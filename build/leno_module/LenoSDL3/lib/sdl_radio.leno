@@ -2,6 +2,7 @@
 // 通过 win.addRadioButton({...}) 创建，同一 group 内只能选中一个。
 // 互斥依赖模块级注册表：Leno 的 struct 数组为引用语义，注册 self 即共享同一实例。
 import "sdl_renderer.leno" as ren; use ren.Renderer
+import "sdl_opts.leno" as dochk    // 选项对账：不认识的键会报一行警告（见 sdl_opts.leno ✓）
 import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.SystemCursor
@@ -13,6 +14,14 @@ use theme.Color
 // 模块级注册表，用于同组互斥（引用语义：dispose 时摘除自身，跨窗口按窗口句柄隔离）
 Array[RadioButton] _radioRegistry = []
 
+
+// 本控件认的键 —— 由本文件全部 `.get("…")` **自动抽取**（是超集 ⇒ 可少报、不误报 ✓）
+//   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
+func _opts_keys(): Array[string] {
+    return [
+"border_color", "box", "checked", "checked_color", "cursor", "enabled", "font_path", "font_size", "font_style", "gap", "group", "text", "text_color", "tip", "unchecked_color", "visible", "x", "y"
+]
+}
 export struct RadioButton impl Widget {
     string text = ""
     string group = "default"
@@ -45,7 +54,9 @@ export struct RadioButton impl Widget {
         }
     }
 
+
     func set(Dict opts) {
+        dochk.check("sdl_radio", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
         Theme th = theme.getTheme()
         _uncheckedColor = th.bgAlt
         _checkedColor = th.accent
@@ -207,3 +218,5 @@ func _registerRadio(RadioButton r) {
 func _unregisterRadio(RadioButton r) {
     for _radioRegistry.len() to i { if _radioRegistry[i] == r { _radioRegistry.remove(i); break } }
 }
+
+

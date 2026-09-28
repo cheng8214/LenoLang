@@ -1,6 +1,7 @@
 // sdl_checkbox.leno — 复选框控件
 // 通过 win.addCheckBox({...}) 创建，点击切换选中态，回调 on_change(bool)
 import "sdl_renderer.leno" as ren; use ren.Renderer
+import "sdl_opts.leno" as dochk    // 选项对账：不认识的键会报一行警告（见 sdl_opts.leno ✓）
 import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.SystemCursor
@@ -9,6 +10,14 @@ import "sdl_tooltip.leno" as tip
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 use theme.Color
 
+
+// 本控件认的键 —— 由本文件全部 `.get("…")` **自动抽取**（是超集 ⇒ 可少报、不误报 ✓）
+//   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
+func _opts_keys(): Array[string] {
+    return [
+"border_color", "box", "checked", "checked_color", "cursor", "enabled", "font_path", "font_size", "font_style", "gap", "text", "text_color", "tip", "unchecked_color", "visible", "x", "y"
+]
+}
 export struct CheckBox impl Widget {
     string text = ""
     float x = 0.0, y = 0.0
@@ -41,7 +50,9 @@ export struct CheckBox impl Widget {
     }
 
     // ==================== set 初始化 ====================
+
     func set(Dict opts) {
+        dochk.check("sdl_checkbox", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
         Theme th = theme.getTheme()
         _uncheckedColor = th.bgAlt
         _checkedColor = th.accent
@@ -181,3 +192,5 @@ export struct CheckBox impl Widget {
 export func createCheckBox(Dict opts): CheckBox {
     CheckBox cb = new CheckBox(); cb.set(opts); return cb
 }
+
+

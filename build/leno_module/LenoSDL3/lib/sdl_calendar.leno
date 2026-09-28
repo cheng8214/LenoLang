@@ -32,12 +32,21 @@
 //                                  today_bg:#FFFFFFFF, today_fg:#2B6BE4FF, today_border:#2B6BE4FF})
 //   cal.set_legend([1, Calendar.LEG_TODAY, 2, 0], ["已签","今日","漏签","未签"])
 import "sdl_renderer.leno" as ren; use ren.Renderer
+import "sdl_opts.leno" as dochk    // 选项对账：不认识的键会报一行警告（见 sdl_opts.leno ✓）
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_label.leno" as lbl; use lbl.Label
 import "sdl_theme.leno" as theme; use theme.Color   // Color 类型在 sdl_theme 里 ✓（不引它字段类型无法解析 ✓）
 import "sdl_core.leno" as core
 
+
+// 本控件认的键 —— 由本文件全部 `.get("…")` **自动抽取**（是超集 ⇒ 可少报、不误报 ✓）
+//   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
+func _opts_keys(): Array[string] {
+    return [
+"alert_bg", "alert_fg", "arrow_color", "arrow_left", "arrow_right", "cell_max", "cell_min", "cell_radius", "cell_radius_ratio", "filled_bg", "filled_fg", "font_size_day", "font_size_head", "font_size_legend", "font_size_week", "gap", "h", "head_h", "head_text_color", "legend_gap", "legend_h", "legend_swatch", "marks", "month", "month_fmt", "pad", "plain_bg", "plain_fg", "rows", "show_head", "today", "today_bg", "today_border", "today_fg", "visible", "w", "week_h", "week_start", "week_text_color", "x", "y", "year"
+]
+}
 export struct Calendar impl Widget {
     // 常用三态的名字（值就是 colors 表的索引 ✓，可自定义更多态 ✓）
     const ST_PLAIN  = 0
@@ -121,7 +130,9 @@ export struct Calendar impl Widget {
     func(int, int):void _onMonthChange = null
 
     // ==================== 构造 ====================
+
     func set(Dict opts) {
+        dochk.check("sdl_calendar", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
         x = opts.get("x", 0.0)
         y = opts.get("y", 0.0)
         float wOpt = opts.get("w", 0.0)
@@ -553,3 +564,5 @@ export func weekdayName(int y, int m, int d, Array[string] names): string {
 export func createCalendar(Dict opts): Calendar {
     Calendar c = new Calendar(); c.set(opts); return c
 }
+
+

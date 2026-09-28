@@ -1,6 +1,7 @@
 // sdl_slider.leno — 滑块控件
 // 通过 win.addSlider({...}) 创建，拖拽 thumb 或在轨道上点击设定数值，回调 on_change(float)
 import "sdl_renderer.leno" as ren; use ren.Renderer
+import "sdl_opts.leno" as dochk    // 选项对账：不认识的键会报一行警告（见 sdl_opts.leno ✓）
 import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.SystemCursor
@@ -10,6 +11,14 @@ import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 use theme.Color
 import maths
 
+
+// 本控件认的键 —— 由本文件全部 `.get("…")` **自动抽取**（是超集 ⇒ 可少报、不误报 ✓）
+//   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
+func _opts_keys(): Array[string] {
+    return [
+"cursor", "enabled", "fill_color", "font_path", "font_size", "font_style", "h", "max", "min", "step", "text_color", "thumb_color", "tip", "track_color", "value", "vertical", "visible", "w", "x", "y"
+]
+}
 export struct Slider impl Widget, Themeable {
     float x = 0.0, y = 0.0, w = 200.0, h = 24.0
     float minV = 0.0, maxV = 100.0, value = 0.0
@@ -42,7 +51,9 @@ export struct Slider impl Widget, Themeable {
     }
 
     // ==================== set 初始化 ====================
+
     func set(Dict opts) {
+        dochk.check("sdl_slider", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
         Theme th = theme.getTheme()
         _trkColor = th.bgAlt
         _fillColor = th.accent
@@ -247,3 +258,5 @@ export struct Slider impl Widget, Themeable {
 export func createSlider(Dict opts): Slider {
     Slider s = new Slider(); s.set(opts); return s
 }
+
+

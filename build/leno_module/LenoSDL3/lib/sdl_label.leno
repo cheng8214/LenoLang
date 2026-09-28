@@ -8,6 +8,7 @@ use core.SDL_Rect
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
+import "sdl_opts.leno" as dochk    // 选项对账（见 sdl_opts.leno 头部的来龙去脉 ✓）
 use theme.Color
 
 export struct Label impl Widget, Themeable {
@@ -67,7 +68,24 @@ export struct Label impl Widget, Themeable {
     }
 
     // ==================== set 初始化 ====================
+    // Label 认的键 ✓（含 `w`/`h` —— 它们**不在**这里被读取，见下面 set() 里的显式提示 ✓）
+    func _label_keys(): Array[string] {
+        return ["x", "y", "w", "h", "text", "font_size", "font_path", "font_style",
+                "text_color", "align", "wrap", "wrap_w", "max_w", "truncate",
+                "tip", "visible", "enabled"]
+    }
+
     func set(Dict opts) {
+        // ★ 两个坑在这里显式提示（2026-09-29）：
+        //   ① `w`/`h` 传入**不生效** ✗ —— 布局尺寸归**父容器**管（add(label, {basis: N}) ✓）
+        //   ② 其他不认识的键 ⇒ 一行警告 + 近名提示 ✓（此前静默丢弃 ✗）
+        for ["w", "h"] to sz {
+            if opts.has(sz) {
+                dochk.warn_once("Label", sz,
+                    "Label：'" + sz + "' 不生效 —— 布局尺寸请写在 add(label, {basis: N}) 里 ✓（父容器决定尺寸）")
+            }
+        }
+        dochk.check("Label", opts, _label_keys())
         Theme th = theme.getTheme()
         _txtColor = th.txt
         text      = opts.get("text", "")

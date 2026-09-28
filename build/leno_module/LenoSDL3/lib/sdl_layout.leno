@@ -29,6 +29,7 @@
 // 注意：放进布局的控件用 SDL3.createXxx 创建（不注册进窗口，避免被窗口与布局双重绘制），
 //       只把布局容器注册进窗口。容器会把窗口句柄自动下发给需要它的子控件（如 Edit 的 IME）。
 import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_opts.leno" as dochk    // 选项对账（见 sdl_opts.leno 头部的来龙去脉 ✓）
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_edit.leno" as edt; use edt.Edit
@@ -88,6 +89,9 @@ export struct HBox impl Widget {
 
     func add(Widget c, Dict opts): Widget {
         if opts == null { opts = {} }
+        // ★ 选项对账（2026-09-29）：写错/不支持的键此前会被**静默丢弃** ✗ ⇒ 这里报一行警告 ✓
+        //   实测收益最大的一条：把尺寸写进 createXxx 的 opts 里 ✗（那是 add(c, {basis:…}) 的活 ✓）
+        dochk.check("add()", opts, _add_keys())
         _c.add(c); _opt.add(opts)
         _natW.add(c.get_w()); _natH.add(c.get_h())
         if _hwnd != null { _layout_pass_window(c, _hwnd) }
@@ -274,6 +278,9 @@ export struct VBox impl Widget {
 
     func add(Widget c, Dict opts): Widget {
         if opts == null { opts = {} }
+        // ★ 选项对账（2026-09-29）：写错/不支持的键此前会被**静默丢弃** ✗ ⇒ 这里报一行警告 ✓
+        //   实测收益最大的一条：把尺寸写进 createXxx 的 opts 里 ✗（那是 add(c, {basis:…}) 的活 ✓）
+        dochk.check("add()", opts, _add_keys())
         _c.add(c); _opt.add(opts)
         _natW.add(c.get_w()); _natH.add(c.get_h())
         if _hwnd != null { _layout_pass_window(c, _hwnd) }
@@ -455,6 +462,9 @@ export struct AnchorBox impl Widget {
 
     func add(Widget c, Dict opts): Widget {
         if opts == null { opts = {} }
+        // ★ 选项对账（2026-09-29）：写错/不支持的键此前会被**静默丢弃** ✗ ⇒ 这里报一行警告 ✓
+        //   实测收益最大的一条：把尺寸写进 createXxx 的 opts 里 ✗（那是 add(c, {basis:…}) 的活 ✓）
+        dochk.check("add()", opts, _add_keys())
         _c.add(c); _opt.add(opts)
         _natW.add(c.get_w()); _natH.add(c.get_h())
         if _hwnd != null { _layout_pass_window(c, _hwnd) }
@@ -570,6 +580,15 @@ export struct AnchorBox impl Widget {
 }
 
 // ★ 核心窗口句柄下发逻辑（必须定义在使用它的函数之前，避免前向引用问题）
+// `add(c, opts)` 认的键 —— 与本文件各处 `.get("…")` 保持一致 ✓
+//   ⚠ 故意比"子项真正用到的"更宽（含 x/y/w/h/left/top/… 锚点类 ✓）⇒ **宁可少报也不误报** ✓
+func _add_keys(): Array[string] {
+    return ["x", "y", "w", "h", "grow", "shrink", "basis", "align", "justify",
+            "minW", "minH", "maxW", "maxH", "expand",
+            "left", "top", "right", "bottom", "centerX", "centerY",
+            "padX", "padY", "padTop", "padBottom", "padLeft", "padRight", "spacing"]
+}
+
 func _passWindowHandle(Widget c, Ptr[u8] hwnd) {
     switch c {
         case is Edit { c.set_window(hwnd); return }

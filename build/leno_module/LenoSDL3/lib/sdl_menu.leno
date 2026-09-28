@@ -27,16 +27,26 @@
 //   transparent     是否透明背景（默认 false，不画菜单栏背景，嵌入标题栏时推荐 true）
 //   auto_width      是否自动计算宽度（默认 false，使用 opts.w；true 时根据菜单项自适应）
 import "sdl_renderer.leno" as ren; use ren.Renderer
+import "sdl_opts.leno" as dochk    // 选项对账：不认识的键会报一行警告（见 sdl_opts.leno ✓）
 import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.(SystemCursor, Scancode, SDL_Rect, sdl3, SDL_Point)
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_image.leno" as img
+import "sdl_opts.leno" as dochk    // 选项对账（见 sdl_opts.leno 头部的来龙去脉 ✓）
 import "sdl_tooltip.leno" as tip
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 use theme.Color
 
 // 单个菜单项（可被子菜单嵌套）
+
+// 本控件认的键 —— 由本文件全部 `.get("…")` **自动抽取**（是超集 ⇒ 可少报、不误报 ✓）
+//   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
+func _opts_keys(): Array[string] {
+    return [
+"accent_color", "action", "align", "auto_width", "bg_color", "border_color", "cursor", "enabled", "font_path", "font_size", "font_style", "h", "id", "image", "image_gap", "image_pad", "image_size", "item_gap", "item_h", "items", "label", "menus", "orientation", "separator", "shortcut", "submenu", "title", "transparent", "visible", "w", "x", "y"
+]
+}
 export struct MenuItem {
     string label = ""
     string id = ""
@@ -50,6 +60,12 @@ export struct MenuItem {
 
 // 由 Dict 构造一个 MenuItem（递归支持子菜单）。供解析与构建器共用。
 func _makeItem(Dict d): MenuItem {
+    // ★ 图标键是 `image`（**不是** `icon` ✗）—— 实测：传 icon 时框架不读 ⇒ 图标永远不出现 ✗
+    //   （这条坑我花了很久才定位到 ✗）⇒ 这里明确点一句 ✓（不自动改键，避免掩盖错误 ✓）
+    if d.has("icon") and not d.has("image") {
+        dochk.warn_once("菜单项", "icon",
+            "菜单项：图标键是 'image' 而不是 'icon' ⇒ 本次没有图标（请写成 image: \"路径\"）")
+    }
     MenuItem mi = new MenuItem()
     mi.label     = d.get("label", "")
     mi.id        = d.get("id", mi.label)
@@ -186,7 +202,9 @@ export struct MenuBar impl Widget, Themeable {
     // 设置所属窗口逻辑宽高，供上下文菜单弹出时做边界夹紧
     func setWindowSize(int ww, int hh) { _winW = ww; _winH = hh }
 
+
     func set(Dict opts) {
+        dochk.check("sdl_menu", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
         x       = opts.get("x", 0)
         y       = opts.get("y", 0)
         w       = opts.get("w", 600)
@@ -891,3 +909,5 @@ func _clearActiveMenu(MenuBar m) {
 export func createMenuBar(Dict opts): MenuBar {
     MenuBar m = new MenuBar(); m.set(opts); return m
 }
+
+

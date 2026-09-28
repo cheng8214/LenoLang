@@ -2,6 +2,7 @@
 // 通过 win.addSpinBox({...}) 创建：左侧 Edit 编辑数值，右侧上下箭头按钮 ±step，滚轮也可调整。
 // 复用 Edit 实现文本输入 / 光标 / IME / 剪贴板，SpinBox 仅负责箭头与数值约束。
 import "sdl_renderer.leno" as ren; use ren.Renderer
+import "sdl_opts.leno" as dochk    // 选项对账：不认识的键会报一行警告（见 sdl_opts.leno ✓）
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.SystemCursor
 import "sdl_widget.leno" as wgt; use wgt.Widget
@@ -11,6 +12,14 @@ import "sdl_edit.leno" as edt; use edt.Edit
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 use theme.Color
 
+
+// 本控件认的键 —— 由本文件全部 `.get("…")` **自动抽取**（是超集 ⇒ 可少报、不误报 ✓）
+//   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
+func _opts_keys(): Array[string] {
+    return [
+"arrow_color", "arrow_w", "bg_color", "border_color", "cursor", "decimals", "enabled", "focus_color", "font_size", "h", "int_mode", "max", "min", "placeholder", "step", "tip", "value", "visible", "w", "x", "y"
+]
+}
 export struct SpinBox impl Widget, Themeable {
     float x = 0.0, y = 0.0, w = 140.0, h = 34.0
     float _arrowW = 20.0            // 右侧箭头区宽度
@@ -97,7 +106,9 @@ export struct SpinBox impl Widget, Themeable {
     func _step_delta(): float { return if step > 0.0 then step else 1.0 }
 
     // ==================== set 初始化 ====================
+
     func set(Dict opts) {
+        dochk.check("sdl_spinbox", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
         Theme th = theme.getTheme()
         _bgColor = th.bg
         _bdrColor = th.border
@@ -295,3 +306,5 @@ export struct SpinBox impl Widget, Themeable {
 export func createSpinBox(Dict opts): SpinBox {
     SpinBox s = new SpinBox(); s.set(opts); return s
 }
+
+

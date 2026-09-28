@@ -1,0 +1,106 @@
+// sdl_opts.leno — 控件选项"对账"小工具（2026-09-29 加）
+//
+// 背景：框架早期为了快，`opts.get(k, def)` 对**不认识的键**一律**静默丢弃** ✗ ——
+//   拼错的名字（`icon` vs `image` ✗）、父容器根本不采纳的键（Label 收 `w` ✗）
+//   全都没有任何提示 ✗ ⇒ 应用侧为此踩了很多坑（实测：图标不出现、文字不显示、
+//   折行压住按钮，都要靠读框架源码才查得出来 ✗）。
+//   ⇒ 本文件提供**一次对账**：在**入口**处把 opts 的键与白名单比一遍，
+//     不认识的 ⇒ 打印一行警告（带"你是不是想要 xxx？"的近名提示 ✓）。
+//
+// 用法（**只加一行，不动原有逻辑** ✓）：
+//   import "sdl_opts" as dochk
+//   dochk.check("Alert", opts, ALERT_KEYS)          // 创建函数 / set() 入口处
+//   dochk.warn_once("菜单项", "icon", "菜单项：图标键是 'image' 不是 'icon' ⇒ 请改成 image: …")
+//
+// 设计取舍（都是**为了不破坏现有代码** ✓）：
+//   · 默认只**警告**、绝不报错 ⇒ 框架已有很多使用者，不能因为多传一个键就炸 ✗
+//   · 同一个 `(控件名, 键名)` **只报一次** ⇒ 循环里建控件也不会刷屏 ✓
+//   · 设 `LENO_UI_STRICT=1` 时前缀变成 `[ui][STRICT]`（便于 CI/自测把它当失败看 ✓）
+//   · 只在**入口**调用（createXxx / add / 解析器）⇒ 不侵入各控件内部 ✓
+import strings
+
+// 已经报过的 `控件名:键名`（同一个错只提醒一次 ✓）
+Array[string] _warned = []
+
+// 收集到的警告原文（供**自测断言** ✓ —— 见 assert/test_ui_opts_guard.leno ✓）
+//   为什么要它：这套东西的价值全在"该报的一定报、不该报的一句不报" ✗
+//   ⇒ 光靠肉眼看屏是回归不住的，必须能被断言钉住 ✓
+Array[string] _log = []
+
+// 取出并清空已收集的警告（自测用 ✓；正常运行不需要它 ✓）
+export func take_log(): Array[string] {
+    Array[string] r = _log
+    _log = []
+    return r
+}
+
+export func _strict(): bool {
+    return _env_or("LENO_UI_STRICT", "") != ""
+}
+
+func _in(Array[string] xs, string x): bool {
+    for xs to it { if it == x { return true } }
+    return false
+}
+
+// 编辑距离（键名都很短 ⇒ 经典 DP 足够快 ✓）
+func _dist(string a, string b): int {
+    int la = a.len()
+    int lb = b.len()
+    if la == 0 { return lb }
+    if lb == 0 { return la }
+    Array[int] prev = []
+    for 0 : lb to j { prev.add(j) }
+    for 1 : la to i {
+        Array[int] cur = [i]
+        for 1 : lb to j {
+            int cost = 1
+            if strings.slice(a, i - 1, i) == strings.slice(b, j - 1, j) { cost = 0 }
+            int v = prev[j] + 1
+            if cur[j - 1] + 1 < v { v = cur[j - 1] + 1 }
+            if prev[j - 1] + cost < v { v = prev[j - 1] + cost }
+            cur.add(v)
+        }
+        prev = cur
+    }
+    return prev[lb]
+}
+
+// 找"最像"的已知键（编辑距离 ≤ 2）⇒ 给"你是不是想要 xxx？"的提示 ✓
+//   实测价值最大的就是这条：`icon` ⇒ `image` ✓（我为此读了一整天源码才定位到 ✗）
+export func near(string k, Array[string] known): string {
+    string best = ""
+    int bestD = 99
+    for known to c {
+        int d = _dist(k, c)
+        if d < bestD { bestD = d; best = c }
+    }
+    if bestD <= 2 { return best }
+    return ""
+}
+
+// 只报一次（同一 (who,key) ✓）；STRICT 时加醒目前缀 ✓
+export func warn_once(string who, string key, string msg) {
+    string tag = who + ":" + key
+    if _in(_warned, tag) { return }
+    _warned.add(tag)
+    _log.add(msg)      // ★ 同时收集一份（供自测断言 ✓）
+    if _strict() { print("[ui][STRICT] " + msg) } else { print("[ui] " + msg) }
+}
+
+// 对账：opts 里出现不在 known 里的键 ⇒ 警告 ✓（默认每个只报一次 ✓）
+export func check(string who, Dict opts, Array[string] known) {
+    if opts == null { return }
+    var ks = opts.keys()
+    for ks to k {
+        // ⚠ `keys()` 返回**无类型 Array** ⇒ 元素是 `any` ✗ ⇒ 显式转 string ✓
+        //   （否则报 "期望 string, 实际 any" ✓ —— 与 RegValueInfo 那个坑同源 ✓）
+        string key = _str(k)
+        if key == "" { continue }
+        if _in(known, key) { continue }
+        string hint = near(key, known)
+        string msg = $"{who}：不认识的选项 '{key}'"
+        if hint != "" { msg = msg + $" —— 你是不是想要 '{hint}'？" }
+        warn_once(who, key, msg)
+    }
+}

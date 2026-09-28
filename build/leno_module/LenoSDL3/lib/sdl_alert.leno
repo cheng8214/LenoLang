@@ -18,6 +18,7 @@ import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_theme.leno" as theme; use theme.Color
 import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_label.leno" as lbl; use lbl.Label
+import "sdl_opts.leno" as dochk    // 选项对账（见 sdl_opts.leno 头部的来龙去脉 ✓）
 import "sdl_core.leno" as core
 
 export struct Alert impl Widget {
@@ -76,7 +77,16 @@ export struct Alert impl Widget {
     func _calc_lx() { _lx = _padX + _accent_off() + _icon_off() }
     func _wrap_w(): float { return _w - 2.0 * _padX - _accent_off() - _icon_off() }
 
+    // Alert 认的键（与本文件 set() 里的 opts.get 一一对应 ✓）
+    func _alert_keys(): Array[string] {
+        return ["kind", "x", "y", "w", "h", "pad_x", "pad_y", "radius",
+                "accent", "accent_w", "bg_color", "border_color", "accent_color",
+                "text_color", "font_size", "icon", "wrap_w", "wrap", "text", "visible"]
+    }
+
     func set(Dict opts) {
+        // ★ 选项对账（2026-09-29）：不认识的键此前**静默丢弃** ✗ ⇒ 现在报一行警告 ✓
+        dochk.check("Alert", opts, _alert_keys())
         _applyKind(opts.get("kind", Alert.KIND_WARN))
         x = opts.get("x", 0.0)
         y = opts.get("y", 0.0)

@@ -1,6 +1,7 @@
 // sdl_listbox.leno — 列表框控件（可滚动、单选/多选）
 // 通过 win.addListBox({...}) 创建，鼠标点击选择、滚轮滚动，回调 on_change(Array[int])
 import maths
+import "sdl_opts.leno" as dochk    // 选项对账：不认识的键会报一行警告（见 sdl_opts.leno ✓）
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
@@ -10,6 +11,14 @@ import "sdl_tooltip.leno" as tip
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 use theme.Color
 
+
+// 本控件认的键 —— 由本文件全部 `.get("…")` **自动抽取**（是超集 ⇒ 可少报、不误报 ✓）
+//   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
+func _opts_keys(): Array[string] {
+    return [
+"bg_color", "border_color", "cursor", "enabled", "font_path", "font_size", "font_style", "h", "hover_color", "item_h", "items", "mode", "scroll_color", "sel_color", "selected", "text_color", "tip", "visible", "w", "x", "y"
+]
+}
 export struct ListBox impl Widget, Themeable {
     // ==================== 关联常量 ====================
     const MODE_SINGLE = 0   // 单选模式
@@ -103,7 +112,9 @@ export struct ListBox impl Widget, Themeable {
     func _total_h(): float { return items.len() * _itemH }
 
     // ==================== set 初始化 ====================
+
     func set(Dict opts) {
+        dochk.check("sdl_listbox", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
         Theme th = theme.getTheme()
         _bgColor = th.bg
         _bdrColor = th.border
@@ -446,3 +457,5 @@ export struct ListBox impl Widget, Themeable {
 export func createListBox(Dict opts): ListBox {
     ListBox lb = new ListBox(); lb.set(opts); return lb
 }
+
+

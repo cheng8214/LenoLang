@@ -1,0 +1,77 @@
+// test_ui_opts_guard.leno — 控件选项对账"**真的会拦**"吗？
+//
+// 为什么值得有这么个测试（2026-09-29）：
+//   这套对账的价值**全在两条**：① 该报的一定报 ✓ ② 不该报的一句不报 ✓
+//   任一条失守，它就退化成噪音 ✗（要么漏掉拼错的键 ✗，要么把合法用法刷屏 ✗）
+//   ⇒ 光靠肉眼看屏是回归不住的 ⇒ 用断言钉住 ✓（这也是它**无 SDL 依赖**的原因 ✓：
+//     只测 sdl_opts 这个纯逻辑层 ✓ ⇒ 不需要窗口/字体 ⇒ 哪里都能跑 ✓）
+//
+// 覆盖：错键必报 ✓ / 对键零报 ✓ / 近名建议 ✓（icon→image、basiss→basis ✓）/
+//       去重（循环里建控件不刷屏 ✓）/ 空 Dict 与 null 不炸 ✓ / STRICT 前缀 ✓
+import "sdl_opts" as dochk
+import strings
+
+var fails = 0
+func check(string name, bool ok) {
+    if ok {
+        print($"[通过] {name}")
+    } else {
+        fails = fails + 1
+        print($"[失败] {name}")
+    }
+}
+
+// 日志里有没有某条（子串匹配 ✓）
+func has(Array[string] log, string sub): bool {
+    for log to s { if strings.find(s, sub) >= 0 { return true } }
+    return false
+}
+
+main() {
+    // ==================== ① 错键 ⇒ 必须拦下 ====================
+    dochk.check("探针A", {label: "x", icon: "a.png"}, ["label", "image"])
+    var l1 = dochk.take_log()
+    check("错键 ⇒ 拦下 1 条", l1.len() == 1)
+    check("拦下的提示里含键名 icon", has(l1, "icon"))
+    check("提示里含控件名 探针A", has(l1, "探针A"))
+
+    // ==================== ② 全对 ⇒ 一条都不能报 ====================
+    dochk.check("探针B", {label: "x", image: "a.png"}, ["label", "image"])
+    check("全对 ⇒ 零警告（不误报 ✓）", dochk.take_log().len() == 0)
+
+    // ==================== ③ 近名建议（这套东西最值钱的一条 ✓）====================
+    dochk.check("探针C", {basiss: 1}, ["basis", "grow"])
+    var l3 = dochk.take_log()
+    check("错键 basiss ⇒ 拦下 1 条", l3.len() == 1)
+    check("给出近名建议 basis", has(l3, "basis"))
+    check("提示用了『你是不是想要』句式", has(l3, "你是不是想要"))
+
+    // ==================== ④ 去重：同一个 (控件,键) 只报一次 ====================
+    //   （循环里建 N 个控件时，绝不能刷 N 行 ✗）
+    dochk.check("探针D", {nope: 1}, ["a"])
+    dochk.check("探针D", {nope: 1}, ["a"])
+    dochk.check("探针D", {nope: 1}, ["a"])
+    check("同键重复提交 ⇒ 只报一次", dochk.take_log().len() == 1)
+    // 去重只针对**同一个键** ✓ ⇒ 换一个键该报还是报（不能把新错误吞掉 ✗）
+    dochk.check("探针D", {other: 2}, ["a"])
+    check("换个键 ⇒ 照报（去重不误伤 ✓）", dochk.take_log().len() == 1)
+
+    // ==================== ⑤ 边界：空 Dict / null / 空白名单 ====================
+    dochk.check("探针E", {}, ["a"])
+    check("空 Dict ⇒ 零警告", dochk.take_log().len() == 0)
+    dochk.check("探针F", {zzz: 1}, [])   // ⚠ 键名别用 `any` —— 那是保留字（会被当成类型 ✗）
+    check("空白名单 ⇒ 任意键都算不认识（报 1 条）", dochk.take_log().len() == 1)
+
+    // ==================== ⑥ 近名函数本身（含"太远就不给建议"✓）====================
+    check("near(icon, [image,label]) ⇒ 无建议（差太远 ✓）", dochk.near("icon", ["image", "label"]) == "")
+    check("near(basiss, [basis]) ⇒ basis", dochk.near("basiss", ["basis"]) == "basis")
+    check("near(imiage, [image]) ⇒ image", dochk.near("imiage", ["image"]) == "image")
+    check("near 完全相等 ⇒ 也给回自己（距离 0 ✓）", dochk.near("image", ["image"]) == "image")
+
+    print("")
+    if fails > 0 {
+        print($"共 {fails} 项失败")
+        _exit(1)
+    }
+    print("全部通过（对账确实会拦 ✓ 且不误报 ✓）")
+}
