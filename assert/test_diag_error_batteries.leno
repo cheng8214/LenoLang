@@ -1,0 +1,56 @@
+// test_diag_error_batteries.leno —— 一批"故意写错"的示例收编成的**负例断言**（2026-09-28；实例四十八）
+//
+// 这些例子原本散在 `examples/` 各处（sys / struct / enum / clib / 多返回值 …），共同点是
+//   **天生编译不过**（它们演示的正是编译器要拒绝的写法）⇒ 作为"示例"永远跑不通，但作为
+//   **诊断回归**很有价值。做法：fixture 移到 `assert/error_cases/`（不改名会以 `test_` 开头被
+//   run_tests 当用例跑 ⇒ 一律换成语义化名字），断言收到本文件（一条一行：fixture / 文案 / 落点行）。
+//
+// ⚠ fixture 是**原样搬运**的 ⇒ 文件顶部可能还留着与当年一致、但与现在落点不符的注释；
+//   **以本文件的断言为准**。
+
+import "helpers/compiler.leno" as ce
+
+main() {
+    // ---- 内置函数实参个数（sys）----
+    ce.expect_error("assert/error_cases/arity_gc_too_many.leno",
+        "_gc 参数过多要报错", "_gc 参数过多: 最多 1 个, 实际 2", 3)
+    ce.expect_error("assert/error_cases/arity_assert_too_few.leno",
+        "assert 参数过少要报错", "assert 参数过少: 最少 1 个, 实际 0", 3)
+    ce.expect_error("assert/error_cases/arity_assert_eq_too_few.leno",
+        "assert_eq 参数过少要报错", "assert_eq 参数过少: 最少 2 个, 实际 1", 3)
+
+    // ---- struct ----
+    ce.expect_error("assert/error_cases/struct_redefine.leno",
+        "struct 重复定义要报错", "struct 'Config' 重复定义", 24)
+    ce.expect_error("assert/error_cases/struct_direct_method_call.leno",
+        "把方法当普通函数直接调要报错", "未定义的函数: Point_test", 14)
+    ce.expect_error("assert/error_cases/struct_scope_resolution.leno",
+        "作用域写错要报语法错", "期望表达式", 15)
+
+    // ---- face ----
+    ce.expect_error("assert/error_cases/face_missing_method.leno",
+        "声明 impl 但缺方法要报错", "但缺少方法 'speak'", 16)
+    ce.expect_error("assert/error_cases/face_not_impl.leno",
+        "未实现 face 的 struct 传给 face 形参要报错（并给 impl 提示）",
+        "第 1 个参数类型不匹配: 期望 face Speaker, 实际 struct Fish", 36)
+
+    // ---- enum ----
+    ce.expect_error("assert/error_cases/enum_redefine.leno",
+        "enum 重复定义要报错", "enum 'Color' 重复定义", 10)
+    ce.expect_error("assert/error_cases/enum_no_member.leno",
+        "访问不存在的枚举成员要报错", "枚举 'Color' 中没有成员 'blue'", 10)
+
+    // ---- clib ----
+    ce.expect_error("assert/error_cases/clib_load_mismatch.leno",
+        "clib 变量类型与 ffi.load 结果不符要报错",
+        "变量 'lib2' 声明类型与初始化值类型不匹配", 18)
+    ce.expect_error("assert/error_cases/clib_str8_param.leno",
+        "clib 形参用 string 而声明是 Ptr 要报错",
+        "函数 'strlen' 参数 1 类型不匹配: 期望 'Ptr', 实际 'string'", 11)
+
+    // ---- 多返回值 ----
+    ce.expect_error("assert/error_cases/multi_ret_count_mismatch.leno",
+        "多返回值个数不匹配要报错", "多返回值数量不匹配：期望 2 个，实际 3 个", 8)
+
+    print("test_diag_error_batteries passed（13 例）")
+}
