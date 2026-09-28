@@ -292,6 +292,15 @@ var gm = core.getGlobalMouse(); gm[0]           // ✗ 运行时抛「下标访�
 
 ## 七、回归用例怎么跑
 
+> **一条命令的 GUI 门禁**（仓库根）：`build\leno.exe assert\run_gui_checks.leno`
+> ① 递归编译 `leno_gui` 下所有 `.leno`（跳过 `.lenocache` / `_tmp*`）② 无头自检
+> `dashboard` / `dashboard_sidebar`（`SDL_VIDEODRIVER=dummy` + `DSHOT` 截图后退出）与
+> `cleaner_master`（`--autotest`）③ 跑主套件 `assert\run_tests.leno`。
+> 全通过 ⇒ 退出码 0；任何失败 ⇒ 打印失败项 + 退出码 1 ✓
+> （写它时踩到的四个坑都记在文件注释里：`set VAR="值"` 会把引号存进值 ✗、
+>  判截图落地要用 `files.exists` ✗、Win32 截屏在无头驱动下会挂 ✗、`_exec` 命令别加引号 ✗）
+
+
 目录：`build/leno_module/LenoSDL3/examples/`
 
 ```

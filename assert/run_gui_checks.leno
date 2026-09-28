@@ -1,0 +1,205 @@
+// run_gui_checks.leno — GUI 回归门禁（一条命令跑完「编译 + 无头自检 + 主套件」）
+//
+// 用法：build\leno.exe assert\run_gui_checks.leno [leno_exe] [gui_dir]
+//   默认：leno_exe = build\leno.exe，gui_dir = leno_gui
+//
+// 为什么需要它：这几轮改界面时的流程全是**手跑**的（编译一遍 leno_gui、无头跑两个看板、
+//   再跑主套件），容易漏 ✗。这里把它固化成一条命令：
+//   ① 编译检查：递归编译 gui_dir 下所有 .leno（跳过 .lenocache 与 _tmp*）
+//   ② 无头自检：跑带「自退出钩子」的程序（SDL_VIDEODRIVER=dummy + DSHOT 截图后退出）
+//      并扫输出里的 error: / 框架用法提示（如 [TabControl 用法提示] ✓）
+//   ③ 主套件：assert\run_tests.leno（编译器自举套件）
+//
+// 判定口径（与 run_tests.leno 一致 ✓）：
+//   · 每个子进程带超时；超时（code == 124）算失败 —— 一个挂死的程序会拖死整套 ✗
+//   · 退出码非 0 ⇒ 失败；退出码 0 但输出里有 error: ⇒ 也失败（编译错误有时不体现在退出码 ✓）
+//   · 失败时打印前几行"像错误"的输出，便于直接定位 ✓
+import dirs
+import strings
+import files
+
+const int COMPILE_TIMEOUT_MS = 90000
+const int RUN_TIMEOUT_MS = 120000
+const int SUITE_TIMEOUT_MS = 900000
+
+var g_exe = ""
+var g_pass = 0
+var g_fail = 0
+Array[string] g_failNames = []
+
+// 只打印"像错误"的前几行（避免把整坨输出倒出来 ✗）
+func print_errors(string output) {
+    if output == null { return }
+    var lines = strings.split(output, "\n")
+    int shown = 0
+    for lines to line {
+        if shown >= 4 { break }
+        var t = strings.trim(line)
+        if strings.has(t, "error") or strings.has(t, "错误") or strings.has(t, "提示") {
+            print("         " + t)
+            shown = shown + 1
+        }
+    }
+}
+
+func fail(string name, string why, string output) {
+    g_fail = g_fail + 1
+    g_failNames.add(name)
+    print("  [FAIL] " + name + " — " + why)
+    print_errors(output)
+}
+
+// 给命令串加引号（路径可能含空格；中文路径也靠引号整体传给 cmd ✓）
+func q(string s): string { return "\"" + s + "\"" }
+
+// ==================== ① 编译检查 ====================
+func check_compiles(string root): int {
+    print("=== [1/3] 编译检查：" + root + "（递归，跳过 .lenocache / _tmp*）===")
+    int checked = 0
+    var walks = dirs.walk(root)
+    for walks to w {
+        if strings.has(w.root, ".lenocache") { continue }
+        var files = w.files
+        for files to f {
+            if not strings.ends_with(f, ".leno") { continue }
+            if strings.starts_with(f, "_tmp") { continue }
+            var full = dirs.abspath(w.root + "\\" + f)
+            if full == null { continue }
+            checked = checked + 1
+            // 注：`_exec` 返回 struct（永不为 null ✗）⇒ 不写 `== null` 判断（编译器会警告死比较 ✓）
+            var r = _exec(g_exe + " -c " + q(full), COMPILE_TIMEOUT_MS)
+            var out = if r.output == null then "" else _str(r.output)
+            if r.code == 124 {
+                fail(f, "编译超时", out)
+            } else {
+                if r.code != 0 or strings.has(out, "error:") {
+                    fail(f, "编译失败", out)
+                } else {
+                    g_pass = g_pass + 1     // 通过的不逐个打印（上百个文件会刷屏 ✗）
+                }
+            }
+        }
+    }
+    print("  检查 " + checked + " 个文件：通过 " + (checked - g_fail) + "，失败 " + g_fail)
+    return checked
+}
+
+// ==================== ② 无头自检 ====================
+// cmd 里 `set X=Y&& 命令`：`_exec` 走 cmd /c（见 run_tests.leno 的说明 ✓）
+//   ⚠ 三个踩过的坑（都实测过 ✗）：
+//     ① `set DSHOT="路径"` —— cmd 会把**引号也存进值里** ⇒ 应用拿到带引号的路径 ✗
+//        ⇒ 变量的值**不能加引号**（临时目录无空格 ✓）
+//     ② 判"截图是否落地"用 `files.exists` ✓ —— 走 `_exec` 拼 `if exist (...) else (...)` 不可靠 ✗
+//     ③ `cleaner_master` 的自截屏走 Win32 GDI，**无头驱动下会挂**（实测超时 ✗）⇒ 它用真实驱动 ✓
+func run_headless(string name, string file, bool headless, bool expect_shot, string extra_args, string shot_arg) {
+    var shotDir = _tmpdir() + "\\leno_gui_checks"
+    dirs.mkdir_p(shotDir)
+    var out_png = shotDir + "\\" + name + ".png"
+    var png_want = out_png
+    if shot_arg != "" { png_want = shot_arg }
+    // ⚠ 先删掉目标 PNG：否则上一次留下的旧图会让"截图存在"**假通过** ✗（实测踩过这类）
+    if files.exists(png_want) { _exec("del /f /q " + png_want, 10000) }
+    var cmd = ""
+    if headless { cmd = cmd + "set SDL_VIDEODRIVER=dummy&& " }
+    if expect_shot { cmd = cmd + "set DSHOT=" + out_png + "&& set DSHOT_AT=3&& " }
+    cmd = cmd + g_exe + " --no-cache " + file
+    if extra_args != "" { cmd = cmd + " " + extra_args }
+    var r = _exec(cmd, RUN_TIMEOUT_MS)
+    var out = if r.output == null then "" else _str(r.output)
+    if r.code == 124 {
+        fail(name, "超时 " + RUN_TIMEOUT_MS + "ms（没有自退出钩子？）", out)
+        return
+    }
+    if r.code != 0 {
+        fail(name, "退出码 " + r.code, out)
+        return
+    }
+    if strings.has(out, "error:") {
+        fail(name, "输出里有 error:", out)
+        return
+    }
+    if strings.has(out, "用法提示") {
+        fail(name, "框架用法提示（见上面输出）", out)
+        return
+    }
+    // 截图得真落地才算"真渲染过"（应用自己截的用 shot_arg 另说 ✓）
+    var png = out_png
+    if shot_arg != "" { png = shot_arg }
+    if png != "" and not files.exists(png) {
+        fail(name, "截图未生成： " + png, out)
+        return
+    }
+    g_pass = g_pass + 1
+    print("  [PASS] " + name)
+}
+
+// ==================== 主流程 ====================
+main() {
+    var args = _args()
+    var exe = "build\\leno.exe"
+    var gui = "leno_gui"
+    if 0 < args.len() { exe = args[0] }
+    if 1 < args.len() { gui = args[1] }
+    var abs = dirs.abspath(exe)
+    if abs != null { exe = abs }
+    g_exe = exe
+
+    print("GUI 回归门禁")
+    print("编译器: " + g_exe)
+    print("GUI 目录: " + gui)
+    print("========================================")
+
+    // 清掉 GUI 目录下的模块缓存，避免旧缓存掩盖问题（与 run_tests.leno 同一做法 ✓）
+    var cw = dirs.walk(gui)
+    for cw to c {
+        var cdirs = c.dirs
+        for cdirs to cd {
+            if cd == ".lenocache" { dirs.delete(c.root + "\\" + cd) }
+        }
+    }
+
+    check_compiles(gui)
+
+    print("")
+    print("=== [2/3] 无头自检（SDL_VIDEODRIVER=dummy + DSHOT 截图后退出）===")
+    // 清单：每个都能自己退出；钩子见各文件头部注释 ✓
+    //   · dashboard / dashboard_sidebar：DSHOT 截图后退出 ✓
+    //   · cleaner_master：--autotest（扫完 → 截屏 → 退出，不删任何文件 ✓）
+    run_headless("dashboard",         gui + "\\应用\\数据看板\\dashboard.leno", true, true, "", "")
+    run_headless("dashboard_sidebar", gui + "\\控件\\数据看板\\dashboard_sidebar.leno", true, true, "", "")
+    // cleaner_master：用**真实**驱动（它的截屏走 Win32，无头会挂 ✗）+ 自带 --autotest（扫完截屏退出 ✓）
+    //   它把 PNG 写到 %TEMP%\cleaner_master_autotest.png ⇒ 用 shot_arg 查这一张 ✓
+    run_headless("cleaner_master", gui + "\\应用\\电脑清理大师\\cleaner_master.leno", false, false,
+                 "--autotest", _tmpdir() + "\\cleaner_master_autotest.png")
+
+    print("")
+    print("=== [3/3] 主套件（assert\\run_tests.leno）===")
+    // ⚠ 约定：`_exec` 的命令**不要加引号**（与 run_tests.leno 自己拉测试时一致 ✓）——
+    //   实测加了引号会让 cmd 报「The filename, directory name, or volume label syntax is incorrect.」✗
+    var suite = "assert\\run_tests.leno"
+    var suiteAbs = dirs.abspath(suite)
+    if suiteAbs != null { suite = suiteAbs }
+    var scmd = g_exe + " " + suite + " " + g_exe + " assert"
+    var sr = _exec(scmd, SUITE_TIMEOUT_MS)
+    var sout = if sr.output == null then "" else _str(sr.output)
+    // 只回显关键行：`Results:` 汇总（**不要取尾部** —— 编译警告会跟在这行后面 ✗，实测踩过）
+    var slines = strings.split(sout, "\n")
+    for slines to line {
+        var t = strings.trim(line)
+        if strings.has(t, "Results:") { print("    " + t) }
+    }
+    if sr.code != 0 {
+        fail("主套件", "退出码 " + sr.code, sout)
+    } else {
+        g_pass = g_pass + 1
+    }
+
+    print("========================================")
+    print("GUI 门禁结果: " + g_pass + " passed, " + g_fail + " failed (total " + (g_pass + g_fail) + ")")
+    if g_fail > 0 {
+        print("失败项：")
+        for g_failNames to n2 { print("  - " + n2) }
+        _exit(1)
+    }
+    print("全部门禁通过 ✓")
+}
