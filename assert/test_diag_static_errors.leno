@@ -676,6 +676,32 @@ main() {
 ")
     ce.expect_error(fa2, "face 变量不能访问非 face 字段（提示用 as 转型）", "没有字段或方法 'name'", 16)
 
+    // ---- face 变量的**正向**能力（2026-09-28；收编后删除 examples/泛型系统/泛型接口与约束/test_face_access.leno）----
+    //   那个示例是**探索型脚本**（问"face 变量能不能访问底层 struct 字段"）⇒ 编译器**正确地**报错
+    //   ⇒ 它永远不可能"跑通"（每跑必是编译错误）。这里把它**两条结论**都收编：face 定义的方法能调 ✓
+    //   （本用例）、struct 特有字段不能直接访问 ✗（见上面的 fa2）—— 收编完就删掉那个跑不通的示例。
+    var fa3 = dirs.join(work, "face_access_ok.leno")
+    files.write(fa3, @"face Speaker {
+    func speak(): string
+}
+
+struct Dog impl Speaker {
+    string name
+
+    func speak(): string {
+        return ""woof from "" + self.name
+    }
+}
+
+main() {
+    var d = new Dog(name = ""Rex"")
+    Speaker s = d
+    print(s.speak())
+}
+")
+    ce.expect_ok(fa3, "face 变量能调用 face 定义的方法（收编 test_face_access 的正向半边）",
+        "woof from Rex")
+
     // ---- struct 方法捕获外层局部（2026-09-28；实例三十二）**崩溃回归** ----
     //   ⚠ 修好之前：这个写法**能编译**，运行期 0xC0000005（实测；机理是方法不是闭包、
     //     却照常被挂 upvalue ⇒ 读野指针）。现在在**解析点**就报错 ⇒ 崩溃变清晰报错。

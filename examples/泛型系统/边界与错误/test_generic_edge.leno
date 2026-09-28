@@ -128,14 +128,32 @@ assert_eq(echo[float](3.14), 3.14)
 assert_eq(echo[bool](true), true)
 
 // --- 11. 泛型函数条件返回 ---
-func coalesce[T](T a, T b): T {
-    if a != null { return a }
+// ⚠ 2026-09-28 修示例（原样保留教学意图，另附实测结论）：
+//   原文是 `coalesce[T](T a, T b)` + `coalesce[int](null, 42)`。
+//   实测：**标量不允许 null**（`int x = null` 报「期望 int，实际 null」）⇒ 那个写法**从来不是
+//   合法程序**，示例陈旧（"能不能收 null"这件事该由**可空类型**表达，见下）。
+//   这里保留"**泛型函数里条件返回**"这个被测能力，判据换成显式的布尔参数：
+func pick[T](T a, T b, bool useA): T {
+    if useA { return a }
     return b
 }
 
-assert_eq(coalesce[int](null, 42), 42)
-assert_eq(coalesce[int](10, 20), 10)
-assert_eq(coalesce[string](null, "default"), "default")
+assert_eq(pick[int](10, 20, true), 10)
+assert_eq(pick[int](10, 20, false), 20)
+assert_eq(pick[string]("a", "b", false), "b")
+
+// 附：可空类型的正确姿势（实测通过）—— 非泛型的可空形参**可以**收 null
+func or_default(int? a, int dflt): int {
+    if a != null { return a }
+    return dflt
+}
+
+assert_eq(or_default(null, 42), 42)
+assert_eq(or_default(10, 42), 10)
+
+// ⚠ 已登记待修（本示例不钉）：**泛型**里的 `T?` 目前丢掉可空标记 ——
+//   `func coalesce[T](T? a, T b): T` 配 `coalesce[int](null, 42)` 仍报「期望 int，实际 null」，
+//   而非泛型的 `int?`/`string?` 形参收 null 是好的（上面那段）。
 
 // --- 12. 泛型 struct 方法修改泛型字段 ---
 struct Counter[T] {
