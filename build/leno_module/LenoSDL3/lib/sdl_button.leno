@@ -252,13 +252,27 @@ export struct Button impl Widget, Themeable {
     func set_border_color(Color c) { _bdrColor = c }
     func set_padding(float p)  { _padding = p }
 
+    // ★ 文本尺寸缓存的**唯一测量点**（text 不变 ⇒ 零测量）。
+    //   为什么要有它：以前 render 主路径已缓存，但 `_draw_text_aligned` 的**右对齐分支**仍每帧
+    //   `measureString(text)` ✗（框架自查清单 J 项的遗漏点）。两处收敛到这里后：
+    //     ① 同一帧内无论画几次、什么对齐方式，都只可能测 0 次（缓存命中）✓
+    //     ② 值与原实现**完全一致**（同字体同文本）⇒ 像素不变 ✓
+    //   缓存失效：`set_text` 与 `_ensure_font`（字体/字号变化）把 `_cachedTextKey` 置为哨兵 ✓
+    func _ensure_text_size() {
+        if _font == null or not _font.ok { return }
+        if text == _cachedTextKey { return }
+        var[float, float](_tw, _th) = _font.measureString(text)
+        _cachedTextW = _tw; _cachedTextH = _th; _cachedTextKey = text
+    }
+
     // 在 [tx, tx+tw] 内按 _align 绘制文字（默认居中 ⇒ 与历史绘制逐像素一致 ✓）
     func _draw_text_aligned(Renderer r, float tx, float tw, float ty, Color col) {
         if _align == ALIGN_LEFT {
             r.drawText(_font, text, tx, ty, col)
         } else if _align == ALIGN_RIGHT {
-            var[float, float](mw, mh) = _font.measureString(text)
-            r.drawText(_font, text, tx + tw - mw, ty, col)
+            // 复用缓存（原先这里每帧 measureString ✗）；缓存未命中时 `_ensure_text_size()` 会补测 ✓
+            _ensure_text_size()
+            r.drawText(_font, text, tx + tw - _cachedTextW, ty, col)
         } else {
             r.drawTextCentered(_font, text, tx, tw, ty, col)
         }
@@ -460,16 +474,11 @@ export struct Button impl Widget, Themeable {
 
         float pad = 6.0 + _padding   // 图标布局的留白；`_padding` 默认 0 ⇒ 仍是 6.0 ✓
         // 提前测量文字，供图标尺寸自适应（防止图标挤占文字 / 内容溢出按钮）
-        // ★ 缓存：text 不变时直接复用，避免每帧 measureString
+        // ★ 缓存：text 不变时直接复用；唯一测量点收敛到 `_ensure_text_size()` ✓（右对齐分支共用）
         float textW = 0.0; float textH = 0.0
         if _font.ok {
-            if text == _cachedTextKey {
-                textW = _cachedTextW; textH = _cachedTextH
-            } else {
-                var[float, float](_tw, _th) = _font.measureString(text)
-                textW = _tw; textH = _th
-                _cachedTextW = textW; _cachedTextH = textH; _cachedTextKey = text
-            }
+            _ensure_text_size()
+            textW = _cachedTextW; textH = _cachedTextH
         }
 
         // 选择当前状态的图标纹理（disabled > pressed > hover > normal）

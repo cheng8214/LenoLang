@@ -230,17 +230,55 @@
 
 ## 第二轮修复进度
 
-| # | 优先级 | 问题 | 状态 |
-|---|--------|------|------|
-| A | 🔴 | Menu `_get_tex` MRU/Dict 缓存 | ⬜ 待修 |
-| B | 🔴 | Menu 循环内 `measureString("Ag")` 提取 | ⬜ 待修 |
-| C | 🔴 | Chart Y 轴刻度标签测量缓存 | ⬜ 待修 |
-| D | 🔴 | Chart 类目标签单宽缓存 | ⬜ 待修 |
-| E | 🟡 | Edit render 复用 `_lineHeight` | ⬜ 待修 |
-| F | 🟡 | ComboBox `measureString("Ag")` 缓存到字段 | ⬜ 待修 |
-| G | 🟡 | Tab 标签宽度缓存 | ⬜ 待修 |
-| H | 🟡 | Label `measureString(text)` 缓存 | ⬜ 待修 |
-| I | 🟡 | Label `_truncatedText()` 结果缓存 | ⬜ 待修 |
-| J | 🟢 | Button `measureString(text)` 缓存 | ⬜ 待修 |
-| K | 🟢 | GroupBox 标题宽度缓存 | ⬜ 待修 |
-| L | 🟢 | Titlebar `getWindowSize` 改事件回调 | ⬜ 待修 |
+> ⚠ **本表曾长期与代码不符**（截至 2026-09-28 的第三轮复核发现：A–I、K 共 10 项**早已修完**，
+> 只是没人回来勾表）。下面按**代码实测**补齐，每项附"证据字段名"便于复查。
+
+| # | 优先级 | 问题 | 状态 | 证据（代码中的缓存字段/实现点） |
+|---|--------|------|------|--------------------------------|
+| A | 🔴 | Menu `_get_tex` MRU/Dict 缓存 | ✅ 已修 | `_imgLastPath` / `_imgLastTex`（`_get_tex` 首行短路） |
+| B | 🔴 | Menu 循环内 `measureString("Ag")` 提取 | ✅ 已修 | `_fontH` 字段（`_ensure_font` 赋值，绘制处直接读） |
+| C | 🔴 | Chart Y 轴刻度标签测量缓存 | ✅ 已修 | `_cachedMaxYLabW`（`ymax` 不变即复用） |
+| D | 🔴 | Chart 类目标签单宽缓存 | ✅ 已修 | `_catW` + `_catDirty` |
+| E | 🟡 | Edit render 复用 `_lineHeight` | ✅ 已修 | 渲染路径已无 `measureString("Ag")`（仅 `_ensure_font` 内一处） |
+| F | 🟡 | ComboBox `measureString("Ag")` 缓存到字段 | ✅ 已修 | `_fontH` 字段（render / renderPopup 均读字段） |
+| G | 🟡 | Tab 标签宽度缓存 | ✅ 已修 | `_tabW` 数组（随 `_tabWDirty` 重算） |
+| H | 🟡 | Label `measureString(text)` 缓存 | ✅ 已修 | `_textWidth()` + `_cachedTextW` / `_cachedTextKey` |
+| I | 🟡 | Label `_truncatedText()` 结果缓存 | ✅ 已修 | `_cachedTruncText` / `_cachedTruncKey` / `_cachedTruncW` |
+| J | 🟢 | Button `measureString(text)` 缓存 | ✅ 已修（2026-09-28） | `_ensure_text_size()` —— **唯一测量点**，原先 render 主路径已缓存、但 `_draw_text_aligned` 的**右对齐分支**仍每帧测 ✗ |
+| K | 🟢 | GroupBox 标题宽度缓存 | ✅ 已修 | `_cachedTitleW` / `_cachedTitleH` / `_cachedTitleKey` |
+| L | 🟢 | Titlebar `getWindowSize` 改事件回调 | ✅ 已修（2026-09-28） | `process()` 改走 `_winSizeDirty` 缓存；**并补上 `isWindowResized()` 置脏**（此前该事件在框架内无人处理 ⇒ 缓存语义才完备） |
+
+---
+
+## 第三轮复核（2026-09-28）：逐项对着代码验证 + 收尾最后 2 项
+
+**方法与结论**：把 A–L 逐条按"缓存字段是否存在、是否在**每帧路径**上生效"审查代码。
+结果：**A–I、K 共 10 项早已修完**（本表此前全部标"⬜ 待修"，属**文档漂移** ✗）；
+真正还有残留的只有 **J** 与 **L** 各一处（下面记录）。
+
+### J（Button）：`_draw_text_aligned` 右对齐分支每帧 `measureString(text)`
+
+* 位置：`sdl_button.leno` 的 `_draw_text_aligned()` 右对齐分支。
+* 为什么漏：清单只点了"render 第 420 行的首次测量"，而**对齐分支**是另一条绘制出口
+  （`_draw_text_aligned` 被 5 处调用：纯文字 / 图标在左 / 图标在右 / 图标在上 / 图标在下）。
+* 改法：新增 `_ensure_text_size()`（**唯一测量点**，text 或字体变化才重测），
+  render 主路径与右对齐分支都走它 ⇒ 同一帧内任何对齐方式都**零测量**。
+* 缓存失效沿用既有哨兵：`set_text` / `_ensure_font` 把 `_cachedTextKey` 置 `"\x01"` ✓。
+
+### L（Titlebar）：`process()` 每个事件都查一次 `SDL_GetWindowSize`
+
+* 位置：`sdl_titlebar.leno` 的 `process()` 开头。
+* 为什么漏：render（614-618）与边缘检测（361-363）**已经**改走 `_winSizeDirty` 缓存，
+  但 `process()` 开头仍在无条件查询 ⇒ 每个事件一次 native 调用 ✗。
+* 改法：同样改走 `_winSizeDirty`；**并补一句 `if ev.isWindowResized() { _winSizeDirty = true }`** ——
+  这句是**语义完备**的关键：改成"脏才查"后，任何来源的尺寸变化都必须能置脏，否则 `w` 会停在旧值 ✗。
+  此前框架内**没有任何地方**使用 `isWindowResized()`（OS 侧缩放无人处理）⇒ 这句不能省。
+  位置必须在读取缓存**之前**，保证本事件就刷新 ✓。
+
+### 验证（两处改动都是纯缓存 ⇒ 必须证明"渲染像素不变"）
+
+* **逐像素比对**：临时基线程序（固定内容 = 标题栏 + 左/中/右对齐按钮 + 两个禁用态按钮 + 标签）
+  在**同一份源**下渲染两次（改前 stash / 改后），从**窗口后台缓冲** `readPixelsAt` 读像素存 PNG
+  ⇒ 两张 PNG **SHA256 完全相同** ✅（10430 字节，`EF7D3E9B…`）。
+  注：截图必须放 `setOverlay`（控件绘制之后、present 之前）；放 `onRender` 回调只会得到空白底图 ✗。
+* **编译回归**：全仓 `leno_gui` 下**用到 TitleBar/Button 的 31 个程序全部编译通过** ✅（0 失败）。

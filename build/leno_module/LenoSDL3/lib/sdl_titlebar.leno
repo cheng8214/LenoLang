@@ -327,9 +327,22 @@ export struct TitleBar impl Widget, Themeable {
         if not _loaded { return }
         if _winHandle == null { return }
 
-        // 同步窗口宽度
-        var[int, int](_winW, _winH) = core.getWindowSize(_winHandle)
-        w = _float(_winW)
+        // ★ 窗口尺寸变化事件 ⇒ 置脏（框架自查清单 L 项收尾）✓
+        //   为什么必须有这一句：下面改成"只在脏时查 SDL_GetWindowSize"后，**任何来源**的尺寸变化
+        //   都必须能置脏，否则 `w` 会长期停在旧值 ✗（自绘边缘拖拽/最大化切换那几处已各自置脏，
+        //   但 OS 侧的缩放事件此前无人处理 —— `isWindowResized()` 在框架内一直没被用到）。
+        //   ⚠ 必须放在读取缓存**之前**：本事件就刷新，不必等下一帧 ✓
+        if ev.isWindowResized() { _winSizeDirty = true; core.markFrameRedraw() }
+
+        // 同步窗口宽度：★ 走 `_winSizeDirty` 缓存（与 render 的 614-618、边缘检测的 361-363 同一套 ✓）
+        //   原先这里**每个事件**都调一次 `SDL_GetWindowSize`（native 调用）✗ —— 而尺寸只在
+        //   缩放结束(351) / 拖拽结束(389) / 窗口状态切换(458,462) / 尺寸变化(579) / resize 事件
+        //   （上一行）时变 ⇒ 只在脏时查一次即可 ✓
+        if _winSizeDirty {
+            var[int, int](_ww, _wh) = core.getWindowSize(_winHandle)
+            _cachedWinW = _ww; _cachedWinH = _wh; _winSizeDirty = false
+        }
+        w = _float(_cachedWinW)
 
         // 跟踪最大化/还原状态（切换时清除按钮悬停，防止状态残留导致关闭按钮变红）
         // ★ 同时设置 _motionSkipCount：窗口尺寸变化后 OS 会生成合成 MouseMotion 事件，
