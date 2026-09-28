@@ -202,7 +202,8 @@ void threads_init_instance_methods(void) {
 
 void threads_init_module(void) {
     TypeKind start_params[] = {TYPE_ANY};
-    native_register_module_method_spec("threads", "start", threads_start, -1, 1, -1, &NATIVE_T_THREAD, start_params);
+    // start 返回 Thread[T]（T = 回调返回类型，⓪ 族声明化）：join 的 ARG0_ELEM 规格读这个 T ✓
+    native_register_module_method_spec("threads", "start", threads_start, -1, 1, -1, &NATIVE_T_THREAD_CB_RET0, start_params);
 
     TypeKind channel_params[] = {TYPE_INT};
     native_register_module_method_spec("threads", "channel", threads_channel, 1, -1, -1, &NATIVE_T_CHANNEL, channel_params);

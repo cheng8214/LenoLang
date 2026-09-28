@@ -503,13 +503,15 @@ void arrays_init_module(void) {
 
     // 函数式方法
     TypeKind map_params[] = {TYPE_ARRAY, TYPE_FUNCTION};
-    native_register_module_method_spec("arrays", "map", arr_map, 2, -1, -1, &NATIVE_T_ARR_ANY, map_params);
+    // map/reduce 的返回规格 = **回调的返回类型**（⓪ 族声明化，2026-09-28）：ARG_CB_RET 节点
+    //   由语义层通用推断点解析（推闭包函数体 / 取命名函数声明返回），此前的语义层 if 链已删 ✓
+    native_register_module_method_spec("arrays", "map", arr_map, 2, -1, -1, &NATIVE_T_ARR_CB_RET1, map_params);
 
     TypeKind filter_params[] = {TYPE_ARRAY, TYPE_FUNCTION};
     native_register_module_method_spec("arrays", "filter", arr_filter, 2, -1, -1, &NATIVE_T_ARR_ARG0_ELEM, filter_params);
 
     TypeKind reduce_params[] = {TYPE_ARRAY, TYPE_FUNCTION, TYPE_ANY};
-    native_register_module_method_spec("arrays", "reduce", arr_reduce, 3, -1, -1, &NATIVE_T_ANY, reduce_params);
+    native_register_module_method_spec("arrays", "reduce", arr_reduce, 3, -1, -1, &NATIVE_T_ARG_REDUCE12, reduce_params);
 }
 
 void arrays_init_instance_methods(void) {
@@ -570,4 +572,7 @@ void arrays_init_instance_methods(void) {
 
     TypeKind reduce_params[] = {TYPE_FUNCTION, TYPE_ANY};
     array_register_method_with_params("reduce",       make_native(arr_reduce,       3, "reduce"),       2, -1, -1, TYPE_ANY, TYPE_UNKNOWN, reduce_params);
+    // map/reduce 实例规格（⓪ 族声明化）：接收者=0、回调=1、init=2 ⇒ 语义层通用推断点解析 ✓
+    native_register_instance_method_return_spec("Array", "map", &NATIVE_T_ARR_CB_RET1);
+    native_register_instance_method_return_spec("Array", "reduce", &NATIVE_T_ARG_REDUCE12);
 }

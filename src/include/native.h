@@ -173,6 +173,12 @@ extern const NativeTypeSpec NATIVE_T_DICT;         // 裸 Dict（K/V 未指定�
 // ⚠ 这是"关系"而不是"类型"：调用点拿得到实参类型才算得出结果，拿不到就退化成 any（保守）。
 //   arrays / dicts / rands / sockets 共用这几份 ⇒ 单一来源，免得各模块各抄一份可能漂的副本。
 extern const NativeTypeSpec NATIVE_T_ARG0_ELEM;      // 第 0 个实参的元素类型（Array[T] → T）
+// ---- 回调返回类型族（⓪ 族声明化，2026-09-28）----
+extern const NativeTypeSpec NATIVE_T_ARG_CB_RET0;    // 第 0 实参是回调（threads.start ⇒ Thread[T]）
+extern const NativeTypeSpec NATIVE_T_ARG_CB_RET1;    // 第 1 实参是回调（实例 map：接收者=0）
+extern const NativeTypeSpec NATIVE_T_ARR_CB_RET1;    // Array[第 1 实参回调的返回]（map）
+extern const NativeTypeSpec NATIVE_T_ARG_REDUCE12;   // 回调=1、累加器=2（reduce ⇒ T）
+extern const NativeTypeSpec NATIVE_T_THREAD_CB_RET0; // Thread[第 0 实参回调的返回]（threads.start）
 extern const NativeTypeSpec NATIVE_T_ARG0_KEY;       // 第 0 个实参的键类型（Dict[K,V] → K）
 extern const NativeTypeSpec NATIVE_T_ARG0_VALUE;     // 第 0 个实参的值类型（Dict[K,V] → V）
 extern const NativeTypeSpec NATIVE_T_ARR_ARG0_ELEM;  // Array[第 0 个实参的元素类型]
@@ -208,6 +214,10 @@ TypeInfo* native_type_spec_to_info(const NativeTypeSpec* spec);
 //     整个规格都解析不出 ⇒ 本函数返回 NULL，调用方回落到原来的 Kind 路径（旧行为逐字不变）。
 //   native_type_spec_to_info() 等价于本函数传 NULL。
 TypeInfo* native_type_spec_to_info_with_args(const NativeTypeSpec* spec, TypeInfo* arg0_type);
+// 带预计算回调返回类型的版本（⓪ 族声明化）：语义侧先推好 T（NTYPE_ARG_CB_RET 节点）再代入；
+//   cb_ret = NULL ⇒ CB_RET 节点给 NULL（顶层回落 Kind 槽，宁漏勿误报）
+TypeInfo* native_type_spec_to_info_with_cb(const NativeTypeSpec* spec, TypeInfo* arg0_type,
+                                           TypeInfo* cb_ret);
 
 // 规格里是否含 NTYPE_ARG0_*（递归）。调用方据此决定"要不要去推实参类型"——
 //   本仓有 230+ 个 native 方法，绝大多数规格与实参无关，不该为它们白推一遍实参。

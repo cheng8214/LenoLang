@@ -832,9 +832,16 @@ const NativeTypeSpec NATIVE_T_DICT        = { NTYPE_DICT,   NULL, NULL, NULL }; 
 // 拿不到（如方法被当值传递）就退化成 any（保守），不会比老路径更差。
 // 为什么上提为预制：arrays / dicts / rands / sockets 四个模块都要用同一份 ⇒ 单一来源，
 // 免得每个模块各自抄一份 `static const NativeTypeSpec`（抄 4 份就有 4 个可能漂的口子）。
-const NativeTypeSpec NATIVE_T_ARG0_ELEM     = { NTYPE_ARG0_ELEM,  NULL, NULL, NULL };        // 第 0 个实参的元素类型
-const NativeTypeSpec NATIVE_T_ARG0_KEY      = { NTYPE_ARG0_KEY,   NULL, NULL, NULL };        // 第 0 个实参的键类型
-const NativeTypeSpec NATIVE_T_ARG0_VALUE    = { NTYPE_ARG0_VALUE, NULL, NULL, NULL };        // 第 0 个实参的值类型
+const NativeTypeSpec NATIVE_T_ARG0_ELEM     = { NTYPE_ARG0_ELEM,  NULL, NULL, NULL, 0, -1 };        // 第 0 个实参的元素类型
+const NativeTypeSpec NATIVE_T_ARG0_KEY      = { NTYPE_ARG0_KEY,   NULL, NULL, NULL, 0, -1 };        // 第 0 个实参的键类型
+const NativeTypeSpec NATIVE_T_ARG0_VALUE    = { NTYPE_ARG0_VALUE, NULL, NULL, NULL, 0, -1 };        // 第 0 个实参的值类型
+// ---- 回调返回类型族（2026-09-28，⓪ 族声明化：map/reduce/start 的语义特判 → 注册即数据）----
+//   下标约定与 ARG0_* 一致（实例形态接收者 = 0；模块形态 0 = 首实参）。acc_index 见 leno_types.h。
+const NativeTypeSpec NATIVE_T_ARG_CB_RET0   = { NTYPE_ARG_CB_RET, NULL, NULL, NULL, 0, -1 };        // 第 0 实参是回调（threads.start）
+const NativeTypeSpec NATIVE_T_ARG_CB_RET1   = { NTYPE_ARG_CB_RET, NULL, NULL, NULL, 1, -1 };        // 第 1 实参是回调（Array 实例 map：接收者=0）
+const NativeTypeSpec NATIVE_T_ARR_CB_RET1   = { NTYPE_ARRAY, NULL, &NATIVE_T_ARG_CB_RET1, NULL, 0, -1 };  // Array[回调返回]（map）
+const NativeTypeSpec NATIVE_T_ARG_REDUCE12  = { NTYPE_ARG_CB_RET, NULL, NULL, NULL, 1, 2 };         // 回调=1、累加器=2（reduce）
+const NativeTypeSpec NATIVE_T_THREAD_CB_RET0 = { NTYPE_THREAD, NULL, &NATIVE_T_ARG_CB_RET0, NULL, 0, -1 }; // Thread[回调返回]（start）
 const NativeTypeSpec NATIVE_T_ARR_ARG0_ELEM = { NTYPE_ARRAY, NULL, &NATIVE_T_ARG0_ELEM, NULL }; // Array[第 0 个实参的元素]
 
 #define NATIVE_STRUCT_SPEC_MAX 64
@@ -935,14 +942,32 @@ static TypeInfo* native_arg0_part_to_info(TypeInfo* arg0, NativeTypeTag tag) {
 int native_type_spec_has_arg_ref(const NativeTypeSpec* spec) {
     if (!spec) return 0;
     if (spec->tag == NTYPE_ARG0_ELEM || spec->tag == NTYPE_ARG0_KEY ||
-        spec->tag == NTYPE_ARG0_VALUE) {
+        spec->tag == NTYPE_ARG0_VALUE || spec->tag == NTYPE_ARG_CB_RET) {
         return 1;
     }
     return native_type_spec_has_arg_ref(spec->sub) || native_type_spec_has_arg_ref(spec->sub2);
 }
 
+// 内部实现：cb_ret = 预计算的回调返回类型（仅 NTYPE_ARG_CB_RET 节点用，可 NULL）
+static TypeInfo* native_type_spec_to_info_impl(const NativeTypeSpec* spec, TypeInfo* arg0_type,
+                                               TypeInfo* cb_ret);
+
 // 规格 → TypeInfo（**新分配，调用方 type_free**），关系型标签用 arg0_type 解析。
 TypeInfo* native_type_spec_to_info_with_args(const NativeTypeSpec* spec, TypeInfo* arg0_type) {
+    return native_type_spec_to_info_impl(spec, arg0_type, NULL);
+}
+
+// 带预计算回调返回类型的版本（⓪ 族声明化，2026-09-28）：NTYPE_ARG_CB_RET 节点无法被
+//   结构解析（需要语义侧推闭包函数体）⇒ 语义层先推好 T，从这里代入；cb_ret 为 NULL ⇒
+//   该节点给 NULL（顶层自然回落 Kind 槽旧行为，宁漏勿误报 ✓）。
+TypeInfo* native_type_spec_to_info_with_cb(const NativeTypeSpec* spec, TypeInfo* arg0_type,
+                                           TypeInfo* cb_ret) {
+    return native_type_spec_to_info_impl(spec, arg0_type, cb_ret);
+}
+
+// 内部实现：cb_ret = 预计算的回调返回类型（仅 NTYPE_ARG_CB_RET 节点用，可 NULL）
+static TypeInfo* native_type_spec_to_info_impl(const NativeTypeSpec* spec, TypeInfo* arg0_type,
+                                               TypeInfo* cb_ret) {
     if (!spec) return NULL;
 
     // 关系型标签：`NTYPE_ARG0_ELEM` 等 ⇒ 取实参里对应的那个类型。
@@ -955,17 +980,24 @@ TypeInfo* native_type_spec_to_info_with_args(const NativeTypeSpec* spec, TypeInf
         spec->tag == NTYPE_ARG0_VALUE) {
         return native_arg0_part_to_info(arg0_type, spec->tag);
     }
+    // 回调返回类型：**结构解析器解析不了**（要语义侧推闭包函数体）⇒ 只认预计算值；
+    //   没有预计算（老入口 / 推不出）⇒ NULL ⇒ 顶层回落 Kind 槽（宁漏勿误报 ✓）
+    if (spec->tag == NTYPE_ARG_CB_RET) {
+        return cb_ret ? type_copy(cb_ret) : NULL;
+    }
 
     TypeInfo* t = type_new(native_spec_kind(spec));
     if (!t) return NULL;
 
     if (spec->tag == NTYPE_STRUCT && spec->name) {
         t->struct_name = strdup(spec->name);
-    } else if (spec->tag == NTYPE_ARRAY || spec->tag == NTYPE_PTR_GENERIC) {
-        t->element_type = native_type_spec_to_info_with_args(spec->sub, arg0_type);
+    } else if (spec->tag == NTYPE_ARRAY || spec->tag == NTYPE_PTR_GENERIC ||
+               spec->tag == NTYPE_THREAD) {
+        // Thread[T]（T = join 的返回类型，2026-09-28）与 Array/Ptr 同走 sub 槽
+        t->element_type = native_type_spec_to_info_impl(spec->sub, arg0_type, cb_ret);
     } else if (spec->tag == NTYPE_DICT) {
-        t->key_type = native_type_spec_to_info_with_args(spec->sub, arg0_type);
-        t->value_type = native_type_spec_to_info_with_args(spec->sub2, arg0_type);
+        t->key_type = native_type_spec_to_info_impl(spec->sub, arg0_type, cb_ret);
+        t->value_type = native_type_spec_to_info_impl(spec->sub2, arg0_type, cb_ret);
     }
     return t;
 }
@@ -1001,7 +1033,15 @@ void native_type_spec_to_string(const NativeTypeSpec* spec, char* out, int out_s
         case NTYPE_FILE:   NSPEC_APPEND("File");   break;
         case NTYPE_SOCKET: NSPEC_APPEND("Socket"); break;
         case NTYPE_CHANNEL:NSPEC_APPEND("Channel");break;
-        case NTYPE_THREAD: NSPEC_APPEND("Thread"); break;
+        case NTYPE_THREAD:
+            NSPEC_APPEND("Thread");
+            if (spec->sub) {   // Thread[T]（T = join 的返回类型，2026-09-28）
+                NSPEC_APPEND("[");
+                native_type_spec_to_string(spec->sub, p, remain);
+                p = out + strlen(out); remain = out_size - (int)strlen(out);
+                NSPEC_APPEND("]");
+            }
+            break;
         case NTYPE_FUTURE: NSPEC_APPEND("Future"); break;
         case NTYPE_STRUCT:
             // 与 type.c 的 type_to_string 保持**同一风格**（`struct Name`）：同一个类型
@@ -1033,6 +1073,13 @@ void native_type_spec_to_string(const NativeTypeSpec* spec, char* out, int out_s
         case NTYPE_ARG0_ELEM:  NSPEC_APPEND("arg0.elem");  break;
         case NTYPE_ARG0_KEY:   NSPEC_APPEND("arg0.key");   break;
         case NTYPE_ARG0_VALUE: NSPEC_APPEND("arg0.value"); break;
+        case NTYPE_ARG_CB_RET:
+            if (spec->acc_index >= 0) {
+                NSPEC_APPEND("argCb(%d, acc=%d)", spec->arg_index, spec->acc_index);
+            } else {
+                NSPEC_APPEND("argCb(%d)", spec->arg_index);
+            }
+            break;
         default: NSPEC_APPEND("any"); break;
     }
     #undef NSPEC_APPEND

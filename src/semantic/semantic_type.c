@@ -183,6 +183,106 @@ static TypeInfo* infer_callback_ret_type(Semantic* s, TypeInfo* elem_type,
 }
 
 // ============================================================================
+// ⓪ 族通用推断点（**语义侧唯一实现**，2026-09-28 声明化）
+// ============================================================================
+// 规格（含 NTYPE_ARG_CB_RET 节点）+ 调用实参 ⇒ 推回调返回类型并代回规格形状。
+//   此前 map（模块/实例两条路径各一份）、reduce、threads.start 各自硬编码 if 链
+//  （最多时四份手写守卫拷贝、精度互不一致）⇒ 收敛后**注册即数据**：
+//     arrays.map    = Array[ARG_CB_RET(1)]      threads.start = Thread[ARG_CB_RET(0)]
+//     arrays.reduce = ARG_CB_RET(1, acc=2)      （实例形态下标同：接收者 = 0）
+//   推断规则：内联闭包（AST_FUNC_DEF）⇒ infer_callback_ret_type（有 acc ⇒ reduce 守卫；
+//   无 acc 但 arg0 是带元素的 Array ⇒ map 守卫；否则直推体）；命名函数 ⇒ TYPE_FUNCTION 的
+//   return_type。推不出 ⇒ NULL（调用方回落 Kind 槽，宁漏勿误报 ✓）。
+// 参数：arg0_type = 接收者/首实参的类型（ARG0 约定，map/reduce 的容器就是它）；
+//   args/arg_count = **实参 AST 数组**（模块形态不含接收者；实例形态下标 - has_receiver 对齐）；
+//   has_receiver = 1 ⇒ 实例形态（下标 0 是接收者，不在 args 里）。
+static const NativeTypeSpec* spec_find_cb_ret(const NativeTypeSpec* spec) {
+    if (!spec) return NULL;
+    if (spec->tag == NTYPE_ARG_CB_RET) return spec;
+    const NativeTypeSpec* f = spec_find_cb_ret(spec->sub);
+    return f ? f : spec_find_cb_ret(spec->sub2);
+}
+
+static TypeInfo* spec_resolve_with_cb_ret(Semantic* s, const NativeTypeSpec* spec,
+                                          TypeInfo* arg0_type,
+                                          Ast* const* args, int arg_count, int has_receiver) {
+    const NativeTypeSpec* cb_node = spec_find_cb_ret(spec);
+    if (!cb_node) return NULL;
+    int cb_i = cb_node->arg_index - has_receiver;
+    if (cb_i < 0 || cb_i >= arg_count) return NULL;
+    Ast* cb_ast = args[cb_i];
+
+    TypeInfo* acc_type = NULL;
+    if (cb_node->acc_index >= 0) {
+        int acc_i = cb_node->acc_index - has_receiver;
+        if (acc_i >= 0 && acc_i < arg_count) {
+            acc_type = infer_expr_type(s, args[acc_i]);
+        }
+    }
+
+    TypeInfo* ret = NULL;
+    if (cb_ast && cb_ast->kind == AST_FUNC_DEF) {
+        bool guarded = false;
+        if (acc_type) {
+            ret = infer_callback_ret_type(s, arg0_type, acc_type, cb_ast);   // reduce 守卫 ✓
+            guarded = true;
+        } else if (arg0_type && arg0_type->kind == TYPE_ARRAY &&
+                   arg0_type->element_type && arg0_type->element_type->kind != TYPE_ANY) {
+            ret = infer_callback_ret_type(s, arg0_type, NULL, cb_ast);       // map 守卫 ✓
+            guarded = true;
+        }
+        if (!guarded || !ret) {
+            // 无容器可守（threads.start）或守卫路径没推出来 ⇒ 直推函数体 ✓
+            ret = infer_return_type_from_body(s, cb_ast->u.func.body);
+        }
+    } else {
+        // 命名函数等：取其函数类型的 return_type（声明即所得 ✓）
+        TypeInfo* ft = infer_expr_type(s, cb_ast);
+        if (ft) {
+            if (ft->kind == TYPE_FUNCTION && ft->return_type) {
+                ret = type_copy(ft->return_type);
+            }
+            type_free(ft);
+        }
+    }
+    if (acc_type) type_free(acc_type);
+    if (!ret || ret->kind == TYPE_ANY) {
+        if (ret) type_free(ret);
+        return NULL;
+    }
+    TypeInfo* out = native_type_spec_to_info_with_cb(spec, arg0_type, ret);   // T 代回规格形状
+    type_free(ret);
+    return out;
+}
+
+// ----------------------------------------------------------------------------
+// Dict.get 返回类型推断（**两条调用路径共享**，2026-09-28 收敛）：
+//   2 参形态 d.get(k, def) ⇒ 第 2 实参（默认值）的类型
+//     （opts.get("x", 0) → int / ("x", 0.0) → float / ("z", true) → bool / ("name", "") → string）；
+//   1 参形态 d.get(k)      ⇒ 字典值类型 V（`Dict[string,string].get("k")` ⇒ string）。
+//   ⚠ 诚实性说明：1 参形态在**键不存在**时返回 null ⇒ 严格说该是 `V?`；但本语言的 null 可
+//     隐式赋给具体类型，且 2 参形态（返回默认值类型）同样是这个口径 ⇒ 与 2 参一致取 V。
+//   命中并推出 ⇒ 返回 TypeInfo（**所有权转移给调用方**）；推不出/非 get ⇒ NULL。
+//   receiver_type 不夺取所有权。此前 AST_CALL / obj_sym 两条路径各留一份拷贝、且 obj_sym
+//   缺 1 参形态 ⇒ 同一语法两处深度不一致（arity 分支逻辑规格词汇表表达不了，收敛为函数共享）。
+static TypeInfo* infer_dict_get_return(Semantic* s, TypeInfo* receiver_type,
+                                       Ast* const* args, int arg_count) {
+    if (!receiver_type || receiver_type->kind != TYPE_DICT) return NULL;
+    if (arg_count >= 2) {
+        TypeInfo* default_type = infer_expr_type(s, args[1]);
+        if (default_type && default_type->kind != TYPE_ANY) {
+            return default_type;
+        }
+        if (default_type) type_free(default_type);
+        return NULL;
+    }
+    if (receiver_type->value_type && receiver_type->value_type->kind != TYPE_ANY) {
+        return type_copy(receiver_type->value_type);
+    }
+    return NULL;
+}
+
+// ============================================================================
 // 类型推断辅助函数
 // ============================================================================
 
@@ -1673,36 +1773,39 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                             //    走（copy/clear/reverse/sort/filter）、裸 `ARG0_ELEM` = pop/remove、
                             //    Dict 的 `Array[ARG0_KEY]` / `Array[ARG0_VALUE]` = keys/values。
                             //    规格是**声明式**的唯一来源 ⇒ 优先于下面按 Kind 猜的老规则。
+                            //    ⚠ `NTYPE_ARG_CB_RET`（map/reduce，2026-09-28 声明化）需要**推函数体**
+                            //    ⇒ 走语义侧通用推断点 spec_resolve_with_cb_ret（下标 0 = 接收者 ✓）
                             {
                                 const NativeTypeSpec* inst_spec =
                                     native_get_instance_method_return_spec(type_name, method_name);
                                 if (inst_spec) {
-                                    TypeInfo* spec_ret =
-                                        native_type_spec_to_info_with_args(inst_spec, obj_type);
-                                    if (spec_ret) {
-                                        ast->cached_type = type_copy(spec_ret);
-                                        type_free(obj_type);
-                                        return spec_ret;
+                                    TypeInfo* spec_ret = NULL;
+                                    if (spec_find_cb_ret(inst_spec)) {
+                                        spec_ret = spec_resolve_with_cb_ret(s, inst_spec, obj_type,
+                                            ast->u.call.args.items, ast->u.call.args.count, 1);
+                                        if (spec_ret) {
+                                            ast->cached_type = type_copy(spec_ret);
+                                            type_free(obj_type);
+                                            return spec_ret;
+                                        }
+                                    } else {
+                                        spec_ret = native_type_spec_to_info_with_args(inst_spec, obj_type);
+                                        if (spec_ret) {
+                                            ast->cached_type = type_copy(spec_ret);
+                                            type_free(obj_type);
+                                            return spec_ret;
+                                        }
                                     }
                                 }
                             }
 
-                            // 获取实例方法的返回类型
+                            // 获取实例方法的返回类型（毯式「ARRAY ⇒ 照抄接收者」规则已删：
+                            //   meta 表里返回 TYPE_ARRAY 的 Array 方法全部已声明规格，
+                            //   规格路径在上面先命中 ✓）
                             int arity;
                             TypeKind return_type = native_get_instance_method_return_type(type_name, method_name, &arity);
-                            
-                            // 如果返回类型是数组（如 copy/filter/reverse/sort），应该与对象类型相同
-                            // 但 map 除外——map 返回 Array[U]，U 取决于 callback 返回类型
-                            if (return_type == TYPE_ARRAY && obj_type->kind == TYPE_ARRAY &&
-                                strcmp(method_name, "map") != 0) {
-                                // 复制对象类型作为返回类型
-                                TypeInfo* result = type_copy(obj_type);
-                                type_free(obj_type);
 
-                                return result;
-                            }
-
-                            // 如果返回类型是数组，从元信息获取元素类型
+                            // 如果返回类型是数组，从元信息获取元素类型（规格缺失时的兜底）
                             if (return_type == TYPE_ARRAY) {
                                 TypeKind elem_type = native_get_instance_method_return_element_type(type_name, method_name);
                                 if (elem_type != TYPE_UNKNOWN) {
@@ -1713,71 +1816,18 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                                 }
                             }
 
-                            // Array.map 泛型推断：根据 callback 返回类型推断 Array[U]
-                            //   守卫逻辑已收敛到 infer_callback_ret_type（模块形态 arrays.map 共用同一实现，
-                            //   此前两处各一份 ⇒ 同一操作两种写法精度不一致）
-                            if (obj_type->kind == TYPE_ARRAY && strcmp(method_name, "map") == 0 &&
-                                ast->u.call.args.count >= 1 && obj_type->element_type &&
-                                obj_type->element_type->kind != TYPE_ANY) {
-                                TypeInfo* inferred = infer_callback_ret_type(s, obj_type, NULL,
-                                                                            ast->u.call.args.items[0]);
-                                if (inferred && inferred->kind != TYPE_ANY) {
-                                    type_free(obj_type);
-                                    TypeInfo* arr_type = type_new(TYPE_ARRAY);
-                                    arr_type->element_type = inferred;
-                                    return arr_type;
-                                }
-                                if (inferred) type_free(inferred);
-                            }
+                            //（map/reduce 的推断特判已删：⓪ 族声明化后走上面的实例规格路径 ✓）
 
-                            // Array.reduce 泛型推断（v3.2.8）：结果类型 = **回调的返回类型**
-                            //   （守卫逻辑同样收敛到 infer_callback_ret_type：acc_type 非空即 reduce 语义）
-                            //   此前 reduce 落到注册表的 `any` ⇒
-                            //   `int s = arr.reduce(func(int a,int b):int { return a+b }, 0)` **编译不过**
-                            //   （实测：变量声明类型与初始化值类型不匹配，实际类型 any）。
-                            if (obj_type->kind == TYPE_ARRAY && strcmp(method_name, "reduce") == 0 &&
-                                ast->u.call.args.count >= 1 && obj_type->element_type &&
-                                obj_type->element_type->kind != TYPE_ANY) {
-                                TypeInfo* red_acc = (ast->u.call.args.count >= 2)
-                                    ? infer_expr_type(s, ast->u.call.args.items[1]) : NULL;
-                                TypeInfo* inferred = infer_callback_ret_type(s, obj_type, red_acc,
-                                                                            ast->u.call.args.items[0]);
-                                if (red_acc) type_free(red_acc);
-                                if (inferred && inferred->kind != TYPE_ANY) {
+                            // Dict.get 返回类型：2 参 ⇒ 默认值类型、1 参 ⇒ 值类型 V
+                            //（与 obj_sym 路径共享 infer_dict_get_return ✓）
+                            {
+                                TypeInfo* get_ret = infer_dict_get_return(s, obj_type,
+                                    ast->u.call.args.items, ast->u.call.args.count);
+                                if (get_ret) {
                                     type_free(obj_type);
-                                    ast->cached_type = type_copy(inferred);
-                                    return inferred;
+                                    ast->cached_type = type_copy(get_ret);
+                                    return get_ret;
                                 }
-                                if (inferred) type_free(inferred);
-                            }
-
-                            // Dict.get 默认值类型推断：根据第二个参数（默认值）推断返回类型
-                            // opts.get("x", 0) → int, opts.get("x", 0.0) → float,
-                            // opts.get("z", true) → bool, opts.get("name", "") → string
-                            if (obj_type->kind == TYPE_DICT && strcmp(method_name, "get") == 0 &&
-                                ast->u.call.args.count >= 2) {
-                                TypeInfo* default_type = infer_expr_type(s, ast->u.call.args.items[1]);
-                                if (default_type && default_type->kind != TYPE_ANY) {
-                                    type_free(obj_type);
-                                    ast->cached_type = type_copy(default_type);
-                                    return default_type;
-                                }
-                                if (default_type) type_free(default_type);
-                            }
-
-                            // Dict.get **1 参形态**（v3.2.8）：没有默认值实参可推 ⇒ 用**字典的值类型 V**
-                            //   （`Dict[string,string].get("k")` ⇒ string；此前是 any ⇒
-                            //    `string s = d.get("k")` 编译不过）。
-                            //   ⚠ 诚实性说明：1 参形态在**键不存在**时返回 null ⇒ 严格说该是 `V?`；
-                            //     但本语言的 null 可隐式赋给具体类型，且 2 参形态（返回默认值类型）同样是
-                            //     这个口径 ⇒ 这里与 2 参形态保持一致取 V。
-                            if (obj_type->kind == TYPE_DICT && strcmp(method_name, "get") == 0 &&
-                                ast->u.call.args.count < 2 &&
-                                obj_type->value_type && obj_type->value_type->kind != TYPE_ANY) {
-                                TypeInfo* vt = type_copy(obj_type->value_type);
-                                type_free(obj_type);
-                                ast->cached_type = type_copy(vt);
-                                return vt;
                             }
 
                             type_free(obj_type);
@@ -1956,79 +2006,17 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
             if (is_native_module) {
                 const char* method_name = ast->u.module_call.method_name;
 
-                // ⓪ 回调返回类型族（`arrays.map` / `arrays.reduce`，v3.2.8）：
-                //   注册规格只能写 `Array[any]` / `any` —— 真实类型取决于**回调的返回类型**
-                //   （模块形态的数组是**第 0 个实参**，不是接收者）。实例形态（`xs.map(fn)`）早有这条守卫，
-                //   模块形态此前没有 ⇒ 同一操作两种写法精度不一致
-                //   （实测：`Array[int] m = arrays.map(xs, fn)` 报 Array[any]，`xs.map(fn)` 却是 Array[int]）。
-                //   两者共用 infer_callback_ret_type（单一事实来源）。
-                //   ⚠ 必须放在**规格查询之前**：规格给的是 `Array[any]`，得让它有机会被更精确的结果覆盖。
-                if (strcmp(actual_module, "arrays") == 0 && ast->u.module_call.args.count >= 2 &&
-                    (strcmp(method_name, "map") == 0 || strcmp(method_name, "reduce") == 0)) {
-                    TypeInfo* arr_type = infer_expr_type(s, ast->u.module_call.args.items[0]);
-                    if (arr_type && arr_type->kind == TYPE_ARRAY && arr_type->element_type &&
-                        arr_type->element_type->kind != TYPE_ANY) {
-                        TypeInfo* acc_type = NULL;
-                        if (strcmp(method_name, "reduce") == 0 && ast->u.module_call.args.count >= 3) {
-                            acc_type = infer_expr_type(s, ast->u.module_call.args.items[2]);
-                        }
-                        TypeInfo* inferred = infer_callback_ret_type(s, arr_type, acc_type,
-                                                                    ast->u.module_call.args.items[1]);
-                        if (acc_type) type_free(acc_type);
-                        if (inferred && inferred->kind != TYPE_ANY) {
-                            type_free(arr_type);
-                            if (strcmp(method_name, "map") == 0) {
-                                TypeInfo* out = type_new(TYPE_ARRAY);
-                                out->element_type = inferred;
-                                ast->cached_type = type_copy(out);
-                                return out;
-                            }
-                            ast->cached_type = type_copy(inferred);
-                            return inferred;
-                        }
-                        if (inferred) type_free(inferred);
-                    }
-                    if (arr_type) type_free(arr_type);
-                }
-
-                // ⓪-b `threads.start(fn, ...)` ⇒ **Thread[T]**（T = 闭包/函数的返回类型，2026-09-28）：
-                //   注册规格只能是裸 Thread（Kind 槽表达不了参数化）⇒ join 此前也只能注册成 any，
-                //   调用点全靠 `is Array[string] => x` 手工收窄 ✗。与 ⓪ 同一策略：查规格**之前**特判 ——
-                //   · 内联闭包（AST_FUNC_DEF）⇒ infer_return_type_from_body 推函数体（与 map 同款）；
-                //   · 命名函数（AST_VAR 等）⇒ 取其 TYPE_FUNCTION 的 return_type（声明即所得 ✓）。
-                //   推不出（any / 无标注）⇒ 落回裸 Thread（join 退回 any —— 宁漏勿误报 ✓）。
-                //   配套：join 的实例返回规格已注册为 ARG0_ELEM（读接收者 Thread[T] 的 T ✓）；
-                //   Thread[T] 的 T 存 element_type 槽（type_copy/渲染已支持，见 type.c ✓）。
-                if (strcmp(actual_module, "threads") == 0 && strcmp(method_name, "start") == 0 &&
-                    ast->u.module_call.args.count >= 1) {
-                    Ast* start_fn = ast->u.module_call.args.items[0];
-                    TypeInfo* start_ret = NULL;
-                    if (start_fn->kind == AST_FUNC_DEF) {
-                        start_ret = infer_return_type_from_body(s, start_fn->u.func.body);
-                    } else {
-                        TypeInfo* ft = infer_expr_type(s, start_fn);
-                        if (ft) {
-                            if (ft->kind == TYPE_FUNCTION && ft->return_type) {
-                                start_ret = type_copy(ft->return_type);
-                            }
-                            type_free(ft);
-                        }
-                    }
-                    if (start_ret && start_ret->kind != TYPE_ANY) {
-                        TypeInfo* th = type_new(TYPE_THREAD);
-                        th->element_type = start_ret;      // 所有权转移（type_free 会带上 ✓）
-                        ast->cached_type = type_copy(th);
-                        return th;
-                    }
-                    if (start_ret) type_free(start_ret);
-                }
+                // ⓪ 族（map/reduce/threads.start 的回调返回类型）已**声明化**（2026-09-28）：
+                //   注册规格带 NTYPE_ARG_CB_RET 节点 ⇒ 下面的规格解析路径经
+                //   spec_resolve_with_cb_ret（语义侧唯一通用推断点）解析，特判 if 链已删 ✓
 
                 // ① 优先用**完整返回类型规格**：它才能表达 `Array[DirEntry]` / `Dict[string,string]`
                 //    这类参数化、带名字的类型（Kind 槽表达不了，见 leno_types.h 的 NativeTypeSpec）。
-                //    ⚠ 规格里可能有**关系型标签**（`NTYPE_ARG0_ELEM` 等）—— 例如 `arrays.copy(xs)`
-                //    的真实类型是 `Array[T]`（T = xs 的元素类型）⇒ 这类规格必须拿**第 0 个实参的
-                //    实际类型**来解析。只为"带实参引用"的规格去推实参：另外 230+ 个方法的规格与
-                //    实参无关，不该为它们白推一遍。返回的 TypeInfo 归调用方释放 ✓
+                //    ⚠ 规格里可能有**关系型标签**（`NTYPE_ARG0_ELEM` / `NTYPE_ARG_CB_RET`）——
+                //    例如 `arrays.copy(xs)` 的真实类型是 `Array[T]`（T = xs 的元素类型）、
+                //    `arrays.map(xs, fn)` 是 `Array[回调返回]` ⇒ 这类规格必须拿实参来解析。
+                //    只为"带实参引用"的规格去推实参：另外 230+ 个方法的规格与实参无关，
+                //    不该为它们白推一遍。返回的 TypeInfo 归调用方释放 ✓
                 const NativeTypeSpec* ret_spec =
                     native_get_module_method_return_spec(actual_module, method_name);
                 if (ret_spec) {
@@ -2036,7 +2024,17 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     if (native_type_spec_has_arg_ref(ret_spec) && ast->u.module_call.args.count > 0) {
                         arg0_type = infer_expr_type(s, ast->u.module_call.args.items[0]);
                     }
-                    TypeInfo* spec_type = native_type_spec_to_info_with_args(ret_spec, arg0_type);
+                    TypeInfo* spec_type = NULL;
+                    if (spec_find_cb_ret(ret_spec)) {
+                        // ⓪ 族：回调返回类型需要**推函数体** ⇒ 语义侧通用推断点 ✓
+                        spec_type = spec_resolve_with_cb_ret(s, ret_spec, arg0_type,
+                            ast->u.module_call.args.items, ast->u.module_call.args.count, 0);
+                        if (spec_type) {
+                            ast->cached_type = type_copy(spec_type);
+                        }
+                    } else {
+                        spec_type = native_type_spec_to_info_with_args(ret_spec, arg0_type);
+                    }
                     if (arg0_type) type_free(arg0_type);
                     if (spec_type) return spec_type;
                 }
@@ -2163,66 +2161,43 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                 const char* type_name = native_get_type_name(obj_sym->type->kind);
                 if (type_name) {
                     const char* method_name = ast->u.module_call.method_name;
+
+                    // ① 规格优先（与 AST_CALL 实例路径**同一实现**）：关系型标签 + CB_RET
+                    //    都由规格声明；接收者 = obj_sym->type（下标 0）。毯式「ARRAY/STRUCT
+                    //    ⇒ 照抄接收者」老规则已删——meta 表里返回 TYPE_ARRAY 的 Array 方法
+                    //    （copy/clear/reverse/sort/map/filter）全部已声明规格 ✓
+                    {
+                        const NativeTypeSpec* inst_spec =
+                            native_get_instance_method_return_spec(type_name, method_name);
+                        if (inst_spec) {
+                            TypeInfo* spec_ret = NULL;
+                            if (spec_find_cb_ret(inst_spec)) {
+                                spec_ret = spec_resolve_with_cb_ret(s, inst_spec, obj_sym->type,
+                                    ast->u.module_call.args.items, ast->u.module_call.args.count, 1);
+                            } else {
+                                spec_ret = native_type_spec_to_info_with_args(inst_spec, obj_sym->type);
+                            }
+                            if (spec_ret) {
+                                ast->cached_type = type_copy(spec_ret);
+                                return spec_ret;
+                            }
+                            // 推不出 ⇒ 落到下面的 Kind 槽兜底（宁漏勿误报）
+                        }
+                    }
+
                     int arity;
                     TypeKind return_type = native_get_instance_method_return_type(type_name, method_name, &arity);
 
-                    // 如果返回类型是数组（如 copy/filter/reverse/sort），应该与对象类型相同
-                    // 但 map 除外——map 返回 Array[U]，U 取决于 callback 返回类型
-                    if (return_type == TYPE_ARRAY && obj_sym->type->kind == TYPE_ARRAY &&
-                        strcmp(method_name, "map") != 0) {
-                        // 复制对象类型作为返回类型
-                        return type_copy(obj_sym->type);
-                    }
-
-                    // 如果返回类型是结构体（如 copy 方法），应该与对象类型相同
-                    if (return_type == TYPE_STRUCT && obj_sym->type->kind == TYPE_STRUCT) {
-                        // 复制对象类型作为返回类型
-                        return type_copy(obj_sym->type);
-                    }
-
-                    // Array.map 泛型推断：类型守卫注入 callback 参数类型
-                    if (obj_sym->type->kind == TYPE_ARRAY && strcmp(method_name, "map") == 0 &&
-                        ast->u.module_call.args.count >= 1 && obj_sym->type->element_type &&
-                        obj_sym->type->element_type->kind != TYPE_ANY) {
-                        Ast* callback_ast = ast->u.module_call.args.items[0];
-                        if (callback_ast && callback_ast->kind == AST_FUNC_DEF &&
-                            callback_ast->u.func.pcnt >= 1) {
-                            TypeInfo* guard_type = type_copy(obj_sym->type->element_type);
-                            TypeInfo* orig_types[8] = {NULL};
-                            int guard_count = callback_ast->u.func.pcnt < 8 ? callback_ast->u.func.pcnt : 8;
-                            for (int gi = 0; gi < guard_count; gi++) {
-                                Symbol* param_sym = scope_resolve(s->current, callback_ast->u.func.params[gi]);
-                                if (param_sym) {
-                                    orig_types[gi] = param_sym->type;
-                                    param_sym->type = (gi == 0) ? type_copy(guard_type) : type_copy(orig_types[gi]);
-                                }
-                            }
-                            TypeInfo* inferred = infer_return_type_from_body(s, callback_ast->u.func.body);
-                            for (int gi = 0; gi < guard_count; gi++) {
-                                Symbol* param_sym = scope_resolve(s->current, callback_ast->u.func.params[gi]);
-                                if (param_sym && orig_types[gi]) {
-                                    type_free(param_sym->type);
-                                    param_sym->type = orig_types[gi];
-                                }
-                            }
-                            type_free(guard_type);
-                            if (inferred && inferred->kind != TYPE_ANY) {
-                                TypeInfo* arr_type = type_new(TYPE_ARRAY);
-                                arr_type->element_type = inferred;
-                                return arr_type;
-                            }
-                            if (inferred) type_free(inferred);
+                    // Dict.get 返回类型：2 参 ⇒ 默认值类型、1 参 ⇒ 值类型 V
+                    //（与 AST_CALL 路径共享 infer_dict_get_return；此前这里只有 2 参拷贝、
+                    //  缺 1 参形态 ⇒ `string s = d.get("k")` 在此路径推不出 ✗ 已统一 ✓）
+                    {
+                        TypeInfo* get_ret = infer_dict_get_return(s, obj_sym->type,
+                            ast->u.module_call.args.items, ast->u.module_call.args.count);
+                        if (get_ret) {
+                            ast->cached_type = type_copy(get_ret);
+                            return get_ret;
                         }
-                    }
-
-                    // Dict.get 默认值类型推断：根据第二个参数（默认值）推断返回类型
-                    if (obj_sym->type->kind == TYPE_DICT && strcmp(method_name, "get") == 0 &&
-                        ast->u.module_call.args.count >= 2) {
-                        TypeInfo* default_type = infer_expr_type(s, ast->u.module_call.args.items[1]);
-                        if (default_type && default_type->kind != TYPE_ANY) {
-                            return default_type;
-                        }
-                        if (default_type) type_free(default_type);
                     }
 
                     return type_new(return_type);

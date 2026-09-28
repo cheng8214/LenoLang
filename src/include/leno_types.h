@@ -310,6 +310,17 @@ typedef enum {
     NTYPE_ARG0_ELEM,    // 第 0 个实参的元素类型（Array[T] 的 T）
     NTYPE_ARG0_KEY,     // 第 0 个实参的键类型（Dict[K,V] 的 K）
     NTYPE_ARG0_VALUE,   // 第 0 个实参的值类型（Dict[K,V] 的 V）
+    // ---- "回调返回类型"标签（2026-09-28，⓪ 族声明化）----
+    //   含义：第 arg_index 个实参是**回调** ⇒ 推它的返回类型（内联闭包推函数体 / 命名函数取
+    //   声明返回类型）。此前的 map/reduce/threads.start 各自在语义层硬编码 if 链（三份手写
+    //   拷贝、精度互不一致）⇒ 收敛后注册即数据，语义侧只有一个通用推断点。
+    //   下标约定与 ARG0_* 一致：实例形态接收者 = 0、实参顺延；模块形态 0 = 首实参。
+    //   ⚠ 结构解析器（native.c）**解析不了**它 —— 需要语义侧先推好 T，再经
+    //     native_type_spec_to_info_with_cb() 代入；推不出 ⇒ 该节点给 NULL（顶层自然回落
+    //     Kind 槽旧行为，宁漏勿误报 ✓）。
+    //   acc_index >= 0 ⇒ **reduce 语义**：守卫时第 0 参 = 第 acc_index 个实参的类型（累加器）、
+    //     第 1 参 = 元素；< 0 ⇒ map 语义（第 0 参 = arg0 的元素）。
+    NTYPE_ARG_CB_RET,   // 第 arg_index 个实参（回调）的返回类型
 } NativeTypeTag;
 
 typedef struct NativeTypeSpec {
@@ -317,6 +328,9 @@ typedef struct NativeTypeSpec {
     const char* name;                  // NTYPE_STRUCT 的类型名；其余传 NULL
     const struct NativeTypeSpec* sub;  // 容器元素 / Dict 的 K / Ptr 的元素
     const struct NativeTypeSpec* sub2; // Dict 的 V（其余传 NULL）
+    // ---- 关系型下标（仅 NTYPE_ARG_CB_RET 用；其余传 0 / -1 即可）----
+    int arg_index;                     // 回调所在的实参下标（接收者 = 0，见上）
+    int acc_index;                     // reduce 语义的累加器实参下标；非 reduce 传 -1
 } NativeTypeSpec;
 
 typedef struct NativeStructSpec {
