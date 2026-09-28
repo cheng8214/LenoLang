@@ -36,6 +36,77 @@ const int MAX_UNITS = 20000
 //     把 `top_items` 与主界面的 `beginClean` 一次改齐 ✓（否则两处各写一份必然漂 ✗）
 export const int SCAN_HDR = 4
 
+// ==================== ② 预览·干跑：只算"将会发生什么"（纯逻辑 ⇒ 可单测 ✓）====================
+// 为什么要有它：清理**不可撤销** ✗ ⇒ 点「一键清理」之前，用户该先看到一张账单：
+//   本次将清理 N 项 / 释放 X / 其中 M 项会被跳过（占用）/ K 项被保留清单豁免 ✓
+// ⚠ 本段**只读**已有扫描结果 ⇒ 不碰磁盘、不删除 ✓（"干跑"的本质 ✓）
+//   唯一的碰盘动作在 alive_top（只 stat ✓，纯读 ✓）—— 用来指出"扫描之后文件还都在吗" ✓
+export struct PreviewRow {
+    int idx = -1         // 类别下标（主界面用它回查 results ⇒ 抽查存活 ✓）
+    string name = ""     // 类别名（展示用 ✓）
+    int cnt = 0          // 将清理项数
+    int bytes = 0        // 将释放字节
+    int skip = 0         // 将跳过（被占用 / 探测失败）
+    int kept = 0         // 保留清单豁免（有意不删 ✓）
+}
+
+export struct PreviewSummary {
+    int catCount = 0     // 参与预览的类别数
+    int cnt = 0
+    int bytes = 0
+    int skip = 0
+    int kept = 0
+    Array[PreviewRow] rows = []
+}
+
+// 依据**已有扫描结果**汇总（cats/results 与主界面同源；checked = 用户勾选的类别下标 ✓）
+//   回收站不参与（由系统托管 ⇒ 不在这里替系统编数字 ✗，主界面自己会提示 ✓）
+export func build_preview(Array[CleanCategory] cats, Array[Array[string]] results, Array[int] checked): PreviewSummary {
+    var out = new PreviewSummary()
+    for checked to i {
+        if i < 0 or i >= cats.len() { continue }
+        if cats[i].id == "recyclebin" { continue }
+        if i >= results.len() { continue }
+        var res = results[i]
+        if res.len() < SCAN_HDR { continue }     // 没扫到 ⇒ 不编数字（不写死 4 ✓）
+        var one = new PreviewRow(
+            idx = i,
+            name = cats[i].name,
+            cnt = _int(res[1]),
+            bytes = _int(res[0]),
+            skip = _int(res[2]),
+            kept = _int(res[3])
+        )
+        out.rows.add(one)
+        out.catCount = out.catCount + 1
+        out.cnt = out.cnt + one.cnt
+        out.bytes = out.bytes + one.bytes
+        out.skip = out.skip + one.skip
+        out.kept = out.kept + one.kept
+    }
+    return out
+}
+
+// 「文件还在不在」抽查：对该类别明细里**最大的 limit 项**逐个 stat，返回仍存在的项数 ✓
+//   （从扫描到清理之间，文件可能已被系统清掉 / 被别的程序挪走 ⇒ 这个数能提示"情况变了" ✓）
+//   ⚠ 依然是**纯读**：只 stat，绝不删除 ✓ —— 也是"干跑没动磁盘"的直接证据 ✓
+//   为什么要 limit：明细最多 MAX_UNITS 对（2 万 ✓）⇒ 全量 stat 会明显卡顿 ✗；
+//     取最大的 limit 项已足够代表变化（主界面用 200 ✓）
+export func alive_top(Array[string] res, int limit): int {
+    if res.len() < SCAN_HDR or limit <= 0 { return 0 }
+    var picked = top_items(res, limit)
+    int n = 0
+    for picked to it {
+        try {
+            var di = dirs.stat(it.path)
+            if di.exists { n = n + 1 }
+        } catch e {
+            continue        // stat 不到（已消失 / 无权限）⇒ 这一项不算"存活" ✓（不静默吞 ✗）
+        }
+    }
+    return n
+}
+
 // ==================== 明细清单：取"最大的 N 项"（纯逻辑 ⇒ 可单测 ✓） ====================
 // 为什么放**本文件**而不是 UI 模块：这里不 import SDL3（见文件头）⇒ 这段能被
 //   test\test_rules.leno 直接单测 ✓；UI 只管把结果画出来（cleaner_detail.leno ✓）
@@ -295,6 +366,17 @@ export func build_categories(): Array[CleanCategory] {
         hint = "浏览器 Service Worker / 网页离线缓存（关掉浏览器后能清更多）"))
 
     return cats
+}
+
+// ==================== 类别图标（文件名 → 用户放在 images\ 的资源 ✓）====================
+// ⚠ 这些是**用户的资源**（iconfont 下载 ✓）⇒ 本模块只**读名字**、绝不写/改文件 ✗
+//   返回 "" ⇒ 该类别暂时没有图标（界面按"无图标"处理 ✓ —— 宁可不画也不猜 ✗）
+// 2026-09-29：按用户实际放置的文件名映射 ✓（含两个不太规整的名字，见注释 ✓）
+export func icon_of(string id): string {
+    // 图标文件名 = **类别 id + ".png"** ✓（2026-09-29 按用户要求，把中文名统一改成英文 ✓）
+    //   ⇒ 以后新增类别只要往 images\ 放一张 `id.png` 就行 ✓，**不用改代码** ✓
+    //   ⚠ 是否存在由调用方检查（应用层 files.exists ✓）—— 本模块保持"纯名字映射" ✓ 不做文件 IO ✓
+    return id + ".png"
 }
 
 // ==================== 保留清单匹配（**放本模块内** —— 见文件头的踩坑记录 ✓） ====================

@@ -1,0 +1,176 @@
+// tools/gen_icons.leno — 用 Leno **程序化生成**清理大师的图标（离线、无窗口 ✓）
+//
+// 画法完全沿用框架既有 API（范本：build\leno_module\LenoSDL3\examples\UI组件\按钮\gen_icons.leno）：
+//   Renderer.fillRect / fillCircle / drawLine / drawTriangle 画形状
+//   r.readPixelsAt(...) 取像素  ⇒  SDL3.saveImagePNG(...) 存盘
+//
+// 产物（64×64、透明底、**纯白形状** ⇒ 按钮/菜单可再用 image_tint 染色）：
+//   preview.png  预览（放大镜）
+//   export.png   导出报告（文档 + 向下箭头）
+//   registry.png 注册表清理（表脊 + 三个节点）
+//   detail.png   查看明细（三行点线）
+//   folder.png   打开该类目录（文件夹）
+//   check.png    勾选本类（勾上的方框）
+//   uncheck.png  取消勾选（空方框）
+//   clean.png    清理已勾选项（垃圾桶）
+//   copy.png     复制路径（两层方块）
+//
+// 用法：build\leno.exe --no-cache "leno_gui\应用\电脑清理大师\tools\gen_icons.leno"
+//   ⚠ 产物写到**应用目录**下的 images\：本脚本在 tools\ 里跑 ⇒ res_dir 是 tools\
+//     ⇒ 取 dirname 回到应用目录再拼 images ✓
+import "SDL3" as SDL3
+import maths
+import dirs
+use SDL3.(Renderer, WindowFlag)
+
+const int CELL = 64
+const int N_ICONS = 9
+const float PI = 3.14159265358979
+
+// 粗线：中线 + 两侧各偏一条 1px（模拟线宽 ✓，和范本同一手法）
+func thickLine(Renderer r, float x1, float y1, float x2, float y2, float w): bool {
+    var dx = x2 - x1
+    var dy = y2 - y1
+    var len = maths.sqrt(dx * dx + dy * dy)
+    if len < 0.001 { return true }
+    var nx = (0.0 - dy) / len
+    var ny = dx / len
+    var o = w / 2.0
+    r.drawLine(x1 + nx * o, y1 + ny * o, x2 + nx * o, y2 + ny * o)
+    r.drawLine(x1, y1, x2, y2)
+    r.drawLine(x1 - nx * o, y1 - ny * o, x2 - nx * o, y2 - ny * o)
+    return true
+}
+
+// 圆环（多段粗线拼）：放大镜的镜片 ✓
+func ring(Renderer r, float cx, float cy, float rad, float w, int segs) {
+    float step = 2.0 * PI / _float(segs)
+    for 0 : segs - 1 to i {
+        float a1 = _float(i) * step
+        float a2 = _float(i + 1) * step
+        thickLine(r, cx + rad * maths.cos(a1), cy + rad * maths.sin(a1),
+                     cx + rad * maths.cos(a2), cy + rad * maths.sin(a2), w)
+    }
+}
+
+// 方框（4 段粗线）
+func box(Renderer r, float x, float y, float w, float h, float lw) {
+    thickLine(r, x, y, x + w, y, lw)
+    thickLine(r, x + w, y, x + w, y + h, lw)
+    thickLine(r, x + w, y + h, x, y + h, lw)
+    thickLine(r, x, y + h, x, y, lw)
+}
+
+// ==================== 各图标（ox = 本格左边缘 ✓）====================
+
+// 预览：放大镜（镜片圆环 + 手柄）
+func drawPreview(Renderer r, float ox) {
+    ring(r, ox + 27.0, 27.0, 15.0, 5.0, 28)
+    thickLine(r, ox + 38.0, 38.0, ox + 50.0, 50.0, 8.0)
+}
+
+// 导出报告：文档 + 向下箭头（angle 180 = 朝下 ✓，范本已验证过的取值）
+func drawExport(Renderer r, float ox) {
+    r.fillRect(ox + 10.0, 10.0, 26.0, 42.0)
+    thickLine(r, ox + 46.0, 16.0, ox + 46.0, 38.0, 6.0)
+    r.drawTriangle(ox + 46.0, 44.0, 16.0, 180.0, 255.0, 255.0, 255.0, 255.0)
+}
+
+// 注册表清理：表脊 + 三个节点（像 hive 分支）
+func drawRegistry(Renderer r, float ox) {
+    r.fillRect(ox + 15.0, 12.0, 5.0, 40.0)
+    for 0 : 2 to i {
+        float y = 16.0 + _float(i) * 14.0
+        r.fillCircle(ox + 17.5, y + 4.0, 5.0)
+        r.fillRect(ox + 26.0, y, 26.0 - _float(i) * 5.0, 8.0)
+    }
+}
+
+// 查看明细：三行「点 + 线」
+func drawDetail(Renderer r, float ox) {
+    for 0 : 2 to i {
+        float y = 18.0 + _float(i) * 14.0
+        r.fillCircle(ox + 15.0, y, 5.0)
+        r.fillRect(ox + 26.0, y - 3.5, 26.0 - _float(i) * 4.0, 7.0)
+    }
+}
+
+// 打开目录：文件夹（带标签页）
+func drawFolder(Renderer r, float ox) {
+    r.fillRect(ox + 11.0, 14.0, 18.0, 9.0)
+    r.fillRect(ox + 11.0, 20.0, 42.0, 28.0)
+}
+
+// 勾选：方框 + 对勾
+func drawCheck(Renderer r, float ox) {
+    box(r, ox + 10.0, 10.0, 34.0, 34.0, 4.0)
+    thickLine(r, ox + 18.0, 28.0, ox + 25.0, 35.0, 5.0)
+    thickLine(r, ox + 25.0, 35.0, ox + 38.0, 19.0, 5.0)
+}
+
+// 取消勾选：空方框
+func drawUncheck(Renderer r, float ox) {
+    box(r, ox + 10.0, 10.0, 34.0, 34.0, 4.0)
+}
+
+// 清理：垃圾桶
+func drawClean(Renderer r, float ox) {
+    r.fillRect(ox + 25.0, 10.0, 12.0, 4.0)
+    r.fillRect(ox + 13.0, 16.0, 36.0, 6.0)
+    r.fillRect(ox + 17.0, 25.0, 28.0, 26.0)
+}
+
+// 复制路径：两层方块（后一个描边、前一个实心）
+func drawCopy(Renderer r, float ox) {
+    box(r, ox + 10.0, 10.0, 26.0, 26.0, 4.0)
+    r.fillRect(ox + 26.0, 26.0, 24.0, 24.0)
+}
+
+main() {
+    // ⚠⚠ 产物目录 = **本脚本自己的 tools\gen_out\** —— 绝不写 `应用目录\images\` ✗✗
+    //   教训（2026-09-29）：原先输出到 images\，把用户**从 iconfont 下载的图标覆盖掉了** ✗
+    //   而且这些文件没进 git ⇒ 无法恢复 ✗。此后本脚本只写自己的 gen_out\（可随时删 ✓）；
+    //   应用的正式图标一律由**用户提供**，放在 `应用目录\images\` ✓。
+    string outDir = dirs.join(dirs.res_dir(), "gen_out")
+    if not dirs.exists(outDir) {
+        try {
+            dirs.mkdir(outDir)
+        } catch e {
+            // 不能空 catch（已是编译期错误 ✓）⇒ 明确记一行再说 ✓
+            print("[gen] 建目录失败：" + outDir)
+        }
+    }
+
+    // ⚠ 关键（2026-09-29 实测踩坑）：**一次 clearColor/setColor 只对后续的一小段绘制可靠** ✗ ——
+    //   原先"一次画满 9 格、最后统一 readPixelsAt"时，**最先画的 3 个**出来是彩色（蓝/橙 ✗），
+    //   后面的却是白色 ✓。改成"**每个图标：清屏 → 重设色 → 画 → 立刻取像素 → 存盘**"后全部正确 ✓。
+    //   ⇒ 每格独立、互不干扰 ✓（也省得靠"一次 setColor 覆盖全部"这种脆弱假设 ✗）
+    var win = SDL3.createWindow({title: "icon-gen", w: CELL, h: CELL, flags: WindowFlag.HIDDEN})
+    if not win.ok {
+        print("[gen] createWindow 失败：" + SDL3.getError())
+        return
+    }
+    var r = SDL3.createRenderer(win.getHandle())
+
+    Array[string] names = ["preview.png", "export.png", "registry.png", "detail.png",
+                           "folder.png", "check.png", "uncheck.png", "clean.png", "copy.png"]
+    int ok = 0
+    for 0 : N_ICONS - 1 to i {
+        r.clearColor(#00000000)      // 透明底（按钮/菜单会再叠自己的底色或 tint ✓）
+        r.setColor(#FFFFFFFF)        // 纯白形状 ⇒ 便于 tint 染色 ✓
+        if i == 0 { drawPreview(r, 0.0) }
+        eif i == 1 { drawExport(r, 0.0) }
+        eif i == 2 { drawRegistry(r, 0.0) }
+        eif i == 3 { drawDetail(r, 0.0) }
+        eif i == 4 { drawFolder(r, 0.0) }
+        eif i == 5 { drawCheck(r, 0.0) }
+        eif i == 6 { drawUncheck(r, 0.0) }
+        eif i == 7 { drawClean(r, 0.0) }
+        eif i == 8 { drawCopy(r, 0.0) }
+        var s = r.readPixelsAt(0, 0, CELL, CELL)
+        if SDL3.saveImagePNG(s, dirs.join(outDir, names[i])) { ok = ok + 1 }
+        else { print("[gen] 失败：" + names[i]) }
+    }
+    print($"[gen] 图标已生成 {ok}/{N_ICONS} ⇒ {outDir}")
+    SDL3.quit()
+}

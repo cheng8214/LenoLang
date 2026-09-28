@@ -1,0 +1,361 @@
+// cleaner_registry.leno — ③ 注册表清理
+//
+// 分层同前（cleaner_rules / cleaner_whitelist / cleaner_detail 一路下来 ✓）：
+//   本文件**不 import SDL3** ⇒ 判定逻辑可被 test\test_registry_logic.leno 直接单测 ✓
+//
+// 三条安全线（缺一不可 ✓）：
+//   ① **判定保守**：只认"命令行里那个 exe 的**绝对路径**确实不存在"，并且
+//      排除 cmd / msiexec / rundll32 / powershell 等"参数不是文件路径"的宿主程序
+//      ⇒ 宁可不报 ✗ 也绝不误删 ✓
+//   ② **动手前必导 .reg 备份**：用系统自带 `reg export`（保真：DWORD/二进制/多字符串都能还原 ✓）
+//      ⇒ 备份到桌面「注册表备份_<时间戳>」目录，双击即可还原 ✓
+//   ③ 扫描/预览全程**只读** ✓；删除必须由用户点「导出备份并清理…」并二次确认 ✓
+//
+// 扫的三类（都是"指向已不存在的文件"这种**可判定**残留 ✓，不碰系统设置 ✗）：
+//   · 无效卸载项  HKCU / HKLM(含 WOW6432Node) …\Uninstall\<子键> 的 UninstallString
+//   · 无效启动项  HKCU / HKLM(含 WOW6432Node) …\Run 的值
+//   · MUICache    指向已消失 exe 的条目（值名形如 `C:\…\x.exe.FriendlyAppName`）
+//   ✗ **最近文档（RecentDocs）没做**：它的值是 REG_BINARY（UTF-16 列表）⇒ 需要二进制解析，
+//     本模块目前只用字符串读取 ⇒ 先不碰（宁可不做 ✗ 也不瞎猜 ✓）
+import Win32
+import dirs
+import files
+import strings
+import times as ti
+// `enumValues()` 的 elements 是**无类型 Array** ⇒ 读成员前要先收窄 ✓（类型转出见 Win32.leno ✓）
+use Win32.RegValueInfo
+
+// ==================== 数据结构 ====================
+export struct RegItem {
+    string hive = ""        // "HKCU" / "HKLM"
+    string keyPath = ""     // 完整子键路径（**不含根** ✓）
+    string name = ""        // kind="value" ⇒ 值名；kind="key" ⇒ 子键名（= keyPath 末段 ✓）
+    string kind = ""        // "value" | "key"
+    string target = ""      // 指向的（已不存在的）文件（展示用 ✓）
+    string reason = ""      // 判定理由（展示用 ✓）
+}
+
+export struct RegScan {
+    Array[RegItem] items = []
+    int keysScanned = 0
+    Array[string] notes = []    // 打不开的键 / 跳过的宿主程序（**不静默吞** ✓）
+}
+
+export struct RegBackup {
+    string dir = ""
+    int exported = 0
+    int failed = 0
+    Array[string] errors = []
+}
+
+export struct RegClean {
+    int ok = 0
+    int failed = 0
+    Array[string] errors = []
+}
+
+// 扫到多少条就停（防极端机器上刷屏 ✓）
+const int REG_ITEM_LIMIT = 200
+
+// ==================== 纯逻辑：命令行 → exe 路径（可单测 ✓）====================
+// 宿主程序：它们的"参数"不是文件路径 ⇒ 一律**不判** ✓（保守第一 ✓）
+func _is_host_exe(string exeName): bool {
+    string n = strings.to_lower(exeName)
+    Array[string] hosts = ["cmd", "cmd.exe", "msiexec", "msiexec.exe",
+                           "rundll32", "rundll32.exe", "wscript", "wscript.exe",
+                           "cscript", "cscript.exe", "powershell", "powershell.exe",
+                           "explorer", "explorer.exe", "mshta", "mshta.exe",
+                           "regsvr32", "regsvr32.exe", "java", "java.exe", "javaw", "javaw.exe"]
+    for hosts to h { if h == n { return true } }
+    return false
+}
+
+// 展开常见的环境变量（只认这几个 ⇒ 其他原样返回 ✓ 不瞎猜 ✗）
+export func expand_env(string p): string {
+    string s = p
+    s = strings.replace(s, "%SystemRoot%", _env_or("SystemRoot", "C:\\Windows"))
+    s = strings.replace(s, "%windir%", _env_or("SystemRoot", "C:\\Windows"))
+    s = strings.replace(s, "%USERPROFILE%", _env_or("USERPROFILE", ""))
+    s = strings.replace(s, "%LOCALAPPDATA%", _env_or("LOCALAPPDATA", ""))
+    s = strings.replace(s, "%APPDATA%", _env_or("APPDATA", ""))
+    s = strings.replace(s, "%ProgramData%", _env_or("ProgramData", ""))
+    s = strings.replace(s, "%ProgramFiles%", _env_or("ProgramFiles", ""))
+    s = strings.replace(s, "%ProgramFiles(x86)%", _env_or("ProgramFiles(x86)", ""))
+    s = strings.replace(s, "%TEMP%", _env_or("TEMP", ""))
+    return s
+}
+
+// 从命令行取出 exe 路径；认不出 / 是宿主程序 / 不是绝对路径 ⇒ 一律返回 "" ✓
+//   `"C:\a b\c.exe" /x` ⇒ `C:\a b\c.exe` ✓
+//   `C:\a\b.exe -x`     ⇒ `C:\a\b.exe` ✓
+//   `MsiExec.exe /X{G}` ⇒ "" ✓（宿主 ⇒ 不判 ✓）
+//   带参数的值 / 相对路径 ⇒ "" ✓
+export func exe_of(string cmdline): string {
+    string s = strings.trim(cmdline)
+    if s == "" { return "" }
+    // ① 先取"头部"：带引号 ⇒ 取引号内；不带引号 ⇒ **整串**（下一步再按 `.exe` 截 ✓）
+    string head = s
+    if strings.starts_with(s, "\"") {
+        // `strings.find` 没有起始位置 ⇒ 先切掉首个引号再找配对的 ✓
+        string rest = strings.slice(s, 1, s.len())
+        int q = strings.find(rest, "\"")
+        if q < 0 { head = rest } else { head = strings.slice(rest, 0, q) }
+    }
+    // ② 截到**第一个 `.exe`** 为止（大小写不敏感 ✓）
+    //    ⚠ 这一步是必须的：**很多 UninstallString 带空格却不加引号** ✗
+    //      实测 `C:\Program Files (x86)\AntiCheatExpert\…\uninstall.exe /uninstall`
+    //      若按空格截断 ⇒ 得到 `C:\Program` ⇒ 判成"不存在" ⇒ **误删** ✗✗
+    //      按 `.exe` 截 ⇒ 得到完整路径 ✓（找不到 `.exe` ⇒ 认不出 ⇒ 返回 "" 不判 ✓）
+    int ex = strings.find(strings.to_lower(head), ".exe")
+    if ex < 0 { return "" }
+    head = strings.slice(head, 0, ex + 4)
+    // ③ 展开环境变量 + 清掉可能残留的引号 ✓
+    head = strings.replace(expand_env(strings.trim(head)), "\"", "")
+    if head == "" { return "" }
+    if _is_host_exe(dirs.basename(head)) { return "" }
+    // 只认**绝对路径**（盘符 `X:\` / UNC `\\` ✓）——裸名字、相对路径不判 ✓
+    if not (strings.find(head, ":\\") > 0 or strings.starts_with(head, "\\\\")) { return "" }
+    return head
+}
+
+// 目标是否**确实不存在**（只 stat ✓ 纯读 ✓）
+//   ⚠ 探测失败时按"存在"处理 ⇒ 不报 ⇒ **保守**（宁可漏报 ✗ 不可误删 ✓）
+export func missing_exe(string exe): bool {
+    if exe == "" { return false }
+    bool exists = true
+    try {
+        exists = files.exists(exe)
+    } catch e {
+        return false
+    }
+    return not exists
+}
+
+// ==================== 扫描（只读 ✓）====================
+struct RegRoot {
+    string hive = ""
+    string path = ""
+}
+
+func _hive(string hive): any {
+    if hive == "HKLM" { return Win32.HKEY_LOCAL_MACHINE }
+    return Win32.HKEY_CURRENT_USER
+}
+
+func _uninstall_roots(): Array[RegRoot] {
+    return [
+        new RegRoot(hive = "HKCU", path = "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall"),
+        new RegRoot(hive = "HKLM", path = "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall"),
+        new RegRoot(hive = "HKLM", path = "SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall")
+    ]
+}
+
+func _run_roots(): Array[RegRoot] {
+    return [
+        new RegRoot(hive = "HKCU", path = "Software\\Microsoft\\Windows\\CurrentVersion\\Run"),
+        new RegRoot(hive = "HKLM", path = "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run"),
+        new RegRoot(hive = "HKLM", path = "SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Run")
+    ]
+}
+
+// ① 卸载项：子键的 UninstallString 指向的 exe 不存在 ⇒ 残留（要删的是**子键** ✓）
+func _scan_uninstall(RegScan out, RegRoot r, int limit) {
+    var open = Win32.regOpenKey(_hive(r.hive), r.path, Win32.KEY_READ)
+    if open.errorCode != 0 {
+        // 打不开很常见（很多机器没有 WOW6432Node 那一支 ✓）⇒ 但**记一笔**不静默吞 ✓
+        out.notes.add($"{r.hive}\\{r.path}：打开失败（{Win32.regErrorToString(open.errorCode)}）")
+        return
+    }
+    var subs = Win32.regEnumSubKeys(open.handle)
+    for subs.subKeys to sk {
+        string name = _str(sk)
+        out.keysScanned = out.keysScanned + 1
+        string sub = r.path + "\\" + name
+        var subOpen = Win32.regOpenKey(_hive(r.hive), sub, Win32.KEY_READ)
+        if subOpen.errorCode != 0 { continue }
+        // SystemComponent=1 ⇒ 系统组件，**不动** ✓（这是最经典的误删来源 ✗）
+        var sysComp = Win32.regReadDword(subOpen.handle, "SystemComponent")
+        if sysComp.errorCode == 0 and sysComp.value == 1 {
+            Win32.regCloseKey(subOpen.handle)
+            continue
+        }
+        var us = Win32.regReadString(subOpen.handle, "UninstallString")
+        Win32.regCloseKey(subOpen.handle)
+        if us.errorCode != 0 or us.value == "" { continue }
+        string exe = exe_of(us.value)
+        if exe == "" { continue }                       // 宿主程序 / 认不出 ⇒ 不判 ✓
+        if not missing_exe(exe) { continue }
+        if out.items.len() >= limit { return }
+        out.items.add(new RegItem(hive = r.hive, keyPath = sub, name = name, kind = "key",
+                                  target = exe, reason = "卸载命令指向的程序已不存在"))
+    }
+    Win32.regCloseKey(open.handle)
+}
+
+// ② 启动项：值指向的 exe 不存在 ⇒ 残留（只删**值** ✓，键本身留着 ✓）
+func _scan_run(RegScan out, RegRoot r, int limit) {
+    var open = Win32.regOpenKey(_hive(r.hive), r.path, Win32.KEY_READ)
+    if open.errorCode != 0 {
+        out.notes.add($"{r.hive}\\{r.path}：打开失败（{Win32.regErrorToString(open.errorCode)}）")
+        return
+    }
+    var vals = Win32.regEnumValues(open.handle)
+    for vals.values to v {
+        RegValueInfo vi = v as RegValueInfo            // 无类型 Array ⇒ 先收窄 ✓
+        string vname = _str(vi.name)
+        if vname == "" { continue }                     // 默认值不碰 ✓
+        out.keysScanned = out.keysScanned + 1
+        var rs = Win32.regReadString(open.handle, vname)
+        if rs.errorCode != 0 or rs.value == "" { continue }
+        string exe = exe_of(rs.value)
+        if exe == "" { continue }
+        if not missing_exe(exe) { continue }
+        if out.items.len() >= limit { break }
+        out.items.add(new RegItem(hive = r.hive, keyPath = r.path, name = vname, kind = "value",
+                                  target = exe, reason = "开机自启指向的程序已不存在"))
+    }
+    Win32.regCloseKey(open.handle)
+}
+
+// ③ MUICache：值名形如 `C:\…\x.exe.FriendlyAppName` ⇒ 切到 `.exe` 为止当路径 ✓
+func _scan_muicache(RegScan out, int limit) {
+    string path = "Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\Shell\\MuiCache"
+    var open = Win32.regOpenKey(_hive("HKCU"), path, Win32.KEY_READ)
+    if open.errorCode != 0 {
+        out.notes.add($"HKCU\\{path}：打开失败（{Win32.regErrorToString(open.errorCode)}）")
+        return
+    }
+    var vals = Win32.regEnumValues(open.handle)
+    for vals.values to v {
+        RegValueInfo vi = v as RegValueInfo            // 无类型 Array ⇒ 先收窄 ✓
+        string vname = _str(vi.name)
+        if vname == "" { continue }
+        int ex = strings.find(strings.to_lower(vname), ".exe")
+        if ex < 0 { continue }                          // 不是 exe 路径 ⇒ 不判 ✓
+        string p = expand_env(strings.slice(vname, 0, ex + 4))
+        if not (strings.find(p, ":\\") > 0 or strings.starts_with(p, "\\\\")) { continue }
+        out.keysScanned = out.keysScanned + 1
+        if not missing_exe(p) { continue }
+        if out.items.len() >= limit { break }
+        out.items.add(new RegItem(hive = "HKCU", keyPath = path, name = vname, kind = "value",
+                                  target = p, reason = "MUICache 指向的程序已不存在"))
+    }
+    Win32.regCloseKey(open.handle)
+}
+
+// 展示用的**短位置**：把几段又长又固定的公共前缀压成 `…` ✓
+//   ⚠ 只影响"显示" —— 备份/删除用的始终是 RegItem 里的**完整路径** ✓
+export func short_location(RegItem it): string {
+    string p = it.keyPath
+    p = strings.replace(p, "SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall", "…\\WOW6432Node\\…\\Uninstall")
+    p = strings.replace(p, "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall", "…\\Uninstall")
+    p = strings.replace(p, "SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Run", "…\\WOW6432Node\\…\\Run")
+    p = strings.replace(p, "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run", "…\\Run")
+    p = strings.replace(p, "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall", "…\\Uninstall")
+    p = strings.replace(p, "Software\\Microsoft\\Windows\\CurrentVersion\\Run", "…\\Run")
+    p = strings.replace(p, "Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\Shell\\MuiCache", "…\\Shell\\MuiCache")
+    return it.hive + "\\" + p
+}
+
+// 总扫描入口（只读 ✓）：limit <= 0 ⇒ 用 REG_ITEM_LIMIT ✓
+export func scan(int limit): RegScan {
+    var out = new RegScan()
+    if limit <= 0 { limit = REG_ITEM_LIMIT }
+    for _uninstall_roots() to r { _scan_uninstall(out, r, limit) }
+    for _run_roots() to r { _scan_run(out, r, limit) }
+    _scan_muicache(out, limit)
+    return out
+}
+
+// ==================== 备份（动手前必须做 ✓）====================
+func _safe_name(string s): string {
+    string r = strings.replace(s, "\\", "_")
+    r = strings.replace(r, ":", "")
+    r = strings.replace(r, " ", "")
+    r = strings.replace(r, "/", "_")
+    return r
+}
+
+func _seen(Array[string] xs, string x): bool {
+    for xs to it { if it == x { return true } }
+    return false
+}
+
+// 桌面备份目录（带时间戳 ✓）
+export func backup_dir(): string {
+    int nowTs = ti.now()
+    string ts = ti.format(nowTs, "%Y%m%d_%H%M%S")
+    string desk = _env_or("USERPROFILE", _tmpdir()) + "\\Desktop"
+    if not dirs.exists(desk) { desk = _tmpdir() }
+    return desk + "\\注册表备份_" + ts
+}
+
+// 导出备份：**每个要动的键各导一个 .reg**（kind="key" 导该子键 ✓；kind="value" 导它所在的键 ✓）
+//   导完逐个**校验文件真的写出来了**（`_exec` 成功 ≠ 导出成功 ✗ ⇒ 必须查盘 ✓）
+export func backup(Array[RegItem] items): RegBackup {
+    var out = new RegBackup()
+    if items.len() == 0 { return out }
+    string dir = backup_dir()
+    if not dirs.exists(dir) {
+        try {
+            dirs.mkdir(dir)
+        } catch e {
+            out.errors.add("创建备份目录失败：" + dir)
+            return out
+        }
+    }
+    out.dir = dir
+    Array[string] done = []
+    for items to it {
+        string full = it.hive + "\\" + it.keyPath
+        if _seen(done, full) { continue }
+        done.add(full)
+        string f = dir + "\\" + _safe_name(full) + ".reg"
+        string cmd = "reg export \"" + full + "\" \"" + f + "\" /y"
+        bool ran = true
+        try { _exec(cmd) } catch e { ran = false }
+        bool wrote = false
+        try { wrote = files.exists(f) } catch e { wrote = false }
+        if ran and wrote {
+            out.exported = out.exported + 1
+        } else {
+            out.failed = out.failed + 1
+            out.errors.add("导出失败：" + full)
+        }
+    }
+    return out
+}
+
+// ==================== 清理（用户已确认 + 已备份 ✓）====================
+export func apply(Array[RegItem] items): RegClean {
+    var out = new RegClean()
+    for items to it {
+        if it.kind == "key" {
+            // 卸载项：整棵子键删（它的子项本来就是这台机器上的残留 ✓）
+            int rc = Win32.regDeleteKeyRecursive(_hive(it.hive), it.keyPath)
+            if rc == 0 {
+                out.ok = out.ok + 1
+            } else {
+                out.failed = out.failed + 1
+                out.errors.add($"{it.hive}\\{it.keyPath}：{Win32.regErrorToString(rc)}")
+            }
+            continue
+        }
+        // 启动项 / MUICache：只删**值** ✓（键本身留着 ✓）
+        var open = Win32.regOpenKey(_hive(it.hive), it.keyPath, Win32.KEY_ALL_ACCESS)
+        if open.errorCode != 0 {
+            out.failed = out.failed + 1
+            out.errors.add($"{it.hive}\\{it.keyPath}：打不开（{Win32.regErrorToString(open.errorCode)}）")
+            continue
+        }
+        int rc = Win32.regDeleteValue(open.handle, it.name)
+        Win32.regCloseKey(open.handle)
+        if rc == 0 {
+            out.ok = out.ok + 1
+        } else {
+            out.failed = out.failed + 1
+            out.errors.add($"{it.hive}\\{it.keyPath}\\{it.name}：{Win32.regErrorToString(rc)}")
+        }
+    }
+    return out
+}

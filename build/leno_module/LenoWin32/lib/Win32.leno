@@ -16,8 +16,13 @@ import "./w32_shell.leno" as shell   // 磁盘空间/回收站（./ 钉死 sibli
 
 // 注册表结果类型：引入后用裸名给下面的转发函数标注返回类型
 // （与 Web.leno 的 use net.(Response, HttpClient, Session) 同一写法）
-use reg.(OpenKeyResult, CreateKeyResult, ReadStringResult, 
-ReadDwordResult, ReadQwordResult, EnumSubKeysResult, EnumValuesResult)
+use reg.(OpenKeyResult, CreateKeyResult, ReadStringResult,
+         ReadDwordResult, ReadQwordResult, EnumSubKeysResult, EnumValuesResult,
+         RegValueInfo)
+// ★ 2026-09-28 补 `RegValueInfo`：`enumValues()` 返回的 `values` 是**无类型 Array** ⇒
+//   应用侧要读元素成员（如 `v.name`）就得先 `as RegValueInfo` 收窄 ⇒ 类型必须能名字化 ✓
+//   （此前只转出 EnumValuesResult ⇒ 应用里只能 `_str(v.name)` 之类动态访问，
+//     实测被检查器推成 `Ptr` 而报"Ptr 不支持属性访问" ✗）
 
 // ── OS 守卫 ──
 export func _is_supported(): bool { return _os() == "windows" }

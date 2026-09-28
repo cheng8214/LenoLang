@@ -18,6 +18,7 @@ import "sdl_theme" as theme
 import "./cleaner_rules.leno" as rules
 import "./cleaner_detail.leno" as detail   // 明细清单弹窗（已从本文件拧出 ⇒ 独立模块 ✓）
 import "./cleaner_whitelist.leno" as wl    // 保留清单（扫描 + 删除双端过滤 ✓）
+import "./cleaner_registry.leno" as reg    // ③ 注册表清理（判定是纯函数 ⇒ 可单测 ✓）
 import Win32
 import dirs
 import files
@@ -27,6 +28,7 @@ import times as ti
 use SDL3.(Event, Renderer, Window, TitleBar, Label, Button, Table, ProgressBar, HBox, VBox, Scancode, Timer)
 use SDL3.RingProgress
 use rules.CleanCategory
+use reg.(RegItem, RegScan, RegBackup, RegClean)
 
 // ==================== 调试日志（--autoclean 用；主线程+worker 都可能调 ⇒ try/catch 兜底） ====================
 func _dlog(string s) {
@@ -74,13 +76,21 @@ struct CleanerMaster {
     Label lastLbl                      // 上次清理记录
     Label timeLbl                      // 清理耗时（进度条行右侧，清理中实时跳动 ✓）
     Button mainBtn
-    Button exportBtn                   // 「导出报告」（报告态可用；其余时候禁用+半透明 ✓）
+    // 三联图标按钮（**图标在上、文字在下** ✓）：预览 / 导出 / 注册表清理
+    //   放在左列下方（2026-09-29 用户要求 ✓）⇒ 底部只剩一个主动作 ✓
+    //   图标由 `tools/gen_icons.leno` 用 Leno 程序化生成 ✓（64×64 透明底白形状 ✓）
+    Button previewBtn
+    Button exportBtn
+    Button regBtn
     Timer pollTimer
 
     // ===== 状态机：idle → scanning → done → cleaning → report =====
     string state = "idle"
     Array[CleanCategory] cats
     Array[Array[string]] results       // 每类别 scan_worker 返回（[size,cnt,skip,路径,大小,...]）
+    // 类别图标路径（与 cats **同序** ✓）：createTable 时作为 row_images 给一份 ✓，
+    //   之后每次 set_rows() 都要**再贴一遍** ✗ —— 见 refreshRows() 里的注释（掉过坑 ✓）
+    Array[string] catIcons = []
     Array[Thread] scanThreads
     Channel? scanCh = null
     int liveSize = 0                   // 扫描实时累计（channel 增量，仅 UI 反馈）
@@ -126,17 +136,20 @@ struct CleanerMaster {
         win.add(titleBar)
         float titleH = titleBar.get_h()
 
-        // 顶部：C 盘空间条（标签与进度条相邻成组，靠右 ✓）
-        var driveRow = SDL3.createHBox({h: 22, padX: 4, padY: 2, spacing: 8})
-        var driveGap = SDL3.createLabel({text: "", w: 1, h: 1})
-        driveRow.add(driveGap, {grow: 1, shrink: 1, align: 3})
-        // 容量文字**右端贴住进度条**（间距 = spacing 8px ✓）：
-        //   空文本创建 ⇒ add 时盒宽 natW=0 ⇒ 布局把 x 锚点放在「进度条左侧 8px」处；
-        //   内部 align:2 是锚点语义（drawX = x - 文字宽）⇒ 文字右端正好落在锚点上 ✓
-        //   ⚠ 不能用 basis 预留盒宽 + 左对齐（那会把空档变成间隙 ✗），也不能用非空文本创建（盒宽随文字走会错位 ✗）
-        driveLbl = SDL3.createLabel({text: "", font_size: 12, align: 2})
-        driveRow.add(driveLbl, {grow: 0, shrink: 0, align: 3})
-        driveBar = SDL3.createProgressBar({w: 240, h: 10, show_text: false})
+        // 顶部：C 盘空间条 —— **左对齐**（2026-09-29 用户要求 ✓）
+        //   原来用 `driveGap`(grow:1) 把这一组顶到右边 ✗ ⇒ 现在直接从左边排起 ✓
+        var driveRow = SDL3.createHBox({h: 26, padX: 4, padY: 2, spacing: 8})
+        // ⚠ 左对齐这里必须**显式给盒宽**（w: 210）：标签是空文本创建 ⇒ 盒宽为 0 ✗
+        //   那样就没给它留位置，文字会直接压在进度条上 ✗
+        //   （右对齐那版靠"align:2 的锚点在右端"绕开了这点，左对齐没有等价技巧 ✓）
+        // ⚠ 宽度要用 **add 的 basis**，不能写 `createLabel({w: ...})`
+        //   —— 本文件 line 231 那条注释已经写明：**Label 创建时的 w 选项不被 set() 读取** ✗
+        //   （实测：写 w:210 时盒宽仍是 0 ⇒ 文字被挤没、进度条顶到最左边 ✗）
+        driveLbl = SDL3.createLabel({text: "", font_size: 12, align: 0})
+        driveRow.add(driveLbl, {grow: 0, shrink: 0, basis: 210, align: 3})
+        // ★ 进度条**内嵌百分比**（框架自带 `show_text` ✓ 绘制 `{pct}%` ✓）
+        //   条高给到 18 才放得下数字（原来 h:10 + show_text:false ✗）✓
+        driveBar = SDL3.createProgressBar({w: 240, h: 18, show_text: true, font_size: 11})
         driveBar.set_value(0.0)
         driveRow.add(driveBar, {grow: 0, shrink: 0, basis: 240, align: 3})
 
@@ -151,7 +164,9 @@ struct CleanerMaster {
                 if state == "done" { return rules.fmt_size(totalSize) }
                 if state == "cleaning" { return "已释放 " + rules.fmt_size(liveFreed) }
                 if state == "report" { return "已释放 " + rules.fmt_size(freedTotal) }
-                return "立即扫描"
+                // ★ 空态环心不再写「立即扫描」✗ —— 那是**第二个**入口（唯一入口是底部主按钮 ✓）
+                //   环心只报状态 ⇒ 用户不用先判断"点哪个" ✓
+                return "待扫描"
             },
             // 副行（环中心第二行）：报告态显示「占可清理 x%」——和上面的「已释放 X MB」互补 ✓
             sub_text_fn: func():string {
@@ -164,7 +179,8 @@ struct CleanerMaster {
                     }
                     return $"{cleanedTotal} 项"
                 }
-                return ""
+                // 空态：**不给操作指令**（唯一指令在底部状态栏 ✓）⇒ 只说"有几类待检查" ✓
+                return _str(cats.len()) + " 类"
             },
             on_click: func() {
                 if state == "idle" or state == "report" { startScan() }
@@ -179,52 +195,133 @@ struct CleanerMaster {
         var th0 = theme.getTheme()
         sumMain = SDL3.createLabel({text: "", font_size: 16, font_style: 1, align: 1, text_color: th0.txt})
         sumSub = SDL3.createLabel({text: "", font_size: 12, align: 1, text_color: th0.txtDim, wrap: true, wrap_w: 270})
-        lastLbl = SDL3.createLabel({text: "", font_size: 12, align: 1, text_color: th0.txtDim, wrap: true, wrap_w: 270})
+        // h: 34 —— 「上次清理 …」会折成**两行**（wrap_w 270 ✓）
+        //   ⚠ 盒高不足时第二行会画到盒外、被下面的「工具」按钮压住 ✗（与状态栏那条同类 ✓）
+        lastLbl = SDL3.createLabel({text: "", font_size: 12, align: 1, text_color: th0.txtDim, wrap: true, wrap_w: 270, h: 34})
         leftCol.add(sumMain, {grow: 0, shrink: 0, align: 1})
-        leftCol.add(sumSub, {grow: 0, shrink: 0, align: 1})
+        // ⚠ **折行 Label 必须用 `add` 的 basis 预留盒高**（VBox 的主轴 = 竖直 ✓）
+        //   创建时的 `h:` **不管用** ✗（实测：h:34 照样被压）—— 与"w 不被读取"是同一个坑 ✓
+        //   不预留的话，布局按"一行高"分配 ⇒ 第二行画到盒外、被下面的「工具」压住 ✗
+        leftCol.add(sumSub, {grow: 0, shrink: 0, basis: 34, align: 1})
         leftCol.add(SDL3.createSeparator({w: 220}), {grow: 0, shrink: 0, align: 1})
-        leftCol.add(lastLbl, {grow: 0, shrink: 0, align: 1})
+        leftCol.add(lastLbl, {grow: 0, shrink: 0, basis: 34, align: 1})
+        // ★ 三联图标按钮（2026-09-29 按用户要求）：**图标在上、文字在下** ✓
+        //   框架原生支持：`image_path` + `image_pos: "top"`（渲染见 sdl_button.leno:587 ✓）
+        //   图标 key 注意是 `image_path` **不是** `icon` ✗（与菜单项的 `image` 同理 ✓）
+        // ★ 2026-09-29 三联按钮（图标在上、文字在下；视觉上"无框"）✓
+        //   ⚠ 走过的两个坑（都记在这儿，免得下次再踩 ✗）：
+        //   ① 用 `background: false` 做透明底 ⇒ **文字/图标是白色**，落在浅色页面上根本看不见 ✗
+        //      而且它把"背景 + hover + 按压"**整块**跳过（sdl_button.leno:437 ✓）
+        //      ⇒ **hover 反馈也没了** ✗（用户立刻发现了 ✓）
+        //   ② 只把按钮压矮不够 —— 图文只有 ~36+2+16 高，盒子太高时文字会被**居中推远** ✗
+        //   ⇒ 现在改成**"看起来透明"的组合**（框架现成旋钮 ✓ 不改框架 ✓）：
+        //        bg_color = 页面底色 ✓ + border/shadow 全关 ✓ ⇒ 视觉上纯图标+文字 ✓
+        //        text_color / image_tint = 主题文字色 ✓ ⇒ 浅底上看得见 ✓
+        //        （因为仍走正常背景分支 ⇒ hover / 按下 反馈照常 ✓）
+        var toolRow = SDL3.createHBox({h: 70, padX: 0, padY: 0, spacing: 6})
+        previewBtn = SDL3.createButton({w: 92, h: 70, text: "预览", font_size: 12, type: "dark",
+            bg_color: th0.bg, border: false, shadow: false,     // 底色 = 页面色 ⇒ 平时"看着无框" ✓
+            hover_color: #E8EAEEFF, pressed_color: #DCE0E6FF,   // ★ 显式给悬停/按压色 ⇒ 反馈一定看得见 ✓
+            text_color: th0.txt,                                 // ★ 不给图标染色 ✗ ——
+            //   图标是用户从 iconfont 下载的（可能是彩色 ✓）⇒ `image_tint` 会把它们压成单色 ✗
+            //   "不可用"的表现改走 `set_image_alpha`（变淡 ✓，颜色保留 ✓），见 _dim()
+            image_path: detail.icon("preview.png"), image_pos: "top", image_size: 36, image_gap: 2})
+        exportBtn = SDL3.createButton({w: 92, h: 70, text: "导出", font_size: 12, type: "dark",
+            bg_color: th0.bg, border: false, shadow: false,     // 底色 = 页面色 ⇒ 平时"看着无框" ✓
+            hover_color: #E8EAEEFF, pressed_color: #DCE0E6FF,   // ★ 显式给悬停/按压色 ⇒ 反馈一定看得见 ✓
+            text_color: th0.txt,                                 // ★ 不给图标染色 ✗ ——
+            //   图标是用户从 iconfont 下载的（可能是彩色 ✓）⇒ `image_tint` 会把它们压成单色 ✗
+            //   "不可用"的表现改走 `set_image_alpha`（变淡 ✓，颜色保留 ✓），见 _dim()
+            image_path: detail.icon("export.png"), image_pos: "top", image_size: 36, image_gap: 2})
+        regBtn = SDL3.createButton({w: 92, h: 70, text: "注册表", font_size: 12, type: "dark",
+            bg_color: th0.bg, border: false, shadow: false,     // 底色 = 页面色 ⇒ 平时"看着无框" ✓
+            hover_color: #E8EAEEFF, pressed_color: #DCE0E6FF,   // ★ 显式给悬停/按压色 ⇒ 反馈一定看得见 ✓
+            text_color: th0.txt,                                 // ★ 不给图标染色 ✗ ——
+            //   图标是用户从 iconfont 下载的（可能是彩色 ✓）⇒ `image_tint` 会把它们压成单色 ✗
+            //   "不可用"的表现改走 `set_image_alpha`（变淡 ✓，颜色保留 ✓），见 _dim()
+            image_path: detail.icon("registry.png"), image_pos: "top", image_size: 36, image_gap: 2})
+        previewBtn.set_tip("预览（干跑）：先看账单，不删除任何文件 —— 扫描完成后可用")
+        exportBtn.set_tip("把本次清理报告写到桌面 —— 清理完成后可用")
+        regBtn.set_tip("注册表残留清理：先给清单，导出 .reg 备份，二次确认后才删除")
+        // ★ 2026-09-29（A 方案）：**不再用 set_enabled** ✗
+        //   因为禁用态框架会画一圈灰底（Button 没有 disabled_bg 选项 ✗，与"无框"设计冲突 ✗）
+        //   ⇒ 改成：按钮**始终 enabled** ✓，用 **暗色** 表示"当前不可用" ✓，
+        //     点击时在回调里拦一下 + 状态栏给提示 ✓（用户不会点了没反应 ✗）
+        _dim(previewBtn, true)   // idle 态：预览不可用 ✓
+        _dim(exportBtn, true)    // idle 态：导出不可用 ✓
+        previewBtn.on_click(func() {
+            if state != "done" { statusLbl.set_text("先扫描一次，再看账单（预览）"); return }
+            openPreview()
+        })
+        exportBtn.on_click(func() {
+            if state != "report" { statusLbl.set_text("清理完成后才有报告可导出"); return }
+            exportReport()
+        })
+        regBtn.on_click(func() { openRegistry() })
+        toolRow.add(previewBtn, {grow: 0, shrink: 0, basis: 92, align: 3})
+        toolRow.add(exportBtn, {grow: 0, shrink: 0, basis: 92, align: 3})
+        toolRow.add(regBtn, {grow: 0, shrink: 0, basis: 92, align: 3})
+        leftCol.add(toolRow, {grow: 0, shrink: 0, basis: 70, align: 0})
         updateSummary()   // 空创建 ⇒ 首帧前先填摘要文案
         mainRow.add(leftCol, {grow: 0, shrink: 0, basis: 300, align: 3})
 
+        // ★ 类别图标（2026-09-29 用户要求：**给类别文字前加上图标** ✓）
+        //   框架的 `image_col` = 把该列画成 **[图标 + 文字]** ✓ ⇒ 图标自然落在类别文字**前面** ✓
+        //   `row_images` 与行平行、**在 createTable 时一次性给** ✓；
+        //   类别顺序是固定的（cats 顺序 ✓）⇒ 之后 set_rows 换数据也不会错位 ✓
+        //   ⚠ 没有图标的类别给空串（不是给目录路径 ✗ —— 那会让框架去 load 一个目录 ✓）
+        catIcons = []
+        for cats to c {
+            string ip = detail.icon(rules.icon_of(c.id))
+            // 文件不存在（比如还没放 d3d.png ✓）⇒ 给空串 ⇒ 该行就不画图标 ✓
+            //   （绝不能把不存在的路径塞进去 ✗ —— 框架会去 load 它 ✓）
+            if files.exists(ip) { catIcons.add(ip) } else { catIcons.add("") }
+        }
         catTable = SDL3.createTable({
             headers: ["", "类别", "大小", "项目数", "结果"],
-            // 结果列加宽（原 130 ⇒ 168）：原先「清 42 · 占用跳过 68」会被截断成「占用跳...」✗
-            col_widths: [40.0, 112.0, 92.0, 64.0, 168.0],
+            col_widths: [40.0, 160.0, 92.0, 64.0, 150.0],
             zebra: true, row_h: 34, header_h: 32, font_size: 14,
             check_col: 0,
+            image_col: 1, image_size: 18, image_pad: 4, image_gap: 6,
+            row_images: catIcons,
             col_reorder: false, resizable: false
         })
-        // 点任意单元格 ⇒ 该类别扫到的**明细清单**（框架 Table 自带 `on_cell` 单击回调 ✓）
-        catTable.on_cell(func(int row, int col) { openDetail(row) })
+        // ★ 交互（2026-09-28 按用户要求调整）：
+        //   · **双击**行 ⇒ 弹明细清单 ✓（原来单击就弹 ✗ ⇒ 现在单击只做"选中"，不打扰 ✓）
+        //   · **右击**行 ⇒ 上下文菜单（勾选/明细/清理/导出 ✓）
+        //   都是框架 Table 自带能力 ⇒ 没有为此改框架 ✓：
+        //     on_dbl_click ✓（内置 400ms + 10px 判定）、addContextItem/on_context_select ✓
+        catTable.on_dbl_click(func(int row, int col) { openDetail(row) })
+        catTable.on_context_will_open(func(int row) { buildCatMenu(row) })
+        catTable.on_context_select(func(int row, string id) { onCatMenuPick(row, id) })
         mainRow.add(catTable, {grow: 1, shrink: 1, align: 3})
 
         // 清理进度条 + 耗时（进度条行右侧 ✓）
         // ⚠ Label 的 align 是**锚点**语义（ALIGN_RIGHT: drawX = x - 文字宽），而 HBox 给子项的 x
         //   恒为「盒左边缘」⇒ 这里只能用 ALIGN_LEFT(0)：文字从盒内左边缘起画，恰在进度条右侧
         //   8px 处；用 align:2 会把文字画到盒外左边、压在进度条尾巴上 ✗
-        var cleanRow = SDL3.createHBox({h: 16, padX: 0, padY: 0, spacing: 8})
-        cleanBar = SDL3.createProgressBar({h: 6, show_text: false})
+        // ★ 同样开启内嵌百分比（2026-09-29）⇒ 行高与条高一起抬到放得下数字 ✓
+        var cleanRow = SDL3.createHBox({h: 22, padX: 0, padY: 0, spacing: 8})
+        cleanBar = SDL3.createProgressBar({h: 18, show_text: true, font_size: 11})
         cleanBar.set_value(0.0)
         cleanRow.add(cleanBar, {grow: 1, shrink: 1, align: 3})
         // basis 预留 110（容纳最长文案「耗时 1 分 05 秒」）；Label 创建时的 w 选项不被 set() 读取
         timeLbl = SDL3.createLabel({text: "", font_size: 11, text_color: th0.txtDim})
         cleanRow.add(timeLbl, {grow: 0, shrink: 0, basis: 110, align: 3})
 
-        // 底部：状态 + 主按钮（tip 解释「跳过」的真实原因 ✓；wrap 防长文字与按钮重叠 ✓）
+        // 底部：状态 + 主动作（**唯一入口** ⇒ 视觉焦点只有一个 ✓）
+        //   「工具」已移到左列下方（2026-09-29 用户要求 ✓）⇒ 这一行只剩状态 + 主按钮 ✓
+        // ⚠ `wrap_w` 必须 ≤ 状态格的**实得宽度**，否则折行会溢到按钮底下被压住 ✗（实测踩过 ✓）
+        //   实得宽度 = 窗口 900 − root padX 12×2 − 本行 padX 4×2 − 190 − 间距 10 = 668
+        //   ⇒ 取 660 留 8px 余量 ✓；h: 42 = 行内高（54 − padY 6×2 ✓）⇒ **两行都在框内** ✓
+        //   注意：框架的 wrap_w 只认写死的值（0 才退回 max_w，**不会**用控件自身宽度 ✓）
         var bottomRow = SDL3.createHBox({h: 54, padX: 4, padY: 6, spacing: 10})
         statusLbl = SDL3.createLabel({
-            text: "就绪 — 点击圆环或「立即扫描」开始", font_size: 13,
-            wrap: true, wrap_w: 540,
+            text: "就绪 — 点「立即扫描」开始", font_size: 13,
+            wrap: true, wrap_w: 660, h: 42,
             tip: "「跳过 N 项」＝这些文件正被其他程序占用（如浏览器正在运行、系统临时文件在使用中）。\n关闭对应程序后点「再扫一次」即可清理。\n点表格任一行可看该类的明细清单。"
         })
         bottomRow.add(statusLbl, {grow: 1, shrink: 1, align: 3})
-        // 「导出报告」：仅报告态可用（其余时候灰掉 ⇒ 一眼看出现在没东西可导 ✓）
-        exportBtn = SDL3.createButton({w: 132, h: 42, text: "导出报告", type: "dark", font_size: 15})
-        exportBtn.set_tip("把本次扫描/清理结果写成文本报告（保存到桌面）")
-        exportBtn.set_enabled(false)
-        exportBtn.on_click(func() { exportReport() })
-        bottomRow.add(exportBtn, {grow: 0, shrink: 0, basis: 132, align: 3})
         mainBtn = SDL3.createButton({w: 190, h: 42, text: "立即扫描", type: "success", font_size: 16})
         mainBtn.on_click(func() {
             if state == "idle" or state == "report" { startScan() } else {
@@ -247,7 +344,9 @@ struct CleanerMaster {
             sumMain.set_text("就绪")
             string wlTip = ""
             if wl.count() > 0 { wlTip = $" · 保留清单 {wl.count()} 条" }
-            sumSub.set_text($"点击圆环或「立即扫描」开始{wlTip}")
+            // ★ 空态这里**不讲操作**（唯一指令在底部状态栏 ✓）⇒ 只回答"将清理什么" ✓
+            //   （改前这里是"点击圆环或「立即扫描」开始" ✗ —— 与环心、状态栏三处重复同一句话 ✗）
+            sumSub.set_text($"{cats.len()} 类可清理{wlTip}")
         }
         if state == "scanning" {
             sumMain.set_text($"已发现 {rules.fmt_size(liveSize)}")
@@ -364,7 +463,8 @@ struct CleanerMaster {
         timeLbl.set_text("")
         ring.set_mode("sweep")
         ring.clear_segments()          // 新一轮扫描 ⇒ 清掉上轮的"绿/橙"双色弧 ✓
-        exportBtn.set_enabled(false)   // 上一轮报告作废 ⇒ 导出也失效 ✓
+        _dim(previewBtn, true)   // 旧扫描结果作废 ⇒ 预览变暗 ✓
+        _dim(exportBtn, true)    // 旧报告作废 ⇒ 导出变暗 ✓
         cleanCheckedIdx = []           // 上轮勾选记录作废（结果列靠它区分「无垃圾/未勾选」✓）
         catTable.clear_cell_colors()
         updateSummary()
@@ -399,13 +499,15 @@ struct CleanerMaster {
         mainBtn.set_enabled(true)
         mainBtn.set_text("一键清理")
         updateSummary()
+        _dim(previewBtn, totalCnt <= 0)   // 确实扫到东西才亮起 ✓
+        _dim(exportBtn, true)             // 此刻还没有报告 ✓
         if autoTest {
             print($"AUTOTEST size={totalSize} cnt={totalCnt} cats={cats.len()} results={results.len()}")
         }
         if totalCnt == 0 {
             statusLbl.set_text("扫描完成：未发现可清理垃圾")
         } else {
-            statusLbl.set_text($"扫描完成：发现 {rules.fmt_size(totalSize)} 可清理（{totalCnt} 项）— 点击「一键清理」")
+            statusLbl.set_text($"扫描完成：{rules.fmt_size(totalSize)} 可清理（{totalCnt} 项）— 可先「预览（干跑）」看账单")
         }
         refreshDrive()
         SDL3.markFrameRedraw()
@@ -458,6 +560,11 @@ struct CleanerMaster {
                     szTxt = rules.fmt_size(_int(res[0]))
                     cntTxt = _str(_int(res[1]))
                 }
+            } else {
+                // ★ 空态（未扫描）：结果列改放"这一类到底会清什么"（= c.hint ✓）
+                //   空表只写「暂无数据」✗ 等于把最大一块屏浪费掉 ⇒ 这里顺手回答
+                //   "这软件会清什么" ⇒ 用户不用先扫一遍才敢点 ✓
+                resTxt = c.hint
             }
             string tip = c.hint            // 行悬停：类别说明（**可能为空** ⇒ 追加一律走 _tip_add ✓）
             // 行悬停再补一行"本次占比"：表格列宽有限（92px 放不下「5.4 GB · 96%」✗）
@@ -527,6 +634,12 @@ struct CleanerMaster {
         for 0 : rows.len() - 1 to i {
             if i < tips.len() and tips[i] != "" { catTable.set_row_tip(i, tips[i]) }
             if i < fgCols.len() and fgCols[i] != 0 { catTable.set_cell_fg(i, 4, fgCols[i]) }
+            // ★ 类别图标必须**每次刷新后重贴**（2026-09-29 用户反馈"扫描后图标不见了" ✓）
+            //   根因：`set_rows()` 会同步 `_rowImages` 长度 ——
+            //     `startScan()` 里的 `set_rows([])` 把图标数组**清空** ✗，
+            //     之后 `set_rows(rows)` 只用空串补齐（sdl_table.leno:448-450 ✓）
+            //   ⇒ 所以这里逐行 set_row_image 重贴一遍 ✓（和 tips/颜色同一处理 ✓）
+            if i < catIcons.len() { catTable.set_row_image(i, catIcons[i]) }
         }
     }
 
@@ -580,6 +693,8 @@ struct CleanerMaster {
         mainBtn.set_text("清理中...")
         statusLbl.set_text("正在清理，请稍候...")
         cleanBar.set_value(0.0)
+        _dim(previewBtn, true)   // 清理中/清理后都无预览意义 ⇒ 变暗 ✓
+        _dim(exportBtn, true)
         cleanCh = threads.channel(65536)
         // 保留清单快照（清理途中用户新加的规则对**本次**不生效 ⇒ 语义明确 ✓）
         Array[string] wlEncClean = wl.encode()
@@ -671,7 +786,8 @@ struct CleanerMaster {
         } else {
             ring.clear_segments()
         }
-        exportBtn.set_enabled(true)     // 有报告了 ⇒ 可导出 ✓
+        _dim(exportBtn, false)   // 有报告了 ⇒ 导出亮起 ✓
+        _dim(previewBtn, true)   // 结果已落地 ⇒ 不再"预览" ✓
         refreshRows()
         saveLastClean()
         state = "report"
@@ -761,6 +877,334 @@ struct CleanerMaster {
         }
         // 模态弹窗关闭后主窗口要重绘（否则留下残影 ✗）
         SDL3.markFrameRedraw()
+    }
+
+    // ==================== ② 预览·干跑（只算不删 ✓）====================
+    // 数据**全部来自已有扫描结果** ⇒ 不重新扫、不动磁盘、更不删除 ✓
+    //   本函数里唯一碰盘的是 alive_top（只 stat 最大的 200 项 ✓ 纯读 ✓）
+    //   入口：底部「预览（干跑）」按钮 + 右键菜单「预览已勾选项（干跑）…」✓
+    func openPreview() {
+        if state != "done" { statusLbl.set_text("先扫描一次，再看预览"); return }
+        openPreviewFor(catTable.get_checked_rows())
+    }
+
+    // 预览"这些类别"（idx = 类别下标数组 ✓）—— 抽出来是为了将来能按行预览 ✓
+    func openPreviewFor(Array[int] idxs) {
+        if idxs.len() == 0 { statusLbl.set_text("请先勾选要预览的项目"); return }
+        var sum = rules.build_preview(cats, results, idxs)
+        if sum.catCount == 0 { statusLbl.set_text("勾选的类别里没有可清理项"); return }
+
+        int dw = 860
+        int dh = 520
+        var dlg = SDL3.createDialogWindow({title: "预览（干跑）— 只统计，不删除", w: dw, h: dh})
+        var droot = SDL3.createVBox({x: 0, y: 0, w: dw, h: dh, padX: 16, padY: 14, spacing: 8})
+        dlg.setRoot(droot)
+
+        droot.add(SDL3.dialogLabel(
+            $"已勾选 {sum.catCount} 类：将清理 {sum.cnt} 项 · 释放 {rules.fmt_size(sum.bytes)}", 14),
+            {grow: 0, shrink: 0, align: 0})
+        droot.add(SDL3.dialogLabel(
+            $"其中：跳过 {sum.skip} 项（被占用/读不到）· 保留清单豁免 {sum.kept} 项 —— 这两类都不会被删", 12),
+            {grow: 0, shrink: 0, align: 0})
+        // ★ 把"没删东西"写在最显眼处：预览最怕被误读成"已经在清理" ✗
+        // ⚠ 弹窗字体没有 `✓` 字形（实测渲染成方框 ✗）⇒ 弹窗文案里一律不用 ✓，
+        //   改用中文说明（主窗口的 label 不受影响 ✓）
+        droot.add(SDL3.dialogLabel("预览只统计、不删除任何文件 —— 确认无误再点「开始清理…」", 12),
+            {grow: 0, shrink: 0, align: 0})
+
+        Table pt = SDL3.createTable({
+            headers: ["类别", "将清理", "大小", "跳过", "保留清单", "抽查存活"],
+            col_widths: [260.0, 90.0, 120.0, 80.0, 110.0, 120.0],
+            zebra: true, row_h: 26, header_h: 28, font_size: 13,
+            col_reorder: false, resizable: false
+        })
+        Array[Array[string]] rows = []
+        for sum.rows to it {
+            // 「抽查存活」：该类最大的 200 项里，现在还有几项真在（**只 stat** ✓ 纯读 ✓）
+            string aliveTxt = "—"
+            if it.cnt > 0 and it.idx >= 0 and it.idx < results.len() {
+                int probe = it.cnt
+                if probe > 200 { probe = 200 }
+                aliveTxt = $"{rules.alive_top(results[it.idx], 200)}/{probe}"
+            }
+            rows.add([it.name, _str(it.cnt), rules.fmt_size(it.bytes), _str(it.skip), _str(it.kept), aliveTxt])
+        }
+        pt.set_rows(rows)
+
+        Label note = SDL3.dialogLabel("「开始清理…」走的是和「一键清理」完全相同的二次确认（项数 + 预计释放量）", 12)
+        Button backBtn = SDL3.createButton({w: 110, h: 34, text: "返回", type: "dark"})
+        Button goBtn = SDL3.createButton({w: 170, h: 34, text: "开始清理…", type: "success"})
+        goBtn.set_tip("进入与「一键清理」相同的确认弹窗；确认后才真正删除 ✓")
+        var done = false
+        var go = false
+        backBtn.on_click(func() { done = true })
+        goBtn.on_click(func() { go = true; done = true })
+        droot.add(pt, {grow: 1, shrink: 1, align: 3})
+        droot.add(note, {grow: 0, shrink: 0, align: 0})
+        droot.add(SDL3.dialogButtonRow([backBtn, goBtn], 16), {grow: 0, shrink: 0, align: 3})
+
+        SDL3.runModal(dlg,
+            func(Event ev): bool {
+                if ev.isQuit() or ev.isWindowClose() { return false }
+                if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
+                return not done
+            },
+            func(Renderer r) { r.clearColor(theme.getTheme().bg) }
+        )
+        SDL3.markFrameRedraw()
+        // ★ 只有点了「开始清理…」才往下走；返回/ESC/关窗 ⇒ 什么都没发生 ✓
+        if go { requestClean() }
+    }
+
+    // ==================== ③ 注册表清理（与文件清理互相独立 ✓）====================
+    // 安全三段式（缺一不可 ✓）：
+    //   ① 扫描**只读** ✓（判定逻辑在 cleaner_registry.leno ⇒ 有单测 ✓）
+    //   ② 点「导出备份并清理 N 项…」只把按钮变成**确认文案**（不在这一下动手 ✗）
+    //   ③ **再点一次**才真删 —— 而且先把 .reg 备份写出来，**备份失败就一项都不删** ✓
+    func openRegistry() {
+        var scan = reg.scan(200)
+        int dw = 1000
+        int dh = 540
+        var dlg = SDL3.createDialogWindow({title: "注册表清理 — 先扫描，再备份，最后才删", w: dw, h: dh})
+        var droot = SDL3.createVBox({x: 0, y: 0, w: dw, h: dh, padX: 16, padY: 14, spacing: 8})
+        dlg.setRoot(droot)
+
+        // 分类计数 + 表格行（一趟循环出 ✓）
+        int nKey = 0
+        int nRun = 0
+        int nMui = 0
+        Array[Array[string]] rows = []
+        for scan.items to it {
+            string kindTxt = "MUICache"
+            if it.kind == "key" {
+                kindTxt = "卸载项"
+                nKey = nKey + 1
+            } eif it.reason == "开机自启指向的程序已不存在" {
+                kindTxt = "启动项"
+                nRun = nRun + 1
+            } else {
+                nMui = nMui + 1
+            }
+            // 位置用**短形式**（只影响显示 ✓）⇒ 把宽度让给"指向的文件"这一列（最关键 ✓）
+            rows.add([kindTxt, reg.short_location(it), it.name, it.target])
+        }
+
+        droot.add(SDL3.dialogLabel(
+            $"扫描 {scan.keysScanned} 项：无效卸载项 {nKey} · 无效启动项 {nRun} · MUICache 失效 {nMui}", 14),
+            {grow: 0, shrink: 0, align: 0})
+        droot.add(SDL3.dialogLabel(
+            "判定很保守：只认「命令行里那个 exe 的绝对路径确实不存在」；cmd / msiexec / rundll32 这类宿主程序一律不判，系统组件（SystemComponent=1）直接跳过", 12),
+            {grow: 0, shrink: 0, align: 0})
+
+        Table rt = SDL3.createTable({
+            headers: ["类别", "位置", "项目", "指向的（已不存在的）文件"],
+            col_widths: [96.0, 210.0, 180.0, 480.0],
+            zebra: true, row_h: 26, header_h: 28, font_size: 13,
+            col_reorder: false, resizable: false
+        })
+        rt.set_rows(rows)
+
+        // 弹窗字体没有 ✓/✗ 字形 ⇒ 文案里一律不用（实测会渲染成方框 ✗）
+        Label note = SDL3.dialogLabel("点「导出备份并清理…」后还会再问一次；备份写到桌面「注册表备份_<时间戳>」，双击 .reg 即可还原", 12)
+        Button backBtn = SDL3.createButton({w: 110, h: 34, text: "关闭", type: "dark"})
+        Button goBtn = SDL3.createButton({w: 250, h: 34, text: "导出备份并清理 " + _str(rows.len()) + " 项…", type: "success"})
+        var done = false
+        var stage = 0            // 0=待确认 1=已确认（这一下才动手） 2=已结束（再点就是关闭）
+        backBtn.on_click(func() { done = true })
+        goBtn.on_click(func() {
+            if stage == 0 {
+                stage = 1
+                goBtn.set_text("确认：备份并删除（不可撤销）")
+                note.set_text($"确认删除这 {rows.len()} 项吗？会先把 .reg 备份写到桌面 —— **备份失败则一项都不删**")
+                SDL3.markFrameRedraw()
+                return
+            }
+            if stage >= 2 { done = true; return }
+            // ① 先备份：**必须全部导出成功**才继续 ✓
+            var bk = reg.backup(scan.items)
+            if bk.exported == 0 or bk.failed > 0 {
+                stage = 2
+                goBtn.set_text("关闭")
+                note.set_text($"备份未全部成功（成功 {bk.exported} · 失败 {bk.failed}）⇒ 已放弃删除，一个都没动")
+                SDL3.markFrameRedraw()
+                return
+            }
+            // ② 再删除（用户已二次确认 ✓）
+            var cl = reg.apply(scan.items)
+            stage = 2
+            goBtn.set_text("关闭")
+            string msg = "已清理 " + _str(cl.ok) + " 项（失败 " + _str(cl.failed) + "）· 备份：" + bk.dir
+            if cl.failed > 0 and cl.errors.len() > 0 { msg = msg + "　首条：" + cl.errors[0] }
+            note.set_text(msg)
+            SDL3.markFrameRedraw()
+        })
+        if rows.len() == 0 {
+            goBtn.set_enabled(false)
+            note.set_text("没发现可清理的残留 —— 这台机器的卸载项 / 启动项 / MUICache 都是好的")
+        }
+        droot.add(rt, {grow: 1, shrink: 1, align: 3})
+        droot.add(note, {grow: 0, shrink: 0, align: 0})
+        droot.add(SDL3.dialogButtonRow([backBtn, goBtn], 16), {grow: 0, shrink: 0, align: 0})
+
+        SDL3.runModal(dlg,
+            func(Event ev): bool {
+                if ev.isQuit() or ev.isWindowClose() { return false }
+                if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
+                return not done
+            },
+            func(Renderer r) { r.clearColor(theme.getTheme().bg) }
+        )
+        SDL3.markFrameRedraw()
+    }
+
+    // ==================== 工具窗（次要动作收口 ✓）====================
+    // 为什么这么设计（2026-09-28）：
+    //   · 常驻底部的灰按钮会被读成"这软件坏了"✗，而且把状态文字挤成窄条 ✗
+    //   · 改成"打开时**按当前状态**算可用性"⇒ 用户看到的永远是"现在能做什么" ✓
+    //   · 动作在**工具窗关掉之后**才执行（模态里再开模态容易出问题 ✗）
+    func openTools() {
+        int dw = 460
+        int dh = 300
+        var dlg = SDL3.createDialogWindow({title: "工具", w: dw, h: dh})
+        var droot = SDL3.createVBox({x: 0, y: 0, w: dw, h: dh, padX: 16, padY: 14, spacing: 10})
+        dlg.setRoot(droot)
+        droot.add(SDL3.dialogLabel($"当前状态：{_state_name()} —— 下面只列出现在能用的动作", 13),
+            {grow: 0, shrink: 0, align: 0})
+
+        Button bPreview = SDL3.createButton({w: 420, h: 38, text: "预览（干跑）— 先看账单，不删任何文件", type: "dark"})
+        Button bExport = SDL3.createButton({w: 420, h: 38, text: "导出报告 — 写到桌面", type: "dark"})
+        Button bReg = SDL3.createButton({w: 420, h: 38, text: "注册表清理 — 残留项 + .reg 备份", type: "dark"})
+        Button bClose = SDL3.createButton({w: 110, h: 34, text: "关闭", type: "dark"})
+        bPreview.set_enabled(state == "done")
+        bExport.set_enabled(state == "report")
+        string whyPreview = "扫描完成（done 态）才有账单可看"
+        string whyExport = "清理完成（报告态）才有报告可导"
+        if state != "done" { bPreview.set_tip(whyPreview) }
+        if state != "report" { bExport.set_tip(whyExport) }
+
+        var done = false
+        string pick = ""
+        bPreview.on_click(func() { pick = "preview"; done = true })
+        bExport.on_click(func() { pick = "export"; done = true })
+        bReg.on_click(func() { pick = "reg"; done = true })
+        bClose.on_click(func() { done = true })
+        droot.add(bPreview, {grow: 0, shrink: 0, align: 0})
+        droot.add(bExport, {grow: 0, shrink: 0, align: 0})
+        droot.add(bReg, {grow: 0, shrink: 0, align: 0})
+        droot.add(SDL3.dialogButtonRow([bClose], 16), {grow: 0, shrink: 0, align: 3})
+
+        SDL3.runModal(dlg,
+            func(Event ev): bool {
+                if ev.isQuit() or ev.isWindowClose() { return false }
+                if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
+                return not done
+            },
+            func(Renderer r) { r.clearColor(theme.getTheme().bg) }
+        )
+        SDL3.markFrameRedraw()
+        // ★ 工具窗已关闭 ⇒ 现在再执行（不做嵌套模态 ✓）
+        if pick == "preview" { openPreview() }
+        eif pick == "export" { exportReport() }
+        eif pick == "reg" { openRegistry() }
+    }
+
+    // 状态的中文名（工具窗抬头用 ✓）
+    func _state_name(): string {
+        if state == "idle" { return "就绪（未扫描）" }
+        if state == "scanning" { return "扫描中" }
+        if state == "done" { return "扫描完成（可预览/可清理）" }
+        if state == "cleaning" { return "清理中" }
+        if state == "report" { return "已清理（报告态）" }
+        return state
+    }
+
+    // 三联按钮的"不可用"表现：**用暗色，而不是 set_enabled** ✓
+    //   为什么：Button 的禁用态会自己画一圈灰底（框架没有 disabled_bg 选项 ✗）
+    //   ⇒ 与"看起来无框"的设计直接冲突 ✗；所以保持 enabled ✓、只换颜色 ✓
+    //   （点击时由各自回调按状态拦截 + 状态栏提示 ✓）
+    func _dim(Button b, bool dim) {
+        // ⚠ 用 `var` 而不是 `Theme th` —— 本文件没有 `use ... Theme` ✗（会报未定义的类型 ✓）
+        var th = theme.getTheme()
+        // ★ 只调**文字色**与**图标透明度**，**绝不给图标染色** ✗
+        //   原因：图标是用户从 iconfont 下载的（彩色 ✓）⇒ `image_tint` 会把它压成单色 ✗
+        //   （2026-09-29 用户反馈"颜色不对"就是这个 ✓）
+        if dim {
+            b.set_text_color(th.txtDim)
+            b.set_image_alpha(70)     // 变淡 ⇒ 一眼看出"现在不可用" ✓（颜色保留 ✓）
+        } else {
+            b.set_text_color(th.txt)
+            b.set_image_alpha(255)
+        }
+    }
+
+    // ==================== 类别行的右键菜单 ====================
+    // 与 `应用/文件管理器` 同一套接线（ctxItem + on_context_will_open 动态重建 ✓）
+    // ⚠ 菜单项的图标键是 **`image`**（不是 `icon` ✗）—— 之前传 `icon:` 框架根本不读，
+    //   图标一直没出现 ✗（实测 + 源码 sdl_menu.leno:57 确认 ✓）⇒ 现在统一走这里 ✓
+    //   图标文件由 `tools/gen_icons.leno` 生成 ✓（名字见本函数各调用点 ✓）
+    func ctxItem(string label, string id, string file): Dict {
+        return {label: label, id: id, image: detail.icon(file)}
+    }
+
+    // 菜单**弹出前**按行状态动态重建（框架先调本回调、再弹出 ✓）
+    //   row < 0 ⇒ 右击空白处（只给全局项 ✓）
+    func buildCatMenu(int row) {
+        catTable.clearContextItems()
+        if row < 0 {
+            catTable.addContextItem(ctxItem("勾选全部类别", "checkall", "check.png"))
+            catTable.addContextItem(ctxItem("全部取消勾选", "uncheckall", "uncheck.png"))
+            catTable.addContextSeparator()
+            // 预览作用于"已勾选项"（多选语义 ⇒ 与具体哪一行无关 ✓）⇒ 空白处也给入口 ✓
+            catTable.addContextItem(ctxItem("预览已勾选项（干跑）…", "preview", "preview.png"))
+            catTable.addContextItem(ctxItem("注册表清理…", "reg", "registry.png"))
+            if state != "done" { catTable.setContextItemEnabled("preview", false) }
+            return
+        }
+        bool hasRes = row < results.len()
+        bool isRecycle = cats[row].id == "recyclebin"
+        bool hasJunk = hasRes and _int(results[row][1]) > 0
+        catTable.addContextItem(ctxItem("查看明细…（双击同效）", "detail", "detail.png"))
+        catTable.addContextItem(ctxItem("打开该类目录", "opendir", "folder.png"))
+        catTable.addContextItem(ctxItem("预览已勾选项（干跑）…", "preview", "preview.png"))
+        catTable.addContextSeparator()
+        if catTable.is_row_checked(row) {
+            catTable.addContextItem(ctxItem("取消勾选本类", "uncheckrow", "uncheck.png"))
+        } else {
+            catTable.addContextItem(ctxItem("勾选本类", "checkrow", "check.png"))
+        }
+        catTable.addContextSeparator()
+        catTable.addContextItem(ctxItem("清理已勾选项…", "clean", "clean.png"))
+        catTable.addContextItem(ctxItem("导出报告", "export", "export.png"))
+        // 按当前状态灰显（框架提供 setContextItemEnabled ✓）
+        if not hasRes or isRecycle { catTable.setContextItemEnabled("detail", false) }
+        if state != "done" { catTable.setContextItemEnabled("preview", false) }
+        if state != "done" or not hasJunk { catTable.setContextItemEnabled("clean", false) }
+        if state != "report" { catTable.setContextItemEnabled("export", false) }
+    }
+
+    // 菜单项分发（row 为右击命中的行 ✓）
+    func onCatMenuPick(int row, string id) {
+        if id == "detail" { openDetail(row); return }
+        // 预览作用于"已勾选项"（多选语义 ✓）⇒ 与右击了哪一行无关 ✓
+        if id == "preview" { openPreview(); return }
+        if id == "reg" { openRegistry(); return }
+        // 打开该类别的根目录（用户去人工看一眼/自己动手 ✓）
+        if id == "opendir" {
+            string root = ""
+            if cats[row].roots.len() > 0 { root = cats[row].roots[0] }
+            bool ok = detail.reveal_in_explorer(root)
+            if ok { statusLbl.set_text("已在资源管理器中打开：" + root) }
+            else { statusLbl.set_text("打不开这个目录 ✗：" + root) }
+            SDL3.markFrameRedraw()
+            return
+        }
+        if id == "checkrow" { catTable.set_row_checked(row, true); SDL3.markFrameRedraw(); return }
+        if id == "uncheckrow" { catTable.set_row_checked(row, false); SDL3.markFrameRedraw(); return }
+        if id == "checkall" { catTable.check_all(); SDL3.markFrameRedraw(); return }
+        if id == "uncheckall" { catTable.uncheck_all(); SDL3.markFrameRedraw(); return }
+        // 复用**既有安全路径**（requestClean 自带"项数+预计释放量"确认弹窗 ✓）
+        if id == "clean" { requestClean(); return }
+        if id == "export" { exportReport(); return }
     }
 
     // ==================== 导出报告（报告态可用 ✓） ====================
@@ -1061,9 +1505,14 @@ struct CleanerMaster {
         SDL3.setTheme(SDL3.lightTheme())
         win = SDL3.createWindow({title: "电脑清理大师", w: 900, h: 620, flags: 0x20})
         if not win.ok { SDL3.ttfQuit(); return }
+        // ★ 先把类别建出来（2026-09-29 调整）：`setupUI()` 里要用它算**类别图标列表**
+        //   （`row_images` ✓），`updateSummary()` 的 idle 文案也要报"几类可清理" ✓
+        //   ⇒ 必须排在 setupUI 之前 ✓（顺带解决了空态表格没内容的问题 ✓）
+        cats = rules.build_categories()
         setupUI()
         refreshDrive()
         loadLastClean()
+        refreshRows()
         updateSummary()
         pollTimer = win.addTimer(50, func() { pollTick() })
         if autoTest {

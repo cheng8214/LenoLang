@@ -1,0 +1,15 @@
+# resource.toml — 打包资源配置（独立于 leno.toml，没有 leno.toml 也能用 ✓）
+#
+# 本应用的资源只有 images/（图标由 tools\gen_icons.leno **用 Leno 程序化生成** ✓）：
+#   cleaner_master.leno 的三联图标按钮 + 表格右键菜单、cleaner_detail.leno 的明细菜单，
+#   都经 cleaner_detail.icon()（内部拼 dirs.res_dir()）取它们 ✓
+#   ⇒ 不声明 resources 的话，打包成 exe 后图标取不到（解包目录里没有 ✓）
+#
+# [pack]
+#   onefile   = true  → 库与资源内嵌进 exe，首次运行解包到**用户缓存目录**（不污染 exe 所在目录 ✓）
+#   resources = 通配模式数组（相对本文件所在目录）；"images/**" ⇒ images 目录递归全部 ✓
+#   （应用图标 .ico 暂未提供 ⇒ 不写 icon 项 ⇒ 用 VM 默认图标 ✓）
+
+[pack]
+onefile   = true
+resources = ["images/**"]

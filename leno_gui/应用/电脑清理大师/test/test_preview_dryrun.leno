@@ -1,0 +1,130 @@
+// test_preview_dryrun.leno — ② 预览·干跑：**只算不删**的不变量验证
+//
+// 这个测试要钉住的**不是**"数字对不对"（那只是顺便 ✓），而是干跑的本质：
+//   预览跑完之后，夹具里的文件必须**一个不少、一字节不差、内容不改** ✓
+//   ⇒ 即"预览绝不删除/改写任何文件"，这是它存在的全部意义 ✓
+//
+// 做法：
+//   造夹具（3 个子目录 × 4 个 16 字节文件）⇒ 每个目录各跑一次 scan_worker
+//   ⇒ build_preview 汇总 ⇒ 断言账单数字 ✓ ⇒ 再**逐项比对预览前后的清单**（路径 + 大小 ✓）
+//
+// 运行：build\leno.exe --no-cache test\test_preview_dryrun.leno
+import "../cleaner_rules.leno" as rules
+import dirs
+import files
+use rules.CleanCategory
+
+var fails = 0
+func check(string name, bool ok) {
+    if ok {
+        print($"[通过] {name}")
+    } else {
+        fails = fails + 1
+        print($"[失败] {name}")
+    }
+}
+func eq(string name, int got, int want) {
+    if got == want {
+        print($"[通过] {name} = {got}")
+    } else {
+        fails = fails + 1
+        print($"[失败] {name} 期望 {want} 实际 {got}")
+    }
+}
+
+const int SUB_COUNT = 3
+const int FILES_PER_DIR = 4
+const int BYTES_PER_FILE = 16
+const string FILL = "0123456789ABCDEF"
+
+// ==================== 夹具 ====================
+string base = _tmpdir() + "\\cleaner_preview_dryrun"
+if dirs.exists(base) { dirs.delete(base) }
+dirs.mkdir(base)
+Array[string] subs = []
+for 0 : SUB_COUNT - 1 to i {
+    string sub = base + "\\sub" + _str(i)
+    dirs.mkdir(sub)
+    subs.add(sub)
+    for 0 : FILES_PER_DIR - 1 to k {
+        files.write(sub + "\\junk_" + _str(k) + ".tmp", FILL)
+    }
+}
+
+// 单文件大小（stat 不到 ⇒ "?"）；catch 里**显式返回** ✓（空 catch 已是编译期错误 ✓）
+func size_of(string p): string {
+    string sz = "?"
+    try {
+        var di = dirs.stat(p)
+        sz = _str(di.size)
+    } catch e {
+        return sz
+    }
+    return sz
+}
+
+// 夹具清单快照：每项为 "路径|大小"（预览前后逐项比对 ✓ —— 只看文件，不看目录 ✓）
+func snapshot(string root): Array[string] {
+    Array[string] out = []
+    for dirs.walk(root) to e {
+        for e.files to f {
+            string p = dirs.join(e.root, f)
+            out.add(p + "|" + size_of(p))
+        }
+    }
+    return out
+}
+var before = snapshot(base)
+eq("夹具文件数", before.len(), SUB_COUNT * FILES_PER_DIR)
+
+// ==================== 扫描（复用与主界面同一个 scan_worker ✓）====================
+Array[CleanCategory] cats = []
+for subs to sub {
+    cats.add(new CleanCategory(id = "fix_" + sub, name = "夹具 " + sub, roots = [sub], file_prefix = "", hint = ""))
+}
+Array[Array[string]] results = []
+for cats to c {
+    results.add(rules.scan_worker(c.roots, c.file_prefix, null, 0, []))
+}
+
+// ==================== 预览（干跑 ✓）====================
+var sum = rules.build_preview(cats, results, [0, 1, 2])
+eq("参与预览的类别数", sum.catCount, SUB_COUNT)
+eq("将清理项数", sum.cnt, SUB_COUNT * FILES_PER_DIR)
+eq("将释放字节", sum.bytes, SUB_COUNT * FILES_PER_DIR * BYTES_PER_FILE)
+eq("跳过项数（夹具无占用文件 ⇒ 0）", sum.skip, 0)
+eq("保留清单豁免（夹具没造豁免 ⇒ 0）", sum.kept, 0)
+eq("账单行数（每类一行 ✓）", sum.rows.len(), SUB_COUNT)
+check("首行是第一个类别（idx 回指正确 ✓）", sum.rows[0].idx == 0 and sum.rows[0].name == "夹具 " + subs[0])
+
+// 抽查存活（**只 stat** ✓）：该类 4 个文件都还在 ⇒ 4
+eq("抽查存活（最大的 4 项）", rules.alive_top(results[0], 4), 4)
+
+// ==================== ★ 核心不变量：干跑没动磁盘 ====================
+var after = snapshot(base)
+eq("预览后文件数不变", after.len(), before.len())
+bool same = after.len() == before.len()
+for 0 : before.len() - 1 to i {
+    if before[i] != after[i] { same = false }
+}
+check("预览后清单逐项一致（路径 + 大小 ✓）", same)
+check("预览后文件仍在（未被删除 ✓）", files.exists(subs[0] + "\\junk_0.tmp"))
+check("预览后内容未变（未被改写 ✓）", files.read(subs[0] + "\\junk_0.tmp") == FILL)
+
+// ==================== 顺带：只勾选一部分时，账单也只算这部分 ====================
+var sum1 = rules.build_preview(cats, results, [1])
+eq("只勾 1 类 ⇒ 类别数", sum1.catCount, 1)
+eq("只勾 1 类 ⇒ 项数", sum1.cnt, FILES_PER_DIR)
+eq("只勾 1 类 ⇒ 字节", sum1.bytes, FILES_PER_DIR * BYTES_PER_FILE)
+
+// 勾一个越界下标 ⇒ 直接跳过（不崩 ✓）
+var sum2 = rules.build_preview(cats, results, [99])
+eq("越界下标 ⇒ 类别数 0", sum2.catCount, 0)
+
+dirs.delete(base)
+print("")
+if fails > 0 {
+    print($"共 {fails} 项失败")
+    _exit(1)
+}
+print("全部通过")

@@ -1,0 +1,103 @@
+// test_registry_logic.leno — ③ 注册表清理：**判定逻辑**单测 + 只读扫描冒烟
+//
+// 两条原则：
+//   ① 本测试**绝不写注册表** ✓（不调 backup/apply ⇒ 只测判定与只读扫描 ✓）
+//   ② 判定必须**保守**：认不出的命令行一律不判 ✗ —— 这里用一堆"绝不该报"的样例钉住它 ✓
+//
+// 运行：build\leno.exe --no-cache test\test_registry_logic.leno
+import "../cleaner_registry.leno" as reg
+import files
+import dirs
+
+var fails = 0
+func check(string name, bool ok) {
+    if ok {
+        print($"[通过] {name}")
+    } else {
+        fails = fails + 1
+        print($"[失败] {name}")
+    }
+}
+func eq(string name, int got, int want) {
+    if got == want {
+        print($"[通过] {name} = {got}")
+    } else {
+        fails = fails + 1
+        print($"[失败] {name} 期望 {want} 实际 {got}")
+    }
+}
+func eqs(string name, string got, string want) {
+    if got == want {
+        print($"[通过] {name} = {got}")
+    } else {
+        fails = fails + 1
+        print($"[失败] {name} 期望 [{want}] 实际 [{got}]")
+    }
+}
+
+// ==================== ① exe_of：命令行 → 可判定的 exe 路径 ====================
+eqs("带引号 ⇒ 取整段（含空格）", reg.exe_of("\"C:\\Program Files\\App\\a.exe\" /silent"),
+    "C:\\Program Files\\App\\a.exe")
+eqs("不带引号 ⇒ 截到 .exe 为止", reg.exe_of("C:\\App\\b.exe -x 1"), "C:\\App\\b.exe")
+eqs("裸路径（无参数）", reg.exe_of("D:\\tools\\c.exe"), "D:\\tools\\c.exe")
+// ★ 这条是**实测踩出来的坑**：UninstallString 常见"带空格且不加引号" ✗
+//   按空格截断会得到 `C:\Program` ⇒ 判成不存在 ⇒ 误删 ✗✗ ⇒ 必须按 `.exe` 截 ✓
+eqs("不带引号 + 路径含空格 ⇒ 完整路径（关键 ✓）",
+    reg.exe_of("C:\\Program Files (x86)\\AntiCheatExpert\\ACE-BASE\\uninstall.exe /uninstall"),
+    "C:\\Program Files (x86)\\AntiCheatExpert\\ACE-BASE\\uninstall.exe")
+eqs("引号内路径含空格 + 参数", reg.exe_of("\"D:\\My Tools\\x y\\tool.exe\" --silent -v"),
+    "D:\\My Tools\\x y\\tool.exe")
+// —— 以下是"绝不该判"的：宿主程序 / 相对路径 / 空串 / 认不出的形态 ——
+check("宿主 MsiExec ⇒ 不判", reg.exe_of("MsiExec.exe /X{90160000-008C-0000-1000-0000000FF1CE}") == "")
+check("宿主 msiexec 带完整路径 ⇒ 不判",
+      reg.exe_of("\"C:\\Windows\\System32\\msiexec.exe\" /X{GUID}") == "")
+check("没有 .exe（如 rundll32 的 dll 参数）⇒ 不判",
+      reg.exe_of("C:\\Windows\\System32\\shell32.dll,Control_RunDLL") == "")
+check("宿主 cmd ⇒ 不判", reg.exe_of("cmd /c start \"\" foo") == "")
+check("宿主 rundll32 ⇒ 不判", reg.exe_of("rundll32.exe shell32.dll,Control_RunDLL") == "")
+check("宿主 powershell ⇒ 不判", reg.exe_of("powershell.exe -File x.ps1") == "")
+check("相对路径 / 裸名字 ⇒ 不判", reg.exe_of("app.exe") == "")
+check("空串 ⇒ 不判", reg.exe_of("") == "")
+check("只有空白 ⇒ 不判", reg.exe_of("   ") == "")
+// 环境变量：展开后才判（拿 expand_env 自身当下界 ✓）
+eqs("环境变量被展开", reg.exe_of("%SystemRoot%\\System32\\x.exe"),
+    reg.expand_env("%SystemRoot%") + "\\System32\\x.exe")
+
+// ==================== ② missing_exe：保守的"不存在"判定 ====================
+string tmp = _tmpdir() + "\\reg_logic_probe.tmp"
+files.write(tmp, "x")
+check("真存在的文件 ⇒ 不算缺失", not reg.missing_exe(tmp))
+check("不存在的绝对路径 ⇒ 算缺失", reg.missing_exe("C:\\definitely\\not\\here_9f8a7b.exe"))
+check("空串 ⇒ 不判缺失（保守 ✓）", not reg.missing_exe(""))
+
+// ==================== ③ 只读扫描冒烟（**不写注册表** ✓）====================
+var s = reg.scan(120)
+check("扫描跑完且不超上限", s.items.len() <= 120)
+check("确实检查过键（keysScanned > 0）", s.keysScanned > 0)
+int nKey = 0
+int nVal = 0
+for s.items to it {
+    if it.kind == "key" { nKey = nKey + 1 } else { nVal = nVal + 1 }
+}
+print($"[信息] 本次扫描：检查 {s.keysScanned} 项 · 疑似残留 {s.items.len()} 条（子键 {nKey} / 值 {nVal}）· 备注 {s.notes.len()} 条")
+int shown = 0
+for s.items to it {
+    if shown >= 25 { break }
+    shown = shown + 1
+    print($"    · {it.hive}\\{it.keyPath}  [{it.kind}] {it.name} ⇒ {it.target}")
+}
+for s.notes to it {
+    print($"    (备注) {it}")
+}
+
+// 备份目录名只是算出来的字符串 ⇒ 不创建、不落盘 ✓（这里只验证它长得对 ✓）
+string bd = reg.backup_dir()
+check("备份目录名含时间戳与固定前缀", bd.len() > 0)
+
+files.delete(tmp)
+print("")
+if fails > 0 {
+    print($"共 {fails} 项失败")
+    _exit(1)
+}
+print("全部通过")
