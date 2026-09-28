@@ -36,6 +36,14 @@ export struct TabControl impl Widget, Themeable {
     Array[VBox] _pageLayouts = []    // 每页的布局容器
     Array[bool] _hasLayout = []       // 每页是否设置了布局容器
     Array[Array[Array[float]]] _rel = []  // 每页每子控件相对「内容区原点」的偏移 [relX, relY]
+    // ==== 同页混用两种定位方式的自检（每页只提示一次 ✓）====
+    //   本模块支持两种页面定位：
+    //     ① 绝对：`addToPage(page, c, dx, dy)`
+    //     ② 布局：`setPageLayout(page, VBox)` + `addToPageLayout(page, c, opts)`
+    //   同一页**混用** ⇒ 绝对定位的控件不参与布局流 ⇒ 窗口缩放时与布局内容重叠/错位 ✗
+    //   （`dashboard.leno` 头部注释记录的"中间状态"就是这一类 ✓）
+    //   仓库现状：每页都只用一种 ⇒ 本检查在既有代码上**零命中**（已实跑全仓确认 ✓）
+    Array[bool] _mixWarned = []
     int _active = 0            // 当前激活页索引
     int _hover = -1            // 悬停的标签索引，-1 无
     bool _loaded = false
@@ -148,9 +156,23 @@ export struct TabControl impl Widget, Themeable {
     }
 
     // 添加子控件到指定页（page 从 0 起）。dx, dy 为「内容区左上角」相对坐标，
+    // 同页混用提示（每页一次，避免刷屏 ✗）
+    func _warn_mix_once(int page, string detail) {
+        while _mixWarned.len() <= page { _mixWarned.add(false) }
+        if _mixWarned[page] { return }
+        _mixWarned[page] = true
+        print($"[TabControl 用法提示] 第 {page} 页：{detail}")
+        print("\n  ⇒ 同一页请只用**一种**定位方式：绝对 addToPage(dx,dy) 或 布局 setPageLayout+addToPageLayout ✓")
+        print("\n  （若这是**有意叠加的浮层**，忽略本提示即可。）\n")
+    }
+
     // TabControl 每帧以内容区原点 (x, y+表头高) + (dx, dy) 重排，故移动/缩放 Tab 时内部整体跟随。
     func addToPage(int page, Widget c, float dx, float dy): Widget {
         if page < 0 or page >= _pages.len() { return c }
+        // ★ 该页已由布局驱动 ⇒ 再绝对定位会与布局流重叠 ✗（曾经只靠注释提醒，注释不会拦人 ✓）
+        if _hasLayout[page] {
+            _warn_mix_once(page, "本页已用 setPageLayout 布局驱动，却又用 addToPage(dx,dy) 绝对定位")
+        }
         _pages[page].add(c)
         _rel[page].add([dx, dy])
         if _hwnd != null { _tab_pass_window(c, _hwnd) }
@@ -163,6 +185,13 @@ export struct TabControl impl Widget, Themeable {
     // 布局容器接管该页的子控件排布，不再用手写 dx,dy
     func setPageLayout(int page, VBox layout) {
         if page < 0 or page >= _pages.len() { return }
+        // ★ 反向检查：本页**已有绝对定位子控件**（只能是 addToPage 加的 ⇒ addToPageLayout 在无布局时
+        //   会直接 return，不会进 `_pages`）⇒ 布局接管后它们不参与排布 ✗
+        //   `not _hasLayout[page]` 是必须的：重复 setPageLayout（重建/换布局）时 `_pages` 里已有
+        //   布局加进来的子控件 ⇒ 不排除就会误报 ✗
+        if _pages[page].len() > 0 and not _hasLayout[page] {
+            _warn_mix_once(page, "本页已有 addToPage(dx,dy) 绝对定位的子控件，现在又用 setPageLayout 布局驱动")
+        }
         _pageLayouts[page] = layout
         _hasLayout[page] = true
         // 初始位置和大小：内容区 = (x, y+表头高, w, h-表头高)
