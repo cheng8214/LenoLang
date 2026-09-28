@@ -1,0 +1,80 @@
+// test_var_null_semantics.leno —— `var` / null 的**文档语义**（2026-09-28；实例四十四）
+//
+// 收编自 `examples/func/var 声明 null 后可以赋任何值.leno`（该示例已删 —— 它**自相矛盾**：
+//   标题说"可以赋任何值"，正文却照着教程演示"锁定后不能改"；还写了"具体类型可以接收 null"，
+//   而教程明确说值类型**不能**为 null）。
+//
+// 教程（docs/Leno入门教程.md:511-553）规定的三条：
+//   ① `var x = null` ⇒ 类型为 **any（未锁定）**；
+//   ② 第一次赋非 null 值 ⇒ **锁定**为该类型（`x = 42` 锁成 int；此后 `x = "hello"` ❌ 报错）；
+//   ③ `int` / `float` / `bool` / `bigint` 是**值类型**，不能赋 null（要可空得写 `int?`）；
+//      而引用型（string 等）可以为 null，`var name = "cheng"; name = null` 是清空，合法。
+//
+// 本文件钉：三条正向 + 三条**按文档必须报错**的负例（负例证明"锁"与"值类型"两条规则真的在生效）。
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_var_null")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ---- ① + ② 正向：声明即 null ⇒ 之后能赋值，并按首次赋的**值类型锁定** ----
+    var x = null
+    x = 42
+    assert_eq(x, 42)             // 锁定为 int 后照常可用
+    var y = null
+    assert_eq(y, null)           // 未赋过 ⇒ 仍是 null
+
+    // ---- ③ 正向：引用型可以为 null（清空写法）----
+    var name = "cheng"
+    name = null
+    assert_eq(name, null)
+    string c = null
+    assert_eq(c, null)
+
+    // ---- ③ 正向：函数从**引用型**返回 null（表示"不存在"）----
+    assert_eq(findUser(1), "cheng")
+    assert_eq(findUser(0), null)
+
+    // ---- 负例 1（② 锁定）：锁成 int 之后再赋 string ⇒ 按教程必须报错 ----
+    var lk = dirs.join(work, "lock_after_int.leno")
+    files.write(lk, @"main() {
+    var a = null
+    a = 42
+    a = ""hello""
+}
+")
+    ce.expect_error(lk, "var=null 首次赋 int 后即锁定，再赋 string 要报错",
+        "无法将值赋值给变量 'a'", 4)
+
+    // ---- 负例 2（③ 值类型）：int 不能为 null（要可空得写 int?）----
+    var vt = dirs.join(work, "int_cannot_be_null.leno")
+    files.write(vt, @"main() {
+    int b = null
+}
+")
+    ce.expect_error(vt, "值类型 int 不能赋 null（应改用 int?）",
+        "变量 'b' 声明类型与初始化值类型不匹配", 2)
+
+    // ---- 负例 3（null 不参与算术，T11）：确定为 null 的值不能做算术 ----
+    var na = dirs.join(work, "null_arith.leno")
+    files.write(na, @"main() {
+    var a = null
+    print(_str(a + 1))
+}
+")
+    ce.expect_error(na, "确定为 null 的值不能参与算术运算",
+        "不能参与算术运算", 3)
+
+    print("test_var_null_semantics passed")
+}
+
+func findUser(int id): string {
+    if id == 0 {
+        return null
+    }
+    return "cheng"
+}
