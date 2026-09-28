@@ -1,0 +1,7 @@
+// 【负例 fixture】导入上面那个有语法错误的模块 ⇒ 编译期报错
+//   （收编自 examples/import/boundary_tests/15_import_error_handling/test_syntax_error.leno，已删）
+import "import_broken_module.leno" as broken
+
+main() {
+    print(_str(broken.value))
+}

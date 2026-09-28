@@ -1,0 +1,8 @@
+// 【负例 fixture】故意写成语法错误（函数缺函数体）—— 供 import_broken.leno 导入
+//   被收编的行为：**导入一个有语法错误的模块** ⇒ 编译期报错，且**报在 fixture 自己那行**上
+//   （收编自 examples/import/boundary_tests/15_import_error_handling/syntax_error_module.leno，已删）。
+//   ⚠ 本文件**故意编译不过**：assert/ 下不以 test_ 开头 ⇒ 不会被 run_tests 当用例跑
+//     （见 helpers/compiler.leno 顶部的规矩）。挪动顶部注释会改落点行 ⇒ 同步改期望行号。
+func broken_func()
+
+export var value = 42

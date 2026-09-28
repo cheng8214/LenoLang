@@ -947,5 +947,21 @@ main() {
     ce.expect_error(tb, "模块级 Dict[string,int] 里放 string 要报错",
         "变量 'badDict' 声明类型与初始化值类型不匹配", 28)
 
+    // ---- 导入错误处理（2026-09-28；实例四十五）----
+    //   收编 `examples/import/boundary_tests/15_import_error_handling` 下的**故意负例**（已删，
+    //   那几个文件自己就写着"如果看到这行，说明导入没有正确报错"）。两条行为：
+    //   ① 导入**不存在**的模块 ⇒ 编译期报错；
+    //   ② 导入**有语法错误**的模块 ⇒ 编译期报错，且错误报在**那个模块自己那行**上。
+    var im1 = dirs.join(work, "import_missing.leno")
+    files.write(im1, @"main() {
+    import ""nonexistent_module.leno"" as m
+}
+")
+    ce.expect_error(im1, "导入不存在的模块要报错", "找不到模块文件: nonexistent_module.leno", 2)
+
+    // ② 用静态 fixture（assert/import_broken*.leno）：坏模块必须在 assert/ 下才能被相对 import 找到
+    ce.expect_error("assert/import_broken.leno", "导入有语法错误的模块要报错（报在 fixture 自己那行）",
+        "期望 '{'", 8)
+
     print("=== test_diag_static_errors ALL passed ===")
 }

@@ -90,3 +90,17 @@ export func expect_error(string script_path, string tag, string expect_text, int
     }
     return out
 }
+
+// 同 expect_error，但**连列一起**校验（2026-09-28 加）。
+//   为什么另开一个而不是改上面那个：`expect_error` **故意**不看列（列号会随文案调整漂移，
+//   把列当承诺会让用例假失败）；但"**错误落点**"本身有一批专门的用例要钉列
+//   （收编自 `examples/验证/error_column_tests` 的 18 个：每例钉"行列 + 文案"）。
+//   ⇒ 给它们一条能钉列的入口，既有判据保持原样。
+export func expect_error_at(string script_path, string tag, string expect_text,
+                           int expect_line, int expect_col):string {
+    var out = expect_error(script_path, tag, expect_text, expect_line)
+    var loc = "(" + expect_line + "," + expect_col + ")"
+    assert_true(strings.has(out, loc),
+        tag + "：报错应落在第 " + expect_line + " 行第 " + expect_col + " 列（期望包含「" + loc + "」）；输出=" + out)
+    return out
+}

@@ -1,0 +1,60 @@
+// test_error_columns.leno —— 编译错误的**落点（行 + 列）**（2026-09-28；实例四十五）
+//
+// 收编自 `examples/验证/error_column_tests`（18 个；该目录已删）—— 那一批是"错误落点"用例：
+//   每例故意写错，看编译器把错误报在**哪一行哪一列**。它们的 fixture 现放在 `assert/error_col/`
+//   下（名字不以 `test_` 开头 ⇒ 不会被 run_tests 当用例跑，见 helpers/compiler.leno 的规矩）。
+//
+// ⚠ **以本文件的断言为准**：那 17 个 fixture 是**原样搬运**的，文件顶部自己写的"期望错误: 第 N 行第 M 列"
+//   注释**早已过时**（当年文件更短 ⇒ 现在实际落点整体后移）—— 实测落点见下面的断言。
+// ⚠ 为什么这批要"钉列"而 `expect_error` 不看列：`expect_error` 故意只钉行（列号会随文案调整漂移，
+//   把列当承诺会让用例假失败）；而这批用例的**价值本身**就是"错误指在正确的列上"（用户能一眼看到
+//   哪个 token 出错）⇒ 另开了 `ce.expect_error_at(path, tag, text, line, col)`。
+
+import "helpers/compiler.leno" as ce
+
+main() {
+    // 一行一条：fixture / 文案特征 / 行 / 列
+    ce.expect_error_at("assert/error_col/col01_undefined_var.leno",
+        "未定义变量落点", "未定义的变量: xyz", 9, 5)
+    ce.expect_error_at("assert/error_col/col02_undefined_func.leno",
+        "未定义函数落点", "未定义的函数: foo", 9, 5)
+    ce.expect_error_at("assert/error_col/col03_param_mismatch.leno",
+        "实参类型不匹配落点", "第 1 个参数类型不匹配", 13, 5)
+    ce.expect_error_at("assert/error_col/col04_array_index.leno",
+        "数组索引类型落点", "数组索引必须是整数类型", 11, 5)
+    ce.expect_error_at("assert/error_col/col05_struct_field.leno",
+        "struct 字段名落点", "struct 没有字段 'z'", 14, 7)
+    ce.expect_error_at("assert/error_col/col06_if_no_brace.leno",
+        "if 缺大括号落点", "if 语句体必须用大括号", 9, 9)
+    ce.expect_error_at("assert/error_col/col07_while_no_brace.leno",
+        "while 缺大括号落点", "while 循环体必须用大括号", 10, 9)
+    ce.expect_error_at("assert/error_col/col08_for_no_brace.leno",
+        "for 缺大括号落点", "for 循环体必须用大括号", 9, 9)
+    ce.expect_error_at("assert/error_col/col09_switch_no_brace.leno",
+        "switch 缺大括号落点", "switch 语句体必须用大括号", 10, 9)
+    ce.expect_error_at("assert/error_col/col10_try_no_brace.leno",
+        "try 缺大括号落点", "try 语句体必须用大括号", 9, 9)
+    ce.expect_error_at("assert/error_col/col11_undef_type.leno",
+        "未定义类型落点", "未定义的类型: UndefinedType", 5, 22)
+    ce.expect_error_at("assert/error_col/col12_compound_assign.leno",
+        "复合赋值里的未定义变量落点", "未定义的变量: xyz", 8, 5)
+    ce.expect_error_at("assert/error_col/col13_parallel_assign.leno",
+        "并行赋值里的未定义变量落点", "未定义的变量: a", 8, 5)
+    ce.expect_error_at("assert/error_col/col14_face_missing.leno",
+        "face 缺方法落点（报在 struct 声明处）", "但缺少方法 'speak'", 9, 1)
+    ce.expect_error_at("assert/error_col/col15_import_error.leno",
+        "未知原生模块落点", "未知的原生模块 'nonexistent_module_xyz'", 5, 1)
+    ce.expect_error_at("assert/error_col/col17_duplicate_var.leno",
+        "重复定义变量落点", "变量 'x' 重复定义", 9, 5)
+    ce.expect_error_at("assert/error_col/col18_method_call.leno",
+        "调用不存在的方法落点", "没有方法 'test_nonexist'", 14, 7)
+
+    // col16 是这批里**唯一需要先修编译器**的一例：`{1.5: v}` 此前**静默编译通过**
+    // （浮点键没被拦 —— 循环头注释、报错文案与 docs/module_dicts.md 三处口径都是"字符串/标识符/整数"）
+    // ⇒ 2026-09-28 在 parser 的字典键分支补了浮点拦截 + **错误恢复**（吃掉本 dict 剩余 token 到 '}'，
+    // 否则 1 处笔误会连着报"期望换行"+"期望表达式"两条级联噪声）。
+    ce.expect_error_at("assert/error_col/col16_dict_key.leno",
+        "浮点字典键落点（此前静默通过）", "浮点数不能作键", 7, 14)
+
+    print("test_error_columns passed（18 例）")
+}

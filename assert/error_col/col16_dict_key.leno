@@ -1,0 +1,8 @@
+// 【负例 fixture】字典键类型不匹配（浮点数不能作键）
+//   原样重建自 examples/验证/error_column_tests/test16_dict_key.leno（该目录已删；它的
+//   "期望错误: 第7行"注释当年就不准）。落点由 test_error_columns.leno 断言。
+//   ⚠ 本行为 2026-09-28 才补上（此前 `{1.5: v}` **静默编译通过** —— 见实例四十五）。
+main()
+{
+    var d = {1.5: "value"}
+}

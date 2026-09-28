@@ -433,8 +433,33 @@ Ast* parse_dict(Parser* p) {
             key_ast->u.string.len = (int)strlen(key_str);
             lexer_next(&p->lex);
         } else if (p->lex.current.type == TOK_NUM) {
-            // 整数键（通过 parse_number 解析，自动处理 int/float/bigint）
+            // 整数键（通过 parse_number 解析，自动处理 int/bigint）
+            // ★ v3.2.8：**浮点数不能作键** —— 循环头的注释（"字符串、标识符(转为字符串)、整数"）、
+            //   下面的报错文案（"…或整数"）与 docs/module_dicts.md（"字典的键必须是字符串"）三处
+            //   口径一致，而实现此前把 TOK_NUM **整份**交给 parse_number ⇒ `{1.5: v}` **静默编译通过**
+            //   （实测：examples/验证/error_column_tests/test16_dict_key.leno 的期望错误不再出现）。
+            int key_line = p->lex.current.line;
+            int key_col = p->lex.current.column;
             key_ast = parse_number(p);
+            if (key_ast && key_ast->kind == AST_NUM && key_ast->u.num.is_float) {
+                error_add_at(ERR_SYNTAX, key_line, key_col,
+                             "字典键必须是字符串、标识符或整数（浮点数不能作键）");
+                ast_free(key_ast);
+                // 恢复：吃掉本字典剩下的 token 到配对的 '}'（含）为止 —— 不这么做的话调用方会在
+                // 同一行看到残留的 `:` / 值 ⇒ 又报"期望换行"+"期望表达式"两条级联噪声
+                // （实测：1 处笔误报 3 条）。语义与循环正常的收尾（消费 '}' 后 break）一致。
+                int depth = 0;
+                while (p->lex.current.type != TOK_EOF) {
+                    if (p->lex.current.type == TOK_LBRACE) {
+                        depth++;
+                    } else if (p->lex.current.type == TOK_RBRACE) {
+                        if (depth == 0) { lexer_next(&p->lex); break; }
+                        depth--;
+                    }
+                    lexer_next(&p->lex);
+                }
+                break;
+            }
         } else {
             if (is_type_keyword(p->lex.current.type)) {
                 char msg[64];
