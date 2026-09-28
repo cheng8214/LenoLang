@@ -2360,6 +2360,8 @@ void gen_module_call(CodeGen* gen, Ast* ast, int dst) {
     //   .leno 源码模块（别名）→ 取模块对象 → exports[方法名] → 普通 CALL
     // 用「该名字能否被原生模块机制识别」区分；lib_ref 对 .leno 模块没有有效信息。
     extern int native_init_module(const char* name);
+    extern TypeKind native_get_module_method_param_type(const char* module_name,
+                                                        const char* method_name, int param_index);
 
     int nargs = ast->u.module_call.args.count;
     const char* modname = ast->u.module_call.module_name ? ast->u.module_call.module_name : "";
@@ -2504,6 +2506,24 @@ void gen_module_call(CodeGen* gen, Ast* ast, int dst) {
     //   R[base+1..] 取参，若指令先发射、实参后写入，读到的是上一轮的旧值。
     for (int i = 0; i < nargs; i++) {
         gen_expr_to(gen, ast->u.module_call.args.items[i], base + 1 + i);
+        // ★ 白名单放行的「加宽」必须落地成真转换（T26 探针抓到的洞，2026-09-28）：
+        //   语义层允许 bool→int/float、bigint→int/float 进 native 形参
+        //   （visit_module.inc 的隐式转换表），但这里此前只裸传 Value —— 而模块侧
+        //   转换器（value_to_double / 各模块本地副本）只认 int/float/bigint ⇒
+        //   bool 被读成 0（实测 maths.cos(true)==1.0=cos(0)、
+        //   strings.sub_str("hello",true,3)=="hel"=起点 0 —— 两通道全坏），
+        //   bigint 进 val_as_int 读到的是指针垃圾位。
+        //   口径对齐**赋值通道**（OP_CAST_FLOAT/INT 的 bool/bigint 分支，true→1 ✓）：
+        //   按形参声明补发 cast；查询越界/ANY 形参原样返回 ⇒ 不发（零影响）。
+        TypeInfo* widen_at = infer_expr_type(gen->sem, ast->u.module_call.args.items[i]);
+        if (widen_at && (widen_at->kind == TYPE_BOOL || widen_at->kind == TYPE_BIGINT)) {
+            TypeKind pk = native_get_module_method_param_type(real_name, methname, i);
+            if (pk == TYPE_FLOAT) {
+                reg_encode_iABC(gen->chunk, OP_CAST_FLOAT, base + 1 + i, base + 1 + i, 0, ast->line);
+            } else if (pk == TYPE_INT) {
+                reg_encode_iABC(gen->chunk, OP_CAST_INT, base + 1 + i, base + 1 + i, 0, ast->line);
+            }
+        }
     }
 
     // ★ 用**真实模块名**（别名可能被 as 改过，而 native 方法表按注册名查找）
