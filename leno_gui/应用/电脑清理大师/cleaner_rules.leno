@@ -45,7 +45,7 @@ func _dir_size(string p): int {
         for e.files to f {
             try {
                 sum = sum + dirs.stat(dirs.join(e.root, f)).size
-            } catch { }
+            } catch e { continue }   // 无权限/被占用 ⇒ 跳过该文件，继续统计下一个 ✓
         }
     }
     return sum
@@ -322,7 +322,7 @@ func _plog(string s) {
         var f = files.open(_tmpdir() + "\\cmaster_debug.log", "a")
         f.writeln(s)
         f.close()
-    } catch { }
+    } catch e { return }    // 日志失败无处可报：有意忽略 ✓
 }
 
 // chunk 元素 = [path, sizeStr]（scan_worker 结果切出）；roots = 类别白名单根。

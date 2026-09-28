@@ -100,6 +100,7 @@ typedef enum {
     WARN_FIELD_NO_INIT,     // struct 标量字段未显式初始化（默认是 null 而不是 0，参与运算会报错）
     WARN_AMBIGUOUS_MODULE,  // 裸文件名 import 撞名：多个包目录都有同名 .leno 且内容不同（静默选错文件）
     WARN_NATIVE_TYPE_NAME_CLASH, // 脚本 struct 与已注册的 native 类型同名（字段解析会优先用脚本定义）
+    WARN_EMPTY_CATCH,      // 空 catch {}：异常被静默吞掉（含 as 收窄失败等运行期错误 ⇒ 功能"没反应"）
 } WarnType;
 
 // ============================================================================

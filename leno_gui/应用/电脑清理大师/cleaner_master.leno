@@ -33,7 +33,7 @@ func _dlog(string s) {
         var f = files.open(p, "a")
         f.writeln(s)
         f.close()
-    } catch { }
+    } catch e { return }    // 日志失败无处可报：写 return 表明有意忽略（体非空 ⇒ 不触发「空catch吞异常」提示 ✓）
 }
 
 // ==================== 线程入口（具名全局 ✓；参数纯数组/字符串 ⇒ 可跨线程 ✓） ====================
@@ -302,7 +302,10 @@ struct CleanerMaster {
                     if cumFreed > 0 { lastLbl.set_text($"累计释放 {rules.fmt_size(cumFreed)}") }
                 }
             }
-        } catch { }
+        } catch e {
+            // ★ 别再静默吞：留一行日志（`catch { }` 曾把 ti.now 的类型错误一起吞掉 ⇒ 该功能静默失效很久 ✗）
+            _dlog("loadLastClean 失败: " + _str(e.msg))
+        }
     }
 
     func saveLastClean() {
@@ -317,7 +320,10 @@ struct CleanerMaster {
             jsons.write_file(_last_clean_path(),
                 {time: ts, freed: freedTotal, items: cleanedTotal, total_freed: cumFreed})
             lastLbl.set_text($"上次清理：{ts} 释放 {rules.fmt_size(freedTotal)} · 累计 {rules.fmt_size(cumFreed)}")
-        } catch { }
+        } catch e {
+            // ★ 同上：保存失败要留痕（否则"上次清理/累计"静默不更新 ✗）
+            _dlog("saveLastClean 失败: " + _str(e.msg))
+        }
     }
 
     // ==================== 扫描 ====================

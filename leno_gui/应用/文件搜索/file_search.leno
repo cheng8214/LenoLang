@@ -156,6 +156,7 @@ func _scan_batch_worker(any ch, Array dirs_to_scan, string keyword, int wid): Ar
             total_sent = total_sent + result[2]
         } catch e {
             // 权限不足等错误，跳过该目录继续下一个
+            continue
         }
     }
     return [total_scanned, total_found, total_sent]
@@ -243,6 +244,7 @@ struct FileSearcher {
                 }
             } catch e {
                 // 跳过权限不足的目录
+                continue
             }
         }
 
@@ -427,6 +429,7 @@ struct FileSearcher {
                     }
                 } catch e {
                     // 线程异常，跳过
+                    continue
                 }
             }
         }
@@ -635,7 +638,7 @@ struct FileSearcher {
         for searchThreads.len() to i {
             var t = searchThreads[i]
             if t is Thread {
-                try { t.join() } catch e {}
+                try { t.join() } catch e { continue }   // 线程异常：跳过（体非空 ⇒ 不触发空 catch 提示 ✓）
             }
         }
 

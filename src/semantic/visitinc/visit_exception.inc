@@ -13,6 +13,18 @@
             
             // 访问 catch 体（如果有，创建独立子作用域）
             if (ast->u.try_.catch_body) {
+                // ★ 空 catch 提示（WARN_EMPTY_CATCH）：`catch { }` 会把异常**静默吞掉** ——
+                //   其中就包括 `x as T` **收窄失败**这类运行期类型错误 ⇒ 表现为"功能没反应"，极难排查。
+                //   真实案例：`ti.now() as Array[int]`（ti.now 返回 int 时间戳而不是数组）抛异常被
+                //   `catch { }` 吞掉 ⇒ 应用里「上次清理记录」与「导出报告」**静默失效很久** ✗，
+                //   直到排查"导出为什么没文件"才挖出来。
+                //   有意忽略时写 `catch e { return }`（体非空 ⇒ 不再提示 ✓）。
+                if (ast->u.try_.catch_body->kind == AST_BLOCK &&
+                    ast->u.try_.catch_body->u.block.count == 0) {
+                    warning_add_at(WARN_EMPTY_CATCH, ast->line, ast->column,
+                        "空 catch 会静默吞掉异常（含 as 收窄失败等运行期错误 ⇒ 功能会「没反应」）；"
+                        "至少记一行日志，确定要忽略请写 catch e { return }");
+                }
                 Scope* catch_scope = scope_new(s->current, 0);
                 s->current = catch_scope;
                 
