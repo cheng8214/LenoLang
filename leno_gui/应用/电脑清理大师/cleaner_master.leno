@@ -196,12 +196,12 @@ struct CleanerMaster {
         sumMain = SDL3.createLabel({text: "", font_size: 16, font_style: 1, align: 1, text_color: th0.txt})
         sumSub = SDL3.createLabel({text: "", font_size: 12, align: 1, text_color: th0.txtDim, wrap: true, wrap_w: 270})
         // h: 34 —— 「上次清理 …」会折成**两行**（wrap_w 270 ✓）
-        //   ⚠ 盒高不足时第二行会画到盒外、被下面的「工具」按钮压住 ✗（与状态栏那条同类 ✓）
+        //   ⚠ 盒高不足时第二行会画到盒外、被左列下方的三联按钮压住 ✗（与状态栏那条同类 ✓）
         lastLbl = SDL3.createLabel({text: "", font_size: 12, align: 1, text_color: th0.txtDim, wrap: true, wrap_w: 270, h: 34})
         leftCol.add(sumMain, {grow: 0, shrink: 0, align: 1})
         // ⚠ **折行 Label 必须用 `add` 的 basis 预留盒高**（VBox 的主轴 = 竖直 ✓）
         //   创建时的 `h:` **不管用** ✗（实测：h:34 照样被压）—— 与"w 不被读取"是同一个坑 ✓
-        //   不预留的话，布局按"一行高"分配 ⇒ 第二行画到盒外、被下面的「工具」压住 ✗
+        //   不预留的话，布局按"一行高"分配 ⇒ 第二行画到盒外、被下方按钮压住 ✗
         leftCol.add(sumSub, {grow: 0, shrink: 0, basis: 34, align: 1})
         leftCol.add(SDL3.createSeparator({w: 220}), {grow: 0, shrink: 0, align: 1})
         leftCol.add(lastLbl, {grow: 0, shrink: 0, basis: 34, align: 1})
@@ -310,7 +310,8 @@ struct CleanerMaster {
         cleanRow.add(timeLbl, {grow: 0, shrink: 0, basis: 110, align: 3})
 
         // 底部：状态 + 主动作（**唯一入口** ⇒ 视觉焦点只有一个 ✓）
-        //   「工具」已移到左列下方（2026-09-29 用户要求 ✓）⇒ 这一行只剩状态 + 主按钮 ✓
+        //   次要动作（预览 / 导出 / 注册表）都在**左列下方**（2026-09-29 用户要求 ✓）
+        //   ⇒ 这一行只剩状态 + 主按钮 ✓（原先那个「工具」收口窗已删除 ✓ 见文件末尾说明 ✓）
         // ⚠ `wrap_w` 必须 ≤ 状态格的**实得宽度**，否则折行会溢到按钮底下被压住 ✗（实测踩过 ✓）
         //   实得宽度 = 窗口 900 − root padX 12×2 − 本行 padX 4×2 − 190 − 间距 10 = 668
         //   ⇒ 取 660 留 8px 余量 ✓；h: 42 = 行内高（54 − padY 6×2 ✓）⇒ **两行都在框内** ✓
@@ -1057,66 +1058,13 @@ struct CleanerMaster {
         SDL3.markFrameRedraw()
     }
 
-    // ==================== 工具窗（次要动作收口 ✓）====================
-    // 为什么这么设计（2026-09-28）：
-    //   · 常驻底部的灰按钮会被读成"这软件坏了"✗，而且把状态文字挤成窄条 ✗
-    //   · 改成"打开时**按当前状态**算可用性"⇒ 用户看到的永远是"现在能做什么" ✓
-    //   · 动作在**工具窗关掉之后**才执行（模态里再开模态容易出问题 ✗）
-    func openTools() {
-        int dw = 460
-        int dh = 300
-        var dlg = SDL3.createDialogWindow({title: "工具", w: dw, h: dh})
-        var droot = SDL3.createVBox({x: 0, y: 0, w: dw, h: dh, padX: 16, padY: 14, spacing: 10})
-        dlg.setRoot(droot)
-        droot.add(SDL3.dialogLabel($"当前状态：{_state_name()} —— 下面只列出现在能用的动作", 13),
-            {grow: 0, shrink: 0, align: 0})
-
-        Button bPreview = SDL3.createButton({w: 420, h: 38, text: "预览（干跑）— 先看账单，不删任何文件", type: "dark"})
-        Button bExport = SDL3.createButton({w: 420, h: 38, text: "导出报告 — 写到桌面", type: "dark"})
-        Button bReg = SDL3.createButton({w: 420, h: 38, text: "注册表清理 — 残留项 + .reg 备份", type: "dark"})
-        Button bClose = SDL3.createButton({w: 110, h: 34, text: "关闭", type: "dark"})
-        bPreview.set_enabled(state == "done")
-        bExport.set_enabled(state == "report")
-        string whyPreview = "扫描完成（done 态）才有账单可看"
-        string whyExport = "清理完成（报告态）才有报告可导"
-        if state != "done" { bPreview.set_tip(whyPreview) }
-        if state != "report" { bExport.set_tip(whyExport) }
-
-        var done = false
-        string pick = ""
-        bPreview.on_click(func() { pick = "preview"; done = true })
-        bExport.on_click(func() { pick = "export"; done = true })
-        bReg.on_click(func() { pick = "reg"; done = true })
-        bClose.on_click(func() { done = true })
-        droot.add(bPreview, {grow: 0, shrink: 0, align: 0})
-        droot.add(bExport, {grow: 0, shrink: 0, align: 0})
-        droot.add(bReg, {grow: 0, shrink: 0, align: 0})
-        droot.add(SDL3.dialogButtonRow([bClose], 16), {grow: 0, shrink: 0, align: 3})
-
-        SDL3.runModal(dlg,
-            func(Event ev): bool {
-                if ev.isQuit() or ev.isWindowClose() { return false }
-                if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
-                return not done
-            },
-            func(Renderer r) { r.clearColor(theme.getTheme().bg) }
-        )
-        SDL3.markFrameRedraw()
-        // ★ 工具窗已关闭 ⇒ 现在再执行（不做嵌套模态 ✓）
-        if pick == "preview" { openPreview() }
-        eif pick == "export" { exportReport() }
-        eif pick == "reg" { openRegistry() }
-    }
-
-    // 状态的中文名（工具窗抬头用 ✓）
-    func _state_name(): string {
-        if state == "idle" { return "就绪（未扫描）" }
-        if state == "scanning" { return "扫描中" }
-        if state == "done" { return "扫描完成（可预览/可清理）" }
-        if state == "cleaning" { return "清理中" }
-        if state == "report" { return "已清理（报告态）" }
-        return state
-    }
+    // ==================== 工具窗（已于 2026-09-29 移除 ✓）====================
+    // 历史：这里曾有一个「工具」模态窗（`openTools`）把次要动作收口，
+    //   并在**打开时按当前状态**算可用性（避免常驻灰按钮像"软件坏了" ✗）。
+    // 现状：那两个动作已各自成为左列的常驻按钮（预览 / 导出 / 注册表）✓，
+    //   状态可用性也在各自的 on_click 里拦截 + 状态栏提示 ✓
+    //   ⇒ 本函数**再无任何调用方**（真正的死代码 ✗）⇒ 删除 ✓（含只被它用到的 `_state_name` ✓）
+    //   ⚠ 若将来想恢复这个"动作收口窗"，从 git 历史取即可 ✓（不必留半截代码 ✗）
 
     // 三联按钮的"不可用"表现：**用暗色，而不是 set_enabled** ✓
     //   为什么：Button 的禁用态会自己画一圈灰底（框架没有 disabled_bg 选项 ✗）
