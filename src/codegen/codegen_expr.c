@@ -1878,6 +1878,11 @@ void gen_call(CodeGen* gen, Ast* ast, int dst) {
 
         // --- native 直接调用（CALL_NATIVE）：省掉"取函数值 + CALL" ---
         if (ref->kind == SYM_NATIVE) {
+            // 加宽落地：与 gen_module_call 同一口径（见该处注释）—— 内置通道的语义
+            // 白名单（visit_expr.inc 的 SYM_NATIVE 分支）同样放行 bool/bigint→int/float，
+            // 这里此前也裸传 ⇒ `sleep(true)` 靠 bool 载荷碰巧=1 才没出错，bigint 进
+            // val_as_int 同样是指针垃圾位。按内置函数的形参声明补发 cast。
+            extern TypeKind native_get_global_function_param_type(const char* name, int param_index);
             int dst_safe = (dst >= 0) &&
                            ((dst >= gen->next_reg) ||
                             regs_available(gen, dst + 1, dst + 1 + nargs));
@@ -1885,6 +1890,15 @@ void gen_call(CodeGen* gen, Ast* ast, int dst) {
             reg_reserve_call_block(gen, base, nargs + 1);
             for (int i = 0; i < nargs; i++) {
                 gen_expr_to(gen, ast->u.call.args.items[i], base + 1 + i);
+                TypeInfo* widen_at = infer_expr_type(gen->sem, ast->u.call.args.items[i]);
+                if (widen_at && (widen_at->kind == TYPE_BOOL || widen_at->kind == TYPE_BIGINT)) {
+                    TypeKind pk = native_get_global_function_param_type(ref->name, i);
+                    if (pk == TYPE_FLOAT) {
+                        reg_encode_iABC(gen->chunk, OP_CAST_FLOAT, base + 1 + i, base + 1 + i, 0, ast->line);
+                    } else if (pk == TYPE_INT) {
+                        reg_encode_iABC(gen->chunk, OP_CAST_INT, base + 1 + i, base + 1 + i, 0, ast->line);
+                    }
+                }
             }
             ObjString* nameStr = str_copy(ref->name, (int)strlen(ref->name));
             int name_const = make_constant(gen, val_obj((Object*)nameStr));
