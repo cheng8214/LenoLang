@@ -9,8 +9,15 @@
 //   **以本文件的断言为准**。
 
 import "helpers/compiler.leno" as ce
+import dirs
+import files
 
 main() {
+    // 动态脚本落在这个临时目录（静态 fixture 走 cwd 相对路径，见文件头说明）
+    var work = dirs.join(_tmpdir(), "leno_error_batteries")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
     // ---- 内置函数实参个数（sys）----
     ce.expect_error("assert/error_cases/arity_gc_too_many.leno",
         "_gc 参数过多要报错", "_gc 参数过多: 最多 1 个, 实际 2", 3)
@@ -72,5 +79,40 @@ main() {
         "use 模块里不存在的符号要报错（并可能给相似名提示）",
         "模块 'gm' 中没有类型或函数 'NotExist'", 5)
 
-    print("test_diag_error_batteries passed（18 例）")
+    // ---- `any` 的三条严格化诊断（2026-09-28；实例五十）----
+    //   收编自 `examples/测试/*`、`examples/crypto/rsa.leno` 等处**被新严格化拦下**的写法
+    //   （实例二十三起：静态 any 不许进 native 形参 / 不能在 any 上访问成员）。
+    //   这三句此前**一条断言都没有** ⇒ 一并钉住（谁放宽/收紧了都能立刻看到）。
+    var an1 = dirs.join(work, "any_index.leno")
+    files.write(an1, @"export func idx(any x): any {
+    return x[0]
+}
+")
+    ce.expect_error(an1, "any 上做索引访问要报错", "不能在 any 类型上进行索引访问", 2)
+
+    var an2 = dirs.join(work, "any_cmp.leno")
+    files.write(an2, @"export func cmp(any a, any b): bool {
+    return a < b
+}
+")
+    ce.expect_error(an2, "any 参与大小比较要报错（并提示指定元素类型）",
+        "any 类型不能参与大小比较", 2)
+
+    // 未标返回类型的函数 ⇒ 返回值是 **any**（**当前契约**：要在算术里用就得标注或用 _int/_str）
+    //   ⚠ 这条**文档里没写**（grep 教程/手册 0 命中）⇒ 钉住是为了"将来若改成按函数体推断，
+    //     这里会先红"，而不是宣称这是最佳设计。来源：examples/测试/数组字典边界/嵌套数组类型问题.leno（已删）
+    var an3 = dirs.join(work, "unannotated_ret.leno")
+    files.write(an3, @"func f() {
+    return 42
+}
+
+main() {
+    var a = 0
+    a = a + f()
+}
+")
+    ce.expect_error(an3, "未标返回类型的函数返回值是 any（进算术要报错）",
+        "无法将值赋值给变量 'a'", 7)
+
+    print("test_diag_error_batteries passed（21 例）")
 }
