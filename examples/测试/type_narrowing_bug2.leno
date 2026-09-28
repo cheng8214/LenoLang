@@ -21,6 +21,7 @@ struct Container {
             try {
                 data.close()
             } catch e {
+                return      // 空 catch 已升为编译期错误 ⇒ 补一句真语句（等价 ✓）
             }
         }
     }

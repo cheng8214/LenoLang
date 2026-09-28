@@ -282,7 +282,7 @@ func with_try_test() {
     for csnum{
         try {
            sum++
-        } catch e { }
+        } catch e { continue }   // 空 catch 已升为编译期错误 ⇒ 补一句真语句（本循环里 continue 与原行为等价 ✓）
     }
     return sum
 }

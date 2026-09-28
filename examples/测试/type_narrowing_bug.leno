@@ -22,6 +22,7 @@ func test_narrowing_in_try(any x) {
         try {
             x.close()
         } catch e {
+            return      // 空 catch 已升为编译期错误 ⇒ 补一句真语句（此函数 try 之后无语句 ⇒ 等价 ✓）
         }
     }
 }
@@ -86,6 +87,7 @@ func test_narrowing_struct_in_try(any x) {
         try {
             var v2 = x.value
         } catch e {
+            return      // 空 catch 已升为编译期错误 ⇒ 补一句真语句（等价 ✓）
         }
     }
 }

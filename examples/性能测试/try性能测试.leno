@@ -26,7 +26,7 @@ func with_try_test() {
     for 10000000{
         try {
            sum++
-        } catch e { }
+        } catch e { continue }   // 空 catch 已升为编译期错误 ⇒ 补 continue（异常路径才走，热路径无影响 ✓）
     }
     return sum
 }
