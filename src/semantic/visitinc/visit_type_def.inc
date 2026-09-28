@@ -353,6 +353,19 @@
                                                 if (mface->methods[j].return_type != TYPE_ANY && ast->u.struct_def.methods[k]->u.func.return_type) {
                                                     TypeKind face_ret = mface->methods[j].return_type;
                                                     TypeKind impl_ret = ast->u.struct_def.methods[k]->u.func.return_type->kind;
+                                                    // ★ v3.2.8：同同文件那条 —— impl 方法**没标返回类型**时
+                                                    //   先推函数体，推不出才跳过（宁漏不误报）
+                                                    int impl_ret_unknown = 0;
+                                                    if (impl_ret == TYPE_INFER) {
+                                                        TypeInfo* body_ret = infer_return_type_from_body(
+                                                            s, ast->u.struct_def.methods[k]->u.func.body);
+                                                        if (body_ret && body_ret->kind != TYPE_ANY) {
+                                                            impl_ret = body_ret->kind;
+                                                        } else {
+                                                            impl_ret_unknown = 1;
+                                                        }
+                                                        if (body_ret) type_free(body_ret);
+                                                    }
                                                     // 允许 TYPE_STRUCT ↔ TYPE_CLIB 互转（都是命名自定义类型）
                                                     int type_match = (face_ret == impl_ret);
                                                     if (!type_match &&
@@ -360,7 +373,16 @@
                                                          (face_ret == TYPE_CLIB && impl_ret == TYPE_STRUCT))) {
                                                         type_match = 1;
                                                     }
-                                                    if (!type_match) {
+                                                    // ★ v3.2.8：语言允许 **int → float 的隐式加宽**
+                                                    //   （实测 `func f(int a): float { return a }` ✓ /
+                                                    //   `float x = intVar` ✓），而**收窄**（float → int）
+                                                    //   是报错的（要求 `_int()`）⇒ 只放行"期望 float、
+                                                    //   实际 int"这一个方向（实测误报：
+                                                    //   examples/switch/test_switch_is_face.leno）。
+                                                    if (!type_match && face_ret == TYPE_FLOAT && impl_ret == TYPE_INT) {
+                                                        type_match = 1;
+                                                    }
+                                                    if (!impl_ret_unknown && !type_match) {
                                                         char msg[256];
                                                         snprintf(msg, sizeof(msg), "struct '%s' 的方法 '%s' 返回类型与 face '%s' 不匹配: 期望 %s, 实际 %s",
                                                                  ast->u.struct_def.name, mname, face_name,
@@ -427,13 +449,35 @@
                                         }
                                     }
                                     TypeKind impl_ret2 = ast->u.struct_def.methods[k]->u.func.return_type->kind;
+                                    // ★ v3.2.8：impl 方法**没标返回类型**时不能拿 `var` 直接比 ——
+                                    //   实测误报（examples/switch/test_switch_{simple2,face2,is_face}.leno
+                                    //   三个都撞上）：`func area() { return width * height }` 配 face 的
+                                    //   `: int` 报「期望 int, 实际 var」。
+                                    //   口径与实例二十五/二十七一致：**没标注就推函数体**
+                                    //   （`infer_return_type_from_body`，唯一实现），推不出才跳过（宁漏不误报）。
+                                    int impl_ret2_unknown = 0;
+                                    if (impl_ret2 == TYPE_INFER) {
+                                        TypeInfo* body_ret = infer_return_type_from_body(
+                                            s, ast->u.struct_def.methods[k]->u.func.body);
+                                        if (body_ret && body_ret->kind != TYPE_ANY) {
+                                            impl_ret2 = body_ret->kind;
+                                        } else {
+                                            impl_ret2_unknown = 1;
+                                        }
+                                        if (body_ret) type_free(body_ret);
+                                    }
                                     int type_match2 = (expected_kind == impl_ret2);
                                     if (!type_match2 &&
                                         ((expected_kind == TYPE_STRUCT && impl_ret2 == TYPE_CLIB) ||
                                          (expected_kind == TYPE_CLIB && impl_ret2 == TYPE_STRUCT))) {
                                         type_match2 = 1;
                                     }
-                                    if (expected_kind != TYPE_ANY && !type_match2) {
+                                    // ★ v3.2.8：同跨模块那条 —— 只放行 int → float 的**加宽**方向
+                                    //   （收窄 float → int 仍要报，语言要求显式 `_int()`）
+                                    if (!type_match2 && expected_kind == TYPE_FLOAT && impl_ret2 == TYPE_INT) {
+                                        type_match2 = 1;
+                                    }
+                                    if (!impl_ret2_unknown && expected_kind != TYPE_ANY && !type_match2) {
                                         char msg[256];
                                         snprintf(msg, sizeof(msg), "struct '%s' 的方法 '%s' 返回类型与 face '%s' 不匹配: 期望 %s, 实际 %s",
                                                  ast->u.struct_def.name, mname, face_name,

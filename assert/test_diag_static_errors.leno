@@ -792,5 +792,66 @@ main() {
     ce.expect_error(fg1, "泛型 face 上真类型不匹配仍要报（且期望类型是代入后的 int）",
         "compareTo 第 1 个参数类型不匹配: 期望 int, 实际 string", 14)
 
+    // ---- face impl 的**返回类型**：没标注时按函数体推（2026-09-28；实例四十二）----
+    //   实测误报（examples/switch 三个用例）：`face Shape { func area(): int }` +
+    //   `struct Rect impl Shape { func area() { return w * h } }` ⇒ 报「期望 int, 实际 var」✗
+    //   —— 检查拿 `TYPE_INFER`（var）直接比，从没试过推函数体。现在按"没标注就推函数体"处理。
+    var fr1 = dirs.join(work, "face_ret_infer_ok.leno")
+    files.write(fr1, @"face Shape {
+    func area(): int
+}
+
+struct Rect impl Shape {
+    int w = 3
+    int h = 4
+    func area() { return w * h }
+}
+
+main() {
+    Shape s = new Rect()
+    print(_str(s.area()))
+}
+")
+    ce.expect_ok(fr1, "impl 方法没标返回类型时按函数体推（不误报）", "12")
+
+    // 加宽方向：face 要 float、impl 体算出 int ⇒ **允许**（语言允许 int → float 隐式加宽，
+    //   实测 `func f(int a): float { return a }` ✓；而收窄 float → int 是报错的）
+    var fr2 = dirs.join(work, "face_ret_widen_ok.leno")
+    files.write(fr2, @"face Shape {
+    func area(): float
+}
+
+struct Rect impl Shape {
+    int w = 3
+    int h = 4
+    func area() { return w * h }
+}
+
+main() {
+    Shape s = new Rect()
+    print(_str(s.area()))
+}
+")
+    ce.expect_ok(fr2, "face 要 float 而 impl 体算出 int ⇒ 按加宽放行", "12")
+
+    // 反向对照（**关键**）：impl 体算出的类型**真不匹配**时仍要报 —— 证明不是把检查关掉了。
+    //   报文行号是 **struct 定义**那行（error_add_at 用的是 ast->line）。
+    var fr3 = dirs.join(work, "face_ret_mismatch.leno")
+    files.write(fr3, @"face Shape {
+    func area(): int
+}
+
+struct Rect impl Shape {
+    int w = 3
+    func area() { return ""oops"" }
+}
+
+main() {
+    print(""x"")
+}
+")
+    ce.expect_error(fr3, "impl 体返回 string 而 face 要 int ⇒ 仍要报（反向对照）",
+        "返回类型与 face 'Shape' 不匹配", 5)
+
     print("=== test_diag_static_errors ALL passed ===")
 }

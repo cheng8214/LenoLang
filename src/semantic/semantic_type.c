@@ -88,7 +88,9 @@ static void fix_struct_to_face(TypeInfo* type) {
 // 从函数体推断返回类型
 // ============================================================================
 
-static TypeInfo* infer_return_type_from_body(Semantic* s, Ast* body) {
+// ⚠ v3.2.8 起**非 static**：`visit_type_def.inc`（编进 semantic_visit_ast.c，另一个 TU）也要用它
+//   —— 判"impl 方法没标返回类型"时的实际返回类型（见该文件里 face 兼容性检查的注释）。
+TypeInfo* infer_return_type_from_body(Semantic* s, Ast* body) {
     if (!body) return NULL;
     
     TypeInfo* inferred_type = NULL;

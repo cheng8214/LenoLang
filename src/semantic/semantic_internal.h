@@ -111,6 +111,10 @@ int semantic_check_undefined_subtypes(Semantic* s, TypeInfo* type, int line, int
 // 泛型形参替换：与 type_substitute 相同语义，但额外识别"TYPE_STRUCT 占位形参"
 // （struct_name=形参名，如字段类型 Array[T] 里的 T）。返回新类型（调用方 free 旧值）。
 TypeInfo* semantic_substitute_generic_param(TypeInfo* type, const char* param_name, TypeInfo* concrete);
+// 从函数体推断返回类型（唯一实现，定义在 semantic_type.c）。语义：看 return 语句的实际类型；
+//   推不出（空体 / 全 any）返回 NULL 或 TYPE_ANY。返回**新类型**（调用方 type_free）。
+//   v3.2.8 起导出：face impl 的返回类型兼容性检查要用它处理"impl 方法没标返回类型"的情况。
+TypeInfo* infer_return_type_from_body(Semantic* s, Ast* body);
 int type_utils_is_array_element_mutator(const char* method_name);
 int type_utils_get_array_element_param_index(const char* method_name, int is_module_call);
 int type_utils_try_update_array_element_type(Symbol* arr_sym, TypeInfo* elem_type);

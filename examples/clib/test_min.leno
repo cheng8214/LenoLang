@@ -1,7 +1,8 @@
 import ffi
 
 clib msvcrt {
-    i32 strlen(string s)
+    // ⚠ 2026-09-28 修示例：同 test_basic.leno —— clib 形参要用 `str8`，不能用 `string`
+    i32 strlen(str8 s)
 }
 
 main() {
