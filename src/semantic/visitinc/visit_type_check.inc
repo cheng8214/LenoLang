@@ -25,7 +25,17 @@
             //     （string 与字符容器之间可能有转换通道 ⇒ 不敢断言 ✓）。
             //   ⚠ 标量→标量（如 `int as float`）是**转换**（OP_CAST_*）不是类型检查 ⇒ 不能拦 ✓
             {
-                TypeInfo* src_t = ast->u.type_check.expr ? infer_expr_type(s, ast->u.type_check.expr) : NULL;
+                // ⚠⚠ **必须排除"裸标识符"源**（实测踩到假阳性 ✗）：face 类型的**参数**标识符
+                //   被 `infer_expr_type` 兜底推成了数值标量 ✗ ⇒ 于是 `s as Circle`（face→struct 的
+                //   合法向下收窄 ✓）会被误判成"不可能收窄" ✗（探针实测：_tmp_face_cast_probe ✓）。
+                //   宁漏不误报：只信**非标识符**的源表达式（字面量 / 调用 / 算术 ✓）——
+                //   而本诊断的动机用例 `ti.now() as Array[int]` 正是**调用** ⇒ 仍然抓得住 ✓。
+                //   （代价：`int n = 5; n as Dict[...]` 这种"标识符源 + 显式标量声明"会漏掉 ✗，
+                //     但要抓它得先让符号类型可靠 ⇒ 等那步修好再放开 ✓）
+                TypeInfo* src_t = NULL;
+                if (ast->u.type_check.expr && ast->u.type_check.expr->kind != AST_VAR) {
+                    src_t = infer_expr_type(s, ast->u.type_check.expr);
+                }
                 TypeInfo* dst_t = ast->u.type_check.type;
                 if (src_t && dst_t) {
                     int src_num = (src_t->kind == TYPE_INT || src_t->kind == TYPE_FLOAT);
@@ -33,13 +43,13 @@
                                    dst_t->kind == TYPE_STRUCT || dst_t->kind == TYPE_CSTRUCT ||
                                    dst_t->kind == TYPE_FACE);
                     if (src_num && dst_obj) {
-                        // ⚠ 消息措辞经**实测**校正：`as` 到容器/struct **不会当场抛异常**，而是
-                        //   把原值**原样带过** ✗ ⇒ 失败推迟到"后面把它当容器用时"（索引/取字段/调方法）
-                        //   才暴露。所以不能说"运行期必定抛异常"（那是错的 ✗），要说"收窄结果不可用" ✓
-                        warning_add_at(WARN_IMPOSSIBLE_CAST, ast->line, ast->column,
-                            "这个 as 收窄不可能成功：左边是确定的数值标量（int/float），右边是容器/struct"
-                            " ⇒ as 会把原值原样带过、不会变质 ✗，后面当容器用时（索引/取字段/调方法）才失败"
-                            "（若外面套了 catch 就成了「功能静默失效」）");
+                        // ⚠ 2026-09-28 起由**警告升为错误**（用户要求 ✓）。
+                        //   措辞经**实测**校正（`as` 到容器不会当场炸，而是原样带过 ✗）✓
+                        error_add_at(ERR_SEMANTIC, ast->line, ast->column,
+                            "[不可能收窄] 左边是确定的数值标量（int/float），右边是容器/struct ⇒ "
+                            "这个 as 收窄不可能成功：as 会把原值原样带过 ✗，后面当容器用时"
+                            "（索引/取字段/调方法）才失败。若确实要动态收窄，请先经 any 中转"
+                            "（例如让值来自返回 any 的函数/参数 ✓）");
                     }
                 }
                 if (src_t) type_free(src_t);

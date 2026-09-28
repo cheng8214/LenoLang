@@ -1152,11 +1152,15 @@ const char* get_module_with_struct_hint(Semantic* s, const char* struct_name) {
 const char* get_type_conversion_hint(TypeKind expected, TypeKind actual) {
     // any 转具体类型
     if (actual == TYPE_ANY) {
+        // ★ 两种写法都点名，并说清**失败语义**（实测 2026-09-28 ✓）：
+        //   `_int(v)` 失败 ⇒ **抛异常**（"无法将字符串转换为整数"）；`v as int` 失败 ⇒ **得到 null**。
+        //   用途不同：前者适合"这里必须是数字，坏了就该报"；后者适合"拿不准就给 null 兜底" ✓
+        //   ⚠ 长度约束见上：这条要追加进定长缓冲 ⇒ 保持短 ✓
         switch (expected) {
-            case TYPE_INT: return "提示：使用 _int(value) 进行显式转换";
-            case TYPE_FLOAT: return "提示：使用 _float(value) 进行显式转换";
-            case TYPE_STRING: return "提示：使用 _str(value) 进行显式转换";
-            case TYPE_BOOL: return "提示：使用 _bool(value) 进行显式转换";
+            case TYPE_INT: return "提示：用 _int(value)（失败抛异常）或 x as int（失败给 null）";
+            case TYPE_FLOAT: return "提示：用 _float(value)（失败抛异常）或 x as float（失败给 null）";
+            case TYPE_STRING: return "提示：用 _str(value)（失败抛异常）或 x as string（失败给 null）";
+            case TYPE_BOOL: return "提示：用 _bool(value)（失败抛异常）或 x as bool（失败给 null）";
             // ⚠ 这条会被追加进调用方的 msg 缓冲（BUFFER_MEDIUM 级）⇒ 必须**短**：
             //   第一版写长了，实测被截断成"…（如" ✗（报文尾部丢字比没有提示更糟）。
             // ★ P1 的要点：**把用户引到语言既有的 `x as T` 安全转换**（`leno_ast.h` 原话：

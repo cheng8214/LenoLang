@@ -19,7 +19,9 @@ import strings
 import files
 
 const int COMPILE_TIMEOUT_MS = 90000
-const int RUN_TIMEOUT_MS = 120000
+// 自检超时：cleaner_master 的 --autotest 会**真扫一遍本机垃圾** ⇒ 垃圾多/机器忙时明显变慢
+// （实测一次扫到 5.9 GB，耗时拉长 ⇒ 120s 曾误判成"没有自退出钩子" ✗）⇒ 放宽到 300s ✓
+const int RUN_TIMEOUT_MS = 300000
 const int SUITE_TIMEOUT_MS = 900000
 
 var g_exe = ""

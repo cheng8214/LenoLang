@@ -34,6 +34,8 @@ struct Container {
                 int n = numData
                 assert_eq(n, 99)
             } catch e {
+                // 空 catch 已升为编译期错误 ✗ ⇒ 放一句真语句（此路径不该进入 ✓，进去就直接返回 ✓）
+                return
             }
         }
     }

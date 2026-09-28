@@ -366,8 +366,7 @@ void warning_print_all(void) {
             case WARN_FIELD_NO_INIT:   type_str = "字段未初始化"; break;
             case WARN_AMBIGUOUS_MODULE: type_str = "模块名歧义"; break;
             case WARN_NATIVE_TYPE_NAME_CLASH: type_str = "与native类型同名"; break;
-            case WARN_EMPTY_CATCH:     type_str = "空catch吞异常"; break;
-            case WARN_IMPOSSIBLE_CAST: type_str = "不可能收窄"; break;
+            // （原 WARN_EMPTY_CATCH / WARN_IMPOSSIBLE_CAST 已升为错误 ⇒ 类别名移入消息前缀 ✓）
             default: break;
         }
 

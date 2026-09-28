@@ -100,8 +100,9 @@ typedef enum {
     WARN_FIELD_NO_INIT,     // struct 标量字段未显式初始化（默认是 null 而不是 0，参与运算会报错）
     WARN_AMBIGUOUS_MODULE,  // 裸文件名 import 撞名：多个包目录都有同名 .leno 且内容不同（静默选错文件）
     WARN_NATIVE_TYPE_NAME_CLASH, // 脚本 struct 与已注册的 native 类型同名（字段解析会优先用脚本定义）
-    WARN_EMPTY_CATCH,      // 空 catch {}：异常被静默吞掉（含 as 收窄失败等运行期错误 ⇒ 功能"没反应"）
-    WARN_IMPOSSIBLE_CAST,  // 不可能成功的 as 收窄（数值标量 → 容器/struct ⇒ 运行期必抛异常）
+    // 注：原 `WARN_EMPTY_CATCH`（空 catch）与 `WARN_IMPOSSIBLE_CAST`（不可能收窄）已于
+    //     2026-09-28 **升为错误** ✗（改用 `error_add_at(ERR_SEMANTIC, ...)`，消息自带
+    //     `[类别名]` 前缀 ✓）⇒ 不再需要这两个枚举值 ✓
 } WarnType;
 
 // ============================================================================

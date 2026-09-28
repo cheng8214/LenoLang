@@ -63,7 +63,11 @@ assert_eq(as_shape != null, true)
 assert_eq(as_shape.area(), 3.14159 * 2.0 * 2.0)
 
 // 测试 6: as face 类型转换 - 不匹配时返回 null
-var not_shape = 42 as Shape
+// ⚠ `42 as Shape` 这种"**字面量**标量 → face/容器"现在会被**编译期报错**（`[不可能收窄]` ✗，
+//   2026-09-28 由警告升为错误 ✓）⇒ 改由 `any` 中转：运行期语义完全一样（不匹配 ⇒ null ✓），
+//   但不再触发编译期诊断 ✓（"先经 any 中转"正是该诊断给出的建议写法 ✓）
+func any_42(): any { return 42 }
+var not_shape = any_42() as Shape
 assert_eq(not_shape, null)
 
 // 测试 7: as 与 is 配合使用

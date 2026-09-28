@@ -34,10 +34,12 @@ main()
 
     // 测试4: finally 总是执行（即使无异常）
     var finally_always = false
+    // ⚠ 空 catch 已升为编译期错误 ✗ ⇒ catch 里放一句"真语句"：万一进来了就说明测试前提被破坏 ✓
+    //   （正常路径不会执行 ⇒ 与原意"// 不执行"一致 ✓）
     try {
         var y = 20
     } catch e {
-        // 不执行
+        print("[异常] 不该进入此 catch: " + _str(e.msg))
     } finally {
         finally_always = true
     }
