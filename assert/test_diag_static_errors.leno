@@ -742,5 +742,29 @@ main() {
 ")
     ce.expect_error(dd1, "dict 上拼错内置方法名仍要报错（并给出相似名提示）", "没有方法 'leng'", 3)
 
+    // ---- 泛型 face 的接收者类型实参要代入方法形参（2026-09-28；实例三十九）----
+    //   这是修误报的**反向对照**：`Comparable[int]` 上 `compareTo("x")` 仍要在编译期报，
+    //   且**期望类型要显示代入后的 `int`**（不是占位 `struct T`）——
+    //   证明这次不是"把检查关掉了"，而是"代入后再比对"。
+    var fg1 = dirs.join(work, "face_generic_mismatch.leno")
+    files.write(fg1, @"face Comparable[T] {
+    func compareTo(T other): int
+}
+
+struct IntVal impl Comparable[int] {
+    int val = 0
+    func compareTo(int other): int {
+        return 0
+    }
+}
+
+main() {
+    Comparable[int] a = new IntVal(val = 3)
+    print(_str(a.compareTo(""x"")))
+}
+")
+    ce.expect_error(fg1, "泛型 face 上真类型不匹配仍要报（且期望类型是代入后的 int）",
+        "compareTo 第 1 个参数类型不匹配: 期望 int, 实际 string", 14)
+
     print("=== test_diag_static_errors ALL passed ===")
 }

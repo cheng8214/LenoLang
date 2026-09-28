@@ -61,9 +61,11 @@ int semantic_check_method_args_from_placeholder(Semantic* s, const char* struct_
                                                 int line, int column);
 
 // face 方法的实参检查（唯一实现；调用点在 visit_module.inc 的 MODULE_CALL 分流处）。
-// 同文件用解析器 face AST 的 method_param_types 判逐参类型；跨模块只有 param_count ⇒ 只判个数。
+// 同文件用解析器 face AST 的 method_param_types 判逐参类型；跨模块读符号表的 param_types。
+// obj_type（可空，v3.2.8 加）：**接收者的静态类型** —— 泛型 face（`Comparable[int]`）要靠它的
+//   类型实参把方法形参里的占位符（`T` ⇒ 解析成 TYPE_STRUCT "T"）代入，否则误报"期望 struct T"。
 int semantic_check_face_method_args(Semantic* s, const char* face_name, const char* method_name,
-                                    AstList* args, int line, int column);
+                                    AstList* args, int line, int column, TypeInfo* obj_type);
 
 // ============================================================================
 // 前置声明 - 变量解析

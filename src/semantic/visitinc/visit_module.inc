@@ -1351,7 +1351,8 @@
                             //   逻辑（按 "Animal::feed" 找占位符 ⇒ 找不到 ⇒ **整块跳过**）⇒ 实参个数与
                             //   类型全不检查（同文件也静默）。这里分流给 face 的检查。
                             semantic_check_face_method_args(s, obj_type->struct_name, method_name,
-                                                            &ast->u.module_call.args, ast->line, ast->column);
+                                                            &ast->u.module_call.args, ast->line, ast->column,
+                                                            obj_type);   // ← 接收者类型（泛型 face 代入用）
                         }
                         // 自定义 struct 方法的参数类型检查
                         else if (obj_type && obj_type->kind == TYPE_STRUCT && obj_type->struct_name) {

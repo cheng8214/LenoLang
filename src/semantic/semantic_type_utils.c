@@ -425,8 +425,19 @@ int semantic_check_method_args_from_placeholder(Semantic* s, const char* struct_
 //   · 跨模块：`ModuleFaceMethodSymbol` 现在有 `param_types` / `param_struct_names`（⑰-2 补的，
 //     同一次 `.lenosymc` bump：v27 → v28）⇒ 类型也判得动；旧缓存里没有这段 ⇒ 只判个数。
 // 返回：1 = 找到该 face 并已判；0 = 没有该 face 的信息。
+// 该类型是不是 face 声明的某个类型形参的**占位**（如 `T` 被解析成 TYPE_STRUCT "T"）？
+//   v3.2.8：用于"代入不了就跳过"的判断 —— 与 struct 方法那支的 is_generic 特判同款
+//   （宁漏不误报：判不了就不要报"类型不匹配"）。
+static int face_param_placeholder_unresolved(TypeInfo* t, char** type_params, int type_param_count) {
+    if (!t || t->kind != TYPE_STRUCT || !t->struct_name || !type_params) return 0;
+    for (int i = 0; i < type_param_count; i++) {
+        if (type_params[i] && strcmp(type_params[i], t->struct_name) == 0) return 1;
+    }
+    return 0;
+}
+
 int semantic_check_face_method_args(Semantic* s, const char* face_name, const char* method_name,
-                                    AstList* args, int line, int column) {
+                                    AstList* args, int line, int column, TypeInfo* obj_type) {
     if (!s || !face_name || !method_name || !args) return 0;
     int arity = args->count;
 
@@ -451,11 +462,42 @@ int semantic_check_face_method_args(Semantic* s, const char* face_name, const ch
                 if (!pts || !pts[j]) return 1;
                 for (int ai = 0; ai < arity; ai++) {
                     TypeInfo* expected_type = pts[j][ai];
-                    if (!expected_type || expected_type->kind == TYPE_ANY ||
-                        expected_type->kind == TYPE_GENERIC_PARAM) continue;
+                    if (!expected_type || expected_type->kind == TYPE_ANY) continue;
+                    // ★ v3.2.8：泛型 face 的**类型实参**要先代入方法形参里的占位符。
+                    //   实测误报：`face Comparable[T] { func compareTo(T other): int }` +
+                    //   `Comparable[int] a = ...` ⇒ `a.compareTo(5)` 报
+                    //   「compareTo 第 1 个参数类型不匹配: 期望 struct T, 实际 int」——
+                    //   `T` 在 face AST 里被解析成 **TYPE_STRUCT 占位**（struct_name="T"），
+                    //   而这里原先**只跳过 TYPE_GENERIC_PARAM** ⇒ 占位被当成真类型比对。
+                    //   代入源 = **接收者的类型实参**（`Comparable[int]` 的 [int]），与 face 声明的
+                    //   形参**按位置**对应（`Comparable[T]` ⇒ generic_args[0] ↔ T）。
+                    TypeInfo* expected_owned = NULL;
+                    if (obj_type && obj_type->generic_count > 0 && obj_type->generic_args &&
+                        stmt->u.face_def.type_param_count > 0 && stmt->u.face_def.type_params) {
+                        expected_owned = type_copy(expected_type);
+                        int gp_n = stmt->u.face_def.type_param_count < obj_type->generic_count
+                                   ? stmt->u.face_def.type_param_count : obj_type->generic_count;
+                        for (int gi = 0; gi < gp_n; gi++) {
+                            if (!stmt->u.face_def.type_params[gi] || !obj_type->generic_args[gi]) continue;
+                            TypeInfo* sub = semantic_substitute_generic_param(expected_owned,
+                                stmt->u.face_def.type_params[gi], obj_type->generic_args[gi]);
+                            type_free(expected_owned);
+                            expected_owned = sub;
+                        }
+                        expected_type = expected_owned;
+                    }
+                    // 代入后仍是占位（TYPE_GENERIC_PARAM，或未代入的"形参名" TYPE_STRUCT 占位）
+                    // ⇒ 判不了，宁漏不误报
+                    if (expected_type->kind == TYPE_GENERIC_PARAM ||
+                        face_param_placeholder_unresolved(expected_type, stmt->u.face_def.type_params,
+                                                          stmt->u.face_def.type_param_count)) {
+                        if (expected_owned) type_free(expected_owned);
+                        continue;
+                    }
                     TypeInfo* arg_type = infer_expr_type(s, args->items[ai]);
                     if (!arg_type || arg_type->kind == TYPE_ANY) {
                         if (arg_type) type_free(arg_type);
+                        if (expected_owned) type_free(expected_owned);
                         continue;
                     }
                     // 聚合类型保守（与 struct 那支同规矩：kind 不同 / 名字缺 / 含模块限定名 ⇒ 不判）
@@ -468,6 +510,7 @@ int semantic_check_face_method_args(Semantic* s, const char* face_name, const ch
                          !expected_type->struct_name || !arg_type->struct_name ||
                          strchr(expected_type->struct_name, '.') || strchr(arg_type->struct_name, '.'))) {
                         type_free(arg_type);
+                        if (expected_owned) type_free(expected_owned);
                         continue;
                     }
                     if (!type_is_compatible(expected_type, arg_type)) {
@@ -480,6 +523,7 @@ int semantic_check_face_method_args(Semantic* s, const char* face_name, const ch
                         error_add_at(ERR_SEMANTIC, line, column, msg);
                     }
                     type_free(arg_type);
+                    if (expected_owned) type_free(expected_owned);
                 }
                 return 1;
             }

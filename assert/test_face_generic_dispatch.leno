@@ -1,0 +1,45 @@
+// test_face_generic_dispatch.leno —— 泛型 face 的接收者类型实参要代入方法形参（2026-09-28；实例三十九）
+//
+// 修的是什么：`face Comparable[T] { func compareTo(T other): int }` + `Comparable[int] a = ...`
+//   ⇒ `a.compareTo(5)` 此前报「compareTo 第 1 个参数类型不匹配: 期望 struct T, 实际 int」✗。
+//   根因：`T` 在 face AST 里被解析成 **TYPE_STRUCT 占位**（struct_name="T"），而 face 的实参检查
+//   原先是**只跳过 TYPE_GENERIC_PARAM** ⇒ 占位被当成真类型比对。
+//   ⇒ 现在按**接收者的类型实参**（`Comparable[int]` 的 [int]）代入（`semantic_check_face_method_args`
+//   新增 obj_type 参数），代入不了的残留占位一律跳过（宁漏不误报）。
+//
+// 反向对照（真错仍要报）钉在 `assert/test_diag_static_errors.leno` 的 face 段：
+//   `Comparable[int] a; a.compareTo("x")` 仍要在编译期报「期望 'int'，实际 'string'」。
+
+face Comparable[T] {
+    func compareTo(T other): int
+}
+
+struct IntVal impl Comparable[int] {
+    int val = 0
+
+    func compareTo(int other): int {
+        if self.val < other { return -1 }
+        if self.val > other { return 1 }
+        return 0
+    }
+}
+
+main() {
+    // 接收者是**泛型 face 类型**（这是此前误报的那条路）
+    Comparable[int] a = new IntVal(val = 3)
+    assert_eq(a.compareTo(5), -1)
+    assert_eq(a.compareTo(3), 0)
+    assert_eq(a.compareTo(1), 1)
+
+    // 正向对照：具体 struct 上的同名方法本来就好 ✓
+    var b = new IntVal(val = 9)
+    assert_eq(b.compareTo(5), 1)
+    assert_eq(b.compareTo(9), 0)
+
+    // 泛型 face 作为参数类型 + as 转型访问底层（与 examples 里那条同型）
+    Comparable[int] c = new IntVal(val = 7)
+    var cc = c as IntVal
+    assert_eq(cc.val, 7)
+
+    print("test_face_generic_dispatch passed")
+}
