@@ -1,0 +1,71 @@
+// 测试 Dict **非 get** 方法的返回类型推断（2026-09-28 修 LenoWeb 的回归锚）
+//
+// 背景：`d.m(...)` 会被改写成 `AST_CALL(AST_INDEX(d,"m"))`，走 semantic_type.c 的 AST_INDEX 分支。
+//   那里在取到编译期元信息表的类型**之后**，曾**无条件**调用 infer_dict_get_return()
+//   —— 该函数只认"接收者是 Dict 且实参 < 2 ⇒ 值类型 V"，**不看方法名** ✗
+//   ⇒ 把 len(应 int)、has(应 bool) 等方法的正确类型覆盖成 V ✗
+//   ⇒ `web_html.leno:26 return attrs.has(name)` 推成 string，LenoWeb 整包 35 个文件编译不过。
+//
+// 这份断言的作用：把「Dict 各方法的推断类型」逐条钉住 ——
+//   若将来再有人在规格/元信息路径上加无条件的"返回 V"覆盖，这里会**编译期**炸掉 ✓
+//
+// ⚠ 判别力说明：`int x = true` 在本语言是**允许**的（bool → int），
+//   所以「赋给 int 不报错」**不能**证明推断成了 any；下面用 `bool` 目标 + 声明返回类型
+//   来做**编译期**检查（编译不过即测试失败 ⇒ 由 run_tests 的编译阶段兜住）✓
+
+struct Attrs {
+    Dict[string, string] attrs = {}
+
+    // LenoWeb web_html.leno:26 的原型 —— 修前这里推成 string ⇒ 编译失败 ✗
+    func hasAttr(string name): bool {
+        return attrs.has(name)
+    }
+
+    // 字段上调用 len：修前推成 string（应 int）✗
+    func count(): int {
+        return attrs.len()
+    }
+}
+
+main() {
+    Dict[string, string] d = {"a": "1", "b": "2"}
+
+    // === 1) has ⇒ bool（修前是 V=string ✗）===
+    bool b1 = d.has("a")
+    assert_eq(b1, true)
+    bool b2 = d.has("zzz")
+    assert_eq(b2, false)
+
+    // === 2) len ⇒ int（修前是 V=string ✗）===
+    int n1 = d.len()
+    assert_eq(n1, 2)
+
+    // 值类型不同 ⇒ 推断也应各自正确（证明不是碰巧）
+    Dict[string, int] dn = {"a": 1}
+    bool b3 = dn.has("a")
+    assert_eq(b3, true)
+    int n2 = dn.len()
+    assert_eq(n2, 1)
+
+    // === 3) get 的行为**不变**（唯一判定点仍只放行 get ✓）===
+    string g1 = d.get("a")
+    assert_eq(g1, "1")
+    string g2 = d.get("nokey", "def")
+    assert_eq(g2, "def")
+    assert_eq(d.get("nokey"), null)   // 1 参形态缺键 ⇒ 运行期 null（静态仍是 V）
+
+    // === 4) keys / values（走 spec 路径，一直是正确的 ⇒ 防回归）===
+    Array[string] ks = d.keys()
+    assert_eq(ks.len(), 2)
+    Array[string] vs = d.values()
+    assert_eq(vs.len(), 2)
+
+    // === 5) struct **字段**上的调用（LenoWeb 的形态：接收者是字段而非局部变量）===
+    Attrs a = new Attrs()
+    a.attrs.set("k", "v")
+    assert_eq(a.hasAttr("k"), true)
+    assert_eq(a.hasAttr("nope"), false)
+    assert_eq(a.count(), 1)
+
+    print("test_dict_method_infer passed")
+}
