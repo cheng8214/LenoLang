@@ -16,37 +16,42 @@ main() {
     }
     
     // Class 用字典表示
+    // ⚠ 2026-09-28 修示例：原来把空数组放进 dict（`students: []`）再 `mathClass.students.add(...)` ——
+    //   未定型 dict 的**值类型是 any** ⇒ 在 any 上调用方法会被编译期拒绝（实例二十三的严格化）。
+    //   改法：容器用**显式定型**的局部变量（dict 只放名字这类不可变信息）。
     var mathClass = {
-        name: "数学一班",
-        students: []
+        name: "数学一班"
     }
-    
+    Array[Dict[string, any]] students = []
+
     // 添加学生（手动操作数组）
-    mathClass.students.add(s1)
-    mathClass.students.add(s2)
+    students.add(s1)
+    students.add(s2)
     
     // 计算平均分（需要外部函数或内联计算）
     print("班级: " + mathClass.name)
     
     // 计算平均年龄（手动遍历）
-    if (mathClass.students.len() == 0) {
+    if (students.len() == 0) {
         print("平均年龄: 0")
     } else {
         int total = 0
-        for mathClass.students to s {
+        for students to s {
             total = total + _int(s.age)    // 需要显式转换
         }
-        print("平均年龄: " + (total / mathClass.students.len()))
+        print("平均年龄: " + (total / students.len()))
     }
     
     // 计算张三的平均分（手动计算）
-    if (s1.scores.len() == 0) {
+    // ⚠ 同上：`s1.scores` 静态类型是 any（dict 的值类型）⇒ 先 `as Array` 取出来
+    Array scores1 = s1.scores as Array
+    if (scores1.len() == 0) {
         print("张三平均分: 0")
     } else {
         int total = 0
-        for s1.scores to score {
+        for scores1 to score {
             total = total + _int(score)    // 需要显式转换
         }
-        print("张三平均分: " + (total / s1.scores.len()))
+        print("张三平均分: " + (total / scores1.len()))
     }
 }

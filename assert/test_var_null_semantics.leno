@@ -69,6 +69,33 @@ main() {
     ce.expect_error(na, "确定为 null 的值不能参与算术运算",
         "不能参与算术运算", 3)
 
+    // ---- 负例 4（null **字面量**直接算）：与上面"变量确定为 null"是**两条不同的检查** ----
+    //   收编自 examples/验证/test_null_arith2.leno（已删）
+    var nl = dirs.join(work, "null_literal_arith.leno")
+    files.write(nl, @"main() {
+    int b = null + 1
+}
+")
+    ce.expect_error(nl, "null 字面量不能参与算术（另一条检查）",
+        "null 类型不能参与算术运算，请先检查变量是否为 null", 2)
+
+    // ---- 负例 5（**可空类型**也要先判空）：`int? a = null` 之后 `a + 1` ----
+    //   收编自 examples/验证/test_nullable_arith.leno 与 test_type_null.leno（已删）
+    var na2 = dirs.join(work, "nullable_arith.leno")
+    files.write(na2, @"main() {
+    int? a = null
+    int b = a + 1
+}
+")
+    ce.expect_error(na2, "可空类型的 null 值参与算术也要报错", "不能参与算术运算", 3)
+
+    // ---- 正向：**引用型容器**可以为 null（收编自 examples/验证/test_null_ref_type.leno，已删；
+    //   该文件同时还钉了"值类型 int 不能为 null" ✗，那条已在负例 2 覆盖）----
+    Dict d = null
+    Array arr = null
+    assert_eq(d, null)
+    assert_eq(arr, null)
+
     print("test_var_null_semantics passed")
 }
 

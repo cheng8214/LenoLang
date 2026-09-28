@@ -4,7 +4,9 @@
 import strings
 
 main() {
-    var students = []
+    // ⚠ 2026-09-28 修示例：`var students = []` 的静态类型是 any / 元素未定 ⇒ 后面
+    //   `students.len()` 与 `s.scores.len()` 会被编译期拒绝（实例二十三的严格化）⇒ 显式定型。
+    Array[Dict[string, any]] students = []
     
     // 创建学生
     for 0:10 to i {
@@ -27,7 +29,9 @@ main() {
         for s.scores to score {
             total = total + _int(score)   // 求和仍需转换
         }
-        var avg = total / s.scores.len()
+        // ⚠ 2026-09-28 修示例：`s.scores` 静态类型是 any（dict 的值类型）⇒ 先 `as Array` 取出来再调方法
+        Array scores = s.scores as Array
+        var avg = total / scores.len()
         print($"{s.name} 平均分: {avg}")
     }
     
