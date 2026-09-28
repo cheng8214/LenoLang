@@ -1,0 +1,8 @@
+// 【负例 fixture】模块本身含**类型错误**（`any` 参数直接当 `int` 返回）
+//   被收编的行为（收编自 examples/import/compiler_bug_repro/upstream_bad.leno，已删）：
+//   导入它的文件**只报这一条上游原始错误**（带**上游文件 + 行号**），不产生一堆 any 级联噪声。
+//   ⚠ 本文件**故意编译不过**（assert/ 下不以 test_ 开头 ⇒ 不会被 run_tests 当用例跑）。
+export func compute(any x): int
+{
+    return x
+}

@@ -1,0 +1,9 @@
+// 【负例 fixture】导入一个有**类型错误**的模块 —— 期望只报上游那一条
+//   （收编自 examples/import/compiler_bug_repro/bug2_cascade_errors.leno，已删；它的预期是
+//    "只报 upstream_bad 的原始错误" —— 实测现在确实如此 ✓）
+import "import_type_error_module.leno" as upstream
+
+main() {
+    var result = upstream.compute(42)
+    print(result)
+}

@@ -963,5 +963,24 @@ main() {
     ce.expect_error("assert/import_broken.leno", "导入有语法错误的模块要报错（报在 fixture 自己那行）",
         "期望 '{'", 8)
 
+    // ---- "错误信息质量"三个 bug-repro 的**收编**（2026-09-28；实例四十七）----
+    //   收编 `examples/import/compiler_bug_repro`（4 个；该目录已删）—— 那批是当年提的
+    //   三个报错质量问题，**现在都不再复现**了，把"应有的行为"钉成断言：
+    //   ① `bug3`：导入不存在的模块 ⇒ **第一个**错误就该是「找不到模块文件」（已在上面 im1 钉住 ✓）；
+    //   ② `bug1`：any 上访问字段 ⇒ 报**语义错误**并给收窄提示（不再标成 unknown_tool_error）；
+    //   ③ `bug2`：上游模块有类型错误 ⇒ **只报上游那一条**（带上游文件 + 行号），不级联。
+    var ba1 = dirs.join(work, "any_field_access.leno")
+    files.write(ba1, @"export func bad_access(any data) {
+    return data.field
+}
+")
+    ce.expect_error(ba1, "any 上直接访问字段要报语义错误（并给收窄提示）",
+        "不能在 any 类型 'data' 上直接访问字段 'field'", 2)
+
+    // ③ 用静态 fixture（assert/import_type_error{,_module}.leno）：上游那一条落在**上游文件**的第 7 行
+    ce.expect_error("assert/import_type_error.leno",
+        "导入有类型错误的模块：只报上游那一条（上游文件 + 行号）",
+        "返回类型不匹配：期望 int，实际 any", 7)
+
     print("=== test_diag_static_errors ALL passed ===")
 }
