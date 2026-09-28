@@ -1,0 +1,54 @@
+// test_thread_join_type.leno —— `threads.start` ⇒ Thread[T] / `join` 返回类型推导（2026-09-28）
+//
+// 修复前：join 注册成 any ⇒ 调用点必须 `if t.join() is Array[string] => x {}` 手工收窄 ✗。
+// 修复后：start 的语义特判返回 Thread[T]（T = 闭包/函数返回类型，存 element_type 槽），
+//   join 的实例规格 ARG0_ELEM 读接收者的 T ⇒ 直接得到真实类型。
+//
+// 判据（**编译期**类型，不是运行期行为 —— 运行期 join 从来就没错，错的是静态类型是 any）：
+//   ① 命名函数（声明返回 string）⇒ join 直接赋给 string 变量（修复前编译报错 ✗）
+//   ② 内联闭包（函数体 return 42）⇒ join 直接赋给 int 变量
+//   ③ 推不出（无标注闭包）⇒ 落回 any：var 收下（宁漏勿误报 ✓），显式收窄照旧可用
+//   ④ 裸 Thread 声明兼容：`Thread t = threads.start(...)` 照常（Thread[T] 按 kind 相等 ✓）
+import threads
+import strings
+
+func makeGreeting(string who): string {
+    return "hi " + who
+}
+
+func makeLen(string s): int {
+    return s.len()
+}
+
+main() {
+    // ① 命名函数 → join ⇒ string（修复前：`string r1 = t1.join()` 编译报错 ✗）
+    var t1 = threads.start(makeGreeting, "a")
+    string r1 = t1.join()
+    assert_eq(r1, "hi a", "命名函数 join ⇒ string")
+
+    // ② 内联闭包 → join ⇒ int（函数体推断）
+    var t2 = threads.start(func() { return 42 })
+    int r2 = t2.join()
+    assert_eq(r2, 42, "内联闭包 join ⇒ int")
+
+    // ②b 命名函数返回 int
+    var t2b = threads.start(makeLen, "hello")
+    int r2b = t2b.join()
+    assert_eq(r2b, 5, "命名函数返回 int ⇒ join int")
+
+    // ③ 推不出的形态（any 参数闭包）⇒ 回落 any：var 收下 + 显式收窄照旧（向后兼容 ✓）
+    var t3 = threads.start(func(any x) { return x }, 7)
+    var r3 = t3.join()
+    assert_true(r3 != null, "推不出 T ⇒ any（var 收下 ✓）")
+
+    // ④ 裸 Thread 声明照常兼容（Thread[T] 与 Thread 按 kind 相等 ✓）
+    Thread t4 = threads.start(makeGreeting, "b")
+    var r4 = t4.join()
+    assert_true(r4 != null, "裸 Thread 声明不受影响")
+
+    // ⑤ state() 返回 string（回归确认：本函数类型本来就对 ✓）
+    string st = t1.state()
+    assert_true(st == "done" or st == "running", "state() 仍是 string")
+
+    print("PASS join 类型推导")
+}

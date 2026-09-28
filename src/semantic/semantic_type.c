@@ -1991,6 +1991,38 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     if (arr_type) type_free(arr_type);
                 }
 
+                // ⓪-b `threads.start(fn, ...)` ⇒ **Thread[T]**（T = 闭包/函数的返回类型，2026-09-28）：
+                //   注册规格只能是裸 Thread（Kind 槽表达不了参数化）⇒ join 此前也只能注册成 any，
+                //   调用点全靠 `is Array[string] => x` 手工收窄 ✗。与 ⓪ 同一策略：查规格**之前**特判 ——
+                //   · 内联闭包（AST_FUNC_DEF）⇒ infer_return_type_from_body 推函数体（与 map 同款）；
+                //   · 命名函数（AST_VAR 等）⇒ 取其 TYPE_FUNCTION 的 return_type（声明即所得 ✓）。
+                //   推不出（any / 无标注）⇒ 落回裸 Thread（join 退回 any —— 宁漏勿误报 ✓）。
+                //   配套：join 的实例返回规格已注册为 ARG0_ELEM（读接收者 Thread[T] 的 T ✓）；
+                //   Thread[T] 的 T 存 element_type 槽（type_copy/渲染已支持，见 type.c ✓）。
+                if (strcmp(actual_module, "threads") == 0 && strcmp(method_name, "start") == 0 &&
+                    ast->u.module_call.args.count >= 1) {
+                    Ast* start_fn = ast->u.module_call.args.items[0];
+                    TypeInfo* start_ret = NULL;
+                    if (start_fn->kind == AST_FUNC_DEF) {
+                        start_ret = infer_return_type_from_body(s, start_fn->u.func.body);
+                    } else {
+                        TypeInfo* ft = infer_expr_type(s, start_fn);
+                        if (ft) {
+                            if (ft->kind == TYPE_FUNCTION && ft->return_type) {
+                                start_ret = type_copy(ft->return_type);
+                            }
+                            type_free(ft);
+                        }
+                    }
+                    if (start_ret && start_ret->kind != TYPE_ANY) {
+                        TypeInfo* th = type_new(TYPE_THREAD);
+                        th->element_type = start_ret;      // 所有权转移（type_free 会带上 ✓）
+                        ast->cached_type = type_copy(th);
+                        return th;
+                    }
+                    if (start_ret) type_free(start_ret);
+                }
+
                 // ① 优先用**完整返回类型规格**：它才能表达 `Array[DirEntry]` / `Dict[string,string]`
                 //    这类参数化、带名字的类型（Kind 槽表达不了，见 leno_types.h 的 NativeTypeSpec）。
                 //    ⚠ 规格里可能有**关系型标签**（`NTYPE_ARG0_ELEM` 等）—— 例如 `arrays.copy(xs)`

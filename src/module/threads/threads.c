@@ -177,6 +177,11 @@ void threads_init_instance_methods(void) {
     // Thread 实例方法
     thread_register_method_with_params("join", make_native(thread_method_join, 1, "join"), 0, -1, -1, TYPE_ANY, TYPE_UNKNOWN, no_params);
     thread_register_method_with_params("state", make_native(thread_method_state, 1, "state"), 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, no_params);
+    // join 返回规格 = **接收者的 T**（ARG0_ELEM）：`threads.start` 的语义特判返回 Thread[T]
+    //   （T = 闭包/函数的返回类型，见 semantic_type.c 的 ⓪-b）⇒ `t.join()` 直接得到 T，
+    //   调用点不再需要 `is Array[string] => x` 手工收窄 ✓（推不出 T 时 start 回落裸 Thread、
+    //   这条规格解析不出元素 ⇒ join 退回 any —— 宁漏勿误报，与 map 同口径 ✓）
+    native_register_instance_method_return_spec("Thread", "join", &NATIVE_T_ARG0_ELEM);
 
     // Channel 实例方法
     channel_register_method_with_params("send", make_native(channel_method_send, 2, "send"), 1, -1, -1, TYPE_ANY, TYPE_UNKNOWN, any_params);

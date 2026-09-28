@@ -487,15 +487,20 @@ struct CacheCleaner {
         progressBar.set_value(95.0)
 
         // join 取回结果求和（线程已 done ⇒ join 立即返回 ✓）
-        // ⚠ join 的返回规格是 any ⇒ 必须显式收窄（赋值给 Array[string] 会报类型错 ✗）
+        // 2026-09-28 起 join 有真实返回类型（Thread[T]，T = worker 的返回类型）⇒ 直接赋值 ✓
+        //   （修复前是 any，必须 `if t.join() is Array[string] => x {}` 手工收窄 ✗）
         int cleaned = 0
         int failed = 0
         int freedSize = 0
+        Array[string] r1 = t1.join()
+        Array[string] r2 = t2.join()
+        Array[string] r3 = t3.join()
+        Array[string] r4 = t4.join()
         Array[Array[string]] rs = []
-        if t1.join() is Array[string] => x { rs.add(x) }
-        if t2.join() is Array[string] => x { rs.add(x) }
-        if t3.join() is Array[string] => x { rs.add(x) }
-        if t4.join() is Array[string] => x { rs.add(x) }
+        rs.add(r1)
+        rs.add(r2)
+        rs.add(r3)
+        rs.add(r4)
         for rs to r {
             cleaned = cleaned + _int(r[0])
             failed = failed + _int(r[1])

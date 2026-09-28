@@ -245,6 +245,11 @@ TypeInfo* type_copy(TypeInfo* type) {
         case TYPE_PTR_GENERIC:
             copy->element_type = type_copy(type->element_type);
             break;
+        case TYPE_THREAD:
+            // Thread[T]（T = join 的返回类型，2026-09-28）：T 存 element_type 槽 ⇒
+            // 复制/释放/渲染都要带上（type_free 是全槽释放 ✓ 无需改）
+            copy->element_type = type_copy(type->element_type);
+            break;
         case TYPE_DICT:
             copy->key_type = type_copy(type->key_type);
             copy->value_type = type_copy(type->value_type);
@@ -382,6 +387,28 @@ static void build_generic_type_string(TypeInfo* type, char* buf, size_t buf_size
             if (*offset + prefix_len < buf_size - 1) {
                 memcpy(buf + *offset, prefix, prefix_len);
                 *offset += prefix_len;
+            }
+            if (type->element_type) {
+                if (*offset + 1 < buf_size) {
+                    buf[*offset] = '[';
+                    (*offset)++;
+                }
+                build_generic_type_string(type->element_type, buf, buf_size, offset);
+                if (*offset + 1 < buf_size) {
+                    buf[*offset] = ']';
+                    (*offset)++;
+                    buf[*offset] = '\0';
+                }
+            }
+            break;
+        }
+        case TYPE_THREAD: {
+            // Thread[T]（T = join 的返回类型；无 T = 裸 Thread —— 与 Array/Ptr 同口径）
+            const char* tprefix = "Thread";
+            size_t tprefix_len = strlen(tprefix);
+            if (*offset + tprefix_len < buf_size - 1) {
+                memcpy(buf + *offset, tprefix, tprefix_len);
+                *offset += tprefix_len;
             }
             if (type->element_type) {
                 if (*offset + 1 < buf_size) {
