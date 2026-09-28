@@ -1,0 +1,10 @@
+// 【正向对照 fixture】**非 const** 的导出数组/字典照常可以改元素
+//   —— 证明"const 元素不可改"那条检查**没有过宽**（收编这组用例时补的对照）。
+//   本文件能正常编译运行（由 test_diag_static_errors.leno 以 cwd 相对路径 expect_ok）。
+import "const_elem_mod.leno" as cm
+
+main() {
+    cm.MARR[0] = 99
+    cm.MDICT["a"] = 42
+    print(_str(cm.MARR[0]) + "," + _str(cm.MDICT["a"]))
+}

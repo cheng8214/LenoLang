@@ -1,0 +1,8 @@
+// 【负例 fixture】const 字典的元素不能改（跨模块形态）
+//   故意编译不过；由 test_diag_static_errors.leno 以 cwd 相对路径断言。
+//   收编自 examples/测试/export array or dict/test_dict_const.leno 与 test_dict_const2.leno（已删）。
+import "const_elem_mod.leno" as cm
+
+main() {
+    cm.CDICT["a"] = 99
+}

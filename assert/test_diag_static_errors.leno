@@ -911,5 +911,41 @@ main() {
 ")
     ce.expect_ok(s2, "数字下标 + 带括号方法调用不受影响", ".....abc")
 
+    // ---- const 的**元素**不可改（2026-09-28；实例四十三）----
+    //   收编 `examples/测试/export array or dict` 下 4 个"只演示会报错"的脚本
+    //   （test_const_mutate / test_const_syntax / test_dict_const / test_dict_const2 —— 都跑不通，
+    //   因为它们演示的正是**编译器拒绝**的写法）。这条检查自栈式 VM 基线（c07a9f6）就在，
+    //   语义是"const **深不可变**"（教程：const 是**不可变**常量），跨模块形态另有专门检查。
+    // ⚠ 这三条用的是**静态 fixture**（assert/const_elem_*.leno）而不是动态写文件：
+    //   被收编的形态是"**跨模块**访问 const 容器的元素"，必须有模块可 import；而动态脚本写在
+    //   `_tmpdir()` 里，相对 import 解析不到 assert/ 下的 fixture（实测：找不到模块文件 ✗）。
+    //   静态 fixture 的定位以 **cwd** 为基准（helpers/compiler.leno 顶部写明了这条规矩：
+    //   run_tests.leno 从仓库根启动）⇒ 传 "assert/xxx.leno" 即可。
+    ce.expect_error("assert/const_elem_neg_array.leno", "const 数组的元素不能改（跨模块形态）",
+        "不能对 const 变量 'cm.CARR' 的元素重新赋值", 9)
+
+    ce.expect_error("assert/const_elem_neg_dict.leno", "const 字典的元素不能改（跨模块形态）",
+        "不能对 const 变量 'cm.CDICT' 的元素重新赋值", 7)
+
+    // **正向对照（关键）**：非 const 的导出容器照常可改 —— 证明那条检查没有过宽
+    ce.expect_ok("assert/const_elem_ok_nonconst.leno",
+        "非 const 的导出数组/字典照常可改元素（不误伤）", "99,42")
+
+    // ---- 模块级导出变量的**类型不匹配**（7 条；2026-09-28；实例四十三）----
+    //   收编 `examples/测试/export array or dict/mod_errors.leno`（已删）—— 那示例自己就写着
+    //   "应该报错"。fixture 里 7 条一次编译能报全 ⇒ 这里逐条钉"变量名 + 落点行"。
+    //   ⚠ 落点行随 fixture 顶部注释平移（现为 10/13/16/19/22/25/28）。
+    var tb = "assert/type_mismatch_battery.leno"
+    ce.expect_error(tb, "模块级 int ← string 要报错", "变量 'badInt' 声明类型与初始化值类型不匹配", 10)
+    ce.expect_error(tb, "模块级 float ← string 要报错", "变量 'badFloat' 声明类型与初始化值类型不匹配", 13)
+    ce.expect_error(tb, "模块级 string ← int 要报错", "变量 'badStr' 声明类型与初始化值类型不匹配", 16)
+    ce.expect_error(tb, "模块级 bool ← int 要报错", "变量 'badBool' 声明类型与初始化值类型不匹配", 19)
+    ce.expect_error(tb, "模块级 int ← float（收窄）要报错",
+        "变量 'badIntFromFloat' 声明类型与初始化值类型不匹配", 22)
+    ce.expect_error(tb, "模块级 Array[int] 里放 string 要报错",
+        "变量 'badArr' 声明类型与初始化值类型不匹配", 25)
+    ce.expect_error(tb, "模块级 Dict[string,int] 里放 string 要报错",
+        "变量 'badDict' 声明类型与初始化值类型不匹配", 28)
+
     print("=== test_diag_static_errors ALL passed ===")
 }

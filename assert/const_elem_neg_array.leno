@@ -1,0 +1,10 @@
+// 【负例 fixture】const 数组的元素不能改（跨模块形态）
+//   —— 本文件**故意编译不过**（assert/ 下不以 test_ 开头的文件不会被 run_tests 当用例跑，
+//      见 helpers/compiler.leno 顶部的说明）；由 test_diag_static_errors.leno 用
+//      `ce.expect_error("assert/const_elem_neg_array.leno", ...)` 以 **cwd 相对路径**断言。
+//   收编自 examples/测试/export array or dict/test_const_mutate.leno（该示例已删）。
+import "const_elem_mod.leno" as cm
+
+main() {
+    cm.CARR[0] = 99
+}

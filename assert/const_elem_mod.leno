@@ -1,0 +1,13 @@
+// const_elem_mod.leno —— 「const 的**元素**不可改」断言的 fixture（assert/test_diag_static_errors.leno 用）
+//
+// 为什么需要它：examples/测试/export array or dict 下曾有 4 个**只演示"改 const 元素会报错"**的脚本
+//   （test_const_mutate / test_const_syntax / test_dict_const / test_dict_const2，都跑不通）——
+//   把它们的结论收编成 assert 侧断言后删掉，同时补一条**正向对照**：
+//   **非 const** 的导出数组/字典照常可以改元素（证明那条检查没有过宽）。
+
+export const Array[int] CARR = [1, 2, 3]
+export const Dict[string, int] CDICT = {"a": 1, "b": 2}
+
+// 正向对照：非 const（可变）的导出容器
+export Array[int] MARR = [1, 2, 3]
+export Dict[string, int] MDICT = {"a": 1, "b": 2}

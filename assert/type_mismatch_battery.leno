@@ -1,0 +1,28 @@
+// 【负例 fixture】模块级导出变量的类型不匹配（7 条）—— **故意编译不过**
+//   收编自 `examples/测试/export array or dict/mod_errors.leno`（该示例已删；它自己就写着
+//   "=== 类型不匹配测试（应该报错）==="）。由 `test_diag_static_errors.leno` 以 **cwd 相对路径**
+//   逐条断言（每条钉"变量名 + 落点行"）—— 一次编译就能报全 7 条，所以断言可分开钉。
+//   ⚠ 加/删本文件顶部的注释会平移落点行 ⇒ 同步改那边的期望行号。
+
+// === 类型不匹配测试（应该报错）===
+
+// 1. int 赋 string
+export int badInt = "wrong"
+
+// 2. float 赋 string
+export float badFloat = "wrong"
+
+// 3. string 赋 int
+export string badStr = 42
+
+// 4. bool 赋 int
+export bool badBool = 42
+
+// 5. int 赋 float（应该报错：float→int 不允许降级）
+export int badIntFromFloat = 3.14
+
+// 6. Array[int] 赋 string 元素
+export Array[int] badArr = [1, "two", 3]
+
+// 7. Dict[string,int] 赋 string 值
+export Dict[string, int] badDict = {"a": "not_int"}

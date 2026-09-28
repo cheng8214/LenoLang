@@ -1,5 +1,0 @@
-import "const_mod.leno" as cm
-{
-   cm.arr[0] = 99
-   print(cm.arr[0])
-}

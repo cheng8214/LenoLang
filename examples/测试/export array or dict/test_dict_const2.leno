@@ -1,5 +1,0 @@
-import "const_syntax.leno" as cs
-{
-   cs.d["a"] = 99
-   print(cs.d["a"])
-}
