@@ -142,7 +142,7 @@ assert_eq(pick[int](10, 20, true), 10)
 assert_eq(pick[int](10, 20, false), 20)
 assert_eq(pick[string]("a", "b", false), "b")
 
-// 附：可空类型的正确姿势（实测通过）—— 非泛型的可空形参**可以**收 null
+// 附：可空类型的正确姿势 —— 非泛型与**泛型**都能收 null（后者 2026-09-28 才修好）
 func or_default(int? a, int dflt): int {
     if a != null { return a }
     return dflt
@@ -151,9 +151,16 @@ func or_default(int? a, int dflt): int {
 assert_eq(or_default(null, 42), 42)
 assert_eq(or_default(10, 42), 10)
 
-// ⚠ 已登记待修（本示例不钉）：**泛型**里的 `T?` 目前丢掉可空标记 ——
-//   `func coalesce[T](T? a, T b): T` 配 `coalesce[int](null, 42)` 仍报「期望 int，实际 null」，
-//   而非泛型的 `int?`/`string?` 形参收 null 是好的（上面那段）。
+// 泛型版的同一个语义：`T?` 的可空标记现在会**跟着代入**（此前丢标记 ⇒ 报「期望 int，实际 null」）
+func coalesce[T](T? a, T b): T {
+    if a != null { return a }
+    return b
+}
+
+assert_eq(coalesce[int](null, 42), 42)
+assert_eq(coalesce[int](10, 20), 10)
+assert_eq(coalesce[string](null, "default"), "default")
+assert_eq(coalesce[string]("x", "y"), "x")
 
 // --- 12. 泛型 struct 方法修改泛型字段 ---
 struct Counter[T] {

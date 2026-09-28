@@ -1269,7 +1269,12 @@ TypeInfo* type_substitute(TypeInfo* type, const char* param_name, TypeInfo* conc
     // 如果是泛型参数且名字匹配，返回具体类型的拷贝
     if (type->kind == TYPE_GENERIC_PARAM && type->type_param_name &&
         strcmp(type->type_param_name, param_name) == 0) {
-        return type_copy(concrete);
+        TypeInfo* replaced = type_copy(concrete);
+        // ★ 别丢**占位符自身**的可空标记：`T?` 代入 `int` 之后必须仍是"可空 int"，
+        //   否则 `func f[T](T? a)` 调 `f[int](null)` 会被判"期望 int，实际 null" ✗
+        //   （实测：非泛型的 `int? a` 收 null 是好的 ⇒ 差别只在这条代入路径）。
+        if (replaced && type->nullable) replaced->nullable = 1;
+        return replaced;
     }
     
     // 递归替换子类型

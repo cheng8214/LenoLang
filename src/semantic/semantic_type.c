@@ -379,11 +379,16 @@ TypeInfo* semantic_substitute_generic_param(TypeInfo* type, const char* param_na
     if (!type) return type;
     if (type->kind == TYPE_GENERIC_PARAM && type->type_param_name &&
         strcmp(type->type_param_name, param_name) == 0) {
-        return type_copy(concrete);
+        TypeInfo* replaced = type_copy(concrete);
+        // ★ 别丢**占位符自身**的可空标记（同 type_substitute 的说明）：`T?` 代入后仍是可空
+        if (replaced && type->nullable) replaced->nullable = 1;
+        return replaced;
     }
     if (type->kind == TYPE_STRUCT && type->struct_name &&
         strcmp(type->struct_name, param_name) == 0) {
-        return type_copy(concrete);
+        TypeInfo* replaced = type_copy(concrete);
+        if (replaced && type->nullable) replaced->nullable = 1;
+        return replaced;
     }
     TypeInfo* result = type_copy(type);
     if (result->element_type) {

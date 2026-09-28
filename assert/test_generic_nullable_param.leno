@@ -1,0 +1,44 @@
+// test_generic_nullable_param.leno —— 泛型 `T?` 的可空标记（2026-09-28；实例四十一）
+//
+// 修的是什么：**泛型里的 `T?` 丢可空标记** —— `func f[T](T? a)` 配 `f[int](null)` 此前报
+//   「第 1 个参数类型不匹配: 期望 int, 实际 null」✗，而同形状的**非泛型** `int? a` 收 null 是好的 ✓。
+//   根因：两个替换助手在把占位符换成具体类型时只 `type_copy(concrete)` ⇒ **丢掉占位符自身的
+//   `nullable`**（`type.c` 的 `type_substitute`、`semantic_type.c` 的
+//   `semantic_substitute_generic_param`）⇒ 两处都补上"带上可空标记"。
+//
+// 本文件同时钉**两条路**：
+//   ① 同文件泛型函数（走 `type_substitute`）；
+//   ② 跨模块泛型函数（走 `semantic_substitute_generic_param`，见 fixture 的 `orElse[T]`）。
+
+import "generic_pair_mod.leno" as gm
+
+// ① 同文件：泛型 + 可空形参
+func coalesce[T](T? a, T b): T {
+    if a != null { return a }
+    return b
+}
+
+// 对照：非泛型的可空形参（本来就好的那条）
+func or_default(int? a, int dflt): int {
+    if a != null { return a }
+    return dflt
+}
+
+main() {
+    // ① 同文件泛型：T = int / string，实参传 null
+    assert_eq(coalesce[int](null, 42), 42)
+    assert_eq(coalesce[int](10, 20), 10)
+    assert_eq(coalesce[string](null, "default"), "default")
+    assert_eq(coalesce[string]("x", "y"), "x")
+
+    // 对照：非泛型可空形参
+    assert_eq(or_default(null, 42), 42)
+    assert_eq(or_default(10, 42), 10)
+
+    // ② 跨模块泛型（fixture 里的 orElse[T](T? a, T b)）—— 走另一个替换助手
+    assert_eq(gm.orElse[int](null, 7), 7)
+    assert_eq(gm.orElse[int](3, 7), 3)
+    assert_eq(gm.orElse[string](null, "z"), "z")
+
+    print("test_generic_nullable_param passed")
+}

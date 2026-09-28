@@ -22,6 +22,13 @@ export func makePair[K, V](K k, V v): Pair[K, V] {
     return new Pair[K, V](key = k, val = v)
 }
 
+// 泛型 + **可空形参**（`T?`）+ 跨模块调用 —— 钉 `semantic_substitute_generic_param` 那条
+// 代入路径也不许丢可空标记（见 assert/test_generic_nullable_param.leno）。
+export func orElse[T](T? a, T b): T {
+    if a != null { return a }
+    return b
+}
+
 // 裸类型形参返回（调用点的类型实参必须能代入它）：`identity[int](42)` ⇒ int
 export func identity[T](T v): T {
     return v
