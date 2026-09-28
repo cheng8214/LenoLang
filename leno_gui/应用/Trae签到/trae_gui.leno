@@ -31,6 +31,7 @@ use SDL3.Button
 import "trae_core.leno" as core
 import "trae_history.leno" as hist
 import "trae_devices.leno" as dev
+import "trae_accounts.leno" as accs      // ⑨ 账号持久化（登出后仍留在列表，token 15 天有效 ✓）
 import "trae_tray.leno" as tray          // 托盘 + 自绘菜单 + 开机自启动（单独一层 ✓）
 import "trae_settings.leno" as cfg       // ⑥b 设置（settings.json + 设置对话框 ✓）
 import "trae_auto.leno" as auto          // ⑥b 定时自动签到调度器（对标参考件 ✓）
@@ -158,6 +159,18 @@ func select_account(string brand, string user) {
     refresh_device_text()
 }
 
+// 取某账号的登录凭据：**在线（storage.json）优先**；登出的账号回退到已保存的 token（⑨ ✓）
+// 返回 [brand, user, token, region, dcId]；都没有 ⇒ []
+// ⚠ 在线但用户不匹配（同品牌登出 A 又登录了 B）⇒ 不能拿 B 的凭据冒充 A ⇒ 回退到 A 的保存记录 ✓
+// dcId 给 ""：dev.ensure 已有记录就直接用，没有就发新号（saved 账号拿不到机器级 Aha 号 ✓）
+func load_for(string brand, string user): Array[string] {
+    var a = core.load_account(brand)
+    if a.len() > 0 and a[1] == user { return a }
+    var sv = accs.get(brand, user)
+    if sv[0] != "" { return [brand, user, sv[0], sv[1], ""] }
+    return []
+}
+
 // 查状态（网络）；顺带**背填**历史：接口说今天已签到但本地没记录 ⇒ 补一条（日历才准 ✓）
 func rpc_status() {
     if SEL_BRAND == "" {
@@ -170,7 +183,7 @@ func rpc_status() {
     STATUS_TEXT = "查询中…"
     BADGE_TEXT = "… 查询中"
     BADGE_KEY = "query"
-    var acc = core.load_account(SEL_BRAND)
+    var acc = load_for(SEL_BRAND, SEL_USER)
     if acc.len() == 0 or acc[2] == "" {
         BADGE_TEXT = "× 无登录态"
         BADGE_KEY = "err"
@@ -244,7 +257,7 @@ func rpc_claim() {
     STATUS_TEXT = "签到中…"
     BADGE_TEXT = "… 签到中"
     BADGE_KEY = "query"
-    var acc = core.load_account(SEL_BRAND)
+    var acc = load_for(SEL_BRAND, SEL_USER)
     if acc.len() == 0 or acc[2] == "" {
         BADGE_TEXT = "× 无登录态"
         BADGE_KEY = "err"
@@ -310,18 +323,74 @@ func _no_claim_r(): Array[string] {
     return ["false", "-7", "", "", "", "未选择账号 / 无登录态", "false", ""]
 }
 
-// 调度器要的是**结果** ⇒ 把 rpc_claim 的结果带出来（同一条路，不重复实现 ✓）
+// 调度器要的是**结果** ⇒ 把签到结果带出来（同一条路，不重复实现 ✓）
 // 离线（NO_NET）⇒ 空结果 ⇒ 调度器"跳过今天"（无头/离线绝不会自己联网 ✓）
+//
+// ⑨ 多账号（2026-09-28 修复"自动签到只签了第一个"✓；手动按钮同日改为全签 ✓）：
+//   **逐个**签列表里的全部账号 ——
+//   · 已签到的账号走 do_claim 的"提交前查状态" ⇒ 返回 already，**不重复提交** ✓；
+//   · 每个账号各自落一条 auto.log（谁成谁败事后可查 ✓）；
+//   · 汇总口径：全部成功 ⇒ 合成 ok（调度器 done 收工 ✓）；失败全是 9095 ⇒ 也算收工
+//     （9095 = 该设备今天已到额度，重试无意义 ✓）；其余 ⇒ 合成失败（msg 指明第一个失败的
+//     账号与原因）⇒ 调度器按原退避重试（重试时已签账号仍是 already，不会重复扣次数 ✓）。
+//   · 结束后**恢复进入前的选中账号**：徽标/积分是逐账号的 ⇒ 一律作废，状态栏给汇总 ✓
 func claim_attempt(): Array[string] {
     if NO_NET { return [] }
-    rpc_claim()
+    if BRANDS_AVAIL.len() <= 1 {
+        rpc_claim()
+        return LAST_CLAIM
+    }
+    string ob = SEL_BRAND
+    string ou = SEL_USER
+    int ok_cnt = 0
+    int fail_9095 = 0
+    string fail_who = ""
+    string fail_code = ""
+    string fail_msg = ""
+    for BRANDS_AVAIL to a {
+        select_account(a[0], a[1])             // 切到该账号（设备号/日历跟着切 ✓）
+        rpc_claim()
+        auto.autoLogResult(a[0] + "|" + a[1], LAST_CLAIM)
+        if LAST_CLAIM.len() == 0 { continue }
+        if core.cl_ok(LAST_CLAIM) {
+            ok_cnt = ok_cnt + 1
+        } else if core.cl_code(LAST_CLAIM) == "9095" {
+            fail_9095 = fail_9095 + 1
+        } else if fail_who == "" {
+            fail_who = a[0] + "/" + a[1]       // 只记**第一个**失败（msg 一行说得清 ✓）
+            fail_code = core.cl_code(LAST_CLAIM)
+            fail_msg = core.cl_msg(LAST_CLAIM)
+        }
+    }
+    int total = BRANDS_AVAIL.len()
+    string ok_flag = "false"
+    string agg_code = ""
+    string summary = ""
+    if fail_who == "" and fail_9095 == 0 {
+        ok_flag = "true"; agg_code = "0"
+        summary = "全部 " + (total as string) + " 个账号签到完成"
+    } else if fail_who == "" {
+        ok_flag = "true"; agg_code = "9095"
+        summary = (fail_9095 as string) + " 个账号 9095（设备今日额度已用，其余已签）"
+    } else {
+        int bad_cnt = total - ok_cnt - fail_9095
+        agg_code = fail_code
+        summary = "签到 " + (total as string) + " 个账号：成功 " + (ok_cnt as string)
+            + "，失败 " + (bad_cnt as string) + "（" + fail_who + "：" + fail_msg + "）"
+    }
+    LAST_CLAIM = [ok_flag, agg_code, "", "", "", summary, "false", ""]
+    select_account(ob, ou)                     // 回到进入前的账号（日历/设备号跟着回来 ✓）
+    invalidate_status()                        // 徽标/积分属于逐账号 ⇒ 作废（如实显示"未查询"✓）
+    STATUS_TEXT = summary                      // 状态栏给**汇总**（逐账号明细在 auto.log ✓）
     return LAST_CLAIM
 }
 
-// 手动签到（按钮 / 托盘的「立即签到」都走它）：成败都告诉调度器"今天手动过了" ⇒ 当天不再自动重试 ✓
+// 手动签到（按钮 / 托盘的「立即签到」）：2026-09-28 起**同样全签**（与自动同一条路 ✓）
+// 全部收工（成功 / 9095）⇒ 告诉调度器"手动过了，今天不再自动重试" ✓；
+// 有真实失败 ⇒ 按**自动**结果上报 ⇒ 照常退避重试（已签账号重试时是 already，不重复 ✓）
 func manual_claim() {
-    rpc_claim()
-    auto.autoNotifyResult(LAST_CLAIM, true)
+    claim_attempt()
+    auto.autoNotifyResult(LAST_CLAIM, core.cl_ok(LAST_CLAIM))
 }
 
 // 打开设置对话框（主窗口按钮 / 托盘「设置…」共用 ✓）；保存成功 ⇒ 调度器**立刻**按新参数走 ✓
@@ -405,12 +474,38 @@ main() {
     }
 
     // ---- 账号扫描（只读、不解密 token 用于展示）----
+    // ⑨ 账号持久化（2026-09-28）：在线账号**落盘**（token/region，幂等刷新 ✓）⇒
+    //   客户端登出后账号仍留在列表里（token 15 天有效，签到照常可用 ✓）。
+    //   列表 = 在线扫描 ∪ 已保存（去重：同 brand|user 在线优先，用新鲜凭据 ✓）。
     BRANDS_AVAIL = core.scan_accounts()
+    var tp0s = core.today_parts()
+    var today0 = core.date_str(tp0s[0], tp0s[1], tp0s[2])
+    int refreshed = 0                            // ⑨ 在线 token 与保存不一致的个数（启动状态栏提示用 ✓）
+    for BRANDS_AVAIL to a {
+        if a[2] != "true" { continue }              // 解不出 token 的不落盘（没有可保存的凭据 ✓）
+        var fa = core.load_account(a[0])
+        if fa.len() > 0 and fa[1] == a[1] {
+            if accs.get(a[0], a[1])[0] != fa[2] { refreshed = refreshed + 1 }
+            accs.save(a[0], a[1], fa[2], fa[3], today0)   // upsert：重登换了 token ⇒ 覆盖成最新 ✓
+        }
+    }
+    Array[Array[string]] merged = []
+    for BRANDS_AVAIL to a { merged.add(a) }
+    var saved_all = accs.all_accounts()
+    for saved_all to sa {
+        bool online = false
+        for merged to m {
+            if m[0] == sa[0] and m[1] == sa[1] { online = true }
+        }
+        if not online { merged.add([sa[0], sa[1], "saved"]) }   // "saved" = 非在线扫描来的（登出 ✓）
+    }
+    BRANDS_AVAIL = merged
     Array[string] items = []
     int i = 0
     while i < BRANDS_AVAIL.len() {
         var a = BRANDS_AVAIL[i]
-        items.add(a[0] + " / " + a[1])
+        var tag = if a[2] == "saved" then "（已保存）" else ""
+        items.add(a[0] + " / " + a[1] + tag)
         i = i + 1
     }
     int pick_idx = 0
@@ -456,10 +551,13 @@ main() {
     cardA.add(devLbl)
     var scoreLbl = SDL3.createLabel({x:44, y:122, text:SCORE_TEXT, font_size:14, text_color:#AAC8AAFF})
     cardA.add(scoreLbl)
-    cardA.add(SDL3.createLabel({x:400, y:124, text:"只读登录态 · 不打印 token", font_size:12, text_color:#787D87FF}))
+    // 「删除该账号」（2026-09-28）：移除**已保存**的凭据（登出账号的签到入口 ✓）；
+    //   在线账号删了下次启动会重新落盘（提示里说明 ✓）。历史与设备号都保留 ✓
+    var btnDelAcc = SDL3.createButton({x:470, y:116, w:110, h:26, text:"删除该账号", tip:"从已保存列表移除该账号的凭据（签到历史/设备号保留；在线账号下次启动会重新保存）"})
+    cardA.add(btnDelAcc)
 
     // ---- 动作按钮（5 个：④ 四个 + ⑥b「设置」✓ 右界 590 对齐卡片 A/B ✓）----
-    var btnClaim = win.addButton({x:24, y:184, w:130, h:38, text:"立即签到", type:"primary", tip:"调 claim 接口并做二次确认"})
+    var btnClaim = win.addButton({x:24, y:184, w:130, h:38, text:"立即签到", type:"primary", tip:"逐个签到列表里的全部账号（已签的不重复提交；结果汇总在状态栏，明细在 auto.log）"})
     var btnStatus = win.addButton({x:162, y:184, w:104, h:38, text:"刷新状态", tip:"只查 status，不签到"})
     var btnToday = win.addButton({x:274, y:184, w:92, h:38, text:"回到今天", tip:"日历跳回本月"})
     // 设备号按账号独立存储（`devices.json`）；被 9074 标记时换一个即可 ✓
@@ -484,7 +582,7 @@ main() {
     // ⑥b：定时自动签到的当前状态（"已开 00:05 · 下次重试 00:35 / 今日已完成 / 今日已放弃" ✓）
     var autoLbl = SDL3.createLabel({x:24, y:644, text:AUTO_TEXT, font_size:12, text_color:#8A93A8FF})
     win.add(autoLbl)
-    win.add(SDL3.createLabel({x:24, y:666, text:"左键点日历格子看当天记录 · Esc 退出 · 数据目录 %APPDATA%\\TraeSignLeno\\（history.json / devices.json / settings.json）", font_size:12, text_color:#787D87FF}))
+    win.add(SDL3.createLabel({x:24, y:666, text:"左键点日历格子看当天记录 · Esc 退出 · 数据目录 %APPDATA%\\TraeSignLeno\\（history / devices / accounts / settings.json）", font_size:12, text_color:#787D87FF}))
 
     // ==================== 日历绘制（局部坐标：画布左上角 = (0,0) ✓ 见画布示例） ====================
     cv.on_draw(func(Renderer r, float ox, float oy, float cw, float ch) {
@@ -612,7 +710,38 @@ main() {
         STATUS_TEXT = "已回到本月"
     })
     btnStatus.on_click(func():void { rpc_status() })
-    btnClaim.on_click(func():void { manual_claim() })          // 手动路径 ⇒ 顺带告知调度器"今天手动过了" ✓
+    btnClaim.on_click(func():void { manual_claim() })          // 手动也**全签**（⑨）；收工才停自动重试 ✓
+    btnDelAcc.on_click(func() {
+        if SEL_BRAND == "" { STATUS_TEXT = "未选择账号"; return }
+        string db_ = SEL_BRAND
+        string du_ = SEL_USER
+        bool had = accs.remove(db_, du_)
+        if not had {
+            STATUS_TEXT = "该账号没有已保存的凭据（在线账号无需删除，登出后才会进保存列表）"
+            return
+        }
+        // 重建内存列表 + 下拉框（saved 账号真正消失 ✓；在线账号只是清掉保存副本，下次启动重新落盘 ✓）
+        Array[Array[string]] keep = []
+        for BRANDS_AVAIL to a {
+            if a[0] == db_ and a[1] == du_ and a[2] == "saved" { continue }
+            keep.add(a)
+        }
+        BRANDS_AVAIL = keep
+        Array[string] its = []
+        for BRANDS_AVAIL to a { its.add(a[0] + " / " + a[1]) }
+        cbAcc.set_items(its)
+        if BRANDS_AVAIL.len() > 0 {
+            cbAcc.set_selected(0)
+            select_account(BRANDS_AVAIL[0][0], BRANDS_AVAIL[0][1])
+            STATUS_TEXT = "已删除保存的账号 " + db_ + "/" + du_ + "（签到历史/设备号保留 ✓；已切到 " + BRANDS_AVAIL[0][0] + "/" + BRANDS_AVAIL[0][1] + "）"
+        } else {
+            SEL_BRAND = ""; SEL_USER = ""
+            invalidate_status()
+            refresh_days()
+            refresh_device_text()
+            STATUS_TEXT = "已删除保存的账号 " + db_ + "/" + du_ + "（列表已空；在线登录后会重新保存 ✓）"
+        }
+    })
     btnRegen.on_click(func():void { rpc_regen_device() })
     btnSettings.on_click(func():void { open_settings(win) })
 
@@ -623,6 +752,9 @@ main() {
     } else {
         rpc_status()
         BOOT_QUERIED = true              // 启动这次查完 ⇒ 之后切号才有必要重查 ✓
+        if refreshed > 0 {
+            STATUS_TEXT = STATUS_TEXT + "（已刷新 " + (refreshed as string) + " 个账号的保存 token ✓）"
+        }
     }
 
     // ==================== 托盘 / 菜单 / 开机自启（trae_tray.leno ✓）====================
