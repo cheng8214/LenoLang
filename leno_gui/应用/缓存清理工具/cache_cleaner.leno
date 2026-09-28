@@ -5,15 +5,19 @@
 //   2. 在 Table 中展示所有找到的缓存项（类型、大小、路径）
 //   3. Table 内置复选框列，点击勾选/取消勾选
 //   4. 表头复选框可全选/全不选，工具栏也有"全选"/"全不选"按钮
-//   5. "清理选中" 按钮删除所有勾选的缓存项，并显示清理结果
-//   6. 清理后自动重新扫描刷新列表
+//   5. "清理选中" 按钮删除所有勾选的缓存项 —— **4 线程并行删除**（2026-09-28），
+//      进度条按完成线程数推进；清理后自动重新扫描刷新列表
+//   6. 「释放缓存」按钮（2026-09-28）：扫描 **Leno 单文件打包 exe 的资源释放缓存**
+//      （`%LOCALAPPDATA%\<exe名>\pack\<hash16>\`，见 src/vm_main.c 的释放机制说明）——
+//      只认"16 位 hex 目录名且带 .leno_pack_ok 哨兵/为空"或 "<hash>.tmp.<pid>" 崩溃残留，
+//      不误伤同名的非 Leno 目录 ✓
 //
 // 布局结构：
 //   Window
 //   ├── TitleBar（自绘标题栏）
 //   └── VBox root
-//       ├── HBox toolbar（浏览按钮 + 目录标签 + 扫描 + 全选/全不选 + 清理）
-//       ├── ProgressBar（扫描进度）
+//       ├── HBox toolbar（浏览按钮 + 目录标签 + 扫描 + 释放缓存 + 全选/全不选 + 清理）
+//       ├── ProgressBar（扫描/清理进度）
 //       ├── HBox statusBar（状态文字 + 统计文字）
 //       └── Table（复选框列 + 类型 + 大小 + 路径）
 //
@@ -23,6 +27,32 @@ import "sdl_filedialog" as fdlg
 use SDL3.(Event, Renderer, Window, TitleBar, Button, Table, Label, ProgressBar, HBox, VBox, Scancode)
 import dirs
 import strings
+import threads
+
+// ==================== 多线程清理（模块级 ⇒ threads.start 可直接引用 ✓） ====================
+// 并行删除线程数：IO 密集型 ⇒ 4 线程足够吃满磁盘队列，再多收益趋零
+const int CLEAN_THREADS = 4
+
+// 清理 worker：chunk 元素 = [path, sizeStr]；返回 [cleaned, failed, freed]（全字符串 ⇒
+// 跨线程回传免收窄 ✓）。try/catch 兜住权限/占用类错误 ⇒ 线程永不进入 error 态 ✓
+func clean_worker(Array[Array[string]] chunk): Array[string] {
+    int cleaned = 0
+    int failed = 0
+    int freed = 0
+    for chunk to it {
+        try {
+            if dirs.delete(it[0]) {
+                cleaned = cleaned + 1
+                freed = freed + _int(it[1])
+            } else {
+                failed = failed + 1
+            }
+        } catch e {
+            failed = failed + 1
+        }
+    }
+    return [_str(cleaned), _str(failed), _str(freed)]
+}
 
 // ==================== 缓存清理器结构体 ====================
 struct CacheCleaner {
@@ -35,6 +65,7 @@ struct CacheCleaner {
     Label       dirLbl
     Button      browseBtn
     Button      scanBtn
+    Button      packScanBtn
     Button      selectAllBtn
     Button      selectNoneBtn
     Button      cleanBtn
@@ -48,6 +79,7 @@ struct CacheCleaner {
     Array[Dict] cacheItems = []
     string currentDir = ""
     bool scanning = false
+    string scanMode = "dir"    // "dir" = 扫描用户选的目录；"pack" = 扫描单文件释放缓存（清理后按同源重扫 ✓）
 
     // ==================== 工具方法 ====================
 
@@ -144,6 +176,125 @@ struct CacheCleaner {
         }
     }
 
+    // ==================== 单文件释放缓存扫描（⑦，2026-09-28） ====================
+    // 释放目录 = `%LOCALAPPDATA%\<exeStem>\pack\<hash16>\`（跨平台缓存根 + 按 payload_hash
+    // 分目录，见 src/vm_main.c 开头的机制说明）。识别判据（**保守**，不误伤同名目录 ✓）：
+    //   · `pack\<16位hex>\` 且带 `.leno_pack_ok` 哨兵，或为空目录；
+    //   · `pack\<16位hex>.tmp.<pid>\` —— 崩溃残留（释放中断没来得及原子改名 ✓）。
+    // 清理单元 = 整个 hash 目录（与 VM 自己的惰性 GC 同口径 ✓）；正在运行的打包 exe
+    //   的目录在 Windows 下文件被锁 ⇒ 删除会失败并计入"失败"，不会损坏它 ✓
+
+    // 是否 16 位 hex（大小写都认；hash 名 ASCII ⇒ 字符下标 == 字节下标 ✓）
+    func isPackHashName(string s): bool {
+        if s.len() != 16 { return false }
+        int i = 0
+        while i < 16 {
+            string ch = s.byte_slice(i, i + 1)
+            bool ok = (ch >= "0" and ch <= "9") or (ch >= "a" and ch <= "f") or (ch >= "A" and ch <= "F")
+            if not ok { return false }
+            i = i + 1
+        }
+        return true
+    }
+
+    // 是否崩溃残留名：`<16hex>.tmp.<pid>`
+    func isTmpResidue(string s): bool {
+        if s.len() <= 21 { return false }                    // 最短 = 16 + 5 + 1 位 pid
+        int p = strings.find(s, ".tmp.")
+        if p != 16 { return false }
+        return isPackHashName(s.byte_slice(0, 16))
+    }
+
+    // 扫描全部 Leno 单文件释放缓存（追加进 cacheItems；不需要用户选目录 ✓）
+    func scanPackRelease() {
+        var la = _env_or("LOCALAPPDATA", "")
+        if la == "" { return }
+        var apps = null
+        try {
+            apps = dirs.listdir(la)
+        } catch e {
+            return
+        }
+        if apps == null { return }
+        for apps to name {
+            if not (name is string) { continue }
+            string appDir = dirs.join(la, _str(name))
+            if not dirs.is_dir(appDir) { continue }
+            var packDir = dirs.join(appDir, "pack")
+            if not dirs.is_dir(packDir) { continue }
+            var hashes = null
+            try {
+                hashes = dirs.listdir(packDir)
+            } catch e {
+                continue
+            }
+            if hashes == null { continue }
+            for hashes to h {
+                if not (h is string) { continue }
+                string hn = _str(h)
+                bool isItem = false
+                if isPackHashName(hn) {
+                    // 哨兵在（完整释放）或目录为空 ⇒ 都是 Leno 释放缓存 ✓
+                    if dirs.exists(dirs.join(appDir + "\\pack\\" + hn, ".leno_pack_ok")) { isItem = true }
+                    else {
+                        var inner = null
+                        try { inner = dirs.listdir(dirs.join(packDir, hn)) } catch e { inner = null }
+                        if inner != null and inner.len() == 0 { isItem = true }
+                    }
+                } else if isTmpResidue(hn) {
+                    isItem = true
+                }
+                if isItem {
+                    string fullp = dirs.join(packDir, hn)
+                    int sz = calcDirSize(fullp)
+                    cacheItems.add({path: fullp, type: "释放缓存", size: sz})
+                }
+            }
+        }
+    }
+
+    // 「释放缓存」扫描入口（不需要选目录 ✓）
+    func onPackScan() {
+        if scanning { return }
+        scanning = true
+        cacheItems = []
+        scanMode = "pack"
+        resultTable.set_rows([])
+        scanBtn.set_enabled(false)
+        packScanBtn.set_enabled(false)
+        cleanBtn.set_enabled(false)
+        selectAllBtn.set_enabled(false)
+        selectNoneBtn.set_enabled(false)
+        progressBar.set_value(50.0)
+        statusLbl.set_text("扫描释放缓存中...")
+        SDL3.markFrameRedraw()
+
+        try {
+            scanPackRelease()
+        } catch e {
+        }
+
+        scanning = false
+        packScanBtn.set_enabled(true)
+        scanBtn.set_enabled(true)
+        progressBar.set_value(100.0)
+        refreshTable()
+        updateCount()
+        if cacheItems.len() == 0 {
+            statusLbl.set_text("扫描完成: 未发现 Leno 释放缓存（%LOCALAPPDATA% 下没有匹配的 pack 目录 ✓）")
+        } else {
+            int totalSize = 0
+            for cacheItems.len() to i {
+                totalSize = totalSize + cacheItems[i].get("size", 0)
+            }
+            statusLbl.set_text("扫描完成: 发现 " + cacheItems.len() + " 个释放缓存目录 (" + strings.fmt_size(totalSize) + ")")
+            cleanBtn.set_enabled(true)
+            selectAllBtn.set_enabled(true)
+            selectNoneBtn.set_enabled(true)
+        }
+        SDL3.markFrameRedraw()
+    }
+
     // 刷新 Table 数据
     func refreshTable() {
         if cacheItems.len() == 0 {
@@ -209,9 +360,11 @@ struct CacheCleaner {
         }
 
         scanning = true
+        scanMode = "dir"
         cacheItems = []
         resultTable.set_rows([])
         scanBtn.set_enabled(false)
+        packScanBtn.set_enabled(false)
         cleanBtn.set_enabled(false)
         selectAllBtn.set_enabled(false)
         selectNoneBtn.set_enabled(false)
@@ -229,6 +382,7 @@ struct CacheCleaner {
         // 扫描完成：必须重新启用扫描按钮，否则扫描过一次后就永远无法再次扫描
         scanning = false
         scanBtn.set_enabled(true)
+        packScanBtn.set_enabled(true)
         progressBar.set_value(100.0)
         refreshTable()
         updateCount()
@@ -268,7 +422,10 @@ struct CacheCleaner {
         SDL3.markFrameRedraw()
     }
 
-    // 清理勾选的缓存项
+    // 清理勾选的缓存项 —— **4 线程并行删除**（2026-09-28）
+    //   勾选项按序轮转均分成 4 个 chunk ⇒ 每线程一个 chunk（IO 密集 ⇒ 并行吃满磁盘队列 ✓）；
+    //   主线程轮询 `state()` 推进进度条并 markFrameRedraw（界面不僵 ✓），全部 done 后 join
+    //   取回 [cleaned, failed, freed] 求和。worker 内 try/catch 兜底 ⇒ 线程不会进 error 态 ✓
     func onClean() {
         Array[int] checkedRows = resultTable.get_checked_rows()
         if checkedRows.len() == 0 {
@@ -277,27 +434,79 @@ struct CacheCleaner {
             return
         }
 
-        int cleaned = 0
-        int failed = 0
-        int freedSize = 0
-
+        // 收集勾选项 → [path, sizeStr]（跨线程传数组元素统一 string，回传免收窄 ✓）
+        Array[Array[string]] items = []
         for checkedRows to idx {
             if idx >= 0 and idx < cacheItems.len() {
                 Dict item = cacheItems[idx]
-                string p = item.get("path", "")
-                int sz = item.get("size", 0)
-                if dirs.delete(p) {
-                    cleaned = cleaned + 1
-                    freedSize = freedSize + sz
-                } else {
-                    failed = failed + 1
-                }
+                items.add([item.get("path", ""), _str(item.get("size", 0))])
             }
         }
 
-        // 重新扫描以刷新列表（已删除的项不再存在）
+        // 轮转分配到 CLEAN_THREADS 个 chunk（空 chunk 的线程立刻返回 [0,0,0] ✓）
+        Array[Array[string]] c1 = []
+        Array[Array[string]] c2 = []
+        Array[Array[string]] c3 = []
+        Array[Array[string]] c4 = []
+        int ci = 0
+        for items.len() to i {
+            if ci % 4 == 0 { c1.add(items[i]) }
+            else if ci % 4 == 1 { c2.add(items[i]) }
+            else if ci % 4 == 2 { c3.add(items[i]) }
+            else { c4.add(items[i]) }
+            ci = ci + 1
+        }
+
+        // 禁用按钮 + 起线程
+        scanning = true
+        cleanBtn.set_enabled(false)
+        scanBtn.set_enabled(false)
+        packScanBtn.set_enabled(false)
+        selectAllBtn.set_enabled(false)
+        selectNoneBtn.set_enabled(false)
+        statusLbl.set_text("清理中...（" + (CLEAN_THREADS as string) + " 线程并行）")
+        progressBar.set_value(10.0)
+        SDL3.markFrameRedraw()
+
+        var t1 = threads.start(clean_worker, c1)
+        var t2 = threads.start(clean_worker, c2)
+        var t3 = threads.start(clean_worker, c3)
+        var t4 = threads.start(clean_worker, c4)
+
+        // 轮询等待（80ms 一拍）：按完成线程数推进进度条 + 重绘 ⇒ 界面保持"活着" ✓
+        while t1.state() == "running" or t2.state() == "running" or t3.state() == "running" or t4.state() == "running" {
+            int done = 0
+            if t1.state() != "running" { done = done + 1 }
+            if t2.state() != "running" { done = done + 1 }
+            if t3.state() != "running" { done = done + 1 }
+            if t4.state() != "running" { done = done + 1 }
+            progressBar.set_value(10.0 + 80.0 * _float(done) / 4.0)
+            SDL3.markFrameRedraw()
+            sleep(80)
+        }
+        progressBar.set_value(95.0)
+
+        // join 取回结果求和（线程已 done ⇒ join 立即返回 ✓）
+        // ⚠ join 的返回规格是 any ⇒ 必须显式收窄（赋值给 Array[string] 会报类型错 ✗）
+        int cleaned = 0
+        int failed = 0
+        int freedSize = 0
+        Array[Array[string]] rs = []
+        if t1.join() is Array[string] => x { rs.add(x) }
+        if t2.join() is Array[string] => x { rs.add(x) }
+        if t3.join() is Array[string] => x { rs.add(x) }
+        if t4.join() is Array[string] => x { rs.add(x) }
+        for rs to r {
+            cleaned = cleaned + _int(r[0])
+            failed = failed + _int(r[1])
+            freedSize = freedSize + _int(r[2])
+        }
+
+        // 重新扫描以刷新列表（按**本次扫描来源**重扫：dir ⇒ 用户目录；pack ⇒ 释放缓存 ✓）
         cacheItems = []
-        if currentDir != "" and dirs.exists(currentDir) {
+        if scanMode == "pack" {
+            scanPackRelease()
+        } else if currentDir != "" and dirs.exists(currentDir) {
             scanDir(currentDir)
         }
         refreshTable()
@@ -313,13 +522,16 @@ struct CacheCleaner {
         }
         // 清理后扫描按钮恢复可用（目录仍存在时），避免停留在禁用状态
         scanBtn.set_enabled(currentDir != "" and dirs.exists(currentDir))
+        packScanBtn.set_enabled(true)
+        scanning = false
+        progressBar.set_value(100.0)
         updateCount()
 
-        string msg = "清理完成: 删除 " + cleaned + " 项"
+        string msg = "清理完成: 删除 " + (cleaned as string) + " 项"
         if failed > 0 {
-            msg = msg + "，失败 " + failed + " 项"
+            msg = msg + "，失败 " + (failed as string) + " 项（文件被占用/无权限）"
         }
-        msg = msg + "，释放 " + strings.fmt_size(freedSize)
+        msg = msg + "，释放 " + strings.fmt_size(freedSize) + "（" + (CLEAN_THREADS as string) + " 线程 ✓）"
         statusLbl.set_text(msg)
         SDL3.markFrameRedraw()
     }
@@ -346,6 +558,11 @@ struct CacheCleaner {
         toolbar.add(scanBtn, {grow: 0, shrink: 0, basis: 70, align: 3})
         scanBtn.set_enabled(false)
         scanBtn.on_click(func() { onScan() })
+
+        // 「释放缓存」：扫描 Leno 单文件打包 exe 的资源释放缓存（不需要选目录 ✓ 2026-09-28）
+        packScanBtn = SDL3.createButton({w: 96, h: 28, text: "释放缓存", font_size: 14})
+        toolbar.add(packScanBtn, {grow: 0, shrink: 0, basis: 96, align: 3})
+        packScanBtn.on_click(func() { onPackScan() })
 
         selectAllBtn = SDL3.createButton({w: 60, h: 28, text: "全选", font_size: 14})
         toolbar.add(selectAllBtn, {grow: 0, shrink: 0, basis: 60, align: 3})
