@@ -1,0 +1,7 @@
+// 【fixture 依赖模块】只导出一个 struct，供"带模块前缀的类型声明"负例使用
+//   （不从 examples 借模块：那条相对路径搬进 assert/ 就失效，见实例四十九的教训）
+export struct Helper {
+    func wrap(): int {
+        return 1
+    }
+}

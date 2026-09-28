@@ -1,0 +1,7 @@
+// 【负例 fixture】带模块前缀的**类型声明**不被支持，编译器要给"先 use 再直接写"的指引
+//   收编自 examples/func/func类型/bug_repro_alias_use.leno（已删）—— 那个 repro 的**首条错误**
+//   就是这个（它想演示的"场景 3"根本走不到）⇒ 把这条**明确指引**收编下来。
+//   ⚠ 本文件故意编译不过；落点由 test_diag_error_batteries.leno 钉。
+import "mod_prefixed_type_mod.leno" as m
+
+m.Helper h = new m.Helper()

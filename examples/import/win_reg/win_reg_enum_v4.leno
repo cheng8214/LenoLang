@@ -434,8 +434,9 @@ export func readExpandString(any hKey, string valueName):ReadExpandStringResult 
                     try {
                         Ptr expandedBuf = ffi.malloc(32767)  // Windows 最大路径长度
                         try {
-                            var expandedLen = ffi.call(kernel32, "ExpandEnvironmentStringsW",
-                                dataBuffer, expandedBuf, 32767)
+                            // ⚠ 2026-09-28 修示例：`ffi.call` 返回 any ⇒ 不能直接 `> 0` 比较 ⇒ 显式转 int
+                            var expandedLen = _int(ffi.call(kernel32, "ExpandEnvironmentStringsW",
+                                dataBuffer, expandedBuf, 32767))
                             if expandedLen > 0 {
                                 return new ReadExpandStringResult(value = ffi.utf16_to_utf8(expandedBuf), errorCode = 0)
                         }

@@ -170,7 +170,8 @@ main() {
         {"size": 10000, "name": "大规模"}
     ];
     for test_cases to  var test_case {
-        var size = test_case["size"];
+        // ⚠ 2026-09-28 修示例：dict 取出来的值是 any ⇒ 不能直接参与大小比较（`size <= 2000`）
+    var size = _int(test_case["size"]);
         var name = test_case["name"];
         print($"\n=== {name}测试 (数组大小: {size}) ===");
         // 生成测试数据

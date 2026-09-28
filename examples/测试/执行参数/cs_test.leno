@@ -473,7 +473,8 @@ func fib_memo_helper(int n, Dict memo) {
 }
 
 // 版本3：迭代实现（最快）
-func fib_iterative(any n) {
+// ⚠ 2026-09-28 修示例：`any n` 不能参与大小比较（`n <= 1`）⇒ 实参都是整数，改成 int
+func fib_iterative(int n) {
     if n <= 1 {
         return n
     }

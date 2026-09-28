@@ -136,5 +136,13 @@ main() {
     ce.expect_error(anyp, "any 形参赋给 int 变量要报错",
         "变量 'n' 声明类型与初始化值类型不匹配", 3)
 
-    print("test_diag_error_batteries passed（26 例）")
+    // ---- `use` 语法指引（2026-09-28；实例五十三）----
+    //   带**模块前缀的类型声明**（`m.Helper h = ...`）不被支持，编译器要给"先 use 再直接写类型名"
+    //   的指引。收编自 examples/func/func类型/bug_repro_alias_use.leno（已删）—— 那个 repro 想演示
+    //   的"场景 3"根本走不到，**首条错误**就是这条指引 ⇒ 把这句钉住。
+    ce.expect_error("assert/error_cases/mod_prefixed_type.leno",
+        "带模块前缀的类型声明要报错并给指引（先说 use、再直接写类型名）",
+        "不支持带模块前缀的类型声明 'm.Helper 变量名'", 7)
+
+    print("test_diag_error_batteries passed（27 例）")
 }
