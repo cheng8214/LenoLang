@@ -52,5 +52,25 @@ main() {
     ce.expect_error("assert/error_cases/multi_ret_count_mismatch.leno",
         "多返回值个数不匹配要报错", "多返回值数量不匹配：期望 2 个，实际 3 个", 8)
 
-    print("test_diag_error_batteries passed（13 例）")
+    // ---- 泛型系统的边界错误（`examples/泛型系统/边界与错误`，6 个）----
+    //   其中 `test_face_access_err`（face 变量访问底层字段）的文案**本文件外已有覆盖** ⇒ 不再重复钉，
+    //   只删文件；另 5 个各钉一条。搬运时把两个 fixture 的 `import "../模块/generic_module2.leno"`
+    //   换成**本地极简 fixture** `error_cases/generic_box_mod.leno`（跨目录相对路径搬不过去 ✓）。
+    ce.expect_error("assert/error_cases/generic_needs_type_param.leno",
+        "泛型 struct 实例化不带类型参数要报错（`new Box(...)`）",
+        "泛型 struct 'Box' 需要类型参数（如 Box[类型]）", 9)
+    ce.expect_error("assert/error_cases/generic_needs_type_param2.leno",
+        "泛型 struct 实例化不带类型参数要报错（另一处写法）",
+        "泛型 struct 'Box' 需要类型参数（如 Box[类型]）", 7)
+    ce.expect_error("assert/error_cases/generic_arg_type_mismatch.leno",
+        "泛型函数显式实参与形参类型不符要报错",
+        "strict 第 2 个参数类型不匹配: 期望 int, 实际 string", 9)
+    ce.expect_error("assert/error_cases/generic_method_arg_mismatch.leno",
+        "泛型 struct 方法实参类型不符要报错",
+        "set 第 1 个参数类型不匹配: 期望 int, 实际 string", 10)
+    ce.expect_error("assert/error_cases/use_not_found.leno",
+        "use 模块里不存在的符号要报错（并可能给相似名提示）",
+        "模块 'gm' 中没有类型或函数 'NotExist'", 5)
+
+    print("test_diag_error_batteries passed（18 例）")
 }

@@ -1,0 +1,11 @@
+// generic_box_mod.leno —— 极简模块：只导出泛型 struct Box[T]
+//   供两个负例用（`use gm.NotExist` 报"没有类型或函数"；`new Box(value=42)` 报"需要类型参数"）。
+//   为什么不继续 import examples 下那个泛型模块：相对路径一搬进 assert/ 就失效
+//   （实测 `import "../模块/generic_module2.leno"` 解析不到），而本地 fixture 不受 examples 变动影响。
+export struct Box[T] {
+    T value
+
+    func get(): T {
+        return self.value
+    }
+}
