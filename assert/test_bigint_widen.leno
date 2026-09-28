@@ -2,9 +2,13 @@
 // Each line is a call the whitelist ALLOWS (widening arg). If the runtime error
 // complains about the TYPE => latent bug (printed as BUG). Range/IO errors => noise.
 import dirs
+import ffi
+import files
+import jsons
 import maths
 import rands
 import regexs
+import sockets
 import strings
 import times
 
@@ -27,6 +31,11 @@ func probe_hit(string tag, string msg) {
 main() {
     var _BIG = -99999999999999999999   // negative: saturated value is still negative => range error, not a giant alloc
 
+    try { ffi.ptr_from_int(true) } catch e { probe_hit("ffi.ptr_from_int[TYPE_INT#0<true>]", e.msg) }
+    try { jsons.get_int(1, "a", _BIG) } catch e { probe_hit("jsons.get_int[TYPE_INT#2<_BIG>]", e.msg) }
+    try { jsons.get_int(1, "a", true) } catch e { probe_hit("jsons.get_int[TYPE_INT#2<true>]", e.msg) }
+    try { jsons.get_float(1, "a", _BIG) } catch e { probe_hit("jsons.get_float[TYPE_FLOAT#2<_BIG>]", e.msg) }
+    try { jsons.get_float(1, "a", true) } catch e { probe_hit("jsons.get_float[TYPE_FLOAT#2<true>]", e.msg) }
     try { maths.sqrt(_BIG) } catch e { probe_hit("maths.sqrt[TYPE_FLOAT#0<_BIG>]", e.msg) }
     try { maths.sqrt(true) } catch e { probe_hit("maths.sqrt[TYPE_FLOAT#0<true>]", e.msg) }
     try { maths.abs(_BIG) } catch e { probe_hit("maths.abs[TYPE_FLOAT#0<_BIG>]", e.msg) }
@@ -119,6 +128,14 @@ main() {
     try { rands.gauss(true, 1.5) } catch e { probe_hit("rands.gauss[TYPE_FLOAT#0<true>]", e.msg) }
     try { rands.gauss(1.5, _BIG) } catch e { probe_hit("rands.gauss[TYPE_FLOAT#1<_BIG>]", e.msg) }
     try { rands.gauss(1.5, true) } catch e { probe_hit("rands.gauss[TYPE_FLOAT#1<true>]", e.msg) }
+    try { sockets.htons(_BIG) } catch e { probe_hit("sockets.htons[TYPE_INT#0<_BIG>]", e.msg) }
+    try { sockets.htons(true) } catch e { probe_hit("sockets.htons[TYPE_INT#0<true>]", e.msg) }
+    try { sockets.htonl(_BIG) } catch e { probe_hit("sockets.htonl[TYPE_INT#0<_BIG>]", e.msg) }
+    try { sockets.htonl(true) } catch e { probe_hit("sockets.htonl[TYPE_INT#0<true>]", e.msg) }
+    try { sockets.ntohs(_BIG) } catch e { probe_hit("sockets.ntohs[TYPE_INT#0<_BIG>]", e.msg) }
+    try { sockets.ntohs(true) } catch e { probe_hit("sockets.ntohs[TYPE_INT#0<true>]", e.msg) }
+    try { sockets.ntohl(_BIG) } catch e { probe_hit("sockets.ntohl[TYPE_INT#0<_BIG>]", e.msg) }
+    try { sockets.ntohl(true) } catch e { probe_hit("sockets.ntohl[TYPE_INT#0<true>]", e.msg) }
     try { strings.slice("a", _BIG, 1) } catch e { probe_hit("strings.slice[TYPE_INT#1<_BIG>]", e.msg) }
     try { strings.slice("a", true, 1) } catch e { probe_hit("strings.slice[TYPE_INT#1<true>]", e.msg) }
     try { strings.slice("a", 1, _BIG) } catch e { probe_hit("strings.slice[TYPE_INT#2<_BIG>]", e.msg) }

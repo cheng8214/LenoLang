@@ -28,10 +28,14 @@ $root    = Split-Path $PSScriptRoot -Parent                          # tools\.. 
 $srcDir  = Join-Path $root "src\module"
 $outFile = Join-Path $root "assert\test_bigint_widen.leno"
 
-# v1 only probes side-effect-safe modules; files/io/jsons/sockets/asyncs/threads/
-# ffi/arrays/dicts come later.
-$moduleWhitelist = @("strings", "maths", "rands", "times", "dirs", "sys", "regexs")
-$methodBlacklist = "(?i)(delete|remove|write|clear|unlink|rmdir|mkdir|create|touch|chdir|exec|run|connect|send|kill|exit|sleep|wait|delay|pause|ints|floats|spawn|launch)"
+# v2 module tiers:
+#   full-probe (both _BIG and true): strings maths rands times dirs sys regexs jsons sockets
+#     - sockets: only pure byte-swap fns survive the blacklist (connect/listen/recv... blocked)
+#   true-only (int params there are sizes/offsets - a huge/negative value could
+#     giant-alloc or wild-ptr): files ffi
+$moduleWhitelist = @("strings", "maths", "rands", "times", "dirs", "sys", "regexs", "jsons", "sockets", "files", "io", "ffi")
+$noBigModules    = @("files", "ffi")
+$methodBlacklist = "(?i)(delete|remove|write|clear|unlink|rmdir|mkdir|create|touch|chdir|exec|run|connect|send|kill|exit|sleep|wait|delay|pause|ints|floats|spawn|launch|accept|listen|bind|recv|select|resolve|shutdown|timeout|malloc|calloc|realloc|alloc|free|copy|rename|move|load|dlsym|open|seek)"
 
 $calls   = New-Object System.Collections.Generic.List[string]
 $mods    = New-Object System.Collections.Generic.List[string]
@@ -78,7 +82,10 @@ foreach ($f in $files) {
         for ($i = 0; $i -lt $arity; $i++) {
             $t = $ptypes[$i]
             if ($t -ne "TYPE_INT" -and $t -ne "TYPE_FLOAT") { continue }
-            foreach ($arg in @("_BIG", "true")) {
+            # _BIG policy: sizes/offsets modules (files/ffi) get true only -
+            # a huge/negative value could giant-alloc or wild-pointer there
+            $probeArgs = if ($noBigModules -contains $mod) { @("true") } else { @("_BIG", "true") }
+            foreach ($arg in $probeArgs) {
                 $list = @()
                 for ($j = 0; $j -lt $arity; $j++) {
                     if ($j -eq $i) { $list += $arg; continue }
