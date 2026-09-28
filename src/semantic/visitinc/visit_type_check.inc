@@ -12,4 +12,36 @@
                 visit(s, ast->u.type_check.expr);
             }
             resolve_type_names(s, ast->u.type_check.type);
+            // ★ 「不可能成功的 as 收窄」提示（WARN_IMPOSSIBLE_CAST）——
+            //   数值标量（int/float）**永远不可能**是一个容器/struct/face ⇒ 运行期必定抛异常；
+            //   若外面套了 `catch { }` 就成了"功能静默失效" ✗。真实案例：
+            //     `ti.now()` 返回的是 **int 时间戳**（不是数组），`ti.now() as Array[int]`
+            //     只在**运行期**炸 ⇒ 应用里「上次清理记录」「导出报告」静默失效很久 ✗
+            //     而写成 `int d = ti.now() as Array[int]` 反而会报错（声明类型不匹配 ✓）
+            //     ⇒ 只有 `var` 接的写法漏网，正是本诊断要补的洞 ✓
+            //   ⚠ 口径（**零误报**优先）：仅当源类型是**完全确定**的 int/float、且目标类型是
+            //     Array/Dict/struct/cstruct/face 时才提示。
+            //     故意放过：`any`（可能真的是容器 ✓）、泛型参数、TYPE_INFER；也放过 string
+            //     （string 与字符容器之间可能有转换通道 ⇒ 不敢断言 ✓）。
+            //   ⚠ 标量→标量（如 `int as float`）是**转换**（OP_CAST_*）不是类型检查 ⇒ 不能拦 ✓
+            {
+                TypeInfo* src_t = ast->u.type_check.expr ? infer_expr_type(s, ast->u.type_check.expr) : NULL;
+                TypeInfo* dst_t = ast->u.type_check.type;
+                if (src_t && dst_t) {
+                    int src_num = (src_t->kind == TYPE_INT || src_t->kind == TYPE_FLOAT);
+                    int dst_obj = (dst_t->kind == TYPE_ARRAY || dst_t->kind == TYPE_DICT ||
+                                   dst_t->kind == TYPE_STRUCT || dst_t->kind == TYPE_CSTRUCT ||
+                                   dst_t->kind == TYPE_FACE);
+                    if (src_num && dst_obj) {
+                        // ⚠ 消息措辞经**实测**校正：`as` 到容器/struct **不会当场抛异常**，而是
+                        //   把原值**原样带过** ✗ ⇒ 失败推迟到"后面把它当容器用时"（索引/取字段/调方法）
+                        //   才暴露。所以不能说"运行期必定抛异常"（那是错的 ✗），要说"收窄结果不可用" ✓
+                        warning_add_at(WARN_IMPOSSIBLE_CAST, ast->line, ast->column,
+                            "这个 as 收窄不可能成功：左边是确定的数值标量（int/float），右边是容器/struct"
+                            " ⇒ as 会把原值原样带过、不会变质 ✗，后面当容器用时（索引/取字段/调方法）才失败"
+                            "（若外面套了 catch 就成了「功能静默失效」）");
+                    }
+                }
+                if (src_t) type_free(src_t);
+            }
             break;

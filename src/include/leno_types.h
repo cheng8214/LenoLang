@@ -101,6 +101,7 @@ typedef enum {
     WARN_AMBIGUOUS_MODULE,  // 裸文件名 import 撞名：多个包目录都有同名 .leno 且内容不同（静默选错文件）
     WARN_NATIVE_TYPE_NAME_CLASH, // 脚本 struct 与已注册的 native 类型同名（字段解析会优先用脚本定义）
     WARN_EMPTY_CATCH,      // 空 catch {}：异常被静默吞掉（含 as 收窄失败等运行期错误 ⇒ 功能"没反应"）
+    WARN_IMPOSSIBLE_CAST,  // 不可能成功的 as 收窄（数值标量 → 容器/struct ⇒ 运行期必抛异常）
 } WarnType;
 
 // ============================================================================
