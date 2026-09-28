@@ -1,0 +1,146 @@
+// test_rules.leno — cleaner_rules 纯逻辑单测（无 SDL）
+// 造临时垃圾 → 换根扫描 → 断言大小/计数 → 删除 → 验证消失 + 白名单拦截
+// 运行：build\leno.exe --no-cache test\test_rules.leno
+import "../cleaner_rules.leno" as rules
+import dirs
+import files
+import strings
+
+var fails = 0
+func check(string name, bool ok) {
+    if ok {
+        print($"[通过] {name}")
+    } else {
+        fails = fails + 1
+        print($"[失败] {name}")
+    }
+}
+func eq(string name, int got, int want) {
+    if got == want {
+        print($"[通过] {name} = {got}")
+    } else {
+        fails = fails + 1
+        print($"[失败] {name} 期望 {want} 实际 {got}")
+    }
+}
+
+// ==================== 1. fmt_size ====================
+check("fmt_size 0", rules.fmt_size(0) == "0 B")
+check("fmt_size 1023", rules.fmt_size(1023) == "1023 B")
+check("fmt_size 1KB", rules.fmt_size(1024) == "1.0 KB")
+check("fmt_size 1.5MB", rules.fmt_size(1572864) == "1.5 MB")
+check("fmt_size 2GB", rules.fmt_size(2147483648) == "2.0 GB")
+
+// ==================== 2. 造临时垃圾 ====================
+string base = _tmpdir() + "\\cleaner_master_test"
+if dirs.exists(base) { dirs.delete(base) }
+dirs.mkdir(base)
+string d1 = base + "\\sub1"
+string d2 = base + "\\sub2"
+dirs.mkdir(d1)
+dirs.mkdir(d2)
+files.write(d1 + "\\a.log", "0123456789")        // 10 字节
+files.write(d1 + "\\b.tmp", "0123456789012345")  // 16 字节
+files.write(base + "\\c.log", "0123")            // 4 字节
+files.write(base + "\\thumbcache_1.db", "0123456789")  // 10 字节（前缀命中）
+files.write(base + "\\other.txt", "x")           // 1 字节（整层模式命中）
+
+// ==================== 3. 整层清理模式扫描 ====================
+var cat = new rules.CleanCategory(id = "t1", name = "整层", roots = [base])
+var r = rules.scan_worker([base], "", null, 0)
+int size = _int(r[0])
+int cnt = _int(r[1])
+int skip = _int(r[2])
+// 5 个单元：sub1(26) sub2(0) c.log(4) thumbcache_1.db(10) other.txt(1) = 41
+eq("整层: 单元数", cnt, 5)
+eq("整层: 大小", size, 41)
+eq("整层: 跳过", skip, 0)
+
+// 单元清单含子目录与文件（结果布局：[size,cnt,skip, 路径,大小, 路径,大小, ...] ⇒ 路径在奇数位）
+bool hasSub1 = false
+bool hasC = false
+for 3 : r.len() - 1 to i {
+    if i % 2 == 1 {
+        if r[i] == d1 { hasSub1 = true }
+        if r[i] == base + "\\c.log" { hasC = true }
+    }
+}
+check("整层: 单元含子目录 sub1", hasSub1)
+check("整层: 单元含文件 c.log", hasC)
+
+// ==================== 4. 前缀过滤模式扫描 ====================
+var cat2 = new rules.CleanCategory(id = "t2", name = "前缀", roots = [base], file_prefix = "thumbcache_")
+var r2 = rules.scan_worker([base], "thumbcache_", null, 0)
+eq("前缀: 单元数", _int(r2[1]), 1)
+eq("前缀: 大小", _int(r2[0]), 10)
+check("前缀: 单元是 thumbcache 文件", r2[3] == base + "\\thumbcache_1.db")
+
+// ==================== 5. 删除 + 白名单拦截 ====================
+// 5a. 白名单外路径（伪造一个不在 roots 里的路径）必须被拦截
+var chunkBad = [[_tmpdir() + "\\outside_target.txt", "10"]]
+var rb = rules.delete_worker(chunkBad, [base], null)
+eq("白名单: 拦截计数", _int(rb[1]), 1)
+check("白名单: 外部文件未动（不存在也不算删掉）", not files.exists(_tmpdir() + "\\outside_target.txt"))
+
+// 5b. 正常删除整层清单（成对取出 路径/大小）
+Array[Array[string]] chunk = []
+for 3 : r.len() - 1 to i {
+    if i % 2 == 1 { chunk.add([r[i], r[i + 1]]) }
+}
+var rd = rules.delete_worker(chunk, [base], null)
+eq("删除: cleaned", _int(rd[0]), 5)
+eq("删除: freed", _int(rd[2]), 41)   // 真实单元大小：26+0+4+10+1
+check("删除: base 下已无 sub1", not dirs.exists(d1))
+check("删除: base 下已无 c.log", not files.exists(base + "\\c.log"))
+
+// 5c. 重复删除同一清单 ⇒ 全部计 failed（已不存在）
+var rd2 = rules.delete_worker(chunk, [base], null)
+eq("重复删除: 全部 failed", _int(rd2[1]), 5)
+
+// ==================== 6. build_categories 基本合法性 ====================
+var cats = rules.build_categories()
+check("build_categories: 类别数 = 6", cats.len() == 6)
+bool foundRecycle = false
+bool foundTemp = false
+for cats to c {
+    if c.id == "recyclebin" and c.roots.len() == 0 { foundRecycle = true }
+    if c.id == "temp" and c.roots.len() >= 1 { foundTemp = true }
+}
+check("build_categories: 有回收站(空根)", foundRecycle)
+check("build_categories: 有临时目录(至少1根)", foundTemp)
+// 根必须真实存在
+bool allExist = true
+for cats to c {
+    for c.roots to rt {
+        if not dirs.exists(rt) { allExist = false }
+    }
+}
+check("build_categories: 所有登记根均存在", allExist)
+
+// ==================== 7. 线程通道冒烟（try_send 不炸） ====================
+import threads
+Channel ch = threads.channel(16)
+var r3 = rules.scan_worker([base], "", ch, 0)
+ch.close()
+check("通道: 扫描正常返回", _int(r3[1]) == 0)   // base 已被 5b 清空 ⇒ 0 单元
+
+// ==================== 8. 删除进度通道（逐项 [attempted, cleaned, freed]） ====================
+files.write(base + "\\p1.txt", "0123456789")
+files.write(base + "\\p2.txt", "0123456789")
+files.write(base + "\\p3.txt", "0123456789")
+Array[Array[string]] chunk2 = [[base + "\\p1.txt", "10"], [base + "\\p2.txt", "10"], [base + "\\p3.txt", "10"]]
+Channel ch2 = threads.channel(64)
+var rd3 = rules.delete_worker(chunk2, [base], ch2)
+eq("进度: 消息数 = 单元数", _int(ch2.len()), 3)
+eq("进度: cleaned", _int(rd3[0]), 3)
+eq("进度: freed", _int(rd3[2]), 30)
+ch2.close()
+
+// ==================== 收尾 ====================
+dirs.delete(base)
+print("")
+if fails > 0 {
+    print($"共 {fails} 项失败")
+    _exit(1)
+}
+print("全部通过")

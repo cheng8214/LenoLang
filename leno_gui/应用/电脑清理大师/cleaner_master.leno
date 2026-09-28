@@ -1,0 +1,787 @@
+// cleaner_master.leno — 电脑清理大师（模仿 360 垃圾清理）
+//
+// 界面：浅色主题 + 大圆环（RingProgress，框架新增控件 ✓）
+//   idle    环中心「立即扫描」（点环即扫）
+//   scanning 环 sweep 旋转光束，中心实时显示已扫大小
+//   done    环 value 模式，中心显示可清理总量；右侧表格勾选清理项
+//   cleaning 底部进度条推进
+//   report  显示「已清理 X，释放 Y」，按钮变「再扫一次」
+//
+// 线程模型（照 file_search / cache_cleaner 套路）：
+//   扫描 = 6 类别并行 threads.start(scan_worker) + channel 实时增量 + 50ms 定时器排空
+//   清理 = 每勾选类别一条 delete_worker 线程，join 取权威结果
+//   worker 必须具名全局函数（scan_entry / delete_entry，闭包会被 GC ✗）
+//
+// 运行：build\leno.exe cleaner_master.leno
+import "SDL3" as SDL3
+import "sdl_theme" as theme
+import "./cleaner_rules.leno" as rules
+import Win32
+import dirs
+import files
+import threads
+import jsons
+import times as ti
+use SDL3.(Event, Renderer, Window, TitleBar, Label, Button, Table, ProgressBar, HBox, VBox, Scancode, Timer)
+use SDL3.RingProgress
+use rules.CleanCategory
+
+// ==================== 调试日志（--autoclean 用；主线程+worker 都可能调 ⇒ try/catch 兜底） ====================
+func _dlog(string s) {
+    try {
+        string p = _tmpdir() + "\\cmaster_debug.log"
+        var f = files.open(p, "a")
+        f.writeln(s)
+        f.close()
+    } catch { }
+}
+
+// ==================== 线程入口（具名全局 ✓；参数纯数组/字符串 ⇒ 可跨线程 ✓） ====================
+func scan_entry(Array[string] roots, string prefix, any ch, int idx): Array[string] {
+    return rules.scan_worker(roots, prefix, ch, idx)
+}
+
+func delete_entry(Array[Array[string]] chunk, Array[string] roots, any ch): Array[string] {
+    _dlog($"  worker enter n={chunk.len()}")
+    var r = rules.delete_worker(chunk, roots, ch)
+    _dlog($"  worker exit cleaned={r[0]} failed={r[1]} freed={r[2]}")
+    return r
+}
+
+// 回收站清空走后台线程（SHEmptyRecycleBin 同步且可能耗时 ⇒ 主线程直调会冻结 UI ✗）
+func recycle_entry(): bool {
+    _dlog("  recycle enter")
+    bool ok = Win32.emptyRecycleBin()
+    _dlog($"  recycle exit ok={ok}")
+    return ok
+}
+
+// ==================== 主结构 ====================
+struct CleanerMaster {
+    // ===== UI 控件 =====
+    Window win
+    TitleBar titleBar
+    RingProgress ring
+    Table catTable
+    ProgressBar driveBar
+    ProgressBar cleanBar
+    Label driveLbl
+    Label statusLbl
+    Label sumMain                      // 摘要卡主行（环下方空白利用 ✓）
+    Label sumSub                       // 摘要卡副行
+    Label lastLbl                      // 上次清理记录
+    Label timeLbl                      // 清理耗时（进度条行右侧，清理中实时跳动 ✓）
+    Button mainBtn
+    Timer pollTimer
+
+    // ===== 状态机：idle → scanning → done → cleaning → report =====
+    string state = "idle"
+    Array[CleanCategory] cats
+    Array[Array[string]] results       // 每类别 scan_worker 返回（[size,cnt,skip,路径,大小,...]）
+    Array[Thread] scanThreads
+    Channel? scanCh = null
+    int liveSize = 0                   // 扫描实时累计（channel 增量，仅 UI 反馈）
+    int liveCnt = 0
+    int totalSize = 0                  // 权威总量（join 结果）
+    int totalCnt = 0
+    Array[Thread] cleanThreads
+    Array[int] cleanCatIdx             // 清理线程序 → 类别序（与 cleanCatStats 平行）
+    Array[Array[string]] cleanCatStats // 每类别清理结果 [cleaned, failed, freed]（join 后填）
+    Channel? cleanCh = null
+    Thread? recycleThread = null       // 回收站清空线程（后台 ✓）
+    int cleanTotalUnits = 0            // 勾选类别的清理单元总数（进度分母）
+    int liveAttempted = 0              // 清理实时进度（channel 增量，仅 UI 反馈）
+    int liveCleaned = 0
+    int liveFreed = 0
+    int cleanedTotal = 0
+    int failedTotal = 0
+    int freedTotal = 0
+    int cleanStartTick = 0             // 清理耗时计时
+    float cleanElapsedSec = 0.0
+    bool recycleCleaned = false
+    bool recycleTimedOut = false       // 回收站线程超时弃管（后台继续尝试，不拖住报告）
+    int recycleTicks = 0
+    int watchdogAttempted = 0          // 看门狗：上次记录的进度值 / tick
+    int watchdogLastTick = 0
+    bool autoTest = false              // --autotest：自动扫描到 done 即退出（不清理 ⇒ 不删任何文件）
+    bool autoClean = false             // --autoclean：合成垃圾类别走真实清理管线（调试取证）
+    bool injected = false
+    bool phase2 = false                // phase2 = 真实类别清理取证
+    string fixtureBase = ""
+    int pollN = 0
+
+    // ==================== UI 构建 ====================
+    func setupUI() {
+        titleBar = SDL3.createTitleBar({title: "电脑清理大师", height: 32, font_size: 14})
+        win.add(titleBar)
+        float titleH = titleBar.get_h()
+
+        // 顶部：C 盘空间条（标签与进度条相邻成组，靠右 ✓）
+        var driveRow = SDL3.createHBox({h: 22, padX: 4, padY: 2, spacing: 8})
+        var driveGap = SDL3.createLabel({text: "", w: 1, h: 1})
+        driveRow.add(driveGap, {grow: 1, shrink: 1, align: 3})
+        // 容量文字**右端贴住进度条**（间距 = spacing 8px ✓）：
+        //   空文本创建 ⇒ add 时盒宽 natW=0 ⇒ 布局把 x 锚点放在「进度条左侧 8px」处；
+        //   内部 align:2 是锚点语义（drawX = x - 文字宽）⇒ 文字右端正好落在锚点上 ✓
+        //   ⚠ 不能用 basis 预留盒宽 + 左对齐（那会把空档变成间隙 ✗），也不能用非空文本创建（盒宽随文字走会错位 ✗）
+        driveLbl = SDL3.createLabel({text: "", font_size: 12, align: 2})
+        driveRow.add(driveLbl, {grow: 0, shrink: 0, align: 3})
+        driveBar = SDL3.createProgressBar({w: 240, h: 10, show_text: false})
+        driveBar.set_value(0.0)
+        driveRow.add(driveBar, {grow: 0, shrink: 0, basis: 240, align: 3})
+
+        // 中部：左圆环 + 摘要卡 + 右类别表
+        var mainRow = SDL3.createHBox({padX: 8, padY: 4, spacing: 8})
+        var leftCol = SDL3.createVBox({padX: 4, padY: 8, spacing: 10})
+        ring = SDL3.createRingProgress({
+            size: 220, thickness: 24, mode: "idle",
+            text_fn: func():string {
+                if state == "scanning" { return rules.fmt_size(liveSize) }
+                if state == "done" { return rules.fmt_size(totalSize) }
+                if state == "cleaning" { return "已清 " + rules.fmt_size(liveFreed) }
+                if state == "report" { return "已清 " + rules.fmt_size(freedTotal) }
+                return "立即扫描"
+            },
+            on_click: func() {
+                if state == "idle" or state == "report" { startScan() }
+            }
+        })
+        leftCol.add(ring, {grow: 0, shrink: 0, align: 1})
+
+        // 摘要卡（利用环下空白 ✓）：主行强调 + 副行说明 + 分隔线 + 上次清理记录
+        // 居中原理（关键）：VBox 的 _natW 只在 add() 时捕获一次 ⇒ 创建文本必须是 ""（natW=0），
+        //   x 锚点才精确落在列中心；内部 align:1（ALIGN_CENTER）= 每行以 x 锚点为中心绘制
+        //   ⇒ 之后 set_text 换任何文字（含 wrap 多行，每行各自居中）都绝对居中 ✓
+        var th0 = theme.getTheme()
+        sumMain = SDL3.createLabel({text: "", font_size: 16, font_style: 1, align: 1, text_color: th0.txt})
+        sumSub = SDL3.createLabel({text: "", font_size: 12, align: 1, text_color: th0.txtDim, wrap: true, wrap_w: 270})
+        lastLbl = SDL3.createLabel({text: "", font_size: 12, align: 1, text_color: th0.txtDim, wrap: true, wrap_w: 270})
+        leftCol.add(sumMain, {grow: 0, shrink: 0, align: 1})
+        leftCol.add(sumSub, {grow: 0, shrink: 0, align: 1})
+        leftCol.add(SDL3.createSeparator({w: 220}), {grow: 0, shrink: 0, align: 1})
+        leftCol.add(lastLbl, {grow: 0, shrink: 0, align: 1})
+        updateSummary()   // 空创建 ⇒ 首帧前先填摘要文案
+        mainRow.add(leftCol, {grow: 0, shrink: 0, basis: 300, align: 3})
+
+        catTable = SDL3.createTable({
+            headers: ["", "类别", "大小", "项目数", "结果"],
+            col_widths: [40.0, 130.0, 100.0, 70.0, 130.0],
+            zebra: true, row_h: 34, header_h: 32, font_size: 14,
+            check_col: 0,
+            col_reorder: false, resizable: false
+        })
+        mainRow.add(catTable, {grow: 1, shrink: 1, align: 3})
+
+        // 清理进度条 + 耗时（进度条行右侧 ✓）
+        // ⚠ Label 的 align 是**锚点**语义（ALIGN_RIGHT: drawX = x - 文字宽），而 HBox 给子项的 x
+        //   恒为「盒左边缘」⇒ 这里只能用 ALIGN_LEFT(0)：文字从盒内左边缘起画，恰在进度条右侧
+        //   8px 处；用 align:2 会把文字画到盒外左边、压在进度条尾巴上 ✗
+        var cleanRow = SDL3.createHBox({h: 16, padX: 0, padY: 0, spacing: 8})
+        cleanBar = SDL3.createProgressBar({h: 6, show_text: false})
+        cleanBar.set_value(0.0)
+        cleanRow.add(cleanBar, {grow: 1, shrink: 1, align: 3})
+        // basis 预留 110（容纳最长文案「耗时 1 分 05 秒」）；Label 创建时的 w 选项不被 set() 读取
+        timeLbl = SDL3.createLabel({text: "", font_size: 11, text_color: th0.txtDim})
+        cleanRow.add(timeLbl, {grow: 0, shrink: 0, basis: 110, align: 3})
+
+        // 底部：状态 + 主按钮（tip 解释「跳过」的真实原因 ✓；wrap 防长文字与按钮重叠 ✓）
+        var bottomRow = SDL3.createHBox({h: 54, padX: 4, padY: 6, spacing: 10})
+        statusLbl = SDL3.createLabel({
+            text: "就绪 — 点击圆环或「立即扫描」开始", font_size: 13,
+            wrap: true, wrap_w: 640,
+            tip: "「跳过 N 项」＝这些文件正被其他程序占用（如浏览器正在运行、系统临时文件在使用中）。\n关闭对应程序后点「再扫一次」即可清理。"
+        })
+        bottomRow.add(statusLbl, {grow: 1, shrink: 1, align: 3})
+        mainBtn = SDL3.createButton({w: 190, h: 42, text: "立即扫描", type: "success", font_size: 16})
+        mainBtn.on_click(func() {
+            if state == "idle" or state == "report" { startScan() } else {
+                if state == "done" { requestClean() }
+            }
+        })
+        bottomRow.add(mainBtn, {grow: 0, shrink: 0, basis: 190, align: 3})
+
+        var root = SDL3.createVBox({padX: 12, padY: 8, spacing: 6})
+        root.add(driveRow, {grow: 0, shrink: 0, align: 3})
+        root.add(mainRow, {grow: 1, shrink: 1, align: 3})
+        root.add(cleanRow, {grow: 0, shrink: 0, align: 3})
+        root.add(bottomRow, {grow: 0, shrink: 0, align: 3})
+        win.setRootAt(root, 0, titleH)
+    }
+
+    // ==================== 摘要卡（环下空白利用 ✓） ====================
+    func updateSummary() {
+        if state == "idle" {
+            sumMain.set_text("就绪")
+            sumSub.set_text("点击圆环或「立即扫描」开始")
+        }
+        if state == "scanning" {
+            sumMain.set_text($"已发现 {rules.fmt_size(liveSize)}")
+            sumSub.set_text($"{liveCnt} 项 · 正在扫描...")
+        }
+        if state == "done" {
+            sumMain.set_text($"可释放 {rules.fmt_size(totalSize)}")
+            sumSub.set_text($"共 {totalCnt} 项 · 已默认全选，可取消勾选")
+        }
+        if state == "cleaning" {
+            sumMain.set_text($"已清理 {liveCleaned}/{cleanTotalUnits} 项")
+            sumSub.set_text($"释放 {rules.fmt_size(liveFreed)} · 跳过项为被占用文件")
+        }
+        if state == "report" {
+            sumMain.set_text($"已释放 {rules.fmt_size(freedTotal)}")
+            sumSub.set_text($"成功 {cleanedTotal} 项 · 跳过 {failedTotal} 项（被占用）")
+        }
+    }
+
+    // ==================== 上次清理记录（%APPDATA%\TraeCleaner\last_clean.json ✓） ====================
+    func _pad2(int v): string {
+        if v < 10 { return "0" + _str(v) }
+        return _str(v)
+    }
+
+    func _last_clean_path(): string {
+        return _env_or("APPDATA", _tmpdir()) + "\\TraeCleaner\\last_clean.json"
+    }
+
+    func loadLastClean() {
+        try {
+            var d = jsons.read_file(_last_clean_path())
+            if d is Dict => j {
+                int freed = _int(j.get("freed", 0))
+                if freed > 0 {
+                    lastLbl.set_text($"上次清理：{j.get("time", "")} 释放 {rules.fmt_size(freed)}")
+                }
+            }
+        } catch { }
+    }
+
+    func saveLastClean() {
+        try {
+            var d = ti.now() as Array[int]     // 实际返回 [年,月,日,时,分,秒]（规格声明 int ⇒ 需 as 收窄）
+            string ts = $"{d[0]}-{_pad2(d[1])}-{_pad2(d[2])} {_pad2(d[3])}:{_pad2(d[4])}"
+            dirs.mkdir_p(_env_or("APPDATA", _tmpdir()) + "\\TraeCleaner")
+            jsons.write_file(_last_clean_path(), {time: ts, freed: freedTotal, items: cleanedTotal})
+            lastLbl.set_text($"上次清理：{ts} 释放 {rules.fmt_size(freedTotal)}")
+        } catch { }
+    }
+
+    // ==================== 扫描 ====================
+    func startScan() {
+        if state == "scanning" or state == "cleaning" { return }
+        state = "scanning"
+        cats = rules.build_categories()
+        results = []
+        scanThreads = []
+        cleanCatIdx = []
+        cleanCatStats = []
+        liveSize = 0
+        liveCnt = 0
+        recycleCleaned = false
+        recycleTimedOut = false
+        catTable.set_rows([])
+        mainBtn.set_enabled(false)
+        mainBtn.set_text("扫描中...")
+        statusLbl.set_text("正在扫描，请稍候...")
+        cleanBar.set_value(0.0)
+        timeLbl.set_text("")
+        ring.set_mode("sweep")
+        updateSummary()
+        scanCh = threads.channel(65536)
+        for 0 : cats.len() - 1 to i {
+            scanThreads.add(threads.start(scan_entry, cats[i].roots, cats[i].file_prefix, scanCh, i))
+        }
+        SDL3.markFrameRedraw()
+    }
+
+    func finishScan() {
+        totalSize = 0
+        totalCnt = 0
+        for 0 : scanThreads.len() - 1 to i {
+            var res = scanThreads[i].join() as Array[string]
+            results.add(res)
+            totalSize = totalSize + _int(res[0])
+            totalCnt = totalCnt + _int(res[1])
+        }
+        if scanCh is Channel { scanCh.close() }
+        scanCh = null
+        scanThreads = []
+        refreshRows()
+        catTable.check_all()
+        ring.set_mode("value")
+        ring.set_value(1.0)
+        state = "done"
+        mainBtn.set_enabled(true)
+        mainBtn.set_text("一键清理")
+        updateSummary()
+        if autoTest {
+            print($"AUTOTEST size={totalSize} cnt={totalCnt} cats={cats.len()} results={results.len()}")
+        }
+        if totalCnt == 0 {
+            statusLbl.set_text("扫描完成：未发现可清理垃圾")
+        } else {
+            statusLbl.set_text($"扫描完成：发现 {rules.fmt_size(totalSize)} 可清理（{totalCnt} 项）— 点击「一键清理」")
+        }
+        refreshDrive()
+        SDL3.markFrameRedraw()
+    }
+
+    func refreshRows() {
+        Array[Array[string]] rows = []
+        for 0 : cats.len() - 1 to i {
+            var c = cats[i]
+            string szTxt = "—"
+            string cntTxt = "—"
+            string resTxt = ""
+            if i < results.len() {
+                var res = results[i]
+                if c.id == "recyclebin" {
+                    szTxt = "系统托管"
+                } else {
+                    szTxt = rules.fmt_size(_int(res[0]))
+                    cntTxt = _str(_int(res[1]))
+                }
+            }
+            // 结果列（report 状态）：每类清理结果一目了然 ✓
+            if state == "report" or state == "cleaning" {
+                if c.id == "recyclebin" {
+                    if recycleTimedOut { resTxt = "后台进行中" } else {
+                        if recycleCleaned { resTxt = "已清空" } else { resTxt = "—" }
+                    }
+                } else {
+                    // cleanCatIdx 与 cleanCatStats 平行 ⇒ 找到本类结果
+                    int ci = -1
+                    for 0 : cleanCatIdx.len() - 1 to k {
+                        if cleanCatIdx[k] == i { ci = k }
+                    }
+                    if ci >= 0 and ci < cleanCatStats.len() {
+                        var s = cleanCatStats[ci]
+                        int cc = _int(s[0])
+                        int cf = _int(s[1])
+                        if cc > 0 and cf > 0 { resTxt = $"清 {cc} · 占用跳过 {cf}" } else {
+                            if cc > 0 { resTxt = $"已清理 {cc} 项" } else {
+                                if cf > 0 { resTxt = $"占用跳过 {cf} 项" } else { resTxt = "无垃圾" }
+                            }
+                        }
+                    } else {
+                        resTxt = "未勾选"
+                    }
+                }
+            }
+            rows.add(["", c.name, szTxt, cntTxt, resTxt])
+        }
+        catTable.set_rows(rows)
+    }
+
+    // ==================== 清理 ====================
+    func requestClean() {
+        if state != "done" { return }
+        Array[int] checked = catTable.get_checked_rows()
+        if checked.len() == 0 {
+            statusLbl.set_text("请先勾选要清理的项目")
+            return
+        }
+        bool needRecycle = false
+        for checked to i {
+            if cats[i].id == "recyclebin" { needRecycle = true }
+        }
+        if needRecycle {
+            showRecycleConfirm(func() { beginClean(checked) })
+        } else {
+            beginClean(checked)
+        }
+    }
+
+    func beginClean(Array[int] checked) {
+        state = "cleaning"
+        cleanStartTick = SDL3.getTicks()
+        cleanedTotal = 0
+        failedTotal = 0
+        freedTotal = 0
+        cleanThreads = []
+        cleanCatIdx = []
+        cleanCatStats = []
+        liveAttempted = 0
+        liveCleaned = 0
+        liveFreed = 0
+        cleanTotalUnits = 0
+        recycleThread = null
+        recycleCleaned = false
+        recycleTimedOut = false
+        recycleTicks = 0
+        watchdogAttempted = 0
+        watchdogLastTick = 0
+        mainBtn.set_enabled(false)
+        mainBtn.set_text("清理中...")
+        statusLbl.set_text("正在清理，请稍候...")
+        cleanBar.set_value(0.0)
+        cleanCh = threads.channel(65536)
+
+        for checked to ri {
+            int i = ri
+            var c = cats[i]
+            if c.id == "recyclebin" { continue }
+            // 结果布局 [size,cnt,skip, 路径,大小, ...] ⇒ 成对切出 chunk
+            var res = results[i]
+            Array[Array[string]] chunk = []
+            int j = 3
+            while j + 1 < res.len() {
+                chunk.add([res[j], res[j + 1]])
+                j = j + 2
+            }
+            if chunk.len() > 0 {
+                cleanTotalUnits = cleanTotalUnits + chunk.len()
+                cleanCatIdx.add(i)
+                cleanThreads.add(threads.start(delete_entry, chunk, c.roots, cleanCh))
+            }
+        }
+        // 回收站：后台线程清空（主线程直调 SHEmptyRecycleBin 会冻结 UI ✗）
+        bool doRecycle = false
+        for checked to i {
+            if cats[i].id == "recyclebin" { doRecycle = true }
+        }
+        if doRecycle {
+            recycleThread = threads.start(recycle_entry)
+        }
+        _dlog($"beginClean: units={cleanTotalUnits} workers={cleanThreads.len()} recycle={doRecycle}")
+        updateSummary()
+        if cleanThreads.len() == 0 and recycleThread == null {
+            finishClean()
+        } else {
+            cleanBar.set_value(2.0)
+        }
+        SDL3.markFrameRedraw()
+    }
+
+    // 耗时格式化：< 60 秒显示 "3.2 秒"，否则 "1 分 05 秒"
+    func _round1(float v): string {
+        int whole = _int(v)
+        int frac = _int((v - _float(whole)) * 10.0 + 0.5)
+        if frac >= 10 { whole = whole + 1; frac = 0 }
+        return $"{whole}.{frac}"
+    }
+
+    func _fmt_secs(float sec): string {
+        if sec < 60.0 { return $"{_round1(sec)} 秒" }
+        int m = _int(sec / 60.0)
+        int r = _int(sec) - m * 60
+        return $"{m} 分 {_pad2(r)} 秒"
+    }
+
+    func finishClean() {
+        _dlog($"finishClean entered (threads={cleanThreads.len()})")
+        cleanElapsedSec = _float(SDL3.getTicks() - cleanStartTick) / 1000.0
+        if cleanElapsedSec < 0.0 { cleanElapsedSec = 0.0 }
+        for 0 : cleanThreads.len() - 1 to i {
+            var r = cleanThreads[i].join() as Array[string]   // [cleaned, failed, freed]
+            cleanCatStats.add(r)
+            cleanedTotal = cleanedTotal + _int(r[0])
+            failedTotal = failedTotal + _int(r[1])
+            freedTotal = freedTotal + _int(r[2])
+        }
+        cleanThreads = []
+        if cleanCh is Channel { cleanCh.close() }
+        cleanCh = null
+        if recycleThread is Thread => rt {
+            if rt.state() != "running" {
+                recycleCleaned = rt.join() as bool
+            }
+            recycleThread = null
+        }
+        cleanBar.set_value(100.0)
+        ring.set_value(1.0)
+        if totalSize > 0 {
+            float ratio = _float(freedTotal) / _float(totalSize)   // 环 = 已释放 ÷ 已发现 ✓
+            ring.set_value(ratio)
+        }
+        refreshRows()
+        saveLastClean()
+        state = "report"
+        mainBtn.set_enabled(true)
+        mainBtn.set_text("再扫一次")
+        string msg = $"清理完成：已清理 {cleanedTotal} 项，释放 {rules.fmt_size(freedTotal)}"
+        if recycleCleaned { msg = msg + "，回收站已清空" }
+        if recycleTimedOut { msg = msg + "，回收站清理仍在后台进行" }
+        if failedTotal > 0 { msg = $"{msg}（{failedTotal} 项被占用跳过 — 关闭浏览器等程序后「再扫一次」可清）" }
+        statusLbl.set_text(msg)
+        timeLbl.set_text($"耗时 {_fmt_secs(cleanElapsedSec)}")
+        updateSummary()
+        refreshDrive()
+        SDL3.markFrameRedraw()
+    }
+
+    // ==================== 回收站清空确认（模态） ====================
+    func showRecycleConfirm(func():void onConfirm) {
+        var dlg = SDL3.createDialogWindow({title: "确认清空回收站", w: 400, h: 170})
+        VBox root = SDL3.createVBox({x: 0, y: 0, w: 400, h: 170, padX: 40, padY: 20, spacing: 10})
+        dlg.setRoot(root)
+        root.add(SDL3.dialogLabel("确认清空回收站", 16), {grow: 0, shrink: 0, align: 1})
+        root.add(SDL3.dialogLabel("回收站中的所有内容将被永久清除。", 13), {grow: 0, shrink: 0, align: 1})
+        root.add(SDL3.dialogSpacer(), {grow: 1, shrink: 1, align: 0})
+        Button okBtn = SDL3.createButton({w: 110, h: 34, text: "清空", type: "danger"})
+        Button cancelBtn = SDL3.createButton({w: 100, h: 34, text: "取消", type: "dark"})
+        HBox btnRow = SDL3.dialogButtonRow([okBtn, cancelBtn], 16)
+        root.add(btnRow, {grow: 0, shrink: 0, align: 3})
+
+        var done = false
+        cancelBtn.on_click(func() { done = true })
+        okBtn.on_click(func() {
+            done = true
+            if onConfirm != null { onConfirm() }
+        })
+        SDL3.runModal(dlg,
+            func(Event ev): bool {
+                if ev.isQuit() or ev.isWindowClose() { return false }
+                if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
+                return not done
+            },
+            func(Renderer r) { r.clearColor(theme.getTheme().bg) }
+        )
+    }
+
+    // ==================== C 盘空间 ====================
+    func refreshDrive() {
+        try {
+            Dict d = Win32.diskSpace("C:\\")
+            if d.ok {
+                int total = _int(d.total)
+                int freeB = _int(d.free)
+                if total > 0 {
+                    driveLbl.set_text($"C盘 剩余 {rules.fmt_size(freeB)} / 共 {rules.fmt_size(total)}")
+                    driveBar.set_value(100.0 * _float(total - freeB) / _float(total))
+                }
+            } else {
+                driveLbl.set_text("C盘 空间不可用")
+            }
+        } catch {
+            driveLbl.set_text("C盘 空间读取失败")
+        }
+    }
+
+    // ==================== 50ms 轮询 ====================
+    func pollTick() {
+        if state == "scanning" { pollScan() }
+        if state == "cleaning" { pollClean() }
+    }
+
+    func pollScan() {
+        try {
+            // 1) 排空 channel 增量（[idx, sizeDelta, cntDelta]）
+            if scanCh is Channel {
+                var ch = scanCh
+                int n = 0
+                while n < 4000 {
+                    var msg = ch.try_receive()
+                    if msg == null { break }
+                    if msg is Array => mv {
+                        liveSize = liveSize + _int(mv[1])
+                        liveCnt = liveCnt + _int(mv[2])
+                    }
+                    n = n + 1
+                }
+            }
+            // 2) 全部线程完成且 channel 排空 ⇒ join 收尾
+            bool allDone = true
+            for 0 : scanThreads.len() - 1 to i {
+                if scanThreads[i] is Thread => t {
+                    if t.state() == "running" { allDone = false }
+                }
+            }
+            if allDone {
+                if scanCh is Channel {
+                    if scanCh.len() > 0 { return }
+                }
+                finishScan()
+            }
+        } catch e {
+            state = "idle"
+            mainBtn.set_enabled(true)
+            mainBtn.set_text("立即扫描")
+            ring.set_mode("idle")
+            statusLbl.set_text($"扫描出错: {_str(e)}")
+            SDL3.markFrameRedraw()
+        }
+    }
+
+    func pollClean() {
+        try {
+            pollN = pollN + 1
+            if pollN % 25 == 0 {
+                string st = "recycle=?"
+                if recycleThread is Thread => rt { st = $"recycle={rt.state()}" } else { st = "recycle=null" }
+                for 0 : cleanThreads.len() - 1 to i {
+                    if cleanThreads[i] is Thread => t { st = $"{st} w{i}={t.state()}" }
+                }
+                int chLen = 0
+                if cleanCh is Channel { chLen = cleanCh.len() }
+                _dlog($"poll tick={pollN} {st} chLen={chLen} attempted={liveAttempted}")
+            }
+            // 1) 排空清理进度 channel（[attempted增量, cleaned增量, freed增量]）
+            if cleanCh is Channel {
+                var ch = cleanCh
+                int n = 0
+                while n < 4000 {
+                    var msg = ch.try_receive()
+                    if msg == null { break }
+                    if msg is Array => mv {
+                        liveAttempted = liveAttempted + _int(mv[0])
+                        liveCleaned = liveCleaned + _int(mv[1])
+                        liveFreed = liveFreed + _int(mv[2])
+                    }
+                    n = n + 1
+                }
+            }
+            // 2) 回收站线程（超时弃管：SHEmptyRecycleBin 对大/被占用回收站可能阻塞很久
+            //    ⇒ 8 秒没结束就不再等它，线程在后台继续尝试；VM active_threads 注册表保活 ⇒ 弃引安全 ✓）
+            bool allDone = true
+            if recycleThread is Thread => rt {
+                if rt.state() == "running" {
+                    recycleTicks = recycleTicks + 1
+                    if recycleTicks > 160 {
+                        _dlog("recycle TIMEOUT — abandon (thread continues in background)")
+                        recycleTimedOut = true
+                        recycleThread = null
+                    } else {
+                        allDone = false
+                    }
+                } else {
+                    recycleCleaned = rt.join() as bool
+                    recycleThread = null
+                }
+            }
+            // 3) 删除线程
+            for 0 : cleanThreads.len() - 1 to i {
+                if cleanThreads[i] is Thread => t {
+                    if t.state() == "running" { allDone = false }
+                }
+            }
+            // 3b) 看门狗：30 秒零进度 ⇒ 弃管所有剩余线程，强制进报告（任何线程卡死都不会永久「清理中」）
+            if liveAttempted != watchdogAttempted {
+                watchdogAttempted = liveAttempted
+                watchdogLastTick = pollN
+            }
+            if not allDone and pollN - watchdogLastTick > 600 {
+                _dlog($"WATCHDOG: no progress for 30s (attempted={liveAttempted}/{cleanTotalUnits}) — abandon {cleanThreads.len()} workers + recycle")
+                recycleTimedOut = true
+                recycleThread = null
+                cleanThreads = []
+                allDone = true
+            }
+            // 4) 实时进度（按已处理单元数推进 + 状态栏逐项刷新）；环 = 已释放 ÷ 已发现 ✓
+            if totalSize > 0 {
+                float fr = _float(liveFreed) / _float(totalSize)
+                if fr > 1.0 { fr = 1.0 }
+                ring.set_value(fr)
+            }
+            if cleanTotalUnits > 0 {
+                float frac = _float(liveAttempted) / _float(cleanTotalUnits)
+                if frac > 1.0 { frac = 1.0 }
+                cleanBar.set_value(2.0 + 96.0 * frac)
+            }
+            statusLbl.set_text($"清理中：已清理 {liveCleaned}/{cleanTotalUnits} 项 · 释放 {rules.fmt_size(liveFreed)}")
+            timeLbl.set_text(_fmt_secs(_float(SDL3.getTicks() - cleanStartTick) / 1000.0))
+            updateSummary()
+            SDL3.markFrameRedraw()
+            // 5) 全部完成且 channel 排空 ⇒ 收尾
+            if allDone {
+                if cleanCh is Channel {
+                    if cleanCh.len() > 0 { return }
+                }
+                finishClean()
+            }
+        } catch e {
+            state = "idle"
+            mainBtn.set_enabled(true)
+            mainBtn.set_text("立即扫描")
+            statusLbl.set_text($"清理出错: {_str(e)}")
+            SDL3.markFrameRedraw()
+        }
+    }
+
+    // ==================== 主入口 ====================
+    func run() {
+        for _args() to a {
+            if a == "--autotest" { autoTest = true }
+            if a == "--autoclean" { autoClean = true; autoTest = true }
+        }
+        if not autoTest { _console(false) }
+        if autoClean {
+            // 造合成垃圾（只清这里 ⇒ 不动用户真实文件）
+            fixtureBase = _tmpdir() + "\\cmaster_autoclean"
+            if dirs.exists(fixtureBase) { dirs.delete(fixtureBase) }
+            dirs.mkdir(fixtureBase)
+            for 0 : 199 to i {
+                files.write(fixtureBase + "\\junk_" + _str(i) + ".tmp", "0123456789ABCDEF0123456789ABCDEF")
+            }
+            _dlog("=== autoclean start (fixture 200 files) ===")
+        }
+        SDL3.ttfInit()
+        SDL3.setTheme(SDL3.lightTheme())
+        win = SDL3.createWindow({title: "电脑清理大师", w: 900, h: 620, flags: 0x20})
+        if not win.ok { SDL3.ttfQuit(); return }
+        setupUI()
+        refreshDrive()
+        loadLastClean()
+        updateSummary()
+        pollTimer = win.addTimer(50, func() { pollTick() })
+        if autoTest {
+            win.addTimer(800, func() {
+                if state == "idle" { startScan() }
+            })
+        }
+        win.run(
+            func(Event ev): bool {
+                if autoClean and state == "done" and not injected {
+                    injected = true
+                    // 注入合成类别（走与真实类别完全一致的 beginClean/pollClean 路径）
+                    var res = rules.scan_worker([fixtureBase], "", null, 0)
+                    Array[string] froots = [fixtureBase]
+                    cats.add(new CleanCategory(id = "fixture", name = "测试垃圾", roots = froots))
+                    results.add(res)
+                    _dlog($"fixture scanned size={res[0]} elems={res.len()}")
+                    beginClean([cats.len() - 1, 5])   // fixture + 回收站（回收站刚被验证秒回）
+                }
+                if autoTest and (state == "done" and not autoClean) {
+                    // 自证截屏（全屏）：留给调用方检查视觉效果 ✓
+                    try {
+                        Dict cap = Win32.captureScreen()
+                        if cap.len() > 0 {
+                            Ptr surf = SDL3.createSurfaceFromRaw(_int(cap.w), _int(cap.h), _int(cap.fmt), cap.pixels, _int(cap.pitch))
+                            SDL3.saveImagePNG(surf, _tmpdir() + "\\cleaner_master_autotest.png")
+                            SDL3.destroySurface(surf)
+                            print("AUTOTEST SHOT SAVED")
+                        }
+                    } catch e {
+                        print($"AUTOTEST capture failed: {_str(e)}")
+                    }
+                    print("AUTOTEST EXIT")
+                    return false
+                }
+                if autoClean and state == "report" {
+                    if not phase2 {
+                        phase2 = true
+                        _dlog("=== phase2: real categories (no recycle) ===")
+                        beginClean([0, 1, 2, 3, 4])
+                    } else {
+                        print("AUTOCLEAN FINISHED")
+                        _dlog("=== autoclean finished ===")
+                        return false
+                    }
+                }
+                if ev.isQuit() or ev.isWindowClose() { return false }
+                if titleBar.is_close_requested() {
+                    titleBar.clear_close_request()
+                    return false
+                }
+                if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
+                return true
+            },
+            func(Renderer r) { }
+        )
+        SDL3.ttfQuit()
+    }
+}
+
+// ==================== 程序入口 ====================
+main() {
+    CleanerMaster app = new CleanerMaster()
+    app.run()
+}

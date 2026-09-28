@@ -12,6 +12,7 @@ import "w32_reg.leno" as reg
 import "w32_hotkey.leno" as hotkey
 import "w32_message.leno" as msg
 import "w32_clipboard.leno" as cb
+import "./w32_shell.leno" as shell   // 磁盘空间/回收站（./ 钉死 sibling，防全局同名顶掉 ✓）
 
 // 注册表结果类型：引入后用裸名给下面的转发函数标注返回类型
 // （与 Web.leno 的 use net.(Response, HttpClient, Session) 同一写法）
@@ -259,4 +260,24 @@ export func regEnumValues(Ptr hKey): EnumValuesResult {
 // 错误码转可读字符串
 export func regErrorToString(int errorCode):string {
     return reg.errorToString(errorCode)
+}
+
+// ==================== 磁盘空间 / 回收站（Shell） ====================
+
+// 磁盘容量（root 形如 "C:\\"）；返回 {ok:bool, total:int, free:int}（字节）
+export func diskSpace(string root): Dict {
+    if not _is_supported() { return {ok: false, total: 0, free: 0} }
+    return shell.diskSpace(root)
+}
+
+// 清空回收站（默认无确认/无进度/无声；空回收站也返回 true）
+export func emptyRecycleBin(int flags = 7): bool {
+    if not _is_supported() { return false }
+    return shell.emptyRecycleBin(flags)
+}
+
+// 删除进回收站（FOF_ALLOWUNDO）；返回 {ok:bool, count:int, aborted:bool}
+export func deleteToRecycleBin(Array[string] paths): Dict {
+    if not _is_supported() { return {ok: false, count: 0, aborted: false} }
+    return shell.deleteToRecycleBin(paths)
 }

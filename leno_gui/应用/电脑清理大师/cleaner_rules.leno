@@ -1,0 +1,269 @@
+// cleaner_rules.leno — 电脑清理大师：清理类别定义 + 扫描/删除 worker
+// 纯逻辑模块：不 import SDL3 ⇒ 可被 test\test_rules.leno 直接单测 ✓
+//
+// 删除安全红线（三道）：
+//   1. 扫描根只在 build_categories 里解析，且逐个 dirs.exists 过滤
+//   2. 整层清理模式的「单元」= 根目录的**直接子项**——不会碰根外的任何东西
+//      前缀过滤模式只收**匹配前缀的文件**，绝不收目录（防误删 Explorer 整目录）
+//   3. delete_worker 逐路径做 starts_with(roots) 白名单校验，不匹配即计 failed
+// 全部 worker 为具名全局函数（threads.start 硬性要求，闭包会被 GC ✗）
+import dirs
+import strings
+import threads
+import files
+
+// ==================== 数据结构 ====================
+export struct CleanCategory {
+    string id = ""
+    string name = ""
+    Array[string] roots = []    // 扫描根列表（构建时解析环境变量 + 存在性过滤）
+    string file_prefix = ""     // 非空 ⇒ 只收该前缀的文件（如 thumbcache_）；空 ⇒ 整层清理
+}
+
+// 每类别清理单元上限（正常垃圾远达不到；超出部分只计数不删）
+const int MAX_UNITS = 20000
+
+// ==================== 小工具 ====================
+func _in_list(Array[string] list, string s): bool {
+    for list to it {
+        if it == s { return true }
+    }
+    return false
+}
+
+func _add_roots(Array[string] out, Array[string] cand) {
+    for cand to c {
+        if c != "" and dirs.exists(c) and not _in_list(out, c) { out.add(c) }
+    }
+}
+
+// 递归目录大小（stat 逐文件；无权限子树静默跳过）
+func _dir_size(string p): int {
+    int sum = 0
+    for dirs.walk(p) to e {
+        for e.files to f {
+            try {
+                sum = sum + dirs.stat(dirs.join(e.root, f)).size
+            } catch { }
+        }
+    }
+    return sum
+}
+
+// 字节数 → 人类可读（"1.2 GB"）
+export func fmt_size(int b): string {
+    float f = _float(b)
+    if f >= 1073741824.0 { return $"{_round1(f / 1073741824.0)} GB" }
+    if f >= 1048576.0 { return $"{_round1(f / 1048576.0)} MB" }
+    if f >= 1024.0 { return $"{_round1(f / 1024.0)} KB" }
+    return $"{b} B"
+}
+
+func _round1(float v): string {
+    int whole = _int(v)
+    int frac = _int((v - _float(whole)) * 10.0 + 0.5)
+    if frac >= 10 { whole = whole + 1; frac = 0 }
+    return $"{whole}.{frac}"
+}
+
+// ==================== 浏览器缓存根探测 ====================
+// profile 名不定（Default / Profile 1 / ...）⇒ listdir 枚举；缓存子目录形态：
+//   <profile>\Cache\Cache_Data（新版）或 <profile>\Cache（旧版，二选一防重复计数）
+//   <profile>\Code Cache、<profile>\GPUCache
+func _browser_cache_roots(string userData): Array[string] {
+    Array[string] out = []
+    if userData == "" or not dirs.exists(userData) { return out }
+    for dirs.listdir(userData) to prof {
+        string pdir = dirs.join(userData, prof)
+        if not dirs.is_dir(pdir) { continue }
+        string cacheData = dirs.join(pdir, "Cache\\Cache_Data")
+        string cachePlain = dirs.join(pdir, "Cache")
+        if dirs.exists(cacheData) { out.add(cacheData) }
+        if not dirs.exists(cacheData) and dirs.exists(cachePlain) { out.add(cachePlain) }
+        string codeCache = dirs.join(pdir, "Code Cache")
+        if dirs.exists(codeCache) { out.add(codeCache) }
+        string gpuCache = dirs.join(pdir, "GPUCache")
+        if dirs.exists(gpuCache) { out.add(gpuCache) }
+    }
+    return out
+}
+
+// ==================== 类别构建 ====================
+// 全部用户级目录（_env 解析），无需管理员权限；不存在的不登记
+export func build_categories(): Array[CleanCategory] {
+    Array[CleanCategory] cats = []
+    string local = _env_or("LOCALAPPDATA", "")
+    string temp = _env_or("TEMP", "")
+
+    // 1) 系统临时文件（%TEMP% 与 %LOCALAPPDATA%\Temp 通常同目录 ⇒ 去重）
+    Array[string] tempRoots = []
+    if temp != "" and dirs.exists(temp) { tempRoots.add(temp) }
+    if local != "" {
+        string lt = dirs.join(local, "Temp")
+        if dirs.exists(lt) and not _in_list(tempRoots, lt) { tempRoots.add(lt) }
+    }
+    cats.add(new CleanCategory(id = "temp", name = "系统临时文件", roots = tempRoots))
+
+    // 2) 浏览器缓存（Chrome / Edge）
+    Array[string] broots = []
+    if local != "" {
+        _add_roots(broots, _browser_cache_roots(dirs.join(local, "Google\\Chrome\\User Data")))
+        _add_roots(broots, _browser_cache_roots(dirs.join(local, "Microsoft\\Edge\\User Data")))
+    }
+    cats.add(new CleanCategory(id = "browser", name = "浏览器缓存", roots = broots))
+
+    // 3) Windows 错误报告
+    Array[string] werRoots = []
+    if local != "" {
+        string wer = dirs.join(local, "Microsoft\\Windows\\WER")
+        _add_roots(werRoots, [dirs.join(wer, "ReportQueue"), dirs.join(wer, "ReportArchive")])
+    }
+    cats.add(new CleanCategory(id = "wer", name = "错误报告", roots = werRoots))
+
+    // 4) DirectX 着色器缓存
+    Array[string] d3dRoots = []
+    if local != "" {
+        _add_roots(d3dRoots, [dirs.join(local, "D3DSCache")])
+    }
+    cats.add(new CleanCategory(id = "d3d", name = "着色器缓存", roots = d3dRoots))
+
+    // 5) 缩略图缓存（只认 thumbcache_ 前缀文件；被 Explorer 占用 ⇒ 删除时计 skipped）
+    Array[string] thumbRoots = []
+    if local != "" {
+        _add_roots(thumbRoots, [dirs.join(local, "Microsoft\\Windows\\Explorer")])
+    }
+    cats.add(new CleanCategory(id = "thumbs", name = "缩略图缓存", roots = thumbRoots, file_prefix = "thumbcache_"))
+
+    // 6) 回收站（特殊类别：roots 为空 ⇒ UI 侧走 Win32.emptyRecycleBin）
+    cats.add(new CleanCategory(id = "recyclebin", name = "回收站"))
+
+    return cats
+}
+
+// ==================== 扫描 worker ====================
+// 扫描一个类别。返回 [sizeStr, cntStr, skipStr, 路径1, 大小1, 路径2, 大小2, ...]
+// （单元大小供 delete_worker 免二次 stat 统计释放量 ✓）
+// 参数用纯数组/字符串——**struct 实例不能跨线程传递** ✗ ⇒ 不收 CleanCategory
+// ch 允许 null（单测直调）；进度经 ch.try_send([idx, sizeDelta, cntDelta]) 上报（非阻塞，满了就丢）
+export func scan_worker(Array[string] roots, string file_prefix, any ch, int idx): Array[string] {
+    int totalSize = 0
+    int totalCnt = 0
+    int skipped = 0
+    Array[string] units = []
+    Array[string] unitSizes = []
+
+    for roots to root {
+        if file_prefix != "" {
+            // ---- 前缀白名单模式：递归收集匹配文件，绝不收目录 ----
+            for dirs.walk(root) to e {
+                for e.files to f {
+                    if not strings.starts_with(f, file_prefix) { continue }
+                    string p = dirs.join(e.root, f)
+                    int sz = 0
+                    try {
+                        var di = dirs.stat(p)
+                        if not di.exists { skipped = skipped + 1; continue }
+                        sz = di.size
+                    } catch {
+                        skipped = skipped + 1
+                        continue
+                    }
+                    totalSize = totalSize + sz
+                    totalCnt = totalCnt + 1
+                    if units.len() < MAX_UNITS {
+                        units.add(p)
+                        unitSizes.add(_str(sz))
+                    }
+                    _report(ch, idx, sz, 1)
+                }
+            }
+        } else {
+            // ---- 整层清理模式：单元 = 根目录的直接子项（文件/目录），大小递归统计 ----
+            for dirs.listdir(root) to child {
+                string p = dirs.join(root, child)
+                int sz = 0
+                try {
+                    var di = dirs.stat(p)
+                    if not di.exists {
+                        skipped = skipped + 1
+                        continue
+                    }
+                    if di.is_file { sz = di.size } else { sz = _dir_size(p) }
+                } catch {
+                    skipped = skipped + 1
+                    continue
+                }
+                totalSize = totalSize + sz
+                totalCnt = totalCnt + 1
+                if units.len() < MAX_UNITS {
+                    units.add(p)
+                    unitSizes.add(_str(sz))
+                }
+                _report(ch, idx, sz, 1)
+            }
+        }
+    }
+
+    Array[string] out = [_str(totalSize), _str(totalCnt), _str(skipped)]
+    for 0 : units.len() - 1 to i {
+        out.add(units[i])
+        out.add(unitSizes[i])
+    }
+    return out
+}
+
+func _report(any ch, int idx, int sizeDelta, int cntDelta) {
+    if ch is Channel {
+        ch.try_send([idx, sizeDelta, cntDelta])
+    }
+}
+
+// ==================== 删除 worker ====================
+// 进度取证日志（与主程序 _dlog 同一文件；并发 open 共享冲突会丢行 ⇒ 仅诊断用）
+func _plog(string s) {
+    try {
+        var f = files.open(_tmpdir() + "\\cmaster_debug.log", "a")
+        f.writeln(s)
+        f.close()
+    } catch { }
+}
+
+// chunk 元素 = [path, sizeStr]（scan_worker 结果切出）；roots = 类别白名单根。
+// 只删 starts_with(任一根) 的路径；全部 try/catch ⇒ 线程永不进 error 态。
+// 进度：每处理完一项向 ch 发 [attempted增量, cleaned增量, freed增量]（非阻塞，满了就丢）
+// 返回 [cleanedStr, failedStr, freedStr]
+export func delete_worker(Array[Array[string]] chunk, Array[string] roots, any ch): Array[string] {
+    int cleaned = 0
+    int failed = 0
+    int freed = 0
+    for chunk to item {
+        string p = item[0]
+        bool allowed = false
+        for roots to r {
+            if strings.starts_with(p, r) { allowed = true }
+        }
+        if not allowed {
+            failed = failed + 1
+            if ch is Channel { ch.try_send([1, 0, 0]) }
+            continue
+        }
+        try {
+            if dirs.delete(p) {
+                cleaned = cleaned + 1
+                int sz = _int(item[1])
+                freed = freed + sz
+                if ch is Channel { ch.try_send([1, 1, sz]) }
+                if (cleaned + failed) % 500 == 0 {
+                    _plog($"  worker progress {cleaned + failed}/{chunk.len()} freed={freed}")
+                }
+            } else {
+                failed = failed + 1      // 被占用/权限 ⇒ 计失败不中断
+                if ch is Channel { ch.try_send([1, 0, 0]) }
+            }
+        } catch {
+            failed = failed + 1
+            if ch is Channel { ch.try_send([1, 0, 0]) }
+        }
+    }
+    return [_str(cleaned), _str(failed), _str(freed)]
+}

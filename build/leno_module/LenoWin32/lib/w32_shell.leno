@@ -1,0 +1,127 @@
+// w32_shell.leno — Windows Shell 轻量封装：磁盘空间 / 回收站 / 回收站式删除
+// 依赖 shell32.dll + kernel32.dll，全部 W 版 API（UTF-16），经 ffi.utf8_to_utf16 转换 ✓
+// FFI 模式照 w32_process.leno：clib 声明 + 惰性 ffi.load + malloc/try/finally free ✓
+import ffi
+
+// ==================== SHELL32 ====================
+clib shell32 {
+    // 清空回收站：root=null ⇒ 所有驱动器；flags = SHERB_* 组合
+    // 返回 HRESULT（0=S_OK；空回收站常见 0x8000FFFF=E_UNEXPECTED，也算成功）
+    i32 SHEmptyRecycleBinW(Ptr hwnd, Ptr[u16] root, u32 flags)
+
+    // 通用文件操作（复制/移动/删除）：op = SHFILEOPSTRUCTW*（56 字节，手排布局见下）
+    // 成功返回 0；fAnyOperationsAborted（偏移 36）=用户/系统中止
+    i32 SHFileOperationW(Ptr op)
+}
+
+// ==================== KERNEL32 ====================
+clib kernel32 {
+    // 磁盘空闲/总容量（出参均为 ULARGE_INTEGER = 8 字节 u64）
+    i32 GetDiskFreeSpaceExW(Ptr[u16] dir, Ptr freeBytes, Ptr totalBytes, Ptr totalFreeBytes)
+
+    // UTF-16 串长（不含结尾 null）——给 SHFileOperationW 拼「双 null 结尾」pFrom 用
+    i32 lstrlenW(Ptr[u16] s)
+}
+
+shell32 _shell = null
+func _shellLib(): shell32 {
+    if _shell == null { _shell = ffi.load("shell32.dll") }
+    return _shell
+}
+kernel32 _krnl = null
+func _krnlLib(): kernel32 {
+    if _krnl == null { _krnl = ffi.load("kernel32.dll") }
+    return _krnl
+}
+
+// ==================== 常量 ====================
+// SHEmptyRecycleBin flags
+export const SHERB_NOCONFIRMATION = 0x1
+export const SHERB_NOPROGRESSUI  = 0x2
+export const SHERB_NOSOUND       = 0x4
+
+// SHFileOperation
+export const FO_DELETE = 3
+// FOF_ALLOWUNDO(0x40 删除进回收站) | FOF_NOCONFIRMATION(0x10) | FOF_SILENT(0x4) | FOF_NOERRORUI(0x400)
+export const FOF_DELETE_TO_BIN = 0x454
+
+// 0x8000FFFF = E_UNEXPECTED —— 回收站已空时 SHEmptyRecycleBinW 的常见返回
+const HR_BIN_EMPTY = -2147418113
+
+// ==================== 磁盘空间 ====================
+// root 形如 "C:\\"；返回 {ok:bool, total:int, free:int}（字节；free=当前用户可用额度）
+export func diskSpace(string root): Dict {
+    Ptr[u16] w = ffi.utf8_to_utf16(root)
+    Ptr pFree    = ffi.malloc(8)     // ULARGE_INTEGER：调用者可用空闲
+    Ptr pTotal   = ffi.malloc(8)     // 总容量
+    Ptr pFreeAll = ffi.malloc(8)     // 全盘空闲
+    try {
+        int ret = _krnlLib().GetDiskFreeSpaceExW(w, pFree, pTotal, pFreeAll)
+        if ret == 0 { return {ok: false, total: 0, free: 0} }
+        return {ok: true, total: ffi.read_int64(pTotal, 0), free: ffi.read_int64(pFree, 0)}
+    } finally {
+        ffi.free(w)
+        ffi.free(pFree)
+        ffi.free(pTotal)
+        ffi.free(pFreeAll)
+    }
+}
+
+// ==================== 清空回收站 ====================
+// 默认无确认、无进度 UI、无声音；root=null ⇒ 清空所有驱动器的回收站。
+// 回收站已空也返回 true（E_UNEXPECTED 视作成功）。
+export func emptyRecycleBin(int flags = 7): bool {
+    int hr = _shellLib().SHEmptyRecycleBinW(null, null, flags)
+    return hr == 0 or hr == HR_BIN_EMPTY
+}
+
+// ==================== 删除进回收站 ====================
+// 逐路径走 SHFileOperationW（FOF_ALLOWUNDO ⇒ 进回收站而非永久删除）。
+// 返回 {ok:bool, count:int, aborted:bool}：count=提交的路径数。
+// pFrom 要求「多串、每串 \0 结尾、整体再补一个 \0」——utf8_to_utf16 只带一个 null，
+// 所以先 lstrlenW 量长，再 malloc 拼缓冲、write_int16 补齐双 null ✓
+export func deleteToRecycleBin(Array[string] paths): Dict {
+    if paths.len() == 0 { return {ok: true, count: 0, aborted: false} }
+
+    // 1) 逐路径转 UTF-16 并累计所需 wchar 总数（每串 +1 结尾，整体再 +1）
+    Array[Ptr[u16]] ws = []
+    int total = 1
+    for paths to p {
+        Ptr[u16] w = ffi.utf8_to_utf16(p)
+        ws.add(w)
+        total = total + _krnlLib().lstrlenW(w) + 1
+    }
+    Ptr[u16] from = ffi.malloc(total * 2)
+    Ptr op = ffi.malloc(56)          // sizeof(SHFILEOPSTRUCTW)
+    try {
+        // 2) 拼 pFrom：串1 \0 串2 \0 ... 串N \0 \0
+        int cur = 0
+        for ws to w {
+            int n = _krnlLib().lstrlenW(w)
+            ffi.memcpy(ffi.offset(from, cur), w, n * 2)
+            ffi.write_int16(from, cur + n * 2, 0)
+            cur = cur + (n + 1) * 2
+        }
+        ffi.write_int16(from, cur, 0)          // 整体结尾再补一个 null（双 null ✓）
+
+        // 3) 手排 SHFILEOPSTRUCTW（x64：hwnd@0 wFunc@8 pFrom@16 pTo@24
+        //    fFlags@36前4B? —— 布局：fFlags@32(4B) fAnyOperationsAborted@36(4B)
+        //    hNameMappings@40 lpszProgressTitle@48）
+        ffi.write_int64(op, 0, 0)              // hwnd = null
+        ffi.write_int64(op, 8, FO_DELETE)      // wFunc（含 12-16 对齐垫 ✓）
+        ffi.write_ptr(op, 16, from)            // pFrom
+        ffi.write_int64(op, 24, 0)             // pTo = null
+        ffi.write_int64(op, 32, FOF_DELETE_TO_BIN)   // fFlags + fAnyOperationsAborted(=0) ✓
+        ffi.write_int64(op, 40, 0)             // hNameMappings = null
+        ffi.write_int64(op, 48, 0)             // lpszProgressTitle = null
+
+        // 4) 执行
+        int ret = _shellLib().SHFileOperationW(op)
+        bool aborted = ffi.read_int(op, 36) != 0
+        return {ok: ret == 0 and not aborted, count: paths.len(), aborted: aborted}
+    } finally {
+        ffi.free(op)
+        ffi.free(from)
+        for ws to w { ffi.free(w) }
+    }
+}

@@ -40,6 +40,7 @@ import "sdl_steps.leno" as stp; use stp.Steps     // 步骤条（竖向流程 / 
 import "sdl_scrim.leno" as scr; use scr.Scrim
 import "sdl_linkbutton.leno" as lnk
 import "sdl_spinner.leno" as spn
+import "sdl_ring.leno" as ring; use ring.RingProgress   // 圆环进度（donut：idle/sweep/value 三态 ✓）
 import "sdl_groupbox.leno" as gbx
 import "sdl_gridlayout.leno" as grd
 import "sdl_splitter.leno" as spl
@@ -129,6 +130,7 @@ export func createSteps(Dict opts): Steps         { return stp.createSteps(opts)
 export func createScrim(Dict opts): Scrim           { return scr.createScrim(opts) }
 export func createLinkButton(Dict opts): LinkButton { return lnk.createLinkButton(opts) }
 export func createSpinner(Dict opts): Spinner       { return spn.createSpinner(opts) }
+export func createRingProgress(Dict opts): RingProgress { return ring.createRingProgress(opts) }
 export func createGroupBox(Dict opts): GroupBox    { return gbx.createGroupBox(opts) }
 export func createGridLayout(Dict opts): GridLayout { return grd.createGridLayout(opts) }
 export func createSplitter(Dict opts): Splitter    { return spl.createSplitter(opts) }
