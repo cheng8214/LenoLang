@@ -31,7 +31,9 @@ func pow_mod(int base, int exp, int n):int {
 
 // 扩展欧几里得算法：求 a 和 b 的最大公约数，以及 x, y 使得 ax + by = gcd(a,b)
 // 返回 [gcd, x, y]
-func extended_gcd(int a, int b) {
+// ⚠ 2026-09-28 修示例：补返回类型标注 —— 未标返回类型的函数其返回值是 **any**
+//   （见 docs 实例五十），而 `any` 上不能做索引访问 ⇒ `mod_inverse` 里的 `result[0]` 会被拒。
+func extended_gcd(int a, int b): Array[int] {
     int old_r = a
     int r = b
     int old_s = 1
@@ -56,7 +58,8 @@ func extended_gcd(int a, int b) {
 }
 
 // 模逆元：求 a mod m 的乘法逆元（即求 x 使得 ax ≡ 1 (mod m)）
-func mod_inverse(int a, int m) {
+// ⚠ 同上：补返回类型（返回 -1 或逆元，都是 int）
+func mod_inverse(int a, int m): int {
     var result = extended_gcd(a, m)
     int g = _int(result[0])
     int x = _int(result[1])

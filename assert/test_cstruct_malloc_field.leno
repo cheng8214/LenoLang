@@ -1,0 +1,30 @@
+// test_cstruct_malloc_field.leno —— cstruct 的 `malloc()` + 标量字段读写（2026-09-28；实例五十二）
+//
+// 收编自 `examples/ffi/test_ffi_final.leno` —— 那是个**没写完的草稿**：全文只有 18 行，最后一行
+//   `print("   x = " + p.x +` 直接断在 `+` 上（三个语法错误），但它的**主体**
+//   （`cstruct` + `Point.malloc()` + `p.x = 100` 读写）是好的 ⇒ 把这条正向行为收编成本用例，草稿删除。
+//   ⚠ 顺带说明：**表达式不能跨行**（行尾的 `+` 不会续行）—— 这正是那个草稿断掉的原因，
+//     本用例把它写在一行里 ✓。
+
+import ffi
+
+cstruct Point {
+    i32 x
+    i32 y
+}
+
+main() {
+    var p = Point.malloc()
+    p.x = 100
+    p.y = 200
+
+    assert_eq(p.x, 100)
+    assert_eq(p.y, 200)
+
+    // 再改一次，确认可写可读
+    p.x = 7
+    assert_eq(p.x, 7)
+    assert_eq(p.y, 200)
+
+    print("test_cstruct_malloc_field passed")
+}
