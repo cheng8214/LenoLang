@@ -265,8 +265,19 @@ static TypeInfo* spec_resolve_with_cb_ret(Semantic* s, const NativeTypeSpec* spe
 //   命中并推出 ⇒ 返回 TypeInfo（**所有权转移给调用方**）；推不出/非 get ⇒ NULL。
 //   receiver_type 不夺取所有权。此前 AST_CALL / obj_sym 两条路径各留一份拷贝、且 obj_sym
 //   缺 1 参形态 ⇒ 同一语法两处深度不一致（arity 分支逻辑规格词汇表表达不了，收敛为函数共享）。
-static TypeInfo* infer_dict_get_return(Semantic* s, TypeInfo* receiver_type,
+// Dict.get 的返回类型 —— **唯一判定点**（方法名判断也在这里，调用点不做名字分支 ✓）
+//   · 2 参形态：按**默认值实参**的类型（`get("y", 0.0)` ⇒ float ✓）
+//   · 1 参形态：字典的值类型 V ✓（缺键时运行期给 null ⇒ 沿用 d4c3e0e 的"乐观"口径 ✓）
+//   ⚠ **只对 `get` 成立**：别的 Dict 方法（`len` ⇒ int、`has` ⇒ bool）在编译期元信息表里
+//     本来就有正确类型（注册桥接见 method_table.c:108 ✓）⇒ 必须在这里**留空**，
+//     让它们落到元信息表 ✓；否则会被本函数返回的 V 覆盖 ✗ ——
+//     LenoWeb `web_html.leno:26 return attrs.has(name)` 正是被推成 string 而编译不过，
+//     导致该包 35 个文件连锁失败 ✓（2026-09-28 修 LenoWeb）
+//   名字判断放这里的理由：与 83ff614「Dict.get 三处特判收敛为共享 infer_dict_get_return」
+//     同一路数 ✓ —— 保持**单一判定点**，别在各调用点又长出 if 链 ✗
+static TypeInfo* infer_dict_get_return(Semantic* s, TypeInfo* receiver_type, const char* method_name,
                                        Ast* const* args, int arg_count) {
+    if (!method_name || strcmp(method_name, "get") != 0) return NULL;
     if (!receiver_type || receiver_type->kind != TYPE_DICT) return NULL;
     if (arg_count >= 2) {
         TypeInfo* default_type = infer_expr_type(s, args[1]);
@@ -1823,8 +1834,11 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
 
                             // Dict.get 返回类型：2 参 ⇒ 默认值类型、1 参 ⇒ 值类型 V
                             //（与 obj_sym 路径共享 infer_dict_get_return ✓）
+                            // ⚠ 方法名判断**已收敛进 infer_dict_get_return 内部**（唯一判定点 ✓）
+                            //   —— 别的 Dict 方法（len ⇒ int / has ⇒ bool）在元信息表里本就有
+                            //   正确类型，必须让它们跳过本块 ✓（2026-09-28 修 LenoWeb）
                             {
-                                TypeInfo* get_ret = infer_dict_get_return(s, obj_type,
+                                TypeInfo* get_ret = infer_dict_get_return(s, obj_type, method_name,
                                     ast->u.call.args.items, ast->u.call.args.count);
                                 if (get_ret) {
                                     type_free(obj_type);
@@ -2194,8 +2208,9 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     // Dict.get 返回类型：2 参 ⇒ 默认值类型、1 参 ⇒ 值类型 V
                     //（与 AST_CALL 路径共享 infer_dict_get_return；此前这里只有 2 参拷贝、
                     //  缺 1 参形态 ⇒ `string s = d.get("k")` 在此路径推不出 ✗ 已统一 ✓）
+                    // 方法名判断已收敛进 infer_dict_get_return 内部（唯一判定点 ✓，2026-09-28）
                     {
-                        TypeInfo* get_ret = infer_dict_get_return(s, obj_sym->type,
+                        TypeInfo* get_ret = infer_dict_get_return(s, obj_sym->type, method_name,
                             ast->u.module_call.args.items, ast->u.module_call.args.count);
                         if (get_ret) {
                             ast->cached_type = type_copy(get_ret);
