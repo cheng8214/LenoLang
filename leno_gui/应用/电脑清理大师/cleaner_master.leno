@@ -16,6 +16,7 @@
 import "SDL3" as SDL3
 import "sdl_theme" as theme
 import "./cleaner_rules.leno" as rules
+import "./cleaner_detail.leno" as detail   // 明细清单弹窗（已从本文件拧出 ⇒ 独立模块 ✓）
 import Win32
 import dirs
 import files
@@ -194,7 +195,7 @@ struct CleanerMaster {
             col_reorder: false, resizable: false
         })
         // 点任意单元格 ⇒ 该类别扫到的**明细清单**（框架 Table 自带 `on_cell` 单击回调 ✓）
-        catTable.on_cell(func(int row, int col) { showDetail(row) })
+        catTable.on_cell(func(int row, int col) { openDetail(row) })
         mainRow.add(catTable, {grow: 1, shrink: 1, align: 3})
 
         // 清理进度条 + 耗时（进度条行右侧 ✓）
@@ -729,84 +730,22 @@ struct CleanerMaster {
     }
 
     // ==================== 明细清单（点表格任一行 ⇒ on_cell 回调 ✓） ====================
-    // 数据来源 = 该类别 scan_worker 的返回 `[size,cnt,skip, 路径,大小, 路径,大小, ...]`
-    // 展示：按**大小降序**取前 100 条（大文件最值得看 ✓），标题里说明总数 ⇒ 不误导"只有这么多" ✓
-    func showDetail(int row) {
+    // **弹窗本体已拧成独立模块** `cleaner_detail.leno` ✓（分层见该文件头；与 Trae签到 同路数 ✓）
+    //   本方法只保留**业务策略**：这类能不能看明细 / 有没有扫描结果 ✓
+    //   （"给数据就画"的部分在模块里 ⇒ 那边可以单独改版/复用，这里不必跟着长 ✓）
+    func openDetail(int row) {
         if row < 0 or row >= cats.len() { return }
         if row >= results.len() { statusLbl.set_text("该类别还没有扫描结果"); return }
-        var c = cats[row]
-        if c.id == "recyclebin" {
+        if cats[row].id == "recyclebin" {
             statusLbl.set_text("回收站由系统托管，不列出逐项清单")
             return
         }
-        var res = results[row]
-        int total = _int(res[1])
-        int LIMIT = 100
-        Array[int] pick = []                 // 结果数组里的下标（指向路径 ✓）
-        Array[int] pickSize = []
-        int j = 3
-        while j + 1 < res.len() {
-            int sz = _int(res[j + 1])
-            if pick.len() < LIMIT {
-                pick.add(j); pickSize.add(sz)
-            } else {
-                int mn = 0                    // 找当前最小项
-                int k0 = 1
-                while k0 < pickSize.len() {
-                    if pickSize[k0] < pickSize[mn] { mn = k0 }
-                    k0 = k0 + 1
-                }
-                if sz > pickSize[mn] { pick[mn] = j; pickSize[mn] = sz }
-            }
-            j = j + 2
+        if not detail.show_detail(cats[row].name, results[row]) {
+            statusLbl.set_text("该类别没有可展示的明细")
+            return
         }
-        // top-K 内部按大小降序（K ≤ 100 ⇒ 冒泡足够 ✓）
-        int a = 0
-        while a + 1 < pickSize.len() {
-            int b = a + 1
-            while b < pickSize.len() {
-                if pickSize[b] > pickSize[a] {
-                    int ts = pickSize[a]; pickSize[a] = pickSize[b]; pickSize[b] = ts
-                    int tp = pick[a]; pick[a] = pick[b]; pick[b] = tp
-                }
-                b = b + 1
-            }
-            a = a + 1
-        }
-
-        var dlg = SDL3.createDialogWindow({title: "明细清单 — " + c.name, w: 760, h: 520})
-        var droot = SDL3.createVBox({x: 0, y: 0, w: 760, h: 520, padX: 16, padY: 14, spacing: 8})
-        dlg.setRoot(droot)
-        string head = $"{c.name}：共 {total} 项 · {rules.fmt_size(_int(res[0]))}"
-        if pick.len() < total { head = $"{head}（下面只列最大的 {pick.len()} 项）" }
-        droot.add(SDL3.dialogLabel(head, 14), {grow: 0, shrink: 0, align: 0})
-        int totalBytes = _int(res[0])
-        Table dt = SDL3.createTable({
-            headers: ["路径", "大小", "占比"],
-            col_widths: [530.0, 110.0, 80.0],
-            zebra: true, row_h: 26, header_h: 28, font_size: 13,
-            col_reorder: false, resizable: false
-        })
-        Array[Array[string]] drows = []
-        for 0 : pick.len() - 1 to k {
-            string pct = "—"
-            if totalBytes > 0 { pct = $"{_int(100.0 * _float(pickSize[k]) / _float(totalBytes))}%" }
-            drows.add([res[pick[k]], rules.fmt_size(pickSize[k]), pct])
-        }
-        dt.set_rows(drows)
-        droot.add(dt, {grow: 1, shrink: 1, align: 3})
-        Button closeBtn = SDL3.createButton({w: 110, h: 34, text: "关闭", type: "dark"})
-        var done = false
-        closeBtn.on_click(func() { done = true })
-        droot.add(SDL3.dialogButtonRow([closeBtn], 16), {grow: 0, shrink: 0, align: 3})
-        SDL3.runModal(dlg,
-            func(Event ev): bool {
-                if ev.isQuit() or ev.isWindowClose() { return false }
-                if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
-                return not done
-            },
-            func(Renderer r) { r.clearColor(theme.getTheme().bg) }
-        )
+        // 模态弹窗关闭后主窗口要重绘（否则留下残影 ✗）
+        SDL3.markFrameRedraw()
     }
 
     // ==================== 导出报告（报告态可用 ✓） ====================

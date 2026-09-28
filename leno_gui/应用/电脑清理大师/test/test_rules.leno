@@ -158,6 +158,40 @@ eq("进度: cleaned", _int(rd3[0]), 3)
 eq("进度: freed", _int(rd3[2]), 30)
 ch2.close()
 
+// ==================== 9. top_items（明细清单"取最大 N 项"，纯逻辑 ✓） ====================
+// 为什么能在这里测：top_items 放在 cleaner_rules.leno（不 import SDL3）⇒ 可直接单测 ✓
+// res 布局：[size, cnt, skip, 路径, 大小, 路径, 大小, ...]
+Array[string] fake = ["60", "4", "0",
+    "c:\\a\\small.tmp", "5",
+    "c:\\a\\big.bin", "30",
+    "c:\\a\\mid.dat", "20",
+    "c:\\a\\tiny.tmp", "1"]
+var ti = rules.top_items(fake, 3)
+eq("top_items: 条数 = limit", ti.len(), 3)
+check("top_items: 第 1 大 = big.bin(30)", ti[0].path == "c:\\a\\big.bin" and ti[0].size == 30)
+check("top_items: 第 2 大 = mid.dat(20)", ti[1].path == "c:\\a\\mid.dat" and ti[1].size == 20)
+check("top_items: 第 3 大 = small.tmp(5)", ti[2].path == "c:\\a\\small.tmp" and ti[2].size == 5)
+// 最小的 tiny.tmp(1) 必须被淘汰（否则"取最大"是假的 ✗）
+bool hasTiny = false
+for ti to it { if it.path == "c:\\a\\tiny.tmp" { hasTiny = true } }
+check("top_items: 最小项被淘汰", not hasTiny)
+
+// limit ≥ 项数 ⇒ 全给，且**仍按降序**
+var ti2 = rules.top_items(fake, 10)
+eq("top_items: limit > n ⇒ 全给", ti2.len(), 4)
+check("top_items: 全给时仍降序", ti2[0].size == 30 and ti2[3].size == 1)
+
+// limit = 0 ⇒ 空（不越界 ✗）
+eq("top_items: limit=0 ⇒ 空", rules.top_items(fake, 0).len(), 0)
+
+// 只有头三项（无明细）/ 空结果 ⇒ 不崩
+Array[string] emptyRes = ["0", "0", "0"]
+eq("top_items: 空结果 ⇒ 空", rules.top_items(emptyRes, 5).len(), 0)
+
+// 同大小两项：都要收进来（不能因为相等就丢项 ✗）
+Array[string] same = ["20", "2", "0", "p1", "10", "p2", "10"]
+eq("top_items: 同大小两项都收", rules.top_items(same, 2).len(), 2)
+
 // ==================== 收尾 ====================
 dirs.delete(base)
 print("")

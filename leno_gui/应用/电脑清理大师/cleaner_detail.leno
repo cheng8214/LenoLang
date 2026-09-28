@@ -1,0 +1,70 @@
+// cleaner_detail.leno — 电脑清理大师：**明细清单**弹窗（从 cleaner_master.leno 拧出来的独立模块 ✓）
+//
+// 分层（与 Trae签到 的 trae_gui.leno / trae_core.leno 同一路数 ✓）：
+//   cleaner_rules.leno   ← **纯逻辑**：类别定义 + 扫描/删除 worker + `top_items`
+//                          （不 import SDL3 ⇒ 能被 test\test_rules.leno 直接单测 ✓）
+//   cleaner_detail.leno  ← **本文件**：只负责"把明细画出来"（SDL3；无业务判断 ✓）
+//   cleaner_master.leno  ← 主界面：状态机 + 把点击接过来（调用本模块 ✓）
+//
+// 输入约定：`res` = 该类别 scan_worker 的返回
+//           布局 `[size, cnt, skip, 路径, 大小, 路径, 大小, ...]`
+// ⚠ "这类能不能看明细"（如回收站由系统托管）属于**业务策略** ⇒ 留在主界面判断 ✓，
+//    本模块只做"给数据就画" ✓（这样它才可被别处复用/单独改版 ✓）
+import "SDL3" as SDL3
+import "sdl_theme" as theme
+import "./cleaner_rules.leno" as rules
+use SDL3.(Event, Renderer, Table, VBox, Button, Scancode)
+
+// 最多列多少项（按大小取前 N ✓；标题里会写明"只列最大的 N 项"以免误读 ✗）
+const int DETAIL_LIMIT = 100
+
+// 弹出某类别的明细清单（模态；阻塞到用户关闭 ✓）
+//   catName = 类别显示名（标题/表头用）
+//   res     = 该类别的扫描结果数组
+// 返回 false ⇒ 数据不足，没什么可展示（调用方可据此写状态栏提示 ✓）
+export func show_detail(string catName, Array[string] res): bool {
+    if res.len() < 3 { return false }
+    int totalBytes = _int(res[0])
+    int totalCnt = _int(res[1])
+    var picked = rules.top_items(res, DETAIL_LIMIT)
+
+    int dw = 760
+    int dh = 520
+    var dlg = SDL3.createDialogWindow({title: "明细清单 — " + catName, w: dw, h: dh})
+    var droot = SDL3.createVBox({x: 0, y: 0, w: dw, h: dh, padX: 16, padY: 14, spacing: 8})
+    dlg.setRoot(droot)
+
+    // 标题写清"共几项 / 多大 / 是否只列了前 N 项"⇒ 不误导成"只有这么多" ✓
+    string head = $"{catName}：共 {totalCnt} 项 · {rules.fmt_size(totalBytes)}"
+    if picked.len() < totalCnt { head = $"{head}（下面只列最大的 {picked.len()} 项）" }
+    droot.add(SDL3.dialogLabel(head, 14), {grow: 0, shrink: 0, align: 0})
+
+    Table dt = SDL3.createTable({
+        headers: ["路径", "大小", "占比"],
+        col_widths: [530.0, 110.0, 80.0],
+        zebra: true, row_h: 26, header_h: 28, font_size: 13,
+        col_reorder: false, resizable: false
+    })
+    Array[Array[string]] rows = []
+    for picked to it {
+        string pct = "—"
+        if totalBytes > 0 { pct = $"{_int(100.0 * _float(it.size) / _float(totalBytes))}%" }
+        rows.add([it.path, rules.fmt_size(it.size), pct])
+    }
+    dt.set_rows(rows)
+    droot.add(dt, {grow: 1, shrink: 1, align: 3})
+
+    Button closeBtn = SDL3.createButton({w: 110, h: 34, text: "关闭", type: "dark"})
+    var done = false
+    closeBtn.on_click(func() { done = true })
+    droot.add(SDL3.dialogButtonRow([closeBtn], 16), {grow: 0, shrink: 0, align: 3})
+    SDL3.runModal(dlg,
+        func(Event ev): bool {
+            if ev.isQuit() or ev.isWindowClose() { return false }
+            if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
+            return not done
+        },
+        func(Renderer r) { r.clearColor(theme.getTheme().bg) }
+    )
+    return true
+}
