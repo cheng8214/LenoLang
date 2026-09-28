@@ -1907,6 +1907,28 @@
                 if (idx_type) type_free(idx_type);
             }
 
+            // 检查：**字符串**接收者的字符串下标（2026-09-28）
+            //   解析器把非调用的 `.name` 编成 `["name"]`（gen_expr 的索引分支注释），
+            //   于是"少了括号的方法引用"（"abc".pad_start）长成 string[string]，
+            //   此前一路放行、运行期才抛「字符串索引必须是数字」——暴露得太晚。
+            //   不能整体禁 string[string]：VM 字符串分支兼任「枚举类型名["成员名"]」
+            //   的兜底形态（07_collections 的 enum_def_find 路径）⇒ 只拦**双字面量**子集：
+            //   编译器生成的枚举形态接收者是**类型名标识符**（语义拿到 TYPE_ENUM，
+            //   走上面 1755 的成员存在性检查），从不会是手写字符串字面量 ⇒
+            //   「字符串字面量接收者 + 字符串字面量下标」必是错误，零误伤。
+            //   ⚠ 接收者是变量/模块链/任意表达式时内容判不了 ⇒ 照旧放行运行期兜底；
+            //     enum_def_find 的注册表运行期才填充（module.c / VM 指令），语义期
+            //     查不了 ⇒ 也别想着在语义期查注册表放行，双字面量直接拦即可。
+            if (obj_type && obj_type->kind == TYPE_STRING &&
+                ast->u.index.obj->kind == AST_STRING &&
+                ast->u.index.index->kind == AST_STRING) {
+                char msg[BUFFER_MEDIUM];
+                snprintf(msg, sizeof(msg),
+                    "字符串不支持字符串下标 '%s'：取字符请用数字下标 s[0]，方法调用请加括号 ()",
+                    ast->u.index.index->u.string.value);
+                error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
+            }
+
             // 检查嵌套字段访问中的 null 默认值（如 self["head"]["next"] 或 self["items"][0]）
             // 当 obj 是 INDEX 类型，且最内层是 self 变量时，检查中间字段的 null 默认值
             if (ast->u.index.obj->kind == AST_INDEX) {

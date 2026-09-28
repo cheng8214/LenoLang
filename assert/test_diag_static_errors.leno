@@ -11,6 +11,8 @@
 //   D3  for x in arr（Python 遍历习惯）→ 被当条件循环（in 是成员测试），报误导的
 //       "未定义变量 x" → 补 [for头成员测试] 警告给出遍历写法 'for x to arr'
 //   D6  var x: 类型（TS/Kotlin 标注习惯）→ 报离谱的"声明语句后"级联 → 改报明确写法指引
+//   E1  "abc".pad_start（字符串字面量的字符串下标 = 漏括号的方法引用）→ 此前运行期才抛
+//       「字符串索引必须是数字」→ 编译期拦截并给两种正确写法（数字下标 / 加括号）
 //
 // 另含四条**不得误伤**的正向用例：循环内的 break/continue 合法；
 // 无效转义 \q 保持"按原样保留"的宽松行为；in 成员测试表达式照常工作；
@@ -852,6 +854,30 @@ main() {
 ")
     ce.expect_error(fr3, "impl 体返回 string 而 face 要 int ⇒ 仍要报（反向对照）",
         "返回类型与 face 'Shape' 不匹配", 5)
+
+    // ---- E1：字符串接收者的字符串下标（双字面量必拦）----
+    //   "abc".pad_start（少了括号的方法引用）此前一路放行到运行期才抛
+    //   「字符串索引必须是数字」⇒ 现在编译期拦截 + 给出两种正确写法。
+    var s1 = dirs.join(work, "str_str_index.leno")
+    files.write(s1, @"main() {
+    var r = ""abc"".pad_start
+    print(r)
+}
+")
+    ce.expect_error(s1, "字符串的字符串下标要报错（漏了括号的方法引用）",
+        "字符串不支持字符串下标 'pad_start'", 2)
+
+    // ---- E1 正向：合法形态一个都不能误伤 ----
+    //   数字下标取字符、带括号的方法调用（静态接收者 ⇒ 走 OP_GET_METHOD 的参数检查）照常。
+    //   变量接收者 + 字符串下标照旧放行（枚举兜底形态，运行期才判）⇒ 这里无需用例。
+    var s2 = dirs.join(work, "str_index_ok.leno")
+    files.write(s2, @"main() {
+    var s = ""hello""
+    print(s[1])
+    print(""abc"".pad_start(8, "".""))
+}
+")
+    ce.expect_ok(s2, "数字下标 + 带括号方法调用不受影响", ".....abc")
 
     print("=== test_diag_static_errors ALL passed ===")
 }
