@@ -118,6 +118,28 @@ static Value threads_start(int argc, Value* args) {
 
     ObjClosure* closure = (ObjClosure*)val_as_obj(args[0]);
 
+    // ★ 前置校验（2026-09-28，修一处"幽灵错误"）：
+    //   线程入口**必须是当前脚本文件里的函数** ✗ —— 直接传**别的模块**的函数会炸，
+    //   而且炸得毫无线索：子线程里 `join()` 只给 "Thread error: unknown error"
+    //   （catch 不到、**进不了函数体** ⇒ 用户连日志都写不出来）。
+    //   根因（见 object_thread.c 的 ThreadStartArgs 快照）：子 VM 只继承**调用方 VM** 的
+    //   globals，且把自己的 `current_module_frame` 置 NULL ⇒ **模块函数**找不到本模块的
+    //   globals ⇒ 进函数体前就失败。
+    //   ⇒ 与其让它变成幽灵错误，不如在**调用点（主线程）**一次说清楚 ✓
+    //   正确写法：在本文件里写个具名包装函数再 start（cleaner_master 的 scan_entry/delete_entry ✓）
+    if (closure->function && closure->function->module) {
+        ObjModule* mod = (ObjModule*)closure->function->module;
+        char msg[512];
+        snprintf(msg, sizeof(msg),
+            "threads.start(): 线程入口必须是**当前文件**的函数 ✗ "
+            "收到的是模块 '%s' 里的 '%s'。请在本文件写一个具名包装函数再 threads.start"
+            "（子线程不会加载别的模块的全局变量 ⇒ 模块函数在子线程里跑不起来）",
+            mod->name ? mod->name : "?",
+            closure->function->name ? closure->function->name : "?");
+        native_throw_error(msg);
+        return val_null();
+    }
+
     Value* call_args = NULL;
     int call_arg_count = argc - 1;
     if (call_arg_count > 0) {

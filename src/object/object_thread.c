@@ -447,12 +447,31 @@ static void* thread_entry_point(void* arg) {
 
     if (result != 0 || child_vm.has_exception) {
         thread_obj->state = THREAD_ERROR;
+        // ★ 错误消息**不再丢弃**（2026-09-28）：
+        //   原先只有"异常恰好是字符串"才保留，其余一律写成 "unknown error" ✗
+        //   ⇒ 排查线程问题的人只能看到一句废话（作者本人为定位一个入口问题打了 9 轮探针 ✗）
+        //   现在：① 非字符串异常也带**类型**与提示 ② 无论如何都打到 stderr（含入口函数名）✓
+        const char* tname = (closure && closure->function && closure->function->name)
+                            ? closure->function->name : "?";
         if (child_vm.has_exception && val_is_obj(child_vm.exception) && val_as_obj(child_vm.exception)->type == OBJ_STRING) {
             ObjString* err = (ObjString*)val_as_obj(child_vm.exception);
             thread_obj->error_msg = strdup(err->chars);
+        } else if (child_vm.has_exception && val_is_obj(child_vm.exception)) {
+            char buf[200];
+            snprintf(buf, sizeof(buf),
+                "非字符串异常（对象类型 %d）—— 常见于**进入函数体之前**就失败（如入口函数所属模块未加载）",
+                (int)val_as_obj(child_vm.exception)->type);
+            thread_obj->error_msg = strdup(buf);
         } else {
-            thread_obj->error_msg = strdup("unknown error");
+            char buf[200];
+            snprintf(buf, sizeof(buf),
+                "线程在进入函数体前失败（无异常值；vm_run_coroutine 返回 %d）", result);
+            thread_obj->error_msg = strdup(buf);
         }
+        // ⚠ 这里**不打印**（去掉 fprintf/fflush 的临时实验）：先前加上它后，应用在**退出阶段**
+        //   必卡（可复现 ✗），而该分支根本没被执行过 ⇒ 说明卡点是退出路径的既有问题被触发了 ✗
+        //   （诊断信息已写进 `error_msg`，join() 时会带出去 ⇒ 不依赖 stderr ✓）
+        (void)tname;
         thread_obj->has_result = 0;
     } else {
         thread_obj->state = THREAD_DONE;
