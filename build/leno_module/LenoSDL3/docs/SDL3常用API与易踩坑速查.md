@@ -305,6 +305,45 @@ build\leno.exe --no-cache build\leno_module\LenoSDL3\examples\图形绘制\test_
 | `图形绘制/test_antialias.leno` | 圆角矩形 + 1px 描边环 + 正圆（纯黑白 ⇒ 覆盖率 = (255−R)/255 ✓，边缘有几档灰阶一目了然 ✓） |
 | `图形绘制/test_aa_clock.leno` | 大圆 + 斜线指针/刻度（`leno_gui/应用/模拟时钟/clock.leno` 的静态复刻） |
 | `图形绘制/test_aa_radii.leno` | `r=10/20/40/80` 圆环 —— 回归「环墨迹压在蒙版纹理末列 ⇒ 整列丢失」那个坑 ✗ |
+
+---
+
+## 八、时间 / 截图 / 圆环：本轮实测新增的三条 ✓
+
+### ⛔ `times.now()` 返回的是 **int 时间戳**，不是 `[年,月,日,…]` 数组
+
+**症状**：`var d = times.now() as Array[int]` **直接抛异常**；若外面套了 `catch { }`（不少应用都这么写）
+就成了**静默失败** —— 表面"功能没反应"，很难查 ✗。实测：`type(times.now()) == "int"`，值形如 `1790597673`。
+（真实案例：电脑清理大师的「上次清理记录」与「导出报告」都因此**从未生效** ✗，直到查导出静默失败才挖出来。）
+
+**正确用法**（strftime 风格 ✓）：
+```leno
+string ts = times.format(times.now(), "%Y-%m-%d %H:%M:%S")     // 2026-09-28 20:15:27
+string fn = "报告_" + times.format(times.now(), "%Y%m%d_%H%M%S") + ".txt"
+```
+
+**教训**：`catch { }` 会把这类**类型错误**一起吞掉 ⇒ 调试期先让 catch 出声
+（`catch e { print(_str(e)) }`），定位完再收回去 ✓。
+
+### ⛔ 截图：钩子放 `setOverlay`，且**要等重绘**
+
+- 钩子放 `onRender` 回调 ⇒ 拿到的是**只有底色的空白图** ✗（控件在回调**之后**才绘制）。
+  实测：错放时 PNG 仅 1137 字节的纯底色；移入 `setOverlay` 后 10430 字节、内容完整 ✓。
+- **还要等重绘**：在事件回调里"改完状态立刻截"⇒ 屏幕上仍是**上一帧** ✗
+  （我抓到的正是"扫描完成"而不是刚切过去的"报告态"）。放到定时器里晚 1.6 秒再截即可 ✓。
+
+### ✅ `RingProgress` 新增：多段弧 + 副行文字（做"已清 / 跳过"双色环 ✓）
+
+```leno
+ring.set_segments([0.23, 0.47], [绿, 橙])                        // 自 12 点顺时针；自带"长出"揭示动画 ✓
+ring.set_sub_text_fn(func():string { return "占可清理 23%" })      // 环中心第二行（字号更小）✓
+ring.clear_segments()                                            // 回单段（重新扫描时记得清 ✓）
+```
+
+- 创建时也可用 opts：`segments: [..]` / `segment_colors: [..]` / `sub_text_fn:` / `sub_font_size:` ✓
+- 段数 > 颜色数 ⇒ **循环取色** ✓；设了多段弧则优先画多段（`mode:"value"` 的弧不再画 ✓）
+- `anim_speed: 0` ⇒ 揭示动画**立即到 1**（无人值守截图/比对时用得上 ✓，避免帧间差异 ✗）
+- 兼容性：没设多段弧、也没设副行 ⇒ 渲染路径与旧版**逐像素一致**（已用同源双构建比对验证 ✓）
 | `其他测试/test_draw_order.leno` | 实测三个绘制层先后（见第一节 ✓） |
 | `其他测试/test_dump_layout.leno` | `dumpLayout` 输出示例（含"有剩余空间但无人 grow"的场景 ✓） |
 

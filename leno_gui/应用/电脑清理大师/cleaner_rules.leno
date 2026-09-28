@@ -18,6 +18,7 @@ export struct CleanCategory {
     string name = ""
     Array[string] roots = []    // 扫描根列表（构建时解析环境变量 + 存在性过滤）
     string file_prefix = ""     // 非空 ⇒ 只收该前缀的文件（如 thumbcache_）；空 ⇒ 整层清理
+    string hint = ""            // 行悬停提示（讲清这类的性质/技巧）；纯 UI 用 ⇒ 不跨线程 ✓
 }
 
 // 每类别清理单元上限（正常垃圾远达不到；超出部分只计数不删）
@@ -88,6 +89,64 @@ func _browser_cache_roots(string userData): Array[string] {
     return out
 }
 
+// ==================== 浏览器 Service Worker / 网页离线缓存 ====================
+// 现代网页缓存的大头（PWA / 站点离线资源）；与上面的 Cache 目录不同，独立成类 ⇒ 可单独勾选 ✓
+func _browser_sw_roots(string userData): Array[string] {
+    Array[string] out = []
+    if userData == "" or not dirs.exists(userData) { return out }
+    for dirs.listdir(userData) to prof {
+        string pdir = dirs.join(userData, prof)
+        if not dirs.is_dir(pdir) { continue }
+        _add_roots(out, [dirs.join(pdir, "Service Worker\\CacheStorage"),
+                         dirs.join(pdir, "Service Worker\\ScriptCache")])
+    }
+    return out
+}
+
+// ==================== 应用缓存根探测（通用：给根 + 一组子目录名） ====================
+func _add_app_cache(Array[string] out, string root, Array[string] subs) {
+    if root == "" or not dirs.exists(root) { return }
+    for subs to s {
+        _add_roots(out, [dirs.join(root, s)])
+    }
+}
+
+// 编辑器缓存：VS Code 系（APPDATA 下的产品目录名各不同 ⇒ 逐个试 ✓）
+func _editor_cache_roots(string appdata): Array[string] {
+    Array[string] out = []
+    if appdata == "" { return out }
+    Array[string] names = ["Code", "Cursor", "VSCodium", "Windsurf", "Trae"]
+    Array[string] subs = ["Cache", "CachedData", "Code Cache", "GPUCache"]
+    for names to n {
+        _add_app_cache(out, dirs.join(appdata, n), subs)
+    }
+    return out
+}
+
+// 聊天/协作类应用缓存（只收缓存目录 ⇒ **不碰聊天记录** ✓）
+func _chat_cache_roots(string appdata): Array[string] {
+    Array[string] out = []
+    if appdata == "" { return out }
+    Array[string] subs = ["Cache", "Code Cache", "GPUCache"]
+    _add_app_cache(out, dirs.join(appdata, "discord"), subs)
+    _add_app_cache(out, dirs.join(appdata, "Slack"), subs)
+    _add_app_cache(out, dirs.join(appdata, "Microsoft\\Teams"), subs)
+    return out
+}
+
+// 包管理器 / 构建工具缓存（删后下次安装重新下载，属安全类 ✓）
+func _dev_cache_roots(string local, string appdata): Array[string] {
+    Array[string] out = []
+    if local != "" {
+        _add_roots(out, [dirs.join(local, "npm-cache"), dirs.join(local, "pip\\cache"),
+                         dirs.join(local, "Yarn\\Cache")])
+    }
+    if appdata != "" {
+        _add_roots(out, [dirs.join(appdata, "npm-cache")])
+    }
+    return out
+}
+
 // ==================== 类别构建 ====================
 // 全部用户级目录（_env 解析），无需管理员权限；不存在的不登记
 export func build_categories(): Array[CleanCategory] {
@@ -136,6 +195,44 @@ export func build_categories(): Array[CleanCategory] {
 
     // 6) 回收站（特殊类别：roots 为空 ⇒ UI 侧走 Win32.emptyRecycleBin）
     cats.add(new CleanCategory(id = "recyclebin", name = "回收站"))
+
+    // ==================== 以下为「更多类别」（全部 user-level ⇒ 无需管理员 ✓） ====================
+    // ⚠ 一律**追加在回收站之后**：`--autoclean` 取证模式用的是历史下标
+    //   （phase1 = [cats.len()-1, 5] / phase2 = [0..4]）⇒ 不能插到前面去 ✓
+
+    // 7) 崩溃转储（程序崩溃时写的 dump；可安全清理）
+    Array[string] dumpRoots = []
+    if local != "" { _add_roots(dumpRoots, [dirs.join(local, "CrashDumps")]) }
+    cats.add(new CleanCategory(id = "crashdump", name = "崩溃转储", roots = dumpRoots,
+        hint = "程序崩溃时写的转储文件（可安全删除）"))
+
+    // 8) 编辑器缓存（VS Code / Cursor / VSCodium / Windsurf / Trae）
+    string appdata = _env_or("APPDATA", "")
+    Array[string] edRoots = []
+    _add_roots(edRoots, _editor_cache_roots(appdata))
+    cats.add(new CleanCategory(id = "editorcache", name = "编辑器缓存", roots = edRoots,
+        hint = "代码编辑器的索引/渲染缓存，删后会自动重建"))
+
+    // 9) 聊天工具缓存（Discord / Slack / Teams；只收缓存目录，**不碰聊天记录**）
+    Array[string] chatRoots = []
+    _add_roots(chatRoots, _chat_cache_roots(appdata))
+    cats.add(new CleanCategory(id = "chatcache", name = "聊天缓存", roots = chatRoots,
+        hint = "聊天图片/表情的本地缓存（不会删聊天记录）"))
+
+    // 10) 包管理器缓存（npm / pip / yarn）
+    Array[string] devRoots = []
+    _add_roots(devRoots, _dev_cache_roots(local, appdata))
+    cats.add(new CleanCategory(id = "devcache", name = "包管理器缓存", roots = devRoots,
+        hint = "npm/pip/yarn 下载缓存；删后下次安装需重新下载（不影响已装的包）"))
+
+    // 11) 浏览器网页离线缓存（Service Worker / CacheStorage）
+    Array[string] swRoots = []
+    if local != "" {
+        _add_roots(swRoots, _browser_sw_roots(dirs.join(local, "Google\\Chrome\\User Data")))
+        _add_roots(swRoots, _browser_sw_roots(dirs.join(local, "Microsoft\\Edge\\User Data")))
+    }
+    cats.add(new CleanCategory(id = "swcache", name = "网页离线缓存", roots = swRoots,
+        hint = "浏览器 Service Worker / 网页离线缓存（关掉浏览器后能清更多）"))
 
     return cats
 }

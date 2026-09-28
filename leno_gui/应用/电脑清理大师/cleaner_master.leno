@@ -72,6 +72,7 @@ struct CleanerMaster {
     Label lastLbl                      // 上次清理记录
     Label timeLbl                      // 清理耗时（进度条行右侧，清理中实时跳动 ✓）
     Button mainBtn
+    Button exportBtn                   // 「导出报告」（报告态可用；其余时候禁用+半透明 ✓）
     Timer pollTimer
 
     // ===== 状态机：idle → scanning → done → cleaning → report =====
@@ -87,6 +88,11 @@ struct CleanerMaster {
     Array[Thread] cleanThreads
     Array[int] cleanCatIdx             // 清理线程序 → 类别序（与 cleanCatStats 平行）
     Array[Array[string]] cleanCatStats // 每类别清理结果 [cleaned, failed, freed]（join 后填）
+    // 本次**用户勾选**的类别序。与 cleanCatIdx 的区别（修「结果列显示未勾选」那个 bug 的关键）：
+    //   cleanCatIdx 只收录"真的起了删除线程"的类别 ⇒ **0 项可清的类别不在里面**，
+    //   于是它们会被误标成"未勾选"✗（实测：错误报告 0 B/0 项 ⇒ 显示"未勾选"但复选框是勾着的）
+    Array[int] cleanCheckedIdx = []
+    int cumFreed = 0                   // 历史累计释放（last_clean.json 累加；摘要卡展示 ✓）
     Channel? cleanCh = null
     Thread? recycleThread = null       // 回收站清空线程（后台 ✓）
     int cleanTotalUnits = 0            // 勾选类别的清理单元总数（进度分母）
@@ -134,13 +140,27 @@ struct CleanerMaster {
         var mainRow = SDL3.createHBox({padX: 8, padY: 4, spacing: 8})
         var leftCol = SDL3.createVBox({padX: 4, padY: 8, spacing: 10})
         ring = SDL3.createRingProgress({
-            size: 220, thickness: 24, mode: "idle",
+            size: 220, thickness: 24, mode: "idle", font_size: 20, sub_font_size: 12,
+            tip: "环 = 本次结果比例\n  绿段 = 已清理项 · 橙段 = 被占用跳过项\n（报告态显示；点环可重新扫描）",
             text_fn: func():string {
                 if state == "scanning" { return rules.fmt_size(liveSize) }
                 if state == "done" { return rules.fmt_size(totalSize) }
-                if state == "cleaning" { return "已清 " + rules.fmt_size(liveFreed) }
-                if state == "report" { return "已清 " + rules.fmt_size(freedTotal) }
+                if state == "cleaning" { return "已释放 " + rules.fmt_size(liveFreed) }
+                if state == "report" { return "已释放 " + rules.fmt_size(freedTotal) }
                 return "立即扫描"
+            },
+            // 副行（环中心第二行）：报告态显示「占可清理 x%」——和上面的「已释放 X MB」互补 ✓
+            sub_text_fn: func():string {
+                if state == "scanning" { return $"{liveCnt} 项" }
+                if state == "done" { return $"共 {totalCnt} 项" }
+                if state == "cleaning" { return $"{liveCleaned}/{cleanTotalUnits} 项" }
+                if state == "report" {
+                    if totalSize > 0 {
+                        return $"占可清理 {_int(100.0 * _float(freedTotal) / _float(totalSize))}%"
+                    }
+                    return $"{cleanedTotal} 项"
+                }
+                return ""
             },
             on_click: func() {
                 if state == "idle" or state == "report" { startScan() }
@@ -165,11 +185,14 @@ struct CleanerMaster {
 
         catTable = SDL3.createTable({
             headers: ["", "类别", "大小", "项目数", "结果"],
-            col_widths: [40.0, 130.0, 100.0, 70.0, 130.0],
+            // 结果列加宽（原 130 ⇒ 168）：原先「清 42 · 占用跳过 68」会被截断成「占用跳...」✗
+            col_widths: [40.0, 112.0, 92.0, 64.0, 168.0],
             zebra: true, row_h: 34, header_h: 32, font_size: 14,
             check_col: 0,
             col_reorder: false, resizable: false
         })
+        // 点任意单元格 ⇒ 该类别扫到的**明细清单**（框架 Table 自带 `on_cell` 单击回调 ✓）
+        catTable.on_cell(func(int row, int col) { showDetail(row) })
         mainRow.add(catTable, {grow: 1, shrink: 1, align: 3})
 
         // 清理进度条 + 耗时（进度条行右侧 ✓）
@@ -188,10 +211,16 @@ struct CleanerMaster {
         var bottomRow = SDL3.createHBox({h: 54, padX: 4, padY: 6, spacing: 10})
         statusLbl = SDL3.createLabel({
             text: "就绪 — 点击圆环或「立即扫描」开始", font_size: 13,
-            wrap: true, wrap_w: 640,
-            tip: "「跳过 N 项」＝这些文件正被其他程序占用（如浏览器正在运行、系统临时文件在使用中）。\n关闭对应程序后点「再扫一次」即可清理。"
+            wrap: true, wrap_w: 540,
+            tip: "「跳过 N 项」＝这些文件正被其他程序占用（如浏览器正在运行、系统临时文件在使用中）。\n关闭对应程序后点「再扫一次」即可清理。\n点表格任一行可看该类的明细清单。"
         })
         bottomRow.add(statusLbl, {grow: 1, shrink: 1, align: 3})
+        // 「导出报告」：仅报告态可用（其余时候灰掉 ⇒ 一眼看出现在没东西可导 ✓）
+        exportBtn = SDL3.createButton({w: 132, h: 42, text: "导出报告", type: "dark", font_size: 15})
+        exportBtn.set_tip("把本次扫描/清理结果写成文本报告（保存到桌面）")
+        exportBtn.set_enabled(false)
+        exportBtn.on_click(func() { exportReport() })
+        bottomRow.add(exportBtn, {grow: 0, shrink: 0, basis: 132, align: 3})
         mainBtn = SDL3.createButton({w: 190, h: 42, text: "立即扫描", type: "success", font_size: 16})
         mainBtn.on_click(func() {
             if state == "idle" or state == "report" { startScan() } else {
@@ -233,6 +262,23 @@ struct CleanerMaster {
     }
 
     // ==================== 上次清理记录（%APPDATA%\TraeCleaner\last_clean.json ✓） ====================
+    func _in_int(Array[int] arr, int v): bool {
+        for arr to x {
+            if x == v { return true }
+        }
+        return false
+    }
+
+    // 按 id 找类别下标（-1 = 不存在）。
+    // 为什么需要：`--autoclean` 取证模式原先写死历史下标（[0..4] 与 5）⇒ 一加类别就会
+    // 悄悄换掉它清理的对象 ✗（本轮就加了 5 类）。改成按 id 查 ⇒ 以后再改类别序也安全 ✓
+    func _cat_index(string id): int {
+        for 0 : cats.len() - 1 to i {
+            if cats[i].id == id { return i }
+        }
+        return -1
+    }
+
     func _pad2(int v): string {
         if v < 10 { return "0" + _str(v) }
         return _str(v)
@@ -247,8 +293,13 @@ struct CleanerMaster {
             var d = jsons.read_file(_last_clean_path())
             if d is Dict => j {
                 int freed = _int(j.get("freed", 0))
+                cumFreed = _int(j.get("total_freed", 0))     // 老文件没这字段 ⇒ 0（下一次保存补上 ✓）
                 if freed > 0 {
-                    lastLbl.set_text($"上次清理：{j.get("time", "")} 释放 {rules.fmt_size(freed)}")
+                    string extra = ""
+                    if cumFreed > freed { extra = $" · 累计 {rules.fmt_size(cumFreed)}" }
+                    lastLbl.set_text($"上次清理：{j.get("time", "")} 释放 {rules.fmt_size(freed)}{extra}")
+                } else {
+                    if cumFreed > 0 { lastLbl.set_text($"累计释放 {rules.fmt_size(cumFreed)}") }
                 }
             }
         } catch { }
@@ -256,11 +307,16 @@ struct CleanerMaster {
 
     func saveLastClean() {
         try {
-            var d = ti.now() as Array[int]     // 实际返回 [年,月,日,时,分,秒]（规格声明 int ⇒ 需 as 收窄）
-            string ts = $"{d[0]}-{_pad2(d[1])}-{_pad2(d[2])} {_pad2(d[3])}:{_pad2(d[4])}"
+            // ⚠ `ti.now()` 返回的是 **int 时间戳**，**不是** [年,月,日,时,分,秒] 数组 ——
+            //   原先写 `ti.now() as Array[int]` 会**直接抛异常**，又被这里的 `catch { }` 吞掉 ⇒
+            //   「上次清理」这项功能其实**从未生效** ✗（本轮查导出报告静默失败时才挖出来）。
+            //   正确做法：`ti.format(时间戳, strftime 风格格式)` ✓
+            string ts = ti.format(ti.now(), "%Y-%m-%d %H:%M:%S")
+            cumFreed = cumFreed + freedTotal   // 跨次累加（"累计释放"✓）
             dirs.mkdir_p(_env_or("APPDATA", _tmpdir()) + "\\TraeCleaner")
-            jsons.write_file(_last_clean_path(), {time: ts, freed: freedTotal, items: cleanedTotal})
-            lastLbl.set_text($"上次清理：{ts} 释放 {rules.fmt_size(freedTotal)}")
+            jsons.write_file(_last_clean_path(),
+                {time: ts, freed: freedTotal, items: cleanedTotal, total_freed: cumFreed})
+            lastLbl.set_text($"上次清理：{ts} 释放 {rules.fmt_size(freedTotal)} · 累计 {rules.fmt_size(cumFreed)}")
         } catch { }
     }
 
@@ -284,6 +340,10 @@ struct CleanerMaster {
         cleanBar.set_value(0.0)
         timeLbl.set_text("")
         ring.set_mode("sweep")
+        ring.clear_segments()          // 新一轮扫描 ⇒ 清掉上轮的"绿/橙"双色弧 ✓
+        exportBtn.set_enabled(false)   // 上一轮报告作废 ⇒ 导出也失效 ✓
+        cleanCheckedIdx = []           // 上轮勾选记录作废（结果列靠它区分「无垃圾/未勾选」✓）
+        catTable.clear_cell_colors()
         updateSummary()
         scanCh = threads.channel(65536)
         for 0 : cats.len() - 1 to i {
@@ -326,6 +386,8 @@ struct CleanerMaster {
 
     func refreshRows() {
         Array[Array[string]] rows = []
+        Array[string] tips = []
+        Array[int] fgCols = []            // 结果列前景色（0 = 用默认色）
         for 0 : cats.len() - 1 to i {
             var c = cats[i]
             string szTxt = "—"
@@ -340,7 +402,9 @@ struct CleanerMaster {
                     cntTxt = _str(_int(res[1]))
                 }
             }
-            // 结果列（report 状态）：每类清理结果一目了然 ✓
+            string tip = c.hint            // 行悬停：类别说明（新增类别都带 ✓）
+            int fg = 0
+            // 结果列（report / cleaning 状态）：每类清理结果一目了然 ✓
             if state == "report" or state == "cleaning" {
                 if c.id == "recyclebin" {
                     if recycleTimedOut { resTxt = "后台进行中" } else {
@@ -356,19 +420,38 @@ struct CleanerMaster {
                         var s = cleanCatStats[ci]
                         int cc = _int(s[0])
                         int cf = _int(s[1])
-                        if cc > 0 and cf > 0 { resTxt = $"清 {cc} · 占用跳过 {cf}" } else {
-                            if cc > 0 { resTxt = $"已清理 {cc} 项" } else {
-                                if cf > 0 { resTxt = $"占用跳过 {cf} 项" } else { resTxt = "无垃圾" }
+                        // 文案缩短（结果列窄 ⇒ 长的会被截断；完整说法进 tip ✓）
+                        if cc > 0 and cf > 0 { resTxt = $"已清 {cc} · 跳过 {cf}" } else {
+                            if cc > 0 { resTxt = $"已清 {cc} 项" } else {
+                                if cf > 0 { resTxt = $"跳过 {cf} 项" } else { resTxt = "无垃圾" }
                             }
                         }
+                        if cc > 0 { fg = theme.getTheme().btnSuccess }      // 清掉了 ⇒ 绿
+                        if cf > 0 { fg = #E09A34FF }                        // 有跳过 ⇒ 橙（更需要你看一眼）
+                        tip = $"{tip}\n本次：已清理 {cc} 项 · 跳过 {cf} 项（被占用）\n点本行看明细清单"
+                    } else if _in_int(cleanCheckedIdx, i) {
+                        // ★ 勾了但没东西可清 ⇒ 说「无垃圾」。
+                        //   原先这里一律落到 else ⇒ 显示「未勾选」✗（实测：错误报告 0 B/0 项、
+                        //   复选框明明是勾着的却写"未勾选" ⇒ 因为 cleanCatIdx 只收录真起了删除线程的类别）
+                        resTxt = "无垃圾"
+                        tip = $"{tip}\n本次扫描未发现可清理项"
                     } else {
                         resTxt = "未勾选"
+                        fg = theme.getTheme().txtDim
+                        tip = $"{tip}\n本次清理未勾选本类"
                     }
                 }
             }
             rows.add(["", c.name, szTxt, cntTxt, resTxt])
+            tips.add(tip)
+            fgCols.add(fg)
         }
         catTable.set_rows(rows)
+        catTable.clear_cell_colors()
+        for 0 : rows.len() - 1 to i {
+            if i < tips.len() and tips[i] != "" { catTable.set_row_tip(i, tips[i]) }
+            if i < fgCols.len() and fgCols[i] != 0 { catTable.set_cell_fg(i, 4, fgCols[i]) }
+        }
     }
 
     // ==================== 清理 ====================
@@ -399,6 +482,9 @@ struct CleanerMaster {
         cleanThreads = []
         cleanCatIdx = []
         cleanCatStats = []
+        // ★ 记下"用户勾选了哪些类"：结果列要靠它把「无垃圾」与「未勾选」分开
+        //   （cleanCatIdx 只收录真起了删除线程的类别 ⇒ 0 项可清的类不在其中 ✗）
+        cleanCheckedIdx = checked
         liveAttempted = 0
         liveCleaned = 0
         liveFreed = 0
@@ -492,6 +578,16 @@ struct CleanerMaster {
             float ratio = _float(freedTotal) / _float(totalSize)   // 环 = 已释放 ÷ 已发现 ✓
             ring.set_value(ratio)
         }
+        // ★ 双色环：绿 = 已清理**项数**占比，橙 = 被占用跳过**项数**占比（余量留轨道色 ✓）
+        //   为什么按项数而非字节：跳过项多是被占用的小文件，用项数更能反映"还剩多少要处理" ✓
+        if totalCnt > 0 {
+            float okRatio = _float(cleanedTotal) / _float(totalCnt)
+            float skipRatio = _float(failedTotal) / _float(totalCnt)
+            ring.set_segments([okRatio, skipRatio], [theme.getTheme().btnSuccess, #E09A34FF])
+        } else {
+            ring.clear_segments()
+        }
+        exportBtn.set_enabled(true)     // 有报告了 ⇒ 可导出 ✓
         refreshRows()
         saveLastClean()
         state = "report"
@@ -554,6 +650,142 @@ struct CleanerMaster {
         } catch {
             driveLbl.set_text("C盘 空间读取失败")
         }
+    }
+
+    // ==================== 明细清单（点表格任一行 ⇒ on_cell 回调 ✓） ====================
+    // 数据来源 = 该类别 scan_worker 的返回 `[size,cnt,skip, 路径,大小, 路径,大小, ...]`
+    // 展示：按**大小降序**取前 100 条（大文件最值得看 ✓），标题里说明总数 ⇒ 不误导"只有这么多" ✓
+    func showDetail(int row) {
+        if row < 0 or row >= cats.len() { return }
+        if row >= results.len() { statusLbl.set_text("该类别还没有扫描结果"); return }
+        var c = cats[row]
+        if c.id == "recyclebin" {
+            statusLbl.set_text("回收站由系统托管，不列出逐项清单")
+            return
+        }
+        var res = results[row]
+        int total = _int(res[1])
+        int LIMIT = 100
+        Array[int] pick = []                 // 结果数组里的下标（指向路径 ✓）
+        Array[int] pickSize = []
+        int j = 3
+        while j + 1 < res.len() {
+            int sz = _int(res[j + 1])
+            if pick.len() < LIMIT {
+                pick.add(j); pickSize.add(sz)
+            } else {
+                int mn = 0                    // 找当前最小项
+                int k0 = 1
+                while k0 < pickSize.len() {
+                    if pickSize[k0] < pickSize[mn] { mn = k0 }
+                    k0 = k0 + 1
+                }
+                if sz > pickSize[mn] { pick[mn] = j; pickSize[mn] = sz }
+            }
+            j = j + 2
+        }
+        // top-K 内部按大小降序（K ≤ 100 ⇒ 冒泡足够 ✓）
+        int a = 0
+        while a + 1 < pickSize.len() {
+            int b = a + 1
+            while b < pickSize.len() {
+                if pickSize[b] > pickSize[a] {
+                    int ts = pickSize[a]; pickSize[a] = pickSize[b]; pickSize[b] = ts
+                    int tp = pick[a]; pick[a] = pick[b]; pick[b] = tp
+                }
+                b = b + 1
+            }
+            a = a + 1
+        }
+
+        var dlg = SDL3.createDialogWindow({title: "明细清单 — " + c.name, w: 760, h: 520})
+        var droot = SDL3.createVBox({x: 0, y: 0, w: 760, h: 520, padX: 16, padY: 14, spacing: 8})
+        dlg.setRoot(droot)
+        string head = $"{c.name}：共 {total} 项 · {rules.fmt_size(_int(res[0]))}"
+        if pick.len() < total { head = $"{head}（下面只列最大的 {pick.len()} 项）" }
+        droot.add(SDL3.dialogLabel(head, 14), {grow: 0, shrink: 0, align: 0})
+        Table dt = SDL3.createTable({
+            headers: ["路径", "大小"],
+            col_widths: [580.0, 120.0],
+            zebra: true, row_h: 26, header_h: 28, font_size: 13,
+            col_reorder: false, resizable: false
+        })
+        Array[Array[string]] drows = []
+        for 0 : pick.len() - 1 to k {
+            drows.add([res[pick[k]], rules.fmt_size(pickSize[k])])
+        }
+        dt.set_rows(drows)
+        droot.add(dt, {grow: 1, shrink: 1, align: 3})
+        Button closeBtn = SDL3.createButton({w: 110, h: 34, text: "关闭", type: "dark"})
+        var done = false
+        closeBtn.on_click(func() { done = true })
+        droot.add(SDL3.dialogButtonRow([closeBtn], 16), {grow: 0, shrink: 0, align: 3})
+        SDL3.runModal(dlg,
+            func(Event ev): bool {
+                if ev.isQuit() or ev.isWindowClose() { return false }
+                if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
+                return not done
+            },
+            func(Renderer r) { r.clearColor(theme.getTheme().bg) }
+        )
+    }
+
+    // ==================== 导出报告（报告态可用 ✓） ====================
+    // 直接存到桌面（不弹文件框 ⇒ 少一次交互、少一个失败点）；路径写回状态栏 ✓
+    func exportReport() {
+        try {
+            // 同一个坑：`ti.now()` 是 int 时间戳（不是数组 ✗）⇒ 用 ti.format 格式化 ✓
+            int nowTs = ti.now()
+            string ts = ti.format(nowTs, "%Y-%m-%d %H:%M:%S")
+            string fname = "清理报告_" + ti.format(nowTs, "%Y%m%d_%H%M%S") + ".txt"
+            string desk = _env_or("USERPROFILE", _tmpdir()) + "\\Desktop"
+            if not dirs.exists(desk) { desk = _tmpdir() }
+            string path = desk + "\\" + fname
+            var f = files.open(path, "w")
+            f.writeln("电脑清理大师 — 清理报告")
+            f.writeln($"时间：{ts}")
+            f.writeln($"耗时：{_fmt_secs(cleanElapsedSec)}")
+            f.writeln("")
+            f.writeln($"已清理：{cleanedTotal} 项")
+            f.writeln($"释放：{rules.fmt_size(freedTotal)}")
+            f.writeln($"跳过：{failedTotal} 项（文件被其他程序占用）")
+            string recy = "未处理"
+            if recycleCleaned { recy = "已清空" }
+            if recycleTimedOut { recy = "后台进行中" }
+            f.writeln($"回收站：{recy}")
+            if cumFreed > 0 { f.writeln($"累计释放：{rules.fmt_size(cumFreed)}") }
+            f.writeln("")
+            f.writeln("---- 分类明细 ----")
+            for 0 : cats.len() - 1 to i {
+                var c = cats[i]
+                if c.id == "recyclebin" {
+                    f.writeln($"  {c.name}：{recy}")
+                    continue
+                }
+                int ci = -1
+                for 0 : cleanCatIdx.len() - 1 to k {
+                    if cleanCatIdx[k] == i { ci = k }
+                }
+                string line = $"  {c.name}："
+                if ci >= 0 and ci < cleanCatStats.len() {
+                    var s = cleanCatStats[ci]
+                    line = line + $"已清理 {_int(s[0])} 项 · 跳过 {_int(s[1])} 项 · 释放 {rules.fmt_size(_int(s[2]))}"
+                } else {
+                    if _in_int(cleanCheckedIdx, i) { line = line + "无垃圾" } else { line = line + "未勾选" }
+                }
+                if i < results.len() {
+                    line = line + $"（扫描：{_int(results[i][1])} 项 / {rules.fmt_size(_int(results[i][0]))}）"
+                }
+                f.writeln(line)
+            }
+            f.writeln("")
+            f.writeln("提示：跳过的项多为被程序占用的文件 —— 关闭浏览器/编辑器等程序后点「再扫一次」即可清理。")
+            f.close()
+            statusLbl.set_text($"报告已保存到桌面：{fname}")
+        } catch e {
+            statusLbl.set_text($"导出失败：{_str(e)}")
+        }
+        SDL3.markFrameRedraw()
     }
 
     // ==================== 50ms 轮询 ====================
@@ -737,7 +969,11 @@ struct CleanerMaster {
                     cats.add(new CleanCategory(id = "fixture", name = "测试垃圾", roots = froots))
                     results.add(res)
                     _dlog($"fixture scanned size={res[0]} elems={res.len()}")
-                    beginClean([cats.len() - 1, 5])   // fixture + 回收站（回收站刚被验证秒回）
+                    // fixture + 回收站（回收站刚被验证秒回）；按 id 查而不是写死下标 ✓
+                    Array[int] ph1 = [cats.len() - 1]
+                    int rbIdx = _cat_index("recyclebin")
+                    if rbIdx >= 0 { ph1.add(rbIdx) }
+                    beginClean(ph1)
                 }
                 if autoTest and (state == "done" and not autoClean) {
                     // 自证截屏（全屏）：留给调用方检查视觉效果 ✓
@@ -759,7 +995,13 @@ struct CleanerMaster {
                     if not phase2 {
                         phase2 = true
                         _dlog("=== phase2: real categories (no recycle) ===")
-                        beginClean([0, 1, 2, 3, 4])
+                        // 5 个"原有"真实类别，按 id 查（写死下标会在加类别后失效 ✗）
+                        Array[int] ph2 = []
+                        for ["temp", "browser", "wer", "d3d", "thumbs"] to cid {
+                            int ix = _cat_index(cid)
+                            if ix >= 0 { ph2.add(ix) }
+                        }
+                        beginClean(ph2)
                     } else {
                         print("AUTOCLEAN FINISHED")
                         _dlog("=== autoclean finished ===")

@@ -29,6 +29,20 @@ export struct RingProgress impl Widget {
     Color _fill = #3CC850FF        // 值弧/亮弧色
     Color _txt = #EBEBF5FF         // 中心文字色
     Color _bg = #FFFFFF00          // 抠底色（内圆）——须与父容器底色一致才无缝
+    // ==================== 多段弧（如"已清 vs 跳过"双色环） ====================
+    // 为什么需要：`value` 模式只有**一段**弧，无法表达"总量里成功的多少、跳过的多少"。
+    //   清理类应用（电脑清理大师）报告页要的正是这个 ⇒ 这里补 `set_segments` ✓
+    Array[float] _segVals = []     // 各段占比（0..1，顺序 = 自 12 点顺时针；总和 ≤ 1，余量留轨道色）
+    Array[Color] _segCols = []     // 各段颜色（可短于 vals ⇒ 循环取色）
+    float _segShown = 1.0          // 揭示动画系数（0→1）：新段数据时长出，避免"瞬间出现"的生硬感
+    float _segLast = 0.0
+    bool _segAnim = false
+    // ==================== 副行文字（环中心第二行，比主行小一号） ====================
+    //   用途：主行放"已释放 42.0 MB"，副行放"占可清理 23%" ⇒ 一个环讲清两件事 ✓
+    func():string _subTextFn
+    float _subFontSize = 12.0
+    Font? _subFont
+    float _subFontH = 0.0
     float _fontSize = 18.0; string _fontPath = ""; Font? _font; float _fontH = 0.0
     bool _showText = true
     int _cursor = SystemCursor.POINTER
@@ -67,7 +81,26 @@ export struct RingProgress impl Widget {
         if opts.get("bg_color") is Color => t { _bg = t }
         if opts.get("text_fn") is func():string => f { _textFn = f }
         if opts.get("on_click") is func():void => f { _onClick = f }
+        if opts.get("sub_text_fn") is func():string => f { _subTextFn = f }
+        _subFontSize = opts.get("sub_font_size", 12)
+        // 多段弧（可选）：segments = 占比数组，segment_colors = 颜色数组（可短 ⇒ 循环取色 ✓）
+        var segsAny = opts.get("segments", [])
+        if segsAny is Array => sa {
+            if sa.len() > 0 {
+                Array[float] vs = []
+                for sa to v { vs.add(_float(v)) }
+                Array[Color] cs = []
+                var segcAny = opts.get("segment_colors", [])
+                if segcAny is Array => ca {
+                    for ca to c {
+                        if c is Color => cc { cs.add(cc) }
+                    }
+                }
+                set_segments(vs, cs)
+            }
+        }
         _ensure_font()
+        _ensure_sub_font()
         _loaded = true
     }
 
@@ -77,6 +110,16 @@ export struct RingProgress impl Widget {
             if _fontPath != "" { _font = fnt.acquireFont(_fontPath, _fontSize) }
             else { _font = fnt.acquireFontAuto(_fontSize) }
             if _font.ok { var[float, float](_gw, _gh) = _font.measureString("Ag"); _fontH = _gh }
+        }
+    }
+
+    // 副行字体（比主行小一号；单独 acquire ⇒ 与主行字号互不影响 ✓）
+    func _ensure_sub_font() {
+        if _subFont == null or not _subFont.ok {
+            if _subFont != null and _subFont.ok { fnt.releaseFont(_subFont) }
+            if _fontPath != "" { _subFont = fnt.acquireFont(_fontPath, _subFontSize) }
+            else { _subFont = fnt.acquireFontAuto(_subFontSize) }
+            if _subFont.ok { var[float, float](_gw, _gh) = _subFont.measureString("Ag"); _subFontH = _gh }
         }
     }
 
@@ -100,6 +143,35 @@ export struct RingProgress impl Widget {
     }
     func get_mode(): string { return _mode }
     func set_text_fn(func():string f) { _textFn = f }
+    // ==================== 多段弧（双色环）API ====================
+    // vals：各段占比（0..1，顺序 = 自 12 点方向**顺时针**依次排布；总和不超 1，余量留轨道色）
+    // cols：各段颜色（可短于 vals ⇒ 按 `i % len` 循环取色）；空 ⇒ 全用 `_fill`
+    // 说明：设置后自动播放"长出"揭示动画（`_segShown` 0→1）—— 清理类应用报告页看着更自然 ✓
+    // ⚠ 与 `mode="value"` 互不干扰：设了多段弧就优先画多段（`value` 弧不再画 ✓）
+    func set_segments(Array[float] vals, Array[Color] cols) {
+        _segVals = []
+        for vals to v {
+            float f = v
+            if f < 0.0 { f = 0.0 }
+            _segVals.add(f)
+        }
+        _segCols = cols
+        _segShown = 0.0; _segLast = 0.0; _segAnim = true
+        core.markFrameRedraw()
+    }
+    func clear_segments() {
+        _segVals = []; _segCols = []
+        _segShown = 1.0; _segLast = 0.0; _segAnim = false
+        core.markFrameRedraw()
+    }
+    func get_segment_count(): int { return _segVals.len() }
+    // 副行文字（环中心第二行；传 null 取消）
+    func set_sub_text_fn(func():string f) { _subTextFn = f }
+    func set_sub_font_size(float s) {
+        _subFontSize = s
+        if _subFont != null and _subFont.ok { fnt.releaseFont(_subFont) }
+        _subFont = null
+    }
     func on_click(func():void cb) { _onClick = cb }
     func set_enabled(bool e) { enabled = e }
     func set_visible(bool v) { visible = v }
@@ -166,14 +238,33 @@ export struct RingProgress impl Widget {
         _sweepLast = now
     }
 
+    // 多段弧的揭示动画（0→1）：与数值动画同款指数逼近，但慢一点 ⇒ 观感更稳 ✓
+    func _step_segments() {
+        if not _segAnim { return }
+        float now = _float(core.getTicks())
+        float dt = 0.0
+        if _segLast > 0.0 { dt = (now - _segLast) / 1000.0 }
+        _segLast = now
+        if _animSpeed <= 0.0 { _segShown = 1.0; _segAnim = false; return }
+        if dt > 0.0 {
+            float f = _animSpeed * dt * 0.6
+            if f > 1.0 { f = 1.0 }
+            _segShown = _segShown + (1.0 - _segShown) * f
+            if _segShown > 0.995 { _segShown = 1.0; _segAnim = false }
+        }
+    }
+
     // ==================== 渲染 ====================
     func render(Renderer r) {
         if not _loaded or not visible { return }
         _ensure_font()
+        if _subTextFn != null { _ensure_sub_font() }
         _step_anim()
+        _step_segments()
         bool busy = false
         if _mode == "sweep" { _step_sweep(); busy = true }
         if _animating { busy = true }
+        if _segAnim { busy = true }
         if busy { core.requestRedraw() }
 
         float cx = x + _size / 2.0
@@ -206,7 +297,23 @@ export struct RingProgress impl Widget {
         r.setColor(_bg)
         r.fillCircle(cx, cy, rInner)
 
-        if _mode == "sweep" {
+        if _segVals.len() > 0 {
+            // 多段弧（双色环）：自 12 点方向顺时针依次排布，长度 = 占比 × 揭示度 ✓
+            //   多片 fillPie 叠画后**只抠一次**内圆 ⇒ 与单段弧同一套 donut 做法 ✓
+            float sa = -90.0
+            for _segVals.len() to si {
+                Color sc = _fill
+                if _segCols.len() > 0 { sc = _segCols[si % _segCols.len()] }
+                float span = _segVals[si] * _segShown * 360.0
+                if span > 0.01 {
+                    r.fillPie(cx, cy, rOuter, sa, sa + span,
+                              theme.colorR(sc), theme.colorG(sc), theme.colorB(sc), theme.colorA(sc))
+                }
+                sa = sa + span
+            }
+            r.setColor(_bg)
+            r.fillCircle(cx, cy, rInner)
+        } else if _mode == "sweep" {
             // 淡色余辉（亮弧后方 110°）
             Color tail = theme.withAlpha(fillC, 70)
             r.fillPie(cx, cy, rOuter, _angle - 110.0, _angle, theme.colorR(tail), theme.colorG(tail), theme.colorB(tail), theme.colorA(tail))
@@ -222,13 +329,24 @@ export struct RingProgress impl Widget {
             r.fillCircle(cx, cy, rInner)
         }
 
-        // 中心文字
+        // 中心文字（单行 / 主+副两行）
         if _showText and _font != null and _font.ok {
             string label = ""
             if _textFn != null { label = _str(_textFn()) } else {
                 if _mode == "value" { int pct = _int(_dispVal * 100.0 + 0.5); label = $"{pct}%" }
             }
-            if label != "" {
+            string sub = ""
+            if _subTextFn != null { sub = _str(_subTextFn()) }
+            if sub != "" and _subFont != null and _subFont.ok {
+                // 两行模式：主行上移、副行下移，两行共同以圆心为视觉中心 ✓
+                //   （若副行仍画在 `cy - _fontH/2`，整体会明显偏高 ⇒ 这里各让一半 ✓）
+                if not enabled { txtC = theme.packColor(theme.colorR(_txt) / 2, theme.colorG(_txt) / 2, theme.colorB(_txt) / 2) }
+                float yMain = cy - _fontH * 0.92
+                float ySub = cy + _fontH * 0.12
+                if label != "" { r.drawTextCentered(_font, label, x, _size, yMain, txtC) }
+                r.drawTextCentered(_subFont, sub, x, _size, ySub, theme.withAlpha(txtC, 210))
+            } else if label != "" {
+                // 单行路径 —— **与改动前逐像素一致** ✓（表达式原样保留，勿动）
                 if not enabled { txtC = theme.packColor(theme.colorR(_txt) / 2, theme.colorG(_txt) / 2, theme.colorB(_txt) / 2) }
                 r.drawTextCentered(_font, label, x, _size, cy - _fontH / 2.0, txtC)
             }
@@ -237,6 +355,7 @@ export struct RingProgress impl Widget {
 
     func dispose() {
         if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
+        if _subFont != null and _subFont.ok { fnt.releaseFont(_subFont) }; _subFont = null
     }
 }
 

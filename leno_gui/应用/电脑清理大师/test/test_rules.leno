@@ -99,15 +99,37 @@ eq("重复删除: 全部 failed", _int(rd2[1]), 5)
 
 // ==================== 6. build_categories 基本合法性 ====================
 var cats = rules.build_categories()
-check("build_categories: 类别数 = 6", cats.len() == 6)
+// 6 原有（系统临时文件/浏览器缓存/错误报告/着色器缓存/缩略图缓存/回收站）
+// + 5 新增（崩溃转储/编辑器缓存/聊天缓存/包管理器缓存/网页离线缓存）
+check("build_categories: 类别数 = 11", cats.len() == 11)
+// ⚠ 顺序契约：前 6 项固定（`--autoclean` 取证模式用历史下标 [0..4] 与 5）；
+//   新增类别必须**追加在回收站之后** ⇒ 这里也钉住"第 6 项（下标 5）是回收站"
+check("build_categories: 下标 5 仍是回收站（autoclean 下标契约）", cats[5].id == "recyclebin")
 bool foundRecycle = false
 bool foundTemp = false
+bool foundAllNew = true
 for cats to c {
     if c.id == "recyclebin" and c.roots.len() == 0 { foundRecycle = true }
     if c.id == "temp" and c.roots.len() >= 1 { foundTemp = true }
 }
+for ["crashdump", "editorcache", "chatcache", "devcache", "swcache"] to need {
+    bool hit = false
+    for cats to c {
+        if c.id == need { hit = true }
+    }
+    if not hit { foundAllNew = false }
+}
 check("build_categories: 有回收站(空根)", foundRecycle)
 check("build_categories: 有临时目录(至少1根)", foundTemp)
+check("build_categories: 5 个新增类别都在", foundAllNew)
+// 新增的 5 类必须带提示（UI 行悬停用 ✓；老类别可留空 ✓）
+bool newHint = true
+for ["crashdump", "editorcache", "chatcache", "devcache", "swcache"] to need {
+    for cats to c {
+        if c.id == need and c.hint == "" { newHint = false }
+    }
+}
+check("build_categories: 新增类别都带 hint", newHint)
 // 根必须真实存在
 bool allExist = true
 for cats to c {
