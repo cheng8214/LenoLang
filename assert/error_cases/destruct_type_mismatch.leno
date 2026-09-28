@@ -1,0 +1,14 @@
+// 【负例 fixture】解构槽位类型与返回值类型不兼容
+//   收编自 examples/测试/cs_design.leno（已删）：`var[string,string](a,b) = test()` 而
+//   `test()` 返回 `[int,string]` ⇒ 槽位 0 应为 int 却声明 string。
+main(){
+  var[string,string](a,b)=test()
+  print(a)
+  print(b)
+}
+
+func test():[int,string]{
+    int a=10
+    string b="hello"
+    return a,b
+}

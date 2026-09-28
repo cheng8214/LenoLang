@@ -114,5 +114,27 @@ main() {
     ce.expect_error(an3, "未标返回类型的函数返回值是 any（进算术要报错）",
         "无法将值赋值给变量 'a'", 7)
 
-    print("test_diag_error_batteries passed（21 例）")
+    // ---- 解构 / 容器元素类型（2026-09-28；实例五十一）----
+    //   ① 解构槽位类型不兼容：收编自 examples/测试/cs_design.leno（已删）
+    ce.expect_error("assert/error_cases/destruct_type_mismatch.leno",
+        "解构槽位声明类型与返回值不兼容要报错",
+        "解构槽位 0 ('a') 类型 string 与返回值类型 int 不兼容", 5)
+    //   ② Array[int] 里 add 字符串：收编自 examples/多变量声明/multi_var_array.leno（已删）
+    ce.expect_error("assert/error_cases/array_int_add_string.leno",
+        "Array[int].add(string) 要报错", "参数 1 期望 'int'，但传入 'string'", 7)
+
+    //   ③ `any` 形参赋给具体类型变量要报错（收编自 examples/func/func 默认参数/default_param_type_check.leno，已删）
+    var anyp = dirs.join(work, "any_param_to_int.leno")
+    files.write(anyp, @"main() {
+    func test2(any a, any b = 0) {
+        int n = a
+        print(n)
+    }
+    test2(42)
+}
+")
+    ce.expect_error(anyp, "any 形参赋给 int 变量要报错",
+        "变量 'n' 声明类型与初始化值类型不匹配", 3)
+
+    print("test_diag_error_batteries passed（26 例）")
 }

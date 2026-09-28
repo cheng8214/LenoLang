@@ -1,0 +1,8 @@
+// 【负例 fixture】同一列上的两类错误（未定义函数 / 未定义变量）
+//   收编自 examples/测试/错误散bug/test_error_col.leno（已删）——它盯的是"**列**">
+//   两处错误都落在第 11 列（函数名 / 变量名的起点），落点由 test_error_columns.leno 钉。
+//   ⚠ 顶部注释会平移落点行 ⇒ 断言里的行号与这里同步。
+main() {
+    print(unknown_func())
+    print(undefined_var)
+}

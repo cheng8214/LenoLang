@@ -1,0 +1,9 @@
+// 【负例 fixture】Array[int] 里 add 字符串要报错
+//   收编自 examples/多变量声明/multi_var_array.leno（已删）——它自己就写着"这里会报错"。
+main()
+{
+	Array[int] b,c
+	print(b,c)
+	b.add("12")
+	print(b)
+}

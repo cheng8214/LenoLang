@@ -56,5 +56,12 @@ main() {
     ce.expect_error_at("assert/error_col/col16_dict_key.leno",
         "浮点字典键落点（此前静默通过）", "浮点数不能作键", 7, 14)
 
-    print("test_error_columns passed（18 例）")
+    // col19：同一列上的两类错误（收编自 examples/测试/错误散bug/test_error_col.leno，已删）——
+    //   两处都落在第 **11** 列（函数名 / 变量名的起点）
+    ce.expect_error_at("assert/error_col/col19_two_errors_same_col.leno",
+        "未定义函数落点（列 11）", "未定义的函数: unknown_func", 6, 11)
+    ce.expect_error_at("assert/error_col/col19_two_errors_same_col.leno",
+        "未定义变量落点（列 11）", "未定义的变量: undefined_var", 7, 11)
+
+    print("test_error_columns passed（20 例）")
 }
