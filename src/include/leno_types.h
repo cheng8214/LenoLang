@@ -321,6 +321,14 @@ typedef enum {
     //   acc_index >= 0 ⇒ **reduce 语义**：守卫时第 0 参 = 第 acc_index 个实参的类型（累加器）、
     //     第 1 参 = 元素；< 0 ⇒ map 语义（第 0 参 = arg0 的元素）。
     NTYPE_ARG_CB_RET,   // 第 arg_index 个实参（回调）的返回类型
+    // ---- "按实参个数选形态"标签（2026-09-28）----
+    //   双形态内置函数（同名两种用法、返回类型不同，如 `_env`：1 参读 ⇒ string、
+    //   2 参写 ⇒ bool）单一静态类型必谎报其一，Kind 槽也表达不了 arity 分支 ⇒
+    //   规格层声明：实参数 < arg_index 取 sub 形态，否则取 sub2 形态。
+    //   ⚠ 结构解析器（native.c 的 native_type_spec_to_info*）**解析不了**它 ——
+    //     需要调用点实参个数 ⇒ 语义侧先经 native_type_spec_resolve_for_call()
+    //     定型成具体子规格，再走正常解析。
+    NTYPE_BY_ARITY,     // 按 argc 分支：argc < arg_index ⇒ sub，否则 ⇒ sub2
 } NativeTypeTag;
 
 typedef struct NativeTypeSpec {

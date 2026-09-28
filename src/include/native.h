@@ -219,6 +219,12 @@ TypeInfo* native_type_spec_to_info_with_args(const NativeTypeSpec* spec, TypeInf
 TypeInfo* native_type_spec_to_info_with_cb(const NativeTypeSpec* spec, TypeInfo* arg0_type,
                                            TypeInfo* cb_ret);
 
+// 带**调用上下文**的规格定型（2026-09-28）：NTYPE_BY_ARITY 节点按实参个数选形态
+//   （双形态内置如 `_env`：读/写返回类型不同）。纯"规格 → 规格"替换 —— BY_ARITY ⇒
+//   选中的子规格（argc < arg_index 取 sub，否则 sub2），其余原样返回。
+//   语义侧先调本函数定型，再走 native_type_spec_to_info* 正常解析。
+const NativeTypeSpec* native_type_spec_resolve_for_call(const NativeTypeSpec* spec, int argc);
+
 // 规格里是否含 NTYPE_ARG0_*（递归）。调用方据此决定"要不要去推实参类型"——
 //   本仓有 230+ 个 native 方法，绝大多数规格与实参无关，不该为它们白推一遍实参。
 int native_type_spec_has_arg_ref(const NativeTypeSpec* spec);

@@ -38,6 +38,15 @@ static const NativeStructSpec EXECRESULT_STRUCT_SPEC = {
     "sys", "ExecResult", 2, EXECRESULT_FIELD_NAMES, EXECRESULT_FIELD_TYPES
 };
 
+// ==================== _env 的类型规格（双形态内置，2026-09-28） ====================
+// `_env(name)` 读 ⇒ string（不存在返回 null —— 按语言口径 null 可隐式赋具体类型，
+//   与 Dict.get 1 参取 V 同口径）；`_env(name, value)` 写 ⇒ bool。
+//   双形态返回类型不同 ⇒ 单一静态类型必谎报其一，Kind 槽也表达不了 arity 分支 ⇒
+//   NTYPE_BY_ARITY 规格声明：实参数 < 2 取读形态，否则写形态（语义侧在调用点定型）。
+static const NativeTypeSpec S_ENV_STR  = { NTYPE_STRING, NULL, NULL, NULL };
+static const NativeTypeSpec S_ENV_BOOL = { NTYPE_BOOL,   NULL, NULL, NULL };
+static const NativeTypeSpec S_ENV_SPEC = { NTYPE_BY_ARITY, NULL, &S_ENV_STR, &S_ENV_BOOL, 2, -1 };
+
 // _args() - 返回脚本命令行参数数组（不包含解释器路径和脚本路径）
 static Value native_args(int argCount, Value* args) {
     (void)argCount;
@@ -616,6 +625,9 @@ void sys_init_globals(void) {
 
     // 注册全局 _env 函数（环境变量：读 1 个参数 / 写 2 个参数；见 native_env 的三种返回）
     vm_register_native("_env", native_env, -1, 1, 2, TYPE_ANY, TYPE_UNKNOWN, NULL);
+    // `_env` 的真实返回按形态分流：1 参读 ⇒ string、2 参写 ⇒ bool（2026-09-28）——
+    //   内置通道的规格版声明（必须在 vm_register_native **之后**，同 `_exec`）
+    native_register_meta_spec("_env", &S_ENV_SPEC);
 
     // 注册全局 _env_or(name, default)：总是 string 的读入口（取不到/空串 ⇒ default ✓）
     TypeKind env_or_params[] = {TYPE_STRING, TYPE_STRING};

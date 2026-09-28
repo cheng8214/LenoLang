@@ -1008,6 +1008,19 @@ TypeInfo* native_type_spec_to_info(const NativeTypeSpec* spec) {
     return native_type_spec_to_info_with_args(spec, NULL);
 }
 
+// 带**调用上下文**的规格定型（2026-09-28）：NTYPE_BY_ARITY 按**实参个数**选形态
+//   （双形态内置如 `_env`：读/写返回类型不同）—— 结构解析器没有 argc，与 ARG_CB_RET
+//   同属"需要调用点信息"的标签。这里纯做"规格 → 规格"替换（BY_ARITY ⇒ 选中的子形态），
+//   结果交给 native_type_spec_to_info* 系列正常解析；非 BY_ARITY 原样返回。
+const NativeTypeSpec* native_type_spec_resolve_for_call(const NativeTypeSpec* spec, int argc) {
+    if (!spec) return NULL;
+    if (spec->tag == NTYPE_BY_ARITY) {
+        return native_type_spec_resolve_for_call(
+            (argc < spec->arg_index) ? spec->sub : spec->sub2, argc);
+    }
+    return spec;
+}
+
 // 规格 → 可读类型串（LSP / 诊断）
 void native_type_spec_to_string(const NativeTypeSpec* spec, char* out, int out_size) {
     if (!out || out_size <= 0) return;
@@ -1080,6 +1093,16 @@ void native_type_spec_to_string(const NativeTypeSpec* spec, char* out, int out_s
                 NSPEC_APPEND("argCb(%d)", spec->arg_index);
             }
             break;
+        case NTYPE_BY_ARITY: {
+            NSPEC_APPEND("byArity(<%d: ", spec->arg_index);
+            native_type_spec_to_string(spec->sub, p, remain);
+            p = out + strlen(out); remain = out_size - (int)strlen(out);
+            NSPEC_APPEND(" | >=%d: ", spec->arg_index);
+            native_type_spec_to_string(spec->sub2, p, remain);
+            p = out + strlen(out); remain = out_size - (int)strlen(out);
+            NSPEC_APPEND(")");
+            break;
+        }
         default: NSPEC_APPEND("any"); break;
     }
     #undef NSPEC_APPEND

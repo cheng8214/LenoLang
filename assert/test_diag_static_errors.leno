@@ -365,29 +365,34 @@ main() {
     //   （如 `(ObjString*)val_as_obj(args[0])`）⇒ 实测
     //       var a = _env("不存在的变量") ; regexs.find_all(a, "[0-9]+")
     //   直接崩（0xC0000005）。现在与"返回值 / 赋值 / 脚本形参 / 数组元素 / 字典值"五条通道**同一口径**。
+    // ⚠ any 源：无返回注解的本地函数（推 any）。旧写法用 `_env(...)` —— 但它已按
+    //   NTYPE_BY_ARITY 规格定型（读 ⇒ string，见下面 ev 组判据）⇒ 不能再当 any 源。
     var a1 = dirs.join(work, "any_to_native_arg.leno")
     files.write(a1, @"import strings
+func any_src() { return null }
 main() {
-    var a = _env(""LENO_NO_SUCH_ENV"")
+    var a = any_src()
     print(strings.len(a))
 }
 ")
-    ce.expect_error(a1, "any 传给 native 形参要编译期拦下（修前是运行期崩）", "但传入 'any'", 4)
+    ce.expect_error(a1, "any 传给 native 形参要编译期拦下（修前是运行期崩）", "但传入 'any'", 5)
 
     var a2 = dirs.join(work, "any_to_module_arg.leno")
     files.write(a2, @"import regexs
+func any_src() { return null }
 main() {
-    var a = _env(""LENO_NO_SUCH_ENV"")
+    var a = any_src()
     print(regexs.find_all(a, ""[0-9]+"").len())
 }
 ")
-    ce.expect_error(a2, "any 传给模块方法形参要编译期拦下", "但传入 'any'", 4)
+    ce.expect_error(a2, "any 传给模块方法形参要编译期拦下", "但传入 'any'", 5)
 
     // 正向（不得误伤）：显式 `_str()` 转换之后照常编译运行
     var a3 = dirs.join(work, "any_explicit_cast_ok.leno")
     files.write(a3, @"import strings
+func any_src() { return null }
 main() {
-    var a = _env(""LENO_NO_SUCH_ENV"")
+    var a = any_src()
     print(strings.len(_str(a)))
 }
 ")
@@ -395,12 +400,39 @@ main() {
 
     // 全局**内置函数**也是 native 通道（第三条）：`sleep` / `_int` 这类带类型形参的同样要拦
     var a4 = dirs.join(work, "any_to_builtin_arg.leno")
-    files.write(a4, @"main() {
-    var a = _env(""LENO_NO_SUCH_ENV"")
+    files.write(a4, @"func any_src() { return null }
+main() {
+    var a = any_src()
     sleep(a)
 }
 ")
-    ce.expect_error(a4, "any 传给内置函数的 int 形参要编译期拦下", "期望 'int'，但传入 'any'", 3)
+    ce.expect_error(a4, "any 传给内置函数的 int 形参要编译期拦下", "期望 'int'，但传入 'any'", 4)
+
+    // ---- `_env` 双形态规格（NTYPE_BY_ARITY，2026-09-28）：读 ⇒ string、写 ⇒ bool ----
+    //   此前整体 any：`bool b = _env(...)` 静默放行、运行期炸；现在定型 ⇒ 编译期拦。
+    var ev1 = dirs.join(work, "env_read_is_string.leno")
+    files.write(ev1, @"main() {
+    bool b = _env(""PATH"")
+}
+")
+    ce.expect_error(ev1, "_env 读形态定型 string（any 时代静默放行）", "实际类型: string", 2)
+
+    var ev2 = dirs.join(work, "env_write_is_bool.leno")
+    files.write(ev2, @"main() {
+    string s = _env(""LENO_X"", ""1"")
+}
+")
+    // ⚠ 判据别用 `int n = _env(...)`：bool→int 是编译期白名单加宽（1/0），会放行
+    ce.expect_error(ev2, "_env 写形态定型 bool", "实际类型: bool", 2)
+
+    var ev3 = dirs.join(work, "env_ok.leno")
+    files.write(ev3, @"main() {
+    string p = _env(""PATH"")
+    bool ok = _env(""LENO_NO_SUCH_XYZ"", ""1"")
+    print(p.len() >= 0 and ok)
+}
+")
+    ce.expect_ok(ev3, "_env 读/写形态各归其位", "true")
 
     // ---- 嵌套容器的**类型不变性**检查（2026-09-27 从 examples/dict/类型的嵌套字典.leno 收进来 ——
     //   那份示例目录已删除，而这是它唯一在守的真实保证：外层容器的写入要递归检查内层类型）----

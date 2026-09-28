@@ -1623,9 +1623,12 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                 //    `ExecResult{...}` 这类**带名字/带字段**的返回类型（`_exec` 的
                 //    `[output, code]` 只能表达成 `Array[any]`）⇒ 有规格就用规格
                 //    （与模块方法的 return_spec 同一优先级规则）。
+                //    NTYPE_BY_ARITY（双形态内置，如 `_env` 读/写返回不同类型）按
+                //    **实参个数**先定型（2026-09-28，注册即数据，语义侧无名字特判）。
                 {
                     const NativeTypeSpec* fn_spec = native_get_return_spec(func_name);
                     if (fn_spec) {
+                        fn_spec = native_type_spec_resolve_for_call(fn_spec, ast->u.call.args.count);
                         TypeInfo* spec_ret = native_type_spec_to_info(fn_spec);
                         if (spec_ret) {
                             ast->cached_type = type_copy(spec_ret);
