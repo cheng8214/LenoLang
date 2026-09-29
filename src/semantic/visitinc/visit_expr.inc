@@ -743,6 +743,9 @@
                             // fallback_default_count > 0 同样表示回退找到了方法
                             const InstanceMethodMeta* method_meta = native_find_instance_method(type_name, method_name);
                             int method_found = (method_meta != NULL) || (expected_arity >= 0) || (fallback_default_count > 0);
+                            // 注：pri 私有方法的检查**不在这里** —— 这里只处理**内建类型**的方法表；
+                            //     用户 struct 的方法走下面 `receiver_type->kind == TYPE_STRUCT` 那条分支
+                            //     （实测：在这插过一版，调试输出证明它一次都没被执行 ✗）
 
                             // 对于 struct 类型，如果 func_table 没找到方法，尝试在 AST 中查找 struct 定义
                             // 这覆盖了"struct 定义在调用之后"的前向引用场景（如 tickAllTimers 在 Timer 之前定义）
@@ -1162,6 +1165,9 @@
                                             if (method_ast && method_ast->kind == AST_FUNC_DEF &&
                                                 strcmp(method_ast->u.func.name, method_name) == 0) {
                                                 // 找到方法，检查参数类型
+                                                // 注：pri 私有方法**不在这里**报 —— 实测零参调用
+                                                //     走不到这条分支 ✗；已改在"成员访问"处兜底
+                                                //     （visit_field_access.inc → pri_check_field_access ✓）
                                                 int actual_arity = ast->u.call.args.count;
                                                 // ★ 前向定义时方法 AST 未变换（self 未前置）⇒
                                                 //   参数个数与实参下标都要按 has_self 调整

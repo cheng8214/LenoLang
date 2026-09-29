@@ -138,6 +138,7 @@ typedef enum {
     TOK_IMPL,          // impl 关键字
     TOK_NEW,           // new 关键字（struct 实例化）
     TOK_ALIAS,         // alias 关键字（类型别名）
+    TOK_PRI,           // pri 关键字（struct 成员私有：默认全公有，只有标了 pri 的才拦 ✓）
     // 类型关键字
     TOK_INT_TYPE, TOK_FLOAT_TYPE, TOK_STRING_TYPE, TOK_BOOL_TYPE, TOK_ARRAY_TYPE, TOK_DICT_TYPE, TOK_ANY_TYPE,
     // TOK_BINT 已移除（int 统一对外，Bint 仅作为内部 TYPE_BIGINT 存在）

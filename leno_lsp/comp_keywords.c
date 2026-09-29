@@ -29,6 +29,8 @@ static const char* leno_keywords[] = {
     "new",
     // 模块
     "import", "export", "as", "use",
+    // 成员可见性（默认全公有 ✓；只有标了 pri 的成员才被编译器拦住 ✓）
+    "pri",
     // 逻辑
     "and", "or", "not", "is", "in",
     // 异常
@@ -86,6 +88,7 @@ static const KeywordInfo keyword_info[] = {
     {"new", "instantiation", "Create struct instance: `new TypeName()`"},
     {"import", "module", "Import module: `import \"path\"` or `import ModuleAlias`"},
     {"export", "module", "Export declaration: `export func ...`"},
+    {"pri", "member visibility", "Private struct member: only that struct's own methods may access it (default is public)"},
     {"as", "module", "Module alias: `import \"path\" as Alias`"},
     {"use", "module", "Use module symbols: `use ModuleName.(FuncA, FuncB)`"},
     {"and", "logic", "Logical AND"},

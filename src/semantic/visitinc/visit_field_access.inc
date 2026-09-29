@@ -177,6 +177,10 @@
                             error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                         }
 
+                        // ★ pri：私有字段的编译期检查（默认全公有 ⇒ 只有标了 pri 的才拦 ✓）
+                        //   放在字段存在性检查之后 ⇒ 名字本身就写错时只报那一条 ✗（不叠加噪音 ✓）
+                        pri_check_field_access(s, ast, obj_type, field_name);
+
                         // 注意：单层字段访问（如 o.inner）不需要检查 null 默认值
                         // 因为获取 null 本身不会运行时出错
                         // 链式访问（如 o.inner.value）的 null 检查在 AST_INDEX 中处理

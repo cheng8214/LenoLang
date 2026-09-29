@@ -222,6 +222,9 @@ struct Ast {
             int is_async;              // 是否是 async 函数（1=是，0=否）
             int is_ctor;               // 是否是构造函数（func StructName()）
             int is_dtor;               // 是否是析构函数（func ~StructName()）
+            // pri 方法私有（默认全公有 ✓）：1 = 只有该 struct 自己的方法能调用 ✓
+            //   仅编译期检查 ✓；未显式 pri 的一律 0 ⇒ 对既有代码零影响 ✓
+            int is_private;
             // 泛型类型参数
             char** type_params;        // 类型参数名数组（如 ["T", "U"]）
             char** type_param_constraints; // 类型参数约束 face 名（如 ["Comparable", NULL]）
@@ -277,6 +280,9 @@ struct Ast {
             TypeInfo** field_types; // 字段类型数组
             Ast** field_defaults;   // 字段默认值表达式数组（可为 NULL）
             int field_count;    // 字段数量
+            // 每个字段是否 pri（1 = 私有 ✓；与 field_names 同长 ✓）
+            //   默认 0 = 公有 ⇒ 只有显式写 pri 的才在编译期拦 ✓（改前全仓无一处 pri ⇒ 零影响 ✓）
+            int* field_private;
             Ast** methods;      // 方法定义数组（AST_FUNC_DEF）
             int method_count;   // 方法数量
             char** impl_names;  // impl 声明的 face 名称数组

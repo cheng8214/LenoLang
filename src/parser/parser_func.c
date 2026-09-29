@@ -1842,12 +1842,14 @@ Ast* parse_struct_stmt(Parser* p) {
     char** field_names = NULL;
     TypeInfo** field_types = NULL;
     Ast** field_defaults = NULL;
+    int* field_private = NULL;      // ★ pri 标志（与 field_names 同长；0=公有 ✓）
     int field_count = 0;
     int field_capacity = 8;
 
     field_names = (char**)malloc(sizeof(char*) * field_capacity);
     field_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * field_capacity);
     field_defaults = (Ast**)calloc(field_capacity, sizeof(Ast*));
+    field_private = (int*)calloc(field_capacity, sizeof(int));   // calloc ⇒ 默认全 0 = 公有 ✓
 
     // 动态数组存储方法
     Ast** methods = NULL;
@@ -1869,6 +1871,25 @@ Ast* parse_struct_stmt(Parser* p) {
         if (p->lex.current.type == TOK_ERROR) {
             lexer_next(&p->lex);
             continue;
+        }
+
+        // ★ pri：成员私有（默认全公有 ✓）—— 它只是**成员声明的前缀**：
+        //     pri int _cache = 0        ← 私有字段
+        //     pri func reload() { ... } ← 私有方法
+        //   语义：只有**该 struct 自己的方法内部**能访问 ✓；其余地方编译期报错 ✓
+        //   ⚠ 与 `_` 前缀无关 ✗ —— `_` 只是书写者的命名习惯（全仓大量在用 ✓，编译器不看它 ✓）
+        //   不支持 pri const（关联常量没有"实例私有"这回事 ✓）⇒ 给一条明确报错 ✓
+        int member_private = 0;
+        if (p->lex.current.type == TOK_PRI) {
+            int pri_line = p->lex.current.line;
+            int pri_col = p->lex.current.column;
+            member_private = 1;
+            lexer_next(&p->lex);
+            if (p->lex.current.type == TOK_CONST) {
+                error_add_at(ERR_SYNTAX, pri_line, pri_col,
+                    "pri 不能修饰关联常量（const）—— 它只能标在字段或方法（func）前面");
+                member_private = 0;   // 按普通 const 继续解析（避免连锁报错 ✗）
+            }
         }
 
         // 检查是否是关联常量声明（const NAME = value 或 const TYPE NAME = value）
@@ -2034,6 +2055,7 @@ Ast* parse_struct_stmt(Parser* p) {
                 func_ast->u.func.is_async = is_async;
                 func_ast->u.func.is_ctor = is_ctor;
                 func_ast->u.func.is_dtor = is_dtor;
+                func_ast->u.func.is_private = member_private;   // ★ pri 方法 ✓（默认 0 = 公有 ✓）
                 // 构造/析构函数不能有显式参数
                 if ((is_ctor || is_dtor) && func_ast->u.func.pcnt > 0) {
                     char msg[BUFFER_MEDIUM];
@@ -2103,10 +2125,13 @@ Ast* parse_struct_stmt(Parser* p) {
                 field_types = (TypeInfo**)realloc(field_types, sizeof(TypeInfo*) * field_capacity);
                 field_defaults = (Ast**)realloc(field_defaults, sizeof(Ast*) * field_capacity);
                 memset(&field_defaults[field_count], 0, sizeof(Ast*) * (field_capacity - field_count));
+                field_private = (int*)realloc(field_private, sizeof(int) * field_capacity);
+                memset(&field_private[field_count], 0, sizeof(int) * (field_capacity - field_count));
             }
 
             field_names[field_count] = field_name;
             field_types[field_count] = type_copy(field_type);
+            field_private[field_count] = member_private;   // ★ pri（`pri int a, b` 两个字段共用前缀 ✓）
 
             // 解析可选的默认值: 类型 名 = 默认值
             if (match(p, TOK_EQ)) {
@@ -2137,6 +2162,7 @@ Ast* parse_struct_stmt(Parser* p) {
         free(field_names);
         free(field_types);
         free(field_defaults);
+        free(field_private);
         for (int i = 0; i < method_count; i++) {
             ast_free(methods[i]);
         }
@@ -2159,6 +2185,7 @@ Ast* parse_struct_stmt(Parser* p) {
     ast->u.struct_def.field_types = field_types;
     ast->u.struct_def.field_defaults = field_defaults;
     ast->u.struct_def.field_count = field_count;
+    ast->u.struct_def.field_private = field_private;   // ★ pri 标志数组 ✓
     ast->u.struct_def.methods = methods;
     ast->u.struct_def.method_count = method_count;
     ast->u.struct_def.impl_names = impl_names;

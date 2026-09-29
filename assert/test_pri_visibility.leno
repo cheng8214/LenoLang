@@ -1,0 +1,33 @@
+// 探针（合法路径）：pri 成员在**自己的方法内部**访问 ⇒ 必须放行 ✓
+// 同时验证：没标 pri 的成员（money / get_money）一切如常 ✓（不误报 ✓）
+struct Wallet {
+    int money = 0
+    pri int pin = 1234
+    pri string key = "k"
+
+    func get_money(): int { return money }
+
+    // 自己的方法里读私有字段 ⇒ 放行 ✓
+    func check(int p): bool {
+        if p == pin { return true }
+        return key == ""
+    }
+
+    // 自己的方法里写私有字段 ⇒ 放行 ✓
+    func reset() { pin = 0 }
+
+    pri func touch() { pin = pin + 1 }   // 私有方法
+
+    // 自己的方法里调私有方法 ⇒ 放行 ✓
+    func call_own() {
+        touch()
+        reset()
+    }
+}
+
+main() {
+    var w = new Wallet()
+    print($"money={w.get_money()} check={w.check(1234)}")
+    w.call_own()
+    print("PRI_OK（私有成员在自己的方法内可用 ✓ 且公有成员照常 ✓）")
+}

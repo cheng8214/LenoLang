@@ -84,6 +84,12 @@ static void init_keyword_table(void) {
         {"null", TOK_NULL},
         {"import", TOK_IMPORT},
         {"export", TOK_EXPORT},
+        // pri：struct 成员的**真私有**（opt-in）—— 默认全公有 ✓
+        //   为什么不复用 `_` 前缀：`_` 是书写者的命名习惯（本仓大量在用 ✓），
+        //   它没有任何语义；真正要机器拦住的必须显式写 pri ✓
+        //   为什么不学 packed/align 做成"上下文关键字"：pri 在本仓 .leno 里
+        //   一次都没被当标识符用过 ⇒ 注册成真关键词反而更安全（误用会得到明确报错 ✓）
+        {"pri", TOK_PRI},
         {"as", TOK_AS},
         {"use", TOK_USE},
         {"and", TOK_AND},

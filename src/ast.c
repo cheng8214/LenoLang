@@ -326,6 +326,7 @@ break;
             free(ast->u.struct_def.field_names);
             free(ast->u.struct_def.field_types);
             free(ast->u.struct_def.field_defaults);
+            free(ast->u.struct_def.field_private);   // pri 标志数组（与 field_names 同长 ✓）
             for (int i = 0; i < ast->u.struct_def.method_count; i++) {
                 ast_free(ast->u.struct_def.methods[i]);
             }
