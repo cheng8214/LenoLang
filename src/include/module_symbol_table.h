@@ -45,6 +45,10 @@ typedef struct {
                                 // 非 NULL 时优先使用，element_type/element_struct_name 为向后兼容的扁平降级
     int nullable;               // 可空字段标记：1=Type?，0=Type
     int line;                   // 字段定义所在行号（1-based，0 表示未知）
+    // `pri` 成员私有（默认全公有 ⇒ 只有显式写 pri 的才是 1）
+    //   为什么必须放进模块符号表（只留在 AST 不够）：**跨模块**访问时当前编译单元拿不到
+    //   被导入 struct 的定义 AST ⇒ 只有符号表这条路能判私有 ✓
+    int is_private;
 } ModuleStructField;
 
 // 模块 struct 方法
@@ -66,6 +70,8 @@ typedef struct {
     char** param_generic_names; // 参数泛型类型参数名（如 "T", "K"），用于泛型方法参数类型检查
     int line;                   // 方法定义所在行号（1-based，0 表示未知）
     int is_async;               // 是否 `async func` 方法（C2，同 ModuleFuncSymbol.is_async）
+    // `pri` 成员私有（同 ModuleStructField.is_private 的理由：跨模块只能靠符号表判 ✓）
+    int is_private;
 } ModuleStructMethod;
 
 // 模块 struct 符号

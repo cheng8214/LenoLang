@@ -18,6 +18,15 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast);
 TypeInfo* infer_method_return_type(Semantic* s, TypeInfo* obj_type, const char* method_name);
 TypeInfo* infer_field_type(Semantic* s, TypeInfo* obj_type, const char* field_name, int* out_field_index);
 
+// ★ pri：私有成员的字段访问检查（实现见 semantic_visit_ast.c ✓）
+//   非 static：semantic_type.c 的 infer_expr_type 里也要调它 ——
+//   因为只有那里跑得够晚，导入模块的符号表才**已经懒加载** ✓（实测早查会拿到 NULL ✗）
+void pri_check_field_access(Semantic* s, Ast* ast, TypeInfo* obj_type, const char* field_name);
+
+// ★ pri：私有**方法**的调用检查（实现见 semantic_visit_ast.c ✓）
+//   非 static：semantic_type.c 处理 `obj.method()` 时也要调它 ✓
+void pri_check_method_access(Semantic* s, Ast* ast, TypeInfo* obj_type, const char* method_name);
+
 // 递归把类型树里的"名字其实是 face/enum 的 TYPE_STRUCT"纠正过来（含 Array/Dict/Ptr 的实参）。
 // **唯一实现**：`is`/`as`、守卫类型、switch case 的匹配类型都调它 —— 因为 v3.2.2 起
 // 嵌套实参的名字会被带进运行期做名字校验，漏修就是"拿 struct 名字比 face 实例"⇒ 误判。

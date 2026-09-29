@@ -85,6 +85,50 @@ static int pri_method_is_private(Semantic* s, const char* struct_name, const cha
     return 0;
 }
 
+// ============ 跨模块：从**导入模块的符号表**里查私有位 ============
+// 为什么必须有这一支：导入方**拿不到被导入 struct 的定义 AST** ✗
+//   ⇒ 只靠 AST 判私有会静默放行 ✗（实测：应用 use 框架模块后碰 pri 成员，一条报错都没有 ✓）
+// 数据来源：文本扫描器剥掉 `pri` 时写进 ModuleStructField/Method.is_private ✓，
+//   再随 .lenosymc 缓存往返（缓存版本已升到 v32 ✓）
+static int pri_imported_field_private(Semantic* s, const char* struct_name,
+                                      const char* field_name, int* out_line) {
+    if (!s || !struct_name || !field_name) return 0;
+    for (int mi = 0; mi < s->imported_module_count; mi++) {
+        ModuleSymbolTable* t = s->imported_modules[mi].sym_table;
+        if (!t) continue;
+        ModuleStructSymbol* ss = module_symbol_table_find_struct(t, struct_name);
+        if (!ss) continue;
+        for (int j = 0; j < ss->field_count; j++) {
+            if (ss->fields[j].name && strcmp(ss->fields[j].name, field_name) == 0) {
+                if (ss->fields[j].is_private) {
+                    if (out_line) *out_line = ss->fields[j].line;
+                    return 1;
+                }
+                return 0;   // 找到但没标 pri ⇒ 公有 ✓
+            }
+        }
+    }
+    return 0;
+}
+
+static int pri_imported_method_private(Semantic* s, const char* struct_name,
+                                       const char* method_name, int* out_line) {
+    if (!s || !struct_name || !method_name) return 0;
+    for (int mi = 0; mi < s->imported_module_count; mi++) {
+        ModuleSymbolTable* t = s->imported_modules[mi].sym_table;
+        if (!t) continue;
+        ModuleStructMethod* m = module_symbol_table_find_struct_method(t, struct_name, method_name);
+        if (m) {
+            if (m->is_private) {
+                if (out_line) *out_line = m->line;
+                return 1;
+            }
+            return 0;
+        }
+    }
+    return 0;
+}
+
 // 统一的报错文案（字段/方法共用 ✓ —— 这套东西值钱的地方就在这句话 ✓）
 static void pri_report(Semantic* s, Ast* ast, const char* kind, const char* struct_name,
                        const char* member, int decl_line) {
@@ -98,21 +142,35 @@ static void pri_report(Semantic* s, Ast* ast, const char* kind, const char* stru
 }
 
 // 字段访问检查（读 ✓ 写 ✓ 都走 AST_FIELD_ACCESS ✓ ⇒ 一处即可 ✓）
-static void pri_check_field_access(Semantic* s, Ast* ast, TypeInfo* obj_type, const char* field_name) {
+// ⚠ 非 static：semantic_type.c 的 infer_expr_type 里也要用（跨模块的表那时才加载好 ✓）
+void pri_check_field_access(Semantic* s, Ast* ast, TypeInfo* obj_type, const char* field_name) {
     if (!obj_type || obj_type->kind != TYPE_STRUCT || !obj_type->struct_name) return;
     if (pri_inside_own_method(s, obj_type->struct_name)) return;
     int line = 0;
     if (pri_field_is_private(s, obj_type->struct_name, field_name, &line)) {
         pri_report(s, ast, "字段", obj_type->struct_name, field_name, line);
+        return;
+    }
+    // 本文件里没有这个 struct 的定义（= 它是**导入**进来的 ✓）⇒ 查模块符号表 ✓
+    if (pri_find_struct_def(s, obj_type->struct_name) == NULL &&
+        pri_imported_field_private(s, obj_type->struct_name, field_name, &line)) {
+        pri_report(s, ast, "字段", obj_type->struct_name, field_name, line);
     }
 }
 
 // 方法调用检查（obj.method() ✓）
-static void pri_check_method_access(Semantic* s, Ast* ast, TypeInfo* obj_type, const char* method_name) {
+// ⚠ 非 static：semantic_type.c 的表达式侧方法解析里也要用（同字段侧的理由 ✓）
+void pri_check_method_access(Semantic* s, Ast* ast, TypeInfo* obj_type, const char* method_name) {
     if (!obj_type || obj_type->kind != TYPE_STRUCT || !obj_type->struct_name) return;
     if (pri_inside_own_method(s, obj_type->struct_name)) return;
     int line = 0;
     if (pri_method_is_private(s, obj_type->struct_name, method_name, &line)) {
+        pri_report(s, ast, "方法", obj_type->struct_name, method_name, line);
+        return;
+    }
+    // 跨模块兜底（同字段侧 ✓）
+    if (pri_find_struct_def(s, obj_type->struct_name) == NULL &&
+        pri_imported_method_private(s, obj_type->struct_name, method_name, &line)) {
         pri_report(s, ast, "方法", obj_type->struct_name, method_name, line);
     }
 }

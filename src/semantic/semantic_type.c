@@ -605,7 +605,29 @@ TypeInfo* infer_field_type(Semantic* s, TypeInfo* obj_type, const char* field_na
                             if (strcmp(ssym->fields[fi].name, field_name) == 0) {
                                 if (out_field_index) *out_field_index = fi;
                                 // 从模块符号表的字段类型构建 TypeInfo
-                                TypeInfo* result = type_new(ssym->fields[fi].type);
+                                // ★ pri：跨模块私有字段 —— **在这里报**，因为只有这里才拿得到
+                    //   已加载（非 NULL）的模块符号表 ✓
+                    //   为什么不在 visit_field_access 里报：那边跑得更早，表的懒加载还没发生
+                    //   ⇒ 实测 imported_modules[].sym_table 仍是 NULL，检查静默失效 ✗
+                    //   放行条件：当前在该 struct 自己的方法内（看 self 的类型 ✓）
+                    if (ssym->fields[fi].is_private) {
+                        int inside_own = 0;
+                        Symbol* self_sym = scope_resolve(s->current, "self");
+                        if (self_sym && self_sym->type && self_sym->type->struct_name &&
+                            strcmp(self_sym->type->struct_name, obj_type->struct_name) == 0) {
+                            inside_own = 1;
+                        }
+                        if (!inside_own) {
+                            char pri_msg[BUFFER_MEDIUM];
+                            snprintf(pri_msg, sizeof(pri_msg),
+                                "'%s.%s' 是 pri 私有字段（%s 第 %d 行）—— 只有 %s 自己的方法内部可以访问它；"
+                                "要对外开放就把 'pri' 去掉（默认全公有）",
+                                obj_type->struct_name, field_name, error_get_filename(),
+                                ssym->fields[fi].line, obj_type->struct_name);
+                            error_add_at(ERR_SEMANTIC, ssym->fields[fi].line, 1, pri_msg);
+                        }
+                    }
+                    TypeInfo* result = type_new(ssym->fields[fi].type);
                                 if (ssym->fields[fi].struct_name) {
                                     result->struct_name = strdup(ssym->fields[fi].struct_name);
                                 }
@@ -1873,6 +1895,9 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                 if (obj_type) {
                     // 处理 struct/cstruct/face 类型的方法调用
                     if (obj_type->kind == TYPE_STRUCT || obj_type->kind == TYPE_CSTRUCT || obj_type->kind == TYPE_FACE) {
+                        // ★ pri：私有方法检查（表达式侧 `obj.method()` 的唯一必经点 ✓）
+                        //   与字段侧同理：放在这里表已懒加载 ✓（visit_module 里查得太早会拿到 NULL ✗）
+                        pri_check_method_access(s, ast, obj_type, method_name);
                         // 从函数表查找方法定义
                         char method_key[256];
                         if (obj_type->struct_name) {
@@ -3027,6 +3052,12 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
             if (obj_type) {
                 const char* field_name = ast->u.field_access.field_name;
                 result = infer_field_type(s, obj_type, field_name, &ast->u.field_access.field_index);
+
+                // ★ pri：私有成员的统一检查点（字段访问的**表达式**侧）
+                //   为什么放这里：infer_field_type 刚跑完 ⇒ 导入模块的符号表**已懒加载** ✓
+                //   （放在 visit_field_access 里查得太早，实测表还是 NULL ⇒ 静默失效 ✗）
+                //   同文件 / 跨模块两支都由 pri_check_field_access 内部处理 ✓
+                pri_check_field_access(s, ast, obj_type, field_name);
 
                 // struct 类型：infer_field_type 可能未找到，尝试从变量符号回退查找
                 if (!result && obj_type->kind == TYPE_STRUCT && ast->u.field_access.obj->kind == AST_VAR) {

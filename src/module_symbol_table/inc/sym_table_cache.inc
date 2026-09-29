@@ -6,7 +6,10 @@
 // ⚠ 版本号登记表：docs/待办_单一事实来源与重复实现收敛.md 第七节
 //   （只覆盖符号表缓存；2026-09-16 撞过车：与上游都用 v23 但格式不同）
 #define LENOSYMC_MAGIC   0x4D59534C  // "LSYM" little-endian
-#define LENOSYMC_VERSION 0x0000001F  // v31: 函数符号新增 **泛型类型形参名**（`type_param_names`）——
+#define LENOSYMC_VERSION 0x00000020  // v32: struct **字段/方法符号新增 `is_private`**（`pri` 成员私有）——
+                                     //      格式变了：字段段、方法段各多一段"是否私有"；旧缓存按 v31
+                                     //      读会错位 ⇒ 必须整体失效重扫 ✓（改前跨模块拦不住私有成员 ✗）
+// v31: 函数符号新增 **泛型类型形参名**（`type_param_names`）——
                                      //      格式变了：`type_param_count` 之后多一段
                                      //      "是否有形参名 + 逐个名字串"。旧缓存按 v30 读到这段会错位
                                      //      ⇒ 必须整体失效重扫。
@@ -310,7 +313,10 @@ fwrite(&fa, 1, 1, f);
             uint32_t fl = (uint32_t)ss->fields[j].line;
             fwrite(&fl, 4, 1, f);
             // v18: 序列化完整类型信息（支持嵌套泛型）
-            sym_cache_write_type_info(f, ss->fields[j].type_info);
+            // v32: pri 私有位（丢了就等于全部公有 ✗）
+        uint8_t fp = (uint8_t)(ss->fields[j].is_private ? 1 : 0);
+        fwrite(&fp, 1, 1, f);
+        sym_cache_write_type_info(f, ss->fields[j].type_info);
         }
         uint32_t mc = (uint32_t)ss->method_count;
         fwrite(&mc, 4, 1, f);
@@ -355,6 +361,9 @@ fwrite(&fa, 1, 1, f);
             // v14: async 方法标记（C2）
             uint8_t ma = (uint8_t)sm->is_async;
             fwrite(&ma, 1, 1, f);
+            // v32: pri 私有位（同字段侧 ✓）
+            uint8_t mpri = (uint8_t)(sm->is_private ? 1 : 0);
+            fwrite(&mpri, 1, 1, f);
         }
         uint8_t is_cs = (uint8_t)ss->is_cstruct;
         fwrite(&is_cs, 1, 1, f);
@@ -746,7 +755,10 @@ static int sym_cache_deserialize(const char* cache_path, ModuleSymbolTable* tabl
             uint32_t fl; if (fread(&fl, 4, 1, f) != 1) goto fail;
             ss->fields[j].line = (int)fl;
             // v18: 反序列化完整类型信息（支持嵌套泛型）
-            ss->fields[j].type_info = sym_cache_read_type_info(f);
+            // v32: pri 私有位（顺序必须与写入一致 ✓：line → 私有位 → type_info）
+        uint8_t fp2; if (fread(&fp2, 1, 1, f) != 1) goto fail;
+        ss->fields[j].is_private = fp2 ? 1 : 0;
+        ss->fields[j].type_info = sym_cache_read_type_info(f);
         }
         uint32_t mc; if (fread(&mc, 4, 1, f) != 1) goto fail;
         ss->method_count = (int)mc;
@@ -793,6 +805,9 @@ static int sym_cache_deserialize(const char* cache_path, ModuleSymbolTable* tabl
             // v14: async 方法标记（C2）
             uint8_t ma; if (fread(&ma, 1, 1, f) != 1) goto fail;
             sm->is_async = ma;
+            // v32: pri 私有位（顺序必须与写入一致 ✓：is_async → 私有位）
+            uint8_t mpri2; if (fread(&mpri2, 1, 1, f) != 1) goto fail;
+            sm->is_private = mpri2 ? 1 : 0;
         }
         uint8_t is_cs; if (fread(&is_cs, 1, 1, f) != 1) goto fail;
         ss->is_cstruct = is_cs;

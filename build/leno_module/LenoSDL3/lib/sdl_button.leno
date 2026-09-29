@@ -40,103 +40,107 @@ export struct Button impl Widget, Themeable {
 
     string text = "Button"
     float x = 0.0, y = 0.0, w = 100.0, h = 40.0
-    float _radius = 6.0      // 圆角半径
-    float _fontSize = 15.0   // 字体大小
-    string _fontPath = ""    // 字体路径（空则自动选择）
-    int _fontStyle = 0       // 字体样式（STYLE_BOLD|STYLE_ITALIC 等）
-    Font? _font              // 字体缓存
+    pri float radius = 6.0      // 圆角半径
+    pri float fontSize = 15.0   // 字体大小
+    pri string fontPath = ""    // 字体路径（空则自动选择）
+    pri int fontStyle = 0       // 字体样式（STYLE_BOLD|STYLE_ITALIC 等）
+    pri Font? font              // 字体缓存
     // ★ 文字测量缓存：text 不变时避免每帧 measureString
-    float _cachedTextW = 0.0
-    float _cachedTextH = 0.0
-    string _cachedTextKey = "\x01"
-    Color _bgColor = #3C8CDCFF   // 背景色（默认 primary）
-    Color _txtColor = #FFFFFFFF  // 文字色
-    int _align = ALIGN_CENTER    // 文字水平对齐（**默认居中 = 历史行为**，零破坏 ✓）
-    Color _bdrColor = 0          // 边框色（0 = 自动：按背景提亮 ✓，见 dashboard 的浅灰/浅蓝描边）
-    float _padding = 0.0         // 文字左右内边距（**默认 0 = 历史行为**，零破坏 ✓；见 align:"left"）
-    Color _hovColor = 0          // 悬停背景色（为 0 时自动计算）
-    Color _prColor = 0           // 按下背景色（为 0 时自动变暗）
-    int _cursor = SystemCursor.POINTER   // 悬停鼠标样式（默认手型）
-    func():void _onClick    // 点击回调
+    pri float cachedTextW = 0.0
+    pri float cachedTextH = 0.0
+    pri string cachedTextKey = "\x01"
+    pri Color bgColor = #3C8CDCFF   // 背景色（默认 primary）
+    pri Color txtColor = #FFFFFFFF  // 文字色
+    pri int textAlign = ALIGN_CENTER    // 文字水平对齐（**默认居中 = 历史行为**，零破坏 ✓）
+                                    // ⚠ 不给外面看 ⇒ 对外用 opts 的 `align` ✓ 或 set_align() ✓
+    pri Color bdrColor = 0          // 边框色（0 = 自动：按背景提亮 ✓，见 dashboard 的浅灰/浅蓝描边）
+    pri float padding = 0.0         // 文字左右内边距（**默认 0 = 历史行为**，零破坏 ✓；见 align:"left"）
+    pri Color hovColor = 0          // 悬停背景色（为 0 时自动计算）
+    pri Color prColor = 0           // 按下背景色（为 0 时自动变暗）
+    pri int cursor = SystemCursor.POINTER   // 悬停鼠标样式（默认手型）
+    pri func():void onClick    // 点击回调
     bool hover = false
-    bool _wasHover = false  // 上一帧悬停状态
+    pri bool wasHover = false  // 上一帧悬停状态
     bool enabled = true
     bool visible = true
-    bool _showShadow = true // 是否显示阴影
-    bool _showBorder = true // 是否显示边框
-    string _btnType = ""   // 预设类型（primary/danger/success/warning/dark/normal）
-    bool _showBackground = true // 是否显示背景（false = 仅显示图标，无框无背景）
-    bool _autoImgEffect = true  // 未提供 hover/press 图时，自动给普通图标加色调效果
-    bool _loaded = false
-    string _tip = ""        // 悬停提示文本（空 = 不提示）
+    pri bool showShadow = true // 是否显示阴影
+    pri bool showBorder = true // 是否显示边框
+    pri string btnType = ""   // 预设类型（primary/danger/success/warning/dark/normal）
+    pri bool showBackground = true // 是否显示背景（false = 仅显示图标，无框无背景）
+    pri bool autoImgEffect = true  // 未提供 hover/press 图时，自动给普通图标加色调效果
+    pri bool loaded = false
+    pri string tipText = ""    // 悬停提示文本（空 = 不提示）（pri：仅自己可用 ✓）
+                               // ⚠ 不能叫 `tip` ✗ —— 本文件 `import "sdl_tooltip.leno" as tip`
+                               //   已占这个裸名（实测：改成 tip 后 `tip.tipReport(…)` 里的 tip
+                               //   变成了字符串字段 ✗ ⇒ 编译器报「类型 'string' 没有方法 'tipReport'」）
 
     // ==================== 图片（图标） ====================
     // 设计参考：Qt setIcon/setIconSize、Material iconGravity、WinForms TextImageRelation
-    string _imagePath = ""   // 图片路径（空 = 无图）
-    int    _imgPos = IMG_LEFT   // 图标相对文字位置（IMG_LEFT/RIGHT/TOP/BOTTOM）
-    float  _imgSize = 0.0    // 图标边长（0 = 自动：取 min(h-8, 自然高)）
-    float  _imgGap = 6.0     // 图标与文字间距
-    int    _imgAlpha = 255   // 图标透明度 0~255
-    Color    _imgTint = -1   // 图标着色（-1 = 不着色，其余为 #RRGGBBAA 着色）
-    Ptr[u8]? _imgTex   // 图片纹理（懒加载，dispose 释放）
-    string _imgLoadPath = "" // 已尝试加载的路径（避免加载失败每帧重试）
+    pri string imagePath = ""   // 图片路径（空 = 无图）
+    pri int    imgPos = IMG_LEFT   // 图标相对文字位置（IMG_LEFT/RIGHT/TOP/BOTTOM）
+    pri float  imgSize = 0.0    // 图标边长（0 = 自动：取 min(h-8, 自然高)）
+    pri float  imgGap = 6.0     // 图标与文字间距
+    pri int    imgAlpha = 255   // 图标透明度 0~255
+    pri Color    imgTint = -1   // 图标着色（-1 = 不着色，其余为 #RRGGBBAA 着色）
+    pri Ptr[u8]? imgTex   // 图片纹理（懒加载，dispose 释放）
+    pri string imgLoadPath = "" // 已尝试加载的路径（避免加载失败每帧重试）
 
     // ==================== 状态图片（对齐 iOS UIButton.setImage(_:forState:)） ====================
-    string _imgPathHover = "";    Ptr[u8]? _imgTexHover;    string _imgLoadHover = ""
-    string _imgPathPressed = "";  Ptr[u8]? _imgTexPressed;  string _imgLoadPressed = ""
-    string _imgPathDisabled = ""; Ptr[u8]? _imgTexDisabled; string _imgLoadDisabled = ""
-    bool   _pressed = false       // 鼠标按下且悬停中（用于 pressed 态图片 / 按下高亮）
+    pri string imgPathHover = "";    pri Ptr[u8]? imgTexHover;    pri string imgLoadHover = ""
+    pri string imgPathPressed = "";  pri Ptr[u8]? imgTexPressed;  pri string imgLoadPressed = ""
+    pri string imgPathDisabled = ""; pri Ptr[u8]? imgTexDisabled; pri string imgLoadDisabled = ""
+    pri bool   pressed = false       // 鼠标按下且悬停中（用于 pressed 态图片 / 按下高亮）
 
     // ==================== 内容模式（对齐 iOS contentMode / Android scaleType） ====================
     // 内容模式（IMG_ASPECT_FIT/STRETCH/ASPECT_FILL）
-    int _imgMode = IMG_ASPECT_FIT
+    pri int imgMode = IMG_ASPECT_FIT
 
     // ==================== 背景图（对齐 iOS setBackgroundImage） ====================
-    string _bgImagePath = ""; Ptr[u8]? _bgTex; string _bgLoadPath = ""
+    pri string bgImagePath = ""; pri Ptr[u8]? bgTex; pri string bgLoadPath = ""
 
     // ==================== 预设类型 ====================
-    func _apply_type(string t) {
+    pri func apply_type(string t) {
         Theme th = theme.getTheme()
         switch t {
-            case "primary"  { _bgColor = th.btnPrimary }
-            case "danger"   { _bgColor = th.btnDanger }
-            case "success"  { _bgColor = th.btnSuccess }
-            case "warning"  { _bgColor = th.btnWarning }
-            case "dark"     { _bgColor = th.btnDark }
+            case "primary"  { bgColor = th.btnPrimary }
+            case "danger"   { bgColor = th.btnDanger }
+            case "success"  { bgColor = th.btnSuccess }
+            case "warning"  { bgColor = th.btnWarning }
+            case "dark"     { bgColor = th.btnDark }
             default {}
         }
     }
 
-    func _ensure_font() {
-        if _font == null or not _font.ok {
-            if _font != null and _font.ok { fnt.releaseFont(_font) }
-            if _fontPath != "" {
-                _font = fnt.acquireFont(_fontPath, _fontSize)
+    pri func ensure_font() {
+        if font == null or not font.ok {
+            if font != null and font.ok { fnt.releaseFont(font) }
+            if fontPath != "" {
+                font = fnt.acquireFont(fontPath, fontSize)
             } else {
-                _font = fnt.acquireFontAuto(_fontSize)
+                font = fnt.acquireFontAuto(fontSize)
             }
-            if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
-            _cachedTextKey = "\x01"   // 字体变化，缓存失效
+            if font.ok and fontStyle != 0 { font.setStyle(fontStyle) }
+            cachedTextKey = "\x01"   // 字体变化，缓存失效
         }
     }
 
     // 懒加载图片纹理（需要有效渲染器，render 时调用）
-    func _ensure_image(Renderer r) {
+    pri func ensure_image(Renderer r) {
         Ptr[u8] h = r.handle
-        if _imagePath != "" and _imgTex == null and _imgLoadPath != _imagePath {
-            _imgTex = img.loadTexture(h, _imagePath); _imgLoadPath = _imagePath
+        if imagePath != "" and imgTex == null and imgLoadPath != imagePath {
+            imgTex = img.loadTexture(h, imagePath); imgLoadPath = imagePath
         }
-        if _imgPathHover != "" and _imgTexHover == null and _imgLoadHover != _imgPathHover {
-            _imgTexHover = img.loadTexture(h, _imgPathHover); _imgLoadHover = _imgPathHover
+        if imgPathHover != "" and imgTexHover == null and imgLoadHover != imgPathHover {
+            imgTexHover = img.loadTexture(h, imgPathHover); imgLoadHover = imgPathHover
         }
-        if _imgPathPressed != "" and _imgTexPressed == null and _imgLoadPressed != _imgPathPressed {
-            _imgTexPressed = img.loadTexture(h, _imgPathPressed); _imgLoadPressed = _imgPathPressed
+        if imgPathPressed != "" and imgTexPressed == null and imgLoadPressed != imgPathPressed {
+            imgTexPressed = img.loadTexture(h, imgPathPressed); imgLoadPressed = imgPathPressed
         }
-        if _imgPathDisabled != "" and _imgTexDisabled == null and _imgLoadDisabled != _imgPathDisabled {
-            _imgTexDisabled = img.loadTexture(h, _imgPathDisabled); _imgLoadDisabled = _imgPathDisabled
+        if imgPathDisabled != "" and imgTexDisabled == null and imgLoadDisabled != imgPathDisabled {
+            imgTexDisabled = img.loadTexture(h, imgPathDisabled); imgLoadDisabled = imgPathDisabled
         }
-        if _bgImagePath != "" and _bgTex == null and _bgLoadPath != _bgImagePath {
-            _bgTex = img.loadTexture(h, _bgImagePath); _bgLoadPath = _bgImagePath
+        if bgImagePath != "" and bgTex == null and bgLoadPath != bgImagePath {
+            bgTex = img.loadTexture(h, bgImagePath); bgLoadPath = bgImagePath
         }
     }
 
@@ -146,8 +150,8 @@ export struct Button impl Widget, Themeable {
         dochk.check("sdl_button", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
         // 主题默认配色（opts 覆盖优先级更高）
         Theme th = theme.getTheme()
-        _bgColor = th.btnPrimary
-        _txtColor = th.txtOnAccent
+        bgColor = th.btnPrimary
+        txtColor = th.txtOnAccent
         text = opts.get("text", "Button")
         x    = opts.get("x", 0)
         y    = opts.get("y", 0)
@@ -155,40 +159,40 @@ export struct Button impl Widget, Themeable {
         h    = opts.get("h", 40)
 
         // 圆角
-        _radius   = opts.get("radius", 6)
+        radius   = opts.get("radius", 6)
         // 字体大小
-        _fontSize = opts.get("font_size", 15)
+        fontSize = opts.get("font_size", 15)
         // 字体路径（空则自动匹配系统字体）
-        _fontPath = opts.get("font_path", "")
+        fontPath = opts.get("font_path", "")
         // 字体样式（粗体/斜体/下划线等）
-        _fontStyle = opts.get("font_style", 0)
+        fontStyle = opts.get("font_style", 0)
 
         // 预设类型（优先级低于显式 color）
-        if opts.get("type") is string => tp { _btnType = tp; _apply_type(tp) }
+        if opts.get("type") is string => tp { btnType = tp; apply_type(tp) }
 
-        // 颜色：opts 未传则保持主题色（_bgColor 等已在上面从 Theme 赋值）
-        if opts.get("bg_color") is Color => t { _bgColor = t }
-        if opts.get("text_color") is Color => t { _txtColor = t }
-        if opts.get("border_color") is Color => t { _bdrColor = t }
+        // 颜色：opts 未传则保持主题色（bgColor 等已在上面从 Theme 赋值）
+        if opts.get("bg_color") is Color => t { bgColor = t }
+        if opts.get("text_color") is Color => t { txtColor = t }
+        if opts.get("border_color") is Color => t { bdrColor = t }
         // 文字水平对齐（默认**居中** = 历史行为 ✓；支持 "left"/"center"/"right" 或 int 常量）
         var av = opts.get("align", ALIGN_CENTER)
         if av is string {
             string avs = av
-            if avs == "left" { _align = ALIGN_LEFT }
-            else if avs == "right" { _align = ALIGN_RIGHT }
-            else { _align = ALIGN_CENTER }
+            if avs == "left" { textAlign = ALIGN_LEFT }
+            else if avs == "right" { textAlign = ALIGN_RIGHT }
+            else { textAlign = ALIGN_CENTER }
         } else {
-            _align = _int(av)
+            textAlign = _int(av)
         }
         // 文字左右内边距（opt-in；默认 0 ⇒ 与历史绘制完全一致 ✓）—— 配合 align:"left" 用，
         // 否则左对齐文字会贴到按钮左边缘（导航项/列表行那种"图标 + 文字"必须留白 ✓）
-        _padding = _float(opts.get("padding", 0.0))
-        if opts.get("hover_color") is Color => t { _hovColor = t }
-        if opts.get("pressed_color") is Color => t { _prColor = t }
+        padding = _float(opts.get("padding", 0.0))
+        if opts.get("hover_color") is Color => t { hovColor = t }
+        if opts.get("pressed_color") is Color => t { prColor = t }
 
         // 外观开关
-        _showShadow = opts.get("shadow", true)
-        _showBorder = opts.get("border", true)
+        showShadow = opts.get("shadow", true)
+        showBorder = opts.get("border", true)
         // ⚠ `background` 是**开关**（true/false = 画不画底/框/阴影 ✓），**不是颜色** ✗
         //   实测最容易踩的：`background: #RRGGBBFF` 或 `background: {bg: …}` —— 旧代码直接
         //   `opts.get("background", true)` ⇒ 非 false 一律当"开"⇒ **静默变真** ✗
@@ -196,185 +200,185 @@ export struct Button impl Widget, Themeable {
         //   ⇒ 显式报一句：颜色请走 bg_color / hover_color / pressed_color ✓
         //   ★ 缺省值给 true（bool）⇒ **没传这个键时绝不会误报** ✓
         if opts.get("background", true) is bool => bgOn {
-            _showBackground = bgOn
+            showBackground = bgOn
         } else {
             dochk.warn_once("Button", "background",
                 "Button：'background' 是开关（true/false），它不负责颜色 —— 颜色请用 'bg_color' / 'hover_color' / 'pressed_color'；本次按 true 处理")
-            _showBackground = true
+            showBackground = true
         }
 
         // 鼠标样式（默认手型，-1 不改变）
-        _cursor = opts.get("cursor", SystemCursor.POINTER)
+        cursor = opts.get("cursor", SystemCursor.POINTER)
 
-        // 状态（hover/_wasHover 默认见字段声明；enabled/visible 有 opts 默认）
+        // 状态（hover/wasHover 默认见字段声明；enabled/visible 有 opts 默认）
         enabled = opts.get("enabled", true)
         visible = opts.get("visible", true)
-        _tip    = opts.get("tip", "")
+        tipText = opts.get("tip", "")
 
         // 图片（图标）
-        _imagePath = opts.get("image_path", "")
+        imagePath = opts.get("image_path", "")
         var ip = opts.get("image_pos", "left")
         if ip is string {
             switch ip {
-                case "left"   { _imgPos = IMG_LEFT }
-                case "right"  { _imgPos = IMG_RIGHT }
-                case "top"    { _imgPos = IMG_TOP }
-                case "bottom" { _imgPos = IMG_BOTTOM }
-                default       { _imgPos = IMG_LEFT }
+                case "left"   { imgPos = IMG_LEFT }
+                case "right"  { imgPos = IMG_RIGHT }
+                case "top"    { imgPos = IMG_TOP }
+                case "bottom" { imgPos = IMG_BOTTOM }
+                default       { imgPos = IMG_LEFT }
             }
         }
-        _imgSize  = opts.get("image_size", 0.0)
-        _imgGap   = opts.get("image_gap", 6.0)
-        _imgAlpha = opts.get("image_alpha", 255)
+        imgSize  = opts.get("image_size", 0.0)
+        imgGap   = opts.get("image_gap", 6.0)
+        imgAlpha = opts.get("image_alpha", 255)
         var tint = opts.get("image_tint")
-        if tint is int { _imgTint = tint }
+        if tint is int { imgTint = tint }
 
         // 内容模式 / 状态图片 / 背景图
-        _imgMode        = opts.get("image_mode", IMG_ASPECT_FIT)
-        _imgPathHover   = opts.get("image_path_hover", "")
-        _imgPathPressed = opts.get("image_path_pressed", "")
-        _imgPathDisabled = opts.get("image_path_disabled", "")
-        _bgImagePath    = opts.get("bg_image", "")
+        imgMode        = opts.get("image_mode", IMG_ASPECT_FIT)
+        imgPathHover   = opts.get("image_path_hover", "")
+        imgPathPressed = opts.get("image_path_pressed", "")
+        imgPathDisabled = opts.get("image_path_disabled", "")
+        bgImagePath    = opts.get("bg_image", "")
 
         // 更换任意图片路径时释放旧纹理，下一帧 render 重新加载
-        _release_all_images()
-        _imgLoadPath = ""; _imgLoadHover = ""; _imgLoadPressed = ""
-        _imgLoadDisabled = ""; _bgLoadPath = ""
+        release_all_images()
+        imgLoadPath = ""; imgLoadHover = ""; imgLoadPressed = ""
+        imgLoadDisabled = ""; bgLoadPath = ""
 
-        _ensure_font()
-        _loaded = true
+        ensure_font()
+        loaded = true
     }
 
     // ==================== 设置方法 ====================
-    func set_text(string t)     { text = t; _cachedTextKey = "\x01" }
-    func set_tip(string t)       { _tip = t }
+    func set_text(string t)     { text = t; cachedTextKey = "\x01" }
+    func set_tip(string t)       { tipText = t }
     func set_pos(float px, float py)      { x = px; y = py }
     func set_size(float sw, float sh)     { w = sw; h = sh }
     func set_bounds(float bx, float by, float bw, float bh) {
         x = bx; y = by; w = bw; h = bh
     }
-    func set_bg_color(Color color)         { _bgColor = color }
-    func set_text_color(Color color)       { _txtColor = color }
-    func set_hover_color(Color color)      { _hovColor = color }
-    func set_pressed_color(Color color)     { _prColor = color }
+    func set_bg_color(Color color)         { bgColor = color }
+    func set_text_color(Color color)       { txtColor = color }
+    func set_hover_color(Color color)      { hovColor = color }
+    func set_pressed_color(Color color)     { prColor = color }
     func set_font_size(float s) {
-        _fontSize = s
-        if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
+        fontSize = s
+        if font != null and font.ok { fnt.releaseFont(font) }; font = null
     }
     func set_font_path(string path) {
-        _fontPath = path
-        if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
+        fontPath = path
+        if font != null and font.ok { fnt.releaseFont(font) }; font = null
     }
     func set_font_style(int style) {
-        _fontStyle = style
-        _ensure_font()
-        if _font.ok { _font.setStyle(style) }
+        fontStyle = style
+        ensure_font()
+        if font.ok { font.setStyle(style) }
     }
-    func set_radius(float r)   { _radius = r }
-    func set_align(int a)      { _align = a }
-    func set_border_color(Color c) { _bdrColor = c }
-    func set_padding(float p)  { _padding = p }
+    func set_radius(float r)   { radius = r }
+    func set_align(int a)      { textAlign = a }
+    func set_border_color(Color c) { bdrColor = c }
+    func set_padding(float p)  { padding = p }
 
     // ★ 文本尺寸缓存的**唯一测量点**（text 不变 ⇒ 零测量）。
-    //   为什么要有它：以前 render 主路径已缓存，但 `_draw_text_aligned` 的**右对齐分支**仍每帧
+    //   为什么要有它：以前 render 主路径已缓存，但 `draw_text_aligned` 的**右对齐分支**仍每帧
     //   `measureString(text)` ✗（框架自查清单 J 项的遗漏点）。两处收敛到这里后：
     //     ① 同一帧内无论画几次、什么对齐方式，都只可能测 0 次（缓存命中）✓
     //     ② 值与原实现**完全一致**（同字体同文本）⇒ 像素不变 ✓
-    //   缓存失效：`set_text` 与 `_ensure_font`（字体/字号变化）把 `_cachedTextKey` 置为哨兵 ✓
-    func _ensure_text_size() {
-        if _font == null or not _font.ok { return }
-        if text == _cachedTextKey { return }
-        var[float, float](_tw, _th) = _font.measureString(text)
-        _cachedTextW = _tw; _cachedTextH = _th; _cachedTextKey = text
+    //   缓存失效：`set_text` 与 `ensure_font`（字体/字号变化）把 `cachedTextKey` 置为哨兵 ✓
+    pri func ensure_text_size() {
+        if font == null or not font.ok { return }
+        if text == cachedTextKey { return }
+        var[float, float](_tw, _th) = font.measureString(text)
+        cachedTextW = _tw; cachedTextH = _th; cachedTextKey = text
     }
 
-    // 在 [tx, tx+tw] 内按 _align 绘制文字（默认居中 ⇒ 与历史绘制逐像素一致 ✓）
-    func _draw_text_aligned(Renderer r, float tx, float tw, float ty, Color col) {
-        if _align == ALIGN_LEFT {
-            r.drawText(_font, text, tx, ty, col)
-        } else if _align == ALIGN_RIGHT {
-            // 复用缓存（原先这里每帧 measureString ✗）；缓存未命中时 `_ensure_text_size()` 会补测 ✓
-            _ensure_text_size()
-            r.drawText(_font, text, tx + tw - _cachedTextW, ty, col)
+    // 在 [tx, tx+tw] 内按 align 绘制文字（默认居中 ⇒ 与历史绘制逐像素一致 ✓）
+    pri func draw_text_aligned(Renderer r, float tx, float tw, float ty, Color col) {
+        if textAlign == ALIGN_LEFT {
+            r.drawText(font, text, tx, ty, col)
+        } else if textAlign == ALIGN_RIGHT {
+            // 复用缓存（原先这里每帧 measureString ✗）；缓存未命中时 `ensure_text_size()` 会补测 ✓
+            ensure_text_size()
+            r.drawText(font, text, tx + tw - cachedTextW, ty, col)
         } else {
-            r.drawTextCentered(_font, text, tx, tw, ty, col)
+            r.drawTextCentered(font, text, tx, tw, ty, col)
         }
     }
     func set_enabled(bool e)   { enabled = e }
     func set_visible(bool v)    { visible = v }
     func is_visible(): bool     { return visible }
-    func set_shadow(bool s)     { _showShadow = s }
-    func set_border(bool b)     { _showBorder = b }
-    func set_background(bool b) { _showBackground = b }
-    func set_cursor(int cur)   { _cursor = cur }
+    func set_shadow(bool s)     { showShadow = s }
+    func set_border(bool b)     { showBorder = b }
+    func set_background(bool b) { showBackground = b }
+    func set_cursor(int cur)   { cursor = cur }
 
     // ==================== 图片设置方法 ====================
     func set_image(string path) {
-        if _imgTex != null { _release_image() }
-        _imagePath = path; _imgTex = null; _imgLoadPath = ""
+        if imgTex != null { release_image() }
+        imagePath = path; imgTex = null; imgLoadPath = ""
     }
     func set_image_pos(string pos) {
         switch pos {
-            case "left"   { _imgPos = IMG_LEFT }
-            case "right"  { _imgPos = IMG_RIGHT }
-            case "top"    { _imgPos = IMG_TOP }
-            case "bottom" { _imgPos = IMG_BOTTOM }
-            default       { _imgPos = IMG_LEFT }
+            case "left"   { imgPos = IMG_LEFT }
+            case "right"  { imgPos = IMG_RIGHT }
+            case "top"    { imgPos = IMG_TOP }
+            case "bottom" { imgPos = IMG_BOTTOM }
+            default       { imgPos = IMG_LEFT }
         }
     }
-    func set_image_size(float s) { _imgSize = s }
-    func set_image_gap(float g)  { _imgGap = g }
-    func set_image_alpha(int a)  { _imgAlpha = a }
-    func set_image_tint(Color color) { _imgTint = color }
-    func set_image_hover(string path) { _imgPathHover = path; _imgTexHover = null; _imgLoadHover = "" }
-    func set_image_pressed(string path) { _imgPathPressed = path; _imgTexPressed = null; _imgLoadPressed = "" }
-    func set_image_disabled(string path) { _imgPathDisabled = path; _imgTexDisabled = null; _imgLoadDisabled = "" }
-    func set_auto_img_effect(bool e) { _autoImgEffect = e }
+    func set_image_size(float s) { imgSize = s }
+    func set_image_gap(float g)  { imgGap = g }
+    func set_image_alpha(int a)  { imgAlpha = a }
+    func set_image_tint(Color color) { imgTint = color }
+    func set_image_hover(string path) { imgPathHover = path; imgTexHover = null; imgLoadHover = "" }
+    func set_image_pressed(string path) { imgPathPressed = path; imgTexPressed = null; imgLoadPressed = "" }
+    func set_image_disabled(string path) { imgPathDisabled = path; imgTexDisabled = null; imgLoadDisabled = "" }
+    func set_auto_img_effect(bool e) { autoImgEffect = e }
     // 内容模式：IMG_ASPECT_FIT / IMG_STRETCH / IMG_ASPECT_FILL
-    func set_image_mode(int mode) { _imgMode = mode }
+    func set_image_mode(int mode) { imgMode = mode }
     // 状态图片（对齐 iOS setImage(_:forState:)）：state ∈ "hover" | "pressed" | "disabled" | "normal"(默认)
     func set_image_for_state(string path, string state) {
         switch state {
             case "hover" {
-                if _imgTexHover != null { core.lib().SDL_DestroyTexture(_imgTexHover); _imgTexHover = null }
-                _imgPathHover = path; _imgLoadHover = ""
+                if imgTexHover != null { core.lib().SDL_DestroyTexture(imgTexHover); imgTexHover = null }
+                imgPathHover = path; imgLoadHover = ""
             }
             case "pressed" {
-                if _imgTexPressed != null { core.lib().SDL_DestroyTexture(_imgTexPressed); _imgTexPressed = null }
-                _imgPathPressed = path; _imgLoadPressed = ""
+                if imgTexPressed != null { core.lib().SDL_DestroyTexture(imgTexPressed); imgTexPressed = null }
+                imgPathPressed = path; imgLoadPressed = ""
             }
             case "disabled" {
-                if _imgTexDisabled != null { core.lib().SDL_DestroyTexture(_imgTexDisabled); _imgTexDisabled = null }
-                _imgPathDisabled = path; _imgLoadDisabled = ""
+                if imgTexDisabled != null { core.lib().SDL_DestroyTexture(imgTexDisabled); imgTexDisabled = null }
+                imgPathDisabled = path; imgLoadDisabled = ""
             }
             default {
-                if _imgTex != null { core.lib().SDL_DestroyTexture(_imgTex); _imgTex = null }
-                _imagePath = path; _imgLoadPath = ""
+                if imgTex != null { core.lib().SDL_DestroyTexture(imgTex); imgTex = null }
+                imagePath = path; imgLoadPath = ""
             }
         }
     }
     // 背景图（对齐 iOS setBackgroundImage / Android background）
     func set_background_image(string path) {
-        if _bgTex != null { core.lib().SDL_DestroyTexture(_bgTex); _bgTex = null }
-        _bgImagePath = path; _bgLoadPath = ""
+        if bgTex != null { core.lib().SDL_DestroyTexture(bgTex); bgTex = null }
+        bgImagePath = path; bgLoadPath = ""
     }
-    func _release_image() {
-        if _imgTex != null { core.lib().SDL_DestroyTexture(_imgTex); _imgTex = null }
+    pri func release_image() {
+        if imgTex != null { core.lib().SDL_DestroyTexture(imgTex); imgTex = null }
     }
-    func _release_all_images() {
-        if _imgTex != null { core.lib().SDL_DestroyTexture(_imgTex); _imgTex = null }
-        if _imgTexHover != null { core.lib().SDL_DestroyTexture(_imgTexHover); _imgTexHover = null }
-        if _imgTexPressed != null { core.lib().SDL_DestroyTexture(_imgTexPressed); _imgTexPressed = null }
-        if _imgTexDisabled != null { core.lib().SDL_DestroyTexture(_imgTexDisabled); _imgTexDisabled = null }
-        if _bgTex != null { core.lib().SDL_DestroyTexture(_bgTex); _bgTex = null }
+    pri func release_all_images() {
+        if imgTex != null { core.lib().SDL_DestroyTexture(imgTex); imgTex = null }
+        if imgTexHover != null { core.lib().SDL_DestroyTexture(imgTexHover); imgTexHover = null }
+        if imgTexPressed != null { core.lib().SDL_DestroyTexture(imgTexPressed); imgTexPressed = null }
+        if imgTexDisabled != null { core.lib().SDL_DestroyTexture(imgTexDisabled); imgTexDisabled = null }
+        if bgTex != null { core.lib().SDL_DestroyTexture(bgTex); bgTex = null }
     }
 
     // 应用预设类型
-    func set_type(string t) { _apply_type(t) }
+    func set_type(string t) { apply_type(t) }
 
     // ==================== 查询方法 ====================
     func is_hover(): bool    { return hover }
-    func is_pressed(): bool  { return _pressed }
+    func is_pressed(): bool  { return pressed }
     func is_enabled(): bool  { return enabled }
     func get_text(): string  { return text }
     func get_x(): float      { return x }
@@ -383,7 +387,7 @@ export struct Button impl Widget, Themeable {
     func get_h(): float      { return h }
 
     // ==================== 交互 ====================
-    func on_click(func():void callback) { _onClick = callback }
+    func on_click(func():void callback) { onClick = callback }
 
     func contains(float mx, float my): bool {
         return mx >= x and mx <= x + w and my >= y and my <= y + h
@@ -391,7 +395,7 @@ export struct Button impl Widget, Themeable {
 
     // 处理事件（run 内部调用）
     func process(Event ev) {
-        if not _loaded { return }
+        if not loaded { return }
         if not visible { return }
         if not enabled { return }
         // 弹层捕获：事件落在“他人的弹层（如打开的菜单/下拉）范围内时忽略，避免穿透到下层控件
@@ -399,92 +403,92 @@ export struct Button impl Widget, Themeable {
         if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
         if core.inPopupCapture(mx, my) { return }
         if ev.isMouseMotion() {
-            _wasHover = hover
+            wasHover = hover
             hover = contains(mx, my)
             // hover 状态变化需请求重绘：run 循环已优化为 motion 不整窗重绘，
             // 由控件在视觉状态变化时自行 markFrameRedraw()（对齐 table/edit 等控件）
-            if hover != _wasHover { core.markFrameRedraw() } else { core.markFrameMotion() }
+            if hover != wasHover { core.markFrameRedraw() } else { core.markFrameMotion() }
             // 鼠标样式切换（集中式：仅请求，帧末 applyFrameCursor 统一应用）
-            if _cursor >= 0 {
-                if hover { core.requestCursor(_cursor) }
+            if cursor >= 0 {
+                if hover { core.requestCursor(cursor) }
             }
             // 悬停提示：hover 时上报；离开由 tipEndMotion 统一清除
-            if hover and _tip != "" { tip.tipReport(_tip, mx, my) }
+            if hover and tipText != "" { tip.tipReport(tipText, mx, my) }
         }
         if ev.isMouseButtonDown() {
             if contains(mx, my) {
                 hover = true
-                _pressed = true
+                pressed = true
                 core.markFrameRedraw()   // 按下状态变化需重绘
-                if _onClick != null { _onClick() }
+                if onClick != null { onClick() }
             }
         }
         if ev.isMouseButtonUp() {
-            if _pressed { core.markFrameRedraw() }   // 释放状态变化需重绘
-            _pressed = false
+            if pressed { core.markFrameRedraw() }   // 释放状态变化需重绘
+            pressed = false
         }
     }
 
     // ==================== 渲染 ====================
     func render(Renderer r) {
-        if not _loaded { return }
+        if not loaded { return }
         if not visible { return }
-        _ensure_font()
-        _ensure_image(r)
+        ensure_font()
+        ensure_image(r)
 
-        Color bgC = _bgColor
-        Color txtC = _txtColor
+        Color bgC = bgColor
+        Color txtC = txtColor
 
         if hover {
-            if _hovColor != 0 {
-                bgC = _hovColor
+            if hovColor != 0 {
+                bgC = hovColor
             } else {
-                bgC = theme.brighten(_bgColor, 40)
+                bgC = theme.brighten(bgColor, 40)
             }
         }
         // 按下态：优先级高于 hover，背景变暗（模拟按压凹陷感）
-        if _pressed and enabled {
-            if _prColor != 0 {
-                bgC = _prColor
+        if pressed and enabled {
+            if prColor != 0 {
+                bgC = prColor
             } else {
-                bgC = theme.darken(_bgColor, 30)
+                bgC = theme.darken(bgColor, 30)
             }
         }
         if not enabled {
-            int er = theme.colorR(_bgColor) / 2
-            int eg = theme.colorG(_bgColor) / 2
-            int eb = theme.colorB(_bgColor) / 2
+            int er = theme.colorR(bgColor) / 2
+            int eg = theme.colorG(bgColor) / 2
+            int eb = theme.colorB(bgColor) / 2
             bgC = theme.packColor(er, eg, eb)
         }
 
-        // 背景/阴影/边框（_showBackground=false 时全部跳过，只显示图标）
-        if _showBackground {
+        // 背景/阴影/边框（showBackground=false 时全部跳过，只显示图标）
+        if showBackground {
             // 阴影（按下时消除阴影，模拟按压贴合感）
-            if _showShadow and not (_pressed and enabled) {
+            if showShadow and not (pressed and enabled) {
                 r.setColor(#00000028)
-                r.fillRoundedRect(x + 2, y + 2, w, h, _radius)
+                r.fillRoundedRect(x + 2, y + 2, w, h, radius)
             }
 
             // 背景
             r.setColor(bgC)
-            r.fillRoundedRect(x, y, w, h, _radius)
+            r.fillRoundedRect(x, y, w, h, radius)
 
             // 背景图（对齐 iOS setBackgroundImage / Android background）：覆盖在纯色背景之上、填满按钮矩形
-            if _bgTex != null {
-                r.setTextureAlpha(_bgTex, 255)
-                r.setTextureColor(_bgTex, #FFFFFFFF)
-                r.drawTextureAt(_bgTex, x, y, w, h)
+            if bgTex != null {
+                r.setTextureAlpha(bgTex, 255)
+                r.setTextureColor(bgTex, #FFFFFFFF)
+                r.drawTextureAt(bgTex, x, y, w, h)
             }
 
             // 边框（按下态使用深色内凹边框，区别于 hover 的亮色高亮边框）
-            if _showBorder {
-                if _pressed and enabled { r.setColor(#00000096) }
+            if showBorder {
+                if pressed and enabled { r.setColor(#00000096) }
                 else if hover { r.setColor(#FFFFFFC8) }
-                else if _bdrColor != 0 { r.setColor(_bdrColor) }   // ★ 显式边框色（opt-in，默认仍是自动 ✓）
+                else if bdrColor != 0 { r.setColor(bdrColor) }   // ★ 显式边框色（opt-in，默认仍是自动 ✓）
                 else {
                     r.setColor(theme.withAlpha(theme.brighten(bgC, 30), 180))
                 }
-                r.drawRoundedRect(x, y, w, h, _radius)
+                r.drawRoundedRect(x, y, w, h, radius)
             }
         }
 
@@ -495,22 +499,22 @@ export struct Button impl Widget, Themeable {
         _btnClip.w = _int(w) + 1; _btnClip.h = _int(h) + 1   // +1 覆盖浮点截断的亚像素
         r.pushClipRect(_btnClip.to_ptr())
 
-        float pad = 6.0 + _padding   // 图标布局的留白；`_padding` 默认 0 ⇒ 仍是 6.0 ✓
+        float pad = 6.0 + padding   // 图标布局的留白；`padding` 默认 0 ⇒ 仍是 6.0 ✓
         // 提前测量文字，供图标尺寸自适应（防止图标挤占文字 / 内容溢出按钮）
-        // ★ 缓存：text 不变时直接复用；唯一测量点收敛到 `_ensure_text_size()` ✓（右对齐分支共用）
+        // ★ 缓存：text 不变时直接复用；唯一测量点收敛到 `ensure_text_size()` ✓（右对齐分支共用）
         float textW = 0.0; float textH = 0.0
-        if _font.ok {
-            _ensure_text_size()
-            textW = _cachedTextW; textH = _cachedTextH
+        if font.ok {
+            ensure_text_size()
+            textW = cachedTextW; textH = cachedTextH
         }
 
         // 选择当前状态的图标纹理（disabled > pressed > hover > normal）
-        Ptr[u8] itex = _imgTex
+        Ptr[u8] itex = imgTex
         bool imgAutoDim = false
-        if not enabled and _imgTexDisabled != null { itex = _imgTexDisabled }
-        else if not enabled { itex = _imgTex; imgAutoDim = true }
-        else if _pressed and _imgTexPressed != null { itex = _imgTexPressed }
-        else if hover and _imgTexHover != null { itex = _imgTexHover }
+        if not enabled and imgTexDisabled != null { itex = imgTexDisabled }
+        else if not enabled { itex = imgTex; imgAutoDim = true }
+        else if pressed and imgTexPressed != null { itex = imgTexPressed }
+        else if hover and imgTexHover != null { itex = imgTexHover }
 
         // 图标尺寸（对齐 Qt setIconSize / Material iconSize）
         // 自动尺寸须按布局约束，确保图标与文字都能容纳在按钮内：
@@ -518,7 +522,7 @@ export struct Button impl Widget, Themeable {
         //  - 左右布局：图标纵向占满（留 padding）
         //  - 上下布局：图标须给文字预留 (h - 2pad - gap - textH) 高度
         bool iconOnly = (text == "")
-        float isize = _imgSize
+        float isize = imgSize
         if isize <= 0.0 and itex != null {
             var[float, float](_tsw, _tsh) = r.getTextureSize(itex)
             isize = _tsh
@@ -530,22 +534,22 @@ export struct Button impl Widget, Themeable {
             float maxS = w - 4.0
             if maxS > h - 4.0 { maxS = h - 4.0 }
             if isize > maxS { isize = maxS }
-        } else if _imgPos == IMG_LEFT or _imgPos == IMG_RIGHT {
+        } else if imgPos == IMG_LEFT or imgPos == IMG_RIGHT {
             if isize > h - 2.0 * pad { isize = h - 2.0 * pad }
         } else {
-            float maxI = h - 2.0 * pad - _imgGap - textH
+            float maxI = h - 2.0 * pad - imgGap - textH
             if maxI < 0.0 { maxI = 0.0 }
             if isize > maxI { isize = maxI }
         }
         if isize < 0.0 { isize = 0.0 }
 
         // 纯图标按钮：悬浮/按下时在图标区域画半透明高亮矩形（比图标稍大）
-        if iconOnly and (hover or _pressed) {
+        if iconOnly and (hover or pressed) {
             float hx = x + (w - isize) / 2.0 - 3.0
             float hy = y + (h - isize) / 2.0 - 3.0
             float hw = isize + 6.0
             float hh = isize + 6.0
-            if _pressed {
+            if pressed {
                 r.setColor(#0000003C)   // 按下：暗色半透明
             } else {
                 r.setColor(#FFFFFF23)  // 悬浮：亮色半透明
@@ -556,18 +560,18 @@ export struct Button impl Widget, Themeable {
         // 实际绘制尺寸（按内容模式保持/拉伸比例，避免非正方形图变形）+ alpha/tint 调制
         float dw = isize; float dh = isize
         if itex != null {
-            int effA = _imgAlpha
-            if imgAutoDim { effA = _int(_imgAlpha * 0.5) }
+            int effA = imgAlpha
+            if imgAutoDim { effA = _int(imgAlpha * 0.5) }
             r.setTextureAlpha(itex, effA)
-            if _imgTint >= 0 {
-                r.setTextureColor(itex, _imgTint)
+            if imgTint >= 0 {
+                r.setTextureColor(itex, imgTint)
             }
             else if imgAutoDim { r.setTextureColor(itex, #808080FF) }   // 禁用态自动变灰
             else { r.setTextureColor(itex, #FFFFFFFF) }
-            if _imgMode != IMG_STRETCH {   // IMG_ASPECT_FIT / IMG_ASPECT_FILL：保持原始比例
+            if imgMode != IMG_STRETCH {   // IMG_ASPECT_FIT / IMG_ASPECT_FILL：保持原始比例
                 var[float, float](nw, nh) = r.getTextureSize(itex)
                 if nw > 0.0 and nh > 0.0 {
-                    if _imgMode == IMG_ASPECT_FILL {   // 覆盖填满（可能裁剪，居中绘制）
+                    if imgMode == IMG_ASPECT_FILL {   // 覆盖填满（可能裁剪，居中绘制）
                         float s = isize / nw; if isize / nh > s { s = isize / nh }
                         dw = nw * s; dh = nh * s
                     } else {             // IMG_ASPECT_FIT：完整显示（可能留边，居中绘制）
@@ -579,60 +583,60 @@ export struct Button impl Widget, Themeable {
         }
 
         // 复用前面已测量的 textH（避免对同一 text 重复调用 measureString）
-        if _font.ok {
+        if font.ok {
             if itex != null and text == "" {
                 // 纯图标（无文字）：整按钮居中绘制
                 float ix = x + (w - isize) / 2.0
                 float iy = y + (h - isize) / 2.0
                 r.drawTextureAt(itex, ix + (isize - dw) / 2.0, iy + (isize - dh) / 2.0, dw, dh)
             } else if itex == null {
-                // 纯文字：按 _align 绘制（默认居中 = 历史行为 ✓；内边距 opt-in ✓）
+                // 纯文字：按 align 绘制（默认居中 = 历史行为 ✓；内边距 opt-in ✓）
                 float cy = y + (h - textH) / 2.0
-                _draw_text_aligned(r, x + _padding, w - 2.0 * _padding, cy, txtC)
-            } else if _imgPos == IMG_LEFT {
+                draw_text_aligned(r, x + padding, w - 2.0 * padding, cy, txtC)
+            } else if imgPos == IMG_LEFT {
                 // 图标在左（对齐 Material iconGravity=start / WinForms ImageBeforeText）
                 float ix = x + pad
                 float iy = y + (h - isize) / 2.0
                 r.drawTextureAt(itex, ix + (isize - dw) / 2.0, iy + (isize - dh) / 2.0, dw, dh)
-                float tx = ix + isize + _imgGap
+                float tx = ix + isize + imgGap
                 float tw = (x + w) - tx - pad
                 float ty = y + (h - textH) / 2.0
-                _draw_text_aligned(r, tx, tw, ty, txtC)
-            } else if _imgPos == IMG_RIGHT {
+                draw_text_aligned(r, tx, tw, ty, txtC)
+            } else if imgPos == IMG_RIGHT {
                 // 图标在右（Material iconGravity=end / WinForms TextBeforeImage）
                 float ix = x + w - pad - isize
                 float iy = y + (h - isize) / 2.0
                 r.drawTextureAt(itex, ix + (isize - dw) / 2.0, iy + (isize - dh) / 2.0, dw, dh)
                 float tx = x + pad
-                float tw = ix - _imgGap - tx
+                float tw = ix - imgGap - tx
                 float ty = y + (h - textH) / 2.0
-                _draw_text_aligned(r, tx, tw, ty, txtC)
-            } else if _imgPos == IMG_TOP {
+                draw_text_aligned(r, tx, tw, ty, txtC)
+            } else if imgPos == IMG_TOP {
                 // 图标在上（Material iconGravity=top / WinForms ImageAboveText）
                 float ix = x + (w - isize) / 2.0
                 float iy = y + pad
                 r.drawTextureAt(itex, ix + (isize - dw) / 2.0, iy + (isize - dh) / 2.0, dw, dh)
-                float ty = iy + isize + _imgGap
+                float ty = iy + isize + imgGap
                 float th = (y + h) - ty - pad
                 float cy = ty + (th - textH) / 2.0
-                _draw_text_aligned(r, x + _padding, w - 2.0 * _padding, cy, txtC)
+                draw_text_aligned(r, x + padding, w - 2.0 * padding, cy, txtC)
             } else {
                 // 图标在下（WinForms TextAboveImage）
                 float ix = x + (w - isize) / 2.0
                 float iy = y + h - pad - isize
                 r.drawTextureAt(itex, ix + (isize - dw) / 2.0, iy + (isize - dh) / 2.0, dw, dh)
                 float ty = y + pad
-                float th = iy - _imgGap - ty
+                float th = iy - imgGap - ty
                 float cy = ty + (th - textH) / 2.0
-                _draw_text_aligned(r, x + _padding, w - 2.0 * _padding, cy, txtC)
+                draw_text_aligned(r, x + padding, w - 2.0 * padding, cy, txtC)
             }
         } else if itex != null {
             // 仅图标、无文字：居中绘制
             float ix = x + (w - isize) / 2.0
             float iy = y + (h - isize) / 2.0
-            if _imgPos == IMG_LEFT { ix = x + pad; iy = y + (h - isize) / 2.0 }
-            else if _imgPos == IMG_RIGHT { ix = x + w - pad - isize; iy = y + (h - isize) / 2.0 }
-            else if _imgPos == IMG_TOP { ix = x + (w - isize) / 2.0; iy = y + pad }
+            if imgPos == IMG_LEFT { ix = x + pad; iy = y + (h - isize) / 2.0 }
+            else if imgPos == IMG_RIGHT { ix = x + w - pad - isize; iy = y + (h - isize) / 2.0 }
+            else if imgPos == IMG_TOP { ix = x + (w - isize) / 2.0; iy = y + pad }
             else { ix = x + (w - isize) / 2.0; iy = y + h - pad - isize }
             r.drawTextureAt(itex, ix + (isize - dw) / 2.0, iy + (isize - dh) / 2.0, dw, dh)
         }
@@ -643,16 +647,16 @@ export struct Button impl Widget, Themeable {
 
 // 释放字体与图片资源
 func dispose() {
-if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
-_release_all_images()
+if font != null and font.ok { fnt.releaseFont(font) }; font = null
+release_all_images()
 }
 
 // ==================== 运行时主题切换 ====================
 func applyTheme(Theme t) {
-_bgColor = t.btnPrimary
-_txtColor = t.txtOnAccent
+bgColor = t.btnPrimary
+txtColor = t.txtOnAccent
 // 重新应用预设类型颜色
-if _btnType != "" { _apply_type(_btnType) }
+if btnType != "" { apply_type(btnType) }
 }
 }
 

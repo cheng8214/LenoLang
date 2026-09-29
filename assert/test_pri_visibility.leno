@@ -1,33 +1,57 @@
-// 探针（合法路径）：pri 成员在**自己的方法内部**访问 ⇒ 必须放行 ✓
-// 同时验证：没标 pri 的成员（money / get_money）一切如常 ✓（不误报 ✓）
-struct Wallet {
-    int money = 0
-    pri int pin = 1234
-    pri string key = "k"
+// test_pri_visibility.leno —— `pri` 成员私有：**同文件**侧的行为断言
+//
+// 覆盖（都要成立 ✓）：
+//   · 自己的方法里访问 pri int / pri string / pri const / pri func ⇒ 全部放行 ✓
+//   · 公有成员一切照常 ✓（默认全公有 ⇒ 不误伤 ✓）
+//   · pri const 语法被接受 ✓（强制尚未接，见 parser_func.c 注释 ✓）
+//
+// ⚠ 跨模块那一半不在这里 ✗：它需要"两个文件"才能构造，而且**必须编译失败** ✓
+//   ⇒ 属于"负向用例"，塞进套件会把套件本身弄红 ✗
+//   跨模块的验证放在 _tmp_pri/（mod.leno + use.leno）✓：
+//     跑 `build\leno.exe -c _tmp_pri\use.leno` 应恰好报 3 条
+//     （Box.secret / Box.hidden / Box.touch ✓，公有的 pub_x / peek / bump 不报 ✓）
+var fails = 0
 
-    func get_money(): int { return money }
-
-    // 自己的方法里读私有字段 ⇒ 放行 ✓
-    func check(int p): bool {
-        if p == pin { return true }
-        return key == ""
-    }
-
-    // 自己的方法里写私有字段 ⇒ 放行 ✓
-    func reset() { pin = 0 }
-
-    pri func touch() { pin = pin + 1 }   // 私有方法
-
-    // 自己的方法里调私有方法 ⇒ 放行 ✓
-    func call_own() {
-        touch()
-        reset()
+func check(string name, bool ok) {
+    if ok {
+        print($"[通过] {name}")
+    } else {
+        fails = fails + 1
+        print($"[失败] {name}")
     }
 }
 
+struct Vault {
+    int open = 1
+    pri int code = 1234
+    pri string label = "v"
+    pri const int MODE = 7
+    pri func unlock(): bool { return code == 1234 }
+    pri async func tick() { code = code + 1 }
+
+    // 自己的方法里访问私有成员 ⇒ 全部应放行 ✓
+    func self_ok(): bool {
+        if code != 1234 { return false }
+        if label == "" { return false }
+        if MODE != 7 { return false }
+        if not unlock() { return false }
+        return true
+    }
+
+    func pub_ok(): int { return open }
+}
+
 main() {
-    var w = new Wallet()
-    print($"money={w.get_money()} check={w.check(1234)}")
-    w.call_own()
-    print("PRI_OK（私有成员在自己的方法内可用 ✓ 且公有成员照常 ✓）")
+    var v = new Vault()
+    check("公有字段可读", v.open == 1)
+    check("公有方法可用", v.pub_ok() == 1)
+    check("自己的方法内可用私有成员（pri int/string/const/func）", v.self_ok())
+    check("pri const 语法被接受（值可经方法读到）", v.self_ok())
+
+    print("")
+    if fails > 0 {
+        print($"共 {fails} 项失败")
+        _exit(1)
+    }
+    print("全部通过（pri 无破坏 ✓ 默认全公有 ✓）")
 }

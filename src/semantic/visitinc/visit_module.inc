@@ -1364,13 +1364,14 @@
                                     break;
                                 }
                             }
+                            // ★ pri：私有方法的编译期检查（默认全公有 ⇒ 只有标了 pri 的才拦 ✓）
+                            //   为什么在这里：用户 struct 的方法调用（`w.touch()`）在语义期走的是
+                            //   **AST_MODULE_CALL** 这一条 ✓（放在"内建方法表"分支里实测走不到 ✗）
+                            //   ⚠ 必须在 `struct_def_ast` 判断**之外** ✗：跨模块时它是 NULL，
+                            //     放里面就等于对导入 struct 永不执行 ✓（实测踩过 ✓）
+                            //   ⚠ 只覆盖**点号调用** ✓；`obj["方法名"]()` 是运行期按名分发（v1 不拦 ✓）
+                            pri_check_method_access(s, ast, obj_type, method_name);
                             if (struct_def_ast) {
-                                // ★ pri：私有方法的编译期检查（默认全公有 ⇒ 只有标了 pri 的才拦 ✓）
-                                //   为什么在这里：用户 struct 的方法调用（`w.touch()`）在语义期走的是
-                                //   **AST_MODULE_CALL** 这一条 ✓ —— 放在"内建方法表"分支或"调用参数检查"
-                                //   分支里实测一次都走不到 ✗（调试输出为空，浪费了两轮 ✓）
-                                //   ⚠ 只覆盖**点号调用** ✓；`obj["方法名"]()` 那条是运行期按名分发（v1 不拦 ✓）
-                                pri_check_method_access(s, ast, obj_type, method_name);
                                 for (int mi = 0; mi < struct_def_ast->u.struct_def.method_count; mi++) {
                                     Ast* method_ast = struct_def_ast->u.struct_def.methods[mi];
                                     if (method_ast && method_ast->kind == AST_FUNC_DEF &&

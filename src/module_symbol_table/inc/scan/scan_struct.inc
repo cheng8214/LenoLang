@@ -146,7 +146,24 @@
                                 continue;
                             }
 
-                            // 检查是否是关联常量声明 (const NAME = value)
+                            // ★ pri：成员私有前缀（默认全公有 ✓）—— 覆盖 `pri int` / `pri string` /
+                    //   `pri func` / `pri async func` / `pri const` ✓
+                    //   只做两件事：记住标志 + 从 after_struct 上剥掉前缀 ✓
+                    //   必须剥掉：下面 const/func/字段 三个分支都按"文本开头是不是关键字"判断 ✓，
+                    //   不剥就会把 `pri int x = 0` 的 `pri` 当成字段类型 ✗
+                    //   ⚠ 要求"单词 pri + 空白" ⇒ 不会误伤 `price` 之类的标识符 ✓
+                    //   ⚠ 位置紧贴 const 检查之前 ⇒ 确定在**成员循环体内** ✓（注释跳过块刚 continue 过）
+                    int member_private = 0;
+                    if (strncmp(after_struct, "pri", 3) == 0 &&
+                        (after_struct[3] == ' ' || after_struct[3] == '\t' ||
+                         after_struct[3] == '\n' || after_struct[3] == '\r')) {
+                        member_private = 1;
+                        after_struct += 3;
+                        while (*after_struct && (*after_struct == ' ' || *after_struct == '\t' ||
+                                                 *after_struct == '\n' || *after_struct == '\r')) after_struct++;
+                    }
+
+                    // 检查是否是关联常量声明 (const NAME = value)
                             if (strncmp(after_struct, "const", 5) == 0 && (after_struct[5] == ' ' || after_struct[5] == '\t')) {
                                 char* after_const = after_struct + 5;
                                 while (*after_const && (*after_const == ' ' || *after_const == '\t')) after_const++;
@@ -598,7 +615,8 @@
                                             memcpy(methods[method_count].name, method_key, method_key_len);
                                             methods[method_count].name[method_key_len] = '\0';
                                             methods[method_count].line = method_def_line;
-                                            methods[method_count].is_async = method_is_async;   // C2：async 方法标记
+                                            methods[method_count].is_async = method_is_async;
+                methods[method_count].is_private = member_private; // ★ pri：跨模块可见性（v32）   // C2：async 方法标记
                                             methods[method_count].return_type = method_return_type;
                                             methods[method_count].return_type_info = method_return_type_info ? type_copy(method_return_type_info) : NULL;
                                             // 释放临时 method_return_type_info（已复制到 methods 数组）
@@ -802,6 +820,7 @@
                                                     if (*c == '\n') fl++;
                                                 }
                                                 fields[field_count].line = fl;
+        fields[field_count].is_private = member_private; // ★ pri：跨模块可见性（v32）
                                             }
                                             // 未识别的自定义类型：alias / clib / struct / cstruct / face 五处都要查
                                             // ⚠ 2026-09-18：此前只查 alias/clib/struct，**漏了 cstruct 与 face**

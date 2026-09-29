@@ -1881,15 +1881,12 @@ Ast* parse_struct_stmt(Parser* p) {
         //   不支持 pri const（关联常量没有"实例私有"这回事 ✓）⇒ 给一条明确报错 ✓
         int member_private = 0;
         if (p->lex.current.type == TOK_PRI) {
-            int pri_line = p->lex.current.line;
-            int pri_col = p->lex.current.column;
             member_private = 1;
             lexer_next(&p->lex);
-            if (p->lex.current.type == TOK_CONST) {
-                error_add_at(ERR_SYNTAX, pri_line, pri_col,
-                    "pri 不能修饰关联常量（const）—— 它只能标在字段或方法（func）前面");
-                member_private = 0;   // 按普通 const 继续解析（避免连锁报错 ✗）
-            }
+            // `pri` 可修饰：字段 ✓ / func ✓ / async func ✓ / **const（关联常量）** ✓
+            //   ⚠ 目前 const 这一支只做到"语法接受 + 记录标志"，**强制尚未接** ✗
+            //     （跨模块访问关联常量走的是另一条路 ⇒ 没有现成的检查点 ✗）
+            //     写在这里免得被误当成"已支持" ✗
         }
 
         // 检查是否是关联常量声明（const NAME = value 或 const TYPE NAME = value）
