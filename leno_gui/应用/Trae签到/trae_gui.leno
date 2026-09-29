@@ -333,7 +333,8 @@ func _no_claim_r(): Array[string] {
 //   · 汇总口径：全部成功 ⇒ 合成 ok（调度器 done 收工 ✓）；失败全是 9095 ⇒ 也算收工
 //     （9095 = 该设备今天已到额度，重试无意义 ✓）；其余 ⇒ 合成失败（msg 指明第一个失败的
 //     账号与原因）⇒ 调度器按原退避重试（重试时已签账号仍是 already，不会重复扣次数 ✓）。
-//   · 结束后**恢复进入前的选中账号**：徽标/积分是逐账号的 ⇒ 一律作废，状态栏给汇总 ✓
+//   · 结束后**恢复进入前的选中账号**并**就地重查该账号状态**（rpc_status）⇒
+//     徽标/积分/日历立即是真值（自动到点签完不用再手动刷新 ✓）；状态栏给汇总 ✓
 func claim_attempt(): Array[string] {
     if NO_NET { return [] }
     if BRANDS_AVAIL.len() <= 1 {
@@ -380,8 +381,12 @@ func claim_attempt(): Array[string] {
     }
     LAST_CLAIM = [ok_flag, agg_code, "", "", "", summary, "false", ""]
     select_account(ob, ou)                     // 回到进入前的账号（日历/设备号跟着回来 ✓）
-    invalidate_status()                        // 徽标/积分属于逐账号 ⇒ 作废（如实显示"未查询"✓）
-    STATUS_TEXT = summary                      // 状态栏给**汇总**（逐账号明细在 auto.log ✓）
+    // 收工后**就地重查选中账号的状态**（2026-09-29）：此前只 invalidate（徽标"… 未查询"）⇒
+    //   自动到点签完后主界面停在旧显示，用户得手动点「刷新状态」才知道真结果 ✗。
+    //   与「刷新状态」按钮同一条路（rpc_status）⇒ 徽标/积分/日历立即是该账号的真值；
+    //   徽标/积分是逐账号的 ⇒ 只重查**当前选中**这一个，不逐个查（N-1 次白等 ✓）
+    rpc_status()
+    STATUS_TEXT = summary                      // 状态栏仍给**汇总**（逐账号明细在 auto.log ✓）
     return LAST_CLAIM
 }
 
