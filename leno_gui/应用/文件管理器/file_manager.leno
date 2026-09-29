@@ -343,8 +343,11 @@ int nid = tree.add_child(id, node)
     }
 
     func updateNavButtons() {
-        if btnBack._loaded { btnBack.set_enabled(histIndex > 0) }
-        if btnForward._loaded { btnForward.set_enabled(histIndex >= 0 and histIndex < history.len() - 1) }
+        // ⚠ 不能读 `btnBack._loaded` ✗ —— Button 的 loaded 已是 pri 私有 ⇒
+        //   那样写**编译期不报错、运行期才炸**（struct 不存在字段 '_loaded' ✗）✓
+        //   改用公开只读入口 is_loaded() ✓
+        if btnBack.is_loaded() { btnBack.set_enabled(histIndex > 0) }
+        if btnForward.is_loaded() { btnForward.set_enabled(histIndex >= 0 and histIndex < history.len() - 1) }
     }
 
     func goBack() {

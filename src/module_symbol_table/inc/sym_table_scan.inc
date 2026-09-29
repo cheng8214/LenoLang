@@ -159,11 +159,17 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                 q++;
             }
             if (source_funcs != sym->method_count) {
-                char check_msg[256];
+                // ★ 2026-09-30：这里原本是 error_add ✗ ⇒ 扫描器被畸形输入带偏时（实测：
+                //   struct 收到 0 个方法 ✓）**整个构建**就死在这条"请报告编译器 bug"上 ✗，
+                //   而真正的症状在远处的调用点（"类型 'struct X' 没有方法 'y'" ✗）⇒ 定位极难 ✓
+                //   ⇒ 降级为**警告** ✓：不中断编译 ✓，消息里写清怎么办（先清缓存重编 ✓）
+                char check_msg[320];
                 snprintf(check_msg, sizeof(check_msg),
-                    "内部错误: struct '%s' 方法收集不完整（源码中 %d 个 func 定义，符号表仅收录 %d 个），请报告编译器 bug",
+                    "符号表扫描可能不完整: struct '%s' 源码中 %d 个 func 定义，符号表只收录 %d 个 —— "
+                    "跨模块调用这些方法会报「没有方法」✗；先删掉 .lenocache 重新编译，仍复现请报告 "
+                    "（此前这条会直接中断编译 ✗，已降级为警告 ✓）",
                     sym->name, source_funcs, sym->method_count);
-                error_add(ERR_SEMANTIC, mod_source_line(source, def_open), check_msg);
+                warning_add(WARN_SYMTAB_INCOMPLETE, mod_source_line(source, def_open), check_msg);
             }
         }
         // face 方法数校验（face 体内方法同样以 "func " 声明）
@@ -217,11 +223,15 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
                 q++;
             }
             if (source_funcs != sym->method_count) {
-                char check_msg[256];
+                // ★ 2026-09-30：与 struct 侧同一个坑 ✗（原为 error_add ⇒ 直接判定构建失败）
+                //   ⇒ 一律降级为警告 ✓（face 同理 ✓）
+                char check_msg[320];
                 snprintf(check_msg, sizeof(check_msg),
-                    "内部错误: face '%s' 方法收集不完整（源码中 %d 个 func 定义，符号表仅收录 %d 个），请报告编译器 bug",
+                    "符号表扫描可能不完整: face '%s' 源码中 %d 个 func 定义，符号表只收录 %d 个 —— "
+                    "跨模块调用这些方法会报「没有方法」✗；先删掉 .lenocache 重新编译，仍复现请报告 "
+                    "（此前这条会直接中断编译 ✗，已降级为警告 ✓）",
                     sym->name, source_funcs, sym->method_count);
-                error_add(ERR_SEMANTIC, mod_source_line(source, def_open), check_msg);
+                warning_add(WARN_SYMTAB_INCOMPLETE, mod_source_line(source, def_open), check_msg);
             }
         }
     }

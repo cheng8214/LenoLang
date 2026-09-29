@@ -36,7 +36,7 @@ import "sdl_image.leno" as img
 //   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
 func _opts_keys(): Array[string] {
     return [
-"arrow_color", "bg_color", "border_color", "check_color", "checkable", "checked", "children", "context_menu", "cursor", "data", "enabled", "expanded", "font_path", "font_size", "font_style", "h", "has_children", "hover_color", "image", "imageExpanded", "imageMode", "indent", "items", "line_color", "mode", "pad_x", "row_h", "scroll_color", "sel_color", "show_check", "show_lines", "text", "text_color", "tip", "visible", "w", "x", "y"
+"arrow_color", "bg_color", "border_color", "check_color", "checkable", "checked", "children", "context_menu", "cursor", "data", "enabled", "expanded", "font_path", "font_size", "font_style", "h", "has_children", "hover_color", "image", "imageExpanded", "imageMode", "image_gap", "image_size", "indent", "items", "line_color", "mode", "pad_x", "row_h", "scroll_color", "sel_color", "show_check", "show_lines", "text", "text_color", "tip", "visible", "w", "x", "y"
 ]
 }
 export struct TreeViewNode {
@@ -363,6 +363,12 @@ n.imageExpanded = d.get("imageExpanded", "")
         _fontStyle = opts.get("font_style", 0)
         _mode     = opts.get("mode", 0)
         _showCheck = opts.get("show_check", false)
+        // ★ 2026-09-30：补上图标尺寸/间距的**选项读取** ✓ —— 此前只有 set_image_size()
+        //   setter ✗ ⇒ 应用写 `createTreeView({…, image_size:16, image_gap:4})` 是
+        //   **静默无效** ✗（选项对账警告抓到的正是这条 ✓：真命中，不是误报 ✓）
+        //   缺省取字段当前值 ⇒ 不传就保持原默认 ✓ 零破坏 ✓
+        _imgSize  = opts.get("image_size", _imgSize)
+        _imgGap   = opts.get("image_gap", _imgGap)
 
         var its = opts.get("items", [])
         if its is Array[Dict] { _build_from_dicts(its) }

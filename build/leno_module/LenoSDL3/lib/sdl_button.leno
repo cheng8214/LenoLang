@@ -377,6 +377,11 @@ export struct Button impl Widget, Themeable {
     func set_type(string t) { apply_type(t) }
 
     // ==================== 查询方法 ====================
+    // ★ 为什么必须有它（2026-09-30 ✓）：`loaded` 是 pri 私有（资源/字体已就绪 ✓），
+    //   但应用要问"这个按钮能不能用了" ✓ ⇒ 给一个**公开只读**入口 ✓
+    //   实测踩过：应用写 `btn._loaded` ✗ 在**运行期**才炸（struct 不存在字段 '_loaded' ✗），
+    //   编译期没拦住 ⇒ 所以这类"跨文件要用的内部状态"必须配 getter ✓
+    func is_loaded(): bool   { return loaded }
     func is_hover(): bool    { return hover }
     func is_pressed(): bool  { return pressed }
     func is_enabled(): bool  { return enabled }

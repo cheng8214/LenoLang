@@ -100,6 +100,13 @@ typedef enum {
     WARN_FIELD_NO_INIT,     // struct 标量字段未显式初始化（默认是 null 而不是 0，参与运算会报错）
     WARN_AMBIGUOUS_MODULE,  // 裸文件名 import 撞名：多个包目录都有同名 .leno 且内容不同（静默选错文件）
     WARN_NATIVE_TYPE_NAME_CLASH, // 脚本 struct 与已注册的 native 类型同名（字段解析会优先用脚本定义）
+    WARN_SYMTAB_INCOMPLETE, // 符号表扫描与源码不一致（诊断 ✓）
+                            //   ★ 2026-09-30：这条校验原本用 **error_add** ✗ ⇒ 扫描器一旦被
+                            //   畸形输入带偏（实测：struct 收到 0 个方法 ✓），**整个构建**就死在
+                            //   这句"请报告编译器 bug"上 ✗，而真正的症状在远处的调用点（
+                            //   "类型 'struct Button' 没有方法 'set_enabled'" ✗）⇒ 极难定位 ✓
+                            //   ⇒ 降级为**警告**：不中断编译 ✓，消息里直接写清"先删 .lenocache
+                            //   重编、仍复现才报告" ✓（诊断该是提示，不该是砖 ✗）
     // 注：原 `WARN_EMPTY_CATCH`（空 catch）与 `WARN_IMPOSSIBLE_CAST`（不可能收窄）已于
     //     2026-09-28 **升为错误** ✗（改用 `error_add_at(ERR_SEMANTIC, ...)`，消息自带
     //     `[类别名]` 前缀 ✓）⇒ 不再需要这两个枚举值 ✓

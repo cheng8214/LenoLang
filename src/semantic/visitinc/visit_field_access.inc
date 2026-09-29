@@ -230,6 +230,41 @@
                                 error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                             }
                         }
+                    } else if (!struct_sym && obj_type->kind == TYPE_STRUCT && obj_type->struct_name) {
+                        // ★★ 跨模块**脚本 struct** 的字段存在性检查（2026-09-30 补上 ✗）
+                        //   此前这条 if/else 链只有三支：本作用域 struct ✓ / native struct ✓ /
+                        //   cstruct ✓ —— 而"定义在别的模块里的脚本 struct"**一支都没有** ✗✗
+                        //   实测（leno_gui/应用/文件管理器/file_manager.leno:346 `btnBack._loaded`
+                        //   —— Button 定义在 LenoSDL3 ✓）：`struct_sym` 一级解析为空 ✗、既不是
+                        //   native 也不是 cstruct ✗ ⇒ 三支全不命中 ⇒ **编译期一句不报** ✗ ⇒
+                        //   一路漏到**运行期**才炸（"[错误] struct 不存在字段 '_loaded'" + 调用栈 ✗）
+                        //   —— 这类"编译期不拦、运行期才死"的错最难查，必须在这里兜住 ✓
+                        //
+                        //   判定同样保守（宁可不报、不可误报 ✓）：只有**确知**字段表
+                        //   （导入模块符号表里有这个 struct 且 field_count > 0）而名字不在其中，
+                        //   才报错 ✓；拿不到符号表就保持沉默 ✓（与上面 native/cstruct 两支一致 ✓）
+                        //   ⚠ 只报错、不动 field_index ✗ —— 运行期按名字查本来就能跑通 ✓
+                        //      （要顺带补索引是另一件事，别和"能拦住错名字"混在一起 ✓）
+                        for (int mi = 0; mi < s->imported_module_count; mi++) {
+                            ImportedModuleInfo* mod = &s->imported_modules[mi];
+                            if (!mod->sym_table) continue;
+                            ModuleStructSymbol* ssym = module_symbol_table_find_struct(mod->sym_table, obj_type->struct_name);
+                            if (!ssym || ssym->is_cstruct || ssym->field_count <= 0) continue;
+                            int hit = 0;
+                            for (int fi = 0; fi < ssym->field_count; fi++) {
+                                if (ssym->fields[fi].name && strcmp(ssym->fields[fi].name, field_name) == 0) {
+                                    hit = 1;
+                                    break;
+                                }
+                            }
+                            if (!hit) {
+                                char msg[BUFFER_MEDIUM];
+                                snprintf(msg, sizeof(msg), "struct '%s' 没有字段 '%s'",
+                                         obj_type->struct_name, field_name);
+                                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                            }
+                            break;   // 该 struct 已在本模块符号表里找到 ⇒ 判完即止 ✓
+                        }
                     }
                 }
                 if (obj_type) type_free(obj_type);

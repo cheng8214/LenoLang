@@ -1878,7 +1878,13 @@ Ast* parse_struct_stmt(Parser* p) {
         //     pri func reload() { ... } ← 私有方法
         //   语义：只有**该 struct 自己的方法内部**能访问 ✓；其余地方编译期报错 ✓
         //   ⚠ 与 `_` 前缀无关 ✗ —— `_` 只是书写者的命名习惯（全仓大量在用 ✓，编译器不看它 ✓）
-        //   不支持 pri const（关联常量没有"实例私有"这回事 ✓）⇒ 给一条明确报错 ✓
+        //   ★★ pri 的作用范围 = **一条声明语句**（实测 2026-09-30，探针 _tmp_pri/multidecl.leno ✓）：
+        //        pri int a = 1, b = 2       ⇒ a、b **都**私有 ✓（**逗号列表共享前缀** ✓）
+        //        pri int a = 1; int b = 2   ⇒ a 私有 ✓、b **公有** ✗（`;` = 下一条声明 ✓）
+        //        pri int a = 1; pri int b=2 ⇒ 都私有 ✓（分号后必须**再写一遍** pri ✓）
+        //     ⇒ **别把 `;` 当成"上一条的继续"** ✗ —— 它等价于换行 ✓
+        //       （这条最早被我写错过注释 ✗，所以特意记在这里 ✓）
+        //   不支持 pri const 的**强制**（语法接受、标志已记 ✓，但检查尚未接 ✗，见下）
         int member_private = 0;
         if (p->lex.current.type == TOK_PRI) {
             member_private = 1;
@@ -2128,7 +2134,10 @@ Ast* parse_struct_stmt(Parser* p) {
 
             field_names[field_count] = field_name;
             field_types[field_count] = type_copy(field_type);
-            field_private[field_count] = member_private;   // ★ pri（`pri int a, b` 两个字段共用前缀 ✓）
+            // ★ pri 只作用于**本条声明语句** ✓：`pri int a, b` 里 a、b 都私有 ✓（逗号共享 ✓）；
+            //   但 `pri int a; int b` 的 b 是**公有** ✗（`;` 起新语句 ✓ ⇒ member_private 会在
+            //   下一轮循环被重置为 0 ✓）—— 别当成"继续上一条" ✗
+            field_private[field_count] = member_private;
 
             // 解析可选的默认值: 类型 名 = 默认值
             if (match(p, TOK_EQ)) {
