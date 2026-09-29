@@ -808,25 +808,25 @@ const NativeTypeSpec* native_get_module_method_return_spec(const char* module_na
 // 表满/重名都静默忽略（与 native 注册表其它部分的风格一致：模块声明是编译期常量，不该失败）。
 // ============================================================================
 // ---- 预制规格（覆盖各模块现有的 19 种组合；语义与老的 (Kind, element) 逐字对应）----
-const NativeTypeSpec NATIVE_T_ANY         = { NTYPE_ANY,    NULL, NULL, NULL };
-const NativeTypeSpec NATIVE_T_INT         = { NTYPE_INT,    NULL, NULL, NULL };
-const NativeTypeSpec NATIVE_T_FLOAT       = { NTYPE_FLOAT,  NULL, NULL, NULL };
-const NativeTypeSpec NATIVE_T_STRING      = { NTYPE_STRING, NULL, NULL, NULL };
-const NativeTypeSpec NATIVE_T_BOOL        = { NTYPE_BOOL,   NULL, NULL, NULL };
-const NativeTypeSpec NATIVE_T_NULL        = { NTYPE_NULL,   NULL, NULL, NULL };
-const NativeTypeSpec NATIVE_T_PTR         = { NTYPE_PTR,    NULL, NULL, NULL };
-const NativeTypeSpec NATIVE_T_FILE        = { NTYPE_FILE,   NULL, NULL, NULL };
-const NativeTypeSpec NATIVE_T_SOCKET      = { NTYPE_SOCKET, NULL, NULL, NULL };
-const NativeTypeSpec NATIVE_T_CHANNEL     = { NTYPE_CHANNEL,NULL, NULL, NULL };
-const NativeTypeSpec NATIVE_T_THREAD      = { NTYPE_THREAD, NULL, NULL, NULL };
-const NativeTypeSpec NATIVE_T_FUTURE      = { NTYPE_FUTURE, NULL, NULL, NULL };
-const NativeTypeSpec NATIVE_T_ARR         = { NTYPE_ARRAY,  NULL, NULL, NULL };              // 元素未指定
-const NativeTypeSpec NATIVE_T_ARR_ANY     = { NTYPE_ARRAY,  NULL, &NATIVE_T_ANY,    NULL };
-const NativeTypeSpec NATIVE_T_ARR_INT     = { NTYPE_ARRAY,  NULL, &NATIVE_T_INT,    NULL };
-const NativeTypeSpec NATIVE_T_ARR_STRING  = { NTYPE_ARRAY,  NULL, &NATIVE_T_STRING, NULL };
-const NativeTypeSpec NATIVE_T_ARR_ARR     = { NTYPE_ARRAY,  NULL, &NATIVE_T_ARR,    NULL };
-const NativeTypeSpec NATIVE_T_ARR_DICT    = { NTYPE_ARRAY,  NULL, &NATIVE_T_DICT,   NULL };
-const NativeTypeSpec NATIVE_T_DICT        = { NTYPE_DICT,   NULL, NULL, NULL };              // K/V 未指定
+const NativeTypeSpec NATIVE_T_ANY         = { NTYPE_ANY,    NULL, NULL, NULL, 0, -1 };
+const NativeTypeSpec NATIVE_T_INT         = { NTYPE_INT,    NULL, NULL, NULL, 0, -1 };
+const NativeTypeSpec NATIVE_T_FLOAT       = { NTYPE_FLOAT,  NULL, NULL, NULL, 0, -1 };
+const NativeTypeSpec NATIVE_T_STRING      = { NTYPE_STRING, NULL, NULL, NULL, 0, -1 };
+const NativeTypeSpec NATIVE_T_BOOL        = { NTYPE_BOOL,   NULL, NULL, NULL, 0, -1 };
+const NativeTypeSpec NATIVE_T_NULL        = { NTYPE_NULL,   NULL, NULL, NULL, 0, -1 };
+const NativeTypeSpec NATIVE_T_PTR         = { NTYPE_PTR,    NULL, NULL, NULL, 0, -1 };
+const NativeTypeSpec NATIVE_T_FILE        = { NTYPE_FILE,   NULL, NULL, NULL, 0, -1 };
+const NativeTypeSpec NATIVE_T_SOCKET      = { NTYPE_SOCKET, NULL, NULL, NULL, 0, -1 };
+const NativeTypeSpec NATIVE_T_CHANNEL     = { NTYPE_CHANNEL,NULL, NULL, NULL, 0, -1 };
+const NativeTypeSpec NATIVE_T_THREAD      = { NTYPE_THREAD, NULL, NULL, NULL, 0, -1 };
+const NativeTypeSpec NATIVE_T_FUTURE      = { NTYPE_FUTURE, NULL, NULL, NULL, 0, -1 };
+const NativeTypeSpec NATIVE_T_ARR         = { NTYPE_ARRAY,  NULL, NULL, NULL, 0, -1 };       // 元素未指定
+const NativeTypeSpec NATIVE_T_ARR_ANY     = { NTYPE_ARRAY,  NULL, &NATIVE_T_ANY,    NULL, 0, -1 };
+const NativeTypeSpec NATIVE_T_ARR_INT     = { NTYPE_ARRAY,  NULL, &NATIVE_T_INT,    NULL, 0, -1 };
+const NativeTypeSpec NATIVE_T_ARR_STRING  = { NTYPE_ARRAY,  NULL, &NATIVE_T_STRING, NULL, 0, -1 };
+const NativeTypeSpec NATIVE_T_ARR_ARR     = { NTYPE_ARRAY,  NULL, &NATIVE_T_ARR,    NULL, 0, -1 };
+const NativeTypeSpec NATIVE_T_ARR_DICT    = { NTYPE_ARRAY,  NULL, &NATIVE_T_DICT,   NULL, 0, -1 };
+const NativeTypeSpec NATIVE_T_DICT        = { NTYPE_DICT,   NULL, NULL, NULL, 0, -1 };       // K/V 未指定
 // ---- 关系型标签（v3.2.6）：返回类型**跟第 0 个实参走**（实例方法里 receiver 即第 0 个）----
 // 它们不是"一个类型"，而是"一条关系" ⇒ 只有能拿到实参类型的地方（native 方法调用点）才算得出结果；
 // 拿不到（如方法被当值传递）就退化成 any（保守），不会比老路径更差。
@@ -842,7 +842,7 @@ const NativeTypeSpec NATIVE_T_ARG_CB_RET1   = { NTYPE_ARG_CB_RET, NULL, NULL, NU
 const NativeTypeSpec NATIVE_T_ARR_CB_RET1   = { NTYPE_ARRAY, NULL, &NATIVE_T_ARG_CB_RET1, NULL, 0, -1 };  // Array[回调返回]（map）
 const NativeTypeSpec NATIVE_T_ARG_REDUCE12  = { NTYPE_ARG_CB_RET, NULL, NULL, NULL, 1, 2 };         // 回调=1、累加器=2（reduce）
 const NativeTypeSpec NATIVE_T_THREAD_CB_RET0 = { NTYPE_THREAD, NULL, &NATIVE_T_ARG_CB_RET0, NULL, 0, -1 }; // Thread[回调返回]（start）
-const NativeTypeSpec NATIVE_T_ARR_ARG0_ELEM = { NTYPE_ARRAY, NULL, &NATIVE_T_ARG0_ELEM, NULL }; // Array[第 0 个实参的元素]
+const NativeTypeSpec NATIVE_T_ARR_ARG0_ELEM = { NTYPE_ARRAY, NULL, &NATIVE_T_ARG0_ELEM, NULL, 0, -1 }; // Array[第 0 个实参的元素]
 
 #define NATIVE_STRUCT_SPEC_MAX 64
 // 与 struct_def_table（object_struct.c）同为 THREAD_LOCAL：每个线程初始化 native 模块时

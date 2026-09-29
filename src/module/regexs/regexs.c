@@ -442,10 +442,10 @@ static Value regex_find(int argc, Value* args) {
 //   同一套做法：**编译期字段表 + 运行期 ObjStructDef 是同一份声明** ⇒ 字段顺序不可能漂。
 // 字段名与旧的字典键**逐字相同**（start / end / text）⇒ 只是取值方式从 `m["x"]` 变成 `m.x`。
 // 顺带：不再每次匹配都 `str_copy` 三个键名（那是 3 次分配 → 0 次）。
-static const NativeTypeSpec S_RX_STRING          = { NTYPE_STRING, NULL, NULL, NULL };
-static const NativeTypeSpec S_RX_INT             = { NTYPE_INT,    NULL, NULL, NULL };
-static const NativeTypeSpec S_REGEXMATCH_SPEC    = { NTYPE_STRUCT, "RegexMatch", NULL, NULL };
-static const NativeTypeSpec S_REGEXMATCH_ARR_SPEC = { NTYPE_ARRAY, NULL, &S_REGEXMATCH_SPEC, NULL };
+static const NativeTypeSpec S_RX_STRING          = { NTYPE_STRING, NULL, NULL, NULL, 0, -1 };
+static const NativeTypeSpec S_RX_INT             = { NTYPE_INT,    NULL, NULL, NULL, 0, -1 };
+static const NativeTypeSpec S_REGEXMATCH_SPEC    = { NTYPE_STRUCT, "RegexMatch", NULL, NULL, 0, -1 };
+static const NativeTypeSpec S_REGEXMATCH_ARR_SPEC = { NTYPE_ARRAY, NULL, &S_REGEXMATCH_SPEC, NULL, 0, -1 };
 
 static const char* REGEXMATCH_FIELD_NAMES[] = { "start", "end", "text" };
 static const NativeTypeSpec* REGEXMATCH_FIELD_TYPES[] = { &S_RX_INT, &S_RX_INT, &S_RX_STRING };

@@ -67,7 +67,11 @@ main() {
             // 执行测试（不重试）；★ P6：带**超时** —— 一个挂死的测试曾把整套拖死 ✗
             var result = _exec(cmd, test_timeout_ms)
 
-            if result == null {
+            // 判空用 `is` 而非 `== null`：native `_exec` 的失败路径确实返回 null（见 sys.c 各
+            //   `val_null()`）⇒ 这里**不是**死代码；但它返回规格声明的是非可空 struct ExecResult，
+            //   直接 `== null` 会被编译器误报「struct 与 null 比较」警告 ⇒
+            //   `is ExecResult` 是等价的非空判据（实测：null ⇒ false、实值 ⇒ true）且不触发警告 ✓
+            if not (result is ExecResult) {
                 print("  [FAIL] " + entry + " - 执行失败")
                 failed = failed + 1
             } else {

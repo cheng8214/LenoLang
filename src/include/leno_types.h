@@ -264,13 +264,13 @@ struct TypeInfo {
 //   运行期由 native_struct_def_for() 按**同一份规格、同一字段顺序**造 ObjStructDef
 //   ⇒ 编译期字段索引与运行期槽位不可能各自漂（历史上就吃过"两边各写一份"的亏）。
 // 用法（模块的 xxx_init_module 里各写一次即可）：
-//     static const NativeTypeSpec S_STRING   = { NTYPE_STRING, NULL, NULL, NULL };
-//     static const NativeTypeSpec S_STRARR[] = { {NTYPE_ARRAY, NULL, &S_STRING, NULL} };  // 元素
+//     static const NativeTypeSpec S_STRING   = { NTYPE_STRING, NULL, NULL, NULL, 0, -1 };
+//     static const NativeTypeSpec S_STRARR[] = { {NTYPE_ARRAY, NULL, &S_STRING, NULL, 0, -1} };  // 元素
 //     static const char* DIRENTRY_FIELDS[] = {"root", "dirs", "files"};
 //     static const NativeTypeSpec* DIRENTRY_TYPES[] = { &S_STRING, &S_STRARR[0], &S_STRARR[0] };
 //     static const NativeStructSpec DIRENTRY = { "dirs", "DirEntry", 3, DIRENTRY_FIELDS, DIRENTRY_TYPES };
-//     static const NativeTypeSpec S_DIRENTRY  = { NTYPE_STRUCT, "DirEntry", NULL, NULL };
-//     static const NativeTypeSpec S_DIRENTRY_ARR[] = { {NTYPE_ARRAY, NULL, &S_DIRENTRY, NULL} };
+//     static const NativeTypeSpec S_DIRENTRY  = { NTYPE_STRUCT, "DirEntry", NULL, NULL, 0, -1 };
+//     static const NativeTypeSpec S_DIRENTRY_ARR[] = { {NTYPE_ARRAY, NULL, &S_DIRENTRY, NULL, 0, -1} };
 //     native_register_struct_spec(&DIRENTRY);
 //     native_register_module_method_spec("dirs", "walk_entries", fn, 1, -1, -1, &S_DIRENTRY_ARR[0], params);
 // ⚠ 被引用的 struct 规格**必须也注册**（native_register_struct_spec），否则编译期字段解析

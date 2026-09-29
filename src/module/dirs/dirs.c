@@ -1091,10 +1091,10 @@ static Value native_dirs_walk(int argCount, Value* args) {
 //   形态以免破坏既有调用点）；随后确认"两套 API"本身才是负担 —— 位置索引既不可读、类型也表达
 //   不出来，于是合并回**单个 `walk`**（返回 `Array[DirEntry]`）、删掉 `walk_entries`，全部调用点
 //   同步改成字段取值。现在只有一条扫描路径、一种返回形态 ✓
-static const NativeTypeSpec S_STR_SPEC          = { NTYPE_STRING, NULL, NULL, NULL };
-static const NativeTypeSpec S_STRARR_SPEC       = { NTYPE_ARRAY, NULL, &S_STR_SPEC, NULL };
-static const NativeTypeSpec S_DIRENTRY_SPEC     = { NTYPE_STRUCT, "DirEntry", NULL, NULL };
-static const NativeTypeSpec S_DIRENTRY_ARR_SPEC = { NTYPE_ARRAY, NULL, &S_DIRENTRY_SPEC, NULL };
+static const NativeTypeSpec S_STR_SPEC          = { NTYPE_STRING, NULL, NULL, NULL, 0, -1 };
+static const NativeTypeSpec S_STRARR_SPEC       = { NTYPE_ARRAY, NULL, &S_STR_SPEC, NULL, 0, -1 };
+static const NativeTypeSpec S_DIRENTRY_SPEC     = { NTYPE_STRUCT, "DirEntry", NULL, NULL, 0, -1 };
+static const NativeTypeSpec S_DIRENTRY_ARR_SPEC = { NTYPE_ARRAY, NULL, &S_DIRENTRY_SPEC, NULL, 0, -1 };
 
 static const char* DIRENTRY_FIELD_NAMES[] = { "root", "dirs", "files" };
 static const NativeTypeSpec* DIRENTRY_FIELD_TYPES[] = { &S_STR_SPEC, &S_STRARR_SPEC, &S_STRARR_SPEC };
@@ -1107,9 +1107,9 @@ static const NativeStructSpec DIRENTRY_STRUCT_SPEC = {
 //   size / mtime 是 int ⇒ 同质的 Dict 表达不了"这个键是 bool、那个键是 int"。
 // 字段名与旧的 Dict 键**逐字相同** ⇒ `st.size` / `st.exists` 这类调用点不用改；
 //   要改的是 `st["size"]` 下标式与 `if st is Dict` 收窄（编译期即被挡住）。
-static const NativeTypeSpec S_BOOL_SPEC = { NTYPE_BOOL, NULL, NULL, NULL };
-static const NativeTypeSpec S_INT_SPEC  = { NTYPE_INT,  NULL, NULL, NULL };
-static const NativeTypeSpec S_DIRINFO_SPEC = { NTYPE_STRUCT, "DirInfo", NULL, NULL };
+static const NativeTypeSpec S_BOOL_SPEC = { NTYPE_BOOL, NULL, NULL, NULL, 0, -1 };
+static const NativeTypeSpec S_INT_SPEC  = { NTYPE_INT,  NULL, NULL, NULL, 0, -1 };
+static const NativeTypeSpec S_DIRINFO_SPEC = { NTYPE_STRUCT, "DirInfo", NULL, NULL, 0, -1 };
 
 static const char* DIRINFO_FIELD_NAMES[] = { "exists", "size", "is_file", "is_dir", "mtime" };
 static const NativeTypeSpec* DIRINFO_FIELD_TYPES[] = {

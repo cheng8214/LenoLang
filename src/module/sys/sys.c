@@ -28,9 +28,9 @@ extern char** g_argv;
 // 字段：`output`（stdout+stderr 合并文本）、`code`（退出码；超时是 **124**，见 P6）。
 // ⚠ 它属于**全局内置函数**（`_exec` 无模块前缀）⇒ 走的是内置返回规格通道
 //   `native_register_meta_spec()`（v3.2.8 新开，此前内置通道只有 Kind 槽）。
-static const NativeTypeSpec S_EXEC_STR = { NTYPE_STRING, NULL, NULL, NULL };
-static const NativeTypeSpec S_EXEC_INT = { NTYPE_INT,    NULL, NULL, NULL };
-static const NativeTypeSpec S_EXECRESULT_SPEC = { NTYPE_STRUCT, "ExecResult", NULL, NULL };
+static const NativeTypeSpec S_EXEC_STR = { NTYPE_STRING, NULL, NULL, NULL, 0, -1 };
+static const NativeTypeSpec S_EXEC_INT = { NTYPE_INT,    NULL, NULL, NULL, 0, -1 };
+static const NativeTypeSpec S_EXECRESULT_SPEC = { NTYPE_STRUCT, "ExecResult", NULL, NULL, 0, -1 };
 
 static const char* EXECRESULT_FIELD_NAMES[] = { "output", "code" };
 static const NativeTypeSpec* EXECRESULT_FIELD_TYPES[] = { &S_EXEC_STR, &S_EXEC_INT };
@@ -43,8 +43,8 @@ static const NativeStructSpec EXECRESULT_STRUCT_SPEC = {
 //   与 Dict.get 1 参取 V 同口径）；`_env(name, value)` 写 ⇒ bool。
 //   双形态返回类型不同 ⇒ 单一静态类型必谎报其一，Kind 槽也表达不了 arity 分支 ⇒
 //   NTYPE_BY_ARITY 规格声明：实参数 < 2 取读形态，否则写形态（语义侧在调用点定型）。
-static const NativeTypeSpec S_ENV_STR  = { NTYPE_STRING, NULL, NULL, NULL };
-static const NativeTypeSpec S_ENV_BOOL = { NTYPE_BOOL,   NULL, NULL, NULL };
+static const NativeTypeSpec S_ENV_STR  = { NTYPE_STRING, NULL, NULL, NULL, 0, -1 };
+static const NativeTypeSpec S_ENV_BOOL = { NTYPE_BOOL,   NULL, NULL, NULL, 0, -1 };
 static const NativeTypeSpec S_ENV_SPEC = { NTYPE_BY_ARITY, NULL, &S_ENV_STR, &S_ENV_BOOL, 2, -1 };
 
 // _args() - 返回脚本命令行参数数组（不包含解释器路径和脚本路径）
