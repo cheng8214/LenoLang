@@ -314,6 +314,63 @@ static void import_type_deps(Semantic* s, ImportedModuleInfo* module_info, TypeI
     }
 }
 
+// ★ T27：`if a != null` 的空窄化 —— 进入对应分支后，让 `a` 不再被判为「确定为 null」。
+// ----------------------------------------------------------------------------
+// T11 的 `Symbol.is_null_value` 只认「声明即 null、此后未赋值」，没把 `if a != null` 的窄化
+// 当豁免路径 ⇒ `int? a = null; if a != null { a + 1 }` 被误报成编译错误（而报错提示推荐的
+// 正是这种写法）。这里把窄化补上：为分支内出现的 `a` 建一个同名影子符号（复用原槽位 index），
+// 其 is_null_value 为 0 —— 之后 `a` 解析到影子符号，算术守卫就不会再报「确定为 null」。
+//   narrow_on_ne：then 分支传 1（条件 `a != null` 成立 ⇒ 非空）；
+//                 else 分支传 0（条件 `a == null` 不成立 ⇒ 非空）。
+// ⚠ 只认 `VAR != null` / `VAR == null`，且只沿 `and` 链（or 有短路语义，不收窄）；
+//   原变量未被 T11 置位的一律跳过 —— 收紧改动面，保持「宁漏勿误报」。
+static void apply_null_narrowing(Semantic* s, Ast* cond, int narrow_on_ne) {
+    if (!cond) return;
+    Ast* stack[32];
+    int top = 0;
+    stack[top++] = cond;
+    while (top > 0) {
+        Ast* node = stack[--top];
+        if (!node) continue;
+        if (node->kind == AST_BINOP && node->u.binop.op == TOK_AND) {
+            if (top < 31) stack[top++] = node->u.binop.r;
+            if (top < 31) stack[top++] = node->u.binop.l;
+            continue;
+        }
+        if (node->kind != AST_BINOP) continue;
+        // then 分支认 `!=`，else 分支认 `==`（两者成立时都意味着变量非空）
+        if ((node->u.binop.op == TOK_NEQ) != narrow_on_ne) continue;
+        Ast* var_side = NULL;
+        if (node->u.binop.l && node->u.binop.r) {
+            if (node->u.binop.l->kind == AST_VAR && node->u.binop.r->kind == AST_NULL) {
+                var_side = node->u.binop.l;
+            } else if (node->u.binop.r->kind == AST_VAR && node->u.binop.l->kind == AST_NULL) {
+                var_side = node->u.binop.r;
+            }
+        }
+        if (!var_side || !var_side->u.var.name) continue;
+
+        SymRef ref;
+        memset(&ref, 0, sizeof(ref));
+        Symbol* original_sym = resolve_variable_with_upvalue(s, var_side->u.var.name, &ref);
+        if (!original_sym || !original_sym->is_null_value) { if (ref.name) free(ref.name); continue; }
+        if (!ref.name) continue;
+
+        SymKind kind = (ref.kind == SYM_UPVALUE) ? SYM_UPVALUE
+                     : (ref.kind == SYM_GLOBAL)  ? SYM_GLOBAL : SYM_LOCAL;
+        // 已有同名守卫符号（如 `a != null and a is Point` 的 is 守卫）⇒ scope_define 返回 NULL，
+        // 复用即可 —— 那种影子符号的 is_null_value 本就是 0。
+        Symbol* shadow = scope_define(s->current, var_side->u.var.name, kind);
+        if (shadow) {
+            if (original_sym->type) shadow->type = type_copy(original_sym->type);
+            shadow->index = ref.index;      // 复用原槽位，代码生成读写的是同一个变量
+            shadow->is_null_value = 0;
+            shadow->is_initialized = 1;
+        }
+        free(ref.name);
+    }
+}
+
 // ============================================================================
 // 访问者模式 - 单遍处理
 // ============================================================================

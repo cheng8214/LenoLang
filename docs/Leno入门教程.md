@@ -1251,7 +1251,7 @@ main() {
 
 ```leno
 main() {
-    func sideEffect(msg) {
+    func sideEffect(any msg) {     // ⚠ 形参**必须带类型**（无类型写法 `func f(msg)` 会报「期望参数名」✗）
         print("执行了: " + msg)
         return true
     }
@@ -4253,12 +4253,17 @@ func process() {
 
 #### 可空值类型与算术运算
 
-当可空值类型（`int?`、`float?`、`bool?`、`bigint?`）参与算术运算时，编译器会发出**警告**，因为运行时该值可能为 null，直接运算会导致运行时错误：
+当可空值类型（`int?`、`float?`、`bool?`、`bigint?`）参与算术运算时，编译器按**能否在编译期断定它一定是 null** 分两档（2026-09-30 实测）：
+
+| 情形 | 表现 |
+| --- | --- |
+| **能断定**（声明为 `null`、此后未赋值，**且不在 `if a != null` 窄化分支内**） | **编译错误** ✗（下例） |
+| **不能断定**（如结构体字段还没赋过值） | 编译**通过**、**运行时**才报 `null 不能参与运算`（**不再有**"编译警告"这一档 ✓） |
 
 ```leno
 main() {
     int? a = null
-    int b = a + 1         // ⚠️ 警告：nullable 值类型参与算术运算，运行时可能为 null
+    int b = a + 1         // ❌ 编译错误：'a' 声明为 null 且此后未赋值 ⇒「null 不能参与算术运算」
     print(b)
 }
 ```
@@ -4275,10 +4280,14 @@ main() {
 }
 ```
 
+> 注：`if a != null` 分支内编译器会把 `a` 的**空窄化**考虑进去，不再判为"值确定为 null"
+> ⇒ 上面这段写法从 2026-09-30 起可正常编译（此前版本有一处误报，见 `docs/待办与路线图.md` 的
+> **T27**，已修复）。
+
 > **规则总结**：
 > - `null + 1`、`null - 1` 等 → **编译错误**（null 字面量直接参与运算）
-> - `int? a = null; a + 1` → **编译警告**（nullable 值类型参与运算，可能为 null）
-> - `if a != null { a + 1 }` → ✅ 安全（窄化后视为 int）
+> - `int? a = null; a + 1` → **编译错误**（编译期能断定 a 一定是 null ⇒ 2026-09-30 起不再是"警告"）
+> - `if a != null { a + 1 }` → ✅ 安全（空窄化后 `a` 视为非空，可正常编译运算）
 > - `string? s = null; s + "x"` → ✅ 安全（string 拼接天然处理 null）
 
 #### 类型兼容规则
@@ -4340,15 +4349,15 @@ struct Widget {
 
     func move(float dx, float dy) {
         // ⚠️ 如果 move() 在 set() 之前调用，x 和 y 是 null
-        // 编译警告：nullable 值类型参与算术运算
-        // 运行时报错："操作数必须是数字或字符串"
+        //（编译期**无法断定** ⇒ 编译通过，运行时才报错 —— 2026-09-30 实测，不再有编译警告这一档）
+        // 运行时报错："null 不能参与运算"
         x = x + dx
         y = y + dy
     }
 }
 ```
 
-> **建议**：所有可能参与运算的**值类型**字段（`int`、`float`、`bool`、`bigint`），都应显式指定默认值，避免 null 导致的编译警告和运行时错误。引用类型（`struct`、`string`、`Array`、`Dict` 等）默认就是 null，不需要写 `= null`。
+> **建议**：所有可能参与运算的**值类型**字段（`int`、`float`、`bool`、`bigint`），都应显式指定默认值，避免 null 导致的**运行时错误**（`null 不能参与运算`）。引用类型（`struct`、`string`、`Array`、`Dict` 等）默认就是 null，不需要写 `= null`。
 
 ### 结构体方法
 
@@ -4474,10 +4483,10 @@ main() {
     // ✅ 插值字符串，自动转换
     print($"({p.x}, {p.y})")   // 输出: (10, 20)
 
-    // 也可以使用 format 方法
+    // 也可以使用 format 方法（⚠ `import` 必须在**模块顶层**，别写在 main 里 —— 这里为了紧挨示例，
+    // 实际代码请把 `import strings` 放到文件开头）
     import strings
     print(strings.format("坐标: ({0}, {1})", p.x, p.y))
-}
 }
 ```
 
@@ -6222,7 +6231,7 @@ struct Password {
     func serialize():string { return value }    // 只是碰巧签名相同
 }
 
-func save(Serializable s) { ... }
+func save(Serializable s) { }    // ⚠ 占位体要写 `{ }`；`{ ... }` 里的 `...` 不是合法 Leno
 
 main() {
     var p = new Password()
@@ -6279,7 +6288,7 @@ struct Dog {
     func speak():string { return "woof" }
 }
 
-func make_sound(Speaker s) { ... }
+func make_sound(Speaker s) { }    // ⚠ 占位体要写 `{ }`；`{ ... }` 里的 `...` 不是合法 Leno
 
 main() {
     var d = new Dog()
@@ -7002,8 +7011,8 @@ main() {
     print(arr[-3:])     // [6, 7, 8]
     print(arr[:-3])     // [1, 2, 3, 4, 5]
 
-    // 完整切片（复制数组）
-    var copy = arr[:]
+    // 完整切片（复制数组）—— ⚠ 不能写 `arr[:]`（双侧全省略不是合法语法 ✗），要显式给界
+    var copy = arr[0:arr.len() - 1]
 }
 ```
 
@@ -7715,8 +7724,9 @@ main() {
 
     // ✅ 处理二进制数据：用 byte_slice（按字节）
     // 例如：加密解密后去除 PKCS7 填充
-    var padded = some_decrypt_result
-    var unpadded = padded.byte_slice(0, padded.byte_len() - pad_len)
+    string padded = "hello___"      // 假设是解密结果（尾部 3 个下划线示意 PKCS7 填充）
+    int pad_len = 3
+    var unpadded = padded.byte_slice(0, padded.byte_len() - pad_len)   // "hello"
 
     // ❌ 错误示范：对二进制数据用 slice
     // 二进制数据中可能包含多字节字符的片段，用字符索引会出错
@@ -9023,15 +9033,15 @@ for modules to mod {
 // 方案1：直接使用索引（推荐）
 modules[0].add(1, 2)
 
-// 方案2：使用函数数组代替模块数组
-var adders = [math.add, string_utils.pad_start]
+// 方案2：使用函数数组代替模块数组（下例用**真实存在**的模块函数 ⇒ 需 `import maths`）
+var adders = [maths.fmod, maths.pow]
 adders[0](1, 2)                // ✅ 正常工作
 
 // 方案3：使用 struct 封装
 struct MathOps {
-    func add: func(int, int):int
+    func add: func(int, int):float
 }
-var ops = [new MathOps(add = math.add)]
+var ops = [new MathOps(add = maths.fmod)]
 ops[0].add(1, 2)               // ✅ 正常工作
 ```
 
@@ -9514,10 +9524,12 @@ import threads
 main() {
     var ch = threads.channel(10)
 
-    // 子线程发送数据
+    // 子线程发送数据（⚠ 形参声明成 `any` ⇒ 必须先 `is Channel` 收窄，否则编译报错）
     var t = threads.start(func(any ch){
-        ch.send("from child")
-        ch.close()
+        if ch is Channel {
+            ch.send("from child")
+            ch.close()
+        }
     }, ch)
 
     // 主线程接收数据
@@ -9536,9 +9548,11 @@ import threads
 main() {
     var ch = threads.channel(0)
 
-    // 子线程发送（会阻塞直到主线程接收）
+    // 子线程发送（会阻塞直到主线程接收）（⚠ `any` 形参要先 `is Channel` 收窄）
     var t = threads.start(func(any ch){
-        ch.send(42)
+        if ch is Channel {
+            ch.send(42)
+        }
     }, ch)
 
     // 主线程接收（会阻塞直到子线程发送）
@@ -9686,11 +9700,15 @@ main() {
     var ch = threads.channel(100)
 
     var t1 = threads.start(func(any ch){
-        for 10 to var i { ch.send("A" + i) }
+        if ch is Channel {
+            for 10 to var i { ch.send("A" + i) }
+        }
     }, ch)
 
     var t2 = threads.start(func(any ch){
-        for 10 to var i { ch.send("B" + i) }
+        if ch is Channel {
+            for 10 to var i { ch.send("B" + i) }
+        }
     }, ch)
 
     t1.join()
@@ -10121,13 +10139,13 @@ main() {
     // 分配内存
     var ptr = ffi.malloc(1024)
     
-    // 写入数据
-    ffi.write_int(ptr, 42)
-    ffi.write_float(ptr + 8, 3.14)
+    // 写入数据（⚠ write_* / read_* 都带 **offset** 参数 ⇒ 旧写法 write_int(ptr, 42) 已不适用）
+    ffi.write_int(ptr, 0, 42)
+    ffi.write_float(ptr, 8, 3.14)
     
     // 读取数据
-    var int_val = ffi.read_int(ptr)
-    var float_val = ffi.read_float(ptr + 8)
+    var int_val = ffi.read_int(ptr, 0)
+    var float_val = ffi.read_float(ptr, 8)
     
     print(int_val)      // 42
     print(float_val)    // 3.14
@@ -10358,16 +10376,18 @@ cstruct TEST_STRUCT {
     u32 field2
 }
 
-// 在线程中使用 cstruct
+// 在线程中使用 cstruct（⚠ `any` 形参要先 `is Channel` 收窄）
 func thread_worker(any ch) {
-    try {
-        var s = TEST_STRUCT.malloc()
-        s.field1 = 100
-        s.field2 = 200
-        ch.send({type: "ok", f1: s.field1, f2: s.field2})
-        s.free()
-    } catch e {
-        ch.send({type: "error", msg: e})
+    if ch is Channel {
+        try {
+            var s = TEST_STRUCT.malloc()
+            s.field1 = 100
+            s.field2 = 200
+            ch.send({type: "ok", f1: s.field1, f2: s.field2})
+            s.free()
+        } catch e {
+            ch.send({type: "error", msg: e})
+        }
     }
 }
 
@@ -10375,7 +10395,9 @@ main() {
     var ch = threads.channel(1)
     var t = threads.start(thread_worker, ch)
     var result = ch.receive()
-    print("field1=" + result.f1 + ", field2=" + result.f2)
+    if result is Dict {     // ⚠ receive() 返回 any ⇒ 也要收窄后才能取字段
+        print("field1=" + result.f1 + ", field2=" + result.f2)
+    }
     t.join()
 }
 ```
@@ -10421,7 +10443,7 @@ Leno 可以用自己写的测试运行器来跑测试——"吃自己的狗粮"�
 import dirs
 import strings
 
-func get_arg(int idx, string fallback) {
+func get_arg(int idx, string fallback):string {     // ⚠ 要写返回类型：否则推断成 any ⇒ 传给 dirs.listdir 会报类型错
     var args = _args()
     if idx < args.len() { return args[idx] }
     return fallback

@@ -395,6 +395,11 @@
                     }
                 }
                 
+                // ★ T27：`if a != null` 空窄化 —— then 分支内 `a` 不再被判为「确定为 null」
+                //   （放在类型守卫之后：若 `a != null and a is Type` 已建了同名影子符号，
+                //    这里的 scope_define 会返回 NULL，直接复用即可）
+                apply_null_narrowing(s, ast->u.if_.cond, 1);
+
                 // => var 绑定：在 then 分支作用域内定义新局部变量
                 // if expr is Type => var { ... use(var) ... }
                 // var 的类型是守卫类型（Type），供 then 分支内的代码使用
@@ -517,6 +522,9 @@
                         }
                     }
                 }
+
+                // ★ T27：`if a == null { } else { }` 的 else 分支内 `a` 非空 ⇒ 同样豁免
+                apply_null_narrowing(s, ast->u.if_.cond, 0);
 
                 if (ast->u.if_.else_->kind == AST_BLOCK) {
                     visit_list(s, &ast->u.if_.else_->u.block);

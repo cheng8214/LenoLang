@@ -144,5 +144,30 @@ main() {
         "带模块前缀的类型声明要报错并给指引（先说 use、再直接写类型名）",
         "不支持带模块前缀的类型声明 'm.Helper 变量名'", 7)
 
-    print("test_diag_error_batteries passed（27 例）")
+    // ---- T11 / T27：`int? a = null` 的编译期判定（2026-09-30）----
+    //   ① 无窄化 ⇒ 必须仍然编译报错（这是 T11 的**正当**报错，T27 的修复不得把它一起放宽）
+    var nul1 = dirs.join(work, "null_arith_no_narrow.leno")
+    files.write(nul1, @"main() {
+    int? a = null
+    int b = a + 1
+    print(b)
+}
+")
+    ce.expect_error(nul1, "无窄化的 `int? a = null; a + 1` 必须报错（T11 不得回退）",
+        "的值确定为 null", 3)
+
+    //   ② `if a != null` 空窄化 ⇒ 不得再误报（T27）；运行期 a 仍为 null ⇒ 分支不进，输出 42
+    var nul2 = dirs.join(work, "null_arith_narrow.leno")
+    files.write(nul2, @"main() {
+    int? a = null
+    if a != null {
+        int b = a + 1
+        print(b)
+    }
+    print(42)
+}
+")
+    ce.expect_ok(nul2, "`if a != null` 分支内的算术不得误报（T27）", "42")
+
+    print("test_diag_error_batteries passed（29 例）")
 }

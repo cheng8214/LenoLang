@@ -86,8 +86,38 @@ func test_string_is_narrowing() {
 }
 
 // ============================================================================
+// 7. T27：`int? a = null` + `if a != null` 的**空窄化**（编译期不得误报「确定为 null」）
+//    T11 只认「声明即 null、此后未赋值」⇒ 曾把 `if a != null` 分支内的 `a + 1` 误报成
+//    编译错误（而报错提示推荐的正是这种写法）。这里钉住修复后的两种形态。
+// ============================================================================
+func test_local_null_then_narrow(): int {
+    int? a = null
+    if a != null {
+        // T27 前：编译误报「变量 'a' 的值确定为 null」⇒ 整份测试编译不过
+        return a + 1
+    }
+    return 42
+}
+
+// 对照组：先赋一次非 null 值，同样的窄化本来就该通过（运行输出 6）
+func test_local_assign_then_narrow(): int {
+    int? a = null
+    a = 5
+    if a != null {
+        return a + 1
+    }
+    return 0
+}
+
+// ============================================================================
 // 运行所有测试
 // ============================================================================
+assert_eq(test_local_null_then_narrow(), 42)
+print("test_local_null_then_narrow: PASSED")
+
+assert_eq(test_local_assign_then_narrow(), 6)
+print("test_local_assign_then_narrow: PASSED")
+
 assert_eq(test_is_narrowing(), 30)
 print("test_is_narrowing: PASSED")
 
