@@ -132,6 +132,10 @@ export struct TitleBar impl Widget, Themeable {
     pri int    btnHover = BTN_NONE   // 悬停按钮（BTN_NONE/MIN/MAX/CLOSE）
     pri bool   maximized = false
     bool   _dragging = false
+    // ★ 2026-09-30：拖拽"阈值"标记 —— 只有指针移动超过阈值才真的搬窗口
+    //   手点标题栏总带一两像素抖动；以前"按下即进拖拽"⇒ 一次"点击"被当成"拖窗口"
+    //   （实测症状：点过标题栏后，点别的按钮第一次没反应、点 ✕ 要点两次 ✓）
+    pri bool   _dragMoved = false
     pri int    motionSkipCount = 0  // 窗口状态切换后跳过合成 Motion 的 hover 更新（防止关闭按钮误红）
     pri int    dragStartGX = 0, dragStartGY = 0
     pri int    dragStartWinX = 0, dragStartWinY = 0
@@ -338,6 +342,21 @@ export struct TitleBar impl Widget, Themeable {
         if not _loaded { return }
         if winHandle == null { return }
 
+        // ★★ 自愈（2026-09-30）：拖拽 / 边缘缩放会**吞掉后续所有事件**（下面那两处 `return` ✓），
+        //   可"抬起"事件并不保证一定送到：拖拽中指针移出窗口、切到别的程序、OS 吞事件…都会丢 ✗
+        //   一旦丢了，`_dragging`（或 `resizeEdge`）就**永远卡住** ⇒ 之后点 ✕、点标题栏、点内容
+        //   全都"第一次没反应"（实测症状：点过标题栏后点 ✕ 要点两次 ✓；点按钮第一次没反应 ✓）。
+        //   ⇒ 每个事件先核对**真实按键状态**：左键早就松开了就立刻清状态，绝不留到下一次 ✗
+        if (core.getMouseState() & 1) == 0 {
+            if _dragging { _dragging = false; _dragMoved = false; winSizeDirty = true; core.markFrameRedraw() }
+            if resizeEdge != EDGE_NONE {
+                resizeEdge = EDGE_NONE
+                winSizeDirty = true
+                core.forceFrameCursor(SystemCursor.DEFAULT)
+                core.markFrameRedraw()
+            }
+        }
+
         // ★ 窗口尺寸变化事件 ⇒ 置脏（框架自查清单 L 项收尾）✓
         //   为什么必须有这一句：下面改成"只在脏时查 SDL_GetWindowSize"后，**任何来源**的尺寸变化
         //   都必须能置脏，否则 `w` 会长期停在旧值 ✗（自绘边缘拖拽/最大化切换那几处已各自置脏，
@@ -403,13 +422,25 @@ if ev.isWindowRestored() { maximized = false; btnHover = BTN_NONE; motionSkipCou
         if _dragging {
             if ev.isMouseMotion() {
                 var[int, int](curGX, curGY) = core.getGlobalMouse()
-                int newX = dragStartWinX + (curGX - dragStartGX)
-                int newY = dragStartWinY + (curGY - dragStartGY)
-                core.lib().SDL_SetWindowPosition(winHandle, newX, newY)
-                core.markFrameRedraw()
+                // ★ 阈值（3px）：没超过就只是"手抖"，**不搬窗口** ⇒ 一次点击不会被当成拖拽 ✓
+                //   （以前"按下即拖" ⇒ 点标题栏会让窗口跟着鼠标漂一两像素，紧接着的那次点击就落空 ✗）
+                if not _dragMoved {
+                    int ddx = curGX - dragStartGX
+                    int ddy = curGY - dragStartGY
+                    if ddx < 0 { ddx = -ddx }
+                    if ddy < 0 { ddy = -ddy }
+                    if ddx >= 3 or ddy >= 3 { _dragMoved = true }
+                }
+                if _dragMoved {
+                    int newX = dragStartWinX + (curGX - dragStartGX)
+                    int newY = dragStartWinY + (curGY - dragStartGY)
+                    core.lib().SDL_SetWindowPosition(winHandle, newX, newY)
+                    core.markFrameRedraw()
+                }
             }
             if ev.isMouseButtonUp() and ev.mouseButton() == 1 {
                 _dragging = false
+                _dragMoved = false
                 winSizeDirty = true   // 拖拽结束后刷新窗口尺寸缓存
                 core.markFrameRedraw()
             }
@@ -463,6 +494,7 @@ if ev.isWindowRestored() { maximized = false; btnHover = BTN_NONE; motionSkipCou
                     if showMaximize { doToggleMaximize() }
                 } else {
                     _dragging = true
+                    _dragMoved = false   // ★ 阈值标记复位：动够了才真搬窗口（见拖拽分支的注释 ✓）
                     var[int, int](_dgx, _dgy) = core.getGlobalMouse(); dragStartGX = _dgx; dragStartGY = _dgy
                     var[int, int](_wpx, _wpy) = core.getWindowPos(winHandle)
                     dragStartWinX = _wpx
