@@ -1,0 +1,101 @@
+// test_method_name_ambiguous.leno —— 「裸调用与所在方法同名 + 该名字还能裸调到同形参个数的函数」的编译期诊断
+//
+// 为什么要有它（2026-09-30，第三条，防的是"以后"）：
+//   struct 方法体内的裸 `NAME(...)` **优先**解析成"本 struct 的同名方法"（见
+//   semantic_visit_method.c 的方法名改写）。所以"包一层同名方法、里面转发给模块级函数"的写法，
+//   在方法名撞上同名模块函数之后就变成自递归（`_dow` → `dow` 那次事故，dashboard 栈溢出 ✗）。
+//   [疑似无限递归] 管"实参就是自己形参"的纯转发；这条管**歧义本身**（实参变了也一样危险）✓
+//
+// 口径（两处收窄，都是为了少报不误报 ✓）：
+//   ① 只收"与**所在方法**同名"的调用：调**兄弟**方法时（如 GameBot.attach 里 `attachPid(pid)`）
+//      作者本意几乎必是那个兄弟方法，且返回值/类型通常也对得上 ⇒ 报了就是噪音 ✗
+//      （实测 LenoHack 有一处，行为完全正确 ✓）
+//   ② 只收形参个数**相同**的：个数不同时，裸调用若按函数个数写，编译器会当场报
+//      「调用方法时参数不足/过多」（**响的** ✓ 实测）⇒ 不会静默，收进来只会多报 ✓
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+import strings
+
+func expect_warn(string out, string tag, string want) {
+    assert_true(strings.has(out, "[同名歧义"), tag + "：应报 [同名歧义]；实际输出=" + out)
+    assert_true(strings.has(out, want), tag + "：警告文案应含「" + want + "」；实际输出=" + out)
+}
+
+func expect_silent(string out, string tag) {
+    assert_true(not strings.has(out, "[同名歧义"),
+        tag + "：不该报 [同名歧义]（误报守卫）；实际输出=" + out)
+}
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_method_name_ambiguous")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ==================== ① 真阳性：与所在方法同名 + 同形参个数 ====================
+    // 本意是"转发给模块级 calc"（重构事故形状）；裸调用会走自己。
+    // 两种解释的**结果不同**（方法 5 / 函数 6）⇒ 静默走错目标是真会算错的 ✓
+    //   注：这里给方法加终止条件只是为了用例能跑完（真实事故里没有 ⇒ 栈溢出）
+    var f1 = dirs.join(work, "must_warn.leno")
+    files.write(f1, @"func calc(int a, int b): int { return a * b }
+struct S {
+    int v = 0
+    func calc(int a, int b): int {
+        if b <= 0 { return a }
+        return calc(a, b - 1) + 1
+    }
+}
+main() {
+    var s = new S()
+    print(""r="" + s.calc(3, 2) + "" g="" + calc(3, 2))
+}
+")
+    var out1 = ce.expect_ok(f1, "同名歧义（正向）", "r=5 g=6")
+    expect_warn(out1, "与所在方法同名 + 同形参个数必须报", "`calc(...)`")
+    expect_warn(out1, "要写清实际调用哪个", "实际会调用本 struct 的方法")
+    expect_warn(out1, "要给出正确写法", "self.calc(...)")
+    // 结果确实不同（方法 5 vs 函数 6）⇒ 这条诊断拦的是"真会算错"的情况 ✓
+    assert_true(strings.has(out1, "r=5 g=6"), "两种解释的结果应不同；实际输出=" + out1)
+
+    // ==================== ② 误报守卫 ====================
+    var f2 = dirs.join(work, "must_silent.leno")
+    files.write(f2, @"func pick(int a): int { return a + 1 }
+func helper(int x): int { return x * 2 }
+func half(int n): int { return n / 2 }
+struct T {
+    int v = 0
+    // (a) 同名但形参个数不同 ⇒ 不进歧义表（个数只吻合函数时编译器会当场报错，响的 ✓）
+    func pick(int a, int b): int { return a * b }
+    func ok1(): int { return pick(1, 2) }
+    // (b) 名字不撞任何方法 ⇒ 普通全局调用 ✓
+    func ok2(): int { return helper(1) }
+    // (c) 撞名但方法体里没裸调它 ⇒ 不该报
+    func ok3(): int { return v + 1 }
+    // (d) 纯递归但没有同名全局函数 ⇒ 不该报
+    func walk(int n): int {
+        if n <= 0 { return 0 }
+        return walk(n - 1) + 1
+    }
+    func ok4(): int { return walk(3) }
+}
+// (e) 有同名全局函数 + 自调用，但显式写了 self. ⇒ 无歧义 ⇒ 不该报
+struct U {
+    int v = 0
+    func half(int n): int {
+        if n <= 0 { return 0 }
+        return self.half(n - 1)
+    }
+}
+main() {
+    var t = new T()
+    var u = new U()
+    print(""ok="" + t.ok1() + "","" + t.ok2() + "","" + t.ok3() + "","" + t.ok4() + "","" + u.half(4))
+}
+")
+    var out2 = ce.expect_ok(f2, "误报守卫（正向）", "ok=2,2,1,3,0")
+    expect_silent(out2, "兄弟方法调用 / 个数不符 / 不撞名 / 无裸调用 / 无同名函数 / 显式 self.")
+
+    dirs.delete(work)
+    print("test_method_name_ambiguous passed")
+}

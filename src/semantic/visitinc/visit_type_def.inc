@@ -249,7 +249,8 @@
                         if (ast->u.struct_def.field_defaults[i]) {
                             transform_method_body(ast->u.struct_def.field_defaults[i],
                                 NULL, 0, NULL, 0, ast->u.struct_def.name,
-                                NULL, 0, ast->u.struct_def.const_names, ast->u.struct_def.const_count, NULL);
+                                NULL, 0, ast->u.struct_def.const_names, ast->u.struct_def.const_count, NULL,
+                                NULL, NULL, 0);
                         }
                     }
                 }
@@ -260,6 +261,33 @@
                 }
 
                 // 处理方法定义：分两阶段
+                // ★ 诊断用「同名歧义表」（2026-09-30）：本 struct 的方法名中，哪些**还能按裸名调用到**
+                //   全局/模块函数（scope_resolve 命中 SYM_GLOBAL_FUNC/SYM_MODULE ⇒ 裸名确实可调用 ✓），
+                //   并记下那个函数的形参个数。方法体内的裸 `NAME(...)` 会被优先解析成**方法** ⇒
+                //   个数两边都吻合时两种解释都成立（静默走错目标 ✗）⇒ 由 transform 报 [同名歧义] ✓
+                //   ⚠ 用 scope_resolve 而不是 func_table_find 单独判：前者才是"这个裸名在这里到底
+                //     能不能调到东西"的口径（能挡掉同名但不可裸调的库函数，少误报 ✓）
+                char** amb_names = NULL;
+                int*   amb_pcnts = NULL;
+                int    amb_count = 0;
+                if (ast->u.struct_def.method_count > 0) {
+                    amb_names = (char**)malloc(sizeof(char*) * ast->u.struct_def.method_count);
+                    amb_pcnts = (int*)malloc(sizeof(int) * ast->u.struct_def.method_count);
+                }
+                for (int m = 0; amb_names && m < ast->u.struct_def.method_count; m++) {
+                    Ast* ma = ast->u.struct_def.methods[m];
+                    if (!ma || ma->kind != AST_FUNC_DEF || !ma->u.func.name) continue;
+                    Symbol* sym = scope_resolve(s->current, ma->u.func.name);
+                    if (!sym || (sym->kind != SYM_GLOBAL_FUNC && sym->kind != SYM_MODULE)) continue;
+                    Ast* gf = func_table_find(&s->func_table, ma->u.func.name);
+                    if (!gf || gf->kind != AST_FUNC_DEF) continue;
+                    // ⚠ 只收**形参个数相同**的：个数不同时，裸调用若按函数个数写，编译器会当场报
+                    //   「调用方法时参数不足/过多」（响的 ✓ 实测）⇒ 不会静默，收进来只会多报 ✓
+                    if (gf->u.func.pcnt != ma->u.func.pcnt) continue;
+                    amb_names[amb_count] = ma->u.func.name;
+                    amb_pcnts[amb_count] = gf->u.func.pcnt;
+                    amb_count++;
+                }
                 // 阶段1：准备所有方法（转换方法体、添加self参数、注册到函数表）
                 for (int i = 0; i < ast->u.struct_def.method_count; i++) {
                     Ast* method_ast = ast->u.struct_def.methods[i];
@@ -276,7 +304,8 @@
                         }
                         transform_method_body(method_ast->u.func.body, ast->u.struct_def.field_names, ast->u.struct_def.field_count, method_names, method_count, ast->u.struct_def.name,
                             method_ast->u.func.params, method_ast->u.func.pcnt, ast->u.struct_def.const_names, ast->u.struct_def.const_count,
-                            method_ast->u.func.name);   // 本方法名（诊断用：判裸调用是否与自身同名 ⇒ 自递归 ✓）
+                            method_ast->u.func.name,   // 本方法名（诊断用：判裸调用是否与自身同名 ⇒ 自递归 ✓）
+                            amb_names, amb_pcnts, amb_count);   // 同名歧义表（见上 ✓）
                         if (method_names) free(method_names);
 
                         // 2. 添加隐式 self 参数作为第一个参数
@@ -322,6 +351,8 @@
                         func_table_add(&s->func_table, method_key, method_ast);
                     }
                 }
+                if (amb_names) free(amb_names);   // 同名歧义表用完即释（表里存的是 method_name 指针，不拥有 ✓）
+                if (amb_pcnts) free(amb_pcnts);
                 
                 // 阶段2：处理所有方法体（语义分析）
                 // 这样方法间可以互相引用，因为所有方法都已注册到函数表

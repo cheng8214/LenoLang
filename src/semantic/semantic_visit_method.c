@@ -64,6 +64,13 @@ static int is_param_name(const char* name, char** param_names, int param_count) 
 // 模块，与编译期无关 ✓）⇒ 用 static 传状态足够，且不用给 56 处递归调用各加一个参数 ✓
 static const char* cur_method_name = NULL;
 
+// 同名歧义表（由调用方按 struct 备好，见 visit_type_def.inc 的说明 ✓）：
+//   amb_names[i] 既是本 struct 的方法名、又能按裸名解析到全局/模块函数（amb_pcnts[i] = 其形参个数）
+// 为什么要它：那种裸调用**两种解释都成立**，而实际会解析成方法（方法优先）⇒ 可能静默走错目标 ✗
+static char** cur_amb_names = NULL;
+static int* cur_amb_pcnts = NULL;
+static int cur_amb_count = 0;
+
 // 前向声明
 static void transform_method_body_ex(Ast* ast, char** field_names, int field_count,
     char** method_names, int method_count, const char* struct_name,
@@ -75,13 +82,24 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
 // param_names/param_count: 方法参数名列表，参数与字段同名时参数优先（遮蔽字段）
 // const_names/const_count: 关联常量名列表，方法体内可以直接用常量名访问 StructName.CONST
 // method_name: 本方法自己的名字（只给诊断用：判"裸调用与所在方法同名"⇒ 自递归 ✓）
+// amb_*: 同名歧义表（本 struct 的方法名 ∩ 能按裸名解析到的全局/模块函数，且形参个数相同 ✓）
 void transform_method_body(Ast* ast, char** field_names, int field_count, char** method_names, int method_count, const char* struct_name,
-    char** param_names, int param_count, char** const_names, int const_count, const char* method_name) {
+    char** param_names, int param_count, char** const_names, int const_count, const char* method_name,
+    char** amb_names, int* amb_pcnts, int amb_count) {
     const char* saved_method = cur_method_name;
+    char** saved_amb_names = cur_amb_names;
+    int* saved_amb_pcnts = cur_amb_pcnts;
+    int saved_amb_count = cur_amb_count;
     cur_method_name = method_name;
+    cur_amb_names = amb_names;
+    cur_amb_pcnts = amb_pcnts;
+    cur_amb_count = amb_count;
     transform_method_body_ex(ast, field_names, field_count, method_names, method_count, struct_name,
         param_names, param_count, param_names, param_count, const_names, const_count);
     cur_method_name = saved_method;
+    cur_amb_names = saved_amb_names;
+    cur_amb_pcnts = saved_amb_pcnts;
+    cur_amb_count = saved_amb_count;
 }
 
 // shadowed_names/shadowed_count: 当前**生效的**遮蔽集合（= 形参 + 所在块内声明过的局部变量 ✓）
@@ -269,6 +287,7 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
         case AST_CALL: {
             // 检查 callee 是否是同 struct 的方法名调用
             int is_struct_method_call = 0;
+            int warned_self_forward = 0;
             if (ast->u.call.callee->kind == AST_VAR && struct_name &&
                 !is_shadowed(ast->u.call.callee->u.var.name, shadowed_names, shadowed_count)) {
                 const char* callee_name = ast->u.call.callee->u.var.name;
@@ -321,6 +340,28 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
                                     "请改实参或加终止条件",
                                     saved_method_name, saved_method_name);
                                 warning_add_at(WARN_SELF_FORWARD, ast->line, ast->column, cmsg);
+                                warned_self_forward = 1;   // 已报更具体的那条 ⇒ 不必再报"同名歧义" ✓
+                            }
+                        }
+                        // ★★ 诊断（2026-09-30）：**同名歧义** —— 裸调用与**所在方法同名**，而这个名字
+                        //   还能按裸名解析到形参个数相同的全局/模块函数 ⇒ 两种解释都成立，实际走方法。
+                        //   为什么只收"与所在方法同名"（= 自己调自己）：调**兄弟**方法时（如
+                        //   GameBot.attach 里 `attachPid(pid)`）作者本意几乎必是那个兄弟方法，且类型/
+                        //   返回值通常也对得上 ⇒ 报了就是噪音 ✗（实测 LenoHack 就有一处，行为是对的 ✓）
+                        //   为什么要"形参个数也相同"：个数只吻合函数时编译器当场报参数不足/过多（响的 ✓）
+                        //   为什么 ② 报过就不报这条：② 更具体（说清了"纯转发 ⇒ 必炸"）✓
+                        for (int ai = 0; !warned_self_forward && ai < cur_amb_count; ai++) {
+                            if (cur_amb_names[ai] && strcmp(cur_amb_names[ai], saved_method_name) == 0 &&
+                                cur_method_name && strcmp(saved_method_name, cur_method_name) == 0 &&
+                                ast->u.call.args.count == cur_amb_pcnts[ai]) {
+                                char amsg[BUFFER_LARGE];
+                                snprintf(amsg, sizeof(amsg),
+                                    "裸调用 `%s(...)` 有歧义：它与所在方法同名，而这个名字还能按裸名解析到"
+                                    "形参个数相同的全局/模块函数 `%s`，**实际会调用本 struct 的方法**"
+                                    "（方法优先）。要调方法请显式写 `self.%s(...)`；要调那个函数请改名区分",
+                                    saved_method_name, saved_method_name, saved_method_name);
+                                warning_add_at(WARN_METHOD_NAME_AMBIGUOUS, ast->line, ast->column, amsg);
+                                break;
                             }
                         }
                         break;
