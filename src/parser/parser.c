@@ -82,6 +82,17 @@ Ast* parse_statement(Parser* p) {
             stmt = parse_use_stmt(p);
             break;
 
+        // pri 只能修饰 struct 成员：出现在模块级/语句位 ⇒ 直接点名病因
+        //   ★ 2026-09-30 加：以前 `TOK_PRI` 不在本 switch 里 ⇒ 掉进 default ⇒ parse_expression_stmt
+        //     ⇒ 报"期望表达式"（指不到病因 ✗；实测在文件顶层写 `pri func f() {}` 就是这么红的 ✓）
+        //   ★ 顺带说明为什么不需要它：模块级**不加 export 就是文件私有**（Leno 的可见性规则 ✓）
+        //     ⇒ 顶层根本用不到 pri；pri 只用于 struct 内"仅本 struct 可见"的字段/方法/关联常量 ✓
+        case TOK_PRI:
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                "pri 只能用于 struct 成员；模块级不加 'export' 就是文件私有，请去掉 'pri'");
+            lexer_next(&p->lex);   // 跳过 pri，让后面的 func/var 照常解析（尽量不连带报错 ✓）
+            return NULL;
+
         // 变量声明（var/const 关键字或类型关键字开头，或自定义 struct 类型）
         case TOK_VAR:
         case TOK_CONST:

@@ -88,46 +88,78 @@ static void fix_struct_to_face(TypeInfo* type) {
 // 从函数体推断返回类型
 // ============================================================================
 
-// ⚠ v3.2.8 起**非 static**：`visit_type_def.inc`（编进 semantic_visit_ast.c，另一个 TU）也要用它
-//   —— 判"impl 方法没标返回类型"时的实际返回类型（见该文件里 face 兼容性检查的注释）。
-TypeInfo* infer_return_type_from_body(Semantic* s, Ast* body) {
-    if (!body) return NULL;
-    
-    TypeInfo* inferred_type = NULL;
-    
-    switch (body->kind) {
-        case AST_BLOCK: {
-            // 遍历块中的所有语句，查找 return 语句
-            for (int i = 0; i < body->u.block.count; i++) {
-                Ast* stmt = body->u.block.items[i];
-                if (stmt->kind == AST_RETURN && stmt->u.ret) {
-                    TypeInfo* ret_type = infer_expr_type(s, stmt->u.ret);
-                    if (ret_type) {
-                        if (!inferred_type) {
-                            inferred_type = ret_type;
-                        } else if (type_is_compatible(inferred_type, ret_type)) {
-                            type_free(ret_type);
-                        } else {
-                            // 类型不兼容，返回 any
-                            type_free(inferred_type);
-                            type_free(ret_type);
-                            return type_new(TYPE_ANY);
-                        }
+// 深扫一棵语句树，把**所有**"带值 return"的表达式类型合并进 *acc：
+//   · 结束时 *acc == NULL ⇒ 树里没有任何带值 return（⇒ 调用方按 void 处理 ✓）
+//   · 多个 return 类型互不兼容 ⇒ 合并成 TYPE_ANY（"推不出"，调用方自行决定宽容还是跳过 ✓）
+//   ★ 2026-09-30：以前只看 **块内顶层** 的 return ⇒ `func(){ if c { return 5 } }` 推不出来 ✗
+//     实测症状：回调字面量被当成 `func():any`，赋给 `func():void` 变量/字段时报
+//     「变量 'x' 声明类型与初始化值类型不匹配」（日常写回调最常踩的一条 ✗）
+//   ⚠ **不下钻嵌套的函数字面量**（AST_FUNC_DEF 落 default）：那里面 return 属于它自己 ✓
+static void merge_return_expr_types(Semantic* s, Ast* node, TypeInfo** acc) {
+    if (!node) return;
+
+    switch (node->kind) {
+        case AST_RETURN:
+            if (node->u.ret) {
+                TypeInfo* rt = infer_expr_type(s, node->u.ret);
+                if (rt) {
+                    if (!*acc) {
+                        *acc = rt;
+                    } else if (type_is_compatible(*acc, rt)) {
+                        type_free(rt);
+                    } else {
+                        // 类型不兼容 ⇒ 当作"推不出"（TYPE_ANY，与旧行为一致 ✓）
+                        type_free(*acc);
+                        type_free(rt);
+                        *acc = type_new(TYPE_ANY);
                     }
                 }
             }
-            break;
-        }
-        case AST_RETURN: {
-            if (body->u.ret) {
-                inferred_type = infer_expr_type(s, body->u.ret);
+            return;
+
+        // 容器语句：下钻各分支（eif 链挂在 else_ 上，递归自然覆盖 ✓）
+        case AST_BLOCK:
+            for (int i = 0; i < node->u.block.count; i++) {
+                merge_return_expr_types(s, node->u.block.items[i], acc);
             }
-            break;
-        }
+            return;
+        case AST_IF:
+            merge_return_expr_types(s, node->u.if_.then, acc);
+            merge_return_expr_types(s, node->u.if_.else_, acc);
+            return;
+        case AST_WHILE:
+            merge_return_expr_types(s, node->u.while_.body, acc);
+            return;
+        case AST_FOR:
+            merge_return_expr_types(s, node->u.for_.body, acc);
+            return;
+        case AST_SWITCH:
+            for (int i = 0; i < node->u.switch_.case_count; i++) {
+                merge_return_expr_types(s, node->u.switch_.cases[i].body, acc);
+            }
+            merge_return_expr_types(s, node->u.switch_.default_body, acc);
+            return;
+        case AST_TRY:
+            merge_return_expr_types(s, node->u.try_.try_body, acc);
+            merge_return_expr_types(s, node->u.try_.catch_body, acc);
+            merge_return_expr_types(s, node->u.try_.finally_body, acc);
+            return;
+
+        // 其它语句（含嵌套函数字面量）不下钻 ✓
         default:
-            break;
+            return;
     }
-    
+}
+
+// ⚠ v3.2.8 起**非 static**：`visit_type_def.inc`（编进 semantic_visit_ast.c，另一个 TU）也要用它
+//   —— 判"impl 方法没标返回类型"时的实际返回类型（见该文件里 face 兼容性检查的注释）。
+//   契约不变：**NULL = 推不出**（调用方见 NULL/TYPE_ANY 一律按"宁漏不误报"跳过 ✓）；
+//   变的是**能推出来的场合变多了**（嵌套分支里的 return 现在也算 ✓，见上面的深扫 ✓）
+TypeInfo* infer_return_type_from_body(Semantic* s, Ast* body) {
+    if (!body) return NULL;
+
+    TypeInfo* inferred_type = NULL;
+    merge_return_expr_types(s, body, &inferred_type);
     return inferred_type;
 }
 
@@ -3270,9 +3302,16 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
             if (ast->u.func.return_type && ast->u.func.return_type->kind != TYPE_INFER) {
                 return_type = type_copy(ast->u.func.return_type);
             } else {
-                // 无显式返回类型注解时，尝试从函数体推断
+                // 无显式返回类型注解 ⇒ **按函数体推断**（深扫，含嵌套分支里的 return ✓）
+                //   ★ 2026-09-30 修正：推不出（函数体里没有任何"带值 return"）时按 **void** 处理。
+                //     以前回落 `TYPE_ANY` ✗ ⇒ 回调字面量被当成 `func():any`，而 `func():void`
+                //     形参/变量是 `TYPE_NULL` ⇒ `type_equals` 两侧都非空时走严格比 ⇒ 不相等 ⇒
+                //     `func():void f = func() { ... }` 编译期报"声明类型与初始化值类型不匹配" ✗
+                //     （实测：`Button.on_click(func(){...})` 这类日常回调最常踩；当时只能绕成
+                //      `func():any f = func(){...}` 再包一层字面量喂进去 ✗）
+                //   ⚠ 这不等于"宽松放行"：`func():int f = func() { }` 照样报错（void ≠ int ✓）
                 TypeInfo* inferred = infer_return_type_from_body(s, ast->u.func.body);
-                return_type = inferred ? inferred : type_new(TYPE_ANY);
+                return_type = inferred ? inferred : type_new(TYPE_NULL);
             }
             
             // 构建参数类型数组

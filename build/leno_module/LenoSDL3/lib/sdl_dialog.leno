@@ -201,13 +201,16 @@ export func msgBox(string title, Array[string] lines, string okText, string canc
     root.add(dialogSpacer(), {grow: 1, shrink: 1, align: 0})
     var done = false
     // ⚠ 两个必须这样写的点（都是实测踩出来的）：
-    //   ① 闭包**字面量**的类型被推断成 `func():any`（不是 func():void）⇒ 不能存进
-    //      `func():void` 的变量 ✗，只能存 func():any 的局部变量、再包一层喂给按钮形参 ✓
+    //   ① 闭包**字面量**的返回类型由编译器**按函数体推断**：本回调没有任何带值 return ⇒ `func():void` ✓
+    //      ★ 2026-09-30 修好之前：字面量一律被当成 `func():any`（推断只扫块内**顶层** return、
+    //      推不出就回落 any ✗）⇒ 赋给 `func():void` 变量会报"声明类型与初始化值类型不匹配"，
+    //      当时只能绕成 `func():any` 的变量、再包一层字面量喂进按钮形参 ✗。现在直接写即可 ✓
+    //      （语言层回归：assert/test_func_literal_ret_infer.leno ✓）
     //   ② `dlg.requestClose()` 不能省：主循环次序是「窗口级 onEvent →（关闭判定）→ 控件分发」✗
     //      ⇒ 按钮回调（在**后面**那一步）里把 done 置真时，本次事件的关闭判定已经过去了 ⇒
     //      不补这条关闭请求，弹窗要等**下一条事件**才关 ⇒ 观感就是"点了没反应"（而动作其实跑了 ✗）。
     //      requestClose 走的是与点 ✕ **完全相同**的关闭路径（摘模态栈 / 清 tip / 恢复焦点 ✓）
-    func():any hitOk = func() {
+    func():void hitOk = func() {
         done = true
         dlg.requestClose()
         if onOk != null { onOk() }

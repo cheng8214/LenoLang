@@ -1,0 +1,69 @@
+// test_func_literal_ret_infer.leno —— 闭包字面量的**返回类型推断**（2026-09-30）
+//
+// 此前：字面量的函数类型由 `infer_expr_type(AST_FUNC_DEF)` 构造（semantic_type.c），无显式注解时
+//   只扫**块内顶层**的 return，且推不出就回落 `TYPE_ANY` ⇒ 字面量成了 `func():any`，
+//   而 `func():void` 形参/变量是 `TYPE_NULL`，`type_equals` 两侧都非空时走严格比 ⇒ 不相等 ⇒
+//   日常写回调必踩：
+//       func():void f = func() { ... }        // 报"变量 'f' 声明类型与初始化值类型不匹配" ✗
+//       Button.on_click(func() { ... })       // 同类（曾只能绕成 func():any 变量再包一层 ✗）
+// 修复：① 推断**深扫**（if/while/for/switch/try 里的 return 也算 ✓）
+//       ② 推不出（函数体里没有任何"带值 return"）时按 **void** 处理（不再回落 any ✓）
+//
+// 本文件钉住三条**方向相反**的承诺 —— 缺了 c，这个修复就可能悄悄变成"宽松放行"✗：
+//   a. 无返回值的字面量 ⇒ void：可赋给 func():void 变量、可传给 func():void 形参 ✓
+//   b. 只有**嵌套分支**里 return 的字面量 ⇒ 推出该类型（此前推不出 ⇒ 报"类型不匹配" ✗）
+//   c. **不得放宽**：无返回值字面量赋给 func():int 依旧报错 ✓
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_func_literal_ret_infer")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ---- a + b：正向（编译通过 + 运行输出）----
+    //   print(1)/print(2)/print(42)：42 = g() + 2，其中 g 的 return 只在 if 分支里 ✓
+    var ok1 = dirs.join(work, "lit_ret_ok.leno")
+    files.write(ok1, @"func runOnce(func():void cb) {
+    cb()
+}
+
+main() {
+    func():void f = func() { print(1) }
+    f()
+    runOnce(func() { print(2) })
+    func():int g = func() {
+        if true {
+            return 40
+        }
+    }
+    print(g() + 2)
+}
+")
+    ce.expect_ok(ok1, "字面量按函数体推断返回类型（无返回 ⇒ void；嵌套 return ⇒ int）", "42")
+
+    // ---- b 的边界：显式注解仍然优先（不得被体推断覆盖）----
+    var ok2 = dirs.join(work, "lit_ret_annot.leno")
+    files.write(ok2, @"main() {
+    func():int h = func():int {
+        return 5
+    }
+    print(h())
+}
+")
+    ce.expect_ok(ok2, "显式返回注解优先于体推断", "5")
+
+    // ---- c：反向（不得放宽）----
+    var bad1 = dirs.join(work, "lit_ret_bad.leno")
+    files.write(bad1, @"main() {
+    func():int f = func() { print(1) }
+    print(f())
+}
+")
+    ce.expect_error(bad1, "无返回值字面量赋给 func():int 仍要报错（修复不是放宽）",
+        "声明类型与初始化值类型不匹配", 2)
+
+    print("test_func_literal_ret_infer passed（3 例）")
+}

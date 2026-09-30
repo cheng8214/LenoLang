@@ -1,0 +1,61 @@
+// test_pri_module_level.leno —— 模块级误用 `pri` 要报"为什么"（2026-09-30）
+//
+// 此前：`pri` 只在 struct 成员循环里被消费（parser_func.c，全仓仅此一处），
+//   顶层写 `pri func f() {}` 会掉进 parse_statement 的 default ⇒ parse_expression_stmt
+//   ⇒ 报"期望表达式"（位置对、**病因不对** ✗）。
+// 现在：parse_statement 直接认识 TOK_PRI，报
+//   「pri 只能用于 struct 成员；模块级不加 'export' 就是文件私有，请去掉 'pri'」
+//   —— 顺带把 Leno 的可见性规则写进提示：**不 export 即文件私有** ✓
+//
+// 本文件同时钉住"**不得误伤**"：struct 成员上的 pri 照常工作 ✓
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_pri_module_level")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ---- 顶层 pri func：点名病因（此前是"期望表达式"）----
+    var bad1 = dirs.join(work, "pri_top.leno")
+    files.write(bad1, @"pri func hidden(): bool {
+    return true
+}
+
+main() {
+    print(1)
+}
+")
+    ce.expect_error(bad1, "模块级 pri func 要报可操作的错", "pri 只能用于 struct 成员", 1)
+
+    // ---- 语句位（main 体内）同理：同一句提示 ----
+    //   ⚠ 这条还顺带钉住"只报一条"：报错后要跳过 pri 再继续解析，
+    //     否则后面的 `int x = 1` 会跟着报"期望表达式"级联噪声 ✗
+    var bad2 = dirs.join(work, "pri_in_body.leno")
+    files.write(bad2, @"main() {
+    pri int x = 1
+    print(x)
+}
+")
+    ce.expect_error(bad2, "语句位 pri 报同一句", "pri 只能用于 struct 成员", 2)
+
+    // ---- 不得误伤：struct 成员上的 pri（字段）照常可编译可运行 ----
+    var ok1 = dirs.join(work, "pri_member_ok.leno")
+    files.write(ok1, @"struct Box {
+    pri int v = 7
+    func get(): int {
+        return v
+    }
+}
+
+main() {
+    var b = new Box()
+    print(b.get())
+}
+")
+    ce.expect_ok(ok1, "struct 成员上的 pri 不受影响", "7")
+
+    print("test_pri_module_level passed（3 例）")
+}
