@@ -141,52 +141,42 @@ main() {
 
     print("综合测试通过!")
 
-    // ========== 不支持的转义必须**响亮报错**（2026-10-01）==========
-    //   以前 `\d` 被当**字面字母 d**：`match("123", "\d+")` 返回 false 却毫无提示（静默失配 ✗）
-    //   ⇒ 现在编译期失败、抛"无效的正则表达式：不支持的转义"。数字类请写 [0-9] ✓
+    // ========== 转义简写 `\d` `\w` `\s`（2026-10-01 起**支持**）==========
+    //   演进史留一笔：① 最早 `\d` 被当**字面字母 d**（`match("123","\d+")` 静默 false ✗）
+    //   ② 上一版改为**报错**挡住（不再静默 ✗→✓）③ 现在真正展开成等价字符类 ✓
+    //   ⇒ 这组断言从"必须报错"改成了"能力验证" ✓
+    assert_eq(regexs.match("123", "\\d+"), true)
+    assert_eq(regexs.match("d", "\\d"), false)          // `\d` 不再等于字面 d ✓
+    assert_eq(regexs.match("abc_1", "\\w+"), true)
+    assert_eq(regexs.match(" ", "\\s"), true)
+    assert_eq(regexs.match("abc", "\\D+"), true)        // 取反：非数字 ✓
+    assert_eq(regexs.match("123", "\\D+"), false)
+    assert_eq(regexs.match(" ", "\\W"), true)
+    assert_eq(regexs.match("5", "[\\d]"), true)         // 字符类内的简写（**只认小写** ✓）
+    assert_eq(regexs.match("123", "[\\d]+"), true)
+    assert_eq(regexs.extract("2026-10-01", "\\d+-\\d+-\\d+"), "2026-10-01")
+    assert_eq(regexs.replace("13812345678", "(\\d\\d\\d)\\d\\d\\d\\d(\\d\\d\\d\\d)", "$1****$2"),
+              "138****5678")                            // 简写 + 反向引用一起用 ✓
+    assert_eq(regexs.replace_all("a   b", "\\s+", " "), "a b")
+
+    // 不认识的转义**仍然报错**（别静默当字面量 ✓）—— 顺带钉住"消息指出是哪个转义"
     var e1 = ""
     try {
-        regexs.match("123", "\\d+")
+        regexs.match("x", "\\q")
     } catch e {
         e1 = _str(e.msg)
     }
     assert_eq(e1.has("不支持的转义"), true)
-    assert_eq(e1.has("\\d"), true)              // 消息要点出**是哪个**转义
+    assert_eq(e1.has("\\q"), true)
 
+    // 字符类**内**仍只认小写简写：`[\D]`（类内再取反）语义含糊 ⇒ 报错 ✓
     var e2 = ""
     try {
-        regexs.find("a b", "\\s")
+        regexs.match("x", "[\\D]")
     } catch e {
         e2 = _str(e.msg)
     }
-    assert_eq(e2.has("不支持的转义"), true)
-
-    var e3 = ""
-    try {
-        regexs.match("word", "\\w+")
-    } catch e {
-        e3 = _str(e.msg)
-    }
-    assert_eq(e3.has("不支持的转义"), true)
-
-    // 字符类**里面**的 shorthand 同样报错（别静默当字面 d）
-    var e4 = ""
-    try {
-        regexs.match("5", "[\\d]")
-    } catch e {
-        e4 = _str(e.msg)
-    }
-    assert_eq(e4.has("不支持的转义"), true)
-
-    // 组**里面**的 shorthand 同样报错 —— 这条曾经把解析器的漏检查暴露成段错误：
-    //   组内解析失败返回 NULL 却继续被解引用（0xC0000005）✗，现已在 parse_factor 里拦住 ✓
-    var e5 = ""
-    try {
-        regexs.match("5", "(\\d)")
-    } catch e {
-        e5 = _str(e.msg)
-    }
-    assert_eq(e5.has("不支持的转义"), true)
+    assert_eq(e2.has("无效的正则表达式"), true)
 
     // 量词 `{n}` 与 POSIX 字符类 `[:digit:]` 同理**不支持** ⇒ 响亮报错
     //   （以前 `a{2}` 被当字面 "a{2}"、`[[:digit:]]` 静默不匹配 —— 都是"看不出来"的错 ✗）

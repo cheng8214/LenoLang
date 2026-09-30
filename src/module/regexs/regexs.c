@@ -153,17 +153,43 @@ static bool re_is_escapable(char c) {
     return strchr(".^$*+?()[]{}|\\/-", c) != NULL;
 }
 
+// 转义简写（shorthand）字符集：`\d` `\w` `\s`（2026-10-01 起**支持** —— 此前它们是报错"不支持的转义"）
+//   大写 = 取反（由调用方决定用 RE_CLASS_NEG ✓）；不是简写 ⇒ 返回 NULL ✓
+//   `\w` = 63 个字符：0-9 + A-Z + `_` + a-z（本引擎是 ASCII 口径，与 Python 的 `\w` 在 ASCII 上一致 ✓）
+static const char* re_shorthand_chars(char c, int* out_len) {
+    switch (c) {
+        case 'd': case 'D':
+            *out_len = 10;
+            return "0123456789";
+        case 's': case 'S':
+            *out_len = 6;
+            return " \t\r\n\v\f";
+        case 'w': case 'W':
+            *out_len = 63;
+            return "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz";
+        default:
+            return NULL;
+    }
+}
+
+// 字符类**内部**只认小写简写（`[\d]` ✓）：`[\D]` 这种"类内再取反"语义含糊 ⇒ 不认（⇒ 报错 ✓）
+static const char* re_shorthand_lower(char c, int* out_len) {
+    if (c == 'd' || c == 's' || c == 'w') return re_shorthand_chars(c, out_len);
+    return NULL;
+}
+
 // 编译失败时给出**具体**消息（指出第一个不支持的转义）。
 //   为什么不设全局错误缓冲：那是静态可写状态，多线程下（threads 模块）会互相踩 ✗；
 //   这里改为把 pattern 再扫一遍 —— 无状态、可重入 ✓
 static void re_report_invalid(const char* pattern) {
     for (const char* q = pattern; *q; q++) {
         if (*q == '\\' && *(q + 1)) {
-            if (!re_is_escapable(*(q + 1))) {
+            int slen = 0;
+            if (re_shorthand_chars(*(q + 1), &slen) == NULL && !re_is_escapable(*(q + 1))) {
                 char msg[192];
                 snprintf(msg, sizeof(msg),
-                         "无效的正则表达式：不支持的转义 \"\\%c\"（本引擎只支持元字符转义；"
-                         "数字类请写 [0-9]，字母类 [A-Za-z]，空白 [ ]）",
+                         "无效的正则表达式：不支持的转义 \"\\%c\"（本引擎支持元字符转义，"
+                         "以及 \\d \\w \\s 与取反的 \\D \\W \\S）",
                          *(q + 1));
                 native_throw_error(msg);
                 return;
@@ -205,7 +231,16 @@ static const char* parse_class(const char* p, ReNode* node) {
         // POSIX 字符类 `[:digit:]` 这类 **不支持**（文档曾承诺、实现从来没有）⇒ 编译失败、响亮报错 ✓
         if (*p == '[' && *(p+1) == ':') return NULL;
         if (*p == '\\' && *(p+1)) {
-            // 类内转义同理（`\-` 也在允许集合里 —— 类内它是"阻止范围解释"的正当写法 ✓）
+            // 类内的简写：`[\d]` `[\w]` `[\s]` ⇒ 展开进字符集
+            //   （**只认小写** ✓ —— `[\D]` 这种"类内再取反"语义含糊 ⇒ 不认 ⇒ 报错 ✓）
+            int slen = 0;
+            const char* sc = re_shorthand_lower(*(p+1), &slen);
+            if (sc) {
+                for (int k = 0; k < slen && len < 256; k++) chars[len++] = sc[k];
+                p += 2;
+                continue;                            // 回到 while 顶部（跳过后面的 else-if ✓）
+            }
+            // 类内的元字符转义（`\-` 在允许集合里 —— 它是"阻止范围解释"的正当写法 ✓）
             if (!re_is_escapable(*(p+1))) return NULL;
             p++;
             chars[len++] = *p++;
@@ -348,14 +383,29 @@ static ReNode* parse_factor(const char** pp) {
         //   接着就用 NULL 指针做 `*p` ⇒ 段错误（2026-10-01 实测 `[\d]` 崩溃 0xC0000005）✗
         if (!p) return NULL;
     } else if (*p == '\\' && *(p+1)) {
-        // ★ 只认元字符转义：`\d` / `\w` / `\s` 这类 shorthand **不支持** ⇒ 编译失败 ⇒ 上层响亮报错
-        //   （以前是把 `\d` 当字面字母 d —— 静默失配，理由见 re_is_escapable 的函数头 ✓）
-        if (!re_is_escapable(*(p+1))) return NULL;
-        p++;
-        node = re_alloc_node();
-        if (!node) return NULL;
-        node->op = RE_CHAR;
-        node->ch = *p++;
+        // ① 先看是不是简写（`\d` `\w` `\s`，取反 `\D` `\W` `\S`）⇒ **展开成等价字符类** ✓
+        //    （2026-10-01 起支持；更早是"当字面字母 d"⇒ 静默失配 ✗，上一版是报错挡住 ✓）
+        int slen = 0;
+        const char* sc = re_shorthand_chars(*(p+1), &slen);
+        if (sc) {
+            node = re_alloc_node();
+            if (!node) return NULL;
+            node->op = (*(p+1) >= 'A' && *(p+1) <= 'Z') ? RE_CLASS_NEG : RE_CLASS;
+            node->class_chars = (char*)malloc(slen + 1);
+            if (!node->class_chars) return NULL;
+            memcpy(node->class_chars, sc, (size_t)slen);
+            node->class_chars[slen] = '\0';
+            node->class_len = slen;
+            p += 2;                                  // 跳过 `\` 与简写字母 ✓
+        } else if (!re_is_escapable(*(p+1))) {
+            return NULL;                             // 其余未知转义 ⇒ 编译失败、响亮报错 ✓
+        } else {
+            p++;
+            node = re_alloc_node();
+            if (!node) return NULL;
+            node->op = RE_CHAR;
+            node->ch = *p++;
+        }
     } else if (*p == '{' || *p == '}') {
         // 量词 `{n}` / `{n,}` / `{n,m}` **不支持**（文档曾承诺，实现从来没有 —— 2026-10-01 实测：
         //   `a{2}` 匹配 "aa" 是 false、匹配字面 "a{2}" 是 true ⇒ 静默错 ✗）⇒ 编译失败、响亮报错。
