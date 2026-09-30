@@ -100,6 +100,59 @@ static Value dict_method_values(int argc, Value* args) {
     return val_obj((Object*)arr);
 }
 
+// setdefault(key, default)：键在 ⇒ 返回现值；键不在 ⇒ **写入** default 并返回它
+//   （语义与 Python `dict.setdefault` 一致 ✓；参数个数由编译期把关 ⇒ 函数体不再判长度 ✓）
+static Value dict_method_setdefault(int argc, Value* args) {
+    (void)argc;
+    ObjDict* dict = (ObjDict*)val_as_obj(args[0]);
+    Value key = args[1];
+    if (dict_has(dict, key)) {
+        return dict_get(dict, key);
+    }
+    Value def = args[2];
+    dict_set(dict, key, def);
+    return def;
+}
+
+// items()：把字典摊平成 `Array[DictEntry{key, value}]`（**按插入序** ✓）
+//   为什么不用"每项一个 `[k, v]` 小数组"：位置取值不可读、顺序一漂就静默错位 ✗
+//   —— 与 `DirEntry`（dirs.walk）/ `RegexMatch`（regexs.find_all）同一判断：
+//   编译期字段表与运行期 ObjStructDef **同源** ⇒ 字段顺序不可能各自漂 ✓
+static Value dict_method_items(int argc, Value* args) {
+    (void)argc;
+    ObjDict* dict = (ObjDict*)val_as_obj(args[0]);
+    int total = dict->order_count;
+
+    ObjArray* arr = (ObjArray*)gc_alloc(sizeof(ObjArray), OBJ_ARRAY);
+    if (!arr) return val_null();
+    arr->count = 0;
+    arr->capacity = total > 0 ? total : 1;
+    arr->elements = (Value*)malloc(arr->capacity * sizeof(Value));
+    if (!arr->elements) {
+        native_throw_error("数组内存分配失败");
+        return val_null();
+    }
+
+    Value arr_val = val_obj((Object*)arr);
+    gc_push_root(&arr_val);        // 循环里 native_struct_new 会 gc_alloc ⇒ 还没交出去的它要护住 ✓
+
+    for (int i = 0; i < total; i++) {
+        Value k = dict->order[i];
+        ObjStruct* e = native_struct_new("DictEntry");
+        if (!e) break;
+        Value ev = val_obj((Object*)e);
+        gc_push_root(&ev);
+        native_struct_set(e, "key", k);
+        native_struct_set(e, "value", dict_get(dict, k));
+        gc_pop_root();
+        arr->elements[arr->count++] = ev;
+        gc_write_barrier((Object*)arr, ev);
+    }
+
+    gc_pop_root();
+    return arr_val;
+}
+
 static Value dict_method_clear(int argc, Value* args) {
     (void)argc;
     ObjDict* dict = (ObjDict*)val_as_obj(args[0]);
@@ -180,4 +233,24 @@ void dicts_init_instance_methods(void) {
     TypeKind values_params[] = {};
     dict_register_method_with_params("values", make_native(dict_method_values, 1, "values"), 0, -1, -1, TYPE_ARRAY, TYPE_UNKNOWN, values_params);
     native_register_instance_method_return_spec("Dict", "values", &S_ARR_ARG0_V);
+
+    // setdefault(key, default)：返回类型标 ANY —— 它"按默认值实参推"的那套标签还没设计，
+    //   与 get 同一处境（见上面 get 的说明 ✓）
+    TypeKind setdefault_params[] = {TYPE_ANY, TYPE_ANY};
+    dict_register_method_with_params("setdefault", make_native(dict_method_setdefault, 3, "setdefault"),
+                                     2, -1, -1, TYPE_ANY, TYPE_UNKNOWN, setdefault_params);
+
+    // items()：返回 `Array[DictEntry{key, value}]`（**字段类型编译期已知** ✓）
+    //   key/value 都标 ANY —— 字典的键值类型本来就可能不齐 ⇒ 收窄交给调用点 ✓
+    static const NativeTypeSpec S_DI_ANY        = { NTYPE_ANY,    NULL, NULL, NULL, 0, -1 };
+    static const NativeTypeSpec S_DICTENTRY     = { NTYPE_STRUCT, "DictEntry", NULL, NULL, 0, -1 };
+    static const NativeTypeSpec S_DICTENTRY_ARR = { NTYPE_ARRAY, NULL, &S_DICTENTRY, NULL, 0, -1 };
+    static const char* DICTENTRY_FIELDS[] = { "key", "value" };
+    static const NativeTypeSpec* DICTENTRY_TYPES[] = { &S_DI_ANY, &S_DI_ANY };
+    static const NativeStructSpec DICTENTRY_SPEC = { "dicts", "DictEntry", 2, DICTENTRY_FIELDS, DICTENTRY_TYPES };
+    native_register_struct_spec(&DICTENTRY_SPEC);
+
+    TypeKind items_params[] = {};
+    dict_register_method_with_params("items", make_native(dict_method_items, 1, "items"), 0, -1, -1, TYPE_ARRAY, TYPE_UNKNOWN, items_params);
+    native_register_instance_method_return_spec("Dict", "items", &S_DICTENTRY_ARR);
 }

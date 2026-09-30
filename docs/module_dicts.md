@@ -252,6 +252,35 @@ print(dict)  // {a: 1, c: 3}
 
 ---
 
+### `setdefault(key, default)`
+
+键存在 ⇒ 返回**现有值**（不覆盖）；键不存在 ⇒ **写入** `default` 并返回它 ✓
+（与 Python 的 `dict.setdefault` 同语义 ✓）
+
+**参数**:
+- `key` (any): 键
+- `default` (any): 键不存在时要写入并返回的值
+
+**返回**: `any` - 键对应的值（已有的，或刚写入的 `default`）
+
+```leno
+var counts = {"a": 1}
+print(counts.setdefault("a", 99))   // 1      （已存在 ⇒ **不覆盖** ✓）
+print(counts.setdefault("b", 7))    // 7      （不存在 ⇒ 写入并返回 ✓）
+print(counts.get("b"))              // 7      （确实写进去了 ✓）
+
+// 典型用法：分组/计数（省掉"先 has 再 set"两步 ✓）
+var groups = {}
+var ks = ["x", "y", "x", "z", "x"]
+for ks to k {
+    groups.setdefault(k, 0)
+    groups.set(k, _int(groups.get(k)) + 1)
+}
+print(groups.get("x"))              // 3
+```
+
+---
+
 ## 遍历方法
 
 ### `keys()`
@@ -291,6 +320,35 @@ for values to value {
     print("值: " + value)
 }
 ```
+
+---
+
+### `items()`
+
+把字典摊平成 `Array[DictEntry]` —— 每项是 `DictEntry{key, value}`（**按插入序** ✓）。
+
+**参数**: 无
+
+**返回**: `Array[DictEntry]` —— 字段 `key` / `value` **编译期已知**（native 结构体规格 ✓）；
+空字典 ⇒ 空数组（不是 `null`）。
+
+```leno
+var d = {"x": 1, "y": 2, "z": 3}
+var its = d.items()
+print(its.len())          // 3
+print(its[0].key)         // "x"（插入序 ✓）
+print(its[0].value)       // 1
+
+// 遍历键值对（比 `keys()` + `get()` 两步更直白 ✓）
+for its to it {
+    print(_str(it.key) + " = " + _str(it.value))
+}
+```
+
+> ⚠ **为什么不是 `Array[[k, v]]`**（每项一个小数组）：位置取值不可读，顺序一漂就**静默错位** ✗。
+> 用结构体规格让**编译期字段表与运行期定义同源** —— 与 `DirEntry`（dirs.walk）/ `RegexMatch`
+> （regexs.find_all）同一套做法 ✓
+> ⚠ `key` / `value` 的静态类型是 `any`（字典的值类型常常不齐）⇒ 参与运算时显式 `_str()` / `_int()` ✓
 
 ---
 

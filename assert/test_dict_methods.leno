@@ -79,5 +79,44 @@ main()
     assert_eq(cd.clear(), null)
     assert_eq(cd.len(), 0)
 
+    // ---- setdefault / items（2026-10-01 新增）----
+    //   setdefault：键在 ⇒ 返回现值（**不覆盖**）；键不在 ⇒ 写入 default 并返回它 ✓
+    Dict[string, int] sd = {"a": 1}
+    assert_eq(sd.setdefault("a", 99), 1)        // 已存在 ⇒ 不覆盖 ✓
+    assert_eq(sd.get("a", 0), 1)
+    assert_eq(sd.setdefault("b", 7), 7)         // 不存在 ⇒ 写入并返回 ✓
+    assert_eq(sd.get("b", 0), 7)
+    assert_eq(sd.len(), 2)
+
+    //   items()：`Array[DictEntry{key, value}]` —— **按插入序**、字段编译期已知 ✓
+    var it_src = {"x": 1, "y": 2, "z": 3}
+    var its = it_src.items()
+    assert_eq(its.len(), 3)
+    assert_eq(_str(its[0].key), "x")            // 插入序 ✓
+    assert_eq(_int(its[0].value), 1)
+    assert_eq(_str(its[2].key), "z")
+    assert_eq(_int(its[2].value), 3)
+
+    // 遍历写法：比 `keys()` + `get()` 两步更直白 ✓
+    int sum_v = 0
+    for its to it {
+        sum_v += _int(it.value)
+    }
+    assert_eq(sum_v, 6)
+
+    // 空字典 ⇒ 空数组（不是 null ✓）
+    var empty_d = {}
+    assert_eq(empty_d.items().len(), 0)
+
+    // setdefault 的典型用法：计数（省掉"先 has 再 set" ✓）
+    var cnt2 = {}
+    var ks2 = ["p", "q", "p"]
+    for ks2 to k {
+        cnt2.setdefault(k, 0)
+        cnt2.set(k, _int(cnt2.get(k)) + 1)
+    }
+    assert_eq(_int(cnt2.get("p")), 2)
+    assert_eq(_int(cnt2.get("q")), 1)
+
     print("test_dict_methods passed")
 }
