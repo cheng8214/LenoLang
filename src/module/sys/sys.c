@@ -238,7 +238,8 @@ static Value native_console(int argCount, Value* args) {
 // _env(name) - 获取环境变量
 // _env(name, value) - 设置环境变量，返回是否成功
 static Value native_env(int argCount, Value* args) {
-    if (argCount < 1 || !val_is_string(args[0])) {
+    // 个数（>= 1）由**编译期**把关（实测：`_env()` ⇒「参数过少: 最少 1 个, 实际 0」）⇒ 这里只守类型
+    if (!val_is_string(args[0])) {
         return val_null();
     }
 
@@ -275,7 +276,8 @@ static Value native_env_or(int argCount, Value* args) {
     if (argCount >= 2 && val_is_string(args[1])) {
         def = (ObjString*)val_as_obj(args[1]);
     }
-    if (argCount < 1 || !val_is_string(args[0])) {
+    // 个数由编译期把关（`_env_or` 是**定长 2 参**：实测 0 参 ⇒「参数数量不匹配: 期望 2」）⇒ 这里只守类型
+    if (!val_is_string(args[0])) {
         return def ? val_obj((Object*)def) : val_obj((Object*)str_copy("", 0));
     }
 
@@ -342,7 +344,8 @@ static Value native_arch(int argCount, Value* args) {
 // 使用 + 临时文件避免 _popen 在大量并发调用时不稳定的问题
 // Windows 版使用 UTF-16 转换以支持中文/Unicode 路径
 static Value native_exec(int argCount, Value* args) {
-    if (argCount < 1 || !val_is_string(args[0])) {
+    // 个数（>= 1）由编译期把关（实测：`_exec()` ⇒「参数过少: 最少 1 个」）⇒ 这里只守类型
+    if (!val_is_string(args[0])) {
         return val_null();
     }
     ObjString* cmd = (ObjString*)val_as_obj(args[0]);

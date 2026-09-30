@@ -4,6 +4,7 @@ import files
 import io
 import dirs
 import ffi
+import strings
 
 // ---- File / Ptr 作为**类型**的用例（2026-09-27 从 examples/files 收编）----
 // 为什么值得钉：`File`（native 句柄）与 `Ptr`（裸指针）能不能当**函数形参**、能不能当
@@ -92,6 +93,28 @@ main()
     // 模块级 `files.write()` 同样返回 null（只写盘、不产生值）
     assert_eq(files.write(filename, "rewritten-by-contract"), null)
     assert_eq(files.read(filename), "rewritten-by-contract")
+
+    // ---- UTF-8 BOM（2026-10-01）----
+    //   口径：`files.read` 是**文本语义**的快捷读取 ⇒ 剥 BOM；二进制模式**原样**给字节。
+    //   为什么要钉：BOM 若混进正文，正则 / 字符串比较 / 数字解析都会**静默失配**（不报错、只错值）。
+    var bomp = dirs.join(_tmpdir(), "leno_bom_contract.txt")
+    var bomW = files.open(bomp, "wb")
+    bomW.write(strings.char(0xEF, 0xBB, 0xBF) + "hello")     // 手写 3 字节 BOM（不靠编辑器 ✓）
+    bomW.close()
+    assert_eq(files.read(bomp), "hello")                     // 文本读取 ⇒ 剥掉 BOM
+    assert_eq(files.read(bomp).len(), 5)
+    var bomR = files.open(bomp, "rb")
+    var bomRaw = bomR.read()
+    // ⚠ 断言按**内容**比、不按 `.len()`：Leno 的字符串长度/索引是 **Unicode 字符**
+    //   （BOM 三字节算 1 个字符）⇒ 用字节数当期望值会算错 ✗
+    assert_eq(bomRaw, strings.char(0xEF, 0xBB, 0xBF) + "hello")   // 二进制 ⇒ BOM 原样带出
+    assert_eq(bomRaw.byte(0), 0xEF)                               // 首字节就是 BOM 的 EF
+    bomR.close()
+    // 反例：没有 BOM 的文件一个字节都不能少（避免"剥"的逻辑误伤）
+    files.write(bomp, "hello")
+    assert_eq(files.read(bomp), "hello")
+    assert_eq(files.read(bomp).len(), 5)
+    files.delete(bomp)
 
     // ---- File / Ptr 作形参与 struct 字段（2026-09-27 从 examples/files 收编）----
     var work = dirs.join(_tmpdir(), "leno_files_param_struct")

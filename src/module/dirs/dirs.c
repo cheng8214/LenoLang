@@ -146,10 +146,7 @@ static Value native_dirs_cwd(int argCount, Value* args) {
 
 // dirs.abspath(path) - 转换为绝对路径
 static Value native_dirs_abspath(int argCount, Value* args) {
-    if (argCount < 1) {
-        native_throw_error("abspath 需要路径参数");
-        return val_null();
-    }
+    (void)argCount;   // 个数由编译期把关（2026-10-01 实测：「参数数量不匹配」）⇒ 运行期不重复检查
     
     const char* path = get_string(args[0]);
     if (!path) {
@@ -194,12 +191,224 @@ static Value native_dirs_abspath(int argCount, Value* args) {
 #endif
 }
 
-// dirs.basename(path) - 获取文件名
-static Value native_dirs_basename(int argCount, Value* args) {
-    if (argCount < 1) {
-        native_throw_error("basename 需要路径参数");
+// ==================== 相对路径（relpath）====================
+// 口径（与 Python `os.path.relpath` 对齐，两处**故意不同**）：
+//   · **纯词法**：不查盘、不解析符号链接、不要求路径存在 ✓
+//     （不借 Windows 的 `_wfullpath` / POSIX 的 `realpath`：后者会解析链接**且要求存在** ⇒
+//      同一段 Leno 代码在两个平台给出不同答案 ✗）
+//   · 跨根（不同盘符 / UNC）⇒ **原样返回 path**，不抛异常；
+//     Python 那边是 `ValueError`，这里选"给原值"—— 脚本工具里跨盘是常见输入，
+//     抛异常只会逼每个调用点写 try ✓
+//   · UNC（`\\server\share` / `//server/share`）**v1 不做**：命中原样返回（宁可没变，不给错答案）
+//   · 段比较：Windows 折叠 ASCII 大小写（盘符/目录名不区分大小写）、POSIX 精确比较 ✓
+
+#define DIRS_MAX_SEG 256
+
+// 取当前工作目录（UTF-8）；成功返回 1
+static int dirs_get_cwd(char* out, size_t outsz) {
+#ifdef _WIN32
+    wchar_t wbuf[4096];
+    if (_wgetcwd(wbuf, sizeof(wbuf) / sizeof(wchar_t)) == NULL) return 0;
+    char* u = utf16_to_utf8(wbuf);
+    if (!u) return 0;
+    if (strlen(u) + 1 > outsz) {
+        free(u);
+        return 0;
+    }
+    strcpy(out, u);
+    free(u);
+    return 1;
+#else
+    return getcwd(out, outsz) != NULL;
+#endif
+}
+
+// 段相等判定。只折叠 ASCII 的 A-Z：UTF-8 里的中文无大小写概念，
+// `_stricmp` 那种按字节折叠反而会误伤（GBK 字节对上会在 0x80+ 区域乱折叠）✗
+static int dirs_seg_eq(const char* a, int alen, const char* b, int blen) {
+    if (alen != blen) return 0;
+#ifdef _WIN32
+    for (int i = 0; i < alen; i++) {
+        char ca = a[i];
+        char cb = b[i];
+        if (ca >= 'A' && ca <= 'Z') ca = (char)(ca - 'A' + 'a');
+        if (cb >= 'A' && cb <= 'Z') cb = (char)(cb - 'A' + 'a');
+        if (ca != cb) return 0;
+    }
+    return 1;
+#else
+    return memcmp(a, b, (size_t)alen) == 0;
+#endif
+}
+
+// 把路径规范化成**绝对 + 无 `.`/`..`**形式：分隔符统一成 '/'、无重复分隔符、无尾随分隔符
+//   root —— 根部分（`C:` 或 `/`）；段从 root 之后算起
+//   返回 1 成功；0 = 规范化不了（UNC / 段数超限 / 取不到 cwd）⇒ 调用方**原样返回** ✓
+static int dirs_norm_abs(const char* in, char* out, size_t outsz, char* root, size_t rootsz) {
+    char tmp[4096];
+    size_t tlen = 0;
+
+    // ① 无根 ⇒ 前置 cwd（`src` / `a\b` 这类相对输入）
+    int has_root = (in[0] == '/' || in[0] == '\\');
+    if (!has_root && ((in[0] >= 'A' && in[0] <= 'Z') || (in[0] >= 'a' && in[0] <= 'z')) && in[1] == ':') {
+        has_root = 1;
+    }
+    if (!has_root) {
+        char cwd[4096];
+        if (!dirs_get_cwd(cwd, sizeof(cwd))) return 0;
+        size_t cl = strlen(cwd);
+        size_t il = strlen(in);
+        if (cl + 1 + il + 1 > sizeof(tmp)) return 0;
+        memcpy(tmp, cwd, cl);
+        tmp[cl] = '/';
+        memcpy(tmp + cl + 1, in, il + 1);
+        tlen = cl + 1 + il;
+    } else {
+        size_t il = strlen(in);
+        if (il + 1 > sizeof(tmp)) return 0;
+        memcpy(tmp, in, il + 1);
+        tlen = il;
+    }
+    (void)tlen;
+
+    // ② UNC 不支持（`\\server\share` / `//server/share`）⇒ 交给调用方原样返回
+    if ((tmp[0] == '\\' && tmp[1] == '\\') || (tmp[0] == '/' && tmp[1] == '/')) return 0;
+
+    // ③ 拆根
+    size_t off = 0;
+    if (tmp[0] == '/') {
+        if (rootsz < 2) return 0;
+        root[0] = '/';
+        root[1] = '\0';
+        off = 1;
+    } else if (((tmp[0] >= 'A' && tmp[0] <= 'Z') || (tmp[0] >= 'a' && tmp[0] <= 'z')) && tmp[1] == ':') {
+        if (rootsz < 3) return 0;
+        root[0] = tmp[0];
+        root[1] = ':';
+        root[2] = '\0';
+        off = (tmp[2] == '/' || tmp[2] == '\\') ? 3 : 2;
+    } else {
+        return 0;
+    }
+
+    // ④ 逐段消解 `.` / `..`（`..` 弹栈；根处多余的 `..` 丢弃 —— 与 POSIX 一致）
+    size_t seg_start[DIRS_MAX_SEG];
+    int nseg = 0;
+    size_t o = 0;
+    const char* p = tmp + off;
+    while (*p) {
+        while (*p == '/' || *p == '\\') p++;
+        if (!*p) break;
+        const char* s = p;
+        while (*p && *p != '/' && *p != '\\') p++;
+        int len = (int)(p - s);
+        if (len == 1 && s[0] == '.') continue;
+        if (len == 2 && s[0] == '.' && s[1] == '.') {
+            if (nseg > 0) {
+                nseg--;
+                o = seg_start[nseg];
+                if (o > 0) o--;                 // 连带前一个分隔符一起退掉
+            }
+            continue;
+        }
+        if (nseg >= DIRS_MAX_SEG) return 0;
+        if (o > 0) {
+            if (o + 1 >= outsz) return 0;
+            out[o++] = '/';
+        }
+        if (o + (size_t)len >= outsz) return 0;
+        seg_start[nseg++] = o;
+        memcpy(out + o, s, len);
+        o += len;
+    }
+    out[o] = '\0';
+    return 1;
+}
+
+// 把规范化路径切成段（分隔符只有 '/'）
+static int dirs_split_segs(const char* s, const char** segs, int* lens, int max) {
+    int n = 0;
+    const char* p = s;
+    while (*p) {
+        while (*p == '/') p++;
+        if (!*p) break;
+        const char* st = p;
+        while (*p && *p != '/') p++;
+        if (n >= max) break;
+        segs[n] = st;
+        lens[n] = (int)(p - st);
+        n++;
+    }
+    return n;
+}
+
+// dirs.relpath(path, base) - 求 path 相对 base 的**词法**相对路径
+//   `relpath("D:\\L\\src\\gc.c", "D:\\L")`      ⇒ `src\\gc.c`
+//   `relpath("D:\\L\\a\\b", "D:\\L\\a\\c\\d")`  ⇒ `..\\..\\b`
+//   `relpath("D:\\x", "D:\\x")`                 ⇒ `.`
+//   `relpath("C:\\a", "D:\\b")`                 ⇒ `C:\\a`（跨根 ⇒ 原样）
+static Value native_dirs_relpath(int argCount, Value* args) {
+    // ⚠ 不写 `if (argCount < 2)`：个数由**编译期**把关（`[语义错误] relpath 参数数量不匹配: 期望 2，实际 N`，
+    //   2026-10-01 实测）⇒ 运行期这段永远进不去。类型仍要守卫：实参类型推断失败时编译期会跳过检查。
+    (void)argCount;
+    const char* path = get_string(args[0]);
+    if (!path) {
+        native_throw_error("relpath 的 path 参数必须是字符串");
         return val_null();
     }
+    const char* base = get_string(args[1]);
+    if (!base) {
+        native_throw_error("relpath 的 base 参数必须是字符串");
+        return val_null();
+    }
+
+    char npath[4096];
+    char nbase[4096];
+    char rp[8];
+    char rb[8];
+    if (!dirs_norm_abs(path, npath, sizeof(npath), rp, sizeof(rp)) ||
+        !dirs_norm_abs(base, nbase, sizeof(nbase), rb, sizeof(rb))) {
+        return val_obj((Object*)str_copy(path, (int)strlen(path)));   // 规范化不了 ⇒ 原样
+    }
+    // ⚠ 根也走**段比较**（折叠 ASCII 大小写）：此前这里用 `strcmp` ⇒ `D:` 与 `d:` 被判成跨盘、
+    //   直接原样返回 ✗（test_dirs 用例⑨抓到的：段折叠、根不折叠的不一致）
+    if (!dirs_seg_eq(rp, (int)strlen(rp), rb, (int)strlen(rb))) {
+        return val_obj((Object*)str_copy(path, (int)strlen(path)));   // 跨根 ⇒ 原样
+    }
+
+    const char* ps[DIRS_MAX_SEG];
+    int pl[DIRS_MAX_SEG];
+    const char* bs[DIRS_MAX_SEG];
+    int bl[DIRS_MAX_SEG];
+    int pn = dirs_split_segs(npath, ps, pl, DIRS_MAX_SEG);
+    int bn = dirs_split_segs(nbase, bs, bl, DIRS_MAX_SEG);
+
+    // 消掉公共前缀
+    int i = 0;
+    while (i < pn && i < bn && dirs_seg_eq(ps[i], pl[i], bs[i], bl[i])) i++;
+
+    char out[4096];
+    size_t o = 0;
+    for (int k = i; k < bn; k++) {                 // base 剩余段 ⇒ 每段一个 `..`
+        if (o + 3 >= sizeof(out)) break;
+        if (o > 0) out[o++] = PATH_SEP;
+        out[o++] = '.';
+        out[o++] = '.';
+    }
+    for (int k = i; k < pn; k++) {                 // path 剩余段 ⇒ 原样接上
+        if (o + (size_t)pl[k] + 1 >= sizeof(out)) break;
+        if (o > 0) out[o++] = PATH_SEP;
+        memcpy(out + o, ps[k], pl[k]);
+        o += pl[k];
+    }
+    if (o == 0) out[o++] = '.';
+    out[o] = '\0';
+    return val_obj((Object*)str_copy(out, (int)o));
+}
+
+// dirs.basename(path) - 获取文件名
+static Value native_dirs_basename(int argCount, Value* args) {
+    (void)argCount;   // 个数由编译期把关（2026-10-01 实测：「参数数量不匹配」）⇒ 运行期不重复检查
     
     const char* path = get_string(args[0]);
     if (!path) {
@@ -226,10 +435,7 @@ static Value native_dirs_basename(int argCount, Value* args) {
 
 // dirs.dirname(path) - 获取目录名
 static Value native_dirs_dirname(int argCount, Value* args) {
-    if (argCount < 1) {
-        native_throw_error("dirname 需要路径参数");
-        return val_null();
-    }
+    (void)argCount;   // 个数由编译期把关（2026-10-01 实测：「参数数量不匹配」）⇒ 运行期不重复检查
     
     const char* path = get_string(args[0]);
     if (!path) {
@@ -261,10 +467,7 @@ static Value native_dirs_dirname(int argCount, Value* args) {
 
 // dirs.extname(path) - 获取扩展名
 static Value native_dirs_extname(int argCount, Value* args) {
-    if (argCount < 1) {
-        native_throw_error("extname 需要路径参数");
-        return val_null();
-    }
+    (void)argCount;   // 个数由编译期把关（2026-10-01 实测：「参数数量不匹配」）⇒ 运行期不重复检查
     
     const char* path = get_string(args[0]);
     if (!path) {
@@ -298,9 +501,9 @@ static Value native_dirs_extname(int argCount, Value* args) {
 
 // dirs.join(part1, part2, ...) - 拼接路径
 static Value native_dirs_join(int argCount, Value* args) {
-    if (argCount < 1) {
-        return val_obj((Object*)str_copy("", 0));
-    }
+    // ⚠ 0 参由**注册元信息**挡住（`min_arity = 1`，见 dirs_init_module）—— 这里原来有一句
+    //   `if (argCount < 1) { return "" }`，那是"运行期判据 + 注册判据"两处并存的旧写法
+    //   （2026-10-01 收敛为单一事实来源：注册说至少要一段，函数体只管干活）✓
     
     // 计算总长度
     int total_len = 0;
@@ -475,10 +678,7 @@ static Value native_dirs_res_dir(int argCount, Value* args) {
 
 // dirs.exists(path) - 检查路径是否存在
 static Value native_dirs_exists(int argCount, Value* args) {
-    if (argCount < 1) {
-        native_throw_error("exists 需要路径参数");
-        return val_null();
-    }
+    (void)argCount;   // 个数由编译期把关（2026-10-01 实测：「参数数量不匹配」）⇒ 运行期不重复检查
     
     const char* path = get_string(args[0]);
     if (!path) {
@@ -500,10 +700,7 @@ static Value native_dirs_exists(int argCount, Value* args) {
 
 // dirs.is_file(path) - 检查是否是文件
 static Value native_dirs_is_file(int argCount, Value* args) {
-    if (argCount < 1) {
-        native_throw_error("is_file 需要路径参数");
-        return val_null();
-    }
+    (void)argCount;   // 个数由编译期把关（2026-10-01 实测：「参数数量不匹配」）⇒ 运行期不重复检查
     
     const char* path = get_string(args[0]);
     if (!path) {
@@ -531,10 +728,7 @@ static Value native_dirs_is_file(int argCount, Value* args) {
 
 // dirs.is_dir(path) - 检查是否是目录
 static Value native_dirs_is_dir(int argCount, Value* args) {
-    if (argCount < 1) {
-        native_throw_error("is_dir 需要路径参数");
-        return val_null();
-    }
+    (void)argCount;   // 个数由编译期把关（2026-10-01 实测：「参数数量不匹配」）⇒ 运行期不重复检查
     
     const char* path = get_string(args[0]);
     if (!path) {
@@ -563,10 +757,7 @@ static Value native_dirs_is_dir(int argCount, Value* args) {
 // dirs.is_symlink(path) - 检查是否是符号链接/junction（reparse point）
 // 用于递归搜索时跳过，防止无限递归导致栈溢出
 static Value native_dirs_is_symlink(int argCount, Value* args) {
-    if (argCount < 1) {
-        native_throw_error("is_symlink 需要路径参数");
-        return val_null();
-    }
+    (void)argCount;   // 个数由编译期把关（2026-10-01 实测：「参数数量不匹配」）⇒ 运行期不重复检查
     
     const char* path = get_string(args[0]);
     if (!path) {
@@ -603,10 +794,7 @@ static Value native_dirs_is_symlink(int argCount, Value* args) {
 
 // dirs.mkdir(path) - 创建目录
 static Value native_dirs_mkdir(int argCount, Value* args) {
-    if (argCount < 1) {
-        native_throw_error("mkdir 需要路径参数");
-        return val_null();
-    }
+    (void)argCount;   // 个数由编译期把关（2026-10-01 实测：「参数数量不匹配」）⇒ 运行期不重复检查
     
     const char* path = get_string(args[0]);
     if (!path) {
@@ -630,10 +818,7 @@ static Value native_dirs_mkdir(int argCount, Value* args) {
 
 // dirs.mkdir_p(path) - 递归创建目录
 static Value native_dirs_mkdir_p(int argCount, Value* args) {
-    if (argCount < 1) {
-        native_throw_error("mkdir_p 需要路径参数");
-        return val_null();
-    }
+    (void)argCount;   // 个数由编译期把关（2026-10-01 实测：「参数数量不匹配」）⇒ 运行期不重复检查
     
     const char* path = get_string(args[0]);
     if (!path) {
@@ -680,10 +865,7 @@ static Value native_dirs_mkdir_p(int argCount, Value* args) {
 
 // dirs.rmdir(path) - 删除空目录
 static Value native_dirs_rmdir(int argCount, Value* args) {
-    if (argCount < 1) {
-        native_throw_error("rmdir 需要路径参数");
-        return val_null();
-    }
+    (void)argCount;   // 个数由编译期把关（2026-10-01 实测：「参数数量不匹配」）⇒ 运行期不重复检查
     
     const char* path = get_string(args[0]);
     if (!path) {
@@ -776,10 +958,7 @@ static int dirs_recursive_delete_u(const char* path) {
 //   ⚠ **不跟随链接**：链接（junction / symlink / mount point）只删链接本身，绝不动 target ——
 //     否则 `delete(link)` 会透过链接把**目标目录的内容**删光（原实现就是这样，属数据丢失）。
 static Value native_dirs_delete(int argCount, Value* args) {
-    if (argCount < 1) {
-        native_throw_error("delete 需要路径参数");
-        return val_null();
-    }
+    (void)argCount;   // 个数由编译期把关（2026-10-01 实测：「参数数量不匹配」）⇒ 运行期不重复检查
 
     const char* path = get_string(args[0]);
     if (!path) {
@@ -802,10 +981,7 @@ static Value native_dirs_delete(int argCount, Value* args) {
 
 // dirs.rename(old, new) - 重命名
 static Value native_dirs_rename(int argCount, Value* args) {
-    if (argCount < 2) {
-        native_throw_error("rename 需要两个参数");
-        return val_null();
-    }
+    (void)argCount;   // 个数由编译期把关（2026-10-01 实测：「参数数量不匹配」）⇒ 运行期不重复检查
     
     const char* old_path = get_string(args[0]);
     const char* new_path = get_string(args[1]);
@@ -836,10 +1012,7 @@ static Value native_dirs_rename(int argCount, Value* args) {
 
 // dirs.listdir(path) - 列出目录内容
 static Value native_dirs_listdir(int argCount, Value* args) {
-    if (argCount < 1) {
-        native_throw_error("listdir 需要路径参数");
-        return val_null();
-    }
+    (void)argCount;   // 个数由编译期把关（2026-10-01 实测：「参数数量不匹配」）⇒ 运行期不重复检查
     
     const char* path = get_string(args[0]);
     if (!path) {
@@ -1056,10 +1229,7 @@ static void walk_scan_dir(const char* path, ObjArray* result) {
 //   `a\b\loop\b\loop\…`（实测一条自指 junction 产出 66 条垃圾条目，直到路径超长才停）。
 //   口径与 `find`（默认不跟随）一致；要跟随请自己 `dirs.is_symlink(p)` 判一下再 walk 目标。
 static Value native_dirs_walk(int argCount, Value* args) {
-    if (argCount < 1) {
-        native_throw_error("walk 需要路径参数");
-        return val_null();
-    }
+    (void)argCount;   // 个数由编译期把关（2026-10-01 实测：「参数数量不匹配」）⇒ 运行期不重复检查
 
     const char* path = get_string(args[0]);
     if (!path) {
@@ -1135,10 +1305,7 @@ static const NativeStructSpec DIRINFO_STRUCT_SPEC = {
 //   口径本就一致（不存在/参数不对 ⇒ size == 0，同 stat 的默认值）；要区分「空文件」与
 //   「不存在」先 `dirs.exists()` 判 ✓
 static Value native_dirs_stat(int argCount, Value* args) {
-    if (argCount < 1) {
-        native_throw_error("stat 需要路径参数");
-        return val_null();
-    }
+    (void)argCount;   // 个数由编译期把关（2026-10-01 实测：「参数数量不匹配」）⇒ 运行期不重复检查
     
     const char* path = get_string(args[0]);
     if (!path) {
@@ -1273,7 +1440,12 @@ void dirs_init_module(void) {
     native_register_module_method_spec("dirs", "basename", native_dirs_basename, 1, -1, -1, &NATIVE_T_STRING, string_params);
     native_register_module_method_spec("dirs", "dirname", native_dirs_dirname, 1, -1, -1, &NATIVE_T_STRING, string_params);
     native_register_module_method_spec("dirs", "extname", native_dirs_extname, 1, -1, -1, &NATIVE_T_STRING, string_params);
-    native_register_module_method_spec("dirs", "join", native_dirs_join, -1, 0, -1, &NATIVE_T_STRING, string_params);
+    // relpath：两个参数**都必填**（不提供"相对 cwd"的单参形态）—— 隐式依赖 cwd 与 Leno 的显式取向相冲 ✓
+    native_register_module_method_spec("dirs", "relpath", native_dirs_relpath, 2, -1, -1, &NATIVE_T_STRING, string2_params);
+    // join 的 `min_arity` 由 0 改成 **1**（2026-10-01）：`dirs.join()` 0 参没有意义，
+    //   原来靠函数体内的 `if (argCount < 1)` 兜 ⇒ 现在编译期就挡（「参数数量不匹配: 期望 1..N, 实际 0」），
+    //   与其余"个数只在注册里声明一处"的方法对齐 ✓
+    native_register_module_method_spec("dirs", "join", native_dirs_join, -1, 1, -1, &NATIVE_T_STRING, string_params);
     // join 是**同质可变参数**：每个实参都必须是 string（v3.2.7 显式声明）。
     //   此前 `arity == -1` 会让 param_types 被整份忽略 ⇒ `dirs.join(1, 2)` 编译期**不报错** ✗，
     //   运行期才在拼接处炸；现在编译期就挡住 ✓（前缀 0 个、尾部 string ⇒ 全部按 string 检查）。

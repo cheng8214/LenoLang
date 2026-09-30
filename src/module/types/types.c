@@ -498,9 +498,7 @@ static ObjString* infer_dict_type(ObjDict* dict) {
 
 // type(value) - 返回值的类型字符串
 static Value native_type(int argCount, Value* args) {
-    if (argCount < 1) {
-        return val_null();
-    }
+    (void)argCount;   // 个数由编译期把关（2026-10-01 实测：`type()` 0 参 ⇒「参数数量不匹配」）⇒ 不重复检查
     
     Value value = args[0];
     ObjString* typeStr;
@@ -583,9 +581,7 @@ static Value native_type(int argCount, Value* args) {
 
 // _int(value) - 转换为整数
 static Value native_to_int(int argCount, Value* args) {
-    if (argCount < 1) {
-        return val_int(0);
-    }
+    (void)argCount;   // 个数由编译期把关（同一族 2026-10-01 清理）⇒ 不重复检查
     
     Value value = args[0];
     
@@ -656,9 +652,7 @@ static Value native_to_int(int argCount, Value* args) {
 
 // _float(value) - 转换为浮点数
 static Value native_to_float(int argCount, Value* args) {
-    if (argCount < 1) {
-        return val_float(0.0);
-    }
+    (void)argCount;   // 个数由编译期把关（同 native_type，2026-10-01）⇒ 不重复检查
     
     Value value = args[0];
     
@@ -706,9 +700,7 @@ static Value native_to_float(int argCount, Value* args) {
 
 // _bool(value) - 转换为布尔值
 static Value native_to_bool(int argCount, Value* args) {
-    if (argCount < 1) {
-        return val_bool(0);
-    }
+    (void)argCount;   // 个数由编译期把关（同一族 2026-10-01 清理）⇒ 不重复检查
     
     Value value = args[0];
     
@@ -743,9 +735,7 @@ static Value native_to_bool(int argCount, Value* args) {
 
 // _str(value) - 转换为字符串
 static Value native_to_str(int argCount, Value* args) {
-    if (argCount < 1) {
-        return val_obj((Object*)str_copy("", 0));
-    }
+    (void)argCount;   // 个数由编译期把关（同一族 2026-10-01 清理）⇒ 不重复检查
     
     Value value = args[0];
     char buf[BUFFER_MEDIUM];
@@ -792,9 +782,7 @@ static Value native_to_str(int argCount, Value* args) {
 }
 // _ptr(value) - 转换为指针
 static Value native_to_ptr(int argCount, Value* args) {
-    if (argCount < 1) {
-        return val_null();
-    }
+    (void)argCount;   // 个数由编译期把关（同 native_type，2026-10-01）⇒ 不重复检查
     
     Value value = args[0];
     
@@ -817,9 +805,7 @@ static Value native_to_ptr(int argCount, Value* args) {
 // _int32(value) - 将整数截断为 32 位有符号整数（环绕语义）
 // 用于加密算法、网络协议等需要固定位宽运算的场景
 static Value native_to_int32(int argCount, Value* args) {
-    if (argCount < 1) {
-        return val_int(0);
-    }
+    (void)argCount;   // 个数由编译期把关（同一族 2026-10-01 清理）⇒ 不重复检查
 
     Value value = args[0];
 
@@ -848,9 +834,7 @@ static Value native_to_int32(int argCount, Value* args) {
 // _uint32(value) - 将整数截断为 32 位无符号整数
 // 等效于 to_unsigned(_int32(x))，用于加密/网络等需要将值解释为 32 位无符号数的场景
 static Value native_to_uint32(int argCount, Value* args) {
-    if (argCount < 1) {
-        return val_int(0);
-    }
+    (void)argCount;   // 个数由编译期把关（同一族 2026-10-01 清理）⇒ 不重复检查
 
     Value value = args[0];
 
@@ -879,9 +863,7 @@ static Value native_to_uint32(int argCount, Value* args) {
 
 // _int64(value) - 将值截断为 64 位有符号整数
 static Value native_to_int64(int argCount, Value* args) {
-    if (argCount < 1) {
-        return val_int(0);
-    }
+    (void)argCount;   // 个数由编译期把关（同一族 2026-10-01 清理）⇒ 不重复检查
 
     Value value = args[0];
 
@@ -905,9 +887,7 @@ static Value native_to_int64(int argCount, Value* args) {
 
 // _uint64(value) - 将值截断为 64 位无符号整数
 static Value native_to_uint64(int argCount, Value* args) {
-    if (argCount < 1) {
-        return val_int(0);
-    }
+    (void)argCount;   // 个数由编译期把关（同一族 2026-10-01 清理）⇒ 不重复检查
 
     Value value = args[0];
 
@@ -939,9 +919,7 @@ static Value native_to_uint64(int argCount, Value* args) {
 
 // _uint8(value) - 将值截断为 8 位无符号整数
 static Value native_to_uint8(int argCount, Value* args) {
-    if (argCount < 1) {
-        return val_int(0);
-    }
+    (void)argCount;   // 个数由编译期把关（同一族 2026-10-01 清理）⇒ 不重复检查
 
     Value value = args[0];
 

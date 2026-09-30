@@ -346,6 +346,37 @@ main()
     assert_eq(self_mt > 0, true)
     assert_eq(self_mt < 4102444800, true)         // 上限 2100-01-01
 
+    // ---- 测试17: relpath（纯词法相对路径；2026-10-01 新增）----
+    //   口径：**不查盘 / 不解析符号链接 / 不要求路径存在**（与 Python `os.path.relpath` 对齐）；
+    //   跨根（不同盘符 / UNC）⇒ **原样返回 path**（Python 那边抛 ValueError，这里给原值）
+    var rsep = dirs.sep()
+    // ① 消掉公共前缀（分隔符跟着平台走 ⇒ 断言里用 dirs.sep() 拼期望值）
+    assert_eq(dirs.relpath("D:" + rsep + "L" + rsep + "src" + rsep + "gc.c", "D:" + rsep + "L"),
+              "src" + rsep + "gc.c")
+    // ② base 更深 ⇒ 用 `..` 回退
+    assert_eq(dirs.relpath("D:" + rsep + "L" + rsep + "a" + rsep + "b",
+                           "D:" + rsep + "L" + rsep + "a" + rsep + "c" + rsep + "d"),
+              ".." + rsep + ".." + rsep + "b")
+    // ③ 相同（含尾随分隔符）⇒ "."
+    assert_eq(dirs.relpath("D:" + rsep + "L", "D:" + rsep + "L" + rsep), ".")
+    // ④ 输入里的 `.` / `..` 先消解、再比较
+    assert_eq(dirs.relpath("D:" + rsep + "L" + rsep + "." + rsep + "src" + rsep + ".." + rsep + "src" + rsep + "a",
+                           "D:" + rsep + "L"),
+              "src" + rsep + "a")
+    // ⑤ **不查盘**：盘符与目录都不存在也照样算 —— 这正是它不借 `realpath` 的理由
+    assert_eq(dirs.relpath("Z:" + rsep + "no_such_dir" + rsep + "x.txt", "Z:" + rsep + "no_such_dir"), "x.txt")
+    // ⑥ 相对输入 ⇒ 先按 cwd 规范化
+    assert_eq(dirs.relpath("src", dirs.cwd()), "src")
+    // ⑦ 空串按 cwd 处理 ⇒ 相对 cwd 就是 "."
+    assert_eq(dirs.relpath("", dirs.cwd()), ".")
+    if _os() == "windows" {
+        // ⑧ 跨盘 ⇒ 原样返回（不抛异常）
+        assert_eq(dirs.relpath("C:" + rsep + "x", "D:" + rsep + "y"), "C:" + rsep + "x")
+        // ⑨ 段比较**不区分大小写**（Windows 的盘符与目录名都折叠 ASCII）
+        assert_eq(dirs.relpath("D:" + rsep + "L" + rsep + "A" + rsep + "b", "d:" + rsep + "l" + rsep + "a"), "b")
+        // ⑩ UNC 暂不支持 ⇒ 原样返回（宁可没变，不给错答案）
+        assert_eq(dirs.relpath("\\\\srv\\share\\a", "\\\\srv\\share"), "\\\\srv\\share\\a")
+    }
     // 清理
     dirs.delete(dirs.join(tg, "x.txt"))
     dirs.delete(dirs.join(tg, "keep.txt"))

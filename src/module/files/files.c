@@ -46,7 +46,8 @@ static ObjString* value_to_objstring(Value value) {
 
 // f.read() 或 f.read(n)
 static Value file_method_read(int argCount, Value* args) {
-    if (argCount < 1 || !is_file_value(args[0])) {
+    (void)argCount;
+    if (!is_file_value(args[0])) {
         native_throw_error("read 方法需要文件对象作为 receiver");
         return val_null();
     }
@@ -140,7 +141,8 @@ static Value file_method_read(int argCount, Value* args) {
 
 // f.readline()
 static Value file_method_readline(int argCount, Value* args) {
-    if (argCount < 1 || !is_file_value(args[0])) {
+    (void)argCount;
+    if (!is_file_value(args[0])) {
         native_throw_error("readline 方法需要文件对象作为 receiver");
         return val_null();
     }
@@ -183,7 +185,8 @@ static Value file_method_readline(int argCount, Value* args) {
 
 // f.readlines()
 static Value file_method_readlines(int argCount, Value* args) {
-    if (argCount < 1 || !is_file_value(args[0])) {
+    (void)argCount;
+    if (!is_file_value(args[0])) {
         native_throw_error("readlines 方法需要文件对象作为 receiver");
         return val_null();
     }
@@ -226,7 +229,8 @@ static Value file_method_readlines(int argCount, Value* args) {
 
 // f.write(string)
 static Value file_method_write(int argCount, Value* args) {
-    if (argCount < 2 || !is_file_value(args[0])) {
+    (void)argCount;
+    if (!is_file_value(args[0])) {
         native_throw_error("write 方法需要文件对象作为 receiver");
         return val_null();
     }
@@ -246,7 +250,8 @@ static Value file_method_write(int argCount, Value* args) {
 
 // f.writeln(string)
 static Value file_method_writeln(int argCount, Value* args) {
-    if (argCount < 2 || !is_file_value(args[0])) {
+    (void)argCount;
+    if (!is_file_value(args[0])) {
         native_throw_error("writeln 方法需要文件对象作为 receiver");
         return val_null();
     }
@@ -268,7 +273,8 @@ static Value file_method_writeln(int argCount, Value* args) {
 
 // f.seek(pos, whence="set")
 static Value file_method_seek(int argCount, Value* args) {
-    if (argCount < 2 || !is_file_value(args[0])) {
+    (void)argCount;
+    if (!is_file_value(args[0])) {
         native_throw_error("seek 方法需要文件对象作为 receiver");
         return val_null();
     }
@@ -303,7 +309,8 @@ static Value file_method_seek(int argCount, Value* args) {
 
 // f.tell()
 static Value file_method_tell(int argCount, Value* args) {
-    if (argCount < 1 || !is_file_value(args[0])) {
+    (void)argCount;
+    if (!is_file_value(args[0])) {
         native_throw_error("tell 方法需要文件对象作为 receiver");
         return val_null();
     }
@@ -320,7 +327,8 @@ static Value file_method_tell(int argCount, Value* args) {
 
 // f.len()
 static Value file_method_len(int argCount, Value* args) {
-    if (argCount < 1 || !is_file_value(args[0])) {
+    (void)argCount;
+    if (!is_file_value(args[0])) {
         native_throw_error("len 方法需要文件对象作为 receiver");
         return val_null();
     }
@@ -341,7 +349,8 @@ static Value file_method_len(int argCount, Value* args) {
 
 // f.eof()
 static Value file_method_eof(int argCount, Value* args) {
-    if (argCount < 1 || !is_file_value(args[0])) {
+    (void)argCount;
+    if (!is_file_value(args[0])) {
         native_throw_error("eof 方法需要文件对象作为 receiver");
         return val_null();
     }
@@ -356,7 +365,8 @@ static Value file_method_eof(int argCount, Value* args) {
 
 // f.close()
 static Value file_method_close(int argCount, Value* args) {
-    if (argCount < 1 || !is_file_value(args[0])) {
+    (void)argCount;
+    if (!is_file_value(args[0])) {
         native_throw_error("close 方法需要文件对象作为 receiver");
         return val_null();
     }
@@ -375,10 +385,7 @@ static Value file_method_close(int argCount, Value* args) {
 
 // files.open(path, mode)
 static Value native_files_open(int argCount, Value* args) {
-    if (argCount < 2) {
-        native_throw_error("open 需要路径和模式参数");
-        return val_null();
-    }
+    (void)argCount;   // 个数由编译期把关（2026-10-01 实测：「参数数量不匹配」）⇒ 运行期不重复检查
 
     if (!is_string_value(args[0]) || !is_string_value(args[1])) {
         native_throw_error("open 参数必须是字符串");
@@ -414,10 +421,7 @@ static Value native_files_open(int argCount, Value* args) {
 
 // files.exists(path)
 static Value native_files_exists(int argCount, Value* args) {
-    if (argCount < 1) {
-        native_throw_error("exists 需要路径参数");
-        return val_null();
-    }
+    (void)argCount;   // 个数由编译期把关（2026-10-01 实测：「参数数量不匹配」）⇒ 运行期不重复检查
 
     if (!is_string_value(args[0])) {
         native_throw_error("exists 参数必须是字符串");
@@ -444,10 +448,7 @@ static Value native_files_exists(int argCount, Value* args) {
 
 // files.delete(path)
 static Value native_files_delete(int argCount, Value* args) {
-    if (argCount < 1) {
-        native_throw_error("delete 需要路径参数");
-        return val_null();
-    }
+    (void)argCount;   // 个数由编译期把关（2026-10-01 实测：「参数数量不匹配」）⇒ 运行期不重复检查
 
     if (!is_string_value(args[0])) {
         native_throw_error("delete 参数必须是字符串");
@@ -470,10 +471,7 @@ static Value native_files_delete(int argCount, Value* args) {
 
 // files.read(path) - 快捷读取全部
 static Value native_files_read(int argCount, Value* args) {
-    if (argCount < 1) {
-        native_throw_error("read 需要路径参数");
-        return val_null();
-    }
+    (void)argCount;   // 个数由编译期把关（2026-10-01 实测：「参数数量不匹配」）⇒ 运行期不重复检查
 
     if (!is_string_value(args[0])) {
         native_throw_error("read 参数必须是字符串");
@@ -515,17 +513,25 @@ static Value native_files_read(int argCount, Value* args) {
     buffer[read_size] = '\0';
     fclose(fp);
 
-    ObjString* result = str_copy(buffer, (int)read_size);
+    // ★ 剥掉 UTF-8 BOM（EF BB BF）——本函数是**文本语义**的快捷读取：
+    //   带 BOM 的文件（Windows 记事本、PowerShell 的 `Set-Content -Encoding utf8` 产出）
+    //   若原样带出 0xEF 0xBB 0xBF，正则 / 字符串比较 / 数字解析都会**静默失配** ✗
+    //   （2026-10-01：examples\工具\lines_check.py 用 `encoding="utf-8-sig"` 正是为躲这个坑）
+    //   要原始字节请走 `files.open(p, "rb").read()`（二进制模式**不**做任何处理 ✓）
+    size_t skip = 0;
+    if (read_size >= 3 && (unsigned char)buffer[0] == 0xEF
+        && (unsigned char)buffer[1] == 0xBB && (unsigned char)buffer[2] == 0xBF) {
+        skip = 3;
+    }
+
+    ObjString* result = str_copy(buffer + skip, (int)(read_size - skip));
     free(buffer);
     return val_obj((Object*)result);
 }
 
 // files.write(path, content)
 static Value native_files_write(int argCount, Value* args) {
-    if (argCount < 2) {
-        native_throw_error("write 需要路径和内容参数");
-        return val_null();
-    }
+    (void)argCount;   // 个数由编译期把关（2026-10-01 实测：「参数数量不匹配」）⇒ 运行期不重复检查
 
     if (!is_string_value(args[0])) {
         native_throw_error("write 第一个参数必须是字符串路径");

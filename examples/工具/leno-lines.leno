@@ -12,7 +12,11 @@ Array[int] g_cnt = [0, 0, 0]
 Array[int] g_tot = [0, 0, 0]
 Array[int] g_blk = [0, 0, 0]
 
-func count_file(string path, int gi) {
+// path —— **真实路径**（读盘用 ✓）；root —— 只用于把显示路径换成**相对 root** 的短写法。
+//   为什么不直接打 walk 给的路径：`dirs.walk(".")` 的 root 带 `.` 段（拼出来是 `.\src\x.c`）⇒
+//   报告里混进前缀，下游对账脚本（lines_check.py）不得不自己 `strip(".\\")` ✗。
+//   现在直接用 `dirs.relpath`（2026-10-01 新增）⇒ 与 Python `os.path.relpath` 逐字一致 ✓
+func count_file(string path, string root, int gi) {
     // ⚠ `files.read` 失败**抛异常**、不返回 null（2026-09-30 实测：无 try ⇒ 程序直接终止；
     //   有 try ⇒ 由 catch 接走，消息在 e.msg）⇒ 原来那句 `if content == null` 是**死判断**，
     //   一旦有文件读不了（占用 / 权限 / 路径过长），整轮统计会当场崩掉 ✗。
@@ -28,7 +32,7 @@ func count_file(string path, int gi) {
     var lines = strings.split(content, "\n")
     int n = lines.len()
     if n > 0 and lines[n - 1] == "" { n -= 1 }    // 结尾换行不算一行 ✓
-    print($"  {strings.format("%6d", n) }  {path}")
+    print($"  {strings.format("%6d", n) }  {dirs.relpath(path, root)}")
     int b = 0
     for 0 : n - 1 to i {
         if strings.trim(lines[i]) == "" { b += 1 }
@@ -44,7 +48,7 @@ func scan(string root, string ext, int gi) {
     for walks to w {
         var fnames = w.files
         for fnames to f {
-            if strings.ends_with(f, ext) { count_file(w.root + sep + f, gi) }
+            if strings.ends_with(f, ext) { count_file(w.root + sep + f, root, gi) }
         }
     }
 }
