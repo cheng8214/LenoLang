@@ -68,7 +68,7 @@ export struct Panel impl Widget, Themeable {
     }
     // 绑定窗口句柄：记录自身，并向下分发给需要它的子控件（Edit / 布局容器 / 嵌套 Panel）
     func _bind_window(Ptr[u8] hwnd) {
-        hwnd = hwnd
+        self.hwnd = hwnd      // 形参遮蔽字段 ⇒ 必须显式 self.
         var lc = _layoutChild
         if lc is Widget { pass_hwnd(lc, hwnd) }
         for children to c { pass_hwnd(c, hwnd) }

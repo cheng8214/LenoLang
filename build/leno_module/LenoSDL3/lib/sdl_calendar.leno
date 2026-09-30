@@ -337,7 +337,7 @@ export struct Calendar impl Widget {
         float availW = _w - 2.0 * _pad - gap * _float(COLS - 1)
         float cw = availW / _float(COLS)
         float headH = 0.0
-        if showHead { headH = headH }
+        if showHead { headH = self.headH }      // 局部 headH 遮蔽字段 ⇒ 必须显式 self.
         float availH = _h - 2.0 * _pad - headH - weekH - legendRows() - gap * _float(rows - 1)
         float chh = availH / _float(rows)
         float c = cw
@@ -358,7 +358,7 @@ export struct Calendar impl Widget {
     }
     pri func cellY(float c, float gridH): float {
         float headH = 0.0
-        if showHead { headH = headH }
+        if showHead { headH = self.headH }      // 局部 headH 遮蔽字段 ⇒ 必须显式 self.
         float oy = y + _pad + headH + weekH
         float avail = _h - 2.0 * _pad - headH - weekH - legendRows()
         if avail > gridH { oy = y + _pad + headH + weekH + (avail - gridH) / 2.0 }
@@ -375,7 +375,7 @@ export struct Calendar impl Widget {
     func get_h(): float {
         if _natH {
             float headH = 0.0
-            if showHead { headH = headH }
+            if showHead { headH = self.headH }      // 局部 headH 遮蔽字段 ⇒ 必须显式 self.
             return 2.0 * _pad + headH + weekH + _float(rows) * cellMax + gap * _float(rows - 1) + legendRows()
         }
         return _h

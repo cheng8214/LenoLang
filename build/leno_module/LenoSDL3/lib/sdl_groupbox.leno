@@ -93,7 +93,7 @@ export struct GroupBox impl Widget, Themeable {
         return c
     }
     func _bind_window(Ptr[u8] hwnd) {
-        hwnd = hwnd
+        self.hwnd = hwnd      // 形参遮蔽字段 ⇒ 必须显式 self.
         var lc = _layoutChild
         if lc is Widget { pass_hwnd(lc, hwnd) }
         for children to c { pass_hwnd(c, hwnd) }

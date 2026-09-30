@@ -103,7 +103,7 @@ export struct HBox impl Widget {
     func clear() { _c = []; _opt = []; _natW = []; _natH = [] }
     // 绑定窗口句柄：记录自身，并把已添加的子控件一并下发
     func _bind_window(Ptr[u8] hwnd) {
-        hwnd = hwnd
+        self.hwnd = hwnd      // 形参遮蔽字段 ⇒ 必须显式 self.（裸写法等于什么都没做 ✗）
         for _c to c { _layout_pass_window(c, hwnd) }
     }
 
@@ -292,7 +292,7 @@ export struct VBox impl Widget {
     func clear() { _c = []; _opt = []; _natW = []; _natH = [] }
     // 绑定窗口句柄：记录自身，并把已添加的子控件一并下发
     func _bind_window(Ptr[u8] hwnd) {
-        hwnd = hwnd
+        self.hwnd = hwnd      // 形参遮蔽字段 ⇒ 必须显式 self.（裸写法等于什么都没做 ✗）
         for _c to c { _layout_pass_window(c, hwnd) }
     }
 
@@ -476,7 +476,7 @@ export struct AnchorBox impl Widget {
     func clear() { _c = []; _opt = []; _natW = []; _natH = [] }
     // 绑定窗口句柄：记录自身，并把已添加的子控件一并下发
     func _bind_window(Ptr[u8] hwnd) {
-        hwnd = hwnd
+        self.hwnd = hwnd      // 形参遮蔽字段 ⇒ 必须显式 self.（裸写法等于什么都没做 ✗）
         for _c to c { _layout_pass_window(c, hwnd) }
     }
 

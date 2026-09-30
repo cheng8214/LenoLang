@@ -190,7 +190,7 @@ export struct SpinBox impl Widget, Themeable {
     func is_enabled(): bool { return enabled }
     func get_text(): string { return edit?.get_text() ?? "" }
     func on_change(func(float):void cb) { onChange = cb }
-    func _bind_window(Ptr[u8] hwnd) { hwnd = hwnd; edit?.set_window(hwnd) }
+    func _bind_window(Ptr[u8] hwnd) { self.hwnd = hwnd; edit?.set_window(hwnd) }   // 形参遮蔽字段 ⇒ 必须显式 self.
 
     func contains(float mx, float my): bool {
         return mx >= x and mx <= x + w and my >= y and my <= y + h

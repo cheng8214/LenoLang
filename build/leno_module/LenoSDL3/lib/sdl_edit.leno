@@ -368,7 +368,7 @@ _drawBorder = opts.get("border", true)
     func set_visible(bool v) { visible = v }
     func is_visible(): bool { return visible }
     func set_window(Ptr[u8] hwnd) {
-        hwnd = hwnd
+        self.hwnd = hwnd                 // 形参遮蔽字段 ⇒ 必须显式 self.
         ctxMenu?.setWindowHandle(hwnd)   // 让右击菜单按窗口隔离绘制
     }
     // 设置所属窗口逻辑宽高，供上下文菜单弹出时做边界夹紧

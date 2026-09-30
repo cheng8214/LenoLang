@@ -53,7 +53,7 @@ export struct Timer {
 
     // 设置并启动（循环），ms=毫秒，=0 只存回调不启动
     func set(int ms, TimerCallback cb) {
-        _cb.clear(); _cb.add(cb); ms = ms
+        _cb.clear(); _cb.add(cb); self.ms = ms   // 形参遮蔽字段 ⇒ 必须显式 self.
         if ms > 0 { next = _float(_lib.SDL_GetTicks()) + ms; running = true }
         else { running = false }
         once = false
@@ -61,7 +61,7 @@ export struct Timer {
 
     // 设置一次性定时器
     func setOnce(int ms, TimerCallback cb) {
-        _cb.clear(); _cb.add(cb); ms = ms
+        _cb.clear(); _cb.add(cb); self.ms = ms   // 形参遮蔽字段 ⇒ 必须显式 self.
         next = _float(_lib.SDL_GetTicks()) + ms
         running = true; once = true
     }
@@ -77,7 +77,7 @@ export struct Timer {
 
     // 修改间隔 + 立即重启计时
     func reset(int ms) {
-        ms = ms
+        self.ms = ms      // 形参遮蔽字段 ⇒ 必须显式 self.
         next = _float(_lib.SDL_GetTicks()) + ms; running = true
     }
 

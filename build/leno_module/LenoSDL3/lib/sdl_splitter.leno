@@ -98,13 +98,13 @@ export struct Splitter impl Widget, Themeable {
     func set_second(Widget c) { _second = c; if hwnd != null { pass_hwnd(c, hwnd) } }
 
     func _bind_window(Ptr[u8] hwnd) {
-        hwnd = hwnd
+        self.hwnd = hwnd      // 形参遮蔽字段 ⇒ 必须显式 self.
         var f = _first;  if f is Widget { pass_hwnd(f, hwnd) }
         var s = _second; if s is Widget { pass_hwnd(s, hwnd) }
     }
     // ★ 新增：绑定窗口句柄和尺寸，并向下传递
     func _bind_window_size(Ptr[u8] hwnd, int ww, int hh) {
-        hwnd = hwnd; winW = ww; winH = hh
+        self.hwnd = hwnd; winW = ww; winH = hh   // 同上：hwnd 形参遮蔽字段
         var f = _first;  if f is Widget { pass_hwnd_size(f, hwnd, ww, hh) }
         var s = _second; if s is Widget { pass_hwnd_size(s, hwnd, ww, hh) }
     }

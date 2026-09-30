@@ -92,7 +92,7 @@ export struct GridLayout impl Widget {
     func count(): int { return _c.len() }
 
     func _bind_window(Ptr[u8] hwnd) {
-        hwnd = hwnd
+        self.hwnd = hwnd      // 形参遮蔽字段 ⇒ 必须显式 self.
         for _c to c { pass_hwnd(c, hwnd) }
     }
     pri func pass_hwnd(Widget c, Ptr[u8] hwnd) {

@@ -111,7 +111,7 @@ export struct ScrollView impl Widget {
     // 绑定窗口句柄：记录自身，并下发给需要它的内容控件（如含 Edit 的布局）
     // 委托给 sdl_layout 的统一函数，确保所有容器类型都能正确传递
     func _bind_window(Ptr[u8] hwnd) {
-        hwnd = hwnd
+        self.hwnd = hwnd      // 形参遮蔽字段 ⇒ 必须显式 self.
         Widget c = _content
         if c is Widget { lay.passWindowHandle(c, hwnd) }
     }

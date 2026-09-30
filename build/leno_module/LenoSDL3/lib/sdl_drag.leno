@@ -69,15 +69,15 @@ export struct DragHint {
 
     // 显示拖拽提示（设置文本 + 位置 + 可见）
     func show(string text, float x, float y) {
-        text = text
-        x = x; y = y
+        // 形参遮蔽同名字段（text/x/y）⇒ 裸写法会写到形参上，字段纹丝不动 ✗
+        self.text = text; self.x = x; self.y = y
         _visible = true
         core.markFrameRedraw()
     }
 
     // 仅更新位置（不改变文本）
     func updatePos(float x, float y) {
-        x = x; y = y
+        self.x = x; self.y = y      // 同上：形参遮蔽字段
         if _visible { core.markFrameRedraw() }
     }
 

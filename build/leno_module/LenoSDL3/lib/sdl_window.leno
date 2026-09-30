@@ -686,7 +686,8 @@ export struct Window {
     // 设置根布局控件：窗口缩放时自动把根控件尺寸设为窗口大小并驱动内部布局重排
     // ★ 同时下发窗口句柄（等价于 win.add 的 _bind_window），确保根控件内部的 Edit/TreeView/ComboBox 等能正常工作
     func setRoot(Widget root) {
-        root = root
+        // ⚠ 形参与字段同名 ⇒ 裸 `root = root` 只会写形参（字段永远为 null ⇒ 根布局不被渲染 ✗）
+        self.root = root
         rootX = 0.0; rootY = 0.0
         root.set_pos(0, 0)
         root.set_size(_w, _h)
@@ -696,7 +697,7 @@ export struct Window {
     // 设置根布局控件（带偏移）：窗口缩放时自动把根控件位置/尺寸设为 (x,y,winW-x,winH-y)
     // 典型场景：顶部 MenuBar 占 h=30，根布局从 (0,30) 开始填满剩余空间
     func setRootAt(Widget root, float ox, float oy) {
-        root = root
+        self.root = root      // 同上：必须显式 self.（形参遮蔽字段 ✓）
         rootX = ox; rootY = oy
         root.set_pos(ox, oy)
         root.set_size(_float(_w) - ox, _float(_h) - oy)
@@ -809,7 +810,7 @@ export struct Window {
     // 注册窗口级右击上下文菜单（只需调用一次）。之后 run 会在每帧事件处理中统一接管右击：
     // 若命中控件自行弹出了自身菜单（占用弹层），则不弹窗口菜单；否则才弹本菜单。
     // 这样「控件菜单优先、窗口菜单兜底」由底层统一保证，示例无需在 onEvent 里处理右键。
-    func setContextMenu(MenuBar bar, int ctxIdx) { bar.setWindowHandle(handle); ctxBar = bar; ctxIdx = ctxIdx }
+    func setContextMenu(MenuBar bar, int ctxIdx) { bar.setWindowHandle(handle); ctxBar = bar; self.ctxIdx = ctxIdx }
 
     // 添加面板容器，opts: {x, y, w, h, bg, border, radius, border_alpha, clip}
     // 用 panel.add(win.addButton({...})) 把子控件挂到面板（子控件用窗口绝对坐标）
