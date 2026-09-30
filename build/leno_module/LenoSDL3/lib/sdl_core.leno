@@ -165,6 +165,7 @@ clib sdl3 {
 
 
     Ptr[u8]  SDL_CreateRenderer(Ptr[u8] window, str8 name)
+    str8     SDL_GetRendererName(Ptr[u8] renderer)   // 自测/排查：看 hint 到底生效没 ✓
     void SDL_DestroyRenderer(Ptr[u8] renderer)
     bool SDL_RenderClear(Ptr[u8] renderer)
     bool SDL_RenderPresent(Ptr[u8] renderer)

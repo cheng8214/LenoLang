@@ -137,11 +137,23 @@ const BX_TEX    = 4   // 批处理文字纹理
 
     // 创建默认渲染器（关联到窗口）
     func initDefault(Ptr[u8] window): bool {
-        // 说明：SDL3 的 2D 渲染 API 本身不支持图元抗锯齿，
-        // SDL_HINT_RENDER_LINE_METHOD="2" 只是切换为 driver 线算法，并不产生 AA。
-        // 真正的抗锯齿靠 enableSSAA()（超采样：渲染到 2x 离屏纹理再降采样贴回）。
-        _lib.SDL_SetHint("SDL_HINT_RENDER_DRIVER", "direct3d")
-        _lib.SDL_SetHint("SDL_HINT_RENDER_LINE_METHOD", "2")
+        // 说明：SDL3 的 2D 渲染 API 本身不支持图元抗锯齿；真正的抗锯齿靠 enableSSAA()
+        //       （超采样：渲染到 2x 离屏纹理再降采样贴回）。
+        //
+        // ★★ 2026-09-30：这里原来有两条 SDL_SetHint —— **已删除**（一直是空操作，且真生效反而有害 ✗）★★
+        //   原来写的是 `SDL_SetHint("SDL_HINT_RENDER_DRIVER", "direct3d")` 与
+        //   `SDL_SetHint("SDL_HINT_RENDER_LINE_METHOD", "2")` —— **名字错了** ✗：
+        //   只有 MACRO 名带 `HINT_` 前缀，**字符串值不带** ⇒ 这两条从来没生效过 ✗
+        //   （核对方式：在仓库里的 SDL3.dll 里查字面量 —— "SDL_RENDER_DRIVER" ✓ 在、
+        //     "SDL_HINT_RENDER_DRIVER" ✗ 不在 ✓ 另一个同理 ✓）
+        //   实测（用 `Renderer.driver_name()` 读**实际**驱动，跑三组）：
+        //     名字对 + 值 "direct3d"  ⇒ 渲染器 = direct3d
+        //     名字对 + 值 "software"  ⇒ 渲染器 = software     ← 证明名字修对后确实生效 ✓
+        //     名字错 + 值 "software"  ⇒ 渲染器 = direct3d11   ← 证明旧写法完全空操作（走默认）✓
+        //   ⇒ 结论：修对名字后**确实生效**，但效果只是把驱动从默认 `direct3d11` 换成 `direct3d`
+        //     （横向切换、没有可见收益 ✗），还会改变渲染路径 ⇒ 按"没用就删"的原则**整段移除** ✓
+        //   ⚠ 今后若确实想"强制 D3D 驱动"（防止个别机器落到 opengl/software 回退），把名字写成
+        //     `SDL_RENDER_DRIVER`（**不带 HINT_** ✓）加回来即可，并用 driver_name() 复核 ✓
         handle = _lib.SDL_CreateRenderer(window, null as string)
         ok = handle != null
         if ok {
@@ -726,6 +738,14 @@ const BX_TEX    = 4   // 批处理文字纹理
     // 设置背景色并清屏（setColor + clear 一步完成）
     func clearColor(Color color) {
         setColor(color); clear()
+    }
+
+    // 当前渲染器**实际**用的驱动名：如 "direct3d11" / "direct3d12" / "opengl" / "software" ✓
+    //   用途：核对 `SDL_RENDER_DRIVER` 这类 hint 到底有没有生效（自测 / 排查用 ✓）
+    //   （这类 hint 的名字写错时**完全静默**：不报错、只是不生效 ✗ —— 实测踩过 ✓）
+    func driver_name(): string {
+        if handle == null { return "" }
+        return _lib.SDL_GetRendererName(handle)
     }
 
     // 渲染到纹理（null 恢复渲染到窗口）
