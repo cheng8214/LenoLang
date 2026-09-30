@@ -172,8 +172,16 @@
 
                         if (!field_found) {
                             char msg[BUFFER_MEDIUM];
-                            const char* type_kind_name = (obj_type->kind == TYPE_CSTRUCT) ? "cstruct" : "struct";
-                            snprintf(msg, sizeof(msg), "%s 没有字段 '%s'", type_kind_name, field_name);
+                            // ★ 文案必须与**类型推断那条检查**（semantic_type.c 的 AST_FIELD_ACCESS /
+                            //   AST_INDEX）**一字不差** ✓ —— 两处覆盖的是**不同路径**（访问器这条看不见
+                            //   "裸字段名"✗，推断那条才看得见 ✓），但同一处错会**同时命中两边** ✗
+                            //   ⇒ 文案不一致时，用户会看到两句不同措辞的同一件事（实测：
+                            //   「struct 没有字段 'x'」+「struct 'X' 没有字段 'x'」✗）
+                            //   ⇒ 统一后编译器按文案合并重复（输出里的"已合并重复"✓）⇒ 只报一条 ✓✓
+                            //   顺带带上 struct 名 ✓（比原来裸的 "struct 没有字段 'x'" 更能定位 ✓）
+                            const char* skind = (obj_type->kind == TYPE_CSTRUCT) ? "cstruct" : "struct";
+                            snprintf(msg, sizeof(msg), "%s '%s' 没有字段 '%s'",
+                                     skind, obj_type->struct_name ? obj_type->struct_name : "?", field_name);
                             error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                         }
 

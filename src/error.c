@@ -117,6 +117,20 @@ int error_count(void) {
     return errors.count;
 }
 
+/* 同一处（行、列）是否已报过一字不差的这句话 —— 见 leno_error.h 的说明 ✓
+ * ⚠ 不比文件名：调用它的两处检查都在**同一次编译**里、同一文件 ✓（跨模块也由 error_get_filename
+ *   统一成"当前文件" ✓），所以按 (行, 列, 文案) 判定就够 ✓ */
+int error_has_at(int line, int column, const char* msg) {
+    if (!msg) return 0;
+    for (int i = 0; i < errors.count; i++) {
+        Error* e = &errors.list[i];
+        if (e->line == line && e->column == column && strcmp(e->msg, msg) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 void error_clear(void) {
     errors.count = 0;
 }

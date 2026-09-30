@@ -2442,7 +2442,10 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                                 char msg[256];
                                 snprintf(msg, sizeof(msg), "struct '%s' 没有字段 '%s'",
                                          recv->struct_name, key);
-                                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                                // 同样先去重 ✓（与上面 AST_FIELD_ACCESS 那条同一理由 ✓）
+                                if (!error_has_at(ast->line, ast->column, msg)) {
+                                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                                }
                             }
 
                             // ★ 顺带把 **pri 私有** 也在索引路上拦住（2026-09-30 ✓）
@@ -3191,7 +3194,12 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                         char msg[256];
                         snprintf(msg, sizeof(msg), "struct '%s' 没有字段 '%s'",
                                  obj_type->struct_name, fname);
-                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                        // ★ 先去重再报 ✓：显式 `self.b.xxx` 形态会被**访问器那条**先报一遍
+                        //   （visit_field_access.inc ✓）⇒ 这里再报就是同一处、同一句话的第二遍 ✗
+                        //   （实测：不去重会显示 "(重复 2 次)" ✗ —— 那只是计数不是折叠 ✓）
+                        if (!error_has_at(ast->line, ast->column, msg)) {
+                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                        }
                     }
                 }
             }

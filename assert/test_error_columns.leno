@@ -22,8 +22,11 @@ main() {
         "实参类型不匹配落点", "第 1 个参数类型不匹配", 13, 5)
     ce.expect_error_at("assert/error_col/col04_array_index.leno",
         "数组索引类型落点", "数组索引必须是整数类型", 11, 5)
+    // ⚠ 2026-09-30 文案更新：原来只有裸的 "struct 没有字段 'z'" ✓，现在带上 struct 名 ✓
+    //   为什么改：类型推断那条路（semantic_type.c）也会报同一件事 ⇒ 两处文案必须**一字不差**，
+    //   编译器才会按文案合并重复（否则同一处错会显示两句不同措辞 ✗）；顺带 struct 名更好定位 ✓
     ce.expect_error_at("assert/error_col/col05_struct_field.leno",
-        "struct 字段名落点", "struct 没有字段 'z'", 14, 7)
+        "struct 字段名落点", "struct 'Point' 没有字段 'z'", 14, 7)
     ce.expect_error_at("assert/error_col/col06_if_no_brace.leno",
         "if 缺大括号落点", "if 语句体必须用大括号", 9, 9)
     ce.expect_error_at("assert/error_col/col07_while_no_brace.leno",

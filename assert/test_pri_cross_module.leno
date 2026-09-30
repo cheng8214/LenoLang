@@ -103,6 +103,20 @@ main() {
             "    var h = new Holder()\n    print(h.bad())\n"),
         "裸字段名访问 pri 私有成员也要拦", "是 pri 私有字段", 0)
 
+    // ==================== ④ 同一处错只该报一条（文案一致 ⇒ 编译器按文案合并重复 ✓） ====================
+    //   背景：访问器那条检查（visit_field_access.inc）与类型推断那条（semantic_type.c）覆盖
+    //   **不同路径** ✓ —— 裸字段名只走推断 ✓、显式 self 两条都走 ✓ ⇒ 显式 self 这种写法会
+    //   **同时命中两边** ✗。文案不一致时实测会看到两句不同措辞的同一件事 ✗
+    //   （「struct 没有字段 'x'」+「struct 'X' 没有字段 'x'」⇒ 合并逻辑认不出是同一句 ✗）
+    //   ⇒ 统一文案后，输出里那句才会**不带「(重复 N 次)」后缀** ✓（= 只报了一条 ✓）
+    var dup_out = ce.expect_error(
+        make_case(work, "dup_report",
+            "struct Holder {\n    Probe p\n    func bad(): int { return self.p.no_such_field }\n}\n",
+            "    var h = new Holder()\n    print(h.bad())\n"),
+        "显式 self 形态：字段名写错要报", "没有字段 'no_such_field'", 0)
+    assert_true(not strings.has(dup_out, "没有字段 'no_such_field' (重复"),
+        "同一处「没有字段」错只该报一条（不该带 (重复 N 次) 后缀）；实际输出=" + dup_out)
+
     // ==================== ③ 不得误伤：公有照常可用 ====================
     //   open ✓ shown() ✓ ready() ✓ 以及**分号后面的 c**（理应公有 ✓）
     ce.expect_ok(

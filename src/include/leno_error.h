@@ -30,6 +30,12 @@ int error_get_column(void);
 const char* error_get_filename(void);
 void error_add(ErrorType type, int line, const char* msg);
 void error_add_at(ErrorType type, int line, int column, const char* msg);
+/* 同一处（行、列）是否已经报过**一字不差**的这句话 —— 2026-09-30 加。
+ * 场景：同一处错会被两处检查同时发现 —— visit_field_access.inc 的访问器那条（走 AST 访问 ✓）
+ * 与 semantic_type.c 的类型推断那条（走推断 ✓）：两者覆盖的路径不同但会**重叠**（显式 self. 形态 ✓）
+ * ⇒ 报第二遍纯属噪音 ✗（实测：统一文案后仍显示 "(重复 2 次)" ✗ —— 那只是计数、不是折叠 ✓）
+ * ⇒ 推断侧报之前先问这一句 ✓，同一处同一句话只留一条 ✓ */
+int error_has_at(int line, int column, const char* msg);
 int error_has_any(void);
 int error_count(void);
 void error_clear(void);
