@@ -58,6 +58,38 @@ static int array_shrink(ObjArray* arr) {
     return 0;
 }
 
+// arr.sum() / arrays.sum(arr) —— 数字数组求和（2026-10-01 新增）
+//   返回 **float**（与 `maths.max/min` 同族，规格与实现同源 ✓）；要整数写 `_int(xs.sum())` ✓
+//     ⚠ 为什么不"全整数就给 int"：那样**返回规格没法诚实**（规格只能标一个类型），
+//       标 ANY 又会让 `int total = xs.sum()` 编不过、标 INT 则含小数时等于说谎 ✗
+//       ⇒ 统一 float，把转换交给调用点，是这里唯一不撒谎的写法 ✓
+//   元素不是数字 ⇒ **抛错并指出第几个**（不默默跳过 —— 静默错数据比报错难查得多 ✗）
+//   ⚠ 不配套做 `sorted` / 数组版 `min`/`max`：前者 `arr.copy().sort()` 已能表达、
+//     后者 `maths.min/max(...)` 已有 ⇒ 再加就是同一件事两种写法 ✗（见 docs/module_arrays.md ✓）
+static Value arr_sum(int argc, Value* args) {
+    (void)argc;
+    ObjArray* arr = (ObjArray*)val_as_obj(args[0]);
+    double acc = 0.0;
+
+    for (int i = 0; i < arr->count; i++) {
+        Value v = arr->elements[i];
+        if (val_is_int(v)) {
+            acc += (double)val_as_int(v);
+        } else if (val_is_bigint(v)) {
+            acc += (double)bigint_to_int64(val_as_bigint(v));
+        } else if (val_is_num(v)) {          // float
+            acc += val_as_num(v);
+        } else {
+            char msg[128];
+            snprintf(msg, sizeof(msg),
+                     "sum 只能用于数字数组（第 %d 个元素不是数字）", i);
+            native_throw_error(msg);
+            return val_null();
+        }
+    }
+    return val_float(acc);
+}
+
 static Value arr_pop(int argc, Value* args) {
     (void)argc;
     ObjArray* arr = (ObjArray*)val_as_obj(args[0]);
@@ -498,6 +530,12 @@ void arrays_init_module(void) {
     TypeKind sort_params[] = {TYPE_ARRAY};
     native_register_module_method_spec("arrays", "sort", arr_sort, 1, -1, -1, &NATIVE_T_ARR_ARG0_ELEM, sort_params);
 
+    // sum：数字数组求和（2026-10-01）。返回 **FLOAT**（与 maths.max/min 同族，规格与实现同源 ✓）
+    //   为什么不按"全整数给 int"：规格只能标一个类型 —— 标 ANY 会让 `int t = xs.sum()` 编不过，
+    //   标 INT 又对含小数的数组说谎 ✗ ⇒ 统一 FLOAT，转换交给调用点（`_int(xs.sum())`）✓
+    TypeKind sum_params[] = {TYPE_ARRAY};
+    native_register_module_method_spec("arrays", "sum", arr_sum, 1, -1, -1, &NATIVE_T_FLOAT, sum_params);
+
     TypeKind join_params[] = {TYPE_ARRAY, TYPE_STRING};
     native_register_module_method_spec("arrays", "join", arr_join, 2, -1, -1, &NATIVE_T_STRING, join_params);
 
@@ -558,6 +596,10 @@ void arrays_init_instance_methods(void) {
     TypeKind sort_params[] = {};
     array_register_method_with_params("sort",         make_native(arr_sort,         1, "sort"),         0, -1, -1, TYPE_ARRAY, TYPE_UNKNOWN, sort_params);
     native_register_instance_method_return_spec("Array", "sort", &NATIVE_T_ARR_ARG0_ELEM);
+
+    // sum：实例形态（接收者就是第 0 个实参）⇒ 返回规格 FLOAT，与模块形态**同一口径** ✓
+    TypeKind sum_params[] = {};
+    array_register_method_with_params("sum",          make_native(arr_sum,          1, "sum"),          0, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, sum_params);
 
     TypeKind join_params[] = {TYPE_STRING};
     array_register_method_with_params("join",         make_native(arr_join,         2, "join"),         1, -1, -1, TYPE_STRING, TYPE_UNKNOWN, join_params);

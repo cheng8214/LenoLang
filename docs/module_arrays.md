@@ -280,6 +280,39 @@ print(result)  // [4]
 
 ---
 
+### `sum()`
+
+数字数组求和 —— 等价于模块形态 `arrays.sum(arr)`。
+
+**参数**: 无
+
+**返回**: `float`（与 `maths.max/min` 同族）—— 要整数写 `_int(xs.sum())` ✓
+
+```leno
+var xs = [1, 2, 3, 4]
+print(xs.sum())                    // 10
+print([].sum())                    // 0       （空数组 ⇒ 0）
+print([1, 2.5].sum())              // 3.5
+print(_int(xs.sum()))              // 10      （显式转 int）
+print(_int([1, 2, 3].sum()) + 1)   // 7       （转 int 后可直接参与整数运算）
+
+// 元素不是数字 ⇒ **报错并指出第几个**，不会静默跳过：
+var bad = [1, "a"]
+// print(bad.sum())        // 运行时错误：sum 只能用于数字数组（第 1 个元素不是数字）
+```
+
+> ⚠ 为什么**不**做"全整数就返回 `int`"（曾这么设计，实测后改掉）：返回**规格**只能标一个类型 ——
+> 标 `ANY` 会让 `int t = xs.sum()` 编不过，标 `INT` 又对含小数的数组说谎 ⇒ 统一 `float`，
+> 把转换交给调用点，是唯一不撒谎的写法 ✓
+
+> ⚠ **为什么不一起做 `sorted` / `enumerate` / 数组版 `min`/`max`**（2026-10-01 的决定）：
+> - `sorted`：`arr.copy().sort()` 已经能表达 ⇒ 再加一个入口就是同一件事两种写法 ✗
+> - `enumerate`：**语言自带** —— `for xs to x, i { ... }` 直接给元素与下标 ✓
+> - `min`/`max`：已有 `maths.min(...)` / `maths.max(...)`（变参形态，返回 float）✓
+> 只补真正缺的那一个（`sum`），不加冗余 API ✓
+
+---
+
 ## 查找方法
 
 ### `index_of(value)`

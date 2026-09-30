@@ -86,5 +86,29 @@ main()
     assert_eq(after_clear, "Array[int]")      // 曾退化成 "Array"
     assert_eq(type(after_copy), "Array[int]")
 
+    // 测试6: sum（2026-10-01 新增）—— 数字数组求和
+    //   返回 **float**（与 maths.max/min 同族）⇒ 要整数用 `_int()` ✓
+    assert_eq(_int(arrays.sum([1, 2, 3, 4])), 10)
+    assert_eq(_int([1, 2, 3, 4].sum()), 10)
+    assert_eq(_int([].sum()), 0)                    // 空数组 ⇒ 0
+    assert_eq(arrays.sum([1.5, 2.5]), 4.0)
+    assert_eq([1.5, 2.5].sum(), 4.0)
+
+    // 返回规格是 float ⇒ 下面两行**不做任何转换**也必须编得过（规格一漂就失败 ✓）
+    float f_mod = arrays.sum([1, 2])
+    float f_ins = [1.5, 2.5].sum()
+    assert_eq(f_mod, 3.0)
+    assert_eq(f_ins, 4.0)
+
+    // 非数字元素 ⇒ **报错并指出第几个**（不静默跳过 ✗）
+    var sum_err = ""
+    try {
+        arrays.sum([1, "a"])
+    } catch e {
+        sum_err = _str(e.msg)
+    }
+    assert_eq(sum_err.has("不是数字"), true)
+    assert_eq(sum_err.has("第 1 个"), true)
+
     print("test_arrays_module passed")
 }
