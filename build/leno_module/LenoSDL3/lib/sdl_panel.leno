@@ -25,33 +25,33 @@ export struct Panel impl Widget, Themeable {
     float x = 0.0, y = 0.0, w = 200.0, h = 150.0
     Array[Widget] children = []
     Widget? _layoutChild          // 自动布局子控件：每帧自动同步到 Panel 内部区域（减去 padding）
-    float _layPad = 0.0          // _layoutChild 的内边距
-    Color _bgColor = #2C2E36FF     // 背景色
-    Color _bdrColor = #5A5F6EFF  // 边框色
-    float _radius = 8.0
-    int _brdA = 220           // 边框透明度
+    pri float layPad = 0.0          // _layoutChild 的内边距
+    pri Color bgColor = #2C2E36FF     // 背景色
+    pri Color bdrColor = #5A5F6EFF  // 边框色
+    pri float radius = 8.0
+    pri int brdA = 220           // 边框透明度
     bool _drawBorder = true
     bool _clip = true         // 是否裁剪子控件到面板范围
     bool _loaded = false, enabled = true, visible = true
-    Ptr[u8] _hwnd              // 绑定的窗口句柄，下发给需要它的子控件（如 Edit 的 IME）
+    pri Ptr[u8] hwnd              // 绑定的窗口句柄，下发给需要它的子控件（如 Edit 的 IME）
 
 
     func set(Dict opts) {
         dochk.check("sdl_panel", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
         Theme th = theme.getTheme()
-        _bgColor = th.bgAlt
-        _bdrColor = th.border
+        bgColor = th.bgAlt
+        bdrColor = th.border
         x    = opts.get("x", 0)
         y    = opts.get("y", 0)
         w    = opts.get("w", 200)
         h    = opts.get("h", 150)
-        _radius = opts.get("radius", 8.0)
+        radius = opts.get("radius", 8.0)
 
         // 颜色：opts 未传则保持默认值
-        if opts.get("bg_color") is Color => t { _bgColor = t }
-        if opts.get("border_color") is Color => t { _bdrColor = t }
+        if opts.get("bg_color") is Color => t { bgColor = t }
+        if opts.get("border_color") is Color => t { bdrColor = t }
 
-        _brdA = opts.get("border_alpha", 220)
+        brdA = opts.get("border_alpha", 220)
         _drawBorder = opts.get("border", true)
         _clip = opts.get("clip", true)
         enabled = opts.get("enabled", true)
@@ -63,19 +63,19 @@ export struct Panel impl Widget, Themeable {
     // ==================== 设置方法 ====================
     func add(Widget c): Widget {
         children.add(c)
-        if _hwnd != null { _pass_hwnd(c, _hwnd) }
+        if hwnd != null { pass_hwnd(c, hwnd) }
         return c
     }
     // 绑定窗口句柄：记录自身，并向下分发给需要它的子控件（Edit / 布局容器 / 嵌套 Panel）
     func _bind_window(Ptr[u8] hwnd) {
-        _hwnd = hwnd
+        hwnd = hwnd
         var lc = _layoutChild
-        if lc is Widget { _pass_hwnd(lc, hwnd) }
-        for children to c { _pass_hwnd(c, hwnd) }
+        if lc is Widget { pass_hwnd(lc, hwnd) }
+        for children to c { pass_hwnd(c, hwnd) }
     }
     // 把窗口句柄下发给子控件：委托给 sdl_layout 的统一函数，确保所有容器类型
     // （含 ScrollView/Splitter/GroupBox/SpinBox/TabControl 等此前遗漏的类型）都能正确传递
-    func _pass_hwnd(Widget c, Ptr[u8] hwnd) {
+    pri func pass_hwnd(Widget c, Ptr[u8] hwnd) {
         lay.passWindowHandle(c, hwnd)
     }
     func remove(Widget c) {
@@ -85,10 +85,10 @@ export struct Panel impl Widget, Themeable {
 
     // 设置自动布局子控件：该控件会每帧自动同步位置/尺寸到 Panel 内部区域（减去 padding）。
     // 典型用法：panel.setLayout(SDL3.createVBox({...}))，Panel 缩放时 VBox 自动跟随。
-    func setLayout(Widget c) { _layoutChild = c; _layPad = 0.0 }
-    func setLayoutPadded(Widget c, float pad) { _layoutChild = c; _layPad = pad }
+    func setLayout(Widget c) { _layoutChild = c; layPad = 0.0 }
+    func setLayoutPadded(Widget c, float pad) { _layoutChild = c; layPad = pad }
 
-    func set_bg_color(Color color) { _bgColor = color }
+    func set_bg_color(Color color) { bgColor = color }
     func set_enabled(bool e) { enabled = e }
     func set_visible(bool v) { visible = v }
     func is_visible(): bool { return visible }
@@ -107,18 +107,18 @@ export struct Panel impl Widget, Themeable {
     func process(Event ev) {
         if not _loaded or not enabled or not visible { return }
         // 先同步布局子控件位置（事件处理前，确保 hit-test 正确）
-        _syncLayoutChild()
+        syncLayoutChild()
         var lc = _layoutChild
         lc?.process(ev)
         for children to c { c.process(ev) }
     }
 
     // 同步 _layoutChild 到 Panel 内部区域
-    func _syncLayoutChild() {
+    pri func syncLayoutChild() {
         var lc = _layoutChild
         if lc is Widget {
-            lc.set_pos(x + _layPad, y + _layPad)
-            lc.set_size(w - 2.0 * _layPad, h - 2.0 * _layPad)
+            lc.set_pos(x + layPad, y + layPad)
+            lc.set_size(w - 2.0 * layPad, h - 2.0 * layPad)
         }
     }
 
@@ -126,8 +126,8 @@ export struct Panel impl Widget, Themeable {
     func render(Renderer r) {
         if not _loaded or not enabled or not visible { return }
 
-        r.setColor(_bgColor)
-        r.fillRoundedRect(x, y, w, h, _radius)
+        r.setColor(bgColor)
+        r.fillRoundedRect(x, y, w, h, radius)
 
         // ⚠ 只有真要裁剪时才分配 rect：面板**每帧**都会 render ⇒ 无条件 malloc/free 是纯浪费 ✗
         //   （`clip:false` 的面板尤其不该付这笔钱；裁剪栈里每次 push 还可能再分配一个交集 rect ✓）
@@ -141,7 +141,7 @@ export struct Panel impl Widget, Themeable {
         }
 
         // 同步并渲染布局子控件
-        _syncLayoutChild()
+        syncLayoutChild()
         var lc = _layoutChild
         lc?.render(r)
 
@@ -153,8 +153,8 @@ export struct Panel impl Widget, Themeable {
         }
 
         if _drawBorder {
-            r.setColor(theme.withAlpha(_bdrColor, _brdA))
-            r.drawRoundedRect(x, y, w, h, _radius)
+            r.setColor(theme.withAlpha(bdrColor, brdA))
+            r.drawRoundedRect(x, y, w, h, radius)
         }
     }
 
@@ -166,8 +166,8 @@ export struct Panel impl Widget, Themeable {
 
 // ==================== 运行时主题切换 ====================
 func applyTheme(Theme t) {
-_bgColor = t.bgAlt
-_bdrColor = t.border
+bgColor = t.bgAlt
+bdrColor = t.border
 }
 }
 

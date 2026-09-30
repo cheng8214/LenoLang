@@ -27,7 +27,7 @@ export struct Scrim impl Widget {
     float x = 0.0, y = 0.0
     float _w = 0.0, _h = 0.0
     Color _color = #00000000     // 遮罩颜色（默认黑色）
-    int _alpha = 120               // 透明度（0=全透明, 255=全不透明）
+    pri int alpha = 120               // 透明度（0=全透明, 255=全不透明）
     bool visible = false            // 默认隐藏（仅在模态对话框打开时显示）
     bool _loaded = true
 
@@ -35,7 +35,7 @@ export struct Scrim impl Widget {
     func set(Dict opts) {
         dochk.check("sdl_scrim", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
         _color = opts.get("color", #00000000)
-        _alpha = opts.get("alpha", 120)
+        alpha = opts.get("alpha", 120)
         visible = opts.get("visible", false)
         _loaded = true
     }
@@ -43,7 +43,7 @@ export struct Scrim impl Widget {
     // ==================== 控制方法 ====================
     func show() { visible = true }
     func hide() { visible = false }
-    func set_alpha(int a) { _alpha = a }
+    func set_alpha(int a) { alpha = a }
     func set_color(Color color) { _color = color }
 
     // ==================== Widget 接口 ====================
@@ -62,7 +62,7 @@ export struct Scrim impl Widget {
 
     func render(Renderer r) {
         if not _loaded or not visible { return }
-        r.setColor(theme.withAlpha(_color, _alpha))
+        r.setColor(theme.withAlpha(_color, alpha))
         r.fillRect(x, y, _w, _h)
     }
 

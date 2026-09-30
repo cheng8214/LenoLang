@@ -24,11 +24,11 @@ export struct Separator impl Widget {
 
     float x = 0.0, y = 0.0
     float _w = 200.0, _h = 1.0
-    int _dir = HORIZONTAL
-    int _thickness = DEFAULT_THICKNESS
+    pri int dir = HORIZONTAL
+    pri int thickness = DEFAULT_THICKNESS
     Color _color = #464A54FF   // 颜色（默认主题分隔色）
-    int _alpha = DEFAULT_ALPHA
-    float _margin = 0.0       // 内缩边距（两端留白）
+    pri int alpha = DEFAULT_ALPHA
+    pri float margin = 0.0       // 内缩边距（两端留白）
     bool _loaded = false, visible = true
 
 
@@ -38,28 +38,28 @@ export struct Separator impl Widget {
         _color = th.sep
         x      = opts.get("x", 0)
         y      = opts.get("y", 0)
-        _dir   = opts.get("dir", Separator.HORIZONTAL)
-        _thickness = opts.get("thickness", Separator.DEFAULT_THICKNESS)
-        _margin = opts.get("margin", 0.0)
+        dir   = opts.get("dir", Separator.HORIZONTAL)
+        thickness = opts.get("thickness", Separator.DEFAULT_THICKNESS)
+        margin = opts.get("margin", 0.0)
         visible = opts.get("visible", true)
         // 根据方向设定默认尺寸
-        if _dir == Separator.HORIZONTAL { _w = opts.get("w", 200); _h = _float(_thickness) }
-        else { _w = _float(_thickness); _h = opts.get("h", 200) }
+        if dir == Separator.HORIZONTAL { _w = opts.get("w", 200); _h = _float(thickness) }
+        else { _w = _float(thickness); _h = opts.get("h", 200) }
         if opts.get("color") is Color => t { _color = t }
-        _alpha = opts.get("alpha", Separator.DEFAULT_ALPHA)
+        alpha = opts.get("alpha", Separator.DEFAULT_ALPHA)
         _loaded = true
     }
 
     // ==================== 设置方法 ====================
-    func set_horizontal() { _dir = Separator.HORIZONTAL; _h = _float(_thickness) }
-    func set_vertical()   { _dir = Separator.VERTICAL;   _w = _float(_thickness) }
+    func set_horizontal() { dir = Separator.HORIZONTAL; _h = _float(thickness) }
+    func set_vertical()   { dir = Separator.VERTICAL;   _w = _float(thickness) }
     func set_thickness(int t) {
-        _thickness = t
-        if _dir == Separator.HORIZONTAL { _h = _float(t) } else { _w = _float(t) }
+        thickness = t
+        if dir == Separator.HORIZONTAL { _h = _float(t) } else { _w = _float(t) }
     }
     func set_color(Color color) { _color = color }
-    func set_alpha(int a) { _alpha = a }
-    func set_margin(float m) { _margin = m }
+    func set_alpha(int a) { alpha = a }
+    func set_margin(float m) { margin = m }
     func set_visible(bool v) { visible = v }
     func is_visible(): bool { return visible }
     func set_enabled(bool e) {}
@@ -71,8 +71,8 @@ export struct Separator impl Widget {
     func get_h(): float { return _h }
     func set_pos(float px, float py) { x = px; y = py }
     func set_size(float sw, float sh) {
-        if _dir == Separator.HORIZONTAL { _w = sw; _h = _float(_thickness) }
-        else { _w = _float(_thickness); _h = sh }
+        if dir == Separator.HORIZONTAL { _w = sw; _h = _float(thickness) }
+        else { _w = _float(thickness); _h = sh }
     }
 
     func process(Event ev) {}
@@ -80,15 +80,15 @@ export struct Separator impl Widget {
     // ==================== 渲染 ====================
     func render(Renderer r) {
         if not _loaded or not visible { return }
-        r.setColor(theme.withAlpha(_color, _alpha))
-        if _dir == Separator.HORIZONTAL {
+        r.setColor(theme.withAlpha(_color, alpha))
+        if dir == Separator.HORIZONTAL {
             // 水平线：沿 x 方向延伸，居中绘制粗细
-            float yy = y + (_h - _float(_thickness)) / 2.0
-            r.fillRect(x + _margin, yy, _w - 2.0 * _margin, _float(_thickness))
+            float yy = y + (_h - _float(thickness)) / 2.0
+            r.fillRect(x + margin, yy, _w - 2.0 * margin, _float(thickness))
         } else {
             // 垂直线：沿 y 方向延伸，居中绘制粗细
-            float xx = x + (_w - _float(_thickness)) / 2.0
-            r.fillRect(xx, y + _margin, _float(_thickness), _h - 2.0 * _margin)
+            float xx = x + (_w - _float(thickness)) / 2.0
+            r.fillRect(xx, y + margin, _float(thickness), _h - 2.0 * margin)
         }
     }
 

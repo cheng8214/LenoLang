@@ -36,73 +36,73 @@ export struct ScrollView impl Widget {
     float x = 0.0, y = 0.0, w = 300.0, h = 200.0
     float _contentW = -1.0, _contentH = -1.0   // 可滚动内容虚拟尺寸
     Widget? _content                       // 内部内容控件（通常 VBox/Panel）
-    float _scrollX = 0.0, _scrollY = 0.0        // 当前滚动偏移
+    pri float scrollX = 0.0, scrollY = 0.0        // 当前滚动偏移
     // 每格滚轮滚动像素（`step` 选项可调）。默认 48 ≈ Windows「3 行」惯例（~16px/行 ✓）；
     // 早先的 24px 明显偏小 ⇒ 用户体感"滚了轮子只走一点点、得使劲滚" ✗
-    float _step = 48.0
+    pri float step = 48.0
     // 平滑滚动（opt-in：`smooth:true`）：滚轮不再瞬间跳一格，而是设一个目标位置、逐帧逼近 ✓
     // 动机：瞬间跳 24px + 帧节流 ⇒ 观感"一顿一顿"✗；逐帧插值后是连续移动 ✓
-    bool _smooth = false
-    bool _smoothAnim = false              // 平滑动画进行中
-    float _syncedX = 0.0, _syncedY = 0.0  // 上次 `_sync` 应用过的位置（位置变了要重做 ⇒ 见 _sync 注释）
-    float _targetY = 0.0, _targetX = 0.0  // 平滑目标（仅动画中有效；非动画时跟随当前值 ✓）
+    pri bool smooth = false
+    pri bool smoothAnim = false              // 平滑动画进行中
+    pri float syncedX = 0.0, syncedY = 0.0  // 上次 `_sync` 应用过的位置（位置变了要重做 ⇒ 见 _sync 注释）
+    pri float targetY = 0.0, targetX = 0.0  // 平滑目标（仅动画中有效；非动画时跟随当前值 ✓）
 
     // 外观
-    Color _bgColor = #262830FF
-    Color _bdrColor = #505A64FF
-    Color _sbColor = #787D8CFF           // 滚动条颜色
-    float _radius = 8.0
-    int _brdA = 200
+    pri Color bgColor = #262830FF
+    pri Color bdrColor = #505A64FF
+    pri Color sbColor = #787D8CFF           // 滚动条颜色
+    pri float radius = 8.0
+    pri int brdA = 200
     bool _drawBorder = true
 
     // 滚动条
-    float _barW = 12.0
-    int _dragV = 0, _dragH = 0         // 0 无 / 1 拖动中
-    float _dragOffV = 0.0, _dragOffH = 0.0
-    float _vThumbY = 0.0, _vThumbH = 0.0      // 竖直滚动条拇指几何（每帧计算）
-    float _hThumbX = 0.0, _hThumbW = 0.0      // 水平滚动条拇指几何
+    pri float barW = 12.0
+    pri int dragV = 0, dragH = 0         // 0 无 / 1 拖动中
+    pri float dragOffV = 0.0, dragOffH = 0.0
+    pri float vThumbY = 0.0, vThumbH = 0.0      // 竖直滚动条拇指几何（每帧计算）
+    pri float hThumbX = 0.0, hThumbW = 0.0      // 水平滚动条拇指几何
 
-    bool _autoW = false, _autoH = false      // 自动内容尺寸标志（content_w/h < 0 时启用）
+    pri bool autoW = false, autoH = false      // 自动内容尺寸标志（content_w/h < 0 时启用）
     // ── 内容尺寸「跟随视图」（自适应布局用 ✓）──
     //   `fit_w`：内容宽 = 视图宽 − 滚动条宽（= 旧写法 `content_w: w - 12` ✓，但会**跟着窗口变**）
     //   `fit_h`：内容高 = max(实测高, 视图高) ⇒ 内容不满一屏时也撑满 ⇒ 内容里的 `grow` 子项
     //     才有"多余空间"可分配（没有它，VBox 的自然高=各子项之和 ⇒ grow 拿不到空间 ✗）
     //   与 `content_w/h < 0` 的自动测量互斥：`fit_w` 优先（此时 `_autoW` 不再启用 ✓）
-    bool _fitW = false, _fitH = false
+    pri bool fitW = false, fitH = false
     bool _loaded = false, enabled = true, visible = true
-    Ptr[u8]? _hwnd
-    int _frameSynced = -1   // _sync() 帧内去重：记录已同步的帧号，-1 表示从未同步
+    pri Ptr[u8]? hwnd
+    pri int frameSynced = -1   // _sync() 帧内去重：记录已同步的帧号，-1 表示从未同步
     // 上一次"已同步过"的自身尺寸：窗口缩放时滚动位置没变，但**内容尺寸必须按新视图尺寸重算** ✗
     //   （只比滚动位置的去重会让内容停在旧宽度 ⇒ 画面"还原后没变"，用户实测 ✓）
-    float _syncedW = -1.0, _syncedH = -1.0
+    pri float syncedW = -1.0, syncedH = -1.0
 
 
     func set(Dict opts) {
         dochk.check("sdl_scrollview", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
         Theme th = theme.getTheme()
-        _bgColor = th.bg
-        _bdrColor = th.border
-        _sbColor = th.sb
+        bgColor = th.bg
+        bdrColor = th.border
+        sbColor = th.sb
         x = opts.get("x", 0)
         y = opts.get("y", 0)
         w = opts.get("w", 300)
         h = opts.get("h", 200)
-        _radius = opts.get("radius", 8.0)
-        if opts.get("bg_color") is Color => t { _bgColor = t }
-        if opts.get("border_color") is Color => t { _bdrColor = t }
+        radius = opts.get("radius", 8.0)
+        if opts.get("bg_color") is Color => t { bgColor = t }
+        if opts.get("border_color") is Color => t { bdrColor = t }
         // 滚动条颜色（默认取主题 `th.sb`）。浅色页面 + 深色默认主题时必须能显式指定，
         // 否则一条深灰滚动条压在浅底上很突兀 ✗（本示例就是这种情况 ✓）
-        if opts.get("bar_color") is Color => t { _sbColor = t }
-        _brdA = opts.get("border_alpha", 200)
+        if opts.get("bar_color") is Color => t { sbColor = t }
+        brdA = opts.get("border_alpha", 200)
         _drawBorder = opts.get("border", true)
         _contentW = opts.get("content_w", -1.0)
         _contentH = opts.get("content_h", -1.0)
-        _fitW = opts.get("fit_w", false)
-        _fitH = opts.get("fit_h", false)
-        if _fitW { _contentW = w - _barW }       // 立即可用（不必等首帧 _sync ✓）
-        _step = opts.get("step", 48.0)          // 每格滚轮步长（默认 48 ≈ 平台惯例 ✓）
-        _smooth = opts.get("smooth", false)    // 平滑滚动（默认关 = 老行为 ✓）
-        _scrollX = 0.0; _scrollY = 0.0
+        fitW = opts.get("fit_w", false)
+        fitH = opts.get("fit_h", false)
+        if fitW { _contentW = w - barW }       // 立即可用（不必等首帧 _sync ✓）
+        step = opts.get("step", 48.0)          // 每格滚轮步长（默认 48 ≈ 平台惯例 ✓）
+        smooth = opts.get("smooth", false)    // 平滑滚动（默认关 = 老行为 ✓）
+        scrollX = 0.0; scrollY = 0.0
         enabled = opts.get("enabled", true)
         visible = opts.get("visible", true)
         _loaded = true
@@ -111,7 +111,7 @@ export struct ScrollView impl Widget {
     // 绑定窗口句柄：记录自身，并下发给需要它的内容控件（如含 Edit 的布局）
     // 委托给 sdl_layout 的统一函数，确保所有容器类型都能正确传递
     func _bind_window(Ptr[u8] hwnd) {
-        _hwnd = hwnd
+        hwnd = hwnd
         Widget c = _content
         if c is Widget { lay.passWindowHandle(c, hwnd) }
     }
@@ -123,17 +123,17 @@ export struct ScrollView impl Widget {
         //   `add` 进来的 ⇒ 此刻量到的自然尺寸是 0（VBox 空的时候 measure_h 就返回 0 ✗），
         //   于是"内容高度 = 0"被当成事实 ⇒ `set_scroll` 立刻被钳成 0 且之后测量出来也回不去 ✗。
         //   交给第一帧 `_syncContent` 去量（它每帧都会重量 ✓）—— 实测踩过这个坑 ✓
-        if _contentW < 0.0 and c != null { _autoW = true }
-        if _contentH < 0.0 and c != null { _autoH = true }
-        _scrollX = 0.0; _scrollY = 0.0
-        if c != null and _hwnd != null { _bind_window(_hwnd) }
+        if _contentW < 0.0 and c != null { autoW = true }
+        if _contentH < 0.0 and c != null { autoH = true }
+        scrollX = 0.0; scrollY = 0.0
+        if c != null and hwnd != null { _bind_window(hwnd) }
         return c
     }
-    func set_content_size(float cw, float ch) { _autoW = false; _autoH = false; _contentW = cw; _contentH = ch; _clampScroll() }
+    func set_content_size(float cw, float ch) { autoW = false; autoH = false; _contentW = cw; _contentH = ch; clampScroll() }
 
     // 测量内容控件的自然尺寸（供自动内容尺寸用）
     // VBox/HBox/AnchorBox 有 measure_w/measure_h 方法，其他控件回退到 get_w/get_h
-    func _measure_w(Widget c): float {
+    pri func measure_w(Widget c): float {
         switch c {
             case is VBox { return c.measure_w() }
             case is HBox { return c.measure_w() }
@@ -142,7 +142,7 @@ export struct ScrollView impl Widget {
         }
         return c.get_w()
     }
-    func _measure_h(Widget c): float {
+    pri func measure_h(Widget c): float {
         switch c {
             case is VBox { return c.measure_h() }
             case is HBox { return c.measure_h() }
@@ -151,82 +151,82 @@ export struct ScrollView impl Widget {
         }
         return c.get_h()
     }
-    func set_bg_color(Color color) { _bgColor = color }
+    func set_bg_color(Color color) { bgColor = color }
 
     // ---- 滚动范围与约束 ----
-    func _vmax(): float { return if _contentH - h < 0.0 then 0.0 else _contentH - h }
-    func _hmax(): float { return if _contentW - w < 0.0 then 0.0 else _contentW - w }
-    func _showV(): bool { return _vmax() > 0.0 }
-    func _showH(): bool { return _hmax() > 0.0 }
-    func _fabs(float v): float { return if v < 0.0 then -v else v }
-    func _clampScroll() {
+    pri func vmax(): float { return if _contentH - h < 0.0 then 0.0 else _contentH - h }
+    pri func hmax(): float { return if _contentW - w < 0.0 then 0.0 else _contentW - w }
+    pri func showV(): bool { return vmax() > 0.0 }
+    pri func showH(): bool { return hmax() > 0.0 }
+    pri func fabs(float v): float { return if v < 0.0 then -v else v }
+    pri func clampScroll() {
         // ⚠ 内容尺寸**还没测量**时（`_autoH/_autoW` 要等第一帧 `_syncContent` 才量，此前
         //   `_contentH/_contentW == -1`）不要按它钳位：否则"构造完立刻 set_scroll"会被钳成 0，
         //   等测量出来也回不去了 ✗（实测踩过：首帧后上限其实有 167，但 y 已经变 0 ✓）
         if _contentH >= 0.0 {
-            float my = _vmax()
-            if _scrollY > my { _scrollY = my }
+            float my = vmax()
+            if scrollY > my { scrollY = my }
         }
         if _contentW >= 0.0 {
-            float mx = _hmax()
-            if _scrollX > mx { _scrollX = mx }
+            float mx = hmax()
+            if scrollX > mx { scrollX = mx }
         }
-        if _scrollX < 0.0 { _scrollX = 0.0 }
-        if _scrollY < 0.0 { _scrollY = 0.0 }
+        if scrollX < 0.0 { scrollX = 0.0 }
+        if scrollY < 0.0 { scrollY = 0.0 }
     }
     // 平滑目标也要夹在可滚范围内（否则会一路滑到无效位置又弹回来 ✗）
-    func _clampTarget() {
-        float mx = _hmax(), my = _vmax()
-        if _targetX < 0.0 { _targetX = 0.0 } if _targetX > mx { _targetX = mx }
-        if _targetY < 0.0 { _targetY = 0.0 } if _targetY > my { _targetY = my }
+    pri func clampTarget() {
+        float mx = hmax(), my = vmax()
+        if targetX < 0.0 { targetX = 0.0 } if targetX > mx { targetX = mx }
+        if targetY < 0.0 { targetY = 0.0 } if targetY > my { targetY = my }
     }
 
     // 程序化滚动：立即到位（并取消进行中的平滑动画，否则会被旧目标拽回去 ✗ = "来回跳"）
     func set_scroll(float sx, float sy) {
-        _smoothAnim = false
-        _scrollX = sx; _scrollY = sy
-        _targetX = sx; _targetY = sy
-        _clampScroll()
+        smoothAnim = false
+        scrollX = sx; scrollY = sy
+        targetX = sx; targetY = sy
+        clampScroll()
     }
     func scroll_to(float sx, float sy) { set_scroll(sx, sy) }
 
     // 按"滚轮语义"滚动一段相对距离 ⇒ 与滚轮**同一条路径**（平滑功能只有一处定义 ✓）
     // `smooth:false`（默认）时立即跳；`smooth:true` 时设目标、由 `_sync` 逐帧逼近 ✓
     func scroll_by(float dx, float dy) {
-        if _smooth {
+        if smooth {
             // 首次滚动时用当前位置作为起点（否则 _target 还是 0 ⇒ 一下跳到顶部 ✗）
-            if not _smoothAnim {
-                _targetX = _scrollX; _targetY = _scrollY; _smoothAnim = true
+            if not smoothAnim {
+                targetX = scrollX; targetY = scrollY; smoothAnim = true
             } else {
                 // ★ 方向反转 ⇒ 先**立即到位**再继续平滑：
                 //   指数逼近只看"位置"，用户一反向就变成"目标在抖、位置在追"，
                 //   实测会形成**永久极限环**（±200 来回滚时 y 在 53↔147 之间来回 ✗ = "抽搐"）
-                float remX = _targetX - _scrollX
-                float remY = _targetY - _scrollY
+                float remX = targetX - scrollX
+                float remY = targetY - scrollY
                 bool revX = (dx > 0.0 and remX < 0.0) or (dx < 0.0 and remX > 0.0)
                 bool revY = (dy > 0.0 and remY < 0.0) or (dy < 0.0 and remY > 0.0)
                 if revX or revY {
-                    _scrollX = _targetX; _scrollY = _targetY   // 反向立刻到位（取消追赶 ✓）
-                    _clampScroll()
-                    _targetX = _scrollX; _targetY = _scrollY   // 目标对齐"现在"，从这里重新平滑 ✓
+                    scrollX = targetX; scrollY = targetY   // 反向立刻到位（取消追赶 ✓）
+                    clampScroll()
+                    targetX = scrollX; targetY = scrollY   // 目标对齐"现在"，从这里重新平滑 ✓
                 }
             }
-            _targetX = _targetX + dx
-            _targetY = _targetY + dy
-            _clampTarget()
+            targetX = targetX + dx
+            targetY = targetY + dy
+            clampTarget()
             // ★ 落后太多（快速连滚）⇒ **直接到位**，不要让它慢慢追：
             //   指数逼近在小步长时是"顺滑"，在快速连滚时会变成"位置远远落后于手指"
             //   ⇒ 体感"滚了半天只走一点点"✗。超过 2.5 格就整段立即生效 ✓
-            float lagX = _targetX - _scrollX
-            float lagY = _targetY - _scrollY
-            if _fabs(lagX) > 2.5 * _step or _fabs(lagY) > 2.5 * _step {
-                _scrollX = _targetX; _scrollY = _targetY
-                _clampScroll()
+            float lagX = targetX - scrollX
+            float lagY = targetY - scrollY
+            if fabs(lagX) > 2.5 * step or fabs(lagY) > 2.5 * step {
+                scrollX = targetX; scrollY = targetY
+                clampScroll()
             }
         } else {
-            _scrollX = _scrollX + dx
-            _scrollY = _scrollY + dy
-            _clampScroll()
+            scrollX = scrollX + dx
+            scrollY = scrollY + dy
+            clampScroll()
         }
         core.markFrameRedraw()
     }
@@ -235,30 +235,30 @@ export struct ScrollView impl Widget {
     // tx/ty 为目标在内容坐标系中的左上角，tw/th 为目标尺寸
     // 若目标已完全在视口内则不动；否则最小幅度滚动使其可见
     func ensure_visible(float tx, float ty, float tw, float th) {
-        _smoothAnim = false        // 立即到位：取消平滑动画（否则会被旧目标拽回去 ✗）
-        float left = _scrollX
-        float right = _scrollX + w
-        float top = _scrollY
-        float bottom = _scrollY + h
-        if tx < left { _scrollX = tx }
-        else if tx + tw > right { _scrollX = tx + tw - w }
-        if ty < top { _scrollY = ty }
-        else if ty + th > bottom { _scrollY = ty + th - h }
-        _clampScroll()
+        smoothAnim = false        // 立即到位：取消平滑动画（否则会被旧目标拽回去 ✗）
+        float left = scrollX
+        float right = scrollX + w
+        float top = scrollY
+        float bottom = scrollY + h
+        if tx < left { scrollX = tx }
+        else if tx + tw > right { scrollX = tx + tw - w }
+        if ty < top { scrollY = ty }
+        else if ty + th > bottom { scrollY = ty + th - h }
+        clampScroll()
         core.markFrameRedraw()
     }
 
-    func get_scroll_x(): float { return _scrollX }
-    func get_scroll_y(): float { return _scrollY }
-    func get_max_scroll_x(): float { return _hmax() }
-    func get_max_scroll_y(): float { return _vmax() }
+    func get_scroll_x(): float { return scrollX }
+    func get_scroll_y(): float { return scrollY }
+    func get_max_scroll_x(): float { return hmax() }
+    func get_max_scroll_y(): float { return vmax() }
 
     // 每帧把内容定位到（视口 - 偏移），设定内容尺寸，并刷新滚动条几何
     // 自动内容尺寸模式下，每帧重新测算（子控件可能动态增减）
     // 帧内去重：process 和 render 各调用一次 _sync()，但同一帧只需执行一次
-    func _sync() {
+    pri func sync() {
         int cur = core.frameId()
-        bool firstThisFrame = (_frameSynced != cur)
+        bool firstThisFrame = (frameSynced != cur)
         // ★ 平滑动画进行中：**每次 `_sync` 都补一次"下一帧"请求**（含下面提前 return 的那条路径 ✓）
         //   为什么必须放在去重之前：滚轮事件那一帧的顺序是「process → render」——
         //   process 里的 `_sync` 是"本帧首次"⇒ 推进一步 + 请求一帧 ✓；但同一帧的**渲染阶段**
@@ -266,69 +266,69 @@ export struct ScrollView impl Widget {
         //   **这一帧渲染完就再没人请求下一帧** ✗ ⇒ 事件循环随即挂起（500ms 空闲超时）✗✗
         //   ⇒ 表现："滚轮滚了画面不动、鼠标一动才跟着动"（用户实测抓到 ✓）
         //   ⇒ 只要动画没结束，就每帧再要一帧（与 Label 横向滚动的每帧请求同一手法 ✓）
-        if _smoothAnim { core.requestRedraw() }
+        if smoothAnim { core.requestRedraw() }
         // ⚠ 去重**不能只看帧号**：同一帧内可能来多个滚轮事件（快速滚 ✗），位置变了就必须重做，
         //   否则渲染用的还是"第一个事件"留下的旧位置 ⇒ 视觉滞后/一顿一顿 ✗（"抽搐"的第二个成因）
         // ⚠ 去重**必须连自身尺寸一起比**：窗口缩放（最大化/还原）时滚动位置没变，但 `fit_w/fit_h`
         //   要按新尺寸重算 `_contentW/_contentH` 并下发 `_content.set_size(...)`；只按"滚动位置没变"
         //   就 return，会让**内容仍按旧宽度排版** ⇒ 画面停在旧样子（而外层的 `w` 已经变了 ⇒
         //   看起来就是"还原后布局没变、要动一下鼠标才恢复" ✗ —— 用户实测抓到 ✓）
-        if not firstThisFrame and _scrollX == _syncedX and _scrollY == _syncedY and w == _syncedW and h == _syncedH { return }
-        _frameSynced = cur
-        _syncedX = _scrollX; _syncedY = _scrollY
-        _syncedW = w; _syncedH = h
-        if _fitW { _contentW = w - _barW }
-        if _autoW and _content != null { _contentW = _measure_w(_content) }
-        if _autoH and _content != null { _contentH = _measure_h(_content) }
+        if not firstThisFrame and scrollX == syncedX and scrollY == syncedY and w == syncedW and h == syncedH { return }
+        frameSynced = cur
+        syncedX = scrollX; syncedY = scrollY
+        syncedW = w; syncedH = h
+        if fitW { _contentW = w - barW }
+        if autoW and _content != null { _contentW = measure_w(_content) }
+        if autoH and _content != null { _contentH = measure_h(_content) }
         // `fit_h`：内容不满一屏也撑满视图高 ⇒ 内容里的 `grow` 子项才有空间可分 ✓
         //   ⚠ 必须放在**测量之后**：先拿真实自然高，再决定要不要顶到视图高 ✓
-        if _fitH and _contentH < h { _contentH = h }
-        _clampScroll()
+        if fitH and _contentH < h { _contentH = h }
+        clampScroll()
         // ★ 平滑滚动（`smooth:true`）：每帧向目标插值一步，到位即停 ✓
         //   `firstThisFrame` 保证"每帧只推进一步"（同一帧内多次 _sync 不会重复推进 ✗）
-        if _smoothAnim and firstThisFrame {
-            float dx = _targetX - _scrollX
-            float dy = _targetY - _scrollY
-            if _fabs(dx) <= 0.5 and _fabs(dy) <= 0.5 {
-                _scrollX = _targetX; _scrollY = _targetY      // 收尾对齐（否则永远差 0.x px ✓）
-                _smoothAnim = false
+        if smoothAnim and firstThisFrame {
+            float dx = targetX - scrollX
+            float dy = targetY - scrollY
+            if fabs(dx) <= 0.5 and fabs(dy) <= 0.5 {
+                scrollX = targetX; scrollY = targetY      // 收尾对齐（否则永远差 0.x px ✓）
+                smoothAnim = false
             } else {
-                _scrollX = _scrollX + dx * 0.4
-                _scrollY = _scrollY + dy * 0.4
+                scrollX = scrollX + dx * 0.4
+                scrollY = scrollY + dy * 0.4
                 core.requestRedraw()      // 动画期间持续请求下一帧（模块的动画机制 ✓）
             }
-            _clampScroll()
+            clampScroll()
         } else {
             // 非动画期间：目标跟随当前位置 ⇒ 拖动滚动条/翻页/程序 set_scroll 都自动同步，不会漂移 ✓
-            _targetX = _scrollX; _targetY = _scrollY
+            targetX = scrollX; targetY = scrollY
         }
-        _computeThumbs()
+        computeThumbs()
         // ⚠ 内容定位**取整**：分数偏移会让文字落在半像素上 ⇒ 边缘发虚/闪 ✗（与"裁剪闪烁"同源）
-        _content?.set_pos(x - _int(_scrollX), y - _int(_scrollY))
+        _content?.set_pos(x - _int(scrollX), y - _int(scrollY))
         _content?.set_size(_contentW, _contentH)
     }
 
-    func _computeThumbs() {
-        _vThumbY = y; _vThumbH = h; _hThumbX = x; _hThumbW = w
-        if _showV() {
-            float gh = if _showH() then _barW else 0.0
+    pri func computeThumbs() {
+        vThumbY = y; vThumbH = h; hThumbX = x; hThumbW = w
+        if showV() {
+            float gh = if showH() then barW else 0.0
             float trackH = h - gh
             float ratio = if _contentH > 0.0 then h / _contentH else 1.0
             float th = trackH * ratio
             if th < 24.0 { th = 24.0 }
-            _vThumbH = th
-            float maxY = _vmax()
-            _vThumbY = if maxY > 0.0 then y + (_scrollY / maxY) * (trackH - th) else y
+            vThumbH = th
+            float maxY = vmax()
+            vThumbY = if maxY > 0.0 then y + (scrollY / maxY) * (trackH - th) else y
         }
-        if _showH() {
-            float gw = if _showV() then _barW else 0.0
+        if showH() {
+            float gw = if showV() then barW else 0.0
             float trackW = w - gw
             float ratio = if _contentW > 0.0 then w / _contentW else 1.0
             float tw = trackW * ratio
             if tw < 24.0 { tw = 24.0 }
-            _hThumbW = tw
-            float maxX = _hmax()
-            _hThumbX = if maxX > 0.0 then x + (_scrollX / maxX) * (trackW - tw) else x
+            hThumbW = tw
+            float maxX = hmax()
+            hThumbX = if maxX > 0.0 then x + (scrollX / maxX) * (trackW - tw) else x
         }
     }
 
@@ -339,8 +339,8 @@ export struct ScrollView impl Widget {
     func set_size(float sw, float sh) {
         w = sw; h = sh
         // 视图尺寸变了 ⇒ `fit_w` 的内容宽立刻跟着变（不必等下一帧 `_sync` ✓）
-        if _fitW { _contentW = w - _barW }
-        _clampScroll()
+        if fitW { _contentW = w - barW }
+        clampScroll()
     }
     func set_enabled(bool e) { enabled = e }
     func set_visible(bool v) { visible = v }
@@ -350,91 +350,91 @@ export struct ScrollView impl Widget {
     }
 
     // 点是否在滚动条槽内（竖直右槽 / 水平底槽）
-    func _onGutter(float mx, float my): bool {
-        if _showV() {
-            float gw = _barW
+    pri func onGutter(float mx, float my): bool {
+        if showV() {
+            float gw = barW
             if mx >= x + w - gw and mx <= x + w and my >= y and my <= y + h { return true }
         }
-        if _showH() {
-            float gh = _barW
+        if showH() {
+            float gh = barW
             if my >= y + h - gh and my <= y + h and mx >= x and mx <= x + w { return true }
         }
         return false
     }
 
-    func _scrollbarDown(float mx, float my) {
-        if _showV() {
-            float tx0 = x + w - _barW
+    pri func scrollbarDown(float mx, float my) {
+        if showV() {
+            float tx0 = x + w - barW
             if mx >= tx0 and mx <= x + w {
-                if my >= _vThumbY and my <= _vThumbY + _vThumbH {
-                    _dragV = 1; _dragOffV = my - _vThumbY
+                if my >= vThumbY and my <= vThumbY + vThumbH {
+                    dragV = 1; dragOffV = my - vThumbY
                 } else {
-                    float gh = if _showH() then _barW else 0.0
+                    float gh = if showH() then barW else 0.0
                     float page = (h - gh) * 0.9
-                    if my < _vThumbY { _scrollY = _scrollY - page } else { _scrollY = _scrollY + page }
-                    _clampScroll()
+                    if my < vThumbY { scrollY = scrollY - page } else { scrollY = scrollY + page }
+                    clampScroll()
                 }
                 return
             }
         }
-        if _showH() {
-            float ty0 = y + h - _barW
+        if showH() {
+            float ty0 = y + h - barW
             if my >= ty0 and my <= y + h {
-                if mx >= _hThumbX and mx <= _hThumbX + _hThumbW {
-                    _dragH = 1; _dragOffH = mx - _hThumbX
+                if mx >= hThumbX and mx <= hThumbX + hThumbW {
+                    dragH = 1; dragOffH = mx - hThumbX
                 } else {
-                    float gw = if _showV() then _barW else 0.0
+                    float gw = if showV() then barW else 0.0
                     float page = (w - gw) * 0.9
-                    if mx < _hThumbX { _scrollX = _scrollX - page } else { _scrollX = _scrollX + page }
-                    _clampScroll()
+                    if mx < hThumbX { scrollX = scrollX - page } else { scrollX = scrollX + page }
+                    clampScroll()
                 }
                 return
             }
         }
     }
 
-    func _scrollbarDrag(float mx, float my) {
-        _smoothAnim = false        // 拖动滚动条必须 1:1 跟手 ⇒ 取消平滑动画 ✓
-        if _dragV == 1 {
-            float gh = if _showH() then _barW else 0.0
+    pri func scrollbarDrag(float mx, float my) {
+        smoothAnim = false        // 拖动滚动条必须 1:1 跟手 ⇒ 取消平滑动画 ✓
+        if dragV == 1 {
+            float gh = if showH() then barW else 0.0
             float trackH = h - gh
-            float maxY = _vmax()
-            if trackH - _vThumbH > 0.0 { _scrollY = (my - _dragOffV - y) / (trackH - _vThumbH) * maxY }
-            _clampScroll()
+            float maxY = vmax()
+            if trackH - vThumbH > 0.0 { scrollY = (my - dragOffV - y) / (trackH - vThumbH) * maxY }
+            clampScroll()
         }
-        if _dragH == 1 {
-            float gw = if _showV() then _barW else 0.0
+        if dragH == 1 {
+            float gw = if showV() then barW else 0.0
             float trackW = w - gw
-            float maxX = _hmax()
-            if trackW - _hThumbW > 0.0 { _scrollX = (mx - _dragOffH - x) / (trackW - _hThumbW) * maxX }
-            _clampScroll()
+            float maxX = hmax()
+            if trackW - hThumbW > 0.0 { scrollX = (mx - dragOffH - x) / (trackW - hThumbW) * maxX }
+            clampScroll()
         }
     }
 
     func process(Event ev) {
         if not _loaded or not enabled or not visible { return }
-        _sync()
+        sync()
         // 滚动条交互优先于内容
         if ev.isMouseButtonDown() and ev.mouseButton() == 1 {
             var[float, float](_dx, _dy) = ev.mousePos()
-            if _onGutter(_dx, _dy) { _scrollbarDown(_dx, _dy); return }
+            if onGutter(_dx, _dy) { scrollbarDown(_dx, _dy); return }
         }
         if ev.isMouseButtonUp() and ev.mouseButton() == 1 {
-            if _dragV != 0 or _dragH != 0 { _dragV = 0; _dragH = 0; return }
+            if dragV != 0 or dragH != 0 { dragV = 0; dragH = 0; return }
         }
-        if ev.isMouseMotion() and (_dragV != 0 or _dragH != 0) {
-            var[float, float](_dx2, _dy2) = ev.mousePos(); _scrollbarDrag(_dx2, _dy2); core.markFrameRedraw(); return
+        if ev.isMouseMotion() and (dragV != 0 or dragH != 0) {
+            var[float, float](_dx2, _dy2) = ev.mousePos(); scrollbarDrag(_dx2, _dy2); core.markFrameRedraw(); return
         }
         // 滚轮：悬停视口内才滚动
         if ev.isMouseWheel() {
             float wx = ev.wheelMouseX(), wy = ev.wheelMouseY()
             if wx >= x and wx <= x + w and wy >= y and wy <= y + h {
-                if _showH() and _fabs(ev.wheelX()) > _fabs(ev.wheelY()) {
-                    scroll_by(-ev.wheelX() * _step, 0.0)
-                } else if _showV() {
+                if showH() and fabs(ev.wheelX()) > fabs(ev.wheelY()) {
+                    scroll_by(-ev.wheelX() * step, 0.0)
+                } else if showV() {
                     // 滚轮语义：wheelY > 0 = 向上/远离用户 ⇒ 内容往下看 ⇒ 偏移减小 ✓
                     // 走 `scroll_by` ⇒ 平滑开关、目标夹取、请求重绘都在那里面统一处理 ✓
-                    scroll_by(0.0, -ev.wheelY() * _step)
+                    scroll_by(0.0, -ev.wheelY() * step)
                 }
             }
         }
@@ -444,56 +444,56 @@ export struct ScrollView impl Widget {
             if kx >= x and kx <= x + w and ky >= y and ky <= y + h {
                 int sc = ev.scancode()
                 if sc == 78 {  // PageDown
-                    _smoothAnim = false
-                    _scrollY = _scrollY + h * 0.9; _clampScroll(); core.markFrameRedraw(); return
+                    smoothAnim = false
+                    scrollY = scrollY + h * 0.9; clampScroll(); core.markFrameRedraw(); return
                 }
                 if sc == 75 {  // PageUp
-                    _smoothAnim = false
-                    _scrollY = _scrollY - h * 0.9; _clampScroll(); core.markFrameRedraw(); return
+                    smoothAnim = false
+                    scrollY = scrollY - h * 0.9; clampScroll(); core.markFrameRedraw(); return
                 }
                 if sc == 74 {  // Home
-                    _smoothAnim = false
-                    _scrollY = 0.0; _scrollX = 0.0; core.markFrameRedraw(); return
+                    smoothAnim = false
+                    scrollY = 0.0; scrollX = 0.0; core.markFrameRedraw(); return
                 }
                 if sc == 77 {  // End
-                    _smoothAnim = false
-                    _scrollY = _vmax(); _scrollX = _hmax(); core.markFrameRedraw(); return
+                    smoothAnim = false
+                    scrollY = vmax(); scrollX = hmax(); core.markFrameRedraw(); return
                 }
             }
         }
         _content?.process(ev)
     }
 
-    func _drawScrollbars(Renderer r) {
-        if _showV() {
-            float gw = _barW
+    pri func drawScrollbars(Renderer r) {
+        if showV() {
+            float gw = barW
             float tx = x + w - gw
-            float gh = if _showH() then _barW else 0.0
-            r.setColor(_sbColor)
+            float gh = if showH() then barW else 0.0
+            r.setColor(sbColor)
             r.fillRoundedRect(tx, y, gw, h - gh, gw / 2.0)
-            r.setColor(theme.brighten(_sbColor, 40))
-            r.fillRoundedRect(tx + 2.0, _vThumbY, gw - 4.0, _vThumbH, (gw - 4.0) / 2.0)
+            r.setColor(theme.brighten(sbColor, 40))
+            r.fillRoundedRect(tx + 2.0, vThumbY, gw - 4.0, vThumbH, (gw - 4.0) / 2.0)
         }
-        if _showH() {
-            float gh = _barW
+        if showH() {
+            float gh = barW
             float ty = y + h - gh
-            float gw = if _showV() then _barW else 0.0
-            r.setColor(_sbColor)
+            float gw = if showV() then barW else 0.0
+            r.setColor(sbColor)
             r.fillRoundedRect(x, ty, w - gw, gh, gh / 2.0)
-            r.setColor(theme.brighten(_sbColor, 40))
-            r.fillRoundedRect(_hThumbX, ty + 2.0, _hThumbW, gh - 4.0, (gh - 4.0) / 2.0)
+            r.setColor(theme.brighten(sbColor, 40))
+            r.fillRoundedRect(hThumbX, ty + 2.0, hThumbW, gh - 4.0, (gh - 4.0) / 2.0)
         }
     }
 
     func render(Renderer r) {
         if not _loaded or not enabled or not visible { return }
-        _sync()
+        sync()
         // 背景
-        r.setColor(_bgColor)
-        r.fillRoundedRect(x, y, w, h, _radius)
+        r.setColor(bgColor)
+        r.fillRoundedRect(x, y, w, h, radius)
         // 裁剪到视口（扣除滚动条槽，避免内容画到槽下）
-        float gw = if _showV() then _barW else 0.0
-        float gh = if _showH() then _barW else 0.0
+        float gw = if showV() then barW else 0.0
+        float gh = if showH() then barW else 0.0
         SDL_Rect cr = SDL_Rect.malloc()
         cr.x = _int(x); cr.y = _int(y)
         cr.w = _int(w - gw) + 1; cr.h = _int(h - gh) + 1   // +1 覆盖浮点截断的亚像素
@@ -501,11 +501,11 @@ export struct ScrollView impl Widget {
         _content?.render(r)
         r.popClipRect()
         // 滚动条（最上层）
-        _drawScrollbars(r)
+        drawScrollbars(r)
         // 边框
         if _drawBorder {
-            r.setColor(theme.withAlpha(_bdrColor, _brdA))
-            r.drawRoundedRect(x, y, w, h, _radius)
+            r.setColor(theme.withAlpha(bdrColor, brdA))
+            r.drawRoundedRect(x, y, w, h, radius)
         }
     }
 

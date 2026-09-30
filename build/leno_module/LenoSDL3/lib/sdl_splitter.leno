@@ -47,71 +47,71 @@ export struct Splitter impl Widget, Themeable {
     float x = 0.0, y = 0.0, w = 400.0, h = 300.0
     Widget? _first               // 第一侧子控件（左侧 / 上侧）
     Widget? _second              // 第二侧子控件（右侧 / 下侧）
-    int    _orientation = HORIZONTAL  // 方向（HORIZONTAL/VERTICAL）
-    float  _ratio = 0.3          // 分割比例：第一侧占比 (0.0~1.0)
-    float  _dividerW = 4.0       // 分割条视觉宽度
-    float  _hitPad   = 4.0       // 命中区域额外宽度（视觉宽度两侧各加 _hitPad）
-    float  _minFirst  = 80.0     // 第一侧最小尺寸
-    float  _minSecond = 80.0     // 第二侧最小尺寸
+    pri int    orientation = HORIZONTAL  // 方向（HORIZONTAL/VERTICAL）
+    pri float  ratio = 0.3          // 分割比例：第一侧占比 (0.0~1.0)
+    pri float  dividerW = 4.0       // 分割条视觉宽度
+    pri float  hitPad   = 4.0       // 命中区域额外宽度（视觉宽度两侧各加 _hitPad）
+    pri float  minFirst  = 80.0     // 第一侧最小尺寸
+    pri float  minSecond = 80.0     // 第二侧最小尺寸
     bool   _dragging = false     // 是否正在拖拽分割条
-    bool   _hover    = false     // 鼠标是否悬停在分割条上
-    float  _dragStartRatio = 0.0 // 拖拽起始比例（用于计算偏移）
-    float  _dragStartMouse = 0.0 // 拖拽起始鼠标坐标
+    pri bool   hover    = false     // 鼠标是否悬停在分割条上
+    pri float  dragStartRatio = 0.0 // 拖拽起始比例（用于计算偏移）
+    pri float  dragStartMouse = 0.0 // 拖拽起始鼠标坐标
     // 分割条颜色
-    Color    _divColor = #5A5F6EFF      // 默认分割条色
-    Color    _hovColor = #3C96EBFF     // 悬停/拖拽高亮色
+    pri Color    divColor = #5A5F6EFF      // 默认分割条色
+    pri Color    hovColor = #3C96EBFF     // 悬停/拖拽高亮色
     bool   _loaded = false
     bool   enabled = true, visible = true
-    Ptr[u8] _hwnd                   // 绑定的窗口句柄
-    int    _winW = 0, _winH = 0     // 窗口尺寸（供向下传递）
+    pri Ptr[u8] hwnd                   // 绑定的窗口句柄
+    pri int    winW = 0, winH = 0     // 窗口尺寸（供向下传递）
 
 
     func set(Dict opts) {
         dochk.check("sdl_splitter", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
         Theme th = theme.getTheme()
-        _divColor = th.border
-        _hovColor = th.accent
+        divColor = th.border
+        hovColor = th.accent
         x           = opts.get("x", 0)
         y           = opts.get("y", 0)
         w           = opts.get("w", 400)
         h           = opts.get("h", 300)
-        _orientation = opts.get("orientation", HORIZONTAL)
-        _ratio       = opts.get("ratio", 0.3)
-        _dividerW    = opts.get("divider_width", 4)
-        _hitPad      = opts.get("hit_pad", 4)
-        _minFirst    = opts.get("min_first", 80)
-        _minSecond   = opts.get("min_second", 80)
+        orientation = opts.get("orientation", HORIZONTAL)
+        ratio       = opts.get("ratio", 0.3)
+        dividerW    = opts.get("divider_width", 4)
+        hitPad      = opts.get("hit_pad", 4)
+        minFirst    = opts.get("min_first", 80)
+        minSecond   = opts.get("min_second", 80)
         // 颜色：opts 未传则保持默认值
-        if opts.get("divider_color") is Color => t { _divColor = t }
-        if opts.get("hover_color") is Color => t { _hovColor = t }
+        if opts.get("divider_color") is Color => t { divColor = t }
+        if opts.get("hover_color") is Color => t { hovColor = t }
         // 构造时传入子控件
         var f = opts.get("first")
         if f is Widget { _first = f }
         var s = opts.get("second")
         if s is Widget { _second = s }
-        _clamp_ratio()
+        clamp_ratio()
         _loaded = true
     }
 
     // ==================== 子控件管理 ====================
-    func set_first(Widget c)  { _first = c; if _hwnd != null { _pass_hwnd(c, _hwnd) } }
-    func set_second(Widget c) { _second = c; if _hwnd != null { _pass_hwnd(c, _hwnd) } }
+    func set_first(Widget c)  { _first = c; if hwnd != null { pass_hwnd(c, hwnd) } }
+    func set_second(Widget c) { _second = c; if hwnd != null { pass_hwnd(c, hwnd) } }
 
     func _bind_window(Ptr[u8] hwnd) {
-        _hwnd = hwnd
-        var f = _first;  if f is Widget { _pass_hwnd(f, hwnd) }
-        var s = _second; if s is Widget { _pass_hwnd(s, hwnd) }
+        hwnd = hwnd
+        var f = _first;  if f is Widget { pass_hwnd(f, hwnd) }
+        var s = _second; if s is Widget { pass_hwnd(s, hwnd) }
     }
     // ★ 新增：绑定窗口句柄和尺寸，并向下传递
     func _bind_window_size(Ptr[u8] hwnd, int ww, int hh) {
-        _hwnd = hwnd; _winW = ww; _winH = hh
-        var f = _first;  if f is Widget { _pass_hwnd_size(f, hwnd, ww, hh) }
-        var s = _second; if s is Widget { _pass_hwnd_size(s, hwnd, ww, hh) }
+        hwnd = hwnd; winW = ww; winH = hh
+        var f = _first;  if f is Widget { pass_hwnd_size(f, hwnd, ww, hh) }
+        var s = _second; if s is Widget { pass_hwnd_size(s, hwnd, ww, hh) }
     }
-    func _pass_hwnd(Widget c, Ptr[u8] hwnd) {
+    pri func pass_hwnd(Widget c, Ptr[u8] hwnd) {
         lay.passWindowHandle(c, hwnd)
     }
-    func _pass_hwnd_size(Widget c, Ptr[u8] hwnd, int ww, int hh) {
+    pri func pass_hwnd_size(Widget c, Ptr[u8] hwnd, int ww, int hh) {
         switch c {
             case is Edit { c.set_window(hwnd); c.set_window_size(ww, hh); return }
             case is Splitter { c._bind_window_size(hwnd, ww, hh); return }
@@ -129,7 +129,7 @@ export struct Splitter impl Widget, Themeable {
     func get_x(): float { return x }
     func get_y(): float { return y }
     func set_pos(float px, float py) { x = px; y = py }
-    func set_size(float sw, float sh) { w = sw; h = sh; _clamp_ratio() }
+    func set_size(float sw, float sh) { w = sw; h = sh; clamp_ratio() }
     func set_enabled(bool e) { enabled = e }
     func set_visible(bool v) { visible = v }
     func is_visible(): bool { return visible }
@@ -139,53 +139,53 @@ export struct Splitter impl Widget, Themeable {
     }
 
     // ==================== 比例管理 ====================
-    func _clamp_ratio() {
-        if _orientation == HORIZONTAL {
+    pri func clamp_ratio() {
+        if orientation == HORIZONTAL {
             if w <= 0.0 { return }   // 占位尺寸（w:0），等布局系统下发实际尺寸后再 clamp
             // 水平分割：ratio 受 minFirst/w 和 minSecond/w 约束
-            float lo = _minFirst / w
-            float hi = 1.0 - _minSecond / w
+            float lo = minFirst / w
+            float hi = 1.0 - minSecond / w
             if lo > hi { lo = hi }   // 空间太小，取中点
-            if _ratio < lo { _ratio = lo }
-            if _ratio > hi { _ratio = hi }
+            if ratio < lo { ratio = lo }
+            if ratio > hi { ratio = hi }
         } else {
             if h <= 0.0 { return }
-            float lo = _minFirst / h
-            float hi = 1.0 - _minSecond / h
+            float lo = minFirst / h
+            float hi = 1.0 - minSecond / h
             if lo > hi { lo = hi }
-            if _ratio < lo { _ratio = lo }
-            if _ratio > hi { _ratio = hi }
+            if ratio < lo { ratio = lo }
+            if ratio > hi { ratio = hi }
         }
     }
 
-    func set_ratio(float r) { _ratio = r; _clamp_ratio() }
-    func get_ratio(): float { return _ratio }
+    func set_ratio(float r) { ratio = r; clamp_ratio() }
+    func get_ratio(): float { return ratio }
 
     // 分割条位置（主轴坐标）
-    func _divider_pos(): float {
-        if _orientation == HORIZONTAL { return x + w * _ratio }
-        return y + h * _ratio
+    pri func divider_pos(): float {
+        if orientation == HORIZONTAL { return x + w * ratio }
+        return y + h * ratio
     }
 
     // 命中检测：鼠标是否在分割条可拖拽区域
     func _in_divider(float mx, float my): bool {
-        float dp = _divider_pos()
-        float half = _dividerW / 2.0 + _hitPad
-        if _orientation == HORIZONTAL {
+        float dp = divider_pos()
+        float half = dividerW / 2.0 + hitPad
+        if orientation == HORIZONTAL {
             return mx >= dp - half and mx <= dp + half and my >= y and my <= y + h
         }
         return my >= dp - half and my <= dp + half and mx >= x and mx <= x + w
     }
 
     // ==================== 布局计算 ====================
-    func _relayout() {
-        float dp = _divider_pos()
+    pri func relayout() {
+        float dp = divider_pos()
         var f = _first
         var s = _second
-        if _orientation == HORIZONTAL {
+        if orientation == HORIZONTAL {
             // 水平：first 在左，second 在右
-            float fw = dp - x - _dividerW / 2.0
-            float sx = dp + _dividerW / 2.0
+            float fw = dp - x - dividerW / 2.0
+            float sx = dp + dividerW / 2.0
             float sw = (x + w) - sx
             if fw < 0.0 { fw = 0.0 }
             if sw < 0.0 { sw = 0.0 }
@@ -193,8 +193,8 @@ export struct Splitter impl Widget, Themeable {
             if s is Widget { s.set_pos(sx, y); s.set_size(sw, h) }
         } else {
             // 垂直：first 在上，second 在下
-            float fh = dp - y - _dividerW / 2.0
-            float sy = dp + _dividerW / 2.0
+            float fh = dp - y - dividerW / 2.0
+            float sy = dp + dividerW / 2.0
             float sh = (y + h) - sy
             if fh < 0.0 { fh = 0.0 }
             if sh < 0.0 { sh = 0.0 }
@@ -206,7 +206,7 @@ export struct Splitter impl Widget, Themeable {
     // ==================== 交互 ====================
     func process(Event ev) {
         if not _loaded or not enabled or not visible { return }
-        _relayout()
+        relayout()
 
         var[float, float](mx, my) = ev.mousePos()
         if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
@@ -219,16 +219,16 @@ export struct Splitter impl Widget, Themeable {
                 return
             }
             if ev.isMouseMotion() {
-                if _orientation == HORIZONTAL {
-                    float delta = mx - _dragStartMouse
-                    float newRatio = _dragStartRatio + delta / w
-                    _ratio = newRatio
+                if orientation == HORIZONTAL {
+                    float delta = mx - dragStartMouse
+                    float newRatio = dragStartRatio + delta / w
+                    ratio = newRatio
                 } else {
-                    float delta = my - _dragStartMouse
-                    float newRatio = _dragStartRatio + delta / h
-                    _ratio = newRatio
+                    float delta = my - dragStartMouse
+                    float newRatio = dragStartRatio + delta / h
+                    ratio = newRatio
                 }
-                _clamp_ratio()
+                clamp_ratio()
                 core.markFrameRedraw()
                 return
             }
@@ -241,12 +241,12 @@ export struct Splitter impl Widget, Themeable {
         if not inPopup {
             // 悬停检测
             if ev.isMouseMotion() {
-                bool prevHover = _hover
-                _hover = _in_divider(mx, my)
-                if _hover != prevHover { core.markFrameRedraw() }
+                bool prevHover = hover
+                hover = _in_divider(mx, my)
+                if hover != prevHover { core.markFrameRedraw() }
                 else { core.markFrameMotion() }
-                if _hover {
-                    if _orientation == HORIZONTAL { core.requestCursor(SystemCursor.EW_RESIZE) }
+                if hover {
+                    if orientation == HORIZONTAL { core.requestCursor(SystemCursor.EW_RESIZE) }
                     else { core.requestCursor(SystemCursor.NS_RESIZE) }
                 }
             }
@@ -254,14 +254,14 @@ export struct Splitter impl Widget, Themeable {
             // 开始拖拽
             if ev.isMouseButtonDown() and _in_divider(mx, my) {
                 _dragging = true
-                if _orientation == HORIZONTAL { _dragStartMouse = mx } else { _dragStartMouse = my }
-                _dragStartRatio = _ratio
+                if orientation == HORIZONTAL { dragStartMouse = mx } else { dragStartMouse = my }
+                dragStartRatio = ratio
                 core.markFrameRedraw()
                 return   // 拖拽开始时不转发事件给子控件
             }
         } else {
             // 弹层打开时清除悬停状态，避免分割条残留高亮
-            _hover = false
+            hover = false
         }
 
         // 转发事件给子控件（非拖拽时）
@@ -272,22 +272,22 @@ export struct Splitter impl Widget, Themeable {
     // ==================== 渲染 ====================
     func render(Renderer r) {
         if not _loaded or not visible { return }
-        _relayout()
+        relayout()
 
         // 渲染子控件
         var f = _first;  if f is Widget { f.render(r) }
         var s = _second; if s is Widget { s.render(r) }
 
         // 渲染分割条
-        float dp = _divider_pos()
-        Color dc = _divColor
-        float dw = _dividerW
-        if _hover or _dragging {
-            dc = _hovColor
-            dw = _dividerW + 1.0   // 悬停/拖拽时稍粗
+        float dp = divider_pos()
+        Color dc = divColor
+        float dw = dividerW
+        if hover or _dragging {
+            dc = hovColor
+            dw = dividerW + 1.0   // 悬停/拖拽时稍粗
         }
         r.setColor(dc)
-        if _orientation == HORIZONTAL {
+        if orientation == HORIZONTAL {
             // 竖向分割条
             r.fillRect(dp - dw / 2.0, y, dw, h)
         } else {
@@ -303,8 +303,8 @@ export struct Splitter impl Widget, Themeable {
 
 // ==================== 运行时主题切换 ====================
 func applyTheme(Theme t) {
-_divColor = t.border
-_hovColor = t.accent
+divColor = t.border
+hovColor = t.accent
 // 子控件的递归由 Window._applyThemeWidget 统一处理
 }
 }

@@ -63,83 +63,83 @@ const _K_SUB   = 3      // 子菜单父项（点它 = 展开/收起 ✓）
 
 export struct PopMenu {
     Window win
-    bool   _made = false
+    bool   made = false
     Font   _font
     // 条目（扁平存 + _level 表示层级，DFS 顺序 ✓：父项紧跟其后的是它的子树 ✓）
-    Array[string] _texts = []
-    Array[int]    _kind  = []
+    pri Array[string] texts = []
+    pri Array[int]    kind  = []
     Array[string] _img   = []              // 条目图标：图片路径（"" = 无图标 ✓ 与 MenuBar 的 image 同义）
     Array[bool]   _on    = []
     Array[int]    _level = []
-    Array[bool]   _exp   = []              // 子菜单父项是否展开
+    pri Array[bool]   exp   = []              // 子菜单父项是否展开
     Array[func():void] _cb = []
-    int _curLevel = 0
+    pri int curLevel = 0
     // 图标纹理缓存（按 path 取/载 ⇒ 避免每帧重载与泄漏 ✓ 同 sdl_menu.leno 的做法）
-    Array[string] _texPath = []
-    Array[Ptr[u8]] _tex = []
-    string _lastTexPath = ""
-    Ptr[u8] _lastTex = null
-    bool _open = false
-    int  _hover = -1
+    pri Array[string] texPath = []
+    pri Array[Ptr[u8]] tex = []
+    pri string lastTexPath = ""
+    pri Ptr[u8] lastTex = null
+    pri bool open = false
+    pri int  hover = -1
     int  _w = 0
     int  _h = 0
-    int  _x = 0                            // 窗口在屏幕上的位置（点外部判定用 ✓）
-    int  _y = 0
-    int  _anchorX = 0                      // 弹出时的光标位置（展开子菜单后按它重新定位 ✓）
-    int  _anchorY = 0
-    bool _armed = false                    // 先见到"鼠标全松开"才武装 ⇒ 防开菜单那一下把自己关掉 ✗
+    pri int  x = 0                            // 窗口在屏幕上的位置（点外部判定用 ✓）
+    pri int  y = 0
+    pri int  anchorX = 0                      // 弹出时的光标位置（展开子菜单后按它重新定位 ✓）
+    pri int  anchorY = 0
+    pri bool armed = false                    // 先见到"鼠标全松开"才武装 ⇒ 防开菜单那一下把自己关掉 ✗
     // 排版结果（每次 _layout 重算 ✓）
-    Array[int]   _vIdx = []                // 可见行 → 条目下标
-    Array[int]   _vCol = []                // 可见行 → 列（= 层级 ✓）
-    Array[float] _vY   = []                // 可见行 → 列内 y
+    pri Array[int]   vIdx = []                // 可见行 → 条目下标
+    pri Array[int]   vCol = []                // 可见行 → 列（= 层级 ✓）
+    pri Array[float] vY   = []                // 可见行 → 列内 y
     Array[float] _colW = []                // 各列宽
     Array[float] _colX = []                // 各列的**窗口内偏移**（子列翻到左侧时可能为 0 ✓）
-    Array[float] _colY = []                // 各列当前 y 游标（布局用 ✓）
+    pri Array[float] colY = []                // 各列当前 y 游标（布局用 ✓）
     Array[float] _colTop = []              // 各列内容顶（-1 = 该层没展开 ⇒ 不画 ✓）
-    Array[float] _colBot = []              // 各列内容底
+    pri Array[float] colBot = []              // 各列内容底
     // 悬停变化的读数（供交互判定 ✓）
-    int _hoverCol = -1
+    pri int hoverCol = -1
 
     // ===== 建条目（第二参数 = 图标图片路径，"" = 无图标 ✓）=====
     func addItem(string t, string image, func():void cb) {
-        _push(t, _K_PLAIN, image, false, cb)
+        push(t, _K_PLAIN, image, false, cb)
     }
     func addCheck(string t, string image, bool on, func():void cb) {
-        _push(t, _K_CHECK, image, on, cb)
+        push(t, _K_CHECK, image, on, cb)
     }
-    func addSeparator() { _push("", _K_SEP, "", false, func() { }) }
+    func addSeparator() { push("", _K_SEP, "", false, func() { }) }
     // 子菜单：begin/end 之间的条目成为它的下一级（可嵌套 ✓）；父项自己不带动作 ✓
     func beginSubmenu(string t, string image = "") {
-        _push(t, _K_SUB, image, false, func() { })
-        _curLevel = _curLevel + 1
+        push(t, _K_SUB, image, false, func() { })
+        curLevel = curLevel + 1
     }
-    func endSubmenu() { if _curLevel > 0 { _curLevel = _curLevel - 1 } }
+    func endSubmenu() { if curLevel > 0 { curLevel = curLevel - 1 } }
 
-    func _push(string t, int k, string image, bool on, func():void cb) {
-        _texts.add(t); _kind.add(k); _img.add(image); _on.add(on)
-        _level.add(_curLevel); _exp.add(false); _cb.add(cb)
+    pri func push(string t, int k, string image, bool on, func():void cb) {
+        texts.add(t); kind.add(k); _img.add(image); _on.add(on)
+        _level.add(curLevel); exp.add(false); _cb.add(cb)
     }
 
     // ===== 状态维护（由调用方同步，菜单不反查 ✓）=====
     func setChecked(int idx, bool on)   { if idx >= 0 and idx < _on.len() { _on[idx] = on } }
-    func setText(int idx, string t)     { if idx >= 0 and idx < _texts.len() { _texts[idx] = t } }
+    func setText(int idx, string t)     { if idx >= 0 and idx < texts.len() { texts[idx] = t } }
     func setIcon(int idx, string image) { if idx >= 0 and idx < _img.len() { _img[idx] = image } }
-    func isExpanded(int idx): bool      { return if idx >= 0 and idx < _exp.len() then _exp[idx] else false }
+    func isExpanded(int idx): bool      { return if idx >= 0 and idx < exp.len() then exp[idx] else false }
     func setExpanded(int idx, bool v)   {                    // 程序化展开/收起（自检用 ✓）
-        if idx >= 0 and idx < _exp.len() and _kind[idx] == _K_SUB {
-            _exp[idx] = v
-            if v { _collapseLevel(_level[idx], idx) }
-            _relayout()
+        if idx >= 0 and idx < exp.len() and kind[idx] == _K_SUB {
+            exp[idx] = v
+            if v { collapseLevel(_level[idx], idx) }
+            relayout()
         }
     }
-    func isOpen(): bool { return _open }
-    func ok(): bool { return _made }          // 窗口建成功没（失败 ⇒ showAt 是空操作 ✓）
+    func isOpen(): bool { return open }
+    func ok(): bool { return made }          // 窗口建成功没（失败 ⇒ showAt 是空操作 ✓）
 
     // 程序化"点第 idx 项"（等价于用户点了它 ✓）—— 无头自测用 ✓
     // 父项 = 展开/收起；普通/勾选项 = 先关菜单再跑回调 ✓
     func clickItem(int idx) {
-        if idx < 0 or idx >= _kind.len() or _kind[idx] == _K_SEP { return }
-        if _kind[idx] == _K_SUB { setExpanded(idx, not _exp[idx]); return }
+        if idx < 0 or idx >= kind.len() or kind[idx] == _K_SEP { return }
+        if kind[idx] == _K_SUB { setExpanded(idx, not exp[idx]); return }
         var cb = _cb[idx]
         hide()
         if cb != null { cb() }
@@ -147,7 +147,7 @@ export struct PopMenu {
 
     // 释放（纹理缓存 + 字体；窗口由 run 循环收尾销毁 ✓）
     func destroy() {
-        _freeTex()
+        freeTex()
         if _font.ok { _font.close() }
     }
 
@@ -155,37 +155,37 @@ export struct PopMenu {
     // 在屏幕坐标 (x, y) 弹出：菜单**底边**贴光标（系统菜单就这么摆 ✓），并夹进屏幕可用区 ✓
     // 之后展开子菜单会**重新排版**（窗口变宽变高）⇒ 仍以这个锚点为准重新定位 ✓
     func showAt(int x, int y) {
-        if not _made { return }
-        _anchorX = x
-        _anchorY = y
-        for _exp.len() to i { _exp[i] = false }      // 每次弹出都从"只显示顶级"开始 ✓
-        _hover = -1
-        _armed = false
-        _relayout()                                  // 内部会 setSize/setPosition ✓
+        if not made { return }
+        anchorX = x
+        anchorY = y
+        for exp.len() to i { exp[i] = false }      // 每次弹出都从"只显示顶级"开始 ✓
+        hover = -1
+        armed = false
+        relayout()                                  // 内部会 setSize/setPosition ✓
         win.show()
         win.raise()
-        _open = true
+        open = true
         core.requestRedraw()
     }
 
     func hide() {
-        if not _made or not _open { return }
+        if not made or not open { return }
         win.hide()
-        _open = false
-        _hover = -1
+        open = false
+        hover = -1
     }
 
     // 主循环每拍调一次：点在**所有面板之外** ⇒ 关（不依赖焦点 ✓；先等"全松开"一次防自关 ✗）
     // 透明窗口 ⇒ 空白区域（面板之间的间隙等）也算"外面" ✓
     func poll() {
-        if not _open { return }
+        if not open { return }
         int st = core.getGlobalMouseState()
-        if st == 0 { _armed = true; return }
-        if not _armed { return }
+        if st == 0 { armed = true; return }
+        if not armed { return }
         // ⚠ getGlobalMouse() 是**多返回值**（[int, int]）⇒ 只能解构，**不能下标** ✗
         //   写 gm[0] 会抛「下标访问: 对象不支持索引」（本模块踩过一次 ✓）
         var[int, int](gx, gy) = core.getGlobalMouse()
-        if _insidePanels(_float(gx - _x), _float(gy - _y)) { return }
+        if _insidePanels(_float(gx - x), _float(gy - y)) { return }
         hide()                                        // 落在所有面板之外 ⇒ 收起（面板间隙也算外面 ✓）
     }
 
@@ -194,13 +194,13 @@ export struct PopMenu {
         for _colW.len() to l {
             if l > 0 and _colTop[l] < 0.0 { continue }
             if lx >= _colX[l] and lx < _colX[l] + _colW[l]
-               and ly >= _colPanelTop(l) and ly < _colPanelTop(l) + _colPanelH(l) { return true }
+               and ly >= colPanelTop(l) and ly < colPanelTop(l) + colPanelH(l) { return true }
         }
         return false
     }
 
     // ===== 排版（可见行 + 各列宽 + 窗口尺寸/位置 ✓）=====
-    func _subEnd(int idx): int {                     // 某父项的子树区间右端（不含 ✓）
+    pri func subEnd(int idx): int {                     // 某父项的子树区间右端（不含 ✓）
         int lv = _level[idx]
         int j = idx + 1
         while j < _level.len() and _level[j] > lv { j = j + 1 }
@@ -208,47 +208,47 @@ export struct PopMenu {
     }
 
     // 注：参数名别叫 from/to（for 语法用了这两个词 ⇒ 保留字 ✗）
-    func _collect(int lo, int hi, int level) {
+    pri func collect(int lo, int hi, int level) {
         int i = lo
         while i < hi {
             if _level[i] != level { i = i + 1; continue }
-            float rh = if _kind[i] == _K_SEP then _SEP_H else _ROW_H
-            float top = _colY[level]
-            _vIdx.add(i); _vCol.add(level); _vY.add(top)
-            _colY[level] = top + rh
+            float rh = if kind[i] == _K_SEP then _SEP_H else _ROW_H
+            float top = colY[level]
+            vIdx.add(i); vCol.add(level); vY.add(top)
+            colY[level] = top + rh
             // 该列面板范围（每级一块独立面板 ⇒ 要各自算 ✓）
             if _colTop[level] < 0.0 or top < _colTop[level] { _colTop[level] = top }
-            if top + rh > _colBot[level] { _colBot[level] = top + rh }
-            if _kind[i] == _K_SUB and _exp[i] {
-                int se = _subEnd(i)
-                if _colY[level + 1] < top { _colY[level + 1] = top }   // 下一级从父行顶部对齐飞出 ✓
-                _collect(i + 1, se, level + 1)
+            if top + rh > colBot[level] { colBot[level] = top + rh }
+            if kind[i] == _K_SUB and exp[i] {
+                int se = subEnd(i)
+                if colY[level + 1] < top { colY[level + 1] = top }   // 下一级从父行顶部对齐飞出 ✓
+                collect(i + 1, se, level + 1)
             }
             i = i + 1
         }
     }
 
     // 重排 + 重新定位 + 请求重绘（悬停展开子菜单、setExpanded 后调 ✓）
-    func _relayout() {
-        if not _made { return }
+    pri func relayout() {
+        if not made { return }
         // 各列宽 = 该层最长文字 + 固定槽位 ✓
         int maxLv = 0
         for _level.len() to i { if _level[i] > maxLv { maxLv = _level[i] } }
         _colW = []
         for maxLv + 1 to l {
             float wMax = 0.0
-            for _texts.len() to i {
-                if _level[i] != l or _kind[i] == _K_SEP { continue }
-                var[float, float](tw, th) = _font.measureString(_texts[i])
+            for texts.len() to i {
+                if _level[i] != l or kind[i] == _K_SEP { continue }
+                var[float, float](tw, th) = _font.measureString(texts[i])
                 if tw > wMax { wMax = tw }
             }
             _colW.add(wMax + _TXT_X + _CHEV_W + _RPAD)
         }
         // 可见行（DFS 展平 ✓）+ 各列内容范围
-        _vIdx = []; _vCol = []; _vY = []
-        _colY = []; _colTop = []; _colBot = []
-        for maxLv + 1 to l { _colY.add(_PAD_Y); _colTop.add(-1.0); _colBot.add(0.0) }
-        _collect(0, _level.len(), 0)
+        vIdx = []; vCol = []; vY = []
+        colY = []; _colTop = []; colBot = []
+        for maxLv + 1 to l { colY.add(_PAD_Y); _colTop.add(-1.0); colBot.add(0.0) }
+        collect(0, _level.len(), 0)
         // 屏幕可用区
         SDL_Rect rc = SDL_Rect.malloc()
         _lib.SDL_GetDisplayUsableBounds(_lib.SDL_GetPrimaryDisplay(), &rc.x)
@@ -256,12 +256,12 @@ export struct PopMenu {
         rc.free()
         // ★ 主列（0 层）的位置**只由自己决定**（底边贴锚点 + 按自身尺寸夹紧 ✓）
         //   ⇒ 子菜单是右飞还是左飞，主菜单都**纹丝不动** ✓（这正是之前被挤走的原因 ✗）
-        float mainH = _colBot[0] + _PAD_Y
-        int mainX = _anchorX
-        int mainY = _anchorY - _int(mainH)
+        float mainH = colBot[0] + _PAD_Y
+        int mainX = anchorX
+        int mainY = anchorY - _int(mainH)
         if mainX + _int(_colW[0]) > sx + sw { mainX = sx + sw - _int(_colW[0]) }
         if mainX < sx { mainX = sx }
-        if mainY < sy { mainY = _anchorY }
+        if mainY < sy { mainY = anchorY }
         if mainY + _int(mainH) > sy + sh { mainY = sy + sh - _int(mainH) }
         // 子列：右边放得下 ⇒ 贴父列右侧；放不下 ⇒ **翻到父列左边**（主菜单不动 ✓）
         Array[int] colSX = []
@@ -282,7 +282,7 @@ export struct PopMenu {
             if l == 0 or _colTop[l] < 0.0 { continue }
             if colSX[l] < wl { wl = colSX[l] }
             if colSX[l] + _int(_colW[l]) > wr { wr = colSX[l] + _int(_colW[l]) }
-            if _colBot[l] + _PAD_Y > wb { wb = _colBot[l] + _PAD_Y }
+            if colBot[l] + _PAD_Y > wb { wb = colBot[l] + _PAD_Y }
         }
         _w = wr - wl
         _h = _int(wb)
@@ -290,80 +290,80 @@ export struct PopMenu {
         for _colW.len() to l { _colX.add(_float(colSX[l] - wl)) }
         win.setSize(_w, _h)
         win.setPosition(wl, mainY)
-        _x = wl; _y = mainY
+        x = wl; y = mainY
         core.requestRedraw()
     }
 
-    func _visColOf(int idx): int {
-        for _vIdx.len() to k { if _vIdx[k] == idx { return _vCol[k] } }
+    pri func visColOf(int idx): int {
+        for vIdx.len() to k { if vIdx[k] == idx { return vCol[k] } }
         return -1
     }
 
     // 收起同级其它父项 + 更深层（展开某一项前调 ✓）
-    func _collapseLevel(int level, int keep) {
-        for _kind.len() to i {
-            if _kind[i] != _K_SUB { continue }
-            if i != keep and _level[i] >= level { _exp[i] = false }
+    pri func collapseLevel(int level, int keep) {
+        for kind.len() to i {
+            if kind[i] != _K_SUB { continue }
+            if i != keep and _level[i] >= level { exp[i] = false }
         }
     }
 
-    func _hit(float mx, float my): int {
-        for _vIdx.len() to k {
-            int c = _vCol[k]
+    pri func hit(float mx, float my): int {
+        for vIdx.len() to k {
+            int c = vCol[k]
             float x0 = _colX[c]
             if mx < x0 or mx >= x0 + _colW[c] { continue }
-            float rh = if _kind[_vIdx[k]] == _K_SEP then _SEP_H else _ROW_H
-            if my >= _vY[k] and my < _vY[k] + rh { return _vIdx[k] }
+            float rh = if kind[vIdx[k]] == _K_SEP then _SEP_H else _ROW_H
+            if my >= vY[k] and my < vY[k] + rh { return vIdx[k] }
         }
         return -1
     }
 
     // 悬停变化：父项 ⇒ 展开它（同级其它收起）；普通项 ⇒ 收起"本级及更深"的展开（保留祖先 ✓）
-    func _onHover(int idx) {
+    pri func onHover(int idx) {
         if idx < 0 { return }                               // 移出窗口 ⇒ 保持现状（点外部才关 ✓）
         bool changed = false
-        if _kind[idx] == _K_SUB {
-            if not _exp[idx] { _exp[idx] = true; changed = true }
+        if kind[idx] == _K_SUB {
+            if not exp[idx] { exp[idx] = true; changed = true }
             int lv = _level[idx]
-            for _kind.len() to i {
-                if i != idx and _kind[i] == _K_SUB and _level[i] >= lv and _exp[i] { _exp[i] = false; changed = true }
+            for kind.len() to i {
+                if i != idx and kind[i] == _K_SUB and _level[i] >= lv and exp[i] { exp[i] = false; changed = true }
             }
         } else {
             int lv = _level[idx]
-            for _kind.len() to i {
-                if _kind[i] == _K_SUB and _level[i] >= lv and _exp[i] { _exp[i] = false; changed = true }
+            for kind.len() to i {
+                if kind[i] == _K_SUB and _level[i] >= lv and exp[i] { exp[i] = false; changed = true }
             }
         }
-        if changed { _relayout() }
+        if changed { relayout() }
     }
 
     // ===== 绘制 / 事件（run 循环自动驱动 ✓）=====
     // 纹理缓存：按 path 取/载（MRU 快路径，连续多条常共用同一图标 ✓）—— 同 sdl_menu.leno
-    func _getTex(Renderer r, string path): Ptr[u8] {
+    pri func getTex(Renderer r, string path): Ptr[u8] {
         if path == "" { return null }
-        if path == _lastTexPath and _lastTex != null { return _lastTex }
-        for _texPath.len() to i {
-            if _texPath[i] == path {
-                _lastTexPath = path; _lastTex = _tex[i]
-                return _tex[i]
+        if path == lastTexPath and lastTex != null { return lastTex }
+        for texPath.len() to i {
+            if texPath[i] == path {
+                lastTexPath = path; lastTex = tex[i]
+                return tex[i]
             }
         }
         Ptr[u8] t = img.loadTexture(r.handle, path)
-        _texPath.add(path); _tex.add(t)
-        _lastTexPath = path; _lastTex = t
+        texPath.add(path); tex.add(t)
+        lastTexPath = path; lastTex = t
         return t
     }
-    func _freeTex() {
-        for _tex.len() to i {
-            if _tex[i] != null { _lib.SDL_DestroyTexture(_tex[i]) }
+    pri func freeTex() {
+        for tex.len() to i {
+            if tex[i] != null { _lib.SDL_DestroyTexture(tex[i]) }
         }
-        _texPath = []; _tex = []
-        _lastTexPath = ""; _lastTex = null
+        texPath = []; tex = []
+        lastTexPath = ""; lastTex = null
     }
 
     // 画条目图标（aspectFit 居中到 _ICO_W 见方 ✓）；返回是否画了
-    func _drawImg(Renderer r, string path, float x, float y): bool {
-        Ptr[u8] tex = _getTex(r, path)
+    pri func drawImg(Renderer r, string path, float x, float y): bool {
+        Ptr[u8] tex = getTex(r, path)
         if tex == null { return false }
         r.setTextureAlpha(tex, 255)
         r.setTextureColor(tex, #FFFFFFFF)
@@ -378,93 +378,93 @@ export struct PopMenu {
         return true
     }
 
-    func _colPanelTop(int l): float { return if l == 0 then 0.0 else _colTop[l] - _PAD_Y }
-    func _colPanelH(int l): float {
-        return if l == 0 then _colBot[0] + _PAD_Y else _colBot[l] + _PAD_Y - (_colTop[l] - _PAD_Y)
+    pri func colPanelTop(int l): float { return if l == 0 then 0.0 else _colTop[l] - _PAD_Y }
+    pri func colPanelH(int l): float {
+        return if l == 0 then colBot[0] + _PAD_Y else colBot[l] + _PAD_Y - (_colTop[l] - _PAD_Y)
     }
 
-    func _render(Renderer ren) {
-        if not _open { return }
+    func render(Renderer ren) {
+        if not open { return }
         ren.clearColor(#00000000)                  // 透明窗口：先清成全透明（否则上一帧残留 ✗）
         Theme th = thm.getTheme()
         // 每级各一块独立面板（子菜单是**另一块面板**，不是同一块里分列 ✗）
         for _colW.len() to l {
             if l > 0 and _colTop[l] < 0.0 { continue }
             ren.setColor(th.bgAlt)
-            ren.fillRoundedRect(_colX[l], _colPanelTop(l), _colW[l], _colPanelH(l), _RADIUS)
+            ren.fillRoundedRect(_colX[l], colPanelTop(l), _colW[l], colPanelH(l), _RADIUS)
             ren.setColor(th.bg)
-            ren.drawRoundedRect(_colX[l], _colPanelTop(l), _colW[l], _colPanelH(l), _RADIUS)
+            ren.drawRoundedRect(_colX[l], colPanelTop(l), _colW[l], colPanelH(l), _RADIUS)
         }
         // 相邻层交界处的"桥"：子面板与父面板紧贴（_GAP = 0 ✓），两条圆角描边会在交界处
         // 残留一道线/抗锯齿缝 ⇒ 用面板底色盖 2px（避开转角圆弧），看起来连成一体 ✓（同原生菜单 ✓）
         for _colW.len() to l {
             if l == 0 or _colTop[l] < 0.0 { continue }
             float bx = if _colX[l] > _colX[l - 1] then _colX[l - 1] + _colW[l - 1] else _colX[l - 1]
-            float t0 = _colPanelTop(l - 1)
-            float t1 = _colPanelTop(l)
+            float t0 = colPanelTop(l - 1)
+            float t1 = colPanelTop(l)
             float y0 = (if t1 > t0 then t1 else t0) + _RADIUS - 1.0
-            float y1 = (if t1 + _colPanelH(l) < t0 + _colPanelH(l - 1) then t1 + _colPanelH(l) else t0 + _colPanelH(l - 1)) - _RADIUS + 1.0
+            float y1 = (if t1 + colPanelH(l) < t0 + colPanelH(l - 1) then t1 + colPanelH(l) else t0 + colPanelH(l - 1)) - _RADIUS + 1.0
             if y1 > y0 {
                 ren.setColor(th.bgAlt)
                 ren.fillRect(bx - 1.0, y0, 2.0, y1 - y0)
             }
         }
-        for _vIdx.len() to k {
-            int idx = _vIdx[k]
-            int c = _vCol[k]
+        for vIdx.len() to k {
+            int idx = vIdx[k]
+            int c = vCol[k]
             float x0 = _colX[c]
             float cw = _colW[c]
-            float y = _vY[k]
+            float y = vY[k]
             // 分隔线（列内缩进 ✓）
-            if _kind[idx] == _K_SEP {
+            if kind[idx] == _K_SEP {
                 ren.setColor(th.bgHover)
                 ren.fillRect(x0 + _ICO_X, y + _SEP_H / 2.0, cw - _ICO_X - _RPAD, 1.0)
                 continue
             }
-            bool hov = (idx == _hover)
+            bool hov = (idx == hover)
             if hov {
                 ren.setColor(th.bgHover)
                 ren.fillRoundedRect(x0 + 3.0, y, cw - 6.0, _ROW_H, 5.0)
             }
             // 图标（图片 ✓ 原色不动；勾选态靠右侧圆点 + 文字亮度区分 ✓）
-            _drawImg(ren, _img[idx], x0 + _ICO_X, y + (_ROW_H - _ICO_W) / 2.0)
+            drawImg(ren, _img[idx], x0 + _ICO_X, y + (_ROW_H - _ICO_W) / 2.0)
             ren.setColor(if hov then th.txt else th.txtInput)
-            ren.drawText(_font, _texts[idx], x0 + _TXT_X, y + 6.0, if hov then th.txt else th.txtInput)
-            if _kind[idx] == _K_SUB {
+            ren.drawText(_font, texts[idx], x0 + _TXT_X, y + 6.0, if hov then th.txt else th.txtInput)
+            if kind[idx] == _K_SUB {
                 // 子菜单指示：实心三角（与 MenuBar 的 drawTriangle 一致 ✓）——展开时朝下 ✓
                 Color ac = th.txtDim
-                float ang = if _exp[idx] then 180.0 else 90.0
+                float ang = if exp[idx] then 180.0 else 90.0
                 ren.drawTriangle(x0 + cw - _CHEV_W + 5.0, y + _ROW_H / 2.0, 5.0, ang,
                                  _float(thm.colorR(ac)), _float(thm.colorG(ac)), _float(thm.colorB(ac)), 255.0)
-            } else if _kind[idx] == _K_CHECK and _on[idx] {
+            } else if kind[idx] == _K_CHECK and _on[idx] {
                 ren.setColor(th.accent)
                 ren.fillCircle(x0 + cw - _CHEV_W + 3.0, y + _ROW_H / 2.0, 3.0)   // 勾选态：右侧圆点 ✓
             }
         }
     }
 
-    func _process(Event ev): bool {
-        if not _open { return true }
+    func process(Event ev): bool {
+        if not open { return true }
         if ev.isWindowClose() { hide(); return true }
         if ev.isWindowFocusLost() { hide(); return true }        // 失焦即关（点别处/Alt+Tab ✓）
         if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { hide(); return true }
         if ev.isMouseMotion() {
             var[float, float](mx, my) = ev.mousePos()
-            int hit = _hit(mx, my)
-            if hit != _hover {
-                _hover = hit
-                _hoverCol = if hit >= 0 then _visColOf(hit) else -1
+            int hit = hit(mx, my)
+            if hit != hover {
+                hover = hit
+                hoverCol = if hit >= 0 then visColOf(hit) else -1
                 core.markFrameRedraw()
-                _onHover(hit)                                    // 悬停父项 ⇒ 飞出下一级 ✓
+                onHover(hit)                                    // 悬停父项 ⇒ 飞出下一级 ✓
             }
             return true
         }
         if ev.isMouseButtonDown() and ev.mouseButton() == 1 {
             var[float, float](mx, my) = ev.mousePos()
-            int hit = _hit(mx, my)
-            if hit >= 0 and _kind[hit] != _K_SEP {
-                if _kind[hit] == _K_SUB {
-                    setExpanded(hit, not _exp[hit])              // 父项：点一下展开/收起 ✓
+            int hit = hit(mx, my)
+            if hit >= 0 and kind[hit] != _K_SEP {
+                if kind[hit] == _K_SUB {
+                    setExpanded(hit, not exp[hit])              // 父项：点一下展开/收起 ✓
                 } else {
                     var cb = _cb[hit]
                     hide()                                       // 先关再跑动作（动作里可能又要弹窗 ✓）
@@ -488,10 +488,10 @@ export func createPopMenu(Dict opts): PopMenu {
                 | WindowFlag.HIDDEN | WindowFlag.TRANSPARENT   // 透明：面板之间/四周透出桌面 ✓
     Window w = wnd.createWindow({title: "popmenu", w: 200, h: 120, flags: flags})
     pm.win = w
-    pm._made = w.ok
+    pm.made = w.ok
     if w.ok {
-        w.registerOnly(func(Event e): bool { return pm._process(e) },
-                       func(Renderer r) { pm._render(r) })
+        w.registerOnly(func(Event e): bool { return pm.process(e) },
+                       func(Renderer r) { pm.render(r) })
     }
     return pm
 }

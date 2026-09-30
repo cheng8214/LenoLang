@@ -23,31 +23,31 @@ func _opts_keys(): Array[string] {
 export struct ProgressBar impl Widget {
     float x = 0.0, y = 0.0, w = 200.0, h = 20.0
     float minV = 0.0, maxV = 100.0, value = 0.0
-    bool _clickable = false, _showText = true
-    string _fontPath = ""; float _fontSize = 15.0; int _fontStyle = 0; Font? _font
-    Color _trkColor = #3C3C48FF          // 轨道背景色
-    Color _fillColor = #3CC850FF     // 已选填充色
-    Color _txtColor = #EBEBF5FF                // 文字色
-    int _cursor = SystemCursor.POINTER
-    bool hover = false; bool _wasHover = false; bool _dragging = false; bool enabled = true; bool visible = true; bool _loaded = false
+    pri bool clickable = false, showText = true
+    pri string fontPath = ""; float _fontSize = 15.0; pri int fontStyle = 0; Font? _font
+    pri Color trkColor = #3C3C48FF          // 轨道背景色
+    pri Color fillColor = #3CC850FF     // 已选填充色
+    pri Color txtColor = #EBEBF5FF                // 文字色
+    pri int cursor = SystemCursor.POINTER
+    bool hover = false; pri bool wasHover = false; bool _dragging = false; bool enabled = true; bool visible = true; bool _loaded = false
     string _tip = ""
-    float _animVal = 0.0, _animTarget = 0.0, _animLast = 0.0, _animSpeed = 12.0; bool _animating = false
-    float _fontH = 0.0          // 字体行高缓存（字体不变时为常量，避免每帧 measureString）
-    func(float):void _onChange
+    pri float animVal = 0.0, animTarget = 0.0, animLast = 0.0, animSpeed = 12.0; pri bool animating = false
+    pri float fontH = 0.0          // 字体行高缓存（字体不变时为常量，避免每帧 measureString）
+    pri func(float):void onChange
 
-    func _ratio(): float {
+    pri func ratio(): float {
         float span = maxV - minV
         if span <= 0.0 { return 0.0 }
-        return maths.max(0.0, maths.min((_animVal - minV) / span, 1.0))
+        return maths.max(0.0, maths.min((animVal - minV) / span, 1.0))
     }
 
-    func _ensure_font() {
+    pri func ensure_font() {
         if _font == null or not _font.ok {
             if _font != null and _font.ok { fnt.releaseFont(_font) }
-            if _fontPath != "" { _font = fnt.acquireFont(_fontPath, _fontSize) }
+            if fontPath != "" { _font = fnt.acquireFont(fontPath, _fontSize) }
             else { _font = fnt.acquireFontAuto(_fontSize) }
-            if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
-            if _font.ok { var[float, float](_agw, _agh) = _font.measureString("Ag"); _fontH = _agh }
+            if _font.ok and fontStyle != 0 { _font.setStyle(fontStyle) }
+            if _font.ok { var[float, float](_agw, _agh) = _font.measureString("Ag"); fontH = _agh }
         }
     }
 
@@ -56,9 +56,9 @@ export struct ProgressBar impl Widget {
     func set(Dict opts) {
         dochk.check("sdl_progress", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
         Theme th = theme.getTheme()
-        _trkColor = th.bgAlt
-        _fillColor = th.btnSuccess
-        _txtColor = th.txt
+        trkColor = th.bgAlt
+        fillColor = th.btnSuccess
+        txtColor = th.txt
         x         = opts.get("x", 0)
         y         = opts.get("y", 0)
         w         = opts.get("w", 200)
@@ -66,26 +66,26 @@ export struct ProgressBar impl Widget {
         minV      = opts.get("min", 0.0)
         maxV      = opts.get("max", 100.0)
         value     = opts.get("value", 0.0)
-        _clickable = opts.get("clickable", false)
-        _showText  = opts.get("show_text", true)
+        clickable = opts.get("clickable", false)
+        showText  = opts.get("show_text", true)
         _fontSize = opts.get("font_size", 15)
-        _fontPath = opts.get("font_path", "")
-        _fontStyle = opts.get("font_style", 0)
+        fontPath = opts.get("font_path", "")
+        fontStyle = opts.get("font_style", 0)
 
         // 颜色：opts 未传或类型不匹配则保持默认值
-        if opts.get("track_color") is Color => t { _trkColor = t }
-        if opts.get("fill_color") is Color => t { _fillColor = t }
-        if opts.get("text_color") is Color => t { _txtColor = t }
+        if opts.get("track_color") is Color => t { trkColor = t }
+        if opts.get("fill_color") is Color => t { fillColor = t }
+        if opts.get("text_color") is Color => t { txtColor = t }
 
-        _cursor = opts.get("cursor", SystemCursor.POINTER)
+        cursor = opts.get("cursor", SystemCursor.POINTER)
         enabled = opts.get("enabled", true)
         visible = opts.get("visible", true)
         // hover/_wasHover/_dragging 默认见字段声明
         value = maths.max(minV, maths.min(value, maxV))
-        _animVal = value; _animTarget = value; _animating = false; _animLast = 0.0
-        _animSpeed = opts.get("anim_speed", 12.0)
+        animVal = value; animTarget = value; animating = false; animLast = 0.0
+        animSpeed = opts.get("anim_speed", 12.0)
         _tip = opts.get("tip", "")
-        _ensure_font()
+        ensure_font()
         _loaded = true
     }
 
@@ -94,14 +94,14 @@ export struct ProgressBar impl Widget {
         float nv = maths.max(minV, maths.min(v, maxV))
         if nv != value {
             value = nv
-            _animTarget = nv
-            _animating = true
-            _animLast = 0.0
-            if _onChange != null { _onChange(value) }
+            animTarget = nv
+            animating = true
+            animLast = 0.0
+            if onChange != null { onChange(value) }
         }
     }
     func get_value(): float      { return value }
-    func get_display_value(): float { return _animVal }   // 动画当前显示值（用于观察过渡）
+    func get_display_value(): float { return animVal }   // 动画当前显示值（用于观察过渡）
     func set_enabled(bool e)      { enabled = e }
     func set_visible(bool v)       { visible = v }
     func is_visible(): bool        { return visible }
@@ -113,13 +113,13 @@ export struct ProgressBar impl Widget {
     func set_pos(float px, float py) { x = px; y = py }
     func set_size(float sw, float sh) { w = sw; h = sh }
 
-    func on_change(func(float):void cb) { _onChange = cb }
+    func on_change(func(float):void cb) { onChange = cb }
 
     func contains(float mx, float my): bool {
         return mx >= x and mx <= x + w and my >= y and my <= y + h
     }
 
-    func _value_from_x(float mx): float {
+    pri func value_from_x(float mx): float {
         float t = (mx - x) / w
         if t < 0.0 { t = 0.0 }
         if t > 1.0 { t = 1.0 }
@@ -131,7 +131,7 @@ export struct ProgressBar impl Widget {
         if not _loaded { return }
         if not visible { return }
         if not enabled { hover = false; _dragging = false; return }
-        if not _clickable {
+        if not clickable {
             // 只读模式：仅处理悬停提示，不改变 hover 状态（避免与可交互模式的 hover 冲突）
             if ev.isMouseMotion() {
                 var[float, float](mx, my) = ev.mousePos()
@@ -148,21 +148,21 @@ export struct ProgressBar impl Widget {
 
         if ev.isMouseMotion() {
             var[float, float](mx, my) = ev.mousePos()
-            _wasHover = hover
+            wasHover = hover
             hover = contains(mx, my)
             if _dragging {
-                value = _value_from_x(mx)
-                _animVal = value          // 拖拽时实时跟随，取消动画延迟
-                _animating = false
-                if _onChange != null { _onChange(value) }
+                value = value_from_x(mx)
+                animVal = value          // 拖拽时实时跟随，取消动画延迟
+                animating = false
+                if onChange != null { onChange(value) }
                 core.markFrameRedraw()
-            } else if _wasHover != hover {
+            } else if wasHover != hover {
                 core.markFrameRedraw()    // hover 变化也需重绘（颜色高亮）
             } else {
                 core.markFrameMotion()
             }
-            if _cursor >= 0 {
-                if hover { core.requestCursor(_cursor) }
+            if cursor >= 0 {
+                if hover { core.requestCursor(cursor) }
             }
         }
 
@@ -172,35 +172,35 @@ export struct ProgressBar impl Widget {
             var[float, float](_dmx, _dmy) = ev.mousePos()
             if contains(_dmx, _dmy) {
                 _dragging = true
-                value = _value_from_x(_dmx)
-                _animTarget = value
-                _animating = true          // 单击跳转：从当前显示位置平滑动画过去
-                _animLast = 0.0
-                if _onChange != null { _onChange(value) }
+                value = value_from_x(_dmx)
+                animTarget = value
+                animating = true          // 单击跳转：从当前显示位置平滑动画过去
+                animLast = 0.0
+                if onChange != null { onChange(value) }
             }
         }
     }
 
     // ==================== 动画步进（每帧由 render 调用） ====================
-    func _step_anim() {
-        if not _animating { return }
-        if _animSpeed <= 0.0 { _animVal = _animTarget; _animating = false; return }  // 关闭动画：立即到位
+    pri func step_anim() {
+        if not animating { return }
+        if animSpeed <= 0.0 { animVal = animTarget; animating = false; return }  // 关闭动画：立即到位
         float now = _float(core.getTicks())
         float dt = 0.0
-        if _animLast > 0.0 { dt = (now - _animLast) / 1000.0 }
-        _animLast = now
-        float diff = _animTarget - _animVal
+        if animLast > 0.0 { dt = (now - animLast) / 1000.0 }
+        animLast = now
+        float diff = animTarget - animVal
         float ad = diff
         if ad < 0.0 { ad = -ad }
         float eps = (maxV - minV) * 0.001
         if eps < 0.0001 { eps = 0.0001 }
         if ad <= eps {
-            _animVal = _animTarget
-            _animating = false
+            animVal = animTarget
+            animating = false
         } else if dt > 0.0 {
-            float f = _animSpeed * dt
+            float f = animSpeed * dt
             if f > 1.0 { f = 1.0 }
-            _animVal += diff * f
+            animVal += diff * f
         }
     }
 
@@ -208,35 +208,35 @@ export struct ProgressBar impl Widget {
     func render(Renderer r) {
         if not _loaded { return }
         if not visible { return }
-        _ensure_font()
-        _step_anim()
-        if _animating { core.requestRedraw() }
+        ensure_font()
+        step_anim()
+        if animating { core.requestRedraw() }
 
         // 轨道背景
-        Color trkC = _trkColor
-        if not enabled { trkC = theme.packColor(theme.colorR(_trkColor) / 2, theme.colorG(_trkColor) / 2, theme.colorB(_trkColor) / 2) }
+        Color trkC = trkColor
+        if not enabled { trkC = theme.packColor(theme.colorR(trkColor) / 2, theme.colorG(trkColor) / 2, theme.colorB(trkColor) / 2) }
         r.setColor(trkC)
         r.fillRoundedRect(x, y, w, h, h / 2.0)
 
         // 已选填充
-        float ratio = _ratio()
+        float ratio = ratio()
         float fillW = ratio * w
-        Color filC = _fillColor
-        if not enabled { filC = theme.packColor(theme.colorR(_fillColor) / 2, theme.colorG(_fillColor) / 2, theme.colorB(_fillColor) / 2) }
+        Color filC = fillColor
+        if not enabled { filC = theme.packColor(theme.colorR(fillColor) / 2, theme.colorG(fillColor) / 2, theme.colorB(fillColor) / 2) }
         if fillW > 1.0 {
             r.setColor(filC)
             r.fillRoundedRect(x, y, fillW, h, h / 2.0)
         }
 
         // 文字（百分比）
-        if _showText and _font != null and _font.ok {
+        if showText and _font != null and _font.ok {
             int pct = _int(ratio * 100.0)
             string label = $"{pct}%"
             var[float, float](tw, th) = _font.measureString(label)
             float tx = x + w / 2.0 - tw / 2.0
             float ty = y + h / 2.0 - th / 2.0
-            Color tc = _txtColor
-            if not enabled { tc = theme.packColor(theme.colorR(_txtColor) / 2, theme.colorG(_txtColor) / 2, theme.colorB(_txtColor) / 2) }
+            Color tc = txtColor
+            if not enabled { tc = theme.packColor(theme.colorR(txtColor) / 2, theme.colorG(txtColor) / 2, theme.colorB(txtColor) / 2) }
             r.drawText(_font, label, tx, ty, tc)
         }
     }

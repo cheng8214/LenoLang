@@ -90,119 +90,119 @@ export struct TitleBar impl Widget, Themeable {
     float x = 0.0, y = 0.0, w = 1000.0, h = 32.0
 
     // ==================== 配置 ====================
-    string _title = ""
+    pri string title = ""
     float  _fontSize = 15.0
-    string _fontPath = ""
+    pri string fontPath = ""
     Font?  _font
-    float  _btnWidth = 40.0
-    float  _btnSpacing = 0.0      // 按钮之间的间距
-    float  _titlePad = 12.0       // 标题水平内边距
-    int    _titleAlign = ALIGN_LEFT   // 标题对齐（ALIGN_LEFT/ALIGN_CENTER）
-    int    _btnAlign = BTN_ALIGN_RIGHT // 按钮组位置（BTN_ALIGN_RIGHT/BTN_ALIGN_LEFT）
+    pri float  btnWidth = 40.0
+    pri float  btnSpacing = 0.0      // 按钮之间的间距
+    pri float  titlePad = 12.0       // 标题水平内边距
+    pri int    titleAlign = ALIGN_LEFT   // 标题对齐（ALIGN_LEFT/ALIGN_CENTER）
+    pri int    btnAlign = BTN_ALIGN_RIGHT // 按钮组位置（BTN_ALIGN_RIGHT/BTN_ALIGN_LEFT）
 
     // 中间控件（VS Code 风格：在标题和按钮之间插入自定义控件）
-    Widget? _centerWidget = null
+    pri Widget? centerWidget = null
 
     // 嵌入式 MenuBar 专用引用（用于 renderPopup 转发）
-    MenuBar? _embeddedMenu = null
-    bool _centerIsMenu = false
+    pri MenuBar? embeddedMenu = null
+    pri bool centerIsMenu = false
 
     // 按钮可见性
-    bool _showMinimize = true
-    bool _showMaximize = true
-    bool _showClose = true
+    pri bool showMinimize = true
+    pri bool showMaximize = true
+    pri bool showClose = true
 
     // ==================== 颜色 ====================
-    Color _bgColor = #262830FF
-    Color _txColor = #C8D1E5FF
-    Color _hovColor = #37404CFF
-    Color _closeHovColor = #E81123FF
-    Color _iconColor = #C8D1E5FF
-    Color _sepColor = #373A44FF
-    bool _showSeparator = true
+    pri Color bgColor = #262830FF
+    pri Color txColor = #C8D1E5FF
+    pri Color hovColor = #37404CFF
+    pri Color closeHovColor = #E81123FF
+    pri Color iconColor = #C8D1E5FF
+    pri Color sepColor = #373A44FF
+    pri bool showSeparator = true
 
     // ==================== 图标图片（可选） ====================
-    string _imgMin = "";  Ptr[u8]? _texMin;  string _loadMin = ""
-    string _imgMax = "";  Ptr[u8]? _texMax;  string _loadMax = ""
-    string _imgRestore = ""; Ptr[u8]? _texRestore; string _loadRestore = ""
-    string _imgClose = ""; Ptr[u8]? _texClose; string _loadClose = ""
-    float _iconImgSize = 16.0
+    pri string imgMin = "";  pri Ptr[u8]? texMin;  pri string loadMin = ""
+    pri string imgMax = "";  pri Ptr[u8]? texMax;  pri string loadMax = ""
+    pri string imgRestore = ""; pri Ptr[u8]? texRestore; pri string loadRestore = ""
+    pri string imgClose = ""; pri Ptr[u8]? texClose; pri string loadClose = ""
+    pri float iconImgSize = 16.0
 
     // ==================== 状态 ====================
-    int    _btnHover = BTN_NONE   // 悬停按钮（BTN_NONE/MIN/MAX/CLOSE）
-    bool   _maximized = false
+    pri int    btnHover = BTN_NONE   // 悬停按钮（BTN_NONE/MIN/MAX/CLOSE）
+    pri bool   maximized = false
     bool   _dragging = false
-    int    _motionSkipCount = 0  // 窗口状态切换后跳过合成 Motion 的 hover 更新（防止关闭按钮误红）
-    int    _dragStartGX = 0, _dragStartGY = 0
-    int    _dragStartWinX = 0, _dragStartWinY = 0
-    Ptr[u8] _winHandle = null
+    pri int    motionSkipCount = 0  // 窗口状态切换后跳过合成 Motion 的 hover 更新（防止关闭按钮误红）
+    pri int    dragStartGX = 0, dragStartGY = 0
+    pri int    dragStartWinX = 0, dragStartWinY = 0
+    pri Ptr[u8] winHandle = null
     // ★ 窗口尺寸缓存：避免每帧调用 SDL_GetWindowSize（仅在拖拽/缩放后置脏）
-    int _cachedWinW = 0
-    int _cachedWinH = 0
-    bool _winSizeDirty = true
+    pri int cachedWinW = 0
+    pri int cachedWinH = 0
+    pri bool winSizeDirty = true
     bool   _loaded = false
-    bool   _borderlessApplied = false
-    bool   _closeRequested = false  // 关闭按钮被按下（示例查询后重置）
+    pri bool   borderlessApplied = false
+    pri bool   closeRequested = false  // 关闭按钮被按下（示例查询后重置）
 
     // ==================== 手动边缘缩放（无边框窗口用） ====================
-    int    _resizeEdge = EDGE_NONE
-    int    _resizeStartGX = 0, _resizeStartGY = 0
-    int    _resizeStartWinX = 0, _resizeStartWinY = 0
-    int    _resizeStartW = 0, _resizeStartH = 0
-    float  _resizeEdgeThreshold = 6.0   // 边缘检测阈值（像素）
+    pri int    resizeEdge = EDGE_NONE
+    pri int    resizeStartGX = 0, resizeStartGY = 0
+    pri int    resizeStartWinX = 0, resizeStartWinY = 0
+    pri int    resizeStartW = 0, resizeStartH = 0
+    pri float  resizeEdgeThreshold = 6.0   // 边缘检测阈值（像素）
 
     // ==================== 回调 ====================
-    func():void _onClose = null
-    func():void _onMinimize = null
-    func():void _onMaximize = null
+    pri func():void onClose = null
+    pri func():void onMinimize = null
+    pri func():void onMaximize = null
 
     // ==================== set 初始化 ====================
 
     func set(Dict opts) {
         dochk.check("sdl_titlebar", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
         h = opts.get("height", 32.0)
-        _title = opts.get("title", "")
+        title = opts.get("title", "")
         _fontSize = opts.get("font_size", 15.0)
-        _fontPath = opts.get("font_path", "")
-        _btnWidth = opts.get("btn_width", 40.0)
-        _btnSpacing = opts.get("btn_spacing", 0.0)
-        _titlePad = opts.get("title_pad", 12.0)
+        fontPath = opts.get("font_path", "")
+        btnWidth = opts.get("btn_width", 40.0)
+        btnSpacing = opts.get("btn_spacing", 0.0)
+        titlePad = opts.get("title_pad", 12.0)
         var align = opts.get("title_align", "left")
         if align is string {
-            if align == "center" { _titleAlign = ALIGN_CENTER } else { _titleAlign = ALIGN_LEFT }
+            if align == "center" { titleAlign = ALIGN_CENTER } else { titleAlign = ALIGN_LEFT }
         }
         var balign = opts.get("btn_align", "right")
         if balign is string {
-            if balign == "left" { _btnAlign = BTN_ALIGN_LEFT } else { _btnAlign = BTN_ALIGN_RIGHT }
+            if balign == "left" { btnAlign = BTN_ALIGN_LEFT } else { btnAlign = BTN_ALIGN_RIGHT }
         }
-        _showMinimize = opts.get("show_minimize", true)
-        _showMaximize = opts.get("show_maximize", true)
-        _showClose = opts.get("show_close", true)
-        _showSeparator = opts.get("show_separator", true)
+        showMinimize = opts.get("show_minimize", true)
+        showMaximize = opts.get("show_maximize", true)
+        showClose = opts.get("show_close", true)
+        showSeparator = opts.get("show_separator", true)
 
         // 颜色：opts 未传则保持默认值
-        if opts.get("bg_color") is Color => t { _bgColor = t }
-        if opts.get("text_color") is Color => t { _txColor = t }
-        if opts.get("hover_color") is Color => t { _hovColor = t }
-        if opts.get("close_hover_color") is Color => t { _closeHovColor = t }
-        if opts.get("icon_color") is Color => t { _iconColor = t }
-        if opts.get("separator_color") is Color => t { _sepColor = t }
+        if opts.get("bg_color") is Color => t { bgColor = t }
+        if opts.get("text_color") is Color => t { txColor = t }
+        if opts.get("hover_color") is Color => t { hovColor = t }
+        if opts.get("close_hover_color") is Color => t { closeHovColor = t }
+        if opts.get("icon_color") is Color => t { iconColor = t }
+        if opts.get("separator_color") is Color => t { sepColor = t }
 
-        _imgMin = opts.get("icon_minimize", "")
-        _imgMax = opts.get("icon_maximize", "")
-        _imgRestore = opts.get("icon_restore", "")
-        _imgClose = opts.get("icon_close", "")
-        _iconImgSize = opts.get("icon_size", 16.0)
+        imgMin = opts.get("icon_minimize", "")
+        imgMax = opts.get("icon_maximize", "")
+        imgRestore = opts.get("icon_restore", "")
+        imgClose = opts.get("icon_close", "")
+        iconImgSize = opts.get("icon_size", 16.0)
 
-        _ensure_font()
+        ensure_font()
         _loaded = true
     }
 
-    func _ensure_font() {
+    pri func ensure_font() {
         if _font == null or not _font.ok {
             if _font != null and _font.ok { fnt.releaseFont(_font) }
-            if _fontPath != "" {
-                _font = fnt.acquireFont(_fontPath, _fontSize)
+            if fontPath != "" {
+                _font = fnt.acquireFont(fontPath, _fontSize)
             } else {
                 _font = fnt.acquireFontAuto(_fontSize)
             }
@@ -214,8 +214,8 @@ export struct TitleBar impl Widget, Themeable {
     // 绑定窗口句柄（win.add 时由 Window._passWindowHandle 调用，或手动调用）
     // 自动去掉系统标题栏边框，恢复缩放能力，并修正最大化状态
     func set_window_handle(Ptr[u8] handle) {
-        _winHandle = handle
-        if not _borderlessApplied and handle != null {
+        winHandle = handle
+        if not borderlessApplied and handle != null {
             // 1. 去掉系统标题栏边框
             core.lib().SDL_SetWindowBordered(handle, false)
             // 2. 恢复缩放能力（SDL_SetWindowBordered 在 Windows 上会去掉 WS_THICKFRAME，
@@ -227,9 +227,9 @@ export struct TitleBar impl Widget, Themeable {
             if core.isWindowMaximized(handle) {
                 core.lib().SDL_RestoreWindow(handle)
                 core.lib().SDL_MaximizeWindow(handle)
-                _maximized = true
+                maximized = true
             }
-            _borderlessApplied = true
+            borderlessApplied = true
         }
     }
 
@@ -250,34 +250,34 @@ export struct TitleBar impl Widget, Themeable {
     // ==================== 按钮位置计算 ====================
     // 根据 _btnAlign 从右到左（BTN_ALIGN_RIGHT）或从左到右（BTN_ALIGN_LEFT）排列按钮
     // 返回各按钮的起始 X 坐标（-1 表示该按钮不显示）
-    func _btnPositions(): Dict {
+    pri func btnPositions(): Dict {
         Dict pos = {}
-        if _btnAlign == BTN_ALIGN_LEFT {
+        if btnAlign == BTN_ALIGN_LEFT {
             // macOS 风格：按钮在左侧，从左到右排列
             float curX = x
-            if _showMinimize {
+            if showMinimize {
                 pos["minimize"] = curX
-                curX = curX + _btnWidth + _btnSpacing
+                curX = curX + btnWidth + btnSpacing
             } else { pos["minimize"] = -1.0 }
-            if _showMaximize {
+            if showMaximize {
                 pos["maximize"] = curX
-                curX = curX + _btnWidth + _btnSpacing
+                curX = curX + btnWidth + btnSpacing
             } else { pos["maximize"] = -1.0 }
-            if _showClose {
+            if showClose {
                 pos["close"] = curX
             } else { pos["close"] = -1.0 }
         } else {
             // Windows/Linux 风格：按钮在右侧，从右到左排列
-            float curX = w - _btnWidth
-            if _showClose {
+            float curX = w - btnWidth
+            if showClose {
                 pos["close"] = curX
-                curX = curX - _btnWidth - _btnSpacing
+                curX = curX - btnWidth - btnSpacing
             } else { pos["close"] = -1.0 }
-            if _showMaximize {
+            if showMaximize {
                 pos["maximize"] = curX
-                curX = curX - _btnWidth - _btnSpacing
+                curX = curX - btnWidth - btnSpacing
             } else { pos["maximize"] = -1.0 }
-            if _showMinimize {
+            if showMinimize {
                 pos["minimize"] = curX
             } else { pos["minimize"] = -1.0 }
         }
@@ -285,50 +285,50 @@ export struct TitleBar impl Widget, Themeable {
     }
 
     // 返回按钮组占据的总宽度
-    func _btnTotalWidth(): float {
+    pri func btnTotalWidth(): float {
         int count = 0
-        if _showMinimize { count = count + 1 }
-        if _showMaximize { count = count + 1 }
-        if _showClose { count = count + 1 }
+        if showMinimize { count = count + 1 }
+        if showMaximize { count = count + 1 }
+        if showClose { count = count + 1 }
         if count == 0 { return 0.0 }
-        return _float(count) * _btnWidth + _float(count - 1) * _btnSpacing
+        return _float(count) * btnWidth + _float(count - 1) * btnSpacing
     }
 
     // 返回按钮区域的左边界 X 坐标
-    func _btnAreaLeft(): float {
-        if _btnAlign == BTN_ALIGN_LEFT { return x }
-        var pos = _btnPositions()
+    pri func btnAreaLeft(): float {
+        if btnAlign == BTN_ALIGN_LEFT { return x }
+        var pos = btnPositions()
         float minP = pos.get("minimize", w)
-        if _showMinimize and minP >= 0.0 { return minP }
+        if showMinimize and minP >= 0.0 { return minP }
         float maxP = pos.get("maximize", w)
-        if _showMaximize and maxP >= 0.0 { return maxP }
+        if showMaximize and maxP >= 0.0 { return maxP }
         float closeP = pos.get("close", w)
-        if _showClose and closeP >= 0.0 { return closeP }
+        if showClose and closeP >= 0.0 { return closeP }
         return w
     }
 
     // 返回按钮区域的右边界 X 坐标（不含 padding）
-    func _btnAreaRight(): float {
-        if _btnAlign == BTN_ALIGN_LEFT { return x + _btnTotalWidth() }
+    pri func btnAreaRight(): float {
+        if btnAlign == BTN_ALIGN_LEFT { return x + btnTotalWidth() }
         return w
     }
 
     // 判断鼠标在哪个按钮上：0=无, 1=min, 2=max, 3=close
-    func _hitTestBtn(float mx): int {
-        var pos = _btnPositions()
+    pri func hitTestBtn(float mx): int {
+        var pos = btnPositions()
         float minP = pos.get("minimize", -1.0)
         float maxP = pos.get("maximize", -1.0)
         float closeP = pos.get("close", -1.0)
         // 检查是否在任何按钮的 X 范围内
         bool inBtnArea = false
-        if _showClose and closeP >= 0.0 and mx >= closeP and mx < closeP + _btnWidth { inBtnArea = true }
-        if not inBtnArea and _showMaximize and maxP >= 0.0 and mx >= maxP and mx < maxP + _btnWidth { inBtnArea = true }
-        if not inBtnArea and _showMinimize and minP >= 0.0 and mx >= minP and mx < minP + _btnWidth { inBtnArea = true }
+        if showClose and closeP >= 0.0 and mx >= closeP and mx < closeP + btnWidth { inBtnArea = true }
+        if not inBtnArea and showMaximize and maxP >= 0.0 and mx >= maxP and mx < maxP + btnWidth { inBtnArea = true }
+        if not inBtnArea and showMinimize and minP >= 0.0 and mx >= minP and mx < minP + btnWidth { inBtnArea = true }
         if not inBtnArea { return 0 }
         // 精确判断是哪个按钮（从外到内，后绘制的在上层优先）
-        if _showClose and mx >= closeP and mx < closeP + _btnWidth { return 3 }
-        if _showMaximize and mx >= maxP and mx < maxP + _btnWidth { return 2 }
-        if _showMinimize and mx >= minP and mx < minP + _btnWidth { return 1 }
+        if showClose and mx >= closeP and mx < closeP + btnWidth { return 3 }
+        if showMaximize and mx >= maxP and mx < maxP + btnWidth { return 2 }
+        if showMinimize and mx >= minP and mx < minP + btnWidth { return 1 }
         return 0
     }
 
@@ -336,43 +336,43 @@ export struct TitleBar impl Widget, Themeable {
 
     func process(Event ev) {
         if not _loaded { return }
-        if _winHandle == null { return }
+        if winHandle == null { return }
 
         // ★ 窗口尺寸变化事件 ⇒ 置脏（框架自查清单 L 项收尾）✓
         //   为什么必须有这一句：下面改成"只在脏时查 SDL_GetWindowSize"后，**任何来源**的尺寸变化
         //   都必须能置脏，否则 `w` 会长期停在旧值 ✗（自绘边缘拖拽/最大化切换那几处已各自置脏，
         //   但 OS 侧的缩放事件此前无人处理 —— `isWindowResized()` 在框架内一直没被用到）。
         //   ⚠ 必须放在读取缓存**之前**：本事件就刷新，不必等下一帧 ✓
-        if ev.isWindowResized() { _winSizeDirty = true; core.markFrameRedraw() }
+        if ev.isWindowResized() { winSizeDirty = true; core.markFrameRedraw() }
 
         // 同步窗口宽度：★ 走 `_winSizeDirty` 缓存（与 render 的 614-618、边缘检测的 361-363 同一套 ✓）
         //   原先这里**每个事件**都调一次 `SDL_GetWindowSize`（native 调用）✗ —— 而尺寸只在
         //   缩放结束(351) / 拖拽结束(389) / 窗口状态切换(458,462) / 尺寸变化(579) / resize 事件
         //   （上一行）时变 ⇒ 只在脏时查一次即可 ✓
-        if _winSizeDirty {
-            var[int, int](_ww, _wh) = core.getWindowSize(_winHandle)
-            _cachedWinW = _ww; _cachedWinH = _wh; _winSizeDirty = false
+        if winSizeDirty {
+            var[int, int](_ww, _wh) = core.getWindowSize(winHandle)
+            cachedWinW = _ww; cachedWinH = _wh; winSizeDirty = false
         }
-        w = _float(_cachedWinW)
+        w = _float(cachedWinW)
 
         // 跟踪最大化/还原状态（切换时清除按钮悬停，防止状态残留导致关闭按钮变红）
         // ★ 同时设置 _motionSkipCount：窗口尺寸变化后 OS 会生成合成 MouseMotion 事件，
         //   此时鼠标的窗口相对坐标可能恰好落在关闭按钮区域，导致 _btnHover 被误设为 3（关闭），
         //   关闭按钮变红。跳过紧随状态切换后的合成 Motion 事件即可避免此问题。
-if ev.isWindowMaximized() { _maximized = true; _btnHover = BTN_NONE; _motionSkipCount = 2; core.markFrameRedraw() }
-if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkipCount = 2; core.markFrameRedraw() }
+if ev.isWindowMaximized() { maximized = true; btnHover = BTN_NONE; motionSkipCount = 2; core.markFrameRedraw() }
+if ev.isWindowRestored() { maximized = false; btnHover = BTN_NONE; motionSkipCount = 2; core.markFrameRedraw() }
 
         var[float, float](mx, my) = ev.mousePos()
 
         // === 手动边缘缩放（非最大化时） ===
-        if _resizeEdge != EDGE_NONE {
+        if resizeEdge != EDGE_NONE {
             // 缩放进行中：处理鼠标移动和释放
             if ev.isMouseMotion() {
-                _doResize()
+                doResize()
             }
             if ev.isMouseButtonUp() and ev.mouseButton() == 1 {
-                _resizeEdge = EDGE_NONE
-                _winSizeDirty = true   // 缩放结束后刷新窗口尺寸缓存
+                resizeEdge = EDGE_NONE
+                winSizeDirty = true   // 缩放结束后刷新窗口尺寸缓存
                 core.forceFrameCursor(SystemCursor.DEFAULT)
                 core.markFrameRedraw()
             }
@@ -380,20 +380,20 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
         }
 
         // 边缘检测（仅在非最大化时）
-        if not _maximized and not _dragging {
+        if not maximized and not _dragging {
             // ★ 复用缓存，避免每帧 getWindowSize
-            if _winSizeDirty and _winHandle != null {
-                var[int, int](_ww, _wh) = core.getWindowSize(_winHandle)
-                _cachedWinW = _ww; _cachedWinH = _wh; _winSizeDirty = false
+            if winSizeDirty and winHandle != null {
+                var[int, int](_ww, _wh) = core.getWindowSize(winHandle)
+                cachedWinW = _ww; cachedWinH = _wh; winSizeDirty = false
             }
-            int winH = _cachedWinH
-            int edge = _detectEdge(mx, my, _cachedWinW, winH)
+            int winH = cachedWinH
+            int edge = detectEdge(mx, my, cachedWinW, winH)
             if edge != 0 {
                 // 请求对应的缩放光标
-                _requestResizeCursor(edge)
+                requestResizeCursor(edge)
                 // 鼠标按下时开始缩放
                 if ev.isMouseButtonDown() and ev.mouseButton() == 1 {
-                    _startResize(edge)
+                    startResize(edge)
                     return
                 }
             }
@@ -403,14 +403,14 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
         if _dragging {
             if ev.isMouseMotion() {
                 var[int, int](curGX, curGY) = core.getGlobalMouse()
-                int newX = _dragStartWinX + (curGX - _dragStartGX)
-                int newY = _dragStartWinY + (curGY - _dragStartGY)
-                core.lib().SDL_SetWindowPosition(_winHandle, newX, newY)
+                int newX = dragStartWinX + (curGX - dragStartGX)
+                int newY = dragStartWinY + (curGY - dragStartGY)
+                core.lib().SDL_SetWindowPosition(winHandle, newX, newY)
                 core.markFrameRedraw()
             }
             if ev.isMouseButtonUp() and ev.mouseButton() == 1 {
                 _dragging = false
-                _winSizeDirty = true   // 拖拽结束后刷新窗口尺寸缓存
+                winSizeDirty = true   // 拖拽结束后刷新窗口尺寸缓存
                 core.markFrameRedraw()
             }
             return  // 拖拽期间不处理其他事件
@@ -419,54 +419,54 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
         // 非拖拽：处理事件
         // ★ 当嵌入的 MenuBar 展开时（isOpen），即使鼠标在标题栏外（下拉区域），
         //   也要继续转发事件给 MenuBar，否则下拉菜单无法响应 hover/click
-        bool menuOpen = (_centerIsMenu and _embeddedMenu != null and _embeddedMenu.isOpen())
+        bool menuOpen = (centerIsMenu and embeddedMenu != null and embeddedMenu.isOpen())
         if not (my >= y and my < y + h and mx >= x) {
-            if _btnHover != BTN_NONE { _btnHover = BTN_NONE; core.markFrameRedraw() }
-            if menuOpen and _centerWidget != null { _centerWidget.process(ev) }
+            if btnHover != BTN_NONE { btnHover = BTN_NONE; core.markFrameRedraw() }
+            if menuOpen and centerWidget != null { centerWidget.process(ev) }
             return
         }
 
         // ★ 中间控件事件转发（让嵌入的 Edit/Button/MenuBar 等控件能接收输入）
-        if _centerWidget != null { _centerWidget.process(ev) }
+        if centerWidget != null { centerWidget.process(ev) }
 
         // 鼠标移动：更新按钮悬停状态
         // ★ 窗口状态切换后的合成 Motion 事件跳过 hover 更新（_motionSkipCount > 0 时递减并跳过），
         //   避免窗口尺寸变化导致鼠标相对坐标落在关闭按钮上而误触红色悬停
         if ev.isMouseMotion() {
-            if _motionSkipCount > 0 {
-                _motionSkipCount = _motionSkipCount - 1
+            if motionSkipCount > 0 {
+                motionSkipCount = motionSkipCount - 1
             } else {
-                int oldHover = _btnHover
-                _btnHover = _hitTestBtn(mx)
-                if _btnHover != BTN_NONE {
+                int oldHover = btnHover
+                btnHover = hitTestBtn(mx)
+                if btnHover != BTN_NONE {
                     core.requestCursor(SystemCursor.POINTER)
                 }
-                if oldHover != _btnHover { core.markFrameRedraw() }
+                if oldHover != btnHover { core.markFrameRedraw() }
             }
         }
 
         // 鼠标按下：按钮点击或开始拖拽
         if ev.isMouseButtonDown() and ev.mouseButton() == 1 {
-            int btn = _hitTestBtn(mx)
-            if btn == 3 and _showClose {
+            int btn = hitTestBtn(mx)
+            if btn == 3 and showClose {
                 // 关闭
-                if _onClose != null { _onClose() }
-                else { _closeRequested = true }
+                if onClose != null { onClose() }
+                else { closeRequested = true }
                 core.markFrameRedraw()
-            } else if btn == 2 and _showMaximize {
-                _doToggleMaximize()
-            } else if btn == 1 and _showMinimize {
-                _doMinimize()
+            } else if btn == 2 and showMaximize {
+                doToggleMaximize()
+            } else if btn == 1 and showMinimize {
+                doMinimize()
             } else {
                 // 标题栏非按钮区域：双击切换最大化，单击开始拖拽
                 if ev.mouseClicks() >= 2 {
-                    if _showMaximize { _doToggleMaximize() }
+                    if showMaximize { doToggleMaximize() }
                 } else {
                     _dragging = true
-                    var[int, int](_dgx, _dgy) = core.getGlobalMouse(); _dragStartGX = _dgx; _dragStartGY = _dgy
-                    var[int, int](_wpx, _wpy) = core.getWindowPos(_winHandle)
-                    _dragStartWinX = _wpx
-                    _dragStartWinY = _wpy
+                    var[int, int](_dgx, _dgy) = core.getGlobalMouse(); dragStartGX = _dgx; dragStartGY = _dgy
+                    var[int, int](_wpx, _wpy) = core.getWindowPos(winHandle)
+                    dragStartWinX = _wpx
+                    dragStartWinY = _wpy
                 }
             }
         }
@@ -476,26 +476,26 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
 
     // ==================== 内部操作 ====================
 
-    func _doToggleMaximize() {
-        if _maximized {
-            core.lib().SDL_RestoreWindow(_winHandle)
-            _winSizeDirty = true   // 状态切换后刷新窗口尺寸缓存
-            _maximized = false
+    pri func doToggleMaximize() {
+        if maximized {
+            core.lib().SDL_RestoreWindow(winHandle)
+            winSizeDirty = true   // 状态切换后刷新窗口尺寸缓存
+            maximized = false
         } else {
-            core.lib().SDL_MaximizeWindow(_winHandle)
-            _winSizeDirty = true   // 状态切换后刷新窗口尺寸缓存
-            _maximized = true
+            core.lib().SDL_MaximizeWindow(winHandle)
+            winSizeDirty = true   // 状态切换后刷新窗口尺寸缓存
+            maximized = true
         }
-        _btnHover = BTN_NONE            // ★ 立即清除悬停状态
-        _motionSkipCount = 2     // ★ 跳过紧随的合成 Motion 事件
+        btnHover = BTN_NONE            // ★ 立即清除悬停状态
+        motionSkipCount = 2     // ★ 跳过紧随的合成 Motion 事件
         core.markFrameRedraw()
-        if _onMaximize != null { _onMaximize() }
+        if onMaximize != null { onMaximize() }
     }
 
-    func _doMinimize() {
-        core.lib().SDL_MinimizeWindow(_winHandle)
+    pri func doMinimize() {
+        core.lib().SDL_MinimizeWindow(winHandle)
         core.markFrameRedraw()
-        if _onMinimize != null { _onMinimize() }
+        if onMinimize != null { onMinimize() }
     }
 
     // ==================== 手动边缘缩放 ====================
@@ -503,8 +503,8 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
     // 检测鼠标是否在窗口边缘
     // 返回: 0=none, 1=left, 2=right, 3=top, 4=bottom,
     //       5=top-left, 6=top-right, 7=bottom-left, 8=bottom-right
-    func _detectEdge(float mx, float my, int winW, int winH): int {
-        float th = _resizeEdgeThreshold
+    pri func detectEdge(float mx, float my, int winW, int winH): int {
+        float th = resizeEdgeThreshold
         float fw = _float(winW)
         float fh = _float(winH)
         bool atLeft   = mx <= th
@@ -526,7 +526,7 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
     }
 
     // 根据 edge 值请求对应的系统缩放光标
-    func _requestResizeCursor(int edge) {
+    pri func requestResizeCursor(int edge) {
         // 1=left, 2=right → EW_RESIZE(7)
         // 3=top, 4=bottom → NS_RESIZE(8)
         // 5=top-left, 8=bottom-right → NWSE_RESIZE(5)
@@ -543,15 +543,15 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
     }
 
     // 开始缩放：记录起始状态
-    func _startResize(int edge) {
-        _resizeEdge = edge
-        var[int, int](_rsgx, _rsgy) = core.getGlobalMouse(); _resizeStartGX = _rsgx; _resizeStartGY = _rsgy
-        var[int, int](_rwx, _rwy) = core.getWindowPos(_winHandle)
-        _resizeStartWinX = _rwx
-        _resizeStartWinY = _rwy
-        var[int, int](_rww, _rwh) = core.getWindowSize(_winHandle)
-        _resizeStartW = _rww
-        _resizeStartH = _rwh
+    pri func startResize(int edge) {
+        resizeEdge = edge
+        var[int, int](_rsgx, _rsgy) = core.getGlobalMouse(); resizeStartGX = _rsgx; resizeStartGY = _rsgy
+        var[int, int](_rwx, _rwy) = core.getWindowPos(winHandle)
+        resizeStartWinX = _rwx
+        resizeStartWinY = _rwy
+        var[int, int](_rww, _rwh) = core.getWindowSize(winHandle)
+        resizeStartW = _rww
+        resizeStartH = _rwh
         // 强制光标：拖拽中保持缩放光标，防止被其他控件覆盖
         if edge == EDGE_LEFT or edge == EDGE_RIGHT {
             core.forceFrameCursor(SystemCursor.EW_RESIZE)
@@ -565,63 +565,63 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
     }
 
     // 执行缩放：根据 edge 和当前全局鼠标位置调整窗口尺寸/位置
-    func _doResize() {
+    pri func doResize() {
         var[int, int](curGX, curGY) = core.getGlobalMouse()
-        int dx = curGX - _resizeStartGX
-        int dy = curGY - _resizeStartGY
-        int newW = _resizeStartW
-        int newH = _resizeStartH
-        int newX = _resizeStartWinX
-        int newY = _resizeStartWinY
-        int edge = _resizeEdge
+        int dx = curGX - resizeStartGX
+        int dy = curGY - resizeStartGY
+        int newW = resizeStartW
+        int newH = resizeStartH
+        int newX = resizeStartWinX
+        int newY = resizeStartWinY
+        int edge = resizeEdge
 
         // 水平方向
         if edge == EDGE_LEFT or edge == EDGE_TOP_LEFT or edge == EDGE_BOTTOM_LEFT {
             // 左边缘：宽度减小，位置左移
-            newW = _resizeStartW - dx
-            newX = _resizeStartWinX + dx
+            newW = resizeStartW - dx
+            newX = resizeStartWinX + dx
         } else if edge == EDGE_RIGHT or edge == EDGE_TOP_RIGHT or edge == EDGE_BOTTOM_RIGHT {
             // 右边缘：宽度增大
-            newW = _resizeStartW + dx
+            newW = resizeStartW + dx
         }
 
         // 垂直方向
         if edge == EDGE_TOP or edge == EDGE_TOP_LEFT or edge == EDGE_TOP_RIGHT {
             // 上边缘：高度减小，位置上移
-            newH = _resizeStartH - dy
-            newY = _resizeStartWinY + dy
+            newH = resizeStartH - dy
+            newY = resizeStartWinY + dy
         } else if edge == EDGE_BOTTOM or edge == EDGE_BOTTOM_LEFT or edge == EDGE_BOTTOM_RIGHT {
             // 下边缘：高度增大
-            newH = _resizeStartH + dy
+            newH = resizeStartH + dy
         }
 
         // 防止窗口尺寸过小
-        if newW < 100 { newW = 100; newX = _resizeStartWinX + (_resizeStartW - 100) }
-        if newH < 100 { newH = 100; newY = _resizeStartWinY + (_resizeStartH - 100) }
+        if newW < 100 { newW = 100; newX = resizeStartWinX + (resizeStartW - 100) }
+        if newH < 100 { newH = 100; newY = resizeStartWinY + (resizeStartH - 100) }
 
-        core.lib().SDL_SetWindowSize(_winHandle, newW, newH)
-            _winSizeDirty = true   // 尺寸变化后刷新缓存
+        core.lib().SDL_SetWindowSize(winHandle, newW, newH)
+            winSizeDirty = true   // 尺寸变化后刷新缓存
         // 仅当位置变化时才设置（左/上边缘缩放会改变窗口位置）
-        if newX != _resizeStartWinX or newY != _resizeStartWinY {
-            core.lib().SDL_SetWindowPosition(_winHandle, newX, newY)
+        if newX != resizeStartWinX or newY != resizeStartWinY {
+            core.lib().SDL_SetWindowPosition(winHandle, newX, newY)
         }
         core.markFrameRedraw()
     }
 
     // ==================== 懒加载图标纹理 ====================
-    func _ensure_images(Renderer r) {
+    pri func ensure_images(Renderer r) {
         Ptr[u8] h = r.handle
-        if _imgMin != "" and _texMin == null and _loadMin != _imgMin {
-            _texMin = img.loadTexture(h, _imgMin); _loadMin = _imgMin
+        if imgMin != "" and texMin == null and loadMin != imgMin {
+            texMin = img.loadTexture(h, imgMin); loadMin = imgMin
         }
-        if _imgMax != "" and _texMax == null and _loadMax != _imgMax {
-            _texMax = img.loadTexture(h, _imgMax); _loadMax = _imgMax
+        if imgMax != "" and texMax == null and loadMax != imgMax {
+            texMax = img.loadTexture(h, imgMax); loadMax = imgMax
         }
-        if _imgRestore != "" and _texRestore == null and _loadRestore != _imgRestore {
-            _texRestore = img.loadTexture(h, _imgRestore); _loadRestore = _imgRestore
+        if imgRestore != "" and texRestore == null and loadRestore != imgRestore {
+            texRestore = img.loadTexture(h, imgRestore); loadRestore = imgRestore
         }
-        if _imgClose != "" and _texClose == null and _loadClose != _imgClose {
-            _texClose = img.loadTexture(h, _imgClose); _loadClose = _imgClose
+        if imgClose != "" and texClose == null and loadClose != imgClose {
+            texClose = img.loadTexture(h, imgClose); loadClose = imgClose
         }
     }
 
@@ -629,50 +629,50 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
 
     func render(Renderer r) {
         if not _loaded { return }
-        _ensure_font()
-        _ensure_images(r)
+        ensure_font()
+        ensure_images(r)
 
         // 同步窗口宽度
         // 缓存：仅在脏时查询 SDL，避免每帧 native call
-        if _winHandle != null {
-            if _winSizeDirty {
-                var[int, int](_ww, _wh) = core.getWindowSize(_winHandle)
-                _cachedWinW = _ww; _cachedWinH = _wh; _winSizeDirty = false
+        if winHandle != null {
+            if winSizeDirty {
+                var[int, int](_ww, _wh) = core.getWindowSize(winHandle)
+                cachedWinW = _ww; cachedWinH = _wh; winSizeDirty = false
             }
-            w = _float(_cachedWinW)
+            w = _float(cachedWinW)
         }
 
         // 背景填充
-        r.setColor(_bgColor)
+        r.setColor(bgColor)
         r.fillRect(x, y, w, h)
 
         // 按钮区域边界（供标题和中间控件布局参考）
-        float btnLeft = _btnAreaLeft()
-        float btnRight = _btnAreaRight()
+        float btnLeft = btnAreaLeft()
+        float btnRight = btnAreaRight()
 
         // 计算中间控件的布局位置（先计算，用于确定标题区域）
         float centerW = 0.0
-        float cLeft = x + _titlePad
+        float cLeft = x + titlePad
         float cActualW = 0.0
-        if _centerWidget != null {
-            centerW = _centerWidget.get_w()
+        if centerWidget != null {
+            centerW = centerWidget.get_w()
             cActualW = centerW
             if cActualW <= 0.0 { cActualW = 200.0 }
-            cLeft = x + _titlePad  // 默认靠左
+            cLeft = x + titlePad  // 默认靠左
             float cRight = cLeft + cActualW
             // 如果和右侧按钮重叠，则调整
-            if _btnAlign == BTN_ALIGN_RIGHT and cRight > btnRight - 4.0 {
+            if btnAlign == BTN_ALIGN_RIGHT and cRight > btnRight - 4.0 {
                 cLeft = btnRight - cActualW - 4.0
-                if cLeft < x + _titlePad { cLeft = x + _titlePad; cActualW = btnRight - cLeft - 4.0 }
+                if cLeft < x + titlePad { cLeft = x + titlePad; cActualW = btnRight - cLeft - 4.0 }
             }
         }
 
         // 标题文字区域：在中间控件和按钮组之间的空白处居中
-        float titleLeft = x + _titlePad
-        float titleRight = w - _titlePad
+        float titleLeft = x + titlePad
+        float titleRight = w - titlePad
         float centerRightEdge = cLeft + cActualW
         if cActualW > 0.0 {
-            if _btnAlign == BTN_ALIGN_RIGHT {
+            if btnAlign == BTN_ALIGN_RIGHT {
                 // 按钮在右：标题在菜单右侧、按钮左侧之间居中
                 titleLeft = centerRightEdge + 8.0
                 titleRight = btnRight - 8.0
@@ -682,79 +682,79 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
                 titleRight = cLeft - 8.0
             }
         } else {
-            if _btnAlign == BTN_ALIGN_RIGHT { titleRight = btnRight - _titlePad }
-            else { titleLeft = btnLeft + _titlePad }
+            if btnAlign == BTN_ALIGN_RIGHT { titleRight = btnRight - titlePad }
+            else { titleLeft = btnLeft + titlePad }
         }
-        if titleLeft > titleRight { titleLeft = x + _titlePad; titleRight = w - _titlePad }
+        if titleLeft > titleRight { titleLeft = x + titlePad; titleRight = w - titlePad }
 
         // 中间控件渲染（VS Code 风格：路径栏/搜索框/菜单栏等）
-        if _centerWidget != null {
+        if centerWidget != null {
             float cw = cActualW
             // 设置中间控件位置并渲染（使用上面计算的 cLeft）
-            _centerWidget.set_pos(cLeft, y + (h - _centerWidget.get_h()) * 0.5)
-            _centerWidget.set_size(cw, _centerWidget.get_h())
-            _centerWidget.render(r)
+            centerWidget.set_pos(cLeft, y + (h - centerWidget.get_h()) * 0.5)
+            centerWidget.set_size(cw, centerWidget.get_h())
+            centerWidget.render(r)
         }
 
         // 标题文字（在中间控件之后绘制，确保层级正确）
-        if _font != null and _font.ok and _title != "" {
-            var[float, float](tw, th) = _font.measureString(_title)
+        if _font != null and _font.ok and title != "" {
+            var[float, float](tw, th) = _font.measureString(title)
             float textY = y + (h - _float(_font.height)) * 0.5
-            if _titleAlign == ALIGN_CENTER or _centerWidget != null {
+            if titleAlign == ALIGN_CENTER or centerWidget != null {
                 // 居中：在 titleLeft ~ titleRight 范围内居中
                 float tcx = titleLeft + (titleRight - titleLeft - tw) * 0.5
                 if tcx < titleLeft { tcx = titleLeft }
                 if tcx + tw > titleRight { tcx = titleRight - tw }
-                r.drawText(_font, _title, r.snapX(tcx), r.snapY(textY), _txColor)
+                r.drawText(_font, title, r.snapX(tcx), r.snapY(textY), txColor)
             } else {
                 // 左对齐
-                r.drawText(_font, _title, r.snapX(titleLeft), r.snapY(textY), _txColor)
+                r.drawText(_font, title, r.snapX(titleLeft), r.snapY(textY), txColor)
             }
         }
 
         // 按钮区域
-        var pos = _btnPositions()
+        var pos = btnPositions()
         float minP = pos.get("minimize", -1.0)
         float maxP = pos.get("maximize", -1.0)
         float closeP = pos.get("close", -1.0)
 
         // 最小化按钮
-        if _showMinimize and minP >= 0.0 {
-            _drawBtnBg(r, minP, _btnHover == BTN_MIN)
-            if _texMin != null {
-                _drawIcon(r, _texMin, minP)
+        if showMinimize and minP >= 0.0 {
+            drawBtnBg(r, minP, btnHover == BTN_MIN)
+            if texMin != null {
+                drawIcon(r, texMin, minP)
             } else {
                 // 矢量：横线
-                r.setColor(_iconColor)
-                r.fillRect(minP + _btnWidth * 0.35, y + h * 0.5, _btnWidth * 0.3, 2.0)
+                r.setColor(iconColor)
+                r.fillRect(minP + btnWidth * 0.35, y + h * 0.5, btnWidth * 0.3, 2.0)
             }
         }
 
         // 最大化/还原按钮
-        if _showMaximize and maxP >= 0.0 {
-            _drawBtnBg(r, maxP, _btnHover == BTN_MAX)
-            if _maximized and _texRestore != null {
-                _drawIcon(r, _texRestore, maxP)
-            } else if not _maximized and _texMax != null {
-                _drawIcon(r, _texMax, maxP)
-            } else if _texMax != null and _texRestore == null {
-                _drawIcon(r, _texMax, maxP)
+        if showMaximize and maxP >= 0.0 {
+            drawBtnBg(r, maxP, btnHover == BTN_MAX)
+            if maximized and texRestore != null {
+                drawIcon(r, texRestore, maxP)
+            } else if not maximized and texMax != null {
+                drawIcon(r, texMax, maxP)
+            } else if texMax != null and texRestore == null {
+                drawIcon(r, texMax, maxP)
             } else {
                 // 矢量绘制
-                r.setColor(_iconColor)
-                _drawMaxIcon(r, maxP)
+                r.setColor(iconColor)
+                drawMaxIcon(r, maxP)
             }
         }
 
         // 关闭按钮
-        if _showClose and closeP >= 0.0 {
-            _drawCloseBtnBg(r, closeP, _btnHover == BTN_CLOSE)
-            if _texClose != null {
-                _drawIcon(r, _texClose, closeP)
+        if showClose and closeP >= 0.0 {
+            drawCloseBtnBg(r, closeP, btnHover == BTN_CLOSE)
+            if texClose != null {
+                drawIcon(r, texClose, closeP)
             } else {
                 // 矢量：X 叉
-                r.setColor(_iconColor)
-                float cx = closeP + _btnWidth * 0.5
+                r.setColor(iconColor)
+                float cx = closeP + btnWidth * 0.5
                 float cy = y + h * 0.5
                 float sz = h * 0.25
                 r.drawLine(cx - sz, cy - sz, cx + sz, cy + sz)
@@ -763,8 +763,8 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
         }
 
         // 底部分隔线
-        if _showSeparator {
-            r.setColor(_sepColor)
+        if showSeparator {
+            r.setColor(sepColor)
             r.fillRect(x, y + h - 1.0, w, 1.0)
         }
     }
@@ -773,32 +773,32 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
     // ★ 当 center_widget 是 MenuBar 时，需要转发 renderPopup 以绘制下拉弹出层
     func renderPopup(Renderer r) {
         if not _loaded { return }
-        if _centerWidget != null {
+        if centerWidget != null {
             // 尝试调用 center_widget 的 renderPopup（MenuBar 有此方法）
             // 用类型检查确保安全
-            var w = _centerWidget
+            var w = centerWidget
             // MenuBar 的 renderPopup 在展开时绘制下拉层
             // 由于 Leno 的动态分发限制，这里通过检查 isOpen 状态来决定是否需要弹层渲染
             // 实际上 MenuBar 的 renderPopup 是独立方法，我们需要直接调用
             // 这里用内联方式处理：检查是否是 MenuBar 并调用其 renderPopup
-            _renderCenterPopup(r)
+            renderCenterPopup(r)
         }
     }
 
     // 内部方法：尝试渲染 center_widget 的弹层（MenuBar 下拉菜单）
-    func _renderCenterPopup(Renderer r) {
+    pri func renderCenterPopup(Renderer r) {
         // 由于 Leno 不支持动态类型转换到具体类型调用方法，
         // 我们在 TitleBar 层面记录 center_widget 是否是 MenuBar 类型
         // 通过 _centerIsMenu 标志位判断
-        if _centerIsMenu and _centerWidget != null {
+        if centerIsMenu and centerWidget != null {
             // 手动调用 MenuBar 的 renderPopup 逻辑
             // MenuBar 的 renderPopup 检查 _open >= 0 后绘制下拉面板
-            _drawMenuBarPopup(r)
+            drawMenuBarPopup(r)
         }
     }
 
     // 绘制嵌入的 MenuBar 的下拉弹出层
-    func _drawMenuBarPopup(Renderer r) {
+    pri func drawMenuBarPopup(Renderer r) {
         // 通过访问 MenuBar 内部状态来判断是否需要绘制弹层
         // 这里我们依赖 MenuBar 自身的 render 方法已经处理了本体，
         // 而 renderPopup 需要额外绘制下拉面板
@@ -819,43 +819,43 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
         //
         // ★ 最终方案：在 TitleBar 中存储 MenuBar 类型的引用（非 Widget?），
         //   提供 set_center_menu(MenuBar) 专用方法。
-        if _embeddedMenu != null {
-            _embeddedMenu.renderPopup(r)
+        if embeddedMenu != null {
+            embeddedMenu.renderPopup(r)
         }
     }
 
     // ★ 专用方法：设置嵌入的 MenuBar（相比通用 set_center_widget，
     //   这个方法会额外处理 renderPopup 转发，确保下拉菜单能正常弹出）
     func set_center_menu(MenuBar bar) {
-        _centerWidget = bar as Widget
-        _embeddedMenu = bar
-        _centerIsMenu = true
+        centerWidget = bar as Widget
+        embeddedMenu = bar
+        centerIsMenu = true
         core.markFrameRedraw()
     }
 
-    func get_center_menu(): MenuBar? { return _embeddedMenu }
+    func get_center_menu(): MenuBar? { return embeddedMenu }
 
     // 普通按钮悬停背景
-    func _drawBtnBg(Renderer r, float bx, bool hover) {
+    pri func drawBtnBg(Renderer r, float bx, bool hover) {
         if hover {
-            r.setColor(_hovColor)
-            r.fillRect(bx, y, _btnWidth, h)
+            r.setColor(hovColor)
+            r.fillRect(bx, y, btnWidth, h)
         }
     }
 
     // 关闭按钮悬停背景（红色）
-    func _drawCloseBtnBg(Renderer r, float bx, bool hover) {
+    pri func drawCloseBtnBg(Renderer r, float bx, bool hover) {
         if hover {
-            r.setColor(_closeHovColor)
-            r.fillRect(bx, y, _btnWidth, h)
+            r.setColor(closeHovColor)
+            r.fillRect(bx, y, btnWidth, h)
         }
     }
 
     // 居中绘制图标图片
-    func _drawIcon(Renderer r, Ptr[u8] tex, float bx) {
-        float sz = _iconImgSize
+    pri func drawIcon(Renderer r, Ptr[u8] tex, float bx) {
+        float sz = iconImgSize
         if sz <= 0.0 { sz = h * 0.5 }
-        float ix = bx + (_btnWidth - sz) * 0.5
+        float ix = bx + (btnWidth - sz) * 0.5
         float iy = y + (h - sz) * 0.5
         r.setTextureAlpha(tex, 255)
         r.setTextureColor(tex, #FFFFFFFF)
@@ -869,11 +869,11 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
     }
 
     // 矢量最大化/还原图标
-    func _drawMaxIcon(Renderer r, float bx) {
-        float cx = bx + _btnWidth * 0.5
+    pri func drawMaxIcon(Renderer r, float bx) {
+        float cx = bx + btnWidth * 0.5
         float cy = y + h * 0.5
         float sz = h * 0.22
-        if _maximized {
+        if maximized {
             // 还原图标：两个偏移方框
             r.drawRect(cx - sz + 2, cy - sz + 2, sz * 1.3, sz * 1.3)
             r.drawLine(cx - sz + 2 + sz * 0.4, cy - sz + 2, cx - sz + 2 + sz * 0.4, cy - sz + 2 - sz * 0.4)
@@ -888,72 +888,72 @@ if ev.isWindowRestored() { _maximized = false; _btnHover = BTN_NONE; _motionSkip
 
     // ==================== 公共 API ====================
 
-    func set_title(string t) { _title = t; core.markFrameRedraw() }
-    func get_title(): string { return _title }
-    func set_maximized(bool v) { _maximized = v; core.markFrameRedraw() }
-    func is_maximized(): bool { return _maximized }
-    func is_close_requested(): bool { return _closeRequested }
-    func clear_close_request() { _closeRequested = false }
+    func set_title(string t) { title = t; core.markFrameRedraw() }
+    func get_title(): string { return title }
+    func set_maximized(bool v) { maximized = v; core.markFrameRedraw() }
+    func is_maximized(): bool { return maximized }
+    func is_close_requested(): bool { return closeRequested }
+    func clear_close_request() { closeRequested = false }
     func is_dragging(): bool { return _dragging }
-    func set_show_minimize(bool v) { _showMinimize = v; core.markFrameRedraw() }
-    func set_show_maximize(bool v) { _showMaximize = v; core.markFrameRedraw() }
-    func set_show_close(bool v) { _showClose = v; core.markFrameRedraw() }
+    func set_show_minimize(bool v) { showMinimize = v; core.markFrameRedraw() }
+    func set_show_maximize(bool v) { showMaximize = v; core.markFrameRedraw() }
+    func set_show_close(bool v) { showClose = v; core.markFrameRedraw() }
     func set_height(float hh) { h = hh; core.markFrameRedraw() }
 
     // 设置按钮组位置："right"（默认，Windows/Linux）或 "left"（macOS 风格）
     func set_btn_align(string align) {
-        if align == "left" { _btnAlign = BTN_ALIGN_LEFT } else { _btnAlign = BTN_ALIGN_RIGHT }
+        if align == "left" { btnAlign = BTN_ALIGN_LEFT } else { btnAlign = BTN_ALIGN_RIGHT }
         core.markFrameRedraw()
     }
 
     // ★ 设置中间控件（VS Code 风格：在标题和按钮之间插入自定义控件）
     //   传入 null 可移除中间控件
-    func set_center_widget(Widget? widget) { _centerWidget = widget; core.markFrameRedraw() }
-    func get_center_widget(): Widget? { return _centerWidget }
+    func set_center_widget(Widget? widget) { centerWidget = widget; core.markFrameRedraw() }
+    func get_center_widget(): Widget? { return centerWidget }
 
     // 设置背景色
-    func set_bg_color(Color color) { _bgColor = color; core.markFrameRedraw() }
+    func set_bg_color(Color color) { bgColor = color; core.markFrameRedraw() }
     // 设置标题文字色
-    func set_text_color(Color color) { _txColor = color; core.markFrameRedraw() }
+    func set_text_color(Color color) { txColor = color; core.markFrameRedraw() }
     // 设置按钮悬停色
-    func set_hover_color(Color color) { _hovColor = color; core.markFrameRedraw() }
+    func set_hover_color(Color color) { hovColor = color; core.markFrameRedraw() }
     // 设置关闭按钮悬停色
-    func set_close_hover_color(Color color) { _closeHovColor = color; core.markFrameRedraw() }
+    func set_close_hover_color(Color color) { closeHovColor = color; core.markFrameRedraw() }
     // 设置图标线条色
-    func set_icon_color(Color color) { _iconColor = color; core.markFrameRedraw() }
+    func set_icon_color(Color color) { iconColor = color; core.markFrameRedraw() }
     // 设置分隔线色
-    func set_separator_color(Color color) { _sepColor = color; core.markFrameRedraw() }
+    func set_separator_color(Color color) { sepColor = color; core.markFrameRedraw() }
 
     // 设置图标图片
-    func set_icon_minimize(string path) { _releaseTex(_texMin); _texMin = null; _imgMin = path; _loadMin = "" }
-    func set_icon_maximize(string path) { _releaseTex(_texMax); _texMax = null; _imgMax = path; _loadMax = "" }
-    func set_icon_restore(string path)  { _releaseTex(_texRestore); _texRestore = null; _imgRestore = path; _loadRestore = "" }
-    func set_icon_close(string path)    { _releaseTex(_texClose); _texClose = null; _imgClose = path; _loadClose = "" }
+    func set_icon_minimize(string path) { releaseTex(texMin); texMin = null; imgMin = path; loadMin = "" }
+    func set_icon_maximize(string path) { releaseTex(texMax); texMax = null; imgMax = path; loadMax = "" }
+    func set_icon_restore(string path)  { releaseTex(texRestore); texRestore = null; imgRestore = path; loadRestore = "" }
+    func set_icon_close(string path)    { releaseTex(texClose); texClose = null; imgClose = path; loadClose = "" }
 
-    func _releaseTex(Ptr[u8]? tex) {
+    pri func releaseTex(Ptr[u8]? tex) {
         if tex != null { core.lib().SDL_DestroyTexture(tex) }
     }
 
     // ==================== 回调注册 ====================
-    func on_close(func():void cb) { _onClose = cb }
-    func on_minimize(func():void cb) { _onMinimize = cb }
-    func on_maximize(func():void cb) { _onMaximize = cb }
+    func on_close(func():void cb) { onClose = cb }
+    func on_minimize(func():void cb) { onMinimize = cb }
+    func on_maximize(func():void cb) { onMaximize = cb }
 
     // ==================== 释放资源 ====================
     func dispose() {
         if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
-        _releaseTex(_texMin); _releaseTex(_texMax)
-        _releaseTex(_texRestore); _releaseTex(_texClose)
-        _texMin = null; _texMax = null; _texRestore = null; _texClose = null
+        releaseTex(texMin); releaseTex(texMax)
+        releaseTex(texRestore); releaseTex(texClose)
+        texMin = null; texMax = null; texRestore = null; texClose = null
     }
 
 // ==================== 运行时主题切换 ====================
 func applyTheme(Theme t) {
-_bgColor = t.bg
-_txColor = t.txt
-_hovColor = t.bgHover
-_sepColor = t.sep
-_iconColor = theme.darken(t.txt, 64)
+bgColor = t.bg
+txColor = t.txt
+hovColor = t.bgHover
+sepColor = t.sep
+iconColor = theme.darken(t.txt, 64)
 }
 }
 

@@ -69,7 +69,7 @@ export struct HBox impl Widget {
     Array[float]  _natW = []   // 子项自然尺寸（add 时捕获，不被 set_size 改写，作为 flex basis 基准）
     Array[float]  _natH = []
     bool _loaded = false
-    Ptr[u8] _hwnd              // 绑定的窗口句柄，下发给需要的子控件
+    pri Ptr[u8] hwnd              // 绑定的窗口句柄，下发给需要的子控件
 
     func set(Dict opts) {
         x = opts.get("x", 0)
@@ -94,7 +94,7 @@ export struct HBox impl Widget {
         dochk.check("add()", opts, _add_keys())
         _c.add(c); _opt.add(opts)
         _natW.add(c.get_w()); _natH.add(c.get_h())
-        if _hwnd != null { _layout_pass_window(c, _hwnd) }
+        if hwnd != null { _layout_pass_window(c, hwnd) }
         return c
     }
     func remove(Widget c) {
@@ -103,7 +103,7 @@ export struct HBox impl Widget {
     func clear() { _c = []; _opt = []; _natW = []; _natH = [] }
     // 绑定窗口句柄：记录自身，并把已添加的子控件一并下发
     func _bind_window(Ptr[u8] hwnd) {
-        _hwnd = hwnd
+        hwnd = hwnd
         for _c to c { _layout_pass_window(c, hwnd) }
     }
 
@@ -141,7 +141,7 @@ export struct HBox impl Widget {
         return pt + pb + maxH
     }
 
-    func _relayout() {
+    pri func relayout() {
         if not _loaded { return }
         int n = _c.len()
         if n == 0 { return }
@@ -226,12 +226,12 @@ export struct HBox impl Widget {
 
     func process(Event ev) {
         if not _loaded { return }
-        _relayout()
+        relayout()
         for _c to c { c.process(ev) }
     }
     func render(Renderer r) {
         if not _loaded { return }
-        _relayout()
+        relayout()
         for _c to c { c.render(r) }
     }
     func dispose() { for _c to c { c.dispose() } }
@@ -258,7 +258,7 @@ export struct VBox impl Widget {
     Array[float]  _natW = []   // 子项自然尺寸（add 时捕获，不被 set_size 改写，作为 flex basis 基准）
     Array[float]  _natH = []
     bool _loaded = false
-    Ptr[u8] _hwnd              // 绑定的窗口句柄，下发给需要的子控件
+    pri Ptr[u8] hwnd              // 绑定的窗口句柄，下发给需要的子控件
 
     func set(Dict opts) {
         x = opts.get("x", 0)
@@ -283,7 +283,7 @@ export struct VBox impl Widget {
         dochk.check("add()", opts, _add_keys())
         _c.add(c); _opt.add(opts)
         _natW.add(c.get_w()); _natH.add(c.get_h())
-        if _hwnd != null { _layout_pass_window(c, _hwnd) }
+        if hwnd != null { _layout_pass_window(c, hwnd) }
         return c
     }
     func remove(Widget c) {
@@ -292,7 +292,7 @@ export struct VBox impl Widget {
     func clear() { _c = []; _opt = []; _natW = []; _natH = [] }
     // 绑定窗口句柄：记录自身，并把已添加的子控件一并下发
     func _bind_window(Ptr[u8] hwnd) {
-        _hwnd = hwnd
+        hwnd = hwnd
         for _c to c { _layout_pass_window(c, hwnd) }
     }
 
@@ -330,7 +330,7 @@ export struct VBox impl Widget {
         return pl + pr + maxW
     }
 
-    func _relayout() {
+    pri func relayout() {
         if not _loaded { return }
         int n = _c.len()
         if n == 0 { return }
@@ -424,12 +424,12 @@ export struct VBox impl Widget {
 
     func process(Event ev) {
         if not _loaded { return }
-        _relayout()
+        relayout()
         for _c to c { c.process(ev) }
     }
     func render(Renderer r) {
         if not _loaded { return }
-        _relayout()
+        relayout()
         for _c to c { c.render(r) }
     }
     func dispose() { for _c to c { c.dispose() } }
@@ -448,7 +448,7 @@ export struct AnchorBox impl Widget {
     Array[float]  _natW = []   // 子项自然尺寸（add 时捕获，不被 set_size 改写）
     Array[float]  _natH = []
     bool _loaded = false
-    Ptr[u8] _hwnd              // 绑定的窗口句柄，下发给需要的子控件
+    pri Ptr[u8] hwnd              // 绑定的窗口句柄，下发给需要的子控件
 
     func set(Dict opts) {
         x = opts.get("x", 0)
@@ -467,7 +467,7 @@ export struct AnchorBox impl Widget {
         dochk.check("add()", opts, _add_keys())
         _c.add(c); _opt.add(opts)
         _natW.add(c.get_w()); _natH.add(c.get_h())
-        if _hwnd != null { _layout_pass_window(c, _hwnd) }
+        if hwnd != null { _layout_pass_window(c, hwnd) }
         return c
     }
     func remove(Widget c) {
@@ -476,7 +476,7 @@ export struct AnchorBox impl Widget {
     func clear() { _c = []; _opt = []; _natW = []; _natH = [] }
     // 绑定窗口句柄：记录自身，并把已添加的子控件一并下发
     func _bind_window(Ptr[u8] hwnd) {
-        _hwnd = hwnd
+        hwnd = hwnd
         for _c to c { _layout_pass_window(c, hwnd) }
     }
 
@@ -523,7 +523,7 @@ export struct AnchorBox impl Widget {
         return 2.0 * padY + maxB
     }
 
-    func _relayout() {
+    pri func relayout() {
         if not _loaded { return }
         float bx = x + padX
         float by = y + padY
@@ -568,12 +568,12 @@ export struct AnchorBox impl Widget {
 
     func process(Event ev) {
         if not _loaded { return }
-        _relayout()
+        relayout()
         for _c to c { c.process(ev) }
     }
     func render(Renderer r) {
         if not _loaded { return }
-        _relayout()
+        relayout()
         for _c to c { c.render(r) }
     }
     func dispose() { for _c to c { c.dispose() } }

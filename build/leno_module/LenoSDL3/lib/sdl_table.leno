@@ -27,260 +27,260 @@ export struct Table impl Widget, Themeable {
     Array[string] _headers = []
     Array[float] _colW = []
     Array[int] _aligns = []           // 每列对齐：0 左, 1 中, 2 右
-    Array[int] _headerAligns = []     // 表头文字对齐（可独立于数据列），0 左, 1 中, 2 右
+    pri Array[int] headerAligns = []     // 表头文字对齐（可独立于数据列），0 左, 1 中, 2 右
     Array[Array[string]] _rows = []
-    int _ncols = 1
-    bool _autoCols = true            // 列宽是否按宽度等分（用户未指定 col_widths）
-    float _headerH = 28.0, _rowH = 24.0
-    float _scrollX = 0.0, _scrollY = 0.0
-    int _selRow = -1, _selCol = -1, _hoverRow = -1, _hoverCol = -1; bool _multi = false; Array[int] _selRows = []
-    Array[bool] _selSet = []           // 选中行标志数组（与 _rows 平行），让 _is_sel O(1) 避免 render 中线性扫描 _selRows
-    bool _sortable = false; int _sortCol = -1; bool _sortDesc = false, _zebra = true
-    Array[int] _numericCols = []    // 数值排序列索引集合（点击表头时按数值而非字符串比较）
-    Array[int] _sortDisabledCols = []  // 禁用排序的列索引集合（黑名单；空数组=全部列可排序，受 _sortable 控制）
-    bool _colReorder = true         // 是否允许拖拽表头重排列顺序
-    int _dragReorderCol = -1        // 正在拖拽重排的源列索引（-1=无）
-    float _reorderStartX = 0.0     // 拖拽起点 X（用于判断是点击还是拖拽）
-    bool _reorderDragging = false  // 已越过拖拽阈值，进入列重排拖拽状态
-    float _reorderDragX = 0.0      // 当前拖拽鼠标 X（绘制指示线用）
-    int _frozenCols = 0           // 冻结列数量（左侧前 N 列不随水平滚动，0=无冻结）
-    bool _rowReorder = false       // 是否允许拖拽行重排
-    int _dragReorderRow = -1       // 正在拖拽重排的源行索引（-1=无）
-    float _rowReorderStartY = 0.0  // 行拖拽起点 Y
-    bool _rowReorderDragging = false // 已越过拖拽阈值
-    float _rowReorderDragY = 0.0   // 当前拖拽鼠标 Y（绘制指示线用）
-    func(int, int):void _onRowReorder  // 行拖拽重排回调（from, to）
+    pri int ncols = 1
+    pri bool autoCols = true            // 列宽是否按宽度等分（用户未指定 col_widths）
+    pri float headerH = 28.0, rowH = 24.0
+    pri float scrollX = 0.0, scrollY = 0.0
+    pri int selRow = -1, selCol = -1, hoverRow = -1, hoverCol = -1; bool _multi = false; pri Array[int] selRows = []
+    pri Array[bool] selSet = []           // 选中行标志数组（与 _rows 平行），让 _is_sel O(1) 避免 render 中线性扫描 _selRows
+    bool _sortable = false; pri int sortCol = -1; pri bool sortDesc = false, _zebra = true
+    pri Array[int] numericCols = []    // 数值排序列索引集合（点击表头时按数值而非字符串比较）
+    pri Array[int] sortDisabledCols = []  // 禁用排序的列索引集合（黑名单；空数组=全部列可排序，受 _sortable 控制）
+    pri bool colReorder = true         // 是否允许拖拽表头重排列顺序
+    pri int dragReorderCol = -1        // 正在拖拽重排的源列索引（-1=无）
+    pri float reorderStartX = 0.0     // 拖拽起点 X（用于判断是点击还是拖拽）
+    pri bool reorderDragging = false  // 已越过拖拽阈值，进入列重排拖拽状态
+    pri float reorderDragX = 0.0      // 当前拖拽鼠标 X（绘制指示线用）
+    pri int frozenCols = 0           // 冻结列数量（左侧前 N 列不随水平滚动，0=无冻结）
+    pri bool rowReorder = false       // 是否允许拖拽行重排
+    pri int dragReorderRow = -1       // 正在拖拽重排的源行索引（-1=无）
+    pri float rowReorderStartY = 0.0  // 行拖拽起点 Y
+    pri bool rowReorderDragging = false // 已越过拖拽阈值
+    pri float rowReorderDragY = 0.0   // 当前拖拽鼠标 Y（绘制指示线用）
+    pri func(int, int):void onRowReorder  // 行拖拽重排回调（from, to）
 
-    float _fontSize = 15.0; string _fontPath = ""; int _fontStyle = 0; Font? _font
-    float _textH = 16.0         // 缓存字体行高，避免每个单元格重复 measureString
-    Color _bgColor = #262830FF
-    Color _hdrColor = #2E3038FF, _hdrTxtColor = #DCE1EBFF
-    Color _selColor = #343A46FF
-    Color _hovColor = #464E5CFF
-    Color _zebColor = #2C2E36FF
-    Color _txtColor = #EBEBF5FF, _sepColor = #464A54FF, _sbColor = #787D8CFF
+    float _fontSize = 15.0; pri string fontPath = ""; pri int fontStyle = 0; Font? _font
+    pri float textH = 16.0         // 缓存字体行高，避免每个单元格重复 measureString
+    pri Color bgColor = #262830FF
+    pri Color hdrColor = #2E3038FF, hdrTxtColor = #DCE1EBFF
+    pri Color selColor = #343A46FF
+    pri Color hovColor = #464E5CFF
+    pri Color zebColor = #2C2E36FF
+    pri Color txtColor = #EBEBF5FF, sepColor = #464A54FF, sbColor = #787D8CFF
     int _cursor = SystemCursor.POINTER
     bool enabled = true, visible = true, _loaded = false
     string _tip = ""
-    Ptr[u8]? _clipBase            // 表格整体裁剪区指针（供单元格内裁剪后恢复）
-    Array[float] _colWPrefix = []    // 列宽前缀和缓存：_colWPrefix[i] = sum(_colW[0..i-1])，让 _col_x O(1)
-    bool _colWPrefixValid = false
-    float _cachedTotalW = -1.0       // _total_w() 缓存，避免 process/render 中多次遍历 _colW
-    bool _totalWValid = false
+    pri Ptr[u8]? clipBase            // 表格整体裁剪区指针（供单元格内裁剪后恢复）
+    pri Array[float] colWPrefix = []    // 列宽前缀和缓存：_colWPrefix[i] = sum(_colW[0..i-1])，让 _col_x O(1)
+    pri bool colWPrefixValid = false
+    pri float cachedTotalW = -1.0       // _total_w() 缓存，避免 process/render 中多次遍历 _colW
+    pri bool totalWValid = false
     // ★ _compute_sb() 结果缓存：process 单帧最多调用 6 次，缓存后只计算 1 次
-    float _cachedSbVw = -1.0, _cachedSbHh = -1.0
-    bool _sbValid = false
-    int _hoverColForTip = -1         // 缓存：上次做 tooltip 截断检查的列索引
-    string _hoverTipText = ""        // 缓存：当前悬停单元格的 tooltip 文本（空串=无需 tooltip）
-    bool _draggingV = false, _draggingH = false; float _vDragOffset = 0.0, _hDragOffset = 0.0
-    int _dragCol = -1; float _dragStartX = 0.0, _dragStartW = 0.0; bool _resizable = true
-    func(int):void _onSelect
-    func(int, int):void _onCell
+    pri float cachedSbVw = -1.0, cachedSbHh = -1.0
+    pri bool sbValid = false
+    pri int hoverColForTip = -1         // 缓存：上次做 tooltip 截断检查的列索引
+    pri string hoverTipText = ""        // 缓存：当前悬停单元格的 tooltip 文本（空串=无需 tooltip）
+    pri bool draggingV = false, draggingH = false; pri float vDragOffset = 0.0, hDragOffset = 0.0
+    pri int dragCol = -1; pri float _dragStartX = 0.0, dragStartW = 0.0; bool _resizable = true
+    pri func(int):void onSelect
+    pri func(int, int):void onCell
     // 内嵌右击上下文菜单（复用 MenuBar 弹层渲染与捕获；默认不预置项，由应用层自定义）
-    MenuBar? _ctxMenu
-    int _ctxMenuH = -1
+    pri MenuBar? ctxMenu
+    pri int ctxMenuH = -1
     Ptr[u8]? _hwnd           // 所属窗口句柄（供内嵌右击菜单按窗口隔离绘制）
-    bool _ctxMenuEnabled = true
+    pri bool ctxMenuEnabled = true
     // 行图标支持：指定某列显示 [图标+文字]，图标路径由 _rowImages 独立存储（对齐 Treeview 模式）
-    int          _imageCol = -1           // 图标列索引（0-based，-1=无图标列）
-    Array[string] _rowImages = []         // 每行图标路径（与 _rows 平行，空串=无图标）
-    Array[string] _rowTips = []           // 每行自定义悬浮 tip（与 _rows 平行，空串=无自定义 tip）
+    pri int          imageCol = -1           // 图标列索引（0-based，-1=无图标列）
+    pri Array[string] rowImages = []         // 每行图标路径（与 _rows 平行，空串=无图标）
+    pri Array[string] rowTips = []           // 每行自定义悬浮 tip（与 _rows 平行，空串=无自定义 tip）
     float        _imgSize = 0.0           // 图标边长（0 = 自动：取 _rowH - 8）
-    int          _imgMode = 0             // 内容模式：0=aspectFit 1=stretch 2=aspectFill
-    float        _imgPad = 4.0            // 图标在单元格内的左侧内边距
-    float        _imgGap = 4.0            // 图标与文字间距
-    Array[string] _imgCachePaths = []     // 纹理缓存路径
-    Array[Ptr[u8]] _imgCacheTex = []      // 纹理缓存指针
-    string _imgLastPath = ""               // MRU 快路径：上次命中的图标路径
-    Ptr[u8] _imgLastTex = null             // MRU 快路径：上次命中的纹理指针
+    pri int          imgMode = 0             // 内容模式：0=aspectFit 1=stretch 2=aspectFill
+    pri float        imgPad = 4.0            // 图标在单元格内的左侧内边距
+    pri float        imgGap = 4.0            // 图标与文字间距
+    pri Array[string] imgCachePaths = []     // 纹理缓存路径
+    pri Array[Ptr[u8]] imgCacheTex = []      // 纹理缓存指针
+    pri string imgLastPath = ""               // MRU 快路径：上次命中的图标路径
+    pri Ptr[u8] imgLastTex = null             // MRU 快路径：上次命中的纹理指针
     // === 拟合文本缓存 ===
     // 预计算可见单元格的截断文本和宽度，避免 render 路径每帧调用 _fit_cell_text + measureString。
     // ★ 优化：只缓存当前视口可见行（_fittedStartRow ~ _fittedEndRow），滚动时惰性重建对应区间，
     //   避免对万行数据全量预计算（O(n×cols) → O(visibleRows×cols)）。
-    Array[string] _fittedText = []        // flat: (row-_fittedStartRow) * _ncols + col，截断后的文本
-    Array[float] _fittedW = []            // flat: (row-_fittedStartRow) * _ncols + col，截断后文本的测量宽度
-    int _fittedStartRow = 0               // 缓存对应的起始行索引
-    int _fittedEndRow = 0                 // 缓存对应的结束行索引（exclusive）
-    bool _fittedValid = false
+    pri Array[string] fittedText = []        // flat: (row-_fittedStartRow) * _ncols + col，截断后的文本
+    pri Array[float] fittedW = []            // flat: (row-_fittedStartRow) * _ncols + col，截断后文本的测量宽度
+    pri int fittedStartRow = 0               // 缓存对应的起始行索引
+    pri int fittedEndRow = 0                 // 缓存对应的结束行索引（exclusive）
+    pri bool fittedValid = false
     // 行背景色缓存：避免 render 中对每个可见行逐个 _is_sel / 判 zebraness / 判 hover
     // （_is_sel 已用 _selSet 消除，此处仅保留注释说明设计思路）
-    int _checkedCount = -1               // _rowChecked 已勾选计数缓存（-1=未计算/失效）
-    int _ctxRow = -1, _ctxCol = -1   // 右击命中行/列
-    int _winW = 0, _winH = 0          // 所属窗口逻辑宽高（上下文菜单边界夹紧用）
-    func(int, string):void _onCtxSelect   // 上下文菜单自定义回调（参数为命中行与项 id）
-    func(int):void _onCtxWillOpen          // 右键菜单弹出前回调（参数为命中行）；用于按行类型动态重建菜单项
-    func(int, int, string):void _onEditCommit  // 行内编辑提交回调（行, 列, 新文本）；供应用层落盘（如重命名）
-    func(int, Array[int]):void _onCheck       // 复选框变化回调（复选列索引, 勾选行索引数组）
+    pri int checkedCount = -1               // _rowChecked 已勾选计数缓存（-1=未计算/失效）
+    pri int ctxRow = -1, ctxCol = -1   // 右击命中行/列
+    pri int winW = 0, winH = 0          // 所属窗口逻辑宽高（上下文菜单边界夹紧用）
+    pri func(int, string):void onCtxSelect   // 上下文菜单自定义回调（参数为命中行与项 id）
+    pri func(int):void onCtxWillOpen          // 右键菜单弹出前回调（参数为命中行）；用于按行类型动态重建菜单项
+    pri func(int, int, string):void onEditCommit  // 行内编辑提交回调（行, 列, 新文本）；供应用层落盘（如重命名）
+    pri func(int, Array[int]):void onCheck       // 复选框变化回调（复选列索引, 勾选行索引数组）
 
     // === 复选框列 ===
-    int  _checkCol = -1               // 复选框列索引（-1=无复选框列）
-    Array[bool] _rowChecked = []      // 每行勾选状态（与 _rows 平行）
-    bool _checkHeaderState = false    // 表头全选框状态（三态：半选用 false 但有部分勾选时渲染半选样式）
-    Color  _chkColor = #46B278FF   // 勾选框填充色
-    Color  _chkBoxColor = #5A5F6EFF  // 未勾选时边框色
-    Color  _markColor = #EBEBF5FF  // 勾选标记颜色
+    pri int  checkCol = -1               // 复选框列索引（-1=无复选框列）
+    pri Array[bool] rowChecked = []      // 每行勾选状态（与 _rows 平行）
+    pri bool checkHeaderState = false    // 表头全选框状态（三态：半选用 false 但有部分勾选时渲染半选样式）
+    pri Color  chkColor = #46B278FF   // 勾选框填充色
+    pri Color  chkBoxColor = #5A5F6EFF  // 未勾选时边框色
+    pri Color  markColor = #EBEBF5FF  // 勾选标记颜色
 
     // === 行级颜色 ===
-    Array[Color] _rowColors = []        // 每行文字色 RGB 打包：0xRRGGBB，0=用默认色
+    pri Array[Color] rowColors = []        // 每行文字色 RGB 打包：0xRRGGBB，0=用默认色
     Dict[string, Color] _cellFgColors = {}  // 单元格前景色：键"row,col"，值 0xRRGGBB，0=无
     Dict[string, Color] _cellBgColors = {}  // 单元格背景色：键"row,col"，值 0xRRGGBB，0=无
-    Array[float] _colMinW = []   // 每列最小宽度（空数组=全部用默认 _minColW）
-    Array[float] _colMaxW = []   // 每列最大宽度（空数组=无上限）
-    float _minColW = 24.0        // 默认列最小宽度
-    float _maxColW = 9999.0     // 默认列最大宽度
+    pri Array[float] colMinW = []   // 每列最小宽度（空数组=全部用默认 _minColW）
+    pri Array[float] colMaxW = []   // 每列最大宽度（空数组=无上限）
+    pri float minColW = 24.0        // 默认列最小宽度
+    pri float maxColW = 9999.0     // 默认列最大宽度
 
     // === 空状态 ===
-    string _emptyText = "暂无数据"     // 空状态提示文字
-    Color _emptyColor = #78808CFF  // 空状态文字颜色
+    pri string emptyText = "暂无数据"     // 空状态提示文字
+    pri Color emptyColor = #78808CFF  // 空状态文字颜色
 
     // === 双击编辑（默认关闭，由应用按需开启） ===
     Edit? _edit
-    bool _editing = false
+    pri bool editing = false
     bool _editable = false          // 是否允许双击进入单元格编辑（默认 false）
-    Array[int] _editableCols = []   // 可编辑列索引集合（空数组=全部可编辑）
-    bool _cellSelect = false        // 单元格选中模式：hover/选中高亮单个单元格而非整行
-    int _editRow = -1, _editCol = -1
+    pri Array[int] editableCols = []   // 可编辑列索引集合（空数组=全部可编辑）
+    pri bool cellSelect = false        // 单元格选中模式：hover/选中高亮单个单元格而非整行
+    pri int editRow = -1, editCol = -1
     int _lastClickTime = -100000
-    float _lastClickX = 0.0, _lastClickY = 0.0
-    func(int, int):void _onDblClick  // 双击单元格回调（无论是否可编辑都会触发，便于应用层自定义如“打开”）
+    pri float lastClickX = 0.0, lastClickY = 0.0
+    pri func(int, int):void onDblClick  // 双击单元格回调（无论是否可编辑都会触发，便于应用层自定义如“打开”）
 
-    func _ensure_font() {
+    pri func ensure_font() {
         if _font == null or not _font.ok {
             if _font != null and _font.ok { fnt.releaseFont(_font) }
-            if _fontPath != "" { _font = fnt.acquireFont(_fontPath, _fontSize) }
+            if fontPath != "" { _font = fnt.acquireFont(fontPath, _fontSize) }
             else { _font = fnt.acquireFontAuto(_fontSize) }
             if _font.ok {
-                if _fontStyle != 0 { _font.setStyle(_fontStyle) }
+                if fontStyle != 0 { _font.setStyle(fontStyle) }
                 var[float, float](_agw, _agh) = _font.measureString("Ag")
-                _textH = _agh   // 字体加载时缓存行高，避免每帧渲染中调用 measureString
+                textH = _agh   // 字体加载时缓存行高，避免每帧渲染中调用 measureString
             }
         }
     }
-    func _total_w(): float {
-        if _totalWValid { return _cachedTotalW }
+    pri func total_w(): float {
+        if totalWValid { return cachedTotalW }
         float s = 0.0
         for _colW.len() to i { s = s + _colW[i] }
-        _cachedTotalW = s; _totalWValid = true
+        cachedTotalW = s; totalWValid = true
         return s
     }
-    func _invalidate_sb() { _sbValid = false }
-    func _compute_sb(): Array[float] {
-        if _sbValid { return [_cachedSbVw, _cachedSbHh] }
-        float fw = _frozen_w()
+    pri func invalidate_sb() { sbValid = false }
+    pri func compute_sb(): Array[float] {
+        if sbValid { return [cachedSbVw, cachedSbHh] }
+        float fw = frozen_w()
         float vw = 0.0, hh = 0.0
-        float bodyH0 = h - _headerH - 8.0
+        float bodyH0 = h - headerH - 8.0
         float bodyW0 = w - 8.0 - fw
-        float ch = _rows.len() * _rowH
-        float tw = _total_w() - fw
+        float ch = _rows.len() * rowH
+        float tw = total_w() - fw
         if ch > bodyH0 { vw = 8.0 }
         if tw > bodyW0 { hh = 8.0 }
         if vw > 0.0 and tw > bodyW0 - vw { hh = 8.0 }
         if hh > 0.0 and ch > bodyH0 - hh { vw = 8.0 }
-        _cachedSbVw = vw; _cachedSbHh = hh; _sbValid = true
+        cachedSbVw = vw; cachedSbHh = hh; sbValid = true
         return [vw, hh]
     }
-    func _max_scroll_y(): float {
-        var sb = _compute_sb()
-        float bodyH = h - _headerH - sb[1]
+    pri func max_scroll_y(): float {
+        var sb = compute_sb()
+        float bodyH = h - headerH - sb[1]
         if bodyH < 0 { bodyH = 0 }
-        float ch = _rows.len() * _rowH
+        float ch = _rows.len() * rowH
         if ch <= 0 { ch = 1 }
         float m = ch - bodyH
         if m < 0 { m = 0 }
         return m
     }
-    func _max_scroll_x(): float {
-        var sb = _compute_sb()
-        float bodyW = w - sb[0] - _frozen_w()
+    pri func max_scroll_x(): float {
+        var sb = compute_sb()
+        float bodyW = w - sb[0] - frozen_w()
         if bodyW < 0 { bodyW = 0 }
-        float m = _total_w() - _frozen_w() - bodyW
+        float m = total_w() - frozen_w() - bodyW
         if m < 0 { m = 0 }
         return m
     }
-    func _clamp_scroll() {
-        float my = _max_scroll_y(); if _scrollY < 0 { _scrollY = 0 }; if _scrollY > my { _scrollY = my }
-        float mx = _max_scroll_x(); if _scrollX < 0 { _scrollX = 0 }; if _scrollX > mx { _scrollX = mx }
+    pri func clamp_scroll() {
+        float my = max_scroll_y(); if scrollY < 0 { scrollY = 0 }; if scrollY > my { scrollY = my }
+        float mx = max_scroll_x(); if scrollX < 0 { scrollX = 0 }; if scrollX > mx { scrollX = mx }
     }
     // 键盘导航：选中某行并滚动到可见
-    func _select_key(int row) {
+    pri func select_key(int row) {
         if row < 0 or row >= _rows.len() { return }
-        _selRow = row
-        _selRows = [row]; _rebuild_sel_set()
-        if row < _selSet.len() { _selSet[row] = true }
-        _ensure_row_visible(row)
+        selRow = row
+        selRows = [row]; rebuild_sel_set()
+        if row < selSet.len() { selSet[row] = true }
+        ensure_row_visible(row)
         core.markFrameRedraw()
-        if _onSelect != null { _onSelect(row) }
+        if onSelect != null { onSelect(row) }
     }
     // 滚动使指定行可见
-    func _ensure_row_visible(int row) {
+    pri func ensure_row_visible(int row) {
         if row < 0 { return }
-        var sb = _compute_sb()
-        float visH = h - _headerH - sb[1]
+        var sb = compute_sb()
+        float visH = h - headerH - sb[1]
         if visH < 0 { visH = 0 }
-        float rowTop = row * _rowH
-        float rowBot = rowTop + _rowH
-        if rowTop < _scrollY { _scrollY = rowTop }
-        eif rowBot > _scrollY + visH { _scrollY = rowBot - visH }
-        _clamp_scroll()
+        float rowTop = row * rowH
+        float rowBot = rowTop + rowH
+        if rowTop < scrollY { scrollY = rowTop }
+        eif rowBot > scrollY + visH { scrollY = rowBot - visH }
+        clamp_scroll()
     }
     // 确保列宽前缀和缓存有效（列宽变化时由 _recompute_cols / 列拖拽处失效）
-    func _ensure_col_prefix() {
-        if _colWPrefixValid { return }
-        _colWPrefix = [0.0]
+    pri func ensure_col_prefix() {
+        if colWPrefixValid { return }
+        colWPrefix = [0.0]
         float s = 0.0
-        for _colW.len() to i { s = s + _colW[i]; _colWPrefix.add(s) }
-        _colWPrefixValid = true
+        for _colW.len() to i { s = s + _colW[i]; colWPrefix.add(s) }
+        colWPrefixValid = true
     }
-    func _col_x(int ci): float {
-        _ensure_col_prefix()
-        if ci < 0 { return x - _scrollX }
-        if ci >= _colWPrefix.len() { ci = _colWPrefix.len() - 1 }
-        if ci < 0 { return x - _scrollX }
+    pri func col_x(int ci): float {
+        ensure_col_prefix()
+        if ci < 0 { return x - scrollX }
+        if ci >= colWPrefix.len() { ci = colWPrefix.len() - 1 }
+        if ci < 0 { return x - scrollX }
         // 冻结列不受水平滚动影响
-        if ci < _frozenCols { return x + _colWPrefix[ci] }
-        return x - _scrollX + _colWPrefix[ci]
+        if ci < frozenCols { return x + colWPrefix[ci] }
+        return x - scrollX + colWPrefix[ci]
     }
-    func _row_at(float my): int {
-        if my < y + _headerH { return -1 }
+    pri func row_at(float my): int {
+        if my < y + headerH { return -1 }
         if my > y + h { return -1 }   // ★ 下边界：鼠标在 Table 下方时不应返回有效行
-        int idx = _int((my - y - _headerH + _scrollY) / _rowH)
+        int idx = _int((my - y - headerH + scrollY) / rowH)
         if idx < 0 or idx >= _rows.len() { return -1 }
         return idx
     }
-    func _col_at(float mx): int {
-        _ensure_col_prefix()
-        if _ncols <= 0 { return -1 }
+    pri func col_at(float mx): int {
+        ensure_col_prefix()
+        if ncols <= 0 { return -1 }
         // 先检查冻结列（不受 _scrollX 影响）
-        if _frozenCols > 0 {
-            for _frozenCols to c {
-                if mx >= x + _colWPrefix[c] and mx < x + _colWPrefix[c + 1] { return c }
+        if frozenCols > 0 {
+            for frozenCols to c {
+                if mx >= x + colWPrefix[c] and mx < x + colWPrefix[c + 1] { return c }
             }
         }
         // 非冻结列：基于 _scrollX 做二分查找
-        float offset = mx - (x - _scrollX)
+        float offset = mx - (x - scrollX)
         if offset < 0 { return -1 }
-        int lo = _frozenCols, hi = _ncols - 1
+        int lo = frozenCols, hi = ncols - 1
         if lo > hi { return -1 }
         while lo < hi {
             int mid = (lo + hi) / 2
-            float edge = _colWPrefix[mid + 1]
+            float edge = colWPrefix[mid + 1]
             if offset < edge { hi = mid } else { lo = mid + 1 }
         }
-        if lo < _colW.len() and offset >= _colWPrefix[lo] and offset < _colWPrefix[lo + 1] { return lo }
+        if lo < _colW.len() and offset >= colWPrefix[lo] and offset < colWPrefix[lo + 1] { return lo }
         return -1
     }
     // 命中表头列分隔线（用于列宽拖拽），返回左侧列索引，未命中返回 -1
-    func _header_resize_col(float mx): int {
+    pri func header_resize_col(float mx): int {
         if not _resizable { return -1 }
-        if _ncols <= 0 { return -1 }
+        if ncols <= 0 { return -1 }
         float tol = 5.0
-        for 0 : _ncols - 1 to c {
-            float edge = _col_x(c) + _colW[c]
+        for 0 : ncols - 1 to c {
+            float edge = col_x(c) + _colW[c]
             if mx >= edge - tol and mx <= edge + tol { return c }
         }
         return -1
     }
-    func _cell(int r, int c): string {
+    pri func cell(int r, int c): string {
         if r < 0 or r >= _rows.len() { return "" }
         var row = _rows[r]
         if c < 0 or c >= row.len() { return "" }
@@ -293,129 +293,129 @@ export struct Table impl Widget, Themeable {
         dochk.check("sdl_table", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
         // 主题默认配色（opts 覆盖优先级更高）
         Theme th = theme.getTheme()
-        _bgColor = th.bg
-        _hdrColor = th.bgHeader
-        _selColor = th.bgSel
-        _hovColor = th.bgHover
-        _zebColor = th.bgZebra
-        _txtColor = th.txt
-        _hdrTxtColor = th.txtHeader
-        _sepColor = th.sep
-        _sbColor = th.sb
-        _emptyColor = th.txtDim
-        _chkBoxColor = th.border
-        _markColor = th.txtOnAccent
+        bgColor = th.bg
+        hdrColor = th.bgHeader
+        selColor = th.bgSel
+        hovColor = th.bgHover
+        zebColor = th.bgZebra
+        txtColor = th.txt
+        hdrTxtColor = th.txtHeader
+        sepColor = th.sep
+        sbColor = th.sb
+        emptyColor = th.txtDim
+        chkBoxColor = th.border
+        markColor = th.txtOnAccent
         x = opts.get("x", 0)
         y = opts.get("y", 0)
         w = opts.get("w", 360)
         h = opts.get("h", 240)
-        _headerH = opts.get("header_h", 28)
-        _rowH = opts.get("row_h", 24)
+        headerH = opts.get("header_h", 28)
+        rowH = opts.get("row_h", 24)
         _fontSize = opts.get("font_size", 15)
-        _fontPath = opts.get("font_path", "")
-        _fontStyle = opts.get("font_style", 0)
+        fontPath = opts.get("font_path", "")
+        fontStyle = opts.get("font_style", 0)
         _sortable = opts.get("sortable", false)
         _resizable = opts.get("resizable", true)
         _zebra = opts.get("zebra", true)
-        _colReorder = opts.get("col_reorder", true)
-        _frozenCols = opts.get("frozen_cols", 0)
-        _rowReorder = opts.get("row_reorder", false)
-        _minColW = opts.get("min_col_width", 24.0)
-        _maxColW = opts.get("max_col_width", 9999.0)
+        colReorder = opts.get("col_reorder", true)
+        frozenCols = opts.get("frozen_cols", 0)
+        rowReorder = opts.get("row_reorder", false)
+        minColW = opts.get("min_col_width", 24.0)
+        maxColW = opts.get("max_col_width", 9999.0)
         var ncs = opts.get("numeric_cols", [])
-        if ncs is Array[int] { _numericCols = ncs } else { _numericCols = [] }
+        if ncs is Array[int] { numericCols = ncs } else { numericCols = [] }
         // 禁用排序的列集合（黑名单，空数组=全部可排序）；列重排时索引自动同步
         var sdc = opts.get("sort_disabled_cols", [])
-        if sdc is Array[int] { _sortDisabledCols = sdc } else { _sortDisabledCols = [] }
+        if sdc is Array[int] { sortDisabledCols = sdc } else { sortDisabledCols = [] }
         // 若当前排序列被禁用，清除排序状态
-        if _is_col_sort_disabled(_sortCol) { _sortCol = -1; _sortDesc = false }
+        if is_col_sort_disabled(sortCol) { sortCol = -1; sortDesc = false }
 
         var hs = opts.get("headers", [])
         if hs is Array[string] { _headers = hs } else { _headers = [] }
         var cws = opts.get("col_widths", [])
-        if cws is Array[float] { _colW = cws ; _autoCols = (_colW.len() == 0) }
-        else { _colW = []; _autoCols = true }
+        if cws is Array[float] { _colW = cws ; autoCols = (_colW.len() == 0) }
+        else { _colW = []; autoCols = true }
         var als = opts.get("aligns", [])
         if als is Array[int] { _aligns = als } else { _aligns = [] }
         var has = opts.get("header_aligns", [])
-        if has is Array[int] { _headerAligns = has } else { _headerAligns = [] }
+        if has is Array[int] { headerAligns = has } else { headerAligns = [] }
 
         var rs = opts.get("rows", [])
         if rs is Array[Array[string]] { _rows = rs } else { _rows = [] }
 
-        _ncols = _headers.len()
-        if _ncols == 0 {
+        ncols = _headers.len()
+        if ncols == 0 {
             int m = 0
             for _rows.len() to i { if _rows[i].len() > m { m = _rows[i].len() } }
-            _ncols = m
+            ncols = m
         }
-        if _ncols == 0 { _ncols = 1 }
-        _recompute_cols()
+        if ncols == 0 { ncols = 1 }
+        recompute_cols()
 
         // 颜色：opts 未传则保持默认值
-        if opts.get("bg_color") is Color => t { _bgColor = t }
-        if opts.get("header_color") is Color => t { _hdrColor = t }
-        if opts.get("sel_color") is Color => t { _selColor = t }
-        if opts.get("sep_color") is Color => t { _sepColor = t }
+        if opts.get("bg_color") is Color => t { bgColor = t }
+        if opts.get("header_color") is Color => t { hdrColor = t }
+        if opts.get("sel_color") is Color => t { selColor = t }
+        if opts.get("sep_color") is Color => t { sepColor = t }
 
         // 行图标配置：image_col 指定哪列显示 [图标+文字]，图标路径由 row_images 独立存储
-        _imageCol = opts.get("image_col", -1)
+        imageCol = opts.get("image_col", -1)
         var ri = opts.get("row_images", [])
-        if ri is Array[string] { _rowImages = ri } else { _rowImages = [] }
+        if ri is Array[string] { rowImages = ri } else { rowImages = [] }
         _imgSize = opts.get("image_size", 0.0)
-        _imgMode = opts.get("image_mode", 0)
-        _imgPad = opts.get("image_pad", 4.0)
-        _imgGap = opts.get("image_gap", 4.0)
+        imgMode = opts.get("image_mode", 0)
+        imgPad = opts.get("image_pad", 4.0)
+        imgGap = opts.get("image_gap", 4.0)
 
         // 复选框列配置
-        _checkCol = opts.get("check_col", -1)
-        if opts.get("check_color") is Color => t { _chkColor = t }
-        _emptyText = opts.get("empty_text", "暂无数据")
-        if opts.get("empty_color") is Color => t { _emptyColor = t }
+        checkCol = opts.get("check_col", -1)
+        if opts.get("check_color") is Color => t { chkColor = t }
+        emptyText = opts.get("empty_text", "暂无数据")
+        if opts.get("empty_color") is Color => t { emptyColor = t }
         // 初始化行勾选/颜色数组长度
-        while _rowChecked.len() < _rows.len() { _rowChecked.add(false) }
-        while _rowColors.len() < _rows.len() { _rowColors.add(0) }
+        while rowChecked.len() < _rows.len() { rowChecked.add(false) }
+        while rowColors.len() < _rows.len() { rowColors.add(0) }
 
         _cursor = opts.get("cursor", SystemCursor.POINTER)
         enabled = opts.get("enabled", true)
         visible = opts.get("visible", true)
         _tip = opts.get("tip", "")
-        _selRow = -1; _selCol = -1; _hoverRow = -1; _selRows = []; _rebuild_sel_set()
+        selRow = -1; selCol = -1; hoverRow = -1; selRows = []; rebuild_sel_set()
         _multi = opts.get("multi_select", opts.get("multi", false))
-        _scrollX = 0.0; _scrollY = 0.0
-        _sortCol = -1; _sortDesc = false
-        _draggingV = false; _draggingH = false
-        _dragCol = -1
+        scrollX = 0.0; scrollY = 0.0
+        sortCol = -1; sortDesc = false
+        draggingV = false; draggingH = false
+        dragCol = -1
         _editable = opts.get("editable", false)
-        _cellSelect = opts.get("cell_select", false)
+        cellSelect = opts.get("cell_select", false)
         // 指定哪些列可编辑（空数组=全部可编辑）
         var ec = opts.get("editable_cols", [])
-        if ec is Array[int] { _editableCols = ec } else { _editableCols = [] }
-        _ensure_font()
-        _clamp_scroll()
+        if ec is Array[int] { editableCols = ec } else { editableCols = [] }
+        ensure_font()
+        clamp_scroll()
         // 编辑框（朴素写法：在 sdl_table 内部经模块别名 edt 创建，触发传递加载别名 bug）
-        _edit = edt.createEdit({x:0, y:0, w:w, h:_rowH, font_size:_fontSize, border:false, draw_bg:true, radius:2})
-        _editing = false
-        _editRow = -1; _editCol = -1
+        _edit = edt.createEdit({x:0, y:0, w:w, h:rowH, font_size:_fontSize, border:false, draw_bg:true, radius:2})
+        editing = false
+        editRow = -1; editCol = -1
         // 内嵌右击上下文菜单（首次 set 时创建，避免重复注册到全局菜单注册表）
-        if _ctxMenu == null {
-            _ctxMenu = menu.createMenuBar({})
-            _ctxMenu.setWindowSize(_winW, _winH)
-            _ctxMenuH = _ctxMenu.addContextMenu("table_ctx")
-            _ctxMenu.on_select(func(string m, string id) { _ctx_select(id) })
-            menu.registerContextMenu(_ctxMenu)
+        if ctxMenu == null {
+            ctxMenu = menu.createMenuBar({})
+            ctxMenu.setWindowSize(winW, winH)
+            ctxMenuH = ctxMenu.addContextMenu("table_ctx")
+            ctxMenu.on_select(func(string m, string id) { ctx_select(id) })
+            menu.registerContextMenu(ctxMenu)
         }
         _loaded = true
     }
 
-    func _recompute_cols() {
-        _colWPrefixValid = false
-        _totalWValid = false
-        _invalidate_sb()
-        _invalidate_fitted()
-        int n = _ncols
+    pri func recompute_cols() {
+        colWPrefixValid = false
+        totalWValid = false
+        invalidate_sb()
+        invalidate_fitted()
+        int n = ncols
         if n <= 0 { n = 1 }
-        if _autoCols or _colW.len() != n {
+        if autoCols or _colW.len() != n {
             _colW = []
             float cw = w / n
             if cw < 30.0 { cw = 30.0 }
@@ -425,9 +425,9 @@ export struct Table impl Widget, Themeable {
             _aligns = []
             for n to _ { _aligns.add(0) }
         }
-        if _headerAligns.len() != n {
-            _headerAligns = []
-            for n to i { int a = 0; if i < _aligns.len() { a = _aligns[i] }; _headerAligns.add(a) }
+        if headerAligns.len() != n {
+            headerAligns = []
+            for n to i { int a = 0; if i < _aligns.len() { a = _aligns[i] }; headerAligns.add(a) }
         }
     }
 
@@ -436,80 +436,80 @@ export struct Table impl Widget, Themeable {
     func get_h(): float { return h }
     func get_x(): float { return x }
     func get_y(): float { return y }
-    func set_pos(float px, float py) { x = px; y = py; _invalidate_sb(); _clamp_scroll() }
+    func set_pos(float px, float py) { x = px; y = py; invalidate_sb(); clamp_scroll() }
     func set_size(float sw, float sh) {
         w = sw; h = sh
-        if _autoCols { _recompute_cols() } else { _invalidate_sb() }
-        _clamp_scroll()
+        if autoCols { recompute_cols() } else { invalidate_sb() }
+        clamp_scroll()
     }
 
     // ==================== 数据操作 ====================
     func set_rows(Array[Array[string]] rs) {
         _rows = rs
-        _invalidate_fitted(); _invalidate_sb()
+        invalidate_fitted(); invalidate_sb()
         int m = 0
         for _rows.len() to i { if _rows[i].len() > m { m = _rows[i].len() } }
-        if _headers.len() > 0 { _ncols = _headers.len() }
-        eif m > 0 { _ncols = m } eif _ncols == 0 { _ncols = 1 }
-        _recompute_cols()
-        _clamp_scroll()
-        _selRow = -1; _selRows = []; _rebuild_sel_set()
+        if _headers.len() > 0 { ncols = _headers.len() }
+        eif m > 0 { ncols = m } eif ncols == 0 { ncols = 1 }
+        recompute_cols()
+        clamp_scroll()
+        selRow = -1; selRows = []; rebuild_sel_set()
         // ★ 同步 _rowImages / _rowTips / _rowChecked / _rowColors 长度（批量截断避免逐个 remove）
         int nRows = _rows.len()
-        if nRows > 0 and _rowImages.len() > nRows { _rowImages = _rowImages[0 : nRows - 1] }
-        eif nRows == 0 { _rowImages = [] }
-        while _rowImages.len() < nRows { _rowImages.add("") }
-        if nRows > 0 and _rowTips.len() > nRows { _rowTips = _rowTips[0 : nRows - 1] }
-        eif nRows == 0 { _rowTips = [] }
-        while _rowTips.len() < nRows { _rowTips.add("") }
-        if nRows > 0 and _rowChecked.len() > nRows { _rowChecked = _rowChecked[0 : nRows - 1] }
-        eif nRows == 0 { _rowChecked = [] }
-        while _rowChecked.len() < nRows { _rowChecked.add(false) }
-        if nRows > 0 and _rowColors.len() > nRows { _rowColors = _rowColors[0 : nRows - 1] }
-        eif nRows == 0 { _rowColors = [] }
-        while _rowColors.len() < nRows { _rowColors.add(0) }
-        _checkedCount = -1
-        _update_check_header()
+        if nRows > 0 and rowImages.len() > nRows { rowImages = rowImages[0 : nRows - 1] }
+        eif nRows == 0 { rowImages = [] }
+        while rowImages.len() < nRows { rowImages.add("") }
+        if nRows > 0 and rowTips.len() > nRows { rowTips = rowTips[0 : nRows - 1] }
+        eif nRows == 0 { rowTips = [] }
+        while rowTips.len() < nRows { rowTips.add("") }
+        if nRows > 0 and rowChecked.len() > nRows { rowChecked = rowChecked[0 : nRows - 1] }
+        eif nRows == 0 { rowChecked = [] }
+        while rowChecked.len() < nRows { rowChecked.add(false) }
+        if nRows > 0 and rowColors.len() > nRows { rowColors = rowColors[0 : nRows - 1] }
+        eif nRows == 0 { rowColors = [] }
+        while rowColors.len() < nRows { rowColors.add(0) }
+        checkedCount = -1
+        update_check_header()
     }
     func add_row(Array[string] row, string imgPath) {
         _rows.add(row)
-        _invalidate_fitted(); _invalidate_sb()
-        _rowImages.add(imgPath)
-        _rowTips.add("")
-        _rowChecked.add(false)
-        _rowColors.add(0)
-        _selSet.add(false)
-        if row.len() > _ncols and _headers.len() == 0 { _ncols = row.len(); _recompute_cols() }
-        _clamp_scroll()
-        _update_check_header()
+        invalidate_fitted(); invalidate_sb()
+        rowImages.add(imgPath)
+        rowTips.add("")
+        rowChecked.add(false)
+        rowColors.add(0)
+        selSet.add(false)
+        if row.len() > ncols and _headers.len() == 0 { ncols = row.len(); recompute_cols() }
+        clamp_scroll()
+        update_check_header()
     }
     func remove_row(int idx) {
-        _invalidate_fitted(); _invalidate_sb()
+        invalidate_fitted(); invalidate_sb()
         if idx >= 0 and idx < _rows.len() { _rows.remove(idx) }
-        if idx >= 0 and idx < _rowImages.len() { _rowImages.remove(idx) }
-        if idx >= 0 and idx < _rowTips.len() { _rowTips.remove(idx) }
-        if idx >= 0 and idx < _rowChecked.len() {
-            if _rowChecked[idx] { _checkedCount = -1 }
-            _rowChecked.remove(idx)
+        if idx >= 0 and idx < rowImages.len() { rowImages.remove(idx) }
+        if idx >= 0 and idx < rowTips.len() { rowTips.remove(idx) }
+        if idx >= 0 and idx < rowChecked.len() {
+            if rowChecked[idx] { checkedCount = -1 }
+            rowChecked.remove(idx)
         }
-        if idx >= 0 and idx < _rowColors.len() { _rowColors.remove(idx) }
-        if _selRow == idx { _selRow = -1 }
-        eif _selRow > idx { _selRow = _selRow - 1 }
+        if idx >= 0 and idx < rowColors.len() { rowColors.remove(idx) }
+        if selRow == idx { selRow = -1 }
+        eif selRow > idx { selRow = selRow - 1 }
         Array[int] ns = []
-        for _selRows.len() to i {
-            int r = _selRows[i]
+        for selRows.len() to i {
+            int r = selRows[i]
             if r == idx { continue }
             if r > idx { r = r - 1 }
             ns.add(r)
         }
-        _selRows = ns
-        _rebuild_sel_set()
-        _clamp_scroll()
-        _update_check_header()
+        selRows = ns
+        rebuild_sel_set()
+        clamp_scroll()
+        update_check_header()
     }
-    func clear() { _rows = []; _rowImages = []; _rowTips = []; _rowChecked = []; _rowColors = []; _selRow = -1; _selCol = -1; _selRows = []; _selSet = []; _scrollX = 0; _scrollY = 0; _checkHeaderState = false; _checkedCount = -1; _invalidate_fitted(); _invalidate_sb() }
+    func clear() { _rows = []; rowImages = []; rowTips = []; rowChecked = []; rowColors = []; selRow = -1; selCol = -1; selRows = []; selSet = []; scrollX = 0; scrollY = 0; checkHeaderState = false; checkedCount = -1; invalidate_fitted(); invalidate_sb() }
     func row_count(): int { return _rows.len() }
-    func col_count(): int { return _ncols }
+    func col_count(): int { return ncols }
     func get_row(int idx): Array[string] {
         if idx >= 0 and idx < _rows.len() { return _rows[idx] }
         return []
@@ -518,77 +518,77 @@ export struct Table impl Widget, Themeable {
         if r >= 0 and r < _rows.len() {
             while _rows[r].len() <= c { _rows[r].add("") }
             _rows[r][c] = v
-            _invalidate_fitted()
+            invalidate_fitted()
         }
     }
     // 获取单元格文本（供 tooltip 截断检测用）
-    func _cell_text(int r, int c): string {
+    pri func cell_text(int r, int c): string {
         if r < 0 or r >= _rows.len() { return "" }
         if c < 0 or c >= _rows[r].len() { return "" }
         return _rows[r][c]
     }
     func get_cell(int r, int c): string {
-        return _cell_text(r, c)
+        return cell_text(r, c)
     }
     func set_headers(Array[string] hs) {
-        _headers = hs; _ncols = hs.len(); if _ncols == 0 { _ncols = 1 }
-        _recompute_cols(); _clamp_scroll(); _invalidate_fitted()
+        _headers = hs; ncols = hs.len(); if ncols == 0 { ncols = 1 }
+        recompute_cols(); clamp_scroll(); invalidate_fitted()
     }
-    func _is_sel(int r): bool {
-        if r < 0 or r >= _selSet.len() { return false }
-        return _selSet[r]
+    pri func is_sel(int r): bool {
+        if r < 0 or r >= selSet.len() { return false }
+        return selSet[r]
     }
-    func _toggle_sel(int r) {
-        while _selSet.len() <= r { _selSet.add(false) }
-        if _selSet[r] {
-            _selSet[r] = false
+    pri func toggle_sel(int r) {
+        while selSet.len() <= r { selSet.add(false) }
+        if selSet[r] {
+            selSet[r] = false
             int idx = -1
-            for _selRows.len() to i { if _selRows[i] == r { idx = i } }
-            if idx >= 0 { _selRows.remove(idx) }
+            for selRows.len() to i { if selRows[i] == r { idx = i } }
+            if idx >= 0 { selRows.remove(idx) }
         } else {
-            _selSet[r] = true; _selRows.add(r)
+            selSet[r] = true; selRows.add(r)
         }
     }
-    func _rebuild_sel_set() {
-        _selSet = []
-        while _selSet.len() < _rows.len() { _selSet.add(false) }
-        for _selRows.len() to i { if _selRows[i] >= 0 and _selRows[i] < _selSet.len() { _selSet[_selRows[i]] = true } }
+    pri func rebuild_sel_set() {
+        selSet = []
+        while selSet.len() < _rows.len() { selSet.add(false) }
+        for selRows.len() to i { if selRows[i] >= 0 and selRows[i] < selSet.len() { selSet[selRows[i]] = true } }
     }
-    func set_selected(int idx) { _selRows = []; _rebuild_sel_set(); if idx >= 0 and idx < _rows.len() { _selRow = idx; _selRows.add(idx); if idx < _selSet.len() { _selSet[idx] = true } } }
-    func get_selected_row(): int { return _selRow }
-    func get_selected_rows(): Array[int] { return _selRows }
-    func set_aligns(Array[int] als) { _aligns = als; if _aligns.len() != _ncols { _recompute_cols() } }
-    func set_header_aligns(Array[int] als) { _headerAligns = als; if _headerAligns.len() != _ncols { _recompute_cols() } }
+    func set_selected(int idx) { selRows = []; rebuild_sel_set(); if idx >= 0 and idx < _rows.len() { selRow = idx; selRows.add(idx); if idx < selSet.len() { selSet[idx] = true } } }
+    func get_selected_row(): int { return selRow }
+    func get_selected_rows(): Array[int] { return selRows }
+    func set_aligns(Array[int] als) { _aligns = als; if _aligns.len() != ncols { recompute_cols() } }
+    func set_header_aligns(Array[int] als) { headerAligns = als; if headerAligns.len() != ncols { recompute_cols() } }
     func set_multi_select(bool m) { _multi = m }
-    func select_all() { _selRows = []; _rebuild_sel_set(); for _rows.len() to i { _selRows.add(i); _selSet[i] = true }; if _selRow < 0 and _rows.len() > 0 { _selRow = 0 } }
-    func clear_selection() { _selRows = []; _selRow = -1; _rebuild_sel_set() }
+    func select_all() { selRows = []; rebuild_sel_set(); for _rows.len() to i { selRows.add(i); selSet[i] = true }; if selRow < 0 and _rows.len() > 0 { selRow = 0 } }
+    func clear_selection() { selRows = []; selRow = -1; rebuild_sel_set() }
     func set_selected_rows(Array[int] rows) {
-        _selRows = []; _rebuild_sel_set()
+        selRows = []; rebuild_sel_set()
         for rows.len() to i {
-            if rows[i] >= 0 and rows[i] < _rows.len() { _selRows.add(rows[i]); if rows[i] < _selSet.len() { _selSet[rows[i]] = true } }
+            if rows[i] >= 0 and rows[i] < _rows.len() { selRows.add(rows[i]); if rows[i] < selSet.len() { selSet[rows[i]] = true } }
         }
-        if _selRows.len() > 0 { _selRow = _selRows[0] } else { _selRow = -1 }
+        if selRows.len() > 0 { selRow = selRows[0] } else { selRow = -1 }
     }
 
     // ==================== 排序 ====================
     // ★ 交换两行数据及所有并行数组（图标/tip/勾选/颜色），保持对齐
-    func _swap_rows(int i, int j) {
+    pri func swap_rows(int i, int j) {
         var tmp = _rows[i]; _rows[i] = _rows[j]; _rows[j] = tmp
-        if i < _rowImages.len() and j < _rowImages.len() {
-            string ti = _rowImages[i]; _rowImages[i] = _rowImages[j]; _rowImages[j] = ti
+        if i < rowImages.len() and j < rowImages.len() {
+            string ti = rowImages[i]; rowImages[i] = rowImages[j]; rowImages[j] = ti
         }
-        if i < _rowTips.len() and j < _rowTips.len() {
-            string tt = _rowTips[i]; _rowTips[i] = _rowTips[j]; _rowTips[j] = tt
+        if i < rowTips.len() and j < rowTips.len() {
+            string tt = rowTips[i]; rowTips[i] = rowTips[j]; rowTips[j] = tt
         }
-        if i < _rowChecked.len() and j < _rowChecked.len() {
-            bool tb = _rowChecked[i]; _rowChecked[i] = _rowChecked[j]; _rowChecked[j] = tb
+        if i < rowChecked.len() and j < rowChecked.len() {
+            bool tb = rowChecked[i]; rowChecked[i] = rowChecked[j]; rowChecked[j] = tb
         }
-        if i < _rowColors.len() and j < _rowColors.len() {
-            Color tc = _rowColors[i]; _rowColors[i] = _rowColors[j]; _rowColors[j] = tc
+        if i < rowColors.len() and j < rowColors.len() {
+            Color tc = rowColors[i]; rowColors[i] = rowColors[j]; rowColors[j] = tc
         }
         // 同步交换单元格级颜色（fg/bg），键格式 "row,col"
         if _cellFgColors.len() > 0 or _cellBgColors.len() > 0 {
-            for 0 : _ncols - 1 to c {
+            for 0 : ncols - 1 to c {
                 string ki = $"{i},{c}"; string kj = $"{j},{c}"
                 Color fgi = _cellFgColors.get(ki, 0); Color fgj = _cellFgColors.get(kj, 0)
                 if fgi != 0 { _cellFgColors[kj] = fgi } else { _cellFgColors.remove(kj) }
@@ -600,18 +600,18 @@ export struct Table impl Widget, Themeable {
         }
     }
     // 判断列是否为数值排序列
-    func _is_numeric_col(int col): bool {
-        for _numericCols.len() to i { if _numericCols[i] == col { return true } }
+    pri func is_numeric_col(int col): bool {
+        for numericCols.len() to i { if numericCols[i] == col { return true } }
         return false
     }
     // 判断列是否被禁用排序（在 _sortDisabledCols 黑名单中）
-    func _is_col_sort_disabled(int col): bool {
+    pri func is_col_sort_disabled(int col): bool {
         if col < 0 { return false }
-        for _sortDisabledCols.len() to i { if _sortDisabledCols[i] == col { return true } }
+        for sortDisabledCols.len() to i { if sortDisabledCols[i] == col { return true } }
         return false
     }
     // 字符串转 float（失败返回 0.0，不抛异常）
-    func _to_float(string s): float {
+    pri func to_float(string s): float {
         try {
             return _float(s)
         } catch {
@@ -619,7 +619,7 @@ export struct Table impl Widget, Themeable {
         }
     }
     // 判断字符串是否为可解析的数字（自动数值排序检测用）
-    func _is_number_str(string s): bool {
+    pri func is_number_str(string s): bool {
         if s == "" { return false }
         try {
             _float(s)
@@ -632,12 +632,12 @@ export struct Table impl Widget, Themeable {
     // 1) 显式在 numeric_cols 中指定 → 数值
     // 2) 否则自动检测：该列所有非空值均可解析为数字 → 数值
     //    （避免 "9" > "89" 这类字符串比较 bug：99/90/89 会排成 90,9,89）
-    func _should_numeric_sort(int col): bool {
-        if _is_numeric_col(col) { return true }
+    pri func should_numeric_sort(int col): bool {
+        if is_numeric_col(col) { return true }
         for _rows.len() to i {
-            string v = _cell(i, col)
+            string v = cell(i, col)
             if v == "" { continue }
-            if not _is_number_str(v) { return false }
+            if not is_number_str(v) { return false }
         }
         return true
     }
@@ -645,210 +645,210 @@ export struct Table impl Widget, Themeable {
     // 支持 numeric 模式：数值列按 float 比较，避免字符串排序 "10" < "2" 的问题
     // ★ 自动检测：显式 numeric_cols 或全列可解析为数字时按数值比较
     func sort_by(int col, bool desc) {
-        _sortCol = col; _sortDesc = desc
-        _invalidate_fitted(); _invalidate_sb()
-        bool numeric = _should_numeric_sort(col)
+        sortCol = col; sortDesc = desc
+        invalidate_fitted(); invalidate_sb()
+        bool numeric = should_numeric_sort(col)
         int n = _rows.len()
         for 0 : n - 1 to i {
             int best = i
-            string bestVal = _cell(i, col)
+            string bestVal = cell(i, col)
             float bestNum = 0.0
-            if numeric { bestNum = _to_float(bestVal) }
+            if numeric { bestNum = to_float(bestVal) }
             for i + 1 : n - 1 to j {
-                string cur = _cell(j, col)
+                string cur = cell(j, col)
                 bool shouldSwap = false
                 if numeric {
-                    float curNum = _to_float(cur)
+                    float curNum = to_float(cur)
                     if desc { shouldSwap = (curNum > bestNum) } else { shouldSwap = (curNum < bestNum) }
                 } else {
                     if desc { shouldSwap = (cur > bestVal) } else { shouldSwap = (cur < bestVal) }
                 }
-                if shouldSwap { best = j; bestVal = cur; if numeric { bestNum = _to_float(cur) } }
+                if shouldSwap { best = j; bestVal = cur; if numeric { bestNum = to_float(cur) } }
             }
-            if best != i { _swap_rows(i, best) }
+            if best != i { swap_rows(i, best) }
         }
     }
 
     // ==================== 设置方法 ====================
-    func set_font_size(float s) { _fontSize = s; if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null; _invalidate_fitted() }
-    func set_col_reorder(bool r) { _colReorder = r }
+    func set_font_size(float s) { _fontSize = s; if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null; invalidate_fitted() }
+    func set_col_reorder(bool r) { colReorder = r }
     // 动态启用/禁用某列的排序（en=false 时从黑名单追加，en=true 时从黑名单移除）
     func set_col_sortable(int col, bool en) {
         if col < 0 { return }
         if not en {
-            if not _is_col_sort_disabled(col) { _sortDisabledCols.add(col) }
-            if _sortCol == col { _sortCol = -1; _sortDesc = false }
+            if not is_col_sort_disabled(col) { sortDisabledCols.add(col) }
+            if sortCol == col { sortCol = -1; sortDesc = false }
         } else {
-            for _sortDisabledCols.len() to i { if _sortDisabledCols[i] == col { _sortDisabledCols.remove(i); break } }
+            for sortDisabledCols.len() to i { if sortDisabledCols[i] == col { sortDisabledCols.remove(i); break } }
         }
     }
     // 整体设置禁用排序的列集合（黑名单，空数组=全部列可排序）
     func set_sort_disabled_cols(Array[int] cols) {
-        _sortDisabledCols = cols
-        if _is_col_sort_disabled(_sortCol) { _sortCol = -1; _sortDesc = false }
+        sortDisabledCols = cols
+        if is_col_sort_disabled(sortCol) { sortCol = -1; sortDesc = false }
     }
     // 查询某列是否可排序（全局开关 + 列级黑名单）
     func is_col_sortable(int col): bool {
-        return _sortable and not _is_col_sort_disabled(col)
+        return _sortable and not is_col_sort_disabled(col)
     }
-    func set_frozen_cols(int n) { _frozenCols = n; _invalidate_sb(); _clamp_scroll() }
-    func set_row_reorder(bool r) { _rowReorder = r }
-    func on_row_reorder(func(int, int):void cb) { _onRowReorder = cb }
+    func set_frozen_cols(int n) { frozenCols = n; invalidate_sb(); clamp_scroll() }
+    func set_row_reorder(bool r) { rowReorder = r }
+    func on_row_reorder(func(int, int):void cb) { onRowReorder = cb }
     // 将行从 srcIdx 移动到 dstIdx 位置（插入到 dstIdx 之前，其他行后移）
-    func _move_row(int srcIdx, int dstIdx) {
+    pri func move_row(int srcIdx, int dstIdx) {
         if srcIdx < 0 or dstIdx < 0 or srcIdx >= _rows.len() or dstIdx >= _rows.len() or srcIdx == dstIdx { return }
-        _invalidate_fitted(); _invalidate_sb()
+        invalidate_fitted(); invalidate_sb()
         // 提取源行数据
         var row = _rows[srcIdx]
         string imgP = ""; string tipP = ""; bool chkP = false; int colP = 0
-        if srcIdx < _rowImages.len() { imgP = _rowImages[srcIdx] }
-        if srcIdx < _rowTips.len() { tipP = _rowTips[srcIdx] }
-        if srcIdx < _rowChecked.len() { chkP = _rowChecked[srcIdx] }
-        if srcIdx < _rowColors.len() { colP = _rowColors[srcIdx] }
+        if srcIdx < rowImages.len() { imgP = rowImages[srcIdx] }
+        if srcIdx < rowTips.len() { tipP = rowTips[srcIdx] }
+        if srcIdx < rowChecked.len() { chkP = rowChecked[srcIdx] }
+        if srcIdx < rowColors.len() { colP = rowColors[srcIdx] }
         // 移除源行
         _rows.remove(srcIdx)
-        if srcIdx < _rowImages.len() { _rowImages.remove(srcIdx) }
-        if srcIdx < _rowTips.len() { _rowTips.remove(srcIdx) }
-        if srcIdx < _rowChecked.len() { _rowChecked.remove(srcIdx) }
-        if srcIdx < _rowColors.len() { _rowColors.remove(srcIdx) }
+        if srcIdx < rowImages.len() { rowImages.remove(srcIdx) }
+        if srcIdx < rowTips.len() { rowTips.remove(srcIdx) }
+        if srcIdx < rowChecked.len() { rowChecked.remove(srcIdx) }
+        if srcIdx < rowColors.len() { rowColors.remove(srcIdx) }
         // 插入到目标位置
         int insertAt = dstIdx
         if dstIdx > srcIdx { insertAt = dstIdx - 1 }  // 移除后索引偏移
         _rows.insert(insertAt, row)
-        _rowImages.insert(insertAt, imgP)
-        _rowTips.insert(insertAt, tipP)
-        _rowChecked.insert(insertAt, chkP)
-        _rowColors.insert(insertAt, colP)
+        rowImages.insert(insertAt, imgP)
+        rowTips.insert(insertAt, tipP)
+        rowChecked.insert(insertAt, chkP)
+        rowColors.insert(insertAt, colP)
         // 同步选中状态
-        _selRow = insertAt
-        _selRows = [insertAt]; _rebuild_sel_set()
-        if insertAt < _selSet.len() { _selSet[insertAt] = true }
-        _checkedCount = -1
-        _clamp_scroll()
-        if _onRowReorder != null { _onRowReorder(srcIdx, dstIdx) }
+        selRow = insertAt
+        selRows = [insertAt]; rebuild_sel_set()
+        if insertAt < selSet.len() { selSet[insertAt] = true }
+        checkedCount = -1
+        clamp_scroll()
+        if onRowReorder != null { onRowReorder(srcIdx, dstIdx) }
     }
     // 冻结列总宽度
-    func _frozen_w(): float {
-        _ensure_col_prefix()
-        if _frozenCols <= 0 { return 0.0 }
-        if _frozenCols >= _colWPrefix.len() { return _colWPrefix[_colWPrefix.len() - 1] }
-        return _colWPrefix[_frozenCols]
+    pri func frozen_w(): float {
+        ensure_col_prefix()
+        if frozenCols <= 0 { return 0.0 }
+        if frozenCols >= colWPrefix.len() { return colWPrefix[colWPrefix.len() - 1] }
+        return colWPrefix[frozenCols]
     }
     // 交换两列顺序：同步交换 headers/colW/aligns/headerAligns 及所有行的列数据
-    func _swap_cols(int a, int b) {
-        if a < 0 or b < 0 or a >= _ncols or b >= _ncols or a == b { return }
+    pri func swap_cols(int a, int b) {
+        if a < 0 or b < 0 or a >= ncols or b >= ncols or a == b { return }
         // 交换表头
         if a < _headers.len() and b < _headers.len() { string th = _headers[a]; _headers[a] = _headers[b]; _headers[b] = th }
         // 交换列宽
         if a < _colW.len() and b < _colW.len() { float tw = _colW[a]; _colW[a] = _colW[b]; _colW[b] = tw }
         // 交换对齐
         if a < _aligns.len() and b < _aligns.len() { int ta = _aligns[a]; _aligns[a] = _aligns[b]; _aligns[b] = ta }
-        if a < _headerAligns.len() and b < _headerAligns.len() { int ta = _headerAligns[a]; _headerAligns[a] = _headerAligns[b]; _headerAligns[b] = ta }
+        if a < headerAligns.len() and b < headerAligns.len() { int ta = headerAligns[a]; headerAligns[a] = headerAligns[b]; headerAligns[b] = ta }
         // 交换每行的列数据
         for _rows.len() to i {
             if a < _rows[i].len() and b < _rows[i].len() { string tc = _rows[i][a]; _rows[i][a] = _rows[i][b]; _rows[i][b] = tc }
         }
         // 交换 numericCols / sortDisabledCols 中的索引
-        for _numericCols.len() to i { if _numericCols[i] == a { _numericCols[i] = b } eif _numericCols[i] == b { _numericCols[i] = a } }
-        for _sortDisabledCols.len() to i { if _sortDisabledCols[i] == a { _sortDisabledCols[i] = b } eif _sortDisabledCols[i] == b { _sortDisabledCols[i] = a } }
+        for numericCols.len() to i { if numericCols[i] == a { numericCols[i] = b } eif numericCols[i] == b { numericCols[i] = a } }
+        for sortDisabledCols.len() to i { if sortDisabledCols[i] == a { sortDisabledCols[i] = b } eif sortDisabledCols[i] == b { sortDisabledCols[i] = a } }
         // 交换 imageCol / checkCol / sortCol 引用（排序箭头跟随列移动）
-        if _imageCol == a { _imageCol = b } eif _imageCol == b { _imageCol = a }
-        if _checkCol == a { _checkCol = b } eif _checkCol == b { _checkCol = a }
-        if _sortCol == a { _sortCol = b } eif _sortCol == b { _sortCol = a }
-        _colWPrefixValid = false; _totalWValid = false; _invalidate_sb(); _invalidate_fitted()
+        if imageCol == a { imageCol = b } eif imageCol == b { imageCol = a }
+        if checkCol == a { checkCol = b } eif checkCol == b { checkCol = a }
+        if sortCol == a { sortCol = b } eif sortCol == b { sortCol = a }
+        colWPrefixValid = false; totalWValid = false; invalidate_sb(); invalidate_fitted()
     }
     func set_enabled(bool e) { enabled = e }
     func set_visible(bool v) { visible = v }
     func set_resizable(bool r) { _resizable = r }
     func is_visible(): bool { return visible }
     func set_tip(string t) { _tip = t }
-    func on_select(func(int):void cb) { _onSelect = cb }
-    func on_cell(func(int, int):void cb) { _onCell = cb }
+    func on_select(func(int):void cb) { onSelect = cb }
+    func on_cell(func(int, int):void cb) { onCell = cb }
 
     // ==================== 行图标设置方法 ====================
-    func set_image_col(int c) { _imageCol = c; _invalidate_fitted() }
+    func set_image_col(int c) { imageCol = c; invalidate_fitted() }
     func set_row_image(int row, string path) {
-        if row >= 0 and row < _rowImages.len() { _rowImages[row] = path; _invalidate_fitted() }
+        if row >= 0 and row < rowImages.len() { rowImages[row] = path; invalidate_fitted() }
         eif row >= 0 {
-            while _rowImages.len() <= row { _rowImages.add("") }
-            _rowImages[row] = path
+            while rowImages.len() <= row { rowImages.add("") }
+            rowImages[row] = path
         }
     }
     func get_row_image(int row): string {
-        if row >= 0 and row < _rowImages.len() { return _rowImages[row] }
+        if row >= 0 and row < rowImages.len() { return rowImages[row] }
         return ""
     }
     func set_row_tip(int row, string tip) {
-        if row >= 0 and row < _rowTips.len() { _rowTips[row] = tip }
+        if row >= 0 and row < rowTips.len() { rowTips[row] = tip }
         eif row >= 0 {
-            while _rowTips.len() <= row { _rowTips.add("") }
-            _rowTips[row] = tip
+            while rowTips.len() <= row { rowTips.add("") }
+            rowTips[row] = tip
         }
     }
-    func set_image_size(float s) { _imgSize = s; _invalidate_fitted() }
-    func set_image_mode(int m) { _imgMode = m }
-    func set_image_pad(float p) { _imgPad = p; _invalidate_fitted() }
-    func set_image_gap(float g) { _imgGap = g; _invalidate_fitted() }
+    func set_image_size(float s) { _imgSize = s; invalidate_fitted() }
+    func set_image_mode(int m) { imgMode = m }
+    func set_image_pad(float p) { imgPad = p; invalidate_fitted() }
+    func set_image_gap(float g) { imgGap = g; invalidate_fitted() }
 
     // ==================== 复选框列 ====================
-    func set_check_col(int c) { _checkCol = c }
+    func set_check_col(int c) { checkCol = c }
     func is_row_checked(int row): bool {
-        if row >= 0 and row < _rowChecked.len() { return _rowChecked[row] }
+        if row >= 0 and row < rowChecked.len() { return rowChecked[row] }
         return false
     }
     func set_row_checked(int row, bool on) {
-        if row >= 0 and row < _rowChecked.len() {
-            if _rowChecked[row] != on { _checkedCount = -1 }
-            _rowChecked[row] = on
-            _update_check_header()
-            if _onCheck != null { _onCheck(_checkCol, _get_checked_rows()) }
+        if row >= 0 and row < rowChecked.len() {
+            if rowChecked[row] != on { checkedCount = -1 }
+            rowChecked[row] = on
+            update_check_header()
+            if onCheck != null { onCheck(checkCol, _get_checked_rows()) }
         }
     }
     func get_checked_rows(): Array[int] { return _get_checked_rows() }
     func check_all() {
-        for _rowChecked.len() to i { _rowChecked[i] = true }
-        _checkHeaderState = true; _checkedCount = _rowChecked.len()
-        if _onCheck != null { _onCheck(_checkCol, _get_checked_rows()) }
+        for rowChecked.len() to i { rowChecked[i] = true }
+        checkHeaderState = true; checkedCount = rowChecked.len()
+        if onCheck != null { onCheck(checkCol, _get_checked_rows()) }
     }
     func uncheck_all() {
-        for _rowChecked.len() to i { _rowChecked[i] = false }
-        _checkHeaderState = false; _checkedCount = 0
-        if _onCheck != null { _onCheck(_checkCol, []) }
+        for rowChecked.len() to i { rowChecked[i] = false }
+        checkHeaderState = false; checkedCount = 0
+        if onCheck != null { onCheck(checkCol, []) }
     }
     func _get_checked_rows(): Array[int] {
         Array[int] out = []
-        for _rowChecked.len() to i { if _rowChecked[i] { out.add(i) } }
+        for rowChecked.len() to i { if rowChecked[i] { out.add(i) } }
         return out
     }
     // ★ 缓存已勾选行计数，避免 render 表头中每帧遍历 _rowChecked
-    func _get_checked_count(): int {
-        if _checkedCount >= 0 { return _checkedCount }
-        _checkedCount = 0
-        for _rowChecked.len() to i { if _rowChecked[i] { _checkedCount = _checkedCount + 1 } }
-        return _checkedCount
+    pri func get_checked_count(): int {
+        if checkedCount >= 0 { return checkedCount }
+        checkedCount = 0
+        for rowChecked.len() to i { if rowChecked[i] { checkedCount = checkedCount + 1 } }
+        return checkedCount
     }
     // 根据行勾选状态更新表头全选框状态
-    func _update_check_header() {
-        if _checkCol < 0 { return }
-        int cnt = _get_checked_count()
-        _checkHeaderState = (cnt > 0 and cnt == _rowChecked.len())
+    pri func update_check_header() {
+        if checkCol < 0 { return }
+        int cnt = get_checked_count()
+        checkHeaderState = (cnt > 0 and cnt == rowChecked.len())
     }
-    func on_check(func(int, Array[int]):void cb) { _onCheck = cb }
+    func on_check(func(int, Array[int]):void cb) { onCheck = cb }
 
     // ==================== 行级颜色 ====================
     // color 为 0xRRGGBB 整数（如 0xFF4040 表红色），0 表示恢复默认色
     func set_row_color(int row, Color color) {
         if row >= 0 {
-            while _rowColors.len() <= row { _rowColors.add(0) }
-            _rowColors[row] = color
+            while rowColors.len() <= row { rowColors.add(0) }
+            rowColors[row] = color
         }
     }
     func get_row_color(int row): Color {
-        if row >= 0 and row < _rowColors.len() { return _rowColors[row] }
+        if row >= 0 and row < rowColors.len() { return rowColors[row] }
         return 0
     }
     func clear_row_colors() {
-        for _rowColors.len() to i { _rowColors[i] = 0 }
+        for rowColors.len() to i { rowColors[i] = 0 }
     }
 
     // ==================== 单元格级颜色 ====================
@@ -875,33 +875,33 @@ export struct Table impl Widget, Themeable {
     // 设置某列的最小/最大宽度
     func set_col_min_width(int col, float w) {
         if col < 0 { return }
-        while _colMinW.len() <= col { _colMinW.add(_minColW) }
-        _colMinW[col] = w
+        while colMinW.len() <= col { colMinW.add(minColW) }
+        colMinW[col] = w
     }
     func set_col_max_width(int col, float w) {
         if col < 0 { return }
-        while _colMaxW.len() <= col { _colMaxW.add(_maxColW) }
-        _colMaxW[col] = w
+        while colMaxW.len() <= col { colMaxW.add(maxColW) }
+        colMaxW[col] = w
     }
     // 获取某列的有效最小宽度
-    func _col_min_w(int col): float {
-        if col >= 0 and col < _colMinW.len() { return _colMinW[col] }
-        return _minColW
+    pri func col_min_w(int col): float {
+        if col >= 0 and col < colMinW.len() { return colMinW[col] }
+        return minColW
     }
     // 获取某列的有效最大宽度
-    func _col_max_w(int col): float {
-        if col >= 0 and col < _colMaxW.len() { return _colMaxW[col] }
-        return _maxColW
+    pri func col_max_w(int col): float {
+        if col >= 0 and col < colMaxW.len() { return colMaxW[col] }
+        return maxColW
     }
 
     // ==================== 空状态 ====================
-    func set_empty_text(string t) { _emptyText = t }
+    func set_empty_text(string t) { emptyText = t }
 
     // ==================== 右击上下文菜单（默认不预置任何项，由应用层自定义） ====================
     // 设置所属窗口逻辑宽高，供上下文菜单弹出时做边界夹紧
     func set_window_size(int ww, int hh) {
-        _winW = ww; _winH = hh
-        _ctxMenu?.setWindowSize(ww, hh)
+        winW = ww; winH = hh
+        ctxMenu?.setWindowSize(ww, hh)
     }
     // ★ Widget 接口：窗口 resize 时自动同步尺寸到内部菜单
     func on_window_resize(int ww, int hh) {
@@ -911,167 +911,167 @@ export struct Table impl Widget, Themeable {
     // ★ 同时传递给内嵌 Edit，使其 IME 候选框能正确定位（否则 _hwnd 为 null，IME 位置默认 0,0）
     func set_window_handle(Ptr[u8] hwnd) {
         _hwnd = hwnd
-        _ctxMenu?.setWindowHandle(hwnd)
+        ctxMenu?.setWindowHandle(hwnd)
         _edit?.set_window(hwnd)
     }
     // 启用/禁用右击上下文菜单
-    func set_context_menu_enabled(bool en) { _ctxMenuEnabled = en }
-    func is_context_menu_enabled(): bool { return _ctxMenuEnabled }
+    func set_context_menu_enabled(bool en) { ctxMenuEnabled = en }
+    func is_context_menu_enabled(): bool { return ctxMenuEnabled }
     // 向上下文菜单追加一项，返回项在菜单内索引（可用于挂子菜单）
     func addContextItem(Dict opts): int {
-        if _ctxMenu == null or _ctxMenuH < 0 { return -1 }
-        return _ctxMenu.addContextItem(_ctxMenuH, opts)
+        if ctxMenu == null or ctxMenuH < 0 { return -1 }
+        return ctxMenu.addContextItem(ctxMenuH, opts)
     }
     // 向上下文菜单追加分隔线
     func addContextSeparator() {
-        if _ctxMenu == null or _ctxMenuH < 0 { return }
-        _ctxMenu.addContextSeparator(_ctxMenuH)
+        if ctxMenu == null or ctxMenuH < 0 { return }
+        ctxMenu.addContextSeparator(ctxMenuH)
     }
     // 按 id 动态启用/禁用某个上下文菜单项（供调用方按当前状态刷新）
     func setContextItemEnabled(string id, bool en) {
-        if _ctxMenu != null and _ctxMenuH >= 0 { _ctxMenu.setContextItemEnabled(_ctxMenuH, id, en) }
+        if ctxMenu != null and ctxMenuH >= 0 { ctxMenu.setContextItemEnabled(ctxMenuH, id, en) }
     }
     // 返回内嵌上下文菜单（MenuBar），应用可经 addContextItem 等进一步扩展或挂子菜单
-    func get_context_menu(): MenuBar { return _ctxMenu }
-    func get_context_menu_handle(): int { return _ctxMenuH }
+    func get_context_menu(): MenuBar { return ctxMenu }
+    func get_context_menu_handle(): int { return ctxMenuH }
     // 右击时记录的行/列（在 on_context_select 回调内可读，定位操作目标）
-    func get_context_menu_row(): int { return _ctxRow }
-    func get_context_menu_col(): int { return _ctxCol }
+    func get_context_menu_row(): int { return ctxRow }
+    func get_context_menu_col(): int { return ctxCol }
     // 注册上下文菜单自定义回调（参数为命中行与项 id）；也可直接在 addContextItem 的 opts 里写 action
-    func on_context_select(func(int, string):void cb) { _onCtxSelect = cb }
+    func on_context_select(func(int, string):void cb) { onCtxSelect = cb }
     // 注册“右键菜单弹出前”回调（参数为命中行，row<0 表示空白处）；用于按行类型动态重建菜单项
-    func on_context_will_open(func(int):void cb) { _onCtxWillOpen = cb }
+    func on_context_will_open(func(int):void cb) { onCtxWillOpen = cb }
     // 清空内嵌上下文菜单的全部项（配合 on_context_will_open 在弹出前重建）
     func clearContextItems() {
-        if _ctxMenu != null and _ctxMenuH >= 0 { _ctxMenu.clearContextItems(_ctxMenuH) }
+        if ctxMenu != null and ctxMenuH >= 0 { ctxMenu.clearContextItems(ctxMenuH) }
     }
     // 注册行内编辑提交回调（行,列,新文本）；如用于右键“重命名”后落盘
-    func on_edit_commit(func(int, int, string):void cb) { _onEditCommit = cb }
+    func on_edit_commit(func(int, int, string):void cb) { onEditCommit = cb }
     // 程序触发进入某行某列的行内编辑（如右键"重命名"、F2 快捷键）
     // ★ 程序化调用绕过 _editable 全局开关：应用层已明确知道要编辑哪个单元格，
     //   不应被默认关闭的双击编辑开关拦截。仍受 _editableCols 列级限制约束（若指定）。
     func begin_edit(int row, int col) {
         if row < 0 or row >= _rows.len() { return }
-        if col < 0 or col >= _ncols { return }
+        if col < 0 or col >= ncols { return }
         // 列级限制：若指定了可编辑列集合，则仅允许这些列
-        if _editableCols.len() > 0 {
+        if editableCols.len() > 0 {
             bool ok = false
-            for _editableCols.len() to i { if _editableCols[i] == col { ok = true } }
+            for editableCols.len() to i { if editableCols[i] == col { ok = true } }
             if not ok { return }
         }
-        _editRow = row; _editCol = col
-        float cx = _col_x(col)
-        float ry = y + _headerH - _scrollY + row * _rowH
+        editRow = row; editCol = col
+        float cx = col_x(col)
+        float ry = y + headerH - scrollY + row * rowH
         _edit.set_pos(cx, ry)
-        _edit.set_size(_colW[col], _rowH)
+        _edit.set_size(_colW[col], rowH)
         _edit.set_font_size(_fontSize)
-        _edit.set_text(_cell(row, col))
+        _edit.set_text(cell(row, col))
         _edit.focus()
-        _editing = true
+        editing = true
     }
 
     // 在 (x,y) 弹出上下文菜单，并记录右击命中的行/列
-    func _open_ctx_menu(float x, float y, int keyMod) {
-        if _ctxMenu == null or _ctxMenuH < 0 { return }
-        _ctxRow = _row_at(y); _ctxCol = _col_at(x)
+    pri func open_ctx_menu(float x, float y, int keyMod) {
+        if ctxMenu == null or ctxMenuH < 0 { return }
+        ctxRow = row_at(y); ctxCol = col_at(x)
         // 右击命中数据行时，更新选中状态
-        if _ctxRow >= 0 {
+        if ctxRow >= 0 {
             // ★ 多选模式右击选中逻辑（对齐 Windows 资源管理器行为）：
             //   - 右击行已选中 → 保持当前多选状态不变（仅更新 _selRow 为当前行）
             //   - 右击行未选中 + 无 Ctrl → 替换为唯一选中项（清除旧多选）
             //   - 右击行未选中 + Ctrl → 追加到多选集
-            if not _is_sel(_ctxRow) {
-                _selRow = _ctxRow
+            if not is_sel(ctxRow) {
+                selRow = ctxRow
                 if _multi {
                     int MOD_CTRL = 64
                     if (keyMod & MOD_CTRL) != 0 {
-                        _selRows.add(_ctxRow)       // Ctrl+右击：追加到多选
-                        while _selSet.len() <= _ctxRow { _selSet.add(false) }
-                        _selSet[_ctxRow] = true
+                        selRows.add(ctxRow)       // Ctrl+右击：追加到多选
+                        while selSet.len() <= ctxRow { selSet.add(false) }
+                        selSet[ctxRow] = true
                     } else {
-                        _selRows = [_ctxRow]; _rebuild_sel_set()
-                        if _ctxRow < _selSet.len() { _selSet[_ctxRow] = true }
+                        selRows = [ctxRow]; rebuild_sel_set()
+                        if ctxRow < selSet.len() { selSet[ctxRow] = true }
                     }
                 } else {
-                    _selRows = [_ctxRow]; _rebuild_sel_set()
-                    if _ctxRow < _selSet.len() { _selSet[_ctxRow] = true }
+                    selRows = [ctxRow]; rebuild_sel_set()
+                    if ctxRow < selSet.len() { selSet[ctxRow] = true }
                 }
-                if _onSelect != null { _onSelect(_ctxRow) }
+                if onSelect != null { onSelect(ctxRow) }
             } eif _multi {
                 // 多选模式下右击已选中行：仅更新 selRow 为当前行，保持 _selRows 不变
-                _selRow = _ctxRow
-                if _onSelect != null { _onSelect(_ctxRow) }
+                selRow = ctxRow
+                if onSelect != null { onSelect(ctxRow) }
             } else {
                 // 单选模式：正常选中
-                _selRow = _ctxRow; _selRows = [_ctxRow]; _rebuild_sel_set()
-                if _ctxRow < _selSet.len() { _selSet[_ctxRow] = true }
-                if _onSelect != null { _onSelect(_ctxRow) }
+                selRow = ctxRow; selRows = [ctxRow]; rebuild_sel_set()
+                if ctxRow < selSet.len() { selSet[ctxRow] = true }
+                if onSelect != null { onSelect(ctxRow) }
             }
         }
         // 弹出前把命中行交给应用层，由它按行类型重建菜单项（文件/文件夹/空白处不同）
-        if _onCtxWillOpen != null { _onCtxWillOpen(_ctxRow) }
+        if onCtxWillOpen != null { onCtxWillOpen(ctxRow) }
         // 重建后仍无任何有效项则不弹菜单（避免出现空白横线）
-        if _ctxMenu.contextItemCount(_ctxMenuH) == 0 { return }
-        _ctxMenu.openContext(_ctxMenuH, x, y)
+        if ctxMenu.contextItemCount(ctxMenuH) == 0 { return }
+        ctxMenu.openContext(ctxMenuH, x, y)
     }
     // 上下文菜单项动作分发
-    func _ctx_select(string id) {
-        if _onCtxSelect != null { _onCtxSelect(_ctxRow, id) }
+    pri func ctx_select(string id) {
+        if onCtxSelect != null { onCtxSelect(ctxRow, id) }
     }
 
     // ==================== 双击编辑 ====================
     func _begin_edit(int row, int col) {
         if row < 0 or row >= _rows.len() { return }
-        if col < 0 or col >= _ncols { return }
-        if not _is_col_editable(col) { return }
-        _editRow = row; _editCol = col
-        float cx = _col_x(col)
-        float ry = y + _headerH - _scrollY + row * _rowH
+        if col < 0 or col >= ncols { return }
+        if not is_col_editable(col) { return }
+        editRow = row; editCol = col
+        float cx = col_x(col)
+        float ry = y + headerH - scrollY + row * rowH
         _edit.set_pos(cx, ry)
-        _edit.set_size(_colW[col], _rowH)
+        _edit.set_size(_colW[col], rowH)
         _edit.set_font_size(_fontSize)
-        _edit.set_text(_cell(row, col))
+        _edit.set_text(cell(row, col))
         _edit.focus()
-        _editing = true
+        editing = true
     }
-    func _commit_edit() {
-        if _editRow >= 0 and _editCol >= 0 and _editRow < _rows.len() {
+    pri func commit_edit() {
+        if editRow >= 0 and editCol >= 0 and editRow < _rows.len() {
             string newText = _edit.get_text()
-            set_cell(_editRow, _editCol, newText)
-            if _onEditCommit != null { _onEditCommit(_editRow, _editCol, newText) }
+            set_cell(editRow, editCol, newText)
+            if onEditCommit != null { onEditCommit(editRow, editCol, newText) }
         }
-        _editing = false
-        _editRow = -1; _editCol = -1
+        editing = false
+        editRow = -1; editCol = -1
         _lastClickTime = -100000
         _edit.blur()    // 停止闪烁定时器，避免每 500ms 空跑 requestRedraw 导致 Table 闪烁
     }
-    func is_editing(): bool { return _editing }
+    func is_editing(): bool { return editing }
     // 启用/禁用双击进入单元格编辑（默认关闭）
     func set_editable(bool en) { _editable = en }
-    func set_cell_select(bool en) { _cellSelect = en }
+    func set_cell_select(bool en) { cellSelect = en }
     func is_editable(): bool { return _editable }
     func set_col_editable(int col, bool en) {
         if en {
             bool found = false
-            for _editableCols.len() to i { if _editableCols[i] == col { found = true } }
-            if not found { _editableCols.add(col) }
+            for editableCols.len() to i { if editableCols[i] == col { found = true } }
+            if not found { editableCols.add(col) }
         } else {
             int idx = -1
-            for _editableCols.len() to i { if _editableCols[i] == col { idx = i } }
-            if idx >= 0 { _editableCols.remove(idx) }
+            for editableCols.len() to i { if editableCols[i] == col { idx = i } }
+            if idx >= 0 { editableCols.remove(idx) }
         }
     }
     // 判断某列是否可编辑
-    func _is_col_editable(int col): bool {
+    pri func is_col_editable(int col): bool {
         if not _editable { return false }
         if col < 0 { return false }
         // 空数组=全部可编辑
-        if _editableCols.len() == 0 { return true }
-        for _editableCols.len() to i { if _editableCols[i] == col { return true } }
+        if editableCols.len() == 0 { return true }
+        for editableCols.len() to i { if editableCols[i] == col { return true } }
         return false
     }
     // 双击单元格回调：无论是否可编辑都会触发，便于应用层自定义（如文件管理器双击打开）
-    func on_dbl_click(func(int, int):void cb) { _onDblClick = cb }
+    func on_dbl_click(func(int, int):void cb) { onDblClick = cb }
     func edit_debug(): string {
         if _edit == null { return "edit=null" }
         if _edit.is_loaded() { return "edit.loaded=true" }
@@ -1085,20 +1085,20 @@ export struct Table impl Widget, Themeable {
     // ==================== 交互 ====================
     func process(Event ev) {
         if not _loaded or not visible or not enabled {
-            _hoverRow = -1; _draggingV = false; _draggingH = false; _dragCol = -1
+            hoverRow = -1; draggingV = false; draggingH = false; dragCol = -1
             return
         }
         var[float, float](mx, my) = ev.mousePos()
         if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
 
         // 内嵌右击上下文菜单已展开：所有事件先交菜单处理（选择/关闭由菜单自身负责）
-        if _ctxMenuEnabled and _ctxMenu != null and _ctxMenu.isOpen() {
+        if ctxMenuEnabled and ctxMenu != null and ctxMenu.isOpen() {
             if ev.isMouseButtonDown() and ev.mouseButton() == 3 {
-                _ctxMenu.close()
-                if contains(mx, my) { _open_ctx_menu(mx, my, ev.keyMod()) }
+                ctxMenu.close()
+                if contains(mx, my) { open_ctx_menu(mx, my, ev.keyMod()) }
                 return
             }
-            _ctxMenu.process(ev)
+            ctxMenu.process(ev)
             return
         }
 
@@ -1106,7 +1106,7 @@ export struct Table impl Widget, Themeable {
         //   若先走 inPopupCapture 拦截，Edit 的菜单将收不到点击事件，导致菜单项无法选中。
         //   菜单因点击菜单项而关闭后，Edit 应保持编辑状态（不提交），下一次真正点击 Edit
         //   外部时才由下方的 _editing 分支提交。
-        if _editing and _edit.isContextMenuOpen() {
+        if editing and _edit.isContextMenuOpen() {
             _edit.process(ev)
             return
         }
@@ -1114,23 +1114,23 @@ export struct Table impl Widget, Themeable {
         if core.inPopupCapture(mx, my) { return }
 
         // 编辑中：事件转发给编辑框
-        if _editing {
+        if editing {
             _edit.process(ev)
-            if ev.isKeyDown() and ev.scancode() == core.Scancode.RETURN { _commit_edit() }
+            if ev.isKeyDown() and ev.scancode() == core.Scancode.RETURN { commit_edit() }
             eif ev.isKeyDown() and ev.scancode() == core.Scancode.ESCAPE {
                 // Esc 取消编辑（不提交）
-                _editing = false
-                _editRow = -1; _editCol = -1
+                editing = false
+                editRow = -1; editCol = -1
                 _lastClickTime = -100000
                 _edit.blur()
             }
             eif ev.isKeyDown() and ev.scancode() == core.Scancode.TAB {
                 // Tab 跳到下一个可编辑单元格
-                _commit_edit()
-                int nr = _editRow, nc = _editCol + 1
+                commit_edit()
+                int nr = editRow, nc = editCol + 1
                 while nr < _rows.len() {
-                    while nc < _ncols {
-                        if _is_col_editable(nc) { _begin_edit(nr, nc); return }
+                    while nc < ncols {
+                        if is_col_editable(nc) { _begin_edit(nr, nc); return }
                         nc++
                     }
                     nc = 0
@@ -1139,7 +1139,7 @@ export struct Table impl Widget, Themeable {
             }
             eif ev.isMouseButtonDown() {
                 var[float, float](_ex, _ey) = ev.mousePos()
-                if not _edit.contains(_ex, _ey) { _commit_edit() }
+                if not _edit.contains(_ex, _ey) { commit_edit() }
             }
             return
         }
@@ -1151,58 +1151,58 @@ export struct Table impl Widget, Themeable {
             switch sc {
                 case core.Scancode.UP {
                     if _rows.len() == 0 { return }
-                    int r = _selRow - 1
-                    if _selRow < 0 { r = 0 }
+                    int r = selRow - 1
+                    if selRow < 0 { r = 0 }
                     if r < 0 { r = 0 }
-                    _select_key(r)
+                    select_key(r)
                     return
                 }
                 case core.Scancode.DOWN {
                     if _rows.len() == 0 { return }
-                    int r = _selRow + 1
-                    if _selRow < 0 { r = 0 }
+                    int r = selRow + 1
+                    if selRow < 0 { r = 0 }
                     if r >= _rows.len() { r = _rows.len() - 1 }
-                    _select_key(r)
+                    select_key(r)
                     return
                 }
                 case core.Scancode.HOME {
                     if _rows.len() == 0 { return }
-                    _select_key(0)
+                    select_key(0)
                     return
                 }
                 case core.Scancode.END {
                     if _rows.len() == 0 { return }
-                    _select_key(_rows.len() - 1)
+                    select_key(_rows.len() - 1)
                     return
                 }
                 case core.Scancode.PAGEUP {
                     if _rows.len() == 0 { return }
-                    var sbP = _compute_sb()
-                    float bodyH = h - _headerH - sbP[1]
+                    var sbP = compute_sb()
+                    float bodyH = h - headerH - sbP[1]
                     if bodyH < 0 { bodyH = 0 }
-                    int pageSteps = _int(bodyH / _rowH)
+                    int pageSteps = _int(bodyH / rowH)
                     if pageSteps < 1 { pageSteps = 1 }
-                    int r = _selRow - pageSteps
+                    int r = selRow - pageSteps
                     if r < 0 { r = 0 }
-                    _select_key(r)
+                    select_key(r)
                     return
                 }
                 case core.Scancode.PAGEDOWN {
                     if _rows.len() == 0 { return }
-                    var sbP = _compute_sb()
-                    float bodyH = h - _headerH - sbP[1]
+                    var sbP = compute_sb()
+                    float bodyH = h - headerH - sbP[1]
                     if bodyH < 0 { bodyH = 0 }
-                    int pageSteps = _int(bodyH / _rowH)
+                    int pageSteps = _int(bodyH / rowH)
                     if pageSteps < 1 { pageSteps = 1 }
-                    int r = _selRow + pageSteps
+                    int r = selRow + pageSteps
                     if r >= _rows.len() { r = _rows.len() - 1 }
-                    _select_key(r)
+                    select_key(r)
                     return
                 }
                 case core.Scancode.RETURN {
-                    if _selRow >= 0 and _selRow < _rows.len() {
-                        if _onDblClick != null { _onDblClick(_selRow, _selCol) }
-                        if _is_col_editable(_selCol) { _begin_edit(_selRow, _selCol) }
+                    if selRow >= 0 and selRow < _rows.len() {
+                        if onDblClick != null { onDblClick(selRow, selCol) }
+                        if is_col_editable(selCol) { _begin_edit(selRow, selCol) }
                     }
                     return
                 }
@@ -1221,111 +1221,111 @@ export struct Table impl Widget, Themeable {
         //   _draggingV/H 不会被清除 → 重新进入表格时无需按住即可拖动滚动条
         if ev.isMouseButtonUp() {
             // 列重排拖拽结束：确定目标列并执行交换
-            if _reorderDragging and _dragReorderCol >= 0 {
-                int targetCol = _col_at(mx)
-                if targetCol >= 0 and targetCol != _dragReorderCol {
-                    _swap_cols(_dragReorderCol, targetCol)
+            if reorderDragging and dragReorderCol >= 0 {
+                int targetCol = col_at(mx)
+                if targetCol >= 0 and targetCol != dragReorderCol {
+                    swap_cols(dragReorderCol, targetCol)
                 }
             }
             // 行重排拖拽结束：确定目标行并执行交换
-            if _rowReorderDragging and _dragReorderRow >= 0 {
-                int targetRow = _row_at(my)
-                if targetRow >= 0 and targetRow != _dragReorderRow {
-                    _move_row(_dragReorderRow, targetRow)
+            if rowReorderDragging and dragReorderRow >= 0 {
+                int targetRow = row_at(my)
+                if targetRow >= 0 and targetRow != dragReorderRow {
+                    move_row(dragReorderRow, targetRow)
                 }
             }
-            _draggingV = false; _draggingH = false; _dragCol = -1
-            _dragReorderCol = -1; _reorderDragging = false
-            _dragReorderRow = -1; _rowReorderDragging = false
+            draggingV = false; draggingH = false; dragCol = -1
+            dragReorderCol = -1; reorderDragging = false
+            dragReorderRow = -1; rowReorderDragging = false
         }
 
         // ★ 拖动滚动条时鼠标移出表格区域仍需继续跟随，否则滚动条卡住不动
-        if _draggingV and ev.isMouseMotion() {
-            var sbV = _compute_sb()
+        if draggingV and ev.isMouseMotion() {
+            var sbV = compute_sb()
             float hhV = sbV[1]
-            float maxY = _max_scroll_y(); if maxY <= 0 { maxY = 1 }
-            float bodyH = h - _headerH - hhV
+            float maxY = max_scroll_y(); if maxY <= 0 { maxY = 1 }
+            float bodyH = h - headerH - hhV
             float track = bodyH - 4.0
-            float contentH = _rows.len() * _rowH; if contentH <= 0 { contentH = 1 }
+            float contentH = _rows.len() * rowH; if contentH <= 0 { contentH = 1 }
             float thumbH = maths.max(18.0, maths.min(bodyH * bodyH / contentH, bodyH))
-            _scrollY = (my - (y + _headerH + 2.0) - _vDragOffset) * (maxY / (track - thumbH))
-            _clamp_scroll()
+            scrollY = (my - (y + headerH + 2.0) - vDragOffset) * (maxY / (track - thumbH))
+            clamp_scroll()
             core.markFrameRedraw()
             return
         }
-        if _draggingH and ev.isMouseMotion() {
-            var sbH = _compute_sb()
+        if draggingH and ev.isMouseMotion() {
+            var sbH = compute_sb()
             float vwH = sbH[0]
-            float maxX = _max_scroll_x(); if maxX <= 0 { maxX = 1 }
+            float maxX = max_scroll_x(); if maxX <= 0 { maxX = 1 }
             float bodyW = w - vwH
             float track = bodyW - 4.0
-            float tw = _total_w(); if tw <= 0 { tw = 1 }
+            float tw = total_w(); if tw <= 0 { tw = 1 }
             float thumbW = maths.max(18.0, maths.min(bodyW * bodyW / tw, bodyW))
-            _scrollX = (mx - (x + 2.0) - _hDragOffset) * (maxX / (track - thumbW))
-            _clamp_scroll()
+            scrollX = (mx - (x + 2.0) - hDragOffset) * (maxX / (track - thumbW))
+            clamp_scroll()
             core.markFrameRedraw()
             return
         }
         // ★ 列宽拖动中：鼠标移出表格仍继续跟随（与滚动条同理）
-        if _dragCol >= 0 and ev.isMouseMotion() {
-            float nw = _dragStartW + (mx - _dragStartX)
-            float minW = _col_min_w(_dragCol)
-            float maxW = _col_max_w(_dragCol)
+        if dragCol >= 0 and ev.isMouseMotion() {
+            float nw = dragStartW + (mx - _dragStartX)
+            float minW = col_min_w(dragCol)
+            float maxW = col_max_w(dragCol)
             if nw < minW { nw = minW }
             if nw > maxW { nw = maxW }
-            if _dragCol >= 0 and _dragCol < _colW.len() { _colW[_dragCol] = nw; _colWPrefixValid = false; _totalWValid = false; _invalidate_sb(); _invalidate_fitted() }
-            _autoCols = false
-            _clamp_scroll()
+            if dragCol >= 0 and dragCol < _colW.len() { _colW[dragCol] = nw; colWPrefixValid = false; totalWValid = false; invalidate_sb(); invalidate_fitted() }
+            autoCols = false
+            clamp_scroll()
             core.markFrameRedraw()
             core.requestCursor(SystemCursor.EW_RESIZE)
             return
         }
 
         // 列重排拖拽中：跟随鼠标移动绘制指示线
-        if _reorderDragging and ev.isMouseMotion() {
-            _reorderDragX = mx
+        if reorderDragging and ev.isMouseMotion() {
+            reorderDragX = mx
             core.markFrameRedraw()
             return
         }
 
         // 行重排拖拽中：跟随鼠标移动绘制指示线
-        if _rowReorderDragging and ev.isMouseMotion() {
-            _rowReorderDragY = my
+        if rowReorderDragging and ev.isMouseMotion() {
+            rowReorderDragY = my
             // 自动滚动：拖到视口顶部/底部边缘时滚动
-            float bodyTop = y + _headerH
+            float bodyTop = y + headerH
             float bodyBot = y + h
-            if my < bodyTop + 30.0 { _scrollY = _scrollY - 3.0 * _rowH; _clamp_scroll() }
-            eif my > bodyBot - 30.0 { _scrollY = _scrollY + 3.0 * _rowH; _clamp_scroll() }
+            if my < bodyTop + 30.0 { scrollY = scrollY - 3.0 * rowH; clamp_scroll() }
+            eif my > bodyBot - 30.0 { scrollY = scrollY + 3.0 * rowH; clamp_scroll() }
             core.markFrameRedraw()
             return
         }
 
         // 仅处理命中表格区域内的事件（表格外点击/悬停不触发表头与行交互）
         if not contains(mx, my) {
-            _hoverRow = -1
-            _hoverColForTip = -1; _hoverTipText = ""
+            hoverRow = -1
+            hoverColForTip = -1; hoverTipText = ""
             return
         }
 
-        var sb = _compute_sb()
+        var sb = compute_sb()
         float vw = sb[0], hh = sb[1]
 
         // 竖向滚动条
         if vw > 0.0 {
             float sx = x + w - vw - 2.0
-            bool inV = mx >= sx - 2.0 and mx <= sx + vw + 2.0 and my >= y + _headerH and my <= y + h - hh
+            bool inV = mx >= sx - 2.0 and mx <= sx + vw + 2.0 and my >= y + headerH and my <= y + h - hh
             if ev.isMouseButtonDown() and inV {
-                float maxY = _max_scroll_y(); if maxY <= 0 { maxY = 1 }
-                float bodyH = h - _headerH - hh
+                float maxY = max_scroll_y(); if maxY <= 0 { maxY = 1 }
+                float bodyH = h - headerH - hh
                 float track = bodyH - 4.0
-                float contentH = _rows.len() * _rowH; if contentH <= 0 { contentH = 1 }
+                float contentH = _rows.len() * rowH; if contentH <= 0 { contentH = 1 }
                 float thumbH = maths.max(18.0, maths.min(bodyH * bodyH / contentH, bodyH))
-                float thy = y + _headerH + 2.0 + (_scrollY / maxY) * (track - thumbH)
-                if my >= thy and my <= thy + thumbH { _draggingV = true; _vDragOffset = my - thy }
+                float thy = y + headerH + 2.0 + (scrollY / maxY) * (track - thumbH)
+                if my >= thy and my <= thy + thumbH { draggingV = true; vDragOffset = my - thy }
                 else {
-                    _draggingV = true; _vDragOffset = thumbH / 2.0
-                    _scrollY = (my - (y + _headerH + 2.0) - thumbH / 2.0) * (maxY / (track - thumbH))
-                    _clamp_scroll()
+                    draggingV = true; vDragOffset = thumbH / 2.0
+                    scrollY = (my - (y + headerH + 2.0) - thumbH / 2.0) * (maxY / (track - thumbH))
+                    clamp_scroll()
                 }
                 return
             }
@@ -1336,17 +1336,17 @@ export struct Table impl Widget, Themeable {
             float sy = y + h - hh - 2.0
             bool inH = my >= sy - 2.0 and my <= sy + hh + 2.0 and mx >= x and mx <= x + w - vw
             if ev.isMouseButtonDown() and inH {
-                float maxX = _max_scroll_x(); if maxX <= 0 { maxX = 1 }
+                float maxX = max_scroll_x(); if maxX <= 0 { maxX = 1 }
                 float bodyW = w - vw
                 float track = bodyW - 4.0
-                float tw = _total_w(); if tw <= 0 { tw = 1 }
+                float tw = total_w(); if tw <= 0 { tw = 1 }
                 float thumbW = maths.max(18.0, maths.min(bodyW * bodyW / tw, bodyW))
-                float thx = x + 2.0 + (_scrollX / maxX) * (track - thumbW)
-                if mx >= thx and mx <= thx + thumbW { _draggingH = true; _hDragOffset = mx - thx }
+                float thx = x + 2.0 + (scrollX / maxX) * (track - thumbW)
+                if mx >= thx and mx <= thx + thumbW { draggingH = true; hDragOffset = mx - thx }
                 else {
-                    _draggingH = true; _hDragOffset = thumbW / 2.0
-                    _scrollX = (mx - (x + 2.0) - thumbW / 2.0) * (maxX / (track - thumbW))
-                    _clamp_scroll()
+                    draggingH = true; hDragOffset = thumbW / 2.0
+                    scrollX = (mx - (x + 2.0) - thumbW / 2.0) * (maxX / (track - thumbW))
+                    clamp_scroll()
                 }
                 return
             }
@@ -1355,60 +1355,60 @@ export struct Table impl Widget, Themeable {
         if ev.isMouseWheel() {
             if not contains(ev.wheelMouseX(), ev.wheelMouseY()) { return }
             int mod = ev.keyMod()
-            if (mod & 1) != 0 { _scrollX = _scrollX - ev.wheelX() * 24.0 }
-            else { _scrollY = _scrollY - ev.wheelY() * _rowH }
-            _clamp_scroll()
+            if (mod & 1) != 0 { scrollX = scrollX - ev.wheelX() * 24.0 }
+            else { scrollY = scrollY - ev.wheelY() * rowH }
+            clamp_scroll()
             return
         }
 
         if ev.isMouseMotion() {
             // 列重排拖拽阈值检测：鼠标移动超过 5px 后进入拖拽状态
-            if _dragReorderCol >= 0 and not _reorderDragging {
-                float dx = mx - _reorderStartX
+            if dragReorderCol >= 0 and not reorderDragging {
+                float dx = mx - reorderStartX
                 if dx > 5.0 or dx < -5.0 {
-                    _reorderDragging = true
-                    _reorderDragX = mx
+                    reorderDragging = true
+                    reorderDragX = mx
                     core.markFrameRedraw()
                     return
                 }
             }
             // 行重排拖拽阈值检测
-            if _dragReorderRow >= 0 and not _rowReorderDragging {
-                float dy = my - _rowReorderStartY
+            if dragReorderRow >= 0 and not rowReorderDragging {
+                float dy = my - rowReorderStartY
                 if dy > 5.0 or dy < -5.0 {
-                    _rowReorderDragging = true
-                    _rowReorderDragY = my
+                    rowReorderDragging = true
+                    rowReorderDragY = my
                     core.markFrameRedraw()
                     return
                 }
             }
-            int prevHover = _hoverRow
-            int prevHoverCol = _hoverCol
+            int prevHover = hoverRow
+            int prevHoverCol = hoverCol
             // ★ X 边界检查：_row_at 只验证 Y 坐标，不检查 X。
             if mx >= x and mx <= x + w {
-                _hoverRow = _row_at(my)
-                _hoverCol = _col_at(mx)
+                hoverRow = row_at(my)
+                hoverCol = col_at(mx)
             } else {
-                _hoverRow = -1; _hoverCol = -1
+                hoverRow = -1; hoverCol = -1
             }
-            bool hv = _hoverRow >= 0
-            if _hoverRow != prevHover or _hoverCol != prevHoverCol { core.markFrameRedraw() } else { core.markFrameMotion() }
-            if _dragCol >= 0 {
-                float nw = _dragStartW + (mx - _dragStartX)
+            bool hv = hoverRow >= 0
+            if hoverRow != prevHover or hoverCol != prevHoverCol { core.markFrameRedraw() } else { core.markFrameMotion() }
+            if dragCol >= 0 {
+                float nw = dragStartW + (mx - _dragStartX)
                 if nw < 24.0 { nw = 24.0 }
-                if _dragCol >= 0 and _dragCol < _colW.len() { _colW[_dragCol] = nw; _colWPrefixValid = false; _totalWValid = false; _invalidate_sb(); _invalidate_fitted() }
-                _autoCols = false
-                _clamp_scroll()
+                if dragCol >= 0 and dragCol < _colW.len() { _colW[dragCol] = nw; colWPrefixValid = false; totalWValid = false; invalidate_sb(); invalidate_fitted() }
+                autoCols = false
+                clamp_scroll()
                 core.markFrameRedraw()
                 core.requestCursor(SystemCursor.EW_RESIZE)
-            } eif my < y + _headerH {
-                int rc = _header_resize_col(mx)
+            } eif my < y + headerH {
+                int rc = header_resize_col(mx)
                 if rc >= 0 { core.requestCursor(SystemCursor.EW_RESIZE) }
                 eif hv and _cursor >= 0 { core.requestCursor(_cursor) }
             } eif hv and _cursor >= 0 {
                 core.requestCursor(_cursor)
             }
-            string rt = if _hoverRow >= 0 and _hoverRow < _rowTips.len() then _rowTips[_hoverRow] else ""
+            string rt = if hoverRow >= 0 and hoverRow < rowTips.len() then rowTips[hoverRow] else ""
             // ★ Tooltip 节流：仅在悬停目标（行/单元格）变化时调用 tipReport（重置延迟计时器），
             //   同一目标内的鼠标移动调用 tipKeep（保持 tooltip 活跃但不重置计时器）。
             //   旧方案每次 motion 都调 tipReport → _tipStart 恒被重置 → tipWaiting() 恒 true
@@ -1423,38 +1423,38 @@ export struct Table impl Widget, Themeable {
                 }
             } eif rt != "" and hv {
                 // 行级自定义 tip：仅跨行时重置延迟，同行内移动不重置
-                if _hoverRow != prevHover { tip.tipReport(rt, mx, my) }
+                if hoverRow != prevHover { tip.tipReport(rt, mx, my) }
                 else { tip.tipKeep(mx, my) }
             } eif hv {
                 // 单元格 Tooltip：文字被截断时悬停显示完整内容
                 // 优化：仅当悬停单元格(行+列)变化时才做 measureString 截断检查，
                 //       同一单元格内的鼠标移动直接复用缓存的 tooltip 文本，
                 //       避免每次 mouse motion 都调 measureString（线性扫描 256 槽缓存）
-                int hc = _col_at(mx)
+                int hc = col_at(mx)
                 if hc >= 0 {
-                    bool cellChanged = (_hoverRow != prevHover or hc != _hoverColForTip)
+                    bool cellChanged = (hoverRow != prevHover or hc != hoverColForTip)
                     if cellChanged {
-                        _hoverColForTip = hc
-                        _hoverTipText = ""
-                        string cellText = _cell_text(_hoverRow, hc)
+                        hoverColForTip = hc
+                        hoverTipText = ""
+                        string cellText = cell_text(hoverRow, hc)
                         if cellText != "" and cellText != null {
                             float iconOff = 0.0
-                            if hc == _imageCol and _hoverRow < _rowImages.len() {
-                                string ip = _rowImages[_hoverRow]
-                                if ip != "" and ip != null { iconOff = _rowH * 0.7 }
+                            if hc == imageCol and hoverRow < rowImages.len() {
+                                string ip = rowImages[hoverRow]
+                                if ip != "" and ip != null { iconOff = rowH * 0.7 }
                             }
                             float pad = 8.0
                             float availW = _colW[hc] - 2.0 * pad - iconOff
                             var[float, float](_fw, _fh) = _font.measureString(cellText); float fullW = _fw
-                            if fullW > availW { _hoverTipText = cellText }
+                            if fullW > availW { hoverTipText = cellText }
                         }
                     }
                     // 复用缓存的 tooltip 文本保持 tooltip 可见
                     // ★ 优化：同一单元格内用 tipKeep 替代 tipReport，不重置延迟计时器
-                    if _hoverTipText != "" {
-                        float cellX = _col_x(hc)
-                        float cellCY = y + _headerH - _scrollY + _hoverRow * _rowH + _rowH / 2.0
-                        if cellChanged { tip.tipReport(_hoverTipText, cellX, cellCY) }
+                    if hoverTipText != "" {
+                        float cellX = col_x(hc)
+                        float cellCY = y + headerH - scrollY + hoverRow * rowH + rowH / 2.0
+                        if cellChanged { tip.tipReport(hoverTipText, cellX, cellCY) }
                         else { tip.tipKeep(cellX, cellCY) }
                     }
                 }
@@ -1463,78 +1463,78 @@ export struct Table impl Widget, Themeable {
 
         if ev.isMouseButtonDown() {
             // 右击：在表格内弹出上下文菜单（默认无预置项，由应用层自定义）
-            if _ctxMenuEnabled and _ctxMenu != null and ev.mouseButton() == 3 {
-                if contains(mx, my) { _open_ctx_menu(mx, my, ev.keyMod()) }
+            if ctxMenuEnabled and ctxMenu != null and ev.mouseButton() == 3 {
+                if contains(mx, my) { open_ctx_menu(mx, my, ev.keyMod()) }
                 return
             }
-            if my < y + _headerH {
+            if my < y + headerH {
                 // 表头复选框：点击全选/全不选
-                if _checkCol >= 0 and _is_in_checkbox(mx, my, true, -1) {
-                    if _checkHeaderState { uncheck_all() } else { check_all() }
+                if checkCol >= 0 and is_in_checkbox(mx, my, true, -1) {
+                    if checkHeaderState { uncheck_all() } else { check_all() }
                     return
                 }
-                int rc = _header_resize_col(mx)
+                int rc = header_resize_col(mx)
                 if rc >= 0 {
-                    _dragCol = rc; _dragStartX = mx; _dragStartW = _colW[rc]
-                    _autoCols = false
+                    dragCol = rc; _dragStartX = mx; dragStartW = _colW[rc]
+                    autoCols = false
                     return
                 }
-                int col = _col_at(mx)
+                int col = col_at(mx)
                 // 列重排：记录拖拽起点（延迟到 mouseMotion 超过阈值时才进入拖拽状态）
-                if col >= 0 and _colReorder {
-                    _dragReorderCol = col; _reorderStartX = mx; _reorderDragging = false
+                if col >= 0 and colReorder {
+                    dragReorderCol = col; reorderStartX = mx; reorderDragging = false
                 }
-                if col >= 0 and _sortable and not _is_col_sort_disabled(col) { sort_by(col, not (_sortCol == col and _sortDesc)) }
+                if col >= 0 and _sortable and not is_col_sort_disabled(col) { sort_by(col, not (sortCol == col and sortDesc)) }
             } else {
-                int row = _row_at(my)
-                int col = _col_at(mx)
+                int row = row_at(my)
+                int col = col_at(mx)
                 if row >= 0 {
                     // 行复选框点击
-                    if _checkCol >= 0 and col == _checkCol and _is_in_checkbox(mx, my, false, row) {
+                    if checkCol >= 0 and col == checkCol and is_in_checkbox(mx, my, false, row) {
                         set_row_checked(row, not is_row_checked(row))
                         return
                     }
                     int now = core.getTicks()
                     bool isDbl = now - _lastClickTime < 400
-                            and mx >= _lastClickX - 10 and mx <= _lastClickX + 10
-                            and my >= _lastClickY - 10 and my <= _lastClickY + 10
+                            and mx >= lastClickX - 10 and mx <= lastClickX + 10
+                            and my >= lastClickY - 10 and my <= lastClickY + 10
                     _lastClickTime = now
-                    _lastClickX = mx; _lastClickY = my
+                    lastClickX = mx; lastClickY = my
                     if isDbl and col >= 0 {
-                        if _onDblClick != null { _onDblClick(row, col) }
-                        if _is_col_editable(col) { _begin_edit(row, col) }
+                        if onDblClick != null { onDblClick(row, col) }
+                        if is_col_editable(col) { _begin_edit(row, col) }
                         return
                     }
                     if _multi {
                         int MOD_SHIFT = 1, MOD_CTRL = 64
                         int mod = ev.keyMod()
             bool shift = (mod & MOD_SHIFT) != 0, ctrl = (mod & MOD_CTRL) != 0
-                        if shift and _selRow >= 0 {
-                            int a = _selRow, b = row
+                        if shift and selRow >= 0 {
+                            int a = selRow, b = row
                             if a > b { int t = a; a = b; b = t }
-                            _selRows = []
-                            for a : b to k { _selRows.add(k) }
-                            _rebuild_sel_set()
-                            for a : b to k { if k < _selSet.len() { _selSet[k] = true } }
+                            selRows = []
+                            for a : b to k { selRows.add(k) }
+                            rebuild_sel_set()
+                            for a : b to k { if k < selSet.len() { selSet[k] = true } }
                         } eif ctrl {
-                            _toggle_sel(row)
+                            toggle_sel(row)
                         } else {
-                            _selRows = [row]; _rebuild_sel_set()
-                            if row < _selSet.len() { _selSet[row] = true }
+                            selRows = [row]; rebuild_sel_set()
+                            if row < selSet.len() { selSet[row] = true }
                         }
-                        _selRow = row
+                        selRow = row
                     } else {
-                        _selRows = [row]; _rebuild_sel_set()
-                        if row < _selSet.len() { _selSet[row] = true }
-                        _selRow = row
+                        selRows = [row]; rebuild_sel_set()
+                        if row < selSet.len() { selSet[row] = true }
+                        selRow = row
                     }
-                    _selCol = col
+                    selCol = col
                     // 行拖拽重排：记录拖拽起点
-                    if _rowReorder {
-                        _dragReorderRow = row; _rowReorderStartY = my; _rowReorderDragging = false
+                    if rowReorder {
+                        dragReorderRow = row; rowReorderStartY = my; rowReorderDragging = false
                     }
-                    if _onSelect != null { _onSelect(row) }
-                    if _onCell != null and col >= 0 { _onCell(row, col) }
+                    if onSelect != null { onSelect(row) }
+                    if onCell != null and col >= 0 { onCell(row, col) }
                 }
             }
         }
@@ -1542,25 +1542,25 @@ export struct Table impl Widget, Themeable {
 
     // ==================== 复选框命中测试与绘制 ====================
     // 判断点击是否落在复选框区域。isHeader=true 时用表头坐标(row 忽略)；否则用数据行坐标
-    func _is_in_checkbox(float mx, float my, bool isHeader, int row): bool {
-        if _checkCol < 0 { return false }
-        float cx = _col_x(_checkCol)
-        float cw = _colW[_checkCol]
+    pri func is_in_checkbox(float mx, float my, bool isHeader, int row): bool {
+        if checkCol < 0 { return false }
+        float cx = col_x(checkCol)
+        float cw = _colW[checkCol]
         float boxSize = 14.0
         float bx = cx + (cw - boxSize) / 2.0
         float by
         if isHeader {
-            by = y + (_headerH - boxSize) / 2.0
+            by = y + (headerH - boxSize) / 2.0
         } else {
             if row < 0 { return false }
-            float ry = y + _headerH - _scrollY + row * _rowH
-            by = ry + (_rowH - boxSize) / 2.0
+            float ry = y + headerH - scrollY + row * rowH
+            by = ry + (rowH - boxSize) / 2.0
         }
         return mx >= bx and mx <= bx + boxSize and my >= by and my <= by + boxSize
     }
 
     // 在指定单元格中心绘制复选框。checked=是否勾选，partial=是否半选(仅表头)
-    func _draw_checkbox(Renderer r, float cx, float cw, float ry, float rh, bool checked, bool partial) {
+    pri func draw_checkbox(Renderer r, float cx, float cw, float ry, float rh, bool checked, bool partial) {
         float boxSize = 14.0
         float bx = r.snapX(cx + (cw - boxSize) / 2.0)
         float by = r.snapY(ry + (rh - boxSize) / 2.0)
@@ -1568,26 +1568,26 @@ export struct Table impl Widget, Themeable {
         //   完全滚出 Table 水平范围的复选框跳过，防止画出 Table 左/右边界。
         if bx + boxSize < x or bx > x + w { return }
         if checked or partial {
-            Color cc = _chkColor
+            Color cc = chkColor
             if partial { cc = theme.packColor(100, 110, 125) }   // 半选用灰色
             if not enabled { cc = theme.darken(cc, 64) }
             r.setColor(cc)
             r.fillRect(bx, by, boxSize, boxSize)
             // 勾号（checked）或横杠（partial 半选）
             if checked {
-                Color mc = _markColor
+                Color mc = markColor
                 if not enabled { mc = theme.packColor(120, 125, 135) }
                 r.setColor(mc)
                 r.drawLine(bx + 3.0, by + 7.5, bx + 6.0, by + 10.5)
                 r.drawLine(bx + 6.0, by + 10.5, bx + 11.0, by + 4.5)
             } eif partial {
-                Color mc = _markColor
+                Color mc = markColor
                 if not enabled { mc = theme.packColor(120, 125, 135) }
                 r.setColor(mc)
                 r.drawLine(bx + 3.0, by + 7.0, bx + 11.0, by + 7.0)
             }
         } else {
-            Color bc = _chkBoxColor
+            Color bc = chkBoxColor
             if not enabled { bc = theme.darken(bc, 64) }
             r.setColor(bc)
             r.drawRect(bx, by, boxSize, boxSize)
@@ -1596,7 +1596,7 @@ export struct Table impl Widget, Themeable {
 
     // ==================== 渲染 ====================
     // 按可用宽度测算，超宽时在末尾追加 "…" 截断（二分查找最大可容纳字符数）
-    func _fit_cell_text(string t, float availW): string {
+    pri func fit_cell_text(string t, float availW): string {
         if _font == null or not _font.ok { return t }
         if availW <= 0.0 { return "" }
         var[float, float](_fw, _fh) = _font.measureString(t); float fullW = _fw
@@ -1619,57 +1619,57 @@ export struct Table impl Widget, Themeable {
     // 和 measureString 的 string key 构造 + 缓存扫描开销（~120-420 次/帧 → 0 次/帧）。
     // 在数据/列宽/字体/图标布局变化时调用 _invalidate_fitted() 失效。
 
-    func _invalidate_fitted() { _fittedValid = false; _fittedStartRow = 0; _fittedEndRow = 0 }
+    pri func invalidate_fitted() { fittedValid = false; fittedStartRow = 0; fittedEndRow = 0 }
 
     // 计算指定行指定列的图标占宽（不绘制，仅用于拟合文本的可用宽度计算）
-    func _compute_icon_off(int r, int c): float {
-        if c != _imageCol or not _has_image_col() { return 0.0 }
-        if r < 0 or r >= _rowImages.len() { return 0.0 }
-        if _rowImages[r] == "" { return 0.0 }
+    pri func compute_icon_off(int r, int c): float {
+        if c != imageCol or not has_image_col() { return 0.0 }
+        if r < 0 or r >= rowImages.len() { return 0.0 }
+        if rowImages[r] == "" { return 0.0 }
         float imgSize = _imgSize
-        if imgSize <= 0.0 { imgSize = _rowH - 8.0 }
+        if imgSize <= 0.0 { imgSize = rowH - 8.0 }
         if imgSize <= 0.0 { return 0.0 }
-        return imgSize + _imgGap
+        return imgSize + imgGap
     }
 
     // 惰性重建拟合文本缓存：只遍历可见行×列，预计算截断文本和宽度
     // ★ 优化：仅计算 [startRow, endRow) 区间，滚动时惰性重建对应区间，
     //   避免对万行数据全量预计算（O(n×cols) → O(visibleRows×cols)）。
     //   render 调用时传入可见行范围，_ensure_fitted 仅在该范围变化时重建。
-    func _ensure_fitted_range(int startRow, int endRow) {
+    pri func ensure_fitted_range(int startRow, int endRow) {
         if _font == null or not _font.ok { return }
-        if _fittedValid and startRow == _fittedStartRow and endRow == _fittedEndRow { return }
-        _fittedStartRow = startRow
-        _fittedEndRow = endRow
+        if fittedValid and startRow == fittedStartRow and endRow == fittedEndRow { return }
+        fittedStartRow = startRow
+        fittedEndRow = endRow
         int nrows = endRow - startRow
-        if nrows <= 0 { _fittedText = []; _fittedW = []; _fittedValid = true; return }
-        _fittedText = []
-        _fittedW = []
+        if nrows <= 0 { fittedText = []; fittedW = []; fittedValid = true; return }
+        fittedText = []
+        fittedW = []
         float pad = 8.0
-        int totalCells = nrows * _ncols
+        int totalCells = nrows * ncols
         for totalCells to _ {
-            _fittedText.add(""); _fittedW.add(0.0)
+            fittedText.add(""); fittedW.add(0.0)
         }
         for startRow : endRow - 1 to r {
-            int baseIdx = (r - startRow) * _ncols
-            for 0 : _ncols - 1 to c {
-                string text = _cell(r, c)
-                float iconOff = _compute_icon_off(r, c)
+            int baseIdx = (r - startRow) * ncols
+            for 0 : ncols - 1 to c {
+                string text = cell(r, c)
+                float iconOff = compute_icon_off(r, c)
                 float availW = _colW[c] - 2.0 * pad - iconOff
-                string fitted = _fit_cell_text(text, availW)
+                string fitted = fit_cell_text(text, availW)
                 float fw = 0.0
                 if fitted != "" { var[float, float](_fw2, _fh2) = _font.measureString(fitted); fw = _fw2 }
-                _fittedText[baseIdx + c] = fitted
-                _fittedW[baseIdx + c] = fw
+                fittedText[baseIdx + c] = fitted
+                fittedW[baseIdx + c] = fw
             }
         }
-        _fittedValid = true
+        fittedValid = true
     }
 
     // 使用预计算的截断文本和宽度绘制单元格文字（跳过 _fit_cell_text 和 measureString）
-    func _draw_cached_text(Renderer r, string dt, float tw, float cx, float cw, float ry, float rh, int align, Color color, float iconOff) {
+    pri func draw_cached_text(Renderer r, string dt, float tw, float cx, float cw, float ry, float rh, int align, Color color, float iconOff) {
         if dt == "" { return }
-        float th = _textH
+        float th = textH
         float ty = ry + (rh - th) / 2.0
         float pad = 8.0
         float tx
@@ -1686,46 +1686,46 @@ export struct Table impl Widget, Themeable {
     }
 
     // 判断是否启用了图标列
-    func _has_image_col(): bool { return _imageCol >= 0 }
+    pri func has_image_col(): bool { return imageCol >= 0 }
 
     // 获取行 ri 的图标路径（越界或无图标返回空串）
-    func _row_image(int ri): string {
-        if ri < 0 or ri >= _rowImages.len() { return "" }
-        return _rowImages[ri]
+    pri func row_image(int ri): string {
+        if ri < 0 or ri >= rowImages.len() { return "" }
+        return rowImages[ri]
     }
 
     // 纹理缓存：按 path 取/载纹理，避免每帧重载与纹理泄漏
     // ★ MRU 快路径：文件管理器中连续多行常共用同一图标（如全部是文件夹），
     //   单槽快路径将 O(n) 线性扫描降为 O(1)，消除每行 string 比较开销
-    func _get_tex(Renderer r, string path): Ptr[u8] {
-        if path == _imgLastPath and _imgLastTex != null { return _imgLastTex }
-        for _imgCachePaths.len() to i {
-            if _imgCachePaths[i] == path {
-                _imgLastPath = path; _imgLastTex = _imgCacheTex[i]
-                return _imgCacheTex[i]
+    pri func get_tex(Renderer r, string path): Ptr[u8] {
+        if path == imgLastPath and imgLastTex != null { return imgLastTex }
+        for imgCachePaths.len() to i {
+            if imgCachePaths[i] == path {
+                imgLastPath = path; imgLastTex = imgCacheTex[i]
+                return imgCacheTex[i]
             }
         }
         Ptr[u8] t = img.loadTexture(r.handle, path)
-        _imgCachePaths.add(path); _imgCacheTex.add(t)
-        _imgLastPath = path; _imgLastTex = t
+        imgCachePaths.add(path); imgCacheTex.add(t)
+        imgLastPath = path; imgLastTex = t
         return t
     }
 
     // 在图标列单元格内绘制 [图标+文字]（对齐 Treeview 的 icon+text 模式）
     // 返回图标占据的宽度（0 = 无图标），供调用方在文字绘制时偏移
-    func _draw_cell_icon(Renderer r, string ipath, float cx, float ry, float rh): float {
+    pri func draw_cell_icon(Renderer r, string ipath, float cx, float ry, float rh): float {
         if ipath == "" { return 0.0 }
-        Ptr[u8] tex = _get_tex(r, ipath)
+        Ptr[u8] tex = get_tex(r, ipath)
         if tex == null { return 0.0 }
         float imgSize = _imgSize
         if imgSize <= 0.0 { imgSize = rh - 8.0 }
         if imgSize <= 0.0 { return 0.0 }
-        float imgX = cx + _imgPad
+        float imgX = cx + imgPad
         float imgY = ry + (rh - imgSize) / 2.0
         r.setTextureAlpha(tex, 255)
         r.setTextureColor(tex, #FFFFFFFF)
         var[float, float](nw, nh) = r.getTextureSize(tex)
-        switch _imgMode {
+        switch imgMode {
             case 1 {
                 // stretch：直接拉伸填满
                 r.drawTextureFromTo(tex, 0.0, 0.0, nw, nh, imgX, imgY, imgSize, imgSize)
@@ -1745,17 +1745,17 @@ export struct Table impl Widget, Themeable {
                     imgX + (imgSize - dw) / 2.0, imgY + (imgSize - dh) / 2.0, dw, dh)
             }
         }
-        return imgSize + _imgGap   // 返回图标总占宽（含间距），文字需右移此量
+        return imgSize + imgGap   // 返回图标总占宽（含间距），文字需右移此量
     }
 
-    func _draw_cell_text(Renderer r, string t, float cx, float cw, float ry, float rh, int align, Color color, float iconOff) {
+    pri func draw_cell_text(Renderer r, string t, float cx, float cw, float ry, float rh, int align, Color color, float iconOff) {
         if _font == null or not _font.ok { return }
         if t == "" { return }
-        float th = _textH
+        float th = textH
         float ty = ry + (rh - th) / 2.0
         float pad = 8.0
         float availW = cw - 2.0 * pad - iconOff
-        string dt = _fit_cell_text(t, availW)
+        string dt = fit_cell_text(t, availW)
         if dt == "" { return }
         var[float, float](_tw, _th) = _font.measureString(dt); float tw = _tw
         float tx
@@ -1778,104 +1778,104 @@ export struct Table impl Widget, Themeable {
 
     func render(Renderer r) {
         if not _loaded or not visible { return }
-        _ensure_font()
+        ensure_font()
 
         // 背景底色（在字体检查之前画，避免字体偶发未就绪时 Table 区域变透明露出容器底色 → 闪一下）
-        Color bgC = _bgColor
-        if not enabled { bgC = theme.darken(_bgColor, 64) }
+        Color bgC = bgColor
+        if not enabled { bgC = theme.darken(bgColor, 64) }
         r.setColor(bgC)
         r.fillRect(x, y, w, h)
 
         if _font == null or not _font.ok { return }   // 字体无效时仍有背景，只跳过文字
 
-        var sb = _compute_sb()
+        var sb = compute_sb()
 
         // 表头
-        r.setColor(_hdrColor)
-        r.fillRect(x, y, w, _headerH)
-        for 0 : _ncols - 1 to c {
-            float cx = _col_x(c)
+        r.setColor(hdrColor)
+        r.fillRect(x, y, w, headerH)
+        for 0 : ncols - 1 to c {
+            float cx = col_x(c)
             float cw = _colW[c]
             if cx + cw < x or cx > x + w { continue }
             // 复选框列表头：绘制全选/半选复选框
-            if c == _checkCol and _checkCol >= 0 {
-                int cnt = _get_checked_count()
-                bool partial = (cnt > 0 and cnt < _rowChecked.len())
-                _draw_checkbox(r, cx, cw, y, _headerH, _checkHeaderState, partial)
+            if c == checkCol and checkCol >= 0 {
+                int cnt = get_checked_count()
+                bool partial = (cnt > 0 and cnt < rowChecked.len())
+                draw_checkbox(r, cx, cw, y, headerH, checkHeaderState, partial)
             }
-            if c < _headers.len() and c != _checkCol {
+            if c < _headers.len() and c != checkCol {
                 string t = _headers[c]
-                Color htc = _hdrTxtColor
+                Color htc = hdrTxtColor
                 // 禁用排序列不显示排序箭头（即使它曾是排序列）
-                if c == _sortCol and not _is_col_sort_disabled(c) {
-                    if _sortDesc { t = $"{t} ▼" } else { t = $"{t} ▲" }
+                if c == sortCol and not is_col_sort_disabled(c) {
+                    if sortDesc { t = $"{t} ▼" } else { t = $"{t} ▲" }
                 }
-                _draw_cell_text(r, t, cx, cw, y, _headerH, _headerAligns[c], htc, 0.0)
+                draw_cell_text(r, t, cx, cw, y, headerH, headerAligns[c], htc, 0.0)
             }
-            r.setColor(theme.withAlpha(_sepColor, 130))
-            r.drawLine(cx + cw, y, cx + cw, y + _headerH)
+            r.setColor(theme.withAlpha(sepColor, 130))
+            r.drawLine(cx + cw, y, cx + cw, y + headerH)
         }
-        r.setColor(theme.withAlpha(_sepColor, 220))
-        r.drawLine(x, y + _headerH, x + w, y + _headerH)
+        r.setColor(theme.withAlpha(sepColor, 220))
+        r.drawLine(x, y + headerH, x + w, y + headerH)
 
         // 数据区：bodyClip 单层裁剪。裁剪深度在 Tab 内容区内仍为 2 层（Tab + body），
         // 且 push/pop 次数与旧"仅全表单层裁剪"版本相同——不引入额外 flush，避免 D3D 闪烁。
         // ★ bodyClip 兜底：跨 header 上边界 / 底部边界的半行被安全裁剪，
         //   既不覆盖表头（滚动到底时行不会画到 header 上），也不整行跳过留空白
         //   （拖动滚动条时顶部半行自然显示，滚动平滑）。
-        float bodyTop = y + _headerH
-        float bodyH = h - _headerH - sb[1]
+        float bodyTop = y + headerH
+        float bodyH = h - headerH - sb[1]
         float bodyW = w - sb[0]
         SDL_Rect bodyClip = SDL_Rect.malloc()
         bodyClip.x = _int(x); bodyClip.y = _int(bodyTop)
         bodyClip.w = _int(bodyW) + 1; bodyClip.h = _int(bodyH) + 1   // +1 防止浮点坐标截断丢失亚像素
         r.pushClipRect(bodyClip.to_ptr())
-        _clipBase = bodyClip.to_ptr()
+        clipBase = bodyClip.to_ptr()
 
-        int startRow = _int(_scrollY / _rowH)
+        int startRow = _int(scrollY / rowH)
         if startRow < 0 { startRow = 0 }
-        int endRow = startRow + _int(bodyH / _rowH) + 2
+        int endRow = startRow + _int(bodyH / rowH) + 2
         if endRow > _rows.len() { endRow = _rows.len() }
         // ★ 惰性重建拟合文本缓存（仅可见行区间）
-        _ensure_fitted_range(startRow, endRow)
+        ensure_fitted_range(startRow, endRow)
 
         // ★ Pass 1：行背景填充——按背景色分组，减少 setColor 切换次数
         //   先画所有普通行，再画 zebran 行，再画 hover 行，最后画选中行
         //   （选中行在最上层，避免被后续覆盖）
         for startRow : endRow - 1 to ri {
-            float ry = bodyTop - _scrollY + ri * _rowH
-            if ry + _rowH < bodyTop or ry > bodyTop + bodyH { continue }
+            float ry = bodyTop - scrollY + ri * rowH
+            if ry + rowH < bodyTop or ry > bodyTop + bodyH { continue }
             Color rc = bgC
-            if _cellSelect {
+            if cellSelect {
                 // 单元格模式：行背景只画 zebra，hover/选中在 Pass 1.5 中按单元格画
-                if _zebra and (ri % 2 == 1) { rc = _zebColor }
+                if _zebra and (ri % 2 == 1) { rc = zebColor }
             } else {
-                if _is_sel(ri) { rc = _selColor }
-                eif ri == _hoverRow { rc = _hovColor }
-                eif _zebra and (ri % 2 == 1) { rc = _zebColor }
+                if is_sel(ri) { rc = selColor }
+                eif ri == hoverRow { rc = hovColor }
+                eif _zebra and (ri % 2 == 1) { rc = zebColor }
             }
             r.setColor(rc)
-            r.fillRect(x, ry, bodyW, _rowH + 1.0)   // ★ 用 bodyW 防止渗透到竖向滚动条区域（替代原 bodyClip 裁剪）
+            r.fillRect(x, ry, bodyW, rowH + 1.0)   // ★ 用 bodyW 防止渗透到竖向滚动条区域（替代原 bodyClip 裁剪）
         }
 
         // ★ Pass 1.5（仅 _cellSelect 模式）：单元格级 hover/选中高亮
-        if _cellSelect {
+        if cellSelect {
             for startRow : endRow - 1 to ri {
-                float ry = bodyTop - _scrollY + ri * _rowH
-                if ry + _rowH < bodyTop or ry > bodyTop + bodyH { continue }
-                bool isSel = (_selRow == ri and _selCol >= 0)
-                bool isHov = (_hoverRow == ri and _hoverCol >= 0)
+                float ry = bodyTop - scrollY + ri * rowH
+                if ry + rowH < bodyTop or ry > bodyTop + bodyH { continue }
+                bool isSel = (selRow == ri and selCol >= 0)
+                bool isHov = (hoverRow == ri and hoverCol >= 0)
                 if isSel or isHov {
                     // 选中单元格优先于 hover
-                    Color hc2 = _hovColor
-                    if isSel { hc2 = _selColor }
+                    Color hc2 = hovColor
+                    if isSel { hc2 = selColor }
                     // 只画 hover/选中单元格高亮（不画整行背景）
-                    int hcol = if isSel then _selCol else _hoverCol
-                    if hcol >= 0 and hcol < _ncols {
-                        float cx = _col_x(hcol), cw = _colW[hcol]
+                    int hcol = if isSel then selCol else hoverCol
+                    if hcol >= 0 and hcol < ncols {
+                        float cx = col_x(hcol), cw = _colW[hcol]
                         if cx + cw >= x and cx <= x + w {
                             r.setColor(hc2)
-                            r.fillRect(cx, ry, cw, _rowH + 1.0)
+                            r.fillRect(cx, ry, cw, rowH + 1.0)
                         }
                     }
                 }
@@ -1885,36 +1885,36 @@ export struct Table impl Widget, Themeable {
         // ★ Pass 2：单元格内容（图标+文字）
         for startRow : endRow - 1 to ri {
             if ri >= _rows.len() { continue }
-            float ry = bodyTop - _scrollY + ri * _rowH
-            if ry + _rowH < bodyTop or ry > bodyTop + bodyH { continue }
+            float ry = bodyTop - scrollY + ri * rowH
+            if ry + rowH < bodyTop or ry > bodyTop + bodyH { continue }
             var row = _rows[ri]
-            string imgPath = _row_image(ri)
+            string imgPath = row_image(ri)
             // 行级颜色：取本行文字色（0=用默认色）
             // ★ _rowColors 存储为 0xRRGGBB（无 alpha），需补 0xFF alpha 否则文字透明
-            Color rowC = _txtColor
-            if ri < _rowColors.len() and _rowColors[ri] != 0 {
-                rowC = theme.withAlpha(_rowColors[ri], 255)
+            Color rowC = txtColor
+            if ri < rowColors.len() and rowColors[ri] != 0 {
+                rowC = theme.withAlpha(rowColors[ri], 255)
             }
-            for 0 : _ncols - 1 to c {
-                float cx = _col_x(c), cw = _colW[c]
+            for 0 : ncols - 1 to c {
+                float cx = col_x(c), cw = _colW[c]
                 if cx + cw < x or cx > x + w { continue }
                 // 复选框列：绘制行复选框
-                if c == _checkCol and _checkCol >= 0 {
-                    _draw_checkbox(r, cx, cw, ry, _rowH, is_row_checked(ri), false)
+                if c == checkCol and checkCol >= 0 {
+                    draw_checkbox(r, cx, cw, ry, rowH, is_row_checked(ri), false)
                     continue
                 }
                 // ★ 跳过正在编辑的单元格：Edit 控件会自行绘制，避免文字叠加重叠
-                if _editing and ri == _editRow and c == _editCol { continue }
+                if editing and ri == editRow and c == editCol { continue }
                 float iconOff = 0.0
-                if c == _imageCol and _has_image_col() {
-                    iconOff = _draw_cell_icon(r, imgPath, cx, ry, _rowH)
+                if c == imageCol and has_image_col() {
+                    iconOff = draw_cell_icon(r, imgPath, cx, ry, rowH)
                 }
                 if c < row.len() {
                     // ★ 使用预计算的拟合文本和宽度，跳过 _fit_cell_text + measureString
-                    int fidx = (ri - _fittedStartRow) * _ncols + c
+                    int fidx = (ri - fittedStartRow) * ncols + c
                     string dt = ""
                     float dw = 0.0
-                    if fidx >= 0 and fidx < _fittedText.len() { dt = _fittedText[fidx]; dw = _fittedW[fidx] }
+                    if fidx >= 0 and fidx < fittedText.len() { dt = fittedText[fidx]; dw = fittedW[fidx] }
                     // 单元格级颜色优先于行级颜色
                     // ★ cell fg 存储为 0xRRGGBB（无 alpha），需补 0xFF alpha 否则文字透明
                     Color cellC = rowC
@@ -1926,9 +1926,9 @@ export struct Table impl Widget, Themeable {
                     Color cbg = get_cell_bg(ri, c)
                     if cbg != 0 {
                         r.setColor(theme.withAlpha(cbg, 200))
-                        r.fillRect(cx, ry, cw, _rowH)
+                        r.fillRect(cx, ry, cw, rowH)
                     }
-                    _draw_cached_text(r, dt, dw, cx, cw, ry, _rowH, _aligns[c], cellC, iconOff)
+                    draw_cached_text(r, dt, dw, cx, cw, ry, rowH, _aligns[c], cellC, iconOff)
                 }
             }
         }
@@ -1936,130 +1936,130 @@ export struct Table impl Widget, Themeable {
         // ★ Pass 3：列分隔线——统一在所有行内容绘制后一次性绘制，减少 setColor 切换
         //   旧方案每格末尾 setColor(sep,70)+drawLine 会打断 fillRect/drawText 批处理，
         //   改为在 pass 3 统一设一次颜色，所有分隔线连续 drawLine（batch 内不中断）。
-        r.setColor(theme.withAlpha(_sepColor, 70))
-        for 0 : _ncols - 1 to c {
-            float cx = _col_x(c), cw = _colW[c]
+        r.setColor(theme.withAlpha(sepColor, 70))
+        for 0 : ncols - 1 to c {
+            float cx = col_x(c), cw = _colW[c]
             if cx + cw < x or cx > x + w { continue }
             for startRow : endRow - 1 to ri {
-                float ry = bodyTop - _scrollY + ri * _rowH
-                if ry + _rowH < bodyTop or ry > bodyTop + bodyH { continue }
-                r.drawLine(cx + cw, ry, cx + cw, ry + _rowH)
+                float ry = bodyTop - scrollY + ri * rowH
+                if ry + rowH < bodyTop or ry > bodyTop + bodyH { continue }
+                r.drawLine(cx + cw, ry, cx + cw, ry + rowH)
             }
         }
 
         // 空状态提示：无数据时在数据区居中显示
-        if _rows.len() == 0 and _emptyText != "" {
-            var[float, float](_tw2, _th2) = _font.measureString(_emptyText); float tw = _tw2
+        if _rows.len() == 0 and emptyText != "" {
+            var[float, float](_tw2, _th2) = _font.measureString(emptyText); float tw = _tw2
             float tx = x + (w - tw) / 2.0
-            float ty = bodyTop + (bodyH - _textH) / 2.0
-            r.setColor(_emptyColor)
-            r.drawText(_font, _emptyText, r.snapX(tx), r.snapY(ty), _emptyColor)
+            float ty = bodyTop + (bodyH - textH) / 2.0
+            r.setColor(emptyColor)
+            r.drawText(_font, emptyText, r.snapX(tx), r.snapY(ty), emptyColor)
         }
 
         // 恢复裁剪（滚动条/边框/拖拽线需全区域绘制）
         r.popClipRect(); bodyClip.free()
 
-        if _dragCol >= 0 and _dragCol < _colW.len() {
-            float ex = _col_x(_dragCol) + _colW[_dragCol]
-            r.setColor(_selColor)
+        if dragCol >= 0 and dragCol < _colW.len() {
+            float ex = col_x(dragCol) + _colW[dragCol]
+            r.setColor(selColor)
             r.drawLine(ex, y, ex, y + h)
         }
 
         // 列重排拖拽指示线：在目标列边界处画竖线
-        if _reorderDragging and _dragReorderCol >= 0 {
-            int targetCol = _col_at(_reorderDragX)
+        if reorderDragging and dragReorderCol >= 0 {
+            int targetCol = col_at(reorderDragX)
             if targetCol >= 0 {
-                float tx = _col_x(targetCol)
+                float tx = col_x(targetCol)
                 // 鼠标在目标列右半部分时指示线画在右侧
-                float cx = _col_x(targetCol) + _colW[targetCol]
-                if _reorderDragX - tx < _colW[targetCol] / 2.0 { cx = tx }
-                r.setColor(theme.brighten(_selColor, 40))
+                float cx = col_x(targetCol) + _colW[targetCol]
+                if reorderDragX - tx < _colW[targetCol] / 2.0 { cx = tx }
+                r.setColor(theme.brighten(selColor, 40))
                 r.drawLine(cx, y, cx, y + h)
             }
         }
 
         // 行重排拖拽指示线：在目标行边界处画横线
-        if _rowReorderDragging and _dragReorderRow >= 0 {
-            int targetRow = _row_at(_rowReorderDragY)
+        if rowReorderDragging and dragReorderRow >= 0 {
+            int targetRow = row_at(rowReorderDragY)
             if targetRow >= 0 {
-                float bodyTop = y + _headerH
-                float ry = bodyTop - _scrollY + targetRow * _rowH
+                float bodyTop = y + headerH
+                float ry = bodyTop - scrollY + targetRow * rowH
                 // 鼠标在行下半部分时指示线画在下方
-                float cy = ry + _rowH
-                if _rowReorderDragY - ry < _rowH / 2.0 { cy = ry }
-                r.setColor(theme.brighten(_selColor, 40))
+                float cy = ry + rowH
+                if rowReorderDragY - ry < rowH / 2.0 { cy = ry }
+                r.setColor(theme.brighten(selColor, 40))
                 r.drawLine(x, cy, x + w, cy)
             }
         }
 
-        r.setColor(theme.withAlpha(_sepColor, 220))
+        r.setColor(theme.withAlpha(sepColor, 220))
         r.drawRect(x, y, w, h)
 
-        if sb[0] > 0.0 { _draw_vscroll(r, sb) }
-        if sb[1] > 0.0 { _draw_hscroll(r, sb) }
+        if sb[0] > 0.0 { draw_vscroll(r, sb) }
+        if sb[1] > 0.0 { draw_hscroll(r, sb) }
 
-        if _editing and _edit != null { _edit.render(r) }
+        if editing and _edit != null { _edit.render(r) }
     }
 
-    func _draw_vscroll(Renderer r, Array[float] sb) {
+    pri func draw_vscroll(Renderer r, Array[float] sb) {
         float vw = 8.0
         float sx = x + w - vw - 2.0
-        float bodyH = h - _headerH - sb[1]
-        float maxY = _max_scroll_y(); if maxY <= 0 { maxY = 1 }
+        float bodyH = h - headerH - sb[1]
+        float maxY = max_scroll_y(); if maxY <= 0 { maxY = 1 }
         float track = bodyH - 4.0
-        float contentH = _rows.len() * _rowH; if contentH <= 0 { contentH = 1 }
+        float contentH = _rows.len() * rowH; if contentH <= 0 { contentH = 1 }
         float thumbH = maths.max(18.0, maths.min(bodyH * bodyH / contentH, bodyH))
-        float thy = y + _headerH + 2.0 + (_scrollY / maxY) * (track - thumbH)
-        r.setColor(theme.withAlpha(_sbColor, 180))
-        r.fillRoundedRect(sx, y + _headerH + 2.0, vw, bodyH - 4.0, vw / 2.0)
-        r.setColor(theme.brighten(_sbColor, 60))
+        float thy = y + headerH + 2.0 + (scrollY / maxY) * (track - thumbH)
+        r.setColor(theme.withAlpha(sbColor, 180))
+        r.fillRoundedRect(sx, y + headerH + 2.0, vw, bodyH - 4.0, vw / 2.0)
+        r.setColor(theme.brighten(sbColor, 60))
         r.fillRoundedRect(sx, thy, vw, thumbH, vw / 2.0)
     }
-    func _draw_hscroll(Renderer r, Array[float] sb) {
+    pri func draw_hscroll(Renderer r, Array[float] sb) {
         float hh = 8.0
         float sy = y + h - hh - 2.0
-        float maxX = _max_scroll_x(); if maxX <= 0 { maxX = 1 }
+        float maxX = max_scroll_x(); if maxX <= 0 { maxX = 1 }
         float bodyW = w - sb[0]
         float track = bodyW - 4.0
-        float tw = _total_w(); if tw <= 0 { tw = 1 }
+        float tw = total_w(); if tw <= 0 { tw = 1 }
         float thumbW = maths.max(18.0, maths.min(bodyW * bodyW / tw, bodyW))
-        float thx = x + 2.0 + (_scrollX / maxX) * (track - thumbW)
-        r.setColor(theme.withAlpha(_sbColor, 180))
+        float thx = x + 2.0 + (scrollX / maxX) * (track - thumbW)
+        r.setColor(theme.withAlpha(sbColor, 180))
         r.fillRoundedRect(x + 2.0, sy, bodyW - 4.0, hh, hh / 2.0)
-        r.setColor(theme.brighten(_sbColor, 60))
+        r.setColor(theme.brighten(sbColor, 60))
         r.fillRoundedRect(thx, sy, thumbW, hh, hh / 2.0)
     }
 
     func dispose() {
         if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
         _edit?.dispose(); _edit = null
-        _ctxMenu?.dispose(); _ctxMenu = null
+        ctxMenu?.dispose(); ctxMenu = null
         // 纹理缓存仅清空引用：其由所属渲染器在销毁时统一释放，
         // 此处再 SDL_DestroyTexture 会造成 double-free/崩溃（见 sdl_font.leno 注释）
-        _imgCacheTex = []; _imgCachePaths = []
-        _imgLastPath = ""; _imgLastTex = null
-        _fittedText = []; _fittedW = []; _fittedValid = false; _fittedStartRow = 0; _fittedEndRow = 0
-        _selSet = []; _checkedCount = -1
+        imgCacheTex = []; imgCachePaths = []
+        imgLastPath = ""; imgLastTex = null
+        fittedText = []; fittedW = []; fittedValid = false; fittedStartRow = 0; fittedEndRow = 0
+        selSet = []; checkedCount = -1
     }
 
 // ==================== 运行时主题切换 ====================
 func applyTheme(Theme t) {
-_bgColor = t.bg
-_hdrColor = t.bgHeader
-_selColor = t.bgSel
-_hovColor = t.bgHover
-_zebColor = t.bgZebra
-_txtColor = t.txt
-_hdrTxtColor = t.txtHeader
-_sepColor = t.sep
-_sbColor = t.sb
-_emptyColor = t.txtDim
-_chkBoxColor = t.border
-_markColor = t.txtOnAccent
-_invalidate_fitted()
+bgColor = t.bg
+hdrColor = t.bgHeader
+selColor = t.bgSel
+hovColor = t.bgHover
+zebColor = t.bgZebra
+txtColor = t.txt
+hdrTxtColor = t.txtHeader
+sepColor = t.sep
+sbColor = t.sb
+emptyColor = t.txtDim
+chkBoxColor = t.border
+markColor = t.txtOnAccent
+invalidate_fitted()
 // 同步内嵌控件的配色
 _edit?.applyTheme(t)
-_ctxMenu?.applyTheme(t)
+ctxMenu?.applyTheme(t)
 }
 }
 

@@ -36,15 +36,15 @@ func _opts_keys(): Array[string] {
 }
 export struct TabControl impl Widget, Themeable {
     float x = 0.0, y = 0.0, w = 400.0, h = 300.0
-    float _tabH = 32.0         // 标签栏高度
-    bool _showHeader = true    // 是否绘制标签栏：false = 只当「纯页面容器」用，靠外部按钮 set_active 切页 ✓
+    pri float tabH = 32.0         // 标签栏高度
+    pri bool showHeader = true    // 是否绘制标签栏：false = 只当「纯页面容器」用，靠外部按钮 set_active 切页 ✓
     bool _drawBorder = true    // 是否画内容区边框（默认 true = 老行为 ✓）
-    bool _clipContent = true   // 是否把页面内容裁剪到内容区（`clip:false` 关闭；默认 true = 老行为 ✓）
+    pri bool clipContent = true   // 是否把页面内容裁剪到内容区（`clip:false` 关闭；默认 true = 老行为 ✓）
     Array[string] _tabs = []     // 各页标题
-    Array[Array[Widget]] _pages = []  // 每页的子控件集合（仅当前页被处理/绘制）
+    pri Array[Array[Widget]] pages = []  // 每页的子控件集合（仅当前页被处理/绘制）
     Array[VBox] _pageLayouts = []    // 每页的布局容器
     Array[bool] _hasLayout = []       // 每页是否设置了布局容器
-    Array[Array[Array[float]]] _rel = []  // 每页每子控件相对「内容区原点」的偏移 [relX, relY]
+    pri Array[Array[Array[float]]] rel = []  // 每页每子控件相对「内容区原点」的偏移 [relX, relY]
     // ==== 同页混用两种定位方式的自检（每页只提示一次 ✓）====
     //   本模块支持两种页面定位：
     //     ① 绝对：`addToPage(page, c, dx, dy)`
@@ -52,38 +52,38 @@ export struct TabControl impl Widget, Themeable {
     //   同一页**混用** ⇒ 绝对定位的控件不参与布局流 ⇒ 窗口缩放时与布局内容重叠/错位 ✗
     //   （`dashboard.leno` 头部注释记录的"中间状态"就是这一类 ✓）
     //   仓库现状：每页都只用一种 ⇒ 本检查在既有代码上**零命中**（已实跑全仓确认 ✓）
-    Array[bool] _mixWarned = []
+    pri Array[bool] mixWarned = []
     int _active = 0            // 当前激活页索引
-    int _hover = -1            // 悬停的标签索引，-1 无
+    pri int hover = -1            // 悬停的标签索引，-1 无
     bool _loaded = false
-    Ptr[u8] _hwnd              // 绑定的窗口句柄，下发给需要它的子控件（如 Edit 的 IME）
+    pri Ptr[u8] hwnd              // 绑定的窗口句柄，下发给需要它的子控件（如 Edit 的 IME）
 
     // 字体（画标签文字）
-    float _fontSize = 15.0; string _fontPath = ""; int _fontStyle = 0; Font? _font
+    float _fontSize = 15.0; pri string fontPath = ""; pri int fontStyle = 0; Font? _font
     // 标签宽度缓存（避免每次 _tabRects 都 measureString）
-    Array[float] _tabW = []
-    bool _tabDirty = true
+    pri Array[float] tabW = []
+    pri bool tabDirty = true
 
     // 配色
-    Color _bgColor = #262830FF       // 内容区背景
-    Color _barColor = #232332FF      // 标签栏背景
-    Color _tabColor = #2C2E36FF      // 非激活标签
-    Color _actColor = #3C96EBFF     // 激活标签
-    Color _txtColor = #78808CFF     // 文字色（非激活）
-    Color _actTxtColor = #EBEBF5FF  // 激活文字色
-    Color _accColor = #50A0F5FF     // 激活标签下划线
-    Color _brdColor = #5A5F6EFF     // 边框色
-    int _cursor = SystemCursor.POINTER
+    pri Color bgColor = #262830FF       // 内容区背景
+    pri Color barColor = #232332FF      // 标签栏背景
+    pri Color tabColor = #2C2E36FF      // 非激活标签
+    pri Color actColor = #3C96EBFF     // 激活标签
+    pri Color txtColor = #78808CFF     // 文字色（非激活）
+    pri Color actTxtColor = #EBEBF5FF  // 激活文字色
+    pri Color accColor = #50A0F5FF     // 激活标签下划线
+    pri Color brdColor = #5A5F6EFF     // 边框色
+    pri int cursor = SystemCursor.POINTER
     bool enabled = true, visible = true
-    func(int):void _onChange
+    pri func(int):void onChange
 
-    func _ensure_font() {
+    pri func ensure_font() {
         if _font == null or not _font.ok {
             if _font != null and _font.ok { fnt.releaseFont(_font) }
-            if _fontPath != "" { _font = fnt.acquireFont(_fontPath, _fontSize) }
+            if fontPath != "" { _font = fnt.acquireFont(fontPath, _fontSize) }
             else { _font = fnt.acquireFontAuto(_fontSize) }
-            if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
-            _tabDirty = true   // 字体变化，标签宽度需重算
+            if _font.ok and fontStyle != 0 { _font.setStyle(fontStyle) }
+            tabDirty = true   // 字体变化，标签宽度需重算
         }
     }
 
@@ -91,40 +91,40 @@ export struct TabControl impl Widget, Themeable {
     func set(Dict opts) {
         dochk.check("sdl_tab", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
         Theme th = theme.getTheme()
-        _bgColor = th.bg
-        _barColor = th.bgInput
-        _tabColor = th.bgAlt
-        _actColor = th.accent
-        _txtColor = th.txtDim
-        _actTxtColor = th.txt
-        _accColor = th.accentBright
-        _brdColor = th.border
+        bgColor = th.bg
+        barColor = th.bgInput
+        tabColor = th.bgAlt
+        actColor = th.accent
+        txtColor = th.txtDim
+        actTxtColor = th.txt
+        accColor = th.accentBright
+        brdColor = th.border
         x    = opts.get("x", 0)
         y    = opts.get("y", 0)
         w    = opts.get("w", 400)
         h    = opts.get("h", 300)
-        _tabH = opts.get("tab_h", 32)
+        tabH = opts.get("tab_h", 32)
         // 隐藏标签栏（默认 false 之外都是老行为 ✓）。用途：像侧栏导航那样用**外部按钮**切页时，
         // 标签栏是多余的；注意**不能**用 `tab_h:0` 代替 ✗ —— render 里标签文字画在 `y - 文字高/2`、
         // 下划线画在 `y - 3`，只是靠"Tab 恰好在窗口最上沿被裁掉"才看不见，一旦 Tab 不在最上沿
         // 就会画到 Tab 外面去 ✗（`show_header:false` 是整条不画 ✓）。
         // ⚠ `tabs` 仍然要照常传：`set_active` 会按 `_tabs.len()` 校验下标 ✓
-        _showHeader = opts.get("show_header", true)
+        showHeader = opts.get("show_header", true)
         _drawBorder = opts.get("border", true)
         // 关掉内容区裁剪：页面内容（如整页 ScrollView）自己有裁剪时这层是冗余的 ✓
-        _clipContent = opts.get("clip", true)
+        clipContent = opts.get("clip", true)
 
         var ts = opts.get("tabs", [])
         if ts is Array[string] { _tabs = ts as Array[string] } else { _tabs = [] }
-        _tabDirty = true   // 标签列表变化，宽度需重算
+        tabDirty = true   // 标签列表变化，宽度需重算
         // 每页一个子控件数组 + 对应的相对偏移数组
-        _pages = []
-        _rel = []
+        pages = []
+        rel = []
         _pageLayouts = []
         _hasLayout = []
         for _tabs.len() to i {
-            _pages.add([])
-            _rel.add([])
+            pages.add([])
+            rel.add([])
             _pageLayouts.add(new VBox())
             _hasLayout.add(false)
         }
@@ -133,20 +133,20 @@ export struct TabControl impl Widget, Themeable {
         if _active < 0 or _active >= _tabs.len() { _active = 0 }
 
         _fontSize = opts.get("font_size", 15)
-        _fontPath = opts.get("font_path", "")
-        _fontStyle = opts.get("font_style", 0)
+        fontPath = opts.get("font_path", "")
+        fontStyle = opts.get("font_style", 0)
 
         // 颜色：opts 未传则保持默认值
-        if opts.get("bg_color") is Color => t { _bgColor = t }
-        if opts.get("border_color") is Color => t { _brdColor = t }
-        if opts.get("active_color") is Color => t { _actColor = t }
-        if opts.get("accent_color") is Color => t { _accColor = t }
+        if opts.get("bg_color") is Color => t { bgColor = t }
+        if opts.get("border_color") is Color => t { brdColor = t }
+        if opts.get("active_color") is Color => t { actColor = t }
+        if opts.get("accent_color") is Color => t { accColor = t }
 
-        _cursor = opts.get("cursor", SystemCursor.POINTER)
-        _hover = -1   // 重置悬停标签（二次 set 时归零）
+        cursor = opts.get("cursor", SystemCursor.POINTER)
+        hover = -1   // 重置悬停标签（二次 set 时归零）
         enabled = opts.get("enabled", true)
         visible = opts.get("visible", true)
-        _ensure_font()
+        ensure_font()
         _loaded = true
     }
 
@@ -161,17 +161,17 @@ export struct TabControl impl Widget, Themeable {
     // ==================== 设置方法 ====================
     // 表头实际占用的高度：`show_header:false` 时内容区就从 (x, y) 开始 ⇒
     // 所有「内容区原点/高度」的计算都走这里，隐藏表头才不会有 32px 的空白 ✗
-    func _hdrH(): float {
-        if _showHeader { return _tabH }
+    pri func hdrH(): float {
+        if showHeader { return tabH }
         return 0.0
     }
 
     // 添加子控件到指定页（page 从 0 起）。dx, dy 为「内容区左上角」相对坐标，
     // 同页混用提示（每页一次，避免刷屏 ✗）
-    func _warn_mix_once(int page, string detail) {
-        while _mixWarned.len() <= page { _mixWarned.add(false) }
-        if _mixWarned[page] { return }
-        _mixWarned[page] = true
+    pri func warn_mix_once(int page, string detail) {
+        while mixWarned.len() <= page { mixWarned.add(false) }
+        if mixWarned[page] { return }
+        mixWarned[page] = true
         print($"[TabControl 用法提示] 第 {page} 页：{detail}")
         print("\n  ⇒ 同一页请只用**一种**定位方式：绝对 addToPage(dx,dy) 或 布局 setPageLayout+addToPageLayout ✓")
         print("\n  （若这是**有意叠加的浮层**，忽略本提示即可。）\n")
@@ -179,14 +179,14 @@ export struct TabControl impl Widget, Themeable {
 
     // TabControl 每帧以内容区原点 (x, y+表头高) + (dx, dy) 重排，故移动/缩放 Tab 时内部整体跟随。
     func addToPage(int page, Widget c, float dx, float dy): Widget {
-        if page < 0 or page >= _pages.len() { return c }
+        if page < 0 or page >= pages.len() { return c }
         // ★ 该页已由布局驱动 ⇒ 再绝对定位会与布局流重叠 ✗（曾经只靠注释提醒，注释不会拦人 ✓）
         if _hasLayout[page] {
-            _warn_mix_once(page, "本页已用 setPageLayout 布局驱动，却又用 addToPage(dx,dy) 绝对定位")
+            warn_mix_once(page, "本页已用 setPageLayout 布局驱动，却又用 addToPage(dx,dy) 绝对定位")
         }
-        _pages[page].add(c)
-        _rel[page].add([dx, dy])
-        if _hwnd != null { _tab_pass_window(c, _hwnd) }
+        pages[page].add(c)
+        rel[page].add([dx, dy])
+        if hwnd != null { _tab_pass_window(c, hwnd) }
         return c
     }
     // 添加到当前激活页（dx, dy 相对内容区左上角）
@@ -195,79 +195,79 @@ export struct TabControl impl Widget, Themeable {
     // 把某页的内容区设为布局容器（如 VBox），自动填满内容区
     // 布局容器接管该页的子控件排布，不再用手写 dx,dy
     func setPageLayout(int page, VBox layout) {
-        if page < 0 or page >= _pages.len() { return }
+        if page < 0 or page >= pages.len() { return }
         // ★ 反向检查：本页**已有绝对定位子控件**（只能是 addToPage 加的 ⇒ addToPageLayout 在无布局时
         //   会直接 return，不会进 `_pages`）⇒ 布局接管后它们不参与排布 ✗
         //   `not _hasLayout[page]` 是必须的：重复 setPageLayout（重建/换布局）时 `_pages` 里已有
         //   布局加进来的子控件 ⇒ 不排除就会误报 ✗
-        if _pages[page].len() > 0 and not _hasLayout[page] {
-            _warn_mix_once(page, "本页已有 addToPage(dx,dy) 绝对定位的子控件，现在又用 setPageLayout 布局驱动")
+        if pages[page].len() > 0 and not _hasLayout[page] {
+            warn_mix_once(page, "本页已有 addToPage(dx,dy) 绝对定位的子控件，现在又用 setPageLayout 布局驱动")
         }
         _pageLayouts[page] = layout
         _hasLayout[page] = true
         // 初始位置和大小：内容区 = (x, y+表头高, w, h-表头高)
-        layout.set_pos(x, y + _hdrH())
-        layout.set_size(w, h - _hdrH())
-        if _hwnd != null { _tab_pass_window(layout as Widget, _hwnd) }
+        layout.set_pos(x, y + hdrH())
+        layout.set_size(w, h - hdrH())
+        if hwnd != null { _tab_pass_window(layout as Widget, hwnd) }
     }
 
     // 向某页的布局容器添加子控件（opts 传给布局容器的 add 方法，如 {align:3, expand:true}）
     func addToPageLayout(int page, Widget c, Dict opts): Widget {
-        if page < 0 or page >= _pages.len() { return c }
+        if page < 0 or page >= pages.len() { return c }
         if not _hasLayout[page] { return c }
         var layout = _pageLayouts[page]
         // 调用布局容器的 add 方法
         layout.add(c, opts)
         // 同时加入该页的子控件列表（供 process/render 遍历）
-        _pages[page].add(c)
-        _rel[page].add([0.0, 0.0])  // 布局模式下偏移无效，但保持数组对齐
-        if _hwnd != null { _tab_pass_window(c, _hwnd) }
+        pages[page].add(c)
+        rel[page].add([0.0, 0.0])  // 布局模式下偏移无效，但保持数组对齐
+        if hwnd != null { _tab_pass_window(c, hwnd) }
         return c
     }
     // 动态新增一页，返回新页索引
     func addPage(string title): int {
         _tabs.add(title)
-        _pages.add([])
-        _rel.add([])
+        pages.add([])
+        rel.add([])
         _pageLayouts.add(new VBox())
         _hasLayout.add(false)
-        _tabDirty = true
+        tabDirty = true
         return _tabs.len() - 1
     }
     // 从某页移除子控件
     func removeFromPage(int page, Widget c) {
-        if page < 0 or page >= _pages.len() { return }
-        var pg = _pages[page]
+        if page < 0 or page >= pages.len() { return }
+        var pg = pages[page]
         for pg.len() to i {
-            if pg[i] == c { pg.remove(i); _rel[page].remove(i); return }
+            if pg[i] == c { pg.remove(i); rel[page].remove(i); return }
         }
     }
     func set_active(int idx) {
         if idx < 0 or idx >= _tabs.len() { return }
         if idx == _active { return }
         _active = idx
-        _closePopups()   // 切页时关闭所有已展开的下拉框，避免弹层残留/错位（修复切 tab 下拉仍显示）
+        closePopups()   // 切页时关闭所有已展开的下拉框，避免弹层残留/错位（修复切 tab 下拉仍显示）
         core.markFrameRedraw()   // ★ 切页后强制请求重绘，避免节流跳帧时画面停留在旧页 → 闪烁
-        if _onChange != null { _onChange(_active) }
+        if onChange != null { onChange(_active) }
     }
     func get_active(): int { return _active }
     func tab_count(): int  { return _tabs.len() }
     func set_enabled(bool e) { enabled = e }
     func set_visible(bool v) { visible = v }
     func is_visible(): bool { return visible }
-    func set_font_size(float s) { _fontSize = s; if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null; _tabDirty = true }
-    func on_change(func(int):void cb) { _onChange = cb }
+    func set_font_size(float s) { _fontSize = s; if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null; tabDirty = true }
+    func on_change(func(int):void cb) { onChange = cb }
     // 绑定窗口句柄（由 Window.addTabControl 调用）
     func _bind_window(Ptr[u8] hwnd) {
-        _hwnd = hwnd
-        for _pages.len() to p {
+        hwnd = hwnd
+        for pages.len() to p {
             // 先把句柄下发给通过 setPageLayout 设置的布局容器，
             // 布局容器内部会递归传递给 Edit 等子控件
             if _hasLayout[p] {
                 _tab_pass_window(_pageLayouts[p] as Widget, hwnd)
             }
             // 再下发给通过 addToPage 直接添加的子控件
-            var pg = _pages[p]
+            var pg = pages[p]
             for pg to c { _tab_pass_window(c, hwnd) }
         }
     }
@@ -276,20 +276,20 @@ export struct TabControl impl Widget, Themeable {
     // 外层布局/拖拽改了 Tab 位置（set_pos）后，内部子控件整体跟随，与布局容器 _relayout 同一机制。
     // 如果该页设置了布局容器（setPageLayout），则只更新布局容器位置/大小并触发布局重排，
     // 子控件的位置由布局容器内部管理。
-    func _applyOffsets(int page) {
-        if page < 0 or page >= _pages.len() { return }
+    pri func applyOffsets(int page) {
+        if page < 0 or page >= pages.len() { return }
         if _hasLayout[page] {
             // 布局页：更新布局容器位置和大小，触发内部重排
             var layout = _pageLayouts[page]
-            layout.set_pos(x, y + _hdrH())
-            layout.set_size(w, h - _hdrH())
+            layout.set_pos(x, y + hdrH())
+            layout.set_size(w, h - hdrH())
             return
         }
         // 普通页：逐个更新子控件相对偏移
-        var pg = _pages[page]
-        var of = _rel[page]
+        var pg = pages[page]
+        var of = rel[page]
         float ox = x
-        float oy = y + _hdrH()
+        float oy = y + hdrH()
         for pg.len() to i {
             var c = pg[i]
             var r = of[i]
@@ -303,31 +303,31 @@ export struct TabControl impl Widget, Themeable {
 
     // 计算各标签矩形：[rx, ry, rw, rh]
     // ★ 使用缓存的标签宽度，避免每次调用都 measureString
-    func _tabRects(): Array[Array[float]] {
+    pri func tabRects(): Array[Array[float]] {
         Array[Array[float]] out = []
         int n = _tabs.len()
         if n == 0 { return out }
-        _ensure_font()
-        if _tabDirty and _font != null and _font.ok {
-            _tabW = []
+        ensure_font()
+        if tabDirty and _font != null and _font.ok {
+            tabW = []
             for n to i {
                 float tw = 60.0
                 var[float, float](_tw, _th) = _font.measureString(_tabs[i]); tw = _tw + 28.0
                 if tw < 48.0 { tw = 48.0 }
-                _tabW.add(tw)
+                tabW.add(tw)
             }
-            _tabDirty = false
+            tabDirty = false
         }
         float total = 0.0
-        for _tabW.len() to i { total = total + _tabW[i] }
+        for tabW.len() to i { total = total + tabW[i] }
         float tx = x
         // 表头高 = 0（show_header:false）⇒ 标签矩形高度为 0 ⇒ 命中测试天然失效 ✓
         if total > w {
             // 放不下则等宽分配
             float ew = w / n
-            for n to i { out.add([tx, y, ew, _hdrH()]); tx = tx + ew }
+            for n to i { out.add([tx, y, ew, hdrH()]); tx = tx + ew }
         } else {
-            for n to i { out.add([tx, y, _tabW[i], _hdrH()]); tx = tx + _tabW[i] }
+            for n to i { out.add([tx, y, tabW[i], hdrH()]); tx = tx + tabW[i] }
         }
         return out
     }
@@ -335,13 +335,13 @@ export struct TabControl impl Widget, Themeable {
     // ==================== 交互 ====================
     func process(Event ev) {
         if not _loaded or not enabled or not visible { return }
-        _applyOffsets(_active)
+        applyOffsets(_active)
         var[float, float](mx, my) = ev.mousePos()
 
 
         // 标签栏交互（`show_header:false` 时整块跳过 ⇒ 不会误吞内容区的点击 ✓）
-        if _showHeader {
-            var rs = _tabRects()
+        if showHeader {
+            var rs = tabRects()
             int hitTab = -1
             for rs.len() to i {
                 var r = rs[i]
@@ -349,10 +349,10 @@ export struct TabControl impl Widget, Themeable {
             }
 
             if ev.isMouseMotion() {
-                int prevHover = _hover
-                _hover = hitTab
-                if _cursor >= 0 and _hover >= 0 { core.requestCursor(_cursor) }
-                if _hover != prevHover { core.markFrameRedraw() } else { core.markFrameMotion() }
+                int prevHover = hover
+                hover = hitTab
+                if cursor >= 0 and hover >= 0 { core.requestCursor(cursor) }
+                if hover != prevHover { core.markFrameRedraw() } else { core.markFrameMotion() }
             }
 
             // 点击标签栏：切换页。若光标落在某打开的弹层（下拉/菜单）范围内则不切换，避免误触；
@@ -361,7 +361,7 @@ export struct TabControl impl Widget, Themeable {
                 if not core.inPopupCapture(mx, my) {
                     set_active(hitTab)   // 内部会关闭所有已展开的下拉框
                 } else {
-                    _closePopups()
+                    closePopups()
                 }
                 return
             }
@@ -375,49 +375,49 @@ export struct TabControl impl Widget, Themeable {
         if _hasLayout[_active] {
             (_pageLayouts[_active] as Widget).process(ev)
         } else {
-            var page = _pages[_active]
+            var page = pages[_active]
             for page to c { c.process(ev) }
         }
     }
 
     // 切页 / 关闭弹层时，关闭所有页（含嵌套在 Panel 内的）已展开的下拉框，
     // 避免弹层残留到其它页或停留在旧坐标（修复「切 tab 下拉框仍在」）。
-    func _closePopups() {
-        for _pages.len() to p {
-            var pg = _pages[p]
-            for pg to c { _closePopupsIn(c) }
+    pri func closePopups() {
+        for pages.len() to p {
+            var pg = pages[p]
+            for pg to c { closePopupsIn(c) }
         }
     }
-    func _closePopupsIn(Widget w) {
+    pri func closePopupsIn(Widget w) {
         if w is ComboBox { w.close(); return }
         if w is Panel {
-            for w.children to c { _closePopupsIn(c) }
+            for w.children to c { closePopupsIn(c) }
         }
     }
 
     // ==================== 渲染 ====================
     func render(Renderer r) {
         if not _loaded or not enabled or not visible { return }
-        _ensure_font()
+        ensure_font()
 
         // 标签栏背景（`show_header:false` ⇒ 高度 0 ⇒ 等于不画 ✓）
-        r.setColor(_barColor)
-        r.fillRect(x, y, w, _hdrH())
+        r.setColor(barColor)
+        r.fillRect(x, y, w, hdrH())
 
         // 各标签
-        var rs = _tabRects()
+        var rs = tabRects()
         for rs.len() to i {
             var rr = rs[i]
-            Color bC = _tabColor
-            Color tC = _txtColor
-            if i == _active { bC = _actColor; tC = _actTxtColor }
-            else if i == _hover { bC = theme.brighten(_tabColor, 15) }
+            Color bC = tabColor
+            Color tC = txtColor
+            if i == _active { bC = actColor; tC = actTxtColor }
+            else if i == hover { bC = theme.brighten(tabColor, 15) }
             r.setColor(bC)
             r.fillRect(rr[0], rr[1], rr[2], rr[3])
 
             // 标签文字（居中裁剪）—— `show_header:false` 时**必须跳过** ✗
             // （否则文字会画到 `rr[1] + (0 - th)/2` = 标签栏上方；`tab_h:0` 那种"假隐藏"就是这么漏的）
-            if _showHeader and _font != null and _font.ok and _tabs[i] != "" {
+            if showHeader and _font != null and _font.ok and _tabs[i] != "" {
                 var[float, float](tw, th) = _font.measureString(_tabs[i])
                 float tx = rr[0] + (rr[2] - tw) / 2.0
                 float ty = rr[1] + (rr[3] - th) / 2.0
@@ -425,73 +425,73 @@ export struct TabControl impl Widget, Themeable {
             }
 
             // 激活标签下划线（隐藏表头时同样不画 ✓）
-            if _showHeader and i == _active {
-                r.setColor(_accColor)
+            if showHeader and i == _active {
+                r.setColor(accColor)
                 r.fillRect(rr[0], rr[1] + rr[3] - 3.0, rr[2], 3.0)
             }
         }
 
         // 标签栏底边（隐藏表头时这条线会横在内容区顶上 ⇒ 跳过 ✓）
-        if _showHeader {
-            r.setColor(_brdColor)
-            r.drawLine(x, y + _tabH, x + w, y + _tabH)
+        if showHeader {
+            r.setColor(brdColor)
+            r.drawLine(x, y + tabH, x + w, y + tabH)
         }
 
         // 内容区（表头隐藏时内容区就从 (x, y) 开始 ⇒ 没有 32px 空白 ✓）
-        float cx = x, cy = y + _hdrH(), cw = w, ch = h - _hdrH()
+        float cx = x, cy = y + hdrH(), cw = w, ch = h - hdrH()
         if cw < 0 { cw = 0 }
         if ch < 0 { ch = 0 }
-        r.setColor(_bgColor)
+        r.setColor(bgColor)
         r.fillRect(cx, cy, cw, ch)
 
         // 裁剪到内容区，绘制当前页子控件（`clip:false` 可关：页面内容自己会被 ScrollView 之类的
         // 容器裁掉时，这一层是**冗余**的 ⇒ 少一层裁剪就少一次 flush/malloc，是"闪烁"的常见来源 ✗）
         SDL_Rect? clip = null
-        if _clipContent {
+        if clipContent {
             var cl = SDL_Rect.malloc()
             cl.x = _int(cx); cl.y = _int(cy); cl.w = _int(cw) + 1; cl.h = _int(ch) + 1   // +1 防止浮点坐标截断丢失亚像素，避免子控件边缘闪烁
             r.pushClipRect(cl.to_ptr())
             clip = cl
         }
 
-        _applyOffsets(_active)
+        applyOffsets(_active)
         // 如果该页有布局容器，渲染布局容器（它内部会渲染子控件并调用 _relayout）
         if _hasLayout[_active] {
             (_pageLayouts[_active] as Widget).render(r)
         } else {
-            var page = _pages[_active]
+            var page = pages[_active]
             for page to c { c.render(r) }
         }
 
-        if _clipContent {
+        if clipContent {
             r.popClipRect()
             clip?.free()
         }
 
         // 内容区边框（`border:false` 可关：纯页面容器场景不想要自己的框 ✓）
         if _drawBorder {
-            r.setColor(_brdColor)
+            r.setColor(brdColor)
             r.drawRect(cx, cy, cw, ch)
         }
     }
 
     func dispose() {
-        for _pages.len() to p {
-            var pg = _pages[p]
+        for pages.len() to p {
+            var pg = pages[p]
             for pg to c { c.dispose() }
         }
         if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
     }
 
     func applyTheme(Theme t) {
-        _bgColor = t.bg
-        _barColor = t.bgInput
-        _tabColor = t.bgAlt
-        _actColor = t.accent
-        _txtColor = t.txtDim
-        _actTxtColor = t.txt
-        _accColor = t.accentBright
-        _brdColor = t.border
+        bgColor = t.bg
+        barColor = t.bgInput
+        tabColor = t.bgAlt
+        actColor = t.accent
+        txtColor = t.txtDim
+        actTxtColor = t.txt
+        accColor = t.accentBright
+        brdColor = t.border
     }
 }
 

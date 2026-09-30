@@ -305,26 +305,26 @@ export func registerRun(Ptr[u8] hdl, int wid, Renderer ren, EventHandler onEvent
 export struct Window {
     Ptr[u8] handle    // SDL_Window 指针
     bool ok = false       // 窗口是否创建成功（显式初值，消 [字段未初始化] 警告）
-    int _w = 0; int _h = 0; float _aaScale = 0.0
+    int _w = 0; int _h = 0; pri float aaScale = 0.0
     // 最大渲染帧率（0 = 不限制）。2026-09-25 由 **30 调到 60**：
     //   实测（dummy 驱动、每帧主动请求重绘 ⇒ 完全由上限决定）：
     //     · 上限 30 时只跑到 ~20.5 fps ✗ —— 节流"多等"了约 15ms/帧（waitTimeout 毫秒精度 + 5ms 兜底 ✓）
     //     · 空窗口裸帧成本 ~17.7ms ⇒ 60 的节流间隔(16ms)与它同量级 ⇒ 轻界面能吃到全部收益 ✓
     //     · 重界面裸成本 ~28ms/帧（示例页 5）⇒ 天花板 ~35fps，改 60 只多拿几点 ⚠
     //   ⚠ 代价是 CPU：重界面上几乎恒定占满 ⇒ 省电/弱机场景仍可 `setMaxFPS(30)` 兜底 ✓
-    int _maxFPS = 60
-    Array[Widget] _widgets = []
-    Array[float]  _widgetZ = []   // 各控件的 z 值（与 _widgets 并行），渲染时按 z 升序排列
-    Array[MenuBar]  _menus  = []   // 菜单栏集合，第二遍画下拉层（盖在最上层）
-    MenuBar? _ctxBar              // 窗口级右击上下文菜单（setContextMenu 注册，run 自动接管弹出）
-    int    _ctxIdx = -1             // 对应的上下文菜单索引（-1 表示未注册）
-    Widget? _root                     // 根布局控件（setRoot/setRootAt 设置），缩放时自动跟随
-    float _rootX = 0.0, _rootY = 0.0  // 根布局偏移（如 MenuBar 高度偏移）
+    pri int maxFPS = 60
+    pri Array[Widget] widgets = []
+    pri Array[float]  widgetZ = []   // 各控件的 z 值（与 _widgets 并行），渲染时按 z 升序排列
+    pri Array[MenuBar]  menus  = []   // 菜单栏集合，第二遍画下拉层（盖在最上层）
+    pri MenuBar? ctxBar              // 窗口级右击上下文菜单（setContextMenu 注册，run 自动接管弹出）
+    pri int    ctxIdx = -1             // 对应的上下文菜单索引（-1 表示未注册）
+    pri Widget? root                     // 根布局控件（setRoot/setRootAt 设置），缩放时自动跟随
+    pri float rootX = 0.0, rootY = 0.0  // 根布局偏移（如 MenuBar 高度偏移）
     bool _dialogHidden = false        // 对话框窗口：创建时隐藏，首帧渲染完后 show（消除闪现）
-    bool _transparent = false          // 透明窗口（跳过背景填充）
+    pri bool transparent = false          // 透明窗口（跳过背景填充）
     RenderCallback? _overlay = null      // 叠加层渲染回调（setOverlay 设置，在所有控件/弹层之上绘制）
     Array[Shortcut] _shortcuts = []    // 本窗口注册的快捷键
-    func():bool _shortcutGuard = null  // 快捷键守卫：返回 true 时阻止快捷键
+    pri func():bool shortcutGuard = null  // 快捷键守卫：返回 true 时阻止快捷键
 
     // 设置叠加层渲染回调（在所有控件和弹层渲染之后、present 之前调用）
     // 用途：拖拽浮动框、自定义全局浮层等需要绘制在所有控件之上的场景
@@ -380,7 +380,7 @@ export struct Window {
     }
 
     // 设置守卫回调：返回 true 时阻止所有快捷键（如 Edit/Table 编辑中）
-    func setShortcutGuard(func():bool guard) { _shortcutGuard = guard }
+    func setShortcutGuard(func():bool guard) { shortcutGuard = guard }
 
     // opts 支持字段：title(string), w(int), h(int), flags(int)
     func init(Dict opts): bool {
@@ -399,12 +399,12 @@ export struct Window {
         if opts.get("resizable", false) { flags = flags | 0x20 }
         _w = w; _h = h
         // 检测透明窗口标志
-        _transparent = (flags & 0x0000000040000000) != 0
+        transparent = (flags & 0x0000000040000000) != 0
         // 超采样抗锯齿：默认关闭；aa:true / aa:2 / aa:1.5 开启
-        _aaScale = 0.0
+        aaScale = 0.0
         var aaOpt = opts.get("aa", 0.0)
-        if aaOpt is bool { if aaOpt { _aaScale = 2.0 } }
-        else { float a = aaOpt; if a > 0.0 { _aaScale = a } }
+        if aaOpt is bool { if aaOpt { aaScale = 2.0 } }
+        else { float a = aaOpt; if a > 0.0 { aaScale = a } }
         handle = _lib.SDL_CreateWindow(title, w, h, flags)
         ok = handle != null
         if ok { _windowCount = _windowCount + 1 }
@@ -466,17 +466,17 @@ export struct Window {
         // 1. 更新全局主题单例
         theme.setTheme(t)
         // 2. 遍历 _widgets（覆盖层：MenuBar/TitleBar 等）
-        for _widgets.len() to i {
-            _applyThemeWidget(_widgets[i], t)
+        for widgets.len() to i {
+            applyThemeWidget(widgets[i], t)
         }
         // 3. 遍历根布局控件（背景层：VBox/HBox 内的 Panel/Table/TreeView 等）
-        if _root != null { _applyThemeWidget(_root, t) }
+        if root != null { applyThemeWidget(root, t) }
         // 4. 请求重绘
         core.requestRedraw()
     }
 
     // 对单个控件及其子控件应用主题（递归容器）
-    func _applyThemeWidget(Widget w, Theme t) {
+    pri func applyThemeWidget(Widget w, Theme t) {
         switch w {
             case is Button { w.applyTheme(t) }
             case is Label { w.applyTheme(t) }
@@ -490,40 +490,40 @@ export struct Window {
                 w.applyTheme(t)
                 // 递归两侧子控件（_first / _second 为 Widget?）
                 var f = w._first
-                if f is Widget { _applyThemeWidget(f, t) }
+                if f is Widget { applyThemeWidget(f, t) }
                 var s = w._second
-                if s is Widget { _applyThemeWidget(s, t) }
+                if s is Widget { applyThemeWidget(s, t) }
             }
             case is Panel {
                 w.applyTheme(t)
                 // ★ 递归 _layoutChild（setLayoutPadded 设置的布局子控件，如 VBox）
                 var lc = w._layoutChild
-                if lc is Widget { _applyThemeWidget(lc, t) }
+                if lc is Widget { applyThemeWidget(lc, t) }
                 // 递归 children（通过 add() 添加的子控件）
-                for w.children.len() to ci { _applyThemeWidget(w.children[ci], t) }
+                for w.children.len() to ci { applyThemeWidget(w.children[ci], t) }
             }
             case is GroupBox {
                 w.applyTheme(t)
                 // ★ 递归 _layoutChild（setLayoutPadded 设置的布局子控件，如 VBox）
                 var glc = w._layoutChild
-                if glc is Widget { _applyThemeWidget(glc, t) }
+                if glc is Widget { applyThemeWidget(glc, t) }
                 // 递归 children（通过 add() 添加的子控件）
-                for w.children.len() to ci { _applyThemeWidget(w.children[ci], t) }
+                for w.children.len() to ci { applyThemeWidget(w.children[ci], t) }
             }
             case is HBox {
-                for w._c.len() to ci { _applyThemeWidget(w._c[ci], t) }
+                for w._c.len() to ci { applyThemeWidget(w._c[ci], t) }
             }
             case is VBox {
-                for w._c.len() to ci { _applyThemeWidget(w._c[ci], t) }
+                for w._c.len() to ci { applyThemeWidget(w._c[ci], t) }
             }
             case is GridLayout {
-                for w._c.len() to ci { _applyThemeWidget(w._c[ci], t) }
+                for w._c.len() to ci { applyThemeWidget(w._c[ci], t) }
             }
         }
     }
 
     // 设置最大渲染帧率（默认 30 FPS；0 = 不限制）
-    func setMaxFPS(int fps) { _maxFPS = fps }
+    func setMaxFPS(int fps) { maxFPS = fps }
 
     // 设置窗口置顶
     func setAlwaysOnTop(bool v): bool {
@@ -567,8 +567,8 @@ export struct Window {
     func destroy() {
         if ok {
             // 根销毁：先释放所有控件资源，沿父子树递归清理
-            for _widgets to w { w.dispose() }
-            _root?.dispose()
+            for widgets to w { w.dispose() }
+            root?.dispose()
             _lib.SDL_DestroyWindow(handle); handle = null; ok = false; _windowCount = _windowCount - 1
         }
     }
@@ -592,16 +592,16 @@ export struct Window {
     // 返回 Button，可 .on_click(func() { ... })
     func addButton(Dict opts): Button {
         Button b = btn.createButton(opts)
-        _widgets.add(b as Widget)
-        _widgetZ.add(opts.get("z", 0.0))
+        widgets.add(b as Widget)
+        widgetZ.add(opts.get("z", 0.0))
         return b
     }
 
     // 添加标签，opts: {text, x, y, font_size, rgb, align}
     func addLabel(Dict opts): Label {
         Label l = lbl.createLabel(opts)
-        _widgets.add(l as Widget)
-        _widgetZ.add(opts.get("z", 0.0))
+        widgets.add(l as Widget)
+        widgetZ.add(opts.get("z", 0.0))
         return l
     }
 
@@ -611,16 +611,16 @@ export struct Window {
         ed.set_window(handle)
         ed.set_window_size(_w, _h)
         if ed.is_context_menu_enabled() { menu.registerContextMenu(ed.get_context_menu()) }   // 上下文菜单登记，由窗口第二遍按窗口隔离绘制
-        _widgets.add(ed as Widget)
-        _widgetZ.add(opts.get("z", 0.0))
+        widgets.add(ed as Widget)
+        widgetZ.add(opts.get("z", 0.0))
         return ed
     }
 
     // 通用控件注册：任何 impl Widget 的控件（含第三方自定义控件）都能被 run() 自动管理
     // z 值默认 0.0；如需自定义层级用 addZ(w, z) 或 setWidgetZ(w, z)
     func add(Widget w): Widget {
-        _widgets.add(w)
-        _widgetZ.add(0.0)
+        widgets.add(w)
+        widgetZ.add(0.0)
         // 绑定窗口句柄：容器向下传递，Edit/Table/TreeView/TitleBar 直接设置
         switch w {
             case is Panel, ScrollView, HBox, VBox, AnchorBox, TabControl, SpinBox, GroupBox, Splitter {
@@ -649,8 +649,8 @@ export struct Window {
 
     // 带层级的控件注册：z 值大的控件画在 z 值小的控件之上
     func addZ(Widget w, float z): Widget {
-        _widgets.add(w)
-        _widgetZ.add(z)
+        widgets.add(w)
+        widgetZ.add(z)
         switch w {
             case is Panel, ScrollView, HBox, VBox, AnchorBox, TabControl, SpinBox, GroupBox, Splitter {
                 w._bind_window(handle); return w
@@ -678,16 +678,16 @@ export struct Window {
 
     // 设置已有控件的 z 值（用于运行时动态调整层级）
     func setWidgetZ(Widget w, float z) {
-        for _widgets.len() to i {
-            if _widgets[i] == w { _widgetZ[i] = z; return }
+        for widgets.len() to i {
+            if widgets[i] == w { widgetZ[i] = z; return }
         }
     }
 
     // 设置根布局控件：窗口缩放时自动把根控件尺寸设为窗口大小并驱动内部布局重排
     // ★ 同时下发窗口句柄（等价于 win.add 的 _bind_window），确保根控件内部的 Edit/TreeView/ComboBox 等能正常工作
     func setRoot(Widget root) {
-        _root = root
-        _rootX = 0.0; _rootY = 0.0
+        root = root
+        rootX = 0.0; rootY = 0.0
         root.set_pos(0, 0)
         root.set_size(_w, _h)
         _passWindowHandle(root)
@@ -696,8 +696,8 @@ export struct Window {
     // 设置根布局控件（带偏移）：窗口缩放时自动把根控件位置/尺寸设为 (x,y,winW-x,winH-y)
     // 典型场景：顶部 MenuBar 占 h=30，根布局从 (0,30) 开始填满剩余空间
     func setRootAt(Widget root, float ox, float oy) {
-        _root = root
-        _rootX = ox; _rootY = oy
+        root = root
+        rootX = ox; rootY = oy
         root.set_pos(ox, oy)
         root.set_size(_float(_w) - ox, _float(_h) - oy)
         _passWindowHandle(root)
@@ -735,8 +735,8 @@ export struct Window {
     // 返回 CheckBox，可 .on_change(func(bool){...}) / .set_checked(bool) / .is_checked()
     func addCheckBox(Dict opts): CheckBox {
         CheckBox c = chk.createCheckBox(opts)
-        _widgets.add(c as Widget)
-        _widgetZ.add(opts.get("z", 0.0))
+        widgets.add(c as Widget)
+        widgetZ.add(opts.get("z", 0.0))
         return c
     }
 
@@ -745,16 +745,16 @@ export struct Window {
     func addRadioButton(Dict opts): RadioButton {
         RadioButton r = rb.createRadioButton(opts)
         r.setWindowHandle(handle)   // 让同组互斥按窗口隔离（避免跨窗口同组互相取消）
-        _widgets.add(r as Widget)
-        _widgetZ.add(opts.get("z", 0.0))
+        widgets.add(r as Widget)
+        widgetZ.add(opts.get("z", 0.0))
         return r
     }
 
     // 添加开关，opts: {text, x, y, w, h, on, on_change}
     func addToggle(Dict opts): Toggle {
         Toggle t = tgl.createToggle(opts)
-        _widgets.add(t as Widget)
-        _widgetZ.add(opts.get("z", 0.0))
+        widgets.add(t as Widget)
+        widgetZ.add(opts.get("z", 0.0))
         return t
     }
 
@@ -762,16 +762,16 @@ export struct Window {
     // 返回 Slider，可 .set_value(float) / .get_value() / .on_change(func(float){...})
     func addSlider(Dict opts): Slider {
         Slider s = sld.createSlider(opts)
-        _widgets.add(s as Widget)
-        _widgetZ.add(opts.get("z", 0.0))
+        widgets.add(s as Widget)
+        widgetZ.add(opts.get("z", 0.0))
         return s
     }
 
     // 添加进度条，opts: {x, y, w, h, min, max, value, clickable, show_text, on_change}
     func addProgressBar(Dict opts): ProgressBar {
         ProgressBar p = prg.createProgressBar(opts)
-        _widgets.add(p as Widget)
-        _widgetZ.add(opts.get("z", 0.0))
+        widgets.add(p as Widget)
+        widgetZ.add(opts.get("z", 0.0))
         return p
     }
 
@@ -779,8 +779,8 @@ export struct Window {
     // mode: 0=单选, 1=多选；on_change 回调收到选中的索引数组 Array[int]
     func addListBox(Dict opts): ListBox {
         ListBox lb2 = lb.createListBox(opts)
-        _widgets.add(lb2 as Widget)
-        _widgetZ.add(opts.get("z", 0.0))
+        widgets.add(lb2 as Widget)
+        widgetZ.add(opts.get("z", 0.0))
         return lb2
     }
 
@@ -789,8 +789,8 @@ export struct Window {
     func addComboBox(Dict opts): ComboBox {
         ComboBox cb = cbb.createComboBox(opts)
         cb.setWindowHandle(handle)   // 让下拉层按窗口隔离绘制（工厂已登记到 registerComboBox）
-        _widgets.add(cb as Widget)
-        _widgetZ.add(opts.get("z", 0.0))
+        widgets.add(cb as Widget)
+        widgetZ.add(opts.get("z", 0.0))
         return cb
     }
 
@@ -799,9 +799,9 @@ export struct Window {
     func addMenuBar(Dict opts): MenuBar {
         MenuBar m = menu.createMenuBar(opts)
         m.setWindowHandle(handle)   // 让活动菜单按窗口隔离（避免跨窗口互相抢互斥）
-        _widgets.add(m as Widget)
-        _widgetZ.add(opts.get("z", 0.0))
-        _menus.add(m)
+        widgets.add(m as Widget)
+        widgetZ.add(opts.get("z", 0.0))
+        menus.add(m)
         m.setWindowSize(_w, _h)   // 供上下文菜单弹出时按窗口边界夹紧
         return m
     }
@@ -809,14 +809,14 @@ export struct Window {
     // 注册窗口级右击上下文菜单（只需调用一次）。之后 run 会在每帧事件处理中统一接管右击：
     // 若命中控件自行弹出了自身菜单（占用弹层），则不弹窗口菜单；否则才弹本菜单。
     // 这样「控件菜单优先、窗口菜单兜底」由底层统一保证，示例无需在 onEvent 里处理右键。
-    func setContextMenu(MenuBar bar, int ctxIdx) { bar.setWindowHandle(handle); _ctxBar = bar; _ctxIdx = ctxIdx }
+    func setContextMenu(MenuBar bar, int ctxIdx) { bar.setWindowHandle(handle); ctxBar = bar; ctxIdx = ctxIdx }
 
     // 添加面板容器，opts: {x, y, w, h, bg, border, radius, border_alpha, clip}
     // 用 panel.add(win.addButton({...})) 把子控件挂到面板（子控件用窗口绝对坐标）
     func addPanel(Dict opts): Panel {
         Panel p = pnl.createPanel(opts)
-        _widgets.add(p as Widget)
-        _widgetZ.add(opts.get("z", 0.0))
+        widgets.add(p as Widget)
+        widgetZ.add(opts.get("z", 0.0))
         p._bind_window(handle)
         return p
     }
@@ -825,8 +825,8 @@ export struct Window {
     // 用法：tab.addToPage(0, SDL3.createButton({...})) 把子控件挂到指定页（子控件用窗口绝对坐标，落在内容区）
     func addTabControl(Dict opts): TabControl {
         TabControl t = tab.createTabControl(opts)
-        _widgets.add(t as Widget)
-        _widgetZ.add(opts.get("z", 0.0))
+        widgets.add(t as Widget)
+        widgetZ.add(opts.get("z", 0.0))
         t._bind_window(handle)
         return t
     }
@@ -835,8 +835,8 @@ export struct Window {
     // 返回 SpinBox，可 .on_change(func(float){...}) / .set_value(float) / .get_value() / .set_range(lo,hi)
     func addSpinBox(Dict opts): SpinBox {
         SpinBox s = spb.createSpinBox(opts)
-        _widgets.add(s as Widget)
-        _widgetZ.add(opts.get("z", 0.0))
+        widgets.add(s as Widget)
+        widgetZ.add(opts.get("z", 0.0))
         s._bind_window(handle)
         return s
     }
@@ -847,8 +847,8 @@ export struct Window {
         Table t = tbl.createTable(opts)
         t.set_window_size(_w, _h)
         t.set_window_handle(handle)
-        _widgets.add(t as Widget)
-        _widgetZ.add(opts.get("z", 0.0))
+        widgets.add(t as Widget)
+        widgetZ.add(opts.get("z", 0.0))
         if t.is_context_menu_enabled() { menu.registerContextMenu(t.get_context_menu()) }   // 上下文菜单登记，由窗口第二遍按窗口隔离绘制
         return t
     }
@@ -857,8 +857,8 @@ export struct Window {
     // 返回 Canvas，可 .on_draw(func(Renderer, float, float){...}) / .on_click(func(float, float, int){...}) 等
     func addCanvas(Dict opts): Canvas {
         Canvas c = cnv.createCanvas(opts)
-        _widgets.add(c as Widget)
-        _widgetZ.add(opts.get("z", 0.0))
+        widgets.add(c as Widget)
+        widgetZ.add(opts.get("z", 0.0))
         c.set_window_handle(handle)
         return c
     }
@@ -867,8 +867,8 @@ export struct Window {
     // hb.add(win.addButton({...}), {expand:true}) 占满剩余宽度；{align:1} 交叉轴居中
     func addHBox(Dict opts): HBox {
         HBox b = lay.createHBox(opts)
-        _widgets.add(b as Widget)
-        _widgetZ.add(opts.get("z", 0.0))
+        widgets.add(b as Widget)
+        widgetZ.add(opts.get("z", 0.0))
         b._bind_window(handle)
         return b
     }
@@ -876,8 +876,8 @@ export struct Window {
     // 添加垂直布局容器，opts: {x, y, w, h, spacing, padX, padY}
     func addVBox(Dict opts): VBox {
         VBox b = lay.createVBox(opts)
-        _widgets.add(b as Widget)
-        _widgetZ.add(opts.get("z", 0.0))
+        widgets.add(b as Widget)
+        widgetZ.add(opts.get("z", 0.0))
         b._bind_window(handle)
         return b
     }
@@ -886,8 +886,8 @@ export struct Window {
     // ab.add(win.addButton({...}), {left:10, top:10}) 钉在左上；{centerX:true,centerY:true} 居中
     func addAnchorBox(Dict opts): AnchorBox {
         AnchorBox b = lay.createAnchorBox(opts)
-        _widgets.add(b as Widget)
-        _widgetZ.add(opts.get("z", 0.0))
+        widgets.add(b as Widget)
+        widgetZ.add(opts.get("z", 0.0))
         b._bind_window(handle)
         return b
     }
@@ -896,8 +896,8 @@ export struct Window {
     // grid.add(win.addButton({...}), {align: 1})  align: 0=左上 1=居中 2=右下 3=撑满
     func addGridLayout(Dict opts): GridLayout {
         GridLayout b = grdlib.createGridLayout(opts)
-        _widgets.add(b as Widget)
-        _widgetZ.add(opts.get("z", 0.0))
+        widgets.add(b as Widget)
+        widgetZ.add(opts.get("z", 0.0))
         b._bind_window(handle)
         return b
     }
@@ -907,8 +907,8 @@ export struct Window {
     // content_w/h 不传则自动取内容自然尺寸；悬停滚轮滚动，可拖右侧/底部滚动条
     func addScrollView(Dict opts): ScrollView {
         ScrollView s = scv.createScrollView(opts)
-        _widgets.add(s as Widget)
-        _widgetZ.add(opts.get("z", 0.0))
+        widgets.add(s as Widget)
+        widgetZ.add(opts.get("z", 0.0))
         s._bind_window(handle)
         return s
     }
@@ -918,8 +918,8 @@ export struct Window {
     // 返回 ImageView，可 .set_image(path) / .set_mode(mode) / .on_click(func(){...}) 等
     func addImageView(Dict opts): ImageView {
         ImageView iv = ivw.createImageView(opts)
-        _widgets.add(iv as Widget)
-        _widgetZ.add(opts.get("z", 0.0))
+        widgets.add(iv as Widget)
+        widgetZ.add(opts.get("z", 0.0))
         return iv
     }
 
@@ -927,8 +927,8 @@ export struct Window {
     // dir: 0=水平(默认) 1=垂直；布局容器中常用作视觉分隔
     func addSeparator(Dict opts): Separator {
         Separator s = seplib.createSeparator(opts)
-        _widgets.add(s as Widget)
-        _widgetZ.add(opts.get("z", 0.0))
+        widgets.add(s as Widget)
+        widgetZ.add(opts.get("z", 0.0))
         return s
     }
 
@@ -937,8 +937,8 @@ export struct Window {
     //        bg_color?, border_color?, text_color?}  不给 w ⇒ 按文字 + 2×pad_x 自适应 ✓
     func addBadge(Dict opts): Badge {
         Badge b = bdglib.createBadge(opts)
-        _widgets.add(b as Widget)
-        _widgetZ.add(opts.get("z", 0.0))
+        widgets.add(b as Widget)
+        widgetZ.add(opts.get("z", 0.0))
         return b
     }
 
@@ -946,8 +946,8 @@ export struct Window {
     // opts: {x, y, w, text, kind?, h?, font_size?, wrap?, wrap_w?, accent?, bg_color?, ...}
     func addAlert(Dict opts): Alert {
         Alert a = altlib.createAlert(opts)
-        _widgets.add(a as Widget)
-        _widgetZ.add(opts.get("z", 0.0))
+        widgets.add(a as Widget)
+        widgetZ.add(opts.get("z", 0.0))
         return a
     }
 
@@ -955,8 +955,8 @@ export struct Window {
     // opts: {x, y, w, dir?(0 竖 1 横), item_h?, circle?, gap?, font_size?, desc_size?, done_color?, ...}
     func addSteps(Dict opts): Steps {
         Steps s = stplib.createSteps(opts)
-        _widgets.add(s as Widget)
-        _widgetZ.add(opts.get("z", 0.0))
+        widgets.add(s as Widget)
+        widgetZ.add(opts.get("z", 0.0))
         return s
     }
 
@@ -967,8 +967,8 @@ export struct Window {
         Scrim s = scrlib.createScrim(opts)
         s.set_pos(0, 0)
         s.set_size(_float(_w), _float(_h))
-        _widgets.add(s as Widget)
-        _widgetZ.add(zv)
+        widgets.add(s as Widget)
+        widgetZ.add(zv)
         return s
     }
 
@@ -976,8 +976,8 @@ export struct Window {
     // 返回 LinkButton，可 .on_click(func(){...}) / .set_visited(bool) / .set_text(t) 等
     func addLinkButton(Dict opts): LinkButton {
         LinkButton lb = lnklib.createLinkButton(opts)
-        _widgets.add(lb as Widget)
-        _widgetZ.add(opts.get("z", 0.0))
+        widgets.add(lb as Widget)
+        widgetZ.add(opts.get("z", 0.0))
         return lb
     }
 
@@ -985,8 +985,8 @@ export struct Window {
     // 返回 Spinner，可 .start() / .stop() / .is_running() / .set_color(r,g,b) 等
     func addSpinner(Dict opts): Spinner {
         Spinner s = spnlib.createSpinner(opts)
-        _widgets.add(s as Widget)
-        _widgetZ.add(opts.get("z", 0.0))
+        widgets.add(s as Widget)
+        widgetZ.add(opts.get("z", 0.0))
         return s
     }
 
@@ -994,8 +994,8 @@ export struct Window {
     // 用 gb.add(win.addButton({x, y, ...})) 把子控件挂到分组（子控件用窗口绝对坐标）
     func addGroupBox(Dict opts): GroupBox {
         GroupBox gb = gbxlib.createGroupBox(opts)
-        _widgets.add(gb as Widget)
-        _widgetZ.add(opts.get("z", 0.0))
+        widgets.add(gb as Widget)
+        widgetZ.add(opts.get("z", 0.0))
         gb._bind_window(handle)
         return gb
     }
@@ -1008,8 +1008,8 @@ export struct Window {
         t.set_window(_w, _h)
         t.set_window_handle(handle)
         if t.is_context_menu_enabled() { menu.registerContextMenu(t.get_context_menu()) }   // 右键上下文菜单登记，由窗口第二遍按窗口隔离绘制
-        _widgets.add(t as Widget)
-        _widgetZ.add(opts.get("z", 0.0))
+        widgets.add(t as Widget)
+        widgetZ.add(opts.get("z", 0.0))
         return t
     }
 
@@ -1017,8 +1017,8 @@ export struct Window {
     // 返回 BarChart，可 .set_data(Array[string] cats, Array[float] vals)
     func addBarChart(Dict opts): BarChart {
         BarChart c = cht.createBarChart(opts)
-        _widgets.add(c as Widget)
-        _widgetZ.add(opts.get("z", 0.0))
+        widgets.add(c as Widget)
+        widgetZ.add(opts.get("z", 0.0))
         return c
     }
 
@@ -1026,8 +1026,8 @@ export struct Window {
     // 返回 LineChart，可 .set_data(Array[string] xlabels, Array[Array[float]] series, Array[string] names)
     func addLineChart(Dict opts): LineChart {
         LineChart c = cht.createLineChart(opts)
-        _widgets.add(c as Widget)
-        _widgetZ.add(opts.get("z", 0.0))
+        widgets.add(c as Widget)
+        widgetZ.add(opts.get("z", 0.0))
         return c
     }
 
@@ -1035,8 +1035,8 @@ export struct Window {
     // 返回 PieChart，可 .set_data(Array[string] labels, Array[float] values)
     func addPieChart(Dict opts): PieChart {
         PieChart c = cht.createPieChart(opts)
-        _widgets.add(c as Widget)
-        _widgetZ.add(opts.get("z", 0.0))
+        widgets.add(c as Widget)
+        widgetZ.add(opts.get("z", 0.0))
         return c
     }
 
@@ -1053,23 +1053,23 @@ export struct Window {
         Size actualSz = getSize()
         _w = actualSz.w; _h = actualSz.h
         Renderer ren = renderer.createRenderer(handle)
-        if _aaScale > 0.0 { ren.enableSSAA(actualSz.w, actualSz.h, _aaScale) }
+        if aaScale > 0.0 { ren.enableSSAA(actualSz.w, actualSz.h, aaScale) }
         // ★ 同步根布局到实际窗口尺寸（setRootAt 在 run() 前调用，此时窗口可能已被系统改变尺寸）
-        if _root != null {
-            _root.set_pos(_rootX, _rootY)
-            _root.set_size(_float(actualSz.w) - _rootX, _float(actualSz.h) - _rootY)
+        if root != null {
+            root.set_pos(rootX, rootY)
+            root.set_size(_float(actualSz.w) - rootX, _float(actualSz.h) - rootY)
         }
         // ★ 同步 MenuBar 到实际窗口尺寸（系统可能已最大化）
-        float _tbH0 = _findTitleBarHeight(_widgets)
-        for _menus.len() to mi {
-            MenuBar mb = _menus[mi]
+        float _tbH0 = _findTitleBarHeight(widgets)
+        for menus.len() to mi {
+            MenuBar mb = menus[mi]
             mb.set_pos(0, _tbH0)
             mb.set_size(_float(actualSz.w), mb.get_h())
             mb.setWindowSize(actualSz.w, actualSz.h)
         }
         // ★ 同步 Table/TreeView 内嵌上下文菜单的窗口尺寸（供右键菜单边界夹紧）
-        for _widgets.len() to wi {
-            var widget = _widgets[wi]
+        for widgets.len() to wi {
+            var widget = widgets[wi]
             if widget is Table {
                 Table t = widget; t.set_window_size(actualSz.w, actualSz.h)
             } else if widget is TreeView {
@@ -1081,21 +1081,21 @@ export struct Window {
         _runRens.add(ren)
         _runEvts.add(onEvent)
         _runRends.add(onRender)
-        _runWidgets.add(_widgets)    // 统一关联控件列表
-        _runWidgetZ.add(_widgetZ)    // 统一关联 z 值列表
-        _runMenus.add(_menus)        // 菜单栏集合（用于第二遍 overlay 绘制）
-        MenuBar? cb = _ctxBar
-        if cb is MenuBar { _runCtxBar.add(cb); _runCtxIdx.add(_ctxIdx) }
+        _runWidgets.add(widgets)    // 统一关联控件列表
+        _runWidgetZ.add(widgetZ)    // 统一关联 z 值列表
+        _runMenus.add(menus)        // 菜单栏集合（用于第二遍 overlay 绘制）
+        MenuBar? cb = ctxBar
+        if cb is MenuBar { _runCtxBar.add(cb); _runCtxIdx.add(ctxIdx) }
         else { _runCtxBar.add(menu.createMenuBar({})); _runCtxIdx.add(-1) }   // 占位（idx=-1 表示未注册，run 中不弹）
-        _runRoots.add(_root)         // 根布局控件
-        _runRootX.add(_rootX)         // 根布局偏移
-        _runRootY.add(_rootY)
+        _runRoots.add(root)         // 根布局控件
+        _runRootX.add(rootX)         // 根布局偏移
+        _runRootY.add(rootY)
         _runW.add(actualSz.w); _runH.add(actualSz.h)
         _runDialogHidden.add(_dialogHidden)   // 对话框窗口：首帧渲染后自动 show
-        _runTransparent.add(_transparent)    // 透明窗口标志
+        _runTransparent.add(transparent)    // 透明窗口标志
         _runOverlays.add(_overlay)           // 叠加层回调（可空）
         _runShortcuts.add(_shortcuts)          // 快捷键列表
-        _runShortcutGuards.add(_shortcutGuard) // 快捷键守卫
+        _runShortcutGuards.add(shortcutGuard) // 快捷键守卫
     }
 
     // 运行主循环（回调模式，支持多窗口）
@@ -1165,7 +1165,7 @@ export struct Window {
         Event ev = event.createEvent()
         bool _needRedraw = true       // 初始绘制一次
         int  _lastRenderTicks = core.getTicks()   // 上次渲染时刻，用于帧率节流
-        int  _throttleMs = if _maxFPS > 0 then 1000 / _maxFPS else 1
+        int  _throttleMs = if maxFPS > 0 then 1000 / maxFPS else 1
         int _sizeSyncRemaining = 10   // 安全网：前 N 帧持续检查窗口尺寸（SDL_SyncWindow 已解决主问题）
 
         // ---- 确定性 GUI 基准模式（2026-09-15）----
@@ -1648,9 +1648,9 @@ export struct Window {
     // 布局调试：打印本窗口的布局树（根布局 + 注册的控件），见文件末尾 _dWalk 的说明 ✓
     func dumpLayout() {
         print("[layout] ===== dump =====  窗口 " + _str(_w) + "x" + _str(_h)
-              + "  控件数=" + _str(_widgets.len()) + "\n")
-        if _root != null { _dWalk(_root, 0, "", -1.0, -1.0) }
-        for _widgets.len() to i { _dWalk(_widgets[i], 0, "", -1.0, -1.0) }
+              + "  控件数=" + _str(widgets.len()) + "\n")
+        if root != null { _dWalk(root, 0, "", -1.0, -1.0) }
+        for widgets.len() to i { _dWalk(widgets[i], 0, "", -1.0, -1.0) }
         print("[layout] ================\n")
     }
 }
