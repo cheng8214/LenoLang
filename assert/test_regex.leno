@@ -141,5 +141,95 @@ main() {
 
     print("综合测试通过!")
 
+    // ========== 不支持的转义必须**响亮报错**（2026-10-01）==========
+    //   以前 `\d` 被当**字面字母 d**：`match("123", "\d+")` 返回 false 却毫无提示（静默失配 ✗）
+    //   ⇒ 现在编译期失败、抛"无效的正则表达式：不支持的转义"。数字类请写 [0-9] ✓
+    var e1 = ""
+    try {
+        regexs.match("123", "\\d+")
+    } catch e {
+        e1 = _str(e.msg)
+    }
+    assert_eq(e1.has("不支持的转义"), true)
+    assert_eq(e1.has("\\d"), true)              // 消息要点出**是哪个**转义
+
+    var e2 = ""
+    try {
+        regexs.find("a b", "\\s")
+    } catch e {
+        e2 = _str(e.msg)
+    }
+    assert_eq(e2.has("不支持的转义"), true)
+
+    var e3 = ""
+    try {
+        regexs.match("word", "\\w+")
+    } catch e {
+        e3 = _str(e.msg)
+    }
+    assert_eq(e3.has("不支持的转义"), true)
+
+    // 字符类**里面**的 shorthand 同样报错（别静默当字面 d）
+    var e4 = ""
+    try {
+        regexs.match("5", "[\\d]")
+    } catch e {
+        e4 = _str(e.msg)
+    }
+    assert_eq(e4.has("不支持的转义"), true)
+
+    // 组**里面**的 shorthand 同样报错 —— 这条曾经把解析器的漏检查暴露成段错误：
+    //   组内解析失败返回 NULL 却继续被解引用（0xC0000005）✗，现已在 parse_factor 里拦住 ✓
+    var e5 = ""
+    try {
+        regexs.match("5", "(\\d)")
+    } catch e {
+        e5 = _str(e.msg)
+    }
+    assert_eq(e5.has("不支持的转义"), true)
+
+    // 量词 `{n}` 与 POSIX 字符类 `[:digit:]` 同理**不支持** ⇒ 响亮报错
+    //   （以前 `a{2}` 被当字面 "a{2}"、`[[:digit:]]` 静默不匹配 —— 都是"看不出来"的错 ✗）
+    var e6 = ""
+    try {
+        regexs.match("aa", "a{2}")
+    } catch e {
+        e6 = _str(e.msg)
+    }
+    assert_eq(e6.has("不支持量词"), true)
+
+    var e7 = ""
+    try {
+        regexs.match("5", "[[:digit:]]")
+    } catch e {
+        e7 = _str(e.msg)
+    }
+    assert_eq(e7.has("不支持 POSIX 字符类"), true)
+
+    // 替换串里的反向引用（`$1`）**不支持** ⇒ 报错（以前会被**原样写进结果**：脱敏得到字面 `$1****$2` ✗）
+    var e8 = ""
+    try {
+        regexs.replace("13812345678", "([0-9][0-9][0-9])[0-9][0-9][0-9][0-9]([0-9][0-9][0-9][0-9])", "$1****$2")
+    } catch e {
+        e8 = _str(e.msg)
+    }
+    assert_eq(e8.has("不支持反向引用"), true)
+
+    // ⚠ 现状钉桩：`groups()` **只返回整体匹配**，不返回捕获组 ——
+    //   本引擎不记录捕获组（`(...)` 只做分组优先级）。这两条是**现状描述**；
+    //   将来真做了捕获组它们会失败 ⇒ 那时正是该改实现/文档/这里的时候 ✓
+    var g1 = regexs.groups("2026-10-01", "([0-9][0-9][0-9][0-9])-([0-9][0-9])-([0-9][0-9])")
+    assert_eq(g1.len(), 1)
+    assert_eq(g1[0], "2026-10-01")
+
+    // 反例：转义花括号照旧可以匹配**字面**花括号 ✓
+    assert_eq(regexs.match("{2}", "\\{2\\}"), true)
+
+    // 反例：合法转义照旧工作 —— 元字符转义，以及类内的 `\-`（阻止范围解释的正当写法 ✓）
+    assert_eq(regexs.match("a.b", "a\\.b"), true)
+    assert_eq(regexs.match("aXb", "a\\.b"), false)
+    assert_eq(regexs.match("-", "[\\-]"), true)
+    assert_eq(regexs.find("a\\b", "\\\\"), 1)   // `\\` = 一个字面反斜杠，位于下标 1
+
     print("\n=== 所有测试通过! ===")
 }

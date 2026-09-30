@@ -1,4 +1,5 @@
 #include "include/native.h"
+#include <stdio.h>      // snprintf（"不支持的转义"错误消息要用，见 re_report_invalid）
 #include <string.h>
 #include <stdlib.h>
 #include <stdbool.h>
@@ -75,6 +76,51 @@ static void re_free_all(void) {
     re_pool_idx = 0;
 }
 
+// 可转义的字符 —— **元字符 + `-` + `/`**。其余（`\d` `\w` `\s` `\b` `\t` … 字母数字类）一律算
+// "不支持的转义"，编译期就失败 ⇒ 上层报错。
+//   为什么必须报错、不能当字面量：`\d` 现在被当**字面字母 d** ⇒ `regexs.match("123", "\\d+")`
+//   返回 false、`match("d", "\\d")` 返回 true（2026-10-01 实测）—— 而 Python 的 `r"\d+"`
+//   照抄过来正是这个下场，**且编译器不给任何警告**（只有写错成单反斜杠 `"\d"` 才有
+//   `[无效转义]` 提示）⇒ 这是最难查的一类"静默失配"。宁可响亮失败 ✓
+//   写法：数字类用 `[0-9]`、字母类用 `[A-Za-z]`、单词类用 `[A-Za-z0-9_]`、空白用 `[ ]` ✓
+static bool re_is_escapable(char c) {
+    return strchr(".^$*+?()[]{}|\\/-", c) != NULL;
+}
+
+// 编译失败时给出**具体**消息（指出第一个不支持的转义）。
+//   为什么不设全局错误缓冲：那是静态可写状态，多线程下（threads 模块）会互相踩 ✗；
+//   这里改为把 pattern 再扫一遍 —— 无状态、可重入 ✓
+static void re_report_invalid(const char* pattern) {
+    for (const char* q = pattern; *q; q++) {
+        if (*q == '\\' && *(q + 1)) {
+            if (!re_is_escapable(*(q + 1))) {
+                char msg[192];
+                snprintf(msg, sizeof(msg),
+                         "无效的正则表达式：不支持的转义 \"\\%c\"（本引擎只支持元字符转义；"
+                         "数字类请写 [0-9]，字母类 [A-Za-z]，空白 [ ]）",
+                         *(q + 1));
+                native_throw_error(msg);
+                return;
+            }
+            q++;
+            continue;
+        }
+        // 量词写法（`{` / `}`）—— 与 shorthand 同理：不支持就**说清楚**，不要静默当字面量 ✓
+        if (*q == '{' || *q == '}') {
+            native_throw_error("无效的正则表达式：不支持量词 {}（本引擎只有 * + ?；"
+                               "要匹配字面花括号请写 \\{ 或 \\}）");
+            return;
+        }
+        // POSIX 字符类写法（`[:digit:]` 等）
+        if (*q == '[' && *(q + 1) == ':') {
+            native_throw_error("无效的正则表达式：不支持 POSIX 字符类 [:...:]"
+                               "（数字写 [0-9]、字母写 [A-Za-z]、空白写 [ ]）");
+            return;
+        }
+    }
+    native_throw_error("无效的正则表达式");
+}
+
 // 解析字符类 [abc] 或 [^abc]
 static const char* parse_class(const char* p, ReNode* node) {
     bool negated = false;
@@ -90,7 +136,11 @@ static const char* parse_class(const char* p, ReNode* node) {
     int len = 0;
     
     while (*p && *p != ']' && len < 256) {
+        // POSIX 字符类 `[:digit:]` 这类 **不支持**（文档曾承诺、实现从来没有）⇒ 编译失败、响亮报错 ✓
+        if (*p == '[' && *(p+1) == ':') return NULL;
         if (*p == '\\' && *(p+1)) {
+            // 类内转义同理（`\-` 也在允许集合里 —— 类内它是"阻止范围解释"的正当写法 ✓）
+            if (!re_is_escapable(*(p+1))) return NULL;
             p++;
             chars[len++] = *p++;
         } else if (*p == '-' && len > 0 && *(p+1) && *(p+1) != ']') {
@@ -172,6 +222,9 @@ static ReNode* parse_factor(const char** pp) {
         if (!node) return NULL;
         node->op = RE_GROUP;
         node->left = parse_regex(&p);
+        // ⚠ 子表达式失败（如组内写了 `(\d)`）必须**向上传播 NULL**：否则会带着 left==NULL
+        //   继续解析 ⇒ 既不报错、又静默按"空表达式"匹配 ✗（2026-10-01 与 parse_class 一起补）
+        if (!node->left) return NULL;
         if (*p == ')') p++;
     } else if (*p == '.') {
         p++;
@@ -193,12 +246,23 @@ static ReNode* parse_factor(const char** pp) {
         node = re_alloc_node();
         if (!node) return NULL;
         p = parse_class(p, node);
+        // ⚠ 字符类解析失败返回 NULL ⇒ **必须在这里拦住**：原来直接 `p = parse_class(...)`，
+        //   接着就用 NULL 指针做 `*p` ⇒ 段错误（2026-10-01 实测 `[\d]` 崩溃 0xC0000005）✗
+        if (!p) return NULL;
     } else if (*p == '\\' && *(p+1)) {
+        // ★ 只认元字符转义：`\d` / `\w` / `\s` 这类 shorthand **不支持** ⇒ 编译失败 ⇒ 上层响亮报错
+        //   （以前是把 `\d` 当字面字母 d —— 静默失配，理由见 re_is_escapable 的函数头 ✓）
+        if (!re_is_escapable(*(p+1))) return NULL;
         p++;
         node = re_alloc_node();
         if (!node) return NULL;
         node->op = RE_CHAR;
         node->ch = *p++;
+    } else if (*p == '{' || *p == '}') {
+        // 量词 `{n}` / `{n,}` / `{n,m}` **不支持**（文档曾承诺，实现从来没有 —— 2026-10-01 实测：
+        //   `a{2}` 匹配 "aa" 是 false、匹配字面 "a{2}" 是 true ⇒ 静默错 ✗）⇒ 编译失败、响亮报错。
+        //   要匹配字面花括号请转义 `\{` / `\}`（在允许集合里 ✓）
+        return NULL;
     } else if (*p && strchr("*+?|)", *p) == NULL) {
         node = re_alloc_node();
         if (!node) return NULL;
@@ -377,6 +441,23 @@ static const char* find_match(ReNode* pattern, const char* str, const char** sta
 
 // ==================== 核心方法实现 ====================
 
+// 替换串检查：**不支持反向引用**（`$1` / `\1`）。
+//   为什么必须报错：本引擎的匹配器**不记录捕获组**（`(...)` 只用于分组优先级 ⇒ 它不产生 `$1`），
+//   而照抄 sed/Perl 习惯写的 `regexs.replace(s, p, "$1****$2")` 以前会把 `$1****$2`
+//   **原样写进结果**（2026-10-01 实测：手机号脱敏得到字面 `$1****$2`）—— 静默错 ✗。
+//   要脱敏就先 `extract` / `find_all` 取段再拼 ✓
+static bool re_reject_backref(ObjString* replacement) {
+    for (int i = 0; replacement->chars[i]; i++) {
+        if (replacement->chars[i] == '$' && replacement->chars[i + 1] >= '0'
+            && replacement->chars[i + 1] <= '9') {
+            native_throw_error("无效的替换串：不支持反向引用 $1（本引擎不记录捕获组，"
+                               "`(...)` 只做分组优先级；请先用 regexs.extract 取段再拼接）");
+            return false;
+        }
+    }
+    return true;
+}
+
 // 1. 检查字符串是否匹配正则表达式
 static Value regex_match(int argc, Value* args) {
     (void)argc;
@@ -391,7 +472,7 @@ static Value regex_match(int argc, Value* args) {
     
     if (!pattern) {
         re_free_all();
-        native_throw_error("无效的正则表达式");
+        re_report_invalid(pattern_str->chars);   // 具体到"哪个转义不支持"（原来只有一句笼统话 ✓）
         return val_null();
     }
     
@@ -416,7 +497,7 @@ static Value regex_find(int argc, Value* args) {
     
     if (!pattern) {
         re_free_all();
-        native_throw_error("无效的正则表达式");
+        re_report_invalid(pattern_str->chars);   // 具体到"哪个转义不支持"（原来只有一句笼统话 ✓）
         return val_null();
     }
     
@@ -467,7 +548,7 @@ static Value regex_find_all(int argc, Value* args) {
     
     if (!pattern) {
         re_free_all();
-        native_throw_error("无效的正则表达式");
+        re_report_invalid(pattern_str->chars);   // 具体到"哪个转义不支持"（原来只有一句笼统话 ✓）
         return val_null();
     }
     
@@ -529,7 +610,7 @@ static Value regex_extract(int argc, Value* args) {
     
     if (!pattern) {
         re_free_all();
-        native_throw_error("无效的正则表达式");
+        re_report_invalid(pattern_str->chars);   // 具体到"哪个转义不支持"（原来只有一句笼统话 ✓）
         return val_null();
     }
     
@@ -561,7 +642,7 @@ static Value regex_extract_all(int argc, Value* args) {
     
     if (!pattern) {
         re_free_all();
-        native_throw_error("无效的正则表达式");
+        re_report_invalid(pattern_str->chars);   // 具体到"哪个转义不支持"（原来只有一句笼统话 ✓）
         return val_null();
     }
     
@@ -600,6 +681,8 @@ static Value regex_replace(int argc, Value* args) {
     ObjString* str = (ObjString*)val_as_obj(args[0]);
     ObjString* pattern_str = (ObjString*)val_as_obj(args[1]);
     ObjString* replacement = (ObjString*)val_as_obj(args[2]);
+    // ★ 反向引用（`$1`）以前会被**原样写进结果** ⇒ 现在直接报错（见 re_reject_backref ✓）
+    if (!re_reject_backref(replacement)) return val_null();
     
     re_pool_idx = 0;
     memset(re_pool, 0, sizeof(re_pool));
@@ -609,7 +692,7 @@ static Value regex_replace(int argc, Value* args) {
     
     if (!pattern) {
         re_free_all();
-        native_throw_error("无效的正则表达式");
+        re_report_invalid(pattern_str->chars);   // 具体到"哪个转义不支持"（原来只有一句笼统话 ✓）
         return val_null();
     }
     
@@ -653,6 +736,8 @@ static Value regex_replace_all(int argc, Value* args) {
     ObjString* str = (ObjString*)val_as_obj(args[0]);
     ObjString* pattern_str = (ObjString*)val_as_obj(args[1]);
     ObjString* replacement = (ObjString*)val_as_obj(args[2]);
+    // ★ 反向引用（`$1`）以前会被**原样写进结果** ⇒ 现在直接报错（见 re_reject_backref ✓）
+    if (!re_reject_backref(replacement)) return val_null();
     
     re_pool_idx = 0;
     memset(re_pool, 0, sizeof(re_pool));
@@ -662,7 +747,7 @@ static Value regex_replace_all(int argc, Value* args) {
     
     if (!pattern) {
         re_free_all();
-        native_throw_error("无效的正则表达式");
+        re_report_invalid(pattern_str->chars);   // 具体到"哪个转义不支持"（原来只有一句笼统话 ✓）
         return val_null();
     }
     
@@ -752,7 +837,7 @@ static Value regex_split(int argc, Value* args) {
     
     if (!pattern) {
         re_free_all();
-        native_throw_error("无效的正则表达式");
+        re_report_invalid(pattern_str->chars);   // 具体到"哪个转义不支持"（原来只有一句笼统话 ✓）
         return val_null();
     }
     
@@ -805,7 +890,7 @@ static Value regex_groups(int argc, Value* args) {
     
     if (!pattern) {
         re_free_all();
-        native_throw_error("无效的正则表达式");
+        re_report_invalid(pattern_str->chars);   // 具体到"哪个转义不支持"（原来只有一句笼统话 ✓）
         return val_null();
     }
     

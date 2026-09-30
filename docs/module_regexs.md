@@ -50,7 +50,9 @@ var result = regexs.match(text, "Hello.*")  // true
 
 ```leno
 regexs.match("hello123", "[a-z]+")        // true (以字母开头)
-regexs.match("hello123", "\\d+")          // false (不以数字开头)
+regexs.match("hello123", "[0-9]+")        // false (不以数字开头)
+// ⚠ 别写 `"\d+"`：本引擎**不支持** shorthand ⇒ 会**直接报错**（不是"静默不匹配"）；
+//    数字请写 `[0-9]`，详见下面「正则表达式语法」的转义表 ✓
 regexs.match("hello", "^[a-z]+$")         // true (全字匹配)
 regexs.match("Hello123", "^[a-z]+$")      // false (大写H不匹配)
 ```
@@ -211,21 +213,27 @@ regexs.split("a,b,c,d", ",", 2)         // ["a", "b", "c,d"] (限制2次)
 
 #### `groups(str, pattern)`
 
-获取匹配的所有分组。
+获取匹配结果数组。
+
+> ⚠ **名不副实（2026-10-01 实测并如实记录）**：本引擎的匹配器**不记录捕获组** —— `(...)`
+> 目前只用于**分组优先级**（如 `(ab)+`），**不产生捕获**。所以本函数返回的数组**只有 1 个元素**
+> （整体匹配），**没有** `groups[1]` / `groups[2]`：
+>
+> ```leno
+> var g = regexs.groups("2026-10-01", "([0-9][0-9][0-9][0-9])-([0-9][0-9])-([0-9][0-9])")
+> // 实际：["2026-10-01"]      ← 长度 1，**不是** 4
+> ```
+>
+> 要分段请改用 `extract` / `extract_all` / `find_all`（例如解析日期：`extract_all(s, "[0-9]+")` ✓），
+> 或直接 `strings.split`。
+> （`tests/assert/test_regex.leno` 里有一条**现状钉桩**断言钉着这个行为：将来真做了捕获组，
+> 那条断言会失败 —— 那时正是该改实现、本文档与那条断言的时候 ✓）
 
 **参数**:
 - `str` (string): 要匹配的字符串
-- `pattern` (string): 包含分组的正则表达式模式
+- `pattern` (string): 正则表达式模式
 
-**返回**: `array` - 分组数组，第0个元素是完整匹配，后续是捕获分组
-
-```leno
-regexs.groups("2024-05-28", "([0-9]+)-([0-9]+)-([0-9]+)")
-// ["2024-05-28", "2024", "05", "28"]
-
-regexs.groups("user@example.com", "([a-z]+)@([a-z.]+)")
-// ["user@example.com", "user", "example.com"]
-```
+**返回**: `Array[string]` - 目前恒为**长度 0 或 1**（无匹配 ⇒ 空数组；有匹配 ⇒ `[整体匹配]`）
 
 ---
 
@@ -259,7 +267,11 @@ regexs.match("helloXworld", pattern)     // false (点号不再匹配任意字�
 
 ## 正则表达式语法
 
-LenoC 使用 POSIX 扩展正则表达式（ERE）语法。
+**本引擎是自研的简易实现**（`src/module/regexs/regexs.c`）—— **不是 POSIX ERE**，也不等价于
+Python 的 `re`，只支持下面这些。
+
+⚠ **不支持的语法不会静默当字面量，而是直接报错**（`无效的正则表达式：…`，2026-10-01 起）：
+`\d`、`{2}`、`[:digit:]` 这类写法**编译期就炸**，不会"看起来没匹配上" ✓
 
 ### 基本元字符
 
@@ -281,31 +293,42 @@ LenoC 使用 POSIX 扩展正则表达式（ERE）语法。
 | `[^abc]` | 匹配非 a, b, c 的字符 | `[^0-9]` 匹配非数字 |
 | `[a-z]` | 匹配 a 到 z | `[a-zA-Z]` 匹配所有字母 |
 | `[0-9]` | 匹配数字 | 等同于 `[0123456789]` |
+| `[\-]` | 类内转义 `-`（阻止被当范围） | 匹配字面减号 |
 
-### 预定义字符类
+### 转义
 
-| 类 | 说明 |
-|----|------|
-| `[:alnum:]` | 字母数字 [a-zA-Z0-9] |
-| `[:alpha:]` | 字母 [a-zA-Z] |
-| `[:digit:]` | 数字 [0-9] |
-| `[:space:]` | 空白字符 |
-| `[:lower:]` | 小写字母 |
-| `[:upper:]` | 大写字母 |
+**只有元字符可以转义**：`\. \* \+ \? \( \) \[ \] \{ \} \| \\ \$ \^ \/ \-` ✓
+其余一律**报错**（不是"当字面量"）：
 
-### 分组与引用
+| 想写 | 结果 | 正确写法 |
+|------|------|---------|
+| `\d` | ❌ 报错「不支持的转义」 | `[0-9]` |
+| `\w` | ❌ 报错 | `[A-Za-z0-9_]` |
+| `\s` | ❌ 报错 | `[ ]`（字面空格） |
+| `\b` / `\t` / `\n` | ❌ 报错 | 直接用字面字符（字符串本身可写 `"\t"` ✓） |
+
+> ⚠ 为什么必须报错：以前 `\d` 被当**字面字母 d** —— `regexs.match("123", "\d+")` 返回 `false`
+> 却毫无提示（而 `match("d", "\d")` 返回 `true`），从 Python 搬过来的 `r"\d+"` 正是这个下场，
+> **且编译器不给任何警告** ✗。现在编译期就炸，照上表改写即可 ✓
+
+### 分组
 
 | 语法 | 说明 | 示例 |
 |------|------|------|
 | `(...)` | 捕获分组 | `([a-z]+)@([a-z]+)` |
 
-### 量词
+### ⚠ 不支持清单（写了会报错，别照搬 Python / POSIX）
 
-| 量词 | 说明 |
-|------|------|
-| `{n}` | 恰好 n 次 |
-| `{n,}` | 至少 n 次 |
-| `{n,m}` | n 到 m 次 |
+| 语法 | 现状 | 替代写法 |
+|------|------|---------|
+| **回溯**（贪婪量词回退）⚠ 最容易踩 | ❌ **不支持** —— `[a-z.]+\.[a-z]+` 匹配 `ab.c.def` **静默返回 `false`** ✗（2026-10-01 实测） | 让贪婪段**不含**它后面要匹配的那个字面量（域名段写 `[a-zA-Z0-9-]+` 再 `\.` ✓）；或改用 `strings.split` / `find_all` |
+| `\d` `\w` `\s` `\b` | ❌ 不支持 | `[0-9]` / `[A-Za-z0-9_]` / `[ ]` |
+| `{n}` `{n,}` `{n,m}` | ❌ 不支持（`{` `}` 曾当字面量，现报错） | 手写重复，或用 `*` `+` `?` |
+| `[:digit:]` 等 POSIX 类 | ❌ 不支持 | `[0-9]` / `[A-Za-z]` |
+| 非贪婪 `*?` `+?` `??` | ❌ 不支持（量词一律贪婪） | —— |
+| 前后查找 `(?=)` `(?<=)` | ❌ 不支持 | 先 `extract` 再判断 |
+| flags（忽略大小写 / 多行） | ❌ 不支持 | 两侧都 `strings.to_lower` 再匹配（`examples\工具\leno-grep.leno` 就是这么做的 ✓） |
+| `re.compile` 预编译 | ❌ 每次调用都重新编译 pattern | 循环里尽量复用同一个 pattern 字符串 |
 
 ---
 
@@ -317,28 +340,33 @@ LenoC 使用 POSIX 扩展正则表达式（ERE）语法。
 import regexs
 
 func is_valid_email(string email):bool {
-    var pattern = "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"
+    // ⚠ 两处都别照搬 Python：
+    //   ① 没有 `{n,m}` 量词 ⇒ `[a-zA-Z]{2,}` 会**报错**，写成 `[a-zA-Z][a-zA-Z]+` ✓
+    //   ② 域名段**别含句点**（`[a-zA-Z0-9.-]+` 不行）：本引擎**不支持回溯** ⇒ 贪婪段把句点吃进去后
+    //      回不了头，`\\.` 就永远匹配不上 ⇒ **静默失配** ✗（见「⚠ 不支持清单」的回溯一条）
+    var pattern = "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9-]+\\.[a-zA-Z][a-zA-Z]+$"
     return regexs.match(email, pattern)
 }
 
 main() {
     print(is_valid_email("user@example.com"))   // true
     print(is_valid_email("invalid.email"))      // false
+    print(is_valid_email("a@b.c.com"))          // false（本例只认单级域名 —— 见上面 ②）
 }
 ```
 
 ### 提取 URL 中的域名
 
 ```leno
-import regexs
+import strings
 
 func extract_domain(string url):string {
-    var pattern = "https?://([^/]+)"
-    var groups = regexs.groups(url, pattern)
-    if (groups.len() >= 2) {
-        return groups[1]
-    }
-    return ""
+    // ⚠ 这条**刻意不用正则**：本引擎不支持回溯 ⇒ `[a-zA-Z0-9.-]+\.[a-zA-Z]+` 这类写法
+    //   实际只取到 `www.example`（2026-10-01 实测）✗；用字符串分段反而更准也更快 ✓
+    var by_scheme = strings.split(url, "://")
+    if by_scheme.len() < 2 { return "" }
+    var by_path = strings.split(by_scheme[1], "/")
+    return by_path[0]
 }
 
 main() {
@@ -353,14 +381,15 @@ main() {
 import regexs
 
 func parse_date(string date_str):Dict {
-    var pattern = "([0-9]{4})-([0-9]{2})-([0-9]{2})"
-    var groups = regexs.groups(date_str, pattern)
+    // ⚠ 没有捕获组 ⇒ 别用 `-([0-9]{2})-` 那套（`{}` 还会**直接报错**）；
+    //   用 `extract_all` 把数字段全取出来更直白 ✓
+    var nums = regexs.extract_all(date_str, "[0-9]+")
 
-    if (groups.len() >= 4) {
+    if nums.len() >= 3 {
         return {
-            year: _int(groups[1]),
-            month: _int(groups[2]),
-            day: _int(groups[3])
+            year: _int(nums[0]),
+            month: _int(nums[1]),
+            day: _int(nums[2])
         }
     }
     return {}
@@ -368,7 +397,10 @@ func parse_date(string date_str):Dict {
 
 main() {
     var date = parse_date("2024-05-28")
-    print(date)  // {year: 2024, month: 5, day: 28}
+    // ⚠ 直接 `print(date)` 只会显示 `<object>`（Dict 的打印就是这样）⇒ 取值打印 ✓
+    print(date.get("year"))    // 2024
+    print(date.get("month"))   // 5
+    print(date.get("day"))     // 28
 }
 ```
 
@@ -378,8 +410,9 @@ main() {
 import regexs
 
 func clean_text(string text):string {
-    // 移除多余空白
-    var result = regexs.replace_all(text, "[[:space:]]+", " ")
+    // ⚠ POSIX 类 `[[:space:]]` **不支持**（会报错）⇒ 把**字面**空白写进字符类：
+    //   字符串里的 `\t` 由编译器转成真正的制表符 ✓
+    var result = regexs.replace_all(text, "[\t ]+", " ")
     // 移除首尾空白
     result = result.trim()
     return result
@@ -412,13 +445,26 @@ main() {
 import regexs
 
 func mask_phone(string phone):string {
-    // 将手机号中间4位替换为 ****
-    return regexs.replace(phone, "([0-9]{3})[0-9]{4}([0-9]{4})", "$1****$2")
+    // ⚠ 本引擎**不支持 `$1` 反向引用**（写了会报错：`无效的替换串：不支持反向引用 $1`）——
+    //   脱敏要分两步：先 `extract` 取段，再拼接 ✓
+    var head = regexs.extract(phone, "^[0-9][0-9][0-9]")          // 前 3 位
+    var tail = regexs.extract(phone, "[0-9][0-9][0-9][0-9]$")     // 后 4 位
+    string h = ""
+    string t = ""
+    if head != null { h = head }
+    if tail != null { t = tail }
+    return h + "****" + t
 }
 
 func mask_email(string email):string {
-    // 将邮箱用户名部分脱敏
-    return regexs.replace(email, "(^.)[^@]*(@.*)$", "$1***$2")
+    // 同上：`(^.)[^@]*(@.*)$` + `$1***$2` 那套用不了 ⇒ 取首字符与 `@` 之后的部分再拼 ✓
+    var first = regexs.extract(email, "^.")            // 首字符
+    var rest  = regexs.extract(email, "@.*$")          // `@` 之后的部分
+    string f = ""
+    string r = ""
+    if first != null { f = first }
+    if rest != null { r = rest }
+    return f + "***" + r
 }
 
 main() {
