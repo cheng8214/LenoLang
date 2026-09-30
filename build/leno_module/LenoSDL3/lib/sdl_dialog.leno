@@ -2,11 +2,12 @@
 import "sdl_window.leno" as wnd; use wnd.Window
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_renderer.leno" as ren; use ren.Renderer
-import "sdl_core.leno" as core; use core.WindowFlag
+import "sdl_core.leno" as core; use core.(WindowFlag, Scancode)   // Scancode 供公共 msgBox 判 ESC ✓
 import "sdl_layout.leno" as lay; use lay.(HBox, VBox)
 import "sdl_label.leno" as lbl; use lbl.Label
 import "sdl_button.leno" as btn; use btn.Button
 import "sdl_theme.leno" as theme; use theme.(Theme, Color)
+import "sdl_titlebar.leno" as tbar; use tbar.(TitleBar, createTitleBar)   // 公共 msgBox 要挂自绘标题栏 ✓
 
 // 模态对话框：默认不在任务栏显示（SDL_WINDOW_UTILITY），
 // 创建时隐藏（HIDDEN），首帧渲染完后自动 show，消除闪现。
@@ -65,15 +66,17 @@ export func createModelessDialog(Dict style): Window {
 //   - align=2(右)：VBox 把 Label 放在右侧，文字从右边开始 → 右对齐 ✓
 //   如果 Label 也设 _align=1，会导致"双重居中"，文字偏移到错误位置！
 //
-// ★ 宽度策略：
-//   - align=0 时用 w:300（配合 VBox align:3 stretch 撑满）
-//   - align=1/2 时用 w:1（VBox 用 _natW=文字宽度 来计算居中位置）
+// ★ 2026-09-30：不再传 `w`/`h`（原来那句"宽度策略"其实是误解 ✗）
+//   Label 的 `w`/`h` **根本不被 set() 读取** —— 布局尺寸归**父容器**管（`add(label, {basis: N})`）✗
+//   传了只会让**每条标签**刷一行 `[ui] Label：'w' 不生效 …` 告警 ✗（实测：一开弹窗就满屏 ✓）
+//   而尺寸语义**完全不变**（本来就已被忽略 ⇒ 写 w:300 / w:1 时它就已经不起作用了 ✗）⇒ 直接去掉 ✓
 export func dialogLabel(string text, float fontSize, Color color = 0, int align = 0): Label {
-// color=0 表示未指定颜色，从主题读取
-if color == 0 { Theme th = theme.getTheme(); color = th.txt }
-float lw = if align == 0 then 300.0 else 1.0
-// ★ Label 内部固定 _align=0（左对齐），由调用方 VBox 的 align 参数控制位置
-return lbl.createLabel({x:0, y:0, w:lw, h:fontSize+6, text:text, font_size:fontSize, text_color:color, align:0})
+    // color=0 表示未指定颜色，从主题读取
+    if color == 0 { Theme th = theme.getTheme(); color = th.txt }
+    // ⚠ `align`（形参）是**容器**的交叉轴对齐（0=左 1=中 2=右），不是 Label 内部对齐 ✓
+    //   本函数内部一律 `align: 0`；要**真正居中**（每行以 x 锚点为中心绘制）请调用方自己用
+    //   `createLabel({..., align: 1})` + `add(..., {align: 1})` —— 公共 msgBox 就是这么做的 ✓
+    return lbl.createLabel({x:0, y:0, text:text, font_size:fontSize, text_color:color, align:0})
 }
 
 // 创建属性行（Label + Value 左右排列，value 自动滚动）
@@ -90,11 +93,12 @@ export func dialogPropRow(string label, string value, float maxW): HBox {
     Theme th = theme.getTheme()
     Color lc = th.txtDim   // 标签列用暗淡色
     Color vc = th.txt             // 值列用主文字色
-    Label l = lbl.createLabel({x:0, y:0, w:80, h:22, text:label, font_size:13, text_color:lc})
+    // ★ 不传 `w`/`h`（Label 不读它们 ✗，传了只会刷 [ui] 告警）—— 宽度已由下面的 `basis:80` / `grow:1` 决定 ✓
+    Label l = lbl.createLabel({x:0, y:0, text:label, font_size:13, text_color:lc})
     float vmw = maxW
     if vmw <= 0.0 { vmw = 260.0 }
     // ★ truncate=2: 滚动模式（长文本自动 marquee 滚动）
-    Label v = lbl.createLabel({x:0, y:0, w:260, h:22, text:value, font_size:13, text_color:vc, max_w:vmw, truncate:2})
+    Label v = lbl.createLabel({x:0, y:0, text:value, font_size:13, text_color:vc, max_w:vmw, truncate:2})
     row.add(l, {grow:0, shrink:0, basis:80, align:0})
     row.add(v, {grow:1, shrink:1, align:0})
     return row
@@ -112,6 +116,122 @@ export func dialogButtonRow(Array[Button] buttons, float spacing = 8.0): HBox {
 }
 
 // 创建弹性间隔（grow:1 把后续内容推到底部）
+// ★ 2026-09-30：不再传 `w:1/h:1` —— Label 的 `w`/`h` 压根不被 set() 读取 ✗
+//   （弹性由调用方的 `add(..., {grow:1, shrink:1})` 决定 ✓）⇒ 传了只会刷两条 [ui] 告警 ✗
 export func dialogSpacer(): Label {
-    return lbl.createLabel({x:0, y:0, w:1, h:1, text:""})
+    return lbl.createLabel({x:0, y:0, text:""})
+}
+
+// ==================== 对话框通用件：自绘标题栏 + 外框底色 ====================
+// 让"应用自己手搓的弹窗"与公共 msgBox **同一套外观**（自绘标题栏 + 能分辨的底色/描边 ✓）
+//   ⚠ 三个都是实测反馈出来的坑：
+//     ① 原来弹窗是**系统原生边框** ⇒ 与主窗口"无边框 + 自绘条"的风格不一致 ✗
+//     ② 原来底色用 `theme.bg` = 与页面同色 ⇒ "撞色到看不出这是弹窗" ✗
+//     ③ TitleBar 的 ✕ 只置 `closeRequested`，**得调用方接 on_close** ⇒ 不接就是"点 ✕ 没反应" ✗
+
+// 自绘标题栏高度：窗口总高 = 本值 + 内容高 ✓
+export const DIALOG_TB_H = 30
+
+// 给对话框挂上自绘标题栏（`TitleBar`，impl Widget ✓）
+//   · 它自己会 `SDL_SetWindowBordered(false)`（见 sdl_titlebar.leno ✓）⇒ 无边框 + 自绘条 ✓
+//   · 弹窗不需要最小化/最大化 ⇒ 关掉，只留 ✕ ✓
+//   ⚠ **返回的 TitleBar 要由调用方接 `on_close`**（不接 = 点 ✕ 毫无反应 ✗），
+//     并且内容根要用 `dlg.setRootAt(root, 0, tb.get_h())` 让出高度 ✓
+export func dialogTitleBar(Window dlg, string title): TitleBar {
+    TitleBar tb = createTitleBar({title: title, height: _float(DIALOG_TB_H), font_size: 13,
+        show_minimize: false, show_maximize: false})
+    dlg.add(tb)
+    return tb
+}
+
+// 弹窗外框：`bgAlt` 打底（区别于页面的 `bg` ✓）+ `border` 色描 1px 边 ✓
+//   ⚠ 给 `runModal` 的 **render 回调**用：那层在控件**之下**（见 Window.run 的注释 ✓）⇒ 描边不会被内容盖 ✓
+export func dialogFramePaint(Renderer r, int w, int h) {
+    Theme th = theme.getTheme()
+    r.clearColor(th.bgAlt)
+    r.setColor(th.border)
+    r.drawRect(0.5, 0.5, _float(w) - 1.0, _float(h) - 1.0)
+}
+
+// ==================== 公共确认弹窗（模态、**回调式** ✓） ====================
+// 用途：确认 / 警告类一次性提示 —— 应用侧不必再各自手搓「标题 + 几行字 + 按钮行 + runModal」✓
+//   （电脑清理大师的「确认清理」与注册表「确认删除注册表」都用这一个 ✓）
+//
+// ★★ 为什么是**回调式**、而不是"返回 bool" ★★
+//   `runModal` 的实现是 `pushModal + win.run()`（见本文件末尾 ✓），而 `Window.run()` 第一句是
+//   `if _runLoopActive { return }`（sdl_window.leno ✓）——即**主循环已经在跑时它立即返回、不阻塞** ✓
+//   ⇒ 任何"在事件回调里弹窗、然后读返回值"的写法都会**在用户还没点的时候就拿到结果** ✗
+//     （对话框照样被主循环渲染出来 ⇒ "弹窗出得来"，可调用方早已按"取消"走掉 ⇒ "点确认没反应" ✗）
+//   ⇒ 只提供回调式：主循环已在跑（事件回调/定时器）⇒ 本函数立即返回、对话框交给主循环继续驱动 ✓；
+//     主循环没跑（main() 里）⇒ run() 会起循环并阻塞到窗口关闭，回调照样触发 ✓ —— 两种场景都对 ✓
+//
+// 用法：
+//   SDL3.msgBox("确认清理", lines, "开始清理", "取消", true, func() { beginClean(checked) })
+//   SDL3.msgBox("提示", lines, "知道了", "", false, null)      // 纯提示（onOk 传 null ✓）
+// 参数：
+//   title 窗口标题；lines 正文（**全部居中** ✓；第 1 行当"结论行"、字号略大 ✓）
+//   okText 主按钮文案（空 ⇒「确定」）；cancelText 次按钮文案（空 ⇒ 只有一个按钮 ✓）
+//   danger 主按钮是否 danger 配色（不可撤销的操作 ⇒ true ✓）
+//   onOk **用户点了主按钮之后**触发；点取消 / 关窗 / ESC 一律不触发 ✓
+// 尺寸：高 = 110 + 行数 × 26；宽固定 460
+//   ⚠ 按钮文案控制在 ~10 个中文字内（按钮宽度固定 150 / 130，长了会被裁 ✗）
+export func msgBox(string title, Array[string] lines, string okText, string cancelText, bool danger, func():void onOk) {
+    if okText == "" { okText = "确定" }
+    bool ask = cancelText != ""
+    int w = 460
+    int contentH = 110 + lines.len() * 26            // 正文区高度（不含标题栏 ✓）
+    var dlg = createDialogWindow({title: title, w: w, h: DIALOG_TB_H + contentH})
+    // 自绘标题栏（公共件 ✓）：与主窗口同款 —— 见 dialogTitleBar 的注释（含"✕ 要接 on_close" ✓）
+    TitleBar tb = dialogTitleBar(dlg, title)
+    // 正文根布局要**让出标题栏高度**（与主窗口 `win.setRootAt(root, 0, titleH)` 同一写法 ✓）
+    VBox root = lay.createVBox({x: 0, y: 0, w: w, h: contentH, padX: 34, padY: 20, spacing: 6})
+    dlg.setRootAt(root, 0.0, tb.get_h())
+    // ★ 正文**真居中**的正确写法（查代码归因过，别再靠猜 ✗）：
+    //   ① 布局里"交叉轴 align=1"= **把子控件的盒子居中**（`(inner - child)/2`，见 sdl_layout 的 CX/CY ✓）
+    //   ② Label 的**自然盒宽 = 文字宽**（创建时 `_w = measureString(text)`，见 sdl_label ✓）
+    //   ③ Label 自己的 `align` 是"以自身 x 为锚点画"（`dx = x - lw/2`，见 sdl_label 的绘制 ✓）
+    //   ⇒ 正确组合 = **Label 内部 align:0 + 容器 align:1**：盒子（＝文字宽）被居中、文字填满盒子 ⇒ 真居中 ✓
+    //   ✗ 若同时给 Label 设内部 align:1 ⇒ **双重居中**：`dx = x - lw/2` 在已居中的盒子上又减半个字宽
+    //     ⇒ 每行**各偏左半个文字宽**（行越长偏得越多）✗ —— 实测就是它把那几行写成偏左的 ✓
+    for lines.len() to i {
+        float fs = 13.0
+        if i == 0 { fs = 15.0 }                      // 第 1 行 = 结论行（略大 ✓）
+        root.add(dialogLabel(lines[i], fs, 0, 1), {grow: 0, shrink: 0, align: 1})
+    }
+    root.add(dialogSpacer(), {grow: 1, shrink: 1, align: 0})
+    var done = false
+    // ⚠ 两个必须这样写的点（都是实测踩出来的）：
+    //   ① 闭包**字面量**的类型被推断成 `func():any`（不是 func():void）⇒ 不能存进
+    //      `func():void` 的变量 ✗，只能存 func():any 的局部变量、再包一层喂给按钮形参 ✓
+    //   ② `dlg.requestClose()` 不能省：主循环次序是「窗口级 onEvent →（关闭判定）→ 控件分发」✗
+    //      ⇒ 按钮回调（在**后面**那一步）里把 done 置真时，本次事件的关闭判定已经过去了 ⇒
+    //      不补这条关闭请求，弹窗要等**下一条事件**才关 ⇒ 观感就是"点了没反应"（而动作其实跑了 ✗）。
+    //      requestClose 走的是与点 ✕ **完全相同**的关闭路径（摘模态栈 / 清 tip / 恢复焦点 ✓）
+    func():any hitOk = func() {
+        done = true
+        dlg.requestClose()
+        if onOk != null { onOk() }
+    }
+    Button okBtn = btn.createButton({w: 150, h: 34, text: okText, type: (if danger then "danger" else "primary")})
+    okBtn.on_click(func() { hitOk() })
+    Array[Button] btns = [okBtn]
+    if ask {
+        Button cancelBtn = btn.createButton({w: 130, h: 34, text: cancelText, type: "dark"})
+        cancelBtn.on_click(func() { done = true; dlg.requestClose() })
+        btns.add(cancelBtn)
+    }
+    root.add(dialogButtonRow(btns, 16), {grow: 0, shrink: 0, align: 3})
+    // ★ 标题栏的 ✕ 必须**自己接**：TitleBar 的关闭按钮只把 `closeRequested` 置真（见 sdl_titlebar.leno
+    //   顶部的 "close → wantQuit（由 isCloseRequested() 查询，示例在事件循环中检查）" ✓）
+    //   ⇒ 不接 `on_close` 就是"点了 ✕ 毫无反应" ✗（实测踩到 ✓）。接着与"取消"同路：不触发 onOk ✓
+    tb.on_close(func() { done = true; dlg.requestClose() })
+    runModal(dlg,
+        func(Event ev): bool {
+            if ev.isQuit() or ev.isWindowClose() { return false }
+            if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
+            return not done
+        },
+        // 外框底色/描边（公共件 ✓，理由见 dialogFramePaint 的注释：不能用与页面同色的 bg ✗）
+        func(Renderer r) { dialogFramePaint(r, w, DIALOG_TB_H + contentH) }
+    )
 }

@@ -167,6 +167,21 @@ export func dialogPropRow(string label, string value, float maxW): HBox { return
 export func dialogButtonRow(Array[Button] buttons, float spacing = 8.0): HBox { return dlg.dialogButtonRow(buttons, spacing) }
 export func dialogSpacer(): Label { return dlg.dialogSpacer() }
 
+// ==================== 对话框通用件（自绘标题栏 / 外框底色）====================
+//   详见 sdl_dialog.leno；应用自己手搓的弹窗照这三行接即可 ✓
+//     int tbH = SDL3.DIALOG_TB_H
+//     var dlg = SDL3.createDialogWindow({title: T, w: dw, h: tbH + dh})
+//     TitleBar tb = SDL3.dialogTitleBar(dlg, T)     // 记得 tb.on_close(func() { done = true; dlg.requestClose() })
+//     dlg.setRootAt(root, 0, tb.get_h())            // 内容根让出标题栏高度
+export const DIALOG_TB_H = dlg.DIALOG_TB_H
+export func dialogTitleBar(Window dlg2, string title): TitleBar { return dlg.dialogTitleBar(dlg2, title) }
+export func dialogFramePaint(Renderer r, int w, int h) { dlg.dialogFramePaint(r, w, h) }
+
+// 公共确认弹窗（模态）：详见 sdl_dialog.leno 的 msgBox
+//   ★ 回调式：onOk 在用户点主按钮之后触发（**不要**写成 `if msgBox(...) {}` —— 主循环已跑时
+//     runModal 立即返回 ⇒ 那样恒判 false、点确认毫无反应 ✗，这是实测踩过的坑 ✓）
+export func msgBox(string title, Array[string] lines, string okText, string cancelText, bool danger, func():void onOk) { dlg.msgBox(title, lines, okText, cancelText, danger, onOk) }
+
 
 // ==================== 重新导出类型别名 ====================
 

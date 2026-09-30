@@ -16,7 +16,7 @@ import "sdl_theme" as theme
 import dirs
 import "./cleaner_rules.leno" as rules
 import "./cleaner_whitelist.leno" as wl
-use SDL3.(Event, Renderer, Table, VBox, Button, Label, Scancode)
+use SDL3.(Event, Renderer, Table, VBox, Button, Label, Scancode, TitleBar)
 
 // 最多列多少项（按大小取前 N ✓；标题里会写明"只列最大的 N 项"以免误读 ✗）
 const int DETAIL_LIMIT = 100
@@ -117,9 +117,12 @@ export func show_detail(string catName, Array[string] res): bool {
 
     int dw = 760
     int dh = 540
-    var dlg = SDL3.createDialogWindow({title: "明细清单 — " + catName, w: dw, h: dh})
+    // ★ 自绘标题栏（公共件 ✓）：窗口高多留 DIALOG_TB_H，内容根 setRootAt 让出该高度 ✓
+    int tbH = SDL3.DIALOG_TB_H
+    var dlg = SDL3.createDialogWindow({title: "明细清单 — " + catName, w: dw, h: tbH + dh})
+    TitleBar tb = SDL3.dialogTitleBar(dlg, "明细清单 — " + catName)
     var droot = SDL3.createVBox({x: 0, y: 0, w: dw, h: dh, padX: 16, padY: 14, spacing: 8})
-    dlg.setRoot(droot)
+    dlg.setRootAt(droot, 0, tb.get_h())
 
     // 标题写清"共几项 / 多大 / 是否只列了前 N 项"⇒ 不误导成"只有这么多" ✓
     string head = $"{catName}：共 {totalCnt} 项 · {rules.fmt_size(totalBytes)}"
@@ -216,14 +219,18 @@ export func show_detail(string catName, Array[string] res): bool {
     droot.add(SDL3.dialogButtonRow([keepBtn, closeBtn], 16), {grow: 0, shrink: 0, align: 3})
 
     var done = false
-    closeBtn.on_click(func() { done = true })
+    // ⚠ 置 done 的按钮要补 `dlg.requestClose()`：控件分发跑在窗口级 onEvent **之后** ⇒
+    //   只置 done 的话，本次事件的关闭判定已过去，弹窗要等**下一条事件**才关 ✗
+    closeBtn.on_click(func() { done = true; dlg.requestClose() })
+    // 标题栏 ✕ = 关闭（TitleBar 的 ✕ 只置 closeRequested，得由调用方接 ✓）
+    tb.on_close(func() { done = true; dlg.requestClose() })
     SDL3.runModal(dlg,
         func(Event ev): bool {
             if ev.isQuit() or ev.isWindowClose() { return false }
             if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
             return not done
         },
-        func(Renderer r) { r.clearColor(theme.getTheme().bg) }
+        func(Renderer r) { SDL3.dialogFramePaint(r, dw, SDL3.DIALOG_TB_H + dh) }
     )
     return true
 }

@@ -25,7 +25,7 @@ import files
 import threads
 import jsons
 import times as ti
-use SDL3.(Event, Renderer, Window, TitleBar, Label, Button, Table, ProgressBar, HBox, VBox, Scancode, Timer)
+use SDL3.(Event, Renderer, Window, TitleBar, Label, Button, CheckBox, Table, ProgressBar, HBox, VBox, Scancode, Timer)
 use SDL3.RingProgress
 use rules.CleanCategory
 use reg.(RegItem, RegScan, RegBackup, RegClean)
@@ -197,7 +197,9 @@ struct CleanerMaster {
         sumSub = SDL3.createLabel({text: "", font_size: 12, align: 1, text_color: th0.txtDim, wrap: true, wrap_w: 270})
         // h: 34 —— 「上次清理 …」会折成**两行**（wrap_w 270 ✓）
         //   ⚠ 盒高不足时第二行会画到盒外、被左列下方的三联按钮压住 ✗（与状态栏那条同类 ✓）
-        lastLbl = SDL3.createLabel({text: "", font_size: 12, align: 1, text_color: th0.txtDim, wrap: true, wrap_w: 270, h: 34})
+        // ⚠ 这里原来还带 `h: 34` —— Label **不读** `h`（传了只会刷 [ui] 告警 ✗）
+        //   盒高由下面 `add(..., {basis: 34})` 预留 ✓（那条注释 203 行讲的就是这个 ✓）
+        lastLbl = SDL3.createLabel({text: "", font_size: 12, align: 1, text_color: th0.txtDim, wrap: true, wrap_w: 270})
         leftCol.add(sumMain, {grow: 0, shrink: 0, align: 1})
         // ⚠ **折行 Label 必须用 `add` 的 basis 预留盒高**（VBox 的主轴 = 竖直 ✓）
         //   创建时的 `h:` **不管用** ✗（实测：h:34 照样被压）—— 与"w 不被读取"是同一个坑 ✓
@@ -314,12 +316,14 @@ struct CleanerMaster {
         //   ⇒ 这一行只剩状态 + 主按钮 ✓（原先那个「工具」收口窗已删除 ✓ 见文件末尾说明 ✓）
         // ⚠ `wrap_w` 必须 ≤ 状态格的**实得宽度**，否则折行会溢到按钮底下被压住 ✗（实测踩过 ✓）
         //   实得宽度 = 窗口 900 − root padX 12×2 − 本行 padX 4×2 − 190 − 间距 10 = 668
-        //   ⇒ 取 660 留 8px 余量 ✓；h: 42 = 行内高（54 − padY 6×2 ✓）⇒ **两行都在框内** ✓
+        //   ⇒ 取 660 留 8px 余量 ✓；盒高 42 = 行内高（54 − padY 6×2 ✓）⇒ **两行都在框内** ✓
+        //   ⚠ 盒高是**父容器给的**（HBox h:54 − padY 6×2 ✓）—— 原来这里还写了 `h: 42` 是**无效**的 ✗
+        //     （Label 不读 `h` ⇒ 只会刷一条 [ui] 告警 ✓）⇒ 删掉，语义不变 ✓
         //   注意：框架的 wrap_w 只认写死的值（0 才退回 max_w，**不会**用控件自身宽度 ✓）
         var bottomRow = SDL3.createHBox({h: 54, padX: 4, padY: 6, spacing: 10})
         statusLbl = SDL3.createLabel({
             text: "就绪 — 点「立即扫描」开始", font_size: 13,
-            wrap: true, wrap_w: 660, h: 42,
+            wrap: true, wrap_w: 660,
             tip: "「跳过 N 项」＝这些文件正被其他程序占用（如浏览器正在运行、系统临时文件在使用中）。\n关闭对应程序后点「再扫一次」即可清理。\n点表格任一行可看该类的明细清单。"
         })
         bottomRow.add(statusLbl, {grow: 1, shrink: 1, align: 3})
@@ -809,37 +813,15 @@ struct CleanerMaster {
     // 与旧 showRecycleConfirm 的区别：① 不含回收站时也确认 ✓ ② 明确给出**项数与预计释放量** ✓
     //   ③ 顺带提示"被占用文件会自动跳过"（避免用户以为失败 ✗）
     func showCleanConfirm(Array[int] checked, int n, int bytes, bool needRecycle) {
-        int dh = 190
-        if needRecycle { dh = 220 }
-        var dlg = SDL3.createDialogWindow({title: "确认清理", w: 440, h: dh})
-        VBox root = SDL3.createVBox({x: 0, y: 0, w: 440, h: dh, padX: 34, padY: 18, spacing: 8})
-        dlg.setRoot(root)
-        root.add(SDL3.dialogLabel("确认清理选中项？", 16), {grow: 0, shrink: 0, align: 1})
-        root.add(SDL3.dialogLabel($"将清理 {n} 项，预计释放 {rules.fmt_size(bytes)}", 13), {grow: 0, shrink: 0, align: 1})
-        if needRecycle {
-            root.add(SDL3.dialogLabel("回收站中的内容将被永久清除。", 13), {grow: 0, shrink: 0, align: 1})
-        }
-        root.add(SDL3.dialogLabel("清理不可撤销；正被其他程序占用的文件会自动跳过。", 12), {grow: 0, shrink: 0, align: 1})
-        root.add(SDL3.dialogSpacer(), {grow: 1, shrink: 1, align: 0})
-        Button okBtn = SDL3.createButton({w: 130, h: 34, text: "开始清理", type: "danger"})
-        Button cancelBtn = SDL3.createButton({w: 100, h: 34, text: "取消", type: "dark"})
-        HBox btnRow = SDL3.dialogButtonRow([okBtn, cancelBtn], 16)
-        root.add(btnRow, {grow: 0, shrink: 0, align: 3})
-
-        var done = false
-        cancelBtn.on_click(func() { done = true })
-        okBtn.on_click(func() {
-            done = true
-            beginClean(checked)
-        })
-        SDL3.runModal(dlg,
-            func(Event ev): bool {
-                if ev.isQuit() or ev.isWindowClose() { return false }
-                if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
-                return not done
-            },
-            func(Renderer r) { r.clearColor(theme.getTheme().bg) }
-        )
+        // 第 1 行是结论行（msgBox 会居中放大 ✓），其余行左对齐 ✓
+        Array[string] lines = ["确认清理选中项？", $"将清理 {n} 项，预计释放 {rules.fmt_size(bytes)}"]
+        if needRecycle { lines.add("回收站中的内容将被永久清除。") }
+        lines.add("清理不可撤销；正被其他程序占用的文件会自动跳过。")
+        // ★ 用**公共确认弹窗**（SDL3.msgBox ✓，见 sdl_dialog.leno）替代原先手搓的那一套：
+        //   同一个弹窗注册表那边也要用 ⇒ 抽成公共件 ✓（也顺手拿到它修好的"点确认当帧关窗" ✓）
+        //   ⚠ 回调式：主循环已跑时 msgBox **立即返回** ⇒ 绝不能写成 `if msgBox(...) { }` ✗
+        //     （那样恒判 false、点确认毫无反应 —— 实测踩过 ✓）
+        SDL3.msgBox("确认清理", lines, "开始清理", "取消", true, func() { beginClean(checked) })
     }
 
     // ==================== C 盘空间 ====================
@@ -897,9 +879,13 @@ struct CleanerMaster {
 
         int dw = 860
         int dh = 520
-        var dlg = SDL3.createDialogWindow({title: "预览（干跑）— 只统计，不删除", w: dw, h: dh})
+        // ★ 自绘标题栏（与主窗口同款 ✓，公共件见 sdl_dialog.dialogTitleBar）：
+        //   窗口高要多留 DIALOG_TB_H；内容根用 setRootAt 让出该高度 ✓
+        int tbH = SDL3.DIALOG_TB_H
+        var dlg = SDL3.createDialogWindow({title: "预览（干跑）— 只统计，不删除", w: dw, h: tbH + dh})
+        TitleBar tb = SDL3.dialogTitleBar(dlg, "预览（干跑）— 只统计，不删除")
         var droot = SDL3.createVBox({x: 0, y: 0, w: dw, h: dh, padX: 16, padY: 14, spacing: 8})
-        dlg.setRoot(droot)
+        dlg.setRootAt(droot, 0, tb.get_h())
 
         droot.add(SDL3.dialogLabel(
             $"已勾选 {sum.catCount} 类：将清理 {sum.cnt} 项 · 释放 {rules.fmt_size(sum.bytes)}", 14),
@@ -937,9 +923,15 @@ struct CleanerMaster {
         Button goBtn = SDL3.createButton({w: 170, h: 34, text: "开始清理…", type: "success"})
         goBtn.set_tip("进入与「一键清理」相同的确认弹窗；确认后才真正删除 ✓")
         var done = false
-        var go = false
-        backBtn.on_click(func() { done = true })
-        goBtn.on_click(func() { go = true; done = true })
+        // ⚠⚠ 原来是 `var go = false` + 回调里置 go + `runModal` 之后 `if go { requestClean() }` ——
+        //   **那句永远不执行** ✗：`runModal` = pushModal + win.run()，而 win.run() 在主循环已跑时
+        //   立即返回（见 sdl_window.leno）⇒ 读 `go` 时它仍是 false ⇒ 点「开始清理…」只关窗、
+        //   什么也不发生（本次报的 bug 之一 ✓）⇒ 动作必须写在**按钮回调里** ✓
+        //   `dlg.requestClose()` 也不能省（控件分发在窗口级 onEvent 之后 ⇒ 不补要等下一事件才关 ✗）
+        backBtn.on_click(func() { done = true; dlg.requestClose() })
+        goBtn.on_click(func() { done = true; dlg.requestClose(); requestClean() })
+        // 标题栏 ✕ = 关闭 = 取消（TitleBar 的 ✕ 只置 closeRequested，得由调用方接 ✓）
+        tb.on_close(func() { done = true; dlg.requestClose() })
         droot.add(pt, {grow: 1, shrink: 1, align: 3})
         droot.add(note, {grow: 0, shrink: 0, align: 0})
         droot.add(SDL3.dialogButtonRow([backBtn, goBtn], 16), {grow: 0, shrink: 0, align: 3})
@@ -950,11 +942,10 @@ struct CleanerMaster {
                 if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
                 return not done
             },
-            func(Renderer r) { r.clearColor(theme.getTheme().bg) }
+            func(Renderer r) { SDL3.dialogFramePaint(r, dw, SDL3.DIALOG_TB_H + dh) }
         )
         SDL3.markFrameRedraw()
-        // ★ 只有点了「开始清理…」才往下走；返回/ESC/关窗 ⇒ 什么都没发生 ✓
-        if go { requestClean() }
+        // （「开始清理…」的动作已在按钮回调里 ⇒ 这里什么都不用做：返回/ESC/关窗 ⇒ 什么都没发生 ✓）
     }
 
     // ==================== ③ 注册表清理（与文件清理互相独立 ✓）====================
@@ -966,9 +957,12 @@ struct CleanerMaster {
         var scan = reg.scan(200)
         int dw = 1000
         int dh = 540
-        var dlg = SDL3.createDialogWindow({title: "注册表清理 — 先扫描，再备份，最后才删", w: dw, h: dh})
+        // ★ 自绘标题栏（公共件 ✓）：窗口高多留 DIALOG_TB_H，内容根 setRootAt 让出该高度 ✓
+        int tbH = SDL3.DIALOG_TB_H
+        var dlg = SDL3.createDialogWindow({title: "注册表清理 — 先扫描，再备份，最后才删", w: dw, h: tbH + dh})
+        TitleBar tb = SDL3.dialogTitleBar(dlg, "注册表清理 — 先扫描，再备份，最后才删")
         var droot = SDL3.createVBox({x: 0, y: 0, w: dw, h: dh, padX: 16, padY: 14, spacing: 8})
-        dlg.setRoot(droot)
+        dlg.setRootAt(droot, 0, tb.get_h())
 
         // 分类计数 + 表格行（一趟循环出 ✓）
         int nKey = 0
@@ -1006,44 +1000,72 @@ struct CleanerMaster {
         rt.set_rows(rows)
 
         // 弹窗字体没有 ✓/✗ 字形 ⇒ 文案里一律不用（实测会渲染成方框 ✗）
-        Label note = SDL3.dialogLabel("点「导出备份并清理…」后还会再问一次；备份写到桌面「注册表备份_<时间戳>」，双击 .reg 即可还原", 12)
+        // ★ 选择：删除前是否导出 .reg 备份（**默认勾上** = 安全默认 ✓）
+        //   取消勾选 ⇒ "不备份直接删"：注册表**没有回收站、不可撤销** ⇒ 说明与确认文案都要讲透 ✓
+        CheckBox bkChk = SDL3.createCheckBox({text: "清理前导出 .reg 备份（推荐）", checked: true, box: 18, font_size: 13})
+        bkChk.set_tip("勾上：先把每一项导出成 .reg 落到桌面（备份未全部成功则一项都不删）；取消：直接删除，无法还原")
+        Label note = SDL3.dialogLabel("", 12)
         Button backBtn = SDL3.createButton({w: 110, h: 34, text: "关闭", type: "dark"})
-        Button goBtn = SDL3.createButton({w: 250, h: 34, text: "导出备份并清理 " + _str(rows.len()) + " 项…", type: "success"})
+        Button goBtn = SDL3.createButton({w: 250, h: 34, text: "清理 " + _str(rows.len()) + " 项…", type: "success"})
         var done = false
-        var stage = 0            // 0=待确认 1=已确认（这一下才动手） 2=已结束（再点就是关闭）
-        backBtn.on_click(func() { done = true })
-        goBtn.on_click(func() {
-            if stage == 0 {
-                stage = 1
-                goBtn.set_text("确认：备份并删除（不可撤销）")
-                note.set_text($"确认删除这 {rows.len()} 项吗？会先把 .reg 备份写到桌面 —— **备份失败则一项都不删**")
-                SDL3.markFrameRedraw()
-                return
+        var backupOn = true      // 与勾选框同步（默认勾上 ✓）
+        // 说明文案随勾选切换（把"不备份"的后果讲透 ✓）
+        var refreshNote = func() {
+            if rows.len() == 0 {
+                note.set_text("没发现可清理的残留 —— 这台机器的卸载项 / 启动项 / MUICache 都是好的")
+            } else if backupOn {
+                note.set_text("点「清理 " + _str(rows.len()) + " 项…」会弹出确认框；备份写到桌面「注册表备份_<时间戳>」，双击 .reg 即可还原")
+            } else {
+                note.set_text("已取消备份：注册表没有回收站，删除后无法还原；若不确定，请勾回上面的备份")
             }
-            if stage >= 2 { done = true; return }
-            // ① 先备份：**必须全部导出成功**才继续 ✓
-            var bk = reg.backup(scan.items)
-            if bk.exported == 0 or bk.failed > 0 {
-                stage = 2
-                goBtn.set_text("关闭")
-                note.set_text($"备份未全部成功（成功 {bk.exported} · 失败 {bk.failed}）⇒ 已放弃删除，一个都没动")
-                SDL3.markFrameRedraw()
-                return
+            SDL3.markFrameRedraw()
+        }
+        // 真正的清理（**确认框点了主按钮之后**才走到这里 ✓）
+        var runRegClean = func() {
+            if backupOn {
+                // ① 先备份：**必须全部导出成功**才继续 ✓
+                var bk = reg.backup(scan.items)
+                if bk.exported == 0 or bk.failed > 0 {
+                    goBtn.set_text("关闭")
+                    note.set_text("备份未全部成功（成功 " + _str(bk.exported) + " · 失败 " + _str(bk.failed) + "）⇒ 已放弃删除，一个都没动")
+                    SDL3.markFrameRedraw()
+                    return
+                }
             }
-            // ② 再删除（用户已二次确认 ✓）
+            // ② 再删除（用户在确认框里点过主按钮 ✓）
             var cl = reg.apply(scan.items)
-            stage = 2
             goBtn.set_text("关闭")
-            string msg = "已清理 " + _str(cl.ok) + " 项（失败 " + _str(cl.failed) + "）· 备份：" + bk.dir
+            goBtn.set_enabled(false)      // 已清完 ⇒ 不给再点（避免对同一批再删一次 ✓）
+            string msg = "已清理 " + _str(cl.ok) + " 项（失败 " + _str(cl.failed) + "）"
+            if backupOn { msg = msg + " · 备份已写到桌面，双击 .reg 可还原" }
             if cl.failed > 0 and cl.errors.len() > 0 { msg = msg + "　首条：" + cl.errors[0] }
             note.set_text(msg)
             SDL3.markFrameRedraw()
-        })
-        if rows.len() == 0 {
-            goBtn.set_enabled(false)
-            note.set_text("没发现可清理的残留 —— 这台机器的卸载项 / 启动项 / MUICache 都是好的")
         }
+        bkChk.on_change(func(bool v): void { backupOn = v; refreshNote() })
+        // ⚠ 置 done 的按钮都要补 `dlg.requestClose()`：控件分发跑在窗口级 onEvent **之后**
+        //   ⇒ 只置 done 的话，本次事件的关闭判定已经过去，弹窗要等**下一条事件**才关 ✗
+        backBtn.on_click(func() { done = true; dlg.requestClose() })
+        // 标题栏 ✕ = 关闭（TitleBar 的 ✕ 只置 closeRequested，得由调用方接 ✓）
+        tb.on_close(func() { done = true; dlg.requestClose() })
+        // ★ 点「清理」⇒ 弹**公共确认窗**（SDL3.msgBox ✓，见 sdl_dialog.leno）：文案随"是否备份"变 ✓
+        goBtn.on_click(func() {
+            if rows.len() == 0 { return }
+            Array[string] lines = ["确认清理注册表残留？", "将删除 " + _str(rows.len()) + " 项（无效卸载项 / 启动项 / MUICache）"]
+            if backupOn {
+                lines.add("先导出 .reg 备份到桌面；备份未全部成功则一项都不删。")
+            } else {
+                lines.add("未备份：注册表没有回收站，删除后无法还原。")
+            }
+            lines.add("删除不可撤销；拿不准就点「取消」，回来把备份勾上。")
+            SDL3.msgBox("确认清理注册表", lines,
+                (if backupOn then "备份并清理" else "不备份，直接删除"),
+                "取消", true, func() { runRegClean() })
+        })
+        if rows.len() == 0 { goBtn.set_enabled(false) }
+        refreshNote()
         droot.add(rt, {grow: 1, shrink: 1, align: 3})
+        droot.add(bkChk, {grow: 0, shrink: 0, align: 0})
         droot.add(note, {grow: 0, shrink: 0, align: 0})
         droot.add(SDL3.dialogButtonRow([backBtn, goBtn], 16), {grow: 0, shrink: 0, align: 0})
 
@@ -1053,7 +1075,7 @@ struct CleanerMaster {
                 if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
                 return not done
             },
-            func(Renderer r) { r.clearColor(theme.getTheme().bg) }
+            func(Renderer r) { SDL3.dialogFramePaint(r, dw, SDL3.DIALOG_TB_H + dh) }
         )
         SDL3.markFrameRedraw()
     }
