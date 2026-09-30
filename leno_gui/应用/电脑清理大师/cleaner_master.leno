@@ -965,28 +965,38 @@ struct CleanerMaster {
         dlg.setRootAt(droot, 0, tb.get_h())
 
         // 分类计数 + 表格行（一趟循环出 ✓）
+        //   ★ 抽成闭包：**清理后要用新一轮扫描重算一遍** ✓
+        //   （原来是"一次性算完就定死"⇒ 删完表格里还挂着刚删掉的项 ⇒ 看着像没生效 ✗）
         int nKey = 0
         int nRun = 0
         int nMui = 0
         Array[Array[string]] rows = []
-        for scan.items to it {
-            string kindTxt = "MUICache"
-            if it.kind == "key" {
-                kindTxt = "卸载项"
-                nKey = nKey + 1
-            } eif it.reason == "开机自启指向的程序已不存在" {
-                kindTxt = "启动项"
-                nRun = nRun + 1
-            } else {
-                nMui = nMui + 1
+        Label headLbl = SDL3.dialogLabel("", 14)
+        var buildRows = func() {
+            nKey = 0
+            nRun = 0
+            nMui = 0
+            Array[Array[string]] rs = []
+            for scan.items to it {
+                string kindTxt = "MUICache"
+                if it.kind == "key" {
+                    kindTxt = "卸载项"
+                    nKey = nKey + 1
+                } eif it.reason == "开机自启指向的程序已不存在" {
+                    kindTxt = "启动项"
+                    nRun = nRun + 1
+                } else {
+                    nMui = nMui + 1
+                }
+                // 位置用**短形式**（只影响显示 ✓）⇒ 把宽度让给"指向的文件"这一列（最关键 ✓）
+                rs.add([kindTxt, reg.short_location(it), it.name, it.target])
             }
-            // 位置用**短形式**（只影响显示 ✓）⇒ 把宽度让给"指向的文件"这一列（最关键 ✓）
-            rows.add([kindTxt, reg.short_location(it), it.name, it.target])
+            rows = rs
+            headLbl.set_text($"扫描 {scan.keysScanned} 项：无效卸载项 {nKey} · 无效启动项 {nRun} · MUICache 失效 {nMui}")
         }
+        buildRows()
 
-        droot.add(SDL3.dialogLabel(
-            $"扫描 {scan.keysScanned} 项：无效卸载项 {nKey} · 无效启动项 {nRun} · MUICache 失效 {nMui}", 14),
-            {grow: 0, shrink: 0, align: 0})
+        droot.add(headLbl, {grow: 0, shrink: 0, align: 0})
         droot.add(SDL3.dialogLabel(
             "判定很保守：只认「命令行里那个 exe 的绝对路径确实不存在」；cmd / msiexec / rundll32 这类宿主程序一律不判，系统组件（SystemComponent=1）直接跳过", 12),
             {grow: 0, shrink: 0, align: 0})
@@ -1034,11 +1044,22 @@ struct CleanerMaster {
             }
             // ② 再删除（用户在确认框里点过主按钮 ✓）
             var cl = reg.apply(scan.items)
+            // ③ ★ 删完**立刻重扫一遍**，表格/计数按"删完的真实状态"刷新 ✓
+            //   为什么不拿 cl.ok 手动剔行：注册表删除会**部分成功**（权限/占用）⇒
+            //   以重新扫描为准才不会骗人 —— 删掉的不再出现，没删掉的还在表里 ✓
+            scan = reg.scan(200)
+            buildRows()
+            rt.set_rows(rows)
             goBtn.set_text("关闭")
             goBtn.set_enabled(false)      // 已清完 ⇒ 不给再点（避免对同一批再删一次 ✓）
             string msg = "已清理 " + _str(cl.ok) + " 项（失败 " + _str(cl.failed) + "）"
             if backupOn { msg = msg + " · 备份已写到桌面，双击 .reg 可还原" }
             if cl.failed > 0 and cl.errors.len() > 0 { msg = msg + "　首条：" + cl.errors[0] }
+            if rows.len() == 0 {
+                msg = msg + " · 列表已刷新：已无残留"
+            } else {
+                msg = msg + " · 列表已刷新：还剩 " + _str(rows.len()) + " 项（多为权限不足）"
+            }
             note.set_text(msg)
             SDL3.markFrameRedraw()
         }
