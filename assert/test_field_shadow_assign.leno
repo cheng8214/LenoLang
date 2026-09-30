@@ -1,0 +1,123 @@
+// test_field_shadow_assign.leno —— 「字段被形参/局部变量遮蔽 ⇒ 赋值静默失效」的编译期诊断
+//
+// 为什么要有它（2026-09-30，实打实踩过一次）：
+//   pri 重构把控件成员去掉下划线时，把 16 处 `_字段 = 形参` 批量改成了 `字段 = 形参`
+//   （如 Window.setRootAt 里的 `root = root`）。而 Leno 里形参/局部变量**优先于同名字段**
+//   （见 assert/test_struct_local_shadow.leno）⇒ 赋值只落在形参上、字段永远为 null。
+//   其中最致命的一处是 Window.root ⇒ 根布局压根没被注册 ⇒ 窗口出得来、控件全不见，
+//   而编译器**一声不吭**（966/966 全都"编译通过" —— 这类运行时语义它测不出来 ✗）。
+//   ⇒ 补上 [遮蔽字段的赋值] 警告（含正确的 `self.X` 写法 ✓）。
+//
+// 本用例钉住两件事（缺一不可）：
+//   ① 真阳性：该报的四类必须报（形参自赋值 / 局部自赋值 / 形参赋别的值 / 复合赋值）✓
+//   ② 误报守卫：仓库既有的正常写法**一句都不许报** —— 局部与字段同名是**有意**写法
+//      （实测 sdl_calendar 的 `int y = year; y = y - 1`、sdl_renderer 的 `bool ok = true;
+//        ok = false` 都长这样，改名前就在 ✓），`self.x = x` / `x = self.x` 更是标准写法 ✓
+//      误报会让正常程序被刷屏，比漏报更糟 ✗
+//
+// 判据口径：警告不是错误（exit 仍为 0）⇒ 用 expect_ok 拿输出，再按文案断言 ✓
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+import strings
+
+// 输出里**含**某段文案
+func expect_warn(string out, string tag, string want) {
+    assert_true(strings.has(out, "[遮蔽字段的赋值]"), tag + "：应报 [遮蔽字段的赋值]；实际输出=" + out)
+    assert_true(strings.has(out, want), tag + "：警告文案应含「" + want + "」；实际输出=" + out)
+}
+
+// 输出里**不含**任何 [遮蔽字段的赋值]（误报守卫 ✓）
+func expect_silent(string out, string tag) {
+    assert_true(not strings.has(out, "[遮蔽字段的赋值]"),
+        tag + "：不该报 [遮蔽字段的赋值]（误报守卫）；实际输出=" + out)
+}
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_field_shadow_assign")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ==================== ① 真阳性 ====================
+    var f1 = dirs.join(work, "must_warn.leno")
+    files.write(f1, @"struct P {
+    int x = 0
+    int y = 0
+    func shadowed_param_self(int x) {
+        x = x
+    }
+    func shadowed_local_self() {
+        float x = 0.0
+        x = x
+    }
+    func shadowed_param_value(int y) {
+        y = 7
+    }
+    func shadowed_param_compound(int x) {
+        x += 1
+    }
+}
+main() {
+    var p = new P()
+    p.shadowed_param_value(1)
+    print(""P="" + p.x)
+}
+")
+    var out1 = ce.expect_ok(f1, "遮蔽字段的赋值（正向）", "P=0")
+    expect_warn(out1, "形参自赋值 x = x", "自赋值")
+    expect_warn(out1, "形参自赋值：给出 self. 写法", "self.x = x")
+    expect_warn(out1, "局部变量自赋值", "遮蔽了同名字段 `x`")
+    expect_warn(out1, "形参遮蔽字段后赋别的值", "赋值只作用于形参 `y`")
+    expect_warn(out1, "形参遮蔽字段后的复合赋值", "复合赋值只作用于形参 `x`")
+
+    // 值真的没写进字段（这正是要拦住的后果 ✓）
+    assert_true(strings.has(out1, "P=0"), "被遮蔽的赋值不得写进字段（P.x 应仍为 0）；实际输出=" + out1)
+
+    // ==================== ② 误报守卫（正常写法，一句都不许报）====================
+    var f2 = dirs.join(work, "must_silent.leno")
+    files.write(f2, @"struct Q {
+    int x = 0
+    int y = 0
+    // 标准写法：显式 self.
+    func ok_self(int x) {
+        self.x = x
+    }
+    // 形参遮蔽字段，但右侧就是 self.字段（本意是取字段）
+    func ok_param_from_self(int x) {
+        x = self.x
+    }
+    // 局部与字段同名 + 累加（sdl_renderer 的 ok / sdl_calendar 的 y 就是这类 ✓）
+    func ok_local_accum(): int {
+        int y = self.y + 1
+        y = y - 1
+        return y
+    }
+    // 局部与字段同名 + 条件里从字段取初值
+    func ok_local_from_self(): float {
+        float x = 0.0
+        if true { x = self.x + 1.0 }
+        return x
+    }
+    // 无遮蔽：直接写字段名（照旧转 self.x ✓）
+    func ok_no_shadow() {
+        x = 1
+        y = 2
+    }
+}
+main() {
+    var q = new Q()
+    q.ok_self(5)
+    q.ok_no_shadow()
+    q.ok_local_accum()
+    q.ok_param_from_self(5)
+    q.ok_local_from_self()
+    print(""Q="" + q.x + "","" + q.y)
+}
+")
+    var out2 = ce.expect_ok(f2, "误报守卫（正向）", "Q=1,2")
+    expect_silent(out2, "self. 写法 / 从字段取值的局部变量 / 无遮蔽的字段赋值")
+
+    dirs.delete(work)
+    print("test_field_shadow_assign passed")
+}

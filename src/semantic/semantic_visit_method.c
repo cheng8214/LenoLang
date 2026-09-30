@@ -13,23 +13,83 @@ static int is_shadowed(const char* name, char** shadowed, int shadowed_count) {
     return 0;
 }
 
+// 名字是否是本 struct 的字段（返回下标；-1 = 不是字段）
+static int field_index_of(const char* name, char** field_names, int field_count) {
+    if (!name || !field_names || field_count <= 0) return -1;
+    for (int i = 0; i < field_count; i++) {
+        if (field_names[i] && strcmp(name, field_names[i]) == 0) return i;
+    }
+    return -1;
+}
+
+// 表达式是否是 `self.字段` 形态（手写的 self.x 与转换出来的都算 ✓）
+// ⚠ 三种 AST 都要认（实测逐个踩出来的）：
+//     · AST_FIELD_ACCESS —— 本函数转换出来的形态（`self.x = v` 的**左值**也是它）；
+//     · AST_MODULE_ACCESS —— **源码里手写的** `self.x` 在表达式位置被解析成"模块成员访问"
+//       （module_name="self"）⇒ 只认 FIELD_ACCESS 的话 `x = self.x` 会误报成"遮蔽字段的笔误" ✗
+//     · AST_INDEX + 字符串下标 —— 语义层 `s.field` 的等价形态（`.name`→`["name"]` 约定）✓
+// 用途：`float h = 0.0; h = self.h` 这种"把字段拷进同名局部"是作者本意 ⇒ 豁免 ✓
+static int is_self_field_access(const Ast* e) {
+    if (!e) return 0;
+    if (e->kind == AST_MODULE_ACCESS) {
+        return e->u.module_access.module_name && strcmp(e->u.module_access.module_name, "self") == 0;
+    }
+    const Ast* obj = NULL;
+    if (e->kind == AST_FIELD_ACCESS) {
+        obj = e->u.field_access.obj;
+    } else if (e->kind == AST_INDEX && e->u.index.index && e->u.index.index->kind == AST_STRING) {
+        obj = e->u.index.obj;
+    } else {
+        return 0;
+    }
+    return obj && obj->kind == AST_VAR && obj->u.var.name && strcmp(obj->u.var.name, "self") == 0;
+}
+
+// 名字是否是本方法的形参
+// 为什么要区分形参与局部变量：`int y = year` + `y = y - 1`、`bool ok = true` + `ok = false`
+// 这类"局部变量与字段同名"在本仓库是**既有且有意**的写法（实测 sdl_calendar / sdl_renderer
+// 各有若干，改名前就是这样 ✗ 不是重构引入的）⇒ 对局部变量报等于刷屏噪音 ✗；
+// 而**形参**遮蔽字段后被赋值几乎必是"以为在写字段"的笔误（本次踩的 16 处里 15 处如此 ✓）
+static int is_param_name(const char* name, char** param_names, int param_count) {
+    if (!name || !param_names || param_count <= 0) return 0;
+    for (int i = 0; i < param_count; i++) {
+        if (param_names[i] && strcmp(name, param_names[i]) == 0) return 1;
+    }
+    return 0;
+}
+
+// 当前正在转换的方法名（只在一次 transform_method_body 调用期间有效 ✓）
+// 为什么要它：判"方法体内的裸调用与**所在方法**同名"= 自己调自己（见 AST_CALL 的诊断 ✓）。
+// 单线程即可：编译器与 LSP 都是顺序做语义分析（src 里唯一的线程封装是**脚本侧**的 threads
+// 模块，与编译期无关 ✓）⇒ 用 static 传状态足够，且不用给 56 处递归调用各加一个参数 ✓
+static const char* cur_method_name = NULL;
+
 // 前向声明
 static void transform_method_body_ex(Ast* ast, char** field_names, int field_count,
     char** method_names, int method_count, const char* struct_name,
-    char** shadowed_names, int shadowed_count, char** const_names, int const_count);
+    char** shadowed_names, int shadowed_count,
+    char** param_names, int param_count, char** const_names, int const_count);
 
 // 将方法体中对字段名和方法名的访问转换为 self.字段名 / StructName::method(self, args)
 // 这是实现 struct 方法的核心：方法体内可以直接写字段名访问字段，直接写方法名调用同 struct 方法
 // param_names/param_count: 方法参数名列表，参数与字段同名时参数优先（遮蔽字段）
 // const_names/const_count: 关联常量名列表，方法体内可以直接用常量名访问 StructName.CONST
+// method_name: 本方法自己的名字（只给诊断用：判"裸调用与所在方法同名"⇒ 自递归 ✓）
 void transform_method_body(Ast* ast, char** field_names, int field_count, char** method_names, int method_count, const char* struct_name,
-    char** param_names, int param_count, char** const_names, int const_count) {
-    transform_method_body_ex(ast, field_names, field_count, method_names, method_count, struct_name, param_names, param_count, const_names, const_count);
+    char** param_names, int param_count, char** const_names, int const_count, const char* method_name) {
+    const char* saved_method = cur_method_name;
+    cur_method_name = method_name;
+    transform_method_body_ex(ast, field_names, field_count, method_names, method_count, struct_name,
+        param_names, param_count, param_names, param_count, const_names, const_count);
+    cur_method_name = saved_method;
 }
 
+// shadowed_names/shadowed_count: 当前**生效的**遮蔽集合（= 形参 + 所在块内声明过的局部变量 ✓）
+// param_names/param_count: 形参那一份（全程不变）—— 只给诊断用（见 is_param_name 的理由 ✓）
 static void transform_method_body_ex(Ast* ast, char** field_names, int field_count,
     char** method_names, int method_count, const char* struct_name,
-    char** shadowed_names, int shadowed_count, char** const_names, int const_count) {
+    char** shadowed_names, int shadowed_count,
+    char** param_names, int param_count, char** const_names, int const_count) {
     if (!ast) return;
     
     switch (ast->kind) {
@@ -96,14 +156,67 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
         case AST_ASSIGN: {
             // 先处理 value 中的字段访问（在转换前保存 value 引用）
             Ast* value = ast->u.assign.value;
-            transform_method_body_ex(value, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+            // ★ 诊断用：变换**前**记下右侧那个裸标识符的名字 —— 变换会把 `X` 就地改写成 `self.X`，
+            //   之后就分不清"是不是自赋值"了；而且它会 free 掉原 name ⇒ 必须先拷出来 ✓
+            char rhs_var_before[128];
+            rhs_var_before[0] = '\0';
+            if (value && value->kind == AST_VAR && value->u.var.name) {
+                snprintf(rhs_var_before, sizeof(rhs_var_before), "%s", value->u.var.name);
+            }
+            transform_method_body_ex(value, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
 
             // 处理赋值左侧的复杂目标表达式（如 v[0].x = 1.0）
             if (ast->u.assign.targets) {
                 for (int i = 0; i < ast->u.assign.name_count; i++) {
                     if (ast->u.assign.targets[i]) {
-                        transform_method_body_ex(ast->u.assign.targets[i], field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+                        transform_method_body_ex(ast->u.assign.targets[i], field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
                     }
+                }
+            }
+
+            // ★★ 编译期诊断（2026-09-30）：字段被形参/局部变量遮蔽时，赋值会**静默失效** ★★
+            //   实测踩到：pri 去下划线重构把 16 处 `_字段 = 形参` 批量改成了 `字段 = 形参`
+            //   （如 Window.setRootAt 里的 `root = root`）⇒ 字段永远是 null ⇒ 整个界面空白，
+            //   而编译器一声不吭（966/966 全都"编译通过" —— 运行时语义它测不出来 ✗）。
+            //   判据两条（**少报不误报**：正常写法一句不报 ✓）：
+            //     ① 自赋值 `X = X`：不管 X 是字段还是变量都**没有任何效果** ⇒ 必是笔误；
+            //     ② **形参**遮蔽字段后被赋了别的值：字段不参与赋值 ⇒ 告诉他 `self.X` 写法 ✓。
+            //        ⚠ 只认形参，不认局部变量：`int y = year` + `y = y - 1`、`bool ok = true` +
+            //          `ok = false` 这类"局部与字段同名"是仓库既有且**有意**的写法（改名前就在 ✓）
+            //          ⇒ 对局部变量报就是刷屏噪音 ✗（实测：全 SDK 只有这两处会误报 ✓）
+            //   唯一豁免：右侧**就是** `self.X`（`float h = 0.0; h = self.h` 是作者本意 ✓）。
+            //   回归用例：assert/test_field_shadow_assign.leno ✓
+            for (int i = 0; i < ast->u.assign.name_count; i++) {
+                const char* tname = ast->u.assign.names[i];
+                if (!tname) continue;
+                int is_field = (field_index_of(tname, field_names, field_count) >= 0);
+                int shadowed = is_shadowed(tname, shadowed_names, shadowed_count);
+                char msg[BUFFER_MEDIUM];
+                if (rhs_var_before[0] && strcmp(rhs_var_before, tname) == 0) {
+                    // ① 自赋值 `X = X`
+                    if (is_field && shadowed) {
+                        snprintf(msg, sizeof(msg),
+                            "自赋值 `%s = %s` 不产生任何效果：此处的 `%s` 是形参/局部变量（它遮蔽了同名字段 "
+                            "`%s`）⇒ 字段不会被修改。要改字段请写 `self.%s = %s`；要读字段请写 `self.%s`",
+                            tname, tname, tname, tname, tname, tname, tname);
+                    } else if (is_field) {
+                        snprintf(msg, sizeof(msg),
+                            "自赋值 `%s = %s` 不产生任何效果（字段 `%s` 的值不变）—— 请检查是否漏写 `self.`",
+                            tname, tname, tname);
+                    } else {
+                        snprintf(msg, sizeof(msg),
+                            "自赋值 `%s = %s` 不产生任何效果（形参/局部变量赋给自己）—— 请检查是否漏写",
+                            tname, tname);
+                    }
+                    warning_add_at(WARN_FIELD_SHADOW_ASSIGN, ast->line, ast->column, msg);
+                } else if (is_field && shadowed && !is_self_field_access(value) &&
+                           is_param_name(tname, param_names, param_count)) {
+                    // ② 形参遮蔽字段后被赋了"别的值"
+                    snprintf(msg, sizeof(msg),
+                        "赋值只作用于形参 `%s`（它遮蔽了同名字段 `%s`）⇒ 字段不会被修改；"
+                        "要改字段请写 `self.%s = ...`；若确实只想改这个形参，请给它改名避免遮蔽",
+                        tname, tname, tname);
+                    warning_add_at(WARN_FIELD_SHADOW_ASSIGN, ast->line, ast->column, msg);
                 }
             }
 
@@ -147,11 +260,11 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
             break;
         }
         case AST_BINOP:
-            transform_method_body_ex(ast->u.binop.l, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
-            transform_method_body_ex(ast->u.binop.r, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+            transform_method_body_ex(ast->u.binop.l, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
+            transform_method_body_ex(ast->u.binop.r, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
             break;
         case AST_UNARY:
-            transform_method_body_ex(ast->u.unary.operand, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+            transform_method_body_ex(ast->u.unary.operand, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
             break;
         case AST_CALL: {
             // 检查 callee 是否是同 struct 的方法名调用
@@ -180,11 +293,41 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
                         method_str->u.string.len = (int)strlen(saved_method_name);
                         ast->u.call.callee->u.index.index = method_str;
                         is_struct_method_call = 1;
+                        // ★★ 诊断（2026-09-30）：裸调用与**所在方法自己**同名，且实参就是它自己的
+                        //   形参 ⇒ 这条"同 struct 方法优先"的改写让它变成**自己调自己** ⇒ 必然
+                        //   无限递归（栈溢出）。实测踩到：sdl_calendar 的
+                        //   `func _dow(int y, int m, int d) { return dow(y, m, d) }` 去下划线改名成
+                        //   `dow` 后既与**模块级** `dow()` 撞名、又被本规则劫持 ⇒ 数据看板
+                        //   /dashboard 直接「调用栈溢出」，而编译期一声不吭 ✗。
+                        //   只认"实参全是本方法形参"这一种（= 纯转发，改名前它是转发给模块函数的 ✓）；
+                        //   带修改的递归是正常写法 ⇒ 不报 ✓（如 `walk(node.child)` ✓）
+                        if (cur_method_name && strcmp(saved_method_name, cur_method_name) == 0 &&
+                            param_count > 0 && ast->u.call.args.count == param_count) {
+                            int all_params = 1;
+                            for (int ai = 0; ai < ast->u.call.args.count; ai++) {
+                                Ast* a = ast->u.call.args.items[ai];
+                                if (!a || a->kind != AST_VAR || !a->u.var.name ||
+                                    !is_param_name(a->u.var.name, param_names, param_count)) {
+                                    all_params = 0;
+                                    break;
+                                }
+                            }
+                            if (all_params) {
+                                char cmsg[BUFFER_LARGE];
+                                snprintf(cmsg, sizeof(cmsg),
+                                    "裸调用 `%s(...)` 与所在方法同名，实参就是它自己的形参 ⇒ 会被解析成"
+                                    "**调用自身** ⇒ 无限递归（栈溢出）。若本意是调同文件的模块级函数 `%s`"
+                                    "（去下划线改名后两者撞名了），请给这个方法改名区分开；确实要递归"
+                                    "请改实参或加终止条件",
+                                    saved_method_name, saved_method_name);
+                                warning_add_at(WARN_SELF_FORWARD, ast->line, ast->column, cmsg);
+                            }
+                        }
                         break;
                     }
                 }
             }
-            transform_method_body_ex(ast->u.call.callee, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+            transform_method_body_ex(ast->u.call.callee, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
             
             // 如果是同 struct 方法调用，需要将 self 作为第一个参数插入
             if (is_struct_method_call) {
@@ -203,7 +346,7 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
                 // 复制原有参数
                 for (int i = 0; i < ast->u.call.args.count; i++) {
                     new_items[i + 1] = ast->u.call.args.items[i];
-                    transform_method_body_ex(new_items[i + 1], field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+                    transform_method_body_ex(new_items[i + 1], field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
                 }
                 
                 // 释放旧列表，使用新列表
@@ -213,39 +356,39 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
             } else {
                 // 普通调用，正常处理参数
                 for (int i = 0; i < ast->u.call.args.count; i++) {
-                    transform_method_body_ex(ast->u.call.args.items[i], field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+                    transform_method_body_ex(ast->u.call.args.items[i], field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
                 }
             }
             break;
         }
         case AST_INDEX:
-            transform_method_body_ex(ast->u.index.obj, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
-            transform_method_body_ex(ast->u.index.index, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+            transform_method_body_ex(ast->u.index.obj, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
+            transform_method_body_ex(ast->u.index.index, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
             break;
         case AST_FIELD_ACCESS:
-            transform_method_body_ex(ast->u.field_access.obj, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+            transform_method_body_ex(ast->u.field_access.obj, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
             break;
         case AST_INDEX_ASSIGN:
-            transform_method_body_ex(ast->u.index_assign.obj, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
-            transform_method_body_ex(ast->u.index_assign.index, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
-            transform_method_body_ex(ast->u.index_assign.value, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+            transform_method_body_ex(ast->u.index_assign.obj, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
+            transform_method_body_ex(ast->u.index_assign.index, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
+            transform_method_body_ex(ast->u.index_assign.value, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
             break;
         case AST_IF: {
-            transform_method_body_ex(ast->u.if_.cond, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
-            transform_method_body_ex(ast->u.if_.then, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
-            transform_method_body_ex(ast->u.if_.else_, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+            transform_method_body_ex(ast->u.if_.cond, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
+            transform_method_body_ex(ast->u.if_.then, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
+            transform_method_body_ex(ast->u.if_.else_, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
             break;
         }
         case AST_WHILE: {
-            transform_method_body_ex(ast->u.while_.cond, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
-            transform_method_body_ex(ast->u.while_.body, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+            transform_method_body_ex(ast->u.while_.cond, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
+            transform_method_body_ex(ast->u.while_.body, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
             break;
         }
         case AST_FOR: {
-            transform_method_body_ex(ast->u.for_.start, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
-            transform_method_body_ex(ast->u.for_.end, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
-            transform_method_body_ex(ast->u.for_.step, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
-            transform_method_body_ex(ast->u.for_.body, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+            transform_method_body_ex(ast->u.for_.start, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
+            transform_method_body_ex(ast->u.for_.end, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
+            transform_method_body_ex(ast->u.for_.step, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
+            transform_method_body_ex(ast->u.for_.body, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
             break;
         }
         case AST_BLOCK: {
@@ -273,31 +416,31 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
                 if (ast->u.block.items[i]->kind == AST_VAR_DECL) {
                     transform_method_body_ex(ast->u.block.items[i]->u.var_decl.init,
                         field_names, field_count, method_names, method_count, struct_name,
-                        shadowed_names, shadowed_count, const_names, const_count);  // init 中仍可访问字段
+                        shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);  // init 中仍可访问字段
                 } else {
                     transform_method_body_ex(ast->u.block.items[i],
                         field_names, field_count, method_names, method_count, struct_name,
-                        merged_shadows, merged_shadow_count, const_names, const_count);
+                        merged_shadows, merged_shadow_count, param_names, param_count, const_names, const_count);
                 }
             }
             break;
         }
         case AST_RETURN:
-            transform_method_body_ex(ast->u.ret, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+            transform_method_body_ex(ast->u.ret, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
             break;
         case AST_RETURN_MULTI:
             for (int i = 0; i < ast->u.ret_multi.count; i++) {
-                transform_method_body_ex(ast->u.ret_multi.exprs[i], field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+                transform_method_body_ex(ast->u.ret_multi.exprs[i], field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
             }
             break;
     case AST_VAR_DECL:
-        transform_method_body_ex(ast->u.var_decl.init, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+        transform_method_body_ex(ast->u.var_decl.init, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
         break;
     case AST_DESTRUCT_DECL:
-        transform_method_body_ex(ast->u.destruct_decl.init, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+        transform_method_body_ex(ast->u.destruct_decl.init, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
         break;
     case AST_EXPR_STMT:
-            transform_method_body_ex(ast->u.expr_stmt.expr, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+            transform_method_body_ex(ast->u.expr_stmt.expr, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
             break;
         case AST_MODULE_CALL: {
             // 检查 module_name 是否是字段名（如 scores.len() 中的 scores）
@@ -370,7 +513,7 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
                 
                 // 处理参数
                 for (int i = 0; i < arg_count; i++) {
-                    transform_method_body_ex(ast->u.call.args.items[i], field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+                    transform_method_body_ex(ast->u.call.args.items[i], field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
                 }
             // 仅当 module_name 为 "self" 时才转换为同 struct 方法调用
             // 否则可能是外部模块调用（如 sm.getValue()），不应被转换为 self 调用
@@ -414,7 +557,7 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
 
                 for (int i = 0; i < arg_count; i++) {
                     new_items[i + 1] = arg_items[i];
-                    transform_method_body_ex(new_items[i + 1], field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+                    transform_method_body_ex(new_items[i + 1], field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
                 }
                 
                 free(arg_items);
@@ -424,13 +567,27 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
             } else {
                 // 普通模块调用，只处理参数
                 for (int i = 0; i < ast->u.module_call.args.count; i++) {
-                    transform_method_body_ex(ast->u.module_call.args.items[i], field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+                    transform_method_body_ex(ast->u.module_call.args.items[i], field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
                 }
             }
             break;
         }
         case AST_COMPOUND_ASSIGN: {
             // 如果被参数/局部变量遮蔽，跳过字段转换
+            //   ⚠ 同一个坑的复合形态（`x += 1`）：被遮蔽时字段也不参与运算 ⇒ 一并告警 ✓
+            //   （口径与上面 ② 完全一致：只认**形参**遮蔽 + 字段同名 ✓；
+            //     正常写法 `self.x += 1` 走 AST_FIELD_ACCESS，压根到不了这里 ✓）
+            if (is_shadowed(ast->u.compound_assign.name, shadowed_names, shadowed_count) &&
+                field_index_of(ast->u.compound_assign.name, field_names, field_count) >= 0 &&
+                is_param_name(ast->u.compound_assign.name, param_names, param_count)) {
+                char msg[BUFFER_MEDIUM];
+                snprintf(msg, sizeof(msg),
+                    "复合赋值只作用于形参 `%s`（它遮蔽了同名字段 `%s`）⇒ 字段不会被修改；"
+                    "要改字段请写成 `self.%s` 的复合赋值；若确实只想改这个形参，请给它改名避免遮蔽",
+                    ast->u.compound_assign.name, ast->u.compound_assign.name,
+                    ast->u.compound_assign.name);
+                warning_add_at(WARN_FIELD_SHADOW_ASSIGN, ast->line, ast->column, msg);
+            }
             if (!is_shadowed(ast->u.compound_assign.name, shadowed_names, shadowed_count)) {
             // 检查是否是字段名的复合赋值
             for (int j = 0; j < field_count; j++) {
@@ -447,50 +604,50 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
                 }
             }
             } // end shadowed check
-            transform_method_body_ex(ast->u.compound_assign.value, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+            transform_method_body_ex(ast->u.compound_assign.value, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
             break;
         }
         case AST_SWITCH: {
-            transform_method_body_ex(ast->u.switch_.expr, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+            transform_method_body_ex(ast->u.switch_.expr, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
             for (int i = 0; i < ast->u.switch_.case_count; i++) {
                 for (int j = 0; j < ast->u.switch_.cases[i].values.count; j++) {
-                    transform_method_body_ex(ast->u.switch_.cases[i].values.items[j], field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+                    transform_method_body_ex(ast->u.switch_.cases[i].values.items[j], field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
                 }
-                transform_method_body_ex(ast->u.switch_.cases[i].body, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+                transform_method_body_ex(ast->u.switch_.cases[i].body, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
             }
-            transform_method_body_ex(ast->u.switch_.default_body, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+            transform_method_body_ex(ast->u.switch_.default_body, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
             break;
         }
         case AST_TRY: {
-            transform_method_body_ex(ast->u.try_.try_body, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
-            transform_method_body_ex(ast->u.try_.catch_body, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
-            transform_method_body_ex(ast->u.try_.finally_body, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+            transform_method_body_ex(ast->u.try_.try_body, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
+            transform_method_body_ex(ast->u.try_.catch_body, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
+            transform_method_body_ex(ast->u.try_.finally_body, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
             break;
         }
         case AST_THROW:
-            transform_method_body_ex(ast->u.throw_.expr, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+            transform_method_body_ex(ast->u.throw_.expr, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
             break;
         case AST_ARRAY: {
             for (int i = 0; i < ast->u.array.count; i++) {
-                transform_method_body_ex(ast->u.array.items[i], field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+                transform_method_body_ex(ast->u.array.items[i], field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
             }
             break;
         }
         case AST_DICT: {
             for (int i = 0; i < ast->u.dict.count; i++) {
-                transform_method_body_ex(ast->u.dict.entries[i].value, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+                transform_method_body_ex(ast->u.dict.entries[i].value, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
             }
             break;
         }
         case AST_INTERP_STRING: {
             for (int i = 0; i < ast->u.interp_string.count - 1; i++) {
-                transform_method_body_ex(ast->u.interp_string.exprs[i], field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+                transform_method_body_ex(ast->u.interp_string.exprs[i], field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
             }
             break;
         }
         case AST_TYPE_CHECK:
         case AST_AS_CAST:
-            transform_method_body_ex(ast->u.type_check.expr, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+            transform_method_body_ex(ast->u.type_check.expr, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
             break;
         case AST_MODULE_ACCESS: {
             // 检查 module_name 是否是字段名（如 head.next 中的 head）
@@ -535,39 +692,39 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
         }
         case AST_FUNC_DEF:
             // 处理嵌套函数：转换函数体内的字段访问和方法调用
-            transform_method_body_ex(ast->u.func.body, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+            transform_method_body_ex(ast->u.func.body, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
             break;
         case AST_AWAIT:
             // 处理 await 表达式中的字段访问
-            transform_method_body_ex(ast->u.await.expr, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+            transform_method_body_ex(ast->u.await.expr, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
             break;
         case AST_ADDRESS_OF:
             // 处理取地址表达式中的字段访问
             if (ast->u.address_of.operand) {
-                transform_method_body_ex(ast->u.address_of.operand, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+                transform_method_body_ex(ast->u.address_of.operand, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
             }
             break;
         case AST_SLICE:
             // 切片表达式：arr[start:end]
             // 递归处理 obj（可能是 struct 字段名）、start、end 中的裸字段名
             if (ast->u.slice.obj) {
-                transform_method_body_ex(ast->u.slice.obj, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+                transform_method_body_ex(ast->u.slice.obj, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
             }
             if (ast->u.slice.start) {
-                transform_method_body_ex(ast->u.slice.start, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+                transform_method_body_ex(ast->u.slice.start, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
             }
             if (ast->u.slice.end) {
-                transform_method_body_ex(ast->u.slice.end, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+                transform_method_body_ex(ast->u.slice.end, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
             }
             break;
         case AST_SAFE_ACCESS:
             // 安全访问：expr?.field / expr?.method(args)
             // 转换 obj 和 args 中的裸字段名为 self["field"]
             if (ast->u.safe_access.obj) {
-                transform_method_body_ex(ast->u.safe_access.obj, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+                transform_method_body_ex(ast->u.safe_access.obj, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
             }
             for (int i = 0; i < ast->u.safe_access.args.count; i++) {
-                transform_method_body_ex(ast->u.safe_access.args.items[i], field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, const_names, const_count);
+                transform_method_body_ex(ast->u.safe_access.args.items[i], field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
             }
             break;
         case AST_CLIB_DEF:

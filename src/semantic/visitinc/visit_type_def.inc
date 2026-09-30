@@ -249,7 +249,7 @@
                         if (ast->u.struct_def.field_defaults[i]) {
                             transform_method_body(ast->u.struct_def.field_defaults[i],
                                 NULL, 0, NULL, 0, ast->u.struct_def.name,
-                                NULL, 0, ast->u.struct_def.const_names, ast->u.struct_def.const_count);
+                                NULL, 0, ast->u.struct_def.const_names, ast->u.struct_def.const_count, NULL);
                         }
                     }
                 }
@@ -275,7 +275,8 @@
                             }
                         }
                         transform_method_body(method_ast->u.func.body, ast->u.struct_def.field_names, ast->u.struct_def.field_count, method_names, method_count, ast->u.struct_def.name,
-                            method_ast->u.func.params, method_ast->u.func.pcnt, ast->u.struct_def.const_names, ast->u.struct_def.const_count);
+                            method_ast->u.func.params, method_ast->u.func.pcnt, ast->u.struct_def.const_names, ast->u.struct_def.const_count,
+                            method_ast->u.func.name);   // 本方法名（诊断用：判裸调用是否与自身同名 ⇒ 自递归 ✓）
                         if (method_names) free(method_names);
 
                         // 2. 添加隐式 self 参数作为第一个参数

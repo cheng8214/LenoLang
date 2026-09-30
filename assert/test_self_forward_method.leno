@@ -1,0 +1,84 @@
+// test_self_forward_method.leno —— 「方法体内裸调用与所在方法同名 ⇒ 自己调自己」的编译期诊断
+//
+// 为什么要有它（2026-09-30，和 test_field_shadow_assign 同一天踩的第二个坑）：
+//   struct 方法体内的裸调用会被**优先**解析成"调本 struct 的同名方法"（见
+//   semantic_visit_method.c 的方法名改写）。于是"包一层同名方法、里面转发给模块级函数"的写法
+//   在**方法改名撞上模块级函数**之后就变成了自递归：
+//     · 重构前：`func _dow(int y, int m, int d): int { return dow(y, m, d) }` —— `_dow` 与
+//       模块级 `dow()` 不撞名 ⇒ 转发正常 ✓
+//     · 去下划线改名后：`func dow(...) { return dow(...) }` ⇒ 裸 `dow(...)` 被解析成调**自己**
+//       ⇒ 无限递归 ⇒ 数据看板/dashboard 直接「调用栈溢出」，编译期一声不吭 ✗
+//   ⇒ 补 [疑似无限递归] 警告 + 正确写法（给方法改名 / 改实参 / 加终止条件 ✓）。
+//
+// 判据（**只认"实参全是本方法形参"的纯转发** ⇒ 真递归零误报 ✓）：
+//   ① 真阳性：同名 + 实参就是自己的形参 ⇒ 必须报
+//   ② 误报守卫：正常递归（实参是 `n - 1` 之类）、调兄弟方法并透传形参、无撞名的普通方法
+//      ⇒ 一句都不许报 ✓
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+import strings
+
+func expect_warn(string out, string tag, string want) {
+    assert_true(strings.has(out, "[疑似无限递归]"), tag + "：应报 [疑似无限递归]；实际输出=" + out)
+    assert_true(strings.has(out, want), tag + "：警告文案应含「" + want + "」；实际输出=" + out)
+}
+
+func expect_silent(string out, string tag) {
+    assert_true(not strings.has(out, "[疑似无限递归]"),
+        tag + "：不该报 [疑似无限递归]（误报守卫）；实际输出=" + out)
+}
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_self_forward")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ==================== ① 真阳性：同名纯转发（sdl_calendar 的原始形态）====================
+    // ⚠ 这个方法是**故意**写成自递归的，所以 main 里绝不能调它（真调会栈溢出 ✗）
+    var f1 = dirs.join(work, "must_warn.leno")
+    files.write(f1, @"func dow(int y, int m, int d): int { return y + m + d }
+struct Calendar {
+    int v = 0
+    pri func dow(int y, int m, int d): int { return dow(y, m, d) }
+    func ok(): int { return v + 1 }
+}
+main() {
+    var c = new Calendar()
+    print(""C="" + c.ok())
+}
+")
+    var out1 = ce.expect_ok(f1, "同名纯转发（正向）", "C=1")
+    expect_warn(out1, "同名纯转发必须报", "`dow(...)`")
+    expect_warn(out1, "要指出解析成调用自身", "调用自身")
+    expect_warn(out1, "要给出正确写法：改名", "改名")
+
+    // ==================== ② 误报守卫 ====================
+    var f2 = dirs.join(work, "must_silent.leno")
+    files.write(f2, @"func calc(int a, int b): int { return a + b }
+struct S {
+    int v = 0
+    // 正常递归：实参带运算 ⇒ 不是纯转发（作者本意就是递归 ✓）
+    pri func walk(int n): int {
+        if n <= 0 { return 0 }
+        return walk(n - 1) + 1
+    }
+    // 调**兄弟**方法并透传自己的形参 ⇒ callee 不是自己 ⇒ 不许报
+    func pick(int a): int { return other(a) }
+    func other(int a): int { return a + v }
+    // 与模块级函数同名，但方法体里没调它（也不转发）⇒ 不许报
+    pri func calc(int a, int b): int { return a * b }
+    func use_walk(): int { return walk(3) }
+}
+main() {
+    var s = new S()
+    print(""S="" + s.use_walk() + "","" + s.pick(2))
+}
+")
+    var out2 = ce.expect_ok(f2, "误报守卫（正向）", "S=3,2")
+    expect_silent(out2, "正常递归 / 兄弟方法透传 / 同名但无转发")
+
+    dirs.delete(work)
+    print("test_self_forward_method passed")
+}
