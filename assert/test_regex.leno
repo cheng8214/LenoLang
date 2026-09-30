@@ -159,6 +159,21 @@ main() {
               "138****5678")                            // 简写 + 反向引用一起用 ✓
     assert_eq(regexs.replace_all("a   b", "\\s+", " "), "a b")
 
+    // ---- 词边界 `\b` / `\B` 与控制字符转义（2026-10-01 起支持）----
+    assert_eq(regexs.match("foo", "\\bfoo\\b"), true)
+    assert_eq(regexs.match("foobar", "\\bfoo\\b"), false)      // 词内不算边界 ✓
+    assert_eq(regexs.find("a cat!", "\\bcat\\b"), 2)
+    assert_eq(regexs.find("scat", "\\bcat\\b"), -1)            // 前面是词字符 ⇒ 无边界 ✓
+    assert_eq(regexs.find("scats", "\\Bcat\\B"), 1)            // `\B` = 非边界 ✓
+    assert_eq(regexs.extract("hello world", "\\bworld\\b"), "world")
+    // 实用场景：**只替换整词**（`scat` 里的 cat 不动 ✓）
+    assert_eq(regexs.replace_all("cat scat cat", "\\bcat\\b", "DOG"), "DOG scat DOG")
+    // 控制字符：`\t` `\n` 等展开成真字符 ✓
+    assert_eq(regexs.match("\t", "\\t"), true)
+    assert_eq(regexs.match("\n", "\\n"), true)
+    assert_eq(regexs.split("a\nb", "\\n").len(), 2)
+    assert_eq(regexs.replace_all("a\t\tb", "\\t+", "|"), "a|b")
+
     // 不认识的转义**仍然报错**（别静默当字面量 ✓）—— 顺带钉住"消息指出是哪个转义"
     var e1 = ""
     try {

@@ -44,6 +44,8 @@ typedef enum {
     RE_PLUS,         // +
     RE_QUESTION,     // ?
     RE_EMPTY,        // 空表达式（`()` / `a|` 这类）—— **零宽成功**
+    RE_BOUNDARY,     // \b —— 词边界（零宽断言 ✓）
+    RE_NBOUNDARY,    // \B —— 非词边界（零宽断言 ✓）
     RE_END_PATTERN   // 结束标记
 } ReOp;
 
@@ -153,6 +155,12 @@ static bool re_is_escapable(char c) {
     return strchr(".^$*+?()[]{}|\\/-", c) != NULL;
 }
 
+// 词字符判定（与 `\w` 同一 ASCII 口径：0-9 A-Z _ a-z）—— `\b` / `\B` 的边界判定用它 ✓
+static bool re_is_word_char(unsigned char c) {
+    return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z')
+        || (c >= 'a' && c <= 'z') || c == '_';
+}
+
 // 转义简写（shorthand）字符集：`\d` `\w` `\s`（2026-10-01 起**支持** —— 此前它们是报错"不支持的转义"）
 //   大写 = 取反（由调用方决定用 RE_CLASS_NEG ✓）；不是简写 ⇒ 返回 NULL ✓
 //   `\w` = 63 个字符：0-9 + A-Z + `_` + a-z（本引擎是 ASCII 口径，与 Python 的 `\w` 在 ASCII 上一致 ✓）
@@ -185,11 +193,14 @@ static void re_report_invalid(const char* pattern) {
     for (const char* q = pattern; *q; q++) {
         if (*q == '\\' && *(q + 1)) {
             int slen = 0;
-            if (re_shorthand_chars(*(q + 1), &slen) == NULL && !re_is_escapable(*(q + 1))) {
+            if (re_shorthand_chars(*(q + 1), &slen) == NULL
+                && *(q + 1) != 'b' && *(q + 1) != 'B'      // 词边界（零宽断言 ✓）
+                && strchr("tnrfv", *(q + 1)) == NULL       // 控制字符 ✓
+                && !re_is_escapable(*(q + 1))) {
                 char msg[192];
                 snprintf(msg, sizeof(msg),
-                         "无效的正则表达式：不支持的转义 \"\\%c\"（本引擎支持元字符转义，"
-                         "以及 \\d \\w \\s 与取反的 \\D \\W \\S）",
+                         "无效的正则表达式：不支持的转义 \"\\%c\"（本引擎支持元字符转义、"
+                         "\\d \\w \\s 及取反、\\b \\B、以及 \\t \\n \\r \\f \\v）",
                          *(q + 1));
                 native_throw_error(msg);
                 return;
@@ -397,6 +408,21 @@ static ReNode* parse_factor(const char** pp) {
             node->class_chars[slen] = '\0';
             node->class_len = slen;
             p += 2;                                  // 跳过 `\` 与简写字母 ✓
+        } else if (*(p+1) == 'b' || *(p+1) == 'B') {
+            // 词边界断言（**零宽** ✓，2026-10-01 起支持）：`\b` = 词/非词交界、`\B` = 非交界 ✓
+            node = re_alloc_node();
+            if (!node) return NULL;
+            node->op = (*(p+1) == 'b') ? RE_BOUNDARY : RE_NBOUNDARY;
+            p += 2;
+        } else if (strchr("tnrfv", *(p+1)) != NULL) {
+            // 控制字符转义（2026-10-01 起支持）：`\t` `\n` `\r` `\f` `\v` ⇒ 展开成**真字符** ✓
+            static const char RE_CTRL[] = { '\t', '\n', '\r', '\f', '\v' };
+            const char* cidx = strchr("tnrfv", *(p+1));
+            node = re_alloc_node();
+            if (!node) return NULL;
+            node->op = RE_CHAR;
+            node->ch = RE_CTRL[cidx - "tnrfv"];
+            p += 2;
         } else if (!re_is_escapable(*(p+1))) {
             return NULL;                             // 其余未知转义 ⇒ 编译失败、响亮报错 ✓
         } else {
@@ -547,6 +573,18 @@ static bool m_chain(ReNode* node, const char* pos, ReCtx* ctx, const char** out)
         case RE_EMPTY:
             ok = m_chain(node->next, pos, ctx, out);
             break;
+        case RE_BOUNDARY:
+        case RE_NBOUNDARY: {
+            // 词边界（**零宽** ✓）：看"前一个字符"与"当前字符"是否分属词/非词
+            //   串首的"前一个字符"按非词算 ⇒ `\bfoo` 在 "foo" 开头能命中（与 Python 一致 ✓）
+            bool prev_w = (pos > ctx->str) && re_is_word_char((unsigned char)*(pos - 1));
+            bool cur_w  = (*pos != '\0') && re_is_word_char((unsigned char)*pos);
+            bool at_boundary = (prev_w != cur_w);
+            if (at_boundary == (node->op == RE_BOUNDARY)) {
+                ok = m_chain(node->next, pos, ctx, out);
+            }
+            break;
+        }
         case RE_START:
             // 本引擎只按**整串**开头算行首（没有多行模式 ⇒ `^` 恒等于"位置 0" ✓）
             if (pos == ctx->str) ok = m_chain(node->next, pos, ctx, out);
