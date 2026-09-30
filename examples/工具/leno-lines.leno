@@ -42,15 +42,29 @@ func count_file(string path, string root, int gi) {
     g_blk[gi] = g_blk[gi] + b
 }
 
-// 一遍 walk 扫一种扩展名 ⇒ 输出自然按组分好 ✓
-func scan(string root, string ext, int gi) {
+// ★ **一趟 walk 收三种扩展名**（2026-10-01 改）：原先按扩展名各扫一遍 ⇒
+//   同一棵目录树被 walk **三次**（而这正是最贵的一步：每层都要读目录）✗。
+//   现在先收集、后打印 —— 输出仍按 `.c / .h / .leno` 分组，组内顺序也与原实现**逐行一致**
+//   （同一棵树、同一个 walk ⇒ 遍历顺序不变 ✓）。
+Array[string] g_paths_c    = []
+Array[string] g_paths_h    = []
+Array[string] g_paths_leno = []
+
+func collect(string root) {
     var walks = dirs.walk(root)
     for walks to w {
         var fnames = w.files
         for fnames to f {
-            if strings.ends_with(f, ext) { count_file(w.root + sep + f, root, gi) }
+            var full = w.root + sep + f
+            if strings.ends_with(f, ".c") { g_paths_c.add(full) }
+            eif strings.ends_with(f, ".h") { g_paths_h.add(full) }
+            eif strings.ends_with(f, ".leno") { g_paths_leno.add(full) }
         }
     }
+}
+
+func count_group(Array[string] paths, string root, int gi) {
+    for paths to p { count_file(p, root, gi) }
 }
 
 main() {
@@ -58,9 +72,10 @@ main() {
     string root = if args.len() >= 1 then args[0] else "."
     print($"== 行数统计: {root} ==")
 
-    print("\n== .c ==");    scan(root, ".c", 0)
-    print("\n== .h ==");    scan(root, ".h", 1)
-    print("\n== .leno =="); scan(root, ".leno", 2)
+    collect(root)
+    print("\n== .c ==");    count_group(g_paths_c, root, 0)
+    print("\n== .h ==");    count_group(g_paths_h, root, 1)
+    print("\n== .leno =="); count_group(g_paths_leno, root, 2)
 
     print("\n== 汇总 ==")
     Array[string] names = [".c    ", ".h    ", ".leno "]
