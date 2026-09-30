@@ -17,10 +17,10 @@ struct Window {
     }
 
     // 对比: 无参数函数类型正常工作
-    func():bool _guard = null
+    pri func():bool guard = null
 
     func setGuard(func():bool cb) {
-        _guard = cb  // 这个正常
+        guard = cb  // 这个正常
     }
 }
 

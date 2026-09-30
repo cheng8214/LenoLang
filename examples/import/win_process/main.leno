@@ -21,9 +21,9 @@ face ProcessManager {
 
 struct MockProcessManager impl ProcessManager {
     Array _processes = []
-    int _nextPid = 1000
+    pri int nextPid = 1000
     int _uptimeMs = 3600000
-    Dict _systemInfo = {
+    pri Dict systemInfo = {
         processorCount: 4,
         pageSize: 4096,
         uptimeMs: 3600000,
@@ -34,8 +34,8 @@ struct MockProcessManager impl ProcessManager {
     }
 
     func addMockProcess(string name) {
-        _processes.add({pid: _nextPid, name: name, memory: 10240, peakMemory: 20480})
-        _nextPid = _nextPid + 1
+        _processes.add({pid: nextPid, name: name, memory: 10240, peakMemory: 20480})
+        nextPid = nextPid + 1
     }
 
     func getCurrentPid():int { return 1234 }
@@ -99,7 +99,7 @@ struct MockProcessManager impl ProcessManager {
         return {found: false, info: null}
     }
 
-    func getSystemInfo():Dict { return _systemInfo }
+    func getSystemInfo():Dict { return systemInfo }
 
     func getSystemUpTime():int { return _uptimeMs }
 

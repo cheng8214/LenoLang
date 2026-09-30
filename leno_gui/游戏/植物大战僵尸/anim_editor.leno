@@ -67,8 +67,8 @@ struct AnimEditor {
     TitleBar titleBar
     MenuBar?  menuBar
     MenuBar?  ctxMenu          // 右击上下文菜单（画布 / 部件列表各一个）
-    int      _ctxIdx = -1
-    int      _ctxLayerIdx = -1
+    pri int      ctxIdx = -1
+    pri int      ctxLayerIdx = -1
     Splitter mainSplit      // 外层：左侧文件列表 vs 内层区
     Splitter innerHSplit    // 内层：中间区 vs 右侧面板
     Splitter midVSplit      // 中间：上(画布) vs 下(部件列表)
@@ -125,55 +125,55 @@ struct AnimEditor {
     int           curFrame = 0
     int           selPart  = -1
     bool          playing  = false
-    bool          _wantQuit = false
-    int           _playLast = 0      // 上次推进帧的 tick（按时间驱动播放）
+    pri bool          wantQuit = false
+    pri int           playLast = 0      // 上次推进帧的 tick（按时间驱动播放）
     float         playSpeed = 1.0    // 播放倍速（1.0 = 按动画文件 fps 原速）
     Font          font
-    Array[string] _fileNames = []
+    pri Array[string] fileNames = []
     Array[float]  _hx = []   // 上一帧绘制时各部件命中矩形（画布像素坐标）
     Array[float]  _hy = []
-    Array[float]  _hw = []
-    Array[float]  _hh = []
-    Array[int]    _hi = []   // 与 _hx 平行：命中矩形对应的真实部件索引
+    pri Array[float]  hw = []
+    pri Array[float]  hh = []
+    pri Array[int]    hi = []   // 与 _hx 平行：命中矩形对应的真实部件索引
     Array[int]    selParts = []  // 多选：选中的部件索引集合
-    bool          _marquee = false      // 是否正在框选
-    bool          _syncList = false     // 内部刷新部件列表（抑制 on_change 回环）
-    bool          _dragPushed = false   // 本次拖拽是否已压入撤销快照
-    int           _dragMode = 0         // 0 无 1 移动选中 2 框选
-    float         _mx0 = 0.0; float _my0 = 0.0; float _mx1 = 0.0; float _my1 = 0.0
+    pri bool          marquee = false      // 是否正在框选
+    pri bool          syncList = false     // 内部刷新部件列表（抑制 on_change 回环）
+    pri bool          dragPushed = false   // 本次拖拽是否已压入撤销快照
+    pri int           dragMode = 0         // 0 无 1 移动选中 2 框选
+    pri float         mx0 = 0.0; pri float my0 = 0.0; pri float mx1 = 0.0; pri float my1 = 0.0
     Array[string] _undo = []   // 撤销栈（动画文本快照）
-    Array[string] _cachePaths = []
-    Array[Ptr[u8]] _cacheTex   = []
+    pri Array[string] cachePaths = []
+    pri Array[Ptr[u8]] cacheTex   = []
     string        animDir
     string        imgDir
     float         bboxCx = 0.0   // 加载动画整体包围盒中心（用于居中，校准时保持稳定）
     float         bboxCy = 0.0
-    bool          _bboxValid = false  // 包围盒中心是否已缓存（换动画/撤销后需重算）
+    pri bool          bboxValid = false  // 包围盒中心是否已缓存（换动画/撤销后需重算）
     // 最近一次改动的记录（供「应用到全部帧」按改动项生成菜单）
-    string        _lastEdit = ""      // "" / "pos" / "rot" / "scale" / "flip"
+    pri string        lastEdit = ""      // "" / "pos" / "rot" / "scale" / "flip"
     float         _lastDx = 0.0; float _lastDy = 0.0   // 位置累计位移
     float         _lastRot = 0.0                       // 旋转累计角度
     float         _lastScale = 1.0                     // 缩放累计倍率
-    string        _lastFlip = ""                       // 最近翻转轴 "h"/"v"
+    pri string        lastFlip = ""                       // 最近翻转轴 "h"/"v"
     // 基准值：选中部件在当前帧的原始变换（_lastEdit 被清空时用它反推改动）
-    float         _baseX = 0.0; float _baseY = 0.0
-    float         _baseA = 0.0
-    float         _baseSx = 1.0; float _baseSy = 1.0
-    bool          _ctrlDown = false                    // Ctrl 是否按下（画布 Ctrl+点击加选/减选）
+    pri float         baseX = 0.0; pri float baseY = 0.0
+    pri float         baseA = 0.0
+    pri float         baseSx = 1.0; pri float baseSy = 1.0
+    pri bool          ctrlDown = false                    // Ctrl 是否按下（画布 Ctrl+点击加选/减选）
     // 视图：滚轮缩放 + 平移（画布坐标 = 内容原点偏移 + 内容值 * zoom）
     float         zoom = 1.0
     float         panX = 0.0; float panY = 0.0
     bool          showGrid = true
-    float         _viewOffX = 0.0   // 上一帧的内容区相对偏移（供滚轮以鼠标为锚点缩放）
-    float         _viewOffY = 0.0
+    pri float         viewOffX = 0.0   // 上一帧的内容区相对偏移（供滚轮以鼠标为锚点缩放）
+    pri float         viewOffY = 0.0
     // 洋葱皮：把前一帧/后一帧的部件画成轮廓，便于逐帧校准
     bool          showGhost = false
-    bool          _dirty = false    // 是否有未保存改动（状态栏以 * 标记）
+    pri bool          dirty = false    // 是否有未保存改动（状态栏以 * 标记）
     Array[string] _redo = []        // 重做栈（动画文本快照）
     // 帧剪贴板：整帧的部件变换（复制帧 → 粘贴帧）
-    Array[float]  _clipX = []; Array[float] _clipY = []; Array[float] _clipA = []
-    Array[float]  _clipSx = []; Array[float] _clipSy = []; Array[int] _clipVis = []
-    bool          _clipValid = false
+    Array[float]  _clipX = []; pri Array[float] clipY = []; pri Array[float] clipA = []
+    pri Array[float]  clipSx = []; pri Array[float] clipSy = []; pri Array[int] clipVis = []
+    pri bool          clipValid = false
     // 上一帧绘制时各部件的绘制尺寸（内容坐标，供对齐工具使用：绘制外拿不到 renderer）
     Array[float]  _pw = []
     Array[float]  _ph = []
@@ -192,14 +192,14 @@ struct AnimEditor {
     }
 
     func getTex(string full, Ptr[u8] rh): Ptr[u8] {
-        if _cachePaths.len() > 0 {
-            for 0 : _cachePaths.len() - 1 to i {
-                if _cachePaths[i] == full { return _cacheTex[i] }
+        if cachePaths.len() > 0 {
+            for 0 : cachePaths.len() - 1 to i {
+                if cachePaths[i] == full { return cacheTex[i] }
             }
         }
         Ptr[u8] t = SDL3.loadImageTexture(rh, full)
-        _cachePaths.add(full)
-        _cacheTex.add(t)
+        cachePaths.add(full)
+        cacheTex.add(t)
         return t
     }
 
@@ -224,13 +224,13 @@ struct AnimEditor {
     // ==================== 文件列表 ====================
 
     func buildFileList() {
-        _fileNames = []
+        fileNames = []
         fileList.clear()
         Array[string] names = dirs.listdir(animDir)
         if names != null {
             for names to n {
                 if n.len() >= 4 and n.slice(n.len() - 4, n.len()) == ".txt" {
-                    _fileNames.add(n)
+                    fileNames.add(n)
                     fileList.add_item(n)
                 }
             }
@@ -316,7 +316,7 @@ struct AnimEditor {
         _undo.add(serializeAnim(anims[curAnim]))
         if _undo.len() > 60 { _undo.remove(0) }
         _redo = []          // 产生新改动后，重做栈失效
-        _dirty = true       // 存在未保存改动
+        dirty = true       // 存在未保存改动
     }
 
     func doUndo() {
@@ -330,9 +330,9 @@ struct AnimEditor {
         anims[curAnim] = a
         selPart = -1
         selParts = []
-        _bboxValid = false     // 撤销后动画数据整体替换：重算居中基准
-        _resetEditDelta()
-        _dirty = true
+        bboxValid = false     // 撤销后动画数据整体替换：重算居中基准
+        resetEditDelta()
+        dirty = true
         updateLayerList()
         updateStatus()
         SDL3.markFrameRedraw()
@@ -348,9 +348,9 @@ struct AnimEditor {
         anims[curAnim] = a
         selPart = -1
         selParts = []
-        _bboxValid = false
-        _resetEditDelta()
-        _dirty = true
+        bboxValid = false
+        resetEditDelta()
+        dirty = true
         updateLayerList()
         updateStatus()
         SDL3.markFrameRedraw()
@@ -369,9 +369,9 @@ struct AnimEditor {
         selParts = []
         _undo = []
         _redo = []
-        _dirty = false
-        _bboxValid = false     // 换动画：重新计算居中基准
-        _resetEditDelta()
+        dirty = false
+        bboxValid = false     // 换动画：重新计算居中基准
+        resetEditDelta()
         canvas.focus()          // 加载后把键盘焦点交给画布
         updateLayerList()
         updateStatus()
@@ -385,7 +385,7 @@ struct AnimEditor {
         string content = serializeAnim(a)
         string path = animDir + a.name
         files.write(path, content)
-        _dirty = false
+        dirty = false
         statusLbl.set_text($"已保存: {a.name}  ({a.parts.len()} 部件, {a.nFrame} 帧)")
     }
 
@@ -403,7 +403,7 @@ struct AnimEditor {
             aa.name = nm
             anims[curAnim] = aa
             files.write(pth, serializeAnim(aa))
-            _dirty = false
+            dirty = false
             buildFileList()
             updateStatus()
             SDL3.markFrameRedraw()
@@ -423,9 +423,9 @@ struct AnimEditor {
         selParts = []
         _undo = []
         _redo = []
-        _dirty = false
-        _bboxValid = false     // 换动画：重新计算居中基准
-        _resetEditDelta()
+        dirty = false
+        bboxValid = false     // 换动画：重新计算居中基准
+        resetEditDelta()
         canvas.focus()          // 加载后把键盘焦点交给画布
         updateLayerList()
         updateStatus()
@@ -487,14 +487,14 @@ struct AnimEditor {
     }
 
     // 收集本次要操作的部件索引（多选优先，否则用单一 selPart）
-    func _targets(): Array[int] {
+    pri func targets(): Array[int] {
         Array[int] idxs = []
         if selParts.len() > 0 { idxs = selParts }
         else if selPart >= 0 { idxs.add(selPart) }
         return idxs
     }
 
-    func _inSel(int idx): bool {
+    pri func inSel(int idx): bool {
         for 0 : selParts.len() - 1 to k {
             if selParts[k] == idx { return true }
         }
@@ -505,7 +505,7 @@ struct AnimEditor {
         if curAnim < 0 or curAnim >= anims.len() { return }
         Anim a = anims[curAnim]
         if curFrame >= a.nFrame { return }
-        Array[int] idxs = _targets()
+        Array[int] idxs = targets()
         for 0 : idxs.len() - 1 to k {
             int idx = idxs[k]
             if idx < 0 or idx >= a.parts.len() { continue }
@@ -515,7 +515,7 @@ struct AnimEditor {
             a.parts[idx] = p
         }
         anims[curAnim] = a
-        _lastEdit = "pos"
+        lastEdit = "pos"
         _lastDx = _lastDx + dx
         _lastDy = _lastDy + dy
         updateStatus()
@@ -526,7 +526,7 @@ struct AnimEditor {
         if curAnim < 0 or curAnim >= anims.len() { return }
         Anim a = anims[curAnim]
         if curFrame >= a.nFrame { return }
-        Array[int] idxs = _targets()
+        Array[int] idxs = targets()
         for 0 : idxs.len() - 1 to k {
             int idx = idxs[k]
             if idx < 0 or idx >= a.parts.len() { continue }
@@ -540,8 +540,8 @@ struct AnimEditor {
             a.parts[idx] = p
         }
         anims[curAnim] = a
-        if which == "scale" { _lastEdit = "scale"; _lastScale = _lastScale * amt }
-        else { _lastEdit = "rot"; _lastRot = _lastRot + amt }
+        if which == "scale" { lastEdit = "scale"; _lastScale = _lastScale * amt }
+        else { lastEdit = "rot"; _lastRot = _lastRot + amt }
         updateStatus()
         SDL3.markFrameRedraw()
     }
@@ -551,7 +551,7 @@ struct AnimEditor {
         if curAnim < 0 or curAnim >= anims.len() { return }
         Anim a = anims[curAnim]
         if curFrame >= a.nFrame { return }
-        Array[int] idxs = _targets()
+        Array[int] idxs = targets()
         for 0 : idxs.len() - 1 to k {
             int idx = idxs[k]
             if idx < 0 or idx >= a.parts.len() { continue }
@@ -561,8 +561,8 @@ struct AnimEditor {
             a.parts[idx] = p
         }
         anims[curAnim] = a
-        _lastEdit = "flip"
-        _lastFlip = axis
+        lastEdit = "flip"
+        lastFlip = axis
         updateStatus()
         SDL3.markFrameRedraw()
     }
@@ -574,7 +574,7 @@ struct AnimEditor {
         selParts = []
         for 0 : a.parts.len() - 1 to i { selParts.add(i) }
         selPart = if selParts.len() > 0 then selParts[0] else -1
-        _resetEditDelta()
+        resetEditDelta()
         updateLayerList()
         updateStatus()
         SDL3.markFrameRedraw()
@@ -585,7 +585,7 @@ struct AnimEditor {
         if curAnim < 0 or curAnim >= anims.len() { return }
         Anim a = anims[curAnim]
         if curFrame >= a.nFrame { return }
-        Array[int] idxs = _targets()
+        Array[int] idxs = targets()
         if idxs.len() == 0 { return }
         pushUndo()
         for 0 : idxs.len() - 1 to k {
@@ -597,7 +597,7 @@ struct AnimEditor {
             a.parts[idx] = p
         }
         anims[curAnim] = a
-        _resetEditDelta()
+        resetEditDelta()
         updateLayerList()
         updateStatus()
         SDL3.markFrameRedraw()
@@ -608,23 +608,23 @@ struct AnimEditor {
         if curAnim < 0 or curAnim >= anims.len() { return }
         Anim a = anims[curAnim]
         if curFrame >= a.nFrame { return }
-        _clipX = []; _clipY = []; _clipA = []; _clipSx = []; _clipSy = []; _clipVis = []
+        _clipX = []; clipY = []; clipA = []; clipSx = []; clipSy = []; clipVis = []
         for 0 : a.parts.len() - 1 to i {
             Part p = a.parts[i]
             _clipX.add(if curFrame < p.px.len()  then p.px[curFrame]  else 0.0)
-            _clipY.add(if curFrame < p.py.len()  then p.py[curFrame]  else 0.0)
-            _clipA.add(if curFrame < p.pa.len()  then p.pa[curFrame]  else 0.0)
-            _clipSx.add(if curFrame < p.psx.len() then p.psx[curFrame] else 1.0)
-            _clipSy.add(if curFrame < p.psy.len() then p.psy[curFrame] else 1.0)
-            _clipVis.add(if curFrame < p.vis.len() then p.vis[curFrame] else 1)
+            clipY.add(if curFrame < p.py.len()  then p.py[curFrame]  else 0.0)
+            clipA.add(if curFrame < p.pa.len()  then p.pa[curFrame]  else 0.0)
+            clipSx.add(if curFrame < p.psx.len() then p.psx[curFrame] else 1.0)
+            clipSy.add(if curFrame < p.psy.len() then p.psy[curFrame] else 1.0)
+            clipVis.add(if curFrame < p.vis.len() then p.vis[curFrame] else 1)
         }
-        _clipValid = true
+        clipValid = true
         statusLbl.set_text($"已复制第 {curFrame + 1} 帧（{a.parts.len()} 个部件）")
     }
 
     func pasteFrame() {
         if curAnim < 0 or curAnim >= anims.len() { return }
-        if not _clipValid { statusLbl.set_text("剪贴板中没有帧数据（先点「复制帧」）"); return }
+        if not clipValid { statusLbl.set_text("剪贴板中没有帧数据（先点「复制帧」）"); return }
         Anim a = anims[curAnim]
         if curFrame >= a.nFrame { return }
         if _clipX.len() != a.parts.len() {
@@ -635,16 +635,16 @@ struct AnimEditor {
         for 0 : a.parts.len() - 1 to i {
             Part p = a.parts[i]
             p.px[curFrame]  = _clipX[i]
-            p.py[curFrame]  = _clipY[i]
-            p.pa[curFrame]  = _clipA[i]
-            p.psx[curFrame] = _clipSx[i]
-            p.psy[curFrame] = _clipSy[i]
-            p.vis[curFrame] = _clipVis[i]
+            p.py[curFrame]  = clipY[i]
+            p.pa[curFrame]  = clipA[i]
+            p.psx[curFrame] = clipSx[i]
+            p.psy[curFrame] = clipSy[i]
+            p.vis[curFrame] = clipVis[i]
             a.parts[i] = p
         }
         anims[curAnim] = a
-        _bboxValid = false
-        _resetEditDelta()
+        bboxValid = false
+        resetEditDelta()
         updateLayerList()
         updateStatus()
         SDL3.markFrameRedraw()
@@ -656,7 +656,7 @@ struct AnimEditor {
         if curAnim < 0 or curAnim >= anims.len() { return }
         Anim a = anims[curAnim]
         if curFrame >= a.nFrame { return }
-        Array[int] idxs = _targets()
+        Array[int] idxs = targets()
         if idxs.len() < 2 { statusLbl.set_text("对齐需要至少选中 2 个部件"); return }
         float minX = 99999.0; float maxX = -99999.0
         float minY = 99999.0; float maxY = -99999.0
@@ -689,7 +689,7 @@ struct AnimEditor {
             a.parts[idx] = p
         }
         anims[curAnim] = a
-        _resetEditDelta()
+        resetEditDelta()
         updateStatus()
         SDL3.markFrameRedraw()
     }
@@ -703,7 +703,7 @@ struct AnimEditor {
         if a.fps < 1 { a.fps = 1 }
         if a.fps > 60 { a.fps = 60 }
         anims[curAnim] = a
-        _playLast = 0
+        playLast = 0
         updateStatus()
         SDL3.markFrameRedraw()
     }
@@ -712,7 +712,7 @@ struct AnimEditor {
     func delSelParts() {
         if curAnim < 0 or curAnim >= anims.len() { return }
         Anim a = anims[curAnim]
-        Array[int] idxs = _targets()
+        Array[int] idxs = targets()
         if idxs.len() == 0 { return }
         pushUndo()
         int n = idxs.len()
@@ -732,8 +732,8 @@ struct AnimEditor {
         anims[curAnim] = a
         selPart = -1
         selParts = []
-        _bboxValid = false     // 部件数量变了：重算居中基准
-        _resetEditDelta()
+        bboxValid = false     // 部件数量变了：重算居中基准
+        resetEditDelta()
         updateLayerList()
         updateStatus()
         SDL3.markFrameRedraw()
@@ -749,7 +749,7 @@ struct AnimEditor {
         p.img = img
         a.parts[selPart] = p
         anims[curAnim] = a
-        _bboxValid = false
+        bboxValid = false
         updateLayerList()
         updateStatus()
         SDL3.markFrameRedraw()
@@ -757,48 +757,48 @@ struct AnimEditor {
     }
 
     // 清空「本次改动」记录（换选择/切帧/换动画/撤销/应用后调用）
-    func _resetEditDelta() {
-        _lastEdit = ""
+    pri func resetEditDelta() {
+        lastEdit = ""
         _lastDx = 0.0; _lastDy = 0.0
         _lastRot = 0.0
         _lastScale = 1.0
-        _lastFlip = ""
+        lastFlip = ""
         snapshotBase()
     }
 
     // 记录基准值：选中部件在当前帧的变换
     func snapshotBase() {
-        _baseX = 0.0; _baseY = 0.0; _baseA = 0.0; _baseSx = 1.0; _baseSy = 1.0
+        baseX = 0.0; baseY = 0.0; baseA = 0.0; baseSx = 1.0; baseSy = 1.0
         if curAnim < 0 or curAnim >= anims.len() or selPart < 0 { return }
         Anim a = anims[curAnim]
         if selPart >= a.parts.len() or curFrame < 0 or curFrame >= a.nFrame { return }
         Part p = a.parts[selPart]
-        _baseX = p.px[curFrame]; _baseY = p.py[curFrame]; _baseA = p.pa[curFrame]
-        _baseSx = p.psx[curFrame]; _baseSy = p.psy[curFrame]
+        baseX = p.px[curFrame]; baseY = p.py[curFrame]; baseA = p.pa[curFrame]
+        baseSx = p.psx[curFrame]; baseSy = p.psy[curFrame]
     }
 
     // 兜底：若 _lastEdit 意外为空，用「基准值 → 当前值」的差反推本次改动，
     // 保证右键菜单第一项稳定出现（不再时有时无）
     func refreshEditDelta() {
-        if _lastEdit != "" { return }
+        if lastEdit != "" { return }
         if curAnim < 0 or curAnim >= anims.len() or selPart < 0 { return }
         Anim a = anims[curAnim]
         if selPart >= a.parts.len() or curFrame < 0 or curFrame >= a.nFrame { return }
         Part p = a.parts[selPart]
-        float dx = p.px[curFrame] - _baseX
-        float dy = p.py[curFrame] - _baseY
-        if dx != 0.0 or dy != 0.0 { _lastEdit = "pos"; _lastDx = dx; _lastDy = dy; return }
-        float da = p.pa[curFrame] - _baseA
-        if da != 0.0 { _lastEdit = "rot"; _lastRot = da; return }
+        float dx = p.px[curFrame] - baseX
+        float dy = p.py[curFrame] - baseY
+        if dx != 0.0 or dy != 0.0 { lastEdit = "pos"; _lastDx = dx; _lastDy = dy; return }
+        float da = p.pa[curFrame] - baseA
+        if da != 0.0 { lastEdit = "rot"; _lastRot = da; return }
         float sx = p.psx[curFrame]; float sy = p.psy[curFrame]
         bool fh = false
         if sx < 0.0 { fh = true }
-        if _baseSx < 0.0 { fh = not fh }
+        if baseSx < 0.0 { fh = not fh }
         bool fv = false
         if sy < 0.0 { fv = true }
-        if _baseSy < 0.0 { fv = not fv }
-        if fh or fv { _lastEdit = "flip"; _lastFlip = if fh then "h" else "v"; return }
-        if _baseSx != 0.0 and sx != _baseSx { _lastEdit = "scale"; _lastScale = sx / _baseSx; return }
+        if baseSy < 0.0 { fv = not fv }
+        if fh or fv { lastEdit = "flip"; lastFlip = if fh then "h" else "v"; return }
+        if baseSx != 0.0 and sx != baseSx { lastEdit = "scale"; _lastScale = sx / baseSx; return }
     }
 
     // ==================== 应用到后续帧 ====================
@@ -820,7 +820,7 @@ struct AnimEditor {
         }
         int nFrom = if allFrames then 0 else curFrame + 1
         if (not allFrames) and nFrom > a.nFrame - 1 { return }   // 已是最后一帧，没有后续帧
-        Array[int] idxs = _targets()
+        Array[int] idxs = targets()
         if idxs.len() == 0 { return }
         pushUndo()
         for 0 : idxs.len() - 1 to k {
@@ -841,7 +841,7 @@ struct AnimEditor {
                     p.psx[f] = p.psx[f] * _lastScale
                     p.psy[f] = p.psy[f] * _lastScale
                 } else if rid == "d_flip" {
-                    if _lastFlip == "h" { p.psx[f] = -p.psx[f] } else { p.psy[f] = -p.psy[f] }
+                    if lastFlip == "h" { p.psx[f] = -p.psx[f] } else { p.psy[f] = -p.psy[f] }
                 } else if rid == "f_h" {
                     p.psx[f] = -p.psx[f]
                 } else if rid == "f_v" {
@@ -870,7 +870,7 @@ struct AnimEditor {
             a.parts[idx] = p
         }
         anims[curAnim] = a
-        _resetEditDelta()
+        resetEditDelta()
         updateLayerList()
         updateStatus()
         SDL3.markFrameRedraw()
@@ -884,52 +884,52 @@ struct AnimEditor {
     // 右键前重建菜单：最近改动项排第一，其余为「复制当前帧到后续帧」
     // （未选中部件 → 不生成任何项 → 菜单不弹出）
     func buildCtxMenu() {
-        if ctxMenu == null or _ctxIdx < 0 { return }
-        ctxMenu.clearContextItems(_ctxIdx)
-        Array[int] idxs = _targets()
+        if ctxMenu == null or ctxIdx < 0 { return }
+        ctxMenu.clearContextItems(ctxIdx)
+        Array[int] idxs = targets()
         if idxs.len() == 0 { return }
         refreshEditDelta()          // 兜底反推，保证第一项稳定出现
         if curAnim < 0 or curAnim >= anims.len() { return }
         Anim a = anims[curAnim]
         int n = a.nFrame - curFrame - 1          // 后续帧数量
         // 帧维度之外的常规操作（始终可用）
-        ctxMenu.addContextItem(_ctxIdx, {label: "隐藏 / 显示 当前帧", id: "v_toggle"})
-        ctxMenu.addContextItem(_ctxIdx, {label: "复制当前帧", id: "v_copyf"})
-        ctxMenu.addContextItem(_ctxIdx, {label: "粘贴到当前帧", id: "v_pastef", enabled: _clipValid})
-        ctxMenu.addContextSeparator(_ctxIdx)
+        ctxMenu.addContextItem(ctxIdx, {label: "隐藏 / 显示 当前帧", id: "v_toggle"})
+        ctxMenu.addContextItem(ctxIdx, {label: "复制当前帧", id: "v_copyf"})
+        ctxMenu.addContextItem(ctxIdx, {label: "粘贴到当前帧", id: "v_pastef", enabled: clipValid})
+        ctxMenu.addContextSeparator(ctxIdx)
         if n <= 0 {
-            ctxMenu.addContextItem(_ctxIdx, {label: "（当前已是最后一帧，可用下面的「全部帧」）", id: "none", enabled: false})
+            ctxMenu.addContextItem(ctxIdx, {label: "（当前已是最后一帧，可用下面的「全部帧」）", id: "none", enabled: false})
         } else {
         // 最近改动项排第一；没有记录时直接跳过，不留禁用占位
-        if _lastEdit == "pos" {
-            ctxMenu.addContextItem(_ctxIdx, {label: $"位置：按本次位移 ({fmtF(_lastDx)}, {fmtF(_lastDy)}) → 后续 {n} 帧", id: "d_pos"})
-        } else if _lastEdit == "rot" {
-            ctxMenu.addContextItem(_ctxIdx, {label: $"旋转：按本次角度 ({fmtF(_lastRot)}°) → 后续 {n} 帧", id: "d_rot"})
-        } else if _lastEdit == "scale" {
-            ctxMenu.addContextItem(_ctxIdx, {label: $"缩放：按本次倍率 (x{fmtF(_lastScale)}) → 后续 {n} 帧", id: "d_scale"})
-        } else if _lastEdit == "flip" {
-            ctxMenu.addContextItem(_ctxIdx, {label: $"翻转：本次翻转 → 后续 {n} 帧", id: "d_flip"})
+        if lastEdit == "pos" {
+            ctxMenu.addContextItem(ctxIdx, {label: $"位置：按本次位移 ({fmtF(_lastDx)}, {fmtF(_lastDy)}) → 后续 {n} 帧", id: "d_pos"})
+        } else if lastEdit == "rot" {
+            ctxMenu.addContextItem(ctxIdx, {label: $"旋转：按本次角度 ({fmtF(_lastRot)}°) → 后续 {n} 帧", id: "d_rot"})
+        } else if lastEdit == "scale" {
+            ctxMenu.addContextItem(ctxIdx, {label: $"缩放：按本次倍率 (x{fmtF(_lastScale)}) → 后续 {n} 帧", id: "d_scale"})
+        } else if lastEdit == "flip" {
+            ctxMenu.addContextItem(ctxIdx, {label: $"翻转：本次翻转 → 后续 {n} 帧", id: "d_flip"})
         }
-        ctxMenu.addContextSeparator(_ctxIdx)
-        ctxMenu.addContextItem(_ctxIdx, {label: $"位置：复制当前帧到后续 {n} 帧", id: "c_pos"})
-        ctxMenu.addContextItem(_ctxIdx, {label: $"旋转：复制当前帧到后续 {n} 帧", id: "c_rot"})
-        ctxMenu.addContextItem(_ctxIdx, {label: $"缩放：复制当前帧到后续 {n} 帧（统一翻转）", id: "c_scale"})
-        ctxMenu.addContextItem(_ctxIdx, {label: $"全部属性：复制当前帧到后续 {n} 帧", id: "c_all"})
-        ctxMenu.addContextSeparator(_ctxIdx)
-        ctxMenu.addContextItem(_ctxIdx, {label: $"翻转：后续 {n} 帧水平翻转", id: "f_h"})
-        ctxMenu.addContextItem(_ctxIdx, {label: $"翻转：后续 {n} 帧垂直翻转", id: "f_v"})
+        ctxMenu.addContextSeparator(ctxIdx)
+        ctxMenu.addContextItem(ctxIdx, {label: $"位置：复制当前帧到后续 {n} 帧", id: "c_pos"})
+        ctxMenu.addContextItem(ctxIdx, {label: $"旋转：复制当前帧到后续 {n} 帧", id: "c_rot"})
+        ctxMenu.addContextItem(ctxIdx, {label: $"缩放：复制当前帧到后续 {n} 帧（统一翻转）", id: "c_scale"})
+        ctxMenu.addContextItem(ctxIdx, {label: $"全部属性：复制当前帧到后续 {n} 帧", id: "c_all"})
+        ctxMenu.addContextSeparator(ctxIdx)
+        ctxMenu.addContextItem(ctxIdx, {label: $"翻转：后续 {n} 帧水平翻转", id: "f_h"})
+        ctxMenu.addContextItem(ctxIdx, {label: $"翻转：后续 {n} 帧垂直翻转", id: "f_v"})
         }
         // 全部帧（含前面的帧）：整段动画统一处理
-        ctxMenu.addContextSeparator(_ctxIdx)
-        ctxMenu.addContextItem(_ctxIdx, {label: $"位置：复制当前帧到全部 {a.nFrame} 帧", id: "a_c_pos"})
-        ctxMenu.addContextItem(_ctxIdx, {label: $"旋转：复制当前帧到全部 {a.nFrame} 帧", id: "a_c_rot"})
-        ctxMenu.addContextItem(_ctxIdx, {label: $"全部属性：复制当前帧到全部 {a.nFrame} 帧", id: "a_c_all"})
-        if _lastEdit == "pos" {
-            ctxMenu.addContextItem(_ctxIdx, {label: $"位置：按本次位移 → 全部 {a.nFrame} 帧", id: "a_d_pos"})
-        } else if _lastEdit == "rot" {
-            ctxMenu.addContextItem(_ctxIdx, {label: $"旋转：按本次角度 → 全部 {a.nFrame} 帧", id: "a_d_rot"})
-        } else if _lastEdit == "scale" {
-            ctxMenu.addContextItem(_ctxIdx, {label: $"缩放：按本次倍率 → 全部 {a.nFrame} 帧", id: "a_d_scale"})
+        ctxMenu.addContextSeparator(ctxIdx)
+        ctxMenu.addContextItem(ctxIdx, {label: $"位置：复制当前帧到全部 {a.nFrame} 帧", id: "a_c_pos"})
+        ctxMenu.addContextItem(ctxIdx, {label: $"旋转：复制当前帧到全部 {a.nFrame} 帧", id: "a_c_rot"})
+        ctxMenu.addContextItem(ctxIdx, {label: $"全部属性：复制当前帧到全部 {a.nFrame} 帧", id: "a_c_all"})
+        if lastEdit == "pos" {
+            ctxMenu.addContextItem(ctxIdx, {label: $"位置：按本次位移 → 全部 {a.nFrame} 帧", id: "a_d_pos"})
+        } else if lastEdit == "rot" {
+            ctxMenu.addContextItem(ctxIdx, {label: $"旋转：按本次角度 → 全部 {a.nFrame} 帧", id: "a_d_rot"})
+        } else if lastEdit == "scale" {
+            ctxMenu.addContextItem(ctxIdx, {label: $"缩放：按本次倍率 → 全部 {a.nFrame} 帧", id: "a_d_scale"})
         }
     }
 
@@ -966,8 +966,8 @@ struct AnimEditor {
         anims[curAnim] = a
         selPart = a.parts.len() - 1
         selParts = [selPart]
-        _bboxValid = false      // 部件集变化 → 重算居中
-        _resetEditDelta()
+        bboxValid = false      // 部件集变化 → 重算居中
+        resetEditDelta()
         updateLayerList()
         updateStatus()
         SDL3.markFrameRedraw()
@@ -999,8 +999,8 @@ struct AnimEditor {
         anims[curAnim] = a
         selPart = a.parts.len() - 1
         selParts = [selPart]
-        _bboxValid = false
-        _resetEditDelta()
+        bboxValid = false
+        resetEditDelta()
         updateLayerList()
         updateStatus()
         SDL3.markFrameRedraw()
@@ -1008,41 +1008,41 @@ struct AnimEditor {
 
     // 部件列表右键菜单：添加部件图片（对话框 / image 目录）+ 常用操作
     func buildLayerCtxMenu() {
-        if ctxMenu == null or _ctxLayerIdx < 0 { return }
-        ctxMenu.clearContextItems(_ctxLayerIdx)
+        if ctxMenu == null or ctxLayerIdx < 0 { return }
+        ctxMenu.clearContextItems(ctxLayerIdx)
         bool has = curAnim >= 0 and curAnim < anims.len()
-        ctxMenu.addContextItem(_ctxLayerIdx, {label: "添加部件（选择图片…）", id: "l_add", enabled: has})
-        int dirIdx = ctxMenu.addContextItem(_ctxLayerIdx, {label: "从 image 目录添加", id: "l_dir", enabled: has})
+        ctxMenu.addContextItem(ctxLayerIdx, {label: "添加部件（选择图片…）", id: "l_add", enabled: has})
+        int dirIdx = ctxMenu.addContextItem(ctxLayerIdx, {label: "从 image 目录添加", id: "l_dir", enabled: has})
         Array[string] imgs = listImages()
         int n = imgs.len()
         if n > 30 { n = 30 }
         if n == 0 {
-            ctxMenu.addContextSubmenuItem(_ctxLayerIdx, dirIdx, {label: "（image 目录为空）", id: "l_none", enabled: false})
+            ctxMenu.addContextSubmenuItem(ctxLayerIdx, dirIdx, {label: "（image 目录为空）", id: "l_none", enabled: false})
         } else {
             for 0 : n - 1 to i {
-                ctxMenu.addContextSubmenuItem(_ctxLayerIdx, dirIdx, {label: imgs[i], id: "img:" + imgs[i]})
+                ctxMenu.addContextSubmenuItem(ctxLayerIdx, dirIdx, {label: imgs[i], id: "img:" + imgs[i]})
             }
             if imgs.len() > n {
-                ctxMenu.addContextSubmenuItem(_ctxLayerIdx, dirIdx, {label: $"…还有 {imgs.len() - n} 个（用上面的“选择图片”添加）", id: "l_more", enabled: false})
+                ctxMenu.addContextSubmenuItem(ctxLayerIdx, dirIdx, {label: $"…还有 {imgs.len() - n} 个（用上面的“选择图片”添加）", id: "l_more", enabled: false})
             }
         }
         // 更换选中部件的图片：同样列出 image 目录（前 30 个）
-        int repIdx = ctxMenu.addContextItem(_ctxLayerIdx, {label: "更换选中部件图片", id: "l_rep", enabled: selPart >= 0})
+        int repIdx = ctxMenu.addContextItem(ctxLayerIdx, {label: "更换选中部件图片", id: "l_rep", enabled: selPart >= 0})
         if n == 0 {
-            ctxMenu.addContextSubmenuItem(_ctxLayerIdx, repIdx, {label: "（image 目录为空）", id: "l_none", enabled: false})
+            ctxMenu.addContextSubmenuItem(ctxLayerIdx, repIdx, {label: "（image 目录为空）", id: "l_none", enabled: false})
         } else {
             for 0 : n - 1 to i2 {
-                ctxMenu.addContextSubmenuItem(_ctxLayerIdx, repIdx, {label: imgs[i2], id: "rep:" + imgs[i2]})
+                ctxMenu.addContextSubmenuItem(ctxLayerIdx, repIdx, {label: imgs[i2], id: "rep:" + imgs[i2]})
             }
         }
-        ctxMenu.addContextSeparator(_ctxLayerIdx)
-        ctxMenu.addContextItem(_ctxLayerIdx, {label: "复制选中部件", id: "l_dup", enabled: selPart >= 0})
-        ctxMenu.addContextItem(_ctxLayerIdx, {label: "删除选中部件", id: "l_del", enabled: selPart >= 0})
-        ctxMenu.addContextItem(_ctxLayerIdx, {label: "隐藏 / 显示 当前帧", id: "l_vis", enabled: selPart >= 0})
-        ctxMenu.addContextSeparator(_ctxLayerIdx)
-        ctxMenu.addContextItem(_ctxLayerIdx, {label: "全选部件", id: "l_all", enabled: has})
-        ctxMenu.addContextItem(_ctxLayerIdx, {label: "上移一层", id: "l_up", enabled: selPart > 0})
-        ctxMenu.addContextItem(_ctxLayerIdx, {label: "下移一层", id: "l_down", enabled: selPart >= 0})
+        ctxMenu.addContextSeparator(ctxLayerIdx)
+        ctxMenu.addContextItem(ctxLayerIdx, {label: "复制选中部件", id: "l_dup", enabled: selPart >= 0})
+        ctxMenu.addContextItem(ctxLayerIdx, {label: "删除选中部件", id: "l_del", enabled: selPart >= 0})
+        ctxMenu.addContextItem(ctxLayerIdx, {label: "隐藏 / 显示 当前帧", id: "l_vis", enabled: selPart >= 0})
+        ctxMenu.addContextSeparator(ctxLayerIdx)
+        ctxMenu.addContextItem(ctxLayerIdx, {label: "全选部件", id: "l_all", enabled: has})
+        ctxMenu.addContextItem(ctxLayerIdx, {label: "上移一层", id: "l_up", enabled: selPart > 0})
+        ctxMenu.addContextItem(ctxLayerIdx, {label: "下移一层", id: "l_down", enabled: selPart >= 0})
     }
 
     func onCtxSelect(string menu, string id) {
@@ -1071,7 +1071,7 @@ struct AnimEditor {
         anims[curAnim] = a
         selPart = -1
         selParts = []
-        _bboxValid = false     // 部件数量变了：重算居中基准
+        bboxValid = false     // 部件数量变了：重算居中基准
         updateLayerList()
         updateStatus()
         SDL3.markFrameRedraw()
@@ -1097,18 +1097,18 @@ struct AnimEditor {
     func onFilesSelect(Array[int] ids) {
         if ids.len() > 0 {
             int i = ids[0]
-            if i >= 0 and i < _fileNames.len() {
-                loadAnimFile(animDir + _fileNames[i])
+            if i >= 0 and i < fileNames.len() {
+                loadAnimFile(animDir + fileNames[i])
             }
         }
     }
 
     func onLayersSelect(Array[int] ids) {
-        if _syncList { return }    // 程序内部同步列表（刷新/set_selected），不回写选择状态
+        if syncList { return }    // 程序内部同步列表（刷新/set_selected），不回写选择状态
         selParts = []
         for 0 : ids.len() - 1 to q { selParts.add(ids[q]) }
         selPart = if ids.len() > 0 then ids[0] else -1
-        _resetEditDelta()
+        resetEditDelta()
         updateStatus()
         SDL3.markFrameRedraw()
         canvas.focus()             // 从列表选部件后，方向键仍可用于微调
@@ -1162,10 +1162,10 @@ struct AnimEditor {
         if dy > 0.0 { zoom = zoom * 1.12 } else { zoom = zoom / 1.12 }
         if zoom < 0.1 { zoom = 0.1 }
         if zoom > 8.0 { zoom = 8.0 }
-        float cx0 = (lx - _viewOffX) / old
-        float cy0 = (ly - _viewOffY) / old
-        panX = panX + (lx - cx0 * zoom - _viewOffX)
-        panY = panY + (ly - cy0 * zoom - _viewOffY)
+        float cx0 = (lx - viewOffX) / old
+        float cy0 = (ly - viewOffY) / old
+        panX = panX + (lx - cx0 * zoom - viewOffX)
+        panY = panY + (ly - cy0 * zoom - viewOffY)
         updateStatus()
         SDL3.markFrameRedraw()
     }
@@ -1181,15 +1181,15 @@ struct AnimEditor {
                 int interval = _int(1000.0 / (_float(fps) * sp))
                 if interval < 1 { interval = 1 }
                 int now = SDL3.getTicks()
-                if _playLast <= 0 { _playLast = now }
-                if now - _playLast >= interval {
-                    _playLast = now
+                if playLast <= 0 { playLast = now }
+                if now - playLast >= interval {
+                    playLast = now
                     curFrame = (curFrame + 1) % anims[curAnim].nFrame
                     updateStatus()
                 }
             }
         } else {
-            _playLast = 0
+            playLast = 0
         }
 
         if curAnim < 0 or curAnim >= anims.len() {
@@ -1236,10 +1236,10 @@ struct AnimEditor {
         }
         // ★ 包围盒中心只算一次并缓存：若每帧重算，移动选中部件会改变包围盒 → 居中偏移跟着变，
         //   画面整体反向漂移（表现为「选中部件上移、其它部件反而下移」）
-        if not _bboxValid {
+        if not bboxValid {
             if got { bboxCx = (minX + maxX) * 0.5; bboxCy = (minY + maxY) * 0.5 }
             else   { bboxCx = 0.0; bboxCy = 0.0 }
-            _bboxValid = true
+            bboxValid = true
         }
         float bcx = bboxCx
         float bcy = bboxCy
@@ -1248,7 +1248,7 @@ struct AnimEditor {
         // 内容相对坐标（原点在画布内容区左上角）偏移，用于与鼠标回调 cx,cy 保持一致
         float xoff = ox0 - ox
         float yoff = oy0 - oy
-        _viewOffX = xoff; _viewOffY = yoff    // 缓存，供滚轮以鼠标为锚点
+        viewOffX = xoff; viewOffY = yoff    // 缓存，供滚轮以鼠标为锚点
 
         // 参考线：网格（间距随缩放自适应）+ 内容原点十字
         if showGrid { drawGrid(r, ox, oy, cw, ch, ox0, oy0) }
@@ -1278,7 +1278,7 @@ struct AnimEditor {
             if nf != curFrame and nf != pf { drawGhostFrame(r, a, nf, ox0, oy0, 1) }
         }
 
-        _hx.clear(); _hy.clear(); _hw.clear(); _hh.clear(); _hi.clear()
+        _hx.clear(); _hy.clear(); hw.clear(); hh.clear(); hi.clear()
         if a.parts.len() > 0 {
             for 0 : a.parts.len() - 1 to i {
                 Part p = a.parts[i]
@@ -1299,8 +1299,8 @@ struct AnimEditor {
                 float dw0 = adw * zoom; float dh0 = adh * zoom
                 r.drawTextureRotated(tex, ox0 + rx * zoom, oy0 + ry * zoom, dw0, dh0, p.pa[curFrame], dw0 * 0.5, dh0 * 0.5, flip)
                 // 命中框存「内容区相对坐标」，与鼠标回调的 cx,cy 同坐标系
-                _hx.add(xoff + rx * zoom); _hy.add(yoff + ry * zoom); _hw.add(dw0); _hh.add(dh0); _hi.add(i)
-                if i == selPart or _inSel(i) {
+                _hx.add(xoff + rx * zoom); _hy.add(yoff + ry * zoom); hw.add(dw0); hh.add(dh0); hi.add(i)
+                if i == selPart or inSel(i) {
                     r.setColor(#FFAA50FF)
                     r.drawRect(ox0 + rx * zoom - 2, oy0 + ry * zoom - 2, dw0 + 4, dh0 + 4)
                 }
@@ -1308,11 +1308,11 @@ struct AnimEditor {
         }
 
         // 框选矩形：_mx* 是内容区相对坐标，绘制时转回窗口绝对坐标（加 ox, oy）
-        if _marquee {
-            float rx0 = if _mx0 < _mx1 then _mx0 else _mx1
-            float ry0 = if _my0 < _my1 then _my0 else _my1
-            float rw = if _mx1 >= _mx0 then _mx1 - _mx0 else _mx0 - _mx1
-            float rh = if _my1 >= _my0 then _my1 - _my0 else _my0 - _my1
+        if marquee {
+            float rx0 = if mx0 < mx1 then mx0 else mx1
+            float ry0 = if my0 < my1 then my0 else my1
+            float rw = if mx1 >= mx0 then mx1 - mx0 else mx0 - mx1
+            float rh = if my1 >= my0 then my1 - my0 else my0 - my1
             r.setColor(#3C82DCFF)
             r.drawRect(ox + rx0, oy + ry0, rw, rh)
         }
@@ -1328,8 +1328,8 @@ struct AnimEditor {
     func hitTestAt(float cx, float cy): int {
         int hit = -1
         for 0 : _hx.len() - 1 to i {
-            float x = _hx[i]; float y = _hy[i]; float w = _hw[i]; float h = _hh[i]
-            if cx >= x and cx <= x + w and cy >= y and cy <= y + h { hit = _hi[i] }
+            float x = _hx[i]; float y = _hy[i]; float w = hw[i]; float h = hh[i]
+            if cx >= x and cx <= x + w and cy >= y and cy <= y + h { hit = hi[i] }
         }
         return hit
     }
@@ -1340,25 +1340,25 @@ struct AnimEditor {
         if curAnim < 0 or curAnim >= anims.len() { return }
         if curFrame >= anims[curAnim].nFrame { return }
         // 画布聚焦由 Canvas 控件在鼠标按下时自行处理（sdl_canvas: focus()）
-        _dragPushed = false
+        dragPushed = false
         if btn == 3 { return }   // 右键：统一由 handleEvent 处理（选中 + 弹菜单）
-        if btn == 2 { _dragMode = 3; return }   // 中键 / 按住中键拖动 = 平移视图
+        if btn == 2 { dragMode = 3; return }   // 中键 / 按住中键拖动 = 平移视图
         // 命中测试：用 _hi 还原真实部件索引
         int hit = hitTestAt(cx, cy)
-        if hit >= 0 and _ctrlDown {
+        if hit >= 0 and ctrlDown {
             // Ctrl + 点击：把该部件加入 / 移出选择集合
-            if _inSel(hit) {
+            if inSel(hit) {
                 Array[int] keep = []
                 for 0 : selParts.len() - 1 to q { if selParts[q] != hit { keep.add(selParts[q]) } }
                 selParts = keep
                 if selPart == hit { selPart = if keep.len() > 0 then keep[0] else -1 }
-                _dragMode = 0
+                dragMode = 0
             } else {
                 selParts.add(hit)
                 selPart = hit
-                _dragMode = 1
+                dragMode = 1
             }
-            _resetEditDelta()
+            resetEditDelta()
             updateLayerList()
             updateStatus()
             SDL3.markFrameRedraw()
@@ -1366,22 +1366,22 @@ struct AnimEditor {
         }
         if hit >= 0 {
             // 已处于多选集合中则保持多选并整体移动，否则单选
-            if selParts.len() > 1 and _inSel(hit) {
+            if selParts.len() > 1 and inSel(hit) {
                 selPart = hit
             } else {
                 selParts = [hit]
                 selPart = hit
             }
-            _resetEditDelta()   // 换选中：本次改动记录作废
-            _marquee = false
-            _dragMode = 1
+            resetEditDelta()   // 换选中：本次改动记录作废
+            marquee = false
+            dragMode = 1
         } else {
             // 空白处：进入框选，起点固定在当前按下位置
             selPart = -1
             selParts = []
-            _marquee = true
-            _mx0 = cx; _my0 = cy; _mx1 = cx; _my1 = cy
-            _dragMode = 2
+            marquee = true
+            mx0 = cx; my0 = cy; mx1 = cx; my1 = cy
+            dragMode = 2
         }
         updateLayerList()
         updateStatus()
@@ -1390,14 +1390,14 @@ struct AnimEditor {
 
     // 鼠标抬起：单击（未拖动）时清除残留的零尺寸框选矩形
     func onCanvasClick(float cx, float cy, int btn) {
-        if _marquee and _mx0 == _mx1 and _my0 == _my1 {
-            _marquee = false
+        if marquee and mx0 == mx1 and my0 == my1 {
+            marquee = false
             SDL3.markFrameRedraw()
         }
     }
 
     func onCanvasDrag(float cx, float cy, float dx, float dy) {
-        if _dragMode == 3 {
+        if dragMode == 3 {
             // 平移视图（中键拖拽）
             panX = panX + dx
             panY = panY + dy
@@ -1405,18 +1405,18 @@ struct AnimEditor {
             return
         }
         if curAnim < 0 or curAnim >= anims.len() { return }
-        if _dragMode == 2 {
+        if dragMode == 2 {
             // 框选：实时更新矩形并计算相交部件
-            _mx1 = cx; _my1 = cy
-            float x0 = if _mx0 < _mx1 then _mx0 else _mx1
-            float y0 = if _my0 < _my1 then _my0 else _my1
-            float x1 = if _mx1 >= _mx0 then _mx1 else _mx0
-            float y1 = if _my1 >= _my0 then _my1 else _my0
+            mx1 = cx; my1 = cy
+            float x0 = if mx0 < mx1 then mx0 else mx1
+            float y0 = if my0 < my1 then my0 else my1
+            float x1 = if mx1 >= mx0 then mx1 else mx0
+            float y1 = if my1 >= my0 then my1 else my0
             selParts = []
             for 0 : _hx.len() - 1 to i {
-                float bx = _hx[i]; float by = _hy[i]; float bw = _hw[i]; float bh = _hh[i]
+                float bx = _hx[i]; float by = _hy[i]; float bw = hw[i]; float bh = hh[i]
                 if bx + bw >= x0 and bx <= x1 and by + bh >= y0 and by <= y1 {
-                    selParts.add(_hi[i])
+                    selParts.add(hi[i])
                 }
             }
             selPart = if selParts.len() > 0 then selParts[0] else -1
@@ -1425,8 +1425,8 @@ struct AnimEditor {
             SDL3.markFrameRedraw()
             return
         }
-        if _dragMode == 1 {
-            if not _dragPushed { pushUndo(); _dragPushed = true }
+        if dragMode == 1 {
+            if not dragPushed { pushUndo(); dragPushed = true }
             moveSel(dx / zoom, dy / zoom)   // 屏幕像素增量 → 内容坐标增量
         }
     }
@@ -1456,7 +1456,7 @@ struct AnimEditor {
         curFrame = f
         while curFrame < 0 { curFrame = curFrame + a.nFrame }
         while curFrame >= a.nFrame { curFrame = curFrame - a.nFrame }
-        _resetEditDelta()
+        resetEditDelta()
         updateStatus()
         SDL3.markFrameRedraw()
     }
@@ -1466,7 +1466,7 @@ struct AnimEditor {
     // 刷新部件列表：_syncList 期间抑制 on_change 回调，
     // 否则 set_selected 会反向触发 onLayersSelect（覆盖多选、并改动画布焦点）
     func updateLayerList() {
-        _syncList = true
+        syncList = true
         layerList.clear()
         if curAnim >= 0 and curAnim < anims.len() {
             Anim a = anims[curAnim]
@@ -1478,7 +1478,7 @@ struct AnimEditor {
             // 列表是单选：多选集合只在画布上呈现，列表高亮主选中项（selPart）
             if selPart >= 0 and selPart < a.parts.len() { layerList.set_selected(selPart) }
         }
-        _syncList = false
+        syncList = false
     }
 
     func updateStatus() {
@@ -1491,11 +1491,11 @@ struct AnimEditor {
         Anim a = anims[curAnim]
         string sel = if selPart < 0 then "无" else a.parts[selPart].img
         string ed = ""    // 本次改动（右键菜单据此生成第一项，也便于确认是否记录到）
-        if _lastEdit == "pos" { ed = $"  本次改动:位置({fmtF(_lastDx)},{fmtF(_lastDy)})" }
-        else if _lastEdit == "rot" { ed = $"  本次改动:旋转({fmtF(_lastRot)}°)" }
-        else if _lastEdit == "scale" { ed = $"  本次改动:缩放(x{fmtF(_lastScale)})" }
-        else if _lastEdit == "flip" { ed = "  本次改动:翻转" }
-        string dmark = if _dirty then " *" else ""
+        if lastEdit == "pos" { ed = $"  本次改动:位置({fmtF(_lastDx)},{fmtF(_lastDy)})" }
+        else if lastEdit == "rot" { ed = $"  本次改动:旋转({fmtF(_lastRot)}°)" }
+        else if lastEdit == "scale" { ed = $"  本次改动:缩放(x{fmtF(_lastScale)})" }
+        else if lastEdit == "flip" { ed = "  本次改动:翻转" }
+        string dmark = if dirty then " *" else ""
         statusLbl.set_text($"动画:{a.name}{dmark}  帧:{curFrame + 1}/{a.nFrame}  fps:{a.fps}  倍速:{fmtF(playSpeed)}x  缩放:{fmtF(zoom)}x  部件:{a.parts.len()}  选中部件:{sel}{ed}")
         if selPart >= 0 and selPart < a.parts.len() {
             Part p = a.parts[selPart]
@@ -1517,7 +1517,7 @@ struct AnimEditor {
     // ==================== 菜单 ====================
 
     func onMenuSelect(string menu, string id) {
-        if id == "exit" { _wantQuit = true; return }
+        if id == "exit" { wantQuit = true; return }
         if id == "load" {
             Array[int] s = fileList.get_selected_indices()
             onFilesSelect(s)
@@ -1528,7 +1528,7 @@ struct AnimEditor {
         if id == "new"    { newAnim(); return }
         if id == "undo"   { doUndo(); return }
         if id == "redo"   { doRedo(); return }
-        if id == "play"   { playing = true; _playLast = 0; SDL3.markFrameRedraw(); return }
+        if id == "play"   { playing = true; playLast = 0; SDL3.markFrameRedraw(); return }
         if id == "stop"   { playing = false; SDL3.markFrameRedraw(); return }
         if id == "ghost"  { showGhost = not showGhost; SDL3.markFrameRedraw(); updateStatus(); return }
         if id == "vis"    { toggleSelVis(); return }
@@ -1584,7 +1584,7 @@ struct AnimEditor {
         canvas.on_click(func(float cx, float cy, int btn) { onCanvasClick(cx, cy, btn) })
         canvas.on_drag(func(float cx, float cy, float dx, float dy) { onCanvasDrag(cx, cy, dx, dy) })
         canvas.on_key(func(Event ev): bool { return onCanvasKey(ev) })
-        canvas.on_mouse_up(func(float cx, float cy, int btn) { _marquee = false; _dragMode = 0; _dragPushed = false; SDL3.markFrameRedraw() })
+        canvas.on_mouse_up(func(float cx, float cy, int btn) { marquee = false; dragMode = 0; dragPushed = false; SDL3.markFrameRedraw() })
         canvas.on_mouse_move(func(float cx, float cy) { statusLbl.set_text($"鼠标: ({_int(cx)}, {_int(cy)})") })
         canvas.on_wheel(func(float lx, float ly, float dx, float dy) { onCanvasWheel(lx, ly, dx, dy) })
         canvas.set_keep_focus(true)   // 画布常驻键盘焦点：点按钮/列表后方向键仍可用
@@ -1592,8 +1592,8 @@ struct AnimEditor {
 
         // 画布右键上下文菜单（纯上下文菜单：没有顶部菜单，不会画出菜单栏）
         ctxMenu = win.addMenuBar({x: 0, y: 0, w: 0, h: 0, font_size: 12, transparent: true})
-        _ctxIdx = ctxMenu.addContextMenu("部件")
-        _ctxLayerIdx = ctxMenu.addContextMenu("部件列表")
+        ctxIdx = ctxMenu.addContextMenu("部件")
+        ctxLayerIdx = ctxMenu.addContextMenu("部件列表")
         ctxMenu.on_select(func(string menu, string id) { onCtxSelect(menu, id) })
 
         // 部件列表：单选模式（多选在画布上用 Ctrl+点击 / 框选，列表只反映主选中项）
@@ -1652,18 +1652,18 @@ struct AnimEditor {
             if curAnim >= 0 and curAnim < anims.len() and anims[curAnim].nFrame > 0 {
                 curFrame = curFrame - 1
                 if curFrame < 0 { curFrame = anims[curAnim].nFrame - 1 }
-                _resetEditDelta()   // 切帧：改动记录只属于原帧
+                resetEditDelta()   // 切帧：改动记录只属于原帧
                 updateStatus(); SDL3.markFrameRedraw()
             }
         })
         btnNext.on_click(func() {
             if curAnim >= 0 and curAnim < anims.len() and anims[curAnim].nFrame > 0 {
                 curFrame = (curFrame + 1) % anims[curAnim].nFrame
-                _resetEditDelta()   // 切帧：改动记录只属于原帧
+                resetEditDelta()   // 切帧：改动记录只属于原帧
                 updateStatus(); SDL3.markFrameRedraw()
             }
         })
-        btnPlay.on_click(func()  { playing = true;  _playLast = 0; SDL3.markFrameRedraw() })
+        btnPlay.on_click(func()  { playing = true;  playLast = 0; SDL3.markFrameRedraw() })
         btnStop.on_click(func()  { playing = false; SDL3.markFrameRedraw() })
         // 编辑类按钮（画布常驻焦点，点按钮不会导致方向键失效）
         btnAddFrame.on_click(func() { addFrame() })
@@ -1682,8 +1682,8 @@ struct AnimEditor {
         btnScaleDown.on_click(func(){ pushUndo(); adjSel("scale", 0.9) })
         btnRotCW.on_click(func()   { pushUndo(); adjSel("rot", 15.0) })
         btnRotCCW.on_click(func()  { pushUndo(); adjSel("rot", -15.0) })
-        btnSlower.on_click(func()  { playSpeed = playSpeed * 0.5; if playSpeed < 0.125 { playSpeed = 0.125 }; _playLast = 0; updateStatus() })
-        btnFaster.on_click(func()  { playSpeed = playSpeed * 2.0; if playSpeed > 8.0 { playSpeed = 8.0 };   _playLast = 0; updateStatus() })
+        btnSlower.on_click(func()  { playSpeed = playSpeed * 0.5; if playSpeed < 0.125 { playSpeed = 0.125 }; playLast = 0; updateStatus() })
+        btnFaster.on_click(func()  { playSpeed = playSpeed * 2.0; if playSpeed > 8.0 { playSpeed = 8.0 };   playLast = 0; updateStatus() })
         btnGrid.on_click(func()    { showGrid = not showGrid; SDL3.markFrameRedraw() })
         btnResetView.on_click(func() { zoom = 1.0; panX = 0.0; panY = 0.0; updateStatus(); SDL3.markFrameRedraw() })
         btnRedo.on_click(func()      { doRedo() })
@@ -1804,8 +1804,8 @@ struct AnimEditor {
     // ==================== 事件 ====================
 
     func handleEvent(Event ev): bool {
-        _ctrlDown = (ev.keyMod() & 192) != 0   // Ctrl 状态（画布 Ctrl+点击加选用）
-        if _wantQuit { return false }
+        ctrlDown = (ev.keyMod() & 192) != 0   // Ctrl 状态（画布 Ctrl+点击加选用）
+        if wantQuit { return false }
         if ev.isQuit() or ev.isWindowClose() { return false }
         if titleBar.is_close_requested() { titleBar.clear_close_request(); return false }
         if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
@@ -1831,22 +1831,22 @@ struct AnimEditor {
             var[float, float](mx, my) = ev.mousePos()
             if layerList.contains(mx, my) {
                 buildLayerCtxMenu()
-                ctxMenu.openContext(_ctxLayerIdx, mx, my)
+                ctxMenu.openContext(ctxLayerIdx, mx, my)
                 return true
             }
             if canvas.contains(mx, my) and curAnim >= 0 and curAnim < anims.len() {
                 int hit = hitTestAt(mx - canvas.get_x() - 1.0, my - canvas.get_y() - 1.0)
                 if hit >= 0 {
                     // 右击已在选中集合里的部件：保留「本次改动」记录，菜单才能给出对应项
-                    if not _inSel(hit) { selParts = [hit]; selPart = hit; _resetEditDelta() }
+                    if not inSel(hit) { selParts = [hit]; selPart = hit; resetEditDelta() }
                 } else {
-                    selPart = -1; selParts = []; _resetEditDelta()
+                    selPart = -1; selParts = []; resetEditDelta()
                 }
                 updateLayerList()
                 updateStatus()
                 SDL3.markFrameRedraw()
                 buildCtxMenu()                          // 按最近改动生成菜单项
-                ctxMenu.openContext(_ctxIdx, mx, my)    // 未选中部件时菜单为空 → 不弹
+                ctxMenu.openContext(ctxIdx, mx, my)    // 未选中部件时菜单为空 → 不弹
             }
             return true
         }

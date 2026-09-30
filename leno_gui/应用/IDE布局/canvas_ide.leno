@@ -41,7 +41,7 @@ struct CanvasIDE {
     // ===== 状态 =====
     bool sidebarVisible = true
     bool outputVisible  = true
-    bool _wantQuit      = false
+    pri bool wantQuit      = false
 
     // ===== 画布状态 =====
     Array[Array[float]] marks = []       // 点击标记 [x, y]（内容区相对坐标）
@@ -309,7 +309,7 @@ struct CanvasIDE {
 
     func onMenuSelect(string menu, string id) {
         if id == "exit" {
-            _wantQuit = true
+            wantQuit = true
             return
         }
         if id == "toggle_sidebar" {
@@ -390,7 +390,7 @@ struct CanvasIDE {
     // ==================== 事件处理 ====================
 
     func handleEvent(Event ev): bool {
-        if _wantQuit { return false }
+        if wantQuit { return false }
         if ev.isQuit() or ev.isWindowClose() { return false }
         if titleBar.is_close_requested() { titleBar.clear_close_request(); return false }
         if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }

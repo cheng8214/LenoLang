@@ -41,7 +41,7 @@ struct IDE {
     // ===== 状态 =====
     bool sidebarVisible = true
     bool outputVisible  = true
-    bool _wantQuit      = false
+    pri bool wantQuit      = false
 
     // ==================== UI 构建 ====================
 
@@ -208,7 +208,7 @@ struct IDE {
     // 菜单选择
     func onMenuSelect(string menu, string id) {
         if id == "exit" {
-            _wantQuit = true
+            wantQuit = true
             return
         }
         if id == "toggle_sidebar" {
@@ -274,7 +274,7 @@ struct IDE {
     // ==================== 事件处理 ====================
 
     func handleEvent(Event ev): bool {
-        if _wantQuit { return false }
+        if wantQuit { return false }
         if ev.isQuit() or ev.isWindowClose() { return false }
         if titleBar.is_close_requested() {
             titleBar.clear_close_request()

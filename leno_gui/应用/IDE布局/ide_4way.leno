@@ -37,7 +37,7 @@ struct IDE4Way {
     bool explorerVisible = true
     bool terminalVisible  = true
     bool outlineVisible  = true
-    bool _wantQuit        = false
+    pri bool wantQuit        = false
 
     func setupUI() {
         float PAD = 1.0
@@ -197,7 +197,7 @@ struct IDE4Way {
     }
 
     func onMenuSelect(string menu, string id) {
-        if id == "exit" { _wantQuit = true; return }
+        if id == "exit" { wantQuit = true; return }
         if id == "toggle_sidebar" { toggleExplorer(); return }
         if id == "toggle_aux" { toggleOutline(); return }
         if id == "toggle_terminal" { toggleTerminal(); return }
@@ -258,7 +258,7 @@ struct IDE4Way {
     }
 
     func handleEvent(Event ev): bool {
-        if _wantQuit { return false }
+        if wantQuit { return false }
         if ev.isQuit() or ev.isWindowClose() { return false }
         if titleBar.is_close_requested() { titleBar.clear_close_request(); return false }
         if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }

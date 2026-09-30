@@ -368,7 +368,7 @@ struct CleanerMaster {
     }
 
     // ==================== 上次清理记录（%APPDATA%\TraeCleaner\last_clean.json ✓） ====================
-    func _in_int(Array[int] arr, int v): bool {
+    pri func in_int(Array[int] arr, int v): bool {
         for arr to x {
             if x == v { return true }
         }
@@ -378,7 +378,7 @@ struct CleanerMaster {
     // 按 id 找类别下标（-1 = 不存在）。
     // 为什么需要：`--autoclean` 取证模式原先写死历史下标（[0..4] 与 5）⇒ 一加类别就会
     // 悄悄换掉它清理的对象 ✗（本轮就加了 5 类）。改成按 id 查 ⇒ 以后再改类别序也安全 ✓
-    func _cat_index(string id): int {
+    pri func cat_index(string id): int {
         for 0 : cats.len() - 1 to i {
             if cats[i].id == id { return i }
         }
@@ -395,19 +395,19 @@ struct CleanerMaster {
     //   此时 `$"{tip}\n本次…"` 等于"空串 + 换行 + 内容" ⇒ 悬停框**第一行是空白** ✗
     //   （截图上就是 tooltip 顶部多出一条空行，然后才是"本次占比…"）
     //   加了本函数后：cur 为空则直接返回 line ⇒ **不可能**出现空首行 ✓
-    func _tip_add(string cur, string line): string {
+    pri func tip_add(string cur, string line): string {
         if line == "" { return cur }
         if cur == "" { return line }
         return $"{cur}\n{line}"
     }
 
-    func _last_clean_path(): string {
+    pri func last_clean_path(): string {
         return _env_or("APPDATA", _tmpdir()) + "\\TraeCleaner\\last_clean.json"
     }
 
     func loadLastClean() {
         try {
-            var d = jsons.read_file(_last_clean_path())
+            var d = jsons.read_file(last_clean_path())
             if d is Dict => j {
                 int freed = _int(j.get("freed", 0))
                 cumFreed = _int(j.get("total_freed", 0))     // 老文件没这字段 ⇒ 0（下一次保存补上 ✓）
@@ -434,7 +434,7 @@ struct CleanerMaster {
             string ts = ti.format(ti.now(), "%Y-%m-%d %H:%M:%S")
             cumFreed = cumFreed + freedTotal   // 跨次累加（"累计释放"✓）
             dirs.mkdir_p(_env_or("APPDATA", _tmpdir()) + "\\TraeCleaner")
-            jsons.write_file(_last_clean_path(),
+            jsons.write_file(last_clean_path(),
                 {time: ts, freed: freedTotal, items: cleanedTotal, total_freed: cumFreed})
             lastLbl.set_text($"上次清理：{ts} 释放 {rules.fmt_size(freedTotal)} · 累计 {rules.fmt_size(cumFreed)}")
         } catch e {
@@ -529,7 +529,7 @@ struct CleanerMaster {
             for 0 : cats.len() - 1 to i {
                 if cats[i].id == "recyclebin" { continue }
                 if i >= results.len() { continue }
-                if _in_int(used, i) { continue }
+                if in_int(used, i) { continue }
                 int s = _int(results[i][0])
                 if s > bestSz { bestSz = s; best = i }
             }
@@ -577,14 +577,14 @@ struct CleanerMaster {
                     int pct = _int(100.0 * _float(shareB) / _float(totalSize))
                     string share = _str(pct) + "%"
                     if pct <= 0 { share = "<1%" }   // 2 MB / 5.5 GB 显示「0%」会被误读成"没有" ✗
-                    tip = _tip_add(tip, "本次占比 " + share)
+                    tip = tip_add(tip, "本次占比 " + share)
                 }
             }
             // 保留清单生效情况（被豁免的项**不会**出现在明细里 ⇒ 必须显式说一声，
             //   否则用户会以为"扫描漏了"或"明明有文件却查不到" ✗）
             if i < results.len() and results[i].len() > 3 {
                 int keptN = _int(results[i][3])
-                if keptN > 0 { tip = _tip_add(tip, $"保留清单已豁免 {keptN} 项") }
+                if keptN > 0 { tip = tip_add(tip, $"保留清单已豁免 {keptN} 项") }
             }
             int fg = 0
             // 结果列（report / cleaning 状态）：每类清理结果一目了然 ✓
@@ -611,18 +611,18 @@ struct CleanerMaster {
                         }
                         if cc > 0 { fg = theme.getTheme().btnSuccess }      // 清掉了 ⇒ 绿
                         if cf > 0 { fg = #E09A34FF }                        // 有跳过 ⇒ 橙（更需要你看一眼）
-                        tip = _tip_add(tip, $"本次：已清理 {cc} 项 · 跳过 {cf} 项（被占用）")
-                        tip = _tip_add(tip, "点本行看明细清单")
-                    } else if _in_int(cleanCheckedIdx, i) {
+                        tip = tip_add(tip, $"本次：已清理 {cc} 项 · 跳过 {cf} 项（被占用）")
+                        tip = tip_add(tip, "点本行看明细清单")
+                    } else if in_int(cleanCheckedIdx, i) {
                         // ★ 勾了但没东西可清 ⇒ 说「无垃圾」。
                         //   原先这里一律落到 else ⇒ 显示「未勾选」✗（实测：错误报告 0 B/0 项、
                         //   复选框明明是勾着的却写"未勾选" ⇒ 因为 cleanCatIdx 只收录真起了删除线程的类别）
                         resTxt = "无垃圾"
-                        tip = _tip_add(tip, "本次扫描未发现可清理项")
+                        tip = tip_add(tip, "本次扫描未发现可清理项")
                     } else {
                         resTxt = "未勾选"
                         fg = theme.getTheme().txtDim
-                        tip = _tip_add(tip, "本次清理未勾选本类")
+                        tip = tip_add(tip, "本次清理未勾选本类")
                     }
                 }
             }
@@ -1196,7 +1196,7 @@ struct CleanerMaster {
                     var s = cleanCatStats[ci]
                     line = line + $"已清理 {_int(s[0])} 项 · 跳过 {_int(s[1])} 项 · 释放 {rules.fmt_size(_int(s[2]))}"
                 } else {
-                    if _in_int(cleanCheckedIdx, i) { line = line + "无垃圾" } else { line = line + "未勾选" }
+                    if in_int(cleanCheckedIdx, i) { line = line + "无垃圾" } else { line = line + "未勾选" }
                 }
                 if i < results.len() {
                     line = line + $"（扫描：{_int(results[i][1])} 项 / {rules.fmt_size(_int(results[i][0]))}）"
@@ -1391,7 +1391,7 @@ struct CleanerMaster {
                 _dlog($"fixture scanned size={res[0]} elems={res.len()}")
                 // fixture + 回收站；按 id 查而不是写死下标 ✓
                 Array[int] ph1 = [cats.len() - 1]
-                int rbIdx = _cat_index("recyclebin")
+                int rbIdx = cat_index("recyclebin")
                 if rbIdx >= 0 { ph1.add(rbIdx) }
                 beginClean(ph1)
                 return
@@ -1407,7 +1407,7 @@ struct CleanerMaster {
                     _dlog("=== phase2: real categories (no recycle) ===")
                     Array[int] ph2 = []
                     for ["temp", "browser", "wer", "d3d", "thumbs"] to cid {
-                        int ix = _cat_index(cid)
+                        int ix = cat_index(cid)
                         if ix >= 0 { ph2.add(ix) }
                     }
                     beginClean(ph2)
