@@ -492,7 +492,11 @@ static Value native_files_read(int argCount, Value* args) {
     FILE* fp = fopen(path->chars, "r");
 #endif
     if (!fp) {
-        native_throw_error("无法打开文件");
+        // 消息口径与 native_files_open 逐字一致（带路径）：此前这里只有"无法打开文件"四个字，
+        //   调用点 catch 到的 e.msg 看不出是哪个文件 ⇒ 与 open 不一致（2026-09-30 对齐）。
+        char msg[128];
+        snprintf(msg, sizeof(msg), "无法打开文件 '%s'", path->chars);
+        native_throw_error(msg);
         return val_null();
     }
 
@@ -542,7 +546,10 @@ static Value native_files_write(int argCount, Value* args) {
     FILE* fp = fopen(path->chars, "w");
 #endif
     if (!fp) {
-        native_throw_error("无法创建文件");
+        // 同上：消息带路径，与 open / read 一致（此前只有"无法创建文件"四个字）。
+        char msg[128];
+        snprintf(msg, sizeof(msg), "无法创建文件 '%s'", path->chars);
+        native_throw_error(msg);
         return val_null();
     }
 

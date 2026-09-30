@@ -13,8 +13,18 @@ Array[int] g_tot = [0, 0, 0]
 Array[int] g_blk = [0, 0, 0]
 
 func count_file(string path, int gi) {
-    var content = files.read(path)
-    if content == null { print($"  (读不了) {path}"); return }
+    // ⚠ `files.read` 失败**抛异常**、不返回 null（2026-09-30 实测：无 try ⇒ 程序直接终止；
+    //   有 try ⇒ 由 catch 接走，消息在 e.msg）⇒ 原来那句 `if content == null` 是**死判断**，
+    //   一旦有文件读不了（占用 / 权限 / 路径过长），整轮统计会当场崩掉 ✗。
+    //   正确容错只能靠 try：读不了就记一行、跳过，继续统计其余文件 ✓
+    string content = ""
+    try {
+        content = files.read(path)
+    } catch e {
+        // 不再重复打 path：read 的失败消息自 2026-09-30 起**自带路径**（与 open / write 同口径 ✓）
+        print($"  (读不了) {_str(e.msg)}")
+        return
+    }
     var lines = strings.split(content, "\n")
     int n = lines.len()
     if n > 0 and lines[n - 1] == "" { n -= 1 }    // 结尾换行不算一行 ✓

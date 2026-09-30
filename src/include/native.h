@@ -405,6 +405,12 @@ void native_free_instance_method_list(char** methods, int count);
 int native_get_current_line(void);
 
 // 抛出运行时错误（供原生函数使用，会自动获取当前行号）
+//
+// ⚠ 本函数**不跳转**：它只把异常登记进当前 VM（`exception` / `has_exception`，见 native.c），
+//   真正的抛出发生在 native 调用**返回之后**（VM 检查 `has_exception`）⇒ 调用点永远拿不到
+//   紧随其后的返回值。所以 `native_throw_error(...); return val_null();` 里的 `return` 只是
+//   C 语法的兜底，**不构成"失败时返回 null"的契约**——曾据此误判 `files.read` 的失败语义
+//   （2026-09-30 实测：无 `try` 时程序直接终止，有 `try` 时由 `catch` 接走，消息见 `e.msg`）。
 void native_throw_error(const char* msg);
 
 Value ffi_reload_library(const char* path);
