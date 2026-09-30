@@ -2367,6 +2367,110 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
             return type_new(TYPE_ANY);
         }
         case AST_INDEX: {
+            // ★★ 字面量键 + struct 接收者 ⇒ 编译期就能查字段表（2026-09-30 补 ✓✓）
+            //   为什么必须放这里：方法体里的**裸字段名**成员访问（`b.no_such_field` ✓
+            //   —— file_manager:346 `btnBack._loaded` 的形态 ✓）实测**走的就是这条索引路**
+            //   ⇒ 上面 AST_FIELD_ACCESS 那段永远看不到它 ✗ ⇒ 编译期一句不报 ✗
+            //     ⇒ 一路漏到**运行期**才炸 ✗（"struct 不存在字段 '_loaded'" + 调用栈 ✗）
+            //   判定保守（宁少报、不误报 ✓）：
+            //     · 键是**字符串字面量** ✓（动态键一律不管 ✓）
+            //     · 接收者静态类型是 TYPE_STRUCT ✓
+            //     · 能在作用域里**确知字段表** ✓
+            //     · 名字既不是字段、也不是同名方法 ⇒ 才报 ✓
+            if (ast->u.index.obj && ast->u.index.index &&
+                ast->u.index.index->kind == AST_STRING) {
+                const char* key = ast->u.index.index->u.string.value;
+                if (key) {
+                    TypeInfo* recv = infer_expr_type(s, ast->u.index.obj);
+                    if (recv && recv->kind == TYPE_STRUCT && recv->struct_name) {
+                        Symbol* def_sym = scope_resolve(s->current, recv->struct_name);
+                        if (def_sym && def_sym->struct_field_count > 0) {
+                            int known = 0;
+                            for (int fi = 0; fi < def_sym->struct_field_count; fi++) {
+                                if (def_sym->struct_field_names[fi] &&
+                                    strcmp(def_sym->struct_field_names[fi], key) == 0) {
+                                    known = 1;
+                                    break;
+                                }
+                            }
+                            if (!known) {
+                                Ast* sd2 = (Ast*)def_sym->type_decl_ast;
+                                if (sd2 && sd2->kind == AST_STRUCT_DEF) {
+                                    for (int mi = 0; mi < sd2->u.struct_def.method_count; mi++) {
+                                        Ast* m = sd2->u.struct_def.methods[mi];
+                                        if (m && m->kind == AST_FUNC_DEF && m->u.func.name &&
+                                            strcmp(m->u.func.name, key) == 0) {
+                                            known = 1;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            if (!known) {
+                                char msg[256];
+                                snprintf(msg, sizeof(msg), "struct '%s' 没有字段 '%s'",
+                                         recv->struct_name, key);
+                                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                            }
+
+                            // ★ 顺带把 **pri 私有** 也在索引路上拦住（2026-09-30 ✓）
+                            //   同一条根因：裸字段名的成员访问走索引路 ✗ ⇒ 访问器那条的 pri
+                            //   检查也看不到它 ✗ ⇒ 私有成员能被裸名读走 ⇒ 只剩运行期才炸 ✗
+                            //   实测（assert/test_pri_cross_module.leno 的 bare_pri_field 一例）：
+                            //   裸名读 pri 字段**编译通过并成功打印出私密值** ✗
+                            //   两个来源都查：同文件看 struct AST 的 field_private[] ✓、
+                            //   跨模块看导入模块符号表（v32 起带 is_private ✓）；都不知道就沉默 ✓
+                            int priv = -1;   // -1 = 拿不到信息 ✓（一律不动 ✓）
+                            Ast* sd3 = (Ast*)def_sym->type_decl_ast;
+                            if (sd3 && sd3->kind == AST_STRUCT_DEF &&
+                                sd3->u.struct_def.field_private) {
+                                for (int fi = 0; fi < sd3->u.struct_def.field_count; fi++) {
+                                    if (sd3->u.struct_def.field_names[fi] &&
+                                        strcmp(sd3->u.struct_def.field_names[fi], key) == 0) {
+                                        priv = sd3->u.struct_def.field_private[fi] ? 1 : 0;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (priv < 0) {
+                                for (int mi = 0; mi < s->imported_module_count && priv < 0; mi++) {
+                                    ImportedModuleInfo* mod = &s->imported_modules[mi];
+                                    if (!mod->sym_table) continue;
+                                    ModuleStructSymbol* ssym =
+                                        module_symbol_table_find_struct(mod->sym_table, recv->struct_name);
+                                    if (!ssym || ssym->is_cstruct) continue;
+                                    for (int fi = 0; fi < ssym->field_count; fi++) {
+                                        if (ssym->fields[fi].name &&
+                                            strcmp(ssym->fields[fi].name, key) == 0) {
+                                            priv = ssym->fields[fi].is_private ? 1 : 0;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            // 自己方法内部访问自己的私有成员是合法的 ✓（与访问器那条同一判定 ✓）
+                            if (priv == 1) {
+                                int own = 0;
+                                Symbol* self_sym2 = scope_resolve(s->current, "self");
+                                if (self_sym2 && self_sym2->type && self_sym2->type->struct_name &&
+                                    strcmp(self_sym2->type->struct_name, recv->struct_name) == 0) {
+                                    own = 1;
+                                }
+                                if (!own) {
+                                    char msg[256];
+                                    snprintf(msg, sizeof(msg),
+                                        "'%s.%s' 是 pri 私有字段 —— 只有 %s 自己的方法内部可以访问它；"
+                                        "要对外开放就把 'pri' 去掉（默认全公有）",
+                                        recv->struct_name, key, recv->struct_name);
+                                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                                }
+                            }
+                        }
+                    }
+                    if (recv) type_free(recv);
+                }
+            }
+
             // 如果有缓存的类型且不是 any，直接返回（any 可能被守卫收窄，需要重新检查）
             if (ast->cached_type && ast->cached_type->kind != TYPE_ANY) {
                 return type_copy(ast->cached_type);
@@ -3011,6 +3115,54 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
         case AST_FIELD_ACCESS: {
             // 字段访问：需要知道对象的类型和字段的类型
             TypeInfo* obj_type = infer_expr_type(s, ast->u.field_access.obj);
+
+            // ★★ 字段存在性检查（2026-09-30 补 ✓）—— 放在**推断这条路**上，而不是只在
+            //   visit_field_access.inc（访问器那条 ✗）
+            //   为什么：实测方法体里的**裸字段名**成员访问（`b.no_such_field` ✓ —— 前处理会把它
+            //   换成 `self.b.no_such_field` ✓）只走推断这条路 ✓，访问器那条覆盖不到 ⇒
+            //   编译期**一句不报** ✗ ⇒ 一路漏到运行期才炸 ✗（file_manager:346 `btnBack._loaded`
+            //   就是这么炸的 ✓ —— 那句在运行期才报"struct 不存在字段 '_loaded'" ✗）
+            //   判定保守（宁少报、不误报 ✓）：
+            //     · 接收者是 **TYPE_STRUCT** 且结构体名已知 ✓
+            //     · 能在当前作用域**确知字段表**（struct_field_count > 0 ✓）
+            //     · 名字既不是字段、也不是同名方法 ⇒ 才报 ✓
+            //     · 拿不到字段表（跨模块没符号 ✓、泛型 any ✓）⇒ 一律沉默 ✓
+            if (obj_type && obj_type->kind == TYPE_STRUCT && obj_type->struct_name &&
+                ast->u.field_access.field_name) {
+                const char* fname = ast->u.field_access.field_name;
+                Symbol* def_sym = scope_resolve(s->current, obj_type->struct_name);
+                if (def_sym && def_sym->struct_field_count > 0) {
+                    int known = 0;
+                    for (int fi = 0; fi < def_sym->struct_field_count; fi++) {
+                        if (def_sym->struct_field_names[fi] &&
+                            strcmp(def_sym->struct_field_names[fi], fname) == 0) {
+                            known = 1;
+                            break;
+                        }
+                    }
+                    if (!known) {
+                        // 同名方法也算存在（方法调用另有语法 ✓；这里只兜"名字写错" ✓）
+                        //   走 struct 定义 AST 的 methods[]（与 pri 检查同款写法 ✓ 准确 ✓）
+                        Ast* sd = (Ast*)def_sym->type_decl_ast;
+                        if (sd && sd->kind == AST_STRUCT_DEF) {
+                            for (int mi = 0; mi < sd->u.struct_def.method_count; mi++) {
+                                Ast* m = sd->u.struct_def.methods[mi];
+                                if (m && m->kind == AST_FUNC_DEF && m->u.func.name &&
+                                    strcmp(m->u.func.name, fname) == 0) {
+                                    known = 1;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if (!known) {
+                        char msg[256];
+                        snprintf(msg, sizeof(msg), "struct '%s' 没有字段 '%s'",
+                                 obj_type->struct_name, fname);
+                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                    }
+                }
+            }
 
             // 检查：基础类型不支持点号属性访问（如 float.w）
             if (obj_type) {

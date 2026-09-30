@@ -1,0 +1,115 @@
+// test_pri_cross_module.leno —— pri 私有 + 跨模块字段检查的回归钉子
+//
+// 为什么要有它（2026-09-30 实测踩出来的三层，全是"编译期静默、运行期才炸"✗）：
+//
+//   ① 跨模块脚本 struct 的字段存在性：`btnBack._loaded`（Button 在别模块 ✓）此前**一句不报** ✗
+//      —— visit_field_access.inc 那条检查只覆盖 本文件 struct / native / cstruct ✗，
+//      "别的模块里的脚本 struct"一支都没有 ⇒ 漏到运行期（"struct 不存在字段 '_loaded'" ✗）
+//
+//   ② **裸字段名**形态（`btnBack.xxx` ✓ = file_manager 的写法）更狠 ✗：它被前处理换成
+//      `self.btnBack["xxx"]`（走**索引/运行期按名查找**那条路 ✓）⇒ 连 ① 那条检查都看不到 ✗
+//      ⇒ 只有写 `self.btnBack.xxx` 才会被拦 ✓ —— 同一个错，两种写法一个拦一个不拦 ✗
+//      ⇒ 现在在**类型推断**那条路上也补了保守检查（字段访问 + 索引节点 ✓）
+//
+//   ③ pri：私有成员跨模块必须拦 ✓（字段 ✓ / 方法 ✓ / **分号多声明里的那半** ✓）
+//
+// 同时钉住**不得误伤**的正向行为 ✓：
+//   · 公有字段/方法/`pri a = 1, b = 2` 之外的写法照常可用 ✓
+//   · `pri string s = ""; int c = 3` 里的 **c 是公有** ✓（分号 = 新声明 ✓，不是"继承 pri" ✗）
+//     —— 这条语义问过、实测过 ✓，写成断言免得以后被想当然改掉 ✗
+//
+// 判据机器复用 assert/helpers/compiler.leno（S7）✓，本文件只负责"造源码" ✓
+
+import dirs
+import files
+import strings
+
+import "helpers/compiler.leno" as ce
+
+// 被导入的模块（每个用例一份 ✓ 互不干扰 ✓）
+//   ⚠ 这里刻意混进四种声明形态，因为它们的 pri 语义**不相同**（都实测过 ✓）：
+//     pri int secret            ⇒ 私有 ✓
+//     pri string s1 = ""; int c = 3      ⇒ s1 私有 ✓、**c 公有** ✓（分号 = 下一条声明 ✓）
+//     pri string g = "", h = ""          ⇒ g、h **都**私有 ✓（逗号列表共享前缀 ✓）
+//     pri func hidden()         ⇒ 私有方法 ✓
+//   ⚠ 别用 `@"…"` 原始字符串 ✗ —— 里面的 `""`（比如 `pri string s1 = ""` ✓）会把原始字符串
+//     **提前截断** ✗ ⇒ 生成出来的 mod.leno 是坏的（实测报"未终止的字符串"✗ + "期望 '}' 结束
+//     struct 定义"✗）⇒ 断言就会以**错误的理由**失败 ✓（本次就被咬过一次 ✗）
+var MOD = "export struct Probe {\n" +
+    "    pri int secret = 7\n" +
+    "    pri string s1 = \"\"; int c = 3\n" +
+    "    pri string g = \"\", h = \"\"\n" +
+    "    int open = 1\n" +
+    "    pri func hidden(): int { return secret }\n" +
+    "    func shown(): int { return open }\n" +
+    "    func ready(): bool { return true }\n" +
+    "}\n" +
+    "export func makeProbe(): Probe { return new Probe() }\n"
+
+// 造一个用例：mod.leno（内容固定 ✓）+ main.leno（extra_decls + main 体 ✓）
+//   返回入口文件路径 ✓（跨模块必须是**两个文件** ✓ 单文件验不出来 ✓）
+func make_case(string work, string name, string extra_decls, string main_body):string {
+    var root = dirs.join(work, name)
+    dirs.delete(root)
+    dirs.mkdir_p(root)
+    files.write(dirs.join(root, "mod.leno"), MOD)
+    var main_path = dirs.join(root, "main.leno")
+    files.write(main_path,
+        "import \"mod.leno\" as m\nuse m.Probe\n\n" + extra_decls +
+        "main() {\n" + main_body + "}\n")
+    return main_path
+}
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_pri_cross_module")
+    // 先清：上次中途失败会留下工作目录与 .lenocache ✗，"必须编译失败"的用例一旦命中旧缓存
+    //   就可能直接跑起来 ⇒ 回归反而验不出来 ✓（与 test_dup_type_kind / test_cross_module_type_conflict 同因）
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ==================== ① pri：跨模块必须拦 ====================
+    // 落点行传 0 = 只验文案与"确实失败" ✓（行号随 import/空行漂移，钉死会假失败 ✗）
+    ce.expect_error(
+        make_case(work, "pri_field", "", "    var p = m.makeProbe()\n    print(p.secret)\n"),
+        "pri 私有字段跨模块访问要拦", "是 pri 私有字段", 0)
+
+    ce.expect_error(
+        make_case(work, "pri_method", "", "    var p = m.makeProbe()\n    print(p.hidden())\n"),
+        "pri 私有方法跨模块调用要拦", "是 pri 私有方法", 0)
+
+    // 分号多声明里那半（`pri string s1 = ""; int c = 3` 的 s1 ✓）
+    ce.expect_error(
+        make_case(work, "pri_semicolon_half", "", "    var p = m.makeProbe()\n    print(p.s1)\n"),
+        "分号多声明里的 prv 那半也要拦", "是 pri 私有字段", 0)
+
+    // 逗号列表的**第二个**名字（`pri string g = "", h = ""` 的 h ✓ —— 共享前缀 ✓）
+    ce.expect_error(
+        make_case(work, "pri_comma_second", "", "    var p = m.makeProbe()\n    print(p.h)\n"),
+        "逗号列表第二个名字同样私有", "是 pri 私有字段", 0)
+
+    // ==================== ② 裸字段名形态（本次修的根因 ✓） ====================
+    // 裸字段名 + **不存在的字段** ⇒ 必须编译期报"没有字段" ✓
+    //   （此前这条路编译期静默 ✗，只有运行期才炸 ✗ —— file_manager:346 `btnBack._loaded` 的形态 ✓）
+    ce.expect_error(
+        make_case(work, "bare_missing_field",
+            "struct Holder {\n    Probe p\n    func bad(): int { return p.no_such_field }\n}\n",
+            "    var h = new Holder()\n    print(h.bad())\n"),
+        "裸字段名的成员写错名，必须编译期报没有字段", "没有字段 'no_such_field'", 0)
+
+    // 裸字段名 + **pri 字段** ⇒ 也必须拦住 ✓（与上面同一个根因的另一面 ✓）
+    ce.expect_error(
+        make_case(work, "bare_pri_field",
+            "struct Holder {\n    Probe p\n    func bad(): int { return p.secret }\n}\n",
+            "    var h = new Holder()\n    print(h.bad())\n"),
+        "裸字段名访问 pri 私有成员也要拦", "是 pri 私有字段", 0)
+
+    // ==================== ③ 不得误伤：公有照常可用 ====================
+    //   open ✓ shown() ✓ ready() ✓ 以及**分号后面的 c**（理应公有 ✓）
+    ce.expect_ok(
+        make_case(work, "public_ok", "",
+            "    var p = m.makeProbe()\n" +
+            "    print($\"{p.open},{p.shown()},{p.ready()},{p.c}\")\n"),
+        "公有成员 + 分号后那条（公有）都要能用", "1,1,true,3")
+
+    print("（test_pri_cross_module 全部断言通过 ✓）")
+}
