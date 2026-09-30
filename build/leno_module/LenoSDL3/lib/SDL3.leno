@@ -167,6 +167,11 @@ export func dialogPropRow(string label, string value, float maxW): HBox { return
 export func dialogButtonRow(Array[Button] buttons, float spacing = 8.0): HBox { return dlg.dialogButtonRow(buttons, spacing) }
 export func dialogSpacer(): Label { return dlg.dialogSpacer() }
 
+// 自测用：向某窗口注入鼠标事件（**客户区**坐标 ✓；详见 sdl_window 的同名函数）
+export func testClickAt(int wid, float x, float y): bool      { return wnd.testClickAt(wid, x, y) }
+export func testMouseAt(int wid, float x, float y, bool pressed): bool { return wnd.testMouseAt(wid, x, y, pressed) }
+export func testMoveAt(int wid, float x, float y): bool       { return wnd.testMoveAt(wid, x, y) }
+
 // ==================== 对话框通用件（自绘标题栏 / 外框底色）====================
 //   详见 sdl_dialog.leno；应用自己手搓的弹窗照这三行接即可 ✓
 //     int tbH = SDL3.DIALOG_TB_H

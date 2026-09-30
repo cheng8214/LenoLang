@@ -452,8 +452,20 @@ export func lib(): sdl3 {
 export func init(int flags = 32): bool {
     sdl3 l = lib()
     if l == null { return false }
+    // ★★ 必须在 SDL_Init **之前**设（SDL 只在初始化时读这个 hint ✓）
+    //   `SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH`：SDL 默认**关** ⇒ 点"未聚焦"的窗口时，
+    //   第一次点击只用来**激活窗口**、不派发给控件 ⇒ 表现就是「第一次点了没反应、第二次才有效」✗
+    //   （实测症状：切到别的程序再回来点标题栏的 最小化/最大化/关闭，第一次无效 ✓；
+    //     只在同一窗口的按钮之间点则一直正常 ⇒ 因为窗口一直有焦点 ✓。
+    //     ⚠ 合成事件（SDL_PushEvent）绕过 SDL 的聚焦处理 ⇒ 自测探针**永远复现不出来** ✗）
+    //   打开后：聚焦那一次点击也会照常派发 ⇒ 第一次点击即有效 ✓
+    //   ⚠ 字面量是 `SDL_MOUSE_FOCUS_CLICKTHROUGH`（**不是** `SDL_HINT_…` ✗）——
+    //     MACRO 名才带 HINT_ 前缀，字符串值不带。已用 `SDL3.dll` 里的字面量核对过：
+    //     "SDL_MOUSE_FOCUS_CLICKTHROUGH" ✓ 在、"SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH" ✗ 不在。
+    //     （同一个坑：sdl_renderer.leno 里那两条 `SDL_HINT_RENDER_DRIVER` 就是错名字 ⇒ 一直是空操作 ✗）
+    l.SDL_SetHint("SDL_MOUSE_FOCUS_CLICKTHROUGH", "1")
     return l.SDL_Init(flags)
-}
+    }
 
 export func initVideo(): bool { return init(InitFlag.VIDEO) }
 

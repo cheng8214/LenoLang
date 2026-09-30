@@ -11,7 +11,7 @@
 //    while running { while ev.poll() { ... } ren.clear(); ...; ren.present() }
 import ffi
 import "sdl_core.leno" as core
-use core.(sdl3, SDL_Point, Size, SDL_WindowEvent)
+use core.(sdl3, SDL_Point, Size, SDL_WindowEvent, SDL_MouseButtonEvent, SDL_MouseMotionEvent)   // 后两个供自测注入点击/移动 ✓
 
 sdl3 _lib = core.lib()
 
@@ -266,6 +266,69 @@ func _modalParent(int wid): int {
         }
     }
     return -1
+}
+
+// ★ 自测/自动化用：向指定窗口**注入一次鼠标点击**（坐标为**客户区**坐标，不含标题栏 ✓）
+//   与 `Window.requestClose()` 同一路数（那个的注释写着"自测/脚本触发关闭流程 —— 人手点 X
+//   没法自动化 ✓"）—— 点击同理：**人手点也没法进无人值守的断言** ⇒ 留一个门 ✓
+//   为什么必须"注入**事件**"而不是直接调用控件回调：注入走的是**真实派发链路** ——
+//   窗口路由 → 模态栈裁决（非栈顶只 raise、不派发 ✓）→ 控件命中测试（Button.contains ✓）
+//   ⇒ 能断言"这一点到底有没有落到那个按钮上" ✓
+//   —— 这正是 2026-09-30「点确认没反应」那类 bug 的判别点：当时用 **窗口矩形** 坐标去点，
+//      整体偏了一个标题栏高 ⇒ 点在了按钮外面（结果点到别处 ✗，教训记在这里 ✓）
+//   ⚠ 坐标是**客户区**坐标；`SDL3.getModalWid()` 可拿到当前模态窗 id ⇒ 断言里这样用：
+//      `SDL3.testClickAt(SDL3.getModalWid(), x, y)` ✓
+//   返回：按下 / 抬起两条事件是否都投递成功
+export func testClickAt(int wid, float x, float y): bool {
+    bool okDown = _pushMouseEvent(true, wid, x, y)
+    bool okUp = _pushMouseEvent(false, wid, x, y)
+    return okDown and okUp
+}
+
+// 只投递"按下"或"抬起"中的一条（自测用：要复现"抬起丢了"这类场景 ✓）
+//   ⚠ 形参不能叫 `down`（它是语言关键字 ✗，编译期报"期望表达式"）
+export func testMouseAt(int wid, float x, float y, bool pressed): bool {
+    return _pushMouseEvent(pressed, wid, x, y)
+}
+
+// 投递一条鼠标移动（自测用：悬停 / 拖拽阈值 ✓）
+export func testMoveAt(int wid, float x, float y): bool {
+    Ptr[u8] e = ffi.malloc(128)
+    for 128 to i { ffi.write_byte(e, i, 0) }        // 先清零（未用字段别带垃圾 ✓）
+    SDL_MouseMotionEvent me = SDL_MouseMotionEvent.from_ptr(e)
+    me.type = core.EventType.MOUSE_MOTION
+    me.windowID = wid
+    me.which = 0
+    me.state = 0
+    me.x = x
+    me.y = y
+    bool r = _lib.SDL_PushEvent(e)
+    ffi.free(e)
+    return r
+}
+
+// 投递一条鼠标按键事件（内部用；SDL_Event 缓冲取 128 字节 ✓）
+//   ⚠ 模块级"私有"只用 `_` 前缀即可 —— 写成 `pri func` 会被解析器判成语法错误 ✗（实测 ✓）
+func _pushMouseEvent(bool pressed, int wid, float x, float y): bool {
+    Ptr[u8] e = ffi.malloc(128)
+    for 128 to i { ffi.write_byte(e, i, 0) }        // 先清零（未用字段别带垃圾 ✓）
+    SDL_MouseButtonEvent me = SDL_MouseButtonEvent.from_ptr(e)
+    if pressed {
+        me.type = core.EventType.MOUSE_BUTTON_DOWN
+        me.down = 1
+    } else {
+        me.type = core.EventType.MOUSE_BUTTON_UP
+        me.down = 0
+    }
+    me.windowID = wid
+    me.which = 0
+    me.button = 1                                   // 1 = 左键
+    me.clicks = 1
+    me.x = x
+    me.y = y
+    bool r = _lib.SDL_PushEvent(e)
+    ffi.free(e)
+    return r
 }
 
 // 按 wid 提升窗口到前台（SDL_RaiseWindow）
