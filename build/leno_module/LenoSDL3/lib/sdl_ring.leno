@@ -23,6 +23,13 @@ func _opts_keys(): Array[string] {
 "anim_speed", "bg_color", "cursor", "enabled", "fill_color", "font_path", "font_size", "mode", "on_click", "segment_colors", "segments", "show_text", "size", "sub_font_size", "sub_text_fn", "sweep_speed", "text_color", "text_fn", "thickness", "tip", "track_color", "value", "visible", "x", "y"
 ]
 }
+// 多段弧「余量补全」阈值（度）：各段合计不到 1 时，余量小于这个角度就按比例补成整圈
+//   为什么需要：余量只剩一两度时，它在 12 点方向就是一条发丝缝（浅色主题下看着就是一道白缝），
+//   且缝宽随数据抖动忽有忽无 ⇒ 像渲染 bug ✗（见 render() 里多段弧那段注释 ✓）
+//   为什么是 4°：直径 220 的环上 4° ≈ 7.7px 弧长（环带厚 24px）—— 比这更小的余量读不出任何
+//   信息，补掉毫无损失；而更大的余量（如 30°）依然保留轨道色，能表达"还有一类没算进来" ✓
+const float SEG_SNAP_DEG = 4.0
+
 export struct RingProgress impl Widget {
     float x = 0.0, y = 0.0
     pri float size = 220.0            // 直径
@@ -41,7 +48,8 @@ export struct RingProgress impl Widget {
     // ==================== 多段弧（如"已清 vs 跳过"双色环） ====================
     // 为什么需要：`value` 模式只有**一段**弧，无法表达"总量里成功的多少、跳过的多少"。
     //   清理类应用（电脑清理大师）报告页要的正是这个 ⇒ 这里补 `set_segments` ✓
-    pri Array[float] segVals = []     // 各段占比（0..1，顺序 = 自 12 点顺时针；总和 ≤ 1，余量留轨道色）
+    pri Array[float] segVals = []     // 各段占比（0..1，顺序 = 自 12 点顺时针；总和 ≤ 1，余量留轨道色
+                                      //   ⚠ 余量 < SEG_SNAP_DEG 度时自动补成整圈 ⇒ 12 点不出白缝 ✓）
     pri Array[Color] segCols = []     // 各段颜色（可短于 vals ⇒ 循环取色）
     pri float segShown = 1.0          // 揭示动画系数（0→1）：新段数据时长出，避免"瞬间出现"的生硬感
     pri float segLast = 0.0
@@ -156,6 +164,8 @@ export struct RingProgress impl Widget {
     func set_text_fn(func():string f) { textFn = f }
     // ==================== 多段弧（双色环）API ====================
     // vals：各段占比（0..1，顺序 = 自 12 点方向**顺时针**依次排布；总和不超 1，余量留轨道色）
+    //       ⚠ 余量折算 < SEG_SNAP_DEG 度（≈4°）时会被补成整圈（按比例放大各段）——
+    //         余量只剩一两度时那只是条发丝缝，补掉比留着好看（见 render 的说明 ✓）
     // cols：各段颜色（可短于 vals ⇒ 按 `i % len` 循环取色）；空 ⇒ 全用 `_fill`
     // 说明：设置后自动播放"长出"揭示动画（`_segShown` 0→1）—— 清理类应用报告页看着更自然 ✓
     // ⚠ 与 `mode="value"` 互不干扰：设了多段弧就优先画多段（`value` 弧不再画 ✓）
@@ -311,11 +321,24 @@ export struct RingProgress impl Widget {
         if segVals.len() > 0 {
             // 多段弧（双色环）：自 12 点方向顺时针依次排布，长度 = 占比 × 揭示度 ✓
             //   多片 fillPie 叠画后**只抠一次**内圆 ⇒ 与单段弧同一套 donut 做法 ✓
+            // ★ 余量补全（2026-09-30）：各段合计不到 1 时，余量停在 12 点方向、露出**轨道色** ✓
+            //   余量明显（看得出"还有一类没算进来"）时这正是想要的效果；但余量只剩一两度时，
+            //   它就是一条**发丝缝** —— 浅色主题下 = 一道白缝，且缝宽随数据抖动忽有忽无 ⇒
+            //   看着像渲染 bug ✗（实测踩到：清理大师前 3 大类占 99.3% ⇒ 12 点一道 2.5° 白缝）
+            //   ⇒ 余量折算成角度 < SEG_SNAP_DEG 时按比例放大各段**补成整圈**（缝消失 ✓）
+            //   ⚠ 只在本段"揭示动画"**结束**（segShown == 1）时补：动画中途补会把"长出"的
+            //     过程弄没（第一帧就满圈）✗ —— 动画结束时代码会把 segShown 精确置 1.0 ✓
+            float segTotal = 0.0
+            for segVals to v { segTotal = segTotal + v }
+            float segScale = 1.0
+            if segShown >= 1.0 and segTotal > 0.0 and segTotal < 1.0 and (1.0 - segTotal) * 360.0 < SEG_SNAP_DEG {
+                segScale = 1.0 / segTotal
+            }
             float sa = -90.0
             for segVals.len() to si {
                 Color sc = fill
                 if segCols.len() > 0 { sc = segCols[si % segCols.len()] }
-                float span = segVals[si] * segShown * 360.0
+                float span = segVals[si] * segShown * 360.0 * segScale
                 if span > 0.01 {
                     r.fillPie(cx, cy, rOuter, sa, sa + span,
                               theme.colorR(sc), theme.colorG(sc), theme.colorB(sc), theme.colorA(sc))
