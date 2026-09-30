@@ -46,32 +46,32 @@ func _opts_keys(): Array[string] {
 }
 export struct Canvas impl Widget, Themeable {
     float x = 0.0, y = 0.0, w = 400.0, h = 300.0
-    Color _bgColor = #1E1E26FF         // 画布背景色（深色，适合绘图）
-    Color _borderColor = #5A5F6EFF     // 边框色
-    float _borderWidth = 1.0           // 边框宽度
+    pri Color bgColor = #1E1E26FF         // 画布背景色（深色，适合绘图）
+    pri Color borderColor = #5A5F6EFF     // 边框色
+    pri float borderWidth = 1.0           // 边框宽度
     float _pad = 0.0                  // 内边距（画布内容区与边框的间距）
     bool _drawBorder = true           // 是否绘制边框
     bool _clip = true                 // 是否裁剪绘制到画布范围
     bool _loaded = false
     bool enabled = true
     bool visible = true
-    int _cursor = SystemCursor.CROSSHAIR   // 鼠标样式（默认十字光标，适合绘图）
-    Ptr[u8] _hwnd                     // 绑定窗口句柄
+    pri int cursor = SystemCursor.CROSSHAIR   // 鼠标样式（默认十字光标，适合绘图）
+    pri Ptr[u8] hwnd                     // 绑定窗口句柄
 
     // === 状态 ===
-    bool _hover = false               // 鼠标是否悬停在画布内
+    pri bool hover = false               // 鼠标是否悬停在画布内
     bool _dragging = false            // 是否正在拖拽（鼠标按下且在画布内移动）
-    float _lastX = 0.0; float _lastY = 0.0  // 上一帧鼠标位置（拖拽增量用）
-    float _downX = 0.0; float _downY = 0.0  // 鼠标按下时的位置
+    pri float lastX = 0.0; pri float lastY = 0.0  // 上一帧鼠标位置（拖拽增量用）
+    pri float downX = 0.0; pri float downY = 0.0  // 鼠标按下时的位置
 
     // === 焦点（键盘）===
     // 与 sdl_edit 的 Edit 一致：画布内按下获得焦点、画布外按下失去焦点，
     // 只有聚焦时键盘事件才转交 _onKey，避免抢走 ListBox/Edit 等控件的按键。
-    bool _focused = false             // 是否聚焦
-    bool _focusable = true            // 是否可聚焦
-    bool _keepFocus = false           // true = 画布外点击不自动失焦（只有显式 blur() 才失焦）
-    bool _drawFocus = true            // 聚焦时是否用高亮色画边框
-    Color _focusColor = #64B4FFFF     // 聚焦边框色
+    pri bool focused = false             // 是否聚焦
+    pri bool focusable = true            // 是否可聚焦
+    pri bool keepFocus = false           // true = 画布外点击不自动失焦（只有显式 blur() 才失焦）
+    pri bool drawFocus = true            // 聚焦时是否用高亮色画边框
+    pri Color focusColor = #64B4FFFF     // 聚焦边框色
 
     // === 回调 ===
     // on_draw 回调参数：(r, ox, oy, cw, ch)
@@ -82,46 +82,46 @@ export struct Canvas impl Widget, Themeable {
     //   ch = 内容区高度
     // 用户绘制时需用窗口绝对坐标：r.fillRect(ox + 10, oy + 10, 50, 50)
     // 鼠标事件回调参数中的 cx, cy 已转换为内容区相对坐标（左上角为原点 (0,0)）
-    func(Renderer, float, float, float, float):void _onDraw  // 绘制回调(r, ox, oy, cw, ch)
-    func(float, float, int):void _onMouseDown     // 鼠标按下(cx, cy, btn)
-    func(float, float, int):void _onMouseUp       // 鼠标抬起(cx, cy, btn)
-    func(float, float, int):void _onClick         // 点击(cx, cy, btn)
-    func(float, float, int):void _onDblClick      // 双击(cx, cy, btn)
-    func(float, float):void _onMouseMove          // 鼠标移动(cx, cy)
-    func(float, float, float, float):void _onDrag // 拖拽(cx, cy, dx, dy)
-    func(float, float):void _onMouseEnter         // 鼠标进入画布(cx, cy)
-    func():void _onMouseLeave                     // 鼠标离开画布
-    func(float, float, float, float):void _onWheel // 滚轮(wx, wy, deltaX, deltaY)
-    func():void _onDispose                         // 释放回调（用户可在此释放自定义资源）
-    func(Event):bool _onKey                        // 键盘回调(事件)：聚焦时收到，返回 true 表示已处理
+    pri func(Renderer, float, float, float, float):void onDraw  // 绘制回调(r, ox, oy, cw, ch)
+    pri func(float, float, int):void onMouseDown     // 鼠标按下(cx, cy, btn)
+    pri func(float, float, int):void onMouseUp       // 鼠标抬起(cx, cy, btn)
+    pri func(float, float, int):void onClick         // 点击(cx, cy, btn)
+    pri func(float, float, int):void onDblClick      // 双击(cx, cy, btn)
+    pri func(float, float):void onMouseMove          // 鼠标移动(cx, cy)
+    pri func(float, float, float, float):void onDrag // 拖拽(cx, cy, dx, dy)
+    pri func(float, float):void onMouseEnter         // 鼠标进入画布(cx, cy)
+    pri func():void onMouseLeave                     // 鼠标离开画布
+    pri func(float, float, float, float):void onWheel // 滚轮(wx, wy, deltaX, deltaY)
+    pri func():void onDispose                         // 释放回调（用户可在此释放自定义资源）
+    pri func(Event):bool onKey                        // 键盘回调(事件)：聚焦时收到，返回 true 表示已处理
 
     // === 双击检测 ===
     int _lastClickTime = -100000     // 上次点击时间（ticks）
-    float _lastClickX = 0.0; float _lastClickY = 0.0
-    int _lastClickBtn = 0
+    pri float lastClickX = 0.0; pri float lastClickY = 0.0
+    pri int lastClickBtn = 0
 
 
     func set(Dict opts) {
         dochk.check("sdl_canvas", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
         Theme th = theme.getTheme()
-        _bgColor = th.bgInput
-        _borderColor = th.border
+        bgColor = th.bgInput
+        borderColor = th.border
         x    = opts.get("x", 0)
         y    = opts.get("y", 0)
         w    = opts.get("w", 400)
         h    = opts.get("h", 300)
         _pad = opts.get("pad", 0.0)
-        _borderWidth = opts.get("border_width", 1.0)
+        borderWidth = opts.get("border_width", 1.0)
         _drawBorder = opts.get("border", true)
         _clip = opts.get("clip", true)
         enabled = opts.get("enabled", true)
         visible = opts.get("visible", true)
-        if opts.get("bg_color") is Color => t { _bgColor = t }
-        if opts.get("border_color") is Color => t { _borderColor = t }
-        _cursor = opts.get("cursor", SystemCursor.CROSSHAIR)
-        _focusable = opts.get("focusable", true)
-        _drawFocus = opts.get("focus_border", true)
-        if opts.get("focus_color") is Color => t { _focusColor = t }
+        if opts.get("bg_color") is Color => t { bgColor = t }
+        if opts.get("border_color") is Color => t { borderColor = t }
+        cursor = opts.get("cursor", SystemCursor.CROSSHAIR)
+        focusable = opts.get("focusable", true)
+        drawFocus = opts.get("focus_border", true)
+        if opts.get("focus_color") is Color => t { focusColor = t }
         _loaded = true
     }
 
@@ -134,50 +134,50 @@ export struct Canvas impl Widget, Themeable {
     func get_y(): float { return y }
 
     // ==================== 回调注册 ====================
-    func on_draw(func(Renderer, float, float, float, float):void cb) { _onDraw = cb }
-    func on_mouse_down(func(float, float, int):void cb) { _onMouseDown = cb }
-    func on_mouse_up(func(float, float, int):void cb) { _onMouseUp = cb }
-    func on_click(func(float, float, int):void cb) { _onClick = cb }
-    func on_dbl_click(func(float, float, int):void cb) { _onDblClick = cb }
-    func on_mouse_move(func(float, float):void cb) { _onMouseMove = cb }
-    func on_drag(func(float, float, float, float):void cb) { _onDrag = cb }
-    func on_mouse_enter(func(float, float):void cb) { _onMouseEnter = cb }
-    func on_mouse_leave(func():void cb) { _onMouseLeave = cb }
-    func on_wheel(func(float, float, float, float):void cb) { _onWheel = cb }
-    func on_dispose(func():void cb) { _onDispose = cb }
+    func on_draw(func(Renderer, float, float, float, float):void cb) { onDraw = cb }
+    func on_mouse_down(func(float, float, int):void cb) { onMouseDown = cb }
+    func on_mouse_up(func(float, float, int):void cb) { onMouseUp = cb }
+    func on_click(func(float, float, int):void cb) { onClick = cb }
+    func on_dbl_click(func(float, float, int):void cb) { onDblClick = cb }
+    func on_mouse_move(func(float, float):void cb) { onMouseMove = cb }
+    func on_drag(func(float, float, float, float):void cb) { onDrag = cb }
+    func on_mouse_enter(func(float, float):void cb) { onMouseEnter = cb }
+    func on_mouse_leave(func():void cb) { onMouseLeave = cb }
+    func on_wheel(func(float, float, float, float):void cb) { onWheel = cb }
+    func on_dispose(func():void cb) { onDispose = cb }
     // 键盘回调：画布聚焦时收到按键事件（ev.isKeyDown() 等），返回 true 表示已处理
-    func on_key(func(Event):bool cb) { _onKey = cb }
+    func on_key(func(Event):bool cb) { onKey = cb }
 
     // ==================== 焦点 ====================
-    func focus()  { if _focusable and not _focused { _focused = true;  core.markFrameRedraw() } }
-    func blur()   { if _focused { _focused = false; core.markFrameRedraw() } }
-    func is_focused(): bool { return _focused }
-    func set_focusable(bool b) { _focusable = b; if not b { _focused = false } }
-    func set_draw_focus(bool b) { _drawFocus = b }
+    func focus()  { if focusable and not focused { focused = true;  core.markFrameRedraw() } }
+    func blur()   { if focused { focused = false; core.markFrameRedraw() } }
+    func is_focused(): bool { return focused }
+    func set_focusable(bool b) { focusable = b; if not b { focused = false } }
+    func set_draw_focus(bool b) { drawFocus = b }
     // 常驻焦点：画布外点击不再自动失焦（需手动 blur() 才失焦）
-    func set_keep_focus(bool b) { _keepFocus = b }
+    func set_keep_focus(bool b) { keepFocus = b }
 
     // ==================== 设置方法 ====================
-    func set_bg_color(Color c) { _bgColor = c }
-    func set_border_color(Color c) { _borderColor = c }
-    func set_border_width(float bw) { _borderWidth = bw }
+    func set_bg_color(Color c) { bgColor = c }
+    func set_border_color(Color c) { borderColor = c }
+    func set_border_width(float bw) { borderWidth = bw }
     func set_pad(float p) { _pad = p }
     func set_draw_border(bool b) { _drawBorder = b }
     func set_clip(bool c) { _clip = c }
-    func set_cursor(int c) { _cursor = c }
+    func set_cursor(int c) { cursor = c }
     func set_enabled(bool e) { enabled = e }
     func set_visible(bool v) { visible = v }
     func is_visible(): bool { return visible }
 
     // ==================== 坐标转换 ====================
     // 把窗口绝对坐标转为画布内相对坐标（左上角为原点）
-    func _to_local(float mx, float my): [float, float] {
-        return mx - x - _borderWidth - _pad, my - y - _borderWidth - _pad
+    pri func to_local(float mx, float my): [float, float] {
+        return mx - x - borderWidth - _pad, my - y - borderWidth - _pad
     }
 
     // 画布内部内容区宽高（减去边框和内边距）
-    func _content_w(): float { return w - 2.0 * _borderWidth - 2.0 * _pad }
-    func _content_h(): float { return h - 2.0 * _borderWidth - 2.0 * _pad }
+    pri func content_w(): float { return w - 2.0 * borderWidth - 2.0 * _pad }
+    pri func content_h(): float { return h - 2.0 * borderWidth - 2.0 * _pad }
 
     // 鼠标是否在画布范围内（含边框）
     func contains(float mx, float my): bool {
@@ -185,11 +185,11 @@ export struct Canvas impl Widget, Themeable {
     }
 
     // 鼠标是否在内容区范围内（不含边框）
-    func _in_content(float mx, float my): bool {
-        float cx = x + _borderWidth + _pad
-        float cy = y + _borderWidth + _pad
-        float cw = _content_w()
-        float ch = _content_h()
+    pri func in_content(float mx, float my): bool {
+        float cx = x + borderWidth + _pad
+        float cy = y + borderWidth + _pad
+        float cw = content_w()
+        float ch = content_h()
         return mx >= cx and mx <= cx + cw and my >= cy and my <= cy + ch
     }
 
@@ -204,83 +204,83 @@ export struct Canvas impl Widget, Themeable {
         //   （否则点右键菜单项会同时命中画布，改掉选中/触发框选）
         if core.inPopupCapture(mx, my) { return }
         bool inCanvas = contains(mx, my)
-        bool inContent = _in_content(mx, my)
+        bool inContent = in_content(mx, my)
 
         // 光标请求
-        if inContent and _cursor >= 0 { core.requestCursor(_cursor) }
+        if inContent and cursor >= 0 { core.requestCursor(cursor) }
 
         // ---- 鼠标移动 ----
         if ev.isMouseMotion() {
             // 进入/离开检测
-            if not _hover and inContent {
-                _hover = true
-                if _onMouseEnter != null {
-                    var[float, float](lx, ly) = _to_local(mx, my)
-                    _onMouseEnter(lx, ly)
+            if not hover and inContent {
+                hover = true
+                if onMouseEnter != null {
+                    var[float, float](lx, ly) = to_local(mx, my)
+                    onMouseEnter(lx, ly)
                 }
             }
-            if _hover and not inContent {
-                _hover = false
+            if hover and not inContent {
+                hover = false
                 _dragging = false
-                if _onMouseLeave != null { _onMouseLeave() }
+                if onMouseLeave != null { onMouseLeave() }
             }
 
-            if _hover {
-                var[float, float](lx, ly) = _to_local(mx, my)
+            if hover {
+                var[float, float](lx, ly) = to_local(mx, my)
                 // 拖拽
                 if _dragging {
-                    float dx = mx - _lastX
-                    float dy = my - _lastY
-                    if _onDrag != null { _onDrag(lx, ly, dx, dy) }
+                    float dx = mx - lastX
+                    float dy = my - lastY
+                    if onDrag != null { onDrag(lx, ly, dx, dy) }
                 } else {
                     // 普通移动
-                    if _onMouseMove != null { _onMouseMove(lx, ly) }
+                    if onMouseMove != null { onMouseMove(lx, ly) }
                 }
-                _lastX = mx; _lastY = my
+                lastX = mx; lastY = my
             }
-            if inContent { core.markFrameMotion() } else if _hover { core.markFrameRedraw() }
+            if inContent { core.markFrameMotion() } else if hover { core.markFrameRedraw() }
         }
 
         // ---- 鼠标按下 ----
         if ev.isMouseButtonDown() {
             // 焦点：画布内按下获得焦点，画布外按下放弃焦点（键盘只发给聚焦控件）
             // _keepFocus = true 时常驻焦点（编辑类场景：点按钮/列表后方向键仍要生效）
-            if inContent { focus() } else if not inCanvas and not _keepFocus { blur() }
+            if inContent { focus() } else if not inCanvas and not keepFocus { blur() }
         }
         if ev.isMouseButtonDown() and inContent {
             int btn = ev.mouseButton()
-            var[float, float](lx, ly) = _to_local(mx, my)
-            _downX = mx; _downY = my
-            _lastX = mx; _lastY = my
+            var[float, float](lx, ly) = to_local(mx, my)
+            downX = mx; downY = my
+            lastX = mx; lastY = my
             _dragging = true
-            if _onMouseDown != null { _onMouseDown(lx, ly, btn) }
+            if onMouseDown != null { onMouseDown(lx, ly, btn) }
             core.markFrameRedraw()
         }
 
         // ---- 鼠标抬起 ----
         if ev.isMouseButtonUp() {
             int btn = ev.mouseButton()
-            var[float, float](lx, ly) = _to_local(mx, my)
+            var[float, float](lx, ly) = to_local(mx, my)
             bool wasDragging = _dragging
             _dragging = false
-            if _onMouseUp != null { _onMouseUp(lx, ly, btn) }
+            if onMouseUp != null { onMouseUp(lx, ly, btn) }
             // 点击检测（鼠标按下和抬起都在画布内）
             if inContent and wasDragging {
                 // 判断是否双击
                 int now = core.getTicks()
                 int elapsed = now - _lastClickTime
                 bool isDbl = false
-                if elapsed < 350 and btn == _lastClickBtn {
-                    float dist2 = (mx - _lastClickX) * (mx - _lastClickX) + (my - _lastClickY) * (my - _lastClickY)
+                if elapsed < 350 and btn == lastClickBtn {
+                    float dist2 = (mx - lastClickX) * (mx - lastClickX) + (my - lastClickY) * (my - lastClickY)
                     if dist2 < 64.0 { isDbl = true }
                 }
                 _lastClickTime = now
-                _lastClickX = mx; _lastClickY = my
-                _lastClickBtn = btn
+                lastClickX = mx; lastClickY = my
+                lastClickBtn = btn
                 if isDbl {
-                    if _onDblClick != null { _onDblClick(lx, ly, btn) }
+                    if onDblClick != null { onDblClick(lx, ly, btn) }
                 } else {
-                    if _onClick != null { _onClick(lx, ly, btn) }
+                    if onClick != null { onClick(lx, ly, btn) }
                 }
             }
             core.markFrameRedraw()
@@ -290,16 +290,16 @@ export struct Canvas impl Widget, Themeable {
         if ev.isMouseWheel() and inContent {
             float wx = ev.wheelMouseX()
             float wy = ev.wheelMouseY()
-            var[float, float](lx, ly) = _to_local(wx, wy)
+            var[float, float](lx, ly) = to_local(wx, wy)
             float dx = ev.wheelX()
             float dy = ev.wheelY()
-            if _onWheel != null { _onWheel(lx, ly, dx, dy) }
+            if onWheel != null { onWheel(lx, ly, dx, dy) }
             core.markFrameRedraw()
         }
 
         // ---- 键盘：聚焦时才转交（与 sdl_edit 的 Edit 一致）----
-        if _focused and ev.isKeyDown() and _onKey != null {
-            if _onKey(ev) { core.markFrameRedraw() }
+        if focused and ev.isKeyDown() and onKey != null {
+            if onKey(ev) { core.markFrameRedraw() }
         }
     }
 
@@ -314,28 +314,28 @@ export struct Canvas impl Widget, Themeable {
         if not _loaded or not visible { return }
 
         // 背景填充（用窗口绝对坐标）
-        Color bgC = _bgColor
-        if not enabled { bgC = theme.darken(_bgColor, 32) }
+        Color bgC = bgColor
+        if not enabled { bgC = theme.darken(bgColor, 32) }
         r.setColor(bgC)
         r.fillRect(x, y, w, h)
 
         // 边框（用窗口绝对坐标）
-        if _drawBorder and _borderWidth > 0.0 {
-            Color bdrC = _borderColor
-            if _focused and _drawFocus { bdrC = _focusColor }
-            else if _hover { bdrC = theme.brighten(_borderColor, 30) }
+        if _drawBorder and borderWidth > 0.0 {
+            Color bdrC = borderColor
+            if focused and drawFocus { bdrC = focusColor }
+            else if hover { bdrC = theme.brighten(borderColor, 30) }
             r.setColor(bdrC)
             r.drawRect(x, y, w - 1.0, h - 1.0)
         }
 
         // 内容区原点（窗口绝对坐标）和尺寸
-        float ox = x + _borderWidth + _pad
-        float oy = y + _borderWidth + _pad
-        float cw = _content_w()
-        float ch = _content_h()
+        float ox = x + borderWidth + _pad
+        float oy = y + borderWidth + _pad
+        float cw = content_w()
+        float ch = content_h()
         if cw <= 0.0 or ch <= 0.0 { return }
 
-        if _onDraw != null {
+        if onDraw != null {
             if _clip {
                 // 裁剪到内容区（窗口绝对坐标），与 Tab/Panel 等容器裁剪栈兼容
                 SDL_Rect clip = SDL_Rect.malloc()
@@ -343,29 +343,29 @@ export struct Canvas impl Widget, Themeable {
                 clip.w = _int(cw) + 1; clip.h = _int(ch) + 1
                 r.pushClipRect(clip.to_ptr())
                 // 转交 renderer 给用户：用户用窗口绝对坐标绘制
-                _onDraw(r, ox, oy, cw, ch)
+                onDraw(r, ox, oy, cw, ch)
                 r.popClipRect()
                 clip.free()
             } else {
-                _onDraw(r, ox, oy, cw, ch)
+                onDraw(r, ox, oy, cw, ch)
             }
         }
     }
 
     // ==================== 释放 ====================
     func dispose() {
-        if _onDispose != null { _onDispose() }
+        if onDispose != null { onDispose() }
     }
 
     // ==================== 主题 ====================
     func applyTheme(Theme t) {
-        _bgColor = t.bgInput
-        _borderColor = t.border
+        bgColor = t.bgInput
+        borderColor = t.border
     }
 
     // ==================== 窗口句柄 ====================
-    func _bind_window(Ptr[u8] hwnd) { _hwnd = hwnd }
-    func set_window_handle(Ptr[u8] hwnd) { _hwnd = hwnd }
+    func _bind_window(Ptr[u8] hwnd) { hwnd = hwnd }
+    func set_window_handle(Ptr[u8] hwnd) { hwnd = hwnd }
 }
 
 // 工厂

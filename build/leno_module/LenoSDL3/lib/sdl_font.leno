@@ -101,9 +101,9 @@ export struct CachedMeas {
 
 export struct Font {
     Ptr[u8] handle; bool ok = false; int height = 0; int ascent = 0; int descent = 0; float _pt = 0.0
-    int _refCount = 0           // 引用计数：acquireFont/acquireFontAuto 获取时 +1，releaseFont 归零才真正 close 并从池摘除
+    int refCount = 0           // 引用计数：acquireFont/acquireFontAuto 获取时 +1，releaseFont 归零才真正 close 并从池摘除
     string _fontPath = ""       // 缓存池查询用
-    float _aaScale = 0.0   // SSAA 倍数：>0 时 measureString 按「2x 测量再除 scale」计算，
+    pri float aaScale = 0.0   // SSAA 倍数：>0 时 measureString 按「2x 测量再除 scale」计算，
                            // 与 Renderer.drawText 的 SSAA 绘制宽度（tex.width/scale）完全一致
 
     // 文字纹理缓存（ring buffer，固定容量）：drawText 命中时直接复用纹理，
@@ -113,21 +113,21 @@ export struct Font {
     // 文字纹理缓存容量。早期 64 槽在「表格 + 目录树 + 菜单 + 标签」同屏存在大量不重复文字时
     // 会每帧淘汰/重建大量纹理，导致重绘（如鼠标移到其它控件、弹对话框）时偶发卡顿/闪烁。
     // 放大到足以容纳整窗可见文字即可避免淘汰，内存实际由“不重复文字数”决定，不会无谓增长。
-    Array[CachedTex] _texCache = []
-    int _texCap = 1024
-    int _texHead = 0
+    pri Array[CachedTex] texCache = []
+    pri int texCap = 1024
+    pri int texHead = 0
     // MRU 快路径：上次命中的缓存 key 与索引。渲染循环中同一文字常被连续多次调用
     // （如 _fit_cell_text 先 measure 再 draw），单槽快路径将 O(1024) 线性扫描降为 O(1)。
-    string _texLastKey = ""
-    int _texLastIdx = -1
+    pri string texLastKey = ""
+    pri int texLastIdx = -1
     // 尺寸缓存：measureString 高频调用，缓存避免重复测量
-    Array[CachedMeas] _measCache = []
-    int _measCap = 256
-    int _measHead = 0
+    pri Array[CachedMeas] measCache = []
+    pri int measCap = 256
+    pri int measHead = 0
     // MRU 快路径：上次命中的测量 key 与结果。measureString 在渲染中被同一文字
     // 连续调用（如截断检查 + 实际绘制），单槽快路径将 O(256) 线性扫描降为 O(1)。
-    string _measLastKey = ""
-    float _measLastW = 0.0, _measLastH = 0.0
+    pri string measLastKey = ""
+    pri float measLastW = 0.0, measLastH = 0.0
 
     func load(string path, float ptsize): bool {
         if not ttfInit() { return false }
@@ -145,12 +145,12 @@ export struct Font {
     func close() {
         if ok {
             // 释放所有缓存文字纹理，避免显存泄漏
-            for _texCache.len() to i {
-                if _texCache[i].ok and _texCache[i].texture != null {
-                    _lib.SDL_DestroyTexture(_texCache[i].texture)
+            for texCache.len() to i {
+                if texCache[i].ok and texCache[i].texture != null {
+                    _lib.SDL_DestroyTexture(texCache[i].texture)
                 }
             }
-            _texCache = []
+            texCache = []
             ttfLib().TTF_CloseFont(handle); handle = null; ok = false
         }
     }
@@ -179,32 +179,32 @@ export struct Font {
         if not ok { return 0.0, 0.0 }
         // 实际测量字号：SSAA 下为 2x，否则 1x。作为缓存 key 维度，自动区分两种测量方式，
         // 缓存命中时连 TTF_SetFontSize 都省掉（measure 在 Edit 中调用极密集）。
-        float mpt = if _aaScale > 0.0 then _pt * _aaScale else _pt
+        float mpt = if aaScale > 0.0 then _pt * aaScale else _pt
         string key = $"{mpt}\x01{text}"
         // MRU 快路径：同一文字连续调用时直接命中，跳过 256 槽线性扫描
-        if key == _measLastKey { return _measLastW, _measLastH }
-        for _measCache.len() to i {
-            if _measCache[i].key == key {
-                _measLastKey = key
-                _measLastW = _measCache[i].w; _measLastH = _measCache[i].h
-                return _measCache[i].w, _measCache[i].h
+        if key == measLastKey { return measLastW, measLastH }
+        for measCache.len() to i {
+            if measCache[i].key == key {
+                measLastKey = key
+                measLastW = measCache[i].w; measLastH = measCache[i].h
+                return measCache[i].w, measCache[i].h
             }
         }
         float mw = 0.0
         float mh = 0.0
-        if _aaScale > 0.0 {
+        if aaScale > 0.0 {
             // SSAA 一致测量：临时放大到 pt*scale 测量，再除以 scale 得到逻辑宽度。
             // 必须与 drawText 在 SSAA 下「渲染 2x 纹理、按 tex.width/scale 绘制」的
             // 精确（非取整）宽度完全一致，否则命中测试/光标/选区边界会和真实文字错位
             // （最坏每字符边界差 0.5px，点击字符间隙时光标会落到前一格）。
             float origPt = _pt
-            ttfLib().TTF_SetFontSize(handle, origPt * _aaScale)
+            ttfLib().TTF_SetFontSize(handle, origPt * aaScale)
             SDL_Point pt = SDL_Point.malloc()
             ttfLib().TTF_GetStringSize(handle, text, 0, &pt.x, &pt.y)
             ttfLib().TTF_SetFontSize(handle, origPt)
             // 注意：不取整。tex.width(2x) == TTF_GetStringSize(2x)，故 tex.width/scale == pt.x/scale
-            mw = pt.x / _aaScale
-            mh = pt.y / _aaScale
+            mw = pt.x / aaScale
+            mh = pt.y / aaScale
             pt.free()
         } else {
             SDL_Point pt = SDL_Point.malloc()
@@ -215,19 +215,19 @@ export struct Font {
         // 写入 ring 缓存（容量满则覆盖最旧）
         CachedMeas e = new CachedMeas()
         e.key = key; e.w = mw; e.h = mh
-        if _measCache.len() < _measCap {
-            _measCache.add(e)
+        if measCache.len() < measCap {
+            measCache.add(e)
         } else {
-            _measCache[_measHead] = e
-            _measHead = (_measHead + 1) % _measCap
+            measCache[measHead] = e
+            measHead = (measHead + 1) % measCap
         }
-        _measLastKey = key; _measLastW = mw; _measLastH = mh
+        measLastKey = key; measLastW = mw; measLastH = mh
         return mw, mh
     }
 
     // 设置 SSAA 倍数（与所用 Renderer 的 getSSAA() 一致）；传 0 关闭。
     // 仅影响 measureString 的测量方式，使其与 drawText 的 2x 渲染对齐。
-    func setSSAA(float scale) { _aaScale = scale }
+    func setSSAA(float scale) { aaScale = scale }
 
     // 文字纹理缓存查询/创建：命中返回缓存纹理（调用方不得 destroy），未命中创建并写入 ring 缓存。
     // 调用前由 Renderer.drawText 负责把字号临时设为 2x（SSAA）或保持 1x；本方法直接用当前字号渲染，
@@ -236,19 +236,19 @@ export struct Font {
         if not ok { return new TextTexture() }
         string key = $"{_pt}\x01{r}\x01{g}\x01{b}\x01{text}"
         // MRU 快路径：同一文字连续调用时直接命中，跳过 1024 槽线性扫描
-        if _texLastIdx >= 0 and _texLastIdx < _texCache.len() and _texLastKey == key {
-            CachedTex c = _texCache[_texLastIdx]
+        if texLastIdx >= 0 and texLastIdx < texCache.len() and texLastKey == key {
+            CachedTex c = texCache[texLastIdx]
             if c.ok and c.ren == renderer and c.texture != null {
                 TextTexture t = new TextTexture()
                 t.texture = c.texture; t.ok = true; t.width = c.w; t.height = c.h
                 return t
             }
         }
-        for _texCache.len() to i {
-            CachedTex c = _texCache[i]
+        for texCache.len() to i {
+            CachedTex c = texCache[i]
             // 必须校验 ren 匹配且纹理仍有效：避免命中「属于已销毁渲染器、且 SDL 复用了同一指针」的失效纹理
             if c.ok and c.ren == renderer and c.texture != null and c.key == key {
-                _texLastKey = key; _texLastIdx = i
+                texLastKey = key; texLastIdx = i
                 TextTexture t = new TextTexture()
                 t.texture = c.texture
                 t.ok = true
@@ -271,15 +271,15 @@ export struct Font {
                 tex.ok = true
                 CachedTex e = new CachedTex()
                 e.key = key; e.texture = texPtr; e.w = tw; e.h = th; e.ok = true; e.ren = renderer
-                if _texCache.len() < _texCap {
-                    _texCache.add(e)
-                    _texLastKey = key; _texLastIdx = _texCache.len() - 1
+                if texCache.len() < texCap {
+                    texCache.add(e)
+                    texLastKey = key; texLastIdx = texCache.len() - 1
                 } else {
-                    CachedTex old = _texCache[_texHead]
+                    CachedTex old = texCache[texHead]
                     if old.ok and old.texture != null { _lib.SDL_DestroyTexture(old.texture) }
-                    _texCache[_texHead] = e
-                    _texLastKey = key; _texLastIdx = _texHead
-                    _texHead = (_texHead + 1) % _texCap
+                    texCache[texHead] = e
+                    texLastKey = key; texLastIdx = texHead
+                    texHead = (texHead + 1) % texCap
                 }
             }
         }
@@ -291,15 +291,15 @@ export struct Font {
     // 置空后即便 SDL 复用同一指针新建渲染器，也不会命中旧渲染器的失效纹理（表现为“字体消失”）。
     func invalidateRenderer(Ptr[u8] renderer) {
         if renderer == null { return }
-        for _texCache.len() to i {
-            if _texCache[i].ren == renderer {
-                _texCache[i].ok = false
-                _texCache[i].texture = null
-                _texCache[i].ren = null
-                _texCache[i].key = ""
+        for texCache.len() to i {
+            if texCache[i].ren == renderer {
+                texCache[i].ok = false
+                texCache[i].texture = null
+                texCache[i].ren = null
+                texCache[i].key = ""
             }
         }
-        _texLastKey = ""; _texLastIdx = -1
+        texLastKey = ""; texLastIdx = -1
     }
 
     func setStyle(int style) {
@@ -474,7 +474,7 @@ export func createFont(string path, float ptsize): Font {
 // 多个控件可共享同一 path+ptsize 的 Font，任一控件 dispose/换字号时只 release 自身引用，
 // 归零才真正关闭并从池摘除，避免旧「直接 _font.close() 误关共享对象」导致其它控件悬空、池残留失效条目。
 export func acquireFont(string path, float ptsize): Font {
-    Font f = createFont(path, ptsize); f._refCount = f._refCount + 1; return f
+    Font f = createFont(path, ptsize); f.refCount = f.refCount + 1; return f
 }
 
 // 加载字体（自动尝试平台默认中文字体回退）
@@ -502,17 +502,17 @@ export func createFontAuto(float ptsize): Font {
 }
 // 获取一个 Font 并登记引用（引用计数 +1）。配对 releaseFont 释放（见 acquireFont 注释）。
 export func acquireFontAuto(float ptsize): Font {
-    Font f = createFontAuto(ptsize); f._refCount = f._refCount + 1; return f
+    Font f = createFontAuto(ptsize); f.refCount = f.refCount + 1; return f
 }
 // 释放一个 Font 持有引用：引用计数 -1，归零才真正关闭并从池摘除。
 // 不归零时不关闭，保证共享同一 Font 的其它控件仍可正常使用（旧行为靠 _font.ok 自愈，会残留失效池条目）。
 export func releaseFont(Font f) {
     if not f.ok { return }
-    f._refCount = f._refCount - 1
-    if f._refCount <= 0 {
+    f.refCount = f.refCount - 1
+    if f.refCount <= 0 {
         for _fontPool.len() to i { if _fontPool[i] == f { _fontPool.remove(i); break } }
         if f.ok { f.close() }
-        f._refCount = 0
+        f.refCount = 0
     }
 }
 

@@ -35,16 +35,16 @@ export struct Badge impl Widget {
 
     float x = 0.0, y = 0.0
     float _w = 0.0, _h = 0.0
-    float _padX = 12.0
-    float _padY = 5.0
-    float _radius = -1.0        // < 0 ⇒ 自动取 高/2（胶囊形 ✓）
-    bool _fixedW = false        // 显式给了 w ⇒ 不按文字自适应 ✓
-    int _align = ALIGN_CENTER
-    Color _bg = #EFF6FFFF       // 默认面向**浅色界面**（深色主题请显式传三色 ✓）
-    Color _bd = #BFDBFEFF
+    pri float padX = 12.0
+    pri float padY = 5.0
+    pri float radius = -1.0        // < 0 ⇒ 自动取 高/2（胶囊形 ✓）
+    pri bool fixedW = false        // 显式给了 w ⇒ 不按文字自适应 ✓
+    pri int textAlign = ALIGN_CENTER
+    pri Color bg = #EFF6FFFF       // 默认面向**浅色界面**（深色主题请显式传三色 ✓）
+    pri Color bd = #BFDBFEFF
     // ⚠ 文字色**必须独立给默认值**，不能拿描边色顶替 ✗ —— 浅色配色的描边本身就浅，
     //   实测用 #BFDBFE 当文字画在 #EFF6FF 底上几乎看不见（亮度 214，肉眼是"空胶囊"✗）
-    Color _txtC = #2563EBFF
+    pri Color txtC = #2563EBFF
     bool _drawBorder = true
     // ⚠ struct 字段不能用 `= new Label()` 当默认值（编译报"默认值不是常量表达式"✗）
     //   ⇒ 可空字段 + 每次使用前判空（与 Label 的 `Font? _font`、ComboBox 的 `_edit` 同一套路 ✓）
@@ -56,47 +56,47 @@ export struct Badge impl Widget {
         dochk.check("sdl_badge", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
         x = opts.get("x", 0.0)
         y = opts.get("y", 0.0)
-        _padX = opts.get("pad_x", 12.0)
-        _padY = opts.get("pad_y", 5.0)
-        _radius = opts.get("radius", -1.0)
-        _align = opts.get("align", Badge.ALIGN_CENTER)
-        if opts.get("bg_color") is Color => t { _bg = t }
-        if opts.get("border_color") is Color => t { _bd = t }
+        padX = opts.get("pad_x", 12.0)
+        padY = opts.get("pad_y", 5.0)
+        radius = opts.get("radius", -1.0)
+        textAlign = opts.get("align", Badge.ALIGN_CENTER)
+        if opts.get("bg_color") is Color => t { bg = t }
+        if opts.get("border_color") is Color => t { bd = t }
         _drawBorder = opts.get("border", true)
         visible = opts.get("visible", true)
         // 文字色：默认 `_txtC`（独立默认值 ✓），`text_color` 可覆盖 ✓
-        Color tc = _txtC
+        Color tc = txtC
         if opts.get("text_color") is Color => t { tc = t }
-        _txtC = tc
+        txtC = tc
         float fs = opts.get("font_size", 11.0)
         _lbl = lbl.createLabel({x:x, y:y, text:opts.get("text", ""), font_size:fs, text_color:tc})
         float wOpt = opts.get("w", 0.0)
-        _fixedW = wOpt > 0.0
+        fixedW = wOpt > 0.0
         _w = wOpt
         _h = opts.get("h", 0.0)
-        _layout()
+        layout()
         _loaded = true
     }
 
     // ==================== 设置方法 ====================
     // 按当前文字重算尺寸：定宽时宽用给定值、高仍按文字自适应 ✓（每帧绘制前也会兜一次 ✓）
-    func _layout() {
+    pri func layout() {
         if _lbl == null { return }
-        if not _fixedW { _w = _lbl.get_w() + 2.0 * _padX }
-        if _h <= 0.0 { _h = _lbl.get_h() + 2.0 * _padY }
+        if not fixedW { _w = _lbl.get_w() + 2.0 * padX }
+        if _h <= 0.0 { _h = _lbl.get_h() + 2.0 * padY }
     }
-    func _radius_eff(): float {
-        if _radius < 0.0 { return _h / 2.0 }
-        return _radius
+    pri func radius_eff(): float {
+        if radius < 0.0 { return _h / 2.0 }
+        return radius
     }
     func set_text(string t) {
         if _lbl == null { return }
         _lbl.set_text(t)
-        _layout()
+        layout()
         core.markFrameRedraw()
     }
-    func set_bg_color(Color c)     { _bg = c }
-    func set_border_color(Color c) { _bd = c }
+    func set_bg_color(Color c)     { bg = c }
+    func set_border_color(Color c) { bd = c }
     func set_text_color(Color c) {
         if _lbl == null { return }
         _lbl.set_text_color(c)
@@ -117,7 +117,7 @@ export struct Badge impl Widget {
     func set_pos(float px, float py) { x = px; y = py }
     func set_size(float sw, float sh) {
         // 给了才用：宽被定住 ⇒ 不再按文字自适应；高没给 ⇒ 保持"文字高 + 2×pad_y" ✓
-        if sw > 0.0 { _w = sw; _fixedW = true }
+        if sw > 0.0 { _w = sw; fixedW = true }
         if sh > 0.0 { _h = sh }
     }
 
@@ -128,21 +128,21 @@ export struct Badge impl Widget {
     func render(Renderer r) {
         if not _loaded or not visible { return }
         if _lbl == null { return }
-        _layout()   // 文字可能被外部改过 ⇒ 每帧兜一次尺寸 ✓（幂等，不贵 ✓）
-        float rad = _radius_eff()
-        r.setColor(_bg)
+        layout()   // 文字可能被外部改过 ⇒ 每帧兜一次尺寸 ✓（幂等，不贵 ✓）
+        float rad = radius_eff()
+        r.setColor(bg)
         r.fillRoundedRect(x, y, _w, _h, rad)
-        if _drawBorder and _bd != 0 {
-            r.setColor(_bd)
+        if _drawBorder and bd != 0 {
+            r.setColor(bd)
             r.drawRoundedRect(x, y, _w, _h, rad)
         }
         // 文字位置：三个对齐都按**实测**文字宽高算 ⇒ 只居中一次 ✓
         // （`set_pos` 不改 Label 的自然尺寸 ⇒ 每帧重复调用是幂等的 ✓）
         float tw = _lbl.get_w()
         float th = _lbl.get_h()
-        float tx = x + _padX
-        if _align == Badge.ALIGN_CENTER { tx = x + (_w - tw) / 2.0 }
-        else if _align == Badge.ALIGN_RIGHT { tx = x + _w - _padX - tw }
+        float tx = x + padX
+        if textAlign == Badge.ALIGN_CENTER { tx = x + (_w - tw) / 2.0 }
+        else if textAlign == Badge.ALIGN_RIGHT { tx = x + _w - padX - tw }
         _lbl.set_pos(tx, y + (_h - th) / 2.0)
         _lbl.render(r)
     }

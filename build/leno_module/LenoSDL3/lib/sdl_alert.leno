@@ -29,56 +29,56 @@ export struct Alert impl Widget {
 
     float x = 0.0, y = 0.0
     float _w = 320.0, _h = 0.0
-    float _padX = 14.0
-    float _padY = 9.0
-    float _radius = 8.0
-    int _kind = KIND_WARN
-    bool _accent = true        // 左侧色条 ✓
-    bool _autoH = true         // 高度按行数自适应（opts 给了 h ⇒ false ✓）
-    float _accentW = 4.0
-    float _lx = 0.0            // 文字相对本控件左上角的 x 偏移（含色条 + 图标 + 间距 ✓）
-    string _icon = ""          // 前置图标字符（默认无 ⇒ 老行为 ✓）
-    Font? _fI = null           // 图标字体（与正文同字号 ✓）
-    Color _bg = #FFF8E1FF
-    Color _bd = #F5C77EFF
-    Color _ac = #B54708FF
+    pri float padX = 14.0
+    pri float padY = 9.0
+    pri float radius = 8.0
+    pri int kind = KIND_WARN
+    pri bool accent = true        // 左侧色条 ✓
+    pri bool autoH = true         // 高度按行数自适应（opts 给了 h ⇒ false ✓）
+    pri float accentW = 4.0
+    pri float lx = 0.0            // 文字相对本控件左上角的 x 偏移（含色条 + 图标 + 间距 ✓）
+    pri string icon = ""          // 前置图标字符（默认无 ⇒ 老行为 ✓）
+    pri Font? fI = null           // 图标字体（与正文同字号 ✓）
+    pri Color bg = #FFF8E1FF
+    pri Color bd = #F5C77EFF
+    pri Color ac = #B54708FF
     // ⚠ struct 字段不能用 `= new Label()` 当默认值（编译报"默认值不是常量表达式"✗）
     //   ⇒ 可空字段 + 使用前判空（同 Label 的 `Font? _font` / ComboBox 的 `_edit` ✓）
     Label? _lbl = null
     bool _loaded = false, visible = true
 
     // 四套预设（浅色界面）
-    func _applyKind(int k) {
-        _kind = k
+    pri func applyKind(int k) {
+        kind = k
         if k == Alert.KIND_INFO {
-            _bg = #EFF6FFFF; _bd = #BFDBFEFF; _ac = #1D4ED8FF
+            bg = #EFF6FFFF; bd = #BFDBFEFF; ac = #1D4ED8FF
         } else if k == Alert.KIND_WARN {
-            _bg = #FFF8E1FF; _bd = #F5C77EFF; _ac = #B54708FF
+            bg = #FFF8E1FF; bd = #F5C77EFF; ac = #B54708FF
         } else if k == Alert.KIND_DANGER {
-            _bg = #FEF2F2FF; _bd = #FECACAFF; _ac = #B42318FF
+            bg = #FEF2F2FF; bd = #FECACAFF; ac = #B42318FF
         } else {
-            _bg = #ECFDF3FF; _bd = #A6F4C5FF; _ac = #027A48FF
+            bg = #ECFDF3FF; bd = #A6F4C5FF; ac = #027A48FF
         }
     }
     // 左侧色条占用的横向宽度（含与文字的间距 ✓）
-    func _accent_off(): float {
-        if _accent { return _accentW + 6.0 }
+    pri func accent_off(): float {
+        if accent { return accentW + 6.0 }
         return 0.0
     }
     // 图标占用的横向宽度（图标实测宽 + 间距；无图标 ⇒ 0 ✓）
     //   ⚠ 用**实测宽**而不是固定值：▲ / ● / → 这类符号宽度并不相同 ✓
-    func _icon_off(): float {
-        if _icon == "" { return 0.0 }
-        if _fI == null or not _fI.ok { return 0.0 }
-        var[float, float](iw, ih) = _fI.measureString(_icon)
+    pri func icon_off(): float {
+        if icon == "" { return 0.0 }
+        if fI == null or not fI.ok { return 0.0 }
+        var[float, float](iw, ih) = fI.measureString(icon)
         return iw + 6.0
     }
     // 文字左偏移 = 内边距 +（有色条时）色条宽 +（有图标时）图标宽 + 间距 ✓
-    func _calc_lx() { _lx = _padX + _accent_off() + _icon_off() }
-    func _wrap_w(): float { return _w - 2.0 * _padX - _accent_off() - _icon_off() }
+    pri func calc_lx() { lx = padX + accent_off() + icon_off() }
+    pri func wrap_w(): float { return _w - 2.0 * padX - accent_off() - icon_off() }
 
     // Alert 认的键（与本文件 set() 里的 opts.get 一一对应 ✓）
-    func _alert_keys(): Array[string] {
+    pri func alert_keys(): Array[string] {
         return ["kind", "x", "y", "w", "h", "pad_x", "pad_y", "radius",
                 "accent", "accent_w", "bg_color", "border_color", "accent_color",
                 "text_color", "font_size", "icon", "wrap_w", "wrap", "text", "visible"]
@@ -86,57 +86,57 @@ export struct Alert impl Widget {
 
     func set(Dict opts) {
         // ★ 选项对账（2026-09-29）：不认识的键此前**静默丢弃** ✗ ⇒ 现在报一行警告 ✓
-        dochk.check("Alert", opts, _alert_keys())
-        _applyKind(opts.get("kind", Alert.KIND_WARN))
+        dochk.check("Alert", opts, alert_keys())
+        applyKind(opts.get("kind", Alert.KIND_WARN))
         x = opts.get("x", 0.0)
         y = opts.get("y", 0.0)
         _w = opts.get("w", 320.0)
-        _padX = opts.get("pad_x", 14.0)
-        _padY = opts.get("pad_y", 9.0)
-        _radius = opts.get("radius", 8.0)
-        _accent = opts.get("accent", true)
-        _accentW = opts.get("accent_w", 4.0)
-        if opts.get("bg_color") is Color => t { _bg = t }
-        if opts.get("border_color") is Color => t { _bd = t }
-        if opts.get("accent_color") is Color => t { _ac = t }
+        padX = opts.get("pad_x", 14.0)
+        padY = opts.get("pad_y", 9.0)
+        radius = opts.get("radius", 8.0)
+        accent = opts.get("accent", true)
+        accentW = opts.get("accent_w", 4.0)
+        if opts.get("bg_color") is Color => t { bg = t }
+        if opts.get("border_color") is Color => t { bd = t }
+        if opts.get("accent_color") is Color => t { ac = t }
         float hOpt = opts.get("h", 0.0)
-        _autoH = hOpt <= 0.0
+        autoH = hOpt <= 0.0
         _h = hOpt
-        Color tc = _ac
+        Color tc = ac
         if opts.get("text_color") is Color => t { tc = t }
         float fs = opts.get("font_size", 12.0)
         // 前置图标（可选）：**先取字体再算左偏移** —— `_icon_off()` 依赖字体实测宽 ✓
-        _icon = opts.get("icon", "")
-        if _icon != "" { _fI = fnt.acquireFontAuto(fs) }
-        _calc_lx()
+        icon = opts.get("icon", "")
+        if icon != "" { fI = fnt.acquireFontAuto(fs) }
+        calc_lx()
         // 折行宽度：显式 `wrap_w` > 0 用它，否则按"内容区宽 - 两侧内边距 - 色条"✓
         float bw = opts.get("wrap_w", 0.0)
-        if bw <= 0.0 { bw = _wrap_w() }
+        if bw <= 0.0 { bw = wrap_w() }
         // 提示条默认**自动折行**（长文案本来就不该横着溢出去 ✓）；短文案折行不生效、零影响 ✓
         bool wrap = opts.get("wrap", true)
-        _lbl = lbl.createLabel({x:x + _lx, y:y + _padY, text:opts.get("text", ""), font_size:fs,
+        _lbl = lbl.createLabel({x:x + lx, y:y + padY, text:opts.get("text", ""), font_size:fs,
                                 text_color:tc, wrap:wrap, wrap_w:bw})
-        _measure()
+        measure()
         visible = opts.get("visible", true)
         _loaded = true
     }
 
     // 高度自适应：按 Label 排完版后的实际高度 ✓（Label 多行排版会把 `_h` 写成 行数×行高 ✓）
-    func _measure() {
+    pri func measure() {
         if _lbl == null { return }
-        if _autoH { _h = _lbl.get_h() + 2.0 * _padY }
+        if autoH { _h = _lbl.get_h() + 2.0 * padY }
     }
 
     // ==================== 设置方法 ====================
     func set_text(string t) {
         if _lbl == null { return }
         _lbl.set_text(t)
-        _measure()
+        measure()
         core.markFrameRedraw()
     }
     func set_kind(int k) {
-        _applyKind(k)
-        if _lbl != null { _lbl.set_text_color(_ac) }
+        applyKind(k)
+        if _lbl != null { _lbl.set_text_color(ac) }
         core.markFrameRedraw()
     }
     func set_visible(bool v) { visible = v }
@@ -158,12 +158,12 @@ export struct Alert impl Widget {
         _w = sw
         if _lbl != null {
             // 宽度变了（如被布局拉伸）⇒ 折行宽度跟着变，否则文字还按老宽度排 ✓
-            _calc_lx()
-            _lbl.set_wrap_w(_wrap_w())
+            calc_lx()
+            _lbl.set_wrap_w(wrap_w())
         }
         // ⚠ 自适应模式必须**重排之后再定高**：宽度一变行数就可能变 ✗
         //   （若直接把 `_h` 钉成调用方传来的旧自然高，换行后就会文字溢出或下半留白 ✓）
-        if _autoH { _measure() }
+        if autoH { measure() }
         else if sh > 0.0 { _h = sh }
     }
 
@@ -174,29 +174,29 @@ export struct Alert impl Widget {
     func render(Renderer r) {
         if not _loaded or not visible { return }
         if _lbl == null { return }
-        _measure()   // 文字被改过 ⇒ 每帧兜一次高度 ✓（幂等 ✓）
-        r.setColor(_bg)
-        r.fillRoundedRect(x, y, _w, _h, _radius)
-        if _bd != 0 {
-            r.setColor(_bd)
-            r.drawRoundedRect(x, y, _w, _h, _radius)
+        measure()   // 文字被改过 ⇒ 每帧兜一次高度 ✓（幂等 ✓）
+        r.setColor(bg)
+        r.fillRoundedRect(x, y, _w, _h, radius)
+        if bd != 0 {
+            r.setColor(bd)
+            r.drawRoundedRect(x, y, _w, _h, radius)
         }
         // 左侧色条：与底同圆角、宽 accent_w ⇒ 视觉上是"贴边的一条"✓
-        if _accent {
-            r.setColor(_ac)
-            r.fillRoundedRect(x, y, _accentW, _h, _radius)
+        if accent {
+            r.setColor(ac)
+            r.fillRoundedRect(x, y, accentW, _h, radius)
         }
         // 前置图标：排在色条右侧、与首行文字顶边对齐 ✓（`_lx` 已把它的宽度算进去 ✓）
-        if _icon != "" and _fI != null and _fI.ok {
-            r.drawText(_fI, _icon, x + _padX + _accent_off(), y + _padY, _ac)
+        if icon != "" and fI != null and fI.ok {
+            r.drawText(fI, icon, x + padX + accent_off(), y + padY, ac)
         }
-        _lbl.set_pos(x + _lx, y + _padY)
+        _lbl.set_pos(x + lx, y + padY)
         _lbl.render(r)
     }
 
     func dispose() {
-        if _fI != null and _fI.ok { fnt.releaseFont(_fI) }
-        _fI = null
+        if fI != null and fI.ok { fnt.releaseFont(fI) }
+        fI = null
         if _lbl == null { return }
         _lbl.dispose()
         _lbl = null

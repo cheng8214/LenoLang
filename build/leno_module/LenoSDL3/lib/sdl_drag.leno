@@ -25,21 +25,21 @@ export struct DragHint {
     // ── 样式配置 ──
     Font? _font = null           // 字体缓存（懒加载）
     float _fontSize = 13.0       // 字体大小
-    float _padX = 10.0           // 内边距 X
-    float _padY = 5.0            // 内边距 Y
-    float _radius = 4.0          // 圆角半径
-    float _offsetX = 14.0        // 相对鼠标的 X 偏移
-    float _offsetY = 14.0        // 相对鼠标的 Y 偏移
+    pri float padX = 10.0           // 内边距 X
+    pri float padY = 5.0            // 内边距 Y
+    pri float radius = 4.0          // 圆角半径
+    pri float offsetX = 14.0        // 相对鼠标的 X 偏移
+    pri float offsetY = 14.0        // 相对鼠标的 Y 偏移
     // 背景色（半透明）
-    Color _bgColor = #1E3C78DC
+    pri Color bgColor = #1E3C78DC
     // 边框色
-    Color _brColor = #508CDCFF
+    pri Color brColor = #508CDCFF
     // 文字色
-    Color _txColor = #FFFFFFFF
+    pri Color txColor = #FFFFFFFF
 
     // ── 运行时状态 ──
-    string _text = ""            // 显示文本
-    float _x = 0.0, _y = 0.0    // 鼠标位置
+    pri string text = ""            // 显示文本
+    pri float x = 0.0, y = 0.0    // 鼠标位置
     bool _visible = false        // 是否可见
 
     // 初始化（通过 Dict 配置样式）
@@ -47,18 +47,18 @@ export struct DragHint {
     func set(Dict opts) {
         dochk.check("sdl_drag", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
         _fontSize = opts.get("font_size", 13.0)
-        _padX = opts.get("pad_x", 10.0)
-        _padY = opts.get("pad_y", 5.0)
-        _radius = opts.get("radius", 4.0)
-        _offsetX = opts.get("offset_x", 14.0)
-        _offsetY = opts.get("offset_y", 14.0)
-        if opts.get("bg_color") is Color => t { _bgColor = t }
-        if opts.get("border_color") is Color => t { _brColor = t }
+        padX = opts.get("pad_x", 10.0)
+        padY = opts.get("pad_y", 5.0)
+        radius = opts.get("radius", 4.0)
+        offsetX = opts.get("offset_x", 14.0)
+        offsetY = opts.get("offset_y", 14.0)
+        if opts.get("bg_color") is Color => t { bgColor = t }
+        if opts.get("border_color") is Color => t { brColor = t }
         var bga = opts.get("bg_a")
-        if bga is int { _bgColor = theme.withAlpha(_bgColor, bga) }
+        if bga is int { bgColor = theme.withAlpha(bgColor, bga) }
         var bra = opts.get("border_a")
-        if bra is int { _brColor = theme.withAlpha(_brColor, bra) }
-        if opts.get("text_color") is Color => t { _txColor = t }
+        if bra is int { brColor = theme.withAlpha(brColor, bra) }
+        if opts.get("text_color") is Color => t { txColor = t }
     }
 
     // 确保字体已加载
@@ -69,42 +69,42 @@ export struct DragHint {
 
     // 显示拖拽提示（设置文本 + 位置 + 可见）
     func show(string text, float x, float y) {
-        _text = text
-        _x = x; _y = y
+        text = text
+        x = x; y = y
         _visible = true
         core.markFrameRedraw()
     }
 
     // 仅更新位置（不改变文本）
     func updatePos(float x, float y) {
-        _x = x; _y = y
+        x = x; y = y
         if _visible { core.markFrameRedraw() }
     }
 
     // 隐藏
     func hide() {
         _visible = false
-        _text = ""
+        text = ""
     }
 
     // 渲染（作为 overlay 回调使用）
     func render(Renderer r) {
-        if not _visible or _text == "" { return }
+        if not _visible or text == "" { return }
         _ensureFont()
         if _font == null or not _font.ok { return }
-        var[float, float](szw, szh) = _font.measureString(_text)
-        float boxW = szw + _padX * 2.0
-        float boxH = szh + _padY * 2.0
-        float bx = _x + _offsetX
-        float by = _y + _offsetY
+        var[float, float](szw, szh) = _font.measureString(text)
+        float boxW = szw + padX * 2.0
+        float boxH = szh + padY * 2.0
+        float bx = x + offsetX
+        float by = y + offsetY
         // 半透明圆角背景
-        r.setColor(_bgColor)
-        r.fillRoundedRect(bx, by, boxW, boxH, _radius)
+        r.setColor(bgColor)
+        r.fillRoundedRect(bx, by, boxW, boxH, radius)
         // 圆角边框
-        r.setColor(_brColor)
-        r.drawRoundedRect(bx, by, boxW, boxH, _radius)
+        r.setColor(brColor)
+        r.drawRoundedRect(bx, by, boxW, boxH, radius)
         // 文字
-        r.drawText(_font, _text, bx + _padX, by + _padY, _txColor)
+        r.drawText(_font, text, bx + padX, by + padY, txColor)
     }
 
     // 释放字体资源

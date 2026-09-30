@@ -182,13 +182,13 @@ export struct TrayMenu {
 	    Ptr[u8]? _ptr
 	    bool    _isSub = false
 
-    func _insert(string label, int flags, int pos): Ptr[u8] {
+    pri func insert(string label, int flags, int pos): Ptr[u8] {
         if _ptr == null { return null }
         return _lib.SDL_InsertTrayEntryAt(_ptr, pos, label, flags)
     }
 
     func addButton(string label, any cb): Ptr[u8] {
-        Ptr[u8] e = _insert(label, TrayEntryFlag.BUTTON, -1)
+        Ptr[u8] e = insert(label, TrayEntryFlag.BUTTON, -1)
         if e != null and cb != null { _bind(e, cb) }
         return e
     }
@@ -196,13 +196,13 @@ export struct TrayMenu {
     func addCheckbox(string label, bool checked, any cb): Ptr[u8] {
         int f = TrayEntryFlag.CHECKBOX
         if checked { f = f | TrayEntryFlag.CHECKED }
-        Ptr[u8] e = _insert(label, f, -1)
+        Ptr[u8] e = insert(label, f, -1)
         if e != null and cb != null { _bind(e, cb) }
         return e
     }
 
     func addSubmenu(string label): TrayMenu {
-        Ptr[u8] entry = _insert(label, TrayEntryFlag.SUBMENU, -1)
+        Ptr[u8] entry = insert(label, TrayEntryFlag.SUBMENU, -1)
         if entry == null { return null }
         Ptr[u8] subPtr = _lib.SDL_CreateTraySubmenu(entry)
         TrayMenu m = new TrayMenu()
@@ -222,7 +222,7 @@ export struct TrayMenu {
     }
 
     func insertButtonAt(int pos, string label, any cb): Ptr[u8] {
-        Ptr[u8] e = _insert(label, TrayEntryFlag.BUTTON, pos)
+        Ptr[u8] e = insert(label, TrayEntryFlag.BUTTON, pos)
         if e != null and cb != null { _bind(e, cb) }
         return e
     }

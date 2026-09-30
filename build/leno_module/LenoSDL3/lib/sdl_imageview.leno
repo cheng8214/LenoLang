@@ -26,61 +26,61 @@ export struct ImageView impl Widget {
 
     float x = 0.0, y = 0.0
     float _w = 100.0, _h = 100.0
-    string _imagePath = ""          // 图片路径
+    pri string imagePath = ""          // 图片路径
     int _mode = MODE_ASPECT_FIT    // 内容模式（MODE_ASPECT_FIT/STRETCH/ASPECT_FILL）
-    float _radius = 0.0             // 圆角半径
-    bool _showBorder = false        // 是否显示边框
-    Color _bdrColor = #5A5F6EFF  // 边框色
-    int _brdA = 200                 // 边框透明度
-    Color _bgColor = 0         // 背景填充色（0=透明不填充）
-    int _alpha = 255                // 图片透明度 0~255
-    Color _tint = -1  // 着色（-1=不着色，其余为 #RRGGBBAA 着色）
-    int _cursor = -1                // 鼠标样式（-1=不改变，SystemCursor.POINTER=手型）
-    func():void _onClick            // 点击回调
-    bool hover = false, _wasHover = false
+    pri float radius = 0.0             // 圆角半径
+    pri bool showBorder = false        // 是否显示边框
+    pri Color bdrColor = #5A5F6EFF  // 边框色
+    pri int brdA = 200                 // 边框透明度
+    pri Color bgColor = 0         // 背景填充色（0=透明不填充）
+    pri int alpha = 255                // 图片透明度 0~255
+    pri Color tint = -1  // 着色（-1=不着色，其余为 #RRGGBBAA 着色）
+    pri int cursor = -1                // 鼠标样式（-1=不改变，SystemCursor.POINTER=手型）
+    pri func():void onClick            // 点击回调
+    pri bool hover = false, wasHover = false
     bool enabled = true, visible = true, _loaded = false
     string _tip = ""               // 悬停提示文本
-    Ptr[u8]? _tex                   // 图片纹理（懒加载）
-    string _loadedPath = ""         // 已加载的路径（避免重复加载）
+    pri Ptr[u8]? tex                   // 图片纹理（懒加载）
+    pri string loadedPath = ""         // 已加载的路径（避免重复加载）
     float _natW = 0.0, _natH = 0.0  // 图片原始尺寸
 
 
     func set(Dict opts) {
         dochk.check("sdl_imageview", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
         Theme th = theme.getTheme()
-        _bdrColor = th.border
+        bdrColor = th.border
         x      = opts.get("x", 0)
         y      = opts.get("y", 0)
         _w     = opts.get("w", 100)
         _h     = opts.get("h", 100)
-        _imagePath = opts.get("image_path", "")
+        imagePath = opts.get("image_path", "")
         _mode  = opts.get("image_mode", MODE_ASPECT_FIT)   // MODE_ASPECT_FIT/STRETCH/ASPECT_FILL
-        _radius = opts.get("radius", 0.0)
-        _showBorder = opts.get("border", false)
-        _alpha = opts.get("alpha", 255)
-        _cursor = opts.get("cursor", -1)
+        radius = opts.get("radius", 0.0)
+        showBorder = opts.get("border", false)
+        alpha = opts.get("alpha", 255)
+        cursor = opts.get("cursor", -1)
         enabled = opts.get("enabled", true)
         visible = opts.get("visible", true)
         _tip = opts.get("tip", "")
-        if opts.get("bg_color") is Color => t { _bgColor = t }
-        if opts.get("border_color") is Color => t { _bdrColor = t }
-        _brdA = opts.get("border_alpha", 200)
-        if opts.get("image_tint") is Color => t { _tint = t }
-        _tex = null; _loadedPath = ""
+        if opts.get("bg_color") is Color => t { bgColor = t }
+        if opts.get("border_color") is Color => t { bdrColor = t }
+        brdA = opts.get("border_alpha", 200)
+        if opts.get("image_tint") is Color => t { tint = t }
+        tex = null; loadedPath = ""
         _loaded = true
     }
 
     // ==================== 设置方法 ====================
     func set_image(string path) {
-        if _tex != null { core.lib().SDL_DestroyTexture(_tex); _tex = null }
-        _imagePath = path; _loadedPath = ""; _tex = null
+        if tex != null { core.lib().SDL_DestroyTexture(tex); tex = null }
+        imagePath = path; loadedPath = ""; tex = null
     }
     func set_mode(int mode) { _mode = mode }
-    func set_radius(float r) { _radius = r }
-    func set_border(bool b) { _showBorder = b }
-    func set_alpha(int a) { _alpha = a }
-    func set_tint(Color color) { _tint = color }
-    func set_cursor(int c) { _cursor = c }
+    func set_radius(float r) { radius = r }
+    func set_border(bool b) { showBorder = b }
+    func set_alpha(int a) { alpha = a }
+    func set_tint(Color color) { tint = color }
+    func set_cursor(int c) { cursor = c }
     func set_enabled(bool e) { enabled = e }
     func set_visible(bool v) { visible = v }
     func is_visible(): bool { return visible }
@@ -94,21 +94,21 @@ export struct ImageView impl Widget {
     func set_pos(float px, float py) { x = px; y = py }
     func set_size(float sw, float sh) { _w = sw; _h = sh }
     func is_hover(): bool { return hover }
-    func get_image_path(): string { return _imagePath }
+    func get_image_path(): string { return imagePath }
 
-    func on_click(func():void cb) { _onClick = cb }
+    func on_click(func():void cb) { onClick = cb }
 
     func contains(float mx, float my): bool {
         return mx >= x and mx <= x + _w and my >= y and my <= y + _h
     }
 
     // 懒加载图片纹理（需有效渲染器）
-    func _ensure_tex(Renderer r) {
-        if _imagePath != "" and _tex == null and _loadedPath != _imagePath {
-            _tex = img.loadTexture(r.handle, _imagePath)
-            _loadedPath = _imagePath
-            if _tex != null {
-                var[float, float](_nw, _nh) = r.getTextureSize(_tex)
+    pri func ensure_tex(Renderer r) {
+        if imagePath != "" and tex == null and loadedPath != imagePath {
+            tex = img.loadTexture(r.handle, imagePath)
+            loadedPath = imagePath
+            if tex != null {
+                var[float, float](_nw, _nh) = r.getTextureSize(tex)
                 _natW = _nw; _natH = _nh
             }
         }
@@ -123,38 +123,38 @@ export struct ImageView impl Widget {
         if core.inPopupCapture(mx, my) { return }
 
         if ev.isMouseMotion() {
-            _wasHover = hover
+            wasHover = hover
             hover = contains(mx, my)
-            if hover != _wasHover { core.markFrameRedraw() } else { core.markFrameMotion() }
-            if _cursor >= 0 {
-                if hover { core.requestCursor(_cursor) }
+            if hover != wasHover { core.markFrameRedraw() } else { core.markFrameMotion() }
+            if cursor >= 0 {
+                if hover { core.requestCursor(cursor) }
             }
             if hover and _tip != "" { tip.tipReport(_tip, mx, my) }
         }
         if ev.isMouseButtonDown() and contains(mx, my) {
             hover = true
             core.markFrameRedraw()
-            if _onClick != null { _onClick() }
+            if onClick != null { onClick() }
         }
     }
 
     // ==================== 渲染 ====================
     func render(Renderer r) {
         if not _loaded or not visible { return }
-        _ensure_tex(r)
+        ensure_tex(r)
 
         // 背景填充（可选）
-        if _bgColor != 0 {
-            r.setColor(_bgColor)
-            if _radius > 0.0 { r.fillRoundedRect(x, y, _w, _h, _radius) }
+        if bgColor != 0 {
+            r.setColor(bgColor)
+            if radius > 0.0 { r.fillRoundedRect(x, y, _w, _h, radius) }
             else { r.fillRect(x, y, _w, _h) }
         }
 
         // 图片绘制
-        if _tex != null {
-            r.setTextureAlpha(_tex, _alpha)
-            if _tint >= 0 { r.setTextureColor(_tex, _tint) }
-            else { r.setTextureColor(_tex, #FFFFFFFF) }
+        if tex != null {
+            r.setTextureAlpha(tex, alpha)
+            if tint >= 0 { r.setTextureColor(tex, tint) }
+            else { r.setTextureColor(tex, #FFFFFFFF) }
 
             float dw = _w; float dh = _h
             float dx = x; float dy = y
@@ -177,23 +177,23 @@ export struct ImageView impl Widget {
                     dx = x + (_w - dw) / 2.0; dy = y + (_h - dh) / 2.0
                 }
             }
-            r.drawTextureAt(_tex, dx, dy, dw, dh)
+            r.drawTextureAt(tex, dx, dy, dw, dh)
         }
 
         // 边框
-        if _showBorder {
-            Color bc = _bdrColor
-            int ba = _brdA
-            if hover { bc = theme.brighten(_bdrColor, 30); ba = 255 }
-            if not enabled { bc = theme.packColor(theme.colorR(_bdrColor) / 2, theme.colorG(_bdrColor) / 2, theme.colorB(_bdrColor) / 2) }
+        if showBorder {
+            Color bc = bdrColor
+            int ba = brdA
+            if hover { bc = theme.brighten(bdrColor, 30); ba = 255 }
+            if not enabled { bc = theme.packColor(theme.colorR(bdrColor) / 2, theme.colorG(bdrColor) / 2, theme.colorB(bdrColor) / 2) }
             r.setColor(theme.withAlpha(bc, ba))
-            if _radius > 0.0 { r.drawRoundedRect(x, y, _w, _h, _radius) }
+            if radius > 0.0 { r.drawRoundedRect(x, y, _w, _h, radius) }
             else { r.drawRect(x, y, _w, _h) }
         }
     }
 
     func dispose() {
-        if _tex != null { core.lib().SDL_DestroyTexture(_tex); _tex = null }
+        if tex != null { core.lib().SDL_DestroyTexture(tex); tex = null }
     }
 }
 

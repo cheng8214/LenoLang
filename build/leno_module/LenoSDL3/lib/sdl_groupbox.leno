@@ -24,35 +24,35 @@ func _opts_keys(): Array[string] {
 }
 export struct GroupBox impl Widget, Themeable {
     float x = 0.0, y = 0.0, w = 300.0, h = 200.0
-    string _title = "Group"
+    pri string title = "Group"
     float _fontSize = 14.0
-    string _fontPath = ""
-    int _fontStyle = 0
+    pri string fontPath = ""
+    pri int fontStyle = 0
     Font? _font
     // ★ 标题宽度缓存：标题不变时避免每帧 measureString
-    float _cachedTitleW = 0.0
-    float _cachedTitleH = 0.0
-    string _cachedTitleKey = "\x01"
+    pri float cachedTitleW = 0.0
+    pri float cachedTitleH = 0.0
+    pri string cachedTitleKey = "\x01"
     Array[Widget] children = []
     Widget? _layoutChild          // 自动布局子控件：每帧自动同步到 GroupBox 内部区域（减去 padding）
-    float _layPad = 0.0          // _layoutChild 的内边距
-    Color _bgColor = #2C2E36FF        // 背景色
-    Color _bdrColor = #5A5F6EFF    // 边框色
-    Color _titleColor = #C8CDD7FF  // 标题文字色
-    int _brdA = 200                            // 边框透明度
-    float _radius = 8.0
-    float _titlePad = 8.0                      // 标题左右间距
+    pri float layPad = 0.0          // _layoutChild 的内边距
+    pri Color bgColor = #2C2E36FF        // 背景色
+    pri Color bdrColor = #5A5F6EFF    // 边框色
+    pri Color titleColor = #C8CDD7FF  // 标题文字色
+    pri int brdA = 200                            // 边框透明度
+    pri float radius = 8.0
+    pri float titlePad = 8.0                      // 标题左右间距
     bool _clip = true
     bool _loaded = false, enabled = true, visible = true
-    Ptr[u8] _hwnd
+    pri Ptr[u8] hwnd
 
-    func _ensure_font() {
+    pri func ensure_font() {
         if _font == null or not _font.ok {
             if _font != null and _font.ok { fnt.releaseFont(_font) }
-            if _fontPath != "" { _font = fnt.acquireFont(_fontPath, _fontSize) }
+            if fontPath != "" { _font = fnt.acquireFont(fontPath, _fontSize) }
             else { _font = fnt.acquireFontAuto(_fontSize) }
-            if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
-            _cachedTitleKey = "\x01"   // 字体变化，缓存失效
+            if _font.ok and fontStyle != 0 { _font.setStyle(fontStyle) }
+            cachedTitleKey = "\x01"   // 字体变化，缓存失效
         }
     }
 
@@ -60,45 +60,45 @@ export struct GroupBox impl Widget, Themeable {
     func set(Dict opts) {
         dochk.check("sdl_groupbox", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
         Theme th = theme.getTheme()
-        _bgColor = th.bgAlt
-        _bdrColor = th.border
-        _titleColor = th.txtHeader
+        bgColor = th.bgAlt
+        bdrColor = th.border
+        titleColor = th.txtHeader
         x      = opts.get("x", 0)
         y      = opts.get("y", 0)
         w      = opts.get("w", 300)
         h      = opts.get("h", 200)
-        _title = opts.get("title", "Group")
+        title = opts.get("title", "Group")
         _fontSize = opts.get("font_size", 14)
-        _fontPath = opts.get("font_path", "")
-        _fontStyle = opts.get("font_style", 0)
-        _radius = opts.get("radius", 8.0)
-        _titlePad = opts.get("title_pad", 8.0)
-        _brdA = opts.get("border_alpha", 200)
+        fontPath = opts.get("font_path", "")
+        fontStyle = opts.get("font_style", 0)
+        radius = opts.get("radius", 8.0)
+        titlePad = opts.get("title_pad", 8.0)
+        brdA = opts.get("border_alpha", 200)
         _clip = opts.get("clip", true)
         enabled = opts.get("enabled", true)
         visible = opts.get("visible", true)
-        if opts.get("bg_color") is Color => t { _bgColor = t }
-        if opts.get("border_color") is Color => t { _bdrColor = t }
-        if opts.get("title_color") is Color => t { _titleColor = t }
-        _ensure_font()
+        if opts.get("bg_color") is Color => t { bgColor = t }
+        if opts.get("border_color") is Color => t { bdrColor = t }
+        if opts.get("title_color") is Color => t { titleColor = t }
+        ensure_font()
         children = []
         _loaded = true
     }
 
     // ==================== 设置方法 ====================
-    func set_title(string t) { _title = t; _cachedTitleKey = "\x01" }
+    func set_title(string t) { title = t; cachedTitleKey = "\x01" }
     func add(Widget c): Widget {
         children.add(c)
-        if _hwnd != null { _pass_hwnd(c, _hwnd) }
+        if hwnd != null { pass_hwnd(c, hwnd) }
         return c
     }
     func _bind_window(Ptr[u8] hwnd) {
-        _hwnd = hwnd
+        hwnd = hwnd
         var lc = _layoutChild
-        if lc is Widget { _pass_hwnd(lc, hwnd) }
-        for children to c { _pass_hwnd(c, hwnd) }
+        if lc is Widget { pass_hwnd(lc, hwnd) }
+        for children to c { pass_hwnd(c, hwnd) }
     }
-    func _pass_hwnd(Widget c, Ptr[u8] hwnd) {
+    pri func pass_hwnd(Widget c, Ptr[u8] hwnd) {
         lay.passWindowHandle(c, hwnd)
     }
     func remove(Widget c) {
@@ -109,19 +109,19 @@ export struct GroupBox impl Widget, Themeable {
     // 设置自动布局子控件：该控件会每帧自动同步位置/尺寸到 GroupBox 内部区域（减去 padding）。
     // 用法：gb.setLayout(SDL3.createVBox({...}))，GroupBox 移动/缩放时 VBox 自动跟随。
     // 这解决了 GroupBox 子控件用绝对坐标不跟随滚动的问题（与 Panel.setLayoutPadded 一致）。
-    func setLayout(Widget c) { _layoutChild = c; _layPad = 0.0 }
-    func setLayoutPadded(Widget c, float pad) { _layoutChild = c; _layPad = pad }
+    func setLayout(Widget c) { _layoutChild = c; layPad = 0.0 }
+    func setLayoutPadded(Widget c, float pad) { _layoutChild = c; layPad = pad }
 
     // 同步 _layoutChild 到 GroupBox 内部区域
-    func _syncLayoutChild() {
+    pri func syncLayoutChild() {
         var lc = _layoutChild
         if lc is Widget {
-            lc.set_pos(x + _layPad, y + _layPad)
-            lc.set_size(w - 2.0 * _layPad, h - 2.0 * _layPad)
+            lc.set_pos(x + layPad, y + layPad)
+            lc.set_size(w - 2.0 * layPad, h - 2.0 * layPad)
         }
     }
 
-    func set_bg_color(Color color) { _bgColor = color }
+    func set_bg_color(Color color) { bgColor = color }
     func set_enabled(bool e) { enabled = e }
     func set_visible(bool v) { visible = v }
     func is_visible(): bool { return visible }
@@ -134,7 +134,7 @@ export struct GroupBox impl Widget, Themeable {
 
     func process(Event ev) {
         if not _loaded or not enabled or not visible { return }
-        _syncLayoutChild()
+        syncLayoutChild()
         var lc = _layoutChild
         lc?.process(ev)
         for children to c { c.process(ev) }
@@ -143,11 +143,11 @@ export struct GroupBox impl Widget, Themeable {
     // ==================== 渲染 ====================
     func render(Renderer r) {
         if not _loaded or not visible { return }
-        _ensure_font()
+        ensure_font()
 
         // 背景
-        r.setColor(_bgColor)
-        r.fillRoundedRect(x, y, w, h, _radius)
+        r.setColor(bgColor)
+        r.fillRoundedRect(x, y, w, h, radius)
 
         // 裁剪子控件（只在真要裁剪时分配 rect ✓ 同 Panel：每帧 render ⇒ 不该无条件 malloc ✗）
         SDL_Rect? cr = null
@@ -158,7 +158,7 @@ export struct GroupBox impl Widget, Themeable {
             r.pushClipRect(c2.to_ptr())
             cr = c2
         }
-        _syncLayoutChild()
+        syncLayoutChild()
         var lc = _layoutChild
         lc?.render(r)
         for children to c { c.render(r) }
@@ -168,27 +168,27 @@ export struct GroupBox impl Widget, Themeable {
         }
 
         // 边框
-        r.setColor(theme.withAlpha(_bdrColor, _brdA))
-        r.drawRoundedRect(x, y, w, h, _radius)
+        r.setColor(theme.withAlpha(bdrColor, brdA))
+        r.drawRoundedRect(x, y, w, h, radius)
 
         // 标题：在边框顶部画一段背景色遮断边框，再绘制文字
-        if _font != null and _font.ok and _title != "" {
+        if _font != null and _font.ok and title != "" {
             // ★ 缓存：标题不变时直接复用
             float msw, msh
-            if _title == _cachedTitleKey {
-                msw = _cachedTitleW; msh = _cachedTitleH
+            if title == cachedTitleKey {
+                msw = cachedTitleW; msh = cachedTitleH
             } else {
-                var[float, float](_msw, _msh) = _font.measureString(_title)
+                var[float, float](_msw, _msh) = _font.measureString(title)
                 msw = _msw; msh = _msh
-                _cachedTitleW = msw; _cachedTitleH = msh; _cachedTitleKey = _title
+                cachedTitleW = msw; cachedTitleH = msh; cachedTitleKey = title
             }
-            float tx = x + _titlePad
+            float tx = x + titlePad
             float ty = y - msh / 2.0
             // 用背景色画一个矩形遮断边框（标题位置）
-            r.setColor(_bgColor)
+            r.setColor(bgColor)
             r.fillRect(tx - 3.0, ty, msw + 6.0, _float(msh))
             // 标题文字
-            r.drawText(_font, _title, tx, ty, _titleColor)
+            r.drawText(_font, title, tx, ty, titleColor)
         }
     }
 
@@ -201,9 +201,9 @@ export struct GroupBox impl Widget, Themeable {
 
     // ==================== 运行时主题切换 ====================
     func applyTheme(Theme t) {
-        _bgColor = t.bgAlt
-        _bdrColor = t.border
-        _titleColor = t.txtHeader
+        bgColor = t.bgAlt
+        bdrColor = t.border
+        titleColor = t.txtHeader
     }
 }
 

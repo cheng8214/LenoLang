@@ -42,19 +42,19 @@ func _opts_keys(): Array[string] {
 }
 export struct GridLayout impl Widget {
     float x = 0.0, y = 0.0, w = 400.0, h = 300.0
-    int _cols = 2               // 列数
+    pri int cols = 2               // 列数
     float padX = 8.0, padY = 8.0
     float spacing = 8.0         // 通用间距
-    float _colSpacing = -1.0    // 列间距（-1 = 用 spacing）
-    float _rowSpacing = -1.0    // 行间距（-1 = 用 spacing）
-    Array[float] _colWeights   // 列权重（不等分时用），为空则等分
+    pri float colSpacing = -1.0    // 列间距（-1 = 用 spacing）
+    pri float rowSpacing = -1.0    // 行间距（-1 = 用 spacing）
+    pri Array[float] colWeights   // 列权重（不等分时用），为空则等分
 
     Array[Widget] _c = []
     Array[Dict]   _opt = []     // 每个子项的布局选项（align 等）
     Array[float]  _natW = []    // 子项添加时的自然宽度
     Array[float]  _natH = []    // 子项添加时的自然高度
     bool _loaded = false, visible = true, enabled = true
-    Ptr[u8] _hwnd
+    pri Ptr[u8] hwnd
 
 
     func set(Dict opts) {
@@ -63,15 +63,15 @@ export struct GridLayout impl Widget {
         y      = opts.get("y", 0)
         w      = opts.get("w", 400)
         h      = opts.get("h", 300)
-        _cols  = opts.get("cols", 2)
-        if _cols < 1 { _cols = 1 }
+        cols  = opts.get("cols", 2)
+        if cols < 1 { cols = 1 }
         padX   = opts.get("padX", 8)
         padY   = opts.get("padY", 8)
         spacing = opts.get("spacing", 8)
-        _colSpacing = opts.get("col_spacing", -1.0)
-        _rowSpacing = opts.get("row_spacing", -1.0)
+        colSpacing = opts.get("col_spacing", -1.0)
+        rowSpacing = opts.get("row_spacing", -1.0)
         var cw = opts.get("col_weights")
-        if cw is Array[float] { _colWeights = cw }
+        if cw is Array[float] { colWeights = cw }
         enabled = opts.get("enabled", true)
         visible = opts.get("visible", true)
         _loaded = true
@@ -82,7 +82,7 @@ export struct GridLayout impl Widget {
         if opts == null { opts = {} }
         _c.add(c); _opt.add(opts)
         _natW.add(c.get_w()); _natH.add(c.get_h())
-        if _hwnd != null { _pass_hwnd(c, _hwnd) }
+        if hwnd != null { pass_hwnd(c, hwnd) }
         return c
     }
     func remove(Widget c) {
@@ -92,10 +92,10 @@ export struct GridLayout impl Widget {
     func count(): int { return _c.len() }
 
     func _bind_window(Ptr[u8] hwnd) {
-        _hwnd = hwnd
-        for _c to c { _pass_hwnd(c, hwnd) }
+        hwnd = hwnd
+        for _c to c { pass_hwnd(c, hwnd) }
     }
-    func _pass_hwnd(Widget c, Ptr[u8] hwnd) {
+    pri func pass_hwnd(Widget c, Ptr[u8] hwnd) {
         lay.passWindowHandle(c, hwnd)
     }
 
@@ -116,13 +116,13 @@ export struct GridLayout impl Widget {
     // measure_h：行数 * 每行最大高度 + padding + 行间距
     func measure_h(): float {
         if not _loaded or _c.len() == 0 { return 2.0 * padY }
-        int nrows = (_c.len() + _cols - 1) / _cols
-        float rs = if _rowSpacing >= 0.0 then _rowSpacing else spacing
+        int nrows = (_c.len() + cols - 1) / cols
+        float rs = if rowSpacing >= 0.0 then rowSpacing else spacing
         float total = 2.0 * padY + rs * (nrows - 1)
         for nrows to r {
             float maxH = 0.0
-            int start = r * _cols
-            for _cols to ci {
+            int start = r * cols
+            for cols to ci {
                 int idx = start + ci
                 if idx < _c.len() {
                     float ch = _natH[idx]
@@ -136,15 +136,15 @@ export struct GridLayout impl Widget {
     // measure_w：cols * 每列最大宽度 + padding + 列间距
     func measure_w(): float {
         if not _loaded or _c.len() == 0 { return 2.0 * padX }
-        float cs = if _colSpacing >= 0.0 then _colSpacing else spacing
-        float total = 2.0 * padX + cs * (_cols - 1)
-        for _cols to ci {
+        float cs = if colSpacing >= 0.0 then colSpacing else spacing
+        float total = 2.0 * padX + cs * (cols - 1)
+        for cols to ci {
             float maxW = 0.0
             int idx = ci
             while idx < _c.len() {
                 float cw = _natW[idx]
                 if cw > maxW { maxW = cw }
-                idx = idx + _cols
+                idx = idx + cols
             }
             total = total + maxW
         }
@@ -152,14 +152,14 @@ export struct GridLayout impl Widget {
     }
 
     // ==================== 布局计算 ====================
-    func _relayout() {
+    pri func relayout() {
         if not _loaded { return }
         int n = _c.len()
         if n == 0 { return }
-        int nrows = (n + _cols - 1) / _cols
-        float cs = if _colSpacing >= 0.0 then _colSpacing else spacing
-        float rs = if _rowSpacing >= 0.0 then _rowSpacing else spacing
-        float innerW = w - 2.0 * padX - cs * (_cols - 1)
+        int nrows = (n + cols - 1) / cols
+        float cs = if colSpacing >= 0.0 then colSpacing else spacing
+        float rs = if rowSpacing >= 0.0 then rowSpacing else spacing
+        float innerW = w - 2.0 * padX - cs * (cols - 1)
         float innerH = h - 2.0 * padY - rs * (nrows - 1)
         if innerW < 0.0 { innerW = 0.0 }
         if innerH < 0.0 { innerH = 0.0 }
@@ -167,13 +167,13 @@ export struct GridLayout impl Widget {
         // 计算每列宽度
         Array[float] colW = []
         float sumWeight = 0.0
-        for _cols to ci {
+        for cols to ci {
             float wt = 1.0
-            if ci < _colWeights.len() { wt = _colWeights[ci] }
+            if ci < colWeights.len() { wt = colWeights[ci] }
             colW.add(wt)
             sumWeight = sumWeight + wt
         }
-        for _cols to ci {
+        for cols to ci {
             colW[ci] = innerW * colW[ci] / sumWeight
         }
 
@@ -181,8 +181,8 @@ export struct GridLayout impl Widget {
         Array[float] rowH = []
         for nrows to r {
             float maxH = 0.0
-            int start = r * _cols
-            for _cols to ci {
+            int start = r * cols
+            for cols to ci {
                 int idx = start + ci
                 if idx < n {
                     float ch = _natH[idx]
@@ -196,8 +196,8 @@ export struct GridLayout impl Widget {
         float startY = y + padY
         for nrows to r {
             float startX = x + padX
-            for _cols to ci {
-                int idx = r * _cols + ci
+            for cols to ci {
+                int idx = r * cols + ci
                 if idx < n {
                     Widget c = _c[idx]
                     Dict o = _opt[idx]
@@ -239,12 +239,12 @@ export struct GridLayout impl Widget {
     // ==================== Widget 接口 ====================
     func process(Event ev) {
         if not _loaded or not enabled or not visible { return }
-        _relayout()
+        relayout()
         for _c to c { c.process(ev) }
     }
     func render(Renderer r) {
         if not _loaded or not visible { return }
-        _relayout()
+        relayout()
         for _c to c { c.render(r) }
     }
     func dispose() { for _c to c { c.dispose() } }

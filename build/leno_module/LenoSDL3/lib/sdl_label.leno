@@ -24,52 +24,52 @@ export struct Label impl Widget, Themeable {
     string text = ""
     float x = 0.0, y = 0.0
     float _fontSize = 15.0       // 字体大小
-    string _fontPath = ""        // 字体路径（空则自动匹配）
-    int _fontStyle = 0           // 字体样式
+    pri string fontPath = ""        // 字体路径（空则自动匹配）
+    pri int fontStyle = 0           // 字体样式
     Font? _font                  // 字体缓存
-    Color _txtColor = #FFFFFFFF  // 文字色
-    int _align = ALIGN_LEFT          // 对齐（ALIGN_LEFT/CENTER/RIGHT）
+    pri Color txtColor = #FFFFFFFF  // 文字色
+    pri int textAlign = ALIGN_LEFT          // 对齐（ALIGN_LEFT/CENTER/RIGHT）
     float _w = 0.0; float _h = 16.0  // 缓存自然尺寸（供布局使用）
     bool _loaded = false
     bool visible = true
     bool enabled = true
-    bool hover = false, _wasHover = false
+    pri bool hover = false, wasHover = false
     string _tip = ""             // 悬停提示文本（空 = 不提示）
     // ── 截断/滚动支持 ──
     float max_w = 0.0            // 最大显示宽度（>0 时启用截断或滚动）
-    int _truncate = TRUNCATE_NONE    // 截断模式（TRUNCATE_NONE/ELLIPSIS/SCROLL）
-    string _fullText = ""        // 完整文本（截断模式下 tooltip 用）
-    float _scrollOffset = 0.0    // 滚动偏移（像素）
-    int _scrollDir = 1           // 滚动方向: 1=右→左, -1=左→右
-    int _scrollLastTick = 0      // 上次滚动时间戳
+    pri int truncate = TRUNCATE_NONE    // 截断模式（TRUNCATE_NONE/ELLIPSIS/SCROLL）
+    pri string fullText = ""        // 完整文本（截断模式下 tooltip 用）
+    pri float scrollOffset = 0.0    // 滚动偏移（像素）
+    pri int scrollDir = 1           // 滚动方向: 1=右→左, -1=左→右
+    pri int scrollLastTick = 0      // 上次滚动时间戳
     // ★ 渲染测量缓存：text 不变时避免每帧 measureString(text)
-    float _cachedTextW = 0.0     // 缓存的文字宽度
-    string _cachedTextKey = "\x01"  // 缓存对应的 text（用不可见字符做初值避免空串歧义）
-    string _cachedTruncText = ""    // _truncatedText 结果缓存
-    string _cachedTruncKey = "\x01" // _truncatedText 对应的 text 键
-    float _cachedTruncW = -1.0
+    pri float cachedTextW = 0.0     // 缓存的文字宽度
+    pri string cachedTextKey = "\x01"  // 缓存对应的 text（用不可见字符做初值避免空串歧义）
+    pri string cachedTruncText = ""    // _truncatedText 结果缓存
+    pri string cachedTruncKey = "\x01" // _truncatedText 对应的 text 键
+    pri float cachedTruncW = -1.0
     // ── 多行 / 自动换行 ──
     // 两者都**默认关** ⇒ `_lines` 保持空 ⇒ 渲染走的还是原来的单行路径，老界面逐像素不变 ✓
-    bool _wrap = false             // 按宽度自动折行（宽度取 `wrap_w`，未给则取 `max_w`）
-    float _wrapW = 0.0             // 折行宽度（0 = 用 `max_w`）
-    Array[string] _lines = []      // 排版后的行（**仅在多行/换行启用时非空** ⇒ 空即老路径 ✓）
-    float _lineH = 0.0             // 行高（= "Ag" 自然高，与单行的垂直居中口径一致 ✓）
+    pri bool wrap = false             // 按宽度自动折行（宽度取 `wrap_w`，未给则取 `max_w`）
+    pri float wrapW = 0.0             // 折行宽度（0 = 用 `max_w`）
+    pri Array[string] lines = []      // 排版后的行（**仅在多行/换行启用时非空** ⇒ 空即老路径 ✓）
+    pri float lineH = 0.0             // 行高（= "Ag" 自然高，与单行的垂直居中口径一致 ✓）
 
-    func _ensure_font() {
+    pri func ensure_font() {
         if _font == null or not _font.ok {
             if _font != null and _font.ok { fnt.releaseFont(_font) }
-            if _fontPath != "" {
-                _font = fnt.acquireFont(_fontPath, _fontSize)
+            if fontPath != "" {
+                _font = fnt.acquireFont(fontPath, _fontSize)
             } else {
                 _font = fnt.acquireFontAuto(_fontSize)
             }
-            if _font.ok and _fontStyle != 0 { _font.setStyle(_fontStyle) }
+            if _font.ok and fontStyle != 0 { _font.setStyle(fontStyle) }
         }
     }
 
     // ==================== set 初始化 ====================
     // Label 认的键 ✓（含 `w`/`h` —— 它们**不在**这里被读取，见下面 set() 里的显式提示 ✓）
-    func _label_keys(): Array[string] {
+    pri func label_keys(): Array[string] {
         return ["x", "y", "w", "h", "text", "font_size", "font_path", "font_style",
                 "text_color", "align", "wrap", "wrap_w", "max_w", "truncate",
                 "tip", "visible", "enabled"]
@@ -85,22 +85,22 @@ export struct Label impl Widget, Themeable {
                     "Label：'" + sz + "' 不生效 —— 布局尺寸请写在 add(label, {basis: N}) 里 ✓（父容器决定尺寸）")
             }
         }
-        dochk.check("Label", opts, _label_keys())
+        dochk.check("Label", opts, label_keys())
         Theme th = theme.getTheme()
-        _txtColor = th.txt
+        txtColor = th.txt
         text      = opts.get("text", "")
         x         = opts.get("x", 0)
         y         = opts.get("y", 0)
         _fontSize = opts.get("font_size", 15)
-        _fontPath = opts.get("font_path", "")
-        _fontStyle = opts.get("font_style", 0)
+        fontPath = opts.get("font_path", "")
+        fontStyle = opts.get("font_style", 0)
 
-        if opts.get("text_color") is Color => t { _txtColor = t }
+        if opts.get("text_color") is Color => t { txtColor = t }
 
         // 对齐
-        _align = opts.get("align", ALIGN_LEFT)
+        textAlign = opts.get("align", ALIGN_LEFT)
 
-        _ensure_font()
+        ensure_font()
         if _font.ok {
             if text != "" { var[float, float](_mw, _mh) = _font.measureString(text); _w = _mw } else { _w = 0.0 }
             var[float, float](_agw, _agh) = _font.measureString("Ag"); _h = _agh
@@ -109,15 +109,15 @@ export struct Label impl Widget, Themeable {
         _tip = opts.get("tip", "")
         // 截断/滚动支持
         max_w = opts.get("max_w", 0.0)
-        _truncate = opts.get("truncate", TRUNCATE_NONE)
-        _fullText = text
-        _scrollOffset = 0.0
-        _scrollDir = 1
-        _scrollLastTick = 0
+        truncate = opts.get("truncate", TRUNCATE_NONE)
+        fullText = text
+        scrollOffset = 0.0
+        scrollDir = 1
+        scrollLastTick = 0
         // ── 多行 / 自动换行（都默认关 ⇒ `_lines` 为空 ⇒ 渲染仍走原单行路径 ✓）──
-        _wrap = opts.get("wrap", false)
-        _wrapW = opts.get("wrap_w", 0.0)
-        _relayout_lines()
+        wrap = opts.get("wrap", false)
+        wrapW = opts.get("wrap_w", 0.0)
+        relayout_lines()
         visible = opts.get("visible", true)
         enabled = opts.get("enabled", true)
         _loaded = true
@@ -129,17 +129,17 @@ export struct Label impl Widget, Themeable {
     //      走原来的单行绘制 ⇒ 老界面逐像素不变 ✓（所以它不会在任何老用法上产生副作用 ✓）
     //   ② 折行宽度：`wrap_w` > 0 用它，否则退回 `max_w`（都不给就没法折行 ⇒ 只按 `\n` 分行 ✓）
     //   ③ 排版结果写回 `_w/_h`（自然尺寸），这样布局容器/`_h` 垂直居中都能直接用 ✓
-    func _relayout_lines() {
-        if _font == null or not _font.ok { _lines = []; _lineH = 0.0; return }
+    pri func relayout_lines() {
+        if _font == null or not _font.ok { lines = []; lineH = 0.0; return }
         // ⚠ `split()` 返回的元素是 `any` ⇒ 必须显式标注为 `Array[string]`（否则 `raw[i]` 拿到 any 会报类型不匹配 ✗；
         //   与 `sdl_edit.leno` 的 `_lines = text...split("\n")` 同款写法 ✓）
         Array[string] raw = text.replace("\r", "").split("\n")
-        float bw = _wrapW
+        float bw = wrapW
         if bw <= 0.0 { bw = max_w }
-        bool wantWrap = _wrap and bw > 0.0
-        if raw.len() <= 1 and not wantWrap { _lines = []; _lineH = 0.0; return }
+        bool wantWrap = wrap and bw > 0.0
+        if raw.len() <= 1 and not wantWrap { lines = []; lineH = 0.0; return }
         var[float, float](agw, agh) = _font.measureString("Ag")
-        _lineH = agh
+        lineH = agh
         Array[string] out = []
         for raw.len() to i {
             string ln = raw[i]
@@ -164,84 +164,84 @@ export struct Label impl Widget, Themeable {
             }
             out.add(cur)
         }
-        _lines = out
+        lines = out
         float mx = 0.0
         for out.len() to i {
             var[float, float](lw, lh) = _font.measureString(out[i])
             if lw > mx { mx = lw }
         }
         _w = mx
-        _h = _lineH * _float(out.len())
+        _h = lineH * _float(out.len())
     }
 
     // ==================== 设置方法 ====================
     func set_text(string t)        {
         text = t
-        _fullText = t
-        _scrollOffset = 0.0
-        _scrollLastTick = 0
-        _cachedTextKey = "\x01"   // text 变化，缓存失效
-        _cachedTruncKey = "\x01"
+        fullText = t
+        scrollOffset = 0.0
+        scrollLastTick = 0
+        cachedTextKey = "\x01"   // text 变化，缓存失效
+        cachedTruncKey = "\x01"
         if _font != null and _font.ok {
-            _w = _textWidth()
+            _w = textWidth()
             var[float, float](_agw, _agh) = _font.measureString("Ag"); _h = _agh
         }
-        _relayout_lines()         // 多行/换行启用时按新文本重排 ✓（未启用则只是清空 `_lines` ✓）
+        relayout_lines()         // 多行/换行启用时按新文本重排 ✓（未启用则只是清空 `_lines` ✓）
     }
-    func set_text_color(Color color) { _txtColor = color }
+    func set_text_color(Color color) { txtColor = color }
     func set_font_size(float s) {
         _fontSize = s
         if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
         // 字号变了 ⇒ 行宽/行高全变 ⇒ 必须重排（`_ensure_font` 先补回字体，否则 `_relayout_lines` 会空转 ✓）
-        _ensure_font()
-        _relayout_lines()
+        ensure_font()
+        relayout_lines()
     }
     func set_font_path(string p) {
-        _fontPath = p
+        fontPath = p
         if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
-        _ensure_font()
-        _relayout_lines()
+        ensure_font()
+        relayout_lines()
     }
     func set_font_style(int style) {
-        _fontStyle = style
-        _ensure_font()
+        fontStyle = style
+        ensure_font()
         if _font.ok { _font.setStyle(style) }
-        _relayout_lines()         // 加粗会改字宽 ⇒ 重排 ✓
+        relayout_lines()         // 加粗会改字宽 ⇒ 重排 ✓
     }
-    func set_align(int a) { _align = a }
+    func set_align(int a) { textAlign = a }
     func set_tip(string t) { _tip = t }
     func set_visible(bool v) { visible = v }
     func is_visible(): bool { return visible }
     func set_enabled(bool e) { enabled = e }
     func is_enabled(): bool { return enabled }
-    func set_max_w(float w) { max_w = w; _cachedTruncKey = "\x01"; _relayout_lines() }
-    func set_truncate(int mode) { _truncate = mode; _scrollOffset = 0.0; _scrollLastTick = 0; _cachedTruncKey = "\x01" }
+    func set_max_w(float w) { max_w = w; cachedTruncKey = "\x01"; relayout_lines() }
+    func set_truncate(int mode) { truncate = mode; scrollOffset = 0.0; scrollLastTick = 0; cachedTruncKey = "\x01" }
     // 多行/换行开关（运行时可改 ✓）
-    func set_wrap(bool v) { _wrap = v; _relayout_lines() }
-    func set_wrap_w(float w) { _wrapW = w; _relayout_lines() }
+    func set_wrap(bool v) { wrap = v; relayout_lines() }
+    func set_wrap_w(float w) { wrapW = w; relayout_lines() }
     // 供上层查询是否处于多行模式（如按钮内嵌 Label 想按内容自适应高度 ✓）
-    func is_multiline(): bool { return _lines.len() > 1 }
-    func get_lines(): int { return _lines.len() }
+    func is_multiline(): bool { return lines.len() > 1 }
+    func get_lines(): int { return lines.len() }
 
     // ★ 获取文字宽度（带缓存，text 不变时直接复用）
-    func _textWidth(): float {
-        if text == _cachedTextKey { return _cachedTextW }
+    pri func textWidth(): float {
+        if text == cachedTextKey { return cachedTextW }
         if _font != null and _font.ok {
             var[float, float](_mw, _mh) = _font.measureString(text)
-            _cachedTextW = _mw; _cachedTextKey = text
+            cachedTextW = _mw; cachedTextKey = text
             return _mw
         }
         return 0.0
     }
 
     // ── 截断文本：测量并裁剪出适合 max_w 的 "前缀...后缀" 形式 ──
-    func _truncatedText(): string {
+    pri func truncatedText(): string {
         if max_w <= 0.0 or _font == null or not _font.ok { return text }
         // ★ 结果缓存：text + max_w 不变时直接复用
-        if text == _cachedTruncKey and max_w == _cachedTruncW { return _cachedTruncText }
-        _cachedTruncKey = text; _cachedTruncW = max_w
+        if text == cachedTruncKey and max_w == cachedTruncW { return cachedTruncText }
+        cachedTruncKey = text; cachedTruncW = max_w
         var[float, float](msw, msh) = _font.measureString(text)
-        if msw <= max_w { _cachedTruncText = text; return text }
+        if msw <= max_w { cachedTruncText = text; return text }
         // 省略号宽度
         string ellipsis = "..."
         var[float, float](esw, esh) = _font.measureString(ellipsis)
@@ -271,7 +271,7 @@ export struct Label impl Widget, Themeable {
         }
         string head = text.slice(0, headEnd)
         string result = head + ellipsis + tail
-        _cachedTruncText = result
+        cachedTruncText = result
         return result
     }
 
@@ -291,11 +291,11 @@ export struct Label impl Widget, Themeable {
         var[float, float](mx, my) = ev.mousePos()
         // ★ 弹层捕获：与 Button/Toggle 等控件一致，弹层打开时不响应 hover
         if core.inPopupCapture(mx, my) { hover = false; return }
-        _wasHover = hover
+        wasHover = hover
         hover = mx >= x and mx <= x + _w and my >= y and my <= y + _h
         // 截断模式：hover 时显示完整文本
-        if hover and _truncate == TRUNCATE_ELLIPSIS and max_w > 0.0 and _fullText != "" {
-            tip.tipReport(_fullText, mx, my)
+        if hover and truncate == TRUNCATE_ELLIPSIS and max_w > 0.0 and fullText != "" {
+            tip.tipReport(fullText, mx, my)
         } else if hover and _tip != "" {
             tip.tipReport(_tip, mx, my)
         }
@@ -305,81 +305,81 @@ export struct Label impl Widget, Themeable {
     // ==================== 渲染 ====================
     func render(Renderer r) {
         if not _loaded or not enabled or not visible { return }
-        _ensure_font()
+        ensure_font()
         if _font == null or not _font.ok { return }
         if text == "" { return }
 
         // ── 多行 / 自动换行 ──
         // 只在 `_lines` 有 2 行以上时接管；单行 ⇒ 继续走下面的原路径（逐像素不变 ✓）。
         // 与截断/滚动互斥：那两个模式有自己的单行语义（省略号/横向滚动）✓
-        if _truncate == TRUNCATE_NONE and _lines.len() > 1 {
-            float lh = _lineH
+        if truncate == TRUNCATE_NONE and lines.len() > 1 {
+            float lh = lineH
             if lh <= 0.0 {
                 var[float, float](_aw, _ah) = _font.measureString("Ag")
                 lh = _ah
             }
-            float totalH = lh * _float(_lines.len())
+            float totalH = lh * _float(lines.len())
             float y0 = y
             // 与单行同一口径：控件高 `_h` 超过文字总高时整体垂直居中 ✓
             if _h > totalH { y0 = y + (_h - totalH) / 2.0 }
-            for _lines.len() to i {
-                string ln = _lines[i]
+            for lines.len() to i {
+                string ln = lines[i]
                 var[float, float](lw, _lh2) = _font.measureString(ln)
                 float dx = x                     // `align` 语义与单行一致：x 是锚点 ✓
-                if _align == ALIGN_CENTER { dx = x - lw / 2.0 }
-                if _align == ALIGN_RIGHT { dx = x - lw }
-                r.drawText(_font, ln, dx, y0 + lh * _float(i), _txtColor)
+                if textAlign == ALIGN_CENTER { dx = x - lw / 2.0 }
+                if textAlign == ALIGN_RIGHT { dx = x - lw }
+                r.drawText(_font, ln, dx, y0 + lh * _float(i), txtColor)
             }
             return
         }
 
         // ── 截断模式 ──
-        if _truncate == TRUNCATE_ELLIPSIS and max_w > 0.0 {
-            float msw = _textWidth()
+        if truncate == TRUNCATE_ELLIPSIS and max_w > 0.0 {
+            float msw = textWidth()
             if msw <= max_w {
                 // 不需要截断，正常绘制
                 float drawX = x
-                if _align == ALIGN_CENTER { drawX = x - msw / 2.0 }
-                if _align == ALIGN_RIGHT { drawX = x - msw }
-                r.drawText(_font, text, drawX, y, _txtColor)
+                if textAlign == ALIGN_CENTER { drawX = x - msw / 2.0 }
+                if textAlign == ALIGN_RIGHT { drawX = x - msw }
+                r.drawText(_font, text, drawX, y, txtColor)
                 return
             }
             // 截断绘制
-            string truncText = _truncatedText()
-            r.drawText(_font, truncText, x, y, _txtColor)
+            string truncText = truncatedText()
+            r.drawText(_font, truncText, x, y, txtColor)
             return
         }
 
         // ── 滚动模式 ──
-        if _truncate == TRUNCATE_SCROLL and max_w > 0.0 {
-            float msw = _textWidth()
+        if truncate == TRUNCATE_SCROLL and max_w > 0.0 {
+            float msw = textWidth()
             if msw <= max_w {
                 // 不需要滚动，正常绘制
                 float drawX = x
-                if _align == ALIGN_CENTER { drawX = x - msw / 2.0 }
-                if _align == ALIGN_RIGHT { drawX = x - msw }
-                r.drawText(_font, text, drawX, y, _txtColor)
+                if textAlign == ALIGN_CENTER { drawX = x - msw / 2.0 }
+                if textAlign == ALIGN_RIGHT { drawX = x - msw }
+                r.drawText(_font, text, drawX, y, txtColor)
                 return
             }
             // 更新滚动偏移
             int now = core.getTicks()
-            if _scrollLastTick == 0 { _scrollLastTick = now }
-            int dt = now - _scrollLastTick
+            if scrollLastTick == 0 { scrollLastTick = now }
+            int dt = now - scrollLastTick
             if dt > 0 {
-                _scrollOffset = _scrollOffset + _float(dt) * 0.03 * _float(_scrollDir)
-                _scrollLastTick = now
+                scrollOffset = scrollOffset + _float(dt) * 0.03 * _float(scrollDir)
+                scrollLastTick = now
             }
             // 滚动范围：从 0 到 -(textWidth - max_w + 20)
             float scrollRange = msw - max_w + 20.0
-            if _scrollDir == 1 {
-                if _scrollOffset >= scrollRange {
-                    _scrollOffset = scrollRange
-                    _scrollDir = -1
+            if scrollDir == 1 {
+                if scrollOffset >= scrollRange {
+                    scrollOffset = scrollRange
+                    scrollDir = -1
                 }
             } else {
-                if _scrollOffset <= 0.0 {
-                    _scrollOffset = 0.0
-                    _scrollDir = 1
+                if scrollOffset <= 0.0 {
+                    scrollOffset = 0.0
+                    scrollDir = 1
                 }
             }
             // 用裁剪矩形绘制（同样需要垂直居中）
@@ -392,7 +392,7 @@ export struct Label impl Widget, Themeable {
             clip.x = _int(x); clip.y = _int(y)
             clip.w = _int(max_w); clip.h = _int(_h + 2)
             r.pushClipRect(clip)
-            r.drawText(_font, text, x - _scrollOffset, scrollDrawY, _txtColor)
+            r.drawText(_font, text, x - scrollOffset, scrollDrawY, txtColor)
             r.popClipRect()
             clip.free()
             core.markFrameRedraw()
@@ -400,11 +400,11 @@ export struct Label impl Widget, Themeable {
         }
 
         // ── 普通绘制 ──
-        float msw = _textWidth()
+        float msw = textWidth()
         float drawX = x
-        if _align == ALIGN_LEFT { drawX = x }                          // 左对齐
-        if _align == ALIGN_CENTER { drawX = x - msw / 2.0 }     // 居中
-        if _align == ALIGN_RIGHT { drawX = x - msw }           // 右对齐
+        if textAlign == ALIGN_LEFT { drawX = x }                          // 左对齐
+        if textAlign == ALIGN_CENTER { drawX = x - msw / 2.0 }     // 居中
+        if textAlign == ALIGN_RIGHT { drawX = x - msw }           // 右对齐
 
         // ★ 垂直居中：当控件高度 _h 大于文字自然高度时，文字垂直居中于控件区域内
         //    解决 HBox/VBox align:3(stretch) 或 align:1(center) 时 Label 文字与 Button 不对齐的问题
@@ -416,7 +416,7 @@ export struct Label impl Widget, Themeable {
             }
         }
 
-        r.drawText(_font, text, drawX, drawY, _txtColor)
+        r.drawText(_font, text, drawX, drawY, txtColor)
     }
 
 // 释放字体资源
@@ -426,7 +426,7 @@ if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
 
 // ==================== 运行时主题切换 ====================
 func applyTheme(Theme t) {
-_txtColor = t.txt
+txtColor = t.txt
 }
 }
 
