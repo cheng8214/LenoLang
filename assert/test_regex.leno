@@ -215,12 +215,40 @@ main() {
     }
     assert_eq(e8.has("不支持反向引用"), true)
 
-    // ⚠ 现状钉桩：`groups()` **只返回整体匹配**，不返回捕获组 ——
-    //   本引擎不记录捕获组（`(...)` 只做分组优先级）。这两条是**现状描述**；
-    //   将来真做了捕获组它们会失败 ⇒ 那时正是该改实现/文档/这里的时候 ✓
+    // ★ 捕获组（2026-10-01 匹配器重写后**真的可用**）：`groups()` 返回 `[整体, 组1, 组2, ...]`
+    //   此前它只回 1 个元素（名不副实）—— 这条断言从"现状钉桩"升级成了"能力验证" ✓
     var g1 = regexs.groups("2026-10-01", "([0-9][0-9][0-9][0-9])-([0-9][0-9])-([0-9][0-9])")
-    assert_eq(g1.len(), 1)
-    assert_eq(g1[0], "2026-10-01")
+    assert_eq(g1.len(), 4)
+    assert_eq(g1[0], "2026-10-01")     // 整体匹配
+    assert_eq(g1[1], "2026")
+    assert_eq(g1[2], "10")
+    assert_eq(g1[3], "01")
+
+    var g2 = regexs.groups("user@example.com", "([a-z]+)@([a-z.]+)")
+    assert_eq(g2.len(), 3)
+    assert_eq(g2[1], "user")
+    assert_eq(g2[2], "example.com")
+
+    // 未参与本次匹配的组 ⇒ **空串**（数组元素类型是 string ⇒ 不用 null ✓）
+    var g3 = regexs.groups("b", "(a)|(b)")
+    assert_eq(g3.len(), 3)
+    assert_eq(g3[1], "")
+    assert_eq(g3[2], "b")
+
+    // 重复组取**最后一次**匹配（与 Python 一致 ✓）
+    var g4 = regexs.groups("abab", "(ab)+")
+    assert_eq(g4.len(), 2)
+    assert_eq(g4[1], "ab")
+
+    // ---- 回溯（旧匹配器"贪吃不会吐"⇒ 下面这些曾经**静默 false** ✗）----
+    assert_eq(regexs.match("ab.c.def", "[a-z.]+\\.[a-z]+"), true)
+    assert_eq(regexs.match("aaab", "a*a*b"), true)
+    assert_eq(regexs.match("ababc", "(a|b)+c"), true)
+    assert_eq(regexs.match("ac", "(a|b)c"), true)          // 或分支之后要能接上后续 ✓
+    assert_eq(regexs.match("abc", "abc$"), true)
+    assert_eq(regexs.match("", "^$"), true)                // 空串 + 串尾锚定 ✓
+    assert_eq(regexs.match("y", "x?y"), true)
+    assert_eq(regexs.extract("https://www.example.com/path", "[a-zA-Z0-9.]+\\.com"), "www.example.com")
 
     // 反例：转义花括号照旧可以匹配**字面**花括号 ✓
     assert_eq(regexs.match("{2}", "\\{2\\}"), true)
