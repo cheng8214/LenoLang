@@ -151,8 +151,8 @@ export struct MemoryHandle {
 
     // 预分配缓冲区 — 高频读写时零分配
     // 16 字节够放 int/int64/float/double
-    Ptr[u8] _readBuf = null
-    Ptr[u8] _writeBuf = null
+    pri Ptr[u8] readBuf = null
+    pri Ptr[u8] writeBuf = null
 
     // 打开目标进程（读+写权限）
     func open(int targetPid): bool {
@@ -164,8 +164,8 @@ export struct MemoryHandle {
         }
         valid = true
         // 预分配读写缓冲区
-        _readBuf = ffi.malloc(16)
-        _writeBuf = ffi.malloc(16)
+        readBuf = ffi.malloc(16)
+        writeBuf = ffi.malloc(16)
         return true
     }
 
@@ -176,13 +176,13 @@ export struct MemoryHandle {
             handle = null
             valid = false
         }
-        if _readBuf != null {
-            ffi.free(_readBuf)
-            _readBuf = null
+        if readBuf != null {
+            ffi.free(readBuf)
+            readBuf = null
         }
-        if _writeBuf != null {
-            ffi.free(_writeBuf)
-            _writeBuf = null
+        if writeBuf != null {
+            ffi.free(writeBuf)
+            writeBuf = null
         }
     }
 
@@ -192,9 +192,9 @@ export struct MemoryHandle {
     // 优化: 用预分配 _readBuf, bytesRead 传 null, 无堆操作
     func readInt(int address): int {
         if not valid or address == 0 { return 0 }
-        int ok = _lib().ReadProcessMemory(handle, ffi.ptr_from_int(address), _readBuf, 4, null)
+        int ok = _lib().ReadProcessMemory(handle, ffi.ptr_from_int(address), readBuf, 4, null)
         if ok != 0 {
-            return ffi.read_int(_readBuf, 0)
+            return ffi.read_int(readBuf, 0)
         }
         return 0
     }
@@ -202,9 +202,9 @@ export struct MemoryHandle {
     // 读取 8 字节整数 (int64)
     func readInt64(int address): int {
         if not valid or address == 0 { return 0 }
-        int ok = _lib().ReadProcessMemory(handle, ffi.ptr_from_int(address), _readBuf, 8, null)
+        int ok = _lib().ReadProcessMemory(handle, ffi.ptr_from_int(address), readBuf, 8, null)
         if ok != 0 {
-            return ffi.read_int64(_readBuf, 0)
+            return ffi.read_int64(readBuf, 0)
         }
         return 0
     }
@@ -212,9 +212,9 @@ export struct MemoryHandle {
     // 读取 4 字节浮点数 (float)
     func readFloat(int address): float {
         if not valid or address == 0 { return 0.0 }
-        int ok = _lib().ReadProcessMemory(handle, ffi.ptr_from_int(address), _readBuf, 4, null)
+        int ok = _lib().ReadProcessMemory(handle, ffi.ptr_from_int(address), readBuf, 4, null)
         if ok != 0 {
-            return ffi.read_float(_readBuf, 0)
+            return ffi.read_float(readBuf, 0)
         }
         return 0.0
     }
@@ -222,9 +222,9 @@ export struct MemoryHandle {
     // 读取 8 字节双精度 (double)
     func readDouble(int address): float {
         if not valid or address == 0 { return 0.0 }
-        int ok = _lib().ReadProcessMemory(handle, ffi.ptr_from_int(address), _readBuf, 8, null)
+        int ok = _lib().ReadProcessMemory(handle, ffi.ptr_from_int(address), readBuf, 8, null)
         if ok != 0 {
-            return ffi.read_double(_readBuf, 0)
+            return ffi.read_double(readBuf, 0)
         }
         return 0.0
     }
@@ -232,9 +232,9 @@ export struct MemoryHandle {
     // 读取 2 字节短整数 (int16)
     func readShort(int address): int {
         if not valid or address == 0 { return 0 }
-        int ok = _lib().ReadProcessMemory(handle, ffi.ptr_from_int(address), _readBuf, 2, null)
+        int ok = _lib().ReadProcessMemory(handle, ffi.ptr_from_int(address), readBuf, 2, null)
         if ok != 0 {
-            return ffi.read_int16(_readBuf, 0)
+            return ffi.read_int16(readBuf, 0)
         }
         return 0
     }
@@ -242,9 +242,9 @@ export struct MemoryHandle {
     // 读取 1 字节 (byte)
     func readByte(int address): int {
         if not valid or address == 0 { return 0 }
-        int ok = _lib().ReadProcessMemory(handle, ffi.ptr_from_int(address), _readBuf, 1, null)
+        int ok = _lib().ReadProcessMemory(handle, ffi.ptr_from_int(address), readBuf, 1, null)
         if ok != 0 {
-            return ffi.read_byte(_readBuf, 0)
+            return ffi.read_byte(readBuf, 0)
         }
         return 0
     }
@@ -270,48 +270,48 @@ export struct MemoryHandle {
     // 优化: 用预分配 _writeBuf, bytesWritten 传 null
     func writeInt(int address, int value): bool {
         if not valid or address == 0 { return false }
-        ffi.write_int(_writeBuf, 0, value)
-        int ok = _lib().WriteProcessMemory(handle, ffi.ptr_from_int(address), _writeBuf, 4, null)
+        ffi.write_int(writeBuf, 0, value)
+        int ok = _lib().WriteProcessMemory(handle, ffi.ptr_from_int(address), writeBuf, 4, null)
         return ok != 0
     }
 
     // 写入 8 字节整数 (int64)
     func writeInt64(int address, int value): bool {
         if not valid or address == 0 { return false }
-        ffi.write_int64(_writeBuf, 0, value)
-        int ok = _lib().WriteProcessMemory(handle, ffi.ptr_from_int(address), _writeBuf, 8, null)
+        ffi.write_int64(writeBuf, 0, value)
+        int ok = _lib().WriteProcessMemory(handle, ffi.ptr_from_int(address), writeBuf, 8, null)
         return ok != 0
     }
 
     // 写入 4 字节浮点数 (float)
     func writeFloat(int address, float value): bool {
         if not valid or address == 0 { return false }
-        ffi.write_float(_writeBuf, 0, value)
-        int ok = _lib().WriteProcessMemory(handle, ffi.ptr_from_int(address), _writeBuf, 4, null)
+        ffi.write_float(writeBuf, 0, value)
+        int ok = _lib().WriteProcessMemory(handle, ffi.ptr_from_int(address), writeBuf, 4, null)
         return ok != 0
     }
 
     // 写入 8 字节双精度 (double)
     func writeDouble(int address, float value): bool {
         if not valid or address == 0 { return false }
-        ffi.write_double(_writeBuf, 0, value)
-        int ok = _lib().WriteProcessMemory(handle, ffi.ptr_from_int(address), _writeBuf, 8, null)
+        ffi.write_double(writeBuf, 0, value)
+        int ok = _lib().WriteProcessMemory(handle, ffi.ptr_from_int(address), writeBuf, 8, null)
         return ok != 0
     }
 
     // 写入 2 字节短整数 (int16)
     func writeShort(int address, int value): bool {
         if not valid or address == 0 { return false }
-        ffi.write_int16(_writeBuf, 0, value)
-        int ok = _lib().WriteProcessMemory(handle, ffi.ptr_from_int(address), _writeBuf, 2, null)
+        ffi.write_int16(writeBuf, 0, value)
+        int ok = _lib().WriteProcessMemory(handle, ffi.ptr_from_int(address), writeBuf, 2, null)
         return ok != 0
     }
 
     // 写入 1 字节 (byte)
     func writeByte(int address, int value): bool {
         if not valid or address == 0 { return false }
-        ffi.write_byte(_writeBuf, 0, value)
-        int ok = _lib().WriteProcessMemory(handle, ffi.ptr_from_int(address), _writeBuf, 1, null)
+        ffi.write_byte(writeBuf, 0, value)
+        int ok = _lib().WriteProcessMemory(handle, ffi.ptr_from_int(address), writeBuf, 1, null)
         return ok != 0
     }
 
@@ -335,9 +335,9 @@ export struct MemoryHandle {
         for offsets to off {
             if addr == 0 { return 0 }
             // 内联 readInt — 直接用 _readBuf, 零分配
-            int ok = _lib().ReadProcessMemory(handle, ffi.ptr_from_int(addr), _readBuf, 4, null)
+            int ok = _lib().ReadProcessMemory(handle, ffi.ptr_from_int(addr), readBuf, 4, null)
             if ok == 0 { return 0 }
-            addr = ffi.read_int(_readBuf, 0)
+            addr = ffi.read_int(readBuf, 0)
             addr = addr + off
         }
         return addr
@@ -383,12 +383,12 @@ export struct MemoryHandle {
 
                 if state == MEM_COMMIT and (protect & READABLE_MASK) != 0 and regionSize > 0 {
                     // 用预分配 _readBuf 读前 16 字节（零分配）
-                    int ok = _lib().ReadProcessMemory(handle, ffi.ptr_from_int(baseAddr), _readBuf, 16, null)
+                    int ok = _lib().ReadProcessMemory(handle, ffi.ptr_from_int(baseAddr), readBuf, 16, null)
                     if ok != 0 {
                         // 优化: 先收集到数组, 再用 strings.join 一次性拼接
                         Array[string] parts = []
                         for 0:15 to i {
-                            int b = ffi.read_byte(_readBuf, i)
+                            int b = ffi.read_byte(readBuf, i)
                             string hx = _str(b)
                             if b < 16 { hx = "0" + hx }
                             parts.add(hx)

@@ -437,7 +437,7 @@ export struct GameBot {
     }
 
     // 检查所有热键
-    func _checkHotkeys() {
+    pri func checkHotkeys() {
         for hotkeys to hk {
             if hk is Dict {
                 func() cb = hk["callback"] as func()
@@ -482,7 +482,7 @@ export struct GameBot {
         print("[GameHelper] 已注册 " + hotkeys.len() + " 个热键")
 
         while running {
-            _checkHotkeys()
+            checkHotkeys()
 
             // 检查退出键 Ctrl+Shift+Q
 bool ctrl = inp.isKeyDown(inp.VK_CONTROL)

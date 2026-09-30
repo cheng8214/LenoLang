@@ -115,8 +115,8 @@ export struct HttpClient {
     Ptr[u8] handle          // curl_easy handle
     bool ok = false         // 是否初始化成功（显式初值，消 [字段未初始化] 警告）
     string _lastError = ""  // 最近错误信息
-    Ptr[u8] _writeCb        // 写回调
-    Ptr[u8] _headerCb       // header 回调
+    pri Ptr[u8] writeCb        // 写回调
+    pri Ptr[u8] headerCb       // header 回调
 
     // 初始化客户端
     func init(): bool {
@@ -128,8 +128,8 @@ export struct HttpClient {
             return false
         }
         // 创建回调
-        _writeCb = ffi.callback(_writeDispatch, WriteCb)
-        _headerCb = ffi.callback(_headerDispatch, HeaderCb)
+        writeCb = ffi.callback(_writeDispatch, WriteCb)
+        headerCb = ffi.callback(_headerDispatch, HeaderCb)
         // 设置默认选项
         core.setopt_int(handle, Opt.NOPROGRESS, 1)
         core.setopt_int(handle, Opt.FOLLOWLOCATION, 1)
@@ -259,7 +259,7 @@ export struct HttpClient {
     // method: GET/POST/PUT/DELETE 等
     // url: 请求 URL
     // body: POST/PUT 请求体（GET 传 ""）
-    func _doRequest(string method, string url, string body): Response {
+    pri func doRequest(string method, string url, string body): Response {
         Response resp = new Response()
         resp.reset()
         if not ok {
@@ -291,8 +291,8 @@ export struct HttpClient {
         }
 
         // 设置写回调和 header 回调
-        core.setopt_ptr(handle, Opt.WRITEFUNCTION, _writeCb)
-        core.setopt_ptr(handle, Opt.HEADERFUNCTION, _headerCb)
+        core.setopt_ptr(handle, Opt.WRITEFUNCTION, writeCb)
+        core.setopt_ptr(handle, Opt.HEADERFUNCTION, headerCb)
 
         // 设置 userdata 为 Response 指针（通过全局变量传递）
         _currentResp = resp
@@ -320,12 +320,12 @@ export struct HttpClient {
 
     // GET 请求
     func get(string url): Response {
-        return _doRequest("GET", url, "")
+        return doRequest("GET", url, "")
     }
 
     // POST 请求（字符串 body）
     func post(string url, string body): Response {
-        return _doRequest("POST", url, body)
+        return doRequest("POST", url, body)
     }
 
     // POST JSON 请求
@@ -339,24 +339,24 @@ export struct HttpClient {
         Ptr[u8] slist = null
         slist = core.slistAppend(slist, "Content-Type: application/json")
         core.setopt_ptr(handle, Opt.HTTPHEADER, slist)
-        Response resp = _doRequest("POST", url, json)
+        Response resp = doRequest("POST", url, json)
         if slist != null { core.slistFreeAll(slist) }
         return resp
     }
 
     // PUT 请求
     func put(string url, string body): Response {
-        return _doRequest("PUT", url, body)
+        return doRequest("PUT", url, body)
     }
 
     // DELETE 请求
     func del(string url): Response {
-        return _doRequest("DELETE", url, "")
+        return doRequest("DELETE", url, "")
     }
 
     // PATCH 请求
     func patch(string url, string body): Response {
-        return _doRequest("PATCH", url, body)
+        return doRequest("PATCH", url, body)
     }
 
     // HEAD 请求（只获取 header，不获取 body）
@@ -366,7 +366,7 @@ export struct HttpClient {
             resp.error = "Client not initialized"
             return resp
         }
-        return _doRequest("HEAD", url, "")
+        return doRequest("HEAD", url, "")
     }
 
     // ==================== 便捷方法 ====================
