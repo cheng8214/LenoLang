@@ -216,6 +216,8 @@ export func quit()                   { core.quit(); fnt.ttfQuit() }
 export func getError(): string       { return core.getError() }
 export func delay(int ms)            { core.delay(ms) }
 export func getTicks(): int          { return core.getTicks() }
+// 本机可用的渲染驱动名（排查/自测用：看 SDL_RENDER_DRIVER 这类名字对应哪个真实驱动 ✓）
+export func renderDrivers(): Array[string] { return core.renderDrivers() }
 
 export func startTextInput(Ptr[u8] w): bool  { return core.startTextInput(w) }
 export func stopTextInput(Ptr[u8] w): bool   { return core.stopTextInput(w) }
