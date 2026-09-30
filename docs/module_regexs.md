@@ -236,7 +236,7 @@ var g3 = regexs.groups("b", "(a)|(b)")
 ```
 
 > ⚠ 捕获要正确，必须让**失败的分支撤掉已记录的组** —— 本引擎用"捕获日志 + 回滚水位"实现 ✓。
-> 但替换串里的 `$1` 反向引用**仍未支持**（写了会报错，见 `replace` 一节）。
+> 反向引用（替换串里的 `$1` / `$0` / `$$`）自 2026-10-01 起**也已支持**（见 `replace` 一节 ✓）。
 
 ---
 
@@ -452,26 +452,14 @@ main() {
 import regexs
 
 func mask_phone(string phone):string {
-    // ⚠ 本引擎**不支持 `$1` 反向引用**（写了会报错：`无效的替换串：不支持反向引用 $1`）——
-    //   脱敏要分两步：先 `extract` 取段，再拼接 ✓
-    var head = regexs.extract(phone, "^[0-9][0-9][0-9]")          // 前 3 位
-    var tail = regexs.extract(phone, "[0-9][0-9][0-9][0-9]$")     // 后 4 位
-    string h = ""
-    string t = ""
-    if head != null { h = head }
-    if tail != null { t = tail }
-    return h + "****" + t
+    // 反向引用（2026-10-01 起支持）：`$1` / `$2` 就是两个捕获组 ✓
+    //   ⚠ 量词 `{n}` 不支持 ⇒ 定长段写成 `[0-9][0-9][0-9]` ✓
+    return regexs.replace(phone, "([0-9][0-9][0-9])[0-9][0-9][0-9][0-9]([0-9][0-9][0-9][0-9])", "$1****$2")
 }
 
 func mask_email(string email):string {
-    // 同上：`(^.)[^@]*(@.*)$` + `$1***$2` 那套用不了 ⇒ 取首字符与 `@` 之后的部分再拼 ✓
-    var first = regexs.extract(email, "^.")            // 首字符
-    var rest  = regexs.extract(email, "@.*$")          // `@` 之后的部分
-    string f = ""
-    string r = ""
-    if first != null { f = first }
-    if rest != null { r = rest }
-    return f + "***" + r
+    // `^(.)[^@]*(@.*)$`：组 1 = 首字符、组 2 = `@` 之后的部分 ✓
+    return regexs.replace(email, "^(.)[^@]*(@.*)$", "$1***$2")
 }
 
 main() {
@@ -484,9 +472,11 @@ main() {
 
 ## 注意事项
 
-1. **正则表达式编译错误**：如果模式语法错误，会抛出运行时错误
+1. **正则表达式编译错误**：模式语法错误 ⇒ **抛运行时错误**（不是静默不匹配 ✓）
    ```leno
-   regexs.match("test", "[invalid")  // 抛出错误
+   regexs.match("test", "[invalid")      // 抛错：无效的正则表达式（未闭合的字符类）
+   regexs.match("test", "\\d+")          // 抛错：无效的正则表达式：不支持的转义 "\d"
+   regexs.match("test", "a{2}")          // 抛错：无效的正则表达式：不支持量词 {}
    ```
 
 2. **贪婪匹配**：`*` 和 `+` 默认是贪婪的，尽可能匹配更多字符

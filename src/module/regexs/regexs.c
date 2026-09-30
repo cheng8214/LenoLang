@@ -76,6 +76,8 @@ typedef struct {
     int gstart[RE_MAX_GROUPS + 1];          // 各组起点偏移（-1 = 未参与本次匹配）
     int gend[RE_MAX_GROUPS + 1];            // 各组终点偏移（不含）
     int ngroup;                             // 本次 pattern 的组数
+    int mstart;                             // 本次**整体匹配**的区间（`$0` 展开要用 ✓）
+    int mend;
     ReCapLog log[RE_CAP_LOG_MAX];           // 捕获改写日志（回溯回滚用 ✓）
     int nlog;
     int depth;                              // 当前递归深度
@@ -84,6 +86,8 @@ typedef struct {
 static void re_ctx_reset(ReCtx* ctx, const char* str, int ngroup) {
     ctx->str = str;
     ctx->ngroup = ngroup;
+    ctx->mstart = -1;
+    ctx->mend = -1;
     ctx->nlog = 0;
     ctx->depth = 0;
     for (int i = 0; i <= RE_MAX_GROUPS; i++) {
@@ -218,7 +222,10 @@ static const char* parse_class(const char* p, ReNode* node) {
         }
     }
     
-    if (*p == ']') p++;
+    // 未闭合的字符类（如 `[invalid` / 单个 `[`）⇒ **编译失败、响亮报错** ✓
+    //   （以前会一路吃到串尾当"字符类到此为止"⇒ 静默按错的内容匹配 ✗，与"不静默"的方针相冲）
+    if (*p != ']') return NULL;
+    p++;
     
     node->class_chars = (char*)malloc(len + 1);
     if (node->class_chars) {
@@ -550,14 +557,20 @@ static bool m_chain(ReNode* node, const char* pos, ReCtx* ctx, const char** out)
 //   静默失配；新逻辑在 m_chain / m_repeat。删掉而不是留着，免得两套匹配语义并存 ✓）
 
 // 查找第一个匹配：从每个起点逐一试（**含串尾** —— 空 pattern / `$` 也要能在末尾命中 ✓）
-static const char* find_match(ReNode* pattern, const char* str, int ngroup, ReCtx* ctx,
+//   ⚠ `base` 与 `from` **必须分开**：`base` 是整个原串起点（**捕获偏移的基准**，也是 `^` 的判定基准），
+//     `from` 只是"从哪儿开始找"。replace_all 会在**同一原串上分段落**继续搜索 ——
+//     若拿分段起点当偏移基准，捕获偏移就变成"相对那一段"的 ⇒ 展开替换串时取到错的内容 ✗
+//     （2026-10-01 实测：`replace_all("a1b2", "([a-z])([0-9])", "$1")` 曾得到 "aa" ✗）
+static const char* find_match(ReNode* pattern, const char* base, const char* from, int ngroup, ReCtx* ctx,
                               const char** start, const char** end) {
-    for (const char* pos = str; ; pos++) {
-        re_ctx_reset(ctx, str, ngroup);          // 每个起点都从干净状态试 ✓
+    for (const char* pos = from; ; pos++) {
+        re_ctx_reset(ctx, base, ngroup);         // 每个起点都从干净状态试 ✓（基准恒为 base ✓）
         const char* e = NULL;
         if (m_chain(pattern, pos, ctx, &e)) {
             *start = pos;
             *end = e;
+            ctx->mstart = (int)(pos - base);     // 整体匹配区间（`$0` 展开用 ✓）
+            ctx->mend = (int)(e - base);
             return e;
         }
         if (*pos == '\0') break;                 // 串尾也试过了 ⇒ 结束
@@ -567,21 +580,41 @@ static const char* find_match(ReNode* pattern, const char* str, int ngroup, ReCt
 
 // ==================== 核心方法实现 ====================
 
-// 替换串检查：**不支持反向引用**（`$1` / `\1`）。
-//   为什么必须报错：本引擎的匹配器**不记录捕获组**（`(...)` 只用于分组优先级 ⇒ 它不产生 `$1`），
-//   而照抄 sed/Perl 习惯写的 `regexs.replace(s, p, "$1****$2")` 以前会把 `$1****$2`
-//   **原样写进结果**（2026-10-01 实测：手机号脱敏得到字面 `$1****$2`）—— 静默错 ✗。
-//   要脱敏就先 `extract` / `find_all` 取段再拼 ✓
-static bool re_reject_backref(ObjString* replacement) {
-    for (int i = 0; replacement->chars[i]; i++) {
-        if (replacement->chars[i] == '$' && replacement->chars[i + 1] >= '0'
-            && replacement->chars[i + 1] <= '9') {
-            native_throw_error("无效的替换串：不支持反向引用 $1（本引擎不记录捕获组，"
-                               "`(...)` 只做分组优先级；请先用 regexs.extract 取段再拼接）");
-            return false;
+// 展开替换串里的反向引用（2026-10-01 真支持，此前是"报错挡住" ✓）：
+//   `$0` = 整体匹配，`$1`..`$9` = 第 N 个捕获组，`$$` = 字面 `$`；
+//   其余 `$x`（后面不是数字/$）按字面 `$x` 原样保留 ✓；**超出组号**（如只有 2 组却写 `$5`）⇒ 展开成空串 ✓
+//   dst 传 NULL 时只算长度（`replace_all` 需要先知道总长 ✓）—— 一个函数两用，避免长度/填充两套逻辑漂移 ✓
+static int re_expand_replacement(const char* repl, ObjString* str, ReCtx* ctx, char* dst) {
+    int n = 0;
+    for (int i = 0; repl[i]; i++) {
+        if (repl[i] == '$' && repl[i + 1] == '$') {
+            if (dst) dst[n] = '$';
+            n++;
+            i++;
+            continue;
         }
+        if (repl[i] == '$' && repl[i + 1] >= '0' && repl[i + 1] <= '9') {
+            int gi = repl[i + 1] - '0';
+            int s = -1;
+            int e = -1;
+            if (gi == 0) {
+                s = ctx->mstart;           // $0 = 整体匹配 ✓
+                e = ctx->mend;
+            } else if (gi <= ctx->ngroup) {
+                s = ctx->gstart[gi];       // 未参与的组 ⇒ -1 ⇒ 展开成空串 ✓
+                e = ctx->gend[gi];
+            }
+            if (s >= 0 && e >= s) {
+                if (dst) memcpy(dst + n, str->chars + s, (size_t)(e - s));
+                n += (e - s);
+            }
+            i++;
+            continue;
+        }
+        if (dst) dst[n] = repl[i];
+        n++;
     }
-    return true;
+    return n;
 }
 
 // 1. 检查字符串是否匹配正则表达式
@@ -632,7 +665,7 @@ static Value regex_find(int argc, Value* args) {
     
     const char* start = NULL;
     const char* end = NULL;
-    find_match(pattern, str->chars, ngroup, &ctx, &start, &end);
+    find_match(pattern, str->chars, str->chars, ngroup, &ctx, &start, &end);
     
     re_free_all();
     
@@ -697,7 +730,7 @@ static Value regex_find_all(int argc, Value* args) {
     while (*pos) {
         const char* start = NULL;
         const char* end = NULL;
-        find_match(pattern, pos, ngroup, &ctx, &start, &end);
+        find_match(pattern, str->chars, pos, ngroup, &ctx, &start, &end);
         
         if (!start) break;
         
@@ -747,7 +780,7 @@ static Value regex_extract(int argc, Value* args) {
     
     const char* start = NULL;
     const char* end = NULL;
-    find_match(pattern, str->chars, ngroup, &ctx, &start, &end);
+    find_match(pattern, str->chars, str->chars, ngroup, &ctx, &start, &end);
     
     re_free_all();
     
@@ -788,7 +821,7 @@ static Value regex_extract_all(int argc, Value* args) {
     while (*pos) {
         const char* start = NULL;
         const char* end = NULL;
-        find_match(pattern, pos, ngroup, &ctx, &start, &end);
+        find_match(pattern, str->chars, pos, ngroup, &ctx, &start, &end);
         
         if (!start) break;
         
@@ -813,8 +846,7 @@ static Value regex_replace(int argc, Value* args) {
     ObjString* str = (ObjString*)val_as_obj(args[0]);
     ObjString* pattern_str = (ObjString*)val_as_obj(args[1]);
     ObjString* replacement = (ObjString*)val_as_obj(args[2]);
-    // ★ 反向引用（`$1`）以前会被**原样写进结果** ⇒ 现在直接报错（见 re_reject_backref ✓）
-    if (!re_reject_backref(replacement)) return val_null();
+    // ★ 反向引用（`$1`）自 2026-10-01 起**真支持**（按本次匹配的捕获展开，见 re_expand_replacement ✓）
     
     re_pool_idx = 0;
     memset(re_pool, 0, sizeof(re_pool));
@@ -831,7 +863,7 @@ static Value regex_replace(int argc, Value* args) {
     
     const char* start = NULL;
     const char* end = NULL;
-    find_match(pattern, str->chars, ngroup, &ctx, &start, &end);
+    find_match(pattern, str->chars, str->chars, ngroup, &ctx, &start, &end);
     
     re_free_all();
     
@@ -839,21 +871,22 @@ static Value regex_replace(int argc, Value* args) {
         return val_obj((Object*)str);  // 未找到，返回原字符串
     }
     
-    // 计算新字符串长度
+    // 计算新字符串长度（替换串里的 `$1` 要**按本次匹配的捕获展开**后再算 ✓）
     int before_len = (int)(start - str->chars);
     int match_len = (int)(end - start);
     int after_len = str->len - before_len - match_len;
-    int new_len = before_len + replacement->len + after_len;
-    
+    int repl_len = re_expand_replacement(replacement->chars, str, &ctx, NULL);
+    int new_len = before_len + repl_len + after_len;
+
     char* result = (char*)malloc(new_len + 1);
     if (!result) {
         native_throw_error("内存分配失败");
         return val_null();
     }
-    
+
     memcpy(result, str->chars, before_len);
-    memcpy(result + before_len, replacement->chars, replacement->len);
-    memcpy(result + before_len + replacement->len, end, after_len);
+    re_expand_replacement(replacement->chars, str, &ctx, result + before_len);   // 展开后填进去 ✓
+    memcpy(result + before_len + repl_len, end, after_len);
     result[new_len] = '\0';
     
     ObjString* result_str = str_new(result, new_len);
@@ -869,8 +902,7 @@ static Value regex_replace_all(int argc, Value* args) {
     ObjString* str = (ObjString*)val_as_obj(args[0]);
     ObjString* pattern_str = (ObjString*)val_as_obj(args[1]);
     ObjString* replacement = (ObjString*)val_as_obj(args[2]);
-    // ★ 反向引用（`$1`）以前会被**原样写进结果** ⇒ 现在直接报错（见 re_reject_backref ✓）
-    if (!re_reject_backref(replacement)) return val_null();
+    // ★ 反向引用（`$1`）自 2026-10-01 起**真支持**（按本次匹配的捕获展开，见 re_expand_replacement ✓）
     
     re_pool_idx = 0;
     memset(re_pool, 0, sizeof(re_pool));
@@ -886,27 +918,30 @@ static Value regex_replace_all(int argc, Value* args) {
     }
     
     // 计算结果长度
+    //   ⚠ 替换串里的 `$1` 每次都要**按那一次匹配的捕获**展开 ⇒ 长度不能按 `replacement->len` 估 ✗
     const char* pos = str->chars;
     int match_count = 0;
     int total_match_len = 0;
-    
+    int total_repl_len = 0;
+
     while (*pos) {
         const char* start = NULL;
         const char* end = NULL;
-        find_match(pattern, pos, ngroup, &ctx, &start, &end);
+        find_match(pattern, str->chars, pos, ngroup, &ctx, &start, &end);
         if (!start) break;
         match_count++;
         total_match_len += (int)(end - start);
+        total_repl_len += re_expand_replacement(replacement->chars, str, &ctx, NULL);
         if (end == start) pos++;
         else pos = end;
     }
-    
+
     if (match_count == 0) {
         re_free_all();
         return val_obj((Object*)str);
     }
-    
-    int new_len = str->len - total_match_len + match_count * replacement->len;
+
+    int new_len = str->len - total_match_len + total_repl_len;
     char* result = (char*)malloc(new_len + 1);
     if (!result) {
         re_free_all();
@@ -921,17 +956,16 @@ static Value regex_replace_all(int argc, Value* args) {
     while (*pos) {
         const char* start = NULL;
         const char* end = NULL;
-        find_match(pattern, pos, ngroup, &ctx, &start, &end);
+        find_match(pattern, str->chars, pos, ngroup, &ctx, &start, &end);
         if (!start) break;
-        
+
         // 复制匹配前的内容
         int before = (int)(start - pos);
         memcpy(dst, pos, before);
         dst += before;
         
-        // 复制替换内容
-        memcpy(dst, replacement->chars, replacement->len);
-        dst += replacement->len;
+        // 复制替换内容（同样按**本次**捕获展开 `$1` ✓）
+        dst += re_expand_replacement(replacement->chars, str, &ctx, dst);
         
         pos = end;
         if (end == start) {
@@ -989,7 +1023,7 @@ static Value regex_split(int argc, Value* args) {
     while (*pos && (limit < 0 || count < limit - 1)) {
         const char* start = NULL;
         const char* end = NULL;
-        find_match(pattern, pos, ngroup, &ctx, &start, &end);
+        find_match(pattern, str->chars, pos, ngroup, &ctx, &start, &end);
         if (!start) break;
         
         int part_len = (int)(start - last_pos);
@@ -1034,7 +1068,7 @@ static Value regex_groups(int argc, Value* args) {
 
     const char* start = NULL;
     const char* end = NULL;
-    find_match(pattern, str->chars, ngroup, &ctx, &start, &end);
+    find_match(pattern, str->chars, str->chars, ngroup, &ctx, &start, &end);
 
     re_free_all();     // 节点池可以放；捕获是"相对 str 的整数偏移"⇒ 不受影响 ✓
 
