@@ -237,8 +237,6 @@ static void ast_fix_agg_kind(ModuleSymbolTable* table, TypeInfo* t);
 static const char* ast_type_param_name(Ast* sd, Ast* fn, TypeInfo* ti);
 // 前向声明：字面量 → 值文本（定义见下；**func 的默认值**也要用它 ✓）
 static char* ast_const_value_text(Ast* v);
-// 前向声明：当前填充阶段（定义见文件末；struct 的字段/方法能否整体覆盖取决于它 ✓）
-int ast_fill_phase(void);
 
 // 别名展开：把 `export alias Color = int` 这类名字解析到**最底层**的 kind ✓
 //   为什么必须有它（2026-10-01 实测）：parser 不认识别名（那是模块符号表的知识）⇒
@@ -1526,15 +1524,11 @@ static void ast_symbol_fill_provider(ModuleSymbolTable* table, const char* src) 
     ast_free(p.root);
 }
 
-// 填充阶段：0 = 扫描阶段（只有语法信息）；1 = **语义分析之后**（类型已解析完整）✓
-//   为什么必须有这个概念：struct 的字段类型 / 方法签名、var 的推断型，
-//   在语法阶段是**不完整**的（实测停用 scan_struct 后 371/35）⇒ 这些类只能在 phase==1
-//   做整组覆盖；在 phase==0 用它们会拿"未解析的类型"把正确的表覆盖坏 ✗
-static int g_ast_fill_phase = 0;
-
-int ast_fill_phase(void) {
-    return g_ast_fill_phase;
-}
+// （2026-10-02 S10 收尾）此处原有"填充阶段"概念与 `ast_fill_phase()` 查询接口，**已删**：
+//   它唯一的用途是让"条目已存在时是否整体覆盖字段/方法"**分阶段**判断（phase==1 才覆盖）；
+//   而那条整体覆盖路径已定案为"**任何阶段都不做**"（见 ast_fill_one_struct_meta 的注释：
+//   AST 的 TypeInfo 与符号表是两套表示层，换指针会让消费者读到另一个世界 ✗）
+//   ⇒ 该接口**零调用点**、阶段变量只剩自己写自己读 ✓ 留着会让下一个人以为"阶段还在起作用" ✗
 
 // 第二次填充入口：由 module_compiler 在**语义分析之后**调用，传**已语义化的 AST**
 //   （void* 是为了不在 core 头里引入 Ast 类型 ✓）
@@ -1542,7 +1536,6 @@ void module_ast_symbols_fill_from_ast(void* table_v, void* ast_root) {
     ModuleSymbolTable* table = (ModuleSymbolTable*)table_v;
     Ast* root = (Ast*)ast_root;
     if (!table || !root || root->kind != AST_BLOCK) return;
-    g_ast_fill_phase = 1;
     for (int i = 0; i < root->u.block.count; i++) {
         Ast* st = root->u.block.items[i];
         if (!st) continue;
@@ -1557,7 +1550,6 @@ void module_ast_symbols_fill_from_ast(void* table_v, void* ast_root) {
         else if (d->kind == AST_CSTRUCT_DEF) ast_fill_one_cstruct(table, d);
         else if (d->kind == AST_VAR_DECL) ast_fill_one_var(table, d);
     }
-    g_ast_fill_phase = 0;
 }
 
 void module_ast_symbols_register(void) {
