@@ -26,7 +26,7 @@ func eq(string name, int got, int want) {
 }
 
 // ==================== 造 50 个垃圾文件 ====================
-string base = _tmpdir() + "\\cleaner_pipeline_e2e"
+string base = dirs.join(_tmpdir(), "cleaner_pipeline_e2e")
 if dirs.exists(base) { dirs.delete(base) }
 dirs.mkdir(base)
 for 0 : 49 to i {

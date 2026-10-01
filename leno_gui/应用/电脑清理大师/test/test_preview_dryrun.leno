@@ -38,7 +38,7 @@ const int BYTES_PER_FILE = 16
 const string FILL = "0123456789ABCDEF"
 
 // ==================== 夹具 ====================
-string base = _tmpdir() + "\\cleaner_preview_dryrun"
+string base = dirs.join(_tmpdir(), "cleaner_preview_dryrun")
 if dirs.exists(base) { dirs.delete(base) }
 dirs.mkdir(base)
 Array[string] subs = []

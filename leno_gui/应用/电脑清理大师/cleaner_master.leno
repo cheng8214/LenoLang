@@ -19,8 +19,9 @@ import "./cleaner_rules.leno" as rules
 import "./cleaner_detail.leno" as detail   // 明细清单弹窗（已从本文件拧出 ⇒ 独立模块 ✓）
 import "./cleaner_whitelist.leno" as wl    // 保留清单（扫描 + 删除双端过滤 ✓）
 import "./cleaner_registry.leno" as reg    // ③ 注册表清理（判定是纯函数 ⇒ 可单测 ✓）
-import Win32
+import Sys                                  // ★ 跨平台系统能力（磁盘/回收站/进程…）—— 取代原先的 Win32 ★
 import dirs
+import strings
 import files
 import threads
 import jsons
@@ -33,7 +34,8 @@ use reg.(RegItem, RegScan, RegBackup, RegClean)
 // ==================== 调试日志（--autoclean 用；主线程+worker 都可能调 ⇒ try/catch 兜底） ====================
 func _dlog(string s) {
     try {
-        string p = _tmpdir() + "\\cmaster_debug.log"
+        // ★ 2026-10-01 换 `dirs.join`：原先写死 `"\\"` ⇒ Linux 下会生成一个名叫 `\cmaster_debug.log` 的怪文件 ✗
+        string p = dirs.join(_tmpdir(), "cmaster_debug.log")
         var f = files.open(p, "a")
         f.writeln(s)
         f.close()
@@ -52,10 +54,13 @@ func delete_entry(Array[Array[string]] chunk, Array[string] roots, any ch, Array
     return r
 }
 
-// 回收站清空走后台线程（SHEmptyRecycleBin 同步且可能耗时 ⇒ 主线程直调会冻结 UI ✗）
+// 回收站清空走后台线程（清空同步且可能耗时 ⇒ 主线程直调会冻结 UI ✗）
+//   ★ 2026-10-01 跨平台：`Sys.emptyTrash()`
+//     · Windows ⇒ SHEmptyRecycleBin（清空所有驱动器回收站）
+//     · Linux   ⇒ freedesktop Trash 规范：清掉 `~/.local/share/Trash/{files,info}`
 func recycle_entry(): bool {
     _dlog("  recycle enter")
-    bool ok = Win32.emptyRecycleBin()
+    bool ok = Sys.emptyTrash()
     _dlog($"  recycle exit ok={ok}")
     return ok
 }
@@ -129,6 +134,11 @@ struct CleanerMaster {
     bool phase2 = false                // phase2 = 真实类别清理取证
     string fixtureBase = ""
     int pollN = 0
+
+    // ===== 自证截屏（★ 2026-10-01 跨平台改造：Win32 GDI 全屏 → SDL3 读本窗口帧）=====
+    string shotPath = ""               // 非空 ⇒ 下一帧渲染完成后截图（跨平台 ✓）
+    bool shotSaved = false             // 该帧已处理完（成功或失败都算 ✓）⇒ 自动化据此决定何时收工
+    int shotWaitTicks = 0              // 已等待的定时器 tick 数（安全阀：等太久就照常收工，不卡死 ✓）
 
     // ==================== UI 构建 ====================
     func setupUI() {
@@ -245,6 +255,12 @@ struct CleanerMaster {
         previewBtn.set_tip("预览（干跑）：先看账单，不删除任何文件 —— 扫描完成后可用")
         exportBtn.set_tip("把本次清理报告写到桌面 —— 清理完成后可用")
         regBtn.set_tip("注册表残留清理：先给清单，导出 .reg 备份，二次确认后才删除")
+        // ★ 2026-10-01 跨平台：注册表是 Windows 独有的 ⇒ 非 Windows 上按本文件既有约定处理
+        //   （**暗色 + 点击拦住并说明** ✓，不引入禁用灰底 —— 见上面 2026-09-29 那条原因 ✓）
+        if not reg.supported() {
+            regBtn.set_tip("注册表清理仅 Windows 可用（本平台 " + Sys.os() + " 没有注册表）")
+            _dim(regBtn, true)
+        }
         // ★ 2026-09-29（A 方案）：**不再用 set_enabled** ✗
         //   因为禁用态框架会画一圈灰底（Button 没有 disabled_bg 选项 ✗，与"无框"设计冲突 ✗）
         //   ⇒ 改成：按钮**始终 enabled** ✓，用 **暗色** 表示"当前不可用" ✓，
@@ -259,7 +275,14 @@ struct CleanerMaster {
             if state != "report" { statusLbl.set_text("清理完成后才有报告可导出"); return }
             exportReport()
         })
-        regBtn.on_click(func() { openRegistry() })
+        regBtn.on_click(func() {
+            // ★ 跨平台：非 Windows 上**点得动、但点不进去** ⇒ 状态栏讲清为什么（不留"点了没反应" ✗）
+            if not reg.supported() {
+                statusLbl.set_text("注册表清理仅 Windows 可用：本平台（" + Sys.os() + "）没有注册表")
+                return
+            }
+            openRegistry()
+        })
         toolRow.add(previewBtn, {grow: 0, shrink: 0, basis: 92, align: 3})
         toolRow.add(exportBtn, {grow: 0, shrink: 0, basis: 92, align: 3})
         toolRow.add(regBtn, {grow: 0, shrink: 0, basis: 92, align: 3})
@@ -824,22 +847,36 @@ struct CleanerMaster {
         SDL3.msgBox("确认清理", lines, "开始清理", "取消", true, func() { beginClean(checked) })
     }
 
-    // ==================== C 盘空间 ====================
+    // ==================== 系统盘空间（★ 2026-10-01 跨平台）====================
+    //   原先写死 `Win32.diskSpace("C:\\")` + 文案 "C盘" ⇒ 非 Windows 上恒不可用 ✗
+    //   现在：盘根取 `Sys.systemRoot()`（Windows=SystemDrive 如 `C:\`；Linux=`/`）✓
+    //         文案按平台给（Windows "C盘" / Linux "根分区"）✓
+    func driveLabel(): string {
+        if Sys.isWindows() {
+            string root = Sys.systemRoot()
+            if root.len() >= 1 { return strings.slice(root, 0, 1) + "盘" }
+            return "系统盘"
+        }
+        if Sys.isMacos() { return "系统卷" }
+        return "根分区"
+    }
+
     func refreshDrive() {
+        string label = driveLabel()
         try {
-            Dict d = Win32.diskSpace("C:\\")
+            Dict d = Sys.diskSpace(Sys.systemRoot())
             if d.ok {
                 int total = _int(d.total)
                 int freeB = _int(d.free)
                 if total > 0 {
-                    driveLbl.set_text($"C盘 剩余 {rules.fmt_size(freeB)} / 共 {rules.fmt_size(total)}")
+                    driveLbl.set_text($"{label} 剩余 {rules.fmt_size(freeB)} / 共 {rules.fmt_size(total)}")
                     driveBar.set_value(100.0 * _float(total - freeB) / _float(total))
                 }
             } else {
-                driveLbl.set_text("C盘 空间不可用")
+                driveLbl.set_text(label + " 空间不可用")
             }
         } catch {
-            driveLbl.set_text("C盘 空间读取失败")
+            driveLbl.set_text(label + " 空间读取失败")
         }
     }
 
@@ -954,6 +991,11 @@ struct CleanerMaster {
     //   ② 点「导出备份并清理 N 项…」只把按钮变成**确认文案**（不在这一下动手 ✗）
     //   ③ **再点一次**才真删 —— 而且先把 .reg 备份写出来，**备份失败就一项都不删** ✓
     func openRegistry() {
+        // ★ 纵深防御（按钮/右键菜单两处入口都要靠它兜底 ✓）：非 Windows 直接说明并返回
+        if not reg.supported() {
+            statusLbl.set_text("注册表清理仅 Windows 可用：本平台（" + Sys.os() + "）没有注册表")
+            return
+        }
         var scan = reg.scan(200)
         int dw = 1000
         int dh = 540
@@ -1256,20 +1298,55 @@ struct CleanerMaster {
         SDL3.markFrameRedraw()
     }
 
-    // ==================== 自证截屏（全屏） ====================
-    // 只给自动化模式用（--autotest / --autoclean）；路径由调用方给 ⇒ done 态与报告态各一张 ✓
+    // ==================== 自证截屏（★ 2026-10-01 跨平台）====================
+    // 原先：`Win32.captureScreen()`（GDI 抓**整个桌面**）⇒ 仅 Windows 可用 ✗
+    // 现在：SDL3 读**本窗口的渲染结果**（`Renderer.readPixelsAt`）⇒ Windows/Linux/macOS 通用 ✓
+    //
+    // ⚠ 时机是这里最讲究的一点（结论照抄自 `leno_gui\应用\数据看板\dashboard.leno` 的实测 ✓）：
+    //   · 必须读在**所有控件/弹层绘制之后、present 之前** ⇒ 只有 `win.setOverlay` 满足 ✓
+    //     放在 `win.run` 的 onRender 回调里读 ⇒ 只会拿到"只有底色"的空白帧 ✗
+    //     放在**定时器**里读更不行：那时帧可能已提交，后台缓冲内容未定义 ✗（偶发黑图/花屏）
+    //   · 而 `--autotest` 的收尾是定时器驱动的 ⇒ 定时器只**登记**路径，真正的读像素交给叠加层 ✓
+    //   ⇒ 于是多了一个"等截图落地"的异步步骤（见 autoStep 与 shotWaitExpired ✓）
     func captureTo(string path) {
+        shotPath = path
+        shotSaved = false
+        shotWaitTicks = 0
+        SDL3.markFrameRedraw()      // 立刻出一帧（否则要等下一次交互才轮到叠加层 ✗）
+    }
+
+    // 叠加层：帧已完整 ⇒ 此刻读像素才是真画面 ✓（每帧被调用；没登记截图就立刻返回 ✓）
+    func shotOverlay(Renderer r) {
+        if shotPath == "" { return }
+        string path = shotPath
+        shotPath = ""
         try {
-            Dict cap = Win32.captureScreen()
-            if cap.len() > 0 {
-                Ptr surf = SDL3.createSurfaceFromRaw(_int(cap.w), _int(cap.h), _int(cap.fmt), cap.pixels, _int(cap.pitch))
-                SDL3.saveImagePNG(surf, path)
-                SDL3.destroySurface(surf)
-                print("SHOT SAVED " + path)
+            var sz = win.getSize()
+            var s = r.readPixelsAt(0, 0, sz.w, sz.h)
+            if s == null {
+                print("SHOT FAILED " + path + " : " + SDL3.getError())
+                shotSaved = true               // 失败也算"处理完"⇒ 不让自动化一直等 ✗
+                return
             }
+            bool ok = SDL3.saveImagePNG(s, path)
+            SDL3.destroySurface(s)             // ⚠ 读出来的 surface 要自己释放（否则每张漏一个 ✗）
+            print("SHOT SAVED " + path + " ok=" + _str(ok))
+            shotSaved = true
         } catch e {
-            print($"capture failed: {_str(e)}")
+            print("SHOT ERROR " + path + " : " + _str(e))
+            shotSaved = true
         }
+    }
+
+    // 等截图落地：跨平台截屏是"下一帧"才完成 ⇒ 自动化必须等它再退 ✓
+    //   返回 true = 可以继续（已落地 / 等太久放弃）；false = 再等一轮 ✓
+    //   ⚠ 必须有安全阀：万一叠加层不跑（窗口被最小化等）也**绝不能卡死** ✓
+    func shotWaitExpired(string tag): bool {
+        if shotSaved { return true }
+        shotWaitTicks = shotWaitTicks + 1
+        if shotWaitTicks < 40 { return false }
+        print("SHOT WAIT TIMEOUT (" + tag + ") —— 继续收工")
+        return true
     }
 
     // ==================== 50ms 轮询 ====================
@@ -1439,12 +1516,14 @@ struct CleanerMaster {
                 beginClean(ph1)
                 return
             }
-            // ② 报告态：先截图，再跑 phase2（真实类别，不含回收站），最后收工 ✓
+            // ② 报告态：先**登记**截图（叠加层下一帧真存），存完再跑 phase2（真实类别，不含回收站）✓
             if state == "report" {
                 if not shotReport {
                     shotReport = true
-                    captureTo(_tmpdir() + "\\cleaner_master_report.png")
+                    captureTo(dirs.join(_tmpdir(), "cleaner_master_report.png"))
+                    return                       // ★ 让出一帧 ⇒ 叠加层才轮到截图 ✓
                 }
+                if not shotWaitExpired("report") { return }
                 if not phase2 {
                     phase2 = true
                     _dlog("=== phase2: real categories (no recycle) ===")
@@ -1463,10 +1542,15 @@ struct CleanerMaster {
             return
         }
 
-        // 纯 --autotest：扫到 done ⇒ 截图 + 退出 ✓
+        // 纯 --autotest：扫到 done ⇒ **登记**截图；等叠加层真存完再退出 ✓
+        //   （★ 不能"登记完立刻 _exit"：那样叠加层根本没机会跑 ⇒ 得到 0 字节或干脆没文件 ✗）
         if state == "done" and not shotDone {
             shotDone = true
-            captureTo(_tmpdir() + "\\cleaner_master_autotest.png")
+            captureTo(dirs.join(_tmpdir(), "cleaner_master_autotest.png"))
+            return                               // ★ 让出一帧给叠加层 ✓
+        }
+        if state == "done" and shotDone {
+            if not shotWaitExpired("autotest") { return }
             print("AUTOTEST EXIT")
             _exit(0)
         }
@@ -1484,11 +1568,11 @@ struct CleanerMaster {
         if not autoTest { _console(false) }
         if autoClean {
             // 造合成垃圾（只清这里 ⇒ 不动用户真实文件）
-            fixtureBase = _tmpdir() + "\\cmaster_autoclean"
+            fixtureBase = dirs.join(_tmpdir(), "cmaster_autoclean")
             if dirs.exists(fixtureBase) { dirs.delete(fixtureBase) }
             dirs.mkdir(fixtureBase)
             for 0 : 199 to i {
-                files.write(fixtureBase + "\\junk_" + _str(i) + ".tmp", "0123456789ABCDEF0123456789ABCDEF")
+                files.write(dirs.join(fixtureBase, "junk_" + _str(i) + ".tmp"), "0123456789ABCDEF0123456789ABCDEF")
             }
             _dlog("=== autoclean start (fixture 200 files) ===")
         }
@@ -1510,6 +1594,9 @@ struct CleanerMaster {
             // ★ 自动化必须走**定时器**（与"有没有事件"无关 ✓）—— 详见 autoStep() 的注释 ✓
             win.addTimer(150, func() { autoStep() })
         }
+        // ★ 截图钩子必须挂**叠加层**：它在所有控件/弹层之后、present 之前调用
+        //   ⇒ 此刻的帧才是完整的（放 onRender 只会拿到空白底帧 ✗，见 shotOverlay 的注释 ✓）
+        win.setOverlay(func(Renderer r) { shotOverlay(r) })
         win.run(
             func(Event ev): bool {
                 // ⚠ 自动化（--autotest / --autoclean）**已全部搬到 autoStep()** ✓

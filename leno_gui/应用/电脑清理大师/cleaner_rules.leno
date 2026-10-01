@@ -279,8 +279,24 @@ func _dev_cache_roots(string local, string appdata): Array[string] {
 }
 
 // ==================== 类别构建 ====================
-// 全部用户级目录（_env 解析），无需管理员权限；不存在的不登记
+// ★ 2026-10-01 分平台（跨平台改造）：
+//   Windows 表 / Linux 表**各自独立**，但**同 id** ⇒ 应用侧（按 id 查类别、按 id 取图标、
+//   `--autoclean` 的 phase 列表）**一行都不用改** ✓
+//   ⚠ 本函数只在**主线程**构建期调用（解析环境变量 + 探测目录）；
+//     worker（scan/delete）只吃 `roots` 字符串数组 ⇒ 与本函数无关 ✓（见文件头的线程踩坑记录）
 export func build_categories(): Array[CleanCategory] {
+    return build_categories_for(_os())
+}
+
+// ★ 可指定平台构建（**导出仅为单测** ✓）：让 Windows 上也能验 Linux 表的结构 ✓
+export func build_categories_for(string osname): Array[CleanCategory] {
+    if osname == "windows" { return _build_windows() }
+    return _build_linux()
+}
+
+// ---------- Windows 表（原样保留 ⇒ 行为零变化 ✓）----------
+// 全部用户级目录（_env 解析），无需管理员权限；不存在的不登记
+func _build_windows(): Array[CleanCategory] {
     Array[CleanCategory] cats = []
     string local = _env_or("LOCALAPPDATA", "")
     string temp = _env_or("TEMP", "")
@@ -366,6 +382,199 @@ export func build_categories(): Array[CleanCategory] {
         hint = "浏览器 Service Worker / 网页离线缓存（关掉浏览器后能清更多）"))
 
     return cats
+}
+
+// ==================== Linux 表（★ 2026-10-01 新增）====================
+// 全部是 `$HOME` 下的**用户级**目录（XDG 规范）⇒ 与 Windows 表同一安全模型：不需要 root ✓
+// 与 Windows 表的三处差异（都选"照实"，绝不编造假路径 ✗）：
+//   · 错误报告（wer）/ 崩溃转储（crashdump）：Linux 没有 WER，core dump 在 /var/crash（需 root）
+//     ⇒ 这两类**留空**（界面上就是 0 项，并给出 hint 说明为什么 ✓）
+//   · 着色器缓存（d3d）：换成 Mesa / NVIDIA 的 shader cache ✓
+//   · 缩略图（thumbs）：`~/.cache/thumbnails` 是**专用目录** ⇒ 不需要 `thumbcache_` 前缀过滤 ✓
+func _build_linux(): Array[CleanCategory] {
+    Array[CleanCategory] cats = []
+    string home = _env_or("HOME", "")
+    string cache = _xdg_dir("XDG_CACHE_HOME", ".cache")
+    string cfg = _xdg_dir("XDG_CONFIG_HOME", ".config")
+
+    // 1) 系统临时文件：$TMPDIR（默认 /tmp）+ /var/tmp
+    Array[string] tempRoots = []
+    _add_roots(tempRoots, [_env_or("TMPDIR", "/tmp"), "/var/tmp"])
+    cats.add(new CleanCategory(id = "temp", name = "系统临时文件", roots = tempRoots))
+
+    // 2) 浏览器缓存（Chromium 系 + Firefox）
+    cats.add(new CleanCategory(id = "browser", name = "浏览器缓存",
+        roots = linux_browser_roots(cache)))
+
+    // 3) 错误报告：本平台无此类别（留空 ⇒ 不编造 ✓）
+    cats.add(new CleanCategory(id = "wer", name = "错误报告",
+        hint = "本平台没有 Windows 错误报告（WER）⇒ 该类别恒为空"))
+
+    // 4) 着色器缓存：Mesa / NVIDIA
+    Array[string] shRoots = []
+    if cache != "" {
+        _add_roots(shRoots, [dirs.join(cache, "mesa_shader_cache"),
+                             dirs.join(cache, "mesa_shader_cache_db")])
+    }
+    if home != "" { _add_roots(shRoots, [dirs.join(dirs.join(home, ".nv"), "GLCache")]) }
+    cats.add(new CleanCategory(id = "d3d", name = "着色器缓存", roots = shRoots,
+        hint = "显卡着色器编译缓存；删后下次启动会自动重建（首帧可能略慢）"))
+
+    // 5) 缩略图缓存（专用目录 ⇒ 整层清理 ✓ 文件管理器会自己重建）
+    Array[string] thumbRoots = []
+    if cache != "" { _add_roots(thumbRoots, [dirs.join(cache, "thumbnails")]) }
+    if home != "" { _add_roots(thumbRoots, [dirs.join(home, ".thumbnails")]) }
+    cats.add(new CleanCategory(id = "thumbs", name = "缩略图缓存", roots = thumbRoots,
+        hint = "文件管理器的缩略图缓存（会自动重建）"))
+
+    // 6) 回收站（与 Windows 同语义：roots 为空 ⇒ UI 侧走 Sys.emptyTrash ✓）
+    cats.add(new CleanCategory(id = "recyclebin", name = "回收站"))
+
+    // ==================== 以下为「更多类别」（一律追加在回收站之后 ✓）====================
+
+    // 7) 崩溃转储：系统 core dump 需要 root ⇒ 留空（不列假路径 ✓）
+    cats.add(new CleanCategory(id = "crashdump", name = "崩溃转储",
+        hint = "系统 core dump 位于 /var/crash（需管理员权限）⇒ 本平台不处理"))
+
+    // 8) 编辑器缓存（VS Code / Cursor / VSCodium / Windsurf / Trae）
+    Array[string] edRoots = []
+    if cfg != "" {
+        _add_roots(edRoots, linux_app_caches(cfg,
+            ["Code", "Cursor", "VSCodium", "Windsurf", "Trae"]))
+    }
+    cats.add(new CleanCategory(id = "editorcache", name = "编辑器缓存", roots = edRoots,
+        hint = "代码编辑器的索引/渲染缓存，删后会自动重建"))
+
+    // 9) 聊天工具缓存（Discord / Slack；只收缓存目录，**不碰聊天记录** ✓）
+    Array[string] chatRoots = []
+    if cfg != "" { _add_roots(chatRoots, linux_app_caches(cfg, ["discord", "Slack"])) }
+    if cache != "" { _add_roots(chatRoots, linux_app_caches(cache, ["discord", "slack"])) }
+    cats.add(new CleanCategory(id = "chatcache", name = "聊天缓存", roots = chatRoots,
+        hint = "聊天图片/表情的本地缓存（不会删聊天记录）"))
+
+    // 10) 包管理器缓存（npm / pip / yarn / uv / cargo）
+    Array[string] devRoots = []
+    if home != "" {
+        _add_roots(devRoots, [dirs.join(dirs.join(home, ".npm"), "_cacache"),
+                              dirs.join(dirs.join(dirs.join(home, ".cargo"), "registry"), "cache")])
+    }
+    if cache != "" {
+        _add_roots(devRoots, [dirs.join(cache, "pip"), dirs.join(cache, "yarn"),
+                              dirs.join(cache, "uv"), dirs.join(cache, "go-build")])
+    }
+    cats.add(new CleanCategory(id = "devcache", name = "包管理器缓存", roots = devRoots,
+        hint = "npm/pip/yarn/cargo 下载缓存；删后下次安装需重新下载（不影响已装的包）"))
+
+    // 11) 浏览器 Service Worker / 网页离线缓存
+    cats.add(new CleanCategory(id = "swcache", name = "网页离线缓存",
+        roots = linux_sw_roots(cache),
+        hint = "浏览器 Service Worker / 网页离线缓存（关掉浏览器后能清更多）"))
+
+    return cats
+}
+
+// XDG 目录：环境变量优先；为空则 `$HOME/<默认相对路径>` ✓
+func _xdg_dir(string envName, string defRel): string {
+    string v = _env_or(envName, "")
+    if v != "" { return v }
+    string home = _env_or("HOME", "")
+    if home == "" { return "" }
+    return dirs.join(home, defRel)
+}
+
+// 一组产品目录下的缓存子目录：`<base>/<产品>/{Cache,Code Cache,GPUCache,CachedData}` ✓
+export func linux_app_caches(string base, Array[string] products): Array[string] {
+    Array[string] out = []
+    if base == "" { return out }
+    Array[string] subs = ["Cache", "Code Cache", "GPUCache", "CachedData"]
+    for products to n {
+        string root = dirs.join(base, n)
+        if not dirs.exists(root) { continue }
+        for subs to s { _add_roots(out, [dirs.join(root, s)]) }
+    }
+    return out
+}
+
+// 一个"浏览器官 / profile"目录下的缓存子目录
+//   判据与 Windows 侧一致：新版在 `Cache/Cache_Data`，旧版是 `Cache`（二选一，防重复计数 ✓）
+//   ⚠ 逐段拼**只是风格**（分隔符统一、好读 ✓）：实测 `dirs.join(x, "a/b")` 与 `"a\\b"` 都能被解析
+//     （Windows 侧 `dirs.exists` 同样成立 ✓）⇒ 这里逐段拼纯粹不想在路径里混两套分隔符 ✓
+//     （我一度把别处的漏检归因到"内嵌分隔符"上 ✗ —— 真正原因是下钻层数不够，见 _linux_descend ✓）
+export func linux_prof_caches(string pdir): Array[string] {
+    Array[string] out = []
+    string cacheData = dirs.join(dirs.join(pdir, "Cache"), "Cache_Data")
+    string cachePlain = dirs.join(pdir, "Cache")
+    if dirs.exists(cacheData) { out.add(cacheData) }
+    eif dirs.exists(cachePlain) { out.add(cachePlain) }
+    _add_roots(out, [dirs.join(pdir, "Code Cache"), dirs.join(pdir, "GPUCache")])
+    return out
+}
+
+// 各发行版里浏览器的 cache 目录名（同一个浏览器在不同包装下名字不同 ⇒ 都列上 ✓）
+func _linux_browser_products(): Array[string] {
+    return ["google-chrome", "google-chrome-beta", "chromium", "chromium-browser",
+            "microsoft-edge", "BraveSoftware", "vivaldi", "opera"]
+}
+
+// 在 base 下**逐层下钻找 profile**，直到某层命中缓存目录就停：
+//   `<cache>/google-chrome/Cache`                     ← base 本身即 profile（1 层 ✓）
+//   `<cache>/chromium/Profile 1/Cache`                ← 2 层 ✓
+//   `<cache>/BraveSoftware/Brave-Browser/Default/…`   ← 3 层 ✓（Brave 真的这么深 ✓ 实测踩过）
+//   ⚠ 「命中即停」是**性能考量**：真实 profile 里有上万个条目（IndexedDB / Local Storage …）
+//     ⇒ 无脑深挖会很慢 ✗；而命中之后就没必要再往里找了 ✓
+//   ⚠ 深度上限 4：防万一出现环形符号链接之类把目录扫爆 ✓
+func _linux_descend(Array[string] out, string dir, int depth, bool swMode) {
+    if depth > 4 { return }
+    int before = out.len()
+    if swMode {
+        _add_roots(out, [dirs.join(dirs.join(dir, "Service Worker"), "CacheStorage"),
+                         dirs.join(dirs.join(dir, "Service Worker"), "ScriptCache")])
+    } else {
+        _add_roots(out, linux_prof_caches(dir))
+    }
+    // 本层已命中 ⇒ 不再下钻（见上 ✓）
+    if out.len() > before and depth > 0 { return }
+    try {
+        for dirs.listdir(dir) to sub {
+            string p = dirs.join(dir, sub)
+            if dirs.is_dir(p) { _linux_descend(out, p, depth + 1, swMode) }
+        }
+    } catch e { return }
+}
+
+// 浏览器缓存根：Chromium 系（逐层下钻找 profile ✓）+ Firefox（`…/<profile>/cache2` ✓）
+export func linux_browser_roots(string cache): Array[string] {
+    Array[string] out = []
+    if cache == "" { return out }
+    var products = _linux_browser_products()
+    for products to prod {
+        string base = dirs.join(cache, prod)
+        if dirs.exists(base) { _linux_descend(out, base, 0, false) }
+    }
+    // Firefox：`<cache>/mozilla/firefox/<profile>/cache2`（该目录本身就是缓存 ⇒ 整层 ✓）
+    //   ⚠ 跳过 `.parentlock`/`.` 开头的条目 ✓
+    string ff = dirs.join(dirs.join(cache, "mozilla"), "firefox")
+    if dirs.exists(ff) {
+        try {
+            for dirs.listdir(ff) to prof {
+                if strings.starts_with(prof, ".") { continue }
+                _add_roots(out, [dirs.join(dirs.join(ff, prof), "cache2")])
+            }
+        } catch e { return out }
+    }
+    return out
+}
+
+// Service Worker / 网页离线缓存（Chromium 系 `<profile>/Service Worker/{CacheStorage,ScriptCache}` ✓）
+export func linux_sw_roots(string cache): Array[string] {
+    Array[string] out = []
+    if cache == "" { return out }
+    var products = _linux_browser_products()
+    for products to prod {
+        string base = dirs.join(cache, prod)
+        if dirs.exists(base) { _linux_descend(out, base, 0, true) }
+    }
+    return out
 }
 
 // ==================== 类别图标（文件名 → 用户放在 images\ 的资源 ✓）====================
@@ -519,7 +728,7 @@ func _report(any ch, int idx, int sizeDelta, int cntDelta) {
 // 进度取证日志（与主程序 _dlog 同一文件；并发 open 共享冲突会丢行 ⇒ 仅诊断用）
 func _plog(string s) {
     try {
-        var f = files.open(_tmpdir() + "\\cmaster_debug.log", "a")
+        var f = files.open(dirs.join(_tmpdir(), "cmaster_debug.log"), "a")
         f.writeln(s)
         f.close()
     } catch e { return }    // 日志失败无处可报：有意忽略 ✓

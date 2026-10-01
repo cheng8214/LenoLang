@@ -1,0 +1,135 @@
+// LenoSys 纯解析层回归（build\leno_module\LenoSys\lib\sys_parse.leno）
+//
+// ★ 这个用例是「Linux 侧逻辑的正确性证明」：
+//   Linux 后端要读的 /proc、df、.desktop、dpkg、xbel 全是文本 ⇒ 这里喂**造好的样例文本**，
+//   就能在 Windows 机器上把这些解析全部钉死 ✓（没有 Linux 机器也不再是盲区 ✓）
+import "../build/leno_module/LenoSys/lib/sys_parse.leno" as sp
+import jsons
+
+main() {
+    print("=== LenoSys 解析层回归 ===")
+
+    // ---------- 通用小工具 ----------
+    var t = sp.tokens("a  b\tc")
+    assert_eq(t.len(), 3)
+    assert_eq(t[0], "a")
+    assert_eq(t[2], "c")
+
+    var ls = sp.split_lines("a\r\nb\n\nc")
+    assert_eq(ls.len(), 4)
+    assert_eq(ls[1], "b")
+    assert_eq(ls[2], "")
+
+    assert_eq(sp.last_index_of("a(b)c(d)", ")"), 7)
+    assert_eq(sp.last_index_of("abc", "z"), -1)
+    // ⚠ 起始位置是**字符索引**（不是字节索引）：多字节字符必须算 1 个 ✓
+    //   `中(a)文(a)` 的字符序列：中(0) ((1) a(2) )(3) 文(4) ((5) a(6) )(7) ⇒ 最后一个 'a' 在 6 ✓
+    assert_eq(sp.last_index_of("中(a)文(a)", "a"), 6)
+    assert_eq(sp.last_index_of(")))", ")"), 2)
+    assert_eq(sp.is_digit_line("  12 34"), true)
+    assert_eq(sp.is_digit_line("/dev/sda1 12"), false)
+    assert_eq(sp.is_number("60%"), false)
+    assert_eq(sp.is_number("60"), true)
+    assert_eq(sp.first_int_in("VmRSS:   1234 kB", -1), 1234)
+    assert_eq(sp.first_int_in("no digits here", -1), -1)
+    print("通用小工具 通过!")
+
+    // ---------- df（两种输出形态 + 失败形态）----------
+    var dA = sp.parse_df("   Size     Avail\n 1000000   400000\n")
+    assert_eq(dA.ok, true)
+    assert_eq(dA.total, 1000000)
+    assert_eq(dA.free, 400000)
+
+    // 普通 df：第 0 列是设备名、第 4 列 Use% 带百分号 ⇒ 都必须被正确绕开 ✓
+    var dB = sp.parse_df("Filesystem 1B-blocks Used Available Use% Mounted on\n/dev/sda1 1000000 600000 400000 60% /\n")
+    assert_eq(dB.ok, true)
+    assert_eq(dB.total, 1000000)
+    assert_eq(dB.free, 400000)
+
+    var dC = sp.parse_df("df: /nope: No such file or directory\n")
+    assert_eq(dC.ok, false)
+    print("df 解析 通过!")
+
+    // ---------- /proc/<pid>/stat ----------
+    // ⚠ 关键边界：comm 里**带空格和括号** ⇒ 必须按最后一个 ')' 切（按第一个切会错位 ✗）
+    //   后半段共 22 段：state(0) ppid(1) … rss(21) ✓
+    var p = sp.parse_proc_stat("1234 (my proc (x)) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 4096")
+    assert_eq(p.ok, true)
+    assert_eq(p.pid, 1234)
+    assert_eq(p.name, "my proc (x)")
+    assert_eq(p.state, "S")
+    assert_eq(p.ppid, 1)
+    assert_eq(p.rssPages, 4096)
+
+    var pBad = sp.parse_proc_stat("not a stat line")
+    assert_eq(pBad.ok, false)
+    print("proc stat 解析 通过!")
+
+    // ---------- /proc/<pid>/status（VmRSS 而非 VmSize ✓）----------
+    var st = "Name:\tbash\nVmSize:\t 999999 kB\nVmRSS:\t  1234 kB\nThreads:\t1\n"
+    assert_eq(sp.parse_proc_status_mem(st), 1234)
+    assert_eq(sp.parse_proc_status_mem("Name:\tbash\n"), -1)
+    print("proc status 解析 通过!")
+
+    // ---------- .desktop（本地化键 / Hidden / 注释）----------
+    var de = "[Desktop Entry]\n# 注释行\nType=Application\nName=Foo\nName[zh_CN]=福\nExec=/usr/bin/foo --bar %U\nHidden=false\n"
+    var e = sp.parse_desktop_entry(de)
+    assert_eq(e.ok, true)
+    assert_eq(e.name, "Foo")
+    assert_eq(e.execLine, "/usr/bin/foo --bar %U")
+    assert_eq(e.hidden, false)
+
+    var e2 = sp.parse_desktop_entry("[Desktop Entry]\nName=Bar\nExec=/bin/bar\nHidden=true\n")
+    assert_eq(e2.hidden, true)
+
+    // 非 [Desktop Entry] 段里的键不算 ⇒ 段切换必须被正确跟踪 ✓
+    var e3 = sp.parse_desktop_entry("[Other]\nName=Nope\n")
+    assert_eq(e3.ok, false)
+    print("desktop 解析 通过!")
+
+    // ---------- dpkg status（只收 install ok installed ✓）----------
+    var dpkg = "Package: aaa\nStatus: install ok installed\nVersion: 1.0\nMaintainer: A <a@x>\nArchitecture: amd64\n\nPackage: bbb\nStatus: deinstall ok config-files\nVersion: 2.0\n\nPackage: ccc\nStatus: install ok installed\nVersion: 3.0\n"
+    var pkgs = sp.parse_dpkg_status(dpkg)
+    assert_eq(pkgs.len(), 2)
+    assert_eq(jsons.get_str(pkgs[0], "name", ""), "aaa")
+    assert_eq(jsons.get_str(pkgs[0], "version", ""), "1.0")
+    assert_eq(jsons.get_str(pkgs[1], "name", ""), "ccc")
+    print("dpkg 解析 通过!")
+
+    // ---------- xbel（最近文件：非 file:// 跳过、去重、百分号解码 ✓）----------
+    var xbel = "<xbel>\n<bookmark href=\"file:///home/u/a.txt\" added=\"x\"/>\n<bookmark href=\"file:///home/u/a.txt\"/>\n<bookmark href=\"http://example.com/\"/>\n<bookmark href=\"file:///home/u/%E4%B8%AD%E6%96%87.txt\"/>\n</xbel>\n"
+    var rec = sp.parse_xbel_recents(xbel, 10)
+    assert_eq(rec.len(), 2)
+    assert_eq(rec[0], "/home/u/a.txt")
+    assert_eq(rec[1], "/home/u/中文.txt")
+    assert_eq(sp.parse_xbel_recents(xbel, 1).len(), 1)
+    print("xbel 解析 通过!")
+
+    // ---------- 百分号编解码 ----------
+    assert_eq(sp.percent_decode("%E4%B8%AD%E6%96%87"), "中文")
+    assert_eq(sp.percent_decode("a%20b"), "a b")
+    assert_eq(sp.percent_decode("100%25"), "100%")
+    assert_eq(sp.percent_decode("原样"), "原样")
+    assert_eq(sp.percent_encode("中文"), "%E4%B8%AD%E6%96%87")
+    assert_eq(sp.percent_encode("a b"), "a%20b")
+    assert_eq(sp.percent_encode("a/b"), "a/b")
+    // 往返一次必须恒等 ✓
+    string rt = "带 空格/和+号#井号.txt"
+    assert_eq(sp.percent_decode(sp.percent_encode(rt)), rt)
+    print("百分号编解码 通过!")
+
+    // ---------- file:// → 路径 ----------
+    assert_eq(sp.file_uri_to_path("file:///home/u/%E4%B8%AD.txt"), "/home/u/中.txt")
+    assert_eq(sp.file_uri_to_path("file:///C:/x%20y"), "C:/x y")
+    assert_eq(sp.file_uri_to_path("http://example.com/a"), "")
+    print("file:// 解析 通过!")
+
+    // ---------- shell 引号 / kill 命令 ----------
+    assert_eq(sp.sh_quote("/tmp/a b"), "'/tmp/a b'")
+    assert_eq(sp.sh_quote("a'b"), "'a'\\''b'")
+    assert_eq(sp.build_kill_cmd(42, false), "kill -TERM 42")
+    assert_eq(sp.build_kill_cmd(42, true), "kill -9 42")
+    print("shell 引号 通过!")
+
+    print("=== LenoSys 解析层：全部通过 ===")
+}

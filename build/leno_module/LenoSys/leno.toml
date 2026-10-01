@@ -1,0 +1,9 @@
+[package]
+name = "LenoSys"
+version = "0.1.0"
+description = "Leno 跨平台系统模块 — 进程 / 磁盘空间 / 回收站 / 开机启动项 / 已装软件 / 最近文件（Windows + Linux，同一套 API）"
+authors = ""
+license = "MIT"
+
+[modules]
+root = "lib"

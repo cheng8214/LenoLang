@@ -1,0 +1,91 @@
+// LenoSys 跨平台系统模块回归（build\leno_module\LenoSys）
+//
+// ★ 用例只写**任何平台都成立**的断言：
+//     「有/无」「>0」「不抛」「结构正确」—— 不做"进程正好 174 个"这类机器相关断言 ✗
+// ★ 不碰用户环境：**不真删文件、不清空回收站**（真删动作已由人工探针验过 ✓）
+//     —— 换平台（尤其 Linux）时请跑 `Sys.selfTest()` 看真机明细 ✓
+import Sys
+import dirs
+import jsons
+import strings
+
+main() {
+    print("=== LenoSys 跨平台系统模块回归 ===")
+
+    // ---------- 平台 ----------
+    assert_true(Sys.os() != "", "os() 不该为空")
+    assert_true(Sys.isWindows() or Sys.isLinux() or Sys.isMacos(), "总得认出一个平台")
+
+    // ---------- 目录 / 路径 ----------
+    assert_true(Sys.homeDir() != "", "homeDir 不该为空")
+    assert_true(Sys.tempDir() != "", "tempDir 不该为空")
+    assert_true(Sys.systemRoot() != "", "systemRoot 不该为空")
+    assert_true(Sys.pathSep() == "/" or Sys.pathSep() == "\\", "分隔符只可能是 / 或 \\")
+    assert_eq(Sys.joinPath(["a", "b"]), "a" + Sys.pathSep() + "b", "joinPath 应使用本平台分隔符")
+    assert_eq(Sys.joinPath(["a", "", "b"]), "a" + Sys.pathSep() + "b", "空段应被跳过")
+
+    // ---------- 环境变量 ----------
+    // ★ 取不到的环境变量必须**原样保留**（静默变空串最危险：路径会变得"看似可用" ✗）
+    assert_eq(Sys.expandEnv("%LENOSYS_NO_SUCH_VAR%"), "%LENOSYS_NO_SUCH_VAR%", "未知 %VAR% 应原样保留")
+    assert_eq(Sys.expandEnv("$LENOSYS_NO_SUCH_VAR"), "$LENOSYS_NO_SUCH_VAR", "未知 $VAR 应原样保留")
+    assert_eq(Sys.env("LENOSYS_NO_SUCH_VAR", "def"), "def", "默认值应生效")
+    print("平台/路径/环境 通过!")
+
+    // ---------- 进程 ----------
+    int pid = Sys.currentPid()
+    assert_true(pid > 0, "currentPid 应 > 0")
+    assert_true(Sys.processExists(pid), "自己这个进程必须'存在'")
+    assert_true(Sys.processMemoryKb(pid) >= 0, "自己的常驻内存应可读（>=0）")
+
+    var ps = Sys.listProcesses()
+    assert_true(ps.len() > 0, "进程列表不该为空")
+    for ps to p { assert_true(p.pid > 0, "每个进程都应有 pid") }
+
+    string exe = Sys.exePath()
+    assert_true(exe != "", "exePath 不该为空")
+
+    // 用**自己的 exe 名**去找自己（比找 explorer/sshd 这类机器相关名字稳 ✓）
+    string self = dirs.basename(exe)
+    if self != "" {
+        string base = self
+        int dot = strings.find(self, ".")
+        if dot > 0 { base = strings.slice(self, 0, dot) }
+        assert_true(Sys.findProcess(base).len() > 0, "应能找到自己（" + base + "）")
+    }
+    assert_true(not Sys.processExists(-1), "非法 pid 必须返回 false")
+    assert_true(not Sys.killProcess(0), "kill(0) 必须安全返回 false")
+    print("进程 通过!")
+
+    // ---------- 磁盘 ----------
+    var d = Sys.diskSpace(Sys.systemRoot())
+    assert_true(jsons.get_bool(d, "ok", false), "系统盘空间应可读")
+    assert_true(jsons.get_int(d, "total", 0) > 0, "总容量应 > 0")
+    assert_true(jsons.get_int(d, "free", 0) >= 0, "可用空间不该为负")
+    assert_true(Sys.listDrives().len() > 0, "至少要有一个盘符/挂载点")
+    int pct = Sys.diskUsagePercent(Sys.systemRoot())
+    assert_true(pct >= 0 and pct <= 100, "使用率应在 0..100（实测 " + _str(pct) + "）")
+    print("磁盘 通过!")
+
+    // ---------- 回收站（**非破坏性**断言 ✓）----------
+    var del0 = Sys.deleteToTrash([])
+    assert_true(jsons.get_bool(del0, "ok", false), "空列表必须安全返回 ok=true")
+    assert_eq(jsons.get_int(del0, "count", -1), 0, "空列表 count 应为 0")
+    print("回收站 通过!")
+
+    // ---------- 启动项 / 已装软件 / 最近文件：只验"可调用 + 结构对" ----------
+    var su = Sys.listStartupItems()
+    for su to it { assert_true(it.id != "" or it.name != "", "启动项应有 id 或 name") }
+
+    var sw = Sys.listInstalledSoftware()
+    for sw to it { assert_true(it.name != "", "已装软件必须有名字（空名已被门面过滤 ✓）") }
+
+    var rec = Sys.recentFiles(3)
+    assert_true(rec.len() <= 3, "max 参数应生效")
+    print("系统项 通过（启动项 " + _str(su.len()) + " / 软件 " + _str(sw.len()) + " / 最近 " + _str(rec.len()) + "）")
+
+    // ---------- 自检 ----------
+    var st = Sys.selfTest()
+    assert_true(jsons.get_bool(st, "ok", false), "selfTest 应全绿（失败项见输出）")
+
+    print("=== LenoSys 回归：全部通过 ===")
+}

@@ -1,0 +1,163 @@
+// test_rules_platform.leno — 清理类别表的**跨平台结构**回归
+//
+// ★ 为什么需要这个用例（核心动机）：
+//   Linux 表在 Windows 上"看起来没问题"——因为那些目录**都不存在** ⇒ `_add_roots` 全过滤掉
+//   ⇒ 拿到一张空表也能"通过" ✗ ⇒ 路径拼装错了根本发现不了 ✗
+//   ⇒ 于是这里**现造一棵合成目录树**，喂给"按目录参数化"的助手（linux_browser_roots /
+//     linux_sw_roots / linux_app_caches），就能在本机验证这些**判据与枚举逻辑**：
+//        Chromium 的 `Cache/Cache_Data` 判据、Brave 那种多层 profile、
+//        Firefox 的 `cache2`、Service Worker 的两个子目录、去重 … ✓
+//   ⚠ 分隔符不在此列（那由 `dirs.join` 保证 ⇒ 本机是 `\`、Linux 上是 `/` ✓）
+//   ★ 另有一步：临时改 HOME/TMPDIR/XDG_* 跑**整张 Linux 表** ⇒ 把"字面路径"那几类
+//     （temp / thumbs / d3d / devcache）在 Windows 上也验一遍 ✓
+import "../cleaner_rules.leno" as rules
+import dirs
+import files
+import strings
+use rules.CleanCategory
+
+func _count_base(Array[string] xs, string b): int {
+    int n = 0
+    for xs to x {
+        if dirs.basename(x) == b { n = n + 1 }
+    }
+    return n
+}
+
+func _has_dup(Array[string] xs): bool {
+    Array[string] seen = []
+    for xs to x {
+        for seen to s {
+            if s == x { return true }
+        }
+        seen.add(x)
+    }
+    return false
+}
+
+func _cat_roots(Array[CleanCategory] cats, string id): Array[string] {
+    for cats to c {
+        if c.id == id { return c.roots }
+    }
+    return []
+}
+
+func _cat_has(Array[CleanCategory] cats, string id, string root): bool {
+    for cats to c {
+        if c.id == id {
+            for c.roots to r {
+                if r == root { return true }
+            }
+        }
+    }
+    return false
+}
+
+func _ok(string what) { print("[通过] " + what) }
+
+main() {
+    print("=== 清理类别表：跨平台结构回归 ===")
+
+    // ---------- A. 两张表必须同 id、同顺序（应用侧按 id 查 ⇒ 这是硬约束）----------
+    var wc = rules.build_categories_for("windows")
+    var lc = rules.build_categories_for("linux")
+    assert_eq(lc.len(), wc.len(), "两张表类别数必须一致（实际 win=" + _str(wc.len()) + " linux=" + _str(lc.len()) + "）")
+    for 0 : wc.len() - 1 to i {
+        assert_eq(lc[i].id, wc[i].id, "第 " + _str(i) + " 个类别 id 必须一致（win=" + wc[i].id + " linux=" + lc[i].id + "）")
+    }
+    _ok("两张表同 id / 同顺序（共 " + _str(wc.len()) + " 类）")
+
+    // ---------- B. 合成目录树 ----------
+    string base = dirs.join(_tmpdir(), "cmaster_platform_test")
+    if dirs.exists(base) { dirs.delete(base) }
+    dirs.mkdir_p(base)
+
+    // Chromium 形态：<cache>/google-chrome/Default/{Cache/Cache_Data, Code Cache, GPUCache}
+    string gd = dirs.join(dirs.join(base, "google-chrome"), "Default")
+    dirs.mkdir_p(dirs.join(dirs.join(gd, "Cache"), "Cache_Data"))
+    dirs.mkdir_p(dirs.join(gd, "Code Cache"))
+    dirs.mkdir_p(dirs.join(gd, "GPUCache"))
+    // Brave 形态：多一层（<cache>/BraveSoftware/Brave-Browser/Default/…）
+    string bd = dirs.join(dirs.join(dirs.join(base, "BraveSoftware"), "Brave-Browser"), "Default")
+    dirs.mkdir_p(dirs.join(dirs.join(bd, "Cache"), "Cache_Data"))
+    // Firefox 形态：<cache>/mozilla/firefox/<profile>/cache2
+    string fp = dirs.join(dirs.join(dirs.join(base, "mozilla"), "firefox"), "abc.default")
+    dirs.mkdir_p(dirs.join(fp, "cache2"))
+    // Service Worker
+    dirs.mkdir_p(dirs.join(dirs.join(gd, "Service Worker"), "CacheStorage"))
+    // 编辑器 / 聊天 形态（走 linux_app_caches）
+    string cfgT = dirs.join(base, "cfg")
+    dirs.mkdir_p(dirs.join(dirs.join(cfgT, "Code"), "Cache"))
+    dirs.mkdir_p(dirs.join(dirs.join(cfgT, "discord"), "GPUCache"))
+
+    var roots = rules.linux_browser_roots(base)
+    assert_true(roots.len() >= 5, "应探测到多个浏览器缓存根（实际 " + _str(roots.len()) + "）")
+    assert_eq(_count_base(roots, "Cache_Data"), 2, "Cache/Cache_Data 应命中 2 个（google-chrome + Brave 多层）")
+    assert_eq(_count_base(roots, "cache2"), 1, "Firefox 的 cache2 应命中 1 个")
+    assert_eq(_count_base(roots, "Code Cache"), 1, "Code Cache 应被收 1 个")
+    assert_eq(_count_base(roots, "GPUCache"), 1, "GPUCache 应被收 1 个")
+    assert_true(not _has_dup(roots), "不得有重复根（重复会双倍计数 ✗）")
+    for roots to r {
+        assert_true(strings.starts_with(r, base), "每个根都必须在合成目录内：" + r)
+    }
+    _ok("浏览器缓存探测（Chromium / Brave 多层 / Firefox cache2 / 去重）")
+
+    var sw = rules.linux_sw_roots(base)
+    assert_true(sw.len() >= 1, "应找到 Service Worker 缓存")
+    assert_eq(dirs.basename(sw[0]), "CacheStorage", "首个应是 CacheStorage（实际 " + dirs.basename(sw[0]) + "）")
+    _ok("网页离线缓存（Service Worker）")
+
+    var ec = rules.linux_app_caches(cfgT, ["Code"])
+    assert_eq(ec.len(), 1, "编辑器缓存应命中 1 个")
+    assert_eq(dirs.basename(ec[0]), "Cache", "编辑器缓存应指向 Cache 子目录")
+    var cc = rules.linux_app_caches(cfgT, ["discord"])
+    assert_eq(cc.len(), 1, "聊天缓存应命中 1 个")
+    assert_eq(dirs.basename(cc[0]), "GPUCache", "聊天缓存应指向 GPUCache")
+    assert_eq(rules.linux_app_caches(cfgT, ["不存在的产品"]).len(), 0, "不存在的产品目录必须返回空")
+    _ok("应用缓存探测（编辑器 / 聊天 / 不存在的产品）")
+
+    // ---------- C. 整张 Linux 表（临时改 HOME/TMPDIR/XDG_* ⇒ 合成环境）----------
+    string oldHome = _env_or("HOME", "")
+    string oldTmp = _env_or("TMPDIR", "")
+    string oldCache = _env_or("XDG_CACHE_HOME", "")
+    string oldCfg = _env_or("XDG_CONFIG_HOME", "")
+
+    string fakeHome = dirs.join(base, "home")
+    string fakeCache = dirs.join(fakeHome, ".cache")
+    string fakeCfg = dirs.join(fakeHome, ".config")
+    string fakeTmp = dirs.join(base, "tmp")
+    dirs.mkdir_p(dirs.join(fakeCache, "thumbnails"))
+    dirs.mkdir_p(dirs.join(fakeCache, "mesa_shader_cache"))
+    dirs.mkdir_p(dirs.join(fakeCache, "pip"))
+    dirs.mkdir_p(dirs.join(dirs.join(fakeHome, ".npm"), "_cacache"))
+    dirs.mkdir_p(fakeTmp)
+
+    _env("HOME", fakeHome)
+    _env("TMPDIR", fakeTmp)
+    _env("XDG_CACHE_HOME", fakeCache)
+    _env("XDG_CONFIG_HOME", fakeCfg)
+
+    var lc2 = rules.build_categories_for("linux")
+    assert_true(_cat_has(lc2, "temp", fakeTmp), "temp 应含 $TMPDIR ⇒ " + _str(_cat_roots(lc2, "temp")))
+    assert_true(_cat_has(lc2, "thumbs", dirs.join(fakeCache, "thumbnails")), "缩略图应含 ~/.cache/thumbnails")
+    assert_true(_cat_has(lc2, "d3d", dirs.join(fakeCache, "mesa_shader_cache")), "着色器缓存应含 mesa_shader_cache")
+    assert_true(_cat_has(lc2, "devcache", dirs.join(dirs.join(fakeHome, ".npm"), "_cacache")), "包管理器缓存应含 ~/.npm/_cacache")
+    assert_true(_cat_has(lc2, "devcache", dirs.join(fakeCache, "pip")), "包管理器缓存应含 ~/.cache/pip")
+    // ★ 这三条是"不编造"的硬约束：Linux 上确实没有的类别必须**留空**（不塞假路径 ✗）
+    assert_eq(_cat_roots(lc2, "wer").len(), 0, "wer 在 Linux 上应留空（不编造 ✗）")
+    assert_eq(_cat_roots(lc2, "crashdump").len(), 0, "crashdump 在 Linux 上应留空（core dump 需 root ✗）")
+    assert_eq(_cat_roots(lc2, "recyclebin").len(), 0, "回收站类别 roots 必须为空（UI 侧走 Sys.emptyTrash ✓）")
+
+    // 还原环境变量（不污染后续用例 ✓）
+    _env("HOME", oldHome)
+    _env("TMPDIR", oldTmp)
+    _env("XDG_CACHE_HOME", oldCache)
+    _env("XDG_CONFIG_HOME", oldCfg)
+    _ok("整张 Linux 表（合成 HOME/TMPDIR/XDG ⇒ temp/thumbs/d3d/devcache 全部命中）")
+
+    // ---------- 收尾：清掉合成目录 ----------
+    if dirs.exists(base) { dirs.delete(base) }
+    assert_true(not dirs.exists(base), "合成目录应已清理干净")
+
+    print("=== 清理类别表跨平台回归：全部通过 ===")
+}

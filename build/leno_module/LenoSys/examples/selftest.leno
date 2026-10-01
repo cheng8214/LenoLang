@@ -1,0 +1,88 @@
+// selftest.leno — **换平台第一件事就跑这个** ✓
+//
+// 用法（仓库根）：
+//   Windows:  build\leno.exe build\leno_module\LenoSys\examples\selftest.leno
+//   Linux:    ./build/leno   build/leno_module/LenoSys/examples/selftest.leno
+//
+// 为什么需要它：本模块的 **Linux 后端没有在真机跑过**（开发机是 Windows+WSL 未装 ✗）
+//   已做的补偿：Linux 侧全部"文本解析"逻辑都抽到 sys_parse.leno，并在 Windows 上被
+//   assert\test_sys_parse.leno 全量回归 ✓；剩下的只有"读文件 / 跑命令"这一段薄壳
+//   ⇒ 在真机上把 selfTest() 跑一遍，就能立刻看出哪个能力真的可用 ✓
+import Sys
+import dirs
+import strings
+import jsons
+
+main() {
+    print("================ LenoSys 自检 ================")
+    var st = Sys.selfTest()
+    var lines = st.lines
+    for lines to l { print("  " + l) }
+    print("  ==> ok = " + _str(st.ok))
+
+    print("")
+    print("---------------- 进程（前 5）----------------")
+    var ps = Sys.listProcesses()
+    print("  共 " + _str(ps.len()) + " 个")
+    int i = 0
+    for ps to p {
+        if i >= 5 { break }
+        print("  pid=" + _str(p.pid) + "  " + p.name)
+        i = i + 1
+    }
+    string exe = Sys.exePath()
+    if exe != "" {
+        string base = dirs.basename(exe)
+        int dot = strings.find(base, ".")
+        if dot > 0 { base = strings.slice(base, 0, dot) }
+        print("  按自身名字查进程（" + base + "）命中 " + _str(Sys.findProcess(base).len()) + " 个")
+        print("  自身内存 = " + _str(Sys.processMemoryKb(Sys.currentPid())) + " KB")
+    }
+
+    print("")
+    print("---------------- 磁盘 ------------------")
+    var d = Sys.diskSpace(Sys.systemRoot())
+    print("  " + Sys.systemRoot() + "  ok=" + _str(jsons.get_bool(d, "ok", false))
+        + "  总 " + _str(jsons.get_int(d, "total", 0))
+        + "  剩 " + _str(jsons.get_int(d, "free", 0))
+        + "  使用率 " + _str(Sys.diskUsagePercent(Sys.systemRoot())) + "%")
+    var dr = Sys.listDrives()
+    int k = 0
+    for dr to x {
+        if k >= 8 { break }
+        print("  盘/挂载点: " + x)
+        k = k + 1
+    }
+
+    print("")
+    print("---------------- 开机启动项（前 8）----------------")
+    var su = Sys.listStartupItems()
+    print("  共 " + _str(su.len()) + " 项")
+    int j = 0
+    for su to it {
+        if j >= 8 { break }
+        // 三元在本语言里写作 `if 条件 then 值1 else 值2` ✓（不是 C 的 `? :` —— 我第一次写错了 ✓）
+        print("  [" + it.scope + "/" + it.source + "] " + it.name
+            + (if it.enabled then "" else "（已禁用）") + " => " + it.cmd)
+        j = j + 1
+    }
+
+    print("")
+    print("---------------- 已装软件（前 8）----------------")
+    var sw = Sys.listInstalledSoftware()
+    print("  共 " + _str(sw.len()) + " 个")
+    int m = 0
+    for sw to it {
+        if m >= 8 { break }
+        print("  " + it.name + "  " + it.version + "  [" + it.source + "]")
+        m = m + 1
+    }
+
+    print("")
+    print("---------------- 最近文件（前 8）----------------")
+    var rec = Sys.recentFiles(8)
+    for rec to r { print("  " + r) }
+
+    print("")
+    print("================ 自检结束 ================")
+}

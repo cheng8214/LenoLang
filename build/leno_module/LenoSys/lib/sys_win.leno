@@ -1,0 +1,299 @@
+// sys_win.leno — LenoSys 的 **Windows 后端**
+//
+// ★ 设计约定（与 Linux 后端一致，门面才好统一转换）：
+//   · 后端**只返回 Dict**（元素也用 Dict）⇒ 门面负责转成导出的结构体（ProcInfo / …）
+//   · 后端**不 import 门面 Sys.leno**（否则成环 ✗）
+//
+// ★ 关于 Win32 依赖：**没有改动 LenoWin32**，只是复用它的门面 `Win32` ✓
+//   ⚠ 裸名 `import Win32` 走全局搜索路径、**先到先得**（见 LenoWin32\lib\Win32.leno 头部记录：
+//     曾因 LenoHack\lib 下有同名陈旧副本而被顶掉 ✗）。若哪天出现"行为像旧版"的怪事，
+//     Sys.selfTest() 会实测磁盘/进程调用 ⇒ 先查这里 ✓
+import Win32
+import dirs
+import files
+import strings
+import jsons
+// ★ 必须有：`regEnumValues` 的元素是**无类型 Array** ⇒ 读字段前要 `as RegValueInfo` 收窄
+//   （Win32.leno 的注释里点过这个坑；实测漏了它 ⇒ 启动项/已装软件**恒为 0 条** ✗✗）
+use Win32.RegValueInfo
+
+// ==================== 平台信息 / 常用目录 ====================
+
+export func homeDir(): string { return _env_or("USERPROFILE", "") }
+export func tempDir(): string { return _env_or("TEMP", "") }
+export func configDir(): string { return _env_or("APPDATA", "") }
+export func dataDir(): string { return _env_or("LOCALAPPDATA", "") }
+export func cacheDir(): string { return _env_or("LOCALAPPDATA", "") }
+
+// 系统盘根（`C:\`）—— 门面 systemRoot() 用；也用于 diskSpace 的默认兜底 ✓
+export func systemRoot(): string {
+    return _env_or("SystemDrive", "C:") + "\\"
+}
+
+export func pathSep(): string { return "\\" }
+
+// ==================== 进程 ====================
+
+// 返回 {ok, errorCode, processes:[{pid,name}]}
+//   ⚠ Win32 侧的 listProcesses 不返回路径/内存（那要为每个 pid 开一次句柄 ⇒ 很慢 ✗）
+//     ⇒ 路径留空、内存按需用 processMemoryKb(pid) 单查 ✓（与 Linux 侧语义一致 ✓）
+export func listProcesses(): Dict {
+    var r = Win32.listProcesses()
+    int ec = jsons.get_int(r, "errorCode", 0)
+    if ec != 0 { return {ok: false, errorCode: ec, processes: []} }
+
+    Array out = []
+    var arr = r.processes
+    for arr to p {
+        int pid = jsons.get_int(p, "pid", 0)
+        if pid > 0 {
+            out.add({pid: pid, name: jsons.get_str(p, "name", ""), path: ""})
+        }
+    }
+    return {ok: true, errorCode: 0, processes: out}
+}
+
+export func processMemoryKb(int pid): int {
+    var m = Win32.getProcessMemory(pid)
+    if jsons.get_int(m, "errorCode", 0) != 0 { return -1 }
+    return jsons.get_int(m, "workingSet", -1)
+}
+
+// force 在 Windows 侧无区别：TerminateProcess 本身就是强制结束 ✓（保留参数只为跨平台同签名 ✓）
+export func killProcess(int pid, bool force): bool {
+    var r = Win32.terminateProcess(pid)
+    return jsons.get_bool(r, "success", false)
+}
+
+export func processExists(int pid): bool { return Win32.processExists(pid) }
+export func currentPid(): int { return Win32.getCurrentPid() }
+export func exePath(): string { return Win32.exePath() }
+
+// ==================== 磁盘 ====================
+
+export func listDrives(): Array[string] {
+    Array[string] out = []
+    try {
+        var d = dirs.list_drives()
+        for d to x { out.add(x) }
+    } catch e { return out }
+    return out
+}
+
+// 取 path 所在盘的根（`C:\Users\x` ⇒ `C:\`）✓ 认不出 ⇒ SystemDrive 兜底 ✓
+export func driveRootOf(string path): string {
+    string p = strings.trim(path)
+    if p.len() >= 2 {
+        if strings.slice(p, 1, 2) == ":" { return strings.slice(p, 0, 2) + "\\" }
+    }
+    return systemRoot()
+}
+
+export func diskSpace(string path): Dict {
+    var r = Win32.diskSpace(driveRootOf(path))
+    if not jsons.get_bool(r, "ok", false) { return {ok: false, total: 0, free: 0} }
+    return {ok: true, total: jsons.get_int(r, "total", 0), free: jsons.get_int(r, "free", 0)}
+}
+
+// ==================== 回收站 ====================
+
+export func deleteToTrash(Array[string] paths): Dict {
+    var r = Win32.deleteToRecycleBin(paths)
+    return {ok: jsons.get_bool(r, "ok", false),
+            count: jsons.get_int(r, "count", 0),
+            aborted: jsons.get_bool(r, "aborted", false),
+            errors: []}
+}
+
+export func emptyTrash(): bool { return Win32.emptyRecycleBin() }
+
+// ==================== 开机启动项（注册表 Run/RunOnce + 启动文件夹）====================
+
+// 返回 [{scope,id,name,cmd,source,enabled}]
+//   scope：HKCU / HKLM / HKLM32（WOW6432Node）/ StartupDir
+//   ⚠ 一律**只读**（注册表清理属于危险动作，本模块只提供"看得见"，不提供"删得掉" ✗）
+export func startupItems(): Array {
+    Array out = []
+
+    _scanRunKey(out, "HKCU", Win32.HKEY_CURRENT_USER,
+                "Software\\Microsoft\\Windows\\CurrentVersion\\Run")
+    _scanRunKey(out, "HKCU", Win32.HKEY_CURRENT_USER,
+                "Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce")
+    _scanRunKey(out, "HKLM", Win32.HKEY_LOCAL_MACHINE,
+                "Software\\Microsoft\\Windows\\CurrentVersion\\Run")
+    _scanRunKey(out, "HKLM", Win32.HKEY_LOCAL_MACHINE,
+                "Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce")
+    _scanRunKey(out, "HKLM32", Win32.HKEY_LOCAL_MACHINE,
+                "Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Run")
+
+    _scanStartupDir(out)
+    return out
+}
+
+func _scanRunKey(Array out, string scope, any hive, string keyPath) {
+    var k = Win32.regOpenKey(hive, keyPath, Win32.KEY_READ)
+    if k.errorCode != 0 { return }
+    Ptr h = k.handle
+    try {
+        var vs = Win32.regEnumValues(h)
+        var vals = vs.values
+        for vals to v {
+            // ★ 枚举出来的元素是**无类型 Array** 的元素 ⇒ 必须 `as` 收窄才能读字段 ✓
+            //   （Win32.leno 头部就点过这个坑：直接 `v.name` / `jsons.get_str(v,…)` 都拿不到值 ✗）
+            RegValueInfo vi = v as RegValueInfo
+            string vn = _str(vi.name)
+            if vn == "" { continue }        // 默认值（无名）不列 ✓
+            out.add({scope: scope, id: vn, name: vn, cmd: _regField(h, vn),
+                     source: "registry", enabled: true})
+        }
+    } finally {
+        Win32.regCloseKey(h)
+    }
+}
+
+func _scanStartupDir(Array out) {
+    string dir = configDir() + "\\Microsoft\\Windows\\Start Menu\\Programs\\Startup"
+    if not dirs.exists(dir) { return }
+    try {
+        var names = dirs.listdir(dir)
+        for names to n {
+            // `desktop.ini` 是资源管理器自己放的（不是启动项 ✗）⇒ 按扩展名排除 ✓
+            if strings.to_lower(dirs.extname(n)) == ".ini" { continue }
+            string full = dirs.join(dir, n)
+            bool isDir = false
+            try { isDir = dirs.is_dir(full) } catch e { isDir = false }
+            if not isDir {
+                out.add({scope: "StartupDir", id: n, name: strings.replace(n, ".lnk", ""),
+                         cmd: full, source: "startup-folder", enabled: true})
+            }
+        }
+    } catch e { return }
+}
+
+// ==================== 已装软件（Uninstall 注册表键）====================
+
+// 返回 [{name,version,publisher,installPath,source}]
+//   跳过：没有 DisplayName 的、以及 SystemComponent != 0 的（后者是系统组件 ✓）
+export func installedSoftware(): Array {
+    Array out = []
+    _scanUninstall(out, Win32.HKEY_LOCAL_MACHINE,
+                   "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall")
+    _scanUninstall(out, Win32.HKEY_LOCAL_MACHINE,
+                   "Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall")
+    _scanUninstall(out, Win32.HKEY_CURRENT_USER,
+                   "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall")
+    return out
+}
+
+func _scanUninstall(Array out, any hive, string rootPath) {
+    var k = Win32.regOpenKey(hive, rootPath, Win32.KEY_READ)
+    if k.errorCode != 0 { return }        // 很多机器没有 WOW6432Node 那一支 ⇒ 打不开是常态 ✓
+    Ptr h = k.handle
+    try {
+        var ss = Win32.regEnumSubKeys(h)
+        var subs = ss.subKeys              // 子键名是**字符串**（`subKeys.add(keyName)` ✓）
+        for subs to sk {
+            string sub = _str(sk)          // 元素为无类型 ⇒ 显式转字符串 ✓
+            if sub == "" { continue }
+
+            var sk2 = Win32.regOpenKey(hive, rootPath + "\\" + sub, Win32.KEY_READ)
+            if sk2.errorCode != 0 { continue }
+            Ptr sh = sk2.handle
+            try {
+                string name = _regField(sh, "DisplayName")
+                if name == "" { continue }                    // 没有显示名 ⇒ 不是"已装软件" ✓
+                if _regValueInt(sh, "SystemComponent") != 0 { continue }   // 系统组件不动 ✓
+                out.add({name: name,
+                         version: _regField(sh, "DisplayVersion"),
+                         publisher: _regField(sh, "Publisher"),
+                         installPath: _regField(sh, "InstallLocation"),
+                         source: "registry"})
+            } finally {
+                Win32.regCloseKey(sh)
+            }
+        }
+    } finally {
+        Win32.regCloseKey(h)
+    }
+}
+
+// ★ 在**已打开的键句柄**上读值 —— 字段直接取（`rs.value`），不能用 `jsons.get_*`
+//   （那是给 Dict/JSON 的 ✗：Win32 返回的是 `ReadStringResult` **结构体**，用 jsons 拿永远得到 "" ✗✗
+//    实测踩过：一开始用 jsons.get_str(rs, "value", "") ⇒ 已装软件恒为 0 个 ✗）
+func _regField(Ptr h, string valueName): string {
+    var rs = Win32.regReadString(h, valueName)
+    if rs.errorCode != 0 { return "" }
+    return rs.value
+}
+
+func _regValueInt(Ptr h, string valueName): int {
+    var rd = Win32.regReadDword(h, valueName)
+    if rd.errorCode != 0 { return 0 }
+    return rd.value
+}
+
+// ==================== 最近使用的文件 ====================
+
+// `%APPDATA%\Microsoft\Windows\Recent` 里是 `.lnk` 快捷方式
+//   ⇒ 去掉扩展名即为"最近打开过的文件名"✓（**按 mtime 由新到旧** ✓ —— dirs.stat 带 mtime ✓）
+export func recentFiles(int max): Array[string] {
+    string dir = configDir() + "\\Microsoft\\Windows\\Recent"
+    Array[string] paths = []
+    Array[int] mtimes = []
+
+    if not dirs.exists(dir) { return paths }
+    try {
+        var names = dirs.listdir(dir)
+        for names to n {
+            if strings.to_lower(dirs.extname(n)) != ".lnk" { continue }
+            string full = dirs.join(dir, n)
+            int mt = 0
+            try {
+                var st = dirs.stat(full)
+                mt = st.mtime
+            } catch e { mt = 0 }
+            paths.add(strings.replace(n, ".lnk", ""))
+            mtimes.add(mt)
+        }
+    } catch e { return paths }
+
+    _sortByTimeDesc(paths, mtimes)
+    return _cap(paths, max)
+}
+
+// 与 times 平行的简单降序排序（数组内联排序：元素少，冒泡够用 ✓）
+//   ⚠ 形参名别叫 times：会与**模块名** times 撞车 ⇒ 被解析成模块（报"模块未导入"✗ 指不到病因）
+func _sortByTimeDesc(Array[string] paths, Array[int] mts) {
+    int n = paths.len()
+    int i = 0
+    while (i < n) {
+        int j = 0
+        while (j + 1 < n - i) {
+            if mts[j] < mts[j + 1] {
+                // ⚠ 声明语句**必须单独占行**（`string tp = a b = c` 报"声明语句后期望换行"✗）
+                string tp = paths[j]
+                string tp2 = paths[j + 1]
+                paths[j] = tp2
+                paths[j + 1] = tp
+
+                int tt = mts[j]
+                int tt2 = mts[j + 1]
+                mts[j] = tt2
+                mts[j + 1] = tt
+            }
+            j = j + 1
+        }
+        i = i + 1
+    }
+}
+
+func _cap(Array[string] src, int max): Array[string] {
+    if max <= 0 { return src }
+    Array[string] out = []
+    int i = 0
+    while (i < src.len() and i < max) {
+        out.add(src[i])
+        i = i + 1
+    }
+    return out
+}

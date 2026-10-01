@@ -1,0 +1,329 @@
+// sys_linux.leno — LenoSys 的 **Linux 后端**
+//
+// ★ 设计（为什么这样能"没 Linux 也能验"）：
+//   本文件只做三件事：**读文件 / 跑命令 / 调纯解析器**（`sys_parse.leno`）。
+//   所有"文本 → 结构"的逻辑都在解析器里，而解析器**已在 Windows 上被
+//   assert\test_sys_parse.leno 钉死** ✓ ⇒ 这里剩下的只是薄壳（读/跑/拼）✓
+//
+// ★ 不 import 门面 Sys.leno（否则成环）；返回一律 **Dict**，由门面转结构体 ✓
+// ★ 不 import ffi ⇒ 没有一个手写 ABI 结构（statvfs 之类）⇒ 没有"结构体布局错了静默崩"的风险 ✓
+//   （磁盘空间走 `df`、进程走 /proc、回收站走 freedesktop Trash 规范 ✓）
+import dirs
+import files
+import strings
+import jsons
+import times as ti
+import "./sys_parse.leno" as sp
+
+// 外部命令统一给超时，避免卡死（mount 挂起时 df 会一直等 ✗）
+const int CMD_TIMEOUT_MS = 15000
+
+// ==================== 平台信息 / 常用目录（XDG 规范 ✓）====================
+
+export func homeDir(): string { return _env_or("HOME", "") }
+
+export func tempDir(): string {
+    string t = _env_or("TMPDIR", "")
+    if t != "" { return t }
+    return "/tmp"
+}
+
+export func configDir(): string {
+    string x = _env_or("XDG_CONFIG_HOME", "")
+    if x != "" { return x }
+    return homeDir() + "/.config"
+}
+
+export func dataDir(): string {
+    string x = _env_or("XDG_DATA_HOME", "")
+    if x != "" { return x }
+    return homeDir() + "/.local/share"
+}
+
+export func cacheDir(): string {
+    string x = _env_or("XDG_CACHE_HOME", "")
+    if x != "" { return x }
+    return homeDir() + "/.cache"
+}
+
+export func systemRoot(): string { return "/" }
+export func pathSep(): string { return "/" }
+
+// ==================== 进程（/proc）====================
+
+// 返回 {ok, errorCode, processes:[{pid,name,path}]}
+//   ⚠ 只读 `/proc/<pid>/stat`（不读 cmdline：它可能因为权限返回空 ✗）
+export func listProcesses(): Dict {
+    if not dirs.exists("/proc") { return {ok: false, errorCode: -1, processes: []} }
+
+    Array out = []
+    var names = dirs.listdir("/proc")
+    for names to n {
+        // 只认纯数字目录（`self`/`thread-self`/`sys` 等一律跳过 ✓）
+        if not sp.is_number(n) { continue }
+
+        string line = ""
+        try { line = files.read("/proc/" + n + "/stat") } catch e { line = "" }
+        if line == "" { continue }     // 进程已退出/权限不足 ⇒ 跳过（不静默吞，只是"不存在" ✓）
+
+        var d = sp.parse_proc_stat(line)
+        if jsons.get_bool(d, "ok", false) {
+            out.add({pid: _int(n), name: jsons.get_str(d, "name", ""), path: ""})
+        }
+    }
+    return {ok: true, errorCode: 0, processes: out}
+}
+
+// 常驻内存（VmRSS，KB）；读不到 ⇒ -1 ✓
+export func processMemoryKb(int pid): int {
+    string txt = ""
+    try { txt = files.read("/proc/" + _str(pid) + "/status") } catch e { return -1 }
+    return sp.parse_proc_status_mem(txt)
+}
+
+export func processExists(int pid): bool {
+    if pid <= 0 { return false }
+    return dirs.exists("/proc/" + _str(pid))
+}
+
+export func killProcess(int pid, bool force): bool {
+    if pid <= 0 { return false }
+    ExecResult? r = _exec(sp.build_kill_cmd(pid, force), CMD_TIMEOUT_MS)
+    if r == null { return false }
+    return r.code == 0
+}
+
+// ★ 自己读 `/proc/self/stat` 的第 1 字段 —— `/proc/self` 就是"当前进程" ✓
+//   （不用 `echo $PPID` 那种 shell 技巧：多一层子进程就不可靠 ✗）
+export func currentPid(): int {
+    string line = ""
+    try { line = files.read("/proc/self/stat") } catch e { return -1 }
+    var d = sp.parse_proc_stat(line)
+    if not jsons.get_bool(d, "ok", false) { return -1 }
+    return jsons.get_int(d, "pid", -1)
+}
+
+// `/proc/<pid>/exe` 是**符号链接** ⇒ 只能 readlink（直接用 files.read 会读到二进制本身 ✗✗）
+export func exePath(): string {
+    int pid = currentPid()
+    if pid <= 0 { return "" }
+    ExecResult? r = _exec("readlink -f /proc/" + _str(pid) + "/exe", CMD_TIMEOUT_MS)
+    if r == null { return "" }
+    return strings.trim(r.output)
+}
+
+// ==================== 磁盘 ====================
+
+export func listDrives(): Array[string] {
+    Array[string] out = []
+    try {
+        var d = dirs.list_drives()
+        for d to x { out.add(x) }
+    } catch e { return out }
+    if out.len() == 0 { out.add("/") }
+    return out
+}
+
+// `df -B1`（GNU coreutils / busybox 都有 ✓）；单位字节 ✓
+export func diskSpace(string path): Dict {
+    string q = sp.sh_quote(path)
+    ExecResult? r = _exec("df -B1 --output=size,avail " + q, CMD_TIMEOUT_MS)
+    if r != null {
+        var d = sp.parse_df(r.output)
+        if jsons.get_bool(d, "ok", false) {
+            return {ok: true, total: jsons.get_int(d, "total", 0), free: jsons.get_int(d, "free", 0)}
+        }
+    }
+    // 退回普通 df（老 coreutils 不认 --output ✓ 解析器两种形态都吃 ✓）
+    ExecResult? r2 = _exec("df -B1 " + q, CMD_TIMEOUT_MS)
+    if r2 == null { return {ok: false, total: 0, free: 0} }
+    var d2 = sp.parse_df(r2.output)
+    if jsons.get_bool(d2, "ok", false) {
+        return {ok: true, total: jsons.get_int(d2, "total", 0), free: jsons.get_int(d2, "free", 0)}
+    }
+    return {ok: false, total: 0, free: 0}
+}
+
+// ==================== 回收站（freedesktop.org Trash 规范）====================
+//
+//   ~/.local/share/Trash/files/<名字>          ← 实际文件
+//   ~/.local/share/Trash/info/<名字>.trashinfo ← 还原信息（原始绝对路径 + 删除时间）
+//   ⚠ 规范里"其它分区"应放 `<挂载点>/.Trash-<uid>`；本版只做家目录回收站，
+//     跨分区时 `mv` 会失败 ⇒ **如实报错**（不假装成功 ✗）；后续版本再补 .Trash-uid ✓
+
+func _trashDir(): string { return dataDir() + "/Trash" }
+
+// 目标名去重：`a.txt` 已存在 ⇒ `a.txt.2`、`a.txt.3` … ✓
+func _uniqueName(string dirPath, string base): string {
+    if not dirs.exists(dirs.join(dirPath, base)) { return base }
+    int i = 2
+    while (i < 10000) {
+        string cand = base + "." + _str(i)
+        if not dirs.exists(dirs.join(dirPath, cand)) { return cand }
+        i = i + 1
+    }
+    return base + "." + _str(ti.ms())
+}
+
+func _two(int n): string {
+    if n < 10 { return "0" + _str(n) }
+    return _str(n)
+}
+
+// `2026-10-01T12:34:56`（Trash 规范要求的本地时间格式 ✓）
+func _nowIso(): string {
+    var dt = ti.datetime()
+    if dt.len() < 6 { return "1970-01-01T00:00:00" }
+    return _str(dt[0]) + "-" + _two(_int(dt[1])) + "-" + _two(_int(dt[2]))
+         + "T" + _two(_int(dt[3])) + ":" + _two(_int(dt[4])) + ":" + _two(_int(dt[5]))
+}
+
+export func deleteToTrash(Array[string] paths): Dict {
+    string root = _trashDir()
+    string filesDir = root + "/files"
+    string infoDir = root + "/info"
+    dirs.mkdir_p(filesDir)
+    dirs.mkdir_p(infoDir)
+
+    int okCount = 0
+    Array[string] errs = []
+    for paths to p {
+        string abs = dirs.abspath(p)
+        if not dirs.exists(abs) {
+            errs.add(abs + "：不存在")
+            continue
+        }
+
+        string target = _uniqueName(filesDir, dirs.basename(abs))
+        ExecResult? mv = _exec("mv -f " + sp.sh_quote(abs) + " " + sp.sh_quote(filesDir + "/" + target), CMD_TIMEOUT_MS)
+        string why = ""
+        if mv != null { why = "（" + strings.trim(mv.output) + "）" }
+        if mv == null or mv.code != 0 {
+            errs.add(abs + "：移动失败" + why)
+            continue
+        }
+
+        // 还原信息（Path 要**百分号编码**；否则含空格/中文的路径还原不回来 ✗）
+        files.write(infoDir + "/" + target + ".trashinfo",
+            "[Trash Info]\nPath=" + sp.percent_encode(abs) + "\nDeletionDate=" + _nowIso() + "\n")
+        okCount = okCount + 1
+    }
+
+    // ⚠ `count` 的口径与 Windows 侧**必须一致**：都是"**提交的路径数**"（不是成功数 ✓）
+    //   —— Win32 的 SHFileOperation 就是这么报的（实测：路径不存在时 ok=false、count 仍 =1 ✓），
+    //   成功数看 `ok`、失败明细看 `errors`（Windows 侧不给明细 ⇒ 注释里写明，见门面文档 ✓）
+    return {ok: errs.len() == 0, count: paths.len(), aborted: false, errors: errs, moved: okCount}
+}
+
+// 清空回收站：递归删 `files/` 与 `info/` 的内容 ✓
+export func emptyTrash(): bool {
+    _clearDir(_trashDir() + "/files")
+    _clearDir(_trashDir() + "/info")
+    return true
+}
+
+func _clearDir(string d) {
+    if not dirs.exists(d) { return }
+    try {
+        var names = dirs.listdir(d)
+        for names to n { _rm_rf(dirs.join(d, n)) }
+    } catch e { return }
+}
+
+// 递归删除（纯 Leno：listdir + stat + delete ✓ 不走 `rm -rf` ⇒ 不怕路径拼错 ✓）
+//   ⚠ **符号链接必须当文件删**：否则会跟着链接进目标目录、把真文件删掉 ✗✗
+func _rm_rf(string p) {
+    bool isLink = false
+    try { isLink = dirs.is_symlink(p) } catch e { isLink = false }
+    if isLink {
+        try { files.delete(p) } catch e { return }
+        return
+    }
+    bool isDir = false
+    try { isDir = dirs.is_dir(p) } catch e { isDir = false }
+    if isDir {
+        try {
+            var names = dirs.listdir(p)
+            for names to n { _rm_rf(dirs.join(p, n)) }
+        } catch e { return }
+        try { dirs.rmdir(p) } catch e { return }
+    } else {
+        try { files.delete(p) } catch e { return }
+    }
+}
+
+// ==================== 开机启动项（freedesktop autostart 规范）====================
+//
+//   用户级：`~/.config/autostart/*.desktop`     系统级：`/etc/xdg/autostart/*.desktop`
+//   `Hidden=true` / `NoDisplay=true` ⇒ enabled=false（仍然列出来 ✓ 让用户看得见）
+//   ⚠ 只做 .desktop；systemd user units（`~/.config/systemd/user/*.service`）留待后续 ✓
+export func startupItems(): Array {
+    Array out = []
+    _scanAutostart(out, configDir() + "/autostart", "user")
+    _scanAutostart(out, "/etc/xdg/autostart", "system")
+    return out
+}
+
+func _scanAutostart(Array out, string dir, string scope) {
+    if not dirs.exists(dir) { return }
+    try {
+        var names = dirs.listdir(dir)
+        for names to n {
+            string full = dirs.join(dir, n)
+            string txt = ""
+            try { txt = files.read(full) } catch e { txt = "" }
+            if txt == "" { continue }
+
+            var e = sp.parse_desktop_entry(txt)
+            if not jsons.get_bool(e, "ok", false) { continue }
+
+            bool hidden = jsons.get_bool(e, "hidden", false)
+            bool nodisp = jsons.get_bool(e, "noDisplay", false)
+            string label = jsons.get_str(e, "name", "")
+            if label == "" { label = n }
+
+            out.add({scope: scope, id: n, name: label,
+                     cmd: jsons.get_str(e, "execLine", ""),
+                     source: "autostart", enabled: not (hidden or nodisp)})
+        }
+    } catch e { return }
+}
+
+// ==================== 已装软件（dpkg）====================
+//
+//   ⚠ 只做 Debian/Ubuntu 的 `/var/lib/dpkg/status`（纯文本 ✓）。
+//     rpm（`/var/lib/rpm` 是 Berkeley DB ✗）/ pacman / flatpak 留待后续；
+//     读不到 ⇒ 返回空数组（门面会带上"本平台未实现"的说明 ✓）
+export func installedSoftware(): Array {
+    Array out = []
+    string f = "/var/lib/dpkg/status"
+    if not files.exists(f) { return out }
+
+    string txt = ""
+    try { txt = files.read(f) } catch e { return out }
+
+    var pkgs = sp.parse_dpkg_status(txt)
+    for pkgs to p {
+        string name = jsons.get_str(p, "name", "")
+        if name == "" { continue }
+        out.add({name: name,
+                 version: jsons.get_str(p, "version", ""),
+                 publisher: jsons.get_str(p, "maintainer", ""),
+                 installPath: "",
+                 source: "dpkg"})
+    }
+    return out
+}
+
+// ==================== 最近使用的文件 ====================
+
+// `~/.local/share/recently-used.xbel`（GTK 维护的 XBEL 清单 ✓）
+//   ⚠ xbel 里**没有可靠的"最后访问时间排序"**（要看 modified 属性解析 ✗）
+//     ⇒ 本版按文件里出现的顺序返回（通常是"最新的在前" ✓）；如需严格排序用
+//        `dirs.stat(path).mtime` 二级排序（后续 ✓）
+export func recentFiles(int max): Array[string] {
+    string f = dataDir() + "/recently-used.xbel"
+    string txt = ""
+    try { txt = files.read(f) } catch e { return [] }
+    return sp.parse_xbel_recents(txt, max)
+}

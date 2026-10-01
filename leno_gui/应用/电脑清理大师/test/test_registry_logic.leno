@@ -64,7 +64,7 @@ eqs("环境变量被展开", reg.exe_of("%SystemRoot%\\System32\\x.exe"),
     reg.expand_env("%SystemRoot%") + "\\System32\\x.exe")
 
 // ==================== ② missing_exe：保守的"不存在"判定 ====================
-string tmp = _tmpdir() + "\\reg_logic_probe.tmp"
+string tmp = dirs.join(_tmpdir(), "reg_logic_probe.tmp")
 files.write(tmp, "x")
 check("真存在的文件 ⇒ 不算缺失", not reg.missing_exe(tmp))
 check("不存在的绝对路径 ⇒ 算缺失", reg.missing_exe("C:\\definitely\\not\\here_9f8a7b.exe"))
@@ -73,7 +73,15 @@ check("空串 ⇒ 不判缺失（保守 ✓）", not reg.missing_exe(""))
 // ==================== ③ 只读扫描冒烟（**不写注册表** ✓）====================
 var s = reg.scan(120)
 check("扫描跑完且不超上限", s.items.len() <= 120)
-check("确实检查过键（keysScanned > 0）", s.keysScanned > 0)
+// ★ 2026-10-01 跨平台：注册表是 Windows 独有 ⇒ 非 Windows 上 `scan()` **如实**返回空 + 说明
+//   ⇒ 这里不能再硬要求 keysScanned > 0 ✗（那会让 Linux 上的用例必然失败）
+//   ⇒ 改成按平台断言"该有的结果形态" ✓
+if reg.supported() {
+    check("确实检查过键（keysScanned > 0）", s.keysScanned > 0)
+} else {
+    check("非 Windows：不返回任何项（不编造 ✗）", s.items.len() == 0)
+    check("非 Windows：必须给出不可用说明（不静默 ✗）", s.notes.len() > 0)
+}
 int nKey = 0
 int nVal = 0
 for s.items to it {

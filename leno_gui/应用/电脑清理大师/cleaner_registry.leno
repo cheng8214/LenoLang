@@ -17,11 +17,19 @@
 //   · MUICache    指向已消失 exe 的条目（值名形如 `C:\…\x.exe.FriendlyAppName`）
 //   ✗ **最近文档（RecentDocs）没做**：它的值是 REG_BINARY（UTF-16 列表）⇒ 需要二进制解析，
 //     本模块目前只用字符串读取 ⇒ 先不碰（宁可不做 ✗ 也不瞎猜 ✓）
+//
+// ★★ 2026-10-01 跨平台说明（**本模块 = Windows 专属**）★★
+//   注册表是 Windows 独有的系统数据库 ⇒ Linux 上没有对应物，**也不该编一个假的** ✗
+//   ⇒ 非 Windows 上：`scan()` 直接返回"空结果 + 一条 notes 说明"，backup/apply 同理拒绝执行 ✓
+//   ⇒ 应用界面据此把这一项标记为"本平台不可用"（见 cleaner_master.openRegistry ✓）
+//   将来若要给 Linux 做等价清理（启动项 `.desktop` / 已装软件 dpkg / 最近文件 xbel），
+//   那是**另一套规则**（数据源完全不同），应该新开模块，而不是在这里塞分支 ✓
 import Win32
 import dirs
 import files
 import strings
 import times as ti
+import Sys
 // `enumValues()` 的 elements 是**无类型 Array** ⇒ 读成员前要先收窄 ✓（类型转出见 Win32.leno ✓）
 use Win32.RegValueInfo
 
@@ -258,14 +266,23 @@ export func short_location(RegItem it): string {
 }
 
 // 总扫描入口（只读 ✓）：limit <= 0 ⇒ 用 REG_ITEM_LIMIT ✓
+//   ★ 2026-10-01 跨平台守卫：注册表是 Windows 独有的 ⇒ 非 Windows 上**如实**返回空 + 说明
+//     （绝不返回假数据、也绝不假装"扫到了 0 条" ✗ —— notes 会一路显示到界面上 ✓）
 export func scan(int limit): RegScan {
     var out = new RegScan()
+    if not Sys.isWindows() {
+        out.notes.add("本平台（" + Sys.os() + "）没有注册表 ⇒ 注册表清理不可用")
+        return out
+    }
     if limit <= 0 { limit = REG_ITEM_LIMIT }
     for _uninstall_roots() to r { _scan_uninstall(out, r, limit) }
     for _run_roots() to r { _scan_run(out, r, limit) }
     _scan_muicache(out, limit)
     return out
 }
+
+// 本平台是否支持注册表清理（应用界面直接用它决定"禁用/提示" ✓ 单一事实来源 ✓）
+export func supported(): bool { return Sys.isWindows() }
 
 // ==================== 备份（动手前必须做 ✓）====================
 func _safe_name(string s): string {
@@ -282,12 +299,17 @@ func _seen(Array[string] xs, string x): bool {
 }
 
 // 桌面备份目录（带时间戳 ✓）
+//   ★ 2026-10-01 跨平台化：原先写死 `%USERPROFILE%\Desktop` + `\\` ⇒ 全部改用
+//     `Sys.homeDir()` + `dirs.join`（Windows 行为**逐字不变**：`%USERPROFILE%\Desktop` ✓；
+//     非 Windows 上即使被调到也不会拼出怪路径 ✓）
 export func backup_dir(): string {
     int nowTs = ti.now()
     string ts = ti.format(nowTs, "%Y%m%d_%H%M%S")
-    string desk = _env_or("USERPROFILE", _tmpdir()) + "\\Desktop"
-    if not dirs.exists(desk) { desk = _tmpdir() }
-    return desk + "\\注册表备份_" + ts
+    string home = Sys.homeDir()
+    if home == "" { home = _tmpdir() }
+    string desk = dirs.join(home, "Desktop")
+    if not dirs.exists(desk) { desk = home }
+    return dirs.join(desk, "注册表备份_" + ts)
 }
 
 // 导出备份：**每个要动的键各导一个 .reg**（kind="key" 导该子键 ✓；kind="value" 导它所在的键 ✓）
@@ -295,6 +317,11 @@ export func backup_dir(): string {
 export func backup(Array[RegItem] items): RegBackup {
     var out = new RegBackup()
     if items.len() == 0 { return out }
+    // 纵深防御：非 Windows 上不允许走到这里（scan 已返回空 ⇒ items 必然为空 ✓）
+    if not Sys.isWindows() {
+        out.errors.add("本平台没有注册表 ⇒ 不执行备份")
+        return out
+    }
     string dir = backup_dir()
     if not dirs.exists(dir) {
         try {
@@ -329,6 +356,11 @@ export func backup(Array[RegItem] items): RegBackup {
 // ==================== 清理（用户已确认 + 已备份 ✓）====================
 export func apply(Array[RegItem] items): RegClean {
     var out = new RegClean()
+    // 纵深防御：非 Windows 一律不删（同上 ✓）
+    if not Sys.isWindows() {
+        out.errors.add("本平台没有注册表 ⇒ 不执行清理")
+        return out
+    }
     for items to it {
         if it.kind == "key" {
             // 卸载项：整棵子键删（它的子项本来就是这台机器上的残留 ✓）

@@ -1,0 +1,369 @@
+// sys_parse.leno — LenoSys 的**纯解析层**：只吃文本、不碰系统 ⇒ 全平台可单测 ✓
+//
+// ★ 为什么单独一层（这是本模块可维护性的关键）：
+//   Linux 后端要读的东西**全是文本格式**：`/proc/*/stat`、`/proc/*/status`、`df`、
+//   `*.desktop`、dpkg 的 status 文件、`recently-used.xbel`。
+//   如果把"读文件"和"解析文本"揉在一起 ⇒ 没有 Linux 机器就**一行都验不了** ✗。
+//   把解析抽到这里（纯函数：string → 结构）⇒ 在 Windows 上拿**造好的样例文本**就能
+//   完整回归（assert\test_sys_parse.leno ✓），Linux 侧只剩"读文件 + 调这里"的薄壳 ✓
+//
+// ⚠ 本文件**不许 import ffi / Win32 / SDL3**，也不许调 _exec —— 保持"纯函数"才可测 ✓
+import strings
+import regexs
+
+// ==================== 通用文本小工具 ====================
+
+// 按空白切词（含制表符；丢弃空串）——df / proc stat / dpkg 都是空白分隔 ✓
+export func tokens(string s): Array[string] {
+    Array[string] out = []
+    string flat = strings.replace(strings.replace(s, "\t", " "), "\r", "")
+    var parts = strings.split(flat, " ")
+    for parts to p {
+        string t = strings.trim(p)
+        if t != "" { out.add(t) }
+    }
+    return out
+}
+
+// 切成行（统一去掉 \r：Windows 侧文本常见 \r\n ✓；**不丢空行** ⇒ 调用方自行判定 ✓）
+export func split_lines(string s): Array[string] {
+    Array[string] out = []
+    var raw = strings.split(strings.replace(s, "\r", ""), "\n")
+    for raw to l { out.add(l) }
+    return out
+}
+
+// 最后一个 ch 的下标（找不到 ⇒ -1）
+//   用法：`/proc/<pid>/stat` 的 `comm` 字段**可能含空格甚至括号**（如 `(a (b))`）⇒
+//         必须按**最后一个** ')' 切开，按第一个切会错位 ✗
+//   ★ 实现依据（实测 ✓）：`strings.find` 支持**起始位置** ⇒ `find(hay, pat, start)` ✓
+//     （`find("abcabc", "a", 1) == 3` ✓）。我第一版误以为它没有起始位置参数、
+//      手写了逐字符扫描 ✗ —— 那是本语言里不必要的手工活 ✓
+export func last_index_of(string s, string ch): int {
+    int found = -1
+    int at = 0
+    while (at <= s.len()) {
+        int i = strings.find(s, ch, at)
+        if i < 0 { return found }
+        found = i
+        at = i + 1
+    }
+    return found
+}
+
+// 取第 i 个片段（越界 ⇒ ""，不抛 ✓ 解析时安全）
+export func at(Array[string] arr, int i): string {
+    if i < 0 { return "" }
+    if i >= arr.len() { return "" }
+    return arr[i]
+}
+
+// 该行是否以十进制数字开头（df 的**表头行**排除用 ✓）
+export func is_digit_line(string s): bool {
+    string t = strings.trim(s)
+    if t == "" { return false }
+    return strings.find("0123456789", strings.slice(t, 0, 1)) >= 0
+}
+
+// 是否**纯十进制数字**（`"60%"` ⇒ false ✓ —— 靠这个把 df 的 Use% 列排除掉 ✓）
+export func is_number(string s): bool {
+    string t = strings.trim(s)
+    if t == "" { return false }
+    int i = 0
+    while (i < t.len()) {
+        if strings.find("0123456789", strings.slice(t, i, i + 1)) < 0 { return false }
+        i = i + 1
+    }
+    return true
+}
+
+// 从形如 "... 123 kB" 的文本里取**第一个整数**（找不到 ⇒ def）
+//   用途：/proc/<pid>/status 的 `VmRSS:    1234 kB`；`df` 的兜底解析 ✓
+export func first_int_in(string s, int def): int {
+    string digits = ""
+    bool started = false
+    int i = 0
+    while (i < s.len()) {
+        string c = strings.slice(s, i, i + 1)
+        bool isDigit = strings.find("0123456789", c) >= 0
+        if isDigit {
+            digits = digits + c
+            started = true
+        } else if started {
+            break
+        }
+        i = i + 1
+    }
+    if digits == "" { return def }
+    return _int(digits)
+}
+
+// ==================== df（Linux 磁盘空间）====================
+
+// 支持两种输出形态（后端会先试 --output=size,avail，失败再退回普通 df ✓）：
+//   A) `df -B1 --output=size,avail <path>` ⇒ 表头 + 一行两列：`<总> <可用>`
+//   B) `df -B1 <path>`                     ⇒ 表头 + 一行多列：`/dev/sda1 <总> <已用> <可用> <Use%> <挂载点>`
+// ★ 规则不按"列号"硬取，而按**纯数字列**取（实测过这个坑）：
+//     · B 形态第 0 列是**设备名**（`/dev/sda1`）⇒ 按列号取会拿到 0 ✗
+//     · B 形态的 `Use%`（`60%`）带百分号 ⇒ `is_number` 判 false ⇒ 自动排除 ✓
+//   ⇒ 数字列 ≥3 个 ⇒ (nums[0], nums[2])；正好 2 个 ⇒ (nums[0], nums[1]) ✓
+export func parse_df(string out): Dict {
+    var ls = split_lines(out)
+    for ls to l {
+        var t = tokens(l)
+        Array[string] nums = []
+        for t to cell {
+            if is_number(cell) { nums.add(cell) }
+        }
+        if nums.len() >= 3 {
+            return {ok: true, total: _int(nums[0]), free: _int(nums[2])}
+        }
+        if nums.len() == 2 {
+            return {ok: true, total: _int(nums[0]), free: _int(nums[1])}
+        }
+    }
+    return {ok: false, total: 0, free: 0}
+}
+
+// ==================== /proc/<pid>/stat ====================
+
+// 形如：`1234 (my proc) S 1 1234 ...`（第 2 段 comm 可能含空格/括号 ⇒ 按最后一个 ')' 切 ✓）
+// 切完剩下的片段从**第 3 个字段**（state）开始 ⇒ state=t[0], ppid=t[1], rss=t[21]（第 24 字段 ✓）
+export func parse_proc_stat(string line): Dict {
+    string s = strings.trim(line)
+    int lp = strings.find(s, "(")
+    if lp < 0 { return {ok: false, pid: 0, name: "", ppid: 0, state: ""} }
+    int rp = last_index_of(s, ")")
+    if rp <= lp { return {ok: false, pid: 0, name: "", ppid: 0, state: ""} }
+
+    int pid = _int(strings.trim(strings.slice(s, 0, lp)))
+    string name = strings.slice(s, lp + 1, rp)
+    string rest = strings.trim(strings.slice(s, rp + 1, s.len()))
+    var t = tokens(rest)
+
+    return {ok: pid > 0,
+            pid: pid,
+            name: name,
+            state: at(t, 0),
+            ppid: _int(at(t, 1)),
+            rssPages: _int(at(t, 21))}
+}
+
+// /proc/<pid>/status 里的常驻内存（VmRSS，单位 KB；找不到 ⇒ -1 ✓ 与 0 区分开）
+//   ⚠ 只认 `VmRSS:` 行：`VmSize`（虚拟）不是"占用"✗，两者差一个数量级
+export func parse_proc_status_mem(string text): int {
+    var ls = split_lines(text)
+    for ls to l {
+        string t = strings.trim(l)
+        if strings.starts_with(t, "VmRSS:") {
+            return first_int_in(strings.slice(t, 6, t.len()), -1)
+        }
+    }
+    return -1
+}
+
+// ==================== .desktop（Linux 开机启动项）====================
+
+// 解析 `~/.config/autostart/*.desktop` / `/etc/xdg/autostart/*.desktop` ✓
+//   认：`Name=`（本地化 `Name[zh_CN]=` 跳过 ✗）、`Exec=`、`Hidden=true`、`NoDisplay=true`
+//   只认 `[Desktop Entry]` 段；`#` 起首是注释 ✓
+export func parse_desktop_entry(string text): Dict {
+    string name = ""
+    string execLine = ""
+    bool hidden = false
+    bool noDisplay = false
+    bool inMain = false
+
+    var ls = split_lines(text)
+    for ls to l {
+        string t = strings.trim(l)
+        if t == "" { continue }
+        if strings.starts_with(t, "#") { continue }
+        if strings.starts_with(t, "[") {
+            inMain = (t == "[Desktop Entry]")
+            continue
+        }
+        if not inMain { continue }
+
+        int eq = strings.find(t, "=")
+        if eq <= 0 { continue }
+        string k = strings.trim(strings.slice(t, 0, eq))
+        string v = strings.trim(strings.slice(t, eq + 1, t.len()))
+
+        // 本地化键（`Name[zh_CN]`）跳过 ⇒ 取不带 locale 的基准值 ✓
+        if strings.find(k, "[") >= 0 { continue }
+
+        if k == "Name" { name = v }
+        else if k == "Exec" { execLine = v }
+        else if k == "Hidden" { hidden = (strings.to_lower(v) == "true") }
+        else if k == "NoDisplay" { noDisplay = (strings.to_lower(v) == "true") }
+    }
+
+    return {ok: (name != "" or execLine != ""),
+            name: name,
+            execLine: execLine,
+            hidden: hidden,
+            noDisplay: noDisplay}
+}
+
+// ==================== dpkg status（Debian/Ubuntu 已装软件）====================
+
+// `/var/lib/dpkg/status` 是**空行分隔的键值块**；只取 `Status: install ok installed` 的包 ✓
+//   ⇒ 每块含 Package / Version / Maintainer / Architecture（缺项给 "" ✓）
+export func parse_dpkg_status(string text): Array {
+    Array out = []
+    string curName = ""
+    string curVer = ""
+    string curMaint = ""
+    string curArch = ""
+    bool installed = false
+    bool hasBlock = false
+
+    var ls = split_lines(text)
+    for ls to l {
+        string t = strings.trim(l)
+
+        if t == "" {
+            // 块结束 ⇒ 已安装的收下（其余丢弃：deinstall/半装都不算 ✓）
+            if hasBlock and installed and curName != "" {
+                out.add({name: curName, version: curVer, maintainer: curMaint, arch: curArch})
+            }
+            curName = "" curVer = "" curMaint = "" curArch = ""
+            installed = false hasBlock = false
+            continue
+        }
+
+        int c = strings.find(t, ":")
+        if c <= 0 { continue }
+        string k = strings.slice(t, 0, c)
+        string v = strings.trim(strings.slice(t, c + 1, t.len()))
+        hasBlock = true
+
+        if k == "Package" { curName = v }
+        else if k == "Version" { curVer = v }
+        else if k == "Maintainer" { curMaint = v }
+        else if k == "Architecture" { curArch = v }
+        else if k == "Status" {
+            installed = (strings.find(v, "install ok installed") >= 0)
+        }
+    }
+
+    // 末块没有空行收尾 ⇒ 补收一次 ✓
+    if hasBlock and installed and curName != "" {
+        out.add({name: curName, version: curVer, maintainer: curMaint, arch: curArch})
+    }
+    return out
+}
+
+// ==================== recently-used.xbel（Linux 最近文件）====================
+
+// `<bookmark href="file:///home/u/a.txt" added=... modified=...>` ⇒ 取 href 里的本地路径 ✓
+//   只认 file:// 方案（http/https 等跳过 ✗）；去重（同一路径多次出现只留一次 ✓）
+export func parse_xbel_recents(string text, int max): Array[string] {
+    Array[string] out = []
+    // ⚠ `regexs.find_all` 返回的是 `Array[RegexMatch]`（结构体，非字符串 ✗）
+    //   `RegexMatch { int start, int end, string text }` ⇒ 取 `.text` ✓（字段类型编译期已知 ✓）
+    var hits = regexs.find_all(text, "href=\"file:[^\"]+\"")
+    for hits to hit {
+        string h = hit.text
+        // h 形如 `href="file:///home/u/a.txt"` ⇒ 掐头去尾取 URL ✓
+        int q1 = strings.find(h, "\"")
+        if q1 >= 0 {
+            string rest = strings.slice(h, q1 + 1, h.len())
+            int q2 = strings.find(rest, "\"")
+            if q2 >= 0 {
+                string p = file_uri_to_path(strings.slice(rest, 0, q2))
+                if p != "" {
+                    if not out.has(p) { out.add(p) }
+                    if max > 0 and out.len() >= max { break }
+                }
+            }
+        }
+    }
+    return out
+}
+
+// ==================== URL / 百分号编解码 ====================
+
+func _hex_val(string c): int {
+    string lower = strings.to_lower(c)
+    int d = strings.find("0123456789abcdef", lower)
+    return d
+}
+
+func _hex_digit(int v): string {
+    string table = "0123456789ABCDEF"
+    if v < 0 or v > 15 { return "0" }
+    return strings.slice(table, v, v + 1)
+}
+
+// `%E4%B8%AD` ⇒ `中`
+//   ★ 实现依据（**实测**过的语言语义，别改坏）：`strings.char(N)` 是**字节语义** ——
+//     `byte_len(char(228)) == 1`、`byte(char(228)) == 228`，且
+//     `char(228)+char(184)+char(173)` 拼出来就是合法 UTF-8 的 `中` ✓
+//     ⇒ 直接按**字节**累加即可，不需要"字节数组 → 字符串"的转换 API ✓
+export func percent_decode(string s): string {
+    string out = ""
+    int i = 0
+    while (i < s.len()) {
+        string c = strings.slice(s, i, i + 1)
+        if c == "%" and i + 2 < s.len() {
+            int hi = _hex_val(strings.slice(s, i + 1, i + 2))
+            int lo = _hex_val(strings.slice(s, i + 2, i + 3))
+            if hi >= 0 and lo >= 0 {
+                out = out + strings.char(hi * 16 + lo)
+                i = i + 3
+                continue
+            }
+        }
+        out = out + c
+        i = i + 1
+    }
+    return out
+}
+
+// `中 文/a b` ⇒ `%E4%B8%AD%20%E6%96%87%2Fa%20b`（只对**非 unreserved** 编码 ✓）
+//   按**字节**遍历（`byte_len`/`byte` ✓）—— 多字节字符会被拆成 3 个 %XX ✓ 正是 URL 规范要求
+export func percent_encode(string s): string {
+    string out = ""
+    string keep = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.~/"
+    int i = 0
+    while (i < strings.byte_len(s)) {
+        int b = strings.byte(s, i)
+        string c = strings.char(b)
+        if strings.find(keep, c) >= 0 {
+            out = out + c
+        } else {
+            out = out + "%" + _hex_digit(b / 16) + _hex_digit(b % 16)
+        }
+        i = i + 1
+    }
+    return out
+}
+
+// `file:///home/u/a%20b.txt` ⇒ `/home/u/a b.txt`；`file:///C:/x` ⇒ `C:/x` ✓
+export func file_uri_to_path(string uri): string {
+    string s = strings.trim(uri)
+    if not strings.starts_with(s, "file://") { return "" }
+    string p = strings.slice(s, 7, s.len())
+    // `file:///C:/…` 会留下一个前导 '/' ⇒ Windows 盘符形态要去掉 ✓
+    if strings.starts_with(p, "/") and p.len() > 2 {
+        string second = strings.slice(p, 2, 3)
+        if second == ":" { p = strings.slice(p, 1, p.len()) }
+    }
+    return percent_decode(p)
+}
+
+// ==================== shell 引号（Linux 侧组命令）====================
+
+// 单引号包裹（`'` → `'\''`）⇒ 任意路径都能安全拼进 `sh -c` ✓
+//   ⚠ 这是"防注入 + 防空格路径"的唯一正解；直接拼双引号会被 `$`/反引号穿透 ✗
+export func sh_quote(string s): string {
+    return "'" + strings.replace(s, "'", "'\\''") + "'"
+}
+
+// `kill -TERM 123` / `kill -KILL 123`（force=true ⇒ -9 ✓）
+export func build_kill_cmd(int pid, bool force): string {
+    if force { return "kill -9 " + _str(pid) }
+    return "kill -TERM " + _str(pid)
+}

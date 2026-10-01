@@ -106,27 +106,59 @@ func _bi(Array[WhitelistRule] out, string p, string note) {
 }
 
 export func builtin_rules(): Array[WhitelistRule] {
-    string win = _env_or("SystemRoot", "C:\\Windows")
-    string pf  = _env_or("ProgramFiles", "C:\\Program Files")
-    string pf86 = _env_or("ProgramFiles(x86)", "C:\\Program Files (x86)")
-    string up = _env_or("USERPROFILE", "")
     Array[WhitelistRule] out = []
-    _bi(out, win, "内置保护：Windows 系统目录")
-    _bi(out, pf, "内置保护：程序目录")
-    _bi(out, pf86, "内置保护：程序目录 (x86)")
-    _bi(out, up + "\\Documents", "内置保护：我的文档")
-    _bi(out, up + "\\Desktop", "内置保护：桌面")
-    _bi(out, up + "\\Pictures", "内置保护：图片")
-    _bi(out, up + "\\Videos", "内置保护：视频")
-    _bi(out, up + "\\Music", "内置保护：音乐")
+    // ★ 2026-10-01 分平台：Windows 那套照旧（**逐字不变** ✓），非 Windows 加一套 Linux 系统目录
+    //   为什么要有 Linux 那套：内置保护是"安全地板"（不可被用户清空 ✓）
+    //   即使当前扫描根都落在 `~/.cache` 与 `/tmp`，多一层地板是廉价的保险 ✓
+    //   ⚠ 刻意**不收** `/var`（整棵会连 `/var/tmp` 一起挡死 ⇒ 自家 temp 类别失效 ✗）
+    //     只收 `/var/log` 与 `/var/lib`（真正的"状态"）✓
+    if _os() == "windows" {
+        string win = _env_or("SystemRoot", "C:\\Windows")
+        string pf  = _env_or("ProgramFiles", "C:\\Program Files")
+        string pf86 = _env_or("ProgramFiles(x86)", "C:\\Program Files (x86)")
+        string up = _env_or("USERPROFILE", "")
+        _bi(out, win, "内置保护：Windows 系统目录")
+        _bi(out, pf, "内置保护：程序目录")
+        _bi(out, pf86, "内置保护：程序目录 (x86)")
+        _bi(out, up + "\\Documents", "内置保护：我的文档")
+        _bi(out, up + "\\Desktop", "内置保护：桌面")
+        _bi(out, up + "\\Pictures", "内置保护：图片")
+        _bi(out, up + "\\Videos", "内置保护：视频")
+        _bi(out, up + "\\Music", "内置保护：音乐")
+        return out
+    }
+
+    // Linux/macOS：系统目录（用户不可能想清掉这些 ✓）
+    Array[string] sysDirs = ["/bin", "/sbin", "/lib", "/lib64", "/usr", "/etc", "/boot",
+                             "/dev", "/proc", "/sys", "/run", "/opt", "/root", "/srv",
+                             "/var/log", "/var/lib"]
+    for sysDirs to d { _bi(out, d, "内置保护：系统目录 " + d) }
+    // 用户目录（与 Windows 那套一一对应；**刻意不收** `~/Downloads` 与 `~/.cache` ✓）
+    string home = _env_or("HOME", "")
+    if home != "" {
+        Array[string] userDirs = ["Desktop", "Documents", "Pictures", "Videos", "Music"]
+        for userDirs to d { _bi(out, dirs.join(home, d), "内置保护：" + d) }
+    }
     return out
 }
 
 export func reset_builtin() { RULES = builtin_rules() }
 
-// ==================== 持久化（%APPDATA%\TraeCleaner\whitelist.json ✓） ====================
+// ==================== 持久化 ====================
+//   ★ 2026-10-01 跨平台：原先写死 `%APPDATA%\...` ⇒ Linux 上 APPDATA 为空会退回**临时目录**
+//     ⇒ 保留清单**重启就没了**（还会在 temp 里留一个名字带 `\` 的怪文件 ✗）
+//     · Windows：`%APPDATA%\TraeCleaner\whitelist.json` —— **逐字不变**（不弄丢老用户的清单 ✓）
+//     · Linux/macOS：XDG 规范 `$XDG_CONFIG_HOME/TraeCleaner/whitelist.json`（默认 `~/.config/…` ✓）
 export func store_path(): string {
-    return _env_or("APPDATA", _tmpdir()) + "\\TraeCleaner\\whitelist.json"
+    if _os() == "windows" {
+        return dirs.join(dirs.join(_env_or("APPDATA", _tmpdir()), "TraeCleaner"), "whitelist.json")
+    }
+    string base = _env_or("XDG_CONFIG_HOME", "")
+    if base == "" {
+        string home = _env_or("HOME", "")
+        if home == "" { base = _tmpdir() } else { base = dirs.join(home, ".config") }
+    }
+    return dirs.join(dirs.join(base, "TraeCleaner"), "whitelist.json")
 }
 
 export func load(): bool {
@@ -168,7 +200,7 @@ export func load(): bool {
 
 export func save(): bool {
     try {
-        dirs.mkdir_p(_env_or("APPDATA", _tmpdir()) + "\\TraeCleaner")
+        dirs.mkdir_p(dirs.dirname(store_path()))   // ★ 目录从 store_path() 推导（平台判断只有一份 ✓）
         Array[any] items = []
         for RULES to r {
             items.add({path: r.path, folder: r.folder, note: r.note})

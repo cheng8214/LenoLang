@@ -32,7 +32,7 @@ check("fmt_size 1.5MB", rules.fmt_size(1572864) == "1.5 MB")
 check("fmt_size 2GB", rules.fmt_size(2147483648) == "2.0 GB")
 
 // ==================== 2. 造临时垃圾 ====================
-string base = _tmpdir() + "\\cleaner_master_test"
+string base = dirs.join(_tmpdir(), "cleaner_master_test")
 if dirs.exists(base) { dirs.delete(base) }
 dirs.mkdir(base)
 string d1 = base + "\\sub1"
@@ -79,10 +79,10 @@ check("前缀: 单元是 thumbcache 文件", r2[rules.SCAN_HDR] == base + "\\thu
 
 // ==================== 5. 删除 + 白名单拦截 ====================
 // 5a. 白名单外路径（伪造一个不在 roots 里的路径）必须被拦截
-var chunkBad = [[_tmpdir() + "\\outside_target.txt", "10"]]
+var chunkBad = [[dirs.join(_tmpdir(), "outside_target.txt"), "10"]]
 var rb = rules.delete_worker(chunkBad, [base], null, [])
 eq("白名单: 拦截计数", _int(rb[1]), 1)
-check("白名单: 外部文件未动（不存在也不算删掉）", not files.exists(_tmpdir() + "\\outside_target.txt"))
+check("白名单: 外部文件未动（不存在也不算删掉）", not files.exists(dirs.join(_tmpdir(), "outside_target.txt")))
 
 // 5b. 正常删除整层清单（成对取出 路径/大小；下标从 SCAN_HDR 起 ✓ 别写死 3 ✗）
 Array[Array[string]] chunk = []
@@ -217,7 +217,7 @@ check("match: 空目标不命中", not wl.match_in(rs, ""))
 
 // ==================== 11. 保留清单对扫描/删除的**实际效果** ====================
 // ⚠ 这一节会改模块全局状态 ⇒ 必须放在最后，并在收尾前清掉 ✓
-string wbase = _tmpdir() + "\\cleaner_wl_test"
+string wbase = dirs.join(_tmpdir(), "cleaner_wl_test")
 if dirs.exists(wbase) { dirs.delete(wbase) }
 dirs.mkdir(wbase)
 dirs.mkdir(wbase + "\\keepdir")
