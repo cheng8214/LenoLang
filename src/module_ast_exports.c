@@ -596,24 +596,32 @@ static void ast_fill_one_var(ModuleSymbolTable* table, Ast* vd) {
     if (!sym) return;
     TypeInfo* src = vd->u.var_decl.type;
     if (!src) return;   // 无类型标注（靠 init 推断）⇒ 保留扫描链结论 ✓
-    // ⚠ 收窄到**基本类型**：实测整类换后 396/10（test_nested_2d / test_nested_generic_field /
-    //   test_export_const_type / test_lenosys …）—— 聚合与泛型类型的 AST 表示与扫描链那套
-    //   口径不同，而消费者（语义/代码生成）依赖扫描链的表示 ⇒ 那些先留给扫描链；
-    //   基本类型（int/string/bool/float/…）两边一致，换过来是纯收益 ✓
-    switch (src->kind) {
-        case TYPE_STRUCT: case TYPE_FACE: case TYPE_CSTRUCT: case TYPE_CLIB:
-        case TYPE_ARRAY: case TYPE_DICT: case TYPE_PTR: case TYPE_PTR_GENERIC:
-        case TYPE_FUNCTION:
-            return;
-        default:
-            break;
+
+    // ⚠ 本轮**只做观测**，不改任何字段（改了必红：整类 396/10、只换 type+is_const 399/7）。
+    //   目的：把 AST 侧与扫描链侧对同一个 var 的类型表示打出来对比，找出真实差异之后再一次性对齐 ✓
+    //   受 LENO_DEBUG_EXPORTS=1 控制 ✓
+    static int vdbg = -1;
+    if (vdbg < 0) {
+        const char* e = getenv("LENO_DEBUG_EXPORTS");
+        vdbg = (e && e[0] && e[0] != '0') ? 1 : 0;
     }
-    // ⚠ 只换**扁平两项**：type（TypeKind）与 is_const。
-    //   实测：连 type_info 一起换会红（396/10，同一批用例）⇒ 障碍在 TypeInfo 这一层，
-    //   与类型种类无关；而 type 与 is_const 是扁平量，换过来无耦合 ✓
-    //   struct_name 仍留给扫描链（它与 type_info 同源，单独换反而会把两者拆开 ✗）
-    sym->type = ast_kind_of(table, src);
-    sym->is_const = vd->u.var_decl.is_const;
+    if (vdbg) {
+        TypeInfo* si = sym->type_info;
+        fprintf(stderr,
+                "[vardiff] %-18s AST: kind=%-3d struct=%-14s elem=%-3d generic=%d tparam=%-4s nullable=%d"
+                " | SYM: type=%-3d struct=%-14s tyinfo=%-3d tyinfo.struct=%s\n",
+                vd->u.var_decl.name,
+                (int)src->kind,
+                src->struct_name ? src->struct_name : "-",
+                src->element_type ? (int)src->element_type->kind : -1,
+                src->generic_count,
+                src->type_param_name ? src->type_param_name : "-",
+                src->nullable,
+                (int)sym->type,
+                sym->struct_name ? sym->struct_name : "-",
+                si ? (int)si->kind : -1,
+                (si && si->struct_name) ? si->struct_name : "-");
+    }
 }
 
 // ---- clib 类接管 ----
@@ -793,7 +801,7 @@ static void ast_symbol_fill_provider(ModuleSymbolTable* table, const char* src) 
             else if (d->kind == AST_STRUCT_DEF) ast_fill_one_struct_meta(table, d);
             else if (d->kind == AST_FACE_DEF) ast_fill_one_face_meta(table, d);
             else if (d->kind == AST_CLIB_DEF) ast_fill_one_clib(table, d);
-            // else if (d->kind == AST_VAR_DECL) ast_fill_one_var(table, d);
+            else if (d->kind == AST_VAR_DECL) ast_fill_one_var(table, d);
             // ⚠ var 类当前只接管**扁平两项**（type / is_const），type_info 仍留给扫描链
             //   —— 连"只收窄到基本类型"也红：396/10，test_export_const_type /
             //   test_nested_2d / test_nested_generic_field / test_lenosys / test_native_module_resolve …）
