@@ -608,11 +608,11 @@ static void ast_fill_one_var(ModuleSymbolTable* table, Ast* vd) {
         default:
             break;
     }
-    int degrade = (src->kind == TYPE_STRUCT && sym->type_info && sym->type_info->kind != TYPE_STRUCT);
-    if (degrade) return;            // 同规则：宁可少改，不让它退化 ✓
+    // ⚠ 只换**扁平两项**：type（TypeKind）与 is_const。
+    //   实测：连 type_info 一起换会红（396/10，同一批用例）⇒ 障碍在 TypeInfo 这一层，
+    //   与类型种类无关；而 type 与 is_const 是扁平量，换过来无耦合 ✓
+    //   struct_name 仍留给扫描链（它与 type_info 同源，单独换反而会把两者拆开 ✗）
     sym->type = ast_kind_of(table, src);
-    sym->struct_name = src->struct_name ? strdup(src->struct_name) : NULL;
-    sym->type_info = type_copy(src);   // 旧值不释放（同上：量小、先避 use-after-free ✓）
     sym->is_const = vd->u.var_decl.is_const;
 }
 
@@ -793,7 +793,9 @@ static void ast_symbol_fill_provider(ModuleSymbolTable* table, const char* src) 
             else if (d->kind == AST_STRUCT_DEF) ast_fill_one_struct_meta(table, d);
             else if (d->kind == AST_FACE_DEF) ast_fill_one_face_meta(table, d);
             else if (d->kind == AST_CLIB_DEF) ast_fill_one_clib(table, d);
-            // ⚠ var 类**暂不接管**（连"只收窄到基本类型"也红：396/10，test_export_const_type /
+            // else if (d->kind == AST_VAR_DECL) ast_fill_one_var(table, d);
+            // ⚠ var 类当前只接管**扁平两项**（type / is_const），type_info 仍留给扫描链
+            //   —— 连"只收窄到基本类型"也红：396/10，test_export_const_type /
             //   test_nested_2d / test_nested_generic_field / test_lenosys / test_native_module_resolve …）
             //   ⇒ 说明障碍不在类型种类，而在**类型表示层本身**：AST 的 TypeInfo 与符号表那套
             //     （经 mod_scan_params / parse_type_from_string 产出、随 .lenosymc 往返、
