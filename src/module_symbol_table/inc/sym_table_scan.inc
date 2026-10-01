@@ -106,12 +106,7 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
             // #include "scan/scan_enum.inc"
             // #include "scan/scan_func.inc"     // ← 已退役（AST 建表 + 泛型形参口径对齐）
             // #include "scan/scan_var.inc"     // ← 已退役（AST 建表 + 按初值种类推断）
-            // ⚠ alias 的文本扫描**暂不能退役**（实测停用后 404/2）：
-            //   sym_table_import_alias.inc 的"use 传导 alias"依赖 scan_alias.inc 填的本地别名表
-            //   （mod_alias_push / FIND_LOCAL_ALIAS）⇒ 停用即断链（test_plane_war_headless /
-            //   test_sdl_capture 变红）。建表路径已在 ast_fill_one_alias 就绪（find 失败则 add_alias）
-            //   ⇒ 等 alias 传导也改为从 AST 取之后，即可整段删除 ✓
-            #include "scan/scan_alias.inc"
+            // #include "scan/scan_alias.inc"     // ← 已退役（AST 建表：ast_fill_one_alias）
         }
 
         if (*p == '\n') cur_line++;
