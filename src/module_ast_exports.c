@@ -616,6 +616,162 @@ static void ast_fill_one_var(ModuleSymbolTable* table, Ast* vd) {
     sym->is_const = vd->u.var_decl.is_const;
 }
 
+// ---- clib 类接管 ----
+//   ModuleClibSymbol 与它的 funcs[] 全是扁平的（TypeKind + 名字 + 计数），
+//   没有嵌套 TypeInfo 指针 ⇒ 可以整类换 ✓ 与 cfunc 同类。
+static void ast_fill_one_clib(ModuleSymbolTable* table, Ast* cd) {
+    if (!cd || !cd->u.clib_def.name || !cd->u.clib_def.func_names) return;
+    ModuleClibSymbol* sym = module_symbol_table_find_clib(table, cd->u.clib_def.name);
+    if (!sym) return;
+    int fc = cd->u.clib_def.func_count;
+    if (fc < 0) return;
+    ModuleClibFuncSymbol* fs =
+        (ModuleClibFuncSymbol*)malloc(sizeof(ModuleClibFuncSymbol) * (fc > 0 ? (size_t)fc : 1));
+    if (!fs) return;
+    for (int i = 0; i < fc; i++) {
+        memset(&fs[i], 0, sizeof(ModuleClibFuncSymbol));
+        fs[i].name = cd->u.clib_def.func_names[i] ? strdup(cd->u.clib_def.func_names[i]) : NULL;
+        TypeInfo* rt = cd->u.clib_def.func_return_types ? cd->u.clib_def.func_return_types[i] : NULL;
+        fs[i].return_type = ast_kind_of(table, rt);
+        fs[i].return_element_type = TYPE_PTR;      // 约定值：表示"无元素类型" ✓
+        fs[i].return_struct_name = (rt && rt->struct_name) ? strdup(rt->struct_name) : NULL;
+        int pc = cd->u.clib_def.func_param_counts ? cd->u.clib_def.func_param_counts[i] : 0;
+        fs[i].param_count = pc;
+        if (pc > 0 && cd->u.clib_def.func_param_types && cd->u.clib_def.func_param_types[i]) {
+            TypeKind* pts = (TypeKind*)malloc(sizeof(TypeKind) * pc);
+            TypeKind* pets = (TypeKind*)malloc(sizeof(TypeKind) * pc);
+            char** psn = (char**)malloc(sizeof(char*) * pc);
+            if (pts && pets && psn) {
+                for (int k = 0; k < pc; k++) {
+                    TypeInfo* ti = cd->u.clib_def.func_param_types[i][k];
+                    pts[k] = ast_kind_of(table, ti);
+                    pets[k] = TYPE_PTR;
+                    psn[k] = (ti && ti->struct_name) ? strdup(ti->struct_name) : NULL;
+                }
+                fs[i].param_types = pts;
+                fs[i].param_element_types = pets;
+                fs[i].param_struct_names = psn;
+            } else {
+                free(pts); free(pets); free(psn);
+            }
+        }
+    }
+    sym->func_count = fc;
+    sym->funcs = fs;      // 旧数组不释放（同前：量小、先避 use-after-free ✓）
+}
+
+// ---- struct / face 的"扁平元信息"接管 ----
+//   为什么只接管这几项：structs[] / faces[] 的主体是**结构体数组**（fields / methods），
+//   其中含 TypeInfo* ⇒ 触碰表示层（见 var 那段结论）✗；
+//   而泛型形参名、impl 名这些是**纯字符串数组 + 计数**，与 AST 同一节点 ⇒ 天然同源，
+//   可以安全接管 ✓（计数必须与它的平行数组一起换 —— 本迁移反复验证的规律 ✓）
+static void ast_fill_one_struct_meta(ModuleSymbolTable* table, Ast* sd) {
+    if (!sd || !sd->u.struct_def.name) return;
+    ModuleStructSymbol* sym = module_symbol_table_find_struct(table, sd->u.struct_def.name);
+    if (!sym) return;
+
+    int tpc = sd->u.struct_def.type_param_count;
+    if (tpc >= 0 && sd->u.struct_def.type_params) {
+        char** tpn = (char**)malloc(sizeof(char*) * (tpc > 0 ? (size_t)tpc : 1));
+        if (tpn) {
+            for (int i = 0; i < tpc; i++) {
+                tpn[i] = sd->u.struct_def.type_params[i]
+                             ? strdup(sd->u.struct_def.type_params[i]) : NULL;
+            }
+            sym->type_param_count = tpc;
+            sym->type_param_names = tpn;     // 旧数组不释放（同前，量小、先避 use-after-free ✓）
+        }
+    }
+
+    int ic = sd->u.struct_def.impl_count;
+    if (ic >= 0 && sd->u.struct_def.impl_names) {
+        char** inn = (char**)malloc(sizeof(char*) * (ic > 0 ? (size_t)ic : 1));
+        if (inn) {
+            for (int i = 0; i < ic; i++) {
+                inn[i] = sd->u.struct_def.impl_names[i]
+                             ? strdup(sd->u.struct_def.impl_names[i]) : NULL;
+            }
+            sym->impl_count = ic;
+            sym->impl_names = inn;
+        }
+    }
+}
+
+static void ast_fill_one_face_meta(ModuleSymbolTable* table, Ast* fd) {
+    if (!fd || !fd->u.face_def.name) return;
+    ModuleFaceSymbol* sym = module_symbol_table_find_face(table, fd->u.face_def.name);
+    if (!sym) return;
+    sym->type_param_count = fd->u.face_def.type_param_count;   // 单个计数、无平行数组 ⇒ 安全 ✓
+}
+
+// ---- enum 类接管 ----
+//   member_names / member_values 与 member_count 是同一节点的**同源平行数组** ⇒ 整组换 ✓
+//   （与 func 的 param 组同一条规律：要么整组换，要么别动 ✓）
+static void ast_fill_one_enum(ModuleSymbolTable* table, Ast* ed) {
+    if (!ed || !ed->u.enum_def.name) return;
+    ModuleEnumSymbol* sym = module_symbol_table_find_enum(table, ed->u.enum_def.name);
+    if (!sym) return;
+    int mc = ed->u.enum_def.member_count;
+    if (mc < 0) return;
+    char** mn = (char**)malloc(sizeof(char*) * (mc > 0 ? (size_t)mc : 1));
+    int64_t* mv = (int64_t*)malloc(sizeof(int64_t) * (mc > 0 ? (size_t)mc : 1));
+    if (!mn || !mv) {
+        free(mn);
+        free(mv);
+        return;
+    }
+    for (int i = 0; i < mc; i++) {
+        mn[i] = (ed->u.enum_def.member_names && ed->u.enum_def.member_names[i])
+                    ? strdup(ed->u.enum_def.member_names[i]) : NULL;
+        mv[i] = ed->u.enum_def.member_values ? ed->u.enum_def.member_values[i] : 0;
+    }
+    // 旧数组不释放（同前：符号表进程内长存活、量小，先避 use-after-free ✓）
+    sym->member_count = mc;
+    sym->member_names = mn;
+    sym->member_values = mv;
+}
+
+// ---- cfunc 类接管 ----
+//   ModuleCfuncSymbol 的字段全是扁平量（TypeKind / 名字 / 计数），没有嵌套结构指针
+//   ⇒ 可以整套换，不碰表示层 ✓（这正是"能托管"与"不能托管"的分界线：是否触碰 TypeInfo 内部）
+//   ⚠ param_element_types / return_element_type 恒填 TYPE_PTR —— 那是这套符号表里表示
+//     "无元素类型"的约定值（Ptr[T] 的 T）；AST 侧没有对应的扁平字段 ⇒ 保守取此值 ✓
+static void ast_fill_one_cfunc(ModuleSymbolTable* table, Ast* cf) {
+    if (!cf || !cf->u.cfunc_decl.name) return;
+    ModuleCfuncSymbol* sym = module_symbol_table_find_cfunc(table, cf->u.cfunc_decl.name);
+    if (!sym) return;
+    int pc = cf->u.cfunc_decl.param_count;
+    if (pc > 0 && cf->u.cfunc_decl.param_types) {
+        TypeKind* pts = (TypeKind*)malloc(sizeof(TypeKind) * pc);
+        TypeKind* pets = (TypeKind*)malloc(sizeof(TypeKind) * pc);
+        char** psn = (char**)malloc(sizeof(char*) * pc);
+        char** pnm = (char**)malloc(sizeof(char*) * pc);
+        if (pts && pets && psn && pnm) {
+            for (int i = 0; i < pc; i++) {
+                TypeInfo* ti = cf->u.cfunc_decl.param_types[i];
+                pts[i] = ast_kind_of(table, ti);
+                pets[i] = TYPE_PTR;
+                psn[i] = (ti && ti->struct_name) ? strdup(ti->struct_name) : NULL;
+                pnm[i] = (cf->u.cfunc_decl.param_names && cf->u.cfunc_decl.param_names[i])
+                             ? strdup(cf->u.cfunc_decl.param_names[i]) : NULL;
+            }
+            sym->param_count = pc;
+            sym->param_types = pts;
+            sym->param_element_types = pets;
+            sym->param_struct_names = psn;
+            sym->param_names = pnm;
+        } else {
+            free(pts); free(pets); free(psn); free(pnm);
+        }
+    }
+    if (cf->u.cfunc_decl.return_type) {
+        sym->return_type = ast_kind_of(table, cf->u.cfunc_decl.return_type);
+        sym->return_element_type = TYPE_PTR;
+        sym->return_struct_name = cf->u.cfunc_decl.return_type->struct_name
+                                      ? strdup(cf->u.cfunc_decl.return_type->struct_name) : NULL;
+    }
+}
+
 static void ast_symbol_fill_provider(ModuleSymbolTable* table, const char* src) {
     if (!table || !src) return;
     Parser p;
@@ -632,6 +788,11 @@ static void ast_symbol_fill_provider(ModuleSymbolTable* table, const char* src) 
             Ast* d = (st->kind == AST_EXPORT && st->u.export.decl) ? st->u.export.decl : st;
             if (d->kind == AST_FUNC_DEF) ast_fill_one_func(table, d);
             else if (d->kind == AST_ALIAS) ast_fill_one_alias(table, d);
+            else if (d->kind == AST_CFUNC_DECL) ast_fill_one_cfunc(table, d);
+            else if (d->kind == AST_ENUM_DEF) ast_fill_one_enum(table, d);
+            else if (d->kind == AST_STRUCT_DEF) ast_fill_one_struct_meta(table, d);
+            else if (d->kind == AST_FACE_DEF) ast_fill_one_face_meta(table, d);
+            else if (d->kind == AST_CLIB_DEF) ast_fill_one_clib(table, d);
             // ⚠ var 类**暂不接管**（连"只收窄到基本类型"也红：396/10，test_export_const_type /
             //   test_nested_2d / test_nested_generic_field / test_lenosys / test_native_module_resolve …）
             //   ⇒ 说明障碍不在类型种类，而在**类型表示层本身**：AST 的 TypeInfo 与符号表那套
