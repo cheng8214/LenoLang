@@ -28,16 +28,10 @@ func tail_lines(string s, int n):string {
 }
 
 main() {
-    // 本用例走的是**完整的 GUI 栈**（LenoSDL3 + LenoMusic）。LenoMusic 的音频后端硬编码加载
-    //   `miniaudio.dll`（Windows）⇒ POSIX 上启动后会在首帧前抛「加载库失败」并退出，
-    //   永远跑不满 `LENO_SDL_FRAMES` 帧（实测：`[OK] 飞机大战启动成功!` 之后紧跟
-    //   `[错误] 渲染异常: 加载库 'miniaudio.dll' 失败`，exit=0 但无 frames 摘要 ✗）。
-    //   音频后端补齐 POSIX 产物之前，这条用例只在 Windows 上有效 ⇒ 非 Windows 跳过。
-    if _os() != "windows" {
-        print("非 Windows 平台：LenoMusic 音频后端依赖 miniaudio.dll，SKIP")
-        return
-    }
-
+    // 本用例走完整的 GUI 栈（LenoSDL3 + LenoMusic）。两个平台都能跑：
+    //   LenoMusic 现按 `_os()` 加载 `miniaudio.dll`（Windows）/ `miniaudio.so`（POSIX，见
+    //   src/build_so.sh）；无音频设备的环境下引擎初始化失败会**优雅降级为静音**
+    //   （打印「音频初始化失败，游戏将以静音模式运行」后照常跑帧）⇒ 不影响下面的帧数判据 ✓
     int frames = 120
     // 用 `_executable()`（= 当前解释器自身的绝对路径）而不是写死 "build\leno.exe"：
     // 本仓库的解释器产物叫 leno.exe（build.bat）/ leno_vm.exe（build_vm.bat），

@@ -86,25 +86,33 @@ var g_ok = false
 miniaudio g_lib = null
 
 func find_dll() {
+    // 库文件名**随平台**：Windows 是 `miniaudio.dll`（src/build_dll.bat 产物），
+    //   POSIX 是 `miniaudio.so`（src/build_so.sh 产物）。原实现把 .dll 写死，
+    //   POSIX 上 ffi.load 会直接抛「加载库失败」⇒ 音频整体不可用 ✗
+    var name = if _os() == "windows" then "miniaudio.dll" else "miniaudio.so"
+
     // 1: global cache ~/.leno/pkgs/LenoMusic/lib/
-    var cache = _homedir() + "\\.leno\\pkgs\\LenoMusic\\lib\\miniaudio.dll"
+    //    用 dirs.join 拼：原实现是 `_homedir() + "\\.leno\\pkgs\\..."`，POSIX 上这是**字面量反斜杠** ✗
+    var cache = dirs.join(_homedir(), ".leno", "pkgs", "LenoMusic", "lib", name)
     if files.exists(cache) { g_path = cache; return }
     // 2: CWD
-    if files.exists("miniaudio.dll") { g_path = "miniaudio.dll"; return }
+    if files.exists(name) { g_path = name; return }
     // 3: lib/ (dev mode from project root)
-    if files.exists("lib/miniaudio.dll") { g_path = "lib/miniaudio.dll"; return }
+    var p3 = dirs.join("lib", name)
+    if files.exists(p3) { g_path = p3; return }
     // 4: ../../lib/ (from examples subdirectory)
-    if files.exists("../../lib/miniaudio.dll") { g_path = "../../lib/miniaudio.dll"; return }
+    var p4 = dirs.join("..", "..", "lib", name)
+    if files.exists(p4) { g_path = p4; return }
     // 5: dirs.script_dir()
     var scr = dirs.script_dir()
     if scr != null {
-        var path = scr + "/miniaudio.dll"
+        var path = dirs.join(scr, name)
         if files.exists(path) { g_path = path; return }
         // Also try ../../lib/ relative to script dir
-        var libPath = scr + "/../../lib/miniaudio.dll"
+        var libPath = dirs.join(scr, "..", "..", "lib", name)
         if files.exists(libPath) { g_path = libPath; return }
     }
-    g_path = "miniaudio.dll"
+    g_path = name
 }
 
 export func lib(): miniaudio {
