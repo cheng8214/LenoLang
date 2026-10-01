@@ -105,7 +105,7 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
             //   find 不到就 add_enum），导出名也由 AST 提供（ModuleExportNamesProvider）✓
             // #include "scan/scan_enum.inc"
             #include "scan/scan_func.inc"
-            #include "scan/scan_var.inc"
+            // #include "scan/scan_var.inc"     // ← 已退役（AST 建表 + 按初值种类推断）
             // ⚠ alias 的文本扫描**暂不能退役**（实测停用后 404/2）：
             //   sym_table_import_alias.inc 的"use 传导 alias"依赖 scan_alias.inc 填的本地别名表
             //   （mod_alias_push / FIND_LOCAL_ALIAS）⇒ 停用即断链（test_plane_war_headless /

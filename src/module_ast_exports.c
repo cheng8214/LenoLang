@@ -640,34 +640,230 @@ static void ast_fill_one_alias(ModuleSymbolTable* table, Ast* al) {
 //   AST 的同一个 TypeInfo 与同一个节点 ⇒ 天然同源，整类一起换 ✓
 //   扫描链为了拿这些要自己解析"类型在前/带泛型"的文本（scan_var.inc 那一大段），
 //   AST 侧 u.var_decl.type 已经是 parser 的结果 ⇒ 这正是"AST 提供更多信息"的直接体现 ✓
+// ---- 本模块的 import 别名表（供 `export const X = base.Y` 这类初始值递归解析）----
+//   为什么需要它：跨模块常量的类型必须**穿过中间模块**传播（test_export_const_type 整条用例
+//   就是这个：B 里 `export const RE_INT = base.INT_VAL`，C 访问 B.RE_INT 时类型要是 int 不是 any ✓）
+//   AST 侧 module_access 只记了别名（"base"）⇒ 得先用本模块的 import 语句把它解析成路径 ✓
+// ⚠ 可重入：解析依赖模块会触发对方也跑填充器 ⇒ 必须 save/restore（见 provider 里的用法 ✓）
+typedef struct {
+    char* key;    // 别名（import "…" as X 的 X；裸包名 import 时就是包名 ✓）
+    char* path;   // 待解析的路径/包名（交给 module_symbol_table_get_shared 解析 ✓）
+} AstImportRef;
+static AstImportRef* g_ast_imports = NULL;
+static int g_ast_import_count = 0;
+
+static void ast_imports_free(AstImportRef* arr, int n) {
+    if (!arr) return;
+    for (int i = 0; i < n; i++) {
+        free(arr[i].key);
+        free(arr[i].path);
+    }
+    free(arr);
+}
+
+static void ast_imports_build(Ast* root, AstImportRef** out, int* out_n) {
+    *out = NULL;
+    *out_n = 0;
+    if (!root || root->kind != AST_BLOCK) return;
+    AstImportRef* arr = NULL;
+    int n = 0;
+    for (int i = 0; i < root->u.block.count; i++) {
+        Ast* st = root->u.block.items[i];
+        if (!st || st->kind != AST_IMPORT) continue;
+        const char* key = st->u.import.alias ? st->u.import.alias : st->u.import.module_name;
+        const char* path = st->u.import.file_path ? st->u.import.file_path : st->u.import.module_name;
+        if (!key || !path) continue;
+        AstImportRef* grown = (AstImportRef*)realloc(arr, sizeof(AstImportRef) * (size_t)(n + 1));
+        if (!grown) break;
+        arr = grown;
+        arr[n].key = strdup(key);
+        arr[n].path = strdup(path);
+        n++;
+    }
+    *out = arr;
+    *out_n = n;
+}
+
+// `mod.MEMBER` 的类型：查**依赖模块**的符号表（与 scan_var.inc:297-336 同口径）：
+//   变量 → enum 成员(可作常量 ⇒ int) → struct/face/cstruct/clib → 函数返回类型 ✓
+//   解析不出 ⇒ NULL（调用方按 TYPE_ANY 处理，不比原来更差 ✓）
+static TypeInfo* ast_infer_module_access(ModuleSymbolTable* table, Ast* init) {
+    if (!table || !init) return NULL;
+    const char* mname = init->u.module_access.module_name;
+    const char* member = init->u.module_access.member_name;
+    if (!mname || !member) return NULL;
+    const char* path = NULL;
+    for (int i = 0; i < g_ast_import_count; i++) {
+        if (g_ast_imports[i].key && strcmp(g_ast_imports[i].key, mname) == 0) {
+            path = g_ast_imports[i].path;
+            break;
+        }
+    }
+    if (!path) return NULL;
+    ModuleSymbolTable* dep = module_symbol_table_get_shared(path, table->module_path);
+    if (!dep) return NULL;
+    ModuleVarSymbol* v = module_symbol_table_find_var(dep, member);
+    if (v) {
+        if (v->type_info) return type_copy(v->type_info);
+        if (v->type != TYPE_ANY) return type_new(v->type);
+        return NULL;
+    }
+    if (module_symbol_table_find_enum(dep, member)) return type_new(TYPE_INT);
+    ModuleStructSymbol* s = module_symbol_table_find_struct(dep, member);
+    if (s) {
+        TypeInfo* t = type_new(s->is_cstruct ? TYPE_CSTRUCT : TYPE_STRUCT);
+        if (t) t->struct_name = strdup(s->name);
+        return t;
+    }
+    if (module_symbol_table_find_face(dep, member)) {
+        TypeInfo* t = type_new(TYPE_FACE);
+        if (t) t->struct_name = strdup(member);
+        return t;
+    }
+    if (module_symbol_table_find_clib(dep, member)) {
+        TypeInfo* t = type_new(TYPE_CLIB);
+        if (t) t->struct_name = strdup(member);
+        return t;
+    }
+    ModuleFuncSymbol* f = module_symbol_table_find_func(dep, member);
+    if (f) {
+        if (f->return_type_info) return type_copy(f->return_type_info);
+        if (f->return_type != TYPE_ANY) return type_new(f->return_type);
+    }
+    return NULL;
+}
+
+// 未标注变量（`var x = 1`）的类型推断：只看初值的**语法种类** ✓
+//   为什么不复用语义的 infer_expr_type：本填充器跑在**语义之前**（get_shared 收口点，
+//   被跨模块查询触发时那个模块可能根本没编译过）⇒ 只能做**声明级**推断 ✓
+//   推断不出 ⇒ NULL（调用方按"没有信息"处理，不会比原来更差 ✓）
+static TypeInfo* ast_infer_var_type(ModuleSymbolTable* table, Ast* init) {
+    if (!init) return NULL;
+    switch (init->kind) {
+        case AST_NUM:    return type_new(init->u.num.is_float ? TYPE_FLOAT : TYPE_INT);
+        case AST_STRING: return type_new(TYPE_STRING);
+        case AST_BOOL:   return type_new(TYPE_BOOL);
+        case AST_ARRAY: {
+            // ⚠ 必须带**元素类型**：只给裸 Array 的话，跨模块 `mod.ARR[0]` 取不到元素类型 ⇒
+            //   退化成 any ⇒「变量 'a0' 声明类型与初始化值类型不匹配」✗（test_var / test_nested_2d）
+            //   元素类型取**首个**元素（与扫描链同一口径）；嵌套数组靠递归得到 Array[Array[int]] ✓
+            TypeInfo* elem = NULL;
+            if (init->u.array.items && init->u.array.count > 0) {
+                elem = ast_infer_var_type(table, init->u.array.items[0]);
+            }
+            return type_array(elem);   // type_array 直接持有入参（见 type.c:26）⇒ 无需另拷 ✓
+        }
+        case AST_DICT: {
+            TypeInfo* k = NULL;
+            TypeInfo* v = NULL;
+            if (init->u.dict.entries && init->u.dict.count > 0) {
+                k = ast_infer_var_type(table, init->u.dict.entries[0].key);
+                v = ast_infer_var_type(table, init->u.dict.entries[0].value);
+            }
+            return type_dict(k, v);
+        }
+        case AST_STRUCT_INIT: {
+            if (!init->u.struct_init.struct_name) return NULL;
+            TypeInfo* named = type_new(TYPE_STRUCT);
+            if (!named) return NULL;
+            named->struct_name = strdup(init->u.struct_init.struct_name);
+            TypeInfo* r = ast_resolved_copy(table, named, 0);   // 别名/聚合 kind 修正 ✓
+            type_free(named);
+            return r;
+        }
+        case AST_VAR: {
+            // 引用本模块已登记的变量/常量 ⇒ 直接用那张表的结论（与扫描链同口径 ✓）
+            ModuleVarSymbol* v = module_symbol_table_find_var(table, init->u.var.name);
+            if (!v) return NULL;
+            if (v->type_info) return type_copy(v->type_info);
+            if (v->type != TYPE_ANY) return type_new(v->type);
+            return NULL;
+        }
+        // `mod.MEMBER`（含 `export const X = base.Y` 的跨模块常量）⇒ 递归查依赖模块 ✓
+        case AST_MODULE_ACCESS: return ast_infer_module_access(table, init);
+        case AST_UNARY:
+            // 取负等一元运算：类型跟操作数（`export const NEG_VAL = -100` ✓ test_export_const_type）
+            if (init->u.unary.operand) return ast_infer_var_type(table, init->u.unary.operand);
+            return NULL;
+        case AST_BINOP: {
+            // 算术/拼接：两侧都判得出时取结论 —— 数值取更宽（float 优先）、字符串相加仍是 string ✓
+            TypeInfo* l = ast_infer_var_type(table, init->u.binop.l);
+            TypeInfo* r = ast_infer_var_type(table, init->u.binop.r);
+            TypeKind lk = l ? l->kind : TYPE_ANY;
+            TypeKind rk = r ? r->kind : TYPE_ANY;
+            if (l) type_free(l);
+            if (r) type_free(r);
+            int ln = (lk == TYPE_INT || lk == TYPE_FLOAT);
+            int rn = (rk == TYPE_INT || rk == TYPE_FLOAT);
+            if (ln && rn) return type_new((lk == TYPE_FLOAT || rk == TYPE_FLOAT) ? TYPE_FLOAT : TYPE_INT);
+            if (lk == TYPE_STRING && rk == TYPE_STRING) return type_new(TYPE_STRING);
+            if (ln) return type_new(lk);
+            if (rn) return type_new(rk);
+            return NULL;
+        }
+        // 调用等 ⇒ 声明级判不出：留空，交给后续（不比原来更差 ✓）
+        default: return NULL;
+    }
+}
+
 static void ast_fill_one_var(ModuleSymbolTable* table, Ast* vd) {
     if (!vd || !vd->u.var_decl.name) return;
     ModuleVarSymbol* sym = module_symbol_table_find_var(table, vd->u.var_decl.name);
-    if (!sym) return;
     TypeInfo* src = vd->u.var_decl.type;
-    if (!src) return;
 
-    // ★ 关键判据（2026-10-01 实测查明，此前误判为"parser 不解析类型名"，实为写法的区别）：
-    //   TYPE_INFER(1) / TYPE_UNKNOWN(0) ⇒ 该 var **本来就没写类型标注**（如 `var x = 1`），
-    //     AST 里没有类型信息，扫描链是从**初值**推断出来的 ⇒ 覆盖过去就是降级 ✗
-    //   而显式标注（`int x = 5` / `Array[int] a = ...`）parser 已解析出真实 kind ⇒ 可以接管 ✓
-    if (src->kind == TYPE_INFER || src->kind == TYPE_UNKNOWN) return;
+    // ★ 判据（2026-10-01 实测查明，此前误判为"parser 不解析类型名"，实为写法区别）：
+    //   有显式标注（`int x = 5` / `Array[int] a = ...`）⇒ parser 已给真实类型，用它 ✓
+    //   TYPE_INFER(1) / TYPE_UNKNOWN(0) = **本来就没写标注**（`var x = 1`）⇒ 改从初值推断 ✓
+    //   （此前只要见到 TYPE_INFER 就 return ⇒ 建表路径永远拿不到未标注变量 ✗）
+    TypeInfo* resolved = NULL;
+    if (src && src->kind != TYPE_INFER && src->kind != TYPE_UNKNOWN) {
+        resolved = ast_resolved_copy(table, src, 0);
+    } else {
+        resolved = ast_infer_var_type(table, vd->u.var_decl.init);
+    }
 
-    // 退化保护：显式标注但名字属于依赖模块等本表查不到的情形 ⇒ 保留扫描链结论 ✓
-    if (src->kind == TYPE_STRUCT && sym->type_info && sym->type_info->kind != TYPE_STRUCT) return;
+    if (!sym) {
+        // ★ 建表路径（scan_var.inc 退役的前提）：AST 直接建条目 ✓
+        //   add_var 内部**复制** type_info（见 sym_table_add.inc:378）⇒ 这里随后释放临时值 ✓
+        module_symbol_table_add_var(table, vd->u.var_decl.name,
+                                    resolved ? resolved->kind : TYPE_ANY,
+                                    (resolved && resolved->struct_name) ? resolved->struct_name : NULL,
+                                    vd->u.var_decl.is_const, resolved);
+        if (resolved) type_free(resolved);
+        return;
+    }
+    if (!resolved) return;   // 已有条目且本轮没算出更好的 ⇒ 保留扫描链结论 ✓
 
-    // 整组换：type / struct_name / type_info 与 is_const 同源（都来自这一个 AST 节点）✓
-    TypeInfo* cp = type_copy(src);
-    if (!cp) return;
-    ast_fix_agg_kind(table, cp);
-    sym->type = cp->kind;
-    sym->struct_name = cp->struct_name ? strdup(cp->struct_name) : NULL;
-    sym->type_info = cp;      // 旧值不释放（量小、先避 use-after-free ✓）
+    // 退化保护（原判据保留）：AST 判成 TYPE_STRUCT 而表里已有更精确的结论
+    //   ⇒ 说明该名字来自依赖模块、本表查不到 ⇒ 不覆盖 ✓
+    if (resolved->kind == TYPE_STRUCT && sym->type_info && sym->type_info->kind != TYPE_STRUCT) {
+        type_free(resolved);
+        return;
+    }
+    sym->type = resolved->kind;
+    sym->struct_name = resolved->struct_name ? strdup(resolved->struct_name) : NULL;
+    sym->type_info = resolved;   // 所有权转移（旧值不释放：量小、先避 use-after-free ✓）
     sym->is_const = vd->u.var_decl.is_const;
 }
 
-    // ⚠ 本轮**只做观测**，不改任何字段（改了必红：整类 396/10、只换 type+is_const 399/7）。
-    //   （曾用 [vardiff] 诊断查明此处，结论已固化进上面的判据；诊断代码已移除 ✓）
+// ---- 解构声明接管（`var (a, b) = ...` / `const {x, y} = ...`）----
+//   扫描链在这里为**每个**名字建条目（scan_var.inc:65-75 那条重复路径）⇒ AST 侧同样逐个建 ✓
+//   槽位类型 slot_types[i] 由 parser 解析好 ⇒ 走同一个 ast_resolved_copy（别名整体展开 ✓）
+static void ast_fill_one_destruct(ModuleSymbolTable* table, Ast* dd) {
+    if (!dd || !dd->u.destruct_decl.names) return;
+    int n = dd->u.destruct_decl.slot_count;
+    for (int i = 0; i < n; i++) {
+        const char* nm = dd->u.destruct_decl.names[i];
+        if (!nm || !nm[0]) continue;
+        if (module_symbol_table_find_var(table, nm)) continue;   // 已有条目 ⇒ 交给覆盖路径 ✓
+        TypeInfo* st = dd->u.destruct_decl.slot_types ? dd->u.destruct_decl.slot_types[i] : NULL;
+        TypeInfo* r = st ? ast_resolved_copy(table, st, 0) : NULL;
+        module_symbol_table_add_var(table, nm, r ? r->kind : TYPE_ANY,
+                                    (r && r->struct_name) ? r->struct_name : NULL,
+                                    dd->u.destruct_decl.is_const, r);
+        if (r) type_free(r);
+    }
+}
 
 // ---- clib 类接管 ----
 //   ModuleClibSymbol 与它的 funcs[] 全是扁平的（TypeKind + 名字 + 计数），
@@ -1203,6 +1399,11 @@ static void ast_symbol_fill_provider(ModuleSymbolTable* table, const char* src) 
         return;         // 语法错 ⇒ 不覆盖（编译本来就会在 parse 阶段报错 ✓）
     }
     Ast* root = p.root;
+    // 本模块 import 别名表（供 `export const X = base.Y` 递归解析依赖模块 ✓）
+    //   ⚠ save/restore 必须成对：下面解析依赖会触发**对方的**填充器 ⇒ 不能覆盖外层在用的表 ✗
+    AstImportRef* saved_imports = g_ast_imports;
+    int saved_import_count = g_ast_import_count;
+    ast_imports_build(root, &g_ast_imports, &g_ast_import_count);
     if (root && root->kind == AST_BLOCK) {
         for (int i = 0; i < root->u.block.count; i++) {
             Ast* st = root->u.block.items[i];
@@ -1217,17 +1418,16 @@ static void ast_symbol_fill_provider(ModuleSymbolTable* table, const char* src) 
             else if (d->kind == AST_CLIB_DEF) ast_fill_one_clib(table, d);
             else if (d->kind == AST_CSTRUCT_DEF) ast_fill_one_cstruct(table, d);
             else if (d->kind == AST_VAR_DECL) ast_fill_one_var(table, d);
-            // ⚠ var 类当前只接管**扁平两项**（type / is_const），type_info 仍留给扫描链
-            //   —— 连"只收窄到基本类型"也红：396/10，test_export_const_type /
-            //   test_nested_2d / test_nested_generic_field / test_lenosys / test_native_module_resolve …）
-            //   ⇒ 说明障碍不在类型种类，而在**类型表示层本身**：AST 的 TypeInfo 与符号表那套
-            //     （经 mod_scan_params / parse_type_from_string 产出、随 .lenosymc 往返、
-            //      被语义与代码生成直接读取）不是同一套结构 ⇒ 换指针会让消费者读到"另一个世界"的东西 ✗
-            //   结论：**先对齐表示层（或让消费者改用 AST 的 TypeInfo），再谈接管各类符号** ✓
-            //   在此之前，alias / func 返回与参数组能接管，是因为它们只需要 TypeKind + 聚合名 ✓
-            // else if (d->kind == AST_VAR_DECL) ast_fill_one_var(table, d);
+            else if (d->kind == AST_DESTRUCT_DECL) ast_fill_one_destruct(table, d);
+            // 注（2026-10-01）：var 类现在**既建表也覆盖**（建表路径见 ast_fill_one_var）。
+            //   此前那套"先对齐表示层"的结论**已作废** —— 障碍不在表示层，而在
+            //   旧实现开头就是 `if (!sym) return;`：停用 scan_var 后**没有任何人建 var 条目**，
+            //   于是"接管"变成了"什么都不做"，才表现为 396/10 / 399/7 那些红 ✓
         }
     }
+    ast_imports_free(g_ast_imports, g_ast_import_count);
+    g_ast_imports = saved_imports;
+    g_ast_import_count = saved_import_count;
     ast_free(p.root);
 }
 
