@@ -267,6 +267,13 @@ ModuleSymbolTable* module_symbol_table_get_shared(const char* module_path, const
         module_symbol_table_destroy(table);
         return NULL;
     }
+
+    // S10 迁移：扫描链跑完后，让"AST 符号填充器"覆盖它已接管的那些声明类
+    //   （编译期注册；VM-only 不注册 ⇒ 空操作，行为与现状一致 ✓）
+    //   挂这里而不是 scan 内部：get_shared 是**唯一收口点** —— 缓存命中/未命中、
+    //   有无磁盘缓存、循环依赖各分支最后都落到这一句 ⇒ 一处挂载覆盖全部路径 ✓
+    module_symbol_table_apply_ast_fill(table, NULL, current_file);
+
     sym_memo_store(full_path, table);
     return table;
 }

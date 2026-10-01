@@ -50,4 +50,9 @@ int module_ast_export_diff_file(const char* path, int verbose);
 //     扫描链的 export_names 退居"VM-only 回退"与"对拍基线"两用 ✓
 void module_ast_exports_register(void);
 
+// S10 迁移：注册"AST 符号填充器"（编译期在 main.c 调一次）
+//   ⇒ 扫描链跑完后，由 AST 覆盖它已接管的声明类（当前：func）
+//   逐类扩展，每扩一类就能停用/删除扫描链的对应分支 ✓
+void module_ast_symbols_register(void);
+
 #endif  // LENO_MODULE_AST_EXPORTS_H

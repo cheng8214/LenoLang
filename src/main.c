@@ -2254,6 +2254,16 @@ static int main_logic(int argc, char** argv) {
     //   ⚠ 必须在**任何模块加载/编译之前** ⇒ 之后 copy_module_export_names 与 module_has_method
     //     都直接走语法，扫描链的 export_names 退居两用：VM-only 回退 + `--export-diff` 对拍基线 ✓
     module_ast_exports_register();
+    // S10 迁移第二步：AST 符号填充器 —— **骨架已就位，暂不启用**。
+    //   ⚠ 实测教训（2026-10-01）：**不能部分覆盖**。只把 return_type / param_count /
+    //     default_count / is_async / type_param_count 从 AST 覆盖过去，而把 param_types /
+    //     param_text / param_default_texts 这些**平行数组**留给扫描链 ⇒ "数量字段"与
+    //     "数组字段"来自两套口径 ⇒ 下游按 param_count 遍历扫描链填的 param_types 直接越界，
+    //     断言从 406/0 掉到 **365/41** ✗。
+    //   ⇒ 接管一类必须**整类字段一起换**（含全部平行数组），换齐了再用全量对拍 + 406 验收。
+    //     func 类还差 param_types / param_text / param_default_texts / return_struct_name 的
+    //     AST 侧映射，补齐后才可打开这一句 ✓
+    // module_ast_symbols_register();
 
     if (exportDiffMode) {
         // 对拍模式：只做"导出名两条路径"的比较，不进正常编译流程 ✓

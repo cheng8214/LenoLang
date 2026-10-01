@@ -330,6 +330,23 @@ void module_symbol_table_add_dep(ModuleSymbolTable* table, const char* path);
 // 追加一个导出名（扫描链在**顶层 export 声明**处调用；空名/重名忽略）。名字内部复制。
 void module_symbol_table_add_export_name(ModuleSymbolTable* table, const char* name);
 
+// ============================================================================
+// S10 迁移：AST 符号填充器（编译期注册；VM-only 不注册 ⇒ 行为与现状一致）
+// ============================================================================
+// 目的：让"符号信息"逐类从文本扫描链迁到 parser AST，最终删掉那套老解析。
+// 机制：扫描链跑完后（`get_shared` 是唯一收口点）调用本填充器，由它**覆盖**
+//   自己已接管的那些声明类；未接管的类仍由扫描链产出 ⇒ 可**逐类**替换、
+//   每类都能用 `--export-diff` + 断言验收，最后逐段删掉扫描链对应分支 ✓
+// 为什么用函数指针：本模块在 `sources_core.txt`（VM-only 也编），不能依赖 parser ✓
+// src 由 core 侧读好传入（避免同一份源码读两遍）✓
+typedef void (*ModuleSymbolFillProvider)(ModuleSymbolTable* table, const char* src);
+
+void module_symbol_table_set_ast_fill_provider(ModuleSymbolFillProvider provider);
+
+// 扫描链完成后调用填充器（未注册则空操作）；source 为 NULL 时内部自行读盘 ✓
+void module_symbol_table_apply_ast_fill(ModuleSymbolTable* table, const char* source,
+                                        const char* current_file);
+
 // 本模块是否导出该名字。**只查导出名清单** —— 不查 funcs/structs 等符号表：
 // 那些表含非导出本地函数（scan_pass2_init.inc）与导入别名（sym_table_import_alias.inc），
 // 语义不同（拿它们当导出集合会让"模块中没有方法 x"少报）。

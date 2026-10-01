@@ -43,6 +43,30 @@ static int mod_ident_char(unsigned char c) {
     return isalnum(c) || c == '_' || c >= 0x80;
 }
 
+// ---- S10 迁移：AST 符号填充器（见 include/module_symbol_table.h 的说明）----
+// 这里只放"调度"，不含任何语法知识 ⇒ 不会把 core 拖进 parser 依赖 ✓
+extern char* read_module_file(const char* file_path, const char* current_file);
+
+static ModuleSymbolFillProvider g_ast_fill_provider = NULL;
+
+void module_symbol_table_set_ast_fill_provider(ModuleSymbolFillProvider provider) {
+    g_ast_fill_provider = provider;
+}
+
+void module_symbol_table_apply_ast_fill(ModuleSymbolTable* table, const char* source,
+                                        const char* current_file) {
+    if (!g_ast_fill_provider || !table) return;
+    char* src = (char*)source;
+    int owned = 0;
+    if (!src && table->module_path) {
+        src = read_module_file(table->module_path, current_file);
+        owned = 1;
+    }
+    if (!src) return;      // 读不了 ⇒ 保留扫描链结果（不比原来更差 ✓）
+    g_ast_fill_provider(table, src);
+    if (owned) free(src);
+}
+
 // ---- 动态名称数组辅助（模块符号表扫描用） ----
 // 历史教训：固定上限数组（如 methods[128]）超限时静默丢弃符号，
 // 错误却爆发在远处的调用点（"类型 'struct X' 没有方法 'Y'"），极难排查。

@@ -448,3 +448,54 @@ void module_ast_exports_register(void) {
     }
     module_set_export_names_provider(ast_export_names_provider);
 }
+
+// ============================================================================
+// S10 迁移：AST 符号填充器 —— 逐类把扫描链的活接过来
+// ============================================================================
+// 为什么用"原地覆盖"而不是"重新建条目"：
+//   扫描链的建表入口（add_func）是**追加**语义，重加会造出重复条目 ✗；
+//   而 find_func 返回的是可写结构体指针 ⇒ 直接覆盖字段即可，零重复风险 ✓
+// 本轮接管：**func**（顶层 `func`，含 `export` 包裹与本地非导出两种）。
+// 覆盖字段只取 AST 侧**现成且更准**的：返回类型用 parser 解析好的 TypeInfo
+//   （扫描链走的是自己那套"文本→类型"，那是第三份类型解析）；参数个数/默认值个数/
+//   泛型参数个数/async 同样直接来自 AST ✓
+// 仍留给扫描链的：param_text / param_default_texts（AST 里是表达式而非文本）⇒
+//   等这些消费者也迁走后再一起换掉 ✓
+
+static void ast_fill_one_func(ModuleSymbolTable* table, Ast* fn) {
+    if (!fn || !fn->u.func.name) return;
+    ModuleFuncSymbol* sym = module_symbol_table_find_func(table, fn->u.func.name);
+    if (!sym) return;   // 建表职责本轮仍归扫描链：这里只覆盖已存在的条目 ✓
+    if (fn->u.func.return_type) {
+        sym->return_type = fn->u.func.return_type->kind;
+        sym->return_type_info = fn->u.func.return_type;
+    }
+    sym->param_count = fn->u.func.pcnt;
+    sym->default_count = fn->u.func.default_count;
+    sym->is_async = fn->u.func.is_async;
+    sym->type_param_count = fn->u.func.type_param_count;
+}
+
+static void ast_symbol_fill_provider(ModuleSymbolTable* table, const char* src) {
+    if (!table || !src) return;
+    Parser p;
+    parser_init(&p, src);
+    if (parser_parse(&p) < 0) {
+        ast_free(p.root);
+        return;         // 语法错 ⇒ 不覆盖（编译本来就会在 parse 阶段报错 ✓）
+    }
+    Ast* root = p.root;
+    if (root && root->kind == AST_BLOCK) {
+        for (int i = 0; i < root->u.block.count; i++) {
+            Ast* st = root->u.block.items[i];
+            if (!st) continue;
+            Ast* decl = (st->kind == AST_EXPORT && st->u.export.decl) ? st->u.export.decl : st;
+            if (decl->kind == AST_FUNC_DEF) ast_fill_one_func(table, decl);
+        }
+    }
+    ast_free(p.root);
+}
+
+void module_ast_symbols_register(void) {
+    module_symbol_table_set_ast_fill_provider(ast_symbol_fill_provider);
+}
