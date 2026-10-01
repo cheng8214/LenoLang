@@ -595,34 +595,29 @@ static void ast_fill_one_var(ModuleSymbolTable* table, Ast* vd) {
     ModuleVarSymbol* sym = module_symbol_table_find_var(table, vd->u.var_decl.name);
     if (!sym) return;
     TypeInfo* src = vd->u.var_decl.type;
-    if (!src) return;   // 无类型标注（靠 init 推断）⇒ 保留扫描链结论 ✓
+    if (!src) return;
+
+    // ★ 关键判据（2026-10-01 实测查明，此前误判为"parser 不解析类型名"，实为写法的区别）：
+    //   TYPE_INFER(1) / TYPE_UNKNOWN(0) ⇒ 该 var **本来就没写类型标注**（如 `var x = 1`），
+    //     AST 里没有类型信息，扫描链是从**初值**推断出来的 ⇒ 覆盖过去就是降级 ✗
+    //   而显式标注（`int x = 5` / `Array[int] a = ...`）parser 已解析出真实 kind ⇒ 可以接管 ✓
+    if (src->kind == TYPE_INFER || src->kind == TYPE_UNKNOWN) return;
+
+    // 退化保护：显式标注但名字属于依赖模块等本表查不到的情形 ⇒ 保留扫描链结论 ✓
+    if (src->kind == TYPE_STRUCT && sym->type_info && sym->type_info->kind != TYPE_STRUCT) return;
+
+    // 整组换：type / struct_name / type_info 与 is_const 同源（都来自这一个 AST 节点）✓
+    TypeInfo* cp = type_copy(src);
+    if (!cp) return;
+    ast_fix_agg_kind(table, cp);
+    sym->type = cp->kind;
+    sym->struct_name = cp->struct_name ? strdup(cp->struct_name) : NULL;
+    sym->type_info = cp;      // 旧值不释放（量小、先避 use-after-free ✓）
+    sym->is_const = vd->u.var_decl.is_const;
+}
 
     // ⚠ 本轮**只做观测**，不改任何字段（改了必红：整类 396/10、只换 type+is_const 399/7）。
-    //   目的：把 AST 侧与扫描链侧对同一个 var 的类型表示打出来对比，找出真实差异之后再一次性对齐 ✓
-    //   受 LENO_DEBUG_EXPORTS=1 控制 ✓
-    static int vdbg = -1;
-    if (vdbg < 0) {
-        const char* e = getenv("LENO_DEBUG_EXPORTS");
-        vdbg = (e && e[0] && e[0] != '0') ? 1 : 0;
-    }
-    if (vdbg) {
-        TypeInfo* si = sym->type_info;
-        fprintf(stderr,
-                "[vardiff] %-18s AST: kind=%-3d struct=%-14s elem=%-3d generic=%d tparam=%-4s nullable=%d"
-                " | SYM: type=%-3d struct=%-14s tyinfo=%-3d tyinfo.struct=%s\n",
-                vd->u.var_decl.name,
-                (int)src->kind,
-                src->struct_name ? src->struct_name : "-",
-                src->element_type ? (int)src->element_type->kind : -1,
-                src->generic_count,
-                src->type_param_name ? src->type_param_name : "-",
-                src->nullable,
-                (int)sym->type,
-                sym->struct_name ? sym->struct_name : "-",
-                si ? (int)si->kind : -1,
-                (si && si->struct_name) ? si->struct_name : "-");
-    }
-}
+    //   （曾用 [vardiff] 诊断查明此处，结论已固化进上面的判据；诊断代码已移除 ✓）
 
 // ---- clib 类接管 ----
 //   ModuleClibSymbol 与它的 funcs[] 全是扁平的（TypeKind + 名字 + 计数），
