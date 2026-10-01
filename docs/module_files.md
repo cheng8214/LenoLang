@@ -546,6 +546,35 @@ f.write("新内容")
 f.close()
 ```
 
+### 字节保真（行尾 / BOM）—— **批量改写务必看这一节**
+
+`files.write` 写下去的就是**你给的字节**，`files.read` 读出来的也是**盘上的字节**（两处都走二进制通道，
+2026-10-02 起；此前是文本模式，会**静默翻译行尾**）：
+
+| 操作 | 行为 |
+| --- | --- |
+| `files.write(p, s)` | 原样落盘：`\n` 就是 `\n`（**不会**变成 `\r\n`）；要 Windows 行尾请自己写 `\r\n` |
+| `files.read(p)` | 原样读入 ⇒ **CRLF 文件读出来行尾仍带 `\r`**（不做 LF 归一化） |
+| `files.read(p)` 与 BOM | **仍会剥掉 UTF-8 BOM**（这是它的文本语义：不剥的话正则 / 比较 / 数字解析会在首字符静默失配） |
+| `files.open(p,"rb")` / `files.open(p,"wb")` | 完全原始：**BOM 也在**、行尾不动 ⇒ "读→改→写回"要**连 BOM 一起保真**时必须走这两条 |
+
+⇒ **"读 → 改 → 写回"的正确姿势**（批量替换工具 `examples/工具/leno-replace.leno` 就是这么写的）：
+
+```leno
+var fin = files.open(path, "rb")
+var raw = fin.read()          // 原始字节：BOM、行尾原样
+fin.close()
+
+var fout = files.open(path, "wb")
+fout.write(raw.replace("旧", "新"))
+fout.close()
+```
+
+⚠ **反例**：`files.write(p, files.read(p).replace("旧", "新"))` —— BOM 会**丢**（`read` 剥掉它、没人补回来）。
+修复前这条更狠：读/写两侧都是文本模式，会把 **LF 文件整个变成 CRLF**（实测 6 字节 → 9 字节）——
+而且两侧**对称翻译**，纯 CRLF 的文件跑一遍反而"看着没事"，特别难查 ✗
+（护栏用例：`assert/test_files_bytes.leno`，逐字节断言 + 变异验证）。
+
 ### 追加写入
 
 ```leno
@@ -950,17 +979,21 @@ main() {
 ```leno
 import files
 
-func find_and_replace(path, old_str, new_str) {
-    // 读取内容
-    var content = files.read(path)
-    
-    // 替换
+func find_and_replace(path, old_str, new_str):bool {
+    // ⚠ 走**原始字节**通道（open "rb"/"wb"）：`files.read` 会剥 BOM，只有 `open(rb)` 拿得到原样字节
+    //   ⇒ 图省事写成 `files.write(path, files.read(path).replace(...))` 会**丢掉 BOM**
+    //   （见上文「字节保真（行尾 / BOM）」一节）。想连 BOM 一起保真就得这么写 ✓
+    var fin = files.open(path, "rb")
+    var content = fin.read()
+    fin.close()
+
     var new_content = content.replace(old_str, new_str)
-    
-    // 写回
-    files.write(path, new_content)
-    
-    return new_content != content  // 是否发生了替换
+    if new_content == content { return false }   // 没命中就别重写（不动 mtime）
+
+    var fout = files.open(path, "wb")
+    fout.write(new_content)
+    fout.close()
+    return true
 }
 
 func find_in_file(path, search_str) {

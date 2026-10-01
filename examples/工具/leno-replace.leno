@@ -1,0 +1,223 @@
+// leno-replace v1 — 批量文本 / 正则替换（读 → 改 → 写回，**字节保真**）
+// 用法: leno leno-replace.leno [regex] [icase] [dry] [ext .leno,.c] <旧文本> <新文本> <文件|目录>...
+//   regex : 旧文本按**正则**解释（支持 () 捕获与 $1/$2 反向引用）
+//   icase : 大小写不敏感（**只对字面量模式**生效；与 regex 同用时忽略并提示）
+//   dry   : 只报告"会改哪里"，**不写盘**（改大范围前先跑一遍）
+//   ext   : 只处理这些后缀（逗号分隔）；不给 = 全部文件
+//
+// 三条保真规矩（批量改盘最容易踩的坑，本工具刻意都守住）：
+//   ① **按字节读写**：`files.open(p,"rb")` 读原始字节、`files.open(p,"wb")` 写回。
+//      ⚠ 文本模式（`"r"` / `"w"`）会**静默翻译行尾**（Windows：写 `\n` → `\r\n`、读 `\r\n` → `\n`）
+//      ⇒ "读 → 改 → 写回"会把 **LF 文件变成 CRLF**（实测 6 字节 → 9 字节；纯 CRLF 文件因为
+//      两侧对称翻译反而"看着没事"，极难查）。该问题已在本仓库修掉（`files.write`/`read` 改二进制、
+//      护栏 `assert/test_files_bytes.leno`），详见 `docs/module_files.md` 的「字节保真」一节。
+//   ② **BOM 原样保留**：`files.read` 是**文本语义**（会剥掉 UTF-8 BOM，那是给
+//      正则/比较/数字解析用的好意），但**写回**时没人替你补 ⇒ 往返一趟 BOM 就没了。
+//      所以本工具走原始字节 + 自己记着 BOM 长度。
+//   ③ **不碰行尾**：替换只发生在正文里，换行符一个不动（不做 LF↔CRLF 归一化）。
+import files
+import strings
+import regexs
+import dirs
+
+int opt_regex = 0
+int opt_icase = 0
+int opt_dry   = 0
+string opt_ext = ""
+string sep = if _os() == "windows" then "\\" else "/"
+
+string from_text = ""
+string to_text   = ""
+
+int hits_total = 0     // 命中次数（所有文件累计）
+int files_hit  = 0     // 真正被改的文件数
+int files_scan = 0     // 扫过的文件数
+int files_skip_bin = 0 // 因"看着像二进制"跳过的文件数
+
+// 跳过不该动的路径：构建缓存、版本库元数据（这些里面也常有源码路径文本，
+//   改了既没用又会把缓存搞脏 —— `.lenosymc` / `.lenb.deps` 里全是绝对路径 ✓）
+func is_skippable(string path):bool {
+    if strings.has(path, ".lenocache") { return true }
+    if strings.has(path, sep + ".git" + sep) { return true }
+    return false
+}
+
+// 二进制文件探测：前 8 KB 里出现 NUL 就判定为二进制 ⇒ 不碰
+//   （文本工具改二进制是"静默损坏"的经典来源；这里只做"看得见"的粗判）
+func is_binary(string raw):bool {
+    int n = raw.byte_len()
+    if n > 8192 { n = 8192 }
+    int i = 0
+    while i < n {
+        if raw.byte(i) == 0 { return true }
+        i = i + 1
+    }
+    return false
+}
+
+func is_ext_ok(string name):bool {
+    if opt_ext == "" { return true }
+    var exts = strings.split(opt_ext, ",")
+    for exts to e {
+        if strings.ends_with(name, e) { return true }
+    }
+    return false
+}
+
+// 原始字节读取（**不剥 BOM、不做行尾翻译**）
+func read_raw(string path):string {
+    var f = files.open(path, "rb")
+    if f == null { return null }
+    var s = f.read()
+    f.close()
+    return s
+}
+
+// 原始字节写回（同上：不补 BOM、不翻译行尾）
+func write_raw(string path, string data) {
+    var f = files.open(path, "wb")
+    if f == null { return }
+    f.write(data)
+    f.close()
+}
+
+// 大小写不敏感的字面量替换：在**小写副本**上找位置、在**原文**上切分
+//   ⚠ 全程用**字节偏移**（byte_slice / byte_len）—— 字符索引与字节索引混用会在
+//     多字节字符（中文路径、注释）上错位；`to_lower` 对 ASCII 不改变字节数 ✓
+func replace_icase_literal(string text, string src, string dst):string {
+    int tl = text.byte_len()
+    int n  = src.byte_len()
+    if n == 0 { return text }
+    var low_text = strings.to_lower(text)
+    var low_src = strings.to_lower(src)
+    var out = ""
+    int i = 0
+    while i + n <= tl {
+        if strings.byte_slice(low_text, i, i + n) == low_src {
+            out = out + dst
+            hits_total = hits_total + 1
+            i = i + n
+        } else {
+            out = out + strings.byte_slice(text, i, i + 1)
+            i = i + 1
+        }
+    }
+    out = out + strings.byte_slice(text, i, tl)
+    return out
+}
+
+// 替换一处文本；命中数累加进 hits_total（返回值长这样是为了让"没命中"也走同一条路）
+func apply_replace(string text):string {
+    if opt_regex {
+        hits_total = hits_total + regexs.find_all(text, from_text).len()
+        return regexs.replace_all(text, from_text, to_text)
+    }
+    if opt_icase {
+        return replace_icase_literal(text, from_text, to_text)
+    }
+    hits_total = hits_total + strings.count(text, from_text)
+    return strings.replace(text, from_text, to_text)
+}
+
+func replace_file(string path) {
+    if is_skippable(path) { return }
+    files_scan = files_scan + 1
+    var raw = read_raw(path)
+    if raw == null {
+        print("  skip(读不了) " + path)
+        return
+    }
+    if is_binary(raw) {
+        files_skip_bin = files_skip_bin + 1
+        return
+    }
+
+    // ① BOM：只**记长度**，正文里去掉；写回时照原样补上
+    var bom = ""
+    var body = raw
+    if raw.byte_len() >= 3 {
+        if raw.byte(0) == 239 {
+            if raw.byte(1) == 187 {
+                if raw.byte(2) == 191 {
+                    bom = strings.byte_slice(raw, 0, 3)
+                    body = strings.byte_slice(raw, 3, raw.byte_len())
+                }
+            }
+        }
+    }
+
+    var before = hits_total
+    var new_body = apply_replace(body)
+    var n = hits_total - before
+    if n == 0 { return }          // 没命中 ⇒ **一个字节都不动**（不重写文件、不动 mtime）
+
+    files_hit = files_hit + 1
+    if opt_dry {
+        print("  [dry] " + path + "  " + n + " 处")
+        return
+    }
+    // ② 写回：BOM + 新正文（byte 级拼接，行尾原样）
+    write_raw(path, bom + new_body)
+    print("  " + path + "  " + n + " 处")
+}
+
+func replace_dir(string dirpath) {
+    var walks = dirs.walk(dirpath)
+    for walks to w {
+        var root = w.root
+        var fnames = w.files
+        for fnames to f {
+            if is_ext_ok(f) {
+                replace_file(root + sep + f)
+            }
+        }
+    }
+}
+
+main() {
+    var args = _args()
+    if args.len() < 1 {
+        print("用法: leno leno-replace.leno [regex] [icase] [dry] [ext .leno,.c] <旧文本> <新文本> <文件|目录>...")
+        return
+    }
+
+    int i = 0
+    while i < args.len() {
+        var a = args[i]
+        if a == "regex"      { opt_regex = 1; i = i + 1 }
+        else if a == "icase" { opt_icase = 1; i = i + 1 }
+        else if a == "dry"   { opt_dry = 1;   i = i + 1 }
+        else if a == "ext" {
+            i = i + 1
+            if i < args.len() { opt_ext = args[i]; i = i + 1 }
+        }
+        else { break }
+    }
+    if i >= args.len() { print("no 旧文本"); return }
+    from_text = args[i]
+    i = i + 1
+    if i >= args.len() { print("no 新文本"); return }
+    to_text = args[i]
+    i = i + 1
+    if i >= args.len() { print("no 文件/目录"); return }
+
+    if opt_regex == 1 {
+        if opt_icase == 1 { print("⚠ icase 只对字面量模式生效 ⇒ 本次按**区分大小写**处理") }
+    }
+    if opt_dry == 1 { print("== dry run（不写盘）==") }
+
+    while i < args.len() {
+        var target = args[i]
+        if dirs.is_dir(target) { replace_dir(target) }
+        else                   { replace_file(target) }
+        i = i + 1
+    }
+
+    if opt_dry == 1 {
+        print("--- 将会改 " + hits_total + " 处 / " + files_hit + " 个文件（扫 " + files_scan +
+              "，跳过二进制 " + files_skip_bin + "）")
+    } else {
+        print("--- 改了 " + hits_total + " 处 / " + files_hit + " 个文件（扫 " + files_scan +
+              "，跳过二进制 " + files_skip_bin + "）")
+    }
+}

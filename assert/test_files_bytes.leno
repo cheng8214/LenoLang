@@ -1,0 +1,89 @@
+// 文件读写的**字节保真**护栏（2026-10-02）
+//
+// 背景：`files.write` 原先用**文本模式**打开（Windows 下 `"w"`）⇒ 静默改写字节 ——
+//   每个 `\n` 被翻成 `\r\n`；而 `files.read` 也是文本模式，把 `\r\n` 翻回 `\n`。
+//   两者**配对**时"看着没事"（对称翻译，纯 CRLF 文件往返居然一致 ✓），但：
+//     · **LF 文件**读进来再写回去 ⇒ 整份变 CRLF（实测 6 字节 → 9 字节）✗；
+//     · 任何"读 → 改 → 写回"的工具（`examples/工具/leno-replace.leno` 第一版就踩了、
+//       还有文档里那个 `find_and_replace` 示例）都会改掉行尾 ⇒ git diff 炸开 ✗。
+//   ⇒ 改成**二进制打开**：写什么字节就是什么字节、读出来不翻译（BOM 仍按既定规则剥掉）。
+//
+// 判据全部逐**字节**断言 —— 别用字符串比较：对称翻译会让它"看起来通过" ✗
+//   ① `files.write` 写 LF 内容 ⇒ 盘上就是 LF
+//   ② `files.write` 写 CRLF 内容 ⇒ 盘上仍是 CRLF（不膨胀成 `\r\r\n`）
+//   ③ `files.read` 不做行尾翻译（CRLF 文件读出来仍带 CR）
+//   ④ 读→写**往返**：LF / CRLF 两种文件都必须**逐字节不变**
+//   ⑤ BOM：`files.read` 仍剥掉（既定契约）；`open(p,"rb")` 拿得到原始字节 ⇒ 往返保真靠它
+//   ⑥ 两条写入通道（`files.write` 与 `open(p,"wb").write`）口径一致
+import dirs
+import files
+import strings
+
+// 原始字节读取（不剥 BOM、不翻译行尾）
+func bytes_of(string path):string {
+    var f = files.open(path, "rb")
+    if f == null { return "" }
+    var s = f.read()
+    f.close()
+    return s
+}
+
+func write_raw(string path, string data) {
+    var f = files.open(path, "wb")
+    if f == null { return }
+    f.write(data)
+    f.close()
+}
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_files_bytes")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ① LF 内容写盘 ⇒ 就是 LF
+    var lf = dirs.join(work, "lf.txt")
+    files.write(lf, "a\nb\nc\n")
+    var r1 = bytes_of(lf)
+    assert_eq(r1.byte_len(), 6, "①LF 内容写盘应为 6 字节（文本模式会变 9）；实际=" + _str(r1.byte_len()))
+    assert_eq(strings.count(r1, "\r"), 0, "①不应出现任何 CR")
+    assert_eq(r1.byte(1), 10, "①第 2 字节应为 LF(10)")
+
+    // ② CRLF 内容写盘 ⇒ 仍是 CRLF
+    var crlf = dirs.join(work, "crlf.txt")
+    files.write(crlf, "a\r\nb\r\n")
+    var r2 = bytes_of(crlf)
+    assert_eq(r2.byte_len(), 6, "②CRLF 内容应为 6 字节（不该膨胀成 8）；实际=" + _str(r2.byte_len()))
+    assert_eq(strings.count(r2, "\r\n"), 2, "②应恰好 2 个 CRLF")
+    assert_eq(strings.count(r2, "\r\r"), 0, "②不应出现双 CR")
+
+    // ③ files.read 不翻译行尾
+    var t3 = files.read(crlf)
+    assert_eq(t3.byte_len(), 6, "③files.read 读 CRLF 文件应仍是 6 字节")
+    assert_eq(strings.count(t3, "\r\n"), 2, "③读出来应仍带 CRLF")
+
+    // ④ 往返：读→写必须逐字节不变（这正是被修掉的那个 bug）
+    files.write(dirs.join(work, "rt_lf.txt"), files.read(lf))
+    files.write(dirs.join(work, "rt_crlf.txt"), files.read(crlf))
+    assert_eq(bytes_of(dirs.join(work, "rt_lf.txt")), "a\nb\nc\n", "④LF 文件往返后必须一字不差")
+    assert_eq(bytes_of(dirs.join(work, "rt_crlf.txt")), "a\r\nb\r\n", "④CRLF 文件往返后必须一字不差")
+
+    // ⑤ BOM：files.read 剥掉（既定契约）；原始字节通道拿得到
+    var bom = dirs.join(work, "bom.txt")
+    // 用 `\uFEFF` 转义写字面量（`strings.char(65279)` 不行：那个按**码点**转，
+    //   239 会编成 C3 AF 两个字节 ⇒ 拼不出原始 EF BB BF）
+    write_raw(bom, "\uFEFF" + "x\n")                      // U+FEFF ⇒ UTF-8 的 EF BB BF
+    var raw5 = bytes_of(bom)
+    assert_eq(raw5.byte_len(), 5, "⑤原始字节应含 BOM（3+2=5）；实际=" + _str(raw5.byte_len()))
+    assert_eq(raw5.byte(0), 239, "⑤原始字节第 1 字节应是 0xEF")
+    assert_eq(files.read(bom), "x\n", "⑤files.read 应剥掉 BOM（既定契约）")
+
+    // ⑥ 两条写入通道一致
+    var a6 = dirs.join(work, "ch_a.txt")
+    var b6 = dirs.join(work, "ch_b.txt")
+    files.write(a6, "p\r\nq\n")
+    write_raw(b6, "p\r\nq\n")
+    assert_eq(bytes_of(a6), bytes_of(b6), "⑥files.write 与 open(wb).write 必须口径一致")
+
+    dirs.delete(work)
+    print("test_files_bytes passed")
+}

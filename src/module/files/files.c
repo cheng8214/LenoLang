@@ -484,11 +484,15 @@ static Value native_files_read(int argCount, Value* args) {
     wchar_t* wpath = utf8_to_utf16(path->chars);
     FILE* fp = NULL;
     if (wpath) {
-        fp = _wfopen(wpath, L"r");
+        // ★ 二进制打开（2026-10-02 修）：文本模式的 `"r"` 会**静默做行尾翻译**（CRLF → LF）
+        //   —— 与本函数的契约不符（它只承诺"剥 BOM"，从没承诺"归一化换行"）✗
+        //   实测：CRLF 文件读出来每行少一个 CR；调用方再写回 ⇒ 整份文件的行尾被改掉。
+        //   现在"读进来什么样、字节就是什么样"（BOM 仍按下面的既定规则剥掉 ✓）
+        fp = _wfopen(wpath, L"rb");
     }
     free(wpath);
 #else
-    FILE* fp = fopen(path->chars, "r");
+    FILE* fp = fopen(path->chars, "rb");
 #endif
     if (!fp) {
         // 消息口径与 native_files_open 逐字一致（带路径）：此前这里只有"无法打开文件"四个字，
@@ -556,11 +560,16 @@ static Value native_files_write(int argCount, Value* args) {
     wchar_t* wpath = utf8_to_utf16(path->chars);
     FILE* fp = NULL;
     if (wpath) {
-        fp = _wfopen(wpath, L"w");
+        // ★ 二进制打开（2026-10-02 修）：文本模式的 `"w"` 会**静默改写字节**（每个 `\n` → `\r\n`）
+        //   ⇒ "读进来再写回去"这类最普通的用法会把**每个 LF 文件变成 CRLF**（实测：
+        //   `61 0A 62 0A 63 0A`（6 字节）写回变成 `61 0D 0A 62 0D 0A 63 0D 0A`（9 字节））
+        //   —— 批量改写工具（examples/工具/leno-replace.leno）第一版就被它坑了 ⇒ 改二进制，
+        //   写入即"给什么字节写什么字节" ✓（要 Windows 行尾就自己在内容里写 `\r\n`）
+        fp = _wfopen(wpath, L"wb");
     }
     free(wpath);
 #else
-    FILE* fp = fopen(path->chars, "w");
+    FILE* fp = fopen(path->chars, "wb");
 #endif
     if (!fp) {
         // 同上：消息带路径，与 open / read 一致（此前只有"无法创建文件"四个字）。
