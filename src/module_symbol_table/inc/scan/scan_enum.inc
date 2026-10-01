@@ -132,8 +132,30 @@
                             }
                         }
                         // 跳过分隔符：逗号、分号或换行
-                            while (*after_enum && *after_enum != ',' && *after_enum != ';' && *after_enum != '}' && *after_enum != '\n') after_enum++;
-                            if (*after_enum == ',' || *after_enum == ';') after_enum++;
+                        //   ⚠ 必须**先处理注释**：注释里出现 `,` 时（如
+                        //     `URL = 10002   // CURLOPTTYPE_STRINGPOINT + 2, 请求 URL`），
+                        //     原逻辑"一路跳到 `,`/`;`/`}`/`\n`"会在那个逗号处停下，
+                        //     于是**注释的剩余文本被当成下一个成员名**读走 ✗。
+                        //     以前中文不被 isalnum 认（读出长度 0 ⇒ 循环继续）⇒ 症状隐藏；
+                        //     `mod_ident_char` 接受 UTF-8 字节后立刻显形 —— 这正是
+                        //     `--export-diff` 抓到的 `OptWithComments` 21 vs 20（真值 20）✓
+                            while (*after_enum && *after_enum != '}' && *after_enum != '\n') {
+                                if (*after_enum == '/' && *(after_enum + 1) == '/') {
+                                    while (*after_enum && *after_enum != '\n') after_enum++;
+                                    break;      // 行注释 ⇒ 到行尾即止（后面的 `,` 都在注释里 ✓）
+                                }
+                                if (*after_enum == '/' && *(after_enum + 1) == '*') {
+                                    after_enum += 2;
+                                    while (*after_enum && !(*after_enum == '*' && *(after_enum + 1) == '/')) after_enum++;
+                                    if (*after_enum) after_enum += 2;
+                                    continue;   // 块注释 ⇒ 跳过后继续找分隔符 ✓
+                                }
+                                if (*after_enum == ',' || *after_enum == ';') {
+                                    after_enum++;
+                                    break;
+                                }
+                                after_enum++;
+                            }
                         }
                         if (*after_enum == '}') after_enum++;
                     }
