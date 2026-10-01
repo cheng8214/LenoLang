@@ -2263,7 +2263,9 @@ static int main_logic(int argc, char** argv) {
     //   ⇒ 接管一类必须**整类字段一起换**（含全部平行数组），换齐了再用全量对拍 + 406 验收。
     //     func 类还差 param_types / param_text / param_default_texts / return_struct_name 的
     //     AST 侧映射，补齐后才可打开这一句 ✓
-    // module_ast_symbols_register();
+    // 当前接管：alias（整类，含类型修正）；func 只覆盖**非平行字段**（return_type / is_async），
+    //   平行数组（param_types / param_text / param_default_texts）仍由扫描链产出 ✓
+    module_ast_symbols_register();
 
     if (exportDiffMode) {
         // 对拍模式：只做"导出名两条路径"的比较，不进正常编译流程 ✓

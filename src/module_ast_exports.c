@@ -462,18 +462,71 @@ void module_ast_exports_register(void) {
 // 仍留给扫描链的：param_text / param_default_texts（AST 里是表达式而非文本）⇒
 //   等这些消费者也迁走后再一起换掉 ✓
 
+// 前向声明：聚合类型修正（定义见下；func 的返回类型也要用它 ✓）
+static void ast_fix_agg_kind(ModuleSymbolTable* table, TypeInfo* t);
+
 static void ast_fill_one_func(ModuleSymbolTable* table, Ast* fn) {
     if (!fn || !fn->u.func.name) return;
     ModuleFuncSymbol* sym = module_symbol_table_find_func(table, fn->u.func.name);
     if (!sym) return;   // 建表职责本轮仍归扫描链：这里只覆盖已存在的条目 ✓
+    // ⚠ 只覆盖**自洽的字段组**：param_types / param_text / param_default_texts 是平行数组，
+    //   只换"数量"会让下游按 AST 的 param_count 去遍历扫描链填的 param_types 而越界
+    //   （实测 365/41）✗ ⇒ 那一组要换必须整组一起换 ✓
     if (fn->u.func.return_type) {
-        sym->return_type = fn->u.func.return_type->kind;
-        sym->return_type_info = fn->u.func.return_type;
+        // return_type / return_type_info / return_struct_name 是**同源字段组**，必须一起换：
+        //   实测只换前两个、把 return_struct_name 留在扫描链 ⇒ 365/41 ✗；
+        //   补齐后 395/11 —— 剩下 11 个全是 clib 用例（parser 对未知名统一给 TYPE_STRUCT，
+        //   不知道它是 clib）⇒ 加 ast_fix_agg_kind 修正 ✓
+        TypeInfo* rt = type_copy(fn->u.func.return_type);
+        if (rt) {
+            ast_fix_agg_kind(table, rt);
+            // ⚠ 修正不了就用**扫描链的结论**：名字可能来自依赖模块的 clib/cstruct
+            //   （本表里查不到 —— 如 test_clib_cross_chain / test_clib_cross_reexport），
+            //   此时 AST 的 TYPE_STRUCT 会把扫描链已判定的 TYPE_CLIB 降级 ⇒ 4 个用例红 ✗
+            //   规则：**只允许"更精确"的替换，退化一律放弃** ✓
+            int degrade = (rt->kind == TYPE_STRUCT && sym->return_type_info &&
+                           sym->return_type_info->kind != TYPE_STRUCT);
+            if (degrade) {
+                type_free(rt);
+            } else {
+                sym->return_type = rt->kind;
+                sym->return_type_info = rt;
+                sym->return_struct_name = rt->struct_name ? strdup(rt->struct_name) : NULL;
+            }
+        }
     }
-    sym->param_count = fn->u.func.pcnt;
-    sym->default_count = fn->u.func.default_count;
     sym->is_async = fn->u.func.is_async;
-    sym->type_param_count = fn->u.func.type_param_count;
+}
+
+// ---- 聚合类型修正 ----
+//   为什么要修正：parser 对"未知名"统一给 TYPE_STRUCT（它不知道那个名字是 face/cstruct/clib，
+//   那些是模块符号表的知识）⇒ AST 侧拿到 TypeInfo 后必须按**本模块声明**改对，
+//   否则 `test_clib_cross*` 那类用例全红（实测 395/11 ✗）。
+//   实现直接用符号表的 find_* 查（不需要自己再收集一遍名字集合 —— 表本来就是现成的 ✓）
+static void ast_fix_agg_kind(ModuleSymbolTable* table, TypeInfo* t) {
+    if (!table || !t || t->kind != TYPE_STRUCT || !t->struct_name) return;
+    if (module_symbol_table_find_clib(table, t->struct_name)) {
+        t->kind = TYPE_CLIB;
+    } else if (module_symbol_table_find_face(table, t->struct_name)) {
+        t->kind = TYPE_FACE;
+    } else {
+        ModuleStructSymbol* s = module_symbol_table_find_struct(table, t->struct_name);
+        if (s && s->is_cstruct) t->kind = TYPE_CSTRUCT;
+    }
+}
+
+// ---- alias 类接管 ----
+//   这一类最能体现"AST 提供更多信息"：扫描链要把类型**拼回字符串**再
+//   `parse_type_from_string` 反解（第三份类型解析），AST 侧 `u.alias.type` 已经
+//   是 parser 解析好的 TypeInfo ⇒ 直接 type_copy 进表 ✓
+static void ast_fill_one_alias(ModuleSymbolTable* table, Ast* al) {
+    if (!al || !al->u.alias.name || !al->u.alias.type) return;
+    ModuleAliasSymbol* sym = module_symbol_table_find_alias(table, al->u.alias.name);
+    if (!sym) return;
+    TypeInfo* t = type_copy(al->u.alias.type);   // ⚠ 必须拷：AST 随后会被 ast_free，直接放指针会悬垂 ✗
+    if (!t) return;
+    ast_fix_agg_kind(table, t);
+    sym->type_info = t;   // 旧值不释放：符号表是进程内长存活缓存、每模块一份，量极小（TODO：并入 GC）
 }
 
 static void ast_symbol_fill_provider(ModuleSymbolTable* table, const char* src) {
@@ -489,8 +542,9 @@ static void ast_symbol_fill_provider(ModuleSymbolTable* table, const char* src) 
         for (int i = 0; i < root->u.block.count; i++) {
             Ast* st = root->u.block.items[i];
             if (!st) continue;
-            Ast* decl = (st->kind == AST_EXPORT && st->u.export.decl) ? st->u.export.decl : st;
-            if (decl->kind == AST_FUNC_DEF) ast_fill_one_func(table, decl);
+            Ast* d = (st->kind == AST_EXPORT && st->u.export.decl) ? st->u.export.decl : st;
+            if (d->kind == AST_FUNC_DEF) ast_fill_one_func(table, d);
+            else if (d->kind == AST_ALIAS) ast_fill_one_alias(table, d);
         }
     }
     ast_free(p.root);
