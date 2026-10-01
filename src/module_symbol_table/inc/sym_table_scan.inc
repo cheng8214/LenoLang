@@ -82,9 +82,17 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
             #include "scan/scan_struct.inc"
             #include "scan/scan_cstruct.inc"
             #include "scan/scan_face.inc"
-            #include "scan/scan_enum.inc"
+            // ★★ S10 删除老解析（2026-10-01）：enum 的**整个文本扫描退役** ——
+            //   符号建表由 parser AST 承担（module_ast_exports.c 的 ast_fill_one_enum，
+            //   find 不到就 add_enum），导出名也由 AST 提供（ModuleExportNamesProvider）✓
+            // #include "scan/scan_enum.inc"
             #include "scan/scan_func.inc"
             #include "scan/scan_var.inc"
+            // ⚠ alias 的文本扫描**暂不能退役**（实测停用后 404/2）：
+            //   sym_table_import_alias.inc 的"use 传导 alias"依赖 scan_alias.inc 填的本地别名表
+            //   （mod_alias_push / FIND_LOCAL_ALIAS）⇒ 停用即断链（test_plane_war_headless /
+            //   test_sdl_capture 变红）。建表路径已在 ast_fill_one_alias 就绪（find 失败则 add_alias）
+            //   ⇒ 等 alias 传导也改为从 AST 取之后，即可整段删除 ✓
             #include "scan/scan_alias.inc"
         }
 

@@ -578,10 +578,16 @@ static void ast_fix_agg_kind(ModuleSymbolTable* table, TypeInfo* t) {
 static void ast_fill_one_alias(ModuleSymbolTable* table, Ast* al) {
     if (!al || !al->u.alias.name || !al->u.alias.type) return;
     ModuleAliasSymbol* sym = module_symbol_table_find_alias(table, al->u.alias.name);
-    if (!sym) return;
     TypeInfo* t = type_copy(al->u.alias.type);   // ⚠ 必须拷：AST 随后会被 ast_free，直接放指针会悬垂 ✗
     if (!t) return;
     ast_fix_agg_kind(table, t);
+    if (!sym) {
+        // ★ 建表路径（S10 删除老解析的前置）：scan_alias.inc 整段退役后由这里建条目 ✓
+        //   add_alias 内部**复制**类型（扫描链随后 type_free 临时值 ⇒ 同一约定 ✓）✓
+        module_symbol_table_add_alias(table, al->u.alias.name, t);
+        type_free(t);
+        return;
+    }
     sym->type_info = t;   // 旧值不释放：符号表是进程内长存活缓存、每模块一份，量极小（TODO：并入 GC）
 }
 
@@ -713,7 +719,6 @@ static void ast_fill_one_face_meta(ModuleSymbolTable* table, Ast* fd) {
 static void ast_fill_one_enum(ModuleSymbolTable* table, Ast* ed) {
     if (!ed || !ed->u.enum_def.name) return;
     ModuleEnumSymbol* sym = module_symbol_table_find_enum(table, ed->u.enum_def.name);
-    if (!sym) return;
     int mc = ed->u.enum_def.member_count;
     if (mc < 0) return;
     char** mn = (char**)malloc(sizeof(char*) * (mc > 0 ? (size_t)mc : 1));
@@ -727,6 +732,16 @@ static void ast_fill_one_enum(ModuleSymbolTable* table, Ast* ed) {
         mn[i] = (ed->u.enum_def.member_names && ed->u.enum_def.member_names[i])
                     ? strdup(ed->u.enum_def.member_names[i]) : NULL;
         mv[i] = ed->u.enum_def.member_values ? ed->u.enum_def.member_values[i] : 0;
+    }
+    if (!sym) {
+        // ★ 建表路径（S10 删除老解析的前置）：条目不存在时由 AST 直接建出来。
+        //   add_enum 内部会**复制**名字（扫描链随后自己 free 临时 buf ⇒ 同一约定 ✓）✓
+        //   有这条之后，scan_enum.inc 的"符号建表"部分就可以停用，只留它的导出名登记 ✓
+        module_symbol_table_add_enum(table, ed->u.enum_def.name, mc, mn, mv);
+        for (int i = 0; i < mc; i++) free(mn[i]);
+        free(mn);
+        free(mv);
+        return;
     }
     // 旧数组不释放（同前：符号表进程内长存活、量小，先避 use-after-free ✓）
     sym->member_count = mc;
