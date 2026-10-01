@@ -464,6 +464,10 @@ void module_ast_exports_register(void) {
 
 // 前向声明：聚合类型修正（定义见下；func 的返回类型也要用它 ✓）
 static void ast_fix_agg_kind(ModuleSymbolTable* table, TypeInfo* t);
+// 前向声明：泛型形参名判定（定义见下；**func 的参数组**也要用它 ⇒ 必须先声明 ✓）
+static const char* ast_type_param_name(Ast* sd, Ast* fn, TypeInfo* ti);
+// 前向声明：字面量 → 值文本（定义见下；**func 的默认值**也要用它 ✓）
+static char* ast_const_value_text(Ast* v);
 // 前向声明：当前填充阶段（定义见文件末；struct 的字段/方法能否整体覆盖取决于它 ✓）
 int ast_fill_phase(void);
 
@@ -517,7 +521,56 @@ static TypeKind ast_kind_of(ModuleSymbolTable* table, TypeInfo* ti) {
 static void ast_fill_one_func(ModuleSymbolTable* table, Ast* fn) {
     if (!fn || !fn->u.func.name) return;
     ModuleFuncSymbol* sym = module_symbol_table_find_func(table, fn->u.func.name);
-    if (!sym) return;   // 建表职责本轮仍归扫描链：这里只覆盖已存在的条目 ✓
+    if (!sym) {
+        // ★ 建表路径（scan_func.inc 退役的前提）：AST 直接建条目 ✓
+        //   param_text / param_default_texts 一律 NULL，依据：
+        //     · param_text —— 语义侧 ⑱ 转正后**已改读 param_types**（visit_module.inc:907-910
+        //       明确记着"就地解析 param_text"那段已删除），别处也没有消费者 ✓
+        //     · defaults —— 消费者只用 default_count（算"必需参数个数"）；文本数组是
+        //       "参数表→类型"那份重复实现的残留 ⇒ 随扫描链一起退役 ✓
+        //   缓存序列化对两者都 NULL 安全（sym_cache_write_string 有 NULL 标记、defaults 有 has 位 ✓）
+        TypeInfo* rti = ast_resolved_copy(table, fn->u.func.return_type, 0);
+        // ⚠ 默认值**必须给文本**（此前的判断是错的）：调用点在**另一个模块**里，拿不到被调函数
+        //   的 AST ⇒ 只能从符号表读 param_default_texts 来补默认值（assert/xmod_defaults.leno
+        //   的注释写得很明白）⇒ 传 NULL 会让默认值变 null ⇒「加法运算: null 不能参与运算」✗
+        //   （实测 test_cross_module_default_args；文本由 ast_const_value_text 从字面量还原 ✓）
+        char** dtexts = NULL;
+        if (fn->u.func.pcnt > 0) {
+            dtexts = (char**)calloc((size_t)fn->u.func.pcnt, sizeof(char*));
+            if (dtexts && fn->u.func.param_defaults) {
+                for (int i = 0; i < fn->u.func.pcnt; i++) {
+                    if (fn->u.func.param_defaults[i]) {
+                        dtexts[i] = ast_const_value_text(fn->u.func.param_defaults[i]);
+                    }
+                }
+            }
+        }
+        module_symbol_table_add_func(table, fn->u.func.name,
+                                     rti ? rti->kind : TYPE_ANY,
+                                     (rti && rti->struct_name) ? rti->struct_name : NULL,
+                                     fn->u.func.type_param_count, rti,
+                                     NULL, fn->u.func.pcnt, fn->u.func.default_count, dtexts,
+                                     fn->u.func.is_async);
+        if (dtexts) {
+            for (int i = 0; i < fn->u.func.pcnt; i++) free(dtexts[i]);
+            free(dtexts);
+        }
+        if (rti) type_free(rti);   // add_func 内部 type_copy（见 sym_table_add.inc:17）✓
+        sym = module_symbol_table_find_func(table, fn->u.func.name);
+        if (!sym) return;
+        // add_func 把 type_param_names / param_types 等**显式置空**（扩容槽位是垃圾值）
+        // ⇒ 泛型形参名必须由这里补填，否则泛型函数的形参名整批丢失 ✗
+        if (fn->u.func.type_param_count > 0 && fn->u.func.type_params) {
+            int tpc = fn->u.func.type_param_count;
+            char** tpn = (char**)calloc((size_t)tpc, sizeof(char*));
+            if (tpn) {
+                for (int i = 0; i < tpc; i++) {
+                    tpn[i] = fn->u.func.type_params[i] ? strdup(fn->u.func.type_params[i]) : NULL;
+                }
+                sym->type_param_names = tpn;
+            }
+        }
+    }
 
     // ---- 返回类型组：return_type / return_type_info / return_struct_name 必须一起换 ----
     //   实测：只换前两个、把 return_struct_name 留在扫描链 ⇒ 365/41 ✗；
@@ -551,7 +604,10 @@ static void ast_fill_one_func(ModuleSymbolTable* table, Ast* fn) {
     //     （实测整组换后 400/6：generic_constraint_cross / generic_nullable_param /
     //      generic_pair_import / widget_deep / plane_war_headless / sdl_capture）⇒
     //     先只接管**无泛型形参**的函数，泛型那批等形参表示对齐后再开 ✓
-    if (fn->u.func.param_types && fn->u.func.pcnt > 0 && fn->u.func.type_param_count == 0) {
+    //   ★ 泛型形参也一并接管（此前为了"形参口径未对齐"整类跳过 ⇒ 现在对齐了）：
+    //     func 侧符号表**没有** param_generic_names 字段（见 module_symbol_table.h:19-30）
+    //     ⇒ 泛型形参名由 type_param_names 承担、param_types 记 TYPE_GENERIC_PARAM ✓
+    if (fn->u.func.param_types && fn->u.func.pcnt > 0) {
         int pc = fn->u.func.pcnt;
         TypeKind* pts = (TypeKind*)malloc(sizeof(TypeKind) * pc);
         char** psn = (char**)malloc(sizeof(char*) * pc);
@@ -559,6 +615,11 @@ static void ast_fill_one_func(ModuleSymbolTable* table, Ast* fn) {
             int degrade = 0;
             for (int i = 0; i < pc; i++) {
                 TypeInfo* ti = fn->u.func.param_types[i];
+                if (ast_type_param_name(NULL, fn, ti) != NULL) {
+                    pts[i] = TYPE_GENERIC_PARAM;
+                    psn[i] = NULL;
+                    continue;
+                }
                 pts[i] = ast_kind_of(table, ti);
                 psn[i] = (ti && ti->struct_name) ? strdup(ti->struct_name) : NULL;
                 // 与返回组同一条规则：AST 判成 TYPE_STRUCT，而扫描链在那个位置已有更精确的
@@ -868,10 +929,13 @@ static void ast_fill_one_destruct(ModuleSymbolTable* table, Ast* dd) {
 // ---- clib 类接管 ----
 //   ModuleClibSymbol 与它的 funcs[] 全是扁平的（TypeKind + 名字 + 计数），
 //   没有嵌套 TypeInfo 指针 ⇒ 可以整类换 ✓ 与 cfunc 同类。
+//   ★ 建表路径尤其必要：扫描链对 `export clib X { … }` **只登记名字数组**
+//     （scan_pass1.inc:179 推完 clib_names 就 continue），**从不建 clib 条目** ⇒
+//     依赖符号表的新路径（AST 的类型分类、语义侧 `use m.X` 的查找、clib 的 use 传导）
+//     全都找不到它 ✗（实测 test_sdl_capture / test_plane_war_headless 的 `use fnt.sdl3_ttf`）
 static void ast_fill_one_clib(ModuleSymbolTable* table, Ast* cd) {
     if (!cd || !cd->u.clib_def.name || !cd->u.clib_def.func_names) return;
     ModuleClibSymbol* sym = module_symbol_table_find_clib(table, cd->u.clib_def.name);
-    if (!sym) return;
     int fc = cd->u.clib_def.func_count;
     if (fc < 0) return;
     ModuleClibFuncSymbol* fs =
@@ -905,8 +969,26 @@ static void ast_fill_one_clib(ModuleSymbolTable* table, Ast* cd) {
             }
         }
     }
-    sym->func_count = fc;
-    sym->funcs = fs;      // 旧数组不释放（同前：量小、先避 use-after-free ✓）
+    if (sym) {
+        sym->func_count = fc;
+        sym->funcs = fs;      // 旧数组不释放（同前：量小、先避 use-after-free ✓）
+        return;
+    }
+    // ★ 建表：add_clib 内部深拷贝（且要求 func_count > 0）⇒ 随后释放我们造的临时数组 ✓
+    if (fc > 0) {
+        module_symbol_table_add_clib(table, cd->u.clib_def.name, fc, fs);
+        for (int i = 0; i < fc; i++) {
+            free(fs[i].name);
+            free(fs[i].return_struct_name);
+            if (fs[i].param_struct_names) {
+                for (int k = 0; k < fs[i].param_count; k++) free(fs[i].param_struct_names[k]);
+                free(fs[i].param_struct_names);
+            }
+            free(fs[i].param_types);
+            free(fs[i].param_element_types);
+        }
+    }
+    free(fs);
 }
 
 // 关联常量的**值文本**：符号表侧存的是**原始文本**（消费者 visit_module.inc:97/165 按文本解析：

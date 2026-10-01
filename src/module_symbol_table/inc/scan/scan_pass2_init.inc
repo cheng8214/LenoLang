@@ -456,6 +456,18 @@
                                         if (!already) {
                                             mod_names_push_z(&clib_names, &clib_name_count, &clib_name_cap, type_name);
                                         }
+                                        // ★ 同时**建条目**（2026-10-01 修）：struct/enum/face/alias 四个分支
+                                        //   都会调各自的 add_*，**只有 clib 这里只推了名字** ✗
+                                        //   ⇒ 依赖"名字数组"的旧扫描链看不出问题，但改走**符号表**的新路径
+                                        //     （AST 填充器的类型分类、语义侧 `use mid.x` 的查找）全都找不到它
+                                        //   ⇒ 实测：`use mid.core_lib` 报「模块 'mid' 中没有类型或函数 'core_lib'」，
+                                        //     连带 `getCore(): core_lib` 的返回类型被降级成 struct ✗
+                                        {
+                                            ModuleClibSymbol* dcs = module_symbol_table_find_clib(dep_table, type_name);
+                                            if (dcs && !module_symbol_table_find_clib(table, type_name)) {
+                                                module_symbol_table_add_clib(table, type_name, dcs->func_count, dcs->funcs);
+                                            }
+                                        }
                                         break;
                                     }
                                 }

@@ -365,7 +365,17 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
                     free(source);
                 }
             }
-            if (result == 0) table->scanned = 1;
+            if (result == 0) {
+                table->scanned = 1;
+                // ★ S10：AST 符号填充器**这里也必须挂一次**（只在 get_shared 挂是不够的）：
+                //   扫描链自己 `create + scan` 出来的**私有依赖表**（use 传导、alias 依赖解析
+                //   等路径）根本不经过 get_shared ⇒ 那张表只有扫描链结果、没有 AST 那部分符号。
+                //   而私有表是要被**读**的：如 scan_pass2_init.inc:446-461 "clib 靠依赖模块的
+                //   funcs 里的返回类型识别"、sym_table_import_alias 的传递依赖 —— 缺了 funcs
+                //   就整条断掉（实测 test_clib_cross_chain：`use mid.core_lib` 报"没有类型或函数"）
+                //   重复调用无害：各 ast_fill_one_* 的建表路径都先 find_* 判存在 ✓
+                module_symbol_table_apply_ast_fill(table, NULL, current_file);
+            }
             return result;
         }
     }
@@ -374,6 +384,9 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
     if (full_path[0]) scan_stack_push(full_path);
     int result = module_symbol_table_scan_depth(table, current_file, 0);
     if (full_path[0]) scan_stack_pop();
-    if (result == 0) table->scanned = 1;
+    if (result == 0) {
+        table->scanned = 1;
+        module_symbol_table_apply_ast_fill(table, NULL, current_file);   // 同上：私有表也要填 ✓
+    }
     return result;
 }
