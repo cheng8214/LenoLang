@@ -282,88 +282,10 @@ TypeInfo* parse_type_from_string(const char* type_str) {
     return parse_type_from_string_inner(&p);
 }
 
-// 基本类型解析 - 识别所有内置类型（用于 struct 字段/函数参数扫描）
-static TypeKind parse_base_type(const char* type_str) {
-    // 基础类型
-    if (strcmp(type_str, "int") == 0)    return TYPE_INT;
-    if (strcmp(type_str, "float") == 0)  return TYPE_FLOAT;
-    if (strcmp(type_str, "string") == 0) return TYPE_STRING;
-    if (strcmp(type_str, "bool") == 0)   return TYPE_BOOL;
-    if (strcmp(type_str, "any") == 0)    return TYPE_ANY;
-    if (strcmp(type_str, "null") == 0)   return TYPE_NULL;
-    // 文件/颜色类型
-    if (strcmp(type_str, "File") == 0)   return TYPE_FILE;
-    // 网络/指针类型
-    if (strcmp(type_str, "Socket") == 0) return TYPE_SOCKET;
-    if (strcmp(type_str, "Channel") == 0) return TYPE_CHANNEL;
-    if (strcmp(type_str, "Thread") == 0) return TYPE_THREAD;
-    if (strcmp(type_str, "Ptr") == 0)    return TYPE_PTR;
-    // C 布局类型
-    if (strcmp(type_str, "i8") == 0)     return TYPE_I8;
-    if (strcmp(type_str, "u8") == 0)     return TYPE_U8;
-    if (strcmp(type_str, "i16") == 0)    return TYPE_I16;
-    if (strcmp(type_str, "u16") == 0)    return TYPE_U16;
-    if (strcmp(type_str, "i32") == 0)    return TYPE_I32;
-    if (strcmp(type_str, "u32") == 0)    return TYPE_U32;
-    if (strcmp(type_str, "i64") == 0)    return TYPE_I64;
-    if (strcmp(type_str, "u64") == 0)    return TYPE_U64;
-    if (strcmp(type_str, "f32") == 0)    return TYPE_F32;
-    if (strcmp(type_str, "f64") == 0)    return TYPE_F64;
-    if (strcmp(type_str, "c_int") == 0)  return TYPE_C_INT;
-    if (strcmp(type_str, "c_uint") == 0) return TYPE_C_UINT;
-    if (strcmp(type_str, "c_long") == 0) return TYPE_C_LONG;
-    if (strcmp(type_str, "c_ulong") == 0) return TYPE_C_ULONG;
-    if (strcmp(type_str, "c_longlong") == 0)  return TYPE_C_LONGLONG;
-    if (strcmp(type_str, "c_ulonglong") == 0) return TYPE_C_ULONGLONG;
-    if (strcmp(type_str, "c_size") == 0) return TYPE_C_SIZE;
-    if (strcmp(type_str, "c_ssize") == 0) return TYPE_C_SSIZE;
-    if (strcmp(type_str, "str8") == 0)   return TYPE_STR8;
-    if (strcmp(type_str, "str16") == 0)  return TYPE_STR16;
-    // 容器/集合类型
-    if (strcmp(type_str, "Array") == 0)  return TYPE_ARRAY;
-    if (strcmp(type_str, "Dict") == 0)   return TYPE_DICT;
-    return TYPE_ANY;
-}
 
-// 检查类型是否是已知的 struct 类型
-static int is_known_struct(const char* type_str, char** struct_names, int struct_count) {
-    for (int i = 0; i < struct_count; i++) {
-        if (strcmp(struct_names[i], type_str) == 0) {
-            return 1;
-        }
-    }
-    return 0;
-}
 
-// 检查类型是否是已知的 clib 类型
-static int is_known_clib(const char* type_str, char** clib_names, int clib_count) {
-    for (int i = 0; i < clib_count; i++) {
-        if (strcmp(clib_names[i], type_str) == 0) {
-            return 1;
-        }
-    }
-    return 0;
-}
 
-// 检查类型是否是已知的 face 类型
-static int is_known_face(const char* type_str, char** face_names, int face_count) {
-    for (int i = 0; i < face_count; i++) {
-        if (strcmp(face_names[i], type_str) == 0) {
-            return 1;
-        }
-    }
-    return 0;
-}
 
-// 检查类型是否是已知的 cstruct 类型
-static int is_known_cstruct(const char* type_str, char** cstruct_names, int cstruct_count) {
-    for (int i = 0; i < cstruct_count; i++) {
-        if (strcmp(cstruct_names[i], type_str) == 0) {
-            return 1;
-        }
-    }
-    return 0;
-}
 
 // ============================================================================
 // 增强文本推断：函数调用/变量引用/简单表达式 → 查同文件符号表
@@ -754,56 +676,4 @@ static TypeInfo* infer_array_literal_element_type(const char* p, ModuleSymbolTab
     return result;
 }
 
-// 从字典字面量文本推断值类型
-// p 指向开头的 '{'，返回推断的值类型 TypeInfo*（caller 拥有），NULL 表示空字典
-// table: 模块符号表（用于查函数返回类型/变量类型）
-static TypeInfo* infer_dict_literal_value_type(const char* p, ModuleSymbolTable* table) {
-    if (!p || *p != '{') return NULL;
-    p++; // skip '{'
-
-    TypeKind common_kind = TYPE_UNKNOWN;
-    int has_elements = 0;
-
-    while (*p) {
-        // skip whitespace
-        while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) p++;
-
-        if (*p == '}') break;
-        if (*p == ',') { p++; continue; }
-
-        // skip key: "string" or identifier
-        if (*p == '"' || *p == '\'') {
-            char quote = *p++;
-            while (*p && *p != quote) { if (*p == '\\' && *(p+1)) p += 2; else p++; }
-            if (*p) p++; // skip closing quote
-        } else {
-            while (*p && (isalnum((unsigned char)*p) || *p == '_')) p++;
-        }
-
-        // skip whitespace and ':'
-        while (*p && (*p == ' ' || *p == '\t')) p++;
-        if (*p == ':') p++;
-        while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) p++;
-
-        // now at value - use enhanced single-expression type inference
-        TypeKind val_kind;
-        const char* before = p;
-        val_kind = infer_single_expr_type(&p, table, NULL);
-        // safety: if p didn't advance, skip one char to avoid infinite loop
-        if (p == before) { p++; }
-
-        has_elements = 1;
-
-        if (common_kind == TYPE_UNKNOWN) {
-            common_kind = val_kind;
-        } else if (common_kind != val_kind) {
-            // type mismatch - try numeric type promotion
-            common_kind = promote_type_kinds(common_kind, val_kind);
-        }
-    }
-
-    if (!has_elements) return NULL; // empty dict
-
-    return type_new(common_kind == TYPE_UNKNOWN ? TYPE_ANY : common_kind);
-}
 

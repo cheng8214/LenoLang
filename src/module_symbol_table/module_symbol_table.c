@@ -32,16 +32,6 @@ extern int normalize_path(char* path, int max_len);
 #define MOD_MAX_TYPE_PARAMS   16   // 单类型最大泛型参数数
 #define MOD_MAX_GENERIC_RET   16   // 返回类型最大泛型参数数
 
-// ---- 标识符字符判定（扫描链统一入口） ----
-// 为什么不直接用 isalnum：**标识符可以是非 ASCII**（如 `export var 测试 = "你好"`）。
-//   isalnum 对 UTF-8 高位字节一律返回 0 ⇒ 扫出的名字长度 0 ⇒ 该标识符**整个丢掉** ✗
-//   （`--export-diff` 对拍抓到的第二个 bug：中文变量名在导出表里消失，后果是跨模块
-//     `use m.测试` 报"模块 m 中没有方法 测试"这种假阴性 —— 与文档 S10 说的"少报"同族）
-// 口径：ASCII 字母数字 + `_` + 任何 **>= 0x80 的字节**（UTF-8 连续字节 ⇒ 中日韩/emoji 名一律收下 ✓），
-//   与 parser 侧"标识符吃 UTF-8 字节"的行为对齐 ✓
-static int mod_ident_char(unsigned char c) {
-    return isalnum(c) || c == '_' || c >= 0x80;
-}
 
 // ---- S10 迁移：AST 符号填充器（见 include/module_symbol_table.h 的说明）----
 // 这里只放"调度"，不含任何语法知识 ⇒ 不会把 core 拖进 parser 依赖 ✓
@@ -73,60 +63,9 @@ void module_symbol_table_apply_ast_fill(ModuleSymbolTable* table, const char* so
 // 数量型收集一律使用以下按需翻倍增长的动态数组。
 // 返回 0 成功，-1 内存不足（调用方跳过该名称继续扫描）
 
-// 追加名称（源码区间 [name_start, name_start+name_len)）
-static int mod_names_push(char*** names, int* count, int* capacity,
-                          const char* name_start, int name_len) {
-    if (name_len <= 0) return -1;
-    if (*count >= *capacity) {
-        int new_cap = *capacity == 0 ? 16 : *capacity * 2;
-        char** grown = (char**)realloc(*names, sizeof(char*) * new_cap);
-        if (!grown) return -1;
-        *names = grown;
-        *capacity = new_cap;
-    }
-    char* s = (char*)malloc(name_len + 1);
-    if (!s) return -1;
-    memcpy(s, name_start, name_len);
-    s[name_len] = '\0';
-    (*names)[(*count)++] = s;
-    return 0;
-}
 
-// 追加名称（NUL 结尾字符串，内部复制）
-static int mod_names_push_z(char*** names, int* count, int* capacity,
-                            const char* name) {
-    return mod_names_push(names, count, capacity, name, (int)strlen(name));
-}
 
-// 追加本地别名（名称 + 类型信息成对存储，type_info 所有权转移给数组）
-static int mod_alias_push(char*** names, TypeInfo*** types, int* count, int* capacity,
-                          const char* name, TypeInfo* type_info) {
-    if (*count >= *capacity) {
-        int new_cap = *capacity == 0 ? 16 : *capacity * 2;
-        char** grown_names = (char**)realloc(*names, sizeof(char*) * new_cap);
-        if (!grown_names) return -1;
-        *names = grown_names;
-        TypeInfo** grown_types = (TypeInfo**)realloc(*types, sizeof(TypeInfo*) * new_cap);
-        if (!grown_types) return -1;
-        *types = grown_types;
-        *capacity = new_cap;
-    }
-    char* s = strdup(name);
-    if (!s) return -1;
-    (*names)[*count] = s;
-    (*types)[*count] = type_info;
-    (*count)++;
-    return 0;
-}
 
-// 计算源码位置 pos 所在行号（1-based，用于错误报告）
-static int mod_source_line(const char* source, const char* pos) {
-    int line = 1;
-    for (const char* c = source; c < pos && *c; c++) {
-        if (*c == '\n') line++;
-    }
-    return line;
-}
 
 // 创建/销毁
 #include "inc/sym_table_create.inc"
@@ -140,7 +79,8 @@ static int mod_source_line(const char* source, const char* pos) {
 // 参数表 → 类型 的唯一实现（⑰-2 起 face 用它；scan_struct 的方法参数段仍是内联版）
 // ⚠ 必须在这里（**文件作用域**）包含：`scan/*.inc` 那批是在扫描**函数体内**包含的代码片段，
 //   在里面定义函数会得到 "invalid storage class for function"（实测踩过）。
-#include "inc/sym_table_params.inc"
+// ★ S10 收官：`inc/sym_table_params.inc` 已删除（"参数表 → 类型"的唯一实现原是给
+//   文本扫描链用的；AST 侧直接读 parser 解析好的 TypeInfo，不再需要它 ✓）
 
 // 导入别名类型依赖传导
 // ★ S10 收官：`inc/sym_table_import_alias.inc` 已删除（use 传导搬到 AST 侧 ast_fill_one_use）

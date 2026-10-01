@@ -339,7 +339,12 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
                 return -1;      // 读不了 ⇒ 扫描失败 ⇒ get_shared 返回 NULL ⇒ 语义侧报"找不到模块文件" ✓
             }
             table->scanned = 1;
+            // ⚠ 填充期间必须**压栈**：填充器会为 `use`/`import` 依赖再取依赖表
+            //   （get_shared → 本函数）⇒ 没有它，循环导入不会被判出来（旧时代是
+            //   文本扫描在栈内取依赖表，天然有这道闸门 ✓）
+            if (full_path[0]) scan_stack_push(full_path);
             module_symbol_table_apply_ast_fill(table, source, current_file);
+            if (full_path[0]) scan_stack_pop();
 
             uint64_t src_hash = serialize_source_hash(source, strlen(source));
             uint64_t src_size = 0;
@@ -375,7 +380,9 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
         char* source = read_module_file(table->module_path, current_file);
         if (!source) return -1;     // 同缓存路径：文件读不了 = 建表失败 ✓
         table->scanned = 1;
+        if (full_path[0]) scan_stack_push(full_path);   // 同上：填充期间压栈（环检测）✓
         module_symbol_table_apply_ast_fill(table, source, current_file);
+        if (full_path[0]) scan_stack_pop();
         free(source);
     }
     return 0;
