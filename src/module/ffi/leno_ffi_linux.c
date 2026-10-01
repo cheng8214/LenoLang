@@ -1,18 +1,26 @@
-/* Leno FFI - Linux x64 实现
+/* Leno FFI - Linux/macOS x64 实现
  * System V AMD64 ABI 调用约定
  *
  * System V AMD64 ABI 规则:
- *   - 整数/指针参数: RDI, RSI, RDX, RCX, R8, R9（按参数位置依次分配）
- *   - 浮点参数: XMM0-XMM7（按参数位置依次分配）
- *   - 整数/浮点寄存器独立计数，按参数位置混合分配
+ *   - 整数/指针参数: RDI, RSI, RDX, RCX, R8, R9（与浮点**各自独立**计数，按参数位置分配）
+ *   - 浮点参数: XMM0-XMM7（同上）
  *     例: foo(int, double, int) → RDI=int1, XMM0=double1, RSI=int2
  *   - 返回值: RAX (整数/指针), XMM0 (浮点)
- *   - 无需影子空间
- *   - 超过 6 个寄存器参数通过栈传递
+ *   - 无需影子空间；整数超过 6 个 / 浮点超过 8 个的参数，按**原始位置顺序**压栈
  *
- * 核心策略与 Windows 版相同，见 leno_ffi_win64.c 的注释。
- * 本文件已将 Windows 版完整的 f32(float)/double 混合分发逻辑移植过来，
- * 以正确覆盖 SDL3 等使用 float 坐标的 C API。
+ * 调用策略：
+ *   1. 纯整数/指针参数 → call_pure_int（1~12 个，走预定义函数指针）
+ *   2. 纯浮点参数（≤6）→ call_pure_double
+ *   3. 其余（**任何**整数+浮点混合）→ 通用汇编调用桩 leno_sysv_call
+ *
+ * 为什么需要通用桩（2026-09-30，修 PVZ 段错误）：
+ *   早先混合参数靠"按类型组合枚举函数指针"覆盖（2/3/4 参数若干组合 + 5 参数 f32 特例），
+ *   超出覆盖面的调用落到"整型回退"——把 double 的位模式当 int64 塞进**通用寄存器**，
+ *   而被调函数按 ABI 期望它在 **XMM** 里 ⇒ 参数整体错位。
+ *   实测触发点：`SDL_RenderTextureRotated(renderer, texture, src, dst, f64 angle, center, flip)`
+ *   —— 7 个参数含 1 个 f64，angle 变成垃圾值，随后解引用出错、植物大战僵尸段错误 ✗。
+ *   枚举法对参数个数是指数爆炸，永远补不全；故改为按 SysV 分类规则**精确分发**：
+ *   整数按序进 RDI-R9、浮点按序进 XMM0-7、放不下的按原始顺序压栈，任意组合都正确 ✓
  */
 
 #include "leno_ffi.h"
@@ -39,7 +47,7 @@ typedef int64_t (*fi11)(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, in
 typedef int64_t (*fi12)(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t);
 
 /* ========================================================================
- *  2. 纯浮点参数的函数指针类型（0~6 个参数）
+ *  2. 纯浮点参数的函数指针类型（0~6 个参数，XMM0-XMM5）
  * ======================================================================== */
 typedef double (*fd0)(void);
 typedef double (*fd1)(double);
@@ -50,113 +58,14 @@ typedef double (*fd5)(double, double, double, double, double);
 typedef double (*fd6)(double, double, double, double, double, double);
 
 /* ========================================================================
- *  3. 混合参数的函数指针类型（2 参数）
- * ======================================================================== */
-typedef int64_t (*f_i_d)(int64_t, double);
-typedef int64_t (*f_d_i)(double, int64_t);
-typedef double  (*f_i_d_r)(int64_t, double);
-typedef double  (*f_d_i_r)(double, int64_t);
-typedef double  (*f_d_d_r)(double, double);
-
-/* float 版本 (f32) — 2 参数混合 */
-typedef int64_t (*f_i_F)(int64_t, float);
-typedef int64_t (*f_F_i)(float, int64_t);
-typedef double  (*f_i_F_r)(int64_t, float);
-typedef double  (*f_F_i_r)(float, int64_t);
-typedef double  (*f_F_F_r)(float, float);
-
-/* ========================================================================
- *  4. 混合参数的函数指针类型（3 参数）
- * ======================================================================== */
-typedef int64_t (*f_i_i_d)(int64_t, int64_t, double);
-typedef int64_t (*f_i_d_i)(int64_t, double, int64_t);
-typedef int64_t (*f_d_i_i)(double, int64_t, int64_t);
-typedef int64_t (*f_d_d_i)(double, double, int64_t);
-typedef int64_t (*f_d_i_d)(double, int64_t, double);
-typedef int64_t (*f_i_d_d)(int64_t, double, double);
-typedef double  (*f_i_i_d_r)(int64_t, int64_t, double);
-typedef double  (*f_i_d_i_r)(int64_t, double, int64_t);
-typedef double  (*f_d_i_i_r)(double, int64_t, int64_t);
-typedef double  (*f_d_d_i_r)(double, double, int64_t);
-typedef double  (*f_d_i_d_r)(double, int64_t, double);
-typedef double  (*f_i_d_d_r)(int64_t, double, double);
-
-/* float 版本 — 3 参数混合 */
-typedef int64_t (*f_i_i_F)(int64_t, int64_t, float);
-typedef int64_t (*f_i_F_i)(int64_t, float, int64_t);
-typedef int64_t (*f_F_i_i)(float, int64_t, int64_t);
-typedef int64_t (*f_F_F_i)(float, float, int64_t);
-typedef int64_t (*f_F_i_F)(float, int64_t, float);
-typedef int64_t (*f_i_F_F)(int64_t, float, float);
-
-/* ========================================================================
- *  5. 混合参数的函数指针类型（4 参数）
- * ======================================================================== */
-typedef int64_t (*f_i_i_i_d)(int64_t, int64_t, int64_t, double);
-typedef int64_t (*f_i_i_d_i)(int64_t, int64_t, double, int64_t);
-typedef int64_t (*f_i_d_i_i)(int64_t, double, int64_t, int64_t);
-typedef int64_t (*f_d_i_i_i)(double, int64_t, int64_t, int64_t);
-typedef int64_t (*f_i_d_d_i)(int64_t, double, double, int64_t);
-typedef int64_t (*f_d_i_d_i)(double, int64_t, double, int64_t);
-typedef int64_t (*f_d_d_i_i)(double, double, int64_t, int64_t);
-typedef int64_t (*f_i_i_d_d)(int64_t, int64_t, double, double);
-typedef int64_t (*f_i_d_i_d)(int64_t, double, int64_t, double);
-typedef int64_t (*f_d_i_i_d)(double, int64_t, int64_t, double);
-
-/* double 返回值版本 — 4 参数混合 */
-typedef double (*f_i_i_i_d_r)(int64_t, int64_t, int64_t, double);
-typedef double (*f_i_i_d_i_r)(int64_t, int64_t, double, int64_t);
-typedef double (*f_i_d_i_i_r)(int64_t, double, int64_t, int64_t);
-typedef double (*f_d_i_i_i_r)(double, int64_t, int64_t, int64_t);
-typedef double (*f_i_i_d_d_r)(int64_t, int64_t, double, double);
-typedef double (*f_i_d_i_d_r)(int64_t, double, int64_t, double);
-typedef double (*f_i_d_d_i_r)(int64_t, double, double, int64_t);
-typedef double (*f_d_i_i_d_r)(double, int64_t, int64_t, double);
-typedef double (*f_d_i_d_i_r)(double, int64_t, double, int64_t);
-typedef double (*f_d_d_i_i_r)(double, double, int64_t, int64_t);
-
-/* float 版本 — 4 参数混合 */
-typedef int64_t (*f_i_i_i_F)(int64_t, int64_t, int64_t, float);
-typedef int64_t (*f_i_i_F_i)(int64_t, int64_t, float, int64_t);
-typedef int64_t (*f_i_F_i_i)(int64_t, float, int64_t, int64_t);
-typedef int64_t (*f_F_i_i_i)(float, int64_t, int64_t, int64_t);
-typedef int64_t (*f_i_F_F_F)(int64_t, float, float, float);
-typedef int64_t (*f_F_F_F_i)(float, float, float, int64_t);
-
-/* float 版本 — 5 参数（1 ptr + 4 f32，SDLRenderLine 等） */
-typedef int64_t (*f_i_F4)(int64_t, float, float, float, float);
-
-/* ========================================================================
- *  辅助函数：判断参数类型是否为浮点
+ *  3. 辅助函数：判断参数类型是否为浮点
  * ======================================================================== */
 static int is_float_type(FFIType t) {
     return t == FFI_TYPE_DOUBLE || t == FFI_TYPE_FLOAT;
 }
-static int is_double_type(FFIType t) {
-    return t == FFI_TYPE_DOUBLE;
-}
-static int is_float_only(FFIType t) {
-    return t == FFI_TYPE_FLOAT;
-}
 
 /* ========================================================================
- *  辅助函数：将 double 的位模式转换为 int64_t（用于回退调用路径）
- *  这不是数值转换，而是位模式重解释
- * ======================================================================== */
-static int64_t double_to_bits(double d) {
-    int64_t bits;
-    memcpy(&bits, &d, sizeof(bits));
-    return bits;
-}
-
-static double bits_to_double(int64_t i) {
-    double d;
-    memcpy(&d, &i, sizeof(d));
-    return d;
-}
-
-/* ========================================================================
- *  核心调用实现：纯整数/指针参数分发
+ *  4. 核心调用实现：纯整数/指针参数分发
  * ======================================================================== */
 static int64_t call_pure_int(void* func, int64_t* iargs, int count) {
     switch (count) {
@@ -178,7 +87,7 @@ static int64_t call_pure_int(void* func, int64_t* iargs, int count) {
 }
 
 /* ========================================================================
- *  核心调用实现：纯浮点参数分发
+ *  5. 核心调用实现：纯浮点参数分发
  * ======================================================================== */
 static double call_pure_double(void* func, double* dargs, int count) {
     switch (count) {
@@ -194,124 +103,152 @@ static double call_pure_double(void* func, double* dargs, int count) {
 }
 
 /* ========================================================================
- *  核心调用实现：混合参数分发（2~4 参数）
- *  根据 arg_types 数组中每个参数的实际类型选择对应函数指针
+ *  6. 通用 SysV 调用桩（汇编）
+ *
+ *  C 原型:
+ *    void leno_sysv_call(void* fn,
+ *                        const uint64_t* gp,   // 已分类：整数/指针，最多 6 个
+ *                        const uint64_t* fp,   // 已分类：浮点原始位模式，固定 8 槽
+ *                        const uint64_t* stk,  // 放不下的参数，按**原始位置顺序**
+ *                        int64_t nstk,         // stk 里的个数
+ *                        int64_t nfp,          // 实际用了几个 XMM（写 AL，变参函数需要）
+ *                        SysvCallRet* out);    // 出参：rax + xmm0 原始 8 字节
+ *
+ *  要点：
+ *    · 第 7 个参数 out 由 C 编译器放在栈上 ⇒ 从 16(%rbp) 取（压过 rbp 后）
+ *    · 压栈参数**倒序**压入，使 stk[0] 落在最靠近返回地址处（= 被调函数看到的第 1 个栈参数）
+ *    · 调用前必须保持 rsp 16 字节对齐：本桩在 rbp 之后共压 3 个寄存器，
+ *      故 (3 + 1) + nstk + pad 需为奇数 ⇒ nstk 为偶数时补压一个 0
+ *    · 返回后先把结果写进出参，再用 rbp 恢复 rsp（丢弃压栈的实参），最后弹回
  * ======================================================================== */
-/* 辅助函数: 取值 & 类型判断 */
-static inline int64_t  arg_i(const FFIArg* a, int n) { return a[n].value.i; }
-static inline double   arg_d(const FFIArg* a, int n) { return a[n].value.d; }
-static inline float    arg_f(const FFIArg* a, int n) { return a[n].value.f; }
-static inline int      argIsDbl(const FFIArg* a, int n) { return is_double_type(a[n].type); }
-static inline int      argIsF32(const FFIArg* a, int n) { return is_float_only(a[n].type); }
 
-static int64_t call_mixed_int_ret(void* func, const FFIArg* a, int total) {
-    /* 2 参数混合 */
-    if (total == 2) {
-        /* double */ if (!argIsDbl(a,0) && argIsDbl(a,1)) return ((f_i_d)func)(arg_i(a,0), arg_d(a,1));
-        /* double */ if (argIsDbl(a,0) && !argIsDbl(a,1)) return ((f_d_i)func)(arg_d(a,0), arg_i(a,1));
-        /* f32    */ if (!argIsF32(a,0) && argIsF32(a,1)) return ((f_i_F)func)(arg_i(a,0), arg_f(a,1));
-        /* f32    */ if (argIsF32(a,0) && !argIsF32(a,1)) return ((f_F_i)func)(arg_f(a,0), arg_i(a,1));
-        return 0;
-    }
-    /* 3 参数混合 */
-    if (total == 3) {
-        /* double */ if (!argIsDbl(a,0)&&!argIsDbl(a,1)&&argIsDbl(a,2)) return ((f_i_i_d)func)(arg_i(a,0),arg_i(a,1),arg_d(a,2));
-        /* double */ if (!argIsDbl(a,0)&&argIsDbl(a,1)&&!argIsDbl(a,2)) return ((f_i_d_i)func)(arg_i(a,0),arg_d(a,1),arg_i(a,2));
-        /* double */ if (argIsDbl(a,0)&&!argIsDbl(a,1)&&!argIsDbl(a,2)) return ((f_d_i_i)func)(arg_d(a,0),arg_i(a,1),arg_i(a,2));
-        /* double×2 */ if (!argIsDbl(a,0)&&argIsDbl(a,1)&&argIsDbl(a,2)) return ((f_i_d_d)func)(arg_i(a,0),arg_d(a,1),arg_d(a,2));
-        /* double×2 */ if (argIsDbl(a,0)&&!argIsDbl(a,1)&&argIsDbl(a,2)) return ((f_d_i_d)func)(arg_d(a,0),arg_i(a,1),arg_d(a,2));
-        /* double×2 */ if (argIsDbl(a,0)&&argIsDbl(a,1)&&!argIsDbl(a,2)) return ((f_d_d_i)func)(arg_d(a,0),arg_d(a,1),arg_i(a,2));
-        /* f32    */ if (!argIsF32(a,0)&&!argIsF32(a,1)&&argIsF32(a,2)) return ((f_i_i_F)func)(arg_i(a,0),arg_i(a,1),arg_f(a,2));
-        /* f32    */ if (!argIsF32(a,0)&&argIsF32(a,1)&&!argIsF32(a,2)) return ((f_i_F_i)func)(arg_i(a,0),arg_f(a,1),arg_i(a,2));
-        /* f32    */ if (argIsF32(a,0)&&!argIsF32(a,1)&&!argIsF32(a,2)) return ((f_F_i_i)func)(arg_f(a,0),arg_i(a,1),arg_i(a,2));
-        /* f32    */ if (!argIsF32(a,0)&&argIsF32(a,1)&&argIsF32(a,2))  return ((f_i_F_F)func)(arg_i(a,0),arg_f(a,1),arg_f(a,2));
-        /* f32    */ if (argIsF32(a,0)&&!argIsF32(a,1)&&argIsF32(a,2))  return ((f_F_i_F)func)(arg_f(a,0),arg_i(a,1),arg_f(a,2));
-        /* f32    */ if (argIsF32(a,0)&&argIsF32(a,1)&&!argIsF32(a,2))  return ((f_F_F_i)func)(arg_f(a,0),arg_f(a,1),arg_i(a,2));
-        return 0;
-    }
-    /* 4 参数混合 */
-    if (total == 4) {
-        /* double */ if (!argIsDbl(a,0)&&!argIsDbl(a,1)&&!argIsDbl(a,2)&&argIsDbl(a,3)) return ((f_i_i_i_d)func)(arg_i(a,0),arg_i(a,1),arg_i(a,2),arg_d(a,3));
-        /* double */ if (!argIsDbl(a,0)&&!argIsDbl(a,1)&&argIsDbl(a,2)&&!argIsDbl(a,3)) return ((f_i_i_d_i)func)(arg_i(a,0),arg_i(a,1),arg_d(a,2),arg_i(a,3));
-        /* double */ if (!argIsDbl(a,0)&&argIsDbl(a,1)&&!argIsDbl(a,2)&&!argIsDbl(a,3)) return ((f_i_d_i_i)func)(arg_i(a,0),arg_d(a,1),arg_i(a,2),arg_i(a,3));
-        /* double */ if (argIsDbl(a,0)&&!argIsDbl(a,1)&&!argIsDbl(a,2)&&!argIsDbl(a,3)) return ((f_d_i_i_i)func)(arg_d(a,0),arg_i(a,1),arg_i(a,2),arg_i(a,3));
-        /* double×2 */ if (!argIsDbl(a,0)&&!argIsDbl(a,1)&&argIsDbl(a,2)&&argIsDbl(a,3)) return ((f_i_i_d_d)func)(arg_i(a,0),arg_i(a,1),arg_d(a,2),arg_d(a,3));
-        /* double×2 */ if (!argIsDbl(a,0)&&argIsDbl(a,1)&&!argIsDbl(a,2)&&argIsDbl(a,3)) return ((f_i_d_i_d)func)(arg_i(a,0),arg_d(a,1),arg_i(a,2),arg_d(a,3));
-        /* double×2 */ if (!argIsDbl(a,0)&&argIsDbl(a,1)&&argIsDbl(a,2)&&!argIsDbl(a,3)) return ((f_i_d_d_i)func)(arg_i(a,0),arg_d(a,1),arg_d(a,2),arg_i(a,3));
-        /* double×2 */ if (argIsDbl(a,0)&&!argIsDbl(a,1)&&!argIsDbl(a,2)&&argIsDbl(a,3)) return ((f_d_i_i_d)func)(arg_d(a,0),arg_i(a,1),arg_i(a,2),arg_d(a,3));
-        /* double×2 */ if (argIsDbl(a,0)&&!argIsDbl(a,1)&&argIsDbl(a,2)&&!argIsDbl(a,3)) return ((f_d_i_d_i)func)(arg_d(a,0),arg_i(a,1),arg_d(a,2),arg_i(a,3));
-        /* double×2 */ if (argIsDbl(a,0)&&argIsDbl(a,1)&&!argIsDbl(a,2)&&!argIsDbl(a,3)) return ((f_d_d_i_i)func)(arg_d(a,0),arg_d(a,1),arg_i(a,2),arg_i(a,3));
-        /* f32    */ if (!argIsF32(a,0)&&!argIsF32(a,1)&&!argIsF32(a,2)&&argIsF32(a,3)) return ((f_i_i_i_F)func)(arg_i(a,0),arg_i(a,1),arg_i(a,2),arg_f(a,3));
-        /* f32    */ if (!argIsF32(a,0)&&!argIsF32(a,1)&&argIsF32(a,2)&&!argIsF32(a,3)) return ((f_i_i_F_i)func)(arg_i(a,0),arg_i(a,1),arg_f(a,2),arg_i(a,3));
-        /* f32    */ if (!argIsF32(a,0)&&argIsF32(a,1)&&!argIsF32(a,2)&&!argIsF32(a,3)) return ((f_i_F_i_i)func)(arg_i(a,0),arg_f(a,1),arg_i(a,2),arg_i(a,3));
-        /* f32    */ if (argIsF32(a,0)&&!argIsF32(a,1)&&!argIsF32(a,2)&&!argIsF32(a,3)) return ((f_F_i_i_i)func)(arg_f(a,0),arg_i(a,1),arg_i(a,2),arg_i(a,3));
-        /* f32×3  */if (!argIsF32(a,0)&&argIsF32(a,1)&&argIsF32(a,2)&&argIsF32(a,3))  return ((f_i_F_F_F)func)(arg_i(a,0),arg_f(a,1),arg_f(a,2),arg_f(a,3));
-        /* f32×3  */if (argIsF32(a,0)&&argIsF32(a,1)&&argIsF32(a,2)&&!argIsF32(a,3))  return ((f_F_F_F_i)func)(arg_f(a,0),arg_f(a,1),arg_f(a,2),arg_i(a,3));
-        return 0;
-    }
-    return 0;
-}
+/* 汇编符号名：Mach-O 需要前导下划线，ELF 不需要 */
+#ifdef __APPLE__
+#  define LENO_SYSV_SYM(x)  "_" x
+#  define LENO_SYSV_TYPE(x) ""
+#  define LENO_SYSV_SIZE(x) ""
+#else
+#  define LENO_SYSV_SYM(x)  x
+#  define LENO_SYSV_TYPE(x) ".type " x ", @function\n"
+#  define LENO_SYSV_SIZE(x) ".size " x ", .-" x "\n"
+#endif
 
-static double call_mixed_double_ret(void* func, const FFIArg* args, int total) {
-    /* 2 参数混合，返回 double（区分 f32 和 f64） */
-    if (total == 2) {
-        /* f32 版本 */
-        if (!argIsF32(args,0) && argIsF32(args,1))  return ((f_i_F_r)func)(args[0].value.i, args[1].value.f);
-        if (argIsF32(args,0) && !argIsF32(args,1))  return ((f_F_i_r)func)(args[0].value.f, args[1].value.i);
-        if (argIsF32(args,0) && argIsF32(args,1))   return ((f_F_F_r)func)(args[0].value.f, args[1].value.f);
-        /* f64 版本 */
-        int d0 = is_double_type(args[0].type);
-        int d1 = is_double_type(args[1].type);
-        if (!d0 && d1)  return ((f_i_d_r)func)(args[0].value.i, args[1].value.d);
-        if (d0 && !d1)  return ((f_d_i_r)func)(args[0].value.d, args[1].value.i);
-        if (d0 && d1)   return ((f_d_d_r)func)(args[0].value.d, args[1].value.d);
-        return 0;
+typedef struct {
+    uint64_t i;   /* RAX —— 整数/指针返回值 */
+    double   d;   /* XMM0 的原始 8 字节 —— 浮点返回值 */
+} SysvCallRet;
+
+extern void leno_sysv_call(void* fn, const uint64_t* gp, const uint64_t* fp,
+                           const uint64_t* stk, int64_t nstk, int64_t nfp,
+                           SysvCallRet* out);
+
+__asm__(
+    ".text\n"
+    ".globl " LENO_SYSV_SYM("leno_sysv_call") "\n"
+    LENO_SYSV_TYPE("leno_sysv_call")
+    LENO_SYSV_SYM("leno_sysv_call") ":\n"
+    "    pushq %rbp\n"
+    "    movq  %rsp, %rbp\n"
+    "    pushq %rbx\n"                                  /* fn 要在参数寄存器被占用后仍可用 */
+    "    pushq %r12\n"                                  /* out 出参指针 */
+    "    pushq %r13\n"                                  /* nfp */
+    "    movq  %rdi, %rbx\n"
+    "    movq  %rsi, %r10\n"                            /* gp */
+    "    movq  %rdx, %r11\n"                            /* fp */
+    "    movq  %r9,  %r13\n"                            /* nfp */
+    "    movq  16(%rbp), %r12\n"                        /* out（第 7 个参数在栈上） */
+    /* ---- 压栈参数（含对齐补位）---- */
+    "    testb $1, %r8b\n"
+    "    jnz   1f\n"                                    /* nstk 为奇数 ⇒ 不用补位 */
+    "    pushq $0\n"                                    /* nstk 为偶数 ⇒ 补 8 字节保持 16 对齐 */
+    "1:\n"
+    "    testq %r8, %r8\n"
+    "    jz    3f\n"
+    "2:\n"
+    "    decq  %r8\n"
+    "    pushq (%rcx,%r8,8)\n"
+    "    testq %r8, %r8\n"
+    "    jnz   2b\n"
+    "3:\n"
+    /* ---- 整数/指针 → RDI,RSI,RDX,RCX,R8,R9 ---- */
+    "    movq  0(%r10),  %rdi\n"
+    "    movq  8(%r10),  %rsi\n"
+    "    movq  16(%r10), %rdx\n"
+    "    movq  24(%r10), %rcx\n"
+    "    movq  32(%r10), %r8\n"
+    "    movq  40(%r10), %r9\n"
+    /* ---- 浮点 → XMM0-XMM7（f32 的位模式也在低 4 字节，movsd 一并加载没问题）---- */
+    "    movsd 0(%r11),  %xmm0\n"
+    "    movsd 8(%r11),  %xmm1\n"
+    "    movsd 16(%r11), %xmm2\n"
+    "    movsd 24(%r11), %xmm3\n"
+    "    movsd 32(%r11), %xmm4\n"
+    "    movsd 40(%r11), %xmm5\n"
+    "    movsd 48(%r11), %xmm6\n"
+    "    movsd 56(%r11), %xmm7\n"
+    "    movl  %r13d, %eax\n"                            /* AL = 使用的向量寄存器数（变参约定） */
+    "    call  *%rbx\n"
+    "    movq  %rax, 0(%r12)\n"
+    "    movsd %xmm0, 8(%r12)\n"
+    "    leaq  -24(%rbp), %rsp\n"                        /* 丢弃压栈实参，回到保存寄存器处 */
+    "    popq  %r13\n"
+    "    popq  %r12\n"
+    "    popq  %rbx\n"
+    "    popq  %rbp\n"
+    "    ret\n"
+    LENO_SYSV_SIZE("leno_sysv_call")
+);
+
+/* ========================================================================
+ *  7. 通用分发：把参数按 SysV 规则分类后交给 leno_sysv_call
+ * ======================================================================== */
+static FFIValue call_generic(void* func, const FFISignature* sig, const FFIArg* args, int total) {
+    uint64_t gp[6]   = {0};   /* 整数/指针（无则填 0，桩会无条件加载） */
+    uint64_t fp[8]   = {0};   /* 浮点原始位模式（同上，固定 8 槽，桩无条件加载） */
+    uint64_t stk[FFI_MAX_ARGS] = {0};
+    int ngp = 0, nfp = 0, nstk = 0;
+
+    for (int i = 0; i < total; i++) {
+        FFIType t = args[i].type;
+        if (is_float_type(t)) {
+            uint64_t bits = 0;
+            if (t == FFI_TYPE_FLOAT) {
+                /* f32：位模式放低 4 字节 ⇒ 桩里 movsd 加载后低 32 位仍是这个 float ✓ */
+                float f = args[i].value.f;
+                memcpy(&bits, &f, sizeof(float));
+            } else {
+                memcpy(&bits, &args[i].value.d, sizeof(double));
+            }
+            if (nfp < 8) fp[nfp++] = bits; else stk[nstk++] = bits;
+        } else {
+            uint64_t v = (t == FFI_TYPE_POINTER)
+                       ? (uint64_t)(intptr_t)args[i].value.p
+                       : (uint64_t)args[i].value.i;
+            if (ngp < 6) gp[ngp++] = v; else stk[nstk++] = v;
+        }
     }
-    /* 3 参数混合，返回 double（仅 f64，f32 3参数返回 double 极少见，走回退） */
-    if (total == 3) {
-        int d0 = is_double_type(args[0].type);
-        int d1 = is_double_type(args[1].type);
-        int d2 = is_double_type(args[2].type);
-        if (!d0 && !d1 && d2)  return ((f_i_i_d_r)func)(args[0].value.i, args[1].value.i, args[2].value.d);
-        if (!d0 && d1 && !d2)  return ((f_i_d_i_r)func)(args[0].value.i, args[1].value.d, args[2].value.i);
-        if (d0 && !d1 && !d2)  return ((f_d_i_i_r)func)(args[0].value.d, args[1].value.i, args[2].value.i);
-        if (!d0 && d1 && d2)   return ((f_i_d_d_r)func)(args[0].value.i, args[1].value.d, args[2].value.d);
-        if (d0 && !d1 && d2)   return ((f_d_i_d_r)func)(args[0].value.d, args[1].value.i, args[2].value.d);
-        if (d0 && d1 && !d2)   return ((f_d_d_i_r)func)(args[0].value.d, args[1].value.d, args[2].value.i);
-        return 0;
+
+    SysvCallRet ret;
+    ret.i = 0;
+    ret.d = 0.0;
+    leno_sysv_call(func, gp, fp, stk, nstk, nfp, &ret);
+
+    FFIValue result = {0};
+    if (sig->ret_type == FFI_TYPE_DOUBLE) {
+        result.d = ret.d;
+    } else if (sig->ret_type == FFI_TYPE_FLOAT) {
+        /* f32 返回值是 XMM0 的**低 4 字节**，不能按 double 解释 */
+        float f;
+        memcpy(&f, &ret.d, sizeof(float));
+        result.d = (double)f;
+    } else {
+        result.i = (int64_t)ret.i;
     }
-    /* 4 参数混合，返回 double */
-    if (total == 4) {
-        int d0 = is_double_type(args[0].type);
-        int d1 = is_double_type(args[1].type);
-        int d2 = is_double_type(args[2].type);
-        int d3 = is_double_type(args[3].type);
-        /* 1 double */
-        if (!d0 && !d1 && !d2 && d3) return ((f_i_i_i_d_r)func)(args[0].value.i, args[1].value.i, args[2].value.i, args[3].value.d);
-        if (!d0 && !d1 && d2 && !d3) return ((f_i_i_d_i_r)func)(args[0].value.i, args[1].value.i, args[2].value.d, args[3].value.i);
-        if (!d0 && d1 && !d2 && !d3) return ((f_i_d_i_i_r)func)(args[0].value.i, args[1].value.d, args[2].value.i, args[3].value.i);
-        if (d0 && !d1 && !d2 && !d3) return ((f_d_i_i_i_r)func)(args[0].value.d, args[1].value.i, args[2].value.i, args[3].value.i);
-        /* 2 doubles */
-        if (!d0 && !d1 && d2 && d3) return ((f_i_i_d_d_r)func)(args[0].value.i, args[1].value.i, args[2].value.d, args[3].value.d);
-        if (!d0 && d1 && !d2 && d3) return ((f_i_d_i_d_r)func)(args[0].value.i, args[1].value.d, args[2].value.i, args[3].value.d);
-        if (!d0 && d1 && d2 && !d3) return ((f_i_d_d_i_r)func)(args[0].value.i, args[1].value.d, args[2].value.d, args[3].value.i);
-        if (d0 && !d1 && !d2 && d3) return ((f_d_i_i_d_r)func)(args[0].value.d, args[1].value.i, args[2].value.i, args[3].value.d);
-        if (d0 && !d1 && d2 && !d3) return ((f_d_i_d_i_r)func)(args[0].value.d, args[1].value.i, args[2].value.d, args[3].value.i);
-        if (d0 && d1 && !d2 && !d3) return ((f_d_d_i_i_r)func)(args[0].value.d, args[1].value.d, args[2].value.i, args[3].value.i);
-        return 0;
-    }
-    return 0;
+    return result;
 }
 
 /* ========================================================================
- *  ffi_call_sysv - System V AMD64 调用约定的核心实现
- *
- *  调用策略（按优先级）:
- *  1. 纯整数/指针参数 → call_pure_int
- *  2. 纯浮点参数 → call_pure_double
- *  3. 混合参数 ≤4 个 → 预定义混合类型分发（含 f32）
- *  4. 5 参数 f32 专用路径（SDL_RenderLine 等）
- *  5. 混合参数 >4 个 → 回退：将 double 位模式当 int64 传
+ *  8. ffi_call_sysv - System V AMD64 调用约定的核心实现
  * ======================================================================== */
 FFIValue ffi_call_sysv(void* func, const FFISignature* sig, const FFIArg* args) {
     FFIValue result = {0};
@@ -351,8 +288,8 @@ FFIValue ffi_call_sysv(void* func, const FFISignature* sig, const FFIArg* args) 
         return result;
     }
 
-    /* ===== 路径 2: 纯浮点参数 ===== */
-    if (icount == 0) {
+    /* ===== 路径 2: 纯浮点参数（≤6，全在 XMM0-XMM5）===== */
+    if (icount == 0 && total <= 6) {
         double dargs[FFI_MAX_ARGS];
         for (int i = 0; i < total; i++)
             dargs[i] = args[i].value.d;
@@ -365,65 +302,8 @@ FFIValue ffi_call_sysv(void* func, const FFISignature* sig, const FFIArg* args) 
         return result;
     }
 
-    /* ===== 路径 3: 混合参数 ≤4 个 → 精确分发 ===== */
-    if (total <= 4) {
-        if (sig->ret_type == FFI_TYPE_DOUBLE || sig->ret_type == FFI_TYPE_FLOAT) {
-            result.d = call_mixed_double_ret(func, args, total);
-        } else {
-            result.i = call_mixed_int_ret(func, args, total);
-        }
-        return result;
-    }
-
-    /* ===== 路径 3.5: >4 参数 f32 专用 =====
-     * Ptr + f32×4 (SDL_RenderLine 等常见 5 参数模式) */
-    if (total == 5) {
-        int fcount = 0;
-        for (int i = 0; i < total; i++)
-            if (is_float_only(args[i].type)) fcount++;
-        /* (Ptr, f32, f32, f32, f32) — 5 参数，1 ptr + 4 f32 */
-        if (fcount == 4 && !is_float_type(args[0].type)) {
-            result.i = ((f_i_F4)func)(args[0].value.i,
-                args[1].value.f, args[2].value.f, args[3].value.f, args[4].value.f);
-            return result;
-        }
-        /* 其他 5 参数组合（含 double）见路径 4 */
-    }
-
-    /* ===== 路径 4: 混合参数回退策略 =====
-     * 将所有参数统一为 int64_t 传递（double 转为位模式），
-     * 让 C 编译器根据强转后的函数指针类型自动分配寄存器。
-     *
-     * ⚠ 警告：此回退路径对浮点参数不保证正确！
-     * int64 位模式通过整数寄存器/栈传递，但被调函数期望
-     * 浮点参数在 XMM 寄存器中，两者不匹配。
-     * 仅当参数全为整数/指针时此路径完全安全。
-     */
-    if (dcount > 0) {
-        fprintf(stderr, "[FFI Warning] 回退调用路径: %d 个参数中含 %d 个浮点参数，"
-                        "浮点参数可能无法正确传递（期望 XMM 寄存器，实际走整数寄存器/栈）\n",
-                total, dcount);
-    }
-    {
-        int64_t iargs[FFI_MAX_ARGS];
-        for (int i = 0; i < total; i++) {
-            if (is_float_type(args[i].type))
-                iargs[i] = double_to_bits(args[i].value.d);
-            else if (args[i].type == FFI_TYPE_POINTER)
-                iargs[i] = (int64_t)(intptr_t)args[i].value.p;
-            else
-                iargs[i] = args[i].value.i;
-        }
-
-        if (sig->ret_type == FFI_TYPE_DOUBLE || sig->ret_type == FFI_TYPE_FLOAT) {
-            int64_t r = call_pure_int(func, iargs, total);
-            result.d = bits_to_double(r);
-        } else {
-            result.i = call_pure_int(func, iargs, total);
-        }
-    }
-
-    return result;
+    /* ===== 路径 3: 其余（任何整数+浮点混合，或纯浮点 >6）→ 通用桩 ===== */
+    return call_generic(func, sig, args, total);
 }
 
 /* 通用调用入口 - Linux 平台转发到 ffi_call_sysv */
