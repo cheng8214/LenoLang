@@ -585,6 +585,37 @@ static void ast_fill_one_alias(ModuleSymbolTable* table, Ast* al) {
     sym->type_info = t;   // 旧值不释放：符号表是进程内长存活缓存、每模块一份，量极小（TODO：并入 GC）
 }
 
+// ---- var 类接管 ----
+//   `ModuleVarSymbol` 四个值字段（type / struct_name / type_info / is_const）**全部**来自
+//   AST 的同一个 TypeInfo 与同一个节点 ⇒ 天然同源，整类一起换 ✓
+//   扫描链为了拿这些要自己解析"类型在前/带泛型"的文本（scan_var.inc 那一大段），
+//   AST 侧 u.var_decl.type 已经是 parser 的结果 ⇒ 这正是"AST 提供更多信息"的直接体现 ✓
+static void ast_fill_one_var(ModuleSymbolTable* table, Ast* vd) {
+    if (!vd || !vd->u.var_decl.name) return;
+    ModuleVarSymbol* sym = module_symbol_table_find_var(table, vd->u.var_decl.name);
+    if (!sym) return;
+    TypeInfo* src = vd->u.var_decl.type;
+    if (!src) return;   // 无类型标注（靠 init 推断）⇒ 保留扫描链结论 ✓
+    // ⚠ 收窄到**基本类型**：实测整类换后 396/10（test_nested_2d / test_nested_generic_field /
+    //   test_export_const_type / test_lenosys …）—— 聚合与泛型类型的 AST 表示与扫描链那套
+    //   口径不同，而消费者（语义/代码生成）依赖扫描链的表示 ⇒ 那些先留给扫描链；
+    //   基本类型（int/string/bool/float/…）两边一致，换过来是纯收益 ✓
+    switch (src->kind) {
+        case TYPE_STRUCT: case TYPE_FACE: case TYPE_CSTRUCT: case TYPE_CLIB:
+        case TYPE_ARRAY: case TYPE_DICT: case TYPE_PTR: case TYPE_PTR_GENERIC:
+        case TYPE_FUNCTION:
+            return;
+        default:
+            break;
+    }
+    int degrade = (src->kind == TYPE_STRUCT && sym->type_info && sym->type_info->kind != TYPE_STRUCT);
+    if (degrade) return;            // 同规则：宁可少改，不让它退化 ✓
+    sym->type = ast_kind_of(table, src);
+    sym->struct_name = src->struct_name ? strdup(src->struct_name) : NULL;
+    sym->type_info = type_copy(src);   // 旧值不释放（同上：量小、先避 use-after-free ✓）
+    sym->is_const = vd->u.var_decl.is_const;
+}
+
 static void ast_symbol_fill_provider(ModuleSymbolTable* table, const char* src) {
     if (!table || !src) return;
     Parser p;
@@ -601,6 +632,14 @@ static void ast_symbol_fill_provider(ModuleSymbolTable* table, const char* src) 
             Ast* d = (st->kind == AST_EXPORT && st->u.export.decl) ? st->u.export.decl : st;
             if (d->kind == AST_FUNC_DEF) ast_fill_one_func(table, d);
             else if (d->kind == AST_ALIAS) ast_fill_one_alias(table, d);
+            // ⚠ var 类**暂不接管**（连"只收窄到基本类型"也红：396/10，test_export_const_type /
+            //   test_nested_2d / test_nested_generic_field / test_lenosys / test_native_module_resolve …）
+            //   ⇒ 说明障碍不在类型种类，而在**类型表示层本身**：AST 的 TypeInfo 与符号表那套
+            //     （经 mod_scan_params / parse_type_from_string 产出、随 .lenosymc 往返、
+            //      被语义与代码生成直接读取）不是同一套结构 ⇒ 换指针会让消费者读到"另一个世界"的东西 ✗
+            //   结论：**先对齐表示层（或让消费者改用 AST 的 TypeInfo），再谈接管各类符号** ✓
+            //   在此之前，alias / func 返回与参数组能接管，是因为它们只需要 TypeKind + 聚合名 ✓
+            // else if (d->kind == AST_VAR_DECL) ast_fill_one_var(table, d);
         }
     }
     ast_free(p.root);
