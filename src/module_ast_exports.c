@@ -23,21 +23,64 @@ extern char* read_module_file(const char* file_path, const char* current_file);
 //   空名/重名忽略 ⇒ 两边对"同名重复导出"的处理一致，不会造出假差异 ✓）
 // ============================================================================
 
-static void ast_exports_push(AstExportList* list, const char* name) {
+static void ast_exports_push(AstExportList* list, const char* name, const char* sig) {
     if (!list || !name || !name[0]) return;
     for (int i = 0; i < list->count; i++) {
         if (strcmp(list->names[i], name) == 0) return;
     }
     if (list->count >= list->capacity) {
         int new_cap = list->capacity == 0 ? 16 : list->capacity * 2;
-        char** grown = (char**)realloc(list->names, sizeof(char*) * new_cap);
-        if (!grown) return;              // 内存不足：跳过该名字（与扫描链同策略 ✓）
-        list->names = grown;
+        char** gn = (char**)realloc(list->names, sizeof(char*) * new_cap);
+        if (!gn) return;                 // 内存不足：跳过该名字（与扫描链同策略 ✓）
+        list->names = gn;
+        char** gs = (char**)realloc(list->sigs, sizeof(char*) * new_cap);
+        if (!gs) return;
+        list->sigs = gs;
         list->capacity = new_cap;
     }
     char* s = strdup(name);
     if (!s) return;
-    list->names[list->count++] = s;
+    list->names[list->count] = s;
+    list->sigs[list->count] = sig ? strdup(sig) : NULL;
+    list->count++;
+}
+
+// 声明摘要：只用**两侧都有的**计数/布尔字段（符号表侧与 AST 侧同名字段），
+//   刻意不含类型名 —— 类型名映射（TypeInfo ↔ TypeKind + struct_name）是另一层工程，
+//   放进来会把"真差异"淹没在映射口径差里 ✗
+static void ast_exports_sig(Ast* decl, char* buf, size_t sz) {
+    switch (decl->kind) {
+        case AST_FUNC_DEF:
+            snprintf(buf, sz, "func(pc=%d,async=%d)", decl->u.func.pcnt, decl->u.func.is_async);
+            break;
+        case AST_VAR_DECL:
+            snprintf(buf, sz, "var(const=%d)", decl->u.var_decl.is_const);
+            break;
+        case AST_DESTRUCT_DECL:
+            snprintf(buf, sz, "var(const=%d)", decl->u.destruct_decl.is_const);
+            break;
+        case AST_STRUCT_DEF:
+            snprintf(buf, sz, "struct(f=%d,m=%d)", decl->u.struct_def.field_count, decl->u.struct_def.method_count);
+            break;
+        case AST_CSTRUCT_DEF:
+            snprintf(buf, sz, "cstruct(f=%d)", decl->u.cstruct_def.field_count);
+            break;
+        case AST_FACE_DEF:
+            snprintf(buf, sz, "face(m=%d)", decl->u.face_def.method_count);
+            break;
+        case AST_ENUM_DEF:
+            snprintf(buf, sz, "enum(m=%d)", decl->u.enum_def.member_count);
+            break;
+        case AST_ALIAS:
+            snprintf(buf, sz, "alias");
+            break;
+        case AST_CFUNC_DECL:
+            snprintf(buf, sz, "cfunc(pc=%d)", decl->u.cfunc_decl.param_count);
+            break;
+        default:
+            buf[0] = '\0';
+            break;
+    }
 }
 
 // 单条声明 ⇒ 贡献哪些导出名。
@@ -46,36 +89,46 @@ static void ast_exports_push(AstExportList* list, const char* name) {
 //     struct(:1074) / face(:272) / enum(:143) / cstruct(:354) / alias(:65) / cfunc(scan_pass1:322)
 static void ast_exports_collect_decl(Ast* decl, AstExportList* out) {
     if (!decl) return;
+    char sig[96];
+    sig[0] = '\0';
     switch (decl->kind) {
         case AST_FUNC_DEF:
-            ast_exports_push(out, decl->u.func.name);
+            ast_exports_sig(decl, sig, sizeof(sig));
+            ast_exports_push(out, decl->u.func.name, sig);
             break;
         case AST_VAR_DECL:
-            ast_exports_push(out, decl->u.var_decl.name);
+            ast_exports_sig(decl, sig, sizeof(sig));
+            ast_exports_push(out, decl->u.var_decl.name, sig);
             break;
         case AST_DESTRUCT_DECL:
             // export var[int,int,int](a,b,c) ⇒ 三个名字各自进表（不是整体一个 ✓）
+            ast_exports_sig(decl, sig, sizeof(sig));
             for (int i = 0; i < decl->u.destruct_decl.slot_count; i++) {
-                ast_exports_push(out, decl->u.destruct_decl.names[i]);
+                ast_exports_push(out, decl->u.destruct_decl.names[i], sig);
             }
             break;
         case AST_STRUCT_DEF:
-            ast_exports_push(out, decl->u.struct_def.name);
+            ast_exports_sig(decl, sig, sizeof(sig));
+            ast_exports_push(out, decl->u.struct_def.name, sig);
             break;
         case AST_FACE_DEF:
-            ast_exports_push(out, decl->u.face_def.name);
+            ast_exports_sig(decl, sig, sizeof(sig));
+            ast_exports_push(out, decl->u.face_def.name, sig);
             break;
         case AST_ENUM_DEF:
-            ast_exports_push(out, decl->u.enum_def.name);
+            ast_exports_sig(decl, sig, sizeof(sig));
+            ast_exports_push(out, decl->u.enum_def.name, sig);
             break;
         case AST_CSTRUCT_DEF:
-            ast_exports_push(out, decl->u.cstruct_def.name);
+            ast_exports_sig(decl, sig, sizeof(sig));
+            ast_exports_push(out, decl->u.cstruct_def.name, sig);
             break;
         case AST_ALIAS:
-            ast_exports_push(out, decl->u.alias.name);
+            ast_exports_push(out, decl->u.alias.name, "alias");
             break;
         case AST_CFUNC_DECL:
-            ast_exports_push(out, decl->u.cfunc_decl.name);
+            ast_exports_sig(decl, sig, sizeof(sig));
+            ast_exports_push(out, decl->u.cfunc_decl.name, sig);
             break;
         // ⚠ AST_CLIB_DEF 故意**不收**：扫描链 12 处 add 里没有 clib（`clib xxx { }` 不进导出表）
         //   ⇒ 这里收了就会造出"仅 AST 有"的假差异 ✗
@@ -87,6 +140,7 @@ static void ast_exports_collect_decl(Ast* decl, AstExportList* out) {
 int module_ast_collect_exports(const char* src, AstExportList* out) {
     if (!out) return -1;
     out->names = NULL;
+    out->sigs = NULL;
     out->count = 0;
     out->capacity = 0;
     if (!src) return -1;
@@ -120,7 +174,12 @@ void module_ast_exports_free(AstExportList* list) {
         for (int i = 0; i < list->count; i++) free(list->names[i]);
         free(list->names);
     }
+    if (list->sigs) {
+        for (int i = 0; i < list->count; i++) free(list->sigs[i]);
+        free(list->sigs);
+    }
     list->names = NULL;
+    list->sigs = NULL;
     list->count = 0;
     list->capacity = 0;
 }
@@ -145,6 +204,55 @@ static void print_names(const char* tag, char** names, int n) {
     printf("  %-22s %d:", tag, n);
     for (int i = 0; i < n; i++) printf(" %s", names[i]);
     printf("\n");
+}
+
+// 符号表侧的"声明摘要"：格式与 ast_exports_sig **逐字一致**，只用两侧都有的字段 ✓
+static void scan_side_sig(ModuleSymbolTable* t, const char* name, char* buf, size_t sz) {
+    buf[0] = '\0';
+    if (!t) { snprintf(buf, sz, "?"); return; }
+    ModuleFuncSymbol* f = module_symbol_table_find_func(t, name);
+    if (f) {
+        snprintf(buf, sz, "func(pc=%d,async=%d)", f->param_count, f->is_async);
+        return;
+    }
+    ModuleStructSymbol* s = module_symbol_table_find_struct(t, name);
+    if (s) {
+        if (s->is_cstruct) snprintf(buf, sz, "cstruct(f=%d)", s->field_count);
+        else snprintf(buf, sz, "struct(f=%d,m=%d)", s->field_count, s->method_count);
+        return;
+    }
+    ModuleEnumSymbol* e = module_symbol_table_find_enum(t, name);
+    if (e) {
+        snprintf(buf, sz, "enum(m=%d)", e->member_count);
+        return;
+    }
+    ModuleFaceSymbol* fa = module_symbol_table_find_face(t, name);
+    if (fa) {
+        snprintf(buf, sz, "face(m=%d)", fa->method_count);
+        return;
+    }
+    // ⚠ cfunc 必须**排在 var 之前**查：`export cfunc X(...)` 的 X 在符号表里同时进了 cfuncs[]
+    //   与 vars[]（后者是扫描链的既有行为），先查 var 会把 cfunc 误报成 var ⇒ 假差异 ✗
+    ModuleCfuncSymbol* cf0 = module_symbol_table_find_cfunc(t, name);
+    if (cf0) {
+        snprintf(buf, sz, "cfunc(pc=%d)", cf0->param_count);
+        return;
+    }
+    ModuleVarSymbol* v = module_symbol_table_find_var(t, name);
+    if (v) {
+        snprintf(buf, sz, "var(const=%d)", v->is_const);
+        return;
+    }
+    if (module_symbol_table_find_alias(t, name)) {
+        snprintf(buf, sz, "alias");
+        return;
+    }
+    ModuleCfuncSymbol* cf = module_symbol_table_find_cfunc(t, name);
+    if (cf) {
+        snprintf(buf, sz, "cfunc(pc=%d)", cf->param_count);
+        return;
+    }
+    snprintf(buf, sz, "?");
 }
 
 int module_ast_export_diff_file(const char* path, int verbose) {
@@ -177,43 +285,68 @@ int module_ast_export_diff_file(const char* path, int verbose) {
         return 2;
     }
 
-    // ④ 比较：先各自排序 ⇒ **顺序不算差异**（两份产出的遍历顺序本就可能不同 ✓）
-    char** scan_sorted = (char**)malloc(sizeof(char*) * (scan_count > 0 ? scan_count : 1));
-    if (!scan_sorted) {
+    // ④ 比较：**用副本排序** ⇒ 顺序不算差异（两份产出的遍历顺序本就可能不同 ✓）
+    //   ⚠ 绝不能原地排 `ast_list.names`：那会打断 `names[i] ↔ sigs[i]` 的下标对齐，
+    //     之后摘要比对会整体错位（症状是"名字互换"式假差异，如 makeColor 拿到 makeSize 的参数数）
+    char** scan_sorted = (char**)malloc(sizeof(char*) * (scan_count > 0 ? (size_t)scan_count : 1));
+    char** ast_sorted = (char**)malloc(sizeof(char*) * (ast_list.count > 0 ? (size_t)ast_list.count : 1));
+    if (!scan_sorted || !ast_sorted) {
+        free(scan_sorted);
+        free(ast_sorted);
         module_ast_exports_free(&ast_list);
         return -1;
     }
     for (int i = 0; i < scan_count; i++) scan_sorted[i] = (char*)scan_names[i];
+    for (int i = 0; i < ast_list.count; i++) ast_sorted[i] = ast_list.names[i];
     qsort(scan_sorted, (size_t)scan_count, sizeof(char*), cmp_str);
-    qsort(ast_list.names, (size_t)ast_list.count, sizeof(char*), cmp_str);
+    qsort(ast_sorted, (size_t)ast_list.count, sizeof(char*), cmp_str);
 
     int only_scan = 0;
     int only_ast = 0;
     for (int i = 0; i < scan_count; i++) {
-        if (!name_in((const char* const*)ast_list.names, ast_list.count, scan_sorted[i])) {
+        if (!name_in((const char* const*)ast_sorted, ast_list.count, scan_sorted[i])) {
             if (only_scan == 0) printf("export-diff: %s\n", path);
             printf("  [仅扫描链有] %s\n", scan_sorted[i]);
             only_scan++;
         }
     }
     for (int i = 0; i < ast_list.count; i++) {
-        if (!name_in((const char* const*)scan_sorted, scan_count, ast_list.names[i])) {
+        if (!name_in((const char* const*)scan_sorted, scan_count, ast_sorted[i])) {
             if (only_scan == 0 && only_ast == 0) printf("export-diff: %s\n", path);
-            printf("  [仅 AST 有]   %s\n", ast_list.names[i]);
+            printf("  [仅 AST 有]   %s\n", ast_sorted[i]);
             only_ast++;
         }
     }
 
-    int same = (only_scan == 0 && only_ast == 0);
+    // 签名级比较：只比**名字集合的交集**（名字差异上面已报过，避免重复刷屏 ✓）
+    int sig_bad = 0;
+    for (int i = 0; i < ast_list.count; i++) {
+        int found = 0;
+        for (int k = 0; k < scan_count && !found; k++) {
+            if (strcmp(scan_sorted[k], ast_list.names[i]) == 0) found = 1;
+        }
+        if (!found) continue;
+        char ss[96];
+        scan_side_sig(table, ast_list.names[i], ss, sizeof(ss));
+        const char* as = ast_list.sigs[i] ? ast_list.sigs[i] : "";
+        if (strcmp(ss, as) != 0) {
+            if (only_scan == 0 && only_ast == 0 && sig_bad == 0) printf("export-diff: %s\n", path);
+            printf("  [摘要不一致] %s：扫描链 %s / AST %s\n", ast_list.names[i], ss, as);
+            sig_bad++;
+        }
+    }
+
+    int same = (only_scan == 0 && only_ast == 0 && sig_bad == 0);
     if (!same) {
         print_names("扫描链(符号表):", scan_sorted, scan_count);
         print_names("AST(parser)   :", ast_list.names, ast_list.count);
     } else if (verbose) {
         printf("export-diff: %s\n", path);
-        print_names("一致:", ast_list.names, ast_list.count);
+        print_names("一致（含摘要）:", ast_list.names, ast_list.count);
     }
 
     free(scan_sorted);
+    free(ast_sorted);
     module_ast_exports_free(&ast_list);
     return same ? 0 : 1;
 }

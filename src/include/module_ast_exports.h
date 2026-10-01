@@ -20,9 +20,13 @@
 #ifndef LENO_MODULE_AST_EXPORTS_H
 #define LENO_MODULE_AST_EXPORTS_H
 
-// 提取结果：与 module_symbol_table_export_names 同形态（名字数组 + 个数）
+// 提取结果：与 module_symbol_table_export_names 同形态（名字数组 + 个数），
+//   外加与名字**按下标对齐**的"声明摘要"（sigs）—— 用于把对拍从"名字集合"升级到
+//   "签名级"（只比两边都有的**计数/布尔**字段，不碰类型名映射 ⇒ 可靠且足以抓
+//   "参数个数/字段数/成员数不一致"这类真 bug ✓）
 typedef struct {
     char** names;     // 内部 strdup，需 module_ast_exports_free 释放
+    char** sigs;      // 与 names 对齐；NULL = 该名字没有摘要
     int count;
     int capacity;
 } AstExportList;
