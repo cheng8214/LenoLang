@@ -1,63 +1,47 @@
-/* 从 parser AST 提取模块顶层导出名（compiler-only）
+/* parser AST → 模块符号表（compiler-only）
  *
- * 定位：这是「符号表文本扫描链 → parser AST」迁移的**第一步 —— 对拍基准**。
- *   终局是 `module_symbol_table` 那套 ~6800 行文本扫描器改从 AST 提取
- *   （docs/待办_单一事实来源与重复实现收敛.md:2719-2723 的 S10"下一步"）。
- *   在迁移过程中，这个函数用来证明"两条路径给出的导出名集合是否一致"。
+ * 本文件现在承载两件**生产**功能（外加一批"把符号从 AST 填进符号表"的填充器）：
+ *   ① 导出名提供者：`module_ast_exports_register()` 把"走 AST 的导出名解析"注册给
+ *      `module_loader`，其 copy_module_export_names / module_has_method 都优先用它
+ *      ⇒ **导出名的唯一来源是语法**（VM-only 不注册 ⇒ 回退扫描链）；
+ *   ② AST 符号填充器：`module_ast_symbols_register()` —— 扫描链跑完后按声明种类把符号
+ *      从 AST 建/覆盖进符号表，是 S10 逐类迁移的载体。
  *
- * ⚠ 为什么必须放在 compiler 专属文件（不能进 module_symbol_table.c / module_loader.c）：
- *   那两个文件在 `sources_core.txt`（**VM-only 也要编**），而 lexer/parser 只在
- *   `sources_compiler.txt` ⇒ 一旦它们在编译期依赖 AST，`build_vm.bat` 链接必炸
+ * ⚠ 必须放在 compiler 专属文件（不能进 module_symbol_table.c / module_loader.c）：
+ *   那两个在 `sources_core.txt`（VM-only 也编），而 lexer/parser 只在 `sources_compiler.txt`
+ *   ⇒ 一旦编译期依赖 AST，`build_vm.bat` 链接必炸
  *   （论证见 docs/待办_单一事实来源与重复实现收敛.md:2713-2717）。
  *
- * 语义口径（与扫描链**逐字对齐**，否则对拍会给出假阳性）：
- *   · 只认**顶层** `export` 包裹的声明 —— AST 上就是父节点 kind == AST_EXPORT
- *     （扫描链侧对应 sym_table_scan.inc:53 的 `strncmp(p,"export",6)` 顶层闸门）；
- *   · 解构 `export var[T](a,b)` 贡献**每个**名字（scan_var.inc:75）；
- *   · `clib xxx { }` **不进**导出表（扫描链 12 处 add 里没有 clib）⇒ 这里也不收；
- *   · `export use` 不存在（parser_module.c:466-469 直接拒）。
+ * 历史：`--export-diff` 对拍工具已于 2026-10-01 **删除** —— 它只服务于"切到 AST 之前先证明
+ *   两条路径给出的导出名一致"这一件事；导出名早就切完（9a7ba8c），且 7 类文本扫描退役后
+ *   扫描链不再登记导出名 ⇒ 它只会持续报"仅 AST 有"的噪音，没有验收价值。
  */
 #ifndef LENO_MODULE_AST_EXPORTS_H
 #define LENO_MODULE_AST_EXPORTS_H
 
-// 提取结果：与 module_symbol_table_export_names 同形态（名字数组 + 个数），
-//   外加与名字**按下标对齐**的"声明摘要"（sigs）—— 用于把对拍从"名字集合"升级到
-//   "签名级"（只比两边都有的**计数/布尔**字段，不碰类型名映射 ⇒ 可靠且足以抓
-//   "参数个数/字段数/成员数不一致"这类真 bug ✓）
+// 提取结果：与 module_symbol_table_export_names 同形态（名字数组 + 个数）
 typedef struct {
     char** names;     // 内部 strdup，需 module_ast_exports_free 释放
-    char** sigs;      // 与 names 对齐；NULL = 该名字没有摘要
     int count;
     int capacity;
 } AstExportList;
 
 // 从**源码文本**提取顶层导出名。
 //   返回 0 = 提取成功（out 已填充，可能 0 个）；-1 = 解析失败或入参非法。
-//   顺序 = 源码里顶层声明的出现顺序（对拍时两边都排序后再比，避免顺序误判 ✓）。
+//   顺序 = 源码里顶层声明的出现顺序（消费方只关心集合 ✓）。
 int module_ast_collect_exports(const char* src, AstExportList* out);
 
 void module_ast_exports_free(AstExportList* list);
 
-// 对拍：给定一个 .leno 文件路径，分别用"符号表扫描链"与"parser AST"取导出名并比较。
-//   退出码：0 = 一致；1 = **不一致**（已打印差异）；2 = 无法比较（读不了源码 / 语法解析失败）。
-//   ⚠ 2 必须与 1 分开：`assert/error_col` 下是**故意的语法错误**用例，它们永远比不了，
-//     混进"不一致"会让批量统计永远有噪音 ✗
-//   verbose=0 时只在"不一致"时打印详情 ✓
-int module_ast_export_diff_file(const char* path, int verbose);
-
 // 注册"基于 parser AST 的导出名提供者"（编译期在 main.c 调一次即可）
-//   ⇒ 之后 `module_loader` 的 copy_module_export_names / module_has_method 都改走语法，
-//     扫描链的 export_names 退居"VM-only 回退"与"对拍基线"两用 ✓
+//   ⇒ 之后 `module_loader` 的 copy_module_export_names / module_has_method 都走语法实现 ✓
 void module_ast_exports_register(void);
 
-// S10 迁移：注册"AST 符号填充器"（编译期在 main.c 调一次）
-//   ⇒ 扫描链跑完后，由 AST 覆盖它已接管的声明类（当前：func）
-//   逐类扩展，每扩一类就能停用/删除扫描链的对应分支 ✓
+// S10：注册"AST 符号填充器"（编译期在 main.c 调一次）
+//   ⇒ 扫描链跑完后，按声明种类由 AST 建表/覆盖；7 类文本扫描已于 2026-10-01 全部退役 ✓
 void module_ast_symbols_register(void);
 
 // 第二次填充（语义分析之后由 module_compiler 调用）：传**已语义化的 AST**。
-//   为什么需要第二次：struct 的字段类型 / 方法签名、var 的推断型类型在**语法阶段不完整**
-//   （类型名解析与推断发生在语义阶段）⇒ 那些类只能在语义之后整组覆盖 ✓
 //   参数用 void* ⇒ 不在这个头里引入 core 的 ModuleSymbolTable 类型 ✓
 void module_ast_symbols_fill_from_ast(void* table, void* ast_root);
 

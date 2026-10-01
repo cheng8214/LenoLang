@@ -11,7 +11,7 @@
 #include "include/module_compiler.h"
 #include "include/module_loader.h"
 #include "include/module_symbol_table.h"
-#include "include/module_ast_exports.h"   // --export-diff：AST 导出名对拍（compiler-only ✓）
+#include "include/module_ast_exports.h"   // S10：AST 导出名提供者 + AST 符号填充器（compiler-only ✓）
 #include "include/leno_package.h"
 #include "include/platform.h"
 #include <stdio.h>
@@ -48,8 +48,6 @@ static int installMode = 0;
 static char* debugOutFile = NULL;  // --debug-out 指定的输出文件路径
 static char* packOutDir = NULL;    // -o/--pack-dir 指定的打包输出目录（NULL ⇒ <源码目录>/dist）
 static int onefileMode = 0;        // --onefile：把原生库与 resource.toml 声明的资源一起内嵌进 exe
-static int exportDiffMode = 0;     // --export-diff：对拍"符号表扫描链"与"parser AST"的导出名（S10 迁移用）
-static int exportDiffVerbose = 0;  // --export-diff-verbose：一致时也打印清单
 int g_use_gui_vm = 0;  // 语义分析阶段检测到 _console(false) 时置为 1
 
 // -p 打包时选哪个 VM 基底（PE 子系统由 prepend 进去的 vm 数据决定，打包后改不了）。
@@ -158,8 +156,6 @@ static void printHelp(const char* program) {
     printf("  --debug           启用调试模式（输出字节码）\n");
     printf("  --debug-out <file> 字节码输出到指定文件（自动启用 --debug）\n");
     printf("  -c, --compile     编译为二进制文件（.lenb），不执行\n");
-    printf("  --export-diff     对拍导出名：比较\"符号表文本扫描链\"与\"parser AST\"的结果\n");
-    printf("                    （退出码 0=一致 / 1=不一致；S10 迁移期的交叉验证工具）\n");
     printf("  -p, --pack        编译并打包为独立可执行文件（嵌入 leno_vm）\n");
     printf("  -o, --pack-dir <目录>  指定打包输出目录（默认 <源码目录>/dist）\n");
     printf("                    输出的 exe 与依赖的原生库（leno.toml 的 [native-libs]）\n");
@@ -2067,15 +2063,6 @@ static int main_logic(int argc, char** argv) {
                 return 1;
             }
             continue;
-        } else if (strcmp(argv[i], "--export-diff") == 0) {
-            // S10 迁移用的对拍开关：把"符号表文本扫描链"与"parser AST"取出的导出名摊开比一遍。
-            //   不改变任何生产行为（既不改扫描链，也不改 AST ✓）
-            exportDiffMode = 1;
-            continue;
-        } else if (strcmp(argv[i], "--export-diff-verbose") == 0) {
-            exportDiffMode = 1;
-            exportDiffVerbose = 1;
-            continue;
         } else if (strcmp(argv[i], "--compile") == 0 || strcmp(argv[i], "-c") == 0) {
             compileMode = 1;
             continue;
@@ -2177,7 +2164,6 @@ static int main_logic(int argc, char** argv) {
         for (int i = file_arg_start; i < argc; i++) {
             // 跳过已被识别为选项的参数
             if (strcmp(argv[i], "--pause") == 0 || strcmp(argv[i], "--debug") == 0 ||
-                strcmp(argv[i], "--export-diff") == 0 || strcmp(argv[i], "--export-diff-verbose") == 0 ||
                 strcmp(argv[i], "--compile") == 0 || strcmp(argv[i], "-c") == 0 ||
                 strcmp(argv[i], "--pack") == 0 || strcmp(argv[i], "-p") == 0 ||
                 strcmp(argv[i], "--pack-dir") == 0 || strcmp(argv[i], "-o") == 0 ||
@@ -2231,8 +2217,7 @@ static int main_logic(int argc, char** argv) {
         if (!filePath) {
             for (int i = file_arg_start; i < argc; i++) {
                 if (strcmp(argv[i], "--pause") == 0 || strcmp(argv[i], "--debug") == 0 ||
-                    strcmp(argv[i], "--export-diff") == 0 || strcmp(argv[i], "--export-diff-verbose") == 0 ||
-                    strcmp(argv[i], "--compile") == 0 || strcmp(argv[i], "-c") == 0 ||
+                        strcmp(argv[i], "--compile") == 0 || strcmp(argv[i], "-c") == 0 ||
                     strcmp(argv[i], "--pack") == 0 || strcmp(argv[i], "-p") == 0 ||
                     strcmp(argv[i], "--pack-dir") == 0 || strcmp(argv[i], "-o") == 0 ||
                     strcmp(argv[i], "--onefile") == 0 ||
@@ -2250,33 +2235,15 @@ static int main_logic(int argc, char** argv) {
         }
     }
     
-    // S10 迁移（2026-10-01）：注册"基于 parser AST 的导出名提供者"。
-    //   ⚠ 必须在**任何模块加载/编译之前** ⇒ 之后 copy_module_export_names 与 module_has_method
-    //     都直接走语法，扫描链的 export_names 退居两用：VM-only 回退 + `--export-diff` 对拍基线 ✓
+    // S10（2026-10-01 收官）：注册"基于 parser AST 的导出名提供者"。
+    //   ⚠ 必须在**任何模块加载/编译之前** ⇒ 之后 copy_module_export_names 与
+    //     module_has_method 都走语法（扫描链的 export_names 退居 VM-only 回退）✓
     module_ast_exports_register();
-    // S10 迁移第二步：AST 符号填充器 —— **骨架已就位，暂不启用**。
-    //   ⚠ 实测教训（2026-10-01）：**不能部分覆盖**。只把 return_type / param_count /
-    //     default_count / is_async / type_param_count 从 AST 覆盖过去，而把 param_types /
-    //     param_text / param_default_texts 这些**平行数组**留给扫描链 ⇒ "数量字段"与
-    //     "数组字段"来自两套口径 ⇒ 下游按 param_count 遍历扫描链填的 param_types 直接越界，
-    //     断言从 406/0 掉到 **365/41** ✗。
-    //   ⇒ 接管一类必须**整类字段一起换**（含全部平行数组），换齐了再用全量对拍 + 406 验收。
-    //     func 类还差 param_types / param_text / param_default_texts / return_struct_name 的
-    //     AST 侧映射，补齐后才可打开这一句 ✓
-    // 当前接管：alias（整类，含类型修正）；func 只覆盖**非平行字段**（return_type / is_async），
-    //   平行数组（param_types / param_text / param_default_texts）仍由扫描链产出 ✓
+    // S10：注册"AST 符号填充器"（扫描链跑完后，按声明种类由 AST 建表/覆盖）。
+    //   落地顺序与踩坑记录见 docs/待办_单一事实来源与重复实现收敛.md 的"实例十二·补四"：
+    //   7 类文本扫描（struct / var / func / enum / face / cstruct / alias）**已全部退役**
+    //   ⇒ 扫描链只剩 `use` / `import` 传导与模块体那点骨架 ✓
     module_ast_symbols_register();
-
-    if (exportDiffMode) {
-        // 对拍模式：只做"导出名两条路径"的比较，不进正常编译流程 ✓
-        //   退出码：0 = 一致、1 = 不一致/失败 ⇒ 便于脚本批量汇总 ✓
-        if (!filePath) {
-            fprintf(stderr, "错误: --export-diff 需要指定一个 .leno 文件\n");
-            return 1;
-        }
-        // 退出码原样透传：0=一致、1=不一致、2=无法比较（语法错误/读不了）✓
-        return module_ast_export_diff_file(filePath, exportDiffVerbose);
-    }
 
     if (initMode) {
         int result;
