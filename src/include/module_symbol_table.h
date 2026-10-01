@@ -204,17 +204,6 @@ typedef struct {
     // （`strncmp(p,"export",6)` + 自己跳注释/字符串/反引号 + 循环跳 `const` 后的类型关键字 +
     // "类型在前"兜底分支），与 `module_symbol_table` 的扫描链**各判一遍"什么算 export"**。
     // 那份复刻已删除 ⇒ 导出名只由扫描链这一处判定（唯一实现者，其余都是"读"它）。
-    //
-    // ⚠ 为什么不能直接查下面那几张符号表回答"模块导出了哪些名字"（这是收敛时最容易踩错的一步）：
-    //   · funcs[] 是「export ∪ **本地非导出函数**」的**并集** —— scan_pass2_init.inc 那趟专门收
-    //     非 export 的本地顶层函数（为的是同文件内也能判签名）⇒ 拿 funcs[] 当导出集合用，
-    //     会让「模块 'm' 中没有方法 'x'」这类错误**少报**（把不导出的名字当成可跨模块访问）；
-    //   · structs[]/enums[]/faces[]/aliases[]/clibs[] 里还混着**导入别名**搬进来的依赖符号
-    //     （sym_table_import_alias.inc）⇒ 同样不是"本模块的导出"。
-    //   ⇒ 单独记一张「本模块顶层 export 声明名」的清单：只记名字，不含类型，随 .lenosymc 往返。
-    char** export_names;         // 导出名数组（每个名字都是本模块顶层 `export` 声明的名字）
-    int export_count;            // 导出名数量
-    int export_capacity;         // 导出名数组容量
     // 依赖模块路径（用于 .lenosymc 缓存失效判定）
     char** dep_paths;           // 依赖模块的绝对路径数组
     int dep_count;              // 依赖模块数量
@@ -337,14 +326,6 @@ void module_symbol_table_reset_memo(void);
 // 添加依赖模块路径（用于 .lenosymc 缓存失效判定）
 void module_symbol_table_add_dep(ModuleSymbolTable* table, const char* path);
 
-// ---- v33：导出名清单（收敛 S10）----
-// 问题的形状：`module_loader.c` 曾用一份**独立的手写文本扫描器** `extract_exports()`
-// 重读源码判"什么算 export"（`strncmp(p,"export",6)` + 自己跳注释/字符串 + 循环跳 `const`
-// 后的类型关键字 + "类型在前"兜底），而扫描链里也有一套同义判定 ⇒ 同一件语义两个实现者，
-// 靠人力对齐（语言加一条声明语法就得改两处，漏一处就是"导出名对不上"类静默错）。
-// 收敛后唯一实现者 = 扫描链，下面三个接口只是"读"它。
-// 追加一个导出名（扫描链在**顶层 export 声明**处调用；空名/重名忽略）。名字内部复制。
-void module_symbol_table_add_export_name(ModuleSymbolTable* table, const char* name);
 
 // ============================================================================
 // S10 迁移：AST 符号填充器（编译期注册；VM-only 不注册 ⇒ 行为与现状一致）
@@ -362,13 +343,5 @@ void module_symbol_table_set_ast_fill_provider(ModuleSymbolFillProvider provider
 // 扫描链完成后调用填充器（未注册则空操作）；source 为 NULL 时内部自行读盘 ✓
 void module_symbol_table_apply_ast_fill(ModuleSymbolTable* table, const char* source,
                                         const char* current_file);
-
-// 本模块是否导出该名字。**只查导出名清单** —— 不查 funcs/structs 等符号表：
-// 那些表含非导出本地函数（scan_pass2_init.inc）与导入别名（sym_table_import_alias.inc），
-// 语义不同（拿它们当导出集合会让"模块中没有方法 x"少报）。
-int module_symbol_table_has_export(ModuleSymbolTable* table, const char* name);
-
-// 取导出名清单（只读；长度写 *out_count）。无导出时返回 NULL 且 *out_count = 0。
-const char* const* module_symbol_table_export_names(ModuleSymbolTable* table, int* out_count);
 
 #endif // MODULE_SYMBOL_TABLE_H

@@ -1,7 +1,8 @@
 #include "include/leno_vm_runtime.h"
 #include "include/module_dispatch.h"
-// v33（收敛 S10）：导出名的唯一来源是模块符号表扫描器 —— 本文件此前自带一份复刻的文本
-// 扫描器 extract_exports()（已删除），现改为只读 module_symbol_table_export_names()/has_export()
+// S10 终局（2026-10-01）：导出名的唯一来源是 **parser AST** —— 由编译期注册的
+// ModuleExportNamesProvider 提供（见 module_ast_exports.c）；文本扫描链与符号表里的
+// "导出名清单"都已整条删除，本文件不再从符号表取导出名 ✓
 #include "include/module_symbol_table.h"
 #include "include/leno_serialize.h"
 #include "include/leno_dce.h"
@@ -202,10 +203,10 @@ static void extract_module_name(const char* file_path, char* out_name, int max_l
 // 循环跳 `const` 后的类型关键字 + "类型在前"兜底分支），与 module_symbol_table 的扫描链
 // 各判一遍同一件语义 —— 语言每加一条声明语法就得改两处，漏一处就是"导出名对不上"类静默错
 // （典型症状：跨模块 `m.foo()` 报「模块 'm' 中没有方法 'foo'」，而源码里明明 export 了）。
-// 现已删除：导出名的唯一实现者 = 扫描链（module_symbol_table/inc/scan/*.inc 在顶层
-// `export` 声明处调 module_symbol_table_add_export_name），消费者只读
-// module_symbol_table_export_names() / module_symbol_table_has_export()。
-// 详见 docs/待办_单一事实来源与重复实现收敛.md 第二节 S10。
+// 现已删除，且**最终形态**是：导出名的唯一实现者 = **parser AST**（顶层 `export` 声明就是
+//   AST 上的 AST_EXPORT 包裹），由编译期注册的 provider（module_ast_exports.c）直接给出；
+//   中途那版"收敛到符号表扫描链"的实现也已随扫描链整条退役（本文件的回退分支一并删除）。
+// 详见 docs/待办_单一事实来源与重复实现收敛.md 第二节 S10（实例十二 · 补四 / 补五）。
 // ============================================================================
 // 规范化路径（统一使用平台特定的分隔符，处理 . 和 ..）
 int normalize_path(char* path, int max_len) {
@@ -432,18 +433,11 @@ static int copy_module_export_names(const char* file_path, const char* current_f
         if (n >= 0) return n;
     }
 
-    // ② 回退：符号表扫描链（与 S10 收敛时的行为逐字一致 ✓）
-    ModuleSymbolTable* table = module_symbol_table_get_shared(file_path, current_file);
-    if (!table) return -1;
-    int total = 0;
-    const char* const* names = module_symbol_table_export_names(table, &total);
-    if (!names || total <= 0) return 0;
-    int count = total < max_names ? total : max_names;
-    for (int i = 0; i < count; i++) {
-        strncpy(out[i], names[i], MAX_EXPORT_NAME - 1);
-        out[i][MAX_EXPORT_NAME - 1] = '\0';
-    }
-    return count;
+    // ② 没有提供者（VM-only 构建不带 parser）⇒ 取不到导出名。
+    //    VM 侧本来也只消费已有产物（`.lenb` 里序列化好的导出名）⇒ 这里报"取不到"即可 ✓
+    (void)out;
+    (void)max_names;
+    return -1;
 }
 
 // 从模块文件中提取导出项（用于语义分析）
@@ -471,12 +465,10 @@ int module_has_method(const char* file_path, const char* current_file, const cha
                 free(names);
                 return found;
             }
-            free(names);   // 提供者失败 ⇒ 回退扫描链 ✓
+            free(names);   // 提供者失败（读不了 / 语法错）⇒ 判不了
         }
     }
-    ModuleSymbolTable* table = module_symbol_table_get_shared(file_path, current_file);
-    if (!table) return -1;
-    return module_symbol_table_has_export(table, method_name) ? 1 : 0;
+    return 0;   // 无提供者（VM-only）⇒ 同样判不了（VM 侧吃 .lenb ✓）
 }
 
 // 加载并编译模块文件

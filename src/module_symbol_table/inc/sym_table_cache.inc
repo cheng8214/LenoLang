@@ -6,11 +6,11 @@
 // ⚠ 版本号登记表：docs/待办_单一事实来源与重复实现收敛.md 第七节
 //   （只覆盖符号表缓存；2026-09-16 撞过车：与上游都用 v23 但格式不同）
 #define LENOSYMC_MAGIC   0x4D59534C  // "LSYM" little-endian
-#define LENOSYMC_VERSION 0x00000021  // v33: **导出名清单**（`ModuleSymbolTable.export_names`）——
-                                     //      格式变了：依赖块之后、funcs 之前多一段"导出名数 + 逐个名字串"
-                                     //      （见 S10：module_loader.c 那份复刻的文本扫描器已删除，
-                                     //       导出名改由扫描链这唯一一处产出并随缓存往返）。
-                                     //      旧缓存按 v32 读到这段会错位 ⇒ 必须整体失效重扫 ✓
+#define LENOSYMC_VERSION 0x00000022  // v34: **删掉导出名清单**（S10 终局：文本扫描链整条退役）——
+                                     //      格式变了：v33 在"依赖块之后、funcs 之前"多加的那段
+                                     //      "导出名数 + 逐个名字串"整段删除（导出名早已由
+                                     //      module_ast_exports 的 provider 直接给，符号表不再存它）。
+                                     //      旧缓存按 v33 读到这段会错位 ⇒ 必须整体失效重扫 ✓
 // v32: struct **字段/方法符号新增 `is_private`**（`pri` 成员私有）——
                                      //      格式变了：字段段、方法段各多一段"是否私有"；旧缓存按 v31
                                      //      读会错位 ⇒ 必须整体失效重扫 ✓（改前跨模块拦不住私有成员 ✗）
@@ -241,13 +241,7 @@ static int sym_cache_serialize(const char* cache_path, ModuleSymbolTable* table,
         fwrite(&dep_hash, 8, 1, f);
     }
 
-    // v33: 导出名清单（收敛 S10）—— 顺序必须与读端一致 ✓：依赖块 → 导出名 → funcs
-    // ⚠ 局部名别用 `ec`：本函数下方 enum 段已占用 `ec`（同名重定义会编译失败 ✗，实测踩过）
-    uint32_t exc = (uint32_t)table->export_count;
-    fwrite(&exc, 4, 1, f);
-    for (uint32_t i = 0; i < exc; i++) {
-        sym_cache_write_string(f, table->export_names[i]);
-    }
+
 
     // funcs
     uint32_t fc = (uint32_t)table->func_count;
@@ -687,17 +681,7 @@ static int sym_cache_deserialize(const char* cache_path, ModuleSymbolTable* tabl
 
     // v33: 导出名清单（收敛 S10）—— 顺序必须与写端一致 ✓：依赖块 → 导出名 → funcs
     //   失败中途返回 -1 ⇒ 调用方走正常扫描；已读进来的名字由 sym_table_clear_symbols 释放 ✓
-    uint32_t exc;
-    if (fread(&exc, 4, 1, f) != 1) { fclose(f); return -1; }
-    table->export_count = 0;
-    table->export_capacity = exc > 0 ? (int)exc : 0;
-    table->export_names = exc > 0 ? (char**)calloc(exc, sizeof(char*)) : NULL;
-    for (uint32_t i = 0; i < exc; i++) {
-        char* nm = sym_cache_read_string(f);
-        if (!nm) { fclose(f); return -1; }
-        table->export_names[i] = nm;
-        table->export_count++;
-    }
+
 
     // funcs
     uint32_t fc;
