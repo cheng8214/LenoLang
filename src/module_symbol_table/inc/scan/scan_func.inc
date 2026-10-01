@@ -4,7 +4,7 @@
                 while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
 
                 const char* name_start = after_func;
-                while (*after_func && (isalnum((unsigned char)*after_func) || *after_func == '_')) after_func++;
+                while (*after_func && (mod_ident_char(*after_func) || *after_func == '_')) after_func++;
                 int name_len = (int)(after_func - name_start);
 
                 if (name_len > 0 && name_len < 64) {
@@ -23,9 +23,9 @@
                         after_func++; // skip '['
                         while (*after_func && *after_func != ']') {
                             while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
-                            if (*after_func && (isalnum((unsigned char)*after_func) || *after_func == '_')) {
+                            if (*after_func && (mod_ident_char(*after_func) || *after_func == '_')) {
                                 const char* tp_start = after_func;
-                                while (*after_func && (isalnum((unsigned char)*after_func) || *after_func == '_')) after_func++;
+                                while (*after_func && (mod_ident_char(*after_func) || *after_func == '_')) after_func++;
                                 int tp_len = (int)(after_func - tp_start);
                                 if (func_type_param_count < 8 && tp_len > 0 && tp_len < 64) {
                                     char* tp_name = (char*)malloc(tp_len + 1);
@@ -42,7 +42,7 @@
                             if (*after_func == ':') {
                                 after_func++; // skip ':'
                                 while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
-                                while (*after_func && (isalnum((unsigned char)*after_func) || *after_func == '_')) after_func++;
+                                while (*after_func && (mod_ident_char(*after_func) || *after_func == '_')) after_func++;
                             }
                             if (*after_func == ',') after_func++;
                         }
@@ -206,7 +206,7 @@
                             }
 
                             // 先读取标识符部分（如 Dict、Array、int 等）
-                            while (*after_func && (isalnum((unsigned char)*after_func) || *after_func == '_')) after_func++;
+                            while (*after_func && (mod_ident_char(*after_func) || *after_func == '_')) after_func++;
                             int type_len = (int)(after_func - type_start);
 
                             // 继续读取泛型参数部分（如 [string,int]）

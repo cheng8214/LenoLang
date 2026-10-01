@@ -4,7 +4,7 @@
                 while (*after_face && (*after_face == ' ' || *after_face == '\t')) after_face++;
 
                 const char* name_start = after_face;
-                while (*after_face && (isalnum((unsigned char)*after_face) || *after_face == '_')) after_face++;
+                while (*after_face && (mod_ident_char(*after_face) || *after_face == '_')) after_face++;
                 int name_len = (int)(after_face - name_start);
 
                 if (name_len > 0 && name_len < 64) {
@@ -22,9 +22,9 @@
                             // 跳过空白（含换行，泛型参数列表可跨行）
                             while (*after_face && (*after_face == ' ' || *after_face == '\t' ||
                                                    *after_face == '\n' || *after_face == '\r')) after_face++;
-                            if (*after_face && (isalnum((unsigned char)*after_face) || *after_face == '_')) {
+                            if (*after_face && (mod_ident_char(*after_face) || *after_face == '_')) {
                                 face_type_param_count++;
-                                while (*after_face && (isalnum((unsigned char)*after_face) || *after_face == '_')) after_face++;
+                                while (*after_face && (mod_ident_char(*after_face) || *after_face == '_')) after_face++;
                             }
                             while (*after_face && (*after_face == ' ' || *after_face == '\t' ||
                                                    *after_face == '\n' || *after_face == '\r')) after_face++;
@@ -68,7 +68,7 @@
 
                                 // 读取方法名
                                 const char* method_name_start = after_func;
-                                while (*after_func && (isalnum((unsigned char)*after_func) || *after_func == '_')) after_func++;
+                                while (*after_func && (mod_ident_char(*after_func) || *after_func == '_')) after_func++;
                                 int method_name_len = (int)(after_func - method_name_start);
 
                                 if (method_name_len > 0 && method_name_len < 64) {
@@ -138,7 +138,7 @@
                                         while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
 
                                         const char* ret_type_start = after_func;
-                                        while (*after_func && (isalnum((unsigned char)*after_func) || *after_func == '_')) after_func++;
+                                        while (*after_func && (mod_ident_char(*after_func) || *after_func == '_')) after_func++;
                                         int ret_type_len = (int)(after_func - ret_type_start);
 
                                         // 继续读取泛型参数部分（如 [string,float]）

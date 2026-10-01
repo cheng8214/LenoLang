@@ -80,7 +80,7 @@
 
                 // 读函数名
                 const char* name_start = after_func;
-                while (*after_func && (isalnum((unsigned char)*after_func) || *after_func == '_')) after_func++;
+                while (*after_func && (mod_ident_char(*after_func) || *after_func == '_')) after_func++;
                 int fname_len = (int)(after_func - name_start);
 
                 if (fname_len > 0 && fname_len < 64) {
@@ -143,7 +143,7 @@
                             const char* type_start = after_func;
 
                             // 读类型标识符
-                            while (*after_func && (isalnum((unsigned char)*after_func) || *after_func == '_')) after_func++;
+                            while (*after_func && (mod_ident_char(*after_func) || *after_func == '_')) after_func++;
                             int type_len = (int)(after_func - type_start);
 
                             // 读泛型参数 [K,V]
@@ -295,7 +295,7 @@
             
             // 读模块别名
             const char* alias_start = p;
-            while (*p && (isalnum((unsigned char)*p) || *p == '_')) p++;
+            while (*p && (mod_ident_char(*p) || *p == '_')) p++;
             int alias_len = (int)(p - alias_start);
             
             if (alias_len > 0 && alias_len < 64 && *p == '.') {
@@ -332,7 +332,7 @@
                                     import_search += 2;
                                     while (*import_search && (*import_search == ' ' || *import_search == '\t')) import_search++;
                                     const char* as_start = import_search;
-                                    while (*import_search && (isalnum((unsigned char)*import_search) || *import_search == '_')) import_search++;
+                                    while (*import_search && (mod_ident_char(*import_search) || *import_search == '_')) import_search++;
                                     int as_len = (int)(import_search - as_start);
                                     if (as_len == alias_len && strncmp(as_start, alias_name, alias_len) == 0) {
                                         // 找到匹配的 import
@@ -385,7 +385,7 @@
 
                     // 读类型名
                     const char* type_start = p;
-                    while (*p && (isalnum((unsigned char)*p) || *p == '_')) p++;
+                    while (*p && (mod_ident_char(*p) || *p == '_')) p++;
                     int type_len = (int)(p - type_start);
 
                     if (type_len > 0 && type_len < 64) {

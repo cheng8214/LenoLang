@@ -4,7 +4,7 @@
                 while (*after_cstruct && (*after_cstruct == ' ' || *after_cstruct == '\t')) after_cstruct++;
 
                 const char* name_start = after_cstruct;
-                while (*after_cstruct && (isalnum((unsigned char)*after_cstruct) || *after_cstruct == '_')) after_cstruct++;
+                while (*after_cstruct && (mod_ident_char(*after_cstruct) || *after_cstruct == '_')) after_cstruct++;
                 int name_len = (int)(after_cstruct - name_start);
 
                 if (name_len > 0 && name_len < 64) {
@@ -45,7 +45,7 @@
                                 char* after_func = after_cstruct + 4;
                                 while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
                                 // 跳过方法名
-                                while (*after_func && (isalnum((unsigned char)*after_func) || *after_func == '_')) after_func++;
+                                while (*after_func && (mod_ident_char(*after_func) || *after_func == '_')) after_func++;
                                 // 跳过参数列表
                                 while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
                                 if (*after_func == '(') {
@@ -72,7 +72,7 @@
                                 if (*after_func == ':') {
                                     after_func++;
                                     while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++;
-                                    while (*after_func && (isalnum((unsigned char)*after_func) || *after_func == '_')) after_func++;
+                                    while (*after_func && (mod_ident_char(*after_func) || *after_func == '_')) after_func++;
                                 }
                                 // 跳过方法体
                                 while (*after_func && (*after_func == ' ' || *after_func == '\t' || *after_func == '\n' || *after_func == '\r')) after_func++;
@@ -112,7 +112,7 @@
 
                             // 解析字段
                             const char* type_start = after_cstruct;
-                            while (*after_cstruct && (isalnum((unsigned char)*after_cstruct) || *after_cstruct == '_')) after_cstruct++;
+                            while (*after_cstruct && (mod_ident_char(*after_cstruct) || *after_cstruct == '_')) after_cstruct++;
                             int type_len = (int)(after_cstruct - type_start);
 
                             if (type_len > 0 && type_len < 64) {
@@ -160,7 +160,7 @@
                                             gp++; // skip '['
                                             while (*gp && (*gp == ' ' || *gp == '\t')) gp++;
                                             const char* elem_type_start2 = gp;
-                                            while (*gp && (isalnum((unsigned char)*gp) || *gp == '_')) gp++;
+                                            while (*gp && (mod_ident_char(*gp) || *gp == '_')) gp++;
                                             int elem_type_len2 = (int)(gp - elem_type_start2);
                                             if (elem_type_len2 > 0 && elem_type_len2 < 64) {
                                                 char elem_type_str[64];
@@ -187,7 +187,7 @@
                                 while (*after_cstruct && (*after_cstruct == ' ' || *after_cstruct == '\t')) after_cstruct++;
 
                                 const char* field_start = after_cstruct;
-                                while (*after_cstruct && (isalnum((unsigned char)*after_cstruct) || *after_cstruct == '_')) after_cstruct++;
+                                while (*after_cstruct && (mod_ident_char(*after_cstruct) || *after_cstruct == '_')) after_cstruct++;
                                 int field_len = (int)(after_cstruct - field_start);
 
                                 if (field_len > 0 && field_len < 64) {

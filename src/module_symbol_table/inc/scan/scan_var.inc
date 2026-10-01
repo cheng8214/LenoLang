@@ -63,7 +63,7 @@
                                                       *after_var == ',')) after_var++;
                                 if (*after_var == ')') { after_var++; break; }
                                 const char* name_start = after_var;
-                                while (*after_var && (isalnum((unsigned char)*after_var) || *after_var == '_')) after_var++;
+                                while (*after_var && (mod_ident_char(*after_var) || *after_var == '_')) after_var++;
                                 int name_len = (int)(after_var - name_start);
                                 if (name_len > 0 && name_len < 64) {
                                     char var_name[64];
@@ -84,7 +84,7 @@
 
                     // 先读第一个标识符
                     const char* first_ident_start = after_var;
-                    while (*after_var && (isalnum((unsigned char)*after_var) || *after_var == '_')) after_var++;
+                    while (*after_var && (mod_ident_char(*after_var) || *after_var == '_')) after_var++;
                     int first_ident_len = (int)(after_var - first_ident_start);
                     char first_ident[64] = {0};
                     if (first_ident_len > 0 && first_ident_len < 64) {
@@ -122,7 +122,7 @@
                             full_type_str[ft_len] = '\0';
                         }
                         after_var = skip_to;
-                    } else if (*skip_to && (isalnum((unsigned char)*skip_to) || *skip_to == '_') && first_ident_len > 0) {
+                    } else if (*skip_to && (mod_ident_char(*skip_to) || *skip_to == '_') && first_ident_len > 0) {
                         // 情况2: const MyStruct b = ... → 第一个标识符是类型名，第二个是变量名
                         // 但要排除 const true / const false / const null 等关键字
                         // 只有当第一个标识符不是 var/true/false/null 时才认为是类型
@@ -151,7 +151,7 @@
                         // 此时 after_var 已跳过类型部分，指向变量名前的空格
                         while (*after_var && (*after_var == ' ' || *after_var == '\t')) after_var++;
                         name_start = after_var;
-                        while (*after_var && (isalnum((unsigned char)*after_var) || *after_var == '_')) after_var++;
+                        while (*after_var && (mod_ident_char(*after_var) || *after_var == '_')) after_var++;
                         name_len = (int)(after_var - name_start);
 
                         // 解析类型
@@ -234,7 +234,7 @@
                                 // 格式: export const X = core.YYY
                                 const char* mod_start = after_var;
                                 const char* mod_end = after_var;
-                                while (*mod_end && (isalnum((unsigned char)*mod_end) || *mod_end == '_')) mod_end++;
+                                while (*mod_end && (mod_ident_char(*mod_end) || *mod_end == '_')) mod_end++;
                                 int mod_len = (int)(mod_end - mod_start);
                                 
                                 if (mod_len > 0 && mod_len < 64 && *mod_end == '.') {
@@ -244,7 +244,7 @@
                                     
                                     const char* member_start = mod_end + 1;
                                     const char* member_end = member_start;
-                                    while (*member_end && (isalnum((unsigned char)*member_end) || *member_end == '_')) member_end++;
+                                    while (*member_end && (mod_ident_char(*member_end) || *member_end == '_')) member_end++;
                                     int member_len = (int)(member_end - member_start);
                                     
                                     if (member_len > 0 && member_len < 64) {
@@ -271,7 +271,7 @@
                                                         import_search += 2;
                                                         while (*import_search && (*import_search == ' ' || *import_search == '\t')) import_search++;
                                                         const char* as_start = import_search;
-                                                        while (*import_search && (isalnum((unsigned char)*import_search) || *import_search == '_')) import_search++;
+                                                        while (*import_search && (mod_ident_char(*import_search) || *import_search == '_')) import_search++;
                                                         int as_len = (int)(import_search - as_start);
                                                         if (as_len == mod_len && strncmp(as_start, mod_alias, mod_len) == 0) {
                                                             if (path_len > 0 && path_len < 1023) {
@@ -344,7 +344,7 @@
                                     // 读取标识符
                                     const char* id_start = after_var;
                                     const char* id_end = after_var;
-                                    while (*id_end && (isalnum((unsigned char)*id_end) || *id_end == '_')) id_end++;
+                                    while (*id_end && (mod_ident_char(*id_end) || *id_end == '_')) id_end++;
                                     int id_len = (int)(id_end - id_start);
                                     
                                     if (id_len > 0 && id_len < 64) {

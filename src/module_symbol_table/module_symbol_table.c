@@ -32,6 +32,17 @@ extern int normalize_path(char* path, int max_len);
 #define MOD_MAX_TYPE_PARAMS   16   // 单类型最大泛型参数数
 #define MOD_MAX_GENERIC_RET   16   // 返回类型最大泛型参数数
 
+// ---- 标识符字符判定（扫描链统一入口） ----
+// 为什么不直接用 isalnum：**标识符可以是非 ASCII**（如 `export var 测试 = "你好"`）。
+//   isalnum 对 UTF-8 高位字节一律返回 0 ⇒ 扫出的名字长度 0 ⇒ 该标识符**整个丢掉** ✗
+//   （`--export-diff` 对拍抓到的第二个 bug：中文变量名在导出表里消失，后果是跨模块
+//     `use m.测试` 报"模块 m 中没有方法 测试"这种假阴性 —— 与文档 S10 说的"少报"同族）
+// 口径：ASCII 字母数字 + `_` + 任何 **>= 0x80 的字节**（UTF-8 连续字节 ⇒ 中日韩/emoji 名一律收下 ✓），
+//   与 parser 侧"标识符吃 UTF-8 字节"的行为对齐 ✓
+static int mod_ident_char(unsigned char c) {
+    return isalnum(c) || c == '_' || c >= 0x80;
+}
+
 // ---- 动态名称数组辅助（模块符号表扫描用） ----
 // 历史教训：固定上限数组（如 methods[128]）超限时静默丢弃符号，
 // 错误却爆发在远处的调用点（"类型 'struct X' 没有方法 'Y'"），极难排查。

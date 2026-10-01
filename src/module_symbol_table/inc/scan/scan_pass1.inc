@@ -113,7 +113,7 @@
                 while (*after_struct && (*after_struct == ' ' || *after_struct == '\t')) after_struct++;
 
                 const char* name_start = after_struct;
-                while (*after_struct && (isalnum((unsigned char)*after_struct) || *after_struct == '_')) after_struct++;
+                while (*after_struct && (mod_ident_char(*after_struct) || *after_struct == '_')) after_struct++;
                 int name_len = (int)(after_struct - name_start);
 
                 if (name_len > 0 && name_len < 64) {
@@ -131,7 +131,7 @@
                 while (*after_cstruct && (*after_cstruct == ' ' || *after_cstruct == '\t')) after_cstruct++;
 
                 const char* name_start = after_cstruct;
-                while (*after_cstruct && (isalnum((unsigned char)*after_cstruct) || *after_cstruct == '_')) after_cstruct++;
+                while (*after_cstruct && (mod_ident_char(*after_cstruct) || *after_cstruct == '_')) after_cstruct++;
                 int name_len = (int)(after_cstruct - name_start);
 
                 if (name_len > 0 && name_len < 64) {
@@ -149,7 +149,7 @@
                 while (*after_face && (*after_face == ' ' || *after_face == '\t')) after_face++;
 
                 const char* name_start = after_face;
-                while (*after_face && (isalnum((unsigned char)*after_face) || *after_face == '_')) after_face++;
+                while (*after_face && (mod_ident_char(*after_face) || *after_face == '_')) after_face++;
                 int name_len = (int)(after_face - name_start);
 
                 if (name_len > 0 && name_len < 64) {
@@ -167,7 +167,7 @@
                 while (*after_clib && (*after_clib == ' ' || *after_clib == '\t')) after_clib++;
 
                 const char* name_start = after_clib;
-                while (*after_clib && (isalnum((unsigned char)*after_clib) || *after_clib == '_')) after_clib++;
+                while (*after_clib && (mod_ident_char(*after_clib) || *after_clib == '_')) after_clib++;
                 int name_len = (int)(after_clib - name_start);
 
                 if (name_len > 0 && name_len < 64) {
@@ -186,7 +186,7 @@
 
                 // 解析 cfunc 名称
                 const char* name_start = after_cfunc;
-                while (*after_cfunc && (isalnum((unsigned char)*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
+                while (*after_cfunc && (mod_ident_char(*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
                 int name_len = (int)(after_cfunc - name_start);
 
                 if (name_len > 0 && name_len < 64) {
@@ -229,7 +229,7 @@
 
                                 // 解析参数类型（支持 Ptr[T] 语法）
                                 const char* pt_start = after_cfunc;
-                                while (*after_cfunc && (isalnum((unsigned char)*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
+                                while (*after_cfunc && (mod_ident_char(*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
                                 if (*after_cfunc == '[') {
                                     after_cfunc++;
                                     while (*after_cfunc && *after_cfunc != ']') after_cfunc++;
@@ -264,7 +264,7 @@
                                 else if (*after_cfunc == '/' && *(after_cfunc+1) == '*') { after_cfunc += 2; while (*after_cfunc && !(*after_cfunc == '*' && *(after_cfunc+1) == '/')) after_cfunc++; if (*after_cfunc) after_cfunc += 2; }
                                 // 解析参数名
                                 const char* pname_start = after_cfunc;
-                                while (*after_cfunc && (isalnum((unsigned char)*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
+                                while (*after_cfunc && (mod_ident_char(*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
                                 int pname_len = (int)(after_cfunc - pname_start);
                                 if (pname_len > 0 && pname_len < 64 && param_count > 0) {
                                     param_names[param_count - 1] = (char*)malloc(pname_len + 1);
@@ -286,7 +286,7 @@
 
                             // 解析返回类型（支持 Ptr[T] 语法）
                             const char* ret_start = after_cfunc;
-                            while (*after_cfunc && (isalnum((unsigned char)*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
+                            while (*after_cfunc && (mod_ident_char(*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
                             if (*after_cfunc == '[') {
                                 after_cfunc++;
                                 while (*after_cfunc && *after_cfunc != ']') after_cfunc++;
@@ -339,7 +339,7 @@
                 while (*after_enum && (*after_enum == ' ' || *after_enum == '\t')) after_enum++;
 
                 const char* name_start = after_enum;
-                while (*after_enum && (isalnum((unsigned char)*after_enum) || *after_enum == '_')) after_enum++;
+                while (*after_enum && (mod_ident_char(*after_enum) || *after_enum == '_')) after_enum++;
                 int name_len = (int)(after_enum - name_start);
 
                 if (name_len > 0 && name_len < 64) {
@@ -358,7 +358,7 @@
             while (*after_clib && (*after_clib == ' ' || *after_clib == '\t')) after_clib++;
 
             const char* name_start = after_clib;
-            while (*after_clib && (isalnum((unsigned char)*after_clib) || *after_clib == '_')) after_clib++;
+            while (*after_clib && (mod_ident_char(*after_clib) || *after_clib == '_')) after_clib++;
             int name_len = (int)(after_clib - name_start);
 
             if (name_len > 0 && name_len < 64) {
@@ -396,7 +396,7 @@
 
                         // 解析返回类型（支持 Ptr[T] 语法）
                         const char* ret_start = after_clib;
-                        while (*after_clib && (isalnum((unsigned char)*after_clib) || *after_clib == '_')) after_clib++;
+                        while (*after_clib && (mod_ident_char(*after_clib) || *after_clib == '_')) after_clib++;
                         // 支持 Ptr[T] 语法：跳过 [T] 部分
                         if (*after_clib == '[') {
                             after_clib++;
@@ -432,7 +432,7 @@
 
                         // 解析函数名
                         const char* func_name_start = after_clib;
-                        while (*after_clib && (isalnum((unsigned char)*after_clib) || *after_clib == '_')) after_clib++;
+                        while (*after_clib && (mod_ident_char(*after_clib) || *after_clib == '_')) after_clib++;
                         int func_name_len = (int)(after_clib - func_name_start);
                         if (func_name_len <= 0) break;
 
@@ -470,7 +470,7 @@
                                 if (*after_clib == ')' || *after_clib == '\0') break;
 
                                 const char* pt_start = after_clib;
-                                while (*after_clib && (isalnum((unsigned char)*after_clib) || *after_clib == '_')) after_clib++;
+                                while (*after_clib && (mod_ident_char(*after_clib) || *after_clib == '_')) after_clib++;
                                 // 支持 Ptr[T] 语法：跳过 [T] 部分
                                 if (*after_clib == '[') {
                                     after_clib++;
@@ -514,7 +514,7 @@
                                 if (*after_clib == '/' && *(after_clib+1) == '/') { while (*after_clib && *after_clib != '\n') after_clib++; }
                                 else if (*after_clib == '/' && *(after_clib+1) == '*') { after_clib += 2; while (*after_clib && !(*after_clib == '*' && *(after_clib+1) == '/')) after_clib++; if (*after_clib) after_clib += 2; }
                                 // 跳过参数名
-                                while (*after_clib && (isalnum((unsigned char)*after_clib) || *after_clib == '_')) after_clib++;
+                                while (*after_clib && (mod_ident_char(*after_clib) || *after_clib == '_')) after_clib++;
                                 // 兜底推进：本圈未消费任何字符时强制前进，避免死循环
                                 if (after_clib == pt_start) after_clib++;
                             }
@@ -567,7 +567,7 @@
 
             // 解析 cfunc 名称
             const char* name_start = after_cfunc;
-            while (*after_cfunc && (isalnum((unsigned char)*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
+            while (*after_cfunc && (mod_ident_char(*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
             int name_len = (int)(after_cfunc - name_start);
 
             if (name_len > 0 && name_len < 64) {
@@ -607,7 +607,7 @@
 
                             // 解析参数类型（支持 Ptr[T] 语法）
                             const char* pt_start = after_cfunc;
-                            while (*after_cfunc && (isalnum((unsigned char)*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
+                            while (*after_cfunc && (mod_ident_char(*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
                             if (*after_cfunc == '[') {
                                 after_cfunc++;
                                 while (*after_cfunc && *after_cfunc != ']') after_cfunc++;
@@ -639,7 +639,7 @@
                             while (*after_cfunc && (*after_cfunc == ' ' || *after_cfunc == '\t')) after_cfunc++;
                             // 解析参数名
                             const char* pname_start = after_cfunc;
-                            while (*after_cfunc && (isalnum((unsigned char)*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
+                            while (*after_cfunc && (mod_ident_char(*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
                             int pname_len = (int)(after_cfunc - pname_start);
                             if (pname_len > 0 && pname_len < 64 && param_count > 0) {
                                 param_names[param_count - 1] = (char*)malloc(pname_len + 1);
@@ -660,7 +660,7 @@
 
                         // 解析返回类型（支持 Ptr[T] 语法）
                         const char* ret_start = after_cfunc;
-                        while (*after_cfunc && (isalnum((unsigned char)*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
+                        while (*after_cfunc && (mod_ident_char(*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
                         if (*after_cfunc == '[') {
                             after_cfunc++;
                             while (*after_cfunc && *after_cfunc != ']') after_cfunc++;
@@ -692,8 +692,12 @@
                             param_count, param_types, param_element_types,
                             param_structs, param_names,
                             ret_type, ret_element_type, NULL);
-                            // v33（收敛 S10）：本文件在 export 块内被 include ⇒ 必然是顶层 export 声明 ⇒ 登记导出名
-                            module_symbol_table_add_export_name(table, cfunc_name_buf);
+                            // ⚠ 此处**不登记导出名**（2026-10-01 修，由 `--export-diff` 对拍抓出）：
+                            //   本块是**顶层非 export** 的 `cfunc X(...)`（入口条件见 scan_pass1.inc:564），
+                            //   不是 sym_table_scan.inc:86 的 `export` 块 ⇒ 登记了就是"给没导出的声明
+                            //   伪造一条导出记录"，会让"模块 m 没有方法 x"的检查**漏报** ✗
+                            //   （原注释"本文件在 export 块内被 include"只对 scan_func/scan_var 那批成立，
+                            //     对 cfunc 的另外三处调用点不成立 ✓）
 
                         // 释放临时数据
                         for (int pi = 0; pi < param_count; pi++) {
@@ -784,7 +788,7 @@
                                     char* after_clib = after_exp + 4;
                                     while (*after_clib && (*after_clib == ' ' || *after_clib == '\t')) after_clib++;
                                     const char* name_start = after_clib;
-                                    while (*after_clib && (isalnum((unsigned char)*after_clib) || *after_clib == '_')) after_clib++;
+                                    while (*after_clib && (mod_ident_char(*after_clib) || *after_clib == '_')) after_clib++;
                                     int name_len = (int)(after_clib - name_start);
                                     if (name_len > 0 && name_len < 64) {
                                         char clib_name_buf[64];
@@ -952,7 +956,7 @@
                                     while (*after_cfunc && (*after_cfunc == ' ' || *after_cfunc == '\t')) after_cfunc++;
 
                                     const char* name_start = after_cfunc;
-                                    while (*after_cfunc && (isalnum((unsigned char)*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
+                                    while (*after_cfunc && (mod_ident_char(*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
                                     int name_len = (int)(after_cfunc - name_start);
 
                                     if (name_len > 0 && name_len < 64) {
@@ -989,7 +993,7 @@
                                                     if (*after_cfunc == ')' || *after_cfunc == '\0') break;
 
                                                     const char* pt_start = after_cfunc;
-                                                    while (*after_cfunc && (isalnum((unsigned char)*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
+                                                    while (*after_cfunc && (mod_ident_char(*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
                                                     if (*after_cfunc == '[') {
                                                         after_cfunc++;
                                                         while (*after_cfunc && *after_cfunc != ']') after_cfunc++;
@@ -1023,7 +1027,7 @@
                                                     else if (*after_cfunc == '/' && *(after_cfunc+1) == '*') { after_cfunc += 2; while (*after_cfunc && !(*after_cfunc == '*' && *(after_cfunc+1) == '/')) after_cfunc++; if (*after_cfunc) after_cfunc += 2; }
                                                     // 解析参数名
                                                     const char* pname_start = after_cfunc;
-                                                    while (*after_cfunc && (isalnum((unsigned char)*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
+                                                    while (*after_cfunc && (mod_ident_char(*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
                                                     int pname_len = (int)(after_cfunc - pname_start);
                                                     if (pname_len > 0 && pname_len < 64 && param_count > 0) {
                                                         param_names[param_count - 1] = (char*)malloc(pname_len + 1);
@@ -1040,7 +1044,7 @@
                                                 while (*after_cfunc && (*after_cfunc == ' ' || *after_cfunc == '\t')) after_cfunc++;
 
                                                 const char* ret_start = after_cfunc;
-                                                while (*after_cfunc && (isalnum((unsigned char)*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
+                                                while (*after_cfunc && (mod_ident_char(*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
                                                 if (*after_cfunc == '[') {
                                                     after_cfunc++;
                                                     while (*after_cfunc && *after_cfunc != ']') after_cfunc++;
@@ -1071,8 +1075,12 @@
                                                     param_count, param_types, param_element_types,
                                                     param_structs, param_names,
                                                     ret_type, ret_element_type, NULL);
-                                                    // v33（收敛 S10）：本文件在 export 块内被 include ⇒ 必然是顶层 export 声明 ⇒ 登记导出名
-                                                    module_symbol_table_add_export_name(table, cfunc_name_buf);
+                                                    // ⚠ 此处**不登记导出名**（2026-10-01 修，由 `--export-diff` 对拍抓出）：
+                                                    //   本块在 **import 块内扫"子文件"**（scan_pass1.inc:730 → :947），
+                                                    //   这里认到的 `export cfunc` 是**依赖模块**的导出 ⇒ 属于那个模块，
+                                                    //   绝不该记到本模块名下 ✗
+                                                    //   （抓出的对拍差异就是这条：cfunc_middle 多出 ProgressCb/LoggerCb
+                                                    //     两个"幽灵导出"，它们其实来自 cfunc_source.leno ✓）
 
                                                 for (int pi = 0; pi < param_count; pi++) {
                                                     free(param_names[pi]);
@@ -1089,7 +1097,7 @@
                                 while (*after_cfunc && (*after_cfunc == ' ' || *after_cfunc == '\t')) after_cfunc++;
 
                                 const char* name_start = after_cfunc;
-                                while (*after_cfunc && (isalnum((unsigned char)*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
+                                while (*after_cfunc && (mod_ident_char(*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
                                 int name_len = (int)(after_cfunc - name_start);
 
                                 if (name_len > 0 && name_len < 64) {
@@ -1129,7 +1137,7 @@
                                                 if (*after_cfunc == ')' || *after_cfunc == '\0') break;
 
                                                 const char* pt_start = after_cfunc;
-                                                while (*after_cfunc && (isalnum((unsigned char)*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
+                                                while (*after_cfunc && (mod_ident_char(*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
                                                 if (*after_cfunc == '[') {
                                                     after_cfunc++;
                                                     while (*after_cfunc && *after_cfunc != ']') after_cfunc++;
@@ -1163,7 +1171,7 @@
                                                 else if (*after_cfunc == '/' && *(after_cfunc+1) == '*') { after_cfunc += 2; while (*after_cfunc && !(*after_cfunc == '*' && *(after_cfunc+1) == '/')) after_cfunc++; if (*after_cfunc) after_cfunc += 2; }
                                                 // 解析参数名
                                                 const char* pname_start = after_cfunc;
-                                                while (*after_cfunc && (isalnum((unsigned char)*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
+                                                while (*after_cfunc && (mod_ident_char(*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
                                                 int pname_len = (int)(after_cfunc - pname_start);
                                                 if (pname_len > 0 && pname_len < 64 && param_count > 0) {
                                                     param_names[param_count - 1] = (char*)malloc(pname_len + 1);
@@ -1180,7 +1188,7 @@
                                             while (*after_cfunc && (*after_cfunc == ' ' || *after_cfunc == '\t')) after_cfunc++;
 
                                             const char* ret_start = after_cfunc;
-                                            while (*after_cfunc && (isalnum((unsigned char)*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
+                                            while (*after_cfunc && (mod_ident_char(*after_cfunc) || *after_cfunc == '_')) after_cfunc++;
                                             if (*after_cfunc == '[') {
                                                 after_cfunc++;
                                                 while (*after_cfunc && *after_cfunc != ']') after_cfunc++;
@@ -1211,8 +1219,10 @@
                                                 param_count, param_types, param_element_types,
                                                 param_structs, param_names,
                                                 ret_type, ret_element_type, NULL);
-                                                // v33（收敛 S10）：本文件在 export 块内被 include ⇒ 必然是顶层 export 声明 ⇒ 登记导出名
-                                                module_symbol_table_add_export_name(table, cfunc_name_buf);
+                                                // ⚠ 此处**不登记导出名**（2026-10-01 修，由 `--export-diff` 对拍抓出）：
+                                                //   同在 import 块的"子文件"扫描里（scan_pass1.inc:730 → :1087），
+                                                //   而且这一支连 `export` 关键字都没有（子文件的**非导出** cfunc）⇒
+                                                //   更不该出现在任何导出表里 ✗
 
                                             for (int pi = 0; pi < param_count; pi++) {
                                                 free(param_names[pi]);

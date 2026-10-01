@@ -11,6 +11,7 @@
 #include "include/module_compiler.h"
 #include "include/module_loader.h"
 #include "include/module_symbol_table.h"
+#include "include/module_ast_exports.h"   // --export-diff：AST 导出名对拍（compiler-only ✓）
 #include "include/leno_package.h"
 #include "include/platform.h"
 #include <stdio.h>
@@ -47,6 +48,8 @@ static int installMode = 0;
 static char* debugOutFile = NULL;  // --debug-out 指定的输出文件路径
 static char* packOutDir = NULL;    // -o/--pack-dir 指定的打包输出目录（NULL ⇒ <源码目录>/dist）
 static int onefileMode = 0;        // --onefile：把原生库与 resource.toml 声明的资源一起内嵌进 exe
+static int exportDiffMode = 0;     // --export-diff：对拍"符号表扫描链"与"parser AST"的导出名（S10 迁移用）
+static int exportDiffVerbose = 0;  // --export-diff-verbose：一致时也打印清单
 int g_use_gui_vm = 0;  // 语义分析阶段检测到 _console(false) 时置为 1
 
 // -p 打包时选哪个 VM 基底（PE 子系统由 prepend 进去的 vm 数据决定，打包后改不了）。
@@ -155,6 +158,8 @@ static void printHelp(const char* program) {
     printf("  --debug           启用调试模式（输出字节码）\n");
     printf("  --debug-out <file> 字节码输出到指定文件（自动启用 --debug）\n");
     printf("  -c, --compile     编译为二进制文件（.lenb），不执行\n");
+    printf("  --export-diff     对拍导出名：比较\"符号表文本扫描链\"与\"parser AST\"的结果\n");
+    printf("                    （退出码 0=一致 / 1=不一致；S10 迁移期的交叉验证工具）\n");
     printf("  -p, --pack        编译并打包为独立可执行文件（嵌入 leno_vm）\n");
     printf("  -o, --pack-dir <目录>  指定打包输出目录（默认 <源码目录>/dist）\n");
     printf("                    输出的 exe 与依赖的原生库（leno.toml 的 [native-libs]）\n");
@@ -2062,6 +2067,15 @@ static int main_logic(int argc, char** argv) {
                 return 1;
             }
             continue;
+        } else if (strcmp(argv[i], "--export-diff") == 0) {
+            // S10 迁移用的对拍开关：把"符号表文本扫描链"与"parser AST"取出的导出名摊开比一遍。
+            //   不改变任何生产行为（既不改扫描链，也不改 AST ✓）
+            exportDiffMode = 1;
+            continue;
+        } else if (strcmp(argv[i], "--export-diff-verbose") == 0) {
+            exportDiffMode = 1;
+            exportDiffVerbose = 1;
+            continue;
         } else if (strcmp(argv[i], "--compile") == 0 || strcmp(argv[i], "-c") == 0) {
             compileMode = 1;
             continue;
@@ -2163,6 +2177,7 @@ static int main_logic(int argc, char** argv) {
         for (int i = file_arg_start; i < argc; i++) {
             // 跳过已被识别为选项的参数
             if (strcmp(argv[i], "--pause") == 0 || strcmp(argv[i], "--debug") == 0 ||
+                strcmp(argv[i], "--export-diff") == 0 || strcmp(argv[i], "--export-diff-verbose") == 0 ||
                 strcmp(argv[i], "--compile") == 0 || strcmp(argv[i], "-c") == 0 ||
                 strcmp(argv[i], "--pack") == 0 || strcmp(argv[i], "-p") == 0 ||
                 strcmp(argv[i], "--pack-dir") == 0 || strcmp(argv[i], "-o") == 0 ||
@@ -2216,6 +2231,7 @@ static int main_logic(int argc, char** argv) {
         if (!filePath) {
             for (int i = file_arg_start; i < argc; i++) {
                 if (strcmp(argv[i], "--pause") == 0 || strcmp(argv[i], "--debug") == 0 ||
+                    strcmp(argv[i], "--export-diff") == 0 || strcmp(argv[i], "--export-diff-verbose") == 0 ||
                     strcmp(argv[i], "--compile") == 0 || strcmp(argv[i], "-c") == 0 ||
                     strcmp(argv[i], "--pack") == 0 || strcmp(argv[i], "-p") == 0 ||
                     strcmp(argv[i], "--pack-dir") == 0 || strcmp(argv[i], "-o") == 0 ||
@@ -2234,6 +2250,17 @@ static int main_logic(int argc, char** argv) {
         }
     }
     
+    if (exportDiffMode) {
+        // 对拍模式：只做"导出名两条路径"的比较，不进正常编译流程 ✓
+        //   退出码：0 = 一致、1 = 不一致/失败 ⇒ 便于脚本批量汇总 ✓
+        if (!filePath) {
+            fprintf(stderr, "错误: --export-diff 需要指定一个 .leno 文件\n");
+            return 1;
+        }
+        // 退出码原样透传：0=一致、1=不一致、2=无法比较（语法错误/读不了）✓
+        return module_ast_export_diff_file(filePath, exportDiffVerbose);
+    }
+
     if (initMode) {
         int result;
         if (filePath) {

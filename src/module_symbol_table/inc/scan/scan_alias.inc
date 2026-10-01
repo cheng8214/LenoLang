@@ -4,7 +4,7 @@
                 while (*after_alias && (*after_alias == ' ' || *after_alias == '\t')) after_alias++;
 
                 const char* name_start = after_alias;
-                while (*after_alias && (isalnum((unsigned char)*after_alias) || *after_alias == '_')) after_alias++;
+                while (*after_alias && (mod_ident_char(*after_alias) || *after_alias == '_')) after_alias++;
                 int name_len = (int)(after_alias - name_start);
 
                 if (name_len > 0 && name_len < 64) {
@@ -23,7 +23,7 @@
                         int ti = 0;
                         while (*after_alias && ti < 255 && *after_alias != '\n' && *after_alias != '\r' &&
                                *after_alias != ';' && *after_alias != '{' && *after_alias != '/') {
-                            if (!(*after_alias == '_' || isalnum((unsigned char)*after_alias) ||
+                            if (!(*after_alias == '_' || mod_ident_char(*after_alias) ||
                                   *after_alias == '[' || *after_alias == ']' ||
                                   *after_alias == ',' || *after_alias == ':' ||
                                   *after_alias == '(' || *after_alias == ')' ||

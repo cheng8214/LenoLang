@@ -4,7 +4,7 @@
                 while (*after_struct && (*after_struct == ' ' || *after_struct == '\t')) after_struct++;
 
                 const char* name_start = after_struct;
-                while (*after_struct && (isalnum((unsigned char)*after_struct) || *after_struct == '_')) after_struct++;
+                while (*after_struct && (mod_ident_char(*after_struct) || *after_struct == '_')) after_struct++;
                 int name_len = (int)(after_struct - name_start);
 
                 if (name_len > 0 && name_len < 64) {
@@ -23,9 +23,9 @@
                             // 跳过空白（含换行，泛型参数列表可跨行）
                             while (*after_struct && (*after_struct == ' ' || *after_struct == '\t' ||
                                                      *after_struct == '\n' || *after_struct == '\r')) after_struct++;
-                            if (*after_struct && (isalnum((unsigned char)*after_struct) || *after_struct == '_')) {
+                            if (*after_struct && (mod_ident_char(*after_struct) || *after_struct == '_')) {
                                 const char* tp_name_start = after_struct;
-                                while (*after_struct && (isalnum((unsigned char)*after_struct) || *after_struct == '_')) after_struct++;
+                                while (*after_struct && (mod_ident_char(*after_struct) || *after_struct == '_')) after_struct++;
                                 int tp_name_len = (int)(after_struct - tp_name_start);
                                 if (tp_name_len > 0 && tp_name_len < 64 && type_param_count < MOD_MAX_TYPE_PARAMS) {
                                     type_param_names[type_param_count] = (char*)malloc(tp_name_len + 1);
@@ -41,7 +41,7 @@
                                 after_struct++; // skip ':'
                                 while (*after_struct && (*after_struct == ' ' || *after_struct == '\t' ||
                                                          *after_struct == '\n' || *after_struct == '\r')) after_struct++;
-                                while (*after_struct && (isalnum((unsigned char)*after_struct) || *after_struct == '_')) after_struct++;
+                                while (*after_struct && (mod_ident_char(*after_struct) || *after_struct == '_')) after_struct++;
                             }
                             if (*after_struct == ',') after_struct++;
                             // 本圈没推进就退出，避免死循环
@@ -61,9 +61,9 @@
                         while (*after_struct && (*after_struct == ' ' || *after_struct == '\t')) after_struct++;
 
                         // 解析 face 名称（支持多个，用逗号分隔）
-                        while (*after_struct && (isalnum((unsigned char)*after_struct) || *after_struct == '_')) {
+                        while (*after_struct && (mod_ident_char(*after_struct) || *after_struct == '_')) {
                             const char* face_name_start = after_struct;
-                            while (*after_struct && (isalnum((unsigned char)*after_struct) || *after_struct == '_')) after_struct++;
+                            while (*after_struct && (mod_ident_char(*after_struct) || *after_struct == '_')) after_struct++;
                             int face_name_len = (int)(after_struct - face_name_start);
 
                             if (face_name_len > 0 && face_name_len < 64) {
@@ -171,14 +171,14 @@
                                 // 跳过可选的类型注解 (const int X = 1)
                                 // 预读：如果标识符后面跟 = 或 ,，说明是类型推断形式
                                 const char* peek_start = after_const;
-                                while (*after_const && (isalnum((unsigned char)*after_const) || *after_const == '_')) after_const++;
+                                while (*after_const && (mod_ident_char(*after_const) || *after_const == '_')) after_const++;
                                 // 跳过空白
                                 while (*after_const && (*after_const == ' ' || *after_const == '\t')) after_const++;
                                 if (*after_const != '=' && *after_const != ',') {
                                     // 显式类型形式：token 是类型，跳过类型后再读名称
                                     after_const = (char*)peek_start; // 回退
                                     // 跳过类型
-                                    while (*after_const && (isalnum((unsigned char)*after_const) || *after_const == '_')) after_const++;
+                                    while (*after_const && (mod_ident_char(*after_const) || *after_const == '_')) after_const++;
                                     // 跳过 [T] 泛型部分
                                     while (*after_const && (*after_const == ' ' || *after_const == '\t')) after_const++;
                                     if (*after_const == '[') {
@@ -203,7 +203,7 @@
 
                                     // 读取常量名
                                     const char* cname_start = after_const;
-                                    while (*after_const && (isalnum((unsigned char)*after_const) || *after_const == '_')) after_const++;
+                                    while (*after_const && (mod_ident_char(*after_const) || *after_const == '_')) after_const++;
                                     int cname_len = (int)(after_const - cname_start);
 
                                     if (cname_len > 0 && cname_len < 64) {
@@ -262,7 +262,7 @@
 
                                 // 读取方法名
                                 const char* method_name_start = after_func;
-                                while (*after_func && (isalnum((unsigned char)*after_func) || *after_func == '_')) after_func++;
+                                while (*after_func && (mod_ident_char(*after_func) || *after_func == '_')) after_func++;
                                 int method_name_len = (int)(after_func - method_name_start);
 
                                 if (method_name_len > 0 && method_name_len < 64) {
@@ -316,7 +316,7 @@
 
                                                 // 检查是否是类型注解（简单启发式：如果看起来像类型，则解析为类型）
                                                 const char* token_start = after_func;
-                                                while (*after_func && (isalnum((unsigned char)*after_func) || *after_func == '_')) after_func++;
+                                                while (*after_func && (mod_ident_char(*after_func) || *after_func == '_')) after_func++;
                                                 int token_len = (int)(after_func - token_start);
 
                                                 if (token_len > 0 && token_len < 64) {
@@ -354,9 +354,9 @@
                                                     while (*after_func == '/' && *(after_func+1) == '*') { after_func += 2; while (*after_func && !(*after_func == '*' && *(after_func+1) == '/')) after_func++; if (*after_func) after_func += 2; while (*after_func && (*after_func == ' ' || *after_func == '\t')) after_func++; }
 
                                                     // 如果后面跟着标识符，说明 token 是类型
-                                                    if (*after_func && (isalnum((unsigned char)*after_func) || *after_func == '_')) {
+                                                    if (*after_func && (mod_ident_char(*after_func) || *after_func == '_')) {
                                                         // token 是类型，跳过参数名
-                                                        while (*after_func && (isalnum((unsigned char)*after_func) || *after_func == '_')) after_func++;
+                                                        while (*after_func && (mod_ident_char(*after_func) || *after_func == '_')) after_func++;
                                                         has_param = 1;
                                                     } else if (*after_func == ',' || *after_func == ')' || *after_func == '=') {
                                                         // token 是参数名（无类型），使用 TYPE_ANY
@@ -436,7 +436,7 @@
 
                                             const char* ret_type_start = after_func;
                                             // 先读取标识符部分
-                                            while (*after_func && (isalnum((unsigned char)*after_func) || *after_func == '_')) after_func++;
+                                            while (*after_func && (mod_ident_char(*after_func) || *after_func == '_')) after_func++;
                                             int ret_type_len = (int)(after_func - ret_type_start);
 
                                             // 继续读取泛型参数部分（如 [string,float]）
@@ -533,9 +533,9 @@
                                                         gen_bracket++;
                                                         while (*gen_bracket && *gen_bracket != ']') {
                                                             while (*gen_bracket && (*gen_bracket == ' ' || *gen_bracket == '\t')) gen_bracket++;
-                                                            if (*gen_bracket && (isalnum((unsigned char)*gen_bracket) || *gen_bracket == '_')) {
+                                                            if (*gen_bracket && (mod_ident_char(*gen_bracket) || *gen_bracket == '_')) {
                                                                 const char* gp_start = gen_bracket;
-                                                                while (*gen_bracket && (isalnum((unsigned char)*gen_bracket) || *gen_bracket == '_')) gen_bracket++;
+                                                                while (*gen_bracket && (mod_ident_char(*gen_bracket) || *gen_bracket == '_')) gen_bracket++;
                                                                 int gp_len = (int)(gen_bracket - gp_start);
                                                                 if (gp_len > 0 && gp_len < 64 && method_return_generic_count < 8) {
                                                                     method_return_generic_params[method_return_generic_count] = (char*)malloc(gp_len + 1);
@@ -689,7 +689,7 @@
 
                             // 解析字段
                             const char* type_start = after_struct;
-                            while (*after_struct && (isalnum((unsigned char)*after_struct) || *after_struct == '_')) after_struct++;
+                            while (*after_struct && (mod_ident_char(*after_struct) || *after_struct == '_')) after_struct++;
                             // 检查类型名后的 ? (如 Font?)
                             int is_nullable = 0;
                             if (*after_struct == '?') {
@@ -750,7 +750,7 @@
                                             gp++; // skip '['
                                             while (*gp && (*gp == ' ' || *gp == '\t')) gp++;
                                             const char* elem_type_start2 = gp;
-                                            while (*gp && (isalnum((unsigned char)*gp) || *gp == '_')) gp++;
+                                            while (*gp && (mod_ident_char(*gp) || *gp == '_')) gp++;
                                             int elem_type_len2 = (int)(gp - elem_type_start2);
                                             if (elem_type_len2 > 0 && elem_type_len2 < 64) {
                                                 char elem_type_str[64];
@@ -789,7 +789,7 @@
                                     while (*after_struct && (*after_struct == ' ' || *after_struct == '\t')) after_struct++;
 
                                     const char* field_start = after_struct;
-                                    while (*after_struct && (isalnum((unsigned char)*after_struct) || *after_struct == '_')) after_struct++;
+                                    while (*after_struct && (mod_ident_char(*after_struct) || *after_struct == '_')) after_struct++;
                                     int field_len = (int)(after_struct - field_start);
 
                                     if (field_len > 0 && field_len < 64) {

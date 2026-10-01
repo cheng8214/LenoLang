@@ -4,7 +4,7 @@
                 while (*after_enum && (*after_enum == ' ' || *after_enum == '\t')) after_enum++;
 
                 const char* name_start = after_enum;
-                while (*after_enum && (isalnum((unsigned char)*after_enum) || *after_enum == '_')) after_enum++;
+                while (*after_enum && (mod_ident_char(*after_enum) || *after_enum == '_')) after_enum++;
                 int name_len = (int)(after_enum - name_start);
 
                 if (name_len > 0 && name_len < 64) {
@@ -38,7 +38,7 @@
                                 continue;
                             }
                             const char* m_start = after_enum;
-                            while (*after_enum && (isalnum((unsigned char)*after_enum) || *after_enum == '_')) after_enum++;
+                            while (*after_enum && (mod_ident_char(*after_enum) || *after_enum == '_')) after_enum++;
                             int m_len = (int)(after_enum - m_start);
                             if (m_len > 0 && m_len < 64) {
                                 // 动态扩容成员数组（容量不足时翻倍）
