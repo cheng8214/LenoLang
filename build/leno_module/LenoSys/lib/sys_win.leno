@@ -232,6 +232,64 @@ func _regValueInt(Ptr h, string valueName): int {
     return rd.value
 }
 
+// ==================== 开机自启动（Windows：HKCU\...\Run）====================
+//
+//   ★ 跨平台契约见门面 Sys.leno 的注释：set/get/remove 三件套，
+//     Windows 落 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 里的**值名 = id** ✓
+//   ⚠ `name` 参数在 Windows 侧**用不到**（Run 键只有"值名 + 命令行"两个概念 ✓）；
+//     保留它是为了与 Linux 侧同签名（Linux 的 .desktop 需要 `Name=` ✓）
+const _RUN_KEY = "Software\\Microsoft\\Windows\\CurrentVersion\\Run"
+
+export func getAutostart(string id): string {
+    if id == "" { return "" }
+    var k = Win32.regOpenKey(Win32.HKEY_CURRENT_USER, _RUN_KEY, Win32.KEY_READ)
+    if k.errorCode != 0 { return "" }
+    Ptr h = k.handle
+    try {
+        var rs = Win32.regReadString(h, id)
+        if rs.errorCode != 0 { return "" }
+        return rs.value
+    } finally {
+        Win32.regCloseKey(h)
+    }
+}
+
+export func setAutostart(string id, string name, string cmd): bool {
+    if id == "" or cmd == "" { return false }
+    var k = Win32.regOpenKey(Win32.HKEY_CURRENT_USER, _RUN_KEY, Win32.KEY_ALL_ACCESS)
+    if k.errorCode != 0 {
+        // Run 键理论上必存在；万一没有就建一个（HKLM 的那份不碰 ⇒ 不需要管理员 ✓）
+        var c = Win32.regCreateKey(Win32.HKEY_CURRENT_USER, _RUN_KEY, Win32.KEY_ALL_ACCESS)
+        if c.errorCode != 0 { return false }
+        Ptr h2 = c.handle
+        try {
+            return Win32.regWriteString(h2, id, cmd) == 0
+        } finally {
+            Win32.regCloseKey(h2)
+        }
+    }
+    Ptr h = k.handle
+    try {
+        return Win32.regWriteString(h, id, cmd) == 0
+    } finally {
+        Win32.regCloseKey(h)
+    }
+}
+
+export func removeAutostart(string id): bool {
+    if id == "" { return false }
+    var k = Win32.regOpenKey(Win32.HKEY_CURRENT_USER, _RUN_KEY, Win32.KEY_ALL_ACCESS)
+    if k.errorCode != 0 { return true }          // 键都打不开 ⇒ 本来就没有自启项（目标已达成 ✓）
+    Ptr h = k.handle
+    try {
+        var rs = Win32.regReadString(h, id)
+        if rs.errorCode != 0 { return true }     // 本来就没有 ⇒ 目标已达成 ✓
+        return Win32.regDeleteValue(h, id) == 0
+    } finally {
+        Win32.regCloseKey(h)
+    }
+}
+
 // ==================== 最近使用的文件 ====================
 
 // `%APPDATA%\Microsoft\Windows\Recent` 里是 `.lnk` 快捷方式

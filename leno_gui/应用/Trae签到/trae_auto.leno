@@ -21,6 +21,7 @@ import "SDL3" as SDL3
 import "trae_core.leno" as core
 import "trae_settings.leno" as cfg
 import files
+import dirs
 import rands
 use SDL3.Window
 
@@ -254,7 +255,7 @@ func _log_path(): string {
     if ov != "" { return ov }
     var d = cfg.settings_dir()
     if d == "" { return "" }
-    return d + "\\auto.log"
+    return dirs.join(d, "auto.log")             // ★ 跨平台：原先写死 "\\auto.log" ✗
 }
 export func autoSetLogPathOverride(string p) { _log_override = p }
 

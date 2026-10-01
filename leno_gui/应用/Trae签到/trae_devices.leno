@@ -21,12 +21,15 @@
 import jsons
 import files
 import dirs
+import Sys
 import "trae_core.leno" as core
 
+// ★ 2026-10-01 跨平台：`%APPDATA%` → `Sys.configDir()`（Windows 逐字不变 ✓ / Linux=~/.config ✓）
+//   ⚠ `trae_accounts.leno` 也复用本函数（同一数据目录 ✓）⇒ 改这里就够 ✓
 export func devices_dir(): string {
-    var appdata = _env_or("APPDATA", "")
-    if appdata == "" { return "" }              // 取不到 ⇒ 空路径（调用方据此跳过读/写盘 ✓）
-    return appdata + "\\TraeSignLeno"
+    var cfgRoot = Sys.configDir()
+    if cfgRoot == "" { return "" }              // 取不到 ⇒ 空路径（调用方据此跳过读/写盘 ✓）
+    return dirs.join(cfgRoot, "TraeSignLeno")
 }
 export func devices_path(): string {
     var d = devices_dir()

@@ -13,12 +13,14 @@ import jsons
 import files
 import strings
 import dirs
+import Sys
 import "trae_core.leno" as core
 
+// ★ 2026-10-01 跨平台：`%APPDATA%` → `Sys.configDir()`（Windows 逐字不变 ✓ / Linux=~/.config ✓）
 export func history_dir(): string {
-    var appdata = _env_or("APPDATA", "")
-    if appdata == "" { return "" }              // 取不到 ⇒ 空路径（调用方据此跳过读/写盘 ✓）
-    return appdata + "\\TraeSignLeno"
+    var cfgRoot = Sys.configDir()
+    if cfgRoot == "" { return "" }              // 取不到 ⇒ 空路径（调用方据此跳过读/写盘 ✓）
+    return dirs.join(cfgRoot, "TraeSignLeno")
 }
 export func history_path(): string {
     var d = history_dir()

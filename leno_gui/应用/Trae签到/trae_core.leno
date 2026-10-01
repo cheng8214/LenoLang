@@ -8,6 +8,8 @@
 import jsons
 import strings
 import files
+import dirs
+import Sys
 import times
 import rands
 import "web_net" as net
@@ -41,10 +43,17 @@ export func claim_url(): string { return api_base() + "/trae/api/v2/ug/checkin_c
 
 // ==================== ② 读登录态（只读） ====================
 
+// ★ 2026-10-01 跨平台：`%APPDATA%\<brand>\User\globalStorage\storage.json`
+//   · Windows：`Sys.configDir()` == `%APPDATA%` ⇒ 路径**逐字不变** ✓
+//   · Linux  ：`~/.config/<brand>/User/globalStorage/storage.json`
+//     —— Trae 是 VS Code 分支，这类客户端在 Linux 上正是把 state 放这儿 ✓
+//   ⚠ 但这**不保证** Linux 上一定读得到 token：那取决于客户端把 auth 存哪
+//     （有的版本改走系统钥匙串 ✗，Leno 这边读不了）⇒ 读不到就**如实**返回 []，
+//     调用方按"没登录态"处理（界面会提示），绝不猜、也不假装成功 ✓
 export func storage_path(string brand): string {
-    var appdata = _env_or("APPDATA", "")
-    if appdata == "" { return "" }              // 取不到 ⇒ 空路径（调用方据此判"没登录态" ✓）
-    return appdata + "\\" + brand + "\\User\\globalStorage\\storage.json"
+    var cfgRoot = Sys.configDir()
+    if cfgRoot == "" { return "" }              // 取不到 ⇒ 空路径（调用方据此判"没登录态" ✓）
+    return dirs.join(dirs.join(dirs.join(dirs.join(cfgRoot, brand), "User"), "globalStorage"), "storage.json")
 }
 
 // 读某个品牌的登录态 → [enc, dcId]；没找到 ⇒ []

@@ -289,6 +289,57 @@ func _scanAutostart(Array out, string dir, string scope) {
     } catch e { return }
 }
 
+// ==================== 开机自启动（Linux：freedesktop autostart）====================
+//
+//   `~/.config/autostart/<id>.desktop` —— 正是 `startupItems()` 读的那套 ✓
+//   ⇒ 写进去之后，`listStartupItems()` 立刻能看到它（读写同源 ✓）
+//   ⚠ `Exec=` 是**逐字照抄**调用方给的命令行 ⇒ 路径含空格时请自行加引号 ✓（这里不猜 ✗）
+func _autostart_path(string id): string {
+    if id == "" { return "" }
+    return dirs.join(dirs.join(configDir(), "autostart"), id + ".desktop")
+}
+
+export func getAutostart(string id): string {
+    string p = _autostart_path(id)
+    if p == "" or not dirs.exists(p) { return "" }
+    string txt = ""
+    try { txt = files.read(p) } catch e { return "" }
+    var e = sp.parse_desktop_entry(txt)
+    if not jsons.get_bool(e, "ok", false) { return "" }
+    if jsons.get_bool(e, "hidden", false) { return "" }     // `Hidden=true` ⇒ 已禁用 ✓
+    return jsons.get_str(e, "execLine", "")
+}
+
+export func setAutostart(string id, string name, string cmd): bool {
+    string p = _autostart_path(id)
+    if p == "" or cmd == "" { return false }
+    dirs.mkdir_p(dirs.dirname(p))
+    string label = name
+    if label == "" { label = id }
+    string body = "[Desktop Entry]\n"
+                + "Type=Application\n"
+                + "Name=" + label + "\n"
+                + "Comment=Leno 应用开机自启动（由 LenoSys 写入）\n"
+                + "Exec=" + cmd + "\n"
+                + "Terminal=false\n"
+                + "Hidden=false\n"
+                + "X-GNOME-Autostart-enabled=true\n"
+    try {
+        files.write(p, body)
+        return dirs.exists(p)
+    } catch e { return false }
+}
+
+export func removeAutostart(string id): bool {
+    string p = _autostart_path(id)
+    if p == "" { return false }
+    if not dirs.exists(p) { return true }        // 本来就没有 ⇒ 目标已达成 ✓
+    try {
+        files.delete(p)
+        return not dirs.exists(p)
+    } catch e { return false }
+}
+
 // ==================== 已装软件（dpkg）====================
 //
 //   ⚠ 只做 Debian/Ubuntu 的 `/var/lib/dpkg/status`（纯文本 ✓）。

@@ -20,6 +20,7 @@ import SDL3
 import jsons
 import files
 import dirs
+import Sys
 import "trae_core.leno" as core
 use SDL3.Event
 use SDL3.Renderer
@@ -50,10 +51,13 @@ var _shouldClose = false        // 对话框里"该关了"（按钮/取消置位
 var _saved = false
 
 // ==================== 路径 / 读写 ====================
+// ★ 2026-10-01 跨平台：`%APPDATA%` → `Sys.configDir()`
+//   · Windows：`configDir()` 就是 `%APPDATA%`（Roaming）⇒ 路径**逐字不变** ✓
+//   · Linux  ：`$XDG_CONFIG_HOME`，默认 `~/.config` ✓（XDG 规范）
 export func settings_dir(): string {
-    var appdata = _env_or("APPDATA", "")
-    if appdata == "" { return "" }              // 取不到 ⇒ 空路径（调用方据此跳过读/写盘 ✓）
-    return appdata + "\\TraeSignLeno"
+    var cfgRoot = Sys.configDir()
+    if cfgRoot == "" { return "" }              // 取不到 ⇒ 空路径（调用方据此跳过读/写盘 ✓）
+    return dirs.join(cfgRoot, "TraeSignLeno")
 }
 
 export func settingsPath(): string {
@@ -210,7 +214,7 @@ func settingsDialogMount(Window dlg, Dict[string, string] d, func():void onSaved
             _shouldClose = true
         } else {
             // 写不进去就**别关**：把原因写在说明行上（用户看得见 ✓，不静默失败 ✗）
-            lblNote.set_text("保存失败：配置目录不可写（%APPDATA%\\TraeSignLeno）")
+            lblNote.set_text("保存失败：配置目录不可写（" + settings_dir() + "）")
         }
     })
 }

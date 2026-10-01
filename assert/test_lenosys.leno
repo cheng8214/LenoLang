@@ -8,6 +8,7 @@ import Sys
 import dirs
 import jsons
 import strings
+import times
 
 main() {
     print("=== LenoSys 跨平台系统模块回归 ===")
@@ -82,6 +83,21 @@ main() {
     var rec = Sys.recentFiles(3)
     assert_true(rec.len() <= 3, "max 参数应生效")
     print("系统项 通过（启动项 " + _str(su.len()) + " / 软件 " + _str(sw.len()) + " / 最近 " + _str(rec.len()) + "）")
+
+    // ---------- 开机自启动三件套（★ 用**临时 id** 且跑完删掉 ⇒ 不污染真实自启 ✓）----------
+    if not Sys.isMacos() {
+        string tid = "LenoSysSelfTest_" + _str(times.ms())
+        assert_eq(Sys.getAutostart(tid), "", "临时 id 一开始不该有自启项")
+        assert_true(Sys.setAutostart(tid, "LenoSys 自检", "echo lenosys"), "写自启项应成功")
+        assert_eq(Sys.getAutostart(tid), "echo lenosys", "读回来必须与写入**逐字一致**")
+        assert_true(Sys.removeAutostart(tid), "删自启项应成功")
+        assert_eq(Sys.getAutostart(tid), "", "删完必须读不到（不留痕 ✓）")
+        // 幂等：再删一次也应成功（"不再自启"这个目标本来就达成 ✓）
+        assert_true(Sys.removeAutostart(tid), "对不存在项再删一次应返回 true（幂等 ✓）")
+        assert_eq(Sys.setAutostart("", "空 id", "echo x"), false, "空 id 必须拒绝")
+        assert_eq(Sys.setAutostart(tid, "空命令", ""), false, "空命令行必须拒绝")
+    }
+    print("开机自启动 通过!")
 
     // ---------- 自检 ----------
     var st = Sys.selfTest()

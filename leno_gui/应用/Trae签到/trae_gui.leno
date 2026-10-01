@@ -28,6 +28,8 @@ use SDL3.Font
 use SDL3.Window
 use SDL3.Canvas
 use SDL3.Button
+import Sys                                 // ★ 跨平台系统能力（数据目录等）★
+import dirs
 import "trae_core.leno" as core
 import "trae_history.leno" as hist
 import "trae_devices.leno" as dev
@@ -587,7 +589,8 @@ main() {
     // ⑥b：定时自动签到的当前状态（"已开 00:05 · 下次重试 00:35 / 今日已完成 / 今日已放弃" ✓）
     var autoLbl = SDL3.createLabel({x:24, y:644, text:AUTO_TEXT, font_size:12, text_color:#8A93A8FF})
     win.add(autoLbl)
-    win.add(SDL3.createLabel({x:24, y:666, text:"左键点日历格子看当天记录 · Esc 退出 · 数据目录 %APPDATA%\\TraeSignLeno\\（history / devices / accounts / settings.json）", font_size:12, text_color:#787D87FF}))
+    // ★ 文案里的数据目录改成**平台真实路径**（原先写死 `%APPDATA%\TraeSignLeno\` ⇒ Linux 上是错的 ✗）
+    win.add(SDL3.createLabel({x:24, y:666, text:"左键点日历格子看当天记录 · Esc 退出 · 数据目录 " + Sys.configDir() + "（history / devices / accounts / settings.json）", font_size:12, text_color:#787D87FF}))
 
     // ==================== 日历绘制（局部坐标：画布左上角 = (0,0) ✓ 见画布示例） ====================
     cv.on_draw(func(Renderer r, float ox, float oy, float cw, float ch) {

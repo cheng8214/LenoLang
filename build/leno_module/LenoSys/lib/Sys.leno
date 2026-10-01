@@ -270,6 +270,36 @@ export func listStartupItems(): Array[StartupItem] {
     return out
 }
 
+// ==================== 开机自启动（跨平台三件套）====================
+//
+//   Windows：`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`（值名 = id ✓）
+//   Linux  ：`~/.config/autostart/<id>.desktop`（freedesktop 规范 ✓ —— 与本模块
+//            `listStartupItems()` 读的是**同一套** ⇒ 写完立刻能在启动项列表里看到 ✓）
+//   macOS  ：**未实现**（返回 false/""，绝不写假文件 ✗ —— LaunchAgents 是另一套格式）
+//
+//   语义约定（三平台一致 ✓）：
+//     · `id` 唯一标识一项自启（GUID/包名风格，别用中文/空格 ✓ 它会变成值名或文件名）
+//     · `get` 返回**当前命令行**；不存在 ⇒ `""`（调用方据此显示"未启用" ✓）
+//     · `remove` 对"本来就不存在"返回 **true**（目标 = 不再自启，已达成 ✓ 幂等 ✓）
+export func getAutostart(string id): string {
+    if isMacos() { return "" }
+    if _isW() { return w.getAutostart(id) }
+    return l.getAutostart(id)
+}
+
+export func setAutostart(string id, string name, string cmd): bool {
+    if isMacos() { return false }
+    if id == "" or cmd == "" { return false }
+    if _isW() { return w.setAutostart(id, name, cmd) }
+    return l.setAutostart(id, name, cmd)
+}
+
+export func removeAutostart(string id): bool {
+    if isMacos() { return false }
+    if _isW() { return w.removeAutostart(id) }
+    return l.removeAutostart(id)
+}
+
 // ==================== 已装软件 ====================
 
 export func listInstalledSoftware(): Array[SoftwareItem] {
