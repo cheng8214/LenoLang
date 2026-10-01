@@ -709,8 +709,54 @@ static void ast_fill_one_struct_meta(ModuleSymbolTable* table, Ast* sd) {
 static void ast_fill_one_face_meta(ModuleSymbolTable* table, Ast* fd) {
     if (!fd || !fd->u.face_def.name) return;
     ModuleFaceSymbol* sym = module_symbol_table_find_face(table, fd->u.face_def.name);
-    if (!sym) return;
-    sym->type_param_count = fd->u.face_def.type_param_count;   // 单个计数、无平行数组 ⇒ 安全 ✓
+    if (sym) {
+        sym->type_param_count = fd->u.face_def.type_param_count;   // 已有条目 ⇒ 只覆盖这项（无平行数组 ✓）
+        return;
+    }
+    // ★ 建表路径（scan_face.inc 退役的前提）：把 methods 数组整体建出来 ✓
+    int mc = fd->u.face_def.method_count;
+    if (mc < 0) return;
+    ModuleFaceMethodSymbol* methods =
+        (ModuleFaceMethodSymbol*)calloc((size_t)(mc > 0 ? mc : 1), sizeof(ModuleFaceMethodSymbol));
+    if (!methods) return;
+    for (int i = 0; i < mc; i++) {
+        methods[i].name = (fd->u.face_def.method_names && fd->u.face_def.method_names[i])
+                              ? strdup(fd->u.face_def.method_names[i]) : NULL;
+        TypeInfo* rt = fd->u.face_def.method_return_types ? fd->u.face_def.method_return_types[i] : NULL;
+        methods[i].return_type = ast_kind_of(table, rt);
+        methods[i].return_struct_name = (rt && rt->struct_name) ? strdup(rt->struct_name) : NULL;
+        int pc = fd->u.face_def.method_param_counts ? fd->u.face_def.method_param_counts[i] : 0;
+        methods[i].param_count = pc;
+        if (pc > 0 && fd->u.face_def.method_param_types && fd->u.face_def.method_param_types[i]) {
+            TypeKind* pts = (TypeKind*)malloc(sizeof(TypeKind) * pc);
+            char** psn = (char**)malloc(sizeof(char*) * pc);
+            if (pts && psn) {
+                for (int k = 0; k < pc; k++) {
+                    TypeInfo* ti = fd->u.face_def.method_param_types[i][k];
+                    pts[k] = ast_kind_of(table, ti);
+                    psn[k] = (ti && ti->struct_name) ? strdup(ti->struct_name) : NULL;
+                }
+                methods[i].param_types = pts;
+                methods[i].param_struct_names = psn;
+            } else {
+                free(pts);
+                free(psn);
+            }
+        }
+    }
+    // add_face 内部复制（与扫描链同一约定）⇒ 随后释放临时结构 ✓
+    module_symbol_table_add_face(table, fd->u.face_def.name, mc, methods,
+                                 fd->u.face_def.type_param_count);
+    for (int i = 0; i < mc; i++) {
+        free(methods[i].name);
+        free(methods[i].return_struct_name);
+        if (methods[i].param_struct_names) {
+            for (int k = 0; k < methods[i].param_count; k++) free(methods[i].param_struct_names[k]);
+            free(methods[i].param_struct_names);
+        }
+        free(methods[i].param_types);
+    }
+    free(methods);
 }
 
 // ---- cstruct：**建表**（scan_cstruct.inc 退役的前提）----

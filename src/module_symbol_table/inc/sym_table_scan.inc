@@ -83,7 +83,9 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
             // ★★ S10 删除老解析：cstruct 的文本扫描退役
             //   （建表由 ast_fill_one_cstruct 承担：AST 的 field_types 直接给出字段类型）✓
             // #include "scan/scan_cstruct.inc"
-            #include "scan/scan_face.inc"
+            // ★★ S10 删除老解析：face 的文本扫描退役
+            //   （建表由 ast_fill_one_face_meta 承担：AST 的 methods 数组整体映射）✓
+            // #include "scan/scan_face.inc"
             // ★★ S10 删除老解析（2026-10-01）：enum 的**整个文本扫描退役** ——
             //   符号建表由 parser AST 承担（module_ast_exports.c 的 ast_fill_one_enum，
             //   find 不到就 add_enum），导出名也由 AST 提供（ModuleExportNamesProvider）✓
