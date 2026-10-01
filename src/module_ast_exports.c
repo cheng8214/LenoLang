@@ -470,6 +470,29 @@ static void ast_fill_one_alias(ModuleSymbolTable* table, Ast* al) {
 //   AST 的同一个 TypeInfo 与同一个节点 ⇒ 天然同源，整类一起换 ✓
 //   扫描链为了拿这些要自己解析"类型在前/带泛型"的文本（scan_var.inc 那一大段），
 //   AST 侧 u.var_decl.type 已经是 parser 的结果 ⇒ 这正是"AST 提供更多信息"的直接体现 ✓
+// ============================================================================
+// 依赖表获取（**带环保护**）
+// ============================================================================
+// 为什么必须防环：填充期间"取依赖模块的表"会触发对方也扫表+填充；而 get_shared 的记忆化
+//   要等**本表填完**才生效 ⇒ `A use B` + `B use A` 会让 A 被当成"没见过"再建一张新表，
+//   如此往复 ⇒ **无限递归** ✗（文本扫描链时代不会有这事：那时取依赖表发生在
+//   scan_depth 内部，`scan_stack` 还在栈上，环会被当场判成"检测到循环依赖" ✓）
+// 两道保险：① 路径已在"解析中"集合里 ⇒ 直接不取（真环）；② 深度上限（兜底，防路径口径不一致）✓
+static const char* g_ast_dep_active[16];
+static int g_ast_dep_n = 0;
+
+static ModuleSymbolTable* ast_dep_table(ModuleSymbolTable* table, const char* path) {
+    if (!table || !path || !path[0]) return NULL;
+    if (g_ast_dep_n >= 16) return NULL;                 // ② 兜底：过深就停
+    for (int i = 0; i < g_ast_dep_n; i++) {             // ① 真环：同一个依赖正在解析中
+        if (g_ast_dep_active[i] && strcmp(g_ast_dep_active[i], path) == 0) return NULL;
+    }
+    g_ast_dep_active[g_ast_dep_n++] = path;
+    ModuleSymbolTable* dep = module_symbol_table_get_shared(path, table->module_path);
+    g_ast_dep_n--;
+    return dep;
+}
+
 // ---- 本模块的 import 别名表（供 `export const X = base.Y` 这类初始值递归解析）----
 //   为什么需要它：跨模块常量的类型必须**穿过中间模块**传播（test_export_const_type 整条用例
 //   就是这个：B 里 `export const RE_INT = base.INT_VAL`，C 访问 B.RE_INT 时类型要是 int 不是 any ✓）
@@ -500,7 +523,29 @@ static void ast_imports_build(Ast* root, AstImportRef** out, int* out_n) {
     for (int i = 0; i < root->u.block.count; i++) {
         Ast* st = root->u.block.items[i];
         if (!st || st->kind != AST_IMPORT) continue;
-        const char* key = st->u.import.alias ? st->u.import.alias : st->u.import.module_name;
+        // key = 该 import 在 `use` 语句里出现的模块名：别名优先 → 裸包名 → **从路径取基名**
+        //   ⚠ 最后那条必须有：`import Win32` 这类裸名 import 在 AST 上可能只剩 file_path
+        //     （alias / module_name 为空）⇒ 少了它 `use Win32.RegValueInfo` 就找不到依赖 ✗
+        //     （实测 test_lenosys / test_native_module_resolve 的 sys_win.leno:18）
+        const char* key = (st->u.import.alias && st->u.import.alias[0])
+                              ? st->u.import.alias
+                              : ((st->u.import.module_name && st->u.import.module_name[0])
+                                     ? st->u.import.module_name : NULL);
+        char keybuf[128];
+        keybuf[0] = '\0';
+        if (!key && st->u.import.file_path) {
+            const char* fp = st->u.import.file_path;
+            const char* b = fp;
+            for (const char* q = fp; *q; q++) {
+                if (*q == '/' || *q == '\\') b = q + 1;
+            }
+            const char* dot = strrchr(b, '.');
+            size_t nlen = (dot && dot > b) ? (size_t)(dot - b) : strlen(b);
+            if (nlen >= sizeof(keybuf)) nlen = sizeof(keybuf) - 1;
+            memcpy(keybuf, b, nlen);
+            keybuf[nlen] = '\0';
+            if (keybuf[0]) key = keybuf;
+        }
         const char* path = st->u.import.file_path ? st->u.import.file_path : st->u.import.module_name;
         if (!key || !path) continue;
         AstImportRef* grown = (AstImportRef*)realloc(arr, sizeof(AstImportRef) * (size_t)(n + 1));
@@ -530,7 +575,7 @@ static TypeInfo* ast_infer_module_access(ModuleSymbolTable* table, Ast* init) {
         }
     }
     if (!path) return NULL;
-    ModuleSymbolTable* dep = module_symbol_table_get_shared(path, table->module_path);
+    ModuleSymbolTable* dep = ast_dep_table(table, path);
     if (!dep) return NULL;
     ModuleVarSymbol* v = module_symbol_table_find_var(dep, member);
     if (v) {
@@ -692,6 +737,158 @@ static void ast_fill_one_destruct(ModuleSymbolTable* table, Ast* dd) {
                                     (r && r->struct_name) ? r->struct_name : NULL,
                                     dd->u.destruct_decl.is_const, r);
         if (r) type_free(r);
+    }
+}
+
+// ============================================================================
+// `use` / `import` 传导接管（S10 收尾 —— 文本扫描链**最后**一块活）
+// ============================================================================
+// 为什么需要它：本模块**自己的**声明由上面的 ast_fill_one_* 建表；而 `use dep.X` 的语义是
+//   "把 dep 模块的类型 X 引进本模块符号表" —— 这条**跨模块引进**的链在 AST 侧原本没有对应物，
+//   一直由 scan_pass2_init.inc 的文本扫描做（认 use 行 → 找 dep 表 → 逐个 add_*）。
+//   实测（把扫描链整体停用）：只红 22 个，且**全部**是 use 链 / clib 跨模块 / cfunc 传导 /
+//   enum 链 / alias 泛型 —— 即这一块就是扫描链剩下的全部价值 ✓
+// 做法：parser 已把 `use` 解析成 AST_USE 节点 ⇒ 按节点做同样的事（不再需要文本匹配）✓
+//   依赖路径用本模块 import 语句建的别名表（g_ast_imports，见 ast_infer_module_access）✓
+
+// alias 底层类型依赖的**递归传导**（与 sym_table_import_alias.inc 的语义对齐）：
+//   `use m.EventHandler`（= func(Event):bool）时，Event 也要一起进来，否则
+//   "返回类型里的聚合名在本表查不到" ⇒ 消费方看到 struct/any ✗
+static void ast_transmit_type_deps(ModuleSymbolTable* table, ModuleSymbolTable* dep,
+                                   TypeInfo* ti, int depth) {
+    if (!table || !dep || !ti || depth > 8) return;
+    switch (ti->kind) {
+        case TYPE_FUNCTION:
+            if (ti->param_types) {
+                for (int i = 0; i < ti->param_count; i++) {
+                    ast_transmit_type_deps(table, dep, ti->param_types[i], depth + 1);
+                }
+            }
+            if (ti->return_type) ast_transmit_type_deps(table, dep, ti->return_type, depth + 1);
+            return;
+        case TYPE_ARRAY:
+        case TYPE_PTR_GENERIC:
+            if (ti->element_type) ast_transmit_type_deps(table, dep, ti->element_type, depth + 1);
+            return;
+        case TYPE_DICT:
+            if (ti->key_type) ast_transmit_type_deps(table, dep, ti->key_type, depth + 1);
+            if (ti->value_type) ast_transmit_type_deps(table, dep, ti->value_type, depth + 1);
+            return;
+        default: break;
+    }
+    if (!ti->struct_name) return;
+    const char* nm = ti->struct_name;
+    // 本地已有 ⇒ 不动（与扫描链的 !find_* 判据一致 ✓）
+    if (module_symbol_table_find_struct(table, nm) || module_symbol_table_find_face(table, nm) ||
+        module_symbol_table_find_enum(table, nm) || module_symbol_table_find_alias(table, nm) ||
+        module_symbol_table_find_clib(table, nm)) {
+        return;
+    }
+    ModuleStructSymbol* ss = module_symbol_table_find_struct(dep, nm);
+    if (ss) {
+        module_symbol_table_add_struct(table, nm, ss->field_count, ss->fields, ss->method_count,
+                                       ss->methods, ss->is_cstruct, ss->type_param_count,
+                                       ss->type_param_names);
+        module_symbol_table_set_struct_impls(table, nm, ss->impl_count, ss->impl_names);
+        module_symbol_table_set_struct_consts(table, nm, ss->const_count, ss->const_names,
+                                              ss->const_value_strs);
+        return;
+    }
+    ModuleFaceSymbol* fs = module_symbol_table_find_face(dep, nm);
+    if (fs) {
+        module_symbol_table_add_face(table, nm, fs->method_count, fs->methods, fs->type_param_count);
+        return;
+    }
+    ModuleEnumSymbol* es = module_symbol_table_find_enum(dep, nm);
+    if (es) {
+        module_symbol_table_add_enum(table, nm, es->member_count, es->member_names, es->member_values);
+        return;
+    }
+    ModuleAliasSymbol* as = module_symbol_table_find_alias(dep, nm);
+    if (as) {
+        module_symbol_table_add_alias(table, nm, as->type_info ? type_copy(as->type_info) : NULL);
+        if (as->type_info) ast_transmit_type_deps(table, dep, as->type_info, depth + 1);
+        return;
+    }
+    ModuleClibSymbol* cs = module_symbol_table_find_clib(dep, nm);
+    if (cs) module_symbol_table_add_clib(table, nm, cs->func_count, cs->funcs);
+}
+
+// `use m.X`（单名）：把 X 从 m 的表里引进本表 ✓
+//   ⚠ 批量写法 `use m.(A, B, C)` 由 parser 拆成多个 AST_USE 节点 ⇒ 这里只处理单名 ✓
+static void ast_fill_one_use(ModuleSymbolTable* table, Ast* us) {
+    if (!table || !us) return;
+    const char* mname = us->u.use.module_name;
+    const char* sname = us->u.use.symbol_name;
+    if (!mname || !sname || !sname[0]) return;
+    const char* path = NULL;
+    for (int i = 0; i < g_ast_import_count; i++) {
+        if (g_ast_imports[i].key && strcmp(g_ast_imports[i].key, mname) == 0) {
+            path = g_ast_imports[i].path;
+            break;
+        }
+    }
+    if (!path) return;                      // 原生模块（io / ffi / maths…）⇒ 无符号表可传导 ✓
+    ModuleSymbolTable* dep = ast_dep_table(table, path);
+    // 【临时探针·待删】
+    fprintf(stderr, "[useprobe] %s: use %s.%s path=%s dep=%p same=%d\n",
+            table->module_path ? table->module_path : "?", mname, sname, path,
+            (void*)dep, (dep == table) ? 1 : 0);
+    if (!dep || dep == table) return;
+    // ★ 依赖登记（`.lenosymc` 失效判定要用；扫描链原先在文本路径里做）✓
+    if (dep->module_path) module_symbol_table_add_dep(table, dep->module_path);
+
+    ModuleStructSymbol* ss = module_symbol_table_find_struct(dep, sname);
+    if (ss) {
+        if (!module_symbol_table_find_struct(table, sname)) {
+            module_symbol_table_add_struct(table, sname, ss->field_count, ss->fields,
+                                           ss->method_count, ss->methods, ss->is_cstruct,
+                                           ss->type_param_count, ss->type_param_names);
+            module_symbol_table_set_struct_impls(table, sname, ss->impl_count, ss->impl_names);
+            module_symbol_table_set_struct_consts(table, sname, ss->const_count, ss->const_names,
+                                                  ss->const_value_strs);
+        }
+        return;
+    }
+    ModuleFaceSymbol* fs = module_symbol_table_find_face(dep, sname);
+    if (fs) {
+        if (!module_symbol_table_find_face(table, sname)) {
+            module_symbol_table_add_face(table, sname, fs->method_count, fs->methods,
+                                         fs->type_param_count);
+        }
+        return;
+    }
+    ModuleClibSymbol* cs = module_symbol_table_find_clib(dep, sname);
+    if (cs) {
+        if (!module_symbol_table_find_clib(table, sname)) {
+            module_symbol_table_add_clib(table, sname, cs->func_count, cs->funcs);
+        }
+        return;
+    }
+    ModuleCfuncSymbol* cf = module_symbol_table_find_cfunc(dep, sname);
+    if (cf) {
+        if (!module_symbol_table_find_cfunc(table, sname)) {
+            module_symbol_table_add_cfunc(table, sname, cf->param_count, cf->param_types,
+                                          cf->param_element_types, cf->param_struct_names,
+                                          cf->param_names, cf->return_type,
+                                          cf->return_element_type, cf->return_struct_name);
+        }
+        return;
+    }
+    ModuleEnumSymbol* es = module_symbol_table_find_enum(dep, sname);
+    if (es) {
+        if (!module_symbol_table_find_enum(table, sname)) {
+            module_symbol_table_add_enum(table, sname, es->member_count, es->member_names,
+                                         es->member_values);
+        }
+        return;
+    }
+    ModuleAliasSymbol* as = module_symbol_table_find_alias(dep, sname);
+    if (as) {
+        if (!module_symbol_table_find_alias(table, sname)) {
+            module_symbol_table_add_alias(table, sname, as->type_info ? type_copy(as->type_info) : NULL);
+        }
+        if (as->type_info) ast_transmit_type_deps(table, dep, as->type_info, 0);
     }
 }
 
@@ -1208,13 +1405,20 @@ static void ast_fill_one_enum(ModuleSymbolTable* table, Ast* ed) {
 static void ast_fill_one_cfunc(ModuleSymbolTable* table, Ast* cf) {
     if (!cf || !cf->u.cfunc_decl.name) return;
     ModuleCfuncSymbol* sym = module_symbol_table_find_cfunc(table, cf->u.cfunc_decl.name);
-    if (!sym) return;
     int pc = cf->u.cfunc_decl.param_count;
+    if (pc < 0) return;
+
+    // ---- 先把 AST 映射成"符号表口径"的扁平数组（建表与覆盖共用同一套映射 ✓）----
+    TypeKind* pts = NULL;
+    TypeKind* pets = NULL;
+    char** psn = NULL;
+    char** pnm = NULL;
+    int have_params = (pc == 0);
     if (pc > 0 && cf->u.cfunc_decl.param_types) {
-        TypeKind* pts = (TypeKind*)malloc(sizeof(TypeKind) * pc);
-        TypeKind* pets = (TypeKind*)malloc(sizeof(TypeKind) * pc);
-        char** psn = (char**)malloc(sizeof(char*) * pc);
-        char** pnm = (char**)malloc(sizeof(char*) * pc);
+        pts = (TypeKind*)malloc(sizeof(TypeKind) * pc);
+        pets = (TypeKind*)malloc(sizeof(TypeKind) * pc);
+        psn = (char**)malloc(sizeof(char*) * pc);
+        pnm = (char**)malloc(sizeof(char*) * pc);
         if (pts && pets && psn && pnm) {
             for (int i = 0; i < pc; i++) {
                 TypeInfo* ti = cf->u.cfunc_decl.param_types[i];
@@ -1224,21 +1428,53 @@ static void ast_fill_one_cfunc(ModuleSymbolTable* table, Ast* cf) {
                 pnm[i] = (cf->u.cfunc_decl.param_names && cf->u.cfunc_decl.param_names[i])
                              ? strdup(cf->u.cfunc_decl.param_names[i]) : NULL;
             }
+            have_params = 1;
+        } else {
+            free(pts); free(pets); free(psn); free(pnm);
+            pts = NULL; pets = NULL; psn = NULL; pnm = NULL;
+        }
+    }
+    int have_ret = (cf->u.cfunc_decl.return_type != NULL);
+    TypeKind rt = TYPE_ANY;
+    char* rsn = NULL;
+    if (have_ret) {
+        rt = ast_kind_of(table, cf->u.cfunc_decl.return_type);
+        rsn = cf->u.cfunc_decl.return_type->struct_name
+                  ? strdup(cf->u.cfunc_decl.return_type->struct_name) : NULL;
+    }
+
+    if (sym) {
+        // 覆盖：旧数组不释放（同前：符号表进程内长存活、量小，先避 use-after-free ✓）
+        if (have_params) {
             sym->param_count = pc;
             sym->param_types = pts;
             sym->param_element_types = pets;
             sym->param_struct_names = psn;
             sym->param_names = pnm;
-        } else {
-            free(pts); free(pets); free(psn); free(pnm);
         }
+        if (have_ret) {
+            sym->return_type = rt;
+            sym->return_element_type = TYPE_PTR;
+            sym->return_struct_name = rsn;
+        }
+        return;
     }
-    if (cf->u.cfunc_decl.return_type) {
-        sym->return_type = ast_kind_of(table, cf->u.cfunc_decl.return_type);
-        sym->return_element_type = TYPE_PTR;
-        sym->return_struct_name = cf->u.cfunc_decl.return_type->struct_name
-                                      ? strdup(cf->u.cfunc_decl.return_type->struct_name) : NULL;
+
+    // ★ 建表路径（scan_pass1 的非 export cfunc 分支退役的前提）：
+    //   `export cfunc X(...)` 的条目原先**只在扫描链里建**（AST 侧只做覆盖）⇒ 停用扫描链后
+    //   跨模块 `use m.X`、以及"把 cfunc 当参数类型"的用法全部失联
+    //   （实测 test_cfunc_use / test_cfunc_chain / test_cfunc_ffi / test_cfunc_sub ✓）
+    //   add_cfunc 内部深拷贝 ⇒ 随后释放临时数组 ✓
+    module_symbol_table_add_cfunc(table, cf->u.cfunc_decl.name, pc, pts, pets, psn, pnm,
+                                  rt, TYPE_PTR, rsn);
+    if (pts) {
+        for (int i = 0; i < pc; i++) {
+            free(psn[i]);
+            free(pnm[i]);
+        }
+        free(pts); free(pets); free(psn); free(pnm);
     }
+    free(rsn);
 }
 
 static void ast_symbol_fill_provider(ModuleSymbolTable* table, const char* src) {
@@ -1260,6 +1496,17 @@ static void ast_symbol_fill_provider(ModuleSymbolTable* table, const char* src) 
             Ast* st = root->u.block.items[i];
             if (!st) continue;
             Ast* d = (st->kind == AST_EXPORT && st->u.export.decl) ? st->u.export.decl : st;
+            // ⚠ 批量 `use m.(A, B, C)`（**>1 个**）会被 parser 打成 **AST_BLOCK**，里面才是
+            //   一串 AST_USE（见 parser_module.c:565 —— 单名才直接返回 AST_USE）⇒
+            //   这里必须展开一层，否则跨行批量 use 整条传导都丢掉
+            //   （实测 test_scanwrap 的 `use base.(Base,\n Other)` 就是这个形状 ✗）
+            if (d->kind == AST_BLOCK) {
+                for (int k = 0; k < d->u.block.count; k++) {
+                    Ast* sub = d->u.block.items[k];
+                    if (sub && sub->kind == AST_USE) ast_fill_one_use(table, sub);
+                }
+                continue;
+            }
             if (d->kind == AST_FUNC_DEF) ast_fill_one_func(table, d);
             else if (d->kind == AST_ALIAS) ast_fill_one_alias(table, d);
             else if (d->kind == AST_CFUNC_DECL) ast_fill_one_cfunc(table, d);
@@ -1270,6 +1517,7 @@ static void ast_symbol_fill_provider(ModuleSymbolTable* table, const char* src) 
             else if (d->kind == AST_CSTRUCT_DEF) ast_fill_one_cstruct(table, d);
             else if (d->kind == AST_VAR_DECL) ast_fill_one_var(table, d);
             else if (d->kind == AST_DESTRUCT_DECL) ast_fill_one_destruct(table, d);
+            else if (d->kind == AST_USE) ast_fill_one_use(table, d);   // ★ 跨模块传导（S10 收尾）
             // 注（2026-10-01）：var 类现在**既建表也覆盖**（建表路径见 ast_fill_one_var）。
             //   此前那套"先对齐表示层"的结论**已作废** —— 障碍不在表示层，而在
             //   旧实现开头就是 `if (!sym) return;`：停用 scan_var 后**没有任何人建 var 条目**，

@@ -143,7 +143,7 @@ static int mod_source_line(const char* source, const char* pos) {
 #include "inc/sym_table_params.inc"
 
 // 导入别名类型依赖传导
-#include "inc/sym_table_import_alias.inc"
+// ★ S10 收官：`inc/sym_table_import_alias.inc` 已删除（use 传导搬到 AST 侧 ast_fill_one_use）
 
 // 枚举成员常量表达式求值：**不再有本模块自己的求值器**。
 // 扫描阶段需要值时调 parser_eval_const_expr_text（parser_func.c），词法/语法/求值全是语言本身
@@ -172,7 +172,11 @@ static void resolve_module_full_path(char* full_path, int max_len,
                                        const char* module_path, const char* current_file);
 
 // 符号表扫描（两遍扫描）
-#include "inc/sym_table_scan.inc"
+// ★ S10 收官（2026-10-01）：文本扫描链**整条退役** —— `inc/sym_table_scan.inc`
+//   （pass1 名字收集 + pass2 的 use/import 传导 + 主循环）与它 include 的 3 个 scan_*.inc
+//   全部删除；`inc/sym_table_import_alias.inc`（alias 依赖递归）随它的唯一调用者一起删。
+//   现在符号**全部**来自 AST 填充器（module_ast_exports.c），本文件只负责
+//   "按路径建表 / 记忆化 / 磁盘缓存 / 环检测" 这套基础设施 ✓
 
 // 符号表缓存（.lenosymc 序列化/反序列化）
 #include "inc/sym_table_cache.inc"
