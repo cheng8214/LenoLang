@@ -1,0 +1,89 @@
+// SDL3 截屏模块回归（build\leno_module\LenoSDL3\lib\sdl_capture.leno）
+//
+// ★ 分两层：
+//   ① 确定性部分：PNG → 像素（**任何平台都能跑** ✓）—— 这正是 Linux 侧"外部工具出 PNG、
+//      自己解码成像素"那条路的核心一步，在 Windows 上就能钉死 ✓
+//   ② 真机抓屏：**软断言**（本平台没工具/没显示器时只提示，不判失败 ⇒ 避免 CI 上假红 ✓）
+import "SDL3" as SDL3
+import ffi
+import dirs
+import files
+import Sys
+import "Win32" as Win32          // ★ 只为验"Windows 那条臂"（应用侧三元表达式的另一半 ✓）
+                               //   ⚠ 在 Linux 上 import 它无害（只是不调用 ✓，见下面 Sys.isWindows 守卫 ✓）
+
+main() {
+    print("=== SDL3 截屏模块回归 ===")
+
+    // ---------- ① 造一张 PNG（用 SDL 自己写 ⇒ 不依赖任何外部工具 ✓）----------
+    int w = 8
+    int h = 4
+    Ptr[u8] buf = ffi.malloc(w * h * 4)
+    int y = 0
+    while (y < h) {
+        int x = 0
+        while (x < w) {
+            ffi.write_int(buf, (y * w + x) * 4, 0xFF000000 + x)
+            x = x + 1
+        }
+        y = y + 1
+    }
+    Ptr[u8] surf = SDL3.createSurfaceFromRaw(w, h, 372645892, buf, w * 4)
+    assert_true(surf != null, "造 surface 失败")
+    string png = dirs.join(_tmpdir(), "sdl_capture_regress.png")
+    assert_true(SDL3.saveImagePNG(surf, png), "写 PNG 失败")
+    assert_true(files.exists(png), "PNG 没落盘")
+
+    // ---------- ② PNG → 像素：必须统一成 ARGB8888（4 字节/像素）----------
+    //   为什么这条最关键：本仓的截屏工具按 "pitch = w*4、每像素 4 字节" 裁剪
+    //   ⇒ 若这里放行一个 24 位/调色板 surface，裁剪会**静默错位** ✗
+    var d = SDL3.pngFileToPixels(png)
+    assert_true(d.len() > 0, "pngFileToPixels 返回空")
+    assert_eq(_int(d["w"]), w, "宽不符")
+    assert_eq(_int(d["h"]), h, "高不符")
+    assert_eq(_int(d["pitch"]), w * 4, "pitch 必须 = w*4（4 字节/像素 ✓）")
+    assert_eq(_int(d["fmt"]), 372645892, "fmt 必须是 ARGB8888（与 Windows 侧一致 ✓）")
+    Ptr[u8] px = d["pixels"] as Ptr[u8]
+    assert_true(px != null, "pixels 为空")
+    print("  读回像素[0] = " + _str(ffi.read_int(px, 0)) + "（能读 ⇒ 指针有效 ✓）")
+    ffi.free(px)
+
+    // ---------- ③ 不存在的文件 ⇒ 如实返回空（不崩、不编假数据 ✓）----------
+    var e = SDL3.pngFileToPixels(dirs.join(_tmpdir(), "no_such_file_xyz.png"))
+    assert_eq(e.len(), 0, "不存在的 PNG 必须返回 {}")
+
+    // ---------- ④ 真机抓屏（软断言 ✓）----------
+    var shot = SDL3.captureScreen()
+    if shot.len() > 0 {
+        print("  真机抓屏：w=" + _str(_int(shot["w"])) + " h=" + _str(_int(shot["h"]))
+            + " pitch=" + _str(_int(shot["pitch"])))
+        assert_eq(_int(shot["pitch"]), _int(shot["w"]) * 4, "抓屏 pitch 也必须是 w*4 ✓")
+        Ptr[u8] cpx = shot["pixels"] as Ptr[u8]
+        if cpx != null { ffi.free(cpx) }
+    } else {
+        print("  真机抓屏：本平台不可用（Windows 请走 Win32.captureScreen；"
+            + "Linux 需装 grim / gnome-screenshot / spectacle / scrot / import ✓）")
+    }
+
+    // ---------- ⑤ Windows 那条臂：应用侧三元表达式的另一半（必须真有像素 ✓）----------
+    //   非 Windows 跳过（`Win32.captureScreen` 会去 load user32.dll ⇒ 只在 Windows 上调 ✓）
+    if Sys.isWindows() {
+        var w2 = Win32.captureScreen()
+        assert_true(w2.len() > 0, "Windows 上 Win32.captureScreen 必须返回像素")
+        int ww = _int(w2["w"])
+        int hh = _int(w2["h"])
+        assert_true(ww > 0 and hh > 0, "Win32 抓屏的尺寸必须 > 0")
+        assert_eq(_int(w2["pitch"]), ww * 4, "Win32 抓屏 pitch 也必须是 w*4（与 SDL3 侧同约定 ✓）")
+        assert_eq(_int(w2["fmt"]), 372645892, "Win32 抓屏 fmt 也必须是 ARGB8888（两端同格式 ✓）")
+        print("  Windows 臂：w=" + _str(ww) + " h=" + _str(hh) + " ✓")
+        Ptr[u8] wp = w2["pixels"] as Ptr[u8]
+        if wp != null { ffi.free(wp) }
+    } else {
+        print("  Windows 臂：本平台跳过（" + Sys.os() + " ✓）")
+    }
+
+    SDL3.destroySurface(surf)
+    ffi.free(buf)
+    try { files.delete(png) } catch e { return }
+    print("=== SDL3 截屏模块回归：通过 ===")
+}

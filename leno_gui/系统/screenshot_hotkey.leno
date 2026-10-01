@@ -1,9 +1,16 @@
-// screenshot_hotkey.leno — Leno QQ 风格截图快捷工具
+// screenshot_hotkey.leno — Leno QQ 风格截图快捷工具（★ 2026-10-01 跨平台）
 // Ctrl+Shift+S 截图，选区后弹出工具栏（箭头/画笔/文字/保存/复制/退出）
+//
+// ★ 跨平台分工（本仓既有惯例：应用侧按平台分支 ✓）：
+//   抓屏    ：Windows=GDI / 其它=SDL3 的外部工具路径（同形返回 ✓ 像素处理代码一行不改 ✓）
+//   剪贴板  ：Windows=DIB / 其它=PNG + `wl-copy`/`xclip`（没装就如实报错并给出文件路径 ✓）
+//   全局热键：**Windows 专属**（轮询键盘 + Win32 消息泵 ✗）⇒ 非 Windows 上直接抓一次，
+//             并把"如何绑定到桌面环境快捷键"打印出来（Linux 的标准做法 ✓）
 import ffi
 import times
 import dirs
 import maths
+import Sys
 import "Win32" as Win32
 import "SDL3" as SDL3
 use SDL3.(Event, Renderer, Scancode, WindowFlag, MouseButton, Font, SDL_SurfaceInfo, SDL_Rect, sdl3_ttf)
@@ -173,7 +180,9 @@ func _b(int c): int { return c & 0xFF }
 
 // ==== 截图 Session ====
 func doScreenshot() {
-    var shot = Win32.captureScreen()
+    // ★ 跨平台抓屏（Windows=GDI 已实测 ✓ / 其它=外部工具 + SDL_image 解码 ✓）
+    //   两者同形返回 {w,h,fmt,pitch,pixels} 且 fmt 均为 ARGB8888 ⇒ 下面的像素处理不用改 ✓
+    var shot = if Sys.isWindows() then Win32.captureScreen() else SDL3.captureScreen()
     if shot is Dict {
         _sw = _int(shot["w"]); _sh = _int(shot["h"])
         _pixels = shot["pixels"] as Ptr[u8]
@@ -1113,15 +1122,63 @@ func _doSave(Array[Font] fontList) {
     ffi.free(cp)
 }
 
-// ==== 复制到剪贴板 ====
+// ==== 复制到剪贴板（★ 2026-10-01 跨平台）====
+//   · Windows：走 DIB（`Win32.copyToClipboard` 原生、无外部依赖 ✓）
+//   · 其它   ：先存一张 PNG，再交给系统工具贴进剪贴板
+//       Wayland ⇒ `wl-copy --type image/png`（重定向进 stdin ✓）
+//       X11     ⇒ `xclip -selection clipboard -t image/png -i <文件>`
+//     ⚠ 两者可能都没装 ⇒ **如实报错并给出文件路径**（不静默失败 ✗，也不假装成功 ✗）
 func _doCopy(Array[Font] fontList) {
     var c = _cropPixels(fontList)
     if c == null { return }
     Ptr[u8] cp = c["pixels"] as Ptr[u8]
     int w = _int(c["w"]); int h = _int(c["h"])
-    if Win32.copyToClipboard(cp,w,h) { print("[剪贴板] 已复制 "+w+"x"+h) }
-    else { print("[剪贴板] 失败") }
+
+    if Sys.isWindows() {
+        if Win32.copyToClipboard(cp, w, h) { print("[剪贴板] 已复制 " + _str(w) + "x" + _str(h)) }
+        else { print("[剪贴板] 失败") }
+        ffi.free(cp)
+        return
+    }
+
+    // 非 Windows：pixels → PNG → 系统剪贴板工具
+    string tmp = dirs.join(_tmpdir(), "lenoshot_clip_" + _str(times.ms()) + ".png")
+    Ptr[u8] surf = SDL3.createSurfaceFromRaw(w, h, 372645892, cp, w * 4)
+    bool wrote = false
+    if surf != null {
+        wrote = SDL3.saveImagePNG(surf, tmp)
+        SDL3.destroySurface(surf)
+    }
     ffi.free(cp)
+    if not wrote {
+        print("[剪贴板] 生成 PNG 失败 ⇒ 无法交给系统工具")
+        return
+    }
+
+    Array[string] cmds = [
+        "wl-copy --type image/png < \"" + tmp + "\"",
+        "xclip -selection clipboard -t image/png -i \"" + tmp + "\""
+    ]
+    for cmds to cmd {
+        ExecResult? r = _exec(cmd, 10000)
+        if r != null and r.code == 0 {
+            print("[剪贴板] 已复制 " + _str(w) + "x" + _str(h) + "（" + cmd + "）")
+            // ⚠ **不删这个 PNG**：wl-copy/xclip 是"后台服务式"持有数据，
+            //   删文件有丢内容的先例 ⇒ 留在临时目录（系统会自己清 ✓）
+            return
+        }
+    }
+    print("[剪贴板] 本平台没装 wl-copy / xclip ⇒ 图片已存到：" + tmp + "（可手动粘贴/保存 ✓）")
+}
+
+// 本程序的自启动命令行（绑定快捷键时用 ✓）
+//   打包态只写 exe；未打包态 = exe + 本脚本 ✓（与 trae_tray 的 _launchCmd 同款判断 ✓）
+func _selfCmd(): string {
+    string exe = Sys.exePath()
+    if dirs.res_dir() != dirs.script_dir() {
+        return "\"" + exe + "\""
+    }
+    return "\"" + exe + "\" \"" + dirs.join(dirs.script_dir(), "screenshot_hotkey.leno") + "\""
 }
 
 // ==== 入口 ====
@@ -1129,6 +1186,22 @@ main() {
     SDL3.ttfInit()
     print("Leno QQ 截图工具 - Ctrl+Shift+S 截图")
     print("选区后弹出工具栏（箭头/画笔/文字/保存/复制/退出）")
+
+    // ★ 2026-10-01 跨平台：全局热键那条链是 **Windows 专属**
+    //   （`Win32.isKeyDown` 轮询 + 消息泵都只存在于 Windows ✗）
+    //   非 Windows 上：**直接抓一次**，并把"怎么绑定快捷键"打印出来 ——
+    //   Linux 的标准做法就是让桌面环境/窗口管理器负责快捷键，程序只需能被命令行触发 ✓
+    //   （不假装有热键、也不静默退出 ✗）
+    if not Sys.isWindows() {
+        print("")
+        print("[热键] 本平台没有全局热键（Windows 专属）⇒ 直接为你启动一次截图 ✓")
+        print("[热键] 想用 Ctrl+Shift+S 之类：把下面这条命令绑定到桌面环境的快捷键里即可 ——")
+        print("        " + _selfCmd())
+        print("")
+        doScreenshot()
+        SDL3.ttfQuit()
+        return
+    }
 
     var _hkDown = false
     var msgBuf = Win32.allocMsg()

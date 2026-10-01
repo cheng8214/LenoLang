@@ -1,0 +1,145 @@
+// sdl_capture.leno — 桌面截屏（**非 Windows 平台**：借外部工具 + SDL_image 解码 ✓）
+//
+// 为什么放在 LenoSDL3（而不是 LenoSys）：
+//   本平台截屏要靠"外部工具写 PNG → 自己解码"，而解码只能用 SDL_image（本模块已有 ✓）。
+//   放进 LenoSys ⇒ "系统能力模块"反过来依赖 GUI 模块 ✗（服务器/CLI 也得装 SDL ✗）
+//
+// ★ Windows 请用 LenoWin32 的 `Win32.captureScreen()`（GDI BitBlt，已实测可用 ✓）。
+//   本函数在 Windows 上**如实返回 {} 并说明**（不静默给黑图 ✗）。
+//   应用侧按本仓既有惯例分支即可（见 cleaner_detail 的 `xdg-open` / `cmd /c start` ✓）：
+//     var shot = if Sys.isWindows() then Win32.captureScreen() else SDL3.captureScreen()
+//
+// 返回（与 `Win32.captureScreen` **同形**，可直接互换 ✓）：
+//   { "w":int, "h":int, "fmt":int, "pitch":int, "pixels":Ptr[u8] }
+//   · `fmt` 恒为 **ARGB8888**（372645892）—— 与 Windows 侧一致 ⇒ 调用方**不必**按平台
+//     分支处理像素布局 ✓（4 字节/像素、小端内存序 B,G,R,A ✓）
+//   · `pixels` 由 `ffi.malloc` 分配 ⇒ **调用方负责 `ffi.free`** ✓；`pitch` 恒 = w*4 ✓
+//   · 失败 ⇒ `{}`（调用方判 `len == 0` ✓）
+//
+// 工具选择（按序试，第一个跑通且产出非空 PNG 的胜出）：
+//   grim              wlroots 系 Wayland（sway / hyprland …）✓
+//   gnome-screenshot  GNOME（内部走 portal ⇒ **可能弹系统授权框** ✓ 这是设计如此，不是 bug）
+//   spectacle         KDE ✓
+//   scrot             X11 ✓
+//   import            ImageMagick（X11）✓
+import ffi
+import files
+import dirs
+import strings
+import times
+import "sdl_core.leno" as core
+import "sdl_image.leno" as img
+use core.sdl3
+
+sdl3 _lib = core.lib()
+
+// SDL_Surface 头部：**实测偏移**（2026-10-01 探针实测，非推测 ✓）
+//   flags@0  format@4  w@8  h@12  pitch@16  (4B 空)  pixels@24
+//   ⚠ 别照抄 SDL2 文档：本机实测 format 是**整数值**而不是指针 ⇒ w 就在 8 ✓
+//     （现有 `SDL_SurfaceInfo` 只声明到 h ✓ 这里补了 pitch/pixels ✓）
+//   ⚠ 字段名不能用 `f32`/`i32` 之类（撞类型关键字 ✗ —— 探针阶段踩过 ✓）
+cstruct SurfRaw {
+    u32 flags
+    i32 format
+    i32 w
+    i32 h
+    i32 pitch
+    i32 pad
+    Ptr[u8] pixels
+}
+
+// ==================== 对外：桌面截屏 ====================
+export func captureScreen(): Dict {
+    if _os() == "windows" {
+        print("[SDL3.captureScreen] Windows 上请用 LenoWin32 的 Win32.captureScreen()（GDI BitBlt）✓")
+        return {}
+    }
+    return _captureViaTool()
+}
+
+// PNG 文件 → {w,h,fmt,pitch,pixels}（**导出以便单测** ✓：这段在 Windows 上也能验 ✓）
+export func pngFileToPixels(string path): Dict {
+    return _pngToPixels(path)
+}
+
+// ==================== 内部实现 ====================
+func _captureViaTool(): Dict {
+    // 临时文件名带毫秒 ⇒ 连拍也不打架 ✓
+    string tmp = dirs.join(_tmpdir(), "lenosdl_cap_" + _str(times.ms()) + ".png")
+    Array[string] tools = [
+        "grim {f}",
+        "gnome-screenshot -f {f}",
+        "spectacle -b -n -o {f}",
+        "scrot {f}",
+        "import -window root {f}"
+    ]
+
+    for tools to t {
+        // ⚠ 路径要加引号（临时目录可能含空格 ✓）；`_exec` 在 Linux 走 popen ⇒ 自带 /bin/sh ✓
+        string cmd = strings.replace(t, "{f}", "\"" + tmp + "\"")
+        // ⚠ `_exec` 可能返回 null ⇒ 用**可空类型** `ExecResult?` 声明
+        //   （直接 `var r = _exec(...)` 再判 `r != null` 会触发
+        //    「struct 与 null 比较」告警：结构体值类型默认不为 null ✓）
+        ExecResult? r = _exec(cmd, 20000)
+        bool ran = (r != null and r.code == 0)
+        if ran and files.exists(tmp) {
+            var d = _pngToPixels(tmp)
+            _rmQuiet(tmp)
+            if d.len() > 0 { return d }
+        }
+    }
+
+    print("[SDL3.captureScreen] 本平台没有可用的截屏工具（" + _os() + "）⇒ 装一个即可："
+        + "grim（Wayland/wlroots）、gnome-screenshot（GNOME，会弹授权框）、"
+        + "spectacle（KDE）、scrot 或 imagemagick 的 import（X11）")
+    return {}
+}
+
+func _rmQuiet(string p) {
+    try { files.delete(p) } catch e { return }
+}
+
+// 解码 PNG 并**统一转成 ARGB8888** ⇒ 与 Windows 截屏同格式 ✓
+//   ⚠ 为什么必须转格式：PNG 可能是**调色板/24 位** ⇒ 若原样返回，调用方那句
+//     "pitch = w*4、按 4 字节取像素"的假设会在**裁剪**时静默错位 ✗（本仓的
+//     截屏工具正是这么裁剪的）⇒ 这里一次性转好，把差异挡在模块内 ✓
+func _pngToPixels(string path): Dict {
+    if path == "" or not files.exists(path) { return {} }
+    Ptr[u8] s0 = img.load(path)
+    if s0 == null { return {} }
+
+    Ptr[u8] s = s0
+    SurfRaw r0 = SurfRaw.from_ptr(s0)
+    if r0.format != core.PIXELFORMAT_ARGB8888 {
+        Ptr[u8] conv = _lib.SDL_ConvertSurface(s0, core.PIXELFORMAT_ARGB8888)
+        if conv != null { s = conv }
+    }
+
+    SurfRaw raw = SurfRaw.from_ptr(s)
+    int w = raw.w
+    int h = raw.h
+    int pitch = raw.pitch
+    if w <= 0 or h <= 0 or raw.pixels == null {
+        _freeAll(s, s0)
+        return {}
+    }
+
+    // 拷一份出来：surface 马上要销毁，而调用方要长期持有这块内存 ✓
+    int size = pitch * h
+    Ptr[u8] dst = ffi.malloc(size)
+    if dst == null {
+        _freeAll(s, s0)
+        return {}
+    }
+    ffi.memcpy(dst, raw.pixels, size)
+    int fmt = raw.format
+    _freeAll(s, s0)
+
+    return {"w": w, "h": h, "fmt": fmt, "pitch": pitch, "pixels": dst}
+}
+
+// s 与 s0 可能同一块（没转换时）⇒ 别 double free ✓
+func _freeAll(Ptr[u8] s, Ptr[u8] s0) {
+    if s != s0 and s != null { _lib.SDL_DestroySurface(s) }
+    if s0 != null { _lib.SDL_DestroySurface(s0) }
+}

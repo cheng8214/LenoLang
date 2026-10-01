@@ -1,10 +1,17 @@
-// screenshot_tool.leno — Leno 桌面截图工具
-// 依赖：LenoSDL3 + LenoWin32
+// screenshot_tool.leno — Leno 桌面截图工具（★ 2026-10-01 跨平台）
+// 依赖：LenoSDL3 + LenoSys（Windows 上额外用 LenoWin32 做抓屏 ✓）
 // 操作：鼠标拖拽框选区域，Enter 保存 PNG，Esc/右键 取消退出
+//
+// 抓屏按平台分支（本仓既有惯例，见 cleaner_detail 的 xdg-open / cmd /c start ✓）：
+//   · Windows：`Win32.captureScreen()`（GDI BitBlt，已实测 ✓）
+//   · 其它   ：`SDL3.captureScreen()`（grim/gnome-screenshot/spectacle/scrot/import + SDL_image 解码 ✓）
+//   两者返回**同形** `{w,h,fmt,pitch,pixels}`，且 fmt 都是 ARGB8888
+//   ⇒ 下面的像素处理与裁剪代码**一行都不用改** ✓
 
 import ffi
 import times
 import dirs
+import Sys
 import "Win32" as Win32
 import "SDL3" as SDL3
 
@@ -272,8 +279,8 @@ func saveSelection() {
 // ==================== 入口 ====================
 
 main() {
-    // 1. 捕获桌面
-    var shot = Win32.captureScreen()
+    // 1. 捕获桌面（★ 跨平台：Windows=GDI / 其它=外部工具 + SDL_image ✓ 同形返回 ✓）
+    var shot = if Sys.isWindows() then Win32.captureScreen() else SDL3.captureScreen()
     if shot is Dict {
         _screenW = _int(shot["w"])
         _screenH = _int(shot["h"])
@@ -284,7 +291,7 @@ main() {
     }
 
     if _screenW <= 0 or _screenH <= 0 or _screenPixels == null {
-        print("截屏数据无效")
+        print("截屏数据无效（本平台抓不到屏幕？Windows 走 GDI；Linux 需装 grim 等工具 ⇒ 已在上方打印提示 ✓）")
         return
     }
 

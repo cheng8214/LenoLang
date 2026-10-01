@@ -207,6 +207,10 @@ clib sdl3 {
     u64  SDL_GetTicks()
 
     Ptr[u8]  SDL_CreateTextureFromSurface(Ptr[u8] renderer, Ptr[u8] surface)
+    // ★ 2026-10-01 加：surface 格式转换（SDL3 的签名收 **SDL_PixelFormat 枚举值**，
+    //   不再是 SDL2 的 `SDL_PixelFormat*` + flags ✓）
+    //   用途：sdl_capture.leno 把解码出来的图统一转成 ARGB8888 ⇒ 与 Windows 截屏同格式 ✓
+    Ptr[u8]  SDL_ConvertSurface(Ptr[u8] surface, u32 format)
     void SDL_DestroyTexture(Ptr[u8] texture)
     bool SDL_GetTextureSize(Ptr[u8] texture, Ptr[f32] w, Ptr[f32] h)
     bool SDL_RenderTexture(Ptr[u8] renderer, Ptr[u8] texture, Ptr[u8] src, Ptr[u8] dst)
