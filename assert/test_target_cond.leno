@@ -1,0 +1,149 @@
+// test_target_cond.leno —— 编译期 target 条件剪枝（2026-10-01 新增功能）
+//
+// 语义（详见 src/optimize/optimize.c 顶部的大段注释与 include/leno_optimize.h）：
+//   · `if` 的条件**只含 `target.*` 常量**且静态可判 ⇒ 死分支被剪掉，
+//     **不参与语义分析、不进字节码**；其余条件（`if false` / `if MY_FLAG` …）一律不动 ✓
+//   · 两端都**解析**（语法错在所有目标上都能查出来 ✓），只对活分支做语义分析 ✓
+//   · 目标由 `--target=<os>[-<arch>]` 指定（不指定 = 宿主编译目标）；
+//     `target.*` 取值与 `_os()` / `_arch()` 同口径：windows/linux/macos、x64/arm64；
+//     `family` 与 `pointer_bits` 分别由 os / arch **派生**（不另立取值 ⇒ 不会不一致 ✓）
+//
+// 本用例钉住的**两条配套承诺**（少了任一条，这功能就会变成语义陷阱）：
+//   ① 死分支里的**语义错不报**（否则等于没剪）—— 用"引用未定义变量"验
+//   ② 死分支里的**语法错照报**（因为剪枝发生在 parse 之后）—— 用"缺右括号"验
+//   另钉：**非 target 条件语义零变化**（`if false { 未定义变量 }` 必须照旧报错 ✓）——
+//   这条是"纯增量"的守门员：实测踩过（见 optimize.c 里 target_cond_eval 的注释）
+import dirs
+import files
+import strings
+
+func q(string path): string {
+    return "\"" + path + "\""
+}
+
+// 拼一条命令行（末尾带 2>&1 ⇒ stdout/stderr 都在 output 里 ✓）
+func cmd(string extra, string script): string {
+    return _executable() + " " + extra + " " + q(script) + " 2>&1"
+}
+
+main() {
+    // ---------- fixture：四个维度的分支标记 ----------
+    var br = dirs.join(_tmpdir(), "tc_branch.leno")
+    files.write(br, @"main() {
+    if target.os == ""windows"" { print(""OSMARK=windows"") } else if target.os == ""linux"" { print(""OSMARK=linux"") } else { print(""OSMARK=other"") }
+    if target.arch == ""arm64"" { print(""ARCHMARK=arm64"") } else { print(""ARCHMARK=x64"") }
+    if target.family == ""unix"" { print(""FAMMARK=unix"") } else { print(""FAMMARK=windows"") }
+    if target.pointer_bits == 64 { print(""BITSMARK=64"") } else { print(""BITSMARK=32"") }
+}
+")
+
+    // ---------- A. 目标决定走哪一支（含 family / pointer_bits 的派生值）----------
+    var a0 = _exec(cmd("", br), 60000)
+    assert_eq(a0.code, 0, "A0 不带 --target（= 宿主）应能跑；输出=" + a0.output)
+    assert_true(strings.has(a0.output, "OSMARK="), "A0 应打印宿主 OS 标记；输出=" + a0.output)
+
+    var a1 = _exec(cmd("--target=linux", br), 60000)
+    assert_eq(a1.code, 0, "A1 --target=linux 应能跑；输出=" + a1.output)
+    assert_true(strings.has(a1.output, "OSMARK=linux"), "A1 应走 linux 支；输出=" + a1.output)
+    assert_true(strings.has(a1.output, "ARCHMARK=x64"), "A1 只给 os ⇒ 架构沿用宿主；输出=" + a1.output)
+    assert_true(strings.has(a1.output, "FAMMARK=unix"), "A1 family 应由 os 派生为 unix；输出=" + a1.output)
+
+    var a2 = _exec(cmd("--target=macos-arm64", br), 60000)
+    assert_eq(a2.code, 0, "A2 --target=macos-arm64 应能跑；输出=" + a2.output)
+    assert_true(strings.has(a2.output, "OSMARK=other"), "A2 macos 应落到 else 支；输出=" + a2.output)
+    assert_true(strings.has(a2.output, "ARCHMARK=arm64"), "A2 架构应变成 arm64；输出=" + a2.output)
+    assert_true(strings.has(a2.output, "BITSMARK=64"), "A2 pointer_bits 应为 64；输出=" + a2.output)
+
+    var a3 = _exec(cmd("--target=windows", br), 60000)
+    assert_eq(a3.code, 0, "A3 --target=windows 应能跑；输出=" + a3.output)
+    assert_true(strings.has(a3.output, "OSMARK=windows"), "A3 应走 windows 支；输出=" + a3.output)
+    assert_true(strings.has(a3.output, "FAMMARK=windows"), "A3 family 应为 windows；输出=" + a3.output)
+
+    // ---------- B. 承诺①：死分支的语义错**不报**（否则等于没剪）----------
+    var dsem = dirs.join(_tmpdir(), "tc_dead_sem.leno")
+    files.write(dsem, @"main() {
+    if target.os == ""windows"" {
+        print(_str(tc_undefined_in_dead_branch))
+    } else {
+        print(""DEADBRANCH=skipped"")
+    }
+}
+")
+    var b1 = _exec(cmd("--target=linux", dsem), 60000)
+    assert_eq(b1.code, 0,
+        "B1 --target=linux 时 windows 支应被剪掉 ⇒ 里面的未定义变量**不该**报错；输出=" + b1.output)
+    assert_true(strings.has(b1.output, "DEADBRANCH=skipped"), "B1 应走出 else 支；输出=" + b1.output)
+
+    var b2 = _exec(cmd("--target=windows", dsem), 60000)
+    assert_true(b2.code != 0,
+        "B2 --target=windows 时该支是**活支** ⇒ 未定义变量必须报错；输出=" + b2.output)
+    assert_true(strings.has(b2.output, "未定义的变量"), "B2 报错应点名未定义变量；输出=" + b2.output)
+
+    // ---------- C. 承诺②：死分支的语法错**照报**（剪枝在 parse 之后 ✓）----------
+    var dsyn = dirs.join(_tmpdir(), "tc_dead_syn.leno")
+    files.write(dsyn, @"main() {
+    if target.os == ""windows"" {
+        print(""x""
+    } else {
+        print(""y"")
+    }
+}
+")
+    var c1 = _exec(cmd("--target=linux", dsyn), 60000)
+    assert_true(c1.code != 0,
+        "C1 死分支里的语法错**仍须**报出来（两端都解析 ✓）；输出=" + c1.output)
+
+    // ---------- D. 非 target 条件：语义零变化（"纯增量"守门员）----------
+    var iffalse = dirs.join(_tmpdir(), "tc_if_false.leno")
+    files.write(iffalse, @"main() {
+    if false {
+        print(_str(tc_undefined_in_if_false))
+    }
+    print(""ok"")
+}
+")
+    var d1 = _exec(cmd("", iffalse), 60000)
+    assert_true(d1.code != 0,
+        "D1 `if false { 未定义变量 }` 原本就要报错 ⇒ 新 pass **不得**把它也剪掉；输出=" + d1.output)
+    var d2 = _exec(cmd("--target=linux", iffalse), 60000)
+    assert_true(d2.code != 0,
+        "D2 带 --target 也一样（非 target 条件与目标无关 ✓）；输出=" + d2.output)
+
+    // ---------- E. 诊断：位置/字段名用错 ----------
+    var badf = dirs.join(_tmpdir(), "tc_bad_field.leno")
+    files.write(badf, @"main() {
+    if target.bogus == 1 { print(1) }
+}
+")
+    var e1 = _exec(cmd("", badf), 60000)
+    assert_true(e1.code != 0, "E1 字段名写错应报错；输出=" + e1.output)
+    assert_true(strings.has(e1.output, "target 没有字段 'bogus'"),
+        "E1 应点名可用字段；输出=" + e1.output)
+
+    var wh = dirs.join(_tmpdir(), "tc_while.leno")
+    files.write(wh, @"main() {
+    while target.os == ""windows"" { print(1) }
+}
+")
+    var e2 = _exec(cmd("", wh), 60000)
+    assert_true(e2.code != 0, "E2 target 条件用在 while 应报错；输出=" + e2.output)
+    assert_true(strings.has(e2.output, "只支持用在 if"),
+        "E2 应说明只支持 if；输出=" + e2.output)
+
+    var mod = dirs.join(_tmpdir(), "tc_module.leno")
+    files.write(mod, @"if target.os == ""windows"" {
+    print(1)
+}
+")
+    var e3 = _exec(cmd("", mod), 60000)
+    assert_true(e3.code != 0, "E3 模块级 target 条件暂不支持，应报错；输出=" + e3.output)
+    assert_true(strings.has(e3.output, "模块级的编译期 target 条件暂不支持"),
+        "E3 应说明原因（export 级牵涉模块符号表的文本扫描器）；输出=" + e3.output)
+
+    var e4 = _exec(cmd("--target=bogus", br), 60000)
+    assert_eq(e4.code, 64, "E4 不认识的 --target 应以 64 退出（CLI 用法错）；输出=" + e4.output)
+    assert_true(strings.has(e4.output, "不认识的 --target=bogus"),
+        "E4 应提示可用取值；输出=" + e4.output)
+
+    print("test_target_cond passed（28 例）")
+}

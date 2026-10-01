@@ -3,6 +3,7 @@
 #include "include/leno_parser.h"
 #include "include/leno_semantic.h"
 #include "include/module_compiler.h"
+#include "include/leno_optimize.h"   // optimize_target_prune（编译期 target 条件剪枝 ✓）
 #include "codegen/codegen.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,6 +28,18 @@ ObjModule* compile_module_new(const char* source, const char* module_name,
         errors.count = saved_count;
         ast_free(parser.root);
         return NULL;
+    }
+
+    // 1.5 编译期 target 条件剪枝（**必须在语义分析之前** ✓）
+    //     模块也要剪：模块体里同样可以有 `if target.os == …` 的条件分支，
+    //     目标由 main 在解析 CLI 时设好（`optimize_set_target`，模块编译发生在它之后 ✓）
+    {
+        int errors_before_prune = errors.count;
+        optimize_target_prune(parser.root);
+        if (errors.count > errors_before_prune) {
+            ast_free(parser.root);
+            return NULL;
+        }
     }
 
     // 2. 语义分析（模块模式）

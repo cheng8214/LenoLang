@@ -166,6 +166,10 @@ static void printHelp(const char* program) {
     printf("                    _console(false) 自动检测）\n");
     printf("  --no-console      打包时强制用无控制台版 leno_vm_gui（Windows；双击不弹黑框）\n");
     printf("                    （二者互斥；非 Windows 平台无此变体，会提示并忽略）\n");
+    printf("  --target=<目标>   编译目标（编译期条件剪枝用；默认宿主）：windows / linux /\n");
+    printf("                    macos，可带架构 -x64 / -arm64（如 --target=linux-arm64）。\n");
+    printf("                    只影响 `if target.* == …` 条件分支的选取；用于交叉检查\n");
+    printf("                    各平台分支。指定后会关闭编译缓存（产物按目标不同）\n");
     printf("  --init [路径]     在当前目录创建新 Leno 包项目\n");
     printf("  --install         安装包或依赖到全局缓存\n");
     printf("  --                终止解释器选项解析：其后的参数都按位置参数处理\n");
@@ -590,6 +594,13 @@ int lenolang_run(const char* source) {
     chunk_init(&chunk);
     CodeGen gen;
     codegen_init(&gen, &chunk, &sem);
+
+    // 2.4 编译期 target 条件剪枝（**必须在语义分析之前**：死分支不参与语义分析 ✓）
+    //     · 只有"条件含 target.*"的 if 会被剪；其余条件一律不动 ⇒ 现有语义零变化 ✓
+    //     · 目标由 CLI 的 --target= 设置（不设 = 宿主编译目标）；详见 leno_optimize.h
+    optimize_target_prune(parser.root);
+    if (error_has_any()) goto fail;
+
     semantic_analyze(&sem, parser.root);
     if (error_has_any()) goto fail;
 
@@ -822,6 +833,11 @@ int lenolang_compile(const char* source, const char* output_path) {
     chunk_init(&chunk);
     CodeGen gen;
     codegen_init(&gen, &chunk, &sem);
+
+    // 编译期 target 条件剪枝（**必须在语义分析之前** ✓；见 lenolang_run 里的同款说明）
+    optimize_target_prune(parser.root);
+    if (error_has_any()) goto compile_fail;
+
     clock_t t_sem0 = clock();
     semantic_analyze(&sem, parser.root);
     clock_t t_sem1 = clock();
@@ -2085,6 +2101,21 @@ static int main_logic(int argc, char** argv) {
             packConsoleMode = PACK_CONSOLE_NONE;
             continue;
         } else if (strcmp(argv[i], "--no-cache") == 0) {
+            module_loader_set_cache_enabled(0);
+            continue;
+        } else if (strncmp(argv[i], "--target=", 9) == 0) {
+            // 编译目标（编译期条件剪枝用，见 leno_optimize.h）：
+            //   --target=windows / --target=linux-arm64 / --target=macos …
+            // ⚠ 指定后**必须关掉编译缓存**：入口/模块缓存的键只含源码哈希 + exe 指纹，
+            //   **不含目标** ⇒ 同一份源码在两个目标下会算出同一个键 ⇒ 会命中错误产物 ✗
+            //   （交叉检查本来也不需要缓存 ✓）
+            const char* spec = argv[i] + 9;
+            if (optimize_set_target(spec) != 0) {
+                fprintf(stderr,
+                        "错误: 不认识的 --target=%s（可用: windows / linux / macos，"
+                        "可带架构 -x64 / -arm64，如 linux-arm64）\n", spec);
+                return 64;
+            }
             module_loader_set_cache_enabled(0);
             continue;
         } else if (strcmp(argv[i], "--version") == 0 || strcmp(argv[i], "-v") == 0) {
