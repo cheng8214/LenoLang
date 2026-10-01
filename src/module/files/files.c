@@ -66,24 +66,25 @@ static Value file_method_read(int argCount, Value* args) {
 
     if (argCount == 1) {
         // 读取全部内容
-        long current = ftell(file->fp);
-        fseek(file->fp, 0, SEEK_END);
-        long size = ftell(file->fp);
-        fseek(file->fp, current, SEEK_SET);
-
-        // 计算剩余可读字节数
-        long remaining = size - current;
-        if (remaining <= 0) {
-            return val_obj((Object*)str_copy("", 0));
-        }
-
-        char* buffer = (char*)malloc(remaining + 1);
+        // ★ 同 native_files_read：不靠 fseek/ftell 的「文件大小」——/proc、/sys 这类伪文件
+        //   上报 size=0，原实现直接返回空串 ✗ 改为从当前位置边读边扩容到 EOF ✓
+        size_t cap = 4096, read_size = 0;
+        char* buffer = (char*)malloc(cap + 1);
         if (!buffer) {
             native_throw_error("内存分配失败");
             return val_null();
         }
-
-        size_t read_size = fread(buffer, 1, remaining, file->fp);
+        for (;;) {
+            if (read_size == cap) {
+                cap *= 2;
+                char* nb = (char*)realloc(buffer, cap + 1);
+                if (!nb) { free(buffer); native_throw_error("内存分配失败"); return val_null(); }
+                buffer = nb;
+            }
+            size_t n = fread(buffer + read_size, 1, cap - read_size, file->fp);
+            read_size += n;
+            if (n == 0) break;      // EOF（或读错误）
+        }
         buffer[read_size] = '\0';
 
         ObjString* result = str_copy(buffer, (int)read_size);
@@ -498,18 +499,28 @@ static Value native_files_read(int argCount, Value* args) {
         return val_null();
     }
 
-    fseek(fp, 0, SEEK_END);
-    long size = ftell(fp);
-    fseek(fp, 0, SEEK_SET);
-
-    char* buffer = (char*)malloc(size + 1);
+    // ★ 不依赖 fseek/ftell 的「文件大小」：/proc、/sys 这类**伪文件**（以及管道）上报
+    //   size=0，按 size 分配会把内容整个漏掉 —— 实测 files.read("/proc/self/stat") 恒为
+    //   空串，连带 LenoSys 的 currentPid / listProcesses / processMemoryKb 在 Linux 全废 ✗
+    //   改为边读边扩容直到 EOF（对普通文件行为不变 ✓）
+    size_t cap = 4096, read_size = 0;
+    char* buffer = (char*)malloc(cap + 1);
     if (!buffer) {
         fclose(fp);
         native_throw_error("内存分配失败");
         return val_null();
     }
-
-    size_t read_size = fread(buffer, 1, size, fp);
+    for (;;) {
+        if (read_size == cap) {
+            cap *= 2;
+            char* nb = (char*)realloc(buffer, cap + 1);
+            if (!nb) { free(buffer); fclose(fp); native_throw_error("内存分配失败"); return val_null(); }
+            buffer = nb;
+        }
+        size_t n = fread(buffer + read_size, 1, cap - read_size, fp);
+        read_size += n;
+        if (n == 0) break;      // EOF（或读错误）
+    }
     buffer[read_size] = '\0';
     fclose(fp);
 

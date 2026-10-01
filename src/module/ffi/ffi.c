@@ -2178,8 +2178,91 @@ static Value ffi_memset_func(int argc, Value* args) {
     return val_null();
 }
 
-#ifdef _WIN32
-/* ffi.utf8_to_utf16(str) - 将 UTF-8 字符串转换为 UTF-16 (Windows)
+/* ---- UTF-16 转换的 POSIX 侧可移植实现（不依赖 wchar_t）----
+ * Windows 的 wchar_t 是 2 字节 UTF-16，而 POSIX 的 wchar_t 是 4 字节（UTF-32）
+ * ⇒ 与 kernel32 的 W 版 API 配套的转换**不能**照搬 wchar_t 版本：这里按 UTF-16 码元
+ * （uint16_t）实现，代理对（surrogate pair）成对处理。
+ *
+ * ★ 为什么 POSIX 也必须提供这两个函数（2026-10-01）：LenoWin32 这类 Windows 专用模块
+ *   在**被 import 时会被整份编译**（平台判断只影响运行期分支，不影响编译）⇒ 只要它们
+ *   引用了 `ffi.utf16_to_utf8`，非 Windows 平台就必须能解析到，否则整个模块编译不过：
+ *   实测 assert/test_lenosys.leno（Sys.leno 无条件 import ./sys_win.leno）与
+ *   assert/test_sdl_capture.leno（直接 import "Win32"）都因此报
+ *   「未找到模块方法: ffi.utf16_to_utf8」✗
+ */
+#ifndef _WIN32
+/* UTF-8 → UTF-16（含结尾 NUL）；失败返回 NULL。返回块用 free() 释放 */
+static uint16_t* leno_utf8_to_utf16(const char* s) {
+    if (!s) return NULL;
+    size_t n = strlen(s);
+    uint16_t* out = (uint16_t*)malloc((n + 1) * sizeof(uint16_t));
+    if (!out) return NULL;
+    size_t w = 0;
+    for (size_t i = 0; i < n; ) {
+        unsigned char c = (unsigned char)s[i];
+        uint32_t cp;
+        int extra;
+        if (c < 0x80)              { cp = c;        extra = 0; }
+        else if ((c & 0xE0) == 0xC0) { cp = c & 0x1F; extra = 1; }
+        else if ((c & 0xF0) == 0xE0) { cp = c & 0x0F; extra = 2; }
+        else if ((c & 0xF8) == 0xF0) { cp = c & 0x07; extra = 3; }
+        else { free(out); return NULL; }                    /* 非法起始字节 */
+        if (i + (size_t)extra >= n) { free(out); return NULL; }  /* 截断序列 */
+        for (int k = 1; k <= extra; k++) {
+            unsigned char cc = (unsigned char)s[i + (size_t)k];
+            if ((cc & 0xC0) != 0x80) { free(out); return NULL; }
+            cp = (cp << 6) | (uint32_t)(cc & 0x3F);
+        }
+        i += (size_t)extra + 1;
+        if (cp <= 0xFFFF) {
+            if (cp >= 0xD800 && cp <= 0xDFFF) { free(out); return NULL; }  /* 落在代理区 */
+            out[w++] = (uint16_t)cp;
+        } else if (cp <= 0x10FFFF) {
+            cp -= 0x10000;
+            out[w++] = (uint16_t)(0xD800 + (cp >> 10));
+            out[w++] = (uint16_t)(0xDC00 + (cp & 0x3FF));
+        } else { free(out); return NULL; }
+    }
+    out[w] = 0;
+    return out;
+}
+
+/* UTF-16（含结尾 NUL）→ UTF-8；失败返回 NULL。返回块用 free() 释放 */
+static char* leno_utf16_to_utf8(const uint16_t* w) {
+    if (!w) return NULL;
+    size_t cap = 64, len = 0;
+    char* out = (char*)malloc(cap);
+    if (!out) return NULL;
+    for (size_t i = 0; w[i] != 0; i++) {
+        uint32_t cp = w[i];
+        if (cp >= 0xD800 && cp <= 0xDBFF) {                 /* 高代理 ⇒ 必须配低代理 */
+            uint16_t lo = w[i + 1];
+            if (lo < 0xDC00 || lo > 0xDFFF) { free(out); return NULL; }
+            cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+            i++;
+        } else if (cp >= 0xDC00 && cp <= 0xDFFF) { free(out); return NULL; }  /* 孤立低代理 */
+        char b[4];
+        int n;
+        if (cp < 0x80)         { b[0] = (char)cp; n = 1; }
+        else if (cp < 0x800)   { b[0] = (char)(0xC0 | (cp >> 6));  b[1] = (char)(0x80 | (cp & 0x3F)); n = 2; }
+        else if (cp < 0x10000) { b[0] = (char)(0xE0 | (cp >> 12)); b[1] = (char)(0x80 | ((cp >> 6) & 0x3F)); b[2] = (char)(0x80 | (cp & 0x3F)); n = 3; }
+        else                   { b[0] = (char)(0xF0 | (cp >> 18)); b[1] = (char)(0x80 | ((cp >> 12) & 0x3F)); b[2] = (char)(0x80 | ((cp >> 6) & 0x3F)); b[3] = (char)(0x80 | (cp & 0x3F)); n = 4; }
+        if (len + (size_t)n + 1 > cap) {
+            cap = (len + (size_t)n + 1) * 2;
+            char* nw = (char*)realloc(out, cap);
+            if (!nw) { free(out); return NULL; }
+            out = nw;
+        }
+        memcpy(out + len, b, (size_t)n);
+        len += (size_t)n;
+    }
+    out[len] = '\0';
+    return out;
+}
+#endif /* !_WIN32 */
+
+/* ffi.utf8_to_utf16(str) - 将 UTF-8 字符串转换为 UTF-16（跨平台：
+ *   Windows 走 platform.h 的 wchar_t(=UTF-16) 版本，POSIX 走上面的 uint16_t 版本）
  * 返回: FFI 指针对象，包含 UTF-16 编码的宽字符数据
  * 使用完后需要用 ffi.free() 释放
  */
@@ -2187,16 +2270,27 @@ static Value ffi_utf8_to_utf16_func(int argc, Value* args) {
     (void)argc;
     ObjString* str = (ObjString*)val_as_obj(args[0]);
 
-    // 使用 platform.h 中的转换函数
+    // Windows：platform.h 的 wchar_t(=UTF-16) 转换；POSIX：本地 uint16_t 实现
+#ifdef _WIN32
     wchar_t* wstr = utf8_to_utf16(str->chars);
+#else
+    uint16_t* wstr = leno_utf8_to_utf16(str->chars);
+#endif
     if (!wstr) {
         native_throw_error("UTF-8 到 UTF-16 转换失败");
         return val_null();
     }
     
     // 计算宽字符长度（包含 null 终止符）
+#ifdef _WIN32
     size_t wlen = wcslen(wstr) + 1;
     size_t byte_size = wlen * sizeof(wchar_t);
+#else
+    size_t wlen = 0;
+    while (wstr[wlen] != 0) wlen++;
+    wlen += 1;                                    /* 含结尾 NUL，与 Windows 侧同口径 */
+    size_t byte_size = wlen * sizeof(uint16_t);
+#endif
     
     // 重新分配内存，加上 8 字节哨兵（与 ffi.malloc 一致，用于 ffi.free 溢出检测）
     void* buf = malloc(byte_size + 8);
@@ -2234,8 +2328,12 @@ static Value ffi_utf16_to_utf8_func(int argc, Value* args) {
     ObjFFIPointer* ptr = val_as_ffi_ptr(args[0]);
     CHECK_NULL_PTR(ptr);
     
-    // 使用 platform.h 中的转换函数
+    // Windows：platform.h 的 wchar_t(=UTF-16) 转换；POSIX：本地 uint16_t 实现
+#ifdef _WIN32
     char* str = utf16_to_utf8((wchar_t*)ptr->ptr);
+#else
+    char* str = leno_utf16_to_utf8((const uint16_t*)ptr->ptr);
+#endif
     if (!str) {
         native_throw_error("UTF-16 到 UTF-8 转换失败");
         return val_null();
@@ -2245,7 +2343,6 @@ static Value ffi_utf16_to_utf8_func(int argc, Value* args) {
     free(str);
     return val_obj((Object*)result);
 }
-#endif // _WIN32
 
 /* ffi.alloc(type_name, value) - 分配指定类型的内存并初始化
  * 简化语法：ffi.alloc("int", 42) 等价于 ffi.malloc(4) + ffi.write_int(ptr, 0, 42)
@@ -3384,12 +3481,13 @@ void ffi_init_module(void) {
     TypeKind memset_params[] = {TYPE_PTR, TYPE_INT, TYPE_INT};
     native_register_module_method_spec("ffi", "memset", ffi_memset_func, 3, -1, -1, &NATIVE_T_NULL, memset_params);
 
-#ifdef _WIN32
-    /* ===== 宽字符转换函数 (Windows) ===== */
+/* ===== 宽字符转换函数 =====
+     * ★ 全平台注册（2026-10-01）：Windows 用 wchar_t(UTF-16)，POSIX 用可移植的
+     *   uint16_t 实现。**不能**只在 Windows 注册 —— LenoWin32 这类模块在非 Windows
+     *   被 import 时同样会被整份编译，引用不到就会「未找到模块方法」直接编译失败 ✗ */
     native_register_module_method_spec("ffi", "utf8_to_utf16", ffi_utf8_to_utf16_func, 1, -1, -1, &NATIVE_T_PTR, string_params);
     TypeKind ptr_params[] = {TYPE_PTR};
     native_register_module_method_spec("ffi", "utf16_to_utf8", ffi_utf16_to_utf8_func, 1, -1, -1, &NATIVE_T_STRING, ptr_params);
-#endif // _WIN32
 
     /* ===== 类型信息函数 ===== */
     TypeKind type_name_params[] = {TYPE_STRING};
