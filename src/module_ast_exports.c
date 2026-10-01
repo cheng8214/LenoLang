@@ -465,25 +465,35 @@ void module_ast_exports_register(void) {
 // 前向声明：聚合类型修正（定义见下；func 的返回类型也要用它 ✓）
 static void ast_fix_agg_kind(ModuleSymbolTable* table, TypeInfo* t);
 
+// 取"按本模块声明修正后"的 TypeKind（不改动入参 ✓）
+//   为什么要它：TypeInfo 是 AST 的（不能改，也不该改 —— 同一份 AST 可能被多次读）；
+//   而符号表要的是修正后的 kind ⇒ 只读地算一个出来 ✓（逻辑与 ast_fix_agg_kind 同源 ✓）
+static TypeKind ast_kind_of(ModuleSymbolTable* table, TypeInfo* ti) {
+    if (!ti) return TYPE_ANY;
+    if (ti->kind == TYPE_STRUCT && ti->struct_name) {
+        if (module_symbol_table_find_clib(table, ti->struct_name)) return TYPE_CLIB;
+        if (module_symbol_table_find_face(table, ti->struct_name)) return TYPE_FACE;
+        ModuleStructSymbol* s = module_symbol_table_find_struct(table, ti->struct_name);
+        if (s && s->is_cstruct) return TYPE_CSTRUCT;
+    }
+    return ti->kind;
+}
+
 static void ast_fill_one_func(ModuleSymbolTable* table, Ast* fn) {
     if (!fn || !fn->u.func.name) return;
     ModuleFuncSymbol* sym = module_symbol_table_find_func(table, fn->u.func.name);
     if (!sym) return;   // 建表职责本轮仍归扫描链：这里只覆盖已存在的条目 ✓
-    // ⚠ 只覆盖**自洽的字段组**：param_types / param_text / param_default_texts 是平行数组，
-    //   只换"数量"会让下游按 AST 的 param_count 去遍历扫描链填的 param_types 而越界
-    //   （实测 365/41）✗ ⇒ 那一组要换必须整组一起换 ✓
+
+    // ---- 返回类型组：return_type / return_type_info / return_struct_name 必须一起换 ----
+    //   实测：只换前两个、把 return_struct_name 留在扫描链 ⇒ 365/41 ✗；
+    //   补齐后 395/11（parser 对未知名统一给 TYPE_STRUCT，不知道它是 clib）⇒ 加修正；
+    //   修正后仍剩 4 个，是**依赖模块**的 clib（本表查不到）⇒ AST 把扫描链判定的
+    //   TYPE_CLIB **降级**了 ⇒ 再加"退化放弃"保护 ✓
+    //   规则：**同源字段组整组换；两套来源冲突时只允许更精确的替换** ✓
     if (fn->u.func.return_type) {
-        // return_type / return_type_info / return_struct_name 是**同源字段组**，必须一起换：
-        //   实测只换前两个、把 return_struct_name 留在扫描链 ⇒ 365/41 ✗；
-        //   补齐后 395/11 —— 剩下 11 个全是 clib 用例（parser 对未知名统一给 TYPE_STRUCT，
-        //   不知道它是 clib）⇒ 加 ast_fix_agg_kind 修正 ✓
         TypeInfo* rt = type_copy(fn->u.func.return_type);
         if (rt) {
             ast_fix_agg_kind(table, rt);
-            // ⚠ 修正不了就用**扫描链的结论**：名字可能来自依赖模块的 clib/cstruct
-            //   （本表里查不到 —— 如 test_clib_cross_chain / test_clib_cross_reexport），
-            //   此时 AST 的 TYPE_STRUCT 会把扫描链已判定的 TYPE_CLIB 降级 ⇒ 4 个用例红 ✗
-            //   规则：**只允许"更精确"的替换，退化一律放弃** ✓
             int degrade = (rt->kind == TYPE_STRUCT && sym->return_type_info &&
                            sym->return_type_info->kind != TYPE_STRUCT);
             if (degrade) {
@@ -495,6 +505,52 @@ static void ast_fill_one_func(ModuleSymbolTable* table, Ast* fn) {
             }
         }
     }
+
+    // ---- 参数组：param_count / param_types / param_struct_names 必须一起换 ----
+    //   AST 侧是并行数组：param_types[i]（TypeInfo*）同时给出 kind 与聚合名，
+    //   所以这一组**天然同源**，可以整组搬 ✓
+    //   ⚠ param_text / param_default_texts 仍是**文本**、且按下标/default_count 索引 ⇒ 本轮不动 ✓
+    //      （它们与 param_count 不同源，所以更不能只换 param_count ✓）
+    //   ⚠ **带泛型形参的函数先跳过**：泛型形参（如 `T`）在符号表里有专门表示（见
+    //     ModuleFuncSymbol::type_param_names 那套），与 AST 的 TypeInfo 口径尚未对齐
+    //     （实测整组换后 400/6：generic_constraint_cross / generic_nullable_param /
+    //      generic_pair_import / widget_deep / plane_war_headless / sdl_capture）⇒
+    //     先只接管**无泛型形参**的函数，泛型那批等形参表示对齐后再开 ✓
+    if (fn->u.func.param_types && fn->u.func.pcnt > 0 && fn->u.func.type_param_count == 0) {
+        int pc = fn->u.func.pcnt;
+        TypeKind* pts = (TypeKind*)malloc(sizeof(TypeKind) * pc);
+        char** psn = (char**)malloc(sizeof(char*) * pc);
+        if (pts && psn) {
+            int degrade = 0;
+            for (int i = 0; i < pc; i++) {
+                TypeInfo* ti = fn->u.func.param_types[i];
+                pts[i] = ast_kind_of(table, ti);
+                psn[i] = (ti && ti->struct_name) ? strdup(ti->struct_name) : NULL;
+                // 与返回组同一条规则：AST 判成 TYPE_STRUCT，而扫描链在那个位置已有更精确的
+                //   结论（如 TYPE_CLIB）⇒ 说明该名字来自**依赖模块**、本表里查不到
+                //   （实测 test_plane_war_headless / test_sdl_capture / test_widget_deep）
+                //   ⇒ **整组放弃**（部分换会让数量与数组不同源 ✗）
+                if (pts[i] == TYPE_STRUCT && sym->param_types && i < sym->param_count &&
+                    sym->param_types[i] != TYPE_STRUCT) {
+                    degrade = 1;
+                }
+            }
+            if (degrade) {
+                for (int i = 0; i < pc; i++) free(psn[i]);
+                free(pts);
+                free(psn);
+            } else {
+                // 旧数组不释放（同返回组：符号表进程内长存活、量小，先避 use-after-free ✓）
+                sym->param_count = pc;
+                sym->param_types = pts;
+                sym->param_struct_names = psn;
+            }
+        } else {
+            free(pts);
+            free(psn);
+        }
+    }
+
     sym->is_async = fn->u.func.is_async;
 }
 
