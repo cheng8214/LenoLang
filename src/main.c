@@ -2250,6 +2250,11 @@ static int main_logic(int argc, char** argv) {
         }
     }
     
+    // S10 迁移（2026-10-01）：注册"基于 parser AST 的导出名提供者"。
+    //   ⚠ 必须在**任何模块加载/编译之前** ⇒ 之后 copy_module_export_names 与 module_has_method
+    //     都直接走语法，扫描链的 export_names 退居两用：VM-only 回退 + `--export-diff` 对拍基线 ✓
+    module_ast_exports_register();
+
     if (exportDiffMode) {
         // 对拍模式：只做"导出名两条路径"的比较，不进正常编译流程 ✓
         //   退出码：0 = 一致、1 = 不一致/失败 ⇒ 便于脚本批量汇总 ✓

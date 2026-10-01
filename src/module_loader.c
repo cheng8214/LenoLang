@@ -402,12 +402,37 @@ void loaded_modules_mark_all(void) {
 // 扫描器删除后它已无意义 —— 符号表侧本就有同机制的进程内记忆化，按「绝对路径 + mtime/size」
 // 失效（module_symbol_table_get_shared → sym_memo_lookup），且与语义分析**共用同一张表**，
 // 比原先"语义分析扫一遍 + 导出名再扫一遍"更省。
-// v33（收敛 S10）：把某模块的导出名拷进固定容量缓冲区 —— **唯一来源 = 扫描器**（module_symbol_table）。
+// ============================================================================
+// 导出名提供者（S10 迁移：导出名的来源可以从"文本扫描链"切到"parser AST"）
+// ============================================================================
+// 为什么需要这一层间接：本文件在 `sources_core.txt`（**VM-only 也编**），而 lexer/parser
+//   只在 `sources_compiler.txt` ⇒ 这里**不能**直接调 parser（否则 `build_vm.bat` 链接必炸，
+//   论证见 docs/待办_单一事实来源与重复实现收敛.md:2713-2717）。于是把"取某模块的导出名"
+//   抽象成可注册的函数指针：
+//     · 编译期（main.c）：注册基于 parser AST 的实现 ⇒ 导出名的唯一来源变成**语法** ✓
+//     · VM-only：不注册 ⇒ 自动回退扫描链（VM 侧本来也只消费已有产物 ✓）
+//   签名与 copy_module_export_names 同形（固定二维缓冲）⇒ 调用点改动最小 ✓
+static ModuleExportNamesProvider g_export_names_provider = NULL;
+
+void module_set_export_names_provider(ModuleExportNamesProvider provider) {
+    g_export_names_provider = provider;
+}
+
+// v33（收敛 S10）：把某模块的导出名拷进固定容量缓冲区。
+//   来源优先级：① 已注册的 parser AST 提供者（编译期）；② 符号表扫描链（回退 / VM-only）
 // file_path 可以是裸包名/相对路径/绝对路径：解析口径交给 module_symbol_table_get_shared
 // （它与解析器/加载器共用 package_resolve_import_spec，比旧的"加载器自己拼路径"更准，
-//   见 S9 的收敛结论）。返回拷入的名字数；扫描失败返回 -1（与旧行为一致 ⇒ 调用方据此报错）。
+//   见 S9 的收敛结论）。返回拷入的名字数；失败返回 -1（与旧行为一致 ⇒ 调用方据此报错）。
 static int copy_module_export_names(const char* file_path, const char* current_file,
                                     char (*out)[MAX_EXPORT_NAME], int max_names) {
+    // ① 优先走 parser AST（唯一来源 = 语法）。
+    //    ⚠ 提供者内部失败（读不了 / 语法错）返回 <0 ⇒ **回退**扫描链：新路径永远不会比原来更差 ✓
+    if (g_export_names_provider) {
+        int n = g_export_names_provider(file_path, current_file, out, max_names);
+        if (n >= 0) return n;
+    }
+
+    // ② 回退：符号表扫描链（与 S10 收敛时的行为逐字一致 ✓）
     ModuleSymbolTable* table = module_symbol_table_get_shared(file_path, current_file);
     if (!table) return -1;
     int total = 0;
@@ -428,11 +453,27 @@ int extract_module_exports_from_file(const char* file_path, const char* current_
 }
 
 // 检查模块中是否存在指定的方法
-// v33（收敛 S10）：直接查扫描器的导出名清单 —— 不再"先拷进 char[512][128] 再逐个 strcmp"。
-// ⚠ 语义与收敛前**必须逐字一致**：查的是"本模块顶层 export 声明的名字"，
-//   不是 funcs[]（那张表是 export ∪ 本地非导出函数 + 导入别名 ⇒ 拿它判会让
+// ⚠ 语义必须逐字坚持"查本模块顶层 export 声明的名字"，**不是** funcs[]
+//   （那张表是 export ∪ 本地非导出函数 + 导入别名 ⇒ 拿它判会让
 //   「模块 'm' 中没有方法 'x'」**少报**，正是收敛时最容易改坏的地方）。
+//   现在优先走与 copy_module_export_names **同一份**名字清单（provider）⇒ 两者不会漂移 ✓
 int module_has_method(const char* file_path, const char* current_file, const char* method_name) {
+    if (g_export_names_provider) {
+        char (*names)[MAX_EXPORT_NAME] =
+            (char(*)[MAX_EXPORT_NAME])malloc(sizeof(char) * MAX_EXPORT_NAME * MAX_EXPORTS);
+        if (names) {
+            int n = g_export_names_provider(file_path, current_file, names, MAX_EXPORTS);
+            if (n >= 0) {
+                int found = 0;
+                for (int i = 0; i < n && !found; i++) {
+                    if (strcmp(names[i], method_name) == 0) found = 1;
+                }
+                free(names);
+                return found;
+            }
+            free(names);   // 提供者失败 ⇒ 回退扫描链 ✓
+        }
+    }
     ModuleSymbolTable* table = module_symbol_table_get_shared(file_path, current_file);
     if (!table) return -1;
     return module_symbol_table_has_export(table, method_name) ? 1 : 0;

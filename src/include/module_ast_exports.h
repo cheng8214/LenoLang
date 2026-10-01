@@ -41,4 +41,9 @@ void module_ast_exports_free(AstExportList* list);
 //   verbose=0 时只在"不一致"时打印详情 ✓
 int module_ast_export_diff_file(const char* path, int verbose);
 
+// 注册"基于 parser AST 的导出名提供者"（编译期在 main.c 调一次即可）
+//   ⇒ 之后 `module_loader` 的 copy_module_export_names / module_has_method 都改走语法，
+//     扫描链的 export_names 退居"VM-only 回退"与"对拍基线"两用 ✓
+void module_ast_exports_register(void);
+
 #endif  // LENO_MODULE_AST_EXPORTS_H

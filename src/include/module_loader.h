@@ -29,6 +29,20 @@ void reset_loaded_modules(void);
 int extract_module_exports_from_file(const char* file_path, const char* current_file, 
                                       char exports[][MAX_EXPORT_NAME_LEN], int max_exports);
 
+// ============================================================================
+// 导出名提供者（S10 迁移：导出名可以从"文本扫描链"切到"parser AST"）
+// ============================================================================
+// 本文件（module_loader.c）在 `sources_core.txt`（**VM-only 也编**），不能直接依赖 parser
+// ⇒ 用可注册的函数指针解耦：
+//   · 编译期由 main.c 注册基于 AST 的实现（唯一来源＝语法）；
+//   · VM-only 不注册 ⇒ 内部自动回退符号表扫描链 ✓
+// 签名与 extract_module_exports_from_file 同形（固定二维缓冲）⇒ 调用点改动最小。
+typedef int (*ModuleExportNamesProvider)(const char* file_path, const char* current_file,
+                                        char (*out)[MAX_EXPORT_NAME_LEN], int max_names);
+
+// 注册提供者（传 NULL 表示注销 ⇒ 回退扫描链）。重复注册覆盖旧值。
+void module_set_export_names_provider(ModuleExportNamesProvider provider);
+
 // 检查模块中是否存在指定的方法
 // file_path: 模块文件路径
 // current_file: 当前文件路径（用于解析相对路径）

@@ -7,6 +7,7 @@
 #include "include/leno_ast.h"
 #include "include/leno_parser.h"
 #include "include/module_symbol_table.h"       // module_symbol_table_get_shared / _export_names
+#include "include/module_loader.h"             // module_set_export_names_provider / MAX_EXPORT_NAME_LEN
 #include "include/module_ast_exports.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -215,4 +216,102 @@ int module_ast_export_diff_file(const char* path, int verbose) {
     free(scan_sorted);
     module_ast_exports_free(&ast_list);
     return same ? 0 : 1;
+}
+
+// ============================================================================
+// 基于 parser AST 的导出名提供者（编译期由 main.c 注册）
+// ============================================================================
+
+// 缓存：路径 → 名字清单。
+//   为什么必须有：`module_has_method` 在语义分析里会被**反复**调用，每次 parse 一遍模块
+//   （几十 ms/次）⇒ 秒级开销，不可接受 ✗（扫描链侧本来就有等价的进程内记忆化 ✓）
+//   键用 file_path 原样：调用点传的形式不同（相对/绝对）只会多缓存一份，不影响正确性 ✓
+#define AST_EXPORT_CACHE_MAX 512
+typedef struct {
+    char* key;
+    char** names;
+    int count;
+} AstExportCacheEntry;
+
+static AstExportCacheEntry g_ast_export_cache[AST_EXPORT_CACHE_MAX];
+static int g_ast_export_cache_count = 0;
+
+static const AstExportCacheEntry* ast_export_cache_lookup(const char* key) {
+    for (int i = 0; i < g_ast_export_cache_count; i++) {
+        if (strcmp(g_ast_export_cache[i].key, key) == 0) return &g_ast_export_cache[i];
+    }
+    return NULL;
+}
+
+static void ast_export_cache_store(const char* key, char** names, int count) {
+    if (g_ast_export_cache_count >= AST_EXPORT_CACHE_MAX) return;   // 满了不再缓存（正确性不受影响 ✓）
+    AstExportCacheEntry* e = &g_ast_export_cache[g_ast_export_cache_count];
+    e->key = strdup(key);
+    if (!e->key) return;
+    e->names = (char**)malloc(sizeof(char*) * (count > 0 ? (size_t)count : 1));
+    if (!e->names) {
+        free(e->key);
+        return;
+    }
+    for (int i = 0; i < count; i++) e->names[i] = strdup(names[i]);
+    e->count = count;
+    g_ast_export_cache_count++;
+}
+
+// 提供者：签名与 module_loader 的 copy_module_export_names 同形（固定二维缓冲 ✓）
+//   返回 ≥0 = 名字数（可能是 0）；<0 = 本路径读不了/语法错 ⇒ 调用方**回退扫描链** ✓
+static int ast_export_names_provider(const char* file_path, const char* current_file,
+                                     char (*out)[MAX_EXPORT_NAME_LEN], int max_names) {
+    if (!file_path || !out || max_names <= 0) return -1;
+
+    const AstExportCacheEntry* hit = ast_export_cache_lookup(file_path);
+    if (hit) {
+        int n = hit->count < max_names ? hit->count : max_names;
+        for (int i = 0; i < n; i++) {
+            strncpy(out[i], hit->names[i], MAX_EXPORT_NAME_LEN - 1);
+            out[i][MAX_EXPORT_NAME_LEN - 1] = '\0';
+        }
+        return n;
+    }
+
+    char* src = read_module_file(file_path, current_file);
+    if (!src) return -1;      // 读不了 ⇒ 回退（由回退路径按原样报错 ✓）
+    AstExportList list;
+    int ok = module_ast_collect_exports(src, &list);
+    free(src);
+    if (ok != 0) {
+        module_ast_exports_free(&list);
+        return -1;            // 语法错 ⇒ 回退（编译本来就会在 parse 阶段报错 ✓）
+    }
+
+    // 诊断（可选）：`LENO_DEBUG_EXPORTS=1` 时打印"这条导出名是 AST 给的"。
+    //   为什么要它：provider 与扫描链**刻意语义等价**（对拍 0 差异）⇒ 光看程序输出
+    //   分不出走的是哪条路 ✗；这个开关让"迁移真的生效"这件事可被直接观测 ✓
+    {
+        static int ast_dbg = -1;
+        if (ast_dbg < 0) {
+            const char* e = getenv("LENO_DEBUG_EXPORTS");
+            ast_dbg = (e && e[0] && e[0] != '0') ? 1 : 0;
+        }
+        if (ast_dbg) {
+            fprintf(stderr, "[export-names] 走 parser AST: %s (%d 个导出名)\n", file_path, list.count);
+        }
+    }
+
+    ast_export_cache_store(file_path, list.names, list.count);
+    int n = list.count < max_names ? list.count : max_names;
+    for (int i = 0; i < n; i++) {
+        strncpy(out[i], list.names[i], MAX_EXPORT_NAME_LEN - 1);
+        out[i][MAX_EXPORT_NAME_LEN - 1] = '\0';
+    }
+    module_ast_exports_free(&list);
+    return n;
+}
+
+void module_ast_exports_register(void) {
+    const char* e = getenv("LENO_DEBUG_EXPORTS");
+    if (e && e[0] && e[0] != '0') {
+        fprintf(stderr, "[export-names] 已注册 AST 提供者\n");
+    }
+    module_set_export_names_provider(ast_export_names_provider);
 }
