@@ -80,7 +80,9 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
             after_export = (char*)scan_skip_async(after_export, &is_async_decl);
 
             #include "scan/scan_struct.inc"
-            #include "scan/scan_cstruct.inc"
+            // ★★ S10 删除老解析：cstruct 的文本扫描退役
+            //   （建表由 ast_fill_one_cstruct 承担：AST 的 field_types 直接给出字段类型）✓
+            // #include "scan/scan_cstruct.inc"
             #include "scan/scan_face.inc"
             // ★★ S10 删除老解析（2026-10-01）：enum 的**整个文本扫描退役** ——
             //   符号建表由 parser AST 承担（module_ast_exports.c 的 ast_fill_one_enum，

@@ -713,6 +713,59 @@ static void ast_fill_one_face_meta(ModuleSymbolTable* table, Ast* fd) {
     sym->type_param_count = fd->u.face_def.type_param_count;   // 单个计数、无平行数组 ⇒ 安全 ✓
 }
 
+// ---- cstruct：**建表**（scan_cstruct.inc 退役的前提）----
+//   为什么现在要建表而不是覆盖：AST 填充器只做覆盖时，删掉 scan_cstruct.inc 那张表就没人建了 ✗
+//   字段映射：AST 的 field_types[i] 一个 TypeInfo 同时给出 kind、聚合名与元素类型 ✓
+static void ast_fill_one_cstruct(ModuleSymbolTable* table, Ast* cd) {
+    if (!cd || !cd->u.cstruct_def.name) return;
+    if (module_symbol_table_find_struct(table, cd->u.cstruct_def.name)) return;  // 已有条目 ⇒ 交给覆盖路径
+    int fc = cd->u.cstruct_def.field_count;
+    if (fc < 0) return;
+    ModuleStructField* fields =
+        (ModuleStructField*)calloc((size_t)(fc > 0 ? fc : 1), sizeof(ModuleStructField));
+    if (!fields) return;
+    for (int i = 0; i < fc; i++) {
+        fields[i].name = (cd->u.cstruct_def.field_names && cd->u.cstruct_def.field_names[i])
+                             ? strdup(cd->u.cstruct_def.field_names[i]) : NULL;
+        TypeInfo* ti = cd->u.cstruct_def.field_types ? cd->u.cstruct_def.field_types[i] : NULL;
+        fields[i].element_type = TYPE_PTR;      // 约定值：表示"无元素类型"（与扫描链一致 ✓）
+        if (ti) {
+            fields[i].type = ast_kind_of(table, ti);
+            fields[i].struct_name = ti->struct_name ? strdup(ti->struct_name) : NULL;
+            if (ti->element_type) {
+                // ⚠ 元素类型也要走同一个修正：嵌套 cstruct 的元素名在本表里能查到，
+                //   直接取 kind 会停在 TYPE_STRUCT（test_nested_cstruct_field_type 抓到的 ✓）
+                fields[i].element_type = ast_kind_of(table, ti->element_type);
+                fields[i].element_struct_name = ti->element_type->struct_name
+                    ? strdup(ti->element_type->struct_name) : NULL;
+            }
+            fields[i].type_info = type_copy(ti);
+            if (fields[i].type_info) {
+                // ⚠ 副本里的 kind 也要修正：消费者读的是 type_info 而不是上面的扁平 type。
+                //   嵌套 cstruct 字段（`cstruct Rect { Point top_left }`）不修就仍是 TYPE_STRUCT
+                //   ⇒ 消费方看到 struct/any ⇒ 「不能在 any 上访问字段」硬编译错
+                //   （test_nested_cstruct_field_type 抓到的正是这条 ✓）
+                ast_fix_agg_kind(table, fields[i].type_info);
+            }
+            fields[i].nullable = ti->nullable;
+            fields[i].line = ti->line;
+        } else {
+            fields[i].type = TYPE_ANY;
+        }
+        fields[i].is_private = 0;   // cstruct 字段没有 pri 语法 ✓
+    }
+    // add_struct 内部复制字段（与扫描链同一约定 ✓）⇒ 随后释放我们造的临时名字
+    module_symbol_table_add_struct(table, cd->u.cstruct_def.name, fc, fields,
+                                   0, NULL, /*is_cstruct=*/1, 0, NULL);
+    for (int i = 0; i < fc; i++) {
+        free(fields[i].name);
+        free(fields[i].struct_name);
+        free(fields[i].element_struct_name);
+        // type_info 不释放：所有权已随 add_struct 转移（与 scan_cstruct.inc 同约定 ✓）
+    }
+    free(fields);
+}
+
 // ---- enum 类接管 ----
 //   member_names / member_values 与 member_count 是同一节点的**同源平行数组** ⇒ 整组换 ✓
 //   （与 func 的 param 组同一条规律：要么整组换，要么别动 ✓）
@@ -811,6 +864,7 @@ static void ast_symbol_fill_provider(ModuleSymbolTable* table, const char* src) 
             else if (d->kind == AST_STRUCT_DEF) ast_fill_one_struct_meta(table, d);
             else if (d->kind == AST_FACE_DEF) ast_fill_one_face_meta(table, d);
             else if (d->kind == AST_CLIB_DEF) ast_fill_one_clib(table, d);
+            else if (d->kind == AST_CSTRUCT_DEF) ast_fill_one_cstruct(table, d);
             else if (d->kind == AST_VAR_DECL) ast_fill_one_var(table, d);
             // ⚠ var 类当前只接管**扁平两项**（type / is_const），type_info 仍留给扫描链
             //   —— 连"只收窄到基本类型"也红：396/10，test_export_const_type /
