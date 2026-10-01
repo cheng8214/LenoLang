@@ -1,32 +1,38 @@
-// test_ffi_win64_abi.leno —— Win64 FFI 调用桩的 **ABI 边界 + 压力** 回归（2026-10-01）
+// test_ffi_abi.leno —— FFI 调用桩的 **ABI 边界 + 压力** 回归（2026-10-01）
 //
-// 背景：Windows 侧的 FFI 后端从"按类型组合枚举函数指针 + 全 int64 回退"改成了
-//   **按 ABI 精确分类 + 汇编调用桩**（`src/module/ffi/leno_ffi_win64.c` 的 `leno_win64_call`，
-//   与 Linux 侧同构 ✓）。本用例把当时用来定位/验证的那套探针固化下来。
+// 背景：三个平台的 FFI 后端都从"按类型组合枚举函数指针 + 全 int64 回退"改成了
+//   **按 ABI 精确分类 + 汇编调用桩**：
+//     · Win64    → `leno_win64_call`   （第 i 个参数占第 i 号槽 + 32B 影子空间）
+//     · SysV x64 → `leno_sysv_call`    （整数/浮点各自计数 + AL=向量寄存器数）
+//     · AAPCS64  → `leno_aapcs_call`   （整数/浮点各自计数 8+8、无影子空间）
+//   本用例把当时用来定位/验证的那套探针固化下来，**三平台通用** ✓
 //
 // 它钉住的关键点（都是**实测踩过**的）：
 //   · 老枚举法的三种坏法：(i32,f32,i32,f32) **静默空调用**、
 //     (f32,f64,i32,i32) 传错值、5 参数含浮点直接**抛错**
-//   · Win64 是"**第 i 个参数占第 i 号槽**"（RCX:XMM0 / RDX:XMM1 / R8:XMM2 / R9:XMM3），
-//     **不是** SysV 那种"整数/浮点各自计数"⇒ 按错模型分类会整体错位
-//   · 影子空间 32 字节必须紧贴返回地址 ⇒ 桩里必须**先压实参、再 sub rsp,32**
-//     （顺序反了会让第 5+ 个参数整体错位）
-//   · 压栈参数前要按 **16 字节对齐**补位（nstk 奇数时补一个 0）——
-//     用"被调方 movaps 写 16 字节对齐局部"当金丝雀（没对齐会直接崩）
+//   · 寄存器分配模型不能弄混：Win64 是"**第 i 个参数占第 i 号槽**"
+//     （RCX:XMM0 / RDX:XMM1 / R8:XMM2 / R9:XMM3），**不是** SysV/AAPCS64 那种
+//     "整数/浮点各自计数"⇒ 按错模型分类会整体错位（实测踩到 ✓）
+//   · Win64 影子空间 32 字节必须紧贴返回地址 ⇒ 桩里必须**先压实参、再 sub rsp,32**
+//     （顺序反了会让第 5+ 个参数整体错位 ✓）；AAPCS64 无影子空间但要**一次分配**保持 16 对齐
+//   · 压栈参数前要按 **16 字节对齐**补位（栈参数个数为奇数时补一格）
 //   · 纯浮点老路径的两个坑：>6 个参数**静默返回 0**；"全浮点参数 + **整数返回**"
-//     从 XMM0 取返回值（真值在 RAX）⇒ 拿到残留浮点垃圾
+//     从浮点寄存器取返回值（真值在整数返回寄存器）⇒ 拿到残留浮点垃圾
+//   · f32 返回值的前后端约定：前端读 `result.f`，后端必须写 `.f`（写 `.d` 会恒为 0 ✓）
 //
 // 判据：多参数用例的被调方返回"**逐参数位掩码**"（第 i 位 = 第 i+1 个参数不对）⇒ 期望 0；
 //   失败时位掩码直接指出**是哪一位**参数错的（比校验和强得多 ✓）。
 //   被调方还往 stderr 打一行 `[DLL] ...`：失败时能直接从日志看到"有没有被调到、实际收到什么" ✓
 //
 // 运行依赖：
-//   · 只在 Windows 上有意义（测的是 `_WIN32` 分支）⇒ 其他平台 **SKIP**（不算失败 ✓）
-//   · 探针 DLL：**优先用 gcc 现场编译** `helpers/ffi_probe_win64.c`
+//   · 探针库：**优先用 gcc/cc 现场编译** `helpers/ffi_probe_abi.c`
 //     （保证"测的是当前源码"，避免预编译件与源码漂移 ✓）；
-//     gcc 不可用则回退到仓库里的 `helpers/ffi_probe_win64.dll`；
-//     两者都没有 ⇒ SKIP ✓
-//   · 预编译件更新方式：`gcc -shared -O2 -o assert/helpers/ffi_probe_win64.dll assert/helpers/ffi_probe_win64.c`
+//     编译器不可用则回退到仓库里的 `helpers/ffi_probe_abi.dll`（Windows 预编译件）；
+//     两者都没有 ⇒ **SKIP**（不算失败 ✓）
+//   · 预编译件更新方式（Windows）：
+//     `gcc -shared -O2 -o assert/helpers/ffi_probe_abi.dll assert/helpers/ffi_probe_abi.c`
+//   · ⚠ 对齐金丝雀（F 组）只在 **x86** 上是"未对齐就崩"的真金丝雀；
+//     AArch64 的 NEON 存取不要求对齐 ⇒ 那边退化为参数值校验（见探针里的 PROBE_HAS_SSE ✓）
 import ffi
 import dirs
 import files
@@ -104,32 +110,44 @@ func cb_double(int x): int { return x * 2 }
 func cb_nested(int x): int { return (G.p_0() as int) + x }
 
 main() {
-    if _os() != "windows" {
-        print("  [SKIP] test_ffi_win64_abi：本用例只测 Windows 的 leno_win64_call 桩")
-        return
-    }
-
-    // 探针 DLL：优先 gcc 现编（测当前源码 ✓），失败则回退预编译件，都没有就 SKIP
+    // 探针库：按平台选扩展名；**优先用编译器现场编译**（保证测的是当前源码 ✓），
+    //   编译不可用则回退仓库里的预编译件，两者都没有 ⇒ SKIP（不算失败 ✓）
     //   ⚠ 判 `r.code` 而不是 `r != null`：`_exec` 返回的是**结构体** `ExecResult{output, code}`，
     //     跟 null 比会被编译器判「struct 与 null 比较」警告（struct 值默认不为 null ✓）；
     //     文档里的用法也是直接 `if result.code == 0` ✓
-    var src = dirs.script_dir() + "/helpers/ffi_probe_win64.c"
-    var dll = dirs.script_dir() + "/helpers/ffi_probe_win64.dll"
-    var gcc = _exec("gcc --version", 20000)
-    if gcc.code == 0 and files.exists(src) {
-        var out = dirs.join(_tmpdir(), "ffi_probe_win64.dll")
-        var r = _exec("gcc -shared -O2 -o \"" + out + "\" \"" + src + "\"", 60000)
-        if r.code == 0 {
-            dll = out
-        } else {
-            print("  注意：gcc 编译探针失败 ⇒ 回退用仓库里的预编译 DLL（可能与源码漂移）")
-        }
+    var osname = _os()
+    var ext = ".dylib"                    // 兜底：macOS 及其它类 Unix
+    if osname == "windows" { ext = ".dll" }
+    else if osname == "linux" { ext = ".so" }
+    var src = dirs.script_dir() + "/helpers/ffi_probe_abi.c"
+    var lib = dirs.script_dir() + "/helpers/ffi_probe_abi" + ext
+    var out = dirs.join(_tmpdir(), "ffi_probe_abi" + ext)
+
+    // 编译器：Windows/Linux 一般是 gcc，macOS 一般是 cc（clang 的别名）
+    var cc = "gcc"
+    var v = _exec("gcc --version", 20000)
+    if v.code != 0 {
+        cc = "cc"
+        v = _exec("cc --version", 20000)
     }
-    if not files.exists(dll) {
-        print("  [SKIP] test_ffi_win64_abi：没有可用的探针 DLL（assert/helpers/ffi_probe_win64.dll）")
+    if v.code == 0 and files.exists(src) {
+        // Windows（MinGW）: -shared；POSIX: -shared -fPIC ✓
+        var flags = "-shared"
+        if osname != "windows" { flags = "-shared -fPIC" }
+        var r = _exec(cc + " " + flags + " -O2 -o \"" + out + "\" \"" + src + "\"", 60000)
+        if r.code == 0 {
+            lib = out
+        } else {
+            print("  注意：" + cc + " 编译探针失败 ⇒ 回退用仓库里的预编译件（可能与源码漂移）")
+        }
+    } else {
+        print("  注意：本机没有 gcc/cc ⇒ 只能用仓库里的预编译件")
+    }
+    if not files.exists(lib) {
+        print("  [SKIP] test_ffi_abi：没有可用的探针库（" + lib + "），且本机也没有 gcc/cc")
         return
     }
-    G = ffi.load(dll)
+    G = ffi.load(lib)
 
     // ================= A. 基础回归：老枚举法的三种坏法 =================
     assert_eq(G.p_idid(1, 2.5, 3, 4.5) as int, 123467343, "A1 (i32,f64,i32,f64) 应正确")
@@ -188,7 +206,8 @@ main() {
         G.p_8d(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0), 87654321.0)
     chkf("E2 f32 返回（取 XMM0 低 4 字节）：2.5+4.5", G.p_retf32(1, 2.5, 3, 4.5), 7.0)
 
-    // ================= F. 对齐金丝雀（被调方 movaps；没 16 对齐会直接崩）=================
+    // ================= F. 对齐金丝雀（x86：被调方 movaps，没 16 对齐会直接崩；
+    //                   AArch64 的 NEON 存取不要求对齐 ⇒ 那边退化为参数值校验）=================
     chk("F1 nstk=1（奇数 ⇒ 补位）", G.p_sse_n1(1, 2.0, 3, 4.0, 5) as int)
     chk("F2 nstk=2（偶数 ⇒ 不补）", G.p_sse_n2(1, 2.0, 3, 4.0, 5, 6.5) as int)
     chk("F3 nstk=3（奇数 ⇒ 补位）", G.p_sse_n3(1, 2.0, 3, 4.0, 5, 6.5, 7) as int)
@@ -208,5 +227,5 @@ main() {
     }
     chk("H1 20 万次混合调用（逐次校验 4 个槽位与值）", bad)
 
-    print("test_ffi_win64_abi passed（38 例）")
+    print("test_ffi_abi passed（38 例）")
 }

@@ -237,10 +237,15 @@ static FFIValue call_generic(void* func, const FFISignature* sig, const FFIArg* 
     if (sig->ret_type == FFI_TYPE_DOUBLE) {
         result.d = ret.d;
     } else if (sig->ret_type == FFI_TYPE_FLOAT) {
-        /* f32 返回值是 XMM0 的**低 4 字节**，不能按 double 解释 */
+        /* f32 返回值是 XMM0 的**低 4 字节**，不能按 double 解释。
+         * ⚠ 必须写 `.f`（不是 `.d`）：前端 `ffi.c` 读的是 `result.f`
+         *   （`case TYPE_F32: return val_float((double)result.f);` ✓）——
+         *   两边是同一个联合体的不同成员，**读写约定必须成对**。
+         *   实测（2026-10-01）：写 `.d` 时前端读 `.f` 拿到的是 double 的低 4 字节
+         *   （7.0 = 0x401C000000000000 ⇒ 低 4 字节全 0）⇒ f32 返回值**恒为 0** ✗ */
         float f;
         memcpy(&f, &ret.d, sizeof(float));
-        result.d = (double)f;
+        result.f = f;
     } else {
         result.i = (int64_t)ret.i;
     }
@@ -263,46 +268,64 @@ FFIValue ffi_call_sysv(void* func, const FFISignature* sig, const FFIArg* args) 
             icount++;
     }
 
-    /* ===== 路径 1: 纯整数/指针参数 ===== */
-    if (dcount == 0) {
-        int64_t iargs[FFI_MAX_ARGS];
-        for (int i = 0; i < total; i++) {
-            if (args[i].type == FFI_TYPE_POINTER)
-                iargs[i] = (int64_t)(intptr_t)args[i].value.p;
-            else
-                iargs[i] = args[i].value.i;
-        }
-        if (sig->ret_type == FFI_TYPE_DOUBLE || sig->ret_type == FFI_TYPE_FLOAT) {
-            /* 所有参数是整数，但返回 double */
-            switch (total) {
-                case 0: result.d = ((double (*)(void))func)(); break;
-                case 1: result.d = ((double (*)(int64_t))func)(iargs[0]); break;
-                case 2: result.d = ((double (*)(int64_t, int64_t))func)(iargs[0], iargs[1]); break;
-                case 3: result.d = ((double (*)(int64_t, int64_t, int64_t))func)(iargs[0], iargs[1], iargs[2]); break;
-                case 4: result.d = ((double (*)(int64_t, int64_t, int64_t, int64_t))func)(iargs[0], iargs[1], iargs[2], iargs[3]); break;
-                default: result.d = 0; break;
-            }
-        } else {
-            result.i = call_pure_int(func, iargs, total);
-        }
-        return result;
+    int ret_is_float = (sig->ret_type == FFI_TYPE_DOUBLE || sig->ret_type == FFI_TYPE_FLOAT);
+
+    /* ★ f32 返回一律走通用桩（2026-10-01，与 Windows 侧同口径）：
+     *   C 函数指针按 `double` 读 XMM0 会把高 4 字节的垃圾一起读进来，而 f32 只需低 4 字节；
+     *   且"取低 4 字节 + 写成 `.f`"这套约定只在桩里实现一次（见 call_generic 的收尾 ✓）
+     *   ⇒ 少一处要同步的读写约定，少一类"某条路径忘了转"的坑 ✓
+     *   （实测症状：f32 返回值**恒为 0** —— 前端读 `.f`，后端写的却是 `.d` ✓） */
+    if (sig->ret_type == FFI_TYPE_FLOAT) {
+        return call_generic(func, sig, args, total);
     }
 
-    /* ===== 路径 2: 纯浮点参数（≤6，全在 XMM0-XMM5）===== */
-    if (icount == 0 && total <= 6) {
+    /* ===== 路径 1: 纯整数/指针参数 ===== */
+    if (dcount == 0) {
+        /* ⚠ "整数参数 + 浮点返回"这一支老写法只枚举了 0~4 个参数，5 个以上**静默返回 0** ✗
+         *   ⇒ 参数多于 4 个时交给通用桩（桩按 ret_type 决定读 RAX 还是 XMM0 ✓） */
+        if (!(ret_is_float && total > 4)) {
+            int64_t iargs[FFI_MAX_ARGS];
+            for (int i = 0; i < total; i++) {
+                if (args[i].type == FFI_TYPE_POINTER)
+                    iargs[i] = (int64_t)(intptr_t)args[i].value.p;
+                else
+                    iargs[i] = args[i].value.i;
+            }
+            if (ret_is_float) {
+                /* 所有参数是整数，但返回浮点 */
+                switch (total) {
+                    case 0: result.d = ((double (*)(void))func)(); break;
+                    case 1: result.d = ((double (*)(int64_t))func)(iargs[0]); break;
+                    case 2: result.d = ((double (*)(int64_t, int64_t))func)(iargs[0], iargs[1]); break;
+                    case 3: result.d = ((double (*)(int64_t, int64_t, int64_t))func)(iargs[0], iargs[1], iargs[2]); break;
+                    case 4: result.d = ((double (*)(int64_t, int64_t, int64_t, int64_t))func)(iargs[0], iargs[1], iargs[2], iargs[3]); break;
+                    default: break;   /* 不可达：total > 4 已在上面转给通用桩 ✓ */
+                }
+            } else {
+                result.i = call_pure_int(func, iargs, total);
+            }
+            return result;
+        }
+        return call_generic(func, sig, args, total);
+    }
+
+    /* ===== 路径 2: 纯浮点参数（≤6，全在 XMM0-XMM5）**且返回也是浮点** =====
+     *   ★ 2026-10-01：必须加 `ret_is_float`。老条件只要求"参数全浮点"，于是
+     *   `int64_t f(double, double, ...)`（全浮点参数 + **整数返回**）也走这条，
+     *   而本条用的是 `double (*)(double, ...)` 函数指针 ⇒ **从 XMM0 取返回值**，
+     *   可真正的返回值在 **RAX** ⇒ 拿到的是残留浮点的垃圾值 ✗
+     *   实测症状（极难查）：`i64 f(f64×6)` 稳定返回 0 / 6 这类"无意义但确定"的值，
+     *   给被调方加一行 fprintf 就换个值（它改变了 XMM0 里残留的是什么）✓ */
+    if (icount == 0 && total <= 6 && ret_is_float) {
         double dargs[FFI_MAX_ARGS];
         for (int i = 0; i < total; i++)
             dargs[i] = args[i].value.d;
-        if (sig->ret_type == FFI_TYPE_DOUBLE || sig->ret_type == FFI_TYPE_FLOAT) {
-            result.d = call_pure_double(func, dargs, total);
-        } else {
-            /* 所有参数是 double，但返回整数 */
-            result.i = (int64_t)call_pure_double(func, dargs, total);
-        }
+        result.d = call_pure_double(func, dargs, total);
         return result;
     }
 
-    /* ===== 路径 3: 其余（任何整数+浮点混合，或纯浮点 >6）→ 通用桩 ===== */
+    /* ===== 路径 3: 其余 → 通用桩
+     *   （任何整数+浮点混合，或纯浮点 >6，或"全浮点参数但整数返回"✓）===== */
     return call_generic(func, sig, args, total);
 }
 

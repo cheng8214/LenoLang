@@ -1,0 +1,49 @@
+fix(ffi): Linux/arm64 侧同源缺陷收口 + arm64 迁 AAPCS64 桩；探针跨平台化；文档同步
+
+承接上一条（Windows 侧改"按 ABI 精确分类 + 汇编调用桩"），把同类问题在其余两个平台
+一并收掉，并把验证手段做成跨平台。
+
+① Linux / SysV x64（leno_ffi_linux.c）
+   · f32 返回值：写 `.d` → 写 `.f`。前端 `ffi.c` 读的是 `result.f`（同一联合体的不同
+     成员）⇒ 写 `.d` 时前端拿到的是 double 的低 4 字节（7.0 = 0x401C000000000000
+     ⇒ 低 4 字节全 0）⇒ **f32 返回值恒为 0** ✗
+   · "全浮点参数 + **整数返回**"：老代码用 `double (*)(...)` 指针调用 ⇒ 从 XMM0 取返回值，
+     而真值在 RAX ⇒ 拿到残留浮点垃圾（实测：`i64 f(f64×6)` 稳定返回 0 / 6 这类无意义值，
+     给被调方加一行日志就换个值 ✗）⇒ 该路径加 `ret_is_float` 条件，返回整数时交给通用桩
+   · "整数参数 + 浮点返回"且参数 >4 时老 switch 只枚举到 4 ⇒ 静默返回 0 ✗ ⇒ 改走桩
+   · f32 返回一律走桩（"取低 4 字节 + 写 .f"只在 call_generic 里实现一次 ✓）
+
+② ARM64（leno_ffi_arm64.c）—— 整体迁移
+   · 删掉枚举 typedef / `path 3.5` / 位模式回退（含回退时那句"浮点可能传不对"的
+     fprintf 自白），改为与另两个平台同构的 **AAPCS64 汇编桩 `leno_aapcs_call`**：
+     整数/浮点 8+8 **独立计数**、无影子空间、栈参数**一次分配** (nstk + nstk&1) * 8
+     从而保持 16 字节对齐
+   · 调用帧偏移量用 offsetof 做**编译期断言**；①② 两个缺陷一并收口（走桩 ⇒ 天然正确）
+   · ⚠ **本文件未在真实 arm64 硬件上验证**（开发机只有 x86-64，且无 AArch64 交叉工具链）：
+     C 侧经 `gcc -fsyntax-only -Wall -Wextra -D__aarch64__` 检查通过 ✓；
+     汇编逐行复核，并修掉一处"AArch64 不允许 SP 作为寄存器偏移寻址的基址"
+     （否则会直接汇编失败）；首次在 arm64 上请先跑 `assert/test_ffi_abi.leno` ✓
+
+③ ffi.c：删掉"超限就抛错"的调用前拦截
+   · 三平台都有桩了 ⇒ 该限制整体不再需要
+   · 顺带修掉一处本就存在的不一致：它没有平台条件，连 Linux 也一起拦了 ✗
+
+④ 探针跨平台化（验证手段）
+   · assert/helpers/ffi_probe_win64.{c,dll} → ffi_probe_abi.{c,dll}：新增平台导出宏；
+     对齐金丝雀按平台条件化（x86 的 movaps 是真金丝雀；AArch64 的 NEON 存取不要求对齐
+     ⇒ 那边退化为参数值校验，文件里已注明 ✓）
+   · assert/test_ffi_win64_abi.leno → test_ffi_abi.leno：按平台选 .dll/.so/.dylib、
+     gcc/cc 现编优先、仓库预编译件兜底、两者都没有则 SKIP（不算失败 ✓）
+   ⇒ Linux/arm64 上一条命令即可复核 ① ②：`build/leno assert/test_ffi_abi.leno`
+
+⑤ 文档同步（3 个 md，一律**追加新记录**而非改历史）
+   · module_ffi_api.md / FFI使用指南.md：更新记录加 (2026-10-01) 条目 + 更新日期
+   · FFI优化方案.md：P0-2 段重写 —— 老的"拦截 + 抛错"标注为已废弃，
+     补上三平台桩对照表（分配模型 / 影子空间）
+
+验证（Windows 本机）：
+· assert/test_ffi_abi.leno：38/38 ✓
+  （三条路径实测：预编译件在 / 移走 DLL 走 gcc 现编 / 无 gcc 则 SKIP 且 exit=0）
+· assert/run_tests.leno：402 passed, 0 failed ✓
+· GUI 门禁：110 passed, 0 failed ✓
+· 探针源码 gcc 编译 0 警告；arm64 文件在 x86 上做 C 语法检查 0 警告 ✓

@@ -873,38 +873,14 @@ static Value ffi_call_impl(int argc, Value* args, int ret_type_kind, const int* 
      *
      *   它原本是给 Win64 的"枚举 + 位模式回退"兜底用的：老回退路径把浮点当 int64
      *   塞进整数寄存器，而被调方按 ABI 在 XMM 里等 ⇒ 必然错，所以宁可抛。
-     *   现在 Windows 侧改成与 Linux 侧同款的"按 ABI 精确分类 + 汇编调用桩"
-     *   （leno_ffi_win64.c ✓）⇒ 任意整数/浮点混合组合都正确，这条限制不再需要 ✓
+     *   现在三个平台都改成"按 ABI 精确分类 + 汇编调用桩"
+     *   （leno_ffi_win64.c / leno_ffi_linux.c / leno_ffi_arm64.c ✓）
+     *   ⇒ 任意整数/浮点混合组合都正确，这条限制整体不再需要 ✓
      *
      *   ⚠ 顺带修掉一处**本就存在的不一致**：这段拦截没有平台条件，连 Linux 也一起拦了
      *     （实测：`(i32,f32,i32,f32,i32)` 在 Linux 上也报「超过 Win64 精确分发上限」✗）
-     *     —— 而 SysV 有 XMM0-7，本不该受限。
-     *
-     *   ⚠ arm64/macOS arm64 侧**仍是老的枚举分发**（leno_ffi_arm64.c，尚无汇编桩）：
-     *     它的回退路径同样把浮点塞进整数寄存器 ⇒ 该组合仍然只能抛。故这里保留分支，
-     *     但**只对 arm64 生效**，并把文案改成本平台的事（不再是"Win64 上限"）✓
-     *     （待办：arm64 也迁到 AAPCS64 汇编桩 —— 那时这段可整体删除 ✓） */
-#if defined(__aarch64__) || defined(__arm64__)
-    {
-        int float_in_reg = 0;  /* 前 4 个参数中的浮点数 */
-        for (int i = 0; i < sig.nargs && i < 4; i++) {
-            if (sig.arg_types[i] == FFI_TYPE_FLOAT ||
-                sig.arg_types[i] == FFI_TYPE_DOUBLE) {
-                float_in_reg++;
-            }
-        }
-        if (sig.nargs > 4 && float_in_reg > 0) {
-            char msg[512];
-            snprintf(msg, sizeof(msg),
-                     "FFI 调用参数 %d 个且前 4 个含浮点：本平台（arm64）尚未迁移到"
-                     "按 ABI 精确分类的调用桩，组合式分发无法正确传递该组合。\n"
-                     "  临时绕法：把浮点参数排到第 5 个之后、或打包进 cstruct 传指针。",
-                     sig.nargs);
-            native_throw_error(msg);
-            return val_null();
-        }
-    }
-#endif
+     *     —— 而 SysV 有 XMM0-7、AAPCS64 有 V0-V7，本不该受限 ✓
+     */
 
     /* 调用函数 */
     FFIValue result = ffi_call(func, &sig, ffi_args);
