@@ -375,6 +375,35 @@ static void patch_chain_jumps(CodeGen* gen, int* pos, int n) {
     }
 }
 
+// `if <expr> is T => name` 的**单次求值**融合：把内层表达式只求值一次，
+//   同时（a）写入绑定槽、（b）就地做类型测试并返回 bool 所在寄存器。
+//
+// 为什么要单独做（2026-09-30 修 LenoWeb DOM 建树崩溃）：
+//   `AST_TYPE_CHECK` 的 codegen 是「把表达式求值到寄存器后**就地覆盖**成 bool」
+//   （见 codegen_expr.c 的 case AST_TYPE_CHECK）⇒ 守卫测试跑完后，被检查的值已经没了，
+//   于是旧实现让绑定变量**重新求值**一遍 `guard_bind_expr`。
+//   对纯变量无所谓，但对**带副作用的表达式**（如 `_parseElement(ctx)` 会推进 ctx.pos）
+//   就是调用了两次：第二次从新位置解析必然失败/返回 null ⇒ 绑定变量变成 null。
+//   实测：`if _parseElement(ctx) is HtmlNode => child { children.add(child) }`
+//   在嵌套元素时把 null 放进 children，随后 `children[i]._parent = n` 报
+//   「字段赋值需要结构体对象」（web_html.leno:510）✗
+static int gen_guarded_is(CodeGen* gen, Ast* tc, int slot, int line) {
+    if (slot >= gen->next_reg) {
+        gen->next_reg = slot + 1;
+        if (gen->next_reg > gen->max_reg) gen->max_reg = gen->next_reg;
+    }
+    int v = gen_expr(gen, tc->u.type_check.expr);      // ★ 只求值这一次（副作用只发生一次）
+    if (v != slot) emit_mov(gen, slot, v, line);       // 绑定槽 ← 该次求值的结果
+    emit_type_check_to(gen, v, tc->u.type_check.type, line);   // v 就地变 bool
+    return v;
+}
+
+// cond 是否是「与 guard_bind_expr 同源的 AST_TYPE_CHECK」——可直接走单次求值融合
+static int cond_is_bind_type_check(Ast* tc, Ast* bind_expr) {
+    return tc && tc->kind == AST_TYPE_CHECK && bind_expr &&
+           tc->u.type_check.expr == bind_expr;
+}
+
 void gen_if_ex(CodeGen* gen, Ast* ast, int want_value, int dst) {
     int need_bind = (ast->u.if_.guard_bind_var && ast->u.if_.guard_bind_index >= 0);
     Ast* cond_ast = ast->u.if_.cond;
@@ -417,11 +446,15 @@ void gen_if_ex(CodeGen* gen, Ast* ast, int want_value, int dst) {
     // 否则右半边用到的绑定变量还是 null（实测报「下标访问: 对象不支持索引」）。
     if (need_bind && cond_ast && cond_ast->kind == AST_BINOP &&
         cond_ast->u.binop.op == TOK_AND) {
-        int c1 = gen_expr(gen, cond_ast->u.binop.l);
+        // 左侧若正是「带绑定的类型守卫」，走单次求值融合（不再重新求值绑定表达式）
+        int fused_left = cond_is_bind_type_check(cond_ast->u.binop.l, ast->u.if_.guard_bind_expr);
+        int c1 = fused_left
+               ? gen_guarded_is(gen, cond_ast->u.binop.l, ast->u.if_.guard_bind_index, ast->line)
+               : gen_expr(gen, cond_ast->u.binop.l);
         jmp_false = emit_jmp_if_false(gen, c1, ast->line);
         reg_free(gen, c1);
 
-        IF_DO_BIND();
+        if (!fused_left) IF_DO_BIND();
 
         int c2 = gen_expr(gen, cond_ast->u.binop.r);
         jmp_false2 = emit_jmp_if_false(gen, c2, ast->line);
@@ -430,6 +463,12 @@ void gen_if_ex(CodeGen* gen, Ast* ast, int want_value, int dst) {
         // 先试「and 链逐侧融合」（⑤-ae）：每个侧条件一条 CMPJMP。
         //   ⚠ 有 `=> name` 绑定时不用它 —— 绑定必须插在"第一侧成立之后、第二侧求值之前"，
         //     那种形态由上面的分支单独处理（need_bind 时 chain_n 保持 0）。
+        if (cond_is_bind_type_check(cond_ast, ast->u.if_.guard_bind_expr)) {
+            // 单次求值融合：求值一次 → 写绑定槽 → 就地类型测试 → 条件跳转
+            int c = gen_guarded_is(gen, cond_ast, ast->u.if_.guard_bind_index, ast->line);
+            jmp_false = emit_jmp_if_false(gen, c, ast->line);
+            reg_free(gen, c);
+        } else {
         if (!need_bind) {
             chain_n = gen_and_cond_jumps(gen, cond_ast, 0, chain_jmp, ast->line);
         }
@@ -444,6 +483,7 @@ void gen_if_ex(CodeGen* gen, Ast* ast, int want_value, int dst) {
         }
 
         IF_DO_BIND();
+        }
     }
     #undef IF_DO_BIND
 

@@ -414,8 +414,15 @@ static inline int call_reg_impl(ObjClosure* closure, int has_self, Value self,
     } else {
     for (int i = 0; i < arg_count; i++) {
         Value arg = src[i];
-        if (param_types && i < arity) {
-            TypeKind expected_type = param_types[i];
+        // ⚠ 形参类型表**含 self 在 [0]**（方法的 arity/pcnt 都算上 self）⇒ 有隐式 self 时
+        //   实参落在 locals[k+i]，类型也必须取 param_types[k+i]。
+        //   此前取 param_types[i] —— k=1 时整体错位一位：实参按**前一个**形参的类型转换。
+        //   实测（2026-09-30）：`arr[0].m(int, string, float, Color)` 里最后那个 int 实参
+        //   被按 `float` 形参转成了 float，于是方法体 `color & 0xFF` 报
+        //   「位与运算: 操作数必须是整数」（LenoSDL3 drawText → test_four_windows）✗
+        int pi = k + i;
+        if (param_types && pi < arity) {
+            TypeKind expected_type = param_types[pi];
             if (expected_type == TYPE_FLOAT && val_is_int(arg)) {
                 arg = val_float((double)val_as_int(arg));
             } else if (expected_type == TYPE_FLOAT && val_is_bigint(arg)) {
