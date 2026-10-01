@@ -644,6 +644,24 @@ static TypeInfo* ast_infer_var_type(ModuleSymbolTable* table, Ast* init) {
             type_free(named);
             return r;
         }
+        case AST_CALL: {
+            // `export var fromFunc = getNum()` / `export var arrFunc = [getNum()]`（**没写**类型标注）
+            //   ⇒ 取被调函数的返回类型（2026-10-02 修，由 examples 全量扫描抓出：
+            //   `测试/export array or dict/test_enhanced.leno`）。
+            //   为什么必须有它：这族"未标注 + 调用"原先靠**文本扫描链的增强推断**算元素/整体类型；
+            //   扫描链退役后没人接管 ⇒ 表里退化成 any ⇒ 跨模块 `m.arrFunc[0]` 也判成 any ⇒
+            //   「变量 'a' 声明类型与初始化值类型不匹配（期望 int，实际 any）」✗
+            //   只认**指向本模块函数**的直接调用（callee 是 AST_VAR）：填充器逐条走，
+            //   函数声明在变量之前 ⇒ 此时已登记 ✓；跨模块 `mod.f()` 走
+            //   `ast_infer_module_access` 那条路，方法调用/其它形态一律留空（宁漏不误报 ✓）
+            Ast* callee = init->u.call.callee;
+            if (!callee || callee->kind != AST_VAR || !callee->u.var.name) return NULL;
+            ModuleFuncSymbol* f = module_symbol_table_find_func(table, callee->u.var.name);
+            if (!f) return NULL;
+            if (f->return_type_info) return type_copy(f->return_type_info);
+            if (f->return_type != TYPE_ANY) return type_new(f->return_type);
+            return NULL;
+        }
         case AST_VAR: {
             // 引用本模块已登记的变量/常量 ⇒ 直接用那张表的结论（与扫描链同口径 ✓）
             ModuleVarSymbol* v = module_symbol_table_find_var(table, init->u.var.name);
@@ -1276,8 +1294,35 @@ static void ast_fill_one_face_meta(ModuleSymbolTable* table, Ast* fd) {
             if (pts && psn) {
                 for (int k = 0; k < pc; k++) {
                     TypeInfo* ti = fd->u.face_def.method_param_types[i][k];
-                    pts[k] = ast_kind_of(table, ti);
-                    psn[k] = (ti && ti->struct_name) ? strdup(ti->struct_name) : NULL;
+                    // ★ 泛型 face 的形参占位必须翻成 TYPE_GENERIC_PARAM（2026-10-02 修，
+                    //   由 examples 全量扫描抓出：`test_generic_use_face.leno`）：
+                    //   `face Comparable[T] { func compareTo(T other): int }` 里 `T` 在 AST 中是
+                    //   **TYPE_STRUCT 占位**（struct_name="T"）⇒ 直接落表的话，
+                    //   `semantic_type_utils.c:552` 的**跨模块 face 形参检查**会把它当真类型比：
+                    //   「compareTo 第 1 个参数类型不匹配: 期望 struct T, 实际 int」✗
+                    //   为什么这是 S10 回归：迁移前扫描器 `mod_resolve_param_type` 对**认不出的名字
+                    //   一律记 TYPE_ANY**（宁漏不误报），而它给 face 传的 type_param_names 是 NULL
+                    //   ⇒ `T` 当时就是 ANY ⇒ 消费方跳过 ✓；AST 侧"什么名字都当 struct"⇒ 退化了 ✗
+                    //   记成 TYPE_GENERIC_PARAM 后两边都对：跨模块检查经
+                    //   `type_is_compatible`（type.c:840 泛型通配）跳过；同文件检查在
+                    //   `semantic_type_utils.c:491` 显式跳过泛型 ✓
+                    const char* gname = NULL;
+                    if (ti && ti->struct_name && fd->u.face_def.type_params) {
+                        for (int tp = 0; tp < fd->u.face_def.type_param_count; tp++) {
+                            if (fd->u.face_def.type_params[tp] &&
+                                strcmp(ti->struct_name, fd->u.face_def.type_params[tp]) == 0) {
+                                gname = ti->struct_name;
+                                break;
+                            }
+                        }
+                    }
+                    if (gname) {
+                        pts[k] = TYPE_GENERIC_PARAM;
+                        psn[k] = NULL;
+                    } else {
+                        pts[k] = ast_kind_of(table, ti);
+                        psn[k] = (ti && ti->struct_name) ? strdup(ti->struct_name) : NULL;
+                    }
                 }
                 methods[i].param_types = pts;
                 methods[i].param_struct_names = psn;

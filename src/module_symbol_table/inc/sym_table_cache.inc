@@ -6,7 +6,13 @@
 // ⚠ 版本号登记表：docs/待办_单一事实来源与重复实现收敛.md 第七节
 //   （只覆盖符号表缓存；2026-09-16 撞过车：与上游都用 v23 但格式不同）
 #define LENOSYMC_MAGIC   0x4D59534C  // "LSYM" little-endian
-#define LENOSYMC_VERSION 0x00000022  // v34: **删掉导出名清单**（S10 终局：文本扫描链整条退役）——
+#define LENOSYMC_VERSION 0x00000023  // v35: **face 方法的泛型形参**改记 `TYPE_GENERIC_PARAM`（内容失效）——
+                                     //      格式一字未改，但 v34 缓存里 `face Comparable[T]` 的
+                                     //      `compareTo(T other)` 形参烙的是 `TYPE_STRUCT`/"T"（当真类型）
+                                     //      ⇒ 不失效的话跨模块 face 调用仍会报
+                                     //      「compareTo 第 1 个参数类型不匹配: 期望 struct T, 实际 int」✗
+                                     //      （2026-10-02 由 examples 全量扫描抓出，S10 回归）
+// v34: **删掉导出名清单**（S10 终局：文本扫描链整条退役）——
                                      //      格式变了：v33 在"依赖块之后、funcs 之前"多加的那段
                                      //      "导出名数 + 逐个名字串"整段删除（导出名早已由
                                      //      module_ast_exports 的 provider 直接给，符号表不再存它）。
