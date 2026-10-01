@@ -79,7 +79,21 @@ static int module_symbol_table_scan_depth(ModuleSymbolTable* table, const char* 
             int is_async_decl = 0;
             after_export = (char*)scan_skip_async(after_export, &is_async_decl);
 
-            #include "scan/scan_struct.inc"
+            // ★★ S10 删除老解析（2026-10-01）：struct 的**整个文本扫描退役** ✓
+            //   ⚠ 这里此前写着"struct 删不掉（371/35）"，那是**误判**：缺的不是语义信息，
+            //     而是 AST 填充器少了几件"扫描链早就做对的事"。停用后逐条补齐即 406/0：
+            //       ① 方法键必须是 `Struct::方法名` 全名（find_struct_method 按 "%s::%s" 查）
+            //       ② impl 列表（add_struct 没有 impl 形参 ⇒ 新增 set_struct_impls）
+            //       ③ 关联常量（同理 ⇒ 新增 set_struct_consts；值文本由 AST 字面量还原）
+            //       ④ 泛型形参：字段/参数归 TYPE_GENERIC_PARAM（字段名进 type_info）、
+            //          方法返回记 return_type_param_name
+            //       ⑤ 别名：`alias Color = int`、`alias SizeF = Dict[string,float]`
+            //          ⇒ 必须**整体展开**（ast_resolved_copy）；只换 kind 会丢键值类型
+            //     五条都在 module_ast_exports.c，且每条都有实测症状记录 ✓
+            //   「符号表服务于跨模块查询」这条**依然成立** —— 查询照样是按需读源码，
+            //     只是现在读的是 AST：module_symbol_table_apply_ast_fill 挂在 get_shared
+            //     这个收口点（与文本扫描同一时机）⇒ 时序上没有变化 ✓
+            // #include "scan/scan_struct.inc"    // ← 已退役（文件已删除）
             // ★★ S10 删除老解析：cstruct 的文本扫描退役
             //   （建表由 ast_fill_one_cstruct 承担：AST 的 field_types 直接给出字段类型）✓
             // #include "scan/scan_cstruct.inc"

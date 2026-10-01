@@ -254,6 +254,22 @@ void module_symbol_table_add_func(ModuleSymbolTable* table, const char* name, Ty
 // 添加 struct 符号
 void module_symbol_table_add_struct(ModuleSymbolTable* table, const char* name, int field_count, ModuleStructField* fields, int method_count, ModuleStructMethod* methods, int is_cstruct, int type_param_count, char** type_param_names);
 
+// 设置 struct 的 impl 列表（S10：AST 填充器的**建表路径**需要它）
+//   为什么单独一个接口：add_struct 的形参里**没有 impl** ⇒ 由 AST 建表时永远填不出
+//   "谁实现了哪个 face"（impl_count 恒 0）⇒ 语义无法经 face 解析方法（实测症状：
+//   跨模块 `u.fmt()` 报「类型 'struct User' 没有方法 'fmt'」且「struct 'User' 未实现 face 'Printable'」✗）
+// 名字内部复制。旧数组不释放（符号表进程内长存活、每模块一份，量小；与其它覆盖路径同一约定 ✓）
+void module_symbol_table_set_struct_impls(ModuleSymbolTable* table, const char* struct_name,
+                                          int impl_count, char** impl_names);
+
+// 设置 struct 的**关联常量**（S10：AST 填充器的建表路径需要它）
+//   同 impl：add_struct 的形参里没有 const ⇒ 由 AST 建表时 const_count 恒 0
+//   ⇒ 跨模块引用 `spl.Splitter.HORIZONTAL` 报「struct 'Splitter' 没有字段 'HORIZONTAL'」✗
+//   value_strs 是**原始文本**（消费者 visit_module.inc 按文本解析：true/false/null/引号串/数值）
+//   ⇒ 调用方负责把 AST 表达式还原成文本。名字与文本都内部复制 ✓
+void module_symbol_table_set_struct_consts(ModuleSymbolTable* table, const char* struct_name,
+                                           int const_count, char** const_names, char** const_value_strs);
+
 // 查找 struct 方法
 ModuleStructMethod* module_symbol_table_find_struct_method(ModuleSymbolTable* table, const char* struct_name, const char* method_name);
 

@@ -55,4 +55,10 @@ void module_ast_exports_register(void);
 //   逐类扩展，每扩一类就能停用/删除扫描链的对应分支 ✓
 void module_ast_symbols_register(void);
 
+// 第二次填充（语义分析之后由 module_compiler 调用）：传**已语义化的 AST**。
+//   为什么需要第二次：struct 的字段类型 / 方法签名、var 的推断型类型在**语法阶段不完整**
+//   （类型名解析与推断发生在语义阶段）⇒ 那些类只能在语义之后整组覆盖 ✓
+//   参数用 void* ⇒ 不在这个头里引入 core 的 ModuleSymbolTable 类型 ✓
+void module_ast_symbols_fill_from_ast(void* table, void* ast_root);
+
 #endif  // LENO_MODULE_AST_EXPORTS_H

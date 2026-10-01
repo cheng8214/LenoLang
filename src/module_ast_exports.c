@@ -464,6 +464,40 @@ void module_ast_exports_register(void) {
 
 // 前向声明：聚合类型修正（定义见下；func 的返回类型也要用它 ✓）
 static void ast_fix_agg_kind(ModuleSymbolTable* table, TypeInfo* t);
+// 前向声明：当前填充阶段（定义见文件末；struct 的字段/方法能否整体覆盖取决于它 ✓）
+int ast_fill_phase(void);
+
+// 别名展开：把 `export alias Color = int` 这类名字解析到**最底层**的 kind ✓
+//   为什么必须有它（2026-10-01 实测）：parser 不认识别名（那是模块符号表的知识）⇒
+//   对 `setColor(Color color)` 里的 `Color` 一律给 TYPE_STRUCT + struct_name="Color" ✗；
+//   而扫描链是靠"use 传导别名进表 + 本地别名表"把 `Color` 解析成 int 的
+//   （sym_table_import_alias.inc:139 / scan_pass2_init.inc:482 / scan_alias.inc:56）✓
+//   少了它：跨模块调用报「setColor 第 1 个参数类型不匹配: 期望 struct Color, 实际 int」
+//   —— plane_war 一次 23 个此类错误 ✓
+// 非聚合 kind ⇒ 原样返回（只对"名字型"kind 才需要查别名）；depth 防别名环 ✓
+static TypeKind ast_alias_unwrap(ModuleSymbolTable* table, TypeKind kind, const char* name, int depth) {
+    if (!table || !name || depth > 8) return kind;
+    if (kind != TYPE_STRUCT && kind != TYPE_FACE && kind != TYPE_CSTRUCT && kind != TYPE_CLIB) return kind;
+    ModuleAliasSymbol* a = module_symbol_table_find_alias(table, name);
+    if (!a || !a->type_info) return kind;
+    return ast_alias_unwrap(table, a->type_info->kind, a->type_info->struct_name, depth + 1);
+}
+
+// 名字型类型的**完整解析副本**：别名**整体展开**（而不是只换 kind）+ 聚合 kind 修正 ✓
+//   为什么不能只换 kind（2026-10-01 实测 test_alias_use_generic）：`alias SizeF = Dict[string, float]`
+//   若只取 kind=TYPE_DICT，**键值类型就丢了** ⇒ 消费方 `ts.w` 取不到 float ⇒
+//   「变量 'w' 声明类型与初始化值类型不匹配」✗。同理 `alias Node = TreeNode` 也要带出底层聚合名 ✓
+//   返回的副本归调用方所有（需要 type_free / 交给会 type_copy 的 add_* ✓）
+static TypeInfo* ast_resolved_copy(ModuleSymbolTable* table, TypeInfo* ti, int depth) {
+    if (!ti) return NULL;
+    if (ti->kind == TYPE_STRUCT && ti->struct_name && depth < 8) {
+        ModuleAliasSymbol* a = module_symbol_table_find_alias(table, ti->struct_name);
+        if (a && a->type_info) return ast_resolved_copy(table, a->type_info, depth + 1);
+    }
+    TypeInfo* cp = type_copy(ti);
+    if (cp) ast_fix_agg_kind(table, cp);
+    return cp;
+}
 
 // 取"按本模块声明修正后"的 TypeKind（不改动入参 ✓）
 //   为什么要它：TypeInfo 是 AST 的（不能改，也不该改 —— 同一份 AST 可能被多次读）；
@@ -475,6 +509,7 @@ static TypeKind ast_kind_of(ModuleSymbolTable* table, TypeInfo* ti) {
         if (module_symbol_table_find_face(table, ti->struct_name)) return TYPE_FACE;
         ModuleStructSymbol* s = module_symbol_table_find_struct(table, ti->struct_name);
         if (s && s->is_cstruct) return TYPE_CSTRUCT;
+        return ast_alias_unwrap(table, ti->kind, ti->struct_name, 0);   // ★ 别名展开
     }
     return ti->kind;
 }
@@ -565,9 +600,18 @@ static void ast_fix_agg_kind(ModuleSymbolTable* table, TypeInfo* t) {
         t->kind = TYPE_CLIB;
     } else if (module_symbol_table_find_face(table, t->struct_name)) {
         t->kind = TYPE_FACE;
+    } else if (module_symbol_table_find_struct(table, t->struct_name) &&
+               module_symbol_table_find_struct(table, t->struct_name)->is_cstruct) {
+        t->kind = TYPE_CSTRUCT;
     } else {
-        ModuleStructSymbol* s = module_symbol_table_find_struct(table, t->struct_name);
-        if (s && s->is_cstruct) t->kind = TYPE_CSTRUCT;
+        // ★ 别名（`export alias Color = int`）：解析到最底层 kind
+        //   若底层**不是**聚合类型 ⇒ 名字必须清掉 —— 否则消费者看到「kind=INT 却带聚合名」
+        //   这种自相矛盾的组合（struct_name 不释放：本副本随 ast_fix 调用方释放，量小 ✓）
+        TypeKind k = ast_alias_unwrap(table, t->kind, t->struct_name, 0);
+        if (k != TYPE_STRUCT && k != TYPE_FACE && k != TYPE_CSTRUCT && k != TYPE_CLIB) {
+            t->struct_name = NULL;
+        }
+        t->kind = k;
     }
 }
 
@@ -669,6 +713,63 @@ static void ast_fill_one_clib(ModuleSymbolTable* table, Ast* cd) {
     sym->funcs = fs;      // 旧数组不释放（同前：量小、先避 use-after-free ✓）
 }
 
+// 关联常量的**值文本**：符号表侧存的是**原始文本**（消费者 visit_module.inc:97/165 按文本解析：
+//   true/false/null/"引号串"/数值）⇒ 这里从 AST 字面量还原成同款文本 ✓
+// 非字面量（如 `= OtherMod.CONST`）⇒ 返回 NULL：消费者取不到文本时退回 val_null()，
+//   与扫描链"文本存下了但解析不出来"是同一下场（不会比原来更差 ✓）
+static char* ast_const_value_text(Ast* v) {
+    if (!v) return NULL;
+    char buf[64];
+    switch (v->kind) {
+        case AST_NUM:
+            if (v->u.num.is_bigint && v->u.num.bigint_str) return strdup(v->u.num.bigint_str);
+            if (v->u.num.is_float) {
+                snprintf(buf, sizeof(buf), "%g", v->u.num.value);
+            } else {
+                snprintf(buf, sizeof(buf), "%lld", (long long)v->u.num.value);
+            }
+            return strdup(buf);
+        case AST_STRING: {
+            if (!v->u.string.value) return NULL;
+            // 带引号还原（消费者的字符串分支就是判首字符是引号 ⇒ 必须带 ✓）
+            size_t n = strlen(v->u.string.value);
+            char* s = (char*)malloc(n + 3);
+            if (!s) return NULL;
+            s[0] = '"';
+            memcpy(s + 1, v->u.string.value, n);
+            s[n + 1] = '"';
+            s[n + 2] = '\0';
+            return s;
+        }
+        case AST_BOOL: return strdup(v->u.boolean ? "true" : "false");
+        case AST_NULL: return strdup("null");
+        default: return NULL;
+    }
+}
+
+// 该类型名是否是"泛型形参"（本 struct 的 T/U… 或本方法的）⇒ 返回形参名，否则 NULL ✓
+//   为什么要单独认它：泛型形参在符号表里**不是聚合类型**，而是 TYPE_GENERIC_PARAM + 形参名
+//   （扫描链经 mod_resolve_param_type 的**唯一实现**这么归，见 scan_struct.inc:335/369）
+//   ⇒ AST 给的 `struct T` 必须翻译过来，否则跨模块调用报
+//     「push 第 1 个参数类型不匹配: 期望 struct T, 实际 int」✗（8 个泛型用例）
+static const char* ast_type_param_name(Ast* sd, Ast* fn, TypeInfo* ti) {
+    if (!ti || !ti->struct_name) return NULL;
+    const char* want = ti->struct_name;
+    if (sd && sd->u.struct_def.type_params) {
+        for (int i = 0; i < sd->u.struct_def.type_param_count; i++) {
+            if (sd->u.struct_def.type_params[i] && strcmp(sd->u.struct_def.type_params[i], want) == 0)
+                return sd->u.struct_def.type_params[i];
+        }
+    }
+    if (fn && fn->u.func.type_params) {
+        for (int i = 0; i < fn->u.func.type_param_count; i++) {
+            if (fn->u.func.type_params[i] && strcmp(fn->u.func.type_params[i], want) == 0)
+                return fn->u.func.type_params[i];
+        }
+    }
+    return NULL;
+}
+
 // ---- struct / face 的"扁平元信息"接管 ----
 //   为什么只接管这几项：structs[] / faces[] 的主体是**结构体数组**（fields / methods），
 //   其中含 TypeInfo* ⇒ 触碰表示层（见 var 那段结论）✗；
@@ -677,32 +778,236 @@ static void ast_fill_one_clib(ModuleSymbolTable* table, Ast* cd) {
 static void ast_fill_one_struct_meta(ModuleSymbolTable* table, Ast* sd) {
     if (!sd || !sd->u.struct_def.name) return;
     ModuleStructSymbol* sym = module_symbol_table_find_struct(table, sd->u.struct_def.name);
-    if (!sym) return;
 
-    int tpc = sd->u.struct_def.type_param_count;
-    if (tpc >= 0 && sd->u.struct_def.type_params) {
-        char** tpn = (char**)malloc(sizeof(char*) * (tpc > 0 ? (size_t)tpc : 1));
-        if (tpn) {
-            for (int i = 0; i < tpc; i++) {
-                tpn[i] = sd->u.struct_def.type_params[i]
-                             ? strdup(sd->u.struct_def.type_params[i]) : NULL;
+    // 条目已存在（scan_struct 仍在建表）⇒ **任何阶段都只覆盖"扁平元信息"**（泛型形参名 / impl 名）。
+    //   为什么 phase==1（语义之后）**也不**整体覆盖字段/方法（2026-10-01 定案，实测抓到 3 个回归）：
+    //     · AST 的 TypeInfo 与符号表那套是**两套表示层**（后者随 .lenosymc 往返、被语义/代码生成直接读）
+    //       ⇒ 换指针/换数组会让消费者读到"另一个世界"的东西 ✗
+    //     · 具体症状（`--export-diff` 同批发现，均为全新编译才复现 ⇒ 缓存掩盖了它）：
+    //       - generic_face_mid.leno(23,5) 「返回类型不匹配：期望 string，实际 any」
+    //         （User 的方法表被换掉 ⇒ fmt 查不到 ⇒ 退化成 any ✗）
+    //       - test_plane_war_headless 多出 [struct与null比较] 警告
+    //         （fields[i].nullable 被 AST 侧覆盖 ⇒ 丢了可空性 ✗）
+    //     · 而当初扫描链那份本来就是正确的，再覆盖一次纯属自伤 ✗
+    //       （2026-10-01：scan_struct.inc 已整文件退役，建表由本文件的建表路径承担；
+    //        这里"条目已存在就不碰 fields/methods"的判据**仍然保留** —— 它对 func/var
+    //        那些仍由扫描链产出的类同样成立，且能挡住"两套表示层互踩"✗）
+    if (sym) {
+        int tpc = sd->u.struct_def.type_param_count;
+        if (tpc >= 0 && sd->u.struct_def.type_params) {
+            char** tpn = (char**)malloc(sizeof(char*) * (tpc > 0 ? (size_t)tpc : 1));
+            if (tpn) {
+                for (int i = 0; i < tpc; i++) {
+                    tpn[i] = sd->u.struct_def.type_params[i]
+                                 ? strdup(sd->u.struct_def.type_params[i]) : NULL;
+                }
+                sym->type_param_count = tpc;
+                sym->type_param_names = tpn;
             }
-            sym->type_param_count = tpc;
-            sym->type_param_names = tpn;     // 旧数组不释放（同前，量小、先避 use-after-free ✓）
         }
+        int ic = sd->u.struct_def.impl_count;
+        if (ic >= 0 && sd->u.struct_def.impl_names) {
+            char** inn = (char**)malloc(sizeof(char*) * (ic > 0 ? (size_t)ic : 1));
+            if (inn) {
+                for (int i = 0; i < ic; i++) {
+                    inn[i] = sd->u.struct_def.impl_names[i]
+                                 ? strdup(sd->u.struct_def.impl_names[i]) : NULL;
+                }
+                sym->impl_count = ic;
+                sym->impl_names = inn;
+            }
+        }
+        return;
     }
 
-    int ic = sd->u.struct_def.impl_count;
-    if (ic >= 0 && sd->u.struct_def.impl_names) {
-        char** inn = (char**)malloc(sizeof(char*) * (ic > 0 ? (size_t)ic : 1));
-        if (inn) {
-            for (int i = 0; i < ic; i++) {
-                inn[i] = sd->u.struct_def.impl_names[i]
-                             ? strdup(sd->u.struct_def.impl_names[i]) : NULL;
-            }
-            sym->impl_count = ic;
-            sym->impl_names = inn;
+    // 到这里 = 语义之后（phase 1，类型已完整）或条目不存在（建表）⇒ 整体搬字段与方法 ✓
+    {
+        int fc = sd->u.struct_def.field_count;
+        int mc = sd->u.struct_def.method_count;
+        if (fc < 0 || mc < 0) return;
+        ModuleStructField* fields = (ModuleStructField*)calloc((size_t)(fc > 0 ? fc : 1), sizeof(ModuleStructField));
+        ModuleStructMethod* methods = (ModuleStructMethod*)calloc((size_t)(mc > 0 ? mc : 1), sizeof(ModuleStructMethod));
+        if (!fields || !methods) {
+            free(fields);
+            free(methods);
+            return;
         }
+        for (int i = 0; i < fc; i++) {
+            fields[i].name = (sd->u.struct_def.field_names && sd->u.struct_def.field_names[i])
+                                 ? strdup(sd->u.struct_def.field_names[i]) : NULL;
+            TypeInfo* ti = sd->u.struct_def.field_types ? sd->u.struct_def.field_types[i] : NULL;
+            fields[i].element_type = TYPE_PTR;
+            const char* f_gname = ast_type_param_name(sd, NULL, ti);
+            if (ti && f_gname) {
+                // 泛型形参字段（`struct Pair[K,V] { K first }`）：与扫描链**同一口径**
+                //   （scan_struct.inc:875-880）：type = TYPE_GENERIC_PARAM、struct_name 留空、
+                //   **名字放进 type_info**（type_generic_param）—— 消费方优先读 type_info ✓
+                //   缺了它 ⇒ 跨模块构造报「字段 'first' 类型不匹配: 期望 'struct K'，实际 'string'」✗
+                fields[i].type = TYPE_GENERIC_PARAM;
+                fields[i].struct_name = NULL;
+                fields[i].type_info = type_generic_param(f_gname);
+                fields[i].nullable = ti->nullable;
+                fields[i].line = ti->line;
+            } else if (ti) {
+                fields[i].type = ast_kind_of(table, ti);
+                fields[i].struct_name = ti->struct_name ? strdup(ti->struct_name) : NULL;
+                if (ti->element_type) {
+                    fields[i].element_type = ast_kind_of(table, ti->element_type);
+                    fields[i].element_struct_name = ti->element_type->struct_name
+                        ? strdup(ti->element_type->struct_name) : NULL;
+                }
+                fields[i].type_info = type_copy(ti);
+                if (fields[i].type_info) ast_fix_agg_kind(table, fields[i].type_info);
+                fields[i].nullable = ti->nullable;
+                fields[i].line = ti->line;
+            } else {
+                fields[i].type = TYPE_ANY;
+            }
+            fields[i].is_private = sd->u.struct_def.field_private ? sd->u.struct_def.field_private[i] : 0;
+        }
+        for (int i = 0; i < mc; i++) {
+            Ast* fn = sd->u.struct_def.methods ? sd->u.struct_def.methods[i] : NULL;
+            if (!fn) continue;
+            // ⚠ 方法名必须是 **`Struct::方法名`** 全名（2026-10-01 修）：
+            //   符号表里方法的键就是这个格式（scan_struct.inc:275 同款），
+            //   而 `module_symbol_table_find_struct_method` 也按 "%s::%s" 查
+            //   ⇒ 这里存裸名会让所有跨模块方法解析失败（实测症状：
+            //      `类型 'struct User' 没有方法 'fmt'` ✗）
+            if (fn->u.func.name) {
+                char mkey[256];
+                snprintf(mkey, sizeof(mkey), "%s::%s", sd->u.struct_def.name, fn->u.func.name);
+                methods[i].name = strdup(mkey);
+            } else {
+                methods[i].name = NULL;
+            }
+            TypeInfo* rt = fn->u.func.return_type;
+            const char* rt_gname = ast_type_param_name(sd, fn, rt);
+            if (rt_gname) {
+                // 返回泛型形参：符号表口径是 kind + 形参名（不是聚合类型）✓
+                methods[i].return_type = TYPE_GENERIC_PARAM;
+                methods[i].return_struct_name = NULL;
+                methods[i].return_type_param_name = strdup(rt_gname);
+                methods[i].return_generic_count = 0;
+                methods[i].return_type_info = NULL;
+            } else {
+                // ⚠ 必须用**完整解析副本**（别名整体展开）：只取 kind 会丢元素/键值类型，
+                //   而且**扁平三元组**（return_type / return_struct_name / return_type_info）
+                //   必须同源 ⇒ 名字也从解析后的副本取（别名指向 Dict 时名字为空 ✓）
+                TypeInfo* rti = ast_resolved_copy(table, rt, 0);
+                methods[i].return_type = rti ? rti->kind : TYPE_ANY;
+                methods[i].return_struct_name = (rti && rti->struct_name) ? strdup(rti->struct_name) : NULL;
+                methods[i].return_type_info = rti;
+            }
+            int pc = fn->u.func.pcnt;
+            methods[i].param_count = pc;
+            if (pc > 0 && fn->u.func.param_types) {
+                TypeKind* pts = (TypeKind*)malloc(sizeof(TypeKind) * pc);
+                char** psn = (char**)malloc(sizeof(char*) * pc);
+                char** pg = (char**)calloc((size_t)pc, sizeof(char*));
+                if (pts && psn && pg) {
+                    for (int k = 0; k < pc; k++) {
+                        TypeInfo* ti = fn->u.func.param_types[k];
+                        const char* gname = ast_type_param_name(sd, fn, ti);
+                        if (gname) {
+                            pts[k] = TYPE_GENERIC_PARAM;
+                            psn[k] = NULL;
+                            pg[k] = strdup(gname);
+                        } else {
+                            pts[k] = ast_kind_of(table, ti);
+                            psn[k] = (ti && ti->struct_name) ? strdup(ti->struct_name) : NULL;
+                        }
+                    }
+                    methods[i].param_types = pts;
+                    methods[i].param_struct_names = psn;
+                    methods[i].param_generic_names = pg;
+                } else {
+                    free(pts);
+                    free(psn);
+                    free(pg);
+                }
+            }
+            methods[i].line = fn->line;
+            methods[i].is_async = fn->u.func.is_async;
+            methods[i].is_private = fn->u.func.is_private;
+        }
+        if (sym) {
+            // 整组覆盖（phase 1）：构造出来的数组**所有权交给符号表** ⇒ 这里不要释放 ✓
+            sym->field_count = fc;
+            sym->fields = fields;
+            sym->method_count = mc;
+            sym->methods = methods;
+            int tpc2 = sd->u.struct_def.type_param_count;
+            sym->type_param_count = tpc2;
+            if (sd->u.struct_def.type_params && tpc2 >= 0) {
+                char** tpn2 = (char**)malloc(sizeof(char*) * (tpc2 > 0 ? (size_t)tpc2 : 1));
+                if (tpn2) {
+                    for (int i = 0; i < tpc2; i++) {
+                        tpn2[i] = sd->u.struct_def.type_params[i]
+                                      ? strdup(sd->u.struct_def.type_params[i]) : NULL;
+                    }
+                    sym->type_param_names = tpn2;
+                }
+            }
+            if (sd->u.struct_def.impl_names) {
+                int ic2 = sd->u.struct_def.impl_count;
+                char** inn2 = (char**)malloc(sizeof(char*) * (ic2 > 0 ? (size_t)ic2 : 1));
+                if (inn2) {
+                    for (int i = 0; i < ic2; i++) {
+                        inn2[i] = sd->u.struct_def.impl_names[i]
+                                      ? strdup(sd->u.struct_def.impl_names[i]) : NULL;
+                    }
+                    sym->impl_count = ic2;
+                    sym->impl_names = inn2;
+                }
+            }
+            return;
+        }
+        // 建表（条目不存在）：add_struct 内部复制 ⇒ 随后释放本地构造 ✓
+        module_symbol_table_add_struct(table, sd->u.struct_def.name, fc, fields, mc, methods, 0,
+                                       sd->u.struct_def.type_param_count, sd->u.struct_def.type_params);
+        // ⚠ impl 必须单独设置（add_struct 的形参里没有它，见 module_symbol_table.h 的说明）：
+        //   缺了它 ⇒ 语义判不出"该 struct 实现了哪个 face" ⇒ 经 face 的方法解析整条路径走不到 ✗
+        module_symbol_table_set_struct_impls(table, sd->u.struct_def.name,
+                                            sd->u.struct_def.impl_count, sd->u.struct_def.impl_names);
+        // ⚠ 关联常量同理（add_struct 也没有 const 形参）：
+        //   缺了它 ⇒ 跨模块引用 `spl.Splitter.HORIZONTAL` 报
+        //   「struct 'Splitter' 没有字段 'HORIZONTAL'」✗（plane_war 冷跑的下一批错误）
+        if (sd->u.struct_def.const_count > 0) {
+            int cc = sd->u.struct_def.const_count;
+            char** cnames = (char**)calloc((size_t)cc, sizeof(char*));
+            char** cvals = (char**)calloc((size_t)cc, sizeof(char*));
+            if (cnames && cvals) {
+                for (int i = 0; i < cc; i++) {
+                    cnames[i] = (sd->u.struct_def.const_names && sd->u.struct_def.const_names[i])
+                                   ? strdup(sd->u.struct_def.const_names[i]) : NULL;
+                    cvals[i] = (sd->u.struct_def.const_values && sd->u.struct_def.const_values[i])
+                                   ? ast_const_value_text(sd->u.struct_def.const_values[i]) : NULL;
+                }
+                module_symbol_table_set_struct_consts(table, sd->u.struct_def.name, cc, cnames, cvals);
+                for (int i = 0; i < cc; i++) {
+                    free(cnames[i]);
+                    free(cvals[i]);
+                }
+            }
+            free(cnames);
+            free(cvals);
+        }
+        for (int i = 0; i < fc; i++) {
+            free(fields[i].name);
+            free(fields[i].struct_name);
+            free(fields[i].element_struct_name);
+        }
+        for (int i = 0; i < mc; i++) {
+            free(methods[i].name);
+            free(methods[i].return_struct_name);
+            if (methods[i].param_struct_names) {
+                for (int k = 0; k < methods[i].param_count; k++) free(methods[i].param_struct_names[k]);
+                free(methods[i].param_struct_names);
+            }
+            free(methods[i].param_types);
+        }
+        free(fields);
+        free(methods);
     }
 }
 
@@ -924,6 +1229,40 @@ static void ast_symbol_fill_provider(ModuleSymbolTable* table, const char* src) 
         }
     }
     ast_free(p.root);
+}
+
+// 填充阶段：0 = 扫描阶段（只有语法信息）；1 = **语义分析之后**（类型已解析完整）✓
+//   为什么必须有这个概念：struct 的字段类型 / 方法签名、var 的推断型，
+//   在语法阶段是**不完整**的（实测停用 scan_struct 后 371/35）⇒ 这些类只能在 phase==1
+//   做整组覆盖；在 phase==0 用它们会拿"未解析的类型"把正确的表覆盖坏 ✗
+static int g_ast_fill_phase = 0;
+
+int ast_fill_phase(void) {
+    return g_ast_fill_phase;
+}
+
+// 第二次填充入口：由 module_compiler 在**语义分析之后**调用，传**已语义化的 AST**
+//   （void* 是为了不在 core 头里引入 Ast 类型 ✓）
+void module_ast_symbols_fill_from_ast(void* table_v, void* ast_root) {
+    ModuleSymbolTable* table = (ModuleSymbolTable*)table_v;
+    Ast* root = (Ast*)ast_root;
+    if (!table || !root || root->kind != AST_BLOCK) return;
+    g_ast_fill_phase = 1;
+    for (int i = 0; i < root->u.block.count; i++) {
+        Ast* st = root->u.block.items[i];
+        if (!st) continue;
+        Ast* d = (st->kind == AST_EXPORT && st->u.export.decl) ? st->u.export.decl : st;
+        if (d->kind == AST_FUNC_DEF) ast_fill_one_func(table, d);
+        else if (d->kind == AST_ALIAS) ast_fill_one_alias(table, d);
+        else if (d->kind == AST_CFUNC_DECL) ast_fill_one_cfunc(table, d);
+        else if (d->kind == AST_ENUM_DEF) ast_fill_one_enum(table, d);
+        else if (d->kind == AST_STRUCT_DEF) ast_fill_one_struct_meta(table, d);
+        else if (d->kind == AST_FACE_DEF) ast_fill_one_face_meta(table, d);
+        else if (d->kind == AST_CLIB_DEF) ast_fill_one_clib(table, d);
+        else if (d->kind == AST_CSTRUCT_DEF) ast_fill_one_cstruct(table, d);
+        else if (d->kind == AST_VAR_DECL) ast_fill_one_var(table, d);
+    }
+    g_ast_fill_phase = 0;
 }
 
 void module_ast_symbols_register(void) {

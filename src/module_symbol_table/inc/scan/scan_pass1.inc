@@ -155,6 +155,10 @@
                 if (name_len > 0 && name_len < 64) {
                     // 动态追加（无固定上限）
                     mod_names_push(&face_names, &face_name_count, &face_name_cap, name_start, name_len);
+                    // ⚠ 这里**不登记导出名**（2026-10-01 定案）：本分支只负责"类型名解析用的名字数组"
+                    //   （供 `Array[IWidget]` 这类类型字符串识别 face）。face 的**符号建表 + 导出名**
+                    //   已由 AST 侧接管（`scan_face.inc` 于 247c96b 整文件退役；导出名走
+                    //   module_ast_exports 的 provider）⇒ 在这里补登记是**往回加**已删的重复实现 ✗
                 }
 
                 p = after_face;
@@ -345,6 +349,9 @@
                 if (name_len > 0 && name_len < 64) {
                     // 动态追加（无固定上限）
                     mod_names_push(&enum_names, &enum_name_count, &enum_name_cap, name_start, name_len);
+                    // ⚠ 这里**不登记导出名**（2026-10-01 定案，与 export face 同）：enum 是"语法阶段
+                    //   信息就完整"的类，`scan_enum.inc` 已整文件退役（814c00a），符号建表与导出名
+                    //   都归 AST 侧 ⇒ 在此补登记属于往回加已删的重复实现 ✗
                 }
 
                 p = after_enum;

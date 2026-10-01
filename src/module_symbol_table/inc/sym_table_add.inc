@@ -159,6 +159,43 @@ void module_symbol_table_add_struct(ModuleSymbolTable* table, const char* name, 
     }
 }
 
+// 设置 struct 的 impl 列表（S10：AST 填充器的建表路径用 —— add_struct 不带 impl 形参）
+void module_symbol_table_set_struct_impls(ModuleSymbolTable* table, const char* struct_name,
+                                          int impl_count, char** impl_names) {
+    if (!table || !struct_name || impl_count < 0) return;
+    ModuleStructSymbol* st = module_symbol_table_find_struct(table, struct_name);
+    if (!st) return;
+    char** names = (char**)malloc(sizeof(char*) * (impl_count > 0 ? (size_t)impl_count : 1));
+    if (!names) return;
+    for (int i = 0; i < impl_count; i++) {
+        names[i] = (impl_names && impl_names[i]) ? strdup(impl_names[i]) : NULL;
+    }
+    st->impl_count = impl_count;
+    st->impl_names = names;   // 旧数组不释放：同其它覆盖路径（量小、先避 use-after-free ✓）
+}
+
+// 设置 struct 的关联常量（S10：AST 填充器的建表路径用 —— add_struct 不带 const 形参）
+void module_symbol_table_set_struct_consts(ModuleSymbolTable* table, const char* struct_name,
+                                           int const_count, char** const_names, char** const_value_strs) {
+    if (!table || !struct_name || const_count < 0) return;
+    ModuleStructSymbol* st = module_symbol_table_find_struct(table, struct_name);
+    if (!st) return;
+    char** names = (char**)malloc(sizeof(char*) * (const_count > 0 ? (size_t)const_count : 1));
+    char** vals = (char**)calloc((size_t)(const_count > 0 ? const_count : 1), sizeof(char*));
+    if (!names || !vals) {
+        free(names);
+        free(vals);
+        return;
+    }
+    for (int i = 0; i < const_count; i++) {
+        names[i] = (const_names && const_names[i]) ? strdup(const_names[i]) : NULL;
+        vals[i] = (const_value_strs && const_value_strs[i]) ? strdup(const_value_strs[i]) : NULL;
+    }
+    st->const_count = const_count;
+    st->const_names = names;
+    st->const_value_strs = vals;   // 旧数组不释放：同其它覆盖路径（量小、先避 use-after-free ✓）
+}
+
 // 查找函数符号
 ModuleFuncSymbol* module_symbol_table_find_func(ModuleSymbolTable* table, const char* func_name) {
     if (!table || !func_name) return NULL;

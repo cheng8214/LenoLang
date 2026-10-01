@@ -4,6 +4,7 @@
 #include "include/leno_semantic.h"
 #include "include/module_compiler.h"
 #include "include/leno_optimize.h"   // optimize_target_prune（编译期 target 条件剪枝 ✓）
+#include "include/module_ast_exports.h"  // S10：语义后二次填充符号表（AST → 符号）
 #include "codegen/codegen.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -47,6 +48,20 @@ ObjModule* compile_module_new(const char* source, const char* module_name,
     Semantic sem;
     semantic_init(&sem, parser.root);
     semantic_analyze_module(&sem, parser.root);
+
+    // 2.5 ★ S10：语义**之后**再填充一次模块符号表。
+    //   为什么必须在语义之后：struct 的字段类型 / 方法签名、var 的推断型类型，在**语法阶段
+    //   是不完整的**（类型名解析与推断都发生在语义阶段）—— 实测在扫描阶段填充后停用
+    //   scan_struct 会 371/35。语义跑完再填，这些信息才完整，对应老解析才能删除 ✓
+    //   参数用 void* 是为了不在 core 头里引入 Ast / ModuleSymbolTable 类型 ✓
+    {
+        // ⚠ 必须用**当前文件路径**取表，不能用 module_name —— 后者是模块别名（如 "base"），
+        //   拿它查符号表只会得到 NULL（实测 [fill2] name=base table=0000000000000000）✗
+        const char* cur = error_get_filename();
+        ModuleSymbolTable* st = cur ? module_symbol_table_get_shared(cur, NULL) : NULL;
+        if (!st) st = module_symbol_table_get_shared(module_name, NULL);   // 回退
+        if (st) module_ast_symbols_fill_from_ast(st, parser.root);
+    }
     // 只关注本模块语义分析新增的错误，不受前序模块错误影响
     if (errors.count > errors_before_semantic) {
         ast_free(parser.root);
