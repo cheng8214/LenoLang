@@ -830,10 +830,6 @@ static void ast_fill_one_use(ModuleSymbolTable* table, Ast* us) {
     }
     if (!path) return;                      // 原生模块（io / ffi / maths…）⇒ 无符号表可传导 ✓
     ModuleSymbolTable* dep = ast_dep_table(table, path);
-    // 【临时探针·待删】
-    fprintf(stderr, "[useprobe] %s: use %s.%s path=%s dep=%p same=%d\n",
-            table->module_path ? table->module_path : "?", mname, sname, path,
-            (void*)dep, (dep == table) ? 1 : 0);
     if (!dep || dep == table) return;
     // ★ 依赖登记（`.lenosymc` 失效判定要用；扫描链原先在文本路径里做）✓
     if (dep->module_path) module_symbol_table_add_dep(table, dep->module_path);
