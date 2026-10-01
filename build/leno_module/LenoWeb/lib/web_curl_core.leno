@@ -226,20 +226,24 @@ export enum SslVersion {
 
 curl g_lib = null
 
-// 加载 libcurl DLL（全局缓存，避免重复加载）
+// 加载 libcurl 动态库（全局缓存，避免重复加载）
+//   · Windows：随模块分发的 `libcurl-x64.dll`
+//   · POSIX  ：随模块分发的 `libcurl.so`（**curl 8.21.0** —— 与随包 `libcurl-x64.dll` 同版本；
+//              TLS 后端用源码静态链入的 mbedTLS 3.5.2，只依赖系统通用库 z/c/dl/rt/pthread/m）
+//              `ffi.load` 会按文件名搜索**已加载模块目录**，故传纯文件名即可命中本模块 lib/ ✓
+//              万一没有自带 .so，再退回系统 soname `libcurl.so.4`（发行版普遍自带）
+// 原实现 POSIX 侧找的是 `libcurl-x64.so`，本仓库并没有这个文件 ⇒ 加载必失败 ✗
 export func lib(): curl {
     if g_lib == null {
-        // 根据平台选择动态库
-        string ext = if _os() == "windows" then ".dll" else ".so"
-        // 从脚本目录和上级目录查找
-        var path = dirs.script_dir() + "/libcurl-x64" + ext
-        if not files.exists(path) { path = dirs.script_dir() + "/libcurl-x64" + ext }
-        if not files.exists(path) { path = dirs.script_dir() + "/../libcurl-x64" + ext }
-        if not files.exists(path) { path = dirs.script_dir() + "/../lib/libcurl-x64" + ext }
-        // fallback: 纯文件名，让 ffi.load 自动搜索（模块目录、exe目录、系统PATH）
-        if not files.exists(path) { path = "libcurl-x64" + ext }
-        if not files.exists(path) { path = "libcurl-x64" + ext }
-        g_lib = ffi.load(path)
+        if _os() == "windows" {
+            g_lib = ffi.load("libcurl-x64.dll")
+        } else {
+            try {
+                g_lib = ffi.load("libcurl.so")
+            } catch e {
+                g_lib = ffi.load("libcurl.so.4")
+            }
+        }
     }
     return g_lib
 }

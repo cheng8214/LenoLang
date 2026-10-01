@@ -12,3 +12,4 @@ root = "lib"
 # 声明了而文件不存在 ⇒ 打包直接报错，故本包未随附的平台不列键。
 [native-libs.sqlite3]
 win   = "lib/sqlite3.dll"
+linux = "lib/sqlite3.so"

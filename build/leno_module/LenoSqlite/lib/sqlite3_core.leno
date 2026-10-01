@@ -152,16 +152,24 @@ export const SQLITE_TRANSIENT = -1
 
 sqlite3 g_lib = null
 
-// 加载 SQLite3 DLL（全局缓存，避免重复加载）
+// 加载 SQLite3 动态库（全局缓存，避免重复加载）
+//   · Windows：随模块分发的 `sqlite3.dll`
+//   · POSIX  ：随模块分发的 `sqlite3.so`（由 sqlite.org 官方 amalgamation 的
+//              `sqlite3.c` 编译：`gcc -shared -fPIC -O2 -o sqlite3.so sqlite3.c -lpthread -ldl -lm`）
+//              `ffi.load` 会按文件名搜索**已加载模块目录**，故传纯文件名即可命中本模块 lib/ ✓
+//              万一没有自带 .so，再退回系统 soname `libsqlite3.so.0`（发行版普遍自带）
+// 原实现 POSIX 侧也找 `sqlite3.so`，但仓库里没有这个文件 ⇒ 加载必失败 ✗
 export func lib(): sqlite3 {
     if g_lib == null {
-        // 根据平台选择动态库扩展名
-        string ext = if _os() == "windows" then ".dll" else ".so"
-        // 从脚本目录和上级目录查找
-        var path = dirs.script_dir() + "/sqlite3" + ext
-        if not files.exists(path) { path = dirs.script_dir() + "/../sqlite3" + ext }
-        if not files.exists(path) { path = "sqlite3" + ext }
-        g_lib = ffi.load(path)
+        if _os() == "windows" {
+            g_lib = ffi.load("sqlite3.dll")
+        } else {
+            try {
+                g_lib = ffi.load("sqlite3.so")
+            } catch e {
+                g_lib = ffi.load("libsqlite3.so.0")
+            }
+        }
     }
     return g_lib
 }
