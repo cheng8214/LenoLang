@@ -771,13 +771,15 @@ static Value ffi_call_impl(int argc, Value* args, int ret_type_kind, const int* 
                     break;
                 default: {
                     /* ---- 声明为浮点的形参收到整数：必须走浮点通道（XMM）----
-                     * 否则会被当整数塞进 GPR：
-                     *   ① Win64 精确分发的"前 4 个形参浮点计数"对不上 ⇒ 直接抛
-                     *      「超过 Win64 精确分发上限」（飞机大战卡死的直接触发点）；
-                     *   ② 即便 ① 不触发，被调方读到的是陈旧的 XMM ⇒ 静默拿到错值。
+                     * 否则会被当整数塞进 GPR，而被调方按 ABI 从 XMM 里读它的参数
+                     * ⇒ 拿到**陈旧值** ⇒ 静默错值（不报错、不崩，最难查）✗
                      * 为什么会发生：调用方手里可能只留下**裸位型**（例如 double 0.0 的
                      * 位型就是 0x0），单看位型分不出"int 0"与"double 0.0" ⇒ 一旦按整数
                      * 交付给 FFI，被调方就拿不到那个 0.0。
+                     * ★ 2026-10-01：旧注释里的另一条后果「① Win64 精确分发的浮点计数
+                     *   对不上 ⇒ 直接抛『超过 Win64 精确分发上限』」（飞机大战卡死的触发点）
+                     *   已随 Windows 侧改用汇编调用桩而**消失**（那段拦载已删除 ✓）⇒
+                     *   这里一旦漏判，就只剩"静默错值"一条路 ⇒ 更要走对通道 ✓
                      * 判据复用 `typekind_to_ffitype`（与返回类型同一处语义来源）。 */
                     FFIType ft = typekind_to_ffitype(param_tk);
                     if (ft == FFI_TYPE_FLOAT || ft == FFI_TYPE_DOUBLE) {
@@ -867,16 +869,22 @@ static Value ffi_call_impl(int argc, Value* args, int ret_type_kind, const int* 
         }
     }
 
-    /* 调用前检查：Win64 下 >4 个参数且前 4 个含浮点 → 回退路径不支持
+    /* ★ 2026-10-01：删掉了「>4 参数且前 4 位含浮点就抛错」的调用前拦截。
      *
-     * Win64 ABI 规则：
-     *   - 前 4 个参数走寄存器（整数/指针→RCX/RDX/R8/R9，浮点→XMM0-3）
-     *   - 第 5+ 个参数走栈（8 字节对齐，double 与 int64 位模式一致）
+     *   它原本是给 Win64 的"枚举 + 位模式回退"兜底用的：老回退路径把浮点当 int64
+     *   塞进整数寄存器，而被调方按 ABI 在 XMM 里等 ⇒ 必然错，所以宁可抛。
+     *   现在 Windows 侧改成与 Linux 侧同款的"按 ABI 精确分类 + 汇编调用桩"
+     *   （leno_ffi_win64.c ✓）⇒ 任意整数/浮点混合组合都正确，这条限制不再需要 ✓
      *
-     * ≤4 参数的混合调用走路径 3 精确分发，无需拦截。
-     * >4 参数时，前 4 个参数中如有浮点，回退路径 call_pure_int 会将浮点
-     * 放入整数寄存器而非 XMM，导致错误。若浮点全在第 5+ 位，走栈安全。
-     */
+     *   ⚠ 顺带修掉一处**本就存在的不一致**：这段拦截没有平台条件，连 Linux 也一起拦了
+     *     （实测：`(i32,f32,i32,f32,i32)` 在 Linux 上也报「超过 Win64 精确分发上限」✗）
+     *     —— 而 SysV 有 XMM0-7，本不该受限。
+     *
+     *   ⚠ arm64/macOS arm64 侧**仍是老的枚举分发**（leno_ffi_arm64.c，尚无汇编桩）：
+     *     它的回退路径同样把浮点塞进整数寄存器 ⇒ 该组合仍然只能抛。故这里保留分支，
+     *     但**只对 arm64 生效**，并把文案改成本平台的事（不再是"Win64 上限"）✓
+     *     （待办：arm64 也迁到 AAPCS64 汇编桩 —— 那时这段可整体删除 ✓） */
+#if defined(__aarch64__) || defined(__arm64__)
     {
         int float_in_reg = 0;  /* 前 4 个参数中的浮点数 */
         for (int i = 0; i < sig.nargs && i < 4; i++) {
@@ -885,41 +893,18 @@ static Value ffi_call_impl(int argc, Value* args, int ret_type_kind, const int* 
                 float_in_reg++;
             }
         }
-        /* 仅当参数 >4 个且前 4 个含浮点时才报错 */
         if (sig.nargs > 4 && float_in_reg > 0) {
-            /* 例外：5 参数 (int/ptr, f32, f32, f32, f32) 由路径 3.5 精确处理 */
-            int is_path35 = 0;
-            if (sig.nargs == 5 && float_in_reg == 3) {
-                int f32_total = 0;
-                for (int i = 0; i < sig.nargs; i++)
-                    if (sig.arg_types[i] == FFI_TYPE_FLOAT) f32_total++;
-                if (f32_total == 4 && sig.arg_types[0] != FFI_TYPE_FLOAT &&
-                    sig.arg_types[0] != FFI_TYPE_DOUBLE) {
-                    is_path35 = 1;
-                }
-            }
-            if (!is_path35) {
-                char msg[512];
-                int total_float = 0;
-                for (int i = 0; i < sig.nargs; i++)
-                    if (sig.arg_types[i] == FFI_TYPE_FLOAT ||
-                        sig.arg_types[i] == FFI_TYPE_DOUBLE)
-                        total_float++;
-                snprintf(msg, sizeof(msg),
-                         "FFI 调用参数 %d 个（含 %d 个浮点），前 4 个参数中含 %d 个浮点，"
-                         "超过 Win64 精确分发上限。\n"
-                         "  当前回退路径无法正确传递前 4 个参数中的浮点值（XMM 寄存器不匹配）。\n"
-                         "  解决方案：\n"
-                         "  - 将参数拆分到 ≤4 个的多次调用\n"
-                         "  - 使用 cstruct 将多个浮点打包为结构体指针传递\n"
-                         "  - 减少浮点参数数量\n"
-                         "  - 调整参数顺序使浮点参数位于第 5 个或之后",
-                         sig.nargs, total_float, float_in_reg);
-                native_throw_error(msg);
-                return val_null();
-            }
+            char msg[512];
+            snprintf(msg, sizeof(msg),
+                     "FFI 调用参数 %d 个且前 4 个含浮点：本平台（arm64）尚未迁移到"
+                     "按 ABI 精确分类的调用桩，组合式分发无法正确传递该组合。\n"
+                     "  临时绕法：把浮点参数排到第 5 个之后、或打包进 cstruct 传指针。",
+                     sig.nargs);
+            native_throw_error(msg);
+            return val_null();
         }
     }
+#endif
 
     /* 调用函数 */
     FFIValue result = ffi_call(func, &sig, ffi_args);

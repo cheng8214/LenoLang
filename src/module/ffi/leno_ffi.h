@@ -3,24 +3,34 @@
  * 支持: Windows x64, Linux x64, macOS x64, macOS arm64, Linux arm64
  *
  * 类型: void, int, double, pointer
- * 最大参数: 12 (6/8 寄存器 + 栈参数)
+ * 最大参数: 12
  *
  * 核心设计:
- *   参数按原始位置混合打包为统一类型列表 (int64_t/double)，
- *   利用 C 编译器自动按各平台 ABI 规则分配寄存器，
- *   避免手动处理混合寄存器分配的复杂性。
+ *   前端（ffi.c）把实参按**类型**打包成 FFIArg 列表（每个实参都带 FFIType 标签 ✓），
+ *   后端（leno_ffi_{win64,linux,arm64}.c）据此按各平台 ABI 分配寄存器与栈参数。
+ *   ⇒ 类型信息一直是充分的：clib 声明在**编译期**就写明了每个形参类型，
+ *     运行期一路传到后端（见下面的 FFISignature/FFIArg ✓）。
  *
  * 平台调用约定:
- *   - Windows x64:    Microsoft x64 (RCX/RDX/R8/R9 + XMM0-XMM3, 32B shadow)
- *   - Linux/macOS x64: System V AMD64 (RDI-R9 + XMM0-XMM7, 无 shadow)
- *   - ARM64 (任意 OS): AAPCS64 (X0-X7 + V0-V7, 无 shadow)
+ *   - Windows x64:    Microsoft x64 (RCX/RDX/R8/R9 + XMM0-XMM3, 32B 影子空间)
+ *   - Linux/macOS x64: System V AMD64 (RDI-R9 + XMM0-XMM7, 无影子空间)
+ *   - ARM64 (任意 OS): AAPCS64 (X0-X7 + V0-V7, 无影子空间)
  *
- * 与 LuaJIT FFI 的对比:
- *   LuaJIT 使用 JIT 编译器动态生成调用序列，可处理任意参数组合。
- *   本实现使用预定义的函数指针类型分发，覆盖常见组合，
- *   对未覆盖的组合回退到 "全 int64" 调用策略：将 double 的位模式
- *   通过 memcpy 转为 int64_t 传递，依赖 ABI 的整数/浮点寄存器独立性。
- *   此回退策略仅在寄存器传参范围内安全（Win64: 4, SysV: 6, AAPCS64: 8）。
+ * 各平台的实现策略（2026-10-01 起）:
+ *   · Windows x64 / Linux·macOS x64：**按 ABI 精确分类 + 汇编调用桩**
+ *     （纯整数 / 纯浮点仍走 C 函数指针；**任何混合组合**交给桩 ⇒ 任意组合都正确 ✓
+ *       见 leno_ffi_win64.c / leno_ffi_linux.c 的文件头 ✓）
+ *   · ARM64：仍是"按类型组合枚举函数指针 + 全 int64 回退"的老做法 ⇒
+ *     ⚠ 覆盖不全、部分组合会静默失效（详见 leno_ffi_arm64.c；待办：迁到 AAPCS64 桩）
+ *
+ * ⚠ 关于老回退"把 double 位模式当 int64 传"（现仅 arm64 侧仍有其影响）：
+ *   它**并不是**"在寄存器传参范围内都安全"——恰恰相反：
+ *     · 浮点实参落在**浮点寄存器**里时走整数寄存器交付 ⇒ 被调方读到陈旧值 ⇒ **必错** ✗
+ *     · 只有浮点实参**溢出到栈上**时，位模式与 ABI 的栈布局一致 ⇒ 才安全 ✓
+ *   （本文件此前把这条说反了。Linux 侧的 PVZ 段错误、Windows 侧 `(i32,f32,i32,f32)`
+ *     静默空调用，根因都是它 ✓）
+ *   与 LuaJIT FFI 的对比: LuaJIT 用 JIT 动态生成调用序列，天然没有这个问题；
+ *   本仓库的汇编调用桩是同一思路的静态版本 ✓
  */
 
 #ifndef LENO_FFI_H

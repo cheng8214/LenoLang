@@ -1,0 +1,212 @@
+// test_ffi_win64_abi.leno —— Win64 FFI 调用桩的 **ABI 边界 + 压力** 回归（2026-10-01）
+//
+// 背景：Windows 侧的 FFI 后端从"按类型组合枚举函数指针 + 全 int64 回退"改成了
+//   **按 ABI 精确分类 + 汇编调用桩**（`src/module/ffi/leno_ffi_win64.c` 的 `leno_win64_call`，
+//   与 Linux 侧同构 ✓）。本用例把当时用来定位/验证的那套探针固化下来。
+//
+// 它钉住的关键点（都是**实测踩过**的）：
+//   · 老枚举法的三种坏法：(i32,f32,i32,f32) **静默空调用**、
+//     (f32,f64,i32,i32) 传错值、5 参数含浮点直接**抛错**
+//   · Win64 是"**第 i 个参数占第 i 号槽**"（RCX:XMM0 / RDX:XMM1 / R8:XMM2 / R9:XMM3），
+//     **不是** SysV 那种"整数/浮点各自计数"⇒ 按错模型分类会整体错位
+//   · 影子空间 32 字节必须紧贴返回地址 ⇒ 桩里必须**先压实参、再 sub rsp,32**
+//     （顺序反了会让第 5+ 个参数整体错位）
+//   · 压栈参数前要按 **16 字节对齐**补位（nstk 奇数时补一个 0）——
+//     用"被调方 movaps 写 16 字节对齐局部"当金丝雀（没对齐会直接崩）
+//   · 纯浮点老路径的两个坑：>6 个参数**静默返回 0**；"全浮点参数 + **整数返回**"
+//     从 XMM0 取返回值（真值在 RAX）⇒ 拿到残留浮点垃圾
+//
+// 判据：多参数用例的被调方返回"**逐参数位掩码**"（第 i 位 = 第 i+1 个参数不对）⇒ 期望 0；
+//   失败时位掩码直接指出**是哪一位**参数错的（比校验和强得多 ✓）。
+//   被调方还往 stderr 打一行 `[DLL] ...`：失败时能直接从日志看到"有没有被调到、实际收到什么" ✓
+//
+// 运行依赖：
+//   · 只在 Windows 上有意义（测的是 `_WIN32` 分支）⇒ 其他平台 **SKIP**（不算失败 ✓）
+//   · 探针 DLL：**优先用 gcc 现场编译** `helpers/ffi_probe_win64.c`
+//     （保证"测的是当前源码"，避免预编译件与源码漂移 ✓）；
+//     gcc 不可用则回退到仓库里的 `helpers/ffi_probe_win64.dll`；
+//     两者都没有 ⇒ SKIP ✓
+//   · 预编译件更新方式：`gcc -shared -O2 -o assert/helpers/ffi_probe_win64.dll assert/helpers/ffi_probe_win64.c`
+import ffi
+import dirs
+import files
+
+// ---- 回调签名（C → Leno）----
+cfunc LenoCbI(i32 x): i32
+cfunc LenoCbN(i32 x): i32
+
+clib probe_lib {
+    // 基础回归（老枚举法的三种坏法）
+    i64 p_idid(i32 a, f64 b, i32 c, f64 d)
+    i64 p_iFiF(i32 a, f32 b, i32 c, f32 d)
+    i64 p_Fdii(f32 a, f64 b, i32 c, i32 d)
+    i64 p_5iFiFi(i32 a, f32 b, i32 c, f32 d, i32 e)
+    // 0 参数 / 返回类型宽度
+    i64 p_0()
+    u8  p_ret_u8()
+    i8  p_ret_i8()
+    u16 p_ret_u16()
+    i16 p_ret_i16()
+    u32 p_ret_u32()
+    i32 p_ret_i32()
+    i64 p_ret_i64()
+    i64 p_ret_i64big()
+    bool p_ret_bool()
+    // 窄整型参数 / i64 全宽参数
+    i64 p_widths(u8 a, i8 b, u16 c, i16 d, u32 e)
+    i64 p_i64args(i64 a, i64 b)
+    // 寄存器 / 栈边界
+    i64 p_dd_reti(f64 a, f64 b)
+    i64 p_4i(i32 a, i32 b, i32 c, i32 d)
+    i64 p_8i(i32 a, i32 b, i32 c, i32 d, i32 e, i32 f, i32 g, i32 h)
+    i64 p_12i(i32 a1, i32 a2, i32 a3, i32 a4, i32 a5, i32 a6, i32 a7, i32 a8, i32 a9, i32 a10, i32 a11, i32 a12)
+    i64 p_4f32(f32 a, f32 b, f32 c, f32 d)
+    i64 p_5f32(f32 a, f32 b, f32 c, f32 d, f32 e)
+    i64 p_6d(f64 a, f64 b, f64 c, f64 d, f64 e, f64 f)
+    i64 p_7d(f64 a, f64 b, f64 c, f64 d, f64 e, f64 f, f64 g)
+    i64 p_4d_4i(f64 a, f64 b, f64 c, f64 d, i32 e, i32 f, i32 g, i32 h)
+    i64 p_4i_4d(i32 a, i32 b, i32 c, i32 d, f64 e, f64 f, f64 g, f64 h)
+    i64 p_mix_f32stack(i32 a, f32 b, f32 c, f32 d, f32 e, f32 f)
+    i64 p_8(i32 a, f64 b, i32 c, f64 d, i32 e, f64 f, i32 g, f64 h)
+    i64 p_12(i32 a1, f64 b1, i32 a2, f64 b2, i32 a3, f64 b3, i32 a4, f64 b4, i32 a5, f64 b5, i32 a6, f64 b6)
+    i64 p_7mix(i64 p1, i64 p2, i64 p3, i64 p4, f64 ang, i64 p5, i32 flip)
+    // 纯浮点 / f32 返回
+    f64 p_8d(f64 a, f64 b, f64 c, f64 d, f64 e, f64 f, f64 g, f64 h)
+    f32 p_retf32(i32 a, f32 b, i32 c, f32 d)
+    // 对齐金丝雀（nstk 奇/偶三种）
+    i64 p_sse_n1(i32 a, f64 b, i32 c, f64 d, i32 e)
+    i64 p_sse_n2(i32 a, f64 b, i32 c, f64 d, i32 e, f64 f)
+    i64 p_sse_n3(i32 a, f64 b, i32 c, f64 d, i32 e, f64 f, i32 g)
+    // 回调 / 重入
+    i32 p_invoke_cb(Ptr[u8] cb, i32 x)
+    // 压力
+    i64 p_stress(i32 a, f64 b, i32 c, f64 d, i32 e)
+}
+
+probe_lib G = null
+
+// ---- 判据小工具 ----
+// 位掩码类：期望 0（第 i 位 = 第 i+1 个参数不对）
+func chk(string tag, int mask) {
+    assert_eq(mask, 0,
+        tag + "：被调方返回逐参数位掩码，第 i 位=第 i+1 个参数不对 ⇒ 应为 0；"
+            + "实际 " + _str(mask) + "（可看 stderr 的 [DLL] 行）")
+}
+
+func chkf(string tag, float got, float want) {
+    assert_true(got == want, tag + "：期望 " + _str(want) + "，实际 " + _str(got))
+}
+
+// ---- 回调实现（C → Leno）----
+func cb_double(int x): int { return x * 2 }
+
+// 重入：**在回调里再调一次 DLL**（嵌套 FFI）⇒ 桩与回调 trampoline 都必须可重入 ✓
+func cb_nested(int x): int { return (G.p_0() as int) + x }
+
+main() {
+    if _os() != "windows" {
+        print("  [SKIP] test_ffi_win64_abi：本用例只测 Windows 的 leno_win64_call 桩")
+        return
+    }
+
+    // 探针 DLL：优先 gcc 现编（测当前源码 ✓），失败则回退预编译件，都没有就 SKIP
+    //   ⚠ 判 `r.code` 而不是 `r != null`：`_exec` 返回的是**结构体** `ExecResult{output, code}`，
+    //     跟 null 比会被编译器判「struct 与 null 比较」警告（struct 值默认不为 null ✓）；
+    //     文档里的用法也是直接 `if result.code == 0` ✓
+    var src = dirs.script_dir() + "/helpers/ffi_probe_win64.c"
+    var dll = dirs.script_dir() + "/helpers/ffi_probe_win64.dll"
+    var gcc = _exec("gcc --version", 20000)
+    if gcc.code == 0 and files.exists(src) {
+        var out = dirs.join(_tmpdir(), "ffi_probe_win64.dll")
+        var r = _exec("gcc -shared -O2 -o \"" + out + "\" \"" + src + "\"", 60000)
+        if r.code == 0 {
+            dll = out
+        } else {
+            print("  注意：gcc 编译探针失败 ⇒ 回退用仓库里的预编译 DLL（可能与源码漂移）")
+        }
+    }
+    if not files.exists(dll) {
+        print("  [SKIP] test_ffi_win64_abi：没有可用的探针 DLL（assert/helpers/ffi_probe_win64.dll）")
+        return
+    }
+    G = ffi.load(dll)
+
+    // ================= A. 基础回归：老枚举法的三种坏法 =================
+    assert_eq(G.p_idid(1, 2.5, 3, 4.5) as int, 123467343, "A1 (i32,f64,i32,f64) 应正确")
+    assert_eq(G.p_iFiF(1, 2.5, 3, 4.5) as int, 123467343,
+        "A2 (i32,f32,i32,f32)：老枚举法会**静默空调用**（返回 0，函数一次没进）")
+    assert_eq(G.p_Fdii(1.5, 2.5, 3, 4) as int, 999000074,
+        "A3 (f32,f64,i32,i32)：老枚举法会把 f32 当 int 配到 double 分支 ⇒ 1.5 变 0")
+    chk("A4 5 参数含浮点（老实现直接抛错）", G.p_5iFiFi(1, 2.5, 3, 4.5, 5) as int)
+
+    // ================= B. 0 参数 / 返回类型宽度 =================
+    assert_eq(G.p_0() as int, 777, "B1 0 参数（桩里 nstk==0 的分支）")
+    assert_eq(G.p_ret_u8() as int, 200, "B2 u8 返回（ABI 说 RAX 高位未定义 ⇒ 前端须窄化）")
+    assert_eq(G.p_ret_i8() as int, -100, "B3 i8 返回（须符号扩展）")
+    assert_eq(G.p_ret_u16() as int, 60000, "B4 u16 返回")
+    assert_eq(G.p_ret_i16() as int, -30000, "B5 i16 返回（须符号扩展）")
+    assert_eq(G.p_ret_u32() as int, 4000000000, "B6 u32 返回（> 2^31）")
+    assert_eq(G.p_ret_i32() as int, -2000000000, "B7 i32 返回")
+    assert_eq(G.p_ret_i64() as int, 1250999896491, "B8 i64 返回 0x123456789AB")
+    // ⚠ 57 位超出 Leno 内联 int 范围 ⇒ 走 bigint ⇒ 用字符串比（as int 会截断）
+    assert_true(_str(G.p_ret_i64big()) == "81985529216486895",
+        "B9 i64 返回 57 位应走 bigint，实际 " + _str(G.p_ret_i64big()))
+    assert_eq(G.p_ret_bool() as int, 1, "B10 bool 返回 true")
+
+    // ================= C. 窄整型 / i64 全宽 参数 =================
+    chk("C1 (u8,i8,u16,i16,u32) 含 1 个栈参数",
+        G.p_widths(200, -100, 60000, -30000, 4000000000) as int)
+    chk("C2 i64 全宽两参数（正/负 44 位）",
+        G.p_i64args(1250999896491, 0 - 1250999896491) as int)
+
+    // ================= D. 寄存器/栈边界 =================
+    chk("D1  4 整数（4 个槽全占）", G.p_4i(1, 2, 3, 4) as int)
+    chk("D1b 全浮点参数 + **整数返回**（曾从 XMM0 取值 ⇒ 拿到残留浮点垃圾）",
+        G.p_dd_reti(1.5, 2.5) as int)
+    chk("D2  8 整数（4 槽 + 4 栈）", G.p_8i(1, 2, 3, 4, 5, 6, 7, 8) as int)
+    chk("D3  12 整数（FFI_MAX_ARGS 上限：4 槽 + 8 栈）",
+        G.p_12i(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12) as int)
+    chk("D4  4 个 f32（4 个浮点槽全占）", G.p_4f32(1.5, 2.5, 3.5, 4.5) as int)
+    chk("D5  5 个 f32（4 槽 + 1 栈）", G.p_5f32(1.5, 2.5, 3.5, 4.5, 5.5) as int)
+    chk("D6  6 个 f64（4 槽 + 2 栈）", G.p_6d(1.5, 2.5, 3.5, 4.5, 5.5, 6.5) as int)
+    chk("D7  7 个 f64（4 槽 + 3 栈，奇数栈 ⇒ 补位）",
+        G.p_7d(1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5) as int)
+    chk("D8  4 浮点槽 + 4 整数**在栈上**",
+        G.p_4d_4i(1.5, 2.5, 3.5, 4.5, 5, 6, 7, 8) as int)
+    chk("D9  4 整数槽 + 4 个 f64**在栈上**（浮点走栈）",
+        G.p_4i_4d(1, 2, 3, 4, 5.5, 6.5, 7.5, 8.5) as int)
+    chk("D10 f32 溢出到栈（第 5、6 个）",
+        G.p_mix_f32stack(1, 2.5, 3.5, 4.5, 5.5, 6.5) as int)
+    chk("D11 8 参数混合（4 槽 + 4 栈）", G.p_8(1, 2.5, 3, 4.5, 5, 6.5, 7, 8.5) as int)
+    chk("D12 12 参数混合（4 槽 + 8 栈）",
+        G.p_12(1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 6.5) as int)
+    chk("D13 指针形状 7 参数（f64 落在第 5 位=栈上）",
+        G.p_7mix(11, 22, 33, 44, 55.5, 66, 7) as int)
+
+    // ================= E. 纯浮点 / f32 返回 =================
+    chkf("E1 纯 f64 x8（老实现 7、8 个参数会**静默返回 0**）",
+        G.p_8d(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0), 87654321.0)
+    chkf("E2 f32 返回（取 XMM0 低 4 字节）：2.5+4.5", G.p_retf32(1, 2.5, 3, 4.5), 7.0)
+
+    // ================= F. 对齐金丝雀（被调方 movaps；没 16 对齐会直接崩）=================
+    chk("F1 nstk=1（奇数 ⇒ 补位）", G.p_sse_n1(1, 2.0, 3, 4.0, 5) as int)
+    chk("F2 nstk=2（偶数 ⇒ 不补）", G.p_sse_n2(1, 2.0, 3, 4.0, 5, 6.5) as int)
+    chk("F3 nstk=3（奇数 ⇒ 补位）", G.p_sse_n3(1, 2.0, 3, 4.0, 5, 6.5, 7) as int)
+
+    // ================= G. 回调（C → Leno）与重入 =================
+    var cb1 = ffi.callback(cb_double, LenoCbI)
+    assert_eq(G.p_invoke_cb(cb1, 21) as int, 42, "G1 C→Leno 回调（21*2）")
+    var cb2 = ffi.callback(cb_nested, LenoCbN)
+    assert_eq(G.p_invoke_cb(cb2, 5) as int, 782,
+        "G2 回调里再调 DLL（嵌套 FFI ⇒ 桩必须可重入）：777+5")
+
+    // ================= H. 压力：混合签名循环 20 万次 =================
+    var bad = 0
+    for 200000 to i {
+        int s = G.p_stress(i, i, i + 1, i + 2, i + 3) as int
+        if s != 0 { bad = bad | s }
+    }
+    chk("H1 20 万次混合调用（逐次校验 4 个槽位与值）", bad)
+
+    print("test_ffi_win64_abi passed（38 例）")
+}
