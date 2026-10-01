@@ -529,3 +529,49 @@ const char* module_symbol_table_hint(ModuleSymbolTable* table, const char* name)
     }
     return hint;
 }
+
+// ============================================================================
+// v33：导出名清单（收敛 S10）
+// ----------------------------------------------------------------------------
+// 唯一实现者 = 扫描链（`inc/scan/*.inc` 在**顶层 export 声明**处调用 add_export_name）。
+// 消费者 = `module_loader.c`：
+//   · extract_module_exports_from_file（喂 module_has_method 判"模块有没有这个方法"）
+//   · load_module_file（建 ObjModule 时把导出名交给 module_compiler 建键）
+// 收敛前这两处消费的是 `module_loader.c` 里那份复刻的文本扫描器 —— 两个实现者必然漂移。
+// ============================================================================
+
+// 追加一个导出名（空名/重名忽略；名字内部复制一份）
+void module_symbol_table_add_export_name(ModuleSymbolTable* table, const char* name) {
+    if (!table || !name || !name[0]) return;
+    // 去重：同一文件里 `export` 同名声明本就该报错（由语义侧报），这里只要保证清单里不重复
+    for (int i = 0; i < table->export_count; i++) {
+        if (strcmp(table->export_names[i], name) == 0) return;
+    }
+    if (table->export_count >= table->export_capacity) {
+        int new_cap = table->export_capacity == 0 ? 16 : table->export_capacity * 2;
+        char** grown = (char**)realloc(table->export_names, sizeof(char*) * new_cap);
+        if (!grown) return;   // 内存不足：跳过该名字，调用方继续扫描（与 mod_names_push 同策略）
+        table->export_names = grown;
+        table->export_capacity = new_cap;
+    }
+    char* s = strdup(name);
+    if (!s) return;
+    table->export_names[table->export_count++] = s;
+}
+
+// 本模块是否导出该名字（只查导出名清单 —— 不查 funcs/structs 等表，理由见头文件字段说明）
+int module_symbol_table_has_export(ModuleSymbolTable* table, const char* name) {
+    if (!table || !name || !name[0]) return 0;
+    for (int i = 0; i < table->export_count; i++) {
+        if (strcmp(table->export_names[i], name) == 0) return 1;
+    }
+    return 0;
+}
+
+// 取导出名清单（只读；长度写 *out_count）
+const char* const* module_symbol_table_export_names(ModuleSymbolTable* table, int* out_count) {
+    if (out_count) *out_count = 0;
+    if (!table || table->export_count <= 0) return NULL;
+    if (out_count) *out_count = table->export_count;
+    return (const char* const*)table->export_names;
+}

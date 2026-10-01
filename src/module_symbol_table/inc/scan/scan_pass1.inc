@@ -318,6 +318,8 @@
                                 param_count, param_types, param_element_types,
                                 param_structs, param_names,
                                 ret_type, ret_element_type, NULL);
+                                // v33（收敛 S10）：本文件在 export 块内被 include ⇒ 必然是顶层 export 声明 ⇒ 登记导出名
+                                module_symbol_table_add_export_name(table, cfunc_name_buf);
 
                             // 释放临时数据
                             for (int pi = 0; pi < param_count; pi++) {
@@ -690,6 +692,8 @@
                             param_count, param_types, param_element_types,
                             param_structs, param_names,
                             ret_type, ret_element_type, NULL);
+                            // v33（收敛 S10）：本文件在 export 块内被 include ⇒ 必然是顶层 export 声明 ⇒ 登记导出名
+                            module_symbol_table_add_export_name(table, cfunc_name_buf);
 
                         // 释放临时数据
                         for (int pi = 0; pi < param_count; pi++) {
@@ -1067,6 +1071,8 @@
                                                     param_count, param_types, param_element_types,
                                                     param_structs, param_names,
                                                     ret_type, ret_element_type, NULL);
+                                                    // v33（收敛 S10）：本文件在 export 块内被 include ⇒ 必然是顶层 export 声明 ⇒ 登记导出名
+                                                    module_symbol_table_add_export_name(table, cfunc_name_buf);
 
                                                 for (int pi = 0; pi < param_count; pi++) {
                                                     free(param_names[pi]);
@@ -1205,6 +1211,8 @@
                                                 param_count, param_types, param_element_types,
                                                 param_structs, param_names,
                                                 ret_type, ret_element_type, NULL);
+                                                // v33（收敛 S10）：本文件在 export 块内被 include ⇒ 必然是顶层 export 声明 ⇒ 登记导出名
+                                                module_symbol_table_add_export_name(table, cfunc_name_buf);
 
                                             for (int pi = 0; pi < param_count; pi++) {
                                                 free(param_names[pi]);

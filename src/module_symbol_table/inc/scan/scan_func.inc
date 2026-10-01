@@ -312,6 +312,10 @@
                                 param_text[0] ? param_text : NULL,
                                 parsed_param_count, parsed_default_count, parsed_default_texts,
                                 is_async_decl);   // `export async func` ⇒ 记进符号表（C2）
+                            // v33（收敛 S10）：本文件是**在 `if (strncmp(p,"export",6)==0)` 块内**被
+                            // `#include` 的（见 sym_table_scan.inc:82-88）⇒ 走到这里必然是顶层 export 声明
+                            // ⇒ 登记导出名。module_loader.c 那边**不再**自己扫一份源码判 export ✓
+                            module_symbol_table_add_export_name(table, func_name);
                             ModuleFuncSymbol* added_func = module_symbol_table_find_func(table, func_name);
                             if (added_func) {
                                 added_func->line = func_def_line;

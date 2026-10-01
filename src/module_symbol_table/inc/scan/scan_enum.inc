@@ -139,6 +139,8 @@
                     }
 
                     module_symbol_table_add_enum(table, enum_name, member_count, member_names_buf, member_values_buf);
+                    // v33（收敛 S10）：本文件在 export 块内被 include ⇒ 必然是顶层 export 声明 ⇒ 登记导出名
+                    module_symbol_table_add_export_name(table, enum_name);
                     for (int mi = 0; mi < member_count; mi++) free(member_names_buf[mi]);
                     // 释放动态数组本体
                     free(member_names_buf);

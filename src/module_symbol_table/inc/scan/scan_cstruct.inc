@@ -350,6 +350,8 @@
 
                         // 添加 cstruct 到符号表（cstruct 无方法，method_count 恒为 0）
                         module_symbol_table_add_struct(table, cstruct_name, field_count, fields, 0, NULL, 1, 0, NULL);
+                        // v33（收敛 S10）：本文件在 export 块内被 include ⇒ 必然是顶层 export 声明 ⇒ 登记导出名
+                        module_symbol_table_add_export_name(table, cstruct_name);
 
                         // 释放临时分配的内存
                         for (int i = 0; i < field_count; i++) {

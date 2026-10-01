@@ -1,5 +1,8 @@
 #include "include/leno_vm_runtime.h"
 #include "include/module_dispatch.h"
+// v33（收敛 S10）：导出名的唯一来源是模块符号表扫描器 —— 本文件此前自带一份复刻的文本
+// 扫描器 extract_exports()（已删除），现改为只读 module_symbol_table_export_names()/has_export()
+#include "include/module_symbol_table.h"
 #include "include/leno_serialize.h"
 #include "include/leno_dce.h"
 #include <stdio.h>
@@ -192,246 +195,18 @@ static void extract_module_name(const char* file_path, char* out_name, int max_l
 }
 
 // 提取导出项
-static void extract_exports(const char* source, ExportList* list) {
-    list->count = 0;
-    const char* p = source;
-
-    while (*p) {
-        // 跳过空白字符
-        while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) p++;
-
-        if (!*p) break;
-
-        // 处理单行注释 //
-        if (*p == '/' && *(p+1) == '/') {
-            while (*p && *p != '\n') p++;
-            continue;
-        }
-
-        // 处理多行注释 /* ... */
-        if (*p == '/' && *(p+1) == '*') {
-            p += 2;  // 跳过 /*
-            while (*p && !(*p == '*' && *(p+1) == '/')) p++;
-            if (*p) p += 2;  // 跳过 */
-            continue;
-        }
-
-        // 处理双引号字符串 "..."
-        if (*p == '"') {
-            p++;  // 跳过起始 "
-            while (*p && *p != '"') {
-                if (*p == '\\' && *(p+1)) p += 2;  // 跳过转义字符
-                else p++;
-            }
-            if (*p) p++;  // 跳过结束 "
-            continue;
-        }
-
-        // 处理单引号字符串 '...'
-        if (*p == '\'') {
-            p++;  // 跳过起始 '
-            while (*p && *p != '\'') {
-                if (*p == '\\' && *(p+1)) p += 2;  // 跳过转义字符
-                else p++;
-            }
-            if (*p) p++;  // 跳过结束 '
-            continue;
-        }
-
-        // 处理原始字符串 `...`
-        if (*p == '`') {
-            p++;  // 跳过起始 `
-            while (*p && *p != '`') p++;
-            if (*p) p++;  // 跳过结束 `
-            continue;
-        }
-
-        // 查找 export 关键字
-        if (strncmp(p, "export", 6) == 0 && !isalnum((unsigned char)p[6]) && p[6] != '_') {
-            p += 6;
-            while (*p && (*p == ' ' || *p == '\t')) p++;
-
-            // ★ 跳过可选的 `async` 前缀（`export async func work()`）：
-            //   少了这一步，导出名会被登记成 "async"（或 "func"），消费者侧
-            //   `m.work()` 直接报「模块 'm' 中没有方法 'work'」—— C2 的第三处。
-            if (strncmp(p, "async", 5) == 0 && !isalnum((unsigned char)p[5]) && p[5] != '_') {
-                p += 5;
-                while (*p && (*p == ' ' || *p == '\t')) p++;
-            }
-            // 跳过可能的 "func"、"var"、"const"、"struct"、"cstruct"、"enum" 关键字
-            if (strncmp(p, "func", 4) == 0 && !isalnum((unsigned char)p[4]) && p[4] != '_') {
-                p += 4;
-                while (*p && (*p == ' ' || *p == '\t')) p++;
-            } else if (strncmp(p, "const", 5) == 0 && !isalnum((unsigned char)p[5]) && p[5] != '_') {
-                p += 5;
-                while (*p && (*p == ' ' || *p == '\t')) p++;
-                // const 后面可能还有类型关键字（如 const int, const float 等），继续跳过
-                // 需要循环跳过，因为可能有多级（虽然当前语法只有一级）
-                int skipped_type = 1;
-                while (skipped_type) {
-                    skipped_type = 0;
-                    if (strncmp(p, "int", 3) == 0 && !isalnum((unsigned char)p[3]) && p[3] != '_') {
-                        p += 3; while (*p && (*p == ' ' || *p == '\t')) p++; skipped_type = 1;
-                    } else if (strncmp(p, "float", 5) == 0 && !isalnum((unsigned char)p[5]) && p[5] != '_') {
-                        p += 5; while (*p && (*p == ' ' || *p == '\t')) p++; skipped_type = 1;
-                    } else if (strncmp(p, "string", 6) == 0 && !isalnum((unsigned char)p[6]) && p[6] != '_') {
-                        p += 6; while (*p && (*p == ' ' || *p == '\t')) p++; skipped_type = 1;
-                    } else if (strncmp(p, "bool", 4) == 0 && !isalnum((unsigned char)p[4]) && p[4] != '_') {
-                        p += 4; while (*p && (*p == ' ' || *p == '\t')) p++; skipped_type = 1;
-                    } else if (strncmp(p, "var", 3) == 0 && !isalnum((unsigned char)p[3]) && p[3] != '_') {
-                        p += 3; while (*p && (*p == ' ' || *p == '\t')) p++; skipped_type = 1;
-                    } else if (strncmp(p, "any", 3) == 0 && !isalnum((unsigned char)p[3]) && p[3] != '_') {
-                        p += 3; while (*p && (*p == ' ' || *p == '\t')) p++; skipped_type = 1;
-                    } else if (strncmp(p, "Array", 5) == 0 && !isalnum((unsigned char)p[5]) && p[5] != '_') {
-                        p += 5; while (*p && (*p == ' ' || *p == '\t')) p++; skipped_type = 1;
-                    } else if (strncmp(p, "Dict", 4) == 0 && !isalnum((unsigned char)p[4]) && p[4] != '_') {
-                        p += 4; while (*p && (*p == ' ' || *p == '\t')) p++; skipped_type = 1;
-                    } else if (strncmp(p, "Ptr", 3) == 0 && !isalnum((unsigned char)p[3]) && p[3] != '_') {
-                        p += 3; while (*p && (*p == ' ' || *p == '\t')) p++; skipped_type = 1;
-                    }
-                    // 跳过泛型参数（如 Array[int] 中的 [int]）
-                    if (*p == '[') {
-                        p++;
-                        while (*p && *p != ']') p++;
-                        if (*p == ']') p++;
-                        while (*p && (*p == ' ' || *p == '\t')) p++;
-                    }
-                }
-            } else if (strncmp(p, "var", 3) == 0 && !isalnum((unsigned char)p[3]) && p[3] != '_') {
-                p += 3;
-                while (*p && (*p == ' ' || *p == '\t')) p++;
-                // 检测解构语法: var[T1, T2](a, b) 或 var{"k": T}(a)
-                if (*p == '[' || *p == '{') {
-                    // 跳过形状部分 [...] 或 {...}
-                    int depth = 1;
-                    p++;
-                    while (*p && depth > 0) {
-                        if (*p == '[' || *p == '{') depth++;
-                        else if (*p == ']' || *p == '}') depth--;
-                        if (depth == 0) { p++; break; }
-                        p++;
-                    }
-                    // 跳过空格
-                    while (*p && (*p == ' ' || *p == '\t')) p++;
-                    // 解析 (name, name, ...)
-                    if (*p == '(') {
-                        p++;
-                        while (*p) {
-                            const char* dname_iter_start = p;   // 进度守卫基准
-                            // 跳过空白与逗号。**含换行**：解构列表换行写合法；漏掉 '\n'
-                            // 会让指针停住、本圈一步不推进 ⇒ 死循环（同 scan_var.inc）。
-                            while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r' || *p == ',')) p++;
-                            if (*p == ')') { p++; break; }
-                            const char* dname_start = p;
-                            while (*p && (isalnum((unsigned char)*p) || *p == '_')) p++;
-                            int dlen = (int)(p - dname_start);
-                            if (dlen > 0 && dlen < MAX_EXPORT_NAME && list->count < MAX_EXPORTS) {
-                                strncpy(list->names[list->count], dname_start, dlen);
-                                list->names[list->count][dlen] = '\0';
-                                list->count++;
-                            }
-                            // 本圈没推进就退出，畸形列表交由真正的解析器报错
-                            if (p == dname_iter_start) break;
-                        }
-                        continue;  // 已处理完，跳过下方的标识符读取
-                    }
-                    continue;
-                }
-            } else if (strncmp(p, "cstruct", 7) == 0 && !isalnum((unsigned char)p[7]) && p[7] != '_') {
-                p += 7;
-                while (*p && (*p == ' ' || *p == '\t')) p++;
-            } else if (strncmp(p, "packed", 6) == 0 && !isalnum((unsigned char)p[6]) && p[6] != '_') {
-                // export packed cstruct / export packed align(N) cstruct
-                p += 6;
-                while (*p && (*p == ' ' || *p == '\t')) p++;
-                // 跳过可选的 align(N)
-                if (strncmp(p, "align", 5) == 0 && !isalnum((unsigned char)p[5]) && p[5] != '_') {
-                    p += 5;
-                    while (*p && (*p == ' ' || *p == '\t')) p++;
-                    if (*p == '(') {
-                        p++;
-                        while (*p && *p != ')') p++;
-                        if (*p == ')') p++;
-                        while (*p && (*p == ' ' || *p == '\t')) p++;
-                    }
-                }
-                // 跳过 cstruct 关键字
-                if (strncmp(p, "cstruct", 7) == 0 && !isalnum((unsigned char)p[7]) && p[7] != '_') {
-                    p += 7;
-                    while (*p && (*p == ' ' || *p == '\t')) p++;
-                }
-            } else if (strncmp(p, "align", 5) == 0 && !isalnum((unsigned char)p[5]) && p[5] != '_') {
-                // export align(N) cstruct / export align(N) packed cstruct
-                p += 5;
-                while (*p && (*p == ' ' || *p == '\t')) p++;
-                if (*p == '(') {
-                    p++;
-                    while (*p && *p != ')') p++;
-                    if (*p == ')') p++;
-                    while (*p && (*p == ' ' || *p == '\t')) p++;
-                }
-                // 跳过可选的 packed
-                if (strncmp(p, "packed", 6) == 0 && !isalnum((unsigned char)p[6]) && p[6] != '_') {
-                    p += 6;
-                    while (*p && (*p == ' ' || *p == '\t')) p++;
-                }
-                // 跳过 cstruct 关键字
-                if (strncmp(p, "cstruct", 7) == 0 && !isalnum((unsigned char)p[7]) && p[7] != '_') {
-                    p += 7;
-                    while (*p && (*p == ' ' || *p == '\t')) p++;
-                }
-            } else if (strncmp(p, "struct", 6) == 0 && !isalnum((unsigned char)p[6]) && p[6] != '_') {
-                p += 6;
-                while (*p && (*p == ' ' || *p == '\t')) p++;
-            } else if (strncmp(p, "enum", 4) == 0 && !isalnum((unsigned char)p[4]) && p[4] != '_') {
-                p += 4;
-                while (*p && (*p == ' ' || *p == '\t')) p++;
-            } else {
-                // "类型在前"声明: export int x = 42, export Array[int] arr = value, export MyStruct b = ...
-                // 跳过类型部分（类型名 + 可选泛型 [T] 或 [K,V]）
-                // 跳过类型名标识符
-                while (*p && (isalnum((unsigned char)*p) || *p == '_')) p++;
-                while (*p && (*p == ' ' || *p == '\t')) p++;
-                // 跳过泛型参数 [T] 或 [K,V]（支持嵌套如 Array[Array[int]]）
-                if (*p == '[') {
-                    int depth = 1;
-                    p++;
-                    while (*p && depth > 0) {
-                        if (*p == '[') depth++;
-                        else if (*p == ']') { depth--; if (depth == 0) { p++; break; } }
-                        p++;
-                    }
-                    while (*p && (*p == ' ' || *p == '\t')) p++;
-                }
-                // 跳过可能的第二级类型（如 Array[Array[int]] 中外层 Array 后还有 [Array[int]]）
-                // 上面已处理嵌套，这里不需要再循环
-            }
-
-            // 读取标识符名称
-            const char* start = p;
-            while (*p && (isalnum(*p) || *p == '_')) p++;
-
-            int len = (int)(p - start);
-            if (len > 0 && len < MAX_EXPORT_NAME) {
-                if (list->count >= MAX_EXPORTS) {
-                    fprintf(stderr, "[错误] 模块导出项数量超过上限 %d，'%.*s' 被忽略\n",
-                            MAX_EXPORTS, len, start);
-                } else {
-                    strncpy(list->names[list->count], start, len);
-                    list->names[list->count][len] = '\0';
-                    list->count++;
-                }
-            } else if (len >= MAX_EXPORT_NAME) {
-                fprintf(stderr, "[错误] 导出项名称长度超过上限 %d：'%.*s'\n",
-                        MAX_EXPORT_NAME, len, start);
-            }
-            continue;
-        }
-
-        p++;
-    }
-}
-
+// ============================================================================
+// v33（收敛 S10）：这里**曾经**是一个独立的手写文本扫描器
+//   static void extract_exports(const char* source, ExportList* list)
+// 它重读源码文本判"什么算 export"（`strncmp(p,"export",6)` + 自己跳注释/字符串/反引号 +
+// 循环跳 `const` 后的类型关键字 + "类型在前"兜底分支），与 module_symbol_table 的扫描链
+// 各判一遍同一件语义 —— 语言每加一条声明语法就得改两处，漏一处就是"导出名对不上"类静默错
+// （典型症状：跨模块 `m.foo()` 报「模块 'm' 中没有方法 'foo'」，而源码里明明 export 了）。
+// 现已删除：导出名的唯一实现者 = 扫描链（module_symbol_table/inc/scan/*.inc 在顶层
+// `export` 声明处调 module_symbol_table_add_export_name），消费者只读
+// module_symbol_table_export_names() / module_symbol_table_has_export()。
+// 详见 docs/待办_单一事实来源与重复实现收敛.md 第二节 S10。
+// ============================================================================
 // 规范化路径（统一使用平台特定的分隔符，处理 . 和 ..）
 int normalize_path(char* path, int max_len) {
     char result[MAX_PATH_LEN];
@@ -622,135 +397,45 @@ void loaded_modules_mark_all(void) {
     }
 }
 
-// ============================================================================
-// 导出项扫描缓存（进程内，按「完整路径 + mtime + size」校验）
-// ----------------------------------------------------------------------------
-// 每个「模块调用点」（mod.foo()）在语义分析阶段都会走
-// module_has_method → extract_module_exports_from_file，而它此前**每次都重读整份模块
-// 源码**并重跑一遍 export 词法统计。一个模块文件被同一文件里的 k 个调用点引用，
-// 就白读 k 次；SDL3 这类工程模块多、调用点多，累加起来很可观。
-// 这里缓存扫描结果：mtime + size 变化即失效（用户在 LSP 里改了文件保存后，
-// 下一次查询会重新扫描），因此不需要显式清缓存的接口。
-// ============================================================================
-typedef struct {
-    char* path;
-    int64_t mtime;
-    uint64_t size;
-    ExportList list;
-} ExportScanCacheEntry;
-
-static ExportScanCacheEntry* g_export_scan_cache = NULL;
-static int g_export_scan_cache_count = 0;
-static int g_export_scan_cache_cap = 0;
-
-// 取文件 mtime/size（Windows 下走宽字符 API 以支持中文路径）；失败返回 -1
-static int module_file_stamp(const char* full_path, int64_t* out_mtime, uint64_t* out_size) {
-#ifdef _WIN32
-    struct _stat st;
-    int wlen = MultiByteToWideChar(CP_UTF8, 0, full_path, -1, NULL, 0);
-    if (wlen <= 0) return -1;
-    wchar_t* wpath = (wchar_t*)malloc(wlen * sizeof(wchar_t));
-    if (!wpath) return -1;
-    MultiByteToWideChar(CP_UTF8, 0, full_path, -1, wpath, wlen);
-    int ret = _wstat(wpath, &st);
-    free(wpath);
-    if (ret != 0) return -1;
-    *out_mtime = (int64_t)st.st_mtime;
-    *out_size = (uint64_t)st.st_size;
-#else
-    struct stat st;
-    if (stat(full_path, &st) != 0) return -1;
-    *out_mtime = (int64_t)st.st_mtime;
-    *out_size = (uint64_t)st.st_size;
-#endif
-    return 0;
-}
-
-// 命中返回列表指针（仅当路径存在且 mtime/size 均未变），否则 NULL
-static ExportList* export_scan_cache_lookup(const char* full_path) {
-    int64_t mtime = 0;
-    uint64_t size = 0;
-    if (module_file_stamp(full_path, &mtime, &size) != 0) return NULL;
-    for (int i = 0; i < g_export_scan_cache_count; i++) {
-        if (strcmp(g_export_scan_cache[i].path, full_path) == 0) {
-            if (g_export_scan_cache[i].mtime == mtime && g_export_scan_cache[i].size == size) {
-                return &g_export_scan_cache[i].list;
-            }
-            return NULL;   // 文件已变：本次重扫后会覆盖这一条
-        }
+// v33（收敛 S10）：此处**曾经**有一套"导出项扫描缓存"（ExportScanCacheEntry +
+// module_file_stamp + export_scan_cache_lookup/store），专门缓存上面那份复刻扫描器的结果。
+// 扫描器删除后它已无意义 —— 符号表侧本就有同机制的进程内记忆化，按「绝对路径 + mtime/size」
+// 失效（module_symbol_table_get_shared → sym_memo_lookup），且与语义分析**共用同一张表**，
+// 比原先"语义分析扫一遍 + 导出名再扫一遍"更省。
+// v33（收敛 S10）：把某模块的导出名拷进固定容量缓冲区 —— **唯一来源 = 扫描器**（module_symbol_table）。
+// file_path 可以是裸包名/相对路径/绝对路径：解析口径交给 module_symbol_table_get_shared
+// （它与解析器/加载器共用 package_resolve_import_spec，比旧的"加载器自己拼路径"更准，
+//   见 S9 的收敛结论）。返回拷入的名字数；扫描失败返回 -1（与旧行为一致 ⇒ 调用方据此报错）。
+static int copy_module_export_names(const char* file_path, const char* current_file,
+                                    char (*out)[MAX_EXPORT_NAME], int max_names) {
+    ModuleSymbolTable* table = module_symbol_table_get_shared(file_path, current_file);
+    if (!table) return -1;
+    int total = 0;
+    const char* const* names = module_symbol_table_export_names(table, &total);
+    if (!names || total <= 0) return 0;
+    int count = total < max_names ? total : max_names;
+    for (int i = 0; i < count; i++) {
+        strncpy(out[i], names[i], MAX_EXPORT_NAME - 1);
+        out[i][MAX_EXPORT_NAME - 1] = '\0';
     }
-    return NULL;
-}
-
-static void export_scan_cache_store(const char* full_path, const ExportList* list) {
-    int64_t mtime = 0;
-    uint64_t size = 0;
-    if (module_file_stamp(full_path, &mtime, &size) != 0) return;
-    for (int i = 0; i < g_export_scan_cache_count; i++) {
-        if (strcmp(g_export_scan_cache[i].path, full_path) == 0) {
-            g_export_scan_cache[i].mtime = mtime;
-            g_export_scan_cache[i].size = size;
-            g_export_scan_cache[i].list = *list;   // ExportList 为纯 POD，值拷贝即可
-            return;
-        }
-    }
-    if (g_export_scan_cache_count >= g_export_scan_cache_cap) {
-        int new_cap = g_export_scan_cache_cap == 0 ? 8 : g_export_scan_cache_cap * 2;
-        ExportScanCacheEntry* grown = (ExportScanCacheEntry*)realloc(
-            g_export_scan_cache, sizeof(ExportScanCacheEntry) * new_cap);
-        if (!grown) return;
-        g_export_scan_cache = grown;
-        g_export_scan_cache_cap = new_cap;
-    }
-    ExportScanCacheEntry* entry = &g_export_scan_cache[g_export_scan_cache_count++];
-    entry->path = strdup(full_path);
-    entry->mtime = mtime;
-    entry->size = size;
-    entry->list = *list;
+    return count;
 }
 
 // 从模块文件中提取导出项（用于语义分析）
 int extract_module_exports_from_file(const char* file_path, const char* current_file,
                                       char exports[][MAX_EXPORT_NAME], int max_exports) {
-    char full_path[MAX_PATH_LEN];
-    if (!module_resolve_path(full_path, file_path, current_file)) return -1;
-
-    ExportList local;
-    ExportList* list = export_scan_cache_lookup(full_path);
-    if (!list) {
-        char* source = read_file(full_path);   // 路径已解析，避免二次解析
-        if (!source) return -1;
-        extract_exports(source, &local);
-        free(source);
-        export_scan_cache_store(full_path, &local);
-        list = &local;
-    }
-
-    int count = list->count < max_exports ? list->count : max_exports;
-    for (int i = 0; i < count; i++) {
-        strncpy(exports[i], list->names[i], MAX_EXPORT_NAME - 1);
-        exports[i][MAX_EXPORT_NAME - 1] = '\0';
-    }
-
-    return count;
+    return copy_module_export_names(file_path, current_file, exports, max_exports);
 }
 
 // 检查模块中是否存在指定的方法
+// v33（收敛 S10）：直接查扫描器的导出名清单 —— 不再"先拷进 char[512][128] 再逐个 strcmp"。
+// ⚠ 语义与收敛前**必须逐字一致**：查的是"本模块顶层 export 声明的名字"，
+//   不是 funcs[]（那张表是 export ∪ 本地非导出函数 + 导入别名 ⇒ 拿它判会让
+//   「模块 'm' 中没有方法 'x'」**少报**，正是收敛时最容易改坏的地方）。
 int module_has_method(const char* file_path, const char* current_file, const char* method_name) {
-    char exports[MAX_EXPORTS][MAX_EXPORT_NAME];
-    int count = extract_module_exports_from_file(file_path, current_file, exports, MAX_EXPORTS);
-
-    if (count < 0) {
-        return -1;
-    }
-
-    for (int i = 0; i < count; i++) {
-        if (strcmp(exports[i], method_name) == 0) {
-            return 1;
-        }
-    }
-
-    return 0;
+    ModuleSymbolTable* table = module_symbol_table_get_shared(file_path, current_file);
+    if (!table) return -1;
+    return module_symbol_table_has_export(table, method_name) ? 1 : 0;
 }
 
 // 加载并编译模块文件
@@ -848,7 +533,13 @@ ObjModule* load_module_file(const char* file_path, const char* current_file, con
         free(source);
         return NULL;
     }
-    extract_exports(source, exports);
+    // v33（收敛 S10）：导出名唯一来源 = 扫描器（旧实现在这里跑那份复刻的文本扫描器）
+    //   传 full_path（已解析的绝对路径）作 module_path、current_file 传 NULL —— 扫描器内部同样会走
+    //   "绝对化 + 进程内记忆化"，因此与语义分析侧**命中同一张表**（不会各扫一遍）
+    {
+        int n = copy_module_export_names(full_path, NULL, exports->names, MAX_EXPORTS);
+        exports->count = (n > 0) ? n : 0;
+    }
 
     // 保存原始文件名（在设置模块文件名之前）
     const char* original_filename_ptr = error_get_filename();

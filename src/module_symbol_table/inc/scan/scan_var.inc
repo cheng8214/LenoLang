@@ -2,10 +2,17 @@
             {
                 int is_const_decl = 0;
                 char* after_var = NULL;
-                if (strncmp(after_export, "const", 5) == 0 && (after_export[5] == ' ' || after_export[5] == '\t' || after_export[5] == '\n' || after_export[5] == '\r' || after_export[5] == '\0')) {
+                // ⚠ v33 修：关键字边界必须也接受 `[` / `{` —— 解构声明**不写空格**时
+                //   （`export var[int, int, int](a, b, c) = data`、`export var{"k": int}(a) = …`，
+                //    见 assert/destruct_export_mod.leno）关键字后面紧跟 `[` ✗，
+                //   原边界只认空白/`\0` ⇒ 判定失败 ⇒ 掉进下面的"类型在前"分支，
+                //   把 **`var` 这个关键字本身当成了变量名** ⇒ 符号表里多一个叫 "var" 的垃圾符号，
+                //   而真正的解构名一个都没进表 ✗。潜伏已久：运行期导出字典的键原先由
+                //   module_loader.c 那份复刻扫描器提供，没人看扫描器这里的名字 ⇒ S10 收敛后立刻显形。
+                if (strncmp(after_export, "const", 5) == 0 && (after_export[5] == ' ' || after_export[5] == '\t' || after_export[5] == '\n' || after_export[5] == '\r' || after_export[5] == '[' || after_export[5] == '{' || after_export[5] == '\0')) {
                     is_const_decl = 1;
                     after_var = after_export + 5;
-                } else if (strncmp(after_export, "var", 3) == 0 && (after_export[3] == ' ' || after_export[3] == '\t' || after_export[3] == '\n' || after_export[3] == '\r' || after_export[3] == '\0')) {
+                } else if (strncmp(after_export, "var", 3) == 0 && (after_export[3] == ' ' || after_export[3] == '\t' || after_export[3] == '\n' || after_export[3] == '\r' || after_export[3] == '[' || after_export[3] == '{' || after_export[3] == '\0')) {
                     after_var = after_export + 3;
                 } else {
                     // 检查是否是"类型在前"无关键字声明: export Array[int] arr = value, export int x = 42
@@ -63,6 +70,9 @@
                                     strncpy(var_name, name_start, name_len);
                                     var_name[name_len] = '\0';
                                     module_symbol_table_add_var(table, var_name, TYPE_ANY, NULL, is_const_decl, NULL);
+                                    // v33（收敛 S10）：解构写法 `export var (a, b) = ...` ⇒ **每个**名字都是导出
+                                    // （旧扫描器专门有一段解构列表解析，这份语义在这里等价保留 ✓）
+                                    module_symbol_table_add_export_name(table, var_name);
                                 }
                                 // 本圈没推进就退出；畸形列表交由真正的解析器报错
                                 if (after_var == var_iter_start) break;
@@ -396,6 +406,9 @@
 
                     module_symbol_table_add_var(table, var_name, var_type,
                         var_struct_name[0] ? var_struct_name : NULL, is_const_decl, var_type_info);
+                    // v33（收敛 S10）：本文件在 export 块内被 include ⇒ 必然是顶层 export 声明
+                    // （`export var` / `export const`，含带类型的各种写法）⇒ 登记导出名 ✓
+                    module_symbol_table_add_export_name(table, var_name);
                     // 释放临时的 var_type_info（所有权已通过 type_copy 转移到符号表）
                     if (var_type_info) {
                         type_free(var_type_info);

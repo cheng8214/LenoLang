@@ -28,6 +28,9 @@ ModuleSymbolTable* module_symbol_table_create(const char* module_path) {
     table->cfuncs = NULL;
     table->cfunc_count = 0;
     table->cfunc_capacity = 0;
+    table->export_names = NULL;
+    table->export_count = 0;
+    table->export_capacity = 0;
     table->dep_paths = NULL;
     table->dep_count = 0;
     table->dep_capacity = 0;
@@ -226,6 +229,12 @@ static void sym_table_clear_symbols(ModuleSymbolTable* table) {
     }
     free(table->dep_paths);
 
+    // 释放导出名清单（v33）
+    for (int i = 0; i < table->export_count; i++) {
+        free(table->export_names[i]);
+    }
+    free(table->export_names);
+
     // 全部归零：调用方随后会往同一张表里重新扫描，必须从「空表」开始
     table->funcs = NULL;      table->func_count = 0;      table->func_capacity = 0;
     table->structs = NULL;    table->struct_count = 0;    table->struct_capacity = 0;
@@ -235,6 +244,7 @@ static void sym_table_clear_symbols(ModuleSymbolTable* table) {
     table->aliases = NULL;    table->alias_count = 0;     table->alias_capacity = 0;
     table->clibs = NULL;      table->clib_count = 0;      table->clib_capacity = 0;
     table->cfuncs = NULL;     table->cfunc_count = 0;     table->cfunc_capacity = 0;
+    table->export_names = NULL; table->export_count = 0;  table->export_capacity = 0;
     table->dep_paths = NULL;  table->dep_count = 0;       table->dep_capacity = 0;
 }
 

@@ -268,6 +268,8 @@
 
                         // 添加 face 到符号表
                         module_symbol_table_add_face(table, face_name, method_count, methods, face_type_param_count);
+                        // v33（收敛 S10）：本文件在 export 块内被 include ⇒ 必然是顶层 export 声明 ⇒ 登记导出名
+                        module_symbol_table_add_export_name(table, face_name);
 
                         // 释放临时分配的内存（add_face 已复制数据）
                         for (int i = 0; i < method_count; i++) {

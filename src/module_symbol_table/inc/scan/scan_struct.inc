@@ -1070,6 +1070,8 @@
 
                         // 添加 struct 到符号表（包括字段和方法）
                         module_symbol_table_add_struct(table, struct_name, field_count, fields, method_count, methods, 0, type_param_count, type_param_names);
+                        // v33（收敛 S10）：本文件在 export 块内被 include ⇒ 必然是顶层 export 声明 ⇒ 登记导出名
+                        module_symbol_table_add_export_name(table, struct_name);
 
         // 设置 impl 信息
         ModuleStructSymbol* added_struct = module_symbol_table_find_struct(table, struct_name);

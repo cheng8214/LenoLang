@@ -60,6 +60,9 @@
                                     }
                                 }
                                 module_symbol_table_add_alias(table, alias_name, ti_ptr);
+                                // v33（收敛 S10）：本文件在 export 块内被 include ⇒ 必然是顶层 export 声明
+                                // ⇒ 登记导出名（旧扫描器 extract_exports 靠"类型在前"兜底分支顺带收它 ✗）
+                                module_symbol_table_add_export_name(table, alias_name);
                                 // 添加到本地解析表（动态追加，无固定上限）
                                 mod_alias_push(&local_alias_names, &local_alias_types, &local_alias_count, &local_alias_cap,
                                     alias_name, type_copy(ti_ptr));
