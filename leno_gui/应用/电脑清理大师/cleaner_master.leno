@@ -428,8 +428,21 @@ struct CleanerMaster {
         return $"{cur}\n{line}"
     }
 
+    // 「上次清理」状态的存放目录（跨平台）
+    // ★ 原实现无条件拼 "\\TraeCleaner\\"：Linux 上 APPDATA 为空 ⇒ 落到 `_tmpdir()` 之后
+    //   变成 `/tmp\TraeCleaner\last_clean.json` 这种**文件名里带反斜杠**的怪文件 ✗
+    //   POSIX 侧按 XDG 规范用 $XDG_CONFIG_HOME（缺省 ~/.config）✓
+    pri func last_clean_dir(): string {
+        if _os() == "windows" {
+            return dirs.join(_env_or("APPDATA", _tmpdir()), "TraeCleaner")
+        }
+        string cfg = _env_or("XDG_CONFIG_HOME", "")
+        if cfg == "" { cfg = dirs.join(_homedir(), ".config") }
+        return dirs.join(cfg, "TraeCleaner")
+    }
+
     pri func last_clean_path(): string {
-        return _env_or("APPDATA", _tmpdir()) + "\\TraeCleaner\\last_clean.json"
+        return dirs.join(last_clean_dir(), "last_clean.json")
     }
 
     func loadLastClean() {
@@ -460,7 +473,7 @@ struct CleanerMaster {
             //   正确做法：`ti.format(时间戳, strftime 风格格式)` ✓
             string ts = ti.format(ti.now(), "%Y-%m-%d %H:%M:%S")
             cumFreed = cumFreed + freedTotal   // 跨次累加（"累计释放"✓）
-            dirs.mkdir_p(_env_or("APPDATA", _tmpdir()) + "\\TraeCleaner")
+            dirs.mkdir_p(last_clean_dir())
             jsons.write_file(last_clean_path(),
                 {time: ts, freed: freedTotal, items: cleanedTotal, total_freed: cumFreed})
             lastLbl.set_text($"上次清理：{ts} 释放 {rules.fmt_size(freedTotal)} · 累计 {rules.fmt_size(cumFreed)}")

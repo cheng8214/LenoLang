@@ -43,11 +43,12 @@ if dirs.exists(base) { dirs.delete(base) }
 dirs.mkdir(base)
 Array[string] subs = []
 for 0 : SUB_COUNT - 1 to i {
-    string sub = base + "\\sub" + _str(i)
+    // ⚠ dirs.join：原先写死 "\" ⇒ Linux 下拼出"文件名里带反斜杠"的怪路径，夹具造不出来 ✗
+    string sub = dirs.join(base, "sub" + _str(i))
     dirs.mkdir(sub)
     subs.add(sub)
     for 0 : FILES_PER_DIR - 1 to k {
-        files.write(sub + "\\junk_" + _str(k) + ".tmp", FILL)
+        files.write(dirs.join(sub, "junk_" + _str(k) + ".tmp"), FILL)
     }
 }
 
@@ -108,8 +109,8 @@ for 0 : before.len() - 1 to i {
     if before[i] != after[i] { same = false }
 }
 check("预览后清单逐项一致（路径 + 大小 ✓）", same)
-check("预览后文件仍在（未被删除 ✓）", files.exists(subs[0] + "\\junk_0.tmp"))
-check("预览后内容未变（未被改写 ✓）", files.read(subs[0] + "\\junk_0.tmp") == FILL)
+check("预览后文件仍在（未被删除 ✓）", files.exists(dirs.join(subs[0], "junk_0.tmp")))
+check("预览后内容未变（未被改写 ✓）", files.read(dirs.join(subs[0], "junk_0.tmp")) == FILL)
 
 // ==================== 顺带：只勾选一部分时，账单也只算这部分 ====================
 var sum1 = rules.build_preview(cats, results, [1])

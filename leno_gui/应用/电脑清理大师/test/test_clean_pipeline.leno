@@ -30,7 +30,7 @@ string base = dirs.join(_tmpdir(), "cleaner_pipeline_e2e")
 if dirs.exists(base) { dirs.delete(base) }
 dirs.mkdir(base)
 for 0 : 49 to i {
-    files.write(base + "\\junk_" + _str(i) + ".tmp", "0123456789ABCDEF")   // 16 字节 × 50
+    files.write(dirs.join(base, "junk_" + _str(i) + ".tmp"), "0123456789ABCDEF")   // 16 字节 × 50
 }
 
 // ==================== 扫描（同步）⇒ 切 chunk（同 UI beginClean） ====================
@@ -84,8 +84,8 @@ eq("实时: cleaned", liveCleaned, 50)
 eq("实时: freed", liveFreed, 800)
 eq("join: cleaned", _int(ret[0]), 50)
 eq("join: freed", _int(ret[2]), 800)
-check("垃圾已全部删除", not files.exists(base + "\\junk_0.tmp"))
-check("垃圾已全部删除(尾)", not files.exists(base + "\\junk_49.tmp"))
+check("垃圾已全部删除", not files.exists(dirs.join(base, "junk_0.tmp")))
+check("垃圾已全部删除(尾)", not files.exists(dirs.join(base, "junk_49.tmp")))
 dirs.delete(base)
 
 print("")
