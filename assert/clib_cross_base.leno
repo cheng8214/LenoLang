@@ -22,7 +22,10 @@ export func loadCore(): core_lib {
 
 export func loadExtra(): extra_lib {
     if g_extra == null {
-        g_extra = ffi.load("kernel32.dll")
+        // 与 loadCore 同口径：Windows 用 kernel32，POSIX 换 libc.so.6 ⇒ 用例本身跨平台
+        //   （`get_value` 从未被调用，这里只要能拿到"第二个 clib 句柄"即可 —— 用例要验的是
+        //     跨模块传递**多个** clib 类型，不是某个具体函数 ✓）
+        g_extra = ffi.load(if _os() == "windows" then "kernel32.dll" else "libc.so.6")
     }
     return g_extra
 }

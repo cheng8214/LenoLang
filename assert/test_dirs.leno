@@ -95,7 +95,7 @@ main()
     // 测试11: `stat(p).size` —— 取大小的**唯一入口**（2026-09-27 收敛：删掉了并行的 dirs.size()）
     //   原 `dirs.size()` 只是"stat 返回无类型 Dict 时补的类型化入口"；stat 改结构体后它就是
     //   重复入口 ⇒ 收敛成一条路，避免同一件事两种写法长期共存
-    var self = "assert\\test_dirs.leno"          // 用一个**确定存在**的文件
+    var self = dirs.join("assert", "test_dirs.leno")   // 用一个**确定存在**的文件
     assert_eq(dirs.exists(self), true)
 
     // ① 类型自证：能直接做 int 整除（any 类型过不了这道）
@@ -103,7 +103,7 @@ main()
     assert_eq(dirs.stat(self).size / 1024 >= 0, true)
 
     // ② 不存在 ⇒ 0（与 stat 的默认值同口径；要区分"空文件"与"不存在"先 dirs.exists()）
-    assert_eq(dirs.stat("assert\\不存在的文件_9b2f.leno").size, 0)
+    assert_eq(dirs.stat(dirs.join("assert", "不存在的文件_9b2f.leno")).size, 0)
 
     // ③ 目录 ⇒ 给的是**目录条目自身**的大小，不是递归总大小（同 walk 口径）
     assert_eq(dirs.stat("assert").size >= 0, true)

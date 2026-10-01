@@ -26,18 +26,23 @@ clib kernel32 {
 }
 
 main() {
-    // === clib 基本调用 ===
-    kernel32 k32 = ffi.load("kernel32.dll")
-    var tick = k32.GetTickCount()
-    print("tick=" + tick)
-    assert_true(tick > 0)
+    // === clib 基本调用（kernel32 专有 ⇒ 仅 Windows） ===
+    //   下面 cstruct / cfunc / qsort 段与平台无关（POSIX 走 libc.so.6），照跑 ✓
+    if _os() == "windows" {
+        kernel32 k32 = ffi.load("kernel32.dll")
+        var tick = k32.GetTickCount()
+        print("tick=" + tick)
+        assert_true(tick > 0)
 
-    // clib Sleep（Windows 定时器精度约 15.6ms，Sleep 实际耗时可能 < 参数值）
-    var before = k32.GetTickCount()
-    k32.Sleep(10)
-    var after = k32.GetTickCount()
-    assert_true(after >= before)
-    print("Sleep OK")
+        // clib Sleep（Windows 定时器精度约 15.6ms，Sleep 实际耗时可能 < 参数值）
+        var before = k32.GetTickCount()
+        k32.Sleep(10)
+        var after = k32.GetTickCount()
+        assert_true(after >= before)
+        print("Sleep OK")
+    } else {
+        print("非 Windows 平台：跳过 GetTickCount / Sleep")
+    }
 
     // === cstruct ===
     var pt = POINT.malloc()

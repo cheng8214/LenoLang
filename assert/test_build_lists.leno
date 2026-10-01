@@ -19,8 +19,19 @@
 //
 // 注：`build.sh` 的等价物在**本机没有 bash** ⇒ 只做了"也读清单"的一致性（无法在此自动验证）。
 
+import dirs
 import files
 import strings
+
+// 清单是**给 Windows 的 .bat 读**的（`for /f` 口径）⇒ 一律 `src\xxx.c` 反斜杠格式，跨平台保持一致。
+//   但校验"文件真实存在"时必须换成**本机原生分隔符**：POSIX 下 `files.exists("src\error.c")` 恒为 false
+//   （实测：这是 Linux 套件 14 个失败之一）✗
+func native_path(string p):string {
+    if dirs.sep() == "\\" {
+        return p
+    }
+    return strings.replace(p, "\\", "/")
+}
 
 func read_lines(string path): Array[string] {
     var out = []
@@ -66,7 +77,7 @@ main() {
     for list_cc to f { all.add(f) }
     for list_vm to f { all.add(f) }
     for all to f {
-        assert_true(files.exists(f),
+        assert_true(files.exists(native_path(f)),
             "构建清单里的文件不存在（改名/删除后忘更新清单？）: " + f)
     }
 

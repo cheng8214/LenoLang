@@ -20,11 +20,12 @@
 //   ⑥ 循环次数对：`for(5)` ⇒ "Loop iteration" **正好 5 次**；
 //   ⑦ `while(i<5)` ⇒ 在 100 之后**逐行**出现 0、1、2、3、4（按行精确比对，避免 "0" 误命中别的数字）。
 
+import dirs
 import strings
 
 main() {
     var exe = _executable()
-    var script = "examples\\minilang\\minilang.leno"
+    var script = dirs.join("examples", "minilang", "minilang.leno")
 
     var r = _exec(exe + " \"" + script + "\"", 60000)
     assert_true(r != null, "没能起子进程跑 " + script)

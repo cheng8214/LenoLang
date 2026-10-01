@@ -12,6 +12,12 @@ cstruct MEMORYSTATUS {
 }
 
 main() {
+    // GlobalMemoryStatus 只在 kernel32（Windows）里 ⇒ 非 Windows 直接跳过，
+    //   否则 ffi.load 会响亮失败（exit != 0）而不是静默 ✓
+    if _os() != "windows" {
+        print("非 Windows 平台：无 kernel32.dll，SKIP")
+        return
+    }
     var kernel32 = ffi.load("kernel32.dll")
     var memStatus = MEMORYSTATUS.malloc()
 

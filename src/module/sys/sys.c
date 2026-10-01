@@ -460,15 +460,18 @@ static Value native_exec(int argCount, Value* args) {
         if (val_is_int(args[1])) timeout_ms = (int)val_as_int(args[1]);
         else if (val_is_num(args[1])) timeout_ms = (int)val_as_num(args[1]);
     }
-    char* run_cmd = (char*)cmd->chars;
-    char* run_buf = NULL;
+    // ★ 追加 `2>&1`：popen 只收 stdout，而编译器等子进程的诊断全走 stderr ⇒
+    //   不合并的话 output 恒为空，与 Windows 分支（`cmd /c <cmd> > tmp 2>&1`）契约不一致 ✗
+    //   （实测：assert/helpers/compiler.leno 断言「输出=空」、run_tests 的失败摘要也抓不到文案）
+    size_t need = strlen(cmd->chars) + 64;
+    char* run_buf = (char*)malloc(need);
+    if (!run_buf) return val_null();
     if (timeout_ms > 0) {
-        size_t need = strlen(cmd->chars) + 40;
-        run_buf = (char*)malloc(need);
-        if (!run_buf) return val_null();
-        snprintf(run_buf, need, "timeout %d %s", (timeout_ms + 999) / 1000, cmd->chars);
-        run_cmd = run_buf;
+        snprintf(run_buf, need, "timeout %d %s 2>&1", (timeout_ms + 999) / 1000, cmd->chars);
+    } else {
+        snprintf(run_buf, need, "%s 2>&1", cmd->chars);
     }
+    char* run_cmd = run_buf;
     FILE* fp = popen(run_cmd, "r");
     if (!fp) { free(run_buf); return val_null(); }
 

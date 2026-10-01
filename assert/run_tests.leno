@@ -1,5 +1,7 @@
 // Leno 自举测试运行器
-// 用法：build\leno.exe assert\run_tests.leno [解释器] [测试目录]
+// 用法：build/leno assert/run_tests.leno [解释器] [测试目录]
+//   Windows：build\leno.exe assert\run_tests.leno build\leno.exe assert
+//   Linux/macOS：build/leno assert/run_tests.leno build/leno assert
 
 import dirs
 import strings
@@ -13,7 +15,12 @@ func get_arg(int idx, string fallback):string {
 }
 
 main() {
-    var leno_exe = get_arg(0, "build\\leno.exe")
+    // 默认解释器按平台取：Windows 为 build\leno.exe，其余为 build/leno
+    var default_exe = dirs.join("build", "leno")
+    if _os() == "windows" {
+        default_exe = default_exe + ".exe"
+    }
+    var leno_exe = get_arg(0, default_exe)
     var test_dir = get_arg(1, "assert")
 
     // 将解释器转为绝对路径：Windows 下 _exec 用 cmd /c 执行，
@@ -37,7 +44,7 @@ main() {
         var cdirs = cw.dirs
         for cdirs to cd {
             if cd == ".lenocache" {
-                dirs.delete(croot + "\\" + cd)
+                dirs.delete(dirs.join(croot, cd))
             }
         }
     }
@@ -60,7 +67,7 @@ main() {
         var files = w.files
         for files to entry {
             if strings.starts_with(entry, "test_") and strings.ends_with(entry, ".leno") {
-                var full = dirs.abspath(root + "\\" + entry)
+                var full = dirs.abspath(dirs.join(root, entry))
                 // 直接传绝对路径，system() 包装层处理 stderr
                 var cmd = leno_exe + " " + full
 

@@ -2,6 +2,7 @@
 
 import jsons
 import files
+import dirs
 
 main()
 {
@@ -96,7 +97,9 @@ main()
     assert_eq(jsons.get_str("不是字典", "k", "d"), "d")                   // 非字典 ⇒ 默认值
 
     // 测试8: write_text 原样写（write_file 会把入参再编码一次 ⇒ 写"已编码文本"必须用它 ✓）
-    var tmp = _tmpdir() + "leno_jsons_t21_test.json"
+    // `_tmpdir()` 的尾部分隔符依平台而异（Windows 带 `\`、POSIX 无）⇒ 必须经 dirs.join 拼，
+//   直接字符串相加在 POSIX 会得到 `/tmpleno_...`（不存在 ⇒ write_text 返回 false）
+    var tmp = dirs.join(_tmpdir(), "leno_jsons_t21_test.json")
     assert_eq(jsons.write_text(tmp, "{}"), true)
     var back = jsons.read_file(tmp)
     assert_eq(type(back), "Dict")                                       // 原样写 "{}" ⇒ 读回就是对象（不是带引号的串 ✗）

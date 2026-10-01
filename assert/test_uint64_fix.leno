@@ -14,45 +14,51 @@ cstruct MEMORYSTATUS {
 main() {
     print("=== 测试 cstruct to_str u64 显示修复 ===")
 
-    var kernel32 = ffi.load("kernel32.dll")
-    var memStatus = MEMORYSTATUS.malloc()
+    // `GlobalMemoryStatus` 是 kernel32 专有 ⇒ 只在 Windows 跑这一段。
+    //   下面 read_uint64/write_uint64 是**纯 FFI 缓冲操作、与平台无关**，必须照跑
+    //   （否则这个用例在 POSIX 上等于整条被跳过，u64 读写的回归就没人守了 ✗）
+    if _os() == "windows" {
+        var kernel32 = ffi.load("kernel32.dll")
+        var memStatus = MEMORYSTATUS.malloc()
 
-    try {
-        memStatus.dwLength = MEMORYSTATUS.size()
-        ffi.call(kernel32, "GlobalMemoryStatus", memStatus.to_ptr())
+        try {
+            memStatus.dwLength = MEMORYSTATUS.size()
+            ffi.call(kernel32, "GlobalMemoryStatus", memStatus.to_ptr())
 
-        print(memStatus.to_str())
-
-        print("")
-        print("=== 测试 read_uint64 / write_uint64 ===")
-
-        // 测试 read_uint64
-        var buf = ffi.malloc(16)
-        ffi.memset(buf, 0, 16)
-
-        // 写入一个大的 uint64 值
-        ffi.write_uint64(buf, 0, 0xFFFFFFFFFFFFFFFF)
-        int val1 = ffi.read_uint64(buf, 0)
-        print("write/read 0xFFFFFFFFFFFFFFFF: " + val1)
-
-        // 写入一个中等大小的值
-        ffi.write_uint64(buf, 0, 34128000000)
-        int val2 = ffi.read_uint64(buf, 0)
-        print("write/read 34128000000: " + val2)
-
-        // 对比 read_int64 和 read_uint64
-        ffi.write_uint64(buf, 0, 0x8000000000000000)
-        int as_int64 = ffi.read_int64(buf, 0)
-        int as_uint64 = ffi.read_uint64(buf, 0)
-        print("0x8000000000000000 as int64: " + as_int64)
-        print("0x8000000000000000 as uint64: " + as_uint64)
-
-        ffi.free(buf)
-
-    } finally {
-        memStatus.free()
-        ffi.free(kernel32)
+            print(memStatus.to_str())
+        } finally {
+            memStatus.free()
+            ffi.free(kernel32)
+        }
+    } else {
+        print("非 Windows 平台：GlobalMemoryStatus 不可用，跳过 cstruct to_str 展示")
     }
+
+    print("")
+    print("=== 测试 read_uint64 / write_uint64 ===")
+
+    // 测试 read_uint64
+    var buf = ffi.malloc(16)
+    ffi.memset(buf, 0, 16)
+
+    // 写入一个大的 uint64 值
+    ffi.write_uint64(buf, 0, 0xFFFFFFFFFFFFFFFF)
+    int val1 = ffi.read_uint64(buf, 0)
+    print("write/read 0xFFFFFFFFFFFFFFFF: " + val1)
+
+    // 写入一个中等大小的值
+    ffi.write_uint64(buf, 0, 34128000000)
+    int val2 = ffi.read_uint64(buf, 0)
+    print("write/read 34128000000: " + val2)
+
+    // 对比 read_int64 和 read_uint64
+    ffi.write_uint64(buf, 0, 0x8000000000000000)
+    int as_int64 = ffi.read_int64(buf, 0)
+    int as_uint64 = ffi.read_uint64(buf, 0)
+    print("0x8000000000000000 as int64: " + as_int64)
+    print("0x8000000000000000 as uint64: " + as_uint64)
+
+    ffi.free(buf)
 
     print("")
     print("=== 测试完成 ===")

@@ -10,6 +10,13 @@ clib curl {
 }
 
 main() {
+    // 随仓库提供的 libcurl 是 Windows 的 x64 DLL（`libcurl-x64.dll`），POSIX 上没有这个文件；
+    //   而 `ffi.load` 找不到库时是**响亮失败**（exit != 0），不会返回 null ⇒ 必须在加载前按平台跳过，
+    //   否则下面那句 `l == null` 的兜底永远轮不到 ✗
+    if _os() != "windows" {
+        print("非 Windows 平台：无 libcurl-x64.dll，SKIP")
+        return
+    }
     curl l = ffi.load("leno_module/LenoWeb/lib/libcurl-x64.dll")
     if l == null {
         print("libcurl not loaded, SKIP")

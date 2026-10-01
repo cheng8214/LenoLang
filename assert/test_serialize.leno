@@ -4,19 +4,24 @@ import files
 import strings
 
 main() {
+    // 用 `_executable()`（当前解释器自身的绝对路径）而不是写死 "leno.exe"：
+    // 成品名随平台不同（Windows leno.exe / POSIX leno），写死会让用例在非 Windows 上
+    // 败于 127（command not found）—— 同 assert/helpers/compiler.leno 的既有口径 ✓
+    var exe = _executable()
+
     // 1. 写一个简单测试程序
     var test_code = "main() { print(\"hello_from_lenb\"); print(1 + 2 * 3) }"
     var tmp_leno = "test_serialize_tmp.leno"
     files.write(tmp_leno, test_code)
 
     // 2. 编译为 .lenb
-    var cr = _exec("leno.exe -c " + tmp_leno)
+    var cr = _exec(exe + " -c " + tmp_leno)
     assert_ne(cr, null)
     assert_eq(cr.code, 0)
 
     // 3. 执行 .lenb
     var tmp_lenb = "test_serialize_tmp.lenb"
-    var rr = _exec("leno.exe " + tmp_lenb)
+    var rr = _exec(exe + " " + tmp_lenb)
     assert_ne(rr, null)
     assert_eq(rr.code, 0)
 
