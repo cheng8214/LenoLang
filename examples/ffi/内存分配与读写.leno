@@ -43,7 +43,7 @@ main()
     // ===== 测试 3: 调用 msvcrt 标准库函数 =====
     print("\n--- 调用 C 标准库函数 ---")
 
-    var libc = ffi.load("msvcrt.dll")
+    var libc = ffi.load(if _os() == "windows" then "msvcrt.dll" else "libc.so.6")
     if libc != null
     {
         // 调用 strlen（返回 int）

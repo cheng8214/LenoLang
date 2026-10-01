@@ -15,7 +15,7 @@ extra_lib g_extra = null
 
 export func loadCore(): core_lib {
     if g_core == null {
-        g_core = ffi.load("msvcrt.dll")
+        g_core = ffi.load(if _os() == "windows" then "msvcrt.dll" else "libc.so.6")
     }
     return g_core
 }

@@ -43,7 +43,7 @@ main() {
 
     // === cfunc 回调 + qsort ===
     var cb = ffi.callback(cmp_ptr, CompareCb)
-    var libc = ffi.load("msvcrt.dll")
+    var libc = ffi.load(if _os() == "windows" then "msvcrt.dll" else "libc.so.6")
     var arr = ffi.malloc(20)
     ffi.write_int(arr, 0,  5)
     ffi.write_int(arr, 4,  3)

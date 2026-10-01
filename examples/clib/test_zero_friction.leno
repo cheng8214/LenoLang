@@ -12,7 +12,7 @@ clib msvcrt {
 }
 
 main() {
-    msvcrt lib = ffi.load("msvcrt.dll")
+    msvcrt lib = ffi.load(if _os() == "windows" then "msvcrt.dll" else "libc.so.6")
 
     // 测试 1: i32 返回值 → int，零摩擦
     int len = lib.strlen("hello")

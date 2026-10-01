@@ -4,7 +4,7 @@ import ffi
 clib core_lib { i32 abs(i32 x) }
 core_lib g = null
 export func loadCore(): core_lib {
-    if g == null { g = ffi.load("msvcrt.dll") }
+    if g == null { g = ffi.load(if _os() == "windows" then "msvcrt.dll" else "libc.so.6") }
     return g
 }
 

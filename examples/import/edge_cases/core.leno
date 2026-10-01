@@ -44,7 +44,7 @@ export enum Color {
 sys_lib g_sys = null
 
 export func loadSys(): sys_lib {
-    if g_sys == null { g_sys = ffi.load("msvcrt.dll") }
+    if g_sys == null { g_sys = ffi.load(if _os() == "windows" then "msvcrt.dll" else "libc.so.6") }
     return g_sys
 }
 

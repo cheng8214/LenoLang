@@ -98,7 +98,7 @@ main() {
 
     // ===== 测试 3: ffi.dlsym 符号解析 =====
     print("\n--- 测试 ffi.dlsym ---")
-    var libc = ffi.load("msvcrt.dll")
+    var libc = ffi.load(if _os() == "windows" then "msvcrt.dll" else "libc.so.6")
     if libc != null {
         var strlen_ptr = ffi.dlsym(libc, "strlen")
         if strlen_ptr != null {
@@ -124,7 +124,7 @@ main() {
 
     // ===== 测试 4: 符号地址缓存（连续调用不出错）=====
     print("\n--- 测试符号地址缓存 ---")
-    var libc2 = ffi.load("msvcrt.dll")
+    var libc2 = ffi.load(if _os() == "windows" then "msvcrt.dll" else "libc.so.6")
     if libc2 != null {
         var total = 0
         for 100 to i {
@@ -165,7 +165,7 @@ main() {
     // ===== 测试 6: ffi.call deprecated 警告 =====
     print("\n--- 测试 ffi.call deprecated ---")
     print("（stderr 应输出 deprecation 警告）")
-    var libc3 = ffi.load("msvcrt.dll")
+    var libc3 = ffi.load(if _os() == "windows" then "msvcrt.dll" else "libc.so.6")
     if libc3 != null {
         var r = ffi.call(libc3, "abs", -42)
         if r == 42 {
@@ -182,7 +182,7 @@ main() {
 
     // ===== 测试 7: int/bigint 合并窄化 =====
     print("\n--- 测试 int/bigint 合并窄化 ---")
-    var libc4 = ffi.load("msvcrt.dll")
+    var libc4 = ffi.load(if _os() == "windows" then "msvcrt.dll" else "libc.so.6")
     if libc4 != null {
         var r1 = ffi.call_int(libc4, "abs", -7)
         if r1 == 7 {

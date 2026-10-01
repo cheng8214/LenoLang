@@ -32,7 +32,7 @@ func test_basic_callback() {
     var cb = ffi.callback(compare, Compare)
     assert(ffi.is_ptr(cb), "回调对象应该被识别为指针")
 
-    var libc = ffi.load("msvcrt.dll")
+    var libc = ffi.load(if _os() == "windows" then "msvcrt.dll" else "libc.so.6")
     var arr = ffi.malloc(20)
 
     ffi.write_int(arr, 0, 5)
@@ -82,7 +82,7 @@ func test_multiple_callbacks() {
     assert(ffi.is_ptr(cb_asc), "升序回调应该有效")
     assert(ffi.is_ptr(cb_desc), "降序回调应该有效")
 
-    var libc = ffi.load("msvcrt.dll")
+    var libc = ffi.load(if _os() == "windows" then "msvcrt.dll" else "libc.so.6")
 
     // 测试升序排序
     var arr1 = ffi.malloc(20)
@@ -232,7 +232,7 @@ func test_callback_with_cstruct() {
     var cb = ffi.callback(compare_points, ComparePoints)
     assert(ffi.is_ptr(cb), "cstruct回调应该有效")
 
-    var libc = ffi.load("msvcrt.dll")
+    var libc = ffi.load(if _os() == "windows" then "msvcrt.dll" else "libc.so.6")
 
     // 创建 Point 数组
     var points = ffi.malloc(40)  // 5个点，每个8字节
@@ -285,7 +285,7 @@ func test_callback_error_handling() {
     assert(ffi.is_ptr(cb), "风险回调应该被创建")
 
     // 正常使用
-    var libc = ffi.load("msvcrt.dll")
+    var libc = ffi.load(if _os() == "windows" then "msvcrt.dll" else "libc.so.6")
     var arr = ffi.malloc(12)
     ffi.write_int(arr, 0, 3)
     ffi.write_int(arr, 4, 1)
@@ -334,7 +334,7 @@ func test_nested_callback_usage() {
 
     var cb_sort = ffi.callback(compare, Compare)
 
-    var libc = ffi.load("msvcrt.dll")
+    var libc = ffi.load(if _os() == "windows" then "msvcrt.dll" else "libc.so.6")
 
     // 多次使用同一个回调
     for 0 : 4 to round {
@@ -371,7 +371,7 @@ func test_callback_library_lifecycle() {
 
     // 多次加载和释放库，回调保持有效
     for 0 : 2 to i {
-        var libc = ffi.load("msvcrt.dll")
+        var libc = ffi.load(if _os() == "windows" then "msvcrt.dll" else "libc.so.6")
 
         var arr = ffi.malloc(12)
         ffi.write_int(arr, 0, 3)

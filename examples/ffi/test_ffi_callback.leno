@@ -20,7 +20,7 @@ var cb = ffi.callback(compare, Compare)
 assert_eq(ffi.is_ptr(cb), true)
 
 // 测试 2: 使用 msvcrt 的 qsort 排序整数数组
-var libc = ffi.load("msvcrt.dll")
+var libc = ffi.load(if _os() == "windows" then "msvcrt.dll" else "libc.so.6")
 
 var arr = ffi.malloc(20)
 ffi.write_int(arr, 0, 5)

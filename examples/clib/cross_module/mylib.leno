@@ -16,7 +16,7 @@ os_lib   g_os   = null
 // 加载库并返回 clib 类型
 export func load(): math_lib {
     if g_math == null {
-        g_math = ffi.load("msvcrt.dll")
+        g_math = ffi.load(if _os() == "windows" then "msvcrt.dll" else "libc.so.6")
     }
     return g_math
 }

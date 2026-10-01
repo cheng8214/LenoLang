@@ -100,7 +100,7 @@ main()
 
     // ===== 9. 混合参数调用测试 =====
     print("\n--- 混合参数调用测试 ---")
-    var libc = ffi.load("msvcrt.dll")
+    var libc = ffi.load(if _os() == "windows" then "msvcrt.dll" else "libc.so.6")
     if libc != null
     {
         // pow(double, double) - 纯 double

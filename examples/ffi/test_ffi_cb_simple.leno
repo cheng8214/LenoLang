@@ -9,7 +9,7 @@ func simple_cb(): int {
 var cb = ffi.callback(simple_cb, SimpleCb)
 print("callback created: " + _str(ffi.is_ptr(cb)))
 
-var libc = ffi.load("msvcrt.dll")
+var libc = ffi.load(if _os() == "windows" then "msvcrt.dll" else "libc.so.6")
 
 var arr = ffi.malloc(20)
 ffi.write_int(arr, 0, 5)

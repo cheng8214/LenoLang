@@ -15,7 +15,7 @@ clib msvcrt {
 }
 
 main() {
-    msvcrt lib = ffi.load("msvcrt.dll")
+    msvcrt lib = ffi.load(if _os() == "windows" then "msvcrt.dll" else "libc.so.6")
 
     // 测试 1: 返回值直接当参数（链式调用）
     int n = lib.strlen(lib.strerror(22))  // EINVAL

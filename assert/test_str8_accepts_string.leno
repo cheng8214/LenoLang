@@ -7,7 +7,7 @@ clib msvcrt {
 }
 
 main() {
-    msvcrt lib = ffi.load("msvcrt.dll")
+    msvcrt lib = ffi.load(if _os() == "windows" then "msvcrt.dll" else "libc.so.6")
 
     // 直接传 string 字面量给 str8 参数
     int len = lib.strlen("hello world")

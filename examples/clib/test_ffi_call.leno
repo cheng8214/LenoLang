@@ -10,7 +10,7 @@ clib msvcrt {
 }
 
 main() {
-    msvcrt libc = ffi.load("msvcrt.dll")
+    msvcrt libc = ffi.load(if _os() == "windows" then "msvcrt.dll" else "libc.so.6")
     var len = libc.strlen("hello")
     io.print("hello length: ")
     io.print(len)

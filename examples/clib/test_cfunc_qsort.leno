@@ -16,7 +16,7 @@ clib msvcrt {
 }
 
 main() {
-    msvcrt lib = ffi.load("msvcrt.dll")
+    msvcrt lib = ffi.load(if _os() == "windows" then "msvcrt.dll" else "libc.so.6")
     int n = 5
     Ptr[u32] arr = ffi.malloc(n * 4)
     ffi.write_at(arr, 0, 50)

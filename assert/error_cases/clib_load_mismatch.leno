@@ -13,7 +13,7 @@ clib user32 {
 }
 
 main() {
-    msvcrt lib1 = ffi.load("msvcrt.dll")
+    msvcrt lib1 = ffi.load(if _os() == "windows" then "msvcrt.dll" else "libc.so.6")
     // 下面这行应该编译报错：不同名 clib 类型不能互转
     user32 lib2 = lib1
     io.print("ERROR: should not compile!")

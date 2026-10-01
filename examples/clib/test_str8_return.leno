@@ -8,7 +8,7 @@ clib msvcrt {
 }
 
 main() {
-    msvcrt lib = ffi.load("msvcrt.dll")
+    msvcrt lib = ffi.load(if _os() == "windows" then "msvcrt.dll" else "libc.so.6")
 
     // 测试 1: str8 返回值 → string，零摩擦
     string msg = lib.strerror(2)  // ENOENT = 2

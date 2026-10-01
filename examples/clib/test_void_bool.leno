@@ -15,7 +15,7 @@ clib kernel32 {
 }
 
 main() {
-    msvcrt libc = ffi.load("msvcrt.dll")
+    msvcrt libc = ffi.load(if _os() == "windows" then "msvcrt.dll" else "libc.so.6")
     kernel32 k32 = ffi.load("kernel32.dll")
 
     // 测试 1: void 返回值赋给变量应为 null

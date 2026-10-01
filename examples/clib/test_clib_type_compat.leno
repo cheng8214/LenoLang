@@ -15,7 +15,7 @@ clib msvcrt {
 
 main() {
     // ===== 测试 1: Ptr -> clib (ffi.load 返回值赋给 clib 变量) =====
-    msvcrt lib = ffi.load("msvcrt.dll")
+    msvcrt lib = ffi.load(if _os() == "windows" then "msvcrt.dll" else "libc.so.6")
     if lib == null {
         io.print("FAIL: ffi.load returned null")
         return

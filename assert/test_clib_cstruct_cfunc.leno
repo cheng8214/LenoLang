@@ -47,7 +47,7 @@ main() {
     assert_eq(pt.y, 88)
 
     // === cfunc + clib qsort ===
-    msvcrt lib = ffi.load("msvcrt.dll")
+    msvcrt lib = ffi.load(if _os() == "windows" then "msvcrt.dll" else "libc.so.6")
     var cb = ffi.callback(my_cmp, Compare)
     int n = 5
     Ptr arr = ffi.malloc(n * 4)

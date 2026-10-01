@@ -9,6 +9,6 @@ clib test_lib {
 test_lib g_lib = null
 
 export func lib(): test_lib {
-    if g_lib == null { g_lib = ffi.load("msvcrt.dll") }
+    if g_lib == null { g_lib = ffi.load(if _os() == "windows" then "msvcrt.dll" else "libc.so.6") }
     return g_lib
 }
