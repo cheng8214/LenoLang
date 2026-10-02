@@ -4,10 +4,12 @@
         int line = GET_CURRENT_LINE();
 
         if (likely(val_is_int(bv) && val_is_int(cv))) {
-            int64_t x = val_as_int(bv), y = val_as_int(cv), s = 0;
+            // ★ 2026-10-03：与 OP_FOR_LOOP 同一套微调（那里有完整说明与实测）
+            //   ① 符号扩展无分支 ② 范围判定折成一次无符号比较
+            int64_t x = VAL_INT48_PAYLOAD(bv), y = VAL_INT48_PAYLOAD(cv), s = 0;
             if (unlikely(__builtin_add_overflow(x, y, &s))) {
                 R(a) = bigint_add(bigint_from_int64(x), bigint_from_int64(y));
-            } else if (unlikely(s < INT48_MIN || s > INT48_MAX)) {
+            } else if (unlikely(!INT48_IN_RANGE(s))) {
                 R(a) = val_obj((Object*)bigint_from_int64(s));
             } else {
                 R(a) = val_int(s);
@@ -56,10 +58,11 @@
         int line = GET_CURRENT_LINE();
 
         if (likely(val_is_int(bv) && val_is_int(cv))) {
-            int64_t x = val_as_int(bv), y = val_as_int(cv), s = 0;
+            // ★ 2026-10-03：同 OP_ADD（无分支符号扩展 + 一次无符号范围判定）
+            int64_t x = VAL_INT48_PAYLOAD(bv), y = VAL_INT48_PAYLOAD(cv), s = 0;
             if (unlikely(__builtin_sub_overflow(x, y, &s))) {
                 R(a) = bigint_sub(bigint_from_int64(x), bigint_from_int64(y));
-            } else if (unlikely(s < INT48_MIN || s > INT48_MAX)) {
+            } else if (unlikely(!INT48_IN_RANGE(s))) {
                 R(a) = val_obj((Object*)bigint_from_int64(s));
             } else {
                 R(a) = val_int(s);
@@ -89,12 +92,13 @@
         int line = GET_CURRENT_LINE();
 
         if (likely(val_is_int(bv) && val_is_int(cv))) {
-            int64_t x = val_as_int(bv), y = val_as_int(cv), s = 0;
+            // ★ 2026-10-03：同 OP_ADD（无分支符号扩展 + 一次无符号范围判定）
+            int64_t x = VAL_INT48_PAYLOAD(bv), y = VAL_INT48_PAYLOAD(cv), s = 0;
             if (x == 0 || y == 0) {
                 R(a) = val_int(0);
             } else if (unlikely(LENO_MUL_OVERFLOW(x, y, &s))) {
                 R(a) = bigint_mul(bigint_from_int64(x), bigint_from_int64(y));
-            } else if (unlikely(s < INT48_MIN || s > INT48_MAX)) {
+            } else if (unlikely(!INT48_IN_RANGE(s))) {
                 R(a) = val_obj((Object*)bigint_from_int64(s));
             } else {
                 R(a) = val_int(s);
@@ -214,10 +218,12 @@
         int line = GET_CURRENT_LINE();
 
         if (likely(val_is_int(bv))) {
-            int64_t x = val_as_int(bv);
+            // ★ 2026-10-03：同 OP_ADD（无分支符号扩展 + 一次无符号范围判定；
+            //   `-x` 在 INT64_MIN 的极端情形由上面那条 unlikely 分支先兜住 ⇒ 此处 -x 不会 UB ✓）
+            int64_t x = VAL_INT48_PAYLOAD(bv);
             if (unlikely(x == INT64_MIN)) {
                 R(a) = bigint_sub(bigint_from_int64(0), bigint_from_int64(x));
-            } else if (unlikely(-x < INT48_MIN || -x > INT48_MAX)) {
+            } else if (unlikely(!INT48_IN_RANGE(-x))) {
                 R(a) = val_obj((Object*)bigint_from_int64(-x));
             } else {
                 R(a) = val_int(-x);
@@ -249,9 +255,11 @@
     //   ② 结果超出 int48 / int64 溢出 ⇒ **提升为 bigint**（48 位截断会算错 ✗）；
     //   ③ 位运算/移位是**无限精度补码**语义（与栈式 op_bitwise.inc 一致）：
     //      `(1<<63) >> 63 == 1`、`0xffffffffffffffff` 是 2^64-1 而不是 -1。
-    #define VM_IO(_v) (val_is_bigint(_v) ? vm_bigint_as_i64(_v) : val_as_int(_v))
+    // ★ 2026-10-03：同 OP_ADD —— `VM_IO` 用无分支的 `VAL_INT48_PAYLOAD`，
+    //   `VM_INT_RESULT` 用一次无符号范围判定（语义不变 ✓）
+    #define VM_IO(_v) (val_is_bigint(_v) ? vm_bigint_as_i64(_v) : VAL_INT48_PAYLOAD(_v))
     #define VM_INT_RESULT(_x) \
-        (((_x) >= INT48_MIN && (_x) <= INT48_MAX) ? val_int((int64_t)(_x)) \
+        (INT48_IN_RANGE(_x) ? val_int((int64_t)(_x)) \
          : bigint_compact_to_int(val_obj((Object*)bigint_from_int64((int64_t)(_x)))))
     #define VM_IS_BIG(_v) (unlikely(val_is_bigint(_v)))
     // ★ T11：**null 不能参与运算** —— 特化指令此前把 null 读成 0（静默错值）。

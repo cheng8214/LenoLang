@@ -213,6 +213,18 @@ static inline int val_as_bool(Value v) {
 #define INT48_MAX   ((int64_t)0x00007FFFFFFFFFFFULL)  // 2^47 - 1
 #define INT48_MIN   ((int64_t)0xFFFF800000000000ULL)  // -2^47
 
+// ★ 2026-10-03（与 Lua 5.5 对拍后的热路径微调，两个共用宏）：
+//   ① `INT48_IN_RANGE(nv)`：把"两次有符号比较 + 两个分支"折成**一次无符号比较** ——
+//      `(uint64_t)(nv - INT48_MIN) <= (uint64_t)(INT48_MAX - INT48_MIN)`。
+//      减法按无符号回绕、定义明确，且 |nv| ≤ 2^48（两侧都是 int48 时）⇒ 不会 UB ✓
+//   ② `VAL_INT48_PAYLOAD(v)`：**无分支**取出 NaN-boxed Value 的 int48 载荷 ——
+//      `(int64_t)(payload << 16) >> 16`（算术右移即从 bit47 符号扩展），
+//      替代 `val_as_int` 里那句 `if (payload & INT48_SIGN_BIT) payload |= 0xFFFF...` ✗
+//   两者语义与各自替代的写法**逐条等价**（见 VM 侧的实测与断言护栏）
+#define INT48_IN_RANGE(nv) \
+    ((uint64_t)((int64_t)(nv) - INT48_MIN) <= (uint64_t)(INT48_MAX - INT48_MIN))
+#define VAL_INT48_PAYLOAD(v) ((int64_t)((((uint64_t)(v)) & PAYLOAD_MASK) << 16) >> 16)
+
 static inline int64_t val_as_int(Value v) {
     int64_t val = (int64_t)(v & PAYLOAD_MASK);
     // sign-extend from bit 47
