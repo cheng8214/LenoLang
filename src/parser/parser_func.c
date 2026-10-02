@@ -1002,6 +1002,20 @@ Ast* parse_destruct_decl(Parser* p, TypeInfo* base_type, int is_const, int line,
     return ast;
 }
 
+// 「解构必须写形状」的定向提示 —— **单一实现**，`var (` 与 `const (` 两个入口共用
+//   （2026-10-02 补）：用户写 `var (a, b) = ...` 多半是想照 Python 那样"一行声明多个"
+//   （`x, y = 1, 2`），但 Leno 的**声明**解构**必须写形状**（`var[...]` / `var{...}` / 空的 `var[]`）
+//   ⇒ `(` 在 var 路径被当成表达式开头（报「期望变量名」）、在 const 路径被当成类型开头
+//   （报「期望类型 (int, float, ...)」）—— 两条都指向别处、看不出真因 ✗
+//   （实测踩点：写 Leno 版批量替换脚本时；文档见 docs/Leno入门教程.md「与 Python 对照」一节）
+//   顺带点出另一条容易混的：`a, b = ...` 是**并行赋值**，只能改**已存在**的变量 ✓
+static void error_destruct_shape_hint(Parser* p) {
+    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                 "解构声明必须写形状：var[...](a, b) = 值（const 同理）；"
+                 "数据源类型确定时可省类型写成空的 var[]（源为 any 时不行）。"
+                 "若要给**已存在**的变量并行赋值，请写 `a, b = ...`（那种写法不能声明新变量）");
+}
+
 Ast* parse_var_decl_internal(Parser* p) {
     int line = p->lex.current.line;
     int decl_column = p->lex.current.column;  // 变量声明起始列号
@@ -1029,7 +1043,14 @@ Ast* parse_var_decl_internal(Parser* p) {
             shared_type = type_new(TYPE_INFER);
         }
     }
-    
+
+    // `const (a, b) = ...`：与 `var (` 同一个误解，但这条路会先落到"解析类型"⇒ 报「期望类型」✗
+    //   ⇒ 同样给定向提示（与 var 路径共用同一份文案，见 error_destruct_shape_hint）
+    if (!shared_type && p->lex.current.type == TOK_LPAREN) {
+        error_destruct_shape_hint(p);
+        return NULL;
+    }
+
     // 解析类型（如果尚未推断）
     if (!shared_type) {
         shared_type = parse_type(p);
@@ -1053,6 +1074,9 @@ Ast* parse_var_decl_internal(Parser* p) {
             snprintf(msg, sizeof(msg), "不能使用关键字(%.*s)作为变量名", 
                      p->lex.current.len, p->lex.current.text);
             error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, msg);
+        } else if (p->lex.current.type == TOK_LPAREN) {
+            // `var (a, b) = ...` ⇒ 定向提示（文案与 const 路径共用，见 error_destruct_shape_hint）
+            error_destruct_shape_hint(p);
         } else {
             error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望变量名");
         }

@@ -13,6 +13,9 @@
 //   D6  var x: 类型（TS/Kotlin 标注习惯）→ 报离谱的"声明语句后"级联 → 改报明确写法指引
 //   E1  "abc".pad_start（字符串字面量的字符串下标 = 漏括号的方法引用）→ 此前运行期才抛
 //       「字符串索引必须是数字」→ 编译期拦截并给两种正确写法（数字下标 / 加括号）
+//   D7  var (a, b) = ...（Python 的"一行声明多个"习惯）→ 此前报「期望变量名」（`(` 被当表达式
+//       开头 ⇒ 落点是那个括号、看不出真因）→ 改报「解构声明必须写形状」（var[]/var[...]），
+//       并点出 `a, b = ...` 是**并行赋值**（只能改已存在的变量，不能声明新的）
 //
 // 另含四条**不得误伤**的正向用例：循环内的 break/continue 合法；
 // 无效转义 \q 保持"按原样保留"的宽松行为；in 成员测试表达式照常工作；
@@ -981,6 +984,47 @@ main() {
     ce.expect_error("assert/import_type_error.leno",
         "导入有类型错误的模块：只报上游那一条（上游文件 + 行号）",
         "返回类型不匹配：期望 int，实际 any", 7)
+
+    // ---- D7：`var (a, b) = ...`（Python 习惯）⇒ 定向提示"必须写形状"（2026-10-02）----
+    //   缘起：写 Leno 版批量替换脚本时想照 Python 那样一行取参，`var (p, o, n) = a` 报的是
+    //   「期望变量名」—— 因为 `(` 被当成**表达式开头**，报错点在那个括号上、看不出真因 ✗
+    //   （同族还有一条：`(a[0], a[1])` 不是表达式 —— Leno 没有元组字面量）
+    var d7a = dirs.join(work, "var_paren.leno")
+    files.write(d7a, @"main() {
+    var arr = [1, 2]
+    var (a, b) = arr
+    print(a + b)
+}
+")
+    ce.expect_error(d7a, "var (a,b) = ... 要给「必须写形状」的定向提示",
+        "解构声明必须写形状", 3)
+
+    // const 走同一条路径（下一条断言即"同一实现"的护栏）
+    var d7b = dirs.join(work, "const_paren.leno")
+    files.write(d7b, @"main() {
+    var arr = [1, 2]
+    const (a, b) = arr
+}
+")
+    ce.expect_error(d7b, "const (a,b) = ... 同样给形状提示", "解构声明必须写形状", 3)
+
+    // 守卫①：别的"var 后面不是变量名"仍走原通用文案（提示别撒得太宽）
+    var d7c = dirs.join(work, "var_no_name.leno")
+    files.write(d7c, @"main() {
+    var = 1
+}
+")
+    ce.expect_error(d7c, "var = 1 仍报「期望变量名」（未被新提示顶掉）", "期望变量名", 2)
+
+    // 守卫②：三种**正确**写法不得误伤（正向，必须编译+运行成功）
+    var d7d = dirs.join(work, "destruct_ok.leno")
+    files.write(d7d, @"main() {
+    var[](x, y) = [1, 2]
+    var a = 10, b, c = 1
+    print(""OK="" + (x + y + a + c))
+}
+")
+    ce.expect_ok(d7d, "解构声明 / 多变量声明照常编译运行", "OK=14")
 
     print("=== test_diag_static_errors ALL passed ===")
 }
