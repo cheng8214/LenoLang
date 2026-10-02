@@ -420,7 +420,7 @@ Leno/
 ├── leno_lsp/                   # LSP language server (C implementation + .vsix plugin)
 ├── assert/                     # assertion tests (469 files, entry point run_tests.leno)
 ├── examples/                   # example code (1016 files)
-├── docs/                       # documentation (67 docs)
+├── docs/                       # documentation (68 .md + 4 screenshots; see docs/INDEX.md)
 ├── resources/leno.rc           # Windows resources (icon / version info)
 ├── sources_core.txt  sources_vm.txt  sources_compiler.txt   # build source file lists
 └── build.sh  build.bat  build_vm.sh  build_vm.bat
@@ -444,32 +444,26 @@ Leno/
 
 ## Documentation
 
+**📚 [Full documentation index (`docs/INDEX.md`)](docs/INDEX.md)** — classification, status, and "which sections are outdated" all live there. Only the most-used links are kept below:
+
 **Getting Started and Guides**
 - [Leno Tutorial](docs/Leno入门教程.md) (Chinese) — complete syntax reference (with an in-depth type system guide)
-- [FAQ](docs/FAQ.md) (Chinese) · [Leno Language Specification Draft](docs/Leno_规范草稿.md) (Chinese) · [Language Improvement Suggestions](docs/Leno语言改进建议.md) (Chinese)
-- [Import Guide](docs/import使用指南.md) (Chinese) · [Async/Await Getting Started Guide](docs/async_await入门指南.md) (Chinese)
-- [FFI Guide](docs/FFI使用指南.md) (Chinese) · [Threads Guide](docs/threads使用指南.md) (Chinese) · [Concurrency Selection Guide](docs/并发选择指引.md) (Chinese)
-- [Package Management and Installation Guide](docs/包管理与安装使用指南.md) (Chinese) · [Single-File Packing Guide](docs/单文件打包使用指南.md) (Chinese)
-- [Encryption Algorithm Examples Guide](docs/加密算法示例指南.md) (Chinese)
+- [FAQ](docs/FAQ.md) (Chinese) · [Leno Language Specification Draft](docs/Leno_规范草稿.md) (Chinese) · [Import Guide](docs/import使用指南.md) (Chinese)
+- [Async/Await Getting Started Guide](docs/async_await入门指南.md) (Chinese) · [Threads Guide](docs/threads使用指南.md) (Chinese) · [Concurrency Selection Guide](docs/并发选择指引.md) (Chinese)
+- [FFI Guide](docs/FFI使用指南.md) (Chinese) · [Package Management and Installation Guide](docs/包管理与安装使用指南.md) (Chinese) · [Single-File Packing Guide](docs/单文件打包使用指南.md) (Chinese)
 
-**Module API Reference** (`docs/module_*.md`)
-- [io](docs/module_io.md) (Chinese) · [maths](docs/module_maths.md) (Chinese) · [strings](docs/module_strings.md) (Chinese) · [arrays](docs/module_arrays.md) (Chinese) · [dicts](docs/module_dicts.md) (Chinese)
-- [types](docs/module_types.md) (Chinese) · [times](docs/module_times.md) (Chinese) · [rands](docs/module_rands.md) (Chinese) · [files](docs/module_files.md) (Chinese) · [dirs](docs/module_dirs.md) (Chinese)
-- [jsons](docs/module_jsons.md) (Chinese) · [sockets](docs/module_sockets.md) (Chinese) · [regexs](docs/module_regexs.md) (Chinese) · [sys](docs/module_sys.md) (Chinese)
-- [ffi](docs/module_ffi_api.md) (Chinese) · [cstructs](docs/module_cstructs.md) (Chinese) · [threads](docs/module_threads_api.md) (Chinese) · [asyncs](docs/module_asyncs.md) (Chinese)
+**Module API Reference** (`docs/module_*.md`, 18 in total — see the index; all Chinese)
+- [io](docs/module_io.md) · [files](docs/module_files.md) · [strings](docs/module_strings.md) · [arrays](docs/module_arrays.md) · [dicts](docs/module_dicts.md) · [types](docs/module_types.md) · [times](docs/module_times.md) · [jsons](docs/module_jsons.md) · [sys](docs/module_sys.md) · [sockets](docs/module_sockets.md) · [cstructs](docs/module_cstructs.md) · [ffi](docs/module_ffi_api.md)
 
 **GUI (LenoSDL3)**
 - [Common APIs and Pitfall Quick Reference](build/leno_module/LenoSDL3/docs/SDL3常用API与易踩坑速查.md) (Chinese) — layout `{basis, grow}` semantics, drawing-layer order, anti-aliasing scope
 - [Widget Optimization Checklist](build/leno_module/LenoSDL3/docs/SDL3控件优化清单.md) (Chinese)
-- [Pixel Direct-Write Rendering Optimization](docs/LenoSDL3像素直写渲染优化.md) (Chinese) · [Diagnosing Flicker Caused by Excessive Clipping](docs/LenoSDL3_裁剪过多导致闪烁排查记录.md) (Chinese) · [Table Method Table Break compiler bug](docs/LenoSDL3_Table方法表断裂编译器bug排查记录.md) (Chinese)
+- [Pixel Direct-Write Rendering Optimization](docs/LenoSDL3像素直写渲染优化.md) (Chinese) · [Diagnosing Flicker Caused by Excessive Clipping](docs/LenoSDL3_裁剪过多导致闪烁排查记录.md) (Chinese)
 - Regression cases: `build/leno_module/LenoSDL3/examples/图形绘制/` (anti-aliasing, clock) + `其他测试/` (drawing order, layout dump)
 
-**Performance and Implementation Notes**
-- [Performance Optimization Notes](docs/性能优化记录.md) (Chinese) · [Performance Test Summary (Leno vs Python)](docs/性能测试总结_Leno_vs_Python.md) (Chinese) · [Bytecode Optimization Analysis](docs/字节码优化分析.md) (Chinese)
-- [Differences Between Register-based and Stack-based](docs/寄存式与栈式的差异清单.md) (Chinese) · [JIT Implementation and Debugging Notes](docs/JIT实现与调试记录.md) (Chinese) · [GC and Allocation Optimization (TODO)](docs/待办_GC与分配优化.md) (Chinese)
-
-**Roadmap**
-- [TODO and Roadmap](docs/待办与路线图.md) (Chinese) · [Usability Pain Points (TraeSign Port Record)](docs/待办_易用性痛点（TraeSign 移植实录）.md) (Chinese) · [Single Source of Truth and Convergence of Duplicate Implementations](docs/待办_单一事实来源与重复实现收敛.md) (Chinese)
+**Performance, Internals and Roadmap**
+- [TODO and Roadmap](docs/待办与路线图.md) (Chinese; the master backlog) · [Performance Optimization Notes](docs/性能优化记录.md) (🟡 stack-VM era) · [Bytecode Optimization Analysis](docs/字节码优化分析.md) (🟡)
+- [Differences Between Register-based and Stack-based](docs/寄存式与栈式的差异清单.md) (📜 archived) · [JIT-era docs (archived)](docs/archive/) — JIT is no longer in the codebase
 
 ## License
 

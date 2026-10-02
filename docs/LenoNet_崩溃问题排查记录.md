@@ -1,5 +1,9 @@
 # LenoNet HttpClient 崩溃问题排查记录
 
+> ⚠ **局部过时（2026-10-02 注）**：文中根因落在 `src/vm/vminc/op_type_specialized.inc` 的
+> `vm_stack_push_fast` —— 该文件已随寄存器式改造删除（`0f0cf52`）⇒ `file:line` 已不可用。
+> "✅ 崩溃已修复"的结论与排查方法（区分"堆损坏"与"越界写"）仍然有效。
+
 ## 概述
 
 在开发 LenoNet（libcurl 绑定）过程中，`HttpClient` 多次请求时发生间歇性崩溃。

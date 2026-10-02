@@ -1,5 +1,11 @@
 # Leno JIT 编译器实现与调试记录
 
+> ⛔ **已归档（2026-10-02）—— JIT 已不在代码中，本文仅供考古。**
+> 本仓库历史（427 个提交，最早 `e8ccc46 2026-09-20 Initial commit`）里**从未有过**任何
+> `jit` 命名文件：`git ls-files "*jit*"` 与 `git log --all --diff-filter=AD -- "*jit*"`
+> 均为空 ⇒ 文中 `src/jit/*`、`LENO_NO_JIT=1`、`JIT_HOT_THRESHOLD` 等**别去当前源码里找**。
+> 现行实现是寄存器式解释器（`src/vm/vminc/run/*.inc`）；现行性能结论与待办见 `docs/待办与路线图.md`。
+
 > 文档记录 Leno VM JIT 编译器的架构设计、已支持字节码清单、调试方法、踩过的坑及解决方案。
 >
 > 代码位置（可移植层 / x86_64 后端分工）：
@@ -653,7 +659,7 @@ R2 的多批 opcode 已补齐。⇒ **当前剩余缺口的完整清单见 §8.7
 | ~~R12~~ | ~~【内存安全】JIT 下「循环体内**按字面量属性名取值**」堆损坏~~（原描述："dict 取值 + 存局部变量"） | ~~最小形态 100% 复现 `0xC0000374`；200000 轮正常 / 262144 轮崩~~ | ~~一个 `pop_bytes` 判据~~ | ~~高（内存损坏）~~ | **已完成（§8.67，2026-09-14）**：根因不是 dict 路径，而是 **`OP_GET_PROPERTY` 独立访问形态没弹 receiver 槽** ⇒ **每次执行泄漏 8 字节** ⇒ 循环里 RSP 单调下漂 ⇒ ~2MB 栈界处 `0xC0000374`。修法：该分支 `pop_bytes` 由 `0` 改为 `8`。实测漂移 **−8/次 → 0**、该循环 **182ms → 约 20~33ms**、A 形态的 3 次 `int48` bailout 一并消失；用例 `assert/test_jit_op_get_property.leno`（40 万轮，必须 > 262144 阈值） |
 | R2 | L7 余项成批补齐 | 余项：`OP_AS_CAST`(94)、`OP_GET_METHOD`(134，**裸方法取值**形态)、`OP_ARRAY_GET/SET`、`OP_DICT*`、`OP_SLICE`(79)、`OP_IN`、`OP_RANGE`、`OP_NEG`(33)、`OP_U8_TO_F64`(146) | 多为 callout 型，照 §8.52~§8.59 的模板走（`opcode_size` + 两处 scan + callout + codegen + 用例）；需要"语义唯一来源"抽取的（VM 里就地 READ 的那类）照 §8.61/§8.64/§8.65 的做法 | 低 | **批次 1（§8.63）**：`OP_IS_NULL`(48)。**批次 2（§8.64）**：`OP_STRING_ADD`(76)（由插值 `$"..."` 产生，不是 `+`；顺带解开内联侧）。**批次 3（§8.65）**：`OP_TYPE_CHECK`(93)——抽出 `type_check_value` 共用，顺带修掉 `TYPE_ENUM` 的 4 字节长度 bug；实测 `FuncCompiled 123 → 289`。**下一批候选**（实测排序）：**内联侧**补 `OP_GET_METHOD`（×36，见 R7；这是"内联能否成立"的问题，不影响循环编译）、`94:AS_CAST`（带值改写语义，直方图未出现）。注：`-d["k"]`、`x == null` 实测走已支持的路径，不必做；**循环级拒收此刻只剩刻意保留项**（`138`）/ R5 前置（`14`）/ 维持拒绝（`142`） |
 | ~~R3~~ | ~~L0 诊断收口~~ | ~~`opcode_size` 余项补全；把 scan 的 default 报错区分成 `unknown opcode`（缺长度）与 `unsupported opcode`（已收录长度但缺 case）~~ | ~~纯诊断，无行为变化~~ | ~~极低~~ | **已完成（§8.63，2026-09-14）**：补齐约 40 条长度（逐条与 VM 的 `READ_*`、`debug.c` 反汇编器交叉核对）；`OP_CLOSURE` 因长度依赖常量表而**故意保持"未知"**；报错分为 `unknown（长度未知）`/`unsupported（已收录长度、未实现）`。**实测收益**：同一负载的拒收清单从"含糊的 138"变成分类可排期（76×4 / 93×3 / 14×2 / 142×2 / 138×49），R2 的下一批因此是测出来的而不是猜的 |
-| R5 | 闭包创建与捕获变量（`OP_CLOSURE` / `GET/SET/CLOSE_UPVALUE`） | 循环里建闭包、闭包体内读写捕获变量都不进 JIT（被调函数带 upvalue 时自动退回 VM 重入 ⇒ 语义正确但不快） | 两件基础：**(a)** func-JIT ABI 要加 closure 通道（现为 `jfn(flocals, globals)`，无 upvalue 入口）；**(b)** 循环 JIT 的 locals 在 scratch 区（迭代即复用）⇒ 直接捕获会产生**悬空 upvalue**，只能先允许"捕获已在 upvalue 链上的变量"，或改 locals 布局 | 高（ABI + 生命周期不变量） | **已完成（§8.72，2026-09-15）**：C0（零捕获）/ C1（by-upvalue）/ C2（值捕获）+ `GET/SET_UPVALUE` 全部进 JIT（P1 `34508a90` / P2a `68002778` / P2b `6c119bd3` / P3 `2a572102`，assert 304→307/0）；设计稿与不变量 I1~I8 见 `JIT闭包与upvalue设计_R5.md`。**C3（引用捕获本帧局部）与内联体内的闭包维持拒绝**（P4 需实测授权 / I8） |
+| R5 | 闭包创建与捕获变量（`OP_CLOSURE` / `GET/SET/CLOSE_UPVALUE`） | 循环里建闭包、闭包体内读写捕获变量都不进 JIT（被调函数带 upvalue 时自动退回 VM 重入 ⇒ 语义正确但不快） | 两件基础：**(a)** func-JIT ABI 要加 closure 通道（现为 `jfn(flocals, globals)`，无 upvalue 入口）；**(b)** 循环 JIT 的 locals 在 scratch 区（迭代即复用）⇒ 直接捕获会产生**悬空 upvalue**，只能先允许"捕获已在 upvalue 链上的变量"，或改 locals 布局 | 高（ABI + 生命周期不变量） | **已完成（§8.72，2026-09-15）**：C0（零捕获）/ C1（by-upvalue）/ C2（值捕获）+ `GET/SET_UPVALUE` 全部进 JIT（P1 `34508a90` / P2a `68002778` / P2b `6c119bd3` / P3 `2a572102`，assert 304→307/0）；设计稿与不变量 I1~I8 见 `docs/archive/JIT闭包与upvalue设计_R5.md`。**C3（引用捕获本帧局部）与内联体内的闭包维持拒绝**（P4 需实测授权 / I8） |
 | R6 | 函数级 JIT 的多返回值 + `OP_TAIL_CALL` | `jit_compile_function` 直接拒收 `return_count > 1`；`OP_TAIL_CALL` 在循环 JIT 里等价"提前返回"（应归入 `has_reachable_return` 拒绝），只有函数级 JIT 有价值 | 多返回：扩返回值通道（`jit_fn_result` 单值 → 多槽约定），调用方回填约定已就绪（§8.59 的 helper）；尾调用：帧复用语义另算 | 中 | **R6-a（多返回值）已完成（§8.75，2026-09-15）**：发布区 `jit_fn_results[] + jit_fn_result_count` + `jit_fastpath_deliver_multi()`；三处快路径与解释器热入口全部支持多值；`return_count == -1` 靠交付前复核回落。探针 `probe_multi_ret_jit.leno` JIT/NO_JIT 逐字一致、快路径 3903 次零回退、assert 307/0。**R6-b（`OP_TAIL_CALL`）已完成（§8.76，同日）**：函数模式=「调用 + 发布结果 + epilogue」，循环/内联维持拒绝；关键是**先补上 `OP_GET_GLOBAL_FUNC`（opcode 18）的缺口**（尾调用形态是它 + `OP_TAIL_CALL`，此前整函数被拒）。"关闭本帧 upvalue"对 JIT 恒为空操作（R5 的 I1 + C3 拒绝）；空间行为靠深度守卫交解释器做真 TCO（探针 20000 层 ×200 轮不崩、0.1s）。探针 `probe_tail_call_jit.leno`、assert 307/0。**仍未支持**：`OP_TAIL_CALL_NATIVE`。**R6-d（`OP_GET_CSTRUCT_DEF`）已完成（§8.80，2026-09-16）**：三侧（loop/func/inline）全部支持，**只嵌名字常量、查找在 callout 里每次现做**（定义是运行时注册的 + 同名重声明会废弃旧 def ⇒ 不能编译期解析）；实测解锁 **8 个函数级编译 + 13 个内联点**，**循环级净解锁 0**（原来被 cstruct 挡的热循环现在被 `OP_CLIB_CALL` 挡）⇒ 下一步做 `OP_CLIB_CALL`(142)，其后是 `OP_AS_CAST`(94) 与 native 方法派发（两者都是本次露出的相邻缺口，见 §8.80）。**R6-e（`OP_CLIB_CALL`）已完成（§8.81，2026-09-16）**：操作数变长 ⇒ codegen 把整条 `ip` 交给 callout（与 `OP_CLOSURE` 传描述表同款）；参数搬上 VM 栈再调 `ffi_clib_call`。三侧支持、`142` 清零，真实负载合计 **loop -9 / func -11 / inline -5**；探针 `probe_clib_call_jit.leno` JIT/NO_JIT 逐字一致且 **Bailouts: 0**、assert 308/0。**下一批**（差分新露出、且直接影响收益兑现）：`call_value` 对 native 方法对象、`OP_AS_CAST`(94)、`OP_GET_FIELD_ADDR`(133) |
 | R7 | 内联的跨模块限制 + 内联侧 opcode 缺口 | ① 模块变量/函数访问被 inline scan 一刀拒绝（§8.55/§8.56）——内联后没有 callee 的帧，模块归属不可知（**实测 ×166**，内联侧第一大）；② inline scan 没有 `OP_GET_METHOD` 的 case ⇒ 含方法调用的函数一律不能内联（**实测 ×36**）；③ `138:GET_CSTRUCT_DEF ×116`（维持拒绝） | ① 在 inline site 记录 callee 的 module，与 caller 相同才允许内联；② 照 loop scan 的记账补 `GET_METHOD`（配对形态 `-(argc+1-rc)`，rc 用同样的 `jit_resolve_method_ret_count`，解析不出就拒绝内联） | 低 | **② 已完成（§8.68，2026-09-15）**：`scan_callee_for_inline` 补 `OP_GET_METHOD`（配对/独立两形态），探针 `probe_inline_method_call.leno` 2.27~2.40x、用例 `test_jit_inline_method_dispatch.leno`。**① 已完成（§8.69，同日）**：加「callee 与 caller 同模块」守卫后放行模块变量/函数访问，探针 `probe_inline_module_var.leno` ≈2~3x、跨模块仍拒绝（安全边界）、用例 `test_jit_inline_module_var.leno`；assert 298/0。③ 维持拒绝。**④ 已完成（2026-09-16，§8.77）**：内联侧补 `OP_CALL`(59) 与 `OP_GET_GLOBAL_FUNC`(18)（"取函数值再调用"形态此前使被调方永不可内联），拒收清零、探针同二进制 A/B **2.72x**、用例 `test_jit_inline_call_value.leno`、assert 308/0 |
 | ~~R8~~ | ~~性能基准复盘~~ | ~~§9 的数据需要按最新覆盖面重跑（JIT vs `LENO_NO_JIT=1`），量化"覆盖面增长到底换来多少"~~ | ~~纯测量；也顺便验证 R4 的延迟回收没有性能回退~~ | ~~极低~~ | **已完成（§9 的「R8 基准复盘」小节，2026-09-14）**：新增可复用基准 `examples/性能测试/JIT覆盖面基准.leno`（8 项，专测本轮补齐的 opcode）；JIT/VM 加速比 2.2x\~18.6x，**字符串插值 1.0x（分配主导，非测错）**；与历史基线交叉核对无回退（i++ 75 vs 78 ms/亿、arr.add 620 vs 625 ms/亿）⇒ R4 延迟释放无可测代价 |
@@ -689,7 +695,7 @@ R2 的多批 opcode 已补齐。⇒ **当前剩余缺口的完整清单见 §8.7
 >
 > 通用 `OP_MUL` 为什么会出现在字节码里（编译器 `AST_MODULE_CALL` 分支未写回
 > `ast->cached_type` → codegen 读到 TYPE_ANY → 发通用 opcode），以及模块调用
-> callout 的三项优化与性能数据，见 `docs/JIT模块调用优化与bailout排查记录.md`。
+> callout 的三项优化与性能数据，见 `docs/archive/JIT模块调用优化与bailout排查记录.md`。
 
 ### 曾经"不支持"、现已支持（旧文档已过时）
 
@@ -1069,7 +1075,7 @@ pop  rax            ; ← 这句被跳过！慢路径却假设 RAX = 左操作�
 界面错位：工具栏被压窄、状态栏贴在工具栏下方、splitter 高度≈0，导航树与表格行整片消失；
 `LENO_NO_JIT=1` 运行完全正常。
 
-**定位**（完整链路见 `JIT模块调用优化与bailout排查记录.md` 第 8 节）：
+**定位**（完整链路见 `docs/archive/JIT模块调用优化与bailout排查记录.md` 第 8 节）：
 从界面像素反推布局分支 —— combo 宽度恰为其 `basis`（300）、按钮按 32 依次排开
 ⇒ `HBox._relayout` 的 `childMain()` 走的是「`free >= 0` 且 `sumGrow == 0`」分支
 ⇒ 累加器 `sumGrow` 不是数值。差分探针随即复现出 `sumGrow = "grow"`
@@ -2325,7 +2331,7 @@ JIT 活值，看起来是最小解。
 且它的"回退"是**按 ScopeDesc/OopMap 把编译帧重构成 bci 精确的解释器帧**（不是重跑）；
 LuaJIT 则靠"**栈槽是 GC 的权威副本** + snapshot 重建退出点状态"，从不扫机器码寄存器。
 我们两条都没有 ⇒ 「活值不可见」和「bailout 只能重跑」都是**缺元数据**的必然结果。
-详见 `docs/JIT安全点与去优化_参考实现调研.md`（含来源与推论标注）。
+详见 `docs/archive/JIT安全点与去优化_参考实现调研.md`（含来源与推论标注）。
 
 ***
 
@@ -4515,7 +4521,7 @@ set LENO_NO_JIT=1 && build\leno.exe jit_probes\probe_dict_set.leno 2000000
 被报 `unsupported opcode 14/15`。后果：**循环里只要建闭包、或循环在闭包体内访问捕获变量，
 整个循环都不进 JIT**。
 
-**设计先行**（`docs/JIT闭包与upvalue设计_R5.md`）：先交形态矩阵 + 不变量 + 分阶段计划，再动手。
+**设计先行**（`docs/archive/JIT闭包与upvalue设计_R5.md`）：先交形态矩阵 + 不变量 + 分阶段计划，再动手。
 按「捕获形态 × JIT 层级」切成 C0/C1/C2/C3 与 U1/U2，确立主线不变量：
 
 > **I1：JIT 永不创建 open upvalue**。JIT 只造 **closed** upvalue（值捕获）或**复用**既有
@@ -4640,7 +4646,7 @@ set LENO_NO_JIT=1 && build\leno.exe jit_probes\probe_dict_set.leno 2000000
   入口缓存 `.lenb` 时间戳立刻更新（07:15:10 → 07:34:02）⇒ 依赖变更会正确失效。
   遇到"改了却没生效"时可先清 `.lenocache` 作排查兜底，但不再是必需步骤。
 - **完全不开窗的静态手段**：`--debug-out <file>` 在执行前落盘主程序 + 全部模块的字节码
-  （见 `JIT闭包与upvalue设计_R5.md` 的 P0 实测）。
+  （见 `docs/archive/JIT闭包与upvalue设计_R5.md` 的 P0 实测）。
 
 **后续（2026-09-16，§8.78）**：本节修的是**哈希碰撞**（混合哈希 + 探测窗口）；但真实应用的
 **工作集 > 表长**时仍会颠簸 —— 实测 file_manager 同配置三跑 `FuncEvict` = 4 / 504 / 3767、
@@ -4813,7 +4819,7 @@ codegen 推送值）。**顺带收益**：解锁「取函数值再调用」的�
    而按 R5 的不变量 **I1（JIT 永不制造新的 open upvalue）+ C3（引用捕获本帧局部）维持拒绝**，
    JIT 化的函数**不可能**有指向自己 locals 的 open upvalue ⇒ 那一步无事可做。
    ⚠ **跨轮耦合**：若将来 P4（C3 提升槽）落地，`OP_TAIL_CALL` 必须重新审查
-   （已同步写进 `JIT闭包与upvalue设计_R5.md` 的 I1 处）。
+   （已同步写进 `docs/archive/JIT闭包与upvalue设计_R5.md` 的 I1 处）。
 2. **空间行为靠深度守卫 + 解释器 TCO 兜底**。帧复用的意义是"尾递归不增长 VM 栈"；
    JIT 是 C 调用链 ⇒ `jit_func_depth >= JIT_FUNC_MAX_DEPTH` 时**直接 bailout**，
    把这条指令交给解释器。实测走向比预期更好：JIT 第 0 层做尾调用 → `vm_call_value` →

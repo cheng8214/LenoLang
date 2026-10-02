@@ -1,9 +1,16 @@
 # 待办：GC 与对象分配优化（交接记录）
 
+> ⚠ **含大量 JIT 时代结论（2026-10-02 注）**：本文多处依据 JIT 的实测，例如"JIT 侧 callout 包装 +
+> 参数搬运只要 14 ns"、"**不要再往「加 JIT 覆盖率 / 内联更多 opcode」上投入**"、
+> `jit_probes/probe_alloc2.leno` 一类探针路径。
+> **JIT 已不在代码中**（本仓库历史里从未有过 `jit` 命名文件，`git ls-files "*jit*"` 为空）
+> ⇒ 这类判据要么按"没有 JIT"重读，要么只当历史依据。
+> **GC / 对象分配本身的部分仍然有效**，是现行待办。
+
 > 建立于 2026-09-13。背景是 §8.30（struct 字段读/方法调用内联，提交 `c4b6bbd1`）之后，
 > 结论是「**调用机制已经不是瓶颈，对象分配/回收才是**」。
 >
-> 相关章节：`JIT实现与调试记录.md` 的 §8.31 / §8.31-a / §8.31-b / §8.32。
+> 相关章节：`docs/archive/JIT实现与调试记录.md` 的 §8.31 / §8.31-a / §8.31-b / §8.32。
 > 本文只记「现在到哪了、下一步做什么、别重复踩哪些坑」。
 
 ---
@@ -122,7 +129,7 @@ JIT 收编热循环后没有返回值 ⇒ 请求被推迟。实测预热循环�
 10M 次 `new` 实测堆涨到 ~960MB，池很快耗尽后退化成裸 `malloc`（这正是 §8.31 里
 「池放大到 1GB 才省 56ns」的成因）。
 
-**两条核实结论（2026-09-13 已查，详见 `JIT实现与调试记录.md` §8.36）**：
+**两条核实结论（2026-09-13 已查，详见 `docs/archive/JIT实现与调试记录.md` §8.36）**：
 
 1. **JIT 的活值在 GC 眼里不可见**：序言把 locals 从 `frame->locals` 复制进机器栈 scratch，
    执行期只在 scratch 读写，`EMIT_WRITEBACK_LOCALS` **只在出口块发射** ⇒ 整个循环期间
@@ -155,7 +162,7 @@ JIT 收编热循环后没有返回值 ⇒ 请求被推迟。实测预热循环�
 `assert` 273/0；`i++` / `经典递归` 无回归。
 （`gc_barrier_canary.leno` 的敏感度问题已由 P0 解决，与 P1 无关，见第五节。）
 
-**进度（2026-09-13，详见 `JIT实现与调试记录.md` §8.37）**：
+**进度（2026-09-13，详见 `docs/archive/JIT实现与调试记录.md` §8.37）**：
 
 * ✅ **已实施**：「JIT 帧内禁止同步回收」硬化 —— `gc_alloc` 的分配失败路径不再在
   JIT 帧里 `gc_major_collect()`（那会把 JIT 的活值当垃圾），改为置延迟标志 +
@@ -178,10 +185,10 @@ JIT 收编热循环后没有返回值 ⇒ 请求被推迟。实测预热循环�
   映射 4（**不计 bailout**）；`op_jump.inc` / `op_for_loop.inc` 消费让出并回收。
   **实测：`probe_jit_gc_safepoint`（while）GC=83/Yields=83/`sum` 逐位正确；
   `probe_alloc2`（for 纯分配 = §8.31 的 960MB 泄漏场景）从 GC=0 变成 GC=333/Yields=333，
-  每次回收 ≈8MB（`freed≈95083`）**。详见 `JIT实现与调试记录.md` §8.38；
+  每次回收 ≈8MB（`freed≈95083`）**。详见 `docs/archive/JIT实现与调试记录.md` §8.38；
   轮询成本量化（+0.11ns/轮）与「R15 预装 / 更细的门」两个后续方向的否定见 §8.39。
 
-**行业对照（2026-09-13 调研，见 `JIT安全点与去优化_参考实现调研.md`）**：
+**行业对照（2026-09-13 调研，见 `docs/archive/JIT安全点与去优化_参考实现调研.md`）**：
 HotSpot 的 poll 也放在**回边/返回前/调用后**（与本项目一致），差别在于它有
 **OopMap + ScopeDesc**，所以①能在 poll 处就地扫寄存器+栈、②回退是**帧重构**而不是重跑；
 LuaJIT 靠**"栈槽就是 GC 的权威副本"**（解释器与 mcode 共用一条 Lua 栈）+ snapshot
@@ -263,11 +270,11 @@ del /q build\leno_base.exe build\leno_broken.exe
 
 > **状态（2026-09-15）：本节 3 项全部关闭** —— `OP_INDEX` 慢路径（已修）、
 > `OP_ADD_FLOAT` 判 NaN-boxed（已解除，见下）、`OP_EQ` 身份比较（已修）。
-> 现存 JIT 待办已不在本节，见 `JIT实现与调试记录.md` §11 路线图 / §12 未解决问题
+> 现存 JIT 待办已不在本节，见 `docs/archive/JIT实现与调试记录.md` §11 路线图 / §12 未解决问题
 > 与本文第四节（P1/P2）。
 
 本节与 GC 无关，但同属「静默不优化」类缺口，一并记在这里。详见
-`JIT实现与调试记录.md` §8.33。
+`docs/archive/JIT实现与调试记录.md` §8.33。
 
 ### ✅ 已修：`OP_INDEX` 慢路径无条件 bailout
 
@@ -322,7 +329,7 @@ NaN-boxed」一律 bailout，整个循环跑不进 JIT。
 **⚠️ 原计划的「codegen 发专用身份比较 opcode」已被否掉**：`Ptr[T]` 是 `ObjFFIPointer`，
 而 `ffi.nullptr()` / `ffi.ptr_from_int(0)` 会产生**包装 NULL 的 ObjFFIPointer**，
 解释器对 `null == Ptr` 走「看包装地址」的特殊规则（为真），纯身份比较会给假 ——
-抬进编译期就会静默改语义。详见 `JIT实现与调试记录.md` §8.34。
+抬进编译期就会静默改语义。详见 `docs/archive/JIT实现与调试记录.md` §8.34。
 
 **验证**：`jit_probes/probe_eq_identity.leno`（JIT 与 `LENO_NO_JIT=1` 结果逐条一致；
 string / array / `ffi.nullptr()==null` 仍走解释器）；`assert` 273/0；
@@ -335,18 +342,18 @@ string / array / `ffi.nullptr()==null` 仍走解释器）；`assert` 273/0；
 - 代码改动 1：写屏障 / `struct_set_field` 内联（`src/gc.c`、`src/include/leno_value.h`、
   `src/object/object_struct.c`）—— 已验证，已提交（`0ead45e9`）。
 - 代码改动 2：`OP_INDEX` 慢路径越界 bailout 桩修复（`src/jit/backend/x86_inc/ops_index.inc`，
-  +7 行）—— 已验证，见第七节与 `JIT实现与调试记录.md` §8.33。
+  +7 行）—— 已验证，见第七节与 `docs/archive/JIT实现与调试记录.md` §8.33。
 - 代码改动 3：`OP_EQ/OP_NEQ` 身份比较快路径（`src/jit/backend/x86_inc/ops_icmp.inc`）
-  —— 已验证，见第七节与 `JIT实现与调试记录.md` §8.34。
+  —— 已验证，见第七节与 `docs/archive/JIT实现与调试记录.md` §8.34。
 - 代码改动 4（2026-09-13 晚，P0）：确定性 GC 钩子（`src/gc.c`、`src/include/leno_value.h`、
   `src/include/leno_vm.h`、`src/vm/vminc/vm_init.inc`、`src/vm/vminc/op_call.inc`）
   —— `LENO_GC_YOUNG_THRESHOLD` / `LENO_GC_FORCE_EVERY` / `LENO_GC_TRACE`，
-  并删除死代码 `gc_check_safe_point()`；见 `JIT实现与调试记录.md` §8.35。
+  并删除死代码 `gc_check_safe_point()`；见 `docs/archive/JIT实现与调试记录.md` §8.35。
 - 新增：`jit_probes/gc_barrier_canary.leno`（**已重做，现在敏感**：配合钩子时
   无屏障版会崩、有屏障版 6000 次回收 `bad=0`，见第五节）、
   `jit_probes/probe_index_slowpath.leno`（`OP_INDEX` 慢路径回归探针，判据见第七节）、
   `jit_probes/probe_eq_identity.leno`（`OP_EQ` 身份比较差分探针，判据见第七节）。
-- 文档：`JIT实现与调试记录.md` §8.31-a（负结果）、§8.31-b（内联屏障 + 覆盖缺口）、
+- 文档：`docs/archive/JIT实现与调试记录.md` §8.31-a（负结果）、§8.31-b（内联屏障 + 覆盖缺口）、
   §8.33（`OP_INDEX` 慢路径 bailout）、§8.34（`OP_EQ` 身份比较快路径）、
   §8.35（确定性 GC 钩子 + 金丝雀真因）；`jit_probes/README.md` 增加「确定性 GC 钩子」一节。
 - 环境已复位：临时 GC 探针已移除、对照二进制与诊断临时文件已删除。

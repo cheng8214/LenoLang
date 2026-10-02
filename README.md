@@ -420,7 +420,7 @@ Leno/
 ├── leno_lsp/                   # LSP 语言服务器（C 实现 + .vsix 插件）
 ├── assert/                     # 断言测试（469 个文件，入口 run_tests.leno）
 ├── examples/                   # 示例代码（1016 个文件）
-├── docs/                       # 文档（67 篇）
+├── docs/                       # 文档（68 篇 .md + 4 张截图；索引见 docs/INDEX.md）
 ├── resources/leno.rc           # Windows 资源（图标 / 版本信息）
 ├── sources_core.txt  sources_vm.txt  sources_compiler.txt   # 构建源文件清单
 └── build.sh  build.bat  build_vm.sh  build_vm.bat
@@ -444,32 +444,26 @@ Leno/
 
 ## 文档
 
+**📚 [完整文档索引（`docs/INDEX.md`）](docs/INDEX.md)** —— 分类、状态、以及"哪些段落已过时"都在那儿。下面只留最常用的几条：
+
 **入门与指南**
 - [Leno 入门教程](docs/Leno入门教程.md) —— 完整语法参考（含类型系统详解）
-- [FAQ](docs/FAQ.md) · [Leno 语言规范草稿](docs/Leno_规范草稿.md) · [语言改进建议](docs/Leno语言改进建议.md)
-- [Import 使用指南](docs/import使用指南.md) · [Async/Await 入门指南](docs/async_await入门指南.md)
-- [FFI 使用指南](docs/FFI使用指南.md) · [Threads 使用指南](docs/threads使用指南.md) · [并发选择指引](docs/并发选择指引.md)
-- [包管理与安装使用指南](docs/包管理与安装使用指南.md) · [单文件打包使用指南](docs/单文件打包使用指南.md)
-- [加密算法示例指南](docs/加密算法示例指南.md)
+- [FAQ](docs/FAQ.md) · [Leno 语言规范草稿](docs/Leno_规范草稿.md) · [Import 使用指南](docs/import使用指南.md)
+- [Async/Await 入门指南](docs/async_await入门指南.md) · [Threads 使用指南](docs/threads使用指南.md) · [并发选择指引](docs/并发选择指引.md)
+- [FFI 使用指南](docs/FFI使用指南.md) · [包管理与安装使用指南](docs/包管理与安装使用指南.md) · [单文件打包使用指南](docs/单文件打包使用指南.md)
 
-**模块 API 参考**（`docs/module_*.md`）
-- [io](docs/module_io.md) · [maths](docs/module_maths.md) · [strings](docs/module_strings.md) · [arrays](docs/module_arrays.md) · [dicts](docs/module_dicts.md)
-- [types](docs/module_types.md) · [times](docs/module_times.md) · [rands](docs/module_rands.md) · [files](docs/module_files.md) · [dirs](docs/module_dirs.md)
-- [jsons](docs/module_jsons.md) · [sockets](docs/module_sockets.md) · [regexs](docs/module_regexs.md) · [sys](docs/module_sys.md)
-- [ffi](docs/module_ffi_api.md) · [cstructs](docs/module_cstructs.md) · [threads](docs/module_threads_api.md) · [asyncs](docs/module_asyncs.md)
+**模块 API 参考**（`docs/module_*.md`，共 18 篇，全量见索引）
+- [io](docs/module_io.md) · [files](docs/module_files.md) · [strings](docs/module_strings.md) · [arrays](docs/module_arrays.md) · [dicts](docs/module_dicts.md) · [types](docs/module_types.md) · [times](docs/module_times.md) · [jsons](docs/module_jsons.md) · [sys](docs/module_sys.md) · [sockets](docs/module_sockets.md) · [cstructs](docs/module_cstructs.md) · [ffi](docs/module_ffi_api.md)
 
 **GUI（LenoSDL3）**
 - [常用 API 与易踩坑速查](build/leno_module/LenoSDL3/docs/SDL3常用API与易踩坑速查.md) —— 布局 `{basis, grow}` 语义、绘制层先后、抗锯齿范围
 - [控件优化清单](build/leno_module/LenoSDL3/docs/SDL3控件优化清单.md)
-- [像素直写渲染优化](docs/LenoSDL3像素直写渲染优化.md) · [裁剪过多导致闪烁排查](docs/LenoSDL3_裁剪过多导致闪烁排查记录.md) · [Table 方法表断裂编译器 bug](docs/LenoSDL3_Table方法表断裂编译器bug排查记录.md)
+- [像素直写渲染优化](docs/LenoSDL3像素直写渲染优化.md) · [裁剪过多导致闪烁排查](docs/LenoSDL3_裁剪过多导致闪烁排查记录.md)
 - 回归用例：`build/leno_module/LenoSDL3/examples/图形绘制/`（抗锯齿、时钟）+ `其他测试/`（绘制顺序、布局 dump）
 
-**性能与实现记录**
-- [性能优化记录](docs/性能优化记录.md) · [性能测试总结（Leno vs Python）](docs/性能测试总结_Leno_vs_Python.md) · [字节码优化分析](docs/字节码优化分析.md)
-- [寄存式与栈式的差异清单](docs/寄存式与栈式的差异清单.md) · [JIT 实现与调试记录](docs/JIT实现与调试记录.md) · [GC 与分配优化（待办）](docs/待办_GC与分配优化.md)
-
-**路线图**
-- [待办与路线图](docs/待办与路线图.md) · [易用性痛点（TraeSign 移植实录）](docs/待办_易用性痛点（TraeSign 移植实录）.md) · [单一事实来源与重复实现收敛](docs/待办_单一事实来源与重复实现收敛.md)
+**性能 · 实现记录 · 路线图**
+- [待办与路线图](docs/待办与路线图.md)（**待办总表 + 历史批次记录**）· [性能优化记录](docs/性能优化记录.md)（🟡 栈式时代）· [字节码优化分析](docs/字节码优化分析.md)（🟡）
+- [寄存器式与栈式的差异清单](docs/寄存式与栈式的差异清单.md)（📜 已归档）· [JIT 系文档（已归档）](docs/archive/)（JIT 已不在代码中）
 
 ## 许可证
 

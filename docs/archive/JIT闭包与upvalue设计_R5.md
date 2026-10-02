@@ -1,8 +1,14 @@
 # JIT 闭包与 upvalue 设计（roadmap R5）
 
+> ⛔ **已归档（2026-10-02）—— JIT 已不在代码中，本文仅供考古。**
+> 本仓库历史（427 个提交，最早 `e8ccc46 2026-09-20 Initial commit`）里**从未有过**任何
+> `jit` 命名文件：`git ls-files "*jit*"` 与 `git log --all --diff-filter=AD -- "*jit*"`
+> 均为空 ⇒ 文中 `src/jit/*`、`LENO_NO_JIT=1`、`JIT_HOT_THRESHOLD` 等**别去当前源码里找**。
+> 现行实现是寄存器式解释器（`src/vm/vminc/run/*.inc`）；现行性能结论与待办见 `docs/待办与路线图.md`。
+
 > 状态：**设计稿，未动手**（2026-09-15）
 > 本文只交付「设计不变量 + 分阶段计划」，不含实现。
-> 前置阅读：`JIT实现与调试记录.md` §11 roadmap R5 / §12 未解决问题。
+> 前置阅读：`docs/archive/JIT实现与调试记录.md` §11 roadmap R5 / §12 未解决问题。
 > 文中所有 `file:line` 均取自当前工作区的源码实测，不是推测；凡未核实的一律标注「待核实」。
 
 ---
@@ -21,7 +27,7 @@ JIT 只做两件事：
 
 只要 I1 成立，「open upvalue 的关闭时机 / 悬空 location / bailout 回滚 open 状态 / `vm_grow_frames` 地址重映射」这一整类问题**被结构性消除**，而不是被小心地绕开。
 
-> **I1 的第三条下游依赖（2026-09-15 补）**：`OP_TAIL_CALL` 的 JIT 实现（`docs/JIT实现与调试记录.md` §8.76）**依赖 I1 + C3 拒绝**。VM 的尾调用必须"关闭本帧全部 upvalue"（因为它复用当前帧，`op_call.inc:42-46`），而 JIT 侧不复用帧 —— 之所以可以不做这一步，正是因为 I1 保证 JIT 永不创建 open upvalue、C3 拒绝保证 JIT 函数不引用本帧 locals ⇒ 被跳过的"关闭"恒为空操作。
+> **I1 的第三条下游依赖（2026-09-15 补）**：`OP_TAIL_CALL` 的 JIT 实现（`docs/archive/JIT实现与调试记录.md` §8.76）**依赖 I1 + C3 拒绝**。VM 的尾调用必须"关闭本帧全部 upvalue"（因为它复用当前帧，`op_call.inc:42-46`），而 JIT 侧不复用帧 —— 之所以可以不做这一步，正是因为 I1 保证 JIT 永不创建 open upvalue、C3 拒绝保证 JIT 函数不引用本帧 locals ⇒ 被跳过的"关闭"恒为空操作。
 > **⇒ 若 P4（C3 提升槽）将来落地，必须重新审查 `OP_TAIL_CALL`。**（前两条下游依赖见 §3 的 C1 与 §7 第 4 条。）
 
 收益侧同样乐观：语义分析已经保证「**循环体内的变量 ⇒ 值捕获**」（`src/semantic/semantic_upvalue.c:200`：`is_value_capture = target_sym->is_in_loop`），也就是说真实负载里「循环里建闭包捕获循环变量」这一最高频形态，**正好落在最安全的 C2 上**。
@@ -297,14 +303,14 @@ JIT 只做两件事：
 `OP_CLOSURE C3` 拒收 **0 / 0 / 0**；file_manager 另开 `LENO_JIT_CLOSURE=1` 跑 60 帧，
 **闭包形态行为 0**（连放行的 C0/C1/C2 都不出现）⇒ 热循环里根本没有闭包指令。
 与上面的静态普查（57 处全在冷路径）**互为独立证据**，结论一致：
-**P4 永久拒绝**（除非触发条件出现）。详见 `docs/JIT实现与调试记录.md` §8.79。
+**P4 永久拒绝**（除非触发条件出现）。详见 `docs/archive/JIT实现与调试记录.md` §8.79。
 
 ---
 
 ### P5 —— 收口
 
 - `LENO_JIT_DUMP` 反汇编补 `OP_CLOSURE` / `GET/SET_UPVALUE` 的可读输出（排查必备）。
-- 更新 `JIT实现与调试记录.md`：新增本轮小节、roadmap R5 行改为「完成（§x.xx）」、§12 补「bailout 重跑会把建闭包这一堆副作用一并重放」。
+- 更新 `docs/archive/JIT实现与调试记录.md`：新增本轮小节、roadmap R5 行改为「完成（§x.xx）」、§12 补「bailout 重跑会把建闭包这一堆副作用一并重放」。
 - `jit_probes/README.md` 登记新探针与基线判据。
 
 ---

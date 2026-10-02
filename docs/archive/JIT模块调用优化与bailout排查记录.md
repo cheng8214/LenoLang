@@ -1,9 +1,15 @@
 # JIT 模块调用优化与 bailout 排查记录（2026-09-11）
 
+> ⛔ **已归档（2026-10-02）—— JIT 已不在代码中，本文仅供考古。**
+> 本仓库历史（427 个提交，最早 `e8ccc46 2026-09-20 Initial commit`）里**从未有过**任何
+> `jit` 命名文件：`git ls-files "*jit*"` 与 `git log --all --diff-filter=AD -- "*jit*"`
+> 均为空 ⇒ 文中 `src/jit/*`、`LENO_NO_JIT=1`、`JIT_HOT_THRESHOLD` 等**别去当前源码里找**。
+> 现行实现是寄存器式解释器（`src/vm/vminc/run/*.inc`）；现行性能结论与待办见 `docs/待办与路线图.md`。
+
 本文记录：`ripple_image.leno` 残留 bailout 的排查结论、JIT 模块调用（callout）的三项优化、
 度量方法、踩到的 ABI 陷阱、性能数据与遗留问题。
 
-相关文档：`docs/JIT实现与调试记录.md`（JIT 结构、寄存器约定、bailout site 编码、踩坑清单）。
+相关文档：`docs/archive/JIT实现与调试记录.md`（JIT 结构、寄存器约定、bailout site 编码、踩坑清单）。
 
 ---
 
@@ -420,7 +426,7 @@ JIT 与解释器输出**逐位一致**；`examples/` 下 73 个非 GUI 示例两
 `EMIT_STORE_TMP/LOAD_TMP` 的 frame spill 槽，而不是 RSI/RDI。
 
 > 完整的寄存器 / ABI 约定、内联写法清单、跨平台矩阵与校验基线，见
-> 《JIT实现与调试记录.md》**§2 寄存器约定与内联规则**。
+> 《docs/archive/JIT实现与调试记录.md》**§2 寄存器约定与内联规则**。
 
 **语义等价性细节**：`CHECK_BOUNDS` 的 `(size_t)offset + 4 > size` 在 offset 为负时会
 **回绕**（如 `offset = -4` → `(size_t)(-4)+4 == 0`，`0 > size` 为假 → **不报错**）。
@@ -555,12 +561,12 @@ assert 263/263（两模式）、`ripple_image.leno` `Bailouts: 0`、72 个示例
 `assert` **266 passed / 0 failed**（含新增 2 个回归断言）；`ripple_image.leno`
 `Bailouts: 0`、59.7 FPS（关 JIT 41.9 FPS）。
 
-**完整排查链路见第 8 节**；语义对照与检查清单见 `JIT实现与调试记录.md` §8.17 / §14。
+**完整排查链路见第 8 节**；语义对照与检查清单见 `docs/archive/JIT实现与调试记录.md` §8.17 / §14。
 
-**同批修掉的另两处**（同属「JIT 与解释器语义不一致」，详见 `JIT实现与调试记录.md`
+**同批修掉的另两处**（同属「JIT 与解释器语义不一致」，详见 `docs/archive/JIT实现与调试记录.md`
 §8.18 / §8.19）：`OP_*_FLOAT` 不提升 int 操作数、`OP_DIV_FLOAT` 除零静默算 inf。
 
-### 7.7 又一批「静默算错」型缺口（2026-09-12 晚，详见 `JIT实现与调试记录.md` §8.20~8.22）
+### 7.7 又一批「静默算错」型缺口（2026-09-12 晚，详见 `docs/archive/JIT实现与调试记录.md` §8.20~8.22）
 
 由五子棋「AI 对 AI 全部下在一个点」和 PvZ「选卡数字每帧左右抖动」两个报障牵出，
 三处都属「不崩、只在热循环里静默算错」：
@@ -688,7 +694,7 @@ HEAD~1: _relayout 350     capable=1        HEAD: _relayout 350     capable=1
 * `src/jit/backend/x86_inc/ops_fcmp.inc`：`EQ/LT/GT/LE/GE_FLOAT` 改用
   `EMIT_FLOAT_ARGS2`（§8.18）
 * `assert/test_jit_method_args.leno`、`assert/test_jit_float_ops.leno`：新增回归断言
-* `docs/JIT实现与调试记录.md`：§8.17–§8.19 踩坑、§9 浮点提升开销、**§14
+* `docs/archive/JIT实现与调试记录.md`：§8.17–§8.19 踩坑、§9 浮点提升开销、**§14
   JIT 与解释器语义差异清单（核对用）**
 
 最近三轮（2026-09-12，`ad9ba582` → `25a4c1c2`）：
@@ -704,7 +710,7 @@ HEAD~1: _relayout 350     capable=1        HEAD: _relayout 350     capable=1
   bailout 诊断输出绝对偏移
 * `src/jit/jit.h`：`JIT_CACHE_PROBES`、`JitState.cache_evictions`
 * `src/jit/backend/x86_inc/ops_return.inc`：`ffi.read_int` / `ffi.write_int` 内联
-* `docs/JIT实现与调试记录.md` §2：寄存器 / ABI 约定与内联规则（新增 §2.3–§2.5）
+* `docs/archive/JIT实现与调试记录.md` §2：寄存器 / ABI 约定与内联规则（新增 §2.3–§2.5）
 
 更早：A′ 编译期类型落地（2026-09-12）：
 

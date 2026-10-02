@@ -1,6 +1,6 @@
 // 回归：**by-upvalue 捕获**（形态 C1）的闭包
 //
-// 背景（docs/JIT闭包与upvalue设计_R5.md §3）：`is_local=0` 的捕获只是把"当前闭包"
+// 背景（docs/archive/JIT闭包与upvalue设计_R5.md §3）：`is_local=0` 的捕获只是把"当前闭包"
 // 的 upvalues[index] 指针复制一份（VM 侧 op_call.inc）—— 不新建 upvalue、不改生命周期。
 //
 // 覆盖点：

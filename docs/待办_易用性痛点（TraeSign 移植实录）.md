@@ -1,5 +1,10 @@
 # 待办：Leno 易用性痛点清单（来自 TraeSign 移植实录）
 
+> ⚠ **含 JIT 时代结论（2026-10-02 注）**：文中若干"复核结论"是用 JIT 的性能口径判过的
+> （例如把"真实热点被 `OP_CAST_INT` bail 拉黑"记成 **JIT 性能**问题）。
+> **JIT 已不在代码中**（`git ls-files "*jit*"` 为空）⇒ 这类判据失去意义；
+> 痛点清单本身（易用性、报错措辞、类型收窄等）**仍是现行待办**。
+
 > **来源**：2026-09-18 用 Leno 从零移植 TraeSign（读 Trae **加密**登录态 → 派生解密拿 token → 真 HTTPS
 > 签到）的全过程逐步踩坑记录。素材现场：
 > `leno_module/LenoSDL3/examples/应用示例/Trae签到/`（`trae_crypto.leno` / `trae_sign.leno` / `README.md`）。
@@ -223,7 +228,7 @@ Bailout: fn='sha512_bytes' loop_bc=821 x3 — 非溢出类 @bc_off=886 | 触发�
 2. **JIT 统计里的 `Bailout: fn=… 触发指令=OP_xxx`** ✓ —— 这次一眼定位 sha512 的拉黑点，硬资产 ✓；
 3. **`LENO_*` 诊断开关**（`LENO_NO_JIT` / `LENO_JIT_CLOG` / `LENO_GC_FORCE_EVERY` / `LENO_NO_JIT_YIELD` …）✓；
 4. **`assert` 套件自动发现 `test_*.leno`** ＋ `jit_probes` 门禁 ＋ 绝对期望值断言的纪律 ✓；
-5. **`§编号` 式复盘文档**（`docs/JIT实现与调试记录.md`）✓ —— 这个项目最值钱的习惯，别丢 ✓。
+5. **`§编号` 式复盘文档**（`docs/archive/JIT实现与调试记录.md`）✓ —— 这个项目最值钱的习惯，别丢 ✓。
 
 ## 落地顺序建议
 

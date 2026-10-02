@@ -1,5 +1,9 @@
 # LenoHtml 开发问题记录
 
+> ⚠ **术语过时（2026-10-02 注）**：文中"导致栈下溢（`sp < stack_base`）"、`OP_SET_MODULE_VAR`、
+> `OP_POP` 一类是**栈式 VM** 的表述；寄存器式改造（`0f0cf52`）后，操作数栈记账已不再是这套模型。
+> Bug 结论（已修）与"其余为设计限制"的判断仍有效。
+
 ## 概述
 
 在开发纯 Leno 实现的 HTML 解析器（`leno_module/LenoWeb/lib/web_html.leno`）过程中，记录了以下 LenoC 语言层面的 bug 和限制。

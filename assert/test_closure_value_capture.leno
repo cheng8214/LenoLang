@@ -1,6 +1,6 @@
 // 回归：**值捕获**（形态 C2）的闭包
 //
-// 背景（docs/JIT闭包与upvalue设计_R5.md §3）：`is_local=1 & is_value_capture=1`
+// 背景（docs/archive/JIT闭包与upvalue设计_R5.md §3）：`is_local=1 & is_value_capture=1`
 // 表示"读本帧某个局部槽的值，建成 **closed** upvalue"（VM op_call.inc）。
 // 语义分析给「循环体内声明的变量」标的正是这个形态（semantic_upvalue.c）⇒
 // **真实负载里"循环里建闭包"大多走这条**。

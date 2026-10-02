@@ -1,6 +1,6 @@
 // 回归：闭包体内读写捕获变量（OP_GET_UPVALUE / OP_SET_UPVALUE）
 //
-// 背景（docs/JIT闭包与upvalue设计_R5.md）：**不许缓存** `upvalue->location` ——
+// 背景（docs/archive/JIT闭包与upvalue设计_R5.md）：**不许缓存** `upvalue->location` ——
 // open→closed 转换会改写 location（不变量 I2），所以每次访问都要重新取。
 //
 // 覆盖点：

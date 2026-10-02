@@ -1,5 +1,8 @@
 # Leno FFI 使用指南
 
+> ⚠ **局部过时（2026-10-02 注）**：文末版本历史里有一条"**v4.1 JIT 内联定宽内存读写**"，
+> **JIT 已不在代码中**（`git ls-files "*jit*"` 为空）⇒ 该条只作历史；**FFI 用法部分不受影响**。
+
 FFI（Foreign Function Interface）是 Leno 语言调用 C 动态库和操作系统 API 的接口。本指南从简单到复杂，循序渐进地介绍 FFI 的使用方法。
 
 ## 目录
@@ -2214,7 +2217,7 @@ main() {
 > `read_uint16`/`read_int`/`read_uint` 及对应 `write_*`（共 12 个）会被**直接内联成
 > 机器码 load/store**，免去每次 ~20ns 的 callout 开销（适合像素直写这类每像素多次
 > 读写的内层循环）。`read_int64`/`read_float`/`read_double`/`read_ptr` 等返回对象或
-> 需堆分配的方法仍走常规调用。详见 `docs/JIT实现与调试记录.md` §2.6。
+> 需堆分配的方法仍走常规调用。详见 `docs/archive/JIT实现与调试记录.md` §2.6。
 
 ### 显式字节序读写
 
@@ -2348,7 +2351,7 @@ main() {
   回归：`assert/test_ffi_abi.leno`（38 例 ABI 边界 + 压力，跨平台）✓
 
 - **v4.1** (2026-09-12):
-  - **JIT 内联定宽内存读写**：热循环中 `read_byte`/`read_int8`/`read_int16`/`read_uint16`/`read_int`/`read_uint` 及对应 `write_*`（共 12 个）由 JIT 直接生成机器码 load/store，免去 callout 开销。像素直写风格基准（15,000,000 次调用）334ms → 221ms（约 -34%）。语义与越界/空指针报错文本与解释器一致；详见 `docs/JIT实现与调试记录.md` §2.6。
+  - **JIT 内联定宽内存读写**：热循环中 `read_byte`/`read_int8`/`read_int16`/`read_uint16`/`read_int`/`read_uint` 及对应 `write_*`（共 12 个）由 JIT 直接生成机器码 load/store，免去 callout 开销。像素直写风格基准（15,000,000 次调用）334ms → 221ms（约 -34%）。语义与越界/空指针报错文本与解释器一致；详见 `docs/archive/JIT实现与调试记录.md` §2.6。
 
 - **v4.0** (2026-08-19):
   - **符号地址缓存**：`ObjFFILibrary` 新增函数地址缓存表（32 槽），`ffi.call_*`/`clib`/`ffi.dlsym` 首次调用后缓存函数地址，后续调用跳过 `GetProcAddress`/`dlsym`。

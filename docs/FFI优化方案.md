@@ -1,5 +1,10 @@
 # FFI 模块优化方案
 
+> ⚠ **局部过时（2026-10-02 注）**：表格状态列虽标 ✅，但其中两条依赖 JIT ——
+> "回调 → **JIT trampoline** 汇编"与"P1-10 **JIT 内联 ffi** 定宽读写（334ms→221ms）"。
+> **JIT 已不在代码中**（`git ls-files "*jit*"` 为空）⇒ "在 JIT 与 `LENO_NO_JIT=1` 两种模式均通过"
+> 这类验收口径已不适用；**非 JIT 的 FFI 优化项仍有效**。
+
 > 基于对 `src/module/ffi/ffi.c`、`leno_ffi.h`、`leno_ffi_win64.c`、`ffi_clib.h` 源码的全面审查
 
 ## 当前架构概览
@@ -160,7 +165,7 @@ Value 数组 + native 调用 + 异常检查），而它们实际只做一次 1/2
 
 JIT 后端（`src/jit/backend/x86_64.c` 的 `ffi_inline_specs[]` 表 + `x86_inc/ops_return.inc`
 的 `OP_MODULE_CALL` 分支）把定宽读写做成**表驱动内联**，详细设计见
-`docs/JIT实现与调试记录.md` §2.6：命中后直接生成 load/store，前置检查
+`docs/archive/JIT实现与调试记录.md` §2.6：命中后直接生成 load/store，前置检查
 （int48 偏移 → NaN-boxed 对象 → `OBJ_FFI_POINTER` → `!NULL/!freed` → owned 边界）
 任一不过就 bailout 交解释器，报错文本与语义不变。
 

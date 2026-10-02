@@ -1,6 +1,6 @@
 // 零捕获闭包回归（循环体内 `func(){...}` 的建闭包 / 调用 / 身份 / 逃逸）
 //
-// 背景（docs/JIT闭包与upvalue设计_R5.md）：OP_CLOSURE 的操作数长度取决于常量表里
+// 背景（docs/archive/JIT闭包与upvalue设计_R5.md）：OP_CLOSURE 的操作数长度取决于常量表里
 // 函数对象的 upvalue_count。这里专钉**零捕获**形态（捕获表为空）：既不新建 upvalue、
 // 也不捕获任何帧槽，只是分配一个闭包对象。
 //
