@@ -954,21 +954,21 @@ static Value native_to_byte(int argCount, Value* args) {
 void types_init_globals(void) {
     // 注册全局 type 函数（返回 string，1 个参数）
     TypeKind type_params[] = {TYPE_ANY};
-    vm_register_native("type", native_type, 1, -1, -1, TYPE_STRING, TYPE_UNKNOWN, type_params);
+    vm_register_native("type", native_type, TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED(type_params));
 
     // 注册类型转换函数
     TypeKind convert_params[] = {TYPE_ANY};
-    vm_register_native("_int", native_to_int, 1, -1, -1, TYPE_INT, TYPE_UNKNOWN, convert_params);
-    vm_register_native("_float", native_to_float, 1, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, convert_params);
-    vm_register_native("_bool", native_to_bool, 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, convert_params);
-    vm_register_native("_str", native_to_str, 1, -1, -1, TYPE_STRING, TYPE_UNKNOWN, convert_params);
-    vm_register_native("_ptr", native_to_ptr, 1, -1, -1, TYPE_PTR, TYPE_UNKNOWN, convert_params);
-    vm_register_native("_int32", native_to_int32, 1, -1, -1, TYPE_INT, TYPE_UNKNOWN, convert_params);
-    vm_register_native("_uint32", native_to_uint32, 1, -1, -1, TYPE_INT, TYPE_UNKNOWN, convert_params);
-    vm_register_native("_int64", native_to_int64, 1, -1, -1, TYPE_INT, TYPE_UNKNOWN, convert_params);
-    vm_register_native("_uint64", native_to_uint64, 1, -1, -1, TYPE_INT, TYPE_UNKNOWN, convert_params);
-    vm_register_native("_uint8", native_to_uint8, 1, -1, -1, TYPE_INT, TYPE_UNKNOWN, convert_params);
-    vm_register_native("_byte", native_to_byte, 1, -1, -1, TYPE_INT, TYPE_UNKNOWN, convert_params);
+    vm_register_native("_int", native_to_int, TYPE_INT, TYPE_UNKNOWN, NATIVE_FIXED(convert_params));
+    vm_register_native("_float", native_to_float, TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED(convert_params));
+    vm_register_native("_bool", native_to_bool, TYPE_BOOL, TYPE_UNKNOWN, NATIVE_FIXED(convert_params));
+    vm_register_native("_str", native_to_str, TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED(convert_params));
+    vm_register_native("_ptr", native_to_ptr, TYPE_PTR, TYPE_UNKNOWN, NATIVE_FIXED(convert_params));
+    vm_register_native("_int32", native_to_int32, TYPE_INT, TYPE_UNKNOWN, NATIVE_FIXED(convert_params));
+    vm_register_native("_uint32", native_to_uint32, TYPE_INT, TYPE_UNKNOWN, NATIVE_FIXED(convert_params));
+    vm_register_native("_int64", native_to_int64, TYPE_INT, TYPE_UNKNOWN, NATIVE_FIXED(convert_params));
+    vm_register_native("_uint64", native_to_uint64, TYPE_INT, TYPE_UNKNOWN, NATIVE_FIXED(convert_params));
+    vm_register_native("_uint8", native_to_uint8, TYPE_INT, TYPE_UNKNOWN, NATIVE_FIXED(convert_params));
+    vm_register_native("_byte", native_to_byte, TYPE_INT, TYPE_UNKNOWN, NATIVE_FIXED(convert_params));
     // 注：**没有** `_Dict()` / `_Array()` —— 容器收窄语言里已有正道：
     //   `x as Dict[string, any]`（**安全转换**：不匹配返回 null，静态类型即目标类型）
     //   `if x is Dict[string, any] => d { ... }`（收窄 + 绑定）

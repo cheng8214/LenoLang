@@ -609,64 +609,64 @@ static Value native_sep(int argCount, Value* args) {
 
 void sys_init_globals(void) {
     // 注册全局 _args 函数（返回 Array[string]，0 个参数）
-    vm_register_native("_args", native_args, 0, -1, -1, TYPE_ARRAY, TYPE_STRING, NULL);
+    vm_register_native("_args", native_args, TYPE_ARRAY, TYPE_STRING, NATIVE_FIXED_NONE(0));
 
     // 注册全局 _script 函数（返回 string，0 个参数）
-    vm_register_native("_script", native_script, 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, NULL);
+    vm_register_native("_script", native_script, TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
 
     // 注册全局 _executable 函数（返回 string，0 个参数）
-    vm_register_native("_executable", native_executable, 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, NULL);
+    vm_register_native("_executable", native_executable, TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
 
     // 注册全局 _gc 函数（返回 bool，0 或 1 个参数）
-    vm_register_native("_gc", native_gc_control, -1, 0, 1, TYPE_BOOL, TYPE_UNKNOWN, NULL);
+    vm_register_native("_gc", native_gc_control, TYPE_BOOL, TYPE_UNKNOWN, NATIVE_VARARG(0, 1, 0, NULL, TYPE_ANY));
 
     // 注册全局 _os 函数（返回 string，0 个参数）
-    vm_register_native("_os", native_os, 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, NULL);
+    vm_register_native("_os", native_os, TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
 
     // 注册全局 _clear 函数（清屏，0 个参数）
-    vm_register_native("_clear", native_clear, 0, -1, -1, TYPE_NULL, TYPE_UNKNOWN, NULL);
+    vm_register_native("_clear", native_clear, TYPE_NULL, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
 
     // 注册全局 _console 函数（控制台显示控制，0 或 1 个参数）
-    vm_register_native("_console", native_console, -1, 0, 1, TYPE_BOOL, TYPE_UNKNOWN, NULL);
+    vm_register_native("_console", native_console, TYPE_BOOL, TYPE_UNKNOWN, NATIVE_VARARG(0, 1, 0, NULL, TYPE_ANY));
 
     // 注册全局 _env 函数（环境变量：读 1 个参数 / 写 2 个参数；见 native_env 的三种返回）
-    vm_register_native("_env", native_env, -1, 1, 2, TYPE_ANY, TYPE_UNKNOWN, NULL);
+    vm_register_native("_env", native_env, TYPE_ANY, TYPE_UNKNOWN, NATIVE_VARARG(1, 2, 0, NULL, TYPE_ANY));
     // `_env` 的真实返回按形态分流：1 参读 ⇒ string、2 参写 ⇒ bool（2026-09-28）——
     //   内置通道的规格版声明（必须在 vm_register_native **之后**，同 `_exec`）
     native_register_meta_spec("_env", &S_ENV_SPEC);
 
     // 注册全局 _env_or(name, default)：总是 string 的读入口（取不到/空串 ⇒ default ✓）
     TypeKind env_or_params[] = {TYPE_STRING, TYPE_STRING};
-    vm_register_native("_env_or", native_env_or, 2, -1, -1, TYPE_STRING, TYPE_UNKNOWN, env_or_params);
+    vm_register_native("_env_or", native_env_or, TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED(env_or_params));
 
     // 注册全局 _exit 函数（退出程序，0 或 1 个参数）
-    vm_register_native("_exit", native_exit, -1, 0, 1, TYPE_NULL, TYPE_UNKNOWN, NULL);
+    vm_register_native("_exit", native_exit, TYPE_NULL, TYPE_UNKNOWN, NATIVE_VARARG(0, 1, 0, NULL, TYPE_ANY));
 
     // 注册全局 _pid 函数（进程ID，0 个参数）
-    vm_register_native("_pid", native_pid, 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, NULL);
+    vm_register_native("_pid", native_pid, TYPE_INT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
 
     // 注册全局 _arch 函数（CPU架构，0 个参数）
-    vm_register_native("_arch", native_arch, 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, NULL);
+    vm_register_native("_arch", native_arch, TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
 
     // 注册全局 _exec 函数（返回 [stdout_string, exit_code] 数组，混合类型用 TYPE_ANY）
     // ⚠ 参数个数是**可变 1..2**（`_exec(cmd[, timeout_ms])`，P6）—— 语义侧读的就是这里的
     //   arity/min/max：arity 写死成 1 时，`_exec(cmd, ms)` 会被判「参数数量不匹配: 期望 1」✗
     //   （实测踩过：新用例与 run_tests.leno 一起编译不过）。对照 `_gc` 的 (-1, 0, 1) 写法。
-    vm_register_native("_exec", native_exec, -1, 1, 2, TYPE_ARRAY, TYPE_ANY, NULL);
+    vm_register_native("_exec", native_exec, TYPE_ARRAY, TYPE_ANY, NATIVE_VARARG(1, 2, 0, NULL, TYPE_ANY));
     // `_exec` 的真实返回是 `ExecResult{ string output, int code }`（v3.2.8）——
     //   内置通道的规格版声明（必须在 vm_register_native **之后**：那是"查找并更新"）
     native_register_struct_spec(&EXECRESULT_STRUCT_SPEC);
     native_register_meta_spec("_exec", &S_EXECRESULT_SPEC);
 
     // 注册全局 _username 函数（用户名，0 个参数）
-    vm_register_native("_username", native_username, 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, NULL);
+    vm_register_native("_username", native_username, TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
 
     // 注册全局 _homedir 函数（主目录，0 个参数）
-    vm_register_native("_homedir", native_homedir, 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, NULL);
+    vm_register_native("_homedir", native_homedir, TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
 
     // 注册全局 _tmpdir 函数（临时目录，0 个参数）
-    vm_register_native("_tmpdir", native_tmpdir, 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, NULL);
+    vm_register_native("_tmpdir", native_tmpdir, TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
 
     // 注册全局 _sep 函数（路径分隔符，0 个参数）
-    vm_register_native("_sep", native_sep, 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, NULL);
+    vm_register_native("_sep", native_sep, TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
 }

@@ -543,6 +543,3 @@ void dict_mark_methods(void) {
     method_table_mark(&dictMethodTable);
 }
 
-DictMethodEntry dict_find_method_meta(const char* name) {
-    return method_table_find_meta(&dictMethodTable, name);
-}

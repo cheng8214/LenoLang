@@ -542,9 +542,6 @@ void struct_register_method(const char* name, ObjNative* method,
 }
 
 // 查找结构体方法的元信息（用于编译期类型检查）
-StructMethodEntry struct_find_method_meta(const char* name) {
-    return method_table_find_meta(&structMethodTable, name);
-}
 
 // 查找结构体方法
 ObjNative* struct_find_method(const char* name) {

@@ -14,7 +14,7 @@ typedef struct {
     TypeKind param_types[MAX_METHOD_PARAMS];  // 参数类型数组
     // 上面 param_types 里**有效**的条目数（v3.2.8）：定长函数 = arity；可变参数函数 = 0
     //   （老行为：整份被忽略 —— getter 的判据是 `param_index < arity`，对 `arity == -1` 恒假），
-    //   除非用 `native_set_builtin_vararg_params()` 显式声明过（= MAX_METHOD_PARAMS）。
+    //   除非随注册声明过（NativeParamSpec 的 declared_count > 0 ⇒ 有效长度 = MAX_METHOD_PARAMS）。
     //   ⚠ 与模块方法通道的 `ModuleMethodMeta::param_type_count` 同一口径 —— 模块那边在 v3.2.7
     //     就补上了（实例二十三），内置这边一直漏着（`input("提示")` 的提示文案因而是 any）。
     int param_type_count;
@@ -52,7 +52,9 @@ typedef struct {
 // 编译时注册 native 函数元信息（供模块使用）
 // min_arity/max_arity: 当 arity == -1（可变参数）时，指定最小/最大允许参数个数；其他情况传 -1
 // return_element_type: 返回数组时的元素类型（TYPE_UNKNOWN 表示未指定）
-void native_register_meta(const char* name, int arity, int min_arity, int max_arity, TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
+void native_register_meta(const char* name, int arity, int min_arity, int max_arity,
+                          TypeKind return_type, TypeKind return_element_type,
+                          int declared_count, const TypeKind* declared, TypeKind tail_type);
 
 // 获取所有注册的 native 函数元信息（编译时使用）
 const NativeFunctionMeta* native_get_all_functions(int* count);
@@ -68,7 +70,8 @@ const NativeTypeSpec* native_get_return_spec(const char* name);
 //   `native_set_method_vararg_params()` 逐字一致（先整份填 tail_type，再盖上前 prefix_count 个）。
 //   ⚠ 必须在 `vm_register_native()` **之后**调用（同名条目不存在时静默忽略 —— 编译期常量，不该失败）。
 //   为什么需要它：`vm_register_native` 的 param_types 实参对 `arity == -1`（如 `input`）是**整份忽略**的。
-void native_set_builtin_vararg_params(const char* name, int prefix_count, const TypeKind* prefix, TypeKind tail_type);
+// (2026-10-02) 此处原有 `native_set_builtin_vararg_params()` —— 全局通道上的"第二步"，
+//   已随统一入口（vm_register_native 收 NativeParamSpec）删除 ✓
 
 // 根据函数名获取返回类型
 TypeKind native_get_return_type(const char* name);
@@ -81,7 +84,10 @@ TypeKind native_get_global_function_param_type(const char* name, int param_index
 
 // 运行时注册 native 函数
 // min_arity/max_arity: 当 arity == -1（可变参数）时，指定最小/最大允许参数个数；其他情况传 -1
-void vm_register_native(const char* name, NativeFn function, int arity, int min_arity, int max_arity, TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
+// 注册全局内置函数（**唯一入口**）：写法与模块/实例族一致 —— 规格用 NATIVE_FIXED /
+//   NATIVE_FIXED_NONE / NATIVE_VARARG（见 leno_types.h 的 NativeParamSpec）✓
+void vm_register_native(const char* name, NativeFn function, TypeKind return_type,
+                        TypeKind return_element_type, NativeParamSpec params);
 
 // 获取 native 函数的返回类型（运行时使用）
 TypeKind vm_get_native_return_type(const char* name);

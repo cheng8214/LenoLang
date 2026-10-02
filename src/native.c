@@ -392,7 +392,22 @@ static THREAD_LOCAL int moduleAliasCount = 0;
 
 // 编译时注册 native 函数元信息
 // min_arity/max_arity: 当 arity == -1（可变参数）时，指定最小/最大允许参数个数；其他情况传 -1
-void native_register_meta(const char* name, int arity, int min_arity, int max_arity, TypeKind return_type, TypeKind return_element_type, TypeKind* param_types) {
+// 全局函数参数规格填写的**唯一实现**（与模块/实例族同一规则：先整份 tail_type、再盖前 N 个 ✓）
+static void function_meta_fill_param_types(NativeFunctionMeta* meta, int declared_count,
+                                           const TypeKind* declared, TypeKind tail_type) {
+    for (int i = 0; i < MAX_METHOD_PARAMS; i++) {
+        meta->param_types[i] = tail_type;
+    }
+    for (int i = 0; i < declared_count && i < MAX_METHOD_PARAMS; i++) {
+        meta->param_types[i] = declared ? declared[i] : TYPE_ANY;
+    }
+    meta->param_type_count = (declared_count > 0) ? MAX_METHOD_PARAMS : 0;
+}
+
+// 注册全局函数的元信息（由 vm_register_native 调用；类型规格一次给全 ✓）
+void native_register_meta(const char* name, int arity, int min_arity, int max_arity,
+                          TypeKind return_type, TypeKind return_element_type,
+                          int declared_count, const TypeKind* declared, TypeKind tail_type) {
     if (functionCount >= MAX_NATIVE_FUNCTIONS) return;
 
     // 检查是否已存在同名函数
@@ -411,24 +426,9 @@ void native_register_meta(const char* name, int arity, int min_arity, int max_ar
     meta->return_element_type = return_element_type;
     meta->return_spec = NULL;   // 规格通道（v3.2.8）另用 native_register_meta_spec() 声明
 
-    // 复制参数类型
-    if (param_types && arity > 0) {
-        int count = arity < MAX_METHOD_PARAMS ? arity : MAX_METHOD_PARAMS;
-        for (int i = 0; i < count; i++) {
-            meta->param_types[i] = param_types[i];
-        }
-        for (int i = count; i < MAX_METHOD_PARAMS; i++) {
-            meta->param_types[i] = TYPE_ANY;
-        }
-        meta->param_type_count = count;
-    } else {
-        // ⚠ 可变参数（arity == -1）走这里 ⇒ 与模块方法通道同一口径：**整份忽略** param_types。
-        //   要声明可变参数的参数类型，注册之后调 `native_set_builtin_vararg_params()`。
-        for (int i = 0; i < MAX_METHOD_PARAMS; i++) {
-            meta->param_types[i] = TYPE_ANY;
-        }
-        meta->param_type_count = 0;
-    }
+    // 类型规格（定长/可变同一处填法 ✓）
+    (void)arity;   // 定长的 declared_count 已由调用方保证 == arity（见 vm_register_native 的自检）
+    function_meta_fill_param_types(meta, declared_count, declared, tail_type);
 }
 
 // 获取所有注册的 native 函数
@@ -511,25 +511,10 @@ TypeKind native_get_global_function_param_type(const char* name, int param_index
     return TYPE_ANY;
 }
 
-// 为**全局内置函数**声明可变参数的参数类型（见 native.h 的说明）。
-//   与模块方法通道的 `native_set_method_vararg_params()` 逐字一致：
-//   先把整份 param_types 填成 tail_type，再盖上前 prefix_count 个。
-void native_set_builtin_vararg_params(const char* name, int prefix_count,
-                                      const TypeKind* prefix, TypeKind tail_type) {
-    for (int i = 0; i < functionCount; i++) {
-        if (strcmp(functionRegistry[i].name, name) == 0) {
-            for (int j = 0; j < MAX_METHOD_PARAMS; j++) {
-                functionRegistry[i].param_types[j] = tail_type;
-            }
-            for (int j = 0; j < prefix_count && j < MAX_METHOD_PARAMS; j++) {
-                functionRegistry[i].param_types[j] = prefix ? prefix[j] : TYPE_ANY;
-            }
-            functionRegistry[i].param_type_count = MAX_METHOD_PARAMS;
-            return;
-        }
-    }
-    // 没注册过就静默忽略（与注册表其它部分的风格一致：编译期常量，不该失败）
-}
+// (2026-10-02) 此处原有 `native_set_builtin_vararg_params()` —— 全局通道上的"第二步"
+//   （先 vm_register_native 注册、再事后补声明类型）。与模块/实例族一并删除：
+//   类型规格现在随 `vm_register_native(..., NativeParamSpec)` **一次给全**，
+//   "忘了第二步就静默失去检查"这个失败模式不复存在 ✓
 
 // 重置注册表（编译前调用）
 void native_reset_registry(void) {
@@ -570,11 +555,29 @@ static void register_native_internal(const char* name, NativeFn function, int ar
     }
 }
 
-// 运行时注册 native 函数
-// min_arity/max_arity: 当 arity == -1（可变参数）时，指定最小/最大允许参数个数；其他情况传 -1
-void vm_register_native(const char* name, NativeFn function, int arity, int min_arity, int max_arity, TypeKind return_type, TypeKind return_element_type, TypeKind* param_types) {
+// 注册全局内置函数（**唯一入口**，2026-10-02 统一）：写法与模块/实例族完全一致 ——
+//   arity 定长写具体个数、可变写 NATIVE_ARITY_VARARG；类型规格用 NATIVE_FIXED /
+//   NATIVE_FIXED_NONE / NATIVE_VARARG（见 leno_types.h 的 NativeParamSpec）✓
+void vm_register_native(const char* name, NativeFn function, TypeKind return_type,
+                        TypeKind return_element_type, NativeParamSpec params) {
+    const int arity = params.arity;
+    const int declared_count = params.declared_count;
+
+    // 自检（与模块/实例族同口径：自相矛盾就**响亮失败**）
+    if (arity != NATIVE_ARITY_VARARG && arity < 0) {
+        fprintf(stderr, "[fatal] native 全局函数注册 %s: arity=%d 非法 —— 可变参数请写 "
+                        "NATIVE_ARITY_VARARG(%d)，定长请写具体个数\n", name, arity, NATIVE_ARITY_VARARG);
+        abort();
+    }
+    if (arity != NATIVE_ARITY_VARARG && declared_count != 0 && declared_count != arity) {
+        fprintf(stderr, "[fatal] native 全局函数注册 %s: 定长 arity=%d 但 declared_count=%d"
+                        "（应相等或传 0）\n", name, arity, declared_count);
+        abort();
+    }
+
     // 先注册元信息（编译时和运行时都需要）
-    native_register_meta(name, arity, min_arity, max_arity, return_type, return_element_type, param_types);
+    native_register_meta(name, arity, params.min_arity, params.max_arity, return_type,
+                         return_element_type, declared_count, params.declared, params.tail_type);
 
     // 如果 VM 已初始化，注册函数到 VM
     extern int vm_initialized;

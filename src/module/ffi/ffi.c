@@ -3356,21 +3356,17 @@ void ffi_init_module(void) {
 
     /* ===== 函数调用 ===== */
     /* ffi.call 返回 any 类型，但实际值是 int，需要用 _int()、_ptr() 等转换 */
-    // ⚠ 这 6 处原先传了 `call_params`（= {ptr, string}），但 `arity == -1` 时它**整份被忽略**
-    //   ⇒ 那两个类型一直没生效。换用一次说全的入口后**真正生效**：前 2 个实参须是 ptr + string
-    //   （函数指针、符号名），其余（FFI 实参）不检查 ✓
-    // ⚠ 这 6 处**故意不声明**类型（declared_count = 0）：原先传的 `call_params = {Ptr, string}`
-    //   从来没生效过（老入口对 arity == -1 整份忽略），一旦启用立刻暴露它是**错的** ——
-    //   实测调用方传的第一个实参是 `clib <符号>`（clib 句柄，不是 Ptr）与 `any`
-    //   ⇒ `ffi.call_ptr(...)` 报「期望 'Ptr'，但传入 'clib curl'」✗（examples/min_test/test6_ffi_call、
-    //   LenoWeb/lib/web_curl_core 等 10 处）。这类"句柄"要么需要类型规则上的等价性，要么该写成 ANY
-    //   ⇒ 属**独立决策**，本轮先保持原行为（不检查），把证据留在这里 ✓
-    native_register_module_method("ffi", "call", ffi_call_func, &NATIVE_T_ANY, NATIVE_VARARG(2, NATIVE_ARITY_ANY, 0, NULL, TYPE_ANY));
-    native_register_module_method("ffi", "call_int", ffi_call_int_func, &NATIVE_T_INT, NATIVE_VARARG(2, NATIVE_ARITY_ANY, 0, NULL, TYPE_ANY));
-    native_register_module_method("ffi", "call_double", ffi_call_double_func, &NATIVE_T_FLOAT, NATIVE_VARARG(2, NATIVE_ARITY_ANY, 0, NULL, TYPE_ANY));
-    native_register_module_method("ffi", "call_void", ffi_call_void_func, &NATIVE_T_NULL, NATIVE_VARARG(2, NATIVE_ARITY_ANY, 0, NULL, TYPE_ANY));
-    native_register_module_method("ffi", "call_ptr", ffi_call_ptr_func, &NATIVE_T_PTR, NATIVE_VARARG(2, NATIVE_ARITY_ANY, 0, NULL, TYPE_ANY));
-    native_register_module_method("ffi", "call_bool", ffi_call_bool_func, &NATIVE_T_BOOL, NATIVE_VARARG(2, NATIVE_ARITY_ANY, 0, NULL, TYPE_ANY));
+    // 形参 `{Ptr, string}` = （库句柄，符号名）—— 检查**已启用**（2026-10-02）
+    //   ⚠ 让第一参能收 clib 句柄，靠的是 type.c 新增的兼容规则 `clib → Ptr`：
+    //     `ffi.call*(lib, "符号", ...)` 里的 lib 全是 `ffi.load(...)` / `clib xxx` 的**句柄**，
+    //     它确实就是"库指针"；此前判等直接判不兼容 ⇒ 这 6 处长期只能"不声明"（= 不检查）✗
+    TypeKind call_params[] = {TYPE_PTR, TYPE_STRING};
+    native_register_module_method("ffi", "call", ffi_call_func, &NATIVE_T_ANY, NATIVE_VARARG(2, NATIVE_ARITY_ANY, 2, call_params, TYPE_ANY));
+    native_register_module_method("ffi", "call_int", ffi_call_int_func, &NATIVE_T_INT, NATIVE_VARARG(2, NATIVE_ARITY_ANY, 2, call_params, TYPE_ANY));
+    native_register_module_method("ffi", "call_double", ffi_call_double_func, &NATIVE_T_FLOAT, NATIVE_VARARG(2, NATIVE_ARITY_ANY, 2, call_params, TYPE_ANY));
+    native_register_module_method("ffi", "call_void", ffi_call_void_func, &NATIVE_T_NULL, NATIVE_VARARG(2, NATIVE_ARITY_ANY, 2, call_params, TYPE_ANY));
+    native_register_module_method("ffi", "call_ptr", ffi_call_ptr_func, &NATIVE_T_PTR, NATIVE_VARARG(2, NATIVE_ARITY_ANY, 2, call_params, TYPE_ANY));
+    native_register_module_method("ffi", "call_bool", ffi_call_bool_func, &NATIVE_T_BOOL, NATIVE_VARARG(2, NATIVE_ARITY_ANY, 2, call_params, TYPE_ANY));
 
     /* ===== 错误码 ===== */
     native_register_module_method("ffi", "last_error", ffi_last_error_func, &NATIVE_T_INT, NATIVE_FIXED_NONE(0));
@@ -3379,8 +3375,9 @@ void ffi_init_module(void) {
     TypeKind malloc_params[] = {TYPE_INT};
     native_register_module_method("ffi", "malloc", ffi_malloc_func, &NATIVE_T_PTR, NATIVE_FIXED(malloc_params));
 
-    // 同上：`new_params = {string, any}` 的第一位实际是 `clib <符号>`（句柄不是 string）⇒ 先不声明 ✓
-    native_register_module_method("ffi", "alloc", ffi_new_func, &NATIVE_T_PTR, NATIVE_VARARG(1, 2, 0, NULL, TYPE_ANY));
+    // `ffi.alloc("int", 42)`：第一位是**类型名字符串**（"int"/"double"/"ptr"…）⇒ `{string, any}` 正确 ✓
+    TypeKind new_params[] = {TYPE_STRING, TYPE_ANY};
+    native_register_module_method("ffi", "alloc", ffi_new_func, &NATIVE_T_PTR, NATIVE_VARARG(1, 2, 2, new_params, TYPE_ANY));
 
     TypeKind calloc_params[] = {TYPE_INT, TYPE_INT};
     native_register_module_method("ffi", "calloc", ffi_calloc_func, &NATIVE_T_PTR, NATIVE_FIXED(calloc_params));

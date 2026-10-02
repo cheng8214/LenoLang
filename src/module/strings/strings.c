@@ -1838,7 +1838,7 @@ void strings_init_module(void) {
 // 初始化全局函数（程序启动时调用）
 void strings_init_globals(void) {
     // 注册全局 format 函数（可变参数，至少 1 个，无上限）
-    vm_register_native("format", native_format, -1, 1, -1, TYPE_STRING, TYPE_UNKNOWN, NULL);
+    vm_register_native("format", native_format, TYPE_STRING, TYPE_UNKNOWN, NATIVE_VARARG(1, NATIVE_ARITY_ANY, 0, NULL, TYPE_ANY));
 }
 
 void strings_init_instance_methods(void) {

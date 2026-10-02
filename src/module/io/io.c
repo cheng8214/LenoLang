@@ -396,18 +396,18 @@ void io_init_globals(void) {
     // 注册全局 print 函数（返回 null/void，可变参数，0~∞）
     // ⚠ 原来写的是 TYPE_ANY —— 与**本行注释**（"返回 null/void"）不一致：实现就是 `return val_null()`
     //   ⇒ 标 `TYPE_NULL`（v3.2.6）。标 any 的后果是 `var x = print(...)` 推出 any 而不是 null。
-    vm_register_native("print", native_print, -1, 0, -1, TYPE_NULL, TYPE_UNKNOWN, NULL);
+    vm_register_native("print", native_print, TYPE_NULL, TYPE_UNKNOWN, NATIVE_VARARG(0, NATIVE_ARITY_ANY, 0, NULL, TYPE_ANY));
 
     // 注册全局 printf 函数（返回 null/void，可变参数，0~∞）
-    vm_register_native("printf", native_printf, -1, 0, -1, TYPE_NULL, TYPE_UNKNOWN, NULL);
+    vm_register_native("printf", native_printf, TYPE_NULL, TYPE_UNKNOWN,
+                       NATIVE_VARARG(0, NATIVE_ARITY_ANY, 0, NULL, TYPE_ANY));
 
-    // 注册全局 input 函数（返回 string，0 或 1 个参数）
-    // 参数类型 string（v3.2.8）：唯一那个可选参数是**提示文案** —— 此前是 any（`input(123)` 也能编过）。
-    //   ⚠ `arity == -1`（可变参数）时 vm_register_native 的 param_types 实参是**整份忽略**的
-    //   ⇒ 必须注册之后再声明（`native_set_builtin_vararg_params`，与模块通道同一套做法）。
-    vm_register_native("input", native_input, -1, 0, 1, TYPE_STRING, TYPE_UNKNOWN, NULL);
+    // 注册全局 input 函数（返回 string，0 或 1 个参数；那个可选参数是**提示文案**：string）
+    //   (2026-10-02) 类型随注册**一次给全**：原先 `vm_register_native` 对 arity == -1 会整份忽略
+    //   param_types，必须再调 `native_set_builtin_vararg_params` 补声明（两步式）⇒ 该接口已删 ✓
     TypeKind input_params[] = {TYPE_STRING};
-    native_set_builtin_vararg_params("input", 1, input_params, TYPE_STRING);
+    vm_register_native("input", native_input, TYPE_STRING, TYPE_UNKNOWN,
+                       NATIVE_VARARG(0, 1, 1, input_params, TYPE_STRING));
 }
 
 // 初始化 io 模块（import io 时调用）

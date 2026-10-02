@@ -1,2 +1,5 @@
 import ffi
-export var KERNEL32 = ffi.load("kernel32")
+// (2026-10-02) 补类型标注 `: Ptr`：跨模块导出时若不带类型，消费者拿到的会是 `any`
+//   ⇒ 启用 ffi 的类型检查后 `ffi.call_int(m.KERNEL32, "GetCurrentProcessId")` 会报
+//   「期望 'Ptr'，但传入 'any'」。标注后句柄的类型能正确传到调用方 ✓
+export Ptr KERNEL32 = ffi.load("kernel32")

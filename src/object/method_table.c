@@ -120,13 +120,9 @@ void method_table_register_method(MethodTable* table, const char* type_name, con
     entry->max_arity = max_arity;
     entry->return_type = return_type;
     entry->return_element_type = return_element_type;
-    // 类型填法：先整份 tail_type，再盖上前 declared_count 个（与编译期元信息同一规则 ✓）
-    for (int i = 0; i < MAX_METHOD_PARAMS; i++) {
-        entry->param_types[i] = tail_type;
-    }
-    for (int i = 0; i < declared_count && i < MAX_METHOD_PARAMS; i++) {
-        entry->param_types[i] = declared ? declared[i] : TYPE_ANY;
-    }
+    // ⚠ (2026-10-02) 这里原有把 param_types 填进**运行期条目**的一段 —— 那份数据零读者
+    //   （消费者 method_table_get_param_type 已删）⇒ 类型只在**编译期元信息表**里保存一份
+    //   （见下面的 native_set_instance_method_vararg_params 调用）✓
 
     // 编译期元信息（检查器读的就是这份）——与上面同一步完成 ⇒ 调用方漏不掉 ✓
     native_register_instance_method_meta_with_params(type_name, name, arity, min_arity, max_arity,
@@ -153,52 +149,14 @@ ObjNative* method_table_find(MethodTable* table, const char* name) {
     return NULL;
 }
 
-// 查找方法元信息
-MethodEntry method_table_find_meta(MethodTable* table, const char* name) {
-    MethodEntry result = {NULL, NULL, 0, TYPE_ANY, TYPE_UNKNOWN, {TYPE_ANY}};
+// (2026-10-02) 此处原有 `method_table_find_meta()` —— 它返回的 `MethodEntry` 里也带一份 param_types，
+//   属同一条"平行保存"的链。它与 9 个 per-type 包装（*_find_method_meta）**零调用点** ⇒ 整族删除 ✓
 
-    if (!table->entries || table->count == 0) return result;
-
-    uint32_t hash = leno_fnv1a(name);
-    int index = hash & (table->capacity - 1);
-
-    MethodHashEntry* entry = table->entries[index];
-    while (entry) {
-        if (strcmp(entry->name, name) == 0) {
-            result.name = entry->name;
-            result.method = entry->method;
-            result.arity = entry->arity;
-            result.return_type = entry->return_type;
-            result.return_element_type = entry->return_element_type;
-            for (int i = 0; i < MAX_METHOD_PARAMS; i++) {
-                result.param_types[i] = entry->param_types[i];
-            }
-            return result;
-        }
-        entry = entry->next;
-    }
-    return result;
-}
-
-// 获取方法参数类型
-TypeKind method_table_get_param_type(MethodTable* table, const char* method_name, int param_index) {
-    if (!table->entries || table->count == 0) return TYPE_ANY;
-
-    uint32_t hash = leno_fnv1a(method_name);
-    int index = hash & (table->capacity - 1);
-
-    MethodHashEntry* entry = table->entries[index];
-    while (entry) {
-        if (strcmp(entry->name, method_name) == 0) {
-            if (param_index >= 0 && param_index < entry->arity && param_index < MAX_METHOD_PARAMS) {
-                return entry->param_types[param_index];
-            }
-            break;
-        }
-        entry = entry->next;
-    }
-    return TYPE_ANY;
-}
+// (2026-10-02) 此处原有 `method_table_get_param_type()` —— 运行期条目的那份 param_types 的读取者。
+//   它与**编译期元信息表**（native.c 的 instanceMethodTable，检查器真正读的）平行保存同一批类型，
+//   且判据 `param_index < entry->arity` 对可变参数恒假（"闸"写了两份、修一份漏一份）✗。
+//   经查它与其 4 个 per-type 包装（array/string/file/dict_get_method_param_type）**零调用点** ⇒ 整族删除，
+//   类型只在编译期元信息表保存一份 ✓
 
 // 初始化方法表（free + init）
 void method_table_init_methods(MethodTable* table, int initial_capacity) {

@@ -910,6 +910,17 @@ int type_is_compatible(TypeInfo* target, TypeInfo* source) {
         return 1;
     }
 
+    // ---- clib 句柄可传给"要 Ptr"的位置（2026-10-02 补）----
+    // 为什么要有这条：`ffi.call*(lib, "符号", ...)` 的第一个实参，仓库里**全是 clib 句柄**
+    //   （`ffi.load("kernel32")` 的返回值，或 `clib xxx` 声明的库对象）⇒ 形参声明成 Ptr **是对的**
+    //   （那确实就是库句柄），但类型判等把它判成不兼容 ✗。后果是 ffi 的 `{Ptr, string}` 声明
+    //   **一启用就大面积报错**（web_curl_core、test6_ffi_call 等 10 处）⇒ 于是它长期被搁置成
+    //   "不声明"（= 那些位置一直没检查）。
+    //   语义依据：clib 句柄就是"库指针"，与 null 规则里把 Ptr / clib 同组一致（见上面 source->kind == TYPE_NULL 段）✓
+    if (target->kind == TYPE_PTR && source->kind == TYPE_CLIB) {
+        return 1;
+    }
+
     // bool 可以隐式转换为 int（true→1, false→0）
     // 这是 bool vs int 的核心修复：bool 是 int 的子集语义
     if (target->kind == TYPE_INT && source->kind == TYPE_BOOL) {

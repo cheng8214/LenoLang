@@ -169,9 +169,6 @@ void array_register_method(const char* name, ObjNative* method,
 }
 
 // 获取数组方法的参数类型
-TypeKind array_get_method_param_type(const char* method_name, int param_index) {
-    return method_table_get_param_type(&arrayMethodTable, method_name, param_index);
-}
 
 // 查找数组方法（O(1)）
 ObjNative* array_find_method(const char* name) {
@@ -179,9 +176,6 @@ ObjNative* array_find_method(const char* name) {
 }
 
 // 查找数组方法的元信息（用于编译期类型检查）
-ArrayMethodEntry array_find_method_meta(const char* name) {
-    return method_table_find_meta(&arrayMethodTable, name);
-}
 
 // 初始化数组方法表
 void array_init_methods(void) {

@@ -1434,24 +1434,18 @@ void file_mark_methods(void);
 void array_register_method(const char* name, ObjNative* method,
                                   TypeKind return_type, TypeKind return_element_type,
                                   NativeParamSpec params);
-ArrayMethodEntry array_find_method_meta(const char* name);
-TypeKind array_get_method_param_type(const char* method_name, int param_index);
 
 // String
 void string_register_method(const char* name, ObjNative* method,
                                   TypeKind return_type, TypeKind return_element_type,
                                   NativeParamSpec params);
 
-StringMethodEntry string_find_method_meta(const char* name);
-TypeKind string_get_method_param_type(const char* method_name, int param_index);
 
 // File
 void file_register_method(const char* name, ObjNative* method,
                                   TypeKind return_type, TypeKind return_element_type,
                                   NativeParamSpec params);
 
-FileMethodEntry file_find_method_meta(const char* name);
-TypeKind file_get_method_param_type(const char* method_name, int param_index);
 
 // Socket
 void socket_init_methods(void);
@@ -1468,15 +1462,12 @@ void dict_register_method(const char* name, ObjNative* method,
                                   TypeKind return_type, TypeKind return_element_type,
                                   NativeParamSpec params);
 
-DictMethodEntry dict_find_method_meta(const char* name);
-TypeKind dict_get_method_param_type(const char* method_name, int param_index);
 
 // Struct
 void struct_init_methods(void);
 void struct_register_method(const char* name, ObjNative* method,
                                   TypeKind return_type, TypeKind return_element_type,
                                   NativeParamSpec params);
-StructMethodEntry struct_find_method_meta(const char* name);
 
 // CStruct
 void cstruct_init_methods(void);
@@ -1484,7 +1475,6 @@ void cstruct_mark_methods(void);
 void cstruct_register_method(const char* name, ObjNative* method,
                                   TypeKind return_type, TypeKind return_element_type,
                                   NativeParamSpec params);
-CStructMethodEntry cstruct_find_method_meta(const char* name);
 
 // Thread
 void thread_init_methods(void);
@@ -1492,7 +1482,6 @@ void thread_mark_methods(void);
 void thread_register_method(const char* name, ObjNative* method,
                                   TypeKind return_type, TypeKind return_element_type,
                                   NativeParamSpec params);
-ThreadMethodEntry thread_find_method_meta(const char* name);
 
 // Channel
 void channel_init_methods(void);
@@ -1500,7 +1489,6 @@ void channel_mark_methods(void);
 void channel_register_method(const char* name, ObjNative* method,
                                   TypeKind return_type, TypeKind return_element_type,
                                   NativeParamSpec params);
-ChannelMethodEntry channel_find_method_meta(const char* name);
 
 // Number
 void number_init_methods(void);
@@ -1508,7 +1496,6 @@ void number_mark_methods(void);
 void number_register_method(const char* name, ObjNative* method,
                                   TypeKind return_type, TypeKind return_element_type,
                                   NativeParamSpec params);
-NumberMethodEntry number_find_method_meta(const char* name);
 
 // ============================================================================
 // 协程系统 API

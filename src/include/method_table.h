@@ -14,17 +14,13 @@
 #define MAX_METHOD_PARAMS 8
 #endif
 
-// 方法元信息（用于编译期类型检查，也作为 find_method_meta 的返回值）
-typedef struct {
-    const char* name;
-    ObjNative* method;
-    int arity;
-    TypeKind return_type;
-    TypeKind return_element_type;
-    TypeKind param_types[MAX_METHOD_PARAMS];
-} MethodEntry;
+// (2026-10-02) 此处原有 `MethodEntry` 结构（find_method_meta 的返回值）—— 随该家族删除 ✓
 
 // 通用方法哈希表条目（内部使用）
+// ⚠ (2026-10-02) 这里原有 `param_types[MAX_METHOD_PARAMS]` —— 它曾与**编译期元信息表**
+//   （native.c 的 instanceMethodTable，检查器真正读的那份）**平行保存**同一批类型，形成"两处闸"：
+//   查表判据各写一遍、修一处漏一处。其消费者（method_table_get_param_type / *_find_method_meta）
+//   经查**零调用点** ⇒ 已删除该家族，本字段随之删掉，类型只在编译期元信息表里存一份 ✓
 typedef struct MethodHashEntry {
     char* name;
     ObjNative* method;
@@ -33,7 +29,6 @@ typedef struct MethodHashEntry {
     int max_arity;
     TypeKind return_type;
     TypeKind return_element_type;
-    TypeKind param_types[MAX_METHOD_PARAMS];
     struct MethodHashEntry* next;
 } MethodHashEntry;
 
@@ -67,8 +62,7 @@ void method_table_register_method(MethodTable* table, const char* type_name, con
 // 查找方法（O(1)，返回方法对象指针）
 ObjNative* method_table_find(MethodTable* table, const char* name);
 
-// 查找方法元信息（返回 MethodEntry 结构体）
-MethodEntry method_table_find_meta(MethodTable* table, const char* name);
+
 
 // 获取方法参数类型
 TypeKind method_table_get_param_type(MethodTable* table, const char* method_name, int param_index);
@@ -80,17 +74,9 @@ void method_table_init_methods(MethodTable* table, int initial_capacity);
 void method_table_mark(MethodTable* table);
 
 // ============================================================================
-// 类型别名 - 保持向后兼容
+// (2026-10-02) 此处原有 9 个 `typedef MethodEntry XMethodEntry;` 向后兼容别名
+//   —— 它们只服务于 `*_find_method_meta` 家族的返回值，而该家族（含 `MethodEntry`）
+//   经查**零调用点** ⇒ 一并删除 ✓
 // ============================================================================
-
-typedef MethodEntry ArrayMethodEntry;
-typedef MethodEntry StringMethodEntry;
-typedef MethodEntry FileMethodEntry;
-typedef MethodEntry DictMethodEntry;
-typedef MethodEntry StructMethodEntry;
-typedef MethodEntry CStructMethodEntry;
-typedef MethodEntry ThreadMethodEntry;
-typedef MethodEntry ChannelMethodEntry;
-typedef MethodEntry NumberMethodEntry;
 
 #endif // METHOD_TABLE_H

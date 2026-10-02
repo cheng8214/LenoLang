@@ -193,9 +193,6 @@ void string_register_method(const char* name, ObjNative* method,
 }
 
 // 获取字符串方法的参数类型
-TypeKind string_get_method_param_type(const char* method_name, int param_index) {
-    return method_table_get_param_type(&stringMethodTable, method_name, param_index);
-}
 
 // 查找字符串方法（O(1)）
 ObjNative* string_find_method(const char* name) {
@@ -203,9 +200,6 @@ ObjNative* string_find_method(const char* name) {
 }
 
 // 查找字符串方法的元信息（用于编译期类型检查）
-StringMethodEntry string_find_method_meta(const char* name) {
-    return method_table_find_meta(&stringMethodTable, name);
-}
 
 void string_init_methods(void) {
     method_table_init_methods(&stringMethodTable, STRING_METHOD_TABLE_INITIAL_CAPACITY);

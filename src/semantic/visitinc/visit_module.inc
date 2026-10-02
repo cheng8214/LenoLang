@@ -825,6 +825,14 @@
                         if (expected_type == TYPE_CFUNC && arg_type->kind == TYPE_CFUNC) {
                             type_compatible = true;
                         }
+                        // clib 句柄可传给"要 Ptr"的位置（2026-10-02 补）：
+                        //   `ffi.call*(lib, "符号", ...)` 的第一参就是 `clib xxx` 句柄（也确实是库指针）⇒
+                        //   声明成 Ptr 是对的，判等却判不兼容 ⇒ 这 6 处长期只能"不声明"（= 不检查）✗
+                        //   ⚠ 这是**独立的判据链**（不是 type_is_compatible）⇒ 同一规则在两处都要写：
+                        //     type.c 的 type_is_compatible（赋值/其它通道）+ 这里（模块方法实参）
+                        if (expected_type == TYPE_PTR && arg_type->kind == TYPE_CLIB) {
+                            type_compatible = true;
+                        }
                         if (!type_compatible) {
                             char msg[BUFFER_MEDIUM];
                             const char* hint = get_type_conversion_hint(expected_type, arg_type->kind);
