@@ -154,7 +154,15 @@
 //   ⇒ .lenb / entry_*.lenb 必须整体失效重编译。
 // v2.7.1（2026-09-16）：枚举成员求值语义修正 —— 扫描器补 `not`、除零/取模零改为与解析器同结论
 //   ⇒ 修正前编译出的 .lenb / entry_*.lenb 里可能烙着错的常量值，必须整体失效重编译。
-#define LENO_BIN_VERSION    0x0003020C  // v3.2.12 - finally 体内的 `break`/`continue` 跳出时，
+// v3.2.13（2026-10-03）：新增 opcode **OP_INDEX_DICT_INT / OP_INDEX_SET_DICT_INT**
+//   （字典索引读/写的静态类型特化，见 leno_vm.h 与 codegen_expr.c / codegen_stmt.c 的发射条件）。
+//   **opcode 集合变了**：按惯例追加在枚举末尾（既有 opcode 编号全部不变 ⇒ 旧 .lenb 在新 VM 上照旧可跑），
+//   但**仍必须 bump** —— 新字节码含旧构建不认识的 opcode，而旧构建会按 magic+version 校验通过、
+//   直接加载并跳转发散（0xC0000005）。判据与先例同 v3.2.0（新增 OP_INDEX_SET_ARRAY_INT）✓
+//   ⇒ LENO_MODCACHE_VERSION 同步升（模块字节码里同样含 opcode）。
+#define LENO_BIN_VERSION    0x0003020D  // v3.2.13 - 新增字典索引特化 opcode（OP_INDEX_DICT_INT /
+                                        //   OP_INDEX_SET_DICT_INT）
+                                        // v3.2.12 - finally 体内的 `break`/`continue` 跳出时，
                                         //   codegen 在其 JMP 前补发 **OP_END_TRY A=2**
                                         //   （离开 finally：注销 try 注册 + 丢弃在飞异常）
                                         //   **为什么升**：同源码发射的指令序列变了（多出 A=2 的
@@ -269,7 +277,10 @@
 // v13：ObjFunction 增加 is_async（运行期判定"调用即建协程"用）。旧缓存里的函数对象缺这个
 //      字段 ⇒ async 函数的**间接调用**（`var f = w; f()`、当参数传、绑定方法）会退回同步执行、
 //      静默错值，所以必须**作废旧缓存**。
-#define LENO_MODCACHE_VERSION  0x0000001C  // v28 - 同 LENO_BIN_VERSION v3.2.12（finally 体内
+#define LENO_MODCACHE_VERSION  0x0000001D  // v29 - 同 LENO_BIN_VERSION v3.2.13（模块 chunk 里
+                                           //       同样含 opcode ⇒ 新增 OP_INDEX_DICT_INT /
+                                           //       OP_INDEX_SET_DICT_INT 后必须整体失效重编译 ✓）
+                                           // v28 - 同 LENO_BIN_VERSION v3.2.12（finally 体内
                                            //       break/continue 的 OP_END_TRY A=2：模块 chunk
                                            //       里同样含 try/finally ⇒ 同判据整体失效 ✓）
                                            // v27 - 同 LENO_BIN_VERSION v3.2.11（try/finally 的

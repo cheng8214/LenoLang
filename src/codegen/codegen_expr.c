@@ -608,6 +608,12 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
             }
             int arr_spec = (ot && ot->kind == TYPE_ARRAY && ot->element_type &&
                             it && it->kind == TYPE_INT);
+            // ★ 2026-10-03 字典特化：接收者静态已知是 Dict、下标静态已知是 int ⇒ 发
+            //   OP_INDEX_DICT_INT（省掉运行期判型与 val_is_int；同数组特化精神 ✓）
+            //   与数组特化互斥（Dict / Array 不同 kind ✓）
+            //   ⚠ 加 `!ot->nullable`：可空 Dict（`Dict? d`）运行期可能是 null，而特化指令
+            //     信任静态类型、不做 null/判型检查 ⇒ 必须回落通用路径 ✓
+            int dict_spec = (ot && ot->kind == TYPE_DICT && !ot->nullable && it && it->kind == TYPE_INT);
             // ★ 立即数下标：数组已特化 + 下标是 **[0,255] 整数字面量** ⇒ **不必求值下标**，
             //   也不必为它分配/装载一个寄存器（Lua 的 GETI 就是把这个小下标编在指令里）。
             //   动机：`arr[0]` 原是「LOADI tmp,0 + INDEX_ARRAY_INT」两条派发，现为一条。
@@ -643,6 +649,12 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
                     int op = (ot->element_type->kind == TYPE_FLOAT) ? OP_INDEX_ARRAY_FLOAT : OP_INDEX_ARRAY_INT;
                     reg_encode_iABC(gen->chunk, op, dst, obj_reg, idx_reg, ast->line);
                 }
+                if (idx_is_temp) reg_free(gen, idx_reg);
+                if (obj_is_temp) reg_free(gen, obj_reg);
+                break;
+            }
+            if (dict_spec) {
+                reg_encode_iABC(gen->chunk, OP_INDEX_DICT_INT, dst, obj_reg, idx_reg, ast->line);
                 if (idx_is_temp) reg_free(gen, idx_reg);
                 if (obj_is_temp) reg_free(gen, obj_reg);
                 break;

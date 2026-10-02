@@ -520,6 +520,47 @@
             DISPATCH();
         }
     }
+    // 与 dict_get 的 is_valid_obj_value 同口径（值对象类型越界 ⇒ 视为不存在）
+#define DICT_VALUE_OR_NULL(dv)                                                         \
+    (((!val_is_obj(dv)) ||                                                             \
+      (val_as_obj(dv)->type >= OBJ_STRING && val_as_obj(dv)->type < OBJ_NONE))         \
+         ? (dv)                                                                        \
+         : val_null())
+
+    // ★ 2026-10-03 字典 int 键专用指令（对齐数组的 OP_INDEX_ARRAY_INT / OP_INDEX_SET_ARRAY_INT）：
+    //   codegen 已核实 R[B] 静态是 Dict、R[C] 静态是 int ⇒ 省掉 `val_is_obj` + OBJ_* 判型 +
+    //   `val_is_int` 检查。语义与 OP_INDEX / OP_INDEX_SET 的字典分支**逐条同口径**：
+    //     非负 int 且落在**数组部分** ⇒ 直取/直写；越界、洞、负数 ⇒ 走通用查找/写入 ✓
+    //   （`(uint64_t)` 无符号比较一并挡掉负数，与既有数组特化同一手法 ✓）
+    LABEL(OP_INDEX_DICT_INT): {
+        int a = READ_A(), b = READ_B(), c = READ_C();
+        ObjDict* dd = (ObjDict*)val_as_obj(R(b));
+        int64_t ii = val_as_int(R(c));
+        if ((uint64_t)ii < (uint64_t)dd->asize) {
+            Value dv = dd->array[ii];
+            if (!val_is_null(dv)) {
+                R(a) = DICT_VALUE_OR_NULL(dv);
+                DISPATCH();
+            }
+        }
+        R(a) = dict_get_slot(dd, R(c), NULL);   // 越界 / 洞 / 负数 ⇒ 通用（哈希部分）✓
+        DISPATCH();
+    }
+
+    LABEL(OP_INDEX_SET_DICT_INT): {
+        int a = READ_A(), b = READ_B(), c = READ_C();
+        ObjDict* dd = (ObjDict*)val_as_obj(R(b));
+        Value nv = R(a);
+        int64_t ii = val_as_int(R(c));
+        if ((uint64_t)ii < (uint64_t)dd->asize && !val_is_null(dd->array[ii])) {
+            dd->array[ii] = nv;                 // 键已存在 ⇒ 与 dict_set 的"更新现有键"分支等价 ✓
+            gc_write_barrier((Object*)dd, nv);
+            DISPATCH();
+        }
+        dict_set(dd, R(c), nv);                 // 新键 / 越界 / 负数 ⇒ 通用（扩容 + 记插入顺序）✓
+        DISPATCH();
+    }
+
     // OP_INDEX_SET A B C: R[B][R[C]] = R[A]
     LABEL(OP_INDEX_SET): {
         uint8_t* ip_before = frame->ip;   // 调用点标识（字典内联缓存的索引）

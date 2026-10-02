@@ -1,0 +1,81 @@
+// test_dict_index_spec.leno — 字典索引**特化指令**的护栏（2026-10-03）
+//
+// 背景：`d[i]` / `d[i] = v`（接收者静态 Dict、下标静态 int）现在发
+//   `OP_INDEX_DICT_INT` / `OP_INDEX_SET_DICT_INT`（对齐数组的 OP_INDEX_ARRAY_INT），
+//   这两条**信任静态类型**、不做 null/判型检查 ⇒ 必须由本文件把"回退路径"钉死：
+//     · 特化路径只处理"非负 int 且落在**数组部分**"；
+//     · 其余（洞 / 越界 / 负数 / 稀疏被踢进哈希 / 缺键）**必须回退通用路径且结果一致**；
+//     · `Dict?` 可空接收者 ⇒ codegen **不发射**特化指令（运行期可能是 null ✗）
+// 判据：与通用路径逐项同值（含 null 口径）—— 漏一项就是"信任静态类型"的代价。
+import io
+
+main() {
+    // ① 密集 int 键：写后读 / 覆盖 / 缺键 / 越界
+    var d = {}
+    for 1:10 to i { d[i] = i * 10 }
+    for 1:10 to i { assert_eq(d[i], i * 10, "① 密集 int 写后读 d[" + _str(i) + "]") }
+    assert_eq(d[0], null, "① 缺键 d[0] == null")
+    assert_eq(d[11], null, "① 越界 d[11] == null")
+    assert_eq(d[1000000], null, "① 远越界 d[1000000] == null")
+    d[5] = 999
+    assert_eq(d[5], 999, "① 覆盖 d[5]")
+    assert_eq(d[4], 40, "① 覆盖不影响邻居 d[4]")
+    assert_eq(d[6], 60, "① 覆盖不影响邻居 d[6]")
+    io.print("[1] 密集 int 键 ✓")
+
+    // ② 负键 ⇒ 走哈希部分
+    var n = {}
+    n[-1] = 111
+    n[-100] = 222
+    assert_eq(n[-1], 111, "② 负键 -1")
+    assert_eq(n[-100], 222, "② 负键 -100")
+    assert_eq(n[-2], null, "② 缺负键 -2")
+    io.print("[2] 负键 ✓")
+
+    // ③ 稀疏（触发 dict_set 的稀疏性保护 ⇒ 落哈希）+ 覆盖
+    var sp = {}
+    sp[100000] = 7
+    assert_eq(sp[100000], 7, "③ 稀疏键 100000")
+    assert_eq(sp[99999], null, "③ 稀疏缺键 99999")
+    sp[100000] = 8
+    assert_eq(sp[100000], 8, "③ 稀疏覆盖")
+    io.print("[3] 稀疏 ✓")
+
+    // ④ int 键与 string 键混用
+    var mx = {}
+    mx[1] = "a"
+    mx["k"] = "b"
+    mx[2] = "c"
+    assert_eq(mx[1], "a", "④ int 键 1")
+    assert_eq(mx[2], "c", "④ int 键 2")
+    assert_eq(mx["k"], "b", "④ string 键")
+    assert_eq(mx[3], null, "④ 缺键")
+    io.print("[4] int/string 混用 ✓")
+
+    // ⑤ 数组部分与哈希部分**同存**（先大 int 触发哈希，再小 int 落数组）
+    var h = {}
+    h[100000] = 1
+    h[3] = 2
+    assert_eq(h[100000], 1, "⑤ 哈希部分")
+    assert_eq(h[3], 2, "⑤ 数组部分")
+    assert_eq(h[4], null, "⑤ 缺键")
+    io.print("[5] 两部分同存 ✓")
+
+    // ⑥ len() 与顺序不受影响
+    var c = {}
+    for 1:5 to i { c[i] = i }
+    assert_eq(c.len(), 5, "⑥ len()")
+    io.print("[6] len() ✓")
+
+    // ⑦ 可空字典：**不发射特化指令** ⇒ 走通用路径（给可捕获错误，而不是崩溃）
+    Dict? nul = null
+    int caught = 0
+    try {
+        var z = nul[1]
+        if z == null { caught = 1 }
+    } catch e {
+        caught = 1
+    }
+    assert_eq(caught, 1, "⑦ 可空字典读 null 未崩溃")
+    io.print("[7] 可空接收者 ✓")
+}

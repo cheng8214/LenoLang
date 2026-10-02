@@ -1274,7 +1274,9 @@ static SymRef* assign_target_ref(Ast* ast, int i) {
 //      ⚠ 只在 infer_field_type 解析出字段索引（≥0）时才走 ⇒ 方法名兜底路径不受影响。
 //   ② 否则：接收者静态类型是 Array + 下标静态 int ⇒ 特化版 OP_INDEX_SET_ARRAY_INT
 //      （**不限元素类型** —— 特化指令只依赖"接收者是数组 + 下标是 int"）。
-//   ③ 其余（字典 / 推断不出类型）⇒ 通用 OP_INDEX_SET，行为不变。
+//   ②b ★ 2026-10-03：接收者静态类型是 Dict + 下标静态 int ⇒ 特化版 OP_INDEX_SET_DICT_INT
+//      （同精神：省掉运行期判型与 val_is_int；越界/洞/负数在 VM 里回退通用路径 ✓）
+//   ③ 其余（推断不出类型）⇒ 通用 OP_INDEX_SET，行为不变。
 //   infer_expr_type / infer_field_type 返回**新分配的副本**，调用方负责释放。
 static OpCode index_set_op_for(CodeGen* gen, Ast* obj_ast, Ast* idx_ast, int* out_field_idx) {
     *out_field_idx = -1;
@@ -1295,7 +1297,15 @@ static OpCode index_set_op_for(CodeGen* gen, Ast* obj_ast, Ast* idx_ast, int* ou
     if (op == OP_INDEX_SET) {
         int spec = (ot && ot->kind == TYPE_ARRAY && ot->element_type &&
                     it && it->kind == TYPE_INT);
-        if (spec) op = OP_INDEX_SET_ARRAY_INT;
+        if (spec) {
+            op = OP_INDEX_SET_ARRAY_INT;
+        } else {
+            // ★ 2026-10-03 字典特化（对齐读路径的 OP_INDEX_DICT_INT / 数组的 _ARRAY_INT）：
+            //   接收者静态已知是 Dict、下标静态已知是 int ⇒ 发 OP_INDEX_SET_DICT_INT
+            //   ⚠ `!ot->nullable` 同读路径：可空 Dict 运行期可能是 null，特化指令不做判型检查 ✗
+            int dspec = (ot && ot->kind == TYPE_DICT && !ot->nullable && it && it->kind == TYPE_INT);
+            if (dspec) op = OP_INDEX_SET_DICT_INT;
+        }
     }
     if (ot) type_free(ot);
     if (it) type_free(it);

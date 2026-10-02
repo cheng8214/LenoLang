@@ -400,6 +400,15 @@ typedef enum {
     OP_TYPE_CHECK_SPEC,  // iABC + 类型规格  R[A] = (R[A] is <spec>)
     OP_AS_CAST_SPEC,     // iABC + 类型规格  R[A] = R[A] as <spec>（不匹配 → null）
 
+    // ★ 2026-10-03：字典**静态类型特化**的索引读/写（对齐数组的 OP_INDEX_ARRAY_INT /
+    //   OP_INDEX_SET_ARRAY_INT）。codegen 已核实"接收者静态是 Dict + 下标静态是 int"
+    //   ⇒ 省掉 `val_is_obj` + `OBJ_ARRAY`/`OBJ_DICT` 判型与 `val_is_int` 检查。
+    //   动机（与 Lua 5.5 对拍实测）：`d[i] = v` 原先落在通用 OP_INDEX_SET 的**第 3 个类型分支**
+    //   （要先判掉 array、string 才轮到 dict），而 Lua 有专门的 OP_SETI ⇒ 重写已存在键慢 1.23x。
+    //   追加在末尾 ⇒ 既有 opcode 编号全部不变，但**仍必须 bump 版本**（见 leno_serialize.h）✓
+    OP_INDEX_DICT_INT,      // iABC  R[A] = R[B][R[C]]（Dict 特化，下标 int）
+    OP_INDEX_SET_DICT_INT,  // iABC  R[B][R[C]] = R[A]（Dict 特化，下标 int）
+
     OP_OPCODE_COUNT,    // 用于跳转表大小
 } OpCode;
 
