@@ -68,6 +68,16 @@ typedef struct {
                                 //    却没处可存 ⇒ 跨模块方法的聚合类型参数不可判（只能跳过）。
                                 //    补上它，跨模块方法实参检查才能覆盖聚合参数（⑯）。
     char** param_generic_names; // 参数泛型类型参数名（如 "T", "K"），用于泛型方法参数类型检查
+    // ---- 默认参数（2026-10-02 补）----
+    // 为什么必须有：跨模块调用点 `s.get()` 拿不到被调方法的 AST（它在另一个模块里）⇒
+    //   调用点只能从符号表读"缺哪几个参数、默认值是什么"来补齐。此前这两项**只**长在
+    //   ModuleFuncSymbol 上（模块级函数跨模块默认值一直是对的），struct 方法侧缺 ⇒ 交叉验证
+    //   实测：`struct M { func get(int y = 7) }` 模块内 `m.get()` = 7 ✓，
+    //   跨模块 `m.get()` = `<object>`、`m.sum(10)` = 随机整数 ✗（**静默垃圾**，不报错）
+    // 口径与 ModuleFuncSymbol 同：数组按**参数下标**对齐（无默认值的槽位为 NULL），
+    //   default_count = 有默认值的参数个数（默认值只允许在尾部）。
+    int default_count;
+    char** param_default_texts;
     int line;                   // 方法定义所在行号（1-based，0 表示未知）
     int is_async;               // 是否 `async func` 方法（C2，同 ModuleFuncSymbol.is_async）
     // `pri` 成员私有（同 ModuleStructField.is_private 的理由：跨模块只能靠符号表判 ✓）

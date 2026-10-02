@@ -61,6 +61,16 @@ main() {
     assert_eq(scm.Constants.MAX_INT, 2147483647)
     print("[6] cross-module pure constant container passed")
 
+    // ========== 测试6b: 跨模块**负值**关联常量（2026-10-02 回归）==========
+    // `-1` 在 AST 里是一元取负 ⇒ ast_const_value_text 一度还原不出文本 ⇒ 这里会读到 null
+    assert_eq(scm.Constants.NEG_INT, -1)
+    assert_eq(scm.Constants.NEG_FLOAT, -2.5)
+    assert_eq(scm.Constants.NEG_TYPED, -7)
+    // 负值默认参数（同一条"AST → 值文本"路径）
+    assert_eq(scm.with_neg_default(), -2.5)
+    assert_eq(scm.with_neg_default(-3, -1.5), -1.5)
+    print("[6b] cross-module negative const / negative default passed")
+
     // ========== 测试7: 常量在跨模块表达式中的混合使用 ==========
     var energy = scm.Physics.GRAVITY * 10.0  // 重力势能 mgh (m=10, h=1)
     assert_eq(energy, 98.0)

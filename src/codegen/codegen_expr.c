@@ -1696,6 +1696,29 @@ static int gen_clib_call(CodeGen* gen, Ast* obj_ast, const char* fname,
     return 1;
 }
 
+// 跨模块 struct 方法的符号表条目（补齐默认参数用）。
+//   为什么不能只查 func_table：那张表是**本编译单元**的（键 "Struct::method"），
+//   跨模块时被调方法的 AST 在别的模块里 ⇒ 只能查导入模块的符号表。
+//   与 infer_field_type 的"跨模块 struct"那一级查找（遍历 imported_modules 查 find_struct）同一口径。
+static ModuleStructMethod* find_imported_struct_method(Semantic* sem, const char* struct_name,
+                                                      const char* method_name) {
+    if (!sem || !struct_name || !method_name || !method_name[0]) return NULL;
+    char key[BUFFER_SMALL];
+    snprintf(key, sizeof(key), "%s::%s", struct_name, method_name);
+    for (int mi = 0; mi < sem->imported_module_count; mi++) {
+        ImportedModuleInfo* mod = &sem->imported_modules[mi];
+        if (!mod->sym_table) continue;
+        ModuleStructSymbol* ss = module_symbol_table_find_struct(mod->sym_table, struct_name);
+        if (!ss || !ss->methods) continue;
+        for (int k = 0; k < ss->method_count; k++) {
+            if (ss->methods[k].name && strcmp(ss->methods[k].name, key) == 0) {
+                return &ss->methods[k];
+            }
+        }
+    }
+    return NULL;
+}
+
 // 生成 obj.name(实参...) 的方法调用：
 //   R[base] = R[base].name    （OP_GET_METHOD，产出绑定方法 / native）
 //   R[base+1..] = 实参（不足的按默认参数补齐）
@@ -1750,8 +1773,23 @@ static void gen_method_call(CodeGen* gen, Ast* obj_ast, const char* mname,
 
     // ⚠ 方法调用的实参列表**已含隐式 self**（语义分析插入，args[0] = self），
     //   所以这里按 self_offset=0 补齐：缺失的默认值对应 params[i]（i = nargs..pcnt-1）
-    int expected = (mdef && mdef->kind == AST_FUNC_DEF && mdef->u.func.pcnt > nargs)
-                       ? mdef->u.func.pcnt : nargs;
+    //
+    // ★ 跨模块 struct 方法：上面那条 `func_table_find` 只查**本编译单元**的表 ⇒ 被调方法
+    //   在别的模块里时 mdef 恒为 NULL ⇒ 缺失的默认值没人补、expected 停在 nargs ⇒
+    //   VM 按未初始化槽位读形参（实测 `s.get()` 得 `<object>`、`s.sum(10)` 得随机整数，
+    //   且**完全不报错**）✗。回落到导入模块的符号表（`ModuleStructMethod::param_count` /
+    //   `param_default_texts`，与 gen_module_call_prep 同一口径）。
+    ModuleStructMethod* msm = NULL;
+    if (!mdef && recv_struct_name[0] && mname) {
+        msm = find_imported_struct_method(gen->sem, recv_struct_name, mname);
+    }
+    // 符号表的 param_count **不含 self**，而调用点 args 含 ⇒ 两者都换算成"含 self 的口径"再比
+    int expected = nargs;
+    if (mdef && mdef->kind == AST_FUNC_DEF && mdef->u.func.pcnt > expected) {
+        expected = mdef->u.func.pcnt;
+    } else if (!mdef && msm && msm->param_count + 1 > expected) {
+        expected = msm->param_count + 1;
+    }
 
     // 基址寄存器：dst 恰好是"刚分配的临时寄存器"（或已在临时区之上）时直接用它，
     //   这样结果天然落在 dst，省掉收尾的 MOV（与全局函数直呼 OP_CALL_GLOBAL_FUNC 同一手法）。
@@ -1773,7 +1811,20 @@ static void gen_method_call(CodeGen* gen, Ast* obj_ast, const char* mname,
     for (int i = 0; i < nargs; i++) {
         gen_expr_to(gen, args->items[i], base + 1 + i);
     }
-    expected = fill_default_args(gen, mdef, 0, nargs, base, line);
+    // ⚠ 只在 mdef 存在时赋值：fill_default_args 在 `fdef == NULL` 时**返回 nargs**
+    //   ⇒ 无条件赋值会把上面按符号表算出的 expected（跨模块那支）又冲回 nargs ✗
+    if (mdef) {
+        expected = fill_default_args(gen, mdef, 0, nargs, base, line);
+    }
+    // 跨模块：mdef 为 NULL ⇒ 只能按符号表里的**文本**补（与 gen_module_call_prep 同一手法）
+    if (!mdef && msm && expected > nargs) {
+        for (int i = nargs; i < expected; i++) {
+            int r = i - 1;   // 去掉 self ⇒ 符号表的参数下标（口径见上面 expected 的换算）
+            const char* dtext = (msm->param_default_texts && r >= 0 && r < msm->param_count)
+                                    ? msm->param_default_texts[r] : NULL;
+            gen_default_value_from_text_to(gen, base + 1 + i, dtext, line);
+        }
+    }
 
     gen_expr_to(gen, obj_ast, base);
 

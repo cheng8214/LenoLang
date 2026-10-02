@@ -30,7 +30,7 @@ void pri_check_method_access(Semantic* s, Ast* ast, TypeInfo* obj_type, const ch
 // 递归把类型树里的"名字其实是 face/enum 的 TYPE_STRUCT"纠正过来（含 Array/Dict/Ptr 的实参）。
 // **唯一实现**：`is`/`as`、守卫类型、switch case 的匹配类型都调它 —— 因为 v3.2.2 起
 // 嵌套实参的名字会被带进运行期做名字校验，漏修就是"拿 struct 名字比 face 实例"⇒ 误判。
-void resolve_type_names(Semantic* s, TypeInfo* type);
+void resolve_type_names(Semantic* s, TypeInfo** type_ptr);
 
 // native struct 兜底判据（v3.2.5）：`DirEntry` / `DirInfo` 这类名字由 native 模块用
 //   `native_register_struct_spec()` 声明（见 leno_types.h），**不在符号表里**（native 模块

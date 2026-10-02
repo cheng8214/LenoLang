@@ -13,7 +13,19 @@
 // 注意：不处理 TYPE_FUNCTION 的签名（那里的名字由其它路径解析），只处理
 //   Array/Dict/Ptr 三种实参位置 + 最外层。
 // ============================================================================
-void resolve_type_names(Semantic* s, TypeInfo* type) {
+// ★ 2026-10-02：改收 `TypeInfo**` —— **别名必须换指针**（`type_free` + `type_copy`，见
+//   resolve_alias_in_type）：`alias IntList = Array[int]` 这种只改 kind 会把元素类型丢掉 ✗。
+//   此前只收 `TypeInfo*` ⇒ 别名这一类整个漏掉 ⇒ `x as 跨模块别名` / `x is 跨模块别名` 的
+//   目标类型停在 `TYPE_STRUCT + 别名名` ⇒ 运行期按一个**不存在的 struct 名**比对 ⇒
+//   **静默给 null / 静默 false**（实测 `"hi" as AliasStr` = null、`is IntList` 不进分支）✗
+void resolve_type_names(Semantic* s, TypeInfo** type_ptr) {
+    if (!type_ptr || !*type_ptr) return;
+
+    // 别名 / face / enum / cstruct / clib 的解析走**唯一实现**（与变量声明、struct 字段类型、
+    //   函数签名同一路）⇒ 不在这里重写一份，避免两处口径漂移 ✓
+    resolve_alias_in_type(s, type_ptr, (*type_ptr)->line);
+
+    TypeInfo* type = *type_ptr;
     if (!type) return;
 
     if (type->kind == TYPE_STRUCT && type->struct_name) {
@@ -44,12 +56,12 @@ void resolve_type_names(Semantic* s, TypeInfo* type) {
 
     // 泛型实参递归（三种带实参的类型）
     if (type->kind == TYPE_ARRAY) {
-        resolve_type_names(s, type->element_type);
+        resolve_type_names(s, &type->element_type);
     } else if (type->kind == TYPE_DICT) {
-        resolve_type_names(s, type->key_type);
-        resolve_type_names(s, type->value_type);
+        resolve_type_names(s, &type->key_type);
+        resolve_type_names(s, &type->value_type);
     } else if (type->kind == TYPE_PTR_GENERIC) {
-        resolve_type_names(s, type->element_type);
+        resolve_type_names(s, &type->element_type);
     }
 }
 

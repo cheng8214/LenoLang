@@ -6,7 +6,14 @@
 // ⚠ 版本号登记表：docs/待办_单一事实来源与重复实现收敛.md 第七节
 //   （只覆盖符号表缓存；2026-09-16 撞过车：与上游都用 v23 但格式不同）
 #define LENOSYMC_MAGIC   0x4D59534C  // "LSYM" little-endian
-#define LENOSYMC_VERSION 0x00000023  // v35: **face 方法的泛型形参**改记 `TYPE_GENERIC_PARAM`（内容失效）——
+#define LENOSYMC_VERSION 0x00000024  // v36: struct **方法符号新增默认参数**
+                                     //      （`default_count` + `param_default_texts`）——
+                                     //      格式变了：方法段在 `param_struct_names` 之后多一段
+                                     //      "默认值个数 + 每个参数的默认值文本"；旧缓存按 v35
+                                     //      读到这段会错位 ⇒ 必须整体失效重扫 ✓
+                                     //      （v35 缓存里根本没有这套 ⇒ 跨模块 `s.get()` 补不出
+                                     //       默认值，VM 按未初始化槽位读 ⇒ 静默垃圾 ✗）
+                                     // v35: **face 方法的泛型形参**改记 `TYPE_GENERIC_PARAM`（内容失效）——
                                      //      格式一字未改，但 v34 缓存里 `face Comparable[T]` 的
                                      //      `compareTo(T other)` 形参烙的是 `TYPE_STRUCT`/"T"（当真类型）
                                      //      ⇒ 不失效的话跨模块 face 调用仍会报
@@ -367,6 +374,13 @@ fwrite(&fa, 1, 1, f);
                 for (uint32_t k = 0; k < pc; k++) {
                     sym_cache_write_string(f, sm->param_struct_names[k]);
                 }
+            }
+            // v36: 默认参数（default_count + 每个参数的默认值文本；与 ModuleFuncSymbol 同口径）
+            uint32_t mdc = (uint32_t)sm->default_count;
+            fwrite(&mdc, 4, 1, f);
+            for (uint32_t k = 0; k < pc; k++) {
+                sym_cache_write_string(f, (sm->param_default_texts && k < (uint32_t)sm->param_count)
+                                              ? sm->param_default_texts[k] : NULL);
             }
             // v15: 序列化方法行号
             uint32_t ml = (uint32_t)sm->line;
@@ -815,6 +829,13 @@ static int sym_cache_deserialize(const char* cache_path, ModuleSymbolTable* tabl
                 for (uint32_t k = 0; k < pc; k++) {
                     sm->param_struct_names[k] = sym_cache_read_string(f);
                 }
+            }
+            // v36: 默认参数（顺序必须与写入一致 ✓：param_struct_names → 默认值个数 → 逐参默认值文本）
+            uint32_t mdc2; if (fread(&mdc2, 4, 1, f) != 1) goto fail;
+            sm->default_count = (int)mdc2;
+            sm->param_default_texts = pc > 0 ? (char**)calloc(pc, sizeof(char*)) : NULL;
+            for (uint32_t k = 0; k < pc; k++) {
+                sm->param_default_texts[k] = sym_cache_read_string(f);
             }
             // v15: 反序列化方法行号
             uint32_t ml; if (fread(&ml, 4, 1, f) != 1) goto fail;

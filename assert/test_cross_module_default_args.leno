@@ -28,4 +28,22 @@ main() {
 
     // ⑥ 默认值参与表达式
     assert_eq(m.add10(1) + m.add10(2, 3), 11 + 5)
+
+    // ⑦ 跨模块 **struct 方法** 的默认参数（2026-10-02，符号表 v36）
+    //   同一个"调用点拿不到被调 AST"的问题在方法侧一直没人管（`ModuleStructMethod`
+    //   没有 default_count / param_default_texts）⇒ 省略的实参是**未初始化槽位**：
+    //   `c.plus()` 得 `<object>`、`c.mul(5)` 得随机整数，**不报错**（静默垃圾 ✗）。
+    //   同时钉两个方向：① 不传 ⇒ 补默认值；② 传了 ⇒ 用实参（别把默认值覆盖上去）。
+    var c = new m.Calc(base = 1)
+    assert_eq(c.plus(), 11)
+    assert_eq(c.plus(20), 21)
+    assert_eq(c.mul(5), 30)          // 5*2*3
+    assert_eq(c.mul(5, 4), 60)       // 5*4*3
+    assert_eq(c.mul(5, 4, 2), 40)    // 5*4*2
+    assert_eq(c.tag(), "s=hi n=7")
+    assert_eq(c.tag("x"), "s=x n=7")
+    assert_eq(c.tag("x", 1), "s=x n=1")
+    // 对照组：无默认值的方法照旧
+    assert_eq(c.no_default(3, 4), 34)
+    print("[7] cross-module struct method default args passed")
 }

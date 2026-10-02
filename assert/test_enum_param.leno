@@ -1,0 +1,85 @@
+// 回归：**enum 类型形参**（2026-10-02）
+//
+// 症状（修前，同文件与跨模块**都**报）：`func f(LE e)` 配 `f(LE.A)` 报
+//   「f 第 1 个参数类型不匹配: 期望 struct LE, 实际 int」✗
+//
+// 根因（两半）：
+//   ① parser 不认识 enum —— 类型位置上的名字它只认内置类型关键字 / 别名 / face
+//      ⇒ `LE` 被记成 `TYPE_STRUCT + "LE"`，而后端的枚举符号是 `TYPE_ENUM`；
+//   ② 枚举成员在语义期就被**折叠成 int 字面量**（`LE.A` → AST_NUM，cached_type = TYPE_INT）
+//      ⇒ 实际类型是 int，与"struct LE"必然对不上。
+// 修法：`resolve_alias_in_type` 增加 enum 分支（与 face/cstruct/clib 同款归一）
+//      + `type_is_compatible` 认 enum ↔ int 互通
+//      + 模块符号表侧 `ast_kind_of` / `ast_fix_agg_kind` 也认枚举名（跨模块那半边）。
+//
+// 判据：① 同文件（普通函数 / struct 方法 / 字段默认值）必须过；
+//      ② 跨模块（模块前缀 + use 单名两种写法）必须过；
+//      ③ 反向对照：枚举值本身仍然是 int（既有语义不许回归）。
+
+import "enum_param_mod.leno" as em
+use em.Mood
+use em.Picker
+
+enum Local {
+    A = -9
+    B = 2
+}
+
+func locArg(Local v): int {
+    switch v {
+        case Local.A {
+            return -1
+        }
+        default {
+            return 1
+        }
+    }
+}
+
+struct LocalHolder {
+    Local cur = Local.B
+
+    func pick(Local v): int {
+        switch v {
+            case Local.A {
+                return -2
+            }
+            default {
+                return 2
+            }
+        }
+    }
+}
+
+main() {
+    // ① 同文件
+    assert_eq(locArg(Local.A), -1)
+    assert_eq(locArg(Local.B), 1)
+    var lh = new LocalHolder()
+    assert_eq(lh.pick(Local.A), -2)
+    assert_eq(lh.pick(Local.B), 2)
+    assert_eq(lh.cur, 2)              // 字段默认值 Local.B
+    print("[1] same-file enum param passed")
+
+    // ② 跨模块
+    assert_eq(em.takeMood(em.Mood.SAD), -100)
+    assert_eq(em.takeMood(em.Mood.HAPPY), 1)
+    assert_eq(em.takeMood(Mood.SAD), -100)
+    var p = new Picker()
+    assert_eq(p.pick(Mood.SAD), -200)
+    var p2 = new em.Picker()
+    assert_eq(p2.pick(em.Mood.SAD), -200)
+    assert_eq(p2.cur, 0)              // 跨模块字段默认值 Mood.HAPPY
+    print("[2] cross-module enum param passed")
+
+    // ③ 反向对照：枚举值仍是 int 语义
+    assert_eq(Mood.HAPPY, 0)
+    assert_eq(Mood.SAD, -5)
+    int asInt = Mood.SAD
+    assert_eq(asInt, -5)
+    if Mood.SAD == -5 {
+        print("[3] enum value is still int passed")
+    } else {
+        assert_eq(1, 0)
+    }
+}

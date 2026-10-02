@@ -109,6 +109,13 @@ static void sym_table_clear_symbols(ModuleSymbolTable* table) {
                 }
                 free(table->structs[i].methods[j].param_generic_names);
             }
+            // 释放默认值文本（v36）
+            if (table->structs[i].methods[j].param_default_texts) {
+                for (int pi = 0; pi < table->structs[i].methods[j].param_count; pi++) {
+                    free(table->structs[i].methods[j].param_default_texts[pi]);
+                }
+                free(table->structs[i].methods[j].param_default_texts);
+            }
         }
         free(table->structs[i].methods);
         // 释放 impl 名称数组

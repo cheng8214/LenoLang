@@ -155,6 +155,22 @@ void module_symbol_table_add_struct(ModuleSymbolTable* table, const char* name, 
                     }
                 }
             }
+            // 深拷贝默认参数（2026-10-02：漏了它 = 跨模块方法调用补不出默认值 ⇒ 静默垃圾 ✗）
+            st->methods[i].default_count = methods[i].default_count;
+            if (methods[i].param_count > 0 && methods[i].param_default_texts) {
+                int has_dtext = 0;
+                for (int j = 0; j < methods[i].param_count; j++) {
+                    if (methods[i].param_default_texts[j]) { has_dtext = 1; break; }
+                }
+                if (has_dtext) {
+                    st->methods[i].param_default_texts =
+                        (char**)calloc((size_t)methods[i].param_count, sizeof(char*));
+                    for (int j = 0; j < methods[i].param_count; j++) {
+                        st->methods[i].param_default_texts[j] = methods[i].param_default_texts[j]
+                            ? strdup(methods[i].param_default_texts[j]) : NULL;
+                    }
+                }
+            }
         }
     }
 }

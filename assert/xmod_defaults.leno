@@ -20,3 +20,27 @@ export func no_default(int a, int b): int {
 export func typed_default(bool flag = true): bool {
     return flag
 }
+
+// ★ struct 方法的默认参数（2026-10-02 补，符号表 v36）：
+//   与模块级函数**同一件事**，但那边早有 `ModuleFuncSymbol.param_default_texts`，
+//   而 `ModuleStructMethod` 一直没有 ⇒ 跨模块 `c.plus()` 补不出默认值，
+//   VM 按未初始化槽位读形参 ⇒ **静默垃圾**（不报错，值随机）。
+export struct Calc {
+    int base = 0
+
+    func plus(int v = 10): int {
+        return base + v
+    }
+
+    func mul(int a, int b = 2, int c = 3): int {
+        return a * b * c
+    }
+
+    func tag(string s = "hi", int n = 7): string {
+        return $"s={s} n={n}"
+    }
+
+    func no_default(int a, int b): int {
+        return a * 10 + b
+    }
+}

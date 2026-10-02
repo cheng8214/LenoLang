@@ -278,6 +278,7 @@ static TypeKind ast_kind_of(ModuleSymbolTable* table, TypeInfo* ti) {
     if (ti->kind == TYPE_STRUCT && ti->struct_name) {
         if (module_symbol_table_find_clib(table, ti->struct_name)) return TYPE_CLIB;
         if (module_symbol_table_find_face(table, ti->struct_name)) return TYPE_FACE;
+        if (module_symbol_table_find_enum(table, ti->struct_name)) return TYPE_ENUM;   // ★ 枚举名
         ModuleStructSymbol* s = module_symbol_table_find_struct(table, ti->struct_name);
         if (s && s->is_cstruct) return TYPE_CSTRUCT;
         return ast_alias_unwrap(table, ti->kind, ti->struct_name, 0);   // ★ 别名展开
@@ -428,6 +429,8 @@ static void ast_fix_agg_kind(ModuleSymbolTable* table, TypeInfo* t) {
         t->kind = TYPE_CLIB;
     } else if (module_symbol_table_find_face(table, t->struct_name)) {
         t->kind = TYPE_FACE;
+    } else if (module_symbol_table_find_enum(table, t->struct_name)) {
+        t->kind = TYPE_ENUM;   // ★ 枚举名（parser 只给 TYPE_STRUCT ⇒ 这里归一，与 ast_kind_of 同源）
     } else if (module_symbol_table_find_struct(table, t->struct_name) &&
                module_symbol_table_find_struct(table, t->struct_name)->is_cstruct) {
         t->kind = TYPE_CSTRUCT;
@@ -1177,6 +1180,21 @@ static void ast_fill_one_struct_meta(ModuleSymbolTable* table, Ast* sd) {
             }
             int pc = fn->u.func.pcnt;
             methods[i].param_count = pc;
+            // v36：默认参数（`default_count` + 逐参默认值文本）——
+            //   `fn` 是**建表时**（self 尚未前置）的方法 AST ⇒ pc 就是"不含 self 的真实参数个数"，
+            //   与 param_defaults 的下标天然对齐（与 ModuleFuncSymbol 同一套还原函数 ast_const_value_text ✓）
+            methods[i].default_count = fn->u.func.default_count;
+            if (pc > 0) {
+                methods[i].param_default_texts = (char**)calloc((size_t)pc, sizeof(char*));
+                if (methods[i].param_default_texts && fn->u.func.param_defaults) {
+                    for (int k = 0; k < pc; k++) {
+                        if (fn->u.func.param_defaults[k]) {
+                            methods[i].param_default_texts[k] =
+                                ast_const_value_text(fn->u.func.param_defaults[k]);
+                        }
+                    }
+                }
+            }
             if (pc > 0 && fn->u.func.param_types) {
                 TypeKind* pts = (TypeKind*)malloc(sizeof(TypeKind) * pc);
                 char** psn = (char**)malloc(sizeof(char*) * pc);
@@ -1280,6 +1298,10 @@ static void ast_fill_one_struct_meta(ModuleSymbolTable* table, Ast* sd) {
             if (methods[i].param_struct_names) {
                 for (int k = 0; k < methods[i].param_count; k++) free(methods[i].param_struct_names[k]);
                 free(methods[i].param_struct_names);
+            }
+            if (methods[i].param_default_texts) {   // v36：同上，add_struct 已深拷贝
+                for (int k = 0; k < methods[i].param_count; k++) free(methods[i].param_default_texts[k]);
+                free(methods[i].param_default_texts);
             }
             free(methods[i].param_types);
         }

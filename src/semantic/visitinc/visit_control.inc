@@ -183,10 +183,10 @@
                         "因为 or 的短路语义意味着两侧条件不一定都成立");
                 }
                 // 递归纠正 guard_type / 各 guard_cond 的类型名（最外层 + Array/Dict/Ptr 实参）
-                resolve_type_names(s, ast->u.if_.guard_type);
+                resolve_type_names(s, &ast->u.if_.guard_type);
                 for (int gi = 0; gi < ast->u.if_.guard_conds.count; gi++) {
                     TypeGuardCond* gc = &ast->u.if_.guard_conds.items[gi];
-                    resolve_type_names(s, gc->guard_type);
+                    resolve_type_names(s, &gc->guard_type);
                 }
             }
 
@@ -418,7 +418,7 @@
                         }
                     }
                     // 修正 struct -> face/enum（与其他守卫类型修正一致；递归到实参）
-                    resolve_type_names(s, bind_type);
+                    resolve_type_names(s, &bind_type);
                     
                     // 定义绑定变量为新的局部变量
                     // 如果预处理阶段已分配 slot（=> 绑定 + and 链），复用同一 slot
@@ -718,11 +718,11 @@
                     // 遍历 match_types，逐个递归修正 struct→face/enum（含 Array/Dict/Ptr 实参）
                     if (ast->u.switch_.cases[i].match_types) {
                         for (int mi = 0; mi < ast->u.switch_.cases[i].match_type_count; mi++) {
-                            resolve_type_names(s, ast->u.switch_.cases[i].match_types[mi]);
+                            resolve_type_names(s, &ast->u.switch_.cases[i].match_types[mi]);
                         }
                     } else {
                         // 单类型回退
-                        resolve_type_names(s, ast->u.switch_.cases[i].match_type);
+                        resolve_type_names(s, &ast->u.switch_.cases[i].match_type);
                     }
                     // 解析 guard_var 的符号引用
                     if (ast->u.switch_.cases[i].guard_var) {

@@ -100,6 +100,14 @@ int resolve_alias_in_type(Semantic* s, TypeInfo** type_ptr, int line) {
             } else if (struct_def && struct_def->type && struct_def->type->kind == TYPE_CLIB) {
                 type->kind = TYPE_CLIB;
                 changed = 1;
+            } else if (struct_def && struct_def->type && struct_def->type->kind == TYPE_ENUM) {
+                // ★ 枚举名（2026-10-02 补）：parser 不认识 enum（它只认内置类型关键字 / 别名 /
+                //   face）⇒ `func f(LE e)` 里的 LE 被记成 TYPE_STRUCT + 名字 ✗；
+                //   而作用域里那条符号是 TYPE_ENUM ⇒ 这里与 face/cstruct/clib 同款归一化。
+                //   缺了它：`f(LE.L)` 报「期望 struct LE，实际 int」（同文件与跨模块都报 ——
+                //   枚举成员在语义期被折叠成 int 字面量，两个名字对不上 ✗）
+                type->kind = TYPE_ENUM;
+                changed = 1;
             }
         }
     }

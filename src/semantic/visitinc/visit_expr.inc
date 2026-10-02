@@ -109,7 +109,7 @@
                     // 递归修正 guard_type 的类型名（最外层 + Array/Dict/Ptr 实参）
                     for (int gi = 0; gi < temp_guards.count; gi++) {
                         TypeGuardCond* gc = &temp_guards.items[gi];
-                        resolve_type_names(s, gc->guard_type);
+                        resolve_type_names(s, &gc->guard_type);
                     }
 
                     // 创建子作用域，应用类型收窄

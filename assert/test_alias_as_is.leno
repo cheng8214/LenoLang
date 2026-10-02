@@ -1,0 +1,67 @@
+// 回归：**跨模块别名** 出现在 `as` / `is` 的类型位置上（2026-10-02）
+//
+// 症状（修前，**静默**）：`"hi" as Label`（Label 是另一个模块里的 `alias Label = string`）
+//   得 null；`[1,2] as Names` 得 null；`v is Names` 静默 false。
+//   本地别名（同文件 `alias X = ...`）反而是好的 ⇒ 只有"跨模块别名"这一格漏了。
+//
+// 根因：`resolve_type_names`（`as`/`is`/守卫/switch case 匹配类型的**唯一入口**）
+//   只把"名字其实是 face / enum 的 TYPE_STRUCT"纠正过来，**别名这一类整条漏掉** ✗；
+//   parser 只认自己见过的本地别名（`find_alias_with_params`）⇒ `use m.Label` 进来的
+//   别名在 AST 上停在 `TYPE_STRUCT + "Label"` ⇒ 运行期拿一个**不存在的 struct 名**去比对
+//   ⇒ 静默 null / 静默 false ✗。
+// 修法：`resolve_type_names` 改为收 `TypeInfo**` 并复用 `resolve_alias_in_type`
+//   （别名必须换指针：`alias Names = Array[string]` 之类要带上元素类型，只改 kind 会丢）。
+//
+// 判据：① 本地别名（对照，修前就是对的）；② 跨模块别名 as（容器 / 标量 / Dict）；
+//      ③ 跨模块别名 is 守卫（含"不该匹配"的反向对照）。
+
+import "alias_as_is_mod.leno" as am
+use am.Names
+use am.Label
+use am.Count
+use am.StrMap
+
+alias LocalNames = Array[string]
+
+func giveAny(): any {
+    return ["p", "q"]
+}
+
+func giveNum(): any {
+    return 42
+}
+
+main() {
+    // ① 本地别名（对照）
+    var a = ["x", "y"] as LocalNames
+    assert_eq(a.len(), 2)
+    print("[1] local alias as passed")
+
+    // ② 跨模块别名 as
+    var b = ["x", "y"] as Names
+    assert_eq(b.len(), 2)
+    assert_eq(b[0], "x")
+    var c = "hi" as Label
+    assert_eq(c, "hi")
+    var d = 5 as Count
+    assert_eq(d, 5)
+    var e = {"k": "v"} as StrMap
+    assert_eq(e["k"], "v")
+    print("[2] cross-module alias as passed")
+
+    // ③ 跨模块别名 is 守卫
+    var g = giveAny()
+    if g is Names {
+        assert_eq(g.len(), 2)
+        print("[3] cross-module alias is matched")
+    } else {
+        assert_eq(1, 0)   // 修前静默走到这里
+    }
+    // 方向对照：数字不是 Names ⇒ 必须**不**匹配
+    var n = giveNum()
+    if n is Names {
+        assert_eq(1, 0)
+    } else {
+        print("[3b] cross-module alias is negative control passed")
+    }
+}

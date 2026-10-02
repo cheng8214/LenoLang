@@ -1,0 +1,6 @@
+// 辅助模块：**跨模块别名** 用于 `as` / `is` 的回归（2026-10-02）
+export alias Names = Array[string]
+export alias Ids = Array[int]
+export alias Label = string
+export alias Count = int
+export alias StrMap = Dict[string, string]

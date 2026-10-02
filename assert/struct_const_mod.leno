@@ -65,6 +65,19 @@ export struct Constants {
     const VERSION_MINOR = 0
     const VERSION_STRING = "2.0.0"
     const MAX_INT = 2147483647
+
+    // ★ 负值关联常量（2026-10-02 补）：`-1` / `-2.5` 在 AST 里是 **一元取负**（AST_UNARY），
+    //   不是 AST_NUM。旧的文本扫描链是"原样摘录文本"，迁移到 AST 后由 ast_const_value_text
+    //   还原文本，它一度只认 AST_NUM/STRING/BOOL/NULL ⇒ 负值取不到文本 ⇒ 跨模块读成 null ✗
+    //   （数值与类型一起丢：leno_gui 数据看板 Calendar.LEG_TODAY 就是这么变 null 的）
+    const NEG_INT = -1
+    const NEG_FLOAT = -2.5
+    const int NEG_TYPED = -7
+}
+
+// 负值默认参数（同一条路径：param_default_texts 也由 ast_const_value_text 还原文本）
+export func with_neg_default(int x = -1, float y = -2.5): float {
+    return y + 0.0 * x
 }
 
 // 导出工厂函数，验证常量在模块内部也能正确使用

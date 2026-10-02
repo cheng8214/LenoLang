@@ -1,0 +1,36 @@
+// 辅助模块：**enum 类型形参** 的跨模块回归（2026-10-02）
+//   parser 不认识 enum（只认内置类型关键字 / 别名 / face）⇒ 形参上写的枚举名被记成
+//   `TYPE_STRUCT + 名字`；而枚举成员在语义期被折叠成 int 字面量 ⇒ 两边对不上：
+//   「期望 struct Mood，实际 int」✗（同文件与跨模块都报）。
+//   这个文件专门提供"跨模块那半边"：模块前缀与 use 单名两种访问都要能过。
+
+export enum Mood {
+    HAPPY = 0
+    SAD = -5
+}
+
+export struct Picker {
+    Mood cur = Mood.HAPPY
+
+    func pick(Mood v): int {
+        switch v {
+            case Mood.SAD {
+                return -200
+            }
+            default {
+                return 2
+            }
+        }
+    }
+}
+
+export func takeMood(Mood v): int {
+    switch v {
+        case Mood.SAD {
+            return -100
+        }
+        default {
+            return 1
+        }
+    }
+}
