@@ -1174,5 +1174,42 @@ struct Cell[T] {
 ")
     ce.expect_ok(g12, "struct 定义在使用之后 ⇒ 泛型字段替换仍要生效（合法用法不得被拒）", "6162")
 
+    // ---- F6：前向引用泛型的**多种形状**都要合法（锁住"占位形式"这一类坑，2026-10-03）----
+    //   涵盖：返回 T、双类型参数 Pair[K,V]、Array[T] 字段 + 元素 mutator、以及对 T 做比较/算术。
+    //   （比较/算术会有"泛型无约束"警告 ✓ 那是**按设计**的提示，不是错误 ✓）
+    var g13 = dirs.join(work, "generic_fwd_shapes.leno")
+    files.write(g13, @"import strings
+main() {
+    var b = new Box[int](value=7)
+    print(""get="" + _str(b.get()))
+    var p = new Pair[string, int](key=""k"", val=1)
+    print(""desc="" + p.describe())
+    var ls = new Bag[string]()
+    ls.addItem(""x"")
+    print(""count="" + _str(ls.count()))
+    var c = new Cmp[int](value=7)
+    print(""sum="" + _str(c.plus(5)))
+}
+struct Box[T] {
+    T value
+    func get():T { return self.value }
+}
+struct Pair[K, V] {
+    K key
+    V val
+    func describe():string { return _str(self.key) + ""/"" + _str(self.val) }
+}
+struct Bag[T] {
+    Array[T] items = []
+    func addItem(T x) { self.items.add(x) }
+    func count():int { return self.items.len() }
+}
+struct Cmp[T] {
+    T value
+    func plus(T other):T { return self.value + other }
+}
+")
+    ce.expect_ok(g13, "前向引用泛型的多形状（返回 T / Pair[K,V] / Array[T] / T 运算）都要合法", "sum=12")
+
     print("=== test_diag_static_errors ALL passed ===")
 }
