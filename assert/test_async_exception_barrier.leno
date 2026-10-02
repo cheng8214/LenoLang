@@ -11,6 +11,14 @@
 import io
 import asyncs
 
+// 引擎错误统一带「[位置] + [调用栈]」（2026-10-02，见 vm_exception.inc）
+//   ⇒ 比消息时只看第一行（正文）；位置块会跟着上下文走，不该进"语义"断言
+func headLine(string s): string {
+    var i = s.find("\n")
+    if i < 0 { return s }
+    return s.slice(0, i)
+}
+
 // 协程里没接住 → 由 run() 收集后抛回调用方
 async func boom() {
     await asyncs.sleep(2)
@@ -66,7 +74,8 @@ func run_multi_failure_case(): string {
 
 main() {
     // ① 跨边界：协程的未捕获异常必须由 run() 抛回调用方
-    assert_eq(run_barrier_case(), "run-caught:boom")
+    //    ⚠ 只比第一行：异常经原生边界（asyncs.run）抛回时会带上「[位置]」块
+    assert_eq(headLine(run_barrier_case()), "run-caught:boom")
 
     // ② 协程内自己的 try-catch 仍然有效（边界只挡"跨出去"，不挡"就地处理"）
     var f = catch_inside()
@@ -75,7 +84,7 @@ main() {
     assert_eq(r[0], "self:inner")
 
     // ④ 多个协程同时失败：run() 必须汇总抛回（不是只抛第一个）
-    assert_eq(run_multi_failure_case(), "2 个协程失败: A; B")
+    assert_eq(headLine(run_multi_failure_case()), "2 个协程失败: A; B")
 
     // ③ 程序能正常跑完（修前这里之后的代码会跑在垃圾帧上）
     io.print("test_async_exception_barrier passed")

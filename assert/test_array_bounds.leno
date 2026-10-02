@@ -169,6 +169,9 @@ main() {
     // 两条路径（特化 / 通用）的越界报错文本必须逐字一致：
     //   `wany` 元素类型不是 int ⇒ 不满足发射条件 ⇒ 仍走通用 OP_INDEX_SET。
     //   ⚠ 长度必须与 `w` 相同（报错文本里带"长度 N"），否则比的是两件不同的事。
+    //   ★ 2026-10-02：引擎错误统一带上「[位置] + [调用栈]」（见 vm_exception.inc），
+    //     而这两处越界**本来就在不同行** ⇒ 只能比第一行（报错正文）；位置块各自
+    //     带自己的行号，另行断言"确实带位置块" ✓
     var wany = []
     wany.add(1)
     wany.add(2)
@@ -177,8 +180,18 @@ main() {
     var msg_spec = ""
     try { wany[9] = 3 } catch e { msg_any = e.msg }
     try { w[9] = 3 } catch e { msg_spec = e.msg }
-    if msg_any != msg_spec {
-        print("两侧越界文本不一致: [" + msg_any + "] vs [" + msg_spec + "]")
+    var head_any = msg_any
+    var head_spec = msg_spec
+    var nl_any = msg_any.find("\n")
+    if nl_any >= 0 { head_any = msg_any.slice(0, nl_any) }
+    var nl_spec = msg_spec.find("\n")
+    if nl_spec >= 0 { head_spec = msg_spec.slice(0, nl_spec) }
+    if head_any != head_spec {
+        print("两侧越界正文不一致: [" + head_any + "] vs [" + head_spec + "]")
+        fail(10)
+    }
+    if not msg_any.has("[位置]") or not msg_spec.has("[位置]") {
+        print("越界报错缺位置块: [" + msg_any + "] vs [" + msg_spec + "]")
         fail(10)
     }
 

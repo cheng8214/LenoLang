@@ -1,0 +1,59 @@
+// 护栏：**引擎**产生的运行期错误，`e.msg` 必须自带「位置 + 调用栈」，且与 e.line 同源
+//   背景（2026-10-02）：原生函数只登记一句裸消息（native_throw_error，如 `_int("12\r")`、
+//   数组越界），`catch e` 拿到的 `e.msg` 完全没有位置；而 `print(e)` / `"…" + e` 只渲染
+//   `e.msg` ⇒ 用户看到的是一句"凭空"的错（实测：PvZ 的「渲染异常: 无法将字符串转换为整数」，
+//   位置其实躺在 e.line / e.file 里，却没人打印它）。
+//   修法（src/vm/vminc/vm_exception.inc）：throw_runtime_error 在 msg 缺 [位置] 时补
+//   「[位置] file:line (func) + [调用栈]」；并修掉位置/栈帧行号的 off-by-one
+//   （ip 指向**下一条**指令 ⇒ 必须按 ip-4 取本指令所在行）。
+//   ⚠ 用户自己 `throw "xxx"` 的字符串**原样保留**（那是用户数据 ⇒ 位置看 e.line / e.file）。
+import strings
+
+func divByZero(): void {
+    var z = 0
+    print(10 / z)          // ← 除零：引擎错误
+}
+
+main() {
+    // ① 原生模块错误（数组越界，消息来自 native_throw_error）：必须有位置 + 调用栈
+    try {
+        var a = [1, 2, 3]
+        print(a[10])
+    } catch e {
+        string m = _str(e.msg)
+        assert_true(strings.has(m, "[位置]"), "原生错误的 e.msg 应带 [位置]，实际=" + m)
+        assert_true(strings.has(m, "[调用栈]"), "原生错误的 e.msg 应带 [调用栈]，实际=" + m)
+        assert_true(strings.has(m, ":" + _str(e.line) + " (func"), "msg 的 [位置] 行号应与 e.line 一致，实际=" + m)
+        assert_true(strings.has(m, _str(e.file)), "msg 的 [位置] 应带 e.file，实际=" + m)
+        // 只补一次：富文案（已含 [位置]）不许被二次追加
+        assert_eq(strings.count(m, "[位置]"), 1, "位置块只应有 1 个，实际=" + m)
+    }
+
+    // ② VM 自己的错误（除零）：[位置] 与 #0 栈帧的行号都必须等于 e.line
+    //    （off-by-one 护栏：修前 [位置]/#0 报的是**下一条指令**的行，与 e.line 差 1 ✗）
+    try {
+        divByZero()
+    } catch e {
+        string m = _str(e.msg)
+        assert_true(strings.has(m, ":" + _str(e.line) + " (func"), "除零的 [位置] 行号应与 e.line 一致，实际=" + m)
+        assert_true(strings.has(m, "@ " + _str(e.file) + ":" + _str(e.line)), "调用栈 #0 的行号应与 e.line 一致，实际=" + m)
+        var frames = e.stack
+        assert_true(frames.len() >= 1)
+        assert_true(strings.has(_str(frames[0]), ":" + _str(e.line)), "e.stack[0] 的行号应与 e.line 一致，实际=" + _str(frames[0]))
+    }
+
+    // ③ 用户 `throw "xxx"`：消息一个字都不许动，但位置仍要能从 e.line / e.file 读到
+    var thrown = ""
+    var thrown_line = 0
+    try {
+        throw "boom"
+    } catch e {
+        thrown = _str(e.msg)
+        thrown_line = _int(e.line)
+        assert_true(strings.has(_str(e.file), ".leno"), "throw 的 e.file 应可用，实际=" + _str(e.file))
+    }
+    assert_eq(thrown, "boom", "用户 throw 的字符串不能被追加任何东西")
+    assert_true(thrown_line > 0, "throw 的 e.line 应可用")
+
+    print("test_error_msg_position passed")
+}

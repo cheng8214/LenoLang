@@ -9201,8 +9201,9 @@ main() {
 
 | 属性 | 类型 | 说明 |
 |------|------|------|
-| `e.msg` | `string` | 错误消息 |
+| `e.msg` | `string` | 错误消息（**引擎**错误自带「[位置] + [调用栈]」块，见下） |
 | `e.file` | `string` | 发生错误的文件路径 |
+| `e.line` | `int` | 发生错误的行号 |
 | `e.stack` | `string` | 调用栈信息 |
 
 ```leno
@@ -9210,7 +9211,7 @@ main() {
     try {
         var a = 1 / 0           // 除零错误
     } catch e {
-        print(e.msg)            // 除零错误
+        print(e.msg)            // 除零错误…（下面还跟着 [位置] / [调用栈]）
         print(e.file)           // 文件路径
         print(e.stack)          // 调用栈
     }
@@ -9227,9 +9228,25 @@ main() {
 > try { throw "error" } catch e { print(e.msg) }    // "error"
 > try { throw "error" } catch e { print(e.stack) }  // 调用栈
 >
-> // 运行时错误 → 同样是异常对象
-> try { var a = 1/0 } catch e { print(e.msg) }      // "除零错误"
+> // 引擎的运行期错误 → 同样是异常对象，且 msg 自带「[位置] + [调用栈]」
+> try { var a = 1/0 } catch e { print(e.msg) }
+> // 除零错误：除数为 0
+> //   [操作] 除法 (/)
+> //   [内部] DIV (/)
+> //   [位置] script.leno:3 (func: main)
+> //   [调用栈]
+> //     #0 main @ script.leno:3
 > ```
+>
+> ⚠ **引擎错误 vs 你自己 `throw` 的字符串**（2026-10-02 统一文案）：
+>
+> - **引擎**产生的错误（除零、越界、`_int("x")` 失败、原生模块报错……）的 `e.msg` **自带**
+>   `[位置] file:line (func: 名)` 和 `[调用栈]` ⇒ 任何 `print(e)` / `"…" + e` 的日志都能直接
+>   看到出错位置。此前原生模块只登记一句裸消息（如 `无法将字符串转换为整数`），日志里
+>   "凭空"没有行号 —— 位置明明在 `e.line`/`e.file` 里，却没人打印它。
+> - 你自己 `throw "xxx"` 的字符串**原样保留**（那是你的数据，不追加任何东西）；要看位置就读
+>   `e.file` / `e.line` / `e.stack`。
+> - 位置块的行号与 `e.line` **同源**（都按"当前指令"算，不再差一行）。
 
 ### 函数内异常传播
 
@@ -9334,7 +9351,7 @@ main() {
         var arr = [1, 2, 3]
         var v = arr[100]
     } catch e {
-        print(e.msg)            // 数组索引越界
+        print(e.msg)            // 数组索引越界 + [位置] + [调用栈]（引擎错误统一带位置）
     }
 
     // 字符串越界
@@ -9342,7 +9359,7 @@ main() {
         var s = "hello"
         var c = s[100]
     } catch e {
-        print(e.msg)            // 字符串索引越界
+        print(e.msg)            // 字符串索引越界 + [位置] + [调用栈]
     }
 }
 ```

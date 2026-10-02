@@ -176,10 +176,15 @@ static ObjArray* build_stack_trace(void) {
         }
 
         // 获取行号（当前 IP 对应的行）
+        // ⚠ ip 指向**下一条**指令（DISPATCH 取指后已 +4，约定见 run/01_prologue.inc）
+        //   ⇒ 本指令 = ip[-4..-1]，行号表必须按 ip-4 取。此前按 ip 取 ⇒ 报出来的
+        //   是**下一条指令**所在行（实测：`var q = 1 / z` 在第 20 行，[位置] 与 #0
+        //   都报 21）—— 与 `e.line`（= GET_CURRENT_LINE()，按 ip-4）自相矛盾 ✗
         int line = 0;
         if (f->chunk && f->chunk->lines && f->ip && f->chunk->code) {
-            int offset = (int)(f->ip - f->chunk->code);
-            if (offset >= 0 && offset < f->chunk->len) {
+            int offset = (int)(f->ip - f->chunk->code) - 4;
+            if (offset < 0) offset = 0;
+            if (offset < f->chunk->len) {
                 line = f->chunk->lines[offset];
             }
         }
@@ -264,7 +269,10 @@ static void print_unhandled_exception(Value exception, int line) {
 
     // 打印错误信息和调用栈
     fprintf(stderr, "[错误] %s:%d: %s\n", filename, line, msg);
-    if (has_stack && stack_arr && stack_arr->count > 0) {
+    // ★ 2026-10-02：msg 里**已含** [调用栈]（统一文案，见 throw_runtime_error）
+    //   ⇒ 不再在下面重复列一遍同样的帧（修前未捕获的原生/操作码错误会把同一份
+    //   调用栈打两遍：一遍在 msg 里、一遍在这里 ✗）
+    if (has_stack && stack_arr && stack_arr->count > 0 && !strstr(msg, "[调用栈]")) {
         fprintf(stderr, "调用栈:\n");
         for (int i = 0; i < stack_arr->count; i++) {
             if (val_is_string(stack_arr->elements[i])) {
@@ -316,11 +324,41 @@ static Value wrap_string_exception(Value str_val, int line) {
     return val_obj((Object*)err_dict);
 }
 
+// 前置声明：两者定义在本函数**之后**（get_current_context / append_stack_trace），
+// 统一错误文案要用到
+static inline void get_current_context(
+    const char** func_name, int* ip_offset,
+    int* src_line, const char** filename);
+static inline int append_stack_trace(char* buf, int pos, size_t buf_size);
+
 // 抛出运行时异常（用于 try-catch 捕获）
 // 设置异常状态并跳转到 catch/finally 块
 // 返回：1 = 异常已被 catch/finally 接管（调用方重取 frame 后继续 DISPATCH）
 //       0 = 未捕获（调用方应停机返回 -1）
 static inline int throw_runtime_error(const char* msg, int line) {
+    // ★ 统一错误文案（2026-10-02）：**引擎**产生的错误一律自带「位置 + 调用栈」，
+    //   与 throw_runtime_error_with_operand(s) 的丰富文案同形。此前原生模块
+    //   （native_throw_error，如 `_int("12\r")`、数组越界）只登记一句**裸消息**，
+    //   于是 `catch e` 拿到的 `e.msg` 没有位置 —— 而 `print(e)` / `"…" + e` 只渲染
+    //   `e.msg` ⇒ 用户看到的是一句"凭空"的错（实测：PvZ 的「渲染异常: 无法将字符串
+    //   转换为整数」，位置其实躺在 `e.line`/`e.file` 里却没人打印）。
+    //   ⚠ 用户自己 `throw "xxx"` 的字符串**不动**（那是用户数据，位置同样在
+    //     `e.line`/`e.file`/`e.stack` 里）—— 见 wrap_string_exception。
+    char unified_buf[BUFFER_XXLARGE];
+    if (!strstr(msg, "[位置]")) {
+        const char* u_func = "<main>";
+        const char* u_file = "unknown";
+        int u_off = 0, u_src = 0;
+        get_current_context(&u_func, &u_off, &u_src, &u_file);
+        // 行号以调用方传入的 line 为准（它是 GET_CURRENT_LINE() 算出来的当前位置），
+        // 只在 line 非法时才退回上下文里的行号
+        int up = snprintf(unified_buf, sizeof(unified_buf),
+                          "%s\n  [位置] %s:%d (func: %s)\n",
+                          msg, u_file, line > 0 ? line : u_src, u_func);
+        append_stack_trace(unified_buf, up, sizeof(unified_buf));
+        msg = unified_buf;
+    }
+
     // 创建异常对象（使用字典表示，包含 msg、line、file、stack 属性）
     ObjDict* err_dict = dict_new(8);
     if (!err_dict) {
@@ -527,10 +565,12 @@ static inline void get_current_context(
             *filename = frame->chunk->filename;
         }
         // IP 偏移和源码行号
+        // ⚠ 同 build_stack_trace：ip 指向下一条指令 ⇒ 本指令按 ip-4 取，
+        //   否则 [位置] 报的是下一条指令的行号（与 e.line 打架）
         if (frame->chunk && frame->chunk->code && frame->ip) {
-            *ip_offset = (int)(frame->ip - frame->chunk->code);
-            if (*ip_offset >= 0 && *ip_offset < frame->chunk->len &&
-                frame->chunk->lines) {
+            *ip_offset = (int)(frame->ip - frame->chunk->code) - 4;
+            if (*ip_offset < 0) *ip_offset = 0;
+            if (*ip_offset < frame->chunk->len && frame->chunk->lines) {
                 *src_line = frame->chunk->lines[*ip_offset];
             }
         }
@@ -564,11 +604,13 @@ static inline int append_stack_trace(char* buf, int pos, size_t buf_size) {
             file = f->chunk->filename;
         }
 
-        // 行号
+        // 行号（同 build_stack_trace：ip 指向下一条指令 ⇒ 按 ip-4 取本指令行，
+        //   否则栈里的行号整体偏一行，与 e.line / [位置] 不一致 ✗）
         int line = 0;
         if (f->chunk && f->chunk->lines && f->chunk->code && f->ip) {
-            int offset = (int)(f->ip - f->chunk->code);
-            if (offset >= 0 && offset < f->chunk->len) {
+            int offset = (int)(f->ip - f->chunk->code) - 4;
+            if (offset < 0) offset = 0;
+            if (offset < f->chunk->len) {
                 line = f->chunk->lines[offset];
             }
         }
