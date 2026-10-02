@@ -444,6 +444,13 @@ void emit_loop(CodeGen* gen, int target, int line) {
     reg_encode_iAsJ(gen->chunk, OP_JMP, offset, line);
 }
 
+// END_TRY A=2：**离开 finally 块**（finally 体内的 break/continue 跳出时由 codegen 补发）
+//   语义 = 注销本层 try 注册 + 丢弃在飞异常；**不做任何跳转**（控制流交给随后的 JMP）。
+//   连发多条 = 跨多层 finally（每层一条）。理由见 codegen_stmt.c 里 AST_BREAK 的注释。
+void emit_leave_finally(CodeGen* gen, int line) {
+    reg_encode_iABC(gen->chunk, OP_END_TRY, 2, 0, 0, line);
+}
+
 // --- 自增自减 ---
 void emit_inc(CodeGen* gen, int dst, int b, int line) {
     reg_encode_iABC(gen->chunk, OP_INC, dst, b, 0, line);

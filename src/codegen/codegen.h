@@ -211,6 +211,9 @@ void patch_jmp_to(CodeGen* gen, int pos, int target);
 // 写入 2 字节 sBx 数据（OP_FOR_PREP / OP_FOR_LOOP 紧随指令的跳转偏移）
 void patch_sbx_at(CodeGen* gen, int pos, int sbx);
 void emit_loop(CodeGen* gen, int target, int line);
+// END_TRY A=2：离开 finally 块（注销 try 注册 + 丢弃在飞异常，不跳转）——
+//   finally 体内的 break/continue 用它收尾，见 codegen_stmt.c 的 AST_BREAK 说明
+void emit_leave_finally(CodeGen* gen, int line);
 
 // 自增自减
 void emit_inc(CodeGen* gen, int dst, int b, int line);

@@ -154,7 +154,13 @@
 //   ⇒ .lenb / entry_*.lenb 必须整体失效重编译。
 // v2.7.1（2026-09-16）：枚举成员求值语义修正 —— 扫描器补 `not`、除零/取模零改为与解析器同结论
 //   ⇒ 修正前编译出的 .lenb / entry_*.lenb 里可能烙着错的常量值，必须整体失效重编译。
-#define LENO_BIN_VERSION    0x0003020B  // v3.2.11 - `try { … } finally { … }`（**无 catch 体**）的
+#define LENO_BIN_VERSION    0x0003020C  // v3.2.12 - finally 体内的 `break`/`continue` 跳出时，
+                                        //   codegen 在其 JMP 前补发 **OP_END_TRY A=2**
+                                        //   （离开 finally：注销 try 注册 + 丢弃在飞异常）
+                                        //   **为什么升**：同源码发射的指令序列变了（多出 A=2 的
+                                        //   END_TRY，旧产物里没有）⇒ 按登记表判据整体失效重编译 ✓
+                                        //   见 codegen_stmt.c 的 AST_BREAK / 09_exception.inc
+                                        // v3.2.11 - `try { … } finally { … }`（**无 catch 体**）的
                                         //   OP_TRY 改用 **A=1** 标记"Bx 指向的是 finally 块"
                                         //   **为什么升**（与实例十二/十三/十七同判据：同源码发射
                                         //   不同指令）：旧产物里 A 恒为 0 ⇒ 新 VM 会把它当
@@ -263,7 +269,10 @@
 // v13：ObjFunction 增加 is_async（运行期判定"调用即建协程"用）。旧缓存里的函数对象缺这个
 //      字段 ⇒ async 函数的**间接调用**（`var f = w; f()`、当参数传、绑定方法）会退回同步执行、
 //      静默错值，所以必须**作废旧缓存**。
-#define LENO_MODCACHE_VERSION  0x0000001B  // v27 - 同 LENO_BIN_VERSION v3.2.11（try/finally 的
+#define LENO_MODCACHE_VERSION  0x0000001C  // v28 - 同 LENO_BIN_VERSION v3.2.12（finally 体内
+                                           //       break/continue 的 OP_END_TRY A=2：模块 chunk
+                                           //       里同样含 try/finally ⇒ 同判据整体失效 ✓）
+                                           // v27 - 同 LENO_BIN_VERSION v3.2.11（try/finally 的
                                            //       OP_TRY A=1：模块 chunk 里同样含 try/finally
                                            //       ⇒ 同判据、同步整体失效 ✓）
                                            // v26 - 同 LENO_BIN_VERSION v3.2.10（跨模块 struct 方法

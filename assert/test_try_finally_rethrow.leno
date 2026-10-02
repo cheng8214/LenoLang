@@ -62,6 +62,50 @@ func loopFinally(): int {
     return hits
 }
 
+func breakOutOfFinally(): int {
+    var i = 0
+    var out = 0
+    while i < 3 {
+        i = i + 1
+        try {
+            if i == 1 { throw "discarded-by-break" }
+            out = out + 10
+        } finally {
+            break                 // break 覆盖在飞异常 ⇒ 丢掉，循环直接结束
+        }
+    }
+    return out                    // 0：第一轮就跳出，且异常被丢弃
+}
+
+func continueOutOfFinally(): int {
+    var i = 0
+    var n = 0
+    while i < 3 {
+        try {
+            i = i + 1
+            throw "discarded-by-continue"
+        } finally {
+            continue              // 每轮的异常都被丢弃（否则第一轮就该上抛）
+        }
+        n = n + 100
+    }
+    return n                      // 0：`continue` 跳过了 n 自增
+}
+
+func afterBreakStale(): int {
+    var i = 0
+    while i < 1 {
+        i = i + 1
+        try {
+            throw "first"
+        } finally {
+            break
+        }
+    }
+    throw "after-loop"            // 上一轮的异常已丢弃 + try 注册已注销 ⇒ 只有这条上抛
+    return 0
+}
+
 main() {
     // ① 基本：异常原样上抛 + finally 执行
     var c1 = false
@@ -144,6 +188,21 @@ main() {
         assert_eq(_str(e.msg), "from-finally")
     }
     assert_eq(c7, true)
+
+    // ⑧⑨ finally 体内 break/continue 跳出：在飞异常被**丢弃**（JS/Python 同语义）
+    assert_eq(breakOutOfFinally(), 0, "break 应丢弃在飞异常、直接跳出循环")
+    assert_eq(continueOutOfFinally(), 0, "continue 应丢弃在飞异常、回到循环头")
+
+    // ⑩ 同时 try 注册必须注销：跳出 finally 之后同一帧里再抛，必须正常上抛
+    //    （修前 pending 泄漏 ⇒ 要么旧异常冒出来、要么跳回已跑完的 finally 块）
+    var c10 = false
+    try {
+        afterBreakStale()
+    } catch e {
+        c10 = true
+        assert_eq(_str(e.msg), "after-loop", "跳出 finally 后应只上抛新异常（旧异常已丢弃）")
+    }
+    assert_eq(c10, true)
 
     print("test_try_finally_rethrow passed")
 }

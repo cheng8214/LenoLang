@@ -15,6 +15,10 @@ typedef struct {
     int continue_jumps[MAX_CONTINUE_JUMPS];  // continue 跳转位置数组（需要回填）
     int continue_count;
     int continue_target;      // continue 跳转目标位置（用于简单循环）
+    // ★ 建该循环时 CodeGen.finally_depth 的值：`break`/`continue` 在 finally 体内时，
+    //   `finally_depth - ctx.finally_depth` = **要跨出几层 finally** ⇒ 需要补几条
+    //   "离开 finally"的清理（OP_END_TRY A=2）。见 gen_stmt 的 AST_BREAK/AST_CONTINUE。
+    int finally_depth;
 } LoopContext;
 
 // 循环上下文链表节点（堆分配，无嵌套深度限制，不占栈空间）
@@ -50,6 +54,9 @@ typedef struct {
     int scope_depth;
     LoopContextNode* loop_head;    // 链表头（当前最内层循环），使用链式堆分配避免栈溢出
     int loop_count;                 // 循环嵌套深度
+    // 当前正在生成的位置在**第几层 finally 体**里（0 = 不在 finally 里）。
+    //   gen_try 生成 finally 体前后 ++/--；`break`/`continue` 据此补"离开 finally"清理。
+    int finally_depth;
     ObjFunction* current_func;     // 当前正在生成的函数（用于更新 local_count）
     Ast* current_func_ast;         // 当前函数的 **AST**（gen_return 要用它取声明的返回类型做
                                    //   返回值规范化 —— ObjFunction 上的 return_types 在寄存器式

@@ -172,6 +172,13 @@ void gen_stmt(CodeGen* gen, Ast* ast) {
         case AST_BREAK: {
             // break: 跳转到循环尾
             if (gen->loop_head) {
+                // ★ 从 finally 体内跳出时先补 N 条"离开 finally"清理（N = 跨出的 finally 层数）：
+                //   注销 try 注册 + 丢弃在飞异常。JS/Python 同语义（break 覆盖在飞异常）；
+                //   不补的话 pending 会**泄漏到别处**，在不相干的 END_TRY 处被重新抛出，
+                //   甚至跳回已经跑完的 finally 块（handler 没注销）✗
+                int crossed = gen->finally_depth - gen->loop_head->ctx.finally_depth;
+                if (crossed < 0) crossed = 0;   // 防御：理论上不会为负
+                for (int i = 0; i < crossed; i++) emit_leave_finally(gen, ast->line);
                 int jmp = emit_jmp(gen, ast->line);
                 gen->loop_head->ctx.break_jumps[gen->loop_head->ctx.break_count++] = jmp;
             }
@@ -180,6 +187,10 @@ void gen_stmt(CodeGen* gen, Ast* ast) {
         case AST_CONTINUE: {
             // continue: 跳回循环头
             if (gen->loop_head) {
+                // ★ 同 break：跨出 finally 层数 = finally_depth - 建循环时的深度
+                int crossed = gen->finally_depth - gen->loop_head->ctx.finally_depth;
+                if (crossed < 0) crossed = 0;
+                for (int i = 0; i < crossed; i++) emit_leave_finally(gen, ast->line);
                 int jmp = emit_jmp(gen, ast->line);
                 gen->loop_head->ctx.continue_jumps[gen->loop_head->ctx.continue_count++] = jmp;
             }
@@ -539,6 +550,7 @@ static void gen_while(CodeGen* gen, Ast* ast) {
     node->prev = gen->loop_head;
     node->ctx.break_count = 0;
     node->ctx.continue_count = 0;
+    node->ctx.finally_depth = gen->finally_depth;   // 建循环时的 finally 深度（见 AST_BREAK/CONTINUE）
     node->ctx.continue_target = 0;      // 本形态不用（continue 统一在下面回填）
     gen->loop_head = node;
     gen->loop_count++;
@@ -703,6 +715,7 @@ static void gen_for(CodeGen* gen, Ast* ast) {
     node->prev = gen->loop_head;
     node->ctx.break_count = 0;
     node->ctx.continue_count = 0;
+    node->ctx.finally_depth = gen->finally_depth;   // 建循环时的 finally 深度（见 AST_BREAK/CONTINUE）
     node->ctx.continue_target = 0;
     gen->loop_head = node;
     gen->loop_count++;
@@ -770,6 +783,7 @@ static void gen_for_iter(CodeGen* gen, Ast* ast) {
     node->prev = gen->loop_head;
     node->ctx.break_count = 0;
     node->ctx.continue_count = 0;
+    node->ctx.finally_depth = gen->finally_depth;   // 建循环时的 finally 深度（见 AST_BREAK/CONTINUE）
     node->ctx.continue_target = 0;
     gen->loop_head = node;
     gen->loop_count++;
@@ -857,6 +871,7 @@ static void gen_switch(CodeGen* gen, Ast* ast) {
     node->prev = gen->loop_head;
     node->ctx.break_count = 0;
     node->ctx.continue_count = 0;
+    node->ctx.finally_depth = gen->finally_depth;   // 建循环时的 finally 深度（见 AST_BREAK/CONTINUE）
     node->ctx.continue_target = 0;
     gen->loop_head = node;
     gen->loop_count++;
@@ -1717,7 +1732,11 @@ static void gen_try(CodeGen* gen, Ast* ast) {
     }
     if (has_finally) {
         reg_encode_iABx(gen->chunk, OP_FINALLY, 0, 0, ast->line);
+        // ★ 生成 finally 体期间登记"处在第几层 finally 里"：体内的 `break`/`continue`
+        //   跳出时要先补"离开 finally"的清理（见 gen_stmt 的 AST_BREAK/AST_CONTINUE）
+        gen->finally_depth++;
         gen_stmt(gen, ast->u.try_.finally_body);
+        gen->finally_depth--;
         // 清除 finally 注册
         reg_encode_iABC(gen->chunk, OP_END_TRY, 0, 0, 0, ast->line);
     }

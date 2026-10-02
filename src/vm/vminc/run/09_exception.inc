@@ -46,6 +46,23 @@
     }
     LABEL(OP_END_TRY): {
         int a = READ_A();
+        // A=2：**离开 finally 块**（finally 体内的 break/continue 跳出，codegen 补发）——
+        //   只做"注销本层 try 注册 + 丢弃在飞异常"，**不做任何跳转**：
+        //   控制流由紧随其后的 OP_JMP 决定 ✓（JS/Python 同语义：break/continue 覆盖在飞异常；
+        //   不注销的话后面同一帧里的异常会跳回这个已经跑完的 finally 块 ✗）
+        if (a == 2) {
+            frame->catch_ip = frame->prev_catch_ip;
+            frame->prev_catch_ip = NULL;
+            frame->catch_finally_ip = NULL;
+            frame->finally_ip = frame->prev_finally_ip;
+            frame->prev_finally_ip = NULL;
+            frame->in_finally = 0;
+            vm.pending_exception = 0;
+            vm.has_exception = 0;
+            vm.exception = val_null();
+            vm.exception_line = 0;
+            DISPATCH();
+        }
         // A=1：**catch 块入口**那次 END_TRY。
         //   catch 体期间必须保持 catch_ip = NULL 且 prev_catch_ip = 外层 catch：
         //     · catch 体内 throw ⇒ catch_finally_ip 分支先跑本层 finally，
