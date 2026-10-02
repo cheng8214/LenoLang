@@ -115,10 +115,22 @@
                 Value lv = frame->locals[var_slot];
                 Value sv = frame->locals[step_slot];
                 if (likely(val_is_int(lv) && val_is_int(sv))) {
-                    int64_t nv = val_as_int(lv) + val_as_int(sv);
-                    frame->locals[var_slot] = (nv >= INT48_MIN && nv <= INT48_MAX)
-                                                  ? val_int(nv)
-                                                  : val_obj((Object*)bigint_from_int64(nv));
+                    // ★ 2026-10-03（与 Lua 5.5 对拍后的微调，两处都比它贵）：
+                    //   ① 符号扩展**无分支**：`val_as_int` 内含 `if (payload & 符号位)` 分支
+                    //      ⇒ 改成 `(int64_t)((payload << 16)) >> 16`（算术右移 = 从 bit47 符号扩展 ✓）
+                    //   ② 溢出到 bigint 的判定折成**一次无符号比较**：
+                    //      `(uint64_t)(nv - INT48_MIN) <= (uint64_t)(INT48_MAX - INT48_MIN)`
+                    //      （原先是两次有符号比较 + 两次分支 ✗；减法是回绕定义明确的 ✓，
+                    //        且 |nv| ≤ 2^48 ⇒ 不会 UB ✓）
+                    //   语义**逐条不变**：范围外仍然提升为 bigint ✓
+                    int64_t a_raw = (int64_t)((lv & PAYLOAD_MASK) << 16) >> 16;
+                    int64_t b_raw = (int64_t)((sv & PAYLOAD_MASK) << 16) >> 16;
+                    int64_t nv = a_raw + b_raw;
+                    if (likely((uint64_t)(nv - INT48_MIN) <= (uint64_t)(INT48_MAX - INT48_MIN))) {
+                        frame->locals[var_slot] = val_int(nv);
+                    } else {
+                        frame->locals[var_slot] = val_obj((Object*)bigint_from_int64(nv));
+                    }
                 } else if (unlikely(val_is_bigint(lv) || val_is_bigint(sv))) {
                     // 循环变量已提升为 bigint（int48 溢出）⇒ 后续用 bigint 加
                     frame->locals[var_slot] = bigint_add(get_bigint_operand(lv),

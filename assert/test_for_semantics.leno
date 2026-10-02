@@ -1,0 +1,70 @@
+// test_for_semantics.leno — 数值 for 循环的语义护栏（2026-10-03）
+//
+// 为什么有它：`OP_FOR_LOOP` 的**溢出判定**从"两次有符号比较"改成了"一次无符号比较"
+//   （`(uint64_t)(nv - INT48_MIN) <= (uint64_t)(INT48_MAX - INT48_MIN)`，对齐 Lua 的做法），
+//   并把符号扩展改成无分支（`(int64_t)((payload << 16)) >> 16`）。
+//   ⇒ 必须把"跨 int48 边界仍正确提升为 bigint""负步长/步长>1/浮点/体内改写"这些口径钉死。
+// ⚠ Leno 的 `for a:b` **含上界**（`for 0:5` 是 6 次迭代），`for a:b:step` 亦然 —— 这是既有语义。
+import io
+
+main() {
+    // ① 含上界语义（既有口径，先钉死免得日后被误改）
+    int c1 = 0
+    for 0:5 to i { c1 = c1 + 1 }
+    assert_eq(c1, 6, "① for 0:5 含上界 ⇒ 6 次")
+
+    // ② 正向跨越 INT48_MAX（2^47-1 = 140737488355327）⇒ 超出部分提升为 bigint 且值正确
+    int cnt = 0
+    var last = 0
+    for 140737488355325:140737488355330 to i {
+        last = i
+        cnt = cnt + 1
+    }
+    assert_eq(cnt, 6, "② 跨 int48 上界迭代次数")
+    assert_eq(_str(last), "140737488355330", "② 末值正确（提升 bigint）")
+
+    // ③ 负向跨越 INT48_MIN（-2^47）：用**算出来的**边界避免负字面量解析歧义
+    int hi = 0 - 140737488355326
+    int lo = 0 - 140737488355331
+    int cnt2 = 0
+    var last2 = 0
+    for hi:lo:0-1 to i {
+        last2 = i
+        cnt2 = cnt2 + 1
+    }
+    assert_eq(cnt2, 6, "③ 负向跨 int48 下界迭代次数")
+    assert_eq(_str(last2), "-140737488355331", "③ 末值正确")
+
+    // ④ 步长 > 1 / 负步长（含上界）
+    int s4 = 0
+    for 0:10:5 to i { s4 = s4 + i }
+    assert_eq(s4, 15, "④ 0,5,10 步长 5 求和")
+    int s5 = 0
+    for 10:2:0-2 to i { s5 = s5 + i }
+    assert_eq(s5, 30, "④ 10..2 步长 -2 求和")
+
+    // ⑤ 浮点循环（非计数制路径）
+    float s6 = 0.0
+    for 0.0:1.0:0.25 to f { s6 = s6 + f }
+    assert_eq(_str(s6), "2.5", "⑤ 浮点 0..1 步长 0.25 求和（含上界）")
+
+    // ⑥ 循环体改写循环变量：不影响迭代次数（与 Lua 同口径）
+    int c6 = 0
+    for 0:5 to i {
+        c6 = c6 + 1
+        i = 100
+    }
+    assert_eq(c6, 6, "⑥ 体内改写变量不影响次数")
+
+    // ⑦ 体内把变量置成 int48 极值 ⇒ 下一轮仍须正确提升为 bigint 且不崩
+    int c7 = 0
+    var seen = ""
+    for 0:3 to i {
+        c7 = c7 + 1
+        if c7 == 1 { i = 140737488355327 }
+        if c7 == 2 { seen = _str(i) }
+    }
+    assert_eq(c7, 4, "⑦ 体内置极值后次数不变")
+    assert_eq(seen, "140737488355328", "⑦ 极值 +1 提升为 bigint")
+    io.print("[for] 数值循环语义 ✓")
+}
