@@ -194,8 +194,9 @@ export func parse_desktop_entry(string text): Dict {
 
         if k == "Name" { name = v }
         else if k == "Exec" { execLine = v }
-        else if k == "Hidden" { hidden = (strings.to_lower(v) == "true") }
-        else if k == "NoDisplay" { noDisplay = (strings.to_lower(v) == "true") }
+        // 2026-10-02 收编：`to_lower(v) == "true"` 会造临时串 ⇒ 改 native `eq_ignore_case` ✓
+        else if k == "Hidden" { hidden = strings.eq_ignore_case(v, "true") }
+        else if k == "NoDisplay" { noDisplay = strings.eq_ignore_case(v, "true") }
     }
 
     return {ok: (name != "" or execLine != ""),

@@ -9,6 +9,7 @@ import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 import "sdl_opts.leno" as dochk    // 选项对账（见 sdl_opts.leno 头部的来龙去脉 ✓）
+import strings   // 2026-10-02：逐字测宽改用 to_codepoints + from_codepoint（替代逐字符 slice ✓）
 use theme.Color
 
 export struct Label impl Widget, Themeable {
@@ -152,8 +153,12 @@ export struct Label impl Widget, Themeable {
             string cur = ""
             float curW = 0.0
             int n = ln.len()
+            // ★ 2026-10-02 收编：原先逐字符 `ln.slice(k, k+1)` 每轮**从头扫**到第 k 个字符（整段 O(n²)）
+            //   ⇒ 改为一趟 `to_codepoints` 取码点 + `from_codepoint` 还原单字符串喂 measureString ✓
+            //   等价：`from_codepoint(to_codepoints(s)[k]) == s.slice(k, k+1)`（对拍 0 分歧 ✓）
+            Array[int] cps = strings.to_codepoints(ln)
             for n to k {
-                string ch = ln.slice(k, k + 1)
+                string ch = strings.from_codepoint(cps[k])
                 var[float, float](cw, chh) = _font.measureString(ch)
                 if cur != "" and curW + cw > bw {
                     out.add(cur)
@@ -251,8 +256,12 @@ export struct Label impl Widget, Themeable {
         int textLen = text.len()
         int tailStart = textLen
         float tailW = 0.0
+        // ★ 2026-10-02 收编（本函数 2 处，共用这一趟）：原先两个循环都逐字符 `text.slice(i, i+1)`
+        //   —— 每轮都要**从头扫**到第 i 个字符（整段 O(n²)）且每字符造一个临时串 ✗
+        //   等价：`from_codepoint(to_codepoints(s)[k]) == s.slice(k, k+1)`（对拍 0 分歧 ✓）
+        Array[int] cps = strings.to_codepoints(text)
         for textLen - 1 : 0 to i {
-            string ch = text.slice(i, i + 1)
+            string ch = strings.from_codepoint(cps[i])
             var[float, float](csw, csh) = _font.measureString(ch)
             if tailW + csw > avail * 0.4 { tailStart = i + 1; break }
             tailW = tailW + csw
@@ -263,7 +272,7 @@ export struct Label impl Widget, Themeable {
         float headW = 0.0
         int headEnd = 0
         for 0 : textLen - 1 to i {
-            string ch = text.slice(i, i + 1)
+            string ch = strings.from_codepoint(cps[i])
             var[float, float](csw, csh) = _font.measureString(ch)
             if headW + csw > avail - tailW { headEnd = i; break }
             headW = headW + csw

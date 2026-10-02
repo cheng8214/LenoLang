@@ -90,20 +90,24 @@ func replace_icase_literal(string text, string src, string dst):string {
     if n == 0 { return text }
     var low_text = strings.to_lower(text)
     var low_src = strings.to_lower(src)
-    var out = ""
+    // ★ 2026-10-02 收编：原先每轮 `out = out + ...` 逐段拼串 ⇒ 整体 **O(n²)**（每次拼接重新分配整串）。
+    //   改成收进数组、最后一趟 `strings.join`（native、一趟分配）⇒ O(n) ✓
+    //   等价：拼接**顺序与内容逐字节不变**；单字节那段用 `strings.char(text.byte(i))` 代替
+    //   `strings.byte_slice(text, i, i+1)`（0-255 全量对拍 0 分歧 ✓ 见 cp_eq 对拍）
+    Array[string] out = []
     int i = 0
     while i + n <= tl {
         if strings.byte_slice(low_text, i, i + n) == low_src {
-            out = out + dst
+            out.add(dst)
             hits_total = hits_total + 1
             i = i + n
         } else {
-            out = out + strings.byte_slice(text, i, i + 1)
+            out.add(strings.char(text.byte(i)))
             i = i + 1
         }
     }
-    out = out + strings.byte_slice(text, i, tl)
-    return out
+    out.add(strings.byte_slice(text, i, tl))
+    return strings.join(out, "")
 }
 
 // 替换一处文本；命中数累加进 hits_total（返回值长这样是为了让"没命中"也走同一条路）

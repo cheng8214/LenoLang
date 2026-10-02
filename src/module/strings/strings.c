@@ -1695,6 +1695,55 @@ static Value str_to_codepoints(int argc, Value* args) {
     return val_obj((Object*)result);
 }
 
+// from_codepoint(cp) —— Unicode 码点 → 单字符字符串（`to_codepoints` 的**逆操作**）
+//   为什么补它：`to_codepoints` 能"拆"不能"装"，而 `strings.char` 只收 0-255（ASCII 码值）
+//   ⇒ 需要**逐字符字符串**的场景（如逐字测宽 `measureString`）只能退回 `slice(k, k+1)`
+//   （每次从头扫到第 k 个字符，整段 O(n²)，且每个字符还造一个临时串 ✗）
+//   范围校验（**不静默错值**，与 from_hex / from_bytes 同一口径）：
+//     · 负数 / 大于 0x10FFFF ⇒ 抛错（不是合法 Unicode 码点）
+//     · 0xD800..0xDFFF（UTF-16 代理区）⇒ 抛错（UTF-8 里不允许出现）
+//   合法值按 UTF-8 编成 1..4 字节 ⇒ 与 `to_codepoints` 严格互逆 ✓
+//   模块式 strings.from_codepoint(cp)：cp 在 args[0]；
+//   实例式 s.from_codepoint(cp)：接收者 args[0]、cp 在 args[1]（接收者被忽略，只为与 to_codepoints 配对/可发现 ✓）
+static Value str_from_codepoint(int argc, Value* args) {
+    int argi = (argc >= 2) ? 1 : 0;
+    if (!val_is_int(args[argi])) {
+        native_throw_error("from_codepoint 需要一个 int 码点");
+        return val_null();
+    }
+    int64_t cp = val_as_int(args[argi]);
+    if (cp < 0 || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) {
+        native_throw_error("from_codepoint: 非法码点（须在 0..0x10FFFF，且不能是代理区 0xD800..0xDFFF）");
+        return val_null();
+    }
+
+    char buf[4];
+    int n = 0;
+    if (cp < 0x80) {
+        buf[n++] = (char)cp;
+    } else if (cp < 0x800) {
+        buf[n++] = (char)(0xC0 | (cp >> 6));
+        buf[n++] = (char)(0x80 | (cp & 0x3F));
+    } else if (cp < 0x10000) {
+        buf[n++] = (char)(0xE0 | (cp >> 12));
+        buf[n++] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        buf[n++] = (char)(0x80 | (cp & 0x3F));
+    } else {
+        buf[n++] = (char)(0xF0 | (cp >> 18));
+        buf[n++] = (char)(0x80 | ((cp >> 12) & 0x3F));
+        buf[n++] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        buf[n++] = (char)(0x80 | (cp & 0x3F));
+    }
+
+    ObjString* s = str_alloc(n);
+    if (!s) { native_throw_error("内存分配失败"); return val_null(); }
+    memcpy(s->chars, buf, (size_t)n);
+    s->chars[n] = '\0';
+    s->char_len = 1;
+    s->hash = hash_string(s->chars, n);
+    return val_obj((Object*)s);
+}
+
 // ==================== 全局函数适配器层 ====================
 
 // format(fmt, ...) - 全局格式化函数
@@ -1828,6 +1877,11 @@ void strings_init_module(void) {
     //   换用一次说全的入口后它们**真正生效**了（{接收者: string, pos: int} ✓ 正是它的签名）✓
     native_register_module_method("strings", "codepoint_at", str_codepoint_at, &NATIVE_T_INT, NATIVE_VARARG(1, 2, 2, cp_at_params, TYPE_ANY));
     native_register_module_method("strings", "to_codepoints", str_to_codepoints, &NATIVE_T_ARR_INT, NATIVE_FIXED(bytes_str_params));
+    // from_codepoint(cp)：`to_codepoints` 的**逆操作**（码点 → 单字符 UTF-8 串；不扫全串 ⇒ O(1)）
+    //   补它的原因：`to_codepoints` 能拆不能装，导致"逐字符要字符串"的场景只能退回 `slice(k,k+1)`
+    //   （O(n) 扫描 ⇒ 整段 O(n²)，见 sdl_label/sdl_edit 的逐字测宽）✗
+    TypeKind from_cp_params[] = {TYPE_INT};
+    native_register_module_method("strings", "from_codepoint", str_from_codepoint, &NATIVE_T_STRING, NATIVE_FIXED(from_cp_params));
 
     // (2026-10-02) 这里原有 8 行 `native_set_method_vararg_params(...)` 与一段 v3.2.7 的说明 ——
     //   那是"两步式"里的第二步（先按 `native_register_module_method_spec` 注册，之后补声明类型）。
@@ -1921,6 +1975,9 @@ void strings_init_instance_methods(void) {
     string_register_method("codepoint_at", make_native(str_codepoint_at, 2, "codepoint_at"), TYPE_INT, TYPE_UNKNOWN, NATIVE_FIXED(int_params));
     string_register_method("to_codepoints", make_native(str_to_codepoints, 1, "to_codepoints"), TYPE_ARRAY, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
     native_register_instance_method_return_spec("string", "to_codepoints", &NATIVE_T_ARR_INT);
+    // 实例式 from_codepoint：与 to_codepoints 配对（可发现性）。⚠ 接收者本身用不上、被忽略 ——
+    //   码点来自实参（`s.from_codepoint(20013)` 与 `strings.from_codepoint(20013)` 结果相同 ✓）
+    string_register_method("from_codepoint", make_native(str_from_codepoint, 2, "from_codepoint"), TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED(int_params));
 
     // 14. 新增：包含检查（实例方法）
     TypeKind has_substr_params[] = {TYPE_STRING};

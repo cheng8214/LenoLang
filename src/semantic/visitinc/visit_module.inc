@@ -1594,14 +1594,15 @@
                         }
 
                         // 判断方法是否找到
-                        // 可变参数实例方法 arity=-1 但方法是存在的，用 inst_meta 判断
+                        // ⚠ 直接问原生表，**不要**拿 arity 的取值当"已找到"的判据：旧代码写的是
+                        //   `expected_arity == -1`，而该 -1 在旧约定里兼作"可变参数"与"没找到"两义 ⇒
+                        //   哨兵改名后语义断裂（not-found 会被误判为已找到，反过来报不出"没有方法" ✗）。
+                        //   返回类型非 ANY ⇒ 一定是从原生表查到的（未找到时该接口返回 ANY）✓
                         int method_found = 0;
-                        if (!(return_type == TYPE_ANY && expected_arity == -1)) {
+                        if (obj_type_name && native_find_instance_method(obj_type_name, method_name)) {
                             method_found = 1;
-                        } else if (obj_type_name) {
-                            // 可变参数情况：再检查一次实例方法是否存在
-                            const InstanceMethodMeta* im = native_find_instance_method(obj_type_name, method_name);
-                            if (im) method_found = 1;
+                        } else if (return_type != TYPE_ANY) {
+                            method_found = 1;
                         }
 
                         // 如果没找到，检查是否是泛型约束类型参数（如 T: Comparable）
@@ -1702,8 +1703,8 @@
                             error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                         }
 
-                        // 检查参数类型（仅当参数数量匹配或可变参数时）
-                        if (obj_type_name && (expected_arity == -1 || actual_arity == expected_arity)) {
+                        // 检查参数类型（仅当参数数量匹配或可变参数时；可变参数的 arity 是 NATIVE_ARITY_VARARG）
+                        if (obj_type_name && (expected_arity == NATIVE_ARITY_VARARG || actual_arity == expected_arity)) {
                             for (int i = 0; i < actual_arity; i++) {
                                 TypeKind expected_param_type = native_get_instance_method_param_type(obj_type_name, method_name, i);
                                 TypeInfo* arg_type = infer_expr_type(s, ast->u.module_call.args.items[i]);

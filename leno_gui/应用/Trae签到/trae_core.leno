@@ -283,10 +283,13 @@ export func random_device_id(): string {
 export func is_valid_device_id(string s): bool {
     if s.len() != 16 { return false }
     if s.byte_slice(0, 1) == "0" { return false }
-    var digits = "0123456789"
+    // ★ 2026-10-02 收编：原先 `strings.has(digits, byte_slice(i, i+1))` 每轮造一个单字节临时串 ⇒
+    //   改用 native `byte(i)` 取字节值、直接比数值区间（不分配）✓
+    //   等价：0-255 全量对拍 0 分歧（`has(单字节串)` ⇔ 字节值 ∈ 48..57，见 cp_eq 对拍）✓
     int i = 0
     while i < 16 {
-        if not strings.has(digits, s.byte_slice(i, i + 1)) { return false }
+        int b = s.byte(i)
+        if b < 48 or b > 57 { return false }
         i = i + 1
     }
     return true

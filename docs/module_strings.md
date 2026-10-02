@@ -764,9 +764,9 @@ strings.from_hex("4869")  // "Hi"
 "abc".eq_ignore_case("ab")        // false（长度不同直接 false，不越界读）
 ```
 
-#### `codepoint_at(pos?)` / `to_codepoints()`
+#### `codepoint_at(pos?)` / `to_codepoints()` / `from_codepoint(cp)`
 
-第 `pos` 个**字符**的 Unicode 码点 / 一趟取出全部码点（`Array[int]`）。
+第 `pos` 个**字符**的 Unicode 码点 / 一趟取出全部码点（`Array[int]`）/ **码点 → 单字符字符串**。
 
 ```leno
 "a中🙂".codepoint_at(0)     // 97
@@ -774,12 +774,24 @@ strings.from_hex("4869")  // "Hi"
 "a中🙂".codepoint_at(-1)    // 128578  ('🙂' = U+1F642，4 字节)
 "a中🙂".codepoint_at(99)    // null（越界，与 byte 同口径）
 "a中🙂".to_codepoints()     // [97, 20013, 128578]
+strings.from_codepoint(20013)   // "中"  ← to_codepoints 的**逆操作**（不扫全串 ⇒ O(1)）
+"x".from_codepoint(65)          // "A"   ← 实例式也可（接收者被忽略，仅为与 to_codepoints 配对）
 ```
+
+**逐字符要"字符串"的场景（例如 `measureString(ch)` 逐字测宽）请配对使用**：
+`Array[int] cps = s.to_codepoints()`（一趟 O(n)）+ 循环里 `strings.from_codepoint(cps[k])` ——
+等价于 `s.slice(k, k+1)`，但后者每轮都要**从头扫**到第 k 个字符（整段 O(n²)）且每字符造一个临时串 ✗
 
 > **★ 整串逐字符处理请用 `to_codepoints()`，别循环 `codepoint_at(i)`**：
 > 后者要从头走到第 i 个字符 ⇒ 循环是 **O(n²)**。基准实测（4000 字符 × 20 趟）：
 > 手写 `slice(i,i+1)` **113,589µs** ｜ 循环 `codepoint_at` **56,307µs（2.0x）**
 > ｜ 一趟 `to_codepoints` **863µs（131.6x）** ✓
+
+> **`from_codepoint` 的非法值会抛错**（不静默错值）：负数、大于 `0x10FFFF`、
+> 以及 UTF-16 代理区 `0xD800..0xDFFF` 都拒绝。
+> ⚠ 一个已知边界：`to_codepoints` 对**非法 UTF-8 字节**（如 `0xFF`）是"原样给首字节值"，
+> 而 `from_codepoint(0xFF)` 会按码点正确编成 `C3 BF` 两字节 ⇒ 这条配对**只对合法 UTF-8 严格互逆**
+> （实测：合法语料逐字符 0 分歧；含坏字节的串会有差异）。SDL/界面文本恒为合法 UTF-8 ⇒ 不受影响 ✓
 
 > 另一条实测（同一次基准）：逐字节拼串 手写 **700,846µs** vs `from_bytes` **84µs（8343x）**；
 > hex 编码 手写 **55,300µs** vs `to_hex` **26µs（2127x）**；忽略大小写 **2.0x**。

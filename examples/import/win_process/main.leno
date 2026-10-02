@@ -48,7 +48,10 @@ struct MockProcessManager impl ProcessManager {
         for _processes to proc {
             Dict p = proc as Dict
             if p.name is string {
-                if p.name.to_lower() == name.to_lower() {
+                // 2026-10-02 收编：原先 `p.name.to_lower() == name.to_lower()` 要造两个临时串，
+                //   改用 native `eq_ignore_case`（逐字节 tolower 比较、**不分配**）。
+                //   等价性有据：两者用的是同一张 tolower 映射，3025 对取值逐值对拍 0 分歧 ✓
+                if p.name.eq_ignore_case(name) {
                     return {found: true, pid: p.pid}
                 }
             }

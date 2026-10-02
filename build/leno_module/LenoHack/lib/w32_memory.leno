@@ -705,7 +705,8 @@ export struct MemoryHandle {
         for modules to m {
             if m is Dict {
                 string name = m["name"] as string
-                if strings.to_lower(name) == target {
+                // 2026-10-02 收编：改 native `eq_ignore_case`（逐字节 tolower、不造临时串）✓
+                if strings.eq_ignore_case(name, target) {
                     return _int(m["base"])
                 }
             }
@@ -721,7 +722,8 @@ export struct MemoryHandle {
         for modules to m {
             if m is Dict {
                 string name = m["name"] as string
-                if strings.to_lower(name) == target {
+                // 2026-10-02 收编：改 native `eq_ignore_case`（逐字节 tolower、不造临时串）✓
+                if strings.eq_ignore_case(name, target) {
                     return _int(m["size"])
                 }
             }

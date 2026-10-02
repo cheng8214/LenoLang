@@ -708,8 +708,14 @@
                             TypeKind return_type = native_get_instance_method_return_type(type_name, method_name, &expected_arity);
 
                             // 当原生方法表找不到时，回退到 func_table 查找模块导入的 struct 方法
+                            // ⚠ 判据直接问表（`method_meta == NULL`），**不要**用 arity 的取值来判断：旧代码写的是
+                            //   `expected_arity == -1`，而那个 -1 在旧约定里**同时**表示"可变参数"与"没找到"两个含义
+                            //   ⇒ 哨兵改名（可变参数 → NATIVE_ARITY_VARARG = -200）后这句恒假，
+                            //   跨模块 struct 方法回退整段失效、泛型用例集体报"没有方法" ✗（本轮实测）。
+                            //   直接问表则语义唯一，且顺带不再对"找到了但返回 any 的可变参数方法"误触发回退 ✓
+                            const InstanceMethodMeta* method_meta = native_find_instance_method(type_name, method_name);
                             int fallback_default_count = 0;
-                            if (return_type == TYPE_ANY && expected_arity == -1 && receiver_type->struct_name) {
+                            if (return_type == TYPE_ANY && method_meta == NULL && receiver_type->struct_name) {
                                 char full_method_name[256];
                                 snprintf(full_method_name, sizeof(full_method_name), "%s::%s", receiver_type->struct_name, method_name);
                                 Ast* func_def = func_table_find(&s->func_table, full_method_name);
@@ -738,10 +744,8 @@
                             }
 
                             // 检查方法是否真实存在
-                            // native_find_instance_method 返回 NULL 表示原生方法表没有此方法
-                            // expected_arity >= 0 表示通过 func_table 或模块符号表回退找到了方法
-                            // fallback_default_count > 0 同样表示回退找到了方法
-                            const InstanceMethodMeta* method_meta = native_find_instance_method(type_name, method_name);
+                            // method_meta（上面已查）非空 ⇒ 原生表里有；expected_arity >= 0 表示通过
+                            // func_table 或模块符号表回退找到了方法；fallback_default_count > 0 同样表示回退找到 ✓
                             int method_found = (method_meta != NULL) || (expected_arity >= 0) || (fallback_default_count > 0);
                             // 注：pri 私有方法的检查**不在这里** —— 这里只处理**内建类型**的方法表；
                             //     用户 struct 的方法走下面 `receiver_type->kind == TYPE_STRUCT` 那条分支
@@ -920,8 +924,8 @@
                                     error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                 }
 
-                                // 检查参数类型
-                                if (expected_arity == -1 || actual_arity == expected_arity) {
+                                // 检查参数类型（可变参数方法的 arity 是 NATIVE_ARITY_VARARG，个数由 min/max 管）
+                                if (expected_arity == NATIVE_ARITY_VARARG || actual_arity == expected_arity) {
                                     // 处理数组方法
                                     if (receiver_type && receiver_type->kind == TYPE_ARRAY) {
                                         // 对于数组方法，从 receiver_type 获取元素类型（如果有的话）
@@ -1112,6 +1116,49 @@
                                                 }
                                             }
                                             if (arg_type) type_free(arg_type);
+                                        }
+                                    }
+                                    // ★ 通用分支（2026-10-02 补）：string / number / file / socket / thread / channel…
+                                    //   为什么必须补：上面这条 if 链原先只有 **ARRAY / DICT / STRUCT** 三条分支
+                                    //   ⇒ 其它原生类型的实例方法**整段跳过**参数类型检查。实测：
+                                    //     `"中".to_hex("x")`、`"ab".pad_start("x","0")` 一直静默编过（还能跑出结果），
+                                    //     而同样的错在模块式 `strings.to_hex("中","x")` 会正常报「期望 'bool'」✗
+                                    //   （根因与 B 那条同源：检查器压根没走到，不是判据写错）
+                                    else {
+                                        int generic_arity = ast->u.call.args.count;
+                                        for (int i = 0; i < generic_arity; i++) {
+                                            TypeKind expected_param_type =
+                                                native_get_instance_method_param_type(type_name, method_name, i);
+                                            if (expected_param_type == TYPE_ANY) continue;   // 未声明类型 ⇒ 不查
+
+                                            TypeInfo* arg_type = infer_expr_type(s, ast->u.call.args.items[i]);
+                                            if (!arg_type) continue;
+
+                                            // 判据与模块通道/赋值通道**同一实现**（type_is_compatible）：
+                                            //   种类相同 ⇒ 兼容；**静态 any 照样拒绝**（与 v3.2.7 对模块通道的定案一致：
+                                            //   native 侧普遍无校验强转，any 到运行期可能是 null ⇒ 必须显式 _str()/_int()）
+                                            bool ok = (arg_type->kind == expected_param_type);
+                                            if (!ok) {
+                                                TypeInfo expected_ti;
+                                                memset(&expected_ti, 0, sizeof(expected_ti));
+                                                expected_ti.kind = expected_param_type;
+                                                ok = (type_is_compatible(&expected_ti, arg_type) != 0);
+                                            }
+                                            if (!ok) {
+                                                char msg[BUFFER_MEDIUM];
+                                                const char* hint = get_type_conversion_hint(expected_param_type, arg_type->kind);
+                                                if (hint) {
+                                                    snprintf(msg, sizeof(msg), "调用方法 '%s' 时参数 %d 类型错误: 期望 '%s'，但传入 '%s'\n%s",
+                                                             method_name, i + 1, type_kind_to_string(expected_param_type),
+                                                             type_to_string(arg_type), hint);
+                                                } else {
+                                                    snprintf(msg, sizeof(msg), "调用方法 '%s' 时参数 %d 类型错误: 期望 '%s'，但传入 '%s'",
+                                                             method_name, i + 1, type_kind_to_string(expected_param_type),
+                                                             type_to_string(arg_type));
+                                                }
+                                                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                                            }
+                                            type_free(arg_type);
                                         }
                                     }
                                 }

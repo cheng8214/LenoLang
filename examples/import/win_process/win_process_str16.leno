@@ -310,7 +310,8 @@ export func findByName(string name):Dict {
     for result.processes to proc {
         Dict p = proc as Dict
         if p.name is string {
-            if p.name.to_lower() == name.to_lower() {
+            // 2026-10-02 收编：`to_lower()==to_lower()` 要造两个临时串 ⇒ 改 native `eq_ignore_case`（不分配）
+            if p.name.eq_ignore_case(name) {
                 return {found: true, pid: p.pid}
             }
         }

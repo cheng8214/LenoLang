@@ -8,6 +8,7 @@ import "sdl_core.leno" as core; use core.SystemCursor
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
 import maths
+import strings   // 2026-10-02：数值解析改用 `to_codepoints`（一趟取码点，替代逐字符 slice ✓）
 import "sdl_edit.leno" as edt; use edt.Edit
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 use theme.Color
@@ -48,15 +49,8 @@ export struct SpinBox impl Widget, Themeable {
         if step > 0.0 { v = maths.round(v / step) * step }
         return maths.max(minV, maths.min(v, maxV))
     }
-    pri func digit(string c): int {
-        switch c {
-            case "0" { return 0 } case "1" { return 1 } case "2" { return 2 }
-            case "3" { return 3 } case "4" { return 4 } case "5" { return 5 }
-            case "6" { return 6 } case "7" { return 7 } case "8" { return 8 }
-            case "9" { return 9 }
-            default  { return 0 }
-        }
-    }
+    // (2026-10-02) 这里原有 `digit(string c)`（单字符 → 0-9 的 switch）。收编 `try_apply_text`
+    //   到码点解析后它**零引用** ⇒ 已删 ✓（数字 = 码点 - 48，见 try_apply_text）
     func _fmt(): string {
         if intMode { return (_int(value)) as string }
         if decimals > 0 {
@@ -78,20 +72,26 @@ export struct SpinBox impl Widget, Themeable {
         if n == 0 { return }
         int i = 0
         bool neg = false
-        if s.slice(0, 1) == "-" { neg = true; i = 1 }
+        // ★ 2026-10-02 收编：原先循环里每次 `s.slice(k, k+1)` 都要从头扫到第 k 个字符
+        //   ⇒ 整个解析是 **O(n²)**。改用 native `to_codepoints` 一趟取全部码点（O(n)），
+        //   循环里只做 O(1) 索引，且**不再造单字符临时串** ✓
+        //   等价：`codepoint_at(s,k) == to_codepoints(s)[k]`（对拍 0 分歧 ✓）；判据同为
+        //   `-`=45 / `.`=46 / `0`..`9`=48..57 —— 非 ASCII 码点与原先的字符串比较同判（都落进 else ⇒ return ✓）
+        Array[int] cps = strings.to_codepoints(s)
+        if cps[0] == 45 { neg = true; i = 1 }
         if neg and n == 1 { return }
         bool anyDigit = false
         float intPart = 0.0; float frac = 0.0; bool hasFrac = false; float fdiv = 1.0
         for i : n - 1 to k {
-            string c = s.slice(k, k + 1)
-            if c == "." {
+            int cp = cps[k]
+            if cp == 46 {
                 if hasFrac { return }
                 hasFrac = true
                 continue
             }
-            if c >= "0" and c <= "9" {
+            if cp >= 48 and cp <= 57 {
                 anyDigit = true
-                int d = digit(c)
+                int d = cp - 48
                 if hasFrac { fdiv = fdiv * 10.0; frac = frac + d / fdiv }
                 else { intPart = intPart * 10.0 + d }
             } else { return }

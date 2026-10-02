@@ -147,7 +147,8 @@ export struct StandardProcessManager impl ProcessManager {
             if proc.name is string
             {
                 var pname = proc.name
-                if pname.to_lower() == name.to_lower() {
+                // 2026-10-02 收编：改 native `eq_ignore_case`（同一张 tolower 映射、不造临时串）✓
+                if pname.eq_ignore_case(name) {
                     return {found: true, pid: proc.pid}
                 }
             }
