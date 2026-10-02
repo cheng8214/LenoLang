@@ -999,6 +999,27 @@ static char* ast_const_value_text(Ast* v) {
         }
         case AST_BOOL: return strdup(v->u.boolean ? "true" : "false");
         case AST_NULL: return strdup("null");
+        case AST_UNARY: {
+            // 一元符号常量（`const LEG_TODAY = -1` 的 `-1` 是 AST_UNARY(TOK_MINUS)，**不是** AST_NUM）
+            //   旧的文本扫描链是原样摘录（"-1"），消费者再用 strtoll/atof 解析 ⇒ 这里必须对齐
+            //   ✗ 漏掉它 ⇒ 文本侧拿不到 ⇒ const_value_strs 为 NULL ⇒ 跨模块读该常量得 null
+            //   （数值和类型一起丢：`Calendar.LEG_TODAY` 实测打印 null，
+            //     又因数组字面量退化 Array[any] 撞出「set_legend 参数类型不匹配」✓）
+            if (v->u.unary.op == TOK_PLUS) {
+                return ast_const_value_text(v->u.unary.operand);   // 一元正号 = 原值（不前缀 "+"，
+                                                                  // 免把 "+0x1F" 交给 strtoll(…,10) 解析成 0 ✓）
+            }
+            if (v->u.unary.op != TOK_MINUS) return NULL;
+            char* inner = ast_const_value_text(v->u.unary.operand);
+            if (!inner) return NULL;
+            size_t n = strlen(inner);
+            char* s = (char*)malloc(n + 2);
+            if (!s) { free(inner); return NULL; }
+            s[0] = '-';
+            memcpy(s + 1, inner, n + 1);
+            free(inner);
+            return s;
+        }
         default: return NULL;
     }
 }
