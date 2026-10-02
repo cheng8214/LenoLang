@@ -6,9 +6,9 @@
 // Native 函数元信息（编译时和运行时都可用）
 typedef struct {
     const char* name;
-    int arity;              // 参数个数，-1 表示可变参数
-    int min_arity;          // 最小参数个数（仅 arity == -1 时有效，-1 表示不限制）
-    int max_arity;          // 最大参数个数（仅 arity == -1 时有效，-1 表示不限制）
+    int arity;              // 参数个数；可变参数写 NATIVE_ARITY_VARARG（-200，**不是 -1**）
+    int min_arity;          // 最小实参个数（仅可变参数 arity == NATIVE_ARITY_VARARG 时有效；NATIVE_ARITY_ANY = 不限）
+    int max_arity;          // 最大实参个数（仅可变参数 arity == NATIVE_ARITY_VARARG 时有效；NATIVE_ARITY_ANY = 不限）
     TypeKind return_type;
     TypeKind return_element_type; // 返回数组时的元素类型（TYPE_UNKNOWN 表示未指定）
     TypeKind param_types[MAX_METHOD_PARAMS];  // 参数类型数组
@@ -31,9 +31,9 @@ typedef struct {
 typedef struct {
     char module_name[32];
     char method_name[32];
-    int arity;              // 参数个数，-1 表示可变参数
-    int min_arity;          // 最小参数个数（仅 arity == -1 时有效，-1 表示不限制）
-    int max_arity;          // 最大参数个数（仅 arity == -1 时有效，-1 表示不限制）
+    int arity;              // 参数个数；可变参数写 NATIVE_ARITY_VARARG（-200，**不是 -1**）
+    int min_arity;          // 最小实参个数（仅可变参数 arity == NATIVE_ARITY_VARARG 时有效；NATIVE_ARITY_ANY = 不限）
+    int max_arity;          // 最大实参个数（仅可变参数 arity == NATIVE_ARITY_VARARG 时有效；NATIVE_ARITY_ANY = 不限）
     TypeKind return_type;
     TypeKind return_element_type; // 返回数组时的元素类型（TYPE_UNKNOWN 表示未指定）
     TypeKind param_types[MAX_METHOD_PARAMS];  // 参数类型数组
@@ -50,7 +50,9 @@ typedef struct {
 } ModuleMethodMeta;
 
 // 编译时注册 native 函数元信息（供模块使用）
-// min_arity/max_arity: 当 arity == -1（可变参数）时，指定最小/最大允许参数个数；其他情况传 -1
+// min_arity/max_arity: 当 arity == NATIVE_ARITY_VARARG（可变参数）时，指定最小/最大允许实参个数
+//   （NATIVE_ARITY_ANY = 不限）；定长注册忽略这两个字段（用 NATIVE_FIXED* 写即可）
+// ⚠ 判据请写哨兵本身或 `< 0`，**不要**写 `== -1` —— 可变参数是 -200，`== -1` 会恒假（2026-10-02 修过这个坑）
 // return_element_type: 返回数组时的元素类型（TYPE_UNKNOWN 表示未指定）
 void native_register_meta(const char* name, int arity, int min_arity, int max_arity,
                           TypeKind return_type, TypeKind return_element_type,
@@ -83,7 +85,9 @@ TypeKind native_get_return_element_type(const char* name);
 TypeKind native_get_global_function_param_type(const char* name, int param_index);
 
 // 运行时注册 native 函数
-// min_arity/max_arity: 当 arity == -1（可变参数）时，指定最小/最大允许参数个数；其他情况传 -1
+// min_arity/max_arity: 当 arity == NATIVE_ARITY_VARARG（可变参数）时，指定最小/最大允许实参个数
+//   （NATIVE_ARITY_ANY = 不限）；定长注册忽略这两个字段（用 NATIVE_FIXED* 写即可）
+// ⚠ 判据请写哨兵本身或 `< 0`，**不要**写 `== -1` —— 可变参数是 -200，`== -1` 会恒假（2026-10-02 修过这个坑）
 // 注册全局内置函数（**唯一入口**）：写法与模块/实例族一致 —— 规格用 NATIVE_FIXED /
 //   NATIVE_FIXED_NONE / NATIVE_VARARG（见 leno_types.h 的 NativeParamSpec）✓
 void vm_register_native(const char* name, NativeFn function, TypeKind return_type,
@@ -344,9 +348,9 @@ ObjNative* make_native(NativeFn fn, int arity, const char* name);
 typedef struct {
     char type_name[32];     // 类型名（如 "array", "string", "dict" 等）
     char method_name[32];   // 方法名
-    int arity;              // 参数个数（不包括receiver），-1 表示可变参数
-    int min_arity;          // 最小参数个数（仅 arity == -1 时有效，-1 表示不限制）
-    int max_arity;          // 最大参数个数（仅 arity == -1 时有效，-1 表示不限制）
+    int arity;              // 参数个数（不包括 receiver）；可变参数写 NATIVE_ARITY_VARARG（-200，**不是 -1**）
+    int min_arity;          // 最小实参个数（仅可变参数 arity == NATIVE_ARITY_VARARG 时有效；NATIVE_ARITY_ANY = 不限）
+    int max_arity;          // 最大实参个数（仅可变参数 arity == NATIVE_ARITY_VARARG 时有效；NATIVE_ARITY_ANY = 不限）
     TypeKind return_type;   // 返回类型
     TypeKind return_element_type; // 返回数组时的元素类型（TYPE_UNKNOWN 表示未指定）
     TypeKind param_types[MAX_METHOD_PARAMS]; // 参数类型数组
@@ -363,12 +367,16 @@ typedef struct {
 } InstanceMethodMeta;
 
 // 注册实例方法元信息（编译时调用）
-// min_arity/max_arity: 当 arity == -1（可变参数）时，指定最小/最大允许参数个数；其他情况传 -1
+// min_arity/max_arity: 当 arity == NATIVE_ARITY_VARARG（可变参数）时，指定最小/最大允许实参个数
+//   （NATIVE_ARITY_ANY = 不限）；定长注册忽略这两个字段（用 NATIVE_FIXED* 写即可）
+// ⚠ 判据请写哨兵本身或 `< 0`，**不要**写 `== -1` —— 可变参数是 -200，`== -1` 会恒假（2026-10-02 修过这个坑）
 // return_element_type: 返回数组时的元素类型，非数组返回类型时传 TYPE_UNKNOWN
 void native_register_instance_method_meta(const char* type_name, const char* method_name, int arity, int min_arity, int max_arity, TypeKind return_type, TypeKind return_element_type);
 
 // 注册实例方法元信息（带参数类型）
-// min_arity/max_arity: 当 arity == -1（可变参数）时，指定最小/最大允许参数个数；其他情况传 -1
+// min_arity/max_arity: 当 arity == NATIVE_ARITY_VARARG（可变参数）时，指定最小/最大允许实参个数
+//   （NATIVE_ARITY_ANY = 不限）；定长注册忽略这两个字段（用 NATIVE_FIXED* 写即可）
+// ⚠ 判据请写哨兵本身或 `< 0`，**不要**写 `== -1` —— 可变参数是 -200，`== -1` 会恒假（2026-10-02 修过这个坑）
 // return_element_type: 返回数组时的元素类型，非数组返回类型时传 TYPE_UNKNOWN
 void native_register_instance_method_meta_with_params(const char* type_name, const char* method_name, int arity, int min_arity, int max_arity, TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
 

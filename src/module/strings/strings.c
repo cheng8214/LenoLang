@@ -1963,7 +1963,7 @@ void strings_init_instance_methods(void) {
     string_register_method("to_bytes", make_native(str_to_bytes, 1, "to_bytes"), TYPE_ARRAY, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
     native_register_instance_method_return_spec("string", "to_bytes", &NATIVE_T_ARR_INT);
     // arity 必须传 **-1**：实例方法的检查器里 `arity >= 0` 表示**精确匹配**（min/max 被忽略 ✗，
-    //   见 visit_expr.inc:892），只有 `arity == -1` 才按 min/max 放行可选参数 ✓
+    //   见 visit_expr.inc:892），只有可变参数（arity == NATIVE_ARITY_VARARG）才按 min/max 放行可选参数 ✓
     TypeKind tohex_bool_param[] = {TYPE_BOOL};
     // (2026-10-02) 改用"一次说全"的入口：个数 0..1 + 前缀 {bool} + 尾部 ANY
     //   （原先写成两步：注册 + 事后 `native_set_instance_method_vararg_params` ⇒ 现已被

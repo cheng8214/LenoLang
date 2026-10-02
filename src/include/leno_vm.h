@@ -1065,7 +1065,9 @@ static inline Value vm_stack_peek_fast(VM* vm, int distance) {
 }
 
 // Native 函数注册
-// min_arity/max_arity: 当 arity == -1（可变参数）时，指定最小/最大允许参数个数；其他情况传 -1
+// min_arity/max_arity: 当 arity == NATIVE_ARITY_VARARG（可变参数，值是 **-200**）时，指定最小/最大
+//   允许实参个数（NATIVE_ARITY_ANY = 不限）；定长注册忽略这两项。
+// ⚠ 判据写哨兵本身或 `< 0`，**别写 `== -1`**（可变参数不是 -1 ⇒ 会恒假；2026-10-02 踩过）
 // 注册全局内置函数（**唯一入口**；规格用 NATIVE_FIXED / NATIVE_FIXED_NONE / NATIVE_VARARG）
 void vm_register_native(const char* name, NativeFn function, TypeKind return_type,
                         TypeKind return_element_type, NativeParamSpec params);

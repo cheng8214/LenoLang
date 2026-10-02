@@ -391,7 +391,9 @@ static THREAD_LOCAL ModuleAlias moduleAliases[MAX_MODULE_ALIASES];
 static THREAD_LOCAL int moduleAliasCount = 0;
 
 // 编译时注册 native 函数元信息
-// min_arity/max_arity: 当 arity == -1（可变参数）时，指定最小/最大允许参数个数；其他情况传 -1
+// min_arity/max_arity: 当 arity == NATIVE_ARITY_VARARG（可变参数，值是 **-200**）时，指定最小/最大
+//   允许实参个数（NATIVE_ARITY_ANY = 不限）；定长注册忽略这两项。
+// ⚠ 判据写哨兵本身或 `< 0`，**别写 `== -1`**（可变参数不是 -1 ⇒ 会恒假；2026-10-02 踩过）
 // 全局函数参数规格填写的**唯一实现**（与模块/实例族同一规则：先整份 tail_type、再盖前 N 个 ✓）
 static void function_meta_fill_param_types(NativeFunctionMeta* meta, int declared_count,
                                            const TypeKind* declared, TypeKind tail_type) {
