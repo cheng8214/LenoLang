@@ -32,11 +32,17 @@ main() {
     assert_eq(strings.from_bytes([]), "", "①空数组 ⇒ 空串")
     io.print("[1] bytes 往返 ✓")
 
-    // ② to_hex / from_hex（大写输出、大小写都能读）
-    assert_eq("Hi".to_hex(), "4869", "②to_hex 大写")
+    // ② to_hex / from_hex（**默认小写**、`upper=true` 大方写、读取时大小写都收）
+    assert_eq("Hi".to_hex(), "4869", "②to_hex 默认（纯数字串看不出大小写，下面才见真章）")
+    assert_eq("中".to_hex(), "e4b8ad", "②to_hex **默认小写**（3 字节中文）")
+    var ab_cd = strings.from_bytes([171, 205])
+    assert_eq(ab_cd.to_hex(), "abcd", "②to_hex 默认小写（0xAB 0xCD）")
+    assert_eq(ab_cd.to_hex(true), "ABCD", "②to_hex(upper=true) 大写")
+    assert_eq(strings.to_hex(ab_cd), "abcd", "②模块式与实例式同默认（小写）")
     assert_eq(strings.from_hex("4869"), "Hi", "②from_hex 读大写")
     assert_eq(strings.from_hex("4869".to_lower()), "Hi", "②from_hex 读小写")
     assert_eq(strings.from_hex("中文".to_hex()), "中文", "②hex 往返含中文")
+    assert_eq(strings.from_hex("e4b8ad"), "中", "②小写 hex 也能读回来")
     assert_eq("".to_hex(), "", "②空串 ⇒ 空 hex")
     io.print("[2] hex 往返 ✓")
 

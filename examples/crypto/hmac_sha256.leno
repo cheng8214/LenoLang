@@ -126,9 +126,8 @@ func str_to_bytes(string s):Array[int] {
 
 // 字节数组转十六进制字符串
 func bytes_to_hex(Array[int] bytes):string {
-    var result = ""
-    for bytes.len() to i { result += byte_to_hex(bytes[i]) }
-    return result
+    // 2026-10-02 API 收口：逐字节拼串 O(n²) ⇒ `from_bytes` + `to_hex` ✓
+    return strings.to_hex(strings.from_bytes(bytes))
 }
 
 // HMAC-SHA256 实现（RFC 2104）

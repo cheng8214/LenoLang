@@ -10,7 +10,10 @@ import strings
 // preserve_non_alpha: 保留非字母字符
 func caesar_encrypt(string plaintext, int shift, bool preserve_case, bool preserve_non_alpha):string {
     shift = ((shift % 26) + 26) % 26  // 归一化到 0-25
-    var result = ""
+    // ★ 收字节进数组、最后一趟 from_bytes（2026-10-02 API 收口）：
+    //   原先每字符 `result += strings.char(...)` ⇒ 整段 **O(n²)**。
+    //   各分支算出来的都是字节值（`enc` / `enc - 32` / `c`）⇒ 直接喂 from_bytes ✓
+    Array[int] out = []
 
     for 0:plaintext.byte_len() - 1 to i {
         int c = plaintext.byte(i)
@@ -18,24 +21,24 @@ func caesar_encrypt(string plaintext, int shift, bool preserve_case, bool preser
         if (c >= 65 and c <= 90) {
             // 大写字母
             int enc = (c - 65 + shift) % 26 + 65
-            result += strings.char(enc)
+            out.add(enc)
         } else if (c >= 97 and c <= 122) {
             // 小写字母
             int enc = (c - 97 + shift) % 26 + 97
             if (preserve_case) {
-                result += strings.char(enc)
+                out.add(enc)
             } else {
-                result += strings.char(enc - 32)  // 转大写
+                out.add(enc - 32)  // 转大写
             }
         } else {
             // 非字母字符
             if (preserve_non_alpha) {
-                result += strings.char(c)
+                out.add(c)
             }
         }
     }
 
-    return result
+    return strings.from_bytes(out)
 }
 
 // 凯撒解密

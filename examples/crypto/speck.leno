@@ -127,16 +127,11 @@ func hex_char_val(int b):int {
     throw "Invalid hex character"
 }
 
+// 2026-10-02 API 收口：原先是手写的"hex 文本 → 字节串"（本目录抄了 9 份）⇒ 收编进
+//   native `strings.from_hex`。
+//   ⚠ 本文件的 `hex_char_val` **保留**：下面解析 hex 密文那段（逐字符取值）还在用它 ✓
 func from_hex(string hex_str):string {
-    var result = ""
-    int i = 0
-    while (i + 1 < hex_str.byte_len()) {
-        int hi = hex_char_val(hex_str.byte(i))
-        int lo = hex_char_val(hex_str.byte(i + 1))
-        result += strings.char((hi << 4) | lo)
-        i += 2
-    }
-    return result
+    return strings.from_hex(hex_str)
 }
 
 // ==================== PKCS7 填充 ====================

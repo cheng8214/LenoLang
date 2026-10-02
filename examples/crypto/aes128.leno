@@ -266,23 +266,17 @@ func hex_nibble(int b):int {
 }
 
 func hex_to_bytes(string hex):Array[int] {
-    var result = []
-    int i = 0
-    while (i + 1 < hex.byte_len()) {
-        int hi = hex_nibble(hex.byte(i))
-        int lo = hex_nibble(hex.byte(i + 1))
-        result.add((hi << 4) | lo)
-        i = i + 2
-    }
-    return result
+    // 2026-10-02 API 收口：手写 hex→字节 ⇒ 收编成 `from_hex` + `to_bytes`（往返对任意字节逐字节一致 ✓）
+    //   ⚠ 与原先的差别（**变严、更对**）：原先 `hex_nibble` 对非法字符**静默返回 0**、
+    //   且奇数长度会**静默丢掉末尾半个字节** ⇒ 现在这两类都抛错（不再是"静默错值" ✓）
+    return strings.from_hex(hex).to_bytes()
 }
 
 func bytes_to_hex(Array[int] bytes):string {
-    var result = ""
-    for 0:bytes.len() - 1 to i {
-        result += byte_to_hex(bytes[i])
-    }
-    return result
+    // 2026-10-02 API 收口：遍历逐字节 `byte_to_hex` 是 O(n²)（每次拼接重新分配整串）⇒
+    //   收编成 `from_bytes` + `to_hex`（两趟 native、各一趟分配 ⇒ O(n)）✓
+    //   ⚠ 与原先的差别：数组里若有**越界元素**（非 0-255）现在会**抛错**，而不是按 `& 0xFF` 静默截断
+    return strings.to_hex(strings.from_bytes(bytes))
 }
 
 // PKCS7 填充
@@ -321,11 +315,9 @@ func str_to_block(string s, int offset):Array[int] {
 
 // 字节块转字符串
 func block_to_str(Array[int] block):string {
-    var result = ""
-    for 0:block.len() - 1 to i {
-        result += strings.char(block[i])
-    }
-    return result
+    // 2026-10-02 API 收口：`block` 本身就是 0-255 的字节数组 ⇒ 正好是 `from_bytes` 的输入
+    //   （原先逐字节 += 拼串是 O(n²)，且每个块都要走一遍 ⇒ 主通道上的开销）
+    return strings.from_bytes(block)
 }
 
 // AES-128 加密字符串（ECB 模式 + PKCS7 填充）

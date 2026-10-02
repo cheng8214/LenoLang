@@ -52,7 +52,9 @@ func is_valid_base64(string input):bool {
 
 // Base64 编码
 func base64_encode(string input):string {
-    var result = ""
+    // ★ 收进数组、最后一趟 join（2026-10-02 API 收口）：原先 `result += table_char(...)`
+    //   每 3 字节拼 4 次 ⇒ 整体 O(n²)；`strings.join` 是 native、一趟分配 ⇒ O(n) ✓
+    Array[string] out = []
     int i = 0
     int len = input.byte_len()
 
@@ -67,10 +69,10 @@ func base64_encode(string input):string {
         int n = (b0 << 16) | (b1 << 8) | b2
 
         // 拆成 4 个 6 位单元，查表
-        result += table_char((n >> 18) & MASK_3F)
-        result += table_char((n >> 12) & MASK_3F)
-        result += table_char((n >> 6) & MASK_3F)
-        result += table_char(n & MASK_3F)
+        out.add(table_char((n >> 18) & MASK_3F))
+        out.add(table_char((n >> 12) & MASK_3F))
+        out.add(table_char((n >> 6) & MASK_3F))
+        out.add(table_char(n & MASK_3F))
 
         i = i + 3
     }
@@ -80,25 +82,26 @@ func base64_encode(string input):string {
     if (remain == 1) {
         int b0 = input.byte(i)
         int n = b0 << 16
-        result += table_char((n >> 18) & MASK_3F)
-        result += table_char((n >> 12) & MASK_3F)
-        result += "=="
+        out.add(table_char((n >> 18) & MASK_3F))
+        out.add(table_char((n >> 12) & MASK_3F))
+        out.add("==")
     } else if (remain == 2) {
         int b0 = input.byte(i)
         int b1 = input.byte(i + 1)
         int n = (b0 << 16) | (b1 << 8)
-        result += table_char((n >> 18) & MASK_3F)
-        result += table_char((n >> 12) & MASK_3F)
-        result += table_char((n >> 6) & MASK_3F)
-        result += "="
+        out.add(table_char((n >> 18) & MASK_3F))
+        out.add(table_char((n >> 12) & MASK_3F))
+        out.add(table_char((n >> 6) & MASK_3F))
+        out.add("=")
     }
 
-    return result
+    return strings.join(out, "")
 }
 
 // Base64 解码
 func base64_decode(string input):string {
-    var result = ""
+    // ★ 收字节进数组、最后一趟 from_bytes（2026-10-02 API 收口）：原先每字节 += ⇒ O(n²) ✓
+    Array[int] out = []
     int len = input.byte_len()
 
     if (not is_valid_base64(input)) {
@@ -125,9 +128,9 @@ func base64_decode(string input):string {
 
         int n = (c0 << 18) | (c1 << 12) | (c2 << 6) | c3
 
-        result += strings.char((n >> 16) & MASK_FF)
-        result += strings.char((n >> 8) & MASK_FF)
-        result += strings.char(n & MASK_FF)
+        out.add((n >> 16) & MASK_FF)
+        out.add((n >> 8) & MASK_FF)
+        out.add(n & MASK_FF)
 
         i = i + 4
     }
@@ -140,18 +143,18 @@ func base64_decode(string input):string {
 
         int n = (c0 << 18) | (c1 << 12) | (c2 << 6)
 
-        result += strings.char((n >> 16) & MASK_FF)
-        result += strings.char((n >> 8) & MASK_FF)
+        out.add((n >> 16) & MASK_FF)
+        out.add((n >> 8) & MASK_FF)
     } else if (pad == 2) {
         int c0 = DECODE_TABLE[input.byte(i)]
         int c1 = DECODE_TABLE[input.byte(i + 1)]
 
         int n = (c0 << 18) | (c1 << 12)
 
-        result += strings.char((n >> 16) & MASK_FF)
+        out.add((n >> 16) & MASK_FF)
     }
 
-    return result
+    return strings.from_bytes(out)
 }
 
 // 获取 Base64 字符对应的 6 位值

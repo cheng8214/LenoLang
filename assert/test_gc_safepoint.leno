@@ -263,37 +263,19 @@ func aes_decrypt_block(Array[int] ciphertext, Array[int] key):Array[int] {
 // ==================== 字符串接口 ====================
 
 // Hex 工具
-func byte_to_hex(int b):string {
-    b = _uint8(b)
-    var hex_chars = "0123456789abcdef"
-    return hex_chars.slice(_uint8(b >> 4) & 0xF, (_uint8(b >> 4) & 0xF) + 1) + hex_chars.slice(b & 0xF, (b & 0xF) + 1)
-}
-
-func hex_nibble(int b):int {
-    if (b >= 48 and b <= 57) { return b - 48 }
-    if (b >= 97 and b <= 102) { return b - 87 }
-    if (b >= 65 and b <= 70) { return b - 55 }
-    return 0
-}
+// (2026-10-02) 手写的 `byte_to_hex` / `hex_nibble` 已删：使用者 `bytes_to_hex` / `hex_to_bytes`
+//   收编进 native `strings.to_hex` / `strings.from_hex` 后它们零引用 ✓
 
 func hex_to_bytes(string hex):Array[int] {
-    var result = []
-    int i = 0
-    while (i + 1 < hex.byte_len()) {
-        int hi = hex_nibble(hex.byte(i))
-        int lo = hex_nibble(hex.byte(i + 1))
-        result.add((hi << 4) | lo)
-        i = i + 2
-    }
-    return result
+    // 2026-10-02 API 收口：手写 hex→字节 ⇒ `from_hex` + `to_bytes` ✓
+    //   ⚠ 变严：原先非法字符静默当 0、奇数长度静默丢尾 ⇒ 现在都抛错
+    return strings.from_hex(hex).to_bytes()
 }
 
 func bytes_to_hex(Array[int] bytes):string {
-    var result = ""
-    for 0:bytes.len() - 1 to i {
-        result += byte_to_hex(bytes[i])
-    }
-    return result
+    // 2026-10-02 API 收口：逐字节拼串 O(n²) ⇒ `from_bytes` + `to_hex`（各一趟分配）✓
+    //   本用例是 GC 安全点测试（大量分配触发 GC）⇒ 少 O(n²) 的垃圾量也顺带是收益 ✓
+    return strings.to_hex(strings.from_bytes(bytes))
 }
 
 // PKCS7 填充
@@ -332,11 +314,9 @@ func str_to_block(string s, int offset):Array[int] {
 
 // 字节块转字符串
 func block_to_str(Array[int] block):string {
-    var result = ""
-    for 0:block.len() - 1 to i {
-        result += strings.char(block[i])
-    }
-    return result
+    // 2026-10-02 API 收口：块是 0-255 字节数组 ⇒ 直接 from_bytes（原先逐字节 += 是 O(n²)）。
+    //   本用例是 GC 安全点测试（大量分配触发 GC）⇒ 换成一趟分配也顺带少了 O(n²) 的垃圾量 ✓
+    return strings.from_bytes(block)
 }
 
 // AES-128 加密字符串（ECB 模式 + PKCS7 填充）

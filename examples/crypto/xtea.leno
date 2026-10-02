@@ -136,37 +136,15 @@ func xtea_decrypt(string key, string ciphertext):string {
 
 // ==================== Hex 工具 ====================
 
-func byte_to_hex(int b):string {
-    b = b & 0xFF
-    var hex_chars = "0123456789abcdef"
-    return hex_chars.slice((b >> 4) & 0xF, ((b >> 4) & 0xF) + 1) + hex_chars.slice(b & 0xF, (b & 0xF) + 1)
-}
-
+// 2026-10-02 API 收口：手写"字节串 → hex"（本目录抄了 8 份）⇒ 收编进 native `strings.to_hex` ✓
 func to_hex(string input):string {
-    var result = ""
-    for 0:input.byte_len() - 1 to i {
-        result += byte_to_hex(input.byte(i))
-    }
-    return result
+    return strings.to_hex(input)
 }
 
-func hex_char_val(int b):int {
-    if (b >= 48 and b <= 57) { return b - 48 }
-    if (b >= 97 and b <= 102) { return b - 87 }
-    if (b >= 65 and b <= 70) { return b - 55 }
-    throw "Invalid hex character"
-}
-
+// 2026-10-02 API 收口：`hex_char_val` + 本函数原先是手写的"hex 文本 → 字节串"
+//   （同一份被抄进本目录 9 个示例）⇒ 收编进 native `strings.from_hex`，只留转发 ✓
 func from_hex(string hex_str):string {
-    var result = ""
-    int i = 0
-    while (i + 1 < hex_str.byte_len()) {
-        int hi = hex_char_val(hex_str.byte(i))
-        int lo = hex_char_val(hex_str.byte(i + 1))
-        result += strings.char((hi << 4) | lo)
-        i += 2
-    }
-    return result
+    return strings.from_hex(hex_str)
 }
 
 // ==================== 便捷接口 ====================

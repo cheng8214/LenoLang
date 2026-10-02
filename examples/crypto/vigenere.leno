@@ -38,7 +38,10 @@ func vigenere_encrypt(string key, string plaintext, bool preserve_case, bool pre
     }
     if (key_indices.len() == 0) { return plaintext }
 
-    var result = ""
+    // ★ 收字节进数组、最后一趟 from_bytes（2026-10-02 API 收口）：
+    //   原先每个字符 `result += strings.char(...)` ⇒ 整段 **O(n²)**（字符串 += 重新分配整串）。
+    //   这里全程只需**字节值**（`c` / `index_to_char*` 返回的都是 int）⇒ 正好直接喂 from_bytes ✓
+    Array[int] out = []
     int key_pos = 0
 
     for 0:plaintext.byte_len() - 1 to i {
@@ -48,7 +51,7 @@ func vigenere_encrypt(string key, string plaintext, bool preserve_case, bool pre
         if (p_idx < 0) {
             // 非字母字符
             if (preserve_non_alpha) {
-                result += strings.char(c)
+                out.add(c)
             }
             continue
         }
@@ -62,13 +65,13 @@ func vigenere_encrypt(string key, string plaintext, bool preserve_case, bool pre
 
         // 输出
         if (preserve_case and c >= 97 and c <= 122) {
-            result += strings.char(index_to_char_lower(enc_idx))
+            out.add(index_to_char_lower(enc_idx))
         } else {
-            result += strings.char(index_to_char(enc_idx))
+            out.add(index_to_char(enc_idx))
         }
     }
 
-    return result
+    return strings.from_bytes(out)
 }
 
 // Vigenere 解密
@@ -83,7 +86,8 @@ func vigenere_decrypt(string key, string ciphertext, bool preserve_case, bool pr
     }
     if (key_indices.len() == 0) { return ciphertext }
 
-    var result = ""
+    // ★ 同 encrypt：收进数组、一趟 from_bytes（原先逐字符 += ⇒ O(n²)）
+    Array[int] out = []
     int key_pos = 0
 
     for 0:ciphertext.byte_len() - 1 to i {
@@ -92,7 +96,7 @@ func vigenere_decrypt(string key, string ciphertext, bool preserve_case, bool pr
 
         if (c_idx < 0) {
             if (preserve_non_alpha) {
-                result += strings.char(c)
+                out.add(c)
             }
             continue
         }
@@ -104,13 +108,13 @@ func vigenere_decrypt(string key, string ciphertext, bool preserve_case, bool pr
         int dec_idx = ((c_idx - shift) % 26 + 26) % 26
 
         if (preserve_case and c >= 97 and c <= 122) {
-            result += strings.char(index_to_char_lower(dec_idx))
+            out.add(index_to_char_lower(dec_idx))
         } else {
-            result += strings.char(index_to_char(dec_idx))
+            out.add(index_to_char(dec_idx))
         }
     }
 
-    return result
+    return strings.from_bytes(out)
 }
 
 // ==================== 便捷接口 ====================

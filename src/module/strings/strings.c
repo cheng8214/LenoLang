@@ -1540,17 +1540,27 @@ static Value str_from_bytes(int argc, Value* args) {
     return val_obj((Object*)result);
 }
 
-// to_hex(s) —— 字节串 → hex 文本（大写，每字节两位）
+// to_hex(s, upper?) —— 字节串 → hex 文本（每字节两位）
+//   **默认小写**（2026-10-02 收编时定的口径）：仓库里现有的 19 处手写实现
+//   （crypto 示例 9 份 `to_hex` + sha/md5/hmac/pbkdf2 里的 `byte_to_hex`）**清一色小写**，
+//   且 SHA/MD5 摘要的通行写法也是小写 ⇒ 默认小写才能"换上以后输出一字不变" ✓
+//   （原先本函数只输出大写，那样换上去会让 19 处输出全变大写 ✗）
+//   `upper=true` 保留大写能力（= 本函数最早的默认行为）。
 static Value str_to_hex(int argc, Value* args) {
-    (void)argc;
     ObjString* s = (ObjString*)val_as_obj(args[0]);
+
+    int upper = 0;
+    if (argc >= 2 && !val_is_null(args[1])) {
+        upper = val_as_bool(args[1]);
+    }
+    const char* digits = upper ? "0123456789ABCDEF" : "0123456789abcdef";
 
     char* buf = (char*)malloc((size_t)s->len * 2 + 1);
     if (!buf) { native_throw_error("内存分配失败"); return val_null(); }
     for (int i = 0; i < s->len; i++) {
         unsigned char b = (unsigned char)s->chars[i];
-        buf[i * 2]     = "0123456789ABCDEF"[b >> 4];
-        buf[i * 2 + 1] = "0123456789ABCDEF"[b & 0xF];
+        buf[i * 2]     = digits[b >> 4];
+        buf[i * 2 + 1] = digits[b & 0xF];
     }
     buf[s->len * 2] = '\0';
 
@@ -1808,7 +1818,10 @@ void strings_init_module(void) {
     native_register_module_method_spec("strings", "to_bytes", str_to_bytes, 1, -1, -1, &NATIVE_T_ARR_INT, bytes_str_params);
     TypeKind bytes_arr_params[] = {TYPE_ARRAY};
     native_register_module_method_spec("strings", "from_bytes", str_from_bytes, 1, -1, -1, &NATIVE_T_STRING, bytes_arr_params);
-    native_register_module_method_spec("strings", "to_hex", str_to_hex, 1, -1, -1, &NATIVE_T_STRING, bytes_str_params);
+    // `to_hex` 的第二个参数是**可选**的 upper（默认小写；见 str_to_hex 的注释）⇒ 按"可变参数"注册
+    //   （arity == -1 + min/max；参数类型在下面 native_set_method_vararg_params 处声明 ✓）
+    TypeKind tohex_params[] = {TYPE_STRING, TYPE_BOOL};
+    native_register_module_method_spec("strings", "to_hex", str_to_hex, -1, 1, 2, &NATIVE_T_STRING, tohex_params);
     native_register_module_method_spec("strings", "from_hex", str_from_hex, 1, -1, -1, &NATIVE_T_STRING, bytes_str_params);
     TypeKind two_str_check_params[] = {TYPE_STRING, TYPE_STRING};
     native_register_module_method_spec("strings", "eq_ignore_case", str_eq_ignore_case, 2, -1, -1, &NATIVE_T_BOOL, two_str_check_params);
@@ -1826,6 +1839,7 @@ void strings_init_module(void) {
     native_set_method_vararg_params("strings", "find",      4, find_params,      TYPE_ANY);
     native_set_method_vararg_params("strings", "byte",      2, byte_params,      TYPE_ANY);
     native_set_method_vararg_params("strings", "byte_find", 3, byte_find_params, TYPE_ANY);
+    native_set_method_vararg_params("strings", "to_hex",     2, tohex_params,     TYPE_ANY);
     native_set_method_vararg_params("strings", "pad_start", 3, pad_params,       TYPE_ANY);
     native_set_method_vararg_params("strings", "pad_end",   3, pad_params,       TYPE_ANY);
     native_set_method_vararg_params("strings", "hex",       2, hex_params,       TYPE_ANY);
@@ -1908,7 +1922,10 @@ void strings_init_instance_methods(void) {
     //   （from_bytes 只做模块式：它的接收者是数组，不是字符串）
     string_register_method_with_params("to_bytes", make_native(str_to_bytes, 1, "to_bytes"), 0, -1, -1, TYPE_ARRAY, TYPE_UNKNOWN, NULL);
     native_register_instance_method_return_spec("string", "to_bytes", &NATIVE_T_ARR_INT);
-    string_register_method_with_params("to_hex", make_native(str_to_hex, 1, "to_hex"), 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, NULL);
+    // arity 必须传 **-1**：实例方法的检查器里 `arity >= 0` 表示**精确匹配**（min/max 被忽略 ✗，
+    //   见 visit_expr.inc:892），只有 `arity == -1` 才按 min/max 放行可选参数 ✓
+    TypeKind tohex_bool_param[] = {TYPE_BOOL};
+    string_register_method_with_params("to_hex", make_native(str_to_hex, -1, "to_hex"), -1, 0, 1, TYPE_STRING, TYPE_UNKNOWN, tohex_bool_param);
     string_register_method_with_params("from_hex", make_native(str_from_hex, 1, "from_hex"), 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, NULL);
     TypeKind one_str_params[] = {TYPE_STRING};
     string_register_method_with_params("eq_ignore_case", make_native(str_eq_ignore_case, 2, "eq_ignore_case"), 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, one_str_params);

@@ -23,13 +23,6 @@ func right_rotate(int x, int c):int {
     return _int32(hi | lo)
 }
 
-func byte_to_hex(int b):string {
-    var hex_chars = "0123456789abcdef"
-    int hi = (b >> 4) & 0x0F
-    int lo = b & 0x0F
-    return strings.char(hex_chars.byte(hi)) + strings.char(hex_chars.byte(lo))
-}
-
 func append_be32(Array[int] arr, int v) {
     arr.add((_uint32(v) >> 24) & 0xFF)
     arr.add((_uint32(v) >> 16) & 0xFF)
@@ -145,9 +138,8 @@ func xor_bytes_inplace(Array[int] a, Array[int] b) {
 
 // 字节数组转十六进制字符串
 func bytes_to_hex(Array[int] bytes):string {
-    var result = ""
-    for bytes.len() to i { result += byte_to_hex(bytes[i]) }
-    return result
+    // 2026-10-02 API 收口：逐字节拼串 O(n²) ⇒ `from_bytes` + `to_hex` ✓
+    return strings.to_hex(strings.from_bytes(bytes))
 }
 
 // 字符串转字节数组

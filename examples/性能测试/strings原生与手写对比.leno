@@ -27,7 +27,8 @@ func hand_to_bytes(string s):Array[int] {
 
 // ---- 3. hex 编码：手写查表 + 两次 slice + 两次拼接（crypto/PE 里的写法）----
 func hand_to_hex(string s):string {
-    var digits = "0123456789ABCDEF"
+    // 数字表跟仓库里 19 处手写实现一致：**小写**（= `to_hex()` 的默认口径 ✓）
+    var digits = "0123456789abcdef"
     var out = ""
     int i = 0
     while i < s.len() {

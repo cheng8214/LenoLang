@@ -737,14 +737,20 @@ strings.from_bytes([72, 105])    // "Hi"
 
 > ⚠ `from_bytes` 的元素**越界或非 int 会抛错**（不静默截断/回绕 —— 那是"静默错值"的经典来源）。
 
-#### `to_hex()` / `from_hex()`
+#### `to_hex(upper?)` / `from_hex()`
 
-字节串 ↔ hex 文本（**大写**输出；`from_hex` 大小写都收）。
+字节串 ↔ hex 文本（**默认小写**；`upper=true` 输出大写；`from_hex` 大小写都收）。
 
 ```leno
 "Hi".to_hex()             // "4869"
+"中".to_hex()             // "e4b8ad"   ← 默认小写
+"中".to_hex(true)         // "E4B8AD"
 strings.from_hex("4869")  // "Hi"
 ```
+
+> **默认为什么是小写**：收编时数出来的 19 处手写实现（crypto 示例 9 份 `to_hex` +
+> `sha*/md5/hmac/pbkdf2` 里的 `byte_to_hex`）**清一色小写**，SHA/MD5 摘要的通行写法也是小写
+> ⇒ 只有默认小写才能"换上去以后输出一字不变" ✓（本 API 最早只输出大写，那样会让这 19 处全部改样 ✗）。
 
 > ⚠ 别与 `hex(value, width)` 混：那个是**数字 → hex 文本**，这两个是**字节串 ↔ hex 文本**。
 > ⚠ `from_hex` 对**奇数长度**或**非 hex 字符**抛错（并指出第几个字符），不静默跳过。
