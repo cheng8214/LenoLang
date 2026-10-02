@@ -8,13 +8,18 @@
 //   · `to_lower(a)==to_lower(b)` 7 处 → `eq_ignore_case`（对拍 3025 对 0 分歧）
 //   · `slice(i,i+1)` 逐字符扫描 9 处 → `byte(i)`+数值区间 / `codepoint_at` / `to_codepoints`+`from_codepoint`
 //     （测宽循环那 4 处靠 ⑦ 这条"cps[i] 还原 == slice(i,i+1)"替掉 O(n²) 扫描）
-//   · `strings.char` **逐字节累加**（`x = x + strings.char(b)` 形态）全部收编（2026-10-03）：
+//   · `strings.char` **逐字节累加**（`x = x + strings.char(b)` 形态）已收编部分（2026-10-03）：
 //     crypto 家族 13 份 byte_to_hex（43 处调用）→ `from_bytes(...).to_hex()`；
 //     web_crawler 4 + pe_analyzer 5 + web_html 26 处 → 一律"字节先收 `Array[int]`，
 //     在消费点/末尾一趟 `strings.from_bytes`"✓
 //     证据：① `from_bytes(数组) == 逐字节 strings.char 拼接`（0-255 全量 / 多字节文本 / 空数组对拍 0 分歧）
 //           ② web 两模块"改动前后逐字对拍"：URL / HTML / CDATA / script / 实体 / **16 条选择器**用例，
 //              52 行输出全同 ✓；③ 21 个加密示例与逐字基线一致 ✓
+//     ⚠ **仍有 44 处未收编**（2026-10-03 全仓统计，排除注释）：vigenere 6、caesar 6、康托尔对角线 4、
+//       patch_title 3、chacha20 2、以及 chacha20_1/2、rc4、xtea、tea、speck、rc5、aes128、crypto_aes、
+//       sys_parse、w32_memory、pe 的 test_analyzer、若干 assert 用例各 1。
+//       其中**一次性追加**（如 `padding += strings.char(pad_len)`，只执行一次）不构成 O(n²) ⇒ 无收编必要；
+//       loop 型的（vigenere/caesar/chacha20/rc4 等）可按同一口径继续收编（crypto 示例有逐字基线可对拍 ✓）
 // 判据：
 //   ① 往返一致（bytes/hex/codepoints 三条都要"来回一趟 == 原串"）
 //   ② 硬编码期望值（防"两边一起漂"）——含中文 3 字节与 emoji 4 字节
