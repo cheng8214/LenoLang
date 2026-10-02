@@ -232,17 +232,18 @@ func _isSpace(int b): bool {
 // ==================== 解析器 ====================
 
 func _parseTagName(_ParseCtx ctx): string {
-    string tag = ""
+    // ★ 2026-10-03 收编：字节先收数组，末尾一趟 from_bytes ✓（tag 名很短，收益有限但口径统一）
+    Array[int] tag_bytes = []
     while ctx.pos < ctx.html.len(){
         int b = ctx.html.byte(ctx.pos)
         if _isAlphaNum(b) or b == 45 or b == 95 {
-            tag = tag + strings.char(b)
+            tag_bytes.add(b)
             ctx.pos = ctx.pos + 1
         } else {
             break
         }
     }
-    return tag
+    return strings.from_bytes(tag_bytes)
 }
 
 func _skipWs(_ParseCtx ctx) {
@@ -276,14 +277,17 @@ func _parseAttrs(_ParseCtx ctx): Dict[string, string] {
             continue
         }
         string name = ""
+        // ★ 2026-10-03 收编：属性名先收字节，循环后物化 ✓（`name` 的声明保留在上方）
+        Array[int] name_bytes = []
         while ctx.pos < len {
             int ch = ctx.html.byte(ctx.pos)
             if _isSpace(ch) or ch == 61 or ch == 62 or ch == 47 or ch == 60 or ch == 38 {
                 break
             }
-            name = name + strings.char(ch)
+            name_bytes.add(ch)
             ctx.pos = ctx.pos + 1
         }
+        name = strings.from_bytes(name_bytes)
         if name == "" {
             ctx.pos = ctx.pos + 1
             continue
@@ -294,6 +298,9 @@ func _parseAttrs(_ParseCtx ctx): Dict[string, string] {
             ctx.pos = ctx.pos + 1
         }
         string val = ""
+        // ★ 2026-10-03 收编：属性值（本函数 2 处 `+= strings.char`，带引号/不带引号两条路）
+        //   ⇒ 先收字节，两路走完在下面统一物化一次 ✓（属性值可能较长 ✓）
+        Array[int] val_bytes = []
         if ctx.pos < len and ctx.html.byte(ctx.pos) == 61 {
             ctx.pos = ctx.pos + 1
             while ctx.pos < len and _isSpace(ctx.html.byte(ctx.pos)) {
@@ -311,7 +318,7 @@ func _parseAttrs(_ParseCtx ctx): Dict[string, string] {
                         ctx.pos = ctx.pos + 1
                         break
                     }
-                    val = val + strings.char(ch)
+                    val_bytes.add(ch)
                     ctx.pos = ctx.pos + 1
                 }
             } else {
@@ -321,10 +328,11 @@ func _parseAttrs(_ParseCtx ctx): Dict[string, string] {
                     if _isSpace(ch) or ch == 62 or ch == 47 {
                         break
                     }
-                    val = val + strings.char(ch)
+                    val_bytes.add(ch)
                     ctx.pos = ctx.pos + 1
                 }
             }
+            val = strings.from_bytes(val_bytes)
         } else {
             // 布尔属性：checked, disabled, selected 等
             // HTML 中布尔属性存在即表示 true，值设为属性名本身
@@ -336,17 +344,18 @@ func _parseAttrs(_ParseCtx ctx): Dict[string, string] {
 }
 
 func _parseText(_ParseCtx ctx): string {
-    string text = ""
+    // ★ 2026-10-03 收编：文本节点可达**较长**（正文）⇒ 字节先收数组，末尾一趟 from_bytes ✓
+    Array[int] text_bytes = []
     int len = ctx.html.len()
     while ctx.pos < len {
         int b = ctx.html.byte(ctx.pos)
         if b == 60 {
             break
         }
-        text = text + strings.char(b)
+        text_bytes.add(b)
         ctx.pos = ctx.pos + 1
     }
-    return text
+    return strings.from_bytes(text_bytes)
 }
 
 // 判断是否为 void 标签（不需要闭合标签）
@@ -421,7 +430,10 @@ func _codepointToUtf8(int cp): string {
 }
 
 func _decodeEntities(string text): string {
-    string result = ""
+    // ★ 2026-10-03 收编：实体解码的产出可达**整篇文本** ⇒ 改成字节数组累积，末尾一趟 from_bytes ✓
+    //   本函数同时有"追加字符串"的分支（解码出的实体 / `_codepointToUtf8`）⇒ 用 `to_bytes()`
+    //   把那两处也并入同一字节数组 ✓（`from_bytes(a+b) == from_bytes(a) + from_bytes(b)`）
+    Array[int] result_bytes = []
     int i = 0
     int len = text.len()
     while i < len {
@@ -461,13 +473,14 @@ func _decodeEntities(string text): string {
                     }
                 }
                 if codepoint > 0 and codepoint <= 1114111 {
-                    result = result + _codepointToUtf8(codepoint)
+                    for _codepointToUtf8(codepoint).to_bytes() to cb { result_bytes.add(cb) }
                 } else {
                     i = savePos + 1
-                    result = result + strings.char(38)
+                    result_bytes.add(38)   // '&'（原 `strings.char(38)`）
                 }
             } else {
-                string name = ""
+                // ★ 2026-10-03 收编：实体名先收字节，循环后物化 ✓（实体名很短，口径统一）
+                Array[int] name_bytes = []
                 while i < len {
                     int ch = text.byte(i)
                     if ch == 59 {
@@ -477,23 +490,24 @@ func _decodeEntities(string text): string {
                     if ch == 38 or _isSpace(ch) or ch == 60 or ch == 62 {
                         break
                     }
-                    name = name + strings.char(ch)
+                    name_bytes.add(ch)
                     i = i + 1
                 }
+                string name = strings.from_bytes(name_bytes)
                 string decoded = _namedEntity(name)
                 if decoded != "" {
-                    result = result + decoded
+                    for decoded.to_bytes() to db { result_bytes.add(db) }
                 } else {
                     i = savePos + 1
-                    result = result + strings.char(38)
+                    result_bytes.add(38)   // '&'（原 `strings.char(38)`）
                 }
             }
         } else {
-            result = result + strings.char(b)
+            result_bytes.add(b)
             i = i + 1
         }
     }
-    return result
+    return strings.from_bytes(result_bytes)
 }
 
 // ==================== 元素解析 ====================
@@ -537,16 +551,18 @@ func _parseElement(_ParseCtx ctx): HtmlNode? {
     // CDATA <![CDATA[ ... ]]>
     if ctx.pos + 8 < len and ctx.html.byte(ctx.pos+1) == 33 and ctx.html.byte(ctx.pos+2) == 91 and ctx.html.byte(ctx.pos+3) == 67 and ctx.html.byte(ctx.pos+4) == 68 and ctx.html.byte(ctx.pos+5) == 65 and ctx.html.byte(ctx.pos+6) == 84 and ctx.html.byte(ctx.pos+7) == 65 and ctx.html.byte(ctx.pos+8) == 91 {
         ctx.pos = ctx.pos + 9
-        string cdata = ""
+        // ★ 2026-10-03 收编：CDATA 内容先收字节，末尾一趟 `strings.from_bytes`（替代逐字符拼串的 O(n²)）✓
+        //   等价性：0-255 全量 / 多字节文本 / 空数组对拍 0 分歧（accum_eq ✓）
+        Array[int] cdata_bytes = []
         while ctx.pos < len {
             if ctx.pos + 2 < len and ctx.html.byte(ctx.pos) == 93 and ctx.html.byte(ctx.pos+1) == 93 and ctx.html.byte(ctx.pos+2) == 62 {
                 ctx.pos = ctx.pos + 3
                 break
             }
-            cdata = cdata + strings.char(ctx.html.byte(ctx.pos))
+            cdata_bytes.add(ctx.html.byte(ctx.pos))
             ctx.pos = ctx.pos + 1
         }
-        return _makeNode("#text", {}, [], cdata)
+        return _makeNode("#text", {}, [], strings.from_bytes(cdata_bytes))
     }
 
     // DOCTYPE / 其他声明 <!...>
@@ -595,7 +611,10 @@ func _parseElement(_ParseCtx ctx): HtmlNode? {
 
     // script/style 标签：原始内容直接读取
     if tagName == "script" or tagName == "style" {
-        string rawContent = ""
+        // ★ 2026-10-03 收编：script/style 的原始内容先收字节（本函数 2 处 `+= strings.char`），
+        //   两个使用点（循环内提前 return / 循环后 return）各物化一次 ✓
+        //   等价性：0-255 全量 / 多字节 / 空数组对拍 0 分歧（accum_eq ✓）
+        Array[int] raw_bytes = []
         while ctx.pos < len {
             if ctx.html.byte(ctx.pos) == 60 and ctx.pos+1 < len and ctx.html.byte(ctx.pos+1) == 47 {
                 int savePos = ctx.pos
@@ -607,18 +626,18 @@ func _parseElement(_ParseCtx ctx): HtmlNode? {
                     if ctx.pos < len and ctx.html.byte(ctx.pos) == 62 {
                         ctx.pos = ctx.pos + 1
                     }
-                    return _makeNode(tagName, attrs, [], rawContent)
+                    return _makeNode(tagName, attrs, [], strings.from_bytes(raw_bytes))
                 } else {
                     ctx.pos = savePos
-                    rawContent = rawContent + strings.char(ctx.html.byte(ctx.pos))
+                    raw_bytes.add(ctx.html.byte(ctx.pos))
                     ctx.pos = ctx.pos + 1
                 }
             } else {
-                rawContent = rawContent + strings.char(ctx.html.byte(ctx.pos))
+                raw_bytes.add(ctx.html.byte(ctx.pos))
                 ctx.pos = ctx.pos + 1
             }
         }
-        return _makeNode(tagName, attrs, [], rawContent)
+        return _makeNode(tagName, attrs, [], strings.from_bytes(raw_bytes))
     }
 
     // 普通标签
@@ -641,15 +660,17 @@ func _parseElement(_ParseCtx ctx): HtmlNode? {
             // CDATA in body
             if ctx.pos + 8 < len and ctx.html.byte(ctx.pos+1) == 33 and ctx.html.byte(ctx.pos+2) == 91 and ctx.html.byte(ctx.pos+3) == 67 and ctx.html.byte(ctx.pos+4) == 68 and ctx.html.byte(ctx.pos+5) == 65 and ctx.html.byte(ctx.pos+6) == 84 and ctx.html.byte(ctx.pos+7) == 65 and ctx.html.byte(ctx.pos+8) == 91 {
                 ctx.pos = ctx.pos + 9
-                string cdata = ""
+                // ★ 2026-10-03 收编：CDATA 先收字节，循环后物化一次 ✓
+                Array[int] cdata_bytes = []
                 while ctx.pos < len {
                     if ctx.pos + 2 < len and ctx.html.byte(ctx.pos) == 93 and ctx.html.byte(ctx.pos+1) == 93 and ctx.html.byte(ctx.pos+2) == 62 {
                         ctx.pos = ctx.pos + 3
                         break
                     }
-                    cdata = cdata + strings.char(ctx.html.byte(ctx.pos))
+                    cdata_bytes.add(ctx.html.byte(ctx.pos))
                     ctx.pos = ctx.pos + 1
                 }
+                string cdata = strings.from_bytes(cdata_bytes)
                 if cdata != "" {
                     textContent = textContent + cdata
                     children.add(_makeNode("#text", {}, [], cdata))
@@ -719,15 +740,17 @@ export func parse(string html): HtmlNode {
                 if ctx.pos + 8 < len and ctx.html.byte(ctx.pos+2) == 91 and ctx.html.byte(ctx.pos+3) == 67 and ctx.html.byte(ctx.pos+4) == 68 and ctx.html.byte(ctx.pos+5) == 65 and ctx.html.byte(ctx.pos+6) == 84 and ctx.html.byte(ctx.pos+7) == 65 and ctx.html.byte(ctx.pos+8) == 91 {
                     // CDATA
                     ctx.pos = ctx.pos + 9
-                    string cdata = ""
+                    // ★ 2026-10-03 收编：CDATA 先收字节，循环后物化一次 ✓
+                    Array[int] cdata_bytes = []
                     while ctx.pos < len {
                         if ctx.pos + 2 < len and ctx.html.byte(ctx.pos) == 93 and ctx.html.byte(ctx.pos+1) == 93 and ctx.html.byte(ctx.pos+2) == 62 {
                             ctx.pos = ctx.pos + 3
                             break
                         }
-                        cdata = cdata + strings.char(ctx.html.byte(ctx.pos))
+                        cdata_bytes.add(ctx.html.byte(ctx.pos))
                         ctx.pos = ctx.pos + 1
                     }
+                    string cdata = strings.from_bytes(cdata_bytes)
                     if cdata != "" {
                         root.children.add(_makeNode("#text", {}, [], cdata))
                     }
@@ -883,6 +906,8 @@ export func stripTags(string html): string {
     string out = ""
     int n = html.len()
     bool inTag = false
+    // ★ 2026-10-03 收编：非标签内容先收字节，末尾一趟 `strings.from_bytes`（替代逐字符拼串的 O(n²)）✓
+    Array[int] out_bytes = []
     for 0:n-1 to i {
         int b = html.byte(i)
         if b == 60 {
@@ -893,10 +918,11 @@ export func stripTags(string html): string {
             inTag = false
         } else {
             if not inTag {
-                out = out + strings.char(b)
+                out_bytes.add(b)
             }
         }
     }
+    out = strings.from_bytes(out_bytes)
     return cleanText(out)
 }
 
@@ -1193,40 +1219,43 @@ func _parseSimple(string selector): SelectorPart {
         int b = selector.byte(i)
         if b == 46 {
             i = i + 1
-            string cls = ""
+            // ★ 2026-10-03 收编：类名先收字节，循环后物化 ✓（选择器 token 很短，收益有限但口径统一）
+            Array[int] cls_bytes = []
             while i < slen {
                 int ch = selector.byte(i)
                 if ch == 46 or ch == 35 or ch == 91 or ch == 58 {
                     break
                 }
-                cls = cls + strings.char(ch)
+                cls_bytes.add(ch)
                 i = i + 1
             }
-            r.classes.add(cls)
+            r.classes.add(strings.from_bytes(cls_bytes))
         } else if b == 35 {
             i = i + 1
-            string idVal = ""
+            // ★ 2026-10-03 收编：id 先收字节，循环后物化 ✓
+            Array[int] id_bytes = []
             while i < slen {
                 int ch = selector.byte(i)
                 if ch == 46 or ch == 35 or ch == 91 or ch == 58 {
                     break
                 }
-                idVal = idVal + strings.char(ch)
+                id_bytes.add(ch)
                 i = i + 1
             }
-            r.id = idVal
+            r.id = strings.from_bytes(id_bytes)
         } else if b == 91 {
             i = i + 1
-            string attrName = ""
+            // ★ 2026-10-03 收编：属性名先收字节，循环后物化 ✓
+            Array[int] attr_name_bytes = []
             while i < slen {
                 int ch = selector.byte(i)
                 if ch == 61 or ch == 94 or ch == 36 or ch == 42 or ch == 93 {
                     break
                 }
-                attrName = attrName + strings.char(ch)
+                attr_name_bytes.add(ch)
                 i = i + 1
             }
-            r.attrName = attrName
+            r.attrName = strings.from_bytes(attr_name_bytes)
             r.hasAttr = true
             r.attrOp = "="
             if i < slen {
@@ -1249,7 +1278,9 @@ func _parseSimple(string selector): SelectorPart {
                 }
                 if i <= slen and i - 1 < slen {
                     // 读取属性值：支持引号（'x' 或 "x"）和无引号，到 ] 为止
-                    string attrVal = ""
+                    // ★ 2026-10-03 收编：属性值（引号 / 无引号两条路，本函数 2 处 `+= strings.char`）
+                    //   ⇒ 先收字节，两路走完在 `r.attrValue = ...` 处统一物化一次 ✓
+                    Array[int] attr_val_bytes = []
                     // 跳过 '=' 后的空白
                     while i < slen and _isSpace(selector.byte(i)) {
                         i = i + 1
@@ -1268,7 +1299,7 @@ func _parseSimple(string selector): SelectorPart {
                                 if ch == 93 {
                                     break
                                 }
-                                attrVal = attrVal + strings.char(ch)
+                                attr_val_bytes.add(ch)
                                 i = i + 1
                             }
                         } else {
@@ -1278,12 +1309,12 @@ func _parseSimple(string selector): SelectorPart {
                                 if ch == 93 {
                                     break
                                 }
-                                attrVal = attrVal + strings.char(ch)
+                                attr_val_bytes.add(ch)
                                 i = i + 1
                             }
                         }
                     }
-                    r.attrValue = attrVal
+                    r.attrValue = strings.from_bytes(attr_val_bytes)
                 }
             }
             if i < slen and selector.byte(i) == 93 {
@@ -1292,32 +1323,34 @@ func _parseSimple(string selector): SelectorPart {
         } else if b == 58 {
             // 伪类 :first-child / :last-child / :nth-child(n) / :only-child
             i = i + 1
-            string pseudo = ""
+            // ★ 2026-10-03 收编：伪类名先收字节，循环后物化 ✓
+            Array[int] pseudo_bytes = []
             while i < slen {
                 int ch = selector.byte(i)
                 if ch == 40 or ch == 46 or ch == 35 or ch == 91 or ch == 58 or ch == 62 {
                     break
                 }
-                pseudo = pseudo + strings.char(ch)
+                pseudo_bytes.add(ch)
                 i = i + 1
             }
-            r.pseudo = pseudo
+            r.pseudo = strings.from_bytes(pseudo_bytes)
             if i < slen and selector.byte(i) == 40 {
                 // nth-child(n)
                 i = i + 1
-                string arg = ""
+                // ★ 2026-10-03 收编：伪类参数先收字节，循环后物化 ✓
+                Array[int] arg_bytes = []
                 while i < slen {
                     int ch = selector.byte(i)
                     if ch == 41 {
                         break
                     }
-                    arg = arg + strings.char(ch)
+                    arg_bytes.add(ch)
                     i = i + 1
                 }
                 if i < slen and selector.byte(i) == 41 {
                     i = i + 1
                 }
-                r.pseudoArg = arg
+                r.pseudoArg = strings.from_bytes(arg_bytes)
             }
         } else {
             break
@@ -1335,17 +1368,22 @@ func _splitSelector(string selector): Array[SelectorPart] {
     bool lastWasChild = false
     int bracketDepth = 0   // 属性选择器 [ ] 深度：内部空格不当作分隔符
 
+    // ★ 2026-10-03 收编：当前选择器片段先收字节，三处使用点（'<' / '>' 分隔、空白分隔、末尾）
+    //   各物化一次 ✓；不变式 `current == from_bytes(current_bytes)` 在每个使用点都成立 ✓
+    Array[int] current_bytes = []
     while i < slen {
         int b = selector.byte(i)
         if b == 91 {   // '[' 进入属性选择器
             bracketDepth = bracketDepth + 1
-            current = current + strings.char(b)
+            current_bytes.add(b)
             i = i + 1
         } else if b == 93 {   // ']' 离开属性选择器
             if bracketDepth > 0 { bracketDepth = bracketDepth - 1 }
-            current = current + strings.char(b)
+            current_bytes.add(b)
             i = i + 1
         } else if b == 62 and bracketDepth == 0 {
+            current = strings.from_bytes(current_bytes)
+            current_bytes = []
             if current != "" {
                 SelectorPart parsed = _parseSimple(current)
                 parsed.isChild = false
@@ -1355,6 +1393,8 @@ func _splitSelector(string selector): Array[SelectorPart] {
             lastWasChild = true
             i = i + 1
         } else if _isSpace(b) and bracketDepth == 0 {
+            current = strings.from_bytes(current_bytes)
+            current_bytes = []
             if current != "" {
                 SelectorPart parsed = _parseSimple(current)
                 parsed.isChild = lastWasChild
@@ -1364,11 +1404,12 @@ func _splitSelector(string selector): Array[SelectorPart] {
             }
             i = i + 1
         } else {
-            current = current + strings.char(b)
+            current_bytes.add(b)
             i = i + 1
         }
     }
 
+    current = strings.from_bytes(current_bytes)
     if current != "" {
         SelectorPart parsed = _parseSimple(current)
         parsed.isChild = lastWasChild
@@ -1388,16 +1429,17 @@ func _hasWord(string str, string word): bool {
         while i < slen and _isSpace(str.byte(i)) {
             i = i + 1
         }
-        string w = ""
+        // ★ 2026-10-03 收编：词先收字节，循环后物化 ✓
+        Array[int] w_bytes = []
         while i < slen {
             int b = str.byte(i)
             if _isSpace(b) {
                 break
             }
-            w = w + strings.char(b)
+            w_bytes.add(b)
             i = i + 1
         }
-        if w == word {
+        if strings.from_bytes(w_bytes) == word {
             return true
         }
     }

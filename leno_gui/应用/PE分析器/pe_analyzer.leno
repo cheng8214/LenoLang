@@ -188,19 +188,22 @@ struct PEAnalyzer {
 
     // 从文件偏移读取 C 字符串（以 \0 结尾，最多 maxLen 字节）
     func readCString(int fileOff, int maxLen): string {
-        string s = ""
+        // ★ 2026-10-03 收编：原先逐字符拼串（每轮重建整串 ⇒ O(n²) ✗）⇒ 字节先收数组，末尾一趟 from_bytes ✓
+        //   两个分支统一成"追加一个字节"：可打印 ⇒ b；否则 ⇒ 46（'.'）✓
+        //   等价性：与逐字符 `strings.char` 拼接在 0-255 全量 / 多字节文本 / 空数组上对拍 0 分歧（accum_eq ✓）
+        Array[int] s_bytes = []
         int i = 0
         while i < maxLen and fileOff + i < fileSize {
             int b = fileData.byte(fileOff + i)
             if b == 0 { break }
             if b >= 0x20 and b <= 0x7E {
-                s = s + strings.char(b)
+                s_bytes.add(b)
             } else {
-                s = s + "."
+                s_bytes.add(46)   // '.'
             }
             i = i + 1
         }
-        return s
+        return strings.from_bytes(s_bytes)
     }
 
     // ==================== UI 构建 ====================
@@ -619,12 +622,14 @@ struct PEAnalyzer {
             int off = sectionTableOff + i * secSize
             if off + secSize > fileSize { break }
 
-            string name = ""
+            // ★ 2026-10-03 收编：字节先收数组，末尾一趟 from_bytes ✓（名称 ≤ 8 字节，收益有限但口径统一）
+            Array[int] name_bytes = []
             for 0:7 to j {
                 int b = fileData.byte(off + j)
                 if b == 0 { break }
-                name = name + strings.char(b)
+                name_bytes.add(b)
             }
+            string name = strings.from_bytes(name_bytes)
 
             int virtSize = readU32(fileData, off + 8)
             int virtAddr = readU32(fileData, off + 12)
@@ -844,16 +849,18 @@ struct PEAnalyzer {
             if rowEnd > dumpLen { rowEnd = dumpLen }
             string addr = toHex8(lenbOffset + rowOff)
             string hexData = ""
-            string asciiData = ""
+            // ★ 2026-10-03 收编：ascii 列先收字节（可打印 ⇒ 原字节；否则 ⇒ 46 '.'），末尾一趟 from_bytes ✓
+            Array[int] ascii_bytes = []
             for rowOff:rowEnd to j {
                 int byteVal = fileData.byte(lenbOffset + j)
                 hexData = hexData + toHex2(byteVal) + " "
                 if byteVal >= 0x20 and byteVal <= 0x7E {
-                    asciiData = asciiData + strings.char(byteVal)
+                    ascii_bytes.add(byteVal)
                 } else {
-                    asciiData = asciiData + "."
+                    ascii_bytes.add(46)   // '.'
                 }
             }
+            string asciiData = strings.from_bytes(ascii_bytes)
             int padCount = rowEnd - rowOff
             while padCount < 16 {
                 hexData = hexData + "   "
@@ -892,7 +899,8 @@ struct PEAnalyzer {
         }
         if strLen == 0 { return true }
         // 解密 — 内联 XOR key 计算（不调用 xorKey 函数：更快，且历史上那条路径出过算错问题）
-        string decrypted = ""
+        // ★ 2026-10-03 收编：解密结果先收字节，循环后一趟 from_bytes（替代逐字符拼串的 O(n²)）✓
+        Array[int] dec_bytes = []
         int j = 0
         while j < strLen {
             int b = fileData.byte(gLenbPos + j) & 0xFF
@@ -902,9 +910,10 @@ struct PEAnalyzer {
             if k == 2 { keyByte = 0x4E }
             if k == 3 { keyByte = 0x4F }
             int dec = (b ^ keyByte) & 0xFF
-            decrypted = decrypted + strings.char(dec)
+            dec_bytes.add(dec)
             j = j + 1
         }
+        string decrypted = strings.from_bytes(dec_bytes)
         gLenbPos = gLenbPos + strLen
         gXorFound = gXorFound + 1
         gXorRows.add([
@@ -1387,14 +1396,15 @@ struct PEAnalyzer {
             gLenbPos = gLenbPos + byteLen
             return "<long:" + _str(byteLen) + ">"
         }
-        string s = ""
+        // ★ 2026-10-03 收编：字节先收数组，末尾一趟 from_bytes ✓
+        Array[int] s_bytes = []
         for 0:byteLen-1 to i {
             int key = xorKey(i)
             int plain = (fileData.byte(gLenbPos) ^ key) & 0xFF
-            s = s + strings.char(plain)
+            s_bytes.add(plain)
             gLenbPos = gLenbPos + 1
         }
-        return s
+        return strings.from_bytes(s_bytes)
     }
 
     // 跳过一个 XOR 字符串 (只推进 gLenbPos，不解密)

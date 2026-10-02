@@ -83,12 +83,20 @@ export struct Url {
     // 规范化路径（合并 ./ .. 等）
     func normalizedPath(): string {
         Array segs = []
+        // ★ 2026-10-03 收编：原先逐字符 `cur = cur + strings.char(b)`（每轮重建整串 ⇒ O(n²) ✗）
+        //   ⇒ 字节先收进数组，到"消费点"（分隔符处 / 循环结束）再一趟 `strings.from_bytes` ✓
+        //   不变式：`cur == strings.from_bytes(cur_bytes)` 在每个消费点都成立 ✓
+        //   （依据 from_bytes(a+b) == from_bytes(a) + from_bytes(b)）
+        //   等价已证：0-255 全量 / 多字节文本 / 空数组逐一对拍 0 分歧（accum_eq 对拍 ✓）
+        Array[int] cur_bytes = []
         string cur = ""
         int i = 0
         int plen = path.len()
         while i < plen {
             int b = path.byte(i)
             if b == 47 {
+                cur = strings.from_bytes(cur_bytes)
+                cur_bytes = []
                 if cur == ".." {
                     if segs.len() > 0 { segs = segs[:segs.len() - 1] }
                 } else if cur != "." and cur != "" {
@@ -96,10 +104,12 @@ export struct Url {
                 }
                 cur = ""
             } else {
-                cur = cur + strings.char(b)
+                cur_bytes.add(b)
             }
             i = i + 1
         }
+        cur = strings.from_bytes(cur_bytes)
+        cur_bytes = []
         if cur == ".." {
             if segs.len() > 0 { segs = segs[:segs.len() - 1] }
         } else if cur != "." and cur != "" {
@@ -217,12 +227,17 @@ export struct Url {
 // 内部辅助：路径规范化（无状态，供 Url.resolve 使用）
 func _collapsePath(string path): string {
     Array segs = []
+    // ★ 2026-10-03 收编：同 `Url.normalizedPath` —— 字节先收数组，消费点一趟 from_bytes ✓
+    //   （不变式与等价性证据见上；`from_bytes(a+b) == from_bytes(a) + from_bytes(b)`）
+    Array[int] cur_bytes = []
     string cur = ""
     int i = 0
     int plen = path.len()
     while i < plen {
         int b = path.byte(i)
         if b == 47 {
+            cur = strings.from_bytes(cur_bytes)
+            cur_bytes = []
             if cur == ".." {
                 if segs.len() > 0 { segs = segs[:segs.len() - 1] }
             } else if cur != "." and cur != "" {
@@ -230,10 +245,12 @@ func _collapsePath(string path): string {
             }
             cur = ""
         } else {
-            cur = cur + strings.char(b)
+            cur_bytes.add(b)
         }
         i = i + 1
     }
+    cur = strings.from_bytes(cur_bytes)
+    cur_bytes = []
     if cur == ".." {
         if segs.len() > 0 { segs = segs[:segs.len() - 1] }
     } else if cur != "." and cur != "" {
@@ -277,24 +294,28 @@ export func parseUrl(string url): Url {
         noQuery = noFrag.slice(0, qi)
     }
     // 解析 scheme://host[:port]/path
+    // ★ 2026-10-03 收编：scheme 先收字节，循环后一趟 `strings.from_bytes`（替代逐字符拼串的 O(n²)）✓
     int pos = 0
-    string scheme = ""
+    Array[int] scheme_bytes = []
     while pos < noQuery.len() and noQuery.byte(pos) != 58 {
-        scheme = scheme + strings.char(noQuery.byte(pos))
+        scheme_bytes.add(noQuery.byte(pos))
         pos = pos + 1
     }
+    // ⚠ 保留局部 `scheme`：后面 `else if scheme != "" and pos >= noQuery.len()` 还要用它 ✓
+    string scheme = strings.from_bytes(scheme_bytes)
     u.scheme = scheme
     if pos + 2 < noQuery.len() and noQuery.byte(pos) == 58 and noQuery.byte(pos + 1) == 47 and noQuery.byte(pos + 2) == 47 {
         u.isAbsolute = true
         pos = pos + 3
-        string host = ""
+        // ★ 2026-10-03 收编：host 先收字节，循环后一趟 `strings.from_bytes` ✓
+        Array[int] host_bytes = []
         while pos < noQuery.len() {
             int b = noQuery.byte(pos)
             if b == 58 or b == 47 { break }
-            host = host + strings.char(b)
+            host_bytes.add(b)
             pos = pos + 1
         }
-        u.host = host
+        u.host = strings.from_bytes(host_bytes)
         if pos < noQuery.len() and noQuery.byte(pos) == 58 {
             pos = pos + 1
             int port = 0
