@@ -1130,5 +1130,32 @@ main() {
 ")
     ce.expect_ok(g9, "可空值先收窄（is / as / _str 三种）再传给 native ⇒ 合法并跑通", "6162")
 
+    // ---- F4：**顺序无关**（2026-10-03）----
+    //   需求在"访问定义体"时记录；调用点可能更早被访问（main 在前 / struct 前向引用）⇒
+    //   当场判会漏过 ✗ ⇒ 改为"调用点只登记、分析收尾统一复查" ✓
+    var g10 = dirs.join(work, "generic_order_fn.leno")
+    files.write(g10, @"import strings
+main() {
+    print(hexit(42))
+}
+func hexit[T](T x):string {
+    return strings.to_hex(x)
+}
+")
+    ce.expect_error(g10, "调用在定义之前（函数）⇒ 收尾仍要报出需求错", "需求不满足", 3)
+
+    var g11 = dirs.join(work, "generic_order_struct.leno")
+    files.write(g11, @"import strings
+main() {
+    Cell[int] c = new Cell[int](value=1)
+    print(c.bad())
+}
+struct Cell[T] {
+    T value
+    func bad():string { return strings.to_hex(self.value) }
+}
+")
+    ce.expect_error(g11, "调用在定义之前（struct 前向引用）⇒ 收尾仍要报出需求错", "需求不满足", 4)
+
     print("=== test_diag_static_errors ALL passed ===")
 }

@@ -1719,10 +1719,20 @@
                         //   ⇒ 用这里**推断出的类型实参**逐条判（定义处判不了：T 未知）✓
                         //   背景实测：`func hexit[T](T x){ return strings.to_hex(x) }` + `hexit(42)`
                         //   以前编译通过、运行期 exit=0xC0000005（C 侧把 int 的位型当指针解引用 ✗）
+                        //   ⚠ 本轮补（2026-10-03）：若某参数这里**推不出来**（"调用在前、定义在后" ⇒ 定义
+                        //     还没解析完，推断退化成 any ✗）⇒ 登记"收尾重新推断"，否则该形态会漏过 ✗
+                        int need_re_infer = 0;
                         for (int i = 0; i < func_def->u.func.type_param_count; i++) {
-                            if (!inferred_types[i] || !inferred_names[i]) continue;
-                            semantic_record_pending_req_check(s, NULL, func_name, inferred_names[i],
-                                                                inferred_types[i], ast);
+                            if (!inferred_names[i]) continue;
+                            if (inferred_types[i] && inferred_types[i]->kind != TYPE_ANY) {
+                                semantic_record_pending_req_check(s, NULL, func_name, inferred_names[i],
+                                                                  inferred_types[i], ast);
+                            } else {
+                                need_re_infer = 1;
+                            }
+                        }
+                        if (need_re_infer) {
+                            semantic_record_pending_generic_call(s, func_name, ast);
                         }
 
                         // 存储特化信息

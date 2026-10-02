@@ -71,8 +71,11 @@ typedef struct {
     Ast* call_ast;      // 调用点（报错位置就取它的 line/column ✓；AST 活得比本表久 ✓）
     char* owner_struct; // NULL = 自由函数
     char* func_name;    // 函数名 / 方法名
-    char* param_name;   // 类型参数名
-    TypeInfo* actual;   // 调用点推断出的类型实参（副本，flush 后释放 ✓）
+    char* param_name;   // 类型参数名（re_infer 时为 NULL ✓）
+    TypeInfo* actual;   // 调用点推断出的类型实参（副本，flush 后释放 ✓；re_infer 时为 NULL ✓）
+    // **收尾重新推断**标记（2026-10-03）：调用点那一刻函数定义还没解析完 ⇒ 推断结果退化成
+    //   `any`（典型场景：main 在前、被调函数在后）⇒ 只登记"这个泛型调用要在收尾重判" ✓
+    int re_infer;
 } PendingReqCheck;
 
 // ============================================================================

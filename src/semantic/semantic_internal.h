@@ -144,6 +144,9 @@ void semantic_check_generic_requirements(Semantic* s, const char* owner_struct, 
 //   分析收尾由 semantic_flush_pending_req_checks() 统一复查（否则调用点早于定义体时会漏过 ✗）
 void semantic_record_pending_req_check(Semantic* s, const char* owner_struct, const char* func_name,
                                        const char* param_name, TypeInfo* actual, Ast* call_ast);
+// 调用点那一刻**推不出**类型实参时登记它（如"调用在前、定义在后"）⇒ 收尾用 func_table 里
+//   已完整的定义**重新推断**再判 ✓（否则该形态会漏过 ✗）
+void semantic_record_pending_generic_call(Semantic* s, const char* callee_name, Ast* call_ast);
 void semantic_flush_pending_req_checks(Semantic* s);
 void semantic_free_generic_requirements(Semantic* s);
 

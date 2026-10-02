@@ -1586,6 +1586,29 @@ void semantic_record_pending_req_check(Semantic* s, const char* owner_struct, co
     p->func_name = strdup(func_name);
     p->param_name = strdup(param_name);
     p->actual = type_new(actual->kind);
+    p->re_infer = 0;
+}
+
+// 登记"**收尾重新推断**的泛型调用"（调用点那一刻函数定义还没解析完 ⇒ 推断退化成 any ✗）
+void semantic_record_pending_generic_call(Semantic* s, const char* callee_name, Ast* call_ast) {
+    if (!s || !callee_name || !call_ast) return;
+    for (int i = 0; i < s->pending_count; i++) {   // 同一调用点只登记一次 ✓
+        if (s->pending[i].re_infer && s->pending[i].call_ast == call_ast) return;
+    }
+    if (s->pending_count >= s->pending_capacity) {
+        int cap = s->pending_capacity ? s->pending_capacity * 2 : 32;
+        PendingReqCheck* np = (PendingReqCheck*)realloc(s->pending, sizeof(PendingReqCheck) * cap);
+        if (!np) return;
+        s->pending = np;
+        s->pending_capacity = cap;
+    }
+    PendingReqCheck* p = &s->pending[s->pending_count++];
+    p->call_ast = call_ast;
+    p->owner_struct = NULL;
+    p->func_name = strdup(callee_name);
+    p->param_name = NULL;
+    p->actual = NULL;
+    p->re_infer = 1;
 }
 
 // **收尾复查**（semantic_analyze / _module 末尾调用）：此时所有定义体都访问完 ⇒ 需求表完整 ✓
@@ -1593,6 +1616,32 @@ void semantic_flush_pending_req_checks(Semantic* s) {
     if (!s) return;
     for (int i = 0; i < s->pending_count; i++) {
         PendingReqCheck* p = &s->pending[i];
+
+        // 调用点推不出类型实参的（"调用在前、定义在后"）⇒ 这里用**已完整**的定义重新推断 ✓
+        if (p->re_infer) {
+            Ast* fd = func_table_find(&s->func_table, p->func_name);
+            if (!fd || fd->kind != AST_FUNC_DEF || !fd->u.func.body) continue;
+            int n = fd->u.func.type_param_count;
+            if (n <= 0) continue;
+
+            TypeInfo** binds = (TypeInfo**)calloc((size_t)n, sizeof(TypeInfo*));
+            if (!binds) continue;
+            for (int a = 0; a < p->call_ast->u.call.args.count && a < fd->u.func.pcnt; a++) {
+                TypeInfo* pt = fd->u.func.param_types[a];
+                TypeInfo* at = infer_expr_type(s, p->call_ast->u.call.args.items[a]);
+                if (pt && at) infer_generic_bindings(pt, at, fd->u.func.type_params, binds, n);
+                if (at) type_free(at);
+            }
+            for (int k = 0; k < n; k++) {
+                if (!binds[k]) continue;
+                semantic_check_generic_requirements(s, NULL, p->func_name,
+                                                    fd->u.func.type_params[k], binds[k], p->call_ast);
+                type_free(binds[k]);
+            }
+            free(binds);
+            continue;
+        }
+
         semantic_check_generic_requirements(s, p->owner_struct, p->func_name, p->param_name,
                                             p->actual, p->call_ast);
     }
