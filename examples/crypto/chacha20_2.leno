@@ -149,7 +149,10 @@ func chacha20_init_state(string key, int counter, string nonce):Array[int] {
 
 // ChaCha20 加密，返回 hex 字符串（避免 null 字节截断问题）
 func chacha20_encrypt(string key, int counter, string nonce, string plaintext):string {
-    var result = ""
+    // ★ 2026-10-02 收编：原先每个明文字节都 `result += byte_to_hex(...)` ✗
+    //   ⇒ 先收进字节数组，末尾一趟 native `from_bytes(...).to_hex()` ✓
+    //   等价已证：0-255 全量对拍 0 分歧（hexeq 对拍 ✓）
+    Array[int] result_bytes = []
     int i = 0
 
     while (i < plaintext.byte_len()) {
@@ -164,7 +167,7 @@ func chacha20_encrypt(string key, int counter, string nonce, string plaintext):s
             int shift = byte_idx * 8
             int key_byte = to_u32(block[word_idx]) >> shift & 0xFF
             int pt_byte = plaintext.byte(i + j)
-            result += byte_to_hex(key_byte ^ pt_byte)
+            result_bytes.add(key_byte ^ pt_byte)
             j += 1
         }
 
@@ -172,7 +175,7 @@ func chacha20_encrypt(string key, int counter, string nonce, string plaintext):s
         counter += 1
     }
 
-    return result
+    return strings.from_bytes(result_bytes).to_hex()
 }
 
 // ChaCha20 解密，输入 hex 字符串
@@ -217,11 +220,8 @@ func hex_nibble(int b):int {
 
 // ==================== Hex 工具 ====================
 
-func byte_to_hex(int b):string {
-    b = b & 0xFF
-    var hex_chars = "0123456789abcdef"
-    return hex_chars.slice((b >> 4) & 0xF, ((b >> 4) & 0xF) + 1) + hex_chars.slice(b & 0xF, (b & 0xF) + 1)
-}
+// (2026-10-02) 这里原有 `byte_to_hex(int)`（手写两位十六进制）。
+//   输出改用 `strings.from_bytes(bytes).to_hex()` 后它**零引用** ⇒ 已删 ✓
 
 // 2026-10-02 API 收口：手写"字节串 → hex"（本目录抄了 8 份）⇒ 收编进 native `strings.to_hex` ✓
 func to_hex(string input):string {

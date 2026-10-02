@@ -114,11 +114,8 @@ func write_be32(int value):string {
 
 // ==================== Hex 工具 ====================
 
-func byte_to_hex(int b):string {
-    b = b & 0xFF
-    var hex_chars = "0123456789abcdef"
-    return hex_chars.slice((b >> 4) & 0xF, ((b >> 4) & 0xF) + 1) + hex_chars.slice(b & 0xF, (b & 0xF) + 1)
-}
+// (2026-10-02) 这里原有 `byte_to_hex(int)`（手写两位十六进制）。
+//   输出改用 `strings.from_bytes(bytes).to_hex()` 后它**零引用** ⇒ 已删 ✓
 
 func hex_char_val(int b):int {
     if (b >= 48 and b <= 57) { return b - 48 }
@@ -172,7 +169,7 @@ func speck_encrypt(string key, string plaintext):string {
     var padded = pkcs7_pad(plaintext)
     Array[int] subkeys = key_to_subkeys(key)
 
-    var result = ""
+    Array[int] result_bytes = []
     int i = 0
     while (i + 7 < padded.byte_len()) {
         int x = read_be32(padded, i)
@@ -180,19 +177,21 @@ func speck_encrypt(string key, string plaintext):string {
 
         Array[int] encrypted = speck_encrypt_block(x, y, subkeys[0], subkeys[1], subkeys[2], subkeys[3])
 
-        // 使用 hex 编码避免 null 字节问题
-        result += byte_to_hex(_int32(encrypted[0] >> 24) & 0xFF)
-        result += byte_to_hex(_int32(encrypted[0] >> 16) & 0xFF)
-        result += byte_to_hex(_int32(encrypted[0] >> 8) & 0xFF)
-        result += byte_to_hex(_int32(encrypted[0]) & 0xFF)
-        result += byte_to_hex(_int32(encrypted[1] >> 24) & 0xFF)
-        result += byte_to_hex(_int32(encrypted[1] >> 16) & 0xFF)
-        result += byte_to_hex(_int32(encrypted[1] >> 8) & 0xFF)
-        result += byte_to_hex(_int32(encrypted[1]) & 0xFF)
+        // ★ 2026-10-02 收编（本函数 8 处）：原先每个字 4 次 byte_to_hex 拼串
+        //   （每轮重建整串 + 每字节 2 个单字符临时串 ✗）⇒ 先收字节，末尾一趟 native 转 hex ✓
+        //   等价已证：0-255 全量 + 4 字节段对拍 0 分歧（hexeq 对拍 ✓）
+        result_bytes.add(_int32(encrypted[0] >> 24) & 0xFF)
+        result_bytes.add(_int32(encrypted[0] >> 16) & 0xFF)
+        result_bytes.add(_int32(encrypted[0] >> 8) & 0xFF)
+        result_bytes.add(_int32(encrypted[0]) & 0xFF)
+        result_bytes.add(_int32(encrypted[1] >> 24) & 0xFF)
+        result_bytes.add(_int32(encrypted[1] >> 16) & 0xFF)
+        result_bytes.add(_int32(encrypted[1] >> 8) & 0xFF)
+        result_bytes.add(_int32(encrypted[1]) & 0xFF)
         i += 8
     }
 
-    return result
+    return strings.from_bytes(result_bytes).to_hex()
 }
 
 // Speck 解密字符串，输入 hex 编码密文

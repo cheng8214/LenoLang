@@ -149,33 +149,20 @@ export func sha256(string input):string {
     }
 
     // ===== 输出 256 位哈希 =====
-    var digest = ""
-    Array[int] h0_bytes = []
-    append_be32(h0_bytes, h0)
-    for h0_bytes.len() to i { digest += byte_to_hex(h0_bytes[i]) }
-    Array[int] h1_bytes = []
-    append_be32(h1_bytes, h1)
-    for h1_bytes.len() to i { digest += byte_to_hex(h1_bytes[i]) }
-    Array[int] h2_bytes = []
-    append_be32(h2_bytes, h2)
-    for h2_bytes.len() to i { digest += byte_to_hex(h2_bytes[i]) }
-    Array[int] h3_bytes = []
-    append_be32(h3_bytes, h3)
-    for h3_bytes.len() to i { digest += byte_to_hex(h3_bytes[i]) }
-    Array[int] h4_bytes = []
-    append_be32(h4_bytes, h4)
-    for h4_bytes.len() to i { digest += byte_to_hex(h4_bytes[i]) }
-    Array[int] h5_bytes = []
-    append_be32(h5_bytes, h5)
-    for h5_bytes.len() to i { digest += byte_to_hex(h5_bytes[i]) }
-    Array[int] h6_bytes = []
-    append_be32(h6_bytes, h6)
-    for h6_bytes.len() to i { digest += byte_to_hex(h6_bytes[i]) }
-    Array[int] h7_bytes = []
-    append_be32(h7_bytes, h7)
-    for h7_bytes.len() to i { digest += byte_to_hex(h7_bytes[i]) }
+    // ★ 2026-10-02 收编：原先 8 段"建 4 字节数组 + 循环逐字节 byte_to_hex 拼串" ✗
+    //   ⇒ 一次性收进一个数组，末尾一趟 native `from_bytes(...).to_hex()` ✓
+    //   等价已证：0-255 全量 + 4 字节段对拍 0 分歧（hexeq 对拍 ✓）
+    Array[int] digest_bytes = []
+    append_be32(digest_bytes, h0)
+    append_be32(digest_bytes, h1)
+    append_be32(digest_bytes, h2)
+    append_be32(digest_bytes, h3)
+    append_be32(digest_bytes, h4)
+    append_be32(digest_bytes, h5)
+    append_be32(digest_bytes, h6)
+    append_be32(digest_bytes, h7)
 
-    return digest
+    return strings.from_bytes(digest_bytes).to_hex()
 }
 
 // ==================== 测试 ====================

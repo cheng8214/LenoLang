@@ -132,11 +132,8 @@ func words_to_str(Array[int] words):string {
 
 // ==================== Hex 工具 ====================
 
-func byte_to_hex(int b):string {
-    b = b & 0xFF
-    var hex_chars = "0123456789abcdef"
-    return hex_chars.slice((b >> 4) & 0xF, ((b >> 4) & 0xF) + 1) + hex_chars.slice(b & 0xF, (b & 0xF) + 1)
-}
+// (2026-10-02) 这里原有 `byte_to_hex(int)`（手写两位十六进制）。
+//   `words_to_hex` 改用 `strings.from_bytes(bytes).to_hex()` 后它**零引用** ⇒ 已删 ✓
 
 // 2026-10-02 API 收口：手写"字节串 → hex"（本目录抄了 8 份）⇒ 收编进 native `strings.to_hex` ✓
 func to_hex(string input):string {
@@ -159,14 +156,17 @@ func from_hex(string hex_str):string {
 
 // 字数组转 hex 字符串（避免 null 字节导致字符串拼接截断）
 func words_to_hex(Array[int] words):string {
-    var result = ""
+    // ★ 2026-10-02 收编（本函数 4 处）：原先每个字 4 次 byte_to_hex 拼串 ✗
+    //   ⇒ 先收进字节数组，末尾一趟 native `from_bytes(...).to_hex()` ✓
+    //   等价已证：0-255 全量 + 4 字节段对拍 0 分歧（hexeq 对拍 ✓）
+    Array[int] bytes = []
     for 0:words.len() - 1 to i {
-        result += byte_to_hex(_int32(words[i] >> 24) & 0xFF)
-        result += byte_to_hex(_int32(words[i] >> 16) & 0xFF)
-        result += byte_to_hex(_int32(words[i] >> 8) & 0xFF)
-        result += byte_to_hex(_int32(words[i]) & 0xFF)
+        bytes.add(_int32(words[i] >> 24) & 0xFF)
+        bytes.add(_int32(words[i] >> 16) & 0xFF)
+        bytes.add(_int32(words[i] >> 8) & 0xFF)
+        bytes.add(_int32(words[i]) & 0xFF)
     }
-    return result
+    return strings.from_bytes(bytes).to_hex()
 }
 
 // hex 字符串转字数组

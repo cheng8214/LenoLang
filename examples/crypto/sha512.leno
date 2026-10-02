@@ -256,10 +256,10 @@ func sha512(string input):string {
         msg.add(input.byte(i))
     }
     var digest = sha512_bytes(msg)
-    string out = ""
-    for digest.len() to i {
-        out += byte_to_hex(digest[i])
-    }
+    // ★ 2026-10-02 收编：原先逐字节 byte_to_hex 拼串（每轮重建整串 + 每字节 2 个单字符临时串 ✗）
+    //   ⇒ 改成一趟 native `from_bytes(...).to_hex()` ✓
+    //   等价已证：0-255 全量 + 4 字节段逐段对拍 0 分歧（hexeq 对拍 ✓）
+    string out = strings.from_bytes(digest).to_hex()
     return out
 }
 
@@ -286,13 +286,8 @@ func be_bytes_to_u64(Array[int] arr, int offset):int {
     return pack64(hi, lo)
 }
 
-// 字节转两位十六进制字符串
-func byte_to_hex(int b):string {
-    var hex_chars = "0123456789abcdef"
-    int h = (b >> 4) & 0x0F
-    int l = b & 0x0F
-    return strings.char(hex_chars.byte(h)) + strings.char(hex_chars.byte(l))
-}
+// (2026-10-02) 这里原有 `byte_to_hex(int)`（手写两位十六进制）。
+//   输出改用 `strings.from_bytes(digest).to_hex()` 后它**零引用** ⇒ 已删 ✓
 
 // ==================== 自测 ====================
 

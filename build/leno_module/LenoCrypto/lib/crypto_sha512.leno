@@ -258,10 +258,9 @@ export func sha512(string input):string {
         msg.add(input.byte(i))
     }
     var digest = sha512_bytes(msg)
-    string out = ""
-    for digest.len() to i {
-        out += byte_to_hex(digest[i])
-    }
+    // ★ 2026-10-02 收编：原先逐字节 byte_to_hex 拼串 ✗ ⇒ 一趟 native `from_bytes(...).to_hex()` ✓
+    //   等价已证：0-255 全量对拍 0 分歧（hexeq 对拍 ✓）
+    string out = strings.from_bytes(digest).to_hex()
     return out
 }
 

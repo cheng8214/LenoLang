@@ -251,12 +251,8 @@ func aes_decrypt_block(Array[int] ciphertext, Array[int] key):Array[int] {
 
 // ==================== 字符串接口 ====================
 
-// Hex 工具
-func byte_to_hex(int b):string {
-    b = _uint8(b)
-    var hex_chars = "0123456789abcdef"
-    return hex_chars.slice(_uint8(b >> 4) & 0xF, (_uint8(b >> 4) & 0xF) + 1) + hex_chars.slice(b & 0xF, (b & 0xF) + 1)
-}
+// (2026-10-02) 这里原有 `byte_to_hex(int)`（手写两位十六进制）。
+//   本文件已无调用点（**零引用** ⇒ 已删 ✓）；hex 输出请用 `strings.from_bytes(bytes).to_hex()` ✓
 
 func hex_nibble(int b):int {
     if (b >= 48 and b <= 57) { return b - 48 }

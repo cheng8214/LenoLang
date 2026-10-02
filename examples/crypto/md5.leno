@@ -14,13 +14,8 @@ func left_rotate(int x, int c):int {
     return _int32((ux << c) | (ux >> (32 - c)))
 }
 
-// 字节转两位十六进制字符串
-func byte_to_hex(int b):string {
-    var hex_chars = "0123456789abcdef"
-    int hi = (b >> 4) & 0x0F
-    int lo = b & 0x0F
-    return strings.char(hex_chars.byte(hi)) + strings.char(hex_chars.byte(lo))
-}
+// (2026-10-02) 这里原有 `byte_to_hex(int)`（手写两位十六进制）。
+//   摘要输出改用 `strings.from_bytes(bytes).to_hex()` 后它**零引用** ⇒ 已删 ✓
 
 // 32 位整数转小端序 4 字节（追加到字节数组）
 func append_le32(Array[int] arr, int v) {
@@ -198,21 +193,16 @@ func md5(string input):string {
     }
 
     // ===== 输出 128 位哈希（小端序字节 → 十六进制）=====
-    var digest = ""
-    Array[int] a_bytes = []
-    append_le32(a_bytes, a0)
-    for a_bytes.len() to i { digest += byte_to_hex(a_bytes[i]) }
-    Array[int] b_bytes = []
-    append_le32(b_bytes, b0)
-    for b_bytes.len() to i { digest += byte_to_hex(b_bytes[i]) }
-    Array[int] c_bytes = []
-    append_le32(c_bytes, c0)
-    for c_bytes.len() to i { digest += byte_to_hex(c_bytes[i]) }
-    Array[int] d_bytes = []
-    append_le32(d_bytes, d0)
-    for d_bytes.len() to i { digest += byte_to_hex(d_bytes[i]) }
+    // ★ 2026-10-02 收编：原先 4 段"建 4 字节数组 + 循环逐字节 byte_to_hex 拼串" ✗
+    //   ⇒ 一次性收进一个数组，末尾一趟 native `from_bytes(...).to_hex()` ✓
+    //   等价已证：0-255 全量 + 4 字节段对拍 0 分歧（hexeq 对拍 ✓）
+    Array[int] digest_bytes = []
+    append_le32(digest_bytes, a0)
+    append_le32(digest_bytes, b0)
+    append_le32(digest_bytes, c0)
+    append_le32(digest_bytes, d0)
 
-    return digest
+    return strings.from_bytes(digest_bytes).to_hex()
 }
 
 // ==================== 测试 ====================

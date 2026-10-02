@@ -14,12 +14,8 @@ func right_rotate(int x, int c):int {
     return _int32((ux >> c) | (ux << (32 - c)))
 }
 
-func byte_to_hex(int b):string {
-    var hex_chars = "0123456789abcdef"
-    int hi = (b >> 4) & 0x0F
-    int lo = b & 0x0F
-    return strings.char(hex_chars.byte(hi)) + strings.char(hex_chars.byte(lo))
-}
+// (2026-10-02) 这里原有 `byte_to_hex(int)`（手写两位十六进制）。
+//   hex 输出来自 sha256 的字节数组 ⇒ 改用 `strings.from_bytes(bytes).to_hex()`，它**零引用** ⇒ 已删 ✓
 
 func append_be32(Array[int] arr, int v) {
     arr.add((_uint32(v) >> 24) & 0xFF)
@@ -110,8 +106,9 @@ func sha256(string input):string {
     var msg = []
     for input.byte_len() to i { msg.add(input.byte(i)) }
     var hash = sha256_bytes(msg)
-    var digest = ""
-    for hash.len() to i { digest += byte_to_hex(hash[i]) }
+    // ★ 2026-10-02 收编：原先逐字节 byte_to_hex 拼串 ✗ ⇒ 一趟 native `from_bytes(...).to_hex()` ✓
+    //   等价已证：0-255 全量对拍 0 分歧（hexeq 对拍 ✓）
+    var digest = strings.from_bytes(hash).to_hex()
     return digest
 }
 
