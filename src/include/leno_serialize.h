@@ -27,17 +27,19 @@
 //     local_count:   uint32
 //     const_count:   uint32
 //     constants[]:   ConstantEntry[]
-//     code_len:      uint32
-//     code:          uint8[]
-//     lines[]:       行号表 RLE+varint ——（段长 varint + 行号 varint）× N，
+//   code_len:      uint32
+//   code:          uint8[]
+//   has_lines:     uint8（1 = 后面跟行号表；`chunk->len == 0` 或无 lines 时为 0）
+//   lines[]:       行号表 RLE+varint ——（段长 varint + 行号 varint）× N，
 //                    展开后与 code 等长；不记录段数（解满 code_len 即止）
+//                    ⚠ v3.0.2 之前是定长 u16[code_len]，那段说明见 LENO_BIN_VERSION 的 v3.0.2 条目
 //
 // ConstantEntry:
 //   type_tag (1 byte) + payload
 //     0x00: NULL       (无载荷)
 //     0x01: TRUE       (无载荷)
 //     0x02: FALSE      (无载荷)
-//     0x03: INT        -> int32 (4 bytes)
+//     0x03: INT        -> int64 (8 bytes；低 48 位有效，写成 u64 大端)
 //     0x04: FLOAT      -> double (8 bytes, IEEE 754)
 //     0x05: STRING     -> uint32 len + UTF-8 bytes
 //     0x06: FUNCTION   -> FunctionData (递归)
@@ -56,15 +58,23 @@
 //           模块缓存 .lenomc 与入口缓存 entry_*.lenb 一律写完整函数体（见 serialize.c 里
 //           dce_set_active 的三处调用点与 src/include/leno_dce.h 的说明）。
 //
-// FunctionData:
+// FunctionData（⚠ 顺序必须与 serialize.c 的 OBJ_FUNCTION 分支、按字节对齐 ——
+//   工具链（如 leno_gui 的 PE 分析器反汇编器）照这份写；此前这里漏了 is_ctor / is_async /
+//   return_* / *_param_count 好几段，导致按本文档实现的反汇编器**整条流错位**）：
 //   name_len:       uint32
 //   name:           UTF-8 bytes
 //   arity:          uint32
 //   upvalue_count:  uint32
 //   local_count:    uint32
 //   has_try:        uint8
-//   param_count:    uint32
-//   param_types:    uint8[] (TypeKind 枚举值)
+//   is_ctor:        uint8
+//   is_async:       uint8（v13 加）
+//   return_count:   uint32
+//   ret_type_count: uint32 + ret_types: uint8[]（长度 = ret_type_count，TypeKind 枚举值）
+//   param_count:    uint32 + param_types: uint8[]（长度 = param_count）
+//   type_param_count: uint32 + (名字串)×（**无条件**写 type_param_count 个：名字可为空串）
+//   pgn_count:      uint32 + (has u8 + [名字串])×（长度 = pgn_count，即 arity）
+//   param_generic_count: uint32
 //   chunk:          Chunk (递归)
 //
 // SymbolEntry:

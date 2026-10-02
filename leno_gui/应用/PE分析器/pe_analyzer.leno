@@ -1103,6 +1103,10 @@ struct PEAnalyzer {
                 if has != 0 { xorSkipStr() }
                 return true
             }
+            // ★ DEAD_FUNCTION (0x14)：**无载荷** —— 1 字节标签就是全部（DCE 剪掉的方法/
+            //   函数，见 src/include/leno_serialize.h 的 0x14 说明）。标签已在上方消费 ⇒ 直接 return ✓
+            //   ✗ 漏了它就会落到 default 那条"多跳 1 字节"，常量表从第一个被剪函数起**整体错位** ✗
+            case 0x14 { return true }
             default { gLenbPos = gLenbPos + 1; return true }
         }
     }
@@ -1115,6 +1119,7 @@ struct PEAnalyzer {
         gLenbPos = gLenbPos + 4   // local_count
         gLenbPos = gLenbPos + 1   // has_try
         gLenbPos = gLenbPos + 1   // is_ctor
+        gLenbPos = gLenbPos + 1   // is_async（2026-09-21 加的，此前漏 ✗）
         gLenbPos = gLenbPos + 4   // return_count
         int rtc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
         if rtc < 0 or rtc > 100000 { gLenbPos = gLenbEnd; return false }
@@ -1146,8 +1151,11 @@ struct PEAnalyzer {
         if codeLen < 0 or codeLen > 1000000 { gLenbPos = gLenbEnd; return false }
         gLenbPos = gLenbPos + codeLen
         if gLenbPos >= gLenbEnd { return true }
-        int hasLines = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
-        if hasLines == 1 and codeLen > 0 { gLenbPos = gLenbPos + 2 * codeLen }
+        int hasLines = safeByte(gLenbPos); gLenbPos = gLenbPos + 1
+        // 行号表 = RLE + varint（v3.0.2 起；旧口径 `2 * codeLen` 会让每个 FUNCTION 常量错位 ✗）
+        if hasLines == 1 and codeLen > 0 {
+            if not skipLinesTable(codeLen) { gLenbPos = gLenbEnd; return false }
+        }
         return true
     }
 
@@ -1291,6 +1299,71 @@ struct PEAnalyzer {
         return (b0 << 24) | (b1 << 16) | (b2 << 8) | b3
     }
 
+    // ==================== 行号表：RLE + varint ====================
+    // ⚠ v3.0.2（2026-09-24）起行号表由**定长 u16[code_len]** 改为 **RLE + varint**：
+    //   `has_lines(1B)` 之后是 (段长 varint + 行号 varint) × N，展开后与 code 等长、
+    //   **不记录段数**（解满 code_len 即止，见 src/include/leno_serialize.h 的 Chunk 布局）。
+    //   ✗ 仍按 `2 * codeLen` 跳过的话，每个 FUNCTION 常量都会**多跳**一大截
+    //   （RLE 通常只有约 1 字节/指令）⇒ 常量表整体错位 ⇒ 偏移漂到文件尾外 ⇒
+    //   裸读返回 null ⇒ 报「位与运算: null 不能参与运算」（本次排查的假线索）✗
+    // 本文档三处都要用它：collectChunkConst / skipChunkRaw / parseOneChunkBody ✓
+
+    // LEB128 风格 varint：低 7 位/字节，最高位 = 续位（与 serialize.c 的 wb_write_varint 对称）
+    func readVarint(): int {
+        int val = 0
+        int shift = 0
+        for 0:4 to i {
+            if not hasBytes(gLenbPos, 1) {
+                markTrunc(gLenbPos)
+                gLenbPos = gLenbEnd
+                return -1
+            }
+            int b = safeByte(gLenbPos)
+            gLenbPos = gLenbPos + 1
+            val = val | ((b & 0x7F) << shift)
+            if (b & 0x80) == 0 { return val }
+            shift = shift + 7
+        }
+        return -1   // 第 5 字节仍带续位 ⇒ 判损坏（同 ctx_read_varint 口径）
+    }
+
+    // 跳过行号表；返回 false = 损坏/截断（调用方交回边界 ✓）
+    func skipLinesTable(int codeLen): bool {
+        if codeLen <= 0 { return true }
+        int filled = 0
+        int guard = 0
+        while filled < codeLen {
+            guard = guard + 1
+            if guard > 1000000 { return false }
+            int runLen = readVarint()
+            if runLen <= 0 { return false }
+            if readVarint() < 0 { return false }   // 行号（值本身不参与跳过）
+            filled = filled + runLen
+        }
+        return true
+    }
+
+    // 读出行号表并**展开**成与 code 等长的行号数组（disasm 逐指令取行号用 ✓）
+    func readLinesRLE(int codeLen): Array[int] {
+        Array[int] lines = []
+        if codeLen <= 0 { return lines }
+        int filled = 0
+        int guard = 0
+        while filled < codeLen and guard < 1000000 {
+            guard = guard + 1
+            int runLen = readVarint()
+            if runLen <= 0 { break }
+            int lineNo = readVarint()
+            if lineNo < 0 { break }
+            for 0:runLen-1 to i {
+                if filled >= codeLen { break }   // 段长越过末尾 ⇒ 按 codeLen 截断（与读端"解满即止"一致）
+                lines.add(lineNo)
+                filled = filled + 1
+            }
+        }
+        return lines
+    }
+
     func rbe16(int off): int {
         if not hasBytes(off, 2) { markTrunc(off); return 0 }
         int b0 = safeByte(off)
@@ -1359,465 +1432,441 @@ struct PEAnalyzer {
             case 0x11 { return "CLOSURE" }
             case 0x12 { return "FFI_LIB" }
             case 0x13 { return "MODULE_REF" }
+            case 0x14 { return "DEAD_FUNCTION" }
         }
         return "TAG_0x" + toHex2(tag)
     }
 
     // ==================== Opcode 名称表 ====================
 
+    // 助记符表：**逐项照抄 `src/debug.c` 的 opCodeNames[]**（那张表与 leno_vm.h 的
+    //   OpCode 枚举严格同序同长，文件里有编译期长度断言 ✓）。
+    // ⚠ 2026-10 重写：旧表是**栈式时代的编号** ✗ —— 与当前寄存器式 VM 整体错位
+    //   （实测旧表把 134 当 OP_GET_METHOD，而当前 99 才是；OP_INVOKE_METHOD_TYPED
+    //     应为 139 而旧表写 162）。**一律以 leno_vm.h 的枚举顺序为准** ✓，
+    //   switch 不支持范围，故逐条列出；未知走兜底 `OP_?0x..`。
     func opName(int code): string {
         switch code {
-            case 0 { return "OP_CONST" }
-            case 1 { return "OP_NULL" }
-            case 2 { return "OP_TRUE" }
-            case 3 { return "OP_FALSE" }
-            case 4 { return "OP_ZERO" }
-            case 5 { return "OP_ONE" }
-            case 6 { return "OP_POP" }
-            case 7 { return "OP_DUP" }
-            case 8 { return "OP_GET_LOCAL" }
-            case 9 { return "OP_SET_LOCAL" }
-            case 10 { return "OP_SET_LOCAL_POP" }
-            case 11 { return "OP_MOVE_LOCAL" }
-            case 12 { return "OP_GET_GLOBAL" }
-            case 13 { return "OP_SET_GLOBAL" }
-            case 14 { return "OP_GET_UPVALUE" }
-            case 15 { return "OP_SET_UPVALUE" }
-            case 16 { return "OP_CLOSE_UPVALUE" }
-            case 17 { return "OP_DEFINE_GLOBAL" }
-            case 18 { return "OP_GET_GLOBAL_FUNC" }
-            case 19 { return "OP_DEFINE_GLOBAL_FUNC" }
-            case 20 { return "OP_GET_NATIVE" }
-            case 21 { return "OP_ADD" }
-            case 22 { return "OP_SUB" }
-            case 23 { return "OP_MUL" }
-            case 24 { return "OP_DIV" }
-            case 25 { return "OP_MOD" }
-            case 26 { return "OP_BITAND" }
-            case 27 { return "OP_BITOR" }
-            case 28 { return "OP_BITXOR" }
-            case 29 { return "OP_BITNOT" }
-            case 30 { return "OP_SHL" }
-            case 31 { return "OP_SHR" }
-            case 32 { return "OP_USHR" }
-            case 33 { return "OP_NEG" }
-            case 34 { return "OP_NOT" }
-            case 35 { return "OP_CAST_FLOAT" }
-            case 36 { return "OP_CAST_INT" }
-            case 37 { return "OP_CAST_STRING" }
-            case 38 { return "OP_SET_PTR_ELEM_TYPE" }
-            case 39 { return "OP_SET_DECLARED_FACE" }
-            case 40 { return "OP_INC" }
-            case 41 { return "OP_DEC" }
-            case 42 { return "OP_INC_LOCAL" }
-            case 43 { return "OP_DEC_LOCAL" }
-            case 44 { return "OP_PRE_INC_LOCAL" }
-            case 45 { return "OP_PRE_DEC_LOCAL" }
-            case 46 { return "OP_EQ" }
-            case 47 { return "OP_NEQ" }
-            case 48 { return "OP_IS_NULL" }
-            case 49 { return "OP_LT" }
-            case 50 { return "OP_GT" }
-            case 51 { return "OP_LE" }
-            case 52 { return "OP_GE" }
-            case 53 { return "OP_IN" }
-            case 54 { return "OP_RANGE" }
-            case 55 { return "OP_JUMP" }
-            case 56 { return "OP_JUMP_IF_FALSE" }
-            case 57 { return "OP_JUMP_IF_TRUE" }
-            case 58 { return "OP_LOOP" }
-            case 59 { return "OP_CALL" }
-            case 60 { return "OP_TAIL_CALL" }
-            case 61 { return "OP_CLOSURE" }
-            case 62 { return "OP_RETURN" }
-            case 63 { return "OP_RETURN_MULTI" }
-            case 64 { return "OP_ARRAY" }
-            case 65 { return "OP_ARRAY_GET" }
-            case 66 { return "OP_ARRAY_SET" }
-            case 67 { return "OP_ARRAY_APPEND" }
-            case 68 { return "OP_ARRAY_APPEND_NOPUSH" }
-            case 69 { return "OP_DICT" }
-            case 70 { return "OP_DICT_GET" }
+            // --- 空操作 / 装载移动 ---
+            case 0 { return "OP_NOP" }
+            case 1 { return "OP_LOADK" }
+            case 2 { return "OP_LOADI" }
+            case 3 { return "OP_LOADF" }
+            case 4 { return "OP_LOADNIL" }
+            case 5 { return "OP_LOADTRUE" }
+            case 6 { return "OP_LOADFALSE" }
+            case 7 { return "OP_MOV" }
+            // --- 全局变量 ---
+            case 8 { return "OP_GETGLOBAL" }
+            case 9 { return "OP_SETGLOBAL" }
+            case 10 { return "OP_DEFGLOBAL" }
+            case 11 { return "OP_GETGLOBALFUNC" }
+            case 12 { return "OP_DEFGLOBALFUNC" }
+            // --- upvalue / 闭包 ---
+            case 13 { return "OP_GETUPVAL" }
+            case 14 { return "OP_SETUPVAL" }
+            case 15 { return "OP_CLOSE" }
+            case 16 { return "OP_CLOSURE" }
+            // --- 算术（通用） ---
+            case 17 { return "OP_ADD" }
+            case 18 { return "OP_SUB" }
+            case 19 { return "OP_MUL" }
+            case 20 { return "OP_DIV" }
+            case 21 { return "OP_MOD" }
+            case 22 { return "OP_NEG" }
+            case 23 { return "OP_NOT" }
+            // --- 算术 int 特化 ---
+            case 24 { return "OP_ADD_INT" }
+            case 25 { return "OP_SUB_INT" }
+            case 26 { return "OP_MUL_INT" }
+            case 27 { return "OP_NEG_INT" }
+            // --- 算术 float 特化 ---
+            case 28 { return "OP_ADD_F" }
+            case 29 { return "OP_SUB_F" }
+            case 30 { return "OP_MUL_F" }
+            case 31 { return "OP_DIV_F" }
+            case 32 { return "OP_NEG_F" }
+            // --- 比较 ---
+            case 33 { return "OP_EQ" }
+            case 34 { return "OP_LT" }
+            case 35 { return "OP_GT" }
+            case 36 { return "OP_LE" }
+            case 37 { return "OP_GE" }
+            case 38 { return "OP_NEQ" }
+            // --- 比较 int 特化 ---
+            case 39 { return "OP_LT_INT" }
+            case 40 { return "OP_GT_INT" }
+            case 41 { return "OP_LE_INT" }
+            case 42 { return "OP_GE_INT" }
+            case 43 { return "OP_EQ_INT" }
+            // --- 位运算 ---
+            case 44 { return "OP_BITAND" }
+            case 45 { return "OP_BITOR" }
+            case 46 { return "OP_BITXOR" }
+            case 47 { return "OP_BITNOT" }
+            case 48 { return "OP_SHL" }
+            case 49 { return "OP_SHR" }
+            case 50 { return "OP_USHR" }
+            // --- 类型转换 ---
+            case 51 { return "OP_CAST_FLOAT" }
+            case 52 { return "OP_CAST_INT" }
+            case 53 { return "OP_CAST_STRING" }
+            case 54 { return "OP_IS_NULL" }
+            // --- 字符串拼接 ---
+            case 55 { return "OP_STRCAT" }
+            // --- 跳转 ---
+            case 56 { return "OP_JMP" }
+            case 57 { return "OP_JMP_IF_FALSE" }
+            case 58 { return "OP_JMP_IF_TRUE" }
+            case 59 { return "OP_TEST" }
+            // --- 自增自减 ---
+            case 60 { return "OP_INC" }
+            case 61 { return "OP_DEC" }
+            // --- 调用 / 返回 ---
+            case 62 { return "OP_CALL" }
+            case 63 { return "OP_CALL_NATIVE" }
+            case 64 { return "OP_RETURN" }
+            case 65 { return "OP_RETURN_MULTI" }
+            case 66 { return "OP_TAIL_CALL" }
+            // --- 数组 ---
+            case 67 { return "OP_NEWARRAY" }
+            case 68 { return "OP_ARRAY_APPEND" }
+            case 69 { return "OP_LEN" }
+            // --- 字典 ---
+            case 70 { return "OP_NEWDICT" }
             case 71 { return "OP_DICT_SET" }
-            case 72 { return "OP_DICT_GET_KEY" }
-            case 73 { return "OP_LOAD_NATIVE_MODULE" }
-            case 74 { return "OP_MODULE_CALL" }
-            case 75 { return "OP_GET_MODULE_CONST" }
-            case 76 { return "OP_STRING_ADD" }
-            case 77 { return "OP_INDEX" }
-            case 78 { return "OP_INDEX_SET" }
-            case 79 { return "OP_SLICE" }
-            case 80 { return "OP_LENGTH" }
-            case 81 { return "OP_ITER_GET" }
-            case 82 { return "OP_ITER_GET_VALUE" }
-            case 83 { return "OP_TRY" }
-            case 84 { return "OP_CATCH" }
-            case 85 { return "OP_FINALLY" }
-            case 86 { return "OP_END_TRY" }
-            case 87 { return "OP_THROW" }
-            case 88 { return "OP_GET_MODULE_VAR" }
-            case 89 { return "OP_SET_MODULE_VAR" }
-            case 90 { return "OP_GET_MODULE_FUNC" }
-            case 91 { return "OP_DEFINE_MODULE_FUNC" }
-            case 92 { return "OP_GET_PROPERTY" }
-            case 93 { return "OP_TYPE_CHECK" }
-            case 94 { return "OP_AS_CAST" }
-            case 95 { return "OP_FOR_PREP" }
-            case 96 { return "OP_FOR_LOOP" }
-            case 97 { return "OP_ADD_INT" }
-            case 98 { return "OP_SUB_INT" }
-            case 99 { return "OP_MUL_INT" }
-            case 100 { return "OP_DIV_INT" }
-            case 101 { return "OP_MOD_INT" }
-            case 102 { return "OP_ADD_FLOAT" }
-            case 103 { return "OP_SUB_FLOAT" }
-            case 104 { return "OP_MUL_FLOAT" }
-            case 105 { return "OP_DIV_FLOAT" }
-            case 106 { return "OP_NEG_INT" }
-            case 107 { return "OP_NEG_FLOAT" }
-            case 108 { return "OP_EQ_INT" }
-            case 109 { return "OP_LT_INT" }
-            case 110 { return "OP_GT_INT" }
-            case 111 { return "OP_LE_INT" }
-            case 112 { return "OP_GE_INT" }
-            case 113 { return "OP_EQ_FLOAT" }
-            case 114 { return "OP_LT_FLOAT" }
-            case 115 { return "OP_GT_FLOAT" }
-            case 116 { return "OP_LE_FLOAT" }
-            case 117 { return "OP_GE_FLOAT" }
-            case 118 { return "OP_ADD_INT_IMM" }
-            case 119 { return "OP_SUB_INT_IMM" }
-            case 120 { return "OP_MUL_INT_IMM" }
-            case 121 { return "OP_LT_INT_IMM" }
-            case 122 { return "OP_GT_INT_IMM" }
-            case 123 { return "OP_LE_INT_IMM" }
-            case 124 { return "OP_GE_INT_IMM" }
-            case 125 { return "OP_EQ_INT_IMM" }
-            case 126 { return "OP_SHL_IMM" }
-            case 127 { return "OP_SHR_IMM" }
-            case 128 { return "OP_USHR_IMM" }
-            case 129 { return "OP_STRUCT_DEF" }
-            case 130 { return "OP_STRUCT_INIT" }
-            case 131 { return "OP_GET_FIELD" }
-            case 132 { return "OP_SET_FIELD" }
-            case 133 { return "OP_GET_FIELD_ADDR" }
-            case 134 { return "OP_GET_METHOD" }
-            case 135 { return "OP_ENUM_DEF" }
-            case 136 { return "OP_FACE_DEF" }
-            case 137 { return "OP_CSTRUCT_DEF" }
-            case 138 { return "OP_GET_CSTRUCT_DEF" }
-            case 139 { return "OP_AWAIT" }
-            case 140 { return "OP_ASYNC_CALL" }
-            case 141 { return "OP_INIT_LENOMODULE" }
-            case 142 { return "OP_CLIB_CALL" }
-            case 143 { return "OP_CFUNC_CALLBACK" }
-            case 144 { return "OP_CALL_NATIVE" }
-            case 145 { return "OP_TAIL_CALL_NATIVE" }
-            case 146 { return "OP_U8_TO_F64" }
-            case 147 { return "OP_PUSH_TYPE_ARGS" }
-            case 148 { return "OP_DTOR_LOCAL" }
-            case 149 { return "OP_CALL_GLOBAL_FUNC" }
-            // ⚠ 2026-09-19 修正：150 起此前**整体错位一位** ✗ —— 枚举里 150 是
-            //   `OP_CALL_GLOBAL_FUNC_TYPED`（旧表把它漏了 ✓）⇒ 其后全部右移一位；
-            //   157 起的一批融合指令（SET_LOCAL_CONST / ACC_FIELDS / CMPJMP_* / GET_FIELD_FAST /
-            //   INVOKE_METHOD_TYPED）旧表里还**不存在** ✗。**一律以 src/include/leno_vm.h 的
-            //   枚举顺序为准** ✓（改了 VM 就得同步这里 ✓）。
-            case 150 { return "OP_CALL_GLOBAL_FUNC_TYPED" }
-            case 151 { return "OP_INC_LOCAL_NOPUSH" }
-            case 152 { return "OP_DEC_LOCAL_NOPUSH" }
-            case 153 { return "OP_MOVE_LOCAL_POP" }
-            case 154 { return "OP_INDEX_SET_NOPUSH" }
-            case 155 { return "OP_CLEAR_LOCAL_RANGE" }
-            case 156 { return "OP_SWITCH_LOOKUP" }
-            case 157 { return "OP_SET_LOCAL_CONST" }
-            case 158 { return "OP_ACC_FIELDS" }
-            case 159 { return "OP_CMPJMP_LL_INT" }
-            case 160 { return "OP_CMPJMP_LG_INT" }
-            case 161 { return "OP_GET_FIELD_FAST" }
-            case 162 { return "OP_INVOKE_METHOD_TYPED" }
-            case 163 { return "OP_CMPJMP_LI_INT" }
-            default { return "OP_0x" + toHex2(code) }
+            // --- 通用索引 ---
+            case 72 { return "OP_INDEX" }
+            case 73 { return "OP_INDEX_ARRAY_INT" }
+            case 74 { return "OP_INDEX_ARRAY_FLOAT" }
+            case 75 { return "OP_INDEX_SET" }
+            case 76 { return "OP_SLICE" }
+            // --- 迭代 ---
+            case 77 { return "OP_ITER_GET" }
+            case 78 { return "OP_ITER_GET_VALUE" }
+            // --- 范围 ---
+            case 79 { return "OP_RANGE" }
+            // --- in ---
+            case 80 { return "OP_IN" }
+            // --- 异常处理 ---
+            case 81 { return "OP_TRY" }
+            case 82 { return "OP_CATCH" }
+            case 83 { return "OP_FINALLY" }
+            case 84 { return "OP_END_TRY" }
+            case 85 { return "OP_THROW" }
+            // --- 模块 ---
+            case 86 { return "OP_LOAD_NATIVE_MODULE" }
+            case 87 { return "OP_MODULE_CALL" }
+            case 88 { return "OP_GET_MODULE_CONST" }
+            case 89 { return "OP_GET_MODULE_VAR" }
+            case 90 { return "OP_SET_MODULE_VAR" }
+            case 91 { return "OP_GET_MODULE_FUNC" }
+            case 92 { return "OP_DEFINE_MODULE_FUNC" }
+            case 93 { return "OP_INIT_LENOMODULE" }
+            // --- struct ---
+            case 94 { return "OP_STRUCT_DEF" }
+            case 95 { return "OP_STRUCT_INIT" }
+            case 96 { return "OP_GET_FIELD" }
+            case 97 { return "OP_SET_FIELD" }
+            case 98 { return "OP_GET_FIELD_ADDR" }
+            case 99 { return "OP_GET_METHOD" }
+            case 100 { return "OP_SET_PTR_ELEM_TYPE" }
+            case 101 { return "OP_SET_DECLARED_FACE" }
+            // --- enum / face / cstruct ---
+            case 102 { return "OP_ENUM_DEF" }
+            case 103 { return "OP_FACE_DEF" }
+            case 104 { return "OP_CSTRUCT_DEF" }
+            case 105 { return "OP_GET_CSTRUCT_DEF" }
+            // --- 类型检查 / 转换 ---
+            case 106 { return "OP_TYPE_CHECK" }
+            case 107 { return "OP_AS_CAST" }
+            // --- 协程 ---
+            case 108 { return "OP_AWAIT" }
+            case 109 { return "OP_ASYNC_CALL" }
+            // --- FFI ---
+            case 110 { return "OP_CLIB_CALL" }
+            case 111 { return "OP_CFUNC_CALLBACK" }
+            case 112 { return "OP_U8_TO_F64" }
+            // --- 泛型 / 析构 ---
+            case 113 { return "OP_PUSH_TYPE_ARGS" }
+            case 114 { return "OP_DTOR_LOCAL" }
+            // --- switch ---
+            case 115 { return "OP_SWITCH_LOOKUP" }
+            // --- for 数值循环 ---
+            case 116 { return "OP_FOR_PREP" }
+            case 117 { return "OP_FOR_LOOP" }
+            // --- 扩展指令 ---
+            case 118 { return "OP_EXTRAARG" }
+            case 119 { return "OP_EXTEND" }
+            // --- 立即数快速路径 ---
+            case 120 { return "OP_ADD_INT_IMM" }
+            case 121 { return "OP_SUB_INT_IMM" }
+            case 122 { return "OP_LT_INT_IMM" }
+            case 123 { return "OP_GT_INT_IMM" }
+            case 124 { return "OP_LE_INT_IMM" }
+            case 125 { return "OP_GE_INT_IMM" }
+            case 126 { return "OP_CALL_GLOBAL_FUNC" }
+            case 127 { return "OP_CMPJMP_LT" }
+            case 128 { return "OP_CMPJMP_LE" }
+            case 129 { return "OP_CMPJMP_GT" }
+            case 130 { return "OP_CMPJMP_GE" }
+            case 131 { return "OP_MUL_INT_IMM" }
+            case 132 { return "OP_LT_F" }
+            case 133 { return "OP_LE_F" }
+            case 134 { return "OP_GT_F" }
+            case 135 { return "OP_GE_F" }
+            case 136 { return "OP_CALL_GLOBAL_FUNC_TYPED" }
+            case 137 { return "OP_GET_FIELD_FAST" }
+            case 138 { return "OP_ACC_FIELDS" }
+            case 139 { return "OP_INVOKE_METHOD_TYPED" }
+            case 140 { return "OP_INDEX_ARRAY_IMM" }
+            case 141 { return "OP_CMPJMP_ITER" }
+            case 142 { return "OP_BITAND_K" }
+            case 143 { return "OP_BITOR_K" }
+            case 144 { return "OP_BITXOR_K" }
+            case 145 { return "OP_SHL_K" }
+            case 146 { return "OP_SHR_K" }
+            case 147 { return "OP_USHR_K" }
+            case 148 { return "OP_INDEX_SET_ARRAY_INT" }
+            case 149 { return "OP_TYPE_CHECK_SPEC" }
+            case 150 { return "OP_AS_CAST_SPEC" }
+            case 151 { return "OP_OPCODE_COUNT" }
+            default { return "OP_?0x" + toHex2(code) }
         }
     }
 
-    // 每条指令的**操作数字节数**（不含 opcode 自身 ✓）。
-    // 权威来源：`src/debug.c`（编译器自带反汇编 ✓ —— 它与 VM 同步维护 ✓）。
-    // ⚠ 2026-09-19 重写：旧表有两类错 ✗ ——
-    //   ① 编号用的是**旧枚举**（150 起整体错位 ✓，见 opName 的说明）；
-    //   ② 部分尺寸本身就错（`OP_CLOSE_UPVALUE` 被范围粗判成 2 ✗、`OP_MODULE_CALL` 记 2 ✗
-    //      实为 6、`OP_FOR_PREP/LOOP` 记 0 ✗ 实为 7/6、`OP_GET_METHOD` 记 1 ✗ 实为 2 …）。
-    // 返回 **-1 = 长度无法静态确定**（依赖运行时数据，如 `OP_CLOSURE` 的 upvalue 数 ✗
-    //   ⇒ 此时反汇编**必须停下并说明**，否则后面全部错位 ✓）。
+    // 本指令**指令头之后**的尾随字节数（不含 4 字节指令头 op8+A8+B8+C8 ✓）。
+    // 权威来源：`src/debug.c` 的 `decode_trailing()`（编译器自带反汇编，与 VM 同步维护 ✓）。
+    // ⚠ 2026-10 重写：旧表是**栈式时代的"操作数字节数"** ✗，与当前寄存器式 VM 完全不符
+    //   （唯一头 = 4 字节；旧的范围 hack `if op >= 118 and op <= 128 { return 1 }` 对应的
+    //     "立即数系列" 编号语义早已变了 —— 现在 118 = OP_EXTRAARG、120-125 = *_INT_IMM）。
+    //   故**删除该 hack**，改为按 debug.c 的尾随规则逐条判定：
+    //     固定 0 字节尾随 ⇒ 返回 0（绝大多数指令）；
+    //     FOR_PREP/FOR_LOOP、CMPJMP_*、CMPJMP_ITER、INVOKE_METHOD_TYPED ⇒ 4（第二个 4 字节字）；
+    //     长度**依赖字节码内容**的 ⇒ 返回 -1，交给 opDynamicLen() 现场解码。
     func opImmSize(int op): int {
-        if op >= 118 and op <= 128 { return 1 }   // 立即数系列（含位移）✓
         switch op {
-            case 0 { return 2 }                    // OP_CONST: const_idx(2)
-            // 局部/上值槽位（16 位 ✓）
-            case 8, 9, 10, 14, 15 { return 2 }     // GET/SET_LOCAL(_POP) / GET/SET_UPVALUE
-            case 42, 43, 44, 45 { return 2 }       // INC/DEC_LOCAL、PRE_INC/PRE_DEC_LOCAL: slot(2)（旧表漏 ✗）
-            case 16 { return 0 }                   // OP_CLOSE_UPVALUE（旧表被范围误算成 2 ✗）
-            case 11 { return 4 }                   // OP_MOVE_LOCAL: src(2) dst(2)
-            // 全局/模块（常量索引 2 字节 ✓）
-            case 12, 13, 17, 18, 19, 20 { return 2 }
-            case 88, 89, 90, 91 { return 2 }       // GET/SET_MODULE_VAR / GET/DEFINE_MODULE_FUNC
-            case 73 { return 2 }                   // OP_LOAD_NATIVE_MODULE
-            case 74 { return 6 }                   // OP_MODULE_CALL: module(2) method(2) args(2)（旧表 2 ✗）
-            case 75 { return 4 }                   // OP_GET_MODULE_CONST: module(2) const(2)（旧表 2 ✗）
-            case 92 { return 2 }                   // OP_GET_PROPERTY
-            // 跳转（4 字节偏移 ✓）
-            case 55, 56, 57, 58 { return 4 }
-            // 调用
-            case 59, 60 { return 2 }               // CALL / TAIL_CALL: arg_count(2)
-            case 144, 145 { return 4 }             // CALL_NATIVE / TAIL_CALL_NATIVE: name(2) args(2)
-            case 149 { return 4 }                  // OP_CALL_GLOBAL_FUNC: slot(2) args(2)
-            case 150 { return 4 }                  // OP_CALL_GLOBAL_FUNC_TYPED（同形 ✓）
-            // 容器
-            case 64 { return 2 }                   // OP_ARRAY: count(2)
-            case 69 { return 2 }                   // OP_DICT: count(2)（旧表漏 ✗）
-            case 67, 68 { return 0 }               // ARRAY_APPEND(_NOPUSH)：无操作数（旧表 2 ✗）
-            // struct / enum / cstruct
-            case 131, 132 { return 1 }             // GET/SET_FIELD: field_idx(1)
-            case 133 { return 1 }                  // OP_GET_FIELD_ADDR: field_idx(1)（旧表 -1 ✗，实测 1）
-            case 134 { return 2 }                  // OP_GET_METHOD: name_idx(2)（旧表 1 ✗）
-            case 138 { return 2 }                  // OP_GET_CSTRUCT_DEF
-            case 161 { return 3 }                  // OP_GET_FIELD_FAST: slot(2) field(1)
-            case 162 { return 6 }                  // OP_INVOKE_METHOD_TYPED: name(2) args(2) type(2)
-            // 循环
-            case 95 { return 7 }                   // OP_FOR_PREP（旧表 0 ✗）
-            case 96 { return 6 }                   // OP_FOR_LOOP（旧表 0 ✗）
-            // 协程 / 模块初始化
-            case 139 { return 0 }                  // OP_AWAIT
-            case 140 { return 2 }                  // OP_ASYNC_CALL: arg_count(2)
-            case 141 { return 0 }                  // OP_INIT_LENOMODULE
-            case 146 { return 0 }                  // OP_U8_TO_F64
-            // 立即数操作数占用 1 字节的合入：38 SET_PTR_ELEM_TYPE / 39 SET_DECLARED_FACE
-            // 63 RETURN_MULTI: count(1)  83 TRY: catch(2)+finally(2)（旧表均漏 ✗）
-            case 38 { return 1 }                   // OP_SET_PTR_ELEM_TYPE: elem_type(1)
-            case 39 { return 2 }                   // OP_SET_DECLARED_FACE: name_const(2)
-            case 63 { return 1 }                   // OP_RETURN_MULTI: count(1)
-            case 83 { return 4 }                   // OP_TRY: catch_off(2)+finally_off(2)
-            // NOPUSH 变体 / 融合指令
-            case 148 { return 2 }                  // OP_DTOR_LOCAL: slot(2)
-            case 151, 152 { return 2 }             // INC/DEC_LOCAL_NOPUSH: slot(2)
-            case 153 { return 4 }                  // OP_MOVE_LOCAL_POP: src(2) dst(2)
-            case 154 { return 0 }                  // OP_INDEX_SET_NOPUSH（旧表 1 ✗）
-            case 155 { return 4 }                  // OP_CLEAR_LOCAL_RANGE: base(2) count(2)
-            case 157 { return 4 }                  // OP_SET_LOCAL_CONST: const(2) slot(2)
-            case 159, 160 { return 9 }             // CMPJMP_LL/LG: cmp(1) a(2) b(2) off(4)
-            case 163 { return 11 }                 // CMPJMP_LI: cmp(1) slot(2) imm(4) off(4)
-            // ↓ 长度**依赖字节码内嵌的计数** ⇒ -1，由 opDynamicLen() 按 VM 布局现场解码 ✓
-            case 61 { return -1 }                  // OP_CLOSURE: 2 + 6*upvalue_count
-            case 93, 94 { return -1 }              // TYPE_CHECK / AS_CAST: type(1)[ name(2)] ⇒ 2 或 3
-            case 129 { return -1 }                 // OP_STRUCT_DEF（字段/方法/impl 变长）
-            case 130 { return -1 }                 // OP_STRUCT_INIT: 7 + 2*generic + args
-            case 135 { return -1 }                 // OP_ENUM_DEF: 3 + 4*members
-            case 136 { return -1 }                 // OP_FACE_DEF
-            case 137 { return -1 }                 // OP_CSTRUCT_DEF
-            case 142 { return -1 }                 // OP_CLIB_CALL: 4 + user_arg_count
-            case 143 { return -1 }                 // OP_CFUNC_CALLBACK: 2 + param_count
-            case 147 { return -1 }                 // OP_PUSH_TYPE_ARGS: 1 + 2*count
-            case 156 { return -1 }                 // OP_SWITCH_LOOKUP: 8 + 4*cases
-            case 158 { return -1 }                 // OP_ACC_FIELDS: 1 + count
-            default { return 0 }                   // 无操作数（+ - * / 比较等 ✓）
+            // --- 定长尾随 4 字节 ---
+            case 116, 117 { return 4 }                     // FOR_PREP / FOR_LOOP：var+inclusive+sBx16
+            case 127, 128, 129, 130 { return 4 }           // CMPJMP_LT/LE/GT/GE：第二个 4 字节字
+            case 141 { return 4 }                          // CMPJMP_ITER：第二个 4 字节字
+            case 139 { return 4 }                          // INVOKE_METHOD_TYPED：name16 + type16
+            // --- 长度依赖字节码内容（⇒ opDynamicLen 现场解码）---
+            case 16 { return -1 }                          // CLOSURE：4 * upvalue_count
+            case 63 { return -1 }                          // CALL_NATIVE：B=0 ⇒ 紧随 EXTRAARG(4)
+            case 87 { return -1 }                          // MODULE_CALL：B=0 ⇒ 紧随 EXTRAARG(4)
+            case 99 { return -1 }                          // GET_METHOD：C=0 ⇒ 紧随 EXTRAARG(4)
+            case 94 { return -1 }                          // STRUCT_DEF：字段/方法/impl/泛型/常量表
+            case 95 { return -1 }                          // STRUCT_INIT：名字+泛型+字段名表+module_slot16
+            case 102 { return -1 }                         // ENUM_DEF：成员表
+            case 103 { return -1 }                         // FACE_DEF：方法签名表
+            case 104 { return -1 }                         // CSTRUCT_DEF：字段布局表
+            case 106 { return -1 }                         // TYPE_CHECK：需名字的类型再 +2
+            case 107 { return -1 }                         // AS_CAST：需名字的类型再 +2
+            case 110 { return -1 }                         // CLIB_CALL：1 + min(nargs,12) 个参数类型
+            case 111 { return -1 }                         // CFUNC_CALLBACK：2 + param_count
+            case 138 { return -1 }                         // ACC_FIELDS：C 个字段索引
+            case 142, 143, 144, 145, 146, 147 { return -1 }  // BIT*_K：C=0 ⇒ 紧随 EXTRAARG(4)
+            case 149, 150 { return -1 }                    // TYPE_CHECK_SPEC / AS_CAST_SPEC：递归类型规格
+            // --- 其余：指令头定长 4 字节，无尾随数据 ---
+            default { return 0 }
         }
     }
 
     // ==================== 动态长度指令解码 (opDynamicLen) ====================
     //
-    // ⚠ 2026-09-19 新增：`opImmSize` 返回 -1 的指令，其长度**依赖字节码内嵌的计数**，
-    //   旧实现直接"停下并说明"⇒ 凡是带 OP_CLOSURE（每个程序的第一步！）/ OP_STRUCT_DEF /
-    //   OP_ENUM_DEF / OP_TRY 之外的类型指令的 chunk,正文一行都反不出来 ✗。
-    //   这里按 `src/vm/vminc/` 各 op 实现里 READ_* 的**精确消费顺序**现场解码。
-    //   权威来源：leno_types.h 的 TypeKind 枚举（TYPE_STRUCT=13/FACE=14/ENUM=15/
-    //   CSTRUCT=35/PTR_GENERIC=40）与 op_*.inc。
-    // 返回**操作数字节数**（不含 opcode）；-1 = 数据越界/不可解 ⇒ 停下并说明 ✓
+    // ⚠ 2026-10 重写：对齐**当前寄存器式 VM**。`opImmSize` 返回 -1 的指令，其长度由这里按
+    //   `src/debug.c` 的 `decode_trailing()` **逐分支规则**现场解码（那是与 VM 同步维护的权威表）。
+    //   指令头定长 4 字节（op8 A8 B8 C8）；本函数返回**指令头之后的尾随字节数**（= 指令总长 - 4）。
+    //   -1 = 数据越界/不可解 ⇒ 调用方停下并说明，绝不"猜个长度继续" ✓。
+    //   涉及的 TypeKind（leno_types.h）：ARRAY=6 / DICT=7 / STRUCT=13 / FACE=14 / ENUM=15 /
+    //   CSTRUCT=35 / PTR_GENERIC=40。
+
+    // 类型规格（TYPE_CHECK_SPEC / AS_CAST_SPEC 的尾随数据）的字节长度 —— 自定界、递归：
+    //   与 vm.c 的 type_spec_size 同格式（唯一格式来源 = leno_vm.h 两个 opcode 上方的说明）：
+    //     spec := kind(1)
+    //             [STRUCT|FACE|ENUM]  name_const(2, 大端)
+    //             [ARRAY]             spec(元素)
+    //             [DICT]              spec(键) spec(值)
+    //             [PTR_GENERIC]       spec(元素)
+    //   其余 kind 无附加字节。返回字节数（≥1）或 -1（越界/深度超限）。
+    func typeSpecSize(int pos, int limit, int depth): int {
+        if depth > 64 { return -1 }
+        if pos < 0 or pos + 1 > limit { markTrunc(pos); return -1 }
+        int kind = safeByte(pos)
+        int p = pos + 1
+        if kind == 13 or kind == 14 or kind == 15 {
+            if p + 2 > limit { markTrunc(p); return -1 }
+            p = p + 2
+        } else if kind == 6 {
+            int sub = typeSpecSize(p, limit, depth + 1)
+            if sub < 0 { return -1 }
+            p = p + sub
+        } else if kind == 7 {
+            int ks = typeSpecSize(p, limit, depth + 1)
+            if ks < 0 { return -1 }
+            p = p + ks
+            int vs = typeSpecSize(p, limit, depth + 1)
+            if vs < 0 { return -1 }
+            p = p + vs
+        } else if kind == 40 {
+            int sub = typeSpecSize(p, limit, depth + 1)
+            if sub < 0 { return -1 }
+            p = p + sub
+        }
+        if p > limit { markTrunc(pos); return -1 }
+        return p - pos
+    }
+
     func opDynamicLen(int op, int start, int limit, Array[int] fnUpvals): int {
-        // 越界安全读取 1/2/4 字节（BE）
-        if start + 1 > limit { return -1 }
-        // op 61: OP_CLOSURE: const_idx(2) + 6*upvalue_count
-        // ⚠ 2026-09-19 修正偏移 ✗：const_idx 在**操作码之后**（VM: READ_CONSTANT 即
-        //   `frame->ip += 2`，见 op_call.inc），必须从 start+1 读，否则把操作码高位拼进
-        //   索引（0x3D00=15616）⇒ 误判越界、整段反汇编崩 ✗
-        if op == 61 {
-            if start + 3 > limit { return -1 }
-            int cidx = rbe16(start + 1)
+        int base = start + 4                 // 指令头定长 4 字节
+        if base > limit { markTrunc(start); return -1 }
+        int bb = safeByte(start + 2)         // 头里的 B 字节
+        int cc = safeByte(start + 3)         // 头里的 C 字节
+
+        // --- 常量索引为 0 ⇒ 紧随一条独立的 4 字节 OP_EXTRAARG（iAx = 24 位常量索引）---
+        //     （对应 VM 的 READ_CONST_IDX；debug.c 用"下一条是不是 OP_EXTRAARG"做保险，这里照做 ✓）
+        if op == 63 or op == 87 {            // CALL_NATIVE / MODULE_CALL：B=0
+            if bb == 0 and hasBytes(base, 4) and safeByte(base) == 118 { return 4 }
+            return 0
+        }
+        if op == 99 {                        // GET_METHOD：C=0
+            if cc == 0 and hasBytes(base, 4) and safeByte(base) == 118 { return 4 }
+            return 0
+        }
+        if op == 142 or op == 143 or op == 144 or op == 145 or op == 146 or op == 147 {
+            if cc == 0 and hasBytes(base, 4) and safeByte(base) == 118 { return 4 }   // BIT*_K：C=0
+            return 0
+        }
+
+        // --- CLOSURE：Bx = 函数常量索引；尾随 = 4 * upvalue_count ---
+        if op == 16 {
+            int cidx = rbe16(start + 2)
             if cidx < 0 or cidx >= fnUpvals.len() { return -1 }
             int upv = fnUpvals[cidx]
             if upv < 0 { return -1 }
-            return 2 + 6 * upv
+            return 4 * upv
         }
-        // op 93/94: TYPE_CHECK / AS_CAST: type(1) [+ name或elem(2/1)]
-        if op == 93 {
-            int tk = safeByte(start)
-            if tk == 0x0D or tk == 0x0E or tk == 0x0F { return 3 }
-            return 2
+        // --- TYPE_CHECK / AS_CAST：B = TypeKind；需名字的类型再 +2（name_const）---
+        if op == 106 {                       // is：STRUCT/FACE/ENUM
+            if bb == 13 or bb == 14 or bb == 15 { return 2 }
+            return 0
         }
-        if op == 94 {
-            int tk = safeByte(start)
-            if tk == 0x0D or tk == 0x0E or tk == 0x23 { return 3 }
-            return 2
+        if op == 107 {                       // as：STRUCT/FACE/CSTRUCT
+            if bb == 13 or bb == 14 or bb == 35 { return 2 }
+            return 0
         }
-        // op 135: OP_ENUM_DEF: name_idx(2)+member_count(1)+((name_idx(2)+value_idx(2))*n)
-        // ⚠ 2026-09-19 修正偏移 ✗：name_idx 在 opcode 之后 ⇒ member_count 在 start+3
-        if op == 135 {
-            if start + 3 > limit { return -1 }
-            int mc = safeByte(start + 3)
-            if mc < 0 { return -1 }
-            return 3 + 4 * mc
+        // --- ENUM_DEF：member_count(1) + (name16 + value16) * n ---
+        if op == 102 {
+            if base + 1 > limit { return -1 }
+            int mc = safeByte(base)
+            if base + 1 + 4 * mc > limit { return -1 }
+            return 1 + 4 * mc
         }
-        // op 136: OP_FACE_DEF: name_idx(2)+method_count(1)+type_param_count(1)
-        //                    + (type_param_name(2)*tpc) + Σmethod( name(2)+param_count(1)+ret(1)+params )
-        // ⚠ 2026-09-19 修正偏移 ✗：method_count 在 start+3（opcode+name_idx 之后）
-        if op == 136 {
-            if start + 4 > limit { return -1 }
-            int mc = safeByte(start + 3)
-            int tpc = safeByte(start + 4)
-            if mc < 0 or tpc < 0 { return -1 }
-            int pos = start + 5 + 2 * tpc
+        // --- FACE_DEF：methods(1) + tps(1) + tps*name16
+        //     + Σmethod( name16 + param_count(1) + ret(1) + param_count 个类型 ) ---
+        if op == 103 {
+            if base + 2 > limit { return -1 }
+            int mc = safeByte(base)
+            int tpc = safeByte(base + 1)
+            int p = 2 + 2 * tpc
             for 0:mc-1 to i {
-                if pos + 4 > limit { return -1 }
-                int pc2 = safeByte(pos + 2)
-                if pc2 < 0 { return -1 }
-                pos = pos + 4 + pc2
+                if base + p + 4 > limit { return -1 }
+                int pc2 = safeByte(base + p + 2)
+                p = p + 4 + pc2
             }
-            if pos > limit { return -1 }
-            // ⚠ pos - start 含 opcode（start 指向操作码），返回操作数字节数需 -1 ✗
-            return pos - start - 1
+            if base + p > limit { return -1 }
+            return p
         }
-        // op 130: OP_STRUCT_INIT: name_idx(2)+arg_count(1)+generic_count(1)
-        //          + (type_name(2)*gc) + (field_idx(1)*args) + mod_space(1)+mod_slot(2)   ← v2.7.3
-        // ⚠ 2026-09-19 修正偏移 ✗：arg_count 在 start+3、generic_count 在 start+4、
-        //   操作数（不含 opcode）总长 = 4 + 2*gc + argc + 3 ⇒ 含 opcode 为 5 + ...
-        if op == 130 {
-            if start + 5 > limit { return -1 }
-            int argc = safeByte(start + 3)
-            int gc = safeByte(start + 4)
-            if argc < 0 or gc < 0 { return -1 }
-            int total = 5 + 2 * gc + argc + 3
-            if start + total > limit { return -1 }
-            return total - 1
-        }
-        // op 129: OP_STRUCT_DEF（布局见 vm/vminc/op_struct.inc，逐字节核对 ✓）
-        //   opcode(1) | name_idx(2) | field_count(1) | method_count(1) | impl_count(1)
-        //   + impl name idxes(2*ic) | type_param_count(1) + type param name idxes(2*tpc)
-        //   + Σfield[ name_idx(2) type(1) is_nullable(1)
-        //            (+hasSTN(1)[+name_idx(2)] if TYPE_STRUCT=13)
-        //            (+elem_type(1) if TYPE_PTR_GENERIC=40)
-        //            + has_default(1)[+default_idx(2)] ]
-        //   + Σmethod[ name_idx(2) func_idx(2) ]（4*mc）
-        //   + ctor_dtor_flags(1)，bit0=有ctor索引(1)、bit1=有dtor索引(1)
-        //   + 关联常量 count(1) + (name_idx(2)+value_idx(2))*cc
-        // ⚠ 2026-09-19 修正 header 偏移 ✗：field_count 在 start+3（opcode+name_idx 之后）
-        if op == 129 {
-            if start + 6 > limit { return -1 }
-            int fc = safeByte(start + 3)
-            int mc = safeByte(start + 4)
-            int ic = safeByte(start + 5)
-            int pos = start + 6
-            pos = pos + 2 * ic                    // impl name idxes
-            if pos > limit { return -1 }
-            int tpc = safeByte(pos); pos = pos + 1
-            if pos > limit or tpc < 0 { return -1 }
-            pos = pos + 2 * tpc                   // type param name idxes
-            if pos > limit { return -1 }
+        // --- CSTRUCT_DEF：fields(1)+total_size(2)+align(1)+packed(1)+explicit(1)
+        //     + Σfield( name16 + type(1) + offset16 + dim16 + nested16 [+1 if PTR_GENERIC] ) ---
+        if op == 104 {
+            if base + 6 > limit { return -1 }
+            int fc = safeByte(base)
+            int p = 6
             for 0:fc-1 to i {
-                if pos + 4 > limit { return -1 }
-                pos = pos + 2                     // field name idx
-                int ftype = safeByte(pos); pos = pos + 2  // ftype + is_nullable
-                if ftype == 0x0D {                // TYPE_STRUCT: has_struct_type_name(1) [+ name idx(2)]
-                    int hasSTN = safeByte(pos); pos = pos + 1
-                    if pos > limit { return -1 }
-                    if hasSTN != 0 { pos = pos + 2 }
-                }
-                if ftype == 0x28 {                // TYPE_PTR_GENERIC: elem_type(1)
-                    pos = pos + 1
-                }
-                if pos > limit { return -1 }
-                int hasDef = safeByte(pos); pos = pos + 1
-                if pos > limit { return -1 }
-                if hasDef != 0 { pos = pos + 2 }  // default const idx
+                if base + p + 9 > limit { return -1 }
+                int ftype = safeByte(base + p + 2)
+                p = p + 9
+                if ftype == 40 { p = p + 1 }
             }
-            // methods: name_idx(2)+func_idx(2)
-            pos = pos + 4 * mc
-            if pos > limit { return -1 }
-            // ctor/dtor flags + indexes
-            int ctorFlags = safeByte(pos); pos = pos + 1
-            if pos > limit { return -1 }
-            if (ctorFlags & 1) != 0 { pos = pos + 1 }
-            if (ctorFlags & 2) != 0 { pos = pos + 1 }
-            if pos > limit { return -1 }
-            // 关联常量: count(1) + (name(2)+value(2))*n
-            int cc = safeByte(pos); pos = pos + 1
-            if pos > limit or cc < 0 { return -1 }
-            pos = pos + 4 * cc
-            if pos > limit { return -1 }
-            // ⚠ pos - start 含 opcode（start 指向操作码），返回操作数字节数需 -1 ✗
-            return pos - start - 1
+            if base + p > limit { return -1 }
+            return p
         }
-        // op 137: OP_CSTRUCT_DEF: name_idx(2)+field_count(1)+total_size(2)+alignment(1)
-        //           +is_packed(1)+explicit_align(1) + Σfield( name(2)+type(1)+offset(2)+array_dim(2)+struct_name_idx(2)
-        //                                              [+ elem_type(1) if TYPE_PTR_GENERIC] )
-        // ⚠ 2026-09-19 修正偏移 ✗：field_count 在 start+3（opcode+name_idx 之后）
-        if op == 137 {
-            if start + 8 > limit { return -1 }
-            int fc = safeByte(start + 3)
-            if fc < 0 { return -1 }
-            int pos = start + 8
+        // --- STRUCT_INIT：name16 + gc(1) + gc*name16 + B*fieldName16 + mod_space(1)+mod_slot(2) ---
+        //     （B = 头里的 B 字节 = 字段名个数）---
+        if op == 95 {
+            if base + 3 > limit { return -1 }
+            int gc = safeByte(base + 2)
+            int p = 6 + 2 * gc + 2 * bb
+            if base + p > limit { return -1 }
+            return p
+        }
+        // --- CLIB_CALL：ret_type(1) + min(nargs,12) 个参数类型（nargs = 头里的 C 字节）---
+        if op == 110 {
+            int lim = cc
+            if lim > 12 { lim = 12 }
+            int p = 1 + lim
+            if base + p > limit { return -1 }
+            return p
+        }
+        // --- CFUNC_CALLBACK：ret_type(1) + param_count(1) + param_count 个参数类型 ---
+        if op == 111 {
+            if base + 2 > limit { return -1 }
+            int pcnt = safeByte(base + 1)
+            int p = 2 + pcnt
+            if base + p > limit { return -1 }
+            return p
+        }
+        // --- ACC_FIELDS：C 个字段索引（C = 头里的 C 字节）---
+        if op == 138 {
+            if base + cc > limit { return -1 }
+            return cc
+        }
+        // --- STRUCT_DEF：逐字节照 debug.c 的字段/方法/impl/泛型/关联常量表 ---
+        if op == 94 {
+            if base + 3 > limit { return -1 }
+            int fc = safeByte(base)
+            int mc = safeByte(base + 1)
+            int ic = safeByte(base + 2)
+            int p = 3 + 2 * ic
+            if base + p + 1 > limit { return -1 }
+            int tpc = safeByte(base + p)
+            p = p + 1 + 2 * tpc
             for 0:fc-1 to i {
-                if pos + 9 > limit { return -1 }
-                int ftype = safeByte(pos + 2)
-                pos = pos + 9
-                if ftype == 0x28 { pos = pos + 1 }
-                if pos > limit { return -1 }
+                if base + p + 4 > limit { return -1 }
+                p = p + 2                              // 字段名 idx
+                int ftype = safeByte(base + p)
+                p = p + 2                              // 类型 + nullable
+                if ftype == 13 {                       // TYPE_STRUCT: hasSTN(1)[+name16]
+                    if base + p + 1 > limit { return -1 }
+                    int hasSTN = safeByte(base + p)
+                    p = p + 1
+                    if hasSTN != 0 { p = p + 2 }
+                }
+                if ftype == 40 { p = p + 1 }           // TYPE_PTR_GENERIC: elem_type(1)
+                if base + p + 1 > limit { return -1 }
+                int hasDef = safeByte(base + p)
+                p = p + 1
+                if hasDef != 0 { p = p + 2 }           // default const idx
             }
-            // ⚠ pos - start 含 opcode（start 指向操作码），返回操作数字节数需 -1 ✗
-            return pos - start - 1
+            p = p + 4 * mc                             // 方法: name16 + func16
+            if base + p + 1 > limit { return -1 }
+            int flags = safeByte(base + p)             // ctor/dtor 标志
+            p = p + 1
+            if (flags & 1) != 0 { p = p + 1 }
+            if (flags & 2) != 0 { p = p + 1 }
+            if base + p + 1 > limit { return -1 }
+            int cst = safeByte(base + p)               // 关联常量 count
+            p = p + 1 + 4 * cst
+            if base + p > limit { return -1 }
+            return p
         }
-        // op 142: OP_CLIB_CALL: arg_count(2)+ret_type(1)+user_arg_count(1)+user_arg_count
-        // ⚠ 2026-09-19 修正偏移 ✗：user_arg_count 在 start+4（opcode+2+1 之后）
-        if op == 142 {
-            if start + 5 > limit { return -1 }
-            int uac = safeByte(start + 4)
-            if uac < 0 { return -1 }
-            int total = 5 + uac
-            if start + total > limit { return -1 }
-            return total - 1
-        }
-        // op 143: OP_CFUNC_CALLBACK: ret_type(1)+param_count(1)+param_count
-        // ⚠ 2026-09-19 修正偏移 ✗：param_count 在 start+2（opcode+ret_type 之后）
-        if op == 143 {
-            if start + 2 > limit { return -1 }
-            int pc2 = safeByte(start + 2)
-            if pc2 < 0 { return -1 }
-            int total = 3 + pc2
-            if start + total > limit { return -1 }
-            return total - 1
-        }
-        // op 147: OP_PUSH_TYPE_ARGS: count(1)+(const_idx(2)*count)
-        // ⚠ 2026-09-19 修正偏移 ✗：count 在 start+1（opcode 之后）
-        if op == 147 {
-            if start + 1 > limit { return -1 }
-            int c = safeByte(start + 1)
-            if c < 0 { return -1 }
-            return 2 + 2 * c
-        }
-        // op 156: OP_SWITCH_LOOKUP: const_idx(2)+case_count(2)+default_off(4)+(body_off(4)*n)
-        // ⚠ 2026-09-19 修正偏移 ✗：case_count 在 start+3（opcode+const_idx 之后）
-        if op == 156 {
-            if start + 5 > limit { return -1 }
-            int cc = rbe16(start + 3)
-            if cc < 0 { return -1 }
-            int total = 9 + 4 * cc
-            if start + total > limit { return -1 }
-            return total - 1
-        }
-        // op 158: OP_ACC_FIELDS: count(1)+(field_idx(1)*count)
-        // ⚠ 2026-09-19 修正偏移 ✗：count 在 start+1（opcode 之后）
-        if op == 158 {
-            if start + 1 > limit { return -1 }
-            int c = safeByte(start + 1)
-            if c < 0 { return -1 }
-            return 2 + c
+        // --- 递归类型规格（自定界，长度由 typeSpecSize 算）---
+        if op == 149 or op == 150 {
+            int sz = typeSpecSize(base, limit, 0)
+            if sz < 0 { return -1 }
+            return sz
         }
         return -1
     }
@@ -2037,6 +2086,8 @@ struct PEAnalyzer {
                 return
             }
 
+            // ★ DEAD_FUNCTION (0x14)：无载荷（标签已消费）✓ —— 漏了它 default 会多跳 1 字节 ✗
+            case 0x14 { return }
             // 未知标签: 尝试跳过 1 字节 (best effort)
             default {
                 gLenbPos = gLenbPos + 1
@@ -2064,6 +2115,7 @@ struct PEAnalyzer {
         gLenbPos = gLenbPos + 4                         // local_count
         gLenbPos = gLenbPos + 1                         // has_try
         gLenbPos = gLenbPos + 1                         // is_ctor（此前漏 ✗）
+        gLenbPos = gLenbPos + 1                         // is_async（2026-09-21 加的，此前漏 ✗）
         gLenbPos = gLenbPos + 4                         // return_count（此前漏 ✗）
         int rtc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4   // ret_type_count（此前漏 ✗）
         if rtc < 0 or rtc > 100000 { markTrunc(gLenbPos); return }
@@ -2097,9 +2149,10 @@ struct PEAnalyzer {
         if codeLen < 0 or codeLen > 1000000 { gLenbPos = gLenbEnd; return }
         gLenbPos = gLenbPos + codeLen
         if gLenbPos >= gLenbEnd { return }
-        int hasLines = fileData.byte(gLenbPos) & 0xFF; gLenbPos = gLenbPos + 1
+        int hasLines = safeByte(gLenbPos); gLenbPos = gLenbPos + 1
+        // 行号表 = RLE + varint（v3.0.2 起，见 readVarint/skipLinesTable 的说明 ✓）
         if hasLines == 1 and codeLen > 0 {
-            gLenbPos = gLenbPos + 2 * codeLen
+            if not skipLinesTable(codeLen) { gLenbPos = gLenbEnd }
         }
     }
 
@@ -2159,6 +2212,7 @@ struct PEAnalyzer {
                 int locals = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
                 gLenbPos = gLenbPos + 1  // has_try
                 gLenbPos = gLenbPos + 1  // is_ctor（此前漏 ✗）
+                gLenbPos = gLenbPos + 1  // is_async（2026-09-21 加的，此前漏 ✗）
                 gLenbPos = gLenbPos + 4  // return_count（此前漏 ✗）
                 int rtc = rbe32(gLenbPos); gLenbPos = gLenbPos + 4  // ret_type_count（此前漏 ✗）
                 if rtc < 0 or rtc > 10000 { gLenbPos = gLenbEnd; return "FUNC?<bad>" }
@@ -2371,6 +2425,9 @@ struct PEAnalyzer {
                 return "MODULE_REF(" + name + ")"
             }
 
+            // ★ DEAD_FUNCTION (0x14)：无载荷（DCE 剪掉的函数；标签已消费）✓
+            case 0x14 { return "DEAD_FUNCTION" }
+
             // 未知标签
             default {
                 gLenbPos = gLenbPos + 1
@@ -2390,77 +2447,89 @@ struct PEAnalyzer {
         int lineNo = -1
         if idx < lines.len() { lineNo = lines[idx] }
 
-        // 范围判断先处理（switch 不支持范围）
-        if op >= 118 and op <= 128 {
-            if pc + 2 <= gLenbEnd {
-                int imm = fileData.byte(pc + 1) & 0xFF
-                if imm >= 128 { imm = imm - 256 }
-                operands = "imm=" + _str(imm)
+        // 当前寄存器式 VM：指令头**定长 4 字节** = op8 | A8 | B8 | C8（大端 ✓）。
+        //   编码形态（见 leno_vm.h）：iABC / iABx / iAsBx / iAsJ / iAx；
+        //   尾随数据由 opImmSize/opDynamicLen 判定，这里只做**显示**（不改走址 ✓）。
+        if pc + 4 <= gLenbEnd {
+            int a = safeByte(pc + 1)
+            int b = safeByte(pc + 2)
+            int c = safeByte(pc + 3)
+            int bx = (b << 8) | c
+            int sbx = bx - 32768
+            switch op {
+                // iAsJ：24 位有符号跳转偏移
+                case 56 {
+                    int sj = (a << 16) | (b << 8) | c
+                    if (sj & 0x800000) != 0 { sj = sj - 0x1000000 }
+                    operands = "sJ=" + _str(sj) + " -> 0x" + toHex8(pc + 4 + sj)
+                }
+                // iAsBx：A + 有符号 16 位（跳转基准 = 指令之后，即 pc+4）
+                case 2, 3, 57, 58 {
+                    operands = "A=" + _str(a) + " sBx=" + _str(sbx) + " -> 0x" + toHex8(pc + 4 + sbx)
+                }
+                // iAx：24 位扩展值（OP_EXTRAARG 作为**独立指令**正常显示 ✓）
+                case 118 {
+                    operands = "Ax=" + _str((a << 16) | (b << 8) | c)
+                }
+                // iABx：A + 16 位常量/全局/upvalue/定义索引
+                case 1, 8, 9, 10, 11, 12, 13, 14, 15, 16, 81, 82, 83, 86, 88, 89, 90, 91, 92, 93, 94, 101, 102, 103, 104, 105, 106, 107, 111, 113, 115 {
+                    operands = "A=" + _str(a) + " Bx=" + _str(bx)
+                }
+                // 默认 iABC：A/B/C 三寄存器
+                default {
+                    operands = "A=" + _str(a) + " B=" + _str(b) + " C=" + _str(c)
+                }
+            }
+            // --- 尾随数据摘要（长度规则与 opImmSize/opDynamicLen 一致）---
+            if op == 116 or op == 117 {                 // FOR_PREP / FOR_LOOP：sBx16 在 pc+6
+                if pc + 8 <= gLenbEnd {
+                    int sb = rbe16(pc + 6) - 32768
+                    operands = operands + "  sBx=" + _str(sb) + " -> 0x" + toHex8(pc + 8 + sb)
+                }
+            }
+            if op == 127 or op == 128 or op == 129 or op == 130 or op == 141 {  // CMPJMP_* / CMPJMP_ITER
+                if pc + 8 <= gLenbEnd {
+                    int off = rbe16(pc + 4) - 32768
+                    operands = operands + "  off=" + _str(off) + " -> 0x" + toHex8(pc + 8 + off)
+                }
+            }
+            if op == 139 {                              // INVOKE_METHOD_TYPED：name16 + type16
+                if pc + 8 <= gLenbEnd {
+                    operands = operands + "  nameK=" + _str(rbe16(pc + 4)) + " typeK=" + _str(rbe16(pc + 6))
+                }
+            }
+            if op == 138 {                              // ACC_FIELDS：C 个字段索引
+                if pc + 4 + c <= gLenbEnd {
+                    string fld = ""
+                    for 0:c-1 to fi {
+                        if fi > 0 { fld = fld + "," }
+                        fld = fld + _str(safeByte(pc + 4 + fi))
+                    }
+                    operands = operands + "  fields=[" + fld + "]"
+                }
+            }
+            // 常量索引为 0 ⇒ 紧随的 OP_EXTRAARG 补全索引。**不重复消费**：EXTRAARG 自身
+            //   仍是下一条独立指令（走址由 opDynamicLen 只 +4 ✓），这里仅做显示提示。
+            if op == 63 or op == 87 {                   // CALL_NATIVE / MODULE_CALL：B=0
+                if b == 0 and pc + 8 <= gLenbEnd and safeByte(pc + 4) == 118 {
+                    int ax = (safeByte(pc + 5) << 16) | (safeByte(pc + 6) << 8) | safeByte(pc + 7)
+                    operands = operands + "  [EXTRAARG K=" + _str(ax) + "]"
+                }
+            }
+            if op == 99 {                               // GET_METHOD：C=0
+                if c == 0 and pc + 8 <= gLenbEnd and safeByte(pc + 4) == 118 {
+                    int ax = (safeByte(pc + 5) << 16) | (safeByte(pc + 6) << 8) | safeByte(pc + 7)
+                    operands = operands + "  [EXTRAARG K=" + _str(ax) + "]"
+                }
+            }
+            if op == 142 or op == 143 or op == 144 or op == 145 or op == 146 or op == 147 {  // BIT*_K：C=0
+                if c == 0 and pc + 8 <= gLenbEnd and safeByte(pc + 4) == 118 {
+                    int ax = (safeByte(pc + 5) << 16) | (safeByte(pc + 6) << 8) | safeByte(pc + 7)
+                    operands = operands + "  [EXTRAARG K=" + _str(ax) + "]"
+                }
             }
         } else {
-            switch op {
-                case 0 {
-                    if pc + 3 <= gLenbEnd { operands = "const[" + _str(rbe16(pc + 1)) + "]" }
-                }
-                // 局部/上值槽位（含自增减，旧表漏 42-45 ✗）
-                case 8, 9, 10, 12, 13, 14, 15, 42, 43, 44, 45, 148, 151, 152 {
-                    if pc + 3 <= gLenbEnd { operands = "slot=" + _str(rbe16(pc + 1)) }
-                }
-                case 11 {
-                    if pc + 5 <= gLenbEnd {
-                        operands = "src=" + _str(rbe16(pc + 1)) + " dst=" + _str(rbe16(pc + 3))
-                    }
-                }
-                case 59, 60 {
-                    if pc + 3 <= gLenbEnd { operands = "argc=" + _str(rbe16(pc + 1)) }
-                }
-                case 55, 56, 57, 58 {
-                    if pc + 5 <= gLenbEnd {
-                        int target = rbe32(pc + 1)
-                        int absT = pc + 1 + 4 + target
-                        operands = "-> 0x" + toHex8(absT)
-                    }
-                }
-                case 144, 145, 149, 150 {
-                    if pc + 5 <= gLenbEnd {
-                        operands = "name=" + _str(rbe16(pc + 1)) + " argc=" + _str(rbe16(pc + 3))
-                    }
-                }
-                case 61, 73, 134, 138 {
-                    if pc + 3 <= gLenbEnd { operands = "const[" + _str(rbe16(pc + 1)) + "]" }
-                }
-                case 64, 69 {
-                    if pc + 3 <= gLenbEnd { operands = "count=" + _str(rbe16(pc + 1)) }
-                }
-                case 63 {
-                    if pc + 2 <= gLenbEnd { operands = "count=" + _str(fileData.byte(pc + 1) & 0xFF) }
-                }
-                case 83 {
-                    if pc + 5 <= gLenbEnd {
-                        int cOff = rbe16(pc + 1)
-                        int fOff = rbe16(pc + 3)
-                        operands = "catch=+" + _str(cOff) + " finally=+" + _str(fOff)
-                    }
-                }
-                case 38 {
-                    if pc + 2 <= gLenbEnd { operands = "elem_type=0x" + toHex2(fileData.byte(pc + 1) & 0xFF) }
-                }
-                case 39, 75 {
-                    if pc + 3 <= gLenbEnd { operands = "const[" + _str(rbe16(pc + 1)) + "]" }
-                    if op == 75 and pc + 5 <= gLenbEnd {
-                        operands = "module=" + _str(rbe16(pc + 1)) + " const=" + _str(rbe16(pc + 3))
-                    }
-                }
-                case 94, 93 {
-                    if pc + 2 <= gLenbEnd { operands = "type=0x" + toHex2(fileData.byte(pc + 1) & 0xFF) }
-                }
-                case 131, 132, 133 {
-                    if pc + 2 <= gLenbEnd { operands = "field=" + _str(fileData.byte(pc + 1) & 0xFF) }
-                }
-                default {
-                    if immSz > 0 { operands = "<" + _str(immSz) + "B>" }
-                }
-            }
+            operands = "<header truncated>"
         }
 
         string lineField = "?"
@@ -2555,7 +2624,11 @@ struct PEAnalyzer {
         Array[int] fnUpvals = []
         for 0:constCnt-1 to ci {
             constStarts.add(gLenbPos)
-            int ctag = fileData.byte(gLenbPos) & 0xFF
+            // ⚠ 用 safeByte（越界 ⇒ 记截断并给 0），不要裸 fileData.byte ✗：常量表一旦与
+            //   产物格式**错位**（例如漏认某个常量标签），偏移会一路漂到文件尾之外 ⇒
+            //   裸读返回 **null** ⇒ 下一句 `null & 0xFF` 报「位与运算: null 不能参与运算」✗
+            //   —— 那个报错指向的是"错位的后果"，不是根因，排查时极易被带偏（本次就是）✓
+            int ctag = safeByte(gLenbPos)
             if ctag == 0x06 {
                 int up0 = -1
                 int nl0 = rbe32(gLenbPos + 1)   // 函数名长度（u32 BE，在 tag 之后）
@@ -2574,7 +2647,7 @@ struct PEAnalyzer {
         // 显示常量，对 FUNCTION 常量递归展开嵌套 chunk
         for 0:constCnt-1 to ci {
             int cst = constStarts[ci]
-            int tag = fileData.byte(cst) & 0xFF
+            int tag = safeByte(cst)   // 同上：raw 读在错位时会给 null，进而 null & 0xFF 崩 ✗
             addDisasmRow("; const[" + _str(ci) + "] = " + constTexts[ci])
             if tag == 0x06 and depth < 4 {
                 // 从保存的起始位置重新计算 chunk 偏移
@@ -2582,9 +2655,10 @@ struct PEAnalyzer {
                 int nameLen = rbe32(subPos)
                 subPos = adv(subPos, 4 + nameLen)
                 if subPos < 0 { return }
-                // arity(4)+upvals(4)+locals(4)+has_try(1)+is_ctor(1)+return_count(4) = 18
-                // （is_ctor / return_count 此前漏算 ✗ —— 见 skipFuncRaw 的权威布局注释 ✓）
-                subPos = adv(subPos, 18)
+                // arity(4)+upvals(4)+locals(4)+has_try(1)+is_ctor(1)+is_async(1)+return_count(4) = 19
+                // （is_ctor / return_count 此前漏算；**is_async** 是 2026-09-21 加的，也漏了 ✗
+                //   —— 权威布局见 skipFuncRaw / src/serialize/serialize.c 的 OBJ_FUNCTION 分支 ✓）
+                subPos = adv(subPos, 19)
                 if subPos < 0 { return }
                 int rtc = rbe32(subPos)                       // ret_type_count（此前漏 ✗）
                 subPos = adv(subPos, 4 + rtc)
@@ -2632,18 +2706,14 @@ struct PEAnalyzer {
         gLenbPos = adv(gLenbPos, codeLen)   // 同类隐患：codeLen 来自文件 ⇒ 必须查边界 ✗
         if gLenbPos < 0 { return }
 
-        // 读取行号
+        // 读取行号（RLE + varint，v3.0.2 起；此前是定长 u16[code_len] ✗）
         int hasLines = -1
         Array[int] lines = []
         if gLenbPos + 1 <= gLenbEnd {
-            hasLines = fileData.byte(gLenbPos) & 0xFF
+            hasLines = safeByte(gLenbPos)
             gLenbPos = gLenbPos + 1
             if hasLines == 1 and codeLen > 0 {
-                for 0:codeLen-1 to li {
-                    if gLenbPos + 2 <= gLenbEnd {
-                        lines.add(rbe16(gLenbPos)); gLenbPos = gLenbPos + 2
-                    }
-                }
+                lines = readLinesRLE(codeLen)      // 展开成与 code 等长的行号数组 ✓
             }
         }
         for 0:codeLen-1 to ii {
@@ -2655,9 +2725,10 @@ struct PEAnalyzer {
         while pc < codeLen {
             if codeStart + pc >= gLenbEnd { break }
             int opc = fileData.byte(codeStart + pc) & 0xFF
+            // imm = 本指令**指令头之后**的尾随字节数（头定长 4 字节 ⇒ 总长 = 4 + imm ✓）。
             int imm = opImmSize(opc)
-            // ⚠ imm < 0 = 本指令长度**依赖字节码内嵌的计数**（如 `OP_CLOSURE` 的 upvalue 数）
-            //   ⇒ 由 opDynamicLen() 按 VM 布局现场解码（2026-09-19 之前直接停下 ✗）
+            // ⚠ imm < 0 = 本指令长度**依赖字节码内容**（如 `OP_CLOSURE` 的 upvalue 数、
+            //   `OP_CALL_NATIVE` B=0 时紧随的 EXTRAARG）⇒ 由 opDynamicLen() 现场解码 ✓
             if imm < 0 {
                 int dynLimit = codeStart + codeLen
                 if dynLimit > gLenbEnd { dynLimit = gLenbEnd }
@@ -2665,7 +2736,7 @@ struct PEAnalyzer {
             }
             // 仍解不出来（数据越界/结构不符）⇒ 停下并说明，绝不"猜个长度继续" ✗
             if imm < 0 {
-                addDisasmRow("; ⚠ 无法确定本指令长度（" + opName(opc) + "，长度依赖运行时数据）⇒ 反汇编到此为止")
+                addDisasmRow("; ⚠ 无法确定本指令长度（" + opName(opc) + "，长度依赖字节码内容）⇒ 反汇编到此为止")
                 break
             }
             string line = decodeOneInstruction(codeStart, codeLen, lines, pc, imm)
@@ -2674,7 +2745,7 @@ struct PEAnalyzer {
             int rowIdx = disasmRows.len() - 1
             if rowIdx >= 0 and disasmRows[rowIdx][0].len() > 0 {
                 string hexStr = ""
-                int byteCnt = 1 + imm
+                int byteCnt = 4 + imm
                 if byteCnt > 16 { byteCnt = 16 }
                 for 0:byteCnt-1 to bi {
                     if codeStart + pc + bi < gLenbEnd {
@@ -2683,7 +2754,7 @@ struct PEAnalyzer {
                 }
                 disasmRows[rowIdx][4] = hexStr
             }
-            pc = pc + 1 + imm
+            pc = pc + 4 + imm
         }
     }
 
