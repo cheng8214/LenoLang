@@ -793,45 +793,23 @@
                     //   ⇒ 这里对齐成同一口径：静态 any 传具体类型形参必须 `_str() / _int() / as`。
                     //   运行期还有 `native_check_module_params()` 兜底（动态路径无法静态判定）。
                     if (expected_type != TYPE_ANY && arg_type && arg_type->kind != expected_type) {
-                        // 允许 int -> float, bigint -> int, bigint -> float, bool -> int/float/bigint 的隐式转换
-                        bool type_compatible = false;
-                        if ((expected_type == TYPE_FLOAT && arg_type->kind == TYPE_INT) ||
-                            (expected_type == TYPE_INT && arg_type->kind == TYPE_BIGINT) ||
-                            (expected_type == TYPE_FLOAT && arg_type->kind == TYPE_BIGINT) ||
-                            ((expected_type == TYPE_INT || expected_type == TYPE_FLOAT || expected_type == TYPE_BIGINT) &&
-                             arg_type->kind == TYPE_BOOL)) {
-                            type_compatible = true;
-                        }
-                        // 允许 Ptr[T] <-> Ptr 之间的隐式转换
-                        if ((expected_type == TYPE_PTR && arg_type->kind == TYPE_PTR_GENERIC) ||
-                            (expected_type == TYPE_PTR_GENERIC && arg_type->kind == TYPE_PTR)) {
-                            type_compatible = true;
-                        }
-                        // C 布局类型隐式转换
-                        if ((expected_type == TYPE_INT && arg_type->kind >= TYPE_I8 && arg_type->kind <= TYPE_C_SSIZE) ||
-                            (arg_type->kind == TYPE_INT && expected_type >= TYPE_I8 && expected_type <= TYPE_C_SSIZE)) {
-                            type_compatible = true;
-                        }
-                        if ((expected_type == TYPE_FLOAT && (arg_type->kind == TYPE_F32 || arg_type->kind == TYPE_F64)) ||
-                            (arg_type->kind == TYPE_FLOAT && (expected_type == TYPE_F32 || expected_type == TYPE_F64))) {
-                            type_compatible = true;
-                        }
-                        if ((expected_type == TYPE_STRING && (arg_type->kind == TYPE_STR8 || arg_type->kind == TYPE_STR16)) ||
-                            (arg_type->kind == TYPE_STRING && (expected_type == TYPE_STR8 || expected_type == TYPE_STR16))) {
-                            type_compatible = true;
-                        }
-
-                        // 允许 cfunc 类型匹配
-                        if (expected_type == TYPE_CFUNC && arg_type->kind == TYPE_CFUNC) {
-                            type_compatible = true;
-                        }
-                        // clib 句柄可传给"要 Ptr"的位置（2026-10-02 补）：
-                        //   `ffi.call*(lib, "符号", ...)` 的第一参就是 `clib xxx` 句柄（也确实是库指针）⇒
-                        //   声明成 Ptr 是对的，判等却判不兼容 ⇒ 这 6 处长期只能"不声明"（= 不检查）✗
-                        //   ⚠ 这是**独立的判据链**（不是 type_is_compatible）⇒ 同一规则在两处都要写：
-                        //     type.c 的 type_is_compatible（赋值/其它通道）+ 这里（模块方法实参）
-                        if (expected_type == TYPE_PTR && arg_type->kind == TYPE_CLIB) {
-                            type_compatible = true;
+                        // ── 判据：**与赋值/其它通道共用同一个实现** `type_is_compatible`（2026-10-02 合并）──
+                        //   为什么必须合并：这里原先自己抄了一份"判据链"（int→float、bigint、
+                        //   C 布局 int、f32/f64、str8/str16、Ptr[T]→Ptr、cfunc、clib→Ptr…），而
+                        //   `type_is_compatible` 里**本来就有**同样这些规则 ⇒ 同一规则两处写：
+                        //   新增/修正一条要改两处，漏一处就出现"赋值能过、传参却报错"这类不一致
+                        //   （本轮实测到一次：`clib → Ptr` 只在 type.c 里有时，ffi.call* 那 6 处照旧报错 ✗）。
+                        //   口径保持不变的两点：
+                        //     · **种类相同 ⇒ 直接兼容**：这里历来只按 Kind 判、不比结构体名（保持老行为 ✓）
+                        //     · **静态 any 仍必须拒绝**（v3.2.7 定案：native 侧普遍无校验强转，any 到运行期
+                        //       可能是 null ⇒ 必须显式 `_str() / _int() / as`）；`type_is_compatible` 对
+                        //       "源是 any" 没有放行规则、尾部是 `return 0` ⇒ 自然拒绝 ✓
+                        bool type_compatible = (arg_type->kind == expected_type);
+                        if (!type_compatible) {
+                            TypeInfo expected_ti;
+                            memset(&expected_ti, 0, sizeof(expected_ti));
+                            expected_ti.kind = expected_type;
+                            type_compatible = (type_is_compatible(&expected_ti, arg_type) != 0);
                         }
                         if (!type_compatible) {
                             char msg[BUFFER_MEDIUM];

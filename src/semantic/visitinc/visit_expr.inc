@@ -981,33 +981,18 @@
                                             
                                             if (expected_param_type != TYPE_ANY && arg_type && arg_type->kind != TYPE_ANY) {
                                                 if (arg_type->kind != expected_param_type) {
-                                                    // 允许 int -> float, bigint -> int, bigint -> float 的隐式转换
-                                                    // 以及 bool -> int/float/bigint 的隐式转换
-                                                    bool type_compatible = false;
-                                                    if ((expected_param_type == TYPE_FLOAT && arg_type->kind == TYPE_INT) ||
-                                                        (expected_param_type == TYPE_INT && arg_type->kind == TYPE_BIGINT) ||
-                                                        (expected_param_type == TYPE_FLOAT && arg_type->kind == TYPE_BIGINT) ||
-                                                        ((expected_param_type == TYPE_INT || expected_param_type == TYPE_FLOAT || expected_param_type == TYPE_BIGINT) &&
-                                                         arg_type->kind == TYPE_BOOL)) {
-                                                        type_compatible = true;
-                                                    }
-                                                    // 允许 Ptr[T] <-> Ptr 之间的隐式转换
-                                                    if ((expected_param_type == TYPE_PTR && arg_type->kind == TYPE_PTR_GENERIC) ||
-                                                        (expected_param_type == TYPE_PTR_GENERIC && arg_type->kind == TYPE_PTR)) {
-                                                        type_compatible = true;
-                                                    }
-                                                    // C 布局类型隐式转换
-                                                    if ((expected_param_type == TYPE_INT && arg_type->kind >= TYPE_I8 && arg_type->kind <= TYPE_C_SSIZE) ||
-                                                        (arg_type->kind == TYPE_INT && expected_param_type >= TYPE_I8 && expected_param_type <= TYPE_C_SSIZE)) {
-                                                        type_compatible = true;
-                                                    }
-                                                    if ((expected_param_type == TYPE_FLOAT && (arg_type->kind == TYPE_F32 || arg_type->kind == TYPE_F64)) ||
-                                                        (arg_type->kind == TYPE_FLOAT && (expected_param_type == TYPE_F32 || expected_param_type == TYPE_F64))) {
-                                                        type_compatible = true;
-                                                    }
-                                                    if ((expected_param_type == TYPE_STRING && (arg_type->kind == TYPE_STR8 || arg_type->kind == TYPE_STR16)) ||
-                                                        (arg_type->kind == TYPE_STRING && (expected_param_type == TYPE_STR8 || expected_param_type == TYPE_STR16))) {
-                                                        type_compatible = true;
+                                                    // ── 通用判据合并（2026-10-02）：改用 `type_is_compatible` ──
+                                                    //   （原先这套 int→float/bigint、C 布局、f32/f64、str8/str16、
+                                                    //     Ptr[T]↔Ptr 的规则与 type.c 重复 ⇒ 同一规则两处写）
+                                                    //   ⚠ 下面那条 **face ← struct** 规则**保留**：它依赖当前调用上下文
+                                                    //     （face 名取自 receiver_type 的元素类型），type_is_compatible 里
+                                                    //     的同名规则取的是 target->struct_name，语义不同，不能替代 ✓
+                                                    bool type_compatible = (arg_type->kind == expected_param_type);
+                                                    if (!type_compatible) {
+                                                        TypeInfo expected_ti;
+                                                        memset(&expected_ti, 0, sizeof(expected_ti));
+                                                        expected_ti.kind = expected_param_type;
+                                                        type_compatible = (type_is_compatible(&expected_ti, arg_type) != 0);
                                                     }
                                                     // 允许 impl face 的 struct 传给 face 类型的参数
                                                     if (expected_param_type == TYPE_FACE && arg_type->kind == TYPE_STRUCT && arg_type->struct_name) {
@@ -1098,32 +1083,17 @@
                                                 } else if (expected_param_type != TYPE_ANY) {
                                                     // 只有 kind 信息，进行简单类型比较
                                                     if (arg_type->kind != expected_param_type) {
-                                                        // 允许 int -> float, bigint -> int, bigint -> float, bool -> int/float/bigint 的隐式转换
-                                                        bool type_compatible = false;
-                                                        if ((expected_param_type == TYPE_FLOAT && arg_type->kind == TYPE_INT) ||
-                                                            (expected_param_type == TYPE_INT && arg_type->kind == TYPE_BIGINT) ||
-                                                            (expected_param_type == TYPE_FLOAT && arg_type->kind == TYPE_BIGINT) ||
-                                                            ((expected_param_type == TYPE_INT || expected_param_type == TYPE_FLOAT || expected_param_type == TYPE_BIGINT) &&
-                                                             arg_type->kind == TYPE_BOOL)) {
-                                                            type_compatible = true;
-                                                        }
-                                                        // 允许 Ptr[T] <-> Ptr 之间的隐式转换
-                                                        if ((expected_param_type == TYPE_PTR && arg_type->kind == TYPE_PTR_GENERIC) ||
-                                                            (expected_param_type == TYPE_PTR_GENERIC && arg_type->kind == TYPE_PTR)) {
-                                                            type_compatible = true;
-                                                        }
-                                                        // C 布局类型隐式转换
-                                                        if ((expected_param_type == TYPE_INT && arg_type->kind >= TYPE_I8 && arg_type->kind <= TYPE_C_SSIZE) ||
-                                                            (arg_type->kind == TYPE_INT && expected_param_type >= TYPE_I8 && expected_param_type <= TYPE_C_SSIZE)) {
-                                                            type_compatible = true;
-                                                        }
-                                                        if ((expected_param_type == TYPE_FLOAT && (arg_type->kind == TYPE_F32 || arg_type->kind == TYPE_F64)) ||
-                                                            (arg_type->kind == TYPE_FLOAT && (expected_param_type == TYPE_F32 || expected_param_type == TYPE_F64))) {
-                                                            type_compatible = true;
-                                                        }
-                                                        if ((expected_param_type == TYPE_STRING && (arg_type->kind == TYPE_STR8 || arg_type->kind == TYPE_STR16)) ||
-                                                            (arg_type->kind == TYPE_STRING && (expected_param_type == TYPE_STR8 || expected_param_type == TYPE_STR16))) {
-                                                            type_compatible = true;
+                                                        // ── 判据合并（2026-10-02）：**与赋值/其它通道共用 `type_is_compatible`** ──
+                                                        //   这里原先又抄了一份判据链（int→float/bigint、C 布局、f32/f64、
+                                                        //   str8/str16、Ptr[T]↔Ptr…），与 type.c 里的规则重复 ⇒ 同一规则两处写。
+                                                        //   口径不变：种类相同 ⇒ 直接兼容；对"源是 any"照旧拒绝
+                                                        //   （type_is_compatible 无该放行规则、尾部 return 0 ✓）
+                                                        bool type_compatible = (arg_type->kind == expected_param_type);
+                                                        if (!type_compatible) {
+                                                            TypeInfo expected_ti;
+                                                            memset(&expected_ti, 0, sizeof(expected_ti));
+                                                            expected_ti.kind = expected_param_type;
+                                                            type_compatible = (type_is_compatible(&expected_ti, arg_type) != 0);
                                                         }
 
                                                         if (!type_compatible) {
