@@ -182,6 +182,25 @@
                                     //     new Cell[int](value=1) ⇒「字段 'value' 类型不匹配: 期望 'struct T'，实际 'int'」✗
                                     check_type = type_copy(expected_type);
                                     for (int gi = 0; gi < struct_def_ast->u.struct_def.type_param_count && gi < ast->u.struct_init.generic_type_count; gi++) {
+                                        // ★ 2026-10-03：类型参数写了**具体类型约束**（`struct Cell[T: string]`）
+                                        //   ⇒ 在实例化处校验实参类型 ✓
+                                        //   为什么必须有这一条：约束存在时，native 实参检查会**直接放行**（约束已保证 ✓）
+                                        //   而不再记"需求" ⇒ 若这里不校验，`new Cell[int](...)` 会静默通过 ✗
+                                        const char* cons = struct_def_ast->u.struct_def.type_param_constraints
+                                                               ? struct_def_ast->u.struct_def.type_param_constraints[gi]
+                                                               : NULL;
+                                        TypeKind ck = semantic_constraint_builtin_kind(cons);
+                                        TypeInfo* arg_ti = ast->u.struct_init.generic_type_args[gi];
+                                        if (ck != TYPE_UNKNOWN && arg_ti &&
+                                            !(arg_ti->kind == ck || (ck == TYPE_INT && arg_ti->kind == TYPE_BIGINT))) {
+                                            char cmsg[BUFFER_MEDIUM];
+                                            snprintf(cmsg, sizeof(cmsg),
+                                                     "类型 '%s' 不满足约束 '%s'（struct '%s' 的类型参数 '%s' 被约束为具体类型）",
+                                                     type_kind_to_string(arg_ti->kind), cons,
+                                                     ast->u.struct_init.struct_name,
+                                                     struct_def_ast->u.struct_def.type_params[gi]);
+                                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, cmsg);
+                                        }
                                         TypeInfo* sub = semantic_substitute_generic_param(check_type,
                                             struct_def_ast->u.struct_def.type_params[gi],
                                             ast->u.struct_init.generic_type_args[gi]);

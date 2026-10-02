@@ -1700,6 +1700,23 @@
                                 TypeInfo* inferred = inferred_types[i];
                                 if (!inferred || inferred->kind == TYPE_ANY) continue;  // 无法推断，跳过
                                 
+                                // ★ 2026-10-03：约束写成**具体类型名**（`[T: string]`）⇒ 直接比 kind ✓
+                                //   （比 face 那条更早、更明确；不匹配就是实打实的约束违反 ✗）
+                                //   `int` 约束接受 bigint —— 与 type_kind_to_string 的"对外统一为 int"一致 ✓
+                                TypeKind ck = semantic_constraint_builtin_kind(constraint);
+                                if (ck != TYPE_UNKNOWN) {
+                                    int ok_ck = (inferred->kind == ck) ||
+                                                (ck == TYPE_INT && inferred->kind == TYPE_BIGINT);
+                                    if (!ok_ck) {
+                                        char msg[BUFFER_MEDIUM];
+                                        snprintf(msg, sizeof(msg),
+                                            "类型 '%s' 不满足约束 '%s'（该泛型参数被约束为具体类型）",
+                                            type_kind_to_string(inferred->kind), constraint);
+                                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                                    }
+                                    continue;   // 具体类型约束已判完，不再走 face 那条 ✓
+                                }
+
                                 // 只有 struct 类型需要检查 impl
                                 if (inferred->kind == TYPE_STRUCT && inferred->struct_name) {
                                     ObjStructDef* sdef = struct_def_find(inferred->struct_name);

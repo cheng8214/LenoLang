@@ -1394,6 +1394,19 @@ int type_utils_check_dict_index_assignment(Symbol* dict_sym, TypeInfo* assign_ty
     return 0;
 }
 
+// 约束名 → 内建**具体类型** kind（不是具体类型名 ⇒ TYPE_UNKNOWN，交给 face 那条路 ✓）
+//   2026-10-03：`[T: FaceName]` 之外放开 `[T: string / int / float / bool]`
+//   —— 泛型体里把 T 用在 native 形参上时，写清约束就能在**定义处**判定，而不必等调用点推断 ✓
+TypeKind semantic_constraint_builtin_kind(const char* name) {
+    if (!name) return TYPE_UNKNOWN;
+    if (strcmp(name, "int") == 0)    return TYPE_INT;
+    if (strcmp(name, "float") == 0)  return TYPE_FLOAT;
+    if (strcmp(name, "string") == 0) return TYPE_STRING;
+    if (strcmp(name, "bool") == 0)   return TYPE_BOOL;
+    if (strcmp(name, "bigint") == 0) return TYPE_BIGINT;
+    return TYPE_UNKNOWN;
+}
+
 // ============================================================================
 // 泛型参数 → native 形参：**两段式需求推断**（B 方案，2026-10-02）
 // ----------------------------------------------------------------------------
@@ -1451,10 +1464,37 @@ int semantic_check_native_arg(Semantic* s, Ast* ast, TypeInfo* arg_type, TypeKin
 
     // ① 是**当前泛型函数**（或**当前泛型 struct 的方法体**）声明的类型参数 ⇒ 记需求，交给调用点判
     //    （本函数不报错，并**接管**该实参：调用方跳过常规比较 ✓）
+    //    ⚠ 若该类型参数写了**具体类型约束**（`[T: string]`）⇒ **定义处**就能判、不用等调用点 ✓
+    //      （约束与 native 形参相容 ⇒ 直接放行 ✓；不相容 ⇒ 定义处报错，意图写清了不该有歧义 ✗）
     if (s && s->cur_generic_func) {
         Ast* f = s->cur_generic_func;
         for (int i = 0; i < f->u.func.type_param_count; i++) {
             if (f->u.func.type_params[i] && strcmp(f->u.func.type_params[i], nm) == 0) {
+                // 约束**优先从实参类型自身读**（`resolve_generic_in_type` 会把约束写进
+                //   TypeInfo.constraint_name ✓，字段/方法签名/函数参数都生效）；
+                //   读不到再按所有者（当前函数）的声明表找 ✓
+                const char* cons = arg_type->constraint_name
+                                       ? arg_type->constraint_name
+                                       : (f->u.func.type_param_constraints ? f->u.func.type_param_constraints[i] : NULL);
+                // ★ struct 方法体的兜底（2026-10-03 实测）：方法 AST **不携带**接收者 struct 的约束 ✗，
+                //   实参类型（如 `self.value`）也没有 constraint_name ✗ —— 约束只在 `cur_generic_struct`
+                //   的声明表里（调试打印：arg_cons=null、method_cons0=null、cur_struct=int ✓）⇒ 回查它 ✓
+                if (!cons && s->cur_generic_struct &&
+                    s->cur_generic_struct->u.struct_def.type_param_constraints &&
+                    i < s->cur_generic_struct->u.struct_def.type_param_count) {
+                    cons = s->cur_generic_struct->u.struct_def.type_param_constraints[i];
+                }
+                TypeKind ck = semantic_constraint_builtin_kind(cons);
+                if (ck != TYPE_UNKNOWN) {
+                    if (expected == ck) return 1;   // 约束已保证 native 形参相容 ✓（无需记需求）
+                    char m[BUFFER_MEDIUM];
+                    snprintf(m, sizeof(m),
+                             "泛型参数 '%s' 约束为 '%s'，但 %s 的第 %d 个参数期望 '%s' —— 两者不相容",
+                             nm, cons, callee_desc ? callee_desc : "native 方法", arg_index + 1,
+                             type_kind_to_string(expected));
+                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, m);
+                    return 1;
+                }
                 semantic_record_generic_requirement(s, nm, expected, ast->line, callee_desc);
                 return 1;
             }
@@ -1466,6 +1506,23 @@ int semantic_check_native_arg(Semantic* s, Ast* ast, TypeInfo* arg_type, TypeKin
         for (int i = 0; i < sd->u.struct_def.type_param_count; i++) {
             if (sd->u.struct_def.type_params && sd->u.struct_def.type_params[i] &&
                 strcmp(sd->u.struct_def.type_params[i], nm) == 0) {
+                // 同函数侧：**优先读实参类型自身**的 constraint_name（struct 字段/方法签名里的 T
+                //   在 resolve_generic_in_type 时就被写上了 ✓，比回查 struct 声明表更可靠）
+                const char* cons = arg_type->constraint_name
+                                       ? arg_type->constraint_name
+                                       : (sd->u.struct_def.type_param_constraints
+                                              ? sd->u.struct_def.type_param_constraints[i] : NULL);
+                TypeKind ck = semantic_constraint_builtin_kind(cons);
+                if (ck != TYPE_UNKNOWN) {
+                    if (expected == ck) return 1;   // 约束已保证 ✓
+                    char m[BUFFER_MEDIUM];
+                    snprintf(m, sizeof(m),
+                             "泛型参数 '%s' 约束为 '%s'，但 %s 的第 %d 个参数期望 '%s' —— 两者不相容",
+                             nm, cons, callee_desc ? callee_desc : "native 方法", arg_index + 1,
+                             type_kind_to_string(expected));
+                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, m);
+                    return 1;
+                }
                 semantic_record_generic_requirement(s, nm, expected, ast->line, callee_desc);
                 return 1;
             }

@@ -1211,5 +1211,56 @@ struct Cmp[T] {
 ")
     ce.expect_ok(g13, "前向引用泛型的多形状（返回 T / Pair[K,V] / Array[T] / T 运算）都要合法", "sum=12")
 
+    // ---- F7：泛型参数的具体类型约束 `[T: string]`（2026-10-03）----
+    //   原先约束只能写 face 名（写 `string` 直接语法报错 ✗）。放开后：
+    //     · 意图写清 ⇒ 定义处即可判 native 形参是否与约束相容 ✓
+    //     · 调用点按约束校验实参类型 ✓；struct 侧在**实例化处**校验 ✓
+    var g14 = dirs.join(work, "cstr_ok.leno")
+    files.write(g14, @"import strings
+func hexit[T: string](T x):string { return strings.to_hex(x) }
+main() { print(hexit(""中"")) }
+")
+    ce.expect_ok(g14, "约束 [T: string] 的合法调用 ⇒ 编译并跑通", "e4b8ad")
+
+    var g15 = dirs.join(work, "cstr_bad_call.leno")
+    files.write(g15, @"import strings
+func hexit[T: string](T x):string { return strings.to_hex(x) }
+main() { print(hexit(42)) }
+")
+    ce.expect_error(g15, "违反约束的调用（T 应为 string 却传 int）⇒ 报错", "不满足约束", 3)
+
+    var g16 = dirs.join(work, "cstr_bad_body.leno")
+    files.write(g16, @"import strings
+func bad[T: int](T x):string { return strings.to_hex(x) }
+main() { print(bad(1)) }
+")
+    ce.expect_error(g16, "约束与 native 形参不相容 ⇒ **定义处**报错（不必等调用点）", "两者不相容", 2)
+
+    var g17 = dirs.join(work, "cstr_struct_bad.leno")
+    files.write(g17, @"import strings
+struct Cell[T: string] {
+    T value
+    func hex():string { return strings.to_hex(self.value) }
+}
+main() {
+    Cell[int] c = new Cell[int](value=1)
+    print(c.hex())
+}
+")
+    ce.expect_error(g17, "struct 实例化违反约束（Cell[int] 而 T 约束为 string）⇒ 报错", "不满足约束", 7)
+
+    var g18 = dirs.join(work, "cstr_struct_ok.leno")
+    files.write(g18, @"import strings
+struct Cell[T: string] {
+    T value
+    func hex():string { return strings.to_hex(self.value) }
+}
+main() {
+    Cell[string] c = new Cell[string](value=""ab"")
+    print(c.hex())
+}
+")
+    ce.expect_ok(g18, "struct 约束的合法实例化（Cell[string]）⇒ 编译并跑通", "6162")
+
     print("=== test_diag_static_errors ALL passed ===")
 }

@@ -135,6 +135,8 @@ TypeInfo* infer_return_type_from_body(Semantic* s, Ast* body);
 //   同时也覆盖**可空值**（`int?`/`string?` 直传非可空 native 形参 = 盲转遇 null ⇒ 段错误 ✗）
 int semantic_check_native_arg(Semantic* s, Ast* ast, TypeInfo* arg_type, TypeKind expected,
                               const char* callee_desc, int arg_index);
+// 约束名 → 内建具体类型 kind（`[T: string]` 这类；不是具体类型名 ⇒ TYPE_UNKNOWN，走 face 那条路 ✓）
+TypeKind semantic_constraint_builtin_kind(const char* name);
 void semantic_record_generic_requirement(Semantic* s, const char* param_name, TypeKind expected,
                                          int line, const char* callee);
 //   `owner_struct`：需求属于 struct 方法时传 struct 名、否则传 NULL（与记录侧对称 ✓）

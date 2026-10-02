@@ -1210,11 +1210,19 @@ Ast* parse_func_body_and_create(Parser* p, char* name, int line, int column) {
             type_params[type_param_count] = copy_string(p->lex.current.text, p->lex.current.len);
             lexer_next(&p->lex);
             
-            // 解析可选的约束: T: FaceName
+            // 解析可选的约束: T: FaceName 或 T: 具体类型名（string / int / float / bool，2026-10-03 放开）
+            //   为什么放开具体类型名：泛型体里把 T 用在 native 形参上时（如 `strings.to_hex(x)`），
+            //   原先只能靠"需求推断"在**调用点**判；写成 `[T: string]` 后意图明确，
+            //   且能在**定义处**直接判 native 形参是否与约束相容 ✓
             if (p->lex.current.type == TOK_COLON) {
                 lexer_next(&p->lex); // 跳过 ':'
-                if (p->lex.current.type != TOK_IDENT) {
-                    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望约束类型名（face 名称）");
+                if (p->lex.current.type != TOK_IDENT &&
+                    p->lex.current.type != TOK_INT_TYPE &&
+                    p->lex.current.type != TOK_FLOAT_TYPE &&
+                    p->lex.current.type != TOK_STRING_TYPE &&
+                    p->lex.current.type != TOK_BOOL_TYPE) {
+                    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                                 "期望约束类型名（face 名或具体类型名，如 string / int / float / bool）");
                 } else {
                     type_param_constraints[type_param_count] = copy_string(p->lex.current.text, p->lex.current.len);
                     lexer_next(&p->lex);
@@ -1766,11 +1774,17 @@ Ast* parse_struct_stmt(Parser* p) {
             type_params[type_param_count] = copy_string(p->lex.current.text, p->lex.current.len);
             lexer_next(&p->lex);
             
-            // 解析可选的约束: T: FaceName
+            // 解析可选的约束: T: FaceName 或 T: 具体类型名（string / int / float / bool，2026-10-03 放开）
+            //   （与函数类型参数同一口径 ✓：泛型 struct 的 T 用在 native 形参上时也能写清约束）
             if (p->lex.current.type == TOK_COLON) {
                 lexer_next(&p->lex);
-                if (p->lex.current.type != TOK_IDENT) {
-                    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望约束类型名（face 名称）");
+                if (p->lex.current.type != TOK_IDENT &&
+                    p->lex.current.type != TOK_INT_TYPE &&
+                    p->lex.current.type != TOK_FLOAT_TYPE &&
+                    p->lex.current.type != TOK_STRING_TYPE &&
+                    p->lex.current.type != TOK_BOOL_TYPE) {
+                    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                                 "期望约束类型名（face 名或具体类型名，如 string / int / float / bool）");
                 } else {
                     type_param_constraints[type_param_count] = copy_string(p->lex.current.text, p->lex.current.len);
                     lexer_next(&p->lex);
