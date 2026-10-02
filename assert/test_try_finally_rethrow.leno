@@ -40,6 +40,28 @@ func normalReturn(): int {
     }
 }
 
+func returnInFinally(): int {
+    try {
+        throw "orig-ret"
+    } finally {
+        return 5              // return **覆盖**在飞异常（JS/Python 同语义）
+    }
+}
+
+func loopFinally(): int {
+    var i = 0
+    var hits = 0
+    while i < 3 {
+        try {
+            if i == 1 { throw "loop-boom" }
+            hits = hits + 1
+        } finally {
+            i = i + 1
+        }
+    }
+    return hits
+}
+
 main() {
     // ① 基本：异常原样上抛 + finally 执行
     var c1 = false
@@ -84,6 +106,44 @@ main() {
         assert_eq(_str(e.msg), "cb-finally")
     }
     assert_eq(c4, true)
+
+    // ⑤ finally 里 `return`：覆盖在飞异常、正常返回，且**不许泄漏**到调用方
+    //    （修法（三）之前它会泄漏出去，在调用方的 END_TRY 处变成"未捕获的异常"直接终止）
+    var c5 = false
+    var r5 = 0
+    try {
+        r5 = returnInFinally()
+        c5 = true
+    } catch e {
+        print("⑤ 不该进 catch: " + e.msg)
+    }
+    assert_eq(c5, true, "finally 里的 return 应覆盖异常、正常返回")
+    assert_eq(r5, 5)
+
+    // ⑥ 循环里的 try/finally：异常必须能穿过循环（修前被静默吞掉、循环照常跑完）
+    var c6 = false
+    try {
+        var h = loopFinally()
+        print("⑥ 不该正常返回 h=" + _str(h))
+    } catch e {
+        c6 = true
+        assert_eq(_str(e.msg), "loop-boom")
+    }
+    assert_eq(c6, true)
+
+    // ⑦ finally 里 `throw`：覆盖原异常（既有文档语义，别被这次改动弄丢）
+    var c7 = false
+    try {
+        try {
+            throw "orig"
+        } finally {
+            throw "from-finally"
+        }
+    } catch e {
+        c7 = true
+        assert_eq(_str(e.msg), "from-finally")
+    }
+    assert_eq(c7, true)
 
     print("test_try_finally_rethrow passed")
 }

@@ -330,6 +330,15 @@
             result = frame->locals[0];
         }
 
+        // ★ 在 finally 体内 return：return **覆盖**在飞异常（JS/Python 同语义）⇒ 清掉 pending。
+        //   ⚠ 不清的话它会**泄漏到调用方**，在调用方的 END_TRY 处被重新抛出 —— 连它自己的
+        //     catch 都进不去（实测：`try { throw "x" } finally { return 5 }` 会变成
+        //     "未捕获的 x" 直接终止程序，而 `return 5` 本该把异常覆盖掉）
+        if (frame->in_finally) {
+            vm.pending_exception = 0;
+            vm.exception = val_null();
+        }
+
         // 有 finally 且尚未执行：先执行 finally，返回值暂存
         if (FRAME_TRY_VALID(frame) && frame->finally_ip != NULL && !frame->in_finally) {
             frame->try_return_value = result;

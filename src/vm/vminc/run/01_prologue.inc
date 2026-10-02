@@ -219,7 +219,11 @@
     //   或宿主栈（ret_frame < 0）；宿主停止条件 / 协程顶层返回在此判定。
     //   末尾会重设 frame（或 goto vm_exit）。
     // =========================================================================
+    // ★ 在 finally 体内 return：return **覆盖**在飞异常（与 OP_RETURN 同口径，见 06_call.inc
+    //   里那段说明）—— 否则 pending 会泄漏到调用方，变成"未捕获的异常"直接终止程序。
+    //   （注：注释写在宏**外面**：宏体里的块注释若以反斜杠续行会让 GCC 报 multi-line comment）
     #define REG_FINISH_RETURN(_result) do { \
+        if (frame->in_finally) { vm.pending_exception = 0; vm.exception = val_null(); } \
         Value _res = (_result); \
         int _ret_frame = frame->ret_frame; \
         int _ret_reg = frame->ret_reg; \

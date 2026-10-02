@@ -9251,6 +9251,8 @@ main() {
 >   `e.msg` / `e.line` / `e.stack` 都还是"错误发生地"那一份，不会被改写成"接住它的那一行"。
 > - `try { … } finally { … }`（**不写 catch**）里抛的异常会**照常向外抛**：finally 必然先执行，
 >   异常文案与位置原样传给外层 `catch`（此前这条路径会把异常**静默吞掉** ✗）。
+> - `finally` 里的 `return` / `throw` 会**覆盖**正在传播的异常（与 JS/Python 一致）：
+>   `return` ⇒ 正常返回那个值、异常丢弃；`throw` ⇒ 用新的那个异常（含它自己的位置）。
 > - **回调里抛的异常会正常上抛**：`arr.map/filter/reduce` 的回调、FFI 回调里 `throw`，
 >   外层的 `try { … } catch e` 都能接住，`e.msg`/`e.line` 就是抛出的那份（既不消失，
 >   也不会让程序异常退出）。
