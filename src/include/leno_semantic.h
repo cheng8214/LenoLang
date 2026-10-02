@@ -62,6 +62,19 @@ typedef struct {
     char* callee;       // 需求来源描述（如 "strings.to_hex"）
 } GenericRequirement;
 
+// 待复查的调用点（**顺序无关**的关键，2026-10-02）：
+//   需求是在"访问定义体"时记录的，而调用点可能在定义体**之前**被访问（main 在前、
+//   struct 前向引用等）⇒ 那一刻需求表还是空的 ⇒ 当场判会**漏过** ✗
+//   做法：调用点只**登记**，等所有定义体都访问完（semantic_analyze / _module 的收尾）
+//   再统一复查 ⇒ 与源码顺序无关 ✓
+typedef struct {
+    Ast* call_ast;      // 调用点（报错位置就取它的 line/column ✓；AST 活得比本表久 ✓）
+    char* owner_struct; // NULL = 自由函数
+    char* func_name;    // 函数名 / 方法名
+    char* param_name;   // 类型参数名
+    TypeInfo* actual;   // 调用点推断出的类型实参（副本，flush 后释放 ✓）
+} PendingReqCheck;
+
 // ============================================================================
 // 单遍语义分析（解决前向引用 + 闭包）
 // ============================================================================
@@ -90,6 +103,9 @@ typedef struct {
     GenericRequirement* reqs;   // 需求表（动态数组）
     int req_count;
     int req_capacity;
+    PendingReqCheck* pending;   // 待复查的调用点（收尾统一判 ⇒ 顺序无关 ✓）
+    int pending_count;
+    int pending_capacity;
 } Semantic;
 
 // 函数表 API

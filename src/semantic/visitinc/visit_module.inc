@@ -1447,7 +1447,7 @@
                                                 int sc = obj_type->generic_count;
                                                 for (int gi = 0; gi < sc && gi < gp_count; gi++) {
                                                     if (!gp_names[gi] || !gp_types[gi]) continue;
-                                                    semantic_check_generic_requirements(s, obj_type->struct_name,
+                                                    semantic_record_pending_req_check(s, obj_type->struct_name,
                                                                                         ast->u.module_call.method_name,
                                                                                         gp_names[gi], gp_types[gi], ast);
                                                 }

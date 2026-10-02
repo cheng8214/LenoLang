@@ -1568,6 +1568,36 @@ void semantic_check_generic_requirements(Semantic* s, const char* owner_struct, 
     }
 }
 
+// **登记**一个待复查的调用点（顺序无关的关键；见 leno_semantic.h 的 PendingReqCheck 说明）
+//   ⚠ 只存 actual 的 **kind**（需求侧比较用的就是 kind ✓）⇒ 原 TypeInfo 之后被释放也不影响 ✓
+void semantic_record_pending_req_check(Semantic* s, const char* owner_struct, const char* func_name,
+                                       const char* param_name, TypeInfo* actual, Ast* call_ast) {
+    if (!s || !func_name || !param_name || !actual || !call_ast) return;
+    if (s->pending_count >= s->pending_capacity) {
+        int cap = s->pending_capacity ? s->pending_capacity * 2 : 32;
+        PendingReqCheck* np = (PendingReqCheck*)realloc(s->pending, sizeof(PendingReqCheck) * cap);
+        if (!np) return;   // 分配失败：跳过（最坏情况退回"当场判"的旧行为，不致命 ✓）
+        s->pending = np;
+        s->pending_capacity = cap;
+    }
+    PendingReqCheck* p = &s->pending[s->pending_count++];
+    p->call_ast = call_ast;
+    p->owner_struct = owner_struct ? strdup(owner_struct) : NULL;
+    p->func_name = strdup(func_name);
+    p->param_name = strdup(param_name);
+    p->actual = type_new(actual->kind);
+}
+
+// **收尾复查**（semantic_analyze / _module 末尾调用）：此时所有定义体都访问完 ⇒ 需求表完整 ✓
+void semantic_flush_pending_req_checks(Semantic* s) {
+    if (!s) return;
+    for (int i = 0; i < s->pending_count; i++) {
+        PendingReqCheck* p = &s->pending[i];
+        semantic_check_generic_requirements(s, p->owner_struct, p->func_name, p->param_name,
+                                            p->actual, p->call_ast);
+    }
+}
+
 // 清理需求表（语义分析收尾时调用）
 void semantic_free_generic_requirements(Semantic* s) {
     if (!s || !s->reqs) return;
@@ -1581,4 +1611,16 @@ void semantic_free_generic_requirements(Semantic* s) {
     s->reqs = NULL;
     s->req_count = 0;
     s->req_capacity = 0;
+
+    // 待复查表（B 方案 · 顺序无关）
+    for (int i = 0; i < s->pending_count; i++) {
+        free(s->pending[i].owner_struct);
+        free(s->pending[i].func_name);
+        free(s->pending[i].param_name);
+        if (s->pending[i].actual) type_free(s->pending[i].actual);
+    }
+    free(s->pending);
+    s->pending = NULL;
+    s->pending_count = 0;
+    s->pending_capacity = 0;
 }

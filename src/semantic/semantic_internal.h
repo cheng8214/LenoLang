@@ -140,6 +140,11 @@ void semantic_record_generic_requirement(Semantic* s, const char* param_name, Ty
 //   `owner_struct`：需求属于 struct 方法时传 struct 名、否则传 NULL（与记录侧对称 ✓）
 void semantic_check_generic_requirements(Semantic* s, const char* owner_struct, const char* func_name,
                                          const char* param_name, TypeInfo* actual, Ast* call_ast);
+// **顺序无关**的两个入口（2026-10-02）：调用点先 semantic_record_pending_req_check() 登记，
+//   分析收尾由 semantic_flush_pending_req_checks() 统一复查（否则调用点早于定义体时会漏过 ✗）
+void semantic_record_pending_req_check(Semantic* s, const char* owner_struct, const char* func_name,
+                                       const char* param_name, TypeInfo* actual, Ast* call_ast);
+void semantic_flush_pending_req_checks(Semantic* s);
 void semantic_free_generic_requirements(Semantic* s);
 
 int type_utils_is_array_element_mutator(const char* method_name);

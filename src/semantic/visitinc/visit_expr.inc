@@ -1268,7 +1268,7 @@
                                                                     : receiver_type->struct_name;
                                                 for (int gi = 0; gi < gp_count; gi++) {
                                                     if (!gp_names[gi] || !gp_types[gi]) continue;
-                                                    semantic_check_generic_requirements(s, sname, method_name,
+                                                    semantic_record_pending_req_check(s, sname, method_name,
                                                                                         gp_names[gi], gp_types[gi], ast);
                                                 }
                                             }
@@ -1721,7 +1721,7 @@
                         //   以前编译通过、运行期 exit=0xC0000005（C 侧把 int 的位型当指针解引用 ✗）
                         for (int i = 0; i < func_def->u.func.type_param_count; i++) {
                             if (!inferred_types[i] || !inferred_names[i]) continue;
-                            semantic_check_generic_requirements(s, NULL, func_name, inferred_names[i],
+                            semantic_record_pending_req_check(s, NULL, func_name, inferred_names[i],
                                                                 inferred_types[i], ast);
                         }
 

@@ -148,6 +148,9 @@ void semantic_init(Semantic* s, Ast* root) {
     s->reqs = NULL;
     s->req_count = 0;
     s->req_capacity = 0;
+    s->pending = NULL;
+    s->pending_count = 0;
+    s->pending_capacity = 0;
 
     // 初始化 imported_modules 数组
     memset(s->imported_modules, 0, sizeof(s->imported_modules));
@@ -460,6 +463,11 @@ void semantic_analyze(Semantic* s, Ast* ast) {
     } else {
         visit(s, ast);
     }
+
+    // ★ 泛型需求的**收尾复查**（2026-10-02）：需求是在"访问定义体"时记录的，而调用点可能
+    //   更早被访问（main 在前 / struct 前向引用）⇒ 当场判会**漏过** ✗
+    //   ⇒ 所有定义体都访问完，这里统一复查（与源码顺序无关 ✓）
+    semantic_flush_pending_req_checks(s);
 }
 
 void semantic_cleanup(Semantic* s) {
@@ -792,4 +800,9 @@ void semantic_analyze_module(Semantic* s, Ast* ast) {
     } else {
         visit(s, ast);
     }
+
+    // ★ 泛型需求的**收尾复查**（2026-10-02）：需求是在"访问定义体"时记录的，而调用点可能
+    //   更早被访问（main 在前 / struct 前向引用）⇒ 当场判会**漏过** ✗
+    //   ⇒ 所有定义体都访问完，这里统一复查（与源码顺序无关 ✓）
+    semantic_flush_pending_req_checks(s);
 }
