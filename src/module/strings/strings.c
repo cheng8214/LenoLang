@@ -1467,6 +1467,224 @@ static Value str_hex(int argc, Value* args) {
     return val_obj((Object*)str_copy(out, width));
 }
 
+// ==================== 2026-10-02 新增：字节 ↔ 文本 的桥 + 两个扫描原语 ====================
+// 缘起（都是"数出来的重复实现"，见各函数的注释）：
+//   · `strings.char(...)` 全仓 **159 处 / 39 文件**，几乎都在逐字节拼串
+//     （base64 / AES / vigenere / caesar / PE 分析 / web_html）——而循环里
+//     `result += strings.char(b)` 是**平方级**（每次 += 都重新分配整串）⇒ 给"一趟分配"的正路 ✓
+//   · "字节串 ↔ hex 文本"在 crypto / PE 里各搓一份（22 处 / 12 文件）
+//     ⚠ 与既有 `hex(n, digits)` **分清**：那个是**数字 → hex 文本**；这两个是**字节串 ↔ hex 文本**
+//       （同为**大写**，保持模块内一致 ✓）
+//   · `to_lower(a) == to_lower(b)` 8 处 / 6 文件（还有只转一侧的写法）⇒ eq_ignore_case
+//   · `text.slice(i, i+1)` 逐字符扫描 10 处 / 6 文件（每步分配一个单字符临时串）⇒ codepoint_at
+
+// 单个 hex 字符 → 0-15（大小写都收）；非法 ⇒ -1（由调用方报错，不静默当 0 ✓）
+static int hex_val(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+// to_bytes(s) —— UTF-8 字节序列（元素 0-255）
+static Value str_to_bytes(int argc, Value* args) {
+    (void)argc;
+    ObjString* s = (ObjString*)val_as_obj(args[0]);
+
+    ObjArray* result = arr_new(s->len > 0 ? s->len : 1);
+    if (!result) return val_null();
+    for (int i = 0; i < s->len; i++) {
+        arr_push_custom(result, val_int((unsigned char)s->chars[i]));
+    }
+    return val_obj((Object*)result);
+}
+
+// from_bytes(arr) —— Array[int]（每个 0-255）→ 字节串
+//   越界/非 int **响亮报错**（不静默截断、不回绕：那是"静默错值"的经典来源 ✓）
+static Value str_from_bytes(int argc, Value* args) {
+    (void)argc;
+    if (!val_is_obj(args[0]) || val_as_obj(args[0])->type != OBJ_ARRAY) {
+        native_throw_error("from_bytes 参数必须是 Array[int]");
+        return val_null();
+    }
+    ObjArray* arr = (ObjArray*)val_as_obj(args[0]);
+
+    char* buf = (char*)malloc((size_t)(arr->count > 0 ? arr->count + 1 : 1));
+    if (!buf) { native_throw_error("内存分配失败"); return val_null(); }
+
+    for (int i = 0; i < arr->count; i++) {
+        Value v = arr->elements[i];
+        if (!val_is_int(v)) {
+            char msg[96];
+            snprintf(msg, sizeof(msg), "from_bytes 第 %d 个元素不是 int（下标从 0 起）", i);
+            free(buf);
+            native_throw_error(msg);
+            return val_null();
+        }
+        int64_t b = val_as_int(v);
+        if (b < 0 || b > 255) {
+            char msg[96];
+            snprintf(msg, sizeof(msg), "from_bytes 第 %d 个元素 %lld 超出 0-255",
+                     i, (long long)b);
+            free(buf);
+            native_throw_error(msg);
+            return val_null();
+        }
+        buf[i] = (char)b;
+    }
+    buf[arr->count] = '\0';
+
+    ObjString* result = str_copy(buf, arr->count);   // str_copy 会算好 len/char_len/hash ✓
+    free(buf);
+    if (!result) return val_null();
+    return val_obj((Object*)result);
+}
+
+// to_hex(s) —— 字节串 → hex 文本（大写，每字节两位）
+static Value str_to_hex(int argc, Value* args) {
+    (void)argc;
+    ObjString* s = (ObjString*)val_as_obj(args[0]);
+
+    char* buf = (char*)malloc((size_t)s->len * 2 + 1);
+    if (!buf) { native_throw_error("内存分配失败"); return val_null(); }
+    for (int i = 0; i < s->len; i++) {
+        unsigned char b = (unsigned char)s->chars[i];
+        buf[i * 2]     = "0123456789ABCDEF"[b >> 4];
+        buf[i * 2 + 1] = "0123456789ABCDEF"[b & 0xF];
+    }
+    buf[s->len * 2] = '\0';
+
+    ObjString* result = str_copy(buf, s->len * 2);
+    free(buf);
+    if (!result) return val_null();
+    return val_obj((Object*)result);
+}
+
+// from_hex(s) —— hex 文本 → 字节串（大写/小写都收；奇数长度或非 hex 字符 ⇒ 报错并指出位置）
+static Value str_from_hex(int argc, Value* args) {
+    (void)argc;
+    ObjString* s = (ObjString*)val_as_obj(args[0]);
+    const char* p = s->chars;
+
+    if (s->len % 2 != 0) {
+        native_throw_error("from_hex 要求长度为偶数（每两个字符表示一个字节）");
+        return val_null();
+    }
+
+    int n = s->len / 2;
+    char* buf = (char*)malloc((size_t)(n > 0 ? n + 1 : 1));
+    if (!buf) { native_throw_error("内存分配失败"); return val_null(); }
+
+    for (int i = 0; i < n; i++) {
+        int hi = hex_val(p[i * 2]);
+        int lo = hex_val(p[i * 2 + 1]);
+        if (hi < 0 || lo < 0) {
+            char msg[128];
+            snprintf(msg, sizeof(msg), "from_hex 第 %d 个字符 '%c' 不是十六进制数字",
+                     (hi < 0 ? i * 2 : i * 2 + 1), (hi < 0 ? p[i * 2] : p[i * 2 + 1]));
+            free(buf);
+            native_throw_error(msg);
+            return val_null();
+        }
+        buf[i] = (char)((hi << 4) | lo);
+    }
+    buf[n] = '\0';
+
+    ObjString* result = str_copy(buf, n);
+    free(buf);
+    if (!result) return val_null();
+    return val_obj((Object*)result);
+}
+
+// eq_ignore_case(a, b) —— 逐字节 tolower 比较
+//   ⚠ 语义 = `to_lower(a) == to_lower(b)`（**同一套映射**：与本文件 str_to_lower 用的
+//      `tolower((unsigned char)c)` 逐字节一致 ⇒ 换成它以后行为完全不变，只省两次整串分配 ✓）
+//   长度不等直接 false（tolower 不改变字节数 ⇒ 长度不变 ✓）
+static Value str_eq_ignore_case(int argc, Value* args) {
+    (void)argc;
+    ObjString* a = (ObjString*)val_as_obj(args[0]);
+    ObjString* b = (ObjString*)val_as_obj(args[1]);
+    if (a->len != b->len) return val_bool(false);
+    for (int i = 0; i < a->len; i++) {
+        int ca = tolower((unsigned char)a->chars[i]);
+        int cb = tolower((unsigned char)b->chars[i]);
+        if (ca != cb) return val_bool(false);
+    }
+    return val_bool(true);
+}
+
+// codepoint_at(s, i) —— 第 i 个**字符**（0-based，支持负索引）的 Unicode 码点
+//   越界 ⇒ null（与 `byte` 同口径 ✓）；返回 int ⇒ 与 ASCII 比较/分类都很便宜、**不分配**
+//   ⚠ 现有取字符的两条路都有代价：`s[i]` / `slice(i, i+1)` 都会造一个单字符临时串 ✗
+//   （sdl_edit 的词选择、sdl_label 的逐字排版就是这么写的：10 处 / 6 文件）
+static Value str_codepoint_at(int argc, Value* args) {
+    (void)argc;
+    ObjString* s = (ObjString*)val_as_obj(args[0]);
+
+    int ci = 0;
+    if (argc >= 2 && val_is_int(args[1])) ci = (int)val_as_int(args[1]);
+    int nchars = s->char_len;
+    if (ci < 0) ci = nchars + ci;
+    if (ci < 0 || ci >= nchars) return val_null();
+
+    int off = utf8_char_offset(s->chars, s->len, ci);
+    if (off < 0 || off >= s->len) return val_null();
+
+    const unsigned char* p = (const unsigned char*)(s->chars + off);
+    int avail = s->len - off;
+    int cp;
+    if (p[0] < 0x80) {
+        cp = p[0];
+    } else if ((p[0] & 0xE0) == 0xC0 && avail >= 2) {
+        cp = ((p[0] & 0x1F) << 6) | (p[1] & 0x3F);
+    } else if ((p[0] & 0xF0) == 0xE0 && avail >= 3) {
+        cp = ((p[0] & 0x0F) << 12) | ((p[1] & 0x3F) << 6) | (p[2] & 0x3F);
+    } else if ((p[0] & 0xF8) == 0xF0 && avail >= 4) {
+        cp = ((p[0] & 0x07) << 18) | ((p[1] & 0x3F) << 12) | ((p[2] & 0x3F) << 6) | (p[3] & 0x3F);
+    } else {
+        cp = p[0];   // 非法/被截断的序列 ⇒ 原样给首字节值（不崩、也不静默乱猜 ✓）
+    }
+    return val_int(cp);
+}
+
+// to_codepoints(s) —— 一趟扫出全部码点（Array[int]）
+//   ★ 为什么有了 codepoint_at 还要它：`codepoint_at(i)` 必须**从头走到第 i 个字符**
+//     ⇒ `for i in 0..len { codepoint_at(i) }` 是 **O(n²)**（微基准实测：逐字符扫描只比手写快 ~2x ✗）。
+//     要"整串逐字符处理"就用它：一趟 O(n) + 之后按数组索引 ✓
+//   （截断/非法序列按单字节推进 ⇒ 既不会死循环，也不静默吃掉后面的字符）
+static Value str_to_codepoints(int argc, Value* args) {
+    (void)argc;
+    ObjString* s = (ObjString*)val_as_obj(args[0]);
+
+    ObjArray* result = arr_new(s->char_len > 0 ? s->char_len : 1);
+    if (!result) return val_null();
+
+    const unsigned char* p = (const unsigned char*)s->chars;
+    int i = 0;
+    while (i < s->len) {
+        int cp = 0;
+        int adv = 1;
+        if (p[i] < 0x80) {
+            cp = p[i];
+        } else if ((p[i] & 0xE0) == 0xC0 && i + 1 < s->len) {
+            cp = ((p[i] & 0x1F) << 6) | (p[i + 1] & 0x3F);
+            adv = 2;
+        } else if ((p[i] & 0xF0) == 0xE0 && i + 2 < s->len) {
+            cp = ((p[i] & 0x0F) << 12) | ((p[i + 1] & 0x3F) << 6) | (p[i + 2] & 0x3F);
+            adv = 3;
+        } else if ((p[i] & 0xF8) == 0xF0 && i + 3 < s->len) {
+            cp = ((p[i] & 0x07) << 18) | ((p[i + 1] & 0x3F) << 12) |
+                 ((p[i + 2] & 0x3F) << 6) | (p[i + 3] & 0x3F);
+            adv = 4;
+        } else {
+            cp = p[i];   // 非法/被截断 ⇒ 原样给首字节值（不崩、不乱猜 ✓）
+        }
+        arr_push_custom(result, val_int(cp));
+        i += adv;
+    }
+    return val_obj((Object*)result);
+}
+
 // ==================== 全局函数适配器层 ====================
 
 // format(fmt, ...) - 全局格式化函数
@@ -1585,6 +1803,19 @@ void strings_init_module(void) {
     TypeKind hex_params[] = {TYPE_INT, TYPE_INT};
     native_register_module_method_spec("strings", "hex", str_hex, -1, 1, 2, &NATIVE_T_STRING, hex_params);
 
+    // 20. 字节 ↔ 文本 的桥 + 扫描原语（2026-10-02；见 str_to_bytes 一族的注释）
+    TypeKind bytes_str_params[] = {TYPE_STRING};
+    native_register_module_method_spec("strings", "to_bytes", str_to_bytes, 1, -1, -1, &NATIVE_T_ARR_INT, bytes_str_params);
+    TypeKind bytes_arr_params[] = {TYPE_ARRAY};
+    native_register_module_method_spec("strings", "from_bytes", str_from_bytes, 1, -1, -1, &NATIVE_T_STRING, bytes_arr_params);
+    native_register_module_method_spec("strings", "to_hex", str_to_hex, 1, -1, -1, &NATIVE_T_STRING, bytes_str_params);
+    native_register_module_method_spec("strings", "from_hex", str_from_hex, 1, -1, -1, &NATIVE_T_STRING, bytes_str_params);
+    TypeKind two_str_check_params[] = {TYPE_STRING, TYPE_STRING};
+    native_register_module_method_spec("strings", "eq_ignore_case", str_eq_ignore_case, 2, -1, -1, &NATIVE_T_BOOL, two_str_check_params);
+    TypeKind cp_at_params[] = {TYPE_STRING, TYPE_INT};
+    native_register_module_method_spec("strings", "codepoint_at", str_codepoint_at, -1, 1, 2, &NATIVE_T_INT, cp_at_params);
+    native_register_module_method_spec("strings", "to_codepoints", str_to_codepoints, 1, -1, -1, &NATIVE_T_ARR_INT, bytes_str_params);
+
     // ---- 可变参数的参数类型（v3.2.7）----
     // 背景：`arity == -1` 的方法此前**整份 param_types 都被忽略**（注册时被写成全 ANY，
     //   查表时又因 `param_index < arity` 恒假而退回 ANY）⇒ 连 `strings.find(1, 2)` 都编译得过去 ✗。
@@ -1671,6 +1902,19 @@ void strings_init_instance_methods(void) {
     //   注册元素类型 `Array[string]`（同 split 的理由：装的都是 str_copy 出来的子串 ✓）
     string_register_method_with_params("lines", make_native(str_lines, 1, "lines"), 0, -1, -1, TYPE_ARRAY, TYPE_UNKNOWN, NULL);
     native_register_instance_method_return_spec("string", "lines", &NATIVE_T_ARR_STRING);
+
+    // 20. 字节 ↔ 文本 的桥 + 扫描原语（实例方法，2026-10-02；与模块式**共用同一个实现**）
+    //   `s.to_bytes()` / `s.to_hex()` / `s.from_hex()` / `a.eq_ignore_case(b)` / `s.codepoint_at(i)`
+    //   （from_bytes 只做模块式：它的接收者是数组，不是字符串）
+    string_register_method_with_params("to_bytes", make_native(str_to_bytes, 1, "to_bytes"), 0, -1, -1, TYPE_ARRAY, TYPE_UNKNOWN, NULL);
+    native_register_instance_method_return_spec("string", "to_bytes", &NATIVE_T_ARR_INT);
+    string_register_method_with_params("to_hex", make_native(str_to_hex, 1, "to_hex"), 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, NULL);
+    string_register_method_with_params("from_hex", make_native(str_from_hex, 1, "from_hex"), 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, NULL);
+    TypeKind one_str_params[] = {TYPE_STRING};
+    string_register_method_with_params("eq_ignore_case", make_native(str_eq_ignore_case, 2, "eq_ignore_case"), 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, one_str_params);
+    string_register_method_with_params("codepoint_at", make_native(str_codepoint_at, 2, "codepoint_at"), 1, -1, -1, TYPE_INT, TYPE_UNKNOWN, int_params);
+    string_register_method_with_params("to_codepoints", make_native(str_to_codepoints, 1, "to_codepoints"), 0, -1, -1, TYPE_ARRAY, TYPE_UNKNOWN, NULL);
+    native_register_instance_method_return_spec("string", "to_codepoints", &NATIVE_T_ARR_INT);
 
     // 14. 新增：包含检查（实例方法）
     TypeKind has_substr_params[] = {TYPE_STRING};

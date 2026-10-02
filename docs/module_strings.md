@@ -719,6 +719,65 @@ strings.char(72, 101, 108, 108, 111)       // "Hello"
 strings.char(65, 66, 67)                   // "ABC"
 ```
 
+### 字节 / 码点 / 忽略大小写（2026-10-02 新增）
+
+这批 API 的来历是"**数出来的重复实现**"：`strings.char(...)` 全仓 **159 处 / 39 文件**
+（crypto / base64 / PE 分析 / web_html 都在逐字节拼串，而循环里 `result += strings.char(b)`
+是 **O(n²)**）、"字节串 ↔ hex" **22 处 / 12 文件**、`to_lower(a) == to_lower(b)` **8 处**、
+`slice(i, i+1)` 逐字符扫描 **10 处**。基准见 `examples/性能测试/strings原生与手写对比.leno`。
+
+#### `to_bytes()` / `strings.from_bytes(arr)`
+
+字符串 ↔ UTF-8 字节数组（元素 0-255）。**逐字节拼串请走 `from_bytes`**（一趟分配）。
+
+```leno
+"Hi中文".to_bytes()              // [72, 105, 228, 184, 173, 230, 150, 135]
+strings.from_bytes([72, 105])    // "Hi"
+```
+
+> ⚠ `from_bytes` 的元素**越界或非 int 会抛错**（不静默截断/回绕 —— 那是"静默错值"的经典来源）。
+
+#### `to_hex()` / `from_hex()`
+
+字节串 ↔ hex 文本（**大写**输出；`from_hex` 大小写都收）。
+
+```leno
+"Hi".to_hex()             // "4869"
+strings.from_hex("4869")  // "Hi"
+```
+
+> ⚠ 别与 `hex(value, width)` 混：那个是**数字 → hex 文本**，这两个是**字节串 ↔ hex 文本**。
+> ⚠ `from_hex` 对**奇数长度**或**非 hex 字符**抛错（并指出第几个字符），不静默跳过。
+
+#### `eq_ignore_case(other)`
+
+忽略大小写的相等判断。语义 = `to_lower(a) == to_lower(b)`（同一套逐字节映射），**省两次整串分配**。
+
+```leno
+"Hello".eq_ignore_case("hELLO")   // true
+"abc".eq_ignore_case("ab")        // false（长度不同直接 false，不越界读）
+```
+
+#### `codepoint_at(pos?)` / `to_codepoints()`
+
+第 `pos` 个**字符**的 Unicode 码点 / 一趟取出全部码点（`Array[int]`）。
+
+```leno
+"a中🙂".codepoint_at(0)     // 97
+"a中🙂".codepoint_at(1)     // 20013   ('中' = U+4E2D)
+"a中🙂".codepoint_at(-1)    // 128578  ('🙂' = U+1F642，4 字节)
+"a中🙂".codepoint_at(99)    // null（越界，与 byte 同口径）
+"a中🙂".to_codepoints()     // [97, 20013, 128578]
+```
+
+> **★ 整串逐字符处理请用 `to_codepoints()`，别循环 `codepoint_at(i)`**：
+> 后者要从头走到第 i 个字符 ⇒ 循环是 **O(n²)**。基准实测（4000 字符 × 20 趟）：
+> 手写 `slice(i,i+1)` **113,589µs** ｜ 循环 `codepoint_at` **56,307µs（2.0x）**
+> ｜ 一趟 `to_codepoints` **863µs（131.6x）** ✓
+
+> 另一条实测（同一次基准）：逐字节拼串 手写 **700,846µs** vs `from_bytes` **84µs（8343x）**；
+> hex 编码 手写 **55,300µs** vs `to_hex` **26µs（2127x）**；忽略大小写 **2.0x**。
+
 ---
 
 ## 索引说明

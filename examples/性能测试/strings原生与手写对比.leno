@@ -1,0 +1,174 @@
+// strings 原生 vs 手写 —— 微基准（2026-10-02）
+//
+// 每组都是"同一件事"的两种写法：左边是**仓库里真实存在的**手写惯用法（见注释里的出处与处数），
+// 右边是本次新加的 strings 原生实现。判据只有一条：结果必须一致（下面各自带 `sink` 校验，
+// 防止 JIT/优化把活儿去掉），然后看耗时。
+//
+// 口径：`times.us()` 微秒；每组跑 `REP` 次取**最好一次**（首次含分配/页错误，不代表稳态）。
+import strings
+import times
+
+int sink = 0        // 汇总结果，防"算了不用"被优化掉
+
+// ---- 1. 逐字节拼串：45 处 / 39 文件里的 `result += strings.char(b)`（O(n²)）----
+func hand_build(Array[int] data):string {
+    var out = ""
+    for data to b { out += strings.char(b) }
+    return out
+}
+
+// ---- 2. 取字节数组：手写逐字节调 strings.byte + add ----
+func hand_to_bytes(string s):Array[int] {
+    Array[int] out = []
+    int i = 0
+    while i < s.len() { out.add(strings.byte(s, i)); i += 1 }
+    return out
+}
+
+// ---- 3. hex 编码：手写查表 + 两次 slice + 两次拼接（crypto/PE 里的写法）----
+func hand_to_hex(string s):string {
+    var digits = "0123456789ABCDEF"
+    var out = ""
+    int i = 0
+    while i < s.len() {
+        int b = strings.byte(s, i)
+        int hi = (b >> 4) & 15
+        int lo = b & 15
+        out += digits.slice(hi, hi + 1) + digits.slice(lo, lo + 1)
+        i += 1
+    }
+    return out
+}
+
+// ---- 4. 逐字符扫描：`sdl_edit` 词选择 / `sdl_label` 逐字排版 的写法（每步分配单字符串）----
+func hand_scan(string s):int {
+    int sum = 0
+    int i = 0
+    while i < s.len() {
+        sum += strings.byte(s.slice(i, i + 1), 0)
+        i += 1
+    }
+    return sum
+}
+
+func native_scan(string s):int {
+    int sum = 0
+    int i = 0
+    while i < s.len() {
+        sum += s.codepoint_at(i)
+        i += 1
+    }
+    return sum
+}
+
+// 整串逐字符：一趟 to_codepoints（O(n)）+ 之后按数组索引 ⇒ 与上面两条 O(n²) 的路对比
+func cps_scan(string s):int {
+    var cps = s.to_codepoints()
+    int sum = 0
+    for cps to c { sum += c }
+    return sum
+}
+
+// 倍数（一位小数）：整数除法会把 1.9 压成 1 ⇒ 看不出真实差距 ✗
+func ratio(int a, int b):string {
+    if b <= 0 { return "inf" }
+    return strings.format("%.1f", _float(a) / _float(b))
+}
+
+// `times.us()` 返回 float（语言不隐式转 int ⇒ 显式收口一处，免得每处都写 _int ✓）
+func now_us():int { return _int(times.us()) }
+
+func best_of(int rep, func():int fn):int {
+    int best = 2147483647
+    for rep {
+        int t0 = now_us()
+        sink += fn()
+        int dt = now_us() - t0
+        if dt < best { best = dt }
+    }
+    return best
+}
+
+main() {
+    int N = 20000
+    Array[int] data = []
+    for N to i { data.add((i * 7 + 13) & 255) }
+    var s = strings.from_bytes(data)          // 20000 字节的可打印/不可打印混合串
+    var s_ascii = ""
+    for 4000 to i { s_ascii += "AbCdEfGh"[i & 7] }
+    var s_ascii2 = ""
+    for 4000 to i { s_ascii2 += "aBcDeFgH"[i & 7] }
+
+    print("=== strings 原生 vs 手写（N=" + N + "）===")
+
+    // 1) 拼串：手写 O(n²) vs 原生一趟分配
+    var t_hand = now_us()
+    var a1 = hand_build(data)
+    var t_hand_us = now_us() - t_hand
+    var t_nat = now_us()
+    var a2 = strings.from_bytes(data)
+    var t_nat_us = now_us() - t_nat
+    assert_eq(a1.len(), a2.len(), "1) 长度必须一致")
+    sink += a1.len() + a2.len()
+    print("[1] 逐字节拼串 : 手写 " + t_hand_us + "us  原生 from_bytes " + t_nat_us + "us  → " +
+          ratio(t_hand_us, t_nat_us) + "x")
+
+    // 2) 取字节
+    var h2 = best_of(3, func():int { return hand_to_bytes(s).len() })
+    var n2 = best_of(3, func():int { return s.to_bytes().len() })
+    print("[2] 取字节数组 : 手写 " + h2 + "us  原生 to_bytes " + n2 + "us  → " +
+          ratio(h2, n2) + "x")
+
+    // 3) hex 编码
+    var h3 = best_of(3, func():int { return hand_to_hex(s_ascii).len() })
+    var n3 = best_of(3, func():int { return s_ascii.to_hex().len() })
+    var chk = hand_to_hex("Hello") == "Hello".to_hex()
+    assert_true(chk, "3) hex 结果必须一致")
+    print("[3] hex 编码   : 手写 " + h3 + "us  原生 to_hex " + n3 + "us  → " +
+          ratio(h3, n3) + "x")
+
+    // 4) 逐字符扫描（4000 字符 × 20 趟）——三条路
+    var h4 = best_of(3, func():int {
+        int t = 0
+        for 20 { t += hand_scan(s_ascii) }
+        return t
+    })
+    var n4 = best_of(3, func():int {
+        int t = 0
+        for 20 { t += native_scan(s_ascii) }
+        return t
+    })
+    var c4 = best_of(3, func():int {
+        int t = 0
+        for 20 { t += cps_scan(s_ascii) }
+        return t
+    })
+    // ⚠ 只在 **ASCII** 上等价：手写版是逐**字节**取值，codepoint_at 是逐**码点** ——
+    //   中文下两者本来就不相等（这也正是"手写没有便宜办法拿到码点"的证据 ✓）
+    assert_eq(hand_scan("abc"), native_scan("abc"), "4) ASCII 下手写与 codepoint_at 必须一致")
+    assert_eq(cps_scan("abc"), native_scan("abc"), "4) to_codepoints 与 codepoint_at 必须一致")
+    assert_eq("中".codepoint_at(0), 20013, "4) 中文码点：'中' = U+4E2D = 20013")
+    print("[4] 逐字符扫描 : 手写 slice " + h4 + "us  |  codepoint_at " + n4 + "us (" + ratio(h4, n4) +
+          "x)  |  to_codepoints " + c4 + "us (" + ratio(h4, c4) + "x)")
+
+    // 5) 忽略大小写比较（4000 字符 × 2000 次）
+    var h5 = best_of(3, func():int {
+        int hits = 0
+        for 2000 {
+            if strings.to_lower(s_ascii) == strings.to_lower(s_ascii2) { hits += 1 }
+        }
+        return hits
+    })
+    var n5 = best_of(3, func():int {
+        int hits = 0
+        for 2000 {
+            if s_ascii.eq_ignore_case(s_ascii2) { hits += 1 }
+        }
+        return hits
+    })
+    assert_true("Hello".eq_ignore_case("hELLO"), "5) 结果必须一致")
+    print("[5] 忽略大小写 : 手写 to_lower×2 " + h5 + "us  原生 eq_ignore_case " + n5 + "us  → " +
+          ratio(h5, n5) + "x")
+
+    print("(校验和 sink=" + sink + "，非 0 说明活儿真干了 ✓)")
+}

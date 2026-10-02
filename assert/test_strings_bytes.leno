@@ -1,0 +1,78 @@
+// test_strings_bytes.leno — 字节 ↔ 文本 的桥 + 扫描原语的护栏（2026-10-02）
+//
+// 为什么有这批 API（数出来的重复实现）：
+//   `strings.char(...)` 159 处 / 39 文件（crypto/base64/PE/web_html 都在逐字节拼串，且是 O(n²)）、
+//   "字节串↔hex" 22 处 / 12 文件、`to_lower(a)==to_lower(b)` 8 处、`slice(i,i+1)` 逐字符扫描 10 处。
+// 判据：
+//   ① 往返一致（bytes/hex/codepoints 三条都要"来回一趟 == 原串"）
+//   ② 硬编码期望值（防"两边一起漂"）——含中文 3 字节与 emoji 4 字节
+//   ③ 错误路径**必须抛**（越界字节 / 奇数长度 hex / 非法 hex 字符）—— 不许静默截断
+//   ④ 越界口径与既有 `byte` 一致（返回 null）
+import strings
+import io
+
+func dump(Array[int] a):string {
+    var out = ""
+    int i = 0
+    for a to x {
+        if i > 0 { out += "," }
+        out += _str(x)
+        i += 1
+    }
+    return "[" + out + "]"
+}
+
+main() {
+    io.print("=== strings 字节桥 / 扫描原语 验证 ===\n")
+
+    // ① to_bytes / from_bytes 往返 + 硬编码
+    assert_eq(dump("Hi中文".to_bytes()), "[72,105,228,184,173,230,150,135]", "①to_bytes 硬编码期望")
+    assert_eq(strings.from_bytes("Hi中文".to_bytes()), "Hi中文", "①bytes 往返必须一致")
+    assert_eq(dump("".to_bytes()), "[]", "①空串 ⇒ 空数组")
+    assert_eq(strings.from_bytes([]), "", "①空数组 ⇒ 空串")
+    io.print("[1] bytes 往返 ✓")
+
+    // ② to_hex / from_hex（大写输出、大小写都能读）
+    assert_eq("Hi".to_hex(), "4869", "②to_hex 大写")
+    assert_eq(strings.from_hex("4869"), "Hi", "②from_hex 读大写")
+    assert_eq(strings.from_hex("4869".to_lower()), "Hi", "②from_hex 读小写")
+    assert_eq(strings.from_hex("中文".to_hex()), "中文", "②hex 往返含中文")
+    assert_eq("".to_hex(), "", "②空串 ⇒ 空 hex")
+    io.print("[2] hex 往返 ✓")
+
+    // ③ 错误路径必须抛（响亮，不静默）
+    int threw = 0
+    try { var x1 = strings.from_bytes([256]) } catch e { threw += 1 }
+    try { var x2 = strings.from_bytes([-1]) } catch e { threw += 1 }
+    try { var x3 = strings.from_hex("abc") } catch e { threw += 1 }     // 奇数长度
+    try { var x4 = strings.from_hex("zz") } catch e { threw += 1 }      // 非 hex 字符
+    assert_eq(threw, 4, "③四条错误路径都必须抛（实抛 " + threw + " 条）")
+    io.print("[3] 错误路径 4 条都抛 ✓")
+
+    // ④ eq_ignore_case：与 to_lower 两边比**同语义**
+    assert_true("Hello".eq_ignore_case("hELLO"), "④应相等")
+    assert_true(not "Hello".eq_ignore_case("world"), "④应不等")
+    assert_true(not "abc".eq_ignore_case("ab"), "④长度不同 ⇒ 不等（不该越界读）")
+    assert_true("".eq_ignore_case(""), "④空串 = 空串")
+    assert_true(strings.eq_ignore_case("ABC", "abc"), "④模块式同样可用")
+    io.print("[4] eq_ignore_case ✓")
+
+    // ⑤ codepoint_at：ASCII / 中文 / emoji(4 字节) / 负索引 / 越界 null
+    var s = "a中🙂"
+    assert_eq(s.codepoint_at(0), 97, "⑤ASCII 'a' = 97")
+    assert_eq(s.codepoint_at(1), 20013, "⑤'中' = U+4E2D = 20013")
+    assert_eq(s.codepoint_at(2), 128578, "⑤'🙂' = U+1F642 = 128578（4 字节路径）")
+    assert_eq(s.codepoint_at(-1), 128578, "⑤负索引取最后一个字符")
+    assert_eq(s.codepoint_at(99), null, "⑤越界 ⇒ null（与 byte 同口径）")
+    assert_eq("中".codepoint_at(0), 20013, "⑤字面量上也能调（模块式/实例式两条通道）")
+    io.print("[5] codepoint_at ✓")
+
+    // ⑥ to_codepoints：一趟扫全部（替代循环 codepoint_at 的 O(n²)）
+    assert_eq(dump("a中🙂".to_codepoints()), "[97,20013,128578]", "⑥码点数组硬编码期望")
+    assert_eq(dump("".to_codepoints()), "[]", "⑥空串 ⇒ 空数组")
+    assert_eq(dump("abc".to_codepoints()), dump(["abc".codepoint_at(0), "abc".codepoint_at(1), "abc".codepoint_at(2)]),
+              "⑥与逐点 codepoint_at 必须一致")
+    io.print("[6] to_codepoints ✓")
+
+    io.print("\n=== strings 字节桥全部通过 ===")
+}
