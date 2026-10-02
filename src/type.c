@@ -894,6 +894,22 @@ int type_is_compatible(TypeInfo* target, TypeInfo* source) {
         return 1;
     }
 
+    // ---- enum 与 int 互通（2026-10-02 补）----
+    // 为什么必须互通：枚举成员的**编译期折叠**（visit_expr 的关联常量/enum 成员折叠）把
+    //   `Color.green` 直接变成 int 字面量（cached_type = TYPE_INT）⇒ 形参那边无论记成
+    //   TYPE_ENUM 还是（迁移期）TYPE_STRUCT + 名字，跟"实际类型 int"都必须能对上；
+    //   反向（枚举值赋给 int）本来就是既有语义（examples/enum/test_enum.leno 的
+    //   `int color = Color.green` ✓）。
+    //   注意这里**不做同名检查**：折叠后根本没有枚举名可比（成员值就是 int），
+    //   加名字比较只会造出"名字对不上就报错"的假报错。
+    if (target->kind == TYPE_ENUM &&
+        (source->kind == TYPE_INT || source->kind == TYPE_ENUM)) {
+        return 1;
+    }
+    if (target->kind == TYPE_INT && source->kind == TYPE_ENUM) {
+        return 1;
+    }
+
     // bool 可以隐式转换为 int（true→1, false→0）
     // 这是 bool vs int 的核心修复：bool 是 int 的子集语义
     if (target->kind == TYPE_INT && source->kind == TYPE_BOOL) {
@@ -942,6 +958,15 @@ int type_is_compatible(TypeInfo* target, TypeInfo* source) {
 
     // 数组类型兼容性检查
     if (target->kind == TYPE_ARRAY && source->kind == TYPE_ARRAY) {
+        // ★ 目标没写元素类型（裸 `Array` / `Array` 形参）⇒ **无约束**，接受任何源数组 ✓
+        //   必须放在"源是 any[]"那条**之前**：否则 `Array[any]` 实参传裸 `Array` 形参会被拒
+        //   （实测：跨模块 `struct H { func take(Array xs) }` 配 `take([1, "x"])` 报
+        //     「take 第 1 个参数类型不匹配: 期望 Array, 实际 Array[any]」✗）；
+        //   下面的 Dict 分支本来就是"裸目标先判"⇒ 这里对齐它，消除两处口径不一致 ✓
+        if (!target->element_type) {
+            return 1;
+        }
+
         // 如果源是空数组（元素类型未指定），可以接受任何目标类型
         // 这允许 Array[int] arr = [] 这样的初始化
         if (!source->element_type) {
@@ -959,11 +984,6 @@ int type_is_compatible(TypeInfo* target, TypeInfo* source) {
         // 防止类型约束丢失（如 Array[int] 赋值给 Array[any] 后添加字符串）
         if (target->element_type && target->element_type->kind == TYPE_ANY) {
             return 0;
-        }
-        
-        // 如果目标没有指定元素类型（如 Array），接受任何源数组类型
-        if (!target->element_type) {
-            return 1;
         }
         
         // 否则需要元素类型具体兼容

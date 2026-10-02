@@ -38,6 +38,9 @@ main() {
         + "    }\n\n"
         + "    func merge(Pair o): int {\n"
         + "        return x + o.x\n"
+        + "    }\n\n"
+        + "    func takeAny(Array xs): int {\n"
+        + "        return xs.len()\n"
         + "    }\n"
         + "}\n")
 
@@ -121,6 +124,38 @@ main() {
         + "}\n")
     ce.expect_error(agg_bad_use, "use：聚合类型参数类型不符必须报错（⑯ 之前静默）",
         "参数类型不匹配", 6)
+
+    // ===== ⑧⑨ 裸容器形参（未写元素类型）=====
+    // ⑧ 之前：`type_is_compatible` 的数组分支把"源是 any[]"那条**放在**"目标没写元素类型"
+    //   那条**前面** ⇒ 裸 `Array` 形参拒收 `Array[any]` 实参（与下面 Dict 分支的口径不一致，
+    //   也与该分支自己的注释"目标没有指定元素类型（如 Array），接受任何源数组类型"相反）✗。
+    //   实测症状：`take([1, "x"])` 报「take 第 1 个参数类型不匹配: 期望 Array, 实际 Array[any]」✗
+    //   （leno_gui 数据看板 `cal.set_legend([1, Calendar.LEG_TODAY, 2, 0], …)` 就是这么炸的）。
+    //   ⚠ 那条路径**只有跨模块 struct 方法**走得到：模块函数的实参检查对 ARRAY 有
+    //   "非基本类型且非聚合 ⇒ continue" 的闸门 ⇒ 这里必须用**方法**（不是函数）钉 ✓
+    var bare_any = dirs.join(work, "bare_any.leno")
+    files.write(bare_any,
+        "import \"lib/p.leno\" as a\n\n"
+        + "main() {\n"
+        + "    var pa = new a.Pair()\n"
+        + "    print(\"R=\" + pa.takeAny([1, \"x\"]))\n"
+        + "}\n")
+    ce.expect_ok(bare_any, "裸 Array 形参必须收 Array[any] 实参（修前误报）", "R=2")
+
+    // ⑨ 反向对照：**具体元素类型 → any[]** 仍必须被拒
+    //   ⚠ 不能拿跨模块方法的 `Array[int]` 形参做对照：`ModuleStructMethod.param_types` 是
+    //     **扁平 kind**、没有元素类型（占位符只记 kind + 聚合名）⇒ 那边 `Array[int]` 与裸
+    //     `Array` 无从区分（那条路径本来就是"宁漏不误报"的保守闸门）。
+    //     故这里改用**带元素类型的承载路径**（变量声明）钉，证明 ⑧ 不是把数组比较整个关掉 ✓
+    var typed_any = dirs.join(work, "typed_any.leno")
+    files.write(typed_any,
+        "main() {\n"
+        + "    Array[int] src = [1, 2]\n"
+        + "    Array[any] dst = src\n"
+        + "    print(\"R=\" + dst.len())\n"
+        + "}\n")
+    ce.expect_error(typed_any, "Array[int] 仍必须拒收赋给 Array[any]（反向对照）",
+        "类型不匹配", 3)
 
     dirs.delete(work)
 
