@@ -409,6 +409,17 @@ typedef enum {
     OP_INDEX_DICT_INT,      // iABC  R[A] = R[B][R[C]]（Dict 特化，下标 int）
     OP_INDEX_SET_DICT_INT,  // iABC  R[B][R[C]] = R[A]（Dict 特化，下标 int）
 
+    // ★ 2026-10-03：数组下标**写**的立即数版本（补齐读路径 OP_INDEX_ARRAY_IMM 的那一半）。
+    //   动机：读侧 `arr[0]` 早已是「一条指令」（下标编在 C 字段里 ✓），而写侧 `arr[0] = v`
+    //   仍要「`OP_LOADI` 装下标 + `OP_INDEX_SET_ARRAY_INT`」两条 —— 下标是编译期字面量时
+    //   那条 LOADI 是**纯浪费的一次派发**，正好落在文档里唯一测得出来的档位
+    //   （"整条指令削减 0.9~2.9ns 测得出来；抠 uop 测得出来才怪"，见 ⑤-c 的分辨率表）。
+    //   口径完全对齐读侧：下标取 **[0,255] 无符号**（C 是 8 位；负字面量必然越界 ⇒ 两侧都不走
+    //   立即数路径），越界检查/写屏障/报错文案与寄存器版 OP_INDEX_SET_ARRAY_INT 逐条一致。
+    //   语料实测：常量下标写入 **151 处**（chacha20 三兄弟 27 处都在热循环里）。
+    //   追加在末尾 ⇒ 既有 opcode 编号全部不变，但**仍必须 bump 版本**（见 leno_serialize.h）✓
+    OP_INDEX_SET_ARRAY_IMM,  // iABC  R[B][C] = R[A]（Array 特化，下标 C ∈ [0,255]）
+
     OP_OPCODE_COUNT,    // 用于跳转表大小
 } OpCode;
 

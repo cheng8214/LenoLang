@@ -743,5 +743,28 @@
         gc_write_barrier((Object*)arr, R(a));
         DISPATCH();
     }
+    // OP_INDEX_SET_ARRAY_IMM A B C: R[B][C] = R[A]（C 是**无符号立即数** 0..255）
+    //   与读路径 OP_INDEX_ARRAY_IMM 完全对称：`a[0] = v` 原先是
+    //   「OP_LOADI 装下标 0 → OP_INDEX_SET_ARRAY_INT」两条派发，下标是编译期字面量时
+    //   那条 LOADI 纯属浪费（Lua 的 SETI 同样把小下标编在指令里）。
+    //   ★ 越界检查 / GC 写屏障 / 报错文案与寄存器版 OP_INDEX_SET_ARRAY_INT **逐条一致**
+    //     （同一个 (uint64_t) 无符号比较 ⇒ 报错文本、行号来源都相同）。
+    LABEL(OP_INDEX_SET_ARRAY_IMM): {
+        int a = READ_A(), b = READ_B();
+        int i2 = (int)READ_C();   // 无符号 0..255
+        ARRAY_SPECIALIZED_NULL_GUARD(b);
+        ObjArray* arr = (ObjArray*)val_as_obj(R(b));
+        if (unlikely((uint64_t)i2 >= (uint64_t)arr->count)) {
+            int line = GET_CURRENT_LINE();
+            char msg[128];
+            snprintf(msg, sizeof(msg), "数组索引越界: 索引 %d, 长度 %d", i2, arr->count);
+            if (!throw_runtime_error(msg, line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        arr->elements[i2] = R(a);
+        gc_write_barrier((Object*)arr, R(a));
+        DISPATCH();
+    }
     #undef ARRAY_SPECIALIZED_NULL_GUARD
     // OP_SLICE A B C: R[A] = R[B][R[A+1] : R[A+2]]（结束索引**包含**；null 表示省略）

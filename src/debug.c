@@ -89,8 +89,9 @@ static const char* opCodeNames[] = {
     "OP_INDEX_SET_ARRAY_INT",
     "OP_TYPE_CHECK_SPEC", "OP_AS_CAST_SPEC",
     "OP_INDEX_DICT_INT", "OP_INDEX_SET_DICT_INT",
+    "OP_INDEX_SET_ARRAY_IMM",
     "OP_OPCODE_COUNT",
-};
+    };
 
 // 表必须与 leno_vm.h 的 OpCode **逐项同序同长**（末尾多一项 OP_OPCODE_COUNT 的名字）：
 // 少一项/多一项都会让"按编号取名"从那一项起整体错位 —— 曾经就漏了

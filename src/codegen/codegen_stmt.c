@@ -1299,6 +1299,19 @@ static OpCode index_set_op_for(CodeGen* gen, Ast* obj_ast, Ast* idx_ast, int* ou
                     it && it->kind == TYPE_INT);
         if (spec) {
             op = OP_INDEX_SET_ARRAY_INT;
+            // ★ 2026-10-03：下标是 **[0,255] 整数字面量** ⇒ 发立即数版 OP_INDEX_SET_ARRAY_IMM
+            //   （对应读路径的 OP_INDEX_ARRAY_IMM）。动机：`a[0] = v` 原先要
+            //   「OP_LOADI 装下标 + OP_INDEX_SET_ARRAY_INT」两条派发 ⇒ 白费一条整指令。
+            //   判据与读路径 codegen_expr.c 的 idx_imm **逐字同口径**：AST_NUM、非 float、
+            //   非 bigint、无符号落在 [0,255]（负字面量必然越界 ⇒ 两侧都不走立即数路径，
+            //   与 Lua 5.5 `isCint()` 的 `l_castS2U(v) <= MAXARG_C` 一致）。
+            if (idx_ast && idx_ast->kind == AST_NUM && !idx_ast->u.num.is_float &&
+                !idx_ast->u.num.is_bigint) {
+                double dv = idx_ast->u.num.value;
+                if (dv >= 0.0 && dv <= 255.0 && dv == (double)(int)dv) {
+                    op = OP_INDEX_SET_ARRAY_IMM;
+                }
+            }
         } else {
             // ★ 2026-10-03 字典特化（对齐读路径的 OP_INDEX_DICT_INT / 数组的 _ARRAY_INT）：
             //   接收者静态已知是 Dict、下标静态已知是 int ⇒ 发 OP_INDEX_SET_DICT_INT
@@ -1343,7 +1356,9 @@ void gen_index_assign(CodeGen* gen, Ast* ast, int dst) {
     // 与读路径的立即数下标同一手法（跳过求值就必须跳过释放）。
     int field_idx = -1;
     OpCode set_op = index_set_op_for(gen, obj_ast, idx_ast, &field_idx);
-    int idx_skip = (set_op == OP_SET_FIELD);
+    // 立即数下标版同样**跳过下标求值**（与字段写同一手法：跳过求值就必须跳过释放 ——
+    // 不分配 ⇒ idx_is_temp 保持 0 ⇒ 下面不会去 free 一个不属于本表达式的寄存器）
+    int idx_skip = (set_op == OP_SET_FIELD || set_op == OP_INDEX_SET_ARRAY_IMM);
     if (obj_slot >= 0) { obj_reg = obj_slot; }
     else { obj_reg = obj_ast ? gen_expr(gen, obj_ast) : -1; obj_is_temp = (obj_reg >= 0); }
     if (idx_skip) { /* 字段索引已定死，不发 LOADK */ }
@@ -1361,6 +1376,10 @@ void gen_index_assign(CodeGen* gen, Ast* ast, int dst) {
     // INDEX_SET / SET_FIELD: R[B][R[C]] = R[A]（静态类型已知 ⇒ 发特化版，见 index_set_op_for）
     if (set_op == OP_SET_FIELD) {
         reg_encode_iABC(gen->chunk, OP_SET_FIELD, val_reg, obj_reg, field_idx, ast->line);
+    } else if (set_op == OP_INDEX_SET_ARRAY_IMM) {
+        // 立即数下标：C 字段直接放字面量（[0,255]，上面已判过 ⇒ 截断安全）
+        reg_encode_iABC(gen->chunk, set_op, val_reg, obj_reg,
+                        (int)(uint8_t)idx_ast->u.num.value, ast->line);
     } else {
         reg_encode_iABC(gen->chunk, set_op, val_reg, obj_reg, idx_reg, ast->line);
     }
@@ -1473,7 +1492,8 @@ void gen_assign(CodeGen* gen, Ast* ast) {
                 //   判据/手法与 gen_index_assign 完全一致（跳过求值就必须跳过释放）。
                 int mf_idx = -1;
                 OpCode mf_op = index_set_op_for(gen, obj_ast, idx_ast, &mf_idx);
-                int mf_idx_skip = (mf_op == OP_SET_FIELD);
+                // 立即数下标版同样跳过下标求值（同 gen_index_assign 的说明：跳过求值 ⇒ 跳过释放）
+                int mf_idx_skip = (mf_op == OP_SET_FIELD || mf_op == OP_INDEX_SET_ARRAY_IMM);
                 if (obj_slot >= 0) { obj_reg = obj_slot; }
                 else { obj_reg = gen_expr(gen, obj_ast); obj_is_temp = 1; }
                 if (mf_idx_skip) { /* 字段索引已定死，不发 LOADK */ }
@@ -1484,6 +1504,10 @@ void gen_assign(CodeGen* gen, Ast* ast) {
                 // INDEX_SET / SET_FIELD: R[B][R[C]] = R[A]（静态类型已知 ⇒ 发特化版，见 index_set_op_for）
                 if (mf_op == OP_SET_FIELD) {
                     reg_encode_iABC(gen->chunk, OP_SET_FIELD, val_reg, obj_reg, mf_idx, ast->line);
+                } else if (mf_op == OP_INDEX_SET_ARRAY_IMM) {
+                    // 立即数下标：C 字段直接放字面量（[0,255]，index_set_op_for 已判 ✓）
+                    reg_encode_iABC(gen->chunk, mf_op, val_reg, obj_reg,
+                                    (int)(uint8_t)idx_ast->u.num.value, ast->line);
                 } else {
                     reg_encode_iABC(gen->chunk, mf_op, val_reg, obj_reg, idx_reg, ast->line);
                 }
