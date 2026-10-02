@@ -369,7 +369,10 @@ static Value call_closure(Value callee, int arg_count, Value* args) {
     // 压入被调用者
     vm_stack_push(vm_ptr, callee);
 
-    int call_result = vm_call_value(callee, arg_count, 0);
+    // ★ 2026-10-02 统一：line 传真值（native_get_current_line() = 触发本回调的脚本行）。
+    //   此前写死 0 ⇒ 回调里抛出的**裸消息**异常（native_throw_error 那类）会带上 line=0，
+    //   报错变成"file:0:"、位置与 [位置] 块对不上 ✗
+    int call_result = vm_call_value(callee, arg_count, native_get_current_line());
     Value ret_val = vm_ptr->last_return_value;
 
     if (call_result != 1) {

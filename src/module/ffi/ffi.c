@@ -2725,7 +2725,9 @@ static FFIValue callback_dispatch_direct(int cb_id, CallbackRegState* regs) {
 
     // 使用 vm_call_value 调用函数
     // 注意：vm_call_value 内部会调用 call_value，它会从栈上获取 callee
-    int call_result = vm_call_value(entry->func_val, total, 0);
+    // ★ 2026-10-02 统一：同 arrays.c 的回调调用点 —— line 传真值（触发回调的脚本行），
+    //   写死 0 会让回调里抛的裸消息异常位置成 "file:0:"
+    int call_result = vm_call_value(entry->func_val, total, native_get_current_line());
     Value ret_val = vm_ptr->last_return_value;
     if (call_result != 1) {  // vm_call_value 返回 1 表示成功
         // 调用失败，清理 VM 状态
