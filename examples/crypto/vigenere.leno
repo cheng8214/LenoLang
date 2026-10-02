@@ -168,11 +168,13 @@ func index_of_coincidence(string text):float {
 // 返回最可能的密钥长度
 func kasiski_test(string text, int min_len, int max_len):int {
     // 提取纯字母文本
-    var alpha = ""
+    // ★ 2026-10-03 收编：原先逐字符累加（O(n²)）⇒ 字节先收数组，循环后一趟 from_bytes ✓
+    Array[int] alpha_bytes = []
     for 0:text.byte_len() - 1 to i {
         int idx = char_to_index(text.byte(i))
-        if (idx >= 0) { alpha += strings.char(index_to_char(idx)) }
+        if (idx >= 0) { alpha_bytes.add(index_to_char(idx)) }
     }
+    string alpha = strings.from_bytes(alpha_bytes)
 
     // 对每个候选密钥长度，计算 IC
     int best_len = 1
@@ -184,12 +186,14 @@ func kasiski_test(string text, int min_len, int max_len):int {
         int valid_groups = 0
 
         for 0:kl - 1 to g {
-            var group = ""
+            // ★ 2026-10-03 收编：同上（逐字符累加 ⇒ 字节数组 + 一趟 from_bytes ✓）
+            Array[int] group_bytes = []
             int pos = g
             while (pos < alpha.len()) {
-                group += strings.char(alpha.byte(pos))
+                group_bytes.add(alpha.byte(pos))
                 pos += kl
             }
+            string group = strings.from_bytes(group_bytes)
             if (group.len() >= 2) {
                 total_ic += index_of_coincidence(group)
                 valid_groups += 1
@@ -212,11 +216,13 @@ func kasiski_test(string text, int min_len, int max_len):int {
 // 返回推测的密钥
 func vigenere_crack(string ciphertext, int key_length):string {
     // 提取纯字母文本
-    var alpha = ""
+    // ★ 2026-10-03 收编：原先逐字符累加（按密文长度循环 ⇒ O(n²)）⇒ 字节数组 + 一趟 from_bytes ✓
+    Array[int] alpha_bytes = []
     for 0:ciphertext.byte_len() - 1 to i {
         int idx = char_to_index(ciphertext.byte(i))
-        if (idx >= 0) { alpha += strings.char(index_to_char(idx)) }
+        if (idx >= 0) { alpha_bytes.add(index_to_char(idx)) }
     }
+    string alpha = strings.from_bytes(alpha_bytes)
 
     // 英文字母标准频率
     Array[float] eng_freq = [0.08167, 0.01492, 0.02782, 0.04253, 0.12702, 0.02228, 0.02015, 0.06094, 0.06966, 0.00153, 0.00772, 0.04025, 0.02406, 0.06749, 0.07507, 0.01929, 0.00095, 0.05987, 0.06327, 0.09056, 0.02758, 0.00978, 0.02360, 0.00150, 0.01974, 0.00074]
@@ -225,12 +231,14 @@ func vigenere_crack(string ciphertext, int key_length):string {
 
     for 0:key_length - 1 to g {
         // 提取该组的字母
-        var group = ""
+        // ★ 2026-10-03 收编：同上（逐字符累加 ⇒ 字节数组 + 一趟 from_bytes ✓）
+        Array[int] group_bytes = []
         int pos = g
         while (pos < alpha.len()) {
-            group += strings.char(alpha.byte(pos))
+            group_bytes.add(alpha.byte(pos))
             pos += key_length
         }
+        string group = strings.from_bytes(group_bytes)
 
         // 对每个可能的偏移，计算与英文频率的相关性
         int best_shift = 0

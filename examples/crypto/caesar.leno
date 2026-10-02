@@ -153,20 +153,23 @@ func mod_inverse(int a, int m):int {
 func affine_encrypt(string plaintext, int a, int b):string {
     if (gcd(a, 26) != 1) { throw "a must be coprime with 26" }
 
-    var result = ""
+    // ★ 2026-10-03 收编：原先逐字符 `result += strings.char(x)`（每轮重建整串 ⇒ O(n²) ✗）
+    //   ⇒ 字节先收进数组，末尾一趟 `strings.from_bytes` ✓
+    //   等价：`from_bytes(数组) == 逐字节 strings.char 拼接`（0-255 全量 / 多字节 / 空数组对拍 0 分歧）
+    Array[int] out_bytes = []
     for 0:plaintext.byte_len() - 1 to i {
         int c = plaintext.byte(i)
         if (c >= 65 and c <= 90) {
             int enc = (a * (c - 65) + b) % 26 + 65
-            result += strings.char(enc)
+            out_bytes.add(enc)
         } else if (c >= 97 and c <= 122) {
             int enc = (a * (c - 97) + b) % 26 + 97
-            result += strings.char(enc)
+            out_bytes.add(enc)
         } else {
-            result += strings.char(c)
+            out_bytes.add(c)
         }
     }
-    return result
+    return strings.from_bytes(out_bytes)
 }
 
 // 仿射解密
@@ -174,20 +177,21 @@ func affine_decrypt(string ciphertext, int a, int b):string {
     int a_inv = mod_inverse(a, 26)
     if (a_inv < 0) { throw "a has no modular inverse mod 26" }
 
-    var result = ""
+    // ★ 2026-10-03 收编：同 affine_encrypt（逐字符拼串 ⇒ 字节数组 + 一趟 from_bytes ✓）
+    Array[int] out_bytes = []
     for 0:ciphertext.byte_len() - 1 to i {
         int c = ciphertext.byte(i)
         if (c >= 65 and c <= 90) {
             int dec = (a_inv * ((c - 65) - b + 260)) % 26 + 65
-            result += strings.char(dec)
+            out_bytes.add(dec)
         } else if (c >= 97 and c <= 122) {
             int dec = (a_inv * ((c - 97) - b + 260)) % 26 + 97
-            result += strings.char(dec)
+            out_bytes.add(dec)
         } else {
-            result += strings.char(c)
+            out_bytes.add(c)
         }
     }
-    return result
+    return strings.from_bytes(out_bytes)
 }
 
 // ==================== 测试 ====================

@@ -179,7 +179,8 @@ func chacha20_encrypt(string key, int counter, string nonce, string plaintext):s
 
 // ChaCha20 解密，输入 hex 字符串
 func chacha20_decrypt(string key, int counter, string nonce, string hex_ciphertext):string {
-    var result = ""
+    // ★ 2026-10-03 收编：原先逐字节 `result += strings.char(...)`（O(n²)）⇒ 字节数组 + 末尾一趟 ✓
+    Array[int] result_bytes = []
     int i = 0
     int total = hex_ciphertext.byte_len() / 2
 
@@ -194,7 +195,7 @@ func chacha20_decrypt(string key, int counter, string nonce, string hex_cipherte
             int shift = byte_idx * 8
             int key_byte = to_u32(block[word_idx]) >> shift & 0xFF
             int ct_byte = hex_val(hex_ciphertext, (i + j) * 2)
-            result += strings.char(key_byte ^ ct_byte)
+            result_bytes.add(key_byte ^ ct_byte)
             j += 1
         }
 
@@ -202,7 +203,7 @@ func chacha20_decrypt(string key, int counter, string nonce, string hex_cipherte
         counter += 1
     }
 
-    return result
+    return strings.from_bytes(result_bytes)
 }
 
 // 从 hex 字符串读取一个字节值

@@ -149,7 +149,9 @@ func chacha20_init_state(string key, int counter, string nonce):Array[int] {
 
 // ChaCha20 加密，返回二进制字符串（含 null 字节，LenoC 已正确处理）
 func chacha20_encrypt(string key, int counter, string nonce, string plaintext):string {
-    var result = ""
+    // ★ 2026-10-03 收编：原先逐字节 `result += strings.char(...)`（每轮重建整串 ⇒ O(n²) ✗）
+    //   ⇒ 字节先收进数组，末尾一趟 `strings.from_bytes` ✓（等价性同 caesar 处的说明）
+    Array[int] result_bytes = []
     int i = 0
 
     while (i < plaintext.byte_len()) {
@@ -164,7 +166,7 @@ func chacha20_encrypt(string key, int counter, string nonce, string plaintext):s
             int shift = byte_idx * 8
             int key_byte = _uint8(to_u32(block[word_idx]) >> shift)
             int pt_byte = plaintext.byte(i + j)
-            result += strings.char(key_byte ^ pt_byte)
+            result_bytes.add(key_byte ^ pt_byte)
             j += 1
         }
 
@@ -172,12 +174,13 @@ func chacha20_encrypt(string key, int counter, string nonce, string plaintext):s
         counter += 1
     }
 
-    return result
+    return strings.from_bytes(result_bytes)
 }
 
 // ChaCha20 解密，输入二进制字符串
 func chacha20_decrypt(string key, int counter, string nonce, string ciphertext):string {
-    var result = ""
+    // ★ 2026-10-03 收编：同 chacha20_encrypt（逐字节拼串 ⇒ 字节数组 + 末尾一趟 ✓）
+    Array[int] result_bytes = []
     int i = 0
     int total = ciphertext.byte_len()
 
@@ -192,7 +195,7 @@ func chacha20_decrypt(string key, int counter, string nonce, string ciphertext):
             int shift = byte_idx * 8
             int key_byte = _uint8(to_u32(block[word_idx]) >> shift)
             int ct_byte = ciphertext.byte(i + j)
-            result += strings.char(key_byte ^ ct_byte)
+            result_bytes.add(key_byte ^ ct_byte)
             j += 1
         }
 
@@ -200,7 +203,7 @@ func chacha20_decrypt(string key, int counter, string nonce, string ciphertext):
         counter += 1
     }
 
-    return result
+    return strings.from_bytes(result_bytes)
 }
 
 // 从 hex 字符串读取一个字节值

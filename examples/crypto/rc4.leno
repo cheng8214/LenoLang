@@ -38,7 +38,10 @@ func rc4_prga(Array[int] S, string input):string {
         box.add(S[i])
     }
 
-    var result = ""
+    // ★ 2026-10-03 收编：原先逐字节 `result += strings.char(...)`（每轮重建整串 ⇒ O(n²) ✗）
+    //   ⇒ 字节先收进数组，末尾一趟 `strings.from_bytes` ✓
+    //   等价：`from_bytes(数组) == 逐字节 strings.char 拼接`（0-255 全量 / 多字节 / 空数组对拍 0 分歧）
+    Array[int] result_bytes = []
     int i = 0
     int j = 0
     int len = input.byte_len()
@@ -56,10 +59,10 @@ func rc4_prga(Array[int] S, string input):string {
         int K = box[_uint8(box[i] + box[j])]
 
         // XOR 加密/解密
-        result += strings.char(input.byte(n) ^ K)
+        result_bytes.add(input.byte(n) ^ K)
     }
 
-    return result
+    return strings.from_bytes(result_bytes)
 }
 
 // RC4 加密（与解密操作相同）
