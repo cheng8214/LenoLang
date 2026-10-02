@@ -1770,10 +1770,19 @@ int vm_run_coroutine_with_vm(ObjCoroutine* co, VM* vm_ptr) {
                     }
                 }
                 // 没有找到异常处理
-                if (co->saved_frames && co->saved_frame_count > 0) {
-                    error_add_at(ERR_RUNTIME, co->saved_frames[0].chunk->lines[0], 0, "未捕获的异步异常");
-                } else {
-                    error_add_at(ERR_RUNTIME, 0, 0, "未捕获的异步异常");
+                // ★ 2026-10-02 统一：**只登记**一条记录（保持"谁捕获谁报"：不即时打印，
+                //   免得与调用方 catch 到的同一次异常形成双重报告），但登记的是**原始异常**
+                //   的 msg 与位置 —— 原来写死"未捕获的异步异常"、位置取协程首行、原文全丢 ✗
+                //   （位置优先用异常自己的 line；拿不到再退回协程首行）
+                {
+                    int uline = exception_own_line();
+                    if (uline <= 0 && co->saved_frames && co->saved_frame_count > 0 &&
+                        co->saved_frames[0].chunk && co->saved_frames[0].chunk->lines) {
+                        uline = co->saved_frames[0].chunk->lines[0];
+                    }
+                    char* umsg = exception_msg_dup();
+                    error_add_at(ERR_RUNTIME, uline, 0, umsg ? umsg : "未捕获的异步异常");
+                    free(umsg);
                 }
             } else {
                 // ★ 寄存器式：把 Future 结果写回挂起时记录的**目标寄存器**。

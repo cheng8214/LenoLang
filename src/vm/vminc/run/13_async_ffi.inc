@@ -137,8 +137,14 @@
 
         if (future->completed) {
             if (!val_is_null(future->error)) {
-                // Future 失败：按异常抛出（交给统一的异常处理路径）
-                if (!throw_runtime_error_with_operand("await: 异步任务失败", "AWAIT", future->error, line)) return -1;
+                // Future 失败：抛出**它自己的**异常（与"未完成→挂起→恢复"那条路
+                // vm.c 的恢复分支同口径）。
+                // ★ 2026-10-02 统一：修前这里包成 "await: 异步任务失败" + [操作数]，
+                //   原 msg 被 value_to_short_str 截成 32 字符的"操作数"（长消息直接看不见）；
+                //   而另一条路走的是"原样抛出" ⇒ 同一件事两种文案，命中哪条还看调度时机 ✗
+                //   （实测 assert/test_async.leno 的 `await risky(-1)` 断言 e.msg == "negative"，
+                //   它走的是恢复路径；已完成的新建协程走这里，修前会得到另一种文案）
+                if (!throw_existing_exception(future->error, line)) return -1;
                 frame = &vm.frames[vm.frame_cnt - 1];
                 DISPATCH();
             }
@@ -228,15 +234,9 @@
         frame = &vm.frames[vm.frame_cnt - 1];
 
         if (unlikely(vm.has_exception)) {
-            char* msg = NULL;
-            if (val_is_obj(vm.exception) && val_as_obj(vm.exception)->type == OBJ_STRING) {
-                msg = strdup(((ObjString*)val_as_obj(vm.exception))->chars);
-            } else {
-                msg = value_to_string(vm.exception);
-            }
-            error_clear();
-            if (!throw_runtime_error(msg, line)) { free(msg); return -1; }
-            free(msg);
+            // ★ 统一走 throw_pending_exception（vm_exception.inc）：ffi_clib_call 内部
+            //   可能回调进 VM（那时异常已是异常对象）⇒ 原样保留，别 flatten 重造
+            if (!throw_pending_exception(line)) return -1;
             frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH();
         }
@@ -265,16 +265,10 @@
         // ffi_callback_create_with_sig 可能回调进 VM（frames 会被 realloc）
         frame = &vm.frames[vm.frame_cnt - 1];
         if (unlikely(vm.has_exception)) {
-            char* msg = NULL;
-            if (val_is_obj(vm.exception) && val_as_obj(vm.exception)->type == OBJ_STRING) {
-                msg = strdup(((ObjString*)val_as_obj(vm.exception))->chars);
-            } else {
-                msg = value_to_string(vm.exception);
-            }
             int line = GET_CURRENT_LINE();
-            error_clear();
-            if (!throw_runtime_error(msg, line)) { free(msg); return -1; }
-            free(msg);
+            // ★ 统一走 throw_pending_exception（vm_exception.inc）：同上，回调路径的异常
+            //   已是异常对象时原样保留
+            if (!throw_pending_exception(line)) return -1;
             frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH();
         }

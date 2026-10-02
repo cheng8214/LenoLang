@@ -161,20 +161,9 @@
             //   （await 侧再抛出 / asyncs.all 收集）。否则 `risky(-1)` 这类
             //   "协程里抛、调用方 await 捕获"的用例会在最后多出一条未处理错误 ✗
             if (vm.current_coroutine) return -1;
-            print_unhandled_exception(exception, line);
-            char* msg = NULL;
-            if (val_is_obj(exception) && val_as_obj(exception)->type == OBJ_DICT) {
-                ObjString* msg_key = str_copy("msg", 3);
-                Value mv = dict_get((ObjDict*)val_as_obj(exception), val_obj((Object*)msg_key));
-                if (val_is_string(mv)) msg = strdup(((ObjString*)val_as_obj(mv))->chars);
-            }
-            if (!msg) msg = value_to_string(exception);
-            runtime_error(msg, line);
-            // S2：上面已带调用栈即时打印过，标记后退出时 error_print_all 不再重复
-            if (errors.count > 0) {
-                errors.list[errors.count - 1].printed = 1;
-            }
-            free(msg);
+            // ★ 统一出口：与 dispatch_exception（vm_exception.inc）里的未捕获报告**同一份**
+            //   实现（异常值就在 vm.exception 里，见上面 `vm.exception = exception;`）
+            report_unhandled_exception(line);
             return -1;
         }
         frame = &vm.frames[vm.frame_cnt - 1];

@@ -512,16 +512,9 @@ static inline int call_value(Value callee, int arg_count, int line) {
                 Value result = native->function(arg_count, vm.stack + vm.sp - arg_count - 1);
                 // 检查 native 函数是否抛出异常（通过 native_throw_error）
                 if (vm.has_exception) {
-                    // 获取异常信息并调用 throw_runtime_error 来处理异常
-                    char* msg = NULL;
-                    if (val_is_obj(vm.exception) && val_as_obj(vm.exception)->type == OBJ_STRING) {
-                        msg = strdup(((ObjString*)val_as_obj(vm.exception))->chars);
-                    } else {
-                        msg = value_to_string(vm.exception);
-                    }
-                    error_clear();
-                    throw_runtime_error(msg, line);
-                    free(msg);
+                    // ★ 统一走 throw_pending_exception（vm_exception.inc）：原生只给裸消息就按
+                    //   调用点造统一文案；**已经是异常对象**的（回调/协程带回来的）原样保留
+                    throw_pending_exception(line);
                     return 0;
                 }
                 vm.sp -= arg_count + 1;
@@ -571,16 +564,9 @@ static inline int call_value(Value callee, int arg_count, int line) {
 
                 // 检查 native 函数是否抛出异常（通过 native_throw_error）
                 if (vm.has_exception) {
-                    // 获取异常信息并调用 throw_runtime_error 来处理异常
-                    char* msg = NULL;
-                    if (val_is_obj(vm.exception) && val_as_obj(vm.exception)->type == OBJ_STRING) {
-                        msg = strdup(((ObjString*)val_as_obj(vm.exception))->chars);
-                    } else {
-                        msg = value_to_string(vm.exception);
-                    }
-                    error_clear();
-                    throw_runtime_error(msg, line);
-                    free(msg);
+                    // ★ 统一走 throw_pending_exception（vm_exception.inc）：原生只给裸消息就按
+                    //   调用点造统一文案；**已经是异常对象**的（回调/协程带回来的）原样保留
+                    throw_pending_exception(line);
                     return 0;
                 }
 

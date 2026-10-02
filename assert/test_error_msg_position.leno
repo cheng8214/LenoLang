@@ -7,11 +7,18 @@
 //   「[位置] file:line (func) + [调用栈]」；并修掉位置/栈帧行号的 off-by-one
 //   （ip 指向**下一条**指令 ⇒ 必须按 ip-4 取本指令所在行）。
 //   ⚠ 用户自己 `throw "xxx"` 的字符串**原样保留**（那是用户数据 ⇒ 位置看 e.line / e.file）。
+//   第二批（同日）：异常跨过**原生边界**（asyncs.run() / FFI 回调 / 方法快路径）时必须
+//   **原样保留**，不许 flatten 成字符串再按"边界那一行"重造 —— 见 throw_pending_exception。
 import strings
+import asyncs
 
 func divByZero(): void {
     var z = 0
     print(10 / z)          // ← 除零：引擎错误
+}
+
+async func asyncBoom(): string {
+    throw "async-boom"     // ← 错误真正发生地（协程内）
 }
 
 main() {
@@ -54,6 +61,24 @@ main() {
     }
     assert_eq(thrown, "boom", "用户 throw 的字符串不能被追加任何东西")
     assert_true(thrown_line > 0, "throw 的 e.line 应可用")
+
+    // ④ 跨**原生边界**（asyncs.run 把协程的失败抛回）时必须原样保留：
+    //    msg 一个字不改（若被 flatten 重造，会被追加 "  [位置] …"）、
+    //    位置仍是协程里 throw 的那一行（修前它被改写成 asyncs.run() 那一行）
+    var bmsg = ""
+    var bline = 0
+    try {
+        var f = asyncBoom()
+        asyncs.run()
+        assert_true(false, "协程失败应该被 run() 抛回")
+    } catch e {
+        bmsg = _str(e.msg)
+        bline = _int(e.line)
+    }
+    assert_eq(bmsg, "async-boom", "经原生边界抛回的消息必须原样保留，实际=" + bmsg)
+    //    ⚠ 21 = 本文件里 `throw "async-boom"` 的行号；上面插删行会让它漂 —— 失败消息会
+    //      把实际行号打出来，照它改这一处即可（这条断言正是"位置必须指向 throw 处"的护栏）
+    assert_eq(bline, 21, "位置应指向协程里 throw 的那一行（本文件第 21 行），实际=" + _str(bline))
 
     print("test_error_msg_position passed")
 }

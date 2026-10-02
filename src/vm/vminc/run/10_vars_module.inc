@@ -96,15 +96,10 @@
         vm.sp = base;
 
         if (unlikely(vm.has_exception)) {
-            char* msg = NULL;
-            if (val_is_obj(vm.exception) && val_as_obj(vm.exception)->type == OBJ_STRING) {
-                msg = strdup(((ObjString*)val_as_obj(vm.exception))->chars);
-            } else {
-                msg = value_to_string(vm.exception);
-            }
-            error_clear();
-            if (!throw_runtime_error(msg, line)) { free(msg); return -1; }
-            free(msg);
+            // ★ 统一走 throw_pending_exception（vm_exception.inc）：原生只给裸消息就按调用点
+            //   造统一文案；**已经是异常对象**的（如协程经 asyncs.run() 抛回）原样保留
+            //   —— 修前这里把它 flatten 成字符串，位置被改写成 asyncs.run() 那一行 ✗
+            if (!throw_pending_exception(line)) return -1;
             frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH();
         }

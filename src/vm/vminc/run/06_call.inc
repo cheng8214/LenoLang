@@ -72,15 +72,9 @@
                 Value result = native->function(nargs, vm.stack + base);
                 vm.sp = base;
                 if (unlikely(vm.has_exception)) {
-                    char* msg = NULL;
-                    if (val_is_obj(vm.exception) && val_as_obj(vm.exception)->type == OBJ_STRING) {
-                        msg = strdup(((ObjString*)val_as_obj(vm.exception))->chars);
-                    } else {
-                        msg = value_to_string(vm.exception);
-                    }
-                    error_clear();
-                    if (!throw_runtime_error(msg, line)) { free(msg); return -1; }
-                    free(msg);
+                    // ★ 统一走 throw_pending_exception（vm_exception.inc）：原生只给了裸消息就
+                    //   按调用点造统一文案；**已经是异常对象**的（协程/回调带回来的）原样保留
+                    if (!throw_pending_exception(line)) return -1;
                     frame = &vm.frames[vm.frame_cnt - 1];
                     DISPATCH();
                 }
@@ -157,15 +151,9 @@
                 Value result = native->function(pass_nargs, vm.stack + base);
                 vm.sp = base;
                 if (unlikely(vm.has_exception)) {
-                    char* msg = NULL;
-                    if (val_is_obj(vm.exception) && val_as_obj(vm.exception)->type == OBJ_STRING) {
-                        msg = strdup(((ObjString*)val_as_obj(vm.exception))->chars);
-                    } else {
-                        msg = value_to_string(vm.exception);
-                    }
-                    error_clear();
-                    if (!throw_runtime_error(msg, line)) { free(msg); return -1; }
-                    free(msg);
+                    // ★ 统一走 throw_pending_exception（vm_exception.inc）：原生只给了裸消息就
+                    //   按调用点造统一文案；**已经是异常对象**的（协程/回调带回来的）原样保留
+                    if (!throw_pending_exception(line)) return -1;
                     frame = &vm.frames[vm.frame_cnt - 1];
                     DISPATCH();
                 }
@@ -248,15 +236,8 @@
         vm.sp = base;
 
         if (unlikely(vm.has_exception)) {
-            char* msg = NULL;
-            if (val_is_obj(vm.exception) && val_as_obj(vm.exception)->type == OBJ_STRING) {
-                msg = strdup(((ObjString*)val_as_obj(vm.exception))->chars);
-            } else {
-                msg = value_to_string(vm.exception);
-            }
-            error_clear();
-            if (!throw_runtime_error(msg, line)) { free(msg); return -1; }
-            free(msg);
+            // ★ 统一走 throw_pending_exception（vm_exception.inc），与上面两处同口径
+            if (!throw_pending_exception(line)) return -1;
             frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH();
         }
