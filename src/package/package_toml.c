@@ -691,7 +691,7 @@ int lockfile_write(const char* file_path, PkgLockFile* lock) {
 
     fprintf(fp, "# Leno lock file - auto-generated, do not edit\n");
     fprintf(fp, "[lock]\n");
-    fprintf(fp, "leno_version = \"%s\"\n\n", lock->leno_version ? lock->leno_version : "1.0.0");
+    fprintf(fp, "leno_version = \"%s\"\n\n", lock->leno_version ? lock->leno_version : "0.1.0");
 
     for (int i = 0; i < lock->package_count; i++) {
         fprintf(fp, "[[packages]]\n");
