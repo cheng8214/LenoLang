@@ -782,6 +782,15 @@
                         }
                     }
                     
+                    // ★ 泛型参数 → 具体类型 native 形参：**拦**（2026-10-02；理由见 semantic_reject_generic_arg_to_native）
+                    //   ⚠ 容器元素 mutator（add/insert/set）跳过：那是"存入"（Value 带 tag、不越界）✓
+                    if (!type_utils_is_array_element_mutator(method_name) &&
+                        !type_utils_is_dict_element_mutator(method_name)) {
+                        char callee[256];
+                        snprintf(callee, sizeof(callee), "%s.%s", actual_module, method_name);
+                        semantic_reject_generic_arg_to_native(ast, arg_type, expected_type, callee, i);
+                    }
+
                     // ⚠ v3.2.7：**删掉了 `arg_type->kind != TYPE_ANY` 这层豁免**。
                     //   老写法是"实参静态类型是 any 就跳过检查" —— 可 any 到运行期可能是任何东西
                     //   （null / int / ...），而 native 侧普遍**无校验强转**（如
@@ -1708,7 +1717,16 @@
                             for (int i = 0; i < actual_arity; i++) {
                                 TypeKind expected_param_type = native_get_instance_method_param_type(obj_type_name, method_name, i);
                                 TypeInfo* arg_type = infer_expr_type(s, ast->u.module_call.args.items[i]);
-                                
+
+                                // ★ 泛型参数 → 具体类型 native 形参：**拦**（2026-10-02）
+                                //   ⚠ 容器元素 mutator（add/insert/set）跳过：那是"存入"（Value 带 tag、不越界）✓
+                                if (!type_utils_is_array_element_mutator(method_name) &&
+                                    !type_utils_is_dict_element_mutator(method_name)) {
+                                    char callee[256];
+                                    snprintf(callee, sizeof(callee), "方法 '%s'", method_name);
+                                    semantic_reject_generic_arg_to_native(ast, arg_type, expected_param_type, callee, i);
+                                }
+
                                 // 处理数组/字典元素修改方法的类型更新和检查
                                 TypeInfo* expected_type_for_check = NULL;
                                 

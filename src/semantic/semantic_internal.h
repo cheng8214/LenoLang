@@ -125,6 +125,13 @@ TypeInfo* semantic_substitute_generic_param(TypeInfo* type, const char* param_na
 //   推不出（空体 / 全 any）返回 NULL 或 TYPE_ANY。返回**新类型**（调用方 type_free）。
 //   v3.2.8 起导出：face impl 的返回类型兼容性检查要用它处理"impl 方法没标返回类型"的情况。
 TypeInfo* infer_return_type_from_body(Semantic* s, Ast* body);
+// 泛型参数 → native 形参（具体类型）的拦截（2026-10-02；实现与理由见 semantic_type_utils.c）
+//   返回 1 = 已报错。**只对 native 调用点调用**（C 侧无校验盲转 ⇒ 传错是访存越界）；
+//   用户函数/字段/赋值的通道**故意不拦**（那不是 UB，且会误伤合法泛型代码）。
+//   `callee_desc` 形如 "strings.to_hex" / "调用方法 'pad_start'"
+int semantic_reject_generic_arg_to_native(Ast* ast, TypeInfo* arg_type, TypeKind expected,
+                                          const char* callee_desc, int arg_index);
+
 int type_utils_is_array_element_mutator(const char* method_name);
 int type_utils_get_array_element_param_index(const char* method_name, int is_module_call);
 int type_utils_try_update_array_element_type(Symbol* arr_sym, TypeInfo* elem_type);

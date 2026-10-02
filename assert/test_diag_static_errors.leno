@@ -1026,5 +1026,41 @@ main() {
 ")
     ce.expect_ok(d7d, "解构声明 / 多变量声明照常编译运行", "OK=14")
 
+    // ---- F1：泛型参数直接传给 **native** 形参（曾静默编过 ⇒ 运行期 0xC0000005 访存越界）----
+    // 判据只加在 native 通道（C 侧 `val_as_obj/val_as_int` 是无校验盲转）；用户函数/字段/赋值不拦
+    //   （那不是 UB —— Value 自带 tag，且定义处一刀切会误伤一片合法泛型代码，见测试里的两条守卫）
+    var g1 = dirs.join(work, "generic_native_module.leno")
+    files.write(g1, @"import strings
+func hexit[T](T x):string { return strings.to_hex(x) }
+main() { print(hexit(42)) }
+")
+    ce.expect_error(g1, "泛型参数传给模块式 native 要报错", "泛型参数 'T' 的类型在编译期未知", 2)
+
+    var g2 = dirs.join(work, "generic_native_instance.leno")
+    files.write(g2, @"import strings
+func eqx[T](string s, T x):bool { return s.eq_ignore_case(x) }
+main() { print(_str(eqx(""ab"", ""AB""))) }
+")
+    ce.expect_error(g2, "泛型参数传给实例式 native 要报错", "泛型参数 'T' 的类型在编译期未知", 2)
+
+    // 守卫①：容器元素 mutator（add/insert）是合法泛型写法（存 Value、不越界）⇒ 不得误伤
+    var g3 = dirs.join(work, "generic_push_ok.leno")
+    files.write(g3, @"func push_ok[T](Array[T] a, T v) { a.add(v) }
+main() {
+    Array[int] a = []
+    push_ok(a, 7)
+    print(""ok="" + _str(a.len()))
+}
+")
+    ce.expect_ok(g3, "容器元素 mutator 的泛型写法不得误伤", "ok=1")
+
+    // 守卫②：用户函数通道不拦 —— 定义处一刀切会拒掉大量合法泛型代码（实测误伤过 4 个用例）
+    var g4 = dirs.join(work, "generic_userfn_ok.leno")
+    files.write(g4, @"func userfn(string s):int { return s.byte_len() }
+func user_ok[T](T v):int { return userfn(v) }
+main() { print(""ok="" + _str(user_ok(""中""))) }
+")
+    ce.expect_ok(g4, "泛型参数传给用户函数不得误伤", "ok=3")
+
     print("=== test_diag_static_errors ALL passed ===")
 }

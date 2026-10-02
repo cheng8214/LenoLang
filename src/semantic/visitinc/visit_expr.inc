@@ -946,7 +946,14 @@
                                             }
                                             
                                             TypeInfo* arg_type = infer_expr_type(s, ast->u.call.args.items[i]);
-                                            
+
+                                            // ★ 泛型参数 → 具体类型 native 形参：**拦**（元素 mutator 除外，见 helper 注释）
+                                            if (!type_utils_is_array_element_mutator(method_name)) {
+                                                char callee[256];
+                                                snprintf(callee, sizeof(callee), "方法 '%s'", method_name);
+                                                semantic_reject_generic_arg_to_native(ast, arg_type, expected_param_type, callee, i);
+                                            }
+
                                             // 处理数组元素修改方法（add/insert）的类型更新
                                             if (type_utils_is_array_element_mutator(method_name)) {
                                                 int elem_param_idx = type_utils_get_array_element_param_index(method_name, 0);
@@ -1062,6 +1069,13 @@
                                                     }
                                                 }
                                             }
+
+                                            // ★ 泛型参数 → 具体类型 native 形参：**拦**（字典元素 mutator 除外）
+                                            if (!type_utils_is_dict_element_mutator(method_name)) {
+                                                char callee[256];
+                                                snprintf(callee, sizeof(callee), "方法 '%s'", method_name);
+                                                semantic_reject_generic_arg_to_native(ast, arg_type, expected_param_type, callee, i);
+                                            }
                                             
                                             // 类型检查：简单类型比较 kind，复杂类型使用 type_is_compatible 深度比较
                                             if (arg_type && arg_type->kind != TYPE_ANY) {
@@ -1133,6 +1147,14 @@
 
                                             TypeInfo* arg_type = infer_expr_type(s, ast->u.call.args.items[i]);
                                             if (!arg_type) continue;
+
+                                            // ★ 泛型参数 → 具体类型 native 形参：**拦**（与模块通道同判据 ✓）
+                                            //   否则实例化后无人复查 ⇒ C 侧盲转 ⇒ 访存越界（实测 0xC0000005 ✗）
+                                            {
+                                                char callee[256];
+                                                snprintf(callee, sizeof(callee), "方法 '%s'", method_name);
+                                                semantic_reject_generic_arg_to_native(ast, arg_type, expected_param_type, callee, i);
+                                            }
 
                                             // 判据与模块通道/赋值通道**同一实现**（type_is_compatible）：
                                             //   种类相同 ⇒ 兼容；**静态 any 照样拒绝**（与 v3.2.7 对模块通道的定案一致：

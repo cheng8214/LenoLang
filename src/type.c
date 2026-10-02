@@ -837,6 +837,13 @@ int type_is_compatible(TypeInfo* target, TypeInfo* source) {
     if (target->kind == TYPE_ANY) return 1;  // any 可以接受任何类型
     if (target->kind == TYPE_INFER) return 1;  // 推断类型接受任何值
     // 泛型类型参数：兼容任何类型（用于泛型函数体内部和类型推断）
+    // ⚠ 这里的 `source == GENERIC_PARAM ⇒ 1` **故意保留**（2026-10-02 试过收紧，误伤 4 个合法用例）：
+    //   本编译器**不做实例化后复查**，所以在定义处一刀切会拒掉大量合法泛型代码
+    //   （用户泛型函数实参、struct 泛型字段初始化、`Array[int] x = stack.pop()` 等）。
+    //   而用户层传错类型只是**动态行为**（Value 自带 tag，不会越界）⇒ 不需要在此处拦。
+    //   真正会**访存越界**的只有 **native 边界**（C 侧 `val_as_obj/val_as_int` 是无校验盲转）
+    //   ⇒ 严格判据加在 native 实参的检查点（见 visit_module.inc 的模块通道循环与
+    //   visit_expr.inc 的实例通道分支）：泛型参数传给**具体类型**的 native 形参 ⇒ 报错 ✓
     if (target->kind == TYPE_GENERIC_PARAM) return 1;
     if (source->kind == TYPE_GENERIC_PARAM) return 1;
 

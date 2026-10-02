@@ -1390,6 +1390,36 @@ int type_utils_check_dict_index_assignment(Symbol* dict_sym, TypeInfo* assign_ty
     format_detailed_type_error(msg, sizeof(msg),
         value_type, assign_type, "字典值类型不匹配");
     error_add_at(ERR_SEMANTIC, line, column, msg);
-    
+
     return 0;
+}
+
+// ============================================================================
+// 泛型参数 → native 形参（具体类型）：**必须拦**（2026-10-02）
+// ----------------------------------------------------------------------------
+// 为什么只在这里拦，而不是在 `type_is_compatible` 里全局收紧 `source == GENERIC_PARAM`：
+//   · 本编译器**不做实例化后复查**泛型函数体 ⇒ 定义处一刀切会拒掉大量合法泛型代码
+//     （实测误伤 4 个用例：`identity[T](v)`、`new Result[T](data=val)`、
+//      `Array[int] out = stack.pop()`、struct 内 `value = v`）
+//   · 用户层"传错类型"只是**动态行为**（Value 自带 tag，不会越界）⇒ 不必在这里拦
+//   · 真正会**访存越界**的只有 native 边界：C 侧 `val_as_obj / val_as_int` 是无校验盲转 ✗
+// 实测（本轮）：`func hexit[T](T x):string { return strings.to_hex(x) }` + `hexit(42)`
+//   ⇒ 编译**通过**、运行期 `exit=0xC0000005`（int 的位型被当指针解引用）✗
+// 调用约定：容器的**元素 mutator**（add/insert/set）不要调本函数 —— 那是"存入"（Value 带 tag、
+//   不越界），且泛型 push 是合法写法（`func push[T](Array[T] a, T v) { a.add(v) }` ✓）
+// 返回：1 = 已报错；0 = 不归本判据管（实参不是泛型参数 / 形参没声明类型）
+int semantic_reject_generic_arg_to_native(Ast* ast, TypeInfo* arg_type, TypeKind expected,
+                                          const char* callee_desc, int arg_index) {
+    if (!ast || !arg_type || arg_type->kind != TYPE_GENERIC_PARAM) return 0;
+    if (expected == TYPE_ANY) return 0;   // 形参未声明类型 ⇒ native 侧本来就不做类型假设
+
+    char msg[BUFFER_MEDIUM];
+    snprintf(msg, sizeof(msg),
+             "泛型参数 '%s' 的类型在编译期未知，不能直接传给 %s 的第 %d 个参数（期望具体类型 '%s'）\n"
+             "  提示: 先显式转换（_str() / _int() / as 具体类型），或把该调用放到具体类型上再做",
+             arg_type->type_param_name ? arg_type->type_param_name : "T",
+             callee_desc ? callee_desc : "native 方法", arg_index + 1,
+             type_kind_to_string(expected));
+    error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+    return 1;
 }
