@@ -114,6 +114,9 @@
         //   边界 = 当前协程的首帧索引（语义见 vm.c 里 saved_frame_cnt 的注释）。
         int throw_floor = vm.current_coroutine ? vm.current_coroutine->saved_frame_cnt : 0;
         if (throw_floor < 0) throw_floor = 0;
+        // ★ 宿主回调边界（f6）：与 dispatch_exception 同款 —— 跑在回调里时不许跳到
+        //   调用方的 catch（否则 catch 在内层循环里跑完、外层再用同一批帧继续跑 ⇒ 崩）
+        if (vm.host_floor > throw_floor) throw_floor = vm.host_floor;
         for (int i = vm.frame_cnt - 1; i >= throw_floor; i--) {
             CallFrame* tf = &vm.frames[i];
             if (tf->closure && tf->closure->function && !tf->closure->function->has_try) continue;
@@ -161,6 +164,9 @@
             //   （await 侧再抛出 / asyncs.all 收集）。否则 `risky(-1)` 这类
             //   "协程里抛、调用方 await 捕获"的用例会在最后多出一条未处理错误 ✗
             if (vm.current_coroutine) return -1;
+            // ★ 宿主回调边界（f6）：同理不报"未捕获"（接它的人在外层）⇒ 保持
+            //   has_exception 交回 C 侧，外层解释器在原生边界处重新派发
+            if (vm.host_floor > 0) return -1;
             // ★ 统一出口：与 dispatch_exception（vm_exception.inc）里的未捕获报告**同一份**
             //   实现（异常值就在 vm.exception 里，见上面 `vm.exception = exception;`）
             report_unhandled_exception(line);

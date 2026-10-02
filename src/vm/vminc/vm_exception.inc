@@ -385,6 +385,13 @@ static inline int dispatch_exception(int line) {
     //   搜索到此为止 —— 协程里没接住的异常按文档"路径3"交给 asyncs.run() 收集。
     int frame_floor = vm.current_coroutine ? vm.current_coroutine->saved_frame_cnt : 0;
     if (frame_floor < 0) frame_floor = 0;
+    // ★ 宿主回调边界（f6）：vm_call_value 跑回调（arr.map/filter、FFI 回调）期间会把
+    //   host_floor 设成"调用前的帧数"。异常**不许**展开到它下面去 —— 跳进调用方的
+    //   catch 会让 catch 在**内层**解释器循环里执行完，内层返回后外层又在同一批帧上
+    //   继续跑 ⇒ 状态写坏（实测：filter 回调里 throw ⇒ catch 打印正常、进程随后
+    //   0xC0000409/0xC0000005 崩，非确定性）。⇒ 撞界就交回 C 侧往外传，外层再派发。
+    int host_floor = vm.host_floor;
+    if (host_floor > frame_floor) frame_floor = host_floor;
     for (int i = vm.frame_cnt - 1; i >= frame_floor; i--) {
         CallFrame* frame = &vm.frames[i];
         // 快速路径：如果函数确定没有 try，直接跳过
@@ -449,6 +456,14 @@ static inline int dispatch_exception(int line) {
     }
 
     // 没有找到任何异常处理
+    if (host_floor > 0) {
+        // ★ 被**宿主回调边界**拦住（f6）⇒ 这不是"没人接"，而是"接它的人在外层"：
+        //   不派发也不报未捕获，保持 has_exception，交回 C 侧（arrays / FFI 宿主）
+        //   沿 C 栈往外传；外层解释器在 OP_MODULE_CALL / OP_CLIB_CALL 的边界处
+        //   再调一次本函数（那时 host_floor 已恢复）就能找到调用方的 catch ✓
+        vm.has_exception = 1;
+        return 0;
+    }
     // ★ 在协程里**不打印**"未处理"：异常按设计交给 asyncs.run() 收集后
     //   再抛回调用方（谁捕获谁报，没捕获才由最外层报）。这里照打会出现
     //   "既说未处理、又被 run() 抛出来处理"的双重报告。

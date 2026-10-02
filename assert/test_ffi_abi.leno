@@ -109,6 +109,10 @@ func cb_double(int x): int { return x * 2 }
 // 重入：**在回调里再调一次 DLL**（嵌套 FFI）⇒ 桩与回调 trampoline 都必须可重入 ✓
 func cb_nested(int x): int { return (G.p_0() as int) + x }
 
+// 回调里抛异常（G3/G4）：C 侧拿不到 Leno 异常，只拿到默认返回值 0；
+//   异常必须在 **ffi 调用点**抛出（原生边界统一派发），且进程**不许崩**
+func cb_throw(int x): int { throw "cb-boom" }
+
 main() {
     // 探针库：按平台选扩展名；**优先用编译器现场编译**（保证测的是当前源码 ✓），
     //   编译不可用则回退仓库里的预编译件，两者都没有 ⇒ SKIP（不算失败 ✓）
@@ -218,6 +222,25 @@ main() {
     var cb2 = ffi.callback(cb_nested, LenoCbN)
     assert_eq(G.p_invoke_cb(cb2, 5) as int, 782,
         "G2 回调里再调 DLL（嵌套 FFI ⇒ 桩必须可重入）：777+5")
+
+    // G3 回调里**抛异常**：C 侧只能拿到默认返回值，异常必须在 **ffi 调用点**抛出，
+    //   而且**不许崩** —— 回调经 vm_call_value 嵌套进解释器；异常若直接跳进调用方的
+    //   catch，catch 会在**内层**循环里跑完、内层返回后外层又在同一批帧上继续跑
+    //   ⇒ 状态写坏（f6：实测 catch 打印正常、进程随后 0xC0000409/0xC0000005 崩）
+    var cbThrow = ffi.callback(cb_throw, LenoCbI)
+    var caught_ffi = false
+    try {
+        var r = G.p_invoke_cb(cbThrow, 21)
+        print("  G3 不该正常返回，实际=" + _str(r))
+    } catch e {
+        caught_ffi = true
+        assert_eq(_str(e.msg), "cb-boom", "回调里抛的消息应原样上抛（不该被吞）")
+        assert_true(_int(e.line) > 0, "异常位置应可用")
+    }
+    assert_eq(caught_ffi, true, "回调里抛的异常必须在 ffi 调用点抛出")
+
+    // G4 抛过一次之后 FFI 还能正常用（帧/栈没被写坏）
+    assert_eq(G.p_invoke_cb(cb1, 21) as int, 42, "G4 异常之后回调仍可用")
 
     // ================= H. 压力：混合签名循环 20 万次 =================
     var bad = 0

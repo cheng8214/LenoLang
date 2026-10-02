@@ -1521,8 +1521,14 @@ int vm_call_value(Value callee, int arg_count, int line) {
     vm.stop_frame_cnt = saved_frame_cnt;
     #undef vm
 
+    // ★ 异常展开下界（f6）：本层嵌套运行里，异常**不许**跳到调用方的帧去
+    //   （那会让 catch 在内层循环里跑完、外层再用同一批帧继续跑 ⇒ 状态写坏）
+    int saved_host_floor = vm_ptr->host_floor;
+    vm_ptr->host_floor = saved_frame_cnt;
+
     int r = vm_run_with_vm(vm_ptr);
 
+    vm_ptr->host_floor = saved_host_floor;
     vm_ptr->stop_frame_cnt = saved_stop_frame_cnt;
     return (r == 0) ? 1 : 0;
 }

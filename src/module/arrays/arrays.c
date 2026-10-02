@@ -357,7 +357,12 @@ static Value arr_join(int argc, Value* args) {
 }
 
 // 辅助函数：调用 LenoC 函数/闭包
-static Value call_closure(Value callee, int arg_count, Value* args) {
+//   成功：返回 1，回调返回值写到 *out
+//   失败：返回 0，且**保留** vm.has_exception（回调里抛的异常）—— 调用方必须**立刻 return**，
+//         让异常沿 C 栈回到原生边界（OP_MODULE_CALL 的 throw_pending_exception）再统一派发。
+//   ⚠ 修前这里是 `has_exception = 0; exception = null;`：既**吞掉**异常，又掩盖了
+//     "异常已经被内层解释器跳进外层 catch 执行过一遍" 的帧错位（那是进程随机崩的根因）。
+static int call_closure(Value callee, int arg_count, Value* args, Value* out) {
     VM* vm_ptr = current_exec_vm ? current_exec_vm : &vm;
     int saved_sp = vm_ptr->sp;
     int saved_frame_cnt = vm_ptr->frame_cnt;
@@ -373,16 +378,16 @@ static Value call_closure(Value callee, int arg_count, Value* args) {
     //   此前写死 0 ⇒ 回调里抛出的**裸消息**异常（native_throw_error 那类）会带上 line=0，
     //   报错变成"file:0:"、位置与 [位置] 块对不上 ✗
     int call_result = vm_call_value(callee, arg_count, native_get_current_line());
-    Value ret_val = vm_ptr->last_return_value;
 
-    if (call_result != 1) {
-        vm_ptr->has_exception = 0;
-        vm_ptr->exception = val_null();
-        vm_ptr->frame_cnt = saved_frame_cnt;
-        ret_val = val_null();
-    }
     vm_ptr->sp = saved_sp;
-    return ret_val;
+    if (call_result != 1) {
+        // 异常退出：回调帧没走正常返回路径 ⇒ 手动把帧数恢复；异常**原样留着**（不清）
+        vm_ptr->frame_cnt = saved_frame_cnt;
+        *out = val_null();
+        return 0;
+    }
+    *out = vm_ptr->last_return_value;
+    return 1;
 }
 
 static Value arr_map(int argc, Value* args) {
@@ -403,7 +408,9 @@ static Value arr_map(int argc, Value* args) {
         Value call_args[2];
         call_args[0] = arr->elements[i];
         call_args[1] = val_int(i);
-        Value mapped = call_closure(fn, 2, call_args);
+        Value mapped = val_null();
+        // 回调里抛异常 ⇒ 立刻 return（异常挂在 vm 上），别继续拿"半成品"结果
+        if (!call_closure(fn, 2, call_args, &mapped)) return val_null();
         if (result->count >= result->capacity) {
             int new_cap = result->capacity * 2;
             Value* new_elems = (Value*)realloc(result->elements, new_cap * sizeof(Value));
@@ -437,7 +444,8 @@ static Value arr_filter(int argc, Value* args) {
         Value call_args[2];
         call_args[0] = arr->elements[i];
         call_args[1] = val_int(i);
-        Value pred = call_closure(fn, 2, call_args);
+        Value pred = val_null();
+        if (!call_closure(fn, 2, call_args, &pred)) return val_null();   // 回调抛异常 ⇒ 上抛
         if (val_is_bool(pred) && val_as_bool(pred)) {
             if (result->count >= result->capacity) {
                 int new_cap = result->capacity * 2;
@@ -479,7 +487,9 @@ static Value arr_reduce(int argc, Value* args) {
         call_args[0] = acc;
         call_args[1] = arr->elements[i];
         call_args[2] = val_int(i);
-        acc = call_closure(fn, 3, call_args);
+        Value next = val_null();
+        if (!call_closure(fn, 3, call_args, &next)) return val_null();   // 回调抛异常 ⇒ 上抛
+        acc = next;
     }
 
     return acc;

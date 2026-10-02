@@ -1,0 +1,68 @@
+// 护栏（f6）：**原生回调里抛的异常**必须能正常上抛，且进程**不能崩**
+//
+//   背景（2026-10-02 实测）：回调经 vm_call_value → 嵌套解释器运行，异常派发一路扫到
+//   **调用方**的 catch 就跳过去 ⇒ catch 在**内层**循环里执行完，内层返回后外层又在同一批
+//   帧上继续跑 ⇒ 状态写坏：表现为 catch 打印正常、进程随后以 0xC0000409 / 0xC0000005 崩，
+//   且**非确定性**（同一脚本连跑 3 次里崩 2 次）。旧二进制（aacb70b）同样崩 ⇒ 老 bug，
+//   不是某次改动引入的。
+//   修法：vm_call_value 设置 host_floor（异常展开下界），撞界时**不派发也不报未捕获**，
+//   把异常交回 C 侧沿 C 栈往外传，外层原生边界（OP_MODULE_CALL）再统一派发。
+//
+//   ⚠ 本用例的**退出码**就是判据（run_tests 只看 exit code）：只要崩，就非 0 ⇒ 红。
+import arrays
+
+func boomPredicate(int x, int i): bool {
+    if x == 3 { throw "callback-boom" }
+    return true
+}
+
+main() {
+    // ① filter：命名函数做回调
+    var a = [1, 2, 3]
+    var caught = false
+    try {
+        var c = a.filter(boomPredicate)
+        print("filter 不该正常返回，结果=" + _str(c))
+    } catch e {
+        caught = true
+        assert_eq(_str(e.msg), "callback-boom", "异常消息应原样上抛")
+        assert_true(_int(e.line) > 0, "异常位置应可用（原为 0）")
+        assert_true(_str(e.file) != "", "异常文件名应可用")
+    }
+    assert_eq(caught, true)
+
+    // ② map：闭包做回调
+    var caught2 = false
+    try {
+        var m = a.map(func(int x, int i): int {
+            if x == 2 { throw "map-boom" }
+            return x * 2
+        })
+        print("map 不该正常返回，结果=" + _str(m))
+    } catch e {
+        caught2 = true
+        assert_eq(_str(e.msg), "map-boom")
+    }
+    assert_eq(caught2, true)
+
+    // ③ reduce：回调抛异常同样上抛
+    var caught3 = false
+    try {
+        var s = a.reduce(func(int acc, int x, int i): int {
+            if i == 1 { throw "reduce-boom" }
+            return acc + x
+        }, 0)
+        print("reduce 不该正常返回，结果=" + _str(s))
+    } catch e {
+        caught3 = true
+        assert_eq(_str(e.msg), "reduce-boom")
+    }
+    assert_eq(caught3, true)
+
+    // ④ 异常被接住之后，VM 还能继续正常工作（帧/栈没被写坏）
+    var ok = a.filter(func(int x, int i): bool { return x > 1 })
+    assert_eq(ok.len(), 2)
+    assert_eq(_int(ok[0]), 2)
+
+    print("test_callback_throw_unwind passed")
+}

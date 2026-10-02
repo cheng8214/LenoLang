@@ -2730,9 +2730,12 @@ static FFIValue callback_dispatch_direct(int cb_id, CallbackRegState* regs) {
     int call_result = vm_call_value(entry->func_val, total, native_get_current_line());
     Value ret_val = vm_ptr->last_return_value;
     if (call_result != 1) {  // vm_call_value 返回 1 表示成功
-        // 调用失败，清理 VM 状态
-        vm_ptr->has_exception = 0;
-        vm_ptr->exception = val_null();
+        // 回调里抛了异常（帧没按正常返回路径回退）⇒ 恢复帧数，但**保留 has_exception**：
+        //   C 侧拿不到 Leno 异常、只能给个默认返回值，异常交给**外层**原生边界
+        //   （OP_CLIB_CALL 的 throw_pending_exception）再统一派发。
+        //   ⚠ 修前这里 `has_exception = 0; exception = null;` ⇒ 异常被静默吞掉
+        //     （调用方什么都看不到）；而且这次的"不许跨宿主边界展开异常"（host_floor）
+        //     也要求这里别把异常清掉，否则外层就没有东西可派发了 ✗
         vm_ptr->frame_cnt = saved_frame_cnt;  // 恢复 frame_cnt
         ret_val = val_int(0);  // 默认返回 0
     }

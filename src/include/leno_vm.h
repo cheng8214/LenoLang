@@ -973,6 +973,13 @@ typedef struct VM {
     int active_thread_count;
     int active_thread_capacity;
     int stop_frame_cnt;          // 回调执行时：帧数降到此值时停止
+    // ★ 宿主回调的**异常展开下界**（f6：vm_call_value 设/恢复；>0 = 正跑在宿主回调里）。
+    //   异常**不许**展开到调用方的帧去 —— 否则 catch 会在**内层**解释器循环里执行完，
+    //   内层返回后外层又在同一批帧上继续跑 ⇒ 状态写坏（实测：数组 filter 回调里 throw
+    //   ⇒ catch 打印正常、进程随后 0xC0000409/0xC0000005 崩，非确定性）。
+    //   ⇒ 撞到下界就**不派发也不报未捕获**，把异常交回 C 侧往外传，外层再用更低的
+    //     下界重新派发（见 vm_exception.inc 的 dispatch_exception）。
+    int host_floor;
     // 泛型类型参数传递：OP_PUSH_TYPE_ARGS → OP_CALL 间的桥接
     char** pending_type_args;    // 待处理的泛型类型参数
     int pending_type_arg_count;  // 待处理数量
