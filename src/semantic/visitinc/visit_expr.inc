@@ -951,7 +951,7 @@
                                             if (!type_utils_is_array_element_mutator(method_name)) {
                                                 char callee[256];
                                                 snprintf(callee, sizeof(callee), "方法 '%s'", method_name);
-                                                if (semantic_native_arg_generic(s, ast, arg_type, expected_param_type, callee, i)) {
+                                                if (semantic_check_native_arg(s, ast, arg_type, expected_param_type, callee, i)) {
                                                     if (arg_type) type_free(arg_type);
                                                     continue;   // 已由需求机制接管 ⇒ 跳过常规比较（见该函数注释 ✓）
                                                 }
@@ -1077,7 +1077,7 @@
                                             if (!type_utils_is_dict_element_mutator(method_name)) {
                                                 char callee[256];
                                                 snprintf(callee, sizeof(callee), "方法 '%s'", method_name);
-                                                if (semantic_native_arg_generic(s, ast, arg_type, expected_param_type, callee, i)) {
+                                                if (semantic_check_native_arg(s, ast, arg_type, expected_param_type, callee, i)) {
                                                     if (arg_type) type_free(arg_type);
                                                     continue;   // 已由需求机制接管 ⇒ 跳过常规比较（见该函数注释 ✓）
                                                 }
@@ -1159,7 +1159,7 @@
                                             {
                                                 char callee[256];
                                                 snprintf(callee, sizeof(callee), "方法 '%s'", method_name);
-                                                if (semantic_native_arg_generic(s, ast, arg_type, expected_param_type, callee, i)) {
+                                                if (semantic_check_native_arg(s, ast, arg_type, expected_param_type, callee, i)) {
                                                     if (arg_type) type_free(arg_type);
                                                     continue;   // 已由需求机制接管 ⇒ 跳过常规比较（见该函数注释 ✓）
                                                 }

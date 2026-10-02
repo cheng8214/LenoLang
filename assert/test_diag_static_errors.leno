@@ -1105,5 +1105,30 @@ main() {
 ")
     ce.expect_ok(g7, "struct 泛型：Cell[string] 调同一方法 ⇒ 合法并跑通", "6162")
 
+    // ---- F3：可空值直传 native（盲转遇 null ⇒ 段错误；2026-10-02）----
+    //   实测 `string? s = null; strings.to_hex(s)` 编译通过、运行期 exit=0xC0000005 ✗
+    var g8 = dirs.join(work, "nullable_native.leno")
+    files.write(g8, @"import strings
+main() {
+    string? s = null
+    print(strings.to_hex(s))
+}
+")
+    ce.expect_error(g8, "可空值直传 native 必须编译报错（此前是运行期段错误）",
+                    "可空值不能直接传给", 4)
+
+    // 守卫⑤：**收窄之后**合法 —— `if x is T { ... }` 是推荐写法（对可空类型有效 ✓），
+    //   显式转换 `x as T` / `_str(x)` 也可以 ✓；⚠ 只有 `if x != null` 不算收窄 ✗
+    var g9 = dirs.join(work, "nullable_narrow_ok.leno")
+    files.write(g9, @"import strings
+main() {
+    string? s = ""ab""
+    if s is string { print(strings.to_hex(s)) }
+    print(strings.to_hex(s as string))
+    print(strings.to_hex(_str(s)))
+}
+")
+    ce.expect_ok(g9, "可空值先收窄（is / as / _str 三种）再传给 native ⇒ 合法并跑通", "6162")
+
     print("=== test_diag_static_errors ALL passed ===")
 }

@@ -1417,9 +1417,27 @@ int type_utils_check_dict_index_assignment(Symbol* dict_sym, TypeInfo* assign_ty
 //   "记了需求"之后再报一遍常规错（实测：实例式 `s.eq_ignore_case(x)` ✗）
 // 返回：1 = 本实参已由需求机制接管（记了需求，或已就地兜底报错）⇒ 跳过常规比较
 //       0 = 不归本判据管（不是泛型参数 / 形参没声明类型 / "struct T" 但不是本函数的参数）⇒ 照常比较
-int semantic_native_arg_generic(Semantic* s, Ast* ast, TypeInfo* arg_type, TypeKind expected,
-                                const char* callee_desc, int arg_index) {
+int semantic_check_native_arg(Semantic* s, Ast* ast, TypeInfo* arg_type, TypeKind expected,
+                              const char* callee_desc, int arg_index) {
     if (!ast || !arg_type || expected == TYPE_ANY) return 0;
+
+    // ② **可空值 → 非可空 native 形参**：与泛型同族，必须拦（2026-10-02）
+    //   实测：`string? s = null; strings.to_hex(s)` ⇒ 编译通过、运行期 exit=0xC0000005 ✗
+    //   （native 侧 `val_as_obj(args[0])` 对 null 直接解引用；`_uint8`/`val_as_int` 之类则拿到垃圾值）
+    //   口径：native 形参**没有可空标记** ⇒ 静态可空类型一律不许直传（要传就先收窄：x as T / _str(x) ✓）
+    if (arg_type->nullable) {
+        char msg[BUFFER_LARGE];
+        snprintf(msg, sizeof(msg),
+                 "可空值不能直接传给 %s 的第 %d 个参数（期望非可空的具体类型 '%s'）\n"
+                 "  提示: native 侧**没有 null 校验**（盲转会崩）⇒ 请先收窄：`if x is %s { ... }`（is 收窄对可空类型有效 ✓），\n"
+                 "        或显式转换 `x as %s` / `_str(x)` / `_int(x)`（⚠ `if x != null` 不构成收窄 ✗）",
+                 callee_desc ? callee_desc : "native 方法", arg_index + 1,
+                 type_kind_to_string(expected),      // 「期望非可空的具体类型 '%s'」
+                 type_kind_to_string(expected),      // 「if x is %s { ... }」
+                 type_kind_to_string(expected));     // 「x as %s」
+        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+        return 1;
+    }
 
     // 只认"泛型参数"两种表示：TYPE_GENERIC_PARAM，或本编译器把注解 `T` 建成的
     // TYPE_STRUCT + struct_name="T"（见 visit_expr.inc:1268 的注释）
