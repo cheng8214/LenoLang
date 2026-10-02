@@ -1,10 +1,21 @@
+    // OP_TRY A Bx
+    //   A=0（默认）：Bx 指向 **catch 块**，登记为 catch handler
+    //   A=1：**无 catch 体、有 finally** ⇒ Bx 指向 **finally 块**，登记为 finally handler
+    //     （异常派发里走"有 finally、无 catch ⇒ pending=1 先跑 finally、之后继续向外抛"那一支；
+    //      若登记成 catch，异常会被 OP_FINALLY 清掉 ⇒ 静默消失，见 codegen_stmt.c 的说明）
     LABEL(OP_TRY): {
+        int a = READ_A();
         int bx = READ_Bx();
         uint8_t* try_start = frame->ip - 4;
         frame->prev_catch_ip = frame->catch_ip;
         frame->prev_finally_ip = frame->finally_ip;
-        frame->catch_ip = try_start + bx;
-        frame->finally_ip = NULL;
+        if (a == 1) {
+            frame->catch_ip = NULL;
+            frame->finally_ip = try_start + bx;
+        } else {
+            frame->catch_ip = try_start + bx;
+            frame->finally_ip = NULL;
+        }
         DISPATCH();
     }
     // OP_CATCH A Bx: R[A] = 当前异常；清除 catch 状态（寄存器式不再走栈传异常）
@@ -64,8 +75,12 @@
                 vm.has_exception = 0;
                 DISPATCH();
             } else {
-                // 当前帧已无处理器：继续向上抛
-                if (!throw_runtime_error("未捕获的异常", vm.exception_line ? vm.exception_line : GET_CURRENT_LINE())) {
+                // 当前帧已无处理器：把**当前异常原样**继续向外抛
+                //   ★ 2026-10-02 统一：修前这里 `throw_runtime_error("未捕获的异常", …)` 会
+                //     **换掉**原异常 —— 调用方 catch 到的是"未捕获的异常"，真正的原因丢了 ✗
+                //     （`try { throw "boom" } finally { }` 走的正是这条路径）
+                vm.has_exception = 1;   // 跳进 finally 时它被清成了 0
+                if (!dispatch_exception(vm.exception_line ? vm.exception_line : GET_CURRENT_LINE())) {
                     return -1;
                 }
                 frame = &vm.frames[vm.frame_cnt - 1];

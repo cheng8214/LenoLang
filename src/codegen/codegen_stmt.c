@@ -1650,7 +1650,16 @@ static void gen_try(CodeGen* gen, Ast* ast) {
     int has_finally = ast->u.try_.finally_body != NULL;
 
     int try_pos = gen->chunk->len;
-    reg_encode_iABx(gen->chunk, OP_TRY, 0, 0, ast->line);
+    // ★ A=1：**无 catch 体、有 finally** ⇒ Bx 指向的是 finally 块，VM 要把它登记成
+    //   finally handler 而不是 catch handler。
+    //   ⚠ 修前这里一律 A=0：throw 被当成"被 catch 住了"直接跳进 finally，异常既没标记
+    //     pending、又被 OP_FINALLY 的 `vm.exception = val_null()` 清掉 ⇒ **整条异常静默消失**
+    //     （实测：`try { throw "x" } finally { }` 连外层 catch 都不进，程序照常往下跑 ✗，
+    //     而且旧二进制 aacb70b 同样如此 ⇒ 老 bug）。
+    //   登记成 finally 后走"派发时标记 pending → 先跑 finally → END_TRY 处继续向外抛"的
+    //   正确路径，异常文案/位置原样保留 ✓
+    int try_a = (has_finally && ast->u.try_.catch_body == NULL) ? 1 : 0;
+    reg_encode_iABx(gen->chunk, OP_TRY, try_a, 0, ast->line);
     int catch_patch_pos = gen->chunk->len - 2;  // Bx 字段位置
 
     // try body
@@ -1684,7 +1693,13 @@ static void gen_try(CodeGen* gen, Ast* ast) {
         catch_fin_patch = gen->chunk->len - 2;   // Bx 字段位置
     }
     // A=1 表示"catch 块入口"这次 END_TRY：保留 catch_finally_ip（catch 体期间有效）
-    reg_encode_iABC(gen->chunk, OP_END_TRY, 1, 0, 0, ast->line);
+    // ★ 只在**真有 catch 体**时发这条：无 catch 体（try/finally）时它是死代码，而且会把
+    //   `catch_pos` 顶到 finally 块**之前** —— A=1 的 OP_TRY 把 catch_pos 当 finally 块用，
+    //   跳进去就会先撞上这条 END_TRY（pending 分支直接往外抛）⇒ **finally 体被跳过** ✗
+    //   （实测：`try { throw } finally { print(...) }` 的 print 不执行、异常却上抛了）
+    if (ast->u.try_.catch_body != NULL) {
+        reg_encode_iABC(gen->chunk, OP_END_TRY, 1, 0, 0, ast->line);
+    }
 
     if (ast->u.try_.catch_body) {
         gen_stmt(gen, ast->u.try_.catch_body);

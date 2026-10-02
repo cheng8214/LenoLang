@@ -154,7 +154,15 @@
 //   ⇒ .lenb / entry_*.lenb 必须整体失效重编译。
 // v2.7.1（2026-09-16）：枚举成员求值语义修正 —— 扫描器补 `not`、除零/取模零改为与解析器同结论
 //   ⇒ 修正前编译出的 .lenb / entry_*.lenb 里可能烙着错的常量值，必须整体失效重编译。
-#define LENO_BIN_VERSION    0x0003020A  // v3.2.10 - 跨模块 struct 方法**默认参数**补齐 + 关联常量
+#define LENO_BIN_VERSION    0x0003020B  // v3.2.11 - `try { … } finally { … }`（**无 catch 体**）的
+                                        //   OP_TRY 改用 **A=1** 标记"Bx 指向的是 finally 块"
+                                        //   **为什么升**（与实例十二/十三/十七同判据：同源码发射
+                                        //   不同指令）：旧产物里 A 恒为 0 ⇒ 新 VM 会把它当
+                                        //   catch handler 处理 —— 与旧行为一致（异常照样被静默
+                                        //   吞掉），所以不是"读不了"，而是"拿不到修复"；按登记表
+                                        //   判据（同源码 → 不同指令）照样整体失效重编译 ✓
+                                        //   见 codegen_stmt.c 的 gen_try 与 run/09_exception.inc
+                                        // v3.2.10 - 跨模块 struct 方法**默认参数**补齐 + 关联常量
                                         //   负值 + enum 形参 / 跨模块别名解析（2026-10-02）
                                         //   **为什么升**（与实例十二/十三/十七同判据：编译期推断/
                                         //   求值语义变化 ⇒ 同源码发射不同指令）：
@@ -255,7 +263,10 @@
 // v13：ObjFunction 增加 is_async（运行期判定"调用即建协程"用）。旧缓存里的函数对象缺这个
 //      字段 ⇒ async 函数的**间接调用**（`var f = w; f()`、当参数传、绑定方法）会退回同步执行、
 //      静默错值，所以必须**作废旧缓存**。
-#define LENO_MODCACHE_VERSION  0x0000001A  // v26 - 同 LENO_BIN_VERSION v3.2.10（跨模块 struct 方法
+#define LENO_MODCACHE_VERSION  0x0000001B  // v27 - 同 LENO_BIN_VERSION v3.2.11（try/finally 的
+                                           //       OP_TRY A=1：模块 chunk 里同样含 try/finally
+                                           //       ⇒ 同判据、同步整体失效 ✓）
+                                           // v26 - 同 LENO_BIN_VERSION v3.2.10（跨模块 struct 方法
                                            //       默认参数补齐值指令 + 负关联常量折叠值 +
                                            //       跨模块别名的类型描述符）—— 模块内联的调用点
                                            //       同样含这些指令 ⇒ 同判据整体失效 ✓

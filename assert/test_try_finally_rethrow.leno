@@ -1,0 +1,89 @@
+// 护栏（f7）：`try { … } finally { … }`（**无 catch**）里抛的异常必须继续向外抛，
+//   不能被静默吞掉；finally 必须照常执行；异常文案/位置原样保留。
+//
+//   背景（2026-10-02 实测）：修前 codegen 一律发 `OP_TRY A=0`，把 **finally 块**登记成
+//   catch handler ⇒ 异常被"当成已捕获"跳进 finally、随即被 `OP_FINALLY` 的
+//   `vm.exception = val_null()` 清掉 ⇒ **整条异常消失**（外层 catch 根本不进、程序照常
+//   往下跑）。旧二进制 aacb70b 同样如此 ⇒ 老 bug。
+//   修法：`OP_TRY A=1` 表示"Bx 指向 finally 块"（登记成 finally handler、走 pending 语义），
+//   无 catch 体时不再发"catch 块入口"那条 END_TRY；END_TRY 收尾处**原样**继续抛
+//   （原来会换成"未捕获的异常"）。bump LENO_BIN_VERSION v3.2.11 / MODCACHE v27。
+import arrays
+
+func oneLevel(): int {
+    try {
+        throw "one-boom"          // ← 第 15 行（下面 ① 断言这个行号）
+    } finally {
+        print("  [one] finally 跑了")
+    }
+    return 0
+}
+
+func twoLevel(): int {
+    try {
+        try {
+            throw "two-boom"
+        } finally {
+            print("  [two] 内层 finally 跑了")
+        }
+    } finally {
+        print("  [two] 外层 finally 跑了")
+    }
+    return 0
+}
+
+func normalReturn(): int {
+    try {
+        return 7
+    } finally {
+        print("  [ret] finally 跑了")
+    }
+}
+
+main() {
+    // ① 基本：异常原样上抛 + finally 执行
+    var c1 = false
+    try {
+        oneLevel()
+    } catch e {
+        c1 = true
+        assert_eq(_str(e.msg), "one-boom", "异常文案必须原样保留（修前整条被吞）")
+        assert_eq(_int(e.line), 15, "位置应指向 throw 那行（本文件第 15 行）")
+    }
+    assert_eq(c1, true, "try/finally 里的异常必须向外抛")
+
+    // ② 两层 finally：都执行，异常仍上抛
+    var c2 = false
+    try {
+        twoLevel()
+    } catch e {
+        c2 = true
+        assert_eq(_str(e.msg), "two-boom")
+    }
+    assert_eq(c2, true)
+
+    // ③ 正常路径不受影响：return 照常、finally 照跑
+    assert_eq(normalReturn(), 7)
+
+    // ④ 回调里的 try/finally 抛异常同样要上抛（宿主边界 + finally 叠加）
+    var a = [1, 2, 3]
+    var c4 = false
+    try {
+        var r = a.map(func(int x, int i): int {
+            try {
+                if x == 1 { throw "cb-finally" }
+                return x
+            } finally {
+                print("  [cb] finally 跑了 x=" + _str(x))
+            }
+            return 0
+        })
+        print("④ map 不该正常返回，结果=" + _str(r))
+    } catch e {
+        c4 = true
+        assert_eq(_str(e.msg), "cb-finally")
+    }
+    assert_eq(c4, true)
+
+    print("test_try_finally_rethrow passed")
+}
