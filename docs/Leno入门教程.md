@@ -3544,6 +3544,69 @@ struct Pair[K, V: Comparable] {
 > - 多个类型参数可以分别约束：`[K, V: Comparable]`
 > - 未约束的泛型参数（如 `K`）仍可接受任意类型
 
+**具体类型约束（`T: string` / `int` / `float` / `bool`）：**
+
+约束名除了 face，也可以直接写**内置具体类型** —— 表示"这个类型参数只接受这一种类型"。
+它解决的实际问题：函数体里要把 `T` 喂给**具体类型形参**（典型是一个 native 调用）时，写清约束就**意图明确**，
+且编译器能在**定义处**判定相容性：
+
+```leno
+import strings
+
+// T 只能是 string ⇒ 函数体里可以直接把 T 交给 strings.to_hex
+func hexit[T: string](T x): string {
+    return strings.to_hex(x)
+}
+
+main() {
+    print(hexit("中"))     // e4b8ad ✓
+    // print(hexit(42))    // ✗ 编译期：类型 'int' 不满足约束 'string'（该泛型参数被约束为具体类型）
+}
+```
+
+约束与函数体写法**不相容**时，**定义处**就报错（不必等到调用点）：
+
+```leno
+import strings
+
+// ✗ 报错在第 2 行，即**定义处**：
+//   泛型参数 'T' 约束为 'int'，但 strings.to_hex 的第 1 个参数期望 'string' —— 两者不相容
+func bad[T: int](T x): string {
+    return strings.to_hex(x)
+}
+```
+
+struct 的类型参数同理，违约在**实例化处**报：
+
+```leno
+import strings
+
+struct Cell[T: string] {
+    T value
+    func hex(): string { return strings.to_hex(self.value) }
+}
+
+main() {
+    Cell[string] c = new Cell[string](value="ab")
+    print(c.hex())                          // 6162 ✓
+    // Cell[int] bad = new Cell[int](value=1)
+    // ✗ 类型 'int' 不满足约束 'string'（struct 'Cell' 的类型参数 'T' 被约束为具体类型）
+}
+```
+
+> **💡 三种写法怎么选**
+>
+> | 写法 | 含义 | 何时用 |
+> |---|---|---|
+> | `[T: Face]` | 只要求实现该 face（多态） | 函数体里调 face 声明的方法 |
+> | `[T: string]` | 只接受这一个**具体类型** | 函数体里要把 `T` 交给具体类型形参（如 `strings.to_hex`） |
+> | `[T]`（不写） | 任意类型 | 只做搬运、比较等通用操作 |
+>
+> - 具体约束支持 `string` / `int` / `float` / `bool`
+> - 写了具体约束 ⇒ 定义处即可判定；**不写**约束 ⇒ 由"需求推断"在**调用点**判定（能在编译期拦住 `func hexit[T](T x){ return strings.to_hex(x) }` + `hexit(42)` 这类错误）
+> - `[T: int]` 也接受 bigint 实参（bigint 对外统一显示为 `int`）
+> - 约束名不写 face、也不写内置类型名时，按"未知约束"处理（不做校验）
+
 **多 face 实现：**
 
 一个 struct 可以同时实现多个 face，用逗号分隔：

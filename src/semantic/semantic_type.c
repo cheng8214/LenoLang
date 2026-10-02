@@ -528,47 +528,20 @@ TypeInfo* infer_method_return_type(Semantic* s, TypeInfo* obj_type, const char* 
     return NULL;
 }
 
-// 泛型形参在字段类型里常被解析成 TYPE_STRUCT 占位（struct_name=形参名，如 "T"），
-// type_substitute 只认 TYPE_GENERIC_PARAM ⇒ 对这类占位补替换（对齐 visit_expr.inc
-// 自定义方法检查里的 is_generic 特判）。语义与 type_substitute 完全一致：
-// **不释放输入**（输入可能是方法 AST 拥有的 param_types[]），返回新类型由调用方释放。
+// 泛型形参替换：**唯一实现是 type_substitute**（2026-10-03 收编，本函数退化为转发）。
+//
+// 历史：本函数原先是 type_substitute 的一份**副本**，差别只在于它额外认一种**占位表示**
+//   （注解 `T` 被建成 `TYPE_STRUCT + struct_name="T"`）。同一规则两处写 ⇒ 已踩两个坑：
+//     ① 少了 return_type / param_types 的递归 ✗
+//     ② 用 type_copy 造出来的子类型**没释放**就被覆盖 ✗（泄漏）
+//   而"为什么需要这份副本"的前提也已消除：产生端（parser 的 func/struct/face 三处声明）
+//   现在统一把类型参数转成 TYPE_GENERIC_PARAM（连带约束 ✓），占位表示不再从 AST 路径漏出 ✓
+//   （实测：examples 抽样 + 断言套件 + 探针文件，占位分支命中 = 0 ✓）
+//   type_substitute 自身同样认两种表示 ⇒ 留作兜住**跨模块缓存/外部符号表**旧内容的安全网 ✓
+//
+// 语义不变：**不释放输入**（输入可能是方法 AST 拥有的 param_types[]），返回的新类型由调用方释放 ✓
 TypeInfo* semantic_substitute_generic_param(TypeInfo* type, const char* param_name, TypeInfo* concrete) {
-    if (!type) return type;
-    if (type->kind == TYPE_GENERIC_PARAM && type->type_param_name &&
-        strcmp(type->type_param_name, param_name) == 0) {
-        TypeInfo* replaced = type_copy(concrete);
-        // ★ 别丢**占位符自身**的可空标记（同 type_substitute 的说明）：`T?` 代入后仍是可空
-        if (replaced && type->nullable) replaced->nullable = 1;
-        return replaced;
-    }
-    if (type->kind == TYPE_STRUCT && type->struct_name &&
-        strcmp(type->struct_name, param_name) == 0) {
-        TypeInfo* replaced = type_copy(concrete);
-        if (replaced && type->nullable) replaced->nullable = 1;
-        return replaced;
-    }
-    TypeInfo* result = type_copy(type);
-    if (result->element_type) {
-        result->element_type = semantic_substitute_generic_param(result->element_type, param_name, concrete);
-    }
-    if (result->key_type) {
-        result->key_type = semantic_substitute_generic_param(result->key_type, param_name, concrete);
-    }
-    if (result->value_type) {
-        result->value_type = semantic_substitute_generic_param(result->value_type, param_name, concrete);
-    }
-    // v31：**泛型实参**也要递归 —— 否则"占位符藏在 generic_args 里"的类型替换等于没做：
-    //   `Pair[K, V]` 的 K/V 就在 generic_args[] 里 ⇒ `gm.makePair[string, int]` 的静态类型
-    //   仍停在 `Pair[K, V]`（实测：`string k = p.getKey()` 报"期望 string，实际 struct K"）。
-    if (result->generic_count > 0 && result->generic_args) {
-        for (int gi = 0; gi < result->generic_count; gi++) {
-            TypeInfo* sub = semantic_substitute_generic_param(result->generic_args[gi],
-                                                             param_name, concrete);
-            type_free(result->generic_args[gi]);   // 释放 type_copy 造出来的那份
-            result->generic_args[gi] = sub;
-        }
-    }
-    return result;
+    return type_substitute(type, param_name, concrete);
 }
 
 // 推断 struct/cstruct/clib/dict 对象访问 field_name 的字段类型

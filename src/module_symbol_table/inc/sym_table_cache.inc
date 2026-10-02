@@ -6,7 +6,7 @@
 // ⚠ 版本号登记表：docs/待办_单一事实来源与重复实现收敛.md 第七节
 //   （只覆盖符号表缓存；2026-09-16 撞过车：与上游都用 v23 但格式不同）
 #define LENOSYMC_MAGIC   0x4D59534C  // "LSYM" little-endian
-#define LENOSYMC_VERSION 0x00000024  // v36: struct **方法符号新增默认参数**
+#define LENOSYMC_VERSION 0x00000025  // v37: 类型参数统一记 TYPE_GENERIC_PARAM（产生端根治）
                                      //      （`default_count` + `param_default_texts`）——
                                      //      格式变了：方法段在 `param_struct_names` 之后多一段
                                      //      "默认值个数 + 每个参数的默认值文本"；旧缓存按 v35

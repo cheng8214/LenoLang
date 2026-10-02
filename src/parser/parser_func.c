@@ -8,7 +8,19 @@
 static TypeInfo* parse_type_internal(Parser* p);
 
 // 本地辅助：将 TypeInfo 树中匹配 param_names 的 TYPE_STRUCT 节点转换为 TYPE_GENERIC_PARAM
-static void convert_to_generic_params(TypeInfo* type, char** param_names, int count) {
+//
+// ★ 2026-10-03 产生端根治（配合语义侧收敛）：
+//   `[T]` 声明的类型参数在注解里先被解析成 `TYPE_STRUCT + struct_name="T"`（因为 `T` 不是已注册
+//   struct），必须再转成 `TYPE_GENERIC_PARAM` 才算"泛型参数"。本辅助就是做这件事的 —— 但此前
+//   **只有 alias 一处**调用它（parser_func.c 的泛型别名分支）✗ ⇒ 函数/struct/face 全靠语义阶段
+//   `resolve_generic_in_type` 补，凡是漏补的地方（典型：泛型 struct 被前向引用时的字段/方法签名）
+//   就留下"占位表示"✗，语义侧那二十多处判据只能各自写"两种表示都认"（同一规则散落多处 ✗）。
+//   现在三处声明（func / struct / face）也在 AST 建好后统一调用本辅助 ⇒ 下游只需认一种表示 ✓
+//
+//   ⚠ 幂等：只匹配 `TYPE_STRUCT`，已转换过的（含方法自己声明的类型参数）不会被覆盖 ✓
+//   ⚠ 约束也要一起写：`resolve_generic_in_type` 对**已转换**的节点会直接跳过（它只认 TYPE_STRUCT）
+//     ⇒ 如果这里不写 `constraint_name`，`[T: string]` 的约束就会在这一步丢掉 ✗
+static void convert_to_generic_params(TypeInfo* type, char** param_names, char** param_constraints, int count) {
     if (!type || count <= 0) return;
     if (type->kind == TYPE_STRUCT && type->struct_name) {
         for (int i = 0; i < count; i++) {
@@ -17,22 +29,36 @@ static void convert_to_generic_params(TypeInfo* type, char** param_names, int co
                 type->struct_name = NULL;
                 type->kind = TYPE_GENERIC_PARAM;
                 type->type_param_name = strdup(param_names[i]);
+                if (param_constraints && param_constraints[i]) {
+                    type->constraint_name = strdup(param_constraints[i]);
+                }
                 return;
             }
         }
     }
-    convert_to_generic_params(type->element_type, param_names, count);
-    convert_to_generic_params(type->key_type, param_names, count);
-    convert_to_generic_params(type->value_type, param_names, count);
-    convert_to_generic_params(type->return_type, param_names, count);
+    // 已经是 TYPE_GENERIC_PARAM 的（例如方法自己的类型参数）：只**补约束**，不覆盖名字 ✓
+    if (type->kind == TYPE_GENERIC_PARAM && type->type_param_name && !type->constraint_name) {
+        for (int i = 0; i < count; i++) {
+            if (param_names[i] && strcmp(type->type_param_name, param_names[i]) == 0) {
+                if (param_constraints && param_constraints[i]) {
+                    type->constraint_name = strdup(param_constraints[i]);
+                }
+                break;
+            }
+        }
+    }
+    convert_to_generic_params(type->element_type, param_names, param_constraints, count);
+    convert_to_generic_params(type->key_type, param_names, param_constraints, count);
+    convert_to_generic_params(type->value_type, param_names, param_constraints, count);
+    convert_to_generic_params(type->return_type, param_names, param_constraints, count);
     if (type->param_types) {
         for (int i = 0; i < type->param_count; i++) {
-            convert_to_generic_params(type->param_types[i], param_names, count);
+            convert_to_generic_params(type->param_types[i], param_names, param_constraints, count);
         }
     }
     if (type->generic_args) {
         for (int i = 0; i < type->generic_count; i++) {
-            convert_to_generic_params(type->generic_args[i], param_names, count);
+            convert_to_generic_params(type->generic_args[i], param_names, param_constraints, count);
         }
     }
 }
@@ -246,7 +272,8 @@ static TypeInfo* parse_base_type(Parser* p) {
                 lexer_next(&p->lex); // 消费 '['
                 TypeInfo* result = type_copy(alias_type);
                 // 先将别名体中的 TYPE_STRUCT 引用转为 TYPE_GENERIC_PARAM
-                convert_to_generic_params(result, alias_tp_names, alias_tp_count);
+                //   （别名这里没有约束数组 ⇒ 传 NULL ✓；语义侧仍会按需要补）
+                convert_to_generic_params(result, alias_tp_names, NULL, alias_tp_count);
                 
                 // 解析泛型参数并依次替换
                 for (int tp = 0; tp < alias_tp_count; tp++) {
@@ -1371,7 +1398,17 @@ Ast* parse_func_body_and_create(Parser* p, char* name, int line, int column) {
             ast->u.func.default_count++;
         }
     }
-    
+
+    // ★ 2026-10-03 产生端根治：把签名里与本函数类型参数同名的注解统一转成 TYPE_GENERIC_PARAM
+    //   （连带约束一起写 ✓）。此前只有 alias 一处转换 ✗ ⇒ 漏补的地方会留下"TYPE_STRUCT + \"T\""
+    //   占位表示，下游二十多处判据只能各自"两种表示都认" ✗。见 convert_to_generic_params 的说明 ✓
+    if (type_param_count > 0 && type_params) {
+        for (int i = 0; i < pcnt; i++) {
+            convert_to_generic_params(param_types[i], type_params, type_param_constraints, type_param_count);
+        }
+        convert_to_generic_params(return_type, type_params, type_param_constraints, type_param_count);
+    }
+
     return ast;
 }
 
@@ -2244,6 +2281,27 @@ Ast* parse_struct_stmt(Parser* p) {
     ast->u.struct_def.const_values = const_values;
     ast->u.struct_def.const_count = const_count;
 
+    // ★ 2026-10-03 产生端根治：泛型 struct 的**字段类型**与**方法签名**里，跟 struct 类型参数同名的
+    //   注解统一转成 TYPE_GENERIC_PARAM（连带约束 ✓）。
+    //   此前这里完全没做 ✗ ⇒ 只能靠语义阶段 resolve_generic_in_type 补 —— 泛型 struct 被**前向引用**
+    //   时那条路补不到，于是方法签名/字段里留下占位表示 ✗（实测就是这个坑：`[T: int]` 的约束在方法体
+    //   里读不到，只能靠各处兜底）。见 convert_to_generic_params 的说明 ✓
+    if (type_param_count > 0 && type_params) {
+        for (int i = 0; i < field_count; i++) {
+            convert_to_generic_params(field_types[i], type_params, type_param_constraints, type_param_count);
+        }
+        for (int mi = 0; mi < method_count; mi++) {
+            Ast* ma = methods[mi];
+            if (!ma || ma->kind != AST_FUNC_DEF) continue;
+            for (int pi = 0; pi < ma->u.func.pcnt; pi++) {
+                convert_to_generic_params(ma->u.func.param_types[pi], type_params,
+                                          type_param_constraints, type_param_count);
+            }
+            convert_to_generic_params(ma->u.func.return_type, type_params,
+                                      type_param_constraints, type_param_count);
+        }
+    }
+
     return ast;
 }
 
@@ -2419,6 +2477,19 @@ Ast* parse_face_stmt(Parser* p) {
     ast->u.face_def.type_params = type_params;
     ast->u.face_def.type_param_constraints = type_param_constraints;
     ast->u.face_def.type_param_count = type_param_count;
+
+    // ★ 2026-10-03 产生端根治：face 的方法签名里跟 face 类型参数同名的注解统一转成
+    //   TYPE_GENERIC_PARAM（连带约束 ✓）—— 与 func / struct 同一口径 ✓
+    if (type_param_count > 0 && type_params) {
+        for (int mi = 0; mi < method_count; mi++) {
+            convert_to_generic_params(method_return_types[mi], type_params,
+                                      type_param_constraints, type_param_count);
+            for (int pi = 0; pi < method_param_counts[mi]; pi++) {
+                convert_to_generic_params(method_param_types[mi][pi], type_params,
+                                          type_param_constraints, type_param_count);
+            }
+        }
+    }
 
     return ast;
 }
