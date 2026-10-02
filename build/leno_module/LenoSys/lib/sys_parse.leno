@@ -27,10 +27,9 @@ export func tokens(string s): Array[string] {
 
 // 切成行（统一去掉 \r：Windows 侧文本常见 \r\n ✓；**不丢空行** ⇒ 调用方自行判定 ✓）
 export func split_lines(string s): Array[string] {
-    Array[string] out = []
-    var raw = strings.split(strings.replace(s, "\r", ""), "\n")
-    for raw to l { out.add(l) }
-    return out
+    // 2026-10-02：收口到 native `strings.lines`（同一个实现 —— 见 src/module/strings/strings.c
+    //   里 str_lines 的注释）。本函数**保留**只为不打断既有调用方，不再自己拼 replace+split ✓
+    return strings.lines(s)
 }
 
 // 最后一个 ch 的下标（找不到 ⇒ -1）

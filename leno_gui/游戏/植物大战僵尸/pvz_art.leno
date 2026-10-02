@@ -59,7 +59,7 @@ export func loadAnim(Renderer r, string file): Anim {
     //   而 `_int("12\r")` / `_float("0.5\r")` 会抛"无法将字符串转换为整数/浮点数"（症状：
     //   首帧 loadResources 里抛 ⇒ 被窗体的 try/catch 包成「渲染异常」直接退出）。
     //   ⇒ 拆行前统一剥掉（库内同款写法：sdl_label / sdl_edit / sdl_tooltip / sys_parse）
-    Array[string] lines = src.replace("\r", "").split("\n")
+    Array[string] lines = src.lines()
     if lines.len() < 3 { return an }
 
     Array[string] fp = lines[0].split("=")

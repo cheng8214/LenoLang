@@ -612,7 +612,7 @@ func _wrapLine(string line, Font f, float maxW): Array[string] {
 
 // 将多行文字按选区宽度自动换行（先按 \n 分行，再对每行自动换行）
 func _wrapText(string text, Font f, float maxW): Array[string] {
-    Array[string] lines = text.replace("\r", "").split("\n")
+    Array[string] lines = text.lines()
     Array[string] result = []
     for lines to line {
         var wrapped = _wrapLine(line, f, maxW)
@@ -1056,7 +1056,7 @@ func _drawTextOnBuf(Ptr[u8] buf, int bw, int bh, AnnoItem a, int ox, int oy, Arr
     int baseX = _int(a.tx) - ox
     int baseY = _int(a.ty) - oy
     // 按 \n 分行，每行用 Wrapped 渲染（自动换行）
-    Array[string] paragraphs = a.text.replace("\r", "").split("\n")
+    Array[string] paragraphs = a.text.lines()
     int curY = baseY
     for paragraphs to para {
         string renderStr = if para.len() > 0 then para else " "

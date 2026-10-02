@@ -133,7 +133,7 @@ export struct Label impl Widget, Themeable {
         if _font == null or not _font.ok { lines = []; lineH = 0.0; return }
         // ⚠ `split()` 返回的元素是 `any` ⇒ 必须显式标注为 `Array[string]`（否则 `raw[i]` 拿到 any 会报类型不匹配 ✗；
         //   与 `sdl_edit.leno` 的 `_lines = text...split("\n")` 同款写法 ✓）
-        Array[string] raw = text.replace("\r", "").split("\n")
+        Array[string] raw = text.lines()
         float bw = wrapW
         if bw <= 0.0 { bw = max_w }
         bool wantWrap = wrap and bw > 0.0

@@ -176,7 +176,7 @@ bool _drawBorder = true          // 是否绘制边框（嵌入 ComboBox 时设�
         // 从 text 拆分行（用 split 处理所有 \n，包括末尾换行产生的空行）
         // ★ 空文本时保持 _lines = [""] 而非 []，确保 _process_ml 等处访问 _lines[0] 不越界
         if text == "" { lines = [""]; return }
-        lines = text.replace("\r", "").split("\n")
+        lines = text.lines()
     }
 
     // 总内容高度
@@ -553,7 +553,7 @@ _drawBorder = opts.get("border", true)
             var left = lines[cursorLine].slice(0, cursorCol)
             var right = lines[cursorLine].slice(cursorCol, lines[cursorLine].len())
             var full = left + paste
-            var plines = full.replace("\r", "").split("\n")
+            var plines = full.lines()
             lines.remove(cursorLine)
             for plines.len() to pi {
                 lines.insert(cursorLine + pi, plines[pi] as string)
@@ -1220,7 +1220,7 @@ _drawBorder = opts.get("border", true)
                         var left = lines[cursorLine].slice(0, cursorCol)
                         var right = lines[cursorLine].slice(cursorCol, lines[cursorLine].len())
                         var full = left + paste
-                        var plines = full.replace("\r", "").split("\n")
+                        var plines = full.lines()
                         lines.remove(cursorLine)
                         for plines.len() to pi {
                             lines.insert(cursorLine + pi, plines[pi])

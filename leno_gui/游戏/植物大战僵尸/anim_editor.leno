@@ -243,7 +243,7 @@ struct AnimEditor {
     func parseAnim(string content, string name): Anim {
         // ★ 同 pvz_art.loadAnim：files.read 不再翻译行尾，CRLF 的 \r 必须先剥掉，
         //   否则 `_int("12\r")` 抛"无法将字符串转换为整数"（打开动画直接报错）
-        Array[string] lines = content.replace("\r", "").split("\n")
+        Array[string] lines = content.lines()
         Anim a = new Anim()
         a.name = name
         if lines.len() < 2 { return a }

@@ -1165,6 +1165,51 @@ static Value str_split(int argc, Value* args) {
     return val_obj((Object*)result);
 }
 
+// 12b. lines(s) —— 按 '\n' 拆行，并去掉行内的所有 '\r'（CRLF / 老式 CR 文本都能直接用）
+//
+//   ★ 为什么要有它（2026-10-02，由一次改动的余震引出）：把 `files.read` / `files.write`
+//     改成二进制通道后**行尾不再被翻译** ⇒ CRLF 文件读出来每行尾带 `\r`，于是"剥 \r 再 split"
+//     这个补丁被**抄到 9 处 / 6 个文件**（sdl_edit ×3、sdl_label、sdl_tooltip、screenshot_hotkey ×2、
+//     anim_editor、pvz_art），PvZ 还因此崩在渲染回调里（`_int("12\r")` 抛错 ⇒ 外层 catch 报
+//     「渲染异常」直接退出）✗ ⇒ 按"单一事实来源"收成这一个实现：
+//     **与 `s.replace("\r", "").split("\n")` 逐字节等价** —— 这不是巧合，而是它的存在理由
+//     （各调用点换过来行为完全不变，不必逐处重判 ✓）
+//   ★ 语义刻意保留 `str_split` 的原样：结尾有换行会多出一个空串（`"a\n"` → `["a", ""]`）。
+//     若改成"丢掉末尾空行"（Python 的 splitlines 那样），各调用点的**循环次数**就变了 ⇒
+//     那是偷偷改语义，不是收口 ✗（需要那种语义就在调用点显式处理）
+static Value str_lines(int argc, Value* args) {
+    (void)argc;
+    if (!val_is_obj(args[0]) || val_as_obj(args[0])->type != OBJ_STRING) {
+        native_throw_error("lines 参数必须是字符串");
+        return val_null();
+    }
+    ObjString* s = (ObjString*)val_as_obj(args[0]);
+
+    ObjArray* result = arr_new(8);
+    if (!result) return val_null();
+
+    int start = 0;
+    for (int i = 0; i <= s->len; i++) {
+        if (i < s->len && s->chars[i] != '\n') continue;   // 只在 '\n' 或串尾切
+
+        int seg_len = i - start;
+        char* buf = (char*)malloc((size_t)(seg_len > 0 ? seg_len : 1));
+        if (!buf) return val_null();
+        int n = 0;
+        for (int k = 0; k < seg_len; k++) {
+            char c = s->chars[start + k];
+            if (c != '\r') buf[n++] = c;
+        }
+        ObjString* line = str_copy(buf, n);
+        free(buf);
+        if (!line) return val_null();
+        arr_push_custom(result, val_obj((Object*)line));
+        start = i + 1;
+    }
+
+    return val_obj((Object*)result);
+}
+
 // 13. 新增：数组连接为字符串
 
 static Value str_join(int argc, Value* args) {
@@ -1509,6 +1554,9 @@ void strings_init_module(void) {
     // 12. 新增：字符串分割
     TypeKind split_params[] = {TYPE_STRING, TYPE_STRING};
     native_register_module_method_spec("strings", "split", str_split, 2, -1, -1, &NATIVE_T_ARR_STRING, split_params);
+    // 12b. 按行拆分（剥 \r）—— 收口 "replace(\r).split(\n)" 的 9 处重复（见 str_lines 的注释）
+    TypeKind lines_params[] = {TYPE_STRING};
+    native_register_module_method_spec("strings", "lines", str_lines, 1, -1, -1, &NATIVE_T_ARR_STRING, lines_params);
 
     // 13. 新增：数组连接
     TypeKind join_params[] = {TYPE_ARRAY, TYPE_STRING};
@@ -1618,6 +1666,11 @@ void strings_init_instance_methods(void) {
     //   装的都是 `str_copy` 出来的**子串** ⇒ 元素类型是 string，不是 any ⇒ 取出来不必收窄。
     //   原来注册成 `TYPE_ARRAY + TYPE_UNKNOWN`（裸 Array）⇒ `s.split(",")[0]` 是 any。
     native_register_instance_method_return_spec("string", "split", &NATIVE_T_ARR_STRING);
+
+    // 12b. 按行拆分（实例方法）—— 与 `strings.lines` 共用同一个实现（见 str_lines 的注释）
+    //   注册元素类型 `Array[string]`（同 split 的理由：装的都是 str_copy 出来的子串 ✓）
+    string_register_method_with_params("lines", make_native(str_lines, 1, "lines"), 0, -1, -1, TYPE_ARRAY, TYPE_UNKNOWN, NULL);
+    native_register_instance_method_return_spec("string", "lines", &NATIVE_T_ARR_STRING);
 
     // 14. 新增：包含检查（实例方法）
     TypeKind has_substr_params[] = {TYPE_STRING};

@@ -1,0 +1,58 @@
+// test_strings_lines.leno — `strings.lines` / `s.lines()` 的护栏（2026-10-02）
+//
+// 它存在的理由（一次改动的余震）：`files.read` / `files.write` 改成二进制通道后**行尾不再被翻译**
+//   ⇒ CRLF 文本读出来每行尾带 `\r` ⇒ "剥 \r 再 split(\n)" 这个补丁被抄到 **9 处 / 6 个文件**
+//   （PvZ 还因此崩在渲染回调里：`_int("12\r")` 抛错 → 外层 catch 报「渲染异常」直接退出）
+//   ⇒ 按"单一事实来源"收成一个 native 实现（见 src/module/strings/strings.c 的 str_lines 注释）
+//
+// 判据：
+//   ① 模块式 `strings.lines(s)` 与实例式 `s.lines()` 结果一致（**两条注册通道**，别只测一条）
+//   ② 与 `s.replace("\r", "").split("\n")` **逐字节等价** —— 这是它对那 9 个调用点的承诺
+//   ③ 关键形态逐个钉死（断言值写死，防"两边一起漂"）：CRLF / LF / 孤立 CR / 空串 / 中文 / 结尾换行
+//   ④ 保留 `split` 的原样语义：**结尾有换行就多一个空元素**（不许偷偷"丢空行"——那会改掉调用点的循环次数）
+import strings
+import io
+
+// 把数组拼成一行便于比较（用 strings.join，避免依赖数组的打印格式）
+func dump(Array[string] a):string {
+    return "[" + strings.join(a, "|") + "]"
+}
+
+main() {
+    io.print("=== strings.lines 验证 ===\n")
+
+    // ①② 对多种样本：两条通道一致 + 与旧惯用法等价
+    Array[string] samples = [
+        "a\r\nb\n",
+        "a\nb",
+        "\r\n\r\n",
+        "",
+        "中文\r\n第二行\n第三行",
+        "trailing\r",
+        "mix\r\nlf\ncr\rend"
+    ]
+    int idx = 0
+    for samples to s {
+        idx = idx + 1
+        var via_module = strings.lines(s)
+        var via_method = s.lines()
+        var via_idiom  = s.replace("\r", "").split("\n")
+        assert_eq(dump(via_method), dump(via_module),
+                  "[1-" + idx + "] 实例式与模块式应一致；输入=" + dump([s]))
+        assert_eq(dump(via_module), dump(via_idiom),
+                  "[2-" + idx + "] 应与旧惯用法（剥 CR 再按 LF 拆）逐字节等价；输入=" + dump([s]))
+    }
+    io.print("[1/2] 7 组样本：两条通道一致 + 与旧惯用法等价 ✓")
+
+    // ③ 关键形态（写死期望值）
+    assert_eq(dump("a\r\nb\n".lines()), "[a|b|]", "[3-1] CRLF + 结尾换行 ⇒ [a, b, 空]")
+    assert_eq(dump("a\nb".lines()), "[a|b]", "[3-2] 纯 LF 两行")
+    assert_eq(dump("a\r\nb\rc".lines()), "[a|bc]", "[3-3] 孤立 CR 不是分隔符（只在 LF 处切）")
+    assert_eq(dump("".lines()), "[]", "[3-4] 空串 ⇒ 一个空元素（同 split）")
+    assert_eq(dump("中文\r\n第二行".lines()), "[中文|第二行]", "[3-5] 多字节不被切坏")
+    assert_eq(dump("a\r\n".lines()), "[a|]", "[3-6] 结尾换行 ⇒ 多一个空元素（④ 不许偷偷丢）")
+    assert_eq("a\r\nb".lines()[0].byte_len(), 1, "[3-7] 行尾的 CR 必须被剥掉")
+    io.print("[3] 关键形态 7 条 ✓")
+
+    io.print("\n=== strings.lines 全部通过 ===")
+}
