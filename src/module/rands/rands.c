@@ -532,17 +532,16 @@ static Value rands_gauss(int argc, Value* args) {
 // ============================================================================
 
 void rands_init_module(void) {
-    TypeKind om_params[] = {};
-    native_register_module_method_spec("rands", "om", rands_om, 0, -1, -1, &NATIVE_T_FLOAT, om_params);
+    native_register_module_method("rands", "om", rands_om, &NATIVE_T_FLOAT, NATIVE_FIXED_NONE(0));
 
     TypeKind ints_params[] = {TYPE_INT, TYPE_INT};
-    native_register_module_method_spec("rands", "ints", rands_ints, 2, -1, -1, &NATIVE_T_INT, ints_params);
+    native_register_module_method("rands", "ints", rands_ints, &NATIVE_T_INT, NATIVE_FIXED(ints_params));
 
     TypeKind floats_params[] = {TYPE_FLOAT, TYPE_FLOAT};
-    native_register_module_method_spec("rands", "floats", rands_floats, 2, -1, -1, &NATIVE_T_FLOAT, floats_params);
+    native_register_module_method("rands", "floats", rands_floats, &NATIVE_T_FLOAT, NATIVE_FIXED(floats_params));
 
     TypeKind bools_params[] = {TYPE_FLOAT};
-    native_register_module_method_spec("rands", "bools", rands_bools, 1, -1, -1, &NATIVE_T_BOOL, bools_params);
+    native_register_module_method("rands", "bools", rands_bools, &NATIVE_T_BOOL, NATIVE_FIXED(bools_params));
 
     // choice/sample/shuffle 的返回类型**跟入参的元素类型走**（关系型规格 `NATIVE_T_ARG0_*`，v3.2.6）：
     //   `choice(arr)` → 元素本身（实现就是 `return arr->elements[index]`）；
@@ -550,28 +549,28 @@ void rands_init_module(void) {
     //   ⚠ 标 `any` / `Array[any]` 会丢元素类型（`rand.choice(names)` 取出来还要收窄）；
     //     写死具体类型又会在 `Array[DirEntry]` 这类上误报 ⇒ 只有"关系"能表达对。
     TypeKind choice_params[] = {TYPE_ARRAY};
-    native_register_module_method_spec("rands", "choice", rands_choice, 1, -1, -1, &NATIVE_T_ARG0_ELEM, choice_params);
+    native_register_module_method("rands", "choice", rands_choice, &NATIVE_T_ARG0_ELEM, NATIVE_FIXED(choice_params));
 
     TypeKind sample_params[] = {TYPE_ARRAY, TYPE_INT};
-    native_register_module_method_spec("rands", "sample", rands_sample, 2, -1, -1, &NATIVE_T_ARR_ARG0_ELEM, sample_params);
+    native_register_module_method("rands", "sample", rands_sample, &NATIVE_T_ARR_ARG0_ELEM, NATIVE_FIXED(sample_params));
 
     TypeKind shuffle_params[] = {TYPE_ARRAY};
-    native_register_module_method_spec("rands", "shuffle", rands_shuffle, 1, -1, -1, &NATIVE_T_ARR_ARG0_ELEM, shuffle_params);
+    native_register_module_method("rands", "shuffle", rands_shuffle, &NATIVE_T_ARR_ARG0_ELEM, NATIVE_FIXED(shuffle_params));
 
     TypeKind str_params[] = {TYPE_INT, TYPE_STRING};
-    native_register_module_method_spec("rands", "str", rands_str, 2, -1, -1, &NATIVE_T_STRING, str_params);
+    native_register_module_method("rands", "str", rands_str, &NATIVE_T_STRING, NATIVE_FIXED(str_params));
 
     TypeKind int_array_params[] = {TYPE_INT, TYPE_INT};
-    native_register_module_method_spec("rands", "int_array", rands_int_array, 2, -1, -1, &NATIVE_T_ARR_INT, int_array_params);
+    native_register_module_method("rands", "int_array", rands_int_array, &NATIVE_T_ARR_INT, NATIVE_FIXED(int_array_params));
 
     TypeKind seed_params[] = {TYPE_INT};
-    native_register_module_method_spec("rands", "seed", rands_seed, 1, -1, -1, &NATIVE_T_NULL, seed_params);
+    native_register_module_method("rands", "seed", rands_seed, &NATIVE_T_NULL, NATIVE_FIXED(seed_params));
 
     // 新增：批量生成随机数数组
     TypeKind array_params[] = {TYPE_INT, TYPE_INT, TYPE_INT};
-    native_register_module_method_spec("rands", "array", rands_array, 3, -1, -1, &NATIVE_T_ARR_INT, array_params);
+    native_register_module_method("rands", "array", rands_array, &NATIVE_T_ARR_INT, NATIVE_FIXED(array_params));
 
     // 新增：正态分布随机数
     TypeKind gauss_params[] = {TYPE_FLOAT, TYPE_FLOAT};
-    native_register_module_method_spec("rands", "gauss", rands_gauss, 2, -1, -1, &NATIVE_T_FLOAT, gauss_params);
+    native_register_module_method("rands", "gauss", rands_gauss, &NATIVE_T_FLOAT, NATIVE_FIXED(gauss_params));
 }

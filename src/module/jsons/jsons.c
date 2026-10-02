@@ -962,37 +962,37 @@ static Value jsons_write_text_func(int argc, Value* args) {
 // Module initialization
 void jsons_init_module(void) {
     TypeKind decode_params[] = {TYPE_STRING};
-    native_register_module_method_spec("jsons", "decode", jsons_decode_func, 1, -1, -1, &NATIVE_T_ANY, decode_params);
+    native_register_module_method("jsons", "decode", jsons_decode_func, &NATIVE_T_ANY, NATIVE_FIXED(decode_params));
 
     TypeKind encode_params[] = {TYPE_ANY};
-    native_register_module_method_spec("jsons", "encode", jsons_encode_func, 1, -1, -1, &NATIVE_T_STRING, encode_params);
-    native_register_module_method_spec("jsons", "encode_pretty", jsons_encode_pretty_func, 1, -1, -1, &NATIVE_T_STRING, encode_params);
+    native_register_module_method("jsons", "encode", jsons_encode_func, &NATIVE_T_STRING, NATIVE_FIXED(encode_params));
+    native_register_module_method("jsons", "encode_pretty", jsons_encode_pretty_func, &NATIVE_T_STRING, NATIVE_FIXED(encode_params));
 
     TypeKind read_file_params[] = {TYPE_STRING};
-    native_register_module_method_spec("jsons", "read_file", jsons_read_file_func, 1, -1, -1, &NATIVE_T_ANY, read_file_params);
+    native_register_module_method("jsons", "read_file", jsons_read_file_func, &NATIVE_T_ANY, NATIVE_FIXED(read_file_params));
 
     TypeKind write_file_params[] = {TYPE_STRING, TYPE_ANY};
-    native_register_module_method_spec("jsons", "write_file", jsons_write_file_func, 2, -1, -1, &NATIVE_T_BOOL, write_file_params);
+    native_register_module_method("jsons", "write_file", jsons_write_file_func, &NATIVE_T_BOOL, NATIVE_FIXED(write_file_params));
 
     // ---- T21：类型化取值助手（收窄收在标准库里 ⇒ 调用点零样板 ✓）----
     TypeKind get_str_params[] = {TYPE_ANY, TYPE_STRING, TYPE_STRING};
-    native_register_module_method_spec("jsons", "get_str", jsons_get_str_func, 3, -1, -1, &NATIVE_T_STRING, get_str_params);
+    native_register_module_method("jsons", "get_str", jsons_get_str_func, &NATIVE_T_STRING, NATIVE_FIXED(get_str_params));
 
     TypeKind get_int_params[] = {TYPE_ANY, TYPE_STRING, TYPE_INT};
-    native_register_module_method_spec("jsons", "get_int", jsons_get_int_func, 3, -1, -1, &NATIVE_T_INT, get_int_params);
+    native_register_module_method("jsons", "get_int", jsons_get_int_func, &NATIVE_T_INT, NATIVE_FIXED(get_int_params));
 
     TypeKind get_float_params[] = {TYPE_ANY, TYPE_STRING, TYPE_FLOAT};
-    native_register_module_method_spec("jsons", "get_float", jsons_get_float_func, 3, -1, -1, &NATIVE_T_FLOAT, get_float_params);
+    native_register_module_method("jsons", "get_float", jsons_get_float_func, &NATIVE_T_FLOAT, NATIVE_FIXED(get_float_params));
 
     TypeKind get_bool_params[] = {TYPE_ANY, TYPE_STRING, TYPE_BOOL};
-    native_register_module_method_spec("jsons", "get_bool", jsons_get_bool_func, 3, -1, -1, &NATIVE_T_BOOL, get_bool_params);
+    native_register_module_method("jsons", "get_bool", jsons_get_bool_func, &NATIVE_T_BOOL, NATIVE_FIXED(get_bool_params));
 
     TypeKind get_obj_params[] = {TYPE_ANY, TYPE_STRING};
-    native_register_module_method_spec("jsons", "get_obj", jsons_get_obj_func, 2, -1, -1, &NATIVE_T_ANY, get_obj_params);
+    native_register_module_method("jsons", "get_obj", jsons_get_obj_func, &NATIVE_T_ANY, NATIVE_FIXED(get_obj_params));
 
     TypeKind keys_params[] = {TYPE_ANY};
-    native_register_module_method_spec("jsons", "keys", jsons_keys_func, 1, -1, -1, &NATIVE_T_ARR_STRING, keys_params);
+    native_register_module_method("jsons", "keys", jsons_keys_func, &NATIVE_T_ARR_STRING, NATIVE_FIXED(keys_params));
 
     TypeKind write_text_params[] = {TYPE_STRING, TYPE_STRING};
-    native_register_module_method_spec("jsons", "write_text", jsons_write_text_func, 2, -1, -1, &NATIVE_T_BOOL, write_text_params);
+    native_register_module_method("jsons", "write_text", jsons_write_text_func, &NATIVE_T_BOOL, NATIVE_FIXED(write_text_params));
 }

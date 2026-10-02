@@ -525,9 +525,10 @@ Value dict_get_value_by_index(ObjDict* dict, int index) {
 
 static THREAD_LOCAL MethodTable dictMethodTable = {NULL, 0, 0};
 
-void dict_register_method_with_params(const char* name, ObjNative* method, int arity, int min_arity, int max_arity,
-                                       TypeKind return_type, TypeKind return_element_type, TypeKind* param_types) {
-    method_table_register_with_params(&dictMethodTable, "Dict", name, method, arity, min_arity, max_arity, return_type, return_element_type, param_types);
+void dict_register_method(const char* name, ObjNative* method,
+                                  TypeKind return_type, TypeKind return_element_type,
+                                  NativeParamSpec params) {
+    method_table_register_method(&dictMethodTable, "Dict", name, method, return_type, return_element_type, params);
 }
 
 ObjNative* dict_find_method(const char* name) {

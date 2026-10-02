@@ -162,9 +162,10 @@ static THREAD_LOCAL MethodTable arrayMethodTable = {NULL, 0, 0};
 #define ARRAY_METHOD_TABLE_INITIAL_CAPACITY 32
 
 // 注册数组方法（带参数类型）
-void array_register_method_with_params(const char* name, ObjNative* method, int arity, int min_arity, int max_arity,
-                                        TypeKind return_type, TypeKind return_element_type, TypeKind* param_types) {
-    method_table_register_with_params(&arrayMethodTable, "Array", name, method, arity, min_arity, max_arity, return_type, return_element_type, param_types);
+void array_register_method(const char* name, ObjNative* method,
+                                  TypeKind return_type, TypeKind return_element_type,
+                                  NativeParamSpec params) {
+    method_table_register_method(&arrayMethodTable, "Array", name, method, return_type, return_element_type, params);
 }
 
 // 获取数组方法的参数类型

@@ -55,9 +55,9 @@
 // 前向声明（定义在 object/object_socket.c 中）
 // ============================================================================
 
-extern void socket_register_method_with_params(const char* name, ObjNative* method, int arity,
-                                               int min_arity, int max_arity,
-                                               TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
+extern void socket_register_method(const char* name, ObjNative* method,
+                                  TypeKind return_type, TypeKind return_element_type,
+                                  NativeParamSpec params);
 extern void socket_init_methods(void);
 extern ObjNative* make_native(NativeFn fn, int arity, const char* name);
 
@@ -196,7 +196,6 @@ void sockets_cancel_async(ObjCoroutine* co) {
 // Socket 实例方法编译期元信息注册（在 native_register_all_instance_method_metas 中调用）
 // ============================================================================
 void sockets_init_instance_methods(void) {
-    TypeKind no_params[] = {};
 
     /* sock.send(data) -> bool */
     TypeKind send_params[] = {TYPE_STRING};
@@ -207,6 +206,7 @@ void sockets_init_instance_methods(void) {
     native_register_instance_method_meta_with_params("Socket", "recv", 1, -1, -1, TYPE_STRING, TYPE_UNKNOWN, recv_params);
 
     /* sock.close() -> null */
+    TypeKind no_params[] = {};
     native_register_instance_method_meta_with_params("Socket", "close", 0, -1, -1, TYPE_NULL, TYPE_UNKNOWN, no_params);
 
     /* sock.accept() -> Socket|null */
@@ -1092,63 +1092,62 @@ void sockets_init_module(void) {
     // 注册时的 arity（第三个参数）是不包括 self 的参数个数
     // =====================================================
 
-    TypeKind no_params[] = {};
 
     /* sock.send(data) -> bool */
     TypeKind send_params[] = {TYPE_STRING};
-    socket_register_method_with_params("send", make_native(socket_send_func, 2, "send"), 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, send_params);
+    socket_register_method("send", make_native(socket_send_func, 2, "send"), TYPE_BOOL, TYPE_UNKNOWN, NATIVE_FIXED(send_params));
 
     /* sock.recv(max_bytes) -> string|null */
     TypeKind recv_params[] = {TYPE_INT};
-    socket_register_method_with_params("recv", make_native(socket_recv_func, 2, "recv"), 1, -1, -1, TYPE_STRING, TYPE_UNKNOWN, recv_params);
+    socket_register_method("recv", make_native(socket_recv_func, 2, "recv"), TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED(recv_params));
 
     /* sock.close() -> null */
-    socket_register_method_with_params("close", make_native(socket_close_func, 1, "close"), 0, -1, -1, TYPE_NULL, TYPE_UNKNOWN, no_params);
+    socket_register_method("close", make_native(socket_close_func, 1, "close"), TYPE_NULL, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
 
     /* sock.accept() -> Socket|null */
-    socket_register_method_with_params("accept", make_native(socket_accept_func, 1, "accept"), 0, -1, -1, TYPE_SOCKET, TYPE_UNKNOWN, no_params);
+    socket_register_method("accept", make_native(socket_accept_func, 1, "accept"), TYPE_SOCKET, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
 
     /* sock.sendto(data, addr, port) -> bool */
     TypeKind sendto_params[] = {TYPE_STRING, TYPE_STRING, TYPE_INT};
-    socket_register_method_with_params("sendto", make_native(socket_sendto_func, 4, "sendto"), 3, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, sendto_params);
+    socket_register_method("sendto", make_native(socket_sendto_func, 4, "sendto"), TYPE_BOOL, TYPE_UNKNOWN, NATIVE_FIXED(sendto_params));
 
     /* sock.recvfrom(max_bytes) -> [data, addr, port]|null */
     TypeKind recvfrom_params[] = {TYPE_INT};
-    socket_register_method_with_params("recvfrom", make_native(socket_recvfrom_func, 2, "recvfrom"), 1, -1, -1, TYPE_STRING, TYPE_UNKNOWN, recvfrom_params);
+    socket_register_method("recvfrom", make_native(socket_recvfrom_func, 2, "recvfrom"), TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED(recvfrom_params));
 
     /* sock.set_nonblocking(nonblocking) -> bool */
     TypeKind set_nonblocking_params[] = {TYPE_BOOL};
-    socket_register_method_with_params("set_nonblocking", make_native(socket_set_nonblocking_func, 2, "set_nonblocking"), 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, set_nonblocking_params);
+    socket_register_method("set_nonblocking", make_native(socket_set_nonblocking_func, 2, "set_nonblocking"), TYPE_BOOL, TYPE_UNKNOWN, NATIVE_FIXED(set_nonblocking_params));
 
     /* sock.peer_addr() -> string|null */
-    socket_register_method_with_params("peer_addr", make_native(socket_peer_addr_func, 1, "peer_addr"), 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, no_params);
+    socket_register_method("peer_addr", make_native(socket_peer_addr_func, 1, "peer_addr"), TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
 
     /* sock.peer_port() -> int|null */
-    socket_register_method_with_params("peer_port", make_native(socket_peer_port_func, 1, "peer_port"), 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, no_params);
+    socket_register_method("peer_port", make_native(socket_peer_port_func, 1, "peer_port"), TYPE_INT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
 
     /* sock.local_addr() -> string|null */
-    socket_register_method_with_params("local_addr", make_native(socket_local_addr_func, 1, "local_addr"), 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, no_params);
+    socket_register_method("local_addr", make_native(socket_local_addr_func, 1, "local_addr"), TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
 
     /* sock.local_port() -> int|null */
-    socket_register_method_with_params("local_port", make_native(socket_local_port_func, 1, "local_port"), 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, no_params);
+    socket_register_method("local_port", make_native(socket_local_port_func, 1, "local_port"), TYPE_INT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
 
     /* sock.error() -> int */
-    socket_register_method_with_params("error", make_native(socket_error_func, 1, "error"), 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, no_params);
+    socket_register_method("error", make_native(socket_error_func, 1, "error"), TYPE_INT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
 
     /* sock.shutdown(how) -> bool */
     TypeKind shutdown_params[] = {TYPE_INT};
-    socket_register_method_with_params("shutdown", make_native(socket_shutdown_func, 2, "shutdown"), 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, shutdown_params);
+    socket_register_method("shutdown", make_native(socket_shutdown_func, 2, "shutdown"), TYPE_BOOL, TYPE_UNKNOWN, NATIVE_FIXED(shutdown_params));
 
     /* sock.set_timeout(ms) -> bool */
     TypeKind set_timeout_params[] = {TYPE_INT};
-    socket_register_method_with_params("set_timeout", make_native(socket_set_timeout_func, 2, "set_timeout"), 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, set_timeout_params);
+    socket_register_method("set_timeout", make_native(socket_set_timeout_func, 2, "set_timeout"), TYPE_BOOL, TYPE_UNKNOWN, NATIVE_FIXED(set_timeout_params));
 
     /* sock.arecv(max_bytes) -> Future (异步接收，在 async 函数中 await 得到 string|null) */
     TypeKind arecv_params[] = {TYPE_INT};
-    socket_register_method_with_params("arecv", make_native(socket_arecv_func, 2, "arecv"), 1, -1, -1, TYPE_FUTURE, TYPE_UNKNOWN, arecv_params);
+    socket_register_method("arecv", make_native(socket_arecv_func, 2, "arecv"), TYPE_FUTURE, TYPE_UNKNOWN, NATIVE_FIXED(arecv_params));
 
     /* sock.aaccept() -> Future (异步接受连接，在 async 函数中 await 得到 Socket|null) */
-    socket_register_method_with_params("aaccept", make_native(socket_aaccept_func, 1, "aaccept"), 0, -1, -1, TYPE_FUTURE, TYPE_UNKNOWN, no_params);
+    socket_register_method("aaccept", make_native(socket_aaccept_func, 1, "aaccept"), TYPE_FUTURE, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
 
     // =====================================================
     // 注册模块工厂方法（sockets.xxx）
@@ -1156,36 +1155,36 @@ void sockets_init_module(void) {
 
     // TCP 客户端
     TypeKind connect_params[] = {TYPE_STRING, TYPE_INT};
-    native_register_module_method_spec("sockets", "connect", sockets_connect_func, 2, -1, -1, &NATIVE_T_SOCKET, connect_params);
+    native_register_module_method("sockets", "connect", sockets_connect_func, &NATIVE_T_SOCKET, NATIVE_FIXED(connect_params));
 
     // TCP 服务器
     TypeKind listen_params[] = {TYPE_STRING, TYPE_INT};
-    native_register_module_method_spec("sockets", "listen", sockets_listen_func, 2, -1, -1, &NATIVE_T_SOCKET, listen_params);
+    native_register_module_method("sockets", "listen", sockets_listen_func, &NATIVE_T_SOCKET, NATIVE_FIXED(listen_params));
 
     // UDP
     TypeKind udp_bind_params[] = {TYPE_STRING, TYPE_INT};
-    native_register_module_method_spec("sockets", "udp_bind", sockets_udp_bind_func, 2, -1, -1, &NATIVE_T_SOCKET, udp_bind_params);
+    native_register_module_method("sockets", "udp_bind", sockets_udp_bind_func, &NATIVE_T_SOCKET, NATIVE_FIXED(udp_bind_params));
 
     // 字节序转换函数
     TypeKind htons_params[] = {TYPE_INT};
-    native_register_module_method_spec("sockets", "htons", sockets_htons_func, 1, -1, -1, &NATIVE_T_INT, htons_params);
+    native_register_module_method("sockets", "htons", sockets_htons_func, &NATIVE_T_INT, NATIVE_FIXED(htons_params));
 
     TypeKind htonl_params[] = {TYPE_INT};
-    native_register_module_method_spec("sockets", "htonl", sockets_htonl_func, 1, -1, -1, &NATIVE_T_INT, htonl_params);
+    native_register_module_method("sockets", "htonl", sockets_htonl_func, &NATIVE_T_INT, NATIVE_FIXED(htonl_params));
 
     TypeKind ntohs_params[] = {TYPE_INT};
-    native_register_module_method_spec("sockets", "ntohs", sockets_ntohs_func, 1, -1, -1, &NATIVE_T_INT, ntohs_params);
+    native_register_module_method("sockets", "ntohs", sockets_ntohs_func, &NATIVE_T_INT, NATIVE_FIXED(ntohs_params));
 
     TypeKind ntohl_params[] = {TYPE_INT};
-    native_register_module_method_spec("sockets", "ntohl", sockets_ntohl_func, 1, -1, -1, &NATIVE_T_INT, ntohl_params);
+    native_register_module_method("sockets", "ntohl", sockets_ntohl_func, &NATIVE_T_INT, NATIVE_FIXED(ntohl_params));
 
     // DNS 解析
     TypeKind resolve_params[] = {TYPE_STRING};
-    native_register_module_method_spec("sockets", "resolve", sockets_resolve_func, 1, -1, -1, &NATIVE_T_STRING, resolve_params);
+    native_register_module_method("sockets", "resolve", sockets_resolve_func, &NATIVE_T_STRING, NATIVE_FIXED(resolve_params));
 
     // select（模块级静态方法，不属于某个 socket 实例）
     // 返回**可读的那些 socket**（实现：遍历入参数组、把就绪的 push 进结果数组）⇒ 元素类型跟着入参走
     //   （关系型规格，v3.2.6）。原来标的是裸 `Array`（元素未指定）⇒ `select(socks)[0]` 是 any、要收窄。
     TypeKind select_params[] = {TYPE_ARRAY, TYPE_INT};
-    native_register_module_method_spec("sockets", "select", sockets_select_func, 2, -1, -1, &NATIVE_T_ARR_ARG0_ELEM, select_params);
+    native_register_module_method("sockets", "select", sockets_select_func, &NATIVE_T_ARR_ARG0_ELEM, NATIVE_FIXED(select_params));
 }

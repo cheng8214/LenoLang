@@ -186,9 +186,10 @@ ObjString* str_concat(ObjString* a, ObjString* b) {
 static THREAD_LOCAL MethodTable stringMethodTable = {NULL, 0, 0};
 
 // 注册字符串方法（带参数类型）
-void string_register_method_with_params(const char* name, ObjNative* method, int arity, int min_arity, int max_arity,
-                                         TypeKind return_type, TypeKind return_element_type, TypeKind* param_types) {
-    method_table_register_with_params(&stringMethodTable, "string", name, method, arity, min_arity, max_arity, return_type, return_element_type, param_types);
+void string_register_method(const char* name, ObjNative* method,
+                                  TypeKind return_type, TypeKind return_element_type,
+                                  NativeParamSpec params) {
+    method_table_register_method(&stringMethodTable, "string", name, method, return_type, return_element_type, params);
 }
 
 // 获取字符串方法的参数类型

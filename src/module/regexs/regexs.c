@@ -1232,26 +1232,27 @@ void regexs_init_module(void) {
     TypeKind str_params[] = {TYPE_STRING, TYPE_STRING};
     TypeKind str3_params[] = {TYPE_STRING, TYPE_STRING, TYPE_STRING};
 
-    native_register_module_method_spec("regexs", "match", regex_match, 2, -1, -1, &NATIVE_T_BOOL, str_params);
-    native_register_module_method_spec("regexs", "find", regex_find, 2, -1, -1, &NATIVE_T_INT, str_params);
-    native_register_module_method_spec("regexs", "extract", regex_extract, 2, -1, -1, &NATIVE_T_STRING, str_params);
-    native_register_module_method_spec("regexs", "replace", regex_replace, 3, -1, -1, &NATIVE_T_STRING, str3_params);
-    native_register_module_method_spec("regexs", "split", regex_split, -1, 2, 3, &NATIVE_T_ARR_STRING, str_params);
+    native_register_module_method("regexs", "match", regex_match, &NATIVE_T_BOOL, NATIVE_FIXED(str_params));
+    native_register_module_method("regexs", "find", regex_find, &NATIVE_T_INT, NATIVE_FIXED(str_params));
+    native_register_module_method("regexs", "extract", regex_extract, &NATIVE_T_STRING, NATIVE_FIXED(str_params));
+    native_register_module_method("regexs", "replace", regex_replace, &NATIVE_T_STRING, NATIVE_FIXED(str3_params));
+    native_register_module_method("regexs", "split", regex_split, &NATIVE_T_ARR_STRING, NATIVE_VARARG(2, 3, 2, str_params, TYPE_ANY));
     // split(str, pattern[, limit])：前两位必须是 string（v3.2.7 显式声明可变参数的前缀类型 ——
     //   此前 `arity == -1` ⇒ param_types 被整份忽略，`regexs.split(1, 2)` 编译期不报错 ✗）
-    native_set_method_vararg_params("regexs", "split", 2, str_params, TYPE_ANY);
-    native_register_module_method_spec("regexs", "groups", regex_groups, 2, -1, -1, &NATIVE_T_ARR_STRING, str_params);
+    // (2026-10-02) 原先这里还有一行 `native_set_method_vararg_params("regexs","split",2,str_params,TYPE_ANY)`
+    //   —— "两步式"的第二步。现已并入上面的 `native_register_module_method_vararg(...)`（一次说全）✓
+    native_register_module_method("regexs", "groups", regex_groups, &NATIVE_T_ARR_STRING, NATIVE_FIXED(str_params));
 
     // 返回数组的方法
     // find_all：返回 `Array[RegexMatch]`（**字段类型编译期已知**，v3.2.7）——
     //   原来是 `Array[Dict]`（裸 Dict）⇒ `m["text"]` 是 any、取值要手动收窄；
     //   改结构体后 `m.text` 直接是 string、`m.start` 直接是 int ✓
     native_register_struct_spec(&REGEXMATCH_STRUCT_SPEC);
-    native_register_module_method_spec("regexs", "find_all", regex_find_all, 2, -1, -1, &S_REGEXMATCH_ARR_SPEC, str_params);
-    native_register_module_method_spec("regexs", "extract_all", regex_extract_all, 2, -1, -1, &NATIVE_T_ARR_STRING, str_params);
-    native_register_module_method_spec("regexs", "replace_all", regex_replace_all, 3, -1, -1, &NATIVE_T_STRING, str3_params);
+    native_register_module_method("regexs", "find_all", regex_find_all, &S_REGEXMATCH_ARR_SPEC, NATIVE_FIXED(str_params));
+    native_register_module_method("regexs", "extract_all", regex_extract_all, &NATIVE_T_ARR_STRING, NATIVE_FIXED(str_params));
+    native_register_module_method("regexs", "replace_all", regex_replace_all, &NATIVE_T_STRING, NATIVE_FIXED(str3_params));
 
     // 单参数方法
     TypeKind single_str_params[] = {TYPE_STRING};
-    native_register_module_method_spec("regexs", "escape", regex_escape, 1, -1, -1, &NATIVE_T_STRING, single_str_params);
+    native_register_module_method("regexs", "escape", regex_escape, &NATIVE_T_STRING, NATIVE_FIXED(single_str_params));
 }

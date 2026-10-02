@@ -15,12 +15,12 @@ extern int channel_try_send(ObjChannel* channel, Value value);
 extern Value channel_try_receive(ObjChannel* channel);
 
 // 外部声明：线程方法注册函数
-extern void thread_register_method_with_params(const char* name, ObjNative* method, int arity,
-                                              int min_arity, int max_arity,
-                                              TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
-extern void channel_register_method_with_params(const char* name, ObjNative* method, int arity,
-                                               int min_arity, int max_arity,
-                                               TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
+extern void thread_register_method(const char* name, ObjNative* method,
+                                  TypeKind return_type, TypeKind return_element_type,
+                                  NativeParamSpec params);
+extern void channel_register_method(const char* name, ObjNative* method,
+                                  TypeKind return_type, TypeKind return_element_type,
+                                  NativeParamSpec params);
 // 外部声明：创建原生函数对象的辅助函数
 extern ObjNative* make_native(NativeFn fn, int arity, const char* name);
 // 外部声明：初始化方法表
@@ -193,12 +193,11 @@ void threads_init_instance_methods(void) {
     thread_init_methods();
     channel_init_methods();
 
-    TypeKind no_params[] = {};
     TypeKind any_params[] = {TYPE_ANY};
 
     // Thread 实例方法
-    thread_register_method_with_params("join", make_native(thread_method_join, 1, "join"), 0, -1, -1, TYPE_ANY, TYPE_UNKNOWN, no_params);
-    thread_register_method_with_params("state", make_native(thread_method_state, 1, "state"), 0, -1, -1, TYPE_STRING, TYPE_UNKNOWN, no_params);
+    thread_register_method("join", make_native(thread_method_join, 1, "join"), TYPE_ANY, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
+    thread_register_method("state", make_native(thread_method_state, 1, "state"), TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
     // join 返回规格 = **接收者的 T**（ARG0_ELEM）：`threads.start` 的语义特判返回 Thread[T]
     //   （T = 闭包/函数的返回类型，见 semantic_type.c 的 ⓪-b）⇒ `t.join()` 直接得到 T，
     //   调用点不再需要 `is Array[string] => x` 手工收窄 ✓（推不出 T 时 start 回落裸 Thread、
@@ -206,18 +205,18 @@ void threads_init_instance_methods(void) {
     native_register_instance_method_return_spec("Thread", "join", &NATIVE_T_ARG0_ELEM);
 
     // Channel 实例方法
-    channel_register_method_with_params("send", make_native(channel_method_send, 2, "send"), 1, -1, -1, TYPE_ANY, TYPE_UNKNOWN, any_params);
+    channel_register_method("send", make_native(channel_method_send, 2, "send"), TYPE_ANY, TYPE_UNKNOWN, NATIVE_FIXED(any_params));
     // send/close 的实现都是 `return val_null()`（只产生副作用）⇒ 返回类型收紧为 `null`（v3.2.6）。
     //   receive/try_receive 保持 any **不是**偷懒：语言里没有 `Channel[T]` 标注（实测 .leno 源码 0 处）
     //   ⇒ 通道没有"元素类型"可推，any 是当前设计的正确结果（要精确得先给 Channel 加类型参数）。
     native_register_instance_method_return_spec("Channel", "send", &NATIVE_T_NULL);
-    channel_register_method_with_params("receive", make_native(channel_method_receive, 1, "receive"), 0, -1, -1, TYPE_ANY, TYPE_UNKNOWN, no_params);
-    channel_register_method_with_params("close", make_native(channel_method_close, 1, "close"), 0, -1, -1, TYPE_ANY, TYPE_UNKNOWN, no_params);
+    channel_register_method("receive", make_native(channel_method_receive, 1, "receive"), TYPE_ANY, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
+    channel_register_method("close", make_native(channel_method_close, 1, "close"), TYPE_ANY, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
     native_register_instance_method_return_spec("Channel", "close", &NATIVE_T_NULL);
-    channel_register_method_with_params("try_send", make_native(channel_method_try_send, 2, "try_send"), 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, any_params);
-    channel_register_method_with_params("try_receive", make_native(channel_method_try_receive, 1, "try_receive"), 0, -1, -1, TYPE_ANY, TYPE_UNKNOWN, no_params);
-    channel_register_method_with_params("is_closed", make_native(channel_method_is_closed, 1, "is_closed"), 0, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, no_params);
-    channel_register_method_with_params("len", make_native(channel_method_len, 1, "len"), 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, no_params);
+    channel_register_method("try_send", make_native(channel_method_try_send, 2, "try_send"), TYPE_BOOL, TYPE_UNKNOWN, NATIVE_FIXED(any_params));
+    channel_register_method("try_receive", make_native(channel_method_try_receive, 1, "try_receive"), TYPE_ANY, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
+    channel_register_method("is_closed", make_native(channel_method_is_closed, 1, "is_closed"), TYPE_BOOL, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
+    channel_register_method("len", make_native(channel_method_len, 1, "len"), TYPE_INT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
 }
 
 // ==================== 模块初始化 ====================
@@ -225,14 +224,14 @@ void threads_init_instance_methods(void) {
 void threads_init_module(void) {
     TypeKind start_params[] = {TYPE_ANY};
     // start 返回 Thread[T]（T = 回调返回类型，⓪ 族声明化）：join 的 ARG0_ELEM 规格读这个 T ✓
-    native_register_module_method_spec("threads", "start", threads_start, -1, 1, -1, &NATIVE_T_THREAD_CB_RET0, start_params);
+    native_register_module_method("threads", "start", threads_start, &NATIVE_T_THREAD_CB_RET0, NATIVE_VARARG(1, NATIVE_ARITY_ANY, 1, start_params, TYPE_ANY));
 
     TypeKind channel_params[] = {TYPE_INT};
-    native_register_module_method_spec("threads", "channel", threads_channel, 1, -1, -1, &NATIVE_T_CHANNEL, channel_params);
+    native_register_module_method("threads", "channel", threads_channel, &NATIVE_T_CHANNEL, NATIVE_FIXED(channel_params));
 
     TypeKind sleep_params[] = {TYPE_INT};
     // 返回 `null`（v3.2.6）：实现就是 `return val_null()`（睡完不产生值）⇒ 别再说它是 any。
-    native_register_module_method_spec("threads", "sleep", threads_sleep, 1, -1, -1, &NATIVE_T_NULL, sleep_params);
+    native_register_module_method("threads", "sleep", threads_sleep, &NATIVE_T_NULL, NATIVE_FIXED(sleep_params));
 
     // 调用 threads_init_instance_methods 注册线程和通道实例方法
     threads_init_instance_methods();

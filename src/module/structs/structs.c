@@ -4,9 +4,9 @@
 
 // 前向声明：结构体实例方法支持函数（定义在 object_struct.c）
 extern void struct_init_methods(void);
-extern void struct_register_method_with_params(const char* name, ObjNative* method, int arity,
-                                                int min_arity, int max_arity,
-                                                TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
+extern void struct_register_method(const char* name, ObjNative* method,
+                                  TypeKind return_type, TypeKind return_element_type,
+                                  NativeParamSpec params);
 
 // ==================== 深拷贝实现 ====================
 
@@ -50,12 +50,8 @@ void structs_init_instance_methods(void) {
     struct_init_methods();
 
     // 注册 copy 方法
-    TypeKind copy_params[] = {};
-    struct_register_method_with_params("copy", make_native(struct_method_copy, 1, "copy"),
-                                       0, -1, -1, TYPE_STRUCT, TYPE_UNKNOWN, copy_params);
+    struct_register_method("copy", make_native(struct_method_copy, 1, "copy"), TYPE_STRUCT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
 
     // 注册 len 方法（迭代器协议：返回字段数量）
-    TypeKind len_params[] = {};
-    struct_register_method_with_params("len", make_native(struct_method_len, 1, "len"),
-                                       0, -1, -1, TYPE_INT, TYPE_UNKNOWN, len_params);
+    struct_register_method("len", make_native(struct_method_len, 1, "len"), TYPE_INT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
 }

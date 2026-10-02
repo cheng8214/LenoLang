@@ -670,16 +670,39 @@ void native_register_all_module_metas(void) {
 
 // 前向声明：规格 → TypeKind（定义在本文件后面的「native 类型规格」一节）
 static TypeKind native_spec_kind(const NativeTypeSpec* spec);
+// 参数规格填充的唯一实现（定义在本文件下方；注册时调用 ⇒ 需前置声明）
+static void module_meta_fill_param_types(ModuleMethodMeta* meta, int declared_count,
+                                         const TypeKind* declared, TypeKind tail_type);
 
-// 注册模块方法（**唯一入口**，v3.2.3 起）：返回类型用完整类型规格声明。
-// min_arity/max_arity: 当 arity == -1（可变参数）时，指定最小/最大允许参数个数；其他情况传 -1
-// param_types: 参数类型数组，长度为 arity，如果为 NULL 则所有参数默认为 TYPE_ANY
-// return_spec: 完整返回类型规格（见 leno_types.h；常用的 19 种已预制为 NATIVE_T_*）。
-//              顶层 Kind / 元素 Kind 由规格**推导**出来一并写进元数据 ⇒ 只认 Kind 的老消费者
-//              （旧的实例方法查询路径、LSP 老渲染等）也拿到大致正确的类型。
-void native_register_module_method_spec(const char* module_name, const char* method_name,
-                                        NativeFn function, int arity, int min_arity, int max_arity,
-                                        const NativeTypeSpec* return_spec, TypeKind* param_types) {
+// 注册模块方法（**唯一入口**）。语义与理由见 native.h 的同名声明注释。
+void native_register_module_method(const char* module_name, const char* method_name,
+                                   NativeFn function, const NativeTypeSpec* return_spec,
+                                   NativeParamSpec params) {
+    const int arity = params.arity;
+    const int min_arity = params.min_arity;
+    const int max_arity = params.max_arity;
+    int declared_count = params.declared_count;
+    const TypeKind* declared = params.declared;
+    const TypeKind tail_type = params.tail_type;
+
+    // ── 规格自检：自相矛盾时**响亮失败**，而不是登记出一张"看不懂的表" ──
+    if (arity != NATIVE_ARITY_VARARG && arity < 0) {
+        fprintf(stderr,
+                "[fatal] native 注册 %s.%s: arity=%d 非法 —— 可变参数请写 NATIVE_ARITY_VARARG(%d)，"
+                "定长请写具体个数\n",
+                module_name, method_name, arity, NATIVE_ARITY_VARARG);
+        abort();
+    }
+    // 定长时 declared_count 必须等于个数（有类型）或 0（不声明类型）——写错就报出来 ✓
+    if (arity != NATIVE_ARITY_VARARG && declared_count != 0 && declared_count != arity) {
+        fprintf(stderr,
+                "[fatal] native 注册 %s.%s: 定长 arity=%d 但 declared_count=%d（应相等或传 0）\n",
+                module_name, method_name, arity, declared_count);
+        abort();
+    }
+    if (declared_count < 0) declared_count = 0;
+    if (declared_count > MAX_METHOD_PARAMS) declared_count = MAX_METHOD_PARAMS;
+
     // 规格 → (顶层 Kind, 数组元素 Kind)：与老的 `(return_type, return_element_type)` 逐字对应
     TypeKind return_type = TYPE_ANY;
     TypeKind return_element_type = TYPE_UNKNOWN;
@@ -716,23 +739,8 @@ void native_register_module_method_spec(const char* module_name, const char* met
             entry->meta.return_type = return_type;
             entry->meta.return_element_type = return_element_type;
             entry->meta.return_spec = return_spec;   // 可空：NULL = 走老的 Kind 路径
-            if (param_types && arity > 0) {
-                int count = arity < MAX_METHOD_PARAMS ? arity : MAX_METHOD_PARAMS;
-                for (int i = 0; i < count; i++) {
-                    entry->meta.param_types[i] = param_types[i];
-                }
-                for (int i = count; i < MAX_METHOD_PARAMS; i++) {
-                    entry->meta.param_types[i] = TYPE_ANY;
-                }
-                entry->meta.param_type_count = count;
-            } else {
-                // ⚠ 可变参数（arity == -1）走这里 ⇒ 老行为是**整份忽略** param_types（全 ANY）。
-                //   要声明可变参数的参数类型，注册之后调 `native_set_method_vararg_params()`。
-                for (int i = 0; i < MAX_METHOD_PARAMS; i++) {
-                    entry->meta.param_types[i] = TYPE_ANY;
-                }
-                entry->meta.param_type_count = 0;
-            }
+            // 类型规格：定长/可变**一处填法**（前 declared_count 个查表、其余按 tail_type）✓
+            module_meta_fill_param_types(&entry->meta, declared_count, declared, tail_type);
             return;
         }
         entry = entry->next;
@@ -769,28 +777,29 @@ void native_register_module_method_spec(const char* module_name, const char* met
     new_entry->meta.return_element_type = return_element_type;
     new_entry->meta.return_spec = return_spec;
 
-    // 复制参数类型
-    if (param_types && arity > 0) {
-        int count = arity < MAX_METHOD_PARAMS ? arity : MAX_METHOD_PARAMS;
-        for (int i = 0; i < count; i++) {
-            new_entry->meta.param_types[i] = param_types[i];
-        }
-        for (int i = count; i < MAX_METHOD_PARAMS; i++) {
-            new_entry->meta.param_types[i] = TYPE_ANY;
-        }
-        new_entry->meta.param_type_count = count;
-    } else {
-        // 可变参数：见上面分支的说明（要声明就注册后调 native_set_method_vararg_params）
-        for (int i = 0; i < MAX_METHOD_PARAMS; i++) {
-            new_entry->meta.param_types[i] = TYPE_ANY;
-        }
-        new_entry->meta.param_type_count = 0;
-    }
+    // 类型规格（与上面"已存在"分支同一处填法）
+    module_meta_fill_param_types(&new_entry->meta, declared_count, declared, tail_type);
 
     // 插入到哈希表
     new_entry->next = moduleMethodTable.entries[index];
     moduleMethodTable.entries[index] = new_entry;
     moduleMethodTable.count++;
+}
+
+// 参数规格填写的**唯一实现**（定长与可变参数共用，2026-10-02）：
+//   先把整份 `param_types` 填成 tail_type，再盖上前 declared_count 个 ⇒ 语义就是
+//   "前 N 个按表查、其余按 tail_type"，一次说全、没有"第二步"可漏 ✓
+//   `param_type_count`：声明过类型（declared_count > 0）⇒ MAX_METHOD_PARAMS（未盖到的位置已是
+//   tail_type，查表照样正确）；没声明 ⇒ 0（= 位置全部不可查，退回 ANY）✓
+static void module_meta_fill_param_types(ModuleMethodMeta* meta, int declared_count,
+                                         const TypeKind* declared, TypeKind tail_type) {
+    for (int i = 0; i < MAX_METHOD_PARAMS; i++) {
+        meta->param_types[i] = tail_type;
+    }
+    for (int i = 0; i < declared_count && i < MAX_METHOD_PARAMS; i++) {
+        meta->param_types[i] = declared ? declared[i] : TYPE_ANY;
+    }
+    meta->param_type_count = (declared_count > 0) ? MAX_METHOD_PARAMS : 0;
 }
 
 // 取模块方法的返回类型规格（编译期：语义侧构造返回类型时优先用它）
@@ -1235,28 +1244,13 @@ TypeKind native_get_module_method_param_type(const char* module_name, const char
     return TYPE_ANY;
 }
 
-// 为可变参数方法声明参数类型（见 native.h 的说明）。
-// **必须在注册之后调用**（这里做"覆盖式"写入：先把整份 param_types 填成 tail_type，再盖上前缀）。
-void native_set_method_vararg_params(const char* module_name, const char* method_name,
-                                     int prefix_count, const TypeKind* prefix, TypeKind tail_type) {
-    ModuleMethodEntry* entry = moduleMethodTable.entries
-        ? moduleMethodTable.entries[hash_module_method(module_name, method_name) & (moduleMethodTable.capacity - 1)]
-        : NULL;
-    // 顺着链找同名条目（与 native_find_module_method 同一走法，只是这里要 meta 的可写指针）
-    while (entry && !(strcmp(entry->module_name, module_name) == 0 &&
-                      strcmp(entry->method_name, method_name) == 0)) {
-        entry = entry->next;
-    }
-    if (!entry) return;   // 没注册过就静默忽略（与注册表其它部分的风格一致：编译期常量，不该失败）
-
-    for (int i = 0; i < MAX_METHOD_PARAMS; i++) {
-        entry->meta.param_types[i] = tail_type;
-    }
-    for (int i = 0; i < prefix_count && i < MAX_METHOD_PARAMS; i++) {
-        entry->meta.param_types[i] = prefix ? prefix[i] : TYPE_ANY;
-    }
-    entry->meta.param_type_count = MAX_METHOD_PARAMS;
-}
+// (2026-10-02) 此处原有 `native_set_method_vararg_params()` —— 那个"两步式"的第二步：
+//   先按 `native_register_module_method_spec(..., arity = -1, ...)` 注册（此时 param_types 被整份忽略），
+//   再调本函数事后覆盖。**已删除**，取而代之的是 `native_register_module_method_vararg()`
+//   （个数范围 + 前缀类型 + 尾部类型一次说全）。
+//   删它的理由不是"难看"，而是它自带一个**静默失败**的失败模式：忘了调 ⇒ 类型声明无声失效，
+//   而"忘了调"在 25 处可变参数注册里实际发生了 11 次（ffi.call* / threads.start /
+//   strings.codepoint_at 的 param_types 当时全是死的）✗ 一次说全的入口没有第二步，所以不可能忘 ✓
 
 // 获取模块的所有方法名（LSP 使用）
 // 返回方法名数组，通过 count 返回数量，需要调用者用 free_module_method_list 释放
@@ -1707,6 +1701,10 @@ void native_register_instance_method_meta_with_params(const char* type_name, con
             entry->meta.max_arity = max_arity;
             entry->meta.return_type = return_type;
             entry->meta.return_element_type = return_element_type;
+            // 有效参数类型个数（2026-10-02）：定长 = arity；可变参数 = 0
+            //   （要检查可变参数就随后调 native_set_instance_method_vararg_params 显式声明 ✓）
+            entry->meta.param_type_count = (param_types && arity > 0)
+                                         ? (arity < MAX_METHOD_PARAMS ? arity : MAX_METHOD_PARAMS) : 0;
             if (param_types && arity > 0) {
                 int count = arity < MAX_METHOD_PARAMS ? arity : MAX_METHOD_PARAMS;
                 for (int i = 0; i < count; i++) {
@@ -1742,6 +1740,9 @@ void native_register_instance_method_meta_with_params(const char* type_name, con
     new_entry->meta.return_type = return_type;
     new_entry->meta.return_element_type = return_element_type;
     new_entry->meta.return_spec = NULL;   // 由 native_register_instance_method_return_spec() 按需补
+    // 有效参数类型个数（2026-10-02）：定长 = arity；可变参数 = 0（见同名字段的注释）
+    new_entry->meta.param_type_count = (param_types && arity > 0)
+                                     ? (arity < MAX_METHOD_PARAMS ? arity : MAX_METHOD_PARAMS) : 0;
 
     if (param_types && arity > 0) {
         int count = arity < MAX_METHOD_PARAMS ? arity : MAX_METHOD_PARAMS;
@@ -1866,7 +1867,11 @@ TypeKind native_get_instance_method_param_type(const char* type_name, const char
     while (entry) {
         if (strcmp(entry->type_name, type_name) == 0 &&
             strcmp(entry->method_name, method_name) == 0) {
-            if (param_index >= 0 && param_index < entry->meta.arity && param_index < MAX_METHOD_PARAMS) {
+            // ⚠ 判据必须用 param_type_count，**不能**用 `param_index < meta.arity`（2026-10-02 修）：
+            //   可变参数方法（arity == -1）下后者**恒假** ⇒ 整份 param_types 被忽略、
+            //   类型检查形同虚设（`"ab".pad_start("x","0")` 一直静默通过 ✗）。
+            //   模块式 v3.2.7 已用同一招修掉（见 native_get_module_method_param_type）✓
+            if (param_index >= 0 && param_index < entry->meta.param_type_count && param_index < MAX_METHOD_PARAMS) {
                 return entry->meta.param_types[param_index];
             }
             break;
@@ -1874,6 +1879,33 @@ TypeKind native_get_instance_method_param_type(const char* type_name, const char
         entry = entry->next;
     }
     return TYPE_ANY;
+}
+
+// 为可变参数实例方法声明参数类型（见 native.h 的说明）。
+// 与模块式的 native_set_method_vararg_params() **逐字对应**，只是按 (type_name, method_name) 找条目。
+// 同样是"覆盖式"写入：先整份填 tail_type，再盖上前 prefix_count 个 ✓
+void native_set_instance_method_vararg_params(const char* type_name, const char* method_name,
+                                              int prefix_count, const TypeKind* prefix, TypeKind tail_type) {
+    if (!instanceMethodTable.entries || !type_name || !method_name) return;
+
+    uint32_t hash = hash_instance_method(type_name, method_name);
+    int index = hash & (instanceMethodTable.capacity - 1);
+
+    // 顺着链找同名条目（与 native_find_instance_method 同一走法，只是这里要 meta 的可写指针）
+    InstanceMethodEntry* entry = instanceMethodTable.entries[index];
+    while (entry && !(strcmp(entry->type_name, type_name) == 0 &&
+                      strcmp(entry->method_name, method_name) == 0)) {
+        entry = entry->next;
+    }
+    if (!entry) return;   // 没注册过就静默忽略（编译期常量，不该失败）
+
+    for (int i = 0; i < MAX_METHOD_PARAMS; i++) {
+        entry->meta.param_types[i] = tail_type;
+    }
+    for (int i = 0; i < prefix_count && i < MAX_METHOD_PARAMS; i++) {
+        entry->meta.param_types[i] = prefix ? prefix[i] : TYPE_ANY;
+    }
+    entry->meta.param_type_count = MAX_METHOD_PARAMS;
 }
 
 // 根据类型名和方法名查找实例方法元信息（编译时调用）

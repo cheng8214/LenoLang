@@ -3,9 +3,9 @@
 
 // 前向声明：字典实例方法支持函数（定义在 object_dict.c）
 extern void dict_init_methods(void);
-extern void dict_register_method_with_params(const char* name, ObjNative* method, int arity,
-                                              int min_arity, int max_arity,
-                                              TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
+extern void dict_register_method(const char* name, ObjNative* method,
+                                  TypeKind return_type, TypeKind return_element_type,
+                                  NativeParamSpec params);
 
 // ==================== 核心方法实现 ====================
 
@@ -197,21 +197,20 @@ void dicts_init_instance_methods(void) {
     static const NativeTypeSpec S_ARR_ARG0_K  = { NTYPE_ARRAY, NULL, &NATIVE_T_ARG0_KEY,   NULL, 0, -1 };
     static const NativeTypeSpec S_ARR_ARG0_V  = { NTYPE_ARRAY, NULL, &NATIVE_T_ARG0_VALUE, NULL, 0, -1 };
     
-    TypeKind len_params[] = {};
-    dict_register_method_with_params("len", make_native(dict_method_len, 1, "len"), 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, len_params);
+    dict_register_method("len", make_native(dict_method_len, 1, "len"), TYPE_INT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
 
     TypeKind has_params[] = {TYPE_ANY};
-    dict_register_method_with_params("has", make_native(dict_method_has, 2, "has"), 1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, has_params);
+    dict_register_method("has", make_native(dict_method_has, 2, "has"), TYPE_BOOL, TYPE_UNKNOWN, NATIVE_FIXED(has_params));
 
     TypeKind get_params[] = {TYPE_ANY, TYPE_ANY};
-    dict_register_method_with_params("get", make_native(dict_method_get, 3, "get"), -1, 1, 2, TYPE_ANY, TYPE_UNKNOWN, get_params);
+    dict_register_method("get", make_native(dict_method_get, 3, "get"), TYPE_ANY, TYPE_UNKNOWN, NATIVE_VARARG(1, 2, 2, get_params, TYPE_ANY));
     // ⚠ get **不能**标 `ARG0_VALUE`：它的类型是由**默认值实参**推出来的（`get("y", 0.0)` → float，
     //   见 assert/test_dict_get_infer.leno），语义侧已有更精确的特例。标成 V 会把它盖掉
     //   （实测：混合类型 dict 的值类型是 any ⇒ `d.get(k, 0.0)` 退化成 any，5 个用例回归）。
     //   那是"按默认值实参推返回类型"的另一族标签，需要时再设计（YAGNI）。
 
     TypeKind set_params[] = {TYPE_ANY, TYPE_ANY};
-    dict_register_method_with_params("set", make_native(dict_method_set, 3, "set"), 2, -1, -1, TYPE_ANY, TYPE_UNKNOWN, set_params);
+    dict_register_method("set", make_native(dict_method_set, 3, "set"), TYPE_ANY, TYPE_UNKNOWN, NATIVE_FIXED(set_params));
     // set/remove/clear 的实现都是 `return val_null()`（不是"值"）⇒ 把返回类型从 any 收紧为 `null`。
     //   为什么不标 ARG0_VALUE：那会骗人（`val_obj(d.set(k,v))` 这种写法本来就不成立）。
     //   风险实测：运行期早就返回 null（`d.set(k,v).set(...)` 之类链式写法从来跑不通）
@@ -219,26 +218,22 @@ void dicts_init_instance_methods(void) {
     native_register_instance_method_return_spec("Dict", "set", &NATIVE_T_NULL);
 
     TypeKind remove_params[] = {TYPE_ANY};
-    dict_register_method_with_params("remove", make_native(dict_method_remove, 2, "remove"), 1, -1, -1, TYPE_ANY, TYPE_UNKNOWN, remove_params);
+    dict_register_method("remove", make_native(dict_method_remove, 2, "remove"), TYPE_ANY, TYPE_UNKNOWN, NATIVE_FIXED(remove_params));
     native_register_instance_method_return_spec("Dict", "remove", &NATIVE_T_NULL);
 
-    TypeKind clear_params[] = {};
-    dict_register_method_with_params("clear", make_native(dict_method_clear, 1, "clear"), 0, -1, -1, TYPE_ANY, TYPE_UNKNOWN, clear_params);
+    dict_register_method("clear", make_native(dict_method_clear, 1, "clear"), TYPE_ANY, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
     native_register_instance_method_return_spec("Dict", "clear", &NATIVE_T_NULL);
 
-    TypeKind keys_params[] = {};
-    dict_register_method_with_params("keys", make_native(dict_method_keys, 1, "keys"), 0, -1, -1, TYPE_ARRAY, TYPE_UNKNOWN, keys_params);
+    dict_register_method("keys", make_native(dict_method_keys, 1, "keys"), TYPE_ARRAY, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
     native_register_instance_method_return_spec("Dict", "keys", &S_ARR_ARG0_K);
 
-    TypeKind values_params[] = {};
-    dict_register_method_with_params("values", make_native(dict_method_values, 1, "values"), 0, -1, -1, TYPE_ARRAY, TYPE_UNKNOWN, values_params);
+    dict_register_method("values", make_native(dict_method_values, 1, "values"), TYPE_ARRAY, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
     native_register_instance_method_return_spec("Dict", "values", &S_ARR_ARG0_V);
 
     // setdefault(key, default)：返回类型标 ANY —— 它"按默认值实参推"的那套标签还没设计，
     //   与 get 同一处境（见上面 get 的说明 ✓）
     TypeKind setdefault_params[] = {TYPE_ANY, TYPE_ANY};
-    dict_register_method_with_params("setdefault", make_native(dict_method_setdefault, 3, "setdefault"),
-                                     2, -1, -1, TYPE_ANY, TYPE_UNKNOWN, setdefault_params);
+    dict_register_method("setdefault", make_native(dict_method_setdefault, 3, "setdefault"), TYPE_ANY, TYPE_UNKNOWN, NATIVE_FIXED(setdefault_params));
 
     // items()：返回 `Array[DictEntry{key, value}]`（**字段类型编译期已知** ✓）
     //   key/value 都标 ANY —— 字典的键值类型本来就可能不齐 ⇒ 收窄交给调用点 ✓
@@ -250,7 +245,6 @@ void dicts_init_instance_methods(void) {
     static const NativeStructSpec DICTENTRY_SPEC = { "dicts", "DictEntry", 2, DICTENTRY_FIELDS, DICTENTRY_TYPES };
     native_register_struct_spec(&DICTENTRY_SPEC);
 
-    TypeKind items_params[] = {};
-    dict_register_method_with_params("items", make_native(dict_method_items, 1, "items"), 0, -1, -1, TYPE_ARRAY, TYPE_UNKNOWN, items_params);
+    dict_register_method("items", make_native(dict_method_items, 1, "items"), TYPE_ARRAY, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
     native_register_instance_method_return_spec("Dict", "items", &S_DICTENTRY_ARR);
 }

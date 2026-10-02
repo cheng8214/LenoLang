@@ -16,9 +16,9 @@
 
 // 前向声明：数字实例方法支持函数（定义在 object_number.c）
 extern void number_init_methods(void);
-extern void number_register_method_with_params(const char* name, ObjNative* method, int arity,
-                                                int min_arity, int max_arity,
-                                                TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
+extern void number_register_method(const char* name, ObjNative* method,
+                                  TypeKind return_type, TypeKind return_element_type,
+                                  NativeParamSpec params);
 
 // 辅助函数：获取数值（支持 int、float 和 BigInt）
 double get_number(Value v) {
@@ -319,157 +319,156 @@ static Value math_e(int argc, Value* args) {
 void maths_init_module(void) {
     // 基本运算
     TypeKind sqrt_params[] = {TYPE_FLOAT};
-    native_register_module_method_spec("maths", "sqrt", math_sqrt, 1, -1, -1, &NATIVE_T_FLOAT, sqrt_params);
+    native_register_module_method("maths", "sqrt", math_sqrt, &NATIVE_T_FLOAT, NATIVE_FIXED(sqrt_params));
 
     TypeKind abs_params[] = {TYPE_FLOAT};
-    native_register_module_method_spec("maths", "abs", math_abs, 1, -1, -1, &NATIVE_T_FLOAT, abs_params);
+    native_register_module_method("maths", "abs", math_abs, &NATIVE_T_FLOAT, NATIVE_FIXED(abs_params));
 
     TypeKind pow_params[] = {TYPE_FLOAT, TYPE_FLOAT};
-    native_register_module_method_spec("maths", "pow", math_pow, 2, -1, -1, &NATIVE_T_FLOAT, pow_params);
+    native_register_module_method("maths", "pow", math_pow, &NATIVE_T_FLOAT, NATIVE_FIXED(pow_params));
 
     // 取整函数
     TypeKind round_params[] = {TYPE_FLOAT};
-    native_register_module_method_spec("maths", "round", math_round, 1, -1, -1, &NATIVE_T_FLOAT, round_params);
+    native_register_module_method("maths", "round", math_round, &NATIVE_T_FLOAT, NATIVE_FIXED(round_params));
 
     TypeKind ceil_params[] = {TYPE_FLOAT};
-    native_register_module_method_spec("maths", "ceil", math_ceil, 1, -1, -1, &NATIVE_T_FLOAT, ceil_params);
+    native_register_module_method("maths", "ceil", math_ceil, &NATIVE_T_FLOAT, NATIVE_FIXED(ceil_params));
 
     TypeKind floor_params[] = {TYPE_FLOAT};
-    native_register_module_method_spec("maths", "floor", math_floor, 1, -1, -1, &NATIVE_T_FLOAT, floor_params);
+    native_register_module_method("maths", "floor", math_floor, &NATIVE_T_FLOAT, NATIVE_FIXED(floor_params));
 
     TypeKind trunc_params[] = {TYPE_FLOAT};
-    native_register_module_method_spec("maths", "trunc", math_trunc, 1, -1, -1, &NATIVE_T_FLOAT, trunc_params);
+    native_register_module_method("maths", "trunc", math_trunc, &NATIVE_T_FLOAT, NATIVE_FIXED(trunc_params));
 
     // 三角函数
     TypeKind cos_params[] = {TYPE_FLOAT};
-    native_register_module_method_spec("maths", "cos", math_cos, 1, -1, -1, &NATIVE_T_FLOAT, cos_params);
+    native_register_module_method("maths", "cos", math_cos, &NATIVE_T_FLOAT, NATIVE_FIXED(cos_params));
 
     TypeKind sin_params[] = {TYPE_FLOAT};
-    native_register_module_method_spec("maths", "sin", math_sin, 1, -1, -1, &NATIVE_T_FLOAT, sin_params);
+    native_register_module_method("maths", "sin", math_sin, &NATIVE_T_FLOAT, NATIVE_FIXED(sin_params));
 
     TypeKind tan_params[] = {TYPE_FLOAT};
-    native_register_module_method_spec("maths", "tan", math_tan, 1, -1, -1, &NATIVE_T_FLOAT, tan_params);
+    native_register_module_method("maths", "tan", math_tan, &NATIVE_T_FLOAT, NATIVE_FIXED(tan_params));
 
     TypeKind asin_params[] = {TYPE_FLOAT};
-    native_register_module_method_spec("maths", "asin", math_asin, 1, -1, -1, &NATIVE_T_FLOAT, asin_params);
+    native_register_module_method("maths", "asin", math_asin, &NATIVE_T_FLOAT, NATIVE_FIXED(asin_params));
 
     TypeKind acos_params[] = {TYPE_FLOAT};
-    native_register_module_method_spec("maths", "acos", math_acos, 1, -1, -1, &NATIVE_T_FLOAT, acos_params);
+    native_register_module_method("maths", "acos", math_acos, &NATIVE_T_FLOAT, NATIVE_FIXED(acos_params));
 
     TypeKind atan_params[] = {TYPE_FLOAT};
-    native_register_module_method_spec("maths", "atan", math_atan, 1, -1, -1, &NATIVE_T_FLOAT, atan_params);
+    native_register_module_method("maths", "atan", math_atan, &NATIVE_T_FLOAT, NATIVE_FIXED(atan_params));
 
     TypeKind atan2_params[] = {TYPE_FLOAT, TYPE_FLOAT};
-    native_register_module_method_spec("maths", "atan2", math_atan2, 2, -1, -1, &NATIVE_T_FLOAT, atan2_params);
+    native_register_module_method("maths", "atan2", math_atan2, &NATIVE_T_FLOAT, NATIVE_FIXED(atan2_params));
 
     // 对数和指数
     TypeKind log_params[] = {TYPE_FLOAT};
-    native_register_module_method_spec("maths", "log", math_log, 1, -1, -1, &NATIVE_T_FLOAT, log_params);
+    native_register_module_method("maths", "log", math_log, &NATIVE_T_FLOAT, NATIVE_FIXED(log_params));
 
     TypeKind log10_params[] = {TYPE_FLOAT};
-    native_register_module_method_spec("maths", "log10", math_log10, 1, -1, -1, &NATIVE_T_FLOAT, log10_params);
+    native_register_module_method("maths", "log10", math_log10, &NATIVE_T_FLOAT, NATIVE_FIXED(log10_params));
 
     TypeKind exp_params[] = {TYPE_FLOAT};
-    native_register_module_method_spec("maths", "exp", math_exp, 1, -1, -1, &NATIVE_T_FLOAT, exp_params);
+    native_register_module_method("maths", "exp", math_exp, &NATIVE_T_FLOAT, NATIVE_FIXED(exp_params));
 
     // 工具函数
-    TypeKind max_params[] = {TYPE_FLOAT};
-    native_register_module_method_spec("maths", "max", math_max, -1, 1, -1, &NATIVE_T_FLOAT, max_params);
+    native_register_module_method("maths", "max", math_max, &NATIVE_T_FLOAT, NATIVE_VARARG(1, NATIVE_ARITY_ANY, 0, NULL, TYPE_FLOAT));
 
-    TypeKind min_params[] = {TYPE_FLOAT};
-    native_register_module_method_spec("maths", "min", math_min, -1, 1, -1, &NATIVE_T_FLOAT, min_params);
+    native_register_module_method("maths", "min", math_min, &NATIVE_T_FLOAT, NATIVE_VARARG(1, NATIVE_ARITY_ANY, 0, NULL, TYPE_FLOAT));
 
     // ---- 可变参数的参数类型（v3.2.7）----
     // max/min 是**同质可变参数**：每个实参都该是数字（v3.2.7 显式声明）。
     //   此前 `arity == -1` 让 param_types 被整份忽略 ⇒ `maths.max("x")` 编译期不报错 ✗。
     // 尾部声明 FLOAT：本语言的 `int → float` 是**允许**的隐式转换（实测 `maths.max(1,2,3)` ⇒ 3.0 ✓），
     //   所以既拦住了非数字，又不会误伤纯整数调用。
-    native_set_method_vararg_params("maths", "max", 0, NULL, TYPE_FLOAT);
-    native_set_method_vararg_params("maths", "min", 0, NULL, TYPE_FLOAT);
+    // (2026-10-02) 原先这两行是 `native_set_method_vararg_params("maths","max"/"min",0,NULL,TYPE_FLOAT)`
+    //   —— "两步式"的第二步。现已并入上面各自的 `native_register_module_method_vararg(...)` ✓
 
     TypeKind deg_params[] = {TYPE_FLOAT};
-    native_register_module_method_spec("maths", "deg", math_deg, 1, -1, -1, &NATIVE_T_FLOAT, deg_params);
+    native_register_module_method("maths", "deg", math_deg, &NATIVE_T_FLOAT, NATIVE_FIXED(deg_params));
 
     TypeKind rad_params[] = {TYPE_FLOAT};
-    native_register_module_method_spec("maths", "rad", math_rad, 1, -1, -1, &NATIVE_T_FLOAT, rad_params);
+    native_register_module_method("maths", "rad", math_rad, &NATIVE_T_FLOAT, NATIVE_FIXED(rad_params));
 
     TypeKind sign_params[] = {TYPE_FLOAT};
-    native_register_module_method_spec("maths", "sign", math_sign, 1, -1, -1, &NATIVE_T_FLOAT, sign_params);
+    native_register_module_method("maths", "sign", math_sign, &NATIVE_T_FLOAT, NATIVE_FIXED(sign_params));
 
     // 新增工具函数
     TypeKind fmod_params[] = {TYPE_FLOAT, TYPE_FLOAT};
-    native_register_module_method_spec("maths", "fmod", math_fmod, 2, -1, -1, &NATIVE_T_FLOAT, fmod_params);
+    native_register_module_method("maths", "fmod", math_fmod, &NATIVE_T_FLOAT, NATIVE_FIXED(fmod_params));
 
     TypeKind clamp_params[] = {TYPE_FLOAT, TYPE_FLOAT, TYPE_FLOAT};
-    native_register_module_method_spec("maths", "clamp", math_clamp, 3, -1, -1, &NATIVE_T_FLOAT, clamp_params);
+    native_register_module_method("maths", "clamp", math_clamp, &NATIVE_T_FLOAT, NATIVE_FIXED(clamp_params));
 
     TypeKind lerp_params[] = {TYPE_FLOAT, TYPE_FLOAT, TYPE_FLOAT};
-    native_register_module_method_spec("maths", "lerp", math_lerp, 3, -1, -1, &NATIVE_T_FLOAT, lerp_params);
+    native_register_module_method("maths", "lerp", math_lerp, &NATIVE_T_FLOAT, NATIVE_FIXED(lerp_params));
 
     TypeKind rsqrt_params[] = {TYPE_FLOAT};
-    native_register_module_method_spec("maths", "rsqrt", math_rsqrt, 1, -1, -1, &NATIVE_T_FLOAT, rsqrt_params);
+    native_register_module_method("maths", "rsqrt", math_rsqrt, &NATIVE_T_FLOAT, NATIVE_FIXED(rsqrt_params));
 
     TypeKind hypot_params[] = {TYPE_FLOAT, TYPE_FLOAT};
-    native_register_module_method_spec("maths", "hypot", math_hypot, 2, -1, -1, &NATIVE_T_FLOAT, hypot_params);
+    native_register_module_method("maths", "hypot", math_hypot, &NATIVE_T_FLOAT, NATIVE_FIXED(hypot_params));
 
     TypeKind log2_params[] = {TYPE_FLOAT};
-    native_register_module_method_spec("maths", "log2", math_log2, 1, -1, -1, &NATIVE_T_FLOAT, log2_params);
+    native_register_module_method("maths", "log2", math_log2, &NATIVE_T_FLOAT, NATIVE_FIXED(log2_params));
 
     TypeKind sin_fast_params[] = {TYPE_FLOAT};
-    native_register_module_method_spec("maths", "sin_fast", math_sin_fast, 1, -1, -1, &NATIVE_T_FLOAT, sin_fast_params);
+    native_register_module_method("maths", "sin_fast", math_sin_fast, &NATIVE_T_FLOAT, NATIVE_FIXED(sin_fast_params));
 
     TypeKind cos_fast_params[] = {TYPE_FLOAT};
-    native_register_module_method_spec("maths", "cos_fast", math_cos_fast, 1, -1, -1, &NATIVE_T_FLOAT, cos_fast_params);
+    native_register_module_method("maths", "cos_fast", math_cos_fast, &NATIVE_T_FLOAT, NATIVE_FIXED(cos_fast_params));
 
     // 常量
-    TypeKind pi_params[] = {};
-    native_register_module_method_spec("maths", "pi", math_pi, 0, -1, -1, &NATIVE_T_FLOAT, pi_params);
+    native_register_module_method("maths", "pi", math_pi, &NATIVE_T_FLOAT, NATIVE_FIXED_NONE(0));
 
-    TypeKind e_params[] = {};
-    native_register_module_method_spec("maths", "e", math_e, 0, -1, -1, &NATIVE_T_FLOAT, e_params);
+    native_register_module_method("maths", "e", math_e, &NATIVE_T_FLOAT, NATIVE_FIXED_NONE(0));
 }
 
 void maths_init_instance_methods(void) {
     number_init_methods();
     
     // 基本运算
-    TypeKind no_params[] = {};
     TypeKind one_params[] = {TYPE_FLOAT};
 
-    number_register_method_with_params("sqrt", make_native(math_sqrt, 1, "sqrt"), 0, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, no_params);
-    number_register_method_with_params("abs", make_native(math_abs, 1, "abs"), 0, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, no_params);
-    number_register_method_with_params("pow", make_native(math_pow, 2, "pow"), 1, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, one_params);
+    number_register_method("sqrt", make_native(math_sqrt, 1, "sqrt"), TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
+    number_register_method("abs", make_native(math_abs, 1, "abs"), TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
+    number_register_method("pow", make_native(math_pow, 2, "pow"), TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED(one_params));
 
     // 取整函数
-    number_register_method_with_params("round", make_native(math_round, 1, "round"), 0, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, no_params);
-    number_register_method_with_params("ceil", make_native(math_ceil, 1, "ceil"), 0, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, no_params);
-    number_register_method_with_params("floor", make_native(math_floor, 1, "floor"), 0, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, no_params);
-    number_register_method_with_params("trunc", make_native(math_trunc, 1, "trunc"), 0, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, no_params);
+    number_register_method("round", make_native(math_round, 1, "round"), TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
+    number_register_method("ceil", make_native(math_ceil, 1, "ceil"), TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
+    number_register_method("floor", make_native(math_floor, 1, "floor"), TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
+    number_register_method("trunc", make_native(math_trunc, 1, "trunc"), TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
 
     // 三角函数
-    number_register_method_with_params("cos", make_native(math_cos, 1, "cos"), 0, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, no_params);
-    number_register_method_with_params("sin", make_native(math_sin, 1, "sin"), 0, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, no_params);
-    number_register_method_with_params("tan", make_native(math_tan, 1, "tan"), 0, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, no_params);
-    number_register_method_with_params("asin", make_native(math_asin, 1, "asin"), 0, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, no_params);
-    number_register_method_with_params("acos", make_native(math_acos, 1, "acos"), 0, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, no_params);
-    number_register_method_with_params("atan", make_native(math_atan, 1, "atan"), 0, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, no_params);
-    number_register_method_with_params("atan2", make_native(math_atan2, 2, "atan2"), 1, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, one_params);
+    number_register_method("cos", make_native(math_cos, 1, "cos"), TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
+    number_register_method("sin", make_native(math_sin, 1, "sin"), TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
+    number_register_method("tan", make_native(math_tan, 1, "tan"), TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
+    number_register_method("asin", make_native(math_asin, 1, "asin"), TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
+    number_register_method("acos", make_native(math_acos, 1, "acos"), TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
+    number_register_method("atan", make_native(math_atan, 1, "atan"), TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
+    number_register_method("atan2", make_native(math_atan2, 2, "atan2"), TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED(one_params));
 
     // 对数和指数
-    number_register_method_with_params("log", make_native(math_log, 1, "log"), 0, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, no_params);
-    number_register_method_with_params("log10", make_native(math_log10, 1, "log10"), 0, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, no_params);
-    number_register_method_with_params("exp", make_native(math_exp, 1, "exp"), 0, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, no_params);
+    number_register_method("log", make_native(math_log, 1, "log"), TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
+    number_register_method("log10", make_native(math_log10, 1, "log10"), TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
+    number_register_method("exp", make_native(math_exp, 1, "exp"), TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
 
     // 工具函数
-    number_register_method_with_params("deg", make_native(math_deg, 1, "deg"), 0, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, no_params);
-    number_register_method_with_params("rad", make_native(math_rad, 1, "rad"), 0, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, no_params);
-    number_register_method_with_params("sign", make_native(math_sign, 1, "sign"), 0, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, no_params);
-    number_register_method_with_params("fmod", make_native(math_fmod, 2, "fmod"), 1, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, one_params);
-    number_register_method_with_params("clamp", make_native(math_clamp, 3, "clamp"), 2, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, one_params);
-    number_register_method_with_params("lerp", make_native(math_lerp, 3, "lerp"), 2, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, one_params);
-    number_register_method_with_params("rsqrt", make_native(math_rsqrt, 1, "rsqrt"), 0, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, no_params);
-    number_register_method_with_params("hypot", make_native(math_hypot, 2, "hypot"), 1, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, one_params);
-    number_register_method_with_params("log2", make_native(math_log2, 1, "log2"), 0, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, no_params);
-    number_register_method_with_params("sin_fast", make_native(math_sin_fast, 1, "sin_fast"), 0, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, no_params);
-    number_register_method_with_params("cos_fast", make_native(math_cos_fast, 1, "cos_fast"), 0, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, no_params);
+    number_register_method("deg", make_native(math_deg, 1, "deg"), TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
+    number_register_method("rad", make_native(math_rad, 1, "rad"), TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
+    number_register_method("sign", make_native(math_sign, 1, "sign"), TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
+    number_register_method("fmod", make_native(math_fmod, 2, "fmod"), TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED(one_params));
+    // ⚠ 这两个是**两个**实参（非接收者 2 个）：旧注册写 `2, -1, -1` 却给了 1 元素的 `one_params`
+    //   ⇒ 老代码按 arity 复制 2 项 = 越界读第 2 项（UB，恰好在"值"上没炸）✗。
+    //   统一成 NATIVE_FIXED(types) 后 arity 由表长推出 ⇒ 必须给**长度正确**的表 ✓
+    TypeKind two_params[] = {TYPE_FLOAT, TYPE_FLOAT};
+    number_register_method("clamp", make_native(math_clamp, 3, "clamp"), TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED(two_params));
+    number_register_method("lerp", make_native(math_lerp, 3, "lerp"), TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED(two_params));
+    number_register_method("rsqrt", make_native(math_rsqrt, 1, "rsqrt"), TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
+    number_register_method("hypot", make_native(math_hypot, 2, "hypot"), TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED(one_params));
+    number_register_method("log2", make_native(math_log2, 1, "log2"), TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
+    number_register_method("sin_fast", make_native(math_sin_fast, 1, "sin_fast"), TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
+    number_register_method("cos_fast", make_native(math_cos_fast, 1, "cos_fast"), TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
 }

@@ -1358,9 +1358,9 @@ void cstruct_array_free(ObjCStructArray* array);
 // cstruct 方法支持
 void cstruct_init_methods(void);
 void cstruct_mark_methods(void);
-void cstruct_register_method_with_params(const char* name, ObjNative* method, int arity,
-                                         int min_arity, int max_arity,
-                                         TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
+void cstruct_register_method(const char* name, ObjNative* method,
+                                  TypeKind return_type, TypeKind return_element_type,
+                                  NativeParamSpec params);
 ObjNative* cstruct_find_method(const char* name);
 
 // 查找结构体方法
@@ -1393,12 +1393,12 @@ ObjNative* file_find_method(const char* name);
 ObjNative* thread_find_method(const char* name);
 ObjNative* channel_find_method(const char* name);
 
-void thread_register_method_with_params(const char* name, ObjNative* method, int arity,
-                                         int min_arity, int max_arity,
-                                         TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
-void channel_register_method_with_params(const char* name, ObjNative* method, int arity,
-                                          int min_arity, int max_arity,
-                                          TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
+void thread_register_method(const char* name, ObjNative* method,
+                                  TypeKind return_type, TypeKind return_element_type,
+                                  NativeParamSpec params);
+void channel_register_method(const char* name, ObjNative* method,
+                                  TypeKind return_type, TypeKind return_element_type,
+                                  NativeParamSpec params);
 
 void thread_init_methods(void);
 void channel_init_methods(void);
@@ -1431,80 +1431,83 @@ void file_mark_methods(void);
 // 方法注册/查找 API（各类型保留独立函数名，内部调用通用 method_table_* 函数）
 
 // Array
-void array_register_method_with_params(const char* name, ObjNative* method, int arity,
-                                        int min_arity, int max_arity,
-                                        TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
+void array_register_method(const char* name, ObjNative* method,
+                                  TypeKind return_type, TypeKind return_element_type,
+                                  NativeParamSpec params);
 ArrayMethodEntry array_find_method_meta(const char* name);
 TypeKind array_get_method_param_type(const char* method_name, int param_index);
 
 // String
-void string_register_method_with_params(const char* name, ObjNative* method, int arity,
-                                         int min_arity, int max_arity,
-                                         TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
+void string_register_method(const char* name, ObjNative* method,
+                                  TypeKind return_type, TypeKind return_element_type,
+                                  NativeParamSpec params);
+
 StringMethodEntry string_find_method_meta(const char* name);
 TypeKind string_get_method_param_type(const char* method_name, int param_index);
 
 // File
-void file_register_method_with_params(const char* name, ObjNative* method, int arity,
-                                       int min_arity, int max_arity,
-                                       TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
+void file_register_method(const char* name, ObjNative* method,
+                                  TypeKind return_type, TypeKind return_element_type,
+                                  NativeParamSpec params);
+
 FileMethodEntry file_find_method_meta(const char* name);
 TypeKind file_get_method_param_type(const char* method_name, int param_index);
 
 // Socket
 void socket_init_methods(void);
 void socket_mark_methods(void);
-void socket_register_method_with_params(const char* name, ObjNative* method, int arity,
-                                         int min_arity, int max_arity,
-                                         TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
+void socket_register_method(const char* name, ObjNative* method,
+                                  TypeKind return_type, TypeKind return_element_type,
+                                  NativeParamSpec params);
 ObjNative* socket_find_method(const char* name);
 
 // Dict
 void dict_init_methods(void);
 void dict_mark_methods(void);
-void dict_register_method_with_params(const char* name, ObjNative* method, int arity,
-                                       int min_arity, int max_arity,
-                                       TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
+void dict_register_method(const char* name, ObjNative* method,
+                                  TypeKind return_type, TypeKind return_element_type,
+                                  NativeParamSpec params);
+
 DictMethodEntry dict_find_method_meta(const char* name);
 TypeKind dict_get_method_param_type(const char* method_name, int param_index);
 
 // Struct
 void struct_init_methods(void);
-void struct_register_method_with_params(const char* name, ObjNative* method, int arity,
-                                         int min_arity, int max_arity,
-                                         TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
+void struct_register_method(const char* name, ObjNative* method,
+                                  TypeKind return_type, TypeKind return_element_type,
+                                  NativeParamSpec params);
 StructMethodEntry struct_find_method_meta(const char* name);
 
 // CStruct
 void cstruct_init_methods(void);
 void cstruct_mark_methods(void);
-void cstruct_register_method_with_params(const char* name, ObjNative* method, int arity,
-                                          int min_arity, int max_arity,
-                                          TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
+void cstruct_register_method(const char* name, ObjNative* method,
+                                  TypeKind return_type, TypeKind return_element_type,
+                                  NativeParamSpec params);
 CStructMethodEntry cstruct_find_method_meta(const char* name);
 
 // Thread
 void thread_init_methods(void);
 void thread_mark_methods(void);
-void thread_register_method_with_params(const char* name, ObjNative* method, int arity,
-                                         int min_arity, int max_arity,
-                                         TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
+void thread_register_method(const char* name, ObjNative* method,
+                                  TypeKind return_type, TypeKind return_element_type,
+                                  NativeParamSpec params);
 ThreadMethodEntry thread_find_method_meta(const char* name);
 
 // Channel
 void channel_init_methods(void);
 void channel_mark_methods(void);
-void channel_register_method_with_params(const char* name, ObjNative* method, int arity,
-                                          int min_arity, int max_arity,
-                                          TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
+void channel_register_method(const char* name, ObjNative* method,
+                                  TypeKind return_type, TypeKind return_element_type,
+                                  NativeParamSpec params);
 ChannelMethodEntry channel_find_method_meta(const char* name);
 
 // Number
 void number_init_methods(void);
 void number_mark_methods(void);
-void number_register_method_with_params(const char* name, ObjNative* method, int arity,
-                                         int min_arity, int max_arity,
-                                         TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
+void number_register_method(const char* name, ObjNative* method,
+                                  TypeKind return_type, TypeKind return_element_type,
+                                  NativeParamSpec params);
 NumberMethodEntry number_find_method_meta(const char* name);
 
 // ============================================================================

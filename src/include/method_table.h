@@ -57,12 +57,12 @@ void method_table_free(MethodTable* table);
 // 扩容方法表（内部使用，负载因子 0.75）
 void method_table_resize(MethodTable* table);
 
-// 注册方法（含参数类型信息，同时注册编译期元信息）
-void method_table_register_with_params(MethodTable* table, const char* type_name,
-                                        const char* name, ObjNative* method, int arity,
-                                        int min_arity, int max_arity,
-                                        TypeKind return_type, TypeKind return_element_type,
-                                        TypeKind* param_types);
+// 注册方法（**唯一入口**，2026-10-02 统一；参数规格用 native.h 的 NativeParamSpec + 构造宏：
+//   NATIVE_FIXED(types) / NATIVE_FIXED_NONE(n) / NATIVE_VARARG(min,max,cnt,types,tail)）
+//   同时登记运行期条目与编译期元信息 —— 规格一次给全，不存在"第二步"可漏 ✓
+void method_table_register_method(MethodTable* table, const char* type_name, const char* name,
+                                  ObjNative* method, TypeKind return_type, TypeKind return_element_type,
+                                  NativeParamSpec params);
 
 // 查找方法（O(1)，返回方法对象指针）
 ObjNative* method_table_find(MethodTable* table, const char* name);

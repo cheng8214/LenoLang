@@ -249,24 +249,24 @@ static Value native_async_get_result(int arg_count, Value* args) {
 // 注册 asyncs 模块
 void asyncs_init_module(void) {
     TypeKind sleep_params[] = {TYPE_INT};
-    native_register_module_method_spec("asyncs", "sleep", native_async_sleep, 1, -1, -1, &NATIVE_T_FUTURE, sleep_params);
+    native_register_module_method("asyncs", "sleep", native_async_sleep, &NATIVE_T_FUTURE, NATIVE_FIXED(sleep_params));
 
-    native_register_module_method_spec("asyncs", "run", native_async_run, 0, -1, -1, &NATIVE_T_NULL, NULL);
+    native_register_module_method("asyncs", "run", native_async_run, &NATIVE_T_NULL, NATIVE_FIXED_NONE(0));
 
-    native_register_module_method_spec("asyncs", "yield", native_async_yield, 0, -1, -1, &NATIVE_T_FUTURE, NULL);
+    native_register_module_method("asyncs", "yield", native_async_yield, &NATIVE_T_FUTURE, NATIVE_FIXED_NONE(0));
 
     TypeKind all_params[] = {TYPE_ARRAY};
-    native_register_module_method_spec("asyncs", "all", native_async_all, 1, -1, -1, &NATIVE_T_ARR_ANY, all_params);
+    native_register_module_method("asyncs", "all", native_async_all, &NATIVE_T_ARR_ANY, NATIVE_FIXED(all_params));
 
     TypeKind timeout_params[] = {TYPE_ANY, TYPE_INT};
-    native_register_module_method_spec("asyncs", "timeout", native_async_timeout, 2, -1, -1, &NATIVE_T_FUTURE, timeout_params);
+    native_register_module_method("asyncs", "timeout", native_async_timeout, &NATIVE_T_FUTURE, NATIVE_FIXED(timeout_params));
 
     // 文档承诺的查询类 API（见上面的说明）
-    native_register_module_method_spec("asyncs", "current", native_async_current, 0, -1, -1, &NATIVE_T_INT, NULL);
+    native_register_module_method("asyncs", "current", native_async_current, &NATIVE_T_INT, NATIVE_FIXED_NONE(0));
     TypeKind is_done_params[] = {TYPE_FUTURE};
-    native_register_module_method_spec("asyncs", "is_done", native_async_is_done, 1, -1, -1, &NATIVE_T_BOOL, is_done_params);
+    native_register_module_method("asyncs", "is_done", native_async_is_done, &NATIVE_T_BOOL, NATIVE_FIXED(is_done_params));
     TypeKind get_result_params[] = {TYPE_FUTURE};
-    native_register_module_method_spec("asyncs", "get_result", native_async_get_result, 1, -1, -1, &NATIVE_T_ANY, get_result_params);
+    native_register_module_method("asyncs", "get_result", native_async_get_result, &NATIVE_T_ANY, NATIVE_FIXED(get_result_params));
 }
 
 // 初始化 asyncs 模块全局变量和事件循环

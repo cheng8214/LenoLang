@@ -535,9 +535,10 @@ Value struct_get_field(ObjStruct* obj, int index) {
 static THREAD_LOCAL MethodTable structMethodTable = {NULL, 0, 0};
 
 // 注册结构体方法（带参数类型）
-void struct_register_method_with_params(const char* name, ObjNative* method, int arity, int min_arity, int max_arity,
-                                         TypeKind return_type, TypeKind return_element_type, TypeKind* param_types) {
-    method_table_register_with_params(&structMethodTable, "struct", name, method, arity, min_arity, max_arity, return_type, return_element_type, param_types);
+void struct_register_method(const char* name, ObjNative* method,
+                                  TypeKind return_type, TypeKind return_element_type,
+                                  NativeParamSpec params) {
+    method_table_register_method(&structMethodTable, "struct", name, method, return_type, return_element_type, params);
 }
 
 // 查找结构体方法的元信息（用于编译期类型检查）

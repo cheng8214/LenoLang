@@ -304,7 +304,7 @@ struct TypeInfo {
 //     static const NativeTypeSpec S_DIRENTRY  = { NTYPE_STRUCT, "DirEntry", NULL, NULL, 0, -1 };
 //     static const NativeTypeSpec S_DIRENTRY_ARR[] = { {NTYPE_ARRAY, NULL, &S_DIRENTRY, NULL, 0, -1} };
 //     native_register_struct_spec(&DIRENTRY);
-//     native_register_module_method_spec("dirs", "walk_entries", fn, 1, -1, -1, &S_DIRENTRY_ARR[0], params);
+//     native_register_module_method("dirs", "walk_entries", fn, &S_DIRENTRY_ARR[0], params);
 // ⚠ 被引用的 struct 规格**必须也注册**（native_register_struct_spec），否则编译期字段解析
 //   会找不到字段表（运行期同样造不出定义）。
 // ⚠ native struct 与脚本 struct 共用**同一个全局名字空间**（按名字索引）⇒ 取名请避免与
@@ -438,5 +438,32 @@ typedef enum {
     SYM_ENUM,        // enum 类型定义
     SYM_FUNC_ALIAS,  // use 导入的模块函数别名
 } SymKind;
+
+// ========== native 注册的**参数规格**（2026-10-02；模块式与实例式共用）==========
+//   为什么放这个底层头：`leno_value.h`（各类型的包装声明）与 `method_table.h` 都要用到它，
+//   放这里两边都能拿到，也不会造成头文件互相包含 ✓
+//   ── 参数个数标记（**不要再写裸 -1**）──
+//   `-1` 过去同时承担两种意思（"这个方法可变参数" / "个数不限"）⇒ 一个数字两种含义，读代码只能猜 ✗
+#define NATIVE_ARITY_VARARG (-200)  // arity 位：可变参数（个数范围看 min_arity..max_arity）
+#define NATIVE_ARITY_ANY    (-1)    // min/max 位：不限（只有 max_arity 用得到）
+
+typedef struct {
+    int arity;                // 定长个数；或 NATIVE_ARITY_VARARG
+    int min_arity;            // 仅可变：最少实参（定长时无意义）
+    int max_arity;            // 仅可变：最多实参（NATIVE_ARITY_ANY = 不限）
+    int declared_count;       // declared 的有效长度（0 = 不声明任何类型）
+    const TypeKind* declared; // 前 declared_count 个实参的类型
+    TypeKind tail_type;       // 其余实参的类型（TYPE_ANY = 不查）
+} NativeParamSpec;
+
+// 三个构造宏：同一形状在全仓库**写法完全一致**，且 count 由 sizeof 推出 ⇒ 不可能与个数打架 ✓
+//   ⚠ NATIVE_FIXED(types) 的 types 必须是**真正的数组**（不能是数组指针，否则 sizeof 退化）
+#define NATIVE_FIXED(types) \
+    (NativeParamSpec){ (int)(sizeof(types) / sizeof(TypeKind)), NATIVE_ARITY_ANY, NATIVE_ARITY_ANY, \
+                       (int)(sizeof(types) / sizeof(TypeKind)), (types), TYPE_ANY }
+#define NATIVE_FIXED_NONE(n) \
+    (NativeParamSpec){ (n), NATIVE_ARITY_ANY, NATIVE_ARITY_ANY, 0, NULL, TYPE_ANY }
+#define NATIVE_VARARG(min, max, cnt, types, tail) \
+    (NativeParamSpec){ NATIVE_ARITY_VARARG, (min), (max), (cnt), (types), (tail) }
 
 #endif // LENO_TYPES_H

@@ -414,16 +414,15 @@ void io_init_globals(void) {
 void io_init_module(void) {
     // 注册 io.print 方法（模块名，方法名，函数指针，参数数量，返回类型，返回元素类型，参数类型数组）
     // 返回类型 `null`（v3.2.6）：实现是 `return val_null()`（只打印、不产生值）⇒ 别再说它是 any。
-    native_register_module_method_spec("io", "print", native_print, -1, 0, -1, &NATIVE_T_NULL, NULL);
+    native_register_module_method("io", "print", native_print, &NATIVE_T_NULL, NATIVE_VARARG(0, NATIVE_ARITY_ANY, 0, NULL, TYPE_ANY));
 
     // 注册 io.printf 方法（模块名，方法名，函数指针，参数数量，返回类型，返回元素类型，参数类型数组）
-    native_register_module_method_spec("io", "printf", native_printf, -1, 0, -1, &NATIVE_T_NULL, NULL);
+    native_register_module_method("io", "printf", native_printf, &NATIVE_T_NULL, NATIVE_VARARG(0, NATIVE_ARITY_ANY, 0, NULL, TYPE_ANY));
 
     // 注册 io.input 方法（模块名，方法名，函数指针，参数数量，返回类型，返回元素类型，参数类型数组）
     // 参数类型 string（v3.2.8，同全局内置那处）：可选参数是提示文案 ⇒ 别再留成 any。
     //   ⚠ 可变参数方法的 param_types **由注册后的 `native_set_method_vararg_params` 声明**
     //     （注册时的实参对它整份忽略 —— 实例二十三的口径）。
-    native_register_module_method_spec("io", "input", native_input, -1, 0, 1, &NATIVE_T_STRING, NULL);
     TypeKind input_params[] = {TYPE_STRING};
-    native_set_method_vararg_params("io", "input", 1, input_params, TYPE_STRING);
+    native_register_module_method("io", "input", native_input, &NATIVE_T_STRING, NATIVE_VARARG(0, 1, 1, input_params, TYPE_STRING));
 }

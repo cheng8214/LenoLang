@@ -545,10 +545,10 @@ void cstruct_def_mark_all(void) {
 static THREAD_LOCAL MethodTable cstructMethodTable = {NULL, 0, 0};
 
 // 注册 cstruct 方法（带参数类型）
-void cstruct_register_method_with_params(const char* name, ObjNative* method, int arity,
-                                         int min_arity, int max_arity,
-                                         TypeKind return_type, TypeKind return_element_type, TypeKind* param_types) {
-    method_table_register_with_params(&cstructMethodTable, "cstruct", name, method, arity, min_arity, max_arity, return_type, return_element_type, param_types);
+void cstruct_register_method(const char* name, ObjNative* method,
+                                  TypeKind return_type, TypeKind return_element_type,
+                                  NativeParamSpec params) {
+    method_table_register_method(&cstructMethodTable, "cstruct", name, method, return_type, return_element_type, params);
 }
 
 // 查找 cstruct 方法

@@ -507,126 +507,119 @@ static Value arr_reduce(int argc, Value* args) {
 
 void arrays_init_module(void) {
     TypeKind len_params[] = {TYPE_ARRAY};
-    native_register_module_method_spec("arrays", "len", arr_len, 1, -1, -1, &NATIVE_T_INT, len_params);
+    native_register_module_method("arrays", "len", arr_len, &NATIVE_T_INT, NATIVE_FIXED(len_params));
 
     TypeKind add_params[] = {TYPE_ARRAY, TYPE_ANY};
-    native_register_module_method_spec("arrays", "add", arr_add, 2, -1, -1, &NATIVE_T_INT, add_params);
+    native_register_module_method("arrays", "add", arr_add, &NATIVE_T_INT, NATIVE_FIXED(add_params));
 
     TypeKind pop_params[] = {TYPE_ARRAY};
-    native_register_module_method_spec("arrays", "pop", arr_pop, 1, -1, -1, &NATIVE_T_ARG0_ELEM, pop_params);
+    native_register_module_method("arrays", "pop", arr_pop, &NATIVE_T_ARG0_ELEM, NATIVE_FIXED(pop_params));
 
     TypeKind insert_params[] = {TYPE_ARRAY, TYPE_INT, TYPE_ANY};
-    native_register_module_method_spec("arrays", "insert", arr_insert, 3, -1, -1, &NATIVE_T_INT, insert_params);
+    native_register_module_method("arrays", "insert", arr_insert, &NATIVE_T_INT, NATIVE_FIXED(insert_params));
 
     TypeKind remove_params[] = {TYPE_ARRAY, TYPE_INT};
-    native_register_module_method_spec("arrays", "remove", arr_remove, 2, -1, -1, &NATIVE_T_ARG0_ELEM, remove_params);
+    native_register_module_method("arrays", "remove", arr_remove, &NATIVE_T_ARG0_ELEM, NATIVE_FIXED(remove_params));
 
     TypeKind has_params[] = {TYPE_ARRAY, TYPE_ANY};
-    native_register_module_method_spec("arrays", "has", arr_has, 2, -1, -1, &NATIVE_T_BOOL, has_params);
+    native_register_module_method("arrays", "has", arr_has, &NATIVE_T_BOOL, NATIVE_FIXED(has_params));
 
     TypeKind copy_params[] = {TYPE_ARRAY};
-    native_register_module_method_spec("arrays", "copy", arr_copy, 1, -1, -1, &NATIVE_T_ARR_ARG0_ELEM, copy_params);
+    native_register_module_method("arrays", "copy", arr_copy, &NATIVE_T_ARR_ARG0_ELEM, NATIVE_FIXED(copy_params));
 
     TypeKind clear_params[] = {TYPE_ARRAY};
-    native_register_module_method_spec("arrays", "clear", arr_clear, 1, -1, -1, &NATIVE_T_ARR_ARG0_ELEM, clear_params);
+    native_register_module_method("arrays", "clear", arr_clear, &NATIVE_T_ARR_ARG0_ELEM, NATIVE_FIXED(clear_params));
 
     // 新增方法注册
     TypeKind index_of_params[] = {TYPE_ARRAY, TYPE_ANY};
-    native_register_module_method_spec("arrays", "index_of", arr_index_of, 2, -1, -1, &NATIVE_T_INT, index_of_params);
+    native_register_module_method("arrays", "index_of", arr_index_of, &NATIVE_T_INT, NATIVE_FIXED(index_of_params));
 
     TypeKind last_index_of_params[] = {TYPE_ARRAY, TYPE_ANY};
-    native_register_module_method_spec("arrays", "last_index_of", arr_last_index_of, 2, -1, -1, &NATIVE_T_INT, last_index_of_params);
+    native_register_module_method("arrays", "last_index_of", arr_last_index_of, &NATIVE_T_INT, NATIVE_FIXED(last_index_of_params));
 
     TypeKind reverse_params[] = {TYPE_ARRAY};
-    native_register_module_method_spec("arrays", "reverse", arr_reverse, 1, -1, -1, &NATIVE_T_ARR_ARG0_ELEM, reverse_params);
+    native_register_module_method("arrays", "reverse", arr_reverse, &NATIVE_T_ARR_ARG0_ELEM, NATIVE_FIXED(reverse_params));
 
     TypeKind sort_params[] = {TYPE_ARRAY};
-    native_register_module_method_spec("arrays", "sort", arr_sort, 1, -1, -1, &NATIVE_T_ARR_ARG0_ELEM, sort_params);
+    native_register_module_method("arrays", "sort", arr_sort, &NATIVE_T_ARR_ARG0_ELEM, NATIVE_FIXED(sort_params));
 
     // sum：数字数组求和（2026-10-01）。返回 **FLOAT**（与 maths.max/min 同族，规格与实现同源 ✓）
     //   为什么不按"全整数给 int"：规格只能标一个类型 —— 标 ANY 会让 `int t = xs.sum()` 编不过，
     //   标 INT 又对含小数的数组说谎 ✗ ⇒ 统一 FLOAT，转换交给调用点（`_int(xs.sum())`）✓
     TypeKind sum_params[] = {TYPE_ARRAY};
-    native_register_module_method_spec("arrays", "sum", arr_sum, 1, -1, -1, &NATIVE_T_FLOAT, sum_params);
+    native_register_module_method("arrays", "sum", arr_sum, &NATIVE_T_FLOAT, NATIVE_FIXED(sum_params));
 
     TypeKind join_params[] = {TYPE_ARRAY, TYPE_STRING};
-    native_register_module_method_spec("arrays", "join", arr_join, 2, -1, -1, &NATIVE_T_STRING, join_params);
+    native_register_module_method("arrays", "join", arr_join, &NATIVE_T_STRING, NATIVE_FIXED(join_params));
 
     // 函数式方法
     TypeKind map_params[] = {TYPE_ARRAY, TYPE_FUNCTION};
     // map/reduce 的返回规格 = **回调的返回类型**（⓪ 族声明化，2026-09-28）：ARG_CB_RET 节点
     //   由语义层通用推断点解析（推闭包函数体 / 取命名函数声明返回），此前的语义层 if 链已删 ✓
-    native_register_module_method_spec("arrays", "map", arr_map, 2, -1, -1, &NATIVE_T_ARR_CB_RET1, map_params);
+    native_register_module_method("arrays", "map", arr_map, &NATIVE_T_ARR_CB_RET1, NATIVE_FIXED(map_params));
 
     TypeKind filter_params[] = {TYPE_ARRAY, TYPE_FUNCTION};
-    native_register_module_method_spec("arrays", "filter", arr_filter, 2, -1, -1, &NATIVE_T_ARR_ARG0_ELEM, filter_params);
+    native_register_module_method("arrays", "filter", arr_filter, &NATIVE_T_ARR_ARG0_ELEM, NATIVE_FIXED(filter_params));
 
     TypeKind reduce_params[] = {TYPE_ARRAY, TYPE_FUNCTION, TYPE_ANY};
-    native_register_module_method_spec("arrays", "reduce", arr_reduce, 3, -1, -1, &NATIVE_T_ARG_REDUCE12, reduce_params);
+    native_register_module_method("arrays", "reduce", arr_reduce, &NATIVE_T_ARG_REDUCE12, NATIVE_FIXED(reduce_params));
 }
 
 void arrays_init_instance_methods(void) {
     array_init_methods();
-    TypeKind len_params[] = {};
-    array_register_method_with_params("len",    make_native(arr_len,    1, "len"),    0, -1, -1, TYPE_INT, TYPE_UNKNOWN, len_params);
+    array_register_method("len", make_native(arr_len,    1, "len"), TYPE_INT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
 
     TypeKind add_params[] = {TYPE_ANY};
-    array_register_method_with_params("add",    make_native(arr_add,    2, "add"),    1, -1, -1, TYPE_INT, TYPE_UNKNOWN, add_params);
+    array_register_method("add", make_native(arr_add,    2, "add"), TYPE_INT, TYPE_UNKNOWN, NATIVE_FIXED(add_params));
 
-    TypeKind pop_params[] = {};
-    array_register_method_with_params("pop",    make_native(arr_pop,    1, "pop"),    0, -1, -1, TYPE_ANY, TYPE_UNKNOWN, pop_params);
+    array_register_method("pop", make_native(arr_pop,    1, "pop"), TYPE_ANY, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
     native_register_instance_method_return_spec("Array", "pop", &NATIVE_T_ARG0_ELEM);
 
     TypeKind insert_params[] = {TYPE_INT, TYPE_ANY};
-    array_register_method_with_params("insert", make_native(arr_insert, 3, "insert"), 2, -1, -1, TYPE_INT, TYPE_UNKNOWN, insert_params);
+    array_register_method("insert", make_native(arr_insert, 3, "insert"), TYPE_INT, TYPE_UNKNOWN, NATIVE_FIXED(insert_params));
 
     TypeKind remove_params[] = {TYPE_INT};
-    array_register_method_with_params("remove", make_native(arr_remove, 2, "remove"), 1, -1, -1, TYPE_ANY, TYPE_UNKNOWN, remove_params);
+    array_register_method("remove", make_native(arr_remove, 2, "remove"), TYPE_ANY, TYPE_UNKNOWN, NATIVE_FIXED(remove_params));
     native_register_instance_method_return_spec("Array", "remove", &NATIVE_T_ARG0_ELEM);
 
     TypeKind has_params[] = {TYPE_ANY};
-    array_register_method_with_params("has",    make_native(arr_has,    2, "has"),    1, -1, -1, TYPE_BOOL, TYPE_UNKNOWN, has_params);
+    array_register_method("has", make_native(arr_has,    2, "has"), TYPE_BOOL, TYPE_UNKNOWN, NATIVE_FIXED(has_params));
 
-    TypeKind copy_params[] = {};
-    array_register_method_with_params("copy",   make_native(arr_copy,   1, "copy"),   0, -1, -1, TYPE_ARRAY, TYPE_UNKNOWN, copy_params);
+    array_register_method("copy", make_native(arr_copy,   1, "copy"), TYPE_ARRAY, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
     native_register_instance_method_return_spec("Array", "copy", &NATIVE_T_ARR_ARG0_ELEM);
 
-    TypeKind clear_params[] = {};
-    array_register_method_with_params("clear",  make_native(arr_clear,  1, "clear"),  0, -1, -1, TYPE_ARRAY, TYPE_UNKNOWN, clear_params);
+    array_register_method("clear", make_native(arr_clear,  1, "clear"), TYPE_ARRAY, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
     native_register_instance_method_return_spec("Array", "clear", &NATIVE_T_ARR_ARG0_ELEM);
 
     // 新增实例方法注册
     TypeKind index_of_params[] = {TYPE_ANY};
-    array_register_method_with_params("index_of",     make_native(arr_index_of,     2, "index_of"),     1, -1, -1, TYPE_INT, TYPE_UNKNOWN, index_of_params);
+    array_register_method("index_of", make_native(arr_index_of,     2, "index_of"), TYPE_INT, TYPE_UNKNOWN, NATIVE_FIXED(index_of_params));
 
     TypeKind last_index_of_params[] = {TYPE_ANY};
-    array_register_method_with_params("last_index_of", make_native(arr_last_index_of, 2, "last_index_of"), 1, -1, -1, TYPE_INT, TYPE_UNKNOWN, last_index_of_params);
+    array_register_method("last_index_of", make_native(arr_last_index_of, 2, "last_index_of"), TYPE_INT, TYPE_UNKNOWN, NATIVE_FIXED(last_index_of_params));
 
-    TypeKind reverse_params[] = {};
-    array_register_method_with_params("reverse",      make_native(arr_reverse,      1, "reverse"),      0, -1, -1, TYPE_ARRAY, TYPE_UNKNOWN, reverse_params);
+    array_register_method("reverse", make_native(arr_reverse,      1, "reverse"), TYPE_ARRAY, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
     native_register_instance_method_return_spec("Array", "reverse", &NATIVE_T_ARR_ARG0_ELEM);
 
-    TypeKind sort_params[] = {};
-    array_register_method_with_params("sort",         make_native(arr_sort,         1, "sort"),         0, -1, -1, TYPE_ARRAY, TYPE_UNKNOWN, sort_params);
+    array_register_method("sort", make_native(arr_sort,         1, "sort"), TYPE_ARRAY, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
     native_register_instance_method_return_spec("Array", "sort", &NATIVE_T_ARR_ARG0_ELEM);
 
     // sum：实例形态（接收者就是第 0 个实参）⇒ 返回规格 FLOAT，与模块形态**同一口径** ✓
-    TypeKind sum_params[] = {};
-    array_register_method_with_params("sum",          make_native(arr_sum,          1, "sum"),          0, -1, -1, TYPE_FLOAT, TYPE_UNKNOWN, sum_params);
+    array_register_method("sum", make_native(arr_sum,          1, "sum"), TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
 
     TypeKind join_params[] = {TYPE_STRING};
-    array_register_method_with_params("join",         make_native(arr_join,         2, "join"),         1, -1, -1, TYPE_STRING, TYPE_UNKNOWN, join_params);
+    array_register_method("join", make_native(arr_join,         2, "join"), TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED(join_params));
 
     // 函数式实例方法
     TypeKind map_params[] = {TYPE_FUNCTION};
-    array_register_method_with_params("map",          make_native(arr_map,          2, "map"),          1, -1, -1, TYPE_ARRAY, TYPE_UNKNOWN, map_params);
+    array_register_method("map", make_native(arr_map,          2, "map"), TYPE_ARRAY, TYPE_UNKNOWN, NATIVE_FIXED(map_params));
 
     TypeKind filter_params[] = {TYPE_FUNCTION};
-    array_register_method_with_params("filter",       make_native(arr_filter,       2, "filter"),       1, -1, -1, TYPE_ARRAY, TYPE_UNKNOWN, filter_params);
+    array_register_method("filter", make_native(arr_filter,       2, "filter"), TYPE_ARRAY, TYPE_UNKNOWN, NATIVE_FIXED(filter_params));
     native_register_instance_method_return_spec("Array", "filter", &NATIVE_T_ARR_ARG0_ELEM);
 
     TypeKind reduce_params[] = {TYPE_FUNCTION, TYPE_ANY};
-    array_register_method_with_params("reduce",       make_native(arr_reduce,       3, "reduce"),       2, -1, -1, TYPE_ANY, TYPE_UNKNOWN, reduce_params);
+    array_register_method("reduce", make_native(arr_reduce,       3, "reduce"), TYPE_ANY, TYPE_UNKNOWN, NATIVE_FIXED(reduce_params));
     // map/reduce 实例规格（⓪ 族声明化）：接收者=0、回调=1、init=2 ⇒ 语义层通用推断点解析 ✓
     native_register_instance_method_return_spec("Array", "map", &NATIVE_T_ARR_CB_RET1);
     native_register_instance_method_return_spec("Array", "reduce", &NATIVE_T_ARG_REDUCE12);

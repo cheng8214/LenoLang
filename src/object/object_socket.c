@@ -16,10 +16,10 @@
 static THREAD_LOCAL MethodTable socketMethodTable = {NULL, 0, 0};
 
 /* 注册 Socket 方法（带参数类型信息，供编译期和运行时使用） */
-void socket_register_method_with_params(const char* name, ObjNative* method, int arity,
-                                        int min_arity, int max_arity,
-                                        TypeKind return_type, TypeKind return_element_type, TypeKind* param_types) {
-    method_table_register_with_params(&socketMethodTable, "Socket", name, method, arity, min_arity, max_arity, return_type, return_element_type, param_types);
+void socket_register_method(const char* name, ObjNative* method,
+                                  TypeKind return_type, TypeKind return_element_type,
+                                  NativeParamSpec params) {
+    method_table_register_method(&socketMethodTable, "Socket", name, method, return_type, return_element_type, params);
 }
 
 /* 查找 Socket 方法（运行时 O(1) 查找） */

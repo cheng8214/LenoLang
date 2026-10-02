@@ -20,7 +20,7 @@ typedef struct {
     int param_type_count;
     // 完整返回类型规格（v3.2.8，可空）：非 NULL 时**优先于**上面的 Kind 槽 —— 内置函数通道此前
     //   只有 Kind，表达不了 `ExecResult{...}` 这类带名字/带字段的返回类型（`_exec` 的 `[output, code]`
-    //   就只能是 `Array[any]`）。语义与 `native_register_module_method_spec` 的 return_spec 对齐。
+    //   就只能是 `Array[any]`）。语义与 `native_register_module_method` 的 return_spec 对齐。
     const NativeTypeSpec* return_spec;
 } NativeFunctionMeta;
 
@@ -109,32 +109,38 @@ const char* native_builtin_module_hint(const char* name);
 // 标记所有 native 函数对象（供 GC 使用）
 void native_mark_all_functions(void);
 
-// ========== 模块方法支持 ==========
+// ========== 参数个数标记（**不要再写裸 -1**）==========
+//   为什么要有命名常量：`-1` 过去同时承担两种完全不同的含义 ——
+//     · arity 位：**这个方法可变参数**（老写法 `arity == -1`）
+//     · min/max 位：**个数不限**
+//   一个数字两种意思，读代码只能靠上下文猜 ⇒ 分家：
+#define NATIVE_ARITY_VARARG (-200)  // arity 位：可变参数（个数范围看 min_arity..max_arity）
+#define NATIVE_ARITY_ANY    (-1)    // min/max 位：不限（只有 max_arity 用得到）
 
-// 注册模块方法（**唯一入口**；v3.2.3 起返回类型用完整规格声明，老的
-// `native_register_module_method(...)` 已删除 —— 它只有一个 TypeKind 槽，表达不了
-// `Array[DirEntry]` / `Dict[string,string]` 这类类型）。
-// min_arity/max_arity: 当 arity == -1（可变参数）时，指定最小/最大允许参数个数；其他情况传 -1
-// param_types: 参数类型数组，长度为 arity，如果为 NULL 则所有参数默认为 TYPE_ANY
-// return_spec: 见 leno_types.h 的 NativeTypeSpec；常用形状直接用下面的 NATIVE_T_* 预制规格
-void native_register_module_method_spec(const char* module_name, const char* method_name,
-                                        NativeFn function, int arity, int min_arity, int max_arity,
-                                        const NativeTypeSpec* return_spec, TypeKind* param_types);
+// ========== 参数规格 ==========
+// `NativeParamSpec` 与 `NATIVE_FIXED` / `NATIVE_FIXED_NONE` / `NATIVE_VARARG` 三个构造宏
+//   定义在 **leno_types.h**（底层头，`leno_value.h` / `method_table.h` 也要用）✓
+//   为什么用结构体规格：拆成位置参数时，定长注册必须在调用点写三个"其实恒等"的数字
+//   （arity 与 declared_count 必然相同、min/max 对定长毫无意义）⇒ 224 处写法五花八门、
+//   且**写错一个就静默漏检查**（实测正是如此）✗ ⇒ 改成"按形状写宏"，全仓库写法一致 ✓
+
+// 注册模块方法（**唯一入口**）。取代了原先两个入口（`..._spec` 定长 / `..._vararg` 可变）
+//   以及更早的"注册 + native_set_method_vararg_params 事后补声明"两步式 ——
+//   两步式的致命处是**忘了第二步就静默失去类型检查**（实测 25 处里 11 处忘了）✗
+// 例：`native_register_module_method("maths", "sqrt", math_sqrt, &NATIVE_T_FLOAT,
+//        NATIVE_FIXED(sqrt_params))`                                    ⇒ 定长、全按表查；
+//     `native_register_module_method("dirs", "cwd", native_dirs_cwd, &NATIVE_T_STRING,
+//        NATIVE_FIXED_NONE(0))`                                         ⇒ 定长、零个实参；
+//     `native_register_module_method("strings", "to_hex", str_to_hex, &NATIVE_T_STRING,
+//        NATIVE_VARARG(1, 2, 2, tohex_params, TYPE_ANY))`               ⇒ 个数 1..2、前 2 个查表。
+void native_register_module_method(const char* module_name, const char* method_name,
+                                   NativeFn function, const NativeTypeSpec* return_spec,
+                                   NativeParamSpec params);
 
 // 获取模块方法的参数类型
 TypeKind native_get_module_method_param_type(const char* module_name, const char* method_name, int param_index);
 
-// 为**可变参数**方法声明参数类型（v3.2.7）：`arity == -1` 的方法以前**整份 param_types 都被忽略**
-//   （注册时被写成全 ANY，查表时又因 `param_index < arity` 恒假而退回 ANY）⇒ 连
-//   `dirs.join(1, 2)` 这种明显错的调用也编译得过去。
-// 语义（**不猜**）：前 `prefix_count` 个实参按 `prefix[i]` 检查，其余实参按 `tail_type` 检查
-//   （`tail_type == TYPE_ANY` = 不检查）。要在**注册之后**调用（与
-//   `native_register_instance_method_return_spec` 同一套路：不改变 238 个调用点）。
-// 例：`native_set_method_vararg_params("dirs", "join", 0, NULL, TYPE_STRING)` ⇒ 全部实参须是 string；
-//     `native_set_method_vararg_params("strings", "find", 2, (TypeKind[]){TYPE_STRING, TYPE_STRING}, TYPE_INT)`
-//     ⇒ 前两个是 string、其余是 int。
-void native_set_method_vararg_params(const char* module_name, const char* method_name,
-                                     int prefix_count, const TypeKind* prefix, TypeKind tail_type);
+
 
 // 根据模块名和方法名查找模块方法
 ModuleMethodMeta* native_find_module_method(const char* module_name, const char* method_name);
@@ -338,6 +344,12 @@ typedef struct {
     TypeKind return_type;   // 返回类型
     TypeKind return_element_type; // 返回数组时的元素类型（TYPE_UNKNOWN 表示未指定）
     TypeKind param_types[MAX_METHOD_PARAMS]; // 参数类型数组
+    // **有效参数类型个数**（2026-10-02 补；与模块式的 ModuleMethodMeta 同字段同语义）。
+    //   为什么要这个字段：查表原先用 `param_index < meta->arity` 当闸门，而**可变参数**方法
+    //   （arity == -1）下这句恒假 ⇒ 那些方法无论怎么声明参数类型都会退回 TYPE_ANY（类型检查形同虚设 ✗）。
+    //   模块式 v3.2.7 已由该字段 + native_set_method_vararg_params() 修掉；实例式这次补齐 ✓
+    //   取值：定长注册 = arity（封顶 MAX_METHOD_PARAMS）；其余 = 0（可变参数未声明前不检查）。
+    int param_type_count;
     // 返回类型的**完整规格**（可空）。非空时优先于上面的两个 Kind，并支持 `NTYPE_ARG0_*`
     //   这类关系型标签（实例形式下"第 0 个实参"= **接收者**）。
     //   用 native_register_instance_method_return_spec() 在同名注册**之后**补上。
@@ -353,6 +365,13 @@ void native_register_instance_method_meta(const char* type_name, const char* met
 // min_arity/max_arity: 当 arity == -1（可变参数）时，指定最小/最大允许参数个数；其他情况传 -1
 // return_element_type: 返回数组时的元素类型，非数组返回类型时传 TYPE_UNKNOWN
 void native_register_instance_method_meta_with_params(const char* type_name, const char* method_name, int arity, int min_arity, int max_arity, TypeKind return_type, TypeKind return_element_type, TypeKind* param_types);
+
+// ⚠ **内部接口**（2026-10-02 起）：只应由 `method_table_register_method()` 调用一次，
+//   把类型规格写进编译期元信息表；**不要在注册调用点自己调**（那正是被删掉的"两步式"✗）。
+//   语义：前 prefix_count 个实参按 prefix[i] 检查，其余按 tail_type（TYPE_ANY = 不检查）；
+//   只改已存在的条目，不创建新条目。
+void native_set_instance_method_vararg_params(const char* type_name, const char* method_name,
+                                              int prefix_count, const TypeKind* prefix, TypeKind tail_type);
 
 // 给**已注册**的实例方法补一条"返回类型规格"（2026-09-27）。
 //   ⚠ 必须在同名的 native_register_instance_method_meta_with_params /

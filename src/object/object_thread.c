@@ -20,10 +20,10 @@ extern int vm_run_coroutine(ObjCoroutine* co);
 
 static THREAD_LOCAL MethodTable threadMethodTable = {NULL, 0, 0};
 
-void thread_register_method_with_params(const char* name, ObjNative* method, int arity,
-                                         int min_arity, int max_arity,
-                                         TypeKind return_type, TypeKind return_element_type, TypeKind* param_types) {
-    method_table_register_with_params(&threadMethodTable, "Thread", name, method, arity, min_arity, max_arity, return_type, return_element_type, param_types);
+void thread_register_method(const char* name, ObjNative* method,
+                                  TypeKind return_type, TypeKind return_element_type,
+                                  NativeParamSpec params) {
+    method_table_register_method(&threadMethodTable, "Thread", name, method, return_type, return_element_type, params);
 }
 
 ObjNative* thread_find_method(const char* name) {
@@ -46,10 +46,10 @@ void thread_mark_methods(void) {
 
 static THREAD_LOCAL MethodTable channelMethodTable = {NULL, 0, 0};
 
-void channel_register_method_with_params(const char* name, ObjNative* method, int arity,
-                                          int min_arity, int max_arity,
-                                          TypeKind return_type, TypeKind return_element_type, TypeKind* param_types) {
-    method_table_register_with_params(&channelMethodTable, "Channel", name, method, arity, min_arity, max_arity, return_type, return_element_type, param_types);
+void channel_register_method(const char* name, ObjNative* method,
+                                  TypeKind return_type, TypeKind return_element_type,
+                                  NativeParamSpec params) {
+    method_table_register_method(&channelMethodTable, "Channel", name, method, return_type, return_element_type, params);
 }
 
 ObjNative* channel_find_method(const char* name) {

@@ -64,16 +64,36 @@ void method_table_resize(MethodTable* table) {
     table->capacity = new_capacity;
 }
 
-// 注册方法（含参数类型信息）
-void method_table_register_with_params(MethodTable* table, const char* type_name,
-                                        const char* name, ObjNative* method, int arity,
-                                        int min_arity, int max_arity,
-                                        TypeKind return_type, TypeKind return_element_type,
-                                        TypeKind* param_types) {
+// 注册方法（**唯一入口**，2026-10-02 统一）：参数规格见 native.h 的 NativeParamSpec 与三个构造宏。
+//   取代了原先两个（`_with_params` 定长 / `_vararg_with_params` 可变）以及更早的
+//   "注册 + 事后补声明"两步式 —— 两步式**忘了第二步就静默失去类型检查** ✗
+//   ⇒ 现在规格随注册**一次给全**（同一步补齐运行期条目与编译期元信息），漏不掉 ✓
+void method_table_register_method(MethodTable* table, const char* type_name, const char* name,
+                                  ObjNative* method, TypeKind return_type, TypeKind return_element_type,
+                                  NativeParamSpec params) {
+    const int arity = params.arity;
+    const int min_arity = params.min_arity;
+    const int max_arity = params.max_arity;
+    const int declared_count = params.declared_count;
+    const TypeKind* declared = params.declared;
+    const TypeKind tail_type = params.tail_type;
+
+    // 自检（与模块侧同口径：自相矛盾就**响亮失败**）
+    if (arity != NATIVE_ARITY_VARARG && arity < 0) {
+        fprintf(stderr, "[fatal] native 实例方法注册 %s.%s: arity=%d 非法 —— 可变参数请写 "
+                        "NATIVE_ARITY_VARARG(%d)，定长请写具体个数\n",
+                type_name, name, arity, NATIVE_ARITY_VARARG);
+        abort();
+    }
+    if (arity != NATIVE_ARITY_VARARG && declared_count != 0 && declared_count != arity) {
+        fprintf(stderr, "[fatal] native 实例方法注册 %s.%s: 定长 arity=%d 但 declared_count=%d"
+                        "（应相等或传 0）\n", type_name, name, arity, declared_count);
+        abort();
+    }
+
     if (!table->entries) {
         method_table_init(table, 32);
     }
-
     if (table->count >= table->capacity * METHOD_TABLE_MAX_LOAD) {
         method_table_resize(table);
     }
@@ -81,67 +101,39 @@ void method_table_register_with_params(MethodTable* table, const char* type_name
     uint32_t hash = leno_fnv1a(name);
     int index = hash & (table->capacity - 1);
 
-    // 检查是否已存在
+    // 找条目；没有就建（更新/新建**共用**下面的填写，不再各写一遍 ✓）
     MethodHashEntry* entry = table->entries[index];
-    while (entry) {
-        if (strcmp(entry->name, name) == 0) {
-            entry->method = method;
-            entry->arity = arity;
-            entry->min_arity = min_arity;
-            entry->max_arity = max_arity;
-            entry->return_type = return_type;
-            entry->return_element_type = return_element_type;
-            if (param_types && arity > 0) {
-                int count = arity < MAX_METHOD_PARAMS ? arity : MAX_METHOD_PARAMS;
-                for (int i = 0; i < count; i++) {
-                    entry->param_types[i] = param_types[i];
-                }
-                for (int i = count; i < MAX_METHOD_PARAMS; i++) {
-                    entry->param_types[i] = TYPE_ANY;
-                }
-            } else {
-                for (int i = 0; i < MAX_METHOD_PARAMS; i++) {
-                    entry->param_types[i] = TYPE_ANY;
-                }
-            }
-            // 同时注册到编译期元信息表
-            native_register_instance_method_meta_with_params(type_name, name, arity, min_arity, max_arity, return_type, return_element_type, param_types);
-            return;
-        }
+    while (entry && strcmp(entry->name, name) != 0) {
         entry = entry->next;
     }
-
-    // 创建新条目
-    MethodHashEntry* new_entry = (MethodHashEntry*)malloc(sizeof(MethodHashEntry));
-    if (!new_entry) return;
-
-    new_entry->name = strdup(name);
-    new_entry->method = method;
-    new_entry->arity = arity;
-    new_entry->min_arity = min_arity;
-    new_entry->max_arity = max_arity;
-    new_entry->return_type = return_type;
-    new_entry->return_element_type = return_element_type;
-    if (param_types && arity > 0) {
-        int count = arity < MAX_METHOD_PARAMS ? arity : MAX_METHOD_PARAMS;
-        for (int i = 0; i < count; i++) {
-            new_entry->param_types[i] = param_types[i];
-        }
-        for (int i = count; i < MAX_METHOD_PARAMS; i++) {
-            new_entry->param_types[i] = TYPE_ANY;
-        }
-    } else {
-        for (int i = 0; i < MAX_METHOD_PARAMS; i++) {
-            new_entry->param_types[i] = TYPE_ANY;
-        }
+    if (!entry) {
+        entry = (MethodHashEntry*)malloc(sizeof(MethodHashEntry));
+        if (!entry) return;
+        entry->name = strdup(name);
+        entry->next = table->entries[index];
+        table->entries[index] = entry;
+        table->count++;
+    }
+    entry->method = method;
+    entry->arity = arity;
+    entry->min_arity = min_arity;
+    entry->max_arity = max_arity;
+    entry->return_type = return_type;
+    entry->return_element_type = return_element_type;
+    // 类型填法：先整份 tail_type，再盖上前 declared_count 个（与编译期元信息同一规则 ✓）
+    for (int i = 0; i < MAX_METHOD_PARAMS; i++) {
+        entry->param_types[i] = tail_type;
+    }
+    for (int i = 0; i < declared_count && i < MAX_METHOD_PARAMS; i++) {
+        entry->param_types[i] = declared ? declared[i] : TYPE_ANY;
     }
 
-    new_entry->next = table->entries[index];
-    table->entries[index] = new_entry;
-    table->count++;
-
-    // 同时注册到编译期元信息表
-    native_register_instance_method_meta_with_params(type_name, name, arity, min_arity, max_arity, return_type, return_element_type, param_types);
+    // 编译期元信息（检查器读的就是这份）——与上面同一步完成 ⇒ 调用方漏不掉 ✓
+    native_register_instance_method_meta_with_params(type_name, name, arity, min_arity, max_arity,
+                                                     return_type, return_element_type, NULL);
+    if (declared_count > 0) {
+        native_set_instance_method_vararg_params(type_name, name, declared_count, declared, tail_type);
+    }
 }
 
 // 查找方法（O(1)）
