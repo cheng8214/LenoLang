@@ -360,7 +360,18 @@
                 for (int i = 0; i < ast->u.struct_def.method_count; i++) {
                     Ast* method_ast = ast->u.struct_def.methods[i];
                     if (method_ast && method_ast->kind == AST_FUNC_DEF) {
+                        // ★ 泛型 struct 的方法体上下文（B 方案第二步，2026-10-02）：方法体里的 T 属于
+                        //   **本 struct**（方法自己不声明类型参数）⇒ 需求按 (struct, 方法, T) 记，
+                        //   随后在该方法的**调用点**用接收者的类型实参校验 ✓
+                        Ast* saved_gs = s->cur_generic_struct;
+                        char* saved_gm = s->cur_struct_method_name;
+                        s->cur_generic_struct = (ast->u.struct_def.type_param_count > 0) ? ast : NULL;
+                        s->cur_struct_method_name = method_ast->u.func.name;
+
                         visit_func_as_struct_method(s, method_ast);
+
+                        s->cur_generic_struct = saved_gs;
+                        s->cur_struct_method_name = saved_gm;
                     }
                 }
 

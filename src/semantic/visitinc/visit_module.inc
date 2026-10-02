@@ -1437,6 +1437,22 @@
                                                 }
                                             }
 
+                                            // ★ 泛型需求校验（B 第二步，2026-10-02）：模块限定形态的 struct 方法调用，
+                                            //   用**接收者（struct）的类型实参**逐条判（与同文件 visit_expr 那条对称 ✓）
+                                            //   ⚠ 必须与上面**填充循环同条件**（type_params 非空）—— 否则 gp_names/gp_types
+                                            //     是 malloc 未初始化的槽位，读进去就是垃圾指针 ✗（实测踩过）
+                                            if (gp_count > 0 && obj_type && obj_type->kind == TYPE_STRUCT &&
+                                                obj_type->generic_count > 0 && struct_def_ast &&
+                                                struct_def_ast->u.struct_def.type_params) {
+                                                int sc = obj_type->generic_count;
+                                                for (int gi = 0; gi < sc && gi < gp_count; gi++) {
+                                                    if (!gp_names[gi] || !gp_types[gi]) continue;
+                                                    semantic_check_generic_requirements(s, obj_type->struct_name,
+                                                                                        ast->u.module_call.method_name,
+                                                                                        gp_names[gi], gp_types[gi], ast);
+                                                }
+                                            }
+
                                             for (int i = 0; i < actual_arity; i++) {
                                                 // +1 跳过 self（前向定义时 self 还没前置，偏移为 0）
                                                 TypeInfo* expected_type = method_ast->u.func.param_types[i + self_off];

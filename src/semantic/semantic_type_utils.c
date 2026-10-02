@@ -1431,11 +1431,23 @@ int semantic_native_arg_generic(Semantic* s, Ast* ast, TypeInfo* arg_type, TypeK
                                                            : arg_type->struct_name;
     if (!nm) return 0;
 
-    // ① 是**当前泛型函数**声明的类型参数 ⇒ 记需求，交给调用点判（本函数不报错，并**接管**该实参）
+    // ① 是**当前泛型函数**（或**当前泛型 struct 的方法体**）声明的类型参数 ⇒ 记需求，交给调用点判
+    //    （本函数不报错，并**接管**该实参：调用方跳过常规比较 ✓）
     if (s && s->cur_generic_func) {
         Ast* f = s->cur_generic_func;
         for (int i = 0; i < f->u.func.type_param_count; i++) {
             if (f->u.func.type_params[i] && strcmp(f->u.func.type_params[i], nm) == 0) {
+                semantic_record_generic_requirement(s, nm, expected, ast->line, callee_desc);
+                return 1;
+            }
+        }
+    }
+    // 泛型 struct 的方法体：T 是**接收者 struct** 的类型参数（本字段由 visit_type_def 设置 ✓）
+    if (s && s->cur_generic_struct && s->cur_struct_method_name) {
+        Ast* sd = s->cur_generic_struct;
+        for (int i = 0; i < sd->u.struct_def.type_param_count; i++) {
+            if (sd->u.struct_def.type_params && sd->u.struct_def.type_params[i] &&
+                strcmp(sd->u.struct_def.type_params[i], nm) == 0) {
                 semantic_record_generic_requirement(s, nm, expected, ast->line, callee_desc);
                 return 1;
             }
@@ -1459,15 +1471,29 @@ int semantic_native_arg_generic(Semantic* s, Ast* ast, TypeInfo* arg_type, TypeK
 // ① 收集：记一条需求（按 函数+参数+期望类型 去重）
 void semantic_record_generic_requirement(Semantic* s, const char* param_name, TypeKind expected,
                                          int line, const char* callee) {
-    if (!s || !s->cur_generic_func || !param_name) return;
-    const char* fname = s->cur_generic_func->u.func.name;
+    if (!s || !param_name) return;
+    // 所有者二选一：**泛型函数**（cur_generic_func）或 **泛型 struct 的方法**（cur_generic_struct
+    //   + cur_struct_method_name）。方法需求的 func_name 存**方法名**、owner_struct 存 struct 名 ✓
+    const char* fname = NULL;
+    const char* owner = NULL;
+    // ⚠ **方法优先**：泛型 struct 的方法 AST 也带 struct 的 type_params（type_param_count > 0）
+    //   ⇒ `cur_generic_func` 在方法体里**也会**被设上（visit 路径自己设的）✗。若先判函数分支，
+    //   方法需求就会被记成"自由函数 bad"（owner=NULL）⇒ 调用点（owner=Cell）永远对不上 ✗（实测）
+    if (s->cur_generic_struct && s->cur_struct_method_name) {
+        fname = s->cur_struct_method_name;
+        owner = s->cur_generic_struct->u.struct_def.name;
+    } else if (s->cur_generic_func) {
+        fname = s->cur_generic_func->u.func.name;
+    }
     if (!fname) return;
 
     for (int i = 0; i < s->req_count; i++) {
         GenericRequirement* r = &s->reqs[i];
         if (r->func_name && strcmp(r->func_name, fname) == 0 &&
             r->param_name && strcmp(r->param_name, param_name) == 0 &&
-            r->expected == expected) {
+            r->expected == expected &&
+            ((!r->owner_struct && !owner) ||
+             (r->owner_struct && owner && strcmp(r->owner_struct, owner) == 0))) {
             return;   // 已有同一条需求 ✓
         }
     }
@@ -1480,6 +1506,7 @@ void semantic_record_generic_requirement(Semantic* s, const char* param_name, Ty
     }
     GenericRequirement* r = &s->reqs[s->req_count++];
     r->func_name = strdup(fname);
+    r->owner_struct = owner ? strdup(owner) : NULL;
     r->param_name = strdup(param_name);
     r->expected = expected;
     r->line = line;
@@ -1487,14 +1514,19 @@ void semantic_record_generic_requirement(Semantic* s, const char* param_name, Ty
 }
 
 // ② 校验：调用点用推断出的类型实参逐条校验需求（func_name/param_name 精确匹配）
-void semantic_check_generic_requirements(Semantic* s, const char* func_name, const char* param_name,
-                                         TypeInfo* actual, Ast* call_ast) {
+void semantic_check_generic_requirements(Semantic* s, const char* owner_struct, const char* func_name,
+                                         const char* param_name, TypeInfo* actual, Ast* call_ast) {
     if (!s || !func_name || !param_name || !actual || !call_ast) return;
     if (actual->kind == TYPE_ANY) return;   // 推断不出来 ⇒ 不判（与 face 约束校验同一口径 ✓）
 
     for (int i = 0; i < s->req_count; i++) {
         GenericRequirement* r = &s->reqs[i];
         if (!r->func_name || !r->param_name) continue;
+        // 所有者必须同类同源：自由函数（两边都无 owner）或同一个 struct 的方法 ✓
+        int owner_match = ((!r->owner_struct && !owner_struct) ||
+                           (r->owner_struct && owner_struct &&
+                            strcmp(r->owner_struct, owner_struct) == 0));
+        if (!owner_match) continue;
         if (strcmp(r->func_name, func_name) != 0) continue;
         if (strcmp(r->param_name, param_name) != 0) continue;
 
@@ -1523,6 +1555,7 @@ void semantic_free_generic_requirements(Semantic* s) {
     if (!s || !s->reqs) return;
     for (int i = 0; i < s->req_count; i++) {
         free(s->reqs[i].func_name);
+        free(s->reqs[i].owner_struct);
         free(s->reqs[i].param_name);
         free(s->reqs[i].callee);
     }

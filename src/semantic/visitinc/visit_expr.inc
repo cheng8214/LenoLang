@@ -1256,6 +1256,23 @@
                                                 }
                                             }
 
+                                            // ★ 泛型需求校验（B 第二步，2026-10-02）：该 struct 方法的体内把 T 用在了
+                                            //   native 形参上 ⇒ 用**接收者的类型实参**逐条判 ✓
+                                            //   背景：`Cell[T] { T value  func bad():string { return strings.to_hex(self.value) } }`
+                                            //   在 `Cell[int]` 上调 bad() 会段错误（C 侧把 int 当指针）；这里拦在编译期 ✓
+                                            //   ⚠ 必须用与上面**填充循环同一个条件**（type_params 非空）：
+                                            //     否则 gp_names/gp_types 是 malloc 未初始化的槽位 ⇒ 读垃圾指针 ✗（实测）
+                                            if (gp_count > 0 && struct_def_ast && struct_def_ast->u.struct_def.type_params) {
+                                                const char* sname = struct_def_ast->u.struct_def.name
+                                                                    ? struct_def_ast->u.struct_def.name
+                                                                    : receiver_type->struct_name;
+                                                for (int gi = 0; gi < gp_count; gi++) {
+                                                    if (!gp_names[gi] || !gp_types[gi]) continue;
+                                                    semantic_check_generic_requirements(s, sname, method_name,
+                                                                                        gp_names[gi], gp_types[gi], ast);
+                                                }
+                                            }
+
                                             for (int i = 0; i < actual_arity; i++) {
                                                 // +1 跳过 self（前向定义时 self 还没前置，偏移为 0）
                                                 TypeInfo* expected_type = method_ast->u.func.param_types[i + self_off];
@@ -1704,7 +1721,7 @@
                         //   以前编译通过、运行期 exit=0xC0000005（C 侧把 int 的位型当指针解引用 ✗）
                         for (int i = 0; i < func_def->u.func.type_param_count; i++) {
                             if (!inferred_types[i] || !inferred_names[i]) continue;
-                            semantic_check_generic_requirements(s, func_name, inferred_names[i],
+                            semantic_check_generic_requirements(s, NULL, func_name, inferred_names[i],
                                                                 inferred_types[i], ast);
                         }
 

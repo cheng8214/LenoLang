@@ -136,8 +136,9 @@ int semantic_native_arg_generic(Semantic* s, Ast* ast, TypeInfo* arg_type, TypeK
                                 const char* callee_desc, int arg_index);
 void semantic_record_generic_requirement(Semantic* s, const char* param_name, TypeKind expected,
                                          int line, const char* callee);
-void semantic_check_generic_requirements(Semantic* s, const char* func_name, const char* param_name,
-                                         TypeInfo* actual, Ast* call_ast);
+//   `owner_struct`：需求属于 struct 方法时传 struct 名、否则传 NULL（与记录侧对称 ✓）
+void semantic_check_generic_requirements(Semantic* s, const char* owner_struct, const char* func_name,
+                                         const char* param_name, TypeInfo* actual, Ast* call_ast);
 void semantic_free_generic_requirements(Semantic* s);
 
 int type_utils_is_array_element_mutator(const char* method_name);

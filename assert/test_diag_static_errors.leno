@@ -1074,5 +1074,36 @@ main() { print(""ok="" + _str(user_ok(""中""))) }
 ")
     ce.expect_ok(g4, "泛型参数传给用户函数不得误伤", "ok=3")
 
+    // ---- F2：泛型 **struct 方法** 里的 native 调用（B 第二步，2026-10-02）----
+    //   方法自己的 AST 不带类型参数，`self.value` 的 T 来自**接收者 struct** ⇒ 需求按 (struct, 方法, T) 记，
+    //   在**方法调用点**用接收者的类型实参校验 ✓
+    var g6 = dirs.join(work, "generic_struct_native.leno")
+    files.write(g6, @"import strings
+struct Cell[T] {
+    T value
+    func bad():string { return strings.to_hex(self.value) }
+}
+main() {
+    Cell[int] c = new Cell[int](value=1)
+    print(c.bad())
+}
+")
+    ce.expect_error(g6, "struct 泛型：Cell[int] 调要求 string 的 native ⇒ 方法调用点报错",
+                    "泛型参数 'T' 的需求不满足", 8)
+
+    // 守卫④：同一个 struct 只以 string 实例化 ⇒ 合法（与 g5 对称 ✓）
+    var g7 = dirs.join(work, "generic_struct_native_ok.leno")
+    files.write(g7, @"import strings
+struct Cell[T] {
+    T value
+    func bad():string { return strings.to_hex(self.value) }
+}
+main() {
+    Cell[string] c = new Cell[string](value=""ab"")
+    print(c.bad())
+}
+")
+    ce.expect_ok(g7, "struct 泛型：Cell[string] 调同一方法 ⇒ 合法并跑通", "6162")
+
     print("=== test_diag_static_errors ALL passed ===")
 }

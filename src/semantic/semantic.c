@@ -143,6 +143,8 @@ void semantic_init(Semantic* s, Ast* root) {
     // ⚠ 泛型需求推断（B 方案）的三个字段**必须**在这里显式清零：本函数**不是**整体 memset
     //   （Semantic 是 main.c 的栈变量）⇒ 漏了就是读栈上垃圾 ⇒ 一调 native 检查点就段错误（实测 ✗）
     s->cur_generic_func = NULL;
+    s->cur_generic_struct = NULL;
+    s->cur_struct_method_name = NULL;
     s->reqs = NULL;
     s->req_count = 0;
     s->req_capacity = 0;

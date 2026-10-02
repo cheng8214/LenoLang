@@ -54,7 +54,8 @@ typedef struct {
 // ============================================================================
 
 typedef struct {
-    char* func_name;    // 需求属于哪个泛型函数（定义处函数名）
+    char* func_name;    // 需求属于哪个泛型函数 / **方法**（定义处函数名）
+    char* owner_struct; // 方法需求时的 struct 名；**函数需求为 NULL**（用于区分两类所有者 ✓）
     char* param_name;   // 类型参数名（如 "T"）
     TypeKind expected;  // native 形参要求的具体类型（如 TYPE_STRING）
     int line;           // 需求来源行（函数体内那一行，供调用点报错时指路）
@@ -84,6 +85,8 @@ typedef struct {
 
     // ---- 泛型需求推断（见上面 GenericRequirement 的说明块）----
     Ast* cur_generic_func;      // 当前正在检查的**泛型函数定义**（非泛型函数体内为 NULL）
+    Ast* cur_generic_struct;    // 当前正在检查其**方法体**的泛型 struct 定义（否则为 NULL）
+    char* cur_struct_method_name; // 上述方法体所属的**方法名**（需求要按 struct+方法 记 ✓；否则 NULL）
     GenericRequirement* reqs;   // 需求表（动态数组）
     int req_count;
     int req_capacity;
