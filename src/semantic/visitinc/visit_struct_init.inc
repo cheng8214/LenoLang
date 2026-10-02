@@ -174,9 +174,15 @@
                                 }
                                 if (struct_def_ast && struct_def_ast->u.struct_def.type_param_count > 0) {
                                     // 用具体类型替换泛型参数
+                                    // ⚠ 必须用 semantic_substitute_generic_param（**同时认两种表示**：
+                                    //   TYPE_GENERIC_PARAM，以及把注解 T 建成 TYPE_STRUCT + struct_name="T"
+                                    //   的占位形式），不能只用 type_substitute（只认前者 ✗）
+                                    //   实测（2026-10-03）：**struct 定义在使用之后**（前向引用）时字段类型是
+                                    //   占位形式 ⇒ 替换不生效 ⇒ 合法代码被拒：
+                                    //     new Cell[int](value=1) ⇒「字段 'value' 类型不匹配: 期望 'struct T'，实际 'int'」✗
                                     check_type = type_copy(expected_type);
                                     for (int gi = 0; gi < struct_def_ast->u.struct_def.type_param_count && gi < ast->u.struct_init.generic_type_count; gi++) {
-                                        TypeInfo* sub = type_substitute(check_type, 
+                                        TypeInfo* sub = semantic_substitute_generic_param(check_type,
                                             struct_def_ast->u.struct_def.type_params[gi],
                                             ast->u.struct_init.generic_type_args[gi]);
                                         type_free(check_type);

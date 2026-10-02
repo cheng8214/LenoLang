@@ -1157,5 +1157,22 @@ struct Cell[T] {
 ")
     ce.expect_error(g11, "调用在定义之前（struct 前向引用）⇒ 收尾仍要报出需求错", "需求不满足", 4)
 
+    // ---- F5：泛型 struct **前向引用**时，字段类型也要正确替换（2026-10-03）----
+    //   原先 visit_struct_init 用的是 type_substitute（只认 TYPE_GENERIC_PARAM），
+    //   而前向引用时字段类型是"TYPE_STRUCT 占位 T" ✗ ⇒ 合法代码被拒：
+    //     new Cell[int](value=1) ⇒「字段 'value' 类型不匹配: 期望 'struct T'，实际 'int'」✗
+    var g12 = dirs.join(work, "generic_struct_fwd_ok.leno")
+    files.write(g12, @"import strings
+main() {
+    Cell[string] c = new Cell[string](value=""ab"")
+    print(c.bad())
+}
+struct Cell[T] {
+    T value
+    func bad():string { return strings.to_hex(self.value) }
+}
+")
+    ce.expect_ok(g12, "struct 定义在使用之后 ⇒ 泛型字段替换仍要生效（合法用法不得被拒）", "6162")
+
     print("=== test_diag_static_errors ALL passed ===")
 }
