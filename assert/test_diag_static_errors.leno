@@ -1029,19 +1029,31 @@ main() {
     // ---- F1：泛型参数直接传给 **native** 形参（曾静默编过 ⇒ 运行期 0xC0000005 访存越界）----
     // 判据只加在 native 通道（C 侧 `val_as_obj/val_as_int` 是无校验盲转）；用户函数/字段/赋值不拦
     //   （那不是 UB —— Value 自带 tag，且定义处一刀切会误伤一片合法泛型代码，见测试里的两条守卫）
+    // B 方案（两段式需求推断）：**定义处不再报错** —— 改在**调用点**用推断出的类型实参校验 ✓
     var g1 = dirs.join(work, "generic_native_module.leno")
     files.write(g1, @"import strings
 func hexit[T](T x):string { return strings.to_hex(x) }
 main() { print(hexit(42)) }
 ")
-    ce.expect_error(g1, "泛型参数传给模块式 native 要报错", "泛型参数 'T' 的类型在编译期未知", 2)
+    ce.expect_error(g1, "模块式：T=int 喂给 native string 形参 ⇒ 调用点报错",
+                    "泛型参数 'T' 的需求不满足", 3)
 
     var g2 = dirs.join(work, "generic_native_instance.leno")
     files.write(g2, @"import strings
 func eqx[T](string s, T x):bool { return s.eq_ignore_case(x) }
-main() { print(_str(eqx(""ab"", ""AB""))) }
+main() { print(_str(eqx(""ab"", 42))) }
 ")
-    ce.expect_error(g2, "泛型参数传给实例式 native 要报错", "泛型参数 'T' 的类型在编译期未知", 2)
+    ce.expect_error(g2, "实例式：T=int 喂给 native string 形参 ⇒ 调用点报错",
+                    "泛型参数 'T' 的需求不满足", 3)
+
+    // 守卫③：**同一个泛型函数**只要所有调用点都满足需求就完全合法（B 的核心收益 ✓）
+    //   （这是"定义处一刀切"做不到的：那样 `hexit` 无论怎么调都不许编译 ✗）
+    var g5 = dirs.join(work, "generic_req_ok.leno")
+    files.write(g5, @"import strings
+func hexit[T](T x):string { return strings.to_hex(x) }
+main() { print(hexit(""中"")) }
+")
+    ce.expect_ok(g5, "同一函数只以 string 实例化 ⇒ 合法并跑通（B 的核心收益）", "e4b8ad")
 
     // 守卫①：容器元素 mutator（add/insert）是合法泛型写法（存 Value、不越界）⇒ 不得误伤
     var g3 = dirs.join(work, "generic_push_ok.leno")

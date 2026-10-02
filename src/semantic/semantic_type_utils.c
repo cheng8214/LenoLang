@@ -1395,31 +1395,139 @@ int type_utils_check_dict_index_assignment(Symbol* dict_sym, TypeInfo* assign_ty
 }
 
 // ============================================================================
-// 泛型参数 → native 形参（具体类型）：**必须拦**（2026-10-02）
+// 泛型参数 → native 形参：**两段式需求推断**（B 方案，2026-10-02）
 // ----------------------------------------------------------------------------
-// 为什么只在这里拦，而不是在 `type_is_compatible` 里全局收紧 `source == GENERIC_PARAM`：
+// 为什么不干脆在 `type_is_compatible` 里全局收紧 `source == GENERIC_PARAM`：
 //   · 本编译器**不做实例化后复查**泛型函数体 ⇒ 定义处一刀切会拒掉大量合法泛型代码
 //     （实测误伤 4 个用例：`identity[T](v)`、`new Result[T](data=val)`、
 //      `Array[int] out = stack.pop()`、struct 内 `value = v`）
-//   · 用户层"传错类型"只是**动态行为**（Value 自带 tag，不会越界）⇒ 不必在这里拦
+//   · 用户层"传错类型"只是**动态行为**（Value 自带 tag，且赋值/实参/返回会插**运行期转换**：
+//     实测 `to_str(42)` → "42"、`int y = "中"` 是可捕获抛错）⇒ 不构成 UB
 //   · 真正会**访存越界**的只有 native 边界：C 侧 `val_as_obj / val_as_int` 是无校验盲转 ✗
-// 实测（本轮）：`func hexit[T](T x):string { return strings.to_hex(x) }` + `hexit(42)`
-//   ⇒ 编译**通过**、运行期 `exit=0xC0000005`（int 的位型被当指针解引用）✗
-// 调用约定：容器的**元素 mutator**（add/insert/set）不要调本函数 —— 那是"存入"（Value 带 tag、
+// 实测（洞）：`func hexit[T](T x):string { return strings.to_hex(x) }` + `hexit(42)`
+//   ⇒ 编译通过、运行期 exit=0xC0000005 ✗
+// 两段式：
+//   ① 收集（本函数）：定义处把 native 形参的具体类型要求记到**当前泛型函数**头上，不报错
+//   ② 校验（semantic_check_generic_requirements）：调用点用推断出的类型实参判
+//   ⇒ `hexit("中")` 合法 ✓、`hexit(42)` 编译期报错 ✓（既准又不误伤）
+// 调用约定：容器的**元素 mutator**（add/insert/set）不要调用本函数 —— 那是"存入"（Value 带 tag、
 //   不越界），且泛型 push 是合法写法（`func push[T](Array[T] a, T v) { a.add(v) }` ✓）
-// 返回：1 = 已报错；0 = 不归本判据管（实参不是泛型参数 / 形参没声明类型）
-int semantic_reject_generic_arg_to_native(Ast* ast, TypeInfo* arg_type, TypeKind expected,
-                                          const char* callee_desc, int arg_index) {
-    if (!ast || !arg_type || arg_type->kind != TYPE_GENERIC_PARAM) return 0;
-    if (expected == TYPE_ANY) return 0;   // 形参未声明类型 ⇒ native 侧本来就不做类型假设
+// ⚠ 返回 1 时调用方**必须跳过后续的常规类型比较**：泛型参数有两种表示，其中"TYPE_STRUCT 占位 T"
+//   不被 `type_is_compatible` 的兜底规则认（那里只认 TYPE_GENERIC_PARAM）⇒ 不跳过就会在
+//   "记了需求"之后再报一遍常规错（实测：实例式 `s.eq_ignore_case(x)` ✗）
+// 返回：1 = 本实参已由需求机制接管（记了需求，或已就地兜底报错）⇒ 跳过常规比较
+//       0 = 不归本判据管（不是泛型参数 / 形参没声明类型 / "struct T" 但不是本函数的参数）⇒ 照常比较
+int semantic_native_arg_generic(Semantic* s, Ast* ast, TypeInfo* arg_type, TypeKind expected,
+                                const char* callee_desc, int arg_index) {
+    if (!ast || !arg_type || expected == TYPE_ANY) return 0;
+
+    // 只认"泛型参数"两种表示：TYPE_GENERIC_PARAM，或本编译器把注解 `T` 建成的
+    // TYPE_STRUCT + struct_name="T"（见 visit_expr.inc:1268 的注释）
+    int looks_generic = (arg_type->kind == TYPE_GENERIC_PARAM) ||
+                        (arg_type->kind == TYPE_STRUCT && arg_type->struct_name != NULL);
+    if (!looks_generic) return 0;
+
+    const char* nm = (arg_type->kind == TYPE_GENERIC_PARAM) ? arg_type->type_param_name
+                                                           : arg_type->struct_name;
+    if (!nm) return 0;
+
+    // ① 是**当前泛型函数**声明的类型参数 ⇒ 记需求，交给调用点判（本函数不报错，并**接管**该实参）
+    if (s && s->cur_generic_func) {
+        Ast* f = s->cur_generic_func;
+        for (int i = 0; i < f->u.func.type_param_count; i++) {
+            if (f->u.func.type_params[i] && strcmp(f->u.func.type_params[i], nm) == 0) {
+                semantic_record_generic_requirement(s, nm, expected, ast->line, callee_desc);
+                return 1;
+            }
+        }
+    }
+
+    // 兜底：不是当前泛型函数的类型参数（例如来自**泛型 struct 的方法体** / 外层闭包）⇒ 就地报错，
+    //   比"静默放过去"好（这类路径在调用点查不到 —— struct 泛型参数的绑定来自接收者，B 暂不覆盖 ✓）
+    if (arg_type->kind != TYPE_GENERIC_PARAM) return 0;   // "struct T" 但不是本函数的参数 ⇒ 交给常规比较
 
     char msg[BUFFER_MEDIUM];
     snprintf(msg, sizeof(msg),
              "泛型参数 '%s' 的类型在编译期未知，不能直接传给 %s 的第 %d 个参数（期望具体类型 '%s'）\n"
              "  提示: 先显式转换（_str() / _int() / as 具体类型），或把该调用放到具体类型上再做",
-             arg_type->type_param_name ? arg_type->type_param_name : "T",
-             callee_desc ? callee_desc : "native 方法", arg_index + 1,
+             nm, callee_desc ? callee_desc : "native 方法", arg_index + 1,
              type_kind_to_string(expected));
     error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
     return 1;
+}
+
+// ① 收集：记一条需求（按 函数+参数+期望类型 去重）
+void semantic_record_generic_requirement(Semantic* s, const char* param_name, TypeKind expected,
+                                         int line, const char* callee) {
+    if (!s || !s->cur_generic_func || !param_name) return;
+    const char* fname = s->cur_generic_func->u.func.name;
+    if (!fname) return;
+
+    for (int i = 0; i < s->req_count; i++) {
+        GenericRequirement* r = &s->reqs[i];
+        if (r->func_name && strcmp(r->func_name, fname) == 0 &&
+            r->param_name && strcmp(r->param_name, param_name) == 0 &&
+            r->expected == expected) {
+            return;   // 已有同一条需求 ✓
+        }
+    }
+    if (s->req_count >= s->req_capacity) {
+        int cap = s->req_capacity ? s->req_capacity * 2 : 16;
+        GenericRequirement* nr = (GenericRequirement*)realloc(s->reqs, sizeof(GenericRequirement) * cap);
+        if (!nr) return;   // 分配失败：静默跳过（后续调用点不校验 ⇒ 退回旧行为，不致命）
+        s->reqs = nr;
+        s->req_capacity = cap;
+    }
+    GenericRequirement* r = &s->reqs[s->req_count++];
+    r->func_name = strdup(fname);
+    r->param_name = strdup(param_name);
+    r->expected = expected;
+    r->line = line;
+    r->callee = callee ? strdup(callee) : NULL;
+}
+
+// ② 校验：调用点用推断出的类型实参逐条校验需求（func_name/param_name 精确匹配）
+void semantic_check_generic_requirements(Semantic* s, const char* func_name, const char* param_name,
+                                         TypeInfo* actual, Ast* call_ast) {
+    if (!s || !func_name || !param_name || !actual || !call_ast) return;
+    if (actual->kind == TYPE_ANY) return;   // 推断不出来 ⇒ 不判（与 face 约束校验同一口径 ✓）
+
+    for (int i = 0; i < s->req_count; i++) {
+        GenericRequirement* r = &s->reqs[i];
+        if (!r->func_name || !r->param_name) continue;
+        if (strcmp(r->func_name, func_name) != 0) continue;
+        if (strcmp(r->param_name, param_name) != 0) continue;
+
+        TypeInfo expected_ti;
+        memset(&expected_ti, 0, sizeof(expected_ti));
+        expected_ti.kind = r->expected;
+        int ok = (actual->kind == r->expected) ||
+                 (type_is_compatible(&expected_ti, actual) != 0);
+        if (ok) continue;
+
+        // 用超大缓冲：本消息拼了 5 个可能很长的片段（参数名/函数名/类型名/需求来源描述）✗
+        //   （用 BUFFER_MEDIUM 会被 GCC 判「可能截断」告警 ✓；仓库要求零告警）
+        char msg[BUFFER_XLARGE];
+        snprintf(msg, sizeof(msg),
+                 "泛型参数 '%s' 的需求不满足: %s 要求它兼容 '%s'"
+                 "（定义处第 %d 行把它用在了 %s 的 native 形参上），但这里推断出的是 '%s'\n"
+                 "  提示: 换满足该需求的类型实参，或先显式转换（_str() / _int() / as 具体类型）",
+                 param_name, func_name, type_kind_to_string(r->expected), r->line,
+                 r->callee ? r->callee : "native", type_kind_to_string(actual->kind));
+        error_add_at(ERR_SEMANTIC, call_ast->line, call_ast->column, msg);
+    }
+}
+
+// 清理需求表（语义分析收尾时调用）
+void semantic_free_generic_requirements(Semantic* s) {
+    if (!s || !s->reqs) return;
+    for (int i = 0; i < s->req_count; i++) {
+        free(s->reqs[i].func_name);
+        free(s->reqs[i].param_name);
+        free(s->reqs[i].callee);
+    }
+    free(s->reqs);
+    s->reqs = NULL;
+    s->req_count = 0;
+    s->req_capacity = 0;
 }

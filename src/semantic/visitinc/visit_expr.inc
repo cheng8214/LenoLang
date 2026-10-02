@@ -951,7 +951,10 @@
                                             if (!type_utils_is_array_element_mutator(method_name)) {
                                                 char callee[256];
                                                 snprintf(callee, sizeof(callee), "方法 '%s'", method_name);
-                                                semantic_reject_generic_arg_to_native(ast, arg_type, expected_param_type, callee, i);
+                                                if (semantic_native_arg_generic(s, ast, arg_type, expected_param_type, callee, i)) {
+                                                    if (arg_type) type_free(arg_type);
+                                                    continue;   // 已由需求机制接管 ⇒ 跳过常规比较（见该函数注释 ✓）
+                                                }
                                             }
 
                                             // 处理数组元素修改方法（add/insert）的类型更新
@@ -1074,7 +1077,10 @@
                                             if (!type_utils_is_dict_element_mutator(method_name)) {
                                                 char callee[256];
                                                 snprintf(callee, sizeof(callee), "方法 '%s'", method_name);
-                                                semantic_reject_generic_arg_to_native(ast, arg_type, expected_param_type, callee, i);
+                                                if (semantic_native_arg_generic(s, ast, arg_type, expected_param_type, callee, i)) {
+                                                    if (arg_type) type_free(arg_type);
+                                                    continue;   // 已由需求机制接管 ⇒ 跳过常规比较（见该函数注释 ✓）
+                                                }
                                             }
                                             
                                             // 类型检查：简单类型比较 kind，复杂类型使用 type_is_compatible 深度比较
@@ -1153,7 +1159,10 @@
                                             {
                                                 char callee[256];
                                                 snprintf(callee, sizeof(callee), "方法 '%s'", method_name);
-                                                semantic_reject_generic_arg_to_native(ast, arg_type, expected_param_type, callee, i);
+                                                if (semantic_native_arg_generic(s, ast, arg_type, expected_param_type, callee, i)) {
+                                                    if (arg_type) type_free(arg_type);
+                                                    continue;   // 已由需求机制接管 ⇒ 跳过常规比较（见该函数注释 ✓）
+                                                }
                                             }
 
                                             // 判据与模块通道/赋值通道**同一实现**（type_is_compatible）：
@@ -1689,6 +1698,16 @@
                             }
                         }
                         
+                        // ★ 泛型需求校验（B 方案，2026-10-02）：函数体内把 T 用在了 native 的**具体类型形参**上
+                        //   ⇒ 用这里**推断出的类型实参**逐条判（定义处判不了：T 未知）✓
+                        //   背景实测：`func hexit[T](T x){ return strings.to_hex(x) }` + `hexit(42)`
+                        //   以前编译通过、运行期 exit=0xC0000005（C 侧把 int 的位型当指针解引用 ✗）
+                        for (int i = 0; i < func_def->u.func.type_param_count; i++) {
+                            if (!inferred_types[i] || !inferred_names[i]) continue;
+                            semantic_check_generic_requirements(s, func_name, inferred_names[i],
+                                                                inferred_types[i], ast);
+                        }
+
                         // 存储特化信息
                         ast->u.call.generic_type_names = inferred_names;
                         ast->u.call.generic_type_args = inferred_types;

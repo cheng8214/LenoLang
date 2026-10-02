@@ -788,7 +788,10 @@
                         !type_utils_is_dict_element_mutator(method_name)) {
                         char callee[256];
                         snprintf(callee, sizeof(callee), "%s.%s", actual_module, method_name);
-                        semantic_reject_generic_arg_to_native(ast, arg_type, expected_type, callee, i);
+                        if (semantic_native_arg_generic(s, ast, arg_type, expected_type, callee, i)) {
+                            if (arg_type) type_free(arg_type);
+                            continue;   // 已由需求机制接管 ⇒ 跳过常规比较（见该函数注释 ✓）
+                        }
                     }
 
                     // ⚠ v3.2.7：**删掉了 `arg_type->kind != TYPE_ANY` 这层豁免**。
@@ -1724,7 +1727,10 @@
                                     !type_utils_is_dict_element_mutator(method_name)) {
                                     char callee[256];
                                     snprintf(callee, sizeof(callee), "方法 '%s'", method_name);
-                                    semantic_reject_generic_arg_to_native(ast, arg_type, expected_param_type, callee, i);
+                                    if (semantic_native_arg_generic(s, ast, arg_type, expected_param_type, callee, i)) {
+                                        if (arg_type) type_free(arg_type);
+                                        continue;   // 已由需求机制接管 ⇒ 跳过常规比较（见该函数注释 ✓）
+                                    }
                                 }
 
                                 // 处理数组/字典元素修改方法的类型更新和检查

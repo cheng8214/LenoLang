@@ -685,9 +685,17 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
         resolve_generic_in_ast(s, ast->u.func.body, ast->u.func.type_params, ast->u.func.type_param_constraints, ast->u.func.type_param_count);
     }
 
+    // ★ 泛型需求收集的上下文（B 方案，2026-10-02）：函数体内把 T 用在 native 的**具体类型形参**上时，
+    //   需求记到本函数头上（随后由**调用点**用类型实参校验 ✓）；非泛型函数体设为 NULL
+    //   ⇒ 那种情况下 native 检查点会退回"就地报错"的兜底（比静默放过去好 ✓）
+    Ast* saved_generic_func = s->cur_generic_func;
+    s->cur_generic_func = (ast->u.func.type_param_count > 0) ? ast : NULL;
+
     // 处理函数体（单遍完成所有分析）
     // 注意：使用 visit 而不是 visit_list，以确保 AST_BLOCK 的预扫描逻辑被执行
     visit(s, ast->u.func.body);
+
+    s->cur_generic_func = saved_generic_func;
 
     // 保存局部变量数量
     ast->u.func.local_count = s->local_index;

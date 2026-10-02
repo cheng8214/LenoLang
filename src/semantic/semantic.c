@@ -140,6 +140,12 @@ void semantic_init(Semantic* s, Ast* root) {
     s->in_clib = 0;
     s->has_module_load_failure = 0;
     s->in_main_func = 0;
+    // ⚠ 泛型需求推断（B 方案）的三个字段**必须**在这里显式清零：本函数**不是**整体 memset
+    //   （Semantic 是 main.c 的栈变量）⇒ 漏了就是读栈上垃圾 ⇒ 一调 native 检查点就段错误（实测 ✗）
+    s->cur_generic_func = NULL;
+    s->reqs = NULL;
+    s->req_count = 0;
+    s->req_capacity = 0;
 
     // 初始化 imported_modules 数组
     memset(s->imported_modules, 0, sizeof(s->imported_modules));
@@ -458,6 +464,7 @@ void semantic_cleanup(Semantic* s) {
     // 注意：AST 类型缓存在 AST 节点被释放时会自动清理
     // 这里只清理函数表和其他资源
     func_table_free(&s->func_table);
+    semantic_free_generic_requirements(s);   // 泛型需求表（B 方案，2026-10-02）
     
     for (int i = 0; i < s->imported_module_count; i++) {
         free(s->imported_modules[i].alias);
