@@ -33,6 +33,24 @@
                         resolve_generic_in_type(ast->u.struct_def.field_types[i],
                             ast->u.struct_def.type_params, ast->u.struct_def.type_param_constraints, ast->u.struct_def.type_param_count);
                     }
+                    // ★ 2026-10-03：**方法签名**也要解析（此前只解析了字段 ✗）
+                    //   不解析的后果：方法参数/返回里的 T 停在"TYPE_STRUCT 占位"表示、且**不带约束**
+                    //   —— 实测（调试打印）：`struct Cell[T: int]` 的方法体里 arg_cons=null、
+                    //     method_cons0=null，只有接收者声明表里有约束 ⇒ 只能靠各处兜底 ✗；
+                    //   解析后：`T` 统一成 TYPE_GENERIC_PARAM + constraint_name ✓
+                    //   （那一批"只认 TYPE_GENERIC_PARAM"的判据在方法参数上也因此受益 ✓）
+                    for (int mi = 0; mi < ast->u.struct_def.method_count; mi++) {
+                        Ast* ma = ast->u.struct_def.methods[mi];
+                        if (!ma || ma->kind != AST_FUNC_DEF) continue;
+                        for (int pi = 0; pi < ma->u.func.pcnt; pi++) {
+                            resolve_generic_in_type(ma->u.func.param_types[pi],
+                                ast->u.struct_def.type_params, ast->u.struct_def.type_param_constraints,
+                                ast->u.struct_def.type_param_count);
+                        }
+                        resolve_generic_in_type(ma->u.func.return_type,
+                            ast->u.struct_def.type_params, ast->u.struct_def.type_param_constraints,
+                            ast->u.struct_def.type_param_count);
+                    }
                 }
 
                 // 先验证所有字段类型是否有效（在注册 struct 之前）
