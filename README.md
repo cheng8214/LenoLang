@@ -1,14 +1,27 @@
 # Leno
 
+**简体中文** | [English](README_EN.md)
+
+![license](https://img.shields.io/badge/license-MIT-blue.svg)
+![platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)
+![build](https://img.shields.io/badge/build-build.bat%20%2F%20build.sh-success.svg)
+![impl](https://img.shields.io/badge/impl-C99-orange.svg)
+
 Leno 是一门**带静态类型检查的脚本语言** —— 由 C 实现，编译为字节码在虚拟机上运行。
 变量与类型一经确定不可更改；内置 GC、协程、多线程、FFI、包管理与字节码打包，
 也能直接写跨平台 GUI（自带 SDL3 模块）。
 
 Leno 诞生于对编程语言设计的热爱与探索，虽非完美，但乐在其中。
 
+<img src="docs/images/dashboard-main.png" width="880" alt="LenoSDL3 数据看板：侧栏布局 / 控件组合 / 折线图 / Canvas 自绘圆环">
+
+> 上图是 `leno_gui/应用/数据看板/` 的**真实运行截图**（用它的 `DSHOT` 无头截图钩子拍的，不是设计稿）——
+> 一份代码同时演示了布局驱动整页、侧栏导航切页、控件组合与 Canvas 自绘。
+> 跑起来：`build\leno.exe leno_gui\应用\数据看板\dashboard.leno`
+
 | | |
 | --- | --- |
-| 版本 | 1.0.0 |
+| 版本 | 0.1.0 |
 | 许可 | MIT |
 | 构建脚本 | Windows `build.bat` / Linux · macOS `build.sh` |
 | 仓库规模 | 内置模块 20 个 · SDL3 源文件 46 个 · 测试 469 文件 · 示例 1016 文件 · 文档 67 篇 |
@@ -306,6 +319,12 @@ main() {
 | `游戏/` | 6 个游戏：俄罗斯方块 / 飞机大战 / 扫雷 / 塔防 / 五子棋 / 植物大战僵尸 |
 | `特效/` | 烟花、代码雨、水波涟漪（含 Python 基准对照） |
 | `系统/` | 截图工具 + 全局热键 |
+
+同一份数据看板应用的其他三页（都是无头钩子实拍）：
+
+| 用量统计（表格 + 折线图） | 每日签到（`Calendar` 控件 + Canvas 圆环） | 设置（表单 / 开关 / 输入框） |
+| --- | --- | --- |
+| <img src="docs/images/dashboard-usage.png" width="270" alt="用量统计页"> | <img src="docs/images/dashboard-checkin.png" width="270" alt="每日签到页"> | <img src="docs/images/dashboard-settings.png" width="270" alt="设置页"> |
 
 渲染上有一处细节值得说明：SDL 的 2D 图元管线**不做抗锯齿**，所以圆角矩形与斜线
 改为「CPU 按覆盖率算好 alpha 写进纹理，GPU 只做采样」——平滑来自像素内容，不受光栅算法限制。
