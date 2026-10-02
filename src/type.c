@@ -1336,6 +1336,20 @@ TypeInfo* type_substitute(TypeInfo* type, const char* param_name, TypeInfo* conc
         return replaced;
     }
     
+    // ★ 第二种表示（2026-10-03 统一）：把注解 `T` 建成 TYPE_STRUCT + struct_name="T" 的**占位形式**。
+    //   本编译器有的构造路径会产生它（典型：泛型 struct 被**前向引用**时，字段/方法签名里的 T ✗），
+    //   而语义侧同一件事早有一个"两种都认"的助手 semantic_substitute_generic_param ⇒ 同一规则两处写 ✗
+    //   ⇒ 在这里补齐，让所有 type_substitute 调用点都不再踩这个坑（实测已踩两次：
+    //     ① visit_struct_init 的字段检查 ⇒ 合法代码被拒：
+    //        `new Cell[int](value=1)` 报「字段 value 类型不匹配: 期望 struct T，实际 int」✗
+    //     ② B 方案里判断"实参是否已由需求机制接管"）
+    if (type->kind == TYPE_STRUCT && type->struct_name &&
+        strcmp(type->struct_name, param_name) == 0) {
+        TypeInfo* replaced = type_copy(concrete);
+        if (replaced && type->nullable) replaced->nullable = 1;   // 同上面那条：别丢占位符的可空标记 ✓
+        return replaced;
+    }
+
     // 递归替换子类型
     TypeInfo* result = type_copy(type);
     if (result->element_type) {
