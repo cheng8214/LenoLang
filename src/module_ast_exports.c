@@ -1341,6 +1341,8 @@ static void ast_fill_one_face_meta(ModuleSymbolTable* table, Ast* fd) {
                     //   由 examples 全量扫描抓出：`test_generic_use_face.leno`）：
                     //   `face Comparable[T] { func compareTo(T other): int }` 里 `T` 在 AST 中是
                     //   **TYPE_STRUCT 占位**（struct_name="T"）⇒ 直接落表的话，
+                    //   ★ 2026-10-03 产生端根治：parser 的 face 声明现在会把 `T` 直接转成
+                    //     TYPE_GENERIC_PARAM ✓ ⇒ 这条占位兼容只兜**外部/旧缓存**来的 AST ✓
                     //   `semantic_type_utils.c:552` 的**跨模块 face 形参检查**会把它当真类型比：
                     //   「compareTo 第 1 个参数类型不匹配: 期望 struct T, 实际 int」✗
                     //   为什么这是 S10 回归：迁移前扫描器 `mod_resolve_param_type` 对**认不出的名字

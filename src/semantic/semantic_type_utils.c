@@ -469,6 +469,8 @@ int semantic_check_face_method_args(Semantic* s, const char* face_name, const ch
                     //   「compareTo 第 1 个参数类型不匹配: 期望 struct T, 实际 int」——
                     //   `T` 在 face AST 里被解析成 **TYPE_STRUCT 占位**（struct_name="T"），
                     //   而这里原先**只跳过 TYPE_GENERIC_PARAM** ⇒ 占位被当成真类型比对。
+                    //   ★ 2026-10-03 产生端根治后：AST 路径只产生 TYPE_GENERIC_PARAM ✓ ⇒ 下面的
+                    //     占位兜底只用于**跨模块缓存 / 外部符号表**里的旧内容 ✓
                     //   代入源 = **接收者的类型实参**（`Comparable[int]` 的 [int]），与 face 声明的
                     //   形参**按位置**对应（`Comparable[T]` ⇒ generic_args[0] ↔ T）。
                     TypeInfo* expected_owned = NULL;
@@ -1425,9 +1427,11 @@ TypeKind semantic_constraint_builtin_kind(const char* name) {
 //   ⇒ `hexit("中")` 合法 ✓、`hexit(42)` 编译期报错 ✓（既准又不误伤）
 // 调用约定：容器的**元素 mutator**（add/insert/set）不要调用本函数 —— 那是"存入"（Value 带 tag、
 //   不越界），且泛型 push 是合法写法（`func push[T](Array[T] a, T v) { a.add(v) }` ✓）
-// ⚠ 返回 1 时调用方**必须跳过后续的常规类型比较**：泛型参数有两种表示，其中"TYPE_STRUCT 占位 T"
-//   不被 `type_is_compatible` 的兜底规则认（那里只认 TYPE_GENERIC_PARAM）⇒ 不跳过就会在
-//   "记了需求"之后再报一遍常规错（实测：实例式 `s.eq_ignore_case(x)` ✗）
+// ⚠ 返回 1 时调用方**必须跳过后续的常规类型比较**：泛型参数存在"两种表示"的可能（TYPE_GENERIC_PARAM，
+//   或历史遗留的"TYPE_STRUCT + struct_name=T"占位），而 `type_is_compatible` 的兜底只认前者
+//   ⇒ 不跳过就会在"记了需求"之后再报一遍常规错（实测：实例式 `s.eq_ignore_case(x)` ✗）
+//   ★ 2026-10-03 产生端根治后：**AST 路径只产生 TYPE_GENERIC_PARAM**（parser 的 func/struct/face
+//     三处声明统一转换 ✓）；下面兼容占位的那条分支保留，只为兜住**跨模块缓存/外部符号表**里的旧内容 ✓
 // 返回：1 = 本实参已由需求机制接管（记了需求，或已就地兜底报错）⇒ 跳过常规比较
 //       0 = 不归本判据管（不是泛型参数 / 形参没声明类型 / "struct T" 但不是本函数的参数）⇒ 照常比较
 int semantic_check_native_arg(Semantic* s, Ast* ast, TypeInfo* arg_type, TypeKind expected,
@@ -1452,8 +1456,9 @@ int semantic_check_native_arg(Semantic* s, Ast* ast, TypeInfo* arg_type, TypeKin
         return 1;
     }
 
-    // 只认"泛型参数"两种表示：TYPE_GENERIC_PARAM，或本编译器把注解 `T` 建成的
-    // TYPE_STRUCT + struct_name="T"（见 visit_expr.inc:1268 的注释）
+    // 只认"泛型参数"：主路径是 TYPE_GENERIC_PARAM ✓；另兼容历史遗留的
+    // TYPE_STRUCT + struct_name="T" 占位 —— 2026-10-03 产生端根治后 **AST 路径不再产生它**，
+    // 这条兼容只为兜住**跨模块缓存/外部符号表**里的旧内容（见 type_substitute 同处说明 ✓）
     int looks_generic = (arg_type->kind == TYPE_GENERIC_PARAM) ||
                         (arg_type->kind == TYPE_STRUCT && arg_type->struct_name != NULL);
     if (!looks_generic) return 0;

@@ -174,10 +174,12 @@
                                 }
                                 if (struct_def_ast && struct_def_ast->u.struct_def.type_param_count > 0) {
                                     // 用具体类型替换泛型参数
-                                    // ⚠ 必须用 semantic_substitute_generic_param（**同时认两种表示**：
-                                    //   TYPE_GENERIC_PARAM，以及把注解 T 建成 TYPE_STRUCT + struct_name="T"
-                                    //   的占位形式），不能只用 type_substitute（只认前者 ✗）
-                                    //   实测（2026-10-03）：**struct 定义在使用之后**（前向引用）时字段类型是
+                                    // ⚠ 用 semantic_substitute_generic_param：它现在是 `type_substitute` 的**转发**
+                                    //   （2026-10-03 收编，唯一实现 ✓），两者都认 "TYPE_GENERIC_PARAM" 与历史遗留的
+                                    //   "TYPE_STRUCT + struct_name=T" 占位 ✓
+                                    //   ★ 同日起**产生端根治**：AST 路径只产生前者（parser 三处声明统一转换 ✓）
+                                    //     ⇒ 占位兼容只用来兜**跨模块缓存 / 外部符号表**里的旧内容 ✓
+                                    //   历史实测（2026-10-03）：**struct 定义在使用之后**（前向引用）时字段类型曾是
                                     //   占位形式 ⇒ 替换不生效 ⇒ 合法代码被拒：
                                     //     new Cell[int](value=1) ⇒「字段 'value' 类型不匹配: 期望 'struct T'，实际 'int'」✗
                                     check_type = type_copy(expected_type);

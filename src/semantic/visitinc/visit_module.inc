@@ -966,8 +966,9 @@
                                     //   此前模块函数符号只记了类型形参**数量** ⇒ `gm.makePair[string, int]("x", 10)`
                                     //   的静态类型停在 `Pair[K, V]`（占位符）⇒ `string k = p.getKey()`
                                     //   报「期望 string，实际 struct K」（实测）。
-                                    //   助手与 struct 方法侧**同一套**（`semantic_substitute_generic_param`，
-                                    //   它同时认 TYPE_GENERIC_PARAM 与 "TYPE_STRUCT 占位形参"）。
+                                    //   助手与 struct 方法侧**同一套**（`semantic_substitute_generic_param` ——
+                                    //   它现为 `type_substitute` 的转发，唯一实现 ✓；两者都认 TYPE_GENERIC_PARAM
+                                    //   与历史遗留的 "TYPE_STRUCT 占位形参" ✓ 而 AST 路径自 2026-10-03 起只产生前者 ✓）。
                                     //   形参名 ↔ 调用实参**按位置**对应（声明 `f[K, V]` 的顺序 = 实参顺序）。
                                     if (func_sym->type_param_count > 0 && func_sym->type_param_names &&
                                         ast->u.module_call.generic_type_args) {
@@ -1461,10 +1462,11 @@
                                                 TypeInfo* check_type = expected_type;
                                                 if (gp_count > 0) {
                                                     for (int gi = 0; gi < gp_count; gi++) {
-                                                        // ★ 用双形态替换（TYPE_GENERIC_PARAM + TYPE_STRUCT
-                                                        //   占位形参都认）：前向定义时方法参数里的 T 是
-                                                        //   "struct T" 占位，type_substitute 不认 ⇒ 残留
-                                                        //   占位会把 int 实参误判为不匹配
+                                                        // ★ 用双形态替换（TYPE_GENERIC_PARAM + 历史遗留的
+                                                        //   TYPE_STRUCT 占位形参都认）：前向定义时方法参数里的 T
+                                                        //   曾是 "struct T" 占位，残留占位会把 int 实参误判为不匹配
+                                                        //   （★ 2026-10-03 产生端根治后 AST 路径只产生前者 ✓，
+                                                        //     此处双形态只兜缓存/外部符号表的旧内容 ✓）
                                                         TypeInfo* sub = semantic_substitute_generic_param(check_type, gp_names[gi], gp_types[gi]);
                                                         // 首轮的 check_type 是 AST 拥有的 param_types[i]，
                                                         // 不能释放；之后的中间副本由这里释放

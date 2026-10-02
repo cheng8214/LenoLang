@@ -1336,13 +1336,16 @@ TypeInfo* type_substitute(TypeInfo* type, const char* param_name, TypeInfo* conc
         return replaced;
     }
     
-    // ★ 第二种表示（2026-10-03 统一）：把注解 `T` 建成 TYPE_STRUCT + struct_name="T" 的**占位形式**。
-    //   本编译器有的构造路径会产生它（典型：泛型 struct 被**前向引用**时，字段/方法签名里的 T ✗），
-    //   而语义侧同一件事早有一个"两种都认"的助手 semantic_substitute_generic_param ⇒ 同一规则两处写 ✗
-    //   ⇒ 在这里补齐，让所有 type_substitute 调用点都不再踩这个坑（实测已踩两次：
+    // ★ 第二种表示：把注解 `T` 建成 TYPE_STRUCT + struct_name="T" 的**占位形式**。
+    //   ⚠ 2026-10-03 **产生端根治**后，AST 路径不再产生它 —— parser 的 func / struct / face
+    //     三处声明会统一把类型参数转成 TYPE_GENERIC_PARAM（连带约束 ✓，见 parser_func.c 的
+    //     convert_to_generic_params 说明）；这里保留只为兜住**跨模块缓存 / 外部符号表**里的旧内容 ✓
+    //   历史（为什么必须有这条）：本编译器曾有多条构造路径产生占位，而语义侧同一件事早有一份
+    //   "两种都认"的副本 semantic_substitute_generic_param ⇒ 同一规则两处写 ⇒ 已踩两次坑：
     //     ① visit_struct_init 的字段检查 ⇒ 合法代码被拒：
     //        `new Cell[int](value=1)` 报「字段 value 类型不匹配: 期望 struct T，实际 int」✗
-    //     ② B 方案里判断"实参是否已由需求机制接管"）
+    //     ② B 方案里判断"实参是否已由需求机制接管"
+    //   （那份副本已收编为本函数的转发 ✓，见 semantic_substitute_generic_param）
     if (type->kind == TYPE_STRUCT && type->struct_name &&
         strcmp(type->struct_name, param_name) == 0) {
         TypeInfo* replaced = type_copy(concrete);
