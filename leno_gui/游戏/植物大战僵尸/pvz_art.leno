@@ -54,7 +54,12 @@ export func loadAnim(Renderer r, string file): Anim {
         return an
     }
     var src = files.read(animPath(file))
-    Array[string] lines = src.split("\n")
+    // ★ 2026-10-02：files.read 走二进制通道后**不再翻译行尾**（LENO_BIN_VERSION v3.2.9，
+    //   见 docs/module_files.md「字节保真」）⇒ CRLF 的 anim/*.txt 读出来每行尾都带 \r，
+    //   而 `_int("12\r")` / `_float("0.5\r")` 会抛"无法将字符串转换为整数/浮点数"（症状：
+    //   首帧 loadResources 里抛 ⇒ 被窗体的 try/catch 包成「渲染异常」直接退出）。
+    //   ⇒ 拆行前统一剥掉（库内同款写法：sdl_label / sdl_edit / sdl_tooltip / sys_parse）
+    Array[string] lines = src.replace("\r", "").split("\n")
     if lines.len() < 3 { return an }
 
     Array[string] fp = lines[0].split("=")
