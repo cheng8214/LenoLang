@@ -340,6 +340,17 @@ static inline int is_valid_obj_value(Value v) {
 }
 
 Value dict_get(ObjDict* dict, Value key) {
+    return dict_get_slot(dict, key, NULL);
+}
+
+// ★ 2026-10-03：一次查找同时给值与哈希槽位（唯一实现，dict_get 是它的包装 ✓）
+//   为什么要合并：VM 的字典内联缓存未命中后还要回填槽位，原先实现是
+//   `dict_get(...)`（查一遍）+ `dict_slot_for(...)`（再查一遍）⇒ 同一次访问**两次查找** ✗
+//   （实测最贵的是 str 键轮转访问：IC 单槽缓存必然 miss ⇒ 每次都吃两遍查找）
+//   语义与 dict_get 完全一致：数组部分优先（越界/洞 ⇒ 落哈希），值合法性过滤同口径 ✓
+//   out_slot 只在"命中哈希部分"时写槽位；数组部分/不存在 ⇒ 写 -1（与 dict_slot_for 同约定 ✓）
+Value dict_get_slot(ObjDict* dict, Value key, int* out_slot) {
+    if (out_slot) *out_slot = -1;
     if (!dict) return val_null();
 
     // 先检查数组部分
@@ -350,6 +361,8 @@ Value dict_get(ObjDict* dict, Value key) {
             if (!is_valid_obj_value(value)) return val_null();
             return value;
         }
+        // 洞 ⇒ 落到哈希（不变量：数组部分的键不会同时在哈希里 ⇒ 结果必为 null ✓）
+        //   ⚠ 但**不能**提前 return：下面统一 return val_null() 也行，这里保留原流程以免语义漂移
     }
 
     // 查哈希部分
@@ -358,6 +371,7 @@ Value dict_get(ObjDict* dict, Value key) {
     if (index >= 0) {
         Value value = dict->entries[index].value;
         if (!is_valid_obj_value(value)) return val_null();
+        if (out_slot) *out_slot = index;   // 命中哈希部分 ⇒ 可回填 IC ✓
         return value;
     }
     return val_null();

@@ -199,6 +199,28 @@
                 //   校验用**内容相等**（value_shallow_equal，与 dict_find_entry 同一判据）——
                 //   编译期字面量不在内化表里、两处 `"k"` 是两个对象，用 == 会永不命中 ✗。
                 ObjDict* dd = (ObjDict*)val_as_obj(obj);
+                // ★ 2026-10-03 快路径：**非负 int 键 → 字典的数组部分**（O(1) 直取，同 Lua 的 luaH_getint）。
+                //   为什么必须专门处理：IC 对这类键**结构性无效** —— 回填走 `dict_slot_for`，
+                //   而它对数组部分的键恒返回 -1（object_dict.c:184）⇒ 把 dic->dict 清空 ⇒
+                //   每次访问都"探 IC（必 miss）+ 跨 TU dict_get + 再 dict_slot_for" ✗
+                //   口径与 dict_get 的数组分支**逐条对齐**：越界 / 洞 ⇒ 落到下面（哈希里必然没有 ⇒ null ✓）；
+                //   值合法性过滤同 IC 命中路径（对象类型越界 ⇒ 视为不存在 ✓）
+                if (likely(val_is_int(idx))) {
+                    int64_t ii = val_as_int(idx);
+                    if (ii >= 0 && ii < dd->asize) {
+                        Value dv = dd->array[ii];
+                        if (!val_is_null(dv)) {
+                            R(a) = (!val_is_obj(dv) ||
+                                    (val_as_obj(dv)->type >= OBJ_STRING && val_as_obj(dv)->type < OBJ_NONE))
+                                       ? dv
+                                       : val_null();
+                            DISPATCH();
+                        }
+                    }
+                    // 越界 / 洞：数组部分不会有 ⇒ 结果必为 null（仍走下面统一取一次，保持单点语义 ✓）
+                    R(a) = dict_get_slot(dd, idx, NULL);
+                    DISPATCH();
+                }
                 InlineDictCacheEntry* dic =
                     &vm.ic_dict_cache[ic_cache_index(ip_before) & (IC_DICT_CACHE_SIZE - 1)];
                 if (likely(!dic->dead && dic->dict == dd && dic->slot >= 0 &&
@@ -215,16 +237,18 @@
                     DISPATCH();
                 }
                 vm.ic_misses++;
-                R(a) = dict_get(dd, idx);
+                // ★ 2026-10-03：改调 dict_get_slot —— 一次查找同时给值与槽位，
+                //   省掉原先 miss 之后**又查一遍**的 dict_slot_for（同一次访问两次查找 ✗）
+                int dslot = -1;
+                R(a) = dict_get_slot(dd, idx, &dslot);
                 if (!dic->dead && dic->miss_streak < IC_DICT_MISS_LIMIT) {
-                    int dslot = dict_slot_for(dd, idx);
                     if (dslot >= 0) {
                         dic->dict = dd;
                         dic->cap = (uint32_t)dd->capacity;
                         dic->slot = dslot;
                         dic->miss_streak++;
                     } else {
-                        dic->dict = NULL;   // 数组部分的键 / 键不存在 ⇒ 不缓存
+                        dic->dict = NULL;   // 键不存在 ⇒ 不缓存
                     }
                 } else if (!dic->dead) {
                     dic->dead = 1;   // 键在轮换 ⇒ 永久放弃（理由见 OP_INDEX_SET 处的注释）
@@ -525,6 +549,23 @@
                 //   `d[k]=v` 原先每次都要走 dict_set 那 5~8 层跨 TU 调用。
                 ObjDict* dd = (ObjDict*)val_as_obj(obj);
                 Value nv2 = R(a);
+                // ★ 2026-10-03 快路径：**非负 int 键 → 数组部分**。IC 对这类键结构性无效
+                //   （`dict_slot_for` 对数组部分的键恒 -1 ⇒ 回填时把 dic->dict 清空 ⇒ 每次必 miss ✗）
+                //   ⇒ 直接处理、不探 IC、不回填：
+                //     ① 槽位**已有非 null 值**（键已存在）⇒ 直写数组 + 写屏障 —— 与 dict_set 的
+                //        "更新现有键"分支逐条等价（`is_new = val_is_null(...)` 为假 ⇒ 不动 acount、
+                //        不记插入顺序 ✓）
+                //     ② 否则（新键 / 越界 / 洞）⇒ 交给 dict_set（要判稀疏、扩容、acount++、记插入顺序 ✓）
+                if (likely(val_is_int(idx))) {
+                    int64_t ii = val_as_int(idx);
+                    if (ii >= 0 && ii < dd->asize && !val_is_null(dd->array[ii])) {
+                        dd->array[ii] = nv2;
+                        gc_write_barrier((Object*)dd, nv2);
+                        DISPATCH();
+                    }
+                    dict_set(dd, idx, nv2);
+                    DISPATCH();
+                }
                 InlineDictCacheEntry* dic =
                     &vm.ic_dict_cache[ic_cache_index(ip_before) & (IC_DICT_CACHE_SIZE - 1)];
                 if (likely(!dic->dead && dic->dict == dd && dic->slot >= 0 &&

@@ -900,6 +900,11 @@ static inline Value arr_read(ObjArray* arr, int index) {
 ObjDict* dict_new(int capacity);
 void dict_set(ObjDict* dict, Value key, Value value);
 Value dict_get(ObjDict* dict, Value key);
+// ★ 2026-10-03：一次查找同时给出**值**与"哈希部分槽位"（-1 = 不在哈希部分：数组部分的键 / 不存在）。
+//   为什么加它：VM 的字典 IC 未命中路径原先要"dict_get 查一遍 + dict_slot_for 再查一遍"——
+//   同一次访问两次查找 ✗（实测 str 键轮转访问时这条最贵）。dict_get 现在是它的包装 ✓
+//   out_slot 传 NULL 表示不需要槽位 ✓
+Value dict_get_slot(ObjDict* dict, Value key, int* out_slot);
 int dict_has(ObjDict* dict, Value key);
 void dict_delete(ObjDict* dict, Value key);
 void dict_try_shrink(ObjDict* dict);
