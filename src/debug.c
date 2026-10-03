@@ -189,7 +189,7 @@ static void dbg_const_str(Chunk* chunk, int idx, char* buf, int buf_size) {
 //   OP_CLIB_CALL      1 字节返回类型 + min(nargs,12) 个参数类型     (gen_clib_call)
 //   OP_CFUNC_CALLBACK 1+1 字节头 + pcnt 个参数类型                 (gen_module_call/ffi.callback)
 //   OP_TYPE_CHECK     / OP_AS_CAST：需要名字的类型再 +2 字节常量索引 (emit_type_op)
-//   OP_FOR_PREP       / OP_FOR_LOOP：定长 8 字节（含 sBx16）        (gen_for 系列)
+//   OP_FOR_PREP       / OP_FOR_LOOP：定长 9 字节（含 sBx16 + flags） (gen_for 系列)
 //   EXTRAARG 前缀：常量索引为 0 时紧随 4 字节（iAx）——
 //     OP_CALL_NATIVE(B=0) / OP_MODULE_CALL(B=0) / OP_GET_METHOD(C=0)
 //     （对应 VM 的 READ_CONST_IDX；这里用"下一条是不是 OP_EXTRAARG"做保险）
@@ -390,11 +390,17 @@ static int decode_trailing(Chunk* chunk, int offset, char* desc, size_t desc_siz
             break;
         }
         case OP_FOR_PREP: {
+            int a_val = (int)chunk->code[offset + 1];   // A 字段：槽位号 或 int8 立即数
             int var = dbg_take_u8(chunk, base, &p, &over);
             int inclusive = dbg_take_u8(chunk, base, &p, &over);
             int sbx = dbg_take_u16(chunk, base, &p, &over) - 32768;   // 与 patch_sbx_at 同约定
-            if (desc) snprintf(desc, desc_size, "循环变量槽位=%d inclusive=%d sBx=%d (跳过体 → %d)",
-                               var, inclusive, sbx, offset + 8 + sbx);
+            int step_slot = dbg_take_u8(chunk, base, &p, &over);       // 步长槽位（立即数形式下由 PREP 物化）
+            int flags = dbg_take_u8(chunk, base, &p, &over);           // bit0/bit1 = A/C 是 int8 立即数
+            if (desc) snprintf(desc, desc_size,
+                               "循环变量槽位=%d inclusive=%d sBx=%d (跳过体 → %d) 起始=%s%d 步长=%s%d(槽%d)",
+                               var, inclusive, sbx, offset + 10 + sbx,
+                               (flags & 1) ? "imm " : "slot ", (int)(int8_t)a_val,
+                               (flags & 2) ? "imm " : "slot ", (int)(int8_t)c, step_slot);
             break;
         }
         case OP_FOR_LOOP: {
@@ -684,9 +690,10 @@ static void disasm_self_check(Chunk* chunk, const char* name) {
             int bx = ((int)chunk->code[off + 2] << 8) | (int)chunk->code[off + 3];
             target = off + bx;
         } else if (op == OP_FOR_PREP || op == OP_FOR_LOOP) {
-            // 偏移编码为 sbx+32768（见 patch_sbx_at）
+            // 偏移编码为 sbx+32768（见 patch_sbx_at）。两条指令长度**不同**：
+            //   FOR_PREP = 10 字节（…sBx + step_slot + flags）、FOR_LOOP = 8 字节（回边零改动）
             int sbx = (((int)chunk->code[off + 6] << 8) | chunk->code[off + 7]) - 32768;
-            target = off + 8 + sbx;
+            target = off + ((op == OP_FOR_PREP) ? 10 : 8) + sbx;
         }
         if (target >= 0 && target != chunk->len && target < chunk->len) {
             if (!is_start[target]) {

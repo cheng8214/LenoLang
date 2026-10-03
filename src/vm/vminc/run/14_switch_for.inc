@@ -1,29 +1,43 @@
     LABEL(OP_SWITCH_LOOKUP): DISPATCH();
 
     // --- for 数值循环（8 字节定长网格；与栈式 op_for_loop.inc 语义一致）---
-    // OP_FOR_PREP: op + A(start_slot) + B(end_slot) + C(step_slot)
-    //              + [var_slot:u8][inclusive:u8][sBx:u16]           （共 8 字节）
+    // OP_FOR_PREP: op + A(start：槽位 或 int8 立即数) + B(end_slot) + C(step：槽位 或 int8 立即数)
+    //              + [var_slot:u8][inclusive:u8][sBx:u16][flags:u8]   （共 9 字节）
     //   局部变量槽位号即寄存器号（每个 slot 独立，不要求连续）
+    //   flags：bit0 = A 字段是 int8 立即数（起始值）；bit1 = C 字段是 int8 立即数（步长）
+    //          ⇒ 立即数形式下那两个字段**不是槽位号**：越界检查与取值都按 flags 分支 ✓
     LABEL(OP_FOR_PREP): {
-        int start_slot = READ_A();
+        int start_field = READ_A();
         int end_slot = READ_B();
-        int step_slot = READ_C();
+        int step_field = READ_C();
         int var_slot = frame->ip[0];
         int inclusive = frame->ip[1];
         int sbx = (((int)frame->ip[2] << 8) | (int)frame->ip[3]) - 32768;
-        frame->ip += 4;
+        int step_slot = frame->ip[4];
+        int flags = frame->ip[5];
+        frame->ip += 6;
 
-        if (unlikely(start_slot >= frame->local_count || end_slot >= frame->local_count ||
-                     step_slot >= frame->local_count || var_slot >= frame->local_count ||
-                     start_slot < 0 || end_slot < 0 || step_slot < 0 || var_slot < 0)) {
+        int start_is_imm = (flags & 1) != 0;
+        int step_is_imm = (flags & 2) != 0;
+
+        // 槽位越界检查：立即数那两个字段不参与（它们不是槽位号）；step_slot 始终是槽位 ✓
+        if (unlikely(end_slot >= frame->local_count || var_slot >= frame->local_count ||
+                     step_slot >= frame->local_count ||
+                     end_slot < 0 || var_slot < 0 || step_slot < 0 ||
+                     (!start_is_imm && (start_field >= frame->local_count || start_field < 0)))) {
             if (!throw_runtime_error("for 循环槽位越界", GET_CURRENT_LINE())) return -1;
             frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH();
         }
 
-        Value start_val = frame->locals[start_slot];
+        Value start_val = start_is_imm ? val_int((int64_t)(int8_t)start_field)
+                                       : frame->locals[start_field];
         Value end_val = frame->locals[end_slot];
-        Value step_val = frame->locals[step_slot];
+        Value step_val = step_is_imm ? val_int((int64_t)(int8_t)step_field)
+                                     : frame->locals[step_field];
+        // ★ 步长立即数在**入口**物化进它自己的槽：FOR_LOOP 的回边因此可以照旧读槽、
+        //   零额外代价（最初那版让回边每轮分支取立即数，实测空循环 +7~8%，已改掉）
+        if (step_is_imm) frame->locals[step_slot] = step_val;
         frame->locals[var_slot] = start_val;
 
         // ★ 计数制快路径（借鉴 Lua 5.5 的 forprep，lvm.c:214-265）：
@@ -80,8 +94,12 @@
         }
         DISPATCH();
     }
-    // OP_FOR_LOOP: op + A(var_slot) + B(step_slot) + C(end_slot)
-    //              + [inclusive:u8][pad:u8][sBx:u16]                （共 8 字节）
+    // OP_FOR_LOOP: op + A(var_slot) + B(step_slot) + C(计数槽)
+    //              + [inclusive:u8][pad:u8][sBx:u16]                  （共 8 字节）
+    //   ★ 回边保持原样（8 字节、步长恒从槽里读）：步长立即数由 FOR_PREP 在入口物化进槽。
+    //     教训（2026-10-03）：曾让本指令也带 flags、每轮在回边分支取立即数 —— 实测把
+    //     空循环拖慢 7~8%（分布不重叠）。回边是循环里最热的路径，任何"每轮多一个分支"
+    //     都得先算清账，宁可把代价挪到入口。
     LABEL(OP_FOR_LOOP): {
         int var_slot = READ_A();
         int step_slot = READ_B();

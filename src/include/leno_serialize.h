@@ -160,7 +160,14 @@
 //   但**仍必须 bump** —— 新字节码含旧构建不认识的 opcode，而旧构建会按 magic+version 校验通过、
 //   直接加载并跳转发散（0xC0000005）。判据与先例同 v3.2.0（新增 OP_INDEX_SET_ARRAY_INT）✓
 //   ⇒ LENO_MODCACHE_VERSION 同步升（模块字节码里同样含 opcode）。
-#define LENO_BIN_VERSION    0x0003020F  // v3.2.15 - 复合赋值（`x += expr` 等）按静态类型选特化
+#define LENO_BIN_VERSION    0x00030210  // v3.2.16 - OP_FOR_PREP / OP_FOR_LOOP 各加一个 flags 字节
+                                        //   （8 → 9 字节）：起止/步长是小整数字面量时**直接编进
+                                        //   指令字段**，省掉每次进循环的那两条 LOADI
+                                        //   （`for N` 4 条 → 2 条、`for 1 {}` 4 条 → 2 条）。
+                                        //   **同源码发射的指令序列与长度都变了** ⇒ 旧产物虽仍可跑
+                                        //   但既不省指令、长度表也对不上（反汇编/校验会错位）
+                                        //   ⇒ 整体失效重编译 ✓（判据同 v3.2.12）
+                                        // v3.2.15 - 复合赋值（`x += expr` 等）按静态类型选特化
                                         //   算子（原先非立即数路径一律通用 OP_ADD/SUB/MUL/DIV ✗）。
                                         //   **判据同 v3.2.12**：同源码发射的指令序列变了
                                         //   （`x += b` 从 `MOV+OP_ADD` 变成 `OP_ADD_F`）⇒ 旧产物
@@ -286,7 +293,10 @@
 // v13：ObjFunction 增加 is_async（运行期判定"调用即建协程"用）。旧缓存里的函数对象缺这个
 //      字段 ⇒ async 函数的**间接调用**（`var f = w; f()`、当参数传、绑定方法）会退回同步执行、
 //      静默错值，所以必须**作废旧缓存**。
-#define LENO_MODCACHE_VERSION  0x0000001F  // v31 - 同 LENO_BIN_VERSION v3.2.15（复合赋值按
+#define LENO_MODCACHE_VERSION  0x00000020  // v32 - 同 LENO_BIN_VERSION v3.2.16（OP_FOR_PREP /
+                                            //   OP_FOR_LOOP 各加 flags 字节 ⇒ 模块 chunk 里
+                                            //   同样含这两条指令）⇒ 同判据整体失效重编译 ✓
+                                            // v31 - 同 LENO_BIN_VERSION v3.2.15（复合赋值按
                                             //   静态类型选特化算子）
                                             // v30 - 同 LENO_BIN_VERSION v3.2.14（新增
                                             //   OP_INDEX_SET_ARRAY_IMM）

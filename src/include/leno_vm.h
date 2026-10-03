@@ -218,11 +218,21 @@ typedef enum {
     // --- switch ---
     OP_SWITCH_LOOKUP,   // iABx  switch 查找
 
-    // --- for 数值循环（寄存器块：R[A]=start, R[A+1]=end, R[A+2]=step, R[A+3]=var）---
-    // 两条指令均为 iABC + 紧随 2 字节 sBx（与 CLOSURE 一样，是"指令 + 附加数据"）：
-    //   OP_FOR_PREP A B C : R[A+3] = R[A]；初始条件不满足则 ip += sBx（跳过循环体）
-    //   OP_FOR_LOOP A B C : R[A+3] += R[A+2]；仍满足条件则 ip += sBx（负值 = 回跳）
-    //   B = inclusive（1 = 包含结束值）
+    // --- for 数值循环 ---
+    // OP_FOR_PREP A B C + [var_slot:u8][inclusive:u8][sBx:u16][step_slot:u8][flags:u8] = 10 字节
+    //   A = 起始值槽位（flags.bit0=1 时该字段**直接是 int8 立即数**）
+    //   B = 上界槽位（**始终是槽位**：本指令把"剩余迭代次数"写回该槽，见计数制快路径）
+    //   C = 步长槽位（flags.bit1=1 时该字段**直接是 int8 立即数**）
+    //   step_slot = 步长的**真实槽位**（立即数形式下由 PREP 在入口把立即数写进它）；
+    //   var_slot  = 循环变量槽位；初始条件不满足 ⇒ ip += sBx（跳过循环体）
+    // OP_FOR_LOOP A B C + [inclusive:u8][pad:u8][sBx:u16] = 8 字节（**回边零改动**）
+    //   A = 循环变量槽位；B = 步长槽位（恒读槽）；C = 计数槽（= PREP 的 B）
+    //   每轮：变量 += 步长；计数 > 0 ⇒ ip += sBx（负值 = 回跳）
+    // ★ 立即数化只为省掉"每次进循环那 2 条 LOADI"（`for N` 4 条 → 2 条、`for 1 {}` 4 条 → 2 条）。
+    //   ⚠ 代价一律放在**入口**：最初那版让 FOR_LOOP 也带 flags、每轮在回边分支取立即数 ——
+    //     实测空循环 +7~8%（分布不重叠）⇒ 已改成"入口物化进槽、回边照旧读槽"。
+    //   ⚠ 超出 int8（-128..127）的起止/步长照旧走槽位形式（codegen 侧判）。
+    //   sBx 仍在尾随数据的第 3..4 字节（patch_sbx_at 的偏移不变）✓
     OP_FOR_PREP,
     OP_FOR_LOOP,
 

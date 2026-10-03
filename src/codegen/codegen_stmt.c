@@ -725,17 +725,40 @@ static void gen_for(CodeGen* gen, Ast* ast) {
     if (mx + 1 > gen->next_reg) gen->next_reg = mx + 1;
     if (gen->next_reg > gen->max_reg) gen->max_reg = gen->next_reg;
 
-    // 起止/步长求值到各自的槽位
+    // ★ 2026-10-03：起始/步长是**小整数字面量**（含缺省：起始 0 / 步长 1）时不再发 LOADI，
+    //   而是把立即数编进 FOR_PREP / FOR_LOOP 的字段（flags 位标记，格式见 leno_vm.h）——
+    //   每进一次循环省 2 条派发（`for N` 4 条 → 2 条、`for 1 {}` 4 条 → 2 条）。
+    //   被调函数里的小循环每次调用都要重跑这几条 ⇒ 对"短循环 × 海量调用"最划算。
+    //   范围取 int8（-128..127）：0 / 1 / -1 这些常见写法全覆盖；超范围原样回落槽位形式。
+    //   ⚠ 立即数形式下 A/C 字段**不再是槽位号**，所以 VM 侧那两个槽位越界检查要按 flags 跳过；
+    //     步长槽位也不再被 FOR_LOOP 读取（它同样带 flags）⇒ 不写它是对的。
+    //   ⚠ 高水位记账在上面（用语义分配的槽位）已经做完，这里改的是"发射形式"，不影响 local_count ✓
+    int start_imm_val = 0, step_imm_val = 1;
+    int for_flags = 0;
     if (ast->u.for_.start) {
-        gen_expr_to(gen, ast->u.for_.start, start_slot);
+        Ast* se = ast->u.for_.start;
+        if (se->kind == AST_NUM && !se->u.num.is_float && !se->u.num.is_bigint &&
+            se->u.num.value >= -128.0 && se->u.num.value <= 127.0) {
+            start_imm_val = (int)se->u.num.value;
+            for_flags |= 1;                      // bit0：A 字段是 int8 立即数
+        } else {
+            gen_expr_to(gen, se, start_slot);
+        }
     } else {
-        emit_loadi_to(gen, start_slot, 0, ast->line);
+        for_flags |= 1;                          // 无 start ⇒ 立即数 0
     }
     gen_expr_to(gen, ast->u.for_.end, end_slot);
     if (ast->u.for_.step) {
-        gen_expr_to(gen, ast->u.for_.step, step_slot);
+        Ast* st = ast->u.for_.step;
+        if (st->kind == AST_NUM && !st->u.num.is_float && !st->u.num.is_bigint &&
+            st->u.num.value >= -128.0 && st->u.num.value <= 127.0) {
+            step_imm_val = (int)st->u.num.value;
+            for_flags |= 2;                      // bit1：C 字段是 int8 立即数（槽位照旧存在）
+        } else {
+            gen_expr_to(gen, st, step_slot);
+        }
     } else {
-        emit_loadi_to(gen, step_slot, 1, ast->line);
+        for_flags |= 2;                          // 无 step ⇒ 立即数 1
     }
 
     int has_loop_var = ast->u.for_.var_name != NULL;
@@ -751,19 +774,27 @@ static void gen_for(CodeGen* gen, Ast* ast) {
     gen->loop_head = node;
     gen->loop_count++;
 
-    // OP_FOR_PREP: op + start + end + step + [var, inclusive, sBx16] = 8 字节
+    // OP_FOR_PREP: op + A(起始：槽位 或 int8 立即数) + B(end 槽位) + C(步长：槽位 或 int8 立即数)
+    //              + [var_slot, inclusive, sBx16, step_slot, flags] = 10 字节
+    //   step_slot 始终写进去：立即数形式下由 VM 在**入口**把它物化进该槽
+    //   ⇒ FOR_LOOP 照旧每轮读槽，回边一行都不用改（见 leno_vm.h 的格式说明）
     int prep_pos = gen->chunk->len;
-    reg_encode_iABC(gen->chunk, OP_FOR_PREP, start_slot, end_slot, step_slot, ast->line);
+    reg_encode_iABC(gen->chunk, OP_FOR_PREP,
+                    (for_flags & 1) ? start_imm_val : start_slot, end_slot,
+                    (for_flags & 2) ? step_imm_val : step_slot, ast->line);
     chunk_write(gen->chunk, (uint8_t)(var_slot & 0xFF), ast->line);
     chunk_write(gen->chunk, (uint8_t)inclusive, ast->line);
     chunk_write(gen->chunk, 0, ast->line);
     chunk_write(gen->chunk, 0, ast->line);
+    chunk_write(gen->chunk, (uint8_t)(step_slot & 0xFF), ast->line);
+    chunk_write(gen->chunk, (uint8_t)for_flags, ast->line);
 
     int body_start = gen->chunk->len;
 
     if (ast->u.for_.body) gen_stmt(gen, ast->u.for_.body);
 
-    // OP_FOR_LOOP: op + var + step + end + [inclusive, pad, sBx16] = 8 字节
+    // OP_FOR_LOOP: op + var + step(槽位) + end(= 计数槽) + [inclusive, pad, sBx16] = 8 字节
+    //   ★ 本指令**保持 8 字节、回边零改动**：步长立即数由 FOR_PREP 在入口物化进槽
     int loop_insn = gen->chunk->len;
     reg_encode_iABC(gen->chunk, OP_FOR_LOOP, var_slot, step_slot, end_slot, ast->line);
     chunk_write(gen->chunk, (uint8_t)inclusive, ast->line);
@@ -778,8 +809,8 @@ static void gen_for(CodeGen* gen, Ast* ast) {
         patch_jmp_to(gen, node->ctx.continue_jumps[i], loop_insn);
     }
 
-    // FOR_PREP 的前跳：初始条件不满足时跳过整个循环
-    patch_sbx_at(gen, prep_pos + 6, gen->chunk->len - (prep_pos + 8));
+    // FOR_PREP 的前跳：初始条件不满足时跳过整个循环（本指令 10 字节）
+    patch_sbx_at(gen, prep_pos + 6, gen->chunk->len - (prep_pos + 10));
 
     for (int i = 0; i < node->ctx.break_count; i++) {
         patch_jmp(gen, node->ctx.break_jumps[i]);
