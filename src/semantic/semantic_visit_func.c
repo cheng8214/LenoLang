@@ -613,6 +613,17 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
     s->func_stack[s->func_stack_depth++] = ast;
     s->current_func = ast;
     s->local_index = ast->u.func.pcnt;
+
+    // ★ 槽位回收：本函数（层级 = func_stack_depth-1）的记账初始化。
+    //   func_pinned 初值 = pcnt：**参数槽位 0..pcnt-1 不得被回退复用**（它们整个函数期内有效，
+    //   且可能被闭包捕获）；func_max_index 初值同样 = pcnt（参数也是寄存器高水位的一部分）。
+    //   ⚠ 这两个数组按层级各存一份：分析内层函数时外层函数的状态是"挂起"的，
+    //     各自的计数器/钉住下界必须分开记账（内层捕获外层槽位时写的是外层那一格）。
+    if (s->func_stack_depth > 0 && s->func_stack_depth <= 64) {
+        int lv = s->func_stack_depth - 1;
+        s->func_pinned[lv] = ast->u.func.pcnt;
+        s->func_max_index[lv] = ast->u.func.pcnt;
+    }
     
     // 创建单一函数作用域（同时包含参数和局部变量）
     Scope* func_scope = scope_new(s->current, 1);
@@ -698,7 +709,16 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
     s->cur_generic_func = saved_generic_func;
 
     // 保存局部变量数量
-    ast->u.func.local_count = s->local_index;
+    //   ★ 必须是**历史最高水位**（func_max_index），不能取 local_index 的当前值：
+    //     槽位回收（语句/作用域边界回退）后当前值会比真实用到的最高槽位小 ⇒
+    //     codegen 的临时寄存器起点（codegen_func.c 里 base_reg 取 func->local_count）
+    //     偏低 ⇒ 临时值盖掉变量（静默错值）。
+    {
+        int lv = sem_local_level(s);
+        int hw = s->func_max_index[lv];
+        if (hw < s->local_index) hw = s->local_index;   // 保险：至少覆盖当前位置
+        ast->u.func.local_count = hw;
+    }
 
     // 恢复状态
     s->current = func_scope->parent;

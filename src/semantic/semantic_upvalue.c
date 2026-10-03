@@ -4,10 +4,37 @@
 // Upvalue 管理
 // ============================================================================
 
+// 当前正在分析的函数在 func_max_index / func_pinned 里的下标（顶层代码没有函数 ⇒ 0）
+int sem_local_level(Semantic* s) {
+    return s->func_stack_depth > 0 ? s->func_stack_depth - 1 : 0;
+}
+
 // 在函数作用域中分配局部变量索引
+//   ★ 槽位回收：local_index 现在**可回退**（见 sem_local_release），所以这里必须同时记
+//     历史高水位 —— func->local_count 只能取高水位（回退后的当前值会偏小 ⇒ codegen 的
+//     临时寄存器起点偏低 ⇒ 临时值盖掉变量，静默错值）。
 int allocate_local_index(Semantic* s) {
     int idx = s->local_index++;
+    int lv = sem_local_level(s);
+    if (s->local_index > s->func_max_index[lv]) s->func_max_index[lv] = s->local_index;
     return idx;
+}
+
+// 槽位回收标记：在**语句/作用域开始处**取，结束处交给 sem_local_release 回退。
+//   返回当前计数器，本身不做任何修改（回退时机由调用方负责）。
+int sem_local_mark(Semantic* s) {
+    return s->local_index;
+}
+
+// 槽位回收：把计数器回退到 max(mark, 该函数"钉住下界")，只降不升。
+//   ⚠ 钉住下界的来源：被闭包**按引用捕获**的槽位（upvalue 持有 frame->locals+slot 裸指针）
+//     —— 它们必须独占槽位到函数结束，否则闭包读到的是后来复用该槽位的变量的值。
+//   ⚠ 只用于"该范围内分配的槽位此刻都已失效"的边界：语句结束（for/if/switch/try 的隐藏槽位）
+//     或控制结构体作用域结束。**变量声明本身不可回收**（它在本块内后续仍可读）。
+void sem_local_release(Semantic* s, int mark) {
+    int floor = s->func_pinned[sem_local_level(s)];
+    int target = mark > floor ? mark : floor;
+    if (target < s->local_index) s->local_index = target;
 }
 
 // 查找导入的模块信息
@@ -232,6 +259,19 @@ Symbol* resolve_variable_with_upvalue(Semantic* s, const char* name, SymRef* ref
         is_value_capture = is_value_capture;
     }
     
+    // ★ 槽位回收（寄存器号 8 位上限）
+    //   按**引用**捕获（is_value_capture=0）⇒ 闭包持有 &frame->locals[slot]：该槽位必须钉住到
+    //   **定义它的那个函数**结束，否则被复用后闭包读到的是后来变量的值。
+    //   值捕获（循环体内定义 ⇒ is_value_capture=1）在建立闭包时就把值拷进 uv->closed，
+    //   不持有槽位指针 ⇒ 不需要钉住（这也是循环里每轮重新创建闭包的语义基础）。
+    //   ⚠ 钉住记账必须记在**定义该变量的函数层级**（start_level）上：此刻 s 正在分析内层
+    //     函数，s->local_index 是内层的计数器，记错层会污染内层函数的回收下界。
+    if (upvalue_added && !is_value_capture && target_sym->index >= 0) {
+        int lv = (start_level >= 0 && start_level < 64) ? start_level : 0;
+        int need = target_sym->index + 1;
+        if (need > s->func_pinned[lv]) s->func_pinned[lv] = need;
+    }
+
     // 只有实际建立了 upvalue 链，才设置为 SYM_UPVALUE
     // 否则保持原始类型（局部变量或参数）
     if (upvalue_added) {

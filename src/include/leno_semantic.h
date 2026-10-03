@@ -91,6 +91,18 @@ typedef struct {
     Ast* func_stack[64]; // 函数栈，用于处理多层嵌套闭包
     int func_stack_depth; // 函数栈深度
     int local_index;    // 全局局部变量索引计数器（所有作用域共享）
+    // ---- 槽位回收（寄存器号只有 8 位 ⇒ 必须让计数器能回退）----
+    //   local_index 现在**可升可降**：语句/作用域结束、且该范围内分配的槽位都已失效时回退。
+    //   下面两个数组按**函数层级**（= func_stack 下标）各存一份，因为嵌套函数分析期间
+    //   外层函数的状态被挂起，必须分别记账：
+    //   func_max_index[lv] —— 该函数槽位计数器的**历史最高水位**（只升不降）；
+    //     它是 func->local_count 的来源，**不能**用 local_index 的当前值（回退后会偏小 ⇒
+    //     codegen 的临时寄存器起点偏低 ⇒ 临时值覆盖变量）。
+    //   func_pinned[lv]    —— 该函数里"**不许复用**"的槽位下界：凡被闭包**按引用捕获**
+    //     （真 upvalue，is_value_capture=0）的槽位，upvalue 持有 `frame->locals + slot` 的
+    //     裸指针，槽位被复用就会读到别的变量的值。回退目标取 max(标记, 该下界)。
+    int func_max_index[64];
+    int func_pinned[64];
     ImportedModuleInfo imported_modules[64];  // 导入的模块信息表
     int imported_module_count;  // 导入的模块数量
     int is_module;      // 是否为模块模式

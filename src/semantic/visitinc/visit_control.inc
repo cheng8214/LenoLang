@@ -1,4 +1,9 @@
         case AST_IF: {
+            // ★ 槽位回收（寄存器号 8 位上限）：if 语句内分配的槽位在语句结束全部失效
+            //   —— `=>` 绑定槽位、then/else 体内的局部变量都算在内 ⇒ 记标记、末尾回退。
+            //   回退下界受"被闭包按引用捕获的槽位"约束（见 sem_local_release）。
+            int _mark_if = sem_local_mark(s);
+
             // D2: 条件位置出现赋值（`if x = 5`）几乎总是漏写 '='（想写 ==）。
             // 赋值表达式会把值写入变量并以该值作为条件——静默通过是 C 语言经典坑。
             if (ast->u.if_.cond && (ast->u.if_.cond->kind == AST_ASSIGN ||
@@ -27,7 +32,7 @@
                     } else {
                         pre_bind_sym->type = type_new(TYPE_ANY);
                     }
-                    pre_bind_sym->index = s->local_index++;
+                    pre_bind_sym->index = allocate_local_index(s);
                     pre_bind_sym->is_initialized = 1;
                     ast->u.if_.guard_bind_index = pre_bind_sym->index;
                 }
@@ -427,7 +432,7 @@
                         if (ast->u.if_.guard_bind_index >= 0) {
                             bind_sym->index = ast->u.if_.guard_bind_index;
                         } else {
-                            bind_sym->index = s->local_index++;
+                            bind_sym->index = allocate_local_index(s);
                             ast->u.if_.guard_bind_index = bind_sym->index;
                         }
                         bind_sym->is_initialized = 1;
@@ -543,10 +548,13 @@
             if (if_type) {
                 type_free(if_type);
             }
+            sem_local_release(s, _mark_if);   // ★ 槽位回收：见 case 开头的说明
             break;
         }
             
         case AST_WHILE: {
+            // ★ 槽位回收：while 体内声明的局部变量在本语句结束即失效
+            int _mark_while = sem_local_mark(s);
             // D2: 条件位置出现赋值（`while x = next()`）——while 有读行惯用法属合法，
             // 但仍提示，避免漏写 '=' 被静默吞掉。
             if (ast->u.while_.cond && (ast->u.while_.cond->kind == AST_ASSIGN ||
@@ -571,10 +579,18 @@
                     scope_free(while_scope);
                 }
             }
+            sem_local_release(s, _mark_while);   // ★ 槽位回收：见 case 开头的说明
             break;
         }
 
         case AST_FOR: {
+            // ★ 槽位回收（寄存器号 8 位上限）：这是**收益最大的一处** —— 一个 for 循环固定
+            //   吃掉 5 个槽位（loop_var/end/step/start/counter，见下面 601-605 行）+ 可选的索引
+            //   变量槽位，且这些隐藏槽位在循环结束后全部失效。此前计数器只升不降 ⇒
+            //   一个函数里 30 个 for 循环就白占 150 个寄存器号（正是"寄存器高水位被声明量顶爆"
+            //   的主因）。这里记标记、语句末尾回退 ⇒ 后续语句（含下一个 for）复用这些号。
+            int _mark_for = sem_local_mark(s);
+
             // D3: for 头的 'x in arr'（Python 遍历习惯）语法上是条件循环——in 是成员测试
             // 运算符，x 需是已定义的外部变量。人类几乎总想写遍历，给出写法指引。
             Ast* for_cond = ast->u.for_.end ? ast->u.for_.end : ast->u.for_.start;
@@ -703,10 +719,15 @@
                     scope_free(for_scope);
                 }
             }
+            sem_local_release(s, _mark_for);   // ★ 槽位回收：见 case 开头的说明
             break;
         }
 
         case AST_SWITCH: {
+            // ★ 槽位回收：case 的 `is T => name` 绑定槽位、解构槽位、各 case 体内声明的
+            //   局部变量都在本语句结束失效 ⇒ 记标记、末尾回退。
+            int _mark_switch = sem_local_mark(s);
+
             visit(s, ast->u.switch_.expr);
 
             for (int i = 0; i < ast->u.switch_.case_count; i++) {
@@ -777,7 +798,7 @@
                         ast->u.switch_.cases[i].guard_bind_var, SYM_LOCAL);
                     if (bind_sym) {
                         bind_sym->type = type_copy(ast->u.switch_.cases[i].match_type);
-                        bind_sym->index = s->local_index++;
+                        bind_sym->index = allocate_local_index(s);
                         bind_sym->is_initialized = 1;
                         ast->u.switch_.cases[i].guard_bind_index = bind_sym->index;
                     }
@@ -812,7 +833,7 @@
                                 Symbol* dvar = scope_define(s->current, var_name, SYM_LOCAL);
                                 if (dvar) {
                                     dvar->type = type_copy(struct_def_sym->struct_field_types[di]);
-                                    dvar->index = s->local_index++;
+                                    dvar->index = allocate_local_index(s);
                                     dvar->is_initialized = 1;
                                     ast->u.switch_.cases[i].destructure_indices[di] = dvar->index;
                                 }
@@ -852,5 +873,6 @@
                     scope_free(default_scope);
                 }
             }
+            sem_local_release(s, _mark_switch);   // ★ 槽位回收：见 case 开头的说明
             break;
         }

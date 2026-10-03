@@ -134,6 +134,14 @@ void semantic_init(Semantic* s, Ast* root) {
     s->current_func = NULL;
     s->func_stack_depth = 0;
     s->local_index = 0;
+    // ★ 槽位回收的两个记账数组**必须显式清零**：本函数不是整体 memset（Semantic 是 main.c
+    //   的栈变量，见上面泛型字段那段同样的教训）⇒ 漏清就是读栈上垃圾：
+    //   func_pinned 为垃圾 ⇒ 回退下界错 ⇒ 槽位被误复用（闭包读到别的变量的值）；
+    //   func_max_index 为垃圾 ⇒ func->local_count 取到垃圾值。
+    for (int _i = 0; _i < 64; _i++) {
+        s->func_max_index[_i] = 0;
+        s->func_pinned[_i] = 0;
+    }
     s->imported_module_count = 0;
     s->is_module = 0;
     s->is_lsp_mode = 0;

@@ -81,6 +81,12 @@ int semantic_check_face_method_args(Semantic* s, const char* face_name, const ch
 // ============================================================================
 int allocate_local_index(Semantic* s);
 
+// 槽位回收（寄存器号 8 位上限；实现见 semantic_upvalue.c）:
+//   local_index 可回退 ⇒ 语句/作用域边界用 sem_local_mark/sem_local_release 成对回收。
+int sem_local_level(Semantic* s);              // 当前函数在 func_max_index/func_pinned 里的下标
+int sem_local_mark(Semantic* s);               // 取回收标记（语句/作用域开始处）
+void sem_local_release(Semantic* s, int mark); // 回退到 max(mark, 钉住下界)
+
 // ============================================================================
 // 前置声明 - upvalue 管理
 // ============================================================================

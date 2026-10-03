@@ -1,0 +1,135 @@
+// 槽位回收（寄存器号 8 位上限）回归测试
+//   背景：局部变量槽位计数器原先**只升不降** —— 一个 for 循环固定吃掉 5 个槽位
+//   （loop_var/end/step/start/counter，见 src/semantic/visitinc/visit_control.inc），
+//   语句结束也不回收 ⇒ 函数寄存器高水位被“声明量”顶到 8 位上限（255）之外，
+//   编译期直接报「寄存器号超出 8 位上限」（A=257 …）。
+//   修复：语句/作用域边界回退计数器；被闭包**按引用捕获**的槽位钉住、不许复用。
+//   两个用例都要求**大量循环**才能触发：60 个循环 = 300 个槽位 ⇒ 回收前必然编译失败。
+
+// ① 300 个槽位必须编得过、且算对
+func manyLoops(): int {
+    var total = 0
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    for 3 { total++ }
+    return total
+}
+
+// ② 引用捕获的槽位必须钉住：captured 被闭包按引用捕获后，后面还有 20 个循环会复用槽位 ——
+//    钉住失效则 captured 被后续变量覆盖 ⇒ 读到错值（read() != 114 或 later 被改掉）。
+func pinnedCapture(): int {
+    var acc = 0
+    for 3 { acc++ }
+    for 3 { acc++ }
+    for 3 { acc++ }
+    for 3 { acc++ }
+    for 3 { acc++ }
+    for 3 { acc++ }
+    for 3 { acc++ }
+    for 3 { acc++ }
+    for 3 { acc++ }
+    for 3 { acc++ }
+    for 3 { acc++ }
+    for 3 { acc++ }
+    for 3 { acc++ }
+    for 3 { acc++ }
+    for 3 { acc++ }
+    for 3 { acc++ }
+    for 3 { acc++ }
+    for 3 { acc++ }
+    for 3 { acc++ }
+    for 3 { acc++ }
+    var captured = 100
+    func bump() { captured = captured + 7 }
+    func read() { return captured }
+    for 3 { acc++ }
+    for 3 { acc++ }
+    for 3 { acc++ }
+    for 3 { acc++ }
+    for 3 { acc++ }
+    for 3 { acc++ }
+    for 3 { acc++ }
+    for 3 { acc++ }
+    for 3 { acc++ }
+    for 3 { acc++ }
+    for 3 { acc++ }
+    for 3 { acc++ }
+    for 3 { acc++ }
+    for 3 { acc++ }
+    for 3 { acc++ }
+    for 3 { acc++ }
+    for 3 { acc++ }
+    for 3 { acc++ }
+    for 3 { acc++ }
+    for 3 { acc++ }
+    var later = 5
+    bump()
+    bump()
+    assert(read() == 114)
+    assert(acc == 120)
+    assert(later == 5)
+    return 1
+}
+
+main() {
+    assert(manyLoops() == 180)
+    assert(pinnedCapture() == 1)
+}
+

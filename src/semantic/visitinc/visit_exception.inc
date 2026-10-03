@@ -1,4 +1,8 @@
         case AST_TRY: {
+            // ★ 槽位回收（寄存器号 8 位上限）：catch 变量槽位、try/catch/finally 体内声明的
+            //   局部变量都在本语句结束失效 ⇒ 记标记、末尾回退。
+            int _mark_try = sem_local_mark(s);
+
             // 访问 try 体（创建独立子作用域）
             {
                 Scope* try_scope = scope_new(s->current, 0);
@@ -75,6 +79,7 @@
                     scope_free(finally_scope);
                 }
             }
+            sem_local_release(s, _mark_try);   // ★ 槽位回收：见 case 开头的说明
             break;
         }
 
