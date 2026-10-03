@@ -1753,7 +1753,8 @@ void gen_compound_assign(CodeGen* gen, Ast* ast) {
         Ast* v = ast->u.compound_assign.value;
         if (v && v->kind == AST_NUM && !v->u.num.is_float && !v->u.num.is_bigint) {
             double dv = v->u.num.value;
-            if (dv >= -128.0 && dv <= 127.0 && dv == (double)(int)dv) {
+            // T33：同口径 —— 8 字节指令 + 尾随字承载 int32，范围放到 int32 全域
+            if (dv >= -2147483648.0 && dv <= 2147483647.0 && dv == (double)(int)dv) {
                 imm_fast = 1;
                 imm_val = (int)dv;
             }
