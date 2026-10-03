@@ -938,23 +938,59 @@ char* lsp_uri_to_path(const char* uri) {
     return result;
 }
 
+// URI path 段里**不必转义**的字符：unreserved（RFC 3986 §2.3）+ '/' 分隔符 + ':'（盘符）。
+//   ':' 必须保留：lsp_uri_to_path 靠 `file:///C:/…` 里第 3 个字符是 ':' 来识别 Windows 绝对路径
+//   （严格按 RFC 8089 盘符本应编码成 %3A，但本仓库两侧都认这一种，改了反而两边不一致）。
+static int lsp_uri_keep(unsigned char c) {
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+           c == '-' || c == '.' || c == '_' || c == '~' || c == '/' || c == ':';
+}
+
+// 路径 → file:// URI（RFC 8089）
+//   Windows: `C:\a b\中文.leno` ⇒ `file:///C:/a%20b/%E4%B8%AD%E6%96%87.leno`
+//   POSIX  : `/home/x/a b.leno` ⇒ `file:///home/x/a%20b.leno`
+//   ⚠ 旧实现是 `sprintf("file:///%s", path)`：
+//     ① 反斜杠原样塞进 URI、且零百分号编码 —— 路径里有空格/中文/`#`/`%` 时给出去的就是**非法 URI**
+//        （本仓库自己的路径就常带中文与空格：`D:\CLeno\Leno\examples\性能测试\…`）；
+//     ② `malloc(strlen + 8)` 在 Windows 分支少算 1 字节（前缀 "file:///" 8 字符 + NUL = +9）⇒ 越界写 1 字节。
 char* lsp_path_to_uri(const char* path) {
     if (!path) return NULL;
-    
+
     // 检查是否已经是 URI
     if (strncmp(path, "file://", 7) == 0) {
         return strdup(path);
     }
-    
-    // 构建 file:// URI
-    char* uri = (char*)malloc(strlen(path) + 8);
+
+    static const char* PFX = "file:///";
+    size_t pl = strlen(path);
+    // 最坏情况：每个字节都编码成 %XX ⇒ 3 倍；再留前缀与 NUL
+    char* uri = (char*)malloc(pl * 3 + strlen(PFX) + 1);
     if (!uri) return NULL;
-    
-    #ifdef _WIN32
-    sprintf(uri, "file:///%s", path);
-    #else
-    sprintf(uri, "file://%s", path);
-    #endif
-    
+
+    static const char HEX[] = "0123456789ABCDEF";
+    size_t o = 0;
+#ifdef _WIN32
+    // file:/// + "C:/…"（三个斜杠：主机名空 + 绝对路径）
+    memcpy(uri, PFX, strlen(PFX));
+    o = strlen(PFX);
+#else
+    // POSIX 的绝对路径本身以 '/' 开头 ⇒ file:// + "/home/…" = file:///home/…（同样是三斜杠）
+    memcpy(uri, "file://", 7);
+    o = 7;
+#endif
+    for (size_t i = 0; i < pl; i++) {
+        unsigned char c = (unsigned char)path[i];
+#ifdef _WIN32
+        if (c == '\\') c = '/';     // RFC 3986 的 path 分隔符只有 '/'，反斜杠必须转
+#endif
+        if (lsp_uri_keep(c)) {
+            uri[o++] = (char)c;
+        } else {
+            uri[o++] = '%';
+            uri[o++] = HEX[c >> 4];
+            uri[o++] = HEX[c & 0x0F];
+        }
+    }
+    uri[o] = '\0';
     return uri;
 }
