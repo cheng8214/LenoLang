@@ -172,6 +172,10 @@
     LABEL(OP_CMPJMP_LE): CMPJMP_IMPL(<=)
     LABEL(OP_CMPJMP_GT): CMPJMP_IMPL(>)
     LABEL(OP_CMPJMP_GE): CMPJMP_IMPL(>=)
+    // T31：等值比较也进融合族。`!=` **复用同一条**（codegen 翻转 C 的极性位）✓
+    //   宏对任意 int 比较器都成立；安全性由 codegen 的判据保证（两侧静态类型都是 int
+    //   ⇒ 不可能是 null ⇒ 与上面四条完全同口径）。
+    LABEL(OP_CMPJMP_EQ): CMPJMP_IMPL(==)
 #undef CMPJMP_IMPL
 
     // 语义与 OP_*_INT 完全一致：左值为 null ⇒ 结果 false（立即数本身不可能为 null）。

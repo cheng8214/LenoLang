@@ -160,7 +160,21 @@
 //   但**仍必须 bump** —— 新字节码含旧构建不认识的 opcode，而旧构建会按 magic+version 校验通过、
 //   直接加载并跳转发散（0xC0000005）。判据与先例同 v3.2.0（新增 OP_INDEX_SET_ARRAY_INT）✓
 //   ⇒ LENO_MODCACHE_VERSION 同步升（模块字节码里同样含 opcode）。
-#define LENO_BIN_VERSION    0x00030212  // v3.2.18 - `return <非裸变量>` 也直落返回寄存器（T30：
+// v3.2.19（2026-10-03）：新增 opcode **OP_CMPJMP_EQ**（等值比较 + 条件跳转融合，T31）——
+//   `if i == 500` 原先 `LOADI + 通用 OP_EQ + JMP_IF_FALSE` **3 条**，现在 **1 条** ✓
+//   （`!=` 复用同一条，靠 C 的极性位翻转；不需要新 opcode）。
+//   **opcode 集合变了**：按惯例**追加在枚举末尾**（既有 opcode 编号全部不变 ⇒ 旧 .lenb
+//   在新 VM 上照旧可跑），但**仍必须 bump** —— 新字节码含旧构建不认识的 opcode，而旧构建
+//   会按 magic+version 校验通过、直接加载并跳转发散（0xC0000005）。判据与先例同 v2.6.0
+//   （新增 OP_CMPJMP_LI_INT，同样是追加在末尾仍 bump）/ v3.2.0。
+//   ⚠ 本条给以后的自己留一句：OP_CMPJMP_EQ **不在** `OP_CMPJMP_LT..OP_CMPJMP_GE` 的编号
+//     区间里（它是末尾追加）⇒ codegen_emit.c 的 `instr_bytes_at` / `patch_common` 那两处
+//     **区间判断必须单独加它** ✗ 漏了会按 4 字节算、把跳距写进错误的字节（本文档反复
+//     警告过的那类坑）。本轮已补 ✓
+//   ⇒ LENO_MODCACHE_VERSION 同步升（模块字节码里同样含 opcode）。
+#define LENO_BIN_VERSION    0x00030213  // v3.2.19 - 新增 OP_CMPJMP_EQ（`==` 进 CMPJMP 融合族；
+                                        //   `!=` 复用同一条、翻转极性位）
+                                        // v3.2.18 - `return <非裸变量>` 也直落返回寄存器（T30：
                                         //   与"带析构"那条路径逐字同口径，省掉一条 MOV）。
                                         //   判据同 v3.2.12：指令序列变了 ⇒ 整体失效重编译 ✓
                                         // v3.2.17 - 复合赋值右值是裸变量时直取寄存器（T29：
@@ -299,7 +313,10 @@
 // v13：ObjFunction 增加 is_async（运行期判定"调用即建协程"用）。旧缓存里的函数对象缺这个
 //      字段 ⇒ async 函数的**间接调用**（`var f = w; f()`、当参数传、绑定方法）会退回同步执行、
 //      静默错值，所以必须**作废旧缓存**。
-#define LENO_MODCACHE_VERSION  0x00000022  // v34 - 同 LENO_BIN_VERSION v3.2.18（T30：return
+#define LENO_MODCACHE_VERSION  0x00000023  // v35 - 同 LENO_BIN_VERSION v3.2.19（新增
+                                            //   OP_CMPJMP_EQ ⇒ opcode 集合变了，模块字节码
+                                            //   也必须整体失效重编译）
+                                            // v34 - 同 LENO_BIN_VERSION v3.2.18（T30：return
                                             //   直落返回寄存器）
                                             // v33 - 同 LENO_BIN_VERSION v3.2.17（T29：复合赋值
                                             //   右值裸变量直取寄存器）

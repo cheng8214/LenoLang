@@ -90,6 +90,7 @@ static const char* opCodeNames[] = {
     "OP_TYPE_CHECK_SPEC", "OP_AS_CAST_SPEC",
     "OP_INDEX_DICT_INT", "OP_INDEX_SET_DICT_INT",
     "OP_INDEX_SET_ARRAY_IMM",
+    "OP_CMPJMP_EQ",        // T31：== 比较+跳转融合（!= 复用同一条，翻转 C 的极性位）
     "OP_OPCODE_COUNT",
     };
 
@@ -416,7 +417,9 @@ static int decode_trailing(Chunk* chunk, int offset, char* desc, size_t desc_siz
         case OP_CMPJMP_LT:
         case OP_CMPJMP_LE:
         case OP_CMPJMP_GT:
-        case OP_CMPJMP_GE: {
+        case OP_CMPJMP_GE:
+        case OP_CMPJMP_EQ: {   // T31：与上面四条同布局（8 字节，第二个字带 16 位偏移）
+
             int bx = dbg_take_u16(chunk, base, &p, &over);
             dbg_take_u16(chunk, base, &p, &over);   // 第二个字的另外 2 字节是填充
             if (desc) {
@@ -681,7 +684,8 @@ static void disasm_self_check(Chunk* chunk, const char* name) {
             int bx = ((int)chunk->code[off + 2] << 8) | (int)chunk->code[off + 3];
             target = off + 4 + (bx - 32768);
         } else if (op == OP_CMPJMP_LT || op == OP_CMPJMP_LE ||
-                   op == OP_CMPJMP_GT || op == OP_CMPJMP_GE || op == OP_CMPJMP_ITER) {
+                   op == OP_CMPJMP_GT || op == OP_CMPJMP_GE ||
+                   op == OP_CMPJMP_EQ || op == OP_CMPJMP_ITER) {
             // 融合指令占 8 字节：偏移在第二个字的前 2 字节（相对"本指令之后"，即 off+8）
             int bx = ((int)chunk->code[off + 4] << 8) | (int)chunk->code[off + 5];
             target = off + 8 + (bx - 32768);

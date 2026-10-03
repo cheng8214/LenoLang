@@ -208,6 +208,7 @@ int try_emit_cmpjmp(CodeGen* gen, Ast* cond, int want_true, int line) {
     if (disabled < 0) disabled = getenv("LENO_NO_CMPJMP") ? 1 : 0;
     if (disabled) return -1;
 
+
     if (!cond || cond->kind != AST_BINOP) return -1;
     Ast* l = cond->u.binop.l;
     Ast* r = cond->u.binop.r;
@@ -221,8 +222,15 @@ int try_emit_cmpjmp(CodeGen* gen, Ast* cond, int want_true, int line) {
         case TOK_LE: op = OP_CMPJMP_LE; break;
         case TOK_GT: op = OP_CMPJMP_GT; break;
         case TOK_GE: op = OP_CMPJMP_GE; break;
+        // T31：`==` / `!=` 也进融合族 —— 与上面四条**同判据**（本函数开头已确认两侧
+        //   cached_type 都是 TYPE_INT ⇒ 不可能是 null ⇒ 融合指令的语义与 OP_EQ_INT 等价 ✓）。
+        //   `!=` 只是把极性位翻过来，**不需要新 opcode** ✓
+        //   动机（dump 实证的不对称）：`if i < 500` 2 条，而 `if i == 500` 3 条 ✗
+        case TOK_EQEQ: op = OP_CMPJMP_EQ; break;
+        case TOK_NEQ:  op = OP_CMPJMP_EQ; want_true = !want_true; break;
         default: return -1;
     }
+
 
     // 左操作数：普通局部变量 / 参数 ⇒ 直接用它的寄存器（既有快路，一个寄存器都不分配）。
     //   ★ ⑤-ad 放宽：其余形态（下标 `arr[j]`、字段访问、`right-left` 这类算术子表达式、

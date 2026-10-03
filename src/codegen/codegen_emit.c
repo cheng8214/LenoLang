@@ -348,7 +348,10 @@ int emit_iter_cmpjmp(CodeGen* gen, int idx_reg, int obj_reg, int pre_inc, int wa
 // 跳转偏移的算法必须按**指令自身长度**扣（`len - pos - size`），用错尺寸会写出错误的跳距。
 static int instr_bytes_at(Chunk* chunk, int pos) {
     uint8_t op = chunk->code[pos];
+    //   ⚠ OP_CMPJMP_EQ（T31）是**末尾追加**的 ⇒ **不在** LT..GE 这个编号区间里，
+    //     必须单独列 ✗ 漏了会按 4 字节算 ⇒ 跳距写错（本文档反复警告过的那类坑）。
     if (op >= (uint8_t)OP_CMPJMP_LT && op <= (uint8_t)OP_CMPJMP_GE) return 8;
+    if (op == (uint8_t)OP_CMPJMP_EQ) return 8;             // T31：等值融合，同样 8 字节
     if (op == (uint8_t)OP_CMPJMP_ITER) return 8;           // 第二个字 = 16 位跳转偏移
     if (op == (uint8_t)OP_INVOKE_METHOD_TYPED) return 8;   // 第二个字 = 方法名/类型名常量
     return 4;
@@ -389,6 +392,7 @@ static void patch_common(CodeGen* gen, int pos, int offset) {
         gen->chunk->code[pos + 2] = (uint8_t)(((uint32_t)offset >> 8) & 0xFF);
         gen->chunk->code[pos + 3] = (uint8_t)((uint32_t)offset & 0xFF);
     } else if ((op >= (uint8_t)OP_CMPJMP_LT && op <= (uint8_t)OP_CMPJMP_GE) ||
+               op == (uint8_t)OP_CMPJMP_EQ ||
                op == (uint8_t)OP_CMPJMP_ITER) {
         // 偏移在**第二个字**里（byte0/1），与 iAsBx 同约定（offset + 32768）
         if (offset < -32768 || offset > 32767) {

@@ -430,6 +430,23 @@ typedef enum {
     //   追加在末尾 ⇒ 既有 opcode 编号全部不变，但**仍必须 bump 版本**（见 leno_serialize.h）✓
     OP_INDEX_SET_ARRAY_IMM,  // iABC  R[B][C] = R[A]（Array 特化，下标 C ∈ [0,255]）
 
+    // 等值比较 + 条件跳转融合（T31，对齐既有的 OP_CMPJMP_LT/LE/GT/GE）：
+    //   动机（2026-10-03 dump 实证的不对称）：`if i < 500` 是 `LOADI + OP_CMPJMP_LT` **2 条**，
+    //   而 `if i == 500` 是 `LOADI + 通用 OP_EQ + JMP_IF_FALSE` **3 条** ✗ ——
+    //   CMPJMP 族和"立即数内联进 C"的编码早就有了，**唯独 `==`/`!=` 没进这个族**。
+    //   语料实测（只编译不运行，examples 体积前 10）：`OP_EQ` 共 **327 处**，
+    //   其中解释器/状态机那类（minilang 145、win_reg_enum 47~50）正是热循环里全是比较的程序 ✓
+    //   `!=` **不需要新 opcode**：C 的 bit6 是极性位（真则跳/假则跳），翻转即可 ✓
+    //   安全性：codegen 只在**两侧静态类型都是 int** 时才发（try_emit_cmpjmp 的 cached_type 判据）
+    //   ⇒ 静态 int 不可能是 null ⇒ 与既有 LT/LE/GT/GE"只排除 null、不做类型检查"的口径一致 ✓
+    //   （对 `==` 这条尤其要紧：通用 OP_EQ 的 `null == null` 为真，而本指令左值为 null 时为假，
+    //     所以"两侧都是 int"这个前提不能松 ✗）
+    //   ⚠ 本条是**末尾追加** ⇒ 不在 `OP_CMPJMP_LT..OP_CMPJMP_GE` 的编号区间里 ✗
+    //     ⇒ codegen_emit.c 的 `instr_bytes_at` / `patch_common` 必须**单独**加它，
+    //       否则按 4 字节算、跳距写错（本文档反复警告过的那类坑）。
+    //   ⚠ 既有 opcode 编号全部不变，但**仍必须 bump 版本**（见 leno_serialize.h）✓
+    OP_CMPJMP_EQ,       // (R[A] == rhs) 按 C 的极性位决定是否跳；8 字节，第二个字带 16 位偏移
+
     OP_OPCODE_COUNT,    // 用于跳转表大小
 } OpCode;
 
