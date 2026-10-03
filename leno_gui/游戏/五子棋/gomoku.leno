@@ -63,34 +63,34 @@ var COL_WHITE  = #ECECF2FF
 
 // ==================== 状态 ====================
 struct Game {
-    int mode            // 0=人机对战, 1=AI对AI
+    int mode = 0            // 0=人机对战, 1=AI对AI
     Array[int] board    // 0 空, 1 黑, 2 白
-    int current         // 当前轮到谁落子
-    bool gameOver
-    int winner          // 0 平局, 1 黑, 2 白
-    int blackAI         // 黑方 AI 智力 1..9
-    int whiteAI         // 白方 AI 智力 1..9
-    int tuneTarget      // 调节对象 0=黑, 1=白
-    bool pause          // AI对AI 暂停
-    int thinkTimer      // 倒计时到 0 时 AI 落子
-    int restartTimer    // 一局结束后的停留计时
-    int lastR, lastC    // 最后一手
-    int hoverR, hoverC  // 鼠标悬停格
-    bool hasHover
-    int blackWins, whiteWins, draws, games
-    int moveCount
-    int aiR, aiC        // 供 bestMove 回传结果
+    int current = 0         // 当前轮到谁落子
+    bool gameOver = 0
+    int winner = 0          // 0 平局, 1 黑, 2 白
+    int blackAI = 0         // 黑方 AI 智力 1..9
+    int whiteAI = 0         // 白方 AI 智力 1..9
+    int tuneTarget = 0      // 调节对象 0=黑, 1=白
+    bool pause = 0          // AI对AI 暂停
+    int thinkTimer = 0      // 倒计时到 0 时 AI 落子
+    int restartTimer = 0    // 一局结束后的停留计时
+    int lastR = 0, lastC = 0    // 最后一手
+    int hoverR = 0, hoverC = 0  // 鼠标悬停格
+    bool hasHover = 0
+    int blackWins = 0, whiteWins = 0, draws = 0, games = 0
+    int moveCount = 0
+    int aiR = 0, aiC = 0        // 供 bestMove 回传结果
     Font font
     Font sfont         // 小号字体（操作说明）
-    int frameCount
-    string state        // "menu" 开场菜单 / "play" 对局中
-    float mx, my        // 鼠标位置（用于菜单按钮悬停）
-    string msg          // 顶部即时反馈横幅
-    int msgTimer        // 横幅剩余显示帧数
-    int placeAnim       // 落子动画剩余帧
-    int winR1, winC1, winR2, winC2  // 获胜连线两端（行列）
+    int frameCount = 0
+    string state = 0        // "menu" 开场菜单 / "play" 对局中
+    float mx = 0, my = 0        // 鼠标位置（用于菜单按钮悬停）
+    string msg = 0          // 顶部即时反馈横幅
+    int msgTimer = 0        // 横幅剩余显示帧数
+    int placeAnim = 0       // 落子动画剩余帧
+    int winR1 = 0, winC1 = 0, winR2 = 0, winC2 = 0  // 获胜连线两端（行列）
     Array[int] histR, histC, histP  // 悔棋历史（每手 r,c,player）
-    int winAnim        // 获胜连线动画帧（快速连线用）
+    int winAnim = 0        // 获胜连线动画帧（快速连线用）
     Array[float] fpX, fpY, fpVX, fpVY, fpLife  // 烟花粒子
 }
 

@@ -3,7 +3,7 @@ import "music_core.leno" as core
 use core.miniaudio
 
 export struct Decoder {
-    Ptr d; bool open
+    Ptr d; bool open = 0
 
     func open(string p): bool {
         miniaudio l = core.lib()

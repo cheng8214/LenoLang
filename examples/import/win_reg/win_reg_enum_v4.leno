@@ -58,70 +58,70 @@ export enum WinError {
 
 // 注册表值信息结构体
 export struct RegValueInfo {
-    string name
-    int type
-    string typeName
+    string name = 0
+    int type = 0
+    string typeName = 0
 }
 
 // 打开键结果结构体
 export struct OpenKeyResult {
     Ptr handle
-    int errorCode
+    int errorCode = 0
 }
 
 // 创建键结果结构体
 export struct CreateKeyResult {
     Ptr handle
-    int errorCode
-    bool created
+    int errorCode = 0
+    bool created = 0
 }
 
 // 读取字符串结果结构体
 export struct ReadStringResult {
-    string value
-    int errorCode
+    string value = 0
+    int errorCode = 0
 }
 
 // 读取展开字符串结果结构体
 export struct ReadExpandStringResult {
-    string value
-    int errorCode
+    string value = 0
+    int errorCode = 0
 }
 
 // 读取二进制结果结构体
 export struct ReadBinaryResult {
     Array data
-    int errorCode
+    int errorCode = 0
 }
 
 // 读取多字符串结果结构体
 export struct ReadMultiStringResult {
     Array strings
-    int errorCode
+    int errorCode = 0
 }
 
 // 读取 DWORD 结果结构体
 export struct ReadDwordResult {
-    int value
-    int errorCode
+    int value = 0
+    int errorCode = 0
 }
 
 // 读取 QWORD 结果结构体
 export struct ReadQwordResult {
-    int value
-    int errorCode
+    int value = 0
+    int errorCode = 0
 }
 
 // 枚举子键结果结构体
 export struct EnumSubKeysResult {
     Array subKeys
-    int errorCode
+    int errorCode = 0
 }
 
 // 枚举值结果结构体
 export struct EnumValuesResult {
     Array values
-    int errorCode
+    int errorCode = 0
 }
 
 // ========== 内部辅助函数 ==========

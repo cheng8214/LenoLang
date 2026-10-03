@@ -101,8 +101,8 @@ assert_eq(arrBox.value[2], 3)
 
 // 不带泛型参数的普通 struct 仍然正常工作
 struct SimplePoint {
-    int x
-    int y
+    int x = 0
+    int y = 0
 }
 
 var pt = new SimplePoint(x=10, y=20)

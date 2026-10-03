@@ -1,17 +1,17 @@
 // 测试 case 解构：switch case is Point(x, y) 提取字段
 
 struct Point {
-    float x
-    float y
+    float x = 0
+    float y = 0
 }
 
 struct Rect {
-    float w
-    float h
+    float w = 0
+    float h = 0
 }
 
 struct Circle {
-    float radius
+    float radius = 0
 }
 
 main() {

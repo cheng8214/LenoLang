@@ -24,14 +24,16 @@ main() {
     int startTime = _int(times.ms())
 
     while not web.shouldStop(c) {
-        CrawlItem entry = web.nextUrl(c)
+        // nextUrl 声明返回 CrawlItem? ⇒ 这里必须用可空类型承接，否则 `== null` 恒假 ✗
+        CrawlItem? entry = web.nextUrl(c)
         if entry == null { break }
         string url = entry.url
         int depth = entry.depth
 
         print("[ Depth " + depth + " ] 抓取: " + url)
 
-        Page page = web.fetchPage(url, "LenoCrawler/1.0")
+        // fetchPage 声明返回 Page? ⇒ 用可空类型承接（同上）
+        Page? page = web.fetchPage(url, "LenoCrawler/1.0")
         if page == null {
             print("  -> 抓取失败，跳过")
         } else {

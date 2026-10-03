@@ -1,6 +1,6 @@
 // test_self_ref_method.leno — 验证 struct 方法返回自身可空类型（HtmlNode?）是否可行
 struct Node {
-    string tag
+    string tag = 0
     Node? parent
 
     // 方法返回自身可空类型

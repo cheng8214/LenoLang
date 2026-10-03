@@ -3,7 +3,7 @@
 
 struct Counter
 {
-    int value
+    int value = 0
     
     // 方法需要捕获外部变量
     func createIncrementor(int step)
@@ -21,7 +21,7 @@ struct Counter
 // 测试外部作用域变量捕获
 struct Container
 {
-    int data
+    int data = 0
     
     func process()
     {
@@ -41,7 +41,7 @@ struct Container
 // 测试嵌套闭包捕获
 struct Calculator
 {
-    int base
+    int base = 0
     
     func compute(int offset)
     {

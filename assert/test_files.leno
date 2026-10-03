@@ -24,7 +24,7 @@ func write_read_ptr(Ptr p): int {
 
 struct FileWrap {
     File handle
-    string path
+    string path = 0
 }
 
 struct PtrWrap {

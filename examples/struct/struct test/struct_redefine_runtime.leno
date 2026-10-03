@@ -3,8 +3,8 @@
 
 struct Config
 {
-    int version
-    string name
+    int version = 0
+    string name = 0
 }
 
 main()

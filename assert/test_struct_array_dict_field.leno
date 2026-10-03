@@ -5,7 +5,7 @@
 struct Container {
     Array items
     Dict props
-    int count
+    int count = 0
     func add_item(int v) { items.add(v); count = items.len() }
     func set_prop(string k, int v) { props[k] = v }
 }

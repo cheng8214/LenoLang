@@ -10,10 +10,10 @@ import strings
 // tag 取值：普通元素为标签名(小写)；文本节点为 "#text"；文档根为 "#document"
 
 export struct HtmlNode {
-    string tag
+    string tag = 0
     Dict[string, string] attrs
     Array[HtmlNode] children
-    string text
+    string text = 0
     HtmlNode? _parent   // 父节点（根节点为 null），建树时由 _makeNode 设置；用 parent() 访问
 
     // 获取属性值（不存在返回空串）
@@ -182,16 +182,16 @@ export struct HtmlNode {
 
 // CSS 选择器的单个组成部分（tag / id / class / 属性 / 伪类）
 export struct SelectorPart {
-    string tag
-    string id
+    string tag = 0
+    string id = 0
     Array[string] classes
-    string attrName
-    string attrValue
-    string attrOp
-    bool hasAttr
-    bool isChild
-    string pseudo
-    string pseudoArg
+    string attrName = 0
+    string attrValue = 0
+    string attrOp = 0
+    bool hasAttr = 0
+    bool isChild = 0
+    string pseudo = 0
+    string pseudoArg = 0
 
     // 是否为纯通配/空选择器（匹配所有元素）
     func isWildcard(): bool {
@@ -204,8 +204,8 @@ export struct SelectorPart {
 // 解析器上下文：每次 parse 调用创建独立实例，保证多线程并发解析安全。
 // 取代原先的模块级全局 _g_pos/_g_html（共享会导致多线程串台）。
 struct _ParseCtx {
-    string html   // 当前解析的 HTML 文本
-    int pos       // 当前解析光标
+    string html = 0   // 当前解析的 HTML 文本
+    int pos = 0       // 当前解析光标
 
     func byte(int off): int {
         if pos + off >= 0 and pos + off < html.len() {

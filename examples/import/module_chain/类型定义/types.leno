@@ -20,22 +20,22 @@ export enum Status {
 
 // 点结构体
 export struct Point {
-    int x
-    int y
+    int x = 0
+    int y = 0
 }
 
 // 矩形结构体
 export struct Rectangle {
-    int x
-    int y
-    int width
-    int height
+    int x = 0
+    int y = 0
+    int width = 0
+    int height = 0
 }
 
 // 人员结构体
 export struct Person {
-    string name
-    int age
+    string name = 0
+    int age = 0
 }
 
 // 创建点的函数

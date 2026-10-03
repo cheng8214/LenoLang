@@ -2,8 +2,8 @@
 
 struct Point
 {
-	float y
-	float x
+	float y = 0
+	float x = 0
 }
 main()
 {

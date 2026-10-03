@@ -1,6 +1,6 @@
 // 链表实现示例
 struct Node {
-    int value
+    int value = 0
     Node next = null
 }
 

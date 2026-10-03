@@ -71,74 +71,74 @@ var PU_SIZE = 24.0             // 道具图标尺寸
 // ==================== 数据结构 ====================
 
 struct Bullet {
-    float x, y, vx, vy
-    int kind       // 0=玩家子弹, 1=敌机子弹
-    bool active
+    float x = 0, y = 0, vx = 0, vy = 0
+    int kind = 0       // 0=玩家子弹, 1=敌机子弹
+    bool active = 0
 }
 
 struct Enemy {
-    float x, y, vx, vy
-    int hp, maxHp, kind   // 0=小, 1=中, 2=大
-    int shootTimer, shootInterval
-    float w, h
-    int score
-    bool active
-    int movePattern   // 0=直线, 1=正弦, 2=追踪
-    float baseX      // 正弦运动基准 X
-    int hitFlash     // 被击中闪烁
+    float x = 0, y = 0, vx = 0, vy = 0
+    int hp = 0, maxHp = 0, kind = 0   // 0=小, 1=中, 2=大
+    int shootTimer = 0, shootInterval = 0
+    float w = 0, h = 0
+    int score = 0
+    bool active = 0
+    int movePattern = 0   // 0=直线, 1=正弦, 2=追踪
+    float baseX = 0      // 正弦运动基准 X
+    int hitFlash = 0     // 被击中闪烁
 }
 
 struct Boss {
-    float x, y, w, h
-    int hp, maxHp
-    int shootTimer, phase, moveTimer
-    bool active, entered
-    float targetY
-    int hitFlash
+    float x = 0, y = 0, w = 0, h = 0
+    int hp = 0, maxHp = 0
+    int shootTimer = 0, phase = 0, moveTimer = 0
+    bool active = 0, entered = 0
+    float targetY = 0
+    int hitFlash = 0
 }
 
 struct Particle {
-    float x, y, vx, vy
-    int life, maxLife
-    int r, g, b
-    float size
+    float x = 0, y = 0, vx = 0, vy = 0
+    int life = 0, maxLife = 0
+    int r = 0, g = 0, b = 0
+    float size = 0
 }
 
 struct Star {
-    float x, y
-    float speed
-    int bright
+    float x = 0, y = 0
+    float speed = 0
+    int bright = 0
 }
 
 struct PowerUp {
-    float x, y
-    float vy
-    float swayT       // 左右摆动相位
-    int kind          // PU_* 之一
-    bool active
+    float x = 0, y = 0
+    float vy = 0
+    float swayT = 0       // 左右摆动相位
+    int kind = 0          // PU_* 之一
+    bool active = 0
 }
 
 struct Player {
-    float x, y, w, h
-    int lives
-    int shootCooldown
-    int invincibleTimer
-    int shieldTimer    // 护盾剩余帧数（>0 时免伤）
-    int power          // 火力等级 1..POWER_MAX
-    int bombs          // 炸弹数
-    bool moveLeft, moveRight, moveUp, moveDown, shooting
+    float x = 0, y = 0, w = 0, h = 0
+    int lives = 0
+    int shootCooldown = 0
+    int invincibleTimer = 0
+    int shieldTimer = 0    // 护盾剩余帧数（>0 时免伤）
+    int power = 0          // 火力等级 1..POWER_MAX
+    int bombs = 0          // 炸弹数
+    bool moveLeft = 0, moveRight = 0, moveUp = 0, moveDown = 0, shooting = 0
 }
 
 struct Game {
-    int state
-    int score
-    int spawnTimer
-    int frameCount
+    int state = 0
+    int score = 0
+    int spawnTimer = 0
+    int frameCount = 0
 
-    int level              // 当前关卡 1..MAX_LEVEL
-    int levelScore         // 本关内累计分数（BOSS 出场判定用，过关清零）
-    int levelBannerTimer   // 关卡/BOSS 横幅剩余帧数
-    int bombFlash          // 炸弹全屏闪光剩余帧数
+    int level = 0              // 当前关卡 1..MAX_LEVEL
+    int levelScore = 0         // 本关内累计分数（BOSS 出场判定用，过关清零）
+    int levelBannerTimer = 0   // 关卡/BOSS 横幅剩余帧数
+    int bombFlash = 0          // 炸弹全屏闪光剩余帧数
 
     Player player
     Array[Enemy] enemies
@@ -147,7 +147,7 @@ struct Game {
     Array[PowerUp] powerups
     Array[Star] stars
     Boss boss
-    bool bossDefeated
+    bool bossDefeated = 0
 
     // 纹理
     Ptr[u8] texPlayer
@@ -163,7 +163,7 @@ struct Game {
     Sfx   sfxHit
     Sfx   sfxExplode
     Sfx   sfxDeath
-    bool audioOk
+    bool audioOk = 0
 
     Font font
 }

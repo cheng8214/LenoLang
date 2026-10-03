@@ -9,24 +9,24 @@ import times
 use SDL3.WindowFlag
 
 struct Particle {
-    float x; float y
-    float vx; float vy
-    int life; int r; int g; int b
-    int ptype
+    float x = 0; float y = 0
+    float vx = 0; float vy = 0
+    int life = 0; int r = 0; int g = 0; int b = 0
+    int ptype = 0
 }
 
 struct Rocket {
-    float x; float y
-    float vy
-    int r; int g; int b
-    float burst_y
-    int burst_count
+    float x = 0; float y = 0
+    float vy = 0
+    int r = 0; int g = 0; int b = 0
+    float burst_y = 0
+    int burst_count = 0
 }
 
 struct Star {
-    float x; float y
-    float twinkle
-    int r; int g; int b
+    float x = 0; float y = 0
+    float twinkle = 0
+    int r = 0; int g = 0; int b = 0
 }
 
 main() {

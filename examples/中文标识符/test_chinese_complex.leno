@@ -2,8 +2,8 @@
 
 // 测试1: 中文结构体
 struct 点 {
-    int x坐标
-    int y坐标
+    int x坐标 = 0
+    int y坐标 = 0
 
     func 移动(int dx, int dy) {
         x坐标 = x坐标 + dx
@@ -24,8 +24,8 @@ enum 颜色 {
 
 // 测试3: 中文类（带方法的struct）
 struct 银行账户 {
-    string 户名
-    int 余额
+    string 户名 = 0
+    int 余额 = 0
 
     func 存款(int 金额) {
         余额 = 余额 + 金额

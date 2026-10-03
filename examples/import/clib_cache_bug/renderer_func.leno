@@ -8,7 +8,7 @@ test_lib _lib = core.lib()  // 模块级缓存
 func getLib(): test_lib { return _lib }
 
 export struct Renderer {
-    bool ok
+    bool ok = 0
 
     func initDefault(): bool { ok = true; return ok }
 

@@ -15,9 +15,9 @@ use audio.(Sound, Sfx)
 // 一个动作（如 僵尸走路 / 豌豆射手射击）
 // 逐帧数据按 part 主序存放：下标 = part * nFrame + frame
 export struct Anim {
-    int fps
-    int nFrame
-    int nPart
+    int fps = 0
+    int nFrame = 0
+    int nPart = 0
     Array[Ptr[u8]] tex
     Array[float] tw            // 部件原始宽
     Array[float] th            // 部件原始高
@@ -27,118 +27,118 @@ export struct Anim {
     Array[float] psx
     Array[float] psy
     Array[int] vis             // 0 = 该帧隐藏
-    float ox                   // 骨架原点（reanim 坐标）
-    float oy
+    float ox = 0                   // 骨架原点（reanim 坐标）
+    float oy = 0
     Array[string] names        // 每个部件的原始文件名（用于保存）
 }
 
 export struct Plant {
-    int ptype
-    int row
-    int col
-    float x
-    float y
-    float hp
-    float maxHp
-    int timer
-    int fuse               // 樱桃引信；向日葵用来标记已出过首颗阳光
-    int anim               // 0=idle 1=动作（射击）
-    float aframe           // 动画帧（浮点，按 fps 推进）
-    bool alive
+    int ptype = 0
+    int row = 0
+    int col = 0
+    float x = 0
+    float y = 0
+    float hp = 0
+    float maxHp = 0
+    int timer = 0
+    int fuse = 0               // 樱桃引信；向日葵用来标记已出过首颗阳光
+    int anim = 0               // 0=idle 1=动作（射击）
+    float aframe = 0           // 动画帧（浮点，按 fps 推进）
+    bool alive = 0
 }
 
 export struct Zombie {
-    int ztype
-    int row
-    float x                // 脚底中心 x
-    float y                // 脚底 y（行固定）
-    float hp
-    float maxHp
-    int hatHp
-    int hatMax
-    float speed
-    bool alive
-    bool eating
-    int eatTimer
-    int slowTimer
-    float slowAmt
-    int anim               // 0=walk 1=eat 2=death
-    float aframe
-    bool dying
-    int dieTimer
+    int ztype = 0
+    int row = 0
+    float x = 0                // 脚底中心 x = 0
+    float y = 0                // 脚底 y（行固定）
+    float hp = 0
+    float maxHp = 0
+    int hatHp = 0
+    int hatMax = 0
+    float speed = 0
+    bool alive = 0
+    bool eating = 0
+    int eatTimer = 0
+    int slowTimer = 0
+    float slowAmt = 0
+    int anim = 0               // 0=walk 1=eat 2=death
+    float aframe = 0
+    bool dying = 0
+    int dieTimer = 0
 }
 
 export struct Pea {
-    int row                // 发射豌豆的植物所在行（碰撞只打本行僵尸）
-    float x
-    float y
-    float vx
-    int kind               // 0=普通 1=寒冰
-    bool alive
+    int row = 0                // 发射豌豆的植物所在行（碰撞只打本行僵尸）
+    float x = 0
+    float y = 0
+    float vx = 0
+    int kind = 0               // 0=普通 1=寒冰
+    bool alive = 0
 }
 
 export struct Sun {
-    float x
-    float y
-    float ty
-    bool falling
-    bool alive
-    int life
-    bool collecting          // 点击后正在飞向阳光库
-    float targetX            // 飞行目标 x（阳光库中心）
-    float targetY            // 飞行目标 y
+    float x = 0
+    float y = 0
+    float ty = 0
+    bool falling = 0
+    bool alive = 0
+    int life = 0
+    bool collecting = 0          // 点击后正在飞向阳光库
+    float targetX = 0            // 飞行目标 x（阳光库中心）
+    float targetY = 0            // 飞行目标 y
 }
 
 export struct Mower {
-    int row
-    float x
-    float y
-    bool active
-    bool alive
+    int row = 0
+    float x = 0
+    float y = 0
+    bool active = 0
+    bool alive = 0
 }
 
 export struct Particle {
-    float x
-    float y
-    float vx
-    float vy
-    float size
-    int life
-    int maxLife
-    int c
+    float x = 0
+    float y = 0
+    float vx = 0
+    float vy = 0
+    float size = 0
+    int life = 0
+    int maxLife = 0
+    int c = 0
 }
 
 export struct FloatText {
-    float x
-    float y
-    string text
-    int c
-    int life
-    int maxLife
+    float x = 0
+    float y = 0
+    string text = 0
+    int c = 0
+    int life = 0
+    int maxLife = 0
 }
 
 export struct Game {
-    int state
-    int frameCount
-    int sun
-    int wave
-    int killed
-    int waveState
-    int waveTimer
+    int state = 0
+    int frameCount = 0
+    int sun = 0
+    int wave = 0
+    int killed = 0
+    int waveState = 0
+    int waveTimer = 0
     Array[int] spawnQueue
-    int spawnIdx
-    int spawnTimer
-    int skyTimer
-    int bannerTimer
-    string bannerText
-    bool hugeWave
+    int spawnIdx = 0
+    int spawnTimer = 0
+    int skyTimer = 0
+    int bannerTimer = 0
+    string bannerText = 0
+    bool hugeWave = 0
 
-    int selCard
-    bool shovelMode
-    float mouseX
-    float mouseY
-    bool muted
-    bool quitReq
+    int selCard = 0
+    bool shovelMode = 0
+    float mouseX = 0
+    float mouseY = 0
+    bool muted = 0
+    bool quitReq = 0
 
     Array[int] cardCd
     Array[Plant] plants
@@ -148,7 +148,7 @@ export struct Game {
     Array[Mower] mowers
     Array[Particle] particles
     Array[FloatText] floats
-    int pCount
+    int pCount = 0
 
     // 纹理
     Ptr[u8] texBg
@@ -167,14 +167,14 @@ export struct Game {
     Ptr[u8] texMowerBody
     Ptr[u8] texMowerWheel1
     Ptr[u8] texMowerWheel2
-    float coneW
-    float coneH
-    float bucketW
-    float bucketH
-    float coneOx
-    float coneOy
-    float bucketOx
-    float bucketOy
+    float coneW = 0
+    float coneH = 0
+    float bucketW = 0
+    float bucketH = 0
+    float coneOx = 0
+    float coneOy = 0
+    float bucketOx = 0
+    float bucketOy = 0
 
     // 动画
     Anim anSunflower
@@ -189,7 +189,7 @@ export struct Game {
     Anim anZEat
     Anim anZDeath
 
-    bool loaded
+    bool loaded = 0
 
     Sound bgm
     Sound winMus
@@ -206,7 +206,7 @@ export struct Game {
     Sfx sfxMower
     Sfx sfxChomp
     Sfx sfxBuzzer
-    bool audioOk
+    bool audioOk = 0
 
     Font font
     Font fontBig

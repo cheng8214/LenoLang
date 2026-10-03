@@ -4,13 +4,13 @@
 //       导致后续字段全部丢失（字段数 < 预期）
 
 export struct Grid {
-    int id
-    string name
+    int id = 0
+    string name = 0
     Array[int] simpleArr
     Array[Array[int]] nestedArr
     Array[Ptr[u8]] ptrArr
     Ptr[u8] rawPtr
-    int tail
+    int tail = 0
 }
 
 // 导出数组变量：跨模块下标访问时元素类型不应丢失

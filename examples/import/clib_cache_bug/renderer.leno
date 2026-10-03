@@ -5,7 +5,7 @@ use core.test_lib
 test_lib _lib = core.lib()  // 模块加载时缓存
 
 export struct Renderer {
-    bool ok
+    bool ok = 0
 
     func initDefault(): bool {
         ok = true

@@ -2,7 +2,7 @@
 // 关键：决定 _makeNode 里 children[i]._parent = n 是否能让外部看到 parent 指针
 
 struct Node {
-    string tag
+    string tag = 0
     Node? parent
 }
 

@@ -4,7 +4,7 @@ face Comparable[T] {
 }
 
 struct IntBox {
-    int value
+    int value = 0
 
     func compareTo(int other): int {
         if self.value < other { return -1 }

@@ -4,7 +4,7 @@ import "../examples/泛型系统/模块/constraint_module.leno" as cm
 use cm.Comparable
 
 struct OrdInt impl Comparable {
-    int value
+    int value = 0
     func compare(Comparable other): int {
         var o = other as OrdInt
         if self.value < o.value { return -1 }
@@ -14,7 +14,7 @@ struct OrdInt impl Comparable {
 }
 
 struct OrdStr impl Comparable {
-    string value
+    string value = 0
     func compare(Comparable other): int {
         var o = other as OrdStr
         if self.value < o.value { return -1 }

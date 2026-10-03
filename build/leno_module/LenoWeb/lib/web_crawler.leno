@@ -24,13 +24,13 @@ func _i(any v): int {
 // 强类型 URL，替代旧的 Dict 表示，提供完整的解析/重组/规范化能力
 
 export struct Url {
-    string scheme      // 协议（http/https 等）
-    string host        // 主机名
-    int port           // 端口（-1 表示未显式指定）
-    string path        // 路径（默认 "/"）
-    string query       // 查询字符串（不含 ?）
-    string fragment    // 锚点（不含 #）
-    bool isAbsolute    // 是否为绝对 URL
+    string scheme = 0      // 协议（http/https 等）
+    string host = 0        // 主机名
+    int port = 0           // 端口（-1 表示未显式指定）
+    string path = 0        // 路径（默认 "/"）
+    string query = 0       // 查询字符串（不含 ?）
+    string fragment = 0    // 锚点（不含 #）
+    bool isAbsolute = 0    // 是否为绝对 URL
 
     // 重新拼接为完整 URL 字符串
     func str(): string {
@@ -352,8 +352,8 @@ export func parseUrl(string url): Url {
 
 // 队列项：待抓取的 URL 及其深度
 export struct CrawlItem {
-    string url
-    int depth
+    string url = 0
+    int depth = 0
 
     func toString(): string {
         return url
@@ -362,9 +362,9 @@ export struct CrawlItem {
 
 // 抓取的页面结果：URL + 状态码 + 原始 HTML + 解析后的 DOM
 export struct Page {
-    string url
-    int status
-    string body
+    string url = 0
+    int status = 0
+    string body = 0
     HtmlNode html
 
     // 页面中所有链接（绝对 URL）
@@ -392,16 +392,16 @@ export struct Page {
 export struct Crawler {
     Array[string] start_urls
     Array[string] allowed_domains
-    int max_pages
-    int max_depth
-    int delay_ms
-    string user_agent
-    bool respect_robots
-    string robots_rules
+    int max_pages = 0
+    int max_depth = 0
+    int delay_ms = 0
+    string user_agent = 0
+    bool respect_robots = 0
+    string robots_rules = 0
     Dict[string, bool] visited
     Array[CrawlItem] queue
-    int page_count
-    bool running
+    int page_count = 0
+    bool running = 0
 
     // 设置 robots.txt 规则
     func setRobots(string robotsText) {

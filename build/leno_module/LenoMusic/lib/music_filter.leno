@@ -4,7 +4,7 @@ use core.miniaudio
 
 // ==================== LPF ====================
 export struct LPF {
-    Ptr h; bool ok; int fmt; int ch; int sr
+    Ptr h; bool ok = 0; int fmt = 0; int ch = 0; int sr = 0
 
     func init(int f, int c, int s, float cf, int o): bool {
         miniaudio l = core.lib()
@@ -35,7 +35,7 @@ export struct LPF {
 
 // ==================== HPF ====================
 export struct HPF {
-    Ptr h; bool ok; int fmt; int ch; int sr
+    Ptr h; bool ok = 0; int fmt = 0; int ch = 0; int sr = 0
 
     func init(int f, int c, int s, float cf, int o): bool {
         miniaudio l = core.lib()

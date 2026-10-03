@@ -13,8 +13,8 @@ face Describable {
 // --- 实现 Sortable 的 struct ---
 
 struct Student impl Sortable, Describable {
-    string name
-    float score
+    string name = 0
+    float score = 0
 
     func sortKey(): float {
         return self.score
@@ -26,8 +26,8 @@ struct Student impl Sortable, Describable {
 }
 
 struct Product impl Sortable, Describable {
-    string name
-    float price
+    string name = 0
+    float price = 0
 
     func sortKey(): float {
         return self.price
@@ -77,7 +77,7 @@ face Comparable[T] {
 
 // 可以定义泛型 face，struct 方法签名匹配即可使用
 struct IntBox {
-    int value
+    int value = 0
 
     func compareTo(int other): int {
         if self.value < other { return -1 }

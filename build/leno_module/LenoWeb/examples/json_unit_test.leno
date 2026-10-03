@@ -4,7 +4,7 @@ import jsons
 
 // 模拟 Response 结构体（只保留 json() 相关部分）
 struct MockResponse {
-    string body
+    string body = 0
 
     func json(): Dict {
         return jsons.decode(body) as Dict

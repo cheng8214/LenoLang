@@ -80,8 +80,8 @@ func test_multi_branch(any x): int {
 // ==================== 测试 6: struct 类型绑定 ====================
 
 struct Point {
-    int x
-    int y
+    int x = 0
+    int y = 0
 }
 
 func make_point(): any {

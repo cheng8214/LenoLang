@@ -3,7 +3,7 @@
 // 导致 var x = getNode() 后 x != null 报警告
 
 struct Node {
-    string tag
+    string tag = 0
 }
 
 func getNode(): Node? {

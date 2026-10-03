@@ -3,7 +3,7 @@ import "cstruct_export_a.leno" as a
 use a.Cv; use a.Cr; use a.Ci
 
 export struct ArrayRenderer {
-    Ptr handle; bool ok
+    Ptr handle; bool ok = 0
     func init(): bool { ok = true; return ok }
     func clear() { }
     func setVal(int r, int g) { }

@@ -53,23 +53,23 @@ Array[float] PAL_B = []
 // ==================== 数据结构 ====================
 
 struct Game {
-    int state
+    int state = 0
 
     Array[int] board          // BOARD_W * BOARD_H，0=空，1..7=方块类型+1
-    int curType               // 当前方块类型 0..6
+    int curType = 0               // 当前方块类型 0..6
     Array[int] curShape       // 当前方块的 4x4 形态（16 个格子）
-    int curX, curY            // 当前方块在棋盘中的左上角坐标
-    int nextType              // 下一个方块
+    int curX = 0, curY = 0            // 当前方块在棋盘中的左上角坐标
+    int nextType = 0              // 下一个方块
     Array[int] bag            // 7-bag 剩余
 
-    int score, lines, level
-    int fallTimer, fallInterval
-    int clearFlashTimer
+    int score = 0, lines = 0, level = 0
+    int fallTimer = 0, fallInterval = 0
+    int clearFlashTimer = 0
     Array[int] clearRows      // 待消除的行号
 
-    int frameCount
-    bool moveLeft, moveRight, softDrop
-    int dasTimer              // 左右连发的重复计时
+    int frameCount = 0
+    bool moveLeft = 0, moveRight = 0, softDrop = 0
+    int dasTimer = 0              // 左右连发的重复计时
 
     Font font
 
@@ -78,9 +78,9 @@ struct Game {
     Sfx   sfxRotate       // 旋转（变形）：音效池，避免快速连按被吞
     Sfx   sfxClear        // 整行消除
     Sfx   sfxSpeed        // 空格硬降加速
-    bool  audioOk
-    bool  warnOn          // 是否处于顶部危险警告状态
-    int   warnCd          // 警告重触发冷却（帧），防抖动重复
+    bool  audioOk = 0
+    bool  warnOn = 0          // 是否处于顶部危险警告状态
+    int   warnCd = 0          // 警告重触发冷却（帧），防抖动重复
 }
 
 // ==================== 形状与调色板 ====================

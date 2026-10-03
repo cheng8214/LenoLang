@@ -4,7 +4,7 @@ var global_var = 42
 
 struct Test
 {
-    int x
+    int x = 0
     
     // 方法使用全局变量
     func useGlobal()

@@ -4,8 +4,8 @@
 import "SDL3" as SDL3
 
 struct Node {
-    int id
-    string text
+    int id = 0
+    string text = 0
     Array[Node] children
 }
 

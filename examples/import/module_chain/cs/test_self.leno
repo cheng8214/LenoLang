@@ -2,8 +2,8 @@
 
 struct Point
 {
-    int x
-    int y
+    int x = 0
+    int y = 0
     
     // 使用 self 访问字段
     func print_self()

@@ -5,8 +5,8 @@ face Speaker {
 }
 
 struct Dog impl Speaker {
-    string name
-    int age
+    string name = 0
+    int age = 0
 
     func speak(): string {
         return "woof from " + self.name

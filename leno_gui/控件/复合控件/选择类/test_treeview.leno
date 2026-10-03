@@ -53,8 +53,9 @@ main() {
     })
     // 右键节点菜单：用内置 MenuBar 添加项 + 统一回调
     var cm = tv.get_context_menu()
-    if cm != null {
-        int ch = tv.get_context_handle()
+    // struct 值类型不为 null ⇒ `cm != null` 恒真（死判据）；真正的判据是菜单句柄有效 ✓
+    int ch = tv.get_context_handle()
+    if ch >= 0 {
         cm.addContextItem(ch, {label: "展开", id: "expand"})
         cm.addContextItem(ch, {label: "折叠", id: "collapse"})
         cm.addContextSeparator(ch)
