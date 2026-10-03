@@ -34,7 +34,7 @@ main() {
 
 ### 类型：`DirEntry` / `DirInfo`
 
-`dirs` 导出两个**类型**（native 类型规格声明，见 `docs/待办_单一事实来源与重复实现收敛.md`）：
+`dirs` 导出两个**类型**（native 类型规格声明，见 `docs/单一事实来源与重复实现收敛.md`）：
 
 | 类型 | 出现在 | 字段 |
 | --- | --- | --- |
@@ -481,7 +481,7 @@ for es to e {
 > 口径同 `find`（默认不跟随）。指回祖先的链接会让跟随式遍历走出原目录树（实测 66 条垃圾条目）；
 > 要跟随请先 `dirs.is_symlink()` 判一下，见 `is_symlink` 的口径表。
 
-**为什么返回结构体、而不是 `[root, dirs, files]` 三元组**：三元组的静态类型是 `Array[Array]` ⇒ 元素是 `any`，只能靠 `e[0] / e[1] / e[2]` 位置索引取值，既不可读、顺序一改还会静默错位。现在用 native 的**类型规格**（`NativeTypeSpec`，见 `docs/待办_单一事实来源与重复实现收敛.md`）声明返回 `Array[DirEntry]`：编译期字段表与运行期 `ObjStructDef` 是**同一份声明** ⇒ 字段名 / 类型 / 顺序同源，编译期即知字段类型 ⇒ 调用点零收窄 ✓
+**为什么返回结构体、而不是 `[root, dirs, files]` 三元组**：三元组的静态类型是 `Array[Array]` ⇒ 元素是 `any`，只能靠 `e[0] / e[1] / e[2]` 位置索引取值，既不可读、顺序一改还会静默错位。现在用 native 的**类型规格**（`NativeTypeSpec`，见 `docs/单一事实来源与重复实现收敛.md`）声明返回 `Array[DirEntry]`：编译期字段表与运行期 `ObjStructDef` 是**同一份声明** ⇒ 字段名 / 类型 / 顺序同源，编译期即知字段类型 ⇒ 调用点零收窄 ✓
 
 > ⚠ **v3.2.3 起返回形态变了**：`walk` 由 `Array[Array]` 三元组改为 `Array[DirEntry]`（同一版本里过渡性的 `walk_entries` 已删除、能力并入 `walk`）⇒ 旧代码的 `entry[0]/entry[1]/entry[2]` 要改成 `entry.root/entry.dirs/entry.files`；返回类型变了 ⇒ 旧 `.lenb` 需重编译。
 > ⚠ 别把局部变量命名成 `files`：那是 native 模块名，会被优先当模块解析（用 `fs` 之类）。

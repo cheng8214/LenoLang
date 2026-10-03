@@ -10,7 +10,7 @@
  * ⚠ 必须放在 compiler 专属文件（不能进 module_symbol_table.c / module_loader.c）：
  *   那两个在 `sources_core.txt`（VM-only 也编），而 lexer/parser 只在 `sources_compiler.txt`
  *   ⇒ 一旦编译期依赖 AST，`build_vm.bat` 链接必炸
- *   （论证见 docs/待办_单一事实来源与重复实现收敛.md:2713-2717）。
+ *   （论证见 docs/单一事实来源与重复实现收敛.md:2713-2717）。
  *
  * 历史：`--export-diff` 对拍工具已于 2026-10-01 **删除** —— 它只服务于"切到 AST 之前先证明
  *   两条路径给出的导出名一致"这一件事；导出名早就切完（9a7ba8c），且 7 类文本扫描退役后

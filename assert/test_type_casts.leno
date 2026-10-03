@@ -1,6 +1,6 @@
 // any → 容器的"正道" —— 回归测试（易用性痛点 P1）
 //
-// 背景（docs/待办_易用性痛点（TraeSign 移植实录）.md 的 P1）：
+// 背景（docs/易用性痛点（TraeSign 移植实录）.md 的 P1）：
 //   `jsons.decode` / `jsons.read_file` 的静态返回类型是 `any`，于是
 //     · `data["collection"]["name"]` ⇒ 「不能在 any 类型上直接访问字段」✗；
 //     · `Dict[string, any] d = jsons.decode(...)` ⇒ 「声明类型与初始化值类型不匹配」✗。

@@ -470,7 +470,7 @@ void chunk_write(Chunk* chunk, uint8_t byte, int line);
 
 // 寄存器号超过 8 位上限（编码会静默截断 ⇒ 读到别的槽位）
 //   ⚠ T34 起这是**编译硬错误**（原先只在 stderr 告警、随后照样写截断字节码 ✗ ⇒ 产物错却编译通过）。
-//   定义在 codegen_emit.c（那边能拿到 error_add）；判据与立项见 docs/待办_寄存器号8位上限.md
+//   定义在 codegen_emit.c（那边能拿到 error_add）；判据与立项见 docs/待办与路线图.md 的「寄存器号 8 位上限」一节
 void codegen_reg_overflow_error(OpCode op, int a, int b, int c, int line);
 
 // 编码：把 4 字节写入 chunk（大端）

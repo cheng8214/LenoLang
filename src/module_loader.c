@@ -206,7 +206,7 @@ static void extract_module_name(const char* file_path, char* out_name, int max_l
 // 现已删除，且**最终形态**是：导出名的唯一实现者 = **parser AST**（顶层 `export` 声明就是
 //   AST 上的 AST_EXPORT 包裹），由编译期注册的 provider（module_ast_exports.c）直接给出；
 //   中途那版"收敛到符号表扫描链"的实现也已随扫描链整条退役（本文件的回退分支一并删除）。
-// 详见 docs/待办_单一事实来源与重复实现收敛.md 第二节 S10（实例十二 · 补四 / 补五）。
+// 详见 docs/单一事实来源与重复实现收敛.md 第二节 S10（实例十二 · 补四 / 补五）。
 // ============================================================================
 // 规范化路径（统一使用平台特定的分隔符，处理 . 和 ..）
 int normalize_path(char* path, int max_len) {
@@ -408,7 +408,7 @@ void loaded_modules_mark_all(void) {
 // ============================================================================
 // 为什么需要这一层间接：本文件在 `sources_core.txt`（**VM-only 也编**），而 lexer/parser
 //   只在 `sources_compiler.txt` ⇒ 这里**不能**直接调 parser（否则 `build_vm.bat` 链接必炸，
-//   论证见 docs/待办_单一事实来源与重复实现收敛.md:2713-2717）。于是把"取某模块的导出名"
+//   论证见 docs/单一事实来源与重复实现收敛.md:2713-2717）。于是把"取某模块的导出名"
 //   抽象成可注册的函数指针：
 //     · 编译期（main.c）：注册基于 parser AST 的实现 ⇒ 导出名的唯一来源变成**语法** ✓
 //     · VM-only：不注册 ⇒ 自动回退扫描链（VM 侧本来也只消费已有产物 ✓）

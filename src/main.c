@@ -244,7 +244,7 @@ static int g_entry_cache_enabled = 0;
 // 一次覆盖整类问题（不必逐表枚举，也就不会漏表）。
 // 失败方向：指纹取不到（0）一律判失效（fail-closed）—— 宁可重编译，不要跑旧码。
 //
-// 本行格式标识已登记在 docs/待办_单一事实来源与重复实现收敛.md 第七节；
+// 本行格式标识已登记在 docs/单一事实来源与重复实现收敛.md 第七节；
 // **不升 `LENO_BIN_VERSION`** 的理由：`.lenb` 自身的字节格式与序列化语义一字未改，
 // 变的只是"什么时候认这份缓存"的外部判定条件 ⇒ 升它会让所有模块级缓存（.lenomc /
 // .lenosymc）跟着无谓失效，而它们各自有独立的失效判定。
@@ -253,7 +253,7 @@ static int g_entry_cache_enabled = 0;
 
 // 跨平台 fopen / remove：Windows 上走宽字符，避免中文路径（如 文件管理器）失败
 // （原先这里还有一份自己的 stat / 哈希 / 读 .lenomc header 的实现，2026-09-16 收敛到
-//   serialize.c 的 module_source_snapshot_* —— 见 docs/待办_单一事实来源与重复实现收敛.md 的 Phase 3）
+//   serialize.c 的 module_source_snapshot_* —— 见 docs/单一事实来源与重复实现收敛.md 的 Phase 3）
 static FILE* entry_deps_fopen(const char* path, const char* mode) {
 #ifdef _WIN32
     wchar_t* wp = utf8_to_utf16(path);
@@ -2245,7 +2245,7 @@ static int main_logic(int argc, char** argv) {
     //     module_has_method 都走语法（扫描链的 export_names 退居 VM-only 回退）✓
     module_ast_exports_register();
     // S10：注册"AST 符号填充器"（扫描链跑完后，按声明种类由 AST 建表/覆盖）。
-    //   落地顺序与踩坑记录见 docs/待办_单一事实来源与重复实现收敛.md 的"实例十二·补四"：
+    //   落地顺序与踩坑记录见 docs/单一事实来源与重复实现收敛.md 的"实例十二·补四"：
     //   7 类文本扫描（struct / var / func / enum / face / cstruct / alias）**已全部退役**
     //   ⇒ 扫描链只剩 `use` / `import` 传导与模块体那点骨架 ✓
     module_ast_symbols_register();

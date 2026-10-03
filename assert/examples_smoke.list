@@ -3,7 +3,7 @@
 # 扩这份清单 = 承诺「它以后不许坏」⇒ 只放**本来就绿**的；发现坏示例先修、再进清单。
 # 背景（为什么要有这个门禁）：`examples/jsons/` 曾三个示例**全部编译不过**（47 / 87 / 87 个
 #   「不能在 any 类型上直接访问字段」）却长期没人发现 —— 它们不在任何门禁里
-#   （套件只自动发现 `assert/test_*.leno`）。见 docs/待办_易用性痛点（TraeSign 移植实录）.md 的 P7。
+#   （套件只自动发现 `assert/test_*.leno`）。见 docs/易用性痛点（TraeSign 移植实录）.md 的 P7。
 examples/jsons/json_any.leno
 examples/多返回值/min_multi.leno
 examples/多返回值/multi_ret_closure_test.leno
@@ -30,7 +30,7 @@ examples/多返回值/test_type_check.leno
 #     线程+async 混用、sockets 的**真实 loopback I/O**（listen/connect/accept/recv/send/select/arecv/aaccept）；
 #   · **C 类**（压测、外网示例、`input()` 交互客户端、`d:\1.zip` 大文件复制、死循环）**不进门禁**：
 #     套件的准则是"快、确定、无外部依赖"，它们与该准则直接冲突 ⇒ 一并删除（覆盖损失已记在
-#     `docs/待办_易用性痛点（TraeSign 移植实录）.md` 的 P7）。
+#     `docs/易用性痛点（TraeSign 移植实录）.md` 的 P7）。
 #   · 收编时还**抓出一个真 bug**（**当天已修**）：`rands.ints(1, 10000000000)` 必崩（0xC0000005），
 #     根因是 BigInt 多 limb 长除法（最小复现 `(9223372036854775807 * 2) % 10000000000` ⇒ 静默返回 null；
 #     修后 = 3709551614）。回归钉在 assert/test_bigint_arith.leno（含**带分配**循环，逼 GC），

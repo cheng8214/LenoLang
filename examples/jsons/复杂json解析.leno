@@ -4,7 +4,7 @@ import "json_any.leno" as j
 print("========== 唐诗集赏析 ==========\n")
 
 // 读取 JSON 文件（**仓库相对路径**：从仓库根运行 `build\leno.exe examples\jsons\复杂json解析.leno`）
-// ⚠ 两处修正（2026-09-19，见 docs/待办_易用性痛点（TraeSign 移植实录）.md 的 P7）：
+// ⚠ 两处修正（2026-09-19，见 docs/易用性痛点（TraeSign 移植实录）.md 的 P7）：
 //   ① 原路径硬编码了**另一台机器**的目录（`D:\CLeno\LenoC\test\jsons\cs.json`）⇒ 示例腐化；
 //      `cs.json` 其实就在**同目录**。
 //   ② `jsons.read_file/decode` 的静态返回类型是 `any` ⇒ 原来那种 `data["collection"]["name"]`

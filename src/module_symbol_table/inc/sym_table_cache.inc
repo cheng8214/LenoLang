@@ -3,7 +3,7 @@
 // 与模块编译缓存（.lenomc）共享 .lenocache/ 目录和相同的失效判定机制
 // ============================================================================
 
-// ⚠ 版本号登记表：docs/待办_单一事实来源与重复实现收敛.md 第七节
+// ⚠ 版本号登记表：docs/单一事实来源与重复实现收敛.md 第七节
 //   （只覆盖符号表缓存；2026-09-16 撞过车：与上游都用 v23 但格式不同）
 #define LENOSYMC_MAGIC   0x4D59534C  // "LSYM" little-endian
 #define LENOSYMC_VERSION 0x00000026  // v38: struct **方法符号新增 `param_text`**（参数列表文本：
@@ -223,7 +223,7 @@ break;
 }
 
 // （原先这里有一份自己的「文本模式读文件 + 算哈希」实现，2026-09-16 收敛到 serialize.c 的
-//   module_source_snapshot_now —— 见 docs/待办_单一事实来源与重复实现收敛.md 的 Phase 3）
+//   module_source_snapshot_now —— 见 docs/单一事实来源与重复实现收敛.md 的 Phase 3）
 
 // 序列化 ModuleSymbolTable 到文件
 static int sym_cache_serialize(const char* cache_path, ModuleSymbolTable* table,

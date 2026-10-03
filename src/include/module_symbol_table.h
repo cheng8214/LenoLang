@@ -217,7 +217,7 @@ typedef struct {
     ModuleCfuncSymbol* cfuncs;  // cfunc 符号数组
     int cfunc_count;             // cfunc 数量
     int cfunc_capacity;          // cfunc 数组容量
-    // ---- v33：导出名清单（收敛 S10 —— 见 docs/待办_单一事实来源与重复实现收敛.md 第二节）----
+    // ---- v33：导出名清单（收敛 S10 —— 见 docs/单一事实来源与重复实现收敛.md 第二节）----
     // 背景：`src/module_loader.c` 原先自带一个**独立的文本扫描器** `extract_exports()`
     // （`strncmp(p,"export",6)` + 自己跳注释/字符串/反引号 + 循环跳 `const` 后的类型关键字 +
     // "类型在前"兜底分支），与 `module_symbol_table` 的扫描链**各判一遍"什么算 export"**。
