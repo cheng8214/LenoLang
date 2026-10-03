@@ -3,13 +3,13 @@
 
 struct A
 {
-    int value_a
+    int value_a = 0
     B b_field
 }
 
 struct B
 {
-    int value_b
+    int value_b = 0
     A a_field
 }
 

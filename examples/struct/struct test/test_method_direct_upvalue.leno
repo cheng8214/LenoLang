@@ -6,7 +6,7 @@ var global_counter = 0
 
 struct TestStruct
 {
-    int value
+    int value = 0
     
     // 方法直接使用全局变量
     func useGlobal()
@@ -32,8 +32,8 @@ func createStructWithCapture(): int
     
     struct LocalStruct
     {
-        int data
-        int base        // ⚠ 外部值用**字段**承接（见下面说明）
+        int data = 0
+        int base = 0        // ⚠ 外部值用**字段**承接（见下面说明）
 
         // 读自己的两个字段 —— 不捕获外层局部
         func getLocal(): int

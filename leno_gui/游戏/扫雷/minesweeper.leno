@@ -45,26 +45,26 @@ var COL_DIGIT_BG= #0C0C12FF
 
 // ==================== 状态 ====================
 struct Game {
-    int cols, rows, mines
-    float cell
-    float boardX, boardY
-    float winW, winH
+    int cols = 0, rows = 0, mines = 0
+    float cell = 0
+    float boardX = 0, boardY = 0
+    float winW = 0, winH = 0
     Array[int]  state   // 0 隐藏, 1 已翻开, 2 插旗
     Array[bool] mine
     Array[int]  adj     // 周围雷数
-    bool placed          // 是否已布雷
-    bool over
-    bool won
-    int  flags
-    int  timeFrames      // 计时（帧）
-    int  frameCount
+    bool placed = 0          // 是否已布雷
+    bool over = 0
+    bool won = 0
+    int  flags = 0
+    int  timeFrames = 0      // 计时（帧）
+    int  frameCount = 0
     Font font
-    string scene         // "menu" 菜单 / "play" 对局
-    float mx, my         // 鼠标位置（菜单悬停/格子高亮）
-    int  lostR, lostC    // 触雷格坐标
+    string scene = 0         // "menu" 菜单 / "play" 对局
+    float mx = 0, my = 0         // 鼠标位置（菜单悬停/格子高亮）
+    int  lostR = 0, lostC = 0    // 触雷格坐标
     Sfx   sfxClick       // 点击方块音效
     Sfx   sfxBoom        // 踩雷爆炸音效
-    bool  audioOk
+    bool  audioOk = 0
 }
 
 // ==================== 工具 ====================

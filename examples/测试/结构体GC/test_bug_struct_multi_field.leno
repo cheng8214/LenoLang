@@ -2,7 +2,7 @@
 // string x = "hi" 单字段正常，不受影响
 
 struct S {
-    int a, b, c          // ❌ 期望字段类型
+    int a = 0, b = 0, c = 0          // ❌ 期望字段类型
 }
 
 main() {

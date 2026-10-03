@@ -27,7 +27,8 @@ main() {
     // —— 扩展：给编辑框内置上下文菜单追加自定义项 ——
     var cm = ed.get_context_menu()
     var h  = ed.get_context_menu_handle()
-    if cm != null and h >= 0 {
+    // struct 值类型不为 null ⇒ `cm != null` 恒真（死判据），只留句柄判据 ✓
+    if h >= 0 {
         cm.addContextSeparator(h)
         cm.addContextItem(h, { label: "清空", id: "clear" })
         cm.addContextItem(h, { label: "转大写", id: "upper" })

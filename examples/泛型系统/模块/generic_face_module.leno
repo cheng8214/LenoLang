@@ -4,7 +4,7 @@ export face Comparable[T] {
 }
 
 export struct IntVal impl Comparable[int] {
-    int val
+    int val = 0
 
     func compareTo(int other): int {
         if self.val < other { return -1 }

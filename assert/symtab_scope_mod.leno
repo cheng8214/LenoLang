@@ -7,7 +7,7 @@
 // 解析到那条 ⇒ 轻则误报「参数数量过多」，重则静默取到局部函数的返回类型。
 
 export struct Node {
-    string tag
+    string tag = 0
 
     // 与下面的模块级 text() 同名（旧 bug：m.text(n) 会解析到这个 0 参方法）
     func text(): string {

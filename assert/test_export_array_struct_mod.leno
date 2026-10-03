@@ -1,7 +1,7 @@
 // 跨模块测试：定义 export struct 和 export func(Array[Point])
 export struct Point {
-    float x
-    float y
+    float x = 0
+    float y = 0
 }
 
 export func processOne(Point pt) {

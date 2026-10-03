@@ -32,34 +32,34 @@
 // ============================================================================
 
 struct Sun {
-    float x
+    float x = 0
 }
 
 struct Plant {
-    int row
+    int row = 0
     float aframe = 0.0    // ★ 必须有默认值（T11）：`p.aframe = stepFrame(1, p.aframe)`
                           //   里 `f + 1.0` 会读到它；不写默认值则初值是 null ⇒
                           //   现在按规则报「null 不能参与运算」（此前静默当 0 —— 正是
                           //   文档「值类型字段必须指定默认值」警告的那种写法）
-    float x
-    float y
-    int timer
-    int fuse
-    bool alive
+    float x = 0
+    float y = 0
+    int timer = 0
+    int fuse = 0
+    bool alive = 0
 }
 
 struct Game {
-    int state
-    int frameCount
-    int sun
-    int wave
-    int killed
-    int waveState
-    int waveTimer
-    int skyTimer
+    int state = 0
+    int frameCount = 0
+    int sun = 0
+    int wave = 0
+    int killed = 0
+    int waveState = 0
+    int waveTimer = 0
+    int skyTimer = 0
     Array[Plant] plants
     Array[Sun] suns
-    int pCount
+    int pCount = 0
 }
 
 var called = 0

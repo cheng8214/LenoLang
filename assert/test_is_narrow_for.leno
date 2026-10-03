@@ -3,7 +3,7 @@
 
 struct LocalResult {
     Array items
-    int code
+    int code = 0
 }
 
 main() {

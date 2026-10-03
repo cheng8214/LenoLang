@@ -2,10 +2,10 @@
 // 目的：验证 HtmlNode 加 parent 字段的可行性（Leno 递归 struct 能否带自身类型的非数组字段）
 
 struct Node {
-    string tag
+    string tag = 0
     Array[Node] children
     Node parent    // 自身类型字段（parent 指针）
-    int depth
+    int depth = 0
 }
 
 main() {

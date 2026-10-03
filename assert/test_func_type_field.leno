@@ -106,7 +106,7 @@ assert_eq(gm.getter(), 42)
 
 // 匹配：int 字段赋值 int 值 → 应通过
 struct IntField {
-    int x
+    int x = 0
 }
 
 var inf = new IntField()

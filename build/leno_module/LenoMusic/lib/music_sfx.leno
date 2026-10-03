@@ -6,9 +6,9 @@ use player.Sound
 
 export struct Sfx {
     Array[Sound] pool
-    int idx
-    bool ok
-    float vol
+    int idx = 0
+    bool ok = 0
+    float vol = 0
 
     // 从同一音频文件预建 n 个实例，统一音量 v
     func setup(string path, int n, float v) {

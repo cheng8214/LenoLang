@@ -41,7 +41,7 @@ import files
 
 // 一个部件（图片 + 每一帧的变换）
 struct Part {
-    string        img
+    string        img = 0
     Array[float]  px   = []   // 每帧 x（中心）
     Array[float]  py   = []   // 每帧 y（中心）
     Array[float]  pa   = []   // 每帧 旋转(度)
@@ -53,9 +53,9 @@ struct Part {
 
 // 一个动画（一个 .txt 文件）
 struct Anim {
-    string         name
-    int            fps
-    int            nFrame
+    string         name = 0
+    int            fps = 0
+    int            nFrame = 0
     Array[Part]    parts = []
 }
 
@@ -144,8 +144,8 @@ struct AnimEditor {
     Array[string] _undo = []   // 撤销栈（动画文本快照）
     pri Array[string] cachePaths = []
     pri Array[Ptr[u8]] cacheTex   = []
-    string        animDir
-    string        imgDir
+    string        animDir = 0
+    string        imgDir = 0
     float         bboxCx = 0.0   // 加载动画整体包围盒中心（用于居中，校准时保持稳定）
     float         bboxCy = 0.0
     pri bool          bboxValid = false  // 包围盒中心是否已缓存（换动画/撤销后需重算）

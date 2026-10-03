@@ -10,7 +10,7 @@ var _engineFailed = false    // 引擎初始化是否曾失败：失败后不再
 
 // ==================== Sound (streaming playback) ====================
 export struct Sound {
-    Ptr h; bool ok
+    Ptr h; bool ok = 0
 
     func load(string p): bool {
         miniaudio l = core.lib()
@@ -117,7 +117,7 @@ export struct Sound {
 
 // ==================== Engine ====================
 export struct Engine {
-    bool ok
+    bool ok = 0
 
     func init(): bool {
         if core.lib().ma_dll_engine_init() != 0 { return false }

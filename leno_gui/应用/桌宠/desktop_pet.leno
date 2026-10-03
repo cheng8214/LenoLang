@@ -8,53 +8,53 @@ import rands
 
 // 烟花粒子（累了蹲下放烟花用）
 struct PetParticle {
-    float x, y
-    float vx, vy
-    int life
-    int r, g, b
-    int kind   // 0=上升火星, 1=爆炸粒子
+    float x = 0, y = 0
+    float vx = 0, vy = 0
+    int life = 0
+    int r = 0, g = 0, b = 0
+    int kind = 0   // 0=上升火星, 1=爆炸粒子
 }
 
 // 机器人状态
 struct Robot {
-    float x, y           // 位置（窗口内）
-    float vx             // 移动速度
-    int frame            // 帧计数
-    int blinkTimer       // 眨眼计时器
-    bool isBlinking      // 是否在眨眼
-    bool isDragging      // 是否在拖拽
-    bool isHover         // 鼠标悬停
-    bool isHappy         // 开心状态（点击后）
-    int happyTimer       // 开心持续时间
-    bool isWaving        // 是否在挥手
-    int waveTimer        // 挥手计时器
-    int waveFrame        // 挥手帧
-    int walkTimer        // 行走计时器
-    int winX, winY       // 窗口位置
-    float jumpOffset     // 跳跃高度偏移
-    bool isJumping       // 是否在跳跃
-    int jumpFrame        // 跳跃帧计数
-    int walkPhase        // 行走相位（腿部交替动画用）
-    int facing           // 朝向：1=朝右, -1=朝左
-    string bubbleText    // 冒泡文字
-    int bubbleTimer      // 冒泡剩余帧数
+    float x = 0, y = 0           // 位置（窗口内）
+    float vx = 0             // 移动速度
+    int frame = 0            // 帧计数
+    int blinkTimer = 0       // 眨眼计时器
+    bool isBlinking = 0      // 是否在眨眼
+    bool isDragging = 0      // 是否在拖拽
+    bool isHover = 0         // 鼠标悬停
+    bool isHappy = 0         // 开心状态（点击后）
+    int happyTimer = 0       // 开心持续时间
+    bool isWaving = 0        // 是否在挥手
+    int waveTimer = 0        // 挥手计时器
+    int waveFrame = 0        // 挥手帧
+    int walkTimer = 0        // 行走计时器
+    int winX = 0, winY = 0       // 窗口位置
+    float jumpOffset = 0     // 跳跃高度偏移
+    bool isJumping = 0       // 是否在跳跃
+    int jumpFrame = 0        // 跳跃帧计数
+    int walkPhase = 0        // 行走相位（腿部交替动画用）
+    int facing = 0           // 朝向：1=朝右, -1=朝左
+    string bubbleText = 0    // 冒泡文字
+    int bubbleTimer = 0      // 冒泡剩余帧数
     // 部位互动状态
-    bool isHeadHurt      // 头部被打（起包+揉脑袋）
-    int headHurtTimer
-    bool isPeeing        // 撒尿模式
-    int peeTimer
-    bool isBlushing      // 脸红
-    int blushTimer
+    bool isHeadHurt = 0      // 头部被打（起包+揉脑袋）
+    int headHurtTimer = 0
+    bool isPeeing = 0        // 撒尿模式
+    int peeTimer = 0
+    bool isBlushing = 0      // 脸红
+    int blushTimer = 0
     // 累了 + 蹲下放烟花
-    int stepCount         // 累计步数（走动计数）
-    bool isTired          // 累了状态
-    int tiredTimer        // 累持续时间
-    bool isCrouching      // 蹲下
+    int stepCount = 0         // 累计步数（走动计数）
+    bool isTired = 0          // 累了状态
+    int tiredTimer = 0        // 累持续时间
+    bool isCrouching = 0      // 蹲下
     Array[PetParticle] fwParticles  // 烟花粒子
-    int fwLaunchTimer     // 下次烟花发射倒计时
+    int fwLaunchTimer = 0     // 下次烟花发射倒计时
     // 拖拽起始记录（用全局鼠标坐标，避免反馈循环抖动）
-    int dragStartGX, dragStartGY
-    int dragStartWinX, dragStartWinY
+    int dragStartGX = 0, dragStartGY = 0
+    int dragStartWinX = 0, dragStartWinY = 0
 }
 
 // 检测点击的身体部位：1=头部, 2=胯下, 3=大腿, 0=其他

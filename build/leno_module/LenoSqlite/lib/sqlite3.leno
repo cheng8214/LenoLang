@@ -39,7 +39,7 @@ export alias RowCallback = func(Statement):bool  // 返回 false 停止遍历
 export struct Statement {
     Ptr[u8] handle   // sqlite3_stmt 指针
     Ptr[u8] _db      // 所属数据库连接（用于错误消息查询）
-    bool ok          // 是否有效
+    bool ok = 0          // 是否有效
 
     // 初始化预编译语句
     // db: 数据库连接指针, sql: SQL 语句
@@ -273,8 +273,8 @@ export struct Statement {
 // 封装 sqlite3* 数据库连接
 export struct Database {
     Ptr[u8] handle   // sqlite3* 数据库连接指针
-    bool ok          // 是否连接成功
-    string _lastError // 最近一次错误消息
+    bool ok = 0          // 是否连接成功
+    string _lastError = 0 // 最近一次错误消息
 
     // 打开数据库连接（简单接口）
     // path: 数据库文件路径

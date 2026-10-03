@@ -24,7 +24,8 @@ Font g_fontSmall = null
 
 main() {
     var win = SDL3.createWindow({title: "文件对话框测试 — 点击按钮", w: 720, h: 420})
-    print("window 创建: " + (win != null))
+    // struct 值类型不为 null ⇒ `win != null` 恒真（死判据）。创建成败看 Window.ok ✓
+    print("window 创建: " + win.ok)
 
     // 字体缓存：仅创建一次，渲染时复用
     g_fontBig = SDL3.createFontAuto(16.0)

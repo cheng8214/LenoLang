@@ -2,8 +2,8 @@
 // 这是一个前向引用问题——struct 方法体中引用了在 struct 之后定义的全局变量
 
 struct Config {
-    string name
-    int value
+    string name = 0
+    int value = 0
 
     func getTimeout(): int {
         return DEFAULT_TIMEOUT

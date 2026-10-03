@@ -2,7 +2,7 @@
 
 // 1. 不同类型：参数遮蔽字段（核心 bug 场景）
 struct Button {
-    int cb          // 字段：int 类型
+    int cb = 0          // 字段：int 类型
 
     func on_click(func():void cb) {  // 参数：func():void 类型，遮蔽字段 cb
         cb()  // 应调用参数 cb，而非访问 self["cb"]
@@ -22,7 +22,7 @@ print("btn.cb = " + btn.cb)  // 应输出 42
 
 // 2. 同类型：参数遮蔽字段（应正常工作）
 struct S {
-    int x
+    int x = 0
 
     func test(int x) {
         print("param x = " + x)   // 参数 x

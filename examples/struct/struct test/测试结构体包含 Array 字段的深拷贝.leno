@@ -2,13 +2,13 @@
 
 struct Inner
 {
-    int value
+    int value = 0
     Array[int] items
 }
 
 struct Outer
 {
-    int id
+    int id = 0
     Inner inner
     Array[int] data
 }

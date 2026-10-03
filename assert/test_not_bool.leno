@@ -11,8 +11,8 @@ func alwaysTrue(): bool { return true }
 func alwaysFalse(): bool { return false }
 
 struct Flag {
-    bool on
-    int v
+    bool on = 0
+    int v = 0
 }
 
 var flag = new Flag()

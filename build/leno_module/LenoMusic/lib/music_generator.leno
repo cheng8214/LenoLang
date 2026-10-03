@@ -4,7 +4,7 @@ use core.miniaudio
 
 // ==================== Waveform ====================
 export struct Waveform {
-    Ptr h; bool ok
+    Ptr h; bool ok = 0
 
     func init(int f, int c, int s, int t, float a, float fr): bool {
         miniaudio l = core.lib()
@@ -43,7 +43,7 @@ export struct Waveform {
 
 // ==================== Noise ====================
 export struct Noise {
-    Ptr h; bool ok
+    Ptr h; bool ok = 0
 
     func init(int f, int c, int t, int s, float a): bool {
         miniaudio l = core.lib()

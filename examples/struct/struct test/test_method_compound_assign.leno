@@ -2,7 +2,7 @@
 
 struct Counter
 {
-    int value
+    int value = 0
     
     // 方法内使用复合赋值
     func increment()

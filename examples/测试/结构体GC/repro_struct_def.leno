@@ -1,10 +1,10 @@
 // 模块 A: 定义 struct + enum
 export struct Info {
-    string name
-    int    age
+    string name = 0
+    int    age = 0
     func greet(): string { return "Hello " + name }
 }
 
-export struct Point { float x; float y }
+export struct Point { float x = 0; float y = 0 }
 
 export enum Color { red; green; blue }

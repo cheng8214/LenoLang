@@ -5,8 +5,8 @@
 
 struct Result[T] {
     T data
-    string error
-    bool ok
+    string error = 0
+    bool ok = 0
 }
 
 func Ok[T](T val): Result[T] {

@@ -1,8 +1,8 @@
 // 测试模块
 
 export struct TestStruct {
-    int value
-    bool isInit
+    int value = 0
+    bool isInit = 0
 
     func init(): bool {
         isInit = true

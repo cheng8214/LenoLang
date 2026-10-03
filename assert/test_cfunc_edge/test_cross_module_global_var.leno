@@ -2,7 +2,7 @@
 import "global_var_source.leno" as src
 
 struct Service {
-    string name
+    string name = 0
 
     func get_timeout(): int {
         return src.SHARED_TIMEOUT

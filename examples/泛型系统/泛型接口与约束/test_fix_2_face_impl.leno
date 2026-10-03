@@ -6,7 +6,7 @@ face Comparable[T] {
 }
 
 struct OrdInt impl Comparable[int] {
-    int value
+    int value = 0
     func compareTo(int other): int {
         if self.value < other { return -1 }
         if self.value > other { return 1 }

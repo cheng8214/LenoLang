@@ -1,5 +1,5 @@
 // 修正 test_struct_iso3：字段名用 kids 而非 children
-struct N { int id; bool flag; Array[N] kids = [] }
+struct N { int id = 0; bool flag = 0; Array[N] kids = [] }
 Array[N] roots = []
 
 func setFlag(int id, bool v) {

@@ -2,9 +2,9 @@
 // 测试 struct 方法引用多个后定义的全局变量、跨模块全局变量
 
 struct AppConfig {
-    string name
-    int timeout
-    int retries
+    string name = 0
+    int timeout = 0
+    int retries = 0
 
     func get_full_config(): string {
         return name + ":" + DEFAULT_TIMEOUT + ":" + MAX_RETRIES + ":" + APP_VERSION
@@ -34,7 +34,7 @@ int APP_VERSION = 100
 
 // 另一个 struct 也引用同一批全局变量
 struct NetworkConfig {
-    string host
+    string host = 0
 
     func get_timeout(): int {
         return DEFAULT_TIMEOUT

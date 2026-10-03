@@ -3,8 +3,8 @@
 
 struct Point2D
 {
-    int x
-    int y
+    int x = 0
+    int y = 0
     
     func getName(): string
     {
@@ -19,9 +19,9 @@ struct Point2D
 
 struct Point3D
 {
-    int x
-    int y
-    int z
+    int x = 0
+    int y = 0
+    int z = 0
     
     func getName(): string
     {

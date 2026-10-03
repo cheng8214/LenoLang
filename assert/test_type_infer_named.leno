@@ -4,8 +4,8 @@
 // 修复：改为先 visit 后推断（visit_struct_init.inc）。
 
 struct Point {
-    float x, y
-    int r, g, b
+    float x = 0, y = 0
+    int r = 0, g = 0, b = 0
 }
 
 func useFloat(float v): float { return v + 1.0 }

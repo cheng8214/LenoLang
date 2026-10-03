@@ -139,11 +139,11 @@ func generate_prime(int bits):var {
 
 // RSA 密钥对
 struct RSAKey {
-    int n   // 模数
-    int e   // 公钥指数
-    int d   // 私钥指数
-    int p   // 素数 p
-    int q   // 素数 q
+    int n = 0   // 模数
+    int e = 0   // 公钥指数
+    int d = 0   // 私钥指数
+    int p = 0   // 素数 p
+    int q = 0   // 素数 q
 }
 
 // 生成 RSA 密钥对

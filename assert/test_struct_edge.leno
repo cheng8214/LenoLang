@@ -5,7 +5,7 @@
 // 1. 自递归 struct 基础：链式构建和读取
 // ============================================================
 struct Node {
-    int id
+    int id          // 故意不写默认值：本文件第 73 行断言"空节点 id=null"
     string name = ""
     Array[Node] children = []
 }

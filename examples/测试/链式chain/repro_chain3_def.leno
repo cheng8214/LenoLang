@@ -1,4 +1,4 @@
 // 模块 A: 定义 struct（不导出）
-struct Inner { float a; float b }
-export struct Outer { string tag; Inner pos }
+struct Inner { float a = 0; float b = 0 }
+export struct Outer { string tag = 0; Inner pos }
 export enum Mode { fast; slow }

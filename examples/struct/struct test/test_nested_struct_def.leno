@@ -11,7 +11,7 @@ func createStructWithCapture(): int
     // 在函数内部定义 struct
     struct LocalStruct
     {
-        int data
+        int data = 0
 
         func getData(): int
         {

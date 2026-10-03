@@ -17,8 +17,8 @@ func test_local_var() {
 
 // ========== 测试2: struct 字段收窄 ==========
 struct TestStruct {
-    int intField
-    string strField
+    int intField = 0
+    string strField = 0
     Array arrField
 }
 

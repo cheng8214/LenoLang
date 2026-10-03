@@ -39,14 +39,14 @@ face Container[T] {
 
 // face 自身带参数，可约束
 struct IntBox {
-    int value
+    int value = 0
     func put(int item) { self.value = item }
     func get(): int { return self.value }
 }
 
 // --- 7. struct impl Comparable，泛型约束调用 face 方法 ---
 struct OrdInt impl Comparable {
-    int value
+    int value = 0
     func compare(Comparable other): int {
         var o = other as OrdInt
         if self.value < o.value { return -1 }
@@ -56,7 +56,7 @@ struct OrdInt impl Comparable {
 }
 
 struct OrdStr impl Comparable {
-    string value
+    string value = 0
     func compare(Comparable other): int {
         var o = other as OrdStr
         if self.value < o.value { return -1 }

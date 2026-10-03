@@ -2,8 +2,8 @@
 // Bug: export func process(Array[Point] pts) 报 "未定义的类型: Point"
 
 export struct Point {
-    float x
-    float y
+    float x = 0
+    float y = 0
 }
 
 export func processOne(Point pt) {
