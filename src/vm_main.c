@@ -325,8 +325,10 @@ static int res_write_sentinel(const char* dir, uint64_t hash) {
 }
 
 // 取文件/目录的最后修改时间（秒）。取不到返回 0（⇒ 不会被 GC 删）。
-static long long res_mtime_sec(const char* path) {
+// ⚠ 只在 Windows 分支用得上：POSIX 的 res_gc 直接读 `st.st_mtime`（见下面 #else 那一半）
+//   ⇒ 不加这个守卫时 POSIX 构建会报 -Wunused-function（build_vm.sh 实测 1 条警告）✗
 #ifdef _WIN32
+static long long res_mtime_sec(const char* path) {
     wchar_t* w = utf8_to_utf16(path);
     if (!w) return 0;
     WIN32_FILE_ATTRIBUTE_DATA fad;
@@ -340,12 +342,8 @@ static long long res_mtime_sec(const char* path) {
     }
     free(w);
     return t;
-#else
-    struct stat st;
-    if (stat(path, &st) != 0) return 0;
-    return (long long)st.st_mtime;
-#endif
 }
+#endif
 
 // 惰性 GC：扫 pack_dir 一层，删掉
 //   · 非当前 hash 的目录（超 RES_GC_MAX_AGE_SEC）

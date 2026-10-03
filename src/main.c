@@ -332,6 +332,18 @@ static void entry_cache_list_add(EntryCacheEntry** list, int* count, int* cap,
     (*count)++;
 }
 
+// 把 `dir + name` 拼进 `dst`；越界返回 0（**不写**截断结果）。
+//   ⚠ 不用 `snprintf(dst, cap, "%s%s", …)`：GCC 的 -Wformat-truncation 会判它在
+//     "dir 最长 + 名字最长"时可能截断（实测 main.c:383 一条警告）；而且真截断时会把
+//     **错的路径**交给随后的 stat / 删除，属静默出错 ⇒ 显式判长 + memcpy 更准 ✓
+static int path_concat_into(char* dst, size_t cap, const char* dir, const char* name) {
+    size_t dl = strlen(dir), nl = strlen(name);
+    if (dl + nl + 1 > cap) return 0;
+    memcpy(dst, dir, dl);
+    memcpy(dst + dl, name, nl + 1);
+    return 1;
+}
+
 // 给定 "…/entry_x.lenb"，回收同目录里过旧的入口缓存
 static void entry_cache_prune_stale(const char* current_cache_path) {
     if (!current_cache_path || !current_cache_path[0]) return;
@@ -380,7 +392,7 @@ static void entry_cache_prune_stale(const char* current_cache_path) {
     while ((ent = readdir(d)) != NULL) {
         if (!entry_cache_name_is_target(ent->d_name)) continue;
         char full[MAX_PATH_LEN];
-        snprintf(full, sizeof(full), "%s%s", dir, ent->d_name);
+        if (!path_concat_into(full, sizeof(full), dir, ent->d_name)) continue;   // 超长 ⇒ 跳过（不拿截断路径去 stat）
         struct stat st;
         if (stat(full, &st) != 0) continue;
         entry_cache_list_add(&list, &count, &cap, ent->d_name, (long long)st.st_mtime);
@@ -393,7 +405,7 @@ static void entry_cache_prune_stale(const char* current_cache_path) {
         // 保留最新的 K 个文件；本次刚写的那两个必然在最前面，绝不会被自己删掉
         for (int i = ENTRY_CACHE_KEEP_FILES; i < count; i++) {
             char full[MAX_PATH_LEN];
-            snprintf(full, sizeof(full), "%s%s", dir, list[i].name);
+            if (!path_concat_into(full, sizeof(full), dir, list[i].name)) continue;
             entry_deps_remove(full);
         }
     }
