@@ -1660,7 +1660,24 @@ static void emit_compound_value(CodeGen* gen, Ast* ast, int dst, int imm_fast, i
         }
         return;
     }
-    int r = gen_expr(gen, ast->u.compound_assign.value);
+    // ★ 2026-10-03（T29）：右值是**裸变量**（局部/参数）⇒ 直取它自己的寄存器，不搬临时。
+    //   原路径 `gen_expr(右值)` 会先发一条 `MOV tmp, b` 再用 tmp ⇒ 白花一条**整条指令**
+    //   （实测 **−13.2% / −15.0%**，分布不重叠；见 docs/待办与路线图.md §T29 的 A/B 表）。
+    //   判据用 `direct_local_reg` —— 与**索引赋值路径**的 `val_slot`、**⑤-ag 的一元运算**
+    //   是同一个函数、同一套论证 ✓（不新增判据、不分叉规则；量级也与 ⑤-ag 的 −13.4% 一致 ✓）。
+    //   安全性（三条，与索引写/⑤-ag 逐条同口径）：
+    //     ① 裸变量**无求值副作用** ⇒ 不存在"求值过程改写了 dst"的问题
+    //        （索引写路径要 `ast_may_write_slot` 防的正是这件事，这里不需要）；
+    //     ② `dst == r`（如 `x += x`）也安全 —— 算术 handler 一律"先读 R[B]/R[C] 再写 R[A]"
+    //        （⑤-ag 的 `x = -x` 是同一论证）；
+    //     ③ 没分配临时 ⇒ 不 `reg_free`（同索引写路径"跳过求值就必须跳过释放"的约定）。
+    //   ⚠ 只认 AST_VAR：字段/索引/调用（`s += p.x`）**不能**这样省 —— 那条 `GET_FIELD`
+    //     是真的在读数（A5 的 `ACC_FIELDS` 同理），删了就成了读垃圾 ✗
+    //     （A/B 里 `+= field` 项保持中性，正是这条判据守住的表现 ✓）
+    Ast* rhs_ast = ast->u.compound_assign.value;
+    int r = direct_local_reg(rhs_ast);
+    int r_is_direct = (r >= 0);
+    if (!r_is_direct) r = gen_expr(gen, rhs_ast);
     // ★ 2026-10-03：非立即数路径也按**静态类型**选特化算子 —— 与 gen_binary 的选码逐条同口径
     //   （`codegen_expr.c` 的 `both_int / both_float` 那两个布尔 + 同一个 switch）。
     //   原先这里一律发**通用** OP_ADD/SUB/MUL/DIV ✗ ⇒ 同一个计算写成 `x += b` 比写成
@@ -1706,7 +1723,7 @@ static void emit_compound_value(CodeGen* gen, Ast* ast, int dst, int imm_fast, i
             emit_compound_op(gen, ast->u.compound_assign.op, dst, r, ast->line);
             break;
     }
-    reg_free(gen, r);
+    if (!r_is_direct) reg_free(gen, r);   // 直取变量寄存器时没分配临时，不能 free ✓
 }
 
 void gen_compound_assign(CodeGen* gen, Ast* ast) {
