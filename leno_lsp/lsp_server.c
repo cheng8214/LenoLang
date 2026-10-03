@@ -5,6 +5,7 @@
 
 #include "leno_lsp.h"
 #include "../src/include/native.h"
+#include "../src/include/module_ast_exports.h"
 #include <signal.h>
 
 #ifdef _WIN32
@@ -47,6 +48,17 @@ LspServer* lsp_server_create(void) {
     // 初始化 GC（实例方法注册需要）
     gc_init();
     lsp_log(server, LSP_LOG_INFO, "GC initialized");
+
+    // S10（2026-10-01 收官）：7 类文本扫描链**已整体退役**，模块符号表只能由
+    // 「parser AST 填充器」产出。这两个注册此前只在 `src/main.c`（CLI 入口）里调过一次
+    // ⇒ LSP 作为**另一个宿主**从来没注册：`g_ast_fill_provider` 恒为 NULL、
+    // `module_set_export_names_provider` 也是空的 ⇒ 所有模块符号表都是**空表**，症状：
+    //   ① 悬停 `SDL3.createTitleBar` 查不到模块函数 ⇒ 只有个符号名、没有任何参数/返回类型；
+    //   ② 语义分析把每个跨模块引用都判成未定义 ⇒ 一个文件几百条误报（"还有很多误报"）。
+    // ⚠ 必须在**任何模块加载/编译之前**注册（同 main.c 的顺序与理由）。
+    module_ast_exports_register();
+    module_ast_symbols_register();
+    lsp_log(server, LSP_LOG_INFO, "AST export/symbol providers registered");
 
     // 初始化实例方法元数据（只需初始化一次）
     native_register_all_instance_method_metas();

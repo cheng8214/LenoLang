@@ -6,7 +6,16 @@
 // ⚠ 版本号登记表：docs/待办_单一事实来源与重复实现收敛.md 第七节
 //   （只覆盖符号表缓存；2026-09-16 撞过车：与上游都用 v23 但格式不同）
 #define LENOSYMC_MAGIC   0x4D59534C  // "LSYM" little-endian
-#define LENOSYMC_VERSION 0x00000025  // v37: 类型参数统一记 TYPE_GENERIC_PARAM（产生端根治）
+#define LENOSYMC_VERSION 0x00000026  // v38: struct **方法符号新增 `param_text`**（参数列表文本：
+                                     //      `Widget c, Dict opts` / `Array[Button] buttons`）——
+                                     //      格式变了：方法段在**末尾**（`is_private` 之后）多一段
+                                     //      "参数列表文本串"；旧缓存按 v37 读到末尾会缺这段
+                                     //      （read 端在末尾读，不缺位，但内容没有 ⇒ 悬停仍显示裸
+                                     //      `Array`），升版本是为了**内容失效**：旧的 v37 缓存
+                                     //      里没有这份文本，不重扫就永远补不上 ✓
+                                     //      （为什么要有它：`param_types`+`param_struct_names`
+                                     //       表达不了元素类型 —— `Array[Button]` 只能显示成 `Array` ✗）
+// v37: 类型参数统一记 TYPE_GENERIC_PARAM（产生端根治）
                                      //      （`default_count` + `param_default_texts`）——
                                      //      格式变了：方法段在 `param_struct_names` 之后多一段
                                      //      "默认值个数 + 每个参数的默认值文本"；旧缓存按 v35
@@ -391,6 +400,8 @@ fwrite(&fa, 1, 1, f);
             // v32: pri 私有位（同字段侧 ✓）
             uint8_t mpri = (uint8_t)(sm->is_private ? 1 : 0);
             fwrite(&mpri, 1, 1, f);
+            // v38: 参数列表文本（悬停/参数提示用；方法段**末尾**，与 read 端同序 ✓）
+            sym_cache_write_string(f, sm->param_text);
         }
         uint8_t is_cs = (uint8_t)ss->is_cstruct;
         fwrite(&is_cs, 1, 1, f);
@@ -846,6 +857,8 @@ static int sym_cache_deserialize(const char* cache_path, ModuleSymbolTable* tabl
             // v32: pri 私有位（顺序必须与写入一致 ✓：is_async → 私有位）
             uint8_t mpri2; if (fread(&mpri2, 1, 1, f) != 1) goto fail;
             sm->is_private = mpri2 ? 1 : 0;
+            // v38: 参数列表文本（顺序必须与写入一致 ✓：方法段末尾）
+            sm->param_text = sym_cache_read_string(f);
         }
         uint8_t is_cs; if (fread(&is_cs, 1, 1, f) != 1) goto fail;
         ss->is_cstruct = is_cs;

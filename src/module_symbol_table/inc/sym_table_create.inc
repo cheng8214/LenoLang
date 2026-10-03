@@ -102,6 +102,7 @@ static void sym_table_clear_symbols(ModuleSymbolTable* table) {
             }
             free(table->structs[i].methods[j].return_generic_param_names);
             free(table->structs[i].methods[j].param_types);
+            free(table->structs[i].methods[j].param_text);   // v38：参数列表文本
             // 释放泛型参数名
             if (table->structs[i].methods[j].param_generic_names) {
                 for (int pi = 0; pi < table->structs[i].methods[j].param_count; pi++) {

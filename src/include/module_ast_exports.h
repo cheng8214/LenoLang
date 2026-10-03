@@ -45,4 +45,10 @@ void module_ast_symbols_register(void);
 //   参数用 void* ⇒ 不在这个头里引入 core 的 ModuleSymbolTable 类型 ✓
 void module_ast_symbols_fill_from_ast(void* table, void* ast_root);
 
+// 把 TypeInfo 渲染成**悬停口径**的类型文本（裸名字：`Widget` / `Array[Button]` / `Ptr[u8]`）
+//   —— 与 type.c 的诊断口径（`struct Widget`）刻意不同，见 module_ast_exports.c 的说明。
+//   用途：LSP 的悬停/参数提示显示返回类型；ti 为 NULL ⇒ 写 "any"；缓冲不足时自动截断 ✓
+//   （TypeInfo 是 core 类型，这里用 void* 以便 LSP 侧直接传 TypeInfo* ✓）
+void module_ast_type_text_into(void* ti, char* buf, int cap);
+
 #endif  // LENO_MODULE_AST_EXPORTS_H

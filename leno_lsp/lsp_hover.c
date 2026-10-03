@@ -9,6 +9,7 @@
 #include "lsp_completion.h"
 #include "../src/include/native.h"
 #include "../src/include/leno_value.h"
+#include "../src/include/module_ast_exports.h"   // module_ast_type_text_into（悬停口径的类型文本）
 #include <ctype.h>
 #include <string.h>
 #include <time.h>
@@ -2301,13 +2302,31 @@ char* last_sep = (slash && backslash) ? (slash > backslash ? slash : backslash) 
         return NULL;
     }
 
-    
-        
+    // ★ 先把这个名字解析成**真实文件路径**（与 parse_imports 同一口径：package_resolve_module_file）：
+    //   本函数此前把 import 文本里的名字原样交给编译器侧建表 —— 对 `import "SDL3" as SDL3` 来说
+    //   那就是包名 "SDL3"：编译器侧的解析在"缓存目录 .lenocache 不在/刚被删掉"时会整个失败
+    //   （scan 返回 -1）⇒ step0 判空，悬停退化成
+    //   「createTitleBar 是 Dict 类型变量的成员」这种误导文案（用户实测：删掉 .lenocache 必现）✗
+    //   LSP 自己的包解析不依赖缓存状态（parse_imports / 定义跳转都用它）⇒ 这里先用它 ✓
+    //   ⚠ 相对路径（`import "./x.leno"`）解析不出来 ⇒ 原样保留（由编译器按 current_file 解析）✓
+    {
+        extern int package_resolve_module_file(const char* module_name, char* out_path, int out_len);
+        char pkg_path[MAX_PATH_LEN] = {0};
+        if (segments[0] && package_resolve_module_file(segments[0], pkg_path, sizeof(pkg_path)) == 1
+            && pkg_path[0]) {
+            free(module_path);
+            module_path = strdup(pkg_path);
+        }
+    }
+
     // 重置模块扫描栈（防止 LSP 多次请求间残留导致误报循环依赖）
     module_symbol_table_reset_scan_stack();
     
     // 使用轻量级 module_symbol_table（带磁盘缓存），不触发完整编译
     ModuleSymbolTable* table = module_symbol_table_create(module_path);
+    fprintf(stderr, "[HOVER] step0: module_path='%s' table=%s\n",
+            module_path, table ? "ok" : "NULL");
+    fflush(stderr);
     free(module_path);
 
     if (!table) {
@@ -2317,6 +2336,8 @@ char* last_sep = (slash && backslash) ? (slash > backslash ? slash : backslash) 
 
     int scan_result = module_symbol_table_scan(table, current_file);
     if (scan_result != 0) {
+        fprintf(stderr, "[HOVER] step0: scan failed (%d)\n", scan_result);
+        fflush(stderr);
         module_symbol_table_destroy(table);
         for (int i = 0; i < segment_count; i++) free(segments[i]);
         return NULL;
@@ -2333,7 +2354,18 @@ char* last_sep = (slash && backslash) ? (slash > backslash ? slash : backslash) 
             int len = 1024 + strlen(word);
             result = (char*)malloc(len);
             if (result) {
-                const char* ret_str = func->return_struct_name ? func->return_struct_name : type_kind_to_string(func->return_type);
+                // 返回类型优先用**完整 TypeInfo**，并按**悬停口径**渲染（裸名字：`TitleBar`、
+                // `Array[DirEntry]`）；type_to_string 是诊断口径，会写成 `struct TitleBar` ✓
+                char ret_buf[256];
+                const char* ret_str;
+                if (func->return_type_info) {
+                    module_ast_type_text_into(func->return_type_info, ret_buf, (int)sizeof(ret_buf));
+                    ret_str = ret_buf;
+                } else {
+                    ret_str = func->return_struct_name ? func->return_struct_name
+                                                       : type_kind_to_string(func->return_type);
+                }
+                // 参数文本由符号表提供（AST 填充器用 `类型 名字` 重建，含 `Ptr[u8] buf` 这类完整类型）✓
                 const char* params = (func->param_text && func->param_text[0]) ? func->param_text : "";
                 if (func->type_param_count > 0) {
                     char tparams[128] = "[";
@@ -2418,7 +2450,16 @@ char* last_sep = (slash && backslash) ? (slash > backslash ? slash : backslash) 
                 int len = 1024 + strlen(word);
                 result = (char*)malloc(len);
                 if (result) {
-                    const char* tstr = var->struct_name ? var->struct_name : type_kind_to_string(var->type);
+                    // 完整类型优先（`Array[int]` / `Dict[string,string]` 只有 type_info 表达得出来），
+                    // 按悬停口径渲染（裸名字，无 `struct ` 前缀）✓
+                    char tstr_buf[256];
+                    const char* tstr;
+                    if (var->type_info) {
+                        module_ast_type_text_into(var->type_info, tstr_buf, (int)sizeof(tstr_buf));
+                        tstr = tstr_buf;
+                    } else {
+                        tstr = var->struct_name ? var->struct_name : type_kind_to_string(var->type);
+                    }
                     snprintf(result, len, "**%s**\n\n```leno\n%s %s\n```\n\n模块导出的%s变量",
                              word, tstr, word, var->is_const ? "常量 " : " ");
                 }
@@ -2447,8 +2488,10 @@ char* last_sep = (slash && backslash) ? (slash > backslash ? slash : backslash) 
                 int len = 1024 + strlen(word);
                 result = (char*)malloc(len);
                 if (result) {
+                char abuf[256];
+                module_ast_type_text_into(als->type_info, abuf, (int)sizeof(abuf));
                 snprintf(result, len, "**%s**\n\n```leno\nalias %s = %s\n```\n\n模块导出的类型别名",
-                         word, word, type_kind_to_string(als->type_info->kind));
+                         word, word, abuf);
                 }
             }
         }
@@ -2482,7 +2525,17 @@ char* last_sep = (slash && backslash) ? (slash > backslash ? slash : backslash) 
                         int len = 1024 + strlen(word);
                         result = (char*)malloc(len);
                         if (result) {
-                            const char* fts = st->fields[fi].struct_name ? st->fields[fi].struct_name : type_kind_to_string(st->fields[fi].type);
+                            // 完整类型优先（`Array[Ptr[u8]]` 这种嵌套只有 type_info 表达得出来）；
+                            // 按悬停口径渲染 —— 裸名字，无 `struct `/`face ` 前缀 ✓
+                            char fbuf[256];
+                            const char* fts;
+                            if (st->fields[fi].type_info) {
+                                module_ast_type_text_into(st->fields[fi].type_info, fbuf, (int)sizeof(fbuf));
+                                fts = fbuf;
+                            } else {
+                                fts = st->fields[fi].struct_name ? st->fields[fi].struct_name
+                                                                 : type_kind_to_string(st->fields[fi].type);
+                            }
                             snprintf(result, len, "**%s**\n\n```leno\n%s %s\n```\n\n%s 字段 (%s)",
                                      word, fts, word, type_name, type_name);
                         }
@@ -2501,8 +2554,18 @@ char* last_sep = (slash && backslash) ? (slash > backslash ? slash : backslash) 
                         int len = 1024 + strlen(word);
                         result = (char*)malloc(len);
                         if (result) {
-                            const char* rts = st->methods[mi].return_struct_name ? st->methods[mi].return_struct_name :
-                                                type_kind_to_string(st->methods[mi].return_type);
+                            // 完整返回类型优先（`Ptr[u8]` 这种只有 TypeInfo 带得出元素类型）；
+                            // 悬停口径 ⇒ 裸名字（`TitleBar`，不是 `struct TitleBar`）✓
+                            char rbuf[256];
+                            const char* rts;
+                            if (st->methods[mi].return_type_info) {
+                                module_ast_type_text_into(st->methods[mi].return_type_info, rbuf, (int)sizeof(rbuf));
+                                rts = rbuf;
+                            } else {
+                                rts = st->methods[mi].return_struct_name
+                                          ? st->methods[mi].return_struct_name
+                                          : type_kind_to_string(st->methods[mi].return_type);
+                            }
                                                         snprintf(result, len, "**%s**\n\n```leno\n%s.%s(...) : %s\n```\n\n%s 方法",
                                      word, type_name, member_name, rts, type_name);
                         }
@@ -3408,6 +3471,13 @@ int trace_method_source(const char* module_path, const char* current_file,
                                 int in_line, int* out_line, const char** out_short) {
     if (!module_path || !method_name || in_line <= 0) return 0;
 
+    // ★ 短名**必须拷贝出参**（不能把 `module_path` 的指针直接交出去）：本函数尾部递归追溯时，
+    //   传入的是那一层栈帧的局部数组 `dep_full_path` ⇒ 最内层设置 `*out_short = dep_full_path + n`
+    //   后各层陆续返回，调用方拿到的是**已销毁栈帧里的地址**：实测打印时还是
+    //   "sdl_titlebar.leno:246"，到后面 snprintf 时就变成 ""（悬停显示 "---\n:246"：有行号、没文件名）✓
+    //   LSP 是单线程、调用方拿到后立即 snprintf ⇒ 一份函数内静态缓冲足够
+    static char s_traced_short[256];
+
     // 读取模块文件内容
     char* src = read_module_file(module_path, current_file);
     if (!src) return 0;
@@ -3445,7 +3515,9 @@ int trace_method_source(const char* module_path, const char* current_file,
             // 方法确实定义在这个文件中，来源就是 module_path
             *out_line = in_line;
             const char* last_sep = find_last_path_sep(module_path);
-            *out_short = last_sep ? last_sep + 1 : module_path;
+            snprintf(s_traced_short, sizeof(s_traced_short), "%s",
+                     last_sep ? last_sep + 1 : module_path);
+            *out_short = s_traced_short;
             free(src);
             return 1;
         }
@@ -3559,30 +3631,37 @@ static char* generate_struct_method_doc(const char* struct_name, const char* met
                                                       const char* content, const char* file_path) {
     ObjStructDef* sdef = struct_def_find(struct_name);
     if (!sdef) {
-        // struct_def_find 失败，尝试 cstruct 内置方法
-        // cstruct 的方法注册在 cstructMethodTable 中，struct_def_find 查不到
-        // cstruct 的方法是固定的内置方法，使用硬编码元信息
-        CStructMethodEntry centry = cstruct_find_method_meta(method_name);
-        if (centry.method) {
-            int arity = centry.arity;
+        // struct_def_find 失败：可能是 cstruct —— 它没有 ObjStructDef，方法注册在
+        // **编译期实例方法元信息表**里（type_name == "cstruct"，与语义层同一查表口径，
+        // 见 semantic_type.c 的 `(obj_type->kind == TYPE_CSTRUCT) ? "cstruct" : "struct"`）。
+        // ⚠ 这里原用 `cstruct_find_method_meta()`/`CStructMethodEntry` —— 该家族
+        //   （MethodEntry / method_table_find_meta / *_find_method_meta）已随
+        //   "类型只在编译期元信息表里保存一份" 的重构删除（2026-10-02），此调用点当时漏改。
+        const InstanceMethodMeta* cmeta = native_find_instance_method("cstruct", method_name);
+        if (cmeta) {
+            int arity = cmeta->arity;
+            // 可变参数（NATIVE_ARITY_VARARG，负数）不展开参数列表
+            int fixed_arity = (arity > 0) ? arity : 0;
             char params_str[256] = {0};
-            if (arity > 0) {
-                int off = 0;
-                for (int j = 0; j < arity && off < (int)sizeof(params_str) - 20; j++) {
-                    const char* pt_str = type_kind_to_string(centry.param_types[j]);
-                    if (j > 0) off += snprintf(params_str + off, sizeof(params_str) - off, ", ");
-                    off += snprintf(params_str + off, sizeof(params_str) - off, "%s", pt_str);
-                }
+            int off = 0;
+            for (int j = 0; j < fixed_arity && off < (int)sizeof(params_str) - 20; j++) {
+                const char* pt_str = type_kind_to_string(
+                    native_get_instance_method_param_type("cstruct", method_name, j));
+                if (j > 0) off += snprintf(params_str + off, sizeof(params_str) - off, ", ");
+                off += snprintf(params_str + off, sizeof(params_str) - off, "%s", pt_str);
             }
-            const char* ret_str = type_kind_to_string(centry.return_type);
+            const char* ret_str = type_kind_to_string(cmeta->return_type);
             int len = 512 + strlen(struct_name) + strlen(method_name) + strlen(params_str) + strlen(ret_str);
             char* info = (char*)malloc(len);
             if (!info) return NULL;
             if (arity == 0) {
-                snprintf(info, len, "**%s.%s()**\n\n```leno\n%s.%s() : %s\n```\n\n%s 内置方法",
+                snprintf(info, len, "**%s.%s()**\n\n```leno\n%s.%s() : %s\n```\n\n%s cstruct 内置方法",
+                         struct_name, method_name, struct_name, method_name, ret_str, struct_name);
+            } else if (arity < 0) {
+                snprintf(info, len, "**%s.%s(...)**\n\n```leno\n%s.%s(...) : %s\n```\n\n%s cstruct 内置方法（可变参数）",
                          struct_name, method_name, struct_name, method_name, ret_str, struct_name);
             } else {
-                snprintf(info, len, "**%s.%s(%s)**\n\n```leno\n%s.%s(%s) : %s\n```\n\n%s 内置方法（%d 个参数）",
+                snprintf(info, len, "**%s.%s(%s)**\n\n```leno\n%s.%s(%s) : %s\n```\n\n%s cstruct 内置方法（%d 个参数）",
                          struct_name, method_name, params_str,
                          struct_name, method_name, params_str, ret_str,
                          struct_name, arity);
@@ -3615,6 +3694,11 @@ static char* generate_struct_method_doc(const char* struct_name, const char* met
                 // 从当前文件的模块符号表获取方法定义行号
                 int method_line = 0;
                 const char* src_short = NULL;
+                // ★ 短名一律**拷进本缓冲区**再指过去：下面的来源可能是
+                //   ① trace_method_source 的静态缓冲（下一次调用会覆盖）
+                //   ② imp_aliases[ii].module_name —— 它在下面 free_import_aliases 时就被释放了，
+                //      直接把指针留到最后 snprintf ⇒ use-after-free（文件名变空/乱码）✗
+                char src_short_buf[256] = {0};
                 fprintf(stderr, "[HOVER-DEBUG] generate_struct_method_doc: looking for line, struct='%s' method='%s' file_path='%s'\n",
                         struct_name, method_name, file_path ? file_path : "NULL");
                 fflush(stderr);
@@ -3662,7 +3746,9 @@ static char* generate_struct_method_doc(const char* struct_name, const char* met
                                             if (trace_method_source(mp, file_path, struct_name, method_name,
                                                                      method_line, &traced_line, &traced_short)) {
                                                 method_line = traced_line;
-                                                src_short = traced_short;
+                                                snprintf(src_short_buf, sizeof(src_short_buf), "%s",
+                                                         traced_short ? traced_short : "");
+                                                src_short = src_short_buf;
                                                 fprintf(stderr, "[HOVER-DEBUG]   traced to: %s:%d\n", src_short, method_line);
                                                 fflush(stderr);
                                             } else {
@@ -3670,7 +3756,9 @@ static char* generate_struct_method_doc(const char* struct_name, const char* met
 const char* slash_i = strrchr(mp, '/');
 const char* backslash_i = strrchr(mp, '\\');
 const char* last_sep_i = (slash_i && backslash_i) ? (slash_i > backslash_i ? slash_i : backslash_i) : (slash_i ? slash_i : (backslash_i ? backslash_i : NULL));
-                                                src_short = last_sep_i ? last_sep_i + 1 : mp;
+                                                snprintf(src_short_buf, sizeof(src_short_buf), "%s",
+                                                         last_sep_i ? last_sep_i + 1 : mp);
+                                                src_short = src_short_buf;
                                             }
                                         } else {
                                             fprintf(stderr, "[HOVER-DEBUG]   not found in this module\n");
@@ -3729,9 +3817,20 @@ const char* last_sep_c = (slash_c && backslash_c) ? (slash_c > backslash_c ? sla
                 // 同时保存方法符号信息，用于在源文件解析失败时构建参数签名
                 int method_line = 0;
                 const char* src_short = NULL;
+                // ★ 短名一律拷进本缓冲区（理由同 fn!=NULL 分支：静态缓冲会被下次调用覆盖；
+                //   imp_aliases 的 module_name 下面就被 free 了 ⇒ 直接留指针会读到已释放内存）✓
+                char src_short_buf[256] = {0};
                 // 保存方法符号信息（从模块符号表获取）
                 int sym_param_count = 0;
                 TypeKind sym_param_types[16] = {0};
+                // ★ 聚合类型形参的名字（struct/face/cstruct/clib）：符号表里 `func add(Widget c, Dict opts)`
+                //   的 kind 是 TYPE_FACE，只靠 type_kind_to_string 会显示成字面量 `face`
+                //   （实测悬停 `HBox.add(face, Dict)` —— 参数类型名丢了）⇒ 必须带名字 ✓
+                //   ⚠ 必须是**拷贝**：符号表下面就被 destroy 了，指针会变悬垂 ✓
+                char sym_param_structs[16][64] = {{0}};
+                // v38：符号表里的**参数列表文本**（`Array[Button] buttons, float spacing`）——
+                //   它是唯一能带出元素/泛型类型的来源（param_types 只有 Kind 槽）✓
+                char sym_param_text[512] = {0};
                 TypeKind sym_return_type = TYPE_ANY;
                 char sym_return_struct[64] = {0};
                 int has_sym_info = 0;
@@ -3745,12 +3844,19 @@ const char* last_sep_c = (slash_c && backslash_c) ? (slash_c > backslash_c ? sla
                                 method_line = cm->line;
                                 sym_param_count = cm->param_count;
                                 sym_return_type = cm->return_type;
+                                if (cm->param_text) {
+                                    snprintf(sym_param_text, sizeof(sym_param_text), "%s", cm->param_text);
+                                }
                                 if (cm->return_struct_name) {
                                     strncpy(sym_return_struct, cm->return_struct_name, sizeof(sym_return_struct) - 1);
                                 }
                                 if (cm->param_types && cm->param_count > 0 && cm->param_count <= 16) {
                                     for (int pi = 0; pi < cm->param_count; pi++) {
                                         sym_param_types[pi] = cm->param_types[pi];
+                                        if (cm->param_struct_names && cm->param_struct_names[pi]) {
+                                            snprintf(sym_param_structs[pi], sizeof(sym_param_structs[pi]),
+                                                     "%s", cm->param_struct_names[pi]);
+                                        }
                                     }
                                 }
                                 has_sym_info = 1;
@@ -3785,12 +3891,19 @@ const char* last_sep_c = (slash_c && backslash_c) ? (slash_c > backslash_c ? sla
                                             // 保存方法符号信息
                                             sym_param_count = im->param_count;
                                             sym_return_type = im->return_type;
+                                            if (im->param_text) {
+                                                snprintf(sym_param_text, sizeof(sym_param_text), "%s", im->param_text);
+                                            }
                                             if (im->return_struct_name) {
                                                 strncpy(sym_return_struct, im->return_struct_name, sizeof(sym_return_struct) - 1);
                                             }
                                             if (im->param_types && im->param_count > 0 && im->param_count <= 16) {
                                                 for (int pi = 0; pi < im->param_count; pi++) {
                                                     sym_param_types[pi] = im->param_types[pi];
+                                                    if (im->param_struct_names && im->param_struct_names[pi]) {
+                                                        snprintf(sym_param_structs[pi], sizeof(sym_param_structs[pi]),
+                                                                 "%s", im->param_struct_names[pi]);
+                                                    }
                                                 }
                                             }
                                             has_sym_info = 1;
@@ -3802,7 +3915,9 @@ const char* last_sep_c = (slash_c && backslash_c) ? (slash_c > backslash_c ? sla
                                             if (trace_method_source(mp, file_path, struct_name, method_name,
                                                                      method_line, &traced_line, &traced_short)) {
                                                 method_line = traced_line;
-                                                src_short = traced_short;
+                                                snprintf(src_short_buf, sizeof(src_short_buf), "%s",
+                                                         traced_short ? traced_short : "");
+                                                src_short = src_short_buf;
                                                 fprintf(stderr, "[HOVER-DEBUG]   [fn=NULL] traced to: %s:%d\n", src_short, method_line);
                                                 fflush(stderr);
                                             } else {
@@ -3810,7 +3925,9 @@ const char* last_sep_c = (slash_c && backslash_c) ? (slash_c > backslash_c ? sla
 const char* slash_i = strrchr(mp, '/');
 const char* backslash_i = strrchr(mp, '\\');
 const char* last_sep_i = (slash_i && backslash_i) ? (slash_i > backslash_i ? slash_i : backslash_i) : (slash_i ? slash_i : (backslash_i ? backslash_i : NULL));
-                                                src_short = last_sep_i ? last_sep_i + 1 : mp;
+                                                snprintf(src_short_buf, sizeof(src_short_buf), "%s",
+                                                         last_sep_i ? last_sep_i + 1 : mp);
+                                                src_short = src_short_buf;
                                             }
                                         } else {
                                             fprintf(stderr, "[HOVER-DEBUG]   [fn=NULL] not found in this module\n");
@@ -3913,11 +4030,18 @@ const char* last_sep_c = (slash_c && backslash_c) ? (slash_c > backslash_c ? sla
                 // 如果源文件解析失败，但有符号表信息，利用参数类型和返回类型构建签名
                 if (has_sym_info) {
                     // 构建参数列表字符串
-                    char params_str[256] = {0};
-                    if (sym_param_count > 0) {
+                    char params_str[512] = {0};
+                    if (sym_param_text[0]) {
+                        // ★ 首选符号表的**参数列表文本**（v38）：它带得出 `Array[Button] buttons`、
+                        //   `Ptr[u8] p` 这类元素/泛型信息，而 kind 槽只能给 `Array` / `Ptr` ✓
+                        snprintf(params_str, sizeof(params_str), "%s", sym_param_text);
+                    } else if (sym_param_count > 0) {
                         int off = 0;
                         for (int j = 0; j < sym_param_count && off < (int)sizeof(params_str) - 20; j++) {
-                            const char* pt_str = type_kind_to_string(sym_param_types[j]);
+                            // 退路：有聚合类型名就用名字（`Widget`），否则退回 kind 名（`int`/`Dict`…）✓
+                            const char* pt_str = sym_param_structs[j][0]
+                                                     ? sym_param_structs[j]
+                                                     : type_kind_to_string(sym_param_types[j]);
                             if (j > 0) off += snprintf(params_str + off, sizeof(params_str) - off, ", ");
                             off += snprintf(params_str + off, sizeof(params_str) - off, "%s", pt_str);
                         }
@@ -4047,16 +4171,35 @@ static char* generate_struct_method_doc_from_modules(const char* struct_name, co
                     fflush(stderr);
                     if (strcmp(sep, method_name) == 0) {
                         int arity = mst->methods[j].param_count;
-                        const char* ret_str = mst->methods[j].return_struct_name ?
-                            mst->methods[j].return_struct_name :
-                            type_kind_to_string(mst->methods[j].return_type);
+                        // 返回类型优先用完整 TypeInfo（Kind/名字槽显示不出 `Ptr[u8]`），
+                        // 按悬停口径渲染（裸名字）✓
+                        char rbuf[256];
+                        const char* ret_str;
+                        if (mst->methods[j].return_type_info) {
+                            module_ast_type_text_into(mst->methods[j].return_type_info, rbuf, (int)sizeof(rbuf));
+                            ret_str = rbuf;
+                        } else {
+                            ret_str = mst->methods[j].return_struct_name
+                                          ? mst->methods[j].return_struct_name
+                                          : type_kind_to_string(mst->methods[j].return_type);
+                        }
                         
                         // 构建参数列表
-                        char params_str[256] = {0};
-                        if (arity > 0 && mst->methods[j].param_types) {
+                        char params_str[512] = {0};
+                        if (mst->methods[j].param_text && mst->methods[j].param_text[0]) {
+                            // ★ 首选符号表的参数列表文本（v38）：带元素/泛型信息
+                            //   （`Array[Button] buttons, float spacing`）✓
+                            snprintf(params_str, sizeof(params_str), "%s", mst->methods[j].param_text);
+                        } else if (arity > 0 && mst->methods[j].param_types) {
                             int offset = 0;
                             for (int k = 0; k < arity && offset < (int)sizeof(params_str) - 20; k++) {
-                                const char* pt_str = type_kind_to_string(mst->methods[j].param_types[k]);
+                                // 退路：聚合类型形参用**名字**（struct/face/cstruct/clib；表还活着 ⇒ 直接用指针 ✓），
+                                // 否则 kind 名。此前一律 kind ⇒ `func add(Widget c, Dict opts)` 显示成
+                                // `HBox.add(face, Dict)`（`face` 是 kind 名，不是类型名）✗
+                                const char* pn = (mst->methods[j].param_struct_names)
+                                                     ? mst->methods[j].param_struct_names[k] : NULL;
+                                const char* pt_str = pn ? pn
+                                                        : type_kind_to_string(mst->methods[j].param_types[k]);
                                 if (k > 0) offset += snprintf(params_str + offset, sizeof(params_str) - offset, ", ");
                                 offset += snprintf(params_str + offset, sizeof(params_str) - offset, "%s", pt_str);
                             }
@@ -4778,6 +4921,23 @@ static char* generate_instance_method_doc(const char* type_name, const char* met
     return info;
 }
 
+// 判断某个名字是否是当前文件的 **import 别名**（即模块名，而不是变量名）。
+//   用途：`SDL3.createTitleBar` 的接收者是模块 ⇒ 不能套"变量成员"那套兜底文案
+//   （曾经显示「createTitleBar 是 Dict 类型变量的成员」，纯误导）✓
+static bool is_import_alias_name(const char* content, const char* name) {
+    if (!content || !name || !name[0]) return false;
+    extern ImportAlias* parse_imports(const char* content, int* count);
+    extern void free_import_aliases(ImportAlias* aliases, int count);
+    int ic = 0;
+    ImportAlias* ia = parse_imports(content, &ic);
+    bool hit = false;
+    for (int i = 0; ia && i < ic; i++) {
+        if (ia[i].alias && strcmp(ia[i].alias, name) == 0) { hit = true; break; }
+    }
+    if (ia) free_import_aliases(ia, ic);
+    return hit;
+}
+
 // 获取悬停信息
 char* lsp_get_hover_info(const char* content, LspPosition pos, const char* file_path) {
     if (!content) return NULL;
@@ -5282,7 +5442,15 @@ const char* last_sep = (slash && backslash) ? (slash > backslash ? slash : backs
                         }
 
                         // 4.5b 回退：如果字段查找和方法查找全部失败但已知变量类型，显示基本成员提示
-                        if (!info) {
+                        //   ⚠ **接收者是 import 别名（模块）时不能走这里**：`SDL3.createTitleBar`
+                        //     会被写成「createTitleBar 是 Dict 类型变量的成员」（把模块当成了变量）✗
+                        //     查不到就留空，让下面的 step6 至少补上定义来源与基本签名 ✓
+                        bool recv_is_module = is_import_alias_name(content, module);
+                        if (!info && recv_is_module) {
+                            fprintf(stderr, "[HOVER] 4.5b: '%s' 是 import 别名，跳过变量成员兜底\n", module);
+                            fflush(stderr);
+                        }
+                        if (!info && !recv_is_module) {
                             size_t fallback_len = 256 + strlen(module) + strlen(method) + strlen(var_type);
                             info = (char*)malloc(fallback_len);
                             if (info) {

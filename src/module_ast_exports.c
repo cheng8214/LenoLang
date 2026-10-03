@@ -273,8 +273,9 @@ void module_ast_exports_register(void) {
 // 覆盖字段只取 AST 侧**现成且更准**的：返回类型用 parser 解析好的 TypeInfo
 //   （扫描链走的是自己那套"文本→类型"，那是第三份类型解析）；参数个数/默认值个数/
 //   泛型参数个数/async 同样直接来自 AST ✓
-// 仍留给扫描链的：param_text / param_default_texts（AST 里是表达式而非文本）⇒
-//   等这些消费者也迁走后再一起换掉 ✓
+// param_text：AST 里形参是"类型 + 名字"（不是文本），但**可据此重建**（见 ast_func_param_text）——
+//   它的消费者是 LSP 的悬停/参数提示（原来判成"零消费者"漏掉了）⇒ 现在也由本文件补齐 ✓
+// param_default_texts：仍由扫描链的文本形态承担（AST 侧是表达式）✓
 
 // 前向声明：聚合类型修正（定义见下；func 的返回类型也要用它 ✓）
 static void ast_fix_agg_kind(ModuleSymbolTable* table, TypeInfo* t);
@@ -331,15 +332,141 @@ static TypeKind ast_kind_of(ModuleSymbolTable* table, TypeInfo* ti) {
     return ti->kind;
 }
 
+// ---- 悬停口径的类型渲染（递归）----
+//   与 type.c 的 build_generic_type_string（**诊断**口径）刻意不同的一点：
+//     · "名字型" kind（struct/face/cstruct/clib/cfunc/enum/泛型形参）⇒ **裸名字**
+//       （`Widget`、`TitleBar`、`T`）——这是用户在源码里写的形态，也是悬停想看到的；
+//       诊断那套要加 `struct `/`face ` 前缀（"期望 struct Color" 是既有文案，不便改）✓
+//     · 参数化 kind 递归展开 ⇒ `Array[Button]`、`Ptr[u8]`、`Dict[string, int]`、
+//       `Array[Array[string]]`（元素类型只有 AST 侧有 —— 这正是 `param_types`
+//       + `param_struct_names` 表达不了、必须存 param_text 的原因 ✓）
+//     · 其余按 type_kind_to_string；可空后缀 `?`（与 type.c 同口径 ✓）
+static void ast_buf_append(char* buf, size_t cap, size_t* off, const char* s) {
+    if (!buf || !s) return;
+    while (*s && *off + 1 < cap) buf[(*off)++] = *s++;
+    buf[*off] = '\0';
+}
+
+static void ast_type_text_append(TypeInfo* ti, char* buf, size_t cap, size_t* off) {
+    if (!ti) {
+        ast_buf_append(buf, cap, off, "any");
+        return;
+    }
+    switch (ti->kind) {
+        case TYPE_ARRAY:
+        case TYPE_PTR_GENERIC:
+        case TYPE_THREAD: {
+            const char* base = (ti->kind == TYPE_ARRAY) ? "Array"
+                               : (ti->kind == TYPE_THREAD) ? "Thread" : "Ptr";
+            ast_buf_append(buf, cap, off, base);
+            if (ti->element_type) {
+                ast_buf_append(buf, cap, off, "[");
+                ast_type_text_append(ti->element_type, buf, cap, off);
+                ast_buf_append(buf, cap, off, "]");
+            }
+            break;
+        }
+        case TYPE_DICT: {
+            ast_buf_append(buf, cap, off, "Dict");
+            if (ti->key_type || ti->value_type) {
+                ast_buf_append(buf, cap, off, "[");
+                ast_type_text_append(ti->key_type, buf, cap, off);
+                ast_buf_append(buf, cap, off, ", ");
+                ast_type_text_append(ti->value_type, buf, cap, off);
+                ast_buf_append(buf, cap, off, "]");
+            }
+            break;
+        }
+        case TYPE_STRUCT:
+        case TYPE_FACE:
+        case TYPE_CSTRUCT:
+        case TYPE_CLIB:
+        case TYPE_CFUNC:
+        case TYPE_ENUM:
+            if (ti->struct_name) {
+                ast_buf_append(buf, cap, off, ti->struct_name);
+                if (ti->generic_count > 0 && ti->generic_args) {
+                    ast_buf_append(buf, cap, off, "[");
+                    for (int i = 0; i < ti->generic_count; i++) {
+                        if (i > 0) ast_buf_append(buf, cap, off, ", ");
+                        ast_type_text_append(ti->generic_args[i], buf, cap, off);
+                    }
+                    ast_buf_append(buf, cap, off, "]");
+                }
+            } else {
+                ast_buf_append(buf, cap, off, type_kind_to_string(ti->kind));
+            }
+            break;
+        case TYPE_GENERIC_PARAM:
+            ast_buf_append(buf, cap, off,
+                           ti->type_param_name ? ti->type_param_name : "T");
+            break;
+        default:
+            ast_buf_append(buf, cap, off, type_kind_to_string(ti->kind));
+            break;
+    }
+    if (ti->nullable) ast_buf_append(buf, cap, off, "?");
+}
+
+// 供 LSP 用：把 TypeInfo 渲染成**悬停口径**的类型文本（裸名字，见 ast_type_text_append）✓
+//   写成"填缓冲"而不是返回 malloc 串：调用点全是 snprintf 的实参，省掉 malloc/free 与泄漏风险 ✓
+void module_ast_type_text_into(void* ti_v, char* buf, int cap) {
+    if (!buf || cap <= 0) return;
+    buf[0] = '\0';
+    size_t off = 0;
+    ast_type_text_append((TypeInfo*)ti_v, buf, (size_t)cap, &off);
+}
+
+// 由 AST 重建"参数列表文本"（`Dict opts, Ptr[u8] buf`）——**给 LSP 用**（悬停 / 参数提示）。
+//   为什么需要它：符号表里没有形参**名**，而悬停要显示 `func createTitleBar(Dict opts): TitleBar`
+//   ⇒ 只有这份文本能给出"类型 + 名字"，而且**带元素/泛型信息**（`Ptr[u8] buf`、
+//   `Array[Button] buttons`）—— `param_types`(Kind) + `param_struct_names` 只能给裸 `Ptr`/`Array` ✗
+//   （建表路径原先传 NULL，理由是"param_text 已无消费者"——那个判断漏了 LSP：
+//     lsp_hover.c 的模块函数/struct 方法悬停与 lsp_signature.c 都读它 ⇒ 参数整段消失 ✗）
+static char* ast_func_param_text(Ast* fn) {
+    if (!fn || !fn->u.func.params || fn->u.func.pcnt <= 0) return NULL;
+    const int pc = fn->u.func.pcnt;
+    char* out = (char*)calloc((size_t)pc * 384 + 1, 1);
+    if (!out) return NULL;
+    size_t off = 0;
+    for (int i = 0; i < pc; i++) {
+        char one[384];
+        size_t oo = 0;
+        one[0] = '\0';
+        if (i > 0) ast_buf_append(one, sizeof(one), &oo, ", ");
+        ast_type_text_append(fn->u.func.param_types ? fn->u.func.param_types[i] : NULL,
+                             one, sizeof(one), &oo);
+        const char* pname = fn->u.func.params[i];
+        if (pname && pname[0]) {
+            ast_buf_append(one, sizeof(one), &oo, " ");
+            ast_buf_append(one, sizeof(one), &oo, pname);
+        }
+        // 默认值文本（`int kind = 2`）——与符号表里 param_default_texts 同一套还原函数 ✓
+        if (fn->u.func.param_defaults && fn->u.func.param_defaults[i]) {
+            char* dtext = ast_const_value_text(fn->u.func.param_defaults[i]);
+            if (dtext) {
+                ast_buf_append(one, sizeof(one), &oo, " = ");
+                ast_buf_append(one, sizeof(one), &oo, dtext);
+                free(dtext);
+            }
+        }
+        size_t n = strlen(one);
+        memcpy(out + off, one, n);
+        off += n;
+        out[off] = '\0';
+    }
+    return out;
+}
+
 static void ast_fill_one_func(ModuleSymbolTable* table, Ast* fn) {
     if (!fn || !fn->u.func.name) return;
     ModuleFuncSymbol* sym = module_symbol_table_find_func(table, fn->u.func.name);
     if (!sym) {
         // ★ 建表路径（scan_func.inc 退役的前提）：AST 直接建条目 ✓
-        //   param_text / param_default_texts 一律 NULL，依据：
-        //     · param_text —— 语义侧 ⑱ 转正后**已改读 param_types**（visit_module.inc:907-910
-        //       明确记着"就地解析 param_text"那段已删除），别处也没有消费者 ✓
-        //     · defaults —— 消费者只用 default_count（算"必需参数个数"）；文本数组是
+        //   param_text 这里仍传 NULL —— 由函数末尾按 AST **统一补**（见 ast_func_param_text：
+        //     语义侧 ⑱ 转正后确实不再读它，但 **LSP 的悬停/参数提示要读** ⇒ 不能缺）；
+        //   param_default_texts 传下面重建的文本：
+        //     defaults —— 消费者只用 default_count（算"必需参数个数"）；文本数组是
         //       "参数表→类型"那份重复实现的残留 ⇒ 随扫描链一起退役 ✓
         //   缓存序列化对两者都 NULL 安全（sym_cache_write_string 有 NULL 标记、defaults 有 has 位 ✓）
         TypeInfo* rti = ast_resolved_copy(table, fn->u.func.return_type, 0);
@@ -458,6 +585,13 @@ static void ast_fill_one_func(ModuleSymbolTable* table, Ast* fn) {
             free(pts);
             free(psn);
         }
+    }
+
+    // ---- 参数文本（悬停 / 参数提示用；LSP 消费）----
+    //   建表路径原先显式传 NULL，理由是"param_text 已无消费者" ⇒ 漏了 LSP（见 ast_func_param_text
+    //   的注释）⇒ 只在**缺失**时按 AST 重建（已有文本来自缓存/旧路径时保持不动，不更差 ✓）
+    if (!sym->param_text && fn->u.func.pcnt > 0) {
+        sym->param_text = ast_func_param_text(fn);
     }
 
     sym->is_async = fn->u.func.is_async;
@@ -1266,6 +1400,10 @@ static void ast_fill_one_struct_meta(ModuleSymbolTable* table, Ast* sd) {
                     free(pg);
                 }
             }
+            // v38：参数列表文本（悬停/参数提示用）——与 ModuleFuncSymbol 同一套重建
+            //   （`param_types`+`param_struct_names` 表达不了元素类型 ⇒ `Array[Button]` 只能是 `Array`）
+            //   ⚠ pc 是"不含 self"的真实参数个数（见上面 v36 的注释）⇒ 文本也不含 self ✓
+            methods[i].param_text = ast_func_param_text(fn);
             methods[i].line = fn->line;
             methods[i].is_async = fn->u.func.is_async;
             methods[i].is_private = fn->u.func.is_private;
@@ -1348,6 +1486,7 @@ static void ast_fill_one_struct_meta(ModuleSymbolTable* table, Ast* sd) {
                 for (int k = 0; k < methods[i].param_count; k++) free(methods[i].param_default_texts[k]);
                 free(methods[i].param_default_texts);
             }
+            free(methods[i].param_text);   // v38：add_struct 已 strdup ⇒ 本地副本释放 ✓
             free(methods[i].param_types);
         }
         free(fields);

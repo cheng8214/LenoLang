@@ -12,6 +12,7 @@
 #include "../src/include/leno_types.h"
 #include "../src/include/native.h"
 #include "../src/include/module_symbol_table.h"
+#include "../src/include/module_ast_exports.h"   // module_ast_type_text_into（悬停口径的类型文本）
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
@@ -209,14 +210,48 @@ static char* build_user_func_signature(const char* func_name, const char* param_
     snprintf(label, sizeof(label), "func %s(%s) : %s", func_name,
              param_text ? param_text : "", return_str ? return_str : "void");
 
-    // 构建参数 labels（从 param_text 简单分割）
+    // 构建参数 labels：按**顶层逗号**切分 ⇒ 每个参数一个 label（客户端才能高亮
+    //   activeParameter；此前整串塞进一个 label，"参数提示"等于没分段 ✗）。
+    //   ⚠ 必须跳过分隔符在**泛型/括号/字符串**里的逗号：`Dict[string, int] opts`、
+    //      `func(int, int) cb`、`string s = "a,b"` 都只有一个参数 ✓
     JsonValue* params = json_array_new();
     if (param_text && param_text[0]) {
-        // 简单处理：将整个 param_text 作为单个参数 label
-        // 更精确的分割需要解析逗号，但考虑嵌套泛型比较复杂
-        JsonValue* param = json_object_new();
-        json_object_set(param, "label", json_string_new(param_text));
-        json_array_add(params, param);
+        const char* p = param_text;
+        const char* seg = p;
+        int depth = 0;
+        char quote = 0;
+        for (;;) {
+            char c = *p;
+            if (quote) {
+                if (c == '\\' && p[1]) { p += 2; continue; }
+                if (c == quote) quote = 0;
+            } else if (c == '"' || c == '\'') {
+                quote = c;
+            } else if (c == '(' || c == '[' || c == '{') {
+                depth++;
+            } else if (c == ')' || c == ']' || c == '}') {
+                if (depth > 0) depth--;
+            }
+            if (c == '\0' || (c == ',' && depth == 0)) {
+                const char* s = seg;
+                const char* e = p;
+                while (s < e && isspace((unsigned char)*s)) s++;
+                while (e > s && isspace((unsigned char)e[-1])) e--;
+                if (e > s) {
+                    char buf[256];
+                    int n = (int)(e - s);
+                    if (n > (int)sizeof(buf) - 1) n = (int)sizeof(buf) - 1;
+                    memcpy(buf, s, (size_t)n);
+                    buf[n] = '\0';
+                    JsonValue* param = json_object_new();
+                    json_object_set(param, "label", json_string_new(buf));
+                    json_array_add(params, param);
+                }
+                if (c == '\0') break;
+                seg = p + 1;
+            }
+            p++;
+        }
     }
 
     JsonValue* sig = json_object_new();
@@ -365,9 +400,11 @@ char* lsp_handle_signature_help(LspServer* server, int id, JsonValue* params) {
                     if (pcount > 0 && sym->type->param_types) {
                         int off = 0;
                         for (int j = 0; j < pcount; j++) {
-                            const char* pt = type_to_string(sym->type->param_types[j]);
+                            // 悬停口径：裸名字（`Widget arg1`，不是 `struct Widget arg1`）✓
+                            char ptbuf[256];
+                            module_ast_type_text_into(sym->type->param_types[j], ptbuf, (int)sizeof(ptbuf));
                             if (j > 0) off += snprintf(param_text + off, sizeof(param_text) - off, ", ");
-                            off += snprintf(param_text + off, sizeof(param_text) - off, "%s arg%d", pt, j + 1);
+                            off += snprintf(param_text + off, sizeof(param_text) - off, "%s arg%d", ptbuf, j + 1);
                         }
                     }
                     sig_response = build_user_func_signature(func_name, param_text,
@@ -408,8 +445,17 @@ char* lsp_handle_signature_help(LspServer* server, int id, JsonValue* params) {
                 if (table && module_symbol_table_scan(table, file_path) == 0) {
                     ModuleFuncSymbol* fn = module_symbol_table_find_func(table, meth);
                     if (fn) {
-                        const char* ret_str = fn->return_struct_name ? fn->return_struct_name :
-                                              type_kind_to_string(fn->return_type);
+                        // 返回类型优先用完整 TypeInfo，并按**悬停口径**渲染（裸名字；
+                        // type_to_string 是诊断口径，会写成 `struct TitleBar`）✓
+                        char ret_buf[256];
+                        const char* ret_str;
+                        if (fn->return_type_info) {
+                            module_ast_type_text_into(fn->return_type_info, ret_buf, (int)sizeof(ret_buf));
+                            ret_str = ret_buf;
+                        } else {
+                            ret_str = fn->return_struct_name ? fn->return_struct_name
+                                                             : type_kind_to_string(fn->return_type);
+                        }
                         sig_response = build_user_func_signature(meth, fn->param_text,
                                                                  fn->param_count, ret_str, active_param);
                     }

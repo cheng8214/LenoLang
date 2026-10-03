@@ -155,6 +155,8 @@ void module_symbol_table_add_struct(ModuleSymbolTable* table, const char* name, 
                     }
                 }
             }
+            // v38：参数列表文本（悬停/参数提示用；calloc 已置 NULL，这里补深拷贝）
+            st->methods[i].param_text = methods[i].param_text ? strdup(methods[i].param_text) : NULL;
             // 深拷贝默认参数（2026-10-02：漏了它 = 跨模块方法调用补不出默认值 ⇒ 静默垃圾 ✗）
             st->methods[i].default_count = methods[i].default_count;
             if (methods[i].param_count > 0 && methods[i].param_default_texts) {

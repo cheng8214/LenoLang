@@ -78,6 +78,14 @@ typedef struct {
     //   default_count = 有默认值的参数个数（默认值只允许在尾部）。
     int default_count;
     char** param_default_texts;
+    // 原始参数文本（如 `Widget c, Dict opts` 或 `Array[Button] buttons, float spacing`）。
+    //   ⚠ 为什么需要它（与 ModuleFuncSymbol::param_text 同一理由，见 ast_func_param_text）：
+    //     `param_types`（TypeKind）+ `param_struct_names`（聚合名）**表达不了元素类型**——
+    //     `Array[Button] buttons` 只能显示成裸 `Array`、`Ptr[u8] p` 只能显示成 `Ptr`
+    //     （LSP 悬停实测：`HBox.add(Widget, Dict)` 修好了，但 `Array[Button]` 这类仍丢元素）。
+    //   LSP 的悬停/参数提示读它；语义检查**不读**（继续走 param_types/param_struct_names）✓
+    //   由 AST 填充器用 ast_func_param_text() 重建（类型走 type_to_string ⇒ 带元素/泛型 ✓）
+    char* param_text;
     int line;                   // 方法定义所在行号（1-based，0 表示未知）
     int is_async;               // 是否 `async func` 方法（C2，同 ModuleFuncSymbol.is_async）
     // `pri` 成员私有（同 ModuleStructField.is_private 的理由：跨模块只能靠符号表判 ✓）

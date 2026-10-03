@@ -356,6 +356,20 @@ static void build_generic_type_string(TypeInfo* type, char* buf, size_t buf_size
         }
         case TYPE_DICT: {
             // Dict[KeyType, ValueType]
+            // ⚠ 源码只写 `Dict`（没给键值实参）时 key_type / value_type 都是 NULL ⇒ 应当显示**裸
+            //   `Dict`**（与上面 Array 在 element_type 为 NULL 时同口径），而不是
+            //   `Dict[unknown, unknown]` —— 后者看着像"类型信息丢了"，实际是源码本来就没写
+            //   （实测 LSP 悬停：`func createTitleBar(Dict[unknown, unknown] opts)` 很唬人）✓
+            if (!type->key_type && !type->value_type) {
+                const char* only = "Dict";
+                size_t only_len = strlen(only);
+                if (*offset + only_len < buf_size - 1) {
+                    memcpy(buf + *offset, only, only_len);
+                    *offset += only_len;
+                    buf[*offset] = '\0';
+                }
+                break;
+            }
             const char* prefix = "Dict[";
             size_t prefix_len = strlen(prefix);
             if (*offset + prefix_len < buf_size - 1) {
