@@ -141,6 +141,29 @@ static int is_string_literal_before_dot(const char* content, int dot_pos) {
     return -1;
 }
 
+// 补全容错：把"正在输入"的成员访问补成可解析文本（说明见 lsp_completion.h 的声明处）
+char* comp_repair_member_access_text(const char* content, LspPosition pos) {
+    if (!content) return NULL;
+
+    int off = lsp_position_to_offset(content, pos);
+    size_t len = strlen(content);
+    if (off <= 0 || (size_t)off > len) return NULL;
+    if (content[off - 1] != '.') return NULL;          // 只在"点后面"修
+
+    // 点后已经有标识符（`Scancode.SP`）时文本本身**可解析** —— SP 未定义只是语义错误，
+    //   不影响解析建作用域 ⇒ 不动它，免得把占位符插进用户已输入的词中间。
+    if ((size_t)off < len && (isalnum((unsigned char)content[off]) || content[off] == '_')) return NULL;
+
+    static const char* PROBE = "__lsp_member__";
+    size_t pl = strlen(PROBE);
+    char* out = (char*)malloc(len + pl + 1);
+    if (!out) return NULL;
+    memcpy(out, content, (size_t)off);
+    memcpy(out + off, PROBE, pl);
+    memcpy(out + off + pl, content + off, len - (size_t)off + 1);   // 连结尾 NUL 一起搬
+    return out;
+}
+
 // 获取光标前的单词/前缀
 // 返回值约定：
 //   普通单词：直接返回单词（如 "str"、"export"）

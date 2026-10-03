@@ -163,6 +163,17 @@ CompletionContextInfo comp_detect_context(
 // 释放上下文检测结果
 void comp_context_free(CompletionContextInfo* ctx);
 
+/* ========== 容错：正在输入时的文本修复 ========== */
+
+// 补全容错：IDE 里用户**正在输入**成员访问（`Scancode.|`）时文本语法不完整，
+//   解析器必然失败 ⇒ root_scope 为 NULL ⇒ 补全的每一条分析路径都空转（实测返回 []）。
+//   做法：光标前一个字符是 '.' 且点后还没有标识符时，在光标处插入一个占位标识符，
+//   让文本变成 `Scancode.__lsp_member__` 从而可解析。
+//   只影响光标之后的字符 ⇒ 光标前的偏移不变、pos 继续有效。
+//   ⚠ 只用于补全；诊断**不走**这条（诊断必须照实报语法错误）。
+//   返回 malloc 的新文本；不需要修复时返回 NULL（调用方沿用原文本）。
+char* comp_repair_member_access_text(const char* content, LspPosition pos);
+
 /* ========== 内置提供者 ========== */
 
 // 添加所有关键字
@@ -288,6 +299,21 @@ void comp_provider_add_use_symbols(
 // 提供 cstruct 的方法补全（size, alignment, offset_of, malloc, debug, to_str 等）
 // 返回 true 如果 identifier 是一个已定义的 cstruct 类型名
 bool comp_provider_add_cstruct_type_methods(
+    CompletionSet* set,
+    const char* content,
+    const char* file_path,
+    const char* type_name,
+    int import_count,
+    ImportAlias* import_aliases
+);
+
+// CTX_DOT_ACCESS: **enum 类型名.成员** 补全
+// 当 . 前的标识符是 enum 类型名时（如 `use SDL3.Scancode` 之后的 `Scancode.`），
+// 列出该枚举的成员（ESCAPE / RETURN / SPACE / …）。
+// 解析口径与 hover 的枚举处理一致：① 当前文件作用域里的 enum 符号（`use` 导入的也在这）
+// ② 兜底扫导入模块的符号表（enum 定义在别的文件时）。
+// 返回 true 表示"左侧确认是 enum 类型名"（调用方据此跳过变量成员那条路）。
+bool comp_provider_add_enum_type_members(
     CompletionSet* set,
     const char* content,
     const char* file_path,

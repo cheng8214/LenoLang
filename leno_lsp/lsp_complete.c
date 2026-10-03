@@ -252,6 +252,10 @@ LspCompletionItem* lsp_get_completions(const char* content, LspPosition pos, int
 
                 if (!is_type_name) {
                     // 不是 cstruct 类型名，继续检查其他可能性
+                    // 记一下产出条数：下面几条都空转时，才去试"enum 类型名.成员"（见下方 ★）。
+                    // 放在**之后**试是为了不给最常见的 `变量.成员` 平白加一次分析/模块扫描。
+                    int produced_before = set->count;
+
                     // 检查是否是函数调用链（如 ttfLib().）
                     if (ctx.is_func_call_chain) {
                         comp_provider_add_func_call_chain_members(set, content, file_path,
@@ -266,10 +270,17 @@ LspCompletionItem* lsp_get_completions(const char* content, LspPosition pos, int
                                                            ctx.module_alias, import_count, import_aliases,
                                                            pos);
                     }
+
+                    // ★ enum 类型名.成员（如 `use SDL3.Scancode` 之后的 `Scancode.`
+                    //   ⇒ ESCAPE / RETURN / SPACE / …）
+                    //   本处**此前是 TODO**（原位只留了一行 `// TODO: 解析文件中的 enum 成员`）
+                    //   ⇒ 用户在这种位置按补全拿到空列表：`Scancode` 是**类型名**而不是变量，
+                    //   上面三条路都解析不出成员（实测 `[COMPLETE] END count=0`）。
+                    if (set->count == produced_before) {
+                        comp_provider_add_enum_type_members(set, content, file_path,
+                                                            ctx.module_alias, import_count, import_aliases);
+                    }
                 }
-                
-                // 也尝试 enum 成员
-                // TODO: 解析文件中的 enum 成员
             }
             break;
         }
@@ -382,7 +393,14 @@ char* lsp_handle_completion(LspServer* server, int id, JsonValue* params) {
     
     // 获取补全项
     int count = 0;
-    LspCompletionItem* items = lsp_get_completions(doc->content, pos, &count, file_path);
+    // ★ 容错：用户**正在输入**成员访问（`Scancode.|`）时文本语法不完整 ⇒ 解析必然失败 ⇒
+    //   root_scope 为 NULL ⇒ 补全里十余处各自分析全部空转（实测返回 []，日志原样：
+    //   `[LSP-ANALYZE] … FAILED(parse)` + `root_scope is NULL (parse failed?)`）。
+    //   这里在"光标紧跟 '.'"时补一个占位标识符 —— 下游全都吃这一份文本，所以修一处就够。
+    //   ⚠ 诊断**不走**这条（诊断必须照实报语法错误，否则红波浪线会消失）。
+    char* repaired = comp_repair_member_access_text(doc->content, pos);
+    LspCompletionItem* items = lsp_get_completions(repaired ? repaired : doc->content, pos, &count, file_path);
+    free(repaired);
     fprintf(stderr, "[COMPLETE] items=%p count=%d\n", (void*)items, count);
     fflush(stderr);
 

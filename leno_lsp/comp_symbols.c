@@ -2495,6 +2495,81 @@ static const struct {
     {NULL, NULL, false}
 };
 
+// ============================================================================
+// CTX_DOT_ACCESS：**enum 类型名.成员**（如 `use SDL3.Scancode` 后的 `Scancode.`）
+//   ⇒ 列出该枚举的成员（ESCAPE / RETURN / SPACE / …）
+//   此前 lsp_complete.c 的 CTX_DOT_ACCESS 分支里只有一行
+//   `// TODO: 解析文件中的 enum 成员` ⇒ 用户在 `Scancode.` 上按补全拿到的是空列表。
+//   解析顺序与 hover 的 enum 处理同口径：
+//     ① 当前文件作用域里的 enum 符号 —— `use SDL3.Scancode` 就是把 enum 的**成员表**
+//        挂到 Symbol 上（Symbol.enum_value_names / enum_values / enum_value_count）
+//     ② 兜底：扫导入模块的符号表（module_symbol_table_find_enum），用于定义在别的文件
+// ============================================================================
+bool comp_provider_add_enum_type_members(
+    CompletionSet* set,
+    const char* content,
+    const char* file_path,
+    const char* type_name,
+    int import_count,
+    ImportAlias* import_aliases
+) {
+    if (!set || !content || !type_name || !*type_name) return false;
+
+    // ① 当前文件作用域（含 `use` 导入的 enum）
+    {
+        CompilerContext ctx;
+        compiler_context_init(&ctx);
+        bool ok = compiler_analyze_with_filename(&ctx, content, file_path);
+        Symbol* esym = (ok && ctx.root_scope) ? scope_resolve_tree_bfs(ctx.root_scope, type_name) : NULL;
+        // 判据与 hover 保持一致：认 enum 成员表，而不是认 kind（use 导入的符号 kind 可能是 SYM_TYPE）
+        if (esym && esym->enum_value_count > 0 && esym->enum_value_names) {
+            fprintf(stderr, "[COMPLETE-ENUM] type='%s' scope hit, members=%d\n", type_name, esym->enum_value_count);
+            fflush(stderr);
+            for (int i = 0; i < esym->enum_value_count; i++) {
+                const char* mn = esym->enum_value_names[i];
+                if (!mn) continue;
+                char detail[256];
+                snprintf(detail, sizeof(detail), "%s.%s = %lld", type_name, mn,
+                         (long long)(esym->enum_values ? esym->enum_values[i] : 0));
+                comp_set_add(set, mn, LSP_COMP_ENUM_MEMBER, PRIO_FIELD, detail, NULL, NULL, NULL);
+            }
+            compiler_context_cleanup(&ctx);
+            return true;
+        }
+        compiler_context_cleanup(&ctx);
+    }
+
+    // ② 兜底：导入模块的符号表
+    for (int i = 0; i < import_count; i++) {
+        const char* mp = find_module_path_by_alias(import_aliases, import_count, import_aliases[i].alias);
+        if (!mp) continue;
+        module_symbol_table_reset_scan_stack();
+        ModuleSymbolTable* table = module_symbol_table_create(mp);
+        if (!table) continue;
+        bool hit = false;
+        if (module_symbol_table_scan(table, file_path) == 0) {
+            ModuleEnumSymbol* me = module_symbol_table_find_enum(table, type_name);
+            if (me && me->member_count > 0 && me->member_names) {
+                fprintf(stderr, "[COMPLETE-ENUM] type='%s' module hit '%s', members=%d\n",
+                        type_name, import_aliases[i].alias, me->member_count);
+                fflush(stderr);
+                for (int j = 0; j < me->member_count; j++) {
+                    const char* mn = me->member_names[j];
+                    if (!mn) continue;
+                    char detail[256];
+                    snprintf(detail, sizeof(detail), "%s.%s = %lld", type_name, mn,
+                             (long long)(me->member_values ? me->member_values[j] : 0));
+                    comp_set_add(set, mn, LSP_COMP_ENUM_MEMBER, PRIO_FIELD, detail, NULL, NULL, NULL);
+                }
+                hit = true;
+            }
+        }
+        module_symbol_table_destroy(table);
+        if (hit) return true;
+    }
+    return false;
+}
+
 bool comp_provider_add_cstruct_type_methods(
     CompletionSet* set,
     const char* content,
@@ -2586,5 +2661,12 @@ bool comp_provider_add_cstruct_type_methods(
     // struct 类型可能也有 size/alignment 等方法（如果编译器支持的话）
     // 但目前 struct 的方法是通过 struct_def_find 查找的，这里不重复添加
 
-    return true;
+    // ⚠ 返回值的语义是"**已认领**这次点补全"（调用方据此跳过后面的变量成员那条路）。
+    //   这里只有 cstruct 分支真的加了补全项；`is_struct`（struct 类型名）一条都没加，
+    //   若也返回 true 就会把后面的路整条吞掉 —— 而"变量名恰好是 struct 类型"是最常见的情形：
+    //     `g.`（g 是 `struct Game` 变量）⇒ sym->type->kind == TYPE_STRUCT ⇒ 旧代码 return true
+    //     ⇒ 变量成员补全被跳过 ⇒ 用户看到**空列表**（实测 `[COMPLETE] END count=0`，
+    //       且 COMPLETE-DEBUG 一条都不打 ⇒ 根本没进变量路径）。
+    //   ⇒ 只有真加了 cstruct 方法才认领。
+    return is_cstruct;
 }
