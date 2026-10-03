@@ -149,17 +149,23 @@
     // 「条件为真则往回跳」，有了它就不必再跟一条独立 `OP_JMP`（每轮省一次派发）。
     // bit6 在寄存器/立即数两种模式下原本都没人用 ⇒ 纯扩展，既有字节码语义不变。
     // ============================================================================
+    // T32：立即数从 **int8** 放宽到 **int16** —— 原先立即数挤在 B 字段（8 位 ⇒ −128..127），
+    //   于是 `if i == 500` 这类必须先 `LOADI` 装进寄存器（两条）。现改用第二个 4 字节字的
+    //   **后 2 字节**（原先只是填充 ✓）装 16 位立即数 ⇒ **指令仍是 8 字节**、跳转偏移仍在
+    //   第二个字的前 2 字节 ⇒ 只多覆盖常量、不改任何既有语义 ✓
+    //   ⚠ 宏体里**不能**写块注释（反斜杠续行会让 GCC 报 multi-line comment）⇒ 说明写在宏外 ✓
 #define CMPJMP_IMPL(int_cmp)                                                       \
     {                                                                              \
         int a = READ_A(), b = READ_B(), c = READ_C();                              \
         int want_imm = (c & 0x80) != 0;                                            \
         int want_true = (c & 0x40) != 0;   /* bit6：比较为真则跳（while 回边用）*/  \
         int bx = ((int)frame->ip[0] << 8) | (int)frame->ip[1];                     \
+        int16_t imm16 = (int16_t)(((int)frame->ip[2] << 8) | (int)frame->ip[3]);   \
         ADVANCE();                          /* 跳过携带偏移的第二个字 */           \
         Value bv = R(a);                                                           \
         int truthy;                                                                \
         if (want_imm) {                                                            \
-            truthy = !val_is_null(bv) && (VM_IO(bv) int_cmp (int64_t)(int8_t)b);   \
+            truthy = !val_is_null(bv) && (VM_IO(bv) int_cmp (int64_t)imm16);       \
         } else {                                                                   \
             Value cv = R(b);                                                       \
             truthy = !val_is_null(bv) && !val_is_null(cv) &&                       \

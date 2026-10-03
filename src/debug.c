@@ -421,7 +421,8 @@ static int decode_trailing(Chunk* chunk, int offset, char* desc, size_t desc_siz
         case OP_CMPJMP_EQ: {   // T31：与上面四条同布局（8 字节，第二个字带 16 位偏移）
 
             int bx = dbg_take_u16(chunk, base, &p, &over);
-            dbg_take_u16(chunk, base, &p, &over);   // 第二个字的另外 2 字节是填充
+            // T32：第二个字的后 2 字节不再是填充 —— 立即数模式下它是 **int16 立即数** ✓
+            int imm16 = (int16_t)dbg_take_u16(chunk, base, &p, &over);
             if (desc) {
                 int off = bx - 32768;
                 int lhs = (int)chunk->code[offset + 1];
@@ -432,7 +433,7 @@ static int decode_trailing(Chunk* chunk, int offset, char* desc, size_t desc_siz
                 const char* pol = (c & 0x40) ? "为真则跳" : "为假则跳";
                 if (c & 0x80) {
                     snprintf(desc, desc_size, "%s %+d（比较 R[%d] 与立即数 %d）",
-                             pol, off, lhs, (int)(int8_t)b);
+                             pol, off, lhs, (int)imm16);   // T32：int16 立即数（不再从 B 字段取）
                 } else {
                     snprintf(desc, desc_size, "%s %+d（比较 R[%d] 与 R[%d]）",
                              pol, off, lhs, (int)b);

@@ -172,7 +172,18 @@
 //     **区间判断必须单独加它** ✗ 漏了会按 4 字节算、把跳距写进错误的字节（本文档反复
 //     警告过的那类坑）。本轮已补 ✓
 //   ⇒ LENO_MODCACHE_VERSION 同步升（模块字节码里同样含 opcode）。
-#define LENO_BIN_VERSION    0x00030213  // v3.2.19 - 新增 OP_CMPJMP_EQ（`==` 进 CMPJMP 融合族；
+// v3.2.20（2026-10-03）：CMPJMP 族的**立即数从 int8 放宽到 int16**（T32）——
+//   原先立即数挤在 B 字段（8 位 ⇒ −128..127），`if i == 500`、`i < 40000` 这类都得先
+//   `LOADI` 装进寄存器（两条）。现改用第二个 4 字节字的**后 2 字节**（原先只是填充）装
+//   16 位立即数 ⇒ **指令仍是 8 字节**、跳转偏移位置不变 ✓ 只多覆盖常量、语义零变化 ✓
+//   **操作数编码变了**（立即数模式：B 字段恒 0、值移到第二个字的后 2 字节）⇒ 必须 bump：
+//   旧构建读新字节码会把 B=0 当立即数用（静默错值 ✗）。判据同 v2.6.0 / v3.2.0。
+//   ⇒ LENO_MODCACHE_VERSION 同步升 ✓
+//   ⚠ 4 字节的 `ADD/SUB/MUL/LT/GT/LE/GE_INT_IMM` 族**加宽不了** ✗（A/B/C 三字段全占满，
+//     且它们没有随附的填充字）⇒ 超 int8 只能退回「LOADI + 寄存器版」= 现状 ✓
+#define LENO_BIN_VERSION    0x00030214  // v3.2.20 - CMPJMP 族立即数 int8 → int16（用第二个字的
+                                        //   后 2 字节；原为填充）
+                                        // v3.2.19 - 新增 OP_CMPJMP_EQ（`==` 进 CMPJMP 融合族；
                                         //   `!=` 复用同一条、翻转极性位）
                                         // v3.2.18 - `return <非裸变量>` 也直落返回寄存器（T30：
                                         //   与"带析构"那条路径逐字同口径，省掉一条 MOV）。
@@ -313,7 +324,10 @@
 // v13：ObjFunction 增加 is_async（运行期判定"调用即建协程"用）。旧缓存里的函数对象缺这个
 //      字段 ⇒ async 函数的**间接调用**（`var f = w; f()`、当参数传、绑定方法）会退回同步执行、
 //      静默错值，所以必须**作废旧缓存**。
-#define LENO_MODCACHE_VERSION  0x00000023  // v35 - 同 LENO_BIN_VERSION v3.2.19（新增
+#define LENO_MODCACHE_VERSION  0x00000024  // v36 - 同 LENO_BIN_VERSION v3.2.20（CMPJMP 族立即数
+                                            //   int8 → int16：操作数编码变了 ⇒ 模块字节码
+                                            //   也必须整体失效重编译）
+                                            // v35 - 同 LENO_BIN_VERSION v3.2.19（新增
                                             //   OP_CMPJMP_EQ ⇒ opcode 集合变了，模块字节码
                                             //   也必须整体失效重编译）
                                             // v34 - 同 LENO_BIN_VERSION v3.2.18（T30：return

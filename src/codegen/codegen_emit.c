@@ -315,11 +315,14 @@ int emit_cmpjmp(CodeGen* gen, OpCode op, int a, int b, int is_imm, int want_true
     // bit6 在**两种模式下**都是空闲位（原先寄存器模式恒 0、立即数模式只用 bit7）
     // ⇒ 加极性不需要新 opcode、也不动既有编码。
     int flags = (is_imm ? 0x80 : 0) | (want_true ? 0x40 : 0);
-    reg_encode_iABC(gen->chunk, op, a, b, flags, line);
-    chunk_write(gen->chunk, 0, line);   // 第二个字：16 位偏移占位
+    // T32：立即数模式（is_imm）下 **B 字段不再承载值** —— 完整的 16 位立即数写进第二个
+    //   4 字节字的**后 2 字节**（原先的填充 ✓）⇒ 跳转偏移仍在第二个字的前 2 字节
+    //   （由 patch_jmp / patch_jmp_to 回填 ✓）⇒ 立即数上限 int8 → int16，指令仍是 8 字节 ✓
+    reg_encode_iABC(gen->chunk, op, a, is_imm ? 0 : b, flags, line);
+    chunk_write(gen->chunk, 0, line);   // 第二个字前 2 字节：16 位跳转偏移占位
     chunk_write(gen->chunk, 0, line);
-    chunk_write(gen->chunk, 0, line);
-    chunk_write(gen->chunk, 0, line);
+    chunk_write(gen->chunk, is_imm ? ((b >> 8) & 0xFF) : 0, line);   // 后 2 字节：int16 立即数
+    chunk_write(gen->chunk, is_imm ? (b & 0xFF) : 0, line);
     return pos;
 }
 

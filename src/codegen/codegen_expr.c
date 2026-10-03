@@ -263,7 +263,9 @@ int try_emit_cmpjmp(CodeGen* gen, Ast* cond, int want_true, int line) {
     int b_ready = 0;
     if (r->kind == AST_NUM && !r->u.num.is_float && !r->u.num.is_bigint) {
         double dv = r->u.num.value;
-        if (dv >= -128.0 && dv <= 127.0) {
+        // T32：立即数上限从 int8 放宽到 **int16**（立即数改放在第二个 4 字节字的后 2 字节，
+        //   见 04_compare_bit_cast.inc 的说明）⇒ `== 500`、`< 40000` 这类也能单条搞定 ✓
+        if (dv >= -32768.0 && dv <= 32767.0) {
             b = (int)dv;
             b_is_imm = 1;
             b_ready = 1;
