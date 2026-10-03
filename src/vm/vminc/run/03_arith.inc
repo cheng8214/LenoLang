@@ -321,10 +321,7 @@
     // 而栈式的 SUB_INT_IMM 只要 1 条 ⇒ 递归基准上指令数差一大截。
     LABEL(OP_ADD_INT_IMM): {
         int a = READ_A(), b = READ_B();
-        // T33：立即数由 int8（C 字段）加宽到 **int32**（承载在紧随的 4 字节字里 ⇒ 指令 8 字节）
-        int32_t imm = (int32_t)(((uint32_t)frame->ip[0] << 24) | ((uint32_t)frame->ip[1] << 16) |
-                                ((uint32_t)frame->ip[2] << 8) | (uint32_t)frame->ip[3]);
-        ADVANCE();                            // 跳过承载立即数的尾随字（4 字节全用）
+        int imm = (int)(int8_t)READ_C();
         Value bv = R(b);
         if (unlikely(!val_is_int(bv))) {                      // 守卫理由见 OP_ADD_INT
             if (val_is_null(bv)) {
@@ -348,10 +345,7 @@
     }
     LABEL(OP_SUB_INT_IMM): {
         int a = READ_A(), b = READ_B();
-        // T33：立即数由 int8（C 字段）加宽到 **int32**（承载在紧随的 4 字节字里 ⇒ 指令 8 字节）
-        int32_t imm = (int32_t)(((uint32_t)frame->ip[0] << 24) | ((uint32_t)frame->ip[1] << 16) |
-                                ((uint32_t)frame->ip[2] << 8) | (uint32_t)frame->ip[3]);
-        ADVANCE();                            // 跳过承载立即数的尾随字（4 字节全用）
+        int imm = (int)(int8_t)READ_C();
         Value bv = R(b);
         if (unlikely(!val_is_int(bv))) {                      // 守卫理由见 OP_ADD_INT
             if (val_is_null(bv)) {
@@ -399,10 +393,7 @@
     // 只是右值是 int8 立即数 —— 省掉把字面量装进寄存器的那条 LOADI。
     LABEL(OP_MUL_INT_IMM): {
         int a = READ_A(), b = READ_B();
-        // T33：立即数由 int8（C 字段）加宽到 **int32**（承载在紧随的 4 字节字里 ⇒ 指令 8 字节）
-        int32_t imm = (int32_t)(((uint32_t)frame->ip[0] << 24) | ((uint32_t)frame->ip[1] << 16) |
-                                ((uint32_t)frame->ip[2] << 8) | (uint32_t)frame->ip[3]);
-        ADVANCE();                            // 跳过承载立即数的尾随字（4 字节全用）
+        int imm = (int)(int8_t)READ_C();
         Value bv = R(b);
         if (unlikely(!val_is_int(bv))) {                      // 守卫理由见 OP_ADD_INT
             if (val_is_null(bv)) {

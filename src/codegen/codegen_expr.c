@@ -1300,9 +1300,7 @@ void gen_binop(CodeGen* gen, Ast* ast, int dst) {
         lhs->cached_type->kind == TYPE_INT && rhs && rhs->kind == AST_NUM &&
         !rhs->u.num.is_float && !rhs->u.num.is_bigint) {
         double dv = rhs->u.num.value;
-        // T33：算术三条 + 比较四条**都已加宽成 8 字节、尾随字整体承载 int32** ⇒ 范围放到 int32 全域 ✓
-        //   ⚠ **七条必须一起改** ✗ 只改算术不改比较会静默截断（`x > 500` 变成 `x > 244` —— 本轮踩过）
-        if (dv >= -2147483648.0 && dv <= 2147483647.0 && dv == (double)(int)dv) {
+        if (dv >= -128.0 && dv <= 127.0) {
             rhs_imm_val = (int)dv;
             rhs_imm = 1;
         }

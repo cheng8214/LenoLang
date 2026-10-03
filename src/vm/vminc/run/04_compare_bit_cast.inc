@@ -189,40 +189,28 @@
     // 有立即数比较后右值那条 LOADI 直接省掉。
     LABEL(OP_LT_INT_IMM): {
         int a = READ_A(), b = READ_B();
-        // T33：立即数由 int8（C 字段）加宽到 **int32**（承载在紧随的 4 字节字里 ⇒ 指令 8 字节）
-        int32_t imm = (int32_t)(((uint32_t)frame->ip[0] << 24) | ((uint32_t)frame->ip[1] << 16) |
-                                ((uint32_t)frame->ip[2] << 8) | (uint32_t)frame->ip[3]);
-        ADVANCE();                            // 跳过承载立即数的尾随字（4 字节全用）
+        int imm = (int)(int8_t)READ_C();
         Value bv = R(b);
         R(a) = val_bool(!val_is_null(bv) && VM_IO(bv) < (int64_t)imm);
         DISPATCH();
     }
     LABEL(OP_GT_INT_IMM): {
         int a = READ_A(), b = READ_B();
-        // T33：立即数由 int8（C 字段）加宽到 **int32**（承载在紧随的 4 字节字里 ⇒ 指令 8 字节）
-        int32_t imm = (int32_t)(((uint32_t)frame->ip[0] << 24) | ((uint32_t)frame->ip[1] << 16) |
-                                ((uint32_t)frame->ip[2] << 8) | (uint32_t)frame->ip[3]);
-        ADVANCE();                            // 跳过承载立即数的尾随字（4 字节全用）
+        int imm = (int)(int8_t)READ_C();
         Value bv = R(b);
         R(a) = val_bool(!val_is_null(bv) && VM_IO(bv) > (int64_t)imm);
         DISPATCH();
     }
     LABEL(OP_LE_INT_IMM): {
         int a = READ_A(), b = READ_B();
-        // T33：立即数由 int8（C 字段）加宽到 **int32**（承载在紧随的 4 字节字里 ⇒ 指令 8 字节）
-        int32_t imm = (int32_t)(((uint32_t)frame->ip[0] << 24) | ((uint32_t)frame->ip[1] << 16) |
-                                ((uint32_t)frame->ip[2] << 8) | (uint32_t)frame->ip[3]);
-        ADVANCE();                            // 跳过承载立即数的尾随字（4 字节全用）
+        int imm = (int)(int8_t)READ_C();
         Value bv = R(b);
         R(a) = val_bool(!val_is_null(bv) && VM_IO(bv) <= (int64_t)imm);
         DISPATCH();
     }
     LABEL(OP_GE_INT_IMM): {
         int a = READ_A(), b = READ_B();
-        // T33：立即数由 int8（C 字段）加宽到 **int32**（承载在紧随的 4 字节字里 ⇒ 指令 8 字节）
-        int32_t imm = (int32_t)(((uint32_t)frame->ip[0] << 24) | ((uint32_t)frame->ip[1] << 16) |
-                                ((uint32_t)frame->ip[2] << 8) | (uint32_t)frame->ip[3]);
-        ADVANCE();                            // 跳过承载立即数的尾随字（4 字节全用）
+        int imm = (int)(int8_t)READ_C();
         Value bv = R(b);
         R(a) = val_bool(!val_is_null(bv) && VM_IO(bv) >= (int64_t)imm);
         DISPATCH();

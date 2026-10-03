@@ -433,23 +433,6 @@ static int decode_trailing(Chunk* chunk, int offset, char* desc, size_t desc_siz
         }
         // for 容器迭代的条件融合（T13）：同样是 8 字节，第二个字前 2 字节是跳转偏移。
         //   A = 索引寄存器；B = 容器寄存器；C 的 bit6 = 真则跳、bit5 = 先自增索引。
-        // T33：立即数族（算术三条 + 值上下文比较四条）加宽到 int32 ⇒ **8 字节**，
-        //   尾随 4 字节字整体承载立即数 ⇒ 反汇编必须吃掉这 4 字节，否则后面整体错位 ✗
-        case OP_ADD_INT_IMM:
-        case OP_SUB_INT_IMM:
-        case OP_MUL_INT_IMM:
-        case OP_LT_INT_IMM:
-        case OP_GT_INT_IMM:
-        case OP_LE_INT_IMM:
-        case OP_GE_INT_IMM: {
-            int32_t imm = (int32_t)(((uint32_t)dbg_take_u16(chunk, base, &p, &over) << 16) |
-                                    (uint32_t)dbg_take_u16(chunk, base, &p, &over));
-            if (desc) {
-                snprintf(desc, desc_size, "R[%d] = R[%d] <imm=%d>",
-                         (int)chunk->code[offset + 1], (int)b, (int)imm);
-            }
-            break;
-        }
         case OP_CMPJMP_ITER: {
             int bx = dbg_take_u16(chunk, base, &p, &over);
             dbg_take_u16(chunk, base, &p, &over);   // 第二个字的另外 2 字节是填充

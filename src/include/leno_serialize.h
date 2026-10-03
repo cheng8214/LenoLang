@@ -181,20 +181,7 @@
 //   ⇒ LENO_MODCACHE_VERSION 同步升 ✓
 //   ⚠ 4 字节的 `ADD/SUB/MUL/LT/GT/LE/GE_INT_IMM` 族**加宽不了** ✗（A/B/C 三字段全占满，
 //     且它们没有随附的填充字）⇒ 超 int8 只能退回「LOADI + 寄存器版」= 现状 ✓
-// v3.2.21（2026-10-03）：**立即数族整体改成 int32（指令由 4 字节变 8 字节）**（T33）——
-//   `OP_ADD/SUB/MUL_INT_IMM`（算术三条）+ `OP_LT/GT/LE/GE_INT_IMM`（值上下文比较四条）：
-//   立即数不再编在 C 字段（int8 ⇒ −128..127），改由**紧随的 4 字节字整体承载**（int32 全域 ✓）
-//   动机：`x + 500`、`x > 100000` 这类原先要「LOADI/LOADK 常量 + 寄存器版」两条；
-//   语料（源码级代理，1481 个 .leno）算术族落在 128..32767 的 270 处、>32767 的 136 处 ✓
-//   ⚠ 七条**必须一起改** ✗ 只改算术不改比较会静默错值（比较那边还会 (int8_t) 截断：
-//     `x > 500` ⇒ `x > 244`；本轮就这么挂过 3 个断言 ✓）
-//   ⚠ 代价：这些指令体积翻倍（连 `x + 5` 也 8 字节）✓ 依据：I-cache/代码布局已被 T9 那轮
-//     证伪（抽出 5KB 冷代码后空调用反而 +8.5% ⇒ 不是杠杆）⇒ 体积不是关键 ✓
-//   **指令长度与操作数编码都变了** ⇒ 必须 bump（旧构建按 4 字节步进 ⇒ 整段错位 ✗）；
-//   `instr_bytes_at` 与 `decode_trailing` 都必须认识这七条 8 字节 ✓
-//   ⇒ LENO_MODCACHE_VERSION 同步升 ✓
-#define LENO_BIN_VERSION    0x00030215  // v3.2.21 - 立即数族 int8 → int32（4 字节 → 8 字节）
-                                        // v3.2.20 - CMPJMP 族立即数 int8 → int16（用第二个字的
+#define LENO_BIN_VERSION    0x00030214  // v3.2.20 - CMPJMP 族立即数 int8 → int16（用第二个字的
                                         //   后 2 字节；原为填充）
                                         // v3.2.19 - 新增 OP_CMPJMP_EQ（`==` 进 CMPJMP 融合族；
                                         //   `!=` 复用同一条、翻转极性位）
@@ -337,10 +324,7 @@
 // v13：ObjFunction 增加 is_async（运行期判定"调用即建协程"用）。旧缓存里的函数对象缺这个
 //      字段 ⇒ async 函数的**间接调用**（`var f = w; f()`、当参数传、绑定方法）会退回同步执行、
 //      静默错值，所以必须**作废旧缓存**。
-#define LENO_MODCACHE_VERSION  0x00000025  // v37 - 同 LENO_BIN_VERSION v3.2.21（立即数族
-                                            //   int8 → int32，指令 4 字节 → 8 字节 ⇒ 模块字节码
-                                            //   也必须整体失效重编译）
-                                            // v36 - 同 LENO_BIN_VERSION v3.2.20（CMPJMP 族立即数
+#define LENO_MODCACHE_VERSION  0x00000024  // v36 - 同 LENO_BIN_VERSION v3.2.20（CMPJMP 族立即数
                                             //   int8 → int16：操作数编码变了 ⇒ 模块字节码
                                             //   也必须整体失效重编译）
                                             // v35 - 同 LENO_BIN_VERSION v3.2.19（新增

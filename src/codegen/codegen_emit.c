@@ -149,69 +149,27 @@ void emit_neg_int(CodeGen* gen, int dst, int b, int line) {
 // 立即数版加减（imm ∈ [-128,127]，编进 C 字段的 8 位有符号）：
 //   R[dst] = R[b] + imm / R[b] - imm —— 省掉「求右值 → LOADI → *_INT」两条指令
 void emit_add_int_imm(CodeGen* gen, int dst, int b, int imm, int line) {
-    reg_encode_iABC(gen->chunk, OP_ADD_INT_IMM, dst, b, 0, line);
-    // T33：立即数加宽到 **int32** ⇒ 指令 8 字节，立即数放紧随的 4 字节字（C 字段空出不用）
-    //   ⚠ 8 字节 ⇒ `instr_bytes_at` 必须认识这七条（跳距按指令长度扣 ✗ 漏了就写错跳距）
-    chunk_write(gen->chunk, (imm >> 24) & 0xFF, line);
-    chunk_write(gen->chunk, (imm >> 16) & 0xFF, line);
-    chunk_write(gen->chunk, (imm >> 8) & 0xFF, line);
-    chunk_write(gen->chunk, imm & 0xFF, line);
+    reg_encode_iABC(gen->chunk, OP_ADD_INT_IMM, dst, b, (int)((uint8_t)(int8_t)imm), line);
 }
 void emit_sub_int_imm(CodeGen* gen, int dst, int b, int imm, int line) {
-    reg_encode_iABC(gen->chunk, OP_SUB_INT_IMM, dst, b, 0, line);
-    // T33：立即数加宽到 **int32** ⇒ 指令 8 字节，立即数放紧随的 4 字节字（C 字段空出不用）
-    //   ⚠ 8 字节 ⇒ `instr_bytes_at` 必须认识这七条（跳距按指令长度扣 ✗ 漏了就写错跳距）
-    chunk_write(gen->chunk, (imm >> 24) & 0xFF, line);
-    chunk_write(gen->chunk, (imm >> 16) & 0xFF, line);
-    chunk_write(gen->chunk, (imm >> 8) & 0xFF, line);
-    chunk_write(gen->chunk, imm & 0xFF, line);
+    reg_encode_iABC(gen->chunk, OP_SUB_INT_IMM, dst, b, (int)((uint8_t)(int8_t)imm), line);
 }
 // 立即数乘法（T10-③）：R[dst] = R[b] * imm —— 省掉「求右值 → LOADI → MUL_INT」里的 LOADI
 void emit_mul_int_imm(CodeGen* gen, int dst, int b, int imm, int line) {
-    reg_encode_iABC(gen->chunk, OP_MUL_INT_IMM, dst, b, 0, line);
-    // T33：立即数加宽到 **int32** ⇒ 指令 8 字节，立即数放紧随的 4 字节字（C 字段空出不用）
-    //   ⚠ 8 字节 ⇒ `instr_bytes_at` 必须认识这七条（跳距按指令长度扣 ✗ 漏了就写错跳距）
-    chunk_write(gen->chunk, (imm >> 24) & 0xFF, line);
-    chunk_write(gen->chunk, (imm >> 16) & 0xFF, line);
-    chunk_write(gen->chunk, (imm >> 8) & 0xFF, line);
-    chunk_write(gen->chunk, imm & 0xFF, line);
+    reg_encode_iABC(gen->chunk, OP_MUL_INT_IMM, dst, b, (int)((uint8_t)(int8_t)imm), line);
 }
 // 立即数比较：R[dst] = R[b] </>/<=/>= imm（imm ∈ [-128,127]）
 void emit_lt_int_imm(CodeGen* gen, int dst, int b, int imm, int line) {
-    reg_encode_iABC(gen->chunk, OP_LT_INT_IMM, dst, b, 0, line);
-    // T33：立即数加宽到 **int32** ⇒ 指令 8 字节，立即数放紧随的 4 字节字（C 字段空出不用）
-    //   ⚠ 8 字节 ⇒ `instr_bytes_at` 必须认识这七条（跳距按指令长度扣 ✗ 漏了就写错跳距）
-    chunk_write(gen->chunk, (imm >> 24) & 0xFF, line);
-    chunk_write(gen->chunk, (imm >> 16) & 0xFF, line);
-    chunk_write(gen->chunk, (imm >> 8) & 0xFF, line);
-    chunk_write(gen->chunk, imm & 0xFF, line);
+    reg_encode_iABC(gen->chunk, OP_LT_INT_IMM, dst, b, (int)((uint8_t)(int8_t)imm), line);
 }
 void emit_gt_int_imm(CodeGen* gen, int dst, int b, int imm, int line) {
-    reg_encode_iABC(gen->chunk, OP_GT_INT_IMM, dst, b, 0, line);
-    // T33：立即数加宽到 **int32** ⇒ 指令 8 字节，立即数放紧随的 4 字节字（C 字段空出不用）
-    //   ⚠ 8 字节 ⇒ `instr_bytes_at` 必须认识这七条（跳距按指令长度扣 ✗ 漏了就写错跳距）
-    chunk_write(gen->chunk, (imm >> 24) & 0xFF, line);
-    chunk_write(gen->chunk, (imm >> 16) & 0xFF, line);
-    chunk_write(gen->chunk, (imm >> 8) & 0xFF, line);
-    chunk_write(gen->chunk, imm & 0xFF, line);
+    reg_encode_iABC(gen->chunk, OP_GT_INT_IMM, dst, b, (int)((uint8_t)(int8_t)imm), line);
 }
 void emit_le_int_imm(CodeGen* gen, int dst, int b, int imm, int line) {
-    reg_encode_iABC(gen->chunk, OP_LE_INT_IMM, dst, b, 0, line);
-    // T33：立即数加宽到 **int32** ⇒ 指令 8 字节，立即数放紧随的 4 字节字（C 字段空出不用）
-    //   ⚠ 8 字节 ⇒ `instr_bytes_at` 必须认识这七条（跳距按指令长度扣 ✗ 漏了就写错跳距）
-    chunk_write(gen->chunk, (imm >> 24) & 0xFF, line);
-    chunk_write(gen->chunk, (imm >> 16) & 0xFF, line);
-    chunk_write(gen->chunk, (imm >> 8) & 0xFF, line);
-    chunk_write(gen->chunk, imm & 0xFF, line);
+    reg_encode_iABC(gen->chunk, OP_LE_INT_IMM, dst, b, (int)((uint8_t)(int8_t)imm), line);
 }
 void emit_ge_int_imm(CodeGen* gen, int dst, int b, int imm, int line) {
-    reg_encode_iABC(gen->chunk, OP_GE_INT_IMM, dst, b, 0, line);
-    // T33：立即数加宽到 **int32** ⇒ 指令 8 字节，立即数放紧随的 4 字节字（C 字段空出不用）
-    //   ⚠ 8 字节 ⇒ `instr_bytes_at` 必须认识这七条（跳距按指令长度扣 ✗ 漏了就写错跳距）
-    chunk_write(gen->chunk, (imm >> 24) & 0xFF, line);
-    chunk_write(gen->chunk, (imm >> 16) & 0xFF, line);
-    chunk_write(gen->chunk, (imm >> 8) & 0xFF, line);
-    chunk_write(gen->chunk, imm & 0xFF, line);
+    reg_encode_iABC(gen->chunk, OP_GE_INT_IMM, dst, b, (int)((uint8_t)(int8_t)imm), line);
 }
 
 // float 特化
@@ -399,12 +357,6 @@ static int instr_bytes_at(Chunk* chunk, int pos) {
     if (op == (uint8_t)OP_CMPJMP_EQ) return 8;             // T31：等值融合，同样 8 字节
     if (op == (uint8_t)OP_CMPJMP_ITER) return 8;           // 第二个字 = 16 位跳转偏移
     if (op == (uint8_t)OP_INVOKE_METHOD_TYPED) return 8;   // 第二个字 = 方法名/类型名常量
-    // T33：立即数族（算术 3 条 + 值上下文比较 4 条）加宽到 int32 ⇒ 8 字节，尾随字承载立即数
-    //   ⚠ **漏掉任何一条**都会把跳距算错（与 T31 那条同类的坑 ✗）
-    if (op == (uint8_t)OP_ADD_INT_IMM || op == (uint8_t)OP_SUB_INT_IMM ||
-        op == (uint8_t)OP_MUL_INT_IMM ||
-        op == (uint8_t)OP_LT_INT_IMM || op == (uint8_t)OP_GT_INT_IMM ||
-        op == (uint8_t)OP_LE_INT_IMM || op == (uint8_t)OP_GE_INT_IMM) return 8;
     return 4;
 }
 
