@@ -2664,7 +2664,20 @@ static const char* typeinfo_to_name(TypeInfo* t) {
 
 void gen_struct_init(CodeGen* gen, Ast* ast, int dst) {
     int n = ast->u.struct_init.field_count;
-    int base = reg_alloc_block(gen, n + 1);
+    // ★ 2026-10-03（T30）：dst 处在**分配前沿/之上**时，直接把对象放在 dst ——
+    //   为什么之前做不到：`OP_STRUCT_INIT` 要求字段值紧邻在 A+1..A+n，所以原先只能自己
+    //   `reg_alloc_block` 拿一块（base），末尾再 `MOV dst, base` 搬一次 ✗。
+    //   判据与 `gen_call` 的 `dst_safe` **逐字同口径**（含 `regs_available` 兜底）：
+    //   只要 dst 就是下一个空槽、或 dst+1..dst+n 整段可安全占用，A 就可以取 dst ✓
+    //   ⇒ 末尾那条 MOV **整条消失**（`base == dst` ⇒ `if (base != dst)` 不成立）。
+    //   实测靶子：光追 `hit()` 的 4 处 `return new Hit(...)`（Phase B 3M 次调用），
+    //   每处 `STRUCT_INIT A=17` 后面都白跟一条 `MOV A=15 B=17` ✗
+    int dst_safe = (dst + 1 == gen->next_reg || dst >= gen->next_reg ||
+                    (dst + 1 + n >= gen->next_reg &&
+                     regs_available(gen, dst + 1, dst + 1 + n)));
+    int base = dst_safe ? dst : reg_alloc_block(gen, n + 1);
+    // 与 gen_call 同一处理：把字段值区抬进临时区，免得求值字段时分配的临时把字段槽盖掉
+    if (dst_safe) reg_reserve_call_block(gen, base, n + 1);
 
     // 构造实参 → R[base+1 .. base+n]
     for (int i = 0; i < n; i++) {
@@ -2744,7 +2757,8 @@ void gen_struct_init(CodeGen* gen, Ast* ast, int dst) {
     }
 
     if (base != dst) emit_mov(gen, dst, base, ast->line);
-    reg_free_block(gen, base);
+    // base == dst 时那是**调用方**要的槽（不是我们分配的块）⇒ 不能 free ✓（见函数开头 T30 说明）
+    if (!dst_safe) reg_free_block(gen, base);
 }
 
 // ============================================================================

@@ -1142,7 +1142,17 @@ static void gen_return(CodeGen* gen, Ast* ast) {
             r = direct;
             r_is_temp = 0;
         } else {
-            r = gen_expr(gen, ast->u.ret);
+            // ★ 2026-10-03（T30）：其余取值也要**直落返回寄存器**，不先落临时再搬。
+            //   原路径 `r = gen_expr(...)` 选一个临时寄存器 ⇒ 紧跟一条 `MOV r_ret, tmp`
+            //   （dump 实证：`hit()` 里 4 处 `return new Hit(...)` 都是
+            //   `STRUCT_INIT A=17` + `MOV A=15 B=17`，而 `hit` 是 Phase B 的 3M 次调用）。
+            //   这条与**本函数上面那段"带析构"路径**（`reg_alloc + gen_expr_to`）**逐字同口径** ✓
+            //   —— 之前只有那条路径这么写，等于同一件事两套写法、其中一套白搬一条 MOV ✗。
+            //   `gen_expr_to` 自己处理"需要相邻寄存器"的值（如调用：实参要在 A+1..）
+            //   ⇒ 不能直落的它内部会退回"临时 + MOV"，语义不变 ✓（构造/字面量/算术
+            //   这些只吃 A 字段的值则直接落进返回寄存器 ✓）。
+            r = reg_alloc(gen);
+            gen_expr_to(gen, ast->u.ret, r);
         }
         emit_cast_for_return(gen, ast->u.ret, r, ast->line);   // C1：返回值按声明类型规范化
         emit_return(gen, r, 1, ast->line);
