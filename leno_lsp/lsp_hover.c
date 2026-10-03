@@ -1050,6 +1050,35 @@ static char* generate_clib_definition_hover(CompilerContext* ctx, const char* cl
     return info;
 }
 
+// 用一个 AST 函数节点拼出签名文本：`func name(Array[int] arr): Array[int]`
+//   ⚠ 类型必须走 module_ast_type_text_into（**悬停口径**，带元素/泛型）
+//     —— 原来用 type_kind_to_string(node->kind) 只有 Kind 槽 ⇒ 本文件里定义的函数
+//     悬停显示成 `func quick_sort_original(Array arr): Array`（`[int]` 全丢）✗
+static char* ast_func_sig_text(Ast* fn) {
+    if (!fn || !fn->u.func.name) return NULL;
+    char sig[1024] = {0};
+    int off = 0;
+    off += snprintf(sig + off, sizeof(sig) - off, "func %s(", fn->u.func.name);
+    for (int j = 0; j < fn->u.func.pcnt && j < 15; j++) {
+        if (off >= (int)sizeof(sig) - 1) break;
+        if (j > 0) off += snprintf(sig + off, sizeof(sig) - off, ", ");
+        char tbuf[256];
+        TypeInfo* ti = fn->u.func.param_types ? fn->u.func.param_types[j] : NULL;
+        if (ti) module_ast_type_text_into(ti, tbuf, (int)sizeof(tbuf));
+        else snprintf(tbuf, sizeof(tbuf), "any");
+        const char* pname = fn->u.func.params[j];
+        off += snprintf(sig + off, sizeof(sig) - off, "%s%s%s", tbuf,
+                        (pname && pname[0]) ? " " : "", (pname && pname[0]) ? pname : "");
+    }
+    if (off < (int)sizeof(sig) - 1) off += snprintf(sig + off, sizeof(sig) - off, ")");
+    if (fn->u.func.return_type && off < (int)sizeof(sig) - 1) {
+        char rbuf[256];
+        module_ast_type_text_into(fn->u.func.return_type, rbuf, (int)sizeof(rbuf));
+        off += snprintf(sig + off, sizeof(sig) - off, ": %s", rbuf);
+    }
+    return strdup(sig);
+}
+
 // 从 AST 中提取函数定义的完整签名（包含参数名和类型）
 static char* extract_func_signature_from_ast(CompilerContext* ctx, const char* func_name) {
     if (!ctx || !ctx->ast_root || !func_name) return NULL;
@@ -1066,45 +1095,14 @@ static char* extract_func_signature_from_ast(CompilerContext* ctx, const char* f
             Ast* inner = stmt->u.export.decl;
             if (inner && inner->kind == AST_FUNC_DEF && inner->u.func.name &&
                 strcmp(inner->u.func.name, func_name) == 0) {
-                // 构建签名
-                char sig[1024] = {0};
-                int off = 0;
-                off += snprintf(sig + off, sizeof(sig) - off, "func %s(", func_name);
-                for (int j = 0; j < inner->u.func.pcnt && j < 15; j++) {
-                    if (j > 0) off += snprintf(sig + off, sizeof(sig) - off, ", ");
-                    const char* pname = inner->u.func.params[j];
-                    const char* ptype = inner->u.func.param_types[j] ? 
-                        type_kind_to_string(inner->u.func.param_types[j]->kind) : "any";
-                    off += snprintf(sig + off, sizeof(sig) - off, "%s %s", ptype, pname);
-                }
-                off += snprintf(sig + off, sizeof(sig) - off, ")");
-                if (inner->u.func.return_type) {
-                    const char* rtype = type_kind_to_string(inner->u.func.return_type->kind);
-                    off += snprintf(sig + off, sizeof(sig) - off, ": %s", rtype);
-                }
-                return strdup(sig);
+                return ast_func_sig_text(inner);
             }
         }
         
         // 直接的函数定义
         if (stmt->kind == AST_FUNC_DEF && stmt->u.func.name &&
             strcmp(stmt->u.func.name, func_name) == 0) {
-            char sig[1024] = {0};
-            int off = 0;
-            off += snprintf(sig + off, sizeof(sig) - off, "func %s(", func_name);
-            for (int j = 0; j < stmt->u.func.pcnt && j < 15; j++) {
-                if (j > 0) off += snprintf(sig + off, sizeof(sig) - off, ", ");
-                const char* pname = stmt->u.func.params[j];
-                const char* ptype = stmt->u.func.param_types[j] ? 
-                    type_kind_to_string(stmt->u.func.param_types[j]->kind) : "any";
-                off += snprintf(sig + off, sizeof(sig) - off, "%s %s", ptype, pname);
-            }
-            off += snprintf(sig + off, sizeof(sig) - off, ")");
-            if (stmt->u.func.return_type) {
-                const char* rtype = type_kind_to_string(stmt->u.func.return_type->kind);
-                off += snprintf(sig + off, sizeof(sig) - off, ": %s", rtype);
-            }
-            return strdup(sig);
+            return ast_func_sig_text(stmt);
         }
     }
     
