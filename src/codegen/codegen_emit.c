@@ -430,6 +430,21 @@ static void report_jump_overflow(CodeGen* gen, int pos, int offset, int limit) {
     error_add(ERR_SEMANTIC, line, msg);
 }
 
+// T34：寄存器号越过 8 位上限 ⇒ **编译硬错误**（T34 之前只 fprintf 告警、随后照样把 &0xFF
+//   截断后的字节码写下去 ✗ ⇒ "编译成功但产物错"，是最坏的一档 ✓）。
+//   立项与判据见 docs/待办_寄存器号8位上限.md §五-1：语料扫查（体积最大的 40 个文件）触发数 = **0** ✓
+//   ⇒ 升级成硬错误不会卡住现有代码 ✓
+//   背景：指令里的 A/B/C 各 8 位 ⇒ 寄存器号 ≥ 256 无法寻址（历史事故：SDL 的 Window.run
+//   寄存器高水位 655 ⇒ 循环变量被截断到别的槽位 ⇒ 现象却是「数组索引必须是数字」✗）
+void codegen_reg_overflow_error(OpCode op, int a, int b, int c, int line) {
+    char msg[BUFFER_MEDIUM];
+    snprintf(msg, sizeof(msg),
+             "寄存器号超出 8 位上限（opcode %d：A=%d B=%d C=%d）：单个函数的寄存器高水位不能超过 255；"
+             "请把该函数拆小、或把长表达式拆成多条语句（详见 docs/待办_寄存器号8位上限.md）",
+             (int)op, a, b, c);
+    error_add(ERR_SEMANTIC, line, msg);
+}
+
 static void patch_common(CodeGen* gen, int pos, int offset) {
     uint8_t op = gen->chunk->code[pos];
     if (op == (uint8_t)OP_JMP) {
