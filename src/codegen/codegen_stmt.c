@@ -1599,7 +1599,51 @@ static void emit_compound_value(CodeGen* gen, Ast* ast, int dst, int imm_fast, i
         return;
     }
     int r = gen_expr(gen, ast->u.compound_assign.value);
-    emit_compound_op(gen, ast->u.compound_assign.op, dst, r, ast->line);
+    // ★ 2026-10-03：非立即数路径也按**静态类型**选特化算子 —— 与 gen_binary 的选码逐条同口径
+    //   （`codegen_expr.c` 的 `both_int / both_float` 那两个布尔 + 同一个 switch）。
+    //   原先这里一律发**通用** OP_ADD/SUB/MUL/DIV ✗ ⇒ 同一个计算写成 `x += b` 比写成
+    //   `x = x + b` 慢一档（dump 实证：`x = x + b` 是 `ADD_F`，`x += b` 是
+    //   `MOV tmp,b` + 通用 `OP_ADD`）。通用算术要逐级派发 int→string→float→bigint→null。
+    //   为什么这是"补齐"而不是"改语义"：`x += expr` 的语义定义就是 `x = x + expr`，
+    //   而后者本来就走特化指令 —— 特化与通用在**运行期守卫**上同口径（两侧类型不符时
+    //   通用报错文案一致；null 参与运算同样是报错，见 03_arith.inc 的 OP_ADD_INT 说明）。
+    //   ⚠ 与上面 imm_fast 同一条排除：`__self_field__` 是语义阶段就地改写出的标记，
+    //     它的 type_kind 不代表真实左值类型 ⇒ 该路径继续走通用算子（保守 ✓）。
+    TypeKind lt = TYPE_UNKNOWN;
+    if (ast->u.compound_assign.ref.name &&
+        strcmp(ast->u.compound_assign.ref.name, "__self_field__") != 0) {
+        lt = ast->u.compound_assign.ref.type_kind;
+    }
+    Ast* rv = ast->u.compound_assign.value;
+    TypeKind rt = (rv && rv->cached_type) ? rv->cached_type->kind : TYPE_UNKNOWN;
+    int both_int = (lt == TYPE_INT && rt == TYPE_INT);
+    int both_float = (lt == TYPE_FLOAT && rt == TYPE_FLOAT);
+    switch (ast->u.compound_assign.op) {
+        case TOK_PLUSEQ:
+            if (both_int) emit_add_int(gen, dst, dst, r, ast->line);
+            else if (both_float) emit_add_f(gen, dst, dst, r, ast->line);
+            else emit_add(gen, dst, dst, r, ast->line);
+            break;
+        case TOK_MINUSEQ:
+            if (both_int) emit_sub_int(gen, dst, dst, r, ast->line);
+            else if (both_float) emit_sub_f(gen, dst, dst, r, ast->line);
+            else emit_sub(gen, dst, dst, r, ast->line);
+            break;
+        case TOK_STAREQ:
+            if (both_int) emit_mul_int(gen, dst, dst, r, ast->line);
+            else if (both_float) emit_mul_f(gen, dst, dst, r, ast->line);
+            else emit_mul(gen, dst, dst, r, ast->line);
+            break;
+        case TOK_SLASHEQ:
+            // 除法与 gen_binary 同：只有 float 特化（int 除法走通用以保留 null/bigint 语义）
+            if (both_float) emit_div_f(gen, dst, dst, r, ast->line);
+            else emit_div(gen, dst, dst, r, ast->line);
+            break;
+        default:
+            // MOD / 位运算 / 移位：gen_binary 那边也没有特化变体 ⇒ 原路（emit_compound_op）
+            emit_compound_op(gen, ast->u.compound_assign.op, dst, r, ast->line);
+            break;
+    }
     reg_free(gen, r);
 }
 
