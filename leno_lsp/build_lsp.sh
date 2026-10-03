@@ -88,6 +88,15 @@ case "$OS" in
     ;;
 esac
 
-gcc -o build/leno_lsp $LSP_SOURCES $LENO_SOURCES -I../src -Wall -Wextra -std=c99 -O2 $LIBS
+# Linux 需要 _GNU_SOURCE —— 与 build.sh / build_vm.sh 同口径（那两处在 Linux 分支里加）。
+#   缺了它，glibc 不声明一批 POSIX 名字（useconds_t / ssize_t / CLOCK_MONOTONIC /
+#   fd_set / DT_DIR / S_IFDIR / MAP_ANONYMOUS …）⇒ 实测直接 31 个 error、构建失败 ✗
+#   Darwin 不加（它走 _DARWIN_C_SOURCE 那一套，与既有分支保持一致）。
+case "$(uname -s 2>/dev/null)" in
+  Darwin*) : ;;
+  *)       CFLAGS="$CFLAGS -D_GNU_SOURCE" ;;
+esac
+
+gcc -o build/leno_lsp $LSP_SOURCES $LENO_SOURCES -I../src -Wall -Wextra -std=c99 -O2 $CFLAGS $LIBS
 
 echo "Build successful: build/leno_lsp"

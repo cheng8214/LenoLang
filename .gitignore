@@ -9,6 +9,9 @@
 #   build/leno_vm ← build_vm.sh
 build/leno
 build/leno_vm
+# LSP 产物同理（leno_lsp.exe 已由 *.exe 覆盖）：
+#   leno_lsp/build/leno_lsp ← leno_lsp/build_lsp.sh
+leno_lsp/build/leno_lsp
 
 # 打包输出（leno -p）：目录内是 exe + 依赖原生库（leno.toml [native-libs]）的副本，
 # 纯产物不入库。不写前导斜杠 —— 打包输出落在 <源码目录>/dist，不在仓库根。

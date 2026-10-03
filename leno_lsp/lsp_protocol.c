@@ -13,7 +13,8 @@
 #ifdef _WIN32
 #include <windows.h>    // GetModuleFileNameA：拿 LSP 自身目录（相对定位内置包）
 #else
-#include <unistd.h>     // readlink("/proc/self/exe")
+#include <unistd.h>
+#include "../src/include/platform.h"   // platform_self_exe_path：跨平台取自身 exe（Linux /proc、macOS _NSGetExecutablePath）
 #endif
 
 // 创建 JSON 对象辅助函数
@@ -236,6 +237,20 @@ char* lsp_create_notification(const char* method, JsonValue* params) {
 #endif
 #define LSP_MAX_EXE_CANDIDATES 16
 
+// 拼 "<dir><kw><分隔符>"（kw 不含分隔符）；放不下返回 0，**不写**截断结果。
+//   为什么不用 `snprintf(dst, cap, "%sbuild%c", dir, LSP_SEP)`：
+//     · GCC 的 -Wformat-truncation 会判它在 dir 接近 cap 时可能截断（实测 3 条警告）；
+//     · 真截断时得到的是**另一个目录**，拿去探测 `leno` 会静默找不到 ⇒ 显式判长更准 ✓
+static int lsp_dir_kw_cand(const char* dir, const char* kw, char* dst, size_t cap) {
+    size_t dl = strlen(dir), kl = strlen(kw);
+    if (dl + kl + 2 > cap) return 0;        /* +分隔符 +NUL */
+    memcpy(dst, dir, dl);
+    memcpy(dst + dl, kw, kl);
+    dst[dl + kl] = LSP_SEP;
+    dst[dl + kl + 1] = '\0';
+    return 1;
+}
+
 // 目录存在性判断
 static int lsp_is_dir(const char* path) {
     struct stat st;
@@ -294,10 +309,11 @@ static int lsp_get_self_dir(char* out, int out_len) {
     buf[n] = '\0';
     return lsp_to_dir_with_sep(buf, out, out_len);
 #else
+    // Linux/macOS 统一走 platform_self_exe_path（Linux=/proc/self/exe、macOS=_NSGetExecutablePath+realpath）。
+    //   ⚠ 原先这里直接 readlink("/proc/self/exe")：/proc 只有 Linux 有 ⇒ macOS 上恒失败，
+    //     候选⑤（LSP 自身相对）静默丢失，内置包 leno_module 可能就找不到 ✗
     char buf[MAX_PATH_LEN];
-    ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
-    if (n <= 0) return -1;
-    buf[n] = '\0';
+    if (!platform_self_exe_path(buf, sizeof(buf))) return -1;
     return lsp_to_dir_with_sep(buf, out, out_len);
 #endif
 }
@@ -458,20 +474,23 @@ char* lsp_handle_initialize(LspServer* server, int id, JsonValue* params) {
             if (lsp_get_self_dir(self_dir, sizeof(self_dir)) == 0) {
                 lsp_cand_add(&cands, self_dir);
                 char build1[MAX_PATH_LEN];
-                snprintf(build1, sizeof(build1), "%sbuild%c", self_dir, LSP_SEP);
-                lsp_cand_add(&cands, build1);
+                if (lsp_dir_kw_cand(self_dir, "build", build1, sizeof(build1))) {
+                    lsp_cand_add(&cands, build1);
+                }
                 char up1[MAX_PATH_LEN];
                 if (lsp_parent_dir(self_dir, up1, sizeof(up1)) == 0) {
                     lsp_cand_add(&cands, up1);
                     char build2[MAX_PATH_LEN];
-                    snprintf(build2, sizeof(build2), "%sbuild%c", up1, LSP_SEP);
-                    lsp_cand_add(&cands, build2);
+                    if (lsp_dir_kw_cand(up1, "build", build2, sizeof(build2))) {
+                        lsp_cand_add(&cands, build2);
+                    }
                     char up2[MAX_PATH_LEN];
                     if (lsp_parent_dir(up1, up2, sizeof(up2)) == 0) {
                         lsp_cand_add(&cands, up2);
                         char build3[MAX_PATH_LEN];
-                        snprintf(build3, sizeof(build3), "%sbuild%c", up2, LSP_SEP);
-                        lsp_cand_add(&cands, build3);
+                        if (lsp_dir_kw_cand(up2, "build", build3, sizeof(build3))) {
+                            lsp_cand_add(&cands, build3);
+                        }
                     }
                 }
             }

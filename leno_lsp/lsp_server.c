@@ -7,6 +7,9 @@
 #include "../src/include/native.h"
 #include "../src/include/module_ast_exports.h"
 #include <signal.h>
+// va_list / va_start（下面的 lsp_log 用）：此前靠其它头**间接**带入，换个包含顺序就炸
+//   （实测 build_lsp.sh 里报 “unknown type name ‘va_list’”），显式包含才稳 ✓
+#include <stdarg.h>
 
 #ifdef _WIN32
 #include <io.h>
