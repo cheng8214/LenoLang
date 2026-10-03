@@ -324,6 +324,23 @@ void compiler_free_symbol_list(char** names, char** types, int count) {
 
 // 从指定 struct 中获取字段类型信息
 // 如果找到字段，返回 true 并设置 type_str_out 和 struct_name_out
+// 类型显示串 → 查表真名（实现说明见 leno_compiler_lib.h 的声明处）：
+//   与 src/type.c 的 build_generic_type_string 显示口径一一对应 ——
+//     TYPE_STRUCT  → "struct Name"（**有泛型实参**时是 "Name[int]"，无前缀、本身就是真名）
+//     TYPE_FACE    → "face Name"
+//     TYPE_CSTRUCT → "cstruct Name"
+//   只挪指针不拷贝 ⇒ 没有缓冲区长度/截断问题，也不会给 LSP 构建引入 -Wformat-truncation。
+const char* lsp_type_key(const char* name) {
+    if (!name) return name;
+    static const char* PREFIXES[] = { "struct ", "cstruct ", "face " };
+    for (size_t i = 0; i < sizeof(PREFIXES) / sizeof(PREFIXES[0]); i++) {
+        size_t pl = strlen(PREFIXES[i]);
+        // 前缀之后必须还有内容（"struct " 这种空名不是有效类型）
+        if (strncmp(name, PREFIXES[i], pl) == 0 && name[pl] != '\0') return name + pl;
+    }
+    return name;
+}
+
 bool compiler_get_struct_field_info(CompilerContext* ctx, const char* struct_name,
                                      const char* field_name, char** type_str_out) {
     if (!ctx || !ctx->root_scope || !struct_name || !field_name) {

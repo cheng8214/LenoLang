@@ -53,4 +53,17 @@ bool compiler_get_struct_field_info(CompilerContext* ctx, const char* struct_nam
 int compiler_find_structs_with_field(CompilerContext* ctx, const char* field_name,
                                       char*** struct_names_out);
 
+// ---------------------------------------------------------------------------
+// 类型**显示串** → **查表真名**（只挪指针、不拷贝，返回的指针可直接用）
+//   为什么需要：compiler_get_struct_field_info / compiler_get_symbol_info 返回的是
+//   `type_to_string()` 的**显示**口径（结构体是 `"struct Sound"`、接口是 `"face X"`、
+//   C 布局是 `"cstruct X"`），而所有查表 API 要的是**真名**：
+//     struct_def_find / module_symbol_table_find_struct / native_get_instance_method_arity …
+//   历史上调用方直接把显示串当键 ⇒ 链式成员悬停整条链落空，只剩"是 X 类型变量的成员"兜底：
+//     [HOVER-DEBUG] generate_struct_method_doc_from_modules: struct='struct Sound' method='setVolume'
+//     [HOVER-DEBUG]     struct 'struct Sound' NOT found in this module
+//   ⇒ 拿不到方法签名（用户实测：`g.bgm.setVolume(...)` 悬停没有参数提示）。
+//   ⚠ 显示串本身**不改**（它是给人看的）：只在"要拿它去查表"的地方过这个函数 ✓
+const char* lsp_type_key(const char* name);
+
 #endif // LENO_COMPILER_LIB_H

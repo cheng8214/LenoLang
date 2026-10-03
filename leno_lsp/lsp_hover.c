@@ -3627,6 +3627,9 @@ int trace_method_source(const char* module_path, const char* current_file,
 // 生成用户定义 struct 方法的悬停文档
 static char* generate_struct_method_doc(const char* struct_name, const char* method_name,
                                                       const char* content, const char* file_path) {
+    // 防御：调用方可能传来**显示**口径的类型串（`struct Sound`）—— 拿它查表必然匹配不上。
+    //   （本文件 4.4b 链式字段那条路已在使用点归一；这里再兜一层，覆盖其它调用点。）
+    struct_name = lsp_type_key(struct_name);
     ObjStructDef* sdef = struct_def_find(struct_name);
     if (!sdef) {
         // struct_def_find 失败：可能是 cstruct —— 它没有 ObjStructDef，方法注册在
@@ -4109,6 +4112,10 @@ const char* last_sep_c = (slash_c && backslash_c) ? (slash_c > backslash_c ? sla
 static char* generate_struct_method_doc_from_modules(const char* struct_name, const char* method_name,
                                                       const char* content, const char* file_path) {
     if (!struct_name || !method_name || !content || !file_path) return NULL;
+
+    // 防御：同 generate_struct_method_doc —— 显示口径（`struct Sound`）查模块符号表必不中
+    //   （日志原样：`struct 'struct Sound' NOT found in this module`）
+    struct_name = lsp_type_key(struct_name);
     
     // 解析当前文件的导入
     int import_count = 0;
@@ -5240,16 +5247,21 @@ char* lsp_get_hover_info(const char* content, LspPosition pos, const char* file_
                                             }
 
                                             if (base_type[0]) {
+                                                // ★ 字段类型串是**显示**口径（结构体字段是 `struct Sound`）：
+                                                //   直接拿去查表/生成文档会整条链落空（native / struct_def_find /
+                                                //   模块符号表三处都匹配不上）⇒ 悬停只剩"是 X 类型变量的成员"兜底，
+                                                //   拿不到方法签名。查表前统一过 lsp_type_key（详见其声明处）。
+                                                const char* base_key = lsp_type_key(base_type);
                                                 // 在字段类型上查找方法
-                                                int f_arity = native_get_instance_method_arity(base_type, remaining_method);
+                                                int f_arity = native_get_instance_method_arity(base_key, remaining_method);
                                                 if (f_arity >= 0) {
-                                                    info = generate_instance_method_doc(base_type, remaining_method);
+                                                    info = generate_instance_method_doc(base_key, remaining_method);
                                                 }
                                                 if (!info) {
-                                                    info = generate_struct_method_doc(base_type, remaining_method, content, file_path);
+                                                    info = generate_struct_method_doc(base_key, remaining_method, content, file_path);
                                                 }
                                                 if (!info) {
-                                                    info = generate_struct_method_doc_from_modules(base_type, remaining_method, content, file_path);
+                                                    info = generate_struct_method_doc_from_modules(base_key, remaining_method, content, file_path);
                                                 }
                                             }
                                             free(field_type_str);
