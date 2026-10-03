@@ -13,6 +13,11 @@
 // 约定：缺键 / 非法值 ⇒ **回默认**（不静默钳位 —— 这样无头自检能确定性断言 ✓）
 // 默认照参考件：开着、每天 00:05、重试开 ✓
 //
+// ★ 2026-10-03：「开机自启动」也进了这张脸（用户反馈：**只有托盘菜单能改** ⇒ 在设置里点开关"没反应" ✗）
+//   但它**不落 settings.json** —— 自启项的"事实来源"就是注册项本身（Win = Run 键 / Linux = .desktop ✓）
+//   ⇒ 对话框只**显示 + 当场改**（读/写走 `settingsBindAutostart` 注入的回调 ⇒ 与托盘菜单
+//     指同一个注册项、同一个值名/命令行 ✓ 设置层因此仍然不认识托盘/系统层 ✓）
+//
 // 对话框：照抄 `文件管理器/props_dialog.leno` 的模态套路（`createDialogWindow` + VBox + `runModal`）；
 //   模态只屏蔽下层输入，主循环/定时器照跑 ⇒ **不会冻住界面** ✓（与原生托盘菜单那种冻结不同 ✓）
 //   ⚠ 装配抽成 `settingsDialogMount`：无头自检只**建窗 + 断言初值**，绝不 `runModal`（dummy 下会挂 ✗）
@@ -135,6 +140,49 @@ export func settingsSaveFrom(bool en, int hour, int mn, bool retry, bool tray): 
     return jsons.write_file(p, db)
 }
 
+// ==================== 开机自启动（设置对话框里的那个开关） ====================
+// 为什么**注入回调**而不是自己写注册项：自启项的"值名 / 显示名 / 命令行（含 `--tray`）"由托盘层统一
+//   （`trae_tray.leno` 的 `_VAL_NAME` / `_launchCmd` ⇒ **单一事实来源** ✓）——这里重复一份必然漂移 ✗
+//   ⇒ 设置层只认识"读状态 / 改状态"两件事，托盘菜单与设置对话框因此指的是**同一个自启项** ✓
+// 未绑定（自检 / 其它宿主）⇒ 读成"关"、保存时**不碰**注册项（不假装成功 ✗）
+func():bool _autoGet = null
+func(bool):bool _autoSet = null
+
+export func settingsBindAutostart(func():bool get, func(bool):bool set) { _autoGet = get; _autoSet = set }
+
+func _autoIsOn(): bool {
+    var g = _autoGet
+    if g == null { return false }
+    return g()                                   // 每次都**现读**（托盘里刚改过也要能看出来 ✓）
+}
+
+func _autoApply(bool on): bool {
+    var s = _autoSet
+    if s == null { return false }
+    return s(on)
+}
+
+// 拨自启开关（**点即生效**那条路）：返回 "" = 成功，否则 = 给人看的原因
+// 为什么要抽出来：这条逻辑同时给"点开关"与"保存"用，且自检能**不开窗口**直接断言它（点控件没法自动化 ✓）
+// ⚠ 只在"目标状态 ≠ 真状态"时才动注册项：否则每点一下/每存一次都要重写一遍注册表（无谓写盘 ✗）
+func _toggleAutostart(bool v): string {
+    if v == _autoIsOn() { return "" }
+    if _autoApply(v) { return "" }
+    return "开机自启动" + (if v then "开启" else "关闭") + "失败（" + Sys.os()
+        + (if Sys.isMacos() then "：本平台未实现" else "：自启项不可写（权限/环境?）") + "）"
+}
+
+// 保存动作（对话框「保存」与自检**共用同一条路** ✓）：先落 settings.json，再按需改自启项
+// 返回 "" = 全成功；否则 = 给人看的原因（对话框写在说明行上 / 自检直接断言 ✓ —— 不静默失败 ✗）
+func _saveFromUI(bool en, int hour, int mn, bool retry, bool tray, bool auto): string {
+    if not settingsSaveFrom(en, hour, mn, retry, tray) {
+        return "保存失败：配置目录不可写（" + settings_dir() + "）"
+    }
+    var e = _toggleAutostart(auto)                       // 点开关已生效 ⇒ 这里通常是 no-op（幂等 ✓）
+    if e != "" { return "设置已保存，但" + e }
+    return ""
+}
+
 // ==================== 设置对话框 ====================
 // 为什么不把控件句柄返回给调用方：SDL3 控件的类型（Toggle/SpinBox/…）作 **struct 字段**时跨模块
 // 会退化成 `any`（编译器实测警告 ⇒ 调用点还得收窄 ✗）⇒ 干脆**装配即接线**，句柄只在本模块内用 ✓
@@ -144,9 +192,10 @@ int  _obsHour = -1
 int  _obsMin = -1
 bool _obsRetry = false
 bool _obsTray = false
+bool _obsAuto = false
 
 // 装配对话框内容 + 接线（抽出来 ⇒ 自检能只建窗 + 看观测点，不跑模态 ✓）
-// 行序：标题 / 自动签到开关 / 触发时间(时:分) / 失败重试 / 关窗收托盘 / 说明 / 弹性间隔 / 按钮行
+// 行序：标题 / 自动签到开关 / 触发时间(时:分) / 失败重试 / 关窗收托盘 / 开机自启动 / 说明 / 弹性间隔 / 按钮行
 // ⚠ 开关一律"**标签 + 纯开关**"两段式（`text:""`）：`Toggle` 的文字画在**开关右侧**、且控件宽度
 //   不被布局改（`set_size` 是空实现）⇒ 文字一长就被窗口右缘裁掉 ✗（实测截图踩过，
 //   与 `控件/设置面板/settings.leno` 的写法一致 ✓）
@@ -154,11 +203,11 @@ func _row(): HBox { return SDL3.createHBox({x:0, y:0, w:1, h:30, padX:0, padY:0,
 
 func settingsDialogMount(Window dlg, Dict[string, string] d, func():void onSaved) {
     float dlgW = 460.0
-    float dlgH = 320.0
+    float dlgH = 360.0                                  // ★ 多了一行"开机自启动" ⇒ 320 → 360 (2026-10-03)
     VBox root = SDL3.createVBox({x:0, y:0, w:dlgW, h:dlgH, padX:30, padY:16, spacing:8})
     dlg.setRoot(root)
 
-    root.add(SDL3.dialogLabel("设置 · 定时自动签到", 16), {grow:0, shrink:0, align:1})
+    root.add(SDL3.dialogLabel("设置 · 定时自动签到 / 开机自启动", 16), {grow:0, shrink:0, align:1})
 
     HBox rowEn = _row()
     rowEn.add(SDL3.dialogLabel("启用定时自动签到", 13), {grow:0, shrink:0, basis:280, align:0})
@@ -188,6 +237,16 @@ func settingsDialogMount(Window dlg, Dict[string, string] d, func():void onSaved
     rowTray.add(tgTray, {grow:0, shrink:0, basis:52, align:0})
     root.add(rowTray, {grow:0, shrink:0, align:3})
 
+    // ★ 2026-10-03 新增：开机自启动（用户反馈"设置里点开关注册居然没反应"⇒ 缺的就是这一行）
+    //   初值 = **注册项真状态**（现读 ✓，不是 settings.json —— 自启项不在那里，见文件头注释 ✓）
+    //   ⚠ 标签写明"点开关立即生效"：它是**系统级开关**（与托盘菜单那项同一件事），不等「保存」✓
+    //     ⇒ 顺带把"「取消」要不要回滚它"的歧义堵住（真状态已改，取消只丢弃本窗口的其它设置 ✓）
+    HBox rowAuto = _row()
+    rowAuto.add(SDL3.dialogLabel("开机自启动（点开关立即生效）", 13), {grow:0, shrink:0, basis:280, align:0})
+    Toggle tgAuto = SDL3.createToggle({x:0, y:0, w:52, h:24, text:"", on:_autoIsOn(), anim:true})
+    rowAuto.add(tgAuto, {grow:0, shrink:0, basis:52, align:0})
+    root.add(rowAuto, {grow:0, shrink:0, align:3})
+
     Label lblNote = SDL3.dialogLabel("23:00 后当天放弃 · 成功/已签到/9095 即停 · 手动签到后当天不再自动重试", 12)
     root.add(lblNote, {grow:0, shrink:0, align:0})
 
@@ -203,18 +262,33 @@ func settingsDialogMount(Window dlg, Dict[string, string] d, func():void onSaved
     _obsMin = _int(spM.get_value())
     _obsRetry = tgRetry.is_on()
     _obsTray = tgTray.is_on()
+    _obsAuto = tgAuto.is_on()
+
+    // ★ 自启开关**点即生效**（不登记到「保存」路径上 ⇒ 与托盘菜单同一手感、同一注册项 ✓）
+    //   失败了就把开关**拨回去** + 在说明行报原因（绝不留一个"看着是开、其实没写进去"的假状态 ✗）
+    //   ⚠ 与下面保存路径不冲突：`_saveFromUI` 只在"开关 ≠ 真状态"时才动自启项 ⇒ 这里成功后保存是 no-op ✓
+    tgAuto.on_change(func(bool v) {
+        var e = _toggleAutostart(v)
+        if e == "" {
+            lblNote.set_text("开机自启动已" + (if v then "开启" else "关闭") + " ✓（点「保存」退出本窗口）")
+        } else {
+            tgAuto.set_on(not v)                        // 拨回去：界面不许显示未生效的状态 ✗
+            lblNote.set_text(e)
+        }
+    })
 
     no.on_click(func():void { _saved = false; _shouldClose = true })     // 取消 ⇒ 不写盘 ✓
+    // 保存：settings.json + 自启项**一起**落地（都成功才算成功 ✓）；自启开关现读控件 ⇒ 点它立刻生效 ✓
     ok.on_click(func():void {
-        bool ok2 = settingsSaveFrom(tgEn.is_on(), _int(spH.get_value()), _int(spM.get_value()),
-                                    tgRetry.is_on(), tgTray.is_on())
-        if ok2 {
+        var err = _saveFromUI(tgEn.is_on(), _int(spH.get_value()), _int(spM.get_value()),
+                              tgRetry.is_on(), tgTray.is_on(), tgAuto.is_on())
+        if err != "" {
+            // 出错就**别关**：把原因写在说明行上（用户看得见 ✓，不静默失败 ✗）
+            lblNote.set_text(err)
+        } else {
             _saved = true
             onSaved()
             _shouldClose = true
-        } else {
-            // 写不进去就**别关**：把原因写在说明行上（用户看得见 ✓，不静默失败 ✗）
-            lblNote.set_text("保存失败：配置目录不可写（" + settings_dir() + "）")
         }
     })
 }
@@ -225,7 +299,7 @@ export func showSettings(Window parent, func():void onSaved) {
     _shouldClose = false
     _saved = false
     var d = settingsLoad()
-    var dlg = SDL3.createDialogWindow({title:"设置 - 定时自动签到", w:460, h:320})
+    var dlg = SDL3.createDialogWindow({title:"设置 - Trae 签到助手", w:460, h:360})
     settingsDialogMount(dlg, d, onSaved)
 
     SDL3.runModal(dlg,
@@ -249,7 +323,22 @@ func _ck(bool c, string what) {
     else { _sfFail = _sfFail + 1; print("[自检] FAIL " + what + "\n") }
 }
 
-// ① 写→读回 ② 对话框建起来 + 控件初值来自文件 ③ 只打开不写盘（取消语义）④ 非法值兜底 ⑤ 清理不留痕
+// 开机自启动的**假回调**（自检用 ⇒ 一个注册表/文件也不碰 ✓）；`_sfAutoFail` 模拟"写不进去"（权限/未实现 ✓）
+var _sfAutoOn = false
+var _sfAutoCalls = 0
+var _sfAutoLast = false
+var _sfAutoFail = false
+func _sfAutoGet(): bool { return _sfAutoOn }
+func _sfAutoSet(bool v): bool {
+    _sfAutoCalls = _sfAutoCalls + 1
+    _sfAutoLast = v
+    if _sfAutoFail { return false }              // 失败 ⇒ 真状态**不变**（调用方据此报原因 ✓）
+    _sfAutoOn = v
+    return true
+}
+
+// ① 写→读回 ② 对话框建起来 + 控件初值来自文件 ③ 只打开不写盘（取消语义）④ 非法值兜底
+// ⑤ 开机自启动（初值取自真状态 / 点开关即生效 / 幂等 / 失败不静默 / 保存路径补齐）⑥ 清理不留痕
 // ⚠ 不跑 runModal（dummy 驱动下没有事件 ⇒ 会挂 ✗）；临时文件跑完删掉 ⇒ 不碰真实设置 ✓
 export func settingsSelftest(): int {
     _sfFail = 0
@@ -262,11 +351,13 @@ export func settingsSelftest(): int {
     _ck(d[KEY_HOUR] == "21" and d[KEY_MIN] == "30", "① 读回 21:30 == 写入 ✓")
     _ck(d[KEY_ENABLED] == "1" and d[KEY_RETRY] == "0" and d[KEY_TRAY] == "1", "① 读回三个开关 == 写入（开/不重试/收托盘 ✓）")
 
-    var dlg = SDL3.createDialogWindow({title:"设置 - 定时自动签到", w:460, h:320})
+    var dlg = SDL3.createDialogWindow({title:"设置 - Trae 签到助手", w:460, h:360})
     settingsDialogMount(dlg, d, func():void { })              // 接线（自检不点按钮 ⇒ 不写盘 ✓）
     _ck(_obsEnabled, "② 开关初值 = 开（来自 settings.json ✓）")
     _ck(_obsHour == 21 and _obsMin == 30, "② 时间初值 = 21:30 ✓")
     _ck(not _obsRetry and _obsTray, "② 重试=关 / 收托盘=开 ✓")
+    // ⚠ 这里**不断言** `_obsAuto`：它取的是宿主（trae_gui）绑定的注册项**真状态** ⇒ 随本机装没装自启而变
+    //   ⇒ 自启开关的初值断言放在 ⑤（用假回调钉住两个方向 ✓，不依赖本机状态 ✓）
 
     // ③ 「取消」= 不写盘：装配本身不许写文件（读回仍是刚才那份 ✓）
     var d2 = settingsLoad()
@@ -277,9 +368,50 @@ export func settingsSelftest(): int {
     _ck(d3[KEY_HOUR] == "0" and d3[KEY_MIN] == "5", "④ 非法 25 时 / 99 分 ⇒ 回默认 00:05 ✓")
     _ck(d3[KEY_RETRY] == "1" and d3[KEY_TRAY] == "0", "④ 开关不受越界影响 ✓")
 
+    // ⑤ 开机自启动（开关初值取**真状态**、保存时按需改自启项 ✓）——本应用缺的就是这一环（2026-10-03 ✓）
+    settingsBindAutostart(func():bool { return _sfAutoGet() }, func(bool v):bool { return _sfAutoSet(v) })
+    _sfAutoOn = false                                  // 注册项没装 ⇒ 开关该是关
+    var dlgOff = SDL3.createDialogWindow({title:"设置 - Trae 签到助手", w:460, h:360})
+    settingsDialogMount(dlgOff, d, func():void { })
+    _ck(not _obsAuto, "⑤ 未启用自启 ⇒ 对话框开关初值 = 关 ✓")
+
+    _sfAutoOn = true                                   // 模拟"注册项已启用"（托盘里开过 ✓）
+    _sfAutoCalls = 0
+    var dlg2 = SDL3.createDialogWindow({title:"设置 - Trae 签到助手", w:460, h:360})
+    settingsDialogMount(dlg2, d, func():void { })
+    _ck(_obsAuto, "⑤ 已启用自启 ⇒ 对话框开关初值 = 开（读的是真状态 ✓）")
+
+    // ⑤a **点开关 = 当场生效**（对话框的 on_change 走的就是这个函数 ✓）
+    _sfAutoCalls = 0
+    var t1 = _toggleAutostart(false)                         // 真状态是"开" ⇒ 关它 = **删**自启项
+    _ck(t1 == "" and _sfAutoCalls == 1 and not _sfAutoLast, "⑤ 点开关⇒关：删除自启项（收到 false ✓）")
+    _ck(not _autoIsOn(), "⑤ 真状态随之变「未启用」 ✓")
+
+    _sfAutoCalls = 0
+    var t2 = _toggleAutostart(false)                         // 已经是关 ⇒ 不该再动注册项
+    _ck(t2 == "" and _sfAutoCalls == 0, "⑤ 已关时再点 ⇒ 不动自启项（幂等 ✓）")
+
+    _sfAutoCalls = 0
+    var t3 = _toggleAutostart(true)                          // 开它 = **写**自启项
+    _ck(t3 == "" and _sfAutoCalls == 1 and _sfAutoLast, "⑤ 点开关⇒开：写入自启项（收到 true ✓）")
+
+    _sfAutoFail = true                                       // 注册项写不进去（权限/未实现）
+    var t4 = _toggleAutostart(false)
+    _ck(t4 != "" and _autoIsOn(), "⑤ 点开关但写失败 ⇒ 如实返回原因、真状态不变（界面据此拨回开关 ✓）")
+    _sfAutoFail = false
+
+    // ⑤b 「保存」路径同一条函数：与真状态一致 ⇒ no-op；不一致 ⇒ 补齐（点开关已生效时就是 no-op ✓）
+    _sfAutoCalls = 0
+    var e1 = _saveFromUI(true, 9, 30, true, true, true)
+    _ck(e1 == "" and _sfAutoCalls == 0, "⑤ 保存时开关与真状态一致 ⇒ 不重写自启项（幂等 ✓）")
+
+    _sfAutoCalls = 0
+    var e2 = _saveFromUI(true, 9, 30, true, true, false)
+    _ck(e2 == "" and _sfAutoCalls == 1 and not _sfAutoLast, "⑤ 保存时开关≠真状态 ⇒ 补齐（删自启项 ✓）")
+
     settingsSetPathOverride("")
     bool del = files.delete(tmp)
-    _ck(del and not files.exists(tmp), "⑤ 临时文件已删除（不碰真实设置、不留痕 ✓）")
+    _ck(del and not files.exists(tmp), "⑥ 临时文件已删除（不碰真实设置、不留痕 ✓）")
 
     print("[自检] 结果：" + (if _sfFail > 0 then ("失败 " + (_sfFail as string) + " 项") else "全部通过") + "\n")
     return _sfFail

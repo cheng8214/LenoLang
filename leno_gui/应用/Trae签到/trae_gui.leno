@@ -401,11 +401,13 @@ func manual_claim() {
 }
 
 // 打开设置对话框（主窗口按钮 / 托盘「设置…」共用 ✓）；保存成功 ⇒ 调度器**立刻**按新参数走 ✓
+// 状态栏回读**注册项真状态**报一句 ⇒ "点了保存到底有没有生效"当场可见 ✓（2026-10-03）
 func open_settings(Window win) {
     cfg.showSettings(win, func():void {
         auto.autoApplySettings()
         AUTO_TEXT = auto.autoStatusText()
-        STATUS_TEXT = "设置已保存（定时自动签到 " + cfg.settingsTimeText() + " ✓）"
+        STATUS_TEXT = "设置已保存（定时自动签到 " + cfg.settingsTimeText()
+            + " · 开机自启动 " + (if tray.trayAutoStartOn() then "已开" else "已关") + " ✓）"
     })
 }
 
@@ -768,6 +770,11 @@ main() {
     // ==================== 托盘 / 菜单 / 开机自启（trae_tray.leno ✓）====================
     // 托盘失败（创建不出来）⇒ 全部退化为原行为（关闭即退出 ✓）
     bool trayOk = tray.traeTrayInit(win, func():void { manual_claim() }, func():void { open_settings(win) })
+    // ★ 2026-10-03：设置对话框里的「开机自启动」接到**托盘层同一套自启项**
+    //   （值名 / 命令行都由 trae_tray 统一 ⇒ 两处入口改的是同一个注册项，不会各写一个 ✓）
+    //   ⚠ 与 trayOk 无关：托盘建不出来时，设置里的开关**照样能用**（只是少了托盘菜单那个入口 ✓）
+    cfg.settingsBindAutostart(func():bool { return tray.trayAutoStartOn() },
+                              func(bool v):bool { return tray.traySetAutoStart(v) })
     if startHidden and trayOk {
         tray.traeTrayShow(false)                 // --tray ⇒ 启动即只留托盘 ✓（开机自启走这条）
         print("[gui] --tray：启动即隐藏到托盘（右键托盘图标 = 菜单 ✓）\n")
