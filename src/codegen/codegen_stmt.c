@@ -40,7 +40,7 @@ extern int gen_expr(CodeGen* gen, Ast* ast);
 // 的 cached_type 只是推断结果，运行时可能不是该类型 —— 必须保留 CAST 做规范化
 // （例：`int i = (k >= 0)` 得到的是 bool，必须 CAST_INT 成 1/0）。
 // ============================================================================
-static int assign_cast_needed(TypeKind target_kind, Ast* value_ast) {
+static int assign_cast_needed(CodeGen* gen, TypeKind target_kind, Ast* value_ast) {
     if (!value_ast) return 1;
     switch (value_ast->kind) {
         case AST_NUM:
@@ -71,7 +71,7 @@ static int assign_cast_needed(TypeKind target_kind, Ast* value_ast) {
             return !(value_ast->cached_type && value_ast->cached_type->kind == target_kind &&
                      (target_kind == TYPE_INT || target_kind == TYPE_FLOAT));
         case AST_CALL: {
-            // ★ 例外：native 的**定点截断函数**（`_int32` / `_uint32`）可以免 CAST ——
+            // ★ 例外 1：native 的**定点截断函数**（`_int32` / `_uint32`）可以免 CAST ——
             //   它们的返回类型是**运行期保证**的：实现里每个分支（int / bigint / float /
             //   bool / null / 非法类型）都收敛到 `return val_int(...)`，绝不会逃逸成
             //   bigint 或别的类型。这与上面 ⚠ 说的"普通调用只有声明推断"是完全不同的事。
@@ -86,6 +86,37 @@ static int assign_cast_needed(TypeKind target_kind, Ast* value_ast) {
                 const char* n = callee->u.var.ref.name;
                 if (strcmp(n, "_int32") == 0 || strcmp(n, "_uint32") == 0) return 0;
             }
+            // ★ 例外 2（2026-10-03 新增）：**声明了返回类型的全局脚本函数**直呼 ——
+            //   它的返回值类型由**返回点**保证，而不是"声明推断"：gen_return 里
+            //   emit_cast_for_return() 对每条 `return expr` 都按 fn->u.func.return_type
+            //   插了一条 CAST（见 codegen_stmt.c 的 C1），声明 `:int/:float/:string`
+            //   的函数返回前已被强制规范化 ⇒ 调用点再 CAST 一次纯属白花。
+            //   （每次调用白花 1 条指令 ≈2.7ns；`s = f(s)` 这类热循环里 1 条 = 1 次派发。
+            //     顺带把 float 参数调用里那条 CAST_FLOAT 也从热循环拿掉。）
+            //   两处边角都安全：
+            //     · 函数**没有** return（codegen_func.c 收尾发 nresults=0 的 OP_RETURN）
+            //       或 `return null` ⇒ 调用方拿到 null，而 OP_CAST_INT/FLOAT/STRING 对
+            //       null **原样放行**（04_compare_bit_cast.inc 的三处 val_is_null 分支）
+            //       ⇒ 插与不插结果一致 ✓
+            //     · 泛型 / async / ctor / dtor 一律排除（它们的返回不是这个 kind）
+            //   判据用**符号槽位身份**（index 相同 ⇒ 同一个函数），不按名字查表 ——
+            //   避免同名多形态 / 前向引用时 func_table_find 取到另一个形态。
+            if (callee && callee->kind == AST_VAR &&
+                callee->u.var.ref.kind == SYM_GLOBAL_FUNC &&
+                callee->u.var.ref.index >= 0 &&
+                value_ast->u.call.generic_type_count == 0 &&
+                !value_ast->u.call.callee_is_async) {
+                Ast* fdef = func_table_find(&gen->sem->func_table, callee->u.var.ref.name);
+                if (fdef && fdef->kind == AST_FUNC_DEF &&
+                    fdef->u.func.ref.kind == SYM_GLOBAL_FUNC &&
+                    fdef->u.func.ref.index == callee->u.var.ref.index &&
+                    !fdef->u.func.is_ctor && !fdef->u.func.is_dtor &&
+                    !fdef->u.func.is_async && fdef->u.func.type_param_count == 0 &&
+                    fdef->u.func.return_type &&
+                    fdef->u.func.return_type->kind == target_kind) {
+                    return 0;
+                }
+            }
             return 1;
         }
         default:
@@ -97,7 +128,7 @@ static int assign_cast_needed(TypeKind target_kind, Ast* value_ast) {
 static void emit_cast_for_target(CodeGen* gen, TypeKind target_kind, Ast* value_ast, int reg, int line) {
     if (!value_ast) return;
     if (target_kind != TYPE_INT && target_kind != TYPE_FLOAT && target_kind != TYPE_STRING) return;
-    if (!assign_cast_needed(target_kind, value_ast)) return;
+    if (!assign_cast_needed(gen, target_kind, value_ast)) return;
     if (target_kind == TYPE_INT) emit_cast_int(gen, reg, reg, line);
     else if (target_kind == TYPE_FLOAT) emit_cast_float(gen, reg, reg, line);
     else emit_cast_string(gen, reg, reg, line);
@@ -1035,7 +1066,7 @@ static int return_cast_needed(CodeGen* gen, Ast* ret_ast) {
     if (fn->u.func.is_ctor) return 0;
     TypeInfo* rt = fn->u.func.return_type;
     if (!rt) return 0;
-    return assign_cast_needed(rt->kind, ret_ast);
+    return assign_cast_needed(gen, rt->kind, ret_ast);
 }
 
 static void gen_return(CodeGen* gen, Ast* ast) {
