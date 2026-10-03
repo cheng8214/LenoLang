@@ -18,6 +18,46 @@
 extern char* read_module_file(const char* file_path, const char* current_file);
 
 // ============================================================================
+// 「当前文件」上下文：解析**被扫描模块**的源码时必须切成它自己
+// ----------------------------------------------------------------------------
+// 为什么必须（2026-10-03 实测的假循环依赖）：
+//   parser_module.c 用 error_get_filename() 当**裸文件名 import 的"导入方目录"提示**
+//   （T19 选项 2：`import "x.leno"` 先查导入方自己的目录）⇒ 本文件里 parser_parse()
+//   解析的若是"别人的源码"，而 error_get_filename() 还停在外层编译单元上，包内
+//   `import "x.leno"` 就会被解析到**外层目录里的同名文件**上 ✗
+//   实测现场：examples/应用示例/app_demo.leno 编译时扫 lib/Music.leno 的符号表，
+//     Music.leno 的 `import "music_player.leno"` 被解析成
+//     examples/应用示例/music_player.leno（示例自己）⇒ 示例又 import "Music"
+//     ⇒ 报**假**的"检测到循环依赖: Music.leno <- music_player.leno <- Music.leno"，
+//     接着 Music 的符号表作废 ⇒ Sound 类型/方法全部报"未定义"（35 个错一连串）。
+//   把同名示例文件挪到别的目录（或改名）就一切正常 ⇒ 与语言/库无关，纯编译器解析口径 bug。
+// 报错归属也顺带修正：这两个 provider 里 parse 出的语法错此前会被记到**外层文件**名下。
+// ============================================================================
+typedef struct {
+    char saved[BUFFER_SMALL];
+    int has_saved;
+} AstFileCtx;
+
+static void ast_file_ctx_enter(const char* module_file, AstFileCtx* ctx) {
+    if (!ctx) return;
+    const char* cur = error_get_filename();
+    ctx->has_saved = (cur && cur[0]) ? 1 : 0;
+    if (ctx->has_saved) {
+        strncpy(ctx->saved, cur, sizeof(ctx->saved) - 1);
+        ctx->saved[sizeof(ctx->saved) - 1] = '\0';
+    } else {
+        ctx->saved[0] = '\0';
+    }
+    // module_file 为空时不动：宁可维持旧行为，也不要把上下文清成空串
+    if (module_file && module_file[0]) error_set_filename(module_file);
+}
+
+static void ast_file_ctx_leave(const AstFileCtx* ctx) {
+    if (!ctx) return;
+    error_set_filename(ctx->has_saved ? ctx->saved : NULL);
+}
+
+// ============================================================================
 // 内部：可增长的名字清单（空名/重名忽略 ⇒ 同一名字重复导出只算一次 ✓）
 // ============================================================================
 
@@ -179,7 +219,12 @@ static int ast_export_names_provider(const char* file_path, const char* current_
     char* src = read_module_file(file_path, current_file);
     if (!src) return -1;      // 读不了 ⇒ 回退（由回退路径按原样报错 ✓）
     AstExportList list;
+    // ⚠ 解析的是**这个模块**的源码 ⇒ 当前文件必须切成它（否则包内裸文件名 import 会被
+    //   解析到外层目录的同名文件上，见 AstFileCtx 的说明）
+    AstFileCtx ctx;
+    ast_file_ctx_enter(file_path, &ctx);
     int ok = module_ast_collect_exports(src, &list);
+    ast_file_ctx_leave(&ctx);
     free(src);
     if (ok != 0) {
         module_ast_exports_free(&list);
@@ -1563,10 +1608,15 @@ static void ast_fill_one_cfunc(ModuleSymbolTable* table, Ast* cf) {
 
 static void ast_symbol_fill_provider(ModuleSymbolTable* table, const char* src) {
     if (!table || !src) return;
+    // ⚠ 解析的是 table 对应模块的源码 ⇒ 当前文件必须切成它，否则包内裸文件名 import
+    //   会被解析到**外层编译单元所在目录**的同名文件上（假循环依赖的成因，见 AstFileCtx）
+    AstFileCtx ctx;
+    ast_file_ctx_enter(table->module_path, &ctx);
     Parser p;
     parser_init(&p, src);
     if (parser_parse(&p) < 0) {
         ast_free(p.root);
+        ast_file_ctx_leave(&ctx);
         return;         // 语法错 ⇒ 不覆盖（编译本来就会在 parse 阶段报错 ✓）
     }
     Ast* root = p.root;
@@ -1611,6 +1661,7 @@ static void ast_symbol_fill_provider(ModuleSymbolTable* table, const char* src) 
     ast_imports_free(g_ast_imports, g_ast_import_count);
     g_ast_imports = saved_imports;
     g_ast_import_count = saved_import_count;
+    ast_file_ctx_leave(&ctx);
     ast_free(p.root);
 }
 
