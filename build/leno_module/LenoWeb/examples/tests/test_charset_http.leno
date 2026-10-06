@@ -1,0 +1,73 @@
+// test_charset_http.leno — HTTP 层「响应体字符集自动转码」（离线，走本机服务端）
+//
+// 覆盖 P0 缺口：libcurl 只搬字节、不认识 `Content-Type; charset=`，
+// 改造前 GBK 页面进 body 就是乱码；现在 net 层统一转成 UTF-8，原始字节留在 rawBody()。
+import "Web" as web
+import "_testkit" as tk
+import threads
+
+int PORT = 39611
+int MAXREQ = 512
+
+// ⚠ threads.start 的入口必须是**本文件**的函数（子线程不加载别的模块的框架）
+func serverEntry(int port, int maxReqs) { tk.serve(port, maxReqs) }
+
+main() {
+    var srv = threads.start(serverEntry, PORT, MAXREQ)
+    if not tk.waitUp(PORT) {
+        print("[FAIL] 本机服务端未起来")
+        tk.shutdown(PORT)
+        _exit(1)
+    }
+    string base = "http://127.0.0.1:" + PORT
+
+    print("--- ① 声明 charset=gbk 的页面 ---")
+    var r1 = web.get(base + "/gbk")
+    tk.check("状态码", r1.statusCode, 200)
+    tk.check("charset 探测", r1.charset, "gbk")
+    tk.check("body 已转码", r1.body, "中文测试")
+    tk.checkTrue("wasDecoded", r1.wasDecoded())
+    tk.check("totalSize 是字节数", r1.totalSize, 8)
+    tk.check("body.len() 是字符数", r1.body.len(), 4)
+    tk.check("rawBody 仍 8 字节", r1.rawBody().byte_len(), 8)
+    tk.checkHas("str() 显示字符集", r1.str(), "Charset: gbk")
+
+    print("--- ② 未声明 charset 的 GBK 页面（系统 ANSI 兜底）---")
+    var r2 = web.get(base + "/gbk-nod")
+    tk.check("charset 推断", r2.charset, "gbk")
+    tk.check("body 已转码", r2.body, "中文")
+
+    print("--- ③ UTF-8 页面不得被改动 ---")
+    var r3 = web.get(base + "/utf8")
+    tk.check("charset", r3.charset, "utf-8")
+    tk.check("body 原样", r3.body, "中文内容")
+    tk.checkTrue("未转码", not r3.wasDecoded())
+
+    print("--- ④ 二进制（image/png）必须原样保留 ---")
+    var r4 = web.get(base + "/bin")
+    tk.check("charset 为空", r4.charset, "")
+    tk.check("字节数", r4.rawBody().byte_len(), 8)
+    tk.checkTrue("body == rawBody", r4.body == r4.rawBody())
+    tk.check("首字节 0x89", r4.body.byte(0), 137)
+    tk.check("末字节 0x0D", r4.body.byte(7), 13)
+
+    print("--- ⑤ 手动转码接口 ---")
+    tk.check("toUtf8", web.toUtf8(tk.gbkBody(), "text/html; charset=gbk"), "中文测试")
+    tk.check("detectCharset", web.detectCharset(tk.gbkBody(), "text/html"), "gbk")
+    tk.check("encodeCharset 往返", web.decodeCharset(web.encodeCharset("中文", "gbk"), "gbk"), "中文")
+
+    print("--- ⑥ 复用同一客户端（累加器必须每次清空）---")
+    var client = web.createClient()
+    var a = client.get(base + "/echo/A")
+    var b = client.get(base + "/echo/B")
+    var c = client.get(base + "/gbk")
+    tk.check("第 1 次", a.body, "BODY:A")
+    tk.check("第 2 次", b.body, "BODY:B")
+    tk.check("第 3 次（GBK，累加器已清空）", c.body, "中文测试")
+    tk.check("第 3 次 raw 长度", c.rawBody().byte_len(), 8)
+    client.close()
+
+    tk.shutdown(PORT)
+    srv.join()
+    if tk.summary("charset_http") != 0 { _exit(1) }
+}

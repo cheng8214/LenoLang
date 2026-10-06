@@ -1,0 +1,116 @@
+// test_crawler_queue.leno — 爬虫调度：URL 去重 / 限速 / robots crawl-delay / CSV 落地
+// 全部离线（nextUrl 只出队不抓取，所以这里连服务端都不需要）
+import "Web" as web
+import "_testkit" as tk
+import times
+import files
+
+use web.Crawler
+
+int PORT = 39615
+
+func mkCrawler(Array[string] seeds, int delayMs, int maxPages): Crawler {
+    return web.createCrawler({
+        start_urls: seeds,
+        allowed_domains: [],
+        max_pages: maxPages,
+        max_depth: 3,
+        delay_ms: delayMs,
+        user_agent: "TestBot",
+        respect_robots: false
+    })
+}
+
+func drain(Crawler c): Array[string] {
+    Array[string] got = []
+    while got.len() < 20 {
+        var it = c.nextUrl()
+        if it == null { break }
+        got.add(it.url)
+        c.markVisited(it.url)
+    }
+    return got
+}
+
+main() {
+    string base = "http://127.0.0.1:" + PORT
+
+    print("--- ① 归一化去重（同一页面的多种写法只算一次）---")
+    var c1 = mkCrawler([base + "/echo/a"], 0, 100)
+    c1.start()
+    c1.enqueue(base + "/echo/a#frag", 1)     // 同页，仅 fragment 不同
+    c1.enqueue(base + "/echo/a", 1)          // 完全重复
+    c1.enqueue(base + "/echo/b", 1)          // 新页面
+    var got1 = drain(c1)
+    tk.check("去重后待抓数（a / b 两页）", got1.len(), 2)
+
+    print("--- ② 已访问的不再入队 ---")
+    var c2 = mkCrawler([base + "/echo/x"], 0, 100)
+    c2.start()
+    var first = drain(c2)
+    tk.check("首次出队 1 条", first.len(), 1)
+    c2.enqueue(base + "/echo/x", 1)          // 已访问 ⇒ 必须被拒
+    var second = drain(c2)
+    tk.check("已访问的重新入队被拒", second.len(), 0)
+
+    print("--- ③ max_pages=0 表示不限 ---")
+    var c3 = mkCrawler([base + "/echo/1"], 0, 0)
+    c3.start()
+    tk.checkTrue("队列非空时不因 max_pages=0 立即停", not c3.shouldStop())
+    c3.max_pages = 1
+    c3.markVisited(base + "/echo/1")
+    tk.checkTrue("达到 max_pages 后停", c3.shouldStop())
+
+    print("--- ④ 限速自动生效（不必手写 sleep）---")
+    var c4 = mkCrawler([base + "/echo/1", base + "/echo/2"], 150, 100)
+    c4.start()
+    float t0 = times.ms()
+    c4.nextUrl()
+    c4.nextUrl()
+    float t1 = times.ms()
+    tk.checkTrue("两次出队间隔 ≥120ms", (t1 - t0) >= 120.0)
+
+    print("--- ⑤ robots.txt 的 crawl-delay ---")
+    string robots = "User-agent: *\nCrawl-delay: 2\n\nUser-agent: fastbot\nCrawl-delay: 0.5\n"
+    tk.check("通配组 2 秒 → 2000ms", web.parseCrawlDelay(robots, "OtherBot"), 2000)
+    tk.check("精确组优先 0.5 秒 → 500ms", web.parseCrawlDelay(robots, "FastBot"), 500)
+    tk.check("无 crawl-delay → 0", web.parseCrawlDelay("User-agent: *\nDisallow: /a\n", "B"), 0)
+    tk.check("空文本 → 0", web.parseCrawlDelay("", "B"), 0)
+    tk.check("脏数据不抛错", web.parseCrawlDelay("User-agent: *\nCrawl-delay: 一\n", "B"), 0)
+
+    var c5 = mkCrawler([], 0, 5)
+    c5.user_agent = "OtherBot"
+    c5.setRobots(robots)
+    tk.check("setRobots 顺带带入 crawl_delay", c5.effectiveDelay(), 2000)
+    c5.delay_ms = 3000
+    tk.check("用户 delay 更大时取用户值", c5.effectiveDelay(), 3000)
+
+    print("--- ⑥ CSV 落地（RFC 4180 转义）---")
+    tk.check("普通字段", web.csvField("abc"), "abc")
+    tk.check("含逗号", web.csvField("a,b"), "\"a,b\"")
+    tk.check("含双引号", web.csvField("a\"b"), "\"a\"\"b\"")
+    tk.check("含换行", web.csvField("a\nb"), "\"a\nb\"")
+    tk.check("toCsv 两行", web.toCsv([["a", "b"], ["1", "2"]]), "a,b\r\n1,2\r\n")
+
+    string csvPath = _tmpdir() + _sep() + "lenoweb_test.csv"
+    int n = web.writeCsv(csvPath, [["张三", "a,b"], ["李四", "x"]], ["名字", "备注"])
+    tk.check("writeCsv 返回数据行数", n, 2)
+    string back = files.read(csvPath)
+    tk.checkHas("含表头", back, "名字,备注")
+    tk.checkHas("含转义字段", back, "\"a,b\"")
+    tk.checkHas("含中文", back, "张三")
+    // ⚠ BOM 只能用**二进制**方式读：files.read() 会顺手吃掉 UTF-8 BOM（文本语义），
+    //   这是读文本的便利，但会让"BOM 到底写没写"这类断言失效。
+    var f = files.open(csvPath, "rb")
+    if f != null {
+        string raw = f.read()
+        f.close()
+        tk.checkTrue("磁盘首字节是 UTF-8 BOM", raw.byte_len() > 3 and raw.byte(0) == 0xEF
+                     and raw.byte(1) == 0xBB and raw.byte(2) == 0xBF)
+    } else {
+        tk.checkTrue("能打开 CSV 文件", false)
+    }
+    files.delete(csvPath)
+
+    if tk.summary("crawler_queue") != 0 { _exit(1) }
+}

@@ -1,0 +1,94 @@
+// test_thread_http.leno — 多线程并发发 HTTP 请求（离线，走本机服务端）
+//
+// 这个用例曾经被迫删除：FFI 回调在子线程里只能成功第一次（`vm_call_value` 把
+// stop_frame_cnt 写到了**全局主 VM** 上，见 docs/多线程struct与模块全局变量问题记录.md 第八节），
+// 表现为 `statusCode=200` 但 `body=""`，两个并发线程直接 0xC0000005。
+//
+// 运行时修好（2026-10-06，`src/vm/vm.c` 的 vm_call_value 改用 `vm_ptr->stop_frame_cnt`）后，
+// 本用例恢复：每个线程各自请求**不同**路径，逐轮校验正文，一旦串台/丢正文就失败。
+import "Web" as web
+import "_testkit" as tk
+import threads
+
+int PORT = 39616
+int WORKERS = 8
+int ROUNDS = 6
+int MAXREQ = 4096
+
+// ⚠ threads.start 的入口必须是**本文件**的函数
+func serverEntry(int port, int maxReqs) { tk.serve(port, maxReqs) }
+
+// 每线程一个独立客户端（等价 Python 里每线程一个 requests.Session）
+func workerOwnClient(any idAny, Channel ch) {
+    int id = _int(idAny)
+    string expect = "BODY:" + _str(id)
+    string url = "http://127.0.0.1:" + _str(PORT) + "/echo/" + _str(id)
+    int bad = 0
+    var client = web.createClient()
+    for ROUNDS to k {
+        var r = client.get(url)
+        if r.body != expect { bad = bad + 1 }
+    }
+    client.close()
+    ch.send(bad)
+}
+
+// 每轮都新建客户端（等价模块级便捷函数 web.get()）
+func workerStateless(any idAny, Channel ch) {
+    int id = _int(idAny)
+    string expect = "BODY:" + _str(id)
+    string url = "http://127.0.0.1:" + _str(PORT) + "/echo/" + _str(id)
+    int bad = 0
+    for ROUNDS to k {
+        var r = web.get(url)
+        if r.body != expect { bad = bad + 1 }
+    }
+    ch.send(bad)
+}
+
+// 并发抓 GBK 页面：顺带验证"转码 + 并发"一起跑也不串
+func workerGbk(any idAny, Channel ch) {
+    int bad = 0
+    string url = "http://127.0.0.1:" + _str(PORT) + "/gbk"
+    for ROUNDS to k {
+        var r = web.get(url)
+        if r.body != "中文测试" { bad = bad + 1 }
+        if r.rawBody().byte_len() != 8 { bad = bad + 1 }
+        if r.charset != "gbk" { bad = bad + 1 }
+    }
+    ch.send(bad)
+}
+
+func runBatch(string title, any fn, int workers) {
+    var ch = threads.channel(workers)
+    for workers to i {
+        threads.start(fn, i, ch)
+    }
+    int bad = 0
+    for workers to i {
+        bad = bad + _int(ch.receive())
+    }
+    ch.close()
+    tk.check(title, bad, 0)
+}
+
+main() {
+    var srv = threads.start(serverEntry, PORT, MAXREQ)
+    if not tk.waitUp(PORT) {
+        print("[FAIL] 本机服务端未起来")
+        tk.shutdown(PORT)
+        _exit(1)
+    }
+
+    var warm = web.get("http://127.0.0.1:" + _str(PORT) + "/echo/warm")
+    tk.check("预热请求", warm.body, "BODY:warm")
+
+    string label = _str(WORKERS) + " 线程 × " + _str(ROUNDS) + " 轮，错误数"
+    runBatch(label + "（每线程独立客户端）", workerOwnClient, WORKERS)
+    runBatch(label + "（每轮新建客户端）", workerStateless, WORKERS)
+    runBatch(label + "（并发抓 GBK 页面）", workerGbk, WORKERS)
+
+    tk.shutdown(PORT)
+    srv.join()
+    if tk.summary("thread_http") != 0 { _exit(1) }
+}

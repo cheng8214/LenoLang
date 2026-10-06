@@ -1,0 +1,87 @@
+// test_ffi_callback_thread.leno — **子线程里的 FFI 回调**（运行时回归用例，离线）
+//
+// 这是 2026-10-06 修掉的那个运行时 bug 的回归用例：
+//   `vm_call_value` 里 `vm.stop_frame_cnt = ...` 用的是宏 `vm`，而在该文件位置宏已被 `#undef`
+//   ⇒ 赋值写到**全局主 VM** 上，嵌套解释器循环读的却是执行 VM ⇒ 子线程的 stop 永远是 0
+//   ⇒ 嵌套循环不停、把调用方的帧也一路跑完 ⇒ 回调"只能成功第一次"，随后结果丢失并崩溃。
+// 修法：`src/vm/vm.c` 改用 `vm_ptr->stop_frame_cnt`（与同函数其余赋值一致）。
+//
+// 本用例不依赖 LenoWeb：直接用 `msvcrt` 的 `qsort` 驱动回调，用**回调被调用的次数**当探针。
+//   主线程正常、子线程曾经只回调 1 次（或直接 0xC0000005）。
+// 断言取"两侧次数相等"而不是写死 10 —— qsort 的比较次数是实现定义的，
+//   但同一算法在主线程/子线程必须一致；再加上排序结果正确，就足以钉住这个 bug。
+import ffi
+import threads
+import "_testkit" as tk
+
+clib msvcrt {
+    void qsort(Ptr base, i32 n, i32 size, Ptr cmp)
+    i32 fflush(Ptr stream)
+}
+
+cfunc CmpCb(Ptr a, Ptr b): i32
+
+struct Acc {
+    int n = 0
+    func onCmp() { n = n + 1 }
+}
+
+// 在**当前线程**里跑一次 qsort（回调计数 + 排序结果），返回 [回调次数, 排序是否正确]
+func runSort(): Array[int] {
+    msvcrt libc = ffi.load("msvcrt.dll")
+    Ptr arr = ffi.malloc(20)
+    ffi.write_int(arr, 0, 5)
+    ffi.write_int(arr, 4, 3)
+    ffi.write_int(arr, 8, 1)
+    ffi.write_int(arr, 12, 4)
+    ffi.write_int(arr, 16, 2)
+
+    Acc acc = new Acc()
+    var cb = ffi.callback(func(Ptr a, Ptr b): int {
+        acc.onCmp()
+        int va = ffi.read_int(a, 0)
+        int vb = ffi.read_int(b, 0)
+        if va < vb { return -1 }
+        if va > vb { return 1 }
+        return 0
+    }, CmpCb)
+
+    libc.qsort(arr, 5, 4, cb)
+
+    bool sortedOk = true
+    for 5 to i {
+        if ffi.read_int(arr, i * 4) != i + 1 { sortedOk = false }
+    }
+    ffi.free(cb)
+    ffi.free(arr)
+    ffi.free(libc)
+    return [acc.n, if sortedOk then 1 else 0]
+}
+
+// 子线程入口（必须是本文件的函数）
+func childEntry(Channel ch) {
+    Array[int] r = runSort()
+    ch.send(_str(r[0]) + "," + _str(r[1]))
+}
+
+main() {
+    // ① 主线程：基准
+    Array[int] mainRes = runSort()
+    int mainCalls = mainRes[0]
+    tk.checkTrue("主线程 qsort 至少比较 4 次", mainCalls >= 4)
+    tk.check("主线程排序结果正确", mainRes[1], 1)
+
+    // ② 子线程：修复前这里是 1 次（或直接崩），现在必须与主线程一致
+    var ch = threads.channel(2)
+    threads.start(childEntry, ch)
+    string raw = _str(ch.receive())
+    var parts = raw.split(",")
+    int childCalls = _int(parts[0])
+    int childOk = _int(parts[1])
+
+    tk.check("子线程回调次数 == 主线程", childCalls, mainCalls)
+    tk.checkTrue("子线程回调次数 > 1（修复前恒为 1）", childCalls > 1)
+    tk.check("子线程排序结果正确", childOk, 1)
+
+    if tk.summary("ffi_callback_thread") != 0 { _exit(1) }
+}

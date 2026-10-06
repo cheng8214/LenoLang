@@ -1,0 +1,71 @@
+// test_multipart.leno — multipart/form-data 文件上传（离线，走本机服务端）
+//
+// 覆盖新增能力：`CURLOPT_MIMEPOST` + `curl_mime_*`（登录/发布/换头像类接口必需）。
+// 服务端 `/post` 会把**完整请求**回显出来，这里直接对回显文本做断言 —— 相当于
+// "看一眼真正发出的报文"，比只看状态码可靠得多。
+import "Web" as web
+import "_testkit" as tk
+import threads
+import files
+
+int PORT = 39614
+int MAXREQ = 64
+
+func serverEntry(int port, int maxReqs) { tk.serve(port, maxReqs) }
+
+main() {
+    var srv = threads.start(serverEntry, PORT, MAXREQ)
+    if not tk.waitUp(PORT) {
+        print("[FAIL] 本机服务端未起来")
+        tk.shutdown(PORT)
+        _exit(1)
+    }
+    string base = "http://127.0.0.1:" + PORT
+
+    // 造一个上传用的临时文件（放在系统临时目录，跑完删掉）
+    string tmpPath = _tmpdir() + _sep() + "lenoweb_upload_test.txt"
+    string fileContent = "FILE-CONTENT-12345"
+    files.write(tmpPath, fileContent)
+
+    print("--- ① 文本字段 + 文件字段 ---")
+    var parts = [
+        web.formField("user", "zhangsan"),
+        web.formField("note", "中文备注"),
+        web.formFile("upload", tmpPath, "a.txt", "text/plain")
+    ]
+    var r1 = web.postMultipart(base + "/post", parts)
+    tk.check("状态码", r1.statusCode, 200)
+    tk.checkHas("Content-Type 为 multipart", r1.body, "multipart/form-data; boundary=")
+    tk.checkHas("字段名 user", r1.body, "name=\"user\"")
+    tk.checkHas("字段值", r1.body, "zhangsan")
+    tk.checkHas("中文字段值", r1.body, "中文备注")
+    tk.checkHas("文件字段名", r1.body, "name=\"upload\"")
+    tk.checkHas("上传文件名", r1.body, "filename=\"a.txt\"")
+    tk.checkHas("文件 MIME 类型", r1.body, "Content-Type: text/plain")
+    tk.checkHas("文件内容", r1.body, fileContent)
+
+    print("--- ② 只有文本字段（不得出现 filename）---")
+    var r2 = web.postMultipart(base + "/post", [web.formField("k", "v")])
+    tk.checkHas("字段名 k", r2.body, "name=\"k\"")
+    tk.checkNotHas("不应有 filename", r2.body, "filename=")
+
+    print("--- ③ 客户端实例方法 / PUT ---")
+    var client = web.createClient()
+    var r3 = client.postMultipart(base + "/post", [web.formField("a", "1")])
+    tk.checkHas("实例 postMultipart", r3.body, "name=\"a\"")
+    var r4 = client.putMultipart(base + "/post", [web.formField("b", "2")])
+    tk.checkHas("实例 putMultipart", r4.body, "name=\"b\"")
+    client.close()
+
+    print("--- ④ 边界：空字段列表 / 不存在的文件 ---")
+    var r5 = web.postMultipart(base + "/post", [])
+    tk.check("空 parts 不崩", r5.statusCode, 200)
+    // 文件不存在时 libcurl 会在 perform 阶段报错（不应崩进程）
+    var r6 = web.postMultipart(base + "/post", [web.formFile("f", tmpPath + ".not-exist")])
+    tk.checkTrue("缺文件不崩（状态码 0 或 200）", r6.statusCode == 0 or r6.statusCode == 200)
+
+    files.delete(tmpPath)
+    tk.shutdown(PORT)
+    srv.join()
+    if tk.summary("multipart") != 0 { _exit(1) }
+}

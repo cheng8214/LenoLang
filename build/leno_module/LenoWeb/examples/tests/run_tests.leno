@@ -1,0 +1,53 @@
+// run_tests.leno — 一键跑完 tests/ 下的全部断言用例（**离线**，可当门禁）
+//
+// 跑法（仓库根目录）：
+//   build\leno.exe build\leno_module\LenoWeb\examples\tests\run_tests.leno
+// 全绿时退出码 0，任一用例失败退出码 1。
+import dirs
+
+Array[string] SUITES = [
+    "test_charset_unit.leno",       // 字符集探测/转码（纯函数）
+    "test_charset_http.leno",       // HTTP 层自动转码（本机服务端）
+    "test_http_repeat.leno",        // 反复请求：回调不泄漏、累加器清空
+    "test_multipart.leno",          // multipart/form-data 上传
+    "test_crawler_queue.leno",      // 爬虫调度：去重/限速/crawl-delay/CSV
+    "test_ffi_callback_thread.leno",// 运行时回归：子线程 FFI 回调（曾经只成功一次）
+    "test_thread_http.leno"         // 多线程并发 HTTP（8 线程 × 6 轮）
+]
+
+main() {
+    string dir = dirs.script_dir() + _sep()
+    string exe = _executable()
+    if exe == "" { exe = "leno" }
+
+    int ok = 0
+    int failed = 0
+    for SUITES.len() to i {
+        string name = SUITES[i]
+        print(">>> " + name)
+        // ⚠ `_exec` 内部是 `cmd /c <cmd>`：命令以引号开头时 cmd 会把首尾引号"吃掉"，
+        //   报 "The filename, directory name, or volume label syntax is incorrect"。
+        //   前面加一个 `call` 就能规规矩矩地引号包路径（路径带空格也不怕）。
+        string cmd = "call \"" + exe + "\" \"" + dir + name + "\""
+        // 给每个用例 120s 上限：挂住时子进程被杀（code == 124），不会拖死整体
+        var r = _exec(cmd, 120000)
+        string out = r.output.trim()
+        if out != "" {
+            print("    " + out.replace("\n", "\n    "))
+        }
+        if r.code == 0 {
+            ok = ok + 1
+        } else {
+            failed = failed + 1
+            if r.code == 124 {
+                print("    [FAIL] 超时（120s）")
+            } else {
+                print("    [FAIL] 退出码 " + r.code)
+            }
+        }
+    }
+
+    print("")
+    print("==== LenoWeb 测试汇总：通过 " + ok + " / 失败 " + failed + "（共 " + SUITES.len() + " 个用例）====")
+    if failed > 0 { _exit(1) }
+}

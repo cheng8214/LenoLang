@@ -1,0 +1,92 @@
+// test_charset_unit.leno — 字符集模块单元测试（纯函数，不需要网络）
+// 跑法：build\leno.exe build\leno_module\LenoWeb\examples\tests\test_charset_unit.leno
+import "web_charset" as cs
+import "_testkit" as tk
+import strings
+
+main() {
+    print("backend     = " + cs.backend())
+    print("defaultChar = " + cs.defaultCharset())
+
+    // ---------- 字符集名 → 代码页 ----------
+    tk.check("codepage gbk", cs.codepage("GBK"), 936)
+    tk.check("codepage gb2312", cs.codepage("gb2312"), 936)
+    tk.check("codepage 带引号空格", cs.codepage(" 'GB2312' "), 936)
+    tk.check("codepage gb18030", cs.codepage("gb18030"), 54936)
+    tk.check("codepage big5", cs.codepage("Big5"), 950)
+    tk.check("codepage shift_jis", cs.codepage("shift_jis"), 932)
+    tk.check("codepage euc-kr", cs.codepage("EUC-KR"), 949)
+    tk.check("codepage utf-8", cs.codepage("UTF-8"), 65001)
+    tk.check("codepage 未知", cs.codepage("no-such-charset"), 0)
+
+    // ---------- 归一化 ----------
+    tk.check("normalize", cs.normalize(" 'GB_2312' "), "gb-2312")
+    tk.check("normalize charset= 前缀", cs.normalize("charset=UTF-8"), "utf-8")
+
+    // ---------- BOM ----------
+    tk.check("bom utf-8", cs.charsetFromBom(strings.from_bytes([0xEF, 0xBB, 0xBF, 65])), "utf-8")
+    tk.check("bom utf-16le", cs.charsetFromBom(strings.from_bytes([0xFF, 0xFE, 65, 0])), "utf-16le")
+    tk.check("bom utf-16be", cs.charsetFromBom(strings.from_bytes([0xFE, 0xFF, 0, 65])), "utf-16be")
+    tk.check("bom none", cs.charsetFromBom("abc"), "")
+
+    // ---------- Content-Type ----------
+    tk.check("ct 普通", cs.charsetFromContentType("text/html; charset=GBK"), "gbk")
+    tk.check("ct 带引号", cs.charsetFromContentType("text/html; charset=\"gb2312\""), "gb2312")
+    tk.check("ct 大小写", cs.charsetFromContentType("TEXT/HTML; CHARSET=UTF-8"), "utf-8")
+    tk.check("ct 无 charset", cs.charsetFromContentType("text/html"), "")
+    tk.check("ct 空", cs.charsetFromContentType(""), "")
+
+    // ---------- <meta> ----------
+    tk.check("meta charset", cs.charsetFromMeta("<html><head><meta charset=\"gbk\"></head>"), "gbk")
+    tk.check("meta http-equiv",
+             cs.charsetFromMeta("<meta http-equiv=\"Content-Type\" content=\"text/html; charset=GB2312\">"), "gb2312")
+    tk.check("meta 无", cs.charsetFromMeta("<html><body>hi</body></html>"), "")
+    // GBK 正文里碰巧出现 "charset" 字样时不得误判（只认 <meta> 标签内部）
+    tk.check("meta 正文里的假 charset",
+             cs.charsetFromMeta("<html><body>a charset=big5 b</body></html>"), "")
+
+    // ---------- UTF-8 合法性 ----------
+    string gbk = strings.from_bytes([0xD6, 0xD0, 0xCE, 0xC4])          // "中文"
+    tk.check("gbk 字节非法 utf-8", cs.isValidUtf8(gbk), false)
+    tk.check("utf-8 合法", cs.isValidUtf8("中文abc"), true)
+    tk.check("ascii 合法", cs.isValidUtf8("hello"), true)
+    tk.check("空串合法", cs.isValidUtf8(""), true)
+    tk.check("孤立 0xFF", cs.isValidUtf8(strings.from_bytes([0xFF])), false)
+    tk.check("截断的 3 字节序列", cs.isValidUtf8(strings.from_bytes([0xE4, 0xB8])), false)
+
+    // ---------- detect ----------
+    tk.check("detect 声明优先", cs.detect(gbk, "text/html; charset=gb2312"), "gb2312")
+    tk.check("detect 无声明 gbk 页面", cs.detect(gbk, "text/html"), "gbk")
+    tk.check("detect utf-8 页面", cs.detect("中文页面", "text/html"), "utf-8")
+    tk.check("detect 二进制不兜底", cs.detect(strings.from_bytes([0x89, 0x50, 0xD6, 0xD0]), "image/png"), "")
+    tk.check("detect 空正文", cs.detect("", "text/html"), "")
+
+    // ---------- decode ----------
+    tk.check("decode gbk", cs.decode(gbk, "gbk"), "中文")
+    tk.check("decode utf-8 原样", cs.decode("中文", "utf-8"), "中文")
+    tk.check("decode 未知编码原样", cs.decode(gbk, "no-such-charset"), gbk)
+    tk.check("decode 空名原样", cs.decode(gbk, ""), gbk)
+    tk.check("decode 去掉 utf-8 BOM", cs.decode(strings.from_bytes([0xEF, 0xBB, 0xBF, 65]), "utf-8"), "A")
+    tk.check("decode 空正文", cs.decode("", "gbk"), "")
+    tk.check("decode big5 合法", cs.decode(strings.from_bytes([0xA4, 0xA4]), "big5"), "中")
+
+    // ---------- encode（UTF-8 → GBK）----------
+    // "中文测试" 的 GBK 字节是固定常量，用来交叉验证 encode 不是"自证"
+    string wantGbk = strings.from_bytes([0xD6, 0xD0, 0xCE, 0xC4, 0xB2, 0xE2, 0xCA, 0xD4])
+    tk.check("encode gbk 字节正确", cs.encode("中文测试", "gbk"), wantGbk)
+    tk.check("encode→decode 往返", cs.decode(cs.encode("中文测试", "gbk"), "gbk"), "中文测试")
+    tk.check("encode utf-8 原样", cs.encode("中文", "utf-8"), "中文")
+    tk.check("encode 未知编码原样", cs.encode("中文", "no-such"), "中文")
+    tk.check("canEncode gbk", cs.canEncode("gbk"), true)
+
+    // ---------- 判定辅助 ----------
+    tk.check("needsDecode gbk", cs.needsDecode("gbk"), true)
+    tk.check("needsDecode utf-8", cs.needsDecode("utf-8"), false)
+    tk.check("needsDecode 空", cs.needsDecode(""), false)
+    tk.check("isTextual text/html", cs.isTextual("text/html"), true)
+    tk.check("isTextual application/json", cs.isTextual("application/json"), true)
+    tk.check("isTextual image/png", cs.isTextual("image/png"), false)
+    tk.check("isTextual 空（当文本）", cs.isTextual(""), true)
+
+    if tk.summary("charset_unit") != 0 { _exit(1) }
+}

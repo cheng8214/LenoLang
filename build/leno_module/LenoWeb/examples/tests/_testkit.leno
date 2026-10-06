@@ -1,0 +1,236 @@
+// _testkit.leno — LenoWeb 测试公共工具（断言 + **不依赖外网**的本机 HTTP 服务端）
+//
+// 为什么自建服务端：真实站点会变、会挂、会被墙，测试就没法当门禁用。
+// 这里用 `sockets` 在**子线程**里跑一个阻塞式 HTTP/1.1 服务端（主线程当客户端连 127.0.0.1），
+// 顺序确定、可离线、可重复。范式来自 `assert/test_sockets_io.leno`。
+//
+// 服务端路由（刻意覆盖爬虫最容易踩的编码场景）：
+//   /gbk       声明 charset=gbk 的 GBK 正文
+//   /gbk-nod   **不声明** charset 的 GBK 正文（只能靠"非合法 UTF-8 ⇒ 系统 ANSI 兜底"识别）
+//   /utf8      声明 charset=utf-8 的 UTF-8 正文
+//   /bin       image/png + 非法 UTF-8 字节（必须**原样保留**，一个字都不能被转码）
+//   /echo/K    正文 = "BODY:K"（并发用例靠它自证"响应没串台"）
+//   /post      回显完整请求（含 Content-Length 头），multipart 用例读它做断言
+//   /quit      让服务端退出（正常收尾，便于 join）
+import sockets
+import threads
+import strings
+
+export int passed = 0
+export int failed = 0
+
+// ==================== 断言 ====================
+
+export func check(string name, any got, any want) {
+    if _str(got) == _str(want) {
+        passed = passed + 1
+    } else {
+        failed = failed + 1
+        print("  [FAIL] " + name)
+        print("         got  = [" + _str(got) + "]")
+        print("         want = [" + _str(want) + "]")
+    }
+}
+
+export func checkTrue(string name, bool cond) {
+    if cond {
+        passed = passed + 1
+    } else {
+        failed = failed + 1
+        print("  [FAIL] " + name + "（期望 true）")
+    }
+}
+
+export func checkHas(string name, string haystack, string needle) {
+    if strings.has(haystack, needle) {
+        passed = passed + 1
+    } else {
+        failed = failed + 1
+        print("  [FAIL] " + name)
+        print("         未包含 [" + needle + "]")
+        print("         实际   [" + _cut(haystack, 400) + "]")
+    }
+}
+
+export func checkNotHas(string name, string haystack, string needle) {
+    if strings.has(haystack, needle) {
+        failed = failed + 1
+        print("  [FAIL] " + name + "（不应包含 [" + needle + "]）")
+    } else {
+        passed = passed + 1
+    }
+}
+
+export func summary(string suite): int {
+    print("[" + suite + "] 通过 " + passed + " / 失败 " + failed)
+    if failed > 0 { return 1 }
+    return 0
+}
+
+func _cut(string s, int maxBytes): string {
+    if s.byte_len() <= maxBytes { return s }
+    return s.byte_slice(0, maxBytes) + "..."
+}
+
+// ==================== 本机 HTTP 服务端 ====================
+
+// 服务端主循环（在子线程里跑）。maxRequests 只是防跑飞的上限，正常靠 /quit 收尾。
+export func serve(int port, int maxRequests) {
+    var srv = sockets.listen("127.0.0.1", port)
+    if srv == null { return }
+    int n = 0
+    while n < maxRequests {
+        var cli = srv.accept()
+        if cli == null { break }
+        cli.set_timeout(3000)
+        string req = _readRequest(cli)
+        string path = _requestPath(req)
+        cli.send(_route(path, req))
+        cli.close()
+        n = n + 1
+        if path == "/quit" { break }
+    }
+    srv.close()
+}
+
+// 服务端就绪检测：反复 connect（成功即说明 listener 已起），连上立刻关掉。
+// 这种"空探针"会被服务端当成一次 404 请求（读不到数据就快速返回），不影响后续用例。
+export func waitUp(int port): bool {
+    int tries = 0
+    while tries < 60 {
+        var probe = sockets.connect("127.0.0.1", port)
+        if probe != null {
+            probe.close()
+            return true
+        }
+        threads.sleep(50)
+        tries = tries + 1
+    }
+    return false
+}
+
+// 通知服务端退出
+export func shutdown(int port) {
+    var c = sockets.connect("127.0.0.1", port)
+    if c != null {
+        c.send("GET /quit HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        c.recv(1024)
+        c.close()
+    }
+}
+
+// ---------- 请求解析 ----------
+
+func _b(string s, int i): int {
+    var v = s.byte(i)
+    if v is int { return v }
+    return -1
+}
+
+func _readRequest(Socket cli): string {
+    string req = ""
+    int guard = 0
+    // ① 先读到请求头结束
+    while guard < 500 {
+        if strings.has(req, "\r\n\r\n") { break }
+        string chunk = cli.recv(65536)
+        if chunk == null or chunk == "" { break }
+        req = req + chunk
+        guard = guard + 1
+    }
+    // ② 若声明了 Content-Length，继续读到 body 完整（multipart 必须收全）
+    int clen = _contentLength(req)
+    if clen > 0 {
+        int headEnd = strings.byte_find(req, "\r\n\r\n")
+        if headEnd >= 0 {
+            int have = req.byte_len() - (headEnd + 4)
+            guard = 0
+            while have < clen and guard < 2000 {
+                string chunk = cli.recv(65536)
+                if chunk == null or chunk == "" { break }
+                req = req + chunk
+                have = req.byte_len() - (headEnd + 4)
+                guard = guard + 1
+            }
+        }
+    }
+    return req
+}
+
+func _contentLength(string req): int {
+    int headEnd = strings.byte_find(req, "\r\n\r\n")
+    if headEnd < 0 { return 0 }
+    int p = strings.byte_find(req, "Content-Length:")
+    if p < 0 or p > headEnd { p = strings.byte_find(req, "content-length:") }
+    if p < 0 or p > headEnd { return 0 }
+    int i = p + 15
+    while i < headEnd {
+        int b = _b(req, i)
+        if b != 32 and b != 9 { break }
+        i = i + 1
+    }
+    Array[int] digits = []
+    while i < headEnd {
+        int b = _b(req, i)
+        if b < 48 or b > 57 { break }
+        digits.add(b)
+        i = i + 1
+    }
+    if digits.len() == 0 { return 0 }
+    return _int(strings.from_bytes(digits))
+}
+
+// 请求行形如 "POST /path HTTP/1.1" ⇒ 取中间那段
+func _requestPath(string req): string {
+    int sp1 = strings.byte_find(req, " ")
+    if sp1 < 0 { return "/" }
+    int sp2 = strings.byte_find(req, " ", sp1 + 1)
+    if sp2 < 0 { return "/" }
+    return req.byte_slice(sp1 + 1, sp2)
+}
+
+// ---------- 路由 ----------
+
+export func gbkBody(): string {
+    // "中文测试" 的 GBK 字节
+    return strings.from_bytes([0xD6, 0xD0, 0xCE, 0xC4, 0xB2, 0xE2, 0xCA, 0xD4])
+}
+
+export func gbkBodyShort(): string {
+    // "中文" 的 GBK 字节
+    return strings.from_bytes([0xD6, 0xD0, 0xCE, 0xC4])
+}
+
+func _route(string path, string req): string {
+    if path == "/gbk" {
+        return _resp(200, "text/html; charset=gbk", gbkBody())
+    }
+    if path == "/gbk-nod" {
+        return _resp(200, "text/html", gbkBodyShort())
+    }
+    if path == "/utf8" {
+        return _resp(200, "text/html; charset=utf-8", "中文内容")
+    }
+    if path == "/bin" {
+        // PNG magic + 非法 UTF-8 字节：任何字符集转码都不得动它
+        return _resp(200, "image/png", strings.from_bytes([0x89, 0x50, 0x4E, 0x47, 0xD6, 0xD0, 0xFF, 0x0D]))
+    }
+    if strings.has(path, "/echo/") {
+        string token = path.byte_slice(6, path.byte_len())
+        return _resp(200, "text/plain; charset=utf-8", "BODY:" + token)
+    }
+    if path == "/post" {
+        return _resp(200, "text/plain; charset=utf-8", "REQ:" + req)
+    }
+    if path == "/quit" {
+        return _resp(200, "text/plain", "bye")
+    }
+    return _resp(404, "text/plain", "not found")
+}
+
+func _resp(int code, string ctype, string body): string {
+    return "HTTP/1.1 " + code + " OK\r\n" +
+           "Content-Type: " + ctype + "\r\n" +
+           "Content-Length: " + body.byte_len() + "\r\n" +
+           "Connection: close\r\n\r\n" + body
+}

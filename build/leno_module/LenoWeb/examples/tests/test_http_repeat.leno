@@ -1,0 +1,67 @@
+// test_http_repeat.leno — 反复请求（离线，走本机服务端）
+//
+// 两个回归点：
+//  ① **回调不泄漏**：`ffi.callback` 同时存活上限是 **256 个**，而模块级 `get()` 每次请求
+//     都会 createClient()（2 个回调）。改造前 close() 只清 curl handle、不 ffi.free 回调
+//     ⇒ 跑到第 128 次请求就"回调耗尽"失败。本用例跑 300 次，专门盯这一点。
+//  ② **累加器每次清空**：复用同一客户端连续请求，正文必须逐次独立（不能叠加上一次的内容）。
+import "Web" as web
+import "_testkit" as tk
+import threads
+
+int PORT = 39612
+int MAXREQ = 1024
+int ROUNDS = 300
+
+func serverEntry(int port, int maxReqs) { tk.serve(port, maxReqs) }
+
+main() {
+    var srv = threads.start(serverEntry, PORT, MAXREQ)
+    if not tk.waitUp(PORT) {
+        print("[FAIL] 本机服务端未起来")
+        tk.shutdown(PORT)
+        _exit(1)
+    }
+    string base = "http://127.0.0.1:" + PORT
+
+    print("--- ① 模块级 get() × " + ROUNDS + " 次（回调必须不泄漏）---")
+    int bad = 0
+    int firstBadAt = -1
+    for ROUNDS to i {
+        var r = web.get(base + "/echo/" + _str(i))
+        if r.body != "BODY:" + _str(i) {
+            bad = bad + 1
+            if firstBadAt < 0 { firstBadAt = i }
+        }
+    }
+    tk.check("失败次数", bad, 0)
+    if firstBadAt >= 0 {
+        print("        首次失败出现在第 " + firstBadAt + " 次（≈128 说明回调泄漏未修）")
+    }
+
+    print("--- ② 复用客户端 × 20 次（累加器必须每次清空）---")
+    var client = web.createClient()
+    int bad2 = 0
+    int lastLen = 0
+    for 20 to i {
+        // 交替请求长短不同的正文，叠加上一次内容就一定露馅
+        var r = client.get(base + "/echo/" + _str(i))
+        if r.body != "BODY:" + _str(i) { bad2 = bad2 + 1 }
+        lastLen = r.totalSize
+    }
+    tk.check("复用客户端失败次数", bad2, 0)
+    // 最后一次是 /echo/19 ⇒ "BODY:19" 共 7 字节（若累加了前面内容会明显更长）
+    tk.check("最后一次 totalSize", lastLen, 7)
+
+    print("--- ③ 反复 close 不崩（句柄/回调都释放干净）---")
+    for 50 to i {
+        var c = web.createClient()
+        c.get(base + "/utf8")
+        c.close()
+    }
+    tk.check("50 次 create/close 后仍可请求", web.get(base + "/echo/ok").body, "BODY:ok")
+
+    tk.shutdown(PORT)
+    srv.join()
+    if tk.summary("http_repeat") != 0 { _exit(1) }
+}
