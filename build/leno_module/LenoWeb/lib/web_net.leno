@@ -4,6 +4,7 @@ import ffi
 import jsons
 import files
 import strings
+import times
 import "web_curl_core.leno" as core
 import "web_charset.leno" as charsets
 // 重新导出核心类型
@@ -330,6 +331,35 @@ export struct HttpClient {
     func setCAInfo(string path): int {
         if not ok { return Code.FAILED_INIT }
         return core.setopt_str(handle, Opt.CAINFO, path)
+    }
+
+    // ---- TLS 指纹相关（反爬基础）----
+    // 这三个都**如实返回是否被接受**：返回 false = 当前 libcurl（TLS 后端/版本）不支持该选项。
+    // ⚠ 只改套件/曲线顺序**不等于**伪装成 Chrome：真正的 JA3/JA4 还包含扩展顺序、
+    //   曲线列表、ALPN 等，需要换成 curl-impersonate 版 libcurl（见 README「反爬基础」）。
+    func setCipherList(string list): bool {
+        if not ok { return false }
+        return core.setopt_str(handle, Opt.SSL_CIPHER_LIST, list) == Code.OK
+    }
+
+    func setTls13Ciphers(string list): bool {
+        if not ok { return false }
+        return core.setopt_str(handle, Opt.TLS13_CIPHERS, list) == Code.OK
+    }
+
+    func setEcCurves(string list): bool {
+        if not ok { return false }
+        return core.setopt_str(handle, Opt.SSL_EC_CURVES, list) == Code.OK
+    }
+
+    // 一键设成"浏览器式"请求头（**含顺序**）。ua 传 "" ⇒ 用 chromeUA()
+    // ⚠ 不含 Accept-Encoding：建客户端时已设 `ACCEPT_ENCODING = ""`，让 libcurl
+    //   按**自身实际支持**的编码声明并自动解压；这里硬写 br/zstd 会在后端不支持时
+    //   把正文弄成一堆二进制（详见 README「反爬基础」）。
+    func setBrowserHeaders(string ua = "", string lang = "zh-CN,zh;q=0.9,en;q=0.8"): int {
+        string realUA = ua
+        if realUA == "" { realUA = chromeUA() }
+        return setHeaders(browserHeaders(realUA, lang))
     }
 
     // 断点续传起始偏移：设了它 libcurl 会发 `Range: bytes=N-` 并要求服务端回 206。
@@ -760,6 +790,195 @@ export func downloadResume(string url, string savePath): int {
     return n
 }
 
+// ==================== 反爬基础：浏览器式请求头 ====================
+//
+// 只解决"看起来不像脚本"这一层。要真正对抗风控，光换头是不够的（见 README「反爬基础」）。
+
+// 常见桌面 Chrome 的 UA。
+// ⚠ 版本号会随时间"变旧"：长期跑建议定期更新，或从配置读（这里只给一个合理默认）。
+export func chromeUA(): string {
+    return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+}
+
+// 浏览器式请求头，**有序**数组（libcurl 按 slist 顺序发出，风控会看顺序）。
+// 顺序对齐 Chrome 的导航请求：UA → Accept → Accept-Language → Upgrade-Insecure-Requests
+//   → Sec-Fetch-* → Cache-Control → Connection。
+// ⚠ 有意**不含** Accept-Encoding：`HttpClient.init()` 里设的是 `ACCEPT_ENCODING = ""`，
+//   由 libcurl 按**自身实际支持**的编码声明并自动解压。硬写 "gzip, deflate, br" 在
+//   后端没有 brotli 时会收到解不开的正文（静默乱码）⇒ 交给 libcurl 才是对的。
+export func browserHeaders(string ua, string lang): Array[string] {
+    return [
+        "User-Agent: " + ua,
+        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language: " + lang,
+        "Upgrade-Insecure-Requests: 1",
+        "Sec-Fetch-Dest: document",
+        "Sec-Fetch-Mode: navigate",
+        "Sec-Fetch-Site: none",
+        "Sec-Fetch-User: ?1",
+        "Cache-Control: max-age=0",
+        "Connection: keep-alive"
+    ]
+}
+
+// 用浏览器头做一次性 GET（独立客户端，不共享 cookie）
+export func getWithBrowserHeaders(string url, string ua = ""): Response {
+    HttpClient c = createClient()
+    c.setBrowserHeaders(ua)
+    Response r = c.get(url)
+    c.close()
+    return r
+}
+
+// 走指定代理做一次性 GET（proxy 传 "" ⇒ 直连）
+export func getVia(string url, string proxy): Response {
+    HttpClient c = createClient()
+    if proxy != "" { c.setProxy(proxy) }
+    Response r = c.get(url)
+    c.close()
+    return r
+}
+
+// ==================== 反爬基础：代理池 ====================
+//
+// 单 IP 高频抓取是最容易命中的特征，所以要多 IP 轮换。但"只轮询"不够：
+// 坏代理若一直留在轮换里，**每次轮到它都要等一个超时**，一个坏 IP 就能把整体吞吐拖死。
+// 所以池子做两件事：轮询 + **失败冷却**（连续失败达阈值临时踢出，到点自动放回 ——
+// 代理也可能只是临时抽风）；`remove` 才是永久剔除（被封）。
+//
+// ⚠ 与 HttpClient 同口径：**不要跨线程共用一个池**（内部无锁）。多线程请各建各的池。
+
+// 单个代理的小账本
+export struct ProxyStats {
+    string proxy = 0
+    int ok = 0
+    int fail = 0
+    int streak_fail = 0      // 连续失败数（成功即清零）
+    int cool_until_ms = 0    // 冷却截止时刻（毫秒；0 = 可用）
+}
+
+export struct ProxyPool {
+    Array[ProxyStats] items
+    int cursor = 0
+    int fail_threshold = 3   // 连续失败几次算坏
+    int cool_ms = 60000      // 冷却时长（毫秒）
+    int rotations = 0        // 已轮换次数（观测用：够不够"每个请求换一个"一眼可见）
+
+    // 取下一个**可用**代理；全在冷却中 ⇒ 返回 ""（调用方据此决定退避还是直连）
+    func next(): string {
+        int n = items.len()
+        if n == 0 { return "" }
+        int now = _nowMs()
+        for 0:n-1 to step {
+            int i = (cursor + step) % n
+            if items[i].cool_until_ms <= now {
+                cursor = (i + 1) % n
+                rotations = rotations + 1
+                return items[i].proxy
+            }
+        }
+        return ""
+    }
+
+    func reportOk(string proxy) {
+        int i = indexOf(proxy)
+        if i < 0 { return }
+        items[i].ok = items[i].ok + 1
+        items[i].streak_fail = 0
+        items[i].cool_until_ms = 0
+    }
+
+    func reportFail(string proxy) {
+        int i = indexOf(proxy)
+        if i < 0 { return }
+        items[i].fail = items[i].fail + 1
+        items[i].streak_fail = items[i].streak_fail + 1
+        if items[i].streak_fail >= fail_threshold {
+            items[i].cool_until_ms = _nowMs() + cool_ms
+            items[i].streak_fail = 0
+        }
+    }
+
+    // 立刻冷却刚用过的代理（服务端明确 403/429 时，比"等连续失败"反应更快）
+    func coolDown(string proxy, int ms) {
+        int i = indexOf(proxy)
+        if i < 0 { return }
+        items[i].cool_until_ms = _nowMs() + ms
+        items[i].streak_fail = 0
+    }
+
+    func add(string proxy) {
+        if proxy == "" { return }
+        if indexOf(proxy) >= 0 { return }
+        ProxyStats st = new ProxyStats()
+        st.proxy = proxy
+        items.add(st)
+    }
+
+    // 永久剔除（代理被封/已下线）
+    func remove(string proxy) {
+        int i = indexOf(proxy)
+        if i < 0 { return }
+        items.remove(i)
+        if cursor >= items.len() { cursor = 0 }
+    }
+
+    func indexOf(string proxy): int {
+        for items.len() to i {
+            if items[i].proxy == proxy { return i }
+        }
+        return -1
+    }
+
+    func size(): int {
+        return items.len()
+    }
+
+    // 当前可用（未在冷却）的代理数
+    func available(): int {
+        int now = _nowMs()
+        int n = 0
+        for items.len() to i {
+            if items[i].cool_until_ms <= now { n = n + 1 }
+        }
+        return n
+    }
+
+    func stats(): Array[ProxyStats] {
+        return items
+    }
+}
+
+// 建池（proxies 形如 "http://127.0.0.1:8080" / "socks5h://host:1080"）
+export func createProxyPool(Array[string] proxies, int fail_threshold = 3, int cool_ms = 60000): ProxyPool {
+    ProxyPool p = new ProxyPool()
+    p.fail_threshold = fail_threshold
+    p.cool_ms = cool_ms
+    for proxies.len() to i { p.add(proxies[i]) }
+    return p
+}
+
+// 从文件建池：一行一个；支持 `#` 注释与空行、行尾空白；文件不存在 ⇒ 返回**空池**（不抛错）
+export func proxyPoolFromFile(string path, int fail_threshold = 3, int cool_ms = 60000): ProxyPool {
+    ProxyPool p = new ProxyPool()
+    p.fail_threshold = fail_threshold
+    p.cool_ms = cool_ms
+    if not files.exists(path) { return p }
+    string text = files.read(path)
+    var lines = strings.split(text, "\n")
+    for lines.len() to i {
+        string ln = strings.trim(lines[i])
+        if ln == "" { continue }
+        if strings.starts_with(ln, "#") { continue }
+        p.add(ln)
+    }
+    return p
+}
+
+func _nowMs(): int {
+    return _int(times.ms())
+}
+
 // ==================== Session 会话 ====================
 // 仿 requests.Session：复用一个 HttpClient 实例，
 // 跨多个请求保持 cookie / 连接 / 认证等状态。
@@ -767,6 +986,9 @@ export func downloadResume(string url, string savePath): int {
 export struct Session {
     HttpClient c        // 复用的客户端（保持 cookie/连接状态）
     Dict headers        // 持久化默认请求头（键值对）
+    ProxyPool? pool = null   // 挂了代理池 ⇒ 每次请求自动轮换（见 sessionSetProxyPool）
+    string last_proxy = 0    // 最近一次请求实际用的代理（供 sessionReport* 上报）
+    bool pool_exhausted = 0  // 最近一次取代理时池子全在冷却 ⇒ 调用方据此退避/直连
 }
 
 // 创建会话
@@ -783,8 +1005,47 @@ export func sessionClose(Session s) {
     }
 }
 
-// 应用持久化的默认 headers
-func _sessionApplyHeaders(Session s) {
+// 给会话挂代理池：之后**每个** sessionXxx 请求都会自动换一个代理。
+// 轮换点就在 _sessionPrepare（所有 sessionXxx 的第一句）——单一落点，不会漏。
+export func sessionSetProxyPool(Session s, ProxyPool pool) {
+    s.pool = pool
+}
+
+// 上报本次请求结果：ok=false 计入该代理的失败数（连续失败达阈值自动冷却）
+export func sessionReportResult(Session s, bool ok) {
+    if s.pool == null { return }
+    if s.last_proxy == "" { return }
+    if ok {
+        s.pool.reportOk(s.last_proxy)
+    } else {
+        s.pool.reportFail(s.last_proxy)
+    }
+}
+
+// 主动冷却刚用过的代理（服务端明确 403/429 时用，比等连续失败反应快）
+export func sessionCoolDownProxy(Session s, int ms) {
+    if s.pool == null { return }
+    if s.last_proxy == "" { return }
+    s.pool.coolDown(s.last_proxy, ms)
+}
+
+// 每个 sessionXxx 请求前的统一准备：**代理轮换 + 持久化 headers**。
+// ⚠ 名字从 _sessionApplyHeaders 改过来就是因为它不只应用 headers 了；
+//   保持"所有 sessionXxx 都先调它"这个不变式，代理轮换才不会漏掉某个动词。
+func _sessionPrepare(Session s) {
+    // ① 代理轮换：取下一个可用代理。池子空/全在冷却 ⇒ 保持现状并把标志立起来，
+    //    **不**在这里偷偷直连（那会暴露真实 IP，比失败更糟）。
+    if s.pool != null and s.pool.size() > 0 {
+        string p = s.pool.next()
+        if p != "" {
+            s.c.setProxy(p)
+            s.last_proxy = p
+            s.pool_exhausted = false
+        } else {
+            s.pool_exhausted = true
+        }
+    }
+    // ② 持久化默认 headers
     var keys = s.headers.keys()
     if keys.len() == 0 {
         return
@@ -801,49 +1062,49 @@ func _sessionApplyHeaders(Session s) {
 
 // 会话 GET
 export func sessionGet(Session s, string url): Response {
-    _sessionApplyHeaders(s)
+    _sessionPrepare(s)
     return s.c.get(url)
 }
 
 // 会话 POST
 export func sessionPost(Session s, string url, string body): Response {
-    _sessionApplyHeaders(s)
+    _sessionPrepare(s)
     return s.c.post(url, body)
 }
 
 // 会话 POST JSON
 export func sessionPostJson(Session s, string url, string json): Response {
-    _sessionApplyHeaders(s)
+    _sessionPrepare(s)
     return s.c.postJson(url, json)
 }
 
 // 会话 PUT
 export func sessionPut(Session s, string url, string body): Response {
-    _sessionApplyHeaders(s)
+    _sessionPrepare(s)
     return s.c.put(url, body)
 }
 
 // 会话 DELETE
 export func sessionDel(Session s, string url): Response {
-    _sessionApplyHeaders(s)
+    _sessionPrepare(s)
     return s.c.del(url)
 }
 
 // 会话 PATCH
 export func sessionPatch(Session s, string url, string body): Response {
-    _sessionApplyHeaders(s)
+    _sessionPrepare(s)
     return s.c.patch(url, body)
 }
 
 // 会话 HEAD
 export func sessionHead(Session s, string url): Response {
-    _sessionApplyHeaders(s)
+    _sessionPrepare(s)
     return s.c.head(url)
 }
 
 // 会话 POST multipart/form-data（保持 cookie / 连接复用）
 export func sessionPostMultipart(Session s, string url, Array[MimeField] parts): Response {
-    _sessionApplyHeaders(s)
+    _sessionPrepare(s)
     return s.c.postMultipart(url, parts)
 }
 
@@ -926,7 +1187,7 @@ export func postJSON(string url, Dict data): Response {
 // Session POST JSON（自动序列化 Dict）
 export func sessionPostJSON(Session s, string url, Dict data): Response {
     string json = jsons.encode(data)
-    _sessionApplyHeaders(s)
+    _sessionPrepare(s)
     return s.c.postJson(url, json)
 }
 

@@ -1,0 +1,52 @@
+// antibot_demo.leno — 反爬基础的三块能力（**刻意不联网**，只演示 API 与池子行为）
+//
+// 真跑抓取时把 url 换成目标站即可；这里不发任何请求，所以能离线运行、也能进 CI。
+import "Web" as web
+
+use web.ProxyPool
+
+main() {
+    print("=== ① 浏览器式请求头（数组顺序 = 发出去的顺序）===")
+    Array[string] hdrs = web.browserHeaders(web.chromeUA(), "zh-CN,zh;q=0.9")
+    for hdrs.len() to i {
+        print("  " + hdrs[i])
+    }
+    print("  ↑ 有意没有 Accept-Encoding：由 libcurl 按**自身实际支持**的编码声明并自动解压")
+    print("    （硬写 gzip,deflate,br 会在后端没有 brotli 时收到解不开的正文）")
+
+    print("")
+    print("=== ② 代理池：轮询 + 失败冷却 ===")
+    var pool = web.createProxyPool(["http://127.0.0.1:8080", "socks5h://127.0.0.1:1080"], 3, 60000)
+    print("  池子 " + pool.size() + " 个，可用 " + pool.available() + " 个")
+    for 3 to round {
+        string p = pool.next()
+        print("  第 " + (round + 1) + " 次取到: " + p)
+        if round == 0 {
+            pool.reportFail(p)
+            pool.reportFail(p)
+            pool.reportFail(p)
+            print("    连报 3 次失败 ⇒ 该代理进冷却，可用 = " + pool.available())
+        }
+    }
+    print("  （冷却到期会自动放回；pool.remove(p) 才是永久剔除）")
+
+    print("")
+    print("=== ③ 会话挂池子：之后每个请求自动换代理 ===")
+    var s = web.createSession()
+    web.sessionSetProxyPool(s, pool)
+    print("  web.sessionGet(s, url) 每次都换一个；")
+    print("  抓完 web.sessionReportResult(s, resp.ok()) 回报成败，坏代理会自动冷却；")
+    print("  服务端明确 403/429 时用 web.sessionCoolDownProxy(s, ms) 立刻冷却该代理。")
+    web.sessionClose(s)
+
+    print("")
+    print("=== ④ TLS 选项：如实返回是否被支持 ===")
+    var c = web.createClient()
+    print("  setCipherList 支持 = " + c.setCipherList("HIGH:!aNULL"))
+    print("  setTls13Ciphers 支持 = " + c.setTls13Ciphers("TLS_AES_128_GCM_SHA256"))
+    print("  setEcCurves 支持 = " + c.setEcCurves("X25519:P-256"))
+    c.close()
+    print("  （JA3/JA4 还含扩展顺序/ALPN 等，真要像 Chrome 得换 curl-impersonate 版 libcurl，见 README）")
+    print("")
+    print("=== demo 结束 ===")
+}

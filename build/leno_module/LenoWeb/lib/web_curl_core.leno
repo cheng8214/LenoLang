@@ -133,6 +133,13 @@ export enum Opt {
     PROXYUSERPWD        = 10006   // CURLOPTTYPE_STRINGPOINT + 6, 代理用户名:密码
     RANGE               = 10007   // CURLOPTTYPE_STRINGPOINT + 7, 范围请求
     MIMEPOST            = 10269   // CURLOPTTYPE_OBJECTPOINT + 269, multipart/form-data（curl_mime_* 句柄）
+    // ---- TLS 指纹相关（反爬基础；curl.h 顺序号见注释）----
+    // ⚠ 这几个选项**并非所有 libcurl 构建都支持**（取决于 TLS 后端/版本）。
+    //   本包不假设它们可用：`HttpClient.setCipherList / setEcCurves / setTls13Ciphers`
+    //   都把 setopt 的返回码如实返回（false = 当前 DLL 不支持，不会静默）。
+    SSL_CIPHER_LIST     = 10083   // CURLOPTTYPE_STRINGPOINT + 83, TLS 密码套件列表
+    TLS13_CIPHERS       = 10276   // CURLOPTTYPE_STRINGPOINT + 276, TLS1.3 套件（curl 7.61+）
+    SSL_EC_CURVES       = 10198   // CURLOPTTYPE_STRINGPOINT + 198, 椭圆曲线列表（curl 7.73+）
 
     // 函数指针选项（CURLOPTTYPE_FUNCTIONPOINT = 20000）
     WRITEFUNCTION       = 20011   // CURLOPTTYPE_FUNCTIONPOINT + 11, 写回调函数

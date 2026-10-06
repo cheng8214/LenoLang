@@ -367,5 +367,5 @@ vm_call_value:  vm_ptr=0xDCFCBB3630  &vm.stop_frame_cnt=0x7FF6983E66D8   ← 主
 | 验证项 | 结果 |
 | --- | --- |
 | 仓库自带断言套件 | **419 passed / 0 failed**（含 9.1 / 9.2 / 9.3 的回归用例） |
-| LenoWeb 套件 | **13 个用例 / 280 项断言全绿** |
-| LenoWeb 离线示例 | 41 个 / 0 失败 |
+| LenoWeb 套件 | **14 个用例 / 333 项断言全绿** |
+| LenoWeb 离线示例 | 43 个 / 0 失败 |

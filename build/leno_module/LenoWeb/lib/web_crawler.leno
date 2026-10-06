@@ -7,7 +7,7 @@ import times
 import jsons
 import "web_html.leno" as htmls
 import "web_net.leno" as web_net
-use web_net.(HttpClient, Response, createClient)
+use web_net.(HttpClient, Response, createClient, ProxyPool)
 use htmls.(HtmlNode)
 
 // ==================== 辅助转换 ====================
@@ -413,6 +413,31 @@ export struct Crawler {
     int _seq = 0                           // 入队序号发号器（同优先级 FIFO）
     int crawl_delay_ms = 0                 // robots.txt 的 crawl-delay（毫秒）
     int _lastFetchMs = 0                   // 上次真正发起抓取的时刻
+    ProxyPool? pool = null                 // 代理池（设了它 ⇒ fetchItem 自动轮换并回报成败）
+
+    // 挂代理池：之后用 fetchItem() 抓取就会自动"取代理 → 抓 → 回报成败"
+    func setProxyPool(ProxyPool p) {
+        pool = p
+    }
+
+    // 抓一页（推荐入口）：有池子就自动轮换 + 回报成败。
+    // 返回 null 有两类原因，调用方都能区分：
+    //   · pool 里全在冷却 ⇒ 本次**不抓**（避免用已被封的 IP 硬打）；`pool.available() == 0` 可判定
+    //   · 请求失败 ⇒ 已计入该代理的失败数（连续失败达阈值会自动冷却它）
+    func fetchItem(CrawlItem item): Page? {
+        if pool == null {
+            return fetchPage(item.url, user_agent)
+        }
+        string p = pool.next()
+        if p == "" { return null }
+        Page? page = fetchPageVia(item.url, user_agent, p)
+        if page == null {
+            pool.reportFail(p)
+        } else {
+            pool.reportOk(p)
+        }
+        return page
+    }
 
     // ---- 断点续爬 ----
     string state_path = ""                 // 非空 ⇒ 每 save_every 页自动把进度写到这里
@@ -1226,8 +1251,15 @@ export func createCrawler(Dict config): Crawler {
 
 // 抓取页面，返回强类型 Page struct（失败返回 null）
 export func fetchPage(string url, string user_agent): Page? {
+    return fetchPageVia(url, user_agent, "")
+}
+
+// 抓取页面（走指定代理；proxy 传 "" ⇒ 直连）。
+// 反爬场景用 Crawler.fetchItem 更省事：它会自动从池子取代理并回报成功/失败。
+export func fetchPageVia(string url, string user_agent, string proxy): Page? {
     HttpClient c = createClient()
     c.setHeaders(["User-Agent: " + user_agent])
+    if proxy != "" { c.setProxy(proxy) }
     Response resp = c.get(url)
     c.close()
     if not resp.ok() { return null }

@@ -12,7 +12,7 @@ import "web_charset.leno" as charsets
 
 // ==================== 重新导出 core 类型 ====================
 use core.(curl, Code, Opt, Info, Global, HttpVersion, SslVersion)
-use net.(Response, HttpClient, Session, MimeField)
+use net.(Response, HttpClient, Session, MimeField, ProxyPool, ProxyStats)
 use htmls.(HtmlNode)
 use crawler.(Url, Crawler, CrawlItem, Page, SitemapEntry, SitemapReport)
 use generic.(Result, Ok, Err, map, filter, reduce, forEach, Stack, LinkedList, ListNode)
@@ -51,6 +51,27 @@ export func sessionSetProxy(Session s, string proxy) { net.sessionSetProxy(s, pr
 export func sessionClose(Session s) { net.sessionClose(s) }
 export func sessionLoadCookies(Session s, string cookieFile): int { return net.sessionLoadCookies(s, cookieFile) }
 export func sessionSaveCookies(Session s, string cookieFile): int { return net.sessionSaveCookies(s, cookieFile) }
+
+// ==================== 反爬基础 ====================
+// 只解决"看起来不像脚本"这一层：浏览器式请求头（含顺序）、代理轮换、TLS 套件选项。
+// 要真正对抗风控还需要 TLS 指纹（换 curl-impersonate 版 libcurl）与动态渲染，见 README。
+
+// libcurl 版本串（排查/验证"换过 DLL 没有"用）
+export func version(): string { return core.version() }
+
+export func chromeUA(): string { return net.chromeUA() }
+export func browserHeaders(string ua, string lang): Array[string] { return net.browserHeaders(ua, lang) }
+export func getWithBrowserHeaders(string url, string ua = ""): Response { return net.getWithBrowserHeaders(url, ua) }
+export func getVia(string url, string proxy): Response { return net.getVia(url, proxy) }
+
+// 代理池：轮询 + 失败冷却（连续失败达阈值临时踢出，到点自动放回）
+export func createProxyPool(Array[string] proxies, int fail_threshold = 3, int cool_ms = 60000): ProxyPool { return net.createProxyPool(proxies, fail_threshold, cool_ms) }
+export func proxyPoolFromFile(string path, int fail_threshold = 3, int cool_ms = 60000): ProxyPool { return net.proxyPoolFromFile(path, fail_threshold, cool_ms) }
+
+// 会话挂上池子后，每个 sessionXxx 请求都会自动换代理（用 sessionReportResult 回报成败）
+export func sessionSetProxyPool(Session s, ProxyPool pool) { net.sessionSetProxyPool(s, pool) }
+export func sessionReportResult(Session s, bool ok) { net.sessionReportResult(s, ok) }
+export func sessionCoolDownProxy(Session s, int ms) { net.sessionCoolDownProxy(s, ms) }
 
 // ==================== multipart/form-data（文件上传） ====================
 export func formField(string name, string value): MimeField { return net.formField(name, value) }
@@ -160,6 +181,9 @@ export func enqueue(Crawler c, string url, int depth, int priority = 0) { c.enqu
 export func shouldStop(Crawler c): bool { return c.shouldStop() }
 export func stop(Crawler c) { c.stop() }
 export func fetchPage(string url, string user_agent): Page? { return crawler.fetchPage(url, user_agent) }
+export func fetchPageVia(string url, string user_agent, string proxy): Page? { return crawler.fetchPageVia(url, user_agent, proxy) }
+// 给爬虫挂代理池：之后用 Crawler.fetchItem(item) 抓取会自动轮换 + 回报成败
+export func setProxyPool(Crawler c, ProxyPool pool) { c.setProxyPool(pool) }
 export func extractLinks(Page page): Array[string] { return crawler.extractLinks(page) }
 
 // 断点续爬：进度落盘 / 载入 / 从 state_path 续爬

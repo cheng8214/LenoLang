@@ -1,0 +1,194 @@
+// test_antibot.leno — 反爬基础：代理池 / 浏览器式请求头 / TLS 选项探测（全离线）
+//
+// 「真的走了代理」怎么证：本机测试服务端的 `_route` 有**代理模式** ——
+//   请求行是**绝对 URI**（`GET http://host/path HTTP/1.1`，代理请求的特征）时，它回
+//   `PROXIED:<uri>`。于是把代理指向它，收到这个正文就说明流量确实过了代理，
+//   而**不需要**真去连一个外部目标站（目标主机名可以完全不存在）。
+//
+// 「轮换确实换了代理」怎么证：池子第 2 个代理指向**没有监听**的端口 ⇒ 用它必然失败。
+//   所以"第 2 次请求失败、第 3 次又成功"本身就证明了轮换发生了（不是一直用第 1 个）。
+import "Web" as web
+import "_testkit" as tk
+import threads
+import strings
+import files
+import times
+
+use web.(Response, HttpClient, ProxyPool)
+
+int PORT = 39631
+int MAXREQ = 300
+int DEAD_PORT = 39639          // 无监听：当作"坏代理"
+
+func serverEntry(int port, int maxReqs) {
+    tk.serve(port, maxReqs)
+}
+
+func base(): string {
+    return "http://127.0.0.1:" + PORT
+}
+
+// 统计 needle 出现次数（用于断言"curl 没再补一个自己的 User-Agent"）
+func countOf(string hay, string needle): int {
+    int n = 0
+    int from = 0
+    for 0:200 to _ {
+        int i = strings.byte_find(hay, needle, from)
+        if i < 0 { break }
+        n = n + 1
+        from = i + needle.byte_len()
+    }
+    return n
+}
+
+main() {
+    var srv = threads.start(serverEntry, PORT, MAXREQ)
+    if not tk.waitUp(PORT) {
+        print("服务端未就绪")
+        _exit(1)
+    }
+    string proxyLive = "http://127.0.0.1:" + PORT
+    string proxyDead = "http://127.0.0.1:" + DEAD_PORT
+
+    print("--- ① 代理池：轮询 / 去重 / 空池 ---")
+    var p1 = web.createProxyPool(["http://p1:1", "http://p2:2", "http://p3:3"])
+    tk.check("size", p1.size(), 3)
+    tk.check("轮询 1", p1.next(), "http://p1:1")
+    tk.check("轮询 2", p1.next(), "http://p2:2")
+    tk.check("轮询 3", p1.next(), "http://p3:3")
+    tk.check("轮询 4 回到开头", p1.next(), "http://p1:1")
+    tk.check("rotations 计数", p1.rotations, 4)
+    p1.add("http://p2:2")
+    tk.check("重复 add 不增", p1.size(), 3)
+    p1.add("")
+    tk.check("add 空串忽略", p1.size(), 3)
+    var pEmpty = web.createProxyPool([])
+    tk.check("空池 next 为空串", pEmpty.next(), "")
+    tk.check("空池 available = 0", pEmpty.available(), 0)
+
+    print("--- ② 连续失败 ⇒ 冷却 ⇒ 到期自动放回 ---")
+    var p2 = web.createProxyPool(["http://a:1", "http://b:2"], 3, 100)
+    tk.check("初始可用 2", p2.available(), 2)
+    p2.reportFail("http://a:1")
+    p2.reportFail("http://a:1")
+    tk.check("失败 2 次仍可用（未达阈值）", p2.available(), 2)
+    p2.reportFail("http://a:1")
+    tk.check("连续 3 次 ⇒ a 进冷却", p2.available(), 1)
+    tk.check("冷却中的会被跳过", p2.next(), "http://b:2")
+    tk.check("只剩 b 时一直给 b", p2.next(), "http://b:2")
+    sleep(140)
+    tk.check("冷却到期自动放回", p2.available(), 2)
+
+    print("--- ③ 成功后连续失败计数清零 / 主动冷却 / 永久剔除 ---")
+    var p3 = web.createProxyPool(["http://c:1"], 3, 5000)
+    p3.reportFail("http://c:1")
+    p3.reportFail("http://c:1")
+    p3.reportOk("http://c:1")
+    p3.reportFail("http://c:1")
+    p3.reportFail("http://c:1")
+    tk.check("成功清零 streak ⇒ 不冷却", p3.available(), 1)
+    var st = p3.stats()
+    tk.check("ok 计数", st[0].ok, 1)
+    tk.check("fail 计数", st[0].fail, 4)
+
+    var p4 = web.createProxyPool(["http://d:1"], 99, 5000)
+    p4.coolDown("http://d:1", 90)
+    tk.check("coolDown 立刻生效", p4.available(), 0)
+    tk.check("coolDown 期间取不到", p4.next(), "")
+    sleep(130)
+    tk.check("coolDown 到期恢复", p4.available(), 1)
+
+    var p5 = web.createProxyPool(["http://e:1", "http://f:2"])
+    p5.remove("http://e:1")
+    tk.check("remove 后 size", p5.size(), 1)
+    tk.check("remove 后只剩 f", p5.next(), "http://f:2")
+
+    var p6 = web.createProxyPool(["http://g:1", "http://h:2"], 1, 10000)
+    p6.reportFail("http://g:1")
+    p6.reportFail("http://h:2")
+    tk.check("全冷却 ⇒ next 为空串（调用方据此退避）", p6.next(), "")
+    tk.check("全冷却 available = 0", p6.available(), 0)
+
+    print("--- ④ 从文件建池（注释 / 空行 / 行尾空白）---")
+    string plist = _tmpdir() + _sep() + "lenoweb_proxy_list.txt"
+    files.write(plist, "# 注释行\n\nhttp://x:1\n  http://y:2  \n# tail\n")
+    var pf = web.proxyPoolFromFile(plist)
+    tk.check("解析出 2 条", pf.size(), 2)
+    tk.check("第一条", pf.next(), "http://x:1")
+    tk.check("第二条（已 trim）", pf.next(), "http://y:2")
+    files.delete(plist)
+    var pmiss = web.proxyPoolFromFile(_tmpdir() + _sep() + "lenoweb_no_such_list.txt")
+    tk.check("文件不存在 ⇒ 空池不抛错", pmiss.size(), 0)
+
+    print("--- ⑤ 真的走代理 / 直连不存在的目标会失败 ---")
+    Response r1 = web.getVia("http://target.invalid/page", proxyLive)
+    tk.check("经代理拿到 200", r1.statusCode, 200)
+    tk.checkTrue("正文证明走了代理（绝对 URI 回显）",
+                 strings.has(r1.body, "PROXIED:http://target.invalid/page"))
+    Response r2 = web.getVia("http://target.invalid/page", "")
+    tk.checkTrue("不经代理 ⇒ 目标不存在 ⇒ 失败（反证上一条）", not r2.ok())
+
+    print("--- ⑥ Session 自动轮换 + 失败回报 + 冷却后绕开 ---")
+    var s = web.createSession()
+    var sp = web.createProxyPool([proxyLive, proxyDead], 3, 10000)
+    web.sessionSetProxyPool(s, sp)
+    Response g1 = web.sessionGet(s, "http://t1.invalid/a")
+    tk.check("第 1 次经活代理成功", g1.statusCode, 200)
+    tk.check("第 1 次用的代理", s.last_proxy, proxyLive)
+    Response g2 = web.sessionGet(s, "http://t2.invalid/b")
+    tk.checkTrue("第 2 次轮到**死**代理 ⇒ 失败（证明真的换了一个）", not g2.ok())
+    tk.check("第 2 次用的代理", s.last_proxy, proxyDead)
+    // 连续失败 3 次 ⇒ 死代理进冷却 ⇒ 下次必须绕开它
+    web.sessionReportResult(s, false)
+    web.sessionReportResult(s, false)
+    web.sessionReportResult(s, false)
+    tk.check("死代理已冷却 ⇒ 可用数 1", sp.available(), 1)
+    Response g3 = web.sessionGet(s, "http://t3.invalid/c")
+    tk.check("第 3 次绕开冷却代理后成功", g3.statusCode, 200)
+    tk.check("第 3 次用回活代理", s.last_proxy, proxyLive)
+    // 把两个都冷却掉 ⇒ 池子耗尽：保持在最后一个代理上，并把标志立起来（不偷偷直连）
+    web.sessionCoolDownProxy(s, 10000)
+    sp.coolDown(proxyLive, 10000)
+    Response g4 = web.sessionGet(s, "http://t4.invalid/d")
+    tk.checkTrue("池子耗尽 ⇒ 挂标志（不静默直连暴露真实 IP）", s.pool_exhausted)
+    web.sessionClose(s)
+
+    print("--- ⑦ 浏览器式请求头（含顺序）---")
+    Response hr = web.getWithBrowserHeaders(base() + "/post", web.chromeUA())
+    string echo = hr.body
+    tk.check("状态码", hr.statusCode, 200)
+    tk.checkTrue("带上了自定义 UA", strings.has(echo, "User-Agent: " + web.chromeUA()))
+    tk.checkTrue("带上 Sec-Fetch-Mode", strings.has(echo, "Sec-Fetch-Mode: navigate"))
+    tk.checkTrue("带上 Upgrade-Insecure-Requests", strings.has(echo, "Upgrade-Insecure-Requests: 1"))
+    tk.check("User-Agent 只出现一次（curl 没再补自己的）", countOf(echo, "User-Agent:"), 1)
+    // 顺序：我们给的相对顺序必须原样保持（libcurl 按 slist 顺序发）
+    int iUA = strings.byte_find(echo, "User-Agent:")
+    int iAcc = strings.byte_find(echo, "Accept:")
+    int iLang = strings.byte_find(echo, "Accept-Language:")
+    int iSec = strings.byte_find(echo, "Sec-Fetch-Dest:")
+    tk.checkTrue("顺序 UA < Accept < Accept-Language < Sec-Fetch-Dest",
+                 iUA >= 0 and iUA < iAcc and iAcc < iLang and iLang < iSec)
+    tk.checkTrue("Accept-Encoding 由 libcurl 自己声明（我们没硬写）",
+                 strings.has(echo, "Accept-Encoding:"))
+    // 自定义 lang
+    Response hr2 = web.getWithBrowserHeaders(base() + "/post", "MyBot/1.0")
+    tk.checkTrue("自定义 UA 生效", strings.has(hr2.body, "User-Agent: MyBot/1.0"))
+    // 模板本身可单独取用（顺序在数组里就是发出去的顺序）
+    Array[string] tmpl = web.browserHeaders("X/1.0", "en-US")
+    tk.check("模板第一条是 UA", tmpl[0], "User-Agent: X/1.0")
+    tk.check("模板含 lang", tmpl[2], "Accept-Language: en-US")
+
+    print("--- ⑧ TLS 选项：如实返回支持与否，且不破坏句柄 ---")
+    var tc = web.createClient()
+    bool suppCipher = tc.setCipherList("HIGH:!aNULL:!MD5")
+    bool suppT13 = tc.setTls13Ciphers("TLS_AES_128_GCM_SHA256")
+    bool suppCurve = tc.setEcCurves("X25519:P-256")
+    print("    setCipherList=" + suppCipher + " setTls13Ciphers=" + suppT13 + " setEcCurves=" + suppCurve)
+    Response tr = tc.get(base() + "/utf8")
+    tk.check("设过 TLS 选项后请求照常", tr.statusCode, 200)
+    tk.check("body 也正常", tr.body, "中文内容")
+    tc.close()
+
+    tk.shutdown(PORT)
+    if tk.summary("antibot") != 0 { _exit(1) }
+}

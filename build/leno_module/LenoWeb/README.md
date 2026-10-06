@@ -213,6 +213,64 @@ web.remoteSize(url)                    // HEAD 取 Content-Length；未知返回
 - 总量已知时会校验最终大小，对不上返回 `-1`
 - 本地文件**已完整**时不再重复下载
 
+## 反爬基础（新增）
+
+只解决"看起来不像脚本"这一层：**浏览器式请求头（含顺序）**、**代理池**、**TLS 套件选项**。
+
+```leno
+// ① 浏览器式请求头：数组顺序就是发出去的顺序（libcurl 按 slist 顺序发）
+var c = web.createClient()
+c.setBrowserHeaders()                        // ua 省略 ⇒ web.chromeUA()
+var r = web.getWithBrowserHeaders(url)       // 一次性：新建客户端 + 浏览器头
+
+// ② 代理池：轮询 + 失败冷却
+var pool = web.createProxyPool(["http://u:p@host:8080", "socks5h://host:1080"])
+var s = web.createSession()
+web.sessionSetProxyPool(s, pool)             // 之后每个 sessionXxx 请求自动换代理
+var resp = web.sessionGet(s, url)
+web.sessionReportResult(s, resp.ok())        // 回报成败 ⇒ 坏代理自动冷却
+web.sessionCoolDownProxy(s, 60000)           // 服务端明确 403/429 时立刻冷却（比等连续失败快）
+
+// 爬虫侧：挂上池子后 fetchItem() 自动"取代理 → 抓 → 回报"
+web.setProxyPool(crawler, pool)
+var page = crawler.fetchItem(item)
+
+// ③ TLS 套件/曲线：**如实返回是否被支持**（不支持就 false，不静默）
+c.setCipherList("HIGH:!aNULL")
+
+// ④ 代理列表也可以从文件读（一行一个；`#` 注释、空行、行尾空白都容忍）
+var pool2 = web.proxyPoolFromFile("proxies.txt")   // 文件不存在 ⇒ 空池，不抛错
+```
+
+两个设计点值得说明：
+
+- **失败要冷却，不只是轮询**：坏代理留在轮换里，每次轮到它都要等一个超时 ——
+  一个坏 IP 就能把整体吞吐拖死。连续失败达 `fail_threshold`（默认 3）⇒ 冷却
+  `cool_ms`（默认 60s），到点**自动放回**（代理也可能只是临时抽风）；
+  `pool.remove(p)` 才是永久剔除（被封）。
+- **池子耗尽不偷偷直连**：全在冷却时 `next()` 返回 `""`，Session 保持现状并置
+  `s.pool_exhausted = true` —— 直连会暴露真实 IP，比"失败"更糟，所以退避还是收工交给调用方。
+
+`Accept-Encoding` **有意不写进模板**：建客户端时设的是 `ACCEPT_ENCODING = ""`，由 libcurl
+按**自身实际支持**的编码声明并自动解压；硬写 `gzip, deflate, br` 会在后端没有 brotli 时
+收到解不开的正文（静默乱码）。
+
+### TLS 指纹（JA3/JA4）：只改套件不够
+
+`setCipherList` / `setTls13Ciphers` / `setEcCurves` 能调套件与曲线顺序，但 JA3/JA4 还包含
+**扩展顺序、ALPN、GREASE**，libcurl 原生没有这些开关。真要对齐 Chrome 指纹，需要把
+`lib/libcurl-x64.dll` 换成 [curl-impersonate](https://github.com/lwthiker/curl-impersonate)
+的 Windows 构建（导出符号与 libcurl 兼容，本模块**无需改代码**即可加载）。
+
+本包**不预置**该 DLL（体积、来源可信度、许可证都要单独交代）。替换后这样验证：
+
+```leno
+print(web.version())          // 应显示替换后的版本串
+```
+
+本仓库自带 DLL 的实测结论（`examples/tests/test_antibot.leno` 第 ⑧ 段会打印）：
+`setCipherList = true`、`setTls13Ciphers = true`、**`setEcCurves = false`**（后端不接受该选项）。
+
 ## 多线程
 
 **HTTP 请求可以从 `threads.start()` 的子线程发起**（2026-10-06 起）。
@@ -253,6 +311,9 @@ main() {
 所以 `sitemap.xml.gz` 只有在服务端带 `Content-Encoding: gzip`（libcurl 会自动解）时才能用；
 否则记入 `SitemapReport.gzip_skipped` 并给出原因——**不会**把压缩字节当 XML 解析出乱码。
 要真正支持：随模块补一个 `zlib1.dll` / `libz.so.1`，再 FFI 绑 `gzopen`/`gzread`（改动很小）。
+
+**TLS 指纹仍是原生 libcurl**：代理轮换与浏览器式请求头已具备，但 JA3/JA4 需要替换 DLL
+（`setEcCurves` 在本包自带 DLL 上就返回 `false`）。见「反爬基础 → TLS 指纹」。
 
 ## 示例与测试
 
