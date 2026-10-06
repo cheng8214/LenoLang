@@ -254,9 +254,6 @@ main() {
 否则记入 `SitemapReport.gzip_skipped` 并给出原因——**不会**把压缩字节当 XML 解析出乱码。
 要真正支持：随模块补一个 `zlib1.dll` / `libz.so.1`，再 FFI 绑 `gzopen`/`gzread`（改动很小）。
 
-**同名方法的两处语法限制**（都是语言侧，不是本模块）：链式接收者 + 省略默认参数会被语义分析拒绝
-（`m.mkCalc().plus()` 报"参数不足"，换成变量接收者即可）。
-
 ## 示例与测试
 
 见 [`examples/README.md`](examples/README.md)。一键跑测试：

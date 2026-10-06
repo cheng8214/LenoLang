@@ -723,6 +723,34 @@
                                     // 从占位符函数获取参数数量和返回类型
                                     expected_arity = func_def->u.func.pcnt - 1; // 减去 self
                                     fallback_default_count = func_def->u.func.default_count;
+                                    // ⚠ `use mod.(StructType)` 导入类型时，本单元这个条目只是**桩**：
+                                    //   形参个数对、但默认值信息全丢（default_count == 0）⇒
+                                    //   `required_arity = expected_arity - fallback_default_count`
+                                    //   会把带默认值的形参当必填，于是**链式接收者**（`m.mk().f()`、
+                                    //   `new T().f()`）省略默认参数时被误报「参数不足」✗
+                                    //   （`var x = m.mk(); x.f()` 走另一条分支就正常 ⇒ 只看接收者形态）。
+                                    //   这里回退到导入模块符号表拿真实默认值个数。
+                                    //   codegen 侧已按"不含 self"的布局补这些默认值（见
+                                    //   codegen_expr.c 里 self_in_args / arg_slot0 那段注释）⇒ 两条一致 ✓
+                                    if (fallback_default_count == 0) {
+                                        for (int mi = 0; mi < s->imported_module_count; mi++) {
+                                            ImportedModuleInfo* minfo = &s->imported_modules[mi];
+                                            if (!minfo->sym_table) continue;
+                                            ModuleStructMethod* msym = module_symbol_table_find_struct_method(
+                                                minfo->sym_table, receiver_type->struct_name, method_name);
+                                            if (!msym) continue;
+                                            int dc = msym->default_count;
+                                            // default_count 也缺失时按默认值文本数组里非 NULL 的个数数
+                                            // （与 codegen 补齐默认参数用的是同一份数据）
+                                            if (dc <= 0 && msym->param_default_texts) {
+                                                for (int k = 0; k < msym->param_count; k++) {
+                                                    if (msym->param_default_texts[k]) dc++;
+                                                }
+                                            }
+                                            if (dc > 0) fallback_default_count = dc;
+                                            break;
+                                        }
+                                    }
                                     if (func_def->u.func.return_type) {
                                         return_type = func_def->u.func.return_type->kind;
                                     }
@@ -735,6 +763,16 @@
                                                 minfo->sym_table, receiver_type->struct_name, method_name);
                                             if (msym) {
                                                 expected_arity = msym->param_count;
+                                                // ★ default_count 必须一起取：下面第 895 行用
+                                                //   `required_arity = expected_arity - fallback_default_count`
+                                                //   判"最少要几个实参"。这里漏了它 ⇒ required_arity 恒等于
+                                                //   param_count ⇒ **接收者不是简单变量**（链式：
+                                                //   `m.mkCalc().plus()`、`new m.Counter().add(1)`）的调用
+                                                //   在省略默认参数时被误报「参数不足」✗。
+                                                //   实测：`plus(int v = 10)` 报"至少需要 1, 实际 0"；
+                                                //   而 `var c = m.mkCalc(); c.plus()` 走另一条分支（本地 AST）
+                                                //   就正常 —— 差别只在接收者形态，所以很难联想到元数检查。
+                                                fallback_default_count = msym->default_count;
                                                 return_type = msym->return_type;
                                                 break;
                                             }

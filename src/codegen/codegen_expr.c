@@ -1718,6 +1718,28 @@ static int gen_clib_call(CodeGen* gen, Ast* obj_ast, const char* fname,
     return 1;
 }
 
+// 两个表达式是否"显然是同一个对象引用"（只认**无副作用**的形态：变量 / 字段链）。
+// 用途：判断方法调用的 args[0] 是不是语义分析插进来的**接收者副本**（见 gen_method_call
+//   里 self_in_args 的说明）。必须**保守**：不确定就返回 0 —— 返回 0 的后果只是多补一条
+//   self 副本 MOV（布局反而更稳），而误判成 1 会让实参整体错位一格 ✗。
+//   `a.add(a)` 这种"第一个实参恰好和接收者同名"的情形返回 1 也是对的：那正是语义分析把
+//   receiver 插进 args[0] 的形态（真要多传一份同名实参，args[0] 才是它）。
+static int expr_same_ref(Ast* a, Ast* b) {
+    if (!a || !b) return 0;
+    if (a == b) return 1;
+    if (a->kind != b->kind) return 0;
+    if (a->kind == AST_VAR) {
+        return a->u.var.name && b->u.var.name && strcmp(a->u.var.name, b->u.var.name) == 0;
+    }
+    if (a->kind == AST_FIELD_ACCESS) {
+        const char* fa = a->u.field_access.field_name;
+        const char* fb = b->u.field_access.field_name;
+        if (!fa || !fb || strcmp(fa, fb) != 0) return 0;
+        return expr_same_ref(a->u.field_access.obj, b->u.field_access.obj);
+    }
+    return 0;
+}
+
 // 跨模块 struct 方法的符号表条目（补齐默认参数用）。
 //   为什么不能只查 func_table：那张表是**本编译单元**的（键 "Struct::method"），
 //   跨模块时被调方法的 AST 在别的模块里 ⇒ 只能查导入模块的符号表。
@@ -1821,6 +1843,37 @@ static void gen_method_call(CodeGen* gen, Ast* obj_ast, const char* mname,
         expected = msm->param_count + 1;
     }
 
+    // ★★ args 是否含**隐式 self** —— 槽位布局的分水岭。
+    //   语义分析只对"接收者是变量/字段链"的形态把 receiver 插进 args[0]（`a.f(x)` ⇒ args=[a,x]）；
+    //   **链式接收者**（`m.mk().f(x)`、`new T().f(x)`、`f().g()`）不会插。
+    //   而下面补默认值原先一律按"含 self"的坐标写槽位 ⇒ 链式形态整体错一格：
+    //   `m.mkCalc().plus()` 会先把 nil 填到 `plus` 的形参槽、真默认值填到**没人读的**下一格 ⇒
+    //   运行期形参是 null（静默错值 ✗，见 docs/多线程struct与模块全局变量问题记录.md §9.3）。
+    //   这里先归一化：不含 self 时**补一个 self 副本**（一条 MOV，不重复求值接收者），
+    //   使布局恒为 `R[base]=receiver、R[base+1]=self、R[base+2..]=实参`
+    //   —— 正是 VM 侧 OP_INVOKE_METHOD_TYPED 的口径（R[A]=receiver、实参在 R[A+1..A+B]，
+    //     且运行期它自己用 `R(A+1)==receiver` 判断 self 在不在实参里）。
+    int self_in_args = 0;
+    if (nargs > 0 && args->items[0]) {
+        self_in_args = (args->items[0] == obj_ast) || expr_same_ref(args->items[0], obj_ast);
+    }
+    int param_total = -1;                 // 形参总数（**不含** self）
+    if (mdef_usable) {
+        param_total = mdef->u.func.pcnt - 1;
+    } else if (msm) {
+        param_total = msm->param_count;
+    }
+    int provided = nargs;                 // 已提供的**真实**参数个数（不含 self）
+    if (self_in_args && provided > 0) provided--;
+    // 实参起始槽（相对 base）：**只对 struct 方法**做"补 self 副本"的归一化 ——
+    //   非 struct 接收者（dict / native / 一等函数字段…）走的不是 OP_INVOKE_METHOD_TYPED
+    //   那套布局（args[0] 从来不是 receiver），挪槽位会把它们的实参整体错位 ✗
+    int arg_slot0 = 1;
+    if (param_total >= 0 && !self_in_args) arg_slot0 = 2;
+    // B 操作数要覆盖到最高的实参槽（base+B）——补 nil/默认值的槽可能比 nargs 更靠后
+    if (param_total >= 0 && 1 + param_total > expected) expected = 1 + param_total;
+    if (nargs > 0 && arg_slot0 + nargs - 1 > expected) expected = arg_slot0 + nargs - 1;
+
     // 基址寄存器：dst 恰好是"刚分配的临时寄存器"（或已在临时区之上）时直接用它，
     //   这样结果天然落在 dst，省掉收尾的 MOV（与全局函数直呼 OP_CALL_GLOBAL_FUNC 同一手法）。
     int dst_safe = (dst + 1 == gen->next_reg || dst >= gen->next_reg);
@@ -1839,41 +1892,39 @@ static void gen_method_call(CodeGen* gen, Ast* obj_ast, const char* mname,
     //   安全性：接收者只写到 base（不碰 base+1..base+expected），实参区已用
     //   next_reg 预留（上面的 need），所以先后求值互不影响。
     for (int i = 0; i < nargs; i++) {
-        gen_expr_to(gen, args->items[i], base + 1 + i);
+        gen_expr_to(gen, args->items[i], base + arg_slot0 + i);
     }
-    // ⚠ 只在"真 AST"时赋值：fill_default_args 在 `fdef == NULL` 时**返回 nargs**
-    //   ⇒ 无条件赋值会把上面按符号表算出的 expected（跨模块那支）又冲回 nargs ✗
-    if (mdef_usable) {
-        expected = fill_default_args(gen, mdef, 0, nargs, base, line);
-        // ★ `use mod.(StructType)` 导入类型时，本单元里那个方法条目只是个**桩**：
-        //   param_defaults 为空 ⇒ fill_default_args 对缺失参数发 LOADNIL（默认值变 null ✗）。
-        //   实测：`use m.(Counter)` 后 `c.add(1)` 报「加法运算: null 不能参与运算」，
-        //   而同样代码改用限定名 `new m.Counter()` 就正常 —— 差别只在有没有 use。
-        //   这里**逐个参数**回退：AST 没有默认值表达式、而导入模块符号表里有文本 ⇒ 用文本补。
-        if (msm && msm->param_default_texts && expected > nargs) {
-            for (int i = nargs; i < expected; i++) {
-                int pi = i;   // self_offset == 0 ⇒ params 下标就是 i
-                Ast* d = (mdef->u.func.param_defaults && pi < mdef->u.func.pcnt)
-                             ? mdef->u.func.param_defaults[pi] : NULL;
-                if (d) continue;   // AST 里有真默认值 ⇒ 上面已经求值过，别覆盖
-                int r = i - 1;     // 去掉 self ⇒ 符号表的参数下标
-                if (r < 0 || r >= msm->param_count) continue;
-                const char* dtext = msm->param_default_texts[r];
-                if (dtext) gen_default_value_from_text_to(gen, base + 1 + i, dtext, line);
+    // 缺失形参补齐：**只按"不含 self"的形参下标 k 走一遍**，槽位恒为 `base + 2 + k`。
+    //   · mdef 有默认值表达式 ⇒ 直接求值（AST 口径最准；param_defaults 的下标**含 self** ⇒ k+1）
+    //   · 否则用导入模块符号表的**文本**（跨模块 + `use` 留下的桩都靠它；下标不含 self ⇒ k）
+    //   · 都没有 ⇒ 发 nil（与旧行为一致，不再无声无息）
+    // 这样"含 self / 不含 self"两种形态的坐标就统一了（见上面 self_in_args 那段注释）。
+    if (param_total >= 0) {
+        for (int k = provided; k < param_total; k++) {
+            int slot = base + 2 + k;
+            int done = 0;
+            if (mdef_usable && mdef->u.func.param_defaults) {
+                int pi = k + 1;
+                if (pi < mdef->u.func.pcnt && mdef->u.func.param_defaults[pi]) {
+                    gen_expr_to(gen, mdef->u.func.param_defaults[pi], slot);
+                    done = 1;
+                }
             }
-        }
-    }
-    // 跨模块 / 非 AST 条目 ⇒ 只能按符号表里的**文本**补（与 gen_module_call_prep 同一手法）
-    if (!mdef_usable && msm && expected > nargs) {
-        for (int i = nargs; i < expected; i++) {
-            int r = i - 1;   // 去掉 self ⇒ 符号表的参数下标（口径见上面 expected 的换算）
-            const char* dtext = (msm->param_default_texts && r >= 0 && r < msm->param_count)
-                                    ? msm->param_default_texts[r] : NULL;
-            gen_default_value_from_text_to(gen, base + 1 + i, dtext, line);
+            if (!done && msm && msm->param_default_texts && k < msm->param_count &&
+                msm->param_default_texts[k]) {
+                gen_default_value_from_text_to(gen, slot, msm->param_default_texts[k], line);
+                done = 1;
+            }
+            if (!done) emit_loadnil_to(gen, slot, line);
         }
     }
 
     gen_expr_to(gen, obj_ast, base);
+    // 不含 self 的形态：补 self 副本（放在接收者求值**之后** ⇒ 只是寄存器复制，
+    // 不会把 `m.mk()` 这类有副作用的接收者表达式求值两次）
+    if (!self_in_args && param_total >= 0) {
+        emit_mov(gen, base + 1, base, line);
+    }
 
     int mlen = (int)strlen(mname);
     ObjString* nameStr = str_copy(mname, mlen);

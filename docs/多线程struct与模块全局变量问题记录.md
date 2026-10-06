@@ -336,17 +336,36 @@ vm_call_value:  vm_ptr=0xDCFCBB3630  &vm.stop_frame_cnt=0x7FF6983E66D8   ← 主
   符号表的 `param_default_texts`。
 - **回归**：`assert/test_use_struct_default_param.leno`（`assert/xmod_defaults.leno` 补了个 `mkCalc()` 工厂）。
 
-### 9.3 仍未修：链式接收者 + 省略默认参数
+### 9.3 ✅ 链式接收者 + 省略默认参数（2026-10-06 修）
 
-`m.mkCalc().plus()` ⇒「调用方法 'plus' 时参数不足: 至少需要 1, 实际 0」
-（`func plus(int v = 10)` 的最小实参应为 **0**）。与 `use` 无关：换成变量接收者
-`var c = m.mkCalc(); c.plus()` 就能过。修它要动**语义侧**的元数检查（按 `default_count` 折算），
-本次未做，只在 `assert/test_use_struct_default_param.leno` 的注释里留了记录。
+**症状**：`m.mkCalc().plus()` ⇒「调用方法 'plus' 时参数不足: 至少需要 1, 实际 0」
+（`func plus(int v = 10)` 的最小实参应为 **0**）。与 `use` 无关 —— 换成变量接收者
+`var c = m.mkCalc(); c.plus()` 就能过，**差别只在接收者的写法**。
 
-### 验证
+**根因（两处，必须一起修）**：语义分析只对"接收者是变量/字段链"的形态把 receiver 插进
+`args[0]`（`a.f(x)` ⇒ args=[a, x]），**链式不插** ⇒ 实参与形参的槽位坐标差一格：
+
+1. **语义侧元数检查**：`required_arity = expected_arity - fallback_default_count`，
+   而 `use` 留下的桩 `default_count == 0` ⇒ 把带默认值的形参当必填
+   （修：桩缺默认计数时回退导入模块符号表，并按 `param_default_texts` 兜底计数）。
+2. **codegen 补默认值**一律按"含 self"的坐标写槽 ⇒ 链式形态整体错一格：真默认值落到
+   **没人读的下一格**、形参拿到 nil ✗（修：先判定 args 是否含隐式 self，把布局归一化成
+   `R[base]=receiver、R[base+1]=self 副本、R[base+2..]=实参` —— 正是 VM 侧
+   `OP_INVOKE_METHOD_TYPED` 的口径，它自己也用 `R(a+1)==receiver` 判 self 在不在实参里）。
+
+两条实现上的坑（都留了注释）：
+
+- `self 副本` 必须是**寄存器 MOV**（接收者求值之后），不能把接收者表达式再求值一遍 ——
+  否则 `mkCalcCounted()` 这类带副作用的接收者会被调用两次。
+- 归一化**只对 struct 方法**生效：dict / native / 一等函数字段的 `args[0]` 从来不是
+  receiver，一起挪会把它们的实参整体错位（第一版就是这么写错的，靠 419 项套件当场发现）。
+
+**回归**：`assert/test_use_struct_default_param.leno`（链式 + 副作用计数 + 各模块形态对照）。
+
+### 验证（§9 三个缺陷修完后的最终状态）
 
 | 验证项 | 结果 |
 | --- | --- |
-| 仓库自带断言套件 | **419 passed / 0 failed**（新增 9.1、9.2 两个回归用例） |
+| 仓库自带断言套件 | **419 passed / 0 failed**（含 9.1 / 9.2 / 9.3 的回归用例） |
 | LenoWeb 套件 | **13 个用例 / 280 项断言全绿** |
 | LenoWeb 离线示例 | 41 个 / 0 失败 |

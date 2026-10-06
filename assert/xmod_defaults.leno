@@ -51,3 +51,18 @@ export struct Calc {
 export func mkCalc(): Calc {
     return new Calc(base = 1)
 }
+
+// ★ 带**副作用**的工厂 + 调用计数：钉住"链式调用的接收者只求值一次"。
+//   为什么单独要这个：codegen 在"实参不含隐式 self"的形态下要往 R[base+1] 补一个 self 副本，
+//   若实现成"把接收者表达式再求值一遍"就会把 `m.mkCalcCounted()` 调两次（本用例会立刻红）。
+//   正确实现是接收者求值后的一条寄存器 MOV ✓
+int _mkCalls = 0
+
+export func mkCalcCounted(): Calc {
+    _mkCalls = _mkCalls + 1
+    return new Calc(base = 1)
+}
+
+export func mkCalcCalls(): int {
+    return _mkCalls
+}

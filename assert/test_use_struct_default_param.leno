@@ -1,21 +1,26 @@
-// 回归：**`use` 导入 struct 类型**后，跨模块调用的方法默认参数必须补齐
+// 回归：跨模块 struct 方法的默认参数（含 **use 导入类型** 与 **链式接收者**）
 //
-// 背景：`use mod.(StructType)` 会在本编译单元留下一个**没有默认值表达式**的方法桩。
-//   codegen 的补齐只有两条路，且原先互斥：
-//     ① 本单元有真 AST ⇒ 用 AST 求值默认值（桩不是真 AST，走这条会发 LOADNIL ⇒ null ✗）
-//     ② 本单元完全没有 AST ⇒ 查导入模块符号表的 param_default_texts（桩存在 ⇒ 这条被跳过 ✗）
-//   ⇒ 两条都落空，省略的实参变成 null。
-//   实测：`use m.(Counter)` 后 `c.add(1)` 报「加法运算: null 不能参与运算」；
-//   同一份代码改用限定名（`new m.Counter()`，不加 use）就正常。
+// 这里钉两类曾经坏掉、而且坏法很"隐蔽"的形态：
 //
-// 修法（codegen_expr.c 方法调用点）：符号表查找不再要求"本地没有 AST"，
-//   并且在 AST 缺默认值表达式时**逐个参数**回退到符号表文本。
+// ① `use mod.(StructType)` 导入类型后，本编译单元里的方法条目只是**桩**：
+//    形参个数对、默认值信息全丢。codegen 原先只认"本地有真 AST"或"本地完全没有"两条路 ⇒
+//    桩存在时两条都落空 ⇒ 省略的实参是 null（实测 `c.add(1)` 报「null 不能参与运算」；
+//    同一份代码改用限定名 `new m.Counter()` 就正常 ⇒ 差别只在有没有 use）。
+//
+// ② **链式接收者**（`m.mkCalc().plus()`、`new Calc(base=1).plus()`）：
+//    语义分析只对"接收者是变量/字段链"的形态把 receiver 插进 args[0]，链式不会插 ⇒
+//    实参与形参的槽位差一格：①编译期被误报「参数不足」，②codegen 即便填了默认值也填到
+//    没人读的下一格 ⇒ 运行期形参是 null。两处都按"不含 self"的坐标修好了
+//    （semantic 按符号表折算默认值个数；codegen 归纳化槽位并补 self 副本）。
+//
+// ③ 顺带钉住：补 self 副本必须用寄存器 MOV，**不能把接收者表达式再求值一遍**
+//    （否则 `mkCalcCounted()` 这种带副作用的接收者会被调用两次）。
 import "xmod_defaults.leno" as m
 
 use m.Calc
 
 main() {
-    // ① use 进来的类型：省略默认值也要补上
+    // ① use 进来的类型 + 变量接收者：省略默认值也要补上
     var c = new Calc(base = 1)
     assert_eq(c.plus(), 11)            // 默认 v=10
     assert_eq(c.plus(20), 21)          // 传了就用实参
@@ -28,18 +33,26 @@ main() {
     // 对照组：无默认值的方法照旧
     assert_eq(c.no_default(3, 4), 34)
 
-    // ② use 进来的模块函数返回的实例（接收者静态类型来自返回值）
-    //    plus: base(1) + v(默认 10)
-    assert_eq(m.mkCalc().plus(5), 6)
-    // ⚠ 已知**另一个**独立缺陷（本用例不覆盖）：**链式接收者 + 省略默认参数**会被语义分析拒掉 ——
-    //   `m.mkCalc().plus()` ⇒ 「调用方法 'plus' 时参数不足: 至少需要 1, 实际 0」
-    //   （`plus(int v = 10)` 的 v 有默认值，最小实参应为 0）。与 use 无关，换成变量接收者
-    //   `var c = m.mkCalc(); c.plus()` 就能过。修复它要动语义侧的元数检查（按 default_count 折算），
-    //   不在本次范围内 ⇒ 这里只记录，避免以后误判成"又回归了"。
+    // ② 链式接收者：三种来源都要能补齐默认值
+    assert_eq(new Calc(base = 1).plus(), 11)          // new 表达式直接接方法
+    assert_eq(m.mkCalc().plus(), 11)                  // 跨模块函数返回值
+    assert_eq(m.mkCalc().plus(20), 21)
+    assert_eq(m.mkCalc().mul(5), 30)
+    assert_eq(m.mkCalc().mul(5, 4, 2), 40)
+    assert_eq(m.mkCalc().tag("x"), "s=x n=7")
+    assert_eq(m.mkCalc().no_default(3, 4), 34)        // 链式 + 无默认值
+    assert_eq(m.mkCalc().plus(5) + m.mkCalc().plus(), 6 + 11)
 
-    // ③ 同模块内的默认参数（一直是对的，防止回退时改坏）
+    // ③ 接收者只求值一次（副作用检查）
+    int before = m.mkCalcCalls()
+    assert_eq(m.mkCalcCounted().plus(), 11)
+    assert_eq(m.mkCalcCalls() - before, 1)
+
+    // ④ 同模块内的默认参数（一直是对的，防止回退时改坏）
     assert_eq(m.add10(5), 15)
     assert_eq(m.add10(5, 20), 25)
+    assert_eq(m.scale(3.0), 6.0)
+    assert_eq(m.multi(1), "a=1 b=20 c=hi")
 
     print("[use_struct_default_param] passed")
 }
