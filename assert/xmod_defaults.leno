@@ -44,3 +44,10 @@ export struct Calc {
         return a * 10 + b
     }
 }
+
+// 工厂：让调用方能测"接收者静态类型来自**跨模块函数返回值**"这条路径
+//   （与写 `new Calc(base = 1)` 是两条不同的类型推断来源，见
+//    assert/test_use_struct_default_param.leno 的注释）
+export func mkCalc(): Calc {
+    return new Calc(base = 1)
+}

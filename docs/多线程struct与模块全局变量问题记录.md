@@ -296,3 +296,57 @@ vm_call_value:  vm_ptr=0xDCFCBB3630  &vm.stop_frame_cnt=0x7FF6983E66D8   ← 主
 
 回归用例：`examples/tests/test_ffi_callback_thread.leno`（运行时层）、
 `examples/tests/test_thread_http.leno`（LenoWeb 层）。
+
+## 九、接着查到的两个语言缺陷（✅ 2026-10-06 修）
+
+都是在做 LenoWeb「爬虫优先队列」时被踩出来的——表面症状都在业务代码里，
+根因都在语言实现。记录在这里，因为**症状与根因距离很远**，下次别再从头查一遍。
+
+### 9.1 `("abc" + 1).len()` 恒为 0（`string_add` 漏设 `char_len`）
+
+- **症状**：LenoWeb 的 `normalizeUrl("http://t/p1")` 返回 `http://t/`（路径被吃掉）。
+- **缩小过程**：`pu(1)` 返回的串内容是对的（`byte_len=11`），但 `pu(1).len()` 是 **0**；
+  再缩到 `("abc" + 1).len() == 0`，而 `("abc" + "de").len() == 5` 正常。
+- **根因**：`ObjString.char_len` 是**字符数缓存**，`str_alloc` 只把它留成 0
+  （注释写着"调用者需在填充内容后设置"），而 `len()` / `slice` / `to_lower` 都直接读它。
+  `src/vm/vm.c` 的 `string_add` 在"两侧不都是字符串"的分支（`value_to_string` 再拼）
+  建串后**漏了这一行**；两侧都是字符串时走 `str_concat` → `str_new`（内部已算）⇒ 那条路一直正常。
+- **为什么难发现**：内容、`byte_len()`、打印都正确，只有 `len()` 系坏掉，而且会**传染**
+  （`.to_lower()` 原样复制 0、`.slice(0, 2)` 返回空串）。纯 ASCII 且不用 `len()` 的代码完全无感。
+- **修法**：`string_add` 补 `result->char_len = utf8_char_len(result->chars, total_len);`
+  ＋ `src/string_table.c` 的 `intern_string`（当前无调用方）同类补漏。
+- **回归**：`assert/test_str_concat_char_len.leno`。
+
+### 9.2 `use mod.(StructType)` 后，跨模块方法默认参数丢失
+
+- **症状**：`Crawler.enqueue(url, depth)` 的 `priority` 变成 `null` ⇒ 优先队列的
+  同级 FIFO 比较被破坏（`null != null` 走成了"不相等"，于是堆不再交换）。
+- **缩小过程**：同模块下 struct 方法默认参数正常；跨模块**模块级函数**也正常
+  （`assert/xmod_defaults.leno` 已有覆盖）；只有**跨模块 struct 方法**不行。
+  最后定位到触发条件是 **`use mod.(StructType)`**：把类型 use 进来才坏，
+  用限定名（`new mod.StructType()`）就正常；把 `assert/xmod_defaults.leno`
+  原样拷到别的目录也一样坏 ⇒ 与文件内容/位置/缓存都无关。
+- **根因**：`use` 导入类型会在本编译单元留下一个**没有默认值表达式**的方法桩。
+  而 `src/codegen/codegen_expr.c` 的 `gen_method_call` 里，两条补齐路径原先**互斥**：
+  ① 本地有真 AST ⇒ 用 AST 求值默认值（桩不是真 AST ⇒ 发 `LOADNIL`）；
+  ② 本地完全没有 AST ⇒ 查导入模块符号表（桩存在 ⇒ 这条被跳过）。
+  ⇒ 两条都落空，省略的实参就是 null。
+  字节码实证：`OP_LOADNIL A=7` 紧挨 `OP_INVOKE_METHOD_TYPED … 实参个数=3`。
+- **修法**：符号表查找不再要求"本地无 AST"；AST 缺默认值表达式时**逐个参数**回退到
+  符号表的 `param_default_texts`。
+- **回归**：`assert/test_use_struct_default_param.leno`（`assert/xmod_defaults.leno` 补了个 `mkCalc()` 工厂）。
+
+### 9.3 仍未修：链式接收者 + 省略默认参数
+
+`m.mkCalc().plus()` ⇒「调用方法 'plus' 时参数不足: 至少需要 1, 实际 0」
+（`func plus(int v = 10)` 的最小实参应为 **0**）。与 `use` 无关：换成变量接收者
+`var c = m.mkCalc(); c.plus()` 就能过。修它要动**语义侧**的元数检查（按 `default_count` 折算），
+本次未做，只在 `assert/test_use_struct_default_param.leno` 的注释里留了记录。
+
+### 验证
+
+| 验证项 | 结果 |
+| --- | --- |
+| 仓库自带断言套件 | **419 passed / 0 failed**（新增 9.1、9.2 两个回归用例） |
+| LenoWeb 套件 | **13 个用例 / 280 项断言全绿** |
+| LenoWeb 离线示例 | 41 个 / 0 失败 |

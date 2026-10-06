@@ -1,0 +1,55 @@
+// 回归：字符串与**非字符串**拼接后的 `.len()`（字符数）
+//
+// 背景：`string_add` 在"两侧不都是字符串"的分支里用 `str_alloc` 建串后**漏设 char_len**
+//   （该字段由 str_alloc 留成 0，注释写着"调用者需在填充内容后设置"），而
+//   `len()` / `slice` / `to_lower` 等都**直接读这个缓存** ⇒
+//     `("abc" + 1).len()` 恒为 0、`.slice(0, 2)` 返回空串、`.to_lower()` 把 0 继续传下去。
+//   内容与 `byte_len()` 都是对的，只有 `len()` 相关的路径坏掉 ⇒ 极难发现
+//   （本仓库 2026-10-06 由 LenoWeb 的 URL 归一化踩到：`normalizeUrl(".../p1")` 被截断）。
+//   str_concat（两侧都是字符串）走 str_new，内部已算 char_len ⇒ 那条路一直是对的。
+//
+// 修法：string_add 里补 `result->char_len = utf8_char_len(...)`（vm.c）＋
+//   string_table.c 的 intern_string 同类补漏。
+import strings
+
+main() {
+    // ① 与各类型拼接：内容、字符数都要对
+    assert_eq("abc" + 1, "abc1")
+    assert_eq(("abc" + 1).len(), 4)
+    assert_eq(("abc" + 1).byte_len(), 4)
+    assert_eq(("abc" + 1.5).len(), 6)
+    assert_eq(("abc" + true).len(), 7)
+    assert_eq((1 + "abc").len(), 4)
+    assert_eq(("" + 1).len(), 1)
+    assert_eq(("n=" + -5).len(), 4)
+    assert_eq(("a" + 1 + 2).len(), 3)
+
+    // ② 对照组：纯字符串拼接一直是对的
+    assert_eq(("abc" + "de").len(), 5)
+    assert_eq((("abc" + 1) + "de").len(), 6)
+    assert_eq((("abc" + 1) + 2).len(), 5)
+    assert_eq(("abc" + ("d" + 1)).len(), 5)
+
+    // ③ 会"传染"char_len 的方法（原先把 0 传下去）
+    string x = "abc" + 1
+    assert_eq(x.len(), 4)
+    assert_eq(x.to_lower().len(), 4)
+    assert_eq(x.to_upper().len(), 4)
+    assert_eq(x.trim().len(), 4)
+    assert_eq(x.replace("a", "z").len(), 4)
+    assert_eq(x.slice(0, 2), "ab")          // 原先返回空串
+    assert_eq(x.slice(0, 2).len(), 2)
+    assert_eq(x.reverse().len(), 4)
+
+    // ④ 多字节：char_len 是**字符数**，byte_len 是字节数
+    assert_eq(("中文" + 1).len(), 3)
+    assert_eq(("中文" + 1).byte_len(), 7)
+    assert_eq(("中文" + 1).slice(0, 2), "中文")
+
+    // ⑤ 汇总之后的串（join / rep 内部重建过 char_len）
+    string j = strings.join(["a" + 1, "b"], "-")
+    assert_eq(j, "a1-b")
+    assert_eq(j.len(), 4)
+
+    print("[str_concat_char_len] passed")
+}

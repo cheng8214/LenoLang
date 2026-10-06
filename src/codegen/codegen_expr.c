@@ -1802,14 +1802,22 @@ static void gen_method_call(CodeGen* gen, Ast* obj_ast, const char* mname,
     //   且**完全不报错**）✗。回落到导入模块的符号表（`ModuleStructMethod::param_count` /
     //   `param_default_texts`，与 gen_module_call_prep 同一口径）。
     ModuleStructMethod* msm = NULL;
-    if (!mdef && recv_struct_name[0] && mname) {
+    // ⚠ 不能只查 `!mdef`：`use mod.(StructType)` 导入类型时，本编译单元的 func_table 里会留下
+    //   一个**非 AST** 的 "Struct::method" 条目 ⇒ mdef 非 NULL 但 `kind != AST_FUNC_DEF`，
+    //   于是旧的 `if (!mdef && ...)` 既不查符号表、`fill_default_args` 又立刻返回 nargs
+    //   ⇒ 省略的实参仍是 null（实测：`use m.(Counter)` 后 `c.add(1)` 报「null 不能参与运算」，
+    //   而用限定名 `new m.Counter()` 正常）。这里改成"只要拿得到符号表就查"，
+    //   真正决定用哪条路的是下面的 mdef_usable。
+    if (recv_struct_name[0] && mname) {
         msm = find_imported_struct_method(gen->sem, recv_struct_name, mname);
     }
+    // 只有**真 AST** 才拿得到默认值表达式（gen_expr 求值）；否则交给符号表文本路径
+    int mdef_usable = (mdef && mdef->kind == AST_FUNC_DEF);
     // 符号表的 param_count **不含 self**，而调用点 args 含 ⇒ 两者都换算成"含 self 的口径"再比
     int expected = nargs;
-    if (mdef && mdef->kind == AST_FUNC_DEF && mdef->u.func.pcnt > expected) {
+    if (mdef_usable && mdef->u.func.pcnt > expected) {
         expected = mdef->u.func.pcnt;
-    } else if (!mdef && msm && msm->param_count + 1 > expected) {
+    } else if (msm && msm->param_count + 1 > expected) {
         expected = msm->param_count + 1;
     }
 
@@ -1833,13 +1841,30 @@ static void gen_method_call(CodeGen* gen, Ast* obj_ast, const char* mname,
     for (int i = 0; i < nargs; i++) {
         gen_expr_to(gen, args->items[i], base + 1 + i);
     }
-    // ⚠ 只在 mdef 存在时赋值：fill_default_args 在 `fdef == NULL` 时**返回 nargs**
+    // ⚠ 只在"真 AST"时赋值：fill_default_args 在 `fdef == NULL` 时**返回 nargs**
     //   ⇒ 无条件赋值会把上面按符号表算出的 expected（跨模块那支）又冲回 nargs ✗
-    if (mdef) {
+    if (mdef_usable) {
         expected = fill_default_args(gen, mdef, 0, nargs, base, line);
+        // ★ `use mod.(StructType)` 导入类型时，本单元里那个方法条目只是个**桩**：
+        //   param_defaults 为空 ⇒ fill_default_args 对缺失参数发 LOADNIL（默认值变 null ✗）。
+        //   实测：`use m.(Counter)` 后 `c.add(1)` 报「加法运算: null 不能参与运算」，
+        //   而同样代码改用限定名 `new m.Counter()` 就正常 —— 差别只在有没有 use。
+        //   这里**逐个参数**回退：AST 没有默认值表达式、而导入模块符号表里有文本 ⇒ 用文本补。
+        if (msm && msm->param_default_texts && expected > nargs) {
+            for (int i = nargs; i < expected; i++) {
+                int pi = i;   // self_offset == 0 ⇒ params 下标就是 i
+                Ast* d = (mdef->u.func.param_defaults && pi < mdef->u.func.pcnt)
+                             ? mdef->u.func.param_defaults[pi] : NULL;
+                if (d) continue;   // AST 里有真默认值 ⇒ 上面已经求值过，别覆盖
+                int r = i - 1;     // 去掉 self ⇒ 符号表的参数下标
+                if (r < 0 || r >= msm->param_count) continue;
+                const char* dtext = msm->param_default_texts[r];
+                if (dtext) gen_default_value_from_text_to(gen, base + 1 + i, dtext, line);
+            }
+        }
     }
-    // 跨模块：mdef 为 NULL ⇒ 只能按符号表里的**文本**补（与 gen_module_call_prep 同一手法）
-    if (!mdef && msm && expected > nargs) {
+    // 跨模块 / 非 AST 条目 ⇒ 只能按符号表里的**文本**补（与 gen_module_call_prep 同一手法）
+    if (!mdef_usable && msm && expected > nargs) {
         for (int i = nargs; i < expected; i++) {
             int r = i - 1;   // 去掉 self ⇒ 符号表的参数下标（口径见上面 expected 的换算）
             const char* dtext = (msm->param_default_texts && r >= 0 && r < msm->param_count)
@@ -2626,6 +2651,7 @@ void gen_module_call(CodeGen* gen, Ast* ast, int dst) {
         memcpy(combo->chars + mlen + 1, meth, (size_t)flen);
         combo->chars[mlen + 1 + flen] = '\0';
         combo->len = mlen + 1 + flen;
+        combo->char_len = combo->len;   // 全是 ASCII ⇒ 字符数 == 字节数（str_alloc 只留 0）
         combo->hash = hash_string(combo->chars, combo->len);
     }
     int cidx = make_constant(gen, val_obj((Object*)combo));

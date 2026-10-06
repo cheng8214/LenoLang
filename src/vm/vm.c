@@ -321,6 +321,13 @@ Value string_add(Value a, Value b) {
     memcpy(result->chars, str_a, len_a);
     memcpy(result->chars + len_a, str_b, len_b);
     result->chars[total_len] = '\0';
+    // ★ 必须补上 char_len：str_alloc 把它留成 0（"调用者需在填充内容后设置"），
+    //   而 str->len() / slice / to_lower 等都**直接读这个缓存**。
+    //   漏了它的后果是**静默**的：`("abc" + 1).len()` 返回 0、`.slice(0,2)` 返回空串、
+    //   `.to_lower()` 把 0 继续传下去；只有内容（byte_len/打印）看起来是对的，
+    //   所以极难定位（本仓库 2026-10-06 由 LenoWeb 的 URL 归一化踩到）。
+    //   str_concat 走 str_new（内部已算），这条 value_to_string 路径是唯一的缺口。
+    result->char_len = utf8_char_len(result->chars, total_len);
     result->hash = hash_string(result->chars, total_len);
 
     // 释放临时字符串

@@ -1,0 +1,45 @@
+// 回归：**`use` 导入 struct 类型**后，跨模块调用的方法默认参数必须补齐
+//
+// 背景：`use mod.(StructType)` 会在本编译单元留下一个**没有默认值表达式**的方法桩。
+//   codegen 的补齐只有两条路，且原先互斥：
+//     ① 本单元有真 AST ⇒ 用 AST 求值默认值（桩不是真 AST，走这条会发 LOADNIL ⇒ null ✗）
+//     ② 本单元完全没有 AST ⇒ 查导入模块符号表的 param_default_texts（桩存在 ⇒ 这条被跳过 ✗）
+//   ⇒ 两条都落空，省略的实参变成 null。
+//   实测：`use m.(Counter)` 后 `c.add(1)` 报「加法运算: null 不能参与运算」；
+//   同一份代码改用限定名（`new m.Counter()`，不加 use）就正常。
+//
+// 修法（codegen_expr.c 方法调用点）：符号表查找不再要求"本地没有 AST"，
+//   并且在 AST 缺默认值表达式时**逐个参数**回退到符号表文本。
+import "xmod_defaults.leno" as m
+
+use m.Calc
+
+main() {
+    // ① use 进来的类型：省略默认值也要补上
+    var c = new Calc(base = 1)
+    assert_eq(c.plus(), 11)            // 默认 v=10
+    assert_eq(c.plus(20), 21)          // 传了就用实参
+    assert_eq(c.mul(5), 30)            // 5 * 2 * 3
+    assert_eq(c.mul(5, 4), 60)         // 5 * 4 * 3
+    assert_eq(c.mul(5, 4, 2), 40)
+    assert_eq(c.tag(), "s=hi n=7")
+    assert_eq(c.tag("x"), "s=x n=7")
+    assert_eq(c.tag("x", 1), "s=x n=1")
+    // 对照组：无默认值的方法照旧
+    assert_eq(c.no_default(3, 4), 34)
+
+    // ② use 进来的模块函数返回的实例（接收者静态类型来自返回值）
+    //    plus: base(1) + v(默认 10)
+    assert_eq(m.mkCalc().plus(5), 6)
+    // ⚠ 已知**另一个**独立缺陷（本用例不覆盖）：**链式接收者 + 省略默认参数**会被语义分析拒掉 ——
+    //   `m.mkCalc().plus()` ⇒ 「调用方法 'plus' 时参数不足: 至少需要 1, 实际 0」
+    //   （`plus(int v = 10)` 的 v 有默认值，最小实参应为 0）。与 use 无关，换成变量接收者
+    //   `var c = m.mkCalc(); c.plus()` 就能过。修复它要动语义侧的元数检查（按 default_count 折算），
+    //   不在本次范围内 ⇒ 这里只记录，避免以后误判成"又回归了"。
+
+    // ③ 同模块内的默认参数（一直是对的，防止回退时改坏）
+    assert_eq(m.add10(5), 15)
+    assert_eq(m.add10(5, 20), 25)
+
+    print("[use_struct_default_param] passed")
+}
