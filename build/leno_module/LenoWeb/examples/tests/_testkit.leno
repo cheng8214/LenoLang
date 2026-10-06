@@ -395,6 +395,48 @@ func _lazyPage(): string {
            "</body></html>"
 }
 
+// /detect 的正文：把"无头特征"探测结果写进 #out（反检测用例的判据）
+//   检查项都是真实站点常用的：webdriver / UA 里的 Headless / window.chrome / plugins / language
+func _detectPage(): string {
+    return "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Detect Page</title></head><body>" +
+           "<div id=\"out\">pending</div>" +
+           "<script>(function(){" +
+           "var r=[];" +
+           "r.push('wd='+(navigator.webdriver===undefined?'undef':String(navigator.webdriver)));" +
+           "r.push('ua='+(navigator.userAgent.indexOf('Headless')<0?'clean':'HEADLESS'));" +
+           "r.push('chrome='+(window.chrome?'yes':'no'));" +
+           "r.push('plug='+(navigator.plugins.length>0?'yes':'no'));" +
+           "r.push('lang='+(navigator.language||''));" +
+           // WebGL 渲染器：无头（软件渲染）常是 SwiftShader/ANGLE，正常桌面是具体显卡型号
+           "var gl='';" +
+           "try{var cv=document.createElement('canvas');var g=cv.getContext('webgl');" +
+           "var dbg=g&&g.getExtension('WEBGL_debug_renderer_info');" +
+           "if(dbg){gl=String(g.getParameter(dbg.UNMASKED_RENDERER_WEBGL));}else{gl='nodbg';}}" +
+           "catch(e){gl='err';}" +
+           "r.push('gl='+(gl.indexOf('Intel')>=0?'intel':gl));" +
+           "document.getElementById('out').textContent=r.join(';');" +
+           "})();</script>" +
+           "</body></html>"
+}
+
+// /trust 的正文：按钮处理函数**检查 event.isTrusted** ⇒ 只有真事件点击才会出现 TRUSTED-CLICK
+func _trustPage(): string {
+    return "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Trust Page</title></head><body>" +
+           "<div id=\"app\">idle</div><button id=\"btn\">go</button>" +
+           "<script>document.getElementById('btn').addEventListener('click',function(e){" +
+           "document.getElementById('app').textContent=(e.isTrusted?'TRUSTED':'UNTRUSTED')+'-CLICK';});</script>" +
+           "</body></html>"
+}
+
+// /type 的正文：输入框的 input 事件把值写进 #out（真事件输入的判据）
+func _typePage(): string {
+    return "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Type Page</title></head><body>" +
+           "<input id=\"q\" type=\"text\"><div id=\"out\">empty</div>" +
+           "<script>document.getElementById('q').addEventListener('input',function(){" +
+           "document.getElementById('out').textContent='TYPED'+'-'+document.getElementById('q').value;});</script>" +
+           "</body></html>"
+}
+
 // /sitemap-ok.gz 的正文：合法 gzip 字节（.NET GZipStream，明文见 _gzipSitemapXml）
 const HEX_SITEMAP_GZ = "1f8b080000000000000ab3292dca294e2db1b3292dcab1b3c9c94fb6cb282929b0d2d74fafd22b492d2ed14fb4d10789dae88315e0529584a20a44820c0500139ff7025d000000"
 
@@ -429,6 +471,15 @@ func _route(string path, string req): string {
     if path == "/sitemap.gz" {
         // gzip 魔数 + 垃圾字节：客户端必须识别出"这是压缩体"并降级，而不是当 XML 解析
         return _resp(200, "application/x-gzip", strings.from_bytes([0x1F, 0x8B, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00]))
+    }
+    if path == "/detect" {
+        return _resp(200, "text/html; charset=utf-8", _detectPage())
+    }
+    if path == "/trust" {
+        return _resp(200, "text/html; charset=utf-8", _trustPage())
+    }
+    if path == "/type" {
+        return _resp(200, "text/html; charset=utf-8", _typePage())
     }
     if path == "/ajax" {
         return _resp(200, "text/html; charset=utf-8", _ajaxPage())

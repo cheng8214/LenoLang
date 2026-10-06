@@ -30,6 +30,17 @@ int MAXREQ = 64
 // ⚠ threads.start 的入口必须是**本文件**的函数
 func serverEntry(int port, int maxReqs) { tk.serve(port, maxReqs) }
 
+// 从 /detect 页面里抠出 #out 的文本（诊断打印用；失败返回 ""）
+func _detectLine(string html): string {
+    string open = "<div id=\"out\">"     // 长度 14
+    int i = strings.byte_find(html, open, 0)
+    if i < 0 { return "" }
+    int s = i + 14
+    int e = strings.byte_find(html, "</div>", s)
+    if e < 0 { return "" }
+    return strings.byte_slice(html, s, e)
+}
+
 main() {
     print("--- ① WS 基础件（纯离线）---")
     tk.check("sha1('')", ws.sha1Hex(""), "da39a3ee5e6b4b0d3255bfef95601890afd80709")
@@ -196,6 +207,112 @@ main() {
         tk.checkTrue("web.renderWith", r3.ok)
         tk.checkTrue("web.renderWith 拿到渲染后内容", strings.has(r3.html, "SPA-CONTENT"))
         tk.checkTrue("web.closeBrowser", web.closeBrowser(b2))
+    }
+
+    print("--- ⑭ 反检测：默认带着无头特征，开 stealth 后抹掉 ---")
+    // 对照组：默认配置（不注入、不改 UA）
+    BrowserConfig cfgPlain = new BrowserConfig()
+    cfgPlain.startUrl = "about:blank"
+    Browser bp = cdp.launch(cfgPlain)
+    tk.checkTrue("对照组浏览器启动", bp.ok)
+    string plainDetect = ""      // 对照组结果（后面要拿它判断"哪些检查项本身有判别力"）
+    if bp.ok {
+        RenderOptions od = new RenderOptions()
+        od.waitUntil = "load"
+        od.settleMs = 100
+        od.timeoutMs = 8000
+        RenderResult dOff = cdp.renderAdvanced(bp, "http://127.0.0.1:" + PORT + "/detect", od)
+        tk.checkTrue("对照组渲染成功", dOff.ok)
+        plainDetect = _detectLine(dOff.html)
+        print("  对照组探测结果: " + plainDetect)
+        tk.checkTrue("默认 UA 暴露 HeadlessChrome", strings.has(dOff.html, "ua=HEADLESS"))
+        cdp.close(bp)
+    }
+
+    // stealth 组：--disable-blink-features=AutomationControlled + UA/语言覆盖 + 注入脚本
+    BrowserConfig cfgSt = new BrowserConfig()
+    cfgSt.startUrl = "about:blank"
+    cfgSt.stealth = true
+    Browser bs = cdp.launch(cfgSt)
+    tk.checkTrue("stealth 浏览器启动", bs.ok)
+    if bs.ok {
+        RenderOptions os = new RenderOptions()
+        os.waitUntil = "load"
+        os.settleMs = 200
+        os.timeoutMs = 8000
+        RenderResult dOn = cdp.renderAdvanced(bs, "http://127.0.0.1:" + PORT + "/detect", os)
+        tk.checkTrue("stealth 渲染成功", dOn.ok)
+        print("  stealth 探测结果: " + _detectLine(dOn.html))
+        tk.checkTrue("UA 已抹掉 Headless 字样", strings.has(dOn.html, "ua=clean"))
+        // ⚠ 现代 headless 的 navigator.webdriver 默认就是 **false**（不是 true），
+        //   站点判据是 `if (navigator.webdriver)` ⇒ 断"不是 true"才有意义
+        tk.check("webdriver 不为 true", strings.has(dOn.html, "wd=true"), false)
+        tk.checkTrue("语言已按配置覆盖", strings.has(dOn.html, "lang=zh-CN"))
+        // WebGL 渲染器：只有对照组**真拿到了渲染器串**（不是 err/nodbg）时才校验
+        // （拿不到就无法证明有判别力，硬断言只会变成"看环境脸色"的假失败）
+        if not strings.has(plainDetect, "gl=err") and not strings.has(plainDetect, "gl=nodbg") and plainDetect != "" {
+            tk.checkTrue("无头软件渲染器已被换掉", strings.has(dOn.html, "gl=intel"))
+        }
+
+        print("--- ⑮ 真事件：JS 点击 vs isTrusted 点击 / 真输入 ---")
+        RenderOptions oJs = new RenderOptions()
+        oJs.waitUntil = "load"
+        oJs.settleMs = 100
+        oJs.clickSelector = "#btn"
+        oJs.timeoutMs = 8000
+        RenderResult jsClick = cdp.renderAdvanced(bs, "http://127.0.0.1:" + PORT + "/trust", oJs)
+        tk.checkTrue("JS 点击渲染成功", jsClick.ok)
+        tk.check("JS 点击被识破（isTrusted=false）", strings.has(jsClick.html, "UNTRUSTED-CLICK"), true)
+
+        RenderOptions oReal = new RenderOptions()
+        oReal.waitUntil = "load"
+        oReal.settleMs = 100
+        oReal.realClickSelector = "#btn"
+        oReal.timeoutMs = 8000
+        RenderResult realClick = cdp.renderAdvanced(bs, "http://127.0.0.1:" + PORT + "/trust", oReal)
+        tk.checkTrue("真事件点击渲染成功", realClick.ok)
+        tk.checkTrue("真事件点击通过 isTrusted 检查", strings.has(realClick.html, "TRUSTED-CLICK"))
+
+        RenderOptions oType = new RenderOptions()
+        oType.waitUntil = "load"
+        oType.settleMs = 100
+        oType.typeSelector = "#q"
+        oType.typeValue = "hello"
+        oType.timeoutMs = 8000
+        RenderResult typed = cdp.renderAdvanced(bs, "http://127.0.0.1:" + PORT + "/type", oType)
+        tk.checkTrue("输入渲染成功", typed.ok)
+        tk.checkTrue("真事件输入触发了 input 事件", strings.has(typed.html, "TYPED-hello"))
+
+        // 回归护栏：反检测脚本是**手工拼的 JS**，括号写错只会静默失效
+        //   （`addScriptToEvaluateOnNewDocument` 连报错都不报）⇒ 必须自检语法
+        CdpClient cdbg = cdp.cdpConnect(cdp.pageWsUrl(bs), 8000)
+        if cdbg.ok {
+            tk.check("反检测脚本语法自检", cdp.stealthSelfTest(cdbg), "ok")
+            // 注入是否**真的落到当前文档**上（原型被改过）
+            string patched = cdp.evaluate(cdbg, "String(WebGLRenderingContext.prototype.getParameter).indexOf('Intel')>=0?'y':'n'")
+            tk.check("注入已落到当前文档（WebGL 原型被改）", patched, "y")
+            cdp.cdpClose(cdbg)
+        }
+
+        tk.checkTrue("stealth 浏览器关闭", cdp.close(bs))
+    }
+
+    print("--- ⑯ 浏览器走代理（--proxy-server）---")
+    // 本机服务端充当代理：收到**绝对 URI** 请求行就回 "PROXIED:<uri>"
+    // 目标主机名故意用不存在的域名 ⇒ 能拿到内容就证明请求确实过了代理
+    BrowserConfig cfgPx = new BrowserConfig()
+    cfgPx.startUrl = "about:blank"
+    cfgPx.proxy = "http://127.0.0.1:" + PORT
+    Browser bpx = cdp.launch(cfgPx)
+    tk.checkTrue("带代理启动浏览器", bpx.ok)
+    if bpx.ok {
+        RenderOptions opx = new RenderOptions()
+        opx.waitUntil = "load"
+        opx.settleMs = 100
+        opx.timeoutMs = 8000
+        RenderResult proxied = cdp.renderAdvanced(bpx, "http://no-such-host.invalid/x", opx)
+        tk.checkTrue("通过代理拿到了响应", strings.has(proxied.html, "PROXIED:"))
+        tk.checkTrue("代理浏览器已关闭", cdp.close(bpx))
     }
 
     tk.shutdown(PORT)

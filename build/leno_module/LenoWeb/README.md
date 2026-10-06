@@ -408,6 +408,40 @@ var r = web.renderAdvanced(b, "https://example.com/spa", opt)
 （**必须先开 `Network` 域再导航**，否则漏掉最早那批请求，就等不准了）；超时不会报错，
 只是照常取值 —— 宁可拿到半成品，也不要卡死。
 
+**交互**（都在取值之前生效，所以拿到的 HTML 反映交互后的状态）：
+
+| 选项 | 实现 | 说明 |
+| --- | --- | --- |
+| `clickSelector` | `element.click()` | 最快，但事件 `isTrusted=false` |
+| `realClickSelector` | `Input.dispatchMouseEvent` | **真事件**（按 `getBoundingClientRect` 算视口坐标），过 `isTrusted` 检查 |
+| `typeSelector` / `typeValue` | `Input.insertText` | 真输入，会触发 `input` 事件 |
+| `scrollTimes` | `window.scrollTo` | 无限滚动 / 懒加载 |
+
+**会话与代理**：`BrowserConfig.proxy`（转成 `--proxy-server`）、`userDataDir`（**给了就持久化**，
+可复用登录态；不给则用临时目录）、`userAgent` / `languages`。
+
+**反检测（`stealth = true`）**：默认关（注入脚本毕竟改了页面环境）。开启后分三层：
+
+| 层 | 做的事 |
+| --- | --- |
+| 启动参数 | `--disable-blink-features=AutomationControlled`（**从源头**去掉 `navigator.webdriver`）、`--lang=<语言>` |
+| CDP | `Emulation.setUserAgentOverride`：UA 按浏览器版本重拼（抹掉 `HeadlessChrome` 字样）+ 语言 + platform |
+| 注入脚本 | `Page.addScriptToEvaluateOnNewDocument`（**导航之前**注册）：webdriver / languages / plugins / mimeTypes / hardwareConcurrency / deviceMemory / `window.chrome` / WebGL 的 `UNMASKED_VENDOR|RENDERER` / `permissions.query('notifications')` |
+
+实测（本机 headless Edge 154，判据是一个**自己探测无头特征**的页面）：
+
+| 特征 | 不开 stealth | 开启后 |
+| --- | --- | --- |
+| `navigator.webdriver` | `false` | `undefined` |
+| UA | `…HeadlessChrome/154…` | 正常 Chrome UA |
+| WebGL `UNMASKED_RENDERER` | `ANGLE (Microsoft, … Basic Render Driver …, D3D11)` | `Intel Iris OpenGL Engine` |
+
+> ⚠ 这是"**抹掉无头特征**"这一层，不是完整指纹伪装（Canvas/字体/Audio 指纹等仍是真值）。
+> ⚠ 注入脚本是**手工拼的 JS 字符串**：括号写错会**静默失效**（`addScriptToEvaluateOnNewDocument`
+> 连报错都不报）⇒ 测试里有一条 `stealthSelfTest` 语法自检（把脚本丢进 `try/eval` 跑一遍）。
+> 这条护栏不是形式主义：实测就是靠它抓到"三个 `defineProperty` 各少一个 `}`"（补丁完全没生效，
+> 但协议层一路"成功"）。
+
 **为什么是这条路（而不是 WebView2）**：
 
 | | 覆盖面 / 理由 |
@@ -441,8 +475,9 @@ var r = web.renderAdvanced(b, "https://example.com/spa", opt)
 
 - 需要本机有 Chrome/Edge（Windows 上 Edge 自带）；**POSIX 路径未实测**（开发环境是 Windows）
 - `web_ws` 只实现 `ws://`，不实现 `wss://`（CDP 走本机明文，用不到）
-- 交互用的是 **JS 点击**（`element.click()`）：派发的是**不可信事件**（`isTrusted=false`），
-  个别站点会据此拒绝。需要真事件时再走 `Input.dispatchMouseEvent`（后续）
+- 交互：`clickSelector` 是 JS 点击（`isTrusted=false`），需要真事件用 `realClickSelector`。
+  **拖拽 / 滚轮 / 键盘组合键还没做**（要真事件键盘序列得走 `Input.dispatchKeyEvent` 逐个按键）
+- 反检测只做到"抹掉无头特征"（见上），**不做** Canvas/字体/Audio 指纹伪装
 - `pageWsUrl` 的选择顺序是"**我们自己创建的 target**（`Target.createTarget` 拿到的 targetId 精确匹配）
   → http 页面 → 非内部 scheme 的页面"。**不能取"第一个 page"**：实测 Edge 首启会自带
   `edge://sync-confirmation-dialog/` 这类内部页，取第一个就会连到它上面

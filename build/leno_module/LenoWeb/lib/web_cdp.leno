@@ -33,12 +33,17 @@ export struct BrowserConfig {
     string exe = ""            // 浏览器可执行文件；"" ⇒ 自动发现（或 LENO_BROWSER）
     bool headless = true
     string startUrl = ""       // 启动时的首页（给 "" 用 about:blank）
-    string userDataDir = ""    // "" ⇒ 自动建临时目录
+    string userDataDir = ""    // "" ⇒ 自动建临时目录；给了就持久化（可复用登录态）
     int port = 0               // 0 ⇒ 自动挑空闲端口
     int windowWidth = 1280
     int windowHeight = 800
     int readyTimeoutMs = 20000 // 等 DevTools 端口就绪的上限
     string extraArgs = ""      // 追加参数（空格分隔）
+    string proxy = ""          // 例 "http://127.0.0.1:8080" ⇒ --proxy-server
+    // ---- 反检测（对强反爬站点建议开：默认关，因为注入脚本毕竟改了页面环境）----
+    bool stealth = false
+    string userAgent = ""      // "" ⇒ stealth 时按浏览器版本自动生成（抹掉 HeadlessChrome 字样）
+    string languages = "zh-CN,zh;q=0.9,en;q=0.8"
 }
 
 export struct Browser {
@@ -52,6 +57,10 @@ export struct Browser {
     bool headless = true
     int pid = 0                // 尽量取（`SystemInfo.getProcessInfo`），取不到为 0
     string pageTargetId = ""   // **我们自己创建的**页面 target（渲染操作都落在它上面）
+    // 反检测配置（launch 时从 config 拷过来，渲染每个页面时按它准备环境）
+    bool stealth = false
+    string userAgent = ""
+    string languages = ""
 }
 
 export struct CdpClient {
@@ -238,6 +247,21 @@ func _buildArgs(BrowserConfig cfg, int port, string udd): string {
     // 干扰"哪个 page target 才是我们的页面"的判断（有 targetId 精确匹配兜底，但仍少扰为妙）
     a = a + "--disable-sync --disable-background-networking --no-service-autorun --disable-default-apps "
     a = a + "--window-size=" + cfg.windowWidth + "," + cfg.windowHeight + " "
+    if cfg.proxy != "" {
+        a = a + "--proxy-server=" + cfg.proxy + " "
+    }
+    if cfg.stealth {
+        // 这一条是"抹掉 navigator.webdriver"的**源头**做法（比在 JS 里覆盖它更干净）
+        a = a + "--disable-blink-features=AutomationControlled "
+        string lang = cfg.languages
+        int semi = strings.byte_find(lang, ";", 0)
+        int comma = strings.byte_find(lang, ",", 0)
+        int cut = -1
+        if comma >= 0 { cut = comma }
+        if semi >= 0 and (cut < 0 or semi < cut) { cut = semi }
+        if cut > 0 { lang = strings.byte_slice(lang, 0, cut) }
+        if lang != "" { a = a + "--lang=" + lang + " " }
+    }
     if cfg.extraArgs != "" { a = a + cfg.extraArgs + " " }
     if cfg.startUrl != "" { a = a + "\"" + cfg.startUrl + "\" " }
     return strings.trim(a)
@@ -260,6 +284,100 @@ func _spawn(string exe, string args): bool {
 func _isWindows(): bool {
     // dirs.sep() 在 Windows 返回 "\"，POSIX 返回 "/"（见 dirs 模块）
     return dirs.sep() == "\\"
+}
+
+// ==================== 反检测（stealth）====================
+
+func _platform(): string {
+    if _isWindows() { return "Win32" }
+    return "Linux x86_64"
+}
+
+// 按浏览器版本号拼一个**正常**的 UA。
+// 为什么要这一步：headless 默认 UA 里带 "HeadlessChrome/154.0.0.0" —— 白送一个特征。
+func _defaultUa(string version): string {
+    string v = version
+    bool isEdge = false
+    if strings.has(v, "Edg/") {
+        isEdge = true
+        v = strings.byte_slice(v, 4, v.byte_len())
+    } else if strings.has(v, "Chrome/") {
+        v = strings.byte_slice(v, 7, v.byte_len())
+    }
+    string base = ""
+    if _isWindows() {
+        base = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/" + v + " Safari/537.36"
+    } else {
+        base = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/" + v + " Safari/537.36"
+    }
+    if isEdge { base = base + " Edg/" + v }
+    return base
+}
+
+// 注入到**每个新文档**里的反检测脚本（在页面自身脚本之前执行）。
+// ⚠ 这是**手工拼的 JS 字符串**：括号计数极易错，而错了以后 `Runtime.evaluate` /
+//   注入都只会静默失效（`addScriptToEvaluateOnNewDocument` 甚至不报错）。
+//   所以测试里有一条 `stealthSelfTest` 断言（把脚本丢进 try/eval 里跑一遍）——
+//   实测就是靠它抓到"三个 defineProperty 各少一个 `}`"这个错。
+//
+// 只做"抹掉无头特征"这一类，不做指纹伪造的军备竞赛：
+//   navigator.webdriver / languages / plugins / mimeTypes / hardwareConcurrency /
+//   window.chrome / WebGL 的 UNMASKED_VENDOR|RENDERER / permissions.query('notifications')
+func _stealthJs(): string {
+    string js = "(function(){"
+    js = js + "try{Object.defineProperty(navigator,'webdriver',{get:function(){return undefined;}});}catch(e){}"
+    js = js + "try{Object.defineProperty(navigator,'languages',{get:function(){return ['zh-CN','zh','en'];}});}catch(e){}"
+    js = js + "try{Object.defineProperty(navigator,'plugins',{get:function(){return [{name:'Chrome PDF Plugin'},{name:'Chrome PDF Viewer'},{name:'Native Client'}];}});}catch(e){}"
+    js = js + "try{Object.defineProperty(navigator,'mimeTypes',{get:function(){return [{type:'application/pdf'}];}});}catch(e){}"
+    js = js + "try{Object.defineProperty(navigator,'hardwareConcurrency',{get:function(){return 8;}});}catch(e){}"
+    js = js + "try{Object.defineProperty(navigator,'deviceMemory',{get:function(){return 8;}});}catch(e){}"
+    js = js + "try{if(!window.chrome){window.chrome={runtime:{},app:{isInstalled:false},csi:function(){},loadTimes:function(){}};}}catch(e){}"
+    js = js + "try{var g=WebGLRenderingContext.prototype.getParameter;"
+    js = js + "WebGLRenderingContext.prototype.getParameter=function(p){"
+    js = js + "if(p===37445)return 'Intel Inc.';if(p===37446)return 'Intel Iris OpenGL Engine';return g.apply(this,arguments);};}catch(e){}"
+    js = js + "try{var g2=WebGL2RenderingContext.prototype.getParameter;"
+    js = js + "WebGL2RenderingContext.prototype.getParameter=function(p){"
+    js = js + "if(p===37445)return 'Intel Inc.';if(p===37446)return 'Intel Iris OpenGL Engine';return g2.apply(this,arguments);};}catch(e){}"
+    js = js + "try{var q=navigator.permissions.query.bind(navigator.permissions);"
+    js = js + "navigator.permissions.query=function(a){"
+    js = js + "if(a&&a.name==='notifications'){return Promise.resolve({state:'default',onchange:null});}return q(a);};}catch(e){}"
+    js = js + "})();"
+    return js
+}
+
+// 反检测脚本源码（导出给测试/诊断用：可以手动 evaluate 一次看它到底有没有效果）
+export func stealthSource(): string {
+    return _stealthJs()
+}
+
+// 自检：把脚本放进 try/eval 里跑一遍。返回 "ok" 或 "ERR:<原因>"。
+// 为什么需要它：`Runtime.evaluate` 遇到**语法错误**只是返回异常详情 —— 我们的 evaluate
+// 只看 value ⇒ 会静默返回空串，于是"注入没生效"完全没有线索（实测就这么卡了一轮）。
+export func stealthSelfTest(CdpClient c): string {
+    string js = "(function(){try{eval(" + jsons.encode(_stealthJs()) + ");return 'ok';}catch(e){return 'ERR:'+e.message;}})()"
+    string r = evaluate(c, js)
+    if r == "" { return "ERR:（evaluate 未返回，可能是语法错误）" }
+    return r
+}
+
+// 每个页面在**导航之前**的环境准备（UA / 语言 / stealth 注入）
+// ⚠ 注入必须早于导航：`Page.addScriptToEvaluateOnNewDocument` 要求"之后创建的新文档"才生效
+// 返回 "" 表示都成功；否则是失败原因（**不要静默失败** —— 静默失败会让 stealth 看起来开着、
+// 实际什么都没注入，实测就踩过：WebGL 渲染器与对照组一模一样，才发现注入压根没生效）
+func _preparePage(CdpClient c, Browser b): string {
+    if not b.stealth { return "" }
+    string ua = b.userAgent
+    if ua == "" { ua = _defaultUa(b.version) }
+    string lang = b.languages
+    if lang == "" { lang = "zh-CN,zh;q=0.9,en;q=0.8" }
+    string params = "{\"userAgent\":" + jsons.encode(ua) +
+                    ",\"acceptLanguage\":" + jsons.encode(lang) +
+                    ",\"platform\":" + jsons.encode(_platform()) + "}"
+    string r1 = cdpCall(c, "Emulation.setUserAgentOverride", params)
+    if r1 == "" { return "设置 UA 失败：" + c.error }
+    string r2 = cdpCall(c, "Page.addScriptToEvaluateOnNewDocument", "{\"source\":" + jsons.encode(_stealthJs()) + "}")
+    if r2 == "" { return "注入反检测脚本失败：" + c.error }
+    return ""
 }
 
 // 兜底清理：按 profile 目录标记杀进程（**主路径是 CDP 的 Browser.close**）
@@ -435,6 +553,10 @@ export func launch(BrowserConfig cfg): Browser {
         return b
     }
     b.exe = exe
+    // 反检测配置跟着浏览器走（渲染每个页面时按它准备环境）
+    b.stealth = cfg.stealth
+    b.userAgent = cfg.userAgent
+    b.languages = cfg.languages
 
     string udd = cfg.userDataDir
     if udd == "" {
@@ -597,7 +719,10 @@ export struct RenderOptions {
     string waitSelector = ""     // waitUntil == "selector" 时等它出现
     int networkIdleMs = 500      // 连续这么久没有在飞请求 ⇒ 算网络空闲
     int settleMs = 500           // 等待结束后再静置一会儿（给前端渲染留时间）
-    string clickSelector = ""    // 打开后先点它（展开 / 懒加载）
+    string clickSelector = ""    // 打开后先点它（JS 点击，最快）
+    string realClickSelector = "" // **真事件**点击（isTrusted=true，过反脚本点击的站点）
+    string typeSelector = ""     // 先往这里输入文字（真事件 insertText）
+    string typeValue = ""
     int scrollTimes = 0          // 打开后向下滚几次（每次滚到底 + 短静置）
     string screenshotPath = ""   // 非空则把截图（PNG）写到这里
 }
@@ -689,6 +814,35 @@ export func clickSelector(CdpClient c, string css): bool {
     return evaluate(c, js) == "1"
 }
 
+// **真事件**点击：走 `Input.dispatchMouseEvent`，页面拿到的 `event.isTrusted === true`。
+// 有些站点用 isTrusted 挡脚本点击（只用 element.click() 会被识破）⇒ 这种场景用这个。
+export func clickReal(CdpClient c, string css): bool {
+    string js = "(function(){var e=document.querySelector(" + jsons.encode(css) +
+                ");if(!e)return '';var r=e.getBoundingClientRect();" +
+                "return Math.round(r.left+r.width/2)+','+Math.round(r.top+r.height/2);})()"
+    string pos = evaluate(c, js)
+    if pos == "" { return false }
+    int comma = strings.byte_find(pos, ",", 0)
+    if comma < 0 { return false }
+    int x = _int(strings.byte_slice(pos, 0, comma))
+    int y = _int(strings.byte_slice(pos, comma + 1, pos.byte_len()))
+    // 坐标是**视口坐标**（getBoundingClientRect 与 CDP 的 x/y 同一坐标系）
+    string common = "\"x\":" + x + ",\"y\":" + y + ",\"button\":\"left\",\"clickCount\":1"
+    cdpCall(c, "Input.dispatchMouseEvent", "{\"type\":\"mouseMoved\"," + common + "}")
+    cdpCall(c, "Input.dispatchMouseEvent", "{\"type\":\"mousePressed\"," + common + "}")
+    cdpCall(c, "Input.dispatchMouseEvent", "{\"type\":\"mouseReleased\"," + common + "}")
+    return true
+}
+
+// **真事件**输入：先聚焦元素，再用 `Input.insertText` 送文字（会触发 input 事件）
+export func typeText(CdpClient c, string css, string text): bool {
+    string js = "(function(){var e=document.querySelector(" + jsons.encode(css) +
+                ");if(!e)return '';e.focus();return '1';})()"
+    if evaluate(c, js) != "1" { return false }
+    cdpCall(c, "Input.insertText", "{\"text\":" + jsons.encode(text) + "}")
+    return true
+}
+
 // 滚到页面底部（无限滚动 / 懒加载用），返回滚动前的文档高度
 export func scrollToBottom(CdpClient c): int {
     string h = evaluate(c, "String(Math.max(document.body.scrollHeight, document.documentElement.scrollHeight))")
@@ -735,6 +889,13 @@ export func renderAdvanced(Browser b, string url, RenderOptions opt): RenderResu
     }
     cdpCall(c, "Page.enable", "")
     cdpCall(c, "Runtime.enable", "")
+    // ⚠ stealth 的 UA/注入必须在**导航之前**做：注入脚本只对"之后创建的文档"生效
+    string prepErr = _preparePage(c, b)
+    if prepErr != "" {
+        r.error = "stealth 准备失败：" + prepErr
+        cdpClose(c)
+        return r
+    }
     if opt.waitUntil == "networkidle" {
         // ⚠ 必须先开 Network 域**再**导航，否则会漏掉最早那批请求（就等不准了）
         cdpCall(c, "Network.enable", "")
@@ -750,8 +911,17 @@ export func renderAdvanced(Browser b, string url, RenderOptions opt): RenderResu
     }
     if opt.settleMs > 0 { _sleepMs(opt.settleMs) }
 
+    // 交互顺序：填表 → 点击 → 滚动（都发生在取值之前，拿到的 HTML 反映交互后的状态）
+    if opt.typeSelector != "" and opt.typeValue != "" {
+        typeText(c, opt.typeSelector, opt.typeValue)
+        _sleepMs(200)
+    }
     if opt.clickSelector != "" {
         clickSelector(c, opt.clickSelector)
+        _sleepMs(300)
+    }
+    if opt.realClickSelector != "" {
+        clickReal(c, opt.realClickSelector)
         _sleepMs(300)
     }
     for 0:opt.scrollTimes-1 to i {
