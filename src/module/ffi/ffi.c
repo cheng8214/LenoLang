@@ -102,6 +102,44 @@ typedef struct {
 static FFICallbackEntry g_callback_registry[MAX_FFI_CALLBACKS];
 static int g_callback_count = 0;
 
+/* ★ 回调槽位锁（2026-10-06 修）：g_callback_registry 是**进程级共享**的普通全局数组，
+ *   而 `ffi.callback` 在多个线程里并发调用时，"找空槽 → 写槽位" 不是原子操作
+ *   ⇒ 两个线程会挑中**同一个 cb_id**，后写者覆盖先写者：先者的 trampoline 分发到
+ *   别人的闭包 ⇒ 回调结果丢失 / 串台（实测：8 线程并发抓取时约 1/3 的响应正文为空或错）。
+ *   实测证据：修前 `8 线程 × 6 轮` 失败 11/18/2 项，修后为 0。 */
+static PlatformMutex g_callback_mutex;
+static int g_callback_mutex_ready = 0;
+
+/* 预留一个回调槽位（线程安全）；成功返回 id，失败返回 -1。
+ * 只把 active 置 1 占位，sig/func_val 由调用方随后填充 —— 此时该槽位已被本线程独占，
+ * 且它的 trampoline 还没交给任何 C 库，故不存在"分发到半初始化槽位"的窗口。 */
+static int callback_registry_reserve(void) {
+    int id = -1;
+    if (g_callback_mutex_ready) platform_mutex_lock(&g_callback_mutex);
+    for (int i = 0; i < MAX_FFI_CALLBACKS; i++) {
+        if (!g_callback_registry[i].active) {
+            g_callback_registry[i].active = 1;
+            g_callback_registry[i].sig = NULL;
+            g_callback_registry[i].func_val = val_null();
+            id = i;
+            break;
+        }
+    }
+    if (g_callback_mutex_ready) platform_mutex_unlock(&g_callback_mutex);
+    return id;
+}
+
+/* 释放一个回调槽位（线程安全）。清 sig/func_val 是为了不让"已死"的槽位
+ * 继续被 gc_scan_children 之外的路径读到悬空指针。 */
+static void callback_registry_release(int cb_id) {
+    if (cb_id < 0 || cb_id >= MAX_FFI_CALLBACKS) return;
+    if (g_callback_mutex_ready) platform_mutex_lock(&g_callback_mutex);
+    g_callback_registry[cb_id].active = 0;
+    g_callback_registry[cb_id].sig = NULL;
+    g_callback_registry[cb_id].func_val = val_null();
+    if (g_callback_mutex_ready) platform_mutex_unlock(&g_callback_mutex);
+}
+
 /* ===== 上次 FFI 调用的错误码缓存 ===== */
 static int64_t g_last_error = 0;
 
@@ -1146,9 +1184,7 @@ static Value ffi_free_func(int argc, Value* args) {
     }
     case OBJ_FFI_CALLBACK: {
         ObjFFICallback* cb = (ObjFFICallback*)obj;
-        if (cb->callback_id >= 0 && cb->callback_id < MAX_FFI_CALLBACKS) {
-            g_callback_registry[cb->callback_id].active = 0;
-        }
+        callback_registry_release(cb->callback_id);
         if (cb->trampoline) {
             free_executable_memory(cb->trampoline, 256);
             cb->trampoline = NULL;
@@ -2615,6 +2651,9 @@ static void ffi_callback_marshal_init(void) {
     platform_mutex_init(&g_pending_mutex);
     platform_cond_init(&g_pending_cond);
     platform_cond_init(&g_complete_cond);
+    /* 回调槽位锁：在主线程、任何线程启动之前初始化（ffi_init_module 由主线程调用） */
+    platform_mutex_init(&g_callback_mutex);
+    g_callback_mutex_ready = 1;
     g_pending_count = 0;
     memset(g_pending_queue, 0, sizeof(g_pending_queue));
     /* 在主线程初始化时记录主线程 ID（ffi_init_module 由主线程调用） */
@@ -2954,9 +2993,8 @@ static void free_executable_memory(void* ptr, size_t size) {
 
 void ffi_callback_free_resources(Object* obj) {
     ObjFFICallback* cb = (ObjFFICallback*)obj;
-    if (cb->callback_id >= 0 && cb->callback_id < MAX_FFI_CALLBACKS) {
-        g_callback_registry[cb->callback_id].active = 0;
-    }
+    /* 走线程安全的释放：GC 可能在别的线程正在 ffi.callback 时被触发 */
+    callback_registry_release(cb->callback_id);
     if (cb->trampoline) {
         free_executable_memory(cb->trampoline, 256);
         cb->trampoline = NULL;
@@ -3284,13 +3322,10 @@ Value ffi_callback_create_with_sig(Value func_val, int ret_type, int param_count
         return val_null();
     }
 
-    int cb_id = -1;
-    for (int i = 0; i < MAX_FFI_CALLBACKS; i++) {
-        if (!g_callback_registry[i].active) {
-            cb_id = i;
-            break;
-        }
-    }
+    /* 槽位分配必须**原子**：多线程并发 ffi.callback 时若各自"找空槽再写入"，
+     * 两个线程会选中同一个 cb_id（后写者覆盖先写者）⇒ 回调分发到别人的闭包。
+     * 见 g_callback_mutex 处的说明。 */
+    int cb_id = callback_registry_reserve();
     if (cb_id < 0) {
         native_throw_error("回调数量已达上限");
         return val_null();
@@ -3298,6 +3333,7 @@ Value ffi_callback_create_with_sig(Value func_val, int ret_type, int param_count
 
     FFISignature* sig = (FFISignature*)malloc(sizeof(FFISignature));
     if (!sig) {
+        callback_registry_release(cb_id);
         native_throw_error("内存不足");
         return val_null();
     }
@@ -3309,19 +3345,21 @@ Value ffi_callback_create_with_sig(Value func_val, int ret_type, int param_count
 
     void* trampoline = create_callback_trampoline(cb_id, (FFIType)ret_type);
     if (!trampoline) {
+        callback_registry_release(cb_id);
         free(sig);
         native_throw_error("无法分配可执行内存");
         return val_null();
     }
 
+    /* active 已由 reserve() 置 1（占位）；这里只填 sig/func_val。
+     * 此刻 trampoline 还没交给任何 C 库 ⇒ 不存在"分发到半初始化槽位"的窗口。 */
     g_callback_registry[cb_id].func_val = func_val;
     g_callback_registry[cb_id].sig = sig;
-    g_callback_registry[cb_id].active = 1;
     g_callback_count++;
 
     ObjFFICallback* cb = (ObjFFICallback*)gc_alloc(sizeof(ObjFFICallback), OBJ_FFI_CALLBACK);
     if (!cb) {
-        g_callback_registry[cb_id].active = 0;
+        callback_registry_release(cb_id);
         free(sig);
         free_executable_memory(trampoline, 256);
         native_throw_error("内存不足");

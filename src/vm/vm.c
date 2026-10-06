@@ -1518,7 +1518,16 @@ int vm_call_value(Value callee, int arg_count, int line) {
         #undef vm
         return 1;
     }
-    vm.stop_frame_cnt = saved_frame_cnt;
+    /* ★ 必须走 `vm_ptr->` 而**不能**用宏 `vm`（2026-10-06 修）：
+     *   本文件里 `#define vm (*current_exec_vm)` 被多处 `#undef vm` 中途摘掉过，
+     *   到这一行时宏**已不在作用域**（`vm` 解析成**全局主 VM**）⇒ 赋值落在主 VM 上，
+     *   而嵌套解释器循环读的是 `vm_ptr`（子线程 = 自己的 VM）⇒ 子线程的 stop 永远是 0
+     *   ⇒ 嵌套循环不停，把**调用方的帧也一路跑完**（frame_cnt → 0）⇒ 回调第二次起
+     *   "成功但结果丢失"，随后 qsort 继续用已弹出的帧 ⇒ 0xC0000005。
+     *   实证：修前 `&vm.stop_frame_cnt` = 主VM+0x4C158、`&vm_ptr->stop_frame_cnt` = 子VM+0x4C158，
+     *   两者地址不同（同一个结构体、同一个偏移）⇒ 就是"写错对象"。
+     *   本函数其余同类赋值（last_return_* / host_floor / stop 的恢复）本来就是 `vm_ptr->`，此行使之一致。 */
+    vm_ptr->stop_frame_cnt = saved_frame_cnt;
     #undef vm
 
     // ★ 异常展开下界（f6）：本层嵌套运行里，异常**不许**跳到调用方的帧去
