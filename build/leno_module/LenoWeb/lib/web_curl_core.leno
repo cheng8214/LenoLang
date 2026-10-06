@@ -128,6 +128,7 @@ export enum Opt {
     USERPWD             = 10005   // CURLOPTTYPE_STRINGPOINT + 5, 用户名:密码
     PROXYUSERPWD        = 10006   // CURLOPTTYPE_STRINGPOINT + 6, 代理用户名:密码
     RANGE               = 10007   // CURLOPTTYPE_STRINGPOINT + 7, 范围请求
+    MIMEPOST            = 10269   // CURLOPTTYPE_OBJECTPOINT + 269, multipart/form-data（curl_mime_* 句柄）
 
     // 函数指针选项（CURLOPTTYPE_FUNCTIONPOINT = 20000）
     WRITEFUNCTION       = 20011   // CURLOPTTYPE_FUNCTIONPOINT + 11, 写回调函数
@@ -224,8 +225,6 @@ export enum SslVersion {
 
 // ==================== DLL 加载 ====================
 
-curl g_lib = null
-
 // 加载 libcurl 动态库（全局缓存，避免重复加载）
 //   · Windows：随模块分发的 `libcurl-x64.dll`
 //   · POSIX  ：随模块分发的 `libcurl.so`（**curl 8.21.0** —— 与随包 `libcurl-x64.dll` 同版本；
@@ -233,6 +232,16 @@ curl g_lib = null
 //              `ffi.load` 会按文件名搜索**已加载模块目录**，故传纯文件名即可命中本模块 lib/ ✓
 //              万一没有自带 .so，再退回系统 soname `libcurl.so.4`（发行版普遍自带）
 // 原实现 POSIX 侧找的是 `libcurl-x64.so`，本仓库并没有这个文件 ⇒ 加载必失败 ✗
+//
+curl g_lib = null
+
+// ⚠ 这里是**懒加载**，全局在多线程间共享（见 web_net.leno 顶部注释）⇒ 首次并发调用时
+//   会有两个线程同时写 g_lib 的窗口。实测结论：**这一处是安全的，不必改造**——
+//   ffi.load 的库对象虽会被 GC 回收（gc.c:1680 ⇒ ffi_library_free_resources ⇒ FreeLibrary），
+//   但 handle 是**引用计数**的：N 个线程各加载一次、输家的 N-1 个对象被回收，
+//   赢家（被 g_lib 引用、GC 可达）仍持有 1 次引用 ⇒ 库不会被真正卸载。
+//   （试过改成"模块级急切加载"，但 `func f(): curl` 的返回值被判定为 struct 而非 clib，
+//     赋值给 clib 变量编译不过 ⇒ 保持懒加载。）
 export func lib(): curl {
     if g_lib == null {
         if _os() == "windows" {
@@ -403,4 +412,51 @@ export func slistFreeAll(Ptr[u8] list) {
 // 释放 curl 分配的内存
 export func free(Ptr[u8] p) {
     lib().curl_free(p)
+}
+
+// ==================== MIME（multipart/form-data）封装 ====================
+// 用途：文件上传（登录/发布类接口大量使用），替代已弃用的 CURLOPT_HTTPPOST（改走 Opt.MIMEPOST）。
+// 与 setopt_* 同风格用法：这些函数都不是变参，但走 ffi.call_* 可复用**已加载的** lib 句柄，
+// 不必再声明一个 clib 块、也不会有第二次 ffi.load 的开销。
+// 典型用法见 web_net.leno 的 HttpClient.postMultipart()。
+
+// 创建 mime 句柄（必须绑定到一个 easy handle；同一 handle 生命周期内有效）
+export func mimeInit(Ptr[u8] easy): Ptr[u8] {
+    return ffi.call_ptr(lib(), "curl_mime_init", easy)
+}
+
+// 释放 mime 句柄（请求结束、easy_cleanup 之前）
+export func mimeFree(Ptr[u8] mime) {
+    if mime == null { return }
+    ffi.call_void(lib(), "curl_mime_free", mime)
+}
+
+// 追加一个 part
+export func mimeAddPart(Ptr[u8] mime): Ptr[u8] {
+    return ffi.call_ptr(lib(), "curl_mime_addpart", mime)
+}
+
+// 设置 part 的表单字段名
+export func mimeName(Ptr[u8] part, string name): int {
+    return ffi.call_int(lib(), "curl_mime_name", part, name)
+}
+
+// 设置 part 的内容（size = 字节数；libcurl 会**立即拷贝**这份数据，故可安全传临时串）
+export func mimeData(Ptr[u8] part, string data, int size): int {
+    return ffi.call_int(lib(), "curl_mime_data", part, data, size)
+}
+
+// 设置 part 的内容来自磁盘文件（libcurl 自己读文件，流式发送 ⇒ 大文件不占内存）
+export func mimeFileData(Ptr[u8] part, string path): int {
+    return ffi.call_int(lib(), "curl_mime_filedata", part, path)
+}
+
+// 指定上传时的文件名（不设则默认用 filedata 的路径）
+export func mimeFileName(Ptr[u8] part, string name): int {
+    return ffi.call_int(lib(), "curl_mime_filename", part, name)
+}
+
+// 指定 part 的 MIME 类型（不设时 libcurl 按文件名后缀猜）
+export func mimeType(Ptr[u8] part, string mimeType): int {
+    return ffi.call_int(lib(), "curl_mime_type", part, mimeType)
 }

@@ -5,6 +5,7 @@ import jsons
 import files
 import strings
 import "web_curl_core.leno" as core
+import "web_charset.leno" as charsets
 // 重新导出核心类型
 use core.(curl, Code, Opt, Info, Global, HttpVersion, SslVersion)
 
@@ -12,21 +13,69 @@ use core.(curl, Code, Opt, Info, Global, HttpVersion, SslVersion)
 cfunc WriteCb(Ptr data, i32 size, i32 nmemb, Ptr userdata): i32
 cfunc HeaderCb(Ptr data, i32 size, i32 nmemb, Ptr userdata): i32
 
-// ==================== 回调分发的全局变量 ====================
-// 问题：libcurl 的 write_callback 中无法直接访问 Response 对象
-// 方案：使用模块级全局变量传递当前 Response
-// 注意：使用可空类型 Type? 以支持 == null 判断
-Response? _currentResp = null
+// ==================== libcurl 全局初始化：模块加载时做一次 ====================
+// ⚠ `curl_global_init` 是 libcurl 文档明确标注的**非线程安全**函数，而原实现在
+//   `HttpClient.init()` 里每个客户端都调一次 ⇒ 多线程并发建客户端时会并发进入
+//   libcurl 的全局初始化（8 线程并发抓取实测：响应正文偶发为空）。
+//   放到模块初始化（单线程，且早于任何 threads.start / 任何请求）做一次即可：
+//   模块级变量初始化可以调用函数（实证可行），且这里返回 int、不涉及 clib 类型。
+int _g_curlGlobalReady = core.globalInit(Global.ALL)
+
+// ==================== 响应累加器（每个客户端一份） ====================
+// libcurl 的 write_callback 拿不到 Response 对象，必须靠"回调 + 外部状态"收集数据。
+//
+// 早先的实现用模块级全局 `Response? _currentResp`，但**模块级全局在多线程间是共享的**
+// （`ObjModule.globals` 不随 `threads.start()` 深拷贝，见
+//  docs/多线程struct与模块全局变量问题记录.md）⇒ 两个线程同时请求会互相覆盖响应体（串台）。
+//
+// 现在改为：每个 HttpClient 在 init() 里建自己的累加器，由**闭包捕获**交给回调
+// （2026-10-06 实测：ffi.callback 支持闭包，可捕获并回写 struct 实例；实例赋值是共享语义）。
+// 语义与 Python 的 requests.Session 对齐：
+//   · 每线程各用各的 client（或直接用模块级 get()，内部每次新建 client）⇒ 线程安全 ✓
+//   · 同一个 client 跨线程共用 ⇒ 和 requests.Session 一样不安全（用户责任）
+//
+// 另一个顺带的收益：分块累加（结束时 join 一次）替代 `body = body + chunk`
+// ⇒ 大响应体从 O(n²) 拷贝降到 O(n)。
+struct _RespAcc {
+    Array[string] bodyChunks
+    Array[string] headerChunks
+    int bodyBytes = 0
+
+    func reset() {
+        bodyChunks = []
+        headerChunks = []
+        bodyBytes = 0
+    }
+    func body(): string { return strings.join(bodyChunks, "") }
+    func headers(): string { return strings.join(headerChunks, "") }
+}
+
+// 写回调的实际动作（只做"读字节 + 存块"，不碰任何全局状态）
+func _accAppendBody(_RespAcc acc, Ptr data, int total): int {
+    if total <= 0 { return 0 }
+    acc.bodyChunks.add(ffi.read_string_n(data, 0, total))
+    acc.bodyBytes = acc.bodyBytes + total
+    return total
+}
+
+// header 回调的实际动作
+func _accAppendHeader(_RespAcc acc, Ptr data, int total): int {
+    if total <= 0 { return 0 }
+    acc.headerChunks.add(ffi.read_string_n(data, 0, total))
+    return total
+}
 
 // ==================== Response 响应结构 ====================
 // 封装 HTTP 响应数据
 export struct Response {
     // 初值与本结构 reset() 里的赋值保持一致（消 [字段未初始化] 警告，语义不变）
     int statusCode = 0             // HTTP 状态码（200, 404, 500 等）
-    string body = ""               // 响应体
+    string body = ""               // 响应体（**已按探测到的字符集转成 UTF-8**）
+    string _raw = ""               // 响应体原始字节（未转码；下划线开头 = 内部字段）
+    string charset = ""            // 探测到的字符集（小写；"" = 未声明且无法推断）
     string headers = ""            // 响应头（原始文本）
     string effectiveUrl = ""       // 最终 URL（可能经重定向后变化）
-    int totalSize = 0              // 下载数据总大小
+    int totalSize = 0              // 下载数据**字节**数
     float totalTime = 0.0          // 总耗时（秒）
     float connectTime = 0.0        // 连接耗时（秒）
     float downloadSpeed = 0.0      // 下载速度（字节/秒）
@@ -38,6 +87,8 @@ export struct Response {
     func reset() {
         statusCode = 0
         body = ""
+        _raw = ""
+        charset = ""
         headers = ""
         effectiveUrl = ""
         totalSize = 0
@@ -48,6 +99,16 @@ export struct Response {
         error = ""
         curlCode = Code.OK
     }
+
+    // 原始字节（未做字符集转码）—— 下载二进制/落盘时必须用它，不能用 body
+    func rawBody(): string { return _raw }
+
+    // body 是否经历过字符集转码
+    func wasDecoded(): bool { return body != _raw }
+
+    // 按"已探测的字符集"把 body 重新取成字节（等价 rawBody，语义更直白）
+    func bytes(): string { return _raw }
+
 
     // 判断是否成功（2xx 状态码）
     func ok(): bool { return statusCode >= 200 and statusCode < 300 }
@@ -100,6 +161,11 @@ export struct Response {
     func str(): string {
         string s = "HTTP " + statusCode + " (" + effectiveUrl + ")\n"
         s = s + "  Content-Type: " + contentType + "\n"
+        if charset != "" {
+            s = s + "  Charset: " + charset
+            if wasDecoded() { s = s + " (已转码为 UTF-8)" }
+            s = s + "\n"
+        }
         s = s + "  Size: " + totalSize + " bytes\n"
         s = s + "  Time: " + totalTime + "s (" + downloadSpeed + " bytes/s)\n"
         if error != "" {
@@ -117,19 +183,26 @@ export struct HttpClient {
     string _lastError = ""  // 最近错误信息
     pri Ptr[u8] writeCb        // 写回调
     pri Ptr[u8] headerCb       // header 回调
+    pri _RespAcc _acc          // 本客户端专属的响应累加器（闭包捕获 ⇒ 无全局态）
 
     // 初始化客户端
     func init(): bool {
-        core.globalInit(Global.ALL)
+        // ⚠ 这里**不要**再调 core.globalInit：curl_global_init 非线程安全，
+        //   已上提到本模块加载时做一次（见文件顶部 _g_curlGlobalReady）。
         handle = core.easyInit()
         ok = handle != null
         if not ok {
             _lastError = "curl_easy_init failed"
             return false
         }
-        // 创建回调
-        writeCb = ffi.callback(_writeDispatch, WriteCb)
-        headerCb = ffi.callback(_headerDispatch, HeaderCb)
+        // 每个客户端一套回调 + 累加器：闭包捕获 _acc ⇒ 不再依赖模块级全局（多线程安全）
+        _acc = new _RespAcc()
+        writeCb = ffi.callback(func(Ptr data, int size, int nmemb, Ptr ud): int {
+            return _accAppendBody(_acc, data, size * nmemb)
+        }, WriteCb)
+        headerCb = ffi.callback(func(Ptr data, int size, int nmemb, Ptr ud): int {
+            return _accAppendHeader(_acc, data, size * nmemb)
+        }, HeaderCb)
         // 设置默认选项
         core.setopt_int(handle, Opt.NOPROGRESS, 1)
         core.setopt_int(handle, Opt.FOLLOWLOCATION, 1)
@@ -142,16 +215,22 @@ export struct HttpClient {
     }
 
     // 关闭客户端
+    // ⚠ 必须同时 ffi.free 两个回调：ffi.callback 同时存活上限 **256 个**，
+    //   而模块级 `get()` 每次请求都会 createClient()（2 个回调）⇒ 不释放的话
+    //   跑到第 128 次请求就会因回调耗尽而失败（原先 close() 只清 handle，属隐性泄漏）。
     func close() {
+        if writeCb != null { ffi.free(writeCb); writeCb = null }
+        if headerCb != null { ffi.free(headerCb); headerCb = null }
         if not ok { return }
         core.easyCleanup(handle)
         handle = null; ok = false
     }
 
-    // 重置所有选项到默认值
+    // 重置所有选项到默认值（回调与累加器不受影响：它们由闭包持有，不依赖 curl 的选项）
     func reset() {
         if not ok { return }
         core.easyReset(handle)
+        _acc.reset()
         // 重新设置默认选项
         core.setopt_int(handle, Opt.NOPROGRESS, 1)
         core.setopt_int(handle, Opt.FOLLOWLOCATION, 1)
@@ -268,6 +347,9 @@ export struct HttpClient {
             return resp
         }
 
+        // 清空本客户端的累加器（回调写入这里，不再有模块级全局）
+        _acc.reset()
+
         // 设置 URL
         core.setopt_str(handle, Opt.URL, url)
 
@@ -290,32 +372,78 @@ export struct HttpClient {
             }
         }
 
-        // 设置写回调和 header 回调
+        // 设置写回调和 header 回调（闭包已捕获本客户端的 _acc）
         core.setopt_ptr(handle, Opt.WRITEFUNCTION, writeCb)
         core.setopt_ptr(handle, Opt.HEADERFUNCTION, headerCb)
 
-        // 设置 userdata 为 Response 指针（通过全局变量传递）
-        _currentResp = resp
-        core.setopt_ptr(handle, Opt.WRITEDATA, ffi.ptr_from_int(0))
-        core.setopt_ptr(handle, Opt.HEADERDATA, ffi.ptr_from_int(0))
+        return _perform(resp)
+    }
 
-        // 执行请求
+    // 执行 + 填充响应（所有请求路径共用；含字符集探测与转码）
+    pri func _perform(Response resp): Response {
         int rc = core.perform(handle)
         resp.curlCode = rc
         if rc != Code.OK {
             resp.error = core.easyStrerror(rc)
         }
-
-        // 获取响应信息
         resp.statusCode = core.getinfo_int(handle, Info.RESPONSE_CODE)
         resp.effectiveUrl = core.getinfo_str(handle, Info.EFFECTIVE_URL)
         resp.totalTime = core.getinfo_double(handle, Info.TOTAL_TIME)
         resp.connectTime = core.getinfo_double(handle, Info.CONNECT_TIME)
         resp.downloadSpeed = core.getinfo_double(handle, Info.SPEED_DOWNLOAD)
         resp.contentType = core.getinfo_str(handle, Info.CONTENT_TYPE)
-        resp.totalSize = body.len()
-
+        resp.headers = _acc.headers()
+        resp._raw = _acc.body()
+        resp.totalSize = _acc.bodyBytes
+        _applyCharset(resp)
         return resp
+    }
+
+    // ==================== multipart/form-data 上传 ====================
+    // 文件上传（登录 / 发布 / 换头像类接口大量使用）。
+    // 直接组装 CURLOPT_MIMEPOST（libcurl 官方推荐的 MIME API），不再走已弃用的 HTTPPOST。
+    // 用法：client.postMultipart(url, [ formField("user","abc"), formFile("avatar","a.png") ])
+    pri func doMultipart(string method, string url, Array[MimeField] parts): Response {
+        Response resp = new Response()
+        resp.reset()
+        if not ok {
+            resp.error = "Client not initialized"
+            resp.curlCode = Code.FAILED_INIT
+            return resp
+        }
+        _acc.reset()
+        core.setopt_str(handle, Opt.URL, url)
+        core.setopt_int(handle, Opt.HTTPGET, 0)
+        core.setopt_int(handle, Opt.NOBODY, 0)
+        core.setopt_int(handle, Opt.POST, 1)
+        if method != "POST" {
+            core.setopt_str(handle, Opt.CUSTOMREQUEST, method)
+        }
+        core.setopt_ptr(handle, Opt.WRITEFUNCTION, writeCb)
+        core.setopt_ptr(handle, Opt.HEADERFUNCTION, headerCb)
+
+        Ptr[u8] mime = core.mimeInit(handle)
+        if mime == null {
+            resp.error = "curl_mime_init failed"
+            return resp
+        }
+        for parts.len() to i {
+            _mimeAddPart(mime, parts[i])
+        }
+        core.setopt_ptr(handle, Opt.MIMEPOST, mime)
+        Response out = _perform(resp)
+        core.mimeFree(mime)
+        return out
+    }
+
+    // POST multipart/form-data
+    func postMultipart(string url, Array[MimeField] parts): Response {
+        return doMultipart("POST", url, parts)
+    }
+
+    // PUT multipart/form-data
+    func putMultipart(string url, Array[MimeField] parts): Response {
+        return doMultipart("PUT", url, parts)
     }
 
     // GET 请求
@@ -408,29 +536,63 @@ export struct HttpClient {
     func lastError(): string { return _lastError }
 }
 
-// ==================== 写回调分发 ====================
+// ==================== 字符集后处理 ====================
 
-// 写回调：接收响应 body 数据
-func _writeDispatch(Ptr data, int size, int nmemb, Ptr userdata): int {
-    if _currentResp == null { return 0 }
-    int totalSize = size * nmemb
-    if totalSize <= 0 { return 0 }
-    // 从 C 内存读取数据
-    // 注意：data 是 char* 指向原始数据，不是 null-terminated
-    // 使用 ffi.read_string_n 读取指定长度的数据
-    string chunk = ffi.read_string_n(data, 0, totalSize)
-    _currentResp.body = _currentResp.body + chunk
-    return totalSize
+// 探测响应体字符集并把 resp.body 统一成 UTF-8；原始字节留在 resp._raw。
+// 只在**确实探测到非 UTF-8** 时才转换 ⇒ 图片/压缩包等二进制响应保持原字节不动。
+// 典型场景：GBK 中文站（无声明）⇒ detect 落到系统 ANSI 兜底 = "gbk" ⇒ 转码 ⇒ 不再乱码。
+func _applyCharset(Response resp) {
+    if resp._raw == "" {
+        resp.charset = ""
+        return
+    }
+    string cs = charsets.detect(resp._raw, resp.contentType)
+    resp.charset = cs
+    // decode 自己处理三种情况：""/未知 ⇒ 原样；utf-8 ⇒ 仅去 BOM；已知编码 ⇒ 转码
+    resp.body = charsets.decode(resp._raw, cs)
 }
 
-// header 回调：接收响应 header 数据
-func _headerDispatch(Ptr data, int size, int nmemb, Ptr userdata): int {
-    if _currentResp == null { return 0 }
-    int totalSize = size * nmemb
-    if totalSize <= 0 { return 0 }
-    string chunk = ffi.read_string_n(data, 0, totalSize)
-    _currentResp.headers = _currentResp.headers + chunk
-    return totalSize
+// ==================== multipart 表单字段 ====================
+
+export struct MimeField {
+    string name = ""
+    string value = ""        // 文本字段的值，或文件字段的磁盘路径
+    bool isFile = false
+    string fileName = ""     // 上传时的文件名（空 ⇒ 用路径末段）
+    string mimeType = ""     // 如 "image/png"（空 ⇒ libcurl 按后缀猜）
+}
+
+// 文本字段（等价 <input type="text" name=...>）
+export func formField(string name, string value): MimeField {
+    MimeField f = new MimeField()
+    f.name = name
+    f.value = value
+    return f
+}
+
+// 文件字段（等价 <input type="file" name=...>）
+export func formFile(string name, string filePath, string fileName = "", string mimeType = ""): MimeField {
+    MimeField f = new MimeField()
+    f.name = name
+    f.value = filePath
+    f.isFile = true
+    f.fileName = fileName
+    f.mimeType = mimeType
+    return f
+}
+
+// 把一个 MimeField 挂到 mime 句柄上
+func _mimeAddPart(Ptr[u8] mime, MimeField f) {
+    Ptr[u8] part = core.mimeAddPart(mime)
+    if part == null { return }
+    core.mimeName(part, f.name)
+    if f.isFile {
+        core.mimeFileData(part, f.value)                    // 由 libcurl 自己读盘，流式发送
+        if f.fileName != "" { core.mimeFileName(part, f.fileName) }
+        if f.mimeType != "" { core.mimeType(part, f.mimeType) }
+    } else {
+        core.mimeData(part, f.value, f.value.byte_len())    // 显式给字节数（不依赖 strlen 语义）
+    }
 }
 
 // ==================== 工厂函数 ====================
@@ -474,14 +636,18 @@ export func postWithRetry(string url, string body, int retries, int delayMs): Re
 
 // ==================== 文件下载 ====================
 
-// 下载 URL 到本地文件，成功返回下载字节数，失败返回 -1
+// 下载 URL 到本地文件，成功返回写入的**字节**数，失败返回 -1
+// ⚠ 落盘必须用原始字节（rawBody），不能用 body：
+//   body 可能已被按字符集转码成 UTF-8（那是给文本解析用的），
+//   拿它写盘会把 GBK 文件写成 UTF-8、把图片/压缩包等二进制写坏。
 export func download(string url, string savePath): int {
     HttpClient c = createClient()
     Response r = c.get(url)
     c.close()
     if r.ok() {
-        files.write(savePath, r.body)
-        return r.body.len()
+        string raw = r.rawBody()
+        files.write(savePath, raw)
+        return raw.byte_len()
     }
     return -1
 }
@@ -565,6 +731,12 @@ export func sessionPatch(Session s, string url, string body): Response {
 export func sessionHead(Session s, string url): Response {
     _sessionApplyHeaders(s)
     return s.c.head(url)
+}
+
+// 会话 POST multipart/form-data（保持 cookie / 连接复用）
+export func sessionPostMultipart(Session s, string url, Array[MimeField] parts): Response {
+    _sessionApplyHeaders(s)
+    return s.c.postMultipart(url, parts)
 }
 
 // 设置持久化默认请求头（会持续应用到后续请求）
@@ -670,6 +842,24 @@ export func patch(string url, string body): Response {
 export func del(string url): Response {
     HttpClient c = createClient()
     Response resp = c.del(url)
+    c.close()
+    return resp
+}
+
+// ==================== multipart/form-data 便捷函数 ====================
+
+// POST multipart/form-data（文件上传）
+export func postMultipart(string url, Array[MimeField] parts): Response {
+    HttpClient c = createClient()
+    Response resp = c.postMultipart(url, parts)
+    c.close()
+    return resp
+}
+
+// PUT multipart/form-data
+export func putMultipart(string url, Array[MimeField] parts): Response {
+    HttpClient c = createClient()
+    Response resp = c.putMultipart(url, parts)
     c.close()
     return resp
 }

@@ -150,7 +150,7 @@ export func patch(string url, string body): Response {
 
 ## 7. 全面测试结果
 
-测试脚本：`examples/full_test.leno`，覆盖 20 个测试场景，40 项断言。
+测试脚本：`examples/07_综合测试/full_test.leno`（2026-10-06 归类前为 `examples/full_test.leno`），覆盖 20 个测试场景，40 项断言。
 
 | 测试项 | 说明 | 结果 |
 |--------|------|------|

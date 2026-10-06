@@ -2,6 +2,8 @@
 // 依赖 web_net.leno（HTTP）和 web_html.leno（HTML 解析）
 
 import strings
+import files
+import times
 import "web_html.leno" as htmls
 import "web_net.leno" as web_net
 use web_net.(HttpClient, Response, createClient)
@@ -403,26 +405,59 @@ export struct Crawler {
     int page_count = 0
     bool running = 0
 
-    // 设置 robots.txt 规则
+    // ---- 内部状态（2026-10-06 新增，见各方法注释）----
+    int _head = 0                          // 队列头下标（替代 remove(0) 的 O(n) 搬移）
+    Dict[string, bool] _queued = {}        // 已入队集合：同一 URL 不重复入队
+    int crawl_delay_ms = 0                 // robots.txt 的 crawl-delay（毫秒）
+    int _lastFetchMs = 0                   // 上次真正发起抓取的时刻
+
+    // 设置 robots.txt 规则（顺带解析 crawl-delay）
     func setRobots(string robotsText) {
         robots_rules = robotsText
+        crawl_delay_ms = parseCrawlDelay(robotsText, user_agent)
     }
 
     // 开始爬取：把 start_urls 入队
     func start() {
         running = true
         page_count = 0
+        _head = 0
+        _lastFetchMs = 0
         for start_urls.len() to i {
-            queue.add(newCrawlItem(start_urls[i], 0))
+            enqueue(start_urls[i], 0)
         }
+    }
+
+    // 实际生效的间隔：robots 的 crawl-delay 与用户 delay_ms 取较大者
+    func effectiveDelay(): int {
+        if crawl_delay_ms > delay_ms { return crawl_delay_ms }
+        return delay_ms
+    }
+
+    // 限速：距上次抓取不足间隔就补睡（框架自动生效，不必用户在循环里手写 sleep）
+    func throttle() {
+        int d = effectiveDelay()
+        if d <= 0 {
+            _lastFetchMs = _nowMs()
+            return
+        }
+        int elapsed = _nowMs() - _lastFetchMs
+        if _lastFetchMs > 0 and elapsed < d {
+            sleep(d - elapsed)
+        }
+        _lastFetchMs = _nowMs()
     }
 
     // 取出下一个待抓取的 URL（跳过已访问/超深/域名不符/robots 禁止）
     func nextUrl(): CrawlItem? {
-        while queue.len() > 0 {
-            CrawlItem entry = queue[0]
-            queue.remove(0)
-            if visited.get(entry.url, false) { continue }
+        if not running { return null }
+        while _head < queue.len() {
+            CrawlItem entry = queue[_head]
+            _head = _head + 1
+            _compactQueue()
+            // 用**归一化后**的 URL 判重：同一页面的 #fragment / ./ 变体不应被当成两页
+            string key = _normKey(entry.url)
+            if visited.get(key, false) { continue }
             if entry.depth > max_depth { continue }
             if allowed_domains.len() > 0 {
                 string d = domain(entry.url)
@@ -433,29 +468,41 @@ export struct Crawler {
                     continue
                 }
             }
+            throttle()
             return entry
         }
         return null
     }
 
-    // 标记已访问
+    // 队列头前进后回收已出队的前缀（否则 queue 会一直变长，且取头退化成 O(n)）
+    func _compactQueue() {
+        if _head >= 64 {
+            queue = queue[_head:queue.len()]
+            _head = 0
+        }
+    }
+
+    // 标记已访问（键为归一化 URL，与 nextUrl/enqueue 保持同一口径）
     func markVisited(string url) {
-        visited[url] = true
+        visited[_normKey(url)] = true
         page_count = page_count + 1
     }
 
-    // 入队一个 URL
+    // 入队一个 URL（归一化 + 双重去重：已访问的不入、队列内已有的不入）
     func enqueue(string url, int depth) {
-        if visited.get(url, false) { return }
+        string u = _normKey(url)
+        if visited.get(u, false) { return }
+        if _queued.get(u, false) { return }
         if depth > max_depth { return }
-        queue.add(newCrawlItem(url, depth))
+        _queued[u] = true
+        queue.add(newCrawlItem(u, depth))
     }
 
     // 是否应停止
     func shouldStop(): bool {
         if not running { return true }
-        if page_count >= max_pages { return true }
-        if queue.len() == 0 { return true }
+        if max_pages > 0 and page_count >= max_pages { return true }
+        if _head >= queue.len() { return true }
         return false
     }
 
@@ -463,6 +510,17 @@ export struct Crawler {
     func stop() {
         running = false
     }
+}
+
+// 归一化 URL 并保证非空（normalizeUrl 异常时退回原串，避免整条链路被空串污染）
+func _normKey(string url): string {
+    string u = normalizeUrl(url)
+    if u == "" { return url }
+    return u
+}
+
+func _nowMs(): int {
+    return _int(times.ms())
 }
 
 // 内部辅助：创建队列项
@@ -670,6 +728,69 @@ export func parseRobots(string text): Dict {
     return {groups: groups}
 }
 
+// 解析 robots.txt 的 crawl-delay（秒 → 毫秒）；没有则返回 0。
+// 为什么单独一个函数：原实现只认 User-agent/Allow/Disallow，**忽略 crawl-delay**，
+// 于是"尊重 robots"其实只尊重了黑名单、没尊重站长要求的抓取频率。
+export func parseCrawlDelay(string robotsText, string userAgent): int {
+    if robotsText == "" { return 0 }
+    string ua = strings.to_lower(strings.trim(userAgent))
+    var lines = strings.split(robotsText, "\n")
+    int starDelay = 0
+    int exactDelay = 0
+    bool inStar = false
+    bool inExact = false
+    for lines to ln {
+        string line = strings.trim(ln)
+        if line == "" or line.starts_with("#") { continue }
+        int ci = strings.find(line, ":")
+        if ci < 0 { continue }
+        string field = strings.to_lower(strings.trim(line.slice(0, ci)))
+        string value = strings.trim(line.slice(ci + 1, line.len()))
+        if field == "user-agent" {
+            string v = strings.to_lower(value)
+            inStar = (v == "*")
+            inExact = (v == ua)
+        } else if field == "crawl-delay" and value != "" {
+            int ms = _secondsToMs(value)
+            if ms > 0 {
+                if inExact and exactDelay == 0 { exactDelay = ms }
+                else if inStar and starDelay == 0 { starDelay = ms }
+            }
+        }
+    }
+    if exactDelay > 0 { return exactDelay }
+    return starDelay
+}
+
+// "1" / "0.5" / "2.00" → 毫秒（非数字 ⇒ 0，不抛错：robots.txt 什么脏数据都有）
+func _secondsToMs(string v): int {
+    int dot = strings.find(v, ".")
+    if dot < 0 {
+        return _intOr0(v) * 1000
+    }
+    int ms = _intOr0(v.slice(0, dot)) * 1000
+    string frac = v.slice(dot + 1, v.len())
+    if frac.len() >= 1 { ms = ms + _intOr0(frac.slice(0, 1)) * 100 }
+    if frac.len() >= 2 { ms = ms + _intOr0(frac.slice(1, 2)) * 10 }
+    return ms
+}
+
+func _intOr0(string s): int {
+    if not _allDigits(s) { return 0 }
+    return _int(s)
+}
+
+func _allDigits(string s): bool {
+    if s == "" { return false }
+    for s.len() to i {
+        var b = s.byte(i)
+        if b is int {
+            if b < 48 or b > 57 { return false }
+        }
+    }
+    return true
+}
+
 // 判断是否允许抓取 url。userAgent 不区分大小写，支持通配 *
 func _robotsRuleMatch(string rule, string path): bool {
     // 支持 * 通配符的简单前缀匹配
@@ -872,4 +993,49 @@ export func fetchSitemapUrls(string siteUrl, string userAgent): Array[string] {
         return parseSitemap(r.body)
     }
     return []
+}
+
+// ==================== 数据落地：CSV ====================
+// 爬虫最常见的出口是"一张表"，此前只能靠 files.write 自己拼 —— 引号/逗号/换行
+// 一旦进到字段里就会把表格撑坏，所以这里提供规范转义。
+
+// 转义单个字段：含 , " 换行 时用双引号包裹，内部双引号双写（RFC 4180）
+export func csvField(string v): string {
+    if not (strings.has(v, ",") or strings.has(v, "\"") or strings.has(v, "\n") or strings.has(v, "\r")) {
+        return v
+    }
+    return "\"" + v.replace("\"", "\"\"") + "\""
+}
+
+// 行集合 → CSV 文本（CRLF 行尾，Excel 友好）
+export func toCsv(Array[Array[string]] rows): string {
+    Array[string] lines = []
+    for rows to row {
+        Array[string] cells = []
+        for row to cell { cells.add(csvField(cell)) }
+        lines.add(strings.join(cells, ","))
+    }
+    return strings.join(lines, "\r\n") + "\r\n"
+}
+
+// 写 CSV 文件，返回写入的数据行数（不含表头）。
+// withBom 默认 true：Excel 只有见到 UTF-8 BOM 才会正确显示中文（双击打开场景）。
+// ⚠ header 没有默认值：默认参数只接受字面量常量，`= []` 不是（编译期会报错）
+//   ⇒ 不想写表头请用 writeCsvRows()
+export func writeCsv(string path, Array[Array[string]] rows, Array[string] header, bool withBom = true): int {
+    string out = ""
+    if header.len() > 0 {
+        out = toCsv([header])
+    }
+    out = out + toCsv(rows)
+    if withBom {
+        out = strings.from_bytes([0xEF, 0xBB, 0xBF]) + out
+    }
+    files.write(path, out)
+    return rows.len()
+}
+
+// 不带表头的 writeCsv
+export func writeCsvRows(string path, Array[Array[string]] rows, bool withBom = true): int {
+    return writeCsv(path, rows, [], withBom)
 }
