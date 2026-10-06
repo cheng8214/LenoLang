@@ -64,7 +64,11 @@ char* lsp_handle_definition(LspServer* server, int id, JsonValue* params) {
     
     // 获取定义位置
     int count = 0;
-    LspLocation* locations = lsp_get_definition(doc->content, pos, &count, json_string_value(uri));
+    // ★ 容错：同悬停 —— 用户正在输入（某行以 `.` 结尾，如 `Scancode.`）时解析失败 ⇒
+    //    跳转定义拿不到任何位置（实测：对 `Scancode` 返回 0 个位置）。补占位标识符后再查。
+    char* def_fixed = comp_repair_dangling_dot_lines(doc->content);
+    LspLocation* locations = lsp_get_definition(def_fixed ? def_fixed : doc->content, pos, &count, json_string_value(uri));
+    free(def_fixed);
     
     // 构建响应
     JsonValue* result = NULL;

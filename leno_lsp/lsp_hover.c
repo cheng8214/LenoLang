@@ -240,7 +240,12 @@ char* lsp_handle_hover(LspServer* server, int id, JsonValue* params) {
     }
 
     // 获取悬停信息
-    char* hover_info = lsp_get_hover_info(doc->content, pos, file_path);
+    // ★ 容错：用户正在输入时文本语法不完整（某行以 `.` 结尾，如 `Scancode.`）⇒ 解析失败
+    //   ⇒ root_scope 为 NULL ⇒ 悬停拿不到任何信息（实测：悬停在 `Scancode` 上返回空）。
+    //   补一个占位标识符后再查。⚠ 诊断**不走**这条（必须照实报语法错误）。
+    char* hover_fixed = comp_repair_dangling_dot_lines(doc->content);
+    char* hover_info = lsp_get_hover_info(hover_fixed ? hover_fixed : doc->content, pos, file_path);
+    free(hover_fixed);
     
     // 构建响应
     JsonValue* result = NULL;

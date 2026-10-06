@@ -340,6 +340,12 @@ int lsp_position_to_offset(const char* content, LspPosition pos);
 LspPosition lsp_offset_to_position(const char* content, int offset);
 char* lsp_get_line_content(const char* content, int line);
 
+// 容错：文本里有"悬空的成员访问"（某行以 '.' 结尾 —— 用户正在打 `Scancode.`）时，
+//   在该行末尾补一个占位标识符，让整份文本可解析。悬停 / 跳转定义 / 参数提示用它：
+//   这几类服务光标落在词中间，没法像补全那样按光标位置精修（不完整的是光标之后的点号）。
+//   返回 malloc 的新文本；无需修复时返回 NULL（调用方沿用原文本）。实现见 comp_context.c。
+char* comp_repair_dangling_dot_lines(const char* content);
+
 // 文本处理工具
 char* get_word_at_position(const char* content, LspPosition pos);
 

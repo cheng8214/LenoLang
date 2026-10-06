@@ -164,6 +164,44 @@ char* comp_repair_member_access_text(const char* content, LspPosition pos) {
     return out;
 }
 
+// 通用容错：文本里有"悬空的成员访问"（某行以 '.' 结尾 —— 用户正在打 `Scancode.`）时，
+//   在该行末尾补一个占位标识符，让整份文本可解析。
+//   用途：**悬停 / 跳转定义 / 参数提示**这类服务 —— 它们没法像补全那样按光标位置精修
+//   （光标落在词的中间，那个让它语法不完整的点号在光标**之后**）。
+//   只在"行尾是点"这一种必然语法错误的形态上动手；返回 malloc 的新文本，无需修复时返回 NULL。
+char* comp_repair_dangling_dot_lines(const char* content) {
+    if (!content) return NULL;
+    static const char* PROBE = "__lsp_member__";
+    size_t pl = strlen(PROBE);
+
+    // 第一遍：数一数有多少个"行尾悬空点"（同时判断是否需要修）
+    int hits = 0;
+    for (const char* p = content; *p; p++) {
+        if (*p != '.') continue;
+        const char* q = p + 1;
+        while (*q == ' ' || *q == '\t' || *q == '\r') q++;
+        if (*q == '\0' || *q == '\n') hits++;
+    }
+    if (hits == 0) return NULL;
+
+    // 第二遍：逐字符复制，在每个悬空点后插占位标识符
+    size_t len = strlen(content);
+    char* out = (char*)malloc(len + pl * (size_t)hits + 1);
+    if (!out) return NULL;
+    size_t w = 0;
+    for (size_t i = 0; i < len; i++) {
+        out[w++] = content[i];
+        if (content[i] != '.') continue;
+        size_t j = i + 1;
+        while (j < len && (content[j] == ' ' || content[j] == '\t' || content[j] == '\r')) j++;
+        if (j < len && content[j] != '\n') continue;   // 点后面还有东西 ⇒ 不是悬空点
+        memcpy(out + w, PROBE, pl);
+        w += pl;
+    }
+    out[w] = '\0';
+    return out;
+}
+
 // 获取光标前的单词/前缀
 // 返回值约定：
 //   普通单词：直接返回单词（如 "str"、"export"）

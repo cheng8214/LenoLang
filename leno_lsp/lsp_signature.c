@@ -388,7 +388,13 @@ char* lsp_handle_signature_help(LspServer* server, int id, JsonValue* params) {
     if (!sig_response && !strchr(func_name, '.')) {
         CompilerContext ctx;
         compiler_context_init(&ctx);
-        if (compiler_analyze_with_filename(&ctx, doc->content, file_path) && ctx.root_scope) {
+        // ★ 容错：同悬停/定义 —— 用户正在输入（某行以 `.` 结尾）时文本解析失败，
+        //   参数提示会整条失效；补占位标识符后再分析。
+        char* sig_fixed = comp_repair_dangling_dot_lines(doc->content);
+        bool sig_ok = compiler_analyze_with_filename(&ctx, sig_fixed ? sig_fixed : doc->content, file_path)
+                      && ctx.root_scope;
+        free(sig_fixed);
+        if (sig_ok) {
             for (int i = 0; i < ctx.root_scope->sym_cnt; i++) {
                 Symbol* sym = ctx.root_scope->syms[i];
                 if (sym && sym->name && strcmp(sym->name, func_name) == 0 &&
