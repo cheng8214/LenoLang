@@ -215,10 +215,20 @@ export func renderPage(string url, int timeoutMs): RenderResult { return browser
 export func renderWith(Browser b, string url, int waitLoadMs, int settleMs): RenderResult {
     return browser.renderWith(b, url, waitLoadMs, settleMs)
 }
-// 完整版：等待策略（load / networkidle / selector）+ 交互（点击、滚动）+ 截图
+// 完整版：等待策略（load / networkidle / selector）+ 交互（点击、滚动、真事件）+ 截图
 export func renderAdvanced(Browser b, string url, RenderOptions opt): RenderResult {
     return browser.renderAdvanced(b, url, opt)
 }
+// 在指定 tab 上渲染（配合 createTarget 做多 tab）
+export func renderOn(Browser b, string targetId, string url, RenderOptions opt): RenderResult {
+    return browser.renderOn(b, targetId, url, opt)
+}
+// 批量渲染（**顺序**，多 tab 轮转；真并发要在你自己的文件里起线程 —— 见 README）
+export func renderMany(Browser b, Array[string] urls, RenderOptions opt, int tabs): Array[RenderResult] {
+    return browser.renderMany(b, urls, opt, tabs)
+}
+export func createTarget(Browser b): string { return browser.createTarget(b) }
+export func closeTarget(Browser b, string targetId): bool { return browser.closeTarget(b, targetId) }
 export func closeBrowser(Browser b): bool { return browser.close(b) }
 
 // ==================== 泛型工具 ====================

@@ -20,6 +20,7 @@ import threads
 import strings
 import sockets
 import files
+import times
 
 use cdp.(Browser, BrowserConfig, CdpClient, RenderResult, RenderOptions)
 use ws.(WsUrl, WsClient)
@@ -313,6 +314,41 @@ main() {
         RenderResult proxied = cdp.renderAdvanced(bpx, "http://no-such-host.invalid/x", opx)
         tk.checkTrue("通过代理拿到了响应", strings.has(proxied.html, "PROXIED:"))
         tk.checkTrue("代理浏览器已关闭", cdp.close(bpx))
+    }
+
+    print("--- ⑰ 批量渲染（多 tab 轮转；单线程）---")
+    // ⚠ 这里**不测多线程**：`threads.start` 的入口函数只能来自主脚本文件，
+    //   库函数里起线程会让进程**直接崩溃**（实测）。并发模式见 README / 实战示例
+    //   （调用方在自己文件里起线程 + `renderOn` 到各自的 tab）。
+    BrowserConfig cfgMc = new BrowserConfig()
+    cfgMc.startUrl = "about:blank"
+    Browser bmc = cdp.launch(cfgMc)
+    tk.checkTrue("批量用浏览器启动", bmc.ok)
+    if bmc.ok {
+        Array[string] urls = [
+            "http://127.0.0.1:" + PORT + "/js",
+            "http://127.0.0.1:" + PORT + "/click",
+            "http://127.0.0.1:" + PORT + "/trust",
+            "http://127.0.0.1:" + PORT + "/type"
+        ]
+        RenderOptions om = new RenderOptions()
+        om.waitUntil = "load"
+        om.settleMs = 500
+        om.timeoutMs = 15000
+        int tmc = _int(times.ms())
+        Array[RenderResult] many = cdp.renderMany(bmc, urls, om, 3)
+        int wall = _int(times.ms()) - tmc
+        int okCount = 0
+        for many.len() to i {
+            if many[i].ok { okCount = okCount + 1 }
+        }
+        print("  4 个 URL / 3 个 tab 用时 = " + wall + "ms（成功 " + okCount + "）")
+        tk.check("结果个数与输入一致", many.len(), 4)
+        tk.check("顺序与输入一致", many[0].url, urls[0])
+        tk.checkTrue("第 1 个（/js）拿到脚本生成的内容", many[0].ok and strings.has(many[0].html, "SPA-CONTENT"))
+        tk.checkTrue("第 3 个（/trust）是初始态（没有 CLICK-DONE）", many[2].ok and not strings.has(many[2].html, "CLICK-DONE"))
+        tk.check("全部成功", okCount, 4)
+        tk.checkTrue("批量浏览器已关闭", cdp.close(bmc))
     }
 
     tk.shutdown(PORT)

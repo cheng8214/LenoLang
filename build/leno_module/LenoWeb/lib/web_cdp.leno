@@ -26,6 +26,7 @@ import sockets
 import "web_ws.leno" as ws
 
 use ws.(WsClient)
+// ⚠ `Channel` / `Socket` 这类**原生类型**全局可见，不需要（也不能）`use`
 
 // ==================== 类型 ====================
 
@@ -246,6 +247,12 @@ func _buildArgs(BrowserConfig cfg, int port, string udd): string {
     // 关掉这些"自带噪音"：Edge 首启会弹 edge://sync-confirmation-dialog/ 之类的内部页，
     // 干扰"哪个 page target 才是我们的页面"的判断（有 targetId 精确匹配兜底，但仍少扰为妙）
     a = a + "--disable-sync --disable-background-networking --no-service-autorun --disable-default-apps "
+    // ⚠ **后台标签的定时器节流**：Chrome 把隐藏标签里的 setTimeout 钳到 ≥1s。
+    //   批量渲染时只有第一个 tab 是活跃的，其余都在后台 ⇒ 页面里"60ms 后写内容"的脚本迟迟不执行，
+    //   取值就拿到半成品（**实测踩过**：同一条 URL 单独渲染正常、批量渲染缺内容）。
+    //   这几条是 Playwright/Puppeteer 的同款处理；另配 CDP 的 Emulation.setFocusEmulationEnabled。
+    a = a + "--disable-background-timer-throttling --disable-backgrounding-occluded-windows "
+    a = a + "--disable-renderer-backgrounding --disable-features=CalculateNativeWinOcclusion "
     a = a + "--window-size=" + cfg.windowWidth + "," + cfg.windowHeight + " "
     if cfg.proxy != "" {
         a = a + "--proxy-server=" + cfg.proxy + " "
@@ -360,11 +367,14 @@ export func stealthSelfTest(CdpClient c): string {
     return r
 }
 
-// 每个页面在**导航之前**的环境准备（UA / 语言 / stealth 注入）
+// 每个页面在**导航之前**的环境准备（聚焦仿真 / UA / 语言 / stealth 注入）
 // ⚠ 注入必须早于导航：`Page.addScriptToEvaluateOnNewDocument` 要求"之后创建的新文档"才生效
 // 返回 "" 表示都成功；否则是失败原因（**不要静默失败** —— 静默失败会让 stealth 看起来开着、
 // 实际什么都没注入，实测就踩过：WebGL 渲染器与对照组一模一样，才发现注入压根没生效）
 func _preparePage(CdpClient c, Browser b): string {
+    // ① 让页面始终"被聚焦"（Playwright 同款）：否则后台标签的定时器会被节流，
+    //    页面里延时渲染的内容会晚到 ⇒ 取值拿到半成品。**与 stealth 无关，始终生效**
+    cdpCall(c, "Emulation.setFocusEmulationEnabled", "{\"enabled\":true}")
     if not b.stealth { return "" }
     string ua = b.userAgent
     if ua == "" { ua = _defaultUa(b.version) }
@@ -635,6 +645,11 @@ export func launch(BrowserConfig cfg): Browser {
 // ⚠ 不能"取第一个 page"：实测 Edge 首启会自带 `edge://sync-confirmation-dialog/` 这类内部页，
 //   取第一个会连到它上面（然后 `#app` 之类当然找不到）
 export func pageWsUrl(Browser b): string {
+    return targetWsUrl(b, b.pageTargetId)
+}
+
+// 指定 targetId 的 WS 地址（并发时每个线程用**自己的** target ⇒ 各连各的，互不干扰）
+export func targetWsUrl(Browser b, string targetId): string {
     string list = _httpGet(b.port, "/json/list", 3000)
     if list == "" { return "" }
     var arr = jsons.decode(list)
@@ -643,11 +658,11 @@ export func pageWsUrl(Browser b): string {
     //   `if seen is Array { … }`。
     if arr is Array {
         // ① targetId 精确匹配
-        if b.pageTargetId != "" {
+        if targetId != "" {
             for arr.len() to i {
                 var it = arr[i]
                 if it is Dict[string, any] {
-                    if jsons.get_str(it, "id", "") == b.pageTargetId {
+                    if jsons.get_str(it, "id", "") == targetId {
                         string u = jsons.get_str(it, "webSocketDebuggerUrl", "")
                         if u != "" { return u }
                     }
@@ -868,8 +883,42 @@ export func captureScreenshot(CdpClient c, string savePath): bool {
 
 // ==================== 高层：渲染一个页面 ====================
 
-// 完整版渲染：等待策略 + 交互 + 截图，都是"取值之前"生效（拿到的 HTML 反映交互后状态）
-export func renderAdvanced(Browser b, string url, RenderOptions opt): RenderResult {
+// 新建一个 tab（返回 targetId；失败返回 ""）。并发渲染时每个线程一个 tab
+export func createTarget(Browser b): string {
+    if not b.ok { return "" }
+    CdpClient c = cdpConnect(b.wsUrl, 5000)
+    if not c.ok { return "" }
+    string res = cdpCall(c, "Target.createTarget", "{\"url\":\"about:blank\"}")
+    cdpClose(c)
+    if res == "" { return "" }
+    var obj = jsons.decode(res)
+    if obj is Dict[string, any] {
+        return jsons.get_str(obj, "targetId", "")
+    }
+    return ""
+}
+
+// 关掉一个 tab
+export func closeTarget(Browser b, string targetId): bool {
+    if targetId == "" { return false }
+    CdpClient c = cdpConnect(b.wsUrl, 5000)
+    if not c.ok { return false }
+    bool ok = cdpCall(c, "Target.closeTarget", "{\"targetId\":" + jsons.encode(targetId) + "}") != ""
+    cdpClose(c)
+    return ok
+}
+
+export func createTargets(Browser b, int n): Array[string] {
+    Array[string] out = []
+    for 0:n-1 to i {
+        string t = createTarget(b)
+        if t != "" { out.add(t) }
+    }
+    return out
+}
+
+// 在**指定 tab** 上渲染（并发时每线程一个 tab，各连各的 WS ⇒ 互不干扰）
+export func renderOn(Browser b, string targetId, string url, RenderOptions opt): RenderResult {
     RenderResult r = new RenderResult()
     r.url = url
     int t0 = _int(times.ms())
@@ -877,7 +926,7 @@ export func renderAdvanced(Browser b, string url, RenderOptions opt): RenderResu
         r.error = "浏览器未就绪：" + b.error
         return r
     }
-    string wsUrl = pageWsUrl(b)
+    string wsUrl = targetWsUrl(b, targetId)
     if wsUrl == "" {
         r.error = "/json/list 里没有 page 类型的 target"
         return r
@@ -947,6 +996,61 @@ export func renderAdvanced(Browser b, string url, RenderOptions opt): RenderResu
     cdpClose(c)
     r.ms = _int(times.ms()) - t0
     return r
+}
+
+// 完整版渲染（默认 tab）：等待策略 + 交互 + 截图，都在"取值之前"生效
+export func renderAdvanced(Browser b, string url, RenderOptions opt): RenderResult {
+    return renderOn(b, b.pageTargetId, url, opt)
+}
+
+// ==================== 批量渲染 ====================
+// ⚠ **本模块不自己起线程**（这是踩出来的硬约束，见下），并发要靠"调用方起线程"：
+//
+//   库函数里 `threads.start(_库内函数, …)` 会让进程**直接崩溃**（不是报错，是崩），
+//   因为子线程只装载**主脚本文件**的函数框架 ⇒ 入口函数必须是调用方文件里的函数。
+//   实测：`web_cdp` 里起线程做分片渲染 ⇒ 线程从未运行，主线程在 `channel.receive()`
+//   上死等（表现为"命令挂了十几分钟没输出"）。所以并发渲染的正确姿势是：
+//
+//   ```leno
+//   // 在**你的文件**里（入口函数也在这里）：
+//   func worker(Browser b, Array[string] urls, RenderOptions opt, string tabId, int k, int n, Channel ch) {
+//       int i = k
+//       while i < urls.len() {
+//           RenderResult r = web.renderOn(b, tabId, urls[i], opt)   // 每个线程用自己的 tab
+//           ch.send(...)                                            // 结果经 channel 回传
+//           i = i + n
+//       }
+//   }
+//   ```
+//   本模块提供 tab 原语：`createTarget` / `renderOn` / `closeTarget`。
+// 顺序批量渲染：可轮转使用多个 tab（**单线程**；并发见上面的说明，要靠调用方起线程）。
+// 多 tab 的意义：URL 之间不共享页面状态（DOM/JS 变量），但仍共享 cookie/localStorage（同浏览器）。
+// 结果**按输入顺序**返回。
+export func renderMany(Browser b, Array[string] urls, RenderOptions opt, int tabs): Array[RenderResult] {
+    Array[RenderResult] out = []
+    if urls.len() == 0 { return out }
+    int n = tabs
+    if n < 1 { n = 1 }
+    if n > urls.len() { n = urls.len() }
+
+    Array[string] targets = []
+    if n > 1 {
+        // 第一个用启动时那个默认 tab，其余新建（少开一个 tab）
+        targets = createTargets(b, n - 1)
+    }
+
+    for 0:urls.len()-1 to i {
+        string tabId = b.pageTargetId
+        if targets.len() > 0 {
+            tabId = targets[i % targets.len()]
+        }
+        out.add(renderOn(b, tabId, urls[i], opt))
+    }
+
+    for targets.len() to j {
+        closeTarget(b, targets[j])
+    }
+    return out
 }
 
 // 简版：等 load 事件 + 固定静置（签名保持不变，内部走 renderAdvanced）
