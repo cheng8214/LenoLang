@@ -1,0 +1,81 @@
+// test_utf8_text.leno — 非 ASCII 文本的解析与清洗（**口径回归**），全离线
+//
+// 背景（2026-10-06 发现并修复）：web_html / web_crawler 里有一批把**字符数**当**字节下标上界**
+// 的写法 —— `int n = html.len()` 配 `html.byte(i)` / `byte_slice(...)`。
+// 纯 ASCII 时 `len() == byte_len()` 恰好等价，所以一直没暴露；一旦文本含中文
+// （或任何多字节字符）就会被截断 / 切碎：
+//   · `parse("<p>中文</p>")` 的 text 只剩 2 字节坏字符
+//   · `allText` 得到 "标标"（应为 "标签一标签二"）
+//   · `stripTags("<b>中文</b>abc")` 得到坏字符
+//   · 解析器本身的 `while ctx.pos < ctx.html.len()` 还会**整篇截断**（只处理前 1/3 字节）
+// ⇒ P0 的字符集转码把 GBK 页面正确转成 UTF-8 之后，**解析这一步又把中文毁掉**。
+//
+// 本用例钉住这个口径：凡是"文本/属性/HTML 源串"的处理，一律按字节。
+import "web_html" as htmls
+import "_testkit" as tk
+import strings
+
+use htmls.(HtmlNode)
+
+// 取第一个 <p> 的文本
+func pText(string html): string {
+    var n = htmls.selectOne(htmls.parse(html), "p")
+    if n == null { return "<null>" }
+    return n.text()
+}
+
+// 取整篇文本
+func allTextOf(string html): string {
+    return htmls.allText(htmls.parse(html))
+}
+
+// 表格 → "a|b#c|d"（便于断言）
+func tableOf(string html): string {
+    Array[Array[string]] rows = htmls.extractTable(htmls.parse(html))
+    Array[string] out = []
+    for rows.len() to i {
+        out.add(strings.join(rows[i], "|"))
+    }
+    return strings.join(out, "#")
+}
+
+main() {
+    print("--- 解析：文本 / 属性 ---")
+    tk.check("中英混排 + 实体", pText("<p>中文 &amp; 汉字ABC</p>"), "中文 & 汉字ABC")
+    tk.check("纯中文", pText("<p>中文</p>"), "中文")
+    tk.check("纯 ASCII + 实体", pText("<p>abc&amp;def</p>"), "abc&def")
+    tk.check("标签属性里的中文 + 实体",
+             htmls.attr(htmls.selectOne(htmls.parse("<a title='标题&amp;副标题'>x</a>"), "a"), "title"),
+             "标题&副标题")
+    // 长文本：截断类 bug 会在长度上立刻暴露
+    string longCn = strings.rep("汉字", 200)
+    tk.check("长中文段落不截断（字节数）", pText("<p>" + longCn + "</p>").byte_len(), 1200)
+    tk.check("长中文段落不截断（内容）", pText("<p>" + longCn + "</p>"), longCn)
+    // 中文在**末尾**：截断 bug 会吃掉尾部
+    tk.check("中文在文档末尾", pText("<div><span>x</span><p>结尾中文</p></div>"), "结尾中文")
+
+    print("--- 聚合与清洗 ---")
+    tk.check("allText", allTextOf("<div><p>标签一</p><p>标签二</p></div>"), "标签一标签二")
+    tk.check("stripTags", htmls.stripTags("<b>中文</b>abc"), "中文abc")
+    tk.check("cleanText 合并空白", htmls.cleanText("中文  abc\n\t汉字"), "中文 abc 汉字")
+    tk.check("cleanText 去首尾空白", htmls.cleanText("  中文  "), "中文")
+    tk.check("htmlToText 结构", htmls.htmlToText(htmls.parse("<h1>标题</h1><p>正文</p>")), "\n# 标题\n\n正文\n")
+    tk.check("extractTable 中文",
+             tableOf("<table><tr><th>名字</th><th>备注</th></tr><tr><td>张三</td><td>中文</td></tr></table>"),
+             "名字|备注#张三|中文")
+
+    print("--- 命名实体表 ---")
+    tk.check("hearts", allTextOf("<p>&hearts;</p>"), "♥")
+    tk.check("euro", allTextOf("<p>&euro;</p>"), "€")
+    tk.check("alpha/beta", allTextOf("<p>&alpha;&beta;</p>"), "αβ")
+    tk.check("copy/reg/trade", allTextOf("<p>&copy;&reg;&trade;</p>"), "©®™")
+    tk.check("rarr/infin", allTextOf("<p>&rarr;&infin;</p>"), "→∞")
+    tk.check("frac12/plusmn", allTextOf("<p>&frac12;&plusmn;</p>"), "½±")
+    tk.check("nbsp 是 U+00A0（不是普通空格）", allTextOf("<p>a&nbsp;b</p>"), "a\u00A0b")
+    tk.check("十进制数字实体", allTextOf("<p>&#20013;&#25991;</p>"), "中文")
+    tk.check("十六进制数字实体", allTextOf("<p>&#x4E2D;&#x6587;</p>"), "中文")
+    tk.check("未知实体原样保留", allTextOf("<p>&nosuchthing;</p>"), "&nosuchthing;")
+    tk.check("实体在中文之间", allTextOf("<p>前&mdash;后</p>"), "前—后")
+
+    if tk.summary("utf8_text") != 0 { _exit(1) }
+}

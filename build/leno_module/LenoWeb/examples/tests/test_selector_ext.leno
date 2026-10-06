@@ -1,0 +1,110 @@
+// test_selector_ext.leno — 扩展选择器语法（2026-10-06 补齐），全离线
+//
+// 覆盖新增 / 修复的能力：
+//   · `:nth-child(an+b)`：`2n+1` / `odd` / `even` / `n+4` / `-n+2` / `2n`
+//     （原先只吃整数，写 `2n+1` 会在 `_int("2n+1")` 处**抛异常中断整次抓取**）
+//   · `:nth-of-type` / `:first-of-type` / `:last-of-type` / `:only-of-type` / `:nth-last-*`
+//   · `:not(...)` / `:has(...)`（含 `> / + / ~` 前导组合器）/ `:empty` / `:root`
+//   · 伪类**可叠加**（`p:not(.a):nth-of-type(2)`）—— 原先第二个伪类会覆盖第一个（静默错）
+//   · 兄弟组合器 `+` / `~`
+//   · 属性运算符 `~=`（词匹配）/ `|=`（前缀），以及 `[attr]` **存在性**判断
+//     （原先 `a[href]` 恒真：所有 a 都命中，包括没有 href 的）
+//   · 结果集去重（`p ~ span` 原先会出现重复项）
+import "web_html" as htmls
+import "_testkit" as tk
+import strings
+
+use htmls.(HtmlNode)
+
+// 取匹配到的节点文本，逗号连接（空结果 ⇒ ""）
+func texts(string html, string s): string {
+    Array[HtmlNode] nodes = htmls.select(htmls.parse(html), s)
+    Array[string] parts = []
+    for nodes.len() to i { parts.add(htmls.allText(nodes[i]).trim()) }
+    return strings.join(parts, ",")
+}
+
+// 匹配个数
+func count(string html, string s): int {
+    return htmls.select(htmls.parse(html), s).len()
+}
+
+// 五行表格（每行一个 td）
+string TBL = "<table>" +
+    "<tr><td>r1</td></tr><tr><td>r2</td></tr><tr><td>r3</td></tr>" +
+    "<tr><td>r4</td></tr><tr><td>r5</td></tr></table>"
+
+// p/span 交替
+string SIB = "<div><p>A</p><span>B</span><p>C</p><span>D</span></div>"
+
+// p/span 混型（of-type 用）
+string TYPED = "<div><p>P1</p><span>S1</span><p>P2</p><span>S2</span></div>"
+
+main() {
+    print("--- :nth-child(an+b) ---")
+    tk.check("2n+1", texts(TBL, "tr:nth-child(2n+1) td"), "r1,r3,r5")
+    tk.check("odd", texts(TBL, "tr:nth-child(odd) td"), "r1,r3,r5")
+    tk.check("even", texts(TBL, "tr:nth-child(even) td"), "r2,r4")
+    tk.check("2n", texts(TBL, "tr:nth-child(2n) td"), "r2,r4")
+    tk.check("3", texts(TBL, "tr:nth-child(3) td"), "r3")
+    tk.check("n+4", texts(TBL, "tr:nth-child(n+4) td"), "r4,r5")
+    tk.check("-n+2", texts(TBL, "tr:nth-child(-n+2) td"), "r1,r2")
+    tk.check("nth-last-child(1)", texts(TBL, "tr:nth-last-child(1) td"), "r5")
+    tk.check("越界参数不抛异常", count(TBL, "tr:nth-child(99)"), 0)
+    tk.check("非法参数不抛异常", count(TBL, "tr:nth-child(abc)"), 0)
+
+    print("--- of-type 家族 ---")
+    tk.check("p:nth-of-type(2)", texts(TYPED, "p:nth-of-type(2)"), "P2")
+    tk.check("span:nth-of-type(1)", texts(TYPED, "span:nth-of-type(1)"), "S1")
+    tk.check("span:first-of-type", texts(TYPED, "span:first-of-type"), "S1")
+    tk.check("p:last-of-type", texts(TYPED, "p:last-of-type"), "P2")
+    tk.check("p:nth-last-of-type(1)", texts(TYPED, "p:nth-last-of-type(1)"), "P2")
+    tk.check("span:only-of-type（无）", count(TYPED, "span:only-of-type"), 0)
+
+    print("--- :not / :has / :empty ---")
+    string MIX = "<div><p class='a'>A</p><span>B</span><p class='b'>C</p></div>"
+    tk.check("p:not(.a)", texts(MIX, "p:not(.a)"), "C")
+    tk.check("p:not(.a):not(.b)", count(MIX, "p:not(.a):not(.b)"), 0)
+    tk.check("叠加伪类 p:not(.a):nth-of-type(2)", texts(MIX, "p:not(.a):nth-of-type(2)"), "C")
+    tk.check("叠加伪类顺序无关", texts(MIX, "p:nth-of-type(2):not(.a)"), "C")
+    tk.check("div:has(span)", texts(MIX, "div:has(span)"), "ABC")
+    tk.check("div:has(> p)", texts(MIX, "div:has(> p)"), "ABC")
+    tk.check("div:has(table) 不命中", count(MIX, "div:has(table)"), 0)
+    tk.check("span:has(+ p)", texts("<div><span>S</span><p>P</p></div>", "span:has(+ p)"), "S")
+    tk.check(":empty", texts("<div><p></p><p>x</p></div>", "p:empty"), "")
+    tk.check(":not(:empty)", texts("<div><p></p><p>x</p></div>", "p:not(:empty)"), "x")
+    tk.check(":not 带嵌套伪类", texts(TBL, "tr:not(:nth-child(2)) td").starts_with("r1"), true)
+
+    print("--- 兄弟组合器 ---")
+    tk.check("p + span", texts(SIB, "p + span"), "B,D")
+    tk.check("p ~ span（结果集去重）", texts(SIB, "p ~ span"), "B,D")
+    tk.check("span + p", texts(SIB, "span + p"), "C")
+    tk.check("+ 只取紧随的一个", count(SIB, "p:first-child + span"), 1)
+    // ⚠ B 前面还有 <p>，所以它是 span 里的第一个、但**不是** :first-child
+    tk.check("span:first-child 不命中 B", count(SIB, "span:first-child"), 0)
+    tk.check("~ 的三段式（first-of-type 起）", texts(SIB, "span:first-of-type ~ span"), "D")
+
+    print("--- 组合器与后代/子代混用 ---")
+    string DEEP = "<div><ul><li><a href='/1'>L1</a></li><li><a href='/2'>L2</a></li></ul></div>"
+    tk.check("div ul li a", texts(DEEP, "div ul li a"), "L1,L2")
+    tk.check("div > ul > li", count(DEEP, "div > ul > li"), 2)
+    tk.check("div > a 不命中孙代", count(DEEP, "div > a"), 0)
+    tk.check("ul li:first-child a", texts(DEEP, "ul li:first-child a"), "L1")
+    tk.check("带空格的子代 div > ul", count(DEEP, "div > ul"), 1)
+
+    print("--- 属性运算符 ---")
+    string AT = "<a href='http://x/a'>1</a><a href='/b'>2</a><a>3</a>"
+    tk.check("[href^='http']", texts(AT, "a[href^='http']"), "1")
+    tk.check("[href$='/b']", texts(AT, "a[href$='/b']"), "2")
+    tk.check("[href*='x/a']", texts(AT, "a[href*='x/a']"), "1")
+    tk.check("[href] 存在性（无 href 的不命中）", texts(AT, "a[href]"), "1,2")
+    tk.check("[class~='x'] 词匹配", texts("<p class='x y'>A</p><p class='xy'>B</p>", "p[class~='x']"), "A")
+    tk.check("[lang|='zh'] 前缀匹配", texts("<p lang='zh-CN'>A</p><p lang='zhx'>B</p>", "p[lang|='zh']"), "A")
+    tk.check("[class='xy'] 精确匹配", texts("<p class='x y'>A</p><p class='xy'>B</p>", "p[class='xy']"), "B")
+
+    print("--- 中文类名 / 选择器 ---")
+    tk.check("中文 class 选择器", texts("<p class='标题'>A</p><p>B</p>", "p.标题"), "A")
+    tk.check(".class 里的中文（多字节）不被截断", count("<p class='标签一'>A</p>", "p.标签一"), 1)
+
+    if tk.summary("selector_ext") != 0 { _exit(1) }
+}

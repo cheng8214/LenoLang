@@ -14,7 +14,9 @@ Array[string] SUITES = [
     "test_ffi_callback_thread.leno",// 运行时回归：子线程 FFI 回调（曾经只成功一次）
     "test_thread_http.leno",        // 多线程并发 HTTP（8 线程 × 6 轮）
     "test_download_resume.leno",    // 断点续传下载（含服务端不支持 Range 的回退）
-    "test_crawler_state.leno"       // 断点续爬（进度落盘 / 恢复 / 自动落盘）
+    "test_crawler_state.leno",      // 断点续爬（进度落盘 / 恢复 / 自动落盘）
+    "test_utf8_text.leno",          // 非 ASCII 文本解析/清洗（口径回归）+ 实体表
+    "test_selector_ext.leno"        // 扩展选择器（an+b / of-type / not / has / 兄弟 / 属性）
 ]
 
 main() {

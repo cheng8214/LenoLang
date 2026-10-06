@@ -73,25 +73,11 @@ export struct HtmlNode {
     }
 
     // 按选择器查询子元素（后代）
+    // ⚠ 走模块级 `_selectFrom`，不要再在这里复制一份循环体 ——
+    //   原先这里与模块级 select() 各有一份**逐字重复**的遍历，加组合器时
+    //   很容易只改一处（另一处静默不同行为）。
     func select(string selector): Array[HtmlNode] {
-        Array[SelectorPart] parts = _splitSelector(selector)
-        if parts.len() == 0 { return [] }
-        Array[HtmlNode] current = [self]
-        int partsLen = parts.len()
-        for 0:partsLen-1 to pi {
-            SelectorPart p0 = parts[pi]
-            Array[HtmlNode] next = []
-            for current.len() to ci {
-                HtmlNode node = current[ci]
-                if p0.isChild {
-                    _findDirectChildren(node, p0, next)
-                } else {
-                    _findDescendants(node, p0, next)
-                }
-            }
-            current = next
-        }
-        return current
+        return _selectFrom(self, selector)
     }
 
     // 查询第一个匹配
@@ -189,13 +175,24 @@ export struct SelectorPart {
     string attrValue = 0
     string attrOp = 0
     bool hasAttr = 0
-    bool isChild = 0
-    string pseudo = 0
-    string pseudoArg = 0
+    // 与**前一段**的关系（第一段无意义）：
+    //   " " 后代   ">" 子元素   "+" 紧随其后的兄弟元素   "~" 之后的所有兄弟元素
+    string comb = " "
+    bool isChild = 0            // 兼容位：等价于 comb == ">"（_removeRec / closest 仍在读它）
+    // 伪类：可叠加（`td:not(.x):first-child`）—— 按 CSS 语义**全部**满足才算匹配。
+    // 原先只有单个 `pseudo`/`pseudoArg` 字段，写第二个伪类会把第一个**覆盖掉**（静默错）。
+    Array[string] pseudos
+    Array[string] pseudoArgs
+
+    // 取第 i 个伪类的参数（无参 ⇒ ""）
+    func pseudoArgAt(int i): string {
+        if i < 0 or i >= pseudoArgs.len() { return "" }
+        return pseudoArgs[i]
+    }
 
     // 是否为纯通配/空选择器（匹配所有元素）
     func isWildcard(): bool {
-        return tag == "" and id == "" and classes.len() == 0 and not hasAttr and pseudo == ""
+        return tag == "" and id == "" and classes.len() == 0 and not hasAttr and pseudos.len() == 0
     }
 }
 
@@ -208,7 +205,7 @@ struct _ParseCtx {
     int pos = 0       // 当前解析光标
 
     func byte(int off): int {
-        if pos + off >= 0 and pos + off < html.len() {
+        if pos + off >= 0 and pos + off < html.byte_len() {
             return html.byte(pos + off)
         }
         return -1
@@ -234,7 +231,7 @@ func _isSpace(int b): bool {
 func _parseTagName(_ParseCtx ctx): string {
     // ★ 2026-10-03 收编：字节先收数组，末尾一趟 from_bytes ✓（tag 名很短，收益有限但口径统一）
     Array[int] tag_bytes = []
-    while ctx.pos < ctx.html.len(){
+    while ctx.pos < ctx.html.byte_len(){
         int b = ctx.html.byte(ctx.pos)
         if _isAlphaNum(b) or b == 45 or b == 95 {
             tag_bytes.add(b)
@@ -247,7 +244,7 @@ func _parseTagName(_ParseCtx ctx): string {
 }
 
 func _skipWs(_ParseCtx ctx) {
-    while ctx.pos <  ctx.html.len() {
+    while ctx.pos <  ctx.html.byte_len() {
         int b = ctx.html.byte(ctx.pos)
         if _isSpace(b) {
             ctx.pos = ctx.pos + 1
@@ -259,7 +256,7 @@ func _skipWs(_ParseCtx ctx) {
 
 func _parseAttrs(_ParseCtx ctx): Dict[string, string] {
     Dict[string, string] attrs = {}
-    int len = ctx.html.len()
+    int len = ctx.html.byte_len()
     while ctx.pos < len {
         while ctx.pos < len and _isSpace(ctx.html.byte(ctx.pos)) {
             ctx.pos = ctx.pos + 1
@@ -346,7 +343,7 @@ func _parseAttrs(_ParseCtx ctx): Dict[string, string] {
 func _parseText(_ParseCtx ctx): string {
     // ★ 2026-10-03 收编：文本节点可达**较长**（正文）⇒ 字节先收数组，末尾一趟 from_bytes ✓
     Array[int] text_bytes = []
-    int len = ctx.html.len()
+    int len = ctx.html.byte_len()
     while ctx.pos < len {
         int b = ctx.html.byte(ctx.pos)
         if b == 60 {
@@ -367,37 +364,80 @@ func _isVoidTag(string tagName): bool {
 
 // ==================== HTML 实体解码 ====================
 
+// 命名实体表：name → Unicode 码点（HTML5 的 2000+ 个实体里，实际会遇到的这 ~250 个）
+//
+// 为什么改成表：原先是一个 24 个 case 的 switch，`&hearts;` `&euro;` `&alpha;` 这类
+// 常见实体全部落空 ⇒ **原样留在正文里**（<p>&hearts;</p> 取文本得到 "&hearts;"）。
+//
+// 覆盖范围：XML 基本 5 个 + ISO-8859-1 全集（96 个，含 `nbsp` 的正确语义 U+00A0）
+//          + 排版标点/空格/方向符 + 货币 + 希腊字母 + 数学与箭头 + 常用符号。
+// 不含：多码点实体（如 `&NotEqualTilde;` 是两个码点）与冷门符号 —— 命中不到时
+//      仍按原样保留 `&name;`（与旧行为一致，不会吃掉内容）。
+Dict[string, int] _NAMED_ENTITIES = {
+    // --- XML/HTML 基本 ---
+    "amp": 38, "lt": 60, "gt": 62, "quot": 34, "apos": 39,
+    // --- ISO-8859-1（Latin-1）全集：160..255 ---
+    "nbsp": 160, "iexcl": 161, "cent": 162, "pound": 163, "curren": 164, "yen": 165,
+    "brvbar": 166, "sect": 167, "uml": 168, "copy": 169, "ordf": 170, "laquo": 171,
+    "not": 172, "shy": 173, "reg": 174, "macr": 175, "deg": 176, "plusmn": 177,
+    "sup2": 178, "sup3": 179, "acute": 180, "micro": 181, "para": 182, "middot": 183,
+    "cedil": 184, "sup1": 185, "ordm": 186, "raquo": 187, "frac14": 188, "frac12": 189,
+    "frac34": 190, "iquest": 191,
+    "Agrave": 192, "Aacute": 193, "Acirc": 194, "Atilde": 195, "Auml": 196, "Aring": 197,
+    "AElig": 198, "Ccedil": 199, "Egrave": 200, "Eacute": 201, "Ecirc": 202, "Euml": 203,
+    "Igrave": 204, "Iacute": 205, "Icirc": 206, "Iuml": 207, "ETH": 208, "Ntilde": 209,
+    "Ograve": 210, "Oacute": 211, "Ocirc": 212, "Otilde": 213, "Ouml": 214, "times": 215,
+    "Oslash": 216, "Ugrave": 217, "Uacute": 218, "Ucirc": 219, "Uuml": 220, "Yacute": 221,
+    "THORN": 222, "szlig": 223,
+    "agrave": 224, "aacute": 225, "acirc": 226, "atilde": 227, "auml": 228, "aring": 229,
+    "aelig": 230, "ccedil": 231, "egrave": 232, "eacute": 233, "ecirc": 234, "euml": 235,
+    "igrave": 236, "iacute": 237, "icirc": 238, "iuml": 239, "eth": 240, "ntilde": 241,
+    "ograve": 242, "oacute": 243, "ocirc": 244, "otilde": 245, "ouml": 246, "divide": 247,
+    "oslash": 248, "ugrave": 249, "uacute": 250, "ucirc": 251, "uuml": 252, "yacute": 253,
+    "thorn": 254, "yuml": 255,
+    // --- 拉丁扩展 / 连字 ---
+    "OElig": 338, "oelig": 339, "Scaron": 352, "scaron": 353, "Yuml": 376,
+    "fnof": 402, "circ": 710, "tilde": 732,
+    // --- 希腊字母 ---
+    "Alpha": 913, "Beta": 914, "Gamma": 915, "Delta": 916, "Epsilon": 917, "Zeta": 918,
+    "Eta": 919, "Theta": 920, "Iota": 921, "Kappa": 922, "Lambda": 923, "Mu": 924,
+    "Nu": 925, "Xi": 926, "Omicron": 927, "Pi": 928, "Rho": 929, "Sigma": 931,
+    "Tau": 932, "Upsilon": 933, "Phi": 934, "Chi": 935, "Psi": 936, "Omega": 937,
+    "alpha": 945, "beta": 946, "gamma": 947, "delta": 948, "epsilon": 949, "zeta": 950,
+    "eta": 951, "theta": 952, "iota": 953, "kappa": 954, "lambda": 955, "mu": 956,
+    "nu": 957, "xi": 958, "omicron": 959, "pi": 960, "rho": 961, "sigmaf": 962,
+    "sigma": 963, "tau": 964, "upsilon": 965, "phi": 966, "chi": 967, "psi": 968,
+    "omega": 969, "thetasym": 977, "upsih": 978, "piv": 982,
+    // --- 空格 / 方向 / 排版标点 ---
+    "ensp": 8194, "emsp": 8195, "thinsp": 8201, "zwnj": 8204, "zwj": 8205,
+    "lrm": 8206, "rlm": 8207, "ndash": 8211, "mdash": 8212, "lsquo": 8216,
+    "rsquo": 8217, "sbquo": 8218, "ldquo": 8220, "rdquo": 8221, "bdquo": 8222,
+    "dagger": 8224, "Dagger": 8225, "bull": 8226, "hellip": 8230, "permil": 8240,
+    "prime": 8242, "Prime": 8243, "lsaquo": 8249, "rsaquo": 8250, "oline": 8254,
+    "frasl": 8260, "euro": 8364,
+    // --- 字母式符号 / 商标 ---
+    "weierp": 8472, "image": 8465, "real": 8476, "trade": 8482, "alefsym": 8501,
+    // --- 箭头 ---
+    "larr": 8592, "uarr": 8593, "rarr": 8594, "darr": 8595, "harr": 8596,
+    "crarr": 8629, "lArr": 8656, "uArr": 8657, "rArr": 8658, "dArr": 8659, "hArr": 8660,
+    // --- 数学运算符 ---
+    "forall": 8704, "part": 8706, "exist": 8707, "empty": 8709, "nabla": 8711,
+    "isin": 8712, "notin": 8713, "ni": 8715, "prod": 8719, "sum": 8721,
+    "minus": 8722, "lowast": 8727, "radic": 8730, "prop": 8733, "infin": 8734,
+    "ang": 8736, "and": 8743, "or": 8744, "cap": 8745, "cup": 8746,
+    "int": 8747, "there4": 8756, "sim": 8764, "cong": 8773, "asymp": 8776,
+    "ne": 8800, "equiv": 8801, "le": 8804, "ge": 8805, "sub": 8834,
+    "sup": 8835, "nsub": 8836, "sube": 8838, "supe": 8839, "oplus": 8853,
+    "otimes": 8855, "perp": 8869, "sdot": 8901,
+    // --- 括号 / 几何 / 扑克 ---
+    "lceil": 8968, "rceil": 8969, "lfloor": 8970, "rfloor": 8971, "lang": 9001,
+    "rang": 9002, "loz": 9674, "spades": 9824, "clubs": 9827, "hearts": 9829, "diams": 9830
+}
+
 func _namedEntity(string name): string {
-    switch name {
-        case "amp" { return "&" }
-        case "lt" { return "<" }
-        case "gt" { return ">" }
-        case "quot" { return "\"" }
-        case "apos" { return "'" }
-        case "nbsp" { return " " }
-        case "copy" { return "©" }
-        case "reg" { return "®" }
-        case "trade" { return "™" }
-        case "hellip" { return "…" }
-        case "mdash" { return "—" }
-        case "ndash" { return "–" }
-        case "laquo" { return "«" }
-        case "raquo" { return "»" }
-        case "ldquo" { return "\u201C" }
-        case "rdquo" { return "\u201D" }
-        case "lsquo" { return "‘" }
-        case "rsquo" { return "’" }
-        case "bull" { return "•" }
-        case "middot" { return "·" }
-        case "deg" { return "°" }
-        case "plusmn" { return "±" }
-        case "times" { return "×" }
-        case "divide" { return "÷" }
-        case "frac14" { return "¼" }
-        case "frac12" { return "½" }
-        case "frac34" { return "¾" }
-        default { return "" }
-    }
+    int cp = _NAMED_ENTITIES.get(name, 0)
+    if cp <= 0 { return "" }
+    return _codepointToUtf8(cp)
 }
 
 func _hexDigit(int ch): int {
@@ -435,7 +475,7 @@ func _decodeEntities(string text): string {
     //   把那两处也并入同一字节数组 ✓（`from_bytes(a+b) == from_bytes(a) + from_bytes(b)`）
     Array[int] result_bytes = []
     int i = 0
-    int len = text.len()
+    int len = text.byte_len()
     while i < len {
         int b = text.byte(i)
         if b == 38 {
@@ -527,7 +567,7 @@ func _makeNode(string tag, Dict[string, string] attrs, Array[HtmlNode] children,
 }
 
 func _parseElement(_ParseCtx ctx): HtmlNode? {
-    int len = ctx.html.len()
+    int len = ctx.html.byte_len()
     if ctx.pos >= len {
         return null
     }
@@ -713,7 +753,7 @@ export func parse(string html): HtmlNode {
     ctx.pos = 0
 
     HtmlNode root = _makeNode("#document", {}, [], "")
-    int len = ctx.html.len()
+    int len = ctx.html.byte_len()
 
     while ctx.pos < len {
         while ctx.pos < len and _isSpace(ctx.html.byte(ctx.pos)) {
@@ -831,7 +871,7 @@ export func cleanText(string raw): string {
     }
     Array[string] out = []
     bool lastWasSpace = false
-    int n = raw.len()
+    int n = raw.byte_len()
     for 0:n-1 to i {
         int b = raw.byte(i)
         if _isSpace(b) {
@@ -845,14 +885,15 @@ export func cleanText(string raw): string {
         }
     }
     string result = strings.join(out, "")
-    // 去首尾空白
-    while result.len() > 0 and result.byte(0) == 32 {
-        result = result.slice(1, result.len())
-    }
-    while result.len() > 0 and result.byte(result.len() - 1) == 32 {
-        result = result.slice(0, result.len() - 1)
-    }
-    return result
+    // 去首尾空白：**必须全程字节口径**。
+    // 原实现是 `while result.len() > 0 and result.byte(result.len() - 1) == 32 { result = result.slice(...) }`：
+    //   `result.len()` 是**字符数**、`result.byte(i)`/`byte_slice` 是**字节下标** ⇒ 中文文本上
+    //   这个下标指到字符中间，判断失真；`slice` 又是字符口径 ⇒ 两个口径来回切，容易改错。
+    int start = 0
+    int end = result.byte_len()
+    while start < end and result.byte(start) == 32 { start = start + 1 }
+    while end > start and result.byte(end - 1) == 32 { end = end - 1 }
+    return result.byte_slice(start, end)
 }
 
 // HTML 转可读纯文本（仿 html2text）：保留段落/标题/列表/换行结构
@@ -904,7 +945,7 @@ func _toTextInto(HtmlNode node, Array[string] parts) {
 // 例："<p>Hi <b>there</b></p>" -> "Hi there"
 export func stripTags(string html): string {
     string out = ""
-    int n = html.len()
+    int n = html.byte_len()
     bool inTag = false
     // ★ 2026-10-03 收编：非标签内容先收字节，末尾一趟 `strings.from_bytes`（替代逐字符拼串的 O(n²)）✓
     Array[int] out_bytes = []
@@ -1199,11 +1240,12 @@ func _parseSimple(string selector): SelectorPart {
     r.attrValue = ""
     r.attrOp = "="
     r.hasAttr = false
+    r.comb = " "
     r.isChild = false
-    r.pseudo = ""
-    r.pseudoArg = ""
+    r.pseudos = []
+    r.pseudoArgs = []
     int i = 0
-    int slen = selector.len()
+    int slen = selector.byte_len()
 
     while i < slen {
         int b = selector.byte(i)
@@ -1249,7 +1291,9 @@ func _parseSimple(string selector): SelectorPart {
             Array[int] attr_name_bytes = []
             while i < slen {
                 int ch = selector.byte(i)
-                if ch == 61 or ch == 94 or ch == 36 or ch == 42 or ch == 93 {
+                // 61'=' 94'^' 36'$' 42'*' 126'~' 124'|' 93']' —— 都要在属性名处停下，
+                // 否则 `[class~='x']` 会把 `~` 吃进属性名
+                if ch == 61 or ch == 94 or ch == 36 or ch == 42 or ch == 93 or ch == 126 or ch == 124 {
                     break
                 }
                 attr_name_bytes.add(ch)
@@ -1274,6 +1318,14 @@ func _parseSimple(string selector): SelectorPart {
                 } else if op == 42 and i + 1 < slen and selector.byte(i + 1) == 61 {
                     // *=
                     r.attrOp = "*="
+                    i = i + 2
+                } else if op == 126 and i + 1 < slen and selector.byte(i + 1) == 61 {
+                    // ~= 空白分隔的词匹配（类名场景最常用）
+                    r.attrOp = "~="
+                    i = i + 2
+                } else if op == 124 and i + 1 < slen and selector.byte(i + 1) == 61 {
+                    // |= 值等于 x 或以 "x-" 开头（lang 场景）
+                    r.attrOp = "|="
                     i = i + 2
                 }
                 if i <= slen and i - 1 < slen {
@@ -1321,36 +1373,44 @@ func _parseSimple(string selector): SelectorPart {
                 i = i + 1
             }
         } else if b == 58 {
-            // 伪类 :first-child / :last-child / :nth-child(n) / :only-child
+            // 伪类：可叠加（`:not(.a):first-child`）⇒ 追加到数组，而不是覆盖单个字段
             i = i + 1
-            // ★ 2026-10-03 收编：伪类名先收字节，循环后物化 ✓
             Array[int] pseudo_bytes = []
             while i < slen {
                 int ch = selector.byte(i)
-                if ch == 40 or ch == 46 or ch == 35 or ch == 91 or ch == 58 or ch == 62 {
+                if ch == 40 or ch == 46 or ch == 35 or ch == 91 or ch == 58 or ch == 62 or ch == 43 or ch == 126 {
                     break
                 }
                 pseudo_bytes.add(ch)
                 i = i + 1
             }
-            r.pseudo = strings.from_bytes(pseudo_bytes)
+            string pname = strings.from_bytes(pseudo_bytes)
+            string parg = ""
             if i < slen and selector.byte(i) == 40 {
-                // nth-child(n)
                 i = i + 1
-                // ★ 2026-10-03 收编：伪类参数先收字节，循环后物化 ✓
+                // 参数里可能有**嵌套括号**（`:not(:nth-child(2))`、`:has(a:not(.b))`）
+                // ⇒ 必须按括号配平收，只认第一个 ')' 会把参数截断成半截选择器。
                 Array[int] arg_bytes = []
+                int depth = 1
                 while i < slen {
                     int ch = selector.byte(i)
-                    if ch == 41 {
-                        break
+                    if ch == 40 {
+                        depth = depth + 1
+                    } else if ch == 41 {
+                        depth = depth - 1
+                        if depth == 0 {
+                            i = i + 1
+                            break
+                        }
                     }
                     arg_bytes.add(ch)
                     i = i + 1
                 }
-                if i < slen and selector.byte(i) == 41 {
-                    i = i + 1
-                }
-                r.pseudoArg = strings.from_bytes(arg_bytes)
+                parg = strings.from_bytes(arg_bytes)
+            }
+            if pname != "" {
+                r.pseudos.add(pname)
+                r.pseudoArgs.add(parg)
             }
         } else {
             break
@@ -1360,16 +1420,18 @@ func _parseSimple(string selector): SelectorPart {
     return r
 }
 
+// 拆分复合选择器为若干"段"，并给每段记下它与**前一段**的组合器。
+//   " " 后代   ">" 子元素   "+" 紧随兄弟   "~" 后续兄弟
+// ⚠ 两处"深度"都要跟：[ ] 属性选择器内部的空格不是分隔符；
+//   ( ) 伪类参数内部的空格同样不是（`:not(.a .b)`、`:has(+ span)`）。
 func _splitSelector(string selector): Array[SelectorPart] {
     Array[SelectorPart] parts = []
-    string current = ""
     int i = 0
-    int slen = selector.len()
-    bool lastWasChild = false
-    int bracketDepth = 0   // 属性选择器 [ ] 深度：内部空格不当作分隔符
+    int slen = selector.byte_len()
+    string pendingComb = " "     // 作用于**下一个** flush 出来的段
+    int bracketDepth = 0
+    int parenDepth = 0
 
-    // ★ 2026-10-03 收编：当前选择器片段先收字节，三处使用点（'<' / '>' 分隔、空白分隔、末尾）
-    //   各物化一次 ✓；不变式 `current == from_bytes(current_bytes)` 在每个使用点都成立 ✓
     Array[int] current_bytes = []
     while i < slen {
         int b = selector.byte(i)
@@ -1381,26 +1443,29 @@ func _splitSelector(string selector): Array[SelectorPart] {
             if bracketDepth > 0 { bracketDepth = bracketDepth - 1 }
             current_bytes.add(b)
             i = i + 1
-        } else if b == 62 and bracketDepth == 0 {
-            current = strings.from_bytes(current_bytes)
-            current_bytes = []
-            if current != "" {
-                SelectorPart parsed = _parseSimple(current)
-                parsed.isChild = false
-                parts.add(parsed)
-                current = ""
-            }
-            lastWasChild = true
+        } else if b == 40 and bracketDepth == 0 {   // '('
+            parenDepth = parenDepth + 1
+            current_bytes.add(b)
             i = i + 1
-        } else if _isSpace(b) and bracketDepth == 0 {
-            current = strings.from_bytes(current_bytes)
+        } else if b == 41 and bracketDepth == 0 {   // ')'
+            if parenDepth > 0 { parenDepth = parenDepth - 1 }
+            current_bytes.add(b)
+            i = i + 1
+        } else if (b == 62 or b == 43 or b == 126) and bracketDepth == 0 and parenDepth == 0 {
+            // '>' / '+' / '~'：组合器（其后可能还有空格，不能把 pendingComb 冲掉）
+            string seg = strings.from_bytes(current_bytes)
             current_bytes = []
-            if current != "" {
-                SelectorPart parsed = _parseSimple(current)
-                parsed.isChild = lastWasChild
-                parts.add(parsed)
-                current = ""
-                lastWasChild = false
+            if seg != "" {
+                parts.add(_partWithComb(seg, pendingComb))
+            }
+            pendingComb = strings.char(b)
+            i = i + 1
+        } else if _isSpace(b) and bracketDepth == 0 and parenDepth == 0 {
+            string seg = strings.from_bytes(current_bytes)
+            current_bytes = []
+            if seg != "" {
+                parts.add(_partWithComb(seg, pendingComb))
+                pendingComb = " "     // 空白分隔 = 后代（只在真的收了一段后才复位）
             }
             i = i + 1
         } else {
@@ -1409,14 +1474,20 @@ func _splitSelector(string selector): Array[SelectorPart] {
         }
     }
 
-    current = strings.from_bytes(current_bytes)
-    if current != "" {
-        SelectorPart parsed = _parseSimple(current)
-        parsed.isChild = lastWasChild
-        parts.add(parsed)
+    string tail = strings.from_bytes(current_bytes)
+    if tail != "" {
+        parts.add(_partWithComb(tail, pendingComb))
     }
 
     return parts
+}
+
+// 解析一段并设置它相对前一段的组合器（isChild 是给旧调用点留的兼容位）
+func _partWithComb(string seg, string comb): SelectorPart {
+    SelectorPart p = _parseSimple(seg)
+    p.comb = comb
+    p.isChild = (comb == ">")
+    return p
 }
 
 func _hasWord(string str, string word): bool {
@@ -1424,7 +1495,7 @@ func _hasWord(string str, string word): bool {
         return false
     }
     int i = 0
-    int slen = str.len()
+    int slen = str.byte_len()
     while i < slen {
         while i < slen and _isSpace(str.byte(i)) {
             i = i + 1
@@ -1446,25 +1517,229 @@ func _hasWord(string str, string word): bool {
     return false
 }
 
-// 检查伪类匹配：node 是兄弟中第 idx 个（0 起），total 为兄弟总数
-func _matchPseudo(HtmlNode node, SelectorPart sel, int idx, int total): bool {
-    if sel.pseudo == "" {
-        return true
+// ==================== 伪类匹配 ====================
+// 位置参数一律按 **CSS 语义只数元素子节点**（`#text` 不计）。
+// 传 `-1` 表示"拿不到父节点、无法判定位置" ⇒ 位置类伪类视为通过（不拦），
+// 这与旧行为一致：宁可多匹配，也不要因为缺上下文而静默全不匹配。
+func _matchPseudo(HtmlNode node, SelectorPart sel, int elemIdx, int elemTotal, int typeIdx, int typeTotal): bool {
+    if sel.pseudos.len() == 0 { return true }
+    for sel.pseudos.len() to pi {
+        if not _matchOnePseudo(node, sel.pseudos[pi], sel.pseudoArgAt(pi), elemIdx, elemTotal, typeIdx, typeTotal) {
+            return false
+        }
     }
-    if sel.pseudo == "first-child" {
-        return idx == 0
-    } else if sel.pseudo == "last-child" {
-        return idx == total - 1
-    } else if sel.pseudo == "only-child" {
-        return total == 1
-    } else if sel.pseudo == "nth-child" {
-        int n = _int(sel.pseudoArg)
-        if n > 0 {
-            return idx == n - 1
+    return true
+}
+
+func _matchOnePseudo(HtmlNode node, string name, string arg, int elemIdx, int elemTotal, int typeIdx, int typeTotal): bool {
+    switch name {
+        case "first-child" { return elemIdx >= 0 and elemIdx == 0 }
+        case "last-child" { return elemIdx >= 0 and elemIdx == elemTotal - 1 }
+        case "only-child" { return elemIdx >= 0 and elemTotal == 1 }
+        case "nth-child" { return _nthMatch(elemIdx, arg) }
+        case "nth-last-child" { return elemIdx >= 0 and _nthMatch(elemTotal - 1 - elemIdx, arg) }
+        case "first-of-type" { return typeIdx >= 0 and typeIdx == 0 }
+        case "last-of-type" { return typeIdx >= 0 and typeIdx == typeTotal - 1 }
+        case "only-of-type" { return typeIdx >= 0 and typeTotal == 1 }
+        case "nth-of-type" { return _nthMatch(typeIdx, arg) }
+        case "nth-last-of-type" { return typeIdx >= 0 and _nthMatch(typeTotal - 1 - typeIdx, arg) }
+        case "empty" { return _isEmptyNode(node) }
+        case "root" {
+            var p = node.parent()
+            return p == null or p.tag == "#document"
+        }
+        case "not" { return not _matchesAnchored(node, strings.trim(arg)) }
+        case "has" { return _hasRelative(node, strings.trim(arg)) }
+        // 未知伪类：不拦（与旧行为一致）—— 写错的伪类不会让整条选择器静默返回空
+        default { return true }
+    }
+}
+
+// `:empty`：没有元素子节点、也没有非空白文本
+func _isEmptyNode(HtmlNode node): bool {
+    for node.children.len() to i {
+        HtmlNode c = node.children[i]
+        if c.isElement() { return false }
+        if c.text.trim() != "" { return false }
+    }
+    return true
+}
+
+// `:not(S)`：S 以 node 自身为锚求值（`S` 可以是复合段，如 `.a.b` / `:nth-child(2)`）
+func _matchesAnchored(HtmlNode node, string selector): bool {
+    if selector == "" { return false }
+    Array[SelectorPart] parts = _splitSelector(selector)
+    if parts.len() == 0 { return false }
+    SelectorPart first = parts[0]
+    if not _matchSimple(node, first) { return false }
+    if not _matchesPseudoOf(node, first) { return false }
+    if parts.len() == 1 { return true }
+    // 其余段以 node 为起点继续收窄（`:not(div > .a)` 这类也能正确求值）
+    Array[HtmlNode] cur = [node]
+    for 1:parts.len()-1 to pi {
+        Array[HtmlNode] next = []
+        for cur.len() to ci { _collectRelated(cur[ci], parts[pi], next) }
+        if next.len() == 0 { return false }
+        cur = next
+    }
+    return true
+}
+
+// 用 node 自己的父节点算出位置参数后判伪类（供 closest 这类"只有单节点"的场景）
+func _matchesPseudoOf(HtmlNode node, SelectorPart sel): bool {
+    if sel.pseudos.len() == 0 { return true }
+    var par = node.parent()
+    if par == null {
+        return _matchPseudo(node, sel, -1, -1, -1, -1)
+    }
+    int ci = _childIndexOf(par, node)
+    if ci < 0 { return _matchPseudo(node, sel, -1, -1, -1, -1) }
+    Array[int] st = _childStats(par, ci, node)
+    return _matchPseudo(node, sel, st[0], st[1], st[2], st[3])
+}
+
+// node 在 parent.children 里的下标；找不到返回 -1
+func _childIndexOf(HtmlNode parent, HtmlNode node): int {
+    for parent.children.len() to i {
+        if parent.children[i] == node { return i }   // struct 实例是引用语义 ⇒ 这比较可靠
+    }
+    return -1
+}
+
+// 位置统计（只数元素）：返回 [elemIdx, elemTotal, typeIdx, typeTotal]
+// childIdx 为 node 在 children 里的下标
+func _childStats(HtmlNode parent, int childIdx, HtmlNode node): Array[int] {
+    int elemIdx = 0
+    int elemTotal = 0
+    int typeIdx = 0
+    int typeTotal = 0
+    for parent.children.len() to i {
+        HtmlNode c = parent.children[i]
+        if not c.isElement() { continue }
+        elemTotal = elemTotal + 1
+        bool sameType = (c.tag == node.tag)
+        if sameType { typeTotal = typeTotal + 1 }
+        if i < childIdx {
+            elemIdx = elemIdx + 1
+            if sameType { typeIdx = typeIdx + 1 }
+        }
+    }
+    return [elemIdx, elemTotal, typeIdx, typeTotal]
+}
+
+// 解析 `:nth-child(...)` 的参数并判断"1 起的位置 pos"是否命中。
+// 支持： `n` 整数、`odd`、`even`、`an+b`（含 `2n+1` / `-n+3` / `+2n-1` / 空格写法）。
+// 参数非法 ⇒ 不匹配（不再抛异常：原先 `_int("2n+1")` 会直接**报错中断整次抓取**）。
+func _nthMatch(int pos0, string arg): bool {
+    if pos0 < 0 { return false }
+    Array[int] ab = _parseAnB(arg)
+    int a = ab[0]
+    int b = ab[1]
+    int k = pos0 + 1
+    if a == 0 { return k == b }
+    int d = k - b
+    if a > 0 {
+        if d < 0 { return false }
+        return d % a == 0
+    }
+    if d > 0 { return false }
+    return d % a == 0
+}
+
+// `an+b` → [a, b]；解析不了返回 [0, 0]（0 匹配不到任何正位置 ⇒ 等价"永不匹配"）
+func _parseAnB(string arg): Array[int] {
+    string s = strings.to_lower(strings.trim(arg))
+    if s == "" { return [0, 0] }
+    if s == "odd" { return [2, 1] }
+    if s == "even" { return [2, 0] }
+    int ni = strings.find(s, "n")
+    if ni < 0 {
+        return [0, _intDef(s, 0)]
+    }
+    // ⚠ 变量名不能用 `as`（类型转换关键字）与 `any`（类型名）
+    string aPart = strings.trim(s.slice(0, ni))
+    string bPart = strings.trim(s.slice(ni + 1, s.len()))
+    int a = 1
+    if aPart == "-" { a = -1 }
+    else if aPart != "" and aPart != "+" { a = _intDef(aPart, 0) }
+    int b = 0
+    if bPart != "" { b = _intDef(bPart, 0) }
+    return [a, b]
+}
+
+// 宽松整数解析（容许前导 '+'/'-'、前后空白，尾随垃圾则退化为"不匹配"用的 0/def）
+func _intDef(string s, int def): int {
+    string t = strings.trim(s)
+    if t == "" { return def }
+    bool neg = false
+    int start = 0
+    int b0 = t.byte(0)
+    if b0 == 43 { start = 1 }          // '+'
+    else if b0 == 45 { neg = true; start = 1 }   // '-'
+    int v = 0
+    bool seenDigit = false
+    int lastIdx = t.byte_len() - 1
+    for start:lastIdx to i {
+        int b = t.byte(i)
+        if b < 48 or b > 57 { break }
+        v = v * 10 + (b - 48)
+        seenDigit = true
+    }
+    if not seenDigit { return def }
+    if neg { return -v }
+    return v
+}
+
+// `:has(...)`：参数可带前导组合器（`> S` 子、`+ S` 紧随兄弟、`~ S` 后续兄弟），
+// 否则按"有后代匹配 S"处理（最常用的形态）。
+func _hasRelative(HtmlNode node, string arg): bool {
+    if arg == "" { return false }
+    int first = arg.byte(0)
+    if first == 62 or first == 43 or first == 126 {
+        string rest = strings.trim(arg.slice(1, arg.len()))
+        if rest == "" { return false }
+        if first == 62 {
+            for node.children.len() to i {
+                HtmlNode c = node.children[i]
+                if c.isElement() and _matchesAnchored(c, rest) { return true }
+            }
+            return false
+        }
+        if first == 43 {
+            var nxt = _nextElementSibling(node)
+            if nxt == null { return false }
+            return _matchesAnchored(nxt, rest)
+        }
+        Array[HtmlNode] after = _siblingsAfter(node)
+        for after.len() to i {
+            if _matchesAnchored(after[i], rest) { return true }
         }
         return false
     }
-    return true
+    return _selectFrom(node, arg).len() > 0
+}
+
+// node 之后的第一个元素兄弟（跳过 #text）
+func _nextElementSibling(HtmlNode node): HtmlNode? {
+    Array[HtmlNode] after = _siblingsAfter(node)
+    if after.len() == 0 { return null }
+    return after[0]
+}
+
+// node 之后的所有元素兄弟（按文档顺序）
+func _siblingsAfter(HtmlNode node): Array[HtmlNode] {
+    Array[HtmlNode] out = []
+    var par = node.parent()
+    if par == null { return out }
+    int ci = _childIndexOf(par, node)
+    if ci < 0 { return out }
+    int from = ci + 1
+    int toIdx = par.children.len() - 1
+    for from:toIdx to i {
+        HtmlNode c = par.children[i]
+        if c.isElement() { out.add(c) }
+    }
+    return out
 }
 
 func _matchSimple(HtmlNode node, SelectorPart sel): bool {
@@ -1499,7 +1774,13 @@ func _matchSimple(HtmlNode node, SelectorPart sel): bool {
     // 属性
     if sel.hasAttr and sel.attrName != "" {
         string actual = node.attrs.get(sel.attrName, "")
-        if sel.attrValue != "" {
+        if sel.attrValue == "" {
+            // ★ 存在性判断：`a[href]` 原先在这里**直接跳过**（外层 if 只看 hasAttr，
+            //   而内层只在 attrValue != "" 时才比对）⇒ 没有该属性的元素也全部命中（静默错）。
+            if not node.attrs.has(sel.attrName) {
+                return false
+            }
+        } else {
             if sel.attrOp == "=" {
                 if actual != sel.attrValue {
                     return false
@@ -1514,6 +1795,16 @@ func _matchSimple(HtmlNode node, SelectorPart sel): bool {
                 }
             } else if sel.attrOp == "*=" {
                 if not actual.has(sel.attrValue) {
+                    return false
+                }
+            } else if sel.attrOp == "~=" {
+                // 空白分隔的词匹配：`[class~='x']` 命中 `class="a x b"`，且不会命中 `xy`
+                if not _hasWord(actual, sel.attrValue) {
+                    return false
+                }
+            } else if sel.attrOp == "|=" {
+                // 等于 v 或以 "v-" 开头（`[lang|='zh']` 命中 zh / zh-CN）
+                if actual != sel.attrValue and not actual.starts_with(sel.attrValue + "-") {
                     return false
                 }
             } else {
@@ -1535,14 +1826,36 @@ func _nodeMatches(HtmlNode node, string selector): bool {
     }
     // 多段选择器（空格/>级联）用于祖先关系，单节点自身匹配只看最后一段
     SelectorPart last = parts[parts.len() - 1]
-    return _matchSimple(node, last) and _matchPseudo(node, last, 0, 1)
+    return _matchSimple(node, last) and _matchesPseudoOf(node, last)
+}
+
+// "本段与上一段的组合器"只有这一处分派 —— select / HtmlNode.select / :has / :not 全走它，
+// 避免各写一份 if（加组合器时漏改某处会变成静默的另一种语义）。
+func _collectRelated(HtmlNode node, SelectorPart sel, Array[HtmlNode] out) {
+    if sel.comb == ">" {
+        _findDirectChildren(node, sel, out)
+    } else if sel.comb == "+" {
+        _findNextSibling(node, sel, out)
+    } else if sel.comb == "~" {
+        _findFollowingSiblings(node, sel, out)
+    } else {
+        _findDescendants(node, sel, out)
+    }
+}
+
+// 单点匹配：先看自身（tag/id/class/attr），有伪类时再算兄弟统计喂位置类伪类
+func _matchChild(HtmlNode parent, int childIdx, HtmlNode child, SelectorPart sel): bool {
+    if not _matchSimple(child, sel) { return false }
+    if sel.pseudos.len() == 0 { return true }
+    Array[int] st = _childStats(parent, childIdx, child)
+    return _matchPseudo(child, sel, st[0], st[1], st[2], st[3])
 }
 
 func _findDescendants(HtmlNode node, SelectorPart sel, Array[HtmlNode] results) {
-    int total = node.children.len()
-    for 0:total-1 to i {
+    for node.children.len() to i {
         HtmlNode child = node.children[i]
-        if _matchSimple(child, sel) and _matchPseudo(child, sel, i, total) {
+        // 只匹配**元素**节点（CSS 选择器从不匹配文本节点；原先 `*` 会把 #text 也收进来）
+        if child.isElement() and _matchChild(node, i, child, sel) {
             results.add(child)
         }
         _findDescendants(child, sel, results)
@@ -1550,38 +1863,74 @@ func _findDescendants(HtmlNode node, SelectorPart sel, Array[HtmlNode] results) 
 }
 
 func _findDirectChildren(HtmlNode node, SelectorPart sel, Array[HtmlNode] results) {
-    int total = node.children.len()
-    for 0:total-1 to i {
+    for node.children.len() to i {
         HtmlNode child = node.children[i]
-        if _matchSimple(child, sel) and _matchPseudo(child, sel, i, total) {
+        if child.isElement() and _matchChild(node, i, child, sel) {
             results.add(child)
         }
     }
 }
 
-export func select(HtmlNode root, string selector): Array[HtmlNode] {
+// 紧随其后的兄弟元素（`+`）
+func _findNextSibling(HtmlNode node, SelectorPart sel, Array[HtmlNode] results) {
+    var par = node.parent()
+    if par == null { return }
+    var nxt = _nextElementSibling(node)
+    if nxt == null { return }
+    int ci = _childIndexOf(par, nxt)
+    if ci >= 0 and _matchChild(par, ci, nxt, sel) { results.add(nxt) }
+}
+
+// 之后的所有兄弟元素（`~`）
+func _findFollowingSiblings(HtmlNode node, SelectorPart sel, Array[HtmlNode] results) {
+    var par = node.parent()
+    if par == null { return }
+    Array[HtmlNode] after = _siblingsAfter(node)
+    for after.len() to k {
+        HtmlNode c = after[k]
+        int ci = _childIndexOf(par, c)
+        if ci >= 0 and _matchChild(par, ci, c, sel) { results.add(c) }
+    }
+}
+
+// select 的唯一实现（模块级 select() 与 HtmlNode.select() 共用这一份）
+func _selectFrom(HtmlNode root, string selector): Array[HtmlNode] {
     Array[SelectorPart] parts = _splitSelector(selector)
     if parts.len() == 0 {
         return []
     }
-
     Array[HtmlNode] current = [root]
     int partsLen = parts.len()
     for 0:partsLen-1 to pi {
         SelectorPart p0 = parts[pi]
         Array[HtmlNode] next = []
         for current.len() to ci {
-            HtmlNode node = current[ci]
-            if p0.isChild {
-                _findDirectChildren(node, p0, next)
-            } else {
-                _findDescendants(node, p0, next)
-            }
+            _collectRelated(current[ci], p0, next)
         }
         current = next
     }
+    return _dedupeNodes(current)
+}
 
-    return current
+// 结果去重（保序）：`p ~ span` 里同一个 span 会被前面**多个** p 各命中一次，
+// 不去重就会出现 ["B","D","D"] 这种重复项（CSS 的匹配集是集合语义）。
+func _dedupeNodes(Array[HtmlNode] src): Array[HtmlNode] {
+    Array[HtmlNode] out = []
+    for src.len() to i {
+        bool dup = false
+        for out.len() to j {
+            if out[j] == src[i] {
+                dup = true
+                break
+            }
+        }
+        if not dup { out.add(src[i]) }
+    }
+    return out
+}
+
+export func select(HtmlNode root, string selector): Array[HtmlNode] {
+    return _selectFrom(root, selector)
 }
 
 export func selectOne(HtmlNode root, string selector): HtmlNode? {

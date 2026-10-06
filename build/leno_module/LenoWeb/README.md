@@ -50,6 +50,45 @@ web.codepage("gb18030")              // → 54936
 
 转码后端：Windows 用 `kernel32`（系统自带），POSIX 用 `iconv`；都拿不到时**原样返回**（不破坏内容）。
 
+> ⚠ **光有转码还不够**：2026-10-06 同时修掉了 `web_html` / `web_crawler` 里一批"把**字符数**当
+> **字节下标上界**"的写法（`int n = html.len()` 配 `html.byte(i)`）。纯 ASCII 时两者恰好相等，
+> 所以一直没暴露；含中文的页面会被**截断/切碎**（`parse("<p>中文</p>")` 取文本只剩 2 字节坏字符，
+> `allText` 得到 `"标标"`）。也就是说：转码把 GBK 页面正确变成 UTF-8 之后，**解析这一步又会把中文毁掉**。
+> 现已全部改为 `byte_len()`，回归用例 `examples/tests/test_utf8_text.leno`。
+
+## HTML 解析与选择器
+
+解析器是手写的、对畸形 HTML 容错（自动闭合、忽略注释/CDATA/DOCTYPE），选择器语法如下：
+
+| 语法 | 例子 |
+| --- | --- |
+| 标签 / 通配 | `div`、`*` |
+| id / class | `#main`、`.item`、`p.a.b` |
+| 属性 | `[href]`（存在性）、`[href='/x']`、`[href^='http']`、`[href$='.png']`、`[href*='x']`、`[class~='x']`（词）、`[lang\|='zh']`（前缀） |
+| 组合器 | 后代（空格）、子元素 `>`、紧随兄弟 `+`、后续兄弟 `~` |
+| 结构伪类 | `:first-child`、`:last-child`、`:only-child`、`:nth-child(2n+1)`、`:nth-child(odd)`、`:nth-child(-n+2)`、`:nth-last-child(n)` |
+| 类型伪类 | `:first-of-type`、`:last-of-type`、`:only-of-type`、`:nth-of-type(2n)`、`:nth-last-of-type(n)` |
+| 否定 / 关系 | `:not(.x)`（可嵌套 `:not(:nth-child(2))`）、`:has(> .price)`、`:has(+ span)`、`:has(~ li)` |
+| 其他 | `:empty`、`:root`；伪类**可叠加**：`td:not(.hidden):nth-child(2)` |
+
+```leno
+var rows = web.select(web.parse(html), "table tr:nth-child(2n+1) td:not(.hidden)")
+```
+
+两处语义细节（与 CSS 一致）：
+
+- 位置类伪类与 `nth-*` **只数元素**（`#text` 不计入编号）
+- 返回结果**已去重**（`p ~ span` 不会因为前面有多个 `p` 而重复给出同一个 `span`）
+
+`:has()` 支持前导组合器（`> S` 子、`+ S` 紧随兄弟、`~ S` 后续兄弟），不带前导组合器时按"有后代匹配"处理。
+
+### 命名实体
+
+`&nbsp;` → `U+00A0`（**不是**普通空格）、`&hearts;` → `♥`、`&euro;` → `€`、`&alpha;` → `α`
+等 ~250 个常用命名实体已收录（ISO-8859-1 全集 + 排版标点 + 货币 + 希腊字母 + 数学/箭头 + 符号）。
+未收录的（多码点实体、冷门符号）会**原样保留** `&name;`，不会吃掉内容；数字实体
+`&#20013;` / `&#x4E2D;` 一直支持。
+
 ## 上传：multipart/form-data（新增）
 
 ```leno

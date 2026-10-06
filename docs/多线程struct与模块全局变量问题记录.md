@@ -291,7 +291,7 @@ vm_call_value:  vm_ptr=0xDCFCBB3630  &vm.stop_frame_cnt=0x7FF6983E66D8   ← 主
 | --- | --- |
 | 最小复现（`qsort` 驱动的回调） | 主线程 10 / 子线程 10，且排序结果正确 |
 | `examples/tests/test_thread_http.leno` | 8 线程 × 6 轮 × 3 种模式（独立 client / 每轮新建 / 并发抓 GBK）全绿，连跑 3 次稳定 |
-| LenoWeb 套件（`examples/tests/run_tests.leno`） | 9 个用例 / 162 项断言全绿 |
+| LenoWeb 套件（`examples/tests/run_tests.leno`） | 11 个用例 / 233 项断言全绿 |
 | **仓库自带断言套件** | **417 passed / 0 failed** —— 证明运行时改动无回归 |
 
 回归用例：`examples/tests/test_ffi_callback_thread.leno`（运行时层）、

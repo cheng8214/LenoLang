@@ -726,7 +726,7 @@ func _fileSize(string path): int {
 func _digitsToInt(string s): int {
     if s == "" { return -1 }
     int v = 0
-    for s.len() to i {
+    for s.byte_len() to i {
         var b = s.byte(i)
         if b is int {
             if b < 48 or b > 57 { return -1 }

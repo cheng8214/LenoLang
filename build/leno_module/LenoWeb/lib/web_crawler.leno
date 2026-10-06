@@ -94,7 +94,7 @@ export struct Url {
         Array[int] cur_bytes = []
         string cur = ""
         int i = 0
-        int plen = path.len()
+        int plen = path.byte_len()
         while i < plen {
             int b = path.byte(i)
             if b == 47 {
@@ -119,9 +119,9 @@ export struct Url {
             segs.add(cur)
         }
         string result = ""
-        if path.len() > 0 and path.byte(0) == 47 { result = "/" }
+        if path.byte_len() > 0 and path.byte(0) == 47 { result = "/" }
         result = result + strings.join(segs, "/")
-        if path.len() > 0 and path.byte(path.len() - 1) == 47 and result != "/" {
+        if path.byte_len() > 0 and path.byte(path.byte_len() - 1) == 47 and result != "/" {
             result = result + "/"
         }
         return result
@@ -166,11 +166,11 @@ export struct Url {
 
     // 拼接相对引用（类似 RFC 3986 resolve）
     func resolve(string ref): Url {
-        if ref.len() > 4 and ref.slice(0, 4).has("://") {
+        if ref.byte_len() > 4 and ref.slice(0, 4).has("://") {
             return parseUrl(ref)
         }
         // 协议相对 //host/path
-        if ref.len() > 2 and ref.byte(0) == 47 and ref.byte(1) == 47 {
+        if ref.byte_len() > 2 and ref.byte(0) == 47 and ref.byte(1) == 47 {
             return parseUrl(scheme + ":" + ref)
         }
         Url u = new Url()
@@ -181,14 +181,14 @@ export struct Url {
         u.query = ""
         u.fragment = ""
         // 绝对路径引用
-        if ref.len() > 0 and ref.byte(0) == 47 {
+        if ref.byte_len() > 0 and ref.byte(0) == 47 {
             u.path = _collapsePath(ref)
         } else {
             // 相对路径：基于当前目录
             string base = normalizedPath()
             int lastSlash = -1
             int bi = 0
-            while bi < base.len() {
+            while bi < base.byte_len() {
                 if base.byte(bi) == 47 { lastSlash = bi }
                 bi = bi + 1
             }
@@ -201,7 +201,7 @@ export struct Url {
         int fi = strings.find(ref, "#")
         string refNoFrag = ref
         if fi >= 0 {
-            u.fragment = ref.slice(fi + 1, ref.len())
+            u.fragment = ref.slice(fi + 1, ref.byte_len())
             refNoFrag = ref.slice(0, fi)
         }
         if qi >= 0 {
@@ -235,7 +235,7 @@ func _collapsePath(string path): string {
     Array[int] cur_bytes = []
     string cur = ""
     int i = 0
-    int plen = path.len()
+    int plen = path.byte_len()
     while i < plen {
         int b = path.byte(i)
         if b == 47 {
@@ -260,9 +260,9 @@ func _collapsePath(string path): string {
         segs.add(cur)
     }
     string result = ""
-    if path.len() > 0 and path.byte(0) == 47 { result = "/" }
+    if path.byte_len() > 0 and path.byte(0) == 47 { result = "/" }
     result = result + strings.join(segs, "/")
-    if path.len() > 0 and path.byte(path.len() - 1) == 47 and result != "/" {
+    if path.byte_len() > 0 and path.byte(path.byte_len() - 1) == 47 and result != "/" {
         result = result + "/"
     }
     return result
@@ -300,29 +300,29 @@ export func parseUrl(string url): Url {
     // ★ 2026-10-03 收编：scheme 先收字节，循环后一趟 `strings.from_bytes`（替代逐字符拼串的 O(n²)）✓
     int pos = 0
     Array[int] scheme_bytes = []
-    while pos < noQuery.len() and noQuery.byte(pos) != 58 {
+    while pos < noQuery.byte_len() and noQuery.byte(pos) != 58 {
         scheme_bytes.add(noQuery.byte(pos))
         pos = pos + 1
     }
-    // ⚠ 保留局部 `scheme`：后面 `else if scheme != "" and pos >= noQuery.len()` 还要用它 ✓
+    // ⚠ 保留局部 `scheme`：后面 `else if scheme != "" and pos >= noQuery.byte_len()` 还要用它 ✓
     string scheme = strings.from_bytes(scheme_bytes)
     u.scheme = scheme
-    if pos + 2 < noQuery.len() and noQuery.byte(pos) == 58 and noQuery.byte(pos + 1) == 47 and noQuery.byte(pos + 2) == 47 {
+    if pos + 2 < noQuery.byte_len() and noQuery.byte(pos) == 58 and noQuery.byte(pos + 1) == 47 and noQuery.byte(pos + 2) == 47 {
         u.isAbsolute = true
         pos = pos + 3
         // ★ 2026-10-03 收编：host 先收字节，循环后一趟 `strings.from_bytes` ✓
         Array[int] host_bytes = []
-        while pos < noQuery.len() {
+        while pos < noQuery.byte_len() {
             int b = noQuery.byte(pos)
             if b == 58 or b == 47 { break }
             host_bytes.add(b)
             pos = pos + 1
         }
         u.host = strings.from_bytes(host_bytes)
-        if pos < noQuery.len() and noQuery.byte(pos) == 58 {
+        if pos < noQuery.byte_len() and noQuery.byte(pos) == 58 {
             pos = pos + 1
             int port = 0
-            while pos < noQuery.len() {
+            while pos < noQuery.byte_len() {
                 int b = noQuery.byte(pos)
                 if b >= 48 and b <= 57 {
                     port = port * 10 + (b - 48)
@@ -332,12 +332,12 @@ export func parseUrl(string url): Url {
             u.port = port
         }
         string path = "/"
-        if pos < noQuery.len() {
-            path = noQuery.slice(pos, noQuery.len())
+        if pos < noQuery.byte_len() {
+            path = noQuery.slice(pos, noQuery.byte_len())
         }
         if path == "" { path = "/" }
         u.path = path
-    } else if scheme != "" and pos >= noQuery.len() {
+    } else if scheme != "" and pos >= noQuery.byte_len() {
         // 只有 scheme，没有 //，视为相对/非标准
         u.isAbsolute = false
     } else {
@@ -688,7 +688,7 @@ export func baseUrl(string url): string {
     string path = u.path
     int lastSlash = -1
     int i = 0
-    while i < path.len() {
+    while i < path.byte_len() {
         if path.byte(i) == 47 { lastSlash = i }
         i = i + 1
     }
@@ -875,7 +875,7 @@ func _intOr0(string s): int {
 
 func _allDigits(string s): bool {
     if s == "" { return false }
-    for s.len() to i {
+    for s.byte_len() to i {
         var b = s.byte(i)
         if b is int {
             if b < 48 or b > 57 { return false }

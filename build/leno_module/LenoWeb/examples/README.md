@@ -41,6 +41,8 @@ build\leno.exe build\leno_module\LenoWeb\examples\tests\test_charset_http.leno
 | `test_thread_http.leno` | **多线程并发 HTTP**：8 线程 × 6 轮 × 3 种模式，含并发抓 GBK 页面 |
 | `test_download_resume.leno` | **断点续传下载**：续传拼接逐字节校验、已完整不重下、本地过大重下、**服务端忽略 Range 时回退**、404 ⇒ -1 |
 | `test_crawler_state.leno` | **断点续爬**：进度落盘/恢复（页数 + 已访问 + 待抓队列）、自动落盘、坏存档不崩 |
+| `test_utf8_text.leno` | **非 ASCII 口径回归**：中文页面的解析/属性/聚合/清洗不被截断；命名实体表 |
+| `test_selector_ext.leno` | **扩展选择器**：`an+b` / `of-type` / `:not` / `:has` / 兄弟组合器 / 属性运算符 / 中文类名 |
 
 ### `_testkit.leno`
 
