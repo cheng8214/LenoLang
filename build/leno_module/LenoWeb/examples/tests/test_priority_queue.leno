@@ -1,0 +1,167 @@
+// test_priority_queue.leno — 爬虫优先队列（二叉堆），全部离线
+//
+// 改造前：`queue` 是一个数组 + 出队下标（`_head`），**没有任何优先级**，
+// 只能按入队顺序 BFS。想"先抓详情页再翻页"就必须自己在循环外维护第二个队列。
+// 现在 `enqueue(url, depth, priority)`：priority 大者先出，同优先级保持入队先后（FIFO 稳定）。
+//
+// 顺带钉住两件容易回归的事：
+//   · 出队顺序是**稳定**的（堆本身不稳定 ⇒ 必须有 seq 兜底）
+//   · 断点续爬的存档格式升到 v2（带 priority），且**兼容旧的二元组存档**
+import "Web" as web
+import "_testkit" as tk
+import strings
+import files
+import jsons
+
+use web.Crawler
+
+func mkCrawler(Array[string] seeds, int maxDepth): Crawler {
+    return web.createCrawler({
+        start_urls: seeds,
+        allowed_domains: [],
+        max_pages: 0,
+        max_depth: maxDepth,
+        delay_ms: 0,
+        user_agent: "PQTest/1.0",
+        respect_robots: false
+    })
+}
+
+func joined(Array[string] xs): string {
+    return strings.join(xs, ",")
+}
+
+// 全部出队（同时 markVisited，避免"已访问"干扰下一轮）
+func drain(Crawler c, int limit): Array[string] {
+    Array[string] got = []
+    while got.len() < limit {
+        var it = c.nextUrl()
+        if it == null { break }
+        got.add(it.url)
+        c.markVisited(it.url)
+    }
+    return got
+}
+
+func pu(int i): string {
+    return "http://t/p" + i
+}
+
+main() {
+    print("--- ① 同优先级：保持入队顺序（FIFO 稳定）---")
+    var c1 = mkCrawler([], 5)
+    c1.start()
+    c1.enqueue(pu(1), 1)
+    c1.enqueue(pu(2), 1)
+    c1.enqueue(pu(3), 1)
+    tk.check("顺序", joined(drain(c1, 10)), pu(1) + "," + pu(2) + "," + pu(3))
+    tk.check("出队后 shouldStop", c1.shouldStop(), true)
+
+    print("--- ② 优先级大的先出（同级仍 FIFO）---")
+    var c2 = mkCrawler([], 5)
+    c2.start()
+    c2.enqueue(pu(1), 1, 0)      // 普通
+    c2.enqueue(pu(2), 1, 5)      // 详情页
+    c2.enqueue(pu(3), 1, 0)
+    c2.enqueue(pu(4), 1, 5)
+    c2.enqueue(pu(5), 1, -1)     // 翻页（最后做）
+    tk.check("2,4 先出；1,3 次之；5 最后",
+             joined(drain(c2, 10)),
+             pu(2) + "," + pu(4) + "," + pu(1) + "," + pu(3) + "," + pu(5))
+
+    print("--- ③ 跑到一半再入队高优先级：应立刻插到最前 ---")
+    var c3 = mkCrawler([], 5)
+    c3.start()
+    c3.enqueue(pu(1), 1, 0)
+    c3.enqueue(pu(2), 1, 0)
+    tk.check("先取 1", c3.nextUrl().url, pu(1))
+    c3.enqueue(pu(9), 1, 100)
+    tk.check("高优先级插队", joined(drain(c3, 10)), pu(9) + "," + pu(2))
+
+    print("--- ④ 与既有过滤/去重规则共存 ---")
+    var c4 = mkCrawler([], 3)
+    c4.start()
+    c4.enqueue(pu(1), 1, 9)
+    c4.enqueue(pu(1), 1, 99)      // 同一 URL：第二次入队被丢弃（优先级不会"升级"）
+    c4.enqueue(pu(2), 9, 99)      // 超深：不入队
+    var got4 = drain(c4, 10)
+    tk.check("去重 + 深度过滤", joined(got4), pu(1))
+    tk.check("未入队的不在 shouldStop 之外", c4.shouldStop(), true)
+
+    var c5 = mkCrawler([], 3)
+    c5.start()
+    c5.enqueue(pu(1), 1, 9)
+    tk.check("先入队者优先（同 URL 不升级）", c5.nextUrl().url, pu(1))
+
+    print("--- ⑤ 随机优先级大批量：顺序必须是 (priority 降序, 入队序升序) ---")
+    var c6 = mkCrawler([], 5)
+    c6.start()
+    Array[string] names = []
+    Array[int] pris = []
+    int seed = 7
+    for 200 to i {
+        seed = (seed * 1103515245 + 12345) % 2147483648
+        int p = (seed / 65536) % 7 - 3
+        string u = pu(i)
+        names.add(u)
+        pris.add(p)
+        c6.enqueue(u, 1, p)
+    }
+    // 自己算一遍期望序列（稳定排序：priority 降序 + 同级保持入队序）
+    Array[int] used = []
+    Array[string] want = []
+    while want.len() < names.len() {
+        int bestI = -1
+        for names.len() to i {
+            bool taken = false
+            for used.len() to k {
+                if used[k] == i { taken = true; break }
+            }
+            if taken { continue }
+            if bestI < 0 or pris[i] > pris[bestI] { bestI = i }
+        }
+        if bestI < 0 { break }
+        used.add(bestI)
+        want.add(names[bestI])
+    }
+    Array[string] got6 = drain(c6, 300)
+    tk.check("条数", got6.len(), 200)
+    tk.check("200 条随机优先级的出队顺序", joined(got6), joined(want))
+
+    print("--- ⑥ 存档往返：优先级要活着回来 ---")
+    string dir = _tmpdir() + _sep()
+    string sp = dir + "lenoweb_pq_state.json"
+    files.delete(sp)
+    var c7 = mkCrawler([], 5)
+    c7.start()
+    c7.enqueue(pu(1), 1, 0)
+    c7.enqueue(pu(2), 1, 9)
+    c7.enqueue(pu(3), 1, 0)
+    c7.enqueue(pu(4), 1, 9)
+    c7.saveState(sp)
+    var d = jsons.read_file(sp) as Dict[string, any]
+    tk.check("存档 version", d["version"], 2)
+
+    var c8 = mkCrawler([], 5)
+    tk.checkTrue("loadState 成功", c8.loadState(sp) >= 0)
+    tk.check("恢复后的出队顺序与原队列一致",
+             joined(drain(c8, 10)),
+             pu(2) + "," + pu(4) + "," + pu(1) + "," + pu(3))
+
+    print("--- ⑦ 兼容旧存档（二元组 [url, depth]，无 priority）---")
+    string spOld = dir + "lenoweb_pq_state_old.json"
+    files.delete(spOld)
+    jsons.write_file(spOld, {
+        version: 1,
+        page_count: 0,
+        visited: [],
+        queue: [[pu(1), 1], [pu(2), 1]]
+    })
+    var c9 = mkCrawler([], 5)
+    tk.checkTrue("旧存档可载入", c9.loadState(spOld) >= 0)
+    tk.check("旧存档按 priority=0 且保持顺序", joined(drain(c9, 10)), pu(1) + "," + pu(2))
+
+    files.delete(sp)
+    files.delete(spOld)
+    if tk.summary("priority_queue") != 0 { _exit(1) }
+}

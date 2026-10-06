@@ -357,6 +357,8 @@ export func parseUrl(string url): Url {
 export struct CrawlItem {
     string url = 0
     int depth = 0
+    int priority = 0        // 越大越先出队（默认 0 ⇒ 先后顺序 = 入队顺序）
+    int seq = 0             // 入队序号：同优先级按它做 FIFO 稳定排序（堆本身不稳定）
 
     func toString(): string {
         return url
@@ -402,13 +404,13 @@ export struct Crawler {
     bool respect_robots = 0
     string robots_rules = 0
     Dict[string, bool] visited
-    Array[CrawlItem] queue
+    Array[CrawlItem] queue                  // 二叉大顶堆（优先队列），见 _push/_pop
     int page_count = 0
     bool running = 0
 
-    // ---- 内部状态（2026-10-06 新增，见各方法注释）----
-    int _head = 0                          // 队列头下标（替代 remove(0) 的 O(n) 搬移）
+    // ---- 内部状态（见各方法注释）----
     Dict[string, bool] _queued = {}        // 已入队集合：同一 URL 不重复入队
+    int _seq = 0                           // 入队序号发号器（同优先级 FIFO）
     int crawl_delay_ms = 0                 // robots.txt 的 crawl-delay（毫秒）
     int _lastFetchMs = 0                   // 上次真正发起抓取的时刻
 
@@ -426,7 +428,7 @@ export struct Crawler {
     func start() {
         running = true
         page_count = 0
-        _head = 0
+        _seq = 0
         _lastFetchMs = 0
         for start_urls.len() to i {
             enqueue(start_urls[i], 0)
@@ -456,35 +458,88 @@ export struct Crawler {
     // 取出下一个待抓取的 URL（跳过已访问/超深/域名不符/robots 禁止）
     func nextUrl(): CrawlItem? {
         if not running { return null }
-        while _head < queue.len() {
-            CrawlItem entry = queue[_head]
-            _head = _head + 1
-            _compactQueue()
+        while queue.len() > 0 {
+            CrawlItem? popped = _pop()
+            if popped == null { break }
             // 用**归一化后**的 URL 判重：同一页面的 #fragment / ./ 变体不应被当成两页
-            string key = _normKey(entry.url)
+            string key = _normKey(popped.url)
             if visited.get(key, false) { continue }
-            if entry.depth > max_depth { continue }
+            if popped.depth > max_depth { continue }
             if allowed_domains.len() > 0 {
-                string d = domain(entry.url)
+                string d = domain(popped.url)
                 if not allowed_domains.has(d) { continue }
             }
             if respect_robots and robots_rules != "" {
-                if not isRobotsAllowed(robots_rules, user_agent, entry.url) {
+                if not isRobotsAllowed(robots_rules, user_agent, popped.url) {
                     continue
                 }
             }
             throttle()
-            return entry
+            return popped
         }
         return null
     }
 
-    // 队列头前进后回收已出队的前缀（否则 queue 会一直变长，且取头退化成 O(n)）
-    func _compactQueue() {
-        if _head >= 64 {
-            queue = queue[_head:queue.len()]
-            _head = 0
+    // ==================== 优先队列（二叉大顶堆）====================
+    // 排序键：`priority` 大者先出；同优先级按 `seq`（入队先后）⇒ FIFO 稳定。
+    // 为什么用堆：数组"排序插入"每次要搬移 O(n)，出队也要搬移；堆的入队/出队都是 O(log n)。
+    // 队列规模上千时差别明显（爬虫的队列经常是上万条）。
+    // 堆数组里没有"已出队的前缀"，所以 block saveState 直接把整个数组存下来即可。
+
+    // i 是否应比 j 先出队
+    func _higher(int i, int j): bool {
+        if queue[i].priority != queue[j].priority {
+            return queue[i].priority > queue[j].priority
         }
+        return queue[i].seq < queue[j].seq
+    }
+
+    func _swap(int i, int j) {
+        CrawlItem t = queue[i]
+        queue[i] = queue[j]
+        queue[j] = t
+    }
+
+    func _siftUp(int i) {
+        while i > 0 {
+            int p = (i - 1) / 2
+            if not _higher(i, p) { break }
+            _swap(i, p)
+            i = p
+        }
+    }
+
+    func _siftDown(int i) {
+        int n = queue.len()
+        while true {
+            int l = i * 2 + 1
+            int r = l + 1
+            int best = i
+            if l < n and _higher(l, best) { best = l }
+            if r < n and _higher(r, best) { best = r }
+            if best == i { break }
+            _swap(i, best)
+            i = best
+        }
+    }
+
+    func _push(CrawlItem it) {
+        queue.add(it)
+        _siftUp(queue.len() - 1)
+    }
+
+    // 调用前请确保队列非空（空时返回 null）
+    func _pop(): CrawlItem? {
+        int n = queue.len()
+        if n == 0 { return null }
+        CrawlItem top = queue[0]
+        CrawlItem last = queue[n - 1]
+        queue.remove(n - 1)
+        if queue.len() > 0 {
+            queue[0] = last
+            _siftDown(0)
+        }
+        return top
     }
 
     // 标记已访问（键为归一化 URL，与 nextUrl/enqueue 保持同一口径）
@@ -499,18 +554,30 @@ export struct Crawler {
 
     // ==================== 断点续爬 ====================
 
-    // 保存进度到 JSON：已访问集合 + **尚未出队**的待抓队列 + 已抓页数。
-    // 队列只存 `_head` 之后的部分（已出队的没必要留），存的是 [url, depth] 二元组
-    // —— CrawlItem 是 struct 实例，直接塞进 JSON 不划算也没必要。
+    // 保存进度到 JSON：已访问集合 + 待抓队列 + 已抓页数。
+    // 队列存成 [url, depth, priority] 三元组 —— CrawlItem 是 struct 实例，
+    // 直接塞进 JSON 不划算也没必要。（version 2 起是三元组；载入时兼容旧的二元组）
+    //
+    // ⚠ 导出顺序必须是**出队顺序**：堆数组的内部顺序是任意的（满足堆序即可），
+    //   直接存数组、载入时按数组顺序重编号 seq ⇒ 同优先级的 FIFO 次序会被打乱
+    //   （实测：存 [p2(pri9) p4(pri9) p1(pri0) p3(pri0)] 恢复成 p2,p4,p3,p1 ✗）。
+    //   所以这里先把堆逐个弹出（得到真实抓取顺序），存完再原样压回去 ——
+    //   saveState 不该破坏运行期状态。
     func saveState(string path) {
         Array[string] seen = visited.keys()
         Array[Array[any]] pending = []
-        for queue.len() to i {
-            if i < _head { continue }
-            pending.add([queue[i].url, queue[i].depth])
+        Array[CrawlItem] drained = []
+        while queue.len() > 0 {
+            CrawlItem? it = _pop()
+            if it == null { break }
+            drained.add(it)
+            pending.add([it.url, it.depth, it.priority])
+        }
+        for drained.len() to i {
+            _push(drained[i])
         }
         jsons.write_file(path, {
-            version: 1,
+            version: 2,
             page_count: page_count,
             visited: seen,
             queue: pending
@@ -540,8 +607,9 @@ export struct Crawler {
             }
         }
 
-        Array[CrawlItem] newQueue = []
+        Array[CrawlItem] restored = []
         Dict[string, bool] newQueued = {}
+        int newSeq = 0
         var pending = d["queue"]
         if pending is Array {
             for pending.len() to i {
@@ -550,7 +618,15 @@ export struct Crawler {
                     var u = pair[0]
                     var dep = pair[1]
                     if u is string and dep is int {
-                        newQueue.add(newCrawlItem(u, dep))
+                        CrawlItem it = newCrawlItem(u, dep)
+                        // version 2 起存 [url, depth, priority]；旧存档是二元组 ⇒ priority 当 0
+                        if pair.len() >= 3 {
+                            var pr = pair[2]
+                            if pr is int { it.priority = pr }
+                        }
+                        it.seq = newSeq
+                        newSeq = newSeq + 1
+                        restored.add(it)
                         newQueued[u] = true
                     }
                 }
@@ -558,9 +634,13 @@ export struct Crawler {
         }
 
         visited = newVisited
-        queue = newQueue
         _queued = newQueued
-        _head = 0
+        // 逐个 _push 重建堆（顺带恢复优先级次序；同优先级按存档顺序重新编号 FIFO）
+        queue = []
+        for restored.len() to i {
+            _push(restored[i])
+        }
+        _seq = newSeq
         _lastFetchMs = 0
         var pc = d["page_count"]
         page_count = if pc is int then pc else 0
@@ -576,20 +656,26 @@ export struct Crawler {
     }
 
     // 入队一个 URL（归一化 + 双重去重：已访问的不入、队列内已有的不入）
-    func enqueue(string url, int depth) {
+    // `priority` 越大越先被 nextUrl() 取出（默认 0 ⇒ 与入队顺序一致）。
+    // 典型用法：详情页 priority=1、翻页 priority=-1 ⇒ 先把详情页吃完再翻页。
+    func enqueue(string url, int depth, int priority = 0) {
         string u = _normKey(url)
         if visited.get(u, false) { return }
         if _queued.get(u, false) { return }
         if depth > max_depth { return }
         _queued[u] = true
-        queue.add(newCrawlItem(u, depth))
+        CrawlItem it = newCrawlItem(u, depth)
+        it.priority = priority
+        it.seq = _seq
+        _seq = _seq + 1
+        _push(it)
     }
 
     // 是否应停止
     func shouldStop(): bool {
         if not running { return true }
         if max_pages > 0 and page_count >= max_pages { return true }
-        if _head >= queue.len() { return true }
+        if queue.len() == 0 { return true }
         return false
     }
 
@@ -979,48 +1065,154 @@ export func isRobotsAllowed(string robotsText, string userAgent, string url): bo
 }
 
 // ==================== Sitemap.xml 解析 ====================
+//
+// 这里不引 XML 解析器（也没必要）：sitemap 的结构极简，按 `<url>` / `<sitemap>` 分块 + 取
+// 子标签文本即可。全部用**字符口径**（`strings.find` / `slice`）—— 与 `xml.byte(i)` 那类
+// 字节口径不可混用（这正是本模块 2026-10-06 修掉的那类 bug）。
 
-// 解析 sitemap.xml 文本，提取所有 <loc> 中的 URL
+// 一条 sitemap 记录（lastmod/changefreq/priority 是可选元数据，没有则为 ""）
+export struct SitemapEntry {
+    string url = 0
+    string lastmod = 0
+    string changefreq = 0
+    string priority = 0
+}
+
+// 递归抓取 sitemap 的结果 + 诊断信息（不引入模块级状态 ⇒ 多线程安全）
+export struct SitemapReport {
+    Array[string] urls = []
+    int sitemaps_fetched = 0       // 实际请求并解析的 sitemap 个数（含子 sitemap）
+    int gzip_skipped = 0           // 因无法解压而跳过的 .gz 个数（见 README「已知限制」）
+    Array[string] errors = []      // 每条形如 "URL：原因"
+}
+
+// 找 `<tag` 的位置：要求标签名后紧跟 '>' 或空白或 '/'，
+// 否则 `<url>` 会误命中 `<urlset>`、`<sitemap>` 会误命中 `<sitemapindex>`。
+// ⚠ 返回的是**字符**下标（与 find/slice 同一口径）。
+func _findOpenTag(string xml, string tagName, int fromPos): int {
+    string open = "<" + tagName
+    int olen = open.len()
+    int n = xml.len()
+    int pos = fromPos
+    while pos < n {
+        int o = strings.find(xml.slice(pos, n), open)
+        if o < 0 { return -1 }
+        int absO = pos + o
+        int after = absO + olen
+        if after >= n { return -1 }
+        string nxt = xml.slice(after, after + 1)
+        if nxt == ">" or nxt == " " or nxt == "\t" or nxt == "\n" or nxt == "\r" or nxt == "/" {
+            return absO
+        }
+        pos = absO + olen
+    }
+    return -1
+}
+
+// 切出所有 `<block ...> ... </block>` 的内容（不含标签本身）
+func _xmlBlocks(string xml, string blockName): Array[string] {
+    Array[string] blocks = []
+    string close = "</" + blockName
+    int n = xml.len()
+    int pos = 0
+    while pos < n {
+        int absO = _findOpenTag(xml, blockName, pos)
+        if absO < 0 { break }
+        int gt = strings.find(xml.slice(absO, n), ">")
+        if gt < 0 { break }
+        int cs = absO + gt + 1
+        int ce = strings.find(xml.slice(cs, n), close)
+        if ce < 0 { break }
+        blocks.add(xml.slice(cs, cs + ce))
+        pos = cs + ce + close.len()
+    }
+    return blocks
+}
+
+// 取第一个 `<tag>内容</tag>` 的文本（去首尾空白；没有则 ""）。XML 标签区分大小写。
+func _xmlText(string xml, string tagName): string {
+    int absO = _findOpenTag(xml, tagName, 0)
+    if absO < 0 { return "" }
+    int n = xml.len()
+    string close = "</" + tagName
+    int gt = strings.find(xml.slice(absO, n), ">")
+    if gt < 0 { return "" }
+    int cs = absO + gt + 1
+    int ce = strings.find(xml.slice(cs, n), close)
+    if ce < 0 { return "" }
+    return strings.trim(xml.slice(cs, cs + ce))
+}
+
+// 解析 sitemap 的所有 <url> 条目（含可选元数据）
+export func parseSitemapEntries(string xml): Array[SitemapEntry] {
+    Array[SitemapEntry] out = []
+    Array[string] blocks = _xmlBlocks(xml, "url")
+    for blocks.len() to i {
+        string loc = _xmlText(blocks[i], "loc")
+        if loc == "" { continue }
+        SitemapEntry e = new SitemapEntry()
+        e.url = loc
+        e.lastmod = _xmlText(blocks[i], "lastmod")
+        e.changefreq = _xmlText(blocks[i], "changefreq")
+        e.priority = _xmlText(blocks[i], "priority")
+        out.add(e)
+    }
+    return out
+}
+
+// 解析 sitemap.xml，提取所有 <loc> 中的 URL（只有地址，兼容旧接口）
 export func parseSitemap(string xml): Array[string] {
     Array[string] urls = []
-    int pos = 0
-    int n = xml.len()
-    while true {
-        // 查找 <loc>（大小写不敏感：支持 <loc> 和 <LOC>）
-        int open = strings.find(xml.slice(pos, n), "<loc")
-        if open < 0 {
-            break
-        }
-        int start = pos + open
-        // 跳过标签内容 <loc> 或 <loc ...>
-        int gt = strings.find(xml.slice(start, n), ">")
-        if gt < 0 {
-            break
-        }
-        int contentStart = start + gt + 1
-        // 查找 </loc>
-        int closeTag = strings.find(xml.slice(contentStart, n), "</loc")
-        if closeTag < 0 {
-            break
-        }
-        int contentEnd = contentStart + closeTag
-        string url = xml.slice(contentStart, contentEnd)
-        url = strings.trim(url)
-        if url != "" {
-            urls.add(url)
-        }
-        pos = contentEnd
+    Array[SitemapEntry] entries = parseSitemapEntries(xml)
+    for entries.len() to i {
+        urls.add(entries[i].url)
     }
     return urls
 }
 
-// 从 URL 获取其 sitemap.xml 路径（简化：直接返回 /sitemap.xml）
+// 是否为 sitemapindex（子 sitemap 索引）
+export func isSitemapIndex(string xml): bool {
+    return _findOpenTag(xml, "sitemapindex", 0) >= 0
+}
+
+// 从 sitemapindex 取子 sitemap 的地址列表（<sitemap><loc>…）
+export func parseSitemapIndex(string xml): Array[string] {
+    Array[string] out = []
+    Array[string] blocks = _xmlBlocks(xml, "sitemap")
+    for blocks.len() to i {
+        string loc = _xmlText(blocks[i], "loc")
+        if loc != "" { out.add(loc) }
+    }
+    return out
+}
+
+// 看起来像 gzip 吗（魔数 1f 8b）
+func _isGzipBody(string body): bool {
+    if body.byte_len() < 2 { return false }
+    return body.byte(0) == 31 and body.byte(1) == 139
+}
+
+// 站点的 sitemap 地址。baseUrl 本身就是 sitemap.xml/.gz 时原样返回。
 export func sitemapUrl(string baseUrl): string {
-    string clean = baseUrl
+    string clean = strings.trim(baseUrl)
+    if clean.ends_with(".xml") or clean.ends_with(".xml.gz") or clean.ends_with(".gz") or clean.ends_with(".txt") {
+        return clean
+    }
     if clean.ends_with("/") {
         clean = clean.slice(0, clean.len() - 1)
     }
     return clean + "/sitemap.xml"
+}
+
+// 站点的 robots.txt 地址（原先是用 `sitemapUrl().replace("/sitemap.xml", "/robots.txt")` 拼的，
+// sitemapUrl 一旦改成别的前缀就会失效 ⇒ 独立出来）
+export func robotsUrl(string baseUrl): string {
+    string clean = strings.trim(baseUrl)
+    if clean.ends_with("/robots.txt") { return clean }
+    if clean.ends_with("/") {
+        clean = clean.slice(0, clean.len() - 1)
+    }
+    return clean + "/robots.txt"
 }
 
 // ==================== Crawler 核心 ====================
@@ -1061,12 +1253,11 @@ export func extractLinks(Page page): Array[string] {
 
 // 从站点获取 robots.txt 文本（成功返回文本，失败返回空串）
 export func fetchRobots(string siteUrl, string userAgent): string {
-    string robotsUrl = sitemapUrl(siteUrl).replace("/sitemap.xml", "/robots.txt")
     HttpClient c = createClient()
     if userAgent != "" {
         c.setHeaders(["User-Agent: " + userAgent])
     }
-    Response r = c.get(robotsUrl)
+    Response r = c.get(robotsUrl(siteUrl))
     c.close()
     if r.ok() {
         return r.body
@@ -1074,18 +1265,84 @@ export func fetchRobots(string siteUrl, string userAgent): string {
     return ""
 }
 
-// 从站点 sitemap 提取所有 URL 列表
-export func fetchSitemapUrls(string siteUrl, string userAgent): Array[string] {
+// 递归抓取 sitemap 并汇总 URL，附带诊断信息。
+//   baseUrl     ：站点根（也可直接给某个 sitemap.xml / sitemap_index.xml 地址）
+//   maxDepth    ：索引下钻层数上限。0 = 只抓这一层（默认 2）
+//   maxSitemaps ：最多请求几个 sitemap（默认 50，防止病态站点拖死）
+//
+// 行为说明：
+//   · `sitemapindex` 会自动下钻到子 sitemap（去重 + 层数限制 + **同站点**限制，
+//     按协议跨站子 sitemap 一律忽略 —— 否则一个第三方索引就能把爬虫引到任意站点）
+//   · `.gz` 的 sitemap 本模块**解压不了**（不带 zlib，见 README「已知限制」）：
+//     响应的 `Content-Encoding: gzip` 由 libcurl 自动解掉；拿到的字节仍是 gzip 魔数时
+//     只计入 `gzip_skipped`，**不会**把压缩字节当 XML 解析出满屏乱码
+//   · 单个 sitemap 抓失败不会中断整体：错误进 `errors`，继续抓其余
+export func fetchSitemapReport(string baseUrl, string userAgent, int maxDepth, int maxSitemaps): SitemapReport {
+    SitemapReport rep = new SitemapReport()
     HttpClient c = createClient()
     if userAgent != "" {
         c.setHeaders(["User-Agent: " + userAgent])
     }
-    Response r = c.get(sitemapUrl(siteUrl))
-    c.close()
-    if r.ok() {
-        return parseSitemap(r.body)
+    Array[string] pending = [sitemapUrl(baseUrl)]
+    Dict[string, bool] seenSm = {}
+    Dict[string, bool] seenUrl = {}
+    string rootHost = domain(baseUrl)
+    int level = 0
+    while pending.len() > 0 and level <= maxDepth {
+        Array[string] next = []
+        for pending.len() to i {
+            string sm = pending[i]
+            if seenSm.get(sm, false) { continue }
+            seenSm[sm] = true
+            if rep.sitemaps_fetched >= maxSitemaps {
+                rep.errors.add(sm + "：已达 maxSitemaps（" + maxSitemaps + "）上限，跳过")
+                continue
+            }
+            Response r = c.get(sm)
+            rep.sitemaps_fetched = rep.sitemaps_fetched + 1
+            if not r.ok() {
+                rep.errors.add(sm + "：HTTP " + r.statusCode)
+                continue
+            }
+            if _isGzipBody(r.body) {
+                rep.gzip_skipped = rep.gzip_skipped + 1
+                rep.errors.add(sm + "：响应体仍是 gzip（服务端未做 Content-Encoding，本模块无 zlib 可解）")
+                continue
+            }
+            if isSitemapIndex(r.body) {
+                Array[string] children = parseSitemapIndex(r.body)
+                for children.len() to k {
+                    string ch = children[k]
+                    if rootHost != "" and domain(ch) != rootHost {
+                        rep.errors.add(ch + "：跨站子 sitemap，已忽略")
+                        continue
+                    }
+                    next.add(ch)
+                }
+            } else {
+                Array[string] urls = parseSitemap(r.body)
+                for urls.len() to k {
+                    if seenUrl.get(urls[k], false) { continue }
+                    seenUrl[urls[k]] = true
+                    rep.urls.add(urls[k])
+                }
+            }
+        }
+        pending = next
+        level = level + 1
     }
-    return []
+    c.close()
+    return rep
+}
+
+// 递归抓 sitemap 只要地址列表（默认下钻 2 层索引）
+export func fetchSitemapUrlsDeep(string baseUrl, string userAgent, int maxDepth = 2, int maxSitemaps = 50): Array[string] {
+    return fetchSitemapReport(baseUrl, userAgent, maxDepth, maxSitemaps).urls
+}
+
+// 从站点 sitemap 提取所有 URL 列表（兼容旧接口：只抓这一层，不跟索引）
+export func fetchSitemapUrls(string siteUrl, string userAgent): Array[string] {
+    return fetchSitemapReport(siteUrl, userAgent, 0, 1).urls
 }
 
 // ==================== 数据落地：CSV ====================

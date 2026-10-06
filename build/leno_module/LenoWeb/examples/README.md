@@ -43,6 +43,8 @@ build\leno.exe build\leno_module\LenoWeb\examples\tests\test_charset_http.leno
 | `test_crawler_state.leno` | **断点续爬**：进度落盘/恢复（页数 + 已访问 + 待抓队列）、自动落盘、坏存档不崩 |
 | `test_utf8_text.leno` | **非 ASCII 口径回归**：中文页面的解析/属性/聚合/清洗不被截断；命名实体表 |
 | `test_selector_ext.leno` | **扩展选择器**：`an+b` / `of-type` / `:not` / `:has` / 兄弟组合器 / 属性运算符 / 中文类名 |
+| `test_priority_queue.leno` | **优先队列**：优先级出队 / 同级 FIFO 稳定 / 与去重共存 / 存档往返 / 兼容旧存档 |
+| `test_sitemap_deep.leno` | **sitemap**：索引递归 / 元数据 / URL 去重 / 跨站忽略 / 层数与数量上限 / `.gz` 降级 |
 
 ### `_testkit.leno`
 

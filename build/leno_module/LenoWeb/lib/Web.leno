@@ -14,7 +14,7 @@ import "web_charset.leno" as charsets
 use core.(curl, Code, Opt, Info, Global, HttpVersion, SslVersion)
 use net.(Response, HttpClient, Session, MimeField)
 use htmls.(HtmlNode)
-use crawler.(Url, Crawler, CrawlItem, Page)
+use crawler.(Url, Crawler, CrawlItem, Page, SitemapEntry, SitemapReport)
 use generic.(Result, Ok, Err, map, filter, reduce, forEach, Stack, LinkedList, ListNode)
 
 // ==================== HTTP 客户端 ====================
@@ -140,9 +140,15 @@ export func csvField(string v): string { return crawler.csvField(v) }
 export func writeCsv(string path, Array[Array[string]] rows, Array[string] header, bool withBom = true): int { return crawler.writeCsv(path, rows, header, withBom) }
 export func writeCsvRows(string path, Array[Array[string]] rows, bool withBom = true): int { return crawler.writeCsvRows(path, rows, withBom) }
 export func parseSitemap(string xml): Array[string] { return crawler.parseSitemap(xml) }
+export func parseSitemapEntries(string xml): Array[SitemapEntry] { return crawler.parseSitemapEntries(xml) }
+export func parseSitemapIndex(string xml): Array[string] { return crawler.parseSitemapIndex(xml) }
+export func isSitemapIndex(string xml): bool { return crawler.isSitemapIndex(xml) }
 export func sitemapUrl(string baseUrl): string { return crawler.sitemapUrl(baseUrl) }
+export func robotsUrl(string baseUrl): string { return crawler.robotsUrl(baseUrl) }
 export func fetchRobots(string siteUrl, string userAgent): string { return crawler.fetchRobots(siteUrl, userAgent) }
 export func fetchSitemapUrls(string siteUrl, string userAgent): Array[string] { return crawler.fetchSitemapUrls(siteUrl, userAgent) }
+export func fetchSitemapUrlsDeep(string baseUrl, string userAgent, int maxDepth = 2, int maxSitemaps = 50): Array[string] { return crawler.fetchSitemapUrlsDeep(baseUrl, userAgent, maxDepth, maxSitemaps) }
+export func fetchSitemapReport(string baseUrl, string userAgent, int maxDepth = 2, int maxSitemaps = 50): SitemapReport { return crawler.fetchSitemapReport(baseUrl, userAgent, maxDepth, maxSitemaps) }
 
 // ==================== 爬虫框架 ====================
 export func createCrawler(Dict config): Crawler { return crawler.createCrawler(config) }
@@ -150,7 +156,7 @@ export func setRobots(Crawler c, string robotsText) { c.setRobots(robotsText) }
 export func start(Crawler c) { c.start() }
 export func nextUrl(Crawler c): CrawlItem? { return c.nextUrl() }
 export func markVisited(Crawler c, string url) { c.markVisited(url) }
-export func enqueue(Crawler c, string url, int depth) { c.enqueue(url, depth) }
+export func enqueue(Crawler c, string url, int depth, int priority = 0) { c.enqueue(url, depth, priority) }
 export func shouldStop(Crawler c): bool { return c.shouldStop() }
 export func stop(Crawler c) { c.stop() }
 export func fetchPage(string url, string user_agent): Page? { return crawler.fetchPage(url, user_agent) }

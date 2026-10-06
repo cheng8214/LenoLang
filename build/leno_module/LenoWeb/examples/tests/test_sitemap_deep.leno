@@ -1,0 +1,126 @@
+// test_sitemap_deep.leno — sitemap：索引递归 / 元数据 / 去重 / 跨站 / .gz 降级（离线）
+//
+// 改进前的问题：
+//   · 只会把抓到的 XML 里所有 `<loc>` 都捞出来 —— 拿到 `sitemapindex` 时得到的是**子 sitemap 的地址**
+//     （等于把 sitemap.xml 本身当成了页面列表），没有任何下钻
+//   · `<lastmod>/<changefreq>/<priority>` 全丢
+//   · 遇到 `sitemap.xml.gz` 会把压缩字节当 XML 解析，捞出一堆乱码"URL"
+//   · 没有跨站防护：索引里写谁就抓谁（可以被引到任意站点）
+import "Web" as web
+import "_testkit" as tk
+import threads
+import strings
+
+use web.SitemapEntry
+
+int PORT = 39616
+int MAXREQ = 512
+
+// ⚠ threads.start 的入口必须是**本文件**的函数
+func serverEntry(int port, int maxReqs) { tk.serve(port, maxReqs) }
+
+// 把条目拼成 "url|lastmod|changefreq|priority" 便于断言
+func entryStr(Array[SitemapEntry] es): string {
+    Array[string] out = []
+    for es.len() to i {
+        out.add(es[i].url + "|" + es[i].lastmod + "|" + es[i].changefreq + "|" + es[i].priority)
+    }
+    return strings.join(out, ";")
+}
+
+func joined(Array[string] xs): string {
+    return strings.join(xs, ";")
+}
+
+main() {
+    print("--- ① 纯解析（不联网）---")
+    string one = "<?xml version=\"1.0\"?><urlset>" +
+                 "<url><loc>http://s/a</loc><lastmod>2026-10-01</lastmod>" +
+                 "<changefreq>daily</changefreq><priority>0.8</priority></url>" +
+                 "<url><loc>http://s/b</loc></url>" +
+                 "</urlset>"
+    tk.check("parseSitemapEntries 元数据",
+             entryStr(web.parseSitemapEntries(one)),
+             "http://s/a|2026-10-01|daily|0.8;http://s/b|||")
+    tk.check("parseSitemap 兼容旧接口", joined(web.parseSitemap(one)), "http://s/a;http://s/b")
+    tk.check("isSitemapIndex(urlset)", web.isSitemapIndex(one), false)
+
+    // ⚠ `<urlset>` 不能被当成 `<url>`、`<sitemapindex>` 不能被当成 `<sitemap>`
+    tk.check("<urlset> 不误当作 <url>", web.parseSitemap(one).len(), 2)
+    string idx = "<sitemapindex><sitemap><loc>http://s/s1.xml</loc></sitemap>" +
+                 "<sitemap><loc>http://s/s2.xml</loc></sitemap></sitemapindex>"
+    tk.check("isSitemapIndex(index)", web.isSitemapIndex(idx), true)
+    tk.check("parseSitemapIndex", joined(web.parseSitemapIndex(idx)), "http://s/s1.xml;http://s/s2.xml")
+    tk.check("索引里没有 <url> 条目", web.parseSitemap(idx).len(), 0)
+
+    print("--- ② URL 拼装 ---")
+    tk.check("sitemapUrl", web.sitemapUrl("http://s"), "http://s/sitemap.xml")
+    tk.check("sitemapUrl 去尾斜杠", web.sitemapUrl("http://s/"), "http://s/sitemap.xml")
+    tk.check("sitemapUrl 已是 sitemap 则原样", web.sitemapUrl("http://s/sm.xml"), "http://s/sm.xml")
+    tk.check("robotsUrl", web.robotsUrl("http://s/"), "http://s/robots.txt")
+
+    var srv = threads.start(serverEntry, PORT, MAXREQ)
+    if not tk.waitUp(PORT) {
+        print("[FAIL] 本机服务端未起来")
+        tk.shutdown(PORT)
+        _exit(1)
+    }
+    string base = "http://127.0.0.1:" + PORT
+    string ua = "LenoWebTest/1.0"
+
+    print("--- ③ 单层 sitemap ---")
+    var rep0 = web.fetchSitemapReport(base + "/sitemap.xml", ua, 0, 1)
+    tk.check("URL 列表", joined(rep0.urls), "http://site.test/a;http://site.test/b")
+    tk.check("抓取个数", rep0.sitemaps_fetched, 1)
+    tk.check("无错误", rep0.errors.len(), 0)
+
+    print("--- ④ 索引递归（去重 + 跨站忽略）---")
+    var rep1 = web.fetchSitemapReport(base + "/sitemap-index.xml", ua, 2, 50)
+    // a 与 b 里各有一条 a2 ⇒ 必须去重成 3 条
+    tk.check("合并后的 URL（已去重）", joined(rep1.urls), "http://site.test/a1;http://site.test/a2;http://site.test/b2")
+    tk.check("抓取个数（重复项不重复抓）", rep1.sitemaps_fetched, 3)
+    tk.checkTrue("记录了跨站忽略", _hasErr(rep1.errors, "跨站"))
+    tk.check("无 gzip 跳过", rep1.gzip_skipped, 0)
+
+    print("--- ⑤ 多层下钻与深度上限 ---")
+    var deep = web.fetchSitemapReport(base + "/sitemap-nested.xml", ua, 3, 50)
+    tk.check("3 层能下钻到底", joined(deep.urls), "http://site.test/a2;http://site.test/b2")
+    var shallow = web.fetchSitemapReport(base + "/sitemap-nested.xml", ua, 1, 50)
+    tk.check("maxDepth=1 只到第二层", joined(shallow.urls), "")
+
+    print("--- ⑥ maxSitemaps 上限 ---")
+    var capped = web.fetchSitemapReport(base + "/sitemap-index.xml", ua, 2, 1)
+    tk.check("只抓 1 个", capped.sitemaps_fetched, 1)
+    tk.checkTrue("超出上限有告警", _hasErr(capped.errors, "maxSitemaps"))
+
+    print("--- ⑦ .gz 降级（不带 zlib 就不该乱解析）---")
+    var gz = web.fetchSitemapReport(base + "/sitemap.gz", ua, 2, 50)
+    tk.check("URL 为空", gz.urls.len(), 0)
+    tk.check("计入 gzip_skipped", gz.gzip_skipped, 1)
+    tk.checkTrue("给出可读原因", _hasErr(gz.errors, "gzip"))
+
+    print("--- ⑧ 抓取失败不中断 ---")
+    var missing = web.fetchSitemapReport(base + "/no-such-sitemap.xml", ua, 2, 50)
+    tk.check("URL 为空", missing.urls.len(), 0)
+    tk.checkTrue("错误里有 HTTP 404", _hasErr(missing.errors, "404"))
+    // 兼容旧接口：单层、失败返回空数组
+    tk.check("fetchSitemapUrls 兼容", web.fetchSitemapUrls(base + "/no-such-sitemap.xml", ua).len(), 0)
+    tk.check("fetchSitemapUrls 正常路径", joined(web.fetchSitemapUrls(base + "/sitemap.xml", ua)),
+             "http://site.test/a;http://site.test/b")
+    tk.check("fetchSitemapUrlsDeep 走索引", joined(web.fetchSitemapUrlsDeep(base + "/sitemap-index.xml", ua)).len() > 0, true)
+
+    print("--- ⑨ robots.txt 地址修正 ---")
+    tk.check("robots.txt 能取到", web.fetchRobots(base, ua).len(), 0)   // 本机服务端没有 /robots.txt ⇒ 404 ⇒ ""
+    tk.check("robots 请求未 200", web.get(base + "/robots.txt").ok(), false)
+
+    tk.shutdown(PORT)
+    srv.join()
+    if tk.summary("sitemap_deep") != 0 { _exit(1) }
+}
+
+func _hasErr(Array[string] errs, string needle): bool {
+    for errs.len() to i {
+        if strings.has(errs[i], needle) { return true }
+    }
+    return false
+}

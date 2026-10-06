@@ -127,9 +127,47 @@ while not c.shouldStop() {
 - **限速由框架生效**：`nextUrl()` 自动按 `delay_ms` 补睡，不必在循环里手写 `sleep`
 - **解析 robots 的 `crawl-delay`**（`web.parseCrawlDelay`），并与 `delay_ms` 取较大者
 - `max_pages = 0` 表示**不限**（原实现会立刻停）
-- 队列出队从 `remove(0)`（O(n)）改为头下标 + 定期回收
+- **优先队列**（见下）：`enqueue(url, depth, priority)`，入队/出队都是 O(log n)
 - **CSV 落地**：`web.writeCsv(path, rows, header)` / `web.toCsv(rows)`（RFC 4180 转义 + UTF-8 BOM，Excel 直接认中文）
 - **断点续爬**：进度落盘 / 恢复（见下）
+- **sitemap**：索引递归 + 元数据 + 跨站防护（见下）
+
+### 优先队列
+
+`priority` 越大越先被 `nextUrl()` 取出；同优先级保持入队先后（FIFO 稳定）。
+
+```leno
+var item = c.nextUrl()
+// 详情页优先（1），翻页往后放（-1）——典型的两级抓取策略
+for page.detailLinks() to href { c.enqueue(href, item.depth + 1, 1) }
+c.enqueue(page.nextPageUrl(), item.depth, -1)
+```
+
+实现是**二叉大顶堆**（`_push` / `_pop` 都是 O(log n)，排序键 = `priority` 降序 + `seq` 升序）。
+为什么不是"排序数组"：数组插入要搬移 O(n)，出队也要搬移；队列上千时差别明显。
+注意 **同一 URL 第二次入队会被丢弃**（优先级不会"升级"）——与判重口径一致。
+
+### Sitemap
+
+```leno
+// 只要地址列表（自动下钻 sitemapindex，默认 2 层）
+Array[string] urls = web.fetchSitemapUrlsDeep("https://example.com", "MyBot/1.0")
+
+// 要诊断信息（为什么少了一些地址？）
+var rep = web.fetchSitemapReport("https://example.com/sitemap_index.xml", "MyBot/1.0", 2, 50)
+print(rep.sitemaps_fetched, rep.gzip_skipped, rep.errors)
+
+// 单条记录的元数据
+for web.parseSitemapEntries(xml) to e { print(e.url, e.lastmod, e.changefreq, e.priority) }
+```
+
+- `sitemapindex` **递归下钻**（去重 + 层数上限 `maxDepth` + 请求数上限 `maxSitemaps`）
+- **同站点限制**：索引里指向别的站点的子 sitemap 一律忽略并记入 `errors`
+  （否则一个第三方索引就能把爬虫引到任意站点）
+- `<lastmod>` / `<changefreq>` / `<priority>` 可读（`SitemapEntry`）
+- `.gz`：响应的 `Content-Encoding: gzip` 由 libcurl 自动解开；**仍是 gzip 魔数时只计入
+  `gzip_skipped`**，不会把压缩字节当 XML 解析出一堆乱码"URL"（原因见「已知限制」）
+- `web.robotsUrl(base)` 单独给出（原先是从 `sitemapUrl().replace(...)` 拼的，前辍一变就失效）
 
 ### 断点续爬
 
@@ -208,6 +246,16 @@ main() {
 
 **POSIX 的 iconv 路径未经实测**（开发环境是 Windows）：`_iconvConvert` / `_iconvDoEx`
 只做静态审查，请在 Linux/macOS 上跑一遍 `examples/tests/test_charset_unit.leno` 确认。
+
+**`.gz` 的 sitemap 解压不了**：本模块只随包分发 `libcurl-x64.dll` / `libcurl.so`，
+系统里既没有独立的 zlib，`libcurl` 也不导出 `gzopen` / `inflate*`
+（2026-10-06 实测：`gzopen`/`inflateInit2`/`zlibVersion` 在 DLL 里都查不到）。
+所以 `sitemap.xml.gz` 只有在服务端带 `Content-Encoding: gzip`（libcurl 会自动解）时才能用；
+否则记入 `SitemapReport.gzip_skipped` 并给出原因——**不会**把压缩字节当 XML 解析出乱码。
+要真正支持：随模块补一个 `zlib1.dll` / `libz.so.1`，再 FFI 绑 `gzopen`/`gzread`（改动很小）。
+
+**同名方法的两处语法限制**（都是语言侧，不是本模块）：链式接收者 + 省略默认参数会被语义分析拒绝
+（`m.mkCalc().plus()` 报"参数不足"，换成变量接收者即可）。
 
 ## 示例与测试
 

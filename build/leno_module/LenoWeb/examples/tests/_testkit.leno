@@ -12,12 +12,26 @@
 //   /echo/K    正文 = "BODY:K"（并发用例靠它自证"响应没串台"）
 //   /post      回显完整请求（含 Content-Length 头），multipart 用例读它做断言
 //   /quit      让服务端退出（正常收尾，便于 join）
+//
+// sitemap 路由（索引递归 / .gz / 跨站 / 去重 用例）：
+//   /sitemap.xml         单层 urlset（2 条，第 1 条带 lastmod/changefreq/priority）
+//   /sitemap-index.xml   索引：2 个站内子 sitemap + 1 个**重复**项 + 1 个**跨站**项
+//   /sitemap-a.xml       urlset：a1、a2
+//   /sitemap-b.xml       urlset：a2（与 a 重复）、b2
+//   /sitemap-nested.xml  索引 → 另一个索引 → /sitemap-b.xml（测多层下钻）
+//   /sitemap.gz          gzip 魔数正文（测"解压不了"的降级路径）
+//
+// 代理：请求行是**绝对 URI**（`GET http://host/path HTTP/1.1`）时回 `PROXIED:<uri>`
+//   ⇒ 目标主机可以是不存在的域名，能收到响应就证明请求确实过了代理
 import sockets
 import threads
 import strings
 
 export int passed = 0
 export int failed = 0
+
+// 服务端自己的端口（sitemap 路由里要拼成绝对 URL）
+int _srvPort = 0
 
 // ==================== 断言 ====================
 
@@ -76,6 +90,7 @@ func _cut(string s, int maxBytes): string {
 
 // 服务端主循环（在子线程里跑）。maxRequests 只是防跑飞的上限，正常靠 /quit 收尾。
 export func serve(int port, int maxRequests) {
+    _srvPort = port
     var srv = sockets.listen("127.0.0.1", port)
     if srv == null { return }
     int n = 0
@@ -288,7 +303,77 @@ func _routeFile(string path, string req, bool supportRange): string {
     return _resp(200, "application/octet-stream", full)
 }
 
+// ---------- sitemap 路由 ----------
+
+func _base(): string {
+    return "http://127.0.0.1:" + _srvPort
+}
+
+func _sitemapXml(): string {
+    return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
+           "<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n" +
+           "  <url><loc>http://site.test/a</loc><lastmod>2026-10-01</lastmod>" +
+           "<changefreq>daily</changefreq><priority>0.8</priority></url>\n" +
+           "  <url><loc>http://site.test/b</loc></url>\n" +
+           "</urlset>"
+}
+
+func _sitemapA(): string {
+    return "<urlset><url><loc>http://site.test/a1</loc></url>" +
+           "<url><loc>http://site.test/a2</loc></url></urlset>"
+}
+
+func _sitemapB(): string {
+    return "<urlset><url><loc>http://site.test/a2</loc></url>" +
+           "<url><loc>http://site.test/b2</loc></url></urlset>"
+}
+
+// 2 个站内 + 1 个重复 + 1 个跨站（跨站必须被忽略）
+func _sitemapIndex(): string {
+    return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
+           "<sitemapindex xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n" +
+           "  <sitemap><loc>" + _base() + "/sitemap-a.xml</loc><lastmod>2026-10-01</lastmod></sitemap>\n" +
+           "  <sitemap><loc>" + _base() + "/sitemap-b.xml</loc></sitemap>\n" +
+           "  <sitemap><loc>" + _base() + "/sitemap-a.xml</loc></sitemap>\n" +
+           "  <sitemap><loc>http://evil.test/sitemap.xml</loc></sitemap>\n" +
+           "</sitemapindex>"
+}
+
+func _sitemapNested(): string {
+    return "<sitemapindex><sitemap><loc>" + _base() + "/sitemap-index2.xml</loc></sitemap></sitemapindex>"
+}
+
+func _sitemapIndex2(): string {
+    return "<sitemapindex><sitemap><loc>" + _base() + "/sitemap-b.xml</loc></sitemap></sitemapindex>"
+}
+
 func _route(string path, string req): string {
+    // 代理模式：请求行是绝对 URI ⇒ 回显它（目标主机可以不存在，收到响应即证明走了代理）
+    if strings.has(path, "http://") or strings.has(path, "https://") {
+        return _resp(200, "text/plain; charset=utf-8", "PROXIED:" + path)
+    }
+    if path == "/sitemap.xml" {
+        return _resp(200, "application/xml", _sitemapXml())
+    }
+    if path == "/sitemap-index.xml" {
+        return _resp(200, "application/xml", _sitemapIndex())
+    }
+    if path == "/sitemap-nested.xml" {
+        return _resp(200, "application/xml", _sitemapNested())
+    }
+    if path == "/sitemap-index2.xml" {
+        return _resp(200, "application/xml", _sitemapIndex2())
+    }
+    if path == "/sitemap-a.xml" {
+        return _resp(200, "application/xml", _sitemapA())
+    }
+    if path == "/sitemap-b.xml" {
+        return _resp(200, "application/xml", _sitemapB())
+    }
+    if path == "/sitemap.gz" {
+        // gzip 魔数 + 垃圾字节：客户端必须识别出"这是压缩体"并降级，而不是当 XML 解析
+        return _resp(200, "application/x-gzip", strings.from_bytes([0x1F, 0x8B, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00]))
+    }
     if path == "/gbk" {
         return _resp(200, "text/html; charset=gbk", gbkBody())
     }
