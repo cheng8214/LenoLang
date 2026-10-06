@@ -58,6 +58,9 @@ export struct Browser {
     bool headless = true
     int pid = 0                // 尽量取（`SystemInfo.getProcessInfo`），取不到为 0
     string pageTargetId = ""   // **我们自己创建的**页面 target（渲染操作都落在它上面）
+    // 临时 profile 目录是不是我们建的：是 ⇒ 关闭时连目录一起删
+    // （实测不删会堆积：一轮调试下来 TEMP 里躺了 99 个 leno-cdp-* 目录）
+    bool tempProfile = false
     // 反检测配置（launch 时从 config 拷过来，渲染每个页面时按它准备环境）
     bool stealth = false
     string userAgent = ""
@@ -577,6 +580,7 @@ export func launch(BrowserConfig cfg): Browser {
         dirs.mkdir_p(udd)
     }
     b.userDataDir = udd
+    b.tempProfile = (cfg.userDataDir == "")   // 我们建的临时目录 ⇒ 关的时候要删掉
 
     int port = cfg.port
     if port <= 0 { port = _pickFreePort(9222, 9400) }
@@ -720,8 +724,24 @@ export func close(Browser b): bool {
     if not done {
         killByProfile(b.userDataDir)
     }
+    // 临时 profile 目录要一起删：一轮调试下来能堆出上百个（每个都可能几十 MB）
+    if b.tempProfile and b.userDataDir != "" {
+        _removeDir(b.userDataDir)
+    }
     b.ok = false
     return done
+}
+
+// 递归删目录（best-effort）。`dirs` 模块的 delete/rmdir 不保证递归，
+// 而浏览器 profile 是深层目录树 ⇒ 直接交给系统的递归删除命令
+func _removeDir(string path): bool {
+    if path == "" or not dirs.exists(path) { return false }
+    if _isWindows() {
+        var r = _exec("cmd /c rmdir /s /q \"" + path + "\"", 15000)
+        return not dirs.exists(path)
+    }
+    var r2 = _exec("rm -rf \"" + path + "\"", 15000)
+    return not dirs.exists(path)
 }
 
 // ==================== 等待策略 / 交互 / 截图 ====================

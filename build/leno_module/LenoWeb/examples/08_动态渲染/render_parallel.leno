@@ -1,0 +1,146 @@
+// render_parallel.leno — 并发渲染实战：一个浏览器 + N 个 tab + N 个线程
+//
+// 用法：
+//   leno.exe render_parallel.leno [url1 url2 ...]
+//   （不给参数就用内置的 4 个 JS 练习页；也可以传 file:/// 本地文件，方便离线试）
+//
+// ⚠⚠ 两个坑都在这里踩过，所以这个例子本身就是"正确姿势"的样本：
+//
+//   1) **threads.start 的入口函数必须在本文件里**
+//      在库模块（web_cdp）里起线程会让进程**直接崩溃**（不是报错，是崩）；
+//      实测更早的一版：线程从未运行，主线程在 channel.receive() 上死等 ⇒ 命令挂十几分钟没输出。
+//      ⇒ 所以并发只能"调用方起线程"，库只提供 tab 原语（createTarget / renderOn / closeTarget）。
+//
+//   2) **等待必须有截止时间**
+//      跨线程收结果时用 try_receive() + deadline，绝不用阻塞式 receive()。
+//
+//   3) 顺带一个渲染侧的坑：**后台标签的定时器会被 Chrome 节流**（钳到 ≥1s），
+//      批量/并发渲染时只有第一个 tab 活跃 ⇒ 页面里"延时写内容"的脚本会迟到。
+//      库的启动参数里已经关掉节流 + setFocusEmulationEnabled，这里不用管（记一笔）。
+import "Web" as web
+import strings
+import times
+import threads
+
+use web.(Browser, BrowserConfig, RenderOptions, RenderResult)
+
+// 每个线程处理"自己那一份"URL：静态分片 i % n（Leno 没有原子操作，共享队列不可靠）
+// 只传**标量 + Channel**，浏览器/选项在 worker 里自己重建（跨线程传 struct 风险高）
+func worker(Array[string] urls, int k, int n, Channel ch, int port, string wsUrl, string tabId,
+            int timeoutMs, string waitUntil, string waitSelector) {
+    Browser b = new Browser()
+    b.ok = true
+    b.port = port
+    b.wsUrl = wsUrl
+    b.pageTargetId = tabId
+    RenderOptions opt = new RenderOptions()
+    opt.timeoutMs = timeoutMs
+    opt.waitUntil = waitUntil
+    opt.waitSelector = waitSelector
+    opt.settleMs = 300
+
+    int i = k
+    while i < urls.len() {
+        RenderResult r = web.renderOn(b, tabId, urls[i], opt)
+        string flag = "0"
+        if r.ok { flag = "1" }
+        // 单条消息：idx|ok|ms|标题|错误（只回传摘要，整页 HTML 太大没必要带）
+        ch.send(i + "|" + flag + "|" + r.ms + "|" + r.title + "|" + r.error)
+        i = i + n
+    }
+}
+
+main() {
+    var args = _args()
+    Array[string] urls = []
+    if args.len() > 0 {
+        for 0:args.len()-1 to i { urls.add(args[i]) }
+    } else {
+        urls.add("https://quotes.toscrape.com/js/")
+        urls.add("https://quotes.toscrape.com/js/page/2/")
+        urls.add("https://quotes.toscrape.com/js/page/3/")
+        urls.add("https://quotes.toscrape.com/js/page/4/")
+    }
+    int n = 3                       // 并发度（tab 数 = 线程数）
+    if n > urls.len() { n = urls.len() }
+    print("URL 个数 " + urls.len() + "，并发度 " + n)
+
+    string exe = web.findBrowser()
+    if exe == "" {
+        print("本机没有 Chrome/Edge —— 请先装一个")
+        return
+    }
+
+    BrowserConfig cfg = new BrowserConfig()
+    cfg.startUrl = "about:blank"
+    cfg.stealth = true
+    Browser b = web.launchBrowser(cfg)
+    if not b.ok {
+        print("启动失败: " + b.error)
+        return
+    }
+    print("浏览器 " + b.version + " 就绪（端口 " + b.port + "）")
+
+    // 每个线程一个 tab（第一个用启动时的默认 tab）
+    Array[string] tabs = []
+    for 0:n-1 to i {
+        string t = ""
+        if i == 0 {
+            t = b.pageTargetId
+        } else {
+            t = web.createTarget(b)
+        }
+        if t != "" { tabs.add(t) }
+    }
+    if tabs.len() < n {
+        print("tab 没开齐（" + tabs.len() + "/" + n + "），退出")
+        web.closeBrowser(b)
+        return
+    }
+
+    print("")
+    print("=== 并发渲染 ===")
+    var ch = threads.channel(urls.len())
+    int t0 = _int(times.ms())
+    for 0:n-1 to k {
+        threads.start(worker, urls, k, n, ch, b.port, b.wsUrl, tabs[k], 20000, "selector", ".quote")
+    }
+
+    // ⚠ 收集必须带截止时间：某个分片线程没起来/渲染抛异常时，绝不能死等
+    Array[string] lines = []
+    for 0:urls.len()-1 to i { lines.add("") }
+    int got = 0
+    int deadline = _int(times.ms()) + 60000
+    while got < urls.len() {
+        var raw = ch.try_receive()
+        if raw == null {
+            if _int(times.ms()) > deadline {
+                print("收集超时（已收到 " + got + "/" + urls.len() + "）")
+                break
+            }
+            threads.sleep(50)
+            continue
+        }
+        if raw not is string { continue }
+        got = got + 1
+        string msg = raw as string
+        int p1 = strings.byte_find(msg, "|", 0)
+        int idx = _int(strings.byte_slice(msg, 0, p1))
+        if idx < 0 or idx >= urls.len() { continue }
+        lines[idx] = strings.byte_slice(msg, p1 + 1, msg.byte_len())
+    }
+    int wall = _int(times.ms()) - t0
+
+    for 0:urls.len()-1 to i {
+        print("  [" + i + "] " + urls[i])
+        print("      " + lines[i])
+    }
+    print("并发总耗时 " + wall + "ms（" + urls.len() + " 页 / " + n + " 个 tab）")
+
+    // 收尾：关掉额外 tab（默认 tab 随浏览器一起走）+ 关浏览器
+    for 1:tabs.len()-1 to j {
+        web.closeTarget(b, tabs[j])
+    }
+    print("closed=" + web.closeBrowser(b))
+    print("=== done ===")
+}

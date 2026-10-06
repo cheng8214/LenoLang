@@ -21,6 +21,7 @@ import strings
 import sockets
 import files
 import times
+import dirs
 
 use cdp.(Browser, BrowserConfig, CdpClient, RenderResult, RenderOptions)
 use ws.(WsUrl, WsClient)
@@ -196,6 +197,9 @@ main() {
     var probe = sockets.connect("127.0.0.1", b.port)
     tk.checkTrue("端口已释放", probe == null)
     if probe != null { probe.close() }
+    // 临时 profile 目录必须一起删掉（不删的话长跑会堆出上百个目录，每个几十 MB）
+    threads.sleep(500)
+    tk.checkTrue("临时 profile 目录已清理", not dirs.exists(b.userDataDir))
 
     print("--- ⑬ Web 统一入口的转发（整条闭环走公开 API）---")
     tk.check("web.findBrowser 转发", web.findBrowser(), exe)

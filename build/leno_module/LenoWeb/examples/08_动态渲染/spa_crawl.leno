@@ -1,0 +1,105 @@
+// spa_crawl.leno — 动态渲染实战：驱动真实浏览器渲染 JS 页面并抽取数据
+//
+// 用法：
+//   leno.exe spa_crawl.leno [url] [截图路径]
+//   url 默认 https://quotes.toscrape.com/js/（官方 JS 渲染练习站，与 05_爬虫实战 用的是同一家）
+//   也可以传 file:///C:/xxx/page.html、http://127.0.0.1:8000/ 等任意地址
+//
+// 这个例子想说明的：
+//   ① 普通 HTTP 抓 SPA ⇒ body 里没有数据（只有空壳 + script）
+//   ② 真浏览器渲染 + **等对时机**（等选择器出现，而不是死等几秒）
+//   ③ 渲染后的 HTML 直接喂给现有解析器（web.parse / web.select / web.allText）
+//   ④ 反检测（stealth）在哪些地方开、开了之后哪些特征被抹掉（见 README 表格）
+import "Web" as web
+import strings
+import files
+
+use web.(Browser, BrowserConfig, RenderOptions, RenderResult)
+use web.HtmlNode
+
+// 抽取一个 .quote 节点里的 "文本 / 作者"
+func quoteLine(HtmlNode q): string {
+    Array[HtmlNode] txts = web.select(q, ".text")
+    string t = ""
+    if txts.len() > 0 { t = web.allText(txts[0]).trim() }
+    Array[HtmlNode] auths = web.select(q, ".author")
+    string a = ""
+    if auths.len() > 0 { a = web.allText(auths[0]).trim() }
+    return t + "  —— " + a
+}
+
+main() {
+    var args = _args()
+    string url = "https://quotes.toscrape.com/js/"
+    if args.len() > 0 and args[0] != "" { url = args[0] }
+    string shotPath = ""
+    if args.len() > 1 { shotPath = args[1] }
+    print("目标: " + url)
+
+    print("")
+    print("=== ① 静态 HTTP 抓取（对照）===")
+    var st = web.get(url)
+    print("状态 " + st.statusCode + "，body " + st.body.byte_len() + " 字节")
+    // SPA 的空壳里通常只有 script，拿不到正文数据
+    Array[HtmlNode] staticQuotes = web.select(web.parse(st.body), ".quote")
+    print("静态解析出的 .quote 个数 = " + staticQuotes.len())
+
+    print("")
+    print("=== ② 找浏览器 ===")
+    string exe = web.findBrowser()
+    if exe == "" {
+        print("本机没有 Chrome/Edge —— 请先装一个，或用环境变量 LENO_BROWSER 指定可执行文件")
+        return
+    }
+    print("用: " + exe)
+
+    print("")
+    print("=== ③ 启动（开 stealth）===")
+    BrowserConfig cfg = new BrowserConfig()
+    cfg.startUrl = "about:blank"
+    cfg.stealth = true              // 抹掉无头特征（UA / webdriver / WebGL 渲染器等）
+    Browser b = web.launchBrowser(cfg)
+    if not b.ok {
+        print("启动失败: " + b.error)
+        return
+    }
+    print("版本 " + b.version + "，端口 " + b.port + "，pid " + b.pid)
+
+    print("")
+    print("=== ④ 渲染（等 .quote 出现，最多 20s）===")
+    RenderOptions opt = new RenderOptions()
+    opt.waitUntil = "selector"      // 比 "load" 靠谱：等**数据出现**
+    opt.waitSelector = ".quote"
+    opt.settleMs = 300
+    opt.scrollTimes = 1             // 顺手滚一下（有些站点首屏之外才懒加载）
+    opt.timeoutMs = 20000
+    if shotPath != "" {
+        opt.screenshotPath = shotPath
+    }
+    RenderResult r = web.renderAdvanced(b, url, opt)
+    print("ok=" + r.ok + "  耗时 " + r.ms + "ms  标题 [" + r.title + "]  渲染后 " + r.html.byte_len() + " 字节")
+    if shotPath != "" {
+        print("截图: " + shotPath + "（存在 " + files.exists(shotPath) + "）")
+    }
+    if not r.ok {
+        print("渲染失败: " + r.error)
+        web.closeBrowser(b)
+        return
+    }
+
+    print("")
+    print("=== ⑤ 渲染后的 HTML 交给现有解析器 ===")
+    var root = web.parse(r.html)
+    Array[HtmlNode] quotes = web.select(root, ".quote")
+    print(".quote 个数 = " + quotes.len() + "（静态抓取时是 " + staticQuotes.len() + "）")
+    int show = quotes.len()
+    if show > 5 { show = 5 }
+    for 0:show-1 to i {
+        print("  " + (i + 1) + ". " + quoteLine(quotes[i]))
+    }
+
+    print("")
+    print("=== ⑥ 关闭 ===")
+    print("closed=" + web.closeBrowser(b))
+    print("=== done ===")
+}

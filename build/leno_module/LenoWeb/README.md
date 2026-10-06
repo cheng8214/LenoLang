@@ -457,6 +457,13 @@ var rs = web.renderMany(b, urls, opt, 3)
 | UA | `…HeadlessChrome/154…` | 正常 Chrome UA |
 | WebGL `UNMASKED_RENDERER` | `ANGLE (Microsoft, … Basic Render Driver …, D3D11)` | `Intel Iris OpenGL Engine` |
 
+**实战验证**（`examples/08_动态渲染/`，2026-10-07 实跑）：
+
+| 脚本 | 结果 |
+| --- | --- |
+| `spa_crawl.leno` | quotes.toscrape.com/js：静态抓取 `.quote` **0 条** → 渲染后 **10 条**（含作者）；走协议关闭 |
+| `render_parallel.leno` | 4 个页面 / 3 个 tab / 3 线程：**7.3s**（单页约 6.3s ⇒ 并发确实起作用） |
+
 > ⚠ 这是"**抹掉无头特征**"这一层，不是完整指纹伪装（Canvas/字体/Audio 指纹等仍是真值）。
 > ⚠ 注入脚本是**手工拼的 JS 字符串**：括号写错会**静默失效**（`addScriptToEvaluateOnNewDocument`
 > 连报错都不报）⇒ 测试里有一条 `stealthSelfTest` 语法自检（把脚本丢进 `try/eval` 跑一遍）。
