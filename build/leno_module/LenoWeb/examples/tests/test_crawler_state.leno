@@ -1,0 +1,90 @@
+// test_crawler_state.leno — 断点续爬（进度落盘 / 载入 / 自动落盘），全离线
+//
+// 覆盖：无存档时 resume() 返回 false；保存后换一个 Crawler 能恢复
+// 「已抓页数 + 已访问集合 + 待抓队列」；已访问的不重新入队；坏存档不崩。
+import "Web" as web
+import "_testkit" as tk
+import files
+
+use web.Crawler
+
+string BASE = "http://example.com"
+
+func mkCrawler(Array[string] seeds, string statePath, int every): Crawler {
+    return web.createCrawler({
+        start_urls: seeds,
+        allowed_domains: [],
+        max_pages: 100,
+        max_depth: 3,
+        delay_ms: 0,
+        user_agent: "StateTest/1.0",
+        respect_robots: false,
+        state_path: statePath,
+        save_every: every
+    })
+}
+
+// 取下一个待抓 URL 的字符串形式（空 ⇒ "<null>"），便于直接断言
+func nextOf(Crawler c): string {
+    var it = c.nextUrl()
+    if it == null { return "<null>" }
+    return it.url
+}
+
+main() {
+    string dir = _tmpdir() + _sep()
+    string sp1 = dir + "lenoweb_state_1.json"
+    string sp2 = dir + "lenoweb_state_2.json"
+    string sp3 = dir + "lenoweb_state_bad.json"
+    files.delete(sp1); files.delete(sp2); files.delete(sp3)
+
+    print("--- ① 首次运行：无存档 ⇒ resume() false ---")
+    var c1 = mkCrawler([BASE + "/a"], sp1, 100)
+    tk.check("resume 无存档", c1.resume(), false)
+    c1.start()
+    tk.check("出队 1", nextOf(c1), BASE + "/a")
+    c1.markVisited(BASE + "/a")
+    c1.enqueue(BASE + "/b", 1)
+    c1.enqueue(BASE + "/c", 1)
+    tk.check("出队 2", nextOf(c1), BASE + "/b")
+    c1.markVisited(BASE + "/b")
+    tk.check("已抓页数", c1.page_count, 2)
+
+    print("--- ② 保存 → 换一个 Crawler 恢复 ---")
+    c1.saveState(sp1)
+    tk.checkTrue("存档已生成", files.exists(sp1))
+
+    var c2 = mkCrawler([], sp1, 100)
+    tk.checkTrue("resume 有存档", c2.resume())
+    tk.check("恢复的已抓页数", c2.page_count, 2)
+    // 只剩 /c 没抓（/a /b 已抓且已出队）
+    tk.check("恢复后出队 = /c", nextOf(c2), BASE + "/c")
+    // 已访问的重新入队必须被拒（visited 恢复了）
+    c2.enqueue(BASE + "/a", 1)
+    c2.enqueue(BASE + "/b", 1)
+    c2.markVisited(BASE + "/c")
+    tk.checkTrue("队列已空 ⇒ shouldStop", c2.shouldStop())
+    tk.check("页数继续累加", c2.page_count, 3)
+
+    print("--- ③ 自动落盘（save_every = 2）---")
+    var c3 = mkCrawler([BASE + "/1", BASE + "/2", BASE + "/3", BASE + "/4"], sp2, 2)
+    c3.start()
+    tk.check("自动落盘前文件不存在", files.exists(sp2), false)
+    for 2 to k { c3.markVisited(nextOf(c3)) }
+    tk.checkTrue("抓满 2 页 ⇒ 自动落盘", files.exists(sp2))
+
+    var c4 = mkCrawler([], sp2, 2)
+    tk.checkTrue("自动存档可恢复", c4.resume())
+    tk.check("自动存档的页数", c4.page_count, 2)
+    tk.check("自动存档后剩余队列从 /3 开始", nextOf(c4), BASE + "/3")
+
+    print("--- ④ 坏存档 / 缺文件不崩 ---")
+    files.write(sp3, "这不是 JSON {{{")
+    var c5 = mkCrawler([], sp3, 100)
+    tk.check("坏 JSON ⇒ resume false", c5.resume(), false)
+    tk.check("loadState 缺文件 ⇒ -1", c5.loadState(dir + "no-such-state.json"), -1)
+    tk.check("resume 未设 state_path ⇒ false", web.createCrawler({start_urls: []}).resume(), false)
+
+    files.delete(sp1); files.delete(sp2); files.delete(sp3)
+    if tk.summary("crawler_state") != 0 { _exit(1) }
+}

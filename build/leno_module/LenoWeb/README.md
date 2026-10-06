@@ -90,6 +90,51 @@ while not c.shouldStop() {
 - `max_pages = 0` 表示**不限**（原实现会立刻停）
 - 队列出队从 `remove(0)`（O(n)）改为头下标 + 定期回收
 - **CSV 落地**：`web.writeCsv(path, rows, header)` / `web.toCsv(rows)`（RFC 4180 转义 + UTF-8 BOM，Excel 直接认中文）
+- **断点续爬**：进度落盘 / 恢复（见下）
+
+### 断点续爬
+
+长跑任务中途挂掉不用从头再来：
+
+```leno
+var c = web.createCrawler({
+    start_urls: ["https://example.com"],
+    state_path: "crawl_state.json",   // 给了它就自动落盘
+    save_every: 50                    // 每 50 页存一次（缺省 50）
+})
+if not c.resume() { c.start() }        // 有存档就续爬，没有就从头
+while not c.shouldStop() {
+    var item = c.nextUrl()
+    if item == null { break }
+    // ... 抓取 ...
+    c.markVisited(item.url)            // 每 save_every 页自动存一次
+}
+c.saveState(c.statePath)              // 收尾再存一次
+```
+
+存档是普通 JSON（`visited` + 未出队的 `queue` + `page_count`），只记录了必要状态：
+
+| 恢复的东西 | 含义 |
+| --- | --- |
+| `page_count` | 已抓页数（`max_pages` 判断不会因为重启而重置） |
+| 已访问集合 | 已抓的 URL 不会被重复抓、也不会被重新入队 |
+| 待抓队列 | 尚未出队的 URL 连同深度一起恢复（顺序保持） |
+
+底层是 `saveState(path)` / `loadState(path)`（可用 `web.saveState/loadState` 直接调）；
+坏存档 / 缺文件一律返回 `-1`，不抛异常。
+
+### 断点续传下载
+
+```leno
+web.downloadResume(url, "big.zip")     // 本地已有前半段 ⇒ 只取剩余字节并追加
+web.remoteSize(url)                    // HEAD 取 Content-Length；未知返回 -1
+```
+
+- 走 libcurl 的 `CURLOPT_RESUME_FROM_LARGE`：自动发 `Range: bytes=N-`
+- **服务端不支持 Range 会自动回退整体重下**（不会把文件拼成"前半段 + 全量"）
+- 本地文件比远端还大（上次下坏了）⇒ 从头重下
+- 总量已知时会校验最终大小，对不上返回 `-1`
+- 本地文件**已完整**时不再重复下载
 
 ## 多线程
 

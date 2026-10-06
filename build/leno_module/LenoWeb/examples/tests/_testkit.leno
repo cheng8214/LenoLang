@@ -96,8 +96,10 @@ export func serve(int port, int maxRequests) {
 // 服务端就绪检测：反复 connect（成功即说明 listener 已起），连上立刻关掉。
 // 这种"空探针"会被服务端当成一次 404 请求（读不到数据就快速返回），不影响后续用例。
 export func waitUp(int port): bool {
+    // 60 → 120（6s）：机器繁忙（杀毒扫描 / 满负载跑整套用例）时子线程 listen 可能要等更久，
+    // 实测曾在整套快速连跑时偶发一次"服务端未起来"（单独跑与重跑均通过）。
     int tries = 0
-    while tries < 60 {
+    while tries < 120 {
         var probe = sockets.connect("127.0.0.1", port)
         if probe != null {
             probe.close()
@@ -201,9 +203,100 @@ export func gbkBodyShort(): string {
     return strings.from_bytes([0xD6, 0xD0, 0xCE, 0xC4])
 }
 
+// ---------- 大文件 / Range（续传用例）----------
+
+// 确定性的 n 字节正文：第 i 个字节 = '0' + (i % 10)
+// ⇒ 客户端可以逐字节校验"续传拼起来的文件"是否正确（不是只看长度）
+export func fileBody(int n): string {
+    Array[int] b = []
+    for n to i { b.add(48 + (i % 10)) }
+    return strings.from_bytes(b)
+}
+
+// 校验一段内容是否是 fileBody 的第 [fromIdx, toIdx) 段
+export func fileBodyOk(string got, int fromIdx, int toIdx): bool {
+    if got.byte_len() != toIdx - fromIdx { return false }
+    for got.byte_len() to k {
+        var b = got.byte(k)
+        if b is int {
+            if b != 48 + ((fromIdx + k) % 10) { return false }
+        }
+    }
+    return true
+}
+
+// 从路径尾段取数字（"/file/1234" ⇒ 1234）；取不到返回 -1
+func _pathSize(string path): int {
+    int n = path.byte_len()
+    int last = -1
+    int i = 0
+    while i < n {
+        if _b(path, i) == 47 { last = i }
+        i = i + 1
+    }
+    if last < 0 { return -1 }
+    int v = 0
+    bool seenDigit = false
+    i = last + 1
+    while i < n {
+        int b = _b(path, i)
+        if b < 48 or b > 57 { break }
+        v = v * 10 + (b - 48)
+        seenDigit = true
+        i = i + 1
+    }
+    if not seenDigit { return -1 }
+    return v
+}
+
+// 解析 `Range: bytes=N-` 的起始偏移；没有 Range 头返回 -1
+func _rangeStart(string req): int {
+    int p = strings.byte_find(req, "Range: bytes=")
+    if p < 0 { p = strings.byte_find(req, "range: bytes=") }
+    if p < 0 { return -1 }
+    int i = p + 13
+    int headEnd = strings.byte_find(req, "\r\n\r\n")
+    int v = 0
+    bool seenDigit = false
+    while i < headEnd {
+        int b = _b(req, i)
+        if b < 48 or b > 57 { break }
+        v = v * 10 + (b - 48)
+        seenDigit = true
+        i = i + 1
+    }
+    if not seenDigit { return -1 }
+    return v
+}
+
+// 大文件路由：supportRange=false 时**故意忽略** Range（用来验证客户端的回退路径）
+func _routeFile(string path, string req, bool supportRange): string {
+    int n = _pathSize(path)
+    if n < 0 { n = 1000 }
+    string full = fileBody(n)
+    if supportRange {
+        int start = _rangeStart(req)
+        if start > 0 {
+            if start >= full.byte_len() {
+                return _respExt(416, "text/plain", "", "Content-Range: bytes */" + n + "\r\n")
+            }
+            string part = full.byte_slice(start, full.byte_len())
+            return _respExt(206, "application/octet-stream", part,
+                            "Content-Range: bytes " + start + "-" + (n - 1) + "/" + n + "\r\n")
+        }
+    }
+    return _resp(200, "application/octet-stream", full)
+}
+
 func _route(string path, string req): string {
     if path == "/gbk" {
         return _resp(200, "text/html; charset=gbk", gbkBody())
+    }
+    if strings.has(path, "/file-norange/") {
+        return _routeFile(path, req, false)
+    }
+    if strings.has(path, "/file/") {
+        return _routeFile(path, req, true)
     }
     if path == "/gbk-nod" {
         return _resp(200, "text/html", gbkBodyShort())
@@ -228,9 +321,23 @@ func _route(string path, string req): string {
     return _resp(404, "text/plain", "not found")
 }
 
+func _reason(int code): string {
+    if code == 200 { return "OK" }
+    if code == 206 { return "Partial Content" }
+    if code == 404 { return "Not Found" }
+    if code == 416 { return "Range Not Satisfiable" }
+    return "OK"
+}
+
 func _resp(int code, string ctype, string body): string {
-    return "HTTP/1.1 " + code + " OK\r\n" +
+    return _respExt(code, ctype, body, "")
+}
+
+// 可插额外响应头（Content-Range 等）
+func _respExt(int code, string ctype, string body, string extra): string {
+    return "HTTP/1.1 " + code + " " + _reason(code) + "\r\n" +
            "Content-Type: " + ctype + "\r\n" +
+           extra +
            "Content-Length: " + body.byte_len() + "\r\n" +
            "Connection: close\r\n\r\n" + body
 }

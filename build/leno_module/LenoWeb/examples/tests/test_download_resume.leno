@@ -1,0 +1,79 @@
+// test_download_resume.leno — 断点续传下载（离线，走本机服务端）
+//
+// 覆盖：
+//   · 首次整体下载
+//   · 本地已有前半段 ⇒ 只取剩余部分并**追加**（且拼出来的内容逐字节正确）
+//   · 本地已完整 ⇒ 不再重复下载
+//   · 本地比远端还大（坏文件）⇒ 从头重下
+//   · **服务端忽略 Range** ⇒ 自动回退整体重下（不能把文件拼成"前半段+全量"）
+//   · remoteSize() 取远端大小
+import "Web" as web
+import "_testkit" as tk
+import threads
+import files
+
+int PORT = 39617
+int MAXREQ = 512
+int N = 5000          // 测试文件大小
+
+func serverEntry(int port, int maxReqs) { tk.serve(port, maxReqs) }
+
+main() {
+    var srv = threads.start(serverEntry, PORT, MAXREQ)
+    if not tk.waitUp(PORT) {
+        print("[FAIL] 本机服务端未起来")
+        tk.shutdown(PORT)
+        _exit(1)
+    }
+    string base = "http://127.0.0.1:" + PORT
+    string dir = _tmpdir() + _sep()
+    string f1 = dir + "lenoweb_resume_1.bin"
+    string f2 = dir + "lenoweb_resume_2.bin"
+    string f3 = dir + "lenoweb_resume_3.bin"
+    files.delete(f1); files.delete(f2); files.delete(f3)
+
+    print("--- ① 首次整体下载 ---")
+    tk.check("remoteSize", web.remoteSize(base + "/file/" + N), N)
+    tk.check("download 字节数", web.download(base + "/file/" + N, f1), N)
+    tk.check("内容正确", tk.fileBodyOk(files.read(f1), 0, N), true)
+
+    print("--- ② 本地已有前半段 ⇒ 续传 ---")
+    // 模拟"上次下到一半断了"：把文件写成前 2000 字节
+    files.write(f2, tk.fileBody(2000))
+    tk.check("续传返回最终大小", web.downloadResume(base + "/file/" + N, f2), N)
+    tk.check("续传后内容逐字节正确", tk.fileBodyOk(files.read(f2), 0, N), true)
+
+    print("--- ③ 本地已完整 ⇒ 不重复下载 ---")
+    tk.check("再调续传仍返回完整大小", web.downloadResume(base + "/file/" + N, f2), N)
+    tk.check("内容仍正确", tk.fileBodyOk(files.read(f2), 0, N), true)
+
+    print("--- ④ 本地比远端还大（坏文件）⇒ 从头重下 ---")
+    files.write(f3, tk.fileBody(N + 500))
+    tk.check("重下后大小正确", web.downloadResume(base + "/file/" + N, f3), N)
+    tk.check("内容正确", tk.fileBodyOk(files.read(f3), 0, N), true)
+
+    print("--- ⑤ 服务端忽略 Range ⇒ 回退整体重下 ---")
+    string f4 = dir + "lenoweb_resume_4.bin"
+    files.delete(f4)
+    files.write(f4, tk.fileBody(1000))            // 前 1000 字节
+    tk.check("返回最终大小", web.downloadResume(base + "/file-norange/3000", f4), 3000)
+    tk.check("回退后内容正确（不是拼出来的垃圾）", tk.fileBodyOk(files.read(f4), 0, 3000), true)
+    files.delete(f4)
+
+    print("--- ⑥ 不存在的本地文件 ⇒ 等价于整体下载 ---")
+    string f5 = dir + "lenoweb_resume_5.bin"
+    files.delete(f5)
+    tk.check("首次即续传接口", web.downloadResume(base + "/file/1234", f5), 1234)
+    tk.check("内容正确", tk.fileBodyOk(files.read(f5), 0, 1234), true)
+    files.delete(f5)
+
+    print("--- ⑦ 404 必须返回 -1（不能把错误页当文件写下去）---")
+    string f6 = dir + "lenoweb_resume_6.bin"
+    files.delete(f6)
+    tk.check("404 ⇒ -1", web.downloadResume(base + "/no-such-thing", f6), -1)
+
+    files.delete(f1); files.delete(f2); files.delete(f3); files.delete(f6)
+    tk.shutdown(PORT)
+    srv.join()
+    if tk.summary("download_resume") != 0 { _exit(1) }
+}

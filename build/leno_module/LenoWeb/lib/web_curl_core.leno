@@ -101,6 +101,10 @@ export enum Opt {
     PROXYTYPE           = 101     // CURLOPTTYPE_VALUES(LONG) + 101（修正：原 10101 错误）
     UPLOAD              = 46      // CURLOPTTYPE_LONG + 46
     POSTFIELDSIZE       = 60      // CURLOPTTYPE_LONG + 60
+    // 断点续传起始偏移：设了它 libcurl 会发 `Range: bytes=N-`，并要求服务端回 206；
+    // 服务端不支持时以 CURLE_RANGE_ERROR(33) 失败 —— 由调用方回退整体重下。
+    RESUME_FROM         = 21      // CURLOPTTYPE_LONG   + 21（32 位，已弃用）
+    RESUME_FROM_LARGE   = 30021   // CURLOPTTYPE_OFF_T  + 21（64 位，断点续传用这个）
 
     // 字符串/对象选项（CURLOPTTYPE_OBJECTPOINT = 10000）
     WRITEDATA           = 10001   // CURLOPTTYPE_CBPOINT    + 1, 写回调的用户数据

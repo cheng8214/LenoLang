@@ -23,6 +23,12 @@ export func createClient(): HttpClient { return net.createClient() }
 // 下载到文件，成功返回字节数，失败返回 -1
 export func download(string url, string savePath): int { return net.download(url, savePath) }
 
+// 断点续传下载：本地已有部分则只取剩余字节（服务端不支持 Range 会自动整体重下）
+export func downloadResume(string url, string savePath): int { return net.downloadResume(url, savePath) }
+
+// 远端资源总大小（HEAD 取 Content-Length）；未知返回 -1
+export func remoteSize(string url): int { return net.remoteSize(url) }
+
 // 带重试的请求
 export func getWithRetry(string url, int retries, int delayMs): Response { return net.getWithRetry(url, retries, delayMs) }
 export func postWithRetry(string url, string body, int retries, int delayMs): Response { return net.postWithRetry(url, body, retries, delayMs) }
@@ -149,6 +155,11 @@ export func shouldStop(Crawler c): bool { return c.shouldStop() }
 export func stop(Crawler c) { c.stop() }
 export func fetchPage(string url, string user_agent): Page? { return crawler.fetchPage(url, user_agent) }
 export func extractLinks(Page page): Array[string] { return crawler.extractLinks(page) }
+
+// 断点续爬：进度落盘 / 载入 / 从 state_path 续爬
+export func saveState(Crawler c, string path) { c.saveState(path) }
+export func loadState(Crawler c, string path): int { return c.loadState(path) }
+export func resume(Crawler c): bool { return c.resume() }
 
 // ==================== 泛型工具 ====================
 // Result[T] 构造器转发

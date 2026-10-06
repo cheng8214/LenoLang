@@ -4,6 +4,7 @@
 import strings
 import files
 import times
+import jsons
 import "web_html.leno" as htmls
 import "web_net.leno" as web_net
 use web_net.(HttpClient, Response, createClient)
@@ -411,6 +412,10 @@ export struct Crawler {
     int crawl_delay_ms = 0                 // robots.txt 的 crawl-delay（毫秒）
     int _lastFetchMs = 0                   // 上次真正发起抓取的时刻
 
+    // ---- 断点续爬 ----
+    string state_path = ""                 // 非空 ⇒ 每 save_every 页自动把进度写到这里
+    int save_every = 0                     // 0 = 不自动落盘
+
     // 设置 robots.txt 规则（顺带解析 crawl-delay）
     func setRobots(string robotsText) {
         robots_rules = robotsText
@@ -486,6 +491,88 @@ export struct Crawler {
     func markVisited(string url) {
         visited[_normKey(url)] = true
         page_count = page_count + 1
+        // 断点续爬：按间隔自动落盘（长跑任务中途挂掉也能接着爬）
+        if state_path != "" and save_every > 0 {
+            if page_count % save_every == 0 { saveState(state_path) }
+        }
+    }
+
+    // ==================== 断点续爬 ====================
+
+    // 保存进度到 JSON：已访问集合 + **尚未出队**的待抓队列 + 已抓页数。
+    // 队列只存 `_head` 之后的部分（已出队的没必要留），存的是 [url, depth] 二元组
+    // —— CrawlItem 是 struct 实例，直接塞进 JSON 不划算也没必要。
+    func saveState(string path) {
+        Array[string] seen = visited.keys()
+        Array[Array[any]] pending = []
+        for queue.len() to i {
+            if i < _head { continue }
+            pending.add([queue[i].url, queue[i].depth])
+        }
+        jsons.write_file(path, {
+            version: 1,
+            page_count: page_count,
+            visited: seen,
+            queue: pending
+        })
+    }
+
+    // 载入进度：返回恢复的已抓页数；文件不存在 / 格式不对返回 -1。
+    // 载入后即可直接 `while not c.shouldStop() { ... }` 继续（running 会被置 true）。
+    func loadState(string path): int {
+        if not files.exists(path) { return -1 }
+        var data = null
+        try {
+            data = jsons.read_file(path)
+        } catch e {
+            return -1
+        }
+        if not (data is Dict) { return -1 }
+        // 收窄到**带泛型参数的** Dict：裸 Dict 取出的元素仍是 any（见编译器提示）
+        Dict[string, any] d = data as Dict[string, any]
+
+        Dict[string, bool] newVisited = {}
+        var seen = d["visited"]
+        if seen is Array {
+            for seen.len() to i {
+                var u = seen[i]
+                if u is string { newVisited[u] = true }
+            }
+        }
+
+        Array[CrawlItem] newQueue = []
+        Dict[string, bool] newQueued = {}
+        var pending = d["queue"]
+        if pending is Array {
+            for pending.len() to i {
+                var pair = pending[i]
+                if pair is Array and pair.len() >= 2 {
+                    var u = pair[0]
+                    var dep = pair[1]
+                    if u is string and dep is int {
+                        newQueue.add(newCrawlItem(u, dep))
+                        newQueued[u] = true
+                    }
+                }
+            }
+        }
+
+        visited = newVisited
+        queue = newQueue
+        _queued = newQueued
+        _head = 0
+        _lastFetchMs = 0
+        var pc = d["page_count"]
+        page_count = if pc is int then pc else 0
+        running = true
+        return page_count
+    }
+
+    // 从 state_path 续爬：有存档 ⇒ true（进度已恢复，直接继续循环即可）；
+    // 无存档 ⇒ false（首次运行，请自行 start()）。
+    func resume(): bool {
+        if state_path == "" { return false }
+        return loadState(state_path) >= 0
     }
 
     // 入队一个 URL（归一化 + 双重去重：已访问的不入、队列内已有的不入）
@@ -560,6 +647,12 @@ func _buildCrawler(Dict config): Crawler {
     if v_ua is string { c.user_agent = v_ua }
     var v_robots = config["respect_robots"]
     if v_robots is bool { c.respect_robots = v_robots }
+    // 断点续爬：给了 state_path 就打开自动落盘（save_every 缺省 50 页）
+    var v_state = config["state_path"]
+    if v_state is string { c.state_path = v_state }
+    var v_every = config["save_every"]
+    if v_every is int { c.save_every = v_every }
+    if c.state_path != "" and c.save_every <= 0 { c.save_every = 50 }
     return c
 }
 

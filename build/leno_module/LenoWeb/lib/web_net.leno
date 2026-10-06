@@ -332,6 +332,13 @@ export struct HttpClient {
         return core.setopt_str(handle, Opt.CAINFO, path)
     }
 
+    // 断点续传起始偏移：设了它 libcurl 会发 `Range: bytes=N-` 并要求服务端回 206。
+    // 服务端不支持时本次请求以 CURLE_RANGE_ERROR(33) 失败（调用方据此回退整体重下）。
+    func setResumeFrom(int offset): int {
+        if not ok { return Code.FAILED_INIT }
+        return core.setopt_int(handle, Opt.RESUME_FROM_LARGE, offset)
+    }
+
     // ==================== 执行请求 ====================
 
     // 执行通用请求（内部使用）
@@ -534,6 +541,52 @@ export struct HttpClient {
 
     // 获取最近错误
     func lastError(): string { return _lastError }
+
+    // ==================== 断点续传下载 ====================
+
+    // 单次下载尝试：offset > 0 ⇒ 带 Range 续传（追加写）；offset == 0 ⇒ 整体覆盖写。
+    // 返回最终文件字节数；失败返回 -1。
+    pri func downloadAttempt(string url, string savePath, int offset): int {
+        // ⚠ 复用的 handle 会**留住**上一次的选项：续传过之后必须显式清零，
+        //   否则后续请求会莫名其妙带上 `Range:` 头（服务端回 206，正文只剩半截）。
+        setResumeFrom(offset)
+        Response r = get(url)
+        if r.curlCode != Code.OK { return -1 }   // 含服务端不支持 Range 时的 RANGE_ERROR(33)
+        if not r.ok() { return -1 }
+        string raw = r.rawBody()
+        if offset > 0 and r.statusCode == 206 {
+            // 服务端确实只给了剩余部分 ⇒ 追加
+            var f = files.open(savePath, "ab")
+            f.write(raw)
+            f.close()
+        } else {
+            // 200：服务端忽略了 Range（或本来就没要续传）⇒ 整体覆盖写，
+            //      否则文件会变成"前半段 + 全量"这种垃圾
+            files.write(savePath, raw)
+        }
+        return _fileSize(savePath)
+    }
+
+    // 断点续传下载：本地已有部分就只取剩余字节；服务端不支持 Range 时自动整体重下。
+    // 成功返回文件最终字节数，失败返回 -1。
+    func downloadResume(string url, string savePath): int {
+        int have = _fileSize(savePath)
+        int total = -1
+        if have > 0 {
+            Response hr = head(url)
+            if hr.ok() { total = _digitsToInt(hr.getHeader("content-length")) }
+            if total == have { return have }              // 已完整 ⇒ 不必再下
+            if total > 0 and have > total { have = 0 }    // 本地比远端还大 ⇒ 文件坏了，重下
+        }
+        if have > 0 {
+            int got = downloadAttempt(url, savePath, have)
+            if got >= 0 { return _verifySize(got, total) }
+            // 续传失败（服务端不支持 Range / 偏移已失效）⇒ 落到下面整体重下
+        }
+        int got2 = downloadAttempt(url, savePath, 0)
+        if got2 < 0 { return -1 }
+        return _verifySize(got2, total)
+    }
 }
 
 // ==================== 字符集后处理 ====================
@@ -650,6 +703,61 @@ export func download(string url, string savePath): int {
         return raw.byte_len()
     }
     return -1
+}
+
+// ==================== 断点续传下载 ====================
+
+// 本地文件大小（不存在 / 打不开 ⇒ 0）
+func _fileSize(string path): int {
+    if not files.exists(path) { return 0 }
+    var f = null
+    try {
+        f = files.open(path, "rb")
+    } catch e {
+        return 0
+    }
+    if f == null { return 0 }
+    int n = f.len()
+    f.close()
+    return n
+}
+
+// 全是数字才转 int，否则 -1（响应头里什么脏值都可能有）
+func _digitsToInt(string s): int {
+    if s == "" { return -1 }
+    int v = 0
+    for s.len() to i {
+        var b = s.byte(i)
+        if b is int {
+            if b < 48 or b > 57 { return -1 }
+            v = v * 10 + (b - 48)
+        }
+    }
+    return v
+}
+
+// 远端资源总大小：HEAD 取 Content-Length；取不到（chunked / 不支持 HEAD）返回 -1
+// ⚠ 这个 `-1` 是"未知"，不是错误 ⇒ 调用方必须区分对待（未知时不做完整性校验）
+export func remoteSize(string url): int {
+    HttpClient c = createClient()
+    Response r = c.head(url)
+    c.close()
+    if not r.ok() { return -1 }
+    return _digitsToInt(r.getHeader("content-length"))
+}
+
+func _verifySize(int got, int total): int {
+    if total > 0 and got != total { return -1 }   // 总量已知却对不上 ⇒ 认为失败
+    return got
+}
+
+// 断点续传下载（模块级便捷版：内部建 / 销客户端）
+// 典型用法：大文件分次下载、断网后重跑同一段代码即可接着下。
+export func downloadResume(string url, string savePath): int {
+    HttpClient c = createClient()
+    int n = c.downloadResume(url, savePath)
+    c.close()
+    return n
 }
 
 // ==================== Session 会话 ====================

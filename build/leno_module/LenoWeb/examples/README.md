@@ -39,6 +39,8 @@ build\leno.exe build\leno_module\LenoWeb\examples\tests\test_charset_http.leno
 | `test_crawler_queue.leno` | URL 归一化去重、限速自动生效、robots `crawl-delay`、CSV 落地 |
 | `test_ffi_callback_thread.leno` | **运行时回归**：子线程里的 FFI 回调（`qsort` 驱动，曾经只成功第一次） |
 | `test_thread_http.leno` | **多线程并发 HTTP**：8 线程 × 6 轮 × 3 种模式，含并发抓 GBK 页面 |
+| `test_download_resume.leno` | **断点续传下载**：续传拼接逐字节校验、已完整不重下、本地过大重下、**服务端忽略 Range 时回退**、404 ⇒ -1 |
+| `test_crawler_state.leno` | **断点续爬**：进度落盘/恢复（页数 + 已访问 + 待抓队列）、自动落盘、坏存档不崩 |
 
 ### `_testkit.leno`
 
