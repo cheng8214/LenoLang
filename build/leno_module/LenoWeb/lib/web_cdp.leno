@@ -51,6 +51,7 @@ export struct Browser {
     string wsUrl = ""          // 浏览器级 webSocketDebuggerUrl
     bool headless = true
     int pid = 0                // 尽量取（`SystemInfo.getProcessInfo`），取不到为 0
+    string pageTargetId = ""   // **我们自己创建的**页面 target（渲染操作都落在它上面）
 }
 
 export struct CdpClient {
@@ -233,6 +234,9 @@ func _buildArgs(BrowserConfig cfg, int port, string udd): string {
     a = a + "--remote-debugging-port=" + port + " "
     a = a + "--user-data-dir=\"" + udd + "\" "
     a = a + "--no-first-run --no-default-browser-check --disable-extensions --disable-gpu "
+    // 关掉这些"自带噪音"：Edge 首启会弹 edge://sync-confirmation-dialog/ 之类的内部页，
+    // 干扰"哪个 page target 才是我们的页面"的判断（有 targetId 精确匹配兜底，但仍少扰为妙）
+    a = a + "--disable-sync --disable-background-networking --no-service-autorun --disable-default-apps "
     a = a + "--window-size=" + cfg.windowWidth + "," + cfg.windowHeight + " "
     if cfg.extraArgs != "" { a = a + cfg.extraArgs + " " }
     if cfg.startUrl != "" { a = a + "\"" + cfg.startUrl + "\" " }
@@ -473,9 +477,19 @@ export func launch(BrowserConfig cfg): Browser {
         return b
     }
 
-    // 顺便取一下浏览器进程号（收尾用得上；取不到不影响使用）
+    // 顺便取一下浏览器进程号（收尾用得上；取不到不影响使用）+ **自己创建一个页面 target**
+    //   ⚠ 为什么显式创建：`/json/list` 里可能有浏览器自带的内部页
+    //   （实测 Edge 首启会冒出 `edge://sync-confirmation-dialog/`），
+    //   "取第一个 page" 会连到别人的页面上 ⇒ 用 targetId 精确锁定我们自己的那个
     CdpClient probe = cdpConnect(b.wsUrl, 5000)
     if probe.ok {
+        string created = cdpCall(probe, "Target.createTarget", "{\"url\":\"about:blank\"}")
+        if created != "" {
+            var cobj = jsons.decode(created)
+            if cobj is Dict[string, any] {
+                b.pageTargetId = jsons.get_str(cobj, "targetId", "")
+            }
+        }
         string sysInfo = cdpCall(probe, "SystemInfo.getProcessInfo", "")
         if sysInfo != "" {
             var arr = jsons.decode(sysInfo)
@@ -493,7 +507,11 @@ export func launch(BrowserConfig cfg): Browser {
     return b
 }
 
-// 取页面级 target 的 WS 地址（type == "page" 的第一个）
+// 取页面级 target 的 WS 地址。
+// 优先级：① 我们**自己创建的** target（按 targetId 精确匹配）
+//        ② url 以 http 开头的 page ③ about:blank ④ 其它 page（排除浏览器内部页）
+// ⚠ 不能"取第一个 page"：实测 Edge 首启会自带 `edge://sync-confirmation-dialog/` 这类内部页，
+//   取第一个会连到它上面（然后 `#app` 之类当然找不到）
 export func pageWsUrl(Browser b): string {
     string list = _httpGet(b.port, "/json/list", 3000)
     if list == "" { return "" }
@@ -502,12 +520,41 @@ export func pageWsUrl(Browser b): string {
     //   ⇒ 里面 `arr.len()` / `arr[i]` 会被判"不能在 any 上访问"。同一做法见 web_crawler 的
     //   `if seen is Array { … }`。
     if arr is Array {
+        // ① targetId 精确匹配
+        if b.pageTargetId != "" {
+            for arr.len() to i {
+                var it = arr[i]
+                if it is Dict[string, any] {
+                    if jsons.get_str(it, "id", "") == b.pageTargetId {
+                        string u = jsons.get_str(it, "webSocketDebuggerUrl", "")
+                        if u != "" { return u }
+                    }
+                }
+            }
+        }
+        // ② http 页面
         for arr.len() to i {
             var it = arr[i]
             if it is Dict[string, any] {
                 if jsons.get_str(it, "type", "") == "page" {
-                    string u = jsons.get_str(it, "webSocketDebuggerUrl", "")
-                    if u != "" { return u }
+                    string url = jsons.get_str(it, "url", "")
+                    if strings.has(url, "http") {
+                        string u = jsons.get_str(it, "webSocketDebuggerUrl", "")
+                        if u != "" { return u }
+                    }
+                }
+            }
+        }
+        // ③/④ about:blank 与其它非内部 scheme
+        for arr.len() to i {
+            var it = arr[i]
+            if it is Dict[string, any] {
+                if jsons.get_str(it, "type", "") == "page" {
+                    string url = jsons.get_str(it, "url", "")
+                    if not strings.has(url, "edge://") and not strings.has(url, "chrome://") and not strings.has(url, "devtools://") {
+                        string u = jsons.get_str(it, "webSocketDebuggerUrl", "")
+                        if u != "" { return u }
+                    }
                 }
             }
         }
@@ -540,10 +587,135 @@ export func close(Browser b): bool {
     return done
 }
 
+// ==================== 等待策略 / 交互 / 截图 ====================
+
+// 渲染选项：把"怎么等、要不要交互"显式化
+// （取代"load 事件 + 固定 sleep"那种不可靠做法 —— 对慢接口会取早）
+export struct RenderOptions {
+    int timeoutMs = 20000        // 总预算
+    string waitUntil = "load"    // "load" | "networkidle" | "selector"
+    string waitSelector = ""     // waitUntil == "selector" 时等它出现
+    int networkIdleMs = 500      // 连续这么久没有在飞请求 ⇒ 算网络空闲
+    int settleMs = 500           // 等待结束后再静置一会儿（给前端渲染留时间）
+    string clickSelector = ""    // 打开后先点它（展开 / 懒加载）
+    int scrollTimes = 0          // 打开后向下滚几次（每次滚到底 + 短静置）
+    string screenshotPath = ""   // 非空则把截图（PNG）写到这里
+}
+
+// 尽量多收几条消息（**不等满**整个 WS 超时）：事件攒进 c.events 交上层按需处理。
+// 实现上把 WS 超时临时压到 ≤200ms ⇒ 这是"轮询式等待"的基础。
+func _drain(CdpClient c, int budgetMs): int {
+    int t0 = _int(times.ms())
+    int count = 0
+    while true {
+        int remain = budgetMs - (_int(times.ms()) - t0)
+        if remain <= 0 { break }
+        if remain > 200 { remain = 200 }
+        ws.setTimeout(c.ws, remain)
+        string raw = ws.recvText(c.ws)
+        if raw == "" { break }
+        count = count + 1
+        var obj = jsons.decode(raw)
+        if obj is Dict[string, any] {
+            if jsons.get_str(obj, "method", "") != "" {
+                c.events.add(raw)
+            }
+        }
+    }
+    return count
+}
+
+// 等"网络空闲"（≈ Playwright 的 wait_until="networkidle"）：
+// 用 Network.* 事件维护在飞请求数，连续 idleMs 没有在飞请求即算空闲。
+// 超时返回 false —— 调用方照常取值（宁可拿到半成品，也不要卡死）
+export func waitNetworkIdle(CdpClient c, int idleMs, int timeoutMs): bool {
+    if not c.ok { return false }
+    cdpCall(c, "Network.enable", "")
+    int t0 = _int(times.ms())
+    int inflight = 0
+    int lastActivity = t0
+    bool seenRequest = false
+    while _int(times.ms()) - t0 < timeoutMs {
+        _drain(c, 150)
+        Array[string] keep = []
+        for c.events.len() to i {
+            var obj = jsons.decode(c.events[i])
+            if obj is Dict[string, any] {
+                string m = jsons.get_str(obj, "method", "")
+                if m == "Network.requestWillBeSent" {
+                    inflight = inflight + 1
+                    seenRequest = true
+                    lastActivity = _int(times.ms())
+                } else if m == "Network.loadingFinished" or m == "Network.loadingFailed" {
+                    inflight = inflight - 1
+                    if inflight < 0 { inflight = 0 }
+                    lastActivity = _int(times.ms())
+                } else {
+                    keep.add(c.events[i])
+                }
+            } else {
+                keep.add(c.events[i])
+            }
+        }
+        c.events = keep
+        int now = _int(times.ms())
+        // 除了"见过请求"之外再给 400ms 宽限：否则页面还没发出第一个请求就被判成空闲
+        if seenRequest or (now - t0) > 400 {
+            if inflight == 0 and (now - lastActivity) >= idleMs {
+                return true
+            }
+        }
+    }
+    return false
+}
+
+// 等选择器出现（轮询实现：简单，且对动态插入的节点立刻可见）
+export func waitForSelector(CdpClient c, string css, int timeoutMs): bool {
+    string js = "(document.querySelector(" + jsons.encode(css) + ") ? '1' : '')"
+    int t0 = _int(times.ms())
+    while _int(times.ms()) - t0 < timeoutMs {
+        if evaluate(c, js) == "1" { return true }
+        _sleepMs(100)
+    }
+    return false
+}
+
+// 用 JS 点击（省掉 Input.* 的坐标换算）。
+// ⚠ 派发的是**不可信事件**（isTrusted=false）：个别站点会据此拒绝。需要真事件时再走
+//   Input.dispatchMouseEvent（后续）
+export func clickSelector(CdpClient c, string css): bool {
+    string js = "(function(){var e=document.querySelector(" + jsons.encode(css) +
+                ");if(!e)return '';e.click();return '1';})()"
+    return evaluate(c, js) == "1"
+}
+
+// 滚到页面底部（无限滚动 / 懒加载用），返回滚动前的文档高度
+export func scrollToBottom(CdpClient c): int {
+    string h = evaluate(c, "String(Math.max(document.body.scrollHeight, document.documentElement.scrollHeight))")
+    evaluate(c, "window.scrollTo(0, document.body.scrollHeight)")
+    return _int(h)
+}
+
+// 截图（PNG）写文件；成功返回 true
+export func captureScreenshot(CdpClient c, string savePath): bool {
+    string res = cdpCall(c, "Page.captureScreenshot", "{\"format\":\"png\"}")
+    if res == "" { return false }
+    var obj = jsons.decode(res)
+    if obj is Dict[string, any] {
+        string b64 = jsons.get_str(obj, "data", "")
+        if b64 == "" { return false }
+        Array[int] bs = ws.base64Decode(b64)
+        if bs.len() == 0 { return false }
+        files.write(savePath, strings.from_bytes(bs))
+        return true
+    }
+    return false
+}
+
 // ==================== 高层：渲染一个页面 ====================
 
-// 用已启动的浏览器渲染 url，返回渲染后的 HTML
-export func renderWith(Browser b, string url, int waitLoadMs, int settleMs): RenderResult {
+// 完整版渲染：等待策略 + 交互 + 截图，都是"取值之前"生效（拿到的 HTML 反映交互后状态）
+export func renderAdvanced(Browser b, string url, RenderOptions opt): RenderResult {
     RenderResult r = new RenderResult()
     r.url = url
     int t0 = _int(times.ms())
@@ -556,17 +728,39 @@ export func renderWith(Browser b, string url, int waitLoadMs, int settleMs): Ren
         r.error = "/json/list 里没有 page 类型的 target"
         return r
     }
-    CdpClient c = cdpConnect(wsUrl, 10000)
+    CdpClient c = cdpConnect(wsUrl, opt.timeoutMs)
     if not c.ok {
         r.error = c.error
         return r
     }
-    // 打开页面 + 等加载
     cdpCall(c, "Page.enable", "")
     cdpCall(c, "Runtime.enable", "")
+    if opt.waitUntil == "networkidle" {
+        // ⚠ 必须先开 Network 域**再**导航，否则会漏掉最早那批请求（就等不准了）
+        cdpCall(c, "Network.enable", "")
+    }
     cdpCall(c, "Page.navigate", "{\"url\":" + jsons.encode(url) + "}")
-    waitEvent(c, "Page.loadEventFired", waitLoadMs)
-    if settleMs > 0 { _sleepMs(settleMs) }
+
+    if opt.waitUntil == "networkidle" {
+        waitNetworkIdle(c, opt.networkIdleMs, opt.timeoutMs)
+    } else if opt.waitUntil == "selector" and opt.waitSelector != "" {
+        waitForSelector(c, opt.waitSelector, opt.timeoutMs)
+    } else {
+        waitEvent(c, "Page.loadEventFired", opt.timeoutMs)
+    }
+    if opt.settleMs > 0 { _sleepMs(opt.settleMs) }
+
+    if opt.clickSelector != "" {
+        clickSelector(c, opt.clickSelector)
+        _sleepMs(300)
+    }
+    for 0:opt.scrollTimes-1 to i {
+        scrollToBottom(c)
+        _sleepMs(300)
+    }
+    if opt.screenshotPath != "" {
+        captureScreenshot(c, opt.screenshotPath)
+    }
 
     r.title = evaluate(c, "document.title")
     string html = evaluate(c, "document.documentElement.outerHTML")
@@ -583,6 +777,15 @@ export func renderWith(Browser b, string url, int waitLoadMs, int settleMs): Ren
     cdpClose(c)
     r.ms = _int(times.ms()) - t0
     return r
+}
+
+// 简版：等 load 事件 + 固定静置（签名保持不变，内部走 renderAdvanced）
+export func renderWith(Browser b, string url, int waitLoadMs, int settleMs): RenderResult {
+    RenderOptions opt = new RenderOptions()
+    opt.timeoutMs = waitLoadMs
+    opt.waitUntil = "load"
+    opt.settleMs = settleMs
+    return renderAdvanced(b, url, opt)
 }
 
 // 一次性：起浏览器 → 渲染 → 关掉。批量抓取请用 launch + renderWith 复用同一个浏览器

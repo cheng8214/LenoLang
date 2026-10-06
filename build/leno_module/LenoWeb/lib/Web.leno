@@ -21,7 +21,7 @@ use crawler.(Url, Crawler, CrawlItem, Page, SitemapEntry, SitemapReport)
 use generic.(Result, Ok, Err, map, filter, reduce, forEach, Stack, LinkedList, ListNode)
 use gzip.(GzipResult)
 use ws.(WsClient, WsUrl, WsMessage)
-use browser.(Browser, BrowserConfig, CdpClient, RenderResult)
+use browser.(Browser, BrowserConfig, CdpClient, RenderResult, RenderOptions)
 
 // ==================== HTTP 客户端 ====================
 export func createClient(): HttpClient { return net.createClient() }
@@ -214,6 +214,10 @@ export func launchBrowser(BrowserConfig cfg): Browser { return browser.launch(cf
 export func renderPage(string url, int timeoutMs): RenderResult { return browser.render(url, timeoutMs) }
 export func renderWith(Browser b, string url, int waitLoadMs, int settleMs): RenderResult {
     return browser.renderWith(b, url, waitLoadMs, settleMs)
+}
+// 完整版：等待策略（load / networkidle / selector）+ 交互（点击、滚动）+ 截图
+export func renderAdvanced(Browser b, string url, RenderOptions opt): RenderResult {
+    return browser.renderAdvanced(b, url, opt)
 }
 export func closeBrowser(Browser b): bool { return browser.close(b) }
 

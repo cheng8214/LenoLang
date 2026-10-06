@@ -19,8 +19,9 @@ import "_testkit" as tk
 import threads
 import strings
 import sockets
+import files
 
-use cdp.(Browser, BrowserConfig, CdpClient, RenderResult)
+use cdp.(Browser, BrowserConfig, CdpClient, RenderResult, RenderOptions)
 use ws.(WsUrl, WsClient)
 
 int PORT = 39621
@@ -53,6 +54,7 @@ main() {
     tk.checkTrue("连不上时给出原因", bad.error != "")
 
     print("--- ② 浏览器发现 ---")
+    string shotPath = _env("TEMP") + _sep() + "leno_cdp_shot.png"
     string exe = cdp.findBrowser()
     if exe == "" {
         print("本机未找到 Chrome/Edge ⇒ 跳过动态渲染部分（不算失败；可用 LENO_BROWSER 指定路径）")
@@ -121,14 +123,69 @@ main() {
     RenderResult r2 = cdp.renderWith(b, "http://127.0.0.1:" + PORT + "/utf8", 8000, 300)
     tk.checkTrue("复用后再渲染一次也成功", r2.ok)
 
-    print("--- ⑨ 关闭：走协议 + 端口释放 ---")
+    print("--- ⑨ 等待策略：只等 load 会取早，networkidle 才拿得到 AJAX 结果 ---")
+    string ajaxUrl = "http://127.0.0.1:" + PORT + "/ajax"
+    RenderOptions optLoad = new RenderOptions()
+    optLoad.waitUntil = "load"
+    optLoad.settleMs = 0
+    optLoad.timeoutMs = 8000
+    RenderResult rLoad = cdp.renderAdvanced(b, ajaxUrl, optLoad)
+    tk.checkTrue("load 模式渲染成功", rLoad.ok)
+    // 页面脚本 400ms 后才写内容 ⇒ 只等 load 必然取早
+    tk.check("load 模式拿不到 AJAX 写入", strings.has(rLoad.html, "AJAX-DONE"), false)
+
+    RenderOptions optIdle = new RenderOptions()
+    optIdle.waitUntil = "networkidle"
+    optIdle.networkIdleMs = 500
+    optIdle.settleMs = 200
+    optIdle.timeoutMs = 15000
+    RenderResult rIdle = cdp.renderAdvanced(b, ajaxUrl, optIdle)
+    tk.checkTrue("networkidle 渲染成功", rIdle.ok)
+    tk.checkTrue("networkidle 等到了 AJAX 写入的内容", strings.has(rIdle.html, "AJAX-DONE"))
+
+    print("--- ⑩ 等选择器 / 点击 / 滚动 / 截图 ---")
+    CdpClient c2 = cdp.cdpConnect(cdp.pageWsUrl(b), 8000)
+    tk.checkTrue("页面级连接成功", c2.ok)
+    if c2.ok {
+        tk.checkTrue("waitForSelector(#app) 命中", cdp.waitForSelector(c2, "#app", 5000))
+        tk.checkTrue("waitForSelector(不存在) 超时返回 false", not cdp.waitForSelector(c2, "#no-such-thing", 800))
+        cdp.cdpClose(c2)
+    }
+
+    RenderOptions optClick = new RenderOptions()
+    optClick.waitUntil = "load"
+    optClick.settleMs = 100
+    optClick.clickSelector = "#btn"
+    optClick.screenshotPath = shotPath
+    optClick.timeoutMs = 8000
+    RenderResult rClick = cdp.renderAdvanced(b, "http://127.0.0.1:" + PORT + "/click", optClick)
+    tk.checkTrue("点击模式渲染成功", rClick.ok)
+    tk.checkTrue("点击真的生效（内容出现）", strings.has(rClick.html, "CLICK-DONE"))
+    tk.checkTrue("截图文件已生成", files.exists(shotPath))
+    if files.exists(shotPath) {
+        string png = files.read(shotPath)
+        tk.checkTrue("截图有内容（>100 字节）", png.byte_len() > 100)
+        tk.check("PNG 魔数首字节", png.byte(0), 137)
+        files.delete(shotPath)
+    }
+
+    RenderOptions optLazy = new RenderOptions()
+    optLazy.waitUntil = "load"
+    optLazy.settleMs = 100
+    optLazy.scrollTimes = 2
+    optLazy.timeoutMs = 8000
+    RenderResult rLazy = cdp.renderAdvanced(b, "http://127.0.0.1:" + PORT + "/lazy", optLazy)
+    tk.checkTrue("滚动模式渲染成功", rLazy.ok)
+    tk.checkTrue("滚动触发了懒加载", strings.has(rLazy.html, "LAZY-DONE"))
+
+    print("--- ⑫ 关闭：走协议 + 端口释放 ---")
     bool closed = cdp.close(b)
     tk.checkTrue("Browser.close 成功", closed)
     var probe = sockets.connect("127.0.0.1", b.port)
     tk.checkTrue("端口已释放", probe == null)
     if probe != null { probe.close() }
 
-    print("--- ⑩ Web 统一入口的转发（整条闭环走公开 API）---")
+    print("--- ⑬ Web 统一入口的转发（整条闭环走公开 API）---")
     tk.check("web.findBrowser 转发", web.findBrowser(), exe)
     BrowserConfig cfg2 = new BrowserConfig()
     cfg2.startUrl = "about:blank"

@@ -175,6 +175,39 @@ export func base64(Array[int] bs): string {
     return strings.join(out, "")
 }
 
+// Base64 解码（截图拿回来的是 base64 PNG，要还原成字节）
+// 遇到 '=' 或非法字符即结束；返回字节数组（二进制安全）
+export func base64Decode(string s): Array[int] {
+    Array[int] out = []
+    int acc = 0
+    int nbits = 0
+    int i = 0
+    int n = s.byte_len()
+    while i < n {
+        int c = s.byte(i)
+        int v = -1
+        if c >= 65 and c <= 90 { v = c - 65 }
+        else if c >= 97 and c <= 122 { v = c - 97 + 26 }
+        else if c >= 48 and c <= 57 { v = c - 48 + 52 }
+        else if c == 43 { v = 62 }        // '+'
+        else if c == 47 { v = 63 }        // '/'
+        if v < 0 { break }
+        acc = ((acc << 6) | v) & 0xFFFFFF
+        nbits = nbits + 6
+        if nbits >= 8 {
+            nbits = nbits - 8
+            out.add(_uint8((acc >> nbits) & 255))
+        }
+        i = i + 1
+    }
+    return out
+}
+
+// 调整读写超时（`c.ws.timeoutMs` 是字段，外部模块改字段不如调这个明确）
+export func setTimeout(WsClient c, int ms) {
+    if ms > 0 { c.timeoutMs = ms }
+}
+
 // ==================== 随机掩码 / 握手 Key ====================
 
 // ⚠ `rands.ints(a, b)` 返回的是**一个** [a,b] 区间的随机整数（不是数组）

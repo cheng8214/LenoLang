@@ -22,6 +22,12 @@
 //   /sitemap.gz          gzip 魔数 + 垃圾字节（测"真解不开"时的降级路径）
 //   /sitemap-ok.gz       合法 gzip 正文（测 web_gzip 真解压：解出 2 条 http://gz.test/*）
 //
+// 动态渲染路由（CDP 用例）：
+//   /js                  脚本 setTimeout 60ms 后写入内容
+//   /ajax                脚本 fetch 在 400ms 后写入（区分 load 与 networkidle 等待）
+//   /click               点击 #btn 后内容才出现
+//   /lazy                滚动后才写入内容
+//
 // 代理：请求行是**绝对 URI**（`GET http://host/path HTTP/1.1`）时回 `PROXIED:<uri>`
 //   ⇒ 目标主机可以是不存在的域名，能收到响应就证明请求确实过了代理
 import sockets
@@ -360,6 +366,35 @@ func _jsPage(): string {
            "</body></html>"
 }
 
+// /ajax 的正文：内容由 fetch 在 **400ms 后**写入
+//   ⇒ "只等 load" 会取早（拿不到），"等 networkidle" 才拿得到 —— 用来验证等待策略
+//   ⚠ 脚本里的标记串一律**拆开拼**（'AJAX'+'-DONE'），否则静态源码里就含该字面量，断言失真
+func _ajaxPage(): string {
+    return "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>AJAX Page</title></head><body>" +
+           "<div id=\"app\">loading</div>" +
+           "<script>setTimeout(function(){fetch('/echo/7').then(function(r){return r.text();}).then(function(){" +
+           "document.getElementById('app').textContent='AJAX'+'-DONE';});},400);</script>" +
+           "</body></html>"
+}
+
+// /click 的正文：内容要**点击按钮后**才出现（验证交互能在取值前生效）
+func _clickPage(): string {
+    return "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Click Page</title></head><body>" +
+           "<div id=\"app\">closed</div><button id=\"btn\">open</button>" +
+           "<script>document.getElementById('btn').addEventListener('click',function(){" +
+           "document.getElementById('app').textContent='CLICK'+'-DONE';});</script>" +
+           "</body></html>"
+}
+
+// /lazy 的正文：滚动后才写入内容（无限滚动 / 懒加载场景）
+func _lazyPage(): string {
+    return "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Lazy Page</title></head><body>" +
+           "<div id=\"app\">top</div><div style=\"height:3000px\"></div>" +
+           "<script>window.addEventListener('scroll',function(){" +
+           "document.getElementById('app').textContent='LAZY'+'-DONE';});</script>" +
+           "</body></html>"
+}
+
 // /sitemap-ok.gz 的正文：合法 gzip 字节（.NET GZipStream，明文见 _gzipSitemapXml）
 const HEX_SITEMAP_GZ = "1f8b080000000000000ab3292dca294e2db1b3292dcab1b3c9c94fb6cb282929b0d2d74fafd22b492d2ed14fb4d10789dae88315e0529584a20a44820c0500139ff7025d000000"
 
@@ -394,6 +429,15 @@ func _route(string path, string req): string {
     if path == "/sitemap.gz" {
         // gzip 魔数 + 垃圾字节：客户端必须识别出"这是压缩体"并降级，而不是当 XML 解析
         return _resp(200, "application/x-gzip", strings.from_bytes([0x1F, 0x8B, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00]))
+    }
+    if path == "/ajax" {
+        return _resp(200, "text/html; charset=utf-8", _ajaxPage())
+    }
+    if path == "/click" {
+        return _resp(200, "text/html; charset=utf-8", _clickPage())
+    }
+    if path == "/lazy" {
+        return _resp(200, "text/html; charset=utf-8", _lazyPage())
     }
     if path == "/js" {
         // 脚本生成内容（延迟 60ms）：静态抓取拿不到，只有真浏览器渲染才有

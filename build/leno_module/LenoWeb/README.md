@@ -384,6 +384,30 @@ var r2 = web.renderWith(b, url2, 8000, 500)
 web.closeBrowser(b)                                    // 走协议 Browser.close
 ```
 
+**完整版渲染（等待策略 / 交互 / 截图）**：`renderAdvanced(b, url, RenderOptions)`
+
+| 选项 | 默认 | 说明 |
+| --- | --- | --- |
+| `waitUntil` | `"load"` | `"load"` / `"networkidle"` / `"selector"` |
+| `waitSelector` | `""` | `waitUntil="selector"` 时等它出现 |
+| `networkIdleMs` | `500` | 连续这么久没有在飞请求 ⇒ 算网络空闲 |
+| `settleMs` | `500` | 等待结束后的额外静置（给前端渲染留时间） |
+| `clickSelector` | `""` | 取值前先点它（展开 / 触发懒加载） |
+| `scrollTimes` | `0` | 取值前向下滚几次（无限滚动） |
+| `screenshotPath` | `""` | 非空则截图（PNG）写到这里 |
+| `timeoutMs` | `20000` | 总预算 |
+
+```leno
+var opt = web.RenderOptions(waitUntil="networkidle", networkIdleMs=800,
+                            clickSelector="#load-more", scrollTimes=3,
+                            screenshotPath="spa.png", timeoutMs=25000)
+var r = web.renderAdvanced(b, "https://example.com/spa", opt)
+```
+
+`networkidle` 是用 `Network.requestWillBeSent` / `loadingFinished` 事件维护"在飞请求数"实现的
+（**必须先开 `Network` 域再导航**，否则漏掉最早那批请求，就等不准了）；超时不会报错，
+只是照常取值 —— 宁可拿到半成品，也不要卡死。
+
 **为什么是这条路（而不是 WebView2）**：
 
 | | 覆盖面 / 理由 |
@@ -417,8 +441,11 @@ web.closeBrowser(b)                                    // 走协议 Browser.clos
 
 - 需要本机有 Chrome/Edge（Windows 上 Edge 自带）；**POSIX 路径未实测**（开发环境是 Windows）
 - `web_ws` 只实现 `ws://`，不实现 `wss://`（CDP 走本机明文，用不到）
-- 等待策略是"`load` 事件 + 固定 `settleMs`"，没有真正的"网络空闲"判定 ⇒
-  对慢接口的页面可能取早了（P2 计划：`Network.*` 事件或 `waitForSelector`）
+- 交互用的是 **JS 点击**（`element.click()`）：派发的是**不可信事件**（`isTrusted=false`），
+  个别站点会据此拒绝。需要真事件时再走 `Input.dispatchMouseEvent`（后续）
+- `pageWsUrl` 的选择顺序是"**我们自己创建的 target**（`Target.createTarget` 拿到的 targetId 精确匹配）
+  → http 页面 → 非内部 scheme 的页面"。**不能取"第一个 page"**：实测 Edge 首启会自带
+  `edge://sync-confirmation-dialog/` 这类内部页，取第一个就会连到它上面
 - **没有做反检测**：`--headless=new` 仍会暴露若干特征（`navigator.webdriver`、Headless Chrome
   的 UA 片段等）。要过强反爬需另做 stealth（`Page.addScriptToEvaluateOnNewDocument` 抹特征、
   用真实 profile 等），属 P2/P3
