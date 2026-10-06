@@ -22,6 +22,7 @@ main() {
 | `web_charset.leno` | **字符集探测与转码**（GBK/BIG5/… ↔ UTF-8） |
 | `web_html.leno` | HTML 解析 + CSS 选择器 + 文本/表格/表单提取 |
 | `web_crawler.leno` | `Crawler` 调度 + URL 工具 + robots/sitemap + CSV |
+| `web_gzip.leno` | **纯 Leno 的 gzip / DEFLATE 解压**（零依赖，`.gz` sitemap 用） |
 | `web_generic.leno` | `Result[T]` 等泛型小工具 |
 
 原生依赖：`lib/libcurl-x64.dll`（Windows）/ `lib/libcurl.so`（Linux），已在 `leno.toml` 的 `[native-libs]` 声明。
@@ -165,9 +166,38 @@ for web.parseSitemapEntries(xml) to e { print(e.url, e.lastmod, e.changefreq, e.
 - **同站点限制**：索引里指向别的站点的子 sitemap 一律忽略并记入 `errors`
   （否则一个第三方索引就能把爬虫引到任意站点）
 - `<lastmod>` / `<changefreq>` / `<priority>` 可读（`SitemapEntry`）
-- `.gz`：响应的 `Content-Encoding: gzip` 由 libcurl 自动解开；**仍是 gzip 魔数时只计入
-  `gzip_skipped`**，不会把压缩字节当 XML 解析出一堆乱码"URL"（原因见「已知限制」）
+- `.gz` **能解**：响应的 `Content-Encoding: gzip` 由 libcurl 自动解；服务端把 `.gz` 当静态文件
+  返回（不带 `Content-Encoding`）时，由模块自己的 `web_gzip` 解（纯 Leno，不需要 zlib）。
+  真解不开（截断/损坏）才计入 `gzip_skipped` 并给出原因——**不会**把压缩字节当 XML 解析出乱码"URL"
 - `web.robotsUrl(base)` 单独给出（原先是从 `sitemapUrl().replace(...)` 拼的，前辍一变就失效）
+
+### gzip / DEFLATE 解压（`web_gzip`，2026-10-06 新增）
+
+```leno
+import "Web" as web
+
+var r = web.gunzip(rawBytes)          // 解 gzip（含头/trailer）
+print(r.ok, r.outBytes, r.error)      // 失败时 error 是可读原因
+if web.isGzip(body) { ... }           // 只判魔数 1f 8b（不解压）
+var d = web.inflateRaw(deflateOnly)   // 裸 DEFLATE（无 gzip 头/trailer）
+```
+
+**为什么自己写**：系统里没有独立的 zlib（PATH / System32 / Git 都查过），`libcurl` 也不导出
+`gzopen` / `inflate*`；随模块分发 DLL 又要维护 Windows/POSIX 两套二进制。这块逻辑不长，
+所以直接用 Leno 实现——零依赖、跨平台、**可重入**（无模块级状态，多线程可同时调用）。
+
+覆盖与取舍：
+
+| 项 | 说明 |
+| --- | --- |
+| 块类型 | stored(00) / fixed(01) / dynamic(10) 全支持，多块流 |
+| gzip 头 | FEXTRA / FNAME / FCOMMENT / FHCRC 可选字段都能跳过 |
+| 校验 | 魔数、保留位、stored 的 LEN/NLEN、Huffman 码长合法性、回拷距离越界、trailer 的 `ISIZE` |
+| 不解 | 多成员"连接式" gzip（只解第一个成员）；不做 CRC32（见「已知限制」） |
+| 性能 | 2.39MB 明文 / 57KB 压包 → **约 96ms**（≈25MB/s；高度重复的 sitemap 数据，普通数据会慢些） |
+
+长度/距离表是用公式算的，测试里对着 RFC1951 的原始数值逐项核过（`rfcTableCheck()`）；
+测试向量的字节来自 .NET `GZipStream`，三种块类型各一份。
 
 ### 断点续爬
 
@@ -335,12 +365,9 @@ main() {
 **POSIX 的 iconv 路径未经实测**（开发环境是 Windows）：`_iconvConvert` / `_iconvDoEx`
 只做静态审查，请在 Linux/macOS 上跑一遍 `examples/tests/test_charset_unit.leno` 确认。
 
-**`.gz` 的 sitemap 解压不了**：本模块只随包分发 `libcurl-x64.dll` / `libcurl.so`，
-系统里既没有独立的 zlib，`libcurl` 也不导出 `gzopen` / `inflate*`
-（2026-10-06 实测：`gzopen`/`inflateInit2`/`zlibVersion` 在 DLL 里都查不到）。
-所以 `sitemap.xml.gz` 只有在服务端带 `Content-Encoding: gzip`（libcurl 会自动解）时才能用；
-否则记入 `SitemapReport.gzip_skipped` 并给出原因——**不会**把压缩字节当 XML 解析出乱码。
-要真正支持：随模块补一个 `zlib1.dll` / `libz.so.1`，再 FFI 绑 `gzopen`/`gzread`（改动很小）。
+**gzip 解压不做 CRC32 校验**：`web_gzip` 校验了头、块结构、`ISIZE`（原文字节数）与各种越界，
+但不逐字节算 CRC32（要按字节跑 8 次位运算，收益不抵成本）。截断与大多数损坏都能报出来，
+但"内容被改过、长度没变"的极端情况不会被发现。
 
 **TLS 指纹仍是原生 libcurl**：代理轮换与浏览器式请求头已具备，但 JA3/JA4 需要替换 DLL
 （`setEcCurves` 在本包自带 DLL 上就返回 `false`）。见「反爬基础 → TLS 指纹」。

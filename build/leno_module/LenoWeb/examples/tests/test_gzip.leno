@@ -1,0 +1,168 @@
+// test_gzip.leno — 纯 Leno 的 gzip / DEFLATE 解压（RFC1951 + RFC1952），全离线
+//
+// 测试向量是 **.NET GZipStream 产出的真实字节**（十六进制内嵌），三种块类型各一份：
+//   V1 fixed   Huffman（BTYPE=1）：103 字节明文 / 74 字节 gz
+//   V2 stored         （BTYPE=0）：同一段明文 / 126 字节 gz
+//   V3 dynamic Huffman（BTYPE=2）：1957 字节明文 / 169 字节 gz（大量长距离回拷）
+//   V4 空正文（手工构造的 20 字节最小 gzip：只有一个"立即结束"的固定块）
+//   V5 任意二进制 64 字节（含 0x00 / 0xFF，验证字节保真，stored 块）
+//
+// 另外覆盖：gzip 头的可选字段（FEXTRA/FNAME/FCOMMENT/FHCRC）、
+//           魔数 / CM / 保留位 / ISIZE / LEN-NLEN / 截断 / 位翻转 等错误路径，
+//           以及长度-距离表（公式实现）与 RFC 原始数值的交叉验证。
+import "web_gzip" as gz
+import "Web" as web
+import "_testkit" as tk
+import strings
+
+use gz.(GzipResult)
+
+const XML1 = "<urlset><url><loc>https://example.com/a</loc></url><url><loc>https://example.com/b</loc></url></urlset>"
+
+const HEX_FIXED = "1f8b0800000000000400b3292dca294e2db1b301d2763639f9c97619252505c556fafaa91589b90539a97ac9f9b9fa8936fa20291b7db02abc4a935094ea438d0700f684f42267000000"
+const HEX_STORED = "1f8b080000000000040001670098ff3c75726c7365743e3c75726c3e3c6c6f633e68747470733a2f2f6578616d706c652e636f6d2f613c2f6c6f633e3c2f75726c3e3c75726c3e3c6c6f633e68747470733a2f2f6578616d706c652e636f6d2f623c2f6c6f633e3c2f75726c3e3c2f75726c7365743ef684f42267000000"
+const HEX_DYNAMIC = "1f8b0800000000000400add54d0ac2301040e113d5c98c1a7f08b94ba8411709293682c76f95ee4578ab4006de6a3e26bc9e65ce3d86f58da1b4313e7a9fe6ab487ea73a95bc1b5b9529ddb3b8209f792869eeb5dda239f383bac1f975b0fd05f9767ec7948c1919db93b103193b92314fc64e64ec4cc62ee8d2b20450038a22505481a20c1475a028044525284a41510b865a30f61ea0160cb5607f5890ed382f092a2612a5070000"
+// 手工构造的最小 gzip：头 + 固定块(立即 EOB) + CRC32=0 + ISIZE=0
+const HEX_EMPTY = "1f8b080000000000040003000000000000000000"
+const HEX_BIN = "1f8b0800000000000400014000bfffdf9e02f5adf2473c1457fd6bb75b3c017e327e589c9f3423d19f1a22d1d8c37cf088d89eb60840d3ca4880ebfb827bf18e6af21b361cc13f69df230ed8246b3c173e094440000000"
+const HEX_BIN_PLAIN = "df9e02f5adf2473c1457fd6bb75b3c017e327e589c9f3423d19f1a22d1d8c37cf088d89eb60840d3ca4880ebfb827bf18e6af21b361cc13f69df230ed8246b3c"
+
+// 与 V3 对应的期望明文（用循环拼出来，免得内嵌 1957 字符的字面量）
+func _xml3(): string {
+    string s = "<urlset>"
+    for 0:24 to i {
+        s = s + "<url><loc>https://example.com/page/" + i + "</loc><lastmod>2026-10-06</lastmod></url>"
+    }
+    return s + "</urlset>"
+}
+
+// 把第 i 个字节改成 v（构造损坏样本）
+func _byteAt(string s, int i, int v): string {
+    Array[int] bs = strings.to_bytes(s)
+    bs[i] = v
+    return strings.from_bytes(bs)
+}
+
+// 去掉末尾 k 个字节（构造截断样本）
+func _dropTail(string s, int k): string {
+    Array[int] bs = strings.to_bytes(s)
+    Array[int] out = []
+    for 0:bs.len()-1-k to i { out.add(bs[i]) }
+    return strings.from_bytes(out)
+}
+
+// 取出 gzip 里的**裸 DEFLATE 数据**（去掉 10 字节最简头 + 8 字节 trailer）
+func _rawDeflate(string g): string {
+    return strings.byte_slice(g, 10, g.byte_len() - 8)
+}
+
+// 给 gzip 头加上 FEXTRA + FNAME + FCOMMENT + FHCRC 四个可选字段
+// （真正的解码器必须按 FLG 逐个跳过；只解"最简头"是不够的）
+func _withHeaderFields(string g): string {
+    Array[int] bs = strings.to_bytes(g)
+    Array[int] out = []
+    for 0:9 to i { out.add(bs[i]) }
+    out[3] = 30               // FLG = FEXTRA(4) | FNAME(8) | FCOMMENT(16) | FHCRC(2)
+    out.add(3); out.add(0)    // FEXTRA: XLEN = 3（小端）
+    out.add(170); out.add(187); out.add(204)
+    string nm = "sitemap.xml"
+    for 0:nm.byte_len()-1 to i { out.add(nm.byte(i)) }
+    out.add(0)                // FNAME 结束
+    out.add(104); out.add(105); out.add(0)   // FCOMMENT = "hi"
+    out.add(0); out.add(0)    // FHCRC（本实现只跳过，不校验）
+    for 10:bs.len()-1 to i { out.add(bs[i]) }
+    return strings.from_bytes(out)
+}
+
+main() {
+    print("--- ① 长度/距离表：公式实现 vs RFC1951 原始数值 ---")
+    tk.check("88 项全对（返回空串表示无错）", gz.rfcTableCheck(), "")
+
+    print("--- ② 三种块类型（参照实现产出的真实字节）---")
+    GzipResult r1 = gz.gunzip(strings.from_hex(HEX_FIXED))
+    tk.checkTrue("fixed: 成功", r1.ok)
+    tk.check("fixed: 明文一致", r1.data, XML1)
+    tk.check("fixed: outBytes", r1.outBytes, 103)
+    tk.check("fixed: inBytes", r1.inBytes, 74)
+    tk.check("fixed: 无错误", r1.error, "")
+
+    GzipResult r2 = gz.gunzip(strings.from_hex(HEX_STORED))
+    tk.checkTrue("stored: 成功", r2.ok)
+    tk.check("stored: 明文一致", r2.data, XML1)
+    tk.check("stored: outBytes", r2.outBytes, 103)
+
+    GzipResult r3 = gz.gunzip(strings.from_hex(HEX_DYNAMIC))
+    tk.checkTrue("dynamic: 成功", r3.ok)
+    tk.check("dynamic: 明文一致（1957 字节，含长距离回拷）", r3.data, _xml3())
+    tk.check("dynamic: outBytes", r3.outBytes, 1957)
+    tk.check("dynamic: inBytes", r3.inBytes, 169)
+
+    print("--- ③ 边界：空正文 / 任意二进制 ---")
+    GzipResult r4 = gz.gunzip(strings.from_hex(HEX_EMPTY))
+    tk.checkTrue("空正文: 成功", r4.ok)
+    tk.check("空正文: 输出为空", r4.outBytes, 0)
+    tk.check("空正文: data 为空串", r4.data, "")
+
+    GzipResult r5 = gz.gunzip(strings.from_hex(HEX_BIN))
+    tk.checkTrue("二进制: 成功", r5.ok)
+    tk.check("二进制: 64 字节字节保真（含 0x00 / 0xFF）", r5.data, strings.from_hex(HEX_BIN_PLAIN))
+    tk.check("二进制: outBytes", r5.outBytes, 64)
+
+    print("--- ④ 魔数识别 ---")
+    tk.checkTrue("isGzip(真实 gzip)", gz.isGzip(strings.from_hex(HEX_FIXED)))
+    tk.checkTrue("isGzip(XML 正文) 应为假", not gz.isGzip(XML1))
+    tk.checkTrue("isGzip(空串) 应为假", not gz.isGzip(""))
+
+    print("--- ⑤ gzip 头可选字段（FEXTRA / FNAME / FCOMMENT / FHCRC）---")
+    GzipResult r6 = gz.gunzip(_withHeaderFields(strings.from_hex(HEX_FIXED)))
+    tk.checkTrue("带四个可选字段仍能解", r6.ok)
+    tk.check("带可选字段: 明文一致", r6.data, XML1)
+
+    print("--- ⑥ 裸 DEFLATE（inflateRaw，无 gzip 头/trailer）---")
+    GzipResult r7 = gz.inflateRaw(_rawDeflate(strings.from_hex(HEX_FIXED)))
+    tk.checkTrue("inflateRaw: 成功", r7.ok)
+    tk.check("inflateRaw: 明文一致", r7.data, XML1)
+    tk.checkTrue("inflateRaw(垃圾字节) 应失败", not gz.inflateRaw("not a deflate stream at all").ok)
+
+    print("--- ⑦ 错误路径（每种都要给出可读原因，而不是静默返回空）---")
+    GzipResult e1 = gz.gunzip("short")
+    tk.checkTrue("太短: 失败", not e1.ok)
+    tk.checkHas("太短: 有原因", e1.error, "太短")
+
+    GzipResult e2 = gz.gunzip("this is definitely not a gzip byte stream")
+    tk.checkTrue("非 gzip: 失败", not e2.ok)
+    tk.checkHas("非 gzip: 提到魔数", e2.error, "魔数")
+
+    GzipResult e3 = gz.gunzip(_byteAt(strings.from_hex(HEX_FIXED), 2, 7))
+    tk.checkTrue("CM=7: 失败", not e3.ok)
+    tk.checkHas("CM=7: 提到压缩方法", e3.error, "压缩方法")
+
+    GzipResult e4 = gz.gunzip(_byteAt(strings.from_hex(HEX_FIXED), 3, 32))
+    tk.checkTrue("保留位非 0: 失败", not e4.ok)
+    tk.checkHas("保留位: 提到保留位", e4.error, "保留位")
+
+    GzipResult e5 = gz.gunzip(_dropTail(strings.from_hex(HEX_FIXED), 5))
+    tk.checkTrue("截断（去掉 trailer 一部分）: 失败", not e5.ok)
+    tk.checkHas("截断: 给出原因", e5.error, "ISIZE")
+
+    GzipResult e6 = gz.gunzip(_byteAt(strings.from_hex(HEX_FIXED), 20, 255))
+    tk.checkTrue("DEFLATE 数据位翻转: 失败", not e6.ok)
+
+    GzipResult e7 = gz.gunzip(_byteAt(strings.from_hex(HEX_FIXED), 73, 9))
+    tk.checkTrue("ISIZE 被篡改: 失败", not e7.ok)
+    tk.checkHas("ISIZE 篡改: 提到校验", e7.error, "ISIZE")
+
+    GzipResult e8 = gz.gunzip(_byteAt(strings.from_hex(HEX_STORED), 13, 0))
+    tk.checkTrue("stored 块 NLEN 被篡改: 失败", not e8.ok)
+    tk.checkHas("NLEN 篡改: 提到 LEN/NLEN", e8.error, "LEN/NLEN")
+
+    GzipResult e9 = gz.gunzip(strings.from_hex("1f8b0800000000000000"))
+    tk.checkTrue("只有头没有数据: 失败", not e9.ok)
+
+    print("--- ⑧ Web 统一入口的转发 ---")
+    tk.checkTrue("web.isGzip 转发到 web_gzip", web.isGzip(strings.from_hex(HEX_FIXED)))
+    tk.check("web.gunzip 转发到 web_gzip", web.gunzip(strings.from_hex(HEX_FIXED)).data, XML1)
+    tk.checkTrue("web.inflateRaw 转发到 web_gzip", web.inflateRaw(_rawDeflate(strings.from_hex(HEX_FIXED))).ok)
+
+    if tk.summary("gzip") != 0 { _exit(1) }
+}

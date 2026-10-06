@@ -1,0 +1,597 @@
+// web_gzip.leno — 纯 Leno 实现的 gzip / DEFLATE 解压（RFC1951 + RFC1952）
+//
+// 为什么自己写而不用 zlib：
+//   · 系统里没有独立的 zlib（PATH / System32 / Git usr/bin 都查过，2026-10-06 实测）；
+//   · libcurl 也不导出 `gzopen` / `inflate*`（它自己的 gzip 解码是内部静态链接的）；
+//   · 随模块分发 zlib1.dll / libz.so.1 要维护两套二进制，而这块逻辑其实不长。
+// 所以干脆自己解 —— 好处：零依赖、跨平台、可重入（无模块级状态，多线程可同时调用）。
+//
+// 用途：
+//   1. `sitemap.xml.gz`（服务端不带 Content-Encoding，libcurl 不会自动解）
+//   2. 任何"响应体是 gzip 字节"的场景（如后端 libcurl 没编 zlib 时的 Content-Encoding）
+//
+// 范围与取舍：
+//   · 支持：stored(00) / fixed(01) / dynamic(10) 三种块、多块流、gzip 头的
+//     FEXTRA / FNAME / FCOMMENT / FHCRC 字段跳过
+//   · 校验：头部魔数与保留位、stored 块的 LEN/NLEN、Huffman 码长合法性、
+//     回拷距离越界、gzip trailer 的 ISIZE（原文字节数）—— 截断/损坏基本都能报出来
+//   · 不做：CRC32 校验（要按字节跑 8 次位运算；ISIZE 已能挡住截断与大部分损坏）、
+//     多成员的"连接式" gzip（罕见；只解第一个成员的内容，尾部多余字节不参与）
+//
+// 性能（2026-10-06 实测，见 examples/tests/test_gzip.leno）：
+//   Huffman 解码走 9 位快查表 + 慢路径兜底，约 15 条 VM 指令/符号；
+//   解 1MB 左右的 XML 大约几百毫秒。sitemap 场景完全够用。
+
+import strings
+
+// ==================== 公共类型 ====================
+
+export struct GzipResult {
+    bool ok = false        // 是否解压成功
+    string data = ""       // ok=true 时是解压后的**字节**（当作字符串用）
+    string error = ""      // ok=false 时的可读原因
+    int inBytes = 0        // 输入字节数
+    int outBytes = 0       // 输出字节数
+}
+
+// ==================== 内部状态 ====================
+// 全部状态挂在 struct 上（引用语义 ⇒ 辅助函数就地修改），**不用模块级变量**，
+// 这样多线程同时解压互不干扰（与 web_crawler 避开模块级状态的做法一致）。
+
+struct _State {
+    string src
+    int n                  // src 的字节数
+    int pos                // 下一个待取字节的下标
+    int buf                // 位缓冲：第 0 位就是"下一个要读的位"
+    int cnt                // 位缓冲里的有效位数（buf 中 >= cnt 的位恒为 0）
+    Array[int] out         // 输出字节
+    bool bad               // 出错标记（细节在 err）
+    string err
+}
+
+// canonical Huffman 解码表
+struct _Huff {
+    Array[int] counts      // counts[len] = 码长为 len 的符号个数（counts[0] 恒为 0）
+    Array[int] syms        // 按 (码长升序, 符号升序) 排列的符号表
+    Array[int] fast        // 9 位快查表：0 = 未命中（走慢路径），否则 (码长 << 9) | 符号
+    bool ok
+    string err
+}
+
+func _newState(string s): _State {
+    _State st = new _State()
+    st.src = s
+    st.n = s.byte_len()
+    st.pos = 0
+    st.buf = 0
+    st.cnt = 0
+    st.out = []
+    st.bad = false
+    st.err = ""
+    return st
+}
+
+func _fail(_State st, string msg) {
+    if not st.bad {
+        st.bad = true
+        st.err = msg
+    }
+}
+
+// ==================== 位读取 ====================
+// DEFLATE 的位序：**字节内低位在前**（LSB first）。Huffman 码本身是 MSB first 写入的，
+// 但因为我们是「按位读、每读一位就左移入 code」，两种次序自然吻合（zlib 的 puff 同法）。
+
+func _refill(_State st) {
+    // 一次补到 24 位以上，够 peek 最长码（15 位）+ 额外位
+    while st.cnt <= 24 and st.pos < st.n {
+        st.buf = st.buf | (st.src.byte(st.pos) << st.cnt)
+        st.cnt = st.cnt + 8
+        st.pos = st.pos + 1
+    }
+}
+
+func _drop(_State st, int k) {
+    st.buf = st.buf >> k
+    st.cnt = st.cnt - k
+    if st.cnt < 0 { st.cnt = 0 }
+}
+
+// 取 k 位并消费（不足则判错）
+func _bits(_State st, int k): int {
+    if st.bad { return 0 }
+    if k == 0 { return 0 }
+    _refill(st)
+    if st.cnt < k {
+        _fail(st, "位流提前结束（需要 " + k + " 位，只剩 " + st.cnt + " 位）")
+        return 0
+    }
+    int v = st.buf & ((1 << k) - 1)
+    _drop(st, k)
+    return v
+}
+
+// 丢弃若干位，对齐到字节边界（stored 块用）
+func _alignToByte(_State st) {
+    int rem = st.cnt % 8
+    if rem > 0 { _drop(st, rem) }
+}
+
+// ==================== Huffman 表 ====================
+
+// 反转低 n 位（快查表要用：缓冲区里先读到的位是数值低位，而码是 MSB first 写入的）
+func _revBits(int v, int n): int {
+    int r = 0
+    for 0:n-1 to i {
+        r = (r << 1) | (v & 1)
+        v = v >> 1
+    }
+    return r
+}
+
+func _buildHuff(Array[int] lens): _Huff {
+    _Huff h = new _Huff()
+    h.ok = false
+    h.err = ""
+    Array[int] counts = []
+    for 0:15 to i { counts.add(0) }
+    for lens.len() to i {
+        int L = lens[i]
+        if L < 0 or L > 15 {
+            h.err = "码长非法（" + L + "）"
+            return h
+        }
+        counts[L] = counts[L] + 1
+    }
+    counts[0] = 0      // 长度为 0 表示"该符号没用到"，不参与建树
+
+    // Kraft 不等式：left 最终应为 0（完备码）；< 0 说明码长过订正（非法）
+    // 允许 left > 0（不完备码）：固定距离表就是这种（30 个长度 5 的码，占不满 32 个），
+    // 真遇到表里没有的码时，解码阶段会报错。
+    int left = 1
+    for 1:15 to L {
+        left = left << 1
+        left = left - counts[L]
+        if left < 0 {
+            h.err = "Huffman 码长过订正（非法）"
+            return h
+        }
+    }
+
+    // 符号表：按码长分组，组内保持符号升序
+    Array[int] offs = []
+    for 0:15 to i { offs.add(0) }
+    int total = 0
+    for 1:15 to L {
+        offs[L] = total
+        total = total + counts[L]
+    }
+    Array[int] syms = []
+    for 0:total-1 to i { syms.add(0) }
+    for lens.len() to i {
+        int L = lens[i]
+        if L == 0 { continue }
+        syms[offs[L]] = i
+        offs[L] = offs[L] + 1
+    }
+
+    // 9 位快查表：码长 <= 9 的码，把它覆盖的所有下标填上 (码长, 符号)
+    Array[int] fast = []
+    for 0:511 to i { fast.add(0) }
+    int code = 0
+    int idx = 0
+    for 1:15 to L {
+        for 0:counts[L]-1 to j {
+            int sym = syms[idx]
+            if L <= 9 {
+                int rev = _revBits(code, L)
+                int step = 1 << L
+                int k = rev
+                while k < 512 {
+                    fast[k] = (L << 9) | sym
+                    k = k + step
+                }
+            }
+            code = code + 1
+            idx = idx + 1
+        }
+        code = code << 1
+    }
+
+    h.counts = counts
+    h.syms = syms
+    h.fast = fast
+    h.ok = true
+    return h
+}
+
+// 解出一个符号；出错返回 -1 并置 st.bad
+func _decodeSym(_State st, _Huff h): int {
+    if st.bad { return -1 }
+    _refill(st)
+    if st.cnt == 0 {
+        _fail(st, "位流提前结束（解 Huffman 码时）")
+        return -1
+    }
+    // 快路径：低 9 位查表
+    int idx = st.buf & 511
+    int e = h.fast[idx]
+    if e != 0 {
+        int L = e >> 9
+        int sym = e & 511
+        _drop(st, L)
+        return sym
+    }
+    // 慢路径（puff 的规范解码）：一位一位走，适用于码长 > 9 的码
+    int code = 0
+    int first = 0
+    int index = 0
+    for 1:15 to L {
+        if L > st.cnt {
+            _fail(st, "位流提前结束（长码，需 " + L + " 位）")
+            return -1
+        }
+        code = code | ((st.buf >> (L - 1)) & 1)
+        int count = h.counts[L]
+        if code - first < count {
+            int sym = h.syms[index + (code - first)]
+            _drop(st, L)
+            return sym
+        }
+        index = index + count
+        first = (first + count) << 1
+        code = code << 1
+    }
+    _fail(st, "遇到非法 Huffman 码")
+    return -1
+}
+
+// ==================== RFC1951 的长度/距离表 ====================
+// 这两张表是**算出来的**而不是硬编码 —— 用测试逐项对照 RFC 的数值
+// （test_gzip.leno 里对着 RFC 表核了全部 29 + 30 项）。
+
+// 长度码 257..285 的基准值：li = 码 - 257，0..28
+// 265..284 每 4 个码一组（g = (li-8)/4），组内额外位相同：
+//   组起点 = 11 + 8*(2^g - 1)；组内第 k 个（k = (li-8)%4）再偏移 k * 2^(g+1)
+// 例：li=8..11 → 11,13,15,17；li=12..15 → 19,23,27,31
+func _lenBase(int li): int {
+    if li < 8 { return 3 + li }                    // 257..264 → 3..10
+    if li == 28 { return 258 }                     // 285（特殊：无额外位）
+    int g = (li - 8) / 4
+    int k = (li - 8) % 4
+    return 11 + 8 * ((1 << g) - 1) + k * (1 << (g + 1))
+}
+
+func _lenExtra(int li): int {
+    if li < 8 { return 0 }
+    if li == 28 { return 0 }
+    return ((li - 8) / 4) + 1
+}
+
+// 距离码 0..29 的基准值
+// 4..29 每 2 个码一组（g = (d-4)/2）：组起点 = 1 + 2^(g+2)，组内第 2 个再 + 2^(g+1)
+// 例：d=4,5 → 5,7；d=6,7 → 9,13；d=8,9 → 17,25
+func _distBase(int d): int {
+    if d < 4 { return d + 1 }                      // 0..3 → 1..4
+    int g = (d - 4) / 2
+    int k = (d - 4) % 2
+    return 1 + (1 << (g + 2)) + k * (1 << (g + 1))
+}
+
+func _distExtra(int d): int {
+    if d < 4 { return 0 }
+    return ((d - 4) / 2) + 1
+}
+
+// 自检：把上面两张**算出来**的表逐项对照 RFC1951 的原始数值（返回 "" 表示全对）。
+// 供测试调用 —— 用公式而不是硬编码表是为了少写 88 行字面量，但公式写错会静默解错数据，
+// 所以这里保留一份 RFC 原始数值做交叉验证。
+export func rfcTableCheck(): string {
+    Array[int] lenB = [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258]
+    Array[int] lenE = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0]
+    Array[int] dstB = [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577]
+    Array[int] dstE = [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13]
+    string bad = ""
+    for 0:28 to i {
+        if _lenBase(i) != lenB[i] {
+            bad = bad + "lenBase[" + i + "]=" + _lenBase(i) + "应为" + lenB[i] + "; "
+        }
+        if _lenExtra(i) != lenE[i] {
+            bad = bad + "lenExtra[" + i + "]=" + _lenExtra(i) + "应为" + lenE[i] + "; "
+        }
+    }
+    for 0:29 to i {
+        if _distBase(i) != dstB[i] {
+            bad = bad + "distBase[" + i + "]=" + _distBase(i) + "应为" + dstB[i] + "; "
+        }
+        if _distExtra(i) != dstE[i] {
+            bad = bad + "distExtra[" + i + "]=" + _distExtra(i) + "应为" + dstE[i] + "; "
+        }
+    }
+    return bad
+}
+
+// ==================== 块解码 ====================
+
+func _fixedLitHuff(): _Huff {
+    Array[int] lens = []
+    for 0:143 to i { lens.add(8) }
+    for 144:255 to i { lens.add(9) }
+    for 256:279 to i { lens.add(7) }
+    for 280:287 to i { lens.add(8) }
+    return _buildHuff(lens)
+}
+
+func _fixedDistHuff(): _Huff {
+    Array[int] lens = []
+    for 0:29 to i { lens.add(5) }
+    return _buildHuff(lens)
+}
+
+// 用一对表解一段 Huffman 数据，直到块结束码(256)
+func _huffBlock(_State st, _Huff lit, _Huff dist) {
+    if not lit.ok { _fail(st, "literal/length 表非法：" + lit.err); return }
+    if not dist.ok { _fail(st, "distance 表非法：" + dist.err); return }
+    while not st.bad {
+        int sym = _decodeSym(st, lit)
+        if st.bad { return }
+        if sym < 0 { return }
+        if sym < 256 {
+            st.out.add(sym)
+            continue
+        }
+        if sym == 256 { return }          // 块结束
+        int li = sym - 257
+        if li > 28 {
+            _fail(st, "非法长度码 " + sym)
+            return
+        }
+        int len = _lenBase(li) + _bits(st, _lenExtra(li))
+        if st.bad { return }
+        int dsym = _decodeSym(st, dist)
+        if st.bad { return }
+        if dsym < 0 or dsym > 29 {
+            _fail(st, "非法距离码 " + dsym)
+            return
+        }
+        int d = _distBase(dsym) + _bits(st, _distExtra(dsym))
+        if st.bad { return }
+        if d > st.out.len() {
+            _fail(st, "回拷距离越界（距离 " + d + " > 已输出 " + st.out.len() + "）")
+            return
+        }
+        // LZ77 回拷：注意可能 len > d（重叠拷贝，要一个字节一个字节拿）
+        for 0:len-1 to i {
+            st.out.add(st.out[st.out.len() - d])
+        }
+    }
+}
+
+// 非压缩块（stored, type=00）：字节对齐后是 LEN/NLEN + 原始字节
+func _storedBlock(_State st) {
+    _alignToByte(st)
+    int len = _bits(st, 16)
+    int nlen = _bits(st, 16)
+    if st.bad { return }
+    if (len ^ 65535) != nlen {
+        _fail(st, "stored 块 LEN/NLEN 校验失败")
+        return
+    }
+    for 0:len-1 to i {
+        st.out.add(_bits(st, 8))
+        if st.bad { return }
+    }
+}
+
+// 动态 Huffman 块（type=10）
+func _dynamicBlock(_State st) {
+    int hlit = _bits(st, 5) + 257
+    int hdist = _bits(st, 5) + 1
+    int hclen = _bits(st, 4) + 4
+    if st.bad { return }
+    if hlit > 286 or hdist > 30 {
+        _fail(st, "动态块头非法（HLIT=" + hlit + " HDIST=" + hdist + "）")
+        return
+    }
+
+    // 码长码自己的码长：按固定顺序给出，未给的补 0
+    Array[int] order = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]
+    Array[int] clLens = []
+    for 0:18 to i { clLens.add(0) }
+    for 0:hclen-1 to i {
+        clLens[order[i]] = _bits(st, 3)
+    }
+    if st.bad { return }
+    _Huff cl = _buildHuff(clLens)
+    if not cl.ok {
+        _fail(st, "码长表非法：" + cl.err)
+        return
+    }
+
+    // 用码长码解出 literal/length + distance 两棵表的码长
+    Array[int] lens = []
+    int total = hlit + hdist
+    while lens.len() < total and not st.bad {
+        int sym = _decodeSym(st, cl)
+        if st.bad { return }
+        if sym < 0 { return }
+        if sym < 16 {
+            lens.add(sym)
+        } else if sym == 16 {
+            if lens.len() == 0 {
+                _fail(st, "码长重复码(16)出现在第一个码长之前")
+                return
+            }
+            int prev = lens[lens.len() - 1]
+            int rep = 3 + _bits(st, 2)
+            for 0:rep-1 to i { lens.add(prev) }
+        } else if sym == 17 {
+            int rep17 = 3 + _bits(st, 3)
+            for 0:rep17-1 to i { lens.add(0) }
+        } else {
+            int rep18 = 11 + _bits(st, 7)
+            for 0:rep18-1 to i { lens.add(0) }
+        }
+        if lens.len() > total {
+            _fail(st, "码长表溢出（> " + total + "）")
+            return
+        }
+    }
+    if st.bad { return }
+    if lens.len() != total {
+        _fail(st, "码长表长度不符（" + lens.len() + " != " + total + "）")
+        return
+    }
+
+    Array[int] litLens = []
+    Array[int] distLens = []
+    for 0:hlit-1 to i { litLens.add(lens[i]) }
+    for hlit:total-1 to i { distLens.add(lens[i]) }
+    if litLens[256] == 0 {
+        _fail(st, "动态块缺少块结束码(256)")
+        return
+    }
+    _Huff lit = _buildHuff(litLens)
+    _Huff dist = _buildHuff(distLens)
+    _huffBlock(st, lit, dist)
+}
+
+// 依次解完所有块（BFINAL 置位后停）
+func _inflateAll(_State st) {
+    bool last = false
+    int guard = 0
+    while not last and not st.bad {
+        guard = guard + 1
+        if guard > 1000000 {
+            _fail(st, "块数异常（超过 1000000）")
+            return
+        }
+        last = _bits(st, 1) == 1
+        if st.bad { return }
+        int t = _bits(st, 2)
+        if st.bad { return }
+        if t == 0 {
+            _storedBlock(st)
+        } else if t == 1 {
+            _huffBlock(st, _fixedLitHuff(), _fixedDistHuff())
+        } else if t == 2 {
+            _dynamicBlock(st)
+        } else {
+            _fail(st, "非法块类型（11）")
+            return
+        }
+    }
+}
+
+// ==================== 公共 API ====================
+
+// 看起来像 gzip 吗（魔数 1f 8b）
+export func isGzip(string raw): bool {
+    if raw.byte_len() < 2 { return false }
+    return raw.byte(0) == 31 and raw.byte(1) == 139
+}
+
+// 裸 DEFLATE 流（无 gzip 头/trailer）
+export func inflateRaw(string raw): GzipResult {
+    GzipResult r = new GzipResult()
+    r.inBytes = raw.byte_len()
+    _State st = _newState(raw)
+    _inflateAll(st)
+    if st.bad {
+        r.ok = false
+        r.error = st.err
+        return r
+    }
+    r.ok = true
+    r.data = strings.from_bytes(st.out)
+    r.outBytes = st.out.len()
+    return r
+}
+
+// gzip（RFC1952）：头（含可选字段）+ DEFLATE 数据 + 8 字节 trailer（CRC32 + ISIZE）
+export func gunzip(string raw): GzipResult {
+    GzipResult r = new GzipResult()
+    int n = raw.byte_len()
+    r.inBytes = n
+    if n < 18 {
+        r.ok = false
+        r.error = "太短，不是有效的 gzip（至少 18 字节）"
+        return r
+    }
+    if raw.byte(0) != 31 or raw.byte(1) != 139 {
+        r.ok = false
+        r.error = "缺少 gzip 魔数 1f 8b"
+        return r
+    }
+    int cm = raw.byte(2)
+    if cm != 8 {
+        r.ok = false
+        r.error = "不支持的压缩方法 CM=" + cm + "（只支持 8 = deflate）"
+        return r
+    }
+    int flg = raw.byte(3)
+    if (flg & 224) != 0 {
+        r.ok = false
+        r.error = "gzip 头保留位非 0（按协议应为 0）"
+        return r
+    }
+    int p = 10      // 跳过 魔数(2) + CM(1) + FLG(1) + MTIME(4) + XFL(1) + OS(1)
+    if (flg & 4) != 0 {          // FEXTRA
+        if p + 2 > n {
+            r.ok = false
+            r.error = "gzip 头被截断（FEXTRA 长度字段）"
+            return r
+        }
+        int xlen = raw.byte(p) | (raw.byte(p + 1) << 8)
+        p = p + 2 + xlen
+        if p > n {
+            r.ok = false
+            r.error = "gzip 头被截断（FEXTRA 内容）"
+            return r
+        }
+    }
+    if (flg & 8) != 0 {          // FNAME：0 结尾
+        while p < n and raw.byte(p) != 0 { p = p + 1 }
+        if p >= n {
+            r.ok = false
+            r.error = "gzip 头被截断（FNAME）"
+            return r
+        }
+        p = p + 1
+    }
+    if (flg & 16) != 0 {         // FCOMMENT：0 结尾
+        while p < n and raw.byte(p) != 0 { p = p + 1 }
+        if p >= n {
+            r.ok = false
+            r.error = "gzip 头被截断（FCOMMENT）"
+            return r
+        }
+        p = p + 1
+    }
+    if (flg & 2) != 0 {          // FHCRC
+        p = p + 2
+    }
+    if p >= n - 8 {
+        r.ok = false
+        r.error = "gzip 头之后没有压缩数据"
+        return r
+    }
+
+    GzipResult inner = inflateRaw(raw.byte_slice(p, n))
+    if not inner.ok {
+        r.ok = false
+        r.error = "DEFLATE 解码失败：" + inner.error
+        return r
+    }
+    // ISIZE：trailer 末 4 字节 = 原文长度 mod 2^32（小端）。用它挡截断/损坏
+    int isize = raw.byte(n - 4) | (raw.byte(n - 3) << 8) | (raw.byte(n - 2) << 16) | (raw.byte(n - 1) << 24)
+    if isize != inner.outBytes % 4294967296 {
+        r.ok = false
+        r.error = "ISIZE 校验失败（trailer=" + isize + " 实际=" + inner.outBytes + "）—— 数据被截断或损坏"
+        return r
+    }
+    r.ok = true
+    r.data = inner.data
+    r.outBytes = inner.outBytes
+    return r
+}

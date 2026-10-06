@@ -19,7 +19,8 @@
 //   /sitemap-a.xml       urlset：a1、a2
 //   /sitemap-b.xml       urlset：a2（与 a 重复）、b2
 //   /sitemap-nested.xml  索引 → 另一个索引 → /sitemap-b.xml（测多层下钻）
-//   /sitemap.gz          gzip 魔数正文（测"解压不了"的降级路径）
+//   /sitemap.gz          gzip 魔数 + 垃圾字节（测"真解不开"时的降级路径）
+//   /sitemap-ok.gz       合法 gzip 正文（测 web_gzip 真解压：解出 2 条 http://gz.test/*）
 //
 // 代理：请求行是**绝对 URI**（`GET http://host/path HTTP/1.1`）时回 `PROXIED:<uri>`
 //   ⇒ 目标主机可以是不存在的域名，能收到响应就证明请求确实过了代理
@@ -347,6 +348,14 @@ func _sitemapIndex2(): string {
     return "<sitemapindex><sitemap><loc>" + _base() + "/sitemap-b.xml</loc></sitemap></sitemapindex>"
 }
 
+// /sitemap-ok.gz 的正文：合法 gzip 字节（.NET GZipStream，明文见 _gzipSitemapXml）
+const HEX_SITEMAP_GZ = "1f8b080000000000000ab3292dca294e2db1b3292dcab1b3c9c94fb6cb282929b0d2d74fafd22b492d2ed14fb4d10789dae88315e0529584a20a44820c0500139ff7025d000000"
+
+// 上面那段 gzip 解开后应该得到的 XML（测试用来核对）
+export func _gzipSitemapXml(): string {
+    return "<urlset><url><loc>http://gz.test/a</loc></url><url><loc>http://gz.test/b</loc></url></urlset>"
+}
+
 func _route(string path, string req): string {
     // 代理模式：请求行是绝对 URI ⇒ 回显它（目标主机可以不存在，收到响应即证明走了代理）
     if strings.has(path, "http://") or strings.has(path, "https://") {
@@ -373,6 +382,11 @@ func _route(string path, string req): string {
     if path == "/sitemap.gz" {
         // gzip 魔数 + 垃圾字节：客户端必须识别出"这是压缩体"并降级，而不是当 XML 解析
         return _resp(200, "application/x-gzip", strings.from_bytes([0x1F, 0x8B, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00]))
+    }
+    if path == "/sitemap-ok.gz" {
+        // **合法** gzip（.NET GZipStream 产出的真实字节，明文见 _gzipSitemapXml）
+        // 服务端按静态 .gz 文件返回：不带 Content-Encoding ⇒ 只能由 web_gzip 自己解
+        return _resp(200, "application/x-gzip", strings.from_hex(HEX_SITEMAP_GZ))
     }
     if path == "/gbk" {
         return _resp(200, "text/html; charset=gbk", gbkBody())

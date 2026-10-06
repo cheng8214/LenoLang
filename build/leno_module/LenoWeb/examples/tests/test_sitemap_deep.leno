@@ -93,13 +93,19 @@ main() {
     tk.check("只抓 1 个", capped.sitemaps_fetched, 1)
     tk.checkTrue("超出上限有告警", _hasErr(capped.errors, "maxSitemaps"))
 
-    print("--- ⑦ .gz 降级（不带 zlib 就不该乱解析）---")
+    print("--- ⑦ .gz：合法 gzip 真解压（服务端按静态文件返回，不带 Content-Encoding）---")
+    var gzOk = web.fetchSitemapReport(base + "/sitemap-ok.gz", ua, 2, 50)
+    tk.check("解出的 URL", joined(gzOk.urls), "http://gz.test/a;http://gz.test/b")
+    tk.check("不算 gzip_skipped", gzOk.gzip_skipped, 0)
+    tk.check("无错误", gzOk.errors.len(), 0)
+
+    print("--- ⑧ .gz 降级（魔数但内容是垃圾 ⇒ 不该乱解析）---")
     var gz = web.fetchSitemapReport(base + "/sitemap.gz", ua, 2, 50)
     tk.check("URL 为空", gz.urls.len(), 0)
     tk.check("计入 gzip_skipped", gz.gzip_skipped, 1)
     tk.checkTrue("给出可读原因", _hasErr(gz.errors, "gzip"))
 
-    print("--- ⑧ 抓取失败不中断 ---")
+    print("--- ⑨ 抓取失败不中断 ---")
     var missing = web.fetchSitemapReport(base + "/no-such-sitemap.xml", ua, 2, 50)
     tk.check("URL 为空", missing.urls.len(), 0)
     tk.checkTrue("错误里有 HTTP 404", _hasErr(missing.errors, "404"))
@@ -109,7 +115,7 @@ main() {
              "http://site.test/a;http://site.test/b")
     tk.check("fetchSitemapUrlsDeep 走索引", joined(web.fetchSitemapUrlsDeep(base + "/sitemap-index.xml", ua)).len() > 0, true)
 
-    print("--- ⑨ robots.txt 地址修正 ---")
+    print("--- ⑩ robots.txt 地址修正 ---")
     tk.check("robots.txt 能取到", web.fetchRobots(base, ua).len(), 0)   // 本机服务端没有 /robots.txt ⇒ 404 ⇒ ""
     tk.check("robots 请求未 200", web.get(base + "/robots.txt").ok(), false)
 

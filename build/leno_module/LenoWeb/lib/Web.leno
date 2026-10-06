@@ -9,6 +9,7 @@ import "web_html.leno" as htmls
 import "web_crawler.leno" as crawler
 import "web_generic.leno" as generic
 import "web_charset.leno" as charsets
+import "web_gzip.leno" as gzip
 
 // ==================== 重新导出 core 类型 ====================
 use core.(curl, Code, Opt, Info, Global, HttpVersion, SslVersion)
@@ -16,6 +17,7 @@ use net.(Response, HttpClient, Session, MimeField, ProxyPool, ProxyStats, BatchR
 use htmls.(HtmlNode)
 use crawler.(Url, Crawler, CrawlItem, Page, SitemapEntry, SitemapReport)
 use generic.(Result, Ok, Err, map, filter, reduce, forEach, Stack, LinkedList, ListNode)
+use gzip.(GzipResult)
 
 // ==================== HTTP 客户端 ====================
 export func createClient(): HttpClient { return net.createClient() }
@@ -194,6 +196,12 @@ export func extractLinks(Page page): Array[string] { return crawler.extractLinks
 export func saveState(Crawler c, string path) { c.saveState(path) }
 export func loadState(Crawler c, string path): int { return c.loadState(path) }
 export func resume(Crawler c): bool { return c.resume() }
+
+// ==================== gzip / DEFLATE 解压 ====================
+// 纯 Leno 实现（零依赖）：解 `.gz`、解"响应体是 gzip 字节"的内容
+export func gunzip(string raw): GzipResult { return gzip.gunzip(raw) }
+export func inflateRaw(string raw): GzipResult { return gzip.inflateRaw(raw) }
+export func isGzip(string raw): bool { return gzip.isGzip(raw) }
 
 // ==================== 泛型工具 ====================
 // Result[T] 构造器转发

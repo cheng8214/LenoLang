@@ -44,7 +44,8 @@ build\leno.exe build\leno_module\LenoWeb\examples\tests\test_charset_http.leno
 | `test_utf8_text.leno` | **非 ASCII 口径回归**：中文页面的解析/属性/聚合/清洗不被截断；命名实体表 |
 | `test_selector_ext.leno` | **扩展选择器**：`an+b` / `of-type` / `:not` / `:has` / 兄弟组合器 / 属性运算符 / 中文类名 |
 | `test_priority_queue.leno` | **优先队列**：优先级出队 / 同级 FIFO 稳定 / 与去重共存 / 存档往返 / 兼容旧存档 |
-| `test_sitemap_deep.leno` | **sitemap**：索引递归 / 元数据 / URL 去重 / 跨站忽略 / 层数与数量上限 / `.gz` 降级 |
+| `test_sitemap_deep.leno` | **sitemap**：索引递归 / 元数据 / URL 去重 / 跨站忽略 / 层数与数量上限 / `.gz` 真解压与降级 |
+| `test_gzip.leno` | **gzip/DEFLATE 解压**（纯 Leno）：三种块类型 / 空正文 / 二进制保真 / 头可选字段 / 错误路径 / RFC 表核对 |
 | `test_antibot.leno` | **反爬基础**：代理池轮询/失败冷却/恢复/剔除法、**真走代理**（本机假代理回显绝对 URI）、Session 自动轮换（用死代理端口可观测地证明换了）、浏览器头顺序、TLS 选项探测 |
 | `test_fetch_all.leno` | **并发批抓**：用 5 个独立延迟服务端把并发**量出来**（并发 253ms vs 串行 1357ms）、结果顺序对齐输入、单条失败不拖累其它、40×2 条回调不泄漏、GBK/代理协同 |
 

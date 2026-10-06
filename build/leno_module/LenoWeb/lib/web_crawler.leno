@@ -5,9 +5,11 @@ import strings
 import files
 import times
 import jsons
+import "web_gzip.leno" as gzip     // 纯 Leno 的 gzip/DEFLATE 解压（.gz sitemap）
 import "web_html.leno" as htmls
 import "web_net.leno" as web_net
 use web_net.(HttpClient, Response, createClient, ProxyPool)
+use gzip.(GzipResult)
 use htmls.(HtmlNode)
 
 // ==================== 辅助转换 ====================
@@ -1107,7 +1109,7 @@ export struct SitemapEntry {
 export struct SitemapReport {
     Array[string] urls = []
     int sitemaps_fetched = 0       // 实际请求并解析的 sitemap 个数（含子 sitemap）
-    int gzip_skipped = 0           // 因无法解压而跳过的 .gz 个数（见 README「已知限制」）
+    int gzip_skipped = 0           // 解压失败而跳过的 .gz 个数（正常 .gz 由 web_gzip 解出，不计这里）
     Array[string] errors = []      // 每条形如 "URL：原因"
 }
 
@@ -1305,9 +1307,10 @@ export func fetchRobots(string siteUrl, string userAgent): string {
 // 行为说明：
 //   · `sitemapindex` 会自动下钻到子 sitemap（去重 + 层数限制 + **同站点**限制，
 //     按协议跨站子 sitemap 一律忽略 —— 否则一个第三方索引就能把爬虫引到任意站点）
-//   · `.gz` 的 sitemap 本模块**解压不了**（不带 zlib，见 README「已知限制」）：
-//     响应的 `Content-Encoding: gzip` 由 libcurl 自动解掉；拿到的字节仍是 gzip 魔数时
-//     只计入 `gzip_skipped`，**不会**把压缩字节当 XML 解析出满屏乱码
+//   · `.gz` 的 sitemap：响应的 `Content-Encoding: gzip` 由 libcurl 自动解掉；
+//     拿到的字节**仍是 gzip 魔数**时（服务端按 `.gz` 静态文件返回、不带 Content-Encoding）
+//     由 `web_gzip` 自己解（纯 Leno 实现，不需要 zlib）。真解不开才计入 `gzip_skipped`，
+//     并且**不会**把压缩字节当 XML 解析出满屏乱码
 //   · 单个 sitemap 抓失败不会中断整体：错误进 `errors`，继续抓其余
 export func fetchSitemapReport(string baseUrl, string userAgent, int maxDepth, int maxSitemaps): SitemapReport {
     SitemapReport rep = new SitemapReport()
@@ -1336,13 +1339,19 @@ export func fetchSitemapReport(string baseUrl, string userAgent, int maxDepth, i
                 rep.errors.add(sm + "：HTTP " + r.statusCode)
                 continue
             }
-            if _isGzipBody(r.body) {
-                rep.gzip_skipped = rep.gzip_skipped + 1
-                rep.errors.add(sm + "：响应体仍是 gzip（服务端未做 Content-Encoding，本模块无 zlib 可解）")
-                continue
+            // 响应体是 gzip 字节（服务端把 .gz 当静态文件发，没做 Content-Encoding）⇒ 自己解
+            string body = r.body
+            if _isGzipBody(body) {
+                GzipResult un = gzip.gunzip(body)
+                if not un.ok {
+                    rep.gzip_skipped = rep.gzip_skipped + 1
+                    rep.errors.add(sm + "：gzip 解压失败（" + un.error + "）")
+                    continue
+                }
+                body = un.data
             }
-            if isSitemapIndex(r.body) {
-                Array[string] children = parseSitemapIndex(r.body)
+            if isSitemapIndex(body) {
+                Array[string] children = parseSitemapIndex(body)
                 for children.len() to k {
                     string ch = children[k]
                     if rootHost != "" and domain(ch) != rootHost {
@@ -1352,7 +1361,7 @@ export func fetchSitemapReport(string baseUrl, string userAgent, int maxDepth, i
                     next.add(ch)
                 }
             } else {
-                Array[string] urls = parseSitemap(r.body)
+                Array[string] urls = parseSitemap(body)
                 for urls.len() to k {
                     if seenUrl.get(urls[k], false) { continue }
                     seenUrl[urls[k]] = true
