@@ -39,14 +39,14 @@ export struct GzipResult {
 // 这样多线程同时解压互不干扰（与 web_crawler 避开模块级状态的做法一致）。
 
 struct _State {
-    string src
-    int n                  // src 的字节数
-    int pos                // 下一个待取字节的下标
-    int buf                // 位缓冲：第 0 位就是"下一个要读的位"
-    int cnt                // 位缓冲里的有效位数（buf 中 >= cnt 的位恒为 0）
+    string src = ""
+    int n = 0              // src 的字节数
+    int pos = 0            // 下一个待取字节的下标
+    int buf = 0            // 位缓冲：第 0 位就是"下一个要读的位"
+    int cnt = 0            // 位缓冲里的有效位数（buf 中 >= cnt 的位恒为 0）
     Array[int] out         // 输出字节
-    bool bad               // 出错标记（细节在 err）
-    string err
+    bool bad = false       // 出错标记（细节在 err）
+    string err = ""
 }
 
 // canonical Huffman 解码表
@@ -54,8 +54,8 @@ struct _Huff {
     Array[int] counts      // counts[len] = 码长为 len 的符号个数（counts[0] 恒为 0）
     Array[int] syms        // 按 (码长升序, 符号升序) 排列的符号表
     Array[int] fast        // 9 位快查表：0 = 未命中（走慢路径），否则 (码长 << 9) | 符号
-    bool ok
-    string err
+    bool ok = false
+    string err = ""
 }
 
 func _newState(string s): _State {

@@ -348,6 +348,18 @@ func _sitemapIndex2(): string {
     return "<sitemapindex><sitemap><loc>" + _base() + "/sitemap-b.xml</loc></sitemap></sitemapindex>"
 }
 
+// /js 的正文：内容**由脚本生成**（延迟 60ms，模拟前端异步取数）
+// 静态 HTTP 抓到的 body 里没有 "SPA-CONTENT"，只有真浏览器渲染后才有 ⇒ 动态渲染用例的判据
+func _jsPage(): string {
+    // ⚠ 脚本里**故意把字符串拆成两段拼**（'SPA' + '-CONTENT'）：
+    //   否则 "SPA-CONTENT" 这个字面量就存在于脚本源码里，静态抓取的 body 也会"包含"它，
+    //   断言就分不出是真渲染还是只抓到了源码（这个坑实测踩过）
+    return "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>JS Page</title></head><body>" +
+           "<div id=\"app\">loading</div>" +
+           "<script>setTimeout(function(){document.getElementById('app').innerHTML='<b>SPA'+'-CONTENT</b>';}, 60);</script>" +
+           "</body></html>"
+}
+
 // /sitemap-ok.gz 的正文：合法 gzip 字节（.NET GZipStream，明文见 _gzipSitemapXml）
 const HEX_SITEMAP_GZ = "1f8b080000000000000ab3292dca294e2db1b3292dcab1b3c9c94fb6cb282929b0d2d74fafd22b492d2ed14fb4d10789dae88315e0529584a20a44820c0500139ff7025d000000"
 
@@ -382,6 +394,10 @@ func _route(string path, string req): string {
     if path == "/sitemap.gz" {
         // gzip 魔数 + 垃圾字节：客户端必须识别出"这是压缩体"并降级，而不是当 XML 解析
         return _resp(200, "application/x-gzip", strings.from_bytes([0x1F, 0x8B, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00]))
+    }
+    if path == "/js" {
+        // 脚本生成内容（延迟 60ms）：静态抓取拿不到，只有真浏览器渲染才有
+        return _resp(200, "text/html; charset=utf-8", _jsPage())
     }
     if path == "/sitemap-ok.gz" {
         // **合法** gzip（.NET GZipStream 产出的真实字节，明文见 _gzipSitemapXml）

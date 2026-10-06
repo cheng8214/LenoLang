@@ -23,6 +23,8 @@ main() {
 | `web_html.leno` | HTML 解析 + CSS 选择器 + 文本/表格/表单提取 |
 | `web_crawler.leno` | `Crawler` 调度 + URL 工具 + robots/sitemap + CSV |
 | `web_gzip.leno` | **纯 Leno 的 gzip / DEFLATE 解压**（零依赖，`.gz` sitemap 用） |
+| `web_ws.leno` | **纯 Leno 的 WebSocket 客户端**（CDP 的通道） |
+| `web_cdp.leno` | **无头浏览器 / 动态渲染**（CDP 驱动 Chrome/Edge + 进程管理） |
 | `web_generic.leno` | `Result[T]` 等泛型小工具 |
 
 原生依赖：`lib/libcurl-x64.dll`（Windows）/ `lib/libcurl.so`（Linux），已在 `leno.toml` 的 `[native-libs]` 声明。
@@ -360,6 +362,48 @@ main() {
 > [`docs/多线程struct与模块全局变量问题记录.md`](../../../docs/多线程struct与模块全局变量问题记录.md) 第八节。
 > 回归用例：`examples/tests/test_thread_http.leno`、`examples/tests/test_ffi_callback_thread.leno`。
 
+## 动态渲染：无头浏览器（2026-10-07 新增）
+
+SPA / JS 注入内容抓不到是静态 HTTP 爬虫的硬缺陷。本模块用 **CDP（Chrome DevTools Protocol）
+驱动本机真实浏览器**，把**渲染后**的 DOM 拿回来，再交给 `web.parse` / `web.select`：
+
+```leno
+import "Web" as web
+
+// 一次性：起浏览器 → 渲染 → 关掉
+var r = web.renderPage("https://example.com/spa", 20000)
+if r.ok {
+    var node = web.parse(r.html)                       // 渲染后的 HTML
+    print(web.allText(web.select(node, "#app")[0]))
+}
+
+// 批量：复用同一个浏览器（启动一次 ~2.5s，之后每页 ~0.5s）
+var b = web.launchBrowser(web.BrowserConfig(headless=true, startUrl="about:blank"))
+var r1 = web.renderWith(b, url1, 8000, 500)
+var r2 = web.renderWith(b, url2, 8000, 500)
+web.closeBrowser(b)                                    // 走协议 Browser.close
+```
+
+**为什么是这条路（而不是 WebView2）**：
+
+| | 覆盖面 / 理由 |
+| --- | --- |
+| 覆盖面 | Chromium 家族占桌面 **≈84%**（StatCounter 2026-08：Chrome 73.28% + Edge 10.46%），且 **Edge 在 Win10/11 系统自带**；WebView2 只在 Windows |
+| 生态 | Playwright / Puppeteer / Selenium 走的都是"外部浏览器 + CDP"这条同路 |
+| 依赖 | 语言**自带 libcurl 已导出 `curl_ws_*`**，`sockets` 也够用 ⇒ WebSocket 用纯 Leno 写（`web_ws`），零第三方二进制 |
+| 隔离 | 浏览器是独立进程：它崩了/被反爬干掉不会带走爬虫（WebView2 是同进程内嵌） |
+
+实现要点与踩过的坑：
+
+- **Chrome/Edge 136+**：`--remote-debugging-port` 对**默认用户目录不再生效**，必须配
+  `--user-data-dir=<独立目录>`。本模块自动建临时目录（不碰用户的浏览器），并把它当作
+  "这是我们拉起的浏览器"的标记，收尾时据此兜底清理（**绝不会** `taskkill /IM msedge.exe`）。
+- 端口自选（连接探测找空闲端口），启动后轮询 `/json/version` 等就绪；`SystemInfo.getProcessInfo`
+  取进程号；关闭优先走 `Browser.close`，失败才按 profile 目录兜底杀。
+- 渲染等待：`Page.loadEventFired` + `settleMs`（默认 800ms，给前端异步取数留时间）；
+  取值用 `Runtime.evaluate`（`returnByValue` + `awaitPromise`）。
+- 没装 Chrome/Edge 时 `findBrowser()` 返回 `""`，可用环境变量 **`LENO_BROWSER`** 指定路径。
+
 ## 已知限制
 
 **POSIX 的 iconv 路径未经实测**（开发环境是 Windows）：`_iconvConvert` / `_iconvDoEx`
@@ -368,6 +412,16 @@ main() {
 **gzip 解压不做 CRC32 校验**：`web_gzip` 校验了头、块结构、`ISIZE`（原文字节数）与各种越界，
 但不逐字节算 CRC32（要按字节跑 8 次位运算，收益不抵成本）。截断与大多数损坏都能报出来，
 但"内容被改过、长度没变"的极端情况不会被发现。
+
+**动态渲染的几处边界**（`web_cdp`）：
+
+- 需要本机有 Chrome/Edge（Windows 上 Edge 自带）；**POSIX 路径未实测**（开发环境是 Windows）
+- `web_ws` 只实现 `ws://`，不实现 `wss://`（CDP 走本机明文，用不到）
+- 等待策略是"`load` 事件 + 固定 `settleMs`"，没有真正的"网络空闲"判定 ⇒
+  对慢接口的页面可能取早了（P2 计划：`Network.*` 事件或 `waitForSelector`）
+- **没有做反检测**：`--headless=new` 仍会暴露若干特征（`navigator.webdriver`、Headless Chrome
+  的 UA 片段等）。要过强反爬需另做 stealth（`Page.addScriptToEvaluateOnNewDocument` 抹特征、
+  用真实 profile 等），属 P2/P3
 
 **TLS 指纹仍是原生 libcurl**：代理轮换与浏览器式请求头已具备，但 JA3/JA4 需要替换 DLL
 （`setEcCurves` 在本包自带 DLL 上就返回 `false`）。见「反爬基础 → TLS 指纹」。

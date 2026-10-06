@@ -21,7 +21,8 @@ Array[string] SUITES = [
     "test_sitemap_deep.leno",       // sitemap 索引递归 / 元数据 / 去重 / 跨站 / .gz 降级
     "test_antibot.leno",            // 反爬基础（代理池轮换/冷却、真走代理、浏览器头顺序、TLS 探测）
     "test_fetch_all.leno",          // 并发批抓（测得出的并发、顺序对齐、错误隔离、回调不泄漏）
-    "test_gzip.leno"                // 纯 Leno gzip/DEFLATE 解压（三种块类型 + 边界 + 错误路径）
+    "test_gzip.leno",               // 纯 Leno gzip/DEFLATE 解压（三种块类型 + 边界 + 错误路径）
+    "test_cdp.leno"                 // 动态渲染：CDP 驱动真实浏览器（无浏览器时自动跳过）
 ]
 
 main() {

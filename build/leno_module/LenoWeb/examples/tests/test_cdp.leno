@@ -1,0 +1,146 @@
+// test_cdp.leno — 动态渲染：CDP 驱动真实浏览器（Chrome/Edge），端到端
+//
+// ⚠ 这个用例**需要本机装有 Chrome/Edge**。找不到浏览器时**跳过**（退出码仍是 0），
+//   这样在没装浏览器的机器/CI 上不会把整条门禁搞红 —— 但跳过会明确打印原因。
+//
+// 覆盖：
+//   ① WS 基础件（SHA-1 RFC 向量 / Base64 / ws:// 解析）—— 纯离线，任何机器都跑
+//   ② 浏览器发现（LENO_BROWSER → Edge → Chrome → 常见路径）
+//   ③ 静态抓取 vs 动态渲染的对照（同一页面，脚本生成的内容只有渲染后才有）
+//   ④ 启动（headless + 独立 user-data-dir + 自选端口 + 取版本/进程号）
+//   ⑤ CDP 往返（Browser.getVersion）+ 未知方法的错误上报
+//   ⑥ 渲染 → 结果直接喂现有 HTML 解析器
+//   ⑦ 同一浏览器复用渲染第二个页面
+//   ⑧ 关闭：走协议 Browser.close，端口释放
+import "Web" as web
+import "web_cdp" as cdp
+import "web_ws" as ws
+import "_testkit" as tk
+import threads
+import strings
+import sockets
+
+use cdp.(Browser, BrowserConfig, CdpClient, RenderResult)
+use ws.(WsUrl, WsClient)
+
+int PORT = 39621
+int MAXREQ = 64
+
+// ⚠ threads.start 的入口必须是**本文件**的函数
+func serverEntry(int port, int maxReqs) { tk.serve(port, maxReqs) }
+
+main() {
+    print("--- ① WS 基础件（纯离线）---")
+    tk.check("sha1('')", ws.sha1Hex(""), "da39a3ee5e6b4b0d3255bfef95601890afd80709")
+    tk.check("sha1('abc')", ws.sha1Hex("abc"), "a9993e364706816aba3e25717850c26c9cd0d89d")
+    tk.check("sha1(56 字符)", ws.sha1Hex("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"),
+             "84983e441c3bd26ebaae4aa1f95129e5e54670f1")
+    tk.check("base64('abc')", ws.base64(strings.to_bytes("abc")), "YWJj")
+    tk.check("base64('ab') 带补位", ws.base64(strings.to_bytes("ab")), "YWI=")
+    tk.check("base64('a') 带补位", ws.base64(strings.to_bytes("a")), "YQ==")
+
+    WsUrl u = ws.parseWsUrl("ws://127.0.0.1:9222/devtools/page/ABC")
+    tk.check("parseWsUrl: ok", u.ok, true)
+    tk.check("parseWsUrl: host", u.host, "127.0.0.1")
+    tk.check("parseWsUrl: port（不能丢）", u.port, 9222)
+    tk.check("parseWsUrl: path", u.path, "/devtools/page/ABC")
+    WsUrl u2 = ws.parseWsUrl("wss://example.com/x")
+    tk.check("wss 明确报错（不静默）", u2.ok, false)
+    tk.checkTrue("wss 错误信息非空", u2.error != "")
+
+    WsClient bad = ws.connect("ws://127.0.0.1:1/nope", 1000)
+    tk.check("连不上时 ok=false", bad.ok, false)
+    tk.checkTrue("连不上时给出原因", bad.error != "")
+
+    print("--- ② 浏览器发现 ---")
+    string exe = cdp.findBrowser()
+    if exe == "" {
+        print("本机未找到 Chrome/Edge ⇒ 跳过动态渲染部分（不算失败；可用 LENO_BROWSER 指定路径）")
+        if tk.summary("cdp") != 0 { _exit(1) }
+        return
+    }
+    print("浏览器 = " + exe)
+
+    print("--- ③ 起本机服务端 + 静态抓取对照 ---")
+    var srv = threads.start(serverEntry, PORT, MAXREQ)
+    if not tk.waitUp(PORT) {
+        print("本机服务端未起来，终止")
+        _exit(1)
+    }
+    string url = "http://127.0.0.1:" + PORT + "/js"
+    var st = web.get(url)
+    tk.checkTrue("静态抓取拿到了 HTML", st.ok())
+    // 页面里的内容由脚本在 60ms 后写入（脚本源码里是把字符串拆开拼的）
+    tk.check("静态抓取**不含**脚本生成的内容", strings.has(st.body, "SPA-CONTENT"), false)
+
+    print("--- ④ 启动 headless 浏览器 ---")
+    BrowserConfig cfg = new BrowserConfig()
+    cfg.startUrl = "about:blank"
+    Browser b = cdp.launch(cfg)
+    tk.checkTrue("启动成功", b.ok)
+    if not b.ok {
+        print("启动失败：" + b.error)
+        tk.shutdown(PORT)
+        _exit(1)
+    }
+    tk.check("端口是自选的", b.port > 0, true)
+    tk.checkTrue("拿到版本号", strings.has(b.version, "/"))
+    tk.checkTrue("拿到浏览器级 WS 地址", strings.has(b.wsUrl, "ws://"))
+    tk.checkTrue("user-data-dir 是独立临时目录", strings.has(b.userDataDir, "leno-cdp-"))
+    tk.checkTrue("拿得到页面级 WS 地址", strings.has(cdp.pageWsUrl(b), "/devtools/page/"))
+    tk.checkTrue("取到了浏览器进程号", b.pid > 0)
+
+    print("--- ⑤ CDP 往返 ---")
+    CdpClient cc = cdp.cdpConnect(b.wsUrl, 8000)
+    tk.checkTrue("浏览器级连接成功", cc.ok)
+    if cc.ok {
+        string ver = cdp.cdpCall(cc, "Browser.getVersion", "")
+        tk.checkTrue("getVersion 返回 JSON（含 product）", strings.has(ver, "product"))
+        string bogus = cdp.cdpCall(cc, "LenoNoSuch.method", "")
+        tk.check("未知方法返回空", bogus, "")
+        tk.checkTrue("未知方法有可读错误", cc.error != "")
+        cdp.cdpClose(cc)
+    }
+
+    print("--- ⑥ 渲染（页面脚本 60ms 后才写内容）---")
+    RenderResult r = cdp.renderWith(b, url, 8000, 500)
+    tk.checkTrue("渲染成功", r.ok)
+    tk.check("标题（来自 <title>）", r.title, "JS Page")
+    tk.checkTrue("渲染后的 HTML 含脚本生成的内容", strings.has(r.html, "SPA-CONTENT"))
+    tk.checkTrue("耗时在合理范围（<10s）", r.ms < 10000)
+
+    print("--- ⑦ 渲染结果直接喂现有解析器 ---")
+    var node = web.parse(r.html)
+    var sel = web.select(node, "#app")
+    tk.check("#app 命中个数", sel.len(), 1)
+    if sel.len() > 0 {
+        tk.check("#app 文本", web.allText(sel[0]).trim(), "SPA-CONTENT")
+    }
+
+    print("--- ⑧ 同一浏览器复用（第二个页面）---")
+    RenderResult r2 = cdp.renderWith(b, "http://127.0.0.1:" + PORT + "/utf8", 8000, 300)
+    tk.checkTrue("复用后再渲染一次也成功", r2.ok)
+
+    print("--- ⑨ 关闭：走协议 + 端口释放 ---")
+    bool closed = cdp.close(b)
+    tk.checkTrue("Browser.close 成功", closed)
+    var probe = sockets.connect("127.0.0.1", b.port)
+    tk.checkTrue("端口已释放", probe == null)
+    if probe != null { probe.close() }
+
+    print("--- ⑩ Web 统一入口的转发（整条闭环走公开 API）---")
+    tk.check("web.findBrowser 转发", web.findBrowser(), exe)
+    BrowserConfig cfg2 = new BrowserConfig()
+    cfg2.startUrl = "about:blank"
+    Browser b2 = web.launchBrowser(cfg2)
+    tk.checkTrue("web.launchBrowser", b2.ok)
+    if b2.ok {
+        RenderResult r3 = web.renderWith(b2, url, 8000, 500)
+        tk.checkTrue("web.renderWith", r3.ok)
+        tk.checkTrue("web.renderWith 拿到渲染后内容", strings.has(r3.html, "SPA-CONTENT"))
+        tk.checkTrue("web.closeBrowser", web.closeBrowser(b2))
+    }
+
+    tk.shutdown(PORT)
+    if tk.summary("cdp") != 0 { _exit(1) }
+}

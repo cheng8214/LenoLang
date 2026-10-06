@@ -1,0 +1,518 @@
+// web_ws.leno — 纯 Leno 的 WebSocket 客户端（RFC6455）
+//
+// 用途：CDP（Chrome DevTools Protocol）—— 驱动无头浏览器时，命令与事件全走 WebSocket。
+//
+// 为什么自己写：
+//   · 语言没有 websockets 模块；
+//   · 自带 libcurl 确实导出了 `curl_ws_send/recv`，但那条路要配 multi 驱动 + `CURLE_AGAIN`
+//     轮询，且行为受构建选项影响；
+//   · 而 `sockets` 有 `connect/send/recv/set_timeout`，握手 + 分帧一共两百来行。
+//   ⇒ 与 `web_gzip` 同一取舍：零依赖、跨平台、可离线测试。
+//
+// 实现范围（够 CDP 用，不过度设计）：
+//   · 客户端握手（含 `Sec-WebSocket-Accept` 校验 —— 非 WS 的 HTTP 错误能被立刻识别出来）
+//   · 文本/二进制/延续帧、分片重组；ping 自动回 pong；close 帧处理
+//   · 出站帧一律加掩码（协议强制，不加服务器会直接断开）
+//   · 读超时（`set_timeout`）⇒ 浏览器挂住不会把调用方钉死
+// 不做：扩展协商（permessage-deflate 等）—— CDP 用不上
+
+import strings
+import sockets
+import times
+import rands
+
+// 握手固定 GUID（RFC6455 §1.3 写死的常量）
+const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+// 帧操作码
+const OP_CONT = 0
+const OP_TEXT = 1
+const OP_BIN = 2
+const OP_CLOSE = 8
+const OP_PING = 9
+const OP_PONG = 10
+
+export struct WsClient {
+    Socket sock
+    // ⚠ 标量字段必须写显式默认值：不写就是 **null**（不是 0/false），参与运算会直接报错
+    bool ok = false
+    string error = ""
+    int timeoutMs = 10000
+    string pending = ""   // 已从 socket 读出但还没消费的字节
+    //   分帧要按"精确长度"读：`recv(n)` 可能只给一部分，多读到的部分必须存着自己用
+    //   （握手响应和第一帧常常在同一个 TCP 段里到达 ⇒ pending 从握手阶段就开始用）
+}
+
+export struct WsMessage {
+    bool ok = false
+    int opcode = 0
+    string data = ""
+    string error = ""
+}
+
+// ==================== SHA-1（FIPS 180-4）====================
+// 握手要算 `SHA1(key + GUID)`。纯 Leno 实现（与 examples/crypto/sha1.leno 同一算法）。
+
+func _rotl32(int x, int c): int {
+    int ux = _uint32(x)
+    return _int32((ux << c) | (ux >> (32 - c)))
+}
+
+func _sha1BlockAppend(Array[int] arr, int v) {
+    arr.add(_uint8(v >> 24))
+    arr.add(_uint8(v >> 16))
+    arr.add(_uint8(v >> 8))
+    arr.add(_uint8(v))
+}
+
+func _sha1Bytes(Array[int] data): Array[int] {
+    int h0 = 0x67452301
+    int h1 = 0xEFCDAB89
+    int h2 = 0x98BADCFE
+    int h3 = 0x10325476
+    int h4 = 0xC3D2E1F0
+
+    Array[int] msg = []
+    for data.len() to i { msg.add(data[i] & 255) }
+    msg.add(0x80)
+    int padLen = (56 - msg.len() % 64 + 64) % 64
+    for 0:padLen-1 to i { msg.add(0) }
+    // 64 位消息长度（bit，大端）：高 32 位恒 0（握手串很短），低 32 位是真值。
+    // ⚠ `_sha1BlockAppend` 一次就追加 4 字节 ⇒ **两趟正好 8 字节**。
+    //   此前这里先手写了 4 个 0 又调两次 ⇒ 长度域变 12 字节，摘要全错
+    //   （实测 `sha1("abc")` 得到 7f9f882d… 而不是 a9993e36…）。
+    int bitLen = data.len() * 8
+    _sha1BlockAppend(msg, 0)
+    _sha1BlockAppend(msg, bitLen)
+
+    int blocks = msg.len() / 64
+    for 0:blocks-1 to b {
+        Array[int] w = []
+        for 0:15 to i {
+            int o = b * 64 + i * 4
+            w.add((_uint32(msg[o]) << 24) | (_uint32(msg[o + 1]) << 16) | (_uint32(msg[o + 2]) << 8) | _uint32(msg[o + 3]))
+        }
+        for 16:79 to i {
+            w.add(_rotl32(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1))
+        }
+        int A = h0
+        int B = h1
+        int C = h2
+        int D = h3
+        int E = h4
+        for 0:79 to i {
+            int f = 0
+            int k = 0
+            if i <= 19 {
+                f = (B & C) | (_uint32(~B) & D)
+                k = 0x5A827999
+            } else if i <= 39 {
+                f = B ^ C ^ D
+                k = 0x6ED9EBA1
+            } else if i <= 59 {
+                f = (B & C) | (B & D) | (C & D)
+                k = 0x8F1BBCDC
+            } else {
+                f = B ^ C ^ D
+                k = 0xCA62C1D6
+            }
+            int temp = _int32(_int32(_rotl32(A, 5) + f) + _int32(E + k) + w[i])
+            E = D
+            D = C
+            C = _rotl32(B, 30)
+            B = A
+            A = temp
+        }
+        h0 = _int32(h0 + A)
+        h1 = _int32(h1 + B)
+        h2 = _int32(h2 + C)
+        h3 = _int32(h3 + D)
+        h4 = _int32(h4 + E)
+    }
+
+    Array[int] out = []
+    _sha1BlockAppend(out, h0)
+    _sha1BlockAppend(out, h1)
+    _sha1BlockAppend(out, h2)
+    _sha1BlockAppend(out, h3)
+    _sha1BlockAppend(out, h4)
+    return out
+}
+
+// 十六进制摘要（自检用；RFC 向量见 examples/tests/test_ws.leno）
+export func sha1Hex(string s): string {
+    return strings.from_bytes(_sha1Bytes(strings.to_bytes(s))).to_hex()
+}
+
+// ==================== Base64 ====================
+const B64_TABLE = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+export func base64(Array[int] bs): string {
+    Array[string] out = []
+    int i = 0
+    int n = bs.len()
+    while i + 2 < n {
+        int v = (bs[i] << 16) | (bs[i + 1] << 8) | bs[i + 2]
+        out.add(strings.char(B64_TABLE.byte((v >> 18) & 63)))
+        out.add(strings.char(B64_TABLE.byte((v >> 12) & 63)))
+        out.add(strings.char(B64_TABLE.byte((v >> 6) & 63)))
+        out.add(strings.char(B64_TABLE.byte(v & 63)))
+        i = i + 3
+    }
+    int rest = n - i
+    if rest == 1 {
+        int v = bs[i] << 16
+        out.add(strings.char(B64_TABLE.byte((v >> 18) & 63)))
+        out.add(strings.char(B64_TABLE.byte((v >> 12) & 63)))
+        out.add("==")
+    } else if rest == 2 {
+        int v = (bs[i] << 16) | (bs[i + 1] << 8)
+        out.add(strings.char(B64_TABLE.byte((v >> 18) & 63)))
+        out.add(strings.char(B64_TABLE.byte((v >> 12) & 63)))
+        out.add(strings.char(B64_TABLE.byte((v >> 6) & 63)))
+        out.add("=")
+    }
+    return strings.join(out, "")
+}
+
+// ==================== 随机掩码 / 握手 Key ====================
+
+// ⚠ `rands.ints(a, b)` 返回的是**一个** [a,b] 区间的随机整数（不是数组）
+//   掩码与握手 Key 不要求密码学强度（本机 CDP 场景），够随机即可
+func _randBytes(int n): Array[int] {
+    Array[int] out = []
+    for 0:n-1 to i {
+        out.add(rands.ints(0, 255))
+    }
+    return out
+}
+
+// ==================== 内部工具 ====================
+
+func _wsFail(WsClient c, string msg): WsClient {
+    c.ok = false
+    c.error = msg
+    return c
+}
+
+// 从 socket 精确读 n 个字节（先吃 pending；超时/断开返回 ""）
+// ⚠ 两个坑都踩过：
+//   ① `sock.recv()` 超时/出错返回的是 **null**（不是空串）⇒ 必须显式判 null，
+//      否则 `got.byte_len()` 在 null 上走错分支；
+//   ② 超时**再兜一层** deadline（`times.ms()`），不把"不会卡死"全押在 SO_RCVTIMEO 上。
+func _readExact(WsClient c, int n): string {
+    int deadline = _int(times.ms()) + c.timeoutMs
+    while c.pending.byte_len() < n {
+        if _int(times.ms()) > deadline { return "" }
+        int want = n - c.pending.byte_len()
+        string got = c.sock.recv(want)
+        if got == null or got.byte_len() == 0 {
+            return ""     // 超时或对端关闭
+        }
+        c.pending = c.pending + got
+    }
+    string out = strings.byte_slice(c.pending, 0, n)
+    c.pending = strings.byte_slice(c.pending, n, c.pending.byte_len())
+    return out
+}
+
+// 读一行（\r\n 结尾），返回不含 CRLF 的内容；失败返回 "" 并置 ok=false
+func _readLine(WsClient c): string {
+    int deadline = _int(times.ms()) + c.timeoutMs
+    while true {
+        int idx = strings.byte_find(c.pending, "\r\n", 0)
+        if idx >= 0 {
+            string line = strings.byte_slice(c.pending, 0, idx)
+            c.pending = strings.byte_slice(c.pending, idx + 2, c.pending.byte_len())
+            return line
+        }
+        if _int(times.ms()) > deadline {
+            _wsFail(c, "握手响应超时（" + c.timeoutMs + "ms）")
+            return ""
+        }
+        string got = c.sock.recv(4096)
+        if got == null or got.byte_len() == 0 {
+            _wsFail(c, "握手期间连接中断")
+            return ""
+        }
+        c.pending = c.pending + got
+    }
+}
+
+// 解析 ws://host:port/path
+// 用 struct 而不是数组返回：数组元素类型不齐（host 是 string、port 是 int）会被判成
+// `Array[any]`，与声明的 `Array[string]` 冲突（实测踩过）
+export struct WsUrl {
+    bool ok = false
+    string host = ""
+    int port = 80
+    string path = "/"
+    string error = ""
+}
+
+export func parseWsUrl(string url): WsUrl {
+    WsUrl u = new WsUrl()
+    string rest = url
+    if strings.has(rest, "ws://") {
+        rest = strings.byte_slice(rest, 5, rest.byte_len())
+    } else if strings.has(rest, "wss://") {
+        // 本模块不实现 wss（CDP 走本机 127.0.0.1 明文，用不到）
+        u.error = "本模块不支持 wss://（只支持 ws://）"
+        return u
+    }
+    int slash = strings.byte_find(rest, "/", 0)
+    string hostPort = rest
+    string path = "/"
+    if slash >= 0 {
+        hostPort = strings.byte_slice(rest, 0, slash)
+        path = strings.byte_slice(rest, slash, rest.byte_len())
+    }
+    string host = hostPort
+    int port = 80
+    int colon = strings.byte_find(hostPort, ":", 0)
+    if colon >= 0 {
+        host = strings.byte_slice(hostPort, 0, colon)
+        port = _int(strings.byte_slice(hostPort, colon + 1, hostPort.byte_len()))
+    }
+    u.ok = true
+    u.host = host
+    u.port = port
+    u.path = path
+    return u
+}
+
+// ==================== 握手 ====================
+
+// 连接 + 握手（timeoutMs 同时用作读写超时）
+export func connect(string url, int timeoutMs): WsClient {
+    WsClient c = new WsClient()
+    // ⚠ `ok` 的语义是"**未出错**"，不是"已完成"：中途多处 `if not c.ok { return c }` 是
+    //   失败短路。初始化成 false 会被这些判断**立刻**当成失败返回
+    //   （实测踩过：握手明明回了 "101"，却在第一处短路就把空错误的失败结果交回去了）。
+    //   失败一律由 `_wsFail` 翻转成 false；成功路径保持 true。
+    c.ok = true
+    c.error = ""
+    c.pending = ""
+    c.timeoutMs = timeoutMs
+    if timeoutMs <= 0 { c.timeoutMs = 10000 }
+
+    WsUrl u = parseWsUrl(url)
+    if not u.ok {
+        return _wsFail(c, u.error + "（收到 " + url + "）")
+    }
+    string host = u.host
+    int port = u.port
+    string path = u.path
+
+    Socket s = sockets.connect(host, port)
+    if s == null {
+        return _wsFail(c, "连接失败：" + host + ":" + port)
+    }
+    s.set_timeout(c.timeoutMs)
+    c.sock = s
+
+    // 握手 Key：16 字节随机 → base64
+    string key = base64(_randBytes(16))
+    string req = "GET " + path + " HTTP/1.1\r\n" +
+                 "Host: " + host + ":" + port + "\r\n" +
+                 "Upgrade: websocket\r\n" +
+                 "Connection: Upgrade\r\n" +
+                 "Sec-WebSocket-Key: " + key + "\r\n" +
+                 "Sec-WebSocket-Version: 13\r\n" +
+                 "\r\n"
+    if not s.send(req) {
+        return _wsFail(c, "握手请求发送失败")
+    }
+
+    string status = _readLine(c)
+    if not c.ok { return c }
+    if not strings.has(status, "101") {
+        // 常见情况：端口上不是 WS 服务（404/400）⇒ 把状态行原样带回去，方便定位
+        return _wsFail(c, "握手失败，服务器返回：" + status)
+    }
+    bool gotAccept = false
+    string accept = ""
+    while true {
+        string line = _readLine(c)
+        if not c.ok { return c }
+        if line == "" { break }        // 空行 = 头结束
+        if strings.has(line, "Sec-WebSocket-Accept:") {
+            int colon = strings.byte_find(line, ":", 0)
+            accept = strings.trim(strings.byte_slice(line, colon + 1, line.byte_len()))
+            gotAccept = true
+        }
+    }
+    string expect = base64(_sha1Bytes(strings.to_bytes(key + WS_GUID)))
+    if not gotAccept or accept != expect {
+        return _wsFail(c, "Sec-WebSocket-Accept 校验失败（对方不是 WebSocket 服务）")
+    }
+
+    c.ok = true
+    return c
+}
+
+// ==================== 发帧 ====================
+
+// 组一个**带掩码**的出站帧（协议要求客户端必须加掩码）
+func _buildFrame(int opcode, string payload): string {
+    Array[int] out = []
+    int n = payload.byte_len()
+    out.add(0x80 | opcode)          // FIN=1 + 操作码
+    if n < 126 {
+        out.add(0x80 | n)
+    } else if n < 65536 {
+        out.add(0x80 | 126)
+        out.add((n >> 8) & 255)
+        out.add(n & 255)
+    } else {
+        out.add(0x80 | 127)
+        // 8 字节长度（高位 4 字节恒 0：CDP 消息到不了 4GB）
+        out.add(0)
+        out.add(0)
+        out.add(0)
+        out.add(0)
+        out.add((n >> 24) & 255)
+        out.add((n >> 16) & 255)
+        out.add((n >> 8) & 255)
+        out.add(n & 255)
+    }
+    Array[int] mask = _randBytes(4)
+    for 0:3 to i { out.add(mask[i]) }
+    for 0:n-1 to i {
+        out.add(payload.byte(i) ^ mask[i % 4])
+    }
+    return strings.from_bytes(out)
+}
+
+export func sendText(WsClient c, string text): bool {
+    if not c.ok { return false }
+    if not c.sock.send(_buildFrame(OP_TEXT, text)) {
+        _wsFail(c, "发送失败")
+        return false
+    }
+    return true
+}
+
+// ==================== 收帧 ====================
+
+// 收一条完整消息（自动拼接延续帧、自动回 pong、忽略 pong）
+export func recvMessage(WsClient c): WsMessage {
+    WsMessage m = new WsMessage()
+    m.ok = false
+    m.opcode = 0
+    m.data = ""
+    m.error = ""
+    if not c.ok {
+        m.error = c.error
+        return m
+    }
+
+    string acc = ""
+    int accOp = 0
+    while true {
+        string h2 = _readExact(c, 2)
+        if h2.byte_len() < 2 {
+            m.error = "读帧头超时（" + c.timeoutMs + "ms）"
+            return m
+        }
+        int b0 = h2.byte(0)
+        int b1 = h2.byte(1)
+        bool fin = (b0 & 0x80) != 0
+        int opcode = b0 & 0x0F
+        bool masked = (b1 & 0x80) != 0
+        int len = b1 & 0x7F
+        if len == 126 {
+            string ext = _readExact(c, 2)
+            if ext.byte_len() < 2 {
+                m.error = "读扩展长度超时"
+                return m
+            }
+            len = (ext.byte(0) << 8) | ext.byte(1)
+        } else if len == 127 {
+            string ext8 = _readExact(c, 8)
+            if ext8.byte_len() < 8 {
+                m.error = "读 64 位长度超时"
+                return m
+            }
+            // 只用低 4 字节（CDP 消息不会到 4GB）
+            len = (ext8.byte(4) << 24) | (ext8.byte(5) << 16) | (ext8.byte(6) << 8) | ext8.byte(7)
+        }
+        Array[int] mask = []
+        if masked {
+            string mk = _readExact(c, 4)
+            if mk.byte_len() < 4 {
+                m.error = "读掩码超时"
+                return m
+            }
+            mask = [mk.byte(0), mk.byte(1), mk.byte(2), mk.byte(3)]
+        }
+        string body = _readExact(c, len)
+        if body.byte_len() < len {
+            m.error = "读帧体超时（要 " + len + " 字节，只收到 " + body.byte_len() + "）"
+            return m
+        }
+        if masked {
+            Array[int] un = []
+            for 0:len-1 to i { un.add(body.byte(i) ^ mask[i % 4]) }
+            body = strings.from_bytes(un)
+        }
+
+        if opcode == OP_PING {
+            c.sock.send(_buildFrame(OP_PONG, body))
+            continue
+        }
+        if opcode == OP_PONG {
+            continue
+        }
+        if opcode == OP_CLOSE {
+            m.ok = false
+            m.error = "对端关闭了连接"
+            c.ok = false
+            return m
+        }
+        // 数据帧：文本/二进制/延续
+        if opcode == OP_CONT {
+            acc = acc + body
+        } else {
+            if acc != "" {
+                // 上一条分片消息没收完就来了新消息 —— 按协议不允许，丢弃上半截
+                acc = ""
+            }
+            accOp = opcode
+            acc = body
+        }
+        if fin {
+            m.ok = true
+            m.opcode = accOp
+            m.data = acc
+            return m
+        }
+    }
+}
+
+// 收一条文本消息（非文本返回 ""，错误信息在 lastError）
+export func recvText(WsClient c): string {
+    WsMessage m = recvMessage(c)
+    if not m.ok {
+        _lastError = m.error
+        return ""
+    }
+    return m.data
+}
+
+// 最近一次错误（recvText 这类"返回字符串"的接口把原因放这里）
+string _lastError = ""
+
+export func lastError(): string {
+    return _lastError
+}
+
+export func close(WsClient c) {
+    if c.ok {
+        c.sock.send(_buildFrame(OP_CLOSE, ""))
+    }
+    if c.sock != null {
+        c.sock.close()
+    }
+    c.ok = false
+}

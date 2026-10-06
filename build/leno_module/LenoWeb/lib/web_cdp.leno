@@ -1,0 +1,603 @@
+// web_cdp.leno — 驱动真实浏览器（Chrome/Edge）的 CDP 客户端 + 进程管理
+//
+// 为什么是这条路（而不是 WebView2）：见 README「动态渲染」。一句话——
+//   Windows 上 Edge 系统自带（等于 100% 有）、且同样覆盖 macOS/Linux；
+//   Playwright/Puppeteer/Selenium 走的也是"外部浏览器 + CDP"这条同路。
+//
+// 本文件负责：
+//   1. 找浏览器（LENO_BROWSER 环境变量 → Edge → Chrome → 常见路径）
+//   2. 拉起（headless + 独立 `--user-data-dir` + 自选空闲端口）并等它就绪
+//   3. 走 `/json/*` HTTP 端点拿目标页/版本信息（自己用 sockets 拼 HTTP，不依赖 libcurl）
+//   4. 走 WebSocket（`web_ws`）发 CDP 命令、等事件
+//   5. 收尾：`Browser.close` + 兜底按 profile 目录杀进程
+//
+// ⚠ 两个必须知道的现实约束（2026-10-06 实测 / 官方变更）：
+//   · **Chrome/Edge 136+**：`--remote-debugging-port` 对**默认用户目录不再生效**，
+//     必须配 `--user-data-dir=<独立目录>`。本模块本来就建临时目录（不碰用户的浏览器）。
+//   · `--user-data-dir` 的路径会出现在进程命令行里 ⇒ 它同时被当作"这是我们的浏览器"的标记，
+//     收尾时据此兜底清理（绝不能 `taskkill /IM msedge.exe`，那会杀掉用户自己的浏览器）。
+
+import strings
+import files
+import dirs
+import jsons
+import times
+import sockets
+import "web_ws.leno" as ws
+
+use ws.(WsClient)
+
+// ==================== 类型 ====================
+
+export struct BrowserConfig {
+    string exe = ""            // 浏览器可执行文件；"" ⇒ 自动发现（或 LENO_BROWSER）
+    bool headless = true
+    string startUrl = ""       // 启动时的首页（给 "" 用 about:blank）
+    string userDataDir = ""    // "" ⇒ 自动建临时目录
+    int port = 0               // 0 ⇒ 自动挑空闲端口
+    int windowWidth = 1280
+    int windowHeight = 800
+    int readyTimeoutMs = 20000 // 等 DevTools 端口就绪的上限
+    string extraArgs = ""      // 追加参数（空格分隔）
+}
+
+export struct Browser {
+    bool ok = false
+    string error = ""
+    string exe = ""
+    int port = 0
+    string userDataDir = ""
+    string version = ""        // 例："Edg/154.0.4258.53" / "Chrome/141.0.xxxx"
+    string wsUrl = ""          // 浏览器级 webSocketDebuggerUrl
+    bool headless = true
+    int pid = 0                // 尽量取（`SystemInfo.getProcessInfo`），取不到为 0
+}
+
+export struct CdpClient {
+    WsClient ws
+    int nextId = 1
+    Array[string] events = []  // 等响应期间收到的事件，按到达顺序留着（waitEvent 会来领）
+    bool ok = false
+    string error = ""
+}
+
+export struct RenderResult {
+    bool ok = false
+    string html = ""
+    string title = ""
+    string url = ""
+    string error = ""
+    int ms = 0
+    int status = 0             // 主文档 HTTP 状态码（拿不到为 0）
+}
+
+// ==================== 浏览器发现 ====================
+
+func _envOr(string name, string def): string {
+    string v = _env(name)
+    if v == null or v == "" { return def }
+    return v
+}
+
+// 返回浏览器可执行文件路径；找不到返回 ""
+export func findBrowser(): string {
+    string envPath = _envOr("LENO_BROWSER", "")
+    if envPath != "" and files.exists(envPath) { return envPath }
+    string local = _envOr("LOCALAPPDATA", "")
+
+    Array[string] cands = []
+    // Windows：Edge 优先（系统自带，装机面最大），再 Chrome
+    string pf = _envOr("ProgramFiles", "C:\\Program Files")
+    string pf86 = _envOr("ProgramFiles(x86)", "C:\\Program Files (x86)")
+    cands.add(pf86 + "\\Microsoft\\Edge\\Application\\msedge.exe")
+    cands.add(pf + "\\Microsoft\\Edge\\Application\\msedge.exe")
+    cands.add(pf + "\\Google\\Chrome\\Application\\chrome.exe")
+    cands.add(pf86 + "\\Google\\Chrome\\Application\\chrome.exe")
+    if local != "" {
+        cands.add(local + "\\Google\\Chrome\\Application\\chrome.exe")
+    }
+    // macOS
+    cands.add("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+    cands.add("/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge")
+    cands.add("/Applications/Chromium.app/Contents/MacOS/Chromium")
+    // Linux
+    cands.add("/usr/bin/google-chrome")
+    cands.add("/usr/bin/google-chrome-stable")
+    cands.add("/usr/bin/chromium")
+    cands.add("/usr/bin/chromium-browser")
+    cands.add("/usr/bin/microsoft-edge")
+    cands.add("/snap/bin/chromium")
+
+    for cands.len() to i {
+        if files.exists(cands[i]) { return cands[i] }
+    }
+    return ""
+}
+
+// ==================== 内部：进程 / 端口 / HTTP ====================
+
+// 唯一的临时目录标记：既是 profile 目录名，也是"我们的浏览器进程"的识别标记
+func _token(): string {
+    return "leno-cdp-" + times.ns()
+}
+
+// 从 lo 起找一个空闲端口（连得上说明被占用）
+// ⚠ 形参不能叫 `from` / `to`：`to` 是 `for a:b to i` 的关键字
+func _pickFreePort(int lo, int hi): int {
+    int p = lo
+    while p <= hi {
+        Socket s = sockets.connect("127.0.0.1", p)
+        if s == null { return p }
+        s.close()
+        p = p + 1
+    }
+    return 0
+}
+
+// 极简 HTTP/1.1 GET（只给本机 DevTools 端点用；不依赖 libcurl）
+//
+// 两个实测过的要点：
+//   ① Host 头**必须带端口**：Chromium 的 `/json/*` 会按 Host 头拼 `webSocketDebuggerUrl`，
+//      写成 `Host: 127.0.0.1` 会拿回 `ws://127.0.0.1/devtools/...`（端口丢了 ⇒ 后面去连 80）
+//   ② **必须按 Content-Length 收尾**：Chromium 无视我们的 `Connection: close`（HTTP/1.1
+//      默认长连接）⇒ 只靠"读到断开/超时"会**白等一个超时**（实测每次 3s，把抓一页拖到 3.5s）
+func _httpGet(int port, string path, int timeoutMs): string {
+    Socket s = sockets.connect("127.0.0.1", port)
+    if s == null { return "" }
+    int slice = timeoutMs
+    if slice > 1000 { slice = 1000 }        // 单次 recv 的超时；总预算另用 deadline 控
+    s.set_timeout(slice)
+    s.send("GET " + path + " HTTP/1.1\r\nHost: 127.0.0.1:" + port + "\r\nConnection: close\r\n\r\n")
+
+    string buf = ""
+    int deadline = _int(times.ms()) + timeoutMs
+    int headEnd = -1
+    while headEnd < 0 {
+        if _int(times.ms()) > deadline { break }
+        string got = s.recv(65536)
+        // ⚠ recv 超时/关闭返回 **null**（不是空串）⇒ 必须显式判 null
+        if got == null or got.byte_len() == 0 { break }
+        buf = buf + got
+        headEnd = strings.byte_find(buf, "\r\n\r\n", 0)
+    }
+    if headEnd < 0 {
+        s.close()
+        return ""
+    }
+    int bodyStart = headEnd + 4
+    int want = _contentLength(buf, headEnd)
+    if want >= 0 {
+        while buf.byte_len() - bodyStart < want {
+            if _int(times.ms()) > deadline { break }
+            string more = s.recv(65536)
+            if more == null or more.byte_len() == 0 { break }
+            buf = buf + more
+        }
+        s.close()
+        int avail = buf.byte_len() - bodyStart
+        if avail < want { want = avail }
+        return strings.byte_slice(buf, bodyStart, bodyStart + want)
+    }
+    // 没有 Content-Length（很少见）：退回"读到断开/超时"
+    while true {
+        if _int(times.ms()) > deadline { break }
+        string got2 = s.recv(65536)
+        if got2 == null or got2.byte_len() == 0 { break }
+        buf = buf + got2
+    }
+    s.close()
+    return strings.byte_slice(buf, bodyStart, buf.byte_len())
+}
+
+// 从响应头里取 Content-Length（找不到返回 -1）
+func _contentLength(string head, int headEnd): int {
+    string h = strings.byte_slice(head, 0, headEnd)
+    string lower = strings.to_lower(h)
+    int idx = strings.byte_find(lower, "content-length:", 0)
+    if idx < 0 { return -1 }
+    int p = idx + 15
+    string digits = ""
+    while p < h.byte_len() {
+        int c = h.byte(p)
+        if c < 48 or c > 57 { break }
+        digits = digits + strings.char(c)
+        p = p + 1
+    }
+    if digits == "" { return -1 }
+    return _int(digits)
+}
+
+// 等 DevTools 端点就绪（返回 /json/version 的 JSON；超时返回 ""）
+func _waitReady(int port, int timeoutMs): string {
+    int t0 = _int(times.ms())
+    while _int(times.ms()) - t0 < timeoutMs {
+        string ver = _httpGet(port, "/json/version", 800)
+        if ver != "" and strings.has(ver, "webSocketDebuggerUrl") { return ver }
+        _sleepMs(50)
+    }
+    return ""
+}
+
+// 让当前线程睡一会儿（没有 sleep 内建 ⇒ 用 times 空转；50ms 级别的等待够用）
+func _sleepMs(int ms) {
+    int t0 = _int(times.ms())
+    while _int(times.ms()) - t0 < ms {
+        // 空转（每次循环都会调 native times.ms，代价很小）
+    }
+}
+
+// 拼命令行（headless 新式写法；Chrome/Edge 通用）
+func _buildArgs(BrowserConfig cfg, int port, string udd): string {
+    string a = ""
+    if cfg.headless { a = a + "--headless=new " }
+    a = a + "--remote-debugging-port=" + port + " "
+    a = a + "--user-data-dir=\"" + udd + "\" "
+    a = a + "--no-first-run --no-default-browser-check --disable-extensions --disable-gpu "
+    a = a + "--window-size=" + cfg.windowWidth + "," + cfg.windowHeight + " "
+    if cfg.extraArgs != "" { a = a + cfg.extraArgs + " " }
+    if cfg.startUrl != "" { a = a + "\"" + cfg.startUrl + "\" " }
+    return strings.trim(a)
+}
+
+// 异步拉起（Windows 走 `cmd /c start ""`，POSIX 走 `sh -c '… &'`）
+// 注意：**绝不能等它退出**（浏览器是常驻进程）⇒ 必须异步 + 独立 user-data-dir
+func _spawn(string exe, string args): bool {
+    if _isWindows() {
+        // `start ""` 的第一个空参数是"标题"，缺了它 cmd 会把带引号的可执行文件路径当标题
+        string cmd = "cmd /c start \"\" \"" + exe + "\" " + args
+        var r = _exec(cmd, 10000)
+        return r.code == 0
+    }
+    string cmd = "sh -c '\"" + exe + "\" " + args + " > /dev/null 2>&1 &'"
+    var r2 = _exec(cmd, 10000)
+    return r2.code == 0
+}
+
+func _isWindows(): bool {
+    // dirs.sep() 在 Windows 返回 "\"，POSIX 返回 "/"（见 dirs 模块）
+    return dirs.sep() == "\\"
+}
+
+// 兜底清理：按 profile 目录标记杀进程（**主路径是 CDP 的 Browser.close**）
+// 只杀命令行里带我们那个唯一目录的进程 —— 不可能碰到用户自己的浏览器
+export func killByProfile(string udd): bool {
+    if udd == "" { return false }
+    string token = strings.byte_slice(udd, strings.byte_find(udd, "leno-cdp-", 0), udd.byte_len())
+    if _isWindows() {
+        // wmic 在新系统上可能已移除 ⇒ 失败就用 powershell 兜一层
+        var r = _exec("wmic process where \"commandline like '%" + token + "%'\" call terminate", 15000)
+        if r.code == 0 { return true }
+        var r2 = _exec("powershell -NoProfile -Command \"Get-CimInstance Win32_Process -Filter \\\"CommandLine like '%" +
+                       token + "%'\\\" | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }\"", 20000)
+        return r2.code == 0
+    }
+    var r3 = _exec("pkill -f " + token, 10000)
+    return r3.code == 0
+}
+
+// ==================== CDP over WebSocket ====================
+
+// 连上浏览器级 WS（或某个 target 的 WS）
+export func cdpConnect(string wsUrl, int timeoutMs): CdpClient {
+    CdpClient c = new CdpClient()
+    c.events = []
+    c.nextId = 1
+    c.ok = false
+    c.error = ""
+    c.ws = ws.connect(wsUrl, timeoutMs)
+    if not c.ws.ok {
+        c.error = "WebSocket 连接失败：" + c.ws.error
+        return c
+    }
+    c.ok = true
+    return c
+}
+
+// 收一条消息；失败返回 ""
+func _recvJson(CdpClient c): string {
+    string raw = ws.recvText(c.ws)
+    if raw == "" {
+        c.ok = false
+        c.error = "读取 CDP 消息失败：" + ws.lastError()
+        return ""
+    }
+    return raw
+}
+
+// 发一条命令并等它的响应；返回 `result` 的 JSON 文本（失败返回 ""）
+export func cdpCall(CdpClient c, string method, string paramsJson): string {
+    if not c.ok { return "" }
+    int id = c.nextId
+    c.nextId = c.nextId + 1
+    string msg = ""
+    if paramsJson == "" or paramsJson == "{}" {
+        msg = "{\"id\":" + id + ",\"method\":\"" + method + "\"}"
+    } else {
+        msg = "{\"id\":" + id + ",\"method\":\"" + method + "\",\"params\":" + paramsJson + "}"
+    }
+    if not ws.sendText(c.ws, msg) {
+        c.ok = false
+        c.error = "发送 CDP 命令失败：" + method
+        return ""
+    }
+    while true {
+        string raw = _recvJson(c)
+        if raw == "" { return "" }
+        var obj = jsons.decode(raw)
+        // 正向守卫即可：`if obj is Dict { … }` 会把 obj **收窄**成 Dict ⇒ 后面直接用它，
+        // 不需要 `as Dict[string, any]`（负向守卫 `not is` 反而**不会**收窄，必须补 cast）
+        if obj is Dict[string, any] {
+            int rid = jsons.get_int(obj, "id", -1)
+            if rid == id {
+                var errObj = jsons.get_obj(obj, "error")
+                if errObj is Dict[string, any] {
+                    c.error = "CDP 错误（" + method + "）：" + jsons.get_str(errObj, "message", "未知错误")
+                    return ""
+                }
+                var resObj = jsons.get_obj(obj, "result")
+                if resObj is Dict[string, any] {
+                    return jsons.encode(resObj)
+                }
+                return "{}"
+            }
+            // 别人的响应/事件 ⇒ 留着给 waitEvent 来领
+            if jsons.get_str(obj, "method", "") != "" {
+                c.events.add(raw)
+            }
+        }
+    }
+}
+
+// 等一个事件（先翻已收到的事件队列，再继续收）；超时返回 ""
+export func waitEvent(CdpClient c, string method, int timeoutMs): string {
+    for c.events.len() to i {
+        var obj = jsons.decode(c.events[i])
+        if obj is Dict[string, any] and jsons.get_str(obj, "method", "") == method {
+            // 领取（从队列里摘掉）
+            string raw = c.events[i]
+            Array[string] keep = []
+            for c.events.len() to j {
+                if j != i { keep.add(c.events[j]) }
+            }
+            c.events = keep
+            return _eventParams(obj)
+        }
+    }
+    int t0 = _int(times.ms())
+    while _int(times.ms()) - t0 < timeoutMs and c.ok {
+        string raw = _recvJson(c)
+        if raw == "" { return "" }
+        var obj = jsons.decode(raw)
+        if obj is Dict[string, any] {
+            if jsons.get_str(obj, "method", "") == method {
+                return _eventParams(obj)
+            }
+            if jsons.get_str(obj, "method", "") != "" {
+                c.events.add(raw)
+            }
+        }
+    }
+    return ""
+}
+
+// 事件消息的 params（没有就返回 "{}"）
+func _eventParams(Dict[string, any] d): string {
+    var p = jsons.get_obj(d, "params")
+    if p is Dict[string, any] {
+        return jsons.encode(p)
+    }
+    return "{}"
+}
+
+// 在页面里求值（returnByValue + awaitPromise），返回字符串结果
+export func evaluate(CdpClient c, string js): string {
+    var expr = jsons.encode(js)
+    string params = "{\"expression\":" + expr + ",\"returnByValue\":true,\"awaitPromise\":true}"
+    string res = cdpCall(c, "Runtime.evaluate", params)
+    if res == "" { return "" }
+    var obj = jsons.decode(res)
+    if obj is Dict[string, any] {
+        // ⚠ 取值要**两层**：cdpCall 返回的已经是命令的 `result`，
+        //   `Runtime.evaluate` 的结果形如 {"result":{"type":"string","value":"…"}}
+        //   ⇒ 先取 "result" 再取 "value"。只取一层会永远拿到空串（实测踩过：
+        //   渲染阶段报"取值失败"但底层错误为空，因为 value 根本没被读到）。
+        var inner = jsons.get_obj(obj, "result")
+        if inner is Dict[string, any] {
+            return jsons.get_str(inner, "value", "")
+        }
+        // 有些命令（或异常情形）直接把 value 放在顶层 ⇒ 兜一层
+        return jsons.get_str(obj, "value", "")
+    }
+    return ""
+}
+
+export func cdpClose(CdpClient c) {
+    ws.close(c.ws)
+    c.ok = false
+}
+
+// ==================== 启动 / 收尾 ====================
+
+export func launch(BrowserConfig cfg): Browser {
+    Browser b = new Browser()
+    b.ok = false
+    b.error = ""
+    b.headless = cfg.headless
+
+    string exe = cfg.exe
+    if exe == "" { exe = findBrowser() }
+    if exe == "" {
+        b.error = "没找到 Chrome / Edge（可用环境变量 LENO_BROWSER 指定可执行文件路径）"
+        return b
+    }
+    b.exe = exe
+
+    string udd = cfg.userDataDir
+    if udd == "" {
+        string base = _envOr("TEMP", _envOr("TMPDIR", "/tmp"))
+        udd = dirs.join(base, _token())
+    }
+    if not dirs.exists(udd) {
+        dirs.mkdir_p(udd)
+    }
+    b.userDataDir = udd
+
+    int port = cfg.port
+    if port <= 0 { port = _pickFreePort(9222, 9400) }
+    if port <= 0 {
+        b.error = "找不到空闲端口（9222-9400 都被占用）"
+        return b
+    }
+
+    string args = _buildArgs(cfg, port, udd)
+    if not _spawn(exe, args) {
+        b.error = "拉起浏览器失败：" + exe
+        return b
+    }
+
+    string verJson = _waitReady(port, cfg.readyTimeoutMs)
+    if verJson == "" {
+        b.error = "浏览器已拉起但 DevTools 端口未就绪（" + port + "，等了 " + cfg.readyTimeoutMs + "ms）"
+        killByProfile(udd)
+        return b
+    }
+    var ver = jsons.decode(verJson)
+    if ver is Dict[string, any] {
+        b.port = port
+        b.version = jsons.get_str(ver, "Browser", "")
+        b.wsUrl = jsons.get_str(ver, "webSocketDebuggerUrl", "")
+        b.ok = true
+    } else {
+        b.error = "无法解析 /json/version 响应"
+        killByProfile(udd)
+        return b
+    }
+
+    // 顺便取一下浏览器进程号（收尾用得上；取不到不影响使用）
+    CdpClient probe = cdpConnect(b.wsUrl, 5000)
+    if probe.ok {
+        string sysInfo = cdpCall(probe, "SystemInfo.getProcessInfo", "")
+        if sysInfo != "" {
+            var arr = jsons.decode(sysInfo)
+            // SystemInfo.getProcessInfo 的 result 形如 {"processInfo":[{"id":1234,"type":"browser"},…]}
+            var list = jsons.get_obj(arr, "processInfo")
+            if list is Array and list.len() > 0 {
+                var first = list[0]
+                if first is Dict[string, any] {
+                    b.pid = jsons.get_int(first, "id", 0)
+                }
+            }
+        }
+        cdpClose(probe)
+    }
+    return b
+}
+
+// 取页面级 target 的 WS 地址（type == "page" 的第一个）
+export func pageWsUrl(Browser b): string {
+    string list = _httpGet(b.port, "/json/list", 3000)
+    if list == "" { return "" }
+    var arr = jsons.decode(list)
+    // ⚠ 必须用**正向**守卫包住循环：负向守卫（`not is` + 提前 return）**不会**收窄类型
+    //   ⇒ 里面 `arr.len()` / `arr[i]` 会被判"不能在 any 上访问"。同一做法见 web_crawler 的
+    //   `if seen is Array { … }`。
+    if arr is Array {
+        for arr.len() to i {
+            var it = arr[i]
+            if it is Dict[string, any] {
+                if jsons.get_str(it, "type", "") == "page" {
+                    string u = jsons.get_str(it, "webSocketDebuggerUrl", "")
+                    if u != "" { return u }
+                }
+            }
+        }
+    }
+    return ""
+}
+
+// 关闭浏览器：先走协议（干净），再按 profile 兜底（务实）
+export func close(Browser b): bool {
+    bool done = false
+    if b.ok and b.wsUrl != "" {
+        CdpClient c = cdpConnect(b.wsUrl, 3000)
+        if c.ok {
+            cdpCall(c, "Browser.close", "")
+            cdpClose(c)
+            // 等它自己退（最多 3s）
+            int t0 = _int(times.ms())
+            while _int(times.ms()) - t0 < 3000 {
+                Socket s = sockets.connect("127.0.0.1", b.port)
+                if s == null { done = true; break }
+                s.close()
+                _sleepMs(100)
+            }
+        }
+    }
+    if not done {
+        killByProfile(b.userDataDir)
+    }
+    b.ok = false
+    return done
+}
+
+// ==================== 高层：渲染一个页面 ====================
+
+// 用已启动的浏览器渲染 url，返回渲染后的 HTML
+export func renderWith(Browser b, string url, int waitLoadMs, int settleMs): RenderResult {
+    RenderResult r = new RenderResult()
+    r.url = url
+    int t0 = _int(times.ms())
+    if not b.ok {
+        r.error = "浏览器未就绪：" + b.error
+        return r
+    }
+    string wsUrl = pageWsUrl(b)
+    if wsUrl == "" {
+        r.error = "/json/list 里没有 page 类型的 target"
+        return r
+    }
+    CdpClient c = cdpConnect(wsUrl, 10000)
+    if not c.ok {
+        r.error = c.error
+        return r
+    }
+    // 打开页面 + 等加载
+    cdpCall(c, "Page.enable", "")
+    cdpCall(c, "Runtime.enable", "")
+    cdpCall(c, "Page.navigate", "{\"url\":" + jsons.encode(url) + "}")
+    waitEvent(c, "Page.loadEventFired", waitLoadMs)
+    if settleMs > 0 { _sleepMs(settleMs) }
+
+    r.title = evaluate(c, "document.title")
+    string html = evaluate(c, "document.documentElement.outerHTML")
+    if html == "" {
+        // 有些页面（或还没渲染）拿不到 outerHTML ⇒ 退回 documentElement.innerHTML
+        html = evaluate(c, "document.documentElement ? document.documentElement.innerHTML : ''")
+    }
+    if html == "" {
+        r.error = "取值失败（页面可能未完成渲染）：" + c.error
+    } else {
+        r.ok = true
+        r.html = html
+    }
+    cdpClose(c)
+    r.ms = _int(times.ms()) - t0
+    return r
+}
+
+// 一次性：起浏览器 → 渲染 → 关掉。批量抓取请用 launch + renderWith 复用同一个浏览器
+export func render(string url, int timeoutMs): RenderResult {
+    BrowserConfig cfg = new BrowserConfig()
+    cfg.startUrl = "about:blank"
+    cfg.readyTimeoutMs = timeoutMs
+    Browser b = launch(cfg)
+    if not b.ok {
+        RenderResult r = new RenderResult()
+        r.url = url
+        r.error = b.error
+        return r
+    }
+    RenderResult r = renderWith(b, url, timeoutMs, 800)
+    close(b)
+    return r
+}
