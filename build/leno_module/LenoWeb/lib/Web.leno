@@ -12,7 +12,7 @@ import "web_charset.leno" as charsets
 
 // ==================== 重新导出 core 类型 ====================
 use core.(curl, Code, Opt, Info, Global, HttpVersion, SslVersion)
-use net.(Response, HttpClient, Session, MimeField, ProxyPool, ProxyStats)
+use net.(Response, HttpClient, Session, MimeField, ProxyPool, ProxyStats, BatchResult)
 use htmls.(HtmlNode)
 use crawler.(Url, Crawler, CrawlItem, Page, SitemapEntry, SitemapReport)
 use generic.(Result, Ok, Err, map, filter, reduce, forEach, Stack, LinkedList, ListNode)
@@ -51,6 +51,10 @@ export func sessionSetProxy(Session s, string proxy) { net.sessionSetProxy(s, pr
 export func sessionClose(Session s) { net.sessionClose(s) }
 export func sessionLoadCookies(Session s, string cookieFile): int { return net.sessionLoadCookies(s, cookieFile) }
 export func sessionSaveCookies(Session s, string cookieFile): int { return net.sessionSaveCookies(s, cookieFile) }
+
+// ==================== 并发批抓 ====================
+// curl_multi 单线程多路复用：N 个请求同时飞，结果按**输入顺序**返回
+export func fetchAll(Array[string] urls, int concurrency = 8, string userAgent = "", string proxy = "", int timeoutMs = 30000): Array[BatchResult] { return net.fetchAll(urls, concurrency, userAgent, proxy, timeoutMs) }
 
 // ==================== 反爬基础 ====================
 // 只解决"看起来不像脚本"这一层：浏览器式请求头（含顺序）、代理轮换、TLS 套件选项。

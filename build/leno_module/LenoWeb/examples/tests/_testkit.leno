@@ -393,6 +393,14 @@ func _route(string path, string req): string {
         // PNG magic + 非法 UTF-8 字节：任何字符集转码都不得动它
         return _resp(200, "image/png", strings.from_bytes([0x89, 0x50, 0x4E, 0x47, 0xD6, 0xD0, 0xFF, 0x0D]))
     }
+    if strings.has(path, "/slow/") {
+        // 延迟响应：用来把"并发"做成**可测的** ——
+        //   N 个独立服务端（每个单线程只服务一条连接）+ 每台延迟 ms ⇒
+        //   并发批抓总耗时 ≈ ms，串行 ≈ N×ms。单服务端做不到这点（它一次只处理一条连接）。
+        int ms = _pathSize(path)
+        if ms > 0 { sleep(ms) }
+        return _resp(200, "text/plain; charset=utf-8", "SLOW:" + ms)
+    }
     if strings.has(path, "/echo/") {
         string token = path.byte_slice(6, path.byte_len())
         return _resp(200, "text/plain; charset=utf-8", "BODY:" + token)

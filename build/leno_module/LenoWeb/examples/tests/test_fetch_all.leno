@@ -1,0 +1,126 @@
+// test_fetch_all.leno — 并发批抓（curl_multi 单线程多路复用），全离线
+//
+// 「真并发」怎么做成**可测的**：起 5 个**独立**服务端（每个是单线程 `serve` 循环，
+//   一次只服务一条连接），每个都有 `/slow/<ms>` 延迟路由。于是：
+//     · concurrency = 5 ⇒ 5 个请求同时飞 ⇒ 总耗时 ≈ 250ms（**不是** 5×250）
+//     · concurrency = 1 ⇒ 串行      ⇒ 总耗时 ≈ 1250ms
+//   两端一对比，并发的存在就是量出来的，而不是"我设了并发参数就算并发"。
+//   （单个测试服务端做不到：它一次只处理一条连接，请求会排队 ⇒ 看起来永远像串行。）
+import "Web" as web
+import "_testkit" as tk
+import threads
+import strings
+import times
+
+use web.(Response, BatchResult)
+
+int P0 = 39641
+int P1 = 39642
+int P2 = 39643
+int P3 = 39644
+int P4 = 39645
+int DEAD = 39649          // 无监听：当作"连不上的目标"
+int MAXREQ = 400
+
+func serverEntry(int port, int maxReqs) {
+    tk.serve(port, maxReqs)
+}
+
+func slowUrl(int port, int ms): string {
+    return "http://127.0.0.1:" + port + "/slow/" + ms
+}
+
+func nowMs(): int {
+    return _int(times.ms())
+}
+
+func allOk(Array[BatchResult] rs): bool {
+    for rs.len() to i {
+        if not rs[i].resp.ok() { return false }
+    }
+    return true
+}
+
+func countOk(Array[BatchResult] rs): int {
+    int n = 0
+    for rs.len() to i {
+        if rs[i].resp.ok() { n = n + 1 }
+    }
+    return n
+}
+
+func urlsJoined(Array[BatchResult] rs): string {
+    Array[string] u = []
+    for rs.len() to i { u.add(rs[i].url) }
+    return strings.join(u, ",")
+}
+
+main() {
+    Array[int] ports = [P0, P1, P2, P3, P4]
+    for ports.len() to i { threads.start(serverEntry, ports[i], MAXREQ) }
+    for ports.len() to i {
+        if not tk.waitUp(ports[i]) {
+            print("服务端未就绪: " + ports[i])
+            _exit(1)
+        }
+    }
+    Array[string] urls = []
+    for ports.len() to i { urls.add(slowUrl(ports[i], 250)) }
+
+    print("--- ① 并发 5：总耗时应远小于 5×250ms ---")
+    int t0 = nowMs()
+    Array[BatchResult] c5 = web.fetchAll(urls, 5)
+    int dtConc = nowMs() - t0
+    print("    并发 5 耗时 = " + dtConc + " ms（串行基线约 1250ms）")
+    tk.check("结果条数", c5.len(), 5)
+    tk.check("全部 200", allOk(c5), true)
+    tk.checkTrue("确实并发了（< 700ms）", dtConc < 700)
+    tk.check("顺序 = 输入顺序", urlsJoined(c5), strings.join(urls, ","))
+    tk.check("正文来自对应服务端", c5[0].resp.body, "SLOW:250")
+    tk.check("index 也对齐", c5[4].index, 4)
+
+    print("--- ② 串行（concurrency=1）对照 ---")
+    int t1 = nowMs()
+    Array[BatchResult] c1 = web.fetchAll(urls, 1)
+    int dtSeq = nowMs() - t1
+    print("    串行耗时 = " + dtSeq + " ms")
+    tk.checkTrue("串行明显更慢（比并发多 400ms 以上）", dtSeq > dtConc + 400)
+    tk.check("串行结果同样全 200", allOk(c1), true)
+
+    print("--- ③ 单条失败不拖累其它（错误隔离）---")
+    Array[string] mixed = [slowUrl(P0, 20), "http://127.0.0.1:" + DEAD + "/nope", slowUrl(P1, 20)]
+    Array[BatchResult] c3 = web.fetchAll(mixed, 3, "", "", 2000)
+    tk.check("条数", c3.len(), 3)
+    tk.check("第 1 条成功", c3[0].resp.ok(), true)
+    tk.checkTrue("第 2 条带错误信息", c3[1].resp.error != "")
+    tk.checkTrue("第 2 条 curlCode 非 0", c3[1].resp.curlCode != 0)
+    tk.check("第 3 条照样成功", c3[2].resp.ok(), true)
+    tk.check("失败条也在原位（顺序不乱）", c3[1].index, 1)
+
+    print("--- ④ 大批量两轮：回调不泄漏（ffi.callback 同时存活上限 256）---")
+    Array[string] many = []
+    for 40 to i { many.add(slowUrl(P2, 0)) }
+    Array[BatchResult] m1 = web.fetchAll(many, 8, "", "", 5000)
+    tk.check("第一轮 40 条全成功", countOk(m1), 40)
+    Array[BatchResult] m2 = web.fetchAll(many, 8, "", "", 5000)
+    tk.check("第二轮仍 40 条全成功（说明每条的 2 个回调都释放了）", countOk(m2), 40)
+
+    print("--- ⑤ 与字符集 / 代理参数协同 ---")
+    Array[BatchResult] gbk = web.fetchAll(["http://127.0.0.1:" + P0 + "/gbk"], 1)
+    tk.check("GBK 页在批抓里也自动转 UTF-8", gbk[0].resp.body, "中文测试")
+    tk.check("charset 探测", gbk[0].resp.charset, "gbk")
+    Array[BatchResult] viaProxy = web.fetchAll(["http://target.invalid/x"], 1, "MyBot/1.0",
+                                               "http://127.0.0.1:" + P1)
+    tk.check("经代理成功", viaProxy[0].resp.statusCode, 200)
+    tk.check("正文回显绝对 URI ⇒ 确实走了代理", viaProxy[0].resp.body, "PROXIED:http://target.invalid/x")
+
+    print("--- ⑥ 边界：空数组 / 并发数大于条数 ---")
+    Array[BatchResult] none = web.fetchAll([])
+    tk.check("空数组 ⇒ 空结果", none.len(), 0)
+    Array[BatchResult] two = web.fetchAll(["http://127.0.0.1:" + P3 + "/slow/10",
+                                           "http://127.0.0.1:" + P4 + "/slow/10"], 99)
+    tk.check("并发 99 但只 2 条 ⇒ 都成功", countOk(two), 2)
+
+    for ports.len() to i { tk.shutdown(ports[i]) }
+    if tk.summary("fetch_all") != 0 { _exit(1) }
+}

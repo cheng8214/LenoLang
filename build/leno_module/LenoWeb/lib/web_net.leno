@@ -979,6 +979,219 @@ func _nowMs(): int {
     return _int(times.ms())
 }
 
+// ==================== 并发批抓（curl_multi 多路复用） ====================
+//
+// 为什么用 curl_multi 而不是线程池：
+//   ① 多路复用是 libcurl 的原生能力 —— N 个请求在**同一个线程**上同时飞行。
+//      没有锁、没有 VM-per-thread；而 Leno 的子线程还要求"入口必须是**当前文件**的函数"
+//      （见 threads 使用指南），库函数自己起不了线程 ⇒ 线程池在库里根本做不出来。
+//   ② 回调都在调用线程上执行 ⇒ 与现有"每个客户端一个累加器 + 闭包捕获"的模型天然兼容。
+// ⚠ multi 句柄**不是线程安全的**：一次批抓一个句柄，不要把同一个 multi 跨线程共用。
+//   同一批里每个 easy 句柄各自独立（各自的累加器、各自的两个回调）⇒ 互不串台。
+
+// 一条批抓结果。results 按**输入顺序**返回（不是完成顺序）⇒ 可直接和 urls 对齐。
+export struct BatchResult {
+    int index = 0
+    string url = 0
+    Response resp
+}
+
+// 一趟请求的运行时状态
+struct _MultiJob {
+    int index = 0
+    string url = 0
+    Ptr[u8] handle = null
+    Ptr writeCb = null
+    Ptr headerCb = null
+    _RespAcc acc
+}
+
+// CURLMsg 的字段偏移（x64；curl.h 的 `struct CURLMsg`）：
+//   0 = msg（int，CURLMSG_DONE = 1） / 8 = easy_handle / 16 = data.result
+func _msgKind(Ptr[u8] msg): int { return ffi.read_int(msg, 0) }
+func _msgEasy(Ptr[u8] msg): Ptr[u8] { return ffi.read_ptr(msg, 8) }
+func _msgResult(Ptr[u8] msg): int { return ffi.read_int(msg, 16) }
+
+func _findJob(Array[_MultiJob] jobs, Ptr[u8] easy): int {
+    int want = ffi.ptr_to_int(easy)
+    for jobs.len() to i {
+        if jobs[i].handle != null and ffi.ptr_to_int(jobs[i].handle) == want { return i }
+    }
+    return -1
+}
+
+// 起一个 easy 句柄并挂进 multi（handle 建不出来时返回的对象 handle 为 null，调用方自行报错）
+func _startJob(Ptr[u8] multi, int index, string url, string ua, string proxy, int timeoutMs): _MultiJob {
+    _MultiJob j = new _MultiJob()
+    j.index = index
+    j.url = url
+    j.handle = core.easyInit()
+    if j.handle == null { return j }
+    _RespAcc acc = new _RespAcc()
+    j.acc = acc
+    j.writeCb = ffi.callback(func(Ptr data, int size, int nmemb, Ptr ud): int {
+        return _accAppendBody(acc, data, size * nmemb)
+    }, WriteCb)
+    j.headerCb = ffi.callback(func(Ptr data, int size, int nmemb, Ptr ud): int {
+        return _accAppendHeader(acc, data, size * nmemb)
+    }, HeaderCb)
+    core.setopt_ptr(j.handle, Opt.WRITEFUNCTION, j.writeCb)
+    core.setopt_ptr(j.handle, Opt.HEADERFUNCTION, j.headerCb)
+    core.setopt_str(j.handle, Opt.URL, url)
+    core.setopt_int(j.handle, Opt.HTTPGET, 1)
+    core.setopt_int(j.handle, Opt.NOPROGRESS, 1)
+    core.setopt_int(j.handle, Opt.FOLLOWLOCATION, 1)
+    core.setopt_int(j.handle, Opt.MAXREDIRS, 10)
+    core.setopt_str(j.handle, Opt.ACCEPT_ENCODING, "")
+    core.setopt_int(j.handle, Opt.TIMEOUT_MS, timeoutMs)
+    core.setopt_int(j.handle, Opt.CONNECTTIMEOUT_MS, timeoutMs)
+    if ua != "" { core.setopt_str(j.handle, Opt.USERAGENT, ua) }
+    if proxy != "" { core.setopt_str(j.handle, Opt.PROXY, proxy) }
+    core.multiAdd(multi, j.handle)
+    return j
+}
+
+// 把一趟结果收成 BatchResult（与 HttpClient._perform 同一套字段 + 字符集转码）
+func _finishJob(_MultiJob j, int curlResult): BatchResult {
+    BatchResult br = new BatchResult()
+    br.index = j.index
+    br.url = j.url
+    Response resp = new Response()
+    resp.reset()
+    resp.curlCode = curlResult
+    if curlResult != Code.OK { resp.error = core.easyStrerror(curlResult) }
+    resp.statusCode = core.getinfo_int(j.handle, Info.RESPONSE_CODE)
+    resp.effectiveUrl = core.getinfo_str(j.handle, Info.EFFECTIVE_URL)
+    resp.totalTime = core.getinfo_double(j.handle, Info.TOTAL_TIME)
+    resp.contentType = core.getinfo_str(j.handle, Info.CONTENT_TYPE)
+    resp.headers = j.acc.headers()
+    resp._raw = j.acc.body()
+    resp.totalSize = j.acc.bodyBytes
+    _applyCharset(resp)
+    br.resp = resp
+    return br
+}
+
+func _freeJob(_MultiJob j) {
+    if j.handle != null { core.easyCleanup(j.handle) }
+    // ⚠ 回调必须释放：ffi.callback 同时存活上限 256 个，一批 100 条就是 200 个
+    if j.writeCb != null { ffi.free(j.writeCb) }
+    if j.headerCb != null { ffi.free(j.headerCb) }
+}
+
+// 并发批抓。结果按**输入顺序**返回；每条的 resp.error 非空即该条失败（其余条不受影响）。
+// concurrency 是同时在飞的请求数（建议 4~16：再高对单站点是压力，且容易触发风控）。
+export func fetchAll(Array[string] urls, int concurrency = 8, string userAgent = "",
+                     string proxy = "", int timeoutMs = 30000): Array[BatchResult] {
+    int n = urls.len()
+    Array[BatchResult] out = []
+    if n == 0 { return out }
+    if concurrency < 1 { concurrency = 1 }
+    Ptr[u8] multi = core.multiInit()
+    if multi == null {
+        for n to i {
+            BatchResult bad = new BatchResult()
+            bad.index = i
+            bad.url = urls[i]
+            bad.resp = new Response()
+            bad.resp.error = "curl_multi_init 失败"
+            out.add(bad)
+        }
+        return out
+    }
+    Ptr[u8] runningP = ffi.malloc(8)
+    Ptr[u8] msgsP = ffi.malloc(8)
+    Array[_MultiJob] jobs = []
+    int nextIdx = 0
+    int alive = 0
+    while nextIdx < n and alive < concurrency {
+        _MultiJob j0 = _startJob(multi, nextIdx, urls[nextIdx], userAgent, proxy, timeoutMs)
+        if j0.handle == null {
+            BatchResult bad = new BatchResult()
+            bad.index = nextIdx
+            bad.url = urls[nextIdx]
+            bad.resp = new Response()
+            bad.resp.error = "curl_easy_init 失败"
+            out.add(bad)
+        } else {
+            jobs.add(j0)
+            alive = alive + 1
+        }
+        nextIdx = nextIdx + 1
+    }
+    // 主循环：驱动 → 收完成消息 → 立刻补入新请求（保持满并发）。
+    // 终止性由每条请求的 TIMEOUT_MS 保证（外面还有 guard 兜底）。
+    int guard = 0
+    while alive > 0 and guard < 1000000 {
+        guard = guard + 1
+        core.multiPerform(multi, runningP)
+        for 0:100000 to _ {
+            Ptr[u8] msg = core.multiInfoRead(multi, msgsP)
+            if msg == null { break }
+            if _msgKind(msg) != 1 { continue }   // 只认 CURLMSG_DONE
+            int jobIdx = _findJob(jobs, _msgEasy(msg))
+            if jobIdx < 0 { continue }
+            _MultiJob j = jobs[jobIdx]
+            int res = _msgResult(msg)
+            core.multiRemove(multi, j.handle)
+            out.add(_finishJob(j, res))
+            _freeJob(j)
+            jobs.remove(jobIdx)
+            alive = alive - 1
+            if nextIdx < n {
+                _MultiJob nj = _startJob(multi, nextIdx, urls[nextIdx], userAgent, proxy, timeoutMs)
+                if nj.handle == null {
+                    BatchResult bad = new BatchResult()
+                    bad.index = nextIdx
+                    bad.url = urls[nextIdx]
+                    bad.resp = new Response()
+                    bad.resp.error = "curl_easy_init 失败"
+                    out.add(bad)
+                } else {
+                    jobs.add(nj)
+                    alive = alive + 1
+                }
+                nextIdx = nextIdx + 1
+            }
+        }
+        if alive == 0 { break }
+        core.multiWait(multi, 200)
+    }
+    // 兜底：guard 用尽时把还在飞的收掉（否则句柄与回调泄漏）
+    for jobs.len() to k {
+        _MultiJob j = jobs[k]
+        core.multiRemove(multi, j.handle)
+        BatchResult bad = new BatchResult()
+        bad.index = j.index
+        bad.url = j.url
+        bad.resp = new Response()
+        bad.resp.error = "批抓未完成（内部保护退出）"
+        out.add(bad)
+        _freeJob(j)
+    }
+    core.multiCleanup(multi)
+    ffi.free(runningP)
+    ffi.free(msgsP)
+    return _byIndex(out)
+}
+
+// 按输入下标排序（完成顺序 ≠ 输入顺序），插入排序即可（批大小通常几十到几百）
+func _byIndex(Array[BatchResult] src): Array[BatchResult] {
+    Array[BatchResult] out = []
+    for src.len() to i {
+        BatchResult cur = src[i]
+        int pos = out.len()
+        for 0:out.len()-1 to k {
+            if out[k].index > cur.index {
+                pos = k
+                break
+            }
+        }
+        out.insert(pos, cur)
+    }
+    return out
+}
+
 // ==================== Session 会话 ====================
 // 仿 requests.Session：复用一个 HttpClient 实例，
 // 跨多个请求保持 cookie / 连接 / 认证等状态。

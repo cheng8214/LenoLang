@@ -1,0 +1,47 @@
+// batch_fetch_demo.leno — 并发批抓演示
+//
+// 用法：<解释器> batch_fetch_demo.leno <url1> [url2 ...]
+//   · 不带参数：只打印用法，**不联网** ⇒ 能进离线回归
+//   · 带 URL  ：并发抓取，并按"状态 / 字节 / 耗时"打一张表
+import "Web" as web
+import times
+
+use web.BatchResult
+
+main() {
+    Array[string] args = _args()
+    if args.len() == 0 {
+        print("用法: <解释器> batch_fetch_demo.leno <url1> [url2 ...]")
+        print("")
+        print("演示的能力：")
+        print("  web.fetchAll(urls, concurrency, ua, proxy, timeoutMs)")
+        print("     并发抓一批；结果按**输入顺序**返回，单条失败不拖累其它")
+        print("  web.browserHeaders(ua, lang) / web.chromeUA()")
+        print("     浏览器式请求头（数组顺序就是发出去的顺序）")
+        print("  web.createProxyPool([...]) / web.proxyPoolFromFile(path)")
+        print("     多代理轮换 + 失败自动冷却（连续失败达阈值临时踢出，到点自动放回）")
+        print("")
+        print("示例: leno batch_fetch_demo.leno https://example.com/ https://example.org/")
+        return
+    }
+
+    print("并发抓取 " + args.len() + " 个 URL（并发 4 + 浏览器式请求头）…")
+    int t0 = _int(times.ms())
+    Array[BatchResult] rs = web.fetchAll(args, 4, web.chromeUA())
+    int dt = _int(times.ms()) - t0
+
+    print("")
+    print("序号  状态  字节     单条耗时(ms)  URL")
+    for rs.len() to i {
+        BatchResult r = rs[i]
+        string status = "ERR"
+        if r.resp.ok() { status = "" + r.resp.statusCode }
+        print("  " + r.index + "   " + status + "  " + r.resp.totalSize + "    " +
+              _int(r.resp.totalTime * 1000.0) + "        " + r.url)
+        if r.resp.error != "" {
+            print("        └ " + r.resp.error)
+        }
+    }
+    print("")
+    print("整批墙钟耗时 = " + dt + " ms（并发下应远小于各条耗时之和）")
+}

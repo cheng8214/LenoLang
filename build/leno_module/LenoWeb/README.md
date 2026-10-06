@@ -213,6 +213,36 @@ web.remoteSize(url)                    // HEAD 取 Content-Length；未知返回
 - 总量已知时会校验最终大小，对不上返回 `-1`
 - 本地文件**已完整**时不再重复下载
 
+## 并发批抓（`curl_multi`，新增）
+
+爬虫吞吐的大头在这：N 个请求在**同一个线程**上同时飞。
+
+为什么是 `curl_multi` 而不是线程池：Leno 的子线程要求"入口必须是**当前文件**的函数"
+（见 [`docs/threads使用指南.md`](../../../docs/threads使用指南.md)）⇒ 库函数自己起不了线程；
+而多路复用是 libcurl 的原生能力，没有锁、也不跨线程（所有回调都在调用线程上执行）。
+
+```leno
+Array[string] urls = [...]                     // 几百个详情页
+Array[BatchResult] rs = web.fetchAll(urls, 8)  // 并发 8
+for rs.len() to i {
+    if rs[i].resp.ok() { save(rs[i].resp.body) }
+    else { log(rs[i].url + " 失败: " + rs[i].resp.error) }
+}
+```
+
+- **结果按输入顺序返回**（不是完成顺序）⇒ 可直接与 `urls` 对齐；每条带 `index` / `url` / `resp`
+- **单条失败不拖累其它**：`resp.error` 非空即该条失败，其余照常完成（`resp.curlCode` 给错误码）
+- `concurrency` 建议 4~16：再高对单站点只是压力，而且更容易触发风控
+- 可选参数 `userAgent` / `proxy`（应用到本批每个请求）、`timeoutMs`（默认 30s）
+- 与字符集层打通：GBK 页在结果里同样是**转好码**的 `resp.body`（`resp.charset` 给出探测结果）
+
+> 想要"每条请求换一个代理"：按代理数把 `urls` 分块，每块调一次 `fetchAll(urls_i, n, ua, proxy_i)`
+> 即可（顺序与并发都不受影响）。批内共用一个出口是刻意的 —— 一次批抓 = 一个 multi 句柄 + 一个出口，
+> 语义更好推理；需要复杂轮换时用 Session 的代理池（见下）。
+
+**并发是量出来的，不是"设了参数就算"**：`examples/tests/test_fetch_all.leno` 起 5 个独立延迟
+服务端（各延迟 250ms），并发 5 实测 **253ms**、串行实测 **1357ms** —— 同一批 URL 的两端对比。
+
 ## 反爬基础（新增）
 
 只解决"看起来不像脚本"这一层：**浏览器式请求头（含顺序）**、**代理池**、**TLS 套件选项**。

@@ -26,6 +26,18 @@ clib curl {
     i32 curl_global_init(i32 flags)
     void curl_global_cleanup()
 
+    // ==================== Multi 接口（并发多路复用） ====================
+    // 一个线程上让 N 个请求同时飞行 —— 爬虫吞吐的主要来源。
+    // ⚠ multi 句柄**不是线程安全的**：一次批抓一个句柄，别跨线程共用。
+    Ptr[u8] curl_multi_init()
+    i32     curl_multi_add_handle(Ptr[u8] multi, Ptr[u8] easy)
+    i32     curl_multi_remove_handle(Ptr[u8] multi, Ptr[u8] easy)
+    i32     curl_multi_perform(Ptr[u8] multi, Ptr[i32] running)
+    Ptr[u8] curl_multi_info_read(Ptr[u8] multi, Ptr[i32] msgs_left)
+    i32     curl_multi_wait(Ptr[u8] multi, Ptr[u8] extra_fds, i32 extra_nfds, i32 timeout_ms, Ptr[i32] numfds)
+    i32     curl_multi_cleanup(Ptr[u8] multi)
+    str8    curl_multi_strerror(i32 errcode)
+
     // ==================== 版本信息 ====================
     str8 curl_version()
     str8 curl_version_info(i32 type)  // 简化声明，返回 const curl_version_info_data*
@@ -406,6 +418,49 @@ export func getinfo_double(Ptr[u8] handle, int option): float {
 // 执行 HTTP 请求
 export func perform(Ptr[u8] handle): int {
     return ffi.call_int(lib(), "curl_easy_perform", handle)
+}
+
+// ==================== Multi（并发）封装 ====================
+//
+// CURLMsg 的字段偏移（x64；见 curl.h）：
+//   0  : msg（int，CURLMSG_DONE = 1）+ 4 字节填充
+//   8  : easy_handle（指针）—— 用来认领"哪个请求完成了"
+//   16 : data.result（CURLcode）
+// 调用方（web_net.fetchAll）按这三个偏移读；偏移写错会读到垃圾句柄 ⇒ 立刻崩，
+// 所以不需要额外的防御性检查（端到端测试就是校验）。
+export func multiInit(): Ptr[u8] {
+    return lib().curl_multi_init()
+}
+
+export func multiAdd(Ptr[u8] multi, Ptr[u8] easy): int {
+    return lib().curl_multi_add_handle(multi, easy)
+}
+
+export func multiRemove(Ptr[u8] multi, Ptr[u8] easy): int {
+    return lib().curl_multi_remove_handle(multi, easy)
+}
+
+// 驱动一次；running 是 out 参数（还剩几个在飞）
+export func multiPerform(Ptr[u8] multi, Ptr[u8] running): int {
+    return lib().curl_multi_perform(multi, running)
+}
+
+// 取一条完成消息（没有则返回 null）；msgsLeft 是 out 参数
+export func multiInfoRead(Ptr[u8] multi, Ptr[u8] msgsLeft): Ptr[u8] {
+    return lib().curl_multi_info_read(multi, msgsLeft)
+}
+
+// 等 IO 事件或超时（毫秒）。用它代替忙等，把 CPU 让出去。
+export func multiWait(Ptr[u8] multi, int timeoutMs): int {
+    return lib().curl_multi_wait(multi, null, 0, timeoutMs, null)
+}
+
+export func multiCleanup(Ptr[u8] multi): int {
+    return lib().curl_multi_cleanup(multi)
+}
+
+export func multiStrerror(int code): string {
+    return lib().curl_multi_strerror(code)
 }
 
 // ==================== slist 封装 ====================
