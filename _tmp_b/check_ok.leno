@@ -1,5 +1,0 @@
-// --check 的正例
-main() {
-    int x = 1
-    print(x)
-}

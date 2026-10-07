@@ -1,9 +1,0 @@
-// 现状探针：B3 现象1 —— new 的尾随逗号
-struct P {
-    int x = 0
-}
-
-main() {
-    var p = new P(x = 1,)
-    print(p.x)
-}

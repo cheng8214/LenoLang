@@ -1,6 +1,0 @@
-// 现状探针：B11 —— 模块级 pri
-pri func helper(): int { return 7 }
-
-main() {
-    print(helper())
-}
