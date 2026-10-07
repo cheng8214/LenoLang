@@ -107,6 +107,8 @@ void emit_closure_to(CodeGen* gen, int dst, int func_const_idx, int line);
 
 // 算术
 void emit_add(CodeGen* gen, int dst, int b, int c, int line);
+// 字符串自追加（iABC，C 未用）：R[dst] = R[dst] + R[b]，可原地（见 OP_STR_APPEND 说明）
+void emit_str_append(CodeGen* gen, int dst, int b, int line);
 void emit_sub(CodeGen* gen, int dst, int b, int c, int line);
 void emit_mul(CodeGen* gen, int dst, int b, int c, int line);
 void emit_div(CodeGen* gen, int dst, int b, int c, int line);

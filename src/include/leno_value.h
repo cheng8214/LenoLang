@@ -308,6 +308,11 @@ typedef struct {
     int len;          // UTF-8 字节长度
     int char_len;     // Unicode 字符数（缓存，O(1) 访问）
     uint32_t hash;
+    // 实际分配的缓冲字节数。全模块**只有一个用途**：`capacity > len + 1` 表示"这块缓冲是
+    //   本 VM 为自追加链特意预留的" ⇒ 允许原地追加（见 str_append_copy / OP_STR_APPEND）。
+    //   其余所有创建路径都设成 `len + 1`（精确大小）⇒ 字面量、内化去重共享串、外部传入的串
+    //   天然不可能被原地修改。gc_alloc 会清零 ⇒ 万一漏设也是 0（保守方向：不可追加）✓
+    int capacity;
 } ObjString;
 
 // 数组对象
@@ -949,6 +954,7 @@ int utf8_char_len(const char* chars, int byte_len);
 int utf8_char_offset(const char* chars, int byte_len, int char_index);
 int utf8_char_byte_len(const char* chars, int byte_len, int offset);
 ObjString* str_alloc(int len);
+ObjString* str_alloc_cap(int len, int capacity);  // 预留容量分配（自追加链专用）
 ObjString* str_new(const char* chars, int len);
 ObjString* str_new_nointern(const char* chars, int len);  // 创建非内化字符串（用于长字符串）
 
@@ -958,6 +964,13 @@ static inline ObjString* str_copy(const char* chars, int len) {
 }
 
 ObjString* str_concat(ObjString* a, ObjString* b);
+
+// 自追加链专用（见 object_string.c 的说明）：
+//   `s = s + e` 由编译器特化为 OP_STR_APPEND ⇒ 走这里，把 O(n²) 变成摊销 O(n)。
+//   安全性由两把锁共同保证：编译期"该槽位无别名"分析 + 运行时 capacity 判据
+//   （只有 str_append_copy 预留过容量的串才可能被 str_append_inplace 原地修改）。
+ObjString* str_append_copy(ObjString* a, Value b);      // 复制并预留容量（链的第一次/分叉）
+ObjString* str_append_inplace(ObjString* a, Value b);   // 原地追加（调用方保证独占）
 
 // Range 操作
 ObjRange* range_new(int64_t start, int64_t end, int inclusive);

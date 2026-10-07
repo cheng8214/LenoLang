@@ -51,6 +51,9 @@ main() {
     for 200000 to i { s3 = s3 + d.get("k" + i, 0) }
     print("dict_200k       = " + (nowMs() - t) + " ms   sum=" + s3)
 
+    // ⚠ 累加器必须**独占**：T33 的自追加特化要求"该变量的全部使用只有自追加 + 只读
+    //   （len/索引/比较）"。这里上游曾把它复用给下面的 str_find，于是被判定为"可能泄漏"
+    //   ⇒ 不特化（保守方向，不是 bug）。基准要测特化后的能力，所以分开用变量。
     t = nowMs()
     string acc = ""
     for 20000 to i { acc = acc + "x" }
@@ -64,9 +67,11 @@ main() {
     string joined = parts.join("")
     print("str_join_20k    = " + (nowMs() - t) + " ms   len=" + joined.len())
 
+    // 查找用**另一个**串：acc 只做累加（见上），两者不互相拖累
+    string findStr = "xxxxxxxxxx"
     t = nowMs()
     int hits = 0
-    for 10000 to i { if strings.has(acc, "xx") { hits = hits + 1 } }
+    for 10000 to i { if strings.has(findStr, "xx") { hits = hits + 1 } }
     print("str_find_10k    = " + (nowMs() - t) + " ms   hits=" + hits)
 
     t = nowMs()

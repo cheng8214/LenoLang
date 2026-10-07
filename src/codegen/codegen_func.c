@@ -163,6 +163,11 @@ void gen_func_closure(CodeGen* gen, Ast* ast, ObjFunction* func) {
     //   嵌套函数（局部函数 / 方法）会层层覆盖，所以必须保存/恢复。
     Ast* saved_func_ast = gen->current_func_ast;
     gen->current_func_ast = ast;
+    // T33：分析本函数体的"可原地追加"槽位。结果只在本函数体内有效 ⇒ 与寄存器分配器
+    //   状态一样保存/恢复（嵌套函数会把它覆盖掉）。
+    unsigned char saved_append_ok[MAX_REG];
+    memcpy(saved_append_ok, gen->str_append_ok, sizeof(saved_append_ok));
+    str_append_analyze(gen, ast->u.func.body);
 
     // ★ 必须保存/恢复寄存器分配器状态：函数体是独立寄存器空间。
     //   注意 free 栈要连**内容**一起保存 —— 只恢复 freetop 计数是不够的：

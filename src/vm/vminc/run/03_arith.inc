@@ -52,6 +52,33 @@
         R(a) = string_add(bv, cv);
         DISPATCH();
     }
+
+    // T33：字符串自追加（`s = s + e`）—— 允许**原地修改** R[A] 指向的串，
+    //   把这类累加的 O(n²) 摊平成 O(n)（CPython 靠 refcount==1 的 in-place realloc 特例
+    //   做到同一件事；Leno 的 GC 没有引用计数，所以改由**编译期**证明"该槽位无别名"）。
+    //   运行时这两道闸保证"即使编译期判断失误也只是变慢，不会写坏别人的串"：
+    //     · 只有 `capacity > len + 1` 的串才原地追加 —— 该容量只由 str_append_copy 预留，
+    //       字面量 / 内化共享串 / 外部传入的串的 capacity 恒为 len+1 ⇒ 一律走复制路径；
+    //     · 左操作数不是字符串时直接回退 string_add（含"值→字符串"的通用转换）。
+    LABEL(OP_STR_APPEND): {
+        int a = READ_A(), b = READ_B();
+        Value av = R(a);
+        Value bv = R(b);
+        if (likely(val_is_obj(av) && val_as_obj(av)->type == OBJ_STRING)) {
+            ObjString* as = (ObjString*)val_as_obj(av);
+            if (as->capacity > as->len + 1) {
+                ObjString* r = str_append_inplace(as, bv);   // 独占 ⇒ 原地追加
+                R(a) = r ? val_obj((Object*)r) : string_add(av, bv);
+            } else {
+                ObjString* r = str_append_copy(as, bv);      // 首次/分叉 ⇒ 复制并预留容量
+                R(a) = r ? val_obj((Object*)r) : string_add(av, bv);
+            }
+        } else {
+            R(a) = string_add(av, bv);
+        }
+        DISPATCH();
+    }
+
     LABEL(OP_SUB): {
         int a = READ_A(), b = READ_B(), c = READ_C();
         Value bv = R(b), cv = R(c);

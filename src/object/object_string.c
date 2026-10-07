@@ -82,6 +82,7 @@ ObjString* str_alloc(int len) {
     }
 
     str->len = len;
+    str->capacity = len + 1;   // 精确大小 ⇒ 不可原地追加（见 ObjString.capacity 说明）
     str->char_len = 0;  // 调用者需在填充内容后设置
     str->hash = 0;
     str->chars[0] = '\0';
@@ -103,6 +104,7 @@ ObjString* str_new_nointern(const char* chars, int len) {
     memcpy(str->chars, chars, len);
     str->chars[len] = '\0';
     str->len = len;
+    str->capacity = len + 1;   // 精确大小 ⇒ 不可原地追加（见 ObjString.capacity 说明）
     str->char_len = utf8_char_len(chars, len);
     str->hash = hash_string(chars, len);
     
@@ -138,6 +140,7 @@ ObjString* str_new(const char* chars, int len) {
     memcpy(str->chars, chars, len);
     str->chars[len] = '\0';
     str->len = len;
+    str->capacity = len + 1;   // 精确大小 ⇒ 不可原地追加（见 ObjString.capacity 说明）
     str->char_len = utf8_char_len(chars, len);
     str->hash = hash_string(chars, len);
     
@@ -193,6 +196,118 @@ ObjString* str_concat(ObjString* a, ObjString* b) {
         intern_register(result);
     }
     return result;
+}
+
+// ============================================================================
+// 自追加链（`s = s + e`，编译器特化成 OP_STR_APPEND）
+// ----------------------------------------------------------------------------
+// 动机：`s = s + "x"` 这类累加是 O(n²) —— 每轮都要重新分配 + 复制整个前缀。CPython 靠
+//   "refcount == 1 就原地 realloc" 的特例摊平成 O(n)，而 Leno 的 GC **没有引用计数**，
+//   运行时无法判断"这个串是否还有别名"，所以不能在 OP_ADD 里擅自原地改。
+//
+// 两道锁共同保证安全：
+//   ① 编译期：只有"该槽位的全部使用都是自追加"（无任何别名/读取）时才生成 OP_STR_APPEND；
+//   ② 运行时：只有 `capacity > len + 1` 的串才允许原地追加，而该容量只由下面的
+//      str_append_copy 预留 ⇒ 字面量 / 内化共享串 / 外部传入的串**永远**走复制路径。
+// 于是"编译期判断失误"最多退化成多复制一次，不会破坏语义。
+// ============================================================================
+
+// 分配 `capacity` 字节缓冲、`len` 有效内容的字符串（capacity >= len + 1）
+ObjString* str_alloc_cap(int len, int capacity) {
+    if (capacity < len + 1) capacity = len + 1;
+    ObjString* str = (ObjString*)gc_alloc(sizeof(ObjString), OBJ_STRING);
+    if (!str) return NULL;
+    str->chars = (char*)malloc((size_t)capacity);
+    if (!str->chars) {
+        native_throw_error("内存分配失败");
+        return NULL;
+    }
+    str->len = len;
+    str->capacity = capacity;
+    str->char_len = 0;   // 调用者填充内容后设置
+    str->hash = 0;
+    str->chars[0] = '\0';
+    return str;
+}
+
+// 把任意 Value 规整成"待追加的字节片段"。*need_free = 1 时 data 由 value_to_string 分配，
+// 调用方负责 free（非字符串值才走这条，转发开销只在极少见的 `s = s + 123` 上）
+static const char* str_append_bytes(Value v, int* out_len, int* out_chars, int* need_free) {
+    *need_free = 0;
+    if (val_is_obj(v) && val_as_obj(v)->type == OBJ_STRING) {
+        ObjString* s = (ObjString*)val_as_obj(v);
+        *out_len = s->len;
+        *out_chars = s->char_len;
+        return s->chars;
+    }
+    char* tmp = value_to_string(v);
+    *out_len = (int)strlen(tmp);
+    *out_chars = utf8_char_len(tmp, *out_len);
+    *need_free = 1;
+    return tmp;
+}
+
+// 追加的**复制路径**：返回 `a + b` 的新串并预留容量（后续就能原地追加了）。
+// 与 str_concat 的两点差异都是刻意的：
+//   ① **不做内化去重** —— 结果必须独占；去重会返回表里的共享串，那串绝不能被原地改
+//   ② 容量留富余（2 倍，且至少 64 字节）⇒ 前几十次追加不再 realloc
+ObjString* str_append_copy(ObjString* a, Value b) {
+    int blen = 0, bchars = 0, need_free = 0;
+    const char* bdata = str_append_bytes(b, &blen, &bchars, &need_free);
+
+    int len = a->len + blen;
+    int cap = (len + 1) * 2;
+    if (cap < 64) cap = 64;
+    ObjString* r = str_alloc_cap(len, cap);
+    if (!r) {
+        if (need_free) free((void*)bdata);
+        return NULL;
+    }
+    memcpy(r->chars, a->chars, (size_t)a->len);
+    memcpy(r->chars + a->len, bdata, (size_t)blen);
+    r->chars[len] = '\0';
+    r->char_len = a->char_len + bchars;
+    r->hash = leno_fnv1a_continue(a->hash, bdata, blen);
+    if (need_free) free((void*)bdata);
+    return r;
+}
+
+// 原地追加：把 b 写到 a 的缓冲尾部并返回 a。
+// ⚠ **调用方必须保证 a 独占**（唯一引用）—— 由编译器特化 + capacity 判据共同保证（见上）。
+ObjString* str_append_inplace(ObjString* a, Value b) {
+    // ⚠ `s = s + s`（自引用）：b 就是 a 自己。下面的 realloc 可能搬走 a->chars，
+    //   所以先取的 bdata 会悬空 ⇒ 自引用时只取长度，等 realloc 之后再取数据指针。
+    int b_is_self = (val_is_obj(b) && val_as_obj(b) == (Object*)a);
+    int blen = 0, bchars = 0, need_free = 0;
+    const char* bdata = NULL;
+    if (b_is_self) {
+        blen = a->len;
+        bchars = a->char_len;
+    } else {
+        bdata = str_append_bytes(b, &blen, &bchars, &need_free);
+    }
+
+    int need = a->len + blen + 1;
+    if (need > a->capacity) {
+        int newcap = a->capacity * 2;
+        if (newcap < need) newcap = need;
+        char* nb = (char*)realloc(a->chars, (size_t)newcap);
+        if (!nb) {
+            if (need_free) free((void*)bdata);
+            native_throw_error("内存分配失败");
+            return a;
+        }
+        a->chars = nb;
+        a->capacity = newcap;
+    }
+    if (b_is_self) bdata = a->chars;   // realloc 之后再取（前半段内容未变）
+    memcpy(a->chars + a->len, bdata, (size_t)blen);
+    a->len += blen;
+    a->chars[a->len] = '\0';
+    a->char_len += bchars;
+    a->hash = leno_fnv1a_continue(a->hash, bdata, blen);
+    if (need_free) free((void*)bdata);
+    return a;
 }
 
 // 注意：str_concat 使用 str_new，char_len 已在 str_new 中自动计算

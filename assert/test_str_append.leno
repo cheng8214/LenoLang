@@ -1,0 +1,102 @@
+// T33：字符串自追加特化（OP_STR_APPEND）的正确性与**安全性**回归
+//
+// 背景：`s = s + e` 原先是 O(n²)（每轮重新分配 + 复制整个前缀）。现在编译器会把它
+//   特化成 OP_STR_APPEND（原地追加）。安全前提是"该槽位无别名"——由编译期分析保证，
+//   运行时还有 capacity 判据兜底。**本文件重点是反例**：一旦分析漏判，别名就会看到
+//   被修改的内容 ⇒ 必须确保有别名时不特化、结果与普通拼接完全一致。
+import strings
+
+main() {
+    // ① 纯累加（会走特化）
+    string a = ""
+    for 1000 to i { a = a + "x" }
+    assert_eq(a.len(), 1000)
+    assert_eq(a.byte_len(), 1000)
+
+    // ② 别名：t 必须保持旧值（特化最容易出错的地方）
+    string s = "a"
+    string t = s
+    s = s + "b"
+    s = s + "c"
+    assert_eq(t, "a")
+    assert_eq(s, "abc")
+
+    // ③ 先累加、后取别名：别名之后 s 再变，t 不能跟着变
+    string x = "x"
+    x = x + "1"
+    string y = x
+    x = x + "2"
+    assert_eq(y, "x1")
+    assert_eq(x, "x12")
+
+    // ④ 传参 / 返回（不属于自追加 ⇒ 不该特化）也要正确
+    assert_eq(buildStr(), "abc")
+    string p = ""
+    p = p + "q"
+    assert_eq(echoStr(p), "q")
+    assert_eq(p, "q")
+
+    // ⑤ `+=` 形式
+    string z = ""
+    for 5 to i { z += "z" }
+    assert_eq(z, "zzzzz")
+    assert_eq(z.len(), 5)
+
+    // ⑥ 中文：char_len / byte_len 两个缓存必须同步更新
+    string cn = ""
+    for 3 to i { cn = cn + "中" }
+    assert_eq(cn.len(), 3)
+    assert_eq(cn.byte_len(), 9)
+    assert_eq(cn, "中中中")
+
+    // ⑦ 追加非字符串值（走 value→string 转换）
+    string m = ""
+    for 3 to i { m = m + i }
+    assert_eq(m, "012")
+
+    // ⑧ 自引用 `s = s + s`（内部要对 realloc 后的指针做保护）
+    string q = "ab"
+    q = q + q
+    assert_eq(q, "abab")
+    q = q + q
+    assert_eq(q, "abababab")
+
+    // ⑨ 作为字典键：hash 必须随内容更新
+    Dict[string, int] d = {}
+    string k = ""
+    k = k + "k"
+    k = k + "1"
+    d[k] = 7
+    assert_eq(d["k1"], 7)
+
+    // ⑩ 长度跨越 realloc 阈值（远超初始预留的 64 字节）
+    string big = ""
+    for 5000 to i { big = big + "ab" }
+    assert_eq(big.len(), 10000)
+    assert_eq(big.byte_len(), 10000)
+    assert_eq(big == "ab", false)
+
+    // ⑪ 特化过的串参与比较/查找仍然正确
+    string e = ""
+    e = e + "a"
+    e = e + "b"
+    assert_eq(e == "ab", true)
+    assert_eq(strings.has(e, "ab"), true)
+
+    // ⑫ 累加器被"读一眼"（len/索引/比较）不影响特化，且语义正确
+    string r = ""
+    for 100 to i { r = r + "r" }
+    assert_eq(r.len(), 100)
+    assert_eq(r[0] == "r", true)
+
+    print("test_str_append passed")
+}
+
+func buildStr(): string {
+    string s = "a"
+    s = s + "b"
+    s = s + "c"
+    return s
+}
+
+func echoStr(string v): string { return v }

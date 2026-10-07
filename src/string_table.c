@@ -267,6 +267,7 @@ ObjString* intern_string(const char* chars, int len) {
     memcpy(str->chars, chars, len);
     str->chars[len] = '\0';
     str->len = len;
+    str->capacity = len + 1;   // 精确大小 ⇒ 不可原地追加（见 ObjString.capacity）
     // ★ 这里也要设 char_len（与 object_string.c 的 str_new 一致）——
     //   漏了它，内化出来的串 `len()` 就是 0（同 2026-10-06 修的 string_add 那个坑）。
     //   本函数当前无调用方，属于同类隐患的预防性修复。

@@ -81,6 +81,11 @@ typedef struct {
     char* mod_real_names[MAX_MOD_ALIASES];  // 真实模块名（native 方法表按它注册）
     unsigned char mod_alias_native[MAX_MOD_ALIASES];
     int mod_alias_count;
+    // --- T33：字符串自追加特化 ---
+    //   按寄存器槽位标记"该槽位可以安全原地追加"（1 = 可），由 str_append_analyze()
+    //   在**每个函数体生成之前**重填（嵌套函数会覆盖 ⇒ codegen_func.c 里保存/恢复）。
+    //   判据与 fail-safe 保证见 codegen.c 的说明。
+    unsigned char str_append_ok[MAX_REG];
 } CodeGen;
 
 // 登记 import：别名 → 真实模块名 + 是否原生模块
@@ -126,6 +131,14 @@ void codegen_init(CodeGen* gen, Chunk* chunk, Semantic* sem);
 void codegen_cleanup(CodeGen* gen);
 void codegen(CodeGen* gen, Ast* ast);
 void codegen_module(CodeGen* gen, Ast* ast);
+// --- T33：字符串自追加特化（定义在 codegen.c）---
+//   `s = s + <expr>` 形态判定（codegen.c 与 codegen_stmt.c 共用，避免两处判据分叉）。
+//   ⚠ target_ref 必须是**语义阶段解析后**的目标引用（assign_target_ref / u.assign.refs[i]）；
+//     赋值目标位置的 AST_VAR 自带的 ref 没被解析（kind 仍是默认 SYM_GLOBAL），不能用。
+int ast_is_self_append(SymRef* target_ref, Ast* value);
+//   分析一个函数体，重填 gen->str_append_ok（判据与 fail-safe 见 codegen.c 的说明）
+void str_append_analyze(CodeGen* gen, Ast* func_body);
+
 // （原 codegen_set_func_dict：dead API，2026-09-25 随模块编译第 4 步一并删除）
 void codegen_set_module(ObjModule* module);
 void codegen_add_dtor_entry(CodeGen* gen, int local_slot);

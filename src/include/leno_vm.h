@@ -447,6 +447,14 @@ typedef enum {
     //   ⚠ 既有 opcode 编号全部不变，但**仍必须 bump 版本**（见 leno_serialize.h）✓
     OP_CMPJMP_EQ,       // (R[A] == rhs) 按 C 的极性位决定是否跳；8 字节，第二个字带 16 位偏移
 
+    // 自追加链的原地追加（T33）：R[A] = R[A] + R[B]，**允许原地修改** R[A] 指向的字符串。
+    //   由编译器在"该槽位的全部使用都是 `s = s + e` 形式、没有任何别名/读取"时生成
+    //   （见 codegen 的 str-append 特化）。目的：把 `s = s + e` 的 O(n²) 摊平成 O(n)。
+    //   运行时仍有两道闸：只有 `capacity > len + 1` 的串（即 str_append_copy 预留过容量的）
+    //   才会被原地追加，其余一律回退 string_add ⇒ **编译期判断失误只会变慢，不会出错** ✓
+    //   ⚠ 末尾追加 ⇒ 既有 opcode 编号不变；但仍必须 bump 序列化版本（见 leno_serialize.h）。
+    OP_STR_APPEND,      // iABC   R[A] = R[A] + R[B]（字符串自追加，可原地）
+
     OP_OPCODE_COUNT,    // 用于跳转表大小
 } OpCode;
 

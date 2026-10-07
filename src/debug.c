@@ -91,6 +91,7 @@ static const char* opCodeNames[] = {
     "OP_INDEX_DICT_INT", "OP_INDEX_SET_DICT_INT",
     "OP_INDEX_SET_ARRAY_IMM",
     "OP_CMPJMP_EQ",        // T31：== 比较+跳转融合（!= 复用同一条，翻转 C 的极性位）
+    "OP_STR_APPEND",       // T33：字符串自追加（可原地）
     "OP_OPCODE_COUNT",
     };
 

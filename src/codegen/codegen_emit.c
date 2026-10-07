@@ -114,6 +114,11 @@ void emit_closure_to(CodeGen* gen, int dst, int func_const_idx, int line) {
 void emit_add(CodeGen* gen, int dst, int b, int c, int line) {
     reg_encode_iABC(gen->chunk, OP_ADD, dst, b, c, line);
 }
+
+// 字符串自追加（T33）：R[dst] = R[dst] + R[b]，允许原地改（编译器仅在该槽位无别名时生成）
+void emit_str_append(CodeGen* gen, int dst, int b, int line) {
+    reg_encode_iABC(gen->chunk, OP_STR_APPEND, dst, b, 0, line);
+}
 void emit_sub(CodeGen* gen, int dst, int b, int c, int line) {
     reg_encode_iABC(gen->chunk, OP_SUB, dst, b, c, line);
 }

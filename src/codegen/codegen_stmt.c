@@ -1505,6 +1505,21 @@ void gen_assign(CodeGen* gen, Ast* ast) {
                 switch (ref->kind) {
                     case SYM_LOCAL:
                     case SYM_PARAM:
+                        // T33：`s = s + e` 自追加特化 —— 原地追加，把 O(n²) 摊平成 O(n)。
+                        //   条件：单目标、非并行赋值、目标是 **string 局部变量**，且编译期分析
+                        //   已证明该槽位"全部使用都是自追加"（gen->str_append_ok，见 codegen.c）。
+                        //   类型检查是硬性要求：`i = i + 1`（int 累加）绝不能被特化到这里。
+                        //   ⚠ 形态判定传的是**已解析的** ref（assign_target_ref 的返回值）——
+                        //     目标节点的 u.var.ref 在语义阶段没被解析，不能拿它比对。
+                        if (n == 1 && pre_reg < 0 && ref->kind == SYM_LOCAL &&
+                            ref->type_kind == TYPE_STRING &&
+                            ref->index >= 0 && ref->index < MAX_REG &&
+                            gen->str_append_ok[ref->index] && ast_is_self_append(ref, value)) {
+                            int rr = gen_expr(gen, value->u.binop.r);
+                            emit_str_append(gen, ref->index, rr, ast->line);
+                            reg_free(gen, rr);
+                            break;
+                        }
                         if (pre_reg >= 0) {
                             emit_cast_for_target(gen, ref->type_kind, value, pre_reg, ast->line);
                             if (ref->index != pre_reg) emit_mov(gen, ref->index, pre_reg, ast->line);
@@ -1740,6 +1755,17 @@ void gen_compound_assign(CodeGen* gen, Ast* ast) {
     // a += expr → R[dst] = R[dst] + expr
     SymRef* ref = &ast->u.compound_assign.ref;
     if (!ref->name) return;
+
+    // T33：`s += e` 的字符串自追加特化（判据同 gen_assign 的 `s = s + e`，见 codegen.c）。
+    //   `__self_field__` 那种语义阶段改写的标记 kind 不是 SYM_LOCAL ⇒ 天然被排除 ✓
+    if (ast->u.compound_assign.op == TOK_PLUSEQ &&
+        ref->kind == SYM_LOCAL && ref->type_kind == TYPE_STRING &&
+        ref->index >= 0 && ref->index < MAX_REG && gen->str_append_ok[ref->index]) {
+        int rr = gen_expr(gen, ast->u.compound_assign.value);
+        emit_str_append(gen, ref->index, rr, ast->line);
+        reg_free(gen, rr);
+        return;
+    }
 
     // ★ 立即数融合的判定（条件说明见 emit_compound_value 的注释）。
     //   `__self_field__` 排除在外：那个标记是语义阶段就地改写出来的，ref 的
