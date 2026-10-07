@@ -1,6 +1,7 @@
 #include "include/lenolang.h"
 #include "include/native.h"
 #include "include/platform.h"    // utf16_to_utf8（Win）/ platform_self_exe_path（Linux/macOS）
+#include "include/platform_thread.h"  // PlatformMutex（_spawn/_kill 的槽位表要加锁）
 #include "include/leno_types.h"  // MAX_PATH_LEN
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,6 +14,12 @@
 #else
     #include <unistd.h>
     #include <pwd.h>
+    #include <signal.h>     // kill / SIGKILL（_kill 收整个进程组）
+    #include <errno.h>      // ESRCH（"整组都没了"也算收干净）
+    #include <sys/wait.h>   // waitpid（reap 子进程，别积僵尸）
+    #ifdef __linux__
+        #include <sys/prctl.h>  // PR_SET_PDEATHSIG —— "父进程一死就杀我"（仅 Linux 有）
+    #endif
 #endif
 
 // 外部声明：main.c 中定义的命令行参数
@@ -605,6 +612,252 @@ static Value native_sep(int argCount, Value* args) {
     #endif
 }
 
+// ==================== 进程句柄：_spawn / _kill（2026-10-07） ====================
+// 由来（真实事故）：2026-10-07 本机两次蓝屏 `0xEF CRITICAL_PROCESS_DIED`，两次都发生在"批量拉起
+//   无头浏览器"的那一瞬间（`%TEMP%` 里 `_exec` 临时文件的断点、WER 的 `Kernel_ef_*` 报告、
+//   以及 exec 临时文件的内容都对得上）。其中一个**结构性**原因：异步拉起长驻进程时**拿不到句柄** ——
+//   此前只有 `_exec("cmd /c start …")`：`start` 让子进程脱离父子关系，父进程手上什么都没有 ⇒
+//   事后收尾只能"回系统里重新找回来"（从 `netstat` 文本里猜 PID、或按命令行扫全场）。
+//   实测后果：**一次用例漏下 45 个 msedge 进程**，反复跑一路堆上去。
+//
+// 语义：
+//   `_spawn(exe, args)` —— **异步**拉起 `exe`（`args` 原样拼在其后），返回**整数句柄**（> 0；失败 -1）
+//   `_kill(handle)`     —— 收掉该句柄对应的**整棵进程树**；true = 确实收了一个有效句柄
+//
+// ★ 核心保证（本次改动的目的）：Windows 侧把子进程放进 **Job Object** 并设
+//   `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` ⇒ **Leno 进程一退出（正常退出 / 崩溃 / 被 taskkill），
+//   句柄随之关闭，内核替我们把 job 里所有进程收掉** —— 孤儿进程在结构上不可能出现 ✓
+//   ⚠ 与 `_exec` 的 job 正好相反：那边**绝不能**设这个标志（`cmd /c start` 拉起的应用要活下来，
+//     见 `assert/test_exec_timeout.leno` ④ 那条守卫）。两个 job 各自为自己的语义负责，互不影响。
+//   POSIX 侧：`setsid()` 让子进程自成进程组 ⇒ `_kill` 用 `kill(-pgid)` 收整棵树；
+//     "父死子死"只有 Linux 有（`PR_SET_PDEATHSIG`，作用于直接子进程），macOS 得靠显式 `_kill`
+//     —— 这正是 Playwright 改走"CDP 管道"的原因（管道一断浏览器自己退）。
+//
+// ⚠ 句柄是**槽位下标 + 1**，不是裸指针：
+//   · 0 / 负数一律无效 ⇒ Leno 侧"结构体字段默认 0"不会误伤某个槽位；
+//   · Windows 的 HANDLE 不暴露到脚本层（脚本层只看见一个不透明整数）。
+// ⚠ 槽位表加锁：Leno 有 `threads` 模块，多线程可能同时 spawn/kill。
+// ⚠ 槽位满（256）时**宁可失败并把刚拉起的那个收掉**，也绝不留没人管的进程。
+#define LENO_SPAWN_MAX 256
+
+typedef struct {
+    int used;
+    int pid;          // 直接子进程 pid（查表/调试用）
+#ifdef _WIN32
+    HANDLE job;       // 可空：建 job/入 job 失败时退化成"只有显式 _kill 才收"
+    HANDLE proc;      // 必须：关它就等于交还句柄
+#else
+    int pgid;         // 子进程组（setsid 后 = 子进程 pid）
+#endif
+} LenoSpawnSlot;
+
+static LenoSpawnSlot s_spawn_slots[LENO_SPAWN_MAX];
+static PlatformMutex s_spawn_mutex;
+static int s_spawn_mutex_inited = 0;
+
+static void spawn_init_once(void) {
+    if (!s_spawn_mutex_inited) {
+        platform_mutex_init(&s_spawn_mutex);
+        s_spawn_mutex_inited = 1;
+    }
+}
+
+static void spawn_lock(void) {
+    spawn_init_once();
+    platform_mutex_lock(&s_spawn_mutex);
+}
+
+static void spawn_unlock(void) {
+    platform_mutex_unlock(&s_spawn_mutex);
+}
+
+// 槽位里的进程是否已退出（非阻塞探测）。调用方持锁。
+static int spawn_slot_exited_locked(int i) {
+#ifdef _WIN32
+    if (!s_spawn_slots[i].proc) return 1;
+    return WaitForSingleObject(s_spawn_slots[i].proc, 0) == WAIT_OBJECT_0;
+#else
+    int st = 0;
+    return waitpid((pid_t)s_spawn_slots[i].pid, &st, WNOHANG) == (pid_t)s_spawn_slots[i].pid;
+#endif
+}
+
+// 清空槽位。Windows 侧**关 job 句柄本身就是收尾**（KILL_ON_JOB_CLOSE 会顺手收掉残留子孙）。
+// 调用方持锁。
+static void spawn_slot_clear_locked(int i) {
+#ifdef _WIN32
+    if (s_spawn_slots[i].proc) CloseHandle(s_spawn_slots[i].proc);
+    if (s_spawn_slots[i].job)  CloseHandle(s_spawn_slots[i].job);
+#else
+    int st = 0;
+    waitpid((pid_t)s_spawn_slots[i].pid, &st, WNOHANG);   // 已退出的顺手 reap，别积僵尸
+#endif
+    memset(&s_spawn_slots[i], 0, sizeof(s_spawn_slots[i]));
+}
+
+// 取一个空槽位；顺便回收**已退出**的（否则长跑的爬虫会把 256 个槽位用光）。调用方持锁。
+static int spawn_alloc_slot_locked(void) {
+    for (int i = 0; i < LENO_SPAWN_MAX; i++) {
+        if (s_spawn_slots[i].used && spawn_slot_exited_locked(i)) {
+            spawn_slot_clear_locked(i);
+        }
+    }
+    for (int i = 0; i < LENO_SPAWN_MAX; i++) {
+        if (!s_spawn_slots[i].used) return i;
+    }
+    return -1;
+}
+
+// _spawn(exe, args) —— 异步拉起，返回句柄（> 0）；失败 -1
+// ⚠ 两个参数分开（而不是收一条命令行）是为了让"哪个是可执行文件"没有歧义：
+//   Job / 进程组都要认准那**一个**进程，再从命令行字符串里解析一遍就多一次出错的机会。
+static Value native_spawn(int argCount, Value* args) {
+    if (argCount < 1 || !val_is_string(args[0])) return val_int(-1);
+    const char* exe = ((ObjString*)val_as_obj(args[0]))->chars;
+    const char* extra = "";
+    if (argCount >= 2 && val_is_string(args[1])) extra = ((ObjString*)val_as_obj(args[1]))->chars;
+    if (exe[0] == '\0') return val_int(-1);
+
+    size_t need = strlen(exe) + strlen(extra) + 8;
+    char* cmd = (char*)malloc(need);
+    if (!cmd) return val_int(-1);
+    snprintf(cmd, need, "\"%s\" %s", exe, extra);
+
+#ifdef _WIN32
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, cmd, -1, NULL, 0);
+    if (wlen <= 0) { free(cmd); return val_int(-1); }
+    wchar_t* wcmd = (wchar_t*)malloc((size_t)wlen * sizeof(wchar_t));
+    if (!wcmd) { free(cmd); return val_int(-1); }
+    MultiByteToWideChar(CP_UTF8, 0, cmd, -1, wcmd, wlen);
+    free(cmd);
+
+    // Job Object + KILL_ON_JOB_CLOSE —— "随父进程死"的内核保证就在这里
+    HANDLE job = CreateJobObjectW(NULL, NULL);
+    if (job) {
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION jeli;
+        memset(&jeli, 0, sizeof(jeli));
+        jeli.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation, &jeli, sizeof(jeli))) {
+            CloseHandle(job);
+            job = NULL;    // 拿不到保证也照常跑（少了"随父死"而已），不因此让调用方失败
+        }
+    }
+
+    STARTUPINFOW si;
+    PROCESS_INFORMATION pi;
+    memset(&si, 0, sizeof(si));
+    memset(&pi, 0, sizeof(pi));
+    si.cb = sizeof(si);
+    // CREATE_SUSPENDED：**先入 job 再放行**，堵住"还没入 job 就 fork 出孙子"这个竞态（同 `_exec`）
+    // CREATE_NO_WINDOW：控制台程序不弹黑窗（批量拉起时很要紧 —— 爬虫不该在用户桌面上闪窗）
+    if (!CreateProcessW(NULL, wcmd, NULL, NULL, FALSE, CREATE_SUSPENDED | CREATE_NO_WINDOW,
+                        NULL, NULL, &si, &pi)) {
+        if (job) CloseHandle(job);
+        free(wcmd);
+        return val_int(-1);
+    }
+    free(wcmd);
+    if (job && !AssignProcessToJobObject(job, pi.hProcess)) {
+        CloseHandle(job);
+        job = NULL;
+    }
+    ResumeThread(pi.hThread);
+    CloseHandle(pi.hThread);
+
+    spawn_lock();
+    int idx = spawn_alloc_slot_locked();
+    if (idx < 0) {
+        spawn_unlock();
+        // 槽位满：把刚拉起的收掉 —— 绝不留没人管的进程（那正是本函数要消灭的东西）
+        if (job) TerminateJobObject(job, 137);
+        else TerminateProcess(pi.hProcess, 137);
+        CloseHandle(pi.hProcess);
+        if (job) CloseHandle(job);
+        return val_int(-1);
+    }
+    s_spawn_slots[idx].used = 1;
+    s_spawn_slots[idx].pid  = (int)pi.dwProcessId;
+    s_spawn_slots[idx].job  = job;
+    s_spawn_slots[idx].proc = pi.hProcess;
+    spawn_unlock();
+    return val_int(idx + 1);
+#else
+    pid_t pid = fork();
+    if (pid < 0) { free(cmd); return val_int(-1); }
+    if (pid == 0) {
+        setsid();                          // 自成会话/进程组 ⇒ 父侧 kill(-pid) 收整棵树
+#ifdef __linux__
+        prctl(PR_SET_PDEATHSIG, SIGKILL);  // Linux 独有：父进程一死就杀我
+#endif
+        // fork 之后到 exec 之间只能用**异步信号安全**的函数（setsid/prctl/execl/_exit 都是）✓
+        execl("/bin/sh", "sh", "-c", cmd, (char*)NULL);
+        _exit(127);                        // exec 失败（连 /bin/sh 都没有）—— 响亮地失败
+    }
+    free(cmd);
+
+    spawn_lock();
+    int idx = spawn_alloc_slot_locked();
+    if (idx < 0) {
+        spawn_unlock();
+        kill(-pid, SIGKILL);
+        kill(pid, SIGKILL);
+        return val_int(-1);
+    }
+    s_spawn_slots[idx].used = 1;
+    s_spawn_slots[idx].pid  = (int)pid;
+    s_spawn_slots[idx].pgid = (int)pid;
+    spawn_unlock();
+    return val_int(idx + 1);
+#endif
+}
+
+// _kill(handle) —— 收掉句柄对应的整棵进程树；true = 有效句柄
+// ⚠ 先把槽位腾空**再**动手：里面要等最多 3 s，持着锁等会把别的线程一起挡住。
+//   槽位一腾空，重复调用自然返回 false（幂等），也不会出现二次关句柄。
+static Value native_kill(int argCount, Value* args) {
+    if (argCount < 1) return val_bool(0);
+    long h = 0;
+    if (val_is_int(args[0])) h = (long)val_as_int(args[0]);
+    else if (val_is_num(args[0])) h = (long)val_as_num(args[0]);
+    if (h <= 0 || h > LENO_SPAWN_MAX) return val_bool(0);
+
+    int idx = (int)h - 1;
+    spawn_lock();
+    if (!s_spawn_slots[idx].used) { spawn_unlock(); return val_bool(0); }
+#ifdef _WIN32
+    HANDLE job  = s_spawn_slots[idx].job;
+    HANDLE proc = s_spawn_slots[idx].proc;
+    memset(&s_spawn_slots[idx], 0, sizeof(s_spawn_slots[idx]));
+    spawn_unlock();
+
+    int ok = 0;
+    if (job) ok = TerminateJobObject(job, 137) != 0;     // 整棵树一起收
+    else if (proc) ok = TerminateProcess(proc, 137) != 0;
+    if (proc) WaitForSingleObject(proc, 3000);           // 有界等待：别把调用方拖住
+    if (proc) CloseHandle(proc);
+    if (job) CloseHandle(job);                           // 关 job ⇒ 万一还有子孙，一并收掉
+    return val_bool(ok);
+#else
+    int pid  = s_spawn_slots[idx].pid;
+    int pgid = s_spawn_slots[idx].pgid;
+    memset(&s_spawn_slots[idx], 0, sizeof(s_spawn_slots[idx]));
+    spawn_unlock();
+
+    int ok = 0;
+    int r1 = kill(-pgid, SIGKILL);                       // 整个进程组
+    int e1 = errno;
+    if (r1 == 0) ok = 1;
+    else if (e1 == ESRCH) ok = 1;                        // 整组都没了 ⇒ 句柄有效、树已收干净
+    else if (kill(pid, SIGKILL) == 0) ok = 1;
+    for (int i = 0; i < 200; i++) {                      // 有界 reap（最多 ~2 s）
+        int st = 0;
+        if (waitpid(pid, &st, WNOHANG) == pid) break;
+        platform_sleep_ms(10);
+    }
+    return val_bool(ok);
+#endif
+}
+
 // ==================== 初始化 ====================
 
 void sys_init_globals(void) {
@@ -669,4 +922,15 @@ void sys_init_globals(void) {
 
     // 注册全局 _sep 函数（路径分隔符，0 个参数）
     vm_register_native("_sep", native_sep, TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
+
+    // 注册全局 _spawn(exe, args) / _kill(handle) —— **拿句柄的异步拉起**（2026-10-07）
+    //   `_spawn` 返回整数句柄（> 0；失败 -1），`_kill` 收掉整棵进程树（true = 有效句柄）。
+    //   为什么要它：`_exec("cmd /c start …")` 会**丢掉句柄**，事后只能猜 PID 去杀（实测漏 45 个进程）；
+    //   `_spawn` 的 job 带 KILL_ON_JOB_CLOSE ⇒ 父进程一退出，内核替我们收掉整棵树（详见函数头注释）。
+    //   ⚠ 参数是**两段**：`exe` 是可执行文件、`args` 是参数串（不写成单条命令行，避免"哪部分是程序"歧义）。
+    TypeKind spawn_params[] = { TYPE_STRING, TYPE_STRING };
+    vm_register_native("_spawn", native_spawn, TYPE_INT, TYPE_UNKNOWN, NATIVE_FIXED(spawn_params));
+    TypeKind kill_params[] = { TYPE_INT };
+    vm_register_native("_kill", native_kill, TYPE_BOOL, TYPE_UNKNOWN, NATIVE_FIXED(kill_params));
+    spawn_init_once();
 }

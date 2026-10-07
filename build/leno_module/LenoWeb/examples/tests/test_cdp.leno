@@ -201,19 +201,9 @@ main() {
     threads.sleep(500)
     tk.checkTrue("临时 profile 目录已清理", not dirs.exists(b.userDataDir))
 
-    print("--- ⑬ Web 统一入口的转发（整条闭环走公开 API）---")
-    tk.check("web.findBrowser 转发", web.findBrowser(), exe)
-    BrowserConfig cfg2 = new BrowserConfig()
-    cfg2.startUrl = "about:blank"
-    Browser b2 = web.launchBrowser(cfg2)
-    tk.checkTrue("web.launchBrowser", b2.ok)
-    if b2.ok {
-        RenderResult r3 = web.renderWith(b2, url, 8000, 500)
-        tk.checkTrue("web.renderWith", r3.ok)
-        tk.checkTrue("web.renderWith 拿到渲染后内容", strings.has(r3.html, "SPA-CONTENT"))
-        tk.checkTrue("web.closeBrowser", web.closeBrowser(b2))
-    }
-
+    // ⚠ ⑬（Web 统一入口转发）原先**单独起一个浏览器**来测。为省资源，已并入 ⑭ 的
+    //   stealth 实例（bs）复用同一个浏览器 —— 见下面 ⑭ 段内的 ⑬ 小节。
+    //   一个浏览器实例是多进程、几百 MB，能省一次就省一次。
     print("--- ⑭ 反检测：默认带着无头特征，开 stealth 后抹掉 ---")
     // 对照组：默认配置（不注入、不改 UA）
     BrowserConfig cfgPlain = new BrowserConfig()
@@ -259,6 +249,13 @@ main() {
             tk.checkTrue("无头软件渲染器已被换掉", strings.has(dOn.html, "gl=intel"))
         }
 
+        // ⑬ Web 统一入口的转发：**复用这个 stealth 实例**（不再单独起一个浏览器）
+        print("--- ⑬ Web 统一入口的转发（整条闭环走公开 API）---")
+        tk.check("web.findBrowser 转发", web.findBrowser(), exe)
+        RenderResult r3 = web.renderWith(bs, url, 8000, 500)
+        tk.checkTrue("web.renderWith 转发可用", r3.ok)
+        tk.checkTrue("web.renderWith 拿到渲染后内容", strings.has(r3.html, "SPA-CONTENT"))
+
         print("--- ⑮ 真事件：JS 点击 vs isTrusted 点击 / 真输入 ---")
         RenderOptions oJs = new RenderOptions()
         oJs.waitUntil = "load"
@@ -299,7 +296,8 @@ main() {
             cdp.cdpClose(cdbg)
         }
 
-        tk.checkTrue("stealth 浏览器关闭", cdp.close(bs))
+        // 顺带把 web.closeBrowser 的转发也测了（关掉这个 stealth 实例）
+        tk.checkTrue("web.closeBrowser 转发可用", web.closeBrowser(bs))
     }
 
     print("--- ⑯ 浏览器走代理（--proxy-server）---")
@@ -352,7 +350,20 @@ main() {
         tk.checkTrue("第 1 个（/js）拿到脚本生成的内容", many[0].ok and strings.has(many[0].html, "SPA-CONTENT"))
         tk.checkTrue("第 3 个（/trust）是初始态（没有 CLICK-DONE）", many[2].ok and not strings.has(many[2].html, "CLICK-DONE"))
         tk.check("全部成功", okCount, 4)
-        tk.checkTrue("批量浏览器已关闭", cdp.close(bmc))
+
+        // ⑱ 兜底清理：**复用刚才这个浏览器**（不再单独起一个）
+        // 为什么单测这条：`Browser.close` 走不了时必须靠兜底 —— 而兜底一旦失效就会**漏进程**
+        // （2026-10-07 之前兜底是"按端口 / 按命令行猜进程"，实测漏到过 45~55 个 msedge，
+        //  漏了还不报错，只是机器越来越慢）。现在兜底 = `_kill(handle)`：
+        // 与端口无关、与命令行无关，只认自己 spawn 的那棵树。
+        print("--- ⑱ 兜底清理：协议不可用时按句柄收整棵树 ---")
+        bmc.ok = false            // 模拟"协议关闭不可用"（close 会跳过 Browser.close）
+        tk.checkTrue("close 仍能收干净（按句柄）", cdp.close(bmc))
+        tk.check("句柄已归还", bmc.handle, 0)
+        threads.sleep(500)
+        var pk = sockets.connect("127.0.0.1", bmc.port)
+        tk.checkTrue("端口已释放", pk == null)
+        if pk != null { pk.close() }
     }
 
     tk.shutdown(PORT)

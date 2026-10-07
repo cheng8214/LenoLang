@@ -483,9 +483,20 @@ var rs = web.renderMany(b, urls, opt, 3)
 
 - **Chrome/Edge 136+**：`--remote-debugging-port` 对**默认用户目录不再生效**，必须配
   `--user-data-dir=<独立目录>`。本模块自动建临时目录（不碰用户的浏览器），并把它当作
-  "这是我们拉起的浏览器"的标记，收尾时据此兜底清理（**绝不会** `taskkill /IM msedge.exe`）。
+  "端口上应答的到底是不是我们拉起的那个"的**核对**标记（见 `_verifyOwnership`）。
+  **绝不会** `taskkill /IM msedge.exe` —— 那会杀掉用户自己的浏览器。
 - 端口自选（连接探测找空闲端口），启动后轮询 `/json/version` 等就绪；`SystemInfo.getProcessInfo`
-  取进程号；关闭优先走 `Browser.close`，失败才按 profile 目录兜底杀。
+  取进程号。
+- **进程生命周期靠句柄，不靠事后匹配**（2026-10-07 重做）：拉起用内建 `_spawn(exe, args)`
+  （**返回句柄**），收尾用 `_kill(handle)` 收**整棵进程树**（`Browser.close` 之后再按句柄兜一次：
+  crashpad handler 之类子进程按设计比浏览器活得久）。为什么必须这样：原先用
+  `_exec("cmd /c start …")`，`start` 让浏览器脱离父子关系 ⇒ **句柄丢了**、父进程一崩就再也管不着，
+  只能事后从 `netstat` 文本里猜 PID、或按命令行扫全场去找它（实测**一轮漏下 45 个** msedge，
+  而这些孤儿反复累积正是"批量渲染把机器压崩"的燃料）。现在有两条硬保证：① 只杀自己 spawn 的那个；
+  ② Leno 进程退出（**含崩溃 / 被强杀**）时，内核会连它一起收掉（Job Object 的
+  `KILL_ON_JOB_CLOSE`）。语言层回归：`assert/test_spawn.leno`。
+- **启动前查可用提交内存**：`BrowserConfig.minFreeCommitMb`（默认 1024MB）不够就**拒绝启动**，
+  上层回退静态结果 —— 宁可降级，也不把用户机器拖垮；查不出来 ⇒ 放行（宁松勿误）。
 - 渲染等待：`Page.loadEventFired` + `settleMs`（默认 800ms，给前端异步取数留时间）；
   取值用 `Runtime.evaluate`（`returnByValue` + `awaitPromise`）。
 - 没装 Chrome/Edge 时 `findBrowser()` 返回 `""`，可用环境变量 **`LENO_BROWSER`** 指定路径。

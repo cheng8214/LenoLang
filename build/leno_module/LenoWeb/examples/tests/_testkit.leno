@@ -104,7 +104,10 @@ export func serve(int port, int maxRequests) {
     while n < maxRequests {
         var cli = srv.accept()
         if cli == null { break }
-        cli.set_timeout(3000)
+        // ⚠ 这里只给 500ms：单线程 accept 循环里，如果某条连接（比如浏览器留下的 keep-alive 空闲
+        //   连接）一直不送数据，`_readRequest` 会阻塞到超时才轮到下一个请求 ⇒ 后面的用例表现为
+        //   "偶发拿到别的路由的正文/超时"。缩短这个阻塞窗口能显著降低串扰概率。
+        cli.set_timeout(500)
         string req = _readRequest(cli)
         string path = _requestPath(req)
         cli.send(_route(path, req))
@@ -437,6 +440,23 @@ func _typePage(): string {
            "</body></html>"
 }
 
+// /spa 的正文：**空壳 + 脚本建内容**（爬虫"SPA 回退"的判据：静态 0 条链接 / 渲染 2 条）
+func _spaPage(): string {
+    return "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>SPA Page</title></head><body>" +
+           "<div id=\"app\"></div>" +
+           "<script>setTimeout(function(){document.getElementById('app').innerHTML=" +
+           "'<a href=\"/p1\">P1</a><a href=\"/p2\">P2</a>';},200);</script>" +
+           "</body></html>"
+}
+
+// /links 的正文：服务端就有链接 + 正文够长（**不该**触发渲染）
+func _linksPage(): string {
+    return "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Links Page</title></head><body>" +
+           "<div id=\"app\"><a href=\"/p1\">P1</a><a href=\"/p2\">P2</a>" +
+           "<p>这是一段够长的静态正文，用来让启发式判定为内容页而不是 SPA 空壳。</p></div>" +
+           "</body></html>"
+}
+
 // /sitemap-ok.gz 的正文：合法 gzip 字节（.NET GZipStream，明文见 _gzipSitemapXml）
 const HEX_SITEMAP_GZ = "1f8b080000000000000ab3292dca294e2db1b3292dcab1b3c9c94fb6cb282929b0d2d74fafd22b492d2ed14fb4d10789dae88315e0529584a20a44820c0500139ff7025d000000"
 
@@ -471,6 +491,16 @@ func _route(string path, string req): string {
     if path == "/sitemap.gz" {
         // gzip 魔数 + 垃圾字节：客户端必须识别出"这是压缩体"并降级，而不是当 XML 解析
         return _resp(200, "application/x-gzip", strings.from_bytes([0x1F, 0x8B, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00]))
+    }
+    if path == "/spa" {
+        return _resp(200, "text/html; charset=utf-8", _spaPage())
+    }
+    if path == "/spa2" {
+        // 内容同 /spa，只是路径不同 —— 用来测"同一爬虫换个 URL 再爬"
+        return _resp(200, "text/html; charset=utf-8", _spaPage())
+    }
+    if path == "/links" {
+        return _resp(200, "text/html; charset=utf-8", _linksPage())
     }
     if path == "/detect" {
         return _resp(200, "text/html; charset=utf-8", _detectPage())

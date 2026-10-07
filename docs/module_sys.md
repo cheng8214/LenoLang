@@ -35,6 +35,8 @@ Sys 模块提供与运行时环境、命令行参数和系统信息相关的全�
 | `_env_or(name, default)` | 获取环境变量（取不到或空串返回 default） | `String` |
 | `_exit(code)` | 以指定退出码终止程序 | 无 |
 | `_exec(cmd[, timeout_ms])` | 执行系统命令并返回 `ExecResult{ output, code }`（可带超时；超时码 124）| `ExecResult` / `null` |
+| `_spawn(exe, args)` | **异步**拉起长驻进程并**保留句柄**（失败 -1）| `Int` |
+| `_kill(handle)` | 收掉句柄对应的**整棵进程树**（幂等）| `Bool` |
 | `_username()` | 获取当前登录用户名 | `String` / `null` |
 | `_homedir()` | 获取用户主目录路径 | `String` / `null` |
 | `_tmpdir()` | 获取系统临时目录路径 | `String` / `null` |
@@ -528,6 +530,46 @@ if result.code == 0 {
 - 返回值是 `ExecResult{ output, code }` 结构体，可同时获取输出和退出码（v3.2.8 起；此前是数组）
 - 如需获取 stderr，在命令中加 `2>&1` 重定向：`_exec("mycmd 2>&1")`
 - **Windows `_popen` 路径问题**：如果命令路径中包含引号 `"`，`_popen` 可能返回错误。建议不使用引号包裹路径，直接拼接：`_exec(leno + " " + test_file)` 而非 `_exec("\"" + leno + "\" \"" + test_file + "\"")`
+
+---
+
+### `_spawn(exe, args)` / `_kill(handle)`
+
+**异步**拉起一个长驻进程并**保留句柄**，之后用句柄收尾（2026-10-07 新增）。
+
+```leno
+var h = _spawn("msedge.exe", "--headless=new --remote-debugging-port=0 --user-data-dir=…")
+if h > 0 {
+    // … 用它 …
+    _kill(h)                 // 收掉整棵进程树
+}
+```
+
+| 函数 | 参数 | 返回 |
+| --- | --- | --- |
+| `_spawn(exe, args)` | `exe` = 可执行文件；`args` = 参数串（原样拼在其后）| `Int` 句柄（**> 0**；失败 **-1**）|
+| `_kill(handle)` | `_spawn` 返回的句柄 | `Bool`（true = 确实收了一个有效句柄）|
+
+- `_spawn` **不等待**（拉起就返回）；`exe` 与 `args` 分成两个参数，是为了让"哪个是可执行文件"
+  没有歧义（Job / 进程组都要认准那**一个**进程，再从命令行里解析一遍就多一次出错机会）。
+- `_kill` 收的是**整棵进程树**（Windows `TerminateJobObject` / POSIX `kill(-pgid)`）；
+  重复调用返回 `false`（幂等）。最多 256 个句柄，已退出的槽位会被自动回收。
+- 句柄是不透明的**正整数**（0 / 负数一律无效）⇒ 结构体字段默认 `0` **不会**误伤某个槽位。
+
+> ★ **父进程退出 ⇒ 子进程一并消失**（这是它与 `_exec("cmd /c start …")` 的本质区别）：
+> Windows 侧子进程被放进带 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` 的 Job Object ⇒ Leno 进程
+> **正常退出 / 崩溃 / 被 `taskkill`**，内核都会把 job 内的进程收掉；Linux 侧用 `PR_SET_PDEATHSIG`。
+> 实测（`assert/test_spawn.leno` 的 ③ 与一次 /F 强杀实验）：父进程被强杀后，"被拉起的进程"计数 1 → 0。
+
+> ⚠ **`_spawn` 还是 `_exec`？**
+> - 要**等结果**（跑条命令拿输出）⇒ `_exec`；
+> - 拉起**长驻进程**（浏览器 / 后台服务）⇒ `_spawn` + `_kill`。
+> 两者的 Job Object 语义**故意相反**：`_exec` **不**设那个标志（`cmd /c start` 拉起的应用必须活下来，
+> 见 `assert/test_exec_timeout.leno` ④），`_spawn` **必须**设 —— 否则"孤儿进程"就是这么来的。
+
+> ⚠ **POSIX 说明**：`_spawn` 经 `/bin/sh -c` 拉起（参数仍按 shell 规则解析）；"父死子死"是 Linux 的
+> `PR_SET_PDEATHSIG`，macOS 没有对应机制 ⇒ 那边要**显式 `_kill`**（与 Playwright 改用 CDP 管道
+> 解决同一问题的原因相同：管道一断，浏览器自己退）。
 
 ---
 

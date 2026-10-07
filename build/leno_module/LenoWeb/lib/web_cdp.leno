@@ -9,13 +9,20 @@
 //   2. 拉起（headless + 独立 `--user-data-dir` + 自选空闲端口）并等它就绪
 //   3. 走 `/json/*` HTTP 端点拿目标页/版本信息（自己用 sockets 拼 HTTP，不依赖 libcurl）
 //   4. 走 WebSocket（`web_ws`）发 CDP 命令、等事件
-//   5. 收尾：`Browser.close` + 兜底按 profile 目录杀进程
+//   5. 收尾：`Browser.close` + **按 `_spawn` 的句柄 `_kill` 收整棵树**（2026-10-07 起）
 //
 // ⚠ 两个必须知道的现实约束（2026-10-06 实测 / 官方变更）：
 //   · **Chrome/Edge 136+**：`--remote-debugging-port` 对**默认用户目录不再生效**，
 //     必须配 `--user-data-dir=<独立目录>`。本模块本来就建临时目录（不碰用户的浏览器）。
-//   · `--user-data-dir` 的路径会出现在进程命令行里 ⇒ 它同时被当作"这是我们的浏览器"的标记，
-//     收尾时据此兜底清理（绝不能 `taskkill /IM msedge.exe`，那会杀掉用户自己的浏览器）。
+//   · `--user-data-dir` 的路径会出现在进程命令行里 ⇒ 它同时是"这是我们的浏览器"的核对标记
+//     （见 `_verifyOwnership`）。**绝不能** `taskkill /IM msedge.exe`：那会杀掉用户自己的浏览器。
+//
+// ★ 生命周期（2026-10-07 重做，起因是一次真实事故）：拉起改用 `_spawn(exe, args)` —— 它
+//   **返回句柄**，收尾用 `_kill(handle)` 收掉整棵树。此前用 `_exec("cmd /c start …")` 是
+//   **丢掉句柄**：`start` 让浏览器脱离父子关系，事后只能从 `netstat` 文本里猜 PID、或按命令行
+//   扫全场去把它找回来（实测一轮漏下 45 个进程），而且父进程一崩就再也管不着。
+//   现在有两条硬保证：① 只杀自己 spawn 的那个；② Leno 进程退出（**含崩溃 / 被强杀**）时，
+//   内核会连它一起收掉（Job Object 的 KILL_ON_JOB_CLOSE，见 `_spawn` 文档）。
 
 import strings
 import files
@@ -45,6 +52,11 @@ export struct BrowserConfig {
     bool stealth = false
     string userAgent = ""      // "" ⇒ stealth 时按浏览器版本自动生成（抹掉 HeadlessChrome 字样）
     string languages = "zh-CN,zh;q=0.9,en;q=0.8"
+    // 启动前**可用提交内存**下限（MB）：低于它就拒绝启动（0 = 不检查）
+    //   为什么要这道闸门：2026-10-07 的两次蓝屏 `0xEF` 都发生在"批量拉起浏览器"的瞬间，
+    //   而本机页面文件只有 2.9GB（提交上限 34.66GB）⇒ 多实例堆积时余量很小。
+    //   宁可拒绝渲染（上层会回退静态结果，见 crawler 的 render_mode），也不把用户机器拖崩。
+    int minFreeCommitMb = 1024
 }
 
 export struct Browser {
@@ -57,6 +69,7 @@ export struct Browser {
     string wsUrl = ""          // 浏览器级 webSocketDebuggerUrl
     bool headless = true
     int pid = 0                // 尽量取（`SystemInfo.getProcessInfo`），取不到为 0
+    int handle = 0             // `_spawn` 返回的**进程句柄**（收整棵树全靠它；0 = 没有）
     string pageTargetId = ""   // **我们自己创建的**页面 target（渲染操作都落在它上面）
     // 临时 profile 目录是不是我们建的：是 ⇒ 关闭时连目录一起删
     // （实测不删会堆积：一轮调试下来 TEMP 里躺了 99 个 leno-cdp-* 目录）
@@ -277,19 +290,11 @@ func _buildArgs(BrowserConfig cfg, int port, string udd): string {
     return strings.trim(a)
 }
 
-// 异步拉起（Windows 走 `cmd /c start ""`，POSIX 走 `sh -c '… &'`）
-// 注意：**绝不能等它退出**（浏览器是常驻进程）⇒ 必须异步 + 独立 user-data-dir
-func _spawn(string exe, string args): bool {
-    if _isWindows() {
-        // `start ""` 的第一个空参数是"标题"，缺了它 cmd 会把带引号的可执行文件路径当标题
-        string cmd = "cmd /c start \"\" \"" + exe + "\" " + args
-        var r = _exec(cmd, 10000)
-        return r.code == 0
-    }
-    string cmd = "sh -c '\"" + exe + "\" " + args + " > /dev/null 2>&1 &'"
-    var r2 = _exec(cmd, 10000)
-    return r2.code == 0
-}
+// 拉起浏览器 —— 直接用**内建** `_spawn(exe, args)`（返回句柄；不等待，浏览器是常驻进程）
+//
+// ⚠ 这里原先是一个同名的局部函数：`_exec("cmd /c start \"\" \"exe\" args")`（POSIX 用 `sh -c … &`）。
+//   名字与内建 `_spawn` **撞了**（会遮蔽它），而且语义正是要修掉的那个：`start` 让浏览器脱离
+//   父子关系 ⇒ 拿不到句柄 ⇒ 收尾只能去系统里"猜"（见下面收尾段落的说明）。2026-10-07 删掉。
 
 func _isWindows(): bool {
     // dirs.sep() 在 Windows 返回 "\"，POSIX 返回 "/"（见 dirs 模块）
@@ -393,21 +398,42 @@ func _preparePage(CdpClient c, Browser b): string {
     return ""
 }
 
-// 兜底清理：按 profile 目录标记杀进程（**主路径是 CDP 的 Browser.close**）
-// 只杀命令行里带我们那个唯一目录的进程 —— 不可能碰到用户自己的浏览器
-export func killByProfile(string udd): bool {
-    if udd == "" { return false }
-    string token = strings.byte_slice(udd, strings.byte_find(udd, "leno-cdp-", 0), udd.byte_len())
-    if _isWindows() {
-        // wmic 在新系统上可能已移除 ⇒ 失败就用 powershell 兜一层
-        var r = _exec("wmic process where \"commandline like '%" + token + "%'\" call terminate", 15000)
-        if r.code == 0 { return true }
-        var r2 = _exec("powershell -NoProfile -Command \"Get-CimInstance Win32_Process -Filter \\\"CommandLine like '%" +
-                       token + "%'\\\" | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }\"", 20000)
-        return r2.code == 0
+// ==================== 收尾：按句柄收整棵树 ====================
+//
+// ⚠ 这里原先有两个"事后去系统里把自己的进程找回来"的函数，2026-10-07 **全删**：
+//   · `killByPort(port)`：`netstat -ano | findstr :端口` → 从**文本**里解析 PID → `taskkill /F /T /PID`
+//   · `killByProfile(udd)`：`wmic process where "commandline like '%标记%'" call terminate`，
+//     失败再上 PowerShell `Get-CimInstance … Stop-Process`
+//   删的三条理由：
+//     ① **猜**PID / 扫命令行 ⇒ 猜错就是误杀别人的进程树（本模块常以管理员运行，后果不可控）；
+//     ② `killByProfile` 的 PowerShell 变体**会匹配到它自己** —— 那条命令的命令行里就含标记
+//        ⇒ 先把自己（和父 cmd.exe）杀掉，后面的浏览器全漏。实测一轮跑完**漏下 45 个** msedge，
+//        这些孤儿反复累积，正是"批量拉起浏览器时把机器压崩"的燃料；
+//     ③ 现在有 `_spawn` 返回的**句柄**：`_kill(handle)` 只收自己拉起的那棵树，不猜也不扫。
+//   保留这条注释是因为：**"杀了就一定是我的"**这件事必须靠句柄，不能靠事后匹配 —— 后者在
+//   并发/崩溃/端口竞争下必然出错（上面 ② 就是实证）。
+
+// 核对这个 DevTools 端点是不是**我们刚启动的**那个浏览器。
+//
+// 为什么必须核对（**实测踩过**）：只看"端口能拿到 /json/version"是不够的 ——
+// 端口竞争窗口里可能连上**别的**浏览器（比如上一个用例刚关闭、端口还没完全释放的那个）。
+// 那样会：渲染"成功"但状态全错（拿到的页面/进程都不是自己的）。
+// 判据：`Browser.getBrowserCommandLine` 里有我们那个**唯一的 --user-data-dir**。
+// 拿不到命令行时**从宽**（方法不支持/被禁用时不至于把功能卡死）。
+func _verifyOwnership(string wsUrl, string udd): bool {
+    if wsUrl == "" { return false }
+    CdpClient c = cdpConnect(wsUrl, 3000)
+    if not c.ok { return false }
+    string cmdline = cdpCall(c, "Browser.getBrowserCommandLine", "")
+    cdpClose(c)
+    if cmdline == "" { return true }          // 拿不到 ⇒ 不据此否定
+    string token = udd
+    if udd != "" {
+        int at = strings.byte_find(udd, "leno-cdp-", 0)
+        if at >= 0 { token = strings.byte_slice(udd, at, udd.byte_len()) }
     }
-    var r3 = _exec("pkill -f " + token, 10000)
-    return r3.code == 0
+    if token != "" and strings.has(cmdline, token) { return true }
+    return false
 }
 
 // ==================== CDP over WebSocket ====================
@@ -551,6 +577,39 @@ export func cdpClose(CdpClient c) {
     c.ok = false
 }
 
+// 可用**提交内存**（MB）。查不到返回 -1 ⇒ 调用方据此**放行**（宁松勿误：查不到不是"内存不够"）。
+// 为什么用它当闸门：真正把机器压死的不是"浏览器多"，而是"提交内存见底"——
+//   提交一旦打满，任何进程（包括关键系统进程）申请内存都会失败，那是内核级故障的温床。
+// POSIX 侧用 `/proc/meminfo` 的 MemAvailable 近似（macOS 没有该文件 ⇒ 返回 -1 跳过检查）。
+func availableCommitMb(): int {
+    if _isWindows() {
+        // FreeVirtualMemory = 提交上限 − 已提交（KB）—— 正是我们要的那个余量
+        var r = _exec("powershell -NoProfile -Command \"[int]((Get-CimInstance Win32_OperatingSystem).FreeVirtualMemory/1024)\"", 15000)
+        if r is ExecResult {
+            if r.code != 0 { return -1 }
+            int mb = _int(strings.trim(r.output))
+            if mb > 0 { return mb }
+        }
+        return -1
+    }
+    if not files.exists("/proc/meminfo") { return -1 }
+    string info = files.read("/proc/meminfo")
+    if info == null { return -1 }
+    int at = strings.byte_find(info, "MemAvailable:", 0)
+    if at < 0 { return -1 }
+    int p = at + 13
+    while p < info.byte_len() and (info.byte(p) == 32 or info.byte(p) == 9) { p = p + 1 }
+    string digits = ""
+    while p < info.byte_len() {
+        int c = info.byte(p)
+        if c < 48 or c > 57 { break }
+        digits = digits + strings.char(c)
+        p = p + 1
+    }
+    if digits == "" { return -1 }
+    return _int(digits) / 1024
+}
+
 // ==================== 启动 / 收尾 ====================
 
 export func launch(BrowserConfig cfg): Browser {
@@ -566,6 +625,14 @@ export func launch(BrowserConfig cfg): Browser {
         return b
     }
     b.exe = exe
+    // 保险：可用提交内存太低就别起了（查不到 ⇒ 放行，宁松勿误）
+    if cfg.minFreeCommitMb > 0 {
+        int freeMb = availableCommitMb()
+        if freeMb >= 0 and freeMb < cfg.minFreeCommitMb {
+            b.error = "可用提交内存不足（" + freeMb + "MB < " + cfg.minFreeCommitMb + "MB），已拒绝启动浏览器"
+            return b
+        }
+    }
     // 反检测配置跟着浏览器走（渲染每个页面时按它准备环境）
     b.stealth = cfg.stealth
     b.userAgent = cfg.userAgent
@@ -590,15 +657,24 @@ export func launch(BrowserConfig cfg): Browser {
     }
 
     string args = _buildArgs(cfg, port, udd)
-    if not _spawn(exe, args) {
+    // ★ 用内建 `_spawn`：它返回**句柄**，收尾时 `_kill(handle)` 收整棵树。
+    //   ⚠ 不能再用 `_exec("cmd /c start …")`：那条路拿不到句柄，只能事后去猜进程（见收尾段落）。
+    b.handle = _spawn(exe, args)
+    if b.handle <= 0 {
         b.error = "拉起浏览器失败：" + exe
+        if cfg.userDataDir == "" { _removeDir(udd) }   // 失败也别留下刚建好的临时目录
         return b
     }
 
     string verJson = _waitReady(port, cfg.readyTimeoutMs)
     if verJson == "" {
         b.error = "浏览器已拉起但 DevTools 端口未就绪（" + port + "，等了 " + cfg.readyTimeoutMs + "ms）"
-        killByProfile(udd)
+        // ⚠ 这里原先要"先等它把端口监听起来"（因为按端口杀会扑空：端口还没 bind ⇒ 实测漏 16 个）。
+        //   改成句柄式收尾后**不需要**了：`_kill` 与端口无关，进程照样收得掉，
+        //   失败路径因此从"白等 3~8 s"变成"立刻收干净"。
+        _kill(b.handle)
+        b.handle = 0
+        if cfg.userDataDir == "" { _removeDir(udd) }
         return b
     }
     var ver = jsons.decode(verJson)
@@ -607,9 +683,23 @@ export func launch(BrowserConfig cfg): Browser {
         b.version = jsons.get_str(ver, "Browser", "")
         b.wsUrl = jsons.get_str(ver, "webSocketDebuggerUrl", "")
         b.ok = true
+        // ⚠ 端口上"有 DevTools"不等于"是我们的浏览器"（端口竞争：上一个浏览器还没退干净）
+        //   ⇒ 核对命令行里的唯一 profile 目录；不是我们的就**不碰**它（只报错，不杀）
+        if not _verifyOwnership(b.wsUrl, udd) {
+            b.ok = false
+            b.error = "端口 " + port + " 上应答的不是我们启动的浏览器（可能是别的实例未退干净），已放弃使用"
+            // ⚠ 端口上应答的那个**不是我们的** ⇒ 绝对不能碰它（杀错人更糟）。
+            //   但"我们刚拉起、却没能抢到端口"的那个进程，我们**手里有句柄** ⇒ 按句柄收掉它。
+            _kill(b.handle)
+            b.handle = 0
+            if cfg.userDataDir == "" { _removeDir(udd) }
+            return b
+        }
     } else {
         b.error = "无法解析 /json/version 响应"
-        killByProfile(udd)
+        _kill(b.handle)
+        b.handle = 0
+        if cfg.userDataDir == "" { _removeDir(udd) }
         return b
     }
 
@@ -703,7 +793,7 @@ export func targetWsUrl(Browser b, string targetId): string {
     return ""
 }
 
-// 关闭浏览器：先走协议（干净），再按 profile 兜底（务实）
+// 关闭浏览器：先走协议（干净），再**按句柄收整棵树**（务实、且必做）
 export func close(Browser b): bool {
     bool done = false
     if b.ok and b.wsUrl != "" {
@@ -721,8 +811,24 @@ export func close(Browser b): bool {
             }
         }
     }
+    // ★ 无论上面是否"干净退出"，都按**句柄**收一次：
+    //   · `Browser.close` 只保证浏览器主进程退出；renderer / GPU / crashpad 之类子进程可能还在
+    //     （crashpad handler 按设计就比浏览器活得久）——`_kill` 收的是**整棵树**，正好补上；
+    //   · 顺手把句柄槽位还回去（不还就是槽位泄漏，长跑的爬虫会慢慢用光 256 个）。
+    //   `_kill` 对已释放的句柄返回 false ⇒ 重复调用安全。
+    if b.handle > 0 {
+        _kill(b.handle)
+        b.handle = 0
+    }
     if not done {
-        killByProfile(b.userDataDir)
+        // 再确认端口真的空出来了（诊断用；"进程是否真没了"由 `_kill` 负责）
+        int t1 = _int(times.ms())
+        while _int(times.ms()) - t1 < 3000 {
+            Socket s2 = sockets.connect("127.0.0.1", b.port)
+            if s2 == null { done = true; break }
+            s2.close()
+            _sleepMs(100)
+        }
     }
     // 临时 profile 目录要一起删：一轮调试下来能堆出上百个（每个都可能几十 MB）
     if b.tempProfile and b.userDataDir != "" {

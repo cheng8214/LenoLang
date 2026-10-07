@@ -1,0 +1,142 @@
+// _spawn / _kill —— 进程句柄回归（2026-10-07）
+//
+// 背景（真实事故）：2026-10-07 本机两次蓝屏 `0xEF CRITICAL_PROCESS_DIED`，两次都发生在"批量拉起
+//   无头浏览器"的那一瞬间。结构性原因之一是：异步拉起长驻进程时**拿不到句柄** —— 只能用
+//   `_exec("cmd /c start …")`，而 `start` 让子进程脱离父子关系 ⇒ 事后收尾只能从 `netstat` 文本里
+//   猜 PID 去杀。实测**一次用例漏下 45 个** msedge 进程（反复跑就一路堆上去）。
+//
+// 判据：
+//   ① 基本：`_spawn` 返回 > 0；`_kill` 返回 true；重复 `_kill` 返回 false（幂等）
+//   ② 真杀：`_kill` 之后那个进程必须从进程表里**消失**（且杀之前必须**确实在**，否则"消失"是空话）
+//   ③ 内核保证（本次改动的核心）：**不调 _kill**，让拉起它的 Leno 进程自己退出 ⇒ 被拉起的进程
+//      必须一并消失（Windows = Job Object 的 KILL_ON_JOB_CLOSE；Linux = PR_SET_PDEATHSIG）。
+//      这一条就是"Leno 崩了也不会留浏览器"的根据。
+//   ④ 守卫：无效句柄（0 / 负数 / 超范围）一律 false，不崩
+//   ⑤ 守卫：拉不起来的程序（不存在的 exe）返回 -1
+//
+// ⚠ ③ 必须用"另一个 Leno 进程"来验证：本进程要活到断言结束，只有"别的进程拉起后又退出"
+//   才能触发"父死子死"这条路径 ⇒ 本文件带一个 `child` 模式（见 main 开头）。
+// ⚠ 探测用的**标记走环境变量**传给探测脚本：绝不能让探测进程自己的命令行带上标记，
+//   否则它会匹配到自己 ⇒ 恒判"还在跑"（这个坑很容易踩，且症状是"测试永远红"）。
+
+import strings
+import files
+import dirs
+
+// 唯一标记：拿它去进程表里找"我们的"那个进程（不会误伤别人同名的进程）
+const TOKEN = "leno_spawn_probe_9f3a1c"
+
+func isWin(): bool { return _os() == "windows" }
+
+// 长驻进程的 exe / args（约 60 s；测试里不是被 _kill 收掉，就是随父进程一起消失）
+//   ⚠ 标记必须出现在**长驻进程自己**的命令行里，否则探测不到 ⇒
+//     Windows：powershell 以 `# 标记` 注释形式带着它（`#` 之后是注释，不影响 Start-Sleep）
+//     POSIX：sh 跑 while 循环（sh 自己就是那个在等的进程，标记在它的 `-c` 串里）
+//   ⚠ 正因为 `_spawn` 不经过 cmd/sh 中转，参数里的 `#` / `&` 才不会被当成元字符解析。
+func sleepExe(): string {
+    if isWin() { return "powershell.exe" }
+    return "/bin/sh"
+}
+
+func sleepArgs(): string {
+    if isWin() {
+        return "-NoProfile -Command \"Start-Sleep -Seconds 60 # " + TOKEN + "\""
+    }
+    return "-c \"while :; do sleep 1; done # " + TOKEN + "\""
+}
+
+// 探测脚本：进程表里还有带标记的进程 ⇒ 退出码 1，否则 0
+func probePath(): string {
+    if isWin() { return dirs.join(_tmpdir(), "leno_spawn_probe.ps1") }
+    return dirs.join(_tmpdir(), "leno_spawn_probe.sh")
+}
+
+func writeProbe() {
+    if isWin() {
+        var s = "$t = $env:LENO_SPAWN_TOKEN\n" +
+                "$n = @(Get-CimInstance Win32_Process -Filter \"CommandLine like '%$t%'\" -ErrorAction SilentlyContinue).Count\n" +
+                "if ($n -gt 0) { exit 1 } else { exit 0 }\n"
+        files.write(probePath(), s)
+        return
+    }
+    // POSIX：ps 的 args 列里找标记；`grep -v` 去掉探测脚本自己那行
+    var s2 = "#!/bin/sh\n" +
+             "ps ax -o args= 2>/dev/null | grep -F \"$LENO_SPAWN_TOKEN\" | grep -v leno_spawn_probe >/dev/null && exit 1\n" +
+             "exit 0\n"
+    files.write(probePath(), s2)
+}
+
+// 还有带标记的进程在跑吗？
+func markedRunning(): bool {
+    if isWin() {
+        var r = _exec("powershell -NoProfile -ExecutionPolicy Bypass -File \"" + probePath() + "\"", 30000)
+        if r is ExecResult { return r.code != 0 }
+        return false
+    }
+    var r2 = _exec("sh " + probePath(), 20000)
+    if r2 is ExecResult { return r2.code != 0 }
+    return false
+}
+
+// 轮询等它消失（每次探测本身要拉起一个进程 ⇒ 天然带间隔，不必再 sleep）
+func waitGone(): bool {
+    for 0:3 to i {
+        if not markedRunning() { return true }
+    }
+    return false
+}
+
+main() {
+    var argv = _args()
+
+    // ---- child 模式：拉起长驻进程后**立刻退出**（故意不 _kill）----
+    if argv.len() > 0 and argv[0] == "child" {
+        var hc = _spawn(sleepExe(), sleepArgs())
+        print("child spawned h=" + hc)
+        _exit(0)
+    }
+
+    // 前置：标记只经环境变量传给探测脚本（见文件头 ⚠）
+    _env("LENO_SPAWN_TOKEN", TOKEN)
+    writeProbe()
+    assert_true(files.exists(probePath()), "探测脚本没写成功：" + probePath())
+    // 前置：一开始就不该有带标记的进程 —— 否则后面的"消失"无法归因（重跑一次即可）
+    assert_eq(markedRunning(), false, "前置条件不成立：本机已有带标记的进程在跑")
+
+    // ---- ① 拿到句柄 / ② 真能杀掉 ----
+    var h = _spawn(sleepExe(), sleepArgs())
+    assert_true(h > 0, "①_spawn 应返回 > 0 的句柄；实际=" + h)
+
+    var started = false
+    for 0:4 to i {
+        if markedRunning() { started = true; break }
+    }
+    assert_eq(started, true, "①被拉起的进程没出现在进程表里（_spawn 没真的拉起？）")
+
+    assert_eq(_kill(h), true, "①_kill 有效句柄应返回 true")
+    assert_eq(waitGone(), true, "②_kill 之后进程必须从进程表里消失")
+    assert_eq(_kill(h), false, "①重复 _kill 应返回 false（幂等）")
+
+    // ---- ③ 内核保证：拉起者退出 ⇒ 子进程一并消失 ----
+    var self = _script()
+    var abs = dirs.abspath(self)
+    if abs != null { self = abs }
+    var rc = _exec(_executable() + " " + self + " child", 60000)
+    assert_true(rc is ExecResult, "③子进程执行失败（起不来？）")
+    var out = _str(rc.output)
+    // 先确认**子进程里真的拉起成功了**，否则"消失"是空话（h=-1 即失败）
+    assert_true(strings.has(out, "child spawned h="), "③子进程里没打印句柄；输出=" + out)
+    assert_eq(strings.has(out, "child spawned h=-1"), false, "③子进程里 _spawn 失败（h=-1）")
+    assert_eq(waitGone(), true,
+        "③拉起者退出后子进程必须消失（Windows = Job Object 的 KILL_ON_JOB_CLOSE；Linux = PR_SET_PDEATHSIG）")
+
+    // ---- ④ 无效句柄守卫 ----
+    assert_eq(_kill(0), false, "④_kill(0) 应为 false（0 不是有效句柄）")
+    assert_eq(_kill(-1), false, "④_kill(-1) 应为 false")
+    assert_eq(_kill(999999), false, "④_kill(超范围) 应为 false")
+
+    // ---- ⑤ 拉不起来的程序 ----
+    assert_eq(_spawn("no_such_exe_leno_probe_zzz", ""), -1, "⑤不存在的 exe 应返回 -1")
+
+    print("test_spawn passed")
+}

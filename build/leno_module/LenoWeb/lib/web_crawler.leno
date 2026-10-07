@@ -6,10 +6,12 @@ import files
 import times
 import jsons
 import "web_gzip.leno" as gzip     // 纯 Leno 的 gzip/DEFLATE 解压（.gz sitemap）
+import "web_cdp.leno" as browser   // 动态渲染（SPA 回退）：CDP 驱动真实浏览器
 import "web_html.leno" as htmls
 import "web_net.leno" as web_net
 use web_net.(HttpClient, Response, createClient, ProxyPool)
 use gzip.(GzipResult)
+use browser.(Browser, BrowserConfig, RenderOptions, RenderResult)
 use htmls.(HtmlNode)
 
 // ==================== 辅助转换 ====================
@@ -422,11 +424,23 @@ export struct Crawler {
         pool = p
     }
 
-    // 抓一页（推荐入口）：有池子就自动轮换 + 回报成败。
+    // ---- 动态渲染（SPA 回退，见 fetchItem）----
+    bool render = false                    // 打开：静态抓不到内容时自动用真浏览器渲染
+    string render_mode = "auto"            // "auto"（按选择器/启发式判断）| "always" | "never"
+    string render_selector = ""            // auto 模式下最可控的判据：静态 HTML 里没有它 ⇒ 渲染
+    bool render_stealth = true             // 渲染时开反检测
+    int render_timeout_ms = 20000
+    string render_proxy = ""               // 渲染走的代理（与 HTTP 的代理池相互独立）
+    string render_user_data_dir = ""       // 非空 ⇒ 复用（可带登录态）
+    int rendered_count = 0                 // 实际渲染过的页数（诊断/统计）
+    string render_error = ""               // 最近一次渲染失败原因
+    Browser? _browser = null               // 渲染用浏览器（懒启动，见 _ensureBrowser）
+
+    // 静态抓一页：有池子就自动轮换 + 回报成败。
     // 返回 null 有两类原因，调用方都能区分：
     //   · pool 里全在冷却 ⇒ 本次**不抓**（避免用已被封的 IP 硬打）；`pool.available() == 0` 可判定
     //   · 请求失败 ⇒ 已计入该代理的失败数（连续失败达阈值会自动冷却它）
-    func fetchItem(CrawlItem item): Page? {
+    func _fetchStatic(CrawlItem item): Page? {
         if pool == null {
             return fetchPage(item.url, user_agent)
         }
@@ -439,6 +453,94 @@ export struct Crawler {
             pool.reportOk(p)
         }
         return page
+    }
+
+    // 懒启动渲染用浏览器（失败返回 null，并把原因放进 render_error）
+    func _ensureBrowser(): Browser? {
+        if _browser != null and _browser.ok { return _browser }
+        BrowserConfig cfg = new BrowserConfig()
+        cfg.startUrl = "about:blank"
+        cfg.stealth = render_stealth
+        cfg.proxy = render_proxy
+        cfg.userDataDir = render_user_data_dir
+        cfg.readyTimeoutMs = render_timeout_ms
+        Browser b = browser.launch(cfg)
+        if not b.ok {
+            render_error = "启动浏览器失败：" + b.error
+            return null
+        }
+        _browser = b
+        return b
+    }
+
+    // 静态 HTML 看起来"没内容"吗 ⇒ 需要真浏览器渲染
+    // 判据按可靠性排序：
+    //   ① render_selector（给了就只看它 —— 最可控）
+    //   ② 是 SPA 空壳：有 <script> 但正文（去标签后）极短，或有常见挂载点却空着
+    func _needsRender(Page page): bool {
+        if render_mode == "always" { return true }
+        if render_mode == "never" { return false }
+        if render_selector != "" {
+            return htmls.select(page.html, render_selector).len() == 0
+        }
+        string low = strings.to_lower(page.body)
+        bool hasScript = strings.has(low, "<script")
+        if hasScript and strings.trim(htmls.allText(page.html)).byte_len() < 200 {
+            return true
+        }
+        // 常见挂载点空着（<div id="app"></div> / id="root" / id="__next"）
+        Array[string] mounts = ["#app", "#root", "#__next", "#vue-app"]
+        for mounts.len() to i {
+            Array[HtmlNode] hit = htmls.select(page.html, mounts[i])
+            if hit.len() > 0 and strings.trim(htmls.allText(hit[0])).byte_len() == 0 {
+                return true
+            }
+        }
+        return false
+    }
+
+    // 关掉渲染用浏览器（**爬完记得调**；临时 profile 目录也会一并清掉）
+    func closeBrowser() {
+        if _browser != null {
+            browser.close(_browser)
+            _browser = null
+        }
+    }
+
+    // 抓一页（推荐入口）。`render = true` 时：
+    //   静态抓取 → 判断是否需要渲染（见 _needsRender）→ 需要就用真浏览器渲染，
+    //   并用**渲染后的 HTML** 覆盖 body/html（url/status 保持不变）。
+    // ⚠ 渲染失败**不报错、退回静态结果**：一次渲染失败不该让整趟爬取挂掉
+    //   （原因留在 `render_error`，页数记在 `rendered_count`）
+    func fetchItem(CrawlItem item): Page? {
+        Page? p = _fetchStatic(item)
+        if p == null { return p }
+        if not render { return p }
+        if not _needsRender(p) { return p }
+
+        Browser? b = _ensureBrowser()
+        if b == null { return p }
+        RenderOptions opt = new RenderOptions()
+        opt.timeoutMs = render_timeout_ms
+        if render_selector != "" {
+            opt.waitUntil = "selector"
+            opt.waitSelector = render_selector
+        } else {
+            opt.waitUntil = "networkidle"      // 没给选择器就等网络空闲
+        }
+        opt.settleMs = 500
+        RenderResult r = browser.renderAdvanced(b, item.url, opt)
+        rendered_count = rendered_count + 1
+        if not r.ok {
+            render_error = r.error
+            return p
+        }
+        Page out = new Page()
+        out.url = p.url
+        out.status = p.status
+        out.body = r.html
+        out.html = htmls.parse(r.html)
+        return out
     }
 
     // ---- 断点续爬 ----
@@ -706,9 +808,10 @@ export struct Crawler {
         return false
     }
 
-    // 停止爬取
+    // 停止爬取（顺带关掉渲染用的浏览器，避免留下进程/临时目录）
     func stop() {
         running = false
+        closeBrowser()
     }
 }
 
@@ -766,6 +869,21 @@ func _buildCrawler(Dict config): Crawler {
     var v_every = config["save_every"]
     if v_every is int { c.save_every = v_every }
     if c.state_path != "" and c.save_every <= 0 { c.save_every = 50 }
+    // 动态渲染（SPA 回退）
+    var v_render = config["render"]
+    if v_render is bool { c.render = v_render }
+    var v_rmode = config["render_mode"]
+    if v_rmode is string { c.render_mode = v_rmode }
+    var v_rsel = config["render_selector"]
+    if v_rsel is string { c.render_selector = v_rsel }
+    var v_rst = config["render_stealth"]
+    if v_rst is bool { c.render_stealth = v_rst }
+    var v_rto = config["render_timeout_ms"]
+    if v_rto is int { c.render_timeout_ms = v_rto }
+    var v_rpx = config["render_proxy"]
+    if v_rpx is string { c.render_proxy = v_rpx }
+    var v_rud = config["render_user_data_dir"]
+    if v_rud is string { c.render_user_data_dir = v_rud }
     return c
 }
 

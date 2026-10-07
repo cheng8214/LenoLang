@@ -1,0 +1,173 @@
+// test_crawl_render.leno — 爬虫的**动态渲染回退**（SPA）：静态拿不到内容时自动用真浏览器
+//
+// 这个用例把两块拼起来验证（这是"实战"最需要的一条链路）：
+//   静态 HTTP 抓取 → 判断是否需要渲染（选择器 / 启发式）→ 真浏览器渲染 → 用渲染后的 HTML 继续
+//
+// ⚠ 需要本机有 Chrome/Edge（没有就跳过渲染部分，退出码仍为 0）；
+//   服务端是本机 testkit，所以除浏览器外不依赖外网。
+import "Web" as web
+import "_testkit" as tk
+import threads
+import strings
+import files
+
+use web.Crawler
+
+int PORT = 39623
+int PORT2 = 39624
+int MAXREQ = 128
+
+func serverEntry(int port, int maxReqs) { tk.serve(port, maxReqs) }
+
+// 第二个服务端（⑤ 专用）：⚠ 单线程服务端在同一端口上被多节复用时会偶发串扰 ——
+// 实测过"⑤ 请求 /spa，却拿到 ③ 用过的 /links 正文，于是既没渲染、链接数也不对"，
+// 表现为很难懂的 0 != 2。给它一个独立端口，把这类干扰从根上掐掉。
+func serverEntry2(int port, int maxReqs) { tk.serve(port, maxReqs) }
+
+func mkCrawler(Array[string] seeds, bool render, string mode, string sel, int timeoutMs): Crawler {
+    return web.createCrawler({
+        start_urls: seeds,
+        allowed_domains: [],
+        max_pages: 1,
+        max_depth: 1,
+        delay_ms: 0,
+        user_agent: "TestBot",
+        respect_robots: false,
+        render: render,
+        render_mode: mode,
+        render_selector: sel,
+        render_stealth: true,
+        render_timeout_ms: timeoutMs
+    })
+}
+
+// 只爬一页，返回该页的链接数（-1 表示抓取失败）
+func runOnce(Crawler c): int {
+    c.start()
+    var it = c.nextUrl()
+    if it == null { return -1 }
+    var page = c.fetchItem(it)
+    if page == null { return -1 }
+    c.markVisited(it.url)
+    return page.links().len()
+}
+
+main() {
+    string base = "http://127.0.0.1:" + PORT
+    var srv = threads.start(serverEntry, PORT, MAXREQ)
+    if not tk.waitUp(PORT) {
+        print("本机服务端未起来，终止")
+        _exit(1)
+    }
+
+    print("--- ① 不开渲染：SPA 空壳拿不到链接（对照）---")
+    var c1 = mkCrawler([base + "/spa"], false, "auto", "", 20000)
+    tk.check("/spa 静态抓取链接数", runOnce(c1), 0)
+    tk.check("没触发渲染", c1.rendered_count, 0)
+
+    print("--- ② 开渲染（auto + 选择器判据）：回退到真浏览器 ---")
+    string exe = web.findBrowser()
+    if exe == "" {
+        print("本机未找到 Chrome/Edge ⇒ 跳过渲染相关断言（不算失败）")
+        tk.shutdown(PORT)
+        if tk.summary("crawl_render") != 0 { _exit(1) }
+        return
+    }
+    print("  浏览器 = " + exe)
+    var c2 = mkCrawler([base + "/spa"], true, "auto", "#app a", 20000)
+    tk.check("/spa 渲染后拿到 2 条链接", runOnce(c2), 2)
+    tk.check("记了 1 次渲染", c2.rendered_count, 1)
+    c2.closeBrowser()
+
+    print("--- ③ auto 不渲染普通页面（服务端已有链接、正文够长）---")
+    var c3 = mkCrawler([base + "/links"], true, "auto", "", 20000)
+    tk.check("/links 静态就能拿到链接", runOnce(c3), 2)
+    tk.check("**没有**触发渲染（省掉了浏览器开销）", c3.rendered_count, 0)
+
+    print("--- ④ render_mode=never：即使内容空着也不渲染 ---")
+    var c4 = mkCrawler([base + "/spa"], true, "never", "", 20000)
+    tk.check("链接数 0", runOnce(c4), 0)
+    tk.check("渲染计数 0", c4.rendered_count, 0)
+
+    print("--- ⑤ 渲染不可用时**退回静态结果、不中断** ---")
+    // 本节的 URL 走**独立服务端**（见 PORT2 说明），避免与前几节共用端口时的偶发串扰
+    var srv2 = threads.start(serverEntry2, PORT2, MAXREQ)
+    if not tk.waitUp(PORT2) {
+        print("第二个服务端未起来，终止")
+        tk.shutdown(PORT)
+        _exit(1)
+    }
+    string base2 = "http://127.0.0.1:" + PORT2
+    // 让渲染**确定性失败**：把 user-data-dir 指到一个**文件**（不是目录）⇒ 浏览器必然起不来。
+    //   ⚠ 两个走过的弯路（都写在这儿免得以后重踩）：
+    //     · `render_timeout_ms = 1` 想让渲染超时 ⇒ **不可靠**：环境热的时候（本机往返亚毫秒 +
+    //       固定 500ms 静置）1ms 超时照样渲染成功 ⇒ 断言只在一整套连跑时偶发失败
+    //     · `render_proxy` 指死代理 ⇒ 对 **localhost 目标无效**：Chrome 默认对 127.0.0.1
+    //       绕过代理，页面照样加载成功
+    //   教训：**别用"极短超时/外部副作用"造失败**，要用语义上必然失败的条件。
+    string notADir = _env("TEMP") + _sep() + "leno_not_a_dir.txt"
+    files.write(notADir, "this is a file, not a directory")
+    var c5 = web.createCrawler({
+        start_urls: [base2 + "/spa"],
+        allowed_domains: [],
+        max_pages: 1,
+        max_depth: 1,
+        delay_ms: 0,
+        user_agent: "TestBot",
+        respect_robots: false,
+        render: true,
+        render_mode: "always",
+        render_stealth: true,
+        render_user_data_dir: notADir,
+        render_timeout_ms: 5000
+    })
+    c5.start()
+    var it5 = c5.nextUrl()
+    int links5 = -1
+    string body5 = ""
+    if it5 == null {
+        print("  ⑤ 诊断：nextUrl 返回 null（没出队）")
+    } else {
+        var p5 = c5.fetchItem(it5)
+        if p5 == null {
+            print("  ⑤ 诊断：fetchItem 返回 null（静态抓取失败）")
+        } else {
+            links5 = p5.links().len()
+            body5 = p5.body
+            print("  ⑤ 诊断：url=" + p5.url + " status=" + p5.status + " body=" + p5.body.byte_len() +
+                  " links=" + links5 + " 渲染次数=" + c5.rendered_count)
+        }
+    }
+    tk.check("仍返回静态页（不报错、不中断）", links5, 0)
+    tk.checkTrue("render_error 给出了原因", c5.render_error != "")
+    print("  原因: " + c5.render_error)
+    // 内容判据：万一是"服务端把别的路由的正文回过来"，这条会立刻指出来
+    // （只断言链接数时，这种情况会表现成很难懂的 0 != 2，实测踩过一次）
+    if links5 == 0 {
+        tk.checkHas("⑤ 拿到的确实是 /spa 的正文", body5, "SPA Page")
+    }
+    // ⚠ 这里**必须**关浏览器：`render: true` 是**懒启动**，渲染失败后浏览器仍然活着
+    //   （这是刻意设计：后续页面还要复用）—— 忘了关就会漏进程（实测这一个用例漏了 16 个）
+    c5.closeBrowser()
+    files.delete(notADir)
+
+    print("--- ⑥ 关掉浏览器后，下一个页面能懒启动重生 ---")
+    var c6 = mkCrawler([base + "/spa"], true, "auto", "#app a", 20000)
+    tk.check("第一次渲染", runOnce(c6), 2)
+    c6.closeBrowser()                          // 显式关浏览器（临时 profile 也一起清）
+    // ⚠ 这里**不能**重爬 /spa：它已在 visited + _queued 里，出队时会被正确跳过（爬虫语义）。
+    //   换个新 URL 才能验证"浏览器关掉后还能懒启动重生"。
+    c6.enqueue(base + "/spa2", 0)
+    var it6 = c6.nextUrl()
+    tk.checkTrue("新 URL 能出队", it6 != null)
+    if it6 != null {
+        var p6 = c6.fetchItem(it6)
+        tk.checkTrue("懒启动重生并渲染成功", p6 != null and p6.links().len() == 2)
+    }
+    tk.check("累计渲染 2 次", c6.rendered_count, 2)
+    c6.closeBrowser()
+
+    tk.shutdown(PORT2)
+    tk.shutdown(PORT)
+    if tk.summary("crawl_render") != 0 { _exit(1) }
+}

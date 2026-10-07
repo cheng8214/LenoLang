@@ -1,0 +1,56 @@
+// run_browser_tests.leno — 需要**真实浏览器**的用例（单独跑，故意不放进日常门禁）
+//
+// 跑法（仓库根目录）：
+//   build\leno.exe build\leno_module\LenoWeb\examples\tests\run_browser_tests.leno
+//
+// ⚠⚠ 资源警告（写在这里是因为踩过：一次把开发机跑死）
+//   · 每个 headless 浏览器实例是 **多进程**（browser/GPU/renderer/utility…）合计几百 MB
+//   · 这两条用例合计会启动 8~10 个实例（顺序启动、逐个关闭）
+//   · **不要连着反复跑**，也不要把它们混进日常门禁连跑
+//   · 跑完请确认没有残留：`tasklist | findstr msedge` 里不该有带 leno-cdp 的进程
+//     （临时 profile 目录在 %TEMP%\leno-cdp-*，正常跑完应当自动删除）
+//
+// 没有装 Chrome/Edge 的机器上，这两条会自己跳过（退出码 0），不影响其它环境使用。
+import dirs
+
+Array[string] SUITES = [
+    "test_cdp.leno",                // 动态渲染：WS 握手 / 启动 / 等待策略 / 交互 / 反检测 / 代理 / 批量
+    "test_crawl_render.leno"        // 爬虫 SPA 回退：静态拿不到内容时自动用真浏览器
+]
+
+main() {
+    string dir = dirs.script_dir() + _sep()
+    string exe = _executable()
+    if exe == "" { exe = "leno" }
+
+    print("==== 浏览器用例（会启动多个 headless 实例，请勿连跑）====")
+
+    int ok = 0
+    int failed = 0
+    for SUITES.len() to i {
+        string name = SUITES[i]
+        print(">>> " + name)
+        string cmd = "call \"" + exe + "\" \"" + dir + name + "\""
+        // 每个用例给 300s（浏览器冷启动 + 多次渲染，比离线用例慢一个量级）
+        var r = _exec(cmd, 300000)
+        string out = r.output.trim()
+        if out != "" {
+            print("    " + out.replace("\n", "\n    "))
+        }
+        if r.code == 0 {
+            ok = ok + 1
+        } else {
+            failed = failed + 1
+            if r.code == 124 {
+                print("    [FAIL] 超时（300s）")
+            } else {
+                print("    [FAIL] 退出码 " + r.code)
+            }
+        }
+    }
+
+    print("")
+    print("==== 浏览器用例汇总：通过 " + ok + " / 失败 " + failed + "（共 " + SUITES.len() + " 个）====")
+    print("提示：若机器变慢，检查 %TEMP%\\leno-cdp-* 残留目录与带 leno-cdp 的 msedge 进程")
+    if failed > 0 { _exit(1) }
+}
