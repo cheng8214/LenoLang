@@ -1,0 +1,63 @@
+// 弹层捕获区：**按窗口隔离**（2026-10-07 框架修复 ✓）
+//
+// 背景：容器派发事件是"挨个发给所有子控件"（见 sdl_layout 的 relayout/process ✓，没有 z 序、没有命中优先）
+//   ⇒ 展开的浮层（ComboBox 下拉 / Menu / 应用自绘的歌单）必须**登记一块捕获区**，
+//     下层标准控件在 process 开头才肯 `if inPopupCapture(mx,my) { return }` ✓
+//   ⚠ 修复前是**全局一块**矩形 ✗ ⇒ 多窗口互相误伤：A 窗口开着浮层，B 窗口里同一个屏幕矩形
+//     也收不到鼠标 ✗（且渲染循环是每窗口清一次 ⇒ 只有最后渲染那窗口的登记能活到下一拍 ✗）
+//
+// 本用例锁的就是修复后的语义 ✓（纯数据、无 GUI 依赖 ⇒ 离线可跑）：
+//   ① 本窗口看得到自己登记的块              ② ★ 别的窗口**看不到**
+//   ③ 两块互不干扰                          ④ 无上下文（应用回调里直投浮层控件）⇒ 一律 false ✓
+//   ⑤ clear 只清本窗口                      ⑥ 同窗口重复登记 ⇒ 只认最后一块（与旧行为一致 ✓）
+import SDL3
+
+int fails = 0
+
+func check(string what, bool ok) {
+    print((if ok then "[通过] " else "[失败] ") + what + "\n")
+    if not ok { fails = fails + 1 }
+}
+
+main() {
+    // ① 本窗口看得到自己的块
+    SDL3.setDispatchWindow(1)
+    SDL3.setPopupCapture(100.0, 100.0, 200.0, 200.0)
+    check("窗口1：看得到自己登记的块", SDL3.inPopupCapture(150.0, 150.0))
+    check("窗口1：块外 ⇒ false", not SDL3.inPopupCapture(10.0, 10.0))
+
+    // ② ★ 修复点：别的窗口看不到
+    SDL3.setDispatchWindow(2)
+    check("★ 窗口2：看不到窗口1 的块（不再互相误伤）", not SDL3.inPopupCapture(150.0, 150.0))
+
+    // ③ 两块互不干扰
+    SDL3.setPopupCapture(300.0, 300.0, 100.0, 100.0)
+    check("窗口2：自己的块生效", SDL3.inPopupCapture(350.0, 350.0))
+    SDL3.setDispatchWindow(1)
+    check("回到窗口1：它那块还在", SDL3.inPopupCapture(150.0, 150.0))
+    check("回到窗口1：看不到窗口2 的块", not SDL3.inPopupCapture(350.0, 350.0))
+
+    // ④ 无上下文 ⇒ 一律 false（应用在事件回调里"直投"浮层控件要靠这条才不被自己挡 ✓）
+    SDL3.clearDispatchWindow()
+    check("无上下文：窗口1 的块也不挡（直投才生效）", not SDL3.inPopupCapture(150.0, 150.0))
+    check("无上下文：窗口2 的块同理", not SDL3.inPopupCapture(350.0, 350.0))
+
+    // ⑤ clear 只清本窗口
+    SDL3.setDispatchWindow(1)
+    SDL3.clearPopupCapture()
+    check("清窗口1 后：窗口1 看不到了", not SDL3.inPopupCapture(150.0, 150.0))
+    SDL3.setDispatchWindow(2)
+    check("清窗口1 不影响 窗口2", SDL3.inPopupCapture(350.0, 350.0))
+
+    // ⑥ 同窗口重复登记 ⇒ 只认最后一块（旧行为不变 ✓）
+    SDL3.setPopupCapture(0.0, 0.0, 50.0, 50.0)
+    check("同窗口重复登记 ⇒ 只认最后一块", SDL3.inPopupCapture(10.0, 10.0) and not SDL3.inPopupCapture(350.0, 350.0))
+    SDL3.clearDispatchWindow()
+
+    print("")
+    if fails > 0 {
+        print("失败 " + _str(fails) + " 项")
+        _exit(1)
+    }
+    print("全部通过（弹层捕获区按窗口隔离 ✓）")
+}

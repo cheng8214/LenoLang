@@ -31,7 +31,7 @@ use theme.Color
 //   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
 func _opts_keys(): Array[string] {
     return [
-"aligns", "bg_color", "cell_select", "cell_types", "check_col", "check_color", "col_reorder", "col_widths", "cursor", "editable", "editable_cols", "empty_color", "empty_text", "enabled", "font_path", "font_size", "font_style", "frozen_cols", "h", "header_aligns", "header_color", "header_h", "headers", "image_col", "image_gap", "image_mode", "image_pad", "image_size", "max_col_width", "min_col_width", "multi", "multi_select", "numeric_cols", "resizable", "row_h", "row_images", "row_reorder", "rows", "sel_color", "sep_color", "sort_disabled_cols", "sortable", "tip", "visible", "w", "x", "y", "zebra"
+"aligns", "bg_color", "cell_select", "cell_types", "check_col", "check_color", "col_reorder", "col_widths", "cursor", "editable", "editable_cols", "empty_color", "empty_text", "enabled", "font_path", "font_size", "font_style", "frozen_cols", "h", "header_aligns", "header_color", "header_h", "headers", "image_col", "image_gap", "image_mode", "image_pad", "image_path", "image_size", "max_col_width", "min_col_width", "multi", "multi_select", "numeric_cols", "resizable", "row_h", "row_images", "row_reorder", "rows", "sel_color", "sep_color", "sort_disabled_cols", "sortable", "tip", "visible", "w", "x", "y", "zebra"
 ]
 }
 export struct Table impl Widget, Themeable {
@@ -95,7 +95,12 @@ export struct Table impl Widget, Themeable {
     pri bool ctxMenuEnabled = true
     // 行图标支持：指定某列显示 [图标+文字]，图标路径由 _rowImages 独立存储（对齐 Treeview 模式）
     pri int          imageCol = -1           // 图标列索引（0-based，-1=无图标列）
-    pri Array[string] rowImages = []         // 每行图标路径（与 _rows 平行，空串=无图标）
+    pri Array[string] rowImages = []         // 每行图标路径（与 _rows 平行，空串=用默认图标）
+    // ★ 图标列的**默认图标**（2026-10-08 新增 ✓）：行没单独给就用它 ⇒ **一次给、永不掉** ✓
+    //   为什么需要：`set_rows()` 会同步 `rowImages` 长度（行数变 0 直接清空 ✗、变少截断 ✗）
+    //     ⇒ 应用每换一批数据都得**逐行重贴**一遍 ✗（cleaner_master 因此真报过"扫描后图标不见了" ✓）
+    //     ⇒ 像"每行都同一个音符/图标"这种需求，直接给 `image_path` 就完事 ✓（不必碰 row_images ✓）
+    pri string       imgDefault = ""
     pri Array[string] rowTips = []           // 每行自定义悬浮 tip（与 _rows 平行，空串=无自定义 tip）
     float        _imgSize = 0.0           // 图标边长（0 = 自动：取 _rowH - 8）
     pri int          imgMode = 0             // 内容模式：0=aspectFit 1=stretch 2=aspectFill
@@ -395,6 +400,7 @@ export struct Table impl Widget, Themeable {
 
         // 行图标配置：image_col 指定哪列显示 [图标+文字]，图标路径由 row_images 独立存储
         imageCol = opts.get("image_col", -1)
+        imgDefault = opts.get("image_path", "")     // 图标列的默认图标（行没单独给就用它 ✓）
         var ri = opts.get("row_images", [])
         if ri is Array[string] { rowImages = ri } else { rowImages = [] }
         _imgSize = opts.get("image_size", 0.0)
@@ -859,6 +865,7 @@ export struct Table impl Widget, Themeable {
         }
     }
     func set_image_size(float s) { _imgSize = s; invalidate_fitted() }
+    func set_image_path(string p) { imgDefault = p; invalidate_fitted() }   // 图标列默认图标（""=取消 ✓）
     func set_image_mode(int m) { imgMode = m }
     func set_image_pad(float p) { imgPad = p; invalidate_fitted() }
     func set_image_gap(float g) { imgGap = g; invalidate_fitted() }
@@ -1816,10 +1823,12 @@ export struct Table impl Widget, Themeable {
     // 判断是否启用了图标列
     pri func has_image_col(): bool { return imageCol >= 0 }
 
-    // 获取行 ri 的图标路径（越界或无图标返回空串）
+    // 获取行 ri 的图标路径：行自己的优先；没给（或越界）⇒ 回落到**默认图标** ✓；都没有 ⇒ 空串 ✓
     pri func row_image(int ri): string {
-        if ri < 0 or ri >= rowImages.len() { return "" }
-        return rowImages[ri]
+        string p = ""
+        if ri >= 0 and ri < rowImages.len() { p = rowImages[ri] }
+        if p == "" { return imgDefault }
+        return p
     }
 
     // 纹理缓存：按 path 取/载纹理，避免每帧重载与纹理泄漏

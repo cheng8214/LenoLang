@@ -636,13 +636,53 @@ export func advanceFrame() { _frameId = _frameId + 1 }
 // 解决：展开弹层的 ComboBox 把弹出矩形登记为捕获区；下层控件只要事件落在“他人的捕获区”内就忽略。
 // 注意：捕获区在 render 阶段登记、在 render 阶段开始前清空，跨帧持久（事件处理在 render 之前，
 // 用的是上一帧 render 登记的捕获区），从而不受控件处理顺序影响。
-Array[float] _popupCapture = []
-export func setPopupCapture(float x, float y, float w, float h) { _popupCapture = [x, y, w, h] }
-export func clearPopupCapture() { _popupCapture = [] }
+// ★ 2026-10-07 修：捕获区**按窗口隔离** ✗✗
+//   早先是**全局一块**矩形 ✗ ⇒ 多窗口时会互相误伤：A 窗口开着歌单浮层，B 窗口里**同一个屏幕矩形**
+//   也会忽略鼠标 ✗（而且渲染循环是**每窗口**清一次 ⇒ 只有最后渲染那个窗口的登记能活到下一拍 ✗）。
+//   ⇒ 现在每块登记都带**归属窗口**；判定时只看"当前上下文窗口"那一块 ✓
+//     （上下文由窗口主循环用 `setDispatchWindow` 在派发/渲染前后设 ✓ 见 sdl_window ✓）。
+//   ⇒ 没有上下文（应用/自检代码直接调 `inPopupCapture`，或在回调里直投 `lb.process(ev)` ✓）
+//     落到"无窗口"那一槽（-1）⇒ 正常查不到 ⇒ 返回 false ✓ —— 这也正是应用侧"直投"能生效的原因 ✓
+Array[Array[float]] _popupCaps = []   // 每项 [窗口id, x, y, w, h]（窗口id = -1 表示"无窗口上下文" ✓）
+int _capWid = -1                      // 当前派发/渲染上下文窗口（-1 = 不在窗口循环里 ✓）
+
+// 由窗口主循环在"派发/渲染某个窗口"前后设置（框架内部用 ✓；自检也可用 ⇒ 故一并转出 ✓）
+export func setDispatchWindow(int wid) { _capWid = wid }
+export func clearDispatchWindow() { _capWid = -1 }
+
+// 登记本窗口的弹层矩形（同窗口旧登记先撤 ⇒ 每窗口同时只认一块 ✓）
+export func setPopupCapture(float x, float y, float w, float h) {
+    float key = _float(_capWid)
+    Array[Array[float]] keep = []
+    for _popupCaps to c { if c[0] != key { keep.add(c) } }
+    keep.add([key, x, y, w, h])
+    _popupCaps = keep
+}
+
+// 撤掉本窗口的登记（窗口主循环每帧渲染前调 ✓）；没有上下文时保守全清 ✓
+export func clearPopupCapture() {
+    if _capWid < 0 { _popupCaps = []; return }
+    float key = _float(_capWid)
+    Array[Array[float]] keep = []
+    for _popupCaps to c { if c[0] != key { keep.add(c) } }
+    _popupCaps = keep
+}
+
+// 窗口销毁时把它那一块清掉（否则残留在表里 ✗ —— 虽然不会再被命中，但会一直占着 ✓）
+export func dropPopupCaptures(int wid) {
+    float key = _float(wid)
+    Array[Array[float]] keep = []
+    for _popupCaps to c { if c[0] != key { keep.add(c) } }
+    _popupCaps = keep
+}
+
+// 事件点是否落在**当前上下文窗口**的捕获区里
 export func inPopupCapture(float mx, float my): bool {
-    if _popupCapture.len() < 4 { return false }
-    return mx >= _popupCapture[0] and mx <= _popupCapture[0] + _popupCapture[2]
-       and my >= _popupCapture[1] and my <= _popupCapture[1] + _popupCapture[3]
+    float key = _float(_capWid)
+    for _popupCaps to c {
+        if c[0] == key and mx >= c[1] and mx <= c[1] + c[3] and my >= c[2] and my <= c[2] + c[4] { return true }
+    }
+    return false
 }
 
 // 弹出消息框

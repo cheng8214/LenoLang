@@ -1386,6 +1386,7 @@ export struct Window {
                             _runRens[i].destroy()
                             _lib.SDL_DestroyWindow(_runHnds[i])
                             _windowCount -= 1
+                            core.dropPopupCaptures(_runWids[i])   // 窗口没了 ⇒ 它那块弹层捕获区也清掉 ✓
                             _runWids.remove(i);  _runHnds.remove(i)
                             _runRens.remove(i); _runEvts.remove(i)
                             _runRends.remove(i); _runWidgets.remove(i); _runWidgetZ.remove(i); _runMenus.remove(i); _runRoots.remove(i); _runRootX.remove(i); _runRootY.remove(i); _runW.remove(i); _runH.remove(i)
@@ -1404,6 +1405,8 @@ export struct Window {
                 // （解决多控件处理顺序导致的 tipClear 覆盖 tipReport 问题）
                 bool _isMotion = ev.isMouseMotion()
                 if _isMotion { tip.tipSetWindow(wid); tip.tipBeginMotion() }
+                // ★ 派发上下文 = 本窗口 ⇒ 弹层捕获区按窗口判定（见 sdl_core 的说明 ✓）
+                core.setDispatchWindow(wid)
                 for _runWids.len() to j {
                     if _runWids[j] == wid {
                         // 先处理根布局控件（背景层），再处理 _widgets（覆盖层如 MenuBar）
@@ -1433,6 +1436,7 @@ export struct Window {
                         }
                     }
                 }
+                core.clearDispatchWindow()      // 派发上下文用完即撤（回到"无窗口"态 ✓）
                 // 窗口缩放：重建 SSAA 离屏纹理 + 更新逻辑尺寸 + 驱动根布局跟随
                 // ★ 不在此处理 WINDOW_MAXIMIZED/WINDOW_RESTORED 事件：这些事件触发时窗口可能尚在
                 //   动画过程中，SDL_GetWindowSize 返回的是最终尺寸而非当前实际尺寸，此时重建 SSAA
@@ -1608,6 +1612,8 @@ export struct Window {
                         return
                     }
                     // 弹层捕获区：每帧渲染前清空，由展开的下拉框在 renderPopup 里重新登记
+                    //   ★ 按窗口隔离：设上下文 ⇒ 只清/只登记**本窗口**那一块（别的窗口不受影响 ✓ 见 sdl_core ✓）
+                    core.setDispatchWindow(_runWids[i])
                     core.clearPopupCapture()
                     // 先渲染根布局控件（背景层），再渲染 _widgets（按 z 值排序后层叠）
                     var rootWid = _runRoots[i]
@@ -1654,6 +1660,7 @@ export struct Window {
                     // 第二遍：所有展开的控件内嵌右击上下文菜单（Edit 经 panel.add 添加时未进 _menus，
                     // 在此兜底绘制到最上层，避免被同级控件遮挡）
                     menu.renderContextMenus(_runRens[i], _runHnds[i], _runW[i], _runH[i])
+                    core.clearDispatchWindow()      // 本窗口的弹层都登记完了 ⇒ 撤上下文 ✓
                     // Tooltip 浮层：在所有控件与弹层之后绘制，浮在最上层；不拦截输入
                     // tipTick 是全局状态更新，每帧只需调一次（在首个窗口时调用）
                     if i == 0 { tip.tipTick() }

@@ -239,6 +239,25 @@ export func warpMouse(Ptr[u8] w, float x, float y): bool { return core.warpMouse
 export func setSystemCursor(int kind): Ptr[u8] { return core.setSystemCursor(kind) }
 export func showMessageBox(string title, string msg, int flags = 0) { core.showMessageBox(title, msg, flags) }
 
+// 弹层捕获区（框架自带机制 ✓ —— 库内 Menu / ComboBox 就是靠它"不穿透"的 ✓）
+//   · 语义：登记一个矩形 ⇒ **所有标准控件**在 `process` 开头都会
+//     `if core.inPopupCapture(mx,my) { return }`（table/button/slider/label/listbox … 见各 sdl_*.leno ✓）
+//     ⇒ 展开浮层时，下面那些控件不会再跟着响应（不会"穿透"✓）
+//   · ⚠ 必须**在渲染期登记**：框架每帧渲染前会 `clearPopupCapture()`（sdl_window.leno:1611 ✓）
+//     ⇒ 展开浮层的控件要在自己的 render / canvas.on_draw 里**每帧**登记一次 ✓
+//       （事件处理在 render 之前 ⇒ 用的是**上一帧**登记的区，跨帧持久 ✓ 见 sdl_core.leno:636 的设计说明 ✓）
+//   · ✅ 捕获区**按窗口隔离**（2026-10-07 修 ✓）：判定只看"当前上下文窗口"那一块
+//     ⇒ A 窗口开着浮层，不会把 B 窗口里同一个屏幕矩形也挡住 ✓
+//     （上下文由窗口主循环在派发/渲染前后设好 ✓；下面的两个 setter 是给自检/框架用的 ✓）
+//   · 应用在事件回调里**直投**给浮层控件（如 `lb.process(ev)`）时没有上下文 ⇒ 落到"无窗口"槽
+//     ⇒ `inPopupCapture` 返回 false ⇒ 直投能正常生效 ✓（这正是自定义浮层要的 ✓）
+export func setPopupCapture(float x, float y, float w, float h) { core.setPopupCapture(x, y, w, h) }
+export func clearPopupCapture() { core.clearPopupCapture() }
+export func inPopupCapture(float mx, float my): bool { return core.inPopupCapture(mx, my) }
+// 派发/渲染上下文（框架内部用；自检也用它来模拟"某个窗口"的判定 ✓）
+export func setDispatchWindow(int wid) { core.setDispatchWindow(wid) }
+export func clearDispatchWindow() { core.clearDispatchWindow() }
+
 export func markFrameRedraw() { core.markFrameRedraw() }
 export func requestRedraw()   { core.requestRedraw() }
 // 取出并清除"待重绘"标志（自检/诊断用：可断言"这一帧跑完后是否还欠一帧" ✓）

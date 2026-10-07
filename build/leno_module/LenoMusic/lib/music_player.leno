@@ -11,6 +11,7 @@ var _engineFailed = false    // 引擎初始化是否曾失败：失败后不再
 // ==================== Sound (streaming playback) ====================
 export struct Sound {
     Ptr h; bool ok = 0
+    bool _started = false        // 播过一次没有（`isAtEnd()` 要它：没播过时 isPlaying() 也是 false ✗）
 
     func load(string p): bool {
         miniaudio l = core.lib()
@@ -35,7 +36,9 @@ export struct Sound {
 
     func play(): bool {
         if not ok { return false }
-        return core.lib().ma_dll_sound_start(h) == 0
+        bool r = core.lib().ma_dll_sound_start(h) == 0
+        if r { _started = true }        // 供 isAtEnd 区分"没播过"与"放完了" ✓
+        return r
     }
 
     func stop(): bool {
@@ -97,6 +100,21 @@ export struct Sound {
     func getPan(): float {
         if not ok { return 0.0 }
         return _float(core.lib().ma_dll_sound_get_pan(h))
+    }
+
+    // ==================== 2026-10-07 新增（给"播放器"用 ✓）====================
+    // 暂停 / 恢复：miniaudio 的 Sound 只有 start/stop ✗ —— 但**实测 `stop()` 会保留播放位置** ✓
+    //   ⇒ 暂停 = stop()、恢复 = play()（把语义写在 API 上，免得每个应用各写一遍 ✓）
+    func pause(): bool { return stop() }
+    func resume(): bool { return play() }
+
+    // 放完了没（"放完自动下一首"要它 ✓）
+    //   ⚠ 不能只看 `isPlaying() == false`：**没播过**也是 false ✗ ⇒ 用 `_started` 区分 ✓
+    //   ⚠ 对"只下了一半的文件"（下载是顺序追加 ⇒ 前缀自洽 ✓）：miniaudio 读到已写末尾就停
+    //     ⇒ 这里同样会判"到结尾" ✓（二期"边下边播"的看护逻辑正好靠它触发续接 ✓）
+    func isAtEnd(): bool {
+        if not ok or not _started { return false }
+        return not isPlaying()
     }
 
     func isInit(): bool { return ok }

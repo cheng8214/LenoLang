@@ -292,6 +292,25 @@ var gm = core.getGlobalMouse(); gm[0]           // ✗ 运行时抛「下标访�
 
 ## 七、回归用例怎么跑
 
+### ⛔ 自检钩子若用 `_exit(0)` **强杀**，就永远测不出"退出卡住" ✗（2026-10-07 实测）
+
+- `DSHOT` / `DAUTO` 这类截图/自动退出钩子若走 `_exit(0)` ⇒ 进程被**强杀** ✓ ⇒ 它**绕过了**正常收尾
+  （dispose 控件 → 释放设备/线程 → uninit ✓）⇒ 「点退出卡着」这种 bug 在自检里**永远不暴露** ✗✗
+- 要测退出：用 `SDL3.requestExit()` ✓ —— 它和 `SDL_QUIT` 走**同一套**收尾流程 ✓（见 sdl_window ✓）
+  ```leno
+      $env:DEXIT='20'      // 到第 20 拍走正常退出路径
+      win.addTimer(120, func() { if 到点了 then SDL3.requestExit() })
+  ```
+  然后**用超时判定**（PowerShell 例 ✓）：
+  ```powershell
+      $p = Start-Process build\leno.exe -ArgumentList '--no-cache','app.leno' -PassThru -NoNewWindow
+      if ($p.WaitForExit(9000)) { "已退出 code=" + $p.ExitCode } else { "★ 卡住"; $p.Kill() }
+  ```
+- ⚠ 常见"退出卡住"的原因：**外部设备/线程没释放** ✗ —— 音频设备（miniaudio）、下载 worker 线程、
+  串口/网络连接等 ✓ ⇒ 退出前显式关掉它们（在 `win.run(...)` 返回后统一收摊 ✓）
+- ⚠ 还有一类"看着像卡住、其实是**故意不关**"：应用里有"有任务在跑就别退"的守卫 ✗
+  ⇒ 退出前先看**状态栏那行字**（通常会写明为什么不给退 ✓）
+
 > **一条命令的 GUI 门禁**（仓库根）：`build\leno.exe assert\run_gui_checks.leno`
 > ① 递归编译 `leno_gui` 下所有 `.leno`（跳过 `.lenocache` / `_tmp*`）② 无头自检
 > `dashboard` / `dashboard_sidebar`（`SDL_VIDEODRIVER=dummy` + `DSHOT` 截图后退出）与
@@ -554,6 +573,204 @@ SDL3.createTitleBar({title: "我的应用",
   气泡与点击必须开窗口手点 ✓（见 §一）
 - ⛔ `actions` 是 `Array[Dict]`，**元素里的键写错不会报错**（`d.get(..., 默认值)` ⇒ 只是没效果 ✗）：
   顶层键（`actions` 本身）已登记进 `_opts_keys()`（写错会提示 ✓），元素键请照上面的名字写 ✓
+
+## 附录 B：`align` 在 HBox / VBox 里的真实语义（2026-10-07 实测 ✓）
+
+`add(child, {align: N})` 的 `align` 管的是**交叉轴**（HBox ⇒ 垂直；VBox ⇒ 水平），取值语义（见 `sdl_layout.relayout` ✓）：
+
+| align | 含义 | 用在哪 |
+| --- | --- | --- |
+| `0` | 靠起始边（左 / 上 ✓） | 文本靠左 |
+| `1` | **居中** | 按钮、图标、滑块这类"有自己个子"的控件 ✓ |
+| `2` | 靠结束边（右 / 下 ✓） | 右对齐的时间、序号 |
+| `3` | **撑满交叉轴** ✗ | 分隔线、整行条（要的就是铺满） |
+
+- ⛔ 最常踩的：给**按钮/滑块**写 `align: 3` ⇒ 它会被抻成整行高（HBox 里）或整列宽（VBox 里）✗
+  按钮背景跟着变形，看着就是"控件被拉伸了" ✗ —— 要**居中就用 `1`** ✓（本次实测栽过 ✓）
+- ⚠ 反过来：`h`/`w` 是为 `align: 1` 准备的；写了 `align: 3` 时那个 `h` 不生效 ✓
+- ⚠ 容器的交叉轴尺寸由 `innerW/innerH` 决定，**子控件的自然尺寸在 `add` 时记下**、之后每帧
+  `relayout` 都用它覆盖 `set_size` ✗ ⇒ 运行时想改**某个子控件的高度**，只能 `remove` + 重新 `add`
+  （并给 `basis` ✓）—— 光 `set_size` 是没用的 ✗
+
+### ⛔ 截断标签（`truncate`）放进容器：宽度也会被"冻结在 `add` 那一刻" ✗（2026-10-07 实测）
+
+`Label` 的截断上限 = **`min(max_w, 盒子宽度)`**（`sdl_label.leno:242` ✓）；而盒子宽度来自
+`_natW[i]` —— **`add()` 那一刻的自然宽度**，`align: 0/1/2` 时每帧照搬（`sdl_layout.leno:404` ✓）。
+
+⇒ 于是踩坑连锁（本仓实测 ✓）：
+1. 建窗时还没歌 ⇒ 文本短 ⇒ `_natW` ≈ 45px 被记下 ✗
+2. 之后 `set_text("很长的歌名")` ⇒ 盒子仍是 45 ✗（`align: 0` 不会重算）
+3. 截断上限 = `min(200, 45)` = **45** ⇒ 永远只剩「试听…」，右边空一大片 ✗✗
+
+```leno
+// ✗ 这样写：max_w 200 也没用，盒子宽才是硬边界
+info.add(songLbl, {grow: 0, shrink: 0, align: 0})
+
+// ✅ 正解：撑满交叉轴（拿下 innerW ✓）+ max_w **与块宽同源**（一个常量两处用 ✓）
+const float INFO_W = 200.0
+songLbl = SDL3.createLabel({text: t, font_size: 14, truncate: 1, max_w: INFO_W})
+info.add(songLbl, {grow: 0, shrink: 0, align: 3})     // ← 关键
+row.add(info, {grow: 0, shrink: 0, basis: INFO_W, align: 1})
+```
+- 想要"随块宽自动伸缩 + 超长才省略" ⇒ **`align: 3` + 两处同一个数** ✓（`player_bar.leno` 的 `INFO_W` 就是样板 ✓）
+- ⚠ 排障时别量错时机：`set_text` 之后**同一拍**读 `lbl.get_w()` 拿到的是"文本自然宽"（布局还没跑 ✗）
+  ⇒ 要**在渲染路径里量**（自绘回调里 ✓，那时 `relayout` 已经给过了 ✓）。本次就先后悔了一次 ✗
+
+### ⛔ 自绘浮层会"**穿透**"到下层控件 ⇒ 必须登记弹层捕获区（2026-10-07 ✓）
+
+容器派发事件是**挨个发给所有子控件**（`sdl_layout` 里 `for _c to c { c.process(ev) }` ✓ —— 没有命中测试、
+也没有"顶层优先" ✗）⇒ 每个控件自己判"鼠标在我矩形内"就响应 ⇒ 浮层底下的 table/按钮 **照样跟着响应** ✗
+（实测：歌单浮层里挪鼠标，底下表格的悬停/提示、甚至右键菜单都会冒出来 ✗）。
+
+框架自带机制：**弹层捕获区** —— 所有标准控件在 `process` 开头都有
+`if SDL3.inPopupCapture(mx,my) { return }`（table/button/slider/label/listbox… ✓），库内 Menu/ComboBox 就靠它 ✓。
+
+```leno
+// ✅ 浮层自带一块**透明画布**当"登记员"（和浮层同矩形、同挂同摘 ✓）
+capSink = SDL3.createCanvas({w: W, h: H, pad: 0, border: false, border_width: 0})
+capSink.set_bg_color(#00000000)                 // 画布默认有不透明底 ✗（见 ④.5）
+capSink.on_draw(func(Renderer r, float ox, float oy, float cw, float ch) {
+    SDL3.setPopupCapture(lb.x, lb.y, lb.w, lb.h)     // ★ 每帧渲染期登记一次
+})
+```
+- ⚠ **必须"每帧登记"**：框架每帧渲染前会 `clearPopupCapture()`（`sdl_window` ✓）⇒ 只登记一次会在下一帧失效 ✗
+  （事件处理在 render 之前 ⇒ 用的是**上一帧**登记的块，跨帧持久 ✓ 不受控件处理顺序影响 ✓）
+- ⚠ 登记后**连浮层自己的控件也会被挡** ✗（ListBox 也带那句守卫 ✓）⇒ 浮层要在事件回调里
+  **直投**给它：`if 在浮层矩形内 { lb.process(ev) }` ✓（滚轮/悬停靠它自己维护 ✓，库内同款范式 ✓）
+- ✅ 捕获区**按窗口隔离**（2026-10-07 修 ✓）：判定只看"当前上下文窗口"那一块
+  ⇒ A 窗口开浮层不会把 B 窗口同屏位置也挡住 ✓；应用回调里直投时"无上下文"⇒ 不拦 ✓
+- 现成样板：`leno_gui\应用\音乐下载器\player_bar.leno`（歌单浮层 ✓）+ `assert\test_popup_capture.leno`（隔离语义 ✓）
+
+### 想做"浮层 / 弹出面板"（下拉、歌单、气泡）⇒ 用 `AnchorBox` ✓
+
+**渲染顺序就是层级**（框架没有 z 轴 API ✗）⇒ 浮层必须画在它要盖住的那些控件**之后** ✓。
+
+```leno
+    var box = SDL3.createAnchorBox({w: 0, h: 主行高})        // 外盒：只占主行那么高 ✓
+    box.add(row,   {left: 0, right: 0, top: 0, h: 主行高})    // 常规内容
+    // 浮层：只给 bottom ⇒ “底边贴着父盒底边**往上**量” ⇒ 它就是向上长 ✓（见 relayout 的 bottom 分支）
+    box.add(popup, {right: 10, bottom: 主行高 + 16.0, w: 360, h: 160})
+```
+- `left/right` 同给 ⇒ 自动拉伸宽度 ✓；只给 `bottom` ⇒ **底边锚定**（`py = by + bh - b - ch` ✓）
+- `AnchorBox` **不裁剪**越界子项 ⇒ 摆在盒子外面没问题 ✓（浮层都是这么摆的 ✓）
+- ⚠ 浮层外盒要留出**缺口**（如 16px）：浮层下方的兄弟控件（忙指示细线、状态栏）是在它**之后**
+  才渲染的 ✗ ⇒ 贴太近会被它们压掉一角 ✓
+- ⚠ **收起时要真的 `remove`**：容器的 `process` **不看 `visible`** ✗ ⇒ 留个看不见的浮层会把
+  它那一带的点击全吃掉 ✗✗（"点外面即收"时尤其明显 ✓）
+- ⚠ 增删**别在事件回调里做**（那是在容器遍历子控件的过程中改数组 ✗）⇒ 回调只置意图，
+  真正的 `add/remove` 放到定时器的 tick 里做 ✓
+- "失去焦点即收"：把窗口事件转给浮层（宿主 `win.run(onEvent, …)` 里转发 ✓），命中测试用
+  `AnchorBox` 的公开字段 `x/y/w/h` 自己算矩形（它**没有** `get_x/get_y` ✗）；ESC 的处理要排在
+  "ESC 关窗口"**之前** ✗ 否则按 ESC 会直接退程序 ✓
+
+## 附录 C：三个实测坑（点击 / 断言 / 自测注入；2026-10-07 ✓）
+
+### ① ⛔ `ListBox`（单选）**点"已选中那一行"不回调** ✗
+
+`sdl_listbox.leno` 里是 `if not is_selected(idx) { … onChange(sel) }` ✓ ⇒ 单选模式下，
+点**已经在选中的行** ⇒ 既不改变选中、也不回调 ✗。
+这坑很隐蔽：列表初值若"预选中当前项"（比如歌单把正在播的曲子设为选中 ✓），
+用户点那一行就会**毫无反应** ✗（本次实测就是这么踩的 ✓）。
+
+```leno
+    // 别只靠 on_change 判"点了哪一行"；要覆盖"点当前行"，就自己按纵坐标算行号 ✓
+    //   （镜像 ListBox 的 pri func index_at：`idx = (my - y + scroll) / itemH` ✓ 无内边距 ✓）
+    int r = _int((my - lb.y + lb.get_scroll()) / 22.0)
+    if r >= 0 and r < n { play(r) }
+```
+（或者干脆别预选中 ✗ —— 但那样就看不到"哪首正在播"的高亮 ✓ 取舍看场景 ✓）
+
+### ② ⛔ 断言别读 `lbl.text`：它**读不到 `set_text` 之后的新值** ✗
+
+本次实测：`stateLbl.set_text(...)` 之后，隔几帧再读 `stateLbl.text` 仍是**旧值** ✗
+⇒ 拿它做断言会得到**假阴性** ✓（我因此白查了一轮 ✓）。
+要断言就读自己的状态量（如 `bar.cur_index()` ✓），或让控件暴露一个 getter ✓。
+
+### ③ ⛔ HBox 里 `grow > 0` **连交叉轴一起撑满** ✗（进度条会变成圆饼 ✓ 实测）
+
+`sdl_layout` 的 HBox 排版里：`if align == 3 { ch = innerH } else if g > 0.0 { ch = innerH }` ✗
+⇒ 想让某个子项**横向吃满剩余宽度**而写了 `grow: 1` ✓ ⇒ 它的**高度也被拉成整行高** ✗。
+
+- 症状：一条 `ProgressBar/h: 8` 在 52px 高的行里被拉成 8..52 ✗，若宽度又被其他子项挤窄 ⇒
+  `drawBar` 用 `h/2` 当圆角 ⇒ 看着就是**一个大圆饼** ✗（本次实测 ✓）
+- ✅ 解法一：那个子项改成**画布自绘** ⇒ 画布照旧 `grow` 吃宽度 ✓，里头的条高自己定（居中画 8px ✓）
+- ✅ 解法二：用 `minH/maxH` 约束（`relayout` 认这两个键 ✓）；⚠ 但 `g>0` 分支会把它**顶到行首** ✗
+  （`cy = y + pt` ✓）⇒ 想垂直居中就别用 grow ✓
+
+### ④.5 ⛔ 自绘控件（`Canvas`）默认有**不透明底** ⇒ 看着像"自绘的东西带白底" ✗
+
+`Canvas` 默认 `bgColor` 是深色，但 `applyTheme` 会把它设成 **主题的"输入框底色"**
+（`sdl_canvas.leno:107 bgColor = th.bgInput` ✓）⇒ **浅色主题下就是白白一块** ✗。
+你只想画一条线/一个圆，却得到一个方底 ✓（本仓实测：进度条上就是这么冒出来的 ✓）。
+
+```leno
+    Canvas c = SDL3.createCanvas({w: 400, h: 52, pad: 0, border: false, border_width: 0})
+    c.set_bg_color(#00000000)        // ★ 必须**用 setter**：写进 opts 会被 applyTheme 覆盖 ✗
+```
+- 同一个坑在别的控件上也一样（`Button` 悬停色那次 ✓）⇒ **凡"主题也会管的颜色"，创建后用 setter 压 ✓**
+- ⚠ `border: false` 只是不画边框；布局仍按 `border_width`(默认 1) **内缩** ⇒ 要精确尺寸就一并给 `border_width: 0` ✓
+- ⚠ 转盘/图标这类"我自己画形状"的画布**都要设透明** ✓：不然圆外的角是一块实心底 ✗
+  （颜色恰好和页面撞上时看不出来 ✗ —— 换主题/换底色就露馅 ✓）
+- 验证方式（本仓惯例 ✓）：截图后**按列取色** ✓ —— 期望"只有页面色 + 我画的那点颜色"，多出别的色就是控件底 ✓
+
+### ④ ⛔ `Button` 的"自然宽度"**把图标也算进去** ⇒ 容器凭空变宽 ✗
+
+实测：三个 `w: 34/46/34` 的纯图标按钮放在一个 HBox 里 ⇒ 那个 HBox **自报 ≈248px**（不是 122 ✗）
+⇒ 它后面就多出 ~130px 空档 ✗（我怎么算都对不上 ✓ 最后靠打印每个子项的 x 才揪出来 ✓）。
+
+- ✅ 给容器（或子项）**显式 `basis`** ✓ —— 布局对 `basis` 是认的 ✓
+  （同一个界面里，转盘 `basis: 44`、信息列 `basis: 200` 都精确对上 ✓ 只有没给 basis 的两个容器飘 ✓）
+- 排障套路 ✓：**别靠算** ✗ —— 把每个子项的 `x/w` 打出来（本仓的播放条就是这么定位的 ✓）
+
+### ⑤ ⚠ 自测注入点击：**先注入一次移动**，否则按钮偶发不生效 ✗
+
+`SDL3.testClickAt(wid, x, y)` 只发 down/up ✓ ⇒ 若按钮的点击判定依赖 `hover`，
+"同一坐标有时开门、有时不开" ✗（实测 ✓）。**先 `testMoveAt(wid, x, y)` 再点击** ✓
+（真人点之前总会有移动 ✓）。坐标是**客户区**坐标 ✓（见 sdl_window:271 那段教训 ✓）。
+
+### ⑥ ⛔ 图标按钮"没有 hover"：`background: false` 会连 hover 一起跳过 ✗
+
+- `background: false`（"只要图标"）会把 **背景 + hover + 按压** 整块跳过 ✗
+  （`sdl_button.leno` 里 `if showBackground { … }` ✓）⇒ 表现就是"鼠标移上去毫无反应" ✗
+- 那改用框架给纯图标按钮的自动高亮行不行 ✗ —— 它**写死是白色** `#FFFFFF23`
+  （`if iconOnly and (hover or pressed)` ✓）⇒ 落在**浅色**界面上白压白 = 看不见 ✗✗（本次实测 ✓）
+  （`文件管理器` 用它有效果，是因为那边页面底色不同 ✓）
+- ✅ 正解（照 `leno_gui\应用\电脑清理大师\cleaner_master.leno:221-240` ✓）：
+  `background: true` + **与页面同色**的 `bg_color`（平时＝看不出有底 ✓）
+  + 显式 `hover_color` / `pressed_color`（比页面略深 ✓）
+  + `border: false, shadow: false`（浅色页面上别冒白边/阴影 ✗）
+```leno
+    Button b = SDL3.createButton({w: 32, h: 28, text: "", background: true,
+        bg_color: #F0F0F5FF, hover_color: #E2E5EBFF, pressed_color: #D3D7DEFF,   // 页面色 → 悬停略深 ✓
+        border: false, shadow: false, image_path: "…/play.png"})
+```
+- ⚠ 想靠"把图标变灰/变亮"来区分状态时**别用 `image_tint`** ✗：它是**相乘**着色 ⇒
+  只会让深色图标更黑 ✓（浅色图标才适合用它 ✓）⇒ 改用**底色**区分 ✓
+- ⚠ 顺带：`background` 是**开关**（true/false），**不是颜色** ✗（给颜色要写 `bg_color` ✓）
+
+## 附录 A：生成**带透明**的 PNG（做图标用；2026-10-07 实测 ✓）
+
+要"画一次、控件复用"的小图标（播放/暂停/上一曲…），离线生成 PNG 比每帧自绘省得多 ✓
+（`Button` 本来就有 `image_path` / `image_hover` / `image_tint` ✓ 生成物交给它就行 ✓）。
+
+- ⛔ **最大的坑：别把图标画在窗口后缓冲上再 `readPixelsAt`** —— 后缓冲**没有 alpha 通道** ✗
+  ⇒ 你 `clearColor(#00000000)` 的"透明底"存出来是**实心黑** ✗（图标带黑底，深色主题上看着像个黑方块 ✗）
+- ✅ 正解：渲染到一张 **ARGB8888 的 target 纹理**上（目标纹理带 alpha ✓），再读它：
+```leno
+    var win = SDL3.createWindow({title: "gen_icons", w: sz, h: sz})   // 无头跑记得 SDL_VIDEODRIVER=dummy
+    Renderer r = SDL3.createRenderer(win.handle)
+    Ptr[u8] tex = r.createTexture(SDL3.PIXELFORMAT_ARGB8888, SDL3.TextureAccess.TARGET, sz, sz)
+    r.setRenderTarget(tex)              // ★ 关键：切到带 alpha 的目标
+    r.clearColor(#00000000)             // 透明底（这次留得住 ✓）
+    ...画图标（纯白 ✓ 颜色交给 image_tint）...
+    // ⚠ 这里**不要** present()：present 是给窗口后缓冲的，目标纹理上没意义 ✗
+    var s = r.readPixelsAt(0, 0, sz, sz)        // 读的是**当前渲染目标** ✓
+    SDL3.saveImagePNG(s, "images\\play.png")    // 色彩类型 6 = RGBA ✓
+    r.setRenderTarget(null); SDL3.destroyTexture(tex)
+```
+- 怎么**验证真的透明**：看 PNG 第 25 字节（色彩类型）—— `6` = RGBA ✓ / `2` = RGB（没 alpha ✗）
+- 尺寸按**显示尺寸 1:1** 生成（如按钮上显示 24px 就出 24px ✓）：缩放会插值 ⇒ 白图标边上发灰 ✗
+- 现成例子：`tools\gen_player_icons.leno`（7 个播放器图标 ✓）；用法 `build\leno.exe tools\gen_player_icons.leno [输出目录] [边长]`
 
 ## 十、Table 单元格：进度条列 与 自绘回调（2026-10-07 新增 ✓）
 
