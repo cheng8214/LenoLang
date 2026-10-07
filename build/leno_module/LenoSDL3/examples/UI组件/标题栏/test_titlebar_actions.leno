@@ -1,0 +1,88 @@
+// test_titlebar_actions.leno — 标题栏「动作按钮」（actions）示例 + **无头自检** ✓
+//
+// 有窗口时看效果、手点（在**仓库根目录**执行）：
+//   build\leno.exe build\leno_module\LenoSDL3\examples\UI组件\标题栏\test_titlebar_actions.leno
+// 无头自检（只建窗 + 断言，不跑交互 ⇒ 不需要显示器 ✓）：
+//   $env:SDL_VIDEODRIVER='dummy'; $env:TITLEBAR_ACTIONS_HEADLESS='1'
+//   build\leno.exe --no-cache build\leno_module\LenoSDL3\examples\UI组件\标题栏\test_titlebar_actions.leno
+//
+// ⚠ 无头下**收不到任何事件**（点击/模态都别指望，见 docs/SDL3常用API与易踩坑速查.md §一）⇒
+//   自检只断言"建窗 + 动作按钮状态"；气泡/点击请开窗口手点 ✓
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer, Window, TitleBar, Label, VBox, Scancode)
+use SDL3.TitleBarAction
+
+int PASSED = 0
+int FAILED = 0
+
+func ok(string name, bool cond) {
+    if cond {
+        PASSED = PASSED + 1
+        print("  [ok] " + name)
+    } else {
+        FAILED = FAILED + 1
+        print("  [FAIL] " + name)
+    }
+}
+
+main() {
+    SDL3.ttfInit()
+    SDL3.setTheme(SDL3.lightTheme())
+    Window win = SDL3.createWindow({title: "标题栏动作按钮示例", w: 720, h: 320, flags: 0x20})
+    if not win.ok {
+        print("[FAIL] 窗口创建失败")
+        SDL3.ttfQuit()
+        _exit(1)
+    }
+
+    // ① 声明式：齿轮 + 太阳 —— **都是内置矢量图标 ⇒ 0 资源文件** ✓
+    //    位置：与最小化/最大化/关闭**同一排**、在它们内侧；声明顺序 = 从系统按钮往内侧排 ✓
+    TitleBar tb = SDL3.createTitleBar({title: "标题栏动作按钮示例", height: 32, font_size: 14,
+        actions: [{id: "settings", icon: "gear", tip: "设置（点我试试）"},
+                  {id: "theme", icon: "sun", tip: "换主题"}]})
+    win.add(tb)
+    // 点击回调：拿到的就是 actions 里的 id ✓（动作区**不会**误触发拖窗/双击最大化 ✓）
+    tb.on_action(func(string id) {
+        print("  [事件] 点了动作按钮：" + id)
+    })
+
+    // ② 自检（不依赖事件 ⇒ 无头下同样成立 ✓）
+    ok("动作按钮进到位（2 个）", tb.action_count() == 2)
+    Array[TitleBarAction] acts = tb.get_actions()
+    ok("顺序 = 声明顺序（先声明的更靠系统按钮 ✓）", acts[0].id == "settings" and acts[1].id == "theme")
+    ok("tip 落位（悬停出气泡用 ✓）", acts[0].tip == "设置（点我试试）")
+    ok("内置矢量名判定：gear ✓ / 图片路径 ✗",
+        SDL3.is_builtin_icon("gear") and SDL3.is_builtin_icon("sun") and not SDL3.is_builtin_icon("images/x.png"))
+
+    // ③ 运行时增删改（不重建标题栏 ✓）
+    tb.add_action({id: "pin", icon: "star", tip: "置顶"})
+    ok("add_action 后 3 个", tb.action_count() == 3)
+    tb.set_action_icon("pin", "images/not_exist.png")   // 换图片路径：加载不出来就画个小点，不崩 ✓
+    tb.set_action_enabled("pin", false)                 // 禁用 ⇒ 变灰且不可点 ✓
+    tb.remove_action("pin")
+    ok("remove_action 后回到 2 个", tb.action_count() == 2)
+    ok("剩下的还是原来那两个", tb.get_actions()[0].id == "settings" and tb.get_actions()[1].id == "theme")
+
+    if _env_or("TITLEBAR_ACTIONS_HEADLESS", "") == "1" {
+        print("")
+        print("通过 " + _str(PASSED) + " / 失败 " + _str(FAILED) + "（无头模式：未跑交互 ✓）")
+        SDL3.ttfQuit()
+        if FAILED > 0 { _exit(1) }
+        return
+    }
+
+    // ④ 交互：手点齿轮/太阳看气泡与回调；ESC 或 ✕ 退出 ✓
+    var root = SDL3.createVBox({padX: 16, padY: 16, spacing: 8})
+    root.add(SDL3.createLabel({text: "点标题栏右侧的齿轮 / 太阳；鼠标停一会儿会出气泡 ✓", font_size: 14}),
+             {grow: 0, shrink: 0, align: 0})
+    win.setRootAt(root, 0, tb.get_h())
+    win.run(
+        func(Event ev): bool {
+            if ev.isQuit() or ev.isWindowClose() { return false }
+            if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) { }
+    )
+    SDL3.ttfQuit()
+}

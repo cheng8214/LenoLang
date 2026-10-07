@@ -49,7 +49,7 @@ use spl.Splitter
 import "sdl_drag.leno" as drag
 use drag.DragHint
 import "sdl_titlebar.leno" as tbar
-use tbar.TitleBar
+use tbar.(TitleBar, TitleBarAction)   // 标题栏 + 它的**动作按钮**类型（2026-10-07 新增 ✓）
 import "sdl_canvas.leno" as cnv
 use cnv.Canvas
 import "sdl_popmenu.leno" as pmenu; use pmenu.PopMenu    // 自绘弹出菜单（图标传图片路径，同 MenuBar ✓）
@@ -137,6 +137,9 @@ export func createGridLayout(Dict opts): GridLayout { return grd.createGridLayou
 export func createSplitter(Dict opts): Splitter    { return spl.createSplitter(opts) }
 export func createDragHint(Dict opts): DragHint     { return drag.createDragHint(opts) }
 export func createTitleBar(Dict opts): TitleBar       { return tbar.createTitleBar(opts) }
+// 标题栏「动作按钮」的两个纯函数也透出去（调用方/示例/测试都靠同一份判定 ✓，2026-10-07 ✓）
+export func parseTitleBarActions(Array[Dict] src): Array[TitleBarAction] { return tbar.parseTitleBarActions(src) }
+export func is_builtin_icon(string n): bool { return tbar.is_builtin_icon(n) }
 export func createCanvas(Dict opts): Canvas            { return cnv.createCanvas(opts) }
 export func isTrayEntryChecked(Ptr[u8] e): bool   { return tray.isEntryChecked(e) }
 export func isTrayEntryEnabled(Ptr[u8] e): bool   { return tray.isEntryEnabled(e) }

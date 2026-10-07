@@ -483,3 +483,59 @@ build\leno.exe --no-cache leno_gui\应用\Trae签到\trae_gui.leno
 `r.readPixelsAt(...)` + `SDL3.saveImagePNG` ✓，本次就是这么做布局核对的 ✓
 ⚠ 但**图标**在这种探针里可能不出现：图片 DLL / 相对路径是按**脚本所在目录**找的 ✗
 ⇒ 看图标请直接跑应用本身 ✓）
+
+---
+
+## 九、标题栏：自定义动作按钮（`actions`，2026-10-07 新增 ✓）
+
+原标题栏只有"最小化 / 最大化 / 关闭"三个固定位；现在**能把任意图标按钮塞进同一排**（系统按钮内侧）✓
+应用侧只要三行：
+
+```leno
+TitleBar tb = SDL3.createTitleBar({title: "我的应用", height: 32, actions: [
+    {id: "settings", icon: "gear", tip: "设置"},
+    {id: "theme",    icon: "sun",  tip: "换主题"}
+]})
+tb.on_action(func(string id) { if id == "settings" { openSettings() } })
+```
+
+> 示例 + **无头自检**：`examples/UI组件/标题栏/test_titlebar_actions.leno`（建窗 + 断言 ⇒ 不需要显示器 ✓）；
+> 真实用法：`leno_gui\应用\音乐下载器\musicdl_gui.leno`（标题栏右侧齿轮 ⇒ 打开设置窗口 ✓）
+
+### 位置与顺序（不用自己算坐标 ✓）
+- 一律排在系统按钮的**内侧**：`btn_align:"right"`（默认）⇒ 紧挨最小化左边；`"left"` ⇒ 紧挨关闭右边 ✓
+- **声明顺序 = 从系统按钮往内侧排**（第一个声明的离系统按钮最近 ✓）
+- 每个动作占一格 `btn_width`（与系统按钮同宽 ⇒ 一排看着齐）；标题与 `center_widget` 的留白按
+  "系统按钮 + 动作按钮"**整条带子**算 ⇒ **没传 `actions` 时与旧版逐像素一致**（老应用零影响 ✓）
+
+### 图标两种给法
+1. **内置矢量名**（**不需要任何图片资源** ✓）：`gear`/`settings`(齿轮)、`menu`、`search`、`star`、
+   `info`/`help`、`refresh`、`sun`、`home`、`dot`
+   —— `SDL3.is_builtin_icon(name)` 可查；**不在表里的一律当图片路径** ✓
+2. 图片路径：`images/x.png` ⇒ 按 id 缓存纹理（换路径自动重载；加载失败画一个小点，**不崩** ✓）
+
+- 键名用 `icon`（与本控件 `icon_minimize` / `icon_close` 一族一致 ✓）；`image` 也认（菜单那套键名 ✓）
+
+### 悬停气泡
+- **复用框架的 tooltip**（`sdl_tooltip`，与 Button/CheckBox 同一套延迟与配色）✓ ⇒ `tip` 直接写中文即可
+- 动作区与系统按钮**互斥**：停在动作按钮上不会亮"最小化/最大化"的悬停底色 ✓
+
+### 点击
+- `tb.on_action(func(string id){ … })`，参数就是 `actions` 里的 `id` ✓
+- ⚠ 动作按钮**不会**误触发"拖窗口 / 双击最大化"（`process()` 里先判动作区，命中就只回调 ✓）
+
+### 运行时增删改（不用重建标题栏）
+| 调用 | 作用 |
+| --- | --- |
+| `add_action({id, icon, tip, enabled})` | 追加；**id 已存在 ⇒ 就地替换** ✓ |
+| `remove_action(id)` / `clear_actions()` | 移除（连带释放图片纹理 ✓）|
+| `set_action_icon(id, name)` / `set_action_tip(id, t)` / `set_action_enabled(id, v)` | 换图标 / 提示 / 禁用（禁用 ⇒ 变灰且不可点 ✓）|
+| `get_actions()` / `action_count()` | 只读快照（自检就靠它 ✓）|
+
+### 三个坑（都实测过 ✓）
+- ⛔ **变量名不能叫 `as`**：`Array[TitleBarAction] as = tb.get_actions()` 会报"期望变量名"
+  （`as` 是类型转换关键字）⇒ 改叫 `acts` ✓
+- ⛔ 无头（`SDL_VIDEODRIVER=dummy`）下**收不到事件**：点击/模态都别指望 ⇒ 自检只断言状态，
+  气泡与点击必须开窗口手点 ✓（见 §一）
+- ⛔ `actions` 是 `Array[Dict]`，**元素里的键写错不会报错**（`d.get(..., 默认值)` ⇒ 只是没效果 ✗）：
+  顶层键（`actions` 本身）已登记进 `_opts_keys()`（写错会提示 ✓），元素键请照上面的名字写 ✓

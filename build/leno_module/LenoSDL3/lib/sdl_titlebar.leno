@@ -54,14 +54,66 @@ import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 use theme.Color
 import "sdl_image.leno" as img
 import "sdl_menu.leno" as mnu; use mnu.MenuBar
+import "sdl_tooltip.leno" as tip    // 悬停提示复用框架那一套（与 Button/CheckBox 同一手感 ✓）
 
 
 // 本控件认的键 —— 由本文件全部 `.get("…")` **自动抽取**（是超集 ⇒ 可少报、不误报 ✓）
 //   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
 func _opts_keys(): Array[string] {
     return [
-"bg_color", "btn_align", "btn_spacing", "btn_width", "close", "close_hover_color", "font_path", "font_size", "height", "hover_color", "icon_close", "icon_color", "icon_maximize", "icon_minimize", "icon_restore", "icon_size", "maximize", "minimize", "separator_color", "show_close", "show_maximize", "show_minimize", "show_separator", "text_color", "title", "title_align", "title_pad"
+"actions", "bg_color", "btn_align", "btn_spacing", "btn_width", "close", "close_hover_color", "font_path", "font_size", "height", "hover_color", "icon_close", "icon_color", "icon_maximize", "icon_minimize", "icon_restore", "icon_size", "maximize", "minimize", "separator_color", "show_close", "show_maximize", "show_minimize", "show_separator", "text_color", "title", "title_align", "title_pad"
 ]
+}
+
+// ==================== 动作按钮（自定义，2026-10-07）====================
+// 原标题栏只有"最小化/最大化/关闭"三个固定位；`actions` 让调用方**往按钮组里加自己的图标按钮** ✓
+//   位置：系统按钮的**内侧**（btn_align="right" ⇒ 从最小化往左排；"left" ⇒ 从关闭往右排）✓
+//   图标两种给法（都不需要额外资源文件时用 ① ✓）：
+//     ① **内置矢量名**：gear(齿轮) / menu / search / star / info / refresh / sun / home / dot
+//     ② 图片路径："images/set.png" ⇒ 按 id 缓存纹理（与 icon_minimize 那套同源 ✓）
+//
+// 用法（声明式）：
+//   TitleBar tb = SDL3.createTitleBar({title: "…", actions: [
+//       {id: "settings", icon: "gear", tip: "设置"},
+//       {id: "theme",    icon: "sun",  tip: "换主题"}
+//   ]})
+//   tb.on_action(func(string id) { if id == "settings" { openSettings() } })
+// 用法（运行时）：tb.add_action({id:"pin", icon:"images/pin.png", tip:"置顶"}) / set_action_icon / remove_action ✓
+//
+// ⚠ 键名用 `icon`（与本控件的 icon_minimize/icon_close 一族一致 ✓）；也收 `image`（菜单那套键名）✓
+export struct TitleBarAction {
+    string id = ""
+    string icon = ""
+    string tip = ""
+    bool enabled = true
+}
+
+func _makeAction(Dict d): TitleBarAction {
+    TitleBarAction a = new TitleBarAction()
+    a.id     = d.get("id", "")
+    a.icon   = d.get("icon", d.get("image", ""))
+    a.tip    = d.get("tip", "")
+    a.enabled = d.get("enabled", true)
+    return a
+}
+
+// 把调用方给的 Array[Dict] 解析成 Array[TitleBarAction]（**没有 id 的直接丢**：删/改都靠 id ✓）
+export func parseTitleBarActions(Array[Dict] src): Array[TitleBarAction] {
+    Array[TitleBarAction] out = []
+    for src.len() to i {
+        TitleBarAction a = _makeAction(src[i])
+        if a.id != "" { out.add(a) }
+    }
+    return out
+}
+
+// 是不是"内置矢量图标名"（不是 ⇒ 当图片路径处理 ✓）。导出 ⇒ 调用方/测试都能用同一份判定 ✓
+export func is_builtin_icon(string n): bool {
+    if n == "gear" or n == "settings" { return true }
+    if n == "menu" or n == "search" or n == "star" { return true }
+    if n == "info" or n == "help" or n == "refresh" { return true }
+    if n == "sun" or n == "home" or n == "dot" { return true }
+    return false
 }
 export struct TitleBar impl Widget, Themeable {
     // ==================== 关联常量 ====================
@@ -128,6 +180,12 @@ export struct TitleBar impl Widget, Themeable {
     pri string imgClose = ""; pri Ptr[u8]? texClose; pri string loadClose = ""
     pri float iconImgSize = 16.0
 
+    // ==================== 动作按钮（自定义；用法见文件头）====================
+    pri Array[TitleBarAction] actions = []   // 图标按钮（顺序 = 从系统按钮往内侧排 ✓）
+    pri string actionHover = ""               // 当前悬停的动作 id（空 = 无）
+    pri Dict actionTex = {}                   // id -> 纹理（只给图片图标用；矢量名不进这里 ✓）
+    pri Dict actionLoad = {}                  // id -> 已加载路径（避免重复加载 ✓）
+
     // ==================== 状态 ====================
     pri int    btnHover = BTN_NONE   // 悬停按钮（BTN_NONE/MIN/MAX/CLOSE）
     pri bool   maximized = false
@@ -159,6 +217,7 @@ export struct TitleBar impl Widget, Themeable {
     pri func():void onClose = null
     pri func():void onMinimize = null
     pri func():void onMaximize = null
+    pri func(string):void onAction = null   // 动作按钮被点击（参数 = 动作 id ✓）
 
     // ==================== set 初始化 ====================
 
@@ -197,6 +256,11 @@ export struct TitleBar impl Widget, Themeable {
         imgRestore = opts.get("icon_restore", "")
         imgClose = opts.get("icon_close", "")
         iconImgSize = opts.get("icon_size", 16.0)
+
+        // 动作按钮：给了 Array[Dict] 就解析（没有 id 的会被丢掉，见 parseTitleBarActions ✓）；
+        //   没给 ⇒ 保持空数组（老代码行为完全不变 ✓）
+        var acts = opts.get("actions", [])
+        if acts is Array[Dict] { actions = parseTitleBarActions(acts) }
 
         ensure_font()
         _loaded = true
@@ -252,7 +316,9 @@ export struct TitleBar impl Widget, Themeable {
     }
 
     // ==================== 按钮位置计算 ====================
-    // 根据 _btnAlign 从右到左（BTN_ALIGN_RIGHT）或从左到右（BTN_ALIGN_LEFT）排列按钮
+    // 系统按钮（最小化/最大化/关闭）+ 自定义**动作按钮**排在**同一条带子**上：
+    //   动作按钮一律在系统按钮的**内侧**（右对齐 ⇒ 从最小化再往左；左对齐 ⇒ 从关闭再往右）✓
+    //   声明顺序 = 从系统按钮往内侧排（第一个声明的离系统按钮最近 ✓）
     // 返回各按钮的起始 X 坐标（-1 表示该按钮不显示）
     pri func btnPositions(): Dict {
         Dict pos = {}
@@ -270,6 +336,13 @@ export struct TitleBar impl Widget, Themeable {
             if showClose {
                 pos["close"] = curX
             } else { pos["close"] = -1.0 }
+            // 动作按钮：接在系统按钮右边
+            float acur = x + btnTotalWidth()
+            for actions.len() to i {
+                acur = acur + btnSpacing
+                pos[actions[i].id] = acur
+                acur = acur + btnWidth
+            }
         } else {
             // Windows/Linux 风格：按钮在右侧，从右到左排列
             float curX = w - btnWidth
@@ -284,11 +357,17 @@ export struct TitleBar impl Widget, Themeable {
             if showMinimize {
                 pos["minimize"] = curX
             } else { pos["minimize"] = -1.0 }
+            // 动作按钮：接在系统按钮左边（第一个声明的紧贴最内侧的系统按钮 ✓）
+            float acur = w - btnTotalWidth()
+            for actions.len() to i {
+                acur = acur - btnSpacing - btnWidth
+                pos[actions[i].id] = acur
+            }
         }
         return pos
     }
 
-    // 返回按钮组占据的总宽度
+    // 系统按钮组占据的总宽度
     pri func btnTotalWidth(): float {
         int count = 0
         if showMinimize { count = count + 1 }
@@ -298,22 +377,27 @@ export struct TitleBar impl Widget, Themeable {
         return _float(count) * btnWidth + _float(count - 1) * btnSpacing
     }
 
+    // 动作按钮组占据的总宽度（含每个动作前的一次 btnSpacing ✓）
+    pri func actionTotalWidth(): float {
+        int n = actions.len()
+        if n == 0 { return 0.0 }
+        return _float(n) * (btnWidth + btnSpacing)
+    }
+
+    // 整条按钮带的总宽度（系统 + 动作）—— 标题/中间控件留白按它算 ✓
+    pri func barTotalWidth(): float {
+        return btnTotalWidth() + actionTotalWidth()
+    }
+
     // 返回按钮区域的左边界 X 坐标
     pri func btnAreaLeft(): float {
         if btnAlign == BTN_ALIGN_LEFT { return x }
-        var pos = btnPositions()
-        float minP = pos.get("minimize", w)
-        if showMinimize and minP >= 0.0 { return minP }
-        float maxP = pos.get("maximize", w)
-        if showMaximize and maxP >= 0.0 { return maxP }
-        float closeP = pos.get("close", w)
-        if showClose and closeP >= 0.0 { return closeP }
-        return w
+        return w - barTotalWidth()
     }
 
     // 返回按钮区域的右边界 X 坐标（不含 padding）
     pri func btnAreaRight(): float {
-        if btnAlign == BTN_ALIGN_LEFT { return x + btnTotalWidth() }
+        if btnAlign == BTN_ALIGN_LEFT { return x + barTotalWidth() }
         return w
     }
 
@@ -334,6 +418,34 @@ export struct TitleBar impl Widget, Themeable {
         if showMaximize and mx >= maxP and mx < maxP + btnWidth { return 2 }
         if showMinimize and mx >= minP and mx < minP + btnWidth { return 1 }
         return 0
+    }
+
+    // 鼠标落在哪个**动作按钮**上（返回动作 id；空 = 没有）—— 与系统按钮各管各的区域 ✓
+    pri func hitTestAction(float mx): string {
+        int n = actions.len()
+        if n == 0 { return "" }
+        var pos = btnPositions()
+        for n to i {
+            TitleBarAction a = actions[i]
+            float px = pos.get(a.id, -1.0)
+            if px >= 0.0 and mx >= px and mx < px + btnWidth { return a.id }
+        }
+        return ""
+    }
+
+    // 动作索引（-1 = 没有这个 id）
+    pri func action_index(string id): int {
+        for actions.len() to i {
+            if actions[i].id == id { return i }
+        }
+        return -1
+    }
+
+    // 动作是否可用（不存在的 id ⇒ 不可用 ✓）
+    pri func action_enabled(string id): bool {
+        int i = action_index(id)
+        if i < 0 { return false }
+        return actions[i].enabled
     }
 
     // ==================== 事件处理 ====================
@@ -453,6 +565,7 @@ if ev.isWindowRestored() { maximized = false; btnHover = BTN_NONE; motionSkipCou
         bool menuOpen = (centerIsMenu and embeddedMenu != null and embeddedMenu.isOpen())
         if not (my >= y and my < y + h and mx >= x) {
             if btnHover != BTN_NONE { btnHover = BTN_NONE; core.markFrameRedraw() }
+            if actionHover != "" { actionHover = ""; core.markFrameRedraw() }
             if menuOpen and centerWidget != null { centerWidget.process(ev) }
             return
         }
@@ -460,7 +573,7 @@ if ev.isWindowRestored() { maximized = false; btnHover = BTN_NONE; motionSkipCou
         // ★ 中间控件事件转发（让嵌入的 Edit/Button/MenuBar 等控件能接收输入）
         if centerWidget != null { centerWidget.process(ev) }
 
-        // 鼠标移动：更新按钮悬停状态
+        // 鼠标移动：更新按钮悬停状态（动作按钮与系统按钮**互斥** ✓）
         // ★ 窗口状态切换后的合成 Motion 事件跳过 hover 更新（_motionSkipCount > 0 时递减并跳过），
         //   避免窗口尺寸变化导致鼠标相对坐标落在关闭按钮上而误触红色悬停
         if ev.isMouseMotion() {
@@ -468,18 +581,35 @@ if ev.isWindowRestored() { maximized = false; btnHover = BTN_NONE; motionSkipCou
                 motionSkipCount = motionSkipCount - 1
             } else {
                 int oldHover = btnHover
-                btnHover = hitTestBtn(mx)
-                if btnHover != BTN_NONE {
+                string oldAHover = actionHover
+                actionHover = hitTestAction(mx)
+                if actionHover != "" {
+                    btnHover = BTN_NONE              // 停在动作区时不该再亮系统按钮 ✓
                     core.requestCursor(SystemCursor.POINTER)
+                    // 悬停提示复用框架那一套（与 Button/CheckBox 同一手感 ✓）
+                    int ai = action_index(actionHover)
+                    if ai >= 0 and actions[ai].tip != "" { tip.tipReport(actions[ai].tip, mx, my) }
+                } else {
+                    btnHover = hitTestBtn(mx)
+                    if btnHover != BTN_NONE {
+                        core.requestCursor(SystemCursor.POINTER)
+                    }
                 }
-                if oldHover != btnHover { core.markFrameRedraw() }
+                if oldHover != btnHover or oldAHover != actionHover { core.markFrameRedraw() }
             }
         }
 
-        // 鼠标按下：按钮点击或开始拖拽
+        // 鼠标按下：动作按钮 / 系统按钮 / 拖拽（三者互斥 ✓）
         if ev.isMouseButtonDown() and ev.mouseButton() == 1 {
+            string act = hitTestAction(mx)
             int btn = hitTestBtn(mx)
-            if btn == 3 and showClose {
+            if act != "" {
+                // 动作按钮：只回调 —— **不拖窗、也不双击最大化** ✓
+                if action_enabled(act) {
+                    if onAction != null { onAction(act) }
+                    core.markFrameRedraw()
+                }
+            } else if btn == 3 and showClose {
                 // 关闭
                 if onClose != null { onClose() }
                 else { closeRequested = true }
@@ -655,6 +785,21 @@ if ev.isWindowRestored() { maximized = false; btnHover = BTN_NONE; motionSkipCou
         if imgClose != "" and texClose == null and loadClose != imgClose {
             texClose = img.loadTexture(h, imgClose); loadClose = imgClose
         }
+        // 动作按钮的**图片**图标：按 id 缓存（矢量名不进这里 ⇒ 不会去文件系统找 ✓）
+        for actions.len() to i {
+            TitleBarAction a = actions[i]
+            if a.icon == "" or is_builtin_icon(a.icon) { continue }
+            string loaded = actionLoad.get(a.id, "")
+            if loaded != a.icon {
+                var old = actionTex.get(a.id, null)
+                if old != null {
+                    var op = old as Ptr[u8]
+                    releaseTex(op)
+                }
+                actionTex[a.id] = img.loadTexture(h, a.icon)
+                actionLoad[a.id] = a.icon
+            }
+        }
     }
 
     // ==================== 渲染 ====================
@@ -794,11 +939,110 @@ if ev.isWindowRestored() { maximized = false; btnHover = BTN_NONE; motionSkipCou
             }
         }
 
+        // 动作按钮（系统按钮内侧；位置顺序与 btnPositions 一致 ✓）
+        int acount = actions.len()
+        if acount > 0 {
+            var apos = btnPositions()
+            for acount to i {
+                TitleBarAction a = actions[i]
+                float ax = apos.get(a.id, -1.0)
+                if ax < 0.0 { continue }
+                if actionHover == a.id and a.enabled {
+                    r.setColor(hovColor)
+                    r.fillRect(ax, y, btnWidth, h)
+                }
+                if a.enabled {
+                    r.setColor(iconColor)
+                } else {
+                    r.setColor(sepColor)      // 禁用 ⇒ 用分隔线色弱化（一眼看出不可点 ✓）
+                }
+                drawActionIcon(r, a.icon, a.id, ax)
+            }
+        }
+
         // 底部分隔线
         if showSeparator {
             r.setColor(sepColor)
             r.fillRect(x, y + h - 1.0, w, 1.0)
         }
+    }
+
+    // ==================== 动作按钮的图标绘制 ====================
+    // 内置矢量名（见 is_builtin_icon）⇒ 矢量画，**不依赖任何图片资源** ✓；
+    // 其他字符串当图片路径（纹理由 ensure_images 按 id 缓存 ✓）
+    pri func drawActionIcon(Renderer r, string icon, string id, float bx) {
+        float cx = bx + btnWidth * 0.5
+        float cy = y + h * 0.5
+        float sz = h * 0.26
+        if sz < 6.0 { sz = 6.0 }
+        if not is_builtin_icon(icon) {
+            var texv = actionTex.get(id, null)
+            if texv != null {
+                var t = texv as Ptr[u8]
+                drawIcon(r, t, bx)
+            } else {
+                r.fillCircle(cx, cy, sz * 0.35)   // 还没加载出来：先点一个点，别留空白 ✗
+            }
+            return
+        }
+        if icon == "gear" or icon == "settings" {
+            // 齿轮：外圈 + 内孔 + 8 颗齿（四正 + 四斜 ⇒ 不用三角函数 ✓）
+            float rr = sz * 0.62
+            r.drawCircle(cx, cy, rr)
+            r.drawCircle(cx, cy, rr * 0.42)
+            float th = 3.0
+            float td = rr * 1.45
+            r.fillRect(cx - th * 0.5, cy - td - th * 0.5, th, th)
+            r.fillRect(cx - th * 0.5, cy + td - th * 0.5, th, th)
+            r.fillRect(cx - td - th * 0.5, cy - th * 0.5, th, th)
+            r.fillRect(cx + td - th * 0.5, cy - th * 0.5, th, th)
+            float dd = rr * 1.02
+            r.fillRect(cx - dd - th * 0.5, cy - dd - th * 0.5, th, th)
+            r.fillRect(cx + dd - th * 0.5, cy - dd - th * 0.5, th, th)
+            r.fillRect(cx - dd - th * 0.5, cy + dd - th * 0.5, th, th)
+            r.fillRect(cx + dd - th * 0.5, cy + dd - th * 0.5, th, th)
+        } else if icon == "menu" {
+            float bw = sz * 1.9
+            r.fillRect(cx - bw * 0.5, cy - sz * 0.8, bw, 1.8)
+            r.fillRect(cx - bw * 0.5, cy - 0.9, bw, 1.8)
+            r.fillRect(cx - bw * 0.5, cy + sz * 0.8 - 1.8, bw, 1.8)
+        } else if icon == "search" {
+            r.drawCircle(cx - sz * 0.22, cy - sz * 0.22, sz * 0.72)
+            r.drawLine(cx + sz * 0.3, cy + sz * 0.3, cx + sz * 1.1, cy + sz * 1.1)
+        } else if icon == "star" {
+            r.drawLine(cx - sz, cy, cx + sz, cy)
+            r.drawLine(cx - sz * 0.5, cy - sz * 0.87, cx + sz * 0.5, cy + sz * 0.87)
+            r.drawLine(cx - sz * 0.5, cy + sz * 0.87, cx + sz * 0.5, cy - sz * 0.87)
+        } else if icon == "info" or icon == "help" {
+            r.drawCircle(cx, cy, sz)
+            r.fillRect(cx - 1.0, cy - sz * 0.5, 2.0, 2.0)
+            r.fillRect(cx - 1.0, cy - sz * 0.05, 2.0, sz * 0.65)
+        } else if icon == "refresh" {
+            r.drawCircle(cx, cy, sz * 0.82)
+            r.fillRect(cx + sz * 0.42, cy - sz * 1.02, 3.0, 3.0)
+        } else if icon == "sun" {
+            r.drawCircle(cx, cy, sz * 0.45)
+            drawIconRays(r, cx, cy, sz * 0.95, 3.0)
+        } else if icon == "home" {
+            r.drawLine(cx - sz, cy, cx, cy - sz * 0.95)
+            r.drawLine(cx, cy - sz * 0.95, cx + sz, cy)
+            r.drawRect(cx - sz * 0.6, cy, sz * 1.2, sz * 0.85)
+        } else {
+            r.fillCircle(cx, cy, sz * 0.35)      // dot：兜底，至少不是空白 ✓
+        }
+    }
+
+    // 八向短横（sun 的射线；与齿轮同款写法，不引三角函数 ✓）
+    pri func drawIconRays(Renderer r, float cx, float cy, float d, float th) {
+        r.fillRect(cx - th * 0.5, cy - d - th * 0.5, th, th)
+        r.fillRect(cx - th * 0.5, cy + d - th * 0.5, th, th)
+        r.fillRect(cx - d - th * 0.5, cy - th * 0.5, th, th)
+        r.fillRect(cx + d - th * 0.5, cy - th * 0.5, th, th)
+        float dd = d * 0.72
+        r.fillRect(cx - dd - th * 0.5, cy - dd - th * 0.5, th, th)
+        r.fillRect(cx + dd - th * 0.5, cy - dd - th * 0.5, th, th)
+        r.fillRect(cx - dd - th * 0.5, cy + dd - th * 0.5, th, th)
+        r.fillRect(cx + dd - th * 0.5, cy + dd - th * 0.5, th, th)
     }
 
     // ==================== 弹层渲染（第二遍，画在最上层） ====================
@@ -970,6 +1214,75 @@ if ev.isWindowRestored() { maximized = false; btnHover = BTN_NONE; motionSkipCou
     func on_close(func():void cb) { onClose = cb }
     func on_minimize(func():void cb) { onMinimize = cb }
     func on_maximize(func():void cb) { onMaximize = cb }
+    func on_action(func(string):void cb) { onAction = cb }   // 动作按钮被点击（见文件头 ✓）
+
+    // ==================== 动作按钮：运行时增删改 ====================
+    //   （声明式那一套见 opts.actions；这里给"边跑边改"用：加/删/换图标/禁用 ✓）
+
+    // 追加一个动作按钮：{id, icon, tip, enabled}（id 为空 ⇒ 忽略；id 已存在 ⇒ 就地替换 ✓）
+    func add_action(Dict a) {
+        TitleBarAction na = _makeAction(a)
+        if na.id == "" { return }
+        int i = action_index(na.id)
+        if i >= 0 { actions[i] = na } else { actions.add(na) }
+        core.markFrameRedraw()
+    }
+
+    // 移除一个动作按钮（连带释放它的图片纹理 ✓）
+    func remove_action(string id) {
+        int i = action_index(id)
+        if i < 0 { return }
+        var old = actionTex.get(id, null)
+        if old != null {
+            var op = old as Ptr[u8]
+            releaseTex(op)
+        }
+        actions.remove(i)
+        if actionHover == id { actionHover = "" }
+        actionTex = {}      // 缓存整体作废（下次 ensure_images 会按剩下的动作重建 ✓）
+        actionLoad = {}
+        core.markFrameRedraw()
+    }
+
+    func clear_actions() {
+        for actions.len() to i {
+            var old = actionTex.get(actions[i].id, null)
+            if old != null {
+                var op = old as Ptr[u8]
+                releaseTex(op)
+            }
+        }
+        actions = []
+        actionTex = {}
+        actionLoad = {}
+        actionHover = ""
+        core.markFrameRedraw()
+    }
+
+    // 换图标：内置矢量名或图片路径都行（换路径 ⇒ 自动重新加载 ✓）
+    func set_action_icon(string id, string icon) {
+        int i = action_index(id)
+        if i < 0 { return }
+        actions[i].icon = icon
+        core.markFrameRedraw()
+    }
+
+    func set_action_tip(string id, string t) {
+        int i = action_index(id)
+        if i < 0 { return }
+        actions[i].tip = t
+    }
+
+    func set_action_enabled(string id, bool v) {
+        int i = action_index(id)
+        if i < 0 { return }
+        actions[i].enabled = v
+        core.markFrameRedraw()
+    }
+
+    // 只读快照 / 计数（调用方与测试都靠它看当前有哪些动作 ✓）
+    func get_actions(): Array[TitleBarAction] { return actions }
+    func action_count(): int { return actions.len() }
 
     // ==================== 释放资源 ====================
     func dispose() {
@@ -977,6 +1290,16 @@ if ev.isWindowRestored() { maximized = false; btnHover = BTN_NONE; motionSkipCou
         releaseTex(texMin); releaseTex(texMax)
         releaseTex(texRestore); releaseTex(texClose)
         texMin = null; texMax = null; texRestore = null; texClose = null
+        // 动作按钮的图片纹理（矢量图标没有纹理 ⇒ 空缓存时什么都不做 ✓）
+        for actions.len() to i {
+            var old = actionTex.get(actions[i].id, null)
+            if old != null {
+                var op = old as Ptr[u8]
+                releaseTex(op)
+            }
+        }
+        actionTex = {}
+        actionLoad = {}
     }
 
 // ==================== 运行时主题切换 ====================
