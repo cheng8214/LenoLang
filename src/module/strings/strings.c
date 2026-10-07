@@ -1540,6 +1540,151 @@ static Value str_from_bytes(int argc, Value* args) {
     return val_obj((Object*)result);
 }
 
+// to_base64(s, url_safe?) —— 字节串 → base64 文本（RFC 4648）
+//
+// 为什么进**核心标准库**（2026-10-07）：仓库里原本有**四份各自独立的实现** ——
+//   `LenoCrypto/lib/crypto_base64.leno`、`examples/crypto/base64.leno`（前者就是从它搬过去的）、
+//   `LenoWeb/lib/web_ws.leno`（WS 握手要 `Sec-WebSocket-Accept` 的编码、截图要解码）、
+//   以及音乐下载器 / Trae签到 各一份。而 `web_ws` 这种"做分帧"的模块不该为了编解码去依赖
+//   一个**加密库** ⇒ core scalar codec 归核心标准库（与 to_hex/from_hex 同族，正是
+//   `docs/单一事实来源与重复实现收敛.md` 的取向）。
+//
+// 命名与参数口径**完全照抄 to_hex**：字节串进、ASCII 串出；第二个参数是可选的 `url_safe`
+//   （`+`/`/` 换成 `-`/`_`，JWT / data: URL 用得上）。
+//   ⚠ 输出**总是**带 `=` padding（最通用）；要 URL-safe 就传 true。
+static Value str_to_base64(int argc, Value* args) {
+    ObjString* s = (ObjString*)val_as_obj(args[0]);
+
+    int url_safe = 0;
+    if (argc >= 2 && !val_is_null(args[1])) {
+        url_safe = val_as_bool(args[1]);
+    }
+    static const char* TBL_STD = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    static const char* TBL_URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    const char* tbl = url_safe ? TBL_URL : TBL_STD;
+
+    int n = s->len;
+    int out_len = ((n + 2) / 3) * 4;
+    char* buf = (char*)malloc((size_t)(out_len > 0 ? out_len : 1) + 1);
+    if (!buf) { native_throw_error("内存分配失败"); return val_null(); }
+
+    const unsigned char* p = (const unsigned char*)s->chars;
+    int o = 0;
+    for (int i = 0; i < n; i += 3) {
+        int b0 = p[i];
+        int b1 = (i + 1 < n) ? p[i + 1] : 0;
+        int b2 = (i + 2 < n) ? p[i + 2] : 0;
+        buf[o++] = tbl[b0 >> 2];
+        buf[o++] = tbl[((b0 & 0x03) << 4) | (b1 >> 4)];
+        buf[o++] = (i + 1 < n) ? tbl[((b1 & 0x0F) << 2) | (b2 >> 6)] : '=';
+        buf[o++] = (i + 2 < n) ? tbl[b2 & 0x3F] : '=';
+    }
+    buf[o] = '\0';
+
+    ObjString* result = str_copy(buf, o);
+    free(buf);
+    if (!result) return val_null();
+    return val_obj((Object*)result);
+}
+
+// base64 字符 → 6 位值；不是合法字符 ⇒ -1
+//   ⚠ **两种字母表都认**（`+/` 与 `-_`）：JWT / data: URL 用后者，而它们只是同一份数据的
+//     不同外壳 —— 让每个调用方自己先做字符替换既啰嗦又容易漏（比如忘了把 `-` 换回去）。
+//   用**算的**而不是查表：无需初始化、天然线程安全（本仓有 threads 模块）✓
+static int b64_val(unsigned char c) {
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '+' || c == '-') return 62;
+    if (c == '/' || c == '_') return 63;
+    return -1;
+}
+
+// from_base64(s) —— base64 文本 → 字节串（RFC 4648）
+//
+// **宽容**（刻意的取舍，2026-10-07）：
+//   · 两种字母表都收（见 b64_val）
+//   · **缺 `=` padding** 也收（`"TQ"` 与 `"TQ=="` 等价）
+//   · **空白字符忽略**（换行 / 制表 / 空格 —— PEM、MIME、从文件读进来的都带）
+// 但**非法字符一律报错、并指出是第几位**（照 B14 的规矩带上坏值）：
+//   静默给空串会重演「青衣」那种"看不出为什么没结果"，比报错难查得多。
+static Value str_from_base64(int argc, Value* args) {
+    (void)argc;
+    ObjString* s = (ObjString*)val_as_obj(args[0]);
+    const unsigned char* p = (const unsigned char*)s->chars;
+    int n = s->len;
+
+    // 输出上界：每 4 个字符最多 3 字节
+    unsigned char* out = (unsigned char*)malloc((size_t)(n / 4 + 2) * 3 + 4);
+    if (!out) { native_throw_error("内存分配失败"); return val_null(); }
+
+    int o = 0;
+    int quad = 0;      // 本组已累积的**有效字符**数（0..3）
+    int val = 0;       // 本组累积的位（最多 18 位）
+    int pad = 0;       // 见过的 '=' 个数
+    for (int i = 0; i < n; i++) {
+        unsigned char c = p[i];
+        if (c == ' ' || c == '\t' || c == '\r' || c == '\n') continue;
+        if (c == '=') {
+            pad++;
+            if (pad > 2) {
+                free(out);
+                native_throw_error("base64 解码失败：'=' 多于 2 个（padding 最多 2 位）");
+                return val_null();
+            }
+            continue;
+        }
+        if (pad > 0) {
+            free(out);
+            native_throw_error("base64 解码失败：'=' 之后仍有数据");
+            return val_null();
+        }
+        int v = b64_val(c);
+        if (v < 0) {
+            char shown[16];
+            if (c >= 32 && c < 127) snprintf(shown, sizeof(shown), "'%c'", c);
+            else snprintf(shown, sizeof(shown), "\\x%02X", c);
+            char msg[128];
+            snprintf(msg, sizeof(msg), "base64 解码失败：非法字符 %s（第 %d 个字符）", shown, i + 1);
+            free(out);
+            native_throw_error(msg);
+            return val_null();
+        }
+        val = (val << 6) | v;
+        quad++;
+        if (quad == 4) {
+            out[o++] = (unsigned char)((val >> 16) & 0xFF);
+            out[o++] = (unsigned char)((val >> 8) & 0xFF);
+            out[o++] = (unsigned char)(val & 0xFF);
+            quad = 0;
+            val = 0;
+        }
+    }
+
+    // 收尾：`quad` 只能是 0 / 2 / 3 —— 余 **1** 个字符表示不出一个字节 ⇒ 长度非法
+    if (quad == 1) {
+        free(out);
+        native_throw_error("base64 解码失败：有效字符数不合法（余 1 个字符无法构成字节）");
+        return val_null();
+    }
+    if (pad > 0 && (quad + pad) % 4 != 0) {
+        free(out);
+        native_throw_error("base64 解码失败：padding 位数与数据长度不匹配");
+        return val_null();
+    }
+    if (quad == 2) {
+        out[o++] = (unsigned char)((val >> 4) & 0xFF);
+    } else if (quad == 3) {
+        out[o++] = (unsigned char)((val >> 10) & 0xFF);
+        out[o++] = (unsigned char)((val >> 2) & 0xFF);
+    }
+
+    ObjString* result = str_copy((char*)out, o);
+    free(out);
+    if (!result) return val_null();
+    return val_obj((Object*)result);
+}
+
 // to_hex(s, upper?) —— 字节串 → hex 文本（每字节两位）
 //   **默认小写**（2026-10-02 收编时定的口径）：仓库里现有的 19 处手写实现
 //   （crypto 示例 9 份 `to_hex` + sha/md5/hmac/pbkdf2 里的 `byte_to_hex`）**清一色小写**，
@@ -1870,6 +2015,10 @@ void strings_init_module(void) {
     TypeKind tohex_params[] = {TYPE_STRING, TYPE_BOOL};
     native_register_module_method("strings", "to_hex", str_to_hex, &NATIVE_T_STRING, NATIVE_VARARG(1, 2, 2, tohex_params, TYPE_ANY));
     native_register_module_method("strings", "from_hex", str_from_hex, &NATIVE_T_STRING, NATIVE_FIXED(bytes_str_params));
+    // base64（2026-10-07）：与 to_hex 同族 —— 可选第二参数也用"可变参数"注册（个数 1..2）
+    TypeKind b64_params[] = {TYPE_STRING, TYPE_BOOL};
+    native_register_module_method("strings", "to_base64", str_to_base64, &NATIVE_T_STRING, NATIVE_VARARG(1, 2, 2, b64_params, TYPE_ANY));
+    native_register_module_method("strings", "from_base64", str_from_base64, &NATIVE_T_STRING, NATIVE_FIXED(bytes_str_params));
     TypeKind two_str_check_params[] = {TYPE_STRING, TYPE_STRING};
     native_register_module_method("strings", "eq_ignore_case", str_eq_ignore_case, &NATIVE_T_BOOL, NATIVE_FIXED(two_str_check_params));
     TypeKind cp_at_params[] = {TYPE_STRING, TYPE_INT};
@@ -1970,6 +2119,9 @@ void strings_init_instance_methods(void) {
     //   `string_register_method_vararg_with_params` 吸收，第二步不存在了 ✓）
     string_register_method("to_hex", make_native(str_to_hex, -1, "to_hex"), TYPE_STRING, TYPE_UNKNOWN, NATIVE_VARARG(0, 1, 1, tohex_bool_param, TYPE_ANY));
     string_register_method("from_hex", make_native(str_from_hex, 1, "from_hex"), TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
+    // base64 实例方法：与 `to_hex` 同形（arity 必须 -1 ⇒ 可选参数才放行，见上面的说明）
+    string_register_method("to_base64", make_native(str_to_base64, -1, "to_base64"), TYPE_STRING, TYPE_UNKNOWN, NATIVE_VARARG(0, 1, 1, tohex_bool_param, TYPE_ANY));
+    string_register_method("from_base64", make_native(str_from_base64, 1, "from_base64"), TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
     TypeKind one_str_params[] = {TYPE_STRING};
     string_register_method("eq_ignore_case", make_native(str_eq_ignore_case, 2, "eq_ignore_case"), TYPE_BOOL, TYPE_UNKNOWN, NATIVE_FIXED(one_str_params));
     string_register_method("codepoint_at", make_native(str_codepoint_at, 2, "codepoint_at"), TYPE_INT, TYPE_UNKNOWN, NATIVE_FIXED(int_params));

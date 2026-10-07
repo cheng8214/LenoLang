@@ -31,6 +31,10 @@ var ct  = crypto.aes128_cbc_encrypt_bytes(key, iv, crypto.str_to_bytes("hello le
 var pt  = crypto.aes128_cbc_decrypt_str(key, iv, ct)   // ⇒ "hello leno crypto"
 ```
 
+> ⚠ **base64 已进核心标准库**（2026-10-07）：`strings.to_base64` / `strings.from_base64`
+> 与上面的 `bytes_to_b64` / `b64_to_bytes` 等价，且解码更宽容（两种字母表 / 缺 padding /
+> 空白都收）。**新代码建议直接用 `strings.*`**（不必依赖本包）；这里保留原名只为兼容既有调用。
+
 ## 设计约定
 
 - **加解密一律走 `Array[int]`（字节）** ✓；字符串只是糖（Leno 的 string 是字节串，二进制经它往返易失真 ✗）。

@@ -145,62 +145,24 @@ export func sha1Hex(string s): string {
 }
 
 // ==================== Base64 ====================
-const B64_TABLE = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-
+// ⚠ 这两支原先**自带一份** base64 实现（编码 26 行 + 解码 25 行）。2026-10-07 起核心标准库有了
+//   `strings.to_base64` / `from_base64` —— 同一份数据不该有第二份实现（本仓原先有**四份**：
+//   LenoCrypto、examples/crypto、这里、以及应用里各一份，正是
+//   `docs/单一事实来源与重复实现收敛.md` 讲的病）⇒ 改成**薄封装**。
+//
+// 名字与签名保持不变（`web_cdp` 用 `ws.base64Decode` 解截图、`test_cdp` 用 `ws.base64` 验向量）：
+//   · **编码输出与原先逐字节一致**（标准字母表 + `=` padding）✓
+//   · **解码行为有变**：原先"遇到非法字符即停、返回已解出的部分"，现在**报错并指出是第几位**
+//     （静默给半截数据比报错难查得多 —— 与 B14 同一取向）。合法数据（Chrome 给的 base64）
+//     完全不受影响；而 PEM / JWT 那种**带换行、缺 padding** 的现在反而能直接解（标准库那份宽容）。
 export func base64(Array[int] bs): string {
-    Array[string] out = []
-    int i = 0
-    int n = bs.len()
-    while i + 2 < n {
-        int v = (bs[i] << 16) | (bs[i + 1] << 8) | bs[i + 2]
-        out.add(strings.char(B64_TABLE.byte((v >> 18) & 63)))
-        out.add(strings.char(B64_TABLE.byte((v >> 12) & 63)))
-        out.add(strings.char(B64_TABLE.byte((v >> 6) & 63)))
-        out.add(strings.char(B64_TABLE.byte(v & 63)))
-        i = i + 3
-    }
-    int rest = n - i
-    if rest == 1 {
-        int v = bs[i] << 16
-        out.add(strings.char(B64_TABLE.byte((v >> 18) & 63)))
-        out.add(strings.char(B64_TABLE.byte((v >> 12) & 63)))
-        out.add("==")
-    } else if rest == 2 {
-        int v = (bs[i] << 16) | (bs[i + 1] << 8)
-        out.add(strings.char(B64_TABLE.byte((v >> 18) & 63)))
-        out.add(strings.char(B64_TABLE.byte((v >> 12) & 63)))
-        out.add(strings.char(B64_TABLE.byte((v >> 6) & 63)))
-        out.add("=")
-    }
-    return strings.join(out, "")
+    return strings.to_base64(strings.from_bytes(bs))
 }
 
 // Base64 解码（截图拿回来的是 base64 PNG，要还原成字节）
-// 遇到 '=' 或非法字符即结束；返回字节数组（二进制安全）
+// 返回字节数组（二进制安全）；非法字符 ⇒ 抛错（消息里带是哪个字符、第几位）
 export func base64Decode(string s): Array[int] {
-    Array[int] out = []
-    int acc = 0
-    int nbits = 0
-    int i = 0
-    int n = s.byte_len()
-    while i < n {
-        int c = s.byte(i)
-        int v = -1
-        if c >= 65 and c <= 90 { v = c - 65 }
-        else if c >= 97 and c <= 122 { v = c - 97 + 26 }
-        else if c >= 48 and c <= 57 { v = c - 48 + 52 }
-        else if c == 43 { v = 62 }        // '+'
-        else if c == 47 { v = 63 }        // '/'
-        if v < 0 { break }
-        acc = ((acc << 6) | v) & 0xFFFFFF
-        nbits = nbits + 6
-        if nbits >= 8 {
-            nbits = nbits - 8
-            out.add(_uint8((acc >> nbits) & 255))
-        }
-        i = i + 1
-    }
-    return out
+    return strings.to_bytes(strings.from_base64(s))
 }
 
 // 调整读写超时（`c.ws.timeoutMs` 是字段，外部模块改字段不如调这个明确）

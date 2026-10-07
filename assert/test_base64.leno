@@ -1,0 +1,84 @@
+// `strings.to_base64` / `from_base64`（2026-10-07 新增）—— 回归
+//
+// 为什么进核心标准库：仓库里原本有**四份各自独立的实现**（LenoCrypto、examples/crypto、
+//   LenoWeb 的 web_ws、以及应用各一份），而 `web_ws` 做分帧不该为编解码去依赖加密库。
+//
+// 判据：
+//   ① RFC 4648 §10 的**官方测试向量**（编码）
+//   ② 往返：非 ASCII 文本、含 0 的二进制
+//   ③ URL-safe 字母表（编码与解码都认）
+//   ④ 宽容解码：缺 padding / 空白字符
+//   ⑤ 非法输入**报错并带坏值**（不静默给空串 —— 那是「青衣」事故的教训）
+//   ⑥ 实例方法（`s.to_base64()`）与模块函数同口径
+
+import strings
+
+main() {
+    // ---------- ① RFC 4648 §10 官方向量 ----------
+    assert_eq(strings.to_base64(""), "", "①空串 → 空串")
+    assert_eq(strings.to_base64("f"), "Zg==", "①'f'")
+    assert_eq(strings.to_base64("fo"), "Zm8=", "①'fo'")
+    assert_eq(strings.to_base64("foo"), "Zm9v", "①'foo'")
+    assert_eq(strings.to_base64("foob"), "Zm9vYg==", "①'foob'")
+    assert_eq(strings.to_base64("fooba"), "Zm9vYmE=", "①'fooba'")
+    assert_eq(strings.to_base64("foobar"), "Zm9vYmFy", "①'foobar'")
+
+    // ---------- ② 往返 ----------
+    assert_eq(strings.from_base64("Zg=="), "f", "②解码")
+    assert_eq(strings.from_base64("Zm9vYmFy"), "foobar", "②解码 'foobar'")
+    assert_eq(strings.from_base64(strings.to_base64("中文 abc")), "中文 abc", "②往返（非 ASCII）")
+    var bin = [0, 1, 2, 253, 254, 255]
+    var rt = strings.from_base64(strings.to_base64(strings.from_bytes(bin)))
+    assert_eq(strings.to_hex(rt), "000102fdfeff", "②往返（二进制，含 0 字节）")
+
+    // ---------- ③ URL-safe ----------
+    // [0xFB,0xFF,0xBF] 的 6 位分组正好是 62,63,62,63 ⇒ 标准 "+/+/"、URL-safe "-_-_"
+    var special = [0xFB, 0xFF, 0xBF]
+    assert_eq(strings.to_base64(strings.from_bytes(special)), "+/+/", "③标准字母表")
+    assert_eq(strings.to_base64(strings.from_bytes(special), true), "-_-_", "③URL-safe 字母表")
+    assert_eq(strings.to_bytes(strings.from_base64("-_-_")), special, "③解码 URL-safe")
+
+    // ---------- ④ 宽容 ----------
+    assert_eq(strings.from_base64("Zm9vYg"), "foob", "④缺 padding 也收")
+    assert_eq(strings.from_base64("Zm9v\nYg=="), "foob", "④换行忽略")
+    assert_eq(strings.from_base64(" Zm9v\tYmFy "), "foobar", "④空格/制表忽略")
+
+    // ---------- ⑤ 非法输入：报错 + 带坏值 ----------
+    string msg = "(没报错)"
+    try {
+        var x = strings.from_base64("Zm9v*")
+    } catch e {
+        msg = $"{e}"
+    }
+    assert_true(strings.has(msg, "*"), "⑤非法字符应报错并带上它；实际=" + msg)
+
+    string msg2 = "(没报错)"
+    try {
+        var y = strings.from_base64("Z")
+    } catch e2 {
+        msg2 = $"{e2}"
+    }
+    assert_true(msg2 != "(没报错)", "⑤余 1 个字符应报错；实际=" + msg2)
+
+    string msg3 = "(没报错)"
+    try {
+        var z = strings.from_base64("Zg===")
+    } catch e3 {
+        msg3 = $"{e3}"
+    }
+    assert_true(msg3 != "(没报错)", "⑤padding 过多应报错；实际=" + msg3)
+
+    string msg4 = "(没报错)"
+    try {
+        var w = strings.from_base64("Zg==Zg==")
+    } catch e4 {
+        msg4 = $"{e4}"
+    }
+    assert_true(msg4 != "(没报错)", "⑤'=' 之后仍有数据应报错；实际=" + msg4)
+
+    // ---------- ⑥ 实例方法 ----------
+    assert_eq("foo".to_base64(), "Zm9v", "⑥实例方法（编码）")
+    assert_eq("Zm9v".from_base64(), "foo", "⑥实例方法（解码）")
+
+    print("test_base64 passed")
+}
