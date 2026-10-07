@@ -104,6 +104,8 @@ export enum Opt {
     HTTPGET             = 80      // CURLOPTTYPE_LONG + 80
     TIMEOUT             = 13      // CURLOPTTYPE_LONG + 13, 超时（秒）
     TIMEOUT_MS          = 155     // CURLOPTTYPE_LONG + 155, 超时（毫秒）
+    LOW_SPEED_LIMIT     = 19      // CURLOPTTYPE_LONG + 19, 低速判定：平均速度下限（字节/秒），0=关闭
+    LOW_SPEED_TIME      = 20      // CURLOPTTYPE_LONG + 20, 低于下限持续这么多秒 ⇒ 判定断流
     CONNECTTIMEOUT      = 78      // CURLOPTTYPE_LONG + 78, 连接超时（秒）
     CONNECTTIMEOUT_MS   = 156     // CURLOPTTYPE_LONG + 156, 连接超时（毫秒）
     SSL_VERIFYPEER      = 64      // CURLOPTTYPE_LONG + 64

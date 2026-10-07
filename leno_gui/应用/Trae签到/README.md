@@ -269,11 +269,13 @@ status → 今日未签到。积分 base=150 extra=50
 签到   → 签到成功！积分 base=150 extra=50        ← 真跑完了 claim + 二次确认 ✓
 ```
 
-> ⚠ **踩坑（已修，值得所有 LenoWeb 使用者注意）**：`client.setHeaders([...])` 是**替换**语义（不是追加）⇒
-> 我一开始先设 `Content-Type/Authorization/x-device-id`、再用第二次调用补 `X-User-Region`，
-> 结果前三个头**被覆盖掉** ⇒ 服务端看到未鉴权请求，返回
+> ⚠ **踩坑（已修，值得所有 LenoWeb 使用者注意）**：请求头 API 原为单一的 `client.setHeaders([...])`，
+> 但它实为**替换**语义（不是追加）⇒ 我一开始先设 `Content-Type/Authorization/x-device-id`、再用第二次调用
+> 补 `X-User-Region`，结果前三个头**被覆盖掉** ⇒ 服务端看到未鉴权请求，返回
 > `{"code":1001,"message":"...not able to authenticate you..."}` ✗。
-> 现象很像「token 过期」，其实不是（token 与参考实现逐字相同 ✓）。**⇒ 所有头必须一次设完** ✓。
+> 现象很像「token 过期」，其实不是（token 与参考实现逐字相同 ✓）。
+> **2026-10-07 库侧已更名**：`replaceHeaders([...])`（整表替换）/ `addHeaders([...])`（追加）——
+> 想"补一个头"就用后者，不再会覆盖前面的 ✓（本工具 `trae_core.leno` 的 `authed_client` 已随库改名）。
 > `TRAE_CHECKIN_DEBUG=1` 会打印 HTTP 码与原始响应，用来分辨这类问题 ✓。
 
 ## 语言侧注意点（踩过的）

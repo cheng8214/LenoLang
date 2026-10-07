@@ -1378,7 +1378,7 @@ export func fetchPage(string url, string user_agent): Page? {
 // 反爬场景用 Crawler.fetchItem 更省事：它会自动从池子取代理并回报成功/失败。
 export func fetchPageVia(string url, string user_agent, string proxy): Page? {
     HttpClient c = createClient()
-    c.setHeaders(["User-Agent: " + user_agent])
+    c.replaceHeaders(["User-Agent: " + user_agent])
     if proxy != "" { c.setProxy(proxy) }
     Response resp = c.get(url)
     c.close()
@@ -1407,7 +1407,7 @@ export func extractLinks(Page page): Array[string] {
 export func fetchRobots(string siteUrl, string userAgent): string {
     HttpClient c = createClient()
     if userAgent != "" {
-        c.setHeaders(["User-Agent: " + userAgent])
+        c.replaceHeaders(["User-Agent: " + userAgent])
     }
     Response r = c.get(robotsUrl(siteUrl))
     c.close()
@@ -1434,7 +1434,7 @@ export func fetchSitemapReport(string baseUrl, string userAgent, int maxDepth, i
     SitemapReport rep = new SitemapReport()
     HttpClient c = createClient()
     if userAgent != "" {
-        c.setHeaders(["User-Agent: " + userAgent])
+        c.replaceHeaders(["User-Agent: " + userAgent])
     }
     Array[string] pending = [sitemapUrl(baseUrl)]
     Dict[string, bool] seenSm = {}

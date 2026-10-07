@@ -166,7 +166,7 @@ main() {
     say("品牌: " + acct_brand + "  账号: " + username + "  设备ID: " + dc_id + "\n")
 
     // 查状态：命中风控 9074 会**自动换设备号重试**（最多 core.MAX_TRY_9074 次 ✓）
-    // ⇒ 这里不再手工建 client：换号必须重建 client（设备号在头里、`setHeaders` 是替换语义 ✓）
+    // ⇒ 这里不再手工建 client：换号必须重建 client（设备号在头里、`replaceHeaders` 是整表替换 ✓）
     var st = core.fetch_status_retry(token, dc_id, region, core.MAX_TRY_9074)
     if core.st_device(st) != dc_id {
         say("  风控 9074：设备号已换新 " + core.st_device(st) + "\n")

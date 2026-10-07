@@ -1,0 +1,176 @@
+// audius_music.leno — 实战：搜索并下载「音乐」（Audius 去中心化音乐平台）
+//
+// 为什么选 Audius：
+//   · 创作者**自主发布**、平台公开分发，API 无需鉴权（不是破解版权保护）
+//   · 搜索走 JSON API，音频流走 302 重定向 ⇒ 正好验证 LenoWeb 的 JSON 解析 + 重定向跟随
+//   · 响应快（实测 api.audius.co ~1.2s），比 Wikimedia Commons 稳定得多
+//
+// 链路：搜索 → 解析 data[] → 筛掉 stream 会 404 的音轨 → 下载音频流 → 魔数 + 码率交叉校验
+//
+// 本脚本实战价值（2026-10-07）：跑出了 LenoWeb 的一个真缺陷 ——
+//   `HttpClient` 默认 `TIMEOUT_MS = 30000` 是**总时限**，而下载大文件时"总耗时"必然超过 30s，
+//   于是 `downloadResume` 对大文件恒定失败、只返回 -1（连原因都没有）。
+//   证据就在下面：7MB 那首耗时 26s，恰好压线成功；更长的音轨（28min/60min → 几十上百 MB）全灭。
+//   已修：下载期间改用「低速超时」（平均速度 < 1 B/s 且持续 60s 才算断），用完恢复原超时。
+import "Web" as web
+import strings
+import files
+import dirs
+import jsons
+import times
+import maths
+
+use web.(Session, Response, HttpClient)
+
+const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+const APP = "lenoweb"
+
+struct Track {
+    string id = ""
+    string title = ""
+    string artist = ""
+    string genre = ""
+    string mood = ""
+    int duration = 0
+    bool streamable = false
+}
+
+func fmtDur(int sec): string {
+    int m = sec / 60
+    int s = sec % 60
+    string ss = _str(s)
+    if s < 10 { ss = "0" + ss }
+    return _str(m) + ":" + ss
+}
+
+// 按文件头魔数判断真实格式 —— 若重定向没跟上，落盘的会是 JSON/HTML 错误页，这里能立刻抓出来
+func magicOf(string path): string {
+    var f = files.open(path, "rb")
+    if f == null { return "打不开" }
+    string head = f.read(4)
+    f.close()
+    if head == null or head.byte_len() < 4 { return "太短" }
+    if strings.starts_with(head, "ID3") { return "MP3(ID3)" }
+    var b0 = strings.byte(head, 0)
+    if b0 is int and b0 == 255 { return "MP3(帧同步)" }
+    if strings.starts_with(head, "OggS") { return "OGG" }
+    if strings.starts_with(head, "fLaC") { return "FLAC" }
+    if strings.starts_with(head, "RIFF") { return "WAV" }
+    if strings.starts_with(head, "{") { return "JSON错误页！" }
+    if strings.starts_with(head, "<") { return "HTML错误页！" }
+    return "未知(" + strings.to_hex(head) + ")"
+}
+
+func rateOf(int bytes, int ms): string {
+    if ms <= 0 { return "-" }
+    float mbps = (_float(bytes) / 1048576.0) / (_float(ms) / 1000.0)
+    return _str(maths.round(mbps * 100.0) / 100.0) + " MB/s"
+}
+
+// 由「字节数 ÷ 时长」反推平均码率：文件若被截断，这个值会明显偏低 —— 完整性的交叉校验
+func kbpsOf(int bytes, int sec): string {
+    if sec <= 0 { return "-" }
+    return _str(bytes * 8 / sec / 1000) + " kbps"
+}
+
+main() {
+    string dir = dirs.script_dir() + _sep()
+    string keyword = "lofi"
+    int limit = 8
+    int maxDownload = 2
+    int maxDurSec = 600        // 只挑 10 分钟以内的（时长最长的那些是几十上百 MB，演示没必要拉满）
+
+    Session s = web.createSession()
+    web.sessionSetHeader(s, "User-Agent", UA)
+    web.sessionSetHeader(s, "Accept", "application/json")
+    web.sessionSetHeader(s, "Referer", "https://audius.co/")
+    web.sessionSetTimeout(s, 30000)
+
+    // ---- ① 搜索 ----
+    string api = "https://api.audius.co/v1/tracks/search?query=" + keyword +
+                 "&limit=" + _str(limit) + "&offset=0&app_name=" + APP
+    print("=== ① 搜索 Audius（关键字 " + keyword + "）===")
+    int t0 = _int(times.ms())
+    Response r = web.sessionGet(s, api)
+    print("  HTTP " + r.statusCode + "，" + r.body.byte_len() + " 字节，耗时 " + (_int(times.ms()) - t0) + "ms")
+    if not r.ok() { print("  搜索失败，终止"); return }
+
+    Array[Track] tracks = []
+    int streamable = 0
+    var obj = jsons.decode(r.body)
+    if obj is Dict[string, any] {
+        var dataAny = obj["data"]
+        if dataAny is Array {
+            for dataAny to item {
+                if item is Dict[string, any] {
+                    Track t = new Track()
+                    t.id = jsons.get_str(item, "id", "")
+                    t.title = jsons.get_str(item, "title", "")
+                    t.genre = jsons.get_str(item, "genre", "")
+                    t.mood = jsons.get_str(item, "mood", "")
+                    t.duration = jsons.get_int(item, "duration", 0)
+                    t.streamable = jsons.get_bool(item, "is_streamable", false)
+                    var u = item["user"]
+                    if u is Dict[string, any] {
+                        t.artist = jsons.get_str(u, "name", "")
+                    }
+                    if t.id != "" {
+                        tracks.add(t)
+                        if t.streamable { streamable = streamable + 1 }
+                    }
+                }
+            }
+        } else {
+            print("  data 不是数组（API 结构变了？）")
+        }
+    } else {
+        print("  JSON 解析失败")
+    }
+    if tracks.len() == 0 { print("  没有解析出音轨"); return }
+
+    for tracks to t, i {
+        string flag = "可流式"
+        if not t.streamable { flag = "不可流式（stream 会 404）" }
+        print("  " + _str(i + 1) + ". " + t.title + " —— " + t.artist)
+        print("     " + t.genre + " / " + t.mood + "｜时长 " + fmtDur(t.duration) +
+              "｜id=" + t.id + "｜" + flag)
+    }
+    print("  合计 " + tracks.len() + " 条，其中可流式 " + streamable + " 条")
+
+    // ---- ② 下载（stream 端点 302 到 CDN，靠 HttpClient 默认的 FOLLOWLOCATION 跟随）----
+    print("")
+    print("=== ② 下载音频流（最多 " + maxDownload + " 首，单曲时长 ≤ " + fmtDur(maxDurSec) + "）===")
+    HttpClient hc = web.createClient()
+    hc.setUserAgent(UA)
+    hc.replaceHeaders(["Referer: https://audius.co/", "Accept: audio/mpeg,audio/*,*/*"])
+    int done = 0
+    int idx = 0
+    for tracks to t {
+        idx = idx + 1
+        if done >= maxDownload { break }
+        if not t.streamable { continue }
+        if t.duration > maxDurSec { continue }
+        string url = "https://api.audius.co/v1/tracks/" + t.id + "/stream?app_name=" + APP
+        string out = dir + "audius_" + t.id + ".mp3"
+        files.delete(out)
+        int tt = _int(times.ms())
+        int got = hc.downloadResume(url, out)
+        int ms = _int(times.ms()) - tt
+        if got <= 0 {
+            print("  [" + _str(idx) + "] 下载失败：" + t.title)
+            print("      原因：" + hc.lastError())
+            continue
+        }
+        string magic = magicOf(out)
+        print("  [" + _str(idx) + "] " + t.title + " —— " + t.artist)
+        print("      " + out)
+        print("      " + strings.fmt_size(got) + "｜" + _str(ms) + "ms｜" + rateOf(got, ms) +
+              "｜魔数 " + magic + "｜反推码率 " + kbpsOf(got, t.duration))
+        done = done + 1
+    }
+    hc.close()
+
+    print("")
+    print("=== 完成：搜索 " + tracks.len() + " 条（可流式 " + streamable + "），下载成功 " + done + " 首 ===")
+    if done == 0 { print("（下载全失败 —— 上面每条都给了 lastError 原因）") }
+}

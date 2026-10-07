@@ -2,6 +2,7 @@
 // 验证 PE 尾部 LENB 检测和 XOR 字符串搜索逻辑
 import files
 import strings
+import dirs
 
 // LENB 魔数 0x424E454C ("LENB" little-endian)
 const LENB_MAGIC = 0x424E454C
@@ -29,9 +30,17 @@ main() {
     // 夹具：取**第一个存在**的候选（原来只写死一个相对路径 ⇒ 换环境就跑不了 ✗）
     // 注意：本测试是**独立 CLI 版**（自带 LENB 检测 / XOR 逻辑）⇒ 它**不覆盖** GUI 里的
     // analyzeDisasm 那条路（那条的越界保护见 pe_analyzer.leno 的 safeByte/adv ✓）。
+    // 夹具查找：**优先按脚本自身位置**拼绝对路径。
+    //   ⚠ 原来只有相对路径 ⇒ 结果取决于"从哪个目录启动"：
+    //     实测 CWD=仓库根 时全部候选都不存在 ⇒ 静默打印"(跳过)"并返回（失败还不报错，最坑 ✗）；
+    //     CWD=应用目录 时第三条 `../../../build/leno.exe` 才命中。
+    //   ⇒ 用 dirs.script_dir() 拼出来的路径与 CWD 无关；原相对路径保留在后作兼容兜底。
+    string sdir = dirs.script_dir() + _sep()
     Array[string] candidates = []
+    candidates.add(sdir + "leno_module" + _sep() + "LenoSDL3" + _sep() + "examples" + _sep() + "基础示例" + _sep() + "hello_window.exe")
+    candidates.add(sdir + ".." + _sep() + ".." + _sep() + ".." + _sep() + "build" + _sep() + "leno.exe")
     candidates.add("leno_module/LenoSDL3/examples/基础示例/hello_window.exe")
-    candidates.add("../../../build/leno.exe")   // 从 应用/PE分析器/ 回仓库根 (build/leno.exe ✓)
+    candidates.add("../../../build/leno.exe")   // 兼容旧行为（依赖 CWD）
     candidates.add("../../build/leno.exe")
     candidates.add("../build/leno.exe")
     string exePath = ""

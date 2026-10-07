@@ -37,7 +37,7 @@
 | --- | --- | --- |
 | P1 | **部分修复** | 两条 any 访问字段/索引的提示已各补一句「收窄到**裸**容器取出的元素仍是 any；要按类型取元素请收窄到**带泛型参数的**容器（`Dict[string, any]` / `Array[string]`）」（`semantic_type.c` 两处），转换提示改成"any 需显式转换，或收窄到带泛型参数的容器"（`semantic_type_utils.c` + `visit_var.inc` 缓冲提到 1024），`module_jsons.md` 补了"`decode` 返回 `any`、需按泛型容器收窄"。**⚠ 附带教训**：提示是要**追加进调用方 `msg` 缓冲**的 —— 第一版写长后被截断成「…（如」✗（报文尾部丢字比没有提示更糟）⇒ 提示文案必须短，且落点缓冲要够。**⚠ 关键更正（2026-09-19）**：提示现已**点名语言既有的 `x as T` 安全转换**（`leno_ast.h` 原话"**安全类型转换**"：匹配返回目标类型、**不匹配返回 null**、静态类型即目标类型）⇒ `Dict[string, any] d = raw as Dict[string, any]` 一步到位 ✓（实测通过）。**明确不做**：`_Dict()` / `_Array()` —— 曾加过又**撤掉**：多余，且"不匹配就抛错"与语言既有"安全转换返回 null"**规矩相反** ✗（正是"同一件事第二份实现"）；`jsons.decode` 仍注册为 `TYPE_ANY`（`jsons.c:745`，**不改**：它本就可能是数组/数字/字符串/null，声明成 Dict 会骗人 ✗）。用例 `test_type_casts.leno`（6 判据，含"缺 `as` 必须报错、且提示要点名 `as`"这条守卫）|
 | P2 | **已修复** ✓ | 修法（与 `_args()` 对齐成**同一条边界**）：脚本路径**之后**的 `-` 开头参数原样交给脚本；`--` 可显式终止解释器选项；未知旗标写在脚本**之前**仍报错（提示没丢）。实测：`x.leno --list` ⇒ 脚本照跑 ✓、`-- x.leno --list` ✓、`--nope x.leno` ⇒ exit 64 +「未知选项」✓。用例 `assert/test_cli_script_args.leno`（4 判据，含两条守卫）；`module_sys.md` 补了边界规则表。README 里的"位置子命令"绕法现在**不必需**了（但保留兼容 ✓）。**2026-09-26 彻底化**：与**内置名撞名**的旗标（`-v/-h/--help/-c/-p/-o/--debug/--pause/--no-cache…`）写在脚本路径之后**也曾被吃掉** —— `x.leno -v` ⇒ 打印版本、脚本不跑 ✗、`x.leno --no-cache` ⇒ 双重生效 ✗ ⇒ 现在判定统一为「**内置旗标写在脚本路径之前**」（见本文 P2 段的"已修（分两步）"，判据 ⑤⑥ 已补进 `assert/test_cli_script_args.leno`） |
-| P3 | **部分修复** | `examples/custom_headers.leno` 已改为**一次给全**（Referer 并进同一张表）；`web_net.leno` 的 `setHeaders` 注释写明**替换**语义 + 1001 误判风险。**未做**：改名 `replaceHeaders` / 新增 `addHeader`（会动 API，需你拍板） |
+| P3 | **已修复** ✓（2026-10-07） | 前次：`custom_headers.leno` 改为**一次给全**；`web_net.leno` 注释写明替换语义 + 1001 误判风险。**本次落实**（你已拍板）：API 拆成两个"名字即语义"的方法 —— `replaceHeaders`（整表替换）+ `addHeaders`（追加）+ `headers()`（回读），`setHeaders` 这个名字**移除**；**20 处调用点全量改名**（库 2 文件、示例 5 文件、Trae 工具 2 文件）。顺带修掉两处隐性缺陷：① `setBearerToken` 自己造 slist 绕过 `_headers`（随后一个 `addHeaders` 就会把 Authorization 冲掉）② slist **从不释放**（每次设头漏一份；现在换表即释放旧表、`close`/`reset` 收尾）。新增门禁 `examples/tests/test_headers_api.leno`（17 判据）⇒ 套件 **17/17** ✓ |
 | P4 | **部分修复（本文此条前半已过期）** | 「从**首个 `.add`** 推断元素类型」**已实现** —— 实测 `var acc=[]` + `acc.add(123)` + 传给 `string` 形参 ⇒ 报「实际 **int**」（代码：`visit_module.inc:700`、`semantic_type_utils.c:532`）⇒ 原文"必须显式写 `Array[string]`"**已不准确** ✗。**残留**：元素类型**真无从推断**（完全没有 `.add`）时，仍在使用处报「实际 `any`」，声明处**无提示** |
 | P5 | **已修复** ✓ | `_env(name, value)` 已支持**写**（`sys.c:183-201`，Win `_putenv_s` / POSIX `setenv`）—— 名字不叫 `_setenv`，但能力齐 ⇒ 可从待办划掉 |
 | P6 | **已修复** ✓ | `_exec(cmd, timeout_ms)`：Windows 走 `CreateProcessW` + `WaitForSingleObject` + `TerminateProcess`，POSIX 用 coreutils `timeout` 包一层；**超时退出码 124**（GNU 惯例）。`assert/run_tests.leno` 每个测试都带超时（默认 120 s，可用 `LENO_TEST_TIMEOUT_MS` 覆盖；`0` = 不限制），超时单独打印「**超时（已被杀掉）**」并计 FAIL。用例 `assert/test_exec_timeout.leno`（3 判据：超时须 1 s 内返回且码 124 / 正常命令带超时照常成功 / 不传超时=旧行为）；`module_sys.md` 补了用法与 124 约定。**顺带**：语义侧的 native 参数个数表也要跟着放（`_exec` 从 1 个参数改成可接受 2 个）—— 这次就是它先报的「参数数量不匹配: 期望 1, 实际 2」 |
@@ -109,6 +109,39 @@
 - 服务端 401/业务 1001 这类"鉴权失败"，模块层若能给出"是否真的发出了 Authorization 头"的诊断会更好 ✓。
 
 **本次绕法**：按有无 region 走**两条完整头列表**、只调一次 `setHeaders` ✓（并在工具里写了注释警告 ✓）。
+
+### ✅ 2026-10-07 已落实（用户拍板）
+
+`web_net.leno` 的请求头 API 拆成两个"名字即语义"的方法（`setHeaders` 这个名字**不再存在**，从根上消掉误导）：
+
+| API | 语义 |
+| --- | --- |
+| `replaceHeaders([...])` | **整表替换**（= CURLOPT_HTTPHEADER）—— 要设多个头就一次给全 |
+| `addHeaders([...])` | **追加**（保留已设的头）—— "补一个头"用这个 |
+| `headers()` | 回读当前头表（自检/诊断） |
+
+调用点**全量改名**（20 处）：`lib/web_net.leno`（含 `setBrowserHeaders`、`_sessionPrepare`）、
+`lib/web_crawler.leno`、`examples/01_HTTP基础/{custom_headers,post_json}.leno`、
+`examples/07_综合测试/full_test.leno`、`examples/09_实战验证/{bilibili_download,audius_music}.leno`、
+`leno_gui/应用/Trae签到/{trae_core,trae_sign}.leno`。
+`custom_headers.leno` 现在**同时演示两种语义**（6 个头用 `replaceHeaders` 一次给全，再 `addHeaders` 补一个）
+⇒ 示例不再教坏用法 ✓。
+
+顺带修掉两处**隐性缺陷**：
+
+1. **`setBearerToken` 绕过头表**：原实现自己 `curl_slist_append` 后直接 setopt，既不同步 `_headers`
+   （⇒ 随后任何一个 `addHeaders` 都会把 Authorization 冲掉），那份 slist 也从不释放。现改走
+   `replaceHeaders`，与 `_headers` 同一份状态 ✓
+2. **slist 从不释放**：`curl_easy_setopt(CURLOPT_HTTPHEADER, …)` **不接管所有权**，原实现每次设头都新建一份
+   且永不 `curl_slist_free_all` ⇒ 每个客户端漏一份。现在 `_applyHeaders` 换表后**释放旧表**、
+   `close()`/`reset()` 收尾（⚠ `reset` 里顺序必须是 `easyReset` **之后**才放，否则 use-after-free）。
+
+**验证**：新增用例 `test_headers_api.leno`（17 判据：替换覆盖 / 追加保留 / 回读 / **500 次反复替换**
+/ 空表 / reset / close / 新客户端独立），已入 `run_tests.leno` 清单 ⇒ 套件 **17/17 通过** ✓；
+Trae 工具数据层自测 `test_core_and_history.leno` 改名后照常全过 ✓。
+
+**遗留（有意）**：`replaceHeaders([])` 现为"**不碰 handle**"（它可能仍引用旧 slist，此时释放 = use-after-free）
+⇒ 真要清空已设的头，目前请**重建客户端**。空表极罕见，不值得为它引内存风险 ✓
 
 ## P4 空数组 `var a = []` ⇒ 元素类型 `any`，报错点离现场很远
 

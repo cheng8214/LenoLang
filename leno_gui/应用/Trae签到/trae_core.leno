@@ -124,22 +124,24 @@ export func default_account(): Array[string] {
 // ==================== ③ 签到接口 ====================
 
 // 建好鉴权头的一次性客户端
-// ⚠ 必须**一次**设完所有头：`setHeaders` 是**替换**语义，分两次调用会把 Authorization /
-// x-device-id 覆盖掉 ⇒ 服务端看到未鉴权请求，返回 `code:1001 not able to authenticate you`
-// （实测踩过这个坑 ✗）⇒ 这里按有无 region 走两条完整列表，绝不追加第二次 ✓。
+// ⚠ 库侧 2026-10-07 更名：原 `setHeaders`（名字含糊、实为**整表替换**）拆成
+//   `replaceHeaders`（整表换）+ `addHeaders`（追加）。
+//   本函数用 replaceHeaders 一次给全；哪天要分步设头就改用 addHeaders —— 不会再覆盖前面的头 ✓
+//   历史坑：分两次调用补头曾把 Authorization / x-device-id 静默覆盖 ⇒ 服务端返回
+//   `code:1001 not able to authenticate you`（看着像 token 过期，实测踩过 ✗）。
 export func authed_client(string token, string dc_id, string region): HttpClient {
     net.globalInit()
     HttpClient c = net.createClient()
     c.setTimeout(20000)
     if region != "" {
-        c.setHeaders([
+        c.replaceHeaders([
             "Content-Type: application/json",
             "Authorization: Cloud-IDE-JWT " + token,
             "x-device-id: " + dc_id,
             "X-User-Region: " + region
         ])
     } else {
-        c.setHeaders([
+        c.replaceHeaders([
             "Content-Type: application/json",
             "Authorization: Cloud-IDE-JWT " + token,
             "x-device-id: " + dc_id
@@ -328,7 +330,7 @@ export func st_need_retry_9074(Array[string] r, int attempt, int max_try): bool 
 }
 
 // 查状态 + 9074 换设备号重试 → fetch_status 的 9 个 slot ＋ 追加 slot 9 = 实际用的设备号 ✓
-// 注意每次都**重建 client**：设备号在请求头里，而 `setHeaders` 是替换语义 ⇒ 改号必须重建 ✓
+// 注意每次都**重建 client**：设备号在请求头里，而 `replaceHeaders` 是整表替换语义 ⇒ 改号必须重建 ✓
 export func fetch_status_retry(string token, string dc_id, string region, int max_try): Array[string] {
     var dc = dc_id
     int attempt = 1

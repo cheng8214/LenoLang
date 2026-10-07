@@ -9,11 +9,14 @@ main() {
     client.setTimeout(15000)
 
     // 设置多个自定义 header
-    // ⚠ setHeaders 是**替换**语义（内部 = CURLOPT_HTTPHEADER，整表换掉、不是追加）⇒ **必须一次给全**。
-    //   分两次调用会丢掉前一次的头（2026-09-18 实测：第二次只补 Referer ⇒ Authorization / Content-Type /
-    //   x-device-id 三个头被覆盖 ⇒ 服务端回业务码 1001「not able to authenticate you」，**看起来完全像
-    //   "token 过期"** ✗✗，差点误判）。下面把 Referer 也并进同一张表 ✓。
-    client.setHeaders([
+    // ⚠ 请求头 API 分成两个"名字即语义"的方法（2026-10-07 更名，原名单一 setHeaders 太含糊）：
+    //     · replaceHeaders([...]) —— **整表替换**（内部 = CURLOPT_HTTPHEADER，把已有头全换掉）
+    //     · addHeaders([...])     —— **追加**（保留已设的头）
+    //   历史坑：老名字 setHeaders 实际是替换语义，却听起来像"补充" ⇒ 有人分两次调用去补 Referer，
+    //   Authorization / Content-Type / x-device-id 三个头被**静默覆盖** ⇒ 服务端回业务码 1001
+    //   「not able to authenticate you」，**看起来完全像"token 过期"** ✗✗，差点误判（2026-09-18 实测）。
+    //   ⇒ 要一次性给全就用 replaceHeaders（下面这样）；只想补一个头就用 addHeaders（见本文件下方）✓
+    client.replaceHeaders([
         "Accept: application/json",
         "Accept-Language: zh-CN,zh;q=0.9,en;q=0.8",
         "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
@@ -27,6 +30,10 @@ main() {
 
     // 设置 User-Agent
     client.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) LenoNet/1.0")
+
+    // 追加一个头 —— 用 addHeaders。若这里改用 replaceHeaders，上面那 6 个会被整表冲掉 ✗
+    client.addHeaders(["X-Trace: added-by-addHeaders"])
+    print("当前请求头 " + client.headers().len() + " 条（replaceHeaders 6 条 + addHeaders 1 条）")
 
     print("=== 自定义 header 请求 ===")
     Response resp = client.get("http://httpbin.org/headers")

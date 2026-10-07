@@ -191,7 +191,7 @@ main() {
     // ==================== 12. 自定义 Header ====================
     print("--- 12. 自定义 Header ---")
     HttpClient c12 = net.createClient()
-    c12.setHeaders([
+    c12.replaceHeaders([
         "X-Custom-Header: LenoNet-Test",
         "X-Request-ID: 12345"
     ])

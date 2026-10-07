@@ -182,6 +182,11 @@ export struct HttpClient {
     Ptr[u8] handle          // curl_easy handle
     bool ok = false         // 是否初始化成功（显式初值，消 [字段未初始化] 警告）
     string _lastError = ""  // 最近错误信息
+    int _timeoutMs = 30000  // 当前总超时限（毫秒）。下载期间会临时放宽、用完按它恢复（见 downloadResume）
+    // 请求头：**自己留一份**。libcurl 的 CURLOPT_HTTPHEADER 是"整表替换"、不追加
+    //   ⇒ 要能"补一个头"就必须在本地维护列表（见 replaceHeaders / addHeaders）。
+    Array[string] _headers = []
+    pri Ptr[u8] _slist = null  // _headers 对应的 curl_slist（换表时释放旧表；close/reset 收尾）
     pri Ptr[u8] writeCb        // 写回调
     pri Ptr[u8] headerCb       // header 回调
     pri _RespAcc _acc          // 本客户端专属的响应累加器（闭包捕获 ⇒ 无全局态）
@@ -209,7 +214,8 @@ export struct HttpClient {
         core.setopt_int(handle, Opt.FOLLOWLOCATION, 1)
         core.setopt_int(handle, Opt.MAXREDIRS, 10)
         core.setopt_str(handle, Opt.USERAGENT, "LenoNet/1.0")
-        core.setopt_int(handle, Opt.TIMEOUT_MS, 30000)
+        _timeoutMs = 30000
+        core.setopt_int(handle, Opt.TIMEOUT_MS, _timeoutMs)
         core.setopt_int(handle, Opt.CONNECTTIMEOUT_MS, 10000)
         core.setopt_str(handle, Opt.ACCEPT_ENCODING, "")
         return ok
@@ -222,6 +228,9 @@ export struct HttpClient {
     func close() {
         if writeCb != null { ffi.free(writeCb); writeCb = null }
         if headerCb != null { ffi.free(headerCb); headerCb = null }
+        // slist 是**我们自己**用 curl_slist_append 造的（libcurl 不接管所有权）⇒ 必须显式释放，
+        //   否则每个客户端漏一份头表（配合 _applyHeaders 的"换表即释放"，整体不漏 ✓）
+        if _slist != null { core.slistFreeAll(_slist); _slist = null }
         if not ok { return }
         core.easyCleanup(handle)
         handle = null; ok = false
@@ -231,13 +240,17 @@ export struct HttpClient {
     func reset() {
         if not ok { return }
         core.easyReset(handle)
+        // easyReset 后 handle **不再引用**任何 slist ⇒ 这时释放才安全（顺序不能反，否则 use-after-free）
+        if _slist != null { core.slistFreeAll(_slist); _slist = null }
+        _headers = []
         _acc.reset()
         // 重新设置默认选项
         core.setopt_int(handle, Opt.NOPROGRESS, 1)
         core.setopt_int(handle, Opt.FOLLOWLOCATION, 1)
         core.setopt_int(handle, Opt.MAXREDIRS, 10)
         core.setopt_str(handle, Opt.USERAGENT, "LenoNet/1.0")
-        core.setopt_int(handle, Opt.TIMEOUT_MS, 30000)
+        _timeoutMs = 30000
+        core.setopt_int(handle, Opt.TIMEOUT_MS, _timeoutMs)
         core.setopt_int(handle, Opt.CONNECTTIMEOUT_MS, 10000)
         core.setopt_str(handle, Opt.ACCEPT_ENCODING, "")
     }
@@ -247,6 +260,7 @@ export struct HttpClient {
     // 设置超时（毫秒）
     func setTimeout(int ms): int {
         if not ok { return Code.FAILED_INIT }
+        _timeoutMs = ms   // 记下来：下载期间会临时放宽，用完按这个值恢复
         return core.setopt_int(handle, Opt.TIMEOUT_MS, ms)
     }
 
@@ -299,20 +313,49 @@ export struct HttpClient {
         return core.setopt_str(handle, Opt.USERPWD, creds)
     }
 
-    // 设置自定义 header
-    // ⚠ **替换**语义（内部 = CURLOPT_HTTPHEADER，整表换掉，**不是追加**）⇒ 多次调用只留最后一次。
-    //   要设多个头必须**一次给全**；只想"补一个头"时，得把旧头拼进新表再调用。
-    //   （2026-09-18 实测：分两次调用 ⇒ 丢掉 Authorization ⇒ 服务端业务码 1001 鉴权失败，
-    //     极易误判成"token 过期"；示例写法见 examples/custom_headers.leno 的注释。）
-    func setHeaders(Array[string] headers): int {
+    // ==================== 请求头：替换 vs 追加 ====================
+    //
+    // ⚠ 历史坑（2026-09-18 实测，2026-10-07 更名）：旧名 `setHeaders` 实际是**替换**语义
+    //   （内部 = CURLOPT_HTTPHEADER，整表换掉、**不追加**），但名字读起来像"设置/补充"。
+    //   于是有人分两次调用去"补 Referer"⇒ 前一批头（Authorization / Content-Type /
+    //   x-device-id）被**静默覆盖** ⇒ 服务端回业务码 1001「not able to authenticate you」，
+    //   现象极像"token 过期"，排查方向被带偏。
+    //   ⇒ 现在拆成两个"名字即语义"的 API：`replaceHeaders`（整表换）+ `addHeaders`（追加）。
+
+    // 内部：把 _headers 整表刷到 handle 上（libcurl 只认整表 ⇒ 每次重建 slist）
+    pri func _applyHeaders(): int {
         if not ok { return Code.FAILED_INIT }
         Ptr[u8] slist = null
-        for headers.len() to i {
-            slist = core.slistAppend(slist, headers[i])
+        for _headers.len() to i {
+            slist = core.slistAppend(slist, _headers[i])
         }
-        if slist == null { return Code.OK }
-        return core.setopt_ptr(handle, Opt.HTTPHEADER, slist)
+        if slist == null {
+            // 空表：**不碰 handle**。它可能仍引用着旧的 slist，这里释放旧表 = use-after-free ✗
+            //   （真要把已设的头清干净，目前请重建客户端 —— 空表极罕见，不值得为它引风险。）
+            return Code.OK
+        }
+        int rc = core.setopt_ptr(handle, Opt.HTTPHEADER, slist)
+        // setopt 之后 handle 已指向**新表** ⇒ 旧表不再被引用，释放它（否则每改一次头就漏一份）
+        if _slist != null { core.slistFreeAll(_slist) }
+        _slist = slist
+        return rc
     }
+
+    // **替换**全部请求头（= CURLOPT_HTTPHEADER，整表换掉）。要设多个头就**一次给全**。
+    func replaceHeaders(Array[string] headers): int {
+        _headers = []
+        for headers to h { _headers.add(h) }
+        return _applyHeaders()
+    }
+
+    // **追加**请求头（保留已设的）。想"补一个头"用这个 —— 别拿 replaceHeaders 调两次（会覆盖）✓
+    func addHeaders(Array[string] headers): int {
+        for headers to h { _headers.add(h) }
+        return _applyHeaders()
+    }
+
+    // 回读当前请求头（自检/诊断用）
+    func headers(): Array[string] { return _headers }
 
     // 设置 verbose 模式
     func setVerbose(bool verbose): int {
@@ -359,7 +402,7 @@ export struct HttpClient {
     func setBrowserHeaders(string ua = "", string lang = "zh-CN,zh;q=0.9,en;q=0.8"): int {
         string realUA = ua
         if realUA == "" { realUA = chromeUA() }
-        return setHeaders(browserHeaders(realUA, lang))
+        return replaceHeaders(browserHeaders(realUA, lang))
     }
 
     // 断点续传起始偏移：设了它 libcurl 会发 `Range: bytes=N-` 并要求服务端回 206。
@@ -565,12 +608,13 @@ export struct HttpClient {
     }
 
     // 设置 Bearer Token 认证
-    // 等价于 setHeaders(["Authorization: Bearer <token>"])
+    // ⚠ 改走 replaceHeaders ⇒ 与 _headers 保持同一份状态（原实现自己造 slist 直接 setopt：
+    //   既绕过了 _headers（随后 addHeaders 会把 Authorization 冲掉），那份 slist 也从不释放）。
+    //   语义不变，仍是**整表替换** ✓
     func setBearerToken(string token): int {
-        if not ok { return Code.FAILED_INIT }
-        Ptr[u8] slist = null
-        slist = core.slistAppend(slist, "Authorization: Bearer " + token)
-        return core.setopt_ptr(handle, Opt.HTTPHEADER, slist)
+        Array[string] hs = []
+        hs.add("Authorization: Bearer " + token)
+        return replaceHeaders(hs)
     }
 
     // 获取句柄
@@ -585,14 +629,22 @@ export struct HttpClient {
     // ==================== 断点续传下载 ====================
 
     // 单次下载尝试：offset > 0 ⇒ 带 Range 续传（追加写）；offset == 0 ⇒ 整体覆盖写。
-    // 返回最终文件字节数；失败返回 -1。
+    // 返回最终文件字节数；失败返回 -1（原因写进 _lastError，用 lastError() 取）。
     pri func downloadAttempt(string url, string savePath, int offset): int {
         // ⚠ 复用的 handle 会**留住**上一次的选项：续传过之后必须显式清零，
         //   否则后续请求会莫名其妙带上 `Range:` 头（服务端回 206，正文只剩半截）。
         setResumeFrom(offset)
         Response r = get(url)
-        if r.curlCode != Code.OK { return -1 }   // 含服务端不支持 Range 时的 RANGE_ERROR(33)
-        if not r.ok() { return -1 }
+        if r.curlCode != Code.OK {
+            // 旧实现只 `return -1`，连"超时(28) / 服务端不支持 Range(33) / 写盘失败(23)"
+            // 都看不出来，排查时只能靠猜（2026-10-07 实战踩过）。现在留下 curlCode + 错误串。
+            _lastError = "下载中断 curlCode=" + _str(r.curlCode) + "：" + r.error
+            return -1
+        }
+        if not r.ok() {
+            _lastError = "下载被拒 HTTP " + _str(r.statusCode)
+            return -1
+        }
         string raw = r.rawBody()
         if offset > 0 and r.statusCode == 206 {
             // 服务端确实只给了剩余部分 ⇒ 追加
@@ -608,24 +660,45 @@ export struct HttpClient {
     }
 
     // 断点续传下载：本地已有部分就只取剩余字节；服务端不支持 Range 时自动整体重下。
-    // 成功返回文件最终字节数，失败返回 -1。
+    // 成功返回文件最终字节数，失败返回 -1（原因见 lastError()）。
+    //
+    // ⚠ 下载与普通请求的**超时语义不同**，这是本函数必须自己管超时的原因：
+    //   普通请求要「总时限」（TIMEOUT_MS）防止对端挂死；而下载必须用「**低速**超时」——
+    //   只要还在持续收数据就不该被掐断。
+    //   实测（2026-10-07，Audius 音频流）：7MB 的曲子耗 26s，恰好压在默认 30s 总时限内侥幸成功；
+    //   同一批 28min/60min 级的音轨（几十~上百 MB）**全部失败**且只返回 -1，
+    //   看着像"网络不通"，其实是总时限把正常下载掐断了。
+    //   现在：下载期间取消总时限，改用「平均速度 < 1 字节/秒 且持续 60 秒」判死。
     func downloadResume(string url, string savePath): int {
+        int savedTimeout = _timeoutMs
+        core.setopt_int(handle, Opt.TIMEOUT_MS, 0)          // 0 = 不设总时限
+        core.setopt_int(handle, Opt.LOW_SPEED_LIMIT, 1)     // 平均速度下限（字节/秒）
+        core.setopt_int(handle, Opt.LOW_SPEED_TIME, 60)     // 低于下限持续 60s ⇒ 判定断流
+
+        int result = -1
         int have = _fileSize(savePath)
         int total = -1
         if have > 0 {
             Response hr = head(url)
             if hr.ok() { total = _digitsToInt(hr.getHeader("content-length")) }
-            if total == have { return have }              // 已完整 ⇒ 不必再下
+            if total == have { result = have }            // 已完整 ⇒ 不必再下
             if total > 0 and have > total { have = 0 }    // 本地比远端还大 ⇒ 文件坏了，重下
         }
-        if have > 0 {
+        if result < 0 and have > 0 {
             int got = downloadAttempt(url, savePath, have)
-            if got >= 0 { return _verifySize(got, total) }
+            if got >= 0 { result = _verifySize(got, total) }
             // 续传失败（服务端不支持 Range / 偏移已失效）⇒ 落到下面整体重下
         }
-        int got2 = downloadAttempt(url, savePath, 0)
-        if got2 < 0 { return -1 }
-        return _verifySize(got2, total)
+        if result < 0 {
+            int got2 = downloadAttempt(url, savePath, 0)
+            if got2 >= 0 { result = _verifySize(got2, total) }
+        }
+
+        // 恢复成普通请求的超时语义（单出口 ⇒ 无论走哪条路都恢复，不污染后续请求）
+        core.setopt_int(handle, Opt.TIMEOUT_MS, savedTimeout)
+        core.setopt_int(handle, Opt.LOW_SPEED_LIMIT, 0)     // 0 = 关闭低速检测
+        core.setopt_int(handle, Opt.LOW_SPEED_TIME, 0)
+        return result
     }
 }
 
@@ -1280,7 +1353,7 @@ func _sessionPrepare(Session s) {
             hdrs.add(k + ": " + v)
         }
     }
-    s.c.setHeaders(hdrs)
+    s.c.replaceHeaders(hdrs)
 }
 
 // 会话 GET

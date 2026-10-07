@@ -109,7 +109,7 @@ main() {
     string out = dir + "bili_" + chosenBv + ".mp4"
     files.delete(out)
     HttpClient hc = web.createClient()
-    hc.setHeaders(["User-Agent: " + UA, "Referer: " + REFERER])
+    hc.replaceHeaders(["User-Agent: " + UA, "Referer: " + REFERER])
     int t2 = _int(times.ms())
     int got = hc.downloadResume(videoUrl, out)
     int dlMs = _int(times.ms()) - t2
@@ -151,7 +151,7 @@ main() {
         print("  裸 Range 请求: HTTP " + rr.statusCode + "  body=" + rr.body.byte_len() +
               " 字节  耗时 " + (_int(times.ms()) - t5) + "ms")
         HttpClient hc2 = web.createClient()
-        hc2.setHeaders(["User-Agent: " + UA, "Referer: " + REFERER])
+        hc2.replaceHeaders(["User-Agent: " + UA, "Referer: " + REFERER])
         int t3 = _int(times.ms())
         int n2 = hc2.downloadResume(videoUrl, part)
         int ms2 = _int(times.ms()) - t3

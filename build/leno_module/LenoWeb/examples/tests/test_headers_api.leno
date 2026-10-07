@@ -1,0 +1,76 @@
+// test_headers_api.leno — 请求头 API：replaceHeaders（整表替换）/ addHeaders（追加）
+//
+// 背景：旧名单一 `setHeaders` 语义含糊（实为 CURLOPT_HTTPHEADER 的**整表替换**），
+//   有人分两次调用去"补头" ⇒ 前一批被**静默覆盖**（Authorization 丢了 ⇒ 服务端回业务码 1001
+//   "not able to authenticate you"，看着像 token 过期）。2026-10-07 拆成两个"名字即语义"的方法，
+//   本用例把行为锁住，防止将来又被改回含糊语义：
+//     · replaceHeaders 覆盖全部（旧头必须消失）
+//     · addHeaders 保留已有（能"补一个头"而不动前面的）
+//     · headers() 能回读当前表
+//     · 反复替换不得崩（slist 每次重建都必须释放旧的 ⇒ 漏释放/释放早了在这里会显形）
+//
+// 全程**离线**：只压 API 语义与内存安全，不发任何请求 ✓
+import "web_net" as net
+import "_testkit" as tk
+import strings
+
+use net.(HttpClient)
+
+main() {
+    net.globalInit()
+    HttpClient c = net.createClient()
+
+    // ---------- 初始 ----------
+    tk.check("初始为空", c.headers().len(), 0)
+
+    // ---------- replaceHeaders：整表替换 ----------
+    c.replaceHeaders(["A: 1", "B: 2"])
+    tk.check("replace 后条数", c.headers().len(), 2)
+    tk.check("replace 后第 1 条", c.headers()[0], "A: 1")
+    tk.check("replace 后第 2 条", c.headers()[1], "B: 2")
+
+    // ---------- addHeaders：追加（绝不能覆盖）----------
+    c.addHeaders(["C: 3"])
+    tk.check("add 后条数", c.headers().len(), 3)
+    tk.check("add 保留原有第 1 条", c.headers()[0], "A: 1")
+    tk.check("add 保留原有第 2 条", c.headers()[1], "B: 2")
+    tk.check("add 追加在末尾", c.headers()[2], "C: 3")
+
+    // ---------- 再 replaceHeaders：旧的全部消失 ----------
+    c.replaceHeaders(["X: 9", "Y: 8", "Z: 7"])
+    tk.check("再 replace 后条数", c.headers().len(), 3)
+    tk.check("再 replace 后旧头已消失", strings.join(c.headers(), "|"), "X: 9|Y: 8|Z: 7")
+
+    // ---------- 反复替换：slist 每次重建 + 释放旧表 ----------
+    for 0:499 to i {
+        c.replaceHeaders(["K: " + _str(i)])
+    }
+    tk.check("500 次 replace 后条数", c.headers().len(), 1)
+    tk.check("500 次 replace 后是最后一次", c.headers()[0], "K: 499")
+
+    c.addHeaders(["L: 1", "M: 2"])
+    tk.check("追加 2 条后条数", c.headers().len(), 3)
+
+    // ---------- 空表 ----------
+    // 实现选择：空表**不碰 handle**（它可能仍引用旧 slist，此时释放 = use-after-free ✗）
+    // ⇒ 只断言"不崩 + 本地表归零"，不断言"已设的头被服务端丢掉"（真要清干净请重建客户端）
+    c.replaceHeaders([])
+    tk.check("空表后本地条数归零", c.headers().len(), 0)
+
+    // ---------- reset / close ----------
+    c.replaceHeaders(["P: 1"])
+    c.reset()
+    tk.check("reset 后条数归零", c.headers().len(), 0)
+
+    c.replaceHeaders(["Q: 1"])
+    c.close()          // 内部释放 slist；重复释放/漏释放会在这里或下面崩
+    tk.checkTrue("close 不崩", true)
+
+    // 再建一个客户端：验证上个客户端释放 slist 没破坏堆
+    HttpClient c2 = net.createClient()
+    c2.replaceHeaders(["R: 1"])
+    tk.check("新客户端独立可用", c2.headers().len(), 1)
+    c2.close()
+
+    _exit(tk.summary("headers_api"))
+}

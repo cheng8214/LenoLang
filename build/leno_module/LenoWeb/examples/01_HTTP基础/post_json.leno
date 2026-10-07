@@ -30,7 +30,7 @@ main() {
     // 使用 HttpClient 带自定义 header
     print("\n=== 带自定义 header 的 POST ===")
     HttpClient client = net.createClient()
-    client.setHeaders([
+    client.replaceHeaders([
         "Content-Type: application/json",
         "Authorization: Bearer my-token",
         "X-Custom-Header: LenoNet"
