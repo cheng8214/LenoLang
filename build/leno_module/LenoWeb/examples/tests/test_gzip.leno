@@ -164,5 +164,19 @@ main() {
     tk.check("web.gunzip 转发到 web_gzip", web.gunzip(strings.from_hex(HEX_FIXED)).data, XML1)
     tk.checkTrue("web.inflateRaw 转发到 web_gzip", web.inflateRaw(_rawDeflate(strings.from_hex(HEX_FIXED))).ok)
 
+    print("--- ⑨ zlib（2 字节头 + deflate + adler32，B8）---")
+    // 向量：拿**真实的裸 deflate**（HEX_FIXED 那条）前面加 zlib 头 `78 9C`、后面补 4 字节校验，
+    //   自建一个 zlib 体。⚠ adler32 本模块**不校验**（与 gzip 不做 CRC32 同一取舍）⇒ 这 4 字节
+    //   填什么都行；向量要证明的是"**先剥 2 字节头再解**"这条路径本身是对的 ✓
+    string zlibBody = strings.from_bytes([0x78, 0x9C]) + _rawDeflate(strings.from_hex(HEX_FIXED)) + strings.from_bytes([0x1A, 0x2B, 0x3C, 0x4D])
+    var zr = gz.inflateZlib(zlibBody)
+    tk.checkTrue("zlib 解压成功", zr.ok)
+    tk.check("zlib 正文正确", zr.data, XML1)
+    var zrShort = gz.inflateZlib(strings.from_bytes([0x78, 0x9C]))
+    tk.checkTrue("太短 ⇒ 失败并给出原因", not zrShort.ok and zrShort.error != "")
+    var zrBad = gz.inflateZlib(strings.from_bytes([0x79, 0x9C, 0x00, 0x00, 0x00, 0x00]))
+    tk.checkTrue("压缩方法不是 deflate ⇒ 失败", not zrBad.ok)
+    tk.check("Web 统一入口的转发", web.inflateZlib(zlibBody).data, XML1)
+
     if tk.summary("gzip") != 0 { _exit(1) }
 }

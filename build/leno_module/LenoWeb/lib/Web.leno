@@ -206,6 +206,7 @@ export func resume(Crawler c): bool { return c.resume() }
 export func gunzip(string raw): GzipResult { return gzip.gunzip(raw) }
 export func inflateRaw(string raw): GzipResult { return gzip.inflateRaw(raw) }
 export func isGzip(string raw): bool { return gzip.isGzip(raw) }
+export func inflateZlib(string raw): GzipResult { return gzip.inflateZlib(raw) }
 
 // ==================== 动态渲染（无头浏览器 / CDP）====================
 // 驱动本机 Chrome/Edge 渲染 SPA，拿回**渲染后**的 HTML —— 再交给 web.parse/web.select

@@ -1,0 +1,46 @@
+// `--check`（只解析 + 语义检查、**不产出** .lenb，B12）—— 回归
+//
+// 背景：想"只验证能不能过编译"原先只能借 `-c`，而 `-c` 会产出 .lenb（脚本化时还得回来删产物）。
+// 判据：
+//   ① 合法文件：exit=0、输出含"检查通过"、且**不产出 .lenb**
+//   ② 语义错误：exit≠0、报错含"类型"，同样不产出 .lenb
+//   ③ 语法错误：exit≠0
+//
+// ⚠ 用 `_executable()` 调自身（不依赖 PATH）；路径**不加引号**——与 `assert/run_tests.leno`
+//   同一写法（Windows 上 `_exec` 走 cmd，给路径加引号反而容易踩引号嵌套的坑）。
+//   因此这里假设 exe 路径与临时目录都不含空格（本机成立）。
+import files
+import dirs
+import strings
+
+func runCheck(string file): ExecResult {
+    return _exec(_executable() + " --check " + file, 60000)
+}
+
+main() {
+    string base = dirs.join(_tmpdir(), "leno_check_probe_")
+    files.write(base + "ok.leno", "main() {\n    int x = 1\n    print(x)\n}\n")
+    files.write(base + "bad.leno", "main() {\n    int x = \"abc\"\n    print(x)\n}\n")
+    files.write(base + "syn.leno", "main() {\n    int x =\n}\n")
+
+    // ---------- ① 合法文件 ----------
+    var r1 = runCheck(base + "ok.leno")
+    assert_eq(r1.code, 0, "①合法文件应 exit=0；输出=" + r1.output)
+    assert_true(strings.has(r1.output, "检查通过"), "①应打印'检查通过'；输出=" + r1.output)
+    assert_eq(files.exists(base + "ok.lenb"), false, "①--check **不许**产出 .lenb")
+
+    // ---------- ② 语义错误 ----------
+    var r2 = runCheck(base + "bad.leno")
+    assert_ne(r2.code, 0, "②语义错误应非零退出；输出=" + r2.output)
+    assert_true(strings.has(r2.output, "类型"), "②应报类型不匹配；输出=" + r2.output)
+    assert_eq(files.exists(base + "bad.lenb"), false, "②失败路径也不该产出 .lenb")
+
+    // ---------- ③ 语法错误 ----------
+    var r3 = runCheck(base + "syn.leno")
+    assert_ne(r3.code, 0, "③语法错误应非零退出；输出=" + r3.output)
+
+    files.delete(base + "ok.leno")
+    files.delete(base + "bad.leno")
+    files.delete(base + "syn.leno")
+    print("test_check_flag passed")
+}

@@ -508,6 +508,44 @@ export func inflateRaw(string raw): GzipResult {
     return r
 }
 
+// zlib 流（RFC1950）：**2 字节头** + DEFLATE 数据 + **4 字节 adler32**（2026-10-07 新增，B8）
+//   ⚠ 为什么需要它：`gunzip` 认的是 10 字节 gzip 头、`inflateRaw` 认的是**裸** deflate，
+//     两个对 zlib 都会错位 ⇒ 调用方只能自己 `byte_slice(2, len)` 剥头（酷我歌词就是这么绕的）。
+//   影响面不止歌词：HTTP `Content-Encoding: deflate`、PNG 的 IDAT、任何 `.zlib` 体都是这个格式。
+//   ⚠ adler32 **不校验** —— 与 gzip 不做 CRC32 是同一取舍（按字节跑位运算，收益不抵成本）；
+//     但尾部那 4 字节不会变成垃圾：deflate 解到 BFINAL 就停、后面的字节不参与解码 ✓，
+//     而真正损坏的数据会在解码阶段以具体错误（块类型非法 / 距离越界）报出来。
+//   ⚠ 只查"压缩方法"，**不查** RFC1950 的 FCHECK（`(CMF*256+FLG) % 31`）：本模块取向是
+//     "能解就解"，不为一个校验位把可用数据挡在门外（损坏由解码阶段兜住）。
+export func inflateZlib(string raw): GzipResult {
+    GzipResult r = new GzipResult()
+    int n = raw.byte_len()
+    r.inBytes = n
+    if n < 6 {
+        r.ok = false
+        r.error = "太短，不是有效的 zlib（至少 6 字节：2 字节头 + 4 字节校验）"
+        return r
+    }
+    int cmf = raw.byte(0)
+    if (cmf & 15) != 8 {
+        r.ok = false
+        r.error = "不是 zlib 流（压缩方法 " + (cmf & 15) + "，只支持 8 = deflate）"
+        return r
+    }
+    string body = strings.byte_slice(raw, 2, n)
+    _State st = _newState(body)
+    _inflateAll(st)
+    if st.bad {
+        r.ok = false
+        r.error = st.err
+        return r
+    }
+    r.ok = true
+    r.data = strings.from_bytes(st.out)
+    r.outBytes = st.out.len()
+    return r
+}
+
 // gzip（RFC1952）：头（含可选字段）+ DEFLATE 数据 + 8 字节 trailer（CRC32 + ISIZE）
 export func gunzip(string raw): GzipResult {
     GzipResult r = new GzipResult()

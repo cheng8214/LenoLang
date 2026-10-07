@@ -579,6 +579,32 @@ static Value native_type(int argCount, Value* args) {
     return val_obj((Object*)typeStr);
 }
 
+// 数值转换失败时把**坏值**拼进消息（B14，2026-10-07）
+//   为什么：排查"青衣事故"时，作者是靠**回到接口原始 JSON** 才看出 `size:999.06Kb` 的；
+//   若消息直接写 `无法将字符串转换为浮点数："999.06Kb"`，至少省一轮试错。
+//   这不是"新增能力"——同一个运行时的文件类报错**一直**带值（`无法打开文件 '…'`）✓，
+//   只是把数值转换类的口径拉齐。
+//   ⚠ 截断到 48 字节并按 **UTF-8 字符边界**回退（别把中文切成半个）；
+//     控制字符换成空格，免得一条消息被撑成多行。
+static void num_convert_err(const char* what, ObjString* s) {
+    char shown[80];
+    int n = s->len > 48 ? 48 : s->len;
+    if (n < s->len) {
+        // 回退到字符边界：0x80~0xBF 是 UTF-8 的**续字节** ⇒ 切在续字节上说明切进了字符中间
+        while (n > 0 && ((unsigned char)s->chars[n] & 0xC0) == 0x80) n--;
+    }
+    int j = 0;
+    for (int i = 0; i < n && j < 60; i++) {
+        unsigned char c = (unsigned char)s->chars[i];
+        shown[j++] = (c < 32 || c == 127) ? ' ' : (char)c;
+    }
+    if (s->len > n) { shown[j++] = '.'; shown[j++] = '.'; shown[j++] = '.'; }
+    shown[j] = '\0';
+    char msg[160];
+    snprintf(msg, sizeof(msg), "%s：\"%s\"", what, shown);
+    native_throw_error(msg);
+}
+
 // _int(value) - 转换为整数
 static Value native_to_int(int argCount, Value* args) {
     (void)argCount;   // 个数由编译期把关（同一族 2026-10-01 清理）⇒ 不重复检查
@@ -619,7 +645,7 @@ static Value native_to_int(int argCount, Value* args) {
                     }
                     return val_int_safe(num);
                 }
-                native_throw_error("无法将字符串转换为整数");
+                num_convert_err("无法将字符串转换为整数", str);
                 return val_int(0);
             } else if (val_as_obj(value)->type == OBJ_BIGINT) {
                 ObjBigInt* big = (ObjBigInt*)val_as_obj(value);
@@ -673,7 +699,7 @@ static Value native_to_float(int argCount, Value* args) {
                 if (*end == '\0') {
                     return val_float(num);
                 }
-                native_throw_error("无法将字符串转换为浮点数");
+                num_convert_err("无法将字符串转换为浮点数", str);
                 return val_float(0.0);
             } else if (val_as_obj(value)->type == OBJ_BIGINT) {
                 ObjBigInt* bigint = (ObjBigInt*)val_as_obj(value);
@@ -771,8 +797,22 @@ static Value native_to_str(int argCount, Value* args) {
                 snprintf(buf, sizeof(buf), "<Socket fd=%d>", (int)sock->fd);
                 result = str_copy(buf, (int)strlen(buf));
             } else {
-                snprintf(buf, sizeof(buf), "<%s>", "object");
-                result = str_copy(buf, (int)strlen(buf));
+                // ★ 统一到**插值 / 字符串拼接的口径**（`value_to_string`，见 vm.c 的字符串相加）：
+                //   数组 / 字典 / struct / 枚举 / cstruct 本来都有正经文本形态，`_str` 却只给
+                //   `<object>` ⇒ 实测：`print(_str(_args()))` 打出 "<object>"，调试时完全看不出
+                //   内容，还会让人怀疑"参数根本没传进来"。
+                //   ⚠ 这是 B4 的**根因**：`_str(x)` 是"把任意东西转成字符串"的通用入口，
+                //     却偏偏是**唯一读不出异常**的写法（插值 `$"{e}"` 能读、`_str(e)` 不能读 ✗）。
+                //     代价实测：错误信息会显示成 `搜索失败：<object>`，等于把修好的错误路径又堵回去。
+                //   兜底仍留 `<object>`：给 `value_to_string` 也描述不了的（理论上为空分支）。
+                char* vs = value_to_string(value);
+                if (vs != NULL) {
+                    result = str_copy(vs, (int)strlen(vs));
+                    free(vs);
+                } else {
+                    snprintf(buf, sizeof(buf), "<%s>", "object");
+                    result = str_copy(buf, (int)strlen(buf));
+                }
             }
             break;
         default:
@@ -951,6 +991,70 @@ static Value native_to_byte(int argCount, Value* args) {
     return native_to_uint8(argCount, args);
 }
 
+// ==================== 宽容版数值转换（B9，2026-10-07） ====================
+// `_int_or(v, def)` / `_float_or(v, def)`：**转不了就给默认值，绝不抛异常**。
+//
+// 为什么要有它（实录 A5「青衣」事故）：`_float("999.06Kb")` 是**抛异常**而不是返回 0，
+//   而服务端 JSON 里"看着像数字"的字段什么写法都有（`43.64Mb` / `999.06Kb` / `zpMb`）
+//   ⇒ 一个畸形字段就能把整次搜索炸掉，界面只剩"没搜到结果"。
+//   最硬的旁证：标准库自己在绕开它 —— `LenoWeb/lib/web_net.leno` 手写了 `_digitsToInt()`，
+//   注释写着"响应头里什么脏值都可能有"。
+//
+// ⚠ 命名与 `_env_or(name, default)` 同族：`*_or` = 拿不到就给默认值 ✓
+// ⚠ **不改** `_int` / `_float` 的既有语义（"抛异常"那条被大量既有代码与测试依赖，
+//   改成宽容等于**静默**改掉别人已经写好的错误处理）⇒ 只能新增入口，不能改旧的。
+static Value native_int_or(int argCount, Value* args) {
+    (void)argCount;   // 个数由编译期把关（同 _int）
+    Value v = args[0];
+    Value def = args[1];
+    if (val_is_string(v)) {
+        ObjString* s = (ObjString*)val_as_obj(v);
+        if (s->len > 0) {
+            char* end;
+            errno = 0;
+            long long n = strtoll(s->chars, &end, 10);
+            // 必须**整串**都是数字：`"12abc"` 也算脏 ⇒ 给默认值（这是"先判再转"的实现）
+            if (*end == '\0' && errno != ERANGE) return val_int_safe(n);
+        }
+        return def;
+    }
+    // 非字符串：这几种调 `_int` 本来就**不会**抛 ⇒ 照常转（口径与 `_int` 一致）
+    switch (val_get_type(v)) {
+        case VAL_INT:
+        case VAL_FLOAT:
+        case VAL_BOOL:
+        case VAL_NULL:
+            return native_to_int(1, &v);
+        default:
+            return def;   // 容器 / struct / 指针：`_int` 在这里是抛 ⇒ 这里给默认值
+    }
+}
+
+static Value native_float_or(int argCount, Value* args) {
+    (void)argCount;
+    Value v = args[0];
+    Value def = args[1];
+    if (val_is_string(v)) {
+        ObjString* s = (ObjString*)val_as_obj(v);
+        if (s->len > 0) {
+            char* end;
+            errno = 0;
+            double d = strtod(s->chars, &end);
+            if (*end == '\0' && errno != ERANGE) return val_float(d);
+        }
+        return def;
+    }
+    switch (val_get_type(v)) {
+        case VAL_INT:
+        case VAL_FLOAT:
+        case VAL_BOOL:
+        case VAL_NULL:
+            return native_to_float(1, &v);
+        default:
+            return def;
+    }
+}
+
 // ==================== 初始化 ====================
 
 void types_init_globals(void) {
@@ -962,6 +1066,11 @@ void types_init_globals(void) {
     TypeKind convert_params[] = {TYPE_ANY};
     vm_register_native("_int", native_to_int, TYPE_INT, TYPE_UNKNOWN, NATIVE_FIXED(convert_params));
     vm_register_native("_float", native_to_float, TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED(convert_params));
+    // 宽容版（B9）：转不了 ⇒ 给默认值，**绝不抛异常**。与 `_env_or` 同族命名与口径。
+    TypeKind or_int_params[] = {TYPE_ANY, TYPE_INT};
+    vm_register_native("_int_or", native_int_or, TYPE_INT, TYPE_UNKNOWN, NATIVE_FIXED(or_int_params));
+    TypeKind or_float_params[] = {TYPE_ANY, TYPE_FLOAT};
+    vm_register_native("_float_or", native_float_or, TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED(or_float_params));
     vm_register_native("_bool", native_to_bool, TYPE_BOOL, TYPE_UNKNOWN, NATIVE_FIXED(convert_params));
     vm_register_native("_str", native_to_str, TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED(convert_params));
     vm_register_native("_ptr", native_to_ptr, TYPE_PTR, TYPE_UNKNOWN, NATIVE_FIXED(convert_params));

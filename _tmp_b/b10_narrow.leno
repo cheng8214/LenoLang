@@ -1,0 +1,13 @@
+// 现状探针：B10 —— 类型收窄是否穿过 `var c = x` 这个局部别名
+func count(any x): int {
+    if x is Array[int] {
+        var c = x
+        return c.len()
+    }
+    return -1
+}
+
+main() {
+    var a = [1, 2, 3]
+    print(count(a))
+}

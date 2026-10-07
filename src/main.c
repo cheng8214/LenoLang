@@ -48,6 +48,7 @@ int debugMode = 0;
 static int pauseMode = 0;
 static int compileMode = 0;
 static int packMode = 0;
+static int checkMode = 0;   // --check：只做解析 + 语义检查（不产出 .lenb、不执行）（B12）
 static int initMode = 0;
 static int installMode = 0;
 static char* debugOutFile = NULL;  // --debug-out 指定的输出文件路径
@@ -161,6 +162,7 @@ static void printHelp(const char* program) {
     printf("  --debug           启用调试模式（输出字节码）\n");
     printf("  --debug-out <file> 字节码输出到指定文件（自动启用 --debug）\n");
     printf("  -c, --compile     编译为二进制文件（.lenb），不执行\n");
+    printf("  --check           只做解析 + 语义检查（不产出 .lenb），有错非零退出\n");
     printf("  -p, --pack        编译并打包为独立可执行文件（嵌入 leno_vm）\n");
     printf("  -o, --pack-dir <目录>  指定打包输出目录（默认 <源码目录>/dist）\n");
     printf("                    输出的 exe 与依赖的原生库（leno.toml 的 [native-libs]）\n");
@@ -862,6 +864,25 @@ int lenolang_compile(const char* source, const char* output_path) {
     fprintf(stderr, "[TIME] semantic: %.1f ms\n", (double)(t_sem1 - t_sem0) / CLOCKS_PER_SEC * 1000.0);
     if (error_has_any()) goto compile_fail;
 
+    // `--check`：到这儿（解析 + 语义都过了）就可以收了 —— **不 codegen、不写 .lenb**（B12）
+    //   ⚠ 清理顺序与正常出口一致；`codegen_cleanup` 在 codegen 之前调用也是安全的
+    //     （`compile_fail` 就能从语义之前跳过来 ✓）
+    if (checkMode) {
+        // ⚠ `chunk.filename` 要到 codegen 阶段才填 ⇒ 走 --check 时它还是空（会打成 "stdin"）。
+        //   改用 `error_get_filename()`（入口文件绝对路径，进本函数前就设好了 ✓）
+        const char* shown = error_get_filename();
+        if (!shown || !shown[0]) shown = chunk.filename;
+        if (!shown || !shown[0]) shown = "stdin";
+        printf("检查通过: %s（未产出 .lenb）\n", shown);
+        codegen_cleanup(&gen);
+        ast_free(parser.root);
+        semantic_cleanup(&sem);
+        chunk_free(&chunk);
+        gc_free_all();
+        warning_print_all();
+        return 0;
+    }
+
     clock_t t_opt0 = clock();
     optimize_constant_fold(parser.root);
     optimize_dead_code_elimination(parser.root);
@@ -1390,6 +1411,13 @@ int lenolang_run_file(const char* path) {
                 module_loader_set_cache_dir(cache_dir);
             }
         }
+    }
+
+    // `--check`：编译但**不产出、不执行**（真正的早退在 lenolang_compile 内部的 checkMode 分支）
+    if (checkMode) {
+        int rc = lenolang_compile(source, path);
+        free(source);
+        return rc;
     }
 
     // 编译模式：编译为 .lenb 文件
@@ -1946,7 +1974,7 @@ int lenolang_run_file(const char* path) {
     
     // ===== 入口文件缓存 =====
     // 检查入口文件的 .lenb 缓存，如果源码哈希不变则直接加载跳过编译
-    if (module_loader_is_cache_enabled() && !compileMode && !packMode && !debugMode) {
+    if (module_loader_is_cache_enabled() && !compileMode && !packMode && !debugMode && !checkMode) {
         const char* abs_f = error_get_filename();
         const char* cache_dir = module_loader_get_cache_dir();
         if (abs_f && cache_dir && cache_dir[0]) {
@@ -2082,6 +2110,13 @@ static int main_logic(int argc, char** argv) {
             continue;
         } else if (strcmp(argv[i], "--compile") == 0 || strcmp(argv[i], "-c") == 0) {
             compileMode = 1;
+            continue;
+        } else if (strcmp(argv[i], "--check") == 0) {
+            // 只验证"能不能过编译"：跑 parse + 语义，有错非零退出，**不写 .lenb**（B12）
+            //   为什么需要：此前只能借 `-c`，而 `-c` 会产出 .lenb（脚本化时还得回来删产物 ✗）。
+            //   收益：编辑器 / CI / 预提交钩子的"无副作用"入口。
+            //   ⚠ 与内部的 `--check-bin`（校验**已打包的** .lenb，见 pack 分支）不是一回事。
+            checkMode = 1;
             continue;
         } else if (strcmp(argv[i], "--pack") == 0 || strcmp(argv[i], "-p") == 0) {
             packMode = 1;

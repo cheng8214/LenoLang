@@ -1,0 +1,10 @@
+// 现状探针：B13（threads.start 实参个数不对时的行为/文案）
+import threads
+
+func named(int n): int { return n * 2 }
+
+main() {
+    print("--- B13: threads.start 实参个数不足（应为 2 个）---")
+    var t = threads.start(named)
+    print("  没报错，join = " + t.join())
+}

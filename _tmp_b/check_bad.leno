@@ -1,0 +1,5 @@
+// --check 的反例（语义错误：int = string）
+main() {
+    int x = "abc"
+    print(x)
+}

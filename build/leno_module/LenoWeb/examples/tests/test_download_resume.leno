@@ -11,6 +11,7 @@ import "Web" as web
 import "_testkit" as tk
 import threads
 import files
+import dirs
 
 int PORT = 39617
 int MAXREQ = 512
@@ -66,6 +67,18 @@ main() {
     tk.check("首次即续传接口", web.downloadResume(base + "/file/1234", f5), 1234)
     tk.check("内容正确", tk.fileBodyOk(files.read(f5), 0, 1234), true)
     files.delete(f5)
+
+    print("--- ⑥b 目标父目录不存在 ⇒ 库自己建（B2）---")
+    // 背景（实录 B2）：文档写"失败返回 -1"，实际是下游 `files.write` **抛异常**
+    //   （打[位置]+[调用栈]，**中断整个程序**）。修法：`downloadResume` 开头先把父目录
+    //   mkdir -p 出来 ⇒ 下面这条断言就是那个修复的判据（父目录确实不存在 → 仍能落盘）。
+    string subdir = dir + "lenoweb_resume_sub"
+    string fsub = subdir + _sep() + "deep.bin"
+    if dirs.exists(subdir) { dirs.delete(subdir) }      // 确保前置条件成立
+    tk.check("父目录不存在时也能落盘（返回字节数）", web.downloadResume(base + "/file/1500", fsub), 1500)
+    tk.check("内容正确", tk.fileBodyOk(files.read(fsub), 0, 1500), true)
+    files.delete(fsub)
+    if dirs.exists(subdir) { dirs.delete(subdir) }
 
     print("--- ⑦ 404 必须返回 -1（不能把错误页当文件写下去）---")
     string f6 = dir + "lenoweb_resume_6.bin"

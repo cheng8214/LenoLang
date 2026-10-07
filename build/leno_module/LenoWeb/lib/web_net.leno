@@ -5,6 +5,7 @@ import jsons
 import files
 import strings
 import times
+import dirs          // downloadResume 要先建父目录（B2：不建的话 files.write 会抛异常中断整个程序）
 import "web_curl_core.leno" as core
 import "web_charset.leno" as charsets
 // 重新导出核心类型
@@ -674,6 +675,16 @@ export struct HttpClient {
         core.setopt_int(handle, Opt.TIMEOUT_MS, 0)          // 0 = 不设总时限
         core.setopt_int(handle, Opt.LOW_SPEED_LIMIT, 1)     // 平均速度下限（字节/秒）
         core.setopt_int(handle, Opt.LOW_SPEED_TIME, 60)     // 低于下限持续 60s ⇒ 判定断流
+
+        // ⚠ 目标**父目录不存在**时，下游 `files.write` 是**抛异常**（打栈 + 中断整个程序），
+        //   而本函数的契约是"失败返回 -1"（实录 B2：实现与文档口径不一致）。
+        //   这里先把父目录建出来 —— 这是调用方最想要的（"存到 downloads/x.flac" 不该
+        //   要求调用方自己先 mkdir）；若连目录都建不出来，属"真的没法写"，
+        //   后续 write 仍会抛，交由调用方处理（不在库里吞掉）。
+        string parent = dirs.dirname(savePath)
+        if parent != "" and not dirs.exists(parent) {
+            dirs.mkdir_p(parent)
+        }
 
         int result = -1
         int have = _fileSize(savePath)

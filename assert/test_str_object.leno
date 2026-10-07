@@ -1,0 +1,50 @@
+// `_str(x)` 对容器 / struct / 异常必须与**插值口径**一致（不能是 `<object>`）—— 回归（B4）
+//
+// 背景（实录 B4）：`_str(x)` 是"把任意东西转成字符串"的通用入口，却偏偏是**唯一读不出异常**
+//   的写法（`$"{e}"` 能读、`print(e)` 能读、`e.msg` 能读，而 `_str(e)` 给 `<object>`）。
+//   真实代价：作者据此写出过**错误结论**；而且代码里 3 处 `_str(e)` 会把"青衣"事故的原因
+//   显示成 `搜索失败：<object>` —— 修好了搜索也等于白修 ✗。
+//
+// 判据：与 `"" + x`（字符串拼接口径）**逐字一致**；异常也读得出内容；标量/字符串不受影响。
+
+import strings
+
+struct Pt {
+    int x = 1
+    int y = 2
+}
+
+main() {
+    var a = [1, 2, 3]
+    var d = {"k": "v"}
+    Pt p = new Pt()
+
+    // ---------- ① 容器：与插值口径逐字一致 ----------
+    assert_true(not strings.has(_str(a), "<object>"), "①_str(Array) 不该是 <object>；实际=" + _str(a))
+    assert_eq(_str(a), "" + a, "①_str(Array) 必须与拼接口径一致")
+    assert_true(not strings.has(_str(d), "<object>"), "②_str(Dict) 不该是 <object>；实际=" + _str(d))
+    assert_eq(_str(d), "" + d, "②_str(Dict) 必须与拼接口径一致")
+
+    // ---------- ② struct ----------
+    assert_true(not strings.has(_str(p), "<object>"), "②_str(struct) 不该是 <object>；实际=" + _str(p))
+    assert_eq(_str(p), "" + p, "②_str(struct) 必须与拼接口径一致")
+
+    // ---------- ③ 异常：这条是 B4 的核心 ----------
+    string es = "(没抓到异常)"
+    try {
+        var v = _int("abc")
+    } catch e {
+        es = _str(e)
+    }
+    assert_true(not strings.has(es, "<object>"), "③_str(异常) 不该是 <object>；实际=" + es)
+    assert_true(strings.has(es, "abc"), "③_str(异常) 应能读出内容；实际=" + es)
+
+    // ---------- ④ 守卫：标量 / 字符串的口径不变 ----------
+    assert_eq(_str("hi"), "hi", "④字符串原样返回")
+    assert_eq(_str(42), "42", "④int")
+    assert_eq(_str(1.5), "1.5", "④float")
+    assert_eq(_str(true), "true", "④bool")
+    assert_eq(_str(null), "null", "④null")
+
+    print("test_str_object passed")
+}

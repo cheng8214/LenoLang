@@ -1,0 +1,68 @@
+// `_int_or` / `_float_or`（宽容转换，B9）+ 数值报错带坏值（B14）—— 回归
+//
+// 背景（实录《移植音乐下载器》A5「青衣」事故）：`_float("999.06Kb")` 是**抛异常**而不是返回 0，
+//   而服务端 JSON 里"看着像数字"的字段什么写法都有（`43.64Mb` / `999.06Kb` / `zpMb`）
+//   ⇒ 一个畸形字段就把整次搜索炸掉，界面只剩"没搜到结果"。
+//   最硬的旁证：标准库自己在绕开它 —— LenoWeb 的 `web_net.leno` 手写了 `_digitsToInt()`，
+//   注释写着"响应头里什么脏值都可能有"。
+//
+// 判据：
+//   ① 宽容版：脏串 / 整串非数字 / 容器 ⇒ 默认值；能转的照常转；非字符串与 `_int` 同口径
+//   ② 报错**带坏值**（B14）：`无法将字符串转换为浮点数："999.06Kb"`
+//   ③ 守卫：`_int` / `_float` 的旧语义**不许变**（脏串仍抛异常）——
+//      这条必须留着，否则"新增一个宽容入口"就悄悄变成了"改掉别人写好的错误处理"
+
+import strings
+
+main() {
+    // ---------- ① 宽容版转换 ----------
+    assert_eq(_int_or("abc", -1), -1, "①脏串应给默认值")
+    assert_eq(_int_or("42", -1), 42, "①能转的照常转")
+    assert_eq(_int_or("12abc", -1), -1, "①尾部有脏字符也算脏（整串判定）")
+    assert_eq(_int_or("", -1), -1, "①空串给默认值")
+    assert_eq(_float_or("999.06Kb", -1.0), -1.0, "①'999.06Kb' 给默认值")
+    assert_eq(_float_or("3.5", 0.0), 3.5, "①'3.5' 正常转")
+    assert_eq(_float_or("zp", -1.0), -1.0, "①'zp' 给默认值")
+    var arr = [1, 2, 3]
+    assert_eq(_int_or(arr, 0), 0, "①容器给默认值")
+    assert_eq(_int_or(3.9, 0), 3, "①非字符串与 _int 同口径（截断）")
+    assert_eq(_int_or(true, 0), 1, "①布尔照常转")
+
+    // ---------- ② 报错带坏值 ----------
+    string msg = ""
+    try {
+        var v = _float("999.06Kb")
+        msg = "(没抛异常)"
+    } catch e {
+        msg = $"{e}"
+    }
+    assert_true(strings.has(msg, "999.06Kb"), "②浮点报错应带坏值；实际=" + msg)
+
+    string msg2 = ""
+    try {
+        var v2 = _int("zp")
+        msg2 = "(没抛异常)"
+    } catch e2 {
+        msg2 = $"{e2}"
+    }
+    assert_true(strings.has(msg2, "zp"), "②整数报错应带坏值；实际=" + msg2)
+
+    // ---------- ③ 旧语义守卫 ----------
+    bool threwFloat = false
+    try {
+        var v3 = _float("zp")
+    } catch e3 {
+        threwFloat = true
+    }
+    assert_eq(threwFloat, true, "③_float 的旧语义（脏串抛异常）必须保持不变")
+
+    bool threwInt = false
+    try {
+        var v4 = _int("abc")
+    } catch e4 {
+        threwInt = true
+    }
+    assert_eq(threwInt, true, "③_int 的旧语义必须保持不变")
+
+    print("test_num_convert passed")
+}
