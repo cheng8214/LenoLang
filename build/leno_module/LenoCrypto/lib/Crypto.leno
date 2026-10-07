@@ -9,19 +9,27 @@
 //     所以库里没有"新写但没验证"的算法 —— 校验见 test/test_crypto_vectors.leno
 //     （向量由 node:crypto 生成，作为绝对期望值 ✓）。
 
-import "crypto_base64.leno" as b64
+import strings  // base64 / 文本⇄字节 一律直连标准库（2026-10-07 见下方说明）
 import "crypto_sha256.leno" as s256
 import "crypto_sha512.leno" as s512
 import "crypto_hmac_sha256.leno" as hmac
 import "crypto_aes.leno" as aes
 
-// ==================== Base64 ====================
-export func base64_encode(string input):string { return b64.base64_encode(input) }
-export func base64_decode(string input):string { return b64.base64_decode(input) }
-export func b64_to_bytes(string s):Array[int] { return b64.b64_to_bytes(s) }
-export func bytes_to_b64(Array[int] bs):string { return b64.bytes_to_b64(bs) }
-export func str_to_bytes(string s):Array[int] { return b64.str_to_bytes(s) }
-export func bytes_to_str(Array[int] bs):string { return b64.bytes_to_str(bs) }
+// ==================== Base64 / 文本⇄字节（2026-10-07 迁至核心标准库）====================
+// 原先这里转发 6 个函数（`base64_encode` / `base64_decode` / `b64_to_bytes` / `bytes_to_b64` /
+// `str_to_bytes` / `bytes_to_str`），实现放在子模块 `crypto_base64.leno`。现在全部**删除**，
+// 调用方一律直连 `strings.*`：
+//   · 文本 ⇒ base64   ：`strings.to_base64(s)`（URL-safe 传第二个参数 true）
+//   · base64 ⇒ 文本   ：`strings.from_base64(s)`
+//   · 字节 ⇒ base64   ：`strings.to_base64(strings.from_bytes(bs))`
+//   · base64 ⇒ 字节   ：`strings.to_bytes(strings.from_base64(s))`
+//   · 文本 ⇄ 字节     ：`strings.to_bytes(s)` / `strings.from_bytes(bs)`
+// 为什么删：base64 是**标量编解码**、不是密码学原语（无密钥、无安全性质），归核心标准库
+//   （与 to_hex/from_hex 同族）⇒ 做分帧的 `web_ws` 这类模块不必为编解码去依赖一个加密库；
+//   且加解密本身走 `Array[int]`，`strings.to_bytes/from_bytes` 语义完全一致 ✓
+// 顺带换来一处**行为增强**：`strings.from_base64` 两种字母表都认（`+/` 与 `-_`）、缺 `=`
+//   padding 也收、空白字符忽略，非法字符则**报错并指出第几位**（旧的 `b64_to_bytes` 是
+//   "遇 '=' 或非法字符即静默截断" ⇒ 结果少一截却看不出原因 ✗）。
 
 // ==================== 哈希 ====================
 // sha256 / sha512 返回**十六进制小写字符串**；*_bytes 返回原始 32/64 字节
@@ -45,10 +53,10 @@ export func aes128_cbc_encrypt_bytes(Array[int] key16, Array[int] iv16, Array[in
 export func aes128_cbc_decrypt_bytes(Array[int] key16, Array[int] iv16, Array[int] ct):Array[int] { return aes.aes128_cbc_decrypt_bytes(key16, iv16, ct) }
 // 字符串糖（内部按 UTF-8 字节处理）
 export func aes128_cbc_encrypt_str(Array[int] key16, Array[int] iv16, string plaintext):Array[int] {
-    return aes.aes128_cbc_encrypt_bytes(key16, iv16, b64.str_to_bytes(plaintext))
+    return aes.aes128_cbc_encrypt_bytes(key16, iv16, strings.to_bytes(plaintext))
 }
 export func aes128_cbc_decrypt_str(Array[int] key16, Array[int] iv16, Array[int] ct):string {
-    return b64.bytes_to_str(aes.aes128_cbc_decrypt_bytes(key16, iv16, ct))
+    return strings.from_bytes(aes.aes128_cbc_decrypt_bytes(key16, iv16, ct))
 }
 
 // ==================== hex ====================

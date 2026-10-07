@@ -1548,6 +1548,9 @@ static Value str_from_bytes(int argc, Value* args) {
 //   以及音乐下载器 / Trae签到 各一份。而 `web_ws` 这种"做分帧"的模块不该为了编解码去依赖
 //   一个**加密库** ⇒ core scalar codec 归核心标准库（与 to_hex/from_hex 同族，正是
 //   `docs/单一事实来源与重复实现收敛.md` 的取向）。
+//   ★ 同日收口结果：`LenoCrypto/lib/crypto_base64.leno`、`examples/crypto/base64.leno`
+//     **已删除**，`LenoWeb/lib/web_ws.leno` 改薄封装，音乐下载器 / Trae签到 直连 `strings.*`
+//     ⇒ 四份实现收敛为**这一份** ✓（注释改动，不影响已构建的二进制）
 //
 // 命名与参数口径**完全照抄 to_hex**：字节串进、ASCII 串出；第二个参数是可选的 `url_safe`
 //   （`+`/`/` 换成 `-`/`_`，JWT / data: URL 用得上）。

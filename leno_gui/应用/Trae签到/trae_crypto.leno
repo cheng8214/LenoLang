@@ -1,8 +1,10 @@
 // Trae 专用解密：登录态密文 → auth JSON
 //
-// 通用加密（Base64 / SHA-512 / AES-128-CBC+PKCS7）已收进标准库 **LenoCrypto** ✓
+// 通用加密（SHA-512 / AES-128-CBC+PKCS7）已收进标准库 **LenoCrypto** ✓；
+//   base64 归**核心标准库** `strings.*`（2026-10-07 起 LenoCrypto 不再提供，见其 lib/Crypto.leno 的说明）
 // ⇒ 本文件只留 Trae 特有的"派生密钥"4 步（对齐参考件 trae-checkin.js 的 decrypt()）✓
 //    旧版这里是 800+ 行纯 Leno 的 AES/SHA-512 机械拼接 ✗ ⇒ 现在 40 行 ✓
+import strings
 import "Crypto" as crypto
 
 // 两张 64 字节表（源自官方客户端派生逻辑；逐字取自参考件）
@@ -14,7 +16,7 @@ var TRAE_DRE = [31, 221, 168, 51, 136, 7, 199, 49, 177, 18, 16, 89, 39, 128, 236
 //   派生：sha512(key) → 与 (ure ^ dre) 拼 128B → sha512 → 前 16B=aesKey、次 16B=iv
 //   解密：CBC 解密（库内自动去 PKCS7）→ 丢掉前 64B → 剩下就是 auth JSON
 export func trae_decrypt_auth(string enc_b64):string {
-    Array[int] t = crypto.b64_to_bytes(enc_b64)
+    Array[int] t = strings.to_bytes(strings.from_base64(enc_b64))
     if t.len() < 38 + 16 { return "" }
 
     var key = []
@@ -38,5 +40,5 @@ export func trae_decrypt_auth(string enc_b64):string {
     if dec.len() <= 64 { return "" }
     var body = []
     for 64:dec.len() - 1 to i { body.add(dec[i]) }
-    return crypto.bytes_to_str(body)
+    return strings.from_bytes(body)
 }
