@@ -1,0 +1,205 @@
+// bilibili_rank.leno — 真实 JS 站点实战：B 站全站排行榜（纯客户端渲染）
+//
+// 为什么挑它：静态 HTML 只有 ~4.9KB 空壳（0 个条目），榜单完全由 JS 拉接口后渲染。
+//   ① HTTP 抓取拿不到（对照）
+//   ② CDP 驱动真浏览器 + 等对时机 ⇒ 拿到渲染后的 DOM，再喂给现有 HTML 解析器
+//
+// 实战结论（2026-10-07）：
+//   · 渲染链路本身通了：100 个条目 + 正常截图；过程中暴露并修掉了两个**库缺陷**
+//     ① `_drain` 污染 WS 读超时（200ms）⇒ 1.3MB 的 outerHTML 读取整体失败、渲染 ok=false
+//     ② `RenderResult.status` 恒为 0（字段承诺了主文档状态码，却没人填）
+//   · 站点侧有两层限制，如实记录、不假装抓到：
+//     ① 分批渲染：只有约 36/100 个条目被完全填充（标题与 UP 主名），其余是空骨架
+//     ② 风控：滚动过多/过快会弹滑块验证码，并把榜单整个从 DOM 卸载（0 条）
+import "Web" as web
+import strings
+import files
+import dirs
+import times
+
+use web.(Browser, BrowserConfig, RenderOptions, RenderResult, HtmlNode)
+
+const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+
+struct Video {
+    int rank = 0
+    string bvid = 0      // 形如 BV1c3HL6qEyq（在 DOM 里有）
+    string url = 0
+    string title = 0     // 实测为空（站点用伪元素渲染）
+    string up = 0
+    string play = 0
+    string danmaku = 0
+}
+
+// 取第一段连续数字，无则 0
+func firstNumber(string s): int {
+    int n = s.byte_len()
+    int val = 0
+    bool started = false
+    int i = 0
+    while i < n {
+        var b = s.byte(i)
+        if b is int {
+            if b >= 48 and b <= 57 {
+                val = val * 10 + (b - 48)
+                started = true
+            } else if started {
+                break
+            }
+        }
+        i = i + 1
+    }
+    return val
+}
+
+// URL 的最后一段（".../video/BV1xx" ⇒ "BV1xx"）
+func lastSeg(string s): string {
+    int last = -1
+    int i = 0
+    while i < s.byte_len() {
+        if s.byte(i) == 47 { last = i }
+        i = i + 1
+    }
+    if last < 0 { return s }
+    return strings.byte_slice(s, last + 1, s.byte_len())
+}
+
+func parseRank(HtmlNode root): Array[Video] {
+    Array[Video] out = []
+    var items = web.select(root, ".rank-item")
+    for items to it {
+        Video v = new Video()
+        var numEl = web.selectOne(it, ".num")
+        if numEl != null { v.rank = firstNumber(web.textContent(numEl)) }
+        // 视频链接：href 是站内相对协议写法 "//www.bilibili.com/video/BV..."
+        var aEl = web.selectOne(it, "a[href*='/video/BV']")
+        if aEl != null {
+            string href = web.attr(aEl, "href")
+            if strings.starts_with(href, "//") { href = "https:" + href }
+            v.url = href
+            v.bvid = lastSeg(href)
+        }
+        var tEl = web.selectOne(it, "a.title")
+        if tEl != null {
+            // 标题优先取 title 属性：B 站部分条目只填了属性、文本节点还是空的
+            // （实测 36 条条目两者都有；属性里偶尔是 " 1" 这类占位 ⇒ trim + 判空后回退文本）
+            string tt = strings.trim(web.attr(tEl, "title"))
+            if tt == "" { tt = strings.trim(web.textContent(tEl)) }
+            v.title = tt
+        }
+        // .data-box 依次是 [UP 主] [播放量] [弹幕数]
+        var boxes = web.select(it, ".data-box")
+        if boxes.len() >= 1 { v.up = web.cleanText(web.textContent(boxes[0])) }
+        if boxes.len() >= 2 { v.play = web.cleanText(web.textContent(boxes[1])) }
+        if boxes.len() >= 3 { v.danmaku = web.cleanText(web.textContent(boxes[2])) }
+        out.add(v)
+    }
+    return out
+}
+
+main() {
+    string url = "https://www.bilibili.com/v/popular/rank/all"
+    string dir = dirs.script_dir() + _sep()
+    print("目标: " + url)
+
+    // ---- ① 静态 HTTP 抓取（对照）----
+    print("")
+    print("=== ① 静态 HTTP 抓取（对照）===")
+    var st = web.getWithBrowserHeaders(url, UA)
+    print("状态 " + st.statusCode + "，body " + st.body.byte_len() + " 字节")
+    print("静态 .rank-item 个数 = " + web.select(web.parse(st.body), ".rank-item").len())
+
+    // ---- ② 找浏览器 + 启动 ----
+    print("")
+    print("=== ② 浏览器 ===")
+    string exe = web.findBrowser()
+    if exe == "" { print("本机没有 Chrome/Edge"); return }
+    print("用: " + exe)
+    BrowserConfig cfg = new BrowserConfig()
+    cfg.startUrl = "about:blank"
+    cfg.stealth = true
+    Browser b = web.launchBrowser(cfg)
+    if not b.ok { print("启动失败: " + b.error); return }
+    print("版本 " + b.version + "，端口 " + b.port + "，pid " + b.pid)
+
+    // ---- ③ 渲染 ----
+    print("")
+    print("=== ③ 渲染（等 .rank-item，滚动触发懒加载）===")
+    RenderOptions opt = new RenderOptions()
+    // ⚠ 不用 networkidle：这个站点有持续心跳请求，networkidle 永远达不成，会一路等到 timeout
+    opt.waitUntil = "selector"
+    opt.waitSelector = ".rank-item"
+    opt.settleMs = 2000
+    // ⚠ 滚动节奏是"填充 vs 风控"的取舍（实测）：
+    //    滚 2 次（快）→ 只有最后一屏填上标题（100 条里 35 条）
+    //    逐屏滚 16 屏（~13s）→ 每屏都填了，但触发了**滑块验证码**，榜单被整个卸载（0 条）
+    //    ⇒ 温和取 4 屏；真要全量就得上代理轮换/更拟人的节奏（见 README 反爬章节）
+    opt.scrollTimes = 4
+    opt.scrollSettleMs = 800      // 每屏停 800ms —— 等"进入视口才渲染"的懒加载填充
+    opt.timeoutMs = 20000
+    opt.screenshotPath = dir + "bilibili_rank.png"
+    RenderResult r = web.renderAdvanced(b, url, opt)
+    print("ok=" + r.ok + "  主文档状态=" + r.status + "  耗时=" + r.ms + "ms  渲染后 " + r.html.byte_len() + " 字节")
+    if not r.ok {
+        print("渲染失败: " + r.error)
+        web.closeBrowser(b)
+        return
+    }
+    print("截图: " + opt.screenshotPath + "（存在 " + files.exists(opt.screenshotPath) + "）")
+    files.write(dir + "bilibili_rank.html", r.html)
+
+    // ---- ④ 解析 ----
+    print("")
+    print("=== ④ 解析榜单 ===")
+    var root = web.parse(r.html)
+    Array[Video] vids = parseRank(root)
+    print("解析出条目 = " + vids.len())
+
+    int noTitle = 0
+    int noUp = 0
+    int noPlay = 0
+    for vids to v {
+        if v.title == "" { noTitle = noTitle + 1 }
+        if v.up == "" { noUp = noUp + 1 }
+        if v.play == "" { noPlay = noPlay + 1 }
+    }
+    print("字段缺失: 标题 " + noTitle + " / UP主 " + noUp + " / 播放量 " + noPlay)
+
+    print("")
+    print("前 3 条原始字段：")
+    int shown = 0
+    for vids to v {
+        if shown >= 3 { break }
+        print("  #" + v.rank + " bvid=" + v.bvid + " 标题=[" + v.title + "] UP=[" + v.up +
+              "] 播放=[" + v.play + "] 弹幕=[" + v.danmaku + "]")
+        shown = shown + 1
+    }
+    bool blocked = strings.has(r.html, "请在下图依次点击") or strings.has(r.html, "滑块验证")
+    if vids.len() == 0 {
+        print("")
+        print("  ⚠ 渲染后 0 个条目 ⇒ 站点风控把榜单卸载了（实测：逐屏滚动过快/过多会触发滑块验证码）。")
+        print("     截图见 bilibili_rank.png；应对：放慢节奏、换代理、或改用它的公开 API。")
+    } else if vids.len() > 0 and noTitle == vids.len() {
+        print("")
+        print("  ⚠ 标题全部为空：截图里标题清晰可见，但 outerHTML 里没有该文本。")
+        print("     这类站点把文本放在 CSS 伪元素 / canvas 里，outerHTML 天然拿不到 ——")
+        print("     需要读它的接口，或用 getComputedStyle(el,'::before').content。")
+    }
+    if blocked { print("  ⚠ 渲染结果里出现了验证码文案，确认被风控拦截。") }
+
+    // ---- ⑤ 落 CSV（有什么写什么）----
+    Array[Array[string]] rows = []
+    for vids to v {
+        rows.add([_str(v.rank), _str(v.bvid), v.title, v.up, v.play, v.danmaku, v.url])
+    }
+    Array[string] header = ["排名", "BV号", "标题", "UP主", "播放量", "弹幕数", "链接"]
+    string csvPath = dir + "bilibili_rank.csv"
+    int wrote = web.writeCsv(csvPath, rows, header)
+    print("")
+    print("CSV 已写入: " + csvPath + "（" + wrote + " 行）")
+
+    // ---- ⑥ 关闭 ----
+    print("")
+    print("=== ⑤ 关闭 ===")
+    print("closed=" + web.closeBrowser(b))
+}

@@ -3,10 +3,46 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <math.h>
 
 // ============================================================================
 // 值操作（注意：val_int, val_float, val_num, val_bool, val_null, val_obj, val_is_truthy 已在 leno_value.h 中内联）
 // ============================================================================
+
+// 浮点 -> 字符串：最短往返表示。
+//
+// 旧实现直接 "%.17g"：double 的 9.7 真实值是 9.699999999999999289...，
+// 于是 `print(9.7)` / `"x=" + 9.7` 会显示 9.6999999999999993（实测：爬虫算出的
+// 平均分 9.068 打印成 9.0680000000000032）。而 CSV/JSON 两条路径用的是 "%g"，
+// 同一个值在不同出口长得不一样 —— 这是缺陷。
+//
+// 现在按 "%.15g → %.16g → %.17g" 依次尝试，取第一个 **strtod 能精确回读**
+// 的精度：9.7 在 15 位就往返成功 ⇒ 输出 "9.7"；而 0.1+0.2 这类真的需要
+// 更多位才能无损的值，仍会输出 "0.30000000000000004"（不丢信息）。
+void val_format_float(double v, char* buf, size_t size) {
+    if (size == 0) return;
+    if (isnan(v)) {
+        snprintf(buf, size, "nan");
+        return;
+    }
+    if (isinf(v)) {
+        snprintf(buf, size, v > 0 ? "inf" : "-inf");
+        return;
+    }
+    for (int prec = 15; prec <= 17; prec++) {
+        snprintf(buf, size, "%.*g", prec, v);
+        if (strtod(buf, NULL) == v) break;
+    }
+    // 整数值的浮点必须保留浮点特征：1 写成 "1.0"（保持旧行为）
+    if (!strchr(buf, '.') && !strchr(buf, 'e') && !strchr(buf, 'E')) {
+        size_t len = strlen(buf);
+        if (len + 2 < size) {
+            buf[len] = '.';
+            buf[len + 1] = '0';
+            buf[len + 2] = '\0';
+        }
+    }
+}
 
 const char* val_to_string(Value v) {
     // 使用线程本地存储，确保线程安全
@@ -25,15 +61,7 @@ const char* val_to_string(Value v) {
             snprintf(buffer, sizeof(buffer), "%lld", (long long)val_as_int(v));
             return buffer;
         case VAL_FLOAT:
-            snprintf(buffer, sizeof(buffer), "%.17g", val_as_num(v));
-            if (!strchr(buffer, '.') && !strchr(buffer, 'e') && !strchr(buffer, 'E')) {
-                size_t len = strlen(buffer);
-                if (len + 2 < sizeof(buffer)) {
-                    buffer[len] = '.';
-                    buffer[len + 1] = '0';
-                    buffer[len + 2] = '\0';
-                }
-            }
+            val_format_float(val_as_num(v), buffer, sizeof(buffer));
             return buffer;
         case VAL_OBJ:
             if (val_as_obj(v)->type == OBJ_STRING) {
@@ -85,15 +113,7 @@ char* value_to_string(Value v) {
         }
         case VAL_FLOAT: {
             char buffer[64];
-            snprintf(buffer, sizeof(buffer), "%.17g", val_as_num(v));
-            if (!strchr(buffer, '.') && !strchr(buffer, 'e') && !strchr(buffer, 'E')) {
-                size_t len = strlen(buffer);
-                if (len + 2 < sizeof(buffer)) {
-                    buffer[len] = '.';
-                    buffer[len + 1] = '0';
-                    buffer[len + 2] = '\0';
-                }
-            }
+            val_format_float(val_as_num(v), buffer, sizeof(buffer));
             result = strdup(buffer);
             break;
         }

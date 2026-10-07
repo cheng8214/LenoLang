@@ -275,6 +275,11 @@ static inline int val_is_truthy(Value v) {
 const char* val_to_string(Value v);
 char* value_to_string(Value v);
 
+// 浮点 -> 字符串：**最短往返**表示（9.7 -> "9.7"，而不是 "9.6999999999999993"）。
+// 保证能 strtod 回读为同一个 double；整数值的浮点带 ".0"（1.0 不写成 1）。
+// buf 由调用者提供；NaN/Inf 输出 "nan"/"inf"/"-inf"（不带 ".0"）。
+void val_format_float(double v, char* buf, size_t size);
+
 static inline int val_is_num(Value v) {
     return val_is_int(v) || val_is_float(v) ||
            (val_is_obj(v) && val_as_obj(v)->type == OBJ_BIGINT);

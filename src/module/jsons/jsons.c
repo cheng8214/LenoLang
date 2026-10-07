@@ -71,7 +71,9 @@ static void sb_append_int(StringBuilder* sb, int64_t num) {
 
 static void sb_append_float(StringBuilder* sb, double num) {
     char buf[64];
-    snprintf(buf, sizeof(buf), "%g", num);
+    // 最短往返：JSON 里的浮点必须能无损反序列化回同一个 double
+    // （旧的 "%g" 会把 0.1+0.2 写成 "0.3"、把 1.0 写成 "1" ⇒ 往返后精度/类型都变）
+    val_format_float(num, buf, sizeof(buf));
     sb_append_cstr(sb, buf);
 }
 

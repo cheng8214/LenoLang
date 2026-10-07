@@ -50,15 +50,7 @@ static void print_value_internal(Value value) {
             break;
         case VAL_FLOAT: {
             char fbuf[64];
-            snprintf(fbuf, sizeof(fbuf), "%.17g", val_as_num(value));
-            if (!strchr(fbuf, '.') && !strchr(fbuf, 'e') && !strchr(fbuf, 'E')) {
-                size_t len = strlen(fbuf);
-                if (len + 2 < sizeof(fbuf)) {
-                    fbuf[len] = '.';
-                    fbuf[len + 1] = '0';
-                    fbuf[len + 2] = '\0';
-                }
-            }
+            val_format_float(val_as_num(value), fbuf, sizeof(fbuf));
             printf("%s", fbuf);
             break;
         }
@@ -172,15 +164,7 @@ static void print_value_quoted(Value value) {
             break;
         case VAL_FLOAT: {
             char fbuf[64];
-            snprintf(fbuf, sizeof(fbuf), "%.17g", val_as_num(value));
-            if (!strchr(fbuf, '.') && !strchr(fbuf, 'e') && !strchr(fbuf, 'E')) {
-                size_t len = strlen(fbuf);
-                if (len + 2 < sizeof(fbuf)) {
-                    fbuf[len] = '.';
-                    fbuf[len + 1] = '0';
-                    fbuf[len + 2] = '\0';
-                }
-            }
+            val_format_float(val_as_num(value), fbuf, sizeof(fbuf));
             printf("%s", fbuf);
             break;
         }

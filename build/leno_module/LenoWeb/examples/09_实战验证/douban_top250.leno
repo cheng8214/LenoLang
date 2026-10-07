@@ -1,0 +1,358 @@
+// douban_top250.leno — 实战：爬取豆瓣读书 Top 250（10 页 / 250 本）
+//
+// 目的：用**真站点**给 Leno 语言 + LenoWeb 库加压，暴露问题。
+// 覆盖：Session + 浏览器头、分页、限速、失败重试、struct 建模、CSS 选择器解析、
+//       字节级字符串处理（数字/年份提取）、手写排序、Dict 聚合、CSV 落地、异常保护。
+import "Web" as web
+import strings
+import dirs
+import times
+
+use web.(Session, Response, HtmlNode)
+
+const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+
+// 一本书的完整记录
+struct Book {
+    int rank = 0
+    string title = 0
+    string author = 0
+    string publisher = 0
+    string pubdate = 0
+    float rating = 0.0
+    int voters = 0
+    string quote = 0
+    string url = 0
+}
+
+// ==================== 字节级字符串工具 ====================
+
+// 取第一段连续数字（允许千分位逗号），无则 0
+func firstNumber(string s): int {
+    int n = s.byte_len()
+    int val = 0
+    bool started = false
+    int i = 0
+    while i < n {
+        var b = s.byte(i)
+        if b is int {
+            if b >= 48 and b <= 57 {
+                val = val * 10 + (b - 48)
+                started = true
+            } else if started and b != 44 {
+                break
+            }
+        }
+        i = i + 1
+    }
+    return val
+}
+
+// 取第一个形如 19xx / 20xx 的年份，无则 0
+func firstYear(string s): int {
+    int n = s.byte_len()
+    int i = 0
+    while i + 4 <= n {
+        var b0 = s.byte(i)
+        if b0 is int and (b0 == 49 or b0 == 50) {
+            var b1 = s.byte(i + 1)
+            var b2 = s.byte(i + 2)
+            var b3 = s.byte(i + 3)
+            if b1 is int and b2 is int and b3 is int and
+               b1 >= 48 and b1 <= 57 and b2 >= 48 and b2 <= 57 and b3 >= 48 and b3 <= 57 {
+                // 后一位不能还是数字（避免从 5 位数里切出 4 位）
+                bool okEnd = true
+                if i + 4 < n {
+                    var b4 = s.byte(i + 4)
+                    if b4 is int and b4 >= 48 and b4 <= 57 { okEnd = false }
+                }
+                if okEnd {
+                    return (b0 - 48) * 1000 + (b1 - 48) * 100 + (b2 - 48) * 10 + (b3 - 48)
+                }
+            }
+        }
+        i = i + 1
+    }
+    return 0
+}
+
+// ==================== 网络 ====================
+
+// 会话请求 + 指数退避重试（对 403/异常都重试）
+func fetchRetry(Session s, string url, int retries): Response {
+    Response r = web.sessionGet(s, url)
+    int attempt = 0
+    while (not r.ok()) and attempt < retries {
+        sleep(2000 * (attempt + 1))
+        print("      重试 " + (attempt + 1) + "/" + retries + "（上次 HTTP " + r.statusCode + "）")
+        r = web.sessionGet(s, url)
+        attempt = attempt + 1
+    }
+    return r
+}
+
+// ==================== 解析 ====================
+
+func parsePage(HtmlNode root, int startRank): Array[Book] {
+    Array[Book] out = []
+    var items = web.select(root, "tr.item")
+    int rank = startRank
+    for items to it {
+        rank = rank + 1
+        Book b = new Book()
+        b.rank = rank
+
+        // 书名 / 详情链接 / 封面：都在 div.pl2 的第一个 a 上
+        var a = web.selectOne(it, "div.pl2 a")
+        if a != null {
+            b.title = web.attr(a, "title")
+            if b.title == "" { b.title = strings.trim(web.textContent(a)) }
+            b.url = web.attr(a, "href")
+        }
+
+        // 出版信息：段数与含义**都不固定**
+        //   作者 / 出版社 / 出版年月 / 价格
+        //   作者 / 译者 / 出版社 / 出版年月        （有译者时多一段，实测 250 本里很常见）
+        //   ⇒ 按固定下标取会把"译者"当成出版社（初版就是这么错的：苏农/荣如德/谭春霞…）。
+        //   正确做法：从右往左找**形如 19xx/20xx 的年份段**定位，它前面一段才是出版社，
+        //   再往左全部是作者/译者。
+        var info = web.selectOne(it, "p.pl")
+        if info != null {
+            string raw = strings.trim(web.textContent(info))
+            Array[string] segs = strings.split(raw, " / ")
+            int yi = -1
+            for segs to sg, si {
+                if si > 0 and firstYear(sg) > 0 { yi = si }
+            }
+            if yi >= 1 {
+                b.pubdate = segs[yi]
+                b.publisher = segs[yi - 1]
+            }
+            int lastAuthor = yi - 2
+            if yi < 0 { lastAuthor = segs.len() - 1 }
+            string auth = ""
+            for segs to sg, si {
+                if si > lastAuthor { break }
+                if auth != "" { auth = auth + " / " }
+                auth = auth + sg
+            }
+            b.author = auth
+        }
+
+        // 评分
+        var star = web.selectOne(it, "span.rating_nums")
+        if star != null {
+            string rs = strings.trim(web.textContent(star))
+            if rs != "" { b.rating = _float(rs) }
+        }
+
+        // 评价人数：div.star 内的 span.pl，形如 "(469748人评价)"
+        var pl = web.selectOne(it, "div.star span.pl")
+        if pl != null { b.voters = firstNumber(web.textContent(pl)) }
+
+        // 一句话书评
+        var q = web.selectOne(it, "p.quote span.inq")
+        if q != null { b.quote = strings.trim(web.textContent(q)) }
+
+        out.add(b)
+    }
+    return out
+}
+
+// ==================== 排序（索引选择排序，避免依赖结构体交换语义） ====================
+
+// 排序判据：评分降序；评分相同按评价人数降序；再相同按排名升序
+func better(Book a, Book b): bool {
+    if a.rating > b.rating { return true }
+    if a.rating < b.rating { return false }
+    if a.voters > b.voters { return true }
+    if a.voters < b.voters { return false }
+    return a.rank < b.rank
+}
+
+func sortedIndex(Array[Book] books): Array[int] {
+    Array[int] order = []
+    for books.len() to i { order.add(i) }
+    int n = order.len()
+    int i = 0
+    while i < n {
+        int best = i
+        int j = i + 1
+        while j < n {
+            if better(books[order[j]], books[order[best]]) { best = j }
+            j = j + 1
+        }
+        if best != i {
+            int tmp = order[i]
+            order[i] = order[best]
+            order[best] = tmp
+        }
+        i = i + 1
+    }
+    return order
+}
+
+// Dict[string,int] 按计数降序取前 n 个 key（返回 "key(count)" 串，便于打印）
+func topKeys(Dict[string, int] dist, int n): Array[string] {
+    Array[string] keys = dist.keys()
+    int m = keys.len()
+    Array[int] idx = []
+    for m to i { idx.add(i) }
+    int i = 0
+    while i < m {
+        int best = i
+        int j = i + 1
+        while j < m {
+            if dist.get(keys[idx[j]], 0) > dist.get(keys[idx[best]], 0) { best = j }
+            j = j + 1
+        }
+        if best != i {
+            int tmp = idx[i]
+            idx[i] = idx[best]
+            idx[best] = tmp
+        }
+        i = i + 1
+    }
+    Array[string] out = []
+    int k = 0
+    while k < m and k < n {
+        string key = keys[idx[k]]
+        out.add(key + "(" + dist.get(key, 0) + ")")
+        k = k + 1
+    }
+    return out
+}
+
+// ==================== 主流程 ====================
+
+main() {
+    print("=== 实战：豆瓣读书 Top 250 ===")
+    print("")
+
+    string base = "https://book.douban.com/top250"
+    int pages = 10
+    int perPage = 25
+    int delayMs = 1200
+
+    // ---- 合规：先读 robots.txt，并遵守它声明的 Crawl-delay ----
+    string robots = web.fetchRobots("https://book.douban.com", UA)
+    if robots != "" {
+        bool allowed = web.isRobotsAllowed(robots, "*", base)
+        int cd = web.parseCrawlDelay(robots, "*")
+        print("robots.txt: " + robots.len() + " 字节｜允许 /top250 = " + allowed + "｜Crawl-delay = " + cd + "s")
+        if cd * 1000 > delayMs { delayMs = cd * 1000 }
+    } else {
+        // 实测：book.douban.com/robots.txt = 404（豆瓣的 robots 只发布在主域 www.douban.com）
+        // 按 RFC 9309，本主机取不到 robots.txt ⇒ 视为不限制，照常爬。
+        print("robots.txt: 本主机无 robots.txt（404 ⇒ 视为不限制；豆瓣的 robots 只在主域）")
+    }
+    print("")
+
+    Session s = web.createSession()
+    web.sessionSetHeader(s, "User-Agent", UA)
+    web.sessionSetHeader(s, "Accept-Language", "zh-CN,zh;q=0.9")
+    web.sessionSetHeader(s, "Accept", "text/html,application/xhtml+xml")
+    web.sessionSetTimeout(s, 20000)
+
+    Array[Book] books = []
+    int okPages = 0
+    int startTime = _int(times.ms())
+
+    for pages to p {
+        string url = base + "?start=" + (p * perPage)
+        print("[页 " + (p + 1) + "/" + pages + "] " + url)
+        Response r = fetchRetry(s, url, 2)
+        if not r.ok() {
+            print("    ✗ 请求失败：HTTP " + r.statusCode + " / " + r.error)
+            continue
+        }
+        print("    HTTP 200，" + r.body.len() + " 字符，耗时 " + r.totalTime + "s")
+        try {
+            var got = parsePage(web.parse(r.body), p * perPage)
+            print("    解析出 " + got.len() + " 本")
+            if got.len() < perPage {
+                print("    ⚠ 条目数不足（可能被限流/页面结构变化）")
+            }
+            for got to b { books.add(b) }
+            okPages = okPages + 1
+        } catch e {
+            print("    ✗ 解析异常：" + e.msg)
+        }
+        sleep(delayMs)
+    }
+
+    int elapsed = _int(times.ms()) - startTime
+    print("")
+    print("=== 抓取汇总 ===")
+    print("成功页数: " + okPages + "/" + pages)
+    print("书目总数: " + books.len())
+    print("耗时: " + (elapsed / 1000) + " 秒")
+    if books.len() == 0 { print("无数据，终止"); return }
+
+    // ---- 统计 ----
+    float sumRating = 0.0
+    int scored = 0
+    int noTitle = 0
+    int noPublisher = 0
+    int noYear = 0
+    Dict[string, int] yearDist = {}
+    Dict[string, int] pubDist = {}
+    for books to b {
+        if b.title == "" { noTitle = noTitle + 1 }
+        if b.rating > 0.0 {
+            sumRating = sumRating + b.rating
+            scored = scored + 1
+        }
+        int y = firstYear(b.pubdate)
+        if y > 0 {
+            string yk = _str(y / 10 * 10) + "s"
+            yearDist[yk] = yearDist.get(yk, 0) + 1
+        } else {
+            noYear = noYear + 1
+        }
+        if b.publisher != "" {
+            pubDist[b.publisher] = pubDist.get(b.publisher, 0) + 1
+        } else {
+            noPublisher = noPublisher + 1
+        }
+    }
+    print("有评分书目: " + scored + "，平均分: " + (sumRating / _float(scored)))
+    print("字段缺失: 书名 " + noTitle + " / 出版社 " + noPublisher + " / 出版年 " + noYear)
+
+    print("")
+    print("出版年代分布（前 8）:")
+    var ys = topKeys(yearDist, 8)
+    for ys to y { print("    " + y) }
+
+    print("")
+    print("出版社 Top 8:")
+    var ps = topKeys(pubDist, 8)
+    for ps to pn { print("    " + pn) }
+
+    // ---- 排序 + Top 10 ----
+    Array[int] order = sortedIndex(books)
+    print("")
+    print("=== 评分 Top 10 ===")
+    int shown = 0
+    for order to oi {
+        if shown >= 10 { break }
+        Book b = books[oi]
+        print("    " + (shown + 1) + ". " + b.title + "  " + b.rating + "  (" + b.voters + "人)  " + b.publisher)
+        shown = shown + 1
+    }
+
+    // ---- 落 CSV ----
+    Array[Array[string]] rows = []
+    for order to oi {
+        Book b = books[oi]
+        rows.add([
+            _str(b.rank), b.title, b.author, b.publisher, b.pubdate,
+            _str(b.rating), _str(b.voters), b.quote, b.url
+        ])
+    }
+    Array[string] header = ["排名", "书名", "作者", "出版社", "出版年月", "评分", "评价人数", "一句话书评", "链接"]
+    string csvPath = dirs.script_dir() + _sep() + "douban_top250.csv"
+    int wrote = web.writeCsv(csvPath, rows, header)
+    print("")
+    print("CSV 已写入: " + csvPath + "（" + wrote + " 行）")
+}

@@ -333,7 +333,8 @@ static Value arr_join(int argc, Value* args) {
             if (val_is_int(v)) {
                 len = snprintf(buf, sizeof(buf), "%lld", (long long)val_as_num(v));
             } else if (val_is_float(v)) {
-                len = snprintf(buf, sizeof(buf), "%g", val_as_num(v));
+                val_format_float(val_as_num(v), buf, sizeof(buf));
+                len = (int)strlen(buf);
             } else if (val_is_bool(v)) {
                 len = snprintf(buf, sizeof(buf), "%s", val_as_bool(v) ? "true" : "false");
             } else if (val_is_null(v)) {

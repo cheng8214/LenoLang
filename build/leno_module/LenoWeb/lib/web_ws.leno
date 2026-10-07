@@ -229,20 +229,36 @@ func _wsFail(WsClient c, string msg): WsClient {
 }
 
 // 从 socket 精确读 n 个字节（先吃 pending；超时/断开返回 ""）
-// ⚠ 两个坑都踩过：
+// ⚠ 四个坑都踩过：
 //   ① `sock.recv()` 超时/出错返回的是 **null**（不是空串）⇒ 必须显式判 null，
 //      否则 `got.byte_len()` 在 null 上走错分支；
-//   ② 超时**再兜一层** deadline（`times.ms()`），不把"不会卡死"全押在 SO_RCVTIMEO 上。
+//   ② 超时要**再兜一层** deadline（`times.ms()`），不把"不会卡死"全押在 SO_RCVTIMEO 上；
+//   ③ deadline 必须是「**无进展**超时」而不是「总耗时超时」：大帧（CDP 的 outerHTML
+//      经常 1~3 MB）接收本身就要时间，按总耗时掐表会把正常的大响应判成超时。
+//      2026-10-07 实战：B 站排行榜渲染后 1.37MB 的 outerHTML 读取失败 ⇒ 整个渲染 ok=false；
+//      根因之一就是总耗时 deadline 被 `_drain` 压到 200ms（见 web_cdp 的 _drain）。
+//   ④ 单次 recv 要**分片**问：一次 `recv(1.37MB)` 拿不全，且大缓冲对 runtime 不友好。
+const WS_RECV_CHUNK = 65536      // 单次 recv 字节上限
+const WS_RECV_STALL_MS = 5000    // 连续这么久一个字节都没收到 ⇒ 认定失败
+
 func _readExact(WsClient c, int n): string {
-    int deadline = _int(times.ms()) + c.timeoutMs
+    int idleLimit = WS_RECV_STALL_MS
+    if c.timeoutMs > 0 and c.timeoutMs < idleLimit { idleLimit = c.timeoutMs }
+    int lastProgress = _int(times.ms())
     while c.pending.byte_len() < n {
-        if _int(times.ms()) > deadline { return "" }
+        if _int(times.ms()) - lastProgress > idleLimit { return "" }
         int want = n - c.pending.byte_len()
+        if want > WS_RECV_CHUNK { want = WS_RECV_CHUNK }
         string got = c.sock.recv(want)
-        if got == null or got.byte_len() == 0 {
-            return ""     // 超时或对端关闭
+        if got == null {
+            // 本轮没有数据（页面忙 / 分段到达）—— **不是致命错误**，只要还没停滞就接着等
+            continue
+        }
+        if got.byte_len() == 0 {
+            return ""     // 对端关闭
         }
         c.pending = c.pending + got
+        lastProgress = _int(times.ms())
     }
     string out = strings.byte_slice(c.pending, 0, n)
     c.pending = strings.byte_slice(c.pending, n, c.pending.byte_len())
@@ -481,7 +497,10 @@ export func recvMessage(WsClient c): WsMessage {
         }
         string body = _readExact(c, len)
         if body.byte_len() < len {
-            m.error = "读帧体超时（要 " + len + " 字节，只收到 " + body.byte_len() + "）"
+            // `_readExact` 失败时**已收到的字节留在 c.pending**（不消费）⇒ 这里能报出真实进度。
+            // 旧文案用的是 `body.byte_len()`，而失败路径 body 恒为 "" ⇒ 永远打印"只收到 0"，
+            // 排查时像是"一个字节都没收到"，把方向带偏（2026-10-07 实战踩过）。
+            m.error = "读帧体超时（要 " + len + " 字节，已收 " + c.pending.byte_len() + "）"
             return m
         }
         if masked {

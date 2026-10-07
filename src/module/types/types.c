@@ -753,7 +753,9 @@ static Value native_to_str(int argCount, Value* args) {
             result = str_copy(buf, (int)strlen(buf));
             break;
         case VAL_FLOAT:
-            snprintf(buf, sizeof(buf), "%.6g", val_as_num(value));
+            // 与 print / 字符串拼接 / JSON 同口径（最短往返）。
+            // 旧的 "%.6g" 会丢精度：_str(3.141592653589793) == "3.14159"。
+            val_format_float(val_as_num(value), buf, sizeof(buf));
             result = str_copy(buf, (int)strlen(buf));
             break;
         case VAL_OBJ:

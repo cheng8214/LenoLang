@@ -506,9 +506,8 @@ ObjString* dict_key_to_string(Value key) {
     }
     if (val_is_float(key)) {
         char buf[64];
-        double d = val_as_double(key);
-        int len = snprintf(buf, sizeof(buf), "%g", d);
-        return str_new(buf, len);
+        val_format_float(val_as_double(key), buf, sizeof(buf));
+        return str_new(buf, (int)strlen(buf));
     }
     if (val_is_bool(key)) {
         return str_new(val_as_bool(key) ? "true" : "false", val_as_bool(key) ? 4 : 5);

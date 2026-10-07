@@ -86,6 +86,9 @@ export struct CdpClient {
     Array[string] events = []  // 等响应期间收到的事件，按到达顺序留着（waitEvent 会来领）
     bool ok = false
     string error = ""
+    // 主文档 HTTP 状态码：从 `Network.responseReceived`（type == "Document"）里顺手记下。
+    // 存在的意义见 RenderResult.status —— 那个字段以前永远是 0（没人填）。
+    int docStatus = 0
 }
 
 export struct RenderResult {
@@ -484,6 +487,11 @@ export func cdpCall(CdpClient c, string method, string paramsJson): string {
     while true {
         string raw = _recvJson(c)
         if raw == "" { return "" }
+        // 顺手记主文档状态码：**必须放在这条公共接收路径上**。
+        // 只挂在 `_drain` 里是不够的 —— 等选择器（selector 策略）走的是 evaluate→cdpCall，
+        // 全程不经过 _drain ⇒ status 依旧是 0（2026-10-07 实测踩过这个坑）。
+        int docSt = _docStatusOf(raw)
+        if docSt > 0 { c.docStatus = docSt }
         var obj = jsons.decode(raw)
         // 正向守卫即可：`if obj is Dict { … }` 会把 obj **收窄**成 Dict ⇒ 后面直接用它，
         // 不需要 `as Dict[string, any]`（负向守卫 `not is` 反而**不会**收窄，必须补 cast）
@@ -864,15 +872,24 @@ export struct RenderOptions {
     string realClickSelector = "" // **真事件**点击（isTrusted=true，过反脚本点击的站点）
     string typeSelector = ""     // 先往这里输入文字（真事件 insertText）
     string typeValue = ""
-    int scrollTimes = 0          // 打开后向下滚几次（每次滚到底 + 短静置）
+    int scrollTimes = 0          // 打开后向下滚几次（每次滚**一屏**，见 scrollSettleMs）
+    int scrollSettleMs = 300     // 每次滚动后的静置：懒加载慢的站点要调大
+                                 //   （2026-10-07 实战：B 站排行榜"进入视口才渲染标题"，
+                                 //    固定 300ms 只填得完最后一屏 ⇒ 100 条里仅 35 条拿到标题）
     string screenshotPath = ""   // 非空则把截图（PNG）写到这里
 }
 
 // 尽量多收几条消息（**不等满**整个 WS 超时）：事件攒进 c.events 交上层按需处理。
 // 实现上把 WS 超时临时压到 ≤200ms ⇒ 这是"轮询式等待"的基础。
+//
+// ⚠ `ws.setTimeout` 改的是 **WsClient 的持久字段 timeoutMs**，而 `_readExact` 的读超时
+//   也读它 ⇒ 用完**必须恢复**。否则第一次 _drain 之后，全场所有读取的预算都只剩 200ms，
+//   大帧（CDP 里 1~3MB 的 outerHTML 很常见）必然"读帧体超时"、整个渲染 ok=false。
+//   2026-10-07 实战发现：B 站排行榜时好时坏，就是 200ms 内收得完/收不完的差别。
 func _drain(CdpClient c, int budgetMs): int {
     int t0 = _int(times.ms())
     int count = 0
+    int savedTimeout = c.ws.timeoutMs
     while true {
         int remain = budgetMs - (_int(times.ms()) - t0)
         if remain <= 0 { break }
@@ -881,6 +898,12 @@ func _drain(CdpClient c, int budgetMs): int {
         string raw = ws.recvText(c.ws)
         if raw == "" { break }
         count = count + 1
+        // 主文档响应事件：只取状态码，**不进 events**（大页面几百条请求，全攒着没意义）
+        int docStatus = _docStatusOf(raw)
+        if docStatus > 0 {
+            c.docStatus = docStatus
+            continue
+        }
         var obj = jsons.decode(raw)
         if obj is Dict[string, any] {
             if jsons.get_str(obj, "method", "") != "" {
@@ -888,7 +911,23 @@ func _drain(CdpClient c, int budgetMs): int {
             }
         }
     }
+    ws.setTimeout(c.ws, savedTimeout)
     return count
+}
+
+// 从一条 CDP 消息里解出「主文档响应状态码」；不是主文档响应 ⇒ 返回 -1
+func _docStatusOf(string raw): int {
+    // 快速过滤：绝大多数消息不含这个子串，省掉一次 JSON 解析
+    if not strings.has(raw, "Network.responseReceived") { return -1 }
+    var obj = jsons.decode(raw)
+    if not (obj is Dict[string, any]) { return -1 }
+    if jsons.get_str(obj, "method", "") != "Network.responseReceived" { return -1 }
+    var params = jsons.get_obj(obj, "params")
+    if params == null { return -1 }
+    if jsons.get_str(params, "type", "") != "Document" { return -1 }
+    var resp = jsons.get_obj(params, "response")
+    if resp == null { return -1 }
+    return jsons.get_int(resp, "status", -1)
 }
 
 // 等"网络空闲"（≈ Playwright 的 wait_until="networkidle"）：
@@ -991,6 +1030,17 @@ export func scrollToBottom(CdpClient c): int {
     return _int(h)
 }
 
+// 向下滚**一屏**（≈ 90% 视口高），返回滚动后的 scrollY。
+// 为什么要逐屏而不是一次到底：很多列表站用 IntersectionObserver "进入视口才渲染/填充"，
+// 一次到底只会填上最后一屏，中途掠过的条目全是空壳（B 站排行榜实测：100 条只填了 35 条）。
+// 配合 `RenderOptions.scrollSettleMs` 就能做到"每屏都停够时间再往下"。
+export func scrollByViewport(CdpClient c): int {
+    string js = "(function(){var h=window.innerHeight||800;" +
+                "window.scrollBy(0, Math.floor(h*0.9));" +
+                "return String(Math.round(window.scrollY));})()"
+    return _int(evaluate(c, js))
+}
+
 // 截图（PNG）写文件；成功返回 true
 export func captureScreenshot(CdpClient c, string savePath): bool {
     string res = cdpCall(c, "Page.captureScreenshot", "{\"format\":\"png\"}")
@@ -1071,10 +1121,12 @@ export func renderOn(Browser b, string targetId, string url, RenderOptions opt):
         cdpClose(c)
         return r
     }
-    if opt.waitUntil == "networkidle" {
-        // ⚠ 必须先开 Network 域**再**导航，否则会漏掉最早那批请求（就等不准了）
-        cdpCall(c, "Network.enable", "")
-    }
+    // ⚠ Network 域必须在**导航之前**开：
+    //   ① networkidle 靠它数"在飞请求"（开晚了会漏掉最早那批请求 ⇒ 等不准）；
+    //   ② 主文档 HTTP 状态码从 `Network.responseReceived` 里取 —— 以前只在 networkidle
+    //      分支才 enable，于是 `RenderResult.status` 永远是 0（字段承诺了却没人填，
+    //      2026-10-07 实战发现：渲染成功但 status=0）。
+    cdpCall(c, "Network.enable", "")
     cdpCall(c, "Page.navigate", "{\"url\":" + jsons.encode(url) + "}")
 
     if opt.waitUntil == "networkidle" {
@@ -1099,14 +1151,17 @@ export func renderOn(Browser b, string targetId, string url, RenderOptions opt):
         clickReal(c, opt.realClickSelector)
         _sleepMs(300)
     }
+    // 逐屏滚动（不是一次到底）：让"进入视口才渲染"的懒加载列表每屏都有机会填充，
+    // 每次滚完按 scrollSettleMs 静置（旧实现写死 300ms，慢站点只能填上最后一屏）
     for 0:opt.scrollTimes-1 to i {
-        scrollToBottom(c)
-        _sleepMs(300)
+        scrollByViewport(c)
+        _sleepMs(opt.scrollSettleMs)
     }
     if opt.screenshotPath != "" {
         captureScreenshot(c, opt.screenshotPath)
     }
 
+    r.status = c.docStatus
     r.title = evaluate(c, "document.title")
     string html = evaluate(c, "document.documentElement.outerHTML")
     if html == "" {
