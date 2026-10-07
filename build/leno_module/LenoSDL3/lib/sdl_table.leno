@@ -116,9 +116,9 @@ export struct Table impl Widget, Themeable {
     pri int  checkCol = -1               // 复选框列索引（-1=无复选框列）
     pri Array[bool] rowChecked = []      // 每行勾选状态（与 _rows 平行）
     pri bool checkHeaderState = false    // 表头全选框状态（三态：半选用 false 但有部分勾选时渲染半选样式）
-    pri Color  chkColor = #46B278FF   // 勾选框填充色
+    pri Color  chkColor = #3C82DCFF   // 勾选框"勾线+边框"色（默认取主题 accent，见 set）
     pri Color  chkBoxColor = #5A5F6EFF  // 未勾选时边框色
-    pri Color  markColor = #EBEBF5FF  // 勾选标记颜色
+    pri Color  markColor = #3C82DCFF  // 勾选标记颜色（默认取主题 accent，见 set）
 
     // === 行级颜色 ===
     pri Array[Color] rowColors = []        // 每行文字色 RGB 打包：0xRRGGBB，0=用默认色
@@ -300,6 +300,10 @@ export struct Table impl Widget, Themeable {
         zebColor = th.bgZebra
         txtColor = th.txt
         hdrTxtColor = th.txtHeader
+        // ★ 复选框列跟随主题（原来 chkColor/markColor 是**硬编码**的绿色 + 近白，
+        //   既不走主题、又与 CheckBox 控件观感不一致 ⇒ 2026-10-07 统一到 accent）
+        chkColor = th.accent
+        markColor = th.accent
         sepColor = th.sep
         sbColor = th.sb
         emptyColor = th.txtDim
@@ -1568,27 +1572,34 @@ export struct Table impl Widget, Themeable {
         //   完全滚出 Table 水平范围的复选框跳过，防止画出 Table 左/右边界。
         if bx + boxSize < x or bx > x + w { return }
         if checked or partial {
-            Color cc = chkColor
-            if partial { cc = theme.packColor(100, 110, 125) }   // 半选用灰色
-            if not enabled { cc = theme.darken(cc, 64) }
-            r.setColor(cc)
-            r.fillRect(bx, by, boxSize, boxSize)
+            // ★ 2026-10-07 与 CheckBox 统一：勾选态**不填满**，改为"主题色描边 + 主题色勾线"
+            //   （原来这里是 fillRect 实心块 + 近白勾线，和 CheckBox 控件两套观感 ✗）
+            Color bc = chkColor
+            Color mc = markColor
+            if partial {
+                // 半选（表头三态的"部分选中"）：保持灰色调，只是同样不填满
+                bc = theme.packColor(100, 110, 125)
+                mc = bc
+            }
+            if not enabled {
+                // 禁用 = 向背景褪色（darken 在浅色主题下会变深、反而更显眼 ✗）
+                Color bg = theme.getTheme().bg
+                bc = theme.mixbg(bc, bg, 55)
+                mc = theme.mixbg(mc, bg, 55)
+            }
+            r.setColor(bc)
+            r.drawRect(bx, by, boxSize, boxSize)
             // 勾号（checked）或横杠（partial 半选）
+            r.setColor(mc)
             if checked {
-                Color mc = markColor
-                if not enabled { mc = theme.packColor(120, 125, 135) }
-                r.setColor(mc)
                 r.drawLine(bx + 3.0, by + 7.5, bx + 6.0, by + 10.5)
                 r.drawLine(bx + 6.0, by + 10.5, bx + 11.0, by + 4.5)
             } eif partial {
-                Color mc = markColor
-                if not enabled { mc = theme.packColor(120, 125, 135) }
-                r.setColor(mc)
                 r.drawLine(bx + 3.0, by + 7.0, bx + 11.0, by + 7.0)
             }
         } else {
             Color bc = chkBoxColor
-            if not enabled { bc = theme.darken(bc, 64) }
+            if not enabled { bc = theme.mixbg(bc, theme.getTheme().bg, 55) }
             r.setColor(bc)
             r.drawRect(bx, by, boxSize, boxSize)
         }

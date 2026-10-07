@@ -152,23 +152,37 @@ export struct CheckBox impl Widget {
         if not visible { return }
         ensure_font()
         float bx = x, by = y, bs = box
+        Theme th = theme.getTheme()
 
-        // 框背景
-        Color boxC = uncheckedColor
-        if checked { boxC = checkedColor }
-        if hover { boxC = theme.brighten(boxC, 25) }
-        if not enabled { boxC = theme.packColor(theme.colorR(uncheckedColor) / 2, theme.colorG(uncheckedColor) / 2, theme.colorB(uncheckedColor) / 2) }
+        // ★ 样式（2026-10-07 定）：**勾选态不再填满** —— 空心圆角框 + 主题色勾线 + 主题色边框。
+        //   为什么去掉填充：工具栏里一排小复选框（音源选择之类）用实心块视觉重量过大，
+        //   会跟旁边的**主按钮**抢注意力；空心 + 彩勾在 20px 尺寸下同样一眼可读 ✓
+        Color fillC = uncheckedColor
+        if hover { fillC = theme.brighten(fillC, 25) }
+        Color brdC = if checked then checkedColor else brdColor
+        Color markC = checkedColor          // ★ 旧的 markColor 是 txtOnAccent（白）—— 去掉蓝底后白勾会看不见
+        Color txtC = txtColor
+        if not enabled {
+            // 禁用 = **向背景褪色**（不是"减半"，理由见 theme.mixbg 的注释）
+            fillC = theme.mixbg(fillC, th.bg, 55)
+            brdC  = theme.mixbg(brdC, th.bg, 55)
+            markC = theme.mixbg(markC, th.bg, 55)
+            txtC  = theme.mixbg(txtC, th.bg, 45)
+        } else if hover {
+            brdC = theme.brighten(brdC, 30)
+        }
 
-        r.setColor(boxC)
+        // 框背景（勾选态 = 与未勾选**同色**，这正是"去掉蓝色填充"）
+        r.setColor(fillC)
         r.fillRoundedRect(bx, by, bs, bs, 5.0)
 
-        // 边框
-        r.setColor(theme.withAlpha(brdColor, 220))
+        // 边框：勾选时用主题色，与勾线同色 ⇒ 小尺寸下也能一眼看出"已勾"
+        r.setColor(theme.withAlpha(brdC, 220))
         r.drawRoundedRect(bx, by, bs, bs, 5.0)
 
         // 勾
         if checked {
-            r.setColor(markColor)
+            r.setColor(markC)
             float p = bs * 0.26
             r.drawLine(bx + p,                by + bs * 0.52, bx + bs * 0.42, by + bs * 0.72)
             r.drawLine(bx + bs * 0.42,        by + bs * 0.72, bx + bs - p,     by + bs * 0.30)
@@ -177,9 +191,7 @@ export struct CheckBox impl Widget {
         // 文字
         if _font.ok and text != "" {
             float cy = by + (bs - fontH) / 2.0
-            Color tc = txtColor
-            if not enabled { tc = theme.packColor(theme.colorR(txtColor) / 2, theme.colorG(txtColor) / 2, theme.colorB(txtColor) / 2) }
-            r.drawText(_font, text, bx + bs + gap, cy, tc)
+            r.drawText(_font, text, bx + bs + gap, cy, txtC)
         }
     }
 

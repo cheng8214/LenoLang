@@ -239,18 +239,30 @@ export struct Label impl Widget, Themeable {
         return 0.0
     }
 
-    // ── 截断文本：测量并裁剪出适合 max_w 的 "前缀...后缀" 形式 ──
+    // ── 实际生效的截断上限：min(max_w, 盒子宽度) ──
+    // ★ 2026-10-07：原来只看 `max_w`，于是**盒子比 max_w 窄时会把整段文字画出去、
+    //   直接压到相邻控件上**（实测：150px 的盒子里放 600 上限的长路径，糊在右边的参照文本上 ✗）。
+    //   `max_w` 的语义是"上限"，盒子才是硬边界 ⇒ 取两者较小值。
+    //   `_w <= 0`（还没被布局分配宽度）时退回 max_w，保持旧行为 ✓
+    pri func truncLimit(): float {
+        if max_w <= 0.0 { return 0.0 }
+        if _w > 0.0 and _w < max_w { return _w }
+        return max_w
+    }
+
+        // ── 截断文本：测量并裁剪出适合上限的 "前缀...后缀" 形式 ──
     pri func truncatedText(): string {
-        if max_w <= 0.0 or _font == null or not _font.ok { return text }
-        // ★ 结果缓存：text + max_w 不变时直接复用
-        if text == cachedTruncKey and max_w == cachedTruncW { return cachedTruncText }
-        cachedTruncKey = text; cachedTruncW = max_w
+        float lim = truncLimit()
+        if lim <= 0.0 or _font == null or not _font.ok { return text }
+        // ★ 结果缓存：text + 上限 不变时直接复用（上限含 _w ⇒ 盒子变窄会自然重算 ✓）
+        if text == cachedTruncKey and lim == cachedTruncW { return cachedTruncText }
+        cachedTruncKey = text; cachedTruncW = lim
         var[float, float](msw, msh) = _font.measureString(text)
-        if msw <= max_w { cachedTruncText = text; return text }
+        if msw <= lim { cachedTruncText = text; return text }
         // 省略号宽度
         string ellipsis = "..."
         var[float, float](esw, esh) = _font.measureString(ellipsis)
-        float avail = max_w - esw
+        float avail = lim - esw
         if avail <= 0.0 { return ellipsis }
         // 从尾部截取后缀（约占可用空间的 40%）
         int textLen = text.len()
@@ -343,19 +355,20 @@ export struct Label impl Widget, Themeable {
         }
 
         // ── 截断模式 ──
-        if truncate == TRUNCATE_ELLIPSIS and max_w > 0.0 {
+        if truncate == TRUNCATE_ELLIPSIS and truncLimit() > 0.0 {
+            float lim = truncLimit()
             float msw = textWidth()
-            if msw <= max_w {
+            if msw <= lim {
                 // 不需要截断，正常绘制
                 float drawX = x
                 if textAlign == ALIGN_CENTER { drawX = x - msw / 2.0 }
                 if textAlign == ALIGN_RIGHT { drawX = x - msw }
-                r.drawText(_font, text, drawX, y, txtColor)
+                r.drawText(_font, text, drawX, textDrawY(), txtColor)
                 return
             }
             // 截断绘制
             string truncText = truncatedText()
-            r.drawText(_font, truncText, x, y, txtColor)
+            r.drawText(_font, truncText, x, textDrawY(), txtColor)
             return
         }
 
@@ -367,7 +380,7 @@ export struct Label impl Widget, Themeable {
                 float drawX = x
                 if textAlign == ALIGN_CENTER { drawX = x - msw / 2.0 }
                 if textAlign == ALIGN_RIGHT { drawX = x - msw }
-                r.drawText(_font, text, drawX, y, txtColor)
+                r.drawText(_font, text, drawX, textDrawY(), txtColor)
                 return
             }
             // 更新滚动偏移
@@ -391,12 +404,8 @@ export struct Label impl Widget, Themeable {
                     scrollDir = 1
                 }
             }
-            // 用裁剪矩形绘制（同样需要垂直居中）
-            float scrollDrawY = y
-            if _font != null and _font.ok and _h > 0.0 {
-                var[float, float](fh2, _) = _font.measureString("Ag")
-                if fh2 < _h { scrollDrawY = y + (_h - fh2) / 2.0 }
-            }
+            // 用裁剪矩形绘制（同样走统一的垂直居中口径）
+            float scrollDrawY = textDrawY()
             SDL_Rect clip = SDL_Rect.malloc()
             clip.x = _int(x); clip.y = _int(y)
             clip.w = _int(max_w); clip.h = _int(_h + 2)
@@ -415,17 +424,25 @@ export struct Label impl Widget, Themeable {
         if textAlign == ALIGN_CENTER { drawX = x - msw / 2.0 }     // 居中
         if textAlign == ALIGN_RIGHT { drawX = x - msw }           // 右对齐
 
-        // ★ 垂直居中：当控件高度 _h 大于文字自然高度时，文字垂直居中于控件区域内
-        //    解决 HBox/VBox align:3(stretch) 或 align:1(center) 时 Label 文字与 Button 不对齐的问题
-        float drawY = y
-        if _font != null and _font.ok and _h > 0.0 {
-            var[float, float](fh, _) = _font.measureString("Ag")  // 文字行高（ascender+descender）
-            if fh < _h {
-                drawY = y + (_h - fh) / 2.0
-            }
-        }
+        // ★ 垂直居中：统一走 textDrawY()（原来只有这一分支有居中，截断/滚动分支漏了 ⇒
+        //   开了 truncate 的标签一旦被布局拉高，文字就顶上去、与同行控件不在一条线上 ✗）
+        float drawY = textDrawY()
 
         r.drawText(_font, text, drawX, drawY, txtColor)
+    }
+
+    // 单行文字在盒子内的**垂直居中** y —— 全局统一口径（2026-10-07）
+    //
+    // 为什么要有这个：当盒子高度 _h 大于文字行高时（例如 HBox 里 grow:1 的标签拿到整行高度、
+    // 或 align:3(stretch)），顶对齐画字会让文字**飘到盒子顶部**，与同一行里其它控件
+    // 不在同一条水平线上（实测：路径标签 y=10 h=30，紧邻的"输出目录：" y=16 h=18 ⇒ 差 6px ✗）。
+    // 三条单行绘制路径（普通 / 截断 / 滚动）现在都用它，行为一致 ✓
+    pri func textDrawY(): float {
+        if _font == null or not _font.ok or _h <= 0.0 { return y }
+        float lh = lineH
+        if lh <= 0.0 { var[float, float](_aw, _ah) = _font.measureString("Ag"); lh = _ah }
+        if lh > 0.0 and lh < _h { return y + (_h - lh) / 2.0 }
+        return y
     }
 
 // 释放字体资源

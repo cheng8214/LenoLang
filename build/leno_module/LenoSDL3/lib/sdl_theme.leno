@@ -63,6 +63,20 @@ export func darken(Color c, int delta): Color {
     return (c & 0xFF000000) | (r << 16) | (g << 8) | b
 }
 
+// 向 bg 混合（"褪色"）：ratio = 0 保持自身，100 完全变成 bg，Alpha 不变
+//
+// ★ 禁用态（enabled=false）请用这个，**不要**用 `packColor(r/2, g/2, b/2)`：
+//   "各通道减半"只在**深色**语境下勉强等于"变淡"；浅色主题下它会把浅色框变成
+//   **实心深块**，一眼看去像"已勾选"（2026-10-07 实测：音源行的禁用复选框
+//   比勾中的还抢眼 ✗）。向背景混合在明暗两种主题下都是"往后退"的正确语义 ✓
+export func mixbg(Color c, Color bg, int ratio): Color {
+    if ratio < 0 { ratio = 0 }; if ratio > 100 { ratio = 100 }
+    int r = colorR(c) + (colorR(bg) - colorR(c)) * ratio / 100
+    int g = colorG(c) + (colorG(bg) - colorG(c)) * ratio / 100
+    int b = colorB(c) + (colorB(bg) - colorB(c)) * ratio / 100
+    return (c & 0xFF000000) | (r << 16) | (g << 8) | b
+}
+
 // ==================== Theme 结构体 ====================
 export struct Theme {
     string name = "dark"
