@@ -69,6 +69,12 @@ ObjString* intern_string(const char* chars, int len);
 // 如果找到返回字符串，否则返回 NULL
 ObjString* intern_find(const char* chars, int len);
 
+// 拼接专用的去重查找：语义等价于 `intern_find(a 的内容接 b 的内容, a->len+b->len)`，
+// 但**不需要先拼出一个临时串**（旧 str_concat 得先 malloc + 两遍 memcpy 才能查表）。
+// hash 由调用方准备好（`leno_fnv1a_continue(a->hash, b->chars, b->len)`）。
+// 长串（> INTERN_MAX_SHORT_LEN）永远不在表里 ⇒ 调用方应先按 intern_should_intern 过滤。
+ObjString* intern_find_concat(ObjString* a, ObjString* b, uint32_t hash);
+
 // 检查字符串是否需要内化（短字符串）
 static inline int intern_should_intern(int len) {
     return len <= INTERN_MAX_SHORT_LEN;

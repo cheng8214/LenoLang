@@ -200,6 +200,34 @@ ObjString* intern_find(const char* chars, int len) {
     return NULL;
 }
 
+// 拼接专用的去重查找：语义 == `intern_find(a 的内容接 b 的内容, a->len + b->len)`，
+// 但**不需要先拼出一个临时串**（旧 str_concat 必须先 malloc + 两遍 memcpy 才能查表）。
+// hash 由调用方算好（`leno_fnv1a_continue(a->hash, b->chars, b->len)`）。
+// 说明：这里**不查** string_cache —— 缓存里只放"注册过的短串"，而拼接结果几乎总是新串，
+//       命中率极低；跳过它正好省掉 cache_index() 内部那第二次哈希计算（又是一遍 O(len)）。
+ObjString* intern_find_concat(ObjString* a, ObjString* b, uint32_t hash) {
+    // 与 str_new 同一套懒初始化兜底（编译期 / 反序列化期也可能走到拼接）
+    if (!string_table.entries || string_table.capacity == 0) {
+        intern_table_init();
+    }
+    if (!string_table.entries || string_table.capacity == 0) return NULL;
+
+    int len = a->len + b->len;
+    int index = hash & (string_table.capacity - 1);
+    InternEntry* entry = string_table.entries[index];
+    while (entry) {
+        ObjString* str = entry->str;
+        if (str->hash == hash && str->len == len &&
+            memcmp(str->chars, a->chars, (size_t)a->len) == 0 &&
+            memcmp(str->chars + a->len, b->chars, (size_t)b->len) == 0) {
+            update_cache(str);
+            return str;
+        }
+        entry = entry->next;
+    }
+    return NULL;
+}
+
 // 查找或创建字符串（所有字符串由 GC 管理）
 // 如果字符串已存在于表中，返回已有字符串；否则创建新字符串并加入表中
 ObjString* intern_string(const char* chars, int len) {

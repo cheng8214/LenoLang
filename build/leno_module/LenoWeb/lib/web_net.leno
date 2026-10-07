@@ -364,9 +364,19 @@ export struct HttpClient {
 
     // 断点续传起始偏移：设了它 libcurl 会发 `Range: bytes=N-` 并要求服务端回 206。
     // 服务端不支持时本次请求以 CURLE_RANGE_ERROR(33) 失败（调用方据此回退整体重下）。
+    //
+    // ⚠ 必须用 **32 位** 的 RESUME_FROM，不能用 RESUME_FROM_LARGE：
+    //   后者要 64 位 `curl_off_t`，而 FFI 通道（core.setopt_int）只传 32 位 ⇒ 高 32 位
+    //   不受控，libcurl 发出去的 `Range: bytes=<被污染的偏移>-` 不是我们要的，服务端
+    //   回 200/416 ⇒ downloadAttempt 判定失败或走整体覆盖写。
+    //   后果很隐蔽：**最终文件永远正确，但"续传"其实每次都在重下整个文件**。
+    //   2026-10-07 在 B 站 CDN 实测：裸 Range 头得到 206、只下 1.35MB/1.48s，
+    //   而 downloadResume 花 2.85s ≈ 完整 2.69MB 的耗时。本地测试服务端不校验这点
+    //   ⇒ 单测一直是绿的（盲区）。
+    //   代价：偏移上限 2^31-1（2GB）；更大体积请改成分片下载。
     func setResumeFrom(int offset): int {
         if not ok { return Code.FAILED_INIT }
-        return core.setopt_int(handle, Opt.RESUME_FROM_LARGE, offset)
+        return core.setopt_int(handle, Opt.RESUME_FROM, offset)
     }
 
     // ==================== 执行请求 ====================

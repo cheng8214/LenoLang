@@ -152,26 +152,46 @@ ObjString* str_new(const char* chars, int len) {
 // 复制字符串（现在直接使用 str_new，会自动处理内化）
 // 注意：str_copy 已在 leno_value.h 中内联
 
-// 字符串拼接
-// 结果字符串如果短则内化，否则不内化
+// 字符串拼接（`s = s + e` 是 O(n²)，这里把**每次拼接的常数**从
+// "两遍数据复制 + 两遍整串扫描 + 两次 malloc + 一次 free" 砍到
+// "一遍数据复制 + 一次 malloc"）。
+//
+// 旧实现：malloc 临时 buffer → memcpy a、memcpy b → str_new（先 intern_find 查表
+//   —— 内部又要算一次整串 hash；再 gc_alloc + malloc + **又** memcpy 整遍内容；
+//   然后 utf8_char_len 扫一遍、hash_string 扫一遍）→ free。数据被复制两遍。
+// 新实现（都是"可加/可续算"的性质换来的，语义逐条等价）：
+//   · hash：FNV-1a 是流式的 ⇒ `hash(ab)` 由 `hash(a)` 续算 b 的字节即可（只扫 b）
+//   · char_len：UTF-8 字符数可加 ⇒ `a->char_len + b->char_len`（不扫）
+//   · 去重：改走 intern_find_concat（不必先拼出临时串）
+//   · 内容：直接写进结果缓冲，只复制一遍
+//
+// ⚠ 依赖的不变量（已逐一核对全部 str_alloc 调用点）：每个字符串的 len/char_len/hash
+//   都必须与内容一致。旧实现"拼接时重算"会**掩盖**上游漏设 char_len/hash 的 bug，
+//   新实现会把它暴露成错误结果 ⇒ 这反而是好事（那类漏设本身就是 bug）。
+// ⚠ 去重语义必须保留：VM 里"字符串指针相等 ⇒ 相等"是字符串比较的快路径
+//   （见 dict_ic_key_match / string_add）。长串永远不在内化表里（表只收
+//   ≤ INTERN_MAX_SHORT_LEN 的串）⇒ 长串跳过查找与旧行为完全等价。
 ObjString* str_concat(ObjString* a, ObjString* b) {
     int len = a->len + b->len;
-    
-    // 创建字符缓冲区
-    char* buffer = (char*)malloc(len + 1);
-    if (!buffer) {
-        native_throw_error("内存分配失败");
-        return NULL;
+    uint32_t hash = leno_fnv1a_continue(a->hash, b->chars, b->len);
+
+    if (intern_should_intern(len)) {
+        ObjString* existing = intern_find_concat(a, b, hash);
+        if (existing) return existing;      // 与旧 str_new 的去重行为一致
     }
-    
-    memcpy(buffer, a->chars, a->len);
-    memcpy(buffer + a->len, b->chars, b->len);
-    buffer[len] = '\0';
-    
-    // 使用 str_new 自动处理内化
-    ObjString* result = str_new(buffer, len);
-    
-    free(buffer);
+
+    ObjString* result = str_alloc(len);
+    if (!result) return NULL;
+    memcpy(result->chars, a->chars, (size_t)a->len);
+    memcpy(result->chars + a->len, b->chars, (size_t)b->len);
+    result->chars[len] = '\0';
+    result->char_len = a->char_len + b->char_len;
+    result->hash = hash;
+
+    // 结果字符串如果短则内化，否则不内化（与旧路径一致）
+    if (intern_should_intern(len)) {
+        intern_register(result);
+    }
     return result;
 }
 

@@ -1,0 +1,178 @@
+// bilibili_download.leno — 实战：从 B 站取真实视频流并下载落盘
+//
+// 链路（真站点，非测试桩）：
+//   ① view 接口  → cid / 时长 / 标题
+//   ② playurl 接口（platform=html5）→ 整段 MP4 的直链 + 官方声明大小
+//   ③ HTTP 下载（**必须带 Referer**，否则 CDN 返回 403）→ 落盘
+//   ④ 校验：字节数 vs 官方 size
+//
+// 候选视频来自热门接口挑的短视频（39~62s），避免下载动辄几百 MB 的长视频。
+import "Web" as web
+import strings
+import files
+import dirs
+import jsons
+import times
+
+use web.(Session, Response, HttpClient)
+
+const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+const REFERER = "https://www.bilibili.com"
+
+main() {
+    string dir = dirs.script_dir() + _sep()
+    Array[string] cands = ["BV1c9H46qExj", "BV12npF6MESW", "BV1msHE6sEde", "BV1UqH46jEef"]
+
+    Session s = web.createSession()
+    web.sessionSetHeader(s, "User-Agent", UA)
+    web.sessionSetHeader(s, "Referer", REFERER)
+    web.sessionSetTimeout(s, 15000)
+
+    // ---- ① 逐个查视频信息，挑时长最短的 ----
+    print("=== ① 查询视频信息（view 接口）===")
+    string chosenBv = ""
+    int chosenCid = 0
+    int chosenDur = 0
+    string chosenTitle = ""
+    for cands to bv {
+        string u = "https://api.bilibili.com/x/web-interface/view?bvid=" + bv
+        int t0 = _int(times.ms())
+        Response r = web.sessionGet(s, u)
+        int ms = _int(times.ms()) - t0
+        if not r.ok() {
+            print("  " + bv + "  请求失败 HTTP " + r.statusCode)
+            continue
+        }
+        var obj = jsons.decode(r.body)
+        if not (obj is Dict[string, any]) { continue }
+        int code = jsons.get_int(obj, "code", -1)
+        if code != 0 {
+            print("  " + bv + "  API code=" + code + " " + jsons.get_str(obj, "message", ""))
+            continue
+        }
+        var data = jsons.get_obj(obj, "data")
+        if data == null { continue }
+        int cid = jsons.get_int(data, "cid", 0)
+        int dur = jsons.get_int(data, "duration", 0)
+        string title = jsons.get_str(data, "title", "")
+        print("  " + bv + "  cid=" + cid + "  " + dur + "s  " + ms + "ms  " + title)
+        if chosenBv == "" or dur < chosenDur {
+            chosenBv = bv
+            chosenCid = cid
+            chosenDur = dur
+            chosenTitle = title
+        }
+    }
+    if chosenBv == "" { print("没取到可用视频，终止"); return }
+    print("")
+    print("选中: " + chosenBv + "（" + chosenDur + "s）" + chosenTitle)
+
+    // ---- ② 取播放直链 ----
+    print("")
+    print("=== ② 取播放直链（playurl 接口，platform=html5 ⇒ 整段 MP4）===")
+    string pu = "https://api.bilibili.com/x/player/playurl?bvid=" + chosenBv +
+                "&cid=" + chosenCid + "&qn=32&fnval=1&platform=html5&high_quality=1"
+    int t1 = _int(times.ms())
+    Response pr = web.sessionGet(s, pu)
+    print("  playurl 耗时 " + (_int(times.ms()) - t1) + "ms，HTTP " + pr.statusCode)
+    string videoUrl = ""
+    int declaredSize = 0
+    if pr.ok() {
+        var pobj = jsons.decode(pr.body)
+        if pobj is Dict[string, any] {
+            int pcode = jsons.get_int(pobj, "code", -1)
+            if pcode != 0 { print("  API code=" + pcode + " " + jsons.get_str(pobj, "message", "")) }
+            var pdata = jsons.get_obj(pobj, "data")
+            if pdata is Dict[string, any] {
+                var durl = pdata["durl"]
+                if durl is Array and durl.len() > 0 {
+                    var d0 = durl[0]
+                    if d0 is Dict[string, any] {
+                        videoUrl = jsons.get_str(d0, "url", "")
+                        declaredSize = jsons.get_int(d0, "size", 0)
+                    }
+                }
+                print("  清晰度=" + jsons.get_int(pdata, "quality", 0) +
+                      "  官方声明大小=" + declaredSize + " 字节（" + (declaredSize / 1048576) + " MB）")
+            }
+        }
+    }
+    if videoUrl == "" {
+        print("  没拿到直链（站点可能要求登录/Cookie）—— 这一步失败即是实战结论")
+        return
+    }
+    print("  直链前缀: " + strings.byte_slice(videoUrl, 0, 80) + "...")
+
+    // ---- ③ 下载（带 Referer；不带会被 CDN 403）----
+    print("")
+    print("=== ③ 下载 ===")
+    string out = dir + "bili_" + chosenBv + ".mp4"
+    files.delete(out)
+    HttpClient hc = web.createClient()
+    hc.setHeaders(["User-Agent: " + UA, "Referer: " + REFERER])
+    int t2 = _int(times.ms())
+    int got = hc.downloadResume(videoUrl, out)
+    int dlMs = _int(times.ms()) - t2
+    hc.close()
+    print("  downloadResume 返回 " + got + " 字节，耗时 " + dlMs + "ms")
+    if got <= 0 { print("  下载失败（-1）—— 直链多半过期或需要额外头"); return }
+
+    float mb = _float(got) / 1048576.0
+    float secs = _float(dlMs) / 1000.0
+    print("  文件: " + out)
+    print("  存在=" + files.exists(out))
+    print("  速率: " + mb + " MB / " + secs + " s = " + (mb / secs) + " MB/s")
+
+    // ---- ④ 校验 ----
+    print("")
+    print("=== ④ 校验 ===")
+    print("  字节数对齐官方 size: " + got + " vs " + declaredSize + " ⇒ " + (got == declaredSize))
+
+    // ---- ⑤ 真实 CDN 上的断点续传 ----
+    print("")
+    print("=== ⑤ 断点续传（真实 CDN）===")
+    string part = dir + "bili_resume.mp4"
+    files.delete(part)
+    string full = files.read(out)
+    if full == null or full.byte_len() == 0 {
+        print("  读不到已下载文件，跳过")
+    } else {
+        int half = full.byte_len() / 2
+        files.write(part, strings.byte_slice(full, 0, half))
+        print("  先造半截文件: " + half + " 字节（完整 " + full.byte_len() + "）")
+        // 续传路径 = 1 次 HEAD（取 content-length）+ 1 次带 Range 的 GET ⇒ 比"纯 Range"多一次往返
+        int t4 = _int(times.ms())
+        int rs = web.remoteSize(videoUrl)
+        print("  单独 HEAD(remoteSize) 耗时 " + (_int(times.ms()) - t4) + "ms，远端大小=" + rs)
+        // 裸 Range 头对照：区分"CDN 忽略 Range"还是"库内部走了整体重下"
+        web.sessionSetHeader(s, "Range", "bytes=" + half + "-")
+        int t5 = _int(times.ms())
+        Response rr = web.sessionGet(s, videoUrl)
+        print("  裸 Range 请求: HTTP " + rr.statusCode + "  body=" + rr.body.byte_len() +
+              " 字节  耗时 " + (_int(times.ms()) - t5) + "ms")
+        HttpClient hc2 = web.createClient()
+        hc2.setHeaders(["User-Agent: " + UA, "Referer: " + REFERER])
+        int t3 = _int(times.ms())
+        int n2 = hc2.downloadResume(videoUrl, part)
+        int ms2 = _int(times.ms()) - t3
+        hc2.close()
+        print("  downloadResume 返回 " + n2 + "，耗时 " + ms2 + "ms")
+        string after = files.read(part)
+        if after == null {
+            print("  续传后读不到文件 ✗")
+        } else {
+            print("  续传后字节数: " + after.byte_len() + "（期望 " + full.byte_len() + "）")
+            print("  与完整文件逐字节一致: " + (after == full))
+            print("  本次只需补 " + (full.byte_len() - half) + " 字节，而非重下 " + full.byte_len())
+        }
+        files.delete(part)
+    }
+
+    print("")
+    print("=== 对照：不带 Referer 的模块级 download() ===")
+    string out2 = dir + "bili_noref_test.bin"
+    files.delete(out2)
+    int got2 = web.download(videoUrl, out2)
+    print("  web.download() 返回 " + got2 + "（-1 即被 CDN 拒绝 ⇒ 说明下载必须能自定义头）")
+    files.delete(out2)
+}

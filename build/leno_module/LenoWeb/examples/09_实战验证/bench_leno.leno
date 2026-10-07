@@ -1,0 +1,85 @@
+// bench_leno.leno — 语言基准（纯计算，不联网），与 bench_node.js 同工作量对照
+//
+// 说明：解释执行的 VM，跟 V8（JIT）比绝对值没意义；这里看的是**同一台机器、
+// 同一轮**下的量级差，以及 Leno 自己各项的相对开销（哪类操作是短板）。
+import times
+import strings
+import jsons
+
+func fib(int n): int {
+    if n < 2 { return n }
+    return fib(n - 1) + fib(n - 2)
+}
+
+func nowMs(): int { return _int(times.ms()) }
+
+main() {
+    print("=== Leno 基准（同机同轮对照 bench_node.js）===")
+
+    int t = nowMs()
+    int sum = 0
+    for 20000000 to i { sum = sum + i }
+    print("int_loop_20m    = " + (nowMs() - t) + " ms   sum=" + sum)
+
+    // 同次数、但累加结果**不超出 32 位**：用来判断上面那条慢是不是因为
+    // "数值变大后退化到慢路径"（实测上面 1744ms vs 这条 ~100ms ⇒ 结论成立）
+    t = nowMs()
+    int small = 0
+    for 20000000 to i { small = small + 1 }
+    print("int_loop_small  = " + (nowMs() - t) + " ms   sum=" + small)
+
+    t = nowMs()
+    int fv = fib(32)
+    print("fib_32          = " + (nowMs() - t) + " ms   fib=" + fv)
+
+    t = nowMs()
+    Array[int] arr = []
+    for 1000000 to i { arr.add(i) }
+    int s2 = 0
+    for arr to v { s2 = s2 + v }
+    print("array_1m_forin  = " + (nowMs() - t) + " ms   sum=" + s2 + "（含建数组）")
+
+    t = nowMs()
+    int s2b = 0
+    for arr.len() to i { s2b = s2b + arr[i] }
+    print("array_1m_index  = " + (nowMs() - t) + " ms   sum=" + s2b + "（仅遍历）")
+
+    t = nowMs()
+    Dict[string, int] d = {}
+    for 200000 to i { d["k" + i] = i }
+    int s3 = 0
+    for 200000 to i { s3 = s3 + d.get("k" + i, 0) }
+    print("dict_200k       = " + (nowMs() - t) + " ms   sum=" + s3)
+
+    t = nowMs()
+    string acc = ""
+    for 20000 to i { acc = acc + "x" }
+    print("str_concat_20k  = " + (nowMs() - t) + " ms   len=" + acc.len())
+
+    // 同一件事改用「数组收集 + join」：字符串不可变 ⇒ `+=` 是 O(n²)，
+    // join 一次性分配是 O(n)。这一项是给用户的**可操作规避方案**。
+    t = nowMs()
+    Array[string] parts = []
+    for 20000 to i { parts.add("x") }
+    string joined = parts.join("")
+    print("str_join_20k    = " + (nowMs() - t) + " ms   len=" + joined.len())
+
+    t = nowMs()
+    int hits = 0
+    for 10000 to i { if strings.has(acc, "xx") { hits = hits + 1 } }
+    print("str_find_10k    = " + (nowMs() - t) + " ms   hits=" + hits)
+
+    t = nowMs()
+    string js = "{\"a\":[1,2,3,{\"b\":\"text\"}],\"n\":123.456}"
+    int cnt = 0
+    for 50000 to i {
+        var o = jsons.decode(js)
+        if o is Dict[string, any] { cnt = cnt + 1 }
+    }
+    print("json_parse_50k  = " + (nowMs() - t) + " ms   cnt=" + cnt)
+
+    t = nowMs()
+    float fs = 0.0
+    for 20000000 to i { fs = fs + 0.5 }
+    print("float_loop_20m  = " + (nowMs() - t) + " ms   sum=" + fs)
+}

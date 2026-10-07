@@ -34,4 +34,15 @@ static inline uint32_t leno_fnv1a_len(const char* str, int len) {
     return hash;
 }
 
+// FNV-1a 的**增量续算**：从已有 hash 继续吃后面的字节。
+// 用途：字符串拼接时 `hash(ab)` 可以由 `hash(a)` 续算 `b` 得到 ⇒ 省掉一次整串扫描。
+// FNV-1a 本身是流式算法（h ^= byte; h *= prime），所以续算与"从头算整串"逐位等价 ✓
+static inline uint32_t leno_fnv1a_continue(uint32_t hash, const char* str, int len) {
+    for (int i = 0; i < len; i++) {
+        hash ^= (unsigned char)str[i];
+        hash *= LENO_FNV1A_PRIME;
+    }
+    return hash;
+}
+
 #endif // LENO_HASH_H
