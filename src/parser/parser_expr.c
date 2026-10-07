@@ -391,6 +391,14 @@ Ast* parse_array(Parser* p) {
         if (!consume(p, TOK_COMMA, "期望 ',' 或 ']'")) {
             break;
         }
+        // ★ 尾随逗号（B3，2026-10-07）：`[1, 2, 3,]` 是**合法**的。
+        //   此前逗号之后直接进 parse_expression、撞上 ']' 会报"期望表达式"且列号指向 ']'
+        //   —— 完全指不到真病因（那个逗号）。多行数组里顺手留个尾随逗号是很自然的写法，
+        //   多数语言都允许；不支持的代价是新手第一分钟就撞墙并盯着"期望表达式"找半天。
+        if (p->lex.current.type == TOK_RBRACKET) {
+            lexer_next(&p->lex);
+            break;
+        }
     }
     
     return ast;
@@ -503,6 +511,11 @@ Ast* parse_dict(Parser* p) {
         }
         
         if (!consume(p, TOK_COMMA, "期望 ',' 或 '}'")) {
+            break;
+        }
+        // ★ 尾随逗号（B3）：`{"a": 1,}` —— 与数组字面量同一口径
+        if (p->lex.current.type == TOK_RBRACE) {
+            lexer_next(&p->lex);
             break;
         }
     }
@@ -680,7 +693,10 @@ Ast* parse_call(Parser* p, Ast* callee) {
         do {
             Ast* arg = parse_expression(p);
             ast_list_add(&ast->u.call.args, arg);
-        } while (match(p, TOK_COMMA));
+        } while (match(p, TOK_COMMA) && p->lex.current.type != TOK_RPAREN);
+        // ⚠ 上面条件里的 `&& p->lex.current.type != TOK_RPAREN` 就是**尾随逗号**支持（B3）：
+        //   `f(a, b,)` 最后一个逗号之后直接是 ')' ⇒ 收尾（此前会进 parse_expression 撞 ')'，
+        //   报"期望表达式"）。`match` 已经消费掉逗号 ✓
     }
     
     if (!consume(p, TOK_RPAREN, "期望 ')'")) {
@@ -805,6 +821,9 @@ Ast* parse_new(Parser* p) {
 
     if (p->lex.current.type != TOK_RPAREN) {
         do {
+            // ★ 尾随逗号（B3）：`new P(x = 1,)` —— 逗号之后直接遇到 ')' 就是收尾。
+            //   此前这里会报"期望字段名"、列号指向 ')'，同样指不到真病因（实录 B3 现象1）。
+            if (p->lex.current.type == TOK_RPAREN) break;
             // 期望字段名
             if (p->lex.current.type != TOK_IDENT) {
                 error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望字段名");

@@ -1,0 +1,44 @@
+// `threads.start` 的**实参个数**校验（B13）—— 回归
+//
+// 背景（实录 B13 副发现 1）：`threads.start(func(int n): int { … })`（**忘了传实参**）报的是
+//   `Thread error: 非字符串异常（对象类型 2）—— 常见于**进入函数体之前**就失败`
+//   —— 真实原因只是参数个数不对，文案却把人往"入口函数所属模块未加载"上引；
+//   而 GUI 里这个错常在定时器回调的 try/catch 里 ⇒ 表现为**静默失败**（搜索永远返回空）。
+//
+// 判据：
+//   ① 个数正确 ⇒ 照常工作
+//   ② 少传 ⇒ 报"期望 N 个参数，实际传了 M 个"（**在主线程**就报，不等到 join）
+//   ③ 多传 ⇒ 同样明确报错
+
+import threads
+import strings
+
+func two(int a, int b): int { return a + b }
+func one(int a): int { return a }
+
+main() {
+    // ---------- ① 正确 ----------
+    var t = threads.start(two, 3, 4)
+    assert_eq(t.join(), 7, "①个数正确应照常工作")
+
+    // ---------- ② 少传 ----------
+    string msg = "(没报错)"
+    try {
+        var t2 = threads.start(two, 3)
+    } catch e {
+        msg = $"{e}"
+    }
+    assert_true(strings.has(msg, "期望 2 个参数"), "②应报期望的参数个数；实际=" + msg)
+    assert_true(strings.has(msg, "实际传了 1 个"), "②应报实际的参数个数；实际=" + msg)
+
+    // ---------- ③ 多传 ----------
+    string msg2 = "(没报错)"
+    try {
+        var t3 = threads.start(one, 1, 2)
+    } catch e2 {
+        msg2 = $"{e2}"
+    }
+    assert_true(strings.has(msg2, "实际传了 2 个"), "③多传应报实际个数；实际=" + msg2)
+
+    print("test_threads_start_args passed")
+}

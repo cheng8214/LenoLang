@@ -10,7 +10,7 @@ Leno 通用加密库：**Base64 / SHA-256 / SHA-512 / HMAC-SHA256 / AES-128（EC
 ## 用法
 
 ```leno
-import "leno_module/LenoCrypto/lib/Crypto.leno" as crypto
+import "Crypto" as crypto
 
 // Base64（bytes 友好：二进制安全）
 var bs = crypto.b64_to_bytes("AAEC/f7/")          // ⇒ [0,1,2,253,254,255]

@@ -353,6 +353,7 @@ build/leno --install                  # 安装当前项目依赖（leno.toml）
 | `--pause` | 执行完毕后暂停（双击运行时看输出） |
 | `--debug` / `--debug-out <file>` | 输出字节码 / 输出到指定文件 |
 | `-c, --compile` | 编译为 `.lenb`，不执行 |
+| `--check` | 只做解析 + 语义检查（**不产出 `.lenb`**），有错非零退出 |
 | `-p, --pack` | 编译并打包（exe + 依赖原生库复制到同一目录） |
 | `-o, --pack-dir <目录>` | 打包输出目录，默认 `<源码目录>/dist` |
 | `--onefile` | 原生库与 `resource.toml [pack] resources` 声明的资源内嵌进 exe |

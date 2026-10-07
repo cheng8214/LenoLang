@@ -140,6 +140,26 @@ static Value threads_start(int argc, Value* args) {
         return val_null();
     }
 
+    // ★ 实参个数校验（B13，2026-10-07）：在**主线程**把话说清楚。
+    //   此前少传实参的症状是 `join()` 抛
+    //   "Thread error: 非字符串异常（对象类型 2）—— 常见于**进入函数体之前**就失败
+    //   （如入口函数所属模块未加载）"，把人往"模块没加载"上引（实录 B13 副发现 1）。
+    //   ⚠ 判据用**严格相等**：Leno 的默认参数是**调用点**补齐的（codegen 的 fill_default_args），
+    //     而线程入口是 VM 直接调用 ⇒ 默认值不会被补，少传就是真错位。
+    if (closure->function) {
+        int want = closure->function->arity;
+        int got = argc - 1;
+        if (got != want) {
+            char amsg[256];
+            snprintf(amsg, sizeof(amsg),
+                "threads.start(): 入口函数期望 %d 个参数，实际传了 %d 个"
+                "（线程入口由 VM 直接调用，默认参数不会被补齐）",
+                want, got);
+            native_throw_error(amsg);
+            return val_null();
+        }
+    }
+
     Value* call_args = NULL;
     int call_arg_count = argc - 1;
     if (call_arg_count > 0) {
