@@ -1,0 +1,104 @@
+// test_table_progress_cells.leno — Table 的"进度单元格"与"自绘回调"（2026-10-07 新增）
+//
+// 为什么值得有这么个测试：这两项能力的风险都在**看不见**的地方 ——
+//   ① 进度值来自**应用随手写的单元格文本**（`37` / `0.37` / `等待中`…）⇒ 解析必须既不抛错也不猜错。
+//      渲染期抛错会把**整帧**打断 ✗ —— 这正是不能用 `_float(s)` 直接转的原因（见 parseProgress ✓）。
+//   ② 这条能力**不新增"每行并行数组"**（值就存在 `_rows` 里 ✓）⇒ 排序/行重排天然跟着走 ✓，
+//      唯一需要随**列**重排同步的是"列类型"（见 sdl_table.swap_cols ✓）。
+//      本测试盯的就是这条边界：类型按列、值按行，二者不能串。
+//
+// ★ 全程**不建窗口、不加载字体**（只 new 一个空 Table 玩纯逻辑）⇒ 无头环境/CI 都能跑 ✓
+// 跑：build\leno.exe assert\test_table_progress_cells.leno
+import "sdl_progress" as prg
+import "sdl_table" as tbl
+import "sdl_renderer" as ren        // 只为在自绘回调签名里写出 Renderer 类型 ✓
+use tbl.Table
+use ren.Renderer
+
+var fails = 0
+func check(string name, bool ok) {
+    if ok {
+        print($"[通过] {name}")
+    } else {
+        fails = fails + 1
+        print($"[失败] {name}")
+    }
+}
+
+func near(float got, float want): bool {
+    float d = got - want
+    if d < 0.0 { d = 0.0 - d }
+    return d < 0.0001
+}
+
+main() {
+    print("=== Table 进度单元格 / 自绘回调回归 ===")
+
+    // ==================== ① 进度值解析（parseProgress）====================
+    // 三种写法都要认：比例 / 百分数 / 带 % 的百分数
+    check("0.37 ⇒ 0.37（比例）",            near(prg.parseProgress("0.37"), 0.37))
+    check("37 ⇒ 0.37（>1 当百分数）",       near(prg.parseProgress("37"), 0.37))
+    check("37% ⇒ 0.37（显式百分号）",       near(prg.parseProgress("37%"), 0.37))
+    check("100 ⇒ 1.0",                      near(prg.parseProgress("100"), 1.0))
+    check("1 ⇒ 1.0（≤1 当比例 ⇒ 100%）",    near(prg.parseProgress("1"), 1.0))
+    check("0 ⇒ 0.0",                        near(prg.parseProgress("0"), 0.0))
+    check("空串 ⇒ 0.0",                     near(prg.parseProgress(""), 0.0))
+    // 越界要夹住：应用给 150 或 -1 也不该画出"反的条" ✗
+    check("150 ⇒ 1.0（夹住）",              near(prg.parseProgress("150"), 1.0))
+    check("-1 ⇒ 0.0（夹住）",               near(prg.parseProgress("-1"), 0.0))
+    // 空白 / 小数 / 正号
+    check("\" 42 \" ⇒ 0.42（空白忽略）",    near(prg.parseProgress(" 42 "), 0.42))
+    check("0.5 ⇒ 0.5",                      near(prg.parseProgress("0.5"), 0.5))
+    check("+25 ⇒ 0.25",                     near(prg.parseProgress("+25"), 0.25))
+    check("42.5 ⇒ 0.425（小数）",           near(prg.parseProgress("42.5"), 0.425))
+    check("\"37 %\" ⇒ 0.37（% 前有空格）",  near(prg.parseProgress("37 %"), 0.37))
+    // ★ 非法一律当 0 且**不抛错**（这条最关键：那列文本是应用随手写的，写着"等待中"很常见 ✓）
+    check("等待中 ⇒ 0.0（不抛错 ✓）",       near(prg.parseProgress("等待中"), 0.0))
+    check("abc ⇒ 0.0",                      near(prg.parseProgress("abc"), 0.0))
+    check("1.2.3 ⇒ 0.0（两个小数点）",      near(prg.parseProgress("1.2.3"), 0.0))
+    check("\"%\" ⇒ 0.0（只有百分号）",      near(prg.parseProgress("%"), 0.0))
+    check("\"-\" ⇒ 0.0（只有符号）",        near(prg.parseProgress("-"), 0.0))
+    check("中间夹空格 \"4 2\" ⇒ 0.0",       near(prg.parseProgress("4 2"), 0.0))
+
+    // ==================== ② 列内容类型：设定 / 读取 / 边界 ====================
+    //   （不调 set()：new 出来的空 Table 就能玩纯逻辑 ⇒ 不需要字体/窗口 ✓）
+    Table t = new Table()
+    t.set_rows([["歌A", "10", "等待中"], ["歌B", "50", "下载中"], ["歌C", "100", "完成"]])
+
+    check("默认：所有列都是文本（空串）", t.get_col_cell_type(0) == "" and t.get_col_cell_type(1) == "")
+    check("越界列读回来也是空串（不崩 ✓）", t.get_col_cell_type(99) == "")
+    check("负数列读回来是空串", t.get_col_cell_type(-1) == "")
+
+    t.set_col_cell_type(1, "progress")
+    check("设 progress ⇒ 读回 progress", t.get_col_cell_type(1) == "progress")
+    check("只影响该列（0 列仍是文本）", t.get_col_cell_type(0) == "")
+
+    t.set_col_cell_type(1, "text")
+    check("设回 text ⇒ 读回空串（空串即文本 ✓）", t.get_col_cell_type(1) == "")
+    t.set_col_cell_type(1, "text")           // 幂等：重复设不该出错
+    check("重复设 text 幂等", t.get_col_cell_type(1) == "")
+
+    t.set_col_cell_type(2, "")
+    check("空串 ⇒ 文本", t.get_col_cell_type(2) == "")
+
+    t.set_col_cell_type(5, "progress")       // 中间隔了没设过的列
+    t.set_col_cell_type(3, "progress")
+    check("中间未设的列补空串（不会错位）", t.get_col_cell_type(3) == "progress" and t.get_col_cell_type(4) == "" and t.get_col_cell_type(5) == "progress")
+    check("已在的列不受影响", t.get_col_cell_type(1) == "" and t.get_col_cell_type(2) == "")
+
+    t.set_col_cell_type(-1, "progress")      // 负数列：忽略，且不许崩
+    check("负数列 ⇒ 忽略（不崩 ✓）", t.get_col_cell_type(-1) == "")
+
+    // ==================== ③ 自绘回调：注册/清除都不该崩 ====================
+    //   （真渲染要窗口 ⇒ 本测只验"接口可用"，渲染链路由 GUI 用例 test_table_cells.leno 兜 ✓）
+    t.on_cell_draw(func(Renderer r, int row, int col, float x, float y, float w, float h) { })
+    t.on_cell_draw(func(Renderer r, int row, int col, float x, float y, float w, float h) { })
+    check("on_cell_draw 可重复注册（覆盖前一个 ✓）", true)
+
+    print("")
+    if fails > 0 {
+        print($"共 {fails} 项失败")
+        _exit(1)
+    }
+    print("全部通过（进度值解析 + 列类型边界 ✓）")
+}

@@ -1,5 +1,16 @@
 // sdl_table.leno — 表格控件（多列多行，可选表头/排序/选择/双向滚动）
 // 通过 win.addTable({...}) 创建；数据用 set_rows / add_row 设置。
+//
+// ★ 2026-10-07：单元格内容**不再只有文本** —— 两种新能力（都在原有的可见行循环里做 ✓）：
+//   · `cell_types: ["", "", "", "progress"]` 或 `set_col_cell_type(c, "progress")`
+//     ⇒ 该列画**进度条**（值取自该列文本，规则见 sdl_progress.parseProgress ✓）
+//     原先只能把进度写成 "37%" 文字 ✗ ⇒ 表格里再嵌一个 ProgressBar 控件是不成的（那要虚拟化+生命周期 ✗）
+//   · `on_cell_draw(cb)` ⇒ 每格常规内容画完后给一次**自绘**机会（矩形已含滚动偏移/冻结列 ✓）
+//     逃生舱：色块、徽标、迷你折线、给某格加角标…… 应用自己画，表格不猜 ✓
+//   ⚠ 观感约定（别再犯）：progress 的轨道/填充/文字色**一律从 sdl_progress 取** ——
+//     本文件已经两次踩过"单元格自己调色 ⇒ 与真控件两套观感"（见 set() 里复选框那段注释 ✓）
+//   ⚠ 本文件**不接管**单元格内的点击：命中仍是行/单元格级（`on_cell(row, col)` ✓）
+//     —— 真控件那种"格内小按钮/可拖进度"要处理可见行实例化与生命周期，本轮不做 ✓
 import maths
 import "sdl_opts.leno" as dochk    // 选项对账：不认识的键会报一行警告（见 sdl_opts.leno ✓）
 import "sdl_renderer.leno" as ren; use ren.Renderer
@@ -9,6 +20,7 @@ import "sdl_core.leno" as core; use core.SystemCursor; use core.SDL_Rect
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_edit.leno" as edt; use edt.Edit
 import "sdl_tooltip.leno" as tip
+import "sdl_progress.leno" as prgb    // ★ 2026-10-07：进度单元格复用它的观感 + 取值规则（同源 ✓）
 import "sdl_menu.leno" as menu; use menu.MenuBar
 import "sdl_image.leno" as img
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
@@ -19,7 +31,7 @@ use theme.Color
 //   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
 func _opts_keys(): Array[string] {
     return [
-"aligns", "bg_color", "cell_select", "check_col", "check_color", "col_reorder", "col_widths", "cursor", "editable", "editable_cols", "empty_color", "empty_text", "enabled", "font_path", "font_size", "font_style", "frozen_cols", "h", "header_aligns", "header_color", "header_h", "headers", "image_col", "image_gap", "image_mode", "image_pad", "image_size", "max_col_width", "min_col_width", "multi", "multi_select", "numeric_cols", "resizable", "row_h", "row_images", "row_reorder", "rows", "sel_color", "sep_color", "sort_disabled_cols", "sortable", "tip", "visible", "w", "x", "y", "zebra"
+"aligns", "bg_color", "cell_select", "cell_types", "check_col", "check_color", "col_reorder", "col_widths", "cursor", "editable", "editable_cols", "empty_color", "empty_text", "enabled", "font_path", "font_size", "font_style", "frozen_cols", "h", "header_aligns", "header_color", "header_h", "headers", "image_col", "image_gap", "image_mode", "image_pad", "image_size", "max_col_width", "min_col_width", "multi", "multi_select", "numeric_cols", "resizable", "row_h", "row_images", "row_reorder", "rows", "sel_color", "sep_color", "sort_disabled_cols", "sortable", "tip", "visible", "w", "x", "y", "zebra"
 ]
 }
 export struct Table impl Widget, Themeable {
@@ -116,9 +128,26 @@ export struct Table impl Widget, Themeable {
     pri int  checkCol = -1               // 复选框列索引（-1=无复选框列）
     pri Array[bool] rowChecked = []      // 每行勾选状态（与 _rows 平行）
     pri bool checkHeaderState = false    // 表头全选框状态（三态：半选用 false 但有部分勾选时渲染半选样式）
-    pri Color  chkColor = #3C82DCFF   // 勾选框"勾线+边框"色（默认取主题 accent，见 set）
+    pri Color  chkColor = #3C82DCFF   // 勾选框的"边框 + 勾线"色（默认取主题 accent，见 set ✓）
     pri Color  chkBoxColor = #5A5F6EFF  // 未勾选时边框色
-    pri Color  markColor = #3C82DCFF  // 勾选标记颜色（默认取主题 accent，见 set）
+    // ⚠ 勾线**不再单独设色**：勾选态是"描边 + 勾线"（不填满）⇒ 勾线必须与描边同色；
+    //   原先这里另设 `markColor = txtOnAccent`（≈白）⇒ 浅色主题下**白勾画在白底上 = 看不见** ✗
+    //   （CheckBox 控件踩过同款，见 sdl_checkbox.leno 那句"去掉蓝底后白勾会看不见" ✓）
+
+    // ==================== 单元格内容类型（2026-10-07 新增）====================
+    // 每列内容类型（下标=列）："" / "text" = 文本（默认），"progress" = 进度条
+    //   ⚠ **值不另存**：progress 列的**单元格文本本身**就是数值（规则见 set_col_cell_type）
+    //     ⇒ 不必新增"每行并行数组" ⇒ 排序 / 行重排 / 列重排**零同步代码** ✓（值随 _rows 一起搬 ✓）
+    //     （这正是 rowImages / rowChecked / rowColors 必须在 swap_rows / move_row / swap_cols
+    //       各写一遍的原因 ✗ —— 少写一处就"进度跟着别人走" ✗）
+    pri Array[string] cellTypes = []
+    // progress 单元格配色：★ 从 sdl_progress 的取色函数取（与 ProgressBar 同源，见文件头约定 ✓）
+    pri Color progTrack = #3C3C48FF, progFill = #3CC850FF, progTxt = #EBEBF5FF
+    // 百分比文字宽度缓存（下标=百分数 0..100，-1=未测）：每个值一生只测一次 ✓
+    //   （表格刻意避开"每格每帧 measureString" —— 见 Pass 2 拟合文本缓存那段注释 ✓）
+    pri Array[float] pctW = []
+    // 单元格自绘回调（r, 行, 列, x, y, w, h）：常规内容**之后**调用 ✓（矩形已含滚动偏移与冻结列）
+    pri func(Renderer, int, int, float, float, float, float):void onCellDraw
 
     // === 行级颜色 ===
     pri Array[Color] rowColors = []        // 每行文字色 RGB 打包：0xRRGGBB，0=用默认色
@@ -300,15 +329,17 @@ export struct Table impl Widget, Themeable {
         zebColor = th.bgZebra
         txtColor = th.txt
         hdrTxtColor = th.txtHeader
-        // ★ 复选框列跟随主题（原来 chkColor/markColor 是**硬编码**的绿色 + 近白，
-        //   既不走主题、又与 CheckBox 控件观感不一致 ⇒ 2026-10-07 统一到 accent）
+        // ★ 复选框列跟随主题（原来 chkColor 是**硬编码**的绿色，既不走主题、又与 CheckBox 观感不一致
+        //   ⇒ 2026-10-07 统一到 accent ✓）；勾线跟描边同色 —— 理由见字段声明处那句 ⚠
         chkColor = th.accent
-        markColor = th.accent
         sepColor = th.sep
         sbColor = th.sb
         emptyColor = th.txtDim
         chkBoxColor = th.border
-        markColor = th.txtOnAccent
+        // ★ progress 单元格配色：走 sdl_progress 的取色函数（与 ProgressBar **同源**，见文件头约定 ✓）
+        progTrack = prgb.barTrackColor(th)
+        progFill = prgb.barFillColor(th)
+        progTxt = prgb.barTextColor(th)
         x = opts.get("x", 0)
         y = opts.get("y", 0)
         w = opts.get("w", 360)
@@ -373,6 +404,13 @@ export struct Table impl Widget, Themeable {
 
         // 复选框列配置
         checkCol = opts.get("check_col", -1)
+        // 单元格内容类型（2026-10-07）：按列给（Array[string]，下标=列），"progress" = 进度条
+        //   与 check_col / image_col 一个路子走 opts ✓（运行时还能 set_col_cell_type 改 ✓）
+        var cts = opts.get("cell_types", [])
+        cellTypes = []
+        if cts is Array[string] {
+            for cts.len() to k { set_col_cell_type(k, cts[k]) }
+        }
         if opts.get("check_color") is Color => t { chkColor = t }
         emptyText = opts.get("empty_text", "暂无数据")
         if opts.get("empty_color") is Color => t { emptyColor = t }
@@ -755,6 +793,9 @@ export struct Table impl Widget, Themeable {
         // 交换 numericCols / sortDisabledCols 中的索引
         for numericCols.len() to i { if numericCols[i] == a { numericCols[i] = b } eif numericCols[i] == b { numericCols[i] = a } }
         for sortDisabledCols.len() to i { if sortDisabledCols[i] == a { sortDisabledCols[i] = b } eif sortDisabledCols[i] == b { sortDisabledCols[i] = a } }
+        // ★ 交换单元格内容类型（2026-10-07）：**值**随行数据一起搬（见上面那个 for ✓），但"类型"
+        //   是按列的 ⇒ 不跟着换就把"进度条列"留在原地了 ✗（原来的数值列变回文本、原文本列画空条）
+        if a < cellTypes.len() and b < cellTypes.len() { string tt = cellTypes[a]; cellTypes[a] = cellTypes[b]; cellTypes[b] = tt }
         // 交换 imageCol / checkCol / sortCol 引用（排序箭头跟随列移动）
         if imageCol == a { imageCol = b } eif imageCol == b { imageCol = a }
         if checkCol == a { checkCol = b } eif checkCol == b { checkCol = a }
@@ -768,9 +809,37 @@ export struct Table impl Widget, Themeable {
     func set_tip(string t) { _tip = t }
     func on_select(func(int):void cb) { onSelect = cb }
     func on_cell(func(int, int):void cb) { onCell = cb }
+    // ★ 单元格自绘（2026-10-07）：每格常规内容画完**之后**调一次（矩形已含滚动偏移/冻结列 ✓）
+    //   应用可任意叠加（色块 / 徽标 / 迷你折线…）；表格**不接管**格内点击（命中仍是 on_cell ✓）
+    func on_cell_draw(func(Renderer, int, int, float, float, float, float):void cb) { onCellDraw = cb }
 
     // ==================== 行图标设置方法 ====================
     func set_image_col(int c) { imageCol = c; invalidate_fitted() }
+
+    // ==================== 单元格内容类型（2026-10-07 新增）====================
+    // 设定某列的内容类型："" / "text"（默认，文本）或 "progress"（进度条）
+    //   ⚠ progress 列的**文本被当作数值**（不显示原文！）：`0.37` / `37` / `37%` 都行，
+    //     规则见 sdl_progress.parseProgress ✓ ⇒ 那列的 set_cell 要写数值，别写"等待中"
+    //     （应用要改显示，改的就该是"值"：set_cell(i, col, _str(pct)) ✓）
+    //   ⚠ 别和 image_col 混用同一列：图标 + 进度条会挤在同一格里（本轮不做"图标+条"的组合）
+    func set_col_cell_type(int c, string t) {
+        if c < 0 { return }
+        string v = t
+        if v == null { v = "" }
+        if v == "text" { v = "" }
+        if v != "" and v != "progress" {
+            print("[Table] 不认识的 cell_type：\"" + v + "\"（只支持 \"text\" 与 \"progress\"）\n")
+            v = ""
+        }
+        while cellTypes.len() <= c { cellTypes.add("") }
+        cellTypes[c] = v
+        invalidate_fitted()      // 该列不再画文本 ⇒ 拟合缓存的意义变了（保守失效 ✓）
+        core.requestRedraw()
+    }
+    func get_col_cell_type(int c): string {
+        if c < 0 or c >= cellTypes.len() { return "" }
+        return cellTypes[c]
+    }
     func set_row_image(int row, string path) {
         if row >= 0 and row < rowImages.len() { rowImages[row] = path; invalidate_fitted() }
         eif row >= 0 {
@@ -1575,7 +1644,8 @@ export struct Table impl Widget, Themeable {
             // ★ 2026-10-07 与 CheckBox 统一：勾选态**不填满**，改为"主题色描边 + 主题色勾线"
             //   （原来这里是 fillRect 实心块 + 近白勾线，和 CheckBox 控件两套观感 ✗）
             Color bc = chkColor
-            Color mc = markColor
+            // ★ 勾线**跟描边同色**：勾选态不填满 ⇒ 用 txtOnAccent（白）在白底上就是"看不见的勾" ✗
+            Color mc = bc
             if partial {
                 // 半选（表头三态的"部分选中"）：保持灰色调，只是同样不填满
                 bc = theme.packColor(100, 110, 125)
@@ -1603,6 +1673,53 @@ export struct Table impl Widget, Themeable {
             r.setColor(bc)
             r.drawRect(bx, by, boxSize, boxSize)
         }
+    }
+
+    // ==================== 单元格：进度条（2026-10-07 新增）====================
+    // 列内容类型（"" = 文本，"progress" = 进度条）—— 越界/未设定一律当文本 ✓
+    pri func cell_type_at(int c): string {
+        if c < 0 or c >= cellTypes.len() { return "" }
+        return cellTypes[c]
+    }
+
+    // 在单元格里画进度条。**观感与 ProgressBar 同源**：几何与配色都走 sdl_progress.drawBar ✓
+    //   （别在这里自己调色 —— 那正是复选框当年踩过的"两套观感"坑，见 set() 那段注释 ✗）
+    pri func draw_progress_cell(Renderer r, float cx, float cw, float ry, float rowH, float ratio, float iconOff) {
+        float pad = 6.0
+        float bx = cx + pad + iconOff
+        float bw = cw - pad * 2.0 - iconOff
+        if bw < 12.0 { return }                    // 列太窄：宁可不画，也不能算出负宽度 ✗
+        float bh = rowH - 10.0
+        if bh < 4.0 { bh = 4.0 }
+        if bh > 12.0 { bh = 12.0 }
+        float by = ry + (rowH - bh) / 2.0
+        prgb.drawBar(r, bx, by, bw, bh, ratio, progTrack, progFill)
+        // 百分比文字（与 ProgressBar 的 show_text 一致）；格太窄就不挤了，免得糊成一团 ✓
+        if _font != null and _font.ok and bw >= 44.0 {
+            int pct = _int(ratio * 100.0)
+            if pct < 0 { pct = 0 }
+            if pct > 100 { pct = 100 }
+            float tw = pct_text_w(pct)
+            if tw + 4.0 < bw {
+                r.drawText(_font, _str(pct) + "%", r.snapX(bx + bw / 2.0 - tw / 2.0),
+                           r.snapY(by + bh / 2.0 - textH / 2.0), progTxt)
+            }
+        }
+    }
+
+    // 百分比文字宽度：0..100 每个值**一生只测一次** ✓
+    //   （表格刻意避开"每格每帧 measureString" —— 见拟合文本缓存那段注释 ✓）
+    pri func pct_text_w(int pct): float {
+        while pctW.len() <= pct { pctW.add(-1.0) }
+        if pctW[pct] < 0.0 {
+            if _font != null and _font.ok {
+                var[float, float](sw, _sh) = _font.measureString(_str(pct) + "%")
+                pctW[pct] = sw
+            } else {
+                pctW[pct] = 0.0
+            }
+        }
+        return pctW[pct]
     }
 
     // ==================== 渲染 ====================
@@ -1912,15 +2029,28 @@ export struct Table impl Widget, Themeable {
                 // 复选框列：绘制行复选框
                 if c == checkCol and checkCol >= 0 {
                     draw_checkbox(r, cx, cw, ry, rowH, is_row_checked(ri), false)
+                    if onCellDraw != null { onCellDraw(r, ri, c, cx, ry, cw, rowH) }
                     continue
                 }
                 // ★ 跳过正在编辑的单元格：Edit 控件会自行绘制，避免文字叠加重叠
+                //   （自绘回调也一并跳过 —— 那一刻这格归 Edit 管 ✓）
                 if editing and ri == editRow and c == editCol { continue }
                 float iconOff = 0.0
                 if c == imageCol and has_image_col() {
                     iconOff = draw_cell_icon(r, imgPath, cx, ry, rowH)
                 }
-                if c < row.len() {
+                if cell_type_at(c) == "progress" {
+                    // ★ 进度条单元格（2026-10-07）：该列**文本当数值**（规则见 sdl_progress.parseProgress）
+                    //   单元格背景色与文本格同待遇：先铺底，再画条 ✓
+                    Color cbg = get_cell_bg(ri, c)
+                    if cbg != 0 {
+                        r.setColor(theme.withAlpha(cbg, 200))
+                        r.fillRect(cx, ry, cw, rowH)
+                    }
+                    float ratio = 0.0
+                    if c < row.len() { ratio = prgb.parseProgress(row[c]) }
+                    draw_progress_cell(r, cx, cw, ry, rowH, ratio, iconOff)
+                } eif c < row.len() {
                     // ★ 使用预计算的拟合文本和宽度，跳过 _fit_cell_text + measureString
                     int fidx = (ri - fittedStartRow) * ncols + c
                     string dt = ""
@@ -1941,6 +2071,9 @@ export struct Table impl Widget, Themeable {
                     }
                     draw_cached_text(r, dt, dw, cx, cw, ry, rowH, _aligns[c], cellC, iconOff)
                 }
+                // ★ 自绘回调（2026-10-07）：常规内容**之后**调用 ⇒ 应用可叠加/覆盖
+                //   （矩形已含滚动偏移与冻结列 ⇒ 应用不用自己算坐标 ✓）
+                if onCellDraw != null { onCellDraw(r, ri, c, cx, ry, cw, rowH) }
             }
         }
 
@@ -2066,7 +2199,7 @@ sepColor = t.sep
 sbColor = t.sb
 emptyColor = t.txtDim
 chkBoxColor = t.border
-markColor = t.txtOnAccent
+chkColor = t.accent        // ★ 补上：原来这里**漏了 chkColor** ⇒ 换主题后描边/勾线还是旧主题的色 ✗
 invalidate_fitted()
 // 同步内嵌控件的配色
 _edit?.applyTheme(t)

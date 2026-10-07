@@ -1,7 +1,15 @@
 // sdl_progress.leno — 进度条控件
 // 通过 win.addProgressBar({...}) 创建，只读显示进度（可 set_value 设定）；
 // 开启 clickable 后点击/拖拽可设定进度（像可交互进度条），回调 on_change(float)
+//
+// ★ 2026-10-07 起，本文件同时是**进度条观感的唯一来源**（供别的控件复用 ✓）：
+//   · `drawBar` / `barTrackColor` / `barFillColor` / `barTextColor` —— Table 的 `progress`
+//     单元格就调它们画条（在那之前，表格只能把进度**写成文字** ✗）
+//   · `parseProgress` —— "进度值写成文本"的解析规则（Table 的进度单元格靠它取值 ✓）
+//   为什么必须同源：本仓两次踩过"单元格观感与真控件不一致"（见 sdl_table 里复选框那段注释）
+//   ⇒ 轨道/填充/圆角的实现**只有这一份**，改这里两边一起变 ✓（再让调用方自己调色 = 又埋一次 ✗）
 import maths
+import strings   // parseProgress 用 `to_codepoints` 自校验（不直接 _float，理由见该函数 ✓）
 import "sdl_opts.leno" as dochk    // 选项对账：不认识的键会报一行警告（见 sdl_opts.leno ✓）
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
@@ -56,9 +64,10 @@ export struct ProgressBar impl Widget {
     func set(Dict opts) {
         dochk.check("sdl_progress", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
         Theme th = theme.getTheme()
-        trkColor = th.bgAlt
-        fillColor = th.btnSuccess
-        txtColor = th.txt
+        // ★ 走导出的取色函数（**同一处映射**）⇒ Table 的进度单元格与这里不会各调各的 ✓
+        trkColor = barTrackColor(th)
+        fillColor = barFillColor(th)
+        txtColor = barTextColor(th)
         x         = opts.get("x", 0)
         y         = opts.get("y", 0)
         w         = opts.get("w", 200)
@@ -212,21 +221,14 @@ export struct ProgressBar impl Widget {
         step_anim()
         if animating { core.requestRedraw() }
 
-        // 轨道背景
+        // 轨道 + 填充：几何与配色**统一走 drawBar** ✓（Table 的进度单元格调的就是这一份）
+        //   disabled 时颜色减半 —— 仍是本控件的行为，原样保留 ✓
+        float ratio = ratio()   // 下面的百分比文字还要用 ⇒ 这个局部保留 ✓
         Color trkC = trkColor
         if not enabled { trkC = theme.packColor(theme.colorR(trkColor) / 2, theme.colorG(trkColor) / 2, theme.colorB(trkColor) / 2) }
-        r.setColor(trkC)
-        r.fillRoundedRect(x, y, w, h, h / 2.0)
-
-        // 已选填充
-        float ratio = ratio()
-        float fillW = ratio * w
         Color filC = fillColor
         if not enabled { filC = theme.packColor(theme.colorR(fillColor) / 2, theme.colorG(fillColor) / 2, theme.colorB(fillColor) / 2) }
-        if fillW > 1.0 {
-            r.setColor(filC)
-            r.fillRoundedRect(x, y, fillW, h, h / 2.0)
-        }
+        drawBar(r, x, y, w, h, ratio, trkC, filC)
 
         // 文字（百分比）
         if showText and _font != null and _font.ok {
@@ -250,5 +252,84 @@ export struct ProgressBar impl Widget {
 export func createProgressBar(Dict opts): ProgressBar {
     ProgressBar p = new ProgressBar(); p.set(opts); return p
 }
+
+// ==================== 供其它控件复用的观感 / 取值规则（2026-10-07 新增）====================
+// 见文件头：**这里是进度条观感的唯一来源**（Table 的 progress 单元格就调它 ✓）
+
+// 默认配色（映射只写在这一处 ⇒ 两边不可能各调各的 ✓）
+export func barTrackColor(Theme th): Color { return th.bgAlt }
+export func barFillColor(Theme th): Color { return th.btnSuccess }
+export func barTextColor(Theme th): Color { return th.txt }
+
+// 把进度条画进**任意矩形**（轨道 + 填充；几何与 render() 完全一致 ⇒ 两处同源 ✓）
+//   ratio 先夹到 0..1：调用方的比例来自解析/计算，夹一下省得画反 ✗
+export func drawBar(Renderer r, float x, float y, float w, float h, float ratio, Color track, Color fill) {
+    if w <= 0.0 or h <= 0.0 { return }
+    float rt = ratio
+    if rt < 0.0 { rt = 0.0 }
+    if rt > 1.0 { rt = 1.0 }
+    r.setColor(track)
+    r.fillRoundedRect(x, y, w, h, h / 2.0)
+    float fillW = rt * w
+    if fillW > 1.0 {
+        r.setColor(fill)
+        r.fillRoundedRect(x, y, fillW, h, h / 2.0)
+    }
+}
+
+// 进度值的**文本表示**规则（Table 的 progress 单元格靠它取值 ✓）
+//   接受：`0.37` / `37` / `37%` / `  100  `（前后空白忽略）、`-1`（越界会夹住）
+//   规则：带 `%` ⇒ 百分数；否则 **> 1 当百分数、≤ 1 当比例**（`1` 与 `100` 都是 100% ✓）
+//   非法（字母/中文/两个小数点/空串，如"等待中"）一律当 **0** ⇒ 画成空条，**不抛错** ✓
+//   ⚠ 为什么不直接 `_float(s)`：它对非法串会 `native_throw_error`（"无法将字符串转换为浮点数"）
+//     —— 而这列文本是**应用随手写的**（"等待中"很常见）⇒ 不接住就把整帧打断 ✗
+//     （`try/catch` 确实接得住 —— 本仓的 `sdl_table.to_float` 就是这么包的 ✓ —— 但那是"每格
+//      每帧走一次异常"，在渲染循环里太重 ✗ ⇒ 还是先按码点自校验、再自己算数值更省也更明确 ✓
+//      `to_codepoints` 一趟取完 ⇒ O(n) 且不造临时串 ✓）
+export func parseProgress(string s): float {
+    if s == null { return 0.0 }
+    Array[int] cps = strings.to_codepoints(s)
+    int i = 0
+    int j = cps.len() - 1
+    while i <= j and isBlank(cps[i]) { i = i + 1 }        // 前导空白
+    bool percent = false
+    if i <= j and cps[j] == 37 { percent = true; j = j - 1 }   // 37 = '%'
+    while i <= j and isBlank(cps[j]) { j = j - 1 }        // 尾部空白
+    if j < i { return 0.0 }
+    bool neg = false
+    if cps[i] == 45 { neg = true; i = i + 1 }             // 45 = '-'
+    eif cps[i] == 43 { i = i + 1 }                        // 43 = '+'
+    if j < i { return 0.0 }                               // 只有符号 ⇒ 非法
+    float v = 0.0
+    bool hasDigit = false        // ⚠ 不能叫 `any` —— 那是保留字（类型名）✗
+    bool dot = false
+    float div = 1.0
+    for i : j to k {
+        int c = cps[k]
+        if c >= 48 and c <= 57 {                          // '0'..'9'
+            hasDigit = true
+            if dot {
+                div = div * 10.0
+                v = v + _float(c - 48) / div
+            } else {
+                v = v * 10.0 + _float(c - 48)
+            }
+        } eif c == 46 {                                   // 46 = '.'
+            if dot { return 0.0 }                         // 两个小数点 ⇒ 非法
+            dot = true
+        } else {
+            return 0.0                                    // 其它字符（字母/中文/中间夹空白…）⇒ 非法
+        }
+    }
+    if not hasDigit { return 0.0 }
+    if neg { v = 0.0 - v }
+    if percent { v = v / 100.0 } eif v > 1.0 { v = v / 100.0 }
+    if v < 0.0 { v = 0.0 }
+    if v > 1.0 { v = 1.0 }
+    return v
+}
+
+// 空白（空格 / 制表 / 换行 / 回车）—— `parseProgress` 两端修剪用
+func isBlank(int c): bool { return c == 32 or c == 9 or c == 10 or c == 13 }
 
 

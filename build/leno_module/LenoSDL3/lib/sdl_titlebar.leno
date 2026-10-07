@@ -61,7 +61,7 @@ import "sdl_tooltip.leno" as tip    // 悬停提示复用框架那一套（与 B
 //   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
 func _opts_keys(): Array[string] {
     return [
-"actions", "bg_color", "btn_align", "btn_spacing", "btn_width", "close", "close_hover_color", "font_path", "font_size", "height", "hover_color", "icon_close", "icon_color", "icon_maximize", "icon_minimize", "icon_restore", "icon_size", "maximize", "minimize", "separator_color", "show_close", "show_maximize", "show_minimize", "show_separator", "text_color", "title", "title_align", "title_pad"
+"actions", "bg_color", "btn_align", "btn_spacing", "btn_width", "close", "close_hover_color", "font_path", "font_size", "height", "hover_color", "icon_close", "icon_color", "icon_maximize", "icon_minimize", "icon_restore", "icon_size", "maximize", "minimize", "separator_color", "show_close", "show_maximize", "show_minimize", "show_separator", "text_color", "title", "title_align", "title_icon", "title_icon_gap", "title_icon_size", "title_pad"
 ]
 }
 
@@ -180,6 +180,14 @@ export struct TitleBar impl Widget, Themeable {
     pri string imgClose = ""; pri Ptr[u8]? texClose; pri string loadClose = ""
     pri float iconImgSize = 16.0
 
+    // ==================== 标题前的**应用图标**（2026-10-07 新增 ✓）====================
+    // 只有文字时标题前面空一块，观感差 ⇒ `title_icon` 给一张图（PNG 也认 ✓），
+    //   与文字**作为一个整体**居中/左对齐 ⇒ 不再"前面空空的" ✓
+    // ⚠ 路径同样要**绝对**（`dirs.res_dir()` 拼 ✓）——控件把它原样交给 SDL_image ✓
+    pri string imgTitle = ""; pri Ptr[u8]? texTitle; pri string loadTitle = ""
+    pri float titleIconSize = 0.0     // ≤0 ⇒ 用 icon_size（与窗口按钮图标同一档 ✓）
+    pri float titleIconGap = 6.0      // 图标与文字之间的间隙
+
     // ==================== 动作按钮（自定义；用法见文件头）====================
     pri Array[TitleBarAction] actions = []   // 图标按钮（顺序 = 从系统按钮往内侧排 ✓）
     pri string actionHover = ""               // 当前悬停的动作 id（空 = 无）
@@ -255,6 +263,10 @@ export struct TitleBar impl Widget, Themeable {
         imgMax = opts.get("icon_maximize", "")
         imgRestore = opts.get("icon_restore", "")
         imgClose = opts.get("icon_close", "")
+        // 标题前的应用图标（也收 `title_image`：与 actions 那套"icon/image 都认"同宽 ✓）
+        imgTitle = opts.get("title_icon", opts.get("title_image", ""))
+        titleIconSize = opts.get("title_icon_size", 0.0)
+        titleIconGap = opts.get("title_icon_gap", 6.0)
         iconImgSize = opts.get("icon_size", 16.0)
 
         // 动作按钮：给了 Array[Dict] 就解析（没有 id 的会被丢掉，见 parseTitleBarActions ✓）；
@@ -785,6 +797,10 @@ if ev.isWindowRestored() { maximized = false; btnHover = BTN_NONE; motionSkipCou
         if imgClose != "" and texClose == null and loadClose != imgClose {
             texClose = img.loadTexture(h, imgClose); loadClose = imgClose
         }
+        // 标题前的应用图标（与 icon_minimize 那套同款：路径变了就重载 ✓）
+        if imgTitle != "" and texTitle == null and loadTitle != imgTitle {
+            texTitle = img.loadTexture(h, imgTitle); loadTitle = imgTitle
+        }
         // 动作按钮的**图片**图标：按 id 缓存（矢量名不进这里 ⇒ 不会去文件系统找 ✓）
         for actions.len() to i {
             TitleBarAction a = actions[i]
@@ -877,16 +893,26 @@ if ev.isWindowRestored() { maximized = false; btnHover = BTN_NONE; motionSkipCou
         if _font != null and _font.ok and title != "" {
             var[float, float](tw, th) = _font.measureString(title)
             float textY = y + (h - _float(_font.height)) * 0.5
+            // ★ 标题前的**应用图标**（`title_icon`，2026-10-07 新增 ✓）：与文字作为**一个整体**排版
+            //   · 尺寸缺省跟 `icon_size` 同档；纹理没加载出来 ⇒ 当"没有图标"，**不留空位** ✓
+            //   · 没有图标时 blockW == tw、bx 与旧算法完全一致 ⇒ 老应用逐像素不变 ✓
+            float iconS = titleIconSize
+            if iconS <= 0.0 { iconS = iconImgSize }
+            bool hasIcon = texTitle != null and iconS > 0.0
+            float blockW = tw
+            if hasIcon { blockW = blockW + iconS + titleIconGap }
+            float bx = titleLeft
             if titleAlign == ALIGN_CENTER or centerWidget != null {
-                // 居中：在 titleLeft ~ titleRight 范围内居中
-                float tcx = titleLeft + (titleRight - titleLeft - tw) * 0.5
-                if tcx < titleLeft { tcx = titleLeft }
-                if tcx + tw > titleRight { tcx = titleRight - tw }
-                r.drawText(_font, title, r.snapX(tcx), r.snapY(textY), txColor)
-            } else {
-                // 左对齐
-                r.drawText(_font, title, r.snapX(titleLeft), r.snapY(textY), txColor)
+                // 居中：图标 + 文字**一起**在 titleLeft ~ titleRight 范围内居中
+                bx = titleLeft + (titleRight - titleLeft - blockW) * 0.5
+                if bx < titleLeft { bx = titleLeft }
+                if bx + blockW > titleRight { bx = titleRight - blockW }
             }
+            if texTitle != null and iconS > 0.0 {
+                drawTitleIcon(r, texTitle, bx, y + (h - iconS) * 0.5, iconS)
+                bx = bx + iconS + titleIconGap
+            }
+            r.drawText(_font, title, r.snapX(bx), r.snapY(textY), txColor)
         }
 
         // 按钮区域
@@ -1144,6 +1170,19 @@ if ev.isWindowRestored() { maximized = false; btnHover = BTN_NONE; motionSkipCou
         r.drawTextureAt(tex, ix + (sz - dw) * 0.5, iy + (sz - dh) * 0.5, dw, dh)
     }
 
+    // 标题前的应用图标：按指定边长**等比**缩放后画在 (bx, by)（与 drawIcon 同一套等比算法 ✓）
+    pri func drawTitleIcon(Renderer r, Ptr[u8] tex, float bx, float by, float sz) {
+        r.setTextureAlpha(tex, 255)
+        r.setTextureColor(tex, #FFFFFFFF)
+        var[float, float](nw, nh) = r.getTextureSize(tex)
+        float dw = sz; float dh = sz
+        if nw > 0.0 and nh > 0.0 {
+            float s = sz / nw; if sz / nh < s { s = sz / nh }
+            dw = nw * s; dh = nh * s
+        }
+        r.drawTextureAt(tex, bx + (sz - dw) * 0.5, by + (sz - dh) * 0.5, dw, dh)
+    }
+
     // 矢量最大化/还原图标
     pri func drawMaxIcon(Renderer r, float bx) {
         float cx = bx + btnWidth * 0.5
@@ -1205,6 +1244,8 @@ if ev.isWindowRestored() { maximized = false; btnHover = BTN_NONE; motionSkipCou
     func set_icon_maximize(string path) { releaseTex(texMax); texMax = null; imgMax = path; loadMax = "" }
     func set_icon_restore(string path)  { releaseTex(texRestore); texRestore = null; imgRestore = path; loadRestore = "" }
     func set_icon_close(string path)    { releaseTex(texClose); texClose = null; imgClose = path; loadClose = "" }
+    // 运行时换标题前的应用图标（传 "" ⇒ 去掉图标 ✓）
+    func set_title_icon(string path)    { releaseTex(texTitle); texTitle = null; imgTitle = path; loadTitle = "" }
 
     pri func releaseTex(Ptr[u8]? tex) {
         if tex != null { core.lib().SDL_DestroyTexture(tex) }
@@ -1289,7 +1330,8 @@ if ev.isWindowRestored() { maximized = false; btnHover = BTN_NONE; motionSkipCou
         if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
         releaseTex(texMin); releaseTex(texMax)
         releaseTex(texRestore); releaseTex(texClose)
-        texMin = null; texMax = null; texRestore = null; texClose = null
+        releaseTex(texTitle)
+        texMin = null; texMax = null; texRestore = null; texClose = null; texTitle = null
         // 动作按钮的图片纹理（矢量图标没有纹理 ⇒ 空缓存时什么都不做 ✓）
         for actions.len() to i {
             var old = actionTex.get(actions[i].id, null)

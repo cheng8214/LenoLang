@@ -180,6 +180,10 @@ main() {
     //   它把 PNG 写到 %TEMP%\cleaner_master_autotest.png ⇒ 用 shot_arg 查这一张 ✓
     run_headless("cleaner_master", gui + "\\应用\\电脑清理大师\\cleaner_master.leno", false, false,
                  "--autotest", _tmpdir() + "\\cleaner_master_autotest.png")
+    // table_cells：Table 的 progress 单元格 + on_cell_draw（2026-10-07 新增 ✓）
+    //   它自带 DSHOT 钩子（截图后退出）⇒ 无头跑一遍就能证明"进度条真的画进了单元格" ✓
+    //   （纯逻辑那份在 assert\test_table_progress_cells.leno，已随主套件跑 ✓）
+    run_headless("table_cells",      gui + "\\控件\\表格\\test_table_cells.leno", true, true, "", "")
 
     print("")
     print("=== [3/3] 主套件（assert\\run_tests.leno）===")

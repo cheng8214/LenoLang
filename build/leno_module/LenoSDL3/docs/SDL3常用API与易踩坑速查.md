@@ -516,6 +516,21 @@ tb.on_action(func(string id) { if id == "settings" { openSettings() } })
 
 - 键名用 `icon`（与本控件 `icon_minimize` / `icon_close` 一族一致 ✓）；`image` 也认（菜单那套键名 ✓）
 
+### 标题前的应用图标（`title_icon`，2026-10-07 新增 ✓）
+
+只有文字时标题前面空一块、观感差 ⇒ 给一张图，与文字作为一个**整体**居中/左对齐 ✓
+
+```leno
+SDL3.createTitleBar({title: "我的应用",
+                     title_icon: dirs.join(dirs.res_dir(), "images/index.png"),   // 也认 title_image ✓
+                     title_icon_size: 18,   // 缺省 ⇒ 跟 icon_size 同档（16）
+                     title_icon_gap: 6})    // 图标与文字的间隙
+```
+- 路径要**绝对**（用 `dirs.res_dir()` 拼 ✓）——控件把字符串**原样**交给 SDL_image；PNG 直接可用 ✓
+- 运行时换：`tb.set_title_icon("…")`（传 `""` ⇒ 去掉图标 ✓）
+- 加载不出来 ⇒ 当"**没有图标**"处理、**不留空位** ✓；**没传** `title_icon` 的旧应用：标题位置与旧版
+  **逐像素一致** ✓（居中时是"图标+文字"整块居中，不会只把文字推到一边 ✓）
+
 ### 悬停气泡
 - **复用框架的 tooltip**（`sdl_tooltip`，与 Button/CheckBox 同一套延迟与配色）✓ ⇒ `tip` 直接写中文即可
 - 动作区与系统按钮**互斥**：停在动作按钮上不会亮"最小化/最大化"的悬停底色 ✓
@@ -539,3 +554,54 @@ tb.on_action(func(string id) { if id == "settings" { openSettings() } })
   气泡与点击必须开窗口手点 ✓（见 §一）
 - ⛔ `actions` 是 `Array[Dict]`，**元素里的键写错不会报错**（`d.get(..., 默认值)` ⇒ 只是没效果 ✗）：
   顶层键（`actions` 本身）已登记进 `_opts_keys()`（写错会提示 ✓），元素键请照上面的名字写 ✓
+
+## 十、Table 单元格：进度条列 与 自绘回调（2026-10-07 新增 ✓）
+
+单元格**不再只有文本** —— 两种能力都长在原有的"可见行循环"里 ⇒ **不牺牲虚拟化**（只处理看得见的行 ✓）。
+
+### 进度条列（`cell_types`）
+```leno
+var tbl = win.addTable({
+    headers: ["歌曲", "进度", "状态"],
+    rows: [["夜曲", "8", "下载中"], ["晴天", "100", "已完成"]],
+    cell_types: ["", "progress", ""]      // 下标=列；"" / "text" = 文本（默认）
+})
+tbl.set_cell(0, 1, "42")                  // ★ 写**数值**：值就存在该列的单元格文本里 ✓
+```
+- 运行时改列类型：`tbl.set_col_cell_type(1, "progress")` / 读回来 `tbl.get_col_cell_type(1)` ✓
+  （切回 `"text"` 就会看到**裸数值**——因为显示与取值用的是同一格文本 ✓）
+- **值怎么写**（规则在 `sdl_progress.parseProgress`）：
+
+  | 写法 | 结果 |
+  | --- | --- |
+  | `"0.37"` / `"37"` / `"37%"` / `"  42 "` | 37% / 37% / 37% / 42% ✓ |
+  | `"1"` 与 `"100"` | 都是 100%（**≤1 当比例、>1 当百分数** ✓）|
+  | `"150"` / `"-1"` | 夹到 100% / 0% ✓ |
+  | `"等待中"` / `"abc"` / `""` | 0%（画成空条，**不抛错、不打断整帧** ✓）|
+
+- ⛔ 非数字写进进度列**不会崩**，但画成 0% 空条（分不清"没开始"和"写错了" ⇒ 状态请另起一列 ✓）
+- 观感与 `ProgressBar` **同源**（轨道/填充/文字色都出 `sdl_progress.drawBar` / `barFillColor` ✓）
+  ⇒ 表格里那条与弹窗底下那条**不会一大一小两种样式**（复选框当年就是栽在"两套观感" ✗）
+- ⛔ 进度列**别与 `image_col` 同列**：图标和条会挤在一格里（本轮不做"图标+条"组合 ✗）
+- 与 `check_col` / `image_col` 一样是**按列**的 ⇒ 列重排（拖表头）时类型跟着列走 ✓
+  而**值**在行数据里 ⇒ 排序 / 行重排**自动跟着走**（不必维护并行数组 ✓）
+
+### 自绘回调（`on_cell_draw`）
+```leno
+tbl.on_cell_draw(func(Renderer r, int row, int col, float x, float y, float w, float h) {
+    if col != 2 { return }
+    r.setColor(#3CC850FF)
+    r.fillRoundedRect(x + w - 16.0, y + h / 2.0 - 4.0, 8.0, 8.0, 4.0)   // 状态列点个小圆点 ✓
+})
+```
+- 时机：该格**常规内容画完之后**；矩形已含滚动偏移与冻结列 ⇒ 应用不用自己算坐标 ✓
+- 覆盖范围：复选框列**也会**回调；**正在行内编辑的那格不回调**（那一刻归 Edit 管 ✓）
+- 表格**不接管格内点击**：命中仍是行/单元格级（`on_cell(row, col)` ✓）
+  ⇒ "格内小按钮 / 可拖进度条"那种真控件要处理可见行实例化与生命周期，本轮**没做** ✓
+- ⛔ 别在回调里 `measureString` 造字符串：表格刻意避开"每格每帧测宽"（进度条自己的百分比
+  文字宽度按 0..100 **一生只测一次** ✓）
+
+### 自检（都无头可跑 ✓）
+- 纯逻辑：`assert\test_table_progress_cells.leno`（进度值解析 + 列类型边界，**不建窗口、不加载字体** ✓）
+- 真渲染：`leno_gui\控件\表格\test_table_cells.leno`（自带 `DSHOT` 钩子 ⇒ 截图后退出，见 §七 ✓）
+  它在 `assert\run_gui_checks.leno` 的无头清单里 ✓
