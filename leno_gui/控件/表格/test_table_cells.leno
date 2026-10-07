@@ -1,0 +1,172 @@
+// test_table_cells.leno — Table 单元格能力：progress（进度条列）+ on_cell_draw（自绘）
+//   2026-10-07 新增的两种能力；跑：build\leno.exe --no-cache leno_gui\控件\表格\test_table_cells.leno（Esc 退出）
+//
+// 校验点：
+//   1) **progress 列**：值写在**该列文本**里（"8" / "25" / "75%" 都认）⇒ 渲染成真进度条 + 居中百分比
+//      —— 观感与 ProgressBar **同源**（都走 sdl_progress.drawBar ✓）⇒ 不会一大一小两种样式
+//   2) **on_cell_draw**：每格常规内容画完之后的**自绘**机会 —— 这里给"状态"列点一个小色块
+//      （矩形由表格算好：已含滚动偏移与冻结列 ⇒ 应用不用自己算坐标 ✓）
+//   3) **混用**：同一张表里"文本列 / 进度列 / 自绘"并存，各管各的 ✓
+//   4) 运行时 `set_col_cell_type` 切列类型 ⇒ 该列**立刻**从文本变进度条（不用重建表 ✓）
+//   5) **拖表头重排列**：进度列的类型与它的值一起走 ⇒ 不会出现"数值列变文本、文本列画空条" ✗
+//      （这条只能人手拖：`swap_cols` 是私有且由拖拽驱动 ⇒ 自动化测不到，见 sdl_table 里那段注释 ✓）
+//
+// 无头自检（环境变量，与 dashboard 同一套约定 ✓）：
+//   set SDL_VIDEODRIVER=dummy
+//   set DSHOT=%TEMP%\table_cells.png   # 截图后退出（就是靠它核对界面的 ✓）
+//   set DSHOT_AT=6                     # 第 6 帧再截（默认 2）
+//   set DAUTO=20                       # 只跑 20 帧就退出（不截图也行 ✓）
+import "SDL3" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+use SDL3.Table
+use SDL3.Color
+
+var SHOT = ""
+int SHOT_AT = 2
+int AUTO = 0
+int FRAMES = 0
+
+// 演示数据：进度值**故意只存数值**（表格那边把文本当数值解析 ✓）
+Array[int] pct = [8, 25, 50, 75, 100, 0]
+Array[string] states = ["下载中", "下载中", "下载中", "下载中", "已完成", "等待中"]
+
+// 把值刷进表格（走 set_cell ⇒ 与真实应用同一条路径 ✓）
+func sync(Table t) {
+    int i = 0
+    while i < pct.len() {
+        t.set_cell(i, 3, _str(pct[i]))      // ★ 进度列写数值：不写 "%"，也不用自己拼字符串 ✓
+        t.set_cell(i, 4, states[i])
+        i = i + 1
+    }
+}
+
+// 演示：把还在下载的行往前推一点（到 100 就转"已完成"）
+func advance(Table t) {
+    int i = 0
+    while i < pct.len() {
+        if states[i] == "下载中" {
+            pct[i] = pct[i] + 7
+            if pct[i] >= 100 {
+                pct[i] = 100
+                states[i] = "已完成"
+            }
+        }
+        i = i + 1
+    }
+    sync(t)
+}
+
+main() {
+    var sh = _env("DSHOT")
+    if sh != null { SHOT = _str(sh) }
+    var sa = _env("DSHOT_AT")
+    if sa != null { SHOT_AT = _int(_str(sa)) }
+    var au = _env("DAUTO")
+    if au != null { AUTO = _int(_str(au)) }
+
+    var win = SDL3.createWindow({title: "Table 单元格：进度条列 + 自绘回调", w: 780, h: 470})
+    if not win.ok {
+        print("创建窗口失败: " + SDL3.getError() + "\n")
+        return
+    }
+
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(14.0)
+
+    Array[Array[string]] rows = [
+        ["夜曲",        "flac", "28.4 MB", "8",   "下载中"],
+        ["晴天",        "mp3",  "9.1 MB",  "25",  "下载中"],
+        ["稻香",        "mp3",  "8.7 MB",  "50",  "下载中"],
+        ["七里香",      "flac", "31.2 MB", "75",  "下载中"],
+        ["青花瓷",      "mp3",  "8.9 MB",  "100", "已完成"],
+        ["不能说的秘密", "mp3",  "9.4 MB",  "0",   "等待中"]
+    ]
+
+    var tbl = win.addTable({
+        x: 20, y: 76, w: 740, h: 320,
+        headers: ["歌曲", "格式", "大小", "进度", "状态"],
+        col_widths: [250.0, 60.0, 100.0, 130.0, 140.0],
+        aligns: [0, 1, 2, 1, 0],
+        header_aligns: [0, 1, 2, 1, 0],
+        rows: rows,
+        zebra: true, row_h: 30, header_h: 30, font_size: 14,
+        sortable: false, col_reorder: true, resizable: false,
+        empty_text: "没有任务",
+        // ★ 第 3 列 = 进度条（值取自该列文本 ✓）；其余列照旧文本 ✓
+        cell_types: ["", "", "", "progress", ""]
+    })
+
+    // ★ on_cell_draw：常规内容之后的**自绘**（给"状态"列点一个状态色块 —— 逃生舱示范 ✓）
+    //   矩形已含滚动偏移 ⇒ 直接按 x/y/w/h 画就行 ✓
+    tbl.on_cell_draw(func(Renderer r, int row, int col, float x, float y, float w, float h) {
+        if col != 4 { return }
+        Color c = #6E7684FF                       // 等待中 = 灰
+        if row < states.len() {
+            if states[row] == "下载中" { c = #3C82DCFF }
+            eif states[row] == "已完成" { c = #3CC850FF }
+        }
+        r.setColor(c)
+        r.fillRoundedRect(x + w - 16.0, y + h / 2.0 - 4.0, 8.0, 8.0, 4.0)
+    })
+
+    // ---- 按钮：演示"运行时改值"与"运行时改列类型" ----
+    win.addButton({x: 20, y: 410, w: 130, h: 32, text: "推进进度"}).on_click(func() {
+        advance(tbl)
+        print("[table] 已推进：进度列现在 = " + _str(pct) + "\n")
+    })
+    win.addButton({x: 160, y: 410, w: 130, h: 32, text: "重置"}).on_click(func() {
+        pct = [8, 25, 50, 75, 100, 0]
+        states = ["下载中", "下载中", "下载中", "下载中", "已完成", "等待中"]
+        sync(tbl)
+    })
+    win.addButton({x: 300, y: 410, w: 190, h: 32, text: "进度列 ⇄ 文本列"}).on_click(func() {
+        // 运行时切换列类型（不用重建表 ✓）：切回文本时会看到"裸数值"（8 / 25 / …）
+        if tbl.get_col_cell_type(3) == "progress" {
+            tbl.set_col_cell_type(3, "text")
+            print("[table] 第 3 列已切回文本\n")
+        } else {
+            tbl.set_col_cell_type(3, "progress")
+            print("[table] 第 3 列已切成进度条\n")
+        }
+    })
+
+    // 截图/自动退出必须放**叠加层**：它在所有控件/弹层之后、present 之前 ⇒ 此刻帧才完整 ✓
+    //   （放在 onRender 回调里读只能拿到"只有底色"的空白图 ✗ —— dashboard 踩过 ✓）
+    win.setOverlay(func(Renderer r) {
+        FRAMES = FRAMES + 1
+        if FRAMES == 1 {
+            print("[table] 首帧完成：进度列类型=" + tbl.get_col_cell_type(3)
+                  + "（空串=文本 / progress=进度条）  行数=" + _str(tbl.row_count()) + "\n")
+        }
+        if SHOT != "" and FRAMES >= SHOT_AT {
+            var s = r.readPixelsAt(0, 0, 780, 470)
+            if s == null {
+                print("[table] 读像素失败: " + SDL3.getError() + "\n")
+            } else {
+                bool ok = SDL3.saveImagePNG(s, SHOT)
+                print("[table] 截图 " + SHOT + " ok=" + _str(ok) + "  帧=" + _str(FRAMES) + "\n")
+            }
+            _exit(0)
+        }
+        if AUTO > 0 and FRAMES >= AUTO {
+            print("[table] DAUTO=" + _str(AUTO) + " 帧跑完 ⇒ 自动退出 ✓\n")
+            _exit(0)
+        }
+    })
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(#1C1E24FF)
+            r.drawText(font, "Table 单元格：进度条列(cell_types) + 自绘回调(on_cell_draw)", 20, 10, #C8D2E6FF)
+            r.drawText(font, "第 3 列是 progress 单元格（值就是该列文本）｜第 5 列右侧小圆点是 on_cell_draw 画的", 20, 32, #96A0B4FF)
+            r.drawText(font, "点『推进进度』看条在动；点『进度列 ⇄ 文本列』看运行时切列类型", 20, 52, #B4C878FF)
+        }
+    )
+}
