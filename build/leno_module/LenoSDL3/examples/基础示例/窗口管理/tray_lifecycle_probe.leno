@@ -5,29 +5,38 @@
 //   排查背景：Trae签到 在睡眠唤醒后崩（2026-10-08 系统日志：0xc0000005 in SDL3.dll），
 //   而它是本仓**唯一**带托盘的 GUI ⇒ 用这个探针把范围缩到"托盘"还是"应用别的部分"。
 //
-// 它只做三件事（能少则少 ⇒ 出事好定位 ✓）：
-//   ① 建一个窗口（启动即隐藏）+ 一个托盘图标（**可选真图标**，见 TRAY_PROBE_ICON ✓）
-//   ② 每 5 秒往日志写一行**心跳**（带墙钟时间 ⇒ 好跟 Windows 事件日志对时间 ✓）
-//   ③ 关键事件也记一行（启动各步骤 / 注销关机请求 / 窗口事件 / 退出）
+// 它只做四件事（能少则少 ⇒ 出事好定位 ✓）：
+//   ① 建一个**看得见**的窗口（原来启动就藏起来 ⇒ 用户"看不到运行" ✗ 已改 ✓）
+//      + 一个托盘图标（**可选真图标**，见 TRAY_PROBE_ICON ✓）
+//   ② 每 5 秒：控制台打一行 + 日志写一行**心跳**（带墙钟时间 ⇒ 好与 Windows 事件日志对时间 ✓）
+//   ③ 窗口上实时显示"第几次心跳 / 最近一次时间 / 日志路径"⇒ 一眼看出它还活着 ✓
+//   ④ 关键事件也记一行（启动各步骤 / 注销关机请求 / 窗口事件 / 退出）
 //
 // 日志（**追加** ⇒ 跨多次运行能连起来看 ✓）：默认 `%TEMP%\tray_probe.log`，可用 TRAY_PROBE_LOG 指定
 //
 // 怎么用：
 //   build\leno.exe build\leno_module\LenoSDL3\examples\基础示例\窗口管理\tray_lifecycle_probe.leno
-//   ★ 想复现"带真图标"的情形（怀疑点就在图标 ✓）就先设一下图标路径：
-//       set TRAY_PROBE_ICON=D:\CLeno\Leno\leno_gui\应用\Trae签到\images\tray_icon.png
-//   然后照你平时的动作来（睡一觉唤醒 / 注销再登录），回来看日志最后一行：
-//     · 日志停在"收到注销/关机请求"之前 ⇒ 进程是被系统收走的（注销/关机很正常 ✓）
-//     · 日志在那之后**再没写**，但你**并没有注销/关机** ⇒ 进程死了 ✗ ⇒ 托盘这条线坐实 ✓
-//     · 唤醒后心跳继续写 ⇒ 进程活得好好的 ✓ ⇒ 问题不在托盘本身，得往显卡/渲染那条线查 ✓
+//   ★ 带真图标（怀疑点就在图标 ✓）—— ⚠ 路径**别带中文**（环境变量传中文会乱码 ✗ 实测）：
+//       copy "D:\CLeno\Leno\leno_gui\应用\Trae签到\images\tray_icon.png" "%TEMP%\tray_icon.png"
+//       set TRAY_PROBE_ICON=%TEMP%\tray_icon.png
+//   ⚠ `TRAY_PROBE_SECONDS` 是**给自测用的自动退出** —— 做"唤醒 / 注销"试验时**千万别设它** ✗
+//     （设了它跑一会儿就自己结束 ⇒ 什么也测不出来 ✗）。
+//     要停它就：关掉那个窗口 ✓ 或托盘右键「退出」✓；控制台里 Ctrl+C 也行 ✓
+//
+// 看结果：
+//   控制台会每 5 秒滚一行 `[探针] 心跳 N`；睡一觉醒来：
+//     · 还在滚 ⇒ 进程活着 ✓ ⇒ 问题不在托盘本身
+//     · 不滚了、也没有"Quit（注销/关机）"那行 ⇒ 死在唤醒那一刻 ✗ ⇒ 托盘这条线坐实 ✓
 import "SDL3" as SDL3
-use SDL3.(Event, Renderer, Tray)      // ⚠ 类型必须 use 进来（`SDL3.Event` 这种带前缀的写法编译器不收 ✓）
+use SDL3.(Event, Renderer, Tray, Font)
 import times
 import files
 import dirs
 
 string _log = ""
 string _icon = ""
+int    _beats = 0
+string _lastBeat = "-"
 bool   _actShow = false
 bool   _actQuit = false
 
@@ -36,15 +45,18 @@ func _p2(int n): string {
     return n as string
 }
 
+func _now(): string {
+    var d = times.datetime()
+    return _p2(_int(d[0])) + "-" + _p2(_int(d[1])) + "-" + _p2(_int(d[2])) + " "
+        + _p2(_int(d[3])) + ":" + _p2(_int(d[4])) + ":" + _p2(_int(d[5]))
+}
+
 // 追加一行（每次开/关文件 ⇒ 崩了也不丢前面 ✓ 与应用的 auto.log 同款做法 ✓）
 func log_line(string s) {
     if _log == "" { return }
-    var d = times.datetime()
-    string ts = _p2(_int(d[0])) + "-" + _p2(_int(d[1])) + "-" + _p2(_int(d[2])) + " "
-        + _p2(_int(d[3])) + ":" + _p2(_int(d[4])) + ":" + _p2(_int(d[5]))
     var f = files.open(_log, "a")
     if f == null { return }
-    f.writeln(ts + " | " + s)
+    f.writeln(_now() + " | " + s)
     f.close()
 }
 
@@ -71,13 +83,15 @@ main() {
     string lp = _env_or("TRAY_PROBE_LOG", "")
     if lp == "" { lp = dirs.join(_tmpdir(), "tray_probe.log") }
     _log = lp
+
+    print("[探针] 启动中… 日志 = " + lp + "\n")
     log_line("=== 探针启动（日志：" + lp + "）===")
     log_line("SDL_VIDEODRIVER = " + _env_or("SDL_VIDEODRIVER", "(默认)"))
 
-    var win = SDL3.createWindow({title: "托盘存活探针", w: 460, h: 220})
-    if not win.ok { log_line("窗口创建失败 ⇒ 结束"); return }
-    log_line("① 窗口 OK")
-    win.hide()                                     // 托盘应用常态：窗口藏着只留图标 ✓
+    var win = SDL3.createWindow({title: "托盘存活探针（看得见就说明它活着 ✓）", w: 620, h: 260})
+    if not win.ok { print("[探针] 窗口创建失败 ⇒ 结束\n"); log_line("窗口创建失败 ⇒ 结束"); return }
+    print("[探针] ① 窗口 OK\n")
+    log_line("① 窗口 OK（**不隐藏** ⇒ 用户能看见它在跑 ✓）")
 
     _icon = pick_icon()
     Ptr[u8] surf = null
@@ -86,38 +100,52 @@ main() {
             surf = SDL3.loadImage(_icon)
         } catch e {
             surf = null
+            log_line("图标加载异常：" + _icon)
         }
     }
     if _icon == "" {
-        log_line("② 图标：未指定且没找到候选 ⇒ 建**无图标**托盘（SDL 不校验 icon ✓）")
+        print("[探针] ② 图标：未指定 ⇒ 建无图标托盘（SDL 不校验 ✓）\n")
+        log_line("② 图标：未指定且没找到候选 ⇒ 无图标托盘")
     } else {
-        log_line("② 图标：" + _icon + " ⇒ " + (if surf == null then "加载失败" else "OK"))
+        string st = if surf == null then "加载失败" else "OK"
+        print("[探针] ② 图标 " + st + "：" + _icon + "\n")
+        log_line("② 图标：" + _icon + " ⇒ " + st)
     }
 
     Tray? t = SDL3.createTray({icon: surf, tooltip: "托盘存活探针"})
     if t == null {
-        // 无头（dummy 视频驱动）或没有 shell 时就是这里 ⇒ 探针只能证明"日志可写" ✓
+        // 无头（dummy 视频驱动）或没有 shell 时就是这里
+        print("[探针] ③ 托盘创建失败（无 shell / dummy 驱动下正常）⇒ 结束\n")
         log_line("③ 托盘创建失败（无 shell / dummy 视频驱动下正常）⇒ 结束，本次无意义")
         return
     }
     Tray tray = t
+    print("[探针] ③ 托盘 OK（图标 surface 全程保留 ✓；图标可能被 Windows 折叠在任务栏 ^ 里，点开就能看到 ✓）\n")
     log_line("③ 托盘 OK（图标 surface 全程保留，退出时才释放 ✓）")
     // ⚠ 图标 surface **不在这里释放**：这正是要验的那条线（睡眠唤醒/Explorer 重启后系统会重读图标 ✓）
 
-    // 菜单：尽量小（显示窗口 / 退出）
     var pm = SDL3.createPopMenu({fontSize: 14.0})
     if pm.ok() {
         pm.addItem("显示窗口", "", func() { _actShow = true })
         pm.addSeparator()
         pm.addItem("退出", "", func() { _actQuit = true })
         SDL3.interceptTrayClick()
+        print("[探针] ④ 菜单 OK（托盘右键：显示窗口 / 退出）\n")
         log_line("④ 菜单 OK（含「显示窗口 / 退出」）")
     } else {
         log_line("④ 菜单创建失败（只剩图标与提示 ✓）")
     }
 
-    // 心跳：5 秒一行（醒来后还在写 ⇒ 进程活着 ✓）
-    win.addTimer(5000, func() { log_line("心跳") })
+    Font f14 = SDL3.createFontAuto(14.0)
+    Font f12 = SDL3.createFontAuto(12.0)
+
+    // 心跳：5 秒一行（控制台 + 日志 ✓ ⇒ "看得到它在跑" ✓）
+    win.addTimer(5000, func() {
+        _beats = _beats + 1
+        _lastBeat = _now()
+        print("[探针] 心跳 " + (_beats as string) + "\n")
+        log_line("心跳 " + (_beats as string))
+    })
 
     // 菜单动作落地（回调里只置位 ⇒ 主循环统一办 ✓ 同应用里的约定 ✓）
     win.addTimer(200, func() {
@@ -125,14 +153,32 @@ main() {
         if _actQuit { _actQuit = false; log_line("菜单：退出 ⇒ 正常结束"); SDL3.requestExit() }
     })
 
+    // 可选：跑 N 秒后自动结束（不必去托盘点退出 ✓）
+    int secs = _int(_env_or("TRAY_PROBE_SECONDS", "0"))
+    if secs > 0 {
+        int deadline = SDL3.getTicks() + secs * 1000
+        win.addTimer(500, func() {
+            if SDL3.getTicks() >= deadline {
+                log_line("到 TRAY_PROBE_SECONDS=" + (secs as string) + " 秒 ⇒ 正常结束")
+                print("[探针] 到点（" + (secs as string) + " 秒）⇒ 正常结束\n")
+                SDL3.requestExit()
+            }
+        })
+        print("[探针] ⚠ 会在 " + (secs as string) + " 秒后**自动结束**（TRAY_PROBE_SECONDS 只给自测用 ✗；做唤醒试验别设它）\n")
+    } else {
+        print("[探针] 不自动结束 ⇒ 要停就关掉本窗口、或托盘右键「退出」✓\n")
+    }
+
     log_line("=== 进入事件循环（正常响应注销/关机 ⇒ 看到 Quit 事件是正常的 ✓）===")
     win.run(
         func(Event e): bool {
             if e.isQuit() {
+                print("[探针] 收到 Quit（注销 / 关机 / 系统请求退出 ⇒ 正常）\n")
                 log_line("事件：Quit（注销 / 关机 / 系统请求退出 ⇒ 正常）")
                 return false
             }
             if e.isWindowClose() {
+                print("[探针] 窗口关闭请求 ⇒ 正常结束\n")
                 log_line("事件：窗口关闭请求 ⇒ 正常结束")
                 return false
             }
@@ -142,10 +188,18 @@ main() {
         },
         func(Renderer r) {
             r.clearColor(#141423FF)
+            r.drawText(f14, "托盘存活探针 · 已跑 " + (_beats as string) + " 次心跳", 20.0, 20.0, #EBEBF5FF)
+            r.drawText(f12, "最近一次心跳：" + _lastBeat, 20.0, 52.0, #96D8FFFF)
+            r.drawText(f12, "日志（追加）：" + _log, 20.0, 78.0, #B4C8DCFF)
+            r.drawText(f12, "图标：" + (if _icon == "" then "(无)" else _icon), 20.0, 104.0, #B4C8DCFF)
+            r.drawText(f12, "睡一觉/注销再回来看：日志最后一行是几点", 20.0, 140.0, #FFC850FF)
+            r.drawText(f12, "心跳还在涨 = 进程活着 ✓  断了且没有 Quit 行 = 死在那一刻 ✗", 20.0, 166.0, #A0A8B4FF)
         }
     )
 
+    print("[探针] 事件循环结束，收尾中…\n")
     log_line("=== 事件循环结束（收尾）===")
     if surf != null { SDL3.destroySurface(surf) }   // 到这里才轮到图标 surface ✓
     log_line("=== 已收尾，进程即将退出 ===")
+    print("[探针] 已收尾，进程退出 ✓\n")
 }

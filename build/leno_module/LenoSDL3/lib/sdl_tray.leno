@@ -38,11 +38,17 @@ sdl3 _lib = core.lib()
 clib user32 {
     Ptr[u8] FindWindowA(str8 cls, str8 title)
     Ptr[u8] SetWindowLongPtrW(Ptr[u8] hwnd, i32 index, Ptr[u8] val)   // 返回旧值（原 WndProc ✓）
-    i64     CallWindowProcW(Ptr[u8] proc, Ptr[u8] hwnd, u32 msg, u64 wp, i64 lp)
-    bool    PostMessageW(Ptr[u8] hwnd, u32 msg, u64 wp, i64 lp)
+    // ⚠⚠ 2026-10-08 修（用户实测：**进程直接被弄死** ✗）：
+    //   `WPARAM` 在 C 里是 **unsigned** 64 位，但 **Leno 的 `int` 是有符号 64 位** ✗ ⇒
+    //   声明成 `u64` 时，只要来一条 wParam 高位为 1 的消息（e.g. 句柄/指针类值 ✓ 实测 -486510649 ✓）
+    //   运行期参数检查就会报「参数 4 负值 … 不能传给 u64」⇒ **整个进程结束** ✓✓
+    //   而 WndProc 必须把 OS 给的参数**原样**转交 ✓ ⇒ 一律声明成 `i64`（**位模式与 ABI 完全相同** ✓，
+    //   只是不再对负值设卡 ✓）。`PostMessageW` 与下面的 `cfunc` 同理 ✓
+    i64     CallWindowProcW(Ptr[u8] proc, Ptr[u8] hwnd, u32 msg, i64 wp, i64 lp)
+    bool    PostMessageW(Ptr[u8] hwnd, u32 msg, i64 wp, i64 lp)
     bool    GetCursorPos(Ptr[u8] pt)
 }
-cfunc _TrayWndProc(Ptr[u8] hwnd, u32 msg, u64 wp, i64 lp):i64
+cfunc _TrayWndProc(Ptr[u8] hwnd, u32 msg, i64 wp, i64 lp):i64
 
 const WM_TRAYICON      = 0x0401   // WM_USER + 1（SDL 托盘窗口的回调消息 ✓）
 const WM_CONTEXTMENU   = 0x007B   // 右击（NOTIFYICON_VERSION_4 ✓）
