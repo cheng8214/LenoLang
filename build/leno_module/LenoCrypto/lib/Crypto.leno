@@ -14,6 +14,7 @@ import "crypto_sha256.leno" as s256
 import "crypto_sha512.leno" as s512
 import "crypto_hmac_sha256.leno" as hmac
 import "crypto_aes.leno" as aes
+import "crypto_md5.leno" as m5
 
 // ==================== Base64 / 文本⇄字节（2026-10-07 迁至核心标准库）====================
 // 原先这里转发 6 个函数（`base64_encode` / `base64_decode` / `b64_to_bytes` / `bytes_to_b64` /
@@ -32,12 +33,16 @@ import "crypto_aes.leno" as aes
 //   "遇 '=' 或非法字符即静默截断" ⇒ 结果少一截却看不出原因 ✗）。
 
 // ==================== 哈希 ====================
-// sha256 / sha512 返回**十六进制小写字符串**；*_bytes 返回原始 32/64 字节
+// sha256 / sha512 / md5 返回**十六进制小写字符串**；*_bytes 返回原始 32/64/16 字节
 export func sha256(string input):string { return s256.sha256(input) }
 // 注：sha256 的 bytes 版在 hmac 子模块里（那里也实现了一份 SHA-256），这里转发以免重复实现
 export func sha256_bytes(Array[int] msg):Array[int] { return hmac.sha256_bytes(msg) }
 export func sha512(string input):string { return s512.sha512(input) }
 export func sha512_bytes(Array[int] msg):Array[int] { return s512.sha512_bytes(msg) }
+// MD5（2026-10-08 收录：部分服务端协议仍拿它做签名，如酷狗 API 的 signature / key）
+//   ⚠ 它作为**摘要算法**早已不适用安全场景（碰撞廉价）——收录理由与边界见 crypto_md5.leno 头部 ✓
+export func md5(string input):string { return m5.md5(input) }
+export func md5_bytes(Array[int] msg):Array[int] { return m5.md5_bytes(msg) }
 
 // ==================== HMAC ====================
 export func hmac_sha256(string key, string message):string { return hmac.hmac_sha256(key, message) }

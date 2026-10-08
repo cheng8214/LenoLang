@@ -1,6 +1,6 @@
 # LenoCrypto
 
-Leno 通用加密库：**SHA-256 / SHA-512 / HMAC-SHA256 / AES-128（ECB 单块 + CBC + PKCS7）**，
+Leno 通用加密库：**MD5 / SHA-256 / SHA-512 / HMAC-SHA256 / AES-128（ECB 单块 + CBC + PKCS7）**，
 纯 Leno 实现，无外部依赖。
 
 > **base64 与"文本 ⇄ 字节"不在这里**：它们是标量编解码、不是密码学原语（无密钥、无安全性质），
@@ -26,6 +26,10 @@ var h   = crypto.sha256("abc")
 var h2  = crypto.sha512("abc")
 var raw = crypto.sha512_bytes(strings.to_bytes("abc"))
 
+// MD5（**只为服务端协议签名**收录，如酷狗 API；别拿它做口令存储/数字签名 ✗）
+var m   = crypto.md5("abc")                            // ⇒ "900150983cd24fb0d6963f7d28e17f72"
+var m16 = crypto.md5_bytes(strings.to_bytes("abc"))    // ⇒ 16 原始字节
+
 // HMAC-SHA256
 var mac = crypto.hmac_sha256("key", "msg")
 
@@ -43,9 +47,9 @@ var pt  = crypto.aes128_cbc_decrypt_str(key, iv, ct)   // ⇒ "hello leno crypto
 
 - **加解密一律走 `Array[int]`（字节）** ✓；字符串只是糖（Leno 的 string 是字节串，二进制经它往返易失真 ✗）。
   ⇒ 文本 ⇄ 字节用 `strings.to_bytes` / `strings.from_bytes` ✓。
-- **子模块互不依赖**（`crypto_sha256` / `crypto_sha512` / `crypto_hmac_sha256` / `crypto_aes`），
+- **子模块互不依赖**（`crypto_md5` / `crypto_sha256` / `crypto_sha512` / `crypto_hmac_sha256` / `crypto_aes`），
   组合只发生在门面 `Crypto.leno` ⇒ 换实现不影响别人 ✓。
-- 四个子模块都是 `examples/crypto/*.leno` 的**机械搬运**（截断各自 `main()`、一律 `export`，
+- 五个子模块都是 `examples/crypto/*.leno` 的**机械搬运**（截断各自 `main()`、一律 `export`，
   算法代码逐字保留 ✓）⇒ 库里不含"新写但没验证"的实现 ✓；`crypto_aes` 末尾追加了 bytes 版
   接口与 CBC/PKCS7 ✓。
 - `crypto_base64`（原第 5 个子模块）已于 2026-10-07 **删除**：base64 归核心标准库，
@@ -57,6 +61,7 @@ var pt  = crypto.aes128_cbc_decrypt_str(key, iv, ct)   // ⇒ "hello leno crypto
 
 | 项 | 向量 |
 | --- | --- |
+| `md5("abc")` | `900150983cd24fb0d6963f7d28e17f72`（另有 RFC 1321 全套 + 跨块 + 中文 UTF-8 + `md5_bytes` 长度用例）|
 | `sha256("abc")` | `ba7816bf…20015ad` |
 | `sha512("abc")` | `ddaf35a1…fa54ca49f` |
 | `hmac_sha256("key","msg")` | `2d93cbc1…bb1b8c628` |
@@ -69,9 +74,10 @@ build\leno.exe leno_module\LenoCrypto\test\test_crypto_vectors.leno
 
 ## 现状 / 待做
 
-- ✅ 已收录：SHA-256、SHA-512、HMAC-SHA256、AES-128（ECB/CBC/PKCS7）；
+- ✅ 已收录：MD5、SHA-256、SHA-512、HMAC-SHA256、AES-128（ECB/CBC/PKCS7）；
   base64 与文本⇄字节归核心标准库 `strings`
-- ⏳ 待收录（`examples/crypto/` 里已有实现，可直接搬）：SHA-1、MD5、PBKDF2、ChaCha20、RC4、
+- ⏳ 待收录（`examples/crypto/` 里已有实现，可直接搬）：SHA-1、PBKDF2、ChaCha20、RC4、
   RC5、TEA/XTEA/XXTEA、Speck、Vigenere、RSA
+  （MD5 于 2026-10-08 收录，触发点是**酷狗 API 的签名就是 md5** —— 见音乐下载器的酷狗源）
 - ⏳ 性能：`sha512_bytes` 里两个循环目前较慢（每轮都有 `OP_CAST_INT` 的开销，结果正确）⇒
   见 `docs/待办_易用性痛点（TraeSign 移植实录）.md` 的 J1 ✓

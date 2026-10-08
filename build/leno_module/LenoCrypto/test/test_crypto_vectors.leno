@@ -11,6 +11,25 @@ main() {
         "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f")
     assert_eq(crypto.sha512_bytes(strings.to_bytes("abc")).len(), 64)   // 原始 64 字节 ✓
 
+    // ==================== MD5（RFC 1321 向量 + 跨块 + UTF-8 字节口径）====================
+    assert_eq(crypto.md5(""), "d41d8cd98f00b204e9800998ecf8427e")
+    assert_eq(crypto.md5("a"), "0cc175b9c0f1b6a831c399e269772661")
+    assert_eq(crypto.md5("abc"), "900150983cd24fb0d6963f7d28e17f72")
+    assert_eq(crypto.md5("message digest"), "f96b697d7cb7938d525a2f31aaf161d0")
+    assert_eq(crypto.md5("abcdefghijklmnopqrstuvwxyz"), "c3fcd3d76192e4007dfb496cca67e13b")
+    assert_eq(crypto.md5("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"),
+        "d174ab98d277d9f5a5611c2c9f419d9f")
+    var rep = ""
+    for 8 to i { rep += "1234567890" }                                   // RFC 1321 的 80 字符用例
+    assert_eq(crypto.md5(rep), "57edf4a22be3c955ac49da2e2107b67a")
+    assert_eq(crypto.md5("The quick brown fox jumps over the lazy dog"), "9e107d9d372bb6826bd81d3542a419d6")
+    assert_eq(crypto.md5("中文"), "a7bac2239fcdcb3a067903d8077c4a07")     // UTF-8 每字 3 字节 ⇒ 走字节口径 ✓
+    assert_eq(crypto.md5("中文abc"), "28251344f0303f110929e0bae4d2bd03")
+    var a200 = ""
+    for 200 to i { a200 = a200 + "A" }                                   // 跨多个 64 字节块
+    assert_eq(crypto.md5(a200), "16bf06b3717d1f238252870e699c2a2e")
+    assert_eq(crypto.md5_bytes(strings.to_bytes("abc")).len(), 16)        // 原始 16 字节 ✓
+
     // ==================== HMAC-SHA256 ====================
     assert_eq(crypto.hmac_sha256("key", "msg"),
         "2d93cbc1be167bcb1637a4a23cbff01a7878f0c50ee833954ea5221bb1b8c628")
