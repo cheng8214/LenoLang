@@ -21,7 +21,7 @@ Leno was born from a love of and exploration into programming language design; i
 
 | | |
 | --- | --- |
-| Version | 0.1.0 |
+| Version | 0.1.1 |
 | License | MIT |
 | Build script | Windows `build.bat` / Linux · macOS `build.sh` |
 | Repo size | 20 built-in modules · 46 SDL3 source files · 469 test files · 1016 example files · 67 docs |
