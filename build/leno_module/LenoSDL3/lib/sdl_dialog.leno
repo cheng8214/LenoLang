@@ -40,11 +40,12 @@ export func restoreFocus(int parentWid) {
     wnd.raiseWindow(parentWid)
 }
 
-// 非模态对话框：正常窗口标志（出现在任务栏），可选置顶
-// 与模态对话框一样首帧隐藏消除闪现，但不强制 UTILITY 标志
+// 非模态对话框：**同样不进任务栏**（2026-10-08 改 ✓）
+//   ⚠ 先前这里写"正常窗口标志（出现在任务栏）" ✗ —— 用户实测：非模态弹窗（含音乐下载器那个
+//     下载窗口 ✓）在任务栏多出一条，看着像另一个程序 ✗ ⇒ 与模态那条统一：带 UTILITY ✓
 export func createModelessDialog(Dict style): Window {
     var existingFlags = style.get("flags", 0)
-    style["flags"] = (existingFlags | WindowFlag.HIDDEN)
+    style["flags"] = (existingFlags | WindowFlag.UTILITY | WindowFlag.HIDDEN)
     var win = wnd.createWindow(style)
     win._dialogHidden = true
     style["flags"] = existingFlags
@@ -138,7 +139,11 @@ export const DIALOG_TB_H = 30
 //   ⚠ **返回的 TitleBar 要由调用方接 `on_close`**（不接 = 点 ✕ 毫无反应 ✗），
 //     并且内容根要用 `dlg.setRootAt(root, 0, tb.get_h())` 让出高度 ✓
 export func dialogTitleBar(Window dlg, string title): TitleBar {
+    // ★ 2026-10-08：弹窗没自己设图标时**沿用主窗口的**（用户实测："主窗口设了图标，弹窗光秃秃" ✗）
+    //   主窗口那个图标由标题栏模块记着（第一个设 title_icon 的 = 主窗口 ✓ 见 sdl_titlebar ✓）
+    //   传空串 == 没传（opts.get 的默认值就是 ""）⇒ 拿不到图标时行为与以前**完全一致** ✓
     TitleBar tb = createTitleBar({title: title, height: _float(DIALOG_TB_H), font_size: 13,
+        title_icon: tbar.appTitleIcon(),
         show_minimize: false, show_maximize: false})
     dlg.add(tb)
     return tb

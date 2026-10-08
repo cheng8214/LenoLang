@@ -265,6 +265,10 @@ export struct TitleBar impl Widget, Themeable {
         imgClose = opts.get("icon_close", "")
         // 标题前的应用图标（也收 `title_image`：与 actions 那套"icon/image 都认"同宽 ✓）
         imgTitle = opts.get("title_icon", opts.get("title_image", ""))
+        // ★ 记住"应用图标"（2026-10-08 ✓）：**第一个**设了 title_icon 的标题栏（= 主窗口 ✓）
+        //   ⇒ 之后建的**弹窗**标题栏若没自己指定，就沿用它 ✓（见 sdl_dialog.dialogTitleBar ✓）
+        //   为什么要记：用户实测"主窗口设了图标，各对话框没设 ⇒ 弹窗光秃秃的" ✗
+        if imgTitle != "" and _appIcon == "" { _appIcon = imgTitle }
         titleIconSize = opts.get("title_icon_size", 0.0)
         titleIconGap = opts.get("title_icon_gap", 6.0)
         iconImgSize = opts.get("icon_size", 16.0)
@@ -1355,6 +1359,13 @@ iconColor = theme.darken(t.txt, 64)
 }
 
 // 工厂
+// 应用图标（2026-10-08 ✓）：**第一个**设了 `title_icon` 的标题栏 = 主窗口那个 ✓
+//   弹窗标题栏没自己指定时沿用它（见 `sdl_dialog.dialogTitleBar` ✓）
+//   为什么记在这儿：标题栏是"谁设了图标"的唯一入口 ✓，而弹窗那边拿不到主窗口的控件 ✓
+string _appIcon = ""
+
+export func appTitleIcon(): string { return _appIcon }
+
 export func createTitleBar(Dict opts): TitleBar {
     TitleBar tb = new TitleBar(); tb.set(opts); return tb
 }
