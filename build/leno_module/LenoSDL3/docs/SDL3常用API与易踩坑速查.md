@@ -748,6 +748,25 @@ capSink.on_draw(func(Renderer r, float ox, float oy, float cw, float ch) {
    ⇒ 右击歌单直接把歌换掉了 ✗ 用户原话："右击没出现菜单，是播放音乐" ✓）
   ⇒ 加一句 `ev.mouseButton() != 3` 即可 ✓（右击的语义是"要菜单"，交给 `lb.process(ev)` 就行 ✓）
 
+### ①-c ★ 别为"绕开类型收窄"把配置结构拍扁（2026-10-08 实测更正）
+
+曾流传"`jsons.decode` 取回来的嵌套结构难收窄 ⇒ 干脆把配置拍成 `key → 裸串`" ✗。
+**实测这几条都正常，不必绕** ✓（详见 `docs/module_jsons.md` 注意事项 8 与
+`docs/类型收窄与绑定语法改进.md`）：
+
+```leno
+    jsons.write_file(p, {version: 1, arr: ["x", "y"]})   // ✓ 字面量字段里直接放数组
+    Dict[string, any] d = {}
+    d["arr"] = ["x", "y"]                                // ✓ 内存与落盘都正确，不会被丢
+    var got = jsons.get_obj(d, "arr")
+    if got is Array[string] => lst { … }                 // ✓ JSON 解出来的数组也过得了这个收窄
+```
+- 需要"几个字符串"的配置项 ⇒ **直接存 `Array[string]`** ✓（本仓例：音乐下载器 `dl_settings.sources` ✓）
+- ⚠ 真正要在意的是另外两条：① `write_file` 会把参数**再编码一次** ⇒ 写"已编码好的文本"用 `write_text` ✓
+  ② 空数组字面量 `var a = []` 的元素类型是 `any` ⇒ 要**显式标注** `Array[string] a = []` ✓
+- ⚠ 教训（本仓实例）：我一度把"自己那条 `if 标志` 守卫为假"误判成"数组被语言丢了" ✗ 还写进注释 ✗
+  ⇒ **下结论前先写最小探针**（`%TEMP%` 下临时脚本，跑完删掉 ✓）别拿推测当实测 ✓
+
 ### ② ⛔ 断言别读 `lbl.text`：它**读不到 `set_text` 之后的新值** ✗
 
 本次实测：`stateLbl.set_text(...)` 之后，隔几帧再读 `stateLbl.text` 仍是**旧值** ✗

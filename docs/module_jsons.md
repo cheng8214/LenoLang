@@ -593,6 +593,17 @@ main() {
    - 解析错误返回 `null`，不会抛出异常
    - 建议始终检查返回值
 
+8. **数组可以直接存、也可以直接收窄**（2026-10-08 实测更正 ✓）
+   - 字面量字段里直接放数组：`jsons.write_file(p, {version: 1, arr: ["x","y"]})` ✓ 落盘就是 JSON 数组
+   - `Dict[string, any] d = {}` 再 `d["arr"] = ["x","y"]` ✓ **内存与落盘都正常，不会被丢掉**
+   - `jsons.decode(...)` 解出来的数组，`is Array[string]` **成立** ✓（库返回的数组如 `jsons.keys` 同样成立）
+   - ⇒ 「几个字符串」这类配置项**直接存数组**即可 ✓，不必为了"绕开收窄"把结构拍扁成裸串 ✗
+     （本仓例：音乐下载器 `dl_settings.sources` 直接存 `Array[string]` ✓）
+   - ⚠ 仍然要在意的一条：`write_file` 会把参数**再编码一次** ⇒ 要写"已编码好的 JSON 文本"用
+     `write_text` ✓（见上文 `write_text` ✓）
+   - ⚠ 空数组字面量 `var a = []` 的元素类型是 `any` ⇒ 想当 `Array[string]` 用要**显式标注**
+     `Array[string] a = []` ✓
+
 ---
 
 ## 性能提示
