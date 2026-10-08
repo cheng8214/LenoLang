@@ -82,17 +82,28 @@ export struct Timer {
     }
 
     // 每帧调用，自动触发回调。返回是否触发了回调（供 tickAllTimers 判断是否需 requestRedraw）
+    //   ⚠⚠ 2026-10-08 修（用户实测："电脑睡眠唤醒后，Trae签到 就崩溃或退出" ✗）：
+    //     先前是 `while now >= next { cb(); next += ms }` ✗ —— 把**所有错过的周期都补跑一遍**。
+    //     平时看不出来（每帧都在跑 ✓），但**睡眠唤醒 / 长卡顿**后 `now` 会一次跳几小时 ✗
+    //     ⇒ 33ms 的动画定时器要补跑 **327272 次**、120ms 的要 90000 次（3 小时，探针实测 ✓）
+    //     ⇒ 界面**假死**几十秒（用户看到的就是"崩溃/退出" ✓）。两个应用都挂 33/120ms 定时器 ⇒ 全中 ✗
+    //   正解：**最多跑一次**，并把 `next` 对齐到"未来"（丢掉积压的周期 ⇒ 醒来只补一拍 ✓）。
+    //     对自动签到那种"该补的事"没影响：`autoTick()` 是拿**真实时钟**判"过没过点" ✓
+    //     ⇒ 醒来这一拍照样会补签 ✓（对标参考件"启动时过了点就补一次" ✓）
     func tick(): bool {
         if not running or _cb.len() == 0 or ms <= 0.0 { return false }
         float now = _float(_lib.SDL_GetTicks())
-        bool fired = false
+        if now < next { return false }
         var cb = _cb[0]
-        while now >= next {
+        if once {
+            running = false          // ⚠ 先置位再回调：回调里若重新 set/setOnce 才不会被这句冲掉 ✓
             cb()
-            fired = true
-            if once { running = false; return fired }
-            next += ms
+            return true
         }
-        return fired
+        // 周期对齐：落后不到一个周期 ⇒ 正常推进（保持不漂移 ✓）；
+        //   落后 ≥ 一个周期（睡眠 / 长卡顿）⇒ 从"现在"重新起算，**不补**那些来不及的拍 ✓
+        if now - next >= ms { next = now + ms } else { next = next + ms }
+        cb()
+        return true
     }
 }
