@@ -2,7 +2,7 @@
 //
 // 通用加密（SHA-512 / AES-128-CBC+PKCS7）已收进标准库 **LenoCrypto** ✓；
 //   base64 归**核心标准库** `strings.*`（2026-10-07 起 LenoCrypto 不再提供，见其 lib/Crypto.leno 的说明）
-// ⇒ 本文件只留 Trae 特有的"派生密钥"4 步（对齐参考件 trae-checkin.js 的 decrypt()）✓
+// ⇒ 本文件只留 Trae 特有的"派生密钥"4 步（对齐参考件的 decrypt()）✓
 //    旧版这里是 800+ 行纯 Leno 的 AES/SHA-512 机械拼接 ✗ ⇒ 现在 40 行 ✓
 import strings
 import "Crypto" as crypto

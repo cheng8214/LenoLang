@@ -1,6 +1,6 @@
 // trae_gui.leno — ④ GUI：窗口 + 标题状态徽标 + 账号下拉 + 今日积分 + 手动签到 + **签到日历**
 //
-// 对标参考件：`TraeSign-main/TraeCheckinApp.cs`（WinForms 主窗体）+ `CalendarControl.cs`（**自绘**日历）✓
+// 对标参考件（WinForms 主窗体 + **自绘**日历）✓
 // 这里同样**自绘日历**（`SDL3.createCanvas` + `Renderer`，见 `examples/UI组件/画布/` ✓）
 //
 // 数据流（单一事实来源，不重复实现）：
@@ -411,7 +411,7 @@ func open_settings(Window win) {
     })
 }
 
-// 手动更换本账号的设备号（对齐参考件 TraeTools 设置页的「更换设备号」✓）
+// 手动更换本账号的设备号（对齐参考件的设置页「更换设备号」✓）
 // 什么时候用：这个号被 9074 标记过、或想给账号换个新身份时 ✓（本账号独立、立刻落盘 ✓）
 // 注意：换号**不会**改变"服务端今天签没签"（签到是**按账号**算的 ✓）⇒ 界面上的已签到状态仍然有效 ✓
 func rpc_regen_device() {
@@ -790,7 +790,7 @@ main() {
     if SEL_BRAND != "" and hist.ok_day(SEL_BRAND, SEL_USER, core.date_str(tp0[0], tp0[1], tp0[2])) {
         auto.autoMarkDoneToday()                 // 本地记录说"今天已签成功" ⇒ 不必再自动补一次 ✓
     }
-    auto.autoTick()                              // 首拍：启动时已过触发点 ⇒ 立刻补一次（对标参考件 :819 ✓）
+    auto.autoTick()                              // 首拍：启动时已过触发点 ⇒ 立刻补一次（对标参考件 ✓）
     AUTO_TEXT = auto.autoStatusText()
 
     // 设置自检（要建窗口 ⇒ 等首帧后再跑；跑完直接退 ✓ 不碰真实 settings.json ✓）

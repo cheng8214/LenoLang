@@ -255,7 +255,7 @@ export func cl_already(Array[string] r): bool       { return r[6] == "true" }
 
 // ==================== ③b 风控 9074：换设备号重试（③ 的失败重试） ====================
 // 9074 =「参与用户太多」的风控拒绝。被拒的是**设备号**、不是 token ⇒ 换一个全新设备号即可继续，
-// **不需要**重新登录 ✓（对标参考实现 `TraeTools/Services/Checkin` 的 checkin.py L145-154：
+// **不需要**重新登录 ✓（对标参考实现：
 // 随机设备号 + 最多 5 次 + 每次间隔 0.8~1.5s ✓）。
 //
 // 两条硬约束（都来自参考件，别想当然 ✗）：
@@ -270,7 +270,7 @@ export func cl_already(Array[string] r): bool       { return r[6] == "true" }
 // 给的号），同一个号重发多少次都还是 9074 ✗。
 export const int MAX_TRY_9074 = 5
 
-// 16 位数字风控设备号（首位 1~9 ⇒ 恰好 16 位；对齐 checkin.py 的 random.randint(10^15, 10^16-1) ✓）
+// 16 位数字风控设备号（首位 1~9 ⇒ 恰好 16 位；对齐参考件的 random.randint(10^15, 10^16-1) ✓）
 export func random_device_id(): string {
     return rands.ints(1000000000000000, 9999999999999999) as string
 }
@@ -303,7 +303,7 @@ export func need_retry_9074(string code, int attempt, int max_try): bool {
     return code == "9074" and attempt < max_try
 }
 
-// 换号间隔：0.8~1.5s 随机（对齐 checkin.py 的 random.uniform(0.8, 1.5) ✓），降低再次被风控的概率
+// 换号间隔：0.8~1.5s 随机（对齐参考件的 random.uniform(0.8, 1.5) ✓），降低再次被风控的概率
 // 用**全局** `sleep(ms)`（注意：它是全局原生函数，**不在** `times` 模块里 ⇒ `times.sleep` 会报
 // "未找到模块方法" ✗，直接写 `sleep(ms)` 就行 ✓；探针实测 sleep(300) ≈ 305ms ✓）
 // 返回值 = 实际睡了多少毫秒（调用方一般不关心；留着便于诊断 ✓）

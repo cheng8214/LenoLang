@@ -1,6 +1,6 @@
 // Trae 签到（Leno 版 · CLI）—— ②③ 的逻辑在 `trae_core.leno`，本文件只做"参数解析 + 输出格式"
 //
-// 对标参考件 D:\Leno工程\TraeSign-main\trae-checkin.js —— 算法与流程以它为准：
+// 对标参考件 —— 算法与流程以它为准：
 //   读本机 Trae 登录态 → 派生解密拿 token/dcId → 调 checkin_credits/status|claim → 打印结果
 //
 // 用法（**位置子命令**；`-s/-l/-d/-j/-a` 单横线别名；`--status/--list/--diag/--json/--app` 双横线别名）：

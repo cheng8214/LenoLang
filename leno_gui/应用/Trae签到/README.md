@@ -1,7 +1,7 @@
 # Trae 签到（Leno 移植）
 
-对标参考件：`D:\Leno工程\TraeSign-main` —— C# 主程序 `TraeCheckinApp.cs` + 自绘日历 `CalendarControl.cs`
-+ 早期 Node 原型 `trae-checkin.js`（**算法以此为准**，exe 只是把 JS 逻辑内置了）。
+对标参考件（C# 主程序 + 自绘日历）
++ 早期 Node 原型（**算法以此为准**，exe 只是把 JS 逻辑内置了）。
 
 目标：用 Leno + `LenoSDL3`（GUI）+ `LenoWeb`（HTTP）复刻这个"每日自动签到托盘助手"。
 
@@ -12,10 +12,10 @@
 | ① **派生解密**（读 Trae 登录态用的 AES-128-CBC）| ✅ 完成，金标自测通过（`trae_crypto.leno`）|
 | ② 读登录态（`storage.json` → `enc` / `dcId` / 品牌/账号）| ✅ 完成（`trae_sign.leno` 的 `pick_auth/load_account/scan_accounts`）|
 | ③ 签到接口（`checkin_credits/status` / `claim` + 二次确认 + 错误码 9095/9074…）| ✅ 完成（`LenoWeb`；与 JS 参考件流程一致）|
-| ④ GUI（标题状态徽标 / 账号下拉 / 今日积分 / 手动签到按钮 / **签到日历**）| ✅ 完成（`trae_gui.leno`；日历用 `Canvas` **自绘**，对标参考件的 `CalendarControl.cs` ✓）|
+| ④ GUI（标题状态徽标 / 账号下拉 / 今日积分 / 手动签到按钮 / **签到日历**）| ✅ 完成（`trae_gui.leno`；日历用 `Canvas` **自绘**，对标参考件的自绘日历 ✓）|
 | ⑤ **风控 9074「参与用户太多」⇒ 自动换设备号重试**（失败重试的「接口层」）| ✅ 完成（`trae_core.leno` ③b；离线端到端验证 `tools/test_9074_retry.js` ✓）|
 | ⑥a **托盘 + 自绘菜单 + 开机自启动** | ✅ 完成（`trae_tray.leno` —— 托盘点击拦截 + `SDL3.createPopMenu` 自绘菜单，**不用原生菜单**（原生 `TrackPopupMenu` 是模态的 ⇒ 菜单开着界面会冻 ✗）；左键 = 显隐窗口、右键 = 菜单；自启写 `HKCU\...\Run`，值 = 当前命令行 + `--tray` ⇒ 启动即隐藏到托盘 ✓）|
-| ⑥b **定时自动签到 + 失败重试的「时间层」**（1/15/30/60/120 分钟）+ **设置对话框** | ✅ 完成（`trae_auto.leno` 调度器 + `trae_settings.leno` 设置/落盘：默认每天 **00:05** 触发（带 0~90 秒抖动）、失败按 **1/15/30/60/120 分钟递增**、**23:00 后放弃**、成功/已签到/9095 即停；**触发时间可在设置里改**；手动签到后当天不再自动重试；结果落 `auto.log` —— 判据逐条对标参考件 `TraeCheckinApp.cs`，首档与抖动是有意偏离，理由见 ⑥b ✓）|
+| ⑥b **定时自动签到 + 失败重试的「时间层」**（1/15/30/60/120 分钟）+ **设置对话框** | ✅ 完成（`trae_auto.leno` 调度器 + `trae_settings.leno` 设置/落盘：默认每天 **00:05** 触发（带 0~90 秒抖动）、失败按 **1/15/30/60/120 分钟递增**、**23:00 后放弃**、成功/已签到/9095 即停；**触发时间可在设置里改**；手动签到后当天不再自动重试；结果落 `auto.log` —— 判据逐条对标参考件，首档与抖动是有意偏离，理由见 ⑥b ✓）|
 | ⑦ 历史记录 `history.json`（日历按账号独立）| ✅ 完成（`trae_history.leno`；键 = `brand+username+日期` ⇒ **天然按账号独立** ✓）|
 | ⑧ **设备号按账号独立**（`devices.json`）⇒ 同机多账号才能**各自**签到 | ✅ 完成（`trae_devices.leno`；对标参考件「每账号独立设备号 + 可手动更换」✓）|
 
@@ -114,7 +114,7 @@ Aha 号、`（独立）` = 本工具给它的新号，切号即跟着换 ✓）�
 > 真正的读写逻辑抽成 `_toggleAutostart`（点开关与保存共用）⇒ 自检能**不开窗口**直接断言它
 > （自检 ⑤：初值取真状态、点/存时"开关 == 真状态"⇒ 不重写注册表、关与开各写一次、写失败如实报错 ✓）。
 
-调度器只有**五条规则**（判据逐条对标参考件 `TraeSign-main/TraeCheckinApp.cs` ✓）：
+调度器只有**五条规则**（判据逐条对标参考件 ✓）：
 
 | 情况 | 处理 |
 | --- | --- |
@@ -161,14 +161,14 @@ Aha 号、`（独立）` = 本工具给它的新号，切号即跟着换 ✓）�
 `dcId` 是**机器级**的 ⇒ 两个品牌读出来是**同一个号**（本机 `2029015639819002`）⇒ 服务端认为
 "同一台设备两个账号" ✗。
 
-**参考件怎么解的**（`D:\软件\TraeTools-main`，全部有据）：
+**参考件怎么解的**（全部有据）：
 
 | 点 | 证据 |
 | --- | --- |
-| 设备号挂在**账号**上 | `Services/Checkin/TraeAccount.cs`：「x-device-id（16 位数字，风控关键），**每账号独立**」|
-| 发号保证互不重复 | `ViewModels/AccountHelpers.cs` `EnsureDeviceId()`：「缺号则生成**不与其它账号重复**的 16 位数字设备号（**风控要求，多账号共用会触发 9074**）」＋ `do { … } while (used.Contains(id))` |
-| 首个账号优先复用真实 Aha 号 | `Services/Checkin/AppConfig.cs` `TryResolveAhaDeviceId()`（读 `iCubeAuthInfo://icube-dc:`）|
-| 被 9074 标记可手动换号 | `ViewModels/SettingsViewModel.cs` `RegenerateDeviceId()`（注释：「设备号被 Trae 风控标记时更换即可解除」）|
+| 设备号挂在**账号**上 | 参考件：「x-device-id（16 位数字，风控关键），**每账号独立**」|
+| 发号保证互不重复 | 参考件：「缺号则生成**不与其它账号重复**的 16 位数字设备号（**风控要求，多账号共用会触发 9074**）」＋ `do { … } while (used.Contains(id))` |
+| 首个账号优先复用真实 Aha 号 | 参考件（读 `iCubeAuthInfo://icube-dc:`）|
+| 被 9074 标记可手动换号 | 参考件（注释：「设备号被 Trae 风控标记时更换即可解除」）|
 
 （它因此**从不处理 `9095`**：全仓搜 `9095` = 0 命中 ✓）
 
@@ -212,7 +212,7 @@ GUI 账号行右侧 → 账号1「设备号 2029015639819002（本机）」，�
 ### ⑤ 风控 9074：换设备号重试
 
 `9074` =「参与用户太多」的**服务端风控**。被拒的是**设备号**、不是 token ⇒ 换一个全新设备号就能
-继续，**不用**重新登录 ✓（对标参考件 `TraeTools-main` 的 `checkin.py` L145-154：随机设备号 +
+继续，**不用**重新登录 ✓（对标参考件：随机设备号 +
 最多 5 次 + 间隔 0.8~1.5s ✓）。
 
 | 要点 | 做法 | 为什么不能想当然 ✗ |
@@ -337,7 +337,7 @@ status → 今日未签到。积分 base=150 extra=50
 > 已知的 `Leno` 侧注意点：`jsons.decode(...)` 返回 `any`，**嵌套字段不能直接点访问**
 > （编译器要求 `if x is T { ... }` 类型收窄）⇒ 用到的地方要么收窄、要么改用字符串断言 ✓。
 
-## ① 派生解密：算法（与 `trae-checkin.js` 的 `decrypt()` 逐字对齐）
+## ① 派生解密：算法（与参考件的 `decrypt()` 逐字对齐）
 
 ```
 enc(base64) 布局 = [6B 前缀][32B key][AES-128-CBC 密文]
@@ -363,7 +363,7 @@ build\leno.exe trae_crypto.leno      # Leno 侧解密必须与 fixture_expect_js
 ```
 
 - fixture 里的 token 是假串（`FAKE-TOKEN-...`）、含中文与 UTF-8 往返用例 ✓，**非机密、可进仓库** ✓；
-- 生成器内部会先用自己的 `refDecrypt()`（`trae-checkin.js` 的移植）解一遍，自校验不通过就不产出 fixture ✓；
+- 生成器内部会先用自己的 `refDecrypt()`（参考件的移植）解一遍，自校验不通过就不产出 fixture ✓；
 - ⚠ 纯文本 fixture 必须**无 BOM**（PowerShell 的 `-Encoding UTF8` 会写 BOM，会让逐字比对失败 ✗）
   ⇒ 生成器用 node 写 ✓（`gen_fixture.js` 同时输出 `.txt` 与 `.json`）。
 

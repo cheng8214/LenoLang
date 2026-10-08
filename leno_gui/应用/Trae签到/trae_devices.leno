@@ -7,13 +7,13 @@
 //   而登录态 `storage.json` 里的 `dcId` 是**机器级**的 ⇒ 两个品牌读出来是**同一个**号 ✗
 //   ⇒ 必须在本工具**自己的目录**里给每个账号记一个独立号 ✓。
 //
-// 对标参考件（TraeTools-main，全部有据）：
-//   - `TraeAccount.cs`：「x-device-id（16 位数字，风控关键），**每账号独立**」✓
-//   - `AccountHelpers.EnsureDeviceId()`：「缺号则生成**不与其它账号重复**的 16 位数字设备号
+// 参考件怎么解的（全部有据）：
+//   - 「x-device-id（16 位数字，风控关键），**每账号独立**」✓
+//   - 「缺号则生成**不与其它账号重复**的 16 位数字设备号
 //     （风控要求，多账号共用会触发 9074）」＋ `do { … } while (used.Contains(id))` ✓
-//   - `AppConfig.TryResolveAhaDeviceId()`：「**优先复用官方客户端的真实 Aha 设备 ID**」✓ ⇒ 本文件的
+//   - 「**优先复用官方客户端的真实 Aha 设备 ID**」✓ ⇒ 本文件的
 //     "首个来分配的账号沿用 Aha 号，其余发新号" 就是这条 ✓
-//   - `SettingsViewModel.RegenerateDeviceId()`：被 9074 标记时可**手动换号并落盘** ✓
+//   - 被 9074 标记时可**手动换号并落盘** ✓
 //
 // 落盘：`%APPDATA%\TraeSignLeno\devices.json`（**自己的目录**，绝不改 Trae 的任何文件 ✓）
 // 结构（与 `history.json` 同款**扁平**键 ⇒ 避开嵌套 JSON 的类型收窄 ✗）：
@@ -131,7 +131,7 @@ export func ensure(string brand, string user, string aha_id): Array[string] {
     return [dc, src]
 }
 
-// 手动换一个全新设备号（GUI「更换设备号」/ 被 9074 标记时用 ✓，对齐参考件 RegenerateDeviceId ✓）
+// 手动换一个全新设备号（GUI「更换设备号」/ 被 9074 标记时用 ✓，对齐参考件 ✓）
 // 返回新号；换号后**立刻落盘** ⇒ 后续运行都沿用新号 ✓
 export func regenerate(string brand, string user): string {
     var dc = core.random_device_id()
