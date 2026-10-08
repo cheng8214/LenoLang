@@ -46,6 +46,13 @@ Window  _win  = null
 PopMenu _pm   = null
 Tray    _tray = null
 bool    _hasTray = false
+// 托盘图标 surface —— **留着不提前释放**（2026-10-08 防御性加固 ✓）
+//   为什么：SDL 是否**复制**这个 surface，我没能从官方文档确认（wiki 与源码都取不到，网络受限 ✗）。
+//     若它**不复制**，那"建完托盘立刻 destroySurface"就是野指针 ✓ —— 平时不显形，但
+//     **睡眠唤醒 / Explorer 重启后系统会重新读取托盘图标** ⇒ 崩在 `SDL3.dll` 里 ✓
+//     （与 2026-10-08 那次 `0xc0000005 in SDL3.dll` 的现象吻合 ✓ 但**未确诊** ⇒ 只是加固 ✓）
+//   代价：几十 KB（每进程一份 ✓）⇒ 宁可留到退出时再释放 ✓（退出前不碰它 = 零风险 ✓）
+Ptr[u8] _iconSurf = null
 bool    _hasMenu = false
 bool    _visible = true
 bool    _inited  = false
@@ -115,7 +122,9 @@ export func traeTrayInit(Window win, func():void onClaim, func():void onSettings
     //   ⇒ 不打印的话，资源缺失只会表现为"系统托盘里没图标"，查不到原因 ✗
     if surf == null { print("[tray] 图标加载失败：" + _ip("tray_icon.png") + "（资源缺失? 打包态应指向 res_dir() 解包目录 ✓）\n") }
     Tray? t = SDL3.createTray({icon: surf, tooltip: _tip})
-    if surf != null { SDL3.destroySurface(surf) }              // 创建时已转成平台图标 ⇒ 可释放 ✓
+    // ⚠ 2026-10-08：**不要**在这里 destroySurface ✗（原先那行注释写"创建时已转成平台图标 ⇒ 可释放 ✓"，
+    //   但"SDL 会不会复制 surface"没能证实 ✓）⇒ 一律留到退出时释放 ✓，见 _iconSurf 的说明 ✓
+    _iconSurf = surf
     if t == null { print("[tray] 托盘创建失败 ⇒ 无托盘模式\n"); _inited = false; return false }
     _tray = t
     _hasTray = true
@@ -211,6 +220,8 @@ export func traeTrayTick() {
 export func traeTrayShutdown() {
     if _hasTray { _tray.destroy() }             // 内部先恢复原 WndProc 再销毁托盘 ✓
     if _hasMenu { _pm.destroy() }
+    // 托盘销毁之后才轮到图标 surface（2026-10-08 ✓ 见 _iconSurf 说明：不提前释放 ✓）
+    if _iconSurf != null { SDL3.destroySurface(_iconSurf); _iconSurf = null }
     _hasTray = false; _hasMenu = false
     _inited = false
 }
