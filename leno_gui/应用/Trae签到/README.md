@@ -1,9 +1,12 @@
 # Trae 签到（Leno 移植）
 
-对标参考件（C# 主程序 + 自绘日历）
-+ 早期 Node 原型（**算法以此为准**，exe 只是把 JS 逻辑内置了）。
-
 目标：用 Leno + `LenoSDL3`（GUI）+ `LenoWeb`（HTTP）复刻这个"每日自动签到托盘助手"。
+
+> **只想直接用？** 到 [Releases](../../releases) 下载 `LenoTrae.exe` —— 单文件，
+> 图标 / 原生库 / 资源全内嵌，目标机器**不需要装 LenoLang**（也不需要装 SDL3），
+> 双击即用（首次运行会自动把依赖解包到用户缓存目录）。
+> 另外附 `--tray` 启动即隐藏到托盘；自己打包用 `leno.exe -p --no-console trae_gui.leno`
+> （脚本里没有 `_console(false)`，不加这个开关会弹黑框）。
 
 ## 进度
 
