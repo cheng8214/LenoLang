@@ -16,7 +16,8 @@
 //   - 被 9074 标记时可**手动换号并落盘** ✓
 //
 // 落盘：`%APPDATA%\TraeSignLeno\devices.json`（**自己的目录**，绝不改 Trae 的任何文件 ✓）
-// 结构（与 `history.json` 同款**扁平**键 ⇒ 避开嵌套 JSON 的类型收窄 ✗）：
+// 结构（与 `history.json` 同款**扁平**键 ✓ —— 为什么是扁平的、以及"避开收窄"那条**早已不是理由** ✗，
+//   见 `trae_history.leno` 顶上的说明 ✓）：
 //   { "TRAE SOLO CN|cheng8214": "2029015639819002", "Trae CN|用户6834498633": "7914448225945861" }
 import jsons
 import files

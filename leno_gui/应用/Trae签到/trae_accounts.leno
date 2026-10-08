@@ -6,7 +6,8 @@
 //   在线的账号每次启动都刷新落盘（token 重登会变 ⇒ 永远以在线扫描为准 ✓）。
 //
 // 落盘：`%APPDATA%\TraeSignLeno\accounts.json`（与 devices.json/history.json 同款**扁平**
-//   `string → string` 表 ⇒ 避开嵌套 JSON 的类型收窄 ✗，只由本工具写 ✓）：
+//   `string → string` 表 ✓ 只由本工具写 ⇒ 值恒为 string ⇒ `is Dict[string, string]` 恒成立 ✓；
+//   "为什么扁平"与"避开收窄那条早已不是理由"见 `trae_history.leno` 顶上 ✓）：
 //   key：`"<brand>|<user>|token"`  → token（JWT，敏感：只落自己的目录、绝不打印 ✓）
 //        `"<brand>|<user>|region"` → region（请求头 `X-User-Region` 用；可空串）
 //        `"<brand>|<user>|seen"`   → 最近一次**在线**见到的日期（2026-09-28）

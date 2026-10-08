@@ -339,6 +339,12 @@ status → 今日未签到。积分 base=150 extra=50
 
 > 已知的 `Leno` 侧注意点：`jsons.decode(...)` 返回 `any`，**嵌套字段不能直接点访问**
 > （编译器要求 `if x is T { ... }` 类型收窄）⇒ 用到的地方要么收窄、要么改用字符串断言 ✓。
+>
+> **（2026-10-08 补）** 这层收窄**已经吃进标准库**：日常取值直接用 `jsons.get_str/get_int/
+> get_float/get_bool/get_obj/keys` 就够（调用点零收窄 ✓ 见上文与 `docs/module_jsons.md` ✓），
+> 手写 `is Dict` 收窄只剩"从 `decode` 直接拿到的裸 `any`"这条老路 ✓；
+> **本项目里那几个扁平存储（history/devices/accounts/settings）保留扁平是历史 + 兼容 + 前缀扫描的
+> 取舍，不再是为了绕开收窄** ✗（见 `trae_history.leno` 顶上的说明 ✓）。
 
 ## ① 派生解密：算法（与参考件的 `decrypt()` 逐字对齐）
 
