@@ -101,7 +101,7 @@ lay.setExtraPassWindow(func(Widget c, Ptr[u8] hwnd) {
     switch c {
         case is Panel, ScrollView, TabControl, SpinBox, GroupBox, Splitter, ComboBox { c._bind_window(hwnd); return }
         case is Edit { c.set_window(hwnd); return }
-        case is Table, TreeView { c.set_window_handle(hwnd); return }
+        case is Table, TreeView, ListBox { c.set_window_handle(hwnd); return }
         case is TitleBar { c.set_window_handle(hwnd); return }
     }
 })
@@ -200,6 +200,8 @@ func _refreshWindowHandle(Widget w, Ptr[u8] hwnd, int ww, int hh) {
         case is Edit { w.set_window(hwnd); return }
         case is TreeView { w.set_window_handle(hwnd); w.set_window(ww, hh); return }
         case is Table { w.set_window_handle(hwnd); w.set_window_size(ww, hh); return }
+        // ★ 2026-10-08：ListBox 也把"句柄 + 窗口尺寸"收下 —— 它的右击上下文菜单要按窗口隔离绘制 ✓
+        case is ListBox { w.set_window_handle(hwnd); w.set_window_size(ww, hh); return }
         case is TitleBar { w.set_window_handle(hwnd); return }
     }
 }
@@ -285,6 +287,15 @@ export func testClickAt(int wid, float x, float y): bool {
     return okDown and okUp
 }
 
+// 注入一次**右键**点击（自测用 ✓ 2026-10-08 补）
+//   为什么补：先前只有左键注入 ✗ ⇒ "上下文菜单弹没弹出来"这类**只能在真机手点** ✗
+//   按钮号与 `Event.mouseButton()` 的约定一致：1 = 左、2 = 中、3 = 右 ✓（同 Table 的判据 ✓）
+export func testRightClickAt(int wid, float x, float y): bool {
+    bool okDown = _pushMouseEvent(true, wid, x, y, 3)
+    bool okUp = _pushMouseEvent(false, wid, x, y, 3)
+    return okDown and okUp
+}
+
 // 只投递"按下"或"抬起"中的一条（自测用：要复现"抬起丢了"这类场景 ✓）
 //   ⚠ 形参不能叫 `down`（它是语言关键字 ✗，编译期报"期望表达式"）
 export func testMouseAt(int wid, float x, float y, bool pressed): bool {
@@ -309,7 +320,7 @@ export func testMoveAt(int wid, float x, float y): bool {
 
 // 投递一条鼠标按键事件（内部用；SDL_Event 缓冲取 128 字节 ✓）
 //   ⚠ 模块级"私有"只用 `_` 前缀即可 —— 写成 `pri func` 会被解析器判成语法错误 ✗（实测 ✓）
-func _pushMouseEvent(bool pressed, int wid, float x, float y): bool {
+func _pushMouseEvent(bool pressed, int wid, float x, float y, int button = 1): bool {
     Ptr[u8] e = ffi.malloc(128)
     for 128 to i { ffi.write_byte(e, i, 0) }        // 先清零（未用字段别带垃圾 ✓）
     SDL_MouseButtonEvent me = SDL_MouseButtonEvent.from_ptr(e)
@@ -322,7 +333,7 @@ func _pushMouseEvent(bool pressed, int wid, float x, float y): bool {
     }
     me.windowID = wid
     me.which = 0
-    me.button = 1                                   // 1 = 左键
+    me.button = button                              // 1 = 左键 / 2 = 中键 / 3 = 右键（默认左键 ✓）
     me.clicks = 1
     me.x = x
     me.y = y

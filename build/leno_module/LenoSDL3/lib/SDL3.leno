@@ -173,6 +173,7 @@ export func dialogSpacer(): Label { return dlg.dialogSpacer() }
 
 // 自测用：向某窗口注入鼠标事件（**客户区**坐标 ✓；详见 sdl_window 的同名函数）
 export func testClickAt(int wid, float x, float y): bool      { return wnd.testClickAt(wid, x, y) }
+export func testRightClickAt(int wid, float x, float y): bool { return wnd.testRightClickAt(wid, x, y) }
 export func testMouseAt(int wid, float x, float y, bool pressed): bool { return wnd.testMouseAt(wid, x, y, pressed) }
 export func testMoveAt(int wid, float x, float y): bool       { return wnd.testMoveAt(wid, x, y) }
 

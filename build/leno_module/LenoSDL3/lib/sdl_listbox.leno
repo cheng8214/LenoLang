@@ -8,6 +8,7 @@ import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.SystemCursor; use core.SDL_Rect
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
+import "sdl_menu.leno" as menu; use menu.MenuBar
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 use theme.Color
 
@@ -45,6 +46,21 @@ export struct ListBox impl Widget, Themeable {
     pri bool draggingScroll = false   // 正在拖拽竖向滚动条
     pri float sbDragOffset = 0.0      // 拖拽起点距滑块顶的相对偏移
     pri func(Array[int]):void onChange
+
+    // ==================== 右击上下文菜单（2026-10-08 补 ✓）====================
+    //   为什么补：先前**只有 Table / TreeView** 有右击菜单 ✗，ListBox 没有
+    //     ⇒ 想在播放列表上挂「删除本地文件 / 在资源管理器里定位」就没辙 ✓（用户点名：这是框架缺口 ✓）
+    //   实现**照 `sdl_table.leno` 那套原样搬**（菜单本体是共用的 `sdl_menu.leno` ✓
+    //     弹出/命中/关闭由它管 ✓；绘制由窗口第二遍 `menu.renderContextMenus` 按窗口隔离统一画 ✓）
+    //   ⚠ 用起来跟 Table 一模一样：`addContextItem({label, id})` + `on_context_select(...)` ✓
+    pri MenuBar? ctxMenu
+    pri int ctxMenuH = -1                    // 菜单句柄（-1 = 还没建）
+    pri bool ctxMenuEnabled = true
+    pri int ctxRow = -1                      // 右击命中的行（-1 = 空白处 ✓）
+    pri int winW = 0
+    pri int winH = 0
+    pri func(int, string):void onCtxSelect   // 菜单项被点：参数是**命中行**与项 id ✓
+    pri func(int):void onCtxWillOpen         // 弹出前回调：按行重建菜单项（不同行不同项 ✓）
 
     pri func ensure_font() {
         if _font == null or not _font.ok {
@@ -158,7 +174,80 @@ export struct ListBox impl Widget, Themeable {
         scroll  = 0.0; hover = -1   // 重置滚动与悬停行（二次 set 时归零）
         ensure_font()
         clamp_scroll()
+        // 右击上下文菜单：首次 set 时建（**避免重复登记**到全局菜单注册表 ✗ 照 Table 同款 ✓）
+        if ctxMenu == null {
+            ctxMenu = menu.createMenuBar({})
+            ctxMenu.setWindowSize(winW, winH)
+            ctxMenuH = ctxMenu.addContextMenu("listbox_ctx")
+            ctxMenu.on_select(func(string m, string id) { ctx_select(id) })
+            menu.registerContextMenu(ctxMenu)
+        }
         _loaded = true
+    }
+
+    // ==================== 右击上下文菜单 API（与 Table **同名同义** ✓ 应用层照写就熟 ✓）====================
+    // 设置所属窗口逻辑宽高（菜单弹出时做边界夹紧 ✓）
+    func set_window_size(int ww, int hh) {
+        winW = ww; winH = hh
+        ctxMenu?.setWindowSize(ww, hh)
+    }
+    // ★ Widget 侧接口：窗口 resize 时自动同步（见 sdl_window / sdl_layout 的 `case is …` 列表 ✓）
+    func on_window_resize(int ww, int hh) { set_window_size(ww, hh) }
+    // 记录所属窗口句柄（菜单要按窗口隔离绘制 ✓ 见 menu.renderContextMenus ✓）
+    func set_window_handle(Ptr[u8] hwnd) { ctxMenu?.setWindowHandle(hwnd) }
+    // 启用/禁用右击菜单
+    func set_context_menu_enabled(bool en) { ctxMenuEnabled = en }
+    func is_context_menu_enabled(): bool { return ctxMenuEnabled }
+    // 追加一项，返回项在菜单内的索引（可用于挂子菜单 ✓）
+    func addContextItem(Dict opts): int {
+        if ctxMenu == null or ctxMenuH < 0 { return -1 }
+        return ctxMenu.addContextItem(ctxMenuH, opts)
+    }
+    func addContextSeparator() {
+        if ctxMenu == null or ctxMenuH < 0 { return }
+        ctxMenu.addContextSeparator(ctxMenuH)
+    }
+    func setContextItemEnabled(string id, bool en) {
+        if ctxMenu != null and ctxMenuH >= 0 { ctxMenu.setContextItemEnabled(ctxMenuH, id, en) }
+    }
+    func clear_context_items() {
+        if ctxMenu != null and ctxMenuH >= 0 { ctxMenu.clearContextItems(ctxMenuH) }
+    }
+    func get_context_menu(): MenuBar { return ctxMenu }
+    func get_context_menu_handle(): int { return ctxMenuH }
+    func get_context_menu_row(): int { return ctxRow }
+    func is_context_menu_open(): bool { return ctxMenu != null and ctxMenu.isOpen() }
+    func on_context_select(func(int, string):void cb) { onCtxSelect = cb }
+    func on_context_will_open(func(int):void cb) { onCtxWillOpen = cb }
+
+    // 在光标处弹出（照 Table 的 `open_ctx_menu` ✓ 只有"选中语义"换成 ListBox 自己那套 ✓）
+    pri func open_ctx_menu(float mx, float my, int keyMod) {
+        ctxRow = index_at(mx, my)
+        if ctxRow >= 0 {
+            // 右击某行顺手选它（跟左键一致 ✓）；多选模式下**不动已有多选** ✗（免得误清 ✓）
+            if _mode == MODE_SINGLE {
+                if not is_selected(ctxRow) {
+                    sel_clear(); sel_add(ctxRow)
+                    if onChange != null { onChange(sel) }
+                }
+            } else {
+                if not is_selected(ctxRow) {
+                    sel_add(ctxRow)
+                    if onChange != null { onChange(sel) }
+                }
+            }
+        }
+        // 弹出前把命中行交给应用层 ⇒ 由它按行重建菜单项（有歌 / 没歌 / 空白处 各不同 ✓）
+        if onCtxWillOpen != null { onCtxWillOpen(ctxRow) }
+        if ctxMenu == null or ctxMenuH < 0 { return }
+        // 重建后一个有效项都没有 ⇒ 不弹（免得留一条空白横线 ✗）
+        if ctxMenu.contextItemCount(ctxMenuH) == 0 { return }
+        ctxMenu.openContext(ctxMenuH, mx, my)
+    }
+
+    // 菜单项动作分发（把"点的是哪一行"一起给出去 ✓）
+    pri func ctx_select(string id) {
+        if onCtxSelect != null { onCtxSelect(ctxRow, id) }
     }
 
     // ==================== 设置方法 ====================
@@ -271,7 +360,9 @@ export struct ListBox impl Widget, Themeable {
         return mx >= x and mx <= x + w and my >= y and my <= y + h
     }
 
-    pri func index_at(float mx, float my): int {
+    // 光标在第几行（-1 = 不在列表里/空白 ✓）—— ★ 2026-10-08 由 pri 改**公开** ✓
+    //   应用层先前只能"自己抄一遍这个公式" ✗（本仓音乐下载器的播放条就抄了一份 ✓）
+    func index_at(float mx, float my): int {
         if not contains(mx, my) { return -1 }
         int idx = _int((my - y + scroll) / itemH)
         if idx < 0 or idx >= items.len() { return -1 }
@@ -287,6 +378,19 @@ export struct ListBox impl Widget, Themeable {
         // 弹层捕获：光标落在“他人的下拉弹层”范围内时，本控件忽略该事件（避免穿透到下层）
         var[float, float](mx, my) = ev.mousePos()
         if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
+        // ★ 右击菜单已展开：事件**先**交菜单（选择/关闭由菜单自身负责 ✓）
+        //   ⚠⚠ 必须排在下面那句"弹层捕获"**之前** ✗✗ —— 菜单打开时它自己也算一个弹层 ✓
+        //     先判捕获就会把菜单自己的事件全吃掉 ⇒ 菜单看着能弹、却点不动 ✗（照 Table 的顺序 ✓）
+        if ctxMenuEnabled and ctxMenu != null and ctxMenu.isOpen() {
+            if ev.isMouseButtonDown() and ev.mouseButton() == 3 {
+                ctxMenu.close()                        // 再右击一次 ⇒ 关上并挪到新位置重开 ✓
+                if contains(mx, my) { open_ctx_menu(mx, my, ev.keyMod()) }
+                return
+            }
+            ctxMenu.process(ev)
+            return
+        }
+
         if core.inPopupCapture(mx, my) { return }
 
 
@@ -342,6 +446,11 @@ export struct ListBox impl Widget, Themeable {
         }
 
         if ev.isMouseButtonDown() {
+            // 右击：在列表内弹出上下文菜单（默认无预置项 ⇒ 由应用层在 onCtxWillOpen 里重建 ✓）
+            if ctxMenuEnabled and ctxMenu != null and ev.mouseButton() == 3 {
+                if contains(mx, my) { open_ctx_menu(mx, my, ev.keyMod()) }
+                return
+            }
             int idx = index_at(mx, my)
             if idx >= 0 {
                 if _mode == MODE_SINGLE {
@@ -441,6 +550,7 @@ export struct ListBox impl Widget, Themeable {
 
     func dispose() {
         if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
+        ctxMenu?.dispose(); ctxMenu = null; ctxMenuH = -1      // 连同上下文菜单一起释放 ✓（免得悬空登记 ✓）
     }
 
     func applyTheme(Theme t) {

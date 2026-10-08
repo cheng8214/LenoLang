@@ -28,6 +28,7 @@ import "sdl_layout.leno" as lay; use lay.(HBox, VBox, AnchorBox)
 import "sdl_panel.leno" as pnl; use pnl.Panel
 import "sdl_table.leno" as tbl; use tbl.Table
 import "sdl_treeview.leno" as tvlib; use tvlib.TreeView
+import "sdl_listbox.leno" as lbx; use lbx.ListBox     // ★ 2026-10-08：它的右键菜单要窗口尺寸（ListBox 不反向依赖本文件 ⇒ 无环 ✓）
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 use theme.Color
 
@@ -118,6 +119,7 @@ export struct Splitter impl Widget, Themeable {
             case is HBox, VBox, AnchorBox, Panel { c._bind_window(hwnd); return }
             case is TreeView { c.set_window_handle(hwnd); c.set_window(ww, hh); return }
             case is Table { c.set_window_handle(hwnd); c.set_window_size(ww, hh); return }
+            case is ListBox { c.set_window_handle(hwnd); c.set_window_size(ww, hh); return }
         }
         // ★ 未识别的容器类型（ScrollView/TabControl/SpinBox/GroupBox 等）通过统一函数传递窗口句柄
         lay.passWindowHandle(c, hwnd)

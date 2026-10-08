@@ -593,7 +593,7 @@ func _passWindowHandle(Widget c, Ptr[u8] hwnd) {
     switch c {
         case is Edit { c.set_window(hwnd); return }
         case is HBox, VBox, AnchorBox { c._bind_window(hwnd); return }
-        case is Table, TreeView { c.set_window_handle(hwnd); return }
+        case is Table, TreeView, ListBox { c.set_window_handle(hwnd); return }
     }
     // 未匹配的扩展类型（Splitter/Panel/TabControl/ScrollView/SpinBox/GroupBox/ComboBox 等）交给回调处理
     if _extraPassWindow != null { _extraPassWindow(c, hwnd) }

@@ -718,11 +718,35 @@ capSink.on_draw(func(Renderer r, float ox, float oy, float cw, float ch) {
 
 ```leno
     // 别只靠 on_change 判"点了哪一行"；要覆盖"点当前行"，就自己按纵坐标算行号 ✓
-    //   （镜像 ListBox 的 pri func index_at：`idx = (my - y + scroll) / itemH` ✓ 无内边距 ✓）
-    int r = _int((my - lb.y + lb.get_scroll()) / 22.0)
+    //   ★ 2026-10-08：ListBox.index_at 已由 **pri 改成公开** ✓ ⇒ 直接用，别再抄公式 ✗
+    //     （旧公式 `idx = (my - y + scroll) / itemH`、无内边距 ✓ —— 先前只能自己镜像一份 ✓）
+    int r = lb.index_at(mx, my)
     if r >= 0 and r < n { play(r) }
 ```
 （或者干脆别预选中 ✗ —— 但那样就看不到"哪首正在播"的高亮 ✓ 取舍看场景 ✓）
+
+### ①-b ★ `ListBox` 也有右击上下文菜单了（2026-10-08 补齐 ✓）
+
+先前**只有 Table / TreeView** 有 ✗ —— 想在播放列表上挂"删除本地文件 / 在资源管理器里定位"就没辙 ✓。
+现在 `ListBox` 的 API 与 Table **同名同义** ✓（就是照 Table 那套搬的 ✓，菜单本体仍是共用的 `sdl_menu` ✓，
+绘制交给窗口第二遍的 `menu.renderContextMenus` ✓）：
+
+```leno
+    lb.addContextItem({label: "删除本地文件…", id: "del"})
+    lb.addContextItem({label: "在资源管理器里定位", id: "reveal"})
+    lb.on_context_will_open(func(int row) { })                 // 弹出前按行重建（不同行不同项 ✓）
+    lb.on_context_select(func(int row, string id) { })         // row = 右击命中行（空白处是 -1 ✓）
+    lb.set_context_menu_enabled(false)                         // 想关就关 ✓
+    lb.get_context_menu_row()                                  // 事后取"刚才右击哪一行" ✓
+```
+- ⚠ 事件顺序上**关键一条**：菜单展开时，`process` 里那段"先交菜单"必须排在 `inPopupCapture` 守卫**之前** ✗
+  （菜单自己也算一个弹层 ⇒ 先判捕获会把菜单自己的事件全吃掉 ⇒ 菜单能弹、却**点不动** ✓ 已按 Table 的顺序排 ✓）
+- 自测：框架新增 **`SDL3.testRightClickAt(wid, x, y)`** ✓（右键 = 按钮号 3 ✓）
+  —— 先前只有左键注入 ✗ ⇒ "菜单到底弹没弹出来"只能真机手点 ✗
+- ⚠ **应用侧的老坑（本仓实测 ✓）**：自己写"点一行就播"这类逻辑时**必须判按钮** ✗
+  （本仓播放条先前是"只要鼠标**按下**且落在歌单矩形里 ⇒ 播那一行"✓ 没判按钮 ✗
+   ⇒ 右击歌单直接把歌换掉了 ✗ 用户原话："右击没出现菜单，是播放音乐" ✓）
+  ⇒ 加一句 `ev.mouseButton() != 3` 即可 ✓（右击的语义是"要菜单"，交给 `lb.process(ev)` 就行 ✓）
 
 ### ② ⛔ 断言别读 `lbl.text`：它**读不到 `set_text` 之后的新值** ✗
 
