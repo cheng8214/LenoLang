@@ -106,5 +106,20 @@ main()
     if back is Dict { assert_eq(jsons.keys(back).len(), 0) }
     files.delete(tmp)
 
+    // 测试9: decode 的 `\uXXXX` 转义（★ 2026-10-09 修）
+    //   为什么钉：旧实现只写 `code < 128`（ASCII ⇒ 单字节）的，中文码点（如 U+5468）
+    //   **一个字节都不写** ⇒ 该段被静默吞掉（实测 `{"name":"\u5c4b\u9876"}` 解出空串 ✗）。
+    //   LenoMusic 的"音乐库"源就是踩在这个坑上（整列歌名全空）。
+    //   ⇒ 现在一律按 UTF-8 写出，代理对（emoji）合成一个码点 ✓
+    var esc = jsons.decode("{\"cn\":\"\\u5468\\u6770\\u4f26\",\"mix\":\"A\\u4e2dB\",\"emoji\":\"\\uD83D\\uDE00\",\"ascii\":\"\\u0041\\u0042\",\"lit\":\"\\\\u5468\"}")
+    assert_eq(jsons.get_str(esc, "cn", ""), "周杰伦")                 // 中文（3 字节/字）
+    assert_eq(jsons.get_str(esc, "cn", "").byte_len(), 9)
+    assert_eq(jsons.get_str(esc, "mix", ""), "A中B")                  // 与 ASCII 混排
+    assert_eq(jsons.get_str(esc, "emoji", "").byte_len(), 4)          // 代理对 ⇒ 合成一个码点（4 字节）
+    assert_eq(jsons.get_str(esc, "ascii", ""), "AB")                  // ASCII 照旧（单字节）
+    assert_eq(jsons.get_str(esc, "lit", ""), "\\u5468")               // `\\u` 是**字面**反斜杠 ⇒ 不误伤
+    var arr2 = jsons.decode("[\"\\u5c4b\\u9876\"]")
+    if arr2 is Array { assert_eq(arr2[0], "屋顶") }                    // 数组元素里同样生效
+
     print("test_json passed")
 }

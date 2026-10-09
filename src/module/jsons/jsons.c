@@ -285,6 +285,48 @@ static bool json_parser_match(JsonParser* parser, JsonTokenType type) {
 
 static Value json_parse_value(JsonParser* parser);
 
+// ---- `\uXXXX` 的两块砖：十六进制读数 + 码点写 UTF-8（2026-10-09 修）----
+// 为什么必须补：JSON 的 `\uXXXX` 给的是**码点**（不是字节），而本语言内部一律 UTF-8
+//   ⇒ 非 ASCII 码点必须按 UTF-8 多字节写出去。旧实现只写 `code < 128`（ASCII ⇒ 单字节）的，
+//   中文这种（如 U+5468）**一个字节都不写** ⇒ 该段被静默吞掉（实测：`{"name":"\u5c4b\u9876"}`
+//   解码得到空串 ⇒ LenoMusic 的"音乐库"源整列歌名全空 ✗）。
+//   ⚠ 这里**不**做转义还原的"工具函数"给调用方用：转义是 JSON 语法的一部分，
+//     解码器自己吃掉才对（让每个调用点先手工过一遍，迟早有地方忘 ✗）。
+static int json_hex4(const char* p) {
+    int v = 0;
+    for (int k = 0; k < 4; k++) {
+        char c = p[k];
+        int d;
+        if (c >= '0' && c <= '9') d = c - '0';
+        else if (c >= 'a' && c <= 'f') d = c - 'a' + 10;
+        else if (c >= 'A' && c <= 'F') d = c - 'A' + 10;
+        else return -1;             // 非法十六进制 ⇒ 调用方原样保留（别写半个字符进去 ✗）
+        v = v * 16 + d;
+    }
+    return v;
+}
+
+// 码点 → UTF-8 字节；返回写入的字节数（调用方保证 cp 在 0..0x10FFFF）
+static int json_utf8_write(int cp, char* out) {
+    if (cp <= 0x7F) { out[0] = (char)cp; return 1; }
+    if (cp <= 0x7FF) {
+        out[0] = (char)(0xC0 | (cp >> 6));
+        out[1] = (char)(0x80 | (cp & 0x3F));
+        return 2;
+    }
+    if (cp <= 0xFFFF) {
+        out[0] = (char)(0xE0 | (cp >> 12));
+        out[1] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        out[2] = (char)(0x80 | (cp & 0x3F));
+        return 3;
+    }
+    out[0] = (char)(0xF0 | (cp >> 18));
+    out[1] = (char)(0x80 | ((cp >> 12) & 0x3F));
+    out[2] = (char)(0x80 | ((cp >> 6) & 0x3F));
+    out[3] = (char)(0x80 | (cp & 0x3F));
+    return 4;
+}
+
 static Value json_parse_string_token(JsonToken* token) {
     char* decoded = malloc(token->len + 1);
     int j = 0;
@@ -301,18 +343,30 @@ static Value json_parse_string_token(JsonToken* token) {
                 case 'n': decoded[j++] = '\n'; i++; break;
                 case 'r': decoded[j++] = '\r'; i++; break;
                 case 't': decoded[j++] = '\t'; i++; break;
-                case 'u':
-                    if (i + 6 <= token->len) {  // \\uXXXX = 6 chars
-                        char hex[5];
-                        strncpy(hex, token->start + i + 2, 4);
-                        hex[4] = '\0';
-                        int code = (int)strtol(hex, NULL, 16);
-                        if (code < 128) {
-                            decoded[j++] = (char)code;
+                case 'u': {
+                    // `\uXXXX` = 6 个字符（'\' 'u' + 4 位十六进制）
+                    //   ★ 2026-10-09 修：旧实现只写 `code < 128`（ASCII）⇒ 中文等码点被**静默丢掉**
+                    //     （`{"name":"\u5c4b\u9876"}` 解出空串 ✗）。现在一律按 UTF-8 编码写出 ✓
+                    if (i + 6 <= token->len) {
+                        int code = json_hex4(token->start + i + 2);
+                        if (code >= 0) {
+                            i += 5;  // 跳过这 6 个字符（for 循环还会 i++ ✓）
+                            // 代理对（surrogate pair）：高位 D800-DBFF + 紧邻的 `\uDC00-\uDFFF`
+                            //   ⇒ 合成一个码点再编码（emoji 那种；不合成会写出两个非法码点 ✗）
+                            if (code >= 0xD800 && code <= 0xDBFF &&
+                                i + 6 < token->len &&
+                                token->start[i + 1] == '\\' && token->start[i + 2] == 'u') {
+                                int lo = json_hex4(token->start + i + 3);
+                                if (lo >= 0xDC00 && lo <= 0xDFFF) {
+                                    code = 0x10000 + ((code - 0xD800) << 10) + (lo - 0xDC00);
+                                    i += 6;
+                                }
+                            }
+                            j += json_utf8_write(code, decoded + j);
                         }
-                        i += 5;  // skip \\uXXXX (will i++ in for loop)
                     }
                     break;
+                }
                 default: decoded[j++] = token->start[i]; break;
             }
         } else {
