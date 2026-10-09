@@ -381,7 +381,9 @@ static Value native_exec(int argCount, Value* args) {
     size_t full_len = wcslen(wcmd) + wcslen(wtmp_path) + 64;
     wchar_t* wfull = malloc(full_len * sizeof(wchar_t));
     if (!wfull) { free(wcmd); return val_null(); }
-    swprintf(wfull, full_len, L"cmd /c %s > \"%s\" 2>&1", wcmd, wtmp_path);
+    // ⚠ `%ls` 不是笔误：宽版 printf 的 `%s` 吃 wchar_t* 只是 MSVC/UCRT 的非标准扩展语义，
+    //   换 msvcrt 版 MinGW / 开 __USE_MINGW_ANSI_STDIO 后 `%s` 是"窄串" ⇒ 宽路径只剩首字符（详见 vm_main.c）
+    swprintf(wfull, full_len, L"cmd /c %ls > \"%ls\" 2>&1", wcmd, wtmp_path);
 
     // ★ P6（2026-09-19）：带超时执行 —— 此前是 _wsystem（阻塞、无超时）⇒ 子进程挂住就把
     //   父进程（乃至整套断言）一起拖死 ✗。现在等不到就收掉，退出码返回 124。

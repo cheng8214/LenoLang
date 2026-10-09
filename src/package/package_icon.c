@@ -94,7 +94,9 @@ static int icon_temp_path(wchar_t* out, size_t n) {
     if (got == 0 || got >= MAX_PATH_LEN) return 0;
     unsigned long pid = (unsigned long)GetCurrentProcessId();
     unsigned long long tick = (unsigned long long)GetTickCount64();
-    _snwprintf(out, n, L"%sleno_icon_%lu_%llu.tmp", dir, pid, tick);
+    // ⚠ `%ls`：宽版 printf 的 `%s` 吃 wchar_t* 只是 MSVC/UCRT 的非标准扩展语义，
+    //   换成 ANSI-stdio 语义（msvcrt 版 MinGW / __USE_MINGW_ANSI_STDIO=1）就退化成"窄串" ⇒ dir 只剩首字符
+    _snwprintf(out, n, L"%lsleno_icon_%lu_%llu.tmp", dir, pid, tick);
     out[n - 1] = L'\0';
     return 1;
 }

@@ -1195,7 +1195,11 @@ static int pack_vm_check_lenb(const char* vm_exe, const char* lenb_path) {
     size_t need = wcslen(wvm) + wcslen(wbin) + 32;
     wchar_t* cmdline = (wchar_t*)malloc(need * sizeof(wchar_t));
     if (!cmdline) { free(wvm); free(wbin); return -1; }
-    swprintf(cmdline, need, L"\"%s\" --check-bin \"%s\"", wvm, wbin);
+    // ⚠ `%ls` 不是笔误（2026-10-09）：宽版 printf 的 `%s` 吃 wchar_t* 只是 MSVC/UCRT 的
+    //   非标准扩展语义；换 ANSI-stdio 语义（msvcrt 版 MinGW / __USE_MINGW_ANSI_STDIO=1）
+    //   `%s` 变回"窄串" ⇒ 命令行里的路径只剩首字符（`leno_xxx.lenb` → `l`），
+    //   VM 握手就会报「不是有效的 .lenb 文件: l」。全仓统一写 `%ls`（两套语义下都是宽串）。
+    swprintf(cmdline, need, L"\"%ls\" --check-bin \"%ls\"", wvm, wbin);
 
     STARTUPINFOW si;
     PROCESS_INFORMATION pi;

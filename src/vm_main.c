@@ -156,7 +156,11 @@ static int res_rmtree_w(const wchar_t* wpath) {
     if (!(attr & FILE_ATTRIBUTE_DIRECTORY)) return DeleteFileW(wpath) ? 0 : -1;
 
     wchar_t wpat[4096];
-    _snwprintf(wpat, 4096, L"%s\\*", wpath);
+    // ⚠ 宽路径拼接必须用 `%ls`（2026-10-09）：宽版 printf 的 `%s` 吃 wchar_t* 只是
+    //   MSVC/UCRT 的**非标准**扩展语义（本机 gcc 15.2.0/UCRT 恰好 __USE_MINGW_ANSI_STDIO=0，
+    //   `%s` 也对）；换 msvcrt 版 MinGW 或有人加 `-D__USE_MINGW_ANSI_STDIO=1`，
+    //   `%s` 就变回"窄字符串" ⇒ 路径被截成首字符（`leno_vm.exe` → `l`）。`%ls` 两套语义下都是宽串。
+    _snwprintf(wpat, 4096, L"%ls\\*", wpath);
     wpat[4095] = L'\0';
     WIN32_FIND_DATAW fd;
     HANDLE h = FindFirstFileW(wpat, &fd);
@@ -164,7 +168,7 @@ static int res_rmtree_w(const wchar_t* wpath) {
         do {
             if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
             wchar_t child[4096];
-            _snwprintf(child, 4096, L"%s\\%s", wpath, fd.cFileName);
+            _snwprintf(child, 4096, L"%ls\\%ls", wpath, fd.cFileName);
             child[4095] = L'\0';
             res_rmtree_w(child);
         } while (FindNextFileW(h, &fd));
