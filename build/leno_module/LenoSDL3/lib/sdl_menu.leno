@@ -822,8 +822,9 @@ export struct MenuBar impl Widget, Themeable {
                 }
                 if it.submenu.len() > 0 {
                     float ax = px + pw - 14.0, ay = ry + itemH / 2.0
-                    // drawTriangle 仍使用 R/G/B 分量，从打包色中提取
-                    r.drawTriangle(ax, ay, 5.0, 90.0, theme.colorR(lc), theme.colorG(lc), theme.colorB(lc), 255)
+                    // ⚠ 用 `drawTriangleC`（内部已把 0~255 归一化）：`drawTriangle` 的色参是
+                    //   0~1 浮点，直接喂 colorR() 会被钳成纯白 ⇒ 浅色主题下子菜单箭头看不见 ✗
+                    r.drawTriangleC(ax, ay, 5.0, 90.0, lc)
                 }
             }
             iy = iy + itemH + (if i < items.len() - 1 then itemGap else 0.0)

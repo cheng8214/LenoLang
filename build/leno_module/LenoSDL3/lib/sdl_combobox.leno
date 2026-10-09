@@ -384,11 +384,16 @@ export struct ComboBox impl Widget, Themeable {
             edit.set_pos(x + 4, y + 1); edit.set_size(w - 24, h - 2)
             edit.render(r)
             // 下拉箭头
+            //   ★ 颜色取**文字色**（2026-10-09 修）：原来用 `brighten(bdrColor, 60)`，浅色主题下
+            //     border=#C8CDD4 提亮 60 会**饱和成纯白** ⇒ 与浅底几乎同色、根本看不见 ✗
+            //     文字色按定义就"与底有对比"（深色主题下自动变成浅箭头 ✓）⇒ 必可见 ✓
+            //     （与 SpinBox 的 `btnColor = txtHeader` 同一口径 ✓）
             float aw = 10.0, ax = x + w - aw - 8.0, ay = y + h / 2.0
-            Color arrowC = theme.brighten(bdrColor, 60)
+            Color arrowC = txtColor
+            if not enabled { arrowC = theme.darken(txtColor, 60) }   // 禁用与文字同步变暗 ✓
+            arrowC = theme.withAlpha(arrowC, 200)                    // 比文字略柔，不抢眼 ✓
             r.setColor(arrowC)
-            r.drawTriangle(ax + aw / 2.0, ay, aw / 2.0, 180.0,
-                theme.colorR(arrowC), theme.colorG(arrowC), theme.colorB(arrowC), 255)
+            r.drawTriangleC(ax + aw / 2.0, ay, aw / 2.0, 180.0, arrowC)
             // 边框
             r.setColor(bdrColor)
             r.drawRoundedRect(x, y, w, h, 6.0)
@@ -421,12 +426,13 @@ export struct ComboBox impl Widget, Themeable {
             r.drawText(_font, t, r.snapX(textX), ty, tcC)
         }
 
-        // 下拉箭头（向下填充三角）
+        // 下拉箭头（向下填充三角）—— 取色同上面那处：**跟文字色**，别跟边框色 ✓（见上方注释）
         float aw = 10.0, ax = x + w - aw - 8.0, ay = y + h / 2.0
-        Color arrowC = theme.brighten(bdrColor, 60)
+        Color arrowC = txtColor
+        if not enabled { arrowC = theme.darken(txtColor, 60) }
+        arrowC = theme.withAlpha(arrowC, 200)
         r.setColor(arrowC)
-        r.drawTriangle(ax + aw / 2.0, ay, aw / 2.0, 180.0,
-            theme.colorR(arrowC), theme.colorG(arrowC), theme.colorB(arrowC), 255)
+        r.drawTriangleC(ax + aw / 2.0, ay, aw / 2.0, 180.0, arrowC)
 
         // 边框
         r.setColor(bdrColor)

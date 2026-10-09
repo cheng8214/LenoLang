@@ -1118,6 +1118,21 @@ const BX_TEX    = 4   // 批处理文字纹理
         return triFillAA(p0x, p0y, p1x, p1y, p2x, p2y, r, g, b, a, r, g, b, a, r, g, b, a, false)
     }
 
+    // ★ 用**打包色**画三角（2026-10-09 加 ✓）—— 专治"箭头看不见"那一类：
+    //   `drawTriangle` 的 r/g/b/a 是 **0~1 浮点**，而调用方手里是 0xAARRGGBB 的打包色
+    //   （`theme.colorR()` 给的是 **0~255 整数**）⇒ 直接喂进去会被钳到 1.0 = **纯白** ✗
+    //   实测 4 处都这么写（ComboBox / TreeView / MenuBar / PopMenu）⇒ 深色主题下"白箭头"
+    //   恰好看着正常，**浅色主题下就变成"浅底白箭头、完全看不见"** ✗（用户实测报告 ✓）
+    //   这里统一归一化 ⇒ 调用方只给一个 Color，再也不会写错尺度 ✓
+    //   （不 import sdl_theme 只为取分量：直接位运算拆打包色，零依赖 ✓）
+    func drawTriangleC(float cx, float cy, float size, float angle, Color c): bool {
+        float cr = _float((c >> 16) & 0xFF) / 255.0
+        float cg = _float((c >> 8) & 0xFF) / 255.0
+        float cb = _float(c & 0xFF) / 255.0
+        float ca = _float((c >> 24) & 0xFF) / 255.0
+        return drawTriangle(cx, cy, size, angle, cr, cg, cb, ca)
+    }
+
     // 绘制渐变三角形（每个顶点可独立设色）
     func drawTriangleGradient(float cx, float cy, float size, float angle,
                                float r0, float g0, float b0, float a0,

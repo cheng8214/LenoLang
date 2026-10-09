@@ -806,8 +806,9 @@ n.imageExpanded = d.get("imageExpanded", "")
                 Color ar = arrColor
                 if not enabled { ar = theme.darken(arrColor, 60) }
                 r.setColor(ar)
-                r.drawTriangle(tcx, tcy, 5.0, if flatExpanded[i] then 180.0 else 90.0,
-                    theme.colorR(ar), theme.colorG(ar), theme.colorB(ar), 255)
+                //   ⚠ 用 `drawTriangleC`（色尺度 0~255 已归一化 ✓）—— 别用 `drawTriangle`
+                //     直接喂 colorR()：那会被钳成纯白 ⇒ 浅色主题下"白底白箭头、看不见" ✗
+                r.drawTriangleC(tcx, tcy, 5.0, if flatExpanded[i] then 180.0 else 90.0, ar)
             }
             if showCheck and flatCheck[i] {
                 float cx = x + padX + depth * _indent

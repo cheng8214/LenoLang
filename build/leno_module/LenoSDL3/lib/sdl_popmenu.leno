@@ -434,8 +434,8 @@ export struct PopMenu {
                 // 子菜单指示：实心三角（与 MenuBar 的 drawTriangle 一致 ✓）——展开时朝下 ✓
                 Color ac = th.txtDim
                 float ang = if exp[idx] then 180.0 else 90.0
-                ren.drawTriangle(x0 + cw - _CHEV_W + 5.0, y + _ROW_H / 2.0, 5.0, ang,
-                                 _float(thm.colorR(ac)), _float(thm.colorG(ac)), _float(thm.colorB(ac)), 255.0)
+                //   ⚠ `drawTriangleC`：色参是 0~1 浮点，打包色得先归一化（否则钳成纯白 ✗）
+                ren.drawTriangleC(x0 + cw - _CHEV_W + 5.0, y + _ROW_H / 2.0, 5.0, ang, ac)
             } else if kind[idx] == _K_CHECK and _on[idx] {
                 ren.setColor(th.accent)
                 ren.fillCircle(x0 + cw - _CHEV_W + 3.0, y + _ROW_H / 2.0, 3.0)   // 勾选态：右侧圆点 ✓
