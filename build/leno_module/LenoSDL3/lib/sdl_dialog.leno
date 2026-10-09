@@ -136,14 +136,21 @@ export const DIALOG_TB_H = 30
 // 给对话框挂上自绘标题栏（`TitleBar`，impl Widget ✓）
 //   · 它自己会 `SDL_SetWindowBordered(false)`（见 sdl_titlebar.leno ✓）⇒ 无边框 + 自绘条 ✓
 //   · 弹窗不需要最小化/最大化 ⇒ 关掉，只留 ✕ ✓
+//   · 弹窗**不该能拖边缩放**（2026-10-09 修 ✓）⇒ 传 `resizable:false`（理由见函数内注释 ✓）
 //   ⚠ **返回的 TitleBar 要由调用方接 `on_close`**（不接 = 点 ✕ 毫无反应 ✗），
 //     并且内容根要用 `dlg.setRootAt(root, 0, tb.get_h())` 让出高度 ✓
 export func dialogTitleBar(Window dlg, string title): TitleBar {
     // ★ 2026-10-08：弹窗没自己设图标时**沿用主窗口的**（用户实测："主窗口设了图标，弹窗光秃秃" ✗）
     //   主窗口那个图标由标题栏模块记着（第一个设 title_icon 的 = 主窗口 ✓ 见 sdl_titlebar ✓）
     //   传空串 == 没传（opts.get 的默认值就是 ""）⇒ 拿不到图标时行为与以前**完全一致** ✓
+    // ★ `resizable:false`（2026-10-09 修）：TitleBar 挂载时会 `SDL_SetWindowResizable(true)`
+    //   —— 那是给**主窗口**的（去掉原生边框后 Windows 会连 WS_THICKFRAME 一起去掉 ⇒ 不补这一下
+    //   主窗口就没法拖边缩放了 ✓）；可弹窗也挂了标题栏 ⇒ 一并被"解放" ⇒ 用户实测
+    //   "msg 弹窗居然能改变大小" ✗（标题栏那套**手动边缘缩放**也会跟着生效，连光标都变 ✗）
+    //   ⇒ 弹窗这里显式声明"不可缩放" ✓；显式选项见 sdl_titlebar 的 `resizable` ✓
     TitleBar tb = createTitleBar({title: title, height: _float(DIALOG_TB_H), font_size: 13,
         title_icon: tbar.appTitleIcon(),
+        resizable: false,
         show_minimize: false, show_maximize: false})
     dlg.add(tb)
     return tb

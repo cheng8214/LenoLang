@@ -37,6 +37,8 @@
 //   icon_size       图标图片显示尺寸（默认 16）
 //   title_align     标题对齐: "left"（默认）或 "center"
 //   title_pad       标题水平内边距（默认 12）
+//   resizable       是否允许拖边缘缩放（默认 true = 历史行为 ✓）
+//                   ⚠ **弹窗必须传 false** —— 见 sdl_dialog.dialogTitleBar（用户实测：msg 弹窗能改大小 ✗）
 //
 // 中间控件（VS Code 风格标题栏）：
 //   通过 set_center_widget(Widget) 在标题栏中间插入自定义控件（如路径栏、搜索框等）。
@@ -61,7 +63,7 @@ import "sdl_tooltip.leno" as tip    // 悬停提示复用框架那一套（与 B
 //   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
 func _opts_keys(): Array[string] {
     return [
-"actions", "bg_color", "btn_align", "btn_spacing", "btn_width", "close", "close_hover_color", "font_path", "font_size", "height", "hover_color", "icon_close", "icon_color", "icon_maximize", "icon_minimize", "icon_restore", "icon_size", "maximize", "minimize", "separator_color", "show_close", "show_maximize", "show_minimize", "show_separator", "text_color", "title", "title_align", "title_icon", "title_icon_gap", "title_icon_size", "title_pad"
+"actions", "bg_color", "btn_align", "btn_spacing", "btn_width", "close", "close_hover_color", "font_path", "font_size", "height", "hover_color", "icon_close", "icon_color", "icon_maximize", "icon_minimize", "icon_restore", "icon_size", "maximize", "minimize", "resizable", "separator_color", "show_close", "show_maximize", "show_minimize", "show_separator", "text_color", "title", "title_align", "title_icon", "title_icon_gap", "title_icon_size", "title_pad"
 ]
 }
 
@@ -215,6 +217,12 @@ export struct TitleBar impl Widget, Themeable {
     pri bool winSizeDirty = true
     bool   _loaded = false
     pri bool   borderlessApplied = false
+    // ★ 是否允许缩放（2026-10-09 加 ✓，默认 true = 历史行为不变）
+    //   ⚠ 为什么需要这个开关：挂载时会 `SDL_SetWindowResizable(true)`（主窗口去掉原生边框后
+    //   靠它恢复缩放能力 ✓），可那一下会把**本来不可缩放的窗口**也"解放"掉 ⇒ 弹窗（msgBox）
+    //   一并继承 ⇒ 用户实测"msg 弹窗居然能拖边改大小" ✗ ⇒ 弹窗走 `resizable:false` ✓
+    //   （同样的开关也管住下面那套**手动边缘缩放**：不可缩放的窗口连光标都不该变 ✓）
+    pri bool   allowResize = true
     pri bool   closeRequested = false  // 关闭按钮被按下（示例查询后重置）
 
     // ==================== 手动边缘缩放（无边框窗口用） ====================
@@ -253,6 +261,7 @@ export struct TitleBar impl Widget, Themeable {
         showMaximize = opts.get("show_maximize", true)
         showClose = opts.get("show_close", true)
         showSeparator = opts.get("show_separator", true)
+        allowResize = opts.get("resizable", true)   // 弹窗传 false ✓（默认 true = 历史行为 ✓）
 
         // 颜色：opts 未传则保持默认值
         if opts.get("bg_color") is Color => t { bgColor = t }
@@ -307,7 +316,9 @@ export struct TitleBar impl Widget, Themeable {
             core.lib().SDL_SetWindowBordered(handle, false)
             // 2. 恢复缩放能力（SDL_SetWindowBordered 在 Windows 上会去掉 WS_THICKFRAME，
             //    导致窗口无法缩放；此处显式恢复）
-            core.lib().SDL_SetWindowResizable(handle, true)
+            //    ⚠ 只在 `allowResize` 时做（2026-10-09）：这一句会把**本来不可缩放**的窗口
+            //    也改成可缩放 ⇒ 弹窗照单全收 ⇒ "msg 弹窗能改大小" ✗（见字段处注释 ✓）
+            if allowResize { core.lib().SDL_SetWindowResizable(handle, true) }
             // 3. 修正最大化状态：窗口若以 MAXIMIZED 标志创建，去掉边框后 Windows 不会
             //    重算最大化客户区，顶部会残留系统标题栏高度的间隙。
             //    解决：restore → re-maximize 强制 Windows 重算
@@ -529,8 +540,8 @@ if ev.isWindowRestored() { maximized = false; btnHover = BTN_NONE; motionSkipCou
             return  // 缩放期间不处理其他事件
         }
 
-        // 边缘检测（仅在非最大化时）
-        if not maximized and not _dragging {
+        // 边缘检测（仅在非最大化、且**允许缩放**时 —— 不可缩放的窗口连光标都不该变 ✓）
+        if allowResize and not maximized and not _dragging {
             // ★ 复用缓存，避免每帧 getWindowSize
             if winSizeDirty and winHandle != null {
                 var[int, int](_ww, _wh) = core.getWindowSize(winHandle)
