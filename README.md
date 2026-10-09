@@ -449,6 +449,7 @@ Leno/
 
 **入门与指南**
 - [Leno 入门教程](docs/Leno入门教程.md) —— 完整语法参考（含类型系统详解）
+- [语言陷阱速查](docs/语言陷阱速查.md) —— **症状 → 病因 → 怎么办**：语言 / 编译器 / 模块 / 构建层踩过的坑（带报错原文与复现方式）
 - [FAQ](docs/FAQ.md) · [Leno 语言规范草稿](docs/Leno_规范草稿.md) · [Import 使用指南](docs/import使用指南.md)
 - [Async/Await 入门指南](docs/async_await入门指南.md) · [Threads 使用指南](docs/threads使用指南.md) · [并发选择指引](docs/并发选择指引.md)
 - [FFI 使用指南](docs/FFI使用指南.md) · [包管理与安装使用指南](docs/包管理与安装使用指南.md) · [单文件打包使用指南](docs/单文件打包使用指南.md)

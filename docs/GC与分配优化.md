@@ -260,9 +260,13 @@ del /q build\leno_base.exe build\leno_broken.exe
 **要点**：
 - 必须有**未被改动的对照路径**（`probe_alloc2` 里的「不分配」行；噪声底通常 ±1.5 ns）；
 - 只做**同机同轮**对照，不要跟文档里的历史绝对值比；
-- 改动 `src/` 后先删 `.lenocache` 再测：缓存不记录编译器二进制身份，只有手工 bump
-  `LENO_BIN_VERSION`/`LENO_MODCACHE_VERSION` 才整体失效。（改被引用的 `leno_module/**/lib/**` 不必再清了
-  —— 2026-09-16 起入口缓存带 `entry_*.lenb.deps` 依赖清单，改模块源会让引用方失效，见 `jit_probes/README.md`。）
+- 改动 `src/` 后先删 `.lenocache` 再测：~~缓存不记录编译器二进制身份~~ ⇒
+  **⚠ 已过时（2026-10-09 实测更正）**：`entry_*.lenb.deps` 第 2 行 `BIN <指纹>` **就是**编译器二进制身份
+  （2026-09-17 / `src/main.c` 的 `§8.112` + `ENTRY_DEPS_MAGIC`）⇒ **重建 exe 后缓存会自动失效**，
+  不必再手删（实测：重建/改 lib 后不删缓存，结果跟着变 ✓ 见 `语言陷阱速查.md` §一 ①）。
+  手工 bump `LENO_BIN_VERSION`/`LENO_MODCACHE_VERSION` 依旧有效 —— 那是"**强制整体失效**"的开关，
+  留作兜底 ✓（改被引用的 `leno_module/**/lib/**` 本来就不必清：2026-09-16 起入口缓存带
+  `entry_*.lenb.deps` 依赖清单，改模块源会让引用方失效，见 `jit_probes/README.md`。）
 
 ---
 
