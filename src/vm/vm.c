@@ -632,6 +632,10 @@ Value type_spec_cast(Value value, Chunk* chunk, const uint8_t* spec, int* out_by
 //   匹配则返回（可能已转换的）value，不匹配返回 null —— 不报错、但可能分配
 //   （字符串转换 / 整数转 FFI 指针）；分配只会置延迟回收标志、不会就地回收（§8.36），
 //   所以调用中途不会被 GC 打断。
+//   ⚠ 本 switch 是编译期「as 恒失败」静态诊断的**同一套口径**：semantic/visitinc/
+//     visit_type_check.inc 里按"源/目标类型对"挡掉必然回 null 的组合（string→数值、
+//     数值→bool 等）。两边改动要**一起改**，否则会出现"运行期已支持 / 编译期仍拦"
+//     或反向的漂移 ✗。
 // ============================================================================
 Value vm_as_cast(Value value, TypeKind expected_type, TypeKind elem_type, Value name_val) {
     int matches = 0;

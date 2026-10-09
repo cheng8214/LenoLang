@@ -35,7 +35,11 @@ var bb = b as bool
 assert_eq(bb, true)
 
 // 测试 2: as 基本类型转换 - 不匹配时返回 null
-var maybe_int = "not_int" as int
+// ⚠ `"not_int" as int`（**字符串源**）现在是**编译期错误**（「as 不做字符串解析」✓，
+//   见 test_as_cast_compile_error.leno）—— 要验证"字符串值 as int 运行期回 null"，
+//   只能经 `any` 中转（运行期语义不变 ✓，与测试 6 的 `any_42() as Shape` 同一套路）
+func any_str(): any { return "not_int" }
+var maybe_int = any_str() as int
 assert_eq(maybe_int, null)
 
 var maybe_float = 42 as float

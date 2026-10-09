@@ -376,6 +376,29 @@ static void apply_null_narrowing(Semantic* s, Ast* cond, int narrow_on_ne) {
 // ============================================================================
 void visit_list(Semantic* s, AstList* list);
 
+// 「as 恒失败」诊断用：TypeKind → 短名（只覆盖本诊断会涉及的标量；其余回「该类型」）
+//   见 visit_type_check.inc 里 AST_AS_CAST 的两条静态诊断（string→数值/bool、数值→bool）
+static const char* sem_as_kind_name(TypeKind k) {
+    switch (k) {
+        case TYPE_INT:    return "int";
+        case TYPE_FLOAT:  return "float";
+        case TYPE_BOOL:   return "bool";
+        case TYPE_BIGINT: return "bigint";
+        case TYPE_STRING: return "string";
+        case TYPE_I8:  return "i8";
+        case TYPE_U8:  return "u8";
+        case TYPE_I16: return "i16";
+        case TYPE_U16: return "u16";
+        case TYPE_I32: return "i32";
+        case TYPE_U32: return "u32";
+        case TYPE_I64: return "i64";
+        case TYPE_U64: return "u64";
+        case TYPE_F32: return "f32";
+        case TYPE_F64: return "f64";
+        default: return "该类型";
+    }
+}
+
 void visit(Semantic* s, Ast* ast) {
     if (!ast) return;
 

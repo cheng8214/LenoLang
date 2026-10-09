@@ -1,0 +1,84 @@
+// test_as_cast_compile_error.leno —— 「as 恒失败」静态诊断（编译期那一半）
+//
+// 背景（2026-10-09，用户实测"误判两次"后要的 ✓）：`vm_as_cast`（src/vm/vm.c）里 `as`
+// 只做**表示/数值转换**、**不做字符串解析**、且 `as bool` 只认 bool ⇒ 下面这些"源是
+// 具体类型、目标铁定不收"的组合运行期必然回 null，本诊断把它们挡在编译期：
+//   ① `"77" as int` / `"1.5" as float`（字符串 → 数值）：编译错误
+//   ② `5 as bool`（数值 → bool）：编译错误
+//
+// ⚠ 判据「零误报优先」：误报会让本来能跑的程序编译不过，比漏报严重得多 ⇒ 后半段是
+//   **误报守卫**——any 源 / null 源 / 数值间转换（float→int、bool→int）/ 数值→string
+//   这些**合法**用法必须照常编译并跑对。
+//
+// 生成源码用**原始字符串**（@"..."，内部引号写 ""）：比拼接读写，缩进即真实缩进 ——
+//   ⚠ 生成内容**逐行一字不变**是硬约束（①②③ 的断言都点名了落点行）。
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+
+// ① 字符串字面量 → int（用户原始动机用例："77" as int）
+func case_str_int(string work): string {
+    var f = dirs.join(work, "sint.leno")
+    files.write(f, @"main() {
+    var x = ""77"" as int
+    print(x)
+}
+")
+    return ce.expect_error(f, "字符串 as int 必须编译报错", "as 不做字符串解析", 2)
+}
+
+// ② 字符串字面量 → float
+func case_str_float(string work): string {
+    var f = dirs.join(work, "sfloat.leno")
+    files.write(f, @"main() {
+    var y = ""1.5"" as float
+    print(y)
+}
+")
+    return ce.expect_error(f, "字符串 as float 必须编译报错", "as 不做字符串解析", 2)
+}
+
+// ③ 数值 → bool（as bool 只认 bool）
+func case_num_bool(string work): string {
+    var f = dirs.join(work, "nbool.leno")
+    files.write(f, @"main() {
+    var z = 5 as bool
+    print(z)
+}
+")
+    return ce.expect_error(f, "int as bool 必须编译报错", "as bool 只认 bool", 2)
+}
+
+// ④ **误报守卫**：这些合法 as 必须编译 + 运行成功
+//    （float→int 截断 / bool→int / 数值→string / any 源 / null 源 / 字符串值经 any 中转）
+func case_no_false_positive(string work): string {
+    var f = dirs.join(work, "ok.leno")
+    files.write(f, @"func any_num(): any { return 5 }
+func any_str(): any { return ""not_int"" }
+main() {
+    var a = 1.9 as int          // float→int 截断 ✓
+    var b = true as int         // bool→int ✓
+    var c = 123 as string       // 数值→string 表示 ✓
+    var d = any_num() as int    // any 源 → 放行 ✓
+    var e = null as int         // null 源 → 放行 ✓
+    var g = any_str() as int    // any 源（运行时是字符串）→ 放行，运行期回 null ✓
+    print(""OK="" + _str(a) + _str(b) + c + _str(d) + _str(e == null) + _str(g == null))
+}
+")
+    return ce.expect_ok(f, "合法 as 不得误报（OK=111235truetrue）", "OK=111235truetrue")
+}
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_as_cast_ce")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    case_str_int(work)
+    case_str_float(work)
+    case_num_bool(work)
+    case_no_false_positive(work)
+
+    dirs.delete(work)
+    print("test_as_cast_compile_error passed")
+}
