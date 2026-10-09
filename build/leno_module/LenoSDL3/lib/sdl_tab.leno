@@ -22,6 +22,7 @@ import "sdl_layout.leno" as lay; use lay.HBox; use lay.VBox; use lay.AnchorBox
 import "sdl_combobox.leno" as cbx; use cbx.ComboBox
 import "sdl_panel.leno" as pnl; use pnl.Panel
 import "sdl_table.leno" as tbl; use tbl.Table
+import "sdl_menu.leno" as menu     // 切页时收掉残留的右击菜单（见 closePopups 的注释 ✓）
 import "sdl_treeview.leno" as tvlib; use tvlib.TreeView
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 use theme.Color
@@ -380,9 +381,14 @@ export struct TabControl impl Widget, Themeable {
         }
     }
 
-    // 切页 / 关闭弹层时，关闭所有页（含嵌套在 Panel 内的）已展开的下拉框，
+    // 切页 / 关闭弹层时，关闭所有页（含嵌套在 Panel 内的）已展开的下拉框 **和残留的右击菜单**，
     // 避免弹层残留到其它页或停留在旧坐标（修复「切 tab 下拉框仍在」）。
+    //   ★ 2026-10-09 补右击菜单（另一个同源 bug ✓）：table/edit/listbox/treeview 的右击菜单不是
+    //     由宿主绘制的，而是 `menu.renderContextMenus` **第二遍按窗口统一画**、只认 `isOpen()` ✗
+    //     ⇒ 切页后菜单**照旧显示**；又因隐藏页收不到事件（process 只转当前页 ✓）⇒ **点不动也关不掉** ✗✗
+    //     （用户实测："table 里右击菜单后，切换 tab，菜单还在停留，虽然无法点击，但是能看到菜单" ✓）
     pri func closePopups() {
+        menu.closeContextMenus(self.hwnd)   // hwnd 为 null（未绑定窗口）时按"本窗口兜底"处理 ✓
         for pages.len() to p {
             var pg = pages[p]
             for pg to c { closePopupsIn(c) }

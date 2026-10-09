@@ -881,6 +881,22 @@ export func renderContextMenus(Renderer r, Ptr[u8] hwnd, int winW, int winH) {
         }
     }
 }
+// ★ 2026-10-09 新增：**主动关闭**上下文菜单（切页 / 收起容器的调用方用，见 sdl_tab.closePopups ✓）
+//   为什么必须有它：这些菜单不归宿主控件绘制 —— 它们由上面的 `renderContextMenus` **第二遍统一画**，
+//   判据只有 `isOpen()`（**不看宿主还在不在** ✗）⇒ 宿主被切页/隐藏后，菜单会**继续留在屏幕上** ✗；
+//   更糟的是隐藏控件收不到事件（TabControl 只把事件转给当前页 ✓）⇒ 菜单**点不动也关不掉**，只能
+//   切回去再点一下才好 ✗✗（用户实测报的就是它 ✓ 原话："table 右击菜单后切换 tab，菜单还在停留"）
+//   口径与 renderContextMenus 对齐：只关归属本窗口的，加上未登记句柄（嵌套控件）的兜底项 ✓
+export func closeContextMenus(Ptr[u8] hwnd) {
+    for _ctxMenuRegistry.len() to k {
+        var cm = _ctxMenuRegistry[k]
+        if cm is MenuBar and cm.isOpen() {
+            if hwnd == null or cm.getWindowHandle() == null or cm.getWindowHandle() == hwnd {
+                cm.close()
+            }
+        }
+    }
+}
 // 摘除某个上下文菜单（在 MenuBar.dispose 时调用；置于文件末尾以便引用 _ctxMenuRegistry）
 func _unregisterContextMenu(MenuBar m) {
     for _ctxMenuRegistry.len() to k { if _ctxMenuRegistry[k] == m { _ctxMenuRegistry.remove(k); break } }
