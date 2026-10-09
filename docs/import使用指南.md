@@ -28,6 +28,60 @@ use shape.(Point, Circle, Rect)   // 等价于三行单独的 use 语句
 
 ***
 
+## 0. 三条硬约束（先看这个）
+
+这三条不是风格偏好，是会**当场编译失败**或**静默出错**的硬规则 ⚠
+
+### 0.1 `import` 必须写在任何使用它的语句之前（含 `const` 定义）
+
+模块级初始化按**文本顺序**进行：模块别名在 `import` 那一行才被绑定。
+把 `import` 放到文件头的常量定义**之后**，就会报两个误导性错误：
+
+```leno
+import "./songrow.leno" as srow
+
+export const int F_ID = srow.F_ID     // ✅ 成立
+```
+
+```leno
+export const int F_ID = srow.F_ID     // ❌ 「未定义的变量: srow」
+                                     // ❌ 「初始化值类型是 any（期望 int）」
+import "./songrow.leno" as srow      // ← 放在这里就已经晚了
+```
+
+⇒ 约定：**`import` / `use` 提到文件最前**（常量、注释块都可以排在它们后面）。
+这也是为什么很多模块头部是"文件头注释 → import → 常量 → 函数"的顺序。
+
+### 0.2 `use` 必须列全**本文件源码里真正用到**的类型
+
+`use mod.(A, B)` 是把类型引进当前作用域 ⇒ 少列一个，编译期报
+「类型未解析」，而**报错位置在 `use` 那一行，与真正缺的那个类型毫无关系**。
+
+最容易漏的是**"传导型"类型**：从另一个模块传进来的类型也算在本文件头上。
+
+```leno
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer, Button, Scancode, Window)     // 用了 Window 就必须列 Window
+Window win = SDL3.createWindow(...)                       // 漏了 Window ⇒「类型未解析」✗
+```
+
+⚠ 这类漏列**静态检查 / lint 抓不到**（源码里类型名只出现在 `use` 里），
+必须**真编译或真运行**才会暴露 ⇒ 写完模块先跑一次 `-c` 编译验证。
+
+### 0.3 模块级只要**不加** `export` 就是文件私有；`pri` 只用于结构体成员
+
+- 模块级函数**不能**写 `pri func` ⇒ 报「语法错误：期望表达式」，错误信息指不到真正病因 ✗
+- 文件私有 = 不写 `export`（不是写 `pri`）：`func helper()` 只在本文件可见 ✓
+- 跨文件使用 ⇒ 必须 `export` + 在使用方 `import` / `use`
+
+```leno
+func helper(): int { return 1 }        // ✅ 文件私有
+export func helper(): int { return 1 } // ✅ 对外可见
+pri func helper(): int { return 1 }    // ❌ 语法错误（pri 只对 struct 成员有意义）
+```
+
+---
+
 ## 1. 导入方式详解
 
 ### 1.1 基本导入

@@ -71,6 +71,14 @@ export struct HBox impl Widget {
     bool _loaded = false
     pri Ptr[u8] hwnd              // 绑定的窗口句柄，下发给需要的子控件
 
+    // ★ 背景色（2026-10-09 新增 ✓）：此前**只有 Panel 有底色**，给布局容器传 `bg_color`
+    //   会被**静默忽略**（`set()` 既不解析也不校验 ✗）⇒ 想给侧栏/内容区上色只能套一层 Panel。
+    //   现在容器自己就能带底色 ✓（LenoMusic 的侧栏就是为这个才被迫绕路）
+    //   ⚠ 默认**透明且不填** ⇒ 不传 `bg_color` 的老代码逐像素不变（零破坏 ✓）
+    pri Color bgColor = #00000000
+    pri float bgRadius = 0.0
+    bool _hasBg = false
+
     func set(Dict opts) {
         x = opts.get("x", 0)
         y = opts.get("y", 0)
@@ -84,8 +92,17 @@ export struct HBox impl Widget {
         padBottom = opts.get("padBottom", -1.0)
         padLeft = opts.get("padLeft", -1.0)
         padRight = opts.get("padRight", -1.0)
+        // 背景（照 Panel 的写法用 `is Color =>` 收窄 ⇒ 类型不对就忽略，不会炸 ✓）
+        if opts.get("bg_color") is Color => t {
+            bgColor = t
+            _hasBg = true
+        }
+        bgRadius = opts.get("bg_radius", 0.0)
         _loaded = true
     }
+
+    // 运行时改底色（与 Panel 同名方法，调用方写法统一 ✓）
+    func set_bg_color(Color c) { bgColor = c; _hasBg = true }
 
     func add(Widget c, Dict opts): Widget {
         if opts == null { opts = {} }
@@ -231,6 +248,11 @@ export struct HBox impl Widget {
     }
     func render(Renderer r) {
         if not _loaded { return }
+        // 背景先画，子控件再盖上来（顺序与 Panel 一致 ✓）
+        if _hasBg {
+            r.setColor(bgColor)
+            r.fillRoundedRect(x, y, w, h, bgRadius)
+        }
         relayout()
         for _c to c { c.render(r) }
     }
@@ -258,7 +280,15 @@ export struct VBox impl Widget {
     Array[float]  _natW = []   // 子项自然尺寸（add 时捕获，不被 set_size 改写，作为 flex basis 基准）
     Array[float]  _natH = []
     bool _loaded = false
-    pri Ptr[u8] hwnd              // 绑定的窗口句柄，下发给需要的子控件
+    pri Ptr[u8] hwnd       // 绑定的窗口句柄，下发给需要的子控件
+
+    // ★ 背景色（2026-10-09 新增 ✓）：与 HBox 同款 —— 此前只有 Panel 有底色，
+    //   给布局容器传 `bg_color` 会被**静默忽略** ⇒ 侧栏这类"整条有色带"只能套 Panel，
+    //   而 Panel 的子控件走**绝对坐标**（与自动布局混用会错位 ✗）⇒ 容器自己能上色才是正道 ✓
+    //   ⚠ 默认透明且不填 ⇒ 老代码逐像素不变（零破坏 ✓）
+    pri Color bgColor = #00000000
+    pri float bgRadius = 0.0
+    bool _hasBg = false
 
     func set(Dict opts) {
         x = opts.get("x", 0)
@@ -273,8 +303,16 @@ export struct VBox impl Widget {
         padBottom = opts.get("padBottom", -1.0)
         padLeft = opts.get("padLeft", -1.0)
         padRight = opts.get("padRight", -1.0)
+        if opts.get("bg_color") is Color => t {
+            bgColor = t
+            _hasBg = true
+        }
+        bgRadius = opts.get("bg_radius", 0.0)
         _loaded = true
     }
+
+    // 运行时改底色（与 Panel 同名 ✓）
+    func set_bg_color(Color c) { bgColor = c; _hasBg = true }
 
     func add(Widget c, Dict opts): Widget {
         if opts == null { opts = {} }
@@ -429,15 +467,20 @@ export struct VBox impl Widget {
     }
     func render(Renderer r) {
         if not _loaded { return }
+        // 背景先画，子控件再盖上来（与 Panel/HBox 一致 ✓）
+        if _hasBg {
+            r.setColor(bgColor)
+            r.fillRoundedRect(x, y, w, h, bgRadius)
+        }
         relayout()
         for _c to c { c.render(r) }
     }
     func dispose() { for _c to c { c.dispose() } }
 }
 
-// ============================================================
-// AnchorBox — 子控件按锚点（left/top/right/bottom 或 center）定位
-// opts 支持：left, top, right, bottom（像素偏移，-1 表示不约束）、
+    // ============================================================
+    // AnchorBox — 子控件按锚点（left/top/right/bottom 或 center）定位
+    // opts 支持：left, top, right, bottom（像素偏移，-1 表示不约束）、
 //            centerX, centerY（bool）、w, h（显式尺寸，覆盖自然尺寸）
 // ============================================================
 export struct AnchorBox impl Widget {
