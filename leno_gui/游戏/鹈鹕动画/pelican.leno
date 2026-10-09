@@ -1,0 +1,1300 @@
+// ============================================================================
+// pelican.leno — 鹈鹕动画（纯几何绘制，零图片 / 零音频资源）
+// ============================================================================
+// 场景：黄昏的海边 —— 天空渐变 / 落日与水面反光 / 漂动的云 / 海面波光 / 远处小岛，
+//       水里站着一只鹈鹕：会呼吸、会眨眼、脑袋跟着鼠标转，
+//       并且按「发现鱼 → 振翅 → 俯冲入水 → 喉囊兜住鱼 → 吞咽」的循环捕食 ✓
+//
+// 操作：
+//   空格 —— 立刻来一轮捕食（催它一把）
+//   P    —— 暂停 / 继续        R —— 重置捕鱼计数        ESC —— 退出
+//   鼠标 —— 鹈鹕的脑袋会朝光标看 ✓
+//
+// 无头自检（配合 SDL_VIDEODRIVER=dummy，与仓库里其它 demo 同一套做法）：
+//   PELICAN_SHOT=<png 路径>   截这一张就退出
+//   PELICAN_T=<秒>            截屏时刻（默认 3.6 秒 = 振翅中、鱼在半空 ✓）
+//   PELICAN_FRAMES=<帧数>     跑够这么多帧就退出（0 = 关掉）
+//
+// 绘制只用框架**公开**图元（都已核对过签名，不是猜的）：
+//   setColor / clear / fillRect / drawLine / fillCircle / drawCircle
+//   fillPie(cx,cy,r,a0,a1,cr,cg,cb,ca) —— 角度单位是**度**，0=正右、顺时针为正
+//   fillTri(x0,y0,x1,y1,x2,y2,cr,cg,cb,ca) —— 任意三角形，带 AA
+//   ⚠ drawTriangle 的 r/g/b/a 是 **0~1 浮点**（不是 0~255）⇒ 本文件一律用 fillTri，
+//     免得掉进「深色底白箭头 / 这里变纯白」那个坑 ✓（框架自己在 2026-10-09 也栽过 ✓）
+// ============================================================================
+
+import "SDL3" as SDL3
+// ⚠ Color 是 `alias Color = int`（见 sdl_theme.leno）⇒ **必须显式 use 进来**，
+//   否则本文件里所有 `Color` 形参都会报「未定义的类型」✗（一堆连锁误报 ✓ 踩过一次 ✓）
+use SDL3.(Event, Renderer, Scancode, Font, BlendMode, Color)
+import maths
+
+// ==================== 画面常量 ====================
+
+var WIN_W = 960
+var WIN_H = 640
+var SEA_Y = 430.0                  // 海平线（水面基线）的纵坐标
+
+var PI = 3.14159265
+var D2R = PI / 180.0
+
+var BIRD_X = 322.0                 // 鹈鹕身体中心（站立时）
+var BIRD_Y = SEA_Y - 64.0
+var NECK_LEN = 92.0                 // 脖子够长才像鹈鹕 ✓（短了就成了鸭子 ✗）
+
+// 状态机时长（秒）：待机 / 发现 / 振翅 / 俯冲 / 兜住 / 吞咽
+var ST_IDLE = 0
+var ST_ALERT = 1
+var ST_FLAP = 2
+var ST_DIVE = 3
+var ST_SCOOP = 4
+var ST_GULP = 5
+var STATE_DUR = [2.4, 0.8, 0.9, 0.5, 1.7, 1.3]
+
+// 调色板（打包色 0xAARRGGBB ✓）
+var C_SUN_CORE = #FFF3D2FF
+var C_SUN_GLOW = #FFC978FF
+var C_FEATHER = #F6F3EBFF          // 羽毛主色（暖白）
+var C_FEATHER_D = #D9D2C4FF        // 羽毛暗部
+var C_FEATHER_L = #FFFEFAFF        // 羽毛亮部
+var C_WING = #EDE6D8FF
+var C_WING_TIP = #C7BFB0FF
+var C_BEAK = #F0A93BFF             // 喙（橙黄）
+var C_BEAK_D = #CE8422FF
+var C_POUCH = #F4B24CFF            // 喉囊
+var C_LEG = #E2932CFF
+var C_EYE = #1B1B24FF
+var C_WHITE = #FFFFFFFF
+var C_HUD_BG = #0B1428FF
+var C_HUD_ACC = #F0A93BFF
+var C_FISH = #C6D6EAFF
+var C_FISH_B = #F2F7FDFF
+var C_FISH_T = #A3B8D6FF
+var C_HILL = #2B3550FF
+
+// ==================== 数据结构 ====================
+
+struct Drop {
+    float x = 0.0
+    float y = 0.0
+    float vx = 0.0
+    float vy = 0.0
+    float life = 0.0
+    float r = 2.0
+    int a = 255
+}
+
+struct Ripple {
+    float x = 0.0
+    float y = 0.0
+    float age = 0.0
+    float max = 1.0
+}
+
+struct Cloud {
+    float x = 0.0
+    float y = 0.0
+    float s = 1.0
+    float v = 4.0
+}
+
+// 鹈鹕的世界坐标几何（每帧由姿态算一次，画的时候只读 ✓）
+struct Geo {
+    float bx = 0.0
+    float by = 0.0
+    float rot = 0.0                 // 身体倾角（度，正 = 头朝下前方 ✓）
+    float nbx = 0.0
+    float nby = 0.0                 // 脖子根
+    float ncx = 0.0
+    float ncy = 0.0                 // 脖子贝塞尔控制点
+    float hx = 0.0
+    float hy = 0.0                  // 头中心
+    float hang = 0.0                // 头朝向（度）
+    float wingA = -10.0             // 近翅角度（度，负 = 抬起来 ✓）
+    float wingB = -10.0             // 远翅角度
+    float legL = 40.0               // 腿长（水线以上部分）
+    float tuck = 0.0                // 收腿程度 0..1
+}
+
+struct Pelican {
+    // 时间与帧
+    float t = 0.0
+    int frame = 0
+    float dt = 0.0
+    float realDt = 0.0              // 真实帧间隔（暂停时也走，用来算 FPS ✓）
+    int lastMs = 0
+
+    // 状态机
+    int state = 0
+    float stT = 0.0
+    int diveSplashed = 0
+
+    // 姿态
+    float bob = 0.0
+    float bodyRot = 0.0
+    float wingA = -10.0
+    float wingB = -10.0
+    float headExtra = 0.0
+    float beakOpen = 0.0
+    float pouch = 0.0
+    float eyeOpen = 1.0
+    float duck = 0.0
+    float legTuck = 0.0
+    float swallow = -1.0            // ≥0 时表示「一口吞」传到脖子的哪个位置 ✓
+
+    // 眨眼
+    float blinkT = 0.0
+    float blinkNext = 2.6
+    int blinkSeed = 1
+
+    // 捕鱼
+    float fishOn = 0.0
+    float fishT = 0.0
+    float fishX = 0.0
+    float fishY = 0.0
+    float fishVX = 0.0
+    float fishVY = 0.0
+    int caught = 0
+    int caughtThisRound = 0
+
+    // 交互
+    bool paused = false
+    float mx = 0.0
+    float my = 0.0
+    int mouseSeen = 0                // 鼠标还没进来时别让它盯着 (0,0)（左上角）✗
+
+    // 资源与统计（Font 是值类型 struct ⇒ 别写成 `= null` ✗ 那样会吃警告 ✓）
+    Font font
+    Font fontBig
+    int fps = 0
+    int fpsFrames = 0
+    float fpsT = 0.0
+
+    // 无头自检
+    string shotPath = ""
+    float shotT = 3.6
+    int frameLimit = 0
+    bool shotDone = false
+
+    // 粒子
+    Array[Drop] drops
+    Array[Ripple] ripples
+    Array[Cloud] clouds
+}
+
+// ==================== 数学小工具 ====================
+
+func clampf(float v, float lo, float hi): float {
+    if v < lo { return lo }
+    if v > hi { return hi }
+    return v
+}
+
+func lerp(float a, float b, float t): float { return a + (b - a) * t }
+
+func smooth(float t): float {
+    float u = clampf(t, 0.0, 1.0)
+    return u * u * (3.0 - 2.0 * u)
+}
+
+// 把 v 从 [a0,a1] 线性映射到 [b0,b1] 并夹紧
+func remap(float v, float a0, float a1, float b0, float b1): float {
+    if a1 == a0 { return b0 }
+    return clampf(lerp(b0, b1, (v - a0) / (a1 - a0)), b0, b1)
+}
+
+// 由向量求屏幕角度（度，0=正右、顺时针为正 ✓ 与 fillPie 同一套）
+func dir_angle(float dx, float dy): float {
+    if dx > -0.0001 and dx < 0.0001 { dx = 0.0001 }
+    float a = maths.atan(dy / dx) / D2R
+    if dx < 0.0 { a = a + 180.0 }
+    return a
+}
+
+// 局部坐标 → 世界坐标（绕 (cx,cy) 旋转 rot 度）
+func wx(float cx, float cy, float lx, float ly, float rot): float {
+    float r = rot * D2R
+    return cx + lx * maths.cos(r) - ly * maths.sin(r)
+}
+
+// ⚠ 这里原来错写成 `return cx + ...` ✗ —— 结果凡是经 `wy` 定位的部位（脖根 / 眼 / 喙 / 喉囊 / 尾羽）
+//   统统被平移了 (cx − cy) 个像素 ⇒ 头飘在上面、眼睛和喙落在身体右下 ✗（"头和喙不在一处"的根因 ✓）
+//   ⇒ 用能打印坐标的调试标记定位出来的 ✓（别靠肉眼猜 ✓）
+func wy(float cx, float cy, float lx, float ly, float rot): float {
+    float r = rot * D2R
+    return cy + lx * maths.sin(r) + ly * maths.cos(r)
+}
+
+// 二次贝塞尔（分量版，省得写解构 ✓）
+func qbx(float x0, float y0, float cx, float cy, float x1, float y1, float t): float {
+    float mt = 1.0 - t
+    return mt * mt * x0 + 2.0 * mt * t * cx + t * t * x1
+}
+
+func qby(float x0, float y0, float cx, float cy, float x1, float y1, float t): float {
+    float mt = 1.0 - t
+    return mt * mt * y0 + 2.0 * mt * t * cy + t * t * y1
+}
+
+// ==================== 颜色 ====================
+
+// 天空渐变：u=0 天顶 → u=1 海平线（黄昏四段 ✓）
+func sky_color(float u): Color {
+    int r = 0
+    int g = 0
+    int b = 0
+    if u < 0.42 {
+        float t = u / 0.42
+        r = _int(lerp(16.0, 56.0, t))
+        g = _int(lerp(28.0, 56.0, t))
+        b = _int(lerp(66.0, 108.0, t))
+    } eif u < 0.76 {
+        float t = (u - 0.42) / 0.34
+        r = _int(lerp(56.0, 194.0, t))
+        g = _int(lerp(56.0, 120.0, t))
+        b = _int(lerp(108.0, 122.0, t))
+    } else {
+        float t = (u - 0.76) / 0.24
+        r = _int(lerp(194.0, 252.0, t))
+        g = _int(lerp(120.0, 192.0, t))
+        b = _int(lerp(122.0, 118.0, t))
+    }
+    return SDL3.packColor(r, g, b, 255)
+}
+
+// 海水渐变：u=0 海平线 → u=1 最近处
+func water_color(float u): Color {
+    int r = _int(lerp(104.0, 20.0, u))
+    int g = _int(lerp(88.0, 30.0, u))
+    int b = _int(lerp(122.0, 62.0, u))
+    return SDL3.packColor(r, g, b, 255)
+}
+
+// ==================== 基础图元封装 ====================
+
+// 填充椭圆（可选旋转）—— 框架没有椭圆图元 ⇒ 用三角扇自己拼 ✓
+func fill_ellipse(Renderer r, float cx, float cy, float rx, float ry, float angDeg, Color c) {
+    if rx <= 0.0 or ry <= 0.0 { return }
+    int cr = SDL3.colorR(c)
+    int cg = SDL3.colorG(c)
+    int cb = SDL3.colorB(c)
+    int ca = SDL3.colorA(c)
+    int segs = 30
+    float rad = angDeg * D2R
+    float co = maths.cos(rad)
+    float si = maths.sin(rad)
+    for 0 : segs - 1 to i {
+        float a0 = 2.0 * PI * _float(i) / _float(segs)
+        float a1 = 2.0 * PI * _float(i + 1) / _float(segs)
+        float lx0 = rx * maths.cos(a0)
+        float ly0 = ry * maths.sin(a0)
+        float lx1 = rx * maths.cos(a1)
+        float ly1 = ry * maths.sin(a1)
+        r.fillTri(cx, cy,
+                  cx + lx0 * co - ly0 * si, cy + lx0 * si + ly0 * co,
+                  cx + lx1 * co - ly1 * si, cy + lx1 * si + ly1 * co,
+                  cr, cg, cb, ca)
+    }
+}
+
+// 带圆头的粗线段（框架只有 1px 的 drawLine ✗ ⇒ 腿 / 脖子 / 羽毛线都用这个 ✓）
+func thick_line(Renderer r, float x0, float y0, float x1, float y1, float wd, Color c) {
+    float hw = wd / 2.0
+    float dx = x1 - x0
+    float dy = y1 - y0
+    float len = maths.sqrt(dx * dx + dy * dy)
+    int cr = SDL3.colorR(c)
+    int cg = SDL3.colorG(c)
+    int cb = SDL3.colorB(c)
+    int ca = SDL3.colorA(c)
+    if len < 0.001 {
+        r.setColor(c)
+        r.fillCircle(x0, y0, hw)
+        return
+    }
+    float nx = -dy / len * hw
+    float ny = dx / len * hw
+    r.fillTri(x0 + nx, y0 + ny, x1 + nx, y1 + ny, x1 - nx, y1 - ny, cr, cg, cb, ca)
+    r.fillTri(x0 + nx, y0 + ny, x1 - nx, y1 - ny, x0 - nx, y0 - ny, cr, cg, cb, ca)
+    r.setColor(c)
+    r.fillCircle(x0, y0, hw)
+    r.fillCircle(x1, y1, hw)
+}
+
+// 旋转三角形（固定色，等价于框架的 drawTriangle 但吃**打包色** ✓）
+func tri_rot(Renderer r, float x, float y, float size, float angDeg, Color c) {
+    float rad = angDeg * D2R
+    float co = maths.cos(rad)
+    float si = maths.sin(rad)
+    int cr = SDL3.colorR(c)
+    int cg = SDL3.colorG(c)
+    int cb = SDL3.colorB(c)
+    int ca = SDL3.colorA(c)
+    r.fillTri(x + co * 0.0 - si * (-size), y + si * 0.0 + co * (-size),
+              x + co * size - si * size, y + si * size + co * size,
+              x + co * (-size) - si * size, y + si * (-size) + co * size,
+              cr, cg, cb, ca)
+}
+
+// ==================== 背景 ====================
+
+func draw_sky(Renderer r) {
+    int bands = 26
+    float h = SEA_Y / _float(bands)
+    for 0 : bands - 1 to i {
+        float u = _float(i) / _float(bands - 1)
+        r.setColor(sky_color(u))
+        r.fillRect(0.0, _float(i) * h, _float(WIN_W), h + 1.0)
+    }
+}
+
+func draw_stars(Renderer r, float t) {
+    r.setBlendMode(BlendMode.BLEND)
+    Color sc = SDL3.packColor(255, 250, 235, 255)
+    for 0 : 25 to i {
+        float u = maths.fmod(_float(i) * 0.6180339887, 1.0)
+        float v = maths.fmod(_float(i) * 0.4142135624, 1.0)
+        float x = u * _float(WIN_W)
+        float y = v * (SEA_Y * 0.34)
+        float tw = 0.5 + 0.5 * maths.sin(t * 1.7 + _float(i) * 1.3)
+        r.setColor(SDL3.withAlpha(sc, _int(40.0 + 150.0 * tw)))
+        r.fillCircle(x, y, 1.0 + 1.3 * tw)
+    }
+    r.setBlendMode(BlendMode.NONE)
+}
+
+func draw_sun(Renderer r, float t) {
+    float sx = 706.0
+    float sy = 296.0
+    r.setBlendMode(BlendMode.BLEND)
+    r.setColor(SDL3.withAlpha(C_SUN_GLOW, 24))
+    r.fillCircle(sx, sy, 136.0)
+    r.setColor(SDL3.withAlpha(C_SUN_GLOW, 38))
+    r.fillCircle(sx, sy, 98.0)
+    r.setColor(SDL3.withAlpha(C_SUN_GLOW, 62))
+    r.fillCircle(sx, sy, 70.0)
+    r.setColor(C_SUN_GLOW)
+    r.fillCircle(sx, sy, 50.0)
+    r.setColor(C_SUN_CORE)
+    r.fillCircle(sx, sy, 40.0)
+    r.setBlendMode(BlendMode.NONE)
+    // 水面反光柱：越远越窄、越亮 ✓
+    r.setBlendMode(BlendMode.BLEND)
+    for 0 : 17 to i {
+        float yy = SEA_Y + 6.0 + _float(i) * 11.2
+        float w = 64.0 - _float(i) * 2.4
+        if w < 8.0 { w = 8.0 }
+        float wob = maths.sin(t * 1.7 + _float(i) * 0.62) * 9.0
+        float al = 118.0 - _float(i) * 5.2
+        if al < 14.0 { al = 14.0 }
+        r.setColor(SDL3.withAlpha(C_SUN_GLOW, _int(al)))
+        r.fillRect(sx - w / 2.0 + wob, yy, w, 3.0)
+    }
+    r.setBlendMode(BlendMode.NONE)
+}
+
+func draw_hills(Renderer r) {
+    r.setColor(C_HILL)
+    r.fillCircle(150.0, SEA_Y + 34.0, 96.0)
+    r.fillCircle(206.0, SEA_Y + 46.0, 66.0)
+    r.fillCircle(862.0, SEA_Y + 40.0, 118.0)
+    r.fillCircle(772.0, SEA_Y + 52.0, 74.0)
+}
+
+func draw_clouds(Renderer r, Pelican p) {
+    r.setBlendMode(BlendMode.BLEND)
+    for 0 : p.clouds.len() - 1 to i {
+        Cloud c = p.clouds[i]
+        float u = clampf(c.y / SEA_Y, 0.0, 1.0)
+        Color base = sky_color(u * 0.88)
+        Color lit = SDL3.brighten(base, 46)
+        Color dark = SDL3.darken(base, 30)
+        float s = c.s
+        r.setColor(SDL3.withAlpha(dark, 150))
+        r.fillCircle(c.x - 42.0 * s, c.y + 9.0 * s, 21.0 * s)
+        r.fillCircle(c.x + 40.0 * s, c.y + 9.0 * s, 19.0 * s)
+        r.setColor(SDL3.withAlpha(lit, 205))
+        r.fillRect(c.x - 46.0 * s, c.y + 2.0 * s, 92.0 * s, 17.0 * s)
+        r.fillCircle(c.x - 28.0 * s, c.y + 2.0 * s, 19.0 * s)
+        r.fillCircle(c.x + 2.0 * s, c.y - 8.0 * s, 26.0 * s)
+        r.fillCircle(c.x + 30.0 * s, c.y + 1.0 * s, 18.0 * s)
+        r.setColor(SDL3.withAlpha(SDL3.brighten(base, 76), 150))
+        r.fillCircle(c.x - 4.0 * s, c.y - 14.0 * s, 15.0 * s)
+    }
+    r.setBlendMode(BlendMode.NONE)
+}
+
+func draw_sea(Renderer r, float t) {
+    int bands = 14
+    float h = (_float(WIN_H) - SEA_Y) / _float(bands)
+    for 0 : bands - 1 to i {
+        float u = _float(i) / _float(bands - 1)
+        r.setColor(water_color(u))
+        r.fillRect(0.0, SEA_Y + _float(i) * h, _float(WIN_W), h + 1.0)
+    }
+    // 海平线上的暖色压边（落日把水面照出一条亮线 ✓）
+    r.setBlendMode(BlendMode.BLEND)
+    r.setColor(SDL3.withAlpha(C_SUN_GLOW, 120))
+    r.fillRect(0.0, SEA_Y - 1.0, _float(WIN_W), 2.0)
+    r.setBlendMode(BlendMode.NONE)
+    // 波光（4 行正弦短线 ✓）
+    Color wc = SDL3.packColor(200, 222, 242, 255)
+    for 0 : 3 to k {
+        float by = SEA_Y + 26.0 + _float(k) * 44.0
+        float amp = 3.0 + _float(k) * 1.6
+        float ph = t * (1.1 + _float(k) * 0.23)
+        int segs = 24
+        float step = _float(WIN_W) / _float(segs)
+        r.setColor(SDL3.withAlpha(wc, 92 - k * 20))
+        float px = 0.0
+        float py = by + maths.sin(px * 0.018 + ph) * amp
+        for 1 : segs to i {
+            float x = _float(i) * step
+            float y = by + maths.sin(x * 0.018 + ph) * amp
+            r.drawLine(px, py, x, y)
+            px = x
+            py = y
+        }
+    }
+    // 细碎反光点
+    r.setBlendMode(BlendMode.BLEND)
+    Color sc = SDL3.packColor(255, 236, 200, 255)
+    for 0 : 27 to i {
+        float u = maths.fmod(_float(i) * 0.6180339887, 1.0)
+        float v = maths.fmod(_float(i) * 0.4142135624, 1.0)
+        float x = u * _float(WIN_W)
+        float y = SEA_Y + 22.0 + v * (_float(WIN_H) - SEA_Y - 32.0)
+        float tw = 0.5 + 0.5 * maths.sin(t * 2.4 + _float(i) * 1.7)
+        r.setColor(SDL3.withAlpha(sc, _int(28.0 + 110.0 * tw)))
+        r.drawLine(x, y, x + 3.0 + 8.0 * tw, y)
+    }
+    r.setBlendMode(BlendMode.NONE)
+}
+
+// 水面倒影（身体下方的几片抖动椭圆 ✓）
+func draw_reflection(Renderer r, Geo g, float t) {
+    r.setBlendMode(BlendMode.BLEND)
+    Color rc = SDL3.packColor(228, 238, 250, 255)
+    for 0 : 3 to i {
+        float yy = SEA_Y + 16.0 + _float(i) * 15.0
+        float wob = maths.sin(t * 1.4 + _float(i) * 0.9) * 5.0
+        float rxw = 60.0 - _float(i) * 12.0
+        float al = 34.0 - _float(i) * 9.0
+        fill_ellipse(r, g.bx + wob, yy, rxw, 7.0 - _float(i) * 1.5, 0.0, SDL3.withAlpha(rc, _int(al)))
+    }
+    r.setBlendMode(BlendMode.NONE)
+}
+
+// ==================== 鹈鹕：姿态 → 几何 ====================
+
+func compute_geo(Pelican p): Geo {
+    Geo g = new Geo()
+    g.rot = p.bodyRot
+    g.bx = BIRD_X
+    g.by = BIRD_Y + p.bob + 10.0 * p.duck
+    // 脖子根：身体局部 (26, -26)（偏上偏前 ✓）旋转到世界
+    g.nbx = wx(g.bx, g.by, 26.0, -26.0, g.rot)
+    g.nby = wy(g.bx, g.by, 26.0, -26.0, g.rot)
+    float hAng = g.rot + p.headExtra
+    g.hang = hAng
+    g.hx = g.nbx + NECK_LEN * maths.cos(hAng * D2R)
+    g.hy = g.nby + NECK_LEN * maths.sin(hAng * D2R)
+    // 控制点：中点再往后上方顶一点 ⇒ 脖子呈 S 形 ✓
+    float fx = maths.cos(hAng * D2R)
+    float fy = maths.sin(hAng * D2R)
+    g.ncx = (g.nbx + g.hx) / 2.0 - fx * 10.0
+    g.ncy = (g.nby + g.hy) / 2.0 - fy * 10.0 - 18.0
+    g.wingA = p.wingA
+    g.wingB = p.wingB
+    g.tuck = p.legTuck
+    float base = (SEA_Y + 10.0) - (g.by + 36.0)
+    if base < 8.0 { base = 8.0 }
+    g.legL = base * (1.0 - 0.62 * p.legTuck)
+    return g
+}
+
+// 腿（画在身体之前 ⇒ 被身体挡住上半截 ✓）
+func draw_legs(Renderer r, Geo g) {
+    float hx1 = g.bx - 12.0
+    float hx2 = g.bx + 12.0
+    float hy = g.by + 34.0
+    float f1 = hy + g.legL
+    float f2 = hy + g.legL
+    thick_line(r, hx1, hy, hx1 - 6.0, f1, 8.0, C_LEG)
+    thick_line(r, hx2, hy, hx2 + 8.0, f2, 8.0, C_LEG)
+    // 蹼（小三角 ✓）
+    float c1 = SDL3.colorR(C_LEG)
+    float cg1 = SDL3.colorG(C_LEG)
+    float cb1 = SDL3.colorB(C_LEG)
+    r.fillTri(hx1 - 12.0, f1 - 2.0, hx1 + 2.0, f1 - 1.0, hx1 - 5.0, f1 + 6.0, _int(c1), _int(cg1), _int(cb1), 255)
+    r.fillTri(hx2 + 2.0, f2 - 2.0, hx2 + 16.0, f2 - 1.0, hx2 + 8.0, f2 + 6.0, _int(c1), _int(cg1), _int(cb1), 255)
+}
+
+// 翅膀（近 / 远共用 ✓）
+//   做法：沿翼展铺一串**渐细**的圆（并让角度随展向轻微后掠 ⇒ 有一点弯 ✓），
+//         末端接三根飞羽、翼面上压两道覆羽暗线 ✓
+//   ⚠ 早先用「两个椭圆叠起来」⇒ 抬起时就是一块灰枕头 ✗（实测难看 ✓ 已换掉 ✓）
+func draw_wing(Renderer r, float ax, float ay, float ang, float scale, Color c, Color tip) {
+    int cr = SDL3.colorR(c)
+    int cg = SDL3.colorG(c)
+    int cb = SDL3.colorB(c)
+    int n = 8
+    // ---- 翼面：沿翼展把「上下缘」连成三角带 ⇒ 一个渐细、带后掠的实心翼形 ✓ ----
+    float pxu = 0.0
+    float pyu = 0.0
+    float pxl = 0.0
+    float pyl = 0.0
+    float tipX = 0.0
+    float tipY = 0.0
+    float tipUx = 0.0
+    float tipUy = 0.0
+    float tipLx = 0.0
+    float tipLy = 0.0
+    for 0 : n to i {
+        float u = _float(i) / _float(n)
+        float a2 = ang + 18.0 * u * u
+        float dist = 8.0 + 64.0 * u * scale
+        float cxw = ax + dist * maths.cos(a2 * D2R)
+        float cyw = ay + dist * maths.sin(a2 * D2R)
+        float hw = (15.0 - 10.0 * u) * scale            // 半宽：根部 15 → 翼尖 5 ✓
+        float nx = -maths.sin(a2 * D2R)
+        float ny = maths.cos(a2 * D2R)
+        float ux = cxw + nx * hw
+        float uy = cyw + ny * hw
+        float lx = cxw - nx * hw
+        float ly = cyw - ny * hw
+        if i > 0 {
+            r.fillTri(pxu, pyu, ux, uy, lx, ly, cr, cg, cb, 255)
+            r.fillTri(pxu, pyu, lx, ly, pxl, pyl, cr, cg, cb, 255)
+        }
+        pxu = ux
+        pyu = uy
+        pxl = lx
+        pyl = ly
+        tipX = cxw
+        tipY = cyw
+        tipUx = ux
+        tipUy = uy
+        tipLx = lx
+        tipLy = ly
+    }
+    // ---- 前缘亮线（受光）----
+    float b0x = ax + 6.0 * scale * maths.cos(ang * D2R) - maths.sin(ang * D2R) * 15.0 * scale
+    float b0y = ay + 6.0 * scale * maths.sin(ang * D2R) + maths.cos(ang * D2R) * 15.0 * scale
+    thick_line(r, b0x, b0y, tipUx, tipUy, 3.0, SDL3.withAlpha(C_FEATHER_L, 190))
+    // ---- 下缘暗边 + 翼尖（抬起来对着天空时才立得住 ✓）----
+    float b1x = ax + 6.0 * scale * maths.cos(ang * D2R) + maths.sin(ang * D2R) * 15.0 * scale
+    float b1y = ay + 6.0 * scale * maths.sin(ang * D2R) - maths.cos(ang * D2R) * 15.0 * scale
+    thick_line(r, b1x, b1y, tipLx, tipLy, 2.6, SDL3.withAlpha(tip, 210))
+    thick_line(r, tipUx, tipUy, tipLx, tipLy, 2.6, SDL3.withAlpha(tip, 210))
+    // ---- 翼尖的飞羽缝（短线段，别做成穿身而过的长棍 ✗）----
+    for 0 : 2 to i {
+        float a3 = ang + 16.0 + _float(i - 1) * 7.0
+        float so = 30.0 + _float(i) * 7.0
+        float eo = so + 14.0
+        thick_line(r,
+                   ax + so * scale * maths.cos(a3 * D2R), ay + so * scale * maths.sin(a3 * D2R),
+                   ax + eo * scale * maths.cos(a3 * D2R), ay + eo * scale * maths.sin(a3 * D2R),
+                   2.0, SDL3.withAlpha(tip, 150))
+    }
+}
+
+// 脖子（一串渐细的圆 ⇒ 平滑 ✓）
+func draw_neck(Renderer r, Geo g) {
+    int n = 22
+    r.setColor(C_FEATHER)
+    for 0 : n to i {
+        float u = _float(i) / _float(n)
+        float nx = qbx(g.nbx, g.nby, g.ncx, g.ncy, g.hx, g.hy, u)
+        float ny = qby(g.nbx, g.nby, g.ncx, g.ncy, g.hx, g.hy, u)
+        float rad = lerp(25.0, 14.0, u)
+        r.fillCircle(nx, ny, rad)
+    }
+    // 脖子下缘的暗部
+    for 0 : 9 to i {
+        float u = _float(i) / 9.0
+        float nx = qbx(g.nbx, g.nby, g.ncx, g.ncy, g.hx, g.hy, u)
+        float ny = qby(g.nbx, g.nby, g.ncx, g.ncy, g.hx, g.hy, u)
+        r.setColor(SDL3.withAlpha(C_FEATHER_D, 90))
+        r.fillCircle(nx + 7.0, ny + 7.0, lerp(13.0, 8.0, u))
+    }
+    r.setBlendMode(BlendMode.NONE)
+}
+
+// 鱼（跳跃中 / 嘴里都用它 ✓）—— 必须定义在 draw_head 之前（头里的鱼要用它 ✓）
+func draw_fish(Renderer r, float x, float y, float s, float ang, int alpha) {
+    Color body = SDL3.withAlpha(C_FISH, alpha)
+    Color belly = SDL3.withAlpha(C_FISH_B, alpha)
+    Color tail = SDL3.withAlpha(C_FISH_T, alpha)
+    fill_ellipse(r, x, y, 15.0 * s, 7.5 * s, ang, body)
+    fill_ellipse(r, x, y + 2.0 * s, 12.0 * s, 4.0 * s, ang, belly)
+    float rad = ang * D2R
+    float dx = maths.cos(rad)
+    float dy = maths.sin(rad)
+    float tx = x - dx * 13.0 * s
+    float ty = y - dy * 13.0 * s
+    float p1x = tx - dy * 8.0 * s
+    float p1y = ty + dx * 8.0 * s
+    float p2x = tx + dy * 8.0 * s
+    float p2y = ty - dx * 8.0 * s
+    float p3x = tx - dx * 12.0 * s
+    float p3y = ty - dy * 12.0 * s
+    r.fillTri(p1x, p1y, p2x, p2y, p3x, p3y,
+              SDL3.colorR(tail), SDL3.colorG(tail), SDL3.colorB(tail), SDL3.colorA(tail))
+    float ex = x + dx * 6.0 * s - dy * 2.4 * s
+    float ey = y + dy * 6.0 * s + dx * 2.4 * s
+    fill_ellipse(r, ex, ey, 1.9 * s, 1.9 * s, 0.0, SDL3.withAlpha(C_EYE, alpha))
+}
+
+// 头 + 喙 + 喉囊（含嘴里那条鱼 ✓）
+func draw_head(Renderer r, Pelican p, Geo g) {
+    float hx = g.hx
+    float hy = g.hy
+    float a = g.hang
+    // 头
+    r.setColor(C_FEATHER)
+    r.fillCircle(hx, hy, 20.0)
+    r.setColor(SDL3.withAlpha(C_FEATHER_L, 200))
+    r.fillCircle(hx - 4.0, hy - 6.0, 12.0)
+    // 后脑的短冠羽（做成几根小羽毛 ✓ 别用灰疙瘩 ✗ 那样像个瘤子）
+    float cf1x = wx(hx, hy, -13.0, -11.0, a)
+    float cf1y = wy(hx, hy, -13.0, -11.0, a)
+    float cf2x = wx(hx, hy, -29.0, -19.0, a)
+    float cf2y = wy(hx, hy, -29.0, -19.0, a)
+    thick_line(r, cf1x, cf1y, cf2x, cf2y, 3.5, SDL3.withAlpha(C_FEATHER_D, 160))
+
+    // ---- 喉囊（先画 ⇒ 喙压在它上面就有清晰边 ✓）----
+    float pbx = wx(hx, hy, 14.0, 6.0, a)
+    float pby = wy(hx, hy, 14.0, 6.0, a)
+    float pr = 30.0 + 42.0 * p.pouch
+    float openB = p.beakOpen * 22.0
+    r.setBlendMode(BlendMode.BLEND)
+    Color pc = SDL3.withAlpha(C_POUCH, 205)
+    r.fillPie(pbx, pby, pr, a + 15.0 + openB, a + 172.0, SDL3.colorR(pc), SDL3.colorG(pc), SDL3.colorB(pc), SDL3.colorA(pc))
+    // 喉囊的暗边（内圈一层，别太深 ⇒ 否则像个橘子瓣 ✗）
+    Color pd = SDL3.withAlpha(C_BEAK_D, 55)
+    r.fillPie(pbx, pby, pr * 0.64, a + 24.0 + openB, a + 162.0, SDL3.colorR(pd), SDL3.colorG(pd), SDL3.colorB(pd), SDL3.colorA(pd))
+    r.setBlendMode(BlendMode.NONE)
+
+    // ---- 嘴里的鱼（兜住那段时间看得见 ✓）----
+    if p.pouch > 0.18 and p.caughtThisRound == 1 and p.fishOn == 0.0 {
+        float fsx = wx(hx, hy, 40.0, 26.0 + 14.0 * p.pouch, a)
+        float fsy = wy(hx, hy, 40.0, 26.0 + 14.0 * p.pouch, a)
+        float fsc = 0.75
+        float fal = clampf(p.pouch * 1.2, 0.0, 1.0)
+        float fx0 = wx(hx, hy, 12.0, 4.0, a)
+        float fy0 = wy(hx, hy, 12.0, 4.0, a)
+        float fdx = fsx - fx0
+        float fdy = fsy - fy0
+        float fang = dir_angle(fdx, fdy)
+        draw_fish(r, fsx, fsy, fsc, fang, _int(235.0 * fal))
+    }
+
+    // ---- 上喙：**扁而长**、由宽到窄（用两个三角拼成锥形 ✓ 单个三角会像箭头 ✗）----
+    float ua = a - 10.0 * p.beakOpen
+    float a1x = wx(hx, hy, 10.0, -5.0, ua)
+    float a1y = wy(hx, hy, 10.0, -5.0, ua)
+    float a2x = wx(hx, hy, 10.0, 7.0, ua)
+    float a2y = wy(hx, hy, 10.0, 7.0, ua)
+    float a3x = wx(hx, hy, 98.0, 1.0, ua)
+    float a3y = wy(hx, hy, 98.0, 1.0, ua)
+    float a4x = wx(hx, hy, 92.0, 8.0, ua)
+    float a4y = wy(hx, hy, 92.0, 8.0, ua)
+    int cbr = SDL3.colorR(C_BEAK)
+    int cbg = SDL3.colorG(C_BEAK)
+    int cbb = SDL3.colorB(C_BEAK)
+    r.fillTri(a1x, a1y, a2x, a2y, a4x, a4y, cbr, cbg, cbb, 255)
+    r.fillTri(a1x, a1y, a4x, a4y, a3x, a3y, cbr, cbg, cbb, 255)
+    // 喙尖那一点点下钩（小三角 ⇒ 有鹈鹕味儿但不抢戏 ✓）
+    float k1x = wx(hx, hy, 86.0, 0.0, ua)
+    float k1y = wy(hx, hy, 86.0, 0.0, ua)
+    float k2x = wx(hx, hy, 101.0, 6.0, ua)
+    float k2y = wy(hx, hy, 101.0, 6.0, ua)
+    float k3x = wx(hx, hy, 88.0, 12.0, ua)
+    float k3y = wy(hx, hy, 88.0, 12.0, ua)
+    r.fillTri(k1x, k1y, k2x, k2y, k3x, k3y,
+              SDL3.colorR(C_BEAK_D), SDL3.colorG(C_BEAK_D), SDL3.colorB(C_BEAK_D), 255)
+    // 下喙（贴在上喙下方、**比上喙短一截** ✓ —— 先前伸到 80 长 ⇒ 像从喙里戳出一根棍子 ✗）
+    float la = a + 9.0 + 20.0 * p.beakOpen
+    float l1x = wx(hx, hy, 10.0, 6.0, la)
+    float l1y = wy(hx, hy, 10.0, 6.0, la)
+    float l2x = wx(hx, hy, 10.0, 12.0, la)
+    float l2y = wy(hx, hy, 10.0, 12.0, la)
+    float l3x = wx(hx, hy, 66.0, 9.0, la)
+    float l3y = wy(hx, hy, 66.0, 9.0, la)
+    r.fillTri(l1x, l1y, l2x, l2y, l3x, l3y,
+              SDL3.colorR(C_BEAK_D), SDL3.colorG(C_BEAK_D), SDL3.colorB(C_BEAK_D), 255)
+    // 喙上的鼻孔小线
+    float nx1 = wx(hx, hy, 34.0, 1.0, ua)
+    float ny1 = wy(hx, hy, 34.0, 1.0, ua)
+    float nx2 = wx(hx, hy, 46.0, 1.0, ua)
+    float ny2 = wy(hx, hy, 46.0, 1.0, ua)
+    thick_line(r, nx1, ny1, nx2, ny2, 2.0, SDL3.withAlpha(C_BEAK_D, 200))
+
+    // ---- 眼（会眨 ✓）----
+    float ex = wx(hx, hy, 5.0, -6.0, a)
+    float ey = wy(hx, hy, 5.0, -6.0, a)
+    Color ring = SDL3.packColor(240, 205, 130, 190)
+    fill_ellipse(r, ex, ey, 9.0, 8.0, a, ring)
+    float er = 3.9 * clampf(p.eyeOpen, 0.06, 1.0)
+    fill_ellipse(r, ex, ey, 3.9, er, a, C_EYE)
+    if p.eyeOpen > 0.45 {
+        float gx = wx(hx, hy, 6.6, -8.2, a)
+        float gy = wy(hx, hy, 6.6, -8.2, a)
+        fill_ellipse(r, gx, gy, 1.5, 1.5, 0.0, SDL3.withAlpha(C_WHITE, 235))
+    }
+}
+
+func draw_pelican(Renderer r, Pelican p, Geo g) {
+    // ---- 远翅（先画 ⇒ 被身体压住 ✓）----
+    //   ⚠ 只在**抬起来**的时候画：收翅时它在身体后面露出一块灰疙瘩 ✗（像驼背 ✓ 实测难看 ✓）
+    if g.wingB < -28.0 {
+        float fwx = wx(g.bx, g.by, -4.0, -18.0, g.rot)
+        float fwy = wy(g.bx, g.by, -4.0, -18.0, g.rot)
+        draw_wing(r, fwx, fwy, g.wingB, 0.86, SDL3.darken(C_WING, 18), SDL3.darken(C_WING_TIP, 12))
+    }
+
+    // ---- 腿 ----
+    draw_legs(r, g)
+
+    // ---- 尾羽（圆钝的一小撮 + 两根羽线 ⇒ 别做成鲨鱼尾 ✗）----
+    float tbx = wx(g.bx, g.by, -74.0, 2.0, g.rot)
+    float tby = wy(g.bx, g.by, -74.0, 2.0, g.rot)
+    fill_ellipse(r, tbx, tby, 30.0, 15.0, g.rot - 8.0, C_WING)
+    float q1x = wx(g.bx, g.by, -60.0, -4.0, g.rot)
+    float q1y = wy(g.bx, g.by, -60.0, -4.0, g.rot)
+    float q2x = wx(g.bx, g.by, -98.0, -1.0, g.rot)
+    float q2y = wy(g.bx, g.by, -98.0, -1.0, g.rot)
+    thick_line(r, q1x, q1y, q2x, q2y, 3.0, SDL3.withAlpha(C_WING_TIP, 200))
+    float q3x = wx(g.bx, g.by, -58.0, 7.0, g.rot)
+    float q3y = wy(g.bx, g.by, -58.0, 7.0, g.rot)
+    float q4x = wx(g.bx, g.by, -94.0, 9.0, g.rot)
+    float q4y = wy(g.bx, g.by, -94.0, 9.0, g.rot)
+    thick_line(r, q3x, q3y, q4x, q4y, 3.0, SDL3.withAlpha(C_WING_TIP, 200))
+
+    // ---- 身体 ----
+    fill_ellipse(r, g.bx, g.by, 76.0, 48.0, g.rot, C_FEATHER)
+    fill_ellipse(r, g.bx - 2.0, g.by + 20.0, 52.0, 19.0, g.rot, SDL3.withAlpha(C_FEATHER_D, 110))
+    float hlx = wx(g.bx, g.by, 18.0, -16.0, g.rot)
+    float hly = wy(g.bx, g.by, 18.0, -16.0, g.rot)
+    fill_ellipse(r, hlx, hly, 42.0, 22.0, g.rot, SDL3.withAlpha(C_FEATHER_L, 190))
+
+    // ---- 脖子 / 头 / 喙 ----
+    draw_neck(r, g)
+    draw_head(r, p, g)
+
+    // ---- 吞咽：一口食物沿脖子往下走 ✓ ----
+    if p.swallow >= 0.0 and p.swallow <= 1.0 {
+        float su = p.swallow
+        float sx = qbx(g.nbx, g.nby, g.ncx, g.ncy, g.hx, g.hy, 1.0 - su)
+        float sy = qby(g.nbx, g.nby, g.ncx, g.ncy, g.hx, g.hy, 1.0 - su)
+        float sr = lerp(9.0, 14.0, su)
+        fill_ellipse(r, sx, sy, sr, sr * 0.82, -12.0 * su, SDL3.withAlpha(C_FEATHER_L, 210))
+    }
+
+    // ---- 近翅 ----
+    float nwx = wx(g.bx, g.by, -2.0, -16.0, g.rot)
+    float nwy = wy(g.bx, g.by, -2.0, -16.0, g.rot)
+    draw_wing(r, nwx, nwy, g.wingA, 1.0, C_WING, C_WING_TIP)
+}
+
+// ==================== 粒子 ====================
+
+func spawn_ripple(Pelican p, float x, float y, float maxR) {
+    p.ripples.add(new Ripple(x=x, y=y, age=0.0, max=maxR))
+}
+
+func spawn_splash(Pelican p, float x, float y, int n, float power, int seed) {
+    for 0 : n - 1 to i {
+        float u = maths.fmod(_float(i + seed) * 0.6180339887, 1.0)
+        float v = maths.fmod(_float(i + seed) * 0.2718281828, 1.0)
+        float ang = -170.0 + u * 160.0
+        float sp = power * (0.55 + v)
+        p.drops.add(new Drop(
+            x=x + (u - 0.5) * 26.0, y=y,
+            vx=sp * maths.cos(ang * D2R), vy=sp * maths.sin(ang * D2R),
+            life=0.5 + 0.7 * v, r=1.6 + 2.4 * v, a=_int(160.0 + 95.0 * v)))
+    }
+}
+
+func update_drops(Pelican p, float dt) {
+    for p.drops.len() - 1 : 0 : -1 to i {
+        Drop d = p.drops[i]
+        d.life = d.life - dt
+        d.vy = d.vy + 620.0 * dt
+        d.x = d.x + d.vx * dt
+        d.y = d.y + d.vy * dt
+        if d.life <= 0.0 {
+            int last = p.drops.len() - 1
+            p.drops[i] = p.drops[last]
+            p.drops.pop()
+        }
+    }
+    for p.ripples.len() - 1 : 0 : -1 to i {
+        Ripple rp = p.ripples[i]
+        rp.age = rp.age + dt
+        if rp.age >= 1.0 {
+            int last = p.ripples.len() - 1
+            p.ripples[i] = p.ripples[last]
+            p.ripples.pop()
+        }
+    }
+}
+
+func draw_drops(Renderer r, Pelican p) {
+    r.setBlendMode(BlendMode.BLEND)
+    Color dc = SDL3.packColor(228, 240, 252, 255)
+    for 0 : p.drops.len() - 1 to i {
+        Drop d = p.drops[i]
+        float k = clampf(d.life / 1.0, 0.0, 1.0)
+        int al = _int(_float(d.a) * k)
+        if al < 8 { continue }
+        r.setColor(SDL3.withAlpha(dc, al))
+        r.fillCircle(d.x, d.y, d.r * (0.6 + 0.4 * k))
+    }
+    r.setBlendMode(BlendMode.NONE)
+}
+
+// 水波圈（用「外圈填色 + 内圈填水色」做出环 ✓ 框架没有椭圆描边 ✗）
+func draw_ripples(Renderer r, Pelican p) {
+    r.setBlendMode(BlendMode.BLEND)
+    Color rc = SDL3.packColor(232, 242, 252, 255)
+    for 0 : p.ripples.len() - 1 to i {
+        Ripple rp = p.ripples[i]
+        float k = clampf(rp.age, 0.0, 1.0)
+        float rr = rp.max * (0.25 + 0.75 * k)
+        float u = clampf((rp.y - SEA_Y) / (_float(WIN_H) - SEA_Y), 0.0, 1.0)
+        int al = _int(140.0 * (1.0 - k))
+        if al < 8 { continue }
+        fill_ellipse(r, rp.x, rp.y, rr, rr * 0.30, 0.0, SDL3.withAlpha(rc, al))
+        fill_ellipse(r, rp.x, rp.y, rr * 0.80, rr * 0.24, 0.0, water_color(u))
+    }
+    r.setBlendMode(BlendMode.NONE)
+}
+
+// 水面压边：画在鹈鹕之后 ⇒ 腿「插进水里」✓
+func draw_front_water(Renderer r, float t) {
+    r.setBlendMode(BlendMode.BLEND)
+    Color fc = SDL3.packColor(206, 226, 246, 255)
+    for 0 : 2 to k {
+        float by = SEA_Y + 4.0 + _float(k) * 7.0
+        float ph = t * (1.3 + _float(k) * 0.4)
+        r.setColor(SDL3.withAlpha(fc, 120 - k * 34))
+        float px = 150.0
+        float py = by + maths.sin(px * 0.02 + ph) * 2.4
+        for 1 : 16 to i {
+            float x = 150.0 + _float(i) * 26.0
+            float y = by + maths.sin(x * 0.02 + ph) * 2.4
+            r.drawLine(px, py, x, y)
+            px = x
+            py = y
+        }
+    }
+    r.setBlendMode(BlendMode.NONE)
+}
+
+// ==================== 状态机 ====================
+
+func state_name(int st): string {
+    if st == ST_IDLE { return "待机·梳羽" }
+    if st == ST_ALERT { return "发现鱼！" }
+    if st == ST_FLAP { return "振翅起飞" }
+    if st == ST_DIVE { return "俯冲入水" }
+    if st == ST_SCOOP { return "喉囊兜住鱼" }
+    if st == ST_GULP { return "仰头吞咽" }
+    return "?"
+}
+
+func start_fish_jump(Pelican p) {
+    p.fishOn = 1.0
+    p.fishT = 0.0
+    p.fishX = BIRD_X + 176.0
+    p.fishY = SEA_Y + 8.0
+    p.fishVX = -74.0
+    p.fishVY = -308.0
+    spawn_ripple(p, p.fishX, SEA_Y + 6.0, 40.0)
+}
+
+func enter_state(Pelican p, int st) {
+    p.state = st
+    p.stT = 0.0
+    if st == ST_IDLE {
+        if p.caughtThisRound == 1 { p.caught = p.caught + 1 }
+        p.caughtThisRound = 0
+        p.pouch = 0.0
+        p.swallow = -1.0
+        p.beakOpen = 0.02
+        p.duck = 0.0
+        p.legTuck = 0.0
+        p.diveSplashed = 0
+    }
+    if st == ST_ALERT {
+        start_fish_jump(p)
+        p.duck = 0.35
+    }
+    if st == ST_FLAP { p.legTuck = 0.45 }
+    if st == ST_DIVE {
+        p.diveSplashed = 0
+        p.legTuck = 0.9
+    }
+    if st == ST_SCOOP {
+        p.pouch = 1.0
+        p.caughtThisRound = 1
+        p.legTuck = 0.0
+        p.beakOpen = 0.75
+        spawn_ripple(p, BIRD_X + 96.0, SEA_Y + 8.0, 46.0)
+        spawn_splash(p, BIRD_X + 96.0, SEA_Y + 6.0, 12, 150.0, 3)
+    }
+    if st == ST_GULP { p.swallow = 0.0 }
+}
+
+func update_state(Pelican p, float dt) {
+    p.stT = p.stT + dt
+    float dur = STATE_DUR[p.state]
+    if p.stT < dur { return }
+    int st = p.state
+    if st == ST_IDLE { enter_state(p, ST_ALERT); return }
+    if st == ST_ALERT { enter_state(p, ST_FLAP); return }
+    if st == ST_FLAP { enter_state(p, ST_DIVE); return }
+    if st == ST_DIVE { enter_state(p, ST_SCOOP); return }
+    if st == ST_SCOOP { enter_state(p, ST_GULP); return }
+    enter_state(p, ST_IDLE)
+}
+
+func update_fish(Pelican p, float dt) {
+    if p.fishOn == 0.0 { return }
+    p.fishT = p.fishT + dt
+    p.fishX = p.fishX + p.fishVX * dt
+    p.fishY = p.fishY + p.fishVY * dt
+    p.fishVY = p.fishVY + 430.0 * dt
+    // 俯冲那一下把它叼走 ✓
+    if p.state == ST_DIVE and p.stT > 0.30 {
+        p.fishOn = 0.0
+        spawn_splash(p, BIRD_X + 96.0, SEA_Y - 4.0, 16, 170.0, 7)
+        spawn_ripple(p, BIRD_X + 96.0, SEA_Y + 8.0, 50.0)
+        return
+    }
+    if p.fishY > SEA_Y + 10.0 {
+        p.fishOn = 0.0
+        spawn_splash(p, p.fishX, SEA_Y + 4.0, 9, 120.0, 5)
+        spawn_ripple(p, p.fishX, SEA_Y + 6.0, 34.0)
+    }
+}
+
+func update_blink(Pelican p, float dt) {
+    p.blinkT = p.blinkT + dt
+    if p.blinkT > p.blinkNext {
+        p.blinkT = 0.0
+        p.blinkSeed = p.blinkSeed + 1
+        float u = maths.fmod(_float(p.blinkSeed) * 0.6180339887, 1.0)
+        p.blinkNext = 2.0 + 2.6 * u
+    }
+    // 眨眼窗口 0.15 秒
+    if p.blinkT < 0.15 {
+        p.eyeOpen = 1.0 - 4.0 * maths.abs(p.blinkT - 0.075) / 0.075
+        if p.eyeOpen < 0.05 { p.eyeOpen = 0.05 }
+    } else {
+        p.eyeOpen = 1.0
+    }
+}
+
+func update_clouds(Pelican p, float dt) {
+    for 0 : p.clouds.len() - 1 to i {
+        Cloud c = p.clouds[i]
+        c.x = c.x + c.v * dt
+        if c.x - 120.0 * c.s > _float(WIN_W) { c.x = -130.0 * c.s }
+    }
+}
+
+// 朝鼠标看：算出「头该往哪转」，并夹在合理范围内 ✓
+func head_look(Pelican p, float fromX, float fromY): float {
+    // 还没收到过鼠标移动 ⇒ 别盯着 (0,0)（左上角）✗
+    //   而让头**抬起来**（鹈鹕站着就是这个姿态 ✓）—— 头一低、脖子就变水平，整只立刻像鸭子 ✗
+    if p.mouseSeen == 0 { return -36.0 }
+    float dx = p.mx - fromX
+    float dy = p.my - fromY
+    float a = dir_angle(dx, dy)
+    // 相对身体：只允许 -55°..+55°
+    float rel = a - p.bodyRot
+    if rel > 180.0 { rel = rel - 360.0 }
+    if rel < -180.0 { rel = rel + 360.0 }
+    return clampf(rel, -55.0, 55.0)
+}
+
+func update_pose(Pelican p, float dt, Geo g) {
+    float k = clampf(dt * 7.0, 0.0, 1.0)
+    float look = head_look(p, g.hx, g.hy)
+    // 待机时的目标姿态
+    float tRot = 0.0
+    float tWingA = -8.0 + maths.sin(p.t * 0.9) * 2.0
+    float tWingB = -8.0 + maths.sin(p.t * 0.9 + 1.4) * 2.0
+    float tBeak = 0.02
+    float tPouch = 0.0
+    float tDuck = 0.0
+    float tTuck = 0.0
+    float tExtra = look * 0.85
+    float tSwallow = -1.0
+
+    if p.state == ST_IDLE {
+        p.bob = maths.sin(p.t * 1.5) * 3.2
+    } eif p.state == ST_ALERT {
+        p.bob = -5.0 + maths.sin(p.t * 3.4) * 1.6
+        tDuck = 0.45
+        tWingA = -24.0
+        tWingB = -20.0
+        tBeak = 0.16
+        // 盯住那条鱼
+        float fa = dir_angle(p.fishX - g.hx, p.fishY - g.hy)
+        float fr = fa - p.bodyRot
+        if fr > 180.0 { fr = fr - 360.0 }
+        if fr < -180.0 { fr = fr + 360.0 }
+        tExtra = clampf(fr * 0.55, -34.0, 44.0)
+    } eif p.state == ST_FLAP {
+        float beat = maths.sin(p.stT * 2.0 * PI / 0.45)
+        float up = beat
+        if up < 0.0 { up = 0.0 }
+        p.bob = -12.0 * up - 2.0
+        tWingA = -20.0 - 66.0 * up
+        tWingB = -20.0 - 58.0 * (1.0 - up)
+        tTuck = 0.5
+        tBeak = 0.28
+        tDuck = 0.10
+        tExtra = -6.0
+    } eif p.state == ST_DIVE {
+        float u = smooth(p.stT / 0.34)
+        tRot = 34.0 * u
+        tWingA = -104.0 * u - 10.0
+        tWingB = -98.0 * u - 10.0
+        tTuck = 0.92
+        tBeak = 0.45 + 0.55 * u
+        tDuck = 1.0 * u
+        tExtra = 12.0 * u
+        p.bob = lerp(p.bob, -10.0 * u, k)
+        // 入水那一下：溅水 + 波圈 ✓
+        if p.diveSplashed == 0 and p.stT > 0.30 {
+            p.diveSplashed = 1
+            spawn_splash(p, BIRD_X + 96.0, SEA_Y - 2.0, 20, 200.0, 11)
+            spawn_ripple(p, BIRD_X + 96.0, SEA_Y + 8.0, 56.0)
+        }
+    } eif p.state == ST_SCOOP {
+        float u = smooth(p.stT / 0.5)
+        tRot = 34.0 * (1.0 - u)
+        tWingA = lerp(-110.0, -26.0, u)
+        tWingB = lerp(-104.0, -22.0, u)
+        tPouch = 1.0
+        tBeak = lerp(0.75, 0.20, u)
+        tExtra = lerp(12.0, -14.0, u)
+        p.bob = -8.0 + maths.sin(p.t * 5.0) * 1.4
+    } eif p.state == ST_GULP {
+        float u = clampf(p.stT / STATE_DUR[ST_GULP], 0.0, 1.0)
+        tSwallow = u
+        tPouch = clampf(1.0 - 2.2 * u, 0.0, 1.0)
+        tBeak = clampf(0.35 - 1.6 * u, 0.02, 1.0)
+        tExtra = -10.0 * (1.0 - u)
+        tRot = -4.0 * maths.sin(u * PI)
+        p.bob = -3.0 * (1.0 - u)
+        tWingA = -10.0
+        tWingB = -12.0
+    }
+
+    p.bodyRot = lerp(p.bodyRot, tRot, k)
+    p.wingA = lerp(p.wingA, tWingA, k)
+    p.wingB = lerp(p.wingB, tWingB, k)
+    p.beakOpen = lerp(p.beakOpen, tBeak, k)
+    p.pouch = lerp(p.pouch, tPouch, k)
+    p.duck = lerp(p.duck, tDuck, k)
+    p.legTuck = lerp(p.legTuck, tTuck, k)
+    p.headExtra = lerp(p.headExtra, tExtra, k)
+    if tSwallow >= 0.0 { p.swallow = tSwallow } else { p.swallow = -1.0 }
+}
+
+func update(Pelican p) {
+    int now = SDL3.getTicks()
+    if p.lastMs == 0 { p.lastMs = now }
+    float dt = _float(now - p.lastMs) / 1000.0
+    p.lastMs = now
+    if dt < 0.0 { dt = 0.0 }
+    if dt > 0.05 { dt = 0.05 }
+    p.realDt = dt
+    if p.paused { dt = 0.0 }
+    p.dt = dt
+    p.t = p.t + dt
+    p.frame = p.frame + 1
+
+    update_clouds(p, dt)
+    update_blink(p, dt)
+    update_drops(p, dt)
+    update_fish(p, dt)
+    update_state(p, dt)
+
+    Geo g = compute_geo(p)
+    update_pose(p, dt, g)
+}
+
+// ==================== HUD ====================
+
+func draw_hud(Renderer r, Pelican p) {
+    if not p.font.ok { return }
+    r.setBlendMode(BlendMode.BLEND)
+    r.setColor(SDL3.withAlpha(C_HUD_BG, 148))
+    r.fillRect(16.0, 14.0, 470.0, 88.0)
+    r.setBlendMode(BlendMode.NONE)
+    r.setColor(C_HUD_ACC)
+    r.fillRect(16.0, 100.0, 470.0, 3.0)
+
+    if p.fontBig.ok {
+        r.drawText(p.fontBig, "鹈鹕 Pelican", 32.0, 20.0, C_WHITE)
+    }
+    r.drawText(p.font, "状态：" + state_name(p.state), 32.0, 52.0, SDL3.packColor(240, 200, 140, 255))
+    r.drawText(p.font, "已捕鱼 " + _str(p.caught) + " 条   空格=催它   P=暂停   R=清零   ESC=退出",
+               32.0, 74.0, SDL3.packColor(206, 220, 236, 255))
+
+    // 右下角：帧率 / 时间
+    string info = _str(p.fps) + " FPS   t=" + _str(_int(p.t)) + "s"
+    r.setBlendMode(BlendMode.BLEND)
+    r.setColor(SDL3.withAlpha(C_HUD_BG, 120))
+    r.fillRect(_float(WIN_W) - 168.0, _float(WIN_H) - 34.0, 152.0, 22.0)
+    r.setBlendMode(BlendMode.NONE)
+    r.drawText(p.font, info, _float(WIN_W) - 158.0, _float(WIN_H) - 30.0,
+               SDL3.packColor(196, 212, 230, 255))
+
+    if p.paused {
+        r.setBlendMode(BlendMode.BLEND)
+        r.setColor(SDL3.withAlpha(C_HUD_BG, 120))
+        r.fillRect(0.0, 0.0, _float(WIN_W), _float(WIN_H))
+        r.setBlendMode(BlendMode.NONE)
+        r.drawText(p.fontBig, "暂停（P 继续）", _float(WIN_W) / 2.0 - 78.0, _float(WIN_H) / 2.0 - 10.0, C_WHITE)
+    }
+}
+
+// ==================== 一帧 ====================
+
+func render_frame(Pelican p, Renderer r) {
+    r.setColor(#000000FF)
+    r.clear()
+
+    draw_sky(r)
+    draw_stars(r, p.t)
+    draw_sun(r, p.t)
+    draw_hills(r)
+    draw_clouds(r, p)
+
+    Geo g = compute_geo(p)
+    draw_reflection(r, g, p.t)
+    draw_sea(r, p.t)
+
+    // 水里 / 半空的鱼（在鹈鹕之前画 ⇒ 被身体挡住时像在它身后 ✓）
+    if p.fishOn == 1.0 {
+        float fa = dir_angle(p.fishVX, p.fishVY)
+        draw_fish(r, p.fishX, p.fishY, 1.0, fa, 255)
+    }
+    draw_ripples(r, p)
+
+    draw_pelican(r, p, g)
+    draw_front_water(r, p.t)
+    draw_drops(r, p)
+    draw_hud(r, p)
+
+    // ★★ 必须**主动请求下一帧** —— 框架是「脏标记」渲染：进渲染前它先把标记清掉
+    //    （`sdl_window.leno:1556` 原话："动画控件在 render 时可调用 requestRedraw() 请求下一帧" ✓）
+    //    不调这句 ⇒ 只画第一帧、之后**画面冻住** ✗ —— 因为没有任何输入事件来触发重绘 ✓
+    //    （自己手写 `while` + `present()` 的 demo 如 fireworks 不需要它 ✓ 用 `win.run(...)` 的就需要 ✓）
+    //    暂停时不请求 ⇒ 让主循环挂在 poll 上，不空转烧 CPU ✓
+    if not p.paused { SDL3.markFrameRedraw() }
+
+    // ---- 无头自检：到点截屏 + 退出 ✓ ----
+    if not p.shotDone and p.shotPath != "" and p.t >= p.shotT {
+        p.shotDone = true
+        var surf = r.readPixelsAt(0, 0, WIN_W, WIN_H)
+        if surf != null {
+            bool ok = SDL3.saveImagePNG(surf, p.shotPath)
+            print("[pelican] 截图 " + (if ok then "成功" else "失败") + "：" + p.shotPath)
+        } else {
+            print("[pelican] 截图失败：readPixelsAt 返回 null")
+        }
+        SDL3.requestExit()
+    }
+    if p.frameLimit > 0 and p.frame >= p.frameLimit { SDL3.requestExit() }
+}
+
+// ==================== 事件 ====================
+
+func on_event(Pelican p, Event e): bool {
+    if e.isMouseMotion() {
+        var[float, float](mx, my) = e.mousePos()
+        p.mx = mx
+        p.my = my
+        p.mouseSeen = 1
+    }
+    if e.isMouseButtonDown() {
+        var[float, float](mx2, my2) = e.mousePos()
+        p.mx = mx2
+        p.my = my2
+        p.mouseSeen = 1
+    }
+    if e.isKeyDown() {
+        if e.scancode() == Scancode.ESCAPE { return false }
+        if e.scancode() == Scancode.SPACE {
+            if p.state == ST_IDLE { enter_state(p, ST_ALERT) }
+        }
+        if e.scancode() == Scancode.P { p.paused = not p.paused }
+        if e.scancode() == Scancode.R {
+            p.caught = 0
+            while p.drops.len() > 0 { p.drops.pop() }
+            while p.ripples.len() > 0 { p.ripples.pop() }
+            enter_state(p, ST_IDLE)
+        }
+    }
+    return true
+}
+
+// ==================== main ====================
+
+main() {
+    var win = SDL3.createWindow({title: "鹈鹕动画 Pelican — LenoSDL3", w: WIN_W, h: WIN_H})
+    if not win.ok { print("创建窗口失败"); return }
+    win.setResizable(false)
+    win.setMaxFPS(60)          // 动画固定 60 帧（默认也是 60 ✓ 写明避免以后被改懵 ✓）
+
+    Pelican p = new Pelican()
+    p.drops = []
+    p.ripples = []
+    p.clouds = []
+    p.clouds.add(new Cloud(x=120.0, y=70.0, s=1.25, v=5.0))
+    p.clouds.add(new Cloud(x=430.0, y=132.0, s=0.95, v=3.4))
+    p.clouds.add(new Cloud(x=720.0, y=58.0, s=1.1, v=6.2))
+    p.clouds.add(new Cloud(x=880.0, y=176.0, s=0.8, v=4.4))
+    p.font = SDL3.acquireFontAuto(15.0)
+    p.fontBig = SDL3.acquireFontAuto(20.0)
+
+    // 无头自检入口（与仓库其它 demo 同一套 env 约定 ✓）
+    var eShot = _env("PELICAN_SHOT")
+    if eShot != null { p.shotPath = _str(eShot) }
+    var eT = _env("PELICAN_T")
+    if eT != null { p.shotT = _float(_str(eT)) }
+    var eF = _env("PELICAN_FRAMES")
+    if eF != null { p.frameLimit = _int(_str(eF)) }
+
+    print("[pelican] 开始 —— 空格=催它捕鱼  P=暂停  R=清零  ESC=退出")
+    if p.shotPath != "" { print("[pelican] 将在 t=" + _str(p.shotT) + "s 截图：" + p.shotPath) }
+
+    win.run(
+        func(Event e): bool { return on_event(p, e) },
+        func(Renderer r) {
+            update(p)
+            p.fpsFrames = p.fpsFrames + 1
+            p.fpsT = p.fpsT + p.realDt
+            if p.fpsT >= 0.5 {
+                p.fps = _int(_float(p.fpsFrames) / p.fpsT)
+                p.fpsFrames = 0
+                p.fpsT = 0.0
+            }
+            render_frame(p, r)
+        }
+    )
+
+    SDL3.releaseFont(p.font)
+    SDL3.releaseFont(p.fontBig)
+    win.destroy()
+    print("[pelican] 退出，本次共捕鱼 " + _str(p.caught) + " 条")
+}
