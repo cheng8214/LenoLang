@@ -113,6 +113,9 @@ export func is_builtin_icon(string n): bool {
     if n == "menu" or n == "search" or n == "star" { return true }
     if n == "info" or n == "help" or n == "refresh" { return true }
     if n == "sun" or n == "home" or n == "dot" { return true }
+    // ★ "download"（2026-10-09 加 ✓）：矢量图标**跟着 `icon_color` 走** ⇒ 浅色/深色标题栏都看得见 ✓
+    //   （图片图标是按原色画的、不吃 icon_color ⇒ 白 PNG 放到浅色标题栏上就"消失"了 ✗）
+    if n == "download" { return true }
     return false
 }
 export struct TitleBar impl Widget, Themeable {
@@ -1057,6 +1060,12 @@ if ev.isWindowRestored() { maximized = false; btnHover = BTN_NONE; motionSkipCou
             r.drawLine(cx - sz, cy, cx, cy - sz * 0.95)
             r.drawLine(cx, cy - sz * 0.95, cx + sz, cy)
             r.drawRect(cx - sz * 0.6, cy, sz * 1.2, sz * 0.85)
+        } else if icon == "download" {
+            // 下载：下箭头（竖杆 + 箭头）+ 底下一条托盘线（三笔都用现成图元，不引三角函数 ✓）
+            r.drawLine(cx, cy - sz * 1.05, cx, cy + sz * 0.25)
+            r.drawLine(cx - sz * 0.62, cy - sz * 0.28, cx, cy + sz * 0.42)
+            r.drawLine(cx, cy + sz * 0.42, cx + sz * 0.62, cy - sz * 0.28)
+            r.drawLine(cx - sz * 0.95, cy + sz * 1.0, cx + sz * 0.95, cy + sz * 1.0)
         } else {
             r.fillCircle(cx, cy, sz * 0.35)      // dot：兜底，至少不是空白 ✓
         }

@@ -600,22 +600,42 @@ export struct Button impl Widget, Themeable {
                 draw_text_aligned(r, x + padding, w - 2.0 * padding, cy, txtC)
             } else if imgPos == IMG_LEFT {
                 // 图标在左（对齐 Material iconGravity=start / WinForms ImageBeforeText）
+                // ★ 整块居中（2026-10-09）：`align:"center"`（默认）此前只把**文字**在"图标右侧的
+                //   剩余区"里居中 ⇒ [图标 + 间距 + 文字] 整块偏左，**按钮越宽偏得越多** ✗
+                //   （实测 68px：左 6 / 右 15；92px 时更明显 ⇒ LenoMusic 侧栏"变长"直接卡在这）
+                //   现在把整块当**一个单元**居中（图标与文字的间距恒为 imgGap ✓）；
+                //   只有装得下（band ≤ w - 2*pad）才走这条 ⇒ 装不下仍按原布局，绝不溢出 ✓
+                float band = isize + imgGap + textW
+                bool midBand = textAlign == ALIGN_CENTER and text != "" and band <= w - 2.0 * pad
                 float ix = x + pad
+                if midBand { ix = x + (w - band) / 2.0 }
                 float iy = y + (h - isize) / 2.0
                 r.drawTextureAt(itex, ix + (isize - dw) / 2.0, iy + (isize - dh) / 2.0, dw, dh)
                 float tx = ix + isize + imgGap
                 float tw = (x + w) - tx - pad
                 float ty = y + (h - textH) / 2.0
-                draw_text_aligned(r, tx, tw, ty, txtC)
+                // 整块已居中 ⇒ 文字紧跟图标（左对齐）；否则仍按 align 在剩余区里排 ✓
+                if midBand { r.drawText(font, text, tx, ty, txtC) }
+                else { draw_text_aligned(r, tx, tw, ty, txtC) }
             } else if imgPos == IMG_RIGHT {
                 // 图标在右（Material iconGravity=end / WinForms TextBeforeImage）
+                // ★ 同上：整块居中（原先镜像地偏右 ✗）
+                float band = isize + imgGap + textW
+                bool midBand = textAlign == ALIGN_CENTER and text != "" and band <= w - 2.0 * pad
+                float tx = x + pad
                 float ix = x + w - pad - isize
+                if midBand {
+                    tx = x + (w - band) / 2.0
+                    ix = tx + textW + imgGap
+                }
                 float iy = y + (h - isize) / 2.0
                 r.drawTextureAt(itex, ix + (isize - dw) / 2.0, iy + (isize - dh) / 2.0, dw, dh)
-                float tx = x + pad
-                float tw = ix - imgGap - tx
                 float ty = y + (h - textH) / 2.0
-                draw_text_aligned(r, tx, tw, ty, txtC)
+                if midBand { r.drawText(font, text, tx, ty, txtC) }
+                else {
+                    float tw = ix - imgGap - tx
+                    draw_text_aligned(r, tx, tw, ty, txtC)
+                }
             } else if imgPos == IMG_TOP {
                 // 图标在上（Material iconGravity=top / WinForms ImageAboveText）
                 float ix = x + (w - isize) / 2.0
