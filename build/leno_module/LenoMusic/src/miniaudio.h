@@ -61114,6 +61114,15 @@ static void ma_default_vfs__get_open_settings_win32(ma_uint32 openMode, DWORD* p
     *pShareMode = 0;
     if ((openMode & MA_OPEN_MODE_READ) != 0) {
         *pShareMode |= FILE_SHARE_READ;
+        /* ── LENO PATCH（2026-10-09）：读模式也放行「共享写 / 共享删除」──
+           上游只声明 FILE_SHARE_READ ⇒ 谁以写模式打开同一个文件都会 ERROR_SHARING_VIOLATION(32)。
+           LenoMusic 的「边下边播」就踩在这上面：播放器（本库流式解码，ma_sound_init_from_file + MA_SOUND_FLAG_STREAM）
+           打开正在播的文件后 ⇒ 下载线程 `files.open(path, "ab")` 追加写**立即失败** ⇒ 下载报错。
+           （下载端用的是 CRT fopen，本来就是 _SH_DENYNO ⇒ 只需放宽这一侧 ✓）
+           改成 READ|WRITE|DELETE 后：写打开成功；正在播放的文件也能被删除（Windows 延迟到句柄关闭再删 ✓）。
+           ⚠ 升级 miniaudio 时务必把这三行补回来（LenoLang 的 docs 与 LenoMusic 的实录里都记着这条 patch ✓）。 */
+        *pShareMode |= FILE_SHARE_WRITE;
+        *pShareMode |= FILE_SHARE_DELETE;
     }
 
     if ((openMode & MA_OPEN_MODE_WRITE) != 0) {
