@@ -181,7 +181,18 @@
 //   ⇒ LENO_MODCACHE_VERSION 同步升 ✓
 //   ⚠ 4 字节的 `ADD/SUB/MUL/LT/GT/LE/GE_INT_IMM` 族**加宽不了** ✗（A/B/C 三字段全占满，
 //     且它们没有随附的填充字）⇒ 超 int8 只能退回「LOADI + 寄存器版」= 现状 ✓
-#define LENO_BIN_VERSION    0x00030215  // v3.2.21 - 新增 opcode **OP_STR_APPEND**（字符串自追加，
+#define LENO_BIN_VERSION    0x00030216  // v3.2.22 - **破坏性语义变更**（切片口径统一）：native
+                                        //   `slice`/`byte_slice` 由"左闭右开"改成**闭区间**、
+                                        //   `sub_str` 删除改名 `take`、`OP_SLICE` 的负索引改为
+                                        //   "负起点从末尾数 / 负终点给空串"。
+                                        //   字节码**格式一字未改**（无新 opcode、无编码变化、
+                                        //   codegen 未动）⇒ 严格说不必 bump；**但仍 bump**，因为
+                                        //   旧缓存（.lenomc/.lenb）里可能烙着 `sub_str` 这个方法名
+                                        //   ⇒ 新 VM 上会**运行期**报"方法不存在"；失效重编后
+                                        //   在**编译期**就报出来（响的 ✓）。判据：语义/API 破坏性
+                                        //   变化 ⇒ 作废旧缓存（与 v3.2.12 的"指令序列变了"同类）
+                                        //   ⇒ LENO_MODCACHE_VERSION 同步升 ✓
+                                        // v3.2.21 - 新增 opcode **OP_STR_APPEND**（字符串自追加，
                                         //   可原地：`s = s + e` 由编译器特化，把 O(n²) 摊平成 O(n)；
                                         //   发射条件见 codegen_stmt.c 的 str-append 分析）
                                         //   **opcode 集合变了**：按惯例追加在枚举末尾（既有编号
@@ -333,7 +344,10 @@
 // v13：ObjFunction 增加 is_async（运行期判定"调用即建协程"用）。旧缓存里的函数对象缺这个
 //      字段 ⇒ async 函数的**间接调用**（`var f = w; f()`、当参数传、绑定方法）会退回同步执行、
 //      静默错值，所以必须**作废旧缓存**。
-#define LENO_MODCACHE_VERSION  0x00000025  // v37 - 同 LENO_BIN_VERSION v3.2.21（新增
+#define LENO_MODCACHE_VERSION  0x00000026  // v38 - 同 LENO_BIN_VERSION v3.2.22（切片口径的破坏性
+                                            //   语义变更 ⇒ 旧模块字节码里可能烙着 `sub_str` 方法名、
+                                            //   且是按旧口径编译的 ⇒ 整体失效重编译）
+                                            // v37 - 同 LENO_BIN_VERSION v3.2.21（新增
                                             //   OP_STR_APPEND ⇒ opcode 集合变了，模块字节码
                                             //   也必须整体失效重编译）
                                             // v36 - 同 LENO_BIN_VERSION v3.2.20（CMPJMP 族立即数

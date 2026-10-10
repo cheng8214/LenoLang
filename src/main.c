@@ -42,7 +42,12 @@
 //       · README.md 的 `| 版本 | … |` 行
 //       · README_EN.md 的 `| Version | … |` 行
 //     ⚠ 徽章里**故意不写版本号**（README 顶部那 4 枚）：多一处就要多同步一处 ✗
-#define LENO_VERSION "0.1.1"
+// ★ 2026-10-10：第三个对外发行版 ⇒ 从 "0.1.1" 改成 "0.2.0" ✓（发行目录 v0.2.0）
+//   为什么走 minor 位：这次是**破坏性**语言变更 —— 切片口径统一成**闭区间**
+//   （`slice`/`byte_slice` 语义变化）、`sub_str` 删除改名 `take`、`OP_SLICE` 的负索引
+//   改成"负起点从末尾数 / 负终点给空串" ⇒ 0.x 的 minor 位在语义上就是 breaking ✓
+//   （外部项目（LenoMusic / LenoTrae）已按新口径迁移；详见 docs/待办与路线图.md §七/§八）
+#define LENO_VERSION "0.2.0"
 
 // 全局标志
 int debugMode = 0;
