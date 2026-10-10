@@ -1590,10 +1590,33 @@
                     }
 
                     // 检查是否是 struct 类型调用（未使用 new 关键字）
+                    // ★ 2026-10-11：**文案修准**（原先把**变量名**当类型名用 ✗）
+                    //   实测（用例 `test_diag_static_errors.leno` 的 ec1 ✓）：
+                    //     `var i = new Info(x = 1)` 之后写 `i()` ⇒ 原先报「例如: new i()」✗
+                    //     —— `i` 是**变量名** ✗，照着改得到 `new i()` 这种编译不过的写法 ✓
+                    //     ⇒ 把"建议"变成了**第二个坑** ✗（这条在用例注释里登记很久了 ✓）。
+                    //   ⇒ 现在分两句说清：① `i` 是**实例**、不能当函数调 ✓；
+                    //     ② 想实例化该类型写 `new 类型名()` ✓、想调方法写 `实例.方法()` ✓。
                     if (sym->type && sym->type->kind == TYPE_STRUCT) {
                         char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg), "struct '%s' 需要使用 new 关键字实例化，例如: new %s()",
-                                func_name, func_name);
+                        const char* tname = sym->type->struct_name ? sym->type->struct_name
+                                                                   : func_name;
+                        // ⚠ 必须**按符号种类**分两句说 ✗ —— 我第一版只看"类型是 struct"就一律
+                        //   说成"实例" ✓ ⇒ 实测把 `Info()`（**类型名**当函数调 ✓）也误标成
+                        //   "`Info` 是 struct 实例" ✗（旧文案在那里本来是对的 ✓ 我改坏了 ✓）。
+                        //   判据：脚本 struct 的**类型符号** kind = SYM_STRUCT ✓（A 组那一轮探针
+                        //   实测过 ✓ 与"类型名当接收者"那条用同一判据 ✓）；变量/局部量则不是 ✓。
+                        if (sym->kind == SYM_STRUCT) {
+                            snprintf(msg, sizeof(msg),
+                                     "`%s` 是 struct **类型名**，不能当函数调用 ✗ —— "
+                                     "实例化请写 `new %s()` ✓",
+                                     func_name, tname);
+                        } else {
+                            snprintf(msg, sizeof(msg),
+                                     "`%s` 是 struct **实例**（类型 '%s'），不能当函数调用 ✗ —— "
+                                     "想实例化该类型请写 `new %s()` ✓；想调它的方法请写 `%s.方法名(...)` ✓",
+                                     func_name, tname, tname, func_name);
+                        }
                         error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     }
                 }
