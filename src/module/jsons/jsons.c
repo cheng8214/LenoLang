@@ -100,6 +100,13 @@ typedef struct {
     const char* start;
     int len;
     double num_value;
+    // ★ 2026-10-10（B 组第 11 条）：**整数文本按 int 解析**，不再一律过 double ✗
+    //   `is_integer`：文本里**没有** '.' / 'e' / 'E' ✓（即 JSON 意义上的整数 ✓）；
+    //   `int_overflow`：是整数文本但**超出 int64** ⇒ 退回 double（见下面的说明 ✓）；
+    //   `int_value`：`is_integer && !int_overflow` 时有效 ✓
+    int is_integer;
+    int int_overflow;
+    int64_t int_value;
 } JsonToken;
 
 typedef struct {
@@ -196,6 +203,34 @@ static JsonToken json_lexer_read_number(JsonLexer* lexer) {
     strncpy(num_str, token.start, token.len);
     num_str[token.len] = '\0';
     token.num_value = strtod(num_str, NULL);
+
+    // ★ 2026-10-10（B 组第 11 条）：**整数文本走精确的 int64 路径** ✓
+    //   为什么必须补：原先解析器靠 `num == (int64_t)num` 判"是不是整数" ✗ —— 那条对
+    //   **超出 2^53** 的值根本不成立 ✓（double 存不下 ⇒ 比较必然错/做溢出转换 ✗），
+    //   实测 `jsons.decode("12345678901234567890")` ⇒ 精度丢失 ✗。而现实里最需要它的
+    //   正是**雪花 ID / 大时间戳**这类值 ✓（它们 > 2^53 但**在 int64 内** ✓ ⇒ 现在能精确 ✓）。
+    //   ⚠ 超出 int64 的整数文本（>19 位）仍然退回 double ✓ —— 想连这个也精确得引
+    //     bigint 的"从十进制串构造"入口 ✓ **本轮不做**（先把最常见的区间修对 ✓ 文档写明 ✓）。
+    token.is_integer = 1;
+    token.int_overflow = 0;
+    token.int_value = 0;
+    for (int i = 0; i < token.len; i++) {
+        if (num_str[i] == '.' || num_str[i] == 'e' || num_str[i] == 'E') {
+            token.is_integer = 0;
+            break;
+        }
+    }
+    if (token.is_integer) {
+        char* end = NULL;
+        errno = 0;
+        long long n = strtoll(num_str, &end, 10);
+        // 整串都吃掉了、且没溢出 ⇒ 用精确值 ✓；否则标记溢出（调用方退回 double ✓）
+        if (end && *end == '\0' && errno != ERANGE) {
+            token.int_value = (int64_t)n;
+        } else {
+            token.int_overflow = 1;
+        }
+    }
     free(num_str);
     
     return token;
@@ -468,13 +503,20 @@ static Value json_parse_value(JsonParser* parser) {
             return json_parse_string_token(&token);
         }
         case JSON_TOKEN_NUMBER: {
+            // ★ 2026-10-10（B 组第 11 条）：整数文本用**精确的 int64** ✓（超出 int48 会自动
+            //   升 bigint ✓）；浮点 / 超 int64 的整数文本照旧走 double ✓。
+            //   ⚠ 必须用 `val_int_safe` 而不是 `val_int` ✗：后者是 NaN-boxing 的 **int48** ✗
+            //     ⇒ 雪花 ID（~1e18）会被**截断** ✗；而原来那句 `num == (int64_t)num`
+            //     对 >2^53 的值**连比较都不成立** ✓（精度早就丢了 ✓ 实测过 ✓）。
+            //   ⚠ 这里**先取字段再 advance**（advance 会把 current 换掉 ✓）
+            int is_int = parser->current.is_integer && !parser->current.int_overflow;
+            int64_t iv = parser->current.int_value;
             double num = parser->current.num_value;
             json_parser_advance(parser);
-            if (num == (int64_t)num) {
-                return val_int((int64_t)num);
-            } else {
-                return val_float(num);
+            if (is_int) {
+                return val_int_safe(iv);
             }
+            return val_float(num);
         }
         case JSON_TOKEN_TRUE:
             json_parser_advance(parser);
@@ -660,6 +702,19 @@ static void json_encode_value(StringBuilder* sb, Value value, int indent, bool p
             break;
         case VAL_OBJ:
             switch (val_as_obj(value)->type) {
+                case OBJ_BIGINT: {
+                    // ★ 2026-10-10（B 组第 11 条）：**大整数按十进制原样写出** ✓
+                    //   ⚠ 不补这条就会**静默写成 null** ✗ —— 实测：`encode(decode("{\"id\":153282510146394112}"))`
+                    //     ⇒ `{"id":null}` ✗（那比原先的"精度丢"更糟 ✓；本轮要消灭的正是静默错值 ✓）
+                    char* s = bigint_to_string((ObjBigInt*)val_as_obj(value));
+                    if (s) {
+                        sb_append_cstr(sb, s);
+                        free(s);
+                    } else {
+                        sb_append_cstr(sb, "0");   // 极端兜底：拿不到十进制就写 0（不写 null ✗）
+                    }
+                    break;
+                }
                 case OBJ_STRING:
                     json_encode_string(sb, ((ObjString*)val_as_obj(value))->chars, ((ObjString*)val_as_obj(value))->len);
                     break;
@@ -843,6 +898,17 @@ static ObjString* json_scalar_text(Value v) {
 
 // 标量 → int64（不抛异常）：字符串要**整串**都是数字才认；溢出/容器 ⇒ 0（调用方回退默认值）
 static int json_scalar_int(Value v, int64_t* out) {
+    // ★ 2026-10-10（B 组第 11 条）：JSON 里的大整数现在可能落在 **bigint** 上 ✓
+    //   （雪花 ID 那种 >int48 的值 ✓）⇒ 能装进 int64 就照常给值 ✓；
+    //   装不进 ⇒ 0 = 调用方回退默认值 ✓（与"超范围给默认值"的既有口径一致 ✓）。
+    //   ⚠ 必须放在 switch **之前**用 `val_is_bigint` 判 ✗ —— 大整数在 `val_get_type()`
+    //     眼里不是独立的 VAL_* 值（实测编译报 `VAL_BIGINT undeclared` ✗），它走的是对象路径 ✓。
+    if (val_is_bigint(v)) {
+        ObjBigInt* bi = val_as_bigint(v);
+        if (!bigint_fits_in_int64(bi)) return 0;
+        *out = bigint_to_int64(bi);
+        return 1;
+    }
     switch (val_get_type(v)) {
         case VAL_INT:
             *out = val_as_int(v);
@@ -876,6 +942,10 @@ static int json_scalar_int(Value v, int64_t* out) {
 
 // 标量 → double（同款约定）
 static int json_scalar_float(Value v, double* out) {
+    // ★ 2026-10-10（B 组第 11 条）：大整数也要能当浮点取 ✓
+    //   ⚠ 不补这条就是**静默回默认值** ✗（实测 `get_float(snow, "id", -1.0)` ⇒ -1.0 ✗
+    //     而调用方以为自己拿的是那个 ID ✓）—— 同 `json_scalar_int` 的说明 ✓
+    if (val_is_bigint(v)) { *out = bigint_to_double(val_as_bigint(v)); return 1; }
     switch (val_get_type(v)) {
         case VAL_INT:   *out = (double)val_as_int(v);      return 1;
         case VAL_FLOAT: *out = val_as_num(v);              return 1;

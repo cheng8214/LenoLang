@@ -121,5 +121,33 @@ main()
     var arr2 = jsons.decode("[\"\\u5c4b\\u9876\"]")
     if arr2 is Array { assert_eq(arr2[0], "屋顶") }                    // 数组元素里同样生效
 
+    // 测试10: **大整数精度**（★ 2026-10-10 修 / B 组第 11 条）
+    //   为什么钉：旧实现把**所有** JSON 数字一律过 `strtod` ✗，再靠 `num == (int64_t)num`
+    //   判"是不是整数"✗ —— 那条对 **> 2^53** 的值根本不成立 ✓（double 存不下 ⇒ 精度早就丢了）。
+    //   现实里最需要它的正是**雪花 ID / 大时间戳**（> 2^53 但**在 int64 内** ✓）。
+    //   ⇒ 现在整数文本走精确 int64 ✓（超出 int48 会自动升 bigint ✓ 所以不能用 val_int ✓）。
+    //   ⚠ 连带修的两处（不修就是**新的静默错值** ✗，我实测抓到的）：
+    //     ① `get_float` 拿不到 bigint ⇒ 静默回**默认值** ✗（实测就是 -1.0 ✓）；
+    //     ② JSON **编码器**不会写 bigint ⇒ 静默写成 **null** ✗（实测 `{"id":null}` ✗
+    //        —— 比原来的"精度丢"更糟 ✓）。
+    var snow = jsons.decode("{\"id\": 153282510146394112}")
+    assert_eq(jsons.get_int(snow, "id", -1), 153282510146394112)   // 精确（旧实现会错 ✗）
+    // 取浮点也能拿到（不再静默回默认 ✗）
+    //   ⚠ 大数别写成**科学计数法字面量** ✗：本语言**源码里的浮点字面量不支持** `1.5e17` ✓
+    //     （实测报「期望 ')'」✗ —— 我在这里踩了两次、第一次还误判成"实参必须加括号"✗
+    //      后来实测 `assert_eq(x > 3, true)` **不加括号也过** ✓ ⇒ 才定位到真因 ✓）
+    //     ⇒ 要么写全数字 ✓ 要么 `_float("1.5e17")` ✓（两者都实测通过 ✓）
+    var idf = jsons.get_float(snow, "id", -1.0)
+    assert_eq((idf > 150000000000000000.0), true)
+    assert_eq(jsons.encode(snow), "{\"id\":153282510146394112}")   // 回写**精确**（不再是 null ✗）
+    //   对照：普通整数/浮点的口径**没变** ✓（42 是整数 ✓、42.0 / 1e3 是浮点 ✓）
+    var plain = jsons.decode("{\"n\": 42, \"f\": 42.0, \"e\": 1e3, \"neg\": -7}")
+    assert_eq(jsons.get_int(plain, "n", -1), 42)
+    assert_eq(jsons.get_float(plain, "f", -1.0), 42.0)
+    assert_eq(jsons.get_float(plain, "e", -1.0), 1000.0)
+    assert_eq(jsons.get_int(plain, "neg", -1), -7)
+    //   超 int64 的整数文本（>19 位）仍退回 double ✓ —— 文档写明的边界 ✓（本轮不接大整数串入口 ✓）
+    assert_eq((jsons.encode(jsons.decode("12345678901234567890")) != "null"), true)
+
     print("test_json passed")
 }
