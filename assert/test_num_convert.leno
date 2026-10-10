@@ -27,11 +27,18 @@ main() {
     assert_eq(_int_or(arr, 0), 0, "①容器给默认值")
     assert_eq(_int_or(3.9, 0), 3, "①非字符串与 _int 同口径（截断）")
     assert_eq(_int_or(true, 0), 1, "①布尔照常转")
+    // ★ 2026-10-10（B 组第 9 条）：**null 也走默认值** ✓（原来给 0 ✗）
+    //   理由：本函数契约是"拿不到就给默认值"✓，而同类口径本来就不一致 ✗
+    //   （空串 / 容器都给默认 ✓ 只有 null 不给 ✗）⇒ 这是不一致，不是设计 ✓
+    assert_eq(_int_or(null, -1), -1, "①null 给默认值（2026-10-10 改）")
+    assert_eq(_int_or(null, 0), 0, "①null + 默认 0 ⇒ 仍是 0（真实调用点口径不变）")
+    assert_eq(_float_or(null, -1.0), -1.0, "①_float_or 的 null 同样给默认值")
 
     // ---------- ② 报错带坏值 ----------
+    // ⚠ 这里 `_v` / `_v2` 同样**故意只用来触发异常** ⇒ 下划线前缀 ✓（见 ③ 的说明 ✓）
     string msg = ""
     try {
-        var v = _float("999.06Kb")
+        var _v = _float("999.06Kb")
         msg = "(没抛异常)"
     } catch e {
         msg = $"{e}"
@@ -40,7 +47,7 @@ main() {
 
     string msg2 = ""
     try {
-        var v2 = _int("zp")
+        var _v2 = _int("zp")
         msg2 = "(没抛异常)"
     } catch e2 {
         msg2 = $"{e2}"
@@ -48,9 +55,12 @@ main() {
     assert_true(strings.has(msg2, "zp"), "②整数报错应带坏值；实际=" + msg2)
 
     // ---------- ③ 旧语义守卫 ----------
+    // ⚠ 这里的局部量**故意只用来触发异常** ⇒ 名字加 `_` 前缀 ✓ —— 本仓约定：
+    //   `_x` = "我知道它没用到，别报我" ✓（否则会被 `[未使用变量]` 警告抓到 ✓
+    //   实测就是它 ✓ 现世报：这两条是本轮自己的检查报出来的 ✓）
     bool threwFloat = false
     try {
-        var v3 = _float("zp")
+        var _v3 = _float("zp")
     } catch e3 {
         threwFloat = true
     }
@@ -58,7 +68,7 @@ main() {
 
     bool threwInt = false
     try {
-        var v4 = _int("abc")
+        var _v4 = _int("abc")
     } catch e4 {
         threwInt = true
     }

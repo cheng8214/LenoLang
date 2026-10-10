@@ -1019,11 +1019,19 @@ static Value native_int_or(int argCount, Value* args) {
         return def;
     }
     // 非字符串：这几种调 `_int` 本来就**不会**抛 ⇒ 照常转（口径与 `_int` 一致）
+    // ★ 2026-10-10（B 组第 9 条）：**null 也走默认值** ✓
+    //   原先 `VAL_NULL` 混在这个 switch 里 ⇒ `native_to_int` 把 null 当 0 ✗
+    //   ⇒ 实测 `_int_or(null, 42)` 得 **0** ✗。而本函数的契约就是"**拿不到就给默认值**" ✓
+    //   （上面注释自己写着 ✓），且**同类口径本来就不一致** ✗：
+    //     `_int_or("", -1)` ⇒ -1 ✓、`_int_or(容器, d)` ⇒ d ✓、偏偏 `null` ⇒ 0 ✗
+    //   ⇒ 这是**不一致**，不是设计 ✓（与 `_env_or("不存在", 兜底)` ⇒ 兜底 ✓ 同一族 ✓）。
+    //   ⚠ 影响面已扫 ✓：真实调用点全是 `_int_or(x, 0)`（LenoMusic 两处 ✓）⇒ 默认是 0 时
+    //     **行为完全不变** ✓；钉着旧行为的只有 pin P26 ✓（已同步更新 ✓）。
+    if (val_get_type(v) == VAL_NULL) return def;
     switch (val_get_type(v)) {
         case VAL_INT:
         case VAL_FLOAT:
         case VAL_BOOL:
-        case VAL_NULL:
             return native_to_int(1, &v);
         default:
             return def;   // 容器 / struct / 指针：`_int` 在这里是抛 ⇒ 这里给默认值
@@ -1044,11 +1052,12 @@ static Value native_float_or(int argCount, Value* args) {
         }
         return def;
     }
+    // ★ 2026-10-10（B 组第 9 条）：同 `_int_or` —— **null 走默认值** ✓（原先是 0.0 ✗）
+    if (val_get_type(v) == VAL_NULL) return def;
     switch (val_get_type(v)) {
         case VAL_INT:
         case VAL_FLOAT:
         case VAL_BOOL:
-        case VAL_NULL:
             return native_to_float(1, &v);
         default:
             return def;
