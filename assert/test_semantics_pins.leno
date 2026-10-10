@@ -1,0 +1,96 @@
+// 语言语义**钉桩**（characterization test；2026-10-10，第五批"行为正确性"体检的产物）
+//
+// 这批用例的性质和别的不同，先说清楚 ✓：
+//   它们**不检查"对不对"**（这些语义都是**有意设计** ✓ 框架里到处按它写 ✓），
+//   而是把**当前口径钉住** —— 哪天有人改了这些语义，这里会红 ✓，
+//   那时**要么**说明是"有意变更"（那就同步改这里的期望值 ✓ 并在提交信息里写清 ✓），
+//   **要么**说明是不小心改坏了（那正是本文件的价值 ✓）。
+//
+// 每条都带**实测值**（2026-10-10 ✓）：都是我先写成探针跑出来、再照实写进来的 ✓
+// —— 不看文档猜语义 ✗（这次就有一条差点被我按别的语言的习惯写反 ✗）。
+
+import dirs
+import files
+
+// 起编译器子进程 + 判据的共享工具（命令行拼接、失败判据的唯一实现，见 S7）
+import "helpers/compiler.leno" as ce
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_semantics_pins")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+    var n = "\n"
+
+    // P1 ★ struct 是**引用语义**：赋值是共享同一个实例（不是拷贝 ✓）
+    //   框架里到处依赖这条 ✓（sdl_radio 的互斥注册表、web_gzip 的就地修改、web_html 的节点比较 ✓）
+    var p1 = dirs.join(work, "struct_ref_assign.leno")
+    files.write(p1, "struct P { int x = 1 }" + n
+        + "main() {" + n
+        + "    var a = new P()" + n
+        + "    var b = a" + n
+        + "    b.x = 7" + n
+        + "    print(_str(a.x) + \"\\n\")" + n
+        + "}" + n)
+    ce.expect_ok(p1, "struct 赋值是共享实例（改 b 看 a）", "7")
+
+    // P2：想独立就各自 new ✓（互不影响 ✓）
+    var p2 = dirs.join(work, "struct_two_new.leno")
+    files.write(p2, "struct P { int x = 1 }" + n
+        + "main() {" + n
+        + "    var a = new P()" + n
+        + "    var b = new P()" + n
+        + "    b.x = 7" + n
+        + "    print(_str(a.x) + \"|\" + _str(b.x) + \"\\n\")" + n
+        + "}" + n)
+    ce.expect_ok(p2, "各自 new 互不影响", "1|7")
+
+    // P3 ★ 切片是**闭区间**（两端都含 ✓）—— 与 `for A : B` 同口径 ✓
+    //   ⚠ 从别的语言过来最容易差一位 ✗（那边多半是 [0:1) ✓）
+    var p3 = dirs.join(work, "slice_closed.leno")
+    files.write(p3, "main() { print(\"中文字\"[0:1] + \"|\\n\") }" + n)
+    ce.expect_ok(p3, "切片闭区间（[0:1] 取到两个字）", "中文|")
+
+    // P4：`.len()` 数的是**字符**不是字节 ✓（汉字算 1 ✓）
+    var p4 = dirs.join(work, "len_chars.leno")
+    files.write(p4, "main() { print(_str(\"中文abc\".len()) + \"\\n\") }" + n)
+    ce.expect_ok(p4, "len() 数字符（2 汉字 + 3 字母 = 5）", "5")
+
+    // P5 ★ 除法 / 取模 / `_int()` 都是 **C 式向零截断** ✓
+    //   ⚠ 别按 Python 的直觉写 ✗（那边 -7 % 3 = 2 ✓ 这里 -1 ✓）
+    var p5 = dirs.join(work, "c_style_int.leno")
+    files.write(p5, "main() {" + n
+        + "    print(_str(-7 / 2) + \" \" + _str(-7 % 3) + \" \" + _str(_int(-3.7)) + \"\\n\")" + n
+        + "}" + n)
+    ce.expect_ok(p5, "C 式截断：-7/2=-3、-7%3=-1、_int(-3.7)=-3", "-3 -1 -3")
+
+    // P6：整数运算会**升 bigint**（不静默翻负 ✓）
+    var p6 = dirs.join(work, "bigint_promote.leno")
+    files.write(p6, "main() { print(_str(2147483647 + 1) + \"\\n\") }" + n)
+    ce.expect_ok(p6, "整数溢出升 bigint", "2147483648")
+
+    // P7：浮点打印是**全精度**（要显示就自己格式化 ✓）
+    var p7 = dirs.join(work, "float_precision.leno")
+    files.write(p7, "main() { print(_str(0.1 + 0.2) + \"\\n\") }" + n)
+    ce.expect_ok(p7, "浮点全精度输出", "0.30000000000000004")
+
+    // P8：struct 与 null 比较**恒为 false**（结构体值不为 null ✓ 同时还有专门告警 ✓）
+    //   ⚠ "引用语义" 与 "不为 null" 两件事同时成立 ✓ 别搞混 ✗
+    var p8 = dirs.join(work, "struct_eq_null.leno")
+    files.write(p8, "struct P { int x = 1 }" + n
+        + "main() {" + n
+        + "    var a = new P()" + n
+        + "    print(_str(a == null) + \"\\n\")" + n
+        + "}" + n)
+    ce.expect_ok(p8, "struct == null 恒 false", "false")
+
+    // P9（对照 ✓）：短路求值不执行右侧 —— `false and f()` 里 f 不能跑 ✓
+    //   （这条**是**"对不对"型 ✓ 不是钉桩 —— 放这里是因为它同属"行为正确性"这批 ✓）
+    var p9 = dirs.join(work, "short_circuit.leno")
+    files.write(p9, "func t(): bool { print(\"SIDE\") ; return true }" + n
+        + "main() { bool r = false and t(); print(_str(r) + \"\\n\") }" + n)
+    ce.expect_ok(p9, "短路求值不执行右侧（输出里不能有 SIDE）", "false")
+
+    dirs.delete(work)
+
+    print("test_semantics_pins passed")
+}
