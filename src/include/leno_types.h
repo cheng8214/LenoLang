@@ -138,6 +138,14 @@ typedef enum {
                               //     过来**第一眼必踩** ✓，而编译器一声不吭 ✗ ⇒ 补这条 ✓
                               //   只吃一种形状：**首参是含 '%' 的字符串字面量、且实参 > 1** ✓
                               //     （变量里装的格式串无从判断 ⇒ 不猜 ✓ 少报不误报 ✓）
+    WARN_NOT_PRECEDENCE,      // `not x is T` / `not x in arr` ⇒ **`not` 先算**（结果常反 ✗，2026-10-10 加）
+                              //   ★ 实测：x = 42 时 `not x is string` = **false** ✗
+                              //     而 `not (x is string)` = **true** ✓ —— 结论**正好相反** ✓
+                              //     同病 `not x in arr` ⇒ `(not x) in arr` ✗（几乎恒 false ✗）
+                              //   ★ 为什么值得单独一条：从 Python 过来**必踩** ✓（那边 `not`
+                              //     比 `is` / `in` **低**优先级 ⇒ `not x is T` 就是 `not (x is T)` ✓）
+                              //   ★ 只查这两处 ✗（`is` 与 `in` / `not in`）：`not a == b` 那种
+                              //     偶尔是**有意**写法 ⇒ 不碰 ✓ 少报不误报 ✓
     // 注：原 `WARN_EMPTY_CATCH`（空 catch）与 `WARN_IMPOSSIBLE_CAST`（不可能收窄）已于
     //     2026-09-28 **升为错误** ✗（改用 `error_add_at(ERR_SEMANTIC, ...)`，消息自带
     //     `[类别名]` 前缀 ✓）⇒ 不再需要这两个枚举值 ✓

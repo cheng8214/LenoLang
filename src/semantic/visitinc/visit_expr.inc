@@ -1,4 +1,11 @@
         case AST_BINOP: {
+            // ★ 2026-10-10（A 组 ①(a)）：**`not x in arr` 的优先级陷阱** ✓
+            //   ⇒ `(not x) in arr` ✗（`not x` 是 bool ⇒ 几乎恒 false ✗）。
+            //   ⚠ 只在 `in` / `not in` 上查 ✗ —— `not a == b` 那种偶尔是**有意**写法
+            //     （如 `not flag == true`）⇒ 不碰 ✓ 少报不误报 ✓
+            if (ast->u.binop.op == TOK_IN || ast->u.binop.op == TOK_NOT_IN) {
+                semantic_check_not_precedence(ast->u.binop.l, ast->line, ast->column, 1);
+            }
             // 短路类型收窄：对于 `a and b`，先访问 a，如果 a 中包含类型守卫
             // (如 `x is Type`)，则在访问 b 时将 x 收窄为 Type
             if (ast->u.binop.op == TOK_AND) {

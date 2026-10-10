@@ -77,6 +77,12 @@ int semantic_check_method_args_from_placeholder(Semantic* s, const char* struct_
 //   ⇒ 调用方直接 `snprintf(msg, …, "未定义的类型: %s%s", type_name, hint)` 即可 ✓。
 void semantic_undefined_type_hint(Semantic* s, const char* type_name, char* buf, size_t size);
 
+// `not` 的优先级陷阱（WARN_NOT_PRECEDENCE，2026-10-10 加）：表达式里写 `not x is T` ⇒
+//   实际是 `(not x) is T` ✗（结果常相反 ✓ 实测 x = 42：false ✗ vs `not (x is T)` = true ✓）。
+//   kind = 0 表示 `is`（类型检查 ✓）、1 表示 `in` / `not in`（成员测试 ✓）。
+//   ⚠ 只查这两类 + 只在 **语义 visit** 调用（infer 会重复喷 ✗ 见实现处的说明 ✓）。
+void semantic_check_not_precedence(Ast* operand, int line, int column, int kind);
+
 // printf 名字骗人（WARN_PRINTF_NO_FORMAT，2026-10-10 加）：`printf` 只做"**不换行打印**"、
 // **不做 % 格式化** ✗（实测：`printf("%d = %s\n", 3, "x")` 不报错、`%d` 原样打出 ✓）
 // ⇒ 首参是**含 '%' 的字符串字面量**且**实参 > 1** 时提醒 ✓（其它形状一律不报 ✓ 少报不误报）

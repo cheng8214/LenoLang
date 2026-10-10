@@ -320,6 +320,43 @@ void semantic_undefined_type_hint(Semantic* s, const char* type_name, char* buf,
 }
 
 // ============================================================================
+// `not` 的优先级陷阱（WARN_NOT_PRECEDENCE）—— **唯一实现**（2026-10-10 加 / A 组 ①(a)）
+// ----------------------------------------------------------------------------
+// 形状：**表达式**里写 `not x is T`（或 `not x in arr` / `not x not in arr`）。
+//   `not` 在本语言里是**前缀一元**运算符 ⇒ `not x is T` 被解析成 `(not x) is T` ✗
+//   ⇒ 实测（x = 42）：`not x is string` = **false** ✗、`not (x is string)` = **true** ✓
+//     —— **结论正好相反** ✓ 而且编译期一声不吭 ✗（典型"静默给错值" ✓）。
+//   为什么从 Python 过来必踩：那边 `not` 的优先级**低于** `is` / `in` ⇒ `not x is T`
+//     就等于 `not (x is T)` ✓（两个语言的"同一句话"意思相反 ✗）。
+// 判据（宁漏勿误报 ✓）：操作数**正是** `AST_UNARY(TOK_NOT)` ✓ —— 也就是"这个 is / in 的
+//   左边就是个 not 表达式" ✓ 不会误伤 `not (x is T)`（那边左操作数是括号里的 is ✓）。
+//   ⚠ 只查 `is`（kind = 0）与 `in` / `not in`（kind = 1）两类 ✗：`not a == b` 那种
+//     偶尔是**有意**写法（少数人真会写 `not flag == true` ✓）⇒ 不碰 ✓。
+// ⚠ 为什么放在**语义 visit** 而不是 infer_expr_type ✗：infer 会被反复调用 ⇒ 同一条
+//   警告会重复喷 ✗（本仓踩过这类坑 ✓）；visit 每个 AST 节点只走一次 ✓。
+void semantic_check_not_precedence(Ast* operand, int line, int column, int kind) {
+    if (!operand) return;
+    if (operand->kind != AST_UNARY) return;
+    if (operand->u.unary.op != TOK_NOT) return;
+
+    char msg[BUFFER_MEDIUM];
+    if (kind == 0) {
+        snprintf(msg, sizeof(msg),
+                 "这一处看起来是 `not x is T` ✗ —— `not` 比 `is` **先算** ⇒ 它其实等价于 "
+                 "`(not x) is T` ✓，结果常与你想要的**相反** ✗（实测：x = 42 时 "
+                 "`not x is string` = false ✗，而 `not (x is string)` = true ✓）。"
+                 "取反请写 `not (x is T)` ✓（表达式里）；if / for **条件位置**还可以写 "
+                 "`x not is T` ✓（否定类型守卫 ✓）");
+    } else {
+        snprintf(msg, sizeof(msg),
+                 "这一处看起来是 `not x in arr` ✗ —— `not` 比 `in` **先算** ⇒ 它其实等价于 "
+                 "`(not x) in arr` ✓（`not x` 是个 bool ⇒ 几乎恒 false ✗）。"
+                 "要判「不在里面」请写 `x not in arr` ✓ 或 `not (x in arr)` ✓");
+    }
+    warning_add_at(WARN_NOT_PRECEDENCE, line, column, msg);
+}
+
+// ============================================================================
 // printf 名字骗人（WARN_PRINTF_NO_FORMAT）—— **唯一实现**（2026-10-10 加）
 // ----------------------------------------------------------------------------
 // 症状（速查 §三 ㉖ 实测）：`printf("%d = %s\n", 3, "x")` **一声不吭** ✗ —— `%d`/`%s`

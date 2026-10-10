@@ -386,6 +386,7 @@ void warning_print_all(void) {
             case WARN_METHOD_NAME_AMBIGUOUS: type_str = "同名歧义（可能走错目标）"; break;
             case WARN_MISSING_RETURN:  type_str = "漏写 return"; break;
             case WARN_PRINTF_NO_FORMAT: type_str = "printf不做格式化"; break;
+            case WARN_NOT_PRECEDENCE: type_str = "not的优先级陷阱"; break;
             // （原 WARN_EMPTY_CATCH / WARN_IMPOSSIBLE_CAST 已升为错误 ⇒ 类别名移入消息前缀 ✓）
             default: break;
         }

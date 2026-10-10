@@ -216,6 +216,43 @@ main() {
         + "}\n")
     ce.expect_warning(pc3, "io.printf：模块通道同样要报", "[printf不做格式化]", 4)
 
+    // ============ D. `not` 的优先级陷阱（WARN_NOT_PRECEDENCE，2026-10-10 加）============
+    // 形状：**表达式**里写 `not x is T` ⇒ 它其实是 `(not x) is T` ✗（`not` 是前缀一元 ✓）
+    //   实测（x = 42）：`not x is string` = **false** ✗、`not (x is string)` = **true** ✓
+    //   —— 结论**正好相反** ✓ 且编译一声不吭 ✗（典型"静默给错值" ✓）。
+    //   为什么从 Python 过来必踩：那边 `not` 比 `is` / `in` **低**优先级 ⇒ `not x is T`
+    //   就等于 `not (x is T)` ✓ ⇒ 两个语言的同一句话意思相反 ✗。
+    // ⚠ 顺带记一条**语言口径**（用户确认过 ✓）：`is not` 不存在 ✗；取反写
+    //   `x not is T`（if / for **条件位置** ✓）或 `not (x is T)`（**表达式** ✓）。
+    //   ⚠ `x not is T` 在表达式里**不合法** ✗（实测报一堆语法错 ✓）。
+
+    // D1：正是那个坑 ⇒ 必须报，落在**函数声明行**（第 1 行整行是一行的形式）
+    var pd1 = dirs.join(work, "not_prec_is.leno")
+    files.write(pd1,
+        "func a1(any x): bool { return not x is string }\n"
+        + "main() { print(_str(a1(42)) + \"\\n\") }\n")
+    ce.expect_warning(pd1, "not x is T ⇒ 报警告（结果其实是反的）", "[not的优先级陷阱]", 1)
+
+    // D2（防误报 ✓）：六种**不该报**的形状一次钉住 ✓
+    //   · `not (x is T)` ✓ 加了括号就是对的（左操作数是括号里的 is ✓）
+    //   · `not (x in arr)` / `x not in arr` ✓ 两种正确写法
+    //   · `not f == true` / `not f` ✓ **有意**的写法（本检查刻意只查 is 与 in ✗ 不碰比较 ✓）
+    //   · `if x not is int { }` ✓ 正式的**否定类型守卫**（条件位置 ✓ parser_stmt_control.c ✓）
+    var pd2 = dirs.join(work, "not_prec_ok.leno")
+    files.write(pd2,
+        "func a2(any x): bool { return not (x is string) }\n"
+        + "func b2(Array[int] arr, int x): bool { return not (x in arr) }\n"
+        + "func b3(Array[int] arr, int x): bool { return x not in arr }\n"
+        + "func c1(bool f): bool { return not f == true }\n"
+        + "func c2(bool f): bool { return not f }\n"
+        + "func g(any x): int {\n"
+        + "    if x not is int { return 1 }\n"
+        + "    return 2\n"
+        + "}\n"
+        + "main() { print(_str(a2(42)) + \"|\" + _str(b2([1], 1)) + \"|\" + _str(c2(false)) + \"\\n\") }\n")
+    var od2 = ce.expect_ok(pd2, "对照组：加括号 / not in / 比较 / not is 守卫", "true|false|true")
+    ce.expect_no_warning(od2, "对照组：六种形状都不该报", "[not的优先级陷阱]")
+
     // 清理临时文件（含对照用例成功编译产生的 .lenocache ✓）
     dirs.delete(work)
 

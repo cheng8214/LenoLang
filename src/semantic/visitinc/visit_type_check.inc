@@ -2,6 +2,10 @@
             if (ast->u.type_check.expr) {
                 visit(s, ast->u.type_check.expr);
             }
+            // ★ 2026-10-10（A 组 ①(a)）：**`not x is T` 的优先级陷阱** ✓
+            //   左边正是 `not X` ⇒ 它其实是 `(not X) is T` ✗（实测 x=42 时结果**相反** ✗）
+            //   见 semantic_type_utils.c 的 semantic_check_not_precedence ✓
+            semantic_check_not_precedence(ast->u.type_check.expr, ast->line, ast->column, 0);
             // 递归纠正类型名（face/enum 被 parser 记成 struct）+ 修 Array/Dict/Ptr 的实参：
             //   v3.2.2 起嵌套实参的名字会被带进运行期做名字校验 ⇒ 漏修就会误判不匹配
             resolve_type_names(s, &ast->u.type_check.type);
