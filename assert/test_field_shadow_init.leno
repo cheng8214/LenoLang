@@ -1,0 +1,87 @@
+// 字段遮蔽改写 × **声明初始化**（2026-10-10 修掉的编译器 bug 回归）
+//
+// 背景（这个 bug 是**新加的「未使用变量」检查揪出来的** ✓ 详见本文件三条用例 ✓）：
+//   struct 方法里写字段名 = 访问字段（`transform_method_body` 把裸名改写成 `self.X` ✓）；
+//   若同名局部量存在就不该改写 ✓ —— 这个判断靠"遮蔽集合"✓。
+//   ✗ 但**声明初始化**那一段原先传的是**没并块内局部**的那份集合 ✓（原意只是防 `var x = x` ✓）
+//     ⇒ 于是"同一块里先声明的局部量，在**后面的声明初始化**里读不到" ✗：
+//       ```
+//       var maxLineW = max_line_width() + 8.0
+//       float maxSX = maxLineW - visW      // ← 这里的 maxLineW 被改写成 self.maxLineW ✗
+//       ```
+//     ⇒ 读的是**字段**（缓存值）而不是刚算出来的局部量 ✗ ⇒ 局部量成了死代码 ✓、
+//       计算结果**静默偏差** ✗（实测 sdl_edit.leno:945/947 就是这么错的 ✓
+//       横向/纵向两条滚动条的算法因此不一致 ✓）。
+//   修法：init 只排除**它自己的名字** ✓，其余块内局部照常参与遮蔽判断 ✓
+//     （见 semantic_visit_method.c 的 AST_BLOCK 分支 ✓）。
+//
+// ⚠ 这类 bug 的特征是"**能编译、不报警、算错数**"✗ ⇒ 断言必须**钉值** ✓
+//   （只钉"有没有警告"抓不住它 ✗）。
+
+import dirs
+import files
+
+// 起编译器子进程 + 判据的共享工具（命令行拼接、失败判据的唯一实现，见 S7）
+import "helpers/compiler.leno" as ce
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_field_shadow_init")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // A1 ★ 本 bug 的正身：**声明初始化**里读同名局部量
+    //   修复前 ⇒ 改写成字段(0) ⇒ 输出 -100 ✗；修复后 ⇒ 读局部(9) ⇒ -91 ✓
+    var p1 = dirs.join(work, "shadow_init.leno")
+    files.write(p1,
+        "struct S {\n"
+        + "    int maxLineW = 0\n"
+        + "    func f(bool drag): int {\n"
+        + "        if drag {\n"
+        + "            var maxLineW = 9\n"
+        + "            int t = maxLineW - 100\n"
+        + "            return t\n"
+        + "        }\n"
+        + "        return 0\n"
+        + "    }\n"
+        + "}\n"
+        + "\n"
+        + "main() { var s = new S(); print(_str(s.f(true)) + \"\\n\") }\n")
+    ce.expect_ok(p1, "声明初始化里读同名局部量（必须读局部 9 ⇒ -91）", "-91")
+
+    // A2：**原意图不能被改坏** ✓ —— `var v = v + 1` 右侧的 v 指的是**字段**(100) ⇒ 101 ✓
+    //   （init 排除自身名的那条规则是故意的 ✓ 这条用例专门钉它 ✓）
+    var p2 = dirs.join(work, "self_init.leno")
+    files.write(p2,
+        "struct S {\n"
+        + "    int v = 100\n"
+        + "    func f(): int {\n"
+        + "        var v = v + 1\n"
+        + "        return v\n"
+        + "    }\n"
+        + "}\n"
+        + "\n"
+        + "main() { var s = new S(); print(_str(s.f()) + \"\\n\") }\n")
+    ce.expect_ok(p2, "自身名仍不参与遮蔽（右侧读字段 100 ⇒ 101）", "101")
+
+    // A3：对照 —— 非声明初始化的读（`return maxLineW - ...`）**修复前就是对的** ✓
+    //   留在这里是为了防止将来"修 A1 把 A3 弄坏"✗（两条路径都必须读局部 ✓）
+    var p3 = dirs.join(work, "return_read.leno")
+    files.write(p3,
+        "struct S {\n"
+        + "    int maxLineW = 0\n"
+        + "    func f(bool drag): int {\n"
+        + "        if drag {\n"
+        + "            var maxLineW = 9\n"
+        + "            return maxLineW - 100\n"
+        + "        }\n"
+        + "        return 0\n"
+        + "    }\n"
+        + "}\n"
+        + "\n"
+        + "main() { var s = new S(); print(_str(s.f(true)) + \"\\n\") }\n")
+    ce.expect_ok(p3, "对照：return 里读同名局部量", "-91")
+
+    dirs.delete(work)
+
+    print("test_field_shadow_init passed")
+}

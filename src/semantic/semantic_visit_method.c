@@ -516,11 +516,29 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
             }
             // 用合并后的遮蔽集合处理块内语句
             for (int i = 0; i < ast->u.block.count; i++) {
-                // 对 var_decl 的 init 部分不传入自身名（防止 init 引用自身时被遮蔽）
+                // 对 var_decl 的 init 部分：**只排除它自己的名字**（防止 `var x = x` 里右侧的 x
+                // 被当成"就是这个局部量"从而不再改写字段 ✓ 这是原本的设计意图 ✓），
+                // 但**同一块里其它局部量必须照常传** ✓。
+                // ✗ 原来这里整份传的是 `shadowed_names`（= **没并块内局部**的那份 ✗）
+                //   ⇒ 实测踩到（2026-10-10，由新加的 WARN_UNUSED_VAR 揪出来 ✓）：
+                //     ```
+                //     var maxLineW = max_line_width() + 8.0
+                //     float maxSX = maxLineW - visW        // ← 声明初始化里读同名局部
+                //     ```
+                //   第二句里的 `maxLineW` 被改写成 `self.maxLineW` ✗ ⇒ 读的是**字段**（缓存值）
+                //   而不是刚算出来的局部量（+8 那份）✗ ⇒ 局部量成了死代码 ✓ 两条滚动条的
+                //   横向/纵向算法因此不一致（sdl_edit.leno:945/947 就是这么错的 ✓）。
                 if (ast->u.block.items[i]->kind == AST_VAR_DECL) {
+                    const char* own = ast->u.block.items[i]->u.var_decl.name;
+                    char* init_shadows[128];
+                    int init_shadow_count = 0;
+                    for (int k = 0; k < merged_shadow_count && init_shadow_count < 128; k++) {
+                        if (own && merged_shadows[k] && strcmp(merged_shadows[k], own) == 0) continue;
+                        init_shadows[init_shadow_count++] = merged_shadows[k];
+                    }
                     transform_method_body_ex(ast->u.block.items[i]->u.var_decl.init,
                         field_names, field_count, method_names, method_count, struct_name,
-                        shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);  // init 中仍可访问字段
+                        init_shadows, init_shadow_count, param_names, param_count, const_names, const_count);  // init 中仍可访问字段
                 } else {
                     transform_method_body_ex(ast->u.block.items[i],
                         field_names, field_count, method_names, method_count, struct_name,
