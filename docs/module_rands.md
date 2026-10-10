@@ -88,17 +88,22 @@ rands.floats(0.0, 1.0)     // 等同于 om()
 
 ## 布尔与选择
 
-### `bools(probability?)`
+### `bools(probability)`
 
-生成随机布尔值，可指定 true 的概率。
+生成随机布尔值，按给定概率返回 true。
+
+> ⚠ **`probability` 是必填的**（2026-10-10 实测修正 ✗）：本文档此前写 `bools(probability?)`
+> 并给了 `rands.bools()` 的例子 —— 但**实际编译不过**：
+> `rands.bools()` ⇒ 编译期 `rands.bools 参数数量不匹配: 期望 1, 实际 0` ✓。
+> 想要"50% 概率"就显式写 `0.5` ✓。
 
 **参数**:
-- `probability` (float, 可选): true 的概率，0.0-1.0，默认 0.5
+- `probability` (float, **必填**): true 的概率，0.0-1.0
 
 **返回**: `bool` - 随机布尔值
 
 ```leno
-rands.bools()           // 50% 概率 true
+rands.bools(0.5)        // 50% 概率 true
 rands.bools(0.7)        // 70% 概率 true
 rands.bools(0.1)        // 10% 概率 true
 rands.bools(1.0)        // 总是 true
@@ -208,18 +213,24 @@ print(arr)                  // [1, 2, 3, 4, 5] - 原数组不变
 
 ## 字符串生成
 
-### `str(length, chars?)`
+### `str(length, chars)`
 
 生成指定长度的随机字符串。
 
+> ⚠ **`chars` 也是必填的**（2026-10-10 实测修正 ✗）：本文档此前写 `str(length, chars?)`
+> 并给了 `rands.str(8)` 的例子 —— 但**实际编译不过**：
+> `rands.str(8)` ⇒ 编译期 `rands.str 参数数量不匹配: 期望 2, 实际 1` ✓。
+> 想要"默认字母数字"就自己把那个字符集传进去 ✓。
+
 **参数**:
 - `length` (int): 字符串长度
-- `chars` (string, 可选): 字符集，默认使用字母数字混合
+- `chars` (string, **必填**): 字符集（**没有**"默认字母数字"这回事 ✗）
 
 **返回**: `string` - 随机字符串
 
 ```leno
-rands.str(8)                // "aB3kL9mN" - 默认字母数字
+// 想要字母数字混合就自己传（这就是文档里旧例子想表达的"默认" ✓）
+rands.str(8, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
 rands.str(6, "0123456789")  // "384729" - 纯数字
 rands.str(10, "abcdef")     // "bacdfaebfc" - 十六进制字符
 rands.str(16, "abcdefghijklmnopqrstuvwxyz")  // 纯小写字母

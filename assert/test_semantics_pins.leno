@@ -200,6 +200,50 @@ main() {
         + "main() { print(dirs.join(\"a/\", \"/b\") + \"\\n\") }" + n)
     ce.expect_ok(p19, "dirs.join 朴素拼接（不归一化）", "a\\/b")
 
+    // ---------- 第十批（数值/随机 ✓）实测后补的钉桩 ----------
+
+    // P20 ★ `.round()` 遇 .5 **远离零**（不是银行家舍入 ✗）；floor/ceil 对负数的口径 ✓
+    var p20 = dirs.join(work, "num_rounding.leno")
+    files.write(p20, "import maths" + n
+        + "main() {" + n
+        + "    print(_str((2.5).round()) + \"|\" + _str((-2.5).round()) + \"|\"" + n
+        + "        + _str((-3.5).floor()) + \"|\" + _str((-3.5).ceil()) + \"|\"" + n
+        + "        + _str(maths.max(1, 2)) + \"\\n\")" + n
+        + "}" + n)
+    ce.expect_ok(p20, "round 远离零 / floor / ceil / max 返回 float",
+        "3.0|-3.0|-4.0|-3.0|2.0")
+
+    // P21 ★ `rands.ints(a, b)` 的**上界含**（闭区间 ✓ 与 for A : B 同口径 ✓）
+    //   200 次抽样里 0 与 3（两端）都必须出现 ✓ —— 只看"值域不越界"抓不住半开/闭区间 ✗
+    var p21 = dirs.join(work, "rands_inclusive.leno")
+    files.write(p21, "import rands" + n
+        + "main() {" + n
+        + "    rands.seed(7)" + n
+        + "    int lo = 99" + n
+        + "    int hi = -99" + n
+        + "    int i = 0" + n
+        + "    while i < 200 {" + n
+        + "        int x = rands.ints(0, 3)" + n
+        + "        if x < lo { lo = x }" + n
+        + "        if x > hi { hi = x }" + n
+        + "        i = i + 1" + n
+        + "    }" + n
+        + "    print(_str(lo) + \"|\" + _str(hi) + \"\\n\")" + n
+        + "}" + n)
+    ce.expect_ok(p21, "rands.ints 上界含（两端都出现过）", "0|3")
+
+    // P22/P23：`rands.str` / `rands.bools` 的**参数都是必填**（文档此前写错 ✗ 已修正 ✓）
+    //   这条钉的是"编译期就该拦住" ✓（别让用户以为有默认值 ✓）
+    var p22 = dirs.join(work, "rands_str_arity.leno")
+    files.write(p22, "import rands" + n
+        + "main() { print(rands.str(8) + \"\\n\") }" + n)
+    ce.expect_error(p22, "rands.str 缺 chars ⇒ 编译期拦住", "参数数量不匹配", 0)
+
+    var p23 = dirs.join(work, "rands_bools_arity.leno")
+    files.write(p23, "import rands" + n
+        + "main() { print(_str(rands.bools()) + \"\\n\") }" + n)
+    ce.expect_error(p23, "rands.bools 缺 probability ⇒ 编译期拦住", "参数数量不匹配", 0)
+
     dirs.delete(work)
 
     print("test_semantics_pins passed")
