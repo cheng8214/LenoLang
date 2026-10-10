@@ -578,6 +578,24 @@ main() {
     //   （断言只钉「需要使用 new 关键字实例化」这半句，等修好文案再收紧）
     ce.expect_error(ec1, "struct 实例当函数调用要报错", "需要使用 new 关键字实例化", 7)
 
+    // ★ 2026-10-10 新增：**把 struct 类型名当接收者用**（忘写 new 的另一种形态 ✓）
+    //   实测背景：`C.go(1)` 原先一路走到**运行期**才报「类型 string 上不存在方法 'go'」✗
+    //   —— 完全指不到点上 ✗（写的人找不到北 ✓）。
+    //   现在在"实例方法调用"分支里按 **SYM_STRUCT** 拦下 ✓（判据怎么定的见 visit_module.inc 的注释：
+    //   探针实测脚本 struct 的符号 kind = SYM_STRUCT ✓，不是 SYM_TYPE ✗ —— 后者是 enum/face ✓，
+    //   cstruct/clib 又是另外两个 kind ✓ ⇒ 只认脚本 struct 才能不误伤 `Vec.malloc()` 那种合法静态写法 ✓）
+    var ec_rcv = dirs.join(work, "struct_as_receiver.leno")
+    files.write(ec_rcv, @"struct C {
+    func go(int n) { print(_str(n)) }
+}
+
+main() {
+    C.go(1)
+}
+")
+    ce.expect_error(ec_rcv, "struct 类型名当接收者要报错（忘写 new）",
+        "不能直接当接收者用", 6)
+
     var ec2 = dirs.join(work, "struct_positional.leno")
     files.write(ec2, @"struct P {
     int x

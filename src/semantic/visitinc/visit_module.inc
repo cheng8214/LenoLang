@@ -1006,6 +1006,24 @@
                 SymRef ref;
                 memset(&ref, 0, sizeof(ref));
                 Symbol* obj_sym = resolve_variable_with_upvalue(s, ast->u.module_call.module_name, &ref);
+                // ★★ 2026-10-10 新增：**把 struct 类型名当接收者用** ⇒ 编译期就拦（十有八九是忘写 new ✓）
+                //   实测 `C.go(1)`（C 是脚本 struct ✓）原先一路走到**运行期**才报
+                //     「类型 string 上不存在方法 'go'」✗ —— 完全指不到点上 ✗（写的人找不到北 ✓）。
+                //   ⚠ 判据是 **SYM_STRUCT**（脚本 struct ✓）而不是 `SYM_TYPE` ✗ —— 我用探针
+                //     实测过：脚本 struct 的类型符号 kind = SYM_STRUCT(8) ✓、`type->kind` = TYPE_STRUCT ✓
+                //     （`SYM_TYPE` 是 enum / face 那一路 ✓；`SYM_CSTRUCT` / `SYM_CLIB` 是另一路 ✓）。
+                //   ⇒ 只认脚本 struct ✓：cstruct / clib 的 `Vec.malloc()` 这类**静态写法是合法的** ✓
+                //     不能误伤 ✓（见 07_collections.inc 里那条兜底注释 ✓）。全套 434 条用例过后无回归 ✓。
+                if (obj_sym && obj_sym->kind == SYM_STRUCT) {
+                    char msg[BUFFER_MEDIUM];
+                    snprintf(msg, sizeof(msg),
+                             "'%s' 是 struct **类型名**，不能直接当接收者用（本语言没有静态方法 ✓）——"
+                             "想调它的方法请先造实例：var x = new %s()，然后 x.%s(...)",
+                             ast->u.module_call.module_name, ast->u.module_call.module_name,
+                             ast->u.module_call.method_name);
+                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                    break;
+                }
                 if (obj_sym) {
                     const char* method_name = ast->u.module_call.method_name;
                     int expected_arity = -1;
