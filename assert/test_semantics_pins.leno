@@ -139,6 +139,29 @@ main() {
         + "}" + n)
     ce.expect_ok(p14, "arrays.copy 深到元素级", "3|2|1")
 
+    // ---------- 第八批（长跑/GC ✓）实测后补的钉桩 ----------
+
+    // P15 ★ **大量分配之后，先前持有的数据不变形** ✓（GC 正确性的最小回归 ✓）
+    //   实测背景（2026-10-10）：百万次字符串分配（G7/H2 ✓）之后，先持有的一批字符串
+    //   内容逐个正确 ✓；这里取 2 万次（约 20ms ✓）作轻量版 ✓ —— 退化就说明 GC 出问题 ✓
+    //   ⚠ 断言**同时钉"计数"和"内容"** ✓：只看计数抓不住"内容被改写"✗
+    var p15 = dirs.join(work, "gc_long_run.leno")
+    files.write(p15, "main() {" + n
+        + "    Array[string] keep = []" + n
+        + "    int total = 0" + n
+        + "    int i = 0" + n
+        + "    while i < 20000 {" + n
+        + "        string s = \"v\" + _str(i)" + n
+        + "        total = total + s.len()" + n
+        + "        if i % 5000 == 0 { keep.add(s) }" + n
+        + "        i = i + 1" + n
+        + "    }" + n
+        + "    string chk = \"\"" + n
+        + "    for keep to t { chk = chk + t + \",\" }" + n
+        + "    print(_str(total) + \"|\" + chk + \"\\n\")" + n
+        + "}" + n)
+    ce.expect_ok(p15, "长跑 2 万次分配后既有数据不变形", "108890|v0,v5000,v10000,v15000,")
+
     dirs.delete(work)
 
     print("test_semantics_pins passed")
