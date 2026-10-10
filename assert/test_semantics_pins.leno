@@ -329,6 +329,44 @@ main() {
         + "}" + n)
     ce.expect_ok(p29, "ffi.alloc 初值可省（清零）", "0|7")
 
+    // ---------- 第十三批（asyncs 深化 ✓）实测后补的钉桩 ----------
+
+    // P30 ★ `asyncs.all` **必须先 await 完**才拿得到结果 ✓（不 await ⇒ 静默全 null ✗）
+    //   两条一起钉 ✓：不 await 的"坏"结果 + await 之后的"好"结果 ✓
+    //   ⚠ 这条是**文档口径**（module_asyncs.md:231「收集多个**已完成** Future 的结果」✓），
+    //     不是 bug ✗ —— 但静默给 null 很容易误判成"协程没跑"✗ ⇒ 值得钉 ✓
+    //   ⚠ 用例**必须**在 `asyncs.run()` **之前**看那一眼 ✗ —— 我先调了 run() 再调 all ✓
+    //     结果两个 Future 早就完成了 ⇒ "坏情况"根本没成立 ⇒ 断言假失败 ✓（又一次"用例先自证" ✓）
+    var p30 = dirs.join(work, "asyncs_all.leno")
+    files.write(p30, "import asyncs" + n
+        + "async func job(int v): int { await asyncs.sleep(1); return v }" + n
+        + "main() {" + n
+        + "    var a = job(1)" + n
+        + "    var b = job(2)" + n
+        + "    printf(\"noWait=\" + _str(asyncs.all([a, b])) + \"|\")" + n
+        + "    asyncs.run()" + n
+        + "    print(\"afterRun=\" + _str(asyncs.all([a, b])) + \"\\n\")" + n
+        + "}" + n)
+    ce.expect_ok(p30, "all：未完成 ⇒ 全 null；跑完 ⇒ 真结果", "noWait=[null, null]|afterRun=[1, 2]")
+
+    // P31：`timeout / sleep / yield` 在**非 async** 上下文里 ⇒ **明确报错** ✓（不是静默 ✓）
+    var p31 = dirs.join(work, "asyncs_guard.leno")
+    files.write(p31, "import asyncs" + n
+        + "main() { print(_str(asyncs.sleep(1)) + \"\\n\") }" + n)
+    ce.expect_error(p31, "sleep 在 main 里 ⇒ 编译/运行期明确拦住", "只能在 async 函数中调用", 0)
+
+    // P32：嵌套 await（协程里等协程 ✓）⇒ 结果正确 ✓
+    var p32 = dirs.join(work, "asyncs_nested_await.leno")
+    files.write(p32, "import asyncs" + n
+        + "async func inner(int v): int { await asyncs.sleep(1); return v + 1 }" + n
+        + "async func outer(int v): int { var r = await inner(v); return r * 10 }" + n
+        + "main() {" + n
+        + "    var f = outer(4)" + n
+        + "    asyncs.run()" + n
+        + "    print(_str(asyncs.get_result(f)) + \"\\n\")" + n
+        + "}" + n)
+    ce.expect_ok(p32, "嵌套 await ⇒ (4+1)*10 = 50", "50")
+
     dirs.delete(work)
 
     print("test_semantics_pins passed")
