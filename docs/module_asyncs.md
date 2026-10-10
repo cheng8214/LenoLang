@@ -266,6 +266,13 @@ async func fetch_all_users() {
 2. 使用 `await` 等待每个 Future 完成
 3. 使用 `all()` 收集所有结果
 
+> ⚠ **2026-10-10 起**：数组里还有**没完成**的 Future ⇒ `all()` **抛错** ✓（不再静默给 `null` ✗）。
+> 原文案：`asyncs.all：第 N 个 Future **还没完成** ⇒ 拿到的会是 null，不是你要的值 ✗ …`
+> （给出两种正确做法：先 `await` / 先 `asyncs.run()` 跑完；或改用
+> `asyncs.is_done(f)` + `asyncs.get_result(f)` 逐个查 ✓）
+> **为什么改**：原来那个 `null` 会被读成"协程没跑"✗，而真因是"没等它"✓ ——
+> 静默错值比报错难查得多 ✓。回归钉在 `assert/test_semantics_pins.leno` 的 **P30** ✓。
+
 ---
 
 ### `timeout(future, ms)`

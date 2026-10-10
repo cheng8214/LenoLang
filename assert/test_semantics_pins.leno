@@ -331,23 +331,33 @@ main() {
 
     // ---------- 第十三批（asyncs 深化 ✓）实测后补的钉桩 ----------
 
-    // P30 ★ `asyncs.all` **必须先 await 完**才拿得到结果 ✓（不 await ⇒ 静默全 null ✗）
-    //   两条一起钉 ✓：不 await 的"坏"结果 + await 之后的"好"结果 ✓
-    //   ⚠ 这条是**文档口径**（module_asyncs.md:231「收集多个**已完成** Future 的结果」✓），
-    //     不是 bug ✗ —— 但静默给 null 很容易误判成"协程没跑"✗ ⇒ 值得钉 ✓
-    //   ⚠ 用例**必须**在 `asyncs.run()` **之前**看那一眼 ✗ —— 我先调了 run() 再调 all ✓
-    //     结果两个 Future 早就完成了 ⇒ "坏情况"根本没成立 ⇒ 断言假失败 ✓（又一次"用例先自证" ✓）
+    // P30 ★ `asyncs.all`：**未完成的 Future ⇒ 抛错**（2026-10-10 改 ✓，A 组第 2 条）
+    //   ⚠ **这条钉桩本身也改过** ✗（值得记着）：原版钉的是"不 await ⇒ **静默全 null**" ✓
+    //     —— 那是当时的**实现行为**，但它是**静默给错值** ✗（看起来像"协程没跑"，
+    //     而不是"你没等它" ✗）⇒ 本轮改成**抛错**：把静默错值变成响的 ✓ 且文案给出
+    //     两种正确做法 ✓（先 await / 先 asyncs.run()；或改用 is_done + get_result ✓）。
+    //   ⚠ 用例**必须**在 `asyncs.run()` **之前**看那一眼 ✗ —— 先 run() 再 all 的话
+    //     两个 Future 早完成了 ⇒ "坏情况"根本不成立 ⇒ 断言假失败 ✓（"用例先自证" ✓）
+    //   ⚠ 全量套件实测：改动只挂这**一条**钉桩 ✓（其余 435 条全过 ✓）⇒ 全仓没有
+    //     任何地方依赖"静默 null"这个旧行为 ✓（这条实测数据比"我觉得安全"值钱 ✓）
     var p30 = dirs.join(work, "asyncs_all.leno")
     files.write(p30, "import asyncs" + n
+        + "import strings" + n
         + "async func job(int v): int { await asyncs.sleep(1); return v }" + n
         + "main() {" + n
         + "    var a = job(1)" + n
         + "    var b = job(2)" + n
-        + "    printf(\"noWait=\" + _str(asyncs.all([a, b])) + \"|\")" + n
+        + "    try {" + n
+        + "        var bad = asyncs.all([a, b])" + n
+        + "        printf(\"noThrow=\" + _str(bad) + \"|\")" + n
+        + "    } catch e {" + n
+        + "        printf(\"threw=\" + _str(strings.has(_str(e.msg), \"还没完成\")) + \"|\")" + n
+        + "    }" + n
         + "    asyncs.run()" + n
         + "    print(\"afterRun=\" + _str(asyncs.all([a, b])) + \"\\n\")" + n
         + "}" + n)
-    ce.expect_ok(p30, "all：未完成 ⇒ 全 null；跑完 ⇒ 真结果", "noWait=[null, null]|afterRun=[1, 2]")
+    ce.expect_ok(p30, "all：未完成 ⇒ 抛错（文案说清）+ 跑完 ⇒ 真结果",
+        "threw=true|afterRun=[1, 2]")
 
     // P31：`timeout / sleep / yield` 在**非 async** 上下文里 ⇒ **明确报错** ✓（不是静默 ✓）
     var p31 = dirs.join(work, "asyncs_guard.leno")

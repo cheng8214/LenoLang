@@ -123,7 +123,15 @@ static Value native_async_yield(int arg_count, Value* args) {
     return val_obj((Object*)future);
 }
 
-// async.all(futures) - 等待所有 Future 完成，返回结果数组
+// asyncs.all(futures) - 收集**已完成** Future 的结果，返回结果数组
+//   ⚠ 注释与文案口径（2026-10-10 修）：
+//   · 上面那行原写"**等待**所有 Future 完成" ✗ —— **假的** ✗：本函数不会等待（native 调用
+//     没有协程挂起能力），文档 `docs/module_asyncs.md:229` 的契约也是"**收集多个已完成**
+//     Future 的结果" ✓ ⇒ 注释已按实现与文档改准 ✓。
+//   · 更要紧的是"**没完成就塞 null**" ✗（静默给错值 ✓ 实测踩过：不先 await 直接 all
+//     ⇒ 全 null，看起来像"任务没返回"而不是"你没等它" ✗）⇒ 现在**抛错** ✓
+//     （见下面那个 throw）：把静默错值变成**响的** ✓，文案直接给出两种正确做法 ✓。
+//   · 数组里**非 Future 的元素**照旧原样带过 ✓（那是有意用法，不动 ✓）。
 static Value native_async_all(int arg_count, Value* args) {
     if (arg_count < 1 || !val_is_obj(args[0]) || val_as_obj(args[0])->type != OBJ_ARRAY) {
         native_throw_error("async.all 需要一个数组参数");
@@ -155,7 +163,16 @@ static Value native_async_all(int arg_count, Value* args) {
         if (future->completed) {
             results->elements[i] = future->result;
         } else {
-            results->elements[i] = val_null();
+            // ★ 2026-10-10：未完成的 Future **不再静默给 null** ✗ ⇒ 抛错并指路 ✓
+            char msg[BUFFER_MEDIUM];
+            snprintf(msg, sizeof(msg),
+                     "asyncs.all：第 %d 个 Future **还没完成** ⇒ 拿到的会是 null，不是你要的值 ✗。"
+                     "两种正确做法：① 在 async 函数里 `await` 它，等它完成后（或 `asyncs.run()` "
+                     "把事件循环跑完）再调 all ✓；② 只想「不等待、逐个查」，请用 "
+                     "`asyncs.is_done(f)` + `asyncs.get_result(f)` ✓",
+                     i + 1);
+            native_throw_error(msg);
+            return val_null();
         }
     }
     
