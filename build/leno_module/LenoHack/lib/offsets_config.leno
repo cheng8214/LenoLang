@@ -93,7 +93,7 @@ export struct OffsetConfig {
         string hexStr = _str(val)
         // 去掉 "0x" 前缀如果有
         if strings.starts_with(hexStr, "0x") or strings.starts_with(hexStr, "0X") {
-            hexStr = strings.sub_str(hexStr, 2, hexStr.len())
+            hexStr = strings.take(hexStr, 2, hexStr.len())
         }
         return _hex_str_to_int(hexStr)
     }

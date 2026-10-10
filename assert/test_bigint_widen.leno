@@ -140,10 +140,10 @@ main() {
     try { strings.slice("a", true, 1) } catch e { probe_hit("strings.slice[TYPE_INT#1<true>]", e.msg) }
     try { strings.slice("a", 1, _BIG) } catch e { probe_hit("strings.slice[TYPE_INT#2<_BIG>]", e.msg) }
     try { strings.slice("a", 1, true) } catch e { probe_hit("strings.slice[TYPE_INT#2<true>]", e.msg) }
-    try { strings.sub_str("a", _BIG, 1) } catch e { probe_hit("strings.sub_str[TYPE_INT#1<_BIG>]", e.msg) }
-    try { strings.sub_str("a", true, 1) } catch e { probe_hit("strings.sub_str[TYPE_INT#1<true>]", e.msg) }
-    try { strings.sub_str("a", 1, _BIG) } catch e { probe_hit("strings.sub_str[TYPE_INT#2<_BIG>]", e.msg) }
-    try { strings.sub_str("a", 1, true) } catch e { probe_hit("strings.sub_str[TYPE_INT#2<true>]", e.msg) }
+    try { strings.take("a", _BIG, 1) } catch e { probe_hit("strings.take[TYPE_INT#1<_BIG>]", e.msg) }
+    try { strings.take("a", true, 1) } catch e { probe_hit("strings.take[TYPE_INT#1<true>]", e.msg) }
+    try { strings.take("a", 1, _BIG) } catch e { probe_hit("strings.take[TYPE_INT#2<_BIG>]", e.msg) }
+    try { strings.take("a", 1, true) } catch e { probe_hit("strings.take[TYPE_INT#2<true>]", e.msg) }
     try { strings.byte_slice("a", _BIG, 1) } catch e { probe_hit("strings.byte_slice[TYPE_INT#1<_BIG>]", e.msg) }
     try { strings.byte_slice("a", true, 1) } catch e { probe_hit("strings.byte_slice[TYPE_INT#1<true>]", e.msg) }
     try { strings.byte_slice("a", 1, _BIG) } catch e { probe_hit("strings.byte_slice[TYPE_INT#2<_BIG>]", e.msg) }

@@ -17,6 +17,8 @@
                     DISPATCH();
                 }
                 start_idx = (int)value_to_double(start_val);
+                // ★ 2026-10-10：负起点从末尾数（与方法 `slice` 同口径；此前一律钳到 0）
+                if (start_idx < 0) start_idx = arr_len + start_idx;
                 if (start_idx < 0) start_idx = 0;
                 if (start_idx > arr_len) start_idx = arr_len;
             }
@@ -27,7 +29,9 @@
                     DISPATCH();
                 }
                 end_idx = (int)value_to_double(end_val);
-                if (end_idx < 0) end_idx = 0;
+                // ★ 2026-10-10：**终点不支持负索引**（与方法 `slice` 同口径）—— 置 -1 ⇒
+                //   slice_len/nchars 变负 ⇒ 下面钳成 0 ⇒ 空结果 ✓（此前钳到 0 ⇒ 会给第一个元素）
+                if (end_idx < 0) end_idx = -1;
                 if (end_idx >= arr_len) end_idx = arr_len - 1;
             }
 
@@ -57,6 +61,8 @@
                     DISPATCH();
                 }
                 start_idx = (int)value_to_double(start_val);
+                // ★ 2026-10-10：负起点从末尾数（与方法 `slice` 同口径；此前一律钳到 0）
+                if (start_idx < 0) start_idx = arr_len + start_idx;
                 if (start_idx < 0) start_idx = 0;
                 if (start_idx > arr_len) start_idx = arr_len;
             }
@@ -67,7 +73,9 @@
                     DISPATCH();
                 }
                 end_idx = (int)value_to_double(end_val);
-                if (end_idx < 0) end_idx = 0;
+                // ★ 2026-10-10：**终点不支持负索引**（与方法 `slice` 同口径）—— 置 -1 ⇒
+                //   slice_len/nchars 变负 ⇒ 下面钳成 0 ⇒ 空结果 ✓（此前钳到 0 ⇒ 会给第一个元素）
+                if (end_idx < 0) end_idx = -1;
                 if (end_idx >= arr_len) end_idx = arr_len - 1;
             }
 

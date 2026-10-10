@@ -12,10 +12,10 @@ main()
     var s2 = "world"
     assert_eq(strings.to_upper(s2), "WORLD")
 
-    // 测试3: 使用字符串实例方法 sub_str 替代 substring
+    // 测试3: 使用字符串实例方法 take 替代 substring
     var s3 = "hello world"
-    assert_eq(s3.sub_str(0, 5), "hello")
-    assert_eq(s3.sub_str(6, 5), "world")
+    assert_eq(s3.take(0, 5), "hello")
+    assert_eq(s3.take(6, 5), "world")
 
     // 测试4: len
     var s4 = "hello"

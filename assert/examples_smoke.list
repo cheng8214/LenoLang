@@ -25,7 +25,7 @@ examples/多返回值/test_type_check.leno
 #     依赖外部服务或外网 / 含 benchmark 与死循环 ⇒ 既不在任何门禁里也没人跑；
 #   · 逐个审计后 **A 类 24 个**（行为已被 assert/ 覆盖）直接删；**B 类 14 个**的独有行为先折叠成断言
 #     再删 —— `byte_find`（含 `\0` 的二进制安全搜索）、`trim_start/trim_end`、Unicode 的
-#     `slice/reverse/sub_str`、**模块形态**的 `strings.reverse/rep/byte`、`File`/`Ptr` 作**形参与
+#     `slice/reverse/take`、**模块形态**的 `strings.reverse/rep/byte`、`File`/`Ptr` 作**形参与
 #     struct 字段**、rands 的 `bools/str/seed(可重复)/gauss`、子线程里 `new struct` 与用 dict/array/递归、
 #     线程+async 混用、sockets 的**真实 loopback I/O**（listen/connect/accept/recv/send/select/arecv/aaccept）；
 #   · **C 类**（压测、外网示例、`input()` 交互客户端、`d:\1.zip` 大文件复制、死循环）**不进门禁**：

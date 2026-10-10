@@ -29,8 +29,8 @@ main()
     assert_eq(parts[0], "a")
     assert_eq(parts[2], "c")
 
-    // 测试 sub_str
-    var sub = "hello world".sub_str(0, 5)
+    // 测试 take
+    var sub = "hello world".take(0, 5)
     assert_eq(sub, "hello")
 
     // 测试字符串插值

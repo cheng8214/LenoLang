@@ -868,7 +868,7 @@ main() {
     var html = http_get("www.example.com", "/")
     io.print("响应长度: " + html.len())
     io.print("前100字符:")
-    io.print(html.sub_str(0, 100))
+    io.print(html.take(0, 100))
 }
 ```
 

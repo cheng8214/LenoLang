@@ -115,11 +115,11 @@ main()
     assert_eq(no_match.len(), 1)
     assert_eq(no_match[0], "hello")
 
-    // 测试16: 字符串方法 - sub_str
-    assert_eq("hello world".sub_str(0, 5), "hello")
-    assert_eq("hello world".sub_str(6, 11), "world")
-    assert_eq("hello".sub_str(0, 5), "hello")
-    assert_eq("hello".sub_str(2, 5), "llo")
+    // 测试16: 字符串方法 - take
+    assert_eq("hello world".take(0, 5), "hello")
+    assert_eq("hello world".take(6, 11), "world")
+    assert_eq("hello".take(0, 5), "hello")
+    assert_eq("hello".take(2, 5), "llo")
 
     // 测试17: 字符串方法 - reverse
     assert_eq("hello".reverse(), "olleh")
@@ -191,15 +191,15 @@ main()
     assert_eq("  hello world  ".trim_start(), "hello world  ")
     assert_eq("  hello world  ".trim_end(), "  hello world")
 
-    // 测试30: Unicode 的实例方法（`slice` / `sub_str` 按**字符**索引，`reverse` 按字符反转）
+    // 测试30: Unicode 的实例方法（`slice` / `take` 按**字符**索引，`reverse` 按字符反转）
     //   （2026-09-27 从 examples/strings/UTF-8 中文测试.leno 收编 —— 原来只测过 ASCII）
     //   为什么要钉：多字节字符上的索引口径最容易出错（按字节切会把汉字切碎）
     var utf = "Hello 世界! 你好 Leno!"
     assert_eq(utf.slice(0, 4), "Hello")
     assert_eq(utf.slice(6, 7), "世界")
     assert_eq(utf.slice(10, 11), "你好")
-    assert_eq(utf.sub_str(6, 2), "世界")
-    assert_eq(utf.sub_str(10, 2), "你好")
+    assert_eq(utf.take(6, 2), "世界")
+    assert_eq(utf.take(10, 2), "你好")
     var cn = "中华人民共和国"
     assert_eq(cn.slice(0, 1), "中华")
     assert_eq(cn.slice(2, 4), "人民共")

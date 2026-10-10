@@ -44,7 +44,7 @@ func tinylang_tokenize(string code):Array[Dict] {
         eif c >= "0" and c <= "9" {
             var start = i
             while i < len and (code[i] >= "0" and code[i] <= "9" or code[i] == "."){i++}
-            var num_str = code.sub_str(start, i - start)
+            var num_str = code.take(start, i - start)
             tokens.add({type: "NUMBER", value: num_str, line: line})
         }
 
@@ -53,7 +53,7 @@ func tinylang_tokenize(string code):Array[Dict] {
             i++
             var start = i
             while i < len and code[i] != "\""{i++}
-            var str = code.sub_str(start, i - start)
+            var str = code.take(start, i - start)
             i++
             tokens.add({type: "STRING", value: str, line: line})
         }
@@ -63,7 +63,7 @@ func tinylang_tokenize(string code):Array[Dict] {
             var start = i;
             while i < len and ((code[i] >= "a" and code[i] <= "z") or (code[i] >= "A" and code[i] <= "Z") or (code[i] >= "0" and code[i] <= "9") or code[i] == "_"){ i++}
 
-            var id = code.sub_str(start, i - start);
+            var id = code.take(start, i - start);
             // 关键字检查
             if keywords.has(_str(id)){tokens.add({type: "KEYWORD", value: id, line: line})}
             else {tokens.add({type: "IDENTIFIER", value: id, line: line})}
@@ -237,7 +237,7 @@ func tinylang_parse(Array[Dict] tokens): Dict {
             var id =_str(token.value);
             // 检查标识符是否以关键字开头（如 for5、whilex 等）
             for keywords to var kw {
-                if id.sub_str(0, kw.len()) == kw {
+                if id.take(0, kw.len()) == kw {
                     throw "第 " + token.line + " 行: '" + id + "' 不是有效的标识符，关键字 '" + kw + "' 后需要分隔符"
                 }
             }

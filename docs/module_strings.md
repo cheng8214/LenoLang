@@ -311,21 +311,25 @@ while pos >= 0 {
 "Hello".slice(0, 99)   // "Hello"
 ```
 
-#### `sub_str(start, length)`
+#### `take(start, n)`
 
-从指定位置开始提取指定长度的子串。
+从指定位置开始取 `n` 个字符（**长度口径** —— 与 `slice` 的"位置口径"区分开，名字自带说明）。
+
+> 旧名 `sub_str` 已于 2026-10-10 **删除**（不留兼容别名）：它和 `slice` 看名字分不出区别，
+> 是"把长度当端点用"那类**静默** bug 的温床（实测踩过一次：`assert/test_byte_join.leno`）。
+> 用它的外部项目（LenoMusic / LenoTrae）已同步改名。
 
 **参数**:
 
-- `start` (int): 开始位置（0-based）
-- `length` (int): 要提取的长度
+- `start` (int): 开始位置（0-based；**负数表示从末尾数**，`-1` = 最后一个字符）
+- `n` (int): 要取的**字符个数**（超界自动截断到末尾；`n <= 0` ⇒ 空串）
 
 **返回**: `string` - 提取的子串
 
 ```leno
-"Hello".sub_str(0, 3)   // "Hel"
-"Hello".sub_str(1, 2)   // "el"
-"Hello".sub_str(-2, 2)  // "lo" (负数索引)
+"Hello".take(0, 3)   // "Hel"
+"Hello".take(1, 2)   // "el"
+"Hello".take(-2, 2)  // "lo" (负起点：从末尾数)
 ```
 
 #### `byte_slice(start, end)`
@@ -849,7 +853,7 @@ print(s.byte_len())  // 9    - 6字节(中文) + 5字节(ASCII) = 9字节
 
 - `find()` - 返回的位置和 start 参数都是 0-based 字符索引
 - `slice()` - start 和 end 参数为字符索引（**闭区间**：含 end；负终点返回空串）
-- `sub_str()` - start 参数为字符索引
+- `take()` - start 参数为字符索引（第 2 个参数是**长度**）
 - `byte()` - pos 参数为字节偏移
 - `byte_slice()` - start 和 end 参数为字节偏移
 - `byte_find()` - 返回的字节偏移和 start 参数都是 0-based 字节偏移
@@ -859,7 +863,7 @@ print(s.byte_len())  // 9    - 6字节(中文) + 5字节(ASCII) = 9字节
 支持负数索引的方法：
 
 - `slice()` - 负数表示从末尾计数
-- `sub_str()` - 负数表示从末尾计数
+- `take()` - 负数表示从末尾计数
 - `byte()` - 负数表示从末尾计数
 
 ---
@@ -867,7 +871,7 @@ print(s.byte_len())  // 9    - 6字节(中文) + 5字节(ASCII) = 9字节
 ## 性能提示
 
 1. `len()` 操作是 O(1) 复杂度，字符串长度会被缓存
-2. `slice()` 和 `sub_str()` 会创建新的字符串对象
+2. `slice()` 和 `take()` 会创建新的字符串对象
 3. `rep()` 在大重复次数时注意内存使用
 
 ---

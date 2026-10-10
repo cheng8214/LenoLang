@@ -310,7 +310,8 @@ static Value str_slice(int argc, Value* args) {
     return val_obj((Object*)result);
 }
 
-static Value str_sub_str(int argc, Value* args) {
+// （★ 2026-10-10 由 str_sub_str 改名 str_take：口径是**长度**，与 slice 的"位置"口径区分开）
+static Value str_take(int argc, Value* args) {
     (void)argc;
     ObjString* str = (ObjString*)val_as_obj(args[0]);
     int char_len = str->char_len;
@@ -1501,7 +1502,8 @@ static Value str_hex(int argc, Value* args) {
 //     ⚠ 与既有 `hex(n, digits)` **分清**：那个是**数字 → hex 文本**；这两个是**字节串 ↔ hex 文本**
 //       （同为**大写**，保持模块内一致 ✓）
 //   · `to_lower(a) == to_lower(b)` 8 处 / 6 文件（还有只转一侧的写法）⇒ eq_ignore_case
-//   · `text.slice(i, i+1)` 逐字符扫描 10 处 / 6 文件（每步分配一个单字符临时串）⇒ codepoint_at
+//   · `text.slice(i, i)` 逐字符扫描 10 处 / 6 文件（每步分配一个单字符临时串）⇒ codepoint_at
+//     （★ 2026-10-10：slice 统一成闭区间后，单字符惯用法从 `slice(i, i+1)` 变成 `slice(i, i)`）
 
 // 单个 hex 字符 → 0-15（大小写都收）；非法 ⇒ -1（由调用方报错，不静默当 0 ✓）
 static int hex_val(char c) {
@@ -1798,7 +1800,7 @@ static Value str_eq_ignore_case(int argc, Value* args) {
 
 // codepoint_at(s, i) —— 第 i 个**字符**（0-based，支持负索引）的 Unicode 码点
 //   越界 ⇒ null（与 `byte` 同口径 ✓）；返回 int ⇒ 与 ASCII 比较/分类都很便宜、**不分配**
-//   ⚠ 现有取字符的两条路都有代价：`s[i]` / `slice(i, i+1)` 都会造一个单字符临时串 ✗
+//   ⚠ 现有取字符的两条路都有代价：`s[i]` / `slice(i, i)` 都会造一个单字符临时串 ✗
 //   （sdl_edit 的词选择、sdl_label 的逐字排版就是这么写的：10 处 / 6 文件）
 static Value str_codepoint_at(int argc, Value* args) {
     (void)argc;
@@ -1870,7 +1872,7 @@ static Value str_to_codepoints(int argc, Value* args) {
 
 // from_codepoint(cp) —— Unicode 码点 → 单字符字符串（`to_codepoints` 的**逆操作**）
 //   为什么补它：`to_codepoints` 能"拆"不能"装"，而 `strings.char` 只收 0-255（ASCII 码值）
-//   ⇒ 需要**逐字符字符串**的场景（如逐字测宽 `measureString`）只能退回 `slice(k, k+1)`
+//   ⇒ 需要**逐字符字符串**的场景（如逐字测宽 `measureString`）只能退回 `slice(k, k)`
 //   （每次从头扫到第 k 个字符，整段 O(n²)，且每个字符还造一个临时串 ✗）
 //   范围校验（**不静默错值**，与 from_hex / from_bytes 同一口径）：
 //     · 负数 / 大于 0x10FFFF ⇒ 抛错（不是合法 Unicode 码点）
@@ -1960,8 +1962,11 @@ void strings_init_module(void) {
     TypeKind slice_params[] = {TYPE_STRING, TYPE_INT, TYPE_INT};
     native_register_module_method("strings", "slice", str_slice, &NATIVE_T_STRING, NATIVE_FIXED(slice_params));
 
-    TypeKind substr_params[] = {TYPE_STRING, TYPE_INT, TYPE_INT};
-    native_register_module_method("strings", "sub_str", str_sub_str, &NATIVE_T_STRING, NATIVE_FIXED(substr_params));
+    // ★ 2026-10-10：`sub_str` 改名成**口径自带**的 `take(start, n)` —— "取 n 个"不是区间，
+    //   叫 sub_str 时看名字分不出它和 `slice(start, end)`（现在两者都是闭区间，只差"长度 vs 端点"）。
+    //   旧名**直接删除、不留兼容别名**：全仓调用点已改完，外部项目（LenoMusic / LenoTrae）另行迁移 ✓
+    TypeKind take_params[] = {TYPE_STRING, TYPE_INT, TYPE_INT};
+    native_register_module_method("strings", "take", str_take, &NATIVE_T_STRING, NATIVE_FIXED(take_params));
 
     // 5b. 字节级切片
     TypeKind byte_slice_params[] = {TYPE_STRING, TYPE_INT, TYPE_INT};
@@ -2055,7 +2060,7 @@ void strings_init_module(void) {
     native_register_module_method("strings", "codepoint_at", str_codepoint_at, &NATIVE_T_INT, NATIVE_VARARG(1, 2, 2, cp_at_params, TYPE_ANY));
     native_register_module_method("strings", "to_codepoints", str_to_codepoints, &NATIVE_T_ARR_INT, NATIVE_FIXED(bytes_str_params));
     // from_codepoint(cp)：`to_codepoints` 的**逆操作**（码点 → 单字符 UTF-8 串；不扫全串 ⇒ O(1)）
-    //   补它的原因：`to_codepoints` 能拆不能装，导致"逐字符要字符串"的场景只能退回 `slice(k,k+1)`
+    //   补它的原因：`to_codepoints` 能拆不能装，导致"逐字符要字符串"的场景只能退回 `slice(k,k)`
     //   （O(n) 扫描 ⇒ 整段 O(n²)，见 sdl_label/sdl_edit 的逐字测宽）✗
     TypeKind from_cp_params[] = {TYPE_INT};
     native_register_module_method("strings", "from_codepoint", str_from_codepoint, &NATIVE_T_STRING, NATIVE_FIXED(from_cp_params));
@@ -2099,7 +2104,8 @@ void strings_init_instance_methods(void) {
     // 5. 子串提取
     TypeKind int2_params[] = {TYPE_INT, TYPE_INT};
     string_register_method("slice", make_native(str_slice, 3, "slice"), TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED(int2_params));
-    string_register_method("sub_str", make_native(str_sub_str, 3, "sub_str"), TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED(int2_params));
+    // ★ 2026-10-10：新名 `take`（口径写进名字）；旧名 `sub_str` 已删除（不留别名）
+    string_register_method("take", make_native(str_take, 3, "take"), TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED(int2_params));
     string_register_method("byte_slice", make_native(str_byte_slice, 3, "byte_slice"), TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED(int2_params));
 
     // 6. 新增：字符串反转（无参数实例方法）
