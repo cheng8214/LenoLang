@@ -141,5 +141,23 @@ main()
     assert_eq(finally_after_rethrow, true)
     assert_eq(rethrow_caught, true)
 
+    // 测试11 ★ 2026-10-10：**非字符串的 `throw` 也要统一成异常对象**
+    //   原先只有字符串走包装 ✗ ⇒ `throw 42` 时 catch 变量拿到的是**裸 int** ✗，
+    //   而它的静态类型是 Dict{msg,line,file,stack} ⇒ **类型撒谎** ✓：
+    //   紧接着 `e.msg` / `e.len()` 报「类型 object 上不存在方法 'len'」✗
+    //   —— 报错与实际完全对不上 ✓（实测 2026-10-10 ✓）
+    //   修法：OP_THROW 里对"非字符串且非异常 Dict"的值也走同一包装 ✓
+    //   （见 src/vm/vminc/run/09_exception.inc ✓ 口径与 throw_existing_exception 对齐 ✓）
+    var num_caught = false
+    var num_msg = ""
+    try {
+        throw 42
+    } catch e {
+        num_caught = true
+        num_msg = e.msg
+    }
+    assert_eq(num_caught, true)
+    assert_eq(num_msg, "42")
+
     print("test_try_catch_edge passed")
 }

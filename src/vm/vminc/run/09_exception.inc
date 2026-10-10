@@ -128,7 +128,24 @@
         int line = GET_CURRENT_LINE();
         Value exception = R(a);
         if (val_is_null(exception)) exception = vm.exception;
-        if (val_is_string(exception)) exception = wrap_string_exception(exception, line);
+        // ★★ 2026-10-10 修：**裸值也要统一包成异常对象**
+        //   原先只有字符串走 wrap_string_exception ✗ ⇒ `throw 42` 时 vm.exception 里存的是
+        //   那个**裸 int** ✗，而 `catch e` 的静态类型是 Dict{msg,line,file,stack}
+        //   （见 visit_exception.inc 的说明 ✓）⇒ **类型撒谎** ✗：紧接着的 `e.len()` / `e.msg`
+        //   报的是「类型 object 上不存在方法 'len'」✗ —— 与实际完全对不上 ✓（实测 2026-10-10）。
+        //   口径与 throw_existing_exception / throw_pending_exception **逐条对齐** ✓：
+        //     · 已是异常对象（Dict）⇒ **原样**（位置是错误真正发生的地方 ✓ 不该被改写成"接住它的那行"）✓
+        //     · 字符串            ⇒ wrap_string_exception（老行为 ✓）
+        //     · 其它裸值          ⇒ 先字符串化，再走同一包装 ✓（这样任何 throw 出来的都是同一个形状 ✓）
+        if (val_is_string(exception)) {
+            exception = wrap_string_exception(exception, line);
+        } else if (!(val_is_obj(exception) && val_as_obj(exception)->type == OBJ_DICT)) {
+            char* m = value_to_string(exception);
+            const char* mm = m ? m : "未知异常";
+            ObjString* ms = str_copy(mm, (int)strlen(mm));
+            if (ms) exception = wrap_string_exception(val_obj((Object*)ms), line);
+            free(m);
+        }
         if (vm.pending_exception) vm.pending_exception = 0;
         vm.exception = exception;
         vm.has_exception = 1;
