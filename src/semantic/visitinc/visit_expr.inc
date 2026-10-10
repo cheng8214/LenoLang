@@ -2021,8 +2021,19 @@
                 TypeInfo* index_type = infer_expr_type(s, ast->u.index.index);
                 if (index_type && index_type->kind != TYPE_INT && index_type->kind != TYPE_ANY) {
                     char msg[BUFFER_MEDIUM];
-                    snprintf(msg, sizeof(msg), "数组索引必须是整数类型，实际为 %s",
-                             type_kind_to_string(index_type->kind));
+                    // ★ 2026-10-10 文案修正：`a.len`（**忘写括号**）会被解析器收成"字符串下标" ✓
+                    //   原来只报「数组索引必须是整数类型，实际为 string」✗ —— 写的人看到这句话
+                    //   根本想不到"原来是忘写括号" ✗（实测：`print(_str(a.len) + "\n")` 报的就是它 ✓）。
+                    //   只在**字符串字面量**下标时给专门话术 ✓（下标是变量的话可能是真错 ✓
+                    //   也可能是 a[i] 里 i 写错类型 ⇒ 不特殊对待 ✓ 少说不误说 ✓）。
+                    if (ast->u.index.index->kind == AST_STRING) {
+                        snprintf(msg, sizeof(msg),
+                                 "数组不能按字符串取元素 —— 这一处像是把属性/方法写成了下标："
+                                 "取长度请写 'x.len()'（**要带括号** ✓）；按名字取元素请改用 Dict");
+                    } else {
+                        snprintf(msg, sizeof(msg), "数组索引必须是整数类型，实际为 %s",
+                                 type_kind_to_string(index_type->kind));
+                    }
                     error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                 }
                 if (index_type) type_free(index_type);

@@ -300,9 +300,14 @@
                                      "use 语句错误：native 模块 '%s' 没有类型 '%s'（可用类型: %s）",
                                      module_name, symbol_name, list);
                         } else {
+                            // ★ 2026-10-10 文案修正：原来只说"没有导出任何类型" ✗ ——
+                            //   实测 `use maths.not_a_real_func` 报的就是这句 ✗，而 maths 明明
+                            //   导出了一堆**函数** ✓ ⇒ 写的人以为是 maths 有问题，其实是用法不对 ✓：
+                            //   `use` 只能导入**类型** ✓（本仓既有写法 `use SDL3.(Event, Renderer, …)` ✓）。
                             snprintf(msg, sizeof(msg),
-                                     "use 语句错误：native 模块 '%s' 没有导出任何类型",
-                                     module_name);
+                                     "use 语句错误：native 模块 '%s' 里没有类型 '%s'，而且它一个类型都没导出"
+                                     "（use 只能导入**类型** ✓；模块里的函数/常量请直接写 '%s.名字(...)' 调用 ✓）",
+                                     module_name, symbol_name, module_name);
                         }
                         error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                         break;

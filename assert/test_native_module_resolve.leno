@@ -74,6 +74,14 @@ main() {
         "import stringss" + n + n + "main() { print(1) }" + n,
         1, "types")
 
+    // === 负向：`use` 一个模块里不存在的类型（2026-10-10 加）===
+    //   实测背景：`use maths.not_a_real_func` 原先只报「native 模块 'maths' 没有导出任何类型」✗
+    //   —— 而 maths 明明导出了一堆**函数** ✓ ⇒ 写的人以为是 maths 有了毛病，其实是用法不对 ✓
+    //   （`use` 只能导入**类型** ✓）。新文案要把这一点说清 ✓，这条断言钉住它 ✓
+    expect_compile_error(work, "bad_use_missing_type",
+        "import maths" + n + n + "use maths.not_a_real_func" + n + "main() { print(1) }" + n,
+        3, "use 只能导入")
+
     dirs.delete(work)
     print("test_native_module_resolve passed")
 }
