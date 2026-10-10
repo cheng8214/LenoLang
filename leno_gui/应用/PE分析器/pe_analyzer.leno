@@ -2582,19 +2582,19 @@ struct PEAnalyzer {
             // 注意: decodeOneInstruction 返回的地址是纯 hex（不含 0x 前缀）
             int space1 = s.find("  ")
             if space1 > 0 {
-                addr = "0x" + s.slice(0, space1)
+                addr = "0x" + s.slice(0, space1 - 1)
                 int restStart = space1
                 while restStart < s.len() and s[restStart] == " " { restStart = restStart + 1 }
                 if restStart < s.len() and s[restStart] == "L" {
                     int space2 = s.find("  ", restStart)
                     if space2 > restStart {
-                        lineNo = s.slice(restStart, space2)
+                        lineNo = s.slice(restStart, space2 - 1)
                         int rest2 = space2
                         while rest2 < s.len() and s[rest2] == " " { rest2 = rest2 + 1 }
                         if rest2 < s.len() {
                             int space3 = s.find("  ", rest2)
                             if space3 > rest2 {
-                                opName = s.slice(rest2, space3)
+                                opName = s.slice(rest2, space3 - 1)
                                 int rest3 = space3
                                 while rest3 < s.len() and s[rest3] == " " { rest3 = rest3 + 1 }
                                 if rest3 < s.len() {

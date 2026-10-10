@@ -40,7 +40,7 @@ func _detectLine(string html): string {
     int s = i + 14
     int e = strings.byte_find(html, "</div>", s)
     if e < 0 { return "" }
-    return strings.byte_slice(html, s, e)
+    return strings.byte_slice(html, s, e - 1)
 }
 
 main() {

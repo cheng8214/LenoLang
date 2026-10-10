@@ -260,35 +260,53 @@ static Value str_replace(int argc, Value* args) {
 }
 
 // 5. 子串提取
-
+//
+// ★ 2026-10-10：`slice` 从"左闭右开"翻成**闭区间** `[start, end]`（含 end），
+//   与切片语法 `s[a:b]` / `arr[a:b]`（OP_SLICE，见 src/vm/vminc/run/08_slice_iter.inc）
+//   统一成同一套口径 —— 此前语法闭、方法开，靠人脑记"哪套是哪套"，出过静默 bug。
+//
+// 口径（与 OP_SLICE 一致的部分：闭区间 + end 超界钳到 char_len-1 + 空区间给 ""）：
+//   · start < 0  ⇒ char_len + start（**从末尾数**，如 slice(-2, 5) 取到倒数第二起）
+//   · end   < 0  ⇒ 返回空串（**负终点不支持**：闭区间下 end=-1 到底是"最后一个字符"
+//                  还是"到最后一个之前"会与直觉冲突 ⇒ 宁可给空，不给错内容。
+//                  要"到末尾"就写 `x.len() - 1` 或更大的值 —— 下面会把它钳到 char_len-1 ✓）
+//   · end  >= char_len ⇒ 钳到 char_len-1（所以 `slice(0, x.len())` 仍是"到末尾" ✓）
+//   · start > end ⇒ 空串（空区间）
+//   · 索引按 **Unicode 字符**（不是字节）计算
+//
+// ⚠ 迁移说明：旧口径 [start, end) 的等价新写法是 `slice(start, end - 1)`（已全仓改完）。
 static Value str_slice(int argc, Value* args) {
     (void)argc;
     ObjString* str = (ObjString*)val_as_obj(args[0]);
     int char_len = str->char_len;
-    
+
     int start = val_as_int(args[1]);
     int end = val_as_int(args[2]);
-    
-    // 处理负数索引
+
+    // 负起点：从末尾数（与旧行为一致 ✓）
     if (start < 0) start = char_len + start;
-    if (end < 0) end = char_len + end;
-    
-    // 边界检查
     if (start < 0) start = 0;
-    if (end > char_len) end = char_len;
-    if (start > end) start = end;
-    
-    if (start >= end) {
+
+    // 负终点 ⇒ 空串（见上面的口径说明）
+    if (end < 0) {
         return val_obj((Object*)str_copy("", 0));
     }
-    
+    if (end > char_len - 1) end = char_len - 1;
+
+    if (start > end) {   // 空区间
+        return val_obj((Object*)str_copy("", 0));
+    }
+
+    int nchars = end - start + 1;
     int byte_start = utf8_char_offset(str->chars, str->len, start);
-    int byte_end = utf8_char_offset(str->chars, str->len, end);
+    int byte_end = (start + nchars >= char_len)
+                       ? str->len
+                       : utf8_char_offset(str->chars, str->len, start + nchars);
     int new_len = byte_end - byte_start;
-    
+
     ObjString* result = str_copy(str->chars + byte_start, new_len);
     if (!result) return val_null();
-    
+
     return val_obj((Object*)result);
 }
 
@@ -324,31 +342,38 @@ static Value str_sub_str(int argc, Value* args) {
 }
 
 // 5b. 字节级切片：按字节偏移量截取子串（用于二进制数据处理）
+//
+// ★ 2026-10-10：与 `slice` 同步翻成**闭区间** `[start, end]`（含 end）；口径完全同上：
+//   负起点从末尾数 / 负终点给空串 / end 超界钳到 byte_len-1 / start > end 给空串。
+//   注意索引是**字节**偏移，不是字符（按字符请用 slice）。
+//
+// ⚠ 迁移说明：旧口径 [start, end) 的等价新写法是 `byte_slice(start, end - 1)`（已全仓改完）。
 static Value str_byte_slice(int argc, Value* args) {
     (void)argc;
     ObjString* str = (ObjString*)val_as_obj(args[0]);
     int byte_len = str->len;
-    
+
     int start = val_as_int(args[1]);
     int end = val_as_int(args[2]);
-    
-    // 处理负数索引（基于字节长度）
+
+    // 负起点：从末尾数（基于字节长度，与旧行为一致 ✓）
     if (start < 0) start = byte_len + start;
-    if (end < 0) end = byte_len + end;
-    
-    // 边界检查
     if (start < 0) start = 0;
-    if (end > byte_len) end = byte_len;
-    if (start > end) start = end;
-    
-    if (start >= end) {
+
+    // 负终点 ⇒ 空串（与 str_slice 同口径）
+    if (end < 0) {
         return val_obj((Object*)str_copy("", 0));
     }
-    
-    int new_len = end - start;
+    if (end > byte_len - 1) end = byte_len - 1;
+
+    if (start > end) {   // 空区间
+        return val_obj((Object*)str_copy("", 0));
+    }
+
+    int new_len = end - start + 1;
     ObjString* result = str_copy(str->chars + start, new_len);
     if (!result) return val_null();
-    
+
     return val_obj((Object*)result);
 }
 

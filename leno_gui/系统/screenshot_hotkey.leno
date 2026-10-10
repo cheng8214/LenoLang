@@ -234,7 +234,9 @@ func doScreenshot() {
                     }
                     if ev.scancode() == Scancode.BACKSPACE and _textStr.len() > 0 {
                         // 退格删除最后一个字符
-                        _textStr = _textStr.slice(0, -1)
+                        // ★ 2026-10-10：slice 已统一成**闭区间** ⇒ "到倒数第二个字符"要写 len-2，
+                        //   这里用**长度口径**的 sub_str(0, len-1) 更直白（len=1 时给 0 ⇒ 空串 ✓）
+                        _textStr = _textStr.sub_str(0, _textStr.len() - 1)
                         _updateIMEPos(win.getHandle(), fontList)
                         SDL3.markFrameRedraw(); return true
                     }
@@ -596,7 +598,7 @@ func _wrapLine(string line, Font f, float maxW): Array[string] {
     if line.len() == 0 { result.add(""); return result }
     string cur = ""
     for line.len() to i {
-        string ch = line.slice(i, i+1)
+        string ch = line.slice(i, i)
         string test = cur + ch
         var[float, float](sz_w, sz_h) = f.measureString(test)
         if sz_w > maxW and cur.len() > 0 {

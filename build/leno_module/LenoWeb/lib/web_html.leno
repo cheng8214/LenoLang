@@ -893,7 +893,7 @@ export func cleanText(string raw): string {
     int end = result.byte_len()
     while start < end and result.byte(start) == 32 { start = start + 1 }
     while end > start and result.byte(end - 1) == 32 { end = end - 1 }
-    return result.byte_slice(start, end)
+    return result.byte_slice(start, end - 1)
 }
 
 // HTML 转可读纯文本（仿 html2text）：保留段落/标题/列表/换行结构
@@ -1657,7 +1657,7 @@ func _parseAnB(string arg): Array[int] {
         return [0, _intDef(s, 0)]
     }
     // ⚠ 变量名不能用 `as`（类型转换关键字）与 `any`（类型名）
-    string aPart = strings.trim(s.slice(0, ni))
+    string aPart = strings.trim(s.slice(0, ni - 1))
     string bPart = strings.trim(s.slice(ni + 1, s.len()))
     int a = 1
     if aPart == "-" { a = -1 }

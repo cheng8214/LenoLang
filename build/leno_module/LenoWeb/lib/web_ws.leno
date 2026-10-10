@@ -222,7 +222,7 @@ func _readExact(WsClient c, int n): string {
         c.pending = c.pending + got
         lastProgress = _int(times.ms())
     }
-    string out = strings.byte_slice(c.pending, 0, n)
+    string out = strings.byte_slice(c.pending, 0, n - 1)
     c.pending = strings.byte_slice(c.pending, n, c.pending.byte_len())
     return out
 }
@@ -233,7 +233,7 @@ func _readLine(WsClient c): string {
     while true {
         int idx = strings.byte_find(c.pending, "\r\n", 0)
         if idx >= 0 {
-            string line = strings.byte_slice(c.pending, 0, idx)
+            string line = strings.byte_slice(c.pending, 0, idx - 1)
             c.pending = strings.byte_slice(c.pending, idx + 2, c.pending.byte_len())
             return line
         }
@@ -275,14 +275,14 @@ export func parseWsUrl(string url): WsUrl {
     string hostPort = rest
     string path = "/"
     if slash >= 0 {
-        hostPort = strings.byte_slice(rest, 0, slash)
+        hostPort = strings.byte_slice(rest, 0, slash - 1)
         path = strings.byte_slice(rest, slash, rest.byte_len())
     }
     string host = hostPort
     int port = 80
     int colon = strings.byte_find(hostPort, ":", 0)
     if colon >= 0 {
-        host = strings.byte_slice(hostPort, 0, colon)
+        host = strings.byte_slice(hostPort, 0, colon - 1)
         port = _int(strings.byte_slice(hostPort, colon + 1, hostPort.byte_len()))
     }
     u.ok = true

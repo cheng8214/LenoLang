@@ -35,7 +35,7 @@ func hand_to_hex(string s):string {
         int b = strings.byte(s, i)
         int hi = (b >> 4) & 15
         int lo = b & 15
-        out += digits.slice(hi, hi + 1) + digits.slice(lo, lo + 1)
+        out += digits.slice(hi, hi) + digits.slice(lo, lo)
         i += 1
     }
     return out
@@ -46,7 +46,7 @@ func hand_scan(string s):int {
     int sum = 0
     int i = 0
     while i < s.len() {
-        sum += strings.byte(s.slice(i, i + 1), 0)
+        sum += strings.byte(s.slice(i, i), 0)
         i += 1
     }
     return sum

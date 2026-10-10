@@ -125,7 +125,7 @@ main() {
         got = got + 1
         string msg = raw as string
         int p1 = strings.byte_find(msg, "|", 0)
-        int idx = _int(strings.byte_slice(msg, 0, p1))
+        int idx = _int(strings.byte_slice(msg, 0, p1 - 1))
         if idx < 0 or idx >= urls.len() { continue }
         lines[idx] = strings.byte_slice(msg, p1 + 1, msg.byte_len())
     }

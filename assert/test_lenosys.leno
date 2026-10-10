@@ -50,7 +50,7 @@ main() {
     if self != "" {
         string base = self
         int dot = strings.find(self, ".")
-        if dot > 0 { base = strings.slice(self, 0, dot) }
+        if dot > 0 { base = strings.slice(self, 0, dot - 1) }
         assert_true(Sys.findProcess(base).len() > 0, "应能找到自己（" + base + "）")
     }
     assert_true(not Sys.processExists(-1), "非法 pid 必须返回 false")

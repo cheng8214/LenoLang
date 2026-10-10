@@ -61,7 +61,7 @@ export func at(Array[string] arr, int i): string {
 export func is_digit_line(string s): bool {
     string t = strings.trim(s)
     if t == "" { return false }
-    return strings.find("0123456789", strings.slice(t, 0, 1)) >= 0
+    return strings.find("0123456789", strings.slice(t, 0, 0)) >= 0
 }
 
 // 是否**纯十进制数字**（`"60%"` ⇒ false ✓ —— 靠这个把 df 的 Use% 列排除掉 ✓）
@@ -70,7 +70,7 @@ export func is_number(string s): bool {
     if t == "" { return false }
     int i = 0
     while (i < t.len()) {
-        if strings.find("0123456789", strings.slice(t, i, i + 1)) < 0 { return false }
+        if strings.find("0123456789", strings.slice(t, i, i)) < 0 { return false }
         i = i + 1
     }
     return true
@@ -83,7 +83,7 @@ export func first_int_in(string s, int def): int {
     bool started = false
     int i = 0
     while (i < s.len()) {
-        string c = strings.slice(s, i, i + 1)
+        string c = strings.slice(s, i, i)
         bool isDigit = strings.find("0123456789", c) >= 0
         if isDigit {
             digits = digits + c
@@ -135,8 +135,8 @@ export func parse_proc_stat(string line): Dict {
     int rp = last_index_of(s, ")")
     if rp <= lp { return {ok: false, pid: 0, name: "", ppid: 0, state: ""} }
 
-    int pid = _int(strings.trim(strings.slice(s, 0, lp)))
-    string name = strings.slice(s, lp + 1, rp)
+    int pid = _int(strings.trim(strings.slice(s, 0, lp - 1)))
+    string name = strings.slice(s, lp + 1, rp - 1)
     string rest = strings.trim(strings.slice(s, rp + 1, s.len()))
     var t = tokens(rest)
 
@@ -186,7 +186,7 @@ export func parse_desktop_entry(string text): Dict {
 
         int eq = strings.find(t, "=")
         if eq <= 0 { continue }
-        string k = strings.trim(strings.slice(t, 0, eq))
+        string k = strings.trim(strings.slice(t, 0, eq - 1))
         string v = strings.trim(strings.slice(t, eq + 1, t.len()))
 
         // 本地化键（`Name[zh_CN]`）跳过 ⇒ 取不带 locale 的基准值 ✓
@@ -235,7 +235,7 @@ export func parse_dpkg_status(string text): Array {
 
         int c = strings.find(t, ":")
         if c <= 0 { continue }
-        string k = strings.slice(t, 0, c)
+        string k = strings.slice(t, 0, c - 1)
         string v = strings.trim(strings.slice(t, c + 1, t.len()))
         hasBlock = true
 
@@ -272,7 +272,7 @@ export func parse_xbel_recents(string text, int max): Array[string] {
             string rest = strings.slice(h, q1 + 1, h.len())
             int q2 = strings.find(rest, "\"")
             if q2 >= 0 {
-                string p = file_uri_to_path(strings.slice(rest, 0, q2))
+                string p = file_uri_to_path(strings.slice(rest, 0, q2 - 1))
                 if p != "" {
                     if not out.has(p) { out.add(p) }
                     if max > 0 and out.len() >= max { break }
@@ -294,7 +294,7 @@ func _hex_val(string c): int {
 func _hex_digit(int v): string {
     string table = "0123456789ABCDEF"
     if v < 0 or v > 15 { return "0" }
-    return strings.slice(table, v, v + 1)
+    return strings.slice(table, v, v)
 }
 
 // `%E4%B8%AD` ⇒ `中`
@@ -306,10 +306,10 @@ export func percent_decode(string s): string {
     string out = ""
     int i = 0
     while (i < s.len()) {
-        string c = strings.slice(s, i, i + 1)
+        string c = strings.slice(s, i, i)
         if c == "%" and i + 2 < s.len() {
-            int hi = _hex_val(strings.slice(s, i + 1, i + 2))
-            int lo = _hex_val(strings.slice(s, i + 2, i + 3))
+            int hi = _hex_val(strings.slice(s, i + 1, (i + 2) - 1))
+            int lo = _hex_val(strings.slice(s, i + 2, (i + 3) - 1))
             if hi >= 0 and lo >= 0 {
                 out = out + strings.char(hi * 16 + lo)
                 i = i + 3
@@ -348,7 +348,7 @@ export func file_uri_to_path(string uri): string {
     string p = strings.slice(s, 7, s.len())
     // `file:///C:/…` 会留下一个前导 '/' ⇒ Windows 盘符形态要去掉 ✓
     if strings.starts_with(p, "/") and p.len() > 2 {
-        string second = strings.slice(p, 2, 3)
+        string second = strings.slice(p, 2, 2)
         if second == ":" { p = strings.slice(p, 1, p.len()) }
     }
     return percent_decode(p)

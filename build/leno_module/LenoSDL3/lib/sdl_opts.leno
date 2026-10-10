@@ -55,7 +55,7 @@ func _dist(string a, string b): int {
         Array[int] cur = [i]
         for 1 : lb to j {
             int cost = 1
-            if strings.slice(a, i - 1, i) == strings.slice(b, j - 1, j) { cost = 0 }
+            if strings.slice(a, i - 1, i - 1) == strings.slice(b, j - 1, j - 1) { cost = 0 }
             int v = prev[j] + 1
             if cur[j - 1] + 1 < v { v = cur[j - 1] + 1 }
             if prev[j - 1] + cost < v { v = prev[j - 1] + cost }

@@ -16,7 +16,7 @@ import asyncs
 func headLine(string s): string {
     var i = s.find("\n")
     if i < 0 { return s }
-    return s.slice(0, i)
+    return s.slice(0, i - 1)
 }
 
 // 协程里没接住 → 由 run() 收集后抛回调用方

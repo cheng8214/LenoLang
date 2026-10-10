@@ -10,7 +10,7 @@ main() {
     Array[string] buf = []
     string text = "hello world"
     for text.len() to i {
-        buf.add(text.slice(i, i + 1))   // slice(start,end) 半开区间取单个字符
+        buf.add(text.slice(i, i))   // slice(start,end) **闭区间**（含 end）⇒ 取单个字符
     }
     string result = strings.join(buf, "")
     assert_eq(result, "hello world")
@@ -20,7 +20,7 @@ main() {
     string zh = "你好世界"
     Array[string] buf2 = []
     for zh.len() to i {
-        buf2.add(zh.slice(i, i + 1))    // 按字符切片（正确处理多字节 UTF-8）
+        buf2.add(zh.slice(i, i))    // 按字符切片（正确处理多字节 UTF-8）
     }
     string zhResult = strings.join(buf2, "")
     assert_eq(zhResult, "你好世界")
@@ -29,7 +29,7 @@ main() {
     // 直接拼接对照
     string direct = ""
     for zh.len() to i {
-        direct = direct + zh.slice(i, i + 1)
+        direct = direct + zh.slice(i, i)
     }
     assert_eq(direct, "你好世界")
     io.print("[3] 直接拼接中文 = '" + direct + "' (对照)")

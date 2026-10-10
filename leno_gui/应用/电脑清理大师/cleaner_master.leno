@@ -867,7 +867,7 @@ struct CleanerMaster {
     func driveLabel(): string {
         if Sys.isWindows() {
             string root = Sys.systemRoot()
-            if root.len() >= 1 { return strings.slice(root, 0, 1) + "盘" }
+            if root.len() >= 1 { return strings.slice(root, 0, 0) + "盘" }
             return "系统盘"
         }
         if Sys.isMacos() { return "系统卷" }

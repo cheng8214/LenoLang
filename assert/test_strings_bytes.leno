@@ -111,7 +111,7 @@ main() {
     assert_eq(back7, rt, "⑦码点→字符串 往返 == 原串")
     int diff7 = 0
     for 0:rt.len() - 1 to i {
-        if strings.from_codepoint(cps7[i]) != rt.slice(i, i + 1) { diff7 += 1 }
+        if strings.from_codepoint(cps7[i]) != rt.slice(i, i) { diff7 += 1 }
     }
     assert_eq(diff7, 0, "⑦from_codepoint(cps[i]) == slice(i, i+1)（逐字符一致）")
     // UTF-8 长度档位边界（1/2/3/4 字节）

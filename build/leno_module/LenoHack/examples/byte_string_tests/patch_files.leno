@@ -30,7 +30,7 @@ func findPattern(string content, string pattern, int contentLen, int pLen): Arra
     while pos <= maxOff {
         if content.byte(pos + filterOff) == filterByte {
             // 过滤命中, 用 byte_slice 取出完整 pLen 字节比较
-            string slice = content.byte_slice(pos, pos + pLen)
+            string slice = content.byte_slice(pos, (pos + pLen) - 1)
             if slice == pattern {
                 results.add(pos)
                 pos = pos + pLen

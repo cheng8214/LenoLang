@@ -7781,14 +7781,24 @@ main() {
 }
 ```
 
-> **⚠️ `str[start:end]` 与 `str.slice(start, end)` 的区别**
+> **⚠️ `str[start:end]` 与 `str.slice(start, end)` 的口径（2026-10-10 起完全一致）**
 >
-> | 语法 | 结束索引 | 示例 | 结果 |
+> | 写法 | 结束索引 | 示例 | 结果 |
 > |------|---------|------|------|
-> | `str[start:end]` | **包含** end | `"abc"[0:1]` | "ab" |
-> | `str.slice(start, end)` | **不包含** end | `"abc".slice(0,1)` | "a" |
+> | `str[start:end]` | **包含** end（闭区间） | `"abc"[0:1]` | "ab" |
+> | `str.slice(start, end)` | **包含** end（闭区间） | `"abc".slice(0,1)` | "ab" |
 >
-> 切片语法 `[start:end]` 与数组切片保持一致（闭区间），而 `slice()` 方法采用左闭右开约定。
+> 两者都是**闭区间（含 end）**，与数组切片 `arr[start:end]` 同一口径 —— `slice()` 此前是
+> "不含 end"（左闭右开），2026-10-10 已统一成闭区间（全仓 248 处调用点同步改写完成）。
+>
+> 残留差异只在**负索引**上（这是有意的，不是遗漏）：
+>
+> | | 起点为负 | 终点为负 |
+> |---|---|---|
+> | `str[start:end]` | 钳到 0 | 钳到 0 |
+> | `str.slice(start, end)` | **从末尾数**（`slice(-2, 5)` = 倒数第二个起） | **返回空串**（闭区间下 `-1` 会与"最后一个字符"混淆 ⇒ 宁空不错）|
+>
+> ⇒ "到末尾"一律写 `x.len() - 1`（或更大的值，会被钳到最后一个字符 ✓）。
 
 ### 字符索引 vs 字节索引（重要）
 
@@ -7802,9 +7812,9 @@ LenoC 字符串内部使用 UTF-8 编码，但对外提供**两套 API**：按�
 |------|------|------|
 | `len()` | 返回字符数 | `"你好".len()` → 2 |
 | `str[i]` | 按字符索引 | `"你好"[0]` → "你" |
-| `str[start:end]` | 按字符位置切片（包含end） | `"你好世界"[0:1]` → "你好" |
-| `slice(start, end)` | 按字符位置切片（不包含end） | `"你好世界".slice(0,2)` → "你好" |
-| `sub_str(start, len)` | 按字符位置截取 | `"你好世界".sub_str(1,2)` → "好世" |
+| `str[start:end]` | 按字符位置切片（**包含** end） | `"你好世界"[0:1]` → "你好" |
+| `slice(start, end)` | 按字符位置切片（**包含** end） | `"你好世界".slice(0,1)` → "你好" |
+| `sub_str(start, len)` | 按字符位置截取（**长度**口径，与上面两个不同） | `"你好世界".sub_str(1,2)` → "好世" |
 | `reverse()` | 按字符反转 | `"你好".reverse()` → "好你" |
 | `find(sub)` | 返回字符位置 | `"你好世界".find("世界")` → 2 |
 
@@ -7816,7 +7826,7 @@ LenoC 字符串内部使用 UTF-8 编码，但对外提供**两套 API**：按�
 |------|------|------|
 | `byte_len()` | 返回字节数 | `"你好".byte_len()` → 6 |
 | `byte(i)` | 获取某字节的值(0-255) | `"A".byte(0)` → 65 |
-| `byte_slice(start, end)` | 按字节位置切片 | `"你好".byte_slice(0,3)` → "你" |
+| `byte_slice(start, end)` | 按字节位置切片（**包含** end） | `"你好".byte_slice(0,2)` → "你" |
 
 #### 何时用 `slice` 何时用 `byte_slice`
 
@@ -7824,19 +7834,19 @@ LenoC 字符串内部使用 UTF-8 编码，但对外提供**两套 API**：按�
 main() {
     var text = "你好世界"
 
-    // ✅ 处理文本：用 slice（按字符）
-    print(text.slice(0, 2))        // "你好"
-    print(text.sub_str(1, 2))      // "好世"
+    // ✅ 处理文本：用 slice（按字符，闭区间：含 end）
+    print(text.slice(0, 1))        // "你好"
+    print(text.sub_str(1, 2))      // "好世"（sub_str 是长度口径，不是区间）
 
-    // ✅ 处理二进制数据：用 byte_slice（按字节）
+    // ✅ 处理二进制数据：用 byte_slice（按字节，闭区间：含 end）
     // 例如：加密解密后去除 PKCS7 填充
     string padded = "hello___"      // 假设是解密结果（尾部 3 个下划线示意 PKCS7 填充）
     int pad_len = 3
-    var unpadded = padded.byte_slice(0, padded.byte_len() - pad_len)   // "hello"
+    var unpadded = padded.byte_slice(0, padded.byte_len() - pad_len - 1)   // "hello"
 
     // ❌ 错误示范：对二进制数据用 slice
     // 二进制数据中可能包含多字节字符的片段，用字符索引会出错
-    // padded.slice(0, padded.len() - pad_len)  // 可能截断到字符中间！
+    // padded.slice(0, padded.len() - pad_len - 1)  // 可能截断到字符中间！
 }
 ```
 
@@ -7959,21 +7969,21 @@ main() {
     var s4 = "hello world hello"
     print(s4.replace("hello", "hi"))    // hi world hi
 
-    // 子串提取（字符索引）
+    // 子串提取（字符索引；slice 是闭区间 —— 含 end）
     var s5 = "hello world"
-    print(s5.slice(0, 5))       // hello
-    print(s5.sub_str(0, 5))     // hello
+    print(s5.slice(0, 4))       // hello
+    print(s5.sub_str(0, 5))     // hello（sub_str 是长度口径）
     print(s5.sub_str(6, 5))     // world
 
     // Unicode 子串提取
     var cn2 = "你好世界hello"
-    print(cn2.slice(0, 2))       // "你好"
+    print(cn2.slice(0, 1))       // "你好"
     print(cn2.sub_str(2, 2))    // "世界"
 
-    // 字节级切片（用于二进制数据处理）
+    // 字节级切片（用于二进制数据处理；同样是闭区间）
     var bin = "你好"
-    print(bin.byte_slice(0, 3))  // "你"（取前3个字节=1个中文字符）
-    print(bin.byte_slice(3, 6))  // "好"（取第3-6字节=第2个中文字符）
+    print(bin.byte_slice(0, 2))  // "你"（取前3个字节=1个中文字符）
+    print(bin.byte_slice(3, 5))  // "好"（取第3-5字节=第2个中文字符）
 }
 ```
 
@@ -8847,8 +8857,8 @@ main() {
     print(strings.byte_len(cn))              // 12（字节数）
 
     // 字节级切片（用于二进制数据处理）
-    print(strings.byte_slice(cn, 0, 3))     // "你"（取前3个字节）
-    print(strings.byte_slice(cn, 3, 6))     // "好"（取第3-6字节）
+    print(strings.byte_slice(cn, 0, 2))     // "你"（取前3个字节；闭区间含 end）
+    print(strings.byte_slice(cn, 3, 5))     // "好"（取第3-5字节）
 }
 ```
 

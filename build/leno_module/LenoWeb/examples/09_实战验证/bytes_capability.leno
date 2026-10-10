@@ -94,7 +94,7 @@ main() {
     // ---- ② 真实结构解析：魔术字节嗅探 ----
     print("")
     print("② 二进制结构解析（魔术字节嗅探 → 按格式解析）")
-    if n >= 10 and strings.byte_slice(data, 0, 3) == "ID3" {
+    if n >= 10 and strings.byte_slice(data, 0, 2) == "ID3" {
         int verMajor = data.byte(3)
         int flags = data.byte(5)
         // syncsafe：每字节只用低 7 位（ID3v2 规范里最容易写错的地方）
@@ -102,10 +102,10 @@ main() {
                       ((data.byte(8) & 0x7F) << 7) | (data.byte(9) & 0x7F)
         print("   识别为 ID3v2 音频：版本 2." + _str(verMajor) +
               "｜flags = " + hex2(flags) + "｜标签大小 = " + _str(tagSize) + " 字节")
-    } else if n >= 64 and strings.byte_slice(data, 0, 2) == "MZ" {
+    } else if n >= 64 and strings.byte_slice(data, 0, 1) == "MZ" {
         // DOS 头偏移 0x3C 处 4 字节小端 = PE 头偏移
         int peOff = le32(data, 0x3C)
-        string sig = strings.byte_slice(data, peOff, peOff + 4)
+        string sig = strings.byte_slice(data, peOff, (peOff + 4) - 1)
         int machine = data.byte(peOff + 4) | (data.byte(peOff + 5) << 8)
         int sections = data.byte(peOff + 6) | (data.byte(peOff + 7) << 8)
         string arch = "未知"
@@ -159,7 +159,7 @@ main() {
 
     // 逐字节比对（前 total 字节）
     string back = files.read(decPath)
-    bool same = strings.byte_slice(data, 0, total) == strings.byte_slice(back, 0, total)
+    bool same = strings.byte_slice(data, 0, total - 1) == strings.byte_slice(back, 0, total - 1)
     print("   处理 " + strings.fmt_size(total) + "：正向 " + _str(msFwd) + "ms，逆向 " + _str(msBack) + "ms")
     float secs = _float(msFwd + msBack) / 1000.0
     if secs > 0.0 {

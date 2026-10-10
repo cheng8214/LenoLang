@@ -84,7 +84,7 @@ export func listDrives(): Array[string] {
 export func driveRootOf(string path): string {
     string p = strings.trim(path)
     if p.len() >= 2 {
-        if strings.slice(p, 1, 2) == ":" { return strings.slice(p, 0, 2) + "\\" }
+        if strings.slice(p, 1, 1) == ":" { return strings.slice(p, 0, 1) + "\\" }
     }
     return systemRoot()
 }

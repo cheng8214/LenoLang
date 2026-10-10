@@ -11,9 +11,12 @@ main() {
     io.print("[0] '你好'.len() = " + zh.len() + " (字符数)")
 
     // 方式A: 逐字符用 slice 取完整字符，收集到数组
+    // ★ 2026-10-10：原文是 `slice(i, 1)`（把第 2 参当"取 1 个字符"用 ⇒ 结果恒为 "你"，
+    //   与下面注释写的"期望 你好"不符 —— 长度口径当端点用的典型误用）。
+    //   闭区间口径下"第 i 个字符"就是 `slice(i, i)` ✓
     Array[string] chars = []
     for zh.len() to i {
-        string ch = zh.slice(i, 1)  // 按字符切片
+        string ch = zh.slice(i, i)  // 按字符切片（闭区间：单字符）
         chars.add(ch)
     }
     string jA = arrays.join(chars, "")

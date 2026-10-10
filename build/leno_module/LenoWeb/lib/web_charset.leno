@@ -167,7 +167,7 @@ export func normalize(string charset): string {
     if n >= 2 {
         int b0 = _byteAt(s, 0)
         if (b0 == 34 or b0 == 39) and _byteAt(s, n - 1) == b0 {
-            s = s.byte_slice(1, n - 1)
+            s = s.byte_slice(1, (n - 1) - 1)
             n = s.byte_len()
         }
     }
@@ -413,12 +413,12 @@ func _stripWideBom(string s, int cp): string {
     int b0 = _byteAt(s, 0)
     int b1 = _byteAt(s, 1)
     if cp == 1200 and b0 == 0xFF and b1 == 0xFE {
-        if n >= 4 and _byteAt(s, 2) == 0 and _byteAt(s, 3) == 0 { return s.byte_slice(4, n) }
-        return s.byte_slice(2, n)
+        if n >= 4 and _byteAt(s, 2) == 0 and _byteAt(s, 3) == 0 { return s.byte_slice(4, n - 1) }
+        return s.byte_slice(2, n - 1)
     }
-    if cp == 1201 and b0 == 0xFE and b1 == 0xFF { return s.byte_slice(2, n) }
-    if cp == 12000 and n >= 4 and b0 == 0xFF and b1 == 0xFE { return s.byte_slice(4, n) }
-    if cp == 12001 and n >= 4 and b0 == 0 and b1 == 0 { return s.byte_slice(4, n) }
+    if cp == 1201 and b0 == 0xFE and b1 == 0xFF { return s.byte_slice(2, n - 1) }
+    if cp == 12000 and n >= 4 and b0 == 0xFF and b1 == 0xFE { return s.byte_slice(4, n - 1) }
+    if cp == 12001 and n >= 4 and b0 == 0 and b1 == 0 { return s.byte_slice(4, n - 1) }
     return s
 }
 
@@ -434,7 +434,7 @@ export func decode(string raw, string charset): string {
     if cp == CP_UTF8 {
         // UTF-8：只顺手去掉 BOM
         if n >= 3 and _byteAt(raw, 0) == 0xEF and _byteAt(raw, 1) == 0xBB and _byteAt(raw, 2) == 0xBF {
-            return raw.byte_slice(3, n)
+            return raw.byte_slice(3, n - 1)
         }
         return raw
     }

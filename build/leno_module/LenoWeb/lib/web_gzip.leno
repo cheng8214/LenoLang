@@ -532,7 +532,7 @@ export func inflateZlib(string raw): GzipResult {
         r.error = "不是 zlib 流（压缩方法 " + (cmf & 15) + "，只支持 8 = deflate）"
         return r
     }
-    string body = strings.byte_slice(raw, 2, n)
+    string body = strings.byte_slice(raw, 2, n - 1)
     _State st = _newState(body)
     _inflateAll(st)
     if st.bad {
@@ -615,7 +615,7 @@ export func gunzip(string raw): GzipResult {
         return r
     }
 
-    GzipResult inner = inflateRaw(raw.byte_slice(p, n))
+    GzipResult inner = inflateRaw(raw.byte_slice(p, n - 1))
     if not inner.ok {
         r.ok = false
         r.error = "DEFLATE 解码失败：" + inner.error

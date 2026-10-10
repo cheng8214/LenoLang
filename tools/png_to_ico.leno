@@ -35,7 +35,7 @@ main() {
     if args.len() >= 2 {
         dst = _str(args[1])
     } else if src.len() > 4 and src.slice(src.len() - 4, src.len()) == ".png" {
-        dst = src.slice(0, src.len() - 4) + ".ico"
+        dst = src.slice(0, (src.len() - 4) - 1) + ".ico"
     } else {
         dst = src + ".ico"
     }

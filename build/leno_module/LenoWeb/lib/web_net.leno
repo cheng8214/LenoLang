@@ -133,19 +133,19 @@ export struct Response {
         int pos = 0
         int n = headers.len()
         while pos < n {
-            int eol = strings.find(headers.slice(pos, n), "\n")
+            int eol = strings.find(headers.slice(pos, n - 1), "\n")
             int lineEnd = n
             if eol >= 0 {
                 lineEnd = pos + eol
             }
-            string line = headers.slice(pos, lineEnd)
+            string line = headers.slice(pos, lineEnd - 1)
             // 去掉行尾 \r
             if line.ends_with("\r") {
-                line = line.slice(0, line.len() - 1)
+                line = line.slice(0, (line.len() - 1) - 1)
             }
             int colon = strings.find(line, ":")
             if colon >= 0 {
-                string hname = line.slice(0, colon).to_lower()
+                string hname = line.slice(0, colon - 1).to_lower()
                 if hname == lower {
                     string hval = line.slice(colon + 1, line.len()).trim()
                     return hval

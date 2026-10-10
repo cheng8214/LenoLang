@@ -74,5 +74,21 @@ main() {
     assert_eq(empty[0:], "")
     print("[PASS] 测试12: 空字符串切片")
 
+    // ================= 口径哨兵（★ 2026-10-10） =================
+    // 方法 `slice`/`byte_slice` 已从"左闭右开"统一成**闭区间**，与上面的语法 `s[a:b]` 同一口径。
+    // 下面这些是**故意的行为契约**：改语言语义前先看这里（口径再分家会静默错，别靠记忆）。
+    assert_eq("abcde".slice(1, 3), "bcd")                 // 闭区间：含 end（语法 s[1:3] 也是 "bcd"）
+    assert_eq("abcde".slice(1, 4), "bcde")
+    assert_eq("abcde".slice(0, 0), "a")                   // 单字符
+    assert_eq("abcde".slice(0, 99), "abcde")              // end 超界 ⇒ 钳到末位
+    assert_eq("abcde".slice(0, "abcde".len()), "abcde")   // "到末尾"写 .len() 仍然成立（靠钳位）
+    assert_eq("abcde".slice(4, 3), "")                    // start > end ⇒ 空串
+    assert_eq("abcde".slice(-2, 4), "de")                 // 负起点：从末尾数
+    assert_eq("abcde".slice(1, -1), "")                   // **负终点 ⇒ 空串**（有意，见 module_strings.md）
+    assert_eq("你好世界".slice(0, 1), "你好")              // 按 Unicode 字符
+    assert_eq("abcde".byte_slice(0, 2), "abc")            // 字节级同口径
+    assert_eq("abcde".byte_slice(0, -1), "")              // 负终点同样给空串
+    print("[PASS] 测试13: 口径哨兵（slice/byte_slice = 闭区间）")
+
     print("test_string_slice all passed")
 }

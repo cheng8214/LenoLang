@@ -90,7 +90,7 @@ export func summary(string suite): int {
 
 func _cut(string s, int maxBytes): string {
     if s.byte_len() <= maxBytes { return s }
-    return s.byte_slice(0, maxBytes) + "..."
+    return s.byte_slice(0, maxBytes - 1) + "..."
 }
 
 // ==================== 本机 HTTP 服务端 ====================
@@ -213,7 +213,7 @@ func _requestPath(string req): string {
     if sp1 < 0 { return "/" }
     int sp2 = strings.byte_find(req, " ", sp1 + 1)
     if sp2 < 0 { return "/" }
-    return req.byte_slice(sp1 + 1, sp2)
+    return req.byte_slice(sp1 + 1, sp2 - 1)
 }
 
 // ---------- 路由 ----------

@@ -37,14 +37,14 @@ main() {
     assert_eq(x.to_upper().len(), 4)
     assert_eq(x.trim().len(), 4)
     assert_eq(x.replace("a", "z").len(), 4)
-    assert_eq(x.slice(0, 2), "ab")          // 原先返回空串
-    assert_eq(x.slice(0, 2).len(), 2)
+    assert_eq(x.slice(0, 1), "ab")          // 原先返回空串
+    assert_eq(x.slice(0, 1).len(), 2)
     assert_eq(x.reverse().len(), 4)
 
     // ④ 多字节：char_len 是**字符数**，byte_len 是字节数
     assert_eq(("中文" + 1).len(), 3)
     assert_eq(("中文" + 1).byte_len(), 7)
-    assert_eq(("中文" + 1).slice(0, 2), "中文")
+    assert_eq(("中文" + 1).slice(0, 1), "中文")
 
     // ⑤ 汇总之后的串（join / rep 内部重建过 char_len）
     string j = strings.join(["a" + 1, "b"], "-")

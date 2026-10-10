@@ -206,7 +206,7 @@ func pkcs7_unpad(string data):string {
     if (pad_len < 1 or pad_len > 4) {
         throw "Invalid PKCS7 padding"
     }
-    return data.byte_slice(0, data.byte_len() - pad_len)
+    return data.byte_slice(0, (data.byte_len() - pad_len) - 1)
 }
 
 // ==================== XXTEA 字符串加密/解密 ====================

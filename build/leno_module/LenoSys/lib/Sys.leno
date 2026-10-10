@@ -76,13 +76,13 @@ export func expandEnv(string s): string {
     string out = ""
     int i = 0
     while (i < s.len()) {
-        string c = strings.slice(s, i, i + 1)
+        string c = strings.slice(s, i, i)
 
         if c == "%" {
             string tail = strings.slice(s, i + 1, s.len())
             int j = strings.find(tail, "%")
             if j > 0 {
-                string nm = strings.slice(tail, 0, j)
+                string nm = strings.slice(tail, 0, j - 1)
                 string v = _env_or(nm, "")
                 if v != "" {
                     out = out + v
@@ -97,13 +97,13 @@ export func expandEnv(string s): string {
             if strings.starts_with(tail, "{") {
                 int close = strings.find(tail, "}")
                 if close > 0 {
-                    nm = strings.slice(tail, 1, close)
+                    nm = strings.slice(tail, 1, close - 1)
                     used = close + 1
                 }
             } else {
                 int k = 0
                 while (k < tail.len()) {
-                    string ch = strings.slice(tail, k, k + 1)
+                    string ch = strings.slice(tail, k, k)
                     if strings.find("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_", ch) < 0 { break }
                     nm = nm + ch
                     k = k + 1

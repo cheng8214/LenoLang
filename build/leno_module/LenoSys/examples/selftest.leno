@@ -34,7 +34,7 @@ main() {
     if exe != "" {
         string base = dirs.basename(exe)
         int dot = strings.find(base, ".")
-        if dot > 0 { base = strings.slice(base, 0, dot) }
+        if dot > 0 { base = strings.slice(base, 0, dot - 1) }
         print("  按自身名字查进程（" + base + "）命中 " + _str(Sys.findProcess(base).len()) + " 个")
         print("  自身内存 = " + _str(Sys.processMemoryKb(Sys.currentPid())) + " KB")
     }

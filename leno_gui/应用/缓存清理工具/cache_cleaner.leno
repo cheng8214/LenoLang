@@ -206,7 +206,7 @@ struct CacheCleaner {
         if s.len() <= 21 { return false }                    // 最短 = 16 + 5 + 1 位 pid
         int p = strings.find(s, ".tmp.")
         if p != 16 { return false }
-        return isPackHashName(s.byte_slice(0, 16))
+        return isPackHashName(s.byte_slice(0, 15))
     }
 
     // 扫描全部 Leno 单文件释放缓存（追加进 cacheItems；不需要用户选目录 ✓）

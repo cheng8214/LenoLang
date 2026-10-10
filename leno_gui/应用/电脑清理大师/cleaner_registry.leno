@@ -107,7 +107,7 @@ export func exe_of(string cmdline): string {
         // `strings.find` 没有起始位置 ⇒ 先切掉首个引号再找配对的 ✓
         string rest = strings.slice(s, 1, s.len())
         int q = strings.find(rest, "\"")
-        if q < 0 { head = rest } else { head = strings.slice(rest, 0, q) }
+        if q < 0 { head = rest } else { head = strings.slice(rest, 0, q - 1) }
     }
     // ② 截到**第一个 `.exe`** 为止（大小写不敏感 ✓）
     //    ⚠ 这一步是必须的：**很多 UninstallString 带空格却不加引号** ✗
@@ -116,7 +116,7 @@ export func exe_of(string cmdline): string {
     //      按 `.exe` 截 ⇒ 得到完整路径 ✓（找不到 `.exe` ⇒ 认不出 ⇒ 返回 "" 不判 ✓）
     int ex = strings.find(strings.to_lower(head), ".exe")
     if ex < 0 { return "" }
-    head = strings.slice(head, 0, ex + 4)
+    head = strings.slice(head, 0, (ex + 4) - 1)
     // ③ 展开环境变量 + 清掉可能残留的引号 ✓
     head = strings.replace(expand_env(strings.trim(head)), "\"", "")
     if head == "" { return "" }
@@ -240,7 +240,7 @@ func _scan_muicache(RegScan out, int limit) {
         if vname == "" { continue }
         int ex = strings.find(strings.to_lower(vname), ".exe")
         if ex < 0 { continue }                          // 不是 exe 路径 ⇒ 不判 ✓
-        string p = expand_env(strings.slice(vname, 0, ex + 4))
+        string p = expand_env(strings.slice(vname, 0, (ex + 4) - 1))
         if not (strings.find(p, ":\\") > 0 or strings.starts_with(p, "\\\\")) { continue }
         out.keysScanned = out.keysScanned + 1
         if not missing_exe(p) { continue }

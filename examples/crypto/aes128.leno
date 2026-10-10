@@ -293,7 +293,7 @@ func pkcs7_unpad(string data):string {
     for 0:pad_len - 1 to i {
         if (data.byte(data.byte_len() - 1 - i) != pad_len) { return data }
     }
-    return data.byte_slice(0, data.byte_len() - pad_len)
+    return data.byte_slice(0, (data.byte_len() - pad_len) - 1)
 }
 
 // 字符串转字节块（16 字节）

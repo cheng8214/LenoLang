@@ -56,7 +56,7 @@ main() {
                     totalQuotes = totalQuotes + 1
                     string showText = text
                     if showText.len() > 50 {
-                        showText = showText.slice(0, 50) + "..."
+                        showText = showText.slice(0, 49) + "..."
                     }
                     print("    " + showText + " —— " + author)
                 }

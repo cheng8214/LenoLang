@@ -49,11 +49,11 @@ func _truncLabel(Font f, string t, float availW): string {
     int lo = 0; int hi = n
     while lo < hi {
         int mid = (lo + hi + 1) / 2
-        var[float, float](mw, mh) = f.measureString(t.slice(0, mid))
+        var[float, float](mw, mh) = f.measureString(t.slice(0, mid - 1))
         if mw <= limit { lo = mid } else { hi = mid - 1 }
     }
     if lo >= n { return t }
-    return t.slice(0, lo) + "\u2026"
+    return t.slice(0, lo - 1) + "\u2026"
 }
 
 // 绘制悬停提示气泡（背景圆角框 + 描边 + 文字）

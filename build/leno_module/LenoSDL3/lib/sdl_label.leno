@@ -279,7 +279,7 @@ export struct Label impl Widget, Themeable {
             tailW = tailW + csw
             tailStart = i
         }
-        string tail = text.slice(tailStart, textLen)
+        string tail = text.slice(tailStart, textLen - 1)
         // 从头部截取前缀（填满剩余空间）
         float headW = 0.0
         int headEnd = 0
@@ -290,7 +290,7 @@ export struct Label impl Widget, Themeable {
             headW = headW + csw
             headEnd = i + 1
         }
-        string head = text.slice(0, headEnd)
+        string head = text.slice(0, headEnd - 1)
         string result = head + ellipsis + tail
         cachedTruncText = result
         return result

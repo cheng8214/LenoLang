@@ -151,8 +151,8 @@ main()
     assert_eq("hi".pad_end(5, " "), "hi   ")
 
     // 测试22: 字符串方法 - slice
-    assert_eq("hello".slice(1, 3), "el")
-    assert_eq("hello".slice(0, 5), "hello")
+    assert_eq("hello".slice(1, 2), "el")
+    assert_eq("hello".slice(0, 4), "hello")
 
     // 测试23: 字符串方法 - byte
     var byte_val = "A".byte(0)
@@ -195,14 +195,14 @@ main()
     //   （2026-09-27 从 examples/strings/UTF-8 中文测试.leno 收编 —— 原来只测过 ASCII）
     //   为什么要钉：多字节字符上的索引口径最容易出错（按字节切会把汉字切碎）
     var utf = "Hello 世界! 你好 Leno!"
-    assert_eq(utf.slice(0, 5), "Hello")
-    assert_eq(utf.slice(6, 8), "世界")
-    assert_eq(utf.slice(10, 12), "你好")
+    assert_eq(utf.slice(0, 4), "Hello")
+    assert_eq(utf.slice(6, 7), "世界")
+    assert_eq(utf.slice(10, 11), "你好")
     assert_eq(utf.sub_str(6, 2), "世界")
     assert_eq(utf.sub_str(10, 2), "你好")
     var cn = "中华人民共和国"
-    assert_eq(cn.slice(0, 2), "中华")
-    assert_eq(cn.slice(2, 5), "人民共")
+    assert_eq(cn.slice(0, 1), "中华")
+    assert_eq(cn.slice(2, 4), "人民共")
     assert_eq(cn.reverse().reverse(), cn)      // 反转两次回到原样（若按字节反转会切碎汉字）
 
     print("test_string_edge passed")

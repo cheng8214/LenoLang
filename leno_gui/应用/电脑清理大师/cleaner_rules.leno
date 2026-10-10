@@ -595,9 +595,9 @@ export func norm_path(string p): string {
     s = strings.to_lower(s)
     s = strings.trim(s)
     while s.len() > 2 and strings.ends_with(s, "\\") {
-        s = strings.slice(s, 0, s.len() - 1)
+        s = strings.slice(s, 0, (s.len() - 1) - 1)
     }
-    if s.len() == 3 and strings.ends_with(s, "\\") { s = strings.slice(s, 0, 2) }
+    if s.len() == 3 and strings.ends_with(s, "\\") { s = strings.slice(s, 0, 1) }
     return s
 }
 
@@ -612,7 +612,7 @@ export func match_encoded(Array[string] enc, string p): bool {
     for enc to e {
         int sep = strings.find(e, "|")
         if sep < 0 { continue }
-        string tag = strings.slice(e, 0, sep)
+        string tag = strings.slice(e, 0, sep - 1)
         string rp = strings.slice(e, sep + 1, e.len())
         if rp == "" { continue }
         if tag == "1" {

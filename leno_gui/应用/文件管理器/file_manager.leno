@@ -216,7 +216,7 @@ Array[int]    _dragSelRows = []    // 鼠标按下时捕获的多选行（拖拽
         string s = p
         while s.len() > 0 {
             string last = s.slice(s.len() - 1, s.len())
-            if last == "\\" or last == "/" { s = s.slice(0, s.len() - 1) } else { break }
+            if last == "\\" or last == "/" { s = s.slice(0, (s.len() - 1) - 1) } else { break }
         }
         if s.len() == 0 { return p }
         return s
@@ -557,7 +557,7 @@ int nid = tree.add_child(id, node)
                 string nameNoExt = nm
                 string ext = dirs.extname(nm)
                 if ext != "" and ext != "." {
-                    nameNoExt = nm.slice(0, nm.len() - ext.len())
+                    nameNoExt = nm.slice(0, (nm.len() - ext.len()) - 1)
                 }
                 int n = 1
                 while dirs.exists(target) {
@@ -967,7 +967,7 @@ case "exit"      { wantQuit = true }
                 string nameNoExt = nm
                 string ext = dirs.extname(nm)
                 if ext != "" and ext != "." {
-                    nameNoExt = nm.slice(0, nm.len() - ext.len())
+                    nameNoExt = nm.slice(0, (nm.len() - ext.len()) - 1)
                 }
                 int n = 1
                 while dirs.exists(target) {

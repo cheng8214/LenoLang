@@ -149,7 +149,7 @@ bool _drawBorder = true          // 是否绘制边框（嵌入 ComboBox 时设�
         if _font == null or not _font.ok { return 0.0 }
         if pos <= 0 { return 0.0 }
         if pos > text.len() { pos = text.len() }
-        var sub = text.slice(0, pos)
+        var sub = text.slice(0, pos - 1)
         if password { sub = "*".rep(pos) }
         var[float, float](_msw, _msh) = _font.measureString(sub)
         return _msw
@@ -164,7 +164,7 @@ bool _drawBorder = true          // 是否绘制边框（嵌入 ComboBox 时设�
         var ln = lines[line]
         if col <= 0 { return 0.0 }
         if col > ln.len() { col = ln.len() }
-        var sub = ln.slice(0, col)
+        var sub = ln.slice(0, col - 1)
         if password { sub = "*".rep(col) }
         var[float, float](_msw, _msh) = _font.measureString(sub)
         return _msw
@@ -556,8 +556,8 @@ _drawBorder = opts.get("border", true)
             rebuild_lines()
             save_undo(); mergeUndo = false; del_sel_lines()
             if lines.len() == 0 { lines.add("") }
-            var left = lines[cursorLine].slice(0, cursorCol)
-            var right = lines[cursorLine].slice(cursorCol, lines[cursorLine].len())
+            var left = lines[cursorLine].slice(0, cursorCol - 1)
+            var right = lines[cursorLine].slice(cursorCol, (lines[cursorLine].len()) - 1)
             var full = left + paste
             var plines = full.lines()
             lines.remove(cursorLine)
@@ -574,7 +574,7 @@ _drawBorder = opts.get("border", true)
         } else {
             paste = paste.replace("\r", "").replace("\n", " ")
             cursorPos = del_sel()
-            text = text.slice(0, cursorPos) + paste + text.slice(cursorPos, text.len())
+            text = text.slice(0, cursorPos - 1) + paste + text.slice(cursorPos, text.len())
             cursorPos += paste.len()
             dirty = true; on_text_changed()
         }
@@ -1092,7 +1092,7 @@ _drawBorder = opts.get("border", true)
         var t = get_text()
         if e > t.len() { e = t.len() }
         if s >= e { return "" }
-        return t.slice(s, e)
+        return t.slice(s, e - 1)
     }
 
     // 删除选区并返回删除的起始位置
@@ -1102,7 +1102,7 @@ _drawBorder = opts.get("border", true)
         if s > e { var t = s; s = e; e = t }
         if s < 0 { s = 0 }
         if e > text.len() { e = text.len() }
-        if s < e { text = text.slice(0, s) + text.slice(e, text.len()) }
+        if s < e { text = text.slice(0, s - 1) + text.slice(e, text.len()) }
         clear_sel()
         return s
     }
@@ -1140,7 +1140,7 @@ _drawBorder = opts.get("border", true)
                         paste = paste.replace("\r", "").replace("\n", " ")
                         save_undo(); mergeUndo = false
                         cursorPos = del_sel()
-                        text = text.slice(0, cursorPos) + paste + text.slice(cursorPos, text.len())
+                        text = text.slice(0, cursorPos - 1) + paste + text.slice(cursorPos, text.len())
                         cursorPos += paste.len()
                         changed = true
                     }
@@ -1155,7 +1155,7 @@ _drawBorder = opts.get("border", true)
                     cursorPos = del_sel(); changed = true
                 } else if cursorPos > 0 {
                     save_undo(); mergeUndo = false
-                    text = text.slice(0, cursorPos - 1) + text.slice(cursorPos, text.len())
+                    text = text.slice(0, (cursorPos - 1) - 1) + text.slice(cursorPos, text.len())
                     cursorPos -= 1; changed = true
                 }
             }
@@ -1165,7 +1165,7 @@ _drawBorder = opts.get("border", true)
                     cursorPos = del_sel(); changed = true
                 } else if cursorPos < text.len() {
                     save_undo(); mergeUndo = false
-                    text = text.slice(0, cursorPos) + text.slice(cursorPos + 1, text.len())
+                    text = text.slice(0, cursorPos - 1) + text.slice(cursorPos + 1, text.len())
                     changed = true
                 }
             }
@@ -1188,7 +1188,7 @@ _drawBorder = opts.get("border", true)
                 // 连续输入合并为一次撤销（与多行一致）；选区删除/光标移动则断开
                 bool canMerge = mergeUndo and not selActive and cursorPos == mergePos
                 if not canMerge { save_undo() }
-                text = text.slice(0, cursorPos) + ch + text.slice(cursorPos, text.len())
+                text = text.slice(0, cursorPos - 1) + ch + text.slice(cursorPos, text.len())
                 cursorPos += ch.len()
                 on_text_changed()
                 dirty = true
@@ -1232,8 +1232,8 @@ _drawBorder = opts.get("border", true)
                         save_undo(); mergeUndo = false
                         del_sel_lines()
                         if lines.len() == 0 { lines.add("") }
-                        var left = lines[cursorLine].slice(0, cursorCol)
-                        var right = lines[cursorLine].slice(cursorCol, lines[cursorLine].len())
+                        var left = lines[cursorLine].slice(0, cursorCol - 1)
+                        var right = lines[cursorLine].slice(cursorCol, (lines[cursorLine].len()) - 1)
                         var full = left + paste
                         var plines = full.lines()
                         lines.remove(cursorLine)
@@ -1256,7 +1256,7 @@ _drawBorder = opts.get("border", true)
                     save_undo(); mergeUndo = false; del_sel_lines(); cachedLen = -1; lwDirty = true; changed = true
                 } else if cursorCol > 0 {
                     save_undo(); mergeUndo = false; var ln = lines[cursorLine]
-                    lines[cursorLine] = ln.slice(0, cursorCol - 1) + ln.slice(cursorCol, ln.len())
+                    lines[cursorLine] = ln.slice(0, (cursorCol - 1) - 1) + ln.slice(cursorCol, ln.len())
                     cursorCol -= 1; cachedLen -= 1; update_line_width(cursorLine); dirtyLine = cursorLine; changed = true
                 } else if cursorLine > 0 {
                     save_undo(); mergeUndo = false; cursorCol = lines[cursorLine - 1].len()
@@ -1272,7 +1272,7 @@ _drawBorder = opts.get("border", true)
                     save_undo(); mergeUndo = false; del_sel_lines(); cachedLen = -1; cachedMaxW = -1; lwDirty = true; changed = true
                 } else if cursorCol < lines[cursorLine].len() {
                     save_undo(); mergeUndo = false; var ln = lines[cursorLine]
-                    lines[cursorLine] = ln.slice(0, cursorCol) + ln.slice(cursorCol + 1, ln.len())
+                    lines[cursorLine] = ln.slice(0, cursorCol - 1) + ln.slice(cursorCol + 1, ln.len())
                     cachedLen -= 1; update_line_width(cursorLine); dirtyLine = cursorLine; changed = true
                 } else if cursorLine < lines.len() - 1 {
                     save_undo(); mergeUndo = false; lines[cursorLine] = lines[cursorLine] + lines[cursorLine + 1]
@@ -1301,7 +1301,7 @@ _drawBorder = opts.get("border", true)
             if sc == Scancode.RETURN {
                 save_undo(); mergeUndo = false; var ln = lines[cursorLine]
                 var rest = ln.slice(cursorCol, ln.len())
-                lines[cursorLine] = ln.slice(0, cursorCol)
+                lines[cursorLine] = ln.slice(0, cursorCol - 1)
                 lines.insert(cursorLine + 1, rest)
                 cursorLine += 1; cursorCol = 0; cachedLen += 1; cachedMaxW = -1; lwDirty = true; changed = true
             }
@@ -1337,7 +1337,7 @@ _drawBorder = opts.get("border", true)
                 del_sel_lines()
                 if lines.len() == 0 { lines.add("") }
                 var ln = lines[cursorLine]
-                lines[cursorLine] = ln.slice(0, cursorCol) + ch + ln.slice(cursorCol, ln.len())
+                lines[cursorLine] = ln.slice(0, cursorCol - 1) + ch + ln.slice(cursorCol, ln.len())
                 cursorCol += ch.len()
                 cachedLen = -1; update_line_width(cursorLine)
                 dirtyLine = cursorLine
@@ -1383,9 +1383,9 @@ _drawBorder = opts.get("border", true)
         // 删除选区
         if ls == le {
             var ln = lines[ls]
-            lines[ls] = ln.slice(0, cs) + ln.slice(ce, ln.len())
+            lines[ls] = ln.slice(0, cs - 1) + ln.slice(ce, ln.len())
         } else {
-            lines[ls] = lines[ls].slice(0, cs) + lines[le].slice(ce, lines[le].len())
+            lines[ls] = lines[ls].slice(0, cs - 1) + lines[le].slice(ce, (lines[le].len()) - 1)
             var cnt = le - ls
             for cnt to _ { lines.remove(ls + 1) }
         }
@@ -1667,8 +1667,8 @@ _drawBorder = opts.get("border", true)
                 var colS = selS - segStart
                 var colE = selE - segStart
                 var full = lines[li]
-                var[float, float](ms1w, ms1h) = _font.measureString(full.slice(c0, c0 + colS))
-                var[float, float](ms2w, ms2h) = _font.measureString(full.slice(c0, c0 + colE))
+                var[float, float](ms1w, ms1h) = _font.measureString(full.slice(c0, (c0 + colS) - 1))
+                var[float, float](ms2w, ms2h) = _font.measureString(full.slice(c0, (c0 + colE) - 1))
                 float sx = r.snapX(x + pad + ms1w - scrollX), ew = ms2w - ms1w, sy = r.snapY(y + pad + di * lineHeight - scrollY)
                 if ew < 0 { ew = 0 }
                 r.setColor(#3C64B4B4)
@@ -1693,7 +1693,7 @@ _drawBorder = opts.get("border", true)
             for firstLine : lastLineV - 1 to di {
                 if di >= drCount { break }
                 var li = drLi[di]; var c0 = drC0[di]; var c1 = drC1[di]
-                var seg = lines[li].slice(c0, c1)
+                var seg = lines[li].slice(c0, c1 - 1)
                 if password { seg = "*".rep(seg.len()) }
                 float ly = y + pad + di * lineHeight - scrollY
                 r.drawText(_font, seg, r.snapX(x + pad - scrollX), r.snapY(ly), txtColor)
@@ -1718,7 +1718,7 @@ _drawBorder = opts.get("border", true)
                         if cdi >= 0 and cdi < drC0.len() { cm0 = drC0[cdi] }
                         if cursorCol < cm0 { cm0 = cursorCol }
                         var ln = lines[cursorLine]
-                        var seg = ln.slice(cm0, cursorCol)
+                        var seg = ln.slice(cm0, cursorCol - 1)
                         var[float, float](_segw, _segh) = _font.measureString(seg); cx = cx + _segw - scrollX
                     } else {
                         cx = cx + line_width_to(cursorLine, cursorCol) - scrollX
@@ -1812,14 +1812,14 @@ _drawBorder = opts.get("border", true)
             var ch = strings.from_codepoint(cps[i])
             var[float, float](cw, _ch) = _font.measureString(ch)
             if curW + cw > maxW and i > segStart {
-                result.add(ln.slice(segStart, i))
+                result.add(ln.slice(segStart, i - 1))
                 segStart = i
                 curW = cw
             } else {
                 curW = curW + cw
             }
         }
-        if segStart < n { result.add(ln.slice(segStart, n)) }
+        if segStart < n { result.add(ln.slice(segStart, n - 1)) }
         return result
     }
 

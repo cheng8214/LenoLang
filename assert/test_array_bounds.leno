@@ -183,9 +183,9 @@ main() {
     var head_any = msg_any
     var head_spec = msg_spec
     var nl_any = msg_any.find("\n")
-    if nl_any >= 0 { head_any = msg_any.slice(0, nl_any) }
+    if nl_any >= 0 { head_any = msg_any.slice(0, nl_any - 1) }
     var nl_spec = msg_spec.find("\n")
-    if nl_spec >= 0 { head_spec = msg_spec.slice(0, nl_spec) }
+    if nl_spec >= 0 { head_spec = msg_spec.slice(0, nl_spec - 1) }
     if head_any != head_spec {
         print("两侧越界正文不一致: [" + head_any + "] vs [" + head_spec + "]")
         fail(10)

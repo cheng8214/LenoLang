@@ -53,7 +53,7 @@ func _dropTail(string s, int k): string {
 
 // 取出 gzip 里的**裸 DEFLATE 数据**（去掉 10 字节最简头 + 8 字节 trailer）
 func _rawDeflate(string g): string {
-    return strings.byte_slice(g, 10, g.byte_len() - 8)
+    return strings.byte_slice(g, 10, (g.byte_len() - 8) - 1)
 }
 
 // 给 gzip 头加上 FEXTRA + FNAME + FCOMMENT + FHCRC 四个可选字段

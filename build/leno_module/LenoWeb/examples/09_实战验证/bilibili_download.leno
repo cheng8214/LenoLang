@@ -101,7 +101,7 @@ main() {
         print("  没拿到直链（站点可能要求登录/Cookie）—— 这一步失败即是实战结论")
         return
     }
-    print("  直链前缀: " + strings.byte_slice(videoUrl, 0, 80) + "...")
+    print("  直链前缀: " + strings.byte_slice(videoUrl, 0, 79) + "...")
 
     // ---- ③ 下载（带 Referer；不带会被 CDN 403）----
     print("")
@@ -138,7 +138,7 @@ main() {
         print("  读不到已下载文件，跳过")
     } else {
         int half = full.byte_len() / 2
-        files.write(part, strings.byte_slice(full, 0, half))
+        files.write(part, strings.byte_slice(full, 0, half - 1))
         print("  先造半截文件: " + half + " 字节（完整 " + full.byte_len() + "）")
         // 续传路径 = 1 次 HEAD（取 content-length）+ 1 次带 Range 的 GET ⇒ 比"纯 Range"多一次往返
         int t4 = _int(times.ms())

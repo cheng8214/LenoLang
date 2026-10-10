@@ -291,19 +291,24 @@ while pos >= 0 {
 
 #### `slice(start, end)`
 
-提取从 `start` 到 `end`（不包含）之间的子串。
+提取 `start` 到 `end` 之间的子串，**闭区间（包含 `end`）** —— 与切片语法 `s[start:end]`、
+数组切片 `arr[start:end]` 完全同一口径（2026-10-10 起统一；此前是"不含 end"）。
 
 **参数**:
 
-- `start` (int): 开始位置（0-based）
-- `end` (int): 结束位置（0-based，不包含）
+- `start` (int): 开始位置（0-based；**负数表示从末尾数**，`-1` = 最后一个字符）
+- `end` (int): 结束位置（0-based，**包含**）。超过末尾会被钳到最后一个字符；
+  **写负数返回空串**（闭区间下 `-1` 与"最后一个字符"含义冲突 ⇒ 宁空不错，要"到末尾"就写 `x.len() - 1`）
 
 **返回**: `string` - 提取的子串
 
 ```leno
-"Hello".slice(0, 3)    // "Hel"
-"Hello".slice(1, 4)    // "ell"
-"Hello".slice(-2, 5)   // "lo" (负数索引)
+"Hello".slice(0, 2)    // "Hel"
+"Hello".slice(1, 3)    // "ell"
+"Hello".slice(-2, 4)   // "lo"   (负起点：倒数第二个到最后一个)
+"Hello".slice(-2, 5)   // "lo"   (end 超界 ⇒ 钳到末尾)
+"Hello".slice(1, -1)   // ""     (终点不支持负索引)
+"Hello".slice(0, 99)   // "Hello"
 ```
 
 #### `sub_str(start, length)`
@@ -325,28 +330,28 @@ while pos >= 0 {
 
 #### `byte_slice(start, end)`
 
-按 **UTF-8 字节偏移** 提取子串。适用于加密、协议解析等二进制数据处理场景。
+按 **UTF-8 字节偏移** 提取子串（**闭区间，包含 `end`**，与 `slice` 同口径）。适用于加密、协议解析等二进制数据处理场景。
 
 **参数**:
 
-- `start` (int): 开始字节偏移（0-based）
-- `end` (int): 结束字节偏移（0-based，不包含）
+- `start` (int): 开始字节偏移（0-based；负数表示从末尾数）
+- `end` (int): 结束字节偏移（0-based，**包含**）。超过末尾会被钳到最后一个字节；**写负数返回空串**
 
 **返回**: `string` - 提取的子串
 
 **注意**: `start` 和 `end` 是字节偏移量，不是字符索引。如果截断到多字节字符中间，可能产生无效 UTF-8。请确保偏移量对齐字符边界。
 
 ```leno
-"Hello".byte_slice(0, 3)      // "Hel"（ASCII，字节=字符）
-"你好世界".byte_slice(0, 3)     // "你"（前3字节=1个中文字符）
-"你好世界".byte_slice(3, 6)     // "好"（第3-6字节=第2个中文字符）
-"hi你好".byte_slice(0, 4)      // "hi你"（2 ASCII + 3字节中文前3字节）
+"Hello".byte_slice(0, 2)      // "Hel"（ASCII，字节=字符）
+"你好世界".byte_slice(0, 2)     // "你"（前3字节=1个中文字符）
+"你好世界".byte_slice(3, 5)     // "好"（第3-5字节=第2个中文字符）
+"hi你好".byte_slice(0, 4)      // "hi你"（2 ASCII + 3字节中文）
 ```
 
 **典型用途**：加密解密后去除 PKCS7 填充：
 
 ```leno
-var unpadded = decrypted.byte_slice(0, decrypted.byte_len() - pad_len)
+var unpadded = decrypted.byte_slice(0, decrypted.byte_len() - pad_len - 1)
 ```
 
 ---
@@ -724,7 +729,7 @@ strings.char(65, 66, 67)                   // "ABC"
 这批 API 的来历是"**数出来的重复实现**"：`strings.char(...)` 全仓 **159 处 / 39 文件**
 （crypto / base64 / PE 分析 / web_html 都在逐字节拼串，而循环里 `result += strings.char(b)`
 是 **O(n²)**）、"字节串 ↔ hex" **22 处 / 12 文件**、`to_lower(a) == to_lower(b)` **8 处**、
-`slice(i, i+1)` 逐字符扫描 **10 处**。基准见 `examples/性能测试/strings原生与手写对比.leno`。
+`slice(i, i)` 逐字符扫描 **10 处**（闭区间取单字符）。基准见 `examples/性能测试/strings原生与手写对比.leno`。
 
 #### `to_bytes()` / `strings.from_bytes(arr)`
 
@@ -803,11 +808,11 @@ strings.from_codepoint(20013)   // "中"  ← to_codepoints 的**逆操作**（�
 
 **逐字符要"字符串"的场景（例如 `measureString(ch)` 逐字测宽）请配对使用**：
 `Array[int] cps = s.to_codepoints()`（一趟 O(n)）+ 循环里 `strings.from_codepoint(cps[k])` ——
-等价于 `s.slice(k, k+1)`，但后者每轮都要**从头扫**到第 k 个字符（整段 O(n²)）且每字符造一个临时串 ✗
+等价于 `s.slice(k, k)`（闭区间取单字符），但后者每轮都要**从头扫**到第 k 个字符（整段 O(n²)）且每字符造一个临时串 ✗
 
 > **★ 整串逐字符处理请用 `to_codepoints()`，别循环 `codepoint_at(i)`**：
 > 后者要从头走到第 i 个字符 ⇒ 循环是 **O(n²)**。基准实测（4000 字符 × 20 趟）：
-> 手写 `slice(i,i+1)` **113,589µs** ｜ 循环 `codepoint_at` **56,307µs（2.0x）**
+> 手写 `slice(i,i)` **113,589µs** ｜ 循环 `codepoint_at` **56,307µs（2.0x）**
 > ｜ 一趟 `to_codepoints` **863µs（131.6x）** ✓
 
 > **`from_codepoint` 的非法值会抛错**（不静默错值）：负数、大于 `0x10FFFF`、
@@ -843,7 +848,7 @@ print(s.byte_len())  // 9    - 6字节(中文) + 5字节(ASCII) = 9字节
 以下方法使用 0-based 索引：
 
 - `find()` - 返回的位置和 start 参数都是 0-based 字符索引
-- `slice()` - start 和 end 参数为字符索引
+- `slice()` - start 和 end 参数为字符索引（**闭区间**：含 end；负终点返回空串）
 - `sub_str()` - start 参数为字符索引
 - `byte()` - pos 参数为字节偏移
 - `byte_slice()` - start 和 end 参数为字节偏移
@@ -873,7 +878,7 @@ print(s.byte_len())  // 9    - 6字节(中文) + 5字节(ASCII) = 9字节
 |------|-------|-----|------|
 | 获取长度 | `s.len()` | `s:len()` 或 `#s` | 相似 |
 | 大小写转换 | `s.to_upper()` | `s:upper()` | 命名不同 |
-| 子串提取 | `s.slice(s, e)` | `s:sub(i, j)` | 索引不同（0-based vs 1-based） |
+| 子串提取 | `s.slice(s, e)` | `s:sub(i, j)` | 索引基准不同（0-based vs 1-based）；**末位都是闭区间（含 j / e）** |
 | 查找 | `s.find(p, i)` | `s:find(p, i)` | 相似 |
 | 二进制查找 | `s.byte_find(p, s)` | 需自定义 | LenoC 特有 |
 | 重复 | `s.rep(n)` | `s:rep(n)` | 相同 |
@@ -906,7 +911,7 @@ main() {
     var pos = text.find("Leno")
     if (pos != -1) {
         print("找到位置: " + pos)
-        var extracted = text.slice(pos, pos + 4)
+        var extracted = text.slice(pos, pos + 3)   // "Leno"（闭区间：含 pos+3）
         print("提取内容: " + extracted)
     }
     

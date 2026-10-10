@@ -107,7 +107,7 @@ main() {
                     totalQuotes = totalQuotes + 1
                     string show = text
                     if show.len() > 40 {
-                        show = show.slice(0, 40) + "..."
+                        show = show.slice(0, 39) + "..."
                     }
                     print("      - " + show + "  [" + author + "]")
                 }

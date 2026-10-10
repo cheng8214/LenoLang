@@ -816,7 +816,7 @@ struct AnimEditor {
         // "a_" 前缀 = 应用到全部帧（含前面的帧）；否则只应用到当前帧之后
         bool allFrames = false
         string rid = id
-        if id.len() > 2 and id.slice(0, 2) == "a_" {
+        if id.len() > 2 and id.slice(0, 1) == "a_" {
             allFrames = true
             rid = id.slice(2, id.len())
         }
@@ -945,7 +945,7 @@ struct AnimEditor {
             for ns to n {
                 int L = n.len()
                 if L > 4 {
-                    string ext = n.slice(L - 4, L)
+                    string ext = n.slice(L - 4, L - 1)
                     if ext == ".png" or ext == ".PNG" or ext == ".jpg" or ext == ".JPG" { out.add(n) }
                 }
             }
@@ -1059,8 +1059,8 @@ struct AnimEditor {
         if id == "v_toggle" { toggleSelVis(); return }
         if id == "v_copyf"  { copyFrame(); return }
         if id == "v_pastef" { pasteFrame(); return }
-        if id.len() > 4 and id.slice(0, 4) == "img:" { addPartImage(id.slice(4, id.len())); return }
-        if id.len() > 4 and id.slice(0, 4) == "rep:" { replaceSelImage(id.slice(4, id.len())); return }
+        if id.len() > 4 and id.slice(0, 3) == "img:" { addPartImage(id.slice(4, id.len())); return }
+        if id.len() > 4 and id.slice(0, 3) == "rep:" { replaceSelImage(id.slice(4, id.len())); return }
         applyToAllFrames(id)
     }
 

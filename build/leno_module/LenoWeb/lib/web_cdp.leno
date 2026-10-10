@@ -206,7 +206,7 @@ func _httpGet(int port, string path, int timeoutMs): string {
         s.close()
         int avail = buf.byte_len() - bodyStart
         if avail < want { want = avail }
-        return strings.byte_slice(buf, bodyStart, bodyStart + want)
+        return strings.byte_slice(buf, bodyStart, (bodyStart + want) - 1)
     }
     // 没有 Content-Length（很少见）：退回"读到断开/超时"
     while true {
@@ -221,7 +221,7 @@ func _httpGet(int port, string path, int timeoutMs): string {
 
 // 从响应头里取 Content-Length（找不到返回 -1）
 func _contentLength(string head, int headEnd): int {
-    string h = strings.byte_slice(head, 0, headEnd)
+    string h = strings.byte_slice(head, 0, headEnd - 1)
     string lower = strings.to_lower(h)
     int idx = strings.byte_find(lower, "content-length:", 0)
     if idx < 0 { return -1 }
@@ -285,7 +285,7 @@ func _buildArgs(BrowserConfig cfg, int port, string udd): string {
         int cut = -1
         if comma >= 0 { cut = comma }
         if semi >= 0 and (cut < 0 or semi < cut) { cut = semi }
-        if cut > 0 { lang = strings.byte_slice(lang, 0, cut) }
+        if cut > 0 { lang = strings.byte_slice(lang, 0, cut - 1) }
         if lang != "" { a = a + "--lang=" + lang + " " }
     }
     if cfg.extraArgs != "" { a = a + cfg.extraArgs + " " }
@@ -1004,7 +1004,7 @@ export func clickReal(CdpClient c, string css): bool {
     if pos == "" { return false }
     int comma = strings.byte_find(pos, ",", 0)
     if comma < 0 { return false }
-    int x = _int(strings.byte_slice(pos, 0, comma))
+    int x = _int(strings.byte_slice(pos, 0, comma - 1))
     int y = _int(strings.byte_slice(pos, comma + 1, pos.byte_len()))
     // 坐标是**视口坐标**（getBoundingClientRect 与 CDP 的 x/y 同一坐标系）
     string common = "\"x\":" + x + ",\"y\":" + y + ",\"button\":\"left\",\"clickCount\":1"

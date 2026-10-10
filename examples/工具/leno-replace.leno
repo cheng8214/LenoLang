@@ -97,7 +97,7 @@ func replace_icase_literal(string text, string src, string dst):string {
     Array[string] out = []
     int i = 0
     while i + n <= tl {
-        if strings.byte_slice(low_text, i, i + n) == low_src {
+        if strings.byte_slice(low_text, i, (i + n) - 1) == low_src {
             out.add(dst)
             hits_total = hits_total + 1
             i = i + n
@@ -106,7 +106,7 @@ func replace_icase_literal(string text, string src, string dst):string {
             i = i + 1
         }
     }
-    out.add(strings.byte_slice(text, i, tl))
+    out.add(strings.byte_slice(text, i, tl - 1))
     return strings.join(out, "")
 }
 
@@ -143,7 +143,7 @@ func replace_file(string path) {
         if raw.byte(0) == 239 {
             if raw.byte(1) == 187 {
                 if raw.byte(2) == 191 {
-                    bom = strings.byte_slice(raw, 0, 3)
+                    bom = strings.byte_slice(raw, 0, 2)
                     body = strings.byte_slice(raw, 3, raw.byte_len())
                 }
             }

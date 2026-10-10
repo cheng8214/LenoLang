@@ -957,7 +957,7 @@ main() {
             // 用途：逐像素比对连续帧 ⇒ 把"闪烁"变成可复现的数字 ✓
             var idx = FRAMES - SHOT_AT
             var path = SHOT
-            if idx > 0 { path = SHOT.byte_slice(0, SHOT.len() - 4) + "_" + _str(idx) + ".png" }
+            if idx > 0 { path = SHOT.byte_slice(0, (SHOT.len() - 4) - 1) + "_" + _str(idx) + ".png" }
             var s = r.readPixelsAt(0, 0, _int(WIN_W), _int(WIN_H))
             if s == null {
                 print("[dash] 读像素失败: " + SDL3.getError() + "\n")

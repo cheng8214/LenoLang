@@ -150,15 +150,15 @@ export struct Url {
         int start = 0
         int qlen = query.len()
         while start <= qlen {
-            int amp = strings.find(query.slice(start, qlen), "&")
+            int amp = strings.find(query.slice(start, qlen - 1), "&")
             int segEnd = qlen
             if amp >= 0 { segEnd = start + amp }
-            string seg = query.slice(start, segEnd)
+            string seg = query.slice(start, segEnd - 1)
             int eq = strings.find(seg, "=")
             string k = seg
             string v = ""
             if eq >= 0 {
-                k = seg.slice(0, eq)
+                k = seg.slice(0, eq - 1)
                 v = seg.slice(eq + 1, seg.len())
             }
             if k == key { return v }
@@ -170,7 +170,7 @@ export struct Url {
 
     // 拼接相对引用（类似 RFC 3986 resolve）
     func resolve(string ref): Url {
-        if ref.byte_len() > 4 and ref.slice(0, 4).has("://") {
+        if ref.byte_len() > 4 and ref.slice(0, 3).has("://") {
             return parseUrl(ref)
         }
         // 协议相对 //host/path
@@ -197,7 +197,7 @@ export struct Url {
                 bi = bi + 1
             }
             string dir = "/"
-            if lastSlash >= 0 { dir = base.slice(0, lastSlash + 1) }
+            if lastSlash >= 0 { dir = base.slice(0, lastSlash) }
             u.path = _collapsePath(dir + ref)
         }
         // 拆分 ref 中的 query/fragment
@@ -206,7 +206,7 @@ export struct Url {
         string refNoFrag = ref
         if fi >= 0 {
             u.fragment = ref.slice(fi + 1, ref.byte_len())
-            refNoFrag = ref.slice(0, fi)
+            refNoFrag = ref.slice(0, fi - 1)
         }
         if qi >= 0 {
             u.query = refNoFrag.slice(qi + 1, refNoFrag.len())
@@ -291,14 +291,14 @@ export func parseUrl(string url): Url {
     // 分离 fragment
     string noFrag = url
     if fi >= 0 {
-        u.fragment = url.slice(fi + 1, len)
-        noFrag = url.slice(0, fi)
+        u.fragment = url.slice(fi + 1, len - 1)
+        noFrag = url.slice(0, fi - 1)
     }
     // 分离 query
     string noQuery = noFrag
     if qi >= 0 {
         u.query = noFrag.slice(qi + 1, noFrag.len())
-        noQuery = noFrag.slice(0, qi)
+        noQuery = noFrag.slice(0, qi - 1)
     }
     // 解析 scheme://host[:port]/path
     // ★ 2026-10-03 收编：scheme 先收字节，循环后一趟 `strings.from_bytes`（替代逐字符拼串的 O(n²)）✓
@@ -957,23 +957,23 @@ export func getQueryParam(string url, string key): string {
     if fi >= 0 and fi > qi {
         end = fi
     }
-    string qs = url.slice(qi + 1, end)
+    string qs = url.slice(qi + 1, end - 1)
     // 按 & 分割各参数
     int start = 0
     int len = qs.len()
     while start <= len {
-        int amp = strings.find(qs.slice(start, len), "&")
+        int amp = strings.find(qs.slice(start, len - 1), "&")
         int segEnd = len
         if amp >= 0 {
             segEnd = start + amp
         }
-        string seg = qs.slice(start, segEnd)
+        string seg = qs.slice(start, segEnd - 1)
         // 按 = 分割 key=value
         int eq = strings.find(seg, "=")
         string k = ""
         string v = ""
         if eq >= 0 {
-            k = seg.slice(0, eq)
+            k = seg.slice(0, eq - 1)
             v = seg.slice(eq + 1, seg.len())
         } else {
             k = seg
@@ -1000,7 +1000,7 @@ export func stripQuery(string url): string {
     } else if fi >= 0 {
         end = fi
     }
-    return url.slice(0, end)
+    return url.slice(0, end - 1)
 }
 
 // ==================== Robots.txt 解析 ====================
@@ -1020,7 +1020,7 @@ export func parseRobots(string text): Dict {
         if ci < 0 {
             continue
         }
-        string field = strings.to_lower(strings.trim(line.slice(0, ci)))
+        string field = strings.to_lower(strings.trim(line.slice(0, ci - 1)))
         string value = strings.trim(line.slice(ci + 1, line.len()))
         if field == "user-agent" {
             // 新一组
@@ -1068,7 +1068,7 @@ export func parseCrawlDelay(string robotsText, string userAgent): int {
         if line == "" or line.starts_with("#") { continue }
         int ci = strings.find(line, ":")
         if ci < 0 { continue }
-        string field = strings.to_lower(strings.trim(line.slice(0, ci)))
+        string field = strings.to_lower(strings.trim(line.slice(0, ci - 1)))
         string value = strings.trim(line.slice(ci + 1, line.len()))
         if field == "user-agent" {
             string v = strings.to_lower(value)
@@ -1092,10 +1092,10 @@ func _secondsToMs(string v): int {
     if dot < 0 {
         return _intOr0(v) * 1000
     }
-    int ms = _intOr0(v.slice(0, dot)) * 1000
+    int ms = _intOr0(v.slice(0, dot - 1)) * 1000
     string frac = v.slice(dot + 1, v.len())
-    if frac.len() >= 1 { ms = ms + _intOr0(frac.slice(0, 1)) * 100 }
-    if frac.len() >= 2 { ms = ms + _intOr0(frac.slice(1, 2)) * 10 }
+    if frac.len() >= 1 { ms = ms + _intOr0(frac.slice(0, 0)) * 100 }
+    if frac.len() >= 2 { ms = ms + _intOr0(frac.slice(1, 1)) * 10 }
     return ms
 }
 
@@ -1122,7 +1122,7 @@ func _robotsRuleMatch(string rule, string path): bool {
     if star < 0 {
         return path.starts_with(rule)
     }
-    string prefix = rule.slice(0, star)
+    string prefix = rule.slice(0, star - 1)
     string suffix = rule.slice(star + 1, rule.len())
     if not path.starts_with(prefix) {
         return false
@@ -1240,12 +1240,12 @@ func _findOpenTag(string xml, string tagName, int fromPos): int {
     int n = xml.len()
     int pos = fromPos
     while pos < n {
-        int o = strings.find(xml.slice(pos, n), open)
+        int o = strings.find(xml.slice(pos, n - 1), open)
         if o < 0 { return -1 }
         int absO = pos + o
         int after = absO + olen
         if after >= n { return -1 }
-        string nxt = xml.slice(after, after + 1)
+        string nxt = xml.slice(after, after)
         if nxt == ">" or nxt == " " or nxt == "\t" or nxt == "\n" or nxt == "\r" or nxt == "/" {
             return absO
         }
@@ -1263,12 +1263,12 @@ func _xmlBlocks(string xml, string blockName): Array[string] {
     while pos < n {
         int absO = _findOpenTag(xml, blockName, pos)
         if absO < 0 { break }
-        int gt = strings.find(xml.slice(absO, n), ">")
+        int gt = strings.find(xml.slice(absO, n - 1), ">")
         if gt < 0 { break }
         int cs = absO + gt + 1
-        int ce = strings.find(xml.slice(cs, n), close)
+        int ce = strings.find(xml.slice(cs, n - 1), close)
         if ce < 0 { break }
-        blocks.add(xml.slice(cs, cs + ce))
+        blocks.add(xml.slice(cs, (cs + ce) - 1))
         pos = cs + ce + close.len()
     }
     return blocks
@@ -1280,12 +1280,12 @@ func _xmlText(string xml, string tagName): string {
     if absO < 0 { return "" }
     int n = xml.len()
     string close = "</" + tagName
-    int gt = strings.find(xml.slice(absO, n), ">")
+    int gt = strings.find(xml.slice(absO, n - 1), ">")
     if gt < 0 { return "" }
     int cs = absO + gt + 1
-    int ce = strings.find(xml.slice(cs, n), close)
+    int ce = strings.find(xml.slice(cs, n - 1), close)
     if ce < 0 { return "" }
-    return strings.trim(xml.slice(cs, cs + ce))
+    return strings.trim(xml.slice(cs, (cs + ce) - 1))
 }
 
 // 解析 sitemap 的所有 <url> 条目（含可选元数据）
@@ -1344,7 +1344,7 @@ export func sitemapUrl(string baseUrl): string {
         return clean
     }
     if clean.ends_with("/") {
-        clean = clean.slice(0, clean.len() - 1)
+        clean = clean.slice(0, (clean.len() - 1) - 1)
     }
     return clean + "/sitemap.xml"
 }
@@ -1355,7 +1355,7 @@ export func robotsUrl(string baseUrl): string {
     string clean = strings.trim(baseUrl)
     if clean.ends_with("/robots.txt") { return clean }
     if clean.ends_with("/") {
-        clean = clean.slice(0, clean.len() - 1)
+        clean = clean.slice(0, (clean.len() - 1) - 1)
     }
     return clean + "/robots.txt"
 }
