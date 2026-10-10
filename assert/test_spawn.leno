@@ -59,9 +59,13 @@ func writeProbe() {
         files.write(probePath(), s)
         return
     }
-    // POSIX：ps 的 args 列里找标记；`grep -v` 去掉探测脚本自己那行
+    // POSIX：ps 的 args 列里找标记；排除「grep 自己那行」用 `[g]rep`（ps 会把 grep 进程也列出来，
+    //   它的参数里正好带着 TOKEN ⇒ 不排掉就"恒为真"）。
+    //   ⚠ **不能**写成 `grep -v leno_spawn_probe`：本文件 TOKEN 就以 `leno_spawn_probe` 开头 ⇒
+    //     那会把**真正的探针**也一起滤掉 ⇒ 恒探测不到（症状：断言①恒红；探针泄漏后还握着
+    //     运行器的管道 ⇒ 整套 assert 卡死）✗
     var s2 = "#!/bin/sh\n" +
-             "ps ax -o args= 2>/dev/null | grep -F \"$LENO_SPAWN_TOKEN\" | grep -v leno_spawn_probe >/dev/null && exit 1\n" +
+             "ps ax -o args= 2>/dev/null | grep -F \"$LENO_SPAWN_TOKEN\" | grep -v '[g]rep' >/dev/null && exit 1\n" +
              "exit 0\n"
     files.write(probePath(), s2)
 }

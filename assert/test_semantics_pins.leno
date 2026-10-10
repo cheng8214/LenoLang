@@ -219,7 +219,14 @@ main() {
         + "        + dirs.join(\"a//\", \"//b\") + \"|\" + dirs.join(\"/home\", \"user\", \"file\") + \"|\"" + n
         + "        + dirs.join(\"a\", \"b\") + \"\\n\")" + n
         + "}" + n)
-    ce.expect_ok(p19, "dirs.join：收拢重复分隔符，但不动根目录", "a\\b|a\\b|a\\b|/home\\user\\file|a\\b")
+    // ⚠ 期望串的**分隔符必须按平台取**：Linux/macOS 是 `/`、Windows 是 `\`。
+    //   原来写死成 `\` ⇒ 在 Linux 上恒红（实测：实际 `a/b|…` vs 期望 `a\b|…` ✗）
+    var sep19 = "/"
+    if _os() == "windows" {
+        sep19 = "\\"
+    }
+    ce.expect_ok(p19, "dirs.join：收拢重复分隔符，但不动根目录",
+        "a" + sep19 + "b|a" + sep19 + "b|a" + sep19 + "b|/home" + sep19 + "user" + sep19 + "file|a" + sep19 + "b")
 
     // ---------- 第十批（数值/随机 ✓）实测后补的钉桩 ----------
 

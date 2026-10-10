@@ -710,6 +710,36 @@ static int spawn_alloc_slot_locked(void) {
     return -1;
 }
 
+#ifndef _WIN32
+// exe 是否**真的能执行**（带路径则直接判；不带路径按 PATH 找，同 execvp）。
+//   ⚠ 为什么需要它：POSIX 侧一律经 `/bin/sh -c "exe" args` 拉起 ⇒ 程序不存在时 sh 只退出
+//     127，而 `_spawn` 早已"成功"返回句柄了 ✗ —— 与 Windows 侧 CreateProcessW 的语义
+//     （程序不存在 ⇒ 直接失败）不一致。契约是「拉不起来 ⇒ -1」⇒ 这里对齐 ✓
+static int spawn_exe_runnable(const char* exe) {
+    if (!exe || !exe[0]) return 0;
+    if (strchr(exe, '/')) return access(exe, X_OK) == 0;
+    const char* path = getenv("PATH");
+    if (!path) return 0;
+    const char* p = path;
+    for (;;) {
+        const char* colon = strchr(p, ':');
+        const char* dir = p;
+        size_t dlen = colon ? (size_t)(colon - p) : strlen(p);
+        if (dlen == 0) { dir = "."; dlen = 1; }   // PATH 里的空项 = 当前目录（同 execvp）
+        char buf[MAX_PATH_LEN];
+        if (dlen + strlen(exe) + 2 <= sizeof(buf)) {
+            memcpy(buf, dir, dlen);
+            buf[dlen] = '/';
+            strcpy(buf + dlen + 1, exe);
+            if (access(buf, X_OK) == 0) return 1;
+        }
+        if (!colon) break;
+        p = colon + 1;
+    }
+    return 0;
+}
+#endif
+
 // _spawn(exe, args) —— 异步拉起，返回句柄（> 0）；失败 -1
 // ⚠ 两个参数分开（而不是收一条命令行）是为了让"哪个是可执行文件"没有歧义：
 //   Job / 进程组都要认准那**一个**进程，再从命令行字符串里解析一遍就多一次出错的机会。
@@ -784,6 +814,9 @@ static Value native_spawn(int argCount, Value* args) {
     spawn_unlock();
     return val_int(idx + 1);
 #else
+    // 程序不存在/不可执行 ⇒ 直接失败（与 Windows 的 CreateProcessW 同口径；见上面的 helper 说明）
+    if (!spawn_exe_runnable(exe)) { free(cmd); return val_int(-1); }
+    pid_t parent_pid = getpid();   // fork 前记下"我"，供子进程堵 PDEATHSIG 的竞态（见下）
     pid_t pid = fork();
     if (pid < 0) { free(cmd); return val_int(-1); }
     if (pid == 0) {
@@ -791,7 +824,12 @@ static Value native_spawn(int argCount, Value* args) {
 #ifdef __linux__
         prctl(PR_SET_PDEATHSIG, SIGKILL);  // Linux 独有：父进程一死就杀我
 #endif
-        // fork 之后到 exec 之间只能用**异步信号安全**的函数（setsid/prctl/execl/_exit 都是）✓
+        // ⚠ 竞态堵漏：若父进程在 fork 之后、prctl 之前就退出了，PDEATHSIG 会被"绑到"当时的
+        //   收尸进程（subreaper，实测 1528）上 ⇒「父死子死」永不触发 ✗（实测 flaky：3 次漏 2 次，
+        //   漏掉的探针还握着父进程的管道 ⇒ 整套 assert 卡死）。比对 getppid() 即可发现"父已不在"
+        //   ⇒ 当场退，绝不让孤儿 exec 出来 ✓
+        if (getppid() != parent_pid) _exit(127);
+        // fork 之后到 exec 之间只能用**异步信号安全**的函数（setsid/prctl/getppid/execl/_exit 都是）✓
         execl("/bin/sh", "sh", "-c", cmd, (char*)NULL);
         _exit(127);                        // exec 失败（连 /bin/sh 都没有）—— 响亮地失败
     }
