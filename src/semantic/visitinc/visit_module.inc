@@ -1947,9 +1947,12 @@
                                          get_similar_struct_method_hint(s, tn, method_name));
                             }
                         } else {
+                            // ★ 2026-10-10（A 组第 7 条）：改走**共享分级提示** ✓
+                            //   （`slice*` ⇒ 切片提示优先 ✓ 其次相似名 ✓）—— 实测 `arr.slice(0,1)`
+                            //   走的正是**这一处**（不是 visit_expr 那处 ✓），所以两处必须同一份 ✓
                             snprintf(msg, sizeof(msg), "类型 '%s' 没有方法 '%s'%s",
                                      type_to_string(obj_sym->type), method_name,
-                                     semantic_method_hint(obj_sym->type, method_name));
+                                     semantic_no_such_method_hint(obj_sym->type, method_name));
                         }
                         error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     }

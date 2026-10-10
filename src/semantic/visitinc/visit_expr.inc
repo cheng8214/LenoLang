@@ -916,12 +916,20 @@
                             if (!method_found && !is_dict_value_call &&
                                 receiver_type->kind != TYPE_CSTRUCT) {
                                 // 方法不存在，编译时报错
+                                // ★ 2026-10-10（A 组第 7 条）：提示**分级** ✓
+                                //   原来这里**写死**了一句"如果是数组切片，请使用 arr[start:end]" ✗
+                                //   —— 于是 `"a".startsWith("a")` 这种**方法名拼错**也收到切片提示 ✗
+                                //   （上面 895 行的注释早就指出过这处**完全误导** ✓ 但一直没改 ✗）。
+                                //   现在：① 先问**相似名**工具（`startsWith` ⇒ 提示 `starts_with` ✓，
+                                //   与 `d.hass`/`arr.reverze` 那两条路径**同一份实现** ✓）；
+                                //   ② 只有名字确实是 `slice*` 那种习惯写法时，才给切片提示 ✓。
                                 char msg[BUFFER_MEDIUM];
                                 const char* type_str = type_to_string(receiver_type);
-                                snprintf(msg, sizeof(msg),
-                                    "类型 '%s' 没有方法 '%s'\n"
-                                    "  提示: 如果是数组切片，请使用 arr[start:end] 语法而非 .slice()",
-                                    type_str, method_name);
+                                // 分级提示走**共享实现** ✓（`slice*` 优先 ✓ 其次相似名 ✓
+                                // 顺序为什么是这样、我第一版怎么踩的 ⇒ 见 semantic_type_utils.c）
+                                snprintf(msg, sizeof(msg), "类型 '%s' 没有方法 '%s'%s",
+                                         type_str, method_name,
+                                         semantic_no_such_method_hint(receiver_type, method_name));
                                 error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                             } else if (method_found) {
                                 // 是实例方法，检查参数

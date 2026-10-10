@@ -1254,6 +1254,38 @@ const char* semantic_method_hint(TypeInfo* type, const char* method_name) {
     return native_instance_method_hint(tn, method_name);
 }
 
+// 方法不存在时的**分级提示**（**唯一实现**，2026-10-10 加 / A 组第 7 条）
+// ----------------------------------------------------------------------------
+// 背景：「类型 'X' 没有方法 'Y'」这句报错在本仓有**好几处**落点 ✗（visit_expr.inc /
+//   visit_module.inc …✓），原来它们**各给各的提示**：
+//     · 一处**写死**了"如果是数组切片，请使用 arr[start:end]" ✗ ⇒ `"a".startsWith("a")`
+//       这种**方法名拼错**也收到切片提示 ✗（**完全误导** ✓ 该处注释早就承认过 ✓）；
+//     · 另一处会给相似名提示 ✓（`d.hass` ⇒ `has` ✓）。
+//   ⇒ 收口成一份 ✓，顺序（**实测踩过** ✗）：
+//     ① `slice*` 系列 ⇒ **切片提示** —— 它代表"把切片当方法调"这个**语言级**混淆 ✓
+//        而表里存在与 "slice" 编辑距离 ≤2 的名字 ⇒ 若把相似名排前面，这条永远轮不到 ✗
+//        （第一版就是这么写的 ✓ 实测 `arr.slice(0,1)` 的提示**消失** ✗）；
+//     ② 否则问相似名（`startsWith` ⇒ `starts_with` ✓ `aad` ⇒ `add` ✓）；
+//     ③ 都没有 ⇒ 空串（调用方只报事实 ✓ 不编建议 ✗）。
+const char* semantic_no_such_method_hint(TypeInfo* type, const char* method_name) {
+    static char hint[192];
+    hint[0] = '\0';
+    if (!method_name || !method_name[0]) return hint;
+
+    if (strncmp(method_name, "slice", 5) == 0) {
+        snprintf(hint, sizeof(hint),
+                 "\n  提示: 如果是数组切片，请使用 arr[start:end] 语法而非 .slice()");
+        return hint;
+    }
+    if (type) {
+        const char* mh = semantic_method_hint(type, method_name);
+        if (mh && mh[0]) {
+            snprintf(hint, sizeof(hint), "%s", mh);
+        }
+    }
+    return hint;
+}
+
 // E5：未定义的 struct 类型若是某**已导入模块**的导出类型，提示先 use 导入
 // （漏 use 是最高频的跨模块手误：模块里有 Point，宿主直接 new Point()）
 const char* get_module_with_struct_hint(Semantic* s, const char* struct_name) {
