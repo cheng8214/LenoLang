@@ -440,6 +440,28 @@ main() {
     ce.expect_ok(p33, "容器边界两套口径（pop⇒null / insert 夹末尾 / 读·remove⇒抛）",
         "null|[1, 2, 3, 9]|[1, 2, 0]|抛抛抛")
 
+    // P34 ★ `ffi.free` **幂等**（2026-10-11 重测 ✓ B 组第 12 条 —— **文档记错了，纠正** ✓）
+    //   ⚠ 旧文档写的是"双重 free 静默通过 ⇒ 真重复释放是堆损坏"✗ —— **实测不是那样** ✓：
+    //     每个指针对象自带 `freed` 标志 ✓（第一次 free 之后 `ptr = NULL` ✓）⇒ 第二次、以及
+    //     用**别名**再 free ⇒ 都是**安全的 no-op** ✓；而 free 之后再**读**会**抛错** ✓
+    //     （不是静默给值 ✓）。⇒ 这两条都是**好**口径 ✓ 钉住它们 ✓（哪天幂等被去掉，这条会红 ✓）
+    //   ⚠ 真正剩下的风险**测不了**（写进文档 ✓）：同一块内存被 **C 代码**也释放过 ✗
+    //     —— `owned` 标志是 Leno 自己记的 ✓ 它看不出来 ✓ ⇒ 与 C 混用必须约定谁负责释放 ✓
+    var p34 = dirs.join(work, "ffi_free_idem.leno")
+    files.write(p34, "import ffi" + n
+        + "main() {" + n
+        + "    var p = ffi.malloc(16)" + n
+        + "    ffi.write_int(p, 0, 42)" + n
+        + "    ffi.free(p)" + n
+        + "    ffi.free(p)" + n
+        + "    var q = p" + n
+        + "    ffi.free(q)" + n
+        + "    string rr = \"没抛\"" + n
+        + "    try { var _z = ffi.read_int(p, 0) } catch ex { rr = \"抛\" }" + n
+        + "    print(\"42|\" + rr + \"|ok\\n\")" + n
+        + "}" + n)
+    ce.expect_ok(p34, "ffi.free 幂等（二次/别名都不炸）+ free 后读会抛", "42|抛|ok")
+
     dirs.delete(work)
 
     print("test_semantics_pins passed")
