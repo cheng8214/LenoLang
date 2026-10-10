@@ -34,6 +34,13 @@ main() {
     // 查找开头
     assert_eq(regexs.find("Hello", "^Hello"), 0)
 
+    // ★ 2026-10-10（A 组第 5 条）：**偏移按字符**（与切片 / .len() / strings.find 同口径 ✓）
+    //   ⚠ 例子必须选"两种口径结果不同"的 ✗ —— 旧文档曾用 `"abc中文def"` 找 `"中文"`⇒3，
+    //     可前三个字符是 ASCII ⇒ 字节数 == 字符数 ✗ 根本区分不出来（那次结论因此错了 ✗）。
+    //     `"中文字abc"`：字符下标 3 ✓ / 字节偏移 9 ✗ ⇒ 能区分 ✓
+    assert_eq(regexs.find("中文字abc", "abc"), 3)
+    assert_eq("中文".len(), 2)          // 字符口径（对照：byte_len 才是 6 ✓）
+
     print("find 测试通过!")
 
     // ========== 测试 find_all ==========
@@ -56,6 +63,17 @@ main() {
     // 无匹配
     var no_matches = regexs.find_all("hello", "[0-9]+")
     assert_eq(no_matches.len(), 0)
+
+    // ★ 含中文：start/end 同样是**字符**下标 ✓（2026-10-10 改 ✓），且能直接拿去切片 ✓
+    //   实测口径：`"a中b中"` 找 `"中"` ⇒ start=1 / start=3 ✓（按字节会是 1 / 5 ✗）
+    var zh = "a中b中"
+    var zm = regexs.find_all(zh, "中")
+    assert_eq(zm.len(), 2)
+    assert_eq(zm[0].start, 1)
+    assert_eq(zm[1].start, 3)
+    assert_eq(zm[0].text, "中")
+    //   切片是**闭区间**而 end **不含** ⇒ 要 -1 ✓（这才是拿偏移切片的正确写法 ✓）
+    assert_eq(zh[zm[0].start : zm[0].end - 1], "中")
 
     print("find_all 测试通过!")
 

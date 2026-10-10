@@ -758,8 +758,15 @@ static Value regex_find(int argc, Value* args) {
     re_free_all();
     
     if (start) {
-        // 返回 0-based 位置
-        return val_int((int)(start - str->chars));
+        // ★ 2026-10-10（A 组第 5 条）：返回 **0 基字符下标**（与切片 / `.len()` /
+        //   `strings.find` 同口径 ✓）—— 原先是**字节**偏移 ✗。
+        //   ⚠ 速查那句"find 返回**字符**索引"实测**是错的** ✗：它举的例子
+        //     `"abc中文def"` 前三个字符是 ASCII ⇒ 字节 == 字符 ✗ **区分不出来** ✓
+        //     （重新实测：`"中文字abc"` 找 `"abc"` ⇒ 旧值 **9** ✗ / 字符应是 **3** ✓）
+        //   ⇒ 两处一起改成字符口径 ✓（`find` 与 `find_all` 本来就一致，都是字节 ✗）
+        int b_off = (int)(start - str->chars);
+        int c_idx = utf8_char_index(str->chars, str->len, b_off);
+        return val_int(c_idx >= 0 ? c_idx : b_off);   // 非法偏移退回字节（不返回 -1 ✗ 那会变成"没找到"）
     }
     return val_int(-1);
 }
@@ -828,8 +835,15 @@ static Value regex_find_all(int argc, Value* args) {
         Value m_val = val_obj((Object*)m);
         gc_push_root(&m_val);   // 填字段期间它还没进 result ⇒ 必须自己护住
 
-        native_struct_set(m, "start", val_int((int)(start - str->chars)));   // 0-based
-        native_struct_set(m, "end",   val_int((int)(end - str->chars)));     // 0-based，不含
+        // ★ 2026-10-10（A 组第 5 条）：`start` / `end` 由**字节**改为**字符**下标 ✓
+        //   注意 `end` 仍是**不含**（开区间尾巴 ✓）—— 而 Leno 切片是**闭区间** ✓
+        //   ⇒ 正确用法是 `s[m.start : m.end - 1]` ✓（实测过 ✓ 见速查 §三 ㉔）
+        int b_start = (int)(start - str->chars);
+        int b_end   = (int)(end   - str->chars);
+        int c_start = utf8_char_index(str->chars, str->len, b_start);
+        int c_end   = utf8_char_index(str->chars, str->len, b_end);
+        native_struct_set(m, "start", val_int(c_start >= 0 ? c_start : b_start));   // 0-based 字符
+        native_struct_set(m, "end",   val_int(c_end   >= 0 ? c_end   : b_end));     // 0-based 字符，不含
         native_struct_set(m, "text",  val_obj((Object*)str_copy(start, (int)(end - start))));
 
         arr_push_custom(result, m_val);

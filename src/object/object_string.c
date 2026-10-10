@@ -64,6 +64,22 @@ int utf8_char_byte_len(const char* chars, int byte_len, int offset) {
     return 1; // 无效 UTF-8
 }
 
+// UTF-8：**字节偏移 → 字符下标**（0 基）—— 与 `utf8_char_offset`（字符→字节）互为反向。
+//   为什么补它（2026-10-10 / A 组第 5 条）：正则引擎报的位置天生是**字节**，而 Leno 的
+//   切片 / `.len()` / `strings.find` 全是**字符**口径 ⇒ 把字节位置交给用户，拿去
+//   `s[start:end]` 必然错位 ✗（实测 `"中文字abc"` 找 `"abc"` ⇒ 字节 9 ✗ / 字符 3 ✓）。
+//   返回 -1 = 偏移非法（负 / 超出 byte_len）⇒ 调用方按"不编造位置"处理 ✓
+//   （注意：**别**把它和"找不到（-1）"混用 —— 调用方要守住这个区别 ✓）。
+int utf8_char_index(const char* chars, int byte_len, int byte_offset) {
+    if (!chars || byte_offset < 0 || byte_offset > byte_len) return -1;
+    int chars_seen = 0;
+    for (int i = 0; i < byte_offset; i++) {
+        // 只数"字符起始字节"：续字节形如 10xxxxxx ⇒ (c & 0xC0) == 0x80 一律跳过 ✓
+        if (((unsigned char)chars[i] & 0xC0) != 0x80) chars_seen++;
+    }
+    return chars_seen;
+}
+
 // 计算字符串哈希值（保持与 string_table.c 兼容）
 uint32_t hash_string(const char* key, int length) {
     return leno_fnv1a_len(key, length);

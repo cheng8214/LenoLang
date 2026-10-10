@@ -164,16 +164,25 @@ main() {
 
     // ---------- 第九批（正则/JSON/文件/目录 ✓）实测后补的钉桩 ----------
 
-    // P16 ★ 同一套 API 里**两种偏移口径**：`find` 按字符 ✓、`find_all` 按字节 ✗
-    //   （含中文时拿 find_all 的 start 去切片必然错位 ✓；模块文档明写了字节 ✓ 见速查 ㉔）
+    // P16 ★ **2026-10-10 改（A 组第 5 条）**：`find` 与 `find_all` 统一成**字符**下标 ✓
+    //   ⚠ **这条钉桩原来钉的是"两种口径"** ✗（`find` 按字符 ✓ / `find_all` 按字节 ✗）——
+    //     而"find 按字符"这个结论**本身就是错的** ✗：它用的例子 `"abc中文def"` 前三个字符
+    //     是 ASCII ⇒ **字节 == 字符** ✗ **区分不出来** ✓（重新实测：`"中文字abc"` 找 `"abc"`
+    //     ⇒ 旧值 **9** ✗，字符应是 **3** ✓）⇒ 两者其实**一直一致**（都是字节 ✗），
+    //     只是"与切片 / `.len()` / `strings.find` 不一致" ✗ ⇒ 现在统一到**字符** ✓。
+    //   ⚠ 例子必须**能区分**两种口径 ✗（"中文字abc" ✓ 而不是 "abc中文def" ✗）——
+    //     这条教训值钱：**例子选错 ⇒ 结论错了还被当成"实测过"** ✓
+    //   ⚠ `end` 仍是**不含**（开区间尾巴 ✓），而切片是**闭区间** ⇒ 用法 `s[m.start : m.end-1]` ✓
     var p16 = dirs.join(work, "regex_offsets.leno")
     files.write(p16, "import regexs" + n
         + "main() {" + n
-        + "    int c = regexs.find(\"abc中文def\", \"中文\")" + n
+        + "    int c = regexs.find(\"中文字abc\", \"abc\")" + n
         + "    var ms = regexs.find_all(\"a中b中\", \"中\")" + n
-        + "    print(_str(c) + \"|\" + _str(ms[0].start) + \",\" + _str(ms[1].start) + \"\\n\")" + n
+        + "    var s = \"a中b中\"" + n
+        + "    print(_str(c) + \"|\" + _str(ms[0].start) + \",\" + _str(ms[1].start)" + n
+        + "        + \"|\" + s[ms[0].start : ms[0].end - 1] + \"\\n\")" + n
         + "}" + n)
-    ce.expect_ok(p16, "find 按字符(3) / find_all 按字节(1,5)", "3|1,5")
+    ce.expect_ok(p16, "find/find_all 都按字符（3|1,3|中，且切片对得上）", "3|1,3|中")
 
     // P17：`jsons.decode` **解析失败 ⇒ null**（不抛错 ✓）—— 必须自己判 null ✓
     var p17 = dirs.join(work, "json_bad_decode.leno")

@@ -953,6 +953,10 @@ uint32_t hash_string(const char* key, int length);
 int utf8_char_len(const char* chars, int byte_len);
 int utf8_char_offset(const char* chars, int byte_len, int char_index);
 int utf8_char_byte_len(const char* chars, int byte_len, int offset);
+// **字节偏移 → 字符下标**（上面三个的反向 ✓，2026-10-10 加）：正则引擎给的是字节位置，
+//   而语言侧的切片 / .len() / strings.find 全是字符口径 ⇒ 交给用户前必须换算 ✓。
+//   返回 -1 = 偏移非法（**别**与"找不到"混用 ✓ 调用方各自守住 ✓）。
+int utf8_char_index(const char* chars, int byte_len, int byte_offset);
 ObjString* str_alloc(int len);
 ObjString* str_alloc_cap(int len, int capacity);  // 预留容量分配（自追加链专用）
 ObjString* str_new(const char* chars, int len);

@@ -79,13 +79,20 @@ regexs.match("Hello123", "^[a-z]+$")      // false (大写H不匹配)
 - `str` (string): 要查找的字符串
 - `pattern` (string): 正则表达式模式
 
-**返回**: `int` - 匹配的起始位置（0-based），未找到返回 -1
+**返回**: `int` - 匹配的起始位置（0-based，按**字符**计 ✓），未找到返回 -1
 
 ```leno
 regexs.find("Hello, World!", "World")     // 7
 regexs.find("Hello, World!", "xyz")       // -1
 regexs.find("abc123def", "[0-9]+")        // 3
+regexs.find("中文字abc", "abc")            // 3 ✓（按字符；按字节会是 9 ✗）
 ```
+
+> ⚠ **2026-10-10 起改为按**字符**计** ✓（原来按字节 ✗）。理由：本语言的切片 / `.len()` /
+> `strings.find` 全是**字符**口径 ✓ ⇒ 字节偏移交到手上，拿去 `s[start:end]` 必然错位 ✗。
+> （注：本文档此前写"`find` 按字符 ✓、`find_all` 按字节 ✗"是**错的** ✗ —— 那一版用的例子
+> `"abc中文def"` 前三个字符是 ASCII ⇒ 字节与字符**数值相同** ✗ 根本区分不出来 ✓；
+> 重新实测 `"中文字abc"` 找 `"abc"` ⇒ 旧值 **9** ✗ ⇒ 两者其实**一直一致**，都是字节 ✗）
 
 #### `find_all(str, pattern)`
 
@@ -99,8 +106,8 @@ regexs.find("abc123def", "[0-9]+")        // 3
 
 | 字段 | 类型 | 含义 |
 | --- | --- | --- |
-| `start` | `int` | 匹配起始位置（0-based，按**字节**计） |
-| `end` | `int` | 匹配结束位置（0-based，**不含**） |
+| `start` | `int` | 匹配起始位置（0-based，按**字符**计 ✓，2026-10-10 起；原按字节 ✗） |
+| `end` | `int` | 匹配结束位置（0-based，**不含** ✓，同样按字符 ✓） |
 | `text` | `string` | 匹配到的子串 |
 
 ```leno
@@ -116,7 +123,9 @@ for matches to m {
 > 这类调用点**不用改**；要改的是 `m["text"]` 下标式与 `if m is Dict` 收窄 —— 编译期就会挡住。
 > 为什么不用 `Dict[string, ...]`：三个键**类型不齐**（`start`/`end` 是 int、`text` 是 string），
 > 同质的 `Dict` 表达不了"这个键 int、那个键 string"（与 `dirs.stat` 改 `DirInfo` 同一判断，见实例十三/二十二）。
-> ⚠ `start` / `end` 是**字节**偏移（不是字符索引）—— 含中文时与 `strings.find` 的字符索引不同口径。
+> ⚠ `start` / `end` **2026-10-10 起是**字符**下标** ✓（与 `strings.find` / 切片 / `.len()` 同口径 ✓；
+> 原来按字节 ✗ ⇒ 含中文时拿 `start` 去切片必然错位 ✗）。**切片要注意 `end` 不含**：
+> `s[m.start : m.end - 1]` ✓（本语言切片是闭区间 ✓）；实测 `"a中b中"` 找 `"中"` ⇒ `start` = 1, 3 ✓。
 > ⚠ native struct 名（`RegexMatch`）**不能当类型标注**（不在符号表里）；让编译器推断
 > （`var m = matches[0]`）再按字段用即可。
 
