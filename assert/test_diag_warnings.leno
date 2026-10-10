@@ -90,11 +90,12 @@ main() {
     var o4 = ce.expect_ok(p4, "对照组：if/else 两支都 return", "")
     ce.expect_no_warning(o4, "对照组：if/else 两支都 return", "[漏写 return]")
 
-    // A5（**已知取舍**，钉当前口径 ✓）：`while true { return }` 在静态上必然离开，
-    //   但判定**保守**（只认 return/throw/if-else/switch/try ✓，不认"恒真循环 + 无 break"✗）
-    //   ⇒ 这里会**误报**一条 ✓。取舍理由：认它就得解析条件是否为字面 true ✗，
-    //   而那类写法少、误判风险高 ✓ —— 宁可漏报/误报这一种，也不把口径搞复杂 ✓。
-    //   ⚠ 将来若改成"恒真循环也认"，把这条断言改成 expect_ok + expect_no_warning 即可 ✓
+    // A5 ★ 2026-10-10 修（**原来这里钉的是"仍会误报"** ✗ 现在改成"不该报" ✓）
+    //   `while true { … }` 恒真 + **本层没有 break** ⇒ 控制流**永远落不到循环之后** ✓
+    //   （要么在里面 return/throw 走掉 ✓、要么一直转下去 ✓）⇒ 不该报"漏写 return" ✓
+    //   ⚠ 教训（值得留着）：当初把"我没实现"写成了"这是设计取舍" ✗ —— 这条误报害得
+    //     一轮体检的结论**虚高** ✓（报了"LenoMusic 3 / LenoTrae 29 条真命中"✗，
+    //     查下去 26 条在框架、6 条是 `:void` / `while true` ✓ **全是本检查自己的误报** ✗）
     var p5 = dirs.join(work, "while_true_return.leno")
     files.write(p5,
         "func f(): int {\n"
@@ -104,7 +105,41 @@ main() {
         + "}\n"
         + "\n"
         + "main() { print(_str(f()) + \"\\n\") }\n")
-    ce.expect_warning(p5, "已知取舍：while true 里的 return 仍报（保守口径）", "[漏写 return]", 1)
+    var o5 = ce.expect_ok(p5, "while true + 无 break ⇒ 不报（原先误报）", "7")
+    ce.expect_no_warning(o5, "while true + 无 break", "[漏写 return]")
+
+    // A6（对照 ✓）：`while true` 里**有 break** ⇒ 可能落到循环之后 ⇒ 仍然该报 ✓
+    //   （而且这正是**真**漏 return：`f(1)` 会 break 出去、走到底返回 null ✗）
+    var pwt = dirs.join(work, "while_true_break.leno")
+    files.write(pwt,
+        "func f(int n): int {\n"
+        + "    while true {\n"
+        + "        if n > 0 { break }\n"
+        + "        return 1\n"
+        + "    }\n"
+        + "}\n"
+        + "\n"
+        + "main() { print(_str(f(0)) + \"\\n\") }\n")
+    ce.expect_warning(pwt, "while true 里有 break ⇒ 仍报（真漏 return）", "[漏写 return]", 1)
+
+    // A7（对照 ✓）：**显式 `: void`** 不算"声明了返回值" ⇒ 不报 ✓
+    //   ⚠ 原先漏了这条 ✗：`void` 在类型解析里是 **TYPE_NULL**（不是 TYPE_INFER ✗）
+    //     ⇒ 只排除 TYPE_INFER 的写法会把 `func stop(): void {…}` 和 `func():void {…}`
+    //     回调全报出来 ✓（实测就是它和 while true 一起，把两个应用的"命中"顶到 32 条 ✗）
+    //   ⚠ 形状照**真实用法**来 ✓：`func():void` 当**实参**传（LenoTrae 的
+    //     `cfg.showSettings(win, func():void {…})` ✓）—— 别赋给变量 ✗（那会撞上
+    //     "声明类型与初始化值类型不匹配"那个已知 wart ✓ 与本检查无关 ✓）
+    var pvoid = dirs.join(work, "void_funcs.leno")
+    files.write(pvoid,
+        "func stop(): void {\n"
+        + "    print(\"s\")" + "\n"
+        + "}\n"
+        + "\n"
+        + "func call_it(func():void cb) { cb() }\n"
+        + "\n"
+        + "main() { call_it(func():void { stop() }); print(\"ok\\n\") }\n")
+    var ovoid = ce.expect_ok(pvoid, "对照：: void 不算声明了返回值", "ok")
+    ce.expect_no_warning(ovoid, "对照：: void 与 func():void 回调", "[漏写 return]")
 
     // ==================== B. 不可达代码 ====================
 

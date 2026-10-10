@@ -291,8 +291,45 @@ void visit_func_as_struct_method(Semantic* s, Ast* ast) {
 //     块（AST_BLOCK）：看**最后一条**有效语句 ✓（空项跳过 ✓）
 //     if：**有 else** 且两支都必然离开 ✓
 //     switch：**有 default**，且每个 case 体与 default 都必然离开 ✓
-//     其余（while / for / 赋值 / 表达式 …）一律算「可能走到底」✓ —— 含 `while true {}` ✗
-//       （那是误报之源 ✓ 本仓的常驻循环本来就都带终止条件 ⇒ 不报更划算 ✓）
+//     `while true { body }`：body 必然离开、且**本层没有 break** ⇒ 必然离开 ✓（2026-10-10 加 ✓）
+//     其余（for / 赋值 / 表达式 …）一律算「可能走到底」✓（**宁可漏报不误报** ✓）
+//
+// `while` 的条件是不是**字面量 true** ✓（`while true { … }` = 常驻循环 ✓）
+static int cond_is_true_literal(Ast* st) {
+    if (!st) return 0;
+    Ast* c = st->u.while_.cond;
+    return c && c->kind == AST_BOOL && c->u.boolean;
+}
+
+// 本层有没有 `break`（**不下探**嵌套循环 / 嵌套函数 ✓ —— 那些 break 跳的是它们自己 ✓）
+//   ⚠ 只沿着"语句容器"下探（块 / if / try / switch ✓）：break 只可能出现在语句位置 ✓，
+//     闭包体是**表达式**里的子节点 ⇒ 不会被这些容器走到 ✓（它的 break 也不属于本层 ✓）
+static int has_break_here(Ast* node) {
+    if (!node) return 0;
+    switch (node->kind) {
+        case AST_BREAK: return 1;
+        case AST_BLOCK:
+            for (int i = 0; i < node->u.block.count; i++) {
+                if (has_break_here(node->u.block.items[i])) return 1;
+            }
+            return 0;
+        case AST_IF:
+            return has_break_here(node->u.if_.then) || has_break_here(node->u.if_.else_);
+        case AST_TRY:
+            return has_break_here(node->u.try_.try_body)
+                || has_break_here(node->u.try_.catch_body)
+                || has_break_here(node->u.try_.finally_body);
+        case AST_SWITCH:
+            for (int i = 0; i < node->u.switch_.case_count; i++) {
+                if (has_break_here(node->u.switch_.cases[i].body)) return 1;
+            }
+            return has_break_here(node->u.switch_.default_body);
+        default:
+            // 嵌套 while / for / 闭包体 / 其它一律**不下探** ✓（保守 ✓ 只可能让我们少报 ✓）
+            return 0;
+    }
+}
+
 static int stmt_always_exits(Ast* st) {
     if (!st) return 0;
     switch (st->kind) {
@@ -320,16 +357,36 @@ static int stmt_always_exits(Ast* st) {
             }
             return 0;
         case AST_TRY: {
-            // ★ try / catch 两支都必然离开 ⇒ 整体必然离开 ✓
-            //   为什么必须认这一条：本仓大量函数写成
-            //     `try { ...; return x } catch { return y }`
-            //   （如 sdl_table 的 to_float / is_number_str ✓）⇒ 不认它就会把这种
-            //   完全正确的写法全报成"漏写 return" ✗（实测就是它们把警告数从个位数顶上去的 ✓）
-            //   ⚠ finally：它自己若必然离开（`finally { return }`）也算 ✓；否则只是收尾 ✓
+            // ★ `try` 语句是否"必然离开函数" ✓ —— 判据要分**有没有 catch**：
+            //   · `finally` 自身必然离开（`finally { return }`）⇒ 整条必然离开 ✓（它盖过 try 的 ✓）
+            //   · **没有 catch**（本仓最主流：`try { ...; return x } finally { 清理 }` ✓）：
+            //     异常会**向外传播** ✓ ⇒ 只要 try 体必然离开 ✓，整条就必然离开 ✓
+            //     （return 走正常路 ✓、throw 走传播路 ✓ —— 两条路都不会"落到 try 之后" ✓）
+            //     为什么必须认这一条：框架里 `LenoWin32/w32_reg.leno` 的 17 个注册表读写函数、
+            //     `w32_process` / `sys_win` / `w32_shell` 里的一批，**全是这个形状** ✓
+            //   · **有 catch**：异常被**就地接住** ✗ ⇒ 必须 try 与 catch **都**必然离开才算 ✓
+            //     （只认 try 会漏报：`try { throw "x" } catch { /* 不 return */ }` 之后会继续往下走 ✗）
+            //   ⚠ 2026-10-10 修：原先**只认"try 与 catch 两支都离开"** ✗ ⇒ 上面那第一种写法
+            //     （No catch + finally ✓ 完全正确）被全判成"可能走到底" ✗ ⇒ 实测在框架上
+            //     刷出 **26 条全误报** ✓；也让"LenoMusic 3 条 / LenoTrae 29 条真命中"这个
+            //     初步结论**虚高** ✗ —— 那条结论已据此更正 ✓
             if (st->u.try_.finally_body && stmt_always_exits(st->u.try_.finally_body)) return 1;
-            if (!stmt_always_exits(st->u.try_.try_body)) return 0;
-            if (st->u.try_.catch_body && stmt_always_exits(st->u.try_.catch_body)) return 1;
-            return 0;
+            if (st->u.try_.catch_body) {
+                return stmt_always_exits(st->u.try_.try_body) && stmt_always_exits(st->u.try_.catch_body);
+            }
+            return stmt_always_exits(st->u.try_.try_body);
+        }
+        case AST_WHILE: {
+            // `while true { body }`（常驻循环 ✓）：条件恒真 + **本层没有 break**
+            //   ⇒ 控制流**永远落不到循环之后** ✓（要么在 body 里 return/throw 走掉 ✓、
+            //     要么一直转下去 ✓）—— 两条路都不会让函数"走到底返回 null" ✓
+            //   ⇒ 这就是我们要判的性质（函数末尾会不会被静默到达 ✓），**与 body 是否必然离开无关** ✓
+            //   ⚠ 2026-10-10 加（并当场修正了一次 ✓）：先是要求"body 也必然离开"✗，
+            //     结果 dl_one 这种**重试循环**（走到底再转一圈 ✓ 是它的正常流程 ✓）仍被误报 ✓；
+            //     想了下：带重试的常驻循环根本不需要在 body 末尾 return ✓ ⇒ 判据简化成上面两条 ✓
+            if (!cond_is_true_literal(st)) return 0;
+            if (has_break_here(st->u.while_.body)) return 0;
+            return 1;
         }
         case AST_SWITCH: {
             if (!st->u.switch_.default_body) return 0;
@@ -791,7 +848,13 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
     //     `return_type` 并不是 NULL 而是 **TYPE_INFER 占位** ✗ —— 只看 NULL 会让所有
     //     void 函数统统报"漏写 return"（实测：SDL3 / sdl_layout 各刷出 250+ 条全误报 ✗✗）。
     //     同文件 249 行那份判据就是 `return_type && kind != TYPE_INFER` ✓ 照它写 ✓
+    //   ⚠ 还要排除 **TYPE_NULL**（显式写的 `: void` ✓）：`void` 在类型解析里映射成
+    //     TYPE_NULL（见 sym_table_type_parse.inc 的 `void ⇒ type_new(TYPE_NULL)` ✓）——
+    //     它与"没写"（TYPE_INFER）是**两种**写法 ✗ ⇒ 只排后者会把 `func stop(): void {…}`
+    //     和 `func():void { … }` 回调全报成"声明了返回值"✗（实测 2026-10-10：
+    //     LenoMusic 2 条 + LenoTrae 3 条全是这个 ✓）
     if (ast->u.func.return_type && ast->u.func.return_type->kind != TYPE_INFER &&
+        ast->u.func.return_type->kind != TYPE_NULL &&
         ast->u.func.body && !stmt_always_exits(ast->u.func.body)) {
         char mrmsg[BUFFER_MEDIUM];
         snprintf(mrmsg, sizeof(mrmsg),
