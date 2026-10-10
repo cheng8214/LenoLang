@@ -35,6 +35,8 @@ import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_edit.leno" as edt; use edt.Edit
 import "sdl_table.leno" as tbl; use tbl.Table
 import "sdl_treeview.leno" as tvlib; use tvlib.TreeView
+// ★ 单类型 case 是**静态**调用 ⇒ 被调类型必须在本文件可见（ListBox 只在这里用到，故显式 import ✓）
+import "sdl_listbox.leno" as lstlib; use lstlib.ListBox
 
 // 扩展窗口句柄下发回调（由 sdl_window 模块注册，避免循环依赖）
 // _layout_pass_window 只认识本模块导入的类型（Edit/HBox/VBox/AnchorBox/Table/TreeView），
@@ -632,11 +634,27 @@ func _add_keys(): Array[string] {
             "padX", "padY", "padTop", "padBottom", "padLeft", "padRight", "spacing"]
 }
 
-func _passWindowHandle(Widget c, Ptr[u8] hwnd) {
+// ★ 函数名**必须全模块树唯一**（这里特意叫 `_lay_dispatch_handle`）：
+//   它原先叫 `_passWindowHandle` —— 与 `sdl_window.leno` 里 `Window._passWindowHandle(Widget)`
+//   **同名**。平时（`.leno` 直跑：各模块各自编译）互不干扰 ✓，但**单文件 `.lenb` / 打包**
+//   会把所有模块并成**一个编译单元**，同名符号在合并后串到 Window 那个方法上 ⇒
+//   下面这几处调用整条**静默失效**（不报错、不执行）⇒ 控件收不到窗口句柄 ⇒
+//   Edit 的 `hwnd` 停在 null ⇒ `SDL_SetTextInputArea` 从不调用 ⇒ **输入法候选框跑到窗口左上角** ✗
+func _lay_dispatch_handle(Widget c, Ptr[u8] hwnd) {
+    // ⚠ 每一支**只准写一个类型**，禁止 `case is HBox, VBox, AnchorBox { ... }` 这种合并写法 ✗
+    //   合并写法下 `c._bind_window(...)` 退化成"按名动态派发"，入口 `.lenb`（单文件 / 打包，
+    //   只有它会开 DCE 裁剪）判不出"谁按类型静态引用过这个方法" ⇒ 把 `_bind_window` 剪成
+    //   **空桩**（调用处静默 no-op ✗）⇒ 整条窗口句柄下发链断掉 ⇒ Edit 的 `hwnd` 停在 null
+    //   ⇒ `SDL_SetTextInputArea` 从不调用 ⇒ **输入法候选框跑到窗口左上角** ✗
+    //   单类型 case 会收窄成具体类型 ⇒ 静态直接调用 ⇒ 引用被 DCE 看见 ⇒ 不会被剪 ✓
     switch c {
         case is Edit { c.set_window(hwnd); return }
-        case is HBox, VBox, AnchorBox { c._bind_window(hwnd); return }
-        case is Table, TreeView, ListBox { c.set_window_handle(hwnd); return }
+        case is HBox { c._bind_window(hwnd); return }
+        case is VBox { c._bind_window(hwnd); return }
+        case is AnchorBox { c._bind_window(hwnd); return }
+        case is Table { c.set_window_handle(hwnd); return }
+        case is TreeView { c.set_window_handle(hwnd); return }
+        case is ListBox { c.set_window_handle(hwnd); return }
     }
     // 未匹配的扩展类型（Splitter/Panel/TabControl/ScrollView/SpinBox/GroupBox/ComboBox 等）交给回调处理
     if _extraPassWindow != null { _extraPassWindow(c, hwnd) }
@@ -647,7 +665,7 @@ func _passWindowHandle(Widget c, Ptr[u8] hwnd) {
 // - 嵌套的布局容器（HBox/VBox/AnchorBox）继续向下传递，保证深层子控件也能拿到句柄。
 // 其它控件忽略即可（无 set_window 需求）。
 func _layout_pass_window(Widget c, Ptr[u8] hwnd) {
-    _passWindowHandle(c, hwnd)
+    _lay_dispatch_handle(c, hwnd)
 }
 
 // ★ 导出统一的窗口句柄下发函数，供 Panel/GroupBox/Splitter/TabControl/ScrollView
@@ -655,7 +673,7 @@ func _layout_pass_window(Widget c, Ptr[u8] hwnd) {
 //   此前各容器的 _pass_hwnd 只处理了部分类型（如 Panel 不认识 ScrollView），导致嵌套
 //   容器内的 Edit 收不到窗口句柄，IME 候选框位置始终在 (0,0)。
 export func passWindowHandle(Widget c, Ptr[u8] hwnd) {
-    _passWindowHandle(c, hwnd)
+    _lay_dispatch_handle(c, hwnd)
 }
 
 // ==================== 工厂 ====================
