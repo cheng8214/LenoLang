@@ -164,7 +164,9 @@ static Value native_async_all(int arg_count, Value* args) {
             results->elements[i] = future->result;
         } else {
             // ★ 2026-10-10：未完成的 Future **不再静默给 null** ✗ ⇒ 抛错并指路 ✓
-            char msg[BUFFER_MEDIUM];
+            //   文案近 320 字节 ⇒ 缓冲必须 ≥ 它，否则 GCC 判 -Wformat-truncation
+            //   （原 BUFFER_MEDIUM=256 会截断，改用 BUFFER_LARGE=512 ✓）
+            char msg[BUFFER_LARGE];
             snprintf(msg, sizeof(msg),
                      "asyncs.all：第 %d 个 Future **还没完成** ⇒ 拿到的会是 null，不是你要的值 ✗。"
                      "两种正确做法：① 在 async 函数里 `await` 它，等它完成后（或 `asyncs.run()` "

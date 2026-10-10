@@ -263,18 +263,18 @@ static JsonToken json_lexer_next_token(JsonLexer* lexer) {
     json_lexer_skip_whitespace(lexer);
     
     if (lexer->pos >= lexer->len) {
-        return (JsonToken){JSON_TOKEN_EOF, NULL, 0, 0};
+        return (JsonToken){JSON_TOKEN_EOF, NULL, 0, 0, 0, 0, 0};
     }
     
     char c = json_lexer_peek(lexer);
     
     switch (c) {
-        case '{': json_lexer_advance(lexer); return (JsonToken){JSON_TOKEN_LBRACE, NULL, 0, 0};
-        case '}': json_lexer_advance(lexer); return (JsonToken){JSON_TOKEN_RBRACE, NULL, 0, 0};
-        case '[': json_lexer_advance(lexer); return (JsonToken){JSON_TOKEN_LBRACKET, NULL, 0, 0};
-        case ']': json_lexer_advance(lexer); return (JsonToken){JSON_TOKEN_RBRACKET, NULL, 0, 0};
-        case ':': json_lexer_advance(lexer); return (JsonToken){JSON_TOKEN_COLON, NULL, 0, 0};
-        case ',': json_lexer_advance(lexer); return (JsonToken){JSON_TOKEN_COMMA, NULL, 0, 0};
+        case '{': json_lexer_advance(lexer); return (JsonToken){JSON_TOKEN_LBRACE, NULL, 0, 0, 0, 0, 0};
+        case '}': json_lexer_advance(lexer); return (JsonToken){JSON_TOKEN_RBRACE, NULL, 0, 0, 0, 0, 0};
+        case '[': json_lexer_advance(lexer); return (JsonToken){JSON_TOKEN_LBRACKET, NULL, 0, 0, 0, 0, 0};
+        case ']': json_lexer_advance(lexer); return (JsonToken){JSON_TOKEN_RBRACKET, NULL, 0, 0, 0, 0, 0};
+        case ':': json_lexer_advance(lexer); return (JsonToken){JSON_TOKEN_COLON, NULL, 0, 0, 0, 0, 0};
+        case ',': json_lexer_advance(lexer); return (JsonToken){JSON_TOKEN_COMMA, NULL, 0, 0, 0, 0, 0};
         case '"': return json_lexer_read_string(lexer);
         default:
             if (isdigit(c) || c == '-') {
@@ -283,7 +283,7 @@ static JsonToken json_lexer_next_token(JsonLexer* lexer) {
                 return json_lexer_read_identifier(lexer);
             } else {
                 json_lexer_advance(lexer);
-                return (JsonToken){JSON_TOKEN_ERROR, NULL, 0, 0};
+                return (JsonToken){JSON_TOKEN_ERROR, NULL, 0, 0, 0, 0, 0};
             }
     }
 }

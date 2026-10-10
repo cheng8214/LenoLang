@@ -347,7 +347,8 @@ int semantic_check_cross_thread_args(Semantic* s, AstList* args, int line, int c
         TypeInfo* at = infer_expr_type(s, arg);
         if (!at) continue;
         if (at->kind == TYPE_STRUCT || at->kind == TYPE_CSTRUCT || at->kind == TYPE_FACE) {
-            char msg[BUFFER_MEDIUM];
+            // 文案 313 字节 + 类型名 ⇒ BUFFER_MEDIUM(256) 会截断（GCC 判 -Wformat-truncation）⇒ LARGE ✓
+            char msg[BUFFER_LARGE];
             snprintf(msg, sizeof(msg),
                      "跨线程不能传 struct —— 第 %d 个实参的类型是 '%s' ✓：跨线程只支持 "
                      "**标量 / string / Array / Dict**（它们会被深克隆 ✓，Channel 按引用共享 ✓）；"
@@ -382,7 +383,8 @@ void semantic_check_not_precedence(Ast* operand, int line, int column, int kind)
     if (operand->kind != AST_UNARY) return;
     if (operand->u.unary.op != TOK_NOT) return;
 
-    char msg[BUFFER_MEDIUM];
+    // 文案 383 字节 ⇒ BUFFER_MEDIUM(256) 会截断（GCC 判 -Wformat-truncation）⇒ LARGE ✓
+    char msg[BUFFER_LARGE];
     if (kind == 0) {
         snprintf(msg, sizeof(msg),
                  "这一处看起来是 `not x is T` ✗ —— `not` 比 `is` **先算** ⇒ 它其实等价于 "
@@ -421,7 +423,8 @@ void semantic_check_printf_style(const char* callee, AstList* args, int line, in
     const char* fmt = first->u.string.value;
     if (!fmt || !strchr(fmt, '%')) return;
 
-    char msg[BUFFER_MEDIUM];
+    // 文案 ~250 字节 + 被调名 ⇒ BUFFER_MEDIUM(256) 差 1 字节就溢出（GCC 判 -Wformat-truncation）⇒ LARGE ✓
+    char msg[BUFFER_LARGE];
     snprintf(msg, sizeof(msg),
              "%s 只做「**不换行打印**」，**不做 %% 格式化** ✗ —— 这里的 %% 会**原样打出来**，"
              "后面几个实参只是按空格拼在末尾 ✓。要格式化请用 format(\"…%%d…\", n) ✓"
