@@ -337,13 +337,27 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
     // 2. 解析返回类型中的 alias
     resolve_alias_in_type(s, &ast->u.func.return_type, ast->line);
 
-    // 3. 同步更新符号的返回类型（当 alias 或类型被解析时）
-    if (ast->u.func.return_type) {
+    // 3. 同步更新符号的函数类型（返回类型 + **形参**）
+    //    ★ 2026-10-10：形参此前**漏了同步** —— `resolve_alias_in_type` 只改了 AST 上的
+    //    `param_types`，符号里那份拷贝仍是 TYPE_STRUCT ⇒ 入口模块编译时，形参是 clib 的函数
+    //    在调用点被读成「期望 struct X」，而实参（ffi.load 结果 / 同类型变量）是 clib ⇒
+    //    报「期望 struct k32_charset, 实际 clib k32_charset」✗（web_charset.leno 5 处；
+    //    被 import 时该参数检查整段跳过 ⇒ 长期没暴露）。返回类型早有同步 ⇒ 这里补齐对称 ✓
+    if (ast->u.func.return_type || ast->u.func.pcnt > 0) {
         Symbol* sym = scope_resolve_local(s->current, ast->u.func.name);
         if (!sym && s->current) sym = scope_resolve(s->current, ast->u.func.name);
-        if (sym && sym->type && sym->type->kind == TYPE_FUNCTION && sym->type->return_type) {
-            type_free(sym->type->return_type);
-            sym->type->return_type = type_copy(ast->u.func.return_type);
+        if (sym && sym->type && sym->type->kind == TYPE_FUNCTION) {
+            if (ast->u.func.return_type && sym->type->return_type) {
+                type_free(sym->type->return_type);
+                sym->type->return_type = type_copy(ast->u.func.return_type);
+            }
+            if (ast->u.func.pcnt > 0 && sym->type->param_types) {
+                for (int i = 0; i < ast->u.func.pcnt && i < sym->type->param_count; i++) {
+                    if (!ast->u.func.param_types[i]) continue;
+                    type_free(sym->type->param_types[i]);
+                    sym->type->param_types[i] = type_copy(ast->u.func.param_types[i]);
+                }
+            }
         }
     }
 

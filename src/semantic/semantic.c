@@ -385,6 +385,36 @@ void semantic_analyze(Semantic* s, Ast* ast) {
         }
     }
 
+    // 预注册所有 clib 定义（★ 2026-10-10）
+    //   与 visit_block.inc 里那份「预注册所有 clib 定义（确保变量类型声明可以正确解析）」保持一致：
+    //   入口路径此前只在**访问到 clib 语句**时才注册 ⇒ 下面这轮函数形参/返回类型的预归一化
+    //   看不到这个名字 ⇒ 形参里的 clib 名字归一不成 TYPE_CLIB ✗
+    if (ast && ast->kind == AST_BLOCK) {
+        AstList* clist = &ast->u.block;
+        for (int i = 0; i < clist->count; i++) {
+            Ast* stmt = clist->items[i];
+            Ast* clib_decl = NULL;
+            if (stmt->kind == AST_CLIB_DEF) {
+                clib_decl = stmt;
+            } else if (stmt->kind == AST_EXPORT && stmt->u.export.decl &&
+                       stmt->u.export.decl->kind == AST_CLIB_DEF) {
+                clib_decl = stmt->u.export.decl;
+            }
+            if (!clib_decl || !clib_decl->u.clib_def.name || !s->current) continue;
+            if (scope_resolve_local(s->current, clib_decl->u.clib_def.name)) continue;
+            Symbol* sym = scope_define(s->current, clib_decl->u.clib_def.name, SYM_CLIB);
+            if (sym) {
+                TypeInfo* clib_type = type_new(TYPE_CLIB);
+                clib_type->struct_name = strdup(clib_decl->u.clib_def.name);
+                sym->type = clib_type;
+                clib_decl->u.clib_def.ref.kind = sym->kind;
+                clib_decl->u.clib_def.ref.index = sym->index;
+                clib_decl->u.clib_def.ref.name = strdup(sym->name);
+                clib_decl->u.clib_def.ref.type_kind = TYPE_CLIB;
+            }
+        }
+    }
+
     // 预注册所有全局函数定义（支持前向引用）
     if (ast && ast->kind == AST_BLOCK) {
         AstList* list = &ast->u.block;
@@ -414,6 +444,31 @@ void semantic_analyze(Semantic* s, Ast* ast) {
                     func_table_add(&s->func_table, decl->u.func.name, decl);
                 }
             }
+        }
+    }
+
+    // 预归一化所有全局函数的形参/返回类型（struct → face/cstruct/clib/enum/alias）（★ 2026-10-10）
+    //   必须在「访问函数体」之前跑完：调用点的实参检查（visit_expr.inc）读的是
+    //   `func_def->u.func.param_types[i]` ⇒ 若被调函数定义在后面（前向引用），检查会发生在
+    //   它自己的归一化之前 ⇒ 形参是 clib 时假报「期望 struct k32_charset, 实际 clib k32_charset」✗
+    //   （web_charset.leno 5 处：`isValidUtf8`(L294) 调 `_iconvIsValid`(L606) 这类后向引用）。
+    //   与 visit_block.inc「第二轮：转换所有函数的参数类型」同口径（那份对 export func 还会漏 ✗）。
+    if (ast && ast->kind == AST_BLOCK) {
+        AstList* flist = &ast->u.block;
+        for (int i = 0; i < flist->count; i++) {
+            Ast* fstmt = flist->items[i];
+            Ast* fn = NULL;
+            if (fstmt->kind == AST_FUNC_DEF) {
+                fn = fstmt;
+            } else if (fstmt->kind == AST_EXPORT && fstmt->u.export.decl &&
+                       fstmt->u.export.decl->kind == AST_FUNC_DEF) {
+                fn = fstmt->u.export.decl;
+            }
+            if (!fn) continue;
+            for (int j = 0; j < fn->u.func.pcnt; j++) {
+                resolve_alias_in_type(s, &fn->u.func.param_types[j], fn->line);
+            }
+            resolve_alias_in_type(s, &fn->u.func.return_type, fn->line);
         }
     }
 

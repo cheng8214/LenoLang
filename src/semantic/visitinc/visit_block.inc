@@ -203,6 +203,15 @@
                                 }
                                 if (struct_def && struct_def->type && struct_def->type->kind == TYPE_CSTRUCT) {
                                     pt->kind = TYPE_CSTRUCT;
+                                } else if (struct_def && struct_def->type && struct_def->type->kind == TYPE_CLIB) {
+                                    // ★ 2026-10-10：**形参**也要认 clib —— 此前只归一 FACE/CSTRUCT，
+                                    //   clib 类型的形参留在 TYPE_STRUCT，而实参（ffi.load 结果 / 同类型变量）
+                                    //   已被归一成 TYPE_CLIB ⇒ 两者对不上，且只在**入口模块**报假错
+                                    //   （被 import 时函数符号是 SYM_MODULE、该参数检查整段跳过 ⇒ 长期未暴露）。
+                                    //   实测：web_charset.leno 当入口编译时 5 个
+                                    //   「期望 struct k32_charset/iconv_charset, 实际 clib …」✗。
+                                    //   与下面"转换返回类型"那段（同为 TYPE_CLIB 分支）保持对称 ✓
+                                    pt->kind = TYPE_CLIB;
                                 }
                             }
                         }

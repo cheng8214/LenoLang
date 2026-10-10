@@ -1,0 +1,43 @@
+// clib 类型作「形参」的口径（2026-10-10 修）
+//
+// 症状：`func f(mylib lib)` 的**形参**类型留在 TYPE_STRUCT，而实参（同类型变量 / ffi.load 结果）
+//       已被归一成 TYPE_CLIB ⇒ 两者对不上，且**只在把文件当入口编译时**报
+//       「期望 struct X, 实际 clib X」✗
+//   真实样本：build/leno_module/LenoWeb/lib/web_charset.leno 当入口时 5 个假报
+//            （被 import 时函数符号是 SYM_MODULE、该参数检查整段跳过 ⇒ 长期没暴露）
+// 修复：src/semantic/visitinc/visit_block.inc 的「第二轮：转换参数类型」补 TYPE_CLIB 分支
+//       （此前只有 FACE/CSTRUCT，而同一段的「转换返回类型」早有 CLIB 分支 ⇒ 不对称）
+// 本用例的作用：把"形参也必须是 clib"钉住 —— 回退该修复时本文件会**编译失败** ✓
+import ffi
+
+clib param_lib {
+    i32 no_such_fn()      // 从不调用，只为拿一个该类型的句柄
+}
+
+param_lib g_lib = null
+
+// 返回类型：本来就归一成 clib ✓（所以调用点拿到的实参是 clib）
+func getLib(): param_lib {
+    if g_lib == null {
+        g_lib = ffi.load(if _os() == "windows" then "msvcrt.dll" else "libc.so.6")
+    }
+    return g_lib
+}
+
+// ← 修复前这里是 struct ⇒ 与实参 clib 对不上、报假错
+func takesLib(param_lib lib): int {
+    return 1
+}
+
+// 顺带钉住 clib → Ptr 的兼容（type.c 的 compat 表：Ptr ← clib 允许；不同名 clib 之间仍禁止）
+func takesPtr(Ptr p): int {
+    return 2
+}
+
+param_lib l = getLib()      // 变量：本来就归一成 clib ✓
+int a = takesLib(l)         // clib 形参 ↔ clib 实参 ⇒ 必须通过
+int b = takesPtr(l)         // clib 实参 → Ptr 形参 ⇒ 也必须通过
+
+print("clib 形参口径 ok")
+print(a)
+print(b)
