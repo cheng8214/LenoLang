@@ -162,6 +162,44 @@ main() {
         + "}" + n)
     ce.expect_ok(p15, "长跑 2 万次分配后既有数据不变形", "108890|v0,v5000,v10000,v15000,")
 
+    // ---------- 第九批（正则/JSON/文件/目录 ✓）实测后补的钉桩 ----------
+
+    // P16 ★ 同一套 API 里**两种偏移口径**：`find` 按字符 ✓、`find_all` 按字节 ✗
+    //   （含中文时拿 find_all 的 start 去切片必然错位 ✓；模块文档明写了字节 ✓ 见速查 ㉔）
+    var p16 = dirs.join(work, "regex_offsets.leno")
+    files.write(p16, "import regexs" + n
+        + "main() {" + n
+        + "    int c = regexs.find(\"abc中文def\", \"中文\")" + n
+        + "    var ms = regexs.find_all(\"a中b中\", \"中\")" + n
+        + "    print(_str(c) + \"|\" + _str(ms[0].start) + \",\" + _str(ms[1].start) + \"\\n\")" + n
+        + "}" + n)
+    ce.expect_ok(p16, "find 按字符(3) / find_all 按字节(1,5)", "3|1,5")
+
+    // P17：`jsons.decode` **解析失败 ⇒ null**（不抛错 ✓）—— 必须自己判 null ✓
+    var p17 = dirs.join(work, "json_bad_decode.leno")
+    files.write(p17, "import jsons" + n
+        + "main() {" + n
+        + "    print(_str(jsons.decode(\"{bad}\") == null) + \",\" + _str(jsons.decode(\"\") == null) + \"\\n\")" + n
+        + "}" + n)
+    ce.expect_ok(p17, "decode 失败给 null（不抛错）", "true,true")
+
+    // P18：`files.read` 读**不存在**的文件 ⇒ **抛错** ✓（不是静默 null ✓ —— 这条是"好"的口径 ✓）
+    var p18 = dirs.join(work, "read_missing.leno")
+    files.write(p18, "import files" + n
+        + "main() {" + n
+        + "    string v = \"-\"" + n
+        + "    try { v = _str(files.read(\"Z:\\\\绝对不存在的文件.txt\")) } catch e { v = \"THREW\" }" + n
+        + "    print(v + \"\\n\")" + n
+        + "}" + n)
+    ce.expect_ok(p18, "读不存在文件会抛错", "THREW")
+
+    // P19：`dirs.join` 是**朴素拼接**（不归一化 ✓）⇒ 自己塞 `/` 会拼出混用分隔符 ✗
+    //   ⚠ 这条钉的是**当前口径** ✓（文档 :165 也这么写 ✓）：别自己往 join 的参数里塞斜杠 ✗
+    var p19 = dirs.join(work, "dirs_join.leno")
+    files.write(p19, "import dirs" + n
+        + "main() { print(dirs.join(\"a/\", \"/b\") + \"\\n\") }" + n)
+    ce.expect_ok(p19, "dirs.join 朴素拼接（不归一化）", "a\\/b")
+
     dirs.delete(work)
 
     print("test_semantics_pins passed")
