@@ -244,6 +244,41 @@ main() {
         + "main() { print(_str(rands.bools()) + \"\\n\") }" + n)
     ce.expect_error(p23, "rands.bools 缺 probability ⇒ 编译期拦住", "参数数量不匹配", 0)
 
+    // ---------- 第十一批（types/io ✓）实测后补的钉桩 ----------
+
+    // P24 ★ `print` **换行**、`printf` **不换行**、且 `printf` **不做 % 替换** ✗
+    //   （名字叫 printf ✗ 语义只是"不换行打印" ✓ —— 最容易误用的一条 ✓）
+    var p24 = dirs.join(work, "print_vs_printf.leno")
+    files.write(p24, "import io" + n
+        + "main() {" + n
+        + "    printf(\"[P1]\")" + n
+        + "    printf(\"[P3]\")" + n
+        + "    printf(\"%d|%s\", 3, \"x\")" + n
+        + "    print(\"\")" + n
+        + "}" + n)
+    //   ⚠ 钉法要**与行尾风格无关** ✓：两个 printf 的输出必须**紧挨着**（证明它不加换行 ✓）；
+    //     若改用 "A\nB" 这种期望 ✗ 就会被 \r\n / \n 的差异搞成假失败 ✓（我第一版就这么挂的 ✗）。
+    //     "format 串与实参之间怎么拼"我仍未查清 ✗ ⇒ 不当承诺 ✓（别把没查清的事写成断言 ✗）
+    ce.expect_ok(p24, "printf 不换行（两段输出紧挨着）", "[P1][P3]")
+
+    // P25 ★ `_bool` 的**字符串真值**：非空恒真 ✗（"false" 也是 true ✗）
+    var p25 = dirs.join(work, "bool_truthy.leno")
+    files.write(p25, "import types" + n
+        + "main() {" + n
+        + "    print(_str(_bool(\"false\")) + \"|\" + _str(_bool(\"0\")) + \"|\"" + n
+        + "        + _str(_bool(\"\")) + \"|\" + _str(_bool(0)) + \"\\n\")" + n
+        + "}" + n)
+    ce.expect_ok(p25, "_bool：非空字符串恒真", "true|true|false|false")
+
+    // P26 ★ `_int_or(null, 默认)` ⇒ **0** ✗（不取默认值 ✓）；`" 7 "` 因不 trim ⇒ 回默认 ✓
+    var p26 = dirs.join(work, "int_or_null.leno")
+    files.write(p26, "import types" + n
+        + "main() {" + n
+        + "    print(_str(_int_or(null, 42)) + \"|\" + _str(_int_or(\" 7 \", 42)) + \"|\"" + n
+        + "        + _str(_int_or(\"7\", 42)) + \"\\n\")" + n
+        + "}" + n)
+    ce.expect_ok(p26, "_int_or：null 变 0、不去空格", "0|42|7")
+
     dirs.delete(work)
 
     print("test_semantics_pins passed")
