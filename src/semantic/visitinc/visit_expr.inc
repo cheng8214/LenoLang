@@ -1686,6 +1686,17 @@
                 }
             }
             
+            // ★★ 2026-10-10 新增：`printf` 名字骗人（WARN_PRINTF_NO_FORMAT）✓
+            //   见 semantic_type_utils.c 的 semantic_check_printf_style（两条通道共用 ✓）。
+            //   ⚠ 判据必须**点名 printf** ✗：第一版只判"是原生函数 + 首参含 % 的字面量"
+            //     ⇒ 实测把 `print("%d", 3)` 与 `format("…%d…", 3)` **也报了** ✗
+            //     —— 而 `format` 正是**真格式化**函数（strings.c 的全局 `format` ✓），
+            //     报它等于把正确答案骂一遍 ✗（这就是"新检查必须逐条查真实代码库误报"那条教训 ✓）。
+            //   用户自定义同名 `func printf` 时 sym 不是 SYM_NATIVE ⇒ 天然不报 ✓
+            if (sym && sym->kind == SYM_NATIVE && func_name && strcmp(func_name, "printf") == 0) {
+                semantic_check_printf_style(func_name, &ast->u.call.args, ast->line, ast->column);
+            }
+
             // 检查用户定义函数的参数类型
             if (sym && (sym->kind == SYM_GLOBAL_FUNC || sym->kind == SYM_LOCAL)) {
                 // 在函数表中查找函数定义（O(1) 哈希表查找）

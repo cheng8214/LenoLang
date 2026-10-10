@@ -687,6 +687,14 @@
                     int expected_arity = meta->arity;
                     int actual_arity = ast->u.module_call.args.count;
 
+                    // ★★ 2026-10-10 新增：`printf` 名字骗人（WARN_PRINTF_NO_FORMAT）✓
+                    //   与全局 `printf(...)` 走**同一个**共享实现（visit_expr.inc 那条是另一入口 ✓）
+                    if (strcmp(actual_module, "io") == 0 &&
+                        strcmp(ast->u.module_call.method_name, "printf") == 0) {
+                        semantic_check_printf_style("io.printf", &ast->u.module_call.args,
+                                                    ast->line, ast->column);
+                    }
+
                     // arity >= 0: 固定参数数量
                     if (expected_arity >= 0 && actual_arity != expected_arity) {
                         char msg[BUFFER_MEDIUM];

@@ -268,6 +268,39 @@ void semantic_register_struct_from_module(Semantic* s, const ModuleStructSymbol*
 }
 
 // ============================================================================
+// printf 名字骗人（WARN_PRINTF_NO_FORMAT）—— **唯一实现**（2026-10-10 加）
+// ----------------------------------------------------------------------------
+// 症状（速查 §三 ㉖ 实测）：`printf("%d = %s\n", 3, "x")` **一声不吭** ✗ —— `%d`/`%s`
+//   原样打出来、后面实参只是按空格拼在末尾 ✓。名字叫 printf ✗ 但语义只有"**不换行打印**"
+//   （不是格式化函数 ✓，`io.c` 的 `native_printf` 里根本不做 % 替换）⇒ 从 C/Python
+//   过来的人**第一眼必踩** ✓，而编译器不报错 ⇒ 最难查的一类 ✓。
+// 判据（宁漏勿误报 ✓，两种形状之外的都不报）：
+//   · 实参 < 2 ⇒ 不报（没有"要替换的实参"⇒ 谈不上误解 ✓）；
+//   · 首参不是 **字符串字面量** ⇒ 不报（变量里装的格式串无从判断 ✓ 不猜 ✓）；
+//   · 首参字面量里**不含 '%'** ⇒ 不报（`printf("a")` 是正常用法 ✓）。
+// 两条通道共用本函数（与"方法是唯一实现"的既有口径一致 ✓）：
+//   · 全局 `printf(...)`      ⇒ visit_expr.inc 的 SYM_NATIVE 分支 ✓
+//   · `io.printf(...)`        ⇒ visit_module.inc 的原生模块方法分支 ✓
+void semantic_check_printf_style(const char* callee, AstList* args, int line, int column) {
+    if (!callee || !args) return;
+    if (args->count < 2) return;
+    Ast* first = args->items[0];
+    if (!first || first->kind != AST_STRING) return;
+    const char* fmt = first->u.string.value;
+    if (!fmt || !strchr(fmt, '%')) return;
+
+    char msg[BUFFER_MEDIUM];
+    snprintf(msg, sizeof(msg),
+             "%s 只做「**不换行打印**」，**不做 %% 格式化** ✗ —— 这里的 %% 会**原样打出来**，"
+             "后面几个实参只是按空格拼在末尾 ✓。要格式化请用 format(\"…%%d…\", n) ✓"
+             "（与 printf 同族的**真格式化**函数，支持 %%s/%%d/%%f/%%e/%%g/%%c ✓）；"
+             "也可以用插值 $\"…{n}\" ✓ 或拼串 \"…\" + _str(n) ✓；"
+             "只想「打印并换行」就用 print ✓",
+             callee);
+    warning_add_at(WARN_PRINTF_NO_FORMAT, line, column, msg);
+}
+
+// ============================================================================
 // 跨模块 struct 方法的实参检查（**唯一实现**）
 // ----------------------------------------------------------------------------
 // 为什么需要它：方法调用的实参检查在本仓有**两份拷贝**，而且两份犯**同一个**错 ——

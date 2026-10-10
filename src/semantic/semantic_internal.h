@@ -69,6 +69,12 @@ int semantic_check_method_args_from_placeholder(Semantic* s, const char* struct_
                                                 const char* method_name, AstList* args,
                                                 int line, int column);
 
+// printf 名字骗人（WARN_PRINTF_NO_FORMAT，2026-10-10 加）：`printf` 只做"**不换行打印**"、
+// **不做 % 格式化** ✗（实测：`printf("%d = %s\n", 3, "x")` 不报错、`%d` 原样打出 ✓）
+// ⇒ 首参是**含 '%' 的字符串字面量**且**实参 > 1** 时提醒 ✓（其它形状一律不报 ✓ 少报不误报）
+// 两条通道共用：全局 `printf(...)`（visit_expr.inc）与 `io.printf(...)`（visit_module.inc）
+void semantic_check_printf_style(const char* callee, AstList* args, int line, int column);
+
 // face 方法的实参检查（唯一实现；调用点在 visit_module.inc 的 MODULE_CALL 分流处）。
 // 同文件用解析器 face AST 的 method_param_types 判逐参类型；跨模块读符号表的 param_types。
 // obj_type（可空，v3.2.8 加）：**接收者的静态类型** —— 泛型 face（`Comparable[int]`）要靠它的

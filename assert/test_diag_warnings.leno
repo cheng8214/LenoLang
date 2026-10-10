@@ -168,6 +168,54 @@ main() {
     var o7 = ce.expect_ok(p7, "对照组：正常块", "3")   // twice(1) = 1+1+1 = 3 ✓
     ce.expect_no_warning(o7, "对照组：正常块", "[不可达代码]")
 
+    // ==================== C. printf 名字骗人（WARN_PRINTF_NO_FORMAT）====================
+    // 速查 §三 ㉖ 的实测：`printf("%d = %s\n", 3, "x")` **不报错** ✗ —— `%d`/`%s` 原样打出来、
+    //   后面几个实参只是按空格拼在末尾 ✓（运行时输出就是 `%d = %s` 换行后接 ` 3 x` ✓）。
+    //   名字叫 printf ✗ 但语义只有"不换行打印" ⇒ 从 C/Python 过来**第一眼必踩** ✓，
+    //   而编译器一声不吭 ⇒ 这类"静默给错"最难查 ✓。现在编译期就提醒 ✓。
+    // 判据三条**缺一不报** ✓：① 点名 `printf` ✓ ② 首参是含 '%' 的**字符串字面量** ✓
+    //   ③ 实参个数 > 1 ✓ ←（②③ 正是"以为它在做 % 替换"的形状 ✓）
+
+    // C1：正是那个坑 ⇒ 必须报，且落在**调用行**（第 3 行）
+    var pc1 = dirs.join(work, "printf_percent.leno")
+    files.write(pc1,
+        "main() {\n"
+        + "    print(\"a\")\n"
+        + "    printf(\"%d = %s\\n\", 3, \"x\")\n"
+        + "}\n")
+    ce.expect_warning(pc1, "printf：首参含 % 且带实参", "[printf不做格式化]", 3)
+
+    // C2（防误报 ✓ **最要紧的一条**）：`format(...)` 是**真格式化**函数 ⇒ **绝不能报它** ✗
+    //   ⚠ 这条是**实测当场抓到的** ✗：第一版判据只写"是原生函数 + 首参含 % 的字面量"
+    //     ⇒ 实测把 `format("…%d…", 3)` 与 `print("%d", 3)` **一起报了** ✗
+    //     —— 等于把**正确答案**骂一遍 ✗（`format` 就在 strings.c 里，与 printf 同族 ✓）。
+    //   本用例一次钉住五种"不该报"的形状 ✓（含"变量里装的格式串"⇒ 不猜 ⇒ 不报 ✓）
+    var pc2 = dirs.join(work, "printf_no_false_alarm.leno")
+    files.write(pc2,
+        "main() {\n"
+        + "    print(format(\"真格式化: %d-%s\", 3, \"x\") + \"\\n\")\n"
+        + "    print(\"%d\", 3)\n"
+        + "    printf(\"hello \")\n"
+        + "    printf(\"a\", \"b\")\n"
+        + "    var f = \"%d\"\n"
+        + "    printf(f, 3)\n"
+        + "    print(\"\\n\")\n"
+        + "}\n")
+    var oc2 = ce.expect_ok(pc2, "对照组：format/print/单参/无 %/变量格式串", "真格式化: 3-x")
+    ce.expect_no_warning(oc2, "对照组：五种形状都不该报", "[printf不做格式化]")
+
+    // C3：`io.printf(...)` 走**另一条通道**（原生模块方法 ✓）⇒ 同样要报 ✓
+    //   两条通道共用 `semantic_check_printf_style` ✓ 但入口是两个（visit_expr / visit_module ✓）
+    //   ⇒ 各钉一条，免得将来只改一条、另一条静默失效 ✗
+    var pc3 = dirs.join(work, "io_printf_percent.leno")
+    files.write(pc3,
+        "import io\n"
+        + "\n"
+        + "main() {\n"
+        + "    io.printf(\"%d\\n\", 7)\n"
+        + "}\n")
+    ce.expect_warning(pc3, "io.printf：模块通道同样要报", "[printf不做格式化]", 4)
+
     // 清理临时文件（含对照用例成功编译产生的 .lenocache ✓）
     dirs.delete(work)
 
