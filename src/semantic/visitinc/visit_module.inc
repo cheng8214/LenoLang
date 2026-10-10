@@ -695,6 +695,14 @@
                                                     ast->line, ast->column);
                     }
 
+                    // ★★ 2026-10-10（A 组第 3 条后半）：`threads.start` 的**跨线程实参**拦截 ✓
+                    //   把"运行期才报不能跨线程传递此类型"提前到编译期 ✓ 见共享实现 ✓
+                    if (strcmp(actual_module, "threads") == 0 &&
+                        strcmp(ast->u.module_call.method_name, "start") == 0) {
+                        semantic_check_cross_thread_args(s, &ast->u.module_call.args,
+                                                         ast->line, ast->column);
+                    }
+
                     // arity >= 0: 固定参数数量
                     if (expected_arity >= 0 && actual_arity != expected_arity) {
                         char msg[BUFFER_MEDIUM];

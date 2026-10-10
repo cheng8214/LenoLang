@@ -639,14 +639,17 @@ main() { print(1) }
     ce.expect_error(mh, "`.slice()` ⇒ 保留专属的切片提示（回归守卫 ✓）",
         "arr[start:end]", 5)
 
-    // ★ 2026-10-10（A 组第 3 条）：**跨线程传 struct** 的两条报错（都是**运行期** ✓ 实测）
-    //   ① `threads.start(work, new P())` ⇒ 运行期「**不能跨线程传递此类型**」✓
-    //      —— 报在 **`threads.start` 那一行** ✓（比过去"只在子线程的字段访问处炸"更早更准 ✓）
-    //   ② 若那个值真进了子线程 ⇒ 子线程里报「字段访问需要结构体对象 —— 若该值来自
-    //      **别的线程**…」✓（这半句是本轮补的 ✓ 原来**一个字都不提线程** ✗ 写的人会往
-    //      "类型写错了"方向查半天 ✓）
-    //   ⚠ 编译期**不报** ✗（实测 `-c` 只编译 ⇒ exit=0 ✓）⇒ 仍然只在运行期露头 ✓
-    //     （⚠ 所以这个用例放在"静态诊断"文件里是**破例**的 ✓ 只是图现成的 ce/dirs/files ✓）
+    // ★ 2026-10-10（A 组第 3 条 + 后半）：**跨线程传 struct 的两层拦截** ✓ 两层都钉 ✓
+    //   ① **编译期**（本轮后半新做 ✓）：静态类型确定为 struct 的实参 ⇒ 直接报 ✓
+    //      （以前 `threads.start(work, new P())` 要等到运行期才报 ✗ 实测 `-c` exit=0 ✓）
+    //   ② **运行期**（**仍然留着** ✓ 是安全底线 ✓）：把 struct 过一遍 `any` ⇒ 静态看不出来 ⇒
+    //      走到运行期报「不能跨线程传递此类型」✓（报在 `threads.start` 那一行 ✓）
+    //   ⚠ 为什么两层都要钉 ✗：只钉编译期会让人以为运行期那条可以删 ✓ —— 而它才是**兜底** ✓
+    //     （跨堆引用 ⇒ 收尾时双重释放 ⇒ `0xC0000374` **堆损坏** ✓ 见 object_thread.c 的实测 ✓）
+    //   ⚠ 另一句「字段访问需要结构体对象 —— 若该值来自**别的线程**…」（本轮补的半句 ✓
+    //     原版**一个字都不提"线程"** ✗）**故意不在这里钉** ✗：它只在"struct 真进了子线程
+    //     且访问了字段"时才出现 ✓ 而在编译期已拦的前提下这条路径**不好稳定构造** ✗
+    //     ⇒ 宁可不钉，也不写一条会飘的断言 ✓（它的原文与理由写在速查 §三 ② ✓）
     var xth = dirs.join(work, "xthread_struct.leno")
     files.write(xth, @"import threads
 
@@ -659,10 +662,24 @@ main() {
     print(1)
 }
 ")
-    ce.expect_error(xth, "跨线程传 struct ⇒ 运行期就拦（不静默）",
+    ce.expect_error(xth, "跨线程传 struct ⇒ **编译期**就拦（不再等到运行期）",
+        "跨线程不能传 struct", 7)
+
+    var xth2 = dirs.join(work, "xthread_struct_any.leno")
+    files.write(xth2, @"import threads
+
+struct P { int x = 7 }
+func work(any p): int { return 1 }
+func go(any v) { threads.start(work, v) }
+
+main() {
+    go(new P())
+    threads.sleep(400)
+    print(1)
+}
+")
+    ce.expect_error(xth2, "`any` 装着 struct ⇒ 运行期兜底仍然拦住",
         "不能跨线程传递此类型", 0)
-    ce.expect_error(xth, "跨线程 struct 落到子线程 ⇒ 文案也点名线程",
-        "若该值来自", 0)
 
     var ec2 = dirs.join(work, "struct_positional.leno")
     files.write(ec2, @"struct P {

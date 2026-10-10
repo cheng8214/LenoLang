@@ -320,6 +320,49 @@ void semantic_undefined_type_hint(Semantic* s, const char* type_name, char* buf,
 }
 
 // ============================================================================
+// 跨线程传值：**编译期拦截"确定是 struct"的实参**（2026-10-10 加 / A 组第 3 条后半）
+// ----------------------------------------------------------------------------
+// 背景（速查 §三 ②）：`threads.start(f, a1, a2, …)` 的实参要**跨线程** ✓，实现是
+//   `value_clone_for_channel` **深克隆** ✓。实测（2026-10-10）它支持的集合是：
+//     `null / int / float / bool`（按值 ✓）、`string`（复制 ✓）、`Array`（深克隆 ✓）、
+//     `Dict`（深克隆 ✓ 连键一起 ✓）、`Channel`（按引用 ✓ —— 同步句柄本就该共享 ✓）；
+//   其余一律走 `default:` ⇒ 运行期抛「不能跨线程传递此类型」✗。
+//   ⚠ 这条拦截**必须**留着 ✗：跨堆引用会让收尾时同一块内存被两个堆各释放一次 ⇒
+//     `0xC0000374` **堆损坏**（object_thread.c:130 一带自带实测：跳过接收侧克隆 0/8、
+//     保留克隆 6/8 ✓）。⚠ 连"容器里装 struct"也已经被它挡住 ✓（探针实测：**明确报错** ✓
+//     不是静默塞指针 ✓）⇒ 这一层是**可靠**的，我们只是把时机**提前** ✓。
+// 判据（**少报不误报** ✓ —— 本仓口径 ✓）：
+//   · 只拦静态类型**确定为** TYPE_STRUCT / TYPE_CSTRUCT / TYPE_FACE 的实参 ✓
+//     （`any` / 泛型 / unknown ⇒ **放行** ✓：静态看不出来时，运行期那条仍然兜底 ✓）；
+//   · **跳过第 1 个实参**（那是被调函数本身 ✓ 不是跨线程数据 ✓）；
+//   · 只在 `threads.start` 这条通道上挂 ✓（`Channel.send` 那条**不改语义** ✓
+//     运行期照样拦 ✓ 见文档 ✓）。
+// 返回：报了几处（便于将来收紧/放宽时做判据 ✓）。
+int semantic_check_cross_thread_args(Semantic* s, AstList* args, int line, int column) {
+    if (!s || !args || args->count <= 1) return 0;
+    int reported = 0;
+    for (int i = 1; i < args->count; i++) {
+        Ast* arg = args->items[i];
+        if (!arg) continue;
+        TypeInfo* at = infer_expr_type(s, arg);
+        if (!at) continue;
+        if (at->kind == TYPE_STRUCT || at->kind == TYPE_CSTRUCT || at->kind == TYPE_FACE) {
+            char msg[BUFFER_MEDIUM];
+            snprintf(msg, sizeof(msg),
+                     "跨线程不能传 struct —— 第 %d 个实参的类型是 '%s' ✓：跨线程只支持 "
+                     "**标量 / string / Array / Dict**（它们会被深克隆 ✓，Channel 按引用共享 ✓）；"
+                     "struct 会退化成 any 并在运行期报「不能跨线程传递此类型」✗ —— 要传结构化"
+                     "数据请改用 `Array[string]` 或 `Dict[string, …]` ✓（见速查 §三 ②）",
+                     i + 1, type_to_string(at));
+            error_add_at(ERR_SEMANTIC, line, column, msg);
+            reported++;
+        }
+        type_free(at);   // infer_expr_type 归调用方释放（本仓口径 ✓）
+    }
+    return reported;
+}
+
+// ============================================================================
 // `not` 的优先级陷阱（WARN_NOT_PRECEDENCE）—— **唯一实现**（2026-10-10 加 / A 组 ①(a)）
 // ----------------------------------------------------------------------------
 // 形状：**表达式**里写 `not x is T`（或 `not x in arr` / `not x not in arr`）。

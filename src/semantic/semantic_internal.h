@@ -77,6 +77,13 @@ int semantic_check_method_args_from_placeholder(Semantic* s, const char* struct_
 //   ⇒ 调用方直接 `snprintf(msg, …, "未定义的类型: %s%s", type_name, hint)` 即可 ✓。
 void semantic_undefined_type_hint(Semantic* s, const char* type_name, char* buf, size_t size);
 
+// 跨线程传值：**编译期拦截"确定是 struct"的实参**（2026-10-10 加 / A 组第 3 条后半）。
+//   `threads.start(f, a1, …)` 的跨线程实参只支持 标量 / string / Array / Dict（深克隆 ✓）
+//   与 Channel（按引用 ✓）；struct / cstruct / face 会被运行期拦下（跨堆引用会堆损坏 ✓）。
+//   本函数把它**提前到编译期** ✓：只拦"静态类型确定为上述三种"的实参 ✓（`any` 放行 ✓）。
+//   返回：报了几处。
+int semantic_check_cross_thread_args(Semantic* s, AstList* args, int line, int column);
+
 // 方法不存在时的**分级提示**（**唯一实现**，2026-10-10 加 / A 组第 7 条）：
 //   ① `slice*` ⇒ 切片提示（`arr[start:end]` ✓ **有意优先** ✗ 见实现的说明 ✓）；
 //   ② 否则给相似名（`startsWith` ⇒ `starts_with` ✓）；③ 都没有 ⇒ 空串。
