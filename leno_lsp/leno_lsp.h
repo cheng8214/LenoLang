@@ -1,7 +1,7 @@
 /**
  * Leno Language Server Protocol (LSP) Implementation
  * 
- * 复用 LenoC 编译器组件提供 IDE 支持
+ * 复用 Leno 编译器组件提供 IDE 支持
  */
 
 #ifndef LENO_LSP_H

@@ -1,4 +1,4 @@
-# LenoC JSON 模块 (jsons)
+# Leno JSON 模块 (jsons)
 
 本文档详细说明 `jsons` 模块提供的 JSON 解析和序列化功能。
 

@@ -1,4 +1,4 @@
-// XXTEA (Corrected Block TEA) —— 纯 LenoC 实现
+// XXTEA (Corrected Block TEA) —— 纯 Leno 实现
 // XXTEA 是 TEA/XTEA 的改进版，支持可变长度数据块加密
 //
 // 与 TEA/XTEA 的区别：
@@ -317,7 +317,7 @@ main() {
 
     // 测试 6：中文加解密
     print("--- 中文加解密 ---")
-    var cn_key = "LenoC密钥"
+    var cn_key = "Leno密钥"
     var cn_text = "你好，XXTEA加密世界！"
     var cn_enc = xxtea_encrypt(cn_key, cn_text)
     var cn_dec = xxtea_decrypt(cn_key, cn_enc)

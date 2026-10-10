@@ -1,5 +1,5 @@
-// ChaCha20 流加密 —— 纯 LenoC 实现
-// 展示 LenoC 的 32 位运算、QR (Quarter Round) 混合函数能力
+// ChaCha20 流加密 —— 纯 Leno 实现
+// 展示 Leno 的 32 位运算、QR (Quarter Round) 混合函数能力
 //
 // ChaCha20 是 Daniel J. Bernstein 设计的现代流加密算法：
 //   - 256 位密钥 + 96 位 nonce + 32 位计数器

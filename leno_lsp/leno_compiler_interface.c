@@ -1,19 +1,19 @@
 /**
- * LenoC Compiler Interface for LSP
- * Reuses LenoC lexer, parser and semantic analyzer
+ * Leno Compiler Interface for LSP
+ * Reuses Leno lexer, parser and semantic analyzer
  */
 
 #include "leno_lsp.h"
 #include "../src/include/lenolang.h"
 #include "../src/include/leno_error.h"
 
-// Global variables needed by LenoC compiler
+// Global variables needed by Leno compiler
 int debugMode = 0;
 // runtime_type_check is defined in vm.c
 
 /**
  * Compile source and collect errors
- * Reuses LenoC lexer, parser, and semantic analyzer
+ * Reuses Leno lexer, parser, and semantic analyzer
  */
 LspDiagnostic* leno_compile_and_collect_errors(const char* content, const char* filename, int* count) {
     *count = 0;
@@ -88,7 +88,7 @@ collect_errors:
                 diags[i].severity = LSP_DIAG_INFORMATION;
         }
         
-        // Set position (LenoC uses 1-based line numbers, LSP uses 0-based)
+        // Set position (Leno uses 1-based line numbers, LSP uses 0-based)
         diags[i].range.start.line = err->line > 0 ? err->line - 1 : 0;
         // 利用编译器的列号精确定位
         if (err->column > 0) {

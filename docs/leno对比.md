@@ -9,7 +9,7 @@
 | CPU | Intel Core i5-14400F |
 | 操作系统 | Windows |
 | Python | 3.13.2 (64-bit AMD64) |
-| Leno | LenoC VM（自研字节码虚拟机） |
+| Leno | Leno VM（自研字节码虚拟机） |
 | 测试规模 | 每项 10,000,000 次操作 |
 
 ## 总体结果速览
@@ -310,6 +310,6 @@ Leno 在 i5-14400F 上展现出 3-5 倍于 Python 的基础性能，这不是测
 
 ---
 
-**测试环境**：Intel Core i5-14400F / Windows / Python 3.13.2 / LenoC VM
+**测试环境**：Intel Core i5-14400F / Windows / Python 3.13.2 / Leno VM
 
 **测试代码**：两份测试脚本完全对等，26 项测试全部通过公平性审查

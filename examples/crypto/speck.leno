@@ -1,4 +1,4 @@
-// Speck64/128 —— 纯 LenoC 实现
+// Speck64/128 —— 纯 Leno 实现
 // Speck 是 NSA 设计的轻量级块密码，专为软件和硬件优化
 //
 // Speck64/128 参数：
@@ -12,7 +12,7 @@ import strings
 // ==================== 循环移位 ====================
 
 // 使用 >>> 逻辑右移运算符实现 32 位循环移位
-// 注意：LenoC int 是 48 位，_int32 返回符号扩展值
+// 注意：Leno int 是 48 位，_int32 返回符号扩展值
 // 所以逻辑右移需要先 & 0xFFFFFFFF 截断为 32 位无符号值
 func rotl32(int x, int n):int {
     n = _int32(n) & 31
@@ -291,7 +291,7 @@ main() {
 
     // 测试 5：中文加解密
     print("--- 中文加解密 ---")
-    var cn_key = "LenoC密钥"
+    var cn_key = "Leno密钥"
     var cn_text = "你好，Speck轻量加密！"
     var cn_enc = speck_encrypt(cn_key, cn_text)
     var cn_dec = speck_decrypt(cn_key, cn_enc)

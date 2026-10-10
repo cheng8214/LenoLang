@@ -1,4 +1,4 @@
-# LenoC Dicts 模块
+# Leno Dicts 模块
 
 本文档详细说明 `dicts` 模块提供的字典（哈希表）操作功能。
 

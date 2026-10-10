@@ -1,4 +1,4 @@
-# LenoC 字符串模块 (strings)
+# Leno 字符串模块 (strings)
 
 本文档详细说明 `strings` 模块提供的所有字符串操作方法。
 
@@ -832,7 +832,7 @@ strings.from_codepoint(20013)   // "中"  ← to_codepoints 的**逆操作**（�
 
 ## 索引说明
 
-LenoC 字符串操作统一使用 **0-based Unicode 字符索引**，与 Python 3、Java 等现代语言保持一致。
+Leno 字符串操作统一使用 **0-based Unicode 字符索引**，与 Python 3、Java 等现代语言保持一致。
 
 ### Unicode 字符索引
 
@@ -878,18 +878,18 @@ print(s.byte_len())  // 9    - 6字节(中文) + 5字节(ASCII) = 9字节
 
 ## 与 Lua 的对比
 
-| 方法 | LenoC | Lua | 说明 |
+| 方法 | Leno | Lua | 说明 |
 |------|-------|-----|------|
 | 获取长度 | `s.len()` | `s:len()` 或 `#s` | 相似 |
 | 大小写转换 | `s.to_upper()` | `s:upper()` | 命名不同 |
 | 子串提取 | `s.slice(s, e)` | `s:sub(i, j)` | 索引基准不同（0-based vs 1-based）；**末位都是闭区间（含 j / e）** |
 | 查找 | `s.find(p, i)` | `s:find(p, i)` | 相似 |
-| 二进制查找 | `s.byte_find(p, s)` | 需自定义 | LenoC 特有 |
+| 二进制查找 | `s.byte_find(p, s)` | 需自定义 | Leno 特有 |
 | 重复 | `s.rep(n)` | `s:rep(n)` | 相同 |
-| 反转 | `s.reverse()` | 需自定义 | LenoC 特有 |
-| 修剪 | `s.trim()` | 需自定义 | LenoC 特有 |
-| 包含检查 | `s.has(sub)` | 需自定义 | LenoC 特有 |
-| 分割 | `s.split(sep)` | 需自定义 | LenoC 特有 |
+| 反转 | `s.reverse()` | 需自定义 | Leno 特有 |
+| 修剪 | `s.trim()` | 需自定义 | Leno 特有 |
+| 包含检查 | `s.has(sub)` | 需自定义 | Leno 特有 |
+| 分割 | `s.split(sep)` | 需自定义 | Leno 特有 |
 | 连接 | `strings.join(arr, sep)` | `table.concat()` | 相似 |
 | 格式化 | `format()` | `string.format()` | 相似 |
 

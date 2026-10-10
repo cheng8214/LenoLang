@@ -1,6 +1,6 @@
 /**
  * 诊断服务
- * 复用 LenoC 编译器提供实时错误检查
+ * 复用 Leno 编译器提供实时错误检查
  */
 
 #include "leno_lsp.h"
@@ -116,7 +116,7 @@ void lsp_publish_diagnostics(LspServer* server, const char* uri) {
     fflush(stderr);
 }
 
-// 将 LenoC 错误类型转换为 LSP 严重程度
+// 将 Leno 错误类型转换为 LSP 严重程度
 static int error_type_to_severity(ErrorType type) {
     switch (type) {
         case ERR_SYNTAX:
@@ -133,13 +133,13 @@ static int error_type_to_severity(ErrorType type) {
     }
 }
 
-// 编译并获取错误（复用 LenoC 编译器）
+// 编译并获取错误（复用 Leno 编译器）
 LspDiagnostic* lsp_compile_and_get_errors_with_filename(const char* content, int* count, const char* filename) {
     *count = 0;
     
     if (!content) return NULL;
     
-    // 使用 LenoC 编译器分析代码
+    // 使用 Leno 编译器分析代码
     CompilerContext ctx;
     compiler_context_init(&ctx);
     

@@ -1,4 +1,4 @@
-# LenoC CStruct 模块 (cstructs)
+# Leno CStruct 模块 (cstructs)
 
 本文档详细说明 `cstructs` 模块提供的 C 布局结构体操作功能。
 

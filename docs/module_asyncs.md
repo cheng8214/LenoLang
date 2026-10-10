@@ -1,4 +1,4 @@
-# LenoC 异步协程模块 (asyncs)
+# Leno 异步协程模块 (asyncs)
 
 本文档详细说明 `asyncs` 模块提供的异步编程和协程功能。
 
@@ -41,7 +41,7 @@ main() {
 
 ### async/await
 
-LenoC 使用 `async` 和 `await` 关键字实现协程：
+Leno 使用 `async` 和 `await` 关键字实现协程：
 
 - **`async func`** - 定义异步函数，返回一个 Future 对象
 - **`await`** - 等待异步操作完成，让出执行权

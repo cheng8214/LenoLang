@@ -1,4 +1,4 @@
-# LenoC 网络模块 (sockets)
+# Leno 网络模块 (sockets)
 
 本文档详细说明 `sockets` 模块提供的 TCP/UDP 网络编程功能。
 

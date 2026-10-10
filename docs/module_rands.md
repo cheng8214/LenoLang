@@ -1,4 +1,4 @@
-# LenoC 随机数模块 (rands)
+# Leno 随机数模块 (rands)
 
 本文档详细说明 `rands` 模块提供的所有随机数生成方法。
 

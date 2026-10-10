@@ -1,4 +1,4 @@
-// XTEA (eXtended TEA) —— 纯 LenoC 实现
+// XTEA (eXtended TEA) —— 纯 Leno 实现
 // XTEA 是 TEA 的改进版，修复了等价密钥问题，算法更简洁
 //
 // 与 TEA 的区别：
@@ -209,7 +209,7 @@ main() {
 
     // 测试 5：中文加解密
     print("--- 中文加解密 ---")
-    var cn_key = "LenoC密钥"
+    var cn_key = "Leno密钥"
     var cn_text = "你好，XTEA加密世界！"
     var cn_enc = xtea_encrypt(cn_key, cn_text)
     var cn_dec = xtea_decrypt(cn_key, cn_enc)

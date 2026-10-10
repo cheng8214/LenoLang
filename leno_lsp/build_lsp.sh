@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-echo "Building Leno LSP Server with LenoC compiler..."
+echo "Building Leno LSP Server with Leno compiler..."
 
 mkdir -p build
 
@@ -33,7 +33,7 @@ LSP_SOURCES="$LSP_SOURCES comp_import.c"
 LSP_SOURCES="$LSP_SOURCES comp_keywords.c"
 LSP_SOURCES="$LSP_SOURCES comp_symbols.c"
 
-# LenoC source files
+# Leno source files
 # ---------------------------------------------------------------------------
 # 源清单与 build.sh / build.bat / build_vm.* **共用同一份**（单一事实来源）：
 #   sources_core.txt      —— 核心运行时

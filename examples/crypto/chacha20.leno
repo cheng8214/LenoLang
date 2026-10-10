@@ -1,5 +1,5 @@
-// ChaCha20 流加密 —— 纯 LenoC 实现
-// 展示 LenoC 的 32 位运算、QR (Quarter Round) 混合函数能力
+// ChaCha20 流加密 —— 纯 Leno 实现
+// 展示 Leno 的 32 位运算、QR (Quarter Round) 混合函数能力
 //
 // ChaCha20 是 Daniel J. Bernstein 设计的现代流加密算法：
 //   - 256 位密钥 + 96 位 nonce + 32 位计数器
@@ -147,7 +147,7 @@ func chacha20_init_state(string key, int counter, string nonce):Array[int] {
 
 // ==================== ChaCha20 加密/解密 ====================
 
-// ChaCha20 加密，返回二进制字符串（含 null 字节，LenoC 已正确处理）
+// ChaCha20 加密，返回二进制字符串（含 null 字节，Leno 已正确处理）
 func chacha20_encrypt(string key, int counter, string nonce, string plaintext):string {
     // ★ 2026-10-03 收编：原先逐字节 `result += strings.char(...)`（每轮重建整串 ⇒ O(n²) ✗）
     //   ⇒ 字节先收进数组，末尾一趟 `strings.from_bytes` ✓（等价性同 caesar 处的说明）

@@ -1,4 +1,4 @@
-// 测试 LenoC 字符串中 null 字节是否导致截断
+// 测试 Leno 字符串中 null 字节是否导致截断
 import files
 import strings
 

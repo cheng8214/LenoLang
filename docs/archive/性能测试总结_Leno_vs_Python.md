@@ -41,7 +41,7 @@
 | 文件 | 问题 | 修正 |
 |------|------|------|
 | `全部测试.py` | csnum 仍为 1000 万、嵌套循环 1000×1000（leno 版 2026-09-06 已改为 1 亿、10000×10000） | 参数同步 |
-| `ripple_bench.py` / `ripple_image.py` | SDL3 DLL 路径硬编码旧目录 `LenoC` | 改为 `Leno` |
+| `ripple_bench.py` / `ripple_image.py` | SDL3 DLL 路径硬编码旧目录 `Leno` | 改为 `Leno` |
 | `ripple_image.leno` | leno 版开 VSync + `delay(16-elapsed)` 限帧 60，py 版关 VSync 跑满上限，FPS 不可比 | 统一为跑满模式（原代码保留注释） |
 
 ---

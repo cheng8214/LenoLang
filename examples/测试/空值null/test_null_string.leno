@@ -1,9 +1,9 @@
-// 测试 LenoC 字符串中 null 字节是否导致截断
+// 测试 Leno 字符串中 null 字节是否导致截断
 import files
 import strings
 
 main() {
-    print("=== LenoC 字符串 null 字节截断测试 ===")
+    print("=== Leno 字符串 null 字节截断测试 ===")
     print("")
 
     // 测试 1：\0 转义 + 字符串拼接

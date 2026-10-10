@@ -1,4 +1,4 @@
-# LenoC 时间模块 (times)
+# Leno 时间模块 (times)
 
 本文档详细说明 `times` 模块提供的所有时间操作方法。
 

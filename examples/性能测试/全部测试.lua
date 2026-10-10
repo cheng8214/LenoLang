@@ -10,7 +10,7 @@ local function myfunc()
 end
 
 local function test1()
-    print("======== LenoC VM 性能基准测试 ========")
+    print("======== Leno VM 性能基准测试 ========")
     print("")
 
     -- 基础运算

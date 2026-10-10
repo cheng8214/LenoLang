@@ -1,4 +1,4 @@
-# LenoC Arrays 模块
+# Leno Arrays 模块
 
 本文档详细说明 `arrays` 模块提供的数组操作功能。
 

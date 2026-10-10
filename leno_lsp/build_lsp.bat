@@ -1,7 +1,7 @@
 @echo off
 setlocal enabledelayedexpansion
 
-echo Building Leno LSP Server with LenoC compiler...
+echo Building Leno LSP Server with Leno compiler...
 
 if not exist build mkdir build
 
@@ -32,7 +32,7 @@ set LSP_SOURCES=!LSP_SOURCES! comp_import.c
 set LSP_SOURCES=!LSP_SOURCES! comp_keywords.c
 set LSP_SOURCES=!LSP_SOURCES! comp_symbols.c
 
-rem === LenoC source files ===
+rem === Leno source files ===
 rem Source lists are SHARED with build.bat / build_vm.bat / build.sh (single source
 rem of truth). Do NOT add a source file here: edit the list files, or the builds
 rem drift apart -- which is exactly how this script broke: it still listed the

@@ -1,4 +1,4 @@
-# LenoC 目录操作模块 (dirs)
+# Leno 目录操作模块 (dirs)
 
 本文档详细说明 `dirs` 模块提供的所有目录和文件操作方法。
 
@@ -76,8 +76,8 @@ main() {
 **返回**: `string` - 当前工作目录的绝对路径
 
 ```leno
-dirs.cwd()  // "D:\\CLeno\\LenoC" (Windows)
-            // "/home/user/LenoC" (Linux/macOS)
+dirs.cwd()  // "D:\\CLeno\\Leno" (Windows)
+            // "/home/user/Leno" (Linux/macOS)
 ```
 
 ---
@@ -92,8 +92,8 @@ dirs.cwd()  // "D:\\CLeno\\LenoC" (Windows)
 **返回**: `string` - 绝对路径
 
 ```leno
-dirs.abspath("src/module/io")     // "D:\\CLeno\\LenoC\\src\\module\\io"
-dirs.abspath("./test.txt")        // "D:\\CLeno\\LenoC\\test.txt"
+dirs.abspath("src/module/io")     // "D:\\CLeno\\Leno\\src\\module\\io"
+dirs.abspath("./test.txt")        // "D:\\CLeno\\Leno\\test.txt"
 ```
 
 ---

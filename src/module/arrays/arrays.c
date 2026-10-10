@@ -357,7 +357,7 @@ static Value arr_join(int argc, Value* args) {
     return val_obj((Object*)result_str);
 }
 
-// 辅助函数：调用 LenoC 函数/闭包
+// 辅助函数：调用 Leno 函数/闭包
 //   成功：返回 1，回调返回值写到 *out
 //   失败：返回 0，且**保留** vm.has_exception（回调里抛的异常）—— 调用方必须**立刻 return**，
 //         让异常沿 C 栈回到原生边界（OP_MODULE_CALL 的 throw_pending_exception）再统一派发。

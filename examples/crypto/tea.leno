@@ -1,5 +1,5 @@
-// TEA (Tiny Encryption Algorithm) —— 纯 LenoC 实现
-// 展示 LenoC 的位运算、Feistel 网络加密能力
+// TEA (Tiny Encryption Algorithm) —— 纯 Leno 实现
+// 展示 Leno 的位运算、Feistel 网络加密能力
 //
 // TEA 是一种微型块加密算法：
 //   - 64 位数据块（两个 32 位半块）
@@ -207,7 +207,7 @@ main() {
 
     // 测试 4：中文加解密
     print("--- 中文加解密 ---")
-    var cn_key = "LenoC密钥"
+    var cn_key = "Leno密钥"
     var cn_text = "你好，TEA加密世界！"
     var cn_enc = tea_encrypt(cn_key, cn_text)
     var cn_dec = tea_decrypt(cn_key, cn_enc)

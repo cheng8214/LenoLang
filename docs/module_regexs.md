@@ -1,4 +1,4 @@
-# LenoC 正则表达式模块 (regexs)
+# Leno 正则表达式模块 (regexs)
 
 本文档详细说明 `regexs` 模块提供的正则表达式操作方法。
 

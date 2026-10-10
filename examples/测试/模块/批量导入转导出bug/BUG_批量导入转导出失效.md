@@ -94,7 +94,7 @@ main() {
 ### 复现命令
 
 ```powershell
-cd d:/CLeno/LenoC
+cd d:/CLeno/Leno
 
 # 对照组：单行 use 转导出 —— 正常运行
 .\build\leno.exe "examples/测试/模块/批量导入转导出bug/repro_batchimport_main_ok.leno"
@@ -187,7 +187,7 @@ use core.(HelperA, HelperB)
 复现文件 `repro_batchimport_main_bug.leno` 重新运行，**已通过**：
 
 ```powershell
-cd d:/CLeno/LenoC
+cd d:/CLeno/Leno
 .\build\leno.exe "examples/测试/模块/批量导入转导出bug/repro_batchimport_main_bug.leno"
 ```
 

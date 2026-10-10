@@ -31,7 +31,7 @@ main() {
         leno_exe = leno_abs
     }
 
-    print("LenoC 自举测试运行器")
+    print("Leno 自举测试运行器")
     print("解释器: " + leno_exe)
     print("测试目录: " + test_dir)
     print("========================================")

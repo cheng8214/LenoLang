@@ -1,5 +1,5 @@
-// RC4 流加密 —— 纯 LenoC 实现
-// 展示 LenoC 的位运算、数组操作、加密算法能力
+// RC4 流加密 —— 纯 Leno 实现
+// 展示 Leno 的位运算、数组操作、加密算法能力
 //
 // RC4 是对称流密码，加密和解密使用相同操作（密钥流 XOR）
 // 安全提示：RC4 已不被推荐用于生产环境，仅作学习演示
@@ -155,17 +155,17 @@ main() {
 
     // 测试 4：hex 便捷接口
     print("--- Hex 便捷接口测试 ---")
-    var hex_ct = rc4_encrypt_hex("password", "Hello, LenoC!")
+    var hex_ct = rc4_encrypt_hex("password", "Hello, Leno!")
     print("加密(hex): " + hex_ct)
     var hex_pt = rc4_decrypt_hex("password", hex_ct)
     print("解密: " + hex_pt)
-    print("往返: " + if hex_pt == "Hello, LenoC!" then "OK" else "FAIL")
+    print("往返: " + if hex_pt == "Hello, Leno!" then "OK" else "FAIL")
     print("")
 
     // 测试 5：中文加解密
     print("--- 中文加解密测试 ---")
     var cn_key = "密钥"
-    var cn_text = "你好，LenoC加密世界！"
+    var cn_text = "你好，Leno加密世界！"
     var cn_enc = rc4(cn_key, cn_text)
     var cn_dec = rc4(cn_key, cn_enc)
     print("原文: " + cn_text)

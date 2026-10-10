@@ -167,7 +167,7 @@ POSIX `X=v cmd` ⇒ 平台分支 ＋ 引号坑 ✓（写 `assert/test_plane_war_
 ## P7 跨模块相对路径冗长 ＋ 示例腐化
 
 **实测**：从 `应用示例/Trae签到/` 引 LenoWeb 要写 `../../../../LenoWeb/lib/web_net.leno` ✗；
-`examples/jsons/复杂json解析.leno` 硬编码了**另一台机器**的路径 `D:\CLeno\LenoC\test\jsons\cs.json` ✗
+`examples/jsons/复杂json解析.leno` 硬编码了**另一台机器**的路径 `D:\CLeno\Leno\test\jsons\cs.json` ✗
 ⇒ 示例已经在腐化，且它是 `jsons` 的"示范用例"之一 ⇒ 会误导（我就是先被它误导过一次 ✓）。
 
 **建议**：模块路径支持包名解析（`import "LenoWeb"`，与 `--install` 体系打通）；示例一律用**仓库相对路径**；

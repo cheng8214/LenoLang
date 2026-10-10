@@ -438,7 +438,7 @@
     {                                                                                  \
         int a = READ_A(), b = READ_B();                                                \
         Value vb = R(b), vc = (CV);                                                    \
-        /* LenoC 的 int 是 48 位有符号：逻辑右移先截断为 48 位无符号再右移。 */          \
+        /* Leno 的 int 是 48 位有符号：逻辑右移先截断为 48 位无符号再右移。 */          \
         /* 之前用 `(unsigned int)`（32 位）截断 ⇒ `-1 >>> 8` 得 16777215 而非 1099511627775 ✗ */ \
         if (unlikely(!val_is_int(vb) || !val_is_int(vc))) {   /* 见 BITAND_BODY */      \
             if (val_is_null(vb) || val_is_null(vc)) {                                  \

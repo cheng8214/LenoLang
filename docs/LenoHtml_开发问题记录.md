@@ -6,7 +6,7 @@
 
 ## 概述
 
-在开发纯 Leno 实现的 HTML 解析器（`leno_module/LenoWeb/lib/web_html.leno`）过程中，记录了以下 LenoC 语言层面的 bug 和限制。
+在开发纯 Leno 实现的 HTML 解析器（`leno_module/LenoWeb/lib/web_html.leno`）过程中，记录了以下 Leno 语言层面的 bug 和限制。
 
 **2026-08-15 更新**: 经过逐条验证，Bug 1 已修复，Bug 9 确认为 Bug 1 的副作用（已修复），其余均为设计限制而非 bug。LenoHtml 全部 18 个测试通过。
 
@@ -72,7 +72,7 @@
 
 **描述**: 函数返回类型声明为 `Array`，但返回 `var current = [root]`（被推断为 `Array[any]`）时报"返回类型不匹配"。
 
-**说明**: LenoC 的数组类型是不变的（invariant），`Array[any]` 不能赋给 `Array`。返回类型改为 `any` 即可。
+**说明**: Leno 的数组类型是不变的（invariant），`Array[any]` 不能赋给 `Array`。返回类型改为 `any` 即可。
 
 ---
 
@@ -82,7 +82,7 @@
 **类型**: 设计限制
 **状态**: ⚠️ 设计限制（非 bug）
 
-**描述**: LenoC 的数字 for 循环语法是 `for 0:N to i`（用冒号），不是 `for 0 to N to i`。
+**描述**: Leno 的数字 for 循环语法是 `for 0:N to i`（用冒号），不是 `for 0 to N to i`。
 
 **说明**: 这是语法设计选择，`for start:end to var` 更简洁。
 
@@ -94,7 +94,7 @@
 **类型**: 设计限制
 **状态**: ⚠️ 设计限制（非 bug）
 
-**描述**: LenoC 不支持 `!` 作为逻辑非运算符，使用 `not` 关键字。
+**描述**: Leno 不支持 `!` 作为逻辑非运算符，使用 `not` 关键字。
 
 **说明**: `not` 关键字可读性更好，且避免了 `!` 与 `!=` 的歧义。
 
@@ -106,7 +106,7 @@
 **类型**: 设计限制
 **状态**: ⚠️ 设计限制（非 bug）
 
-**描述**: LenoC 函数参数声明使用 `type name` 顺序（类似 C/Go），不是 `name: type`（类似 Python/Kotlin）。
+**描述**: Leno 函数参数声明使用 `type name` 顺序（类似 C/Go），不是 `name: type`（类似 Python/Kotlin）。
 
 **说明**: 这是语法风格选择，与 C/Go/Rust 一致。
 

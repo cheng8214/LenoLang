@@ -16,7 +16,7 @@
 #include <fcntl.h>
 #endif
 
-// LenoC 需要的全局变量
+// Leno 需要的全局变量
 int debugMode = 0;
 int g_argc = 0;
 char** g_argv = NULL;
