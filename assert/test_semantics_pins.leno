@@ -90,6 +90,55 @@ main() {
         + "main() { bool r = false and t(); print(_str(r) + \"\\n\") }" + n)
     ce.expect_ok(p9, "短路求值不执行右侧（输出里不能有 SIDE）", "false")
 
+    // ---------- 第六批（容器/数值/相等 ✓）实测后补的钉桩 ----------
+
+    // P10 ★ `==` 口径：**数组逐元素 ✓、字典按引用 ✗**（明文出处：src/vm/vm.c:1219 的注释 ✓）
+    //   最容易咬人的一条 ✓：两个"看起来一样"的字典**不相等** ✓
+    var p10 = dirs.join(work, "eq_semantics.leno")
+    files.write(p10, "main() {" + n
+        + "    print(_str([1, 2] == [1, 2]) + \"|\" + _str({\"a\": 1} == {\"a\": 1}) + \"\\n\")" + n
+        + "}" + n)
+    ce.expect_ok(p10, "数组比内容 / 字典比引用", "true|false")
+
+    // P11：`arr.sum()` **返回 float**（纯 int 数组也是 ✓）—— 有意设计 ✓ 理由在 module_arrays.md:305 ✓
+    var p11 = dirs.join(work, "sum_float.leno")
+    files.write(p11, "main() { print(_str([1, 2, 3].sum()) + \"\\n\") }" + n)
+    ce.expect_ok(p11, "sum() 返回 float（6.0）", "6.0")
+
+    // P12：空数组 `pop()` ⇒ **null、不抛错**（对比：`a[5]`/`remove(越界)` 会抛 ✓ 口径不齐 ✓）
+    var p12 = dirs.join(work, "empty_pop.leno")
+    files.write(p12, "main() {" + n
+        + "    var e = []" + n
+        + "    var r = e.pop()" + n
+        + "    print(_str(r) + \"|\" + _str(e.len()) + \"\\n\")" + n
+        + "}" + n)
+    ce.expect_ok(p12, "空 pop ⇒ null 且长度仍 0", "null|0")
+
+    // P13：`_int()` 解析**严**（不去空格 ✗）—— 解析用户输入要先 trim ✓
+    var p13 = dirs.join(work, "int_strict.leno")
+    files.write(p13, "main() {" + n
+        + "    string v = \"-\"" + n
+        + "    try { v = _str(_int(\" 5 \")) } catch { v = \"THREW\" }" + n
+        + "    print(v + \"\\n\")" + n
+        + "}" + n)
+    ce.expect_ok(p13, "_int(\" 5 \") 会抛（不自动 trim）", "THREW")
+
+    // P14：`arrays.copy` **深到元素级** ✓（容器独立 ✓ struct 元素也造新实例 ✓）
+    //   ⚠ 与 P1 的 struct 引用语义对照 ✓：赋值共享、copy 独立 ✓
+    var p14 = dirs.join(work, "array_copy_deep.leno")
+    files.write(p14, "import arrays" + n
+        + "struct P { int x = 1 }" + n
+        + "main() {" + n
+        + "    var a = [1, 2]" + n
+        + "    var b = arrays.copy(a)" + n
+        + "    a.add(3)" + n
+        + "    var s1 = [new P()]" + n
+        + "    var s2 = arrays.copy(s1)" + n
+        + "    s2[0].x = 9" + n
+        + "    print(_str(a.len()) + \"|\" + _str(b.len()) + \"|\" + _str(s1[0].x) + \"\\n\")" + n
+        + "}" + n)
+    ce.expect_ok(p14, "arrays.copy 深到元素级", "3|2|1")
+
     dirs.delete(work)
 
     print("test_semantics_pins passed")
