@@ -951,6 +951,17 @@ static void gen_switch(CodeGen* gen, Ast* ast) {
                 TypeInfo* mt = (tcount > 0 && ast->u.switch_.cases[i].match_types)
                                    ? ast->u.switch_.cases[i].match_types[k]
                                    : ast->u.switch_.cases[i].match_type;
+                // ★★ 2026-10-10 治本（上游 LenoSDL3「打包后窗口句柄下发静默失效」根因 ②）：
+                //   把"本 case 收窄到哪些类型"记进 DCE 的**已引用类型** ✓
+                //   为什么非记不可：合并写法 `case is A, B, C { c.m(...) }` 下变量收窄不出具体类型
+                //   （等价 any ✓）⇒ 那条 `c.m(...)` 退化成**按名动态派发** ⇒ DCE 只知道
+                //   "方法名 m 被通配引用、但不知道谁在用"✗ ⇒ 若 A/B/C 不计入已引用类型，
+                //   它们的方法就被判死、写成 `<dce-cut>` 空桩（调用方拿到 null、**静默 no-op** ✗）。
+                //   症状极难查：`.leno` 直跑/模块缓存都正常 ✓，**只有入口 .lenb / 打包**（唯一开
+                //   DCE 的产物）才犯 ✓ —— 上游那次输入法候选框跑到窗口左上角就是这条 ✓。
+                //   注：dce.c 那侧也把"名字通配"默认改成安全档了（见 resolve_wildcard_methods ✓），
+                //   这里是**更精确**的那一半：知道类型 ⇒ 只留该类型的方法，不必全留 ✓
+                if (mt && mt->struct_name) dce_note_type_ref(mt->struct_name);
                 // 就地检查会覆盖 tmp：先复制一份到临时寄存器
                 int tr = reg_alloc(gen);
                 emit_mov(gen, tr, tmp, line);
@@ -1041,7 +1052,18 @@ static void gen_switch(CodeGen* gen, Ast* ast) {
             }
         }
 
+        // ★★ 2026-10-10 治本（配合 dce.c）：**合并 `case is A, B` 的 case 体内**，
+        //   按名的方法调用除了记"精确 (A, 方法名)"之外，还要**再按名字通配记一次** ✓
+        //   为什么：语义侧只把 scrutinee 收窄成**第一个**类型（visit_control.inc:786 ✓）
+        //   ⇒ 精确引用只覆盖 A ✗，而 B 也可能收到这次派发 ⇒ B 的同名方法被判死、
+        //   写成空桩 ⇒ 调用方**静默 no-op** ✗（只有入口 .lenb / 打包才犯 ✓）。
+        //   本处同时把 case 里的每个类型记为"已引用类型"（见上面 emit_type_check 那段 ✓）
+        //   ⇒ 通配名 + 类型被引用 ⇒ 这些类型的方法正确保活 ✓（精度不塌：只放行这几个类型 ✓）
+        int _mtc = ast->u.switch_.cases[i].match_type_count;
+        int _multi = ast->u.switch_.cases[i].is_type_match && _mtc > 1;
+        if (_multi) dce_enter_multitype_case();
         if (ast->u.switch_.cases[i].body) gen_stmt(gen, ast->u.switch_.cases[i].body);
+        if (_multi) dce_leave_multitype_case();
         body_end_jumps[i] = emit_jmp(gen, line);   // 不 fallthrough
     }
 

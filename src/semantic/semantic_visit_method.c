@@ -71,6 +71,17 @@ static char** cur_amb_names = NULL;
 static int* cur_amb_pcnts = NULL;
 static int cur_amb_count = 0;
 
+// ★★ 2026-10-10 新增：**形参个数闸门**用的两张表（都由调用方按 struct 备好 ✓）
+//   为什么要它：裸名调用原先**只看名字**就优先当方法 ⇒ 与同名自由/全局函数撞车时，
+//     要么报“参数过多”（挡住正确写法 ✗），要么在个数恰好吻合时**静默调错目标** ✗
+//     （上游 LenoSDL3 打包后窗口句柄下发静默失效、本仓 10 组同名撞车都是这一条 ✓）
+//   cur_meth_pcnts[i]     与 method_names[i] 平行：那个方法**自己**声明的形参个数 ✓
+//   cur_amb_meth_pcnts[i] 与 amb_names/amb_pcnts 平行：撞名**方法**自己的形参个数 ✓
+//                         （amb_pcnts[i] 记的是同名**函数**的个数 ✓ 两个都要 ✓）
+static int* cur_meth_pcnts = NULL;
+static int  cur_meth_pcnt_count = 0;
+static int* cur_amb_meth_pcnts = NULL;
+
 // 前向声明
 static void transform_method_body_ex(Ast* ast, char** field_names, int field_count,
     char** method_names, int method_count, const char* struct_name,
@@ -85,21 +96,31 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
 // amb_*: 同名歧义表（本 struct 的方法名 ∩ 能按裸名解析到的全局/模块函数，且形参个数相同 ✓）
 void transform_method_body(Ast* ast, char** field_names, int field_count, char** method_names, int method_count, const char* struct_name,
     char** param_names, int param_count, char** const_names, int const_count, const char* method_name,
-    char** amb_names, int* amb_pcnts, int amb_count) {
+    char** amb_names, int* amb_pcnts, int amb_count,
+    int* method_pcounts, int* amb_meth_pcnts) {
     const char* saved_method = cur_method_name;
     char** saved_amb_names = cur_amb_names;
     int* saved_amb_pcnts = cur_amb_pcnts;
     int saved_amb_count = cur_amb_count;
+    int* saved_meth_pcnts = cur_meth_pcnts;
+    int saved_meth_pcnt_count = cur_meth_pcnt_count;
+    int* saved_amb_meth_pcnts = cur_amb_meth_pcnts;
     cur_method_name = method_name;
     cur_amb_names = amb_names;
     cur_amb_pcnts = amb_pcnts;
     cur_amb_count = amb_count;
+    cur_meth_pcnts = method_pcounts;
+    cur_meth_pcnt_count = method_pcounts ? method_count : 0;
+    cur_amb_meth_pcnts = amb_meth_pcnts;
     transform_method_body_ex(ast, field_names, field_count, method_names, method_count, struct_name,
         param_names, param_count, param_names, param_count, const_names, const_count);
     cur_method_name = saved_method;
     cur_amb_names = saved_amb_names;
     cur_amb_pcnts = saved_amb_pcnts;
     cur_amb_count = saved_amb_count;
+    cur_meth_pcnts = saved_meth_pcnts;
+    cur_meth_pcnt_count = saved_meth_pcnt_count;
+    cur_amb_meth_pcnts = saved_amb_meth_pcnts;
 }
 
 // shadowed_names/shadowed_count: 当前**生效的**遮蔽集合（= 形参 + 所在块内声明过的局部变量 ✓）
@@ -293,6 +314,44 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
                 const char* callee_name = ast->u.call.callee->u.var.name;
                 for (int i = 0; i < method_count; i++) {
                     if (strcmp(callee_name, method_names[i]) == 0) {
+                        // ★★ 2026-10-10 治本（上游 LenoSDL3「打包后窗口句柄下发静默失效」根因 ①）：
+                        //   **形参个数对不上就不许劫持** ✓
+                        //   症状：模块 A 的顶层自由函数 `f(a, b)` 与模块 B 的方法 `T.f(a)` **同名** ✗
+                        //     裸调用 `f(x, y)` 原先被**无条件**改写成 `self["f"](self, x, y)` ⇒
+                        //     ① 个数差得多时当场报“参数过多/不足” ⇒ 把**正确写法**挡在编译期 ✗
+                        //     ② 个数恰好吻合时两种解释都成立 ⇒ **静默调错目标** ✗
+                        //     （本仓实测 10 组同名撞车 + 那次输入法候选框跑偏都是这一条 ✓）
+                        //   现在：只有当这个裸调用**在个数上也像那个方法**时才劫持 ✓；
+                        //     个数不符、且**裸名确实还能解析到同名函数、其个数正好等于实参个数**时
+                        //     （= 这行调用其实是在调那个函数 ✓）⇒ 不劫持，原样交给正常解析 ✓
+                        //   ⚠ 为什么不能简单写成“个数不等就不许劫持”：方法可以带**默认参数**
+                        //     （`func f(int a, int b = 1)` 的 pcnt = 2 ✓）⇒ 裸写 `f(1)` 是**合法的方法调用**
+                        //     ✓，一律拒绝就会把它推给自由/全局函数 ⇒ 引入新的静默走错 ✗
+                        //     只有“另一个同名函数正好吃 1 个实参”时，这行调用才真的另有解释 ✓
+                        {
+                            int argc = ast->u.call.args.count;
+                            int mpc = (cur_meth_pcnts && i < cur_meth_pcnt_count) ? cur_meth_pcnts[i] : -1;
+                            int refuse = 0;
+                            if (mpc >= 0) {
+                                if (argc > mpc) {
+                                    // ★ 硬判据：实参**比方法形参还多** ⇒ 铁定不是这个方法 ✓
+                                    //   为什么零风险：方法可以有默认参数（实参只会**更少** ✓），
+                                    //   绝不可能"实参多于形参"还合法 ✓ ⇒ 拒绝劫持必然正确 ✓
+                                    refuse = 1;
+                                } else if (argc < mpc) {
+                                    // 实参更少：可能是默认参数（**合法的方法调用** ✓）⇒ 只有
+                                    // "同名裸函数正好吃这么多实参"（表里有 ✓）时才让位给它 ✓
+                                    for (int ai = 0; ai < cur_amb_count; ai++) {
+                                        if (cur_amb_names[ai] && strcmp(cur_amb_names[ai], callee_name) == 0 &&
+                                            cur_amb_pcnts[ai] == argc) {
+                                            refuse = 1;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            if (refuse) continue;
+                        }
                         int line = ast->u.call.callee->line;
                         // 先保存方法名，再释放 callee
                         char* saved_method_name = strdup(callee_name);
@@ -351,9 +410,13 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
                         //   为什么要"形参个数也相同"：个数只吻合函数时编译器当场报参数不足/过多（响的 ✓）
                         //   为什么 ② 报过就不报这条：② 更具体（说清了"纯转发 ⇒ 必炸"）✓
                         for (int ai = 0; !warned_self_forward && ai < cur_amb_count; ai++) {
+                            // ★ 2026-10-10：歧义表改成**全收**（原先只收“函数与方法个数相同”的那批 ✗，
+                            //   那正好把“个数不符 ⇒ 被方法劫持”这条 bug 掩盖掉了 ⇒ 见 visit_type_def.inc ✓）
+                            //   ⇒ 这里必须自己把“两边个数都吻合”这个条件补齐 ✓ 告警语义与从前一致 ✓
                             if (cur_amb_names[ai] && strcmp(cur_amb_names[ai], saved_method_name) == 0 &&
                                 cur_method_name && strcmp(saved_method_name, cur_method_name) == 0 &&
-                                ast->u.call.args.count == cur_amb_pcnts[ai]) {
+                                ast->u.call.args.count == cur_amb_pcnts[ai] &&
+                                (!cur_amb_meth_pcnts || ast->u.call.args.count == cur_amb_meth_pcnts[ai])) {
                                 char amsg[BUFFER_LARGE];
                                 snprintf(amsg, sizeof(amsg),
                                     "裸调用 `%s(...)` 有歧义：它与所在方法同名，而这个名字还能按裸名解析到"

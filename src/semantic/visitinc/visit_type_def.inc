@@ -268,7 +268,8 @@
                             transform_method_body(ast->u.struct_def.field_defaults[i],
                                 NULL, 0, NULL, 0, ast->u.struct_def.name,
                                 NULL, 0, ast->u.struct_def.const_names, ast->u.struct_def.const_count, NULL,
-                                NULL, NULL, 0);
+                                NULL, NULL, 0,
+                                NULL, NULL);
                         }
                     }
                 }
@@ -287,10 +288,12 @@
                 //     能不能调到东西"的口径（能挡掉同名但不可裸调的库函数，少误报 ✓）
                 char** amb_names = NULL;
                 int*   amb_pcnts = NULL;
+                int*   amb_meth_pcnts = NULL;   // ★ 撞名**方法自己**的形参个数（配合个数闸门 ✓）
                 int    amb_count = 0;
                 if (ast->u.struct_def.method_count > 0) {
                     amb_names = (char**)malloc(sizeof(char*) * ast->u.struct_def.method_count);
                     amb_pcnts = (int*)malloc(sizeof(int) * ast->u.struct_def.method_count);
+                    amb_meth_pcnts = (int*)malloc(sizeof(int) * ast->u.struct_def.method_count);
                 }
                 for (int m = 0; amb_names && m < ast->u.struct_def.method_count; m++) {
                     Ast* ma = ast->u.struct_def.methods[m];
@@ -299,32 +302,46 @@
                     if (!sym || (sym->kind != SYM_GLOBAL_FUNC && sym->kind != SYM_MODULE)) continue;
                     Ast* gf = func_table_find(&s->func_table, ma->u.func.name);
                     if (!gf || gf->kind != AST_FUNC_DEF) continue;
-                    // ⚠ 只收**形参个数相同**的：个数不同时，裸调用若按函数个数写，编译器会当场报
-                    //   「调用方法时参数不足/过多」（响的 ✓ 实测）⇒ 不会静默，收进来只会多报 ✓
-                    if (gf->u.func.pcnt != ma->u.func.pcnt) continue;
+                    // ★★ 2026-10-10 改：**不再只收"个数相同"的** ✗
+                    //   旧口径（`if (gf->u.func.pcnt != ma->u.func.pcnt) continue;`）有个致命副作用：
+                    //   个数**不同**时（= 裸调用其实只可能是那个函数的 ✓）既不收进表、也没人管 ⇒
+                    //   裸调用照样被"方法优先"劫持 ⇒ 报“参数过多”或**静默调错目标** ✗
+                    //   （上游 LenoSDL3 那次「打包后句柄下发静默失效」+ 本仓 10 组同名撞车 ✓）
+                    //   现在**全收** ✓：个数闸门（semantic_visit_method.c）拿它判"这行调用到底更像哪一个" ✓；
+                    //   下面的歧义告警自带"两边个数都吻合"的条件 ✓ ⇒ 告警语义与从前逐字一致 ✓
+                    //   ⚠ 两列含义别搞混：amb_pcnts = 同名**函数**的个数 ✓、amb_meth_pcnts = **方法**自己的 ✓
                     amb_names[amb_count] = ma->u.func.name;
                     amb_pcnts[amb_count] = gf->u.func.pcnt;
+                    amb_meth_pcnts[amb_count] = ma->u.func.pcnt;
                     amb_count++;
+                }
+                // ★★ 2026-10-10：方法名表 / 形参个数表**必须在"逐个方法补 self"之前**就建好 ✓
+                //   为什么：下面阶段1 每处理完一个方法就把它的 `u.func.pcnt` **+1**（补隐式 self ✓）
+                //   ⇒ 若在循环内部建表，**前面已处理过的方法**读到的是"形参个数 + 1" ✗
+                //   （实测：`func poke(Widget c)` 被闸门读成 2 ✗ ⇒ 判据失效、劫持照旧 ✗）
+                //   这里一律在进循环前读，此时每个 pcnt 都还是"声明里写的那个" ✓
+                char** method_names = NULL;
+                int*   method_pcounts = NULL;      // 与 method_names 平行：各方法声明的形参个数 ✓
+                int    method_count = ast->u.struct_def.method_count;
+                if (method_count > 0) {
+                    method_names = (char**)malloc(sizeof(char*) * method_count);
+                    method_pcounts = (int*)malloc(sizeof(int) * method_count);
+                    for (int m = 0; m < method_count; m++) {
+                        Ast* mi = ast->u.struct_def.methods[m];
+                        method_names[m] = (mi && mi->u.func.name) ? mi->u.func.name : NULL;
+                        method_pcounts[m] = (mi && mi->kind == AST_FUNC_DEF) ? mi->u.func.pcnt : -1;
+                    }
                 }
                 // 阶段1：准备所有方法（转换方法体、添加self参数、注册到函数表）
                 for (int i = 0; i < ast->u.struct_def.method_count; i++) {
                     Ast* method_ast = ast->u.struct_def.methods[i];
                     if (method_ast && method_ast->kind == AST_FUNC_DEF) {
                         // 1. 转换方法体：将字段名访问转换为 self.字段名，方法名调用转换为 self.方法名
-                        // 收集所有方法名
-                        char** method_names = NULL;
-                        int method_count = ast->u.struct_def.method_count;
-                        if (method_count > 0) {
-                            method_names = (char**)malloc(sizeof(char*) * method_count);
-                            for (int m = 0; m < method_count; m++) {
-                                method_names[m] = ast->u.struct_def.methods[m]->u.func.name;
-                            }
-                        }
                         transform_method_body(method_ast->u.func.body, ast->u.struct_def.field_names, ast->u.struct_def.field_count, method_names, method_count, ast->u.struct_def.name,
                             method_ast->u.func.params, method_ast->u.func.pcnt, ast->u.struct_def.const_names, ast->u.struct_def.const_count,
                             method_ast->u.func.name,   // 本方法名（诊断用：判裸调用是否与自身同名 ⇒ 自递归 ✓）
-                            amb_names, amb_pcnts, amb_count);   // 同名歧义表（见上 ✓）
-                        if (method_names) free(method_names);
+                            amb_names, amb_pcnts, amb_count,   // 同名表（见上 ✓）
+                            method_pcounts, amb_meth_pcnts);   // ★ 个数闸门的两张表 ✓
 
                         // 2. 添加隐式 self 参数作为第一个参数
                         int new_pcnt = method_ast->u.func.pcnt + 1;
@@ -371,6 +388,10 @@
                 }
                 if (amb_names) free(amb_names);   // 同名歧义表用完即释（表里存的是 method_name 指针，不拥有 ✓）
                 if (amb_pcnts) free(amb_pcnts);
+                if (amb_meth_pcnts) free(amb_meth_pcnts);   // ★ 新增的同名表（个数闸门用 ✓）
+                if (method_names) free(method_names);       // ★ 名字表/个数表也随阶段1 结束释放 ✓
+                if (method_pcounts) free(method_pcounts);
+
                 
                 // 阶段2：处理所有方法体（语义分析）
                 // 这样方法间可以互相引用，因为所有方法都已注册到函数表

@@ -60,6 +60,11 @@ void dce_note_method_ref(const char* type_name, const char* method_name); // typ
 void dce_note_func_value(ObjFunction* func);                             // 匿名闭包 / 局部函数的创建点
 void dce_note_type_ref(const char* type_name);                           // 类型被引用
 
+// ★ 2026-10-10：合并 `case is A, B` 的 case 体区间（生成期间置位 ⇒ 区间内的方法引用
+//   会**额外**按名字通配登记一次 ✓ 理由见 dce_note_method_ref 的注释 ✓）
+void dce_enter_multitype_case(void);
+void dce_leave_multitype_case(void);
+
 // 有模块来自 .lenomc 缓存 ⇒ 引用图不完整 ⇒ 一律不剪（module_loader 命中缓存时调用）
 void dce_note_module_cached(void);
 

@@ -62,7 +62,12 @@ static int s_collect = 0;         // 是否收集引用图（只在 -c / -p 这�
                                   //   不该为一份用不上的图付代价
 static int s_active = 0;          // 是否正在写入口 .lenb
 static int s_verbose = 0;
-static int s_wild_safe = 0;       // 名字通配不再按"类型被引用"过滤（最保守档，对比用）
+static int s_wild_safe = 1;       // 名字通配不再按"类型被引用"过滤（★ 2026-10-10 起**默认开** ✓）
+// ★ 2026-10-10：合并 `case is A, B` 的 case 体区间计数（生成期间 > 0 ⇒ 期间的方法引用
+//   额外按名字通配登记一次 ✓ 见 dce_note_method_ref ✓）
+static int s_in_multitype_case = 0;
+void dce_enter_multitype_case(void) { if (s_collect) s_in_multitype_case++; }
+void dce_leave_multitype_case(void) { if (s_collect && s_in_multitype_case > 0) s_in_multitype_case--; }
 static int s_cached_module = 0;   // 有模块来自 .lenomc ⇒ 图不完整
 static int s_finalized = 0;
 
@@ -295,7 +300,20 @@ int dce_enabled(void) {
         const char* vb = getenv("LENO_DCE_VERBOSE");
         s_verbose = vb ? atoi(vb) : 0;
         if (vb && s_verbose == 0) s_verbose = 1;   // 只写 "1"/其它非数字也算开启
-        s_wild_safe = getenv("LENO_DCE_WILD_SAFE") ? 1 : 0;
+        // ★★ 2026-10-10：**默认改成安全档**（原来默认是"按类型是否被引用"过滤的启发式 ✗）
+    //   为什么必须改默认：**动态派发在静态上不可判定** ✓ 类型过滤只是启发式 ⇒
+    //   猜错的代价是"方法被剪成 `<dce-cut>` 空桩 ⇒ 调用方静默 no-op"✗（比崩溃更难查 ✗，
+    //   而且只在入口 .lenb / 打包这条路上犯 ✓）；猜对的收益只是省几个函数体 ✓
+    //   （上游 LenoSDL3「打包后窗口句柄下发静默失效」根因 ② 就是它 ✓）
+    //   开关口径：
+    //     LENO_DCE_WILD_STRICT=1  ⇒ 恢复旧的启发式（做 A/B 用 ✓）
+    //     LENO_DCE_WILD_SAFE=0    ⇒ 同义（兼容旧脚本写法 ✓，因为默认已是安全档 ✓）
+    s_wild_safe = 1;
+    if (getenv("LENO_DCE_WILD_STRICT")) s_wild_safe = 0;
+    {
+        const char* _ws = getenv("LENO_DCE_WILD_SAFE");
+        if (_ws && _ws[0] == '0') s_wild_safe = 0;
+    }
     }
     return s_enabled;
 }
@@ -475,6 +493,14 @@ void dce_note_name_ref(const char* name) {
 
 void dce_note_method_ref(const char* type_name, const char* method_name) {
     if (!s_collect || !method_name || !method_name[0]) return;
+    // ★★ 2026-10-10 治本：合并 `case is A, B { c.m() }` 的 case 体里，`c` 的静态类型会被
+    //   语义侧收窄成**第一个**类型（visit_control.inc ✓）⇒ 下面记的是精确的 (A, m) ✗，
+    //   而 B 其实也可能收到这次派发 ⇒ B.m 会被判死、剪成**空桩**（调用方静默 no-op ✗，
+    //   且只有入口 .lenb / 打包才犯 ✓ —— 上游 LenoSDL3 那次就是这个）。
+    //   做法：在这个区间内**额外**把方法名按"名字通配"登记一次 ✓ ⇒ 结合 gen_switch 把
+    //   该 case 的每个类型都记为"已引用类型"（dce_note_type_ref ✓）⇒ resolve_wildcard_methods
+    //   会把 B.m 正确保活 ✓（精度不塌：只放行那几个类型 ✓）
+    if (s_in_multitype_case) strset_add(&s_used_method_names, method_name);
     DceRef r;
     memset(&r, 0, sizeof(r));
     r.kind = DREF_METHOD;

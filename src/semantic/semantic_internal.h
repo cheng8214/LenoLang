@@ -115,7 +115,8 @@ void resolve_generic_in_type(TypeInfo* type, char** type_params, char** type_par
 // ============================================================================
 void transform_method_body(Ast* ast, char** field_names, int field_count, char** method_names, int method_count, const char* struct_name,
     char** param_names, int param_count, char** const_names, int const_count, const char* method_name,
-    char** amb_names, int* amb_pcnts, int amb_count);
+    char** amb_names, int* amb_pcnts, int amb_count,
+    int* method_pcounts, int* amb_meth_pcnts);
 
 // ============================================================================
 // 类型工具函数
