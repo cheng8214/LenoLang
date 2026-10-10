@@ -1,9 +1,23 @@
+    // ★★ 2026-10-10（A 组第 3 条）：**这四处的文案收口到一处** ✓ 并补上最常见的真实原因 ✓
+    //   原来"字段访问需要结构体对象"这句在同一文件里**抄了四遍** ✗（值不是对象 / 不是 struct
+    //   两条路径各两处 ✓）—— 改一处漏三处是必然 ✓；更要紧的是这句**完全不提线程** ✗：
+    //   本仓最典型的成因就是**跨线程传 struct** ✓（子线程不加载别的模块的全局变量 ✓
+    //   struct / 多返回值过 `threads.start` 或 `Channel` 后静态类型退化成 any ⇒
+    //   **编译期看不出来、运行期在这里炸** ✓ ⇒ 写的人会往"类型写错了"方向查半天 ✓）。
+    //   跨线程协议本来只支持**纯字符串数组** ✓（见速查 §一② / §三② ✓）。
+    //   ⚠ 只加"可能是跨线程"这一句 ✓ 不改成错误/警告级别 ✓（这里已经是运行期抛错 ✓ 够响 ✓）
+    #ifndef VM_MSG_FIELD_NEEDS_STRUCT
+    #define VM_MSG_FIELD_NEEDS_STRUCT \
+        "字段访问需要结构体对象 —— 若该值来自**别的线程**（threads.start / Channel），那就是它：" \
+        "跨线程只支持纯字符串数组，不支持 struct"
+    #endif
+
     LABEL(OP_GET_FIELD): {
         int a = READ_A(), b = READ_B(), c = READ_C();
         Value obj = R(b);
         int line = GET_CURRENT_LINE();
         if (unlikely(!val_is_obj(obj))) {
-            if (!throw_runtime_error("字段访问需要结构体对象", line)) return -1;
+            if (!throw_runtime_error(VM_MSG_FIELD_NEEDS_STRUCT, line)) return -1;
             frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH();
         }
@@ -19,7 +33,7 @@
             DISPATCH();
         }
         if (unlikely(val_as_obj(obj)->type != OBJ_STRUCT)) {
-            if (!throw_runtime_error("字段访问需要结构体对象", line)) return -1;
+            if (!throw_runtime_error(VM_MSG_FIELD_NEEDS_STRUCT, line)) return -1;
             frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH();
         }
@@ -41,7 +55,7 @@
         Value obj = R(b);
         int line = GET_CURRENT_LINE();
         if (unlikely(!val_is_obj(obj) || val_as_obj(obj)->type != OBJ_STRUCT)) {
-            if (!throw_runtime_error("字段访问需要结构体对象", line)) return -1;
+            if (!throw_runtime_error(VM_MSG_FIELD_NEEDS_STRUCT, line)) return -1;
             frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH();
         }
@@ -65,7 +79,7 @@
         frame->ip += c;                       // 跳过尾随的字段索引字节
         const uint8_t* idx = frame->ip - c;
         if (unlikely(!val_is_obj(obj) || val_as_obj(obj)->type != OBJ_STRUCT)) {
-            if (!throw_runtime_error("字段访问需要结构体对象", line)) return -1;
+            if (!throw_runtime_error(VM_MSG_FIELD_NEEDS_STRUCT, line)) return -1;
             frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH();
         }
