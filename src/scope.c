@@ -68,6 +68,35 @@ Scope* scope_new(Scope* parent, int is_func) {
 void scope_free(Scope* scope) {
     if (!scope) return;
 
+    // ★★ 2026-10-10：未使用局部量诊断（WARN_UNUSED_VAR）的**唯一报告点**就在这里 ✓
+    //   为什么是这里：这是所有作用域销毁的必经之路 ✓（块体 / 循环体 / if 体 / 函数体
+    //     各自收尾时都会走到 ✓），而"到底读没读过"必须等这条作用域**整个扫完**才能定 ✓。
+    //   怎么判"该不该查"：**只看声明点打的 `track_unused` 标记** ✓ ——
+    //     ⚠ 不能用 `scope->parent == NULL` 判"是不是模块/全局作用域" ✗：本函数在递归前
+    //       会把 `child->parent` 置空（见下面那个循环 ✓）⇒ 子作用域进来时 parent 已是 NULL ✗
+    //       （这条我第一版就写错过 ✓）。
+    //     声明点只对"用户代码里的局部量"打标记 ✓ ⇒ 模块级/全局量、LSP 模式、形参、
+    //     解构名、编译期合成的作用域（for 头守卫等）自动豁免 ✓。
+    for (int w = 0; w < scope->sym_cnt; w++) {
+        Symbol* wsym = scope->syms[w];
+        if (!wsym || !wsym->track_unused) continue;
+        if (wsym->is_read) continue;
+        // 被闭包捕获的量跳过：真正的读取发生在闭包体里（走 upvalue 路径 ✓），
+        // 从外层看"没读过"⇒ 判它未使用**不安全** ✗（宁漏勿误报 ✓）。
+        if (wsym->is_captured) continue;
+        if (!wsym->name || wsym->name[0] == '\0') continue;
+        // `_x` 是本仓的"我知道它没用到，别报我"约定 ✓
+        if (wsym->name[0] == '_') continue;
+        // 编译期合成的名字（作用域守卫会造出 `s.age` / `d[key]` 这类 ✗）不查 ✓
+        if (strchr(wsym->name, '.') || strchr(wsym->name, '[')) continue;
+
+        char wmsg[BUFFER_MEDIUM];
+        snprintf(wmsg, sizeof(wmsg),
+                 "局部变量 '%s' 声明后从未被使用（名字此后再没出现过）—— 删掉它，"
+                 "或若是有意保留占位请改名为 '_%s'", wsym->name, wsym->name);
+        warning_add_at(WARN_UNUSED_VAR, wsym->decl_line, 1, wmsg);
+    }
+
     // 递归释放所有子作用域
     for (int i = 0; i < scope->child_count; i++) {
         if (scope->children[i]) {

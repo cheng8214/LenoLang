@@ -86,7 +86,20 @@ int add_upvalue(Ast* func_ast, const char* name, int index, int is_local, int is
 
 // 解析变量并处理 upvalue
 // 返回符号，并在需要时自动注册 upvalue
+// ★ 2026-10-10：本函数改成"**读路径统一置位**"的外壳，原实现改名到 `_raw` ✓
+//   为什么非得在这里补一刀（实测踩到的 ✗）：函数式变量被**调用**时（`var c = func(){...}`
+//   然后 `c()` ），被调方的解析**不走 `visit_var.inc` 的 AST_VAR 分支** ✗ ⇒ 只在外层置位的话
+//   `c` 会被误报成"从未被读取" ✗ —— 一个字都没写错的代码被报出来 ✗（我第一版就报了 ✓）。
+//   本函数是"按名字取值"的总入口 ✓（读变量 / 调函数变量 / 插值 / 传参… 都过这里 ✓）
+//   ⇒ 在此置位覆盖最全 ✓；而**纯赋值**路径不走这里 ✓（实测 `written = 5` 仍会被正确报成
+//   "只写没读" ✓）⇒ 不会把"只写过"洗成"读过" ✓。
 Symbol* resolve_variable_with_upvalue(Semantic* s, const char* name, SymRef* ref) {
+    Symbol* sym = resolve_variable_with_upvalue_raw(s, name, ref);
+    if (sym) sym->is_read = 1;
+    return sym;
+}
+
+Symbol* resolve_variable_with_upvalue_raw(Semantic* s, const char* name, SymRef* ref) {
     if (!s->current) {
         return scope_resolve(s->current, name);
     }

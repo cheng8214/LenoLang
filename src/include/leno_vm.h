@@ -749,6 +749,18 @@ struct Symbol {
     //        由 VM 的运行期检查兜底（见 src/vm/vminc/run/03_arith.inc 的 OP_ADD_INT 等）。
     int is_null_value;
 
+    // ★ 编译期专用：**未使用局部量**诊断（WARN_UNUSED_VAR，2026-10-10 首次实现）
+    //   背景：这条警告在 leno_types.h 有枚举、error.c 有名字表，却**全仓零调用点** ✗
+    //     ⇒ 实测 `var x = 1`（从头到尾没用过）编译零诊断 ✓ 静默放过 ✓。
+    //   is_read      ：该变量是否被**读过**（置位点只有一处：visit_var.inc 的 AST_VAR 读路径 ✓）；
+    //   decl_line    ：声明所在行（只用于报错落点）；
+    //   track_unused ：**只登记"用户代码里的局部量"** —— 模块级/全局量不登记（可能被别的
+    //     模块用到 ✓）、LSP 模式不登记（编到一半的代码天天有未用变量 ✗ 会刷屏 ✓）、
+    //     形参与解构名不经过声明点那条路径 ⇒ 天然豁免 ✓（不靠报告点再加判据 ✓）。
+    int is_read;
+    int decl_line;
+    int track_unused;
+
     Scope* scope;
     Symbol* next;
     TypeInfo* type;

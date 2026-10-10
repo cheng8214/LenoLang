@@ -37,6 +37,16 @@
                 sym = scope_define(s->current, ast->u.var_decl.name, kind);
             }
             if (sym) {
+                // ★ 未使用局部量诊断（WARN_UNUSED_VAR）的**登记点**：只登记"用户代码里的局部量" ✓
+                //   模块级/全局量不登记（可能被别的模块用到 ✓）；
+                //   LSP 模式不登记（编到一半的代码天天有未用变量 ✗ 会刷屏 ✓）；
+                //   形参 / 解构名 / for 头变量不走这条路径 ⇒ 天然豁免 ✓。
+                //   ⚠ 三个字段在这里**显式赋值**：不依赖符号是 calloc 还是 malloc 出来的 ✓
+                if (kind == SYM_LOCAL && !s->is_lsp_mode) {
+                    sym->track_unused = 1;
+                    sym->decl_line = ast->line;
+                    sym->is_read = 0;
+                }
                 // 设置 const 标志
                 if (ast->u.var_decl.is_const) {
                     sym->is_const = 1;
@@ -347,6 +357,10 @@
         
         case AST_VAR: {
             Symbol* sym = resolve_variable_with_upvalue(s, ast->u.var.name, &ast->u.var.ref);
+            // ★ 未使用局部量诊断（WARN_UNUSED_VAR）：这里是"**读过**"的唯一置位点 ✓
+            //   （若本分支同时被"赋值目标"复用，则赋值也会被算成读 ⇒ 只会**少报**、
+            //    不会误报 ✓ 方向是安全的 —— 未使用变量的诊断宁漏勿误报 ✓）
+            if (sym) sym->is_read = 1;
             if (!sym) {
                 char msg[BUFFER_MEDIUM];
                 snprintf(msg, sizeof(msg), "未定义的变量: %s", ast->u.var.name);

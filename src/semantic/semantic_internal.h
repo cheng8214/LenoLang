@@ -93,6 +93,10 @@ void sem_local_release(Semantic* s, int mark); // 回退到 max(mark, 钉住下�
 ImportedModuleInfo* find_imported_module(Semantic* s, const char* alias);
 int add_upvalue(Ast* func_ast, const char* name, int index, int is_local, int is_value_capture);
 Symbol* resolve_variable_with_upvalue(Semantic* s, const char* name, SymRef* ref);
+// 上面那个的**原实现**（2026-10-10 拆出来给 WARN_UNUSED_VAR 用）：它只做解析，
+// 而公开名 `resolve_variable_with_upvalue` 现在还会顺手把「该变量被读过」置位 ✓
+// （见 semantic_upvalue.c 里的说明：函数式变量被调用时走的就是这条路 ✓ 漏了会误报 ✗）。
+Symbol* resolve_variable_with_upvalue_raw(Semantic* s, const char* name, SymRef* ref);
 
 // T11：「该变量的值**确定为 null**」⇒ 编译错误（教程：null 不能参与算术运算）。
 //   判据是 Symbol.is_null_value —— 声明即 null 且此后没被写过（见 visit_var.inc 的置位/清位点，

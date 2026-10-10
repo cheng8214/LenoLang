@@ -1,0 +1,154 @@
+// 「未使用变量」诊断回归（WARN_UNUSED_VAR，2026-10-10 首次实现）
+//
+// 背景：这条警告在 `leno_types.h` 有枚举、`error.c` 有名字表，却**全仓零调用点** ✗ ——
+//   实测 `var x = 1`（从头到尾没用过）**编译零诊断、静默放过** ✗。本文件把它钉住 ✓。
+//
+// 实现落点（两处，都不是"顺手加的"，各有理由 ✓）：
+//   · 登记点：`visit_var.inc` 的 AST_VAR_DECL —— 只登记**用户代码里的局部量**
+//     （模块级量、LSP 模式、形参、解构名天然豁免 ✓ 不靠报告点再判 ✓）；
+//   · 报告点：`scope.c` 的 `scope_free` —— 所有作用域销毁的必经之路 ✓
+//     （块体/循环体/if 体/函数体各自收尾都会走到 ✓），而"读没读过"必须等整个作用域扫完才定 ✓。
+//     ⚠ 报告点**不能**用 `scope->parent == NULL` 判"是不是全局作用域" ✗ —— scope_free
+//       递归前会把 `child->parent` 置空 ⇒ 子作用域进来时 parent 已是 NULL ✗（我第一版写错过 ✓）。
+//
+// ⚠ 一半用例是**防误报对照**：这条检查天生容易误报（"读"的路径不止一条 ✓）。
+//   我实测撞到一个真误报 ✗：`var c = func(){...}` 之后 `c()` **调用**它 —— 被调方的解析
+//   不走 AST_VAR 分支 ✗ ⇒ 只在外层置位的话 `c` 会被报成"从未使用" ✗（一个字都没写错 ✗）。
+//   修法：把"按名字取值"的总入口 `resolve_variable_with_upvalue` 改成外壳，
+//   解析成功后统一置位 ✓（见 semantic_upvalue.c 的说明 ✓）。这条已在此钉住 ✓。
+
+import dirs
+import files
+
+// 起编译器子进程 + 判据的共享工具（命令行拼接、失败判据的唯一实现，见 S7）
+import "helpers/compiler.leno" as ce
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_diag_unused_var")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ---------- A. 该报的 ----------
+
+    // A1：声明后名字再没出现过 ⇒ 报在**声明行**
+    var p1 = dirs.join(work, "unused_basic.leno")
+    files.write(p1,
+        "main() {\n"
+        + "    var unused = 1\n"
+        + "    print(\"hi\\n\")\n"
+        + "}\n")
+    ce.expect_warning(p1, "未使用变量：基本形", "[未使用变量]", 2)
+
+    // A2：块内（循环体里）声明的未使用量也要报 ✓
+    //   钉的是"报告点放在 visit_block 会漏"这件事的反面：scope_free 是所有块体的必经之路 ✓
+    var p2 = dirs.join(work, "unused_in_loop.leno")
+    files.write(p2,
+        "main() {\n"
+        + "    for 0 : 2 to i {\n"
+        + "        var inner = 7\n"
+        + "    }\n"
+        + "    print(\"hi\\n\")\n"
+        + "}\n")
+    ce.expect_warning(p2, "未使用变量：循环体内", "[未使用变量]", 3)
+
+    // ---------- B. 不该报的（防误报对照）----------
+
+    // B1：正常读一下 ⇒ 不报 ✓
+    var p3 = dirs.join(work, "used.leno")
+    files.write(p3,
+        "main() {\n"
+        + "    var used = 1\n"
+        + "    print(_str(used) + \"\\n\")\n"
+        + "}\n")
+    var o3 = ce.expect_ok(p3, "对照：读过的变量", "1")
+    ce.expect_no_warning(o3, "对照：读过的变量", "[未使用变量]")
+
+    // B2：`_x` 是本仓的"我知道它没用到，别报我"约定 ⇒ 豁免 ✓
+    var p4 = dirs.join(work, "underscore.leno")
+    files.write(p4,
+        "main() {\n"
+        + "    var _skip = 1\n"
+        + "    print(\"hi\\n\")\n"
+        + "}\n")
+    var o4 = ce.expect_ok(p4, "对照：下划线前缀", "")
+    ce.expect_no_warning(o4, "对照：下划线前缀", "[未使用变量]")
+
+    // B3：形参未使用 ⇒ 豁免 ✓（接口签名常要求留着 ✓；形参不走声明点 ⇒ 天然不登记 ✓）
+    var p5 = dirs.join(work, "unused_param.leno")
+    files.write(p5,
+        "func f(int p): int {\n"
+        + "    return 7\n"
+        + "}\n"
+        + "\n"
+        + "main() { print(_str(f(1)) + \"\\n\") }\n")
+    var o5 = ce.expect_ok(p5, "对照：未使用的形参", "7")
+    ce.expect_no_warning(o5, "对照：未使用的形参", "[未使用变量]")
+
+    // B4：模块级/全局量 ⇒ 豁免 ✓（可能被别的模块用到 ✓ 不能乱报 ✓）
+    var p6 = dirs.join(work, "unused_global.leno")
+    files.write(p6,
+        "var g_never_used = 1\n"
+        + "\n"
+        + "main() { print(\"hi\\n\") }\n")
+    var o6 = ce.expect_ok(p6, "对照：模块级量", "")
+    ce.expect_no_warning(o6, "对照：模块级量", "[未使用变量]")
+
+    // B5 ★：函数式变量被**调用** ⇒ 不报 ✓
+    //   这是实测撞到的**真误报** ✗：调用处的被调方解析不走 AST_VAR ✗
+    //   ⇒ 修法见文件头说明（resolve_variable_with_upvalue 统一置位 ✓）
+    var p7 = dirs.join(work, "closure_called.leno")
+    files.write(p7,
+        "main() {\n"
+        + "    var c = func(): int { return 5 }\n"
+        + "    print(_str(c()) + \"\\n\")\n"
+        + "}\n")
+    var o7 = ce.expect_ok(p7, "对照：函数式变量被调用", "5")
+    ce.expect_no_warning(o7, "对照：函数式变量被调用", "[未使用变量]")
+
+    // B6 ★：`$"..."` 插值里用到 ⇒ 不报 ✓
+    //   ⚠ 注意 `"v={b}"`（**没有** $）不是插值、是字面量 ⇒ 那种写法里 b 真没用过 ✓ 该报 ✓
+    //     （我一度把这种当成误报 ✗ 查了才发现是**探针写错了** ✓ —— 教训记这里 ✓）
+    var p8 = dirs.join(work, "interp_used.leno")
+    files.write(p8,
+        "main() {\n"
+        + "    var b = 2\n"
+        + "    print($\"v={b}\\n\")\n"
+        + "}\n")
+    var o8 = ce.expect_ok(p8, "对照：$ 插值里用到", "v=2")
+    ce.expect_no_warning(o8, "对照：$ 插值里用到", "[未使用变量]")
+
+    // B7：局部量**遮蔽同名字段**且被读取 ⇒ 不报 ✓（实测读的就是局部 ✓ 打印 1 不是 100 ✓）
+    var p9 = dirs.join(work, "shadow_field.leno")
+    files.write(p9,
+        "struct S {\n"
+        + "    int v = 100\n"
+        + "    func f(): int {\n"
+        + "        var v = 1\n"
+        + "        return v + 0\n"
+        + "    }\n"
+        + "}\n"
+        + "\n"
+        + "main() {\n"
+        + "    var s = new S()\n"
+        + "    print(_str(s.f()) + \"\\n\")\n"
+        + "}\n")
+    var o9 = ce.expect_ok(p9, "对照：遮蔽字段但被读", "1")
+    ce.expect_no_warning(o9, "对照：遮蔽字段但被读", "[未使用变量]")
+
+    // B8（钉当前口径 ✓）：声明后**只被赋值**、再没别的提及 ⇒ 也**不报** ✓
+    //   为什么：赋值目标也要走"按名字取值"的入口 ✓ ⇒ 会被算成"用到过" ✓。
+    //   口径是「宁漏勿误报」✓ —— 代价是漏掉"只写过没读过"这一类 ✓（如实记在这里 ✓）。
+    var p10 = dirs.join(work, "assigned_only.leno")
+    files.write(p10,
+        "main() {\n"
+        + "    var written = 0\n"
+        + "    written = 5\n"
+        + "    print(\"hi\\n\")\n"
+        + "}\n")
+    var o10 = ce.expect_ok(p10, "对照：只被赋值（当前口径不报）", "")
+    ce.expect_no_warning(o10, "对照：只被赋值（当前口径不报）", "[未使用变量]")
+
+    dirs.delete(work)
+
+    print("test_diag_unused_var passed")
+}
