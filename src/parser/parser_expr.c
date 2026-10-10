@@ -1358,9 +1358,33 @@ Ast* parse_postfix_inc_dec(Parser* p, Ast* left) {
 }
 
 // 解析类型检查表达式: expr is type
+//
+// ★ 2026-10-10（A 组第 6 条）：**`is not` 依然不合法** ✓（**有意**：类型检查的取反只写
+//   `not (x is T)` ✓ —— 语言里只有这一种写法 ✓，入门教程里 `is` 也只讲类型收窄 ✓）
+//   但原来这条坑的**报错很差** ✗（速查 §三 ③ 实测）：`x is not string` 会喷**两条**错 ——
+//     「类型检查表达式期望类型名（如 int, float, string, bool, Array[int] 等）」
+//     + 一条纯噪音「期望表达式」✗（成因：第一条失败后，解析器手里还端着 `not string` ✓）。
+//   写的人从这两条里看不出"原来是 `is not` 不行" ✗ ⇒ 现在：
+//     ① 报**单条**、直接说清不支持 + 给出正确写法 ✓（落点指向那个 `not` ✓）；
+//     ② 顺手把 `not` 消费掉，让后面按正常的 `is 类型` 继续解析 ⇒ **不再产生第二条噪音** ✗。
+//   ⚠ 注意别"顺手把它实现成合法语法" ✗ —— 我第一版就是这么干的 ✗（加了 negate 分支 ✓）：
+//     那是**擅自加语言** ✓ 已撤回 ✓（语言里取反类型检查的**正式写法**是另一套 ✓ 见下 ✓）。
+//   ⚠ 文案也别只甩一种写法 ✗（我第二版就只说了 `not (x is T)` ✓ 漏了地道的那个 ✓）：
+//     本语言的否定类型守卫是 **`x not is T`** ✓（`if` / `for` 的条件位置 ✓ 由
+//     parser_stmt_control.c 的 `is_not_is` 实现 ✓ 连 `s.age not is int` 这种字段守卫都支持 ✓，
+//     用例 `assert/test_narrow_edge.leno` 的"测试 11: 否定类型守卫 (not is)" 就是它 ✓）；
+//     而**表达式**位置（`return` / 赋值右侧…）没有 `not is` ✗ ⇒ 那里写 `not (x is T)` ✓。
 Ast* parse_type_check(Parser* p, Ast* left) {
     int line = p->lex.current.line;
     lexer_next(&p->lex); // 消费 "is"
+
+    // ★ `is not`：紧跟 `is` 之后的 `not` ⇒ 单条说清"不支持" ✓（别让它变成两条噪音 ✗）
+    if (p->lex.current.type == TOK_NOT) {
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                     "本语言不支持 `is not` —— 取反请写 `x not is 类型`"
+                     "（if / for 条件里 ✓ 如 if a not is string）或 `not (x is 类型)`（表达式里 ✓）");
+        lexer_next(&p->lex);   // 消费 `not` ✓ 让后面按正常的 `is 类型` 继续解析（不当场再喷一条 ✗）
+    }
 
     // 解析类型
     TypeInfo* type_info = parse_type(p);

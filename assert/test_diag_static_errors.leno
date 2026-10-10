@@ -596,6 +596,23 @@ main() {
     ce.expect_error(ec_rcv, "struct 类型名当接收者要报错（忘写 new）",
         "不能直接当接收者用", 6)
 
+    // ★ 2026-10-10（A 组第 6 条）：`is not` **不存在** ⇒ 现在**单条**说清 + 给出两种正确写法
+    //   ⚠ 修的是"报错指不到病因"✗：原先它喷**两条**语法错
+    //     （`类型检查表达式期望类型名（如 int, float, string, bool, Array[int] 等）` +
+    //      纯噪音 `期望表达式`✗）⇒ 写的人从这两条里看不出"原来是 `is not` 不行"✓。
+    //   ⚠ 这条**只钉文案**，不钉"它变成合法语法"✗ —— 语言里取反的正式写法是
+    //     `x not is T`（if / for **条件位置** ✓ 见 assert/test_narrow_edge.leno 的
+    //     "测试 11: 否定类型守卫 (not is)" ✓）与 `not (x is T)`（**表达式**位置 ✓）；
+    //     ⚠ `x not is T` 在表达式里**不合法** ✗（实测 `return x not is string` 报一堆语法错 ✓）
+    //   ⚠ 我第一版曾把它"顺手实现成合法语法"✗ ⇒ 已撤回 ✓（那是擅自加语言 ✓ 用户确认过口径 ✓）
+    var ec_isnot = dirs.join(work, "is_not_unsupported.leno")
+    files.write(ec_isnot, @"func f(any x): bool { return x is not string }
+
+main() { print(1) }
+")
+    ce.expect_error(ec_isnot, "`is not` 不存在 ⇒ 单条报错并给正确写法",
+        "本语言不支持 `is not`", 1)
+
     var ec2 = dirs.join(work, "struct_positional.leno")
     files.write(ec2, @"struct P {
     int x
