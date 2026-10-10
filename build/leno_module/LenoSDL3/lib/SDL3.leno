@@ -281,7 +281,20 @@ export func hasClipboardText(): bool { return core.hasClipboardText() }
 
 // ==================== 重新导出工厂函数 ====================
 
-export func createWindow(Dict opts): Window    { return wnd.createWindow(opts) }
+// createWindow：opts 见 sdl_window.init；★ 另收 `icon`（PNG 路径）——
+//   Windows 的窗口图标由 exe 的 PE 资源自动带出，Linux/macOS **没有**这个机制 ⇒
+//   要让窗口/任务栏显示图标，必须显式调一次 SDL_SetWindowIcon。这里就地做了 ✓
+//   用法：createWindow({title:"…", w:…, h:…, icon: dirs.join(dirs.res_dir(), "images/app.png")})
+//   （路径要用 res_dir()：单文件打包后资源解包到缓存目录，script_dir() 取不到 ✓）
+export func createWindow(Dict opts): Window    {
+    var win = wnd.createWindow(opts)
+    string iconPath = opts.get("icon", "")
+    if win.ok and iconPath != "" {
+        var iconSurface = img.load(iconPath)
+        if iconSurface != null { win.setIcon(iconSurface) }
+    }
+    return win
+}
 export func setRoot(Window win, Widget root)   { win.setRoot(root) }
 export func setRootAt(Window win, Widget root, float ox, float oy) { win.setRootAt(root, ox, oy) }
 export func pushModal(int w)                   { wnd.pushModal(w) }

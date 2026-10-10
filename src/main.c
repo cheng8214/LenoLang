@@ -1854,7 +1854,9 @@ int lenolang_run_file(const char* path) {
                 return -1;
             }
 #else
-            printf("[pack] 提示: 本平台不支持替换 PE 图标，[pack] icon 已忽略\n");
+            // 非 Windows 没有 PE 资源段可换图标 ⇒ 这里不做事；改由下面在**输出目录**里
+            //   产出 `<stem>.desktop` + `<stem>.png`（Linux 的图标机制是 .desktop ✓）
+            printf("[pack] 提示: 本平台无 PE 资源段；[pack] icon 将用于生成桌面图标（.desktop/PNG）\n");
 #endif
         }
 
@@ -1946,6 +1948,104 @@ int lenolang_run_file(const char* path) {
 #ifndef _WIN32
         // Linux/macOS：添加可执行权限
         chmod(out_exe, 0755);
+#endif
+
+#ifndef _WIN32
+        // ------------------------------------------------------------------
+        // Linux/macOS：在输出目录里**顺带产出**桌面图标：<stem>.desktop + <stem>.png
+        // ------------------------------------------------------------------
+        // 为什么打包时要加这段：Windows 的图标是 PE 资源（见上面 package_icon_replace），
+        //   而 **ELF 没有"内嵌图标"这个概念** ⇒ Linux 上要让产物"有图标"，只能靠一份
+        //   `.desktop`（Icon= 指向 PNG）。此前非 Windows 只打印一句"已忽略" ⇒ 打包出的
+        //   应用在 Linux 上**哪儿都不显示图标** ✗（用户实测反馈的就是这条）。
+        // 只写进**输出目录**、不碰用户家目录：dist 是拿去分发的产物，装不装由使用者决定
+        //   （装法见下面打印的提示）。缺 [pack] icon 或图标不是 PNG ⇒ 打印一行、**不算失败** ✓
+        // 图标来源：`[pack] icon`。可以是 PNG，也可以是 tools/png_to_ico.leno 产出的
+        //   **PNG 容器 .ico**（22 字节 ICO 头 + 原 PNG 数据 ⇒ 跳过前 22 字节即是图 ✓）
+        {
+            const char* b1 = strrchr(out_exe, '\\');
+            const char* b2 = strrchr(out_exe, '/');
+            const char* bb = b1;
+            if (b2 && (!b1 || b2 > b1)) bb = b2;
+            char stem[MAX_PATH_LEN];
+            // 显式判长拷贝（不用 snprintf）：源是 out_exe（4×MAX_PATH_LEN 量级），
+            // 目标只有 MAX_PATH_LEN ⇒ GCC 会判 -Wformat-truncation（其实 basename 很短 ✓）
+            {
+                const char* src = bb ? bb + 1 : out_exe;
+                size_t sl = strlen(src);
+                if (sl >= sizeof(stem)) sl = sizeof(stem) - 1;
+                memcpy(stem, src, sl);
+                stem[sl] = '\0';
+            }
+            char* stem_dot = strrchr(stem, '.');
+            if (stem_dot) *stem_dot = '\0';
+            size_t dl = strlen(out_dir);
+            const char* dsep = (dl > 0 && out_dir[dl - 1] != '\\' &&
+                                out_dir[dl - 1] != '/') ? PSEP : "";
+
+            int png_ok = 0;
+            if (pack_icon[0]) {
+                FILE* icf = fopen(pack_icon, "rb");
+                if (icf) {
+                    unsigned char head[30];
+                    size_t hn = fread(head, 1, sizeof(head), icf);
+                    long off = -1;
+                    if (hn >= 8 && head[0] == 0x89 && head[1] == 'P' &&
+                        head[2] == 'N' && head[3] == 'G') {
+                        off = 0;                       // 本就是 PNG
+                    } else if (hn >= 26 && head[22] == 0x89 && head[23] == 'P' &&
+                               head[24] == 'N' && head[25] == 'G') {
+                        off = 22;                      // PNG 容器 .ico
+                    }
+                    if (off >= 0) {
+                        char png_path[MAX_PATH_LEN * 4];
+                        snprintf(png_path, sizeof(png_path), "%s%s%s.png", out_dir, dsep, stem);
+                        fseek(icf, off, SEEK_SET);
+                        FILE* png_fp = fopen(png_path, "wb");
+                        if (png_fp) {
+                            unsigned char buf[4096];
+                            size_t r;
+                            while ((r = fread(buf, 1, sizeof(buf), icf)) > 0) fwrite(buf, 1, r, png_fp);
+                            fclose(png_fp);
+                            png_ok = 1;
+                            printf("[pack] 桌面图标 PNG: %s\n", png_path);
+                        }
+                    }
+                    fclose(icf);
+                }
+            }
+
+            if (png_ok) {
+                char desk_path[MAX_PATH_LEN * 4];
+                snprintf(desk_path, sizeof(desk_path), "%s%s%s.desktop", out_dir, dsep, stem);
+                // Exec 必须写**绝对路径**：.desktop 装到 ~/.local/share 之后，它的工作目录
+                // 不再是生成时那个目录（打相对路径 ⇒ 点了没反应 ✗）。realpath 失败就用原值。
+                char abs_exe[MAX_PATH_LEN];
+                const char* exec_path = realpath(out_exe, abs_exe) ? abs_exe : out_exe;
+                FILE* dfp = fopen(desk_path, "w");
+                if (dfp) {
+                    // Terminal：GUI 应用（脚本里 _console(false) ⇒ g_use_gui_vm）不弹终端；
+                    // 其余按控制台程序处理（Terminal=true，双击能看到输出 ✓）
+                    // 不写 Categories：应用类目因程序而异，猜错不如不写（Freedesktop 允许省略 ✓）
+                    fprintf(dfp,
+                            "[Desktop Entry]\n"
+                            "Type=Application\n"
+                            "Name=%s\n"
+                            "Exec=\"%s\" %%f\n"
+                            "Icon=%s\n"
+                            "Terminal=%s\n",
+                            stem, exec_path, stem, g_use_gui_vm ? "false" : "true");
+                    fclose(dfp);
+                    printf("[pack] 桌面入口: %s\n", desk_path);
+                    printf("[pack] Linux 菜单图标装法：%s.png → ~/.local/share/icons/hicolor/48x48/apps/ ，"
+                           "%s.desktop → ~/.local/share/applications/（图标名即 %s ✓）\n",
+                           stem, stem, stem);
+                }
+            } else {
+                printf("[pack] 提示: 未产出 .desktop —— Linux 图标需要 [pack] icon 且为 PNG"
+                       "（或 tools/png_to_ico.leno 产出的 PNG 容器 .ico）\n");
+            }
+        }
 #endif
 
         free(vm_data);

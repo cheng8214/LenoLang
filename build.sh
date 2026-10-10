@@ -93,6 +93,57 @@ fi
 
 $CC $CFLAGS -o build/leno$EXE $SOURCES $ICON_OBJ -Isrc -Wall -Wextra -std=c99 -O2 $LIBS
 
+# ---------------------------------------------------------------------------
+# Linux 桌面图标（只有 Linux 走这一步）
+# ---------------------------------------------------------------------------
+# 为什么 Windows 那边一行就够、Linux 得另起一段：Windows 的图标是 **PE 资源段**
+#   （上面 windres 那段）；而 **ELF 没有"内嵌图标"这个概念** ⇒ Linux 桌面是从
+#   `.desktop` 文件（`Icon=` 指向 PNG/SVG）+ 图标主题里取图标的。此前非 Windows
+#   分支一个字节都不处理 ⇒ 编译出来的 leno 在 Linux 上**任何地方都不会显示图标** ✗
+#   （与 Windows 的 leno.exe 不对称 —— 这就是"为啥 Linux 上没图标"的答案）。
+#
+# 做法：把 build/leno_icon.ico 里的 PNG **抽出来**再注册：
+#   该 .ico 是 tools/png_to_ico.leno 产出的 **PNG 容器**（22 字节 ICO 头 + 原 PNG 数据，
+#   见 resources/leno.rc 的说明）⇒ 直接跳过前 22 字节就是那张 PNG ✓
+#   然后装到用户目录（~/.local/share）⇒ 应用菜单 / 启动器里就有图标了 ✓
+# ⚠ 只影响「应用菜单 / 启动器」：文件管理器里**单个 ELF 文件**依旧不会有自定义图标
+#   （Linux 没有这个机制，不是没做）。
+# ⚠ 抽不出 PNG（比如 .ico 里是 DIB 编码的条目）⇒ 打印一行并跳过，**绝不影响构建** ✓
+if [ "$PLATFORM" = "linux" ]; then
+  ICON_SRC=""
+  if [ -f resources/leno_icon.ico ]; then
+    ICON_SRC="resources/leno_icon.ico"
+  elif [ -f build/leno_icon.ico ]; then
+    ICON_SRC="build/leno_icon.ico"
+  fi
+  if [ -n "$ICON_SRC" ]; then
+    # 校验"偏移 22 起是 PNG 签名"（89 50 4E 47 0D 0A 1A 0A）
+    ICON_SIG=$(tail -c +23 "$ICON_SRC" | od -An -tx1 -N8 | tr -d ' \n')
+    if [ "$ICON_SIG" = "89504e470d0a1a0a" ]; then
+      ICON_DIR="$HOME/.local/share/icons/hicolor/48x48/apps"
+      ICON_DESKTOP="$HOME/.local/share/applications"
+      if mkdir -p "$ICON_DIR" "$ICON_DESKTOP" 2>/dev/null; then
+        tail -c +23 "$ICON_SRC" > "$ICON_DIR/leno.png"
+        cat > "$ICON_DESKTOP/leno.desktop" <<DESKTOP
+[Desktop Entry]
+Type=Application
+Name=LenoLang
+Comment=Leno language compiler
+Exec=$(pwd)/build/leno %f
+Icon=leno
+Terminal=true
+Categories=Development;
+DESKTOP
+        echo "Icon: 桌面图标已安装 → $ICON_DESKTOP/leno.desktop（PNG: $ICON_DIR/leno.png）"
+      else
+        echo "Icon: 装不进 $ICON_DESKTOP（只读或 HOME 异常），跳过桌面图标"
+      fi
+    else
+      echo "Icon: $ICON_SRC 不是 PNG 容器，跳过桌面图标（Linux 只认 PNG/SVG）"
+    fi
+  fi
+fi
+
 echo "Build successful"
 echo ""
 echo "Usage: build/leno$EXE <file.leno>"
