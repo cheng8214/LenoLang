@@ -526,16 +526,31 @@ static Value native_dirs_join(int argCount, Value* args) {
     for (int i = 0; i < argCount; i++) {
         const char* part = get_string(args[i]);
         if (part) {
-            strcat(buffer, part);
+            // ★ 2026-10-10（B 组第 10 条）：**收拢重复分隔符** ✓
+            //   原来只处理"已累积串的**尾部**分隔符"✗ ⇒ 下一段开头的 `/` 原样接上 ⇒
+            //   实测 `dirs.join("a/", "/b")` ⇒ `a\/b` ✗（文档 `module_dirs.md` 也自己承认
+            //   "朴素拼接、不归一化"✓）—— 这种路径**能跑但埋雷** ✓：交给别的工具
+            //   （或 `files.*`）时 `a\/b` 在 Windows 上可能被当成别的路径 ✓。
+            //   ⚠ **两条边界必须守住**（我第一版没守 ⇒ 当场踩坑 ✓）：
+            //     ① **跳过前导分隔符只在"已累积串以分隔符结尾"时做** ✗ —— 无条件跳会把
+            //        第一段的根吞掉：实测 `join("/home","user","file")` ⇒ `home\user\file` ✗
+            //        （第一版就是这个结果 ✓ 与文档示例当场矛盾 ✓）；
+            //     ② 末尾要收拢**全部**分隔符再补一个平台分隔符 ✓ —— 否则 `join("a//","b")`
+            //        会留下 `a/\b` ✗（半归一化 ✓）。
+            //   ⚠ 刻意**不做** Python 那种"后段是绝对路径 ⇒ 丢掉前面" ✗（那是**语义变更** ✓
+            //     影响面大 ✓ 见文档说明 ✓）。
+            const char* p = part;
+            int blen = (int)strlen(buffer);
+            if (blen > 0 && (buffer[blen-1] == '/' || buffer[blen-1] == '\\')) {
+                while (*p == '/' || *p == '\\') p++;
+            }
+            strcat(buffer, p);
             if (i < argCount - 1) {
-                // 移除末尾已有的分隔符，避免重复
+                // 收拢末尾的**所有**分隔符，再补一个平台分隔符
                 int len = (int)strlen(buffer);
-                if (len > 0 && (buffer[len-1] == '/' || buffer[len-1] == '\\')) {
-                    buffer[len-1] = PATH_SEP;
-                    buffer[len] = '\0';
-                } else {
-                    strcat(buffer, PATH_SEP_STR);
-                }
+                while (len > 0 && (buffer[len-1] == '/' || buffer[len-1] == '\\')) len--;
+                buffer[len] = PATH_SEP;
+                buffer[len + 1] = '\0';
             }
         }
     }
