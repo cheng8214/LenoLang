@@ -268,6 +268,58 @@ void semantic_register_struct_from_module(Semantic* s, const ModuleStructSymbol*
 }
 
 // ============================================================================
+// 「未定义的类型」提示（**唯一实现**，2026-10-10 加 / A 组第 4 条）
+// ----------------------------------------------------------------------------
+// 症状（速查 §一③ / §二②）：`use M.(A, B)` **漏列一个类型**时，报的是
+//   「未定义的类型: Label（请检查是否已通过 use 语句导入该类型，如 use module.Label）」
+//   ✗ —— 把"到底该写 use 哪个模块"留给人猜 ✗。而这条**最容易吃亏**：
+//   · 报错点在**使用那一行**（不是 use / import 那行 ✓）；
+//   · 只出现在**泛型参数 / 返回类型**里的类型也要列（`Array[Button]` 里的 `Button` ✗ 最容易漏）；
+//   · lint 常抓不到（它不跑完整模块符号表 ✓）⇒ 只有编译才炸 ✓。
+// 修法：报错时**直接去已导入模块的符号表里按名字找**（struct/face/enum/别名/clib 五类 ✓）
+//   ⇒ 命中就写清「它其实是模块 'SDL3' 导出的 struct ⇒ 请补 `use SDL3.Label`」✓；
+//   一个都没命中才退回原来那句泛泛提示 ✓（少说不误说 ✓）。
+// 为什么必须做成共享函数：这句话在本仓有**七处拷贝** ✗（实测 grep：visit_var.inc 四处、
+//   visit_type_def.inc 一处、semantic_visit_func.c 一处、visit_module.inc 一处 ✓）
+//   ——「各写各的必然改漏」是与"方法/实参检查只留一份实现"同一条教训 ✓。
+//   ⚠ 找全它们靠的是 **grep 报错文案本身** ✓：第九处藏在"类型 'X' 没有方法 'Y'"里
+//     （它把"类型未定义"当括号里的补充 ✗）⇒ 按"功能"找会漏 ✓ 按"文案"找才找得全 ✓。
+void semantic_undefined_type_hint(Semantic* s, const char* type_name, char* buf, size_t size) {
+    if (!buf || size == 0) return;
+    buf[0] = '\0';
+    if (!type_name) return;
+
+    // `double`：从别的语言带过来的错名字里最常见的一个 ⇒ 专门话术 ✓（原来是各处 if 判 ✓）
+    if (strcmp(type_name, "double") == 0) {
+        snprintf(buf, size,
+                 "（Leno 中使用 float 代替 double，Leno 的 float 是 64 位双精度浮点数）");
+        return;
+    }
+
+    if (s) {
+        for (int i = 0; i < s->imported_module_count; i++) {
+            ImportedModuleInfo* im = &s->imported_modules[i];
+            if (!im->sym_table || !im->alias) continue;
+            ModuleSymbolTable* t = im->sym_table;
+            const char* kind = NULL;
+            if (module_symbol_table_find_struct(t, type_name)) kind = "struct";
+            else if (module_symbol_table_find_face(t, type_name)) kind = "face";
+            else if (module_symbol_table_find_enum(t, type_name)) kind = "enum";
+            else if (module_symbol_table_find_alias(t, type_name)) kind = "别名";
+            else if (module_symbol_table_find_clib(t, type_name)) kind = "clib";
+            if (kind) {
+                snprintf(buf, size,
+                         "（它其实是模块 '%s' 导出的 %s ⇒ 请补一句 `use %s.%s` ✓；"
+                         "源码里**出现它的每一处**都要在 use 列表里 —— 泛型参数里（如 Array[%s]）也算 ✓）",
+                         im->alias, kind, im->alias, type_name, type_name);
+                return;
+            }
+        }
+    }
+    snprintf(buf, size, "（请检查是否已通过 use 语句导入该类型，如 use module.%s）", type_name);
+}
+
+// ============================================================================
 // printf 名字骗人（WARN_PRINTF_NO_FORMAT）—— **唯一实现**（2026-10-10 加）
 // ----------------------------------------------------------------------------
 // 症状（速查 §三 ㉖ 实测）：`printf("%d = %s\n", 3, "x")` **一声不吭** ✗ —— `%d`/`%s`

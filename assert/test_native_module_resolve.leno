@@ -82,6 +82,51 @@ main() {
         "import maths" + n + n + "use maths.not_a_real_func" + n + "main() { print(1) }" + n,
         3, "use 只能导入")
 
+    // === A 组第 4 条（2026-10-10）：`use` 漏类型 ⇒ 报错要**说清它是哪个模块导出的** ===
+    //   实测背景（速查 §一③ / §二②）：漏一个类型时只报「未定义的类型: Label（请检查是否已
+    //   通过 use 语句导入该类型，如 use module.Label）」✗ —— 问题在于：
+    //     · 报错点在**使用那一行**（不是 use / import 那行 ✓）；
+    //     · 最容易漏的是"只出现在**泛型参数 / 返回类型**里"的类型（`Array[Button]` 的 Button ✗）；
+    //     · lint 常抓不到（它不跑完整模块符号表 ✓）⇒ 只能靠编译器把话说到位 ✓。
+    //   现在：报错时直接去**已导入模块的符号表**里按名字找（struct/face/enum/别名/clib ✓）
+    //   ⇒ 命中就点名模块 ✓（七处拷贝合并成一个共享实现 ✓ 见 semantic_undefined_type_hint ✓）
+    var modx_src = "export struct Widget { int x = 1 }" + n
+        + "export enum Color { Red, Green }" + n
+        + "export func hey(): int { return 1 }" + n
+    files.write(dirs.join(work, "modx.leno"), modx_src)
+
+    // ① 普通声明缺 use ⇒ 点名「模块 'modx' 导出的 struct」
+    expect_compile_error(work, "use_hint_struct",
+        "import \"./modx.leno\" as modx" + n
+        + "main() {" + n
+        + "    Widget w" + n
+        + "}" + n,
+        3, "它其实是模块 'modx' 导出的 struct")
+
+    // ② **泛型参数里**的类型（最容易漏的一种 ✓）⇒ 同样要点名
+    expect_compile_error(work, "use_hint_generic",
+        "import \"./modx.leno\" as modx" + n
+        + "main() {" + n
+        + "    Array[Widget] ws = []" + n
+        + "}" + n,
+        3, "它其实是模块 'modx' 导出的 struct")
+
+    // ③ **返回类型里**的 enum ⇒ 要点名，且说清是 enum（不是 struct ✓）
+    expect_compile_error(work, "use_hint_enum_ret",
+        "import \"./modx.leno\" as modx" + n
+        + "func pick(): Color { return 0 }" + n
+        + "main() { print(1) }" + n,
+        2, "它其实是模块 'modx' 导出的 enum")
+
+    // ④（防误报 ✓）**真的谁都没有**这个名字 ⇒ 必须退回原来那句泛泛提示 ✓
+    //   钉的是"不许乱指模块" ✗ —— 造一个假建议比不报更坏 ✓
+    //   （判据用兜底文案本身 ✓：命中模块那条**不含**这句话 ✓ 两者互斥 ✓）
+    expect_compile_error(work, "use_hint_none",
+        "main() {" + n
+        + "    Zzz q" + n
+        + "}" + n,
+        2, "请检查是否已通过 use 语句导入该类型")
+
     dirs.delete(work)
     print("test_native_module_resolve passed")
 }

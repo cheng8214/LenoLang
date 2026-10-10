@@ -132,12 +132,13 @@
                             //   这类标注合法 —— 名字不在符号表里，但字段表由 native 规格提供
                             //   （与字段解析、运行期 ObjStructDef 同源）⇒ 保持 TYPE_STRUCT + 名字即可
                         } else if (!struct_def) {
-                            char msg[BUFFER_MEDIUM];
-                            if (strcmp(type_name, "double") == 0) {
-                                snprintf(msg, sizeof(msg), "未定义的类型: %s（Leno 中使用 float 代替 double，Leno 的 float 是 64 位双精度浮点数）", type_name);
-                            } else {
-                                snprintf(msg, sizeof(msg), "未定义的类型: %s（请检查是否已通过 use 语句导入该类型，如 use module.%s）", type_name, type_name);
-                            }
+                            char msg[1024];   /* 大于 BUFFER_MEDIUM：容纳中文 + 共享提示 ✓ */
+                            char hint[BUFFER_MEDIUM];
+                            // ★ 2026-10-10：提示改由**共享实现**生成 —— 它会去已导入模块里
+                            //   按名字找（命中就说清是哪个模块导出的 ✓），`double` 的专门
+                            //   话术也归它 ✓（原来这八处各写一份 ✗）
+                            semantic_undefined_type_hint(s, type_name, hint, sizeof(hint));
+                            snprintf(msg, sizeof(msg), "未定义的类型: %s%s", type_name, hint);
                             error_add_at(ERR_UNDEFINED_VAR, ast->line, ast->column, msg);
                             declared_type_undefined = 1;
                         } else if (struct_def->kind == SYM_TYPE && struct_def->type) {
@@ -153,12 +154,10 @@
                         } else if (!struct_def->type ||
                                    (struct_def->type->kind != TYPE_STRUCT &&
                                     struct_def->type->kind != TYPE_FACE)) {
-                            char msg[BUFFER_MEDIUM];
-                            if (strcmp(type_name, "double") == 0) {
-                                snprintf(msg, sizeof(msg), "未定义的类型: %s（Leno 中使用 float 代替 double，Leno 的 float 是 64 位双精度浮点数）", type_name);
-                            } else {
-                                snprintf(msg, sizeof(msg), "未定义的类型: %s（请检查是否已通过 use 语句导入该类型，如 use module.%s）", type_name, type_name);
-                            }
+                            char msg[1024];   /* 同上一处：容纳中文 + 共享提示 ✓ */
+                            char hint[BUFFER_MEDIUM];
+                            semantic_undefined_type_hint(s, type_name, hint, sizeof(hint));
+                            snprintf(msg, sizeof(msg), "未定义的类型: %s%s", type_name, hint);
                             error_add_at(ERR_UNDEFINED_VAR, ast->line, ast->column, msg);
                             declared_type_undefined = 1;
                         }
@@ -182,8 +181,10 @@
                                 type_free(ast->u.var_decl.type);
                                 ast->u.var_decl.type = type_copy(struct_def->type);
                             } else {
-                                char msg[BUFFER_MEDIUM];
-                                snprintf(msg, sizeof(msg), "未定义的类型: %s（请检查是否已通过 use 语句导入该类型，如 use module.%s）", type_name, type_name);
+                                char msg[1024];   /* 同上一处：容纳中文 + 共享提示 ✓ */
+                                char hint[BUFFER_MEDIUM];
+                                semantic_undefined_type_hint(s, type_name, hint, sizeof(hint));
+                                snprintf(msg, sizeof(msg), "未定义的类型: %s%s", type_name, hint);
                                 error_add_at(ERR_UNDEFINED_VAR, ast->line, ast->column, msg);
                                 declared_type_undefined = 1;
                             }
@@ -334,9 +335,11 @@
                                    (struct_def->type->kind != TYPE_STRUCT &&
                                     struct_def->type->kind != TYPE_CSTRUCT &&
                                     struct_def->type->kind != TYPE_FACE)) {
-                            char msg[BUFFER_MEDIUM];
-                            snprintf(msg, sizeof(msg), "未定义的类型: %s（请检查是否已通过 use 语句导入该类型，如 use module.%s）",
-                                     sym->type->struct_name, sym->type->struct_name);
+                            char msg[1024];   /* 同上一处：容纳中文 + 共享提示 ✓ */
+                            char hint[BUFFER_MEDIUM];
+                            semantic_undefined_type_hint(s, sym->type->struct_name, hint, sizeof(hint));
+                            snprintf(msg, sizeof(msg), "未定义的类型: %s%s",
+                                     sym->type->struct_name, hint);
                             error_add_at(ERR_UNDEFINED_VAR, ast->line, ast->column, msg);
                         }
                     }

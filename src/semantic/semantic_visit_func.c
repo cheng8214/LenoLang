@@ -21,12 +21,12 @@ static void check_undefined_type(Semantic* s, TypeInfo* type, int line, int colu
         // 完全找不到 → 未定义的类型
         //   （native struct 是唯一例外：`DirEntry` / `DirInfo` 不在符号表里，但字段表由
         //     native 规格提供 ⇒ 见 semantic_native_struct_known 的说明）
-        char msg[BUFFER_MEDIUM];
-        if (type->struct_name && strcmp(type->struct_name, "double") == 0) {
-            snprintf(msg, sizeof(msg), "未定义的类型: %s（Leno 中使用 float 代替 double，Leno 的 float 是 64 位双精度浮点数）", type->struct_name);
-        } else {
-            snprintf(msg, sizeof(msg), "未定义的类型: %s（请检查是否已通过 use 语句导入该类型，如 use module.%s）", type->struct_name, type->struct_name);
-        }
+        char msg[1024];   /* 大于 BUFFER_MEDIUM：容纳中文 + 共享提示 ✓ */
+        char hint[BUFFER_MEDIUM];
+        // ★ 2026-10-10：`double` 的专门话术与"该去哪个模块导"都挪进共享实现 ✓
+        //   （原来这里是自己 if/else 各写一句 ✗ 全仓八处拷贝之一 ✓）
+        semantic_undefined_type_hint(s, type->struct_name, hint, sizeof(hint));
+        snprintf(msg, sizeof(msg), "未定义的类型: %s%s", type->struct_name, hint);
         error_add_at(ERR_SEMANTIC, err_line, err_column, msg);
     }
         // 找到了就是合法的 struct 类型（alias 已在 resolve_alias_in_type 中解析）

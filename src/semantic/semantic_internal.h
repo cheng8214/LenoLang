@@ -69,6 +69,14 @@ int semantic_check_method_args_from_placeholder(Semantic* s, const char* struct_
                                                 const char* method_name, AstList* args,
                                                 int line, int column);
 
+// 「未定义的类型」提示（**唯一实现**，2026-10-10 加 / A 组第 4 条）：去**已导入模块**的
+//   符号表里按名字找（struct/face/enum/别名/clib ✓）⇒ 命中就写清「它其实是模块 'X' 导出的
+//   某类 ⇒ 请补 `use X.名字`」✓；找不到才退回泛泛提示 ✓。
+//   为什么要共享：这句话在本仓有**七处拷贝** ✗（实测：visit_var.inc 四处 / visit_type_def.inc 一处 /
+//   semantic_visit_func.c 一处 / visit_module.inc 一处）⇒ 各写各的必然改漏 ✓。buf 写成"（…）"（含括号 ✓）
+//   ⇒ 调用方直接 `snprintf(msg, …, "未定义的类型: %s%s", type_name, hint)` 即可 ✓。
+void semantic_undefined_type_hint(Semantic* s, const char* type_name, char* buf, size_t size);
+
 // printf 名字骗人（WARN_PRINTF_NO_FORMAT，2026-10-10 加）：`printf` 只做"**不换行打印**"、
 // **不做 % 格式化** ✗（实测：`printf("%d = %s\n", 3, "x")` 不报错、`%d` 原样打出 ✓）
 // ⇒ 首参是**含 '%' 的字符串字面量**且**实参 > 1** 时提醒 ✓（其它形状一律不报 ✓ 少报不误报）

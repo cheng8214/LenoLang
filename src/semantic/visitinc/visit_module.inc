@@ -1924,7 +1924,7 @@
                         error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     } else {
                         // 方法不存在于该类型
-                        char msg[BUFFER_MEDIUM];
+                        char msg[1024];   /* 大于 BUFFER_MEDIUM：下面要拼共享提示（中文较长 ✓） */
                         // ★ 增强报错：当类型是 TYPE_STRING 且方法名是 contains/includes 时，提示用 has
                         if (obj_sym->type->kind == TYPE_STRING &&
                             (strcmp(method_name, "contains") == 0 || strcmp(method_name, "includes") == 0)) {
@@ -1934,8 +1934,13 @@
                             const char* tn = obj_sym->type->struct_name;
                             Symbol* def_sym = scope_resolve_tree_bfs(s->root_scope, tn);
                             if (!def_sym) {
-                                snprintf(msg, sizeof(msg), "类型 '%s' 没有方法 '%s'（类型 '%s' 未定义，请检查是否已通过 use 语句导入该类型，如 use module.%s）",
-                                         type_to_string(obj_sym->type), method_name, tn, tn);
+                                // ★ 2026-10-10：提示走**共享实现** ⇒ 直接说清"它是哪个模块导出的" ✓
+                                //   （grep 出来的第九处拷贝 ✗ —— 上面几处是按 build/运行时那句找的，
+                                //    这一处藏在"类型没有方法"里 ✓ 说明"照着报错文案 grep"才找得全 ✓）
+                                char hint[BUFFER_MEDIUM];
+                                semantic_undefined_type_hint(s, tn, hint, sizeof(hint));
+                                snprintf(msg, sizeof(msg), "类型 '%s' 没有方法 '%s'：类型 '%s' 未定义%s",
+                                         type_to_string(obj_sym->type), method_name, tn, hint);
                             } else {
                                 snprintf(msg, sizeof(msg), "类型 '%s' 没有方法 '%s'%s",
                                          type_to_string(obj_sym->type), method_name,

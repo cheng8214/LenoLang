@@ -97,11 +97,15 @@
                                      ref_type->type->kind != TYPE_CLIB &&
                                      ref_type->type->kind != TYPE_CSTRUCT &&
                                      ref_type->type->kind != TYPE_FACE)) {
-                                    char msg[BUFFER_MEDIUM];
-                                    snprintf(msg, sizeof(msg), "struct '%s' 的字段 '%s' 使用了未定义的类型 '%s'（请检查是否已通过 use 语句导入该类型，如 use module.%s）",
-                                             ast->u.struct_def.name,
+                                    char msg[1024];   /* 大于 BUFFER_MEDIUM：容纳中文 + 提示（同 §"方法不存在"那处 ✓） */
+                                    char hint[BUFFER_MEDIUM];
+                                    // ★ 2026-10-10：提示走共享实现 ⇒ 会去已导入模块里找它 ✓
+                                    semantic_undefined_type_hint(s, field_type->struct_name, hint, sizeof(hint));
+                                    snprintf(msg, sizeof(msg), "%s: struct '%s' 的字段 '%s' 使用了未定义的类型 '%s'",
+                                             "未定义的类型", ast->u.struct_def.name,
                                              ast->u.struct_def.field_names[i],
-                                             field_type->struct_name, field_type->struct_name);
+                                             field_type->struct_name);
+                                    strncat(msg, hint, sizeof(msg) - strlen(msg) - 1);
                                     error_add_at(ERR_UNDEFINED_VAR, ast->line, ast->column, msg);
                                 } else if (ref_type->type->kind == TYPE_CLIB) {
                                     // 修正字段类型为 TYPE_CLIB
