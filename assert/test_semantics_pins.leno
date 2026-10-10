@@ -279,6 +279,56 @@ main() {
         + "}" + n)
     ce.expect_ok(p26, "_int_or：null 变 0、不去空格", "0|42|7")
 
+    // ---------- 第十二批（FFI / cstruct ✓）实测后补的钉桩 ----------
+
+    // P27 ★ cstruct 布局与 **C ABI 逐项一致** ✓（size / offset_of / alignment ✓）
+    //   钉住它 = 钉住"能安全地和 C 共享内存布局"这件承诺 ✓（哪天布局算法被改坏会红 ✓）
+    var p27 = dirs.join(work, "cstruct_layout.leno")
+    files.write(p27, "cstruct Normal { u8 a  i32 b  u8 c }" + n
+        + "packed cstruct PackedDemo { u8 a  i32 b  u8 c }" + n
+        + "align(16) cstruct A { i32 a }" + n
+        + "cstruct Ar { i32 n  i32 v[4] }" + n
+        + "main() {" + n
+        + "    var nn = Normal.malloc()" + n
+        + "    var qq = PackedDemo.malloc()" + n
+        + "    var aa = A.malloc()" + n
+        + "    var ar = Ar.malloc()" + n
+        + "    print(_str(nn.size()) + \"|\" + _str(nn.offset_of(\"b\")) + \"|\" + _str(nn.offset_of(\"c\")) + \"|\" + _str(nn.alignment())" + n
+        + "        + \"|\" + _str(qq.size()) + \"|\" + _str(qq.offset_of(\"b\")) + \"|\" + _str(qq.alignment())" + n
+        + "        + \"|\" + _str(aa.size()) + \"|\" + _str(aa.alignment())" + n
+        + "        + \"|\" + _str(ar.size()) + \"|\" + _str(ar.offset_of(\"v\")) + \"\\n\")" + n
+        + "    nn.free(); qq.free(); aa.free(); ar.free()" + n
+        + "}" + n)
+    ce.expect_ok(p27, "cstruct 布局对齐 C ABI（Normal/packed/align16/数组字段）",
+        "12|4|8|4|6|1|1|16|16|20|4")
+
+    // P28 ★ **非对齐** int64 读写是正确的 ✓（可以放心按字节偏移拼包 ✓）
+    var p28 = dirs.join(work, "ffi_unaligned.leno")
+    files.write(p28, "import ffi" + n
+        + "main() {" + n
+        + "    Ptr p = ffi.malloc(16)" + n
+        + "    ffi.write_int64(p, 0, 1234567890123)" + n
+        + "    ffi.write_double(p, 8, 3.25)" + n
+        + "    string ok = _str(ffi.read_int64(p, 0)) + \"|\" + _str(ffi.read_double(p, 8))" + n
+        + "    ffi.write_int64(p, 1, 42)" + n
+        + "    print(ok + \"|\" + _str(ffi.read_int64(p, 1)) + \"\\n\")" + n
+        + "    ffi.free(p)" + n
+        + "    ffi.free(ffi.nullptr())" + n
+        + "    print(\"free(null) ok\\n\")" + n
+        + "}" + n)
+    ce.expect_ok(p28, "非对齐 int64 读写正确 / free(null) 安全",
+        "1234567890123|3.25|42")
+
+    // P29：`ffi.alloc("int")` **初值可省** ✓（清零 ✓）
+    var p29 = dirs.join(work, "ffi_alloc_optional.leno")
+    files.write(p29, "import ffi" + n
+        + "main() {" + n
+        + "    Ptr a = ffi.alloc(\"int\")" + n
+        + "    Ptr b = ffi.alloc(\"int\", 7)" + n
+        + "    print(_str(ffi.read_int(a, 0)) + \"|\" + _str(ffi.read_int(b, 0)) + \"\\n\")" + n
+        + "}" + n)
+    ce.expect_ok(p29, "ffi.alloc 初值可省（清零）", "0|7")
+
     dirs.delete(work)
 
     print("test_semantics_pins passed")
