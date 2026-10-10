@@ -153,9 +153,9 @@ export struct Label impl Widget, Themeable {
             string cur = ""
             float curW = 0.0
             int n = ln.len()
-            // ★ 2026-10-02 收编：原先逐字符 `ln.slice(k, k+1)` 每轮**从头扫**到第 k 个字符（整段 O(n²)）
+            // ★ 2026-10-02 收编：原先逐字符（旧口径，slice 不含 end）`ln.slice(k, k+1)` 每轮**从头扫**到第 k 个字符（整段 O(n²)）
             //   ⇒ 改为一趟 `to_codepoints` 取码点 + `from_codepoint` 还原单字符串喂 measureString ✓
-            //   等价：`from_codepoint(to_codepoints(s)[k]) == s.slice(k, k+1)`（对拍 0 分歧 ✓）
+            //   等价：`from_codepoint(to_codepoints(s)[k]) == s.slice(k, k)`（对拍 0 分歧 ✓；新口径含 end）
             Array[int] cps = strings.to_codepoints(ln)
             for n to k {
                 string ch = strings.from_codepoint(cps[k])
@@ -268,9 +268,9 @@ export struct Label impl Widget, Themeable {
         int textLen = text.len()
         int tailStart = textLen
         float tailW = 0.0
-        // ★ 2026-10-02 收编（本函数 2 处，共用这一趟）：原先两个循环都逐字符 `text.slice(i, i+1)`
+        // ★ 2026-10-02 收编（本函数 2 处，共用这一趟）：原先两个循环都逐字符（旧口径，slice 不含 end）`text.slice(i, i+1)`
         //   —— 每轮都要**从头扫**到第 i 个字符（整段 O(n²)）且每字符造一个临时串 ✗
-        //   等价：`from_codepoint(to_codepoints(s)[k]) == s.slice(k, k+1)`（对拍 0 分歧 ✓）
+        //   等价：`from_codepoint(to_codepoints(s)[k]) == s.slice(k, k)`（对拍 0 分歧 ✓；新口径含 end）
         Array[int] cps = strings.to_codepoints(text)
         for textLen - 1 : 0 to i {
             string ch = strings.from_codepoint(cps[i])

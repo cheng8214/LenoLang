@@ -595,7 +595,7 @@ export func norm_path(string p): string {
     s = strings.to_lower(s)
     s = strings.trim(s)
     while s.len() > 2 and strings.ends_with(s, "\\") {
-        s = strings.slice(s, 0, (s.len() - 1) - 1)
+        s = strings.slice(s, 0, s.len() - 2)
     }
     if s.len() == 3 and strings.ends_with(s, "\\") { s = strings.slice(s, 0, 1) }
     return s

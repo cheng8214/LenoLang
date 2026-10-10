@@ -216,7 +216,7 @@ Array[int]    _dragSelRows = []    // 鼠标按下时捕获的多选行（拖拽
         string s = p
         while s.len() > 0 {
             string last = s.slice(s.len() - 1, s.len())
-            if last == "\\" or last == "/" { s = s.slice(0, (s.len() - 1) - 1) } else { break }
+            if last == "\\" or last == "/" { s = s.slice(0, s.len() - 2) } else { break }
         }
         if s.len() == 0 { return p }
         return s

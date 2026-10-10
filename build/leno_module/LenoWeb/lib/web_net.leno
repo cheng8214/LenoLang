@@ -141,7 +141,7 @@ export struct Response {
             string line = headers.slice(pos, lineEnd - 1)
             // 去掉行尾 \r
             if line.ends_with("\r") {
-                line = line.slice(0, (line.len() - 1) - 1)
+                line = line.slice(0, line.len() - 2)
             }
             int colon = strings.find(line, ":")
             if colon >= 0 {

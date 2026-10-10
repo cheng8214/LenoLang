@@ -167,7 +167,7 @@ export func normalize(string charset): string {
     if n >= 2 {
         int b0 = _byteAt(s, 0)
         if (b0 == 34 or b0 == 39) and _byteAt(s, n - 1) == b0 {
-            s = s.byte_slice(1, (n - 1) - 1)
+            s = s.byte_slice(1, n - 2)
             n = s.byte_len()
         }
     }

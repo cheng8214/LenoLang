@@ -1344,7 +1344,7 @@ export func sitemapUrl(string baseUrl): string {
         return clean
     }
     if clean.ends_with("/") {
-        clean = clean.slice(0, (clean.len() - 1) - 1)
+        clean = clean.slice(0, clean.len() - 2)
     }
     return clean + "/sitemap.xml"
 }
@@ -1355,7 +1355,7 @@ export func robotsUrl(string baseUrl): string {
     string clean = strings.trim(baseUrl)
     if clean.ends_with("/robots.txt") { return clean }
     if clean.ends_with("/") {
-        clean = clean.slice(0, (clean.len() - 1) - 1)
+        clean = clean.slice(0, clean.len() - 2)
     }
     return clean + "/robots.txt"
 }

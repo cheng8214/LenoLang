@@ -73,6 +73,7 @@ export struct SpinBox impl Widget, Themeable {
         int i = 0
         bool neg = false
         // ★ 2026-10-02 收编：原先循环里每次 `s.slice(k, k+1)` 都要从头扫到第 k 个字符
+//   （注：那是**旧口径**（slice 不含 end）的单字符写法；2026-10-10 起 slice 含 end ⇒ 单字符写 `slice(k, k)`）
         //   ⇒ 整个解析是 **O(n²)**。改用 native `to_codepoints` 一趟取全部码点（O(n)），
         //   循环里只做 O(1) 索引，且**不再造单字符临时串** ✓
         //   等价：`codepoint_at(s,k) == to_codepoints(s)[k]`（对拍 0 分歧 ✓）；判据同为

@@ -2674,7 +2674,7 @@ void gen_module_call(CodeGen* gen, Ast* ast, int dst) {
         //   （visit_module.inc 的隐式转换表），但这里此前只裸传 Value —— 而模块侧
         //   转换器（value_to_double / 各模块本地副本）只认 int/float/bigint ⇒
         //   bool 被读成 0（实测 maths.cos(true)==1.0=cos(0)、
-        //   strings.sub_str("hello",true,3)=="hel"=起点 0 —— 两通道全坏），
+        //   strings.take("hello",true,3)=="hel"=起点 0 —— 两通道全坏），
         //   bigint 进 val_as_int 读到的是指针垃圾位。
         //   口径对齐**赋值通道**（OP_CAST_FLOAT/INT 的 bool/bigint 分支，true→1 ✓）：
         //   按形参声明补发 cast；查询越界/ANY 形参原样返回 ⇒ 不发（零影响）。

@@ -93,7 +93,7 @@ func replace_icase_literal(string text, string src, string dst):string {
     // ★ 2026-10-02 收编：原先每轮 `out = out + ...` 逐段拼串 ⇒ 整体 **O(n²)**（每次拼接重新分配整串）。
     //   改成收进数组、最后一趟 `strings.join`（native、一趟分配）⇒ O(n) ✓
     //   等价：拼接**顺序与内容逐字节不变**；单字节那段用 `strings.char(text.byte(i))` 代替
-    //   `strings.byte_slice(text, i, i+1)`（0-255 全量对拍 0 分歧 ✓ 见 cp_eq 对拍）
+    //   `strings.byte_slice(text, i, i)`（单字节；旧口径写作 i+1，2026-10-10 起 byte_slice 闭区间含 end）（0-255 全量对拍 0 分歧 ✓ 见 cp_eq 对拍）
     Array[string] out = []
     int i = 0
     while i + n <= tl {

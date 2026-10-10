@@ -102,7 +102,8 @@ main() {
     assert_eq(strings.from_codepoint(20013), "中", "⑦中文（3 字节）")
     assert_eq(strings.from_codepoint(128578), "🙂", "⑦emoji（4 字节）")
     assert_eq("x".from_codepoint(65), "A", "⑦实例式（接收者被忽略，与模块式同结果）")
-    // 与 slice 逐字符一致 —— sdl_label / sdl_edit 的逐字测宽循环正是靠这条替代 slice(i, i+1)
+    // 与 slice 逐字符一致 —— sdl_label / sdl_edit 的逐字测宽循环正是靠这条替代 slice(i, i)
+    //   （旧口径写作 slice(i, i+1)；2026-10-10 起 slice 闭区间含 end ⇒ 单字符是 slice(i, i)）
     var rt = "a中🙂Ä"
     Array[int] cps7 = rt.to_codepoints()
     assert_eq(cps7.len(), rt.len(), "⑦码点数 == len()（字符数）")
@@ -113,7 +114,7 @@ main() {
     for 0:rt.len() - 1 to i {
         if strings.from_codepoint(cps7[i]) != rt.slice(i, i) { diff7 += 1 }
     }
-    assert_eq(diff7, 0, "⑦from_codepoint(cps[i]) == slice(i, i+1)（逐字符一致）")
+    assert_eq(diff7, 0, "⑦from_codepoint(cps[i]) == slice(i, i)（逐字符一致）")
     // UTF-8 长度档位边界（1/2/3/4 字节）
     assert_eq(strings.from_codepoint(127).byte_len(), 1, "⑦0x7F ⇒ 1 字节")
     assert_eq(strings.from_codepoint(128).byte_len(), 2, "⑦0x80 ⇒ 2 字节")

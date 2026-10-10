@@ -190,7 +190,7 @@ struct CacheCleaner {
         if s.len() != 16 { return false }
         int i = 0
         while i < 16 {
-            // ★ 2026-10-02 收编：原先 `byte_slice(i, i+1)` 造一个单字节临时串再跟字面量比字符串 ⇒
+            // ★ 2026-10-02 收编：原先（旧口径，byte_slice 不含 end）`byte_slice(i, i+1)` 造一个单字节临时串再跟字面量比字符串 ⇒
             //   改用 native `byte(i)` 取**字节值**、直接比数值区间（不分配）✓
             //   等价：0-255 全量对拍 0 分歧（字符串比较 ⇔ 字节值区间，见 cp_eq 对拍）✓
             int b = s.byte(i)
