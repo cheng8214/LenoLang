@@ -307,7 +307,6 @@ export struct MenuBar impl Widget, Themeable {
     pri func recalcAutoWidth() {
         if _titles.len() == 0 or _font == null or not _font.ok { return }
         float totalW = 0.0
-        float fontH = _float(_font.height)
         for _titles.len() to i {
             if i < ctxFlag.len() and ctxFlag[i] { continue }  // 跳过上下文菜单
             var[float, float](tw, th) = _font.measureString(_titles[i])

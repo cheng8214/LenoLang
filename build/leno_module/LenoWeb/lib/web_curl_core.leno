@@ -389,7 +389,11 @@ export func setopt_double(Ptr[u8] handle, int option, float value): int {
 // 获取整数信息
 export func getinfo_int(Ptr[u8] handle, int option): int {
     Ptr[u8] buf = ffi.malloc(8)
-    int rc = ffi.call_int(lib(), "curl_easy_getinfo", handle, option, buf)
+    // ⚠ 返回码**有意不检查**（curl 失败时下面的 read 读到的就是未初始化的值 ✓）——
+    //   改名 `_rc` 是按编译器"未使用变量"的建议显式声明这个意图 ✓
+    //   （2026-10-10：这条警告是新加的未使用变量检查报出来的 ✓ 真正的修法是给调用方
+    //    加错误处理 ✓ 那是行为变更 ⇒ 留待单独评估 ✓）
+    int _rc = ffi.call_int(lib(), "curl_easy_getinfo", handle, option, buf)
     int val = ffi.read_int64(buf, 0)
     ffi.free(buf)
     return val
@@ -398,7 +402,11 @@ export func getinfo_int(Ptr[u8] handle, int option): int {
 // 获取字符串信息
 export func getinfo_str(Ptr[u8] handle, int option): string {
     Ptr[u8] buf = ffi.malloc(8)
-    int rc = ffi.call_int(lib(), "curl_easy_getinfo", handle, option, buf)
+    // ⚠ 返回码**有意不检查**（curl 失败时下面的 read 读到的就是未初始化的值 ✓）——
+    //   改名 `_rc` 是按编译器"未使用变量"的建议显式声明这个意图 ✓
+    //   （2026-10-10：这条警告是新加的未使用变量检查报出来的 ✓ 真正的修法是给调用方
+    //    加错误处理 ✓ 那是行为变更 ⇒ 留待单独评估 ✓）
+    int _rc = ffi.call_int(lib(), "curl_easy_getinfo", handle, option, buf)
     Ptr[u8] ptr = ffi.read_ptr(buf, 0)
     string s = ""
     if ptr != null { s = ffi.read_string(ptr, 0) }
@@ -409,7 +417,11 @@ export func getinfo_str(Ptr[u8] handle, int option): string {
 // 获取浮点信息
 export func getinfo_double(Ptr[u8] handle, int option): float {
     Ptr[u8] buf = ffi.malloc(8)
-    int rc = ffi.call_int(lib(), "curl_easy_getinfo", handle, option, buf)
+    // ⚠ 返回码**有意不检查**（curl 失败时下面的 read 读到的就是未初始化的值 ✓）——
+    //   改名 `_rc` 是按编译器"未使用变量"的建议显式声明这个意图 ✓
+    //   （2026-10-10：这条警告是新加的未使用变量检查报出来的 ✓ 真正的修法是给调用方
+    //    加错误处理 ✓ 那是行为变更 ⇒ 留待单独评估 ✓）
+    int _rc = ffi.call_int(lib(), "curl_easy_getinfo", handle, option, buf)
     float val = ffi.read_double(buf, 0)
     ffi.free(buf)
     return val

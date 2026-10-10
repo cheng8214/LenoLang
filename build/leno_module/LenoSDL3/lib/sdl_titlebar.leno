@@ -1102,7 +1102,6 @@ if ev.isWindowRestored() { maximized = false; btnHover = BTN_NONE; motionSkipCou
         if centerWidget != null {
             // 尝试调用 center_widget 的 renderPopup（MenuBar 有此方法）
             // 用类型检查确保安全
-            var w = centerWidget
             // MenuBar 的 renderPopup 在展开时绘制下拉层
             // 由于 Leno 的动态分发限制，这里通过检查 isOpen 状态来决定是否需要弹层渲染
             // 实际上 MenuBar 的 renderPopup 是独立方法，我们需要直接调用
