@@ -1,0 +1,140 @@
+// 警告类诊断回归（2026-10-10 新增）
+//
+// 为什么要有这个文件：套件原本只有「**必须编译失败**」的入口（`ce.expect_error` ✗），
+//   而"漏写 return / 不可达代码"这类诊断是**警告** —— 编译**成功**（exit=0）✓ ⇒
+//   它们在套件里表达不出来 ✗。实测后果：`WARN_UNUSED_VAR` / `WARN_UNREACHABLE`
+//   在 leno_types.h 里有枚举、在 error.c 里有名字表，却**全仓零调用点** ✗
+//   （= 检查根本没实现，也永远不会有人发现 ✓）。⇒ 本文件 + `ce.expect_warning`
+//   补上"警告也能被钉住"这条入口 ✓。
+//
+// 本文件覆盖的两条检查（都是本轮体检发现"静默放过"后实现的 ✓）：
+//   A. `[漏写 return]`（WARN_MISSING_RETURN ✓）：函数声明了返回类型却存在走到底的路径。
+//      实测危害：调用点**静默拿到 null** ✗（不报错、不警告 ⇒ 极难查 ✓）。
+//   B. `[不可达代码]`（WARN_UNREACHABLE ✓）：终止语句（return/throw/break/continue）后面
+//      紧邻的语句永远不会执行。
+//
+// ⚠ 一半的用例是**防误报对照**（"不该报"✓）：新检查最容易在大代码库上刷屏 ✗ ——
+//   实测过一次：A 的初版在 SDL3 上刷出 **254 条全误报** ✗（根因：没排除 void 函数
+//   在 AST 里的 `TYPE_INFER` 占位 ✓），第二版又被 `try/catch { return ... }` 这种
+//   完全正确的写法误报 ✗。这两条都已修 ✓ 并在这里钉住 ✓。
+
+import dirs
+import files
+
+// 起编译器子进程 + 判据的共享工具（命令行拼接、失败判据的唯一实现，见 S7）
+import "helpers/compiler.leno" as ce
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_diag_warnings")
+    // 先清一次：上次若中途断言失败会留下工作目录与 .lenocache，
+    // 而"应当编译成功"的对照用例一旦命中旧缓存就直接过 ⇒ 回归就验不出来了 ✓
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ==================== A. 漏写 return ====================
+
+    // A1：`if` 没有 else ⇒ 存在"走到底"的路径 ⇒ 必须报，且落在**函数声明行**（第 1 行）
+    var p1 = dirs.join(work, "missing_return_if.leno")
+    files.write(p1,
+        "func half(int x): int {\n"
+        + "    if x > 0 { return x }\n"
+        + "}\n"
+        + "\n"
+        + "main() { print(_str(half(1)) + \"\\n\") }\n")
+    ce.expect_warning(p1, "漏写 return：if 无 else", "[漏写 return]", 1)
+
+    // A2（防误报 ✓）：**末尾 return 之后压着死代码**时，不能报"漏写 return" ✗
+    //   钉的是本轮修掉的一个自误报：块内原先只看"最后一条语句" ⇒ 被死代码骗 ⇒
+    //   `func f(): int { return 1; print("dead") }` 被误判成漏 return ✗
+    //   （现改成**正序扫、任一条必然离开即算离开** ✓；那句死代码由 B 单独提示 ✓）
+    var p2 = dirs.join(work, "dead_after_return.leno")
+    files.write(p2,
+        "func f(): int {\n"
+        + "    return 1\n"
+        + "    print(\"dead\\n\")\n"
+        + "}\n"
+        + "\n"
+        + "main() { print(_str(f()) + \"\\n\") }\n")
+    var o2 = ce.expect_warning(p2, "不可达：return 后有死代码", "[不可达代码]", 3)
+    ce.expect_no_warning(o2, "不可达：return 后有死代码（不该连带报漏 return）", "[漏写 return]")
+
+    // A3（防误报 ✓）：`try { ... return ... } catch { ... return ... }` 是**正确**写法 ⇒
+    //   两边都必然离开 ⇒ 不该报 ✗（本仓 sdl_table 的 to_float / is_number_str 就是它 ✓
+    //   初版把这种写法全报成漏 return ⇒ 警告数从个位数顶到 200+ ✗）
+    var p3 = dirs.join(work, "try_both_return.leno")
+    files.write(p3,
+        "func pick(int n): int {\n"
+        + "    try {\n"
+        + "        return n + 1\n"
+        + "    } catch {\n"
+        + "        return 0\n"
+        + "    }\n"
+        + "}\n"
+        + "\n"
+        + "main() { print(_str(pick(1)) + \"\\n\") }\n")
+    var o3 = ce.expect_ok(p3, "对照组：try/catch 两支都 return", "")
+    ce.expect_no_warning(o3, "对照组：try/catch 两支都 return", "[漏写 return]")
+
+    // A4（对照 ✓）：`if / else` 两支都 return ⇒ 必然离开 ⇒ 不该报 ✗（钉 if-else 规则 ✓）
+    var p4 = dirs.join(work, "if_else_both_return.leno")
+    files.write(p4,
+        "func sign(int n): int {\n"
+        + "    if n > 0 {\n"
+        + "        return 1\n"
+        + "    } else {\n"
+        + "        return -1\n"
+        + "    }\n"
+        + "}\n"
+        + "\n"
+        + "main() { print(_str(sign(1)) + \"\\n\") }\n")
+    var o4 = ce.expect_ok(p4, "对照组：if/else 两支都 return", "")
+    ce.expect_no_warning(o4, "对照组：if/else 两支都 return", "[漏写 return]")
+
+    // A5（**已知取舍**，钉当前口径 ✓）：`while true { return }` 在静态上必然离开，
+    //   但判定**保守**（只认 return/throw/if-else/switch/try ✓，不认"恒真循环 + 无 break"✗）
+    //   ⇒ 这里会**误报**一条 ✓。取舍理由：认它就得解析条件是否为字面 true ✗，
+    //   而那类写法少、误判风险高 ✓ —— 宁可漏报/误报这一种，也不把口径搞复杂 ✓。
+    //   ⚠ 将来若改成"恒真循环也认"，把这条断言改成 expect_ok + expect_no_warning 即可 ✓
+    var p5 = dirs.join(work, "while_true_return.leno")
+    files.write(p5,
+        "func f(): int {\n"
+        + "    while true {\n"
+        + "        return 7\n"
+        + "    }\n"
+        + "}\n"
+        + "\n"
+        + "main() { print(_str(f()) + \"\\n\") }\n")
+    ce.expect_warning(p5, "已知取舍：while true 里的 return 仍报（保守口径）", "[漏写 return]", 1)
+
+    // ==================== B. 不可达代码 ====================
+
+    // B1：循环体里 `continue` 后面跟一句 ⇒ 那句永远不执行 ⇒ 报在第 4 行
+    var p6 = dirs.join(work, "dead_after_continue.leno")
+    files.write(p6,
+        "main() {\n"
+        + "    for 0 : 3 to i {\n"
+        + "        continue\n"
+        + "        print(\"dead\\n\")\n"
+        + "    }\n"
+        + "    print(\"done\\n\")\n"
+        + "}\n")
+    ce.expect_warning(p6, "不可达：continue 后有死代码", "[不可达代码]", 4)
+
+    // B2（防误报 ✓）：正常的多语句块（没有任何终止语句）⇒ 一句都不该报 ✓
+    var p7 = dirs.join(work, "no_dead_code.leno")
+    files.write(p7,
+        "func twice(int n): int {\n"
+        + "    int a = n + 1\n"
+        + "    int b = a + 1\n"
+        + "    return b\n"
+        + "}\n"
+        + "\n"
+        + "main() { print(_str(twice(1)) + \"\\n\") }\n")
+    var o7 = ce.expect_ok(p7, "对照组：正常块", "3")   // twice(1) = 1+1+1 = 3 ✓
+    ce.expect_no_warning(o7, "对照组：正常块", "[不可达代码]")
+
+    // 清理临时文件（含对照用例成功编译产生的 .lenocache ✓）
+    dirs.delete(work)
+
+    print("test_diag_warnings passed")
+}

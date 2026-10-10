@@ -91,6 +91,42 @@ export func expect_error(string script_path, string tag, string expect_text, int
     return out
 }
 
+// 期望**编译成功但带警告**（exit == 0）：输出里必须出现 expect_text（警告文案）；
+// expect_line > 0 时还要求落点含 "<line>,"。返回输出。
+//
+// 为什么必须另开一个（2026-10-10）：诊断家族原先只有「必须失败」的 expect_error ✗，
+//   而"漏写 return / 不可达代码"这类是**警告** —— 编译**成功**（exit=0）✓ ⇒
+//   它们在套件里**根本表达不出来** ✗（这正是 WARN_UNUSED_VAR / WARN_UNREACHABLE
+//   长期"只有枚举与名字表、全仓零调用点"却一路绿灯的原因之一 ✓）。
+//   判据与 expect_error 同款：**超时码必须单独拎出来判红** ✗（124 也是非 0 ✗）。
+export func expect_warning(string script_path, string tag, string expect_text, int expect_line):string {
+    var r = _exec(cmd_for(script_path), EXEC_TIMEOUT_MS)
+    assert_ne(r, null, tag + "：_exec 返回 null（子进程起不来？）")
+
+    var out = _str(r.output)
+    assert_ne(r.code, EXEC_TIMEOUT_CODE,
+        tag + "：子进程超时（" + EXEC_TIMEOUT_MS + "ms 未返回）；输出=" + out)
+    assert_eq(r.code, 0, tag + "：警告**不该**让编译失败，实际 exit=" + r.code + "；输出=" + out)
+
+    assert_true(strings.has(out, expect_text),
+        tag + "：警告文案应包含「" + expect_text + "」；输出=" + out)
+
+    if expect_line > 0 {
+        var loc = "(" + expect_line + ","
+        assert_true(strings.has(out, loc),
+            tag + "：警告应落在第 " + expect_line + " 行（期望包含「" + loc + "」）；输出=" + out)
+    }
+    return out
+}
+
+// 断言**没有**该警告（防误报）。新加的检查最容易在真实代码库上刷屏 ✗（实测过一次：
+//   漏 return 那条初版在 SDL3 上刷出 254 条**全误报** ✗，根因是没排除 void 函数的
+//   TYPE_INFER 占位 ✓）⇒ 每条新检查都该配一条"不该报"的对照用例 ✓。
+export func expect_no_warning(string out, string tag, string absent_text) {
+    assert_true(not strings.has(out, absent_text),
+        tag + "：不该出现这条警告「" + absent_text + "」；输出=" + out)
+}
+
 // 同 expect_error，但**连列一起**校验（2026-09-28 加）。
 //   为什么另开一个而不是改上面那个：`expect_error` **故意**不看列（列号会随文案调整漂移，
 //   把列当承诺会让用例假失败）；但"**错误落点**"本身有一批专门的用例要钉列

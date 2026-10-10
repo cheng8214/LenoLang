@@ -384,6 +384,7 @@ void warning_print_all(void) {
             case WARN_FIELD_SHADOW_ASSIGN: type_str = "遮蔽字段的赋值"; break;
             case WARN_SELF_FORWARD:          type_str = "疑似无限递归"; break;
             case WARN_METHOD_NAME_AMBIGUOUS: type_str = "同名歧义（可能走错目标）"; break;
+            case WARN_MISSING_RETURN:  type_str = "漏写 return"; break;
             // （原 WARN_EMPTY_CATCH / WARN_IMPOSSIBLE_CAST 已升为错误 ⇒ 类别名移入消息前缀 ✓）
             default: break;
         }

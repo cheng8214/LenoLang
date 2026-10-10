@@ -268,6 +268,9 @@
                 }
             }
             // 然后正常处理所有语句
+            //   （★ 不可达代码检查不在这里 —— 它在 `visit_list` 里一处覆盖全部块体 ✓
+            //     原因：if/while/for/case 的块体走的是 `visit_list(...)` 直接进来、
+            //     **绕过**本 AST_BLOCK 分支 ✗ ⇒ 放在这里会漏掉所有循环体与分支体 ✓）
             visit_list(s, &ast->u.block);
             break;
         }

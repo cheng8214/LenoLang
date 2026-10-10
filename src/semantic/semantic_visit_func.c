@@ -283,6 +283,67 @@ void visit_func_as_struct_method(Semantic* s, Ast* ast) {
     visit_func_impl(s, ast, 1);
 }
 
+// ★★ 2026-10-10 新增：**漏写 return 检查**用的「这条语句是否必然离开函数」判定 ✓
+//   为什么要有它：体检实测（用例 A4）—— 函数声明 `: int` 却漏了 return 时，编译器
+//     **一声不吭** ✓、运行期**静默返回 null** ✗（调用点拿到 null 接着跑 ✓ 极难查 ✓）。
+//   口径（**保守**：只认确凿的终止语句，宁可漏报也不误报 ✗）：
+//     return / return a,b,c / throw                ⇒ 必然离开 ✓
+//     块（AST_BLOCK）：看**最后一条**有效语句 ✓（空项跳过 ✓）
+//     if：**有 else** 且两支都必然离开 ✓
+//     switch：**有 default**，且每个 case 体与 default 都必然离开 ✓
+//     其余（while / for / 赋值 / 表达式 …）一律算「可能走到底」✓ —— 含 `while true {}` ✗
+//       （那是误报之源 ✓ 本仓的常驻循环本来就都带终止条件 ⇒ 不报更划算 ✓）
+static int stmt_always_exits(Ast* st) {
+    if (!st) return 0;
+    switch (st->kind) {
+        case AST_RETURN:
+        case AST_RETURN_MULTI:
+        case AST_THROW:
+            return 1;
+        case AST_BLOCK: {
+            // ★ 正序扫：块里**任意一条**必然离开 ⇒ 整个块必然离开 ✓
+            //   ⚠ 不能只看"最后一条" ✗：`func f(): int { return 1; print("never") }` 这种
+            //     "return 之后还压着一句死代码"的写法，最后一条是 print ⇒ 只看末尾就会
+            //     误报"漏写 return" ✗（实测 C1 用例正是这个形状 ✓ 已修 ✓）
+            //     （紧跟的那句死代码由 visit_block.inc 的 WARN_UNREACHABLE 单独提示 ✓ 不冲突 ✓）
+            for (int i = 0; i < st->u.block.count; i++) {
+                Ast* it = st->u.block.items[i];
+                if (!it) continue;
+                if (stmt_always_exits(it)) return 1;
+            }
+            return 0;
+        }
+        case AST_IF:
+            if (st->u.if_.else_ && stmt_always_exits(st->u.if_.then) &&
+                stmt_always_exits(st->u.if_.else_)) {
+                return 1;
+            }
+            return 0;
+        case AST_TRY: {
+            // ★ try / catch 两支都必然离开 ⇒ 整体必然离开 ✓
+            //   为什么必须认这一条：本仓大量函数写成
+            //     `try { ...; return x } catch { return y }`
+            //   （如 sdl_table 的 to_float / is_number_str ✓）⇒ 不认它就会把这种
+            //   完全正确的写法全报成"漏写 return" ✗（实测就是它们把警告数从个位数顶上去的 ✓）
+            //   ⚠ finally：它自己若必然离开（`finally { return }`）也算 ✓；否则只是收尾 ✓
+            if (st->u.try_.finally_body && stmt_always_exits(st->u.try_.finally_body)) return 1;
+            if (!stmt_always_exits(st->u.try_.try_body)) return 0;
+            if (st->u.try_.catch_body && stmt_always_exits(st->u.try_.catch_body)) return 1;
+            return 0;
+        }
+        case AST_SWITCH: {
+            if (!st->u.switch_.default_body) return 0;
+            if (!stmt_always_exits(st->u.switch_.default_body)) return 0;
+            for (int i = 0; i < st->u.switch_.case_count; i++) {
+                if (!stmt_always_exits(st->u.switch_.cases[i].body)) return 0;
+            }
+            return 1;
+        }
+        default:
+            return 0;
+    }
+}
+
 void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
     if (ast->u.func.local_count > 0) {
         return;
@@ -719,6 +780,26 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
     // 处理函数体（单遍完成所有分析）
     // 注意：使用 visit 而不是 visit_list，以确保 AST_BLOCK 的预扫描逻辑被执行
     visit(s, ast->u.func.body);
+
+    // ★★ 2026-10-10 新增：**漏写 return 检查** ✓
+    //   实测（体检用例 A4）：函数声明了返回值却漏 return 时，原先**完全不报** ✓，
+    //   运行期静默返回 null ✗（调用点拿到 null 继续跑 ⇒ 极难查 ✓）。
+    //   ⚠ 只对"声明了返回类型"的函数查 ✓（`return_type == NULL` = void ⇒ 跳过 ✓，
+    //     见上方形参处理的注释：无返回类型签名时 return_type 为 NULL ✓）；
+    //     判定口径见 stmt_always_exits 的注释（保守 ⇒ 宁可漏报不误报 ✓）
+    //   ⚠ 判据必须同时排除 **TYPE_INFER**：没写返回类型的函数（void ✓）在 AST 里
+    //     `return_type` 并不是 NULL 而是 **TYPE_INFER 占位** ✗ —— 只看 NULL 会让所有
+    //     void 函数统统报"漏写 return"（实测：SDL3 / sdl_layout 各刷出 250+ 条全误报 ✗✗）。
+    //     同文件 249 行那份判据就是 `return_type && kind != TYPE_INFER` ✓ 照它写 ✓
+    if (ast->u.func.return_type && ast->u.func.return_type->kind != TYPE_INFER &&
+        ast->u.func.body && !stmt_always_exits(ast->u.func.body)) {
+        char mrmsg[BUFFER_MEDIUM];
+        snprintf(mrmsg, sizeof(mrmsg),
+                 "函数 '%s' 声明了返回值，但存在没有 return 的路径 ⇒ 漏写 return 时调用点会"
+                 "**静默拿到 null**（实测如此 ✓，请补 return 或在末尾 return 兜底值）",
+                 ast->u.func.name ? ast->u.func.name : "?");
+        warning_add_at(WARN_MISSING_RETURN, ast->line, ast->column, mrmsg);
+    }
 
     s->cur_generic_func = saved_generic_func;
 
