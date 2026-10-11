@@ -895,7 +895,16 @@ int lenolang_compile(const char* source, const char* output_path) {
         const char* shown = error_get_filename();
         if (!shown || !shown[0]) shown = chunk.filename;
         if (!shown || !shown[0]) shown = "stdin";
-        printf("检查通过: %s（未产出 .lenb）\n", shown);
+        // ★ 检查范围必须说清（2026-10-11，B7 / 改进 6 ②）：`--check` 只跑**入口文件自己**的
+        //   解析 + 语义 —— 被 import 的模块**函数体一条都不查** ✗（模块符号表由 parser AST
+        //   填充器产出，不走语义 ⇒ 模块里的类型错误它看不见）。
+        //   实测：把 `int x = "oops"` 放进被 import 的模块，`--check 入口` 照样打印"检查通过"，
+        //   而 `-c` 会报出来 ⇒ "我已经 check 过了"是假的安心（B6 正是这么混过第一道筛子的 ✓）。
+        //   不做"顺手把模块也查一遍"（改进 6 ①）的原因：那要把模块编译管线（parse + 语义）
+        //   对每个被引用模块跑一遍，还得管住副作用（.lenomc 缓存写入）与错误归属 —— 收益不抵
+        //   风险 ⇒ 先按文档给的更便宜那条落地：**把范围印出来** ✓
+        printf("检查通过: %s（仅入口文件；未产出 .lenb）\n", shown);
+        printf("          ⚠ 被 import 的模块「函数体」未检查 —— 发版前请真编译一次：leno -c <入口>\n");
         codegen_cleanup(&gen);
         ast_free(parser.root);
         semantic_cleanup(&sem);

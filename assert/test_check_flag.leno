@@ -2,9 +2,10 @@
 //
 // 背景：想"只验证能不能过编译"原先只能借 `-c`，而 `-c` 会产出 .lenb（脚本化时还得回来删产物）。
 // 判据：
-//   ① 合法文件：exit=0、输出含"检查通过"、且**不产出 .lenb**
+//   ① 合法文件：exit=0、输出含"检查通过"**与检查范围**、且**不产出 .lenb**
 //   ② 语义错误：exit≠0、报错含"类型"，同样不产出 .lenb
 //   ③ 语法错误：exit≠0
+//   ④ 检查范围的边界（B7）：被 import 的模块函数体不查 ⇒ 目前 exit=0（改进 6 ① 落地后会变红 ✓）
 //
 // ⚠ 用 `_executable()` 调自身（不依赖 PATH）；路径**不加引号**——与 `assert/run_tests.leno`
 //   同一写法（Windows 上 `_exec` 走 cmd，给路径加引号反而容易踩引号嵌套的坑）。
@@ -29,6 +30,9 @@ main() {
     assert_true(strings.has(r1.output, "检查通过"), "①应打印'检查通过'；输出=" + r1.output)
     assert_eq(files.exists(base + "ok.lenb"), false, "①--check **不许**产出 .lenb")
 
+    assert_true(strings.has(r1.output, "仅入口文件"),
+        "①成功输出必须**自报检查范围**（B7 / 改进 6 ②：被 import 的模块函数体不查）；输出=" + r1.output)
+
     // ---------- ② 语义错误 ----------
     var r2 = runCheck(base + "bad.leno")
     assert_ne(r2.code, 0, "②语义错误应非零退出；输出=" + r2.output)
@@ -39,8 +43,29 @@ main() {
     var r3 = runCheck(base + "syn.leno")
     assert_ne(r3.code, 0, "③语法错误应非零退出；输出=" + r3.output)
 
+    // ---------- ④ 检查范围的**已知边界**（B7 / 改进 6）----------
+    //   被 import 的模块只建符号表、**不走语义** ⇒ 它函数体里的错误 `--check` 看不见 ✗
+    //   ⚠ 这是**登记在案的边界**，不是期望行为（出处：docs/Leno报错提示改进计划.md 的 B7 / 改进 6、
+    //     语言陷阱速查 §四 ✓）。改进 6 ①（让 --check 也过一遍模块体）一旦落地 ⇒ 本条会变红，
+    //     那时把它改成"应当非零退出"即可 ✓ —— 留着比删掉好：现状与文档被这一条钉在一起 ✓
+    //   ⚠ 相对 import 是"相对**入口文件所在目录**" ⇒ 两者必须真的同目录，
+    //     别用 base + 前缀拼名字（那样入口在旁边、模块名对不上 ✗ 实测踩到一次）
+    string mdir = dirs.join(_tmpdir(), "leno_check_probe_mods")
+    dirs.delete(mdir)
+    dirs.mkdir_p(mdir)
+    files.write(dirs.join(mdir, "mod.leno"),
+        "export func boom(): int {\n    int x = \"oops\"\n    return x\n}\n")
+    files.write(dirs.join(mdir, "use.leno"),
+        "import \"./mod.leno\" as m\nmain() {\n    print(_str(m.boom()))\n}\n")
+    var r4 = runCheck(dirs.join(mdir, "use.leno"))
+    assert_eq(r4.code, 0,
+        "④【已知边界】--check 不查模块函数体 ⇒ 目前 exit=0（若变成非 0 = 改进 6 ① 已落地，请更新本条）；输出=" + r4.output)
+    assert_true(strings.has(r4.output, "未检查"),
+        "④输出必须点明该边界（这正是 B7 的修法 ②）；输出=" + r4.output)
+
     files.delete(base + "ok.leno")
     files.delete(base + "bad.leno")
     files.delete(base + "syn.leno")
+    dirs.delete(mdir)
     print("test_check_flag passed")
 }
