@@ -267,6 +267,32 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
                 if (is_shadowed(ast->u.assign.names[i], shadowed_names, shadowed_count)) continue;
                 for (int j = 0; j < field_count; j++) {
                     if (strcmp(ast->u.assign.names[i], field_names[j]) == 0) {
+                        // ★★ 嵌套成员赋值（2026-10-11 修）★★
+                        //   目标若是"字段.成员"（例：`inner.value = v`，`inner` 是本 struct 的字段），
+                        //   parser 给的是 AST_ASSIGN{names[0]="inner",
+                        //                            targets[0]=AST_MODULE_ACCESS{inner,value}}
+                        //   —— 上面那次 targets 的 transform **已经把 targets[i] 改写成**
+                        //   `self.inner["value"]`（AST_INDEX{obj=FIELD_ACCESS(self,inner), index="value"}）✓
+                        //   ⇒ 这里必须**用它**收尾：走"先取外层字段（引用）⇒ 再写内层字段"，
+                        //     与 `o.inner.value = v`（经局部量）同一条路 ✓
+                        //   ✗ 此前把整句按"裸字段名"重写成 `self["inner"] = v` —— 最后那个成员被丢掉，
+                        //     于是报出「字段 'inner' 类型不匹配: 期望 'struct Inner'，实际 'float'」
+                        //     这种**指错靶子**的假错：合法代码被拒，照报错去查 RHS / 字段声明都查不出病因
+                        //     （LenoMusic 的 `volSld.value = v` 就是撞在这 ✓ 见 docs/Leno报错提示改进计划.md B6）
+                        Ast* tgt = ast->u.assign.targets ? ast->u.assign.targets[i] : NULL;
+                        if (tgt && tgt->kind == AST_INDEX) {
+                            Ast* nested_value = ast->u.assign.value;
+                            Ast* nested_obj = tgt->u.index.obj;
+                            Ast* nested_idx = tgt->u.index.index;
+                            tgt->u.index.obj = NULL;      // 子节点交给新节点，避免二次释放
+                            tgt->u.index.index = NULL;
+                            ast->kind = AST_INDEX_ASSIGN;
+                            ast->u.index_assign.obj = nested_obj;
+                            ast->u.index_assign.index = nested_idx;   // 末级成员名字符串 ✓
+                            ast->u.index_assign.value = nested_value;
+                            return;
+                        }
+
                         // 将字段名赋值转换为 self.字段名 = value
                         // 保存原始 value 引用
                         Ast* original_value = ast->u.assign.value;

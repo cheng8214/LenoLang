@@ -1,0 +1,156 @@
+// test_nested_field_assign.leno —— 嵌套成员赋值（`字段.成员 = 值`）回归
+//
+// 条目：B6 / 改进 5（docs/Leno报错提示改进计划.md）、语言陷阱速查 §三 ㉙
+//
+// 修之前（2026-10-11 之前）：基座是**本 struct 的字段**时（`inner.value = 1.0`），
+//   semantic_visit_method.c 的"裸字段名 ⇒ self[字段] = 值"重写会把**末级成员丢掉**，
+//   于是合法代码被拒、且报错指错靶子：
+//     error: [类型不匹配] 字段 'inner' 类型不匹配: 期望 'struct Inner'，实际 'float'
+//   （源码里压根没有"给 inner 赋值"这回事 ⇒ 照着报错去查 RHS / 字段声明，查不出病因 ✗）
+//   而同一句经**局部量**（`o.inner.value = v`）却能过 —— 同语言两种写法行为不一致 ✗
+//
+// 修之后（两处）：
+//   ① semantic_visit_method.c：目标已是嵌套访问（transform 已把 targets[i] 变成
+//      `self.inner["value"]`）⇒ 按"先取外层字段（引用）⇒ 再写内层字段"收尾，
+//      与经局部量/参数走同一条路 ✓
+//   ② visit_expr.inc：字段表**已知**却查不到这个名字 ⇒ 编译期报「struct 'X' 没有字段 'y'」
+//      （与读路径同一句文案，读写对称 ✓）；此前会一路拖到**运行时**才报 ✗
+//
+// 判据全部走 helpers/compiler.leno 的 expect_ok / expect_error（真起子进程 ✓）
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+import strings
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_nested_field_assign")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ---- ① 本 struct 的 struct 型字段：普通赋值 + 复合赋值 + 读-改-写 ----
+    //   期望 1.5 + 2.0 = 3.5（值级判据 ⇒ 钉的是"真的写进了同一个对象"，
+    //   不只是"编译通过"——struct 是引用语义，基座字段指向的对象必须被改到 ✓）
+    var t1 = dirs.join(work, "field_base.leno")
+    files.write(t1, @"struct Inner {
+    float value = 0.0
+}
+struct Outer {
+    Inner inner
+    func f() { inner.value = 1.5 }
+    func g() { inner.value = inner.value + 2.0 }
+    func h(): float { return inner.value }
+}
+main() {
+    Outer o = new Outer()
+    o.inner = new Inner()
+    o.f()
+    o.g()
+    print(""NFA="" + _str(o.h()))
+}
+")
+    ce.expect_ok(t1, "本 struct 字段作基座：嵌套赋值真的生效", "NFA=3.5")
+
+    // ---- ② 经局部量 / 参数作基座（原本就能过 ⇒ 防回归）----
+    var t2 = dirs.join(work, "local_and_param.leno")
+    files.write(t2, @"struct Inner {
+    float value = 0.0
+}
+struct Outer {
+    Inner inner
+}
+func via_param(Outer o) { o.inner.value = 7.0 }
+main() {
+    Outer o = new Outer()
+    o.inner = new Inner()
+    o.inner.value = 2.0
+    via_param(o)
+    print(""NFA="" + _str(o.inner.value))
+}
+")
+    ce.expect_ok(t2, "局部量 / 参数作基座照旧", "NFA=7.0")
+
+    // ---- ③ 三层嵌套（`mid.deep.value = v`）—— 走的是另一条路（AST_INDEX_ASSIGN），一并钉住 ----
+    var t3 = dirs.join(work, "three_level.leno")
+    files.write(t3, @"struct L3 {
+    float value = 0.0
+}
+struct L2 {
+    L3 deep
+}
+struct L1 {
+    L2 mid
+    func f() { mid.deep.value = 4.5 }
+}
+main() {
+    L1 o = new L1()
+    o.mid = new L2()
+    o.mid.deep = new L3()
+    o.f()
+    print(""NFA="" + _str(o.mid.deep.value))
+}
+")
+    ce.expect_ok(t3, "三层嵌套照旧生效", "NFA=4.5")
+
+    // ---- ④ 字段被形参遮蔽：只改形参（保持既有语义与警告，不能因本次改动变形）----
+    var t4 = dirs.join(work, "shadow_param.leno")
+    files.write(t4, @"struct Inner {
+    float value = 0.0
+}
+struct Outer {
+    Inner inner
+    func d(Inner inner) { inner.value = 99.0 }
+}
+main() {
+    Outer o = new Outer()
+    o.inner = new Inner()
+    Inner i = new Inner()
+    o.d(i)
+    print(""NFA="" + _str(i.value) + ""/"" + _str(o.inner.value))
+}
+")
+    var out4 = ce.expect_warning(t4, "形参遮蔽字段：仍只改形参 + 保留既有警告", "遮蔽了同名字段", 0)
+    ce.expect_no_warning(out4, "形参遮蔽字段", "类型不匹配")
+
+    // ---- ⑤ 内层成员不存在 ⇒ 编译期报错，且文案指对靶子（与读路径同一句）----
+    var t5 = dirs.join(work, "no_such_member.leno")
+    files.write(t5, @"struct Inner {
+    float value = 0.0
+}
+struct Outer {
+    Inner inner
+    func f() { inner.nope = 1.0 }
+}
+main() {
+    Outer o = new Outer()
+    o.inner = new Inner()
+    o.f()
+}
+")
+    var out5 = ce.expect_error(t5,
+        "内层成员不存在：编译期报错（不再拖到运行时）",
+        "struct 'Inner' 没有字段 'nope'", 6)
+    ce.expect_no_warning(out5, "内层成员不存在", "字段 'inner' 类型不匹配")
+
+    // ---- ⑥ 内层成员类型不匹配 ⇒ 靶子必须是内层那个字段 ----
+    var t6 = dirs.join(work, "inner_type_mismatch.leno")
+    files.write(t6, @"struct Inner {
+    float value = 0.0
+}
+struct Outer {
+    Inner inner
+    func f() { inner.value = ""oops"" }
+}
+main() {
+    Outer o = new Outer()
+    o.inner = new Inner()
+    o.f()
+}
+")
+    var out6 = ce.expect_error(t6,
+        "内层成员类型不匹配：报的是内层字段",
+        "字段 'value' 类型不匹配", 6)
+    ce.expect_no_warning(out6, "内层成员类型不匹配", "字段 'inner' 类型不匹配")
+
+    dirs.delete(work)
+}

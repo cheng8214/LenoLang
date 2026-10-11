@@ -357,9 +357,14 @@
                     // 从 struct 定义中查找字段类型和索引
                     TypeInfo* expected_type = NULL;
                     int expected_is_owned = 0;   // expected_type 是否为我们复制出来的（需 type_free）
+                    // 字段表**查到了**（此时"查不到"才是真·没有这个字段 ✓）
+                    //   ⚠ 与"struct 定义不在当前作用域"（跨模块等）区分开：那种情况两级都查不到，
+                    //     属"信息不足"，不能报错（照旧交给 codegen 兜底）⇒ 用这个标记做闸门 ✓
+                    int field_table_known = 0;
                     if (obj_type->struct_name) {
                         Symbol* struct_def_sym = scope_resolve(s->current, obj_type->struct_name);
                         if (struct_def_sym && struct_def_sym->struct_field_count > 0) {
+                            field_table_known = 1;
                             for (int j = 0; j < struct_def_sym->struct_field_count; j++) {
                                 if (strcmp(struct_def_sym->struct_field_names[j], field_name) == 0) {
                                     expected_type = struct_def_sym->struct_field_types[j];
@@ -404,6 +409,17 @@
                         }
 
                         if (value_type) type_free(value_type);
+                    } else if (field_table_known) {
+                        // ★ 字段表查得到、这个名字不在里面 ⇒ 真·没有这个字段（2026-10-11 补）
+                        //   文案与**读**那条路一致（`o.inner.nope` 读的时候就是这么报的 ✓）⇒ 读写对称 ✓。
+                        //   不补的话这条会一直拖到**运行时**才报「struct 不存在字段 'nope'」✗ ——
+                        //   实测：`inner.nope = 1.0`（基座是**本 struct 的字段**）此前只报运行时错，
+                        //   而同一句经局部量（`o.inner.nope = 1.0`）是编译期错 ⇒ 两条路不一致 ✓
+                        char msg[BUFFER_MEDIUM];
+                        snprintf(msg, sizeof(msg), "struct '%s' 没有字段 '%s'",
+                                 obj_type->struct_name ? obj_type->struct_name : "?",
+                                 field_name);
+                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     }
                     // 推断来的类型是我们的副本，用完释放（原路径的类型归符号所有，不能放）
                     if (expected_is_owned && expected_type) type_free(expected_type);
