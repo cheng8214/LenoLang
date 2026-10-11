@@ -60,6 +60,9 @@ char* process_escape_sequences(const char* text, int len, int* out_len, int line
 char* copy_string(const char* text, int len);
 char* process_raw_string(const char* text, int len, int* out_len);
 int is_type_keyword(LenoTokenType type);
+// ★ M5a（2026-10-11）：「use 列表里这个名字不是模块导出类型」的定向提示（**单一实现**）——
+//   bulk=1 时说"use 批量导入"、否则"use 语句"；内建类型 ⇒ 直接去掉 ✓，保留字 ⇒ 换名字 ✓
+void error_use_list_name_hint(Parser* p, int bulk);
 int is_cstruct_layout_attr(Parser* p);  // 检查当前 token 是否是 packed/align 上下文标识符
 
 // 错误恢复：同步到语句边界

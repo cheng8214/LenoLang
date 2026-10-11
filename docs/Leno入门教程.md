@@ -4060,6 +4060,19 @@ struct Rectangle {
 }
 ```
 
+> **💡 方法里自引用写 `self`（不是 `this`）**
+>
+> ```leno
+> struct Box {
+>     int v = 0
+>     func bump(): void { self.v = self.v + 1 }   // ✓ self
+>     func me(): Box { return self }              // ✓ 返回的就是该对象本身（引用语义）
+> }
+> ```
+>
+> `this` 是 C++ / Java / C# 的习惯 ✗ —— Leno 里**没有这个关键字**，写它会报
+> 「未定义的变量: this」（现在会**顺带提示**改 `self` ✓）。
+
 > **💡 建议：使用有意义的默认值**
 >
 > ```leno

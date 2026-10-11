@@ -209,6 +209,38 @@ int is_type_keyword(LenoTokenType type) {
            type == TOK_FUNC;
 }
 
+// ★ M5a（2026-10-11，见 docs/语言摩擦与隐式契约清单.md）：「use 列表里这个名字不是模块导出类型」
+//   的定向提示 —— **单一实现**，`use 批量导入` 与 `use 单模式` 两个入口共用 ✓
+//   实测（2026-10-11）：`use SDL3.(…, Thread)` 报的是"use 批量导入期望类型名" ✗ ——
+//   `Thread` 是**内建类型**（Leno 自带、不属于任何模块 ✓），用户看不出"该把这个名字删掉" ✓
+//   ⇒ 两种情况点名说清：① 内建类型 ⇒ 直接去掉 ✓；② 保留字 ⇒ 换个名字 ✓；
+//   其它才退回原话（保持不变，避免影响既有断言 ✓）。
+//   判据用 `is_type_keyword`（覆盖 int/string/bool/Array/Dict/File/Socket/Channel/Thread/Future/Ptr/func ✓）
+void error_use_list_name_hint(Parser* p, int bulk) {
+    const char* where = bulk ? "use 批量导入" : "use 语句";
+    if (is_type_keyword(p->lex.current.type)) {
+        char msg[320];
+        snprintf(msg, sizeof(msg),
+            "%s: '%.*s' 是**内建类型**（Leno 自带，不属于任何模块）⇒ 不用也不能放进 use 列表 ✗ —— "
+            "直接从列表里去掉它 ✓（use 只列**模块导出的**类型：模块里 `export struct` / `export face` / "
+            "`export enum` / `export alias` 的那些 ✓）",
+            where, p->lex.current.len, p->lex.current.text);
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, msg);
+        return;
+    }
+    const char* kw = lexer_keyword_text(p->lex.current.type);
+    if (kw) {
+        char msg[224];
+        snprintf(msg, sizeof(msg),
+            "%s: '%s' 是**保留字** ✗ 不能当类型名 —— 换个名字 ✓", where, kw);
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, msg);
+        return;
+    }
+    char msg[80];
+    snprintf(msg, sizeof(msg), "%s期望类型名", where);
+    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, msg);
+}
+
 // 检查当前 token 是否是 cstruct 布局属性标识符（packed / align）
 // packed 和 align 不是全局关键字，而是"上下文关键字"——
 // 仅在 cstruct 定义前缀位置才具有特殊含义，其他位置（如字典键、变量名）

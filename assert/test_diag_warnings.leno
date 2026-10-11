@@ -20,6 +20,7 @@
 
 import dirs
 import files
+import strings
 
 // 起编译器子进程 + 判据的共享工具（命令行拼接、失败判据的唯一实现，见 S7）
 import "helpers/compiler.leno" as ce
@@ -252,6 +253,108 @@ main() {
         + "main() { print(_str(a2(42)) + \"|\" + _str(b2([1], 1)) + \"|\" + _str(c2(false)) + \"\\n\") }\n")
     var od2 = ce.expect_ok(pd2, "对照组：加括号 / not in / 比较 / not is 守卫", "true|false|true")
     ce.expect_no_warning(od2, "对照组：六种形状都不该报", "[not的优先级陷阱]")
+
+    // ==== E. 语言摩擦清单 M1…M5b（2026-10-11 修 ✓；出处 docs/语言摩擦与隐式契约清单.md）====
+
+    // E1（M3）：方法里写 `this` ⇒ 必须报，且**顺带提示 self** ✓
+    //   （旧行为：只报"未定义的变量: this"、一个字不提 self ✗ —— 与 contains()→has() 同类洞 ✓）
+    var pe1 = dirs.join(work, "m3_this.leno")
+    files.write(pe1,
+        "struct Box {\n"
+        + "    int v = 0\n"
+        + "    func me(): Box { return this }\n"
+        + "}\n"
+        + "main() {\n"
+        + "    var b = new Box()\n"
+        + "    print(_str(b.v) + \"\\n\")\n"
+        + "}\n")
+    var oe1 = ce.expect_error(pe1, "M3：this 应报未定义变量", "未定义的变量: this", 3)
+    assert_true(strings.has(oe1, "self"),
+        "M3：报错应**顺带提示** self（这是本条的全部价值 ✓）；实际输出=" + oe1)
+
+    // E2（M4）：模块别名被同名字段遮蔽 ⇒ 必须报 [模块别名被遮蔽] ✓（不改语义、只把话说清 ✓）
+    var pe2m = dirs.join(work, "m4_mod.leno")
+    files.write(pe2m, "export struct Page {\n    int v = 0\n}\n")
+    var pe2 = dirs.join(work, "m4_shadow.leno")
+    files.write(pe2,
+        "import \"./m4_mod.leno\" as bang\n"
+        + "use bang.Page\n"
+        + "\n"
+        + "struct App {\n"
+        + "    Page? bang = null\n"
+        + "}\n"
+        + "main() {\n"
+        + "    var a = new App()\n"
+        + "    print(\"ok\\n\")\n"
+        + "}\n")
+    ce.expect_warning(pe2, "M4：别名被字段遮蔽", "[模块别名被遮蔽]", 4)
+
+    // E3（M5a）：把**内建类型**写进 use 列表 ⇒ 报错要**点名说清**（不是干巴巴"期望类型名"✗）
+    var pe3 = dirs.join(work, "m5a_builtin.leno")
+    files.write(pe3,
+        "import io\n"
+        + "use io.(Thread)\n"
+        + "main() { print(\"x\\n\") }\n")
+    ce.expect_error(pe3, "M5a：use 里放内建类型", "'Thread' 是**内建类型**", 2)
+
+    // E4（M5b）：保留字当变量名 ⇒ 报错要**点出"这是保留字"**（旧文案只给"期望变量名"✗）
+    var pe4 = dirs.join(work, "m5b_keyword.leno")
+    files.write(pe4,
+        "main() {\n"
+        + "    var alias = 1\n"
+        + "    print(_str(alias) + \"\\n\")\n"
+        + "}\n")
+    ce.expect_error(pe4, "M5b：保留字当变量名", "是**保留字**", 2)
+
+    // E5（M2）：**函数类型字段**的调用按声明签名推返回类型 ✓
+    //   修前：返回值是 any ⇒ `string s = b.f()` 报「期望 string，实际 any」✗
+    //   （反向自证见 E5b：故意接成 int ⇒ 必须报「实际类型: string」而不是 any ✓）
+    var pe5 = dirs.join(work, "m2_funcfield.leno")
+    files.write(pe5,
+        "struct Box {\n"
+        + "    func():string f = null\n"
+        + "    func call_it(): string { return self.f() }\n"
+        + "}\n"
+        + "func my_out(): string { return \"D:/out\" }\n"
+        + "main() {\n"
+        + "    var b = new Box()\n"
+        + "    b.f = my_out\n"
+        + "    string s = b.f()\n"
+        + "    print(b.call_it() + \"|\" + s + \"\\n\")\n"
+        + "}\n")
+    ce.expect_ok(pe5, "M2：函数类型字段调用带回声明类型", "D:/out|D:/out")
+
+    var pe5b = dirs.join(work, "m2_funcfield_neg.leno")
+    files.write(pe5b,
+        "struct Box { func():string f = null }\n"
+        + "func my_out(): string { return \"x\" }\n"
+        + "main() {\n"
+        + "    var b = new Box()\n"
+        + "    b.f = my_out\n"
+        + "    int n = b.f()\n"
+        + "    print(_str(n) + \"\\n\")\n"
+        + "}\n")
+    ce.expect_error(pe5b, "M2 反向：类型真的流过来了（应报 string 而非 any）",
+        "实际类型: string", 6)
+
+    // E6（M1）：模块函数当线程入口 ⇒ 文案必须点名"**入口脚本（顶层文件）**"
+    //   （旧文案说"当前文件"✗ —— 同一次运行里"当前文件"有好几个 ✓ 照着改改不出对的结果 ✓）
+    var pe6m = dirs.join(work, "m1_mod.leno")
+    files.write(pe6m, "export func worker():string {\n    return \"from module\"\n}\n")
+    var pe6 = dirs.join(work, "m1_entry.leno")
+    files.write(pe6,
+        "import \"./m1_mod.leno\" as m\n"
+        + "import threads\n"
+        + "import strings\n"
+        + "main() {\n"
+        + "    try {\n"
+        + "        var t = threads.start(m.worker)\n"
+        + "        print(\"noThrow\\n\")\n"
+        + "    } catch e {\n"
+        + "        print(\"threw=\" + _str(strings.has(_str(e.msg), \"入口脚本（顶层文件）\")) + \"\\n\")\n"
+        + "    }\n"
+        + "}\n")
+    ce.expect_ok(pe6, "M1：模块函数当线程入口的文案点名入口脚本", "threw=true")
 
     // 清理临时文件（含对照用例成功编译产生的 .lenocache ✓）
     dirs.delete(work)

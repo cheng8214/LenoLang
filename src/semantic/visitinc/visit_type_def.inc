@@ -202,6 +202,11 @@
                                 warning_add_at(WARN_FIELD_NO_INIT, ast->line, ast->column, wmsg);
                             }
                         }
+
+                        // ★ M4（2026-10-11）：字段名撞上**模块别名** ⇒ 遮蔽告警 ✓
+                        //   放在这里正好：字段名与 import 别名都已知 ✓（实测复现见 M4 文档 ✓）
+                        semantic_check_alias_shadow(s, ast->u.struct_def.field_names[i], "字段",
+                                                    ast->line, ast->column);
                     }
 
                     // 存储泛型类型参数信息

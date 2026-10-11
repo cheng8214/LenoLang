@@ -95,6 +95,12 @@ const char* semantic_no_such_method_hint(TypeInfo* type, const char* method_name
 //   ⚠ 只查这两类 + 只在 **语义 visit** 调用（infer 会重复喷 ✗ 见实现处的说明 ✓）。
 void semantic_check_not_precedence(Ast* operand, int line, int column, int kind);
 
+// ★ M4（2026-10-11）：**模块别名 vs 同名符号**的遮蔽告警（**单一实现** ✓）
+//   `what` 传中文名词（如 "字段" / "局部变量" ✓）；命中同名别名时发一条
+//   WARN_MODULE_ALIAS_SHADOWED ✓；两个登记点共用：struct 字段（visit_type_def.inc）与
+//   变量声明（visit_var.inc）✓
+void semantic_check_alias_shadow(Semantic* s, const char* name, const char* what, int line, int column);
+
 // printf 名字骗人（WARN_PRINTF_NO_FORMAT，2026-10-10 加）：`printf` 只做"**不换行打印**"、
 // **不做 % 格式化** ✗（实测：`printf("%d = %s\n", 3, "x")` 不报错、`%d` 原样打出 ✓）
 // ⇒ 首参是**含 '%' 的字符串字面量**且**实参 > 1** 时提醒 ✓（其它形状一律不报 ✓ 少报不误报）

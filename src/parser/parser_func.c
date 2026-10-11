@@ -630,7 +630,26 @@ Ast* parse_alias_stmt(Parser* p) {
     lexer_next(&p->lex); // 跳过 alias
 
     if (p->lex.current.type != TOK_IDENT) {
-        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望别名名称");
+        // ★ M5b（2026-10-11，见 docs/语言摩擦与隐式契约清单.md）：旧文案只有"期望别名名称" ✗
+        //   实测（2026-10-11）：写 `Outer alias = o`（想声明变量、名字顺手用了保留字 `alias` ✗）
+        //   会**一头撞进别名声明这条路** ⇒ 报"期望别名名称"，用户完全看不出"是名字碰到了保留字" ✓
+        //   ⇒ 这里把两条出路都说清：① 真要写别名 ⇒ `alias 名字 = 类型` ✓；
+        //     ② 其实是想声明变量 ⇒ **换个变量名**（保留字不能当名字 ✓）。
+        const char* kw = lexer_keyword_text(p->lex.current.type);
+        char msg[384];
+        if (kw) {
+            snprintf(msg, sizeof(msg),
+                "'alias' 是**保留字**（它开启一条**类型别名声明**，形如 `alias 名字 = 类型`）✗ —— "
+                "这里需要别名名字，却拿到了保留字 '%s'。若你本来是想**声明变量**"
+                "（`类型 名字 = 值`）⇒ 换个变量名即可 ✓（保留字不能当名字）", kw);
+        } else {
+            snprintf(msg, sizeof(msg),
+                "'alias' 是**保留字**（它开启一条**类型别名声明**，形如 `alias 名字 = 类型`）✗ —— "
+                "这里需要的是别名名字。若你本来是想**声明变量**（`类型 名字 = 值`，"
+                "如 `Outer alias = o`）⇒ 换个变量名即可 ✓（保留字不能当名字："
+                "alias / struct / for / func / const / return …）");
+        }
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, msg);
         return NULL;
     }
 
@@ -1105,7 +1124,21 @@ Ast* parse_var_decl_internal(Parser* p) {
             // `var (a, b) = ...` ⇒ 定向提示（文案与 const 路径共用，见 error_destruct_shape_hint）
             error_destruct_shape_hint(p);
         } else {
-            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望变量名");
+            // ★ M5b（2026-10-11，见 docs/语言摩擦与隐式契约清单.md）：**保留字撞名**要说清 ✓
+            //   实测（2026-10-11）：`Outer alias = o` 报的是普通语法错"期望变量名" ✗
+            //   —— 看不出问题出在 `alias` 是**保留字**上，白烧一轮编译 ✓。
+            //   判据用 lexer 反查（不是类型关键字的那批也覆盖 ✓：struct / for / const / return …）
+            const char* kw = lexer_keyword_text(p->lex.current.type);
+            if (kw) {
+                char msg[192];
+                snprintf(msg, sizeof(msg),
+                    "'%s' 是**保留字** ✗ 不能用作变量名 —— 换个名字 ✓"
+                    "（保留字是语法的一部分，如 alias / struct / for / func / const / return …）",
+                    kw);
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, msg);
+            } else {
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望变量名");
+            }
         }
         type_free(shared_type);
         return NULL;

@@ -402,6 +402,35 @@ void semantic_check_not_precedence(Ast* operand, int line, int column, int kind)
 }
 
 // ============================================================================
+// ============================================================================
+// ★ M4（2026-10-11，见 docs/语言摩擦与隐式契约清单.md）：**模块别名 vs 同名符号**的遮蔽告警
+//   —— **单一实现**（struct 字段与变量声明两个登记点共用 ✓）
+// ----------------------------------------------------------------------------
+// 实测（拆分 LenoMusic 当天 ✓）：入口脚本里
+//     import "./bang_page.leno" as bang      // 模块别名
+//     struct App { BangPage? bang = null }   // 恰好也有个字段叫 bang
+//   方法里裸写 `bang = bang.create_bang_page(...)` ⇒ 后一个 `bang` 被解析成**字段** ✗，
+//   报错是"在字段 bang 上找不到方法 create_bang_page" ✗ —— **看不出是遮蔽** ✗
+//   ⇒ 排查烧掉好几轮编译循环 ✓（改名 `as bangpg` 后当场通过 ✓）。
+// 为什么值得报：这种冲突**几乎从不合法** ✓（模块别名与字段/局部量同名 ⇒ 模块成员在该位置
+//   不可达 ✗），报出来没有误伤成本 ✓ ⇒ 用 **warning**（不改语义，只把话说清 ✓）。
+// what：中文名词（"字段" / "局部变量" ✓），用来把句子说成"又是这里的字段" ✓
+void semantic_check_alias_shadow(Semantic* s, const char* name, const char* what, int line, int column) {
+    if (!s || !name || !what) return;
+    for (int i = 0; i < s->imported_module_count; i++) {
+        ImportedModuleInfo* im = &s->imported_modules[i];
+        if (!im->alias || strcmp(im->alias, name) != 0) continue;
+        char msg[BUFFER_MEDIUM];
+        snprintf(msg, sizeof(msg),
+                 "「%s」既是**模块别名**（import … as %s ✓）又是这里的%s —— 名字解析优先给%s，"
+                 "**模块成员在这个位置不可达** ✗（症状：`%s.某方法(...)` 报「在该对象上找不到方法」、"
+                 "看不出是遮蔽 ✗）。改法二选一：给模块别名改名（如 `as %spg` ✓），或给这处%s改名 ✓",
+                 name, name, what, what, name, name, what);
+        warning_add_at(WARN_MODULE_ALIAS_SHADOWED, line, column, msg);
+        return;
+    }
+}
+
 // printf 名字骗人（WARN_PRINTF_NO_FORMAT）—— **唯一实现**（2026-10-10 加）
 // ----------------------------------------------------------------------------
 // 症状（速查 §三 ㉖ 实测）：`printf("%d = %s\n", 3, "x")` **一声不吭** ✗ —— `%d`/`%s`
@@ -1141,6 +1170,25 @@ const char* get_similar_name_hint(Scope* scope, const char* name) {
     {
         const char* kw = literal_case_hint(name);
         if (kw[0]) return kw;
+    }
+
+    // ★ M3（2026-10-11，见 docs/语言摩擦与隐式契约清单.md）：`this` 是**最常见的顺手词**
+    //   （C++/Java/C# 习惯 ✓），而 Leno 的实例自引用叫 **`self`** ⇒ 专门给一条提示 ✓。
+    //   必须放在"相似名搜索"**之前** ✗：`this` 与作用域里任何变量都不像（编辑距离 ≥3）
+    //   ⇒ 走相似名那条路永远给不出提示 ✓（实测：方法里写 `return this` 只报
+    //   "未定义的变量: this"、一个字不提 self ✗ —— 与"contains() 提示 has()"同类的洞 ✓）。
+    //   顺带把**大小写写错**的 `Self`/`SELF` 也收进来（同一个洞的另一种踩法 ✓）。
+    if (strcmp(name, "this") == 0 || strcmp(name, "This") == 0 || strcmp(name, "THIS") == 0) {
+        snprintf(hint, sizeof(hint),
+                 "\n  提示: Leno 里没有 `this` 这个关键字 —— 方法内的实例自引用写 **`self`** ✓"
+                 "（把 `this.x` 改成 `self.x` ✓；`return self` 也合法，返回的就是该对象本身 ✓）");
+        return hint;
+    }
+    if (strcmp(name, "Self") == 0 || strcmp(name, "SELF") == 0) {
+        snprintf(hint, sizeof(hint),
+                 "\n  提示: 实例自引用要写**小写** `self` ✓（大小写敏感 ⇒ `%s` 是未定义的名字 ✗）",
+                 name);
+        return hint;
     }
 
     const char* best = NULL;

@@ -36,4 +36,8 @@ void lexer_init(Lexer* lex, const char* source);
 void lexer_next(Lexer* lex);
 int lexer_match(Lexer* lex, LenoTokenType type);
 
+// ★ M5b（2026-10-11）：token → 保留字文本（反查 ✓）；不是关键字返回 NULL ✓。
+//   给"保留字撞名"的报错用（如 `Outer alias = o` ⇒ "'alias' 是保留字，换个名字 ✓"）。
+const char* lexer_keyword_text(LenoTokenType type);
+
 #endif // LENO_LEXER_H

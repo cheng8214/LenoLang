@@ -741,6 +741,35 @@ Leno 的变量是动态类型的，声明类型（如 `int`）只是编译期提
 
 ---
 
+## 线程入口的模块限制（⚠ 模块化重构必看）
+
+线程入口函数**必须是入口脚本（顶层文件）里的具名全局函数** ✓ —— **被 `import` 的模块里的函数不行** ✗。
+
+**为什么**：子线程只继承**主线程的全局变量**，且**不加载被导入模块的全局变量** ⇒ 模块函数在子线程里
+跑不起来。症状很坑：`join()` 只给 `Thread error: unknown error`，**连函数体都进不去**
+（catch 不到、日志也写不出来 ✗）。
+
+```leno
+// ✗ 不行：worker 定义在模块里
+import "./worker.leno" as w
+var t = threads.start(w.do_work)      // 报「线程入口必须是入口脚本（顶层文件）里的具名全局函数」
+
+// ✓ 做法一：在入口脚本里写个具名包装函数
+func do_work_entry(): string { return w.do_work() }
+var t = threads.start(do_work_entry)
+
+// ✓ 做法二（模块化最常用）：宿主把函数**当值传进模块**
+//   模块侧：
+//     export struct Page { func():string worker = null }
+//     export func run(p: Page): string { var t = threads.start(p.worker)  return t.join() }
+//   ⇒ `p.worker` 仍是**入口脚本的函数**（module == NULL ✓）⇒ 子线程 globals 正常 ✓
+```
+
+⚠ 两种做法都**实测过** ✓（做法二是 LenoMusic 三个页面模块的落地方式 ✓）。
+这条契约由编译器在 `threads.start` **调用点**直接报出（文案会点名是哪个模块的哪个函数 ✓）。
+
+> 另：入口函数的**实参个数必须严格对上** ✓ —— 线程入口由 VM 直接调用，**默认参数不会被补齐** ✗。
+
 ## API 参考
 
 ### threads 模块

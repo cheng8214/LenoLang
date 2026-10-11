@@ -525,7 +525,8 @@ Ast* parse_use_stmt(Parser* p) {
 
         while (1) {
             if (p->lex.current.type != TOK_IDENT) {
-                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "use 批量导入期望类型名");
+                // ★ M5a（2026-10-11）：内建类型 / 保留字点名说清（**单一实现**在 parser_utils.c ✓）
+                error_use_list_name_hint(p, 1);
                 free(module_name);
                 ast_free(block);
                 return NULL;
@@ -575,7 +576,8 @@ Ast* parse_use_stmt(Parser* p) {
 
     // 单模式: use module.Type（原有逻辑）
     if (p->lex.current.type != TOK_IDENT) {
-        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "use 语句期望类型名");
+        // ★ M5a（2026-10-11）：与批量模式共用同一份提示 ✓
+        error_use_list_name_hint(p, 0);
         free(module_name);
         return NULL;
     }

@@ -1904,6 +1904,30 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                 }
                 if (callee_type) type_free(callee_type);
             }
+            // ★ M2（2026-10-11，见 docs/语言摩擦与隐式契约清单.md）：**函数类型字段**的调用
+            //   按**声明签名**推返回类型 ✓ —— 信息是现成的：字段声明写着 `func():string outdirOf`
+            //   ✓，此前却退化成 `any` ✗ ⇒ 调用点必须手写 `var d = f()  return d as string` 收窄 ✗，
+            //   而且报错只说"实际 any"、看不出"明明声明了返回类型" ✗（拆分 LenoMusic 时真撞 ✓）。
+            //   手法与上面 AST_INDEX 那条（`self["op"](…)` ✓）完全一致 ✓；
+            //   另外两种形态一直是对的 ✓：具名函数（func_table ✓）与**变量**装函数
+            //   （semantic_type.c:1608 那条 ✓）⇒ 本次只补"字段"这一种 ✗。
+            //   ⚠ 顺序：必须放在下面"实例方法（obj.method()）"分支**之前** —— 函数类型字段不是
+            //     方法 ✓，让方法那条先跑去查 `S::名字` 只会白查一轮再落回 any ✗。
+            if (ast->u.call.callee && ast->u.call.callee->kind == AST_FIELD_ACCESS) {
+                TypeInfo* callee_type = infer_expr_type(s, ast->u.call.callee);
+                TypeInfo* fn_type = callee_type;
+                if (fn_type && fn_type->kind != TYPE_FUNCTION &&
+                    fn_type->value_type && fn_type->value_type->kind == TYPE_FUNCTION) {
+                    fn_type = fn_type->value_type;   // 可空函数类型 ⇒ 签名在 value_type 里 ✓
+                }
+                if (fn_type && fn_type->kind == TYPE_FUNCTION && fn_type->return_type) {
+                    TypeInfo* ret = type_copy(fn_type->return_type);
+                    ast->cached_type = type_copy(ret);
+                    if (callee_type) type_free(callee_type);
+                    return ret;
+                }
+                if (callee_type) type_free(callee_type);
+            }
             // 处理实例方法调用：obj.method()（callee 是 AST_FIELD_ACCESS）
             if (ast->u.call.callee && ast->u.call.callee->kind == AST_FIELD_ACCESS) {
                 Ast* field_access = ast->u.call.callee;

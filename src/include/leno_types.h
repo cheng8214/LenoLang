@@ -149,6 +149,12 @@ typedef enum {
     // 注：原 `WARN_EMPTY_CATCH`（空 catch）与 `WARN_IMPOSSIBLE_CAST`（不可能收窄）已于
     //     2026-09-28 **升为错误** ✗（改用 `error_add_at(ERR_SEMANTIC, ...)`，消息自带
     //     `[类别名]` 前缀 ✓）⇒ 不再需要这两个枚举值 ✓
+    WARN_MODULE_ALIAS_SHADOWED, // **模块别名被同名符号遮蔽**（2026-10-11 加 / M4）：
+                                //   `import "./bang_page.leno" as bang` 而 struct 又有个字段
+                                //   叫 `bang` ⇒ 方法内裸写 `bang.create_bang_page(...)` 里的
+                                //   `bang` 被解析成**字段** ✗，报错却是"在该字段上找不到方法" ✗
+                                //   —— 一个字不提遮蔽 ✓（拆 LenoMusic 时白烧几轮编译 ✓）。
+                                //   这种冲突几乎从不合法 ⇒ 报 warning 把话说清（不改语义 ✓）
 } WarnType;
 
 // ============================================================================

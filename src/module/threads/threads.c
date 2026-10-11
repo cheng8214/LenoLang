@@ -118,22 +118,34 @@ static Value threads_start(int argc, Value* args) {
 
     ObjClosure* closure = (ObjClosure*)val_as_obj(args[0]);
 
-    // ★ 前置校验（2026-09-28，修一处"幽灵错误"）：
-    //   线程入口**必须是当前脚本文件里的函数** ✗ —— 直接传**别的模块**的函数会炸，
-    //   而且炸得毫无线索：子线程里 `join()` 只给 "Thread error: unknown error"
+    // ★ 前置校验（2026-09-28，修一处"幽灵错误"；文案 2026-10-11 改准 —— 见
+    //   docs/语言摩擦与隐式契约清单.md 的 **M1**）：
+    //   线程入口**必须是入口脚本（顶层文件）里的具名全局函数** ✓ —— 直接传**被导入模块**的
+    //   函数会炸，而且炸得毫无线索：子线程里 `join()` 只给 "Thread error: unknown error"
     //   （catch 不到、**进不了函数体** ⇒ 用户连日志都写不出来）。
     //   根因（见 object_thread.c 的 ThreadStartArgs 快照）：子 VM 只继承**调用方 VM** 的
     //   globals，且把自己的 `current_module_frame` 置 NULL ⇒ **模块函数**找不到本模块的
     //   globals ⇒ 进函数体前就失败。
-    //   ⇒ 与其让它变成幽灵错误，不如在**调用点（主线程）**一次说清楚 ✓
-    //   正确写法：在本文件里写个具名包装函数再 start（cleaner_master 的 scan_entry/delete_entry ✓）
+    //   ⚠ 旧文案说"当前文件" ✗ —— 同一次运行里"当前文件"有好几个（每个被 import 的模块
+    //     都是"当前文件"之一）⇒ 用户照着改改不出对的结果（拆分 LenoMusic 时真撞过 ✗）。
+    //     判据其实是 `closure->function->module == NULL` ⇒ **入口脚本**的函数 ✓。
+    //   正确写法两种（都实测过 ✓）：
+    //     ① 在**入口脚本**里写个具名包装函数再 start（cleaner_master 的 scan_entry/delete_entry ✓）；
+    //     ② 让宿主把函数**当值传进模块**：模块里把字段声明成 `func(...):...`，
+    //        模块内 `threads.start(字段, …)` ✓ —— 此时它仍是**入口脚本的函数**
+    //        （module == NULL ✓），子线程 globals 正常 ✓（LenoMusic 三个页面模块全按此落地 ✓）。
     if (closure->function && closure->function->module) {
         ObjModule* mod = (ObjModule*)closure->function->module;
-        char msg[512];
+        char msg[1024];
         snprintf(msg, sizeof(msg),
-            "threads.start(): 线程入口必须是**当前文件**的函数 ✗ "
-            "收到的是模块 '%s' 里的 '%s'。请在本文件写一个具名包装函数再 threads.start"
-            "（子线程不会加载别的模块的全局变量 ⇒ 模块函数在子线程里跑不起来）",
+            "threads.start(): 线程入口必须是**入口脚本（顶层文件）里的具名全局函数** ✗ —— "
+            "收到的是模块 '%s' 里的 '%s'。为什么：子线程只继承主线程的全局变量、"
+            "**不加载被导入模块的全局变量** ⇒ 模块函数在子线程里跑不起来 ✗"
+            "（症状是 join() 只给 'Thread error: unknown error'，连函数体都进不去）。"
+            "两种正确做法：① 在入口脚本里写一个具名包装函数，再 threads.start 它 ✓；"
+            "② 让宿主把函数**当值传进模块**（字段声明成 func(...):...，"
+            "模块里 threads.start(字段, …) ✓ —— 它仍是入口脚本的函数 ✓）。"
+            "详见 docs/threads使用指南.md 的「线程入口的模块限制」一节 ✓",
             mod->name ? mod->name : "?",
             closure->function->name ? closure->function->name : "?");
         native_throw_error(msg);

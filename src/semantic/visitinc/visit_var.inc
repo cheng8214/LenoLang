@@ -35,6 +35,10 @@
                 }
             } else {
                 sym = scope_define(s->current, ast->u.var_decl.name, kind);
+                // ★ M4（2026-10-11）：变量名撞上**模块别名** ⇒ 遮蔽告警 ✓
+                //   （与 struct 字段那条共用 semantic_check_alias_shadow ✓）
+                semantic_check_alias_shadow(s, ast->u.var_decl.name, "局部变量",
+                                            ast->line, ast->column);
             }
             if (sym) {
                 // ★ 未使用局部量诊断（WARN_UNUSED_VAR）的**登记点**：只登记"用户代码里的局部量" ✓

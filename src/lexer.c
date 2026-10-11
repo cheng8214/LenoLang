@@ -955,3 +955,17 @@ int lexer_match(Lexer* lex, LenoTokenType type) {
     }
     return 0;
 }
+
+// ★ M5b（2026-10-11，见 docs/语言摩擦与隐式契约清单.md）：**token → 保留字文本**（反查 ✓）。
+//   用途：撞名报错要说清"这是保留字" ✓ —— 例如 `Outer alias = o`（`alias` 是关键字 ✓）
+//   旧文案只给"期望变量名" ✗，用户看不出问题出在**词**上（实录：探针 2026-10-11 ✓）。
+//   表只有 ~60 项 ⇒ 反着扫一遍足够便宜，而且**只在报错路径**调用 ✓（不进热路径 ✓）。
+const char* lexer_keyword_text(LenoTokenType type) {
+    init_keyword_table();
+    for (int i = 0; i < KEYWORD_TABLE_SIZE; i++) {
+        for (KeywordEntry* e = keyword_table[i]; e; e = e->next) {
+            if (e->type == type && e->keyword) return e->keyword;
+        }
+    }
+    return NULL;
+}
