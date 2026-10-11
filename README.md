@@ -195,7 +195,9 @@ build/leno hello.leno
 ```bash
 # 从仓库根目录
 build\leno.exe leno_gui\应用\数据看板\dashboard.leno          # 多特性组合样板（布局/控件/Canvas 自绘 ✓）
-build\leno.exe leno_gui\游戏\俄罗斯方块\tetris.leno
+# 游戏（五子棋 / 俄罗斯方块 / 塔防 / 扫雷 / 植物大战僵尸 / 飞机大战 / 鹈鹕动画）
+#   已迁到**独立仓 LenoGame**（2026-10-11）：https://github.com/cheng8214/LenoGame
+build\leno.exe ..\LenoGame\俄罗斯方块\tetris.leno
 ```
 
 ---

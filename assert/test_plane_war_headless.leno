@@ -13,6 +13,7 @@
 //      （=真跑满，不是提前退出）。
 
 import dirs
+import files
 import strings
 
 func tail_lines(string s, int n):string {
@@ -38,9 +39,30 @@ main() {
     // 写死成品名会让用例"还没跑就注定失败"（实测 exit=1、输出为空）。
     // 这也是 assert/helpers/compiler.leno 的既有口径（它同样用 `_executable()`）。
     var leno = _executable()
-    var game = dirs.abspath(dirs.join("leno_gui", "游戏", "飞机大战", "plane_war.leno"))
     assert_eq(leno != null, true)     // 解释器路径必须解析得出来
-    assert_eq(game != null, true)
+
+    // ★ 2026-10-11：七个游戏已迁到**独立仓 LenoGame**（本仓不再含 leno_gui/游戏/）
+    //   ⇒ 按顺序探三个位置（谁在就用谁 ✓）：
+    //     ① 环境变量 `LENO_GAME_DIR` 指向 LenoGame 仓根 ✓
+    //     ② 本仓旧位置（兼容还没迁完的工作区 ✓）
+    //     ③ 与本仓**同级**的 `..\LenoGame` ✓
+    //   ⚠ 一处都没有 ⇒ **跳过**（打印一行说明、不算失败 ✓）—— 这是"依赖外部仓的用例"的正确姿态：
+    //     没装就跳过；判红只会逼人把这个用例删掉 ✗（那就把覆盖丢了 ✗）
+    var rel = dirs.join("飞机大战", "plane_war.leno")
+    var cands = []
+    var gameDir = _env("LENO_GAME_DIR")
+    if gameDir != null and gameDir != "" { cands.add(dirs.join(gameDir, rel)) }
+    cands.add(dirs.abspath(dirs.join("leno_gui", "游戏", rel)))
+    cands.add(dirs.abspath(dirs.join("..", "LenoGame", rel)))
+    var game = ""
+    for cands to cand {
+        if files.exists(cand) { game = cand  break }
+    }
+    if game == "" {
+        print("[SKIP] 飞机大战无界面门禁用例：找不到 " + rel + "\n")
+        print("       游戏已迁到 LenoGame 仓 ✓ —— 把 LenoGame 放在本仓同级，或设 LENO_GAME_DIR 指向它即可跑 ✓\n")
+        return
+    }
 
     var run = "\"" + leno + "\" --no-cache \"" + game + "\""
     // 注意：`_exec` 在 Windows 下已经经过 `cmd /c`，这里不要再自己加 "cmd /c"；

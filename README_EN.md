@@ -195,7 +195,9 @@ A bundled SDL3 module; the repo already ships directly runnable apps (dashboard,
 ```bash
 # From the repo root
 build\leno.exe leno_gui\应用\数据看板\dashboard.leno          # multi-feature showcase (layout / widgets / custom Canvas drawing ✓)
-build\leno.exe leno_gui\游戏\俄罗斯方块\tetris.leno
+# Games (Gomoku / Tetris / Tower Defense / Minesweeper / Plants vs. Zombies / Plane War / Pelican)
+#   moved to their own repo **LenoGame** (2026-10-11): https://github.com/cheng8214/LenoGame
+build\leno.exe ..\LenoGame\俄罗斯方块\tetris.leno
 ```
 
 ---
