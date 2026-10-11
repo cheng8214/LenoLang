@@ -535,9 +535,11 @@ static int leno_stderr_has_reader(void) {
     //   ⇒ 用它会误判成"人看得见" ⇒ 日志与弹窗全都不做 ✗（实测踩过 ✓）；
     //   而 GetConsoleWindow()!=NULL 才是"屏幕上真有个窗口能显示" ✓ —— 这正是第一版
     //   能写出日志、能弹框的那条判据 ✓。
-    // ⚠ 已知边界：msys/mintty 伪终端窗口不属于 Win32 控制台 ⇒ 会被判成"没人接"而落日志
-    //   （多一个文件、无害 ✓）。要彻底区分得按 PE 子系统（GUI vs 控制台）判 ⇒ 后续给
-    //   -mwindows 那个构建加 `-DLENO_GUI_SUBSYSTEM`，只在 GUI 子系统里做这次接管 ✓
+    // ⚠ 这一支只是"**窗口层**"的判据：msys/mintty 伪终端、以及"没有可见窗口的控制台环境"
+    //   （IDE 里的 PowerShell ✓ 实测 `GetConsoleWindow()==NULL` ✗）都会落到"没人接" ✗。
+    //   ⇒ 真正的兜底判据是**PE 子系统**（见 leno_is_gui_subsystem ✓）：只有 GUI 子系统的
+    //     二进制才允许接管 ✓ —— 控制台子系统（leno.exe / leno_vm.exe ✓）永不接管 ⇒
+    //     不会在被 IDE/管道/伪终端启动时往 `build\logs\` 里攒垃圾日志 ✓（实测撞到过 ✓）。
     return GetConsoleWindow() != NULL ? 1 : 0;
 #else
     if (isatty(2)) return 1;                    // 终端 ✓
@@ -563,8 +565,8 @@ static void leno_ensure_parent_dir(const char* file) {
 #endif
 }
 
-// 取"本 exe 所在目录"（取不到返回 0 ✓ —— 调用方降级到用户目录 ✓）
-static int leno_exe_dir(char* out, size_t n) {
+// 取"本进程 exe 的绝对路径"（取不到返回 0 ✓）
+static int leno_self_exe_path(char* out, size_t n) {
     out[0] = '\0';
 #ifdef _WIN32
     // W 版 + utf16_to_utf8：路径里有中文（本仓的发布目录就是中文名 ✓）也不乱码 ✓
@@ -576,11 +578,15 @@ static int leno_exe_dir(char* out, size_t n) {
     if (!u8) return 0;
     snprintf(out, n, "%s", u8);
     free(u8);
+    return out[0] != '\0';
 #else
-    char exe[MAX_PATH_LEN];
-    if (!platform_self_exe_path(exe, sizeof(exe))) return 0;
-    snprintf(out, n, "%s", exe);
+    return platform_self_exe_path(out, n);
 #endif
+}
+
+// 取"本 exe 所在目录"（取不到返回 0 ✓ —— 调用方降级到用户目录 ✓）
+static int leno_exe_dir(char* out, size_t n) {
+    if (!leno_self_exe_path(out, n)) return 0;
     char* slash = strrchr(out, '/');
     char* bslash = strrchr(out, '\\');
     char* cut = (bslash && (!slash || bslash > slash)) ? bslash : slash;
@@ -588,6 +594,39 @@ static int leno_exe_dir(char* out, size_t n) {
     *cut = '\0';
     return out[0] != '\0';
 }
+
+#ifdef _WIN32
+// ★ 2026-10-11：本二进制是 **GUI 子系统** 还是 **控制台子系统**（读自身 PE 头 ✓ 不改构建脚本 ✓）。
+//   为什么必须分：Windows 上"没有控制台窗口"有两种情形 ——
+//     ① **GUI 子系统**（`leno_vm_gui.exe` / 打包产物 ✓）被双击 ⇒ 输出真的没人接 ⇒ **该接管** ✓；
+//     ② **控制台子系统**（`leno.exe` / `leno_vm.exe` ✓）在一个"没有可见窗口"的环境里被启动
+//        （IDE 里的 PowerShell ✓ 实测就是 `GetConsoleWindow()==NULL` ✗）⇒ 用户**其实看得见**
+//        输出（终端在 ✓）⇒ 接管的唯一效果是**在 `build\logs\` 里攒垃圾日志** ✗（实测撞到 ✓）。
+//   ⇒ 判据：只有 GUI 子系统才做这次接管 ✓；控制台子系统永不接管 ✓。
+//   PE 头：e_lfanew(0x3C) → PE 签名 4 字节 → COFF 头 20 字节 → OptionalHeader 里的
+//   Subsystem 字段（PE32/PE32+ 都在 OptionalHeader 偏移 68 ✓）= 2 表示 IMAGE_SUBSYSTEM_WINDOWS_GUI ✓
+static int leno_is_gui_subsystem(void) {
+    char exe[MAX_PATH_LEN];
+    if (!leno_self_exe_path(exe, sizeof(exe))) return 0;
+    FILE* f = fopen(exe, "rb");
+    if (!f) return 0;
+    unsigned char dos[64];
+    if (fread(dos, 1, sizeof(dos), f) != sizeof(dos) || dos[0] != 'M' || dos[1] != 'Z') {
+        fclose(f); return 0;
+    }
+    long pe_off = (long)dos[0x3C] | ((long)dos[0x3D] << 8) | ((long)dos[0x3E] << 16) | ((long)dos[0x3F] << 24);
+    if (pe_off <= 0 || fseek(f, pe_off, SEEK_SET) != 0) { fclose(f); return 0; }
+    // ⚠ 缓冲要覆盖到 OptionalHeader 偏移 68+2 处（= 相对 pe_off 的 92/93 字节 ✓）：
+    //   PE 签名 4 + COFF 20 + OptionalHeader 里 Subsystem 的偏移 68 ⇒ 至少 94 字节 ✓
+    //   （第一版给了 72 ✗ ⇒ gcc `-Warray-bounds` 当场抓住 ✓ 这就是"构建 0 警告"的用处 ✓）
+    unsigned char hdr[96];
+    if (fread(hdr, 1, sizeof(hdr), f) != sizeof(hdr)) { fclose(f); return 0; }
+    fclose(f);
+    if (hdr[0] != 'P' || hdr[1] != 'E' || hdr[2] != 0 || hdr[3] != 0) return 0;
+    unsigned subsystem = hdr[24 + 68] | ((unsigned)hdr[24 + 69] << 8);
+    return subsystem == 2 ? 1 : 0;   // IMAGE_SUBSYSTEM_WINDOWS_GUI
+}
+#endif
 
 // 选日志路径（三级回退 ✓）：① LENO_LOG ② exe 同目录 logs\ ③ 用户目录
 static void leno_pick_log_path(char* out, size_t n) {
@@ -640,26 +679,58 @@ void leno_error_init(void) {
 
     // 输出有人接（管道 / 文件 / 真控制台 ✓）⇒ 绝不插手 ✓（别抢别人的输出 ✓）
     if (leno_stderr_has_reader()) return;
+#ifdef _WIN32
+    // ★ 只有 **GUI 子系统**的二进制才做这次接管 ✓（判据见 leno_is_gui_subsystem 的说明）：
+    //   控制台子系统（leno.exe / leno_vm.exe ✓）的 stdout/stderr 永远有去处（终端/父进程 ✓），
+    //   接管的唯一效果是在 `build\logs\` 攒垃圾日志 ✗ ⇒ 直接返回 ✓
+    if (!leno_is_gui_subsystem()) return;
+#endif
 
     // ② 真·双击：stdout/stderr 一起接到日志（**无缓冲** ✓ —— 崩溃时缓冲里的内容会丢 ✗）
     char path[MAX_PATH_LEN];
     leno_pick_log_path(path, sizeof(path));
     if (!path[0]) return;
     leno_ensure_parent_dir(path);
+    // ⚠ 日志是**追加**的 ✓ ⇒ 不加约束会无上限长大 ✗（实测：同一程序反复启动会一段段堆头 ✓）：
+    //   · 只在**空文件**（或刚重开 ✓）时写那段说明头 ✓；
+    //   · 超过 256KB 就**重开一份** ✓（上次的错已经没意义了 ✓ 本次的错误一定在后面 ✓）
+    long old_size = 0;
+    {
+        FILE* probe = fopen(path, "rb");
+        if (probe) {
+            if (fseek(probe, 0, SEEK_END) == 0) old_size = ftell(probe);
+            fclose(probe);
+        }
+    }
+    int fresh = (old_size <= 0);
+    if (old_size > 256 * 1024) {
+        remove(path);
+        fresh = 1;
+    }
     FILE* f = freopen(path, "a", stdout);
     if (!f) return;
-    f = freopen(path, "a", stderr);
-    if (!f) return;
-    g_leno_log_fd = fileno(stderr);
+    // ★ 让 stderr **共用 stdout 那个文件位置** ✓ —— 直接再 freopen(stderr) 同一路径会得到
+    //   两个**独立**位置 ⇒ 两路输出在日志里互相插队、一行被另一行劈成两半 ✗
+    //   （实测撞到过：print 的整行被 [崩溃] 行从中间切开 ✓）
+#ifdef _WIN32
+    _dup2(_fileno(stdout), _fileno(stderr));
+#else
+    dup2(fileno(stdout), fileno(stderr));
+#endif
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
+    g_leno_log_fd = fileno(stdout);
     snprintf(g_leno_log_path, sizeof(g_leno_log_path), "%s", path);
 
-    // 日志开头打一条分隔（同一文件会被多次启动追加 ✓）
-    fprintf(stderr,
-            "\n===== Leno 运行时日志（本文件是无控制台发布版的**唯一**输出通道 ✓）=====\n"
-            "启动时间：程序启动即写；出错时会带上位置与调用栈 ✓\n"
-            "提示：把本文件整个发给作者即可定位 ✓（路径：%s）\n\n", path);
+    if (fresh) {
+        fprintf(stderr,
+                "\n===== Leno 运行时日志（本文件是无控制台发布版的**唯一**输出通道 ✓）=====\n"
+                "启动时间：程序启动即写；出错时会带上位置与调用栈 ✓\n"
+                "提示：把本文件整个发给作者即可定位 ✓（路径：%s）\n\n", path);
+    } else {
+        // 追加场景：只留一行分隔，别再堆一遍说明头 ✗（同一程序反复启动会把日志堆满 ✓）
+        fprintf(stderr, "\n--- 新的启动 ---\n");
+    }
     fflush(stderr);
 
     g_leno_logging_active = 1;   // 弹窗判据：只有"接管了输出"时才允许弹 ✓（见下 ✓）
