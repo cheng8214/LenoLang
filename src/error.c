@@ -890,7 +890,11 @@ void leno_error_report_exit(int exit_code) {
     char tail[1800];
     leno_read_log_tail(tail, sizeof(tail));
 
-    char body[2400];
+    // ⚠ 缓冲必须容得下**最坏情况**（否则 Linux 侧 gcc 会报 -Wformat-truncation ✗ 实测 ✓）：
+    //   tail ≤ 1799 ✓ + g_leno_log_path ≤ MAX_PATH_LEN-1 ✓ —— Linux 上 MAX_PATH_LEN 是 **4096**
+    //   （Windows 只有 260 ✓ 所以我本地 gcc 15 一直没报 ✗）⇒ 原来给 2400 是不够的 ✗
+    //   ⇒ 取 8192（1800 + 4096 + 字面量 ≈ 6.1KB ✓ 留足余量 ✓）
+    char body[8192];
     /* 手写拼接（避免在可能的异常上下文里依赖 snprintf 的长度语义 ✓ 这里其实安全 ✓） */
     snprintf(body, sizeof(body),
              "程序出错了（退出码 %d）\n\n"
@@ -921,7 +925,9 @@ void leno_error_report_exit(int exit_code) {
     {
         /* Linux/macOS：优先 zenity（能显示长文本 ✓），退 xmessage ✓；
            都没有就只剩日志文件 ✓（绝不死等 ✗） */
-        char cmd[MAX_PATH_LEN + 256];
+        // 这条格式串里出现**两次** g_leno_log_path ⇒ 最坏 2 × (MAX_PATH_LEN-1) + 字面量 ✓
+        // （Linux 的 MAX_PATH_LEN = 4096 ⇒ 原来的 +256 明显不够 ✗ 实测被 -Wformat-truncation 抓住 ✓）
+        char cmd[MAX_PATH_LEN * 2 + 512];
         snprintf(cmd, sizeof(cmd),
                  "if command -v zenity >/dev/null 2>&1; then "
                  "zenity --error --no-wrap --title='Leno 程序出错' --text='日志文件：%s'; "

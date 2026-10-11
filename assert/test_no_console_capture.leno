@@ -62,12 +62,16 @@ main() {
 
     // ---------- B. 带 LENO_LOG：显式要求 ⇒ 必须真写日志 ----------
     if dirs.exists(logsDir) { dirs.delete(logsDir) }
-    // `_exec` 在 Windows 下过 cmd /c ⇒ 用 `set X=v&&` 前缀传环境变量（`&&` 前不留空格 ✓）
+    // ⚠ 传环境变量的写法**两个平台不一样**，两边都有实测踩坑：
+    //   · Windows：`_exec` 过 `cmd /c` ⇒ 用 `set X=v&&` 前缀（`&&` 前**不留空格** ✓ 留了会变成值的一部分 ✗）
+    //   · POSIX：`_exec` 会用 coreutils 的 `timeout` **包一层**（见 sys.c 的 P6 说明 ✓）⇒
+    //     `X=v 程序` 这种**变量前缀会被当成命令名** ✗（实测：Linux 上本条断言红了 ✗ 报
+    //     "日志文件不存在" —— 其实是程序压根没跑起来 ✓）⇒ 必须走 `env X=v 程序` ✓
     var withLog = ""
     if _os() == "windows" {
         withLog = "set LENO_LOG=" + logFile + "&& set LENO_NO_DIALOG=1&& " + exe
     } else {
-        withLog = "LENO_LOG=" + logFile + " LENO_NO_DIALOG=1 " + exe
+        withLog = "env LENO_LOG=" + logFile + " LENO_NO_DIALOG=1 " + exe
     }
     var run2 = _exec(withLog, 60000)
     assert_true(run2 is ExecResult, "带 LENO_LOG 的产物应能执行")
