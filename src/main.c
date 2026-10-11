@@ -2185,6 +2185,8 @@ int lenolang_run_file(const char* path) {
 // 主函数逻辑
 static int main_logic(int argc, char** argv) {
     setupConsole();
+    // ★ 2026-10-11：错误可见性（无控制台发布版把输出落日志；终端里跑就接父控制台 ✓）
+    leno_error_init();
 
     // 注册模块编译器函数指针（解耦 module_loader 和编译器）
     set_module_compile_func(compile_module_new);

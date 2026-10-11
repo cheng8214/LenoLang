@@ -73,6 +73,22 @@ extern WarningCollector warnings;
 
 void warning_add(WarnType type, int line, const char* msg);
 void warning_add_at(WarnType type, int line, int column, const char* msg);
+
+// ============================================================================
+// ★ 2026-10-11：无控制台发布版的**错误可见性**（实现在 error.c 末尾，含完整说明）
+// ----------------------------------------------------------------------------
+// GUI 打包产物（`_console(false)` ⇒ 无控制台版 VM）双击运行时没有控制台 ⇒ 所有
+// `fprintf(stderr, …)`（含带位置的调用栈）**全丢** ⇒ 用户只看到"闪一下就没了" ✗。
+// 入口尽早调一次 `leno_error_init()`（幂等 ✓）：
+//   ① 有父控制台就接回去（Windows AttachConsole）⇒ 终端里跑也看得到 ✓
+//   ② 真·双击（无控制台、且 stdout/stderr 也没被捕获）⇒ **stdout/stderr 一起接到日志文件**
+//      （路径三级回退：LENO_LOG → exe 同目录 logs\ → 用户目录 ✓）
+//   ③ 已被捕获（管道/重定向/CI/`_exec` 子进程 ✓）⇒ 什么都不动 ✓（否则会破坏别人的捕获 ✗）
+// 另装崩溃兜底（`SetUnhandledExceptionFilter` / POSIX `signal`）与致命错误弹窗 ✓
+// ============================================================================
+void leno_error_init(void);
+// 当前日志文件的绝对路径（没开日志则返回 NULL ✓）——弹窗与提示要显示它 ✓
+const char* leno_error_log_path(void);
 int warning_has_any(void);
 void warning_clear(void);
 void warning_print_all(void);

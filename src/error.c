@@ -1,4 +1,19 @@
 #include "include/lenolang.h"
+// ★ 2026-10-11：无控制台发布版的错误可见性要用到平台层（exe 路径 / 宽字符转换 / mkdir ✓）
+//   platform.h 两侧都兜住了：Windows 给 utf16_to_utf8（内联 ✓）、POSIX 声明
+//   platform_self_exe_path ✓
+#include "include/platform.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#ifdef _WIN32
+#include <windows.h>
+#include <direct.h>
+#else
+#include <unistd.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#endif
 
 // 全局错误收集器
 ErrorCollector errors = {0};
@@ -471,4 +486,176 @@ void error_report_shadowed_module(void* ctx, const char* name, const char* winne
     error_set_filename(winner);
     warning_add_at(WARN_AMBIGUOUS_MODULE, 1, 1, msg);
     error_set_filename(saved[0] ? saved : NULL);
+}
+
+// ============================================================================
+// ★ 2026-10-11：无控制台发布版的**错误可见性**（唯一实现；说明见 include/leno_error.h）
+// ----------------------------------------------------------------------------
+// 症状（用户实录 ✓）：GUI 打包产物（`_console(false)` ⇒ 无控制台版 VM）**双击**运行 ⇒
+//   Windows GUI 子系统进程没有控制台 ⇒ 所有 `fprintf(stderr, …)`（含已带位置的调用栈）
+//   **全部消失** ✗ ⇒ 用户只看到"闪一下就没了"，作者一行线索都拿不到 ✓。
+//   （Linux 从 .desktop 启动、macOS 从 Finder 启动同理 ✓）
+//
+// 分层对策：
+//   ① 有父控制台 ⇒ **接回去**（Windows AttachConsole(ATTACH_PARENT_PROCESS) + 重开 CONOUT$）
+//      ⇒ 在终端里跑打包产物也能看到全部输出 ✓
+//   ② 真·双击（无控制台 ✓）⇒ **stdout/stderr 一起接到日志文件** ⇒ 现有所有 fprintf/print
+//      一行不改就全落盘 ✓（含调用栈 ✓）；路径三级回退：LENO_LOG → exe 同目录 logs\ → 用户目录
+//   ③ stderr 若**已被捕获**（管道/文件/CI/`_exec` 子进程/无头用例 ✓）⇒ **什么都不动** ✓
+//      —— 动了会把别人的捕获搞坏 ✗，也会让套件假失败 ✗（这条是"只认真·双击"的判据 ✓）
+//   ④ 崩溃兜底与弹窗见下方两个小节 ✓
+// ============================================================================
+
+static char g_leno_log_path[MAX_PATH_LEN] = "";   // 日志绝对路径（空 = 没开日志 ✓）
+static int  g_leno_log_fd = -1;                   // 崩溃兜底要用的**异步安全** fd（见 ④ ✓）
+static int  g_leno_err_inited = 0;                // 幂等（多个入口调用只生效一次 ✓）
+
+const char* leno_error_log_path(void) {
+    return g_leno_log_path[0] ? g_leno_log_path : NULL;
+}
+
+// stderr 现在**有没有人接**（= 输出不会白丢 ✓）。
+// 判据（保守方向 ✓：拿不准就当"有人接" ⇒ 我们不动 ✓ —— 少写一份日志没关系，
+// 但绝不能把别人的捕获搞坏 ✗，也绝不能把本该显示的输出抢走 ✗）：
+//   ① 管道 / 普通文件 ⇒ **有人接** ✓（终端重定向、CI、`_exec` 子进程、无头用例 ✓）
+//   ② 真控制台 ⇒ 有人接 ✓（人看得见 ✓）
+//   ③ 其余（句柄无效 / NUL / POSIX 上非 tty 非管道非文件 ✓）⇒ **没人接** ⇒ 才落日志 ✓
+//      —— Windows 双击 GUI 打包产物就是 ③ ✓
+static int leno_stderr_has_reader(void) {
+#ifdef _WIN32
+    HANDLE h = GetStdHandle(STD_ERROR_HANDLE);
+    if (h == NULL || h == INVALID_HANDLE_VALUE) return 0;
+    DWORD t = GetFileType(h);
+    if (t == FILE_TYPE_PIPE || t == FILE_TYPE_DISK) return 1;   // 被捕获 ✓
+    if (t != FILE_TYPE_CHAR) return 0;                          // UNKNOWN 等 ⇒ 没人接 ✓
+    DWORD mode = 0;
+    if (GetConsoleMode(h, &mode)) return 1;                     // 真控制台 ✓
+    // ⚠ 已知边界：msys/mintty 之类"伪终端"也落在这一支（既不是控制台、也不是管道/文件 ✓）
+    //   ⇒ 会被当成"没人接"而落日志 ✓。代价是多写一个日志文件（无害 ✓），
+    //   收益是 GUI 打包产物**双击**时终于留得下线索（这才是本轮的目标 ✓）。
+    //   要彻底区分得看 PE 子系统（GUI vs 控制台）—— 记为后续：给 -mwindows 那个构建加一个
+    //   -DLENO_GUI_SUBSYSTEM，只在 GUI 子系统里做这次接管 ✓
+    return 0;
+#else
+    if (isatty(2)) return 1;                    // 终端 ✓
+    struct stat st;
+    if (fstat(2, &st) == 0 && (S_ISFIFO(st.st_mode) || S_ISREG(st.st_mode))) return 1;  // 管道/文件 ✓
+    return 0;                                   // /dev/null、已关闭、socket ⇒ 没人接 ✓
+#endif
+}
+
+// 给日志文件建父目录（只建一层 ✓ —— logs\ 不存在是唯一现实情况 ✓）
+static void leno_ensure_parent_dir(const char* file) {
+    char dir[MAX_PATH_LEN];
+    snprintf(dir, sizeof(dir), "%s", file);
+    char* slash = strrchr(dir, '/');
+    char* bslash = strrchr(dir, '\\');
+    char* cut = (bslash && (!slash || bslash > slash)) ? bslash : slash;
+    if (!cut || cut == dir) return;
+    *cut = '\0';
+#ifdef _WIN32
+    _mkdir(dir);
+#else
+    mkdir(dir, 0755);
+#endif
+}
+
+// 取"本 exe 所在目录"（取不到返回 0 ✓ —— 调用方降级到用户目录 ✓）
+static int leno_exe_dir(char* out, size_t n) {
+    out[0] = '\0';
+#ifdef _WIN32
+    // W 版 + utf16_to_utf8：路径里有中文（本仓的发布目录就是中文名 ✓）也不乱码 ✓
+    wchar_t wbuf[MAX_PATH_LEN];
+    DWORD len = GetModuleFileNameW(NULL, wbuf, (DWORD)(sizeof(wbuf) / sizeof(wbuf[0])));
+    if (len == 0 || len >= (DWORD)(sizeof(wbuf) / sizeof(wbuf[0]))) return 0;
+    wbuf[len] = L'\0';
+    char* u8 = utf16_to_utf8(wbuf);
+    if (!u8) return 0;
+    snprintf(out, n, "%s", u8);
+    free(u8);
+#else
+    char exe[MAX_PATH_LEN];
+    if (!platform_self_exe_path(exe, sizeof(exe))) return 0;
+    snprintf(out, n, "%s", exe);
+#endif
+    char* slash = strrchr(out, '/');
+    char* bslash = strrchr(out, '\\');
+    char* cut = (bslash && (!slash || bslash > slash)) ? bslash : slash;
+    if (!cut) { out[0] = '\0'; return 0; }
+    *cut = '\0';
+    return out[0] != '\0';
+}
+
+// 选日志路径（三级回退 ✓）：① LENO_LOG ② exe 同目录 logs\ ③ 用户目录
+static void leno_pick_log_path(char* out, size_t n) {
+    const char* env = getenv("LENO_LOG");
+    if (env && env[0]) { snprintf(out, n, "%s", env); return; }
+
+    char dir[MAX_PATH_LEN];
+    if (leno_exe_dir(dir, sizeof(dir))) {
+#ifdef _WIN32
+        snprintf(out, n, "%s\\logs\\leno_error.log", dir);
+#else
+        snprintf(out, n, "%s/logs/leno_error.log", dir);
+#endif
+        return;
+    }
+#ifdef _WIN32
+    const char* base = getenv("LOCALAPPDATA");
+    if (!base || !base[0]) base = getenv("TEMP");
+    if (!base || !base[0]) base = ".";
+    snprintf(out, n, "%s\\Leno\\logs\\leno_error.log", base);
+#else
+    const char* base = getenv("XDG_STATE_HOME");
+    if (base && base[0]) {
+        snprintf(out, n, "%s/leno/logs/leno_error.log", base);
+    } else {
+        const char* home = getenv("HOME");
+        if (!home || !home[0]) home = ".";
+        snprintf(out, n, "%s/.local/state/leno/logs/leno_error.log", home);
+    }
+#endif
+}
+
+void leno_error_init(void) {
+    if (g_leno_err_inited) return;
+    g_leno_err_inited = 1;
+
+#ifdef _WIN32
+    // ① 终端里跑（父进程有控制台 ✓）：接回去，这样 GUI 打包产物在 cmd/PowerShell 里
+    //    也能看到全部输出 ✓（双击时这句返回 FALSE ⇒ 落到 ② ✓）
+    if (AttachConsole(ATTACH_PARENT_PROCESS)) {
+        FILE* f;
+        f = freopen("CONOUT$", "w", stdout);  (void)f;
+        f = freopen("CONOUT$", "w", stderr);  (void)f;
+        f = freopen("CONIN$",  "r", stdin);   (void)f;
+        // 接回来的控制台也要 UTF-8（VM 侧本来没有这句 ✓ 顺手补上，中文错误信息才不乱码 ✓）
+        SetConsoleOutputCP(CP_UTF8);
+        SetConsoleCP(CP_UTF8);
+    }
+#endif
+
+    // 输出有人接（管道 / 文件 / 真控制台 ✓）⇒ 绝不插手 ✓（别抢别人的输出 ✓）
+    if (leno_stderr_has_reader()) return;
+
+    // ② 真·双击：stdout/stderr 一起接到日志（**无缓冲** ✓ —— 崩溃时缓冲里的内容会丢 ✗）
+    char path[MAX_PATH_LEN];
+    leno_pick_log_path(path, sizeof(path));
+    if (!path[0]) return;
+    leno_ensure_parent_dir(path);
+    FILE* f = freopen(path, "a", stdout);
+    if (!f) return;
+    f = freopen(path, "a", stderr);
+    if (!f) return;
+    g_leno_log_fd = fileno(stderr);
+    setvbuf(stdout, NULL, _IONBF, 0);
+    setvbuf(stderr, NULL, _IONBF, 0);
+    snprintf(g_leno_log_path, sizeof(g_leno_log_path), "%s", path);
+
+    // 日志开头打一条分隔（同一文件会被多次启动追加 ✓）
+    fprintf(stderr,
+            "\n===== Leno 运行时日志（本文件是无控制台发布版的**唯一**输出通道 ✓）=====\n"
+            "启动时间：程序启动即写；出错时会带上位置与调用栈 ✓\n"
+            "提示：把本文件整个发给作者即可定位 ✓（路径：%s）\n\n", path);
+    fflush(stderr);
 }

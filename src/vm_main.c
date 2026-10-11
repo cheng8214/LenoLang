@@ -798,6 +798,10 @@ static int check_lenb_only(const char* filename) {
 
 // VM 主逻辑（平台无关）
 static int vm_run_main(int argc, char** argv) {
+    // ★ 2026-10-11：错误可见性（**打包发布版**走的就是这条路 ✓）——
+    //   无控制台（真·双击 ✓）⇒ stdout/stderr 接到日志文件；终端里跑 ⇒ 接父控制台 ✓
+    //   已被捕获（CI / `_exec` 子进程 / 无头用例 ✓）⇒ 不动 ✓ 详见 src/error.c 的实现说明
+    leno_error_init();
     // --check-bin <file>：只校验不执行 —— 必须排在"自检内嵌数据"之前，
     //   否则带内嵌数据的 VM 会先走自运行分支，命令行参数就被丢掉了。
     if (argc >= 3 && argv[1] && strcmp(argv[1], "--check-bin") == 0) {
