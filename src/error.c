@@ -6,6 +6,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+// ★ signal / raise / SIGSEGV / SIGABRT / SIGBUS / SIGFPE / SIGILL / SIG_DFL 全在这里 ✓
+//   ⚠ 2026-10-11 补：Windows 侧被 <windows.h> **间接**带进来了 ⇒ Linux 首编当场报
+//     “‘SIGSEGV’ undeclared / implicit declaration of ‘signal’” ✗（实测 ✓）。
+//   ⇒ 标准头一律**显式**写，别靠别人间接带 ✓（这条教训适用于本仓所有 C 文件 ✓）
+#include <signal.h>
 #ifdef _WIN32
 #include <windows.h>
 #include <direct.h>
