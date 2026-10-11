@@ -420,7 +420,9 @@ void semantic_check_alias_shadow(Semantic* s, const char* name, const char* what
     for (int i = 0; i < s->imported_module_count; i++) {
         ImportedModuleInfo* im = &s->imported_modules[i];
         if (!im->alias || strcmp(im->alias, name) != 0) continue;
-        char msg[BUFFER_MEDIUM];
+        // ⚠ 缓冲要够大 ✓：这条文案有 6 处 %s + 中文 ⇒ BUFFER_MEDIUM(100) 装不下 ✗
+        //   （实测被 gcc 抓到 -Wformat-truncation ✗ —— 本仓的口径是构建 **0 warning** ✓）
+        char msg[512];
         snprintf(msg, sizeof(msg),
                  "「%s」既是**模块别名**（import … as %s ✓）又是这里的%s —— 名字解析优先给%s，"
                  "**模块成员在这个位置不可达** ✗（症状：`%s.某方法(...)` 报「在该对象上找不到方法」、"
