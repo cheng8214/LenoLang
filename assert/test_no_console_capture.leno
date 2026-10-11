@@ -1,0 +1,83 @@
+// 回归：**无控制台发布版的输出接管，绝不能碰有人接的输出**（2026-10-11 加）
+//
+// 为什么要有这条：`src/error.c` 的"错误可见性"会在**确实没人接输出**时把 stdout/stderr 接到
+//   日志文件（目的：GUI 打包产物**双击**崩了也能留下线索 ✓）。但上线当天用**真实产物**回归时，
+//   连着撞三次"把用户原本能用的输出搞没" ✗ —— 每一次都比它要修的问题更严重 ✗：
+//     ① 判据只看 stderr ⇒ `app.exe | grep x`（stdout 是管道、stderr 不是）被判成"没人接"
+//        ⇒ **stdout 也被抢进日志** ✗ ⇒ 被捕获的那一路 0 行 ✗；
+//     ② `AttachConsole` 之后**无条件** `freopen("CONOUT$")` ⇒ 把 `app.exe > out.txt`
+//        的重定向**冲掉** ✗ ⇒ 空文件、exit 却是 0 ✗；
+//     ③ 改用"CHAR + 无控制台窗口 ⇒ 没人接"当判据后，实测量到：**打包产物在重定向到文件时
+//        `GetFileType` 也报 CHAR(0x2)** ✗（同条件普通 GUI 探针报 DISK ✓）⇒ 句柄层根本分不开 ✗
+//        ⇒ 又一次误伤重定向 ✗（实测 `> out.txt` 得 0 行 ✓）。
+//   ⇒ 最终判据取**保守方向**：只有"句柄真的没有"（NULL/INVALID/UNKNOWN ✓）才算没人接 ✓；
+//     想要日志的场合走**显式**开关 `LENO_LOG=<路径>` ✓（它强制接管 ✓ 但仍只对 GUI 子系统 ✓）。
+//
+// 本用例钉的就是这两半（都能在 CI 里复现 ✓）：
+//   A. **不带** LENO_LOG ⇒ 产物输出照样被捕获 ✓ 且**不生成** `dist/logs/` ✓（= 没误伤 ✓）
+//   B. **带上** LENO_LOG ⇒ 日志文件被创建 ✓ 且里面有产物的输出 ✓（= 显式开关真生效 ✓）
+import dirs
+import files
+import strings
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_no_console_capture")
+    if dirs.exists(work) { dirs.delete(work) }
+    dirs.mkdir(work)
+
+    var src = dirs.join(work, "app.leno")
+    files.write(src,
+        "main() {\n"
+        + "    _console(false)\n"
+        + "    print(\"captured-by-pipe OK\\n\")\n"
+        + "}\n")
+
+    var dist = dirs.join(work, "dist")
+    var leno = _executable()
+    // ⚠ exe **不能加引号**：`_exec` 在 Windows 下是 `cmd /c <cmd> > tmp 2>&1`，cmd 会剥掉
+    //   `/c` 后紧跟的最外两层引号 ⇒ 加了引号会报 "The filename, directory name, or volume
+    //   label syntax is incorrect."（`helpers/compiler.leno` 早记过这个坑 ✓ 实测又踩到 ✓）
+    var pack = leno + " -p --onefile -o \"" + dist + "\" \"" + src + "\""
+    var pr = _exec(pack, 120000)
+    assert_true(pr is ExecResult, "打包命令应能执行（_exec 不该返回 null）")
+    assert_eq(pr.code, 0, "打包应成功；输出=" + _str(pr.output))
+
+    var exe = dirs.join(dist, "app")
+    if _os() == "windows" { exe = exe + ".exe" }
+    assert_true(files.exists(exe), "打包产物应存在：" + exe)
+
+    var logsDir = dirs.join(dist, "logs")
+    var logFile = dirs.join(logsDir, "leno_error.log")
+
+    // ---------- A. 不带 LENO_LOG：不许动别人接好的输出 ----------
+    if dirs.exists(logsDir) { dirs.delete(logsDir) }
+    var run = _exec(exe, 60000)
+    assert_true(run is ExecResult, "产物应能执行")
+    assert_eq(run.code, 0, "产物应正常退出；输出=" + _str(run.output))
+    assert_true(strings.has(_str(run.output), "captured-by-pipe OK"),
+        "★A1 有人接（重定向/管道）时输出必须照旧可捕获 —— 失败即意味着输出被日志接管抢走了 ✗"
+        + "（实测过的真 bug ①③，见文件头）；实际输出=" + _str(run.output))
+    assert_true(not dirs.exists(logsDir),
+        "★A2 输出有人接时**不该**生成 dist/logs/（判据过宽就会误伤重定向 ✗ 实测 bug ③）")
+
+    // ---------- B. 带 LENO_LOG：显式要求 ⇒ 必须真写日志 ----------
+    if dirs.exists(logsDir) { dirs.delete(logsDir) }
+    // `_exec` 在 Windows 下过 cmd /c ⇒ 用 `set X=v&&` 前缀传环境变量（`&&` 前不留空格 ✓）
+    var withLog = ""
+    if _os() == "windows" {
+        withLog = "set LENO_LOG=" + logFile + "&& set LENO_NO_DIALOG=1&& " + exe
+    } else {
+        withLog = "LENO_LOG=" + logFile + " LENO_NO_DIALOG=1 " + exe
+    }
+    var run2 = _exec(withLog, 60000)
+    assert_true(run2 is ExecResult, "带 LENO_LOG 的产物应能执行")
+    assert_true(files.exists(logFile),
+        "★B1 显式给了 LENO_LOG ⇒ 必须生成日志文件：" + logFile)
+    if files.exists(logFile) {
+        var content = _str(files.read(logFile))
+        assert_true(strings.has(content, "captured-by-pipe OK"),
+            "★B2 日志应包含产物输出（否则等于接管了却没记东西 ✗）；内容=" + content)
+    }
+
+    dirs.delete(work)
+}

@@ -527,22 +527,22 @@ const char* leno_error_log_path(void) {
 static int leno_one_fd_has_reader(int which) {
 #ifdef _WIN32
     // which: 1 = stdout ✓ 2 = stderr ✓
+    // ★ 判据只认**"句柄真的没有"**（NULL / INVALID / FILE_TYPE_UNKNOWN ✓）⇒ 才认为"没人接" ✓。
+    //   \u26a0 为什么不再用"CHAR + 没有控制台窗口"当判据（实测教训 ✗）：
+    //     打包产物（`leno_vm_gui.exe` ✓）在**重定向到文件**时 `GetFileType` 也报 **CHAR(0x2)** ✗
+    //     （同条件下普通 GUI 探针报 DISK(0x1) ✓ ⇒ 两者在句柄层就分不开 ✗），而 `GetConsoleWindow()`
+    //     在 IDE / 无控制台环境里恒为 NULL ✗ ⇒ 旧判据会把"**文件重定向**"也当成没人接 ✗
+    //     ⇒ 接管后把用户的重定向冲掉、文件 0 行 ✗✗（实测：`app.exe > out.txt` 空文件、exit=0 ✓）。
+    //   ⇒ 取**保守方向**：宁可少接管一次（输出照旧打屏/进管道 ✓），也绝不动别人接好的输出 ✓。
+    //   ⇒ 想要日志的场合用**显式**开关 `LENO_LOG=<路径>`（见 leno_error_init ✓ 它强制接管 ✓）。
     HANDLE h = GetStdHandle(which == 1 ? STD_OUTPUT_HANDLE : STD_ERROR_HANDLE);
     if (h == NULL || h == INVALID_HANDLE_VALUE) return 0;
-    DWORD t = GetFileType(h);
-    if (t == FILE_TYPE_PIPE || t == FILE_TYPE_DISK) return 1;   // 被捕获（重定向/CI/_exec ✓）
-    // ★ 判"人看不看得见"用 **GetConsoleWindow**（实测口径 ✓）：
-    //   本 IDE 环境里 GetConsoleMode 会对一个**没有窗口**的隐藏控制台返回成功 ✗
-    //   ⇒ 用它会误判成"人看得见" ⇒ 日志与弹窗全都不做 ✗（实测踩过 ✓）；
-    //   而 GetConsoleWindow()!=NULL 才是"屏幕上真有个窗口能显示" ✓ —— 这正是第一版
-    //   能写出日志、能弹框的那条判据 ✓。
-    return GetConsoleWindow() != NULL ? 1 : 0;
+    return GetFileType(h) != FILE_TYPE_UNKNOWN ? 1 : 0;
 #else
     int fd = (which == 1) ? 1 : 2;
-    if (isatty(fd)) return 1;                   // 终端 ✓
     struct stat st;
-    if (fstat(fd, &st) == 0 && (S_ISFIFO(st.st_mode) || S_ISREG(st.st_mode))) return 1;  // 管道/文件 ✓
-    return 0;                                   // /dev/null、已关闭、socket ⇒ 没人接 ✓
+    if (fstat(fd, &st) != 0) return 0;          // fd 无效 ⇒ 没人接 ✓
+    return 1;                                   // tty / 管道 / 文件 / /dev/null 一律当"有去处" ✓
 #endif
 }
 
@@ -706,8 +706,13 @@ void leno_error_init(void) {
     }
 #endif
 
-    // 输出有人接（管道 / 文件 / 真控制台 ✓）⇒ 绝不插手 ✓（别抢别人的输出 ✓）
-    if (leno_output_has_reader()) return;
+    // 输出有人接（管道 / 文件 / 控制台 / 甚至是"说不清但句柄有效" ✓）⇒ 绝不插手 ✓
+    // ★ `LENO_LOG=<路径>` 是**显式要求**日志 ⇒ 跳过这条判据强制接管 ✓（但**仍**只对 GUI 子系统 ✓）
+    {
+        const char* envLog = getenv("LENO_LOG");
+        int forced = (envLog && envLog[0]) ? 1 : 0;
+        if (!forced && leno_output_has_reader()) return;
+    }
 #ifdef _WIN32
     // ★ 只有 **GUI 子系统**的二进制才做这次接管 ✓（判据见 leno_is_gui_subsystem 的说明）：
     //   控制台子系统（leno.exe / leno_vm.exe ✓）的 stdout/stderr 永远有去处（终端/父进程 ✓），
