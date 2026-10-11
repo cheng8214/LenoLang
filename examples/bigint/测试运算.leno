@@ -13,7 +13,7 @@ main() {
     
     // 测试 2: null 错误
     print("\n=== 测试 null 错误 ===")
-    var n = null
+    var _n = null
     // 这些应该报错
     // var r1 = n + 1  // 运行时错误: 加法: null 不能参与算术运算
     // var r2 = 1 - n  // 运行时错误: 减法: null 不能参与算术运算

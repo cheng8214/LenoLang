@@ -20,7 +20,7 @@ func fmtSize(int b): string {
 main() {
     // --- 模式1: float 声明 + 算术（CAST 消除路径） ---
     float dlgW = 470.0
-    float dlgH = 380.0
+    float _dlgH = 380.0
     float padX = 30.0
     float innerW = dlgW - padX * 2.0
     float propMaxW = innerW - 80.0 - 8.0

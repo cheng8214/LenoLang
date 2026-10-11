@@ -2,7 +2,7 @@ export struct Point
 {
     int x = 0
     int y = 0
-    func test():int
+    func test():int   // ← 故意触发 [ 漏写 return ] 警告 ✓（本文件是教学/边界用例，不是漏改 ✓）
     {
         print("test")
     }

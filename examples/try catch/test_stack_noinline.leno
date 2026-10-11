@@ -4,7 +4,7 @@
 func level3() {
     try {
         var arr = [1, 2, 3]
-        var x = arr[10]    // 数组越界
+        var _x = arr[10]    // 数组越界
     } catch e {
         throw e    // 重新抛出，使 level3 含 try 但不被内联
     }
@@ -40,7 +40,7 @@ try {
 
 print("\n=== 测试: 除零错误调用链 ===")
 func deep_a() {
-    try { var x = 1 / 0 } catch e { throw e }
+    try { var _x = 1 / 0 } catch e { throw e }   // 故意的除零（本用例就是要看调用链 ✓）
 }
 
 func deep_b() {

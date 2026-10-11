@@ -1204,8 +1204,8 @@ struct PEAnalyzer {
 
         // 遍历符号表 (scope data: global_var_count + global_func_count + sym_count + symbols)
         if gLenbPos + 12 <= gLenbEnd {
-            int gvars = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
-            int gfuncs = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            int _gvars = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
+            int _gfuncs = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
             int symCount = rbe32(gLenbPos); gLenbPos = gLenbPos + 4
             if symCount >= 0 and symCount <= 100000 {
                 for 0:symCount-1 to si {
@@ -2773,8 +2773,8 @@ struct PEAnalyzer {
     func skipHeaderAndSymbols(int startPos): int {
         int pos = startPos
         if pos + 12 > gLenbEnd { return pos }
-        int gvars = rbe32(pos); pos = pos + 4
-        int gfuncs = rbe32(pos); pos = pos + 4
+        int _gvars = rbe32(pos); pos = pos + 4     // 读过去只为推进 pos（值本身不用）✓
+        int _gfuncs = rbe32(pos); pos = pos + 4
         int symCount = rbe32(pos); pos = pos + 4
         if symCount < 0 or symCount > 100000 { return pos }
 

@@ -5,7 +5,7 @@
 face Container {
     func get(): int
 }
-struct Box impl Container {
+struct Box impl Container {   // ← 故意触发 [ 字段未初始化 ] 警告 ✓（本文件是教学/边界用例，不是漏改 ✓）
     int val
     func get(): int { return self.val }
 }
@@ -16,7 +16,7 @@ print("face basic: " + b.get())
 face Comparable {
     func compare(Comparable other): int
 }
-struct OrdInt impl Comparable {
+struct OrdInt impl Comparable {   // ← 故意触发 [ 字段未初始化 ] 警告 ✓（本文件是教学/边界用例，不是漏改 ✓）
     int value
     func compare(Comparable other): int {
         var o = other as OrdInt
@@ -31,7 +31,7 @@ var r1 = id(o1)
 print("constraint ok: " + r1.value)
 
 // === #4: 泛型运算 ===
-func double[T](T x): T { return x + x }
+func double[T](T x): T { return x + x }   // ← 故意触发 [ 泛型无约束 ] 警告 ✓（本文件是教学/边界用例，不是漏改 ✓）
 var d = double[int](21)
 print("double: " + d)
 

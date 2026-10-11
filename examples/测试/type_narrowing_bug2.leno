@@ -31,7 +31,7 @@ struct Container {
         if data is Channel {
             int i = 0
             while i < 3 {
-                var msg = data.try_receive()
+                var _msg = data.try_receive()
                 i = i + 1
             }
         }
@@ -41,7 +41,7 @@ struct Container {
         // is 收窄后在嵌套 if 中调用方法
         if data is Channel {
             if data.len() > 0 {
-                var msg = data.try_receive()
+                var _msg = data.try_receive()
             }
         }
     }
@@ -58,7 +58,7 @@ struct Container {
         // is 收窄后在 for 循环中调用方法
         if data is Channel {
             for 3 to i {
-                var msg = data.try_receive()
+                var _msg = data.try_receive()   // 只为验证"收窄后在 for 块里调用"这条编译错误 ✓
             }
         }
     }

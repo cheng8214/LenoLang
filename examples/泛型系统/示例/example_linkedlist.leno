@@ -20,11 +20,11 @@ struct LinkedList[T] {
     // 在尾部追加
     func append(T val) {
         var node = new Node[T](data=val)
-        if self.head == null {
+        if self.head == null {   // ← 故意触发 [ struct与null比较 ] 警告 ✓（本文件是教学/边界用例，不是漏改 ✓）
             self.head = node
         } else {
             var curr = self.head
-            while curr.next != null {
+            while curr.next != null {   // ← 故意触发 [ struct与null比较 ] 警告 ✓（本文件是教学/边界用例，不是漏改 ✓）
                 curr = curr.next
             }
             curr.next = node
@@ -92,7 +92,7 @@ func joinList[T](LinkedList[T] list, string sep): string {
     var result = ""
     for arr to item {
         if result != "" { result = result + sep }
-        result = result + item
+        result = result + item   // ← 故意触发 [ 泛型无约束 ] 警告 ✓（本文件是教学/边界用例，不是漏改 ✓）
     }
     return result
 }

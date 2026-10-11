@@ -28,7 +28,7 @@ main() {
     print("4. 混用: " + v4a + " " + v4b + " " + v4c)
 
     // 5. system_lib
-    system_lib s = ttf.getTTFSys()
+    system_lib _s = ttf.getTTFSys()
     print("5. sys: OK")
 
     // 6. struct + clib (通过透传函数间接访问)

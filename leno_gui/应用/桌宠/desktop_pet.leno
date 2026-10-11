@@ -60,7 +60,7 @@ struct Robot {
 // 检测点击的身体部位：1=头部, 2=胯下, 3=大腿, 0=其他
 func hitTest(float mx, float my, float cx, float cy): int {
     float dx = mx - cx
-    float dy = my - cy
+    float _dy = my - cy
     // 头部：y-50 ~ y-12，|x| < 25
     if my < cy - 12.0 and my > cy - 50.0 and dx * dx < 625.0 { return 1 }
     // 胯下：y+30 ~ y+40，|x| < 8（腿之间）

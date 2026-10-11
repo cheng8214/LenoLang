@@ -218,7 +218,7 @@ func test1()
 
     // 数组访问
     var arr1=[]
-    var k=0
+    var _k=0
     for 1000 { arr1.add(1) }
     t1=times.ms()
     for csnum
@@ -299,7 +299,7 @@ func whileandfor()
     for csnum {}
     var t2=times.ms()
     var for_empty = t2-t1
-    print($"for N \{\}: " + for_empty + "ms")
+    print($"for N \{\}: " + for_empty + "ms")   // ← 故意触发 [ 无效转义 ] 警告 ✓（本文件是教学/边界用例，不是漏改 ✓）
 
     t1=times.ms()
     var i=0
@@ -338,7 +338,7 @@ func whileandfor()
     print("--- 测试3: for to var vs while (带循环变量访问) ---")
 
     t1=times.ms()
-    var sum=0
+    var _sum=0
     for csnum to j {
         j
     }

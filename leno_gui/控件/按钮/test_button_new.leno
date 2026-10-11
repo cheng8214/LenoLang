@@ -75,15 +75,15 @@ main() {
 
     // —— 3) 内容模式：同一张 2:1 宽图，三种缩放表现 ——
     //     aspectFit(默认) 保持比例完整+留边 / stretch 拉伸变形 / aspectFill 填满裁剪
-    Button bFit = win.addButton({
+    Button _bFit = win.addButton({
         text: "aspectFit", x: 30, y: 110, w: 160, h: 60,
         type: "dark", image_path: "d:/t_wide.png", image_pos: "left", image_mode: 0
     })
-    Button bStretch = win.addButton({
+    Button _bStretch = win.addButton({
         text: "stretch", x: 200, y: 110, w: 160, h: 60,
         type: "dark", image_path: "d:/t_wide.png", image_pos: "left", image_mode: 1
     })
-    Button bFill = win.addButton({
+    Button _bFill = win.addButton({
         text: "aspectFill", x: 370, y: 110, w: 160, h: 60,
         type: "dark", image_path: "d:/t_wide.png", image_pos: "left", image_mode: 2
     })

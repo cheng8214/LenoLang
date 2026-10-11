@@ -3,7 +3,7 @@ import times
 main()
 {
    // var 多变量声明
-   var a=10, b, c=1
+   var a=10, b, c=1   // ← 故意触发 [ 部分初值声明 ] 警告 ✓（本文件是教学/边界用例，不是漏改 ✓）
    
    print("a=" + a + ", type=" + type(a))
    print("b=" + b + ", type=" + type(b))

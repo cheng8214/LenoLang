@@ -28,7 +28,7 @@ struct LinkedList
         
         // 使用局部变量遍历，避免 head.next 链式访问的问题
         var current = head
-        while (current != null)
+        while (current != null)   // ← 故意触发 [ struct与null比较 ] 警告 ✓（本文件是教学/边界用例，不是漏改 ✓）
         {
             printf(current.value)
             printf(" -> ")

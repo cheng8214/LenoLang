@@ -11,6 +11,6 @@ export struct Box[T] {
     }
 
     func add(T v): T {
-        return self.value + v
+        return self.value + v   // ← 故意触发 [ 泛型无约束 ] 警告 ✓（本文件是教学/边界用例，不是漏改 ✓）
     }
 }

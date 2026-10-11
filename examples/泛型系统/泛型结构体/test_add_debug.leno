@@ -3,7 +3,7 @@ struct Calc[T] {
     T base
 
     func add(T v): T {
-        return self.base + v
+        return self.base + v   // ← 故意触发 [ 泛型无约束 ] 警告 ✓（本文件是教学/边界用例，不是漏改 ✓）
     }
 }
 

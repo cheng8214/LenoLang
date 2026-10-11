@@ -2,7 +2,7 @@ main()
 {
     // 测试1：捕获除零错误
     try {
-        var a = 10 / 0
+        var _a = 10 / 0
         print("这行不会执行")
     } catch e {
         print($"捕获除零错误: {e}")
@@ -11,7 +11,7 @@ main()
     // 测试2：捕获数组越界
     try {
         var arr = [1, 2, 3]
-        var x = arr[10]
+        var _x = arr[10]
         print("这行不会执行")
     } catch e {
         print($"捕获数组越界: {e}")

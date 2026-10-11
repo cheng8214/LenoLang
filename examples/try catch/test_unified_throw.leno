@@ -16,7 +16,7 @@ try {
 
 print("\n=== 测试 2: 运行时异常仍然正常 ===")
 try {
-    var a = 1 / 0
+    var _a = 1 / 0
 } catch e {
     print("  print(e): " + e)
     print("  e.msg: " + e.msg)

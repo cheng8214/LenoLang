@@ -502,7 +502,7 @@ int nid = tree.add_child(id, node)
         } else {
             cmd = "cmd /c start \"\" \"" + path + "\""
         }
-        var r = _exec(cmd)
+        var _r = _exec(cmd)
         statusLbl.set_text("已打开: " + dirs.basename(path))
     }
 

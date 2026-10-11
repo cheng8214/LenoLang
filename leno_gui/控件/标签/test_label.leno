@@ -12,21 +12,21 @@ main() {
     SDL3.ttfInit()
 
     // 左对齐（默认）
-    Label lblLeft = win.addLabel({text: "左对齐: Hello Leno!", x: 50, y: 40, font_size: 18, text_color: #FFDC64FF})
+    Label _lblLeft = win.addLabel({text: "左对齐: Hello Leno!", x: 50, y: 40, font_size: 18, text_color: #FFDC64FF})
 
     // 居中
-    Label lblCenter = win.addLabel({text: "居中对齐: Hello Leno!", x: 300, y: 90, font_size: 20,
+    Label _lblCenter = win.addLabel({text: "居中对齐: Hello Leno!", x: 300, y: 90, font_size: 20,
                                      align: 1, text_color: #64DCFFFF})
 
     // 右对齐
-    Label lblRight = win.addLabel({text: "右对齐: Hello Leno!", x: 550, y: 140, font_size: 20,
+    Label _lblRight = win.addLabel({text: "右对齐: Hello Leno!", x: 550, y: 140, font_size: 20,
                                     align: 2, text_color: #64FFA0FF})
 
     // 大字
-    Label lblBig = win.addLabel({text: "48px 大标题", x: 50, y: 200, font_size: 48, text_color: #FFFFFFFF})
+    Label _lblBig = win.addLabel({text: "48px 大标题", x: 50, y: 200, font_size: 48, text_color: #FFFFFFFF})
 
     // 小字
-    Label lblSmall = win.addLabel({text: "14px 小字", x: 50, y: 270, font_size: 14, text_color: #B4B4C8FF})
+    Label _lblSmall = win.addLabel({text: "14px 小字", x: 50, y: 270, font_size: 14, text_color: #B4B4C8FF})
 
     win.run(
         func(Event e): bool {

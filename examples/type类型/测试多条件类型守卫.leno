@@ -3,7 +3,7 @@
 var x = 5
 var y = "hello"
 
-if x is int or y is string {
+if x is int or y is string {   // ← 故意触发 [ or类型守卫 ] 警告 ✓（本文件是教学/边界用例，不是漏改 ✓）
     print("guard passed")
 } else {
     print("guard failed")

@@ -30,9 +30,9 @@ import dirs
 import jsons
 import times
 import sockets
-import "web_ws.leno" as ws
+import "web_ws.leno" as webws
 
-use ws.(WsClient)
+use webws.(WsClient)
 // ⚠ `Channel` / `Socket` 这类**原生类型**全局可见，不需要（也不能）`use`
 
 // ==================== 类型 ====================
@@ -448,7 +448,7 @@ export func cdpConnect(string wsUrl, int timeoutMs): CdpClient {
     c.nextId = 1
     c.ok = false
     c.error = ""
-    c.ws = ws.connect(wsUrl, timeoutMs)
+    c.ws = webws.connect(wsUrl, timeoutMs)
     if not c.ws.ok {
         c.error = "WebSocket 连接失败：" + c.ws.error
         return c
@@ -459,10 +459,10 @@ export func cdpConnect(string wsUrl, int timeoutMs): CdpClient {
 
 // 收一条消息；失败返回 ""
 func _recvJson(CdpClient c): string {
-    string raw = ws.recvText(c.ws)
+    string raw = webws.recvText(c.ws)
     if raw == "" {
         c.ok = false
-        c.error = "读取 CDP 消息失败：" + ws.lastError()
+        c.error = "读取 CDP 消息失败：" + webws.lastError()
         return ""
     }
     return raw
@@ -479,7 +479,7 @@ export func cdpCall(CdpClient c, string method, string paramsJson): string {
     } else {
         msg = "{\"id\":" + id + ",\"method\":\"" + method + "\",\"params\":" + paramsJson + "}"
     }
-    if not ws.sendText(c.ws, msg) {
+    if not webws.sendText(c.ws, msg) {
         c.ok = false
         c.error = "发送 CDP 命令失败：" + method
         return ""
@@ -523,7 +523,6 @@ export func waitEvent(CdpClient c, string method, int timeoutMs): string {
         var obj = jsons.decode(c.events[i])
         if obj is Dict[string, any] and jsons.get_str(obj, "method", "") == method {
             // 领取（从队列里摘掉）
-            string raw = c.events[i]
             Array[string] keep = []
             for c.events.len() to j {
                 if j != i { keep.add(c.events[j]) }
@@ -581,7 +580,7 @@ export func evaluate(CdpClient c, string js): string {
 }
 
 export func cdpClose(CdpClient c) {
-    ws.close(c.ws)
+    webws.close(c.ws)
     c.ok = false
 }
 
@@ -851,10 +850,12 @@ export func close(Browser b): bool {
 func _removeDir(string path): bool {
     if path == "" or not dirs.exists(path) { return false }
     if _isWindows() {
-        var r = _exec("cmd /c rmdir /s /q \"" + path + "\"", 15000)
+        // ⚠ `_r` 不是笔误 ✓：**调用必须照跑**（rmdir 的副作用 ✓），只有返回值没人用 ✓
+        //   （新警告 [未使用变量] 给的两条出路之一：有意保留 ⇒ 改 `_` 前缀 ✓ 见 M 系列姊妹项）
+        var _r = _exec("cmd /c rmdir /s /q \"" + path + "\"", 15000)
         return not dirs.exists(path)
     }
-    var r2 = _exec("rm -rf \"" + path + "\"", 15000)
+    var _r2 = _exec("rm -rf \"" + path + "\"", 15000)   // 同上：调用要跑，返回值不用 ✓
     return not dirs.exists(path)
 }
 
@@ -882,7 +883,7 @@ export struct RenderOptions {
 // 尽量多收几条消息（**不等满**整个 WS 超时）：事件攒进 c.events 交上层按需处理。
 // 实现上把 WS 超时临时压到 ≤200ms ⇒ 这是"轮询式等待"的基础。
 //
-// ⚠ `ws.setTimeout` 改的是 **WsClient 的持久字段 timeoutMs**，而 `_readExact` 的读超时
+// ⚠ `webws.setTimeout` 改的是 **WsClient 的持久字段 timeoutMs**，而 `_readExact` 的读超时
 //   也读它 ⇒ 用完**必须恢复**。否则第一次 _drain 之后，全场所有读取的预算都只剩 200ms，
 //   大帧（CDP 里 1~3MB 的 outerHTML 很常见）必然"读帧体超时"、整个渲染 ok=false。
 //   2026-10-07 实战发现：B 站排行榜时好时坏，就是 200ms 内收得完/收不完的差别。
@@ -894,8 +895,8 @@ func _drain(CdpClient c, int budgetMs): int {
         int remain = budgetMs - (_int(times.ms()) - t0)
         if remain <= 0 { break }
         if remain > 200 { remain = 200 }
-        ws.setTimeout(c.ws, remain)
-        string raw = ws.recvText(c.ws)
+        webws.setTimeout(c.ws, remain)
+        string raw = webws.recvText(c.ws)
         if raw == "" { break }
         count = count + 1
         // 主文档响应事件：只取状态码，**不进 events**（大页面几百条请求，全攒着没意义）
@@ -911,7 +912,7 @@ func _drain(CdpClient c, int budgetMs): int {
             }
         }
     }
-    ws.setTimeout(c.ws, savedTimeout)
+    webws.setTimeout(c.ws, savedTimeout)
     return count
 }
 
@@ -1049,7 +1050,7 @@ export func captureScreenshot(CdpClient c, string savePath): bool {
     if obj is Dict[string, any] {
         string b64 = jsons.get_str(obj, "data", "")
         if b64 == "" { return false }
-        Array[int] bs = ws.base64Decode(b64)
+        Array[int] bs = webws.base64Decode(b64)
         if bs.len() == 0 { return false }
         files.write(savePath, strings.from_bytes(bs))
         return true

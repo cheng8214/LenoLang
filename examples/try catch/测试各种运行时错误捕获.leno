@@ -4,7 +4,7 @@ main()
     
     // 1. 除零错误
     try {
-        var a = 10 / 0
+        var _a = 10 / 0
     } catch e {
         print($"1. 除零错误: {e}")
     }
@@ -12,7 +12,7 @@ main()
     // 2. 数组越界
     try {
         var arr = [1, 2, 3]
-        var x = arr[10]
+        var _x = arr[10]
     } catch e {
         print($"2. 数组越界: {e}")
     }
@@ -29,7 +29,7 @@ main()
     // 5. 字符串索引越界
     try {
         var s = "hello"
-        var c = s[100]
+        var _c = s[100]
     } catch e {
         print($"5. 字符串索引越界: {e}")
     }

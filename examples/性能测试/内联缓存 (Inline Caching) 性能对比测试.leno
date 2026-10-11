@@ -84,8 +84,8 @@ main() {
     
     t1 = times.ms()
     for iterations {
-        var len = arr3.len()
-        var first = arr3[0]
+        var _len = arr3.len()
+        var _first = arr3[0]
     }
     t2 = times.ms()
     var chain_time = t2 - t1

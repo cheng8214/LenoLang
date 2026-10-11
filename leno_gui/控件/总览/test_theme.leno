@@ -51,21 +51,21 @@ func buildWindow() {
 
     // ─── 选择类 ───
     win.addLabel({x: 540, y: 158, text: "Selection", font_size: 14})
-    var cb1 = win.addCheckBox({x: 540, y: 184, text: "复选框 A", checked: true, tip: "复选演示"})
-    var cb2 = win.addCheckBox({x: 540, y: 214, text: "复选框 B"})
+    var _cb1 = win.addCheckBox({x: 540, y: 184, text: "复选框 A", checked: true, tip: "复选演示"})
+    var _cb2 = win.addCheckBox({x: 540, y: 214, text: "复选框 B"})
 
-    var r1 = win.addRadioButton({x: 540, y: 248, text: "单选 1", group: "theme", checked: true})
-    var r2 = win.addRadioButton({x: 540, y: 276, text: "单选 2", group: "theme"})
+    var _r1 = win.addRadioButton({x: 540, y: 248, text: "单选 1", group: "theme", checked: true})
+    var _r2 = win.addRadioButton({x: 540, y: 276, text: "单选 2", group: "theme"})
 
-    var t1 = win.addToggle({x: 540, y: 310, text: "开关 1", on: true,  anim: true})
-    var t2 = win.addToggle({x: 540, y: 340, text: "开关 2", on: false, anim: true})
+    var _t1 = win.addToggle({x: 540, y: 310, text: "开关 1", on: true,  anim: true})
+    var _t2 = win.addToggle({x: 540, y: 340, text: "开关 2", on: false, anim: true})
 
     // ─── 滑块与进度条 ───
     win.addLabel({x: 24, y: 300, text: "Slider & Progress", font_size: 14})
     var sl = win.addSlider({x: 24, y: 326, w: 260, h: 24, min: 0, max: 100, value: 40, tip: "拖动滑块"})
     sl.on_change(func(float v):void { /* 可扩展 */ })
 
-    var pg = win.addProgressBar({x: 24, y: 366, w: 260, h: 22, value: 60})
+    var _pg = win.addProgressBar({x: 24, y: 366, w: 260, h: 22, value: 60})
     win.addLabel({x: 300, y: 366, text: "进度 60%", font_size: 13})
 
     // ─── 列表框 ───

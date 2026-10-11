@@ -1,4 +1,4 @@
-// 核心层 - 模拟 SDL3.leno 基础 DLL 绑定
+// 核心层 - 模拟 SDL3.leno 基础 DLL 绑定   // ← 故意触发 [ 模块名歧义 ] 警告 ✓（本文件是教学/边界用例，不是漏改 ✓）
 import ffi
 
 clib core_lib {

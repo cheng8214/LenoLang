@@ -2,7 +2,7 @@
 
 func inner() {
     // 抛出异常
-    var a = 1 / 0;
+    var _a = 1 / 0;
 }
 
 func middle() {

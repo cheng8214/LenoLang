@@ -21,7 +21,7 @@ main() {
     print("3. 链式: " + v3)
 
     // 4. 多类型
-    var s = sdl.wrapGetSys()
+    var _s = sdl.wrapGetSys()
     var c2 = sdl.wrapGetCore()
     var v4 = c2.abs(-13) as int
     print("4. 多类型: " + v4)

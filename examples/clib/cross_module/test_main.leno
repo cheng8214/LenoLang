@@ -10,7 +10,7 @@ main() {
     print("1. 桥接函数: " + ml.doAbs(-5))
 
     // 测试2: 拿到 clib 值
-    math_lib l = ml.load()
+    math_lib _l = ml.load()
     print("2. load() 成功")
 
     // 测试3: 链式调用 clib 方法
@@ -21,7 +21,7 @@ main() {
     print("4. 变量复用: " + l2.abs(-10))
 
     // 测试5: 同一模块多个 clib 类型
-    os_lib o = ml.loadOs()
+    os_lib _o = ml.loadOs()
     print("5. 第二个 clib 类型 loadOs() 成功")
 
     // 测试6: clib 双重链式

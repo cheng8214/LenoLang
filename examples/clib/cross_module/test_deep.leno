@@ -20,7 +20,7 @@ main() {
     print("3. 链式: " + v3)
 
     // 4. extra
-    var e = deep.deepGetExtra()
+    var _e = deep.deepGetExtra()
     print("4. extra: OK")
 
     // 5. 变量复用

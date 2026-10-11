@@ -73,7 +73,7 @@ assert_eq(opt2.hasValue, true)
 
 // --- 7. 泛型函数中泛型参数的算术运算 ---
 func add[T](T a, T b): T {
-    return a + b
+    return a + b   // ← 故意触发 [ 泛型无约束 ] 警告 ✓（本文件是教学/边界用例，不是漏改 ✓）
 }
 
 assert_eq(add[int](3, 4), 7)
@@ -183,7 +183,7 @@ assert_eq(sc.count, 1)
 
 // --- 13. 泛型函数比较操作 ---
 func max[T](T a, T b): T {
-    if a >= b { return a }
+    if a >= b { return a }   // ← 故意触发 [ 泛型无约束 ] 警告 ✓（本文件是教学/边界用例，不是漏改 ✓）
     return b
 }
 

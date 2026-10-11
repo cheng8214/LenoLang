@@ -1322,7 +1322,7 @@ func onClick(Game g, float mx, float my) {
     }
 
     if g.state == ST_HELP {
-        var pw = 620.0
+        var _pw = 620.0
         var ph = 440.0
         var py = _float(WIN_H) * 0.5 - ph * 0.5
         var by = py + ph - 40.0

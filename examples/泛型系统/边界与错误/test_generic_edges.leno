@@ -34,7 +34,7 @@ struct EmptyBox impl Comparable {
 func newEmpty[T: Comparable](): T { return null }
 
 // ===== 6. 约束 struct 嵌套泛型 =====
-struct ConstrainedHolder[T: Comparable] {
+struct ConstrainedHolder[T: Comparable] {   // ← 故意触发 [ 字段未初始化 ] 警告 ✓（本文件是教学/边界用例，不是漏改 ✓）
     int extra
     func getExtra(): int { return self.extra }
 }
@@ -62,7 +62,7 @@ main() {
 
     print("=== 5: 约束无参 newEmpty ===")
     var eb = newEmpty[EmptyBox]()
-    assert(eb == null)
+    assert(eb == null)   // ← 故意触发 [ struct与null比较 ] 警告 ✓（本文件是教学/边界用例，不是漏改 ✓）
 
     print("=== 6: 约束 struct 实例化 ===")
     var ch = new ConstrainedHolder[int](extra=100)

@@ -23,7 +23,7 @@ main() {
     io.print("PASS: Ptr -> clib")
 
     // ===== 测试 2: clib -> Ptr (向下兼容) =====
-    Ptr p = lib
+    Ptr _p = lib
     io.print("PASS: clib -> Ptr")
 
     // ===== 测试 3: 同名 clib 赋值 =====

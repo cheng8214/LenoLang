@@ -724,7 +724,7 @@ export func getParentPid(int pid):Dict {
         }
 
         // 【优化】可以直接读取 str16 字段
-        var processName = pe32.szExeFile
+        var _processName = pe32.szExeFile
        // print("找到进程: " + processName)
 
         pe32.free()

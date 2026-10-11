@@ -59,7 +59,7 @@ func on_directory_changed(int errorCode, int bytesTransferred, Ptr overlapped): 
         var offset = 0
         while offset < bytesTransferred {
             var action = ffi.read_uint(g_buffer, offset + 4)
-            var fileNameLen = ffi.read_uint(g_buffer, offset + 8)
+            var _fileNameLen = ffi.read_uint(g_buffer, offset + 8)
 
             // 读取文件名 (UTF-16)
             var fileNamePtr = ffi.offset(g_buffer, offset + 12)

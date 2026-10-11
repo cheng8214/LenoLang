@@ -282,7 +282,7 @@ main() {
         for 0 : numCols - 1 to i {
             float x = colX[i]
             float y = colY[i]
-            float bright = colBright[i]
+            float _bright = colBright[i]
             int gx = _int(x); int gy = _int(y)
 
             // 头部字符（亮绿；闪烁时纯白[0]档）
@@ -371,7 +371,7 @@ main() {
         b0 += 50; b1 += 50
     }
     if perfLogs.len() > 0 {
-        var tot = 0; var sumMs = 0
+        var _tot = 0; var sumMs = 0
         for 0 : perfMs.len() - 1 to k { sumMs += perfMs[k] }
         var avgMs = _float(sumMs) / _float(perfLogs.len())
         var avgFps = 0.0

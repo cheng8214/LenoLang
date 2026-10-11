@@ -167,7 +167,7 @@ func test_libdl() {
         print("dlopen libc.so.6: 成功")
 
         // dlerror
-        var err = ffi.call_ptr(libdl, "dlerror")
+        var _err = ffi.call_ptr(libdl, "dlerror")
 
         // dlclose
         ffi.call_int(libdl, "dlclose", handle)

@@ -57,8 +57,8 @@ main() {
     // 测试计算 1000 次（for 闭区间 0:999，共 1000 次）
     start = times.ns()
     for 0:1000-1 to i {
-        var avgAge = mathClass.getAverageAge()
-        var avgScore = mathClass.getAverageScore()
+        var _avgAge = mathClass.getAverageAge()
+        var _avgScore = mathClass.getAverageScore()
     }
     var calc_time = times.ns() - start
 

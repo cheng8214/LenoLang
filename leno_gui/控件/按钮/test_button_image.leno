@@ -29,35 +29,35 @@ main() {
     if not win.ok { print("窗口创建失败"); return }
 
     // —— 演示 1：图标在左（默认，对齐 Material iconGravity=start / WinForms ImageBeforeText） ——
-    Button bLeft = win.addButton({
+    Button _bLeft = win.addButton({
         text: "图标在左", x: 30, y: 30, w: 200, h: 50,
         type: "primary",
         image_path: "D:/1.png", image_pos: "left", image_gap: 8
     })
 
     // —— 演示 2：图标在右（Material iconGravity=end / WinForms TextBeforeImage） ——
-    Button bRight = win.addButton({
+    Button _bRight = win.addButton({
         text: "图标在右", x: 280, y: 30, w: 200, h: 50,
         type: "success",
         image_path: "D:/1.png", image_pos: "right"
     })
 
     // —— 演示 3：图标在上（Material iconGravity=top / WinForms ImageAboveText） ——
-    Button bTop = win.addButton({
+    Button _bTop = win.addButton({
         text: "图标在上", x: 30, y: 110, w: 200, h: 70,
         type: "warning",
         image_path: "D:/1.png", image_pos: "top"
     })
 
     // —— 演示 4：图标在下（WinForms TextAboveImage） ——
-    Button bBottom = win.addButton({
+    Button _bBottom = win.addButton({
         text: "图标在下", x: 280, y: 110, w: 200, h: 70,
         type: "danger",
         image_path: "D:/1.png", image_pos: "bottom"
     })
 
     // —— 演示 5：透明度 + 着色（对齐 Qt ColorMod / Material icon tint） ——
-    Button bTint = win.addButton({
+    Button _bTint = win.addButton({
         text: "半透明+红色着色", x: 30, y: 210, w: 230, h: 50,
         type: "dark",
         image_path: "D:/1.png", image_pos: "left",
@@ -80,14 +80,14 @@ main() {
     })
 
     // —— 演示 7：纯图标按钮（无文字） ——
-    Button bIconOnly = win.addButton({
+    Button _bIconOnly = win.addButton({
         x: 30, y: 290, w: 50, h: 50,
         type: "success",
         image_path: "D:/1.png"
     })
 
     // —— 演示 8：很小的按钮（窄高 + 图标在上）—— 验证图标/文字自适应与裁剪不溢出
-    Button bSmall = win.addButton({
+    Button _bSmall = win.addButton({
         text: "小按钮", x: 100, y: 360, w: 90, h: 46,
         type: "primary",
         image_path: "D:/1.png", image_pos: "top"

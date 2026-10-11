@@ -22,7 +22,7 @@ main() {
     ed.on_change(func() { msg = "内容: " + ed.get_text() })
 
     // 多行编辑框（同样支持右键菜单，撤销/重做可用）
-    Edit edMl = win.addEdit({text: "多行文本\n第二行\n第三行", x: 30, y: 130, w: 300, h: 120, multiline: true})
+    Edit _edMl = win.addEdit({text: "多行文本\n第二行\n第三行", x: 30, y: 130, w: 300, h: 120, multiline: true})
 
     // —— 扩展：给编辑框内置上下文菜单追加自定义项 ——
     var cm = ed.get_context_menu()

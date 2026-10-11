@@ -25,14 +25,14 @@ main() {
         for students to s {
             totalAge = totalAge + s.age
         }
-        var avgAge = totalAge / students.len()
+        var _avgAge = totalAge / students.len()
 
         // 计算平均分数
         int totalScore = 0
         for students to s {
             totalScore = totalScore + s.score
         }
-        var avgScore = totalScore / students.len()
+        var _avgScore = totalScore / students.len()
     }
     var calc_time = times.ns() - start
 

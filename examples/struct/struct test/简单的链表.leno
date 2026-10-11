@@ -25,5 +25,5 @@ main()
     
     print("head value: ")
     //会报错
-   print(list.head.value)
+   print(list.head.value)   // ← 故意触发 [ 空值链式访问 ] 警告 ✓（本文件是教学/边界用例，不是漏改 ✓）
 }

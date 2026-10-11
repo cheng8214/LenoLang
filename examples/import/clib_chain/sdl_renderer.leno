@@ -1,4 +1,4 @@
-// 渲染器模块 - 模拟 renderer.leno
+// 渲染器模块 - 模拟 renderer.leno   // ← 故意触发 [ 模块名歧义 ] 警告 ✓（本文件是教学/边界用例，不是漏改 ✓）
 import "sdl_core.leno" as core
 use core.core_lib
 

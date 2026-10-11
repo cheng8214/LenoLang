@@ -30,7 +30,7 @@ main() {
     })
 
     // 只读输入框
-    Edit edRead = win.addEdit({text: "这是只读文字，不可编辑", x: 20, y: 170, w: 250, h: 36, readonly: true})
+    Edit _edRead = win.addEdit({text: "这是只读文字，不可编辑", x: 20, y: 170, w: 250, h: 36, readonly: true})
 
     // 暗色主题
     Edit edDark = win.addEdit({text: "暗色主题", x: 20, y: 225, w: 250, h: 36,
@@ -38,7 +38,7 @@ main() {
     edDark.on_enter(func() { lastMsg = "回车: " + edDark.get_text(); print("[enter] " + lastMsg) })
 
     // 长文本输入框
-    Edit edWide = win.addEdit({text: "这是一段很长的文字用来测试滚动", x: 20, y: 290, w: 460, h: 36})
+    Edit _edWide = win.addEdit({text: "这是一段很长的文字用来测试滚动", x: 20, y: 290, w: 460, h: 36})
 
     win.run(
         func(Event e): bool {

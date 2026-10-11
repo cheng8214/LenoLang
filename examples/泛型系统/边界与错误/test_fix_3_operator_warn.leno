@@ -2,8 +2,8 @@
 print("=== 运算符警告 ===")
 
 // 无约束算术 → stderr 警告，但运行正常
-func add[T](T a, T b): T { return a + b }
-func max[T](T a, T b): T { if a >= b { return a } return b }
+func add[T](T a, T b): T { return a + b }   // ← 故意触发 [ 泛型无约束 ] 警告 ✓（本文件是教学/边界用例，不是漏改 ✓）
+func max[T](T a, T b): T { if a >= b { return a } return b }   // ← 故意触发 [ 泛型无约束 ] 警告 ✓（本文件是教学/边界用例，不是漏改 ✓）
 
 assert_eq(add[int](3, 5), 8)
 assert_eq(max[int](10, 20), 20)

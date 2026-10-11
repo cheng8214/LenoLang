@@ -16,7 +16,7 @@ func list_add(LinkedList list, int value)
     var new_node = new Node()
     new_node.value = value
     
-    if (list.head == null)
+    if (list.head == null)   // ← 故意触发 [ struct与null比较 ] 警告 ✓（本文件是教学/边界用例，不是漏改 ✓）
     {
         // 第一个节点
         list.head = new_node
@@ -25,7 +25,7 @@ func list_add(LinkedList list, int value)
     {
         // 找到最后一个节点，追加到后面
         var current = list.head
-        while (current.next != null)
+        while (current.next != null)   // ← 故意触发 [ struct与null比较 ] 警告 ✓（本文件是教学/边界用例，不是漏改 ✓）
         {
             current = current.next
         }

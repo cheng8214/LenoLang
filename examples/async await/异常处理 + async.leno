@@ -4,7 +4,7 @@ import asyncs
 async func risky():string {
     await asyncs.sleep(100)
     throw "出错了"
-    return "不会执行"
+    return "不会执行"   // ← 故意触发 [ 不可达代码 ] 警告 ✓（本文件是教学/边界用例，不是漏改 ✓）
 }
 
 async func safe_catch() {

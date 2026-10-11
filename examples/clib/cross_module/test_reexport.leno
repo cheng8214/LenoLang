@@ -11,7 +11,7 @@ main() {
 
     print("2. 链式: " + mid.getCore().abs(-7))
 
-    extra_lib e = mid.getExtra()
+    extra_lib _e = mid.getExtra()
     print("3. extra: OK")
 
     core_lib cc = mid.getCore()

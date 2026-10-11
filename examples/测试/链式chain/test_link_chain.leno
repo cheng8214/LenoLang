@@ -10,10 +10,10 @@ main() {
     a.next = b
 
     // a.next 赋值后应该可以访问
-    print("a.next.val = " + a.next.val)  // 编译器是否允许？
+    print("a.next.val = " + a.next.val)  // 编译器是否允许？   // ← 故意触发 [ 空值链式访问 ] 警告 ✓（本文件是教学/边界用例，不是漏改 ✓）
 
     // 链式多级
     Link c = new Link(); c.val = 3
     b.next = c
-    print("a.next.next.val = " + a.next.next.val)  // 是否允许？
+    print("a.next.next.val = " + a.next.next.val)  // 是否允许？   // ← 故意触发 [ 空值链式访问 ] 警告 ✓（本文件是教学/边界用例，不是漏改 ✓）
 }

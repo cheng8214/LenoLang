@@ -74,7 +74,7 @@ func test_array_append_tail(int start, int n): Array {
     if n <= 0 {
         return [start]
     }
-    var arr = [start]
+    var _arr = [start]
     // 尾调用位置
     return test_array_append_tail(start + 1, n - 1)
 }
@@ -100,7 +100,7 @@ func test_chain_tail(int n): Array {
     if n <= 0 {
         return [1, 2, 3]
     }
-    var arr = [n]
+    var _arr = [n]
     // 尾调用位置
     return test_chain_tail(n - 1)
 }

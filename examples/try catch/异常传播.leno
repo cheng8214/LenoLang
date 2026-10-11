@@ -15,7 +15,7 @@ func test()
 {
 	try
 	{
-	float a=10/0
+	float _a=10/0
 	}
 	catch e
 	{

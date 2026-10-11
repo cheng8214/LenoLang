@@ -11,7 +11,7 @@ main()
     print($"Point1: x={p1.x}, y={p1.y}")
     var p=math.get()
     print(p.test())
-    int a=p1.x
+    int _a=p1.x
     var p2 = math.create_point(30, 40)
     print($"Point2: x={p2.x}, y={p2.y}")
     

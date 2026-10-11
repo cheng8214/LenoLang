@@ -36,7 +36,7 @@ func test_narrowing_in_while(any x) {
         // ❌ 在 while 块中调用：编译错误
         int i = 0
         while i < 3 {
-            var msg = x.try_receive()
+            var _msg = x.try_receive()
             i = i + 1
         }
     }
@@ -50,7 +50,7 @@ func test_narrowing_in_nested_if(any x) {
 
         // ❌ 在嵌套 if 中调用：编译错误
         if x.len() > 0 {
-            var msg = x.try_receive()
+            var _msg = x.try_receive()
         }
     }
 }
@@ -72,7 +72,7 @@ func test_narrowing_in_for(any x) {
 
         // ❌ 在 for 块中调用：编译错误
         for 3 to i {
-            var msg = x.try_receive()
+            var _msg = x.try_receive()   // 只为验证"在 for 块里调用"这条编译错误 ✓ 取值不用 ✓
         }
     }
 }
@@ -81,11 +81,11 @@ func test_narrowing_struct_in_try(any x) {
     // ★ 测试6: struct 类型在 try 块中访问字段
     if x is MyData {
         // ✅ 直接访问：正常
-        var v = x.value
+        var _v = x.value
 
         // ❌ 在 try 块中访问：编译错误？
         try {
-            var v2 = x.value
+            var _v2 = x.value
         } catch e {
             return      // 空 catch 已升为编译期错误 ⇒ 补一句真语句（等价 ✓）
         }
@@ -96,12 +96,12 @@ func test_narrowing_struct_in_while(any x) {
     // ★ 测试7: struct 类型在 while 块中访问字段
     if x is MyData {
         // ✅ 直接访问：正常
-        var v = x.value
+        var _v = x.value
 
         // ❌ 在 while 块中访问：编译错误？
         int i = 0
         while i < 3 {
-            var v2 = x.value
+            var _v2 = x.value
             i = i + 1
         }
     }
@@ -112,7 +112,7 @@ func test_narrowing_struct_assignment(any x) {
     if x is MyData {
         // ❌ 赋值给 MyData 变量：编译错误？
         MyData d = x
-        var v = d.value
+        var _v = d.value   // 只为验证"赋值给 MyData 变量"这条编译错误 ✓ 取值不用 ✓
     }
 }
 

@@ -1035,10 +1035,13 @@ export struct Window {
     // 添加超链接按钮，opts: {text, x, y, url, font_size, rgb, hover_rgb, underline, visited, on_click, ...}
     // 返回 LinkButton，可 .on_click(func(){...}) / .set_visited(bool) / .set_text(t) 等
     func addLinkButton(Dict opts): LinkButton {
-        LinkButton lb = lnklib.createLinkButton(opts)
-        widgets.add(lb as Widget)
+        // ⚠ 局部量不能叫 `lb` ✗ —— 本文件 `import "sdl_listbox.leno" as lb`（见第 43 行 ✓）
+        //   同名会让 **模块别名在该作用域不可达**（新警告 [模块别名被遮蔽] ✓ 见 M4）
+        //   ⇒ 局部量改名 `link` ✓（别名在 addListBox 里还在用 ✓ 见第 841 行）
+        LinkButton link = lnklib.createLinkButton(opts)
+        widgets.add(link as Widget)
         widgetZ.add(opts.get("z", 0.0))
-        return lb
+        return link
     }
 
     // 添加加载旋转动画，opts: {x, y, size, thickness, rgb, speed, running, full_track, ...}

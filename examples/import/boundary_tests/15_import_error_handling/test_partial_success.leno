@@ -16,6 +16,6 @@ main() {
 
     // 测试会失败的函数
     print("调用会失败的函数...")
-    var fail_result = partial.will_fail()
+    var _fail_result = partial.will_fail()
     print("如果看到这行，说明运行时错误没有正确报错")
 }

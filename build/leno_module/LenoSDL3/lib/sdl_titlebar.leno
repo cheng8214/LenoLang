@@ -56,7 +56,10 @@ import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 use theme.Color
 import "sdl_image.leno" as img
 import "sdl_menu.leno" as mnu; use mnu.MenuBar
-import "sdl_tooltip.leno" as tip    // 悬停提示复用框架那一套（与 Button/CheckBox 同一手感 ✓）
+// ⚠ 别名不能叫 `tip` ✗ —— 本文件有个**公有字段** `tip`（TitleBarAction.tip ✓ 用户写
+//   `{tip: "设置"}` 的那个 ✓ 不能改名 ✗）⇒ 别名与字段同名会让模块在该作用域不可达
+//   （新警告 [模块别名被遮蔽] ✓ 见 M4）⇒ 别名用 `tooltip` ✓
+import "sdl_tooltip.leno" as tooltip    // 悬停提示复用框架那一套（与 Button/CheckBox 同一手感 ✓）
 
 
 // 本控件认的键 —— 由本文件全部 `.get("…")` **自动抽取**（是超集 ⇒ 可少报、不误报 ✓）
@@ -618,7 +621,7 @@ if ev.isWindowRestored() { maximized = false; btnHover = BTN_NONE; motionSkipCou
                     core.requestCursor(SystemCursor.POINTER)
                     // 悬停提示复用框架那一套（与 Button/CheckBox 同一手感 ✓）
                     int ai = action_index(actionHover)
-                    if ai >= 0 and actions[ai].tip != "" { tip.tipReport(actions[ai].tip, mx, my) }
+                    if ai >= 0 and actions[ai].tip != "" { tooltip.tipReport(actions[ai].tip, mx, my) }
                 } else {
                     btnHover = hitTestBtn(mx)
                     if btnHover != BTN_NONE {

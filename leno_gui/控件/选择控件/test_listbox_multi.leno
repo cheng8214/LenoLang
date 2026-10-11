@@ -64,7 +64,7 @@ func onInvert() {
     Array[int] cur = lb.get_selected_indices()
     // 构建反选索引：不在 cur 中的全部选中
     Array[int] inverted = []
-    int curIdx = 0
+    int _curIdx = 0
     for data.len() to i {
         bool inCur = false
         for cur.len() to j {

@@ -5,7 +5,7 @@ main()
     // 测试1：try-catch-finally，发生异常
     try {
         print("1. try块开始")
-        var a = 10 / 0
+        var _a = 10 / 0
         print("1. 这行不会执行")
     } catch e {
         print($"1. catch块: {e}")
@@ -32,7 +32,7 @@ main()
     try {
         print("3. try块开始")
         throw "测试异常"
-        print("3. 这行不会执行")
+        print("3. 这行不会执行")   // ← 故意触发 [ 不可达代码 ] 警告 ✓（本文件是教学/边界用例，不是漏改 ✓）
     } finally {
         print("3. finally块（应该执行）")
     }

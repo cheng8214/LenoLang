@@ -12,7 +12,7 @@ main() {
     kernel32 k32 = ffi.load("kernel32.dll")
 
     // 测试 1: 成功调用后 last_error 应为 0
-    int pid = k32.GetCurrentProcessId()
+    int _pid = k32.GetCurrentProcessId()
     int err1 = ffi.last_error()
     if err1 == 0 {
         print("  PASS: 成功调用后 last_error = 0")
@@ -33,7 +33,7 @@ main() {
     }
 
     // 测试 3: 对比 ffi.last_error() 与直接调用 GetLastError()
-    Ptr h2 = k32.OpenProcess(0x0400, 0, 8888888)
+    Ptr _h2 = k32.OpenProcess(0x0400, 0, 8888888)
     int cached = ffi.last_error()
     int direct = k32.GetLastError()
     if cached == direct or (cached != 0 and direct != 0) {
@@ -43,7 +43,7 @@ main() {
     }
 
     // 测试 4: 成功调用后错误码应重置为 0
-    int pid2 = k32.GetCurrentProcessId()
+    int _pid2 = k32.GetCurrentProcessId()
     int err3 = ffi.last_error()
     if err3 == 0 {
         print("  PASS: 成功调用后错误码重置为 0")

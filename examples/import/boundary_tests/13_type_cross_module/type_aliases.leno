@@ -39,7 +39,7 @@ export func merge_pairs(Array p1, Array p2) {
 }
 
 export func map_merge(any m1, any m2) {
-    var result = {}
+    var _result = {}
     // 简化版本，直接返回 m1
     return m1
 }

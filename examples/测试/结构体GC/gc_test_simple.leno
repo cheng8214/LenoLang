@@ -3,7 +3,7 @@
 main() {
     var i = 0
     while i < 100000 {
-        var s = "string " + i
+        var _s = "string " + i
         i = i + 1
     }
     print("完成")

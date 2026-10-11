@@ -14,7 +14,7 @@ main() {
     print("2. 链式: " + mid.getCore().abs(-7))
 
     // 测试: 多类型
-    extra_lib e = mid.getExtra()
+    extra_lib _e = mid.getExtra()
     core_lib c2 = mid.getCore()
     print("3. 多类型: " + c2.abs(-11))
 

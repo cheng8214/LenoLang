@@ -42,7 +42,7 @@ func add_eax_ebx() {
 }
 
 func cmp_eax_ebx() {
-    var result = eax - ebx
+    var _result = eax - ebx
 }
 
 // ========== 性能测试：计算 1+2+...+N ==========

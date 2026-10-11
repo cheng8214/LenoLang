@@ -6,6 +6,6 @@ use b.Holder
 main() {
     print("=== min ===")
     var h = new Holder(lib = b.loadCore(), tag = "t")
-    core_lib l = h.lib        // 崩溃在这里
+    core_lib _l = h.lib        // 崩溃在这里
     print("done")
 }

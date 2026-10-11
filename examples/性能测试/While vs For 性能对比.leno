@@ -51,7 +51,7 @@ main()
     print("--- 测试3: for to var vs while (带循环变量访问) ---")
 
     t1=times.ms()
-    var sum=0
+    var _sum=0
     for csnum to j {
         j
     }

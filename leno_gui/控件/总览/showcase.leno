@@ -202,7 +202,7 @@ main() {
     pSV.add(SDL3.createLabel({x:878, y:614, text:"悬停滚轮 / 拖右侧滚动条；内容由 VBox 自适应", font_size:12, text_color: #9696A0FF}))
 
     // ===================== 卡片9：选项卡 =====================
-    var pTab = card(win, 864, 634, 400, 320, "选项卡 TabControl")
+    var _pTab = card(win, 864, 634, 400, 320, "选项卡 TabControl")
     var tab = win.addTabControl({x:878, y:684, w:372, h:250, tabs:["基础","高级"], active:0, tab_h:30})
     // 页0 基础
     tab.addToPage(0, SDL3.createLabel({x:20, y:20, text:"基础设置"}), 20, 20)
