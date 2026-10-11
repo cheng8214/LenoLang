@@ -509,6 +509,9 @@ void error_report_shadowed_module(void* ctx, const char* name, const char* winne
 static char g_leno_log_path[MAX_PATH_LEN] = "";   // 日志绝对路径（空 = 没开日志 ✓）
 static int  g_leno_log_fd = -1;                   // 崩溃兜底要用的**异步安全** fd（见 ④ ✓）
 static int  g_leno_err_inited = 0;                // 幂等（多个入口调用只生效一次 ✓）
+static int  g_leno_logging_active = 0;            // 输出是否已被日志接管（= 允许弹框的唯一前提 ✓）
+
+static void leno_install_crash_handlers(void);    // ④ 的实现在本节之后 ✓
 
 const char* leno_error_log_path(void) {
     return g_leno_log_path[0] ? g_leno_log_path : NULL;
@@ -526,16 +529,16 @@ static int leno_stderr_has_reader(void) {
     HANDLE h = GetStdHandle(STD_ERROR_HANDLE);
     if (h == NULL || h == INVALID_HANDLE_VALUE) return 0;
     DWORD t = GetFileType(h);
-    if (t == FILE_TYPE_PIPE || t == FILE_TYPE_DISK) return 1;   // 被捕获 ✓
-    if (t != FILE_TYPE_CHAR) return 0;                          // UNKNOWN 等 ⇒ 没人接 ✓
-    DWORD mode = 0;
-    if (GetConsoleMode(h, &mode)) return 1;                     // 真控制台 ✓
-    // ⚠ 已知边界：msys/mintty 之类"伪终端"也落在这一支（既不是控制台、也不是管道/文件 ✓）
-    //   ⇒ 会被当成"没人接"而落日志 ✓。代价是多写一个日志文件（无害 ✓），
-    //   收益是 GUI 打包产物**双击**时终于留得下线索（这才是本轮的目标 ✓）。
-    //   要彻底区分得看 PE 子系统（GUI vs 控制台）—— 记为后续：给 -mwindows 那个构建加一个
-    //   -DLENO_GUI_SUBSYSTEM，只在 GUI 子系统里做这次接管 ✓
-    return 0;
+    if (t == FILE_TYPE_PIPE || t == FILE_TYPE_DISK) return 1;   // 被捕获（重定向/CI/_exec ✓）
+    // ★ 判"人看不看得见"用 **GetConsoleWindow**（实测口径 ✓）：
+    //   本 IDE 环境里 GetConsoleMode 会对一个**没有窗口**的隐藏控制台返回成功 ✗
+    //   ⇒ 用它会误判成"人看得见" ⇒ 日志与弹窗全都不做 ✗（实测踩过 ✓）；
+    //   而 GetConsoleWindow()!=NULL 才是"屏幕上真有个窗口能显示" ✓ —— 这正是第一版
+    //   能写出日志、能弹框的那条判据 ✓。
+    // ⚠ 已知边界：msys/mintty 伪终端窗口不属于 Win32 控制台 ⇒ 会被判成"没人接"而落日志
+    //   （多一个文件、无害 ✓）。要彻底区分得按 PE 子系统（GUI vs 控制台）判 ⇒ 后续给
+    //   -mwindows 那个构建加 `-DLENO_GUI_SUBSYSTEM`，只在 GUI 子系统里做这次接管 ✓
+    return GetConsoleWindow() != NULL ? 1 : 0;
 #else
     if (isatty(2)) return 1;                    // 终端 ✓
     struct stat st;
@@ -658,4 +661,167 @@ void leno_error_init(void) {
             "启动时间：程序启动即写；出错时会带上位置与调用栈 ✓\n"
             "提示：把本文件整个发给作者即可定位 ✓（路径：%s）\n\n", path);
     fflush(stderr);
+
+    g_leno_logging_active = 1;   // 弹窗判据：只有"接管了输出"时才允许弹 ✓（见下 ✓）
+    leno_install_crash_handlers();
+}
+
+// ============================================================================
+// ④ 崩溃兜底（`SetUnhandledExceptionFilter` / POSIX `signal`）
+// ----------------------------------------------------------------------------
+// 受控错误（Leno 的 throw / 运行时错误）走的是 ③ 的日志路径 ✓；但**真正的崩溃**
+//   （访问违例 / 除零 / abort ✓）根本不经过 Leno 代码 ✗ —— 不挂这个钩子，用户看到的
+//   只有系统的"程序已停止工作"（一个字不提 Leno ✓，也不指日志 ✓）。
+// ⚠ 这种上下文里只有**异步信号安全**的调用能用 ✗ ⇒ 不能 fprintf / snprintf / malloc ✗
+//   ⇒ 这里手写十六进制拼接 ✓ 只用 write(2) ✓（否则会在崩溃时二次死掉 ✓）
+// ============================================================================
+static void leno_crash_write(const char* kind, unsigned long code) {
+    char buf[160];
+    int n = 0;
+    const char* p = "\n[崩溃] ";
+    while (*p && n < 140) buf[n++] = *p++;
+    p = kind;
+    while (*p && n < 140) buf[n++] = *p++;
+    p = "，异常码 0x";
+    while (*p && n < 140) buf[n++] = *p++;
+    {
+        static const char hexd[] = "0123456789ABCDEF";
+        int shift;
+        for (shift = 28; shift >= 0; shift -= 4) {
+            unsigned long d = (code >> shift) & 0xFUL;
+            buf[n++] = hexd[d];
+        }
+    }
+    buf[n++] = '\n';
+    buf[n++] = '\0';
+#ifdef _WIN32
+    {
+        HANDLE h = (HANDLE)_get_osfhandle(g_leno_log_fd >= 0 ? g_leno_log_fd : 2);
+        DWORD wrote = 0;
+        if (h != INVALID_HANDLE_VALUE && h != NULL) WriteFile(h, buf, (DWORD)(n - 1), &wrote, NULL);
+    }
+#else
+    {
+        ssize_t r = write(g_leno_log_fd >= 0 ? g_leno_log_fd : 2, buf, (size_t)(n - 1));
+        (void)r;
+        if (g_leno_log_fd >= 0) {
+            ssize_t r2 = write(2, buf, (size_t)(n - 1));
+            (void)r2;
+        }
+    }
+#endif
+}
+
+#ifdef _WIN32
+static LONG WINAPI leno_unhandled_filter(EXCEPTION_POINTERS* info) {
+    unsigned long code = 0;
+    if (info && info->ExceptionRecord) code = (unsigned long)info->ExceptionRecord->ExceptionCode;
+    leno_crash_write("未处理的系统异常", code);
+    return EXCEPTION_EXECUTE_HANDLER;   // 交给系统收尾（**不拦** ✓ 别冒充"已处理" ✗）
+}
+#else
+static void leno_signal_handler(int sig) {
+    leno_crash_write("收到信号", (unsigned long)sig);
+    // 复原默认处理再重发 ⇒ 保留标准行为（core dump ✓）同时日志里已经留下痕迹 ✓
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
+#endif
+
+static void leno_install_crash_handlers(void) {
+#ifdef _WIN32
+    SetUnhandledExceptionFilter(leno_unhandled_filter);
+#else
+    signal(SIGSEGV, leno_signal_handler);
+    signal(SIGABRT, leno_signal_handler);
+    signal(SIGBUS,  leno_signal_handler);
+    signal(SIGFPE,  leno_signal_handler);
+    signal(SIGILL,  leno_signal_handler);
+#endif
+}
+
+// ============================================================================
+// ⑤ 致命错误弹窗（只在 **真·双击** 时弹 ✓ —— 即"输出已经被日志接管"那种场合 ✓）
+// ----------------------------------------------------------------------------
+// 判据用 `g_leno_logging_active`：管道/文件/真控制台 ⇒ 从没置位 ⇒ **永不弹框** ✓
+//   ⇒ CI、无头用例、终端里跑，都不会被弹框卡住 ✗✓（这是本设计最要紧的一条 ✓）
+// 内容用**日志尾部**当摘要（不依赖任何内部错误结构 ✓ 信息和日志完全一致 ✓）；
+// Windows 加一个"是否打开日志"（`explorer /select` ✓ 用户一步就能把文件发出来 ✓）。
+// `LENO_NO_DIALOG=1` 可强制关掉（无人值守 ✓）。
+// ============================================================================
+static void leno_read_log_tail(char* out, size_t n) {
+    out[0] = '\0';
+    if (!g_leno_log_path[0]) return;
+    FILE* f = fopen(g_leno_log_path, "rb");
+    if (!f) return;
+    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return; }
+    long size = ftell(f);
+    if (size <= 0) { fclose(f); return; }
+    long want = (long)(n - 1);
+    long from = size > want ? size - want : 0;
+    if (fseek(f, from, SEEK_SET) != 0) { fclose(f); return; }
+    size_t got = fread(out, 1, (size_t)want, f);
+    out[got] = '\0';
+    fclose(f);
+    // 用二进制方式读，行尾可能是 \r\n ✓ 显示无妨 ✓；截断处可能切到多字节字符 ⇒ 允许 ✓
+}
+
+void leno_error_report_exit(int exit_code) {
+    if (exit_code == 0) return;
+    if (!g_leno_logging_active) return;              // 输出有人接 ⇒ 绝不弹框 ✓
+    if (!g_leno_log_path[0]) return;
+    const char* noDlg = getenv("LENO_NO_DIALOG");
+    if (noDlg && noDlg[0] && strcmp(noDlg, "0") != 0) {
+        fprintf(stderr, "[提示] 已按 LENO_NO_DIALOG 跳过错误提示框 ✓\n");
+        fflush(stderr);
+        return;
+    }
+
+    char tail[1800];
+    leno_read_log_tail(tail, sizeof(tail));
+
+    char body[2400];
+    /* 手写拼接（避免在可能的异常上下文里依赖 snprintf 的长度语义 ✓ 这里其实安全 ✓） */
+    snprintf(body, sizeof(body),
+             "程序出错了（退出码 %d）\n\n"
+             "最近日志：\n%s\n\n"
+             "完整日志（含调用栈）在：\n%s\n\n"
+             "把这个文件发给作者即可定位 ✓（Ctrl+C 可复制本框）",
+             exit_code, tail, g_leno_log_path);
+
+#ifdef _WIN32
+    {
+        wchar_t wbody[2400];
+        if (MultiByteToWideChar(CP_UTF8, 0, body, -1, wbody, 2400) > 0) {
+            // 是/否 = "是否打开日志所在文件夹" ✓（用户下一步就是把文件发出去 ✓）
+            int r = MessageBoxW(NULL, wbody, L"Leno 程序出错",
+                                MB_YESNO | MB_ICONERROR | MB_SETFOREGROUND | MB_TOPMOST);
+            fprintf(stderr, "[提示] 已弹出错误提示框（MessageBoxW ✓）\n");
+            fflush(stderr);
+            if (r == IDYES) {
+                // 用 explorer /select 打开并选中日志 ✓（走 system 免去额外链接 shell32 ✓）
+                char cmd[MAX_PATH_LEN + 32];
+                snprintf(cmd, sizeof(cmd), "explorer /select,\"%s\"", g_leno_log_path);
+                int rc = system(cmd);
+                (void)rc;
+            }
+        }
+    }
+#else
+    {
+        /* Linux/macOS：优先 zenity（能显示长文本 ✓），退 xmessage ✓；
+           都没有就只剩日志文件 ✓（绝不死等 ✗） */
+        char cmd[MAX_PATH_LEN + 256];
+        snprintf(cmd, sizeof(cmd),
+                 "if command -v zenity >/dev/null 2>&1; then "
+                 "zenity --error --no-wrap --title='Leno 程序出错' --text='日志文件：%s'; "
+                 "elif command -v xmessage >/dev/null 2>&1; then "
+                 "xmessage -title 'Leno 程序出错' '日志文件：%s'; fi",
+                 g_leno_log_path, g_leno_log_path);
+        int rc = system(cmd);
+        (void)rc;
+        fprintf(stderr, "[提示] 已尝试弹出错误提示（zenity / xmessage ✓）\n");
+        fflush(stderr);
+    }
+#endif
 }

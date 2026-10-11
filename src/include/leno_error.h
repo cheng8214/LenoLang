@@ -89,6 +89,9 @@ void warning_add_at(WarnType type, int line, int column, const char* msg);
 void leno_error_init(void);
 // 当前日志文件的绝对路径（没开日志则返回 NULL ✓）——弹窗与提示要显示它 ✓
 const char* leno_error_log_path(void);
+// 进程即将以非零码退出时调用（弹窗只在"输出已被日志接管"时才会真弹 ✓；
+// `LENO_NO_DIALOG=1` 可强制关掉 ✓；exit_code == 0 时直接返回 ✓）
+void leno_error_report_exit(int exit_code);
 int warning_has_any(void);
 void warning_clear(void);
 void warning_print_all(void);

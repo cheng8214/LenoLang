@@ -873,12 +873,20 @@ int wmain(int argc, wchar_t* argv[]) {
             }
         }
     }
-    return vm_run_main(argc, g_argv);
+    // ★ 2026-10-11：Windows 侧的真正入口是 **wmain**（GUI 打包产物也走它 ✓）——
+    //   非零退出且"无人接输出"（真·双击 ✓）⇒ 弹错误提示框（见 src/error.c ⑤ ✓）
+    int rc = vm_run_main(argc, g_argv);
+    leno_error_report_exit(rc);
+    return rc;
 }
 #else
 int main(int argc, char* argv[]) {
     g_argc = argc;
     g_argv = argv;
-    return vm_run_main(argc, argv);
+    int rc = vm_run_main(argc, argv);
+    // ★ 2026-10-11：非零退出且"无人接输出"（真·双击 ✓）⇒ 弹一个错误提示框
+    //   （把日志尾部当摘要 + 日志路径 ✓；管道/终端/CI 一律不弹 ✓ 见 src/error.c ⑤）
+    leno_error_report_exit(rc);
+    return rc;
 }
 #endif
