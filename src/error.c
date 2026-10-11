@@ -524,9 +524,10 @@ const char* leno_error_log_path(void) {
 //   ② 真控制台 ⇒ 有人接 ✓（人看得见 ✓）
 //   ③ 其余（句柄无效 / NUL / POSIX 上非 tty 非管道非文件 ✓）⇒ **没人接** ⇒ 才落日志 ✓
 //      —— Windows 双击 GUI 打包产物就是 ③ ✓
-static int leno_stderr_has_reader(void) {
+static int leno_one_fd_has_reader(int which) {
 #ifdef _WIN32
-    HANDLE h = GetStdHandle(STD_ERROR_HANDLE);
+    // which: 1 = stdout ✓ 2 = stderr ✓
+    HANDLE h = GetStdHandle(which == 1 ? STD_OUTPUT_HANDLE : STD_ERROR_HANDLE);
     if (h == NULL || h == INVALID_HANDLE_VALUE) return 0;
     DWORD t = GetFileType(h);
     if (t == FILE_TYPE_PIPE || t == FILE_TYPE_DISK) return 1;   // 被捕获（重定向/CI/_exec ✓）
@@ -535,19 +536,38 @@ static int leno_stderr_has_reader(void) {
     //   ⇒ 用它会误判成"人看得见" ⇒ 日志与弹窗全都不做 ✗（实测踩过 ✓）；
     //   而 GetConsoleWindow()!=NULL 才是"屏幕上真有个窗口能显示" ✓ —— 这正是第一版
     //   能写出日志、能弹框的那条判据 ✓。
-    // ⚠ 这一支只是"**窗口层**"的判据：msys/mintty 伪终端、以及"没有可见窗口的控制台环境"
-    //   （IDE 里的 PowerShell ✓ 实测 `GetConsoleWindow()==NULL` ✗）都会落到"没人接" ✗。
-    //   ⇒ 真正的兜底判据是**PE 子系统**（见 leno_is_gui_subsystem ✓）：只有 GUI 子系统的
-    //     二进制才允许接管 ✓ —— 控制台子系统（leno.exe / leno_vm.exe ✓）永不接管 ⇒
-    //     不会在被 IDE/管道/伪终端启动时往 `build\logs\` 里攒垃圾日志 ✓（实测撞到过 ✓）。
     return GetConsoleWindow() != NULL ? 1 : 0;
 #else
-    if (isatty(2)) return 1;                    // 终端 ✓
+    int fd = (which == 1) ? 1 : 2;
+    if (isatty(fd)) return 1;                   // 终端 ✓
     struct stat st;
-    if (fstat(2, &st) == 0 && (S_ISFIFO(st.st_mode) || S_ISREG(st.st_mode))) return 1;  // 管道/文件 ✓
+    if (fstat(fd, &st) == 0 && (S_ISFIFO(st.st_mode) || S_ISREG(st.st_mode))) return 1;  // 管道/文件 ✓
     return 0;                                   // /dev/null、已关闭、socket ⇒ 没人接 ✓
 #endif
 }
+
+// ★ 2026-10-11（实测抓到的真 bug ✗）：**stdout 与 stderr 要分别判** ✓。
+//   只判 stderr 会漏掉最常见的一类用法 —— `app.exe | grep x` / PowerShell 的
+//   `& app.exe 2>&1 | Out-String` / CI 里只接 stdout ⇒ **stdout 是管道、stderr 不是** ✗
+//   ⇒ 旧代码把 stdout 也一起抢进日志 ✗ ⇒ **被捕获的那一路反而什么都收不到** ✗✗
+//   （实测：无头跑游戏，屏幕上 0 行输出 ✓ 就是它 ✓）。
+//   判据改成"**两路都有去处才算有人接**" ✓：任一路没人接 ⇒ 不接管 ✓（绝不抢 ✓）；
+//   两路都没人接（真·双击 ✓）⇒ 才接管 ✓。
+static int leno_output_has_reader(void) {
+    return leno_one_fd_has_reader(1) && leno_one_fd_has_reader(2);
+}
+
+#ifdef _WIN32
+// 这一路（1 = stdout ✓ 2 = stderr ✓）现在**能不能用**（句柄有效、有去处 ✓）。
+// 与 has_reader 的区别：usable 只问"句柄有效吗"（管道 / 文件 / 控制台都算能用 ✓），
+//   它专门用来决定"AttachConsole 之后要不要把它重开成 CONOUT$" ✓ ——
+//   **已经能用的绝不碰** ✓（碰了就把用户的重定向冲掉 ✗ 见 leno_error_init 里的实测说明 ✓）
+static int leno_one_fd_usable(int which) {
+    HANDLE h = GetStdHandle(which == 1 ? STD_OUTPUT_HANDLE : STD_ERROR_HANDLE);
+    if (h == NULL || h == INVALID_HANDLE_VALUE) return 0;
+    return GetFileType(h) != FILE_TYPE_UNKNOWN ? 1 : 0;
+}
+#endif
 
 // 给日志文件建父目录（只建一层 ✓ —— logs\ 不存在是唯一现实情况 ✓）
 static void leno_ensure_parent_dir(const char* file) {
@@ -666,11 +686,20 @@ void leno_error_init(void) {
 #ifdef _WIN32
     // ① 终端里跑（父进程有控制台 ✓）：接回去，这样 GUI 打包产物在 cmd/PowerShell 里
     //    也能看到全部输出 ✓（双击时这句返回 FALSE ⇒ 落到 ② ✓）
+    // ⚠ 实测抓到的真 bug ✗：**只把"当前不可用"的那一路接回来** ✓ —— 无条件 freopen("CONOUT$")
+    //   会把用户已有的**重定向**（`app.exe > out.txt` / `app.exe | grep x` ✓）直接冲掉 ✗✗
+    //   ⇒ 表现是"输出既不在文件里也不在屏上"（实测：重定向文件 0 行 ✓ 而 exit=0 ✓）。
+    //   AttachConsole 只是"让控制台存在" ✓，**不该顺手改掉已经能用的标准流** ✓。
     if (AttachConsole(ATTACH_PARENT_PROCESS)) {
         FILE* f;
-        f = freopen("CONOUT$", "w", stdout);  (void)f;
-        f = freopen("CONOUT$", "w", stderr);  (void)f;
-        f = freopen("CONIN$",  "r", stdin);   (void)f;
+        if (!leno_one_fd_usable(1)) { f = freopen("CONOUT$", "w", stdout); (void)f; }
+        if (!leno_one_fd_usable(2)) { f = freopen("CONOUT$", "w", stderr); (void)f; }
+        {
+            HANDLE h = GetStdHandle(STD_INPUT_HANDLE);
+            if (h == NULL || h == INVALID_HANDLE_VALUE || GetFileType(h) == FILE_TYPE_UNKNOWN) {
+                f = freopen("CONIN$", "r", stdin); (void)f;
+            }
+        }
         // 接回来的控制台也要 UTF-8（VM 侧本来没有这句 ✓ 顺手补上，中文错误信息才不乱码 ✓）
         SetConsoleOutputCP(CP_UTF8);
         SetConsoleCP(CP_UTF8);
@@ -678,7 +707,7 @@ void leno_error_init(void) {
 #endif
 
     // 输出有人接（管道 / 文件 / 真控制台 ✓）⇒ 绝不插手 ✓（别抢别人的输出 ✓）
-    if (leno_stderr_has_reader()) return;
+    if (leno_output_has_reader()) return;
 #ifdef _WIN32
     // ★ 只有 **GUI 子系统**的二进制才做这次接管 ✓（判据见 leno_is_gui_subsystem 的说明）：
     //   控制台子系统（leno.exe / leno_vm.exe ✓）的 stdout/stderr 永远有去处（终端/父进程 ✓），
