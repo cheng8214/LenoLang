@@ -1447,5 +1447,27 @@ main() {
     ce.expect_error(m9c, "M9：限定名做**返回类型** ⇒ 同一条诊断",
         "不支持带模块前缀的类型名", 3)
 
+    // M9 的**正向对照**（另一半口径，2026-10-12 实测）：**native 类型规格不需要 `use`** ——
+    //   `DirEntry` / `DirInfo` / `ExecResult` 这类由 native 规格声明，编译器**全局**认得 ✓
+    //   ⇒ 标注 / 单条声明 / `is` 守卫三种写法都不 `use` 也该过 ✓
+    //   ⚠ 钉住它，是为了防止后来者**"顺手统一"**成"所有类型都要 use" ✗（那是两回事：
+    //     要 `use` 的只有**源码模块**里 `struct` 声明的类型 ✓ 见语言陷阱速查 ㉝ 的三行表 ✓）
+    var m9ok = dirs.join(work, "native_spec_without_use.leno")
+    files.write(m9ok, @"import dirs
+
+main() {
+    Array[DirEntry] ws = dirs.walk(dirs.script_dir())
+    DirEntry? first = null
+    if ws.len() > 0 { first = ws[0] }
+    if first is DirEntry => e {
+        print(""ok "" + e.root)
+    } else {
+        print(""noentry"")
+    }
+}
+")
+    ce.expect_ok(m9ok, "M9 正向：native 规格（DirEntry）不 use 也能标注 / 声明 / 守卫",
+        "ok ")
+
     print("=== test_diag_static_errors ALL passed ===")
 }
