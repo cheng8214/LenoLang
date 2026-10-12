@@ -1,0 +1,113 @@
+// 指数字面量（`1e10` / `1.0e10` / `1.5e-3` / `2E+8`）—— 回归
+//
+// 背景（2026-10-12）：**同一个字面量曾有两条路两种结果** ——
+//   · enum 成员值：**一直能用**（const 文本求值器交给 `strtod` ⇒ `X = 1e10` 得 10000000000 ✓）
+//   · 普通表达式：词法把 `1e10` 切成 `1` + 标识符 `e10` ⇒ 报「声明语句后期望换行或 ';'，
+//     但同一行出现标识符」（错误文案指不到病因 ✗）
+// ⇒ 已按"全面支持"补词法（`src/lexer.c` 的 `read_number`；出处 docs/语言摩擦与隐式契约清单.md 的 M7）。
+//
+// 三条护栏（本文件逐条钉住）：
+//   ① 只在十进制生效 ⇒ `0x1E10` 的 `E` 是十六进制数字，必须仍是整数 7696 ✓
+//   ② `e/E` 之后**必须真跟数字**（可带一个 +/-）⇒ `1efoo` / `1e` / `1e+` 保持报错 ✓
+//   ③ 只吃一次指数 ⇒ `1e1e1` 报错 ✓
+//
+// 语义口径：`1e10` 是 **float**（与 C/JS 一致 ✓）；而 **enum 成员值**仍按整数求值
+//   （`type(E.X)` = "int" ✓，与"枚举成员是整数"的既有口径一致 ✓）
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_exp_literal")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ---------- ① 普通上下文：声明 / 表达式 / 数组 / 实参 ----------
+    var t1 = dirs.join(work, "ok.leno")
+    files.write(t1, @"main() {
+    float a = 1e10
+    var b = 1.0e10
+    var c = 1.5e-3
+    var d = 2E+8
+    var arr = [1e3, 2.5e2]
+    print(""EXP="" + _str(a) + ""|"" + _str(b) + ""|"" + _str(c) + ""|"" + _str(d) + ""|"" + _str(arr[0]) + ""|"" + _str(arr[1]) + ""|"" + type(a))
+}
+")
+    ce.expect_ok(t1, "指数字面量在普通表达式里可用",
+        "EXP=10000000000.0|10000000000.0|0.0015|200000000.0|1000.0|250.0|float")
+
+    // ---------- ② 十六进制护栏：`0x1E10` 必须仍是整数（不能被当成 0x1 + e10）----------
+    var t2 = dirs.join(work, "hex_guard.leno")
+    files.write(t2, @"main() {
+    var h = 0x1E10
+    var e = 0xE
+    print(""HEX="" + _str(h) + ""|"" + _str(e))
+}
+")
+    ce.expect_ok(t2, "0x 十六进制里的 E 不被当指数", "HEX=7696|14")
+
+    // ---------- ③ enum 成员值与普通表达式**同值**（这次修的动机用例）----------
+    var t3 = dirs.join(work, "enum_same.leno")
+    files.write(t3, @"enum E {
+    X = 1e10
+}
+main() {
+    print(""ENUM="" + _str(E.X) + ""|"" + type(E.X))
+}
+")
+    ce.expect_ok(t3, "enum 成员值仍按整数求值", "ENUM=10000000000|int")
+
+    // ---------- ④ 护栏负例：e 后面没真跟数字 ⇒ 必须照旧报错（不许把标识符吞掉）----------
+    var b1 = dirs.join(work, "bad_ident.leno")
+    files.write(b1, @"main() {
+    var h = 1efoo
+    print(_str(h))
+}
+")
+    ce.expect_error(b1, "1efoo 仍应报错（护栏 ②）", "error", 0)
+
+    var b2 = dirs.join(work, "bad_bare.leno")
+    files.write(b2, @"main() {
+    var i = 1e
+    print(_str(i))
+}
+")
+    ce.expect_error(b2, "裸 1e 仍应报错（护栏 ②）", "error", 0)
+
+    var b3 = dirs.join(work, "bad_sign.leno")
+    files.write(b3, @"main() {
+    var i = 1e+
+    print(_str(i))
+}
+")
+    ce.expect_error(b3, "1e+ 仍应报错（护栏 ②）", "error", 0)
+
+    var b4 = dirs.join(work, "double_exp.leno")
+    files.write(b4, @"main() {
+    var i = 1e1e1
+    print(_str(i))
+}
+")
+    ce.expect_error(b4, "1e1e1 只吃一次指数（护栏 ③）", "error", 0)
+
+    var b5 = dirs.join(work, "bin_guard.leno")
+    files.write(b5, @"main() {
+    var j = 0b1e10
+    print(_str(j))
+}
+")
+    ce.expect_error(b5, "0b 二进制后面不吃指数（护栏 ①）", "error", 0)
+
+    // ---------- ⑤ 量级冒烟：大/小指数不翻负、不丢精度到 0 ----------
+    var t5 = dirs.join(work, "magnitude.leno")
+    files.write(t5, @"main() {
+    var big = 1e300
+    var tiny = 1e-300
+    print(""MAG="" + _str(big > 0.0) + ""|"" + _str(tiny > 0.0) + ""|"" + _str(1e18 == 1000000000000000000.0))
+}
+")
+    ce.expect_ok(t5, "极大/极小指数可用", "MAG=true|true|true")
+
+    dirs.delete(work)
+    print("test_exp_literal passed")
+}

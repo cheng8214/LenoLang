@@ -485,6 +485,29 @@ static Token read_number(Lexer* lex) {
         }
     }
 
+    // ★ 科学计数法（2026-10-12 支持）：1e10 / 1.0e10 / 1.5e-3 / 2E+8
+    //   **为什么补**：enum 成员值那条路**本来就吃**（const 文本求值器交给 strtod ⇒
+    //   `enum E { X = 1e10 }` 算得 10000000000 ✓），可普通表达式走词法却把 `1e10` 切成
+    //   `1` + 标识符 `e10` ⇒ 同一个字面量**两条路两种结果**（保真度漏洞，
+    //   出处 docs/语言摩擦与隐式契约清单.md 的 M7 ✓）。
+    //   ⚠ 三条护栏（都不许省）：
+    //     ① **只在十进制**下生效 —— `0x1E10` 的 `E` 是十六进制数字，必须仍是整数 7696 ✓
+    //     ② `e/E` 之后**必须真跟数字**（可带一个 +/-）—— 否则这一段不吃：
+    //        `1efoo` / `1e` / `1e+` 保持原样 ⇒ 照旧报语法错（不会把标识符悄悄吞掉 ✗）
+    //     ③ 只吃**一次**指数 ⇒ `1e1e1` = `1e1` + 标识符 `e1` ⇒ 报错 ✓（不会越界读）
+    if (!is_hex && !is_bin && (peek(lex) == 'e' || peek(lex) == 'E')) {
+        const char* after = lex->src + lex->pos + 1;   // peek 非 '\0' ⇒ 这一步在缓冲区内 ✓
+        if (*after == '+' || *after == '-') after++;   // 最多再看一格；尽头是 '\0' ⇒ 安全 ✓
+        if (isdigit((unsigned char)*after)) {
+            is_float = 1;
+            advance(lex);                              // e / E
+            if (peek(lex) == '+' || peek(lex) == '-') advance(lex);
+            while (isdigit(peek(lex))) {
+                advance(lex);
+            }
+        }
+    }
+
     tok.text = start;
     tok.len = (lex->src + lex->pos) - start;
 
