@@ -1,0 +1,98 @@
+// test_use_missing_diag.leno —— US2 判据：**漏列 `use` 时报错要指到"真正用到它的那一行"**
+//   台账：docs/类型可见性与use逃生阀修复追踪.md 的 US2
+//
+// 背景（import使用指南 §0.2 记的坑）：`use m.(A, B)` 少列一个 C 时，报错**位置**曾经在
+//   `use` 那一行 ⇒ 与真正缺的那个类型**毫无关系**，写的人只能自己猜是哪个名字漏了 ✗
+//   而且这类漏列**静态检查/lint 抓不到**（类型名只出现在 `use` 里）⇒ 体验特别差。
+//
+// ★ 2026-10-12（US2 复核）：**症状不复现** —— 五个声明位置（局部变量 / 形参 / 返回 /
+//   struct 字段 / 泛型实参）**全都报在使用处**，并且点名类型 + 给出处方 `use m.C` ✓
+//   ⇒ 本条的价值转为**钉住这个位置**（防回退）—— 断言里同时判**行号** ✓
+//   （只判文案不够：这正是当初退化成"报在 use 行"的那一半 ✓）
+//
+// ⚠ 一条**宽松**的现状（不是 bug，特意记录）：`if v is C`（C 没 use）**不报错、能跑** ——
+//   `is` / `as` 这类**动态判据**位置会去**已导入模块**里按名字找类型 ✓
+//   （与"声明位置必须 use"是两套口径：声明要不含糊，动态判据只需唯一命中 ✓）
+//   见本文件 ⑦；如果将来要收紧成"is 也要 use"，把 ⑦ 反过来钉即可 ✓
+
+import dirs
+import files
+import io
+
+import "helpers/compiler.leno" as ce
+
+// 被测模块：三个 struct，入口只 use 两个 ⇒ C 永远漏列
+func make_module(string work):string {
+    var root = dirs.join(work, "us2_missing_use")
+    dirs.delete(root)
+    dirs.mkdir_p(dirs.join(root, "lib"))
+    files.write(dirs.join(root, "lib/m.leno"),
+        "export struct A {\n    int x = 1\n}\n\n"
+        + "export struct B {\n    int y = 2\n}\n\n"
+        + "export struct C {\n    int z = 3\n}\n")
+    return root
+}
+
+// 造入口：3 行前言（import / use(漏 C) / 空行）+ body ⇒ 文件行号 = body 行号 + 3
+func build_entry(string root, string name, string body):string {
+    var path = dirs.join(root, name + ".leno")
+    files.write(path,
+        "import \"lib/m.leno\" as m\nuse m.(A, B)\n\n" + body)
+    return path
+}
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_use_missing_diag")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+    var root = make_module(work)
+
+    // 处方文案（三处共用）：点名类型 + 告诉你怎么补
+    var rx = "它其实是模块 'm' 导出的 struct"
+
+    // ① 局部变量声明 —— `C c = …` 在 body 第 2 行 ⇒ 文件第 5 行
+    var p1 = build_entry(root, "var_decl",
+        "main() {\n    C c = new m.C()\n    print(c.z)\n}\n")
+    ce.expect_error(p1, "① 局部变量声明漏 use ⇒ 报在**声明那一行**（不是 use 行）", rx, 5)
+    ce.expect_error(p1, "① 同上：点名那个缺失的类型 C", "未定义的类型: C", 5)
+
+    // ② 形参类型 —— body 第 1 行 ⇒ 第 4 行
+    var p2 = build_entry(root, "param",
+        "func take(C c): int {\n    return c.z\n}\n\nmain() {\n    print(take(new m.C()))\n}\n")
+    ce.expect_error(p2, "② 形参类型漏 use ⇒ 报在形参那一行", rx, 4)
+
+    // ③ 返回类型 —— body 第 1 行 ⇒ 第 4 行
+    var p3 = build_entry(root, "ret",
+        "func give(): C {\n    return null\n}\n\nmain() {\n    print(1)\n}\n")
+    ce.expect_error(p3, "③ 返回类型漏 use ⇒ 报在返回类型那一行", rx, 4)
+
+    // ④ struct 字段 —— body 第 1 行 ⇒ 第 4 行（报在 struct 那一行，且文案里点名**字段** ✓）
+    var p4 = build_entry(root, "field",
+        "struct Holder {\n    C c\n}\n\nmain() {\n    print(1)\n}\n")
+    ce.expect_error(p4, "④ struct 字段漏 use ⇒ 报在 struct 声明那一行并点名字段",
+        "字段 'c' 使用了未定义的类型 'C'", 4)
+
+    // ⑤ 泛型实参（藏在 Array[...] 里）—— body 第 2 行 ⇒ 第 5 行
+    //   （B2 修复专门覆盖过这条：顶层是 Array 合法，藏在 generic_args 里的名字原先无人查 ✗）
+    var p5 = build_entry(root, "generic_arg",
+        "main() {\n    Array[C] arr = []\n    print(arr.len())\n}\n")
+    ce.expect_error(p5, "⑤ 泛型实参里的漏列也要报（不是拖到类型不匹配才炸）", rx, 5)
+
+    // ⑥ 处方可用性：补上 `use m.C` 就**必须**能编译能跑 ✓
+    //   （判据的另一半：报错给的处方是真的 ✓）
+    var p6 = build_entry(root, "fixed",
+        "main() {\n    C c = new m.C()\n    print(\"F=\" + c.z)\n}\n")
+    files.write(p6,
+        "import \"lib/m.leno\" as m\nuse m.(A, B, C)\n\n"
+        + "main() {\n    C c = new m.C()\n    print(\"F=\" + c.z)\n}\n")
+    ce.expect_ok(p6, "⑥ 按处方补 `use m.C` ⇒ 编译并跑通（处方是真的 ✓）", "F=3")
+
+    // ⑦ 宽松现状：`is C` 没 use 也能跑（is/as 这类**动态判据**会去已导入模块里按名字找 ✓）
+    var p7 = build_entry(root, "is_lenient",
+        "main() {\n    var v = new m.C()\n    if v is C => q {\n        print(\"I=\" + q.z)\n    }\n}\n")
+    ce.expect_ok(p7, "⑦ 现状（宽松）：`is C` 未 use 也能编译并命中（动态判据按名字在已导入模块里找 ✓）",
+        "I=3")
+
+    dirs.delete(work)
+    io.print("test_use_missing_diag passed")
+}
