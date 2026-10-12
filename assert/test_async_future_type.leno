@@ -12,7 +12,10 @@
 //
 // ⚠ 一条**有意为之**的口径（写用例时别当 bug）：**裸 `Future`（不写 `[T]`）元素未知**
 //   ⇒ `await x` 不猜、仍是 `any` ⇒ 在标了返回类型的函数里仍会报「期望 int，实际 any」✓
-//   —— 信息不足就不猜（本仓"少报不误报"口径 ✓）。要精确就写 `Future[int]` ✓（见下面 ③ 的负例 2）
+//   —— 信息不足就不猜（本仓"少报不误报"口径 ✓）。
+//   ★ 理由（2026-10-12 定）：**`any` 不能赋给任何东西是本语言的规矩**（除非转换 / `as`）✓
+//     ⇒ 两条出路都已钉在本文件：① **精确写法** `Future[int]`（推荐 ✓，见 ③）；
+//       ② **动态写法** `(await x) as int`（见 ⑤ ✓ —— 这正是 `any` 那条规矩的通用逃生阀）
 //
 // ⚠ 另一条：形参名别与**全局函数同名**（推断里名字解析不带作用域 ⇒ 会按全局函数推 ⇒ 假象 ✗），
 //   本文件形参用 `f` / `fn` ✓
@@ -46,6 +49,17 @@ async func take_typed(Future[int] f): int {
     return await f
 }
 
+// ⑤ 裸 Future 的**合法用法**：显式转换（`any` 不能直接赋值 ⇒ 用 `as` ✓）
+//   两种写法都钉：先落变量再转 / 表达式上直接转
+async func take_as(Future f): int {
+    var v = await f
+    return v as int
+}
+
+async func take_as2(Future f): int {
+    return (await f) as int
+}
+
 async func driver(): int {
     var w = new W()
 
@@ -67,7 +81,11 @@ async func driver(): int {
     Future[int] g = plain()
     var v4 = await g
 
-    return v1 + v2 + v3 + v4      // 7 + 5 + 5 + 5 = 22
+    // ⑤ 裸 Future + `as`（元素未知时的合法出路 ✓）
+    var v5 = await take_as(plain())
+    var v6 = await take_as2(plain())
+
+    return v1 + v2 + v3 + v4 + v5 + v6      // 7 + 5 + 5 + 5 + 5 + 5 = 32
 }
 
 // 造一个"导入 asyncs、body 在 main 里"的入口（负例用；body 自带缩进）
@@ -84,7 +102,7 @@ main() {
     var d = driver()
     asyncs.run()
     var r = asyncs.all([d])
-    assert_eq(r[0], 22, "T3：C3 + C6 解包出的值正确（7+5+5+5）")
+    assert_eq(r[0], 32, "T3：C3 + C6 解包出的值正确（7+5+5+5+5+5）")
 
     var work = dirs.join(_tmpdir(), "leno_async_future_type")
     dirs.delete(work)
