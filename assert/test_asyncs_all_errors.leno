@@ -1,0 +1,104 @@
+// test_asyncs_all_errors.leno —— T4 判据：`asyncs.all` 的**失败**语义（C8）
+//   台账：docs/待办与路线图.md 的 §T4（方向 (b)：不吞错 ✓）
+//
+// 改之前（C8）：失败的 Future `completed` 也是 1、`result` 是 null ⇒ `all([失败f])` 返回
+//   `[null]` —— 与"成功但值是 null"**无法区分** ✗，错误还要**拖到 `asyncs.run()`** 才炸
+//   （甚至跑到别处才炸 ✗）⇒ 典型的"静默错值"✓ 本仓口径里最该消灭的一类 ✓
+// 改之后：**当场抛** —— 口径与 `asyncs.run()` **一模一样**：
+//   · 1 个失败 ⇒ 抛**原错误值**（保留类型/内容 ⇒ try-catch 拿到的是原物 ✓）
+//   · 多个失败 ⇒ 抛**汇总串**（`N 个 Future 失败 ⇒ 第 2 个: …; 第 4 个: …` ✓）
+//
+// ⚠ 可达性（为什么这条路径真会发生）：`await` **过**的失败 Future 由
+//   `vm.c` 置 `error_propagated=1` ⇒ **不进** `loop->errors` ⇒ `run()` 不再重抛 ✓
+//   但那个 Future **仍然是"已完成 + 带 error"** ⇒ 随后 `all([它])` 就会踩上 ✓
+//   （另一种同样可达：错误已被自己的 try-catch 吃掉之后，用户回头再 `all` 一遍 ✓）
+//
+// 另两条一起回归：C10（未完成 ⇒ 抛错，不是 null ✓）、非 Future 元素原样带过 ✓
+
+import asyncs
+import io
+import strings
+
+async func boom(string msg): int {
+    // ⚠ 不要在后面再写 `return 0` —— 它不可达，编译器会给「不可达代码」警告 ✗
+    throw msg
+}
+
+async func ok(int v): int {
+    await asyncs.sleep(1)
+    return v
+}
+
+async func driver() {
+    // ① 先让两个 Future **失败**，并把错误各自吃掉（⇒ error_propagated ⇒ run() 不再重抛 ✓）
+    var f1 = boom("X1")
+    var caught1 = ""
+    try {
+        await f1
+    } catch e {
+        caught1 = $"{e}"
+    }
+    assert_true(strings.has(caught1, "X1"), "① 第一个 Future 确实失败过（await 时被 catch ✓）")
+
+    var f2 = boom("X2")
+    var caught2 = ""
+    try {
+        await f2
+    } catch e2 {
+        caught2 = $"{e2}"
+    }
+    assert_true(strings.has(caught2, "X2"), "① 第二个 Future 也确实失败过")
+
+    // ② **单个**失败 ⇒ 抛的是**原错误值**（不是被包成一串字的汇总）
+    var got1 = "(没炸)"
+    try {
+        var r1 = asyncs.all([f1])
+        got1 = "没炸:len=" + r1.len()
+    } catch e3 {
+        got1 = $"{e3}"
+    }
+    assert_true(strings.has(got1, "X1"),
+        "② 单个失败 ⇒ all 当场抛**原错误值**；实际=" + got1)
+    assert_true(strings.has(got1, "X1") and not strings.has(got1, "2 个"),
+        "② 单失败分支**不**走汇总串（与 run() 同口径）")
+
+    // ③ **多个**失败 ⇒ 汇总串（点名第几个 + 各自消息）
+    var got2 = "(没炸)"
+    try {
+        var r2 = asyncs.all([f1, f2])
+        got2 = "没炸:len=" + r2.len()
+    } catch e4 {
+        got2 = $"{e4}"
+    }
+    assert_true(strings.has(got2, "2 个 Future 失败"),
+        "③ 多个失败 ⇒ 汇总串点名个数；实际=" + got2)
+    assert_true(strings.has(got2, "第 1 个") and strings.has(got2, "第 2 个"),
+        "③ 汇总串要指认**是第几个**失败（否则还是不好查）；实际=" + got2)
+    assert_true(strings.has(got2, "X1") and strings.has(got2, "X2"),
+        "③ 汇总串要带上各自的消息；实际=" + got2)
+
+    // ④ 回归（C10）：**未完成**的 Future 仍然抛错，不许静默给 null
+    var slow = ok(7)
+    var got3 = "(没炸)"
+    try {
+        var r3 = asyncs.all([slow])
+        got3 = "没炸:len=" + r3.len()
+    } catch e5 {
+        got3 = $"{e5}"
+    }
+    assert_true(strings.has(got3, "还没完成"),
+        "④ 未完成 ⇒ 仍然抛错（C10 未被这次改动破坏）；实际=" + got3)
+
+    // ⑤ 回归：全部成功 + 非 Future 元素原样带过
+    await slow
+    var r5 = asyncs.all([slow, 42, "s"])
+    assert_eq(r5[0], 7, "⑤ 成功的 Future 仍然取到结果")
+    assert_eq(r5[1], 42, "⑤ 非 Future 元素原样带过（有意用法，不动）")
+    assert_eq(r5[2], "s", "⑤ 同上（字符串）")
+}
+
+main() {
+    driver()          // 语句级调用（driver 无返回值 ⇒ 不用接 Future，避免"未使用变量"警告 ✓）
+    asyncs.run()
+    io.print("test_asyncs_all_errors passed")
+}

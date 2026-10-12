@@ -140,6 +140,13 @@ static Value native_async_all(int arg_count, Value* args) {
     
     ObjArray* futures_arr = (ObjArray*)val_as_obj(args[0]);
     int count = futures_arr->count;
+
+    // ★ T4 / C8：失败汇总的记账（声明在循环外 ⇒ 循环后统一抛 ✓）
+    int fail_count = 0;
+    Value first_err = val_null();
+    char agg[1024];
+    int agg_off = 0;
+    agg[0] = '\0';
     
     if (count == 0) {
         ObjArray* result = arr_new(0);
@@ -161,6 +168,27 @@ static Value native_async_all(int arg_count, Value* args) {
         
         ObjFuture* future = (ObjFuture*)val_as_obj(fv);
         if (future->completed) {
+            // ★ T4 / C8（2026-10-12）：**失败的 Future 不再静默给 null** ✗
+            //   症状（改之前）：`all([失败future])` 返回 `[null]` —— 与"成功但返回 null"
+            //     完全无法区分 ✗，而错误要**拖到 `asyncs.run()`** 才炸（甚至跑到别处才炸 ✗）。
+            //   这就是"静默错值"，按本仓口径（静默错值 > 编译期报错 > 性能）**必须消灭** ✓。
+            //   口径照 `asyncs.run()` 的既有做法**一模一样** ✓：
+            //     · 只有 1 个失败 ⇒ 抛**原错误值**（保留类型/内容，try-catch 拿到的是原物 ✓）
+            //     · 多个失败 ⇒ 抛**汇总串**（`N 个协程失败: …` 那条口径的 all 版 ✓）
+            //   （判据：`assert/test_asyncs_all_errors.leno` ✓）
+            if (!val_is_null(future->error)) {
+                fail_count++;
+                if (fail_count == 1) first_err = future->error;
+                if (agg_off < (int)sizeof(agg) - 64) {
+                    char* err_str = value_to_string(future->error);
+                    agg_off += snprintf(agg + agg_off, sizeof(agg) - (size_t)agg_off,
+                                        "%s第 %d 个: %s",
+                                        fail_count == 1 ? "" : "; ", i + 1,
+                                        err_str ? err_str : "?");
+                    free(err_str);
+                }
+                continue;   // 失败成员**不进结果数组**（下面统一抛掉 ✓）
+            }
             results->elements[i] = future->result;
         } else {
             // ★ 2026-10-10：未完成的 Future **不再静默给 null** ✗ ⇒ 抛错并指路 ✓
@@ -178,6 +206,29 @@ static Value native_async_all(int arg_count, Value* args) {
         }
     }
     
+    // ★ T4 / C8（2026-10-12）：有失败 ⇒ **这里就炸**（不再把错误留给 asyncs.run() ✓）
+    if (fail_count > 0) {
+        if (fail_count == 1) {
+            // 单个失败 ⇒ 抛**原错误值**（与 `asyncs.run()` 的单错分支同口径 ✓：
+            //   try-catch 拿到的仍是原来那个值/类型，不被包成一串字 ✓）
+            VM* target_vm = get_current_vm();
+            if (target_vm) {
+                target_vm->exception = first_err;
+                target_vm->has_exception = 1;
+                target_vm->exception_line = native_get_current_line();
+            }
+            return val_null();
+        }
+        char msg[1200];
+        snprintf(msg, sizeof(msg),
+                 "asyncs.all：%d 个 Future 失败 ⇒ %s"
+                 "（与 asyncs.run() 的「N 个协程失败」同口径；想逐个处理请改用 "
+                 "`is_done(f)` + `get_result(f)` 自己遍历 ✓）",
+                 fail_count, agg);
+        native_throw_error(msg);
+        return val_null();
+    }
+
     return val_obj((Object*)results);
 }
 

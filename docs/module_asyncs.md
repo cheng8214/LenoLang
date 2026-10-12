@@ -228,13 +228,30 @@ async func get_result_demo() {
 
 ### `all(futures)`
 
-收集多个已完成 Future 的结果。
+收集多个**已完成** Future 的结果。
 
 **参数**:
-- `futures` (array): Future 对象数组
+- `futures` (array): Future 对象数组 —— ⚠ 里面**非 Future 的元素原样带过**（有意用法 ✓）
 
 **返回**: `array` - 所有 Future 的结果数组
 
+> **★ 失败与未完成：当场抛错，不给 `null`**（2026-10-12 收口，见 `待办与路线图.md` §T4）
+>
+> | 情形 | 行为 |
+> |---|---|
+> | 某个 Future **还没完成** | **抛错**（C10，2026-10-10 起）—— 文案里给两条正确做法 ✓ |
+> | 某个 Future **失败** | **抛错**（C8，2026-10-12 起）—— 不再是 `[null]` ✗ |
+> | **1 个**失败 | 抛**原错误值**（try-catch 拿到的就是原来那个值/类型 ✓，与 `asyncs.run()` 的单错分支同口径 ✓） |
+> | **多个**失败 | 抛**汇总串**：`asyncs.all：N 个 Future 失败 ⇒ 第 2 个: …; 第 4 个: …` ✓ |
+> | 想**逐个**处理失败 | 改用 `is_done(f)` + `get_result(f)` 自己遍历 ✓ |
+>
+> 为什么（C8 的由来）：失败的 Future 也是"已完成"（`is_done` 为 true）、`result` 是 `null`
+> ⇒ 过去 `all([失败f])` 返回 `[null]`，**与"成功但值是 null"无法区分** ✗，而错误要拖到
+> `asyncs.run()` 才炸（甚至跑到别处才炸 ✗）—— 典型的静默错值 ✓ 已消灭 ✓
+>
+> ⚠ **`all` 本身不会等待**（native 调用没有协程挂起能力）：它只收**已完成**的结果 ⇒
+> 要等齐请先 `await` 或让 `asyncs.run()` 跑完（这也是"未完成就抛错"那条存在的原因 ✓）。
+> 判据：`assert/test_asyncs_all_errors.leno` ✓
 ```leno
 async func fetch_user(id):dict {
     await asyncs.sleep(100)
