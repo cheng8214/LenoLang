@@ -159,10 +159,13 @@ main()
         assert_eq(ok4, false)
     }
 
-    // ---- 类型契约（v3.2.6）----
+    // ---- 类型契约（v3.2.6 / ★ 2026-10-12 TH4 更新）----
     //   `threads.sleep()` / `Channel.send()` / `Channel.close()` 返回 `null`（实现都是 val_null）。
-    //   ⚠ `receive()` / `try_receive()` **保持 any 不是偷懒**：语言里没有 `Channel[T]` 标注
-    //     （实测 .leno 源码 0 处）⇒ 通道没有"元素类型"可推，any 是当前设计的正确结果。
+    //   ⚠ 旧注释写「`receive()` / `try_receive()` 保持 any 不是偷懒：语言里没有 `Channel[T]` 标注」
+    //     ✗ —— **2026-10-12（TH4）起语言里有了**：`Channel[int] ch` 的 `ch.receive()` 就是 `int` ✓
+    //     （元素走 element_type 槽，语法照 `Ptr[T]`；裸 `Channel` 才回落 any ✓）
+    //   ⚠ 但 `try_receive()` **仍然**是 any ✓ 且是有意的：空通道它给 `null` ⇒ 说它是 T 就是撒谎
+    //     （要精确得先有"可空元素"的表示 —— 独立需求）。判据在 `assert\test_channel_generic.leno`。
     assert_eq(threads.sleep(0), null)
     var contract_ch = threads.channel(1)
     assert_eq(contract_ch.send(1), null)

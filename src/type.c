@@ -75,6 +75,26 @@ TypeInfo* type_ptr_generic(TypeInfo* element_type) {
     return type;
 }
 
+// 创建 Channel[T]（TH4，2026-10-12）：T = `receive()` 的返回类型
+//   与 Thread[T] 同口径：**不是新的 kind**，就在 TYPE_CHANNEL 的 element_type 槽上挂 ✓
+//   （`element_type == NULL` = 裸 `Channel`，即"元素类型未知" —— 与 Array/Ptr 同口径 ✓）
+TypeInfo* type_channel_generic(TypeInfo* element_type) {
+    TypeInfo* type = type_new(TYPE_CHANNEL);
+    if (type) {
+        type->element_type = element_type;
+    }
+    return type;
+}
+
+// 创建 Thread[T]（TH4 顺带：解析器现在能吃 `Thread[T]` 标注了 —— 之前只能由原生规格内部构造）
+TypeInfo* type_thread_generic(TypeInfo* element_type) {
+    TypeInfo* type = type_new(TYPE_THREAD);
+    if (type) {
+        type->element_type = element_type;
+    }
+    return type;
+}
+
 // 创建函数类型
 TypeInfo* type_function(TypeInfo* return_type, TypeInfo** param_types, int param_count) {
     TypeInfo* type = type_new(TYPE_FUNCTION);
@@ -178,6 +198,11 @@ int type_equals(TypeInfo* a, TypeInfo* b) {
                    type_equals(a->value_type, b->value_type);
         case TYPE_PTR_GENERIC:
             return type_equals(a->element_type, b->element_type);
+        case TYPE_CHANNEL:
+            // Channel[T]（TH4，2026-10-12）：元素槽参与相等判断 ✓
+            //   ⚠ 裸 `Channel`（element_type = NULL）与 `Channel[int]` **不相等** ⇒ 赋值兼容
+            //     由 type_is_compatible 里的专门规则放行（见那里的 TYPE_CHANNEL 段 ✓）
+            return type_equals(a->element_type, b->element_type);
         case TYPE_FUNCTION: {
             // 处理 return_type：NULL 指针等同于 TYPE_NULL（void 返回）
             // 无显式返回类型的函数 return_type=NULL，func(...):void 的 return_type=TYPE_NULL
@@ -248,6 +273,10 @@ TypeInfo* type_copy(TypeInfo* type) {
         case TYPE_THREAD:
             // Thread[T]（T = join 的返回类型，2026-09-28）：T 存 element_type 槽 ⇒
             // 复制/释放/渲染都要带上（type_free 是全槽释放 ✓ 无需改）
+            copy->element_type = type_copy(type->element_type);
+            break;
+        case TYPE_CHANNEL:
+            // Channel[T]（TH4，2026-10-12）：T = `receive()` 的返回类型，同用 element_type 槽 ✓
             copy->element_type = type_copy(type->element_type);
             break;
         case TYPE_DICT:
@@ -423,6 +452,29 @@ static void build_generic_type_string(TypeInfo* type, char* buf, size_t buf_size
             if (*offset + tprefix_len < buf_size - 1) {
                 memcpy(buf + *offset, tprefix, tprefix_len);
                 *offset += tprefix_len;
+            }
+            if (type->element_type) {
+                if (*offset + 1 < buf_size) {
+                    buf[*offset] = '[';
+                    (*offset)++;
+                }
+                build_generic_type_string(type->element_type, buf, buf_size, offset);
+                if (*offset + 1 < buf_size) {
+                    buf[*offset] = ']';
+                    (*offset)++;
+                    buf[*offset] = '\0';
+                }
+            }
+            break;
+        }
+        case TYPE_CHANNEL: {
+            // Channel[T]（TH4，2026-10-12）：T = `receive()` 的返回类型；无 T = 裸 Channel
+            //   （诊断 / hover 里能看到元素类型 —— 否则 `Channel[int]` 的报错会写成 `Channel` ✗）
+            const char* cprefix = "Channel";
+            size_t cprefix_len = strlen(cprefix);
+            if (*offset + cprefix_len < buf_size - 1) {
+                memcpy(buf + *offset, cprefix, cprefix_len);
+                *offset += cprefix_len;
             }
             if (type->element_type) {
                 if (*offset + 1 < buf_size) {
@@ -1184,6 +1236,18 @@ int type_is_compatible(TypeInfo* target, TypeInfo* source) {
             return 1;
         }
         return 0;
+    }
+
+    // Channel[T] 类型兼容性检查（TH4，2026-10-12）—— 口径照抄下面的 Ptr[T]：
+    //   **元素类型未知的一侧一律放行** ✓（运行期本来就不携带元素类型，写窄了只会误报 ✗）
+    //   ① 目标裸 `Channel` ⇒ 任何 `Channel[…]` 都能赋给它（当成"不关心的通道"看 ✓）
+    //   ② 源裸 `Channel` ⇒ 能赋给 `Channel[T]`（`Channel[int] ch = threads.channel(1)` 靠这条 ✓）
+    //   ③ 两侧都有元素 ⇒ 逐元素走 type_is_compatible
+    if (target->kind == TYPE_CHANNEL) {
+        if (source->kind != TYPE_CHANNEL) return 0;
+        if (!target->element_type) return 1;   // ①
+        if (!source->element_type) return 1;   // ②
+        return type_is_compatible(target->element_type, source->element_type);   // ③
     }
 
     // Ptr[T] 类型兼容性检查

@@ -356,13 +356,21 @@ void threads_init_instance_methods(void) {
     // Channel 实例方法
     channel_register_method("send", make_native(channel_method_send, 2, "send"), TYPE_ANY, TYPE_UNKNOWN, NATIVE_FIXED(any_params));
     // send/close 的实现都是 `return val_null()`（只产生副作用）⇒ 返回类型收紧为 `null`（v3.2.6）。
-    //   receive/try_receive 保持 any **不是**偷懒：语言里没有 `Channel[T]` 标注（实测 .leno 源码 0 处）
-    //   ⇒ 通道没有"元素类型"可推，any 是当前设计的正确结果（要精确得先给 Channel 加类型参数）。
+    //   ★ 2026-10-12（TH4）起语言里**有** `Channel[T]` 标注了 ⇒ 下面 receive 的返回类型
+    //     从 any 收紧成"接收者的元素类型"（旧注释写"语言里没有 Channel[T]" ✗ 已作废）。
+    //   ⚠ `send(v)` 的**形参**仍是 `any`：要按 T 校验实参得给参数也上元素规格（另一件事，未做）✗
     native_register_instance_method_return_spec("Channel", "send", &NATIVE_T_NULL);
     channel_register_method("receive", make_native(channel_method_receive, 1, "receive"), TYPE_ANY, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
+    // ★ receive 的返回类型 = **接收者的元素类型**（TH4，2026-10-12）：
+    //   `Channel[int] ch` ⇒ `ch.receive()` 就是 `int`，不再需要 `_int(...)` 或 `is` 收窄 ✓
+    //   ⚠ 裸 `Channel`（无元素）解析不出 ⇒ 回落 any ✓（宁漏勿误报 ✓）
+    native_register_instance_method_return_spec("Channel", "receive", &NATIVE_T_ARG0_ELEM);
     channel_register_method("close", make_native(channel_method_close, 1, "close"), TYPE_ANY, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
     native_register_instance_method_return_spec("Channel", "close", &NATIVE_T_NULL);
     channel_register_method("try_send", make_native(channel_method_try_send, 2, "try_send"), TYPE_BOOL, TYPE_UNKNOWN, NATIVE_FIXED(any_params));
+    // ⚠ try_receive **故意仍返回 any** ✗：通道空时它给 `null` ⇒ 说它是 `T` 就是**说谎**
+    //   （会让人写出 `int x = ch.try_receive()` 这种空通道下拿到 null 的代码 ✗）。
+    //   要精确得先给类型系统一个"可空元素"的表达（`T?`）—— 那是独立的需求 ✓
     channel_register_method("try_receive", make_native(channel_method_try_receive, 1, "try_receive"), TYPE_ANY, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
     channel_register_method("is_closed", make_native(channel_method_is_closed, 1, "is_closed"), TYPE_BOOL, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
     channel_register_method("len", make_native(channel_method_len, 1, "len"), TYPE_INT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));

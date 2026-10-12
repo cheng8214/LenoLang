@@ -870,18 +870,62 @@ print(threads.join_all(ts))   // 2
 3. **回调的形参个数是硬校验**（线程入口由 VM 直接调用，默认参数不会被补齐 ✓）：
    `parallel_for` 要 `f(int)`，`map` 要 `f(item, index)`（与 `arrays.map` 同口径 ✓）。
 
+## 通道元素类型（`Channel[T]`，★ 2026-10-12 起）
+
+给通道写上元素类型，`receive()` 就**直接是那个类型**，不用再 `_int(...)` / `is` 收窄：
+
+```leno
+import threads
+
+struct Pt { int x = 0  string tag = "" }
+
+main() {
+    Channel[int] ch = threads.channel(4)   // ← 工厂返回裸 Channel，靠标注拿到元素类型
+    ch.send(7)
+    int v = ch.receive()                   // ✓ 直接是 int
+
+    Channel[Pt] pc = threads.channel(4)
+    var p = new Pt()
+    p.x = 9
+    pc.send(p)
+    Pt got = pc.receive()                  // ✓ 直接是 Pt（跨线程的 struct 是深拷贝）
+    print(got.x + v)
+}
+```
+
+| 写法 | `receive()` 的静态类型 |
+|---|---|
+| `Channel[int] ch` | `int` ✓ |
+| `Channel[Pt] ch` | `Pt` ✓（可再取字段） |
+| `var ch = threads.channel(1)`（裸 `Channel`） | `any`（**回落**，仍可用但需 `_int(...)` / 收窄） |
+| `ch.try_receive()` | 恒为 `any` ✓ **这是有意的**：空通道它给 `null`，说它是 `T` 就是撒谎（要精确得先有"可空元素"的表示） |
+
+⚠ 两条口径：
+1. **元素未知的一侧一律放行** —— 裸 `Channel` 能赋给 `Channel[int]`，`Channel[int]` 也能传给
+   形参写成 `Channel` 的函数（运行期本来就不携带元素类型 ⇒ 写窄了只会误报）；
+2. `threads.channel(n)` **推不出** T（工厂没有元素信息）⇒ 想看精确类型就**写标注**。
+   顺带：`Thread[T]` 标注现在也能写了（`Thread[int] t = threads.start(f, 1)` ✓）。
+
 ## API 参考
 
 ### threads 模块
 
 | 方法 | 说明 | 返回值 |
 |------|------|--------|
-| `threads.start(func, args...)` | 启动新线程 | `Thread` |
-| `threads.channel(capacity)` | 创建通道 | `Channel` |
+| `threads.start(func, args...)` | 启动新线程 | `Thread[回调返回]` |
+| `threads.channel(capacity)` | 创建通道（裸 `Channel`；要元素类型请写标注） | `Channel` |
 | `threads.sleep(ms)` | 当前线程休眠 | `null` |
 | `threads.join_all(Array[Thread])` | 等一组线程结束 | `int` |
 | `threads.parallel_for(n, f)` | 分 n 份并行（`f(index)`） | `int` |
 | `threads.map(arr, f)` | 并行 map（`f(item, index)`，按输入顺序） | `Array[回调返回]` |
+
+### Channel 方法（返回类型与元素挂钩）
+
+| 方法 | 说明 | 返回值 |
+|------|------|--------|
+| `ch.send(v)` | 发送（满则阻塞） | `null` |
+| `ch.receive()` | 接收（空则阻塞） | **接收者的元素类型**（`Channel[int]` ⇒ `int`；裸 `Channel` ⇒ `any`） |
+| `ch.try_receive()` | 非阻塞接收 | `any`（空通道给 `null` —— 见上表说明） |
 
 ### Thread 方法
 

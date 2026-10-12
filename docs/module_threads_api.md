@@ -261,7 +261,7 @@ ch.send([1, 2, 3])
 从通道接收一个值。
 
 **返回值:**
-- 接收到的值
+- 接收到的值 —— **静态类型 = 接收者的元素类型** ✓（★ 2026-10-12 起，见下面的 `Channel[T]`）
 
 **注意:**
 - 如果通道为空且未关闭，会阻塞等待
@@ -274,6 +274,33 @@ ch.send("hello")
 var msg = ch.receive()
 print(msg)  // 输出: hello
 ```
+
+### `Channel[T]` —— 通道的元素类型（★ 2026-10-12 起）
+
+写 `Channel[T]` 就把"元素类型"告诉编译器，`receive()` 直接得到 T，不用 `_int(...)` / 收窄：
+
+```leno
+Channel[int] ch = threads.channel(4)     // 工厂返回裸 Channel ⇒ 靠标注拿到元素类型
+ch.send(7)
+int v = ch.receive()                     // ✓ 直接是 int
+
+Channel[Pt] pc = threads.channel(4)      // Pt 是 struct
+Pt got = pc.receive()                    // ✓ 直接是 Pt（跨线程的 struct 是深拷贝）
+```
+
+**规则**（与 `Ptr[T]` / `Thread[T]` 同口径 ✓）：
+
+| 情形 | 结果 |
+|---|---|
+| `Channel[int]` 的 `receive()` | `int` |
+| 裸 `Channel` 的 `receive()` | `any`（回落 —— 仍可用，但要 `_int(...)` / 收窄） |
+| `try_receive()` | 恒为 `any` ✓（**有意**：空通道给 `null`，说它是 `T` 就是撒谎） |
+| 裸 `Channel` 赋给 `Channel[int]` | ✅ 允许（元素未知的一侧放行） |
+| `Channel[int]` 传给形参 `Channel` | ✅ 允许（同上） |
+| `Channel[int]` 赋给 `Channel[string]` | ❌ 报「期望类型: Channel[string]，实际类型: Channel[int]」 |
+| `threads.channel(n)` | 返回**裸 `Channel`**（工厂推不出 T）⇒ 要精确就写标注 |
+
+顺带：`Thread[T]` 标注现在也写得出来了 ✓（`Thread[int] t = threads.start(f, 1)`）。
 
 ### `channel.try_send(value)`
 

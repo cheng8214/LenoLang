@@ -264,6 +264,16 @@ static TypeInfo* parse_type_from_string_inner(const char** p) {
             return type_ptr_generic(param1);
         }
 
+        // ★ Channel[T] / Thread[T]（TH4，2026-10-12）：**必须在这里认出来** ✗
+        //   否则会落到下面的"泛型 struct"兜底 ⇒ 被当成一个名叫 `Channel` 的 struct ✗
+        //   （跨模块签名里写 `Channel[int]` 时，调用侧拿到的类型就错了）
+        if (strcmp(ident, "Channel") == 0) {
+            return type_channel_generic(param1);
+        }
+        if (strcmp(ident, "Thread") == 0) {
+            return type_thread_generic(param1);
+        }
+
         // 泛型 struct 类型：Holder[K] → TYPE_STRUCT, struct_name="Holder", element_type=K
         TypeInfo* generic_struct = type_new(TYPE_STRUCT);
         generic_struct->struct_name = strdup(ident);

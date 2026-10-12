@@ -937,10 +937,13 @@ static TypeKind native_spec_kind(const NativeTypeSpec* spec) {
 // 关系型标签（NTYPE_ARG0_*）→ 实参类型里的对应部分；解析不出 ⇒ NULL（调用方退化成 any）
 static TypeInfo* native_arg0_part_to_info(TypeInfo* arg0, NativeTypeTag tag) {
     if (!arg0) return NULL;
-    // ARG0_ELEM 同时服务两种容器：Array[T] 的 T（copy/pop/...）与 Thread[T] 的 T
-    //   （join 的返回类型 = threads.start 时闭包的返回类型，2026-09-28 ✓）
+    // ARG0_ELEM 现在服务三种容器：
+    //   · Array[T] 的 T（copy/pop/...）
+    //   · Thread[T] 的 T（join 的返回类型 = threads.start 时闭包的返回类型，2026-09-28 ✓）
+    //   · Channel[T] 的 T（receive/try_receive 的返回类型，TH4，2026-10-12 ✓）
     if (tag == NTYPE_ARG0_ELEM &&
-        (arg0->kind == TYPE_ARRAY || arg0->kind == TYPE_THREAD) && arg0->element_type) {
+        (arg0->kind == TYPE_ARRAY || arg0->kind == TYPE_THREAD ||
+         arg0->kind == TYPE_CHANNEL) && arg0->element_type) {
         return type_copy(arg0->element_type);
     }
     if (tag == NTYPE_ARG0_KEY && arg0->kind == TYPE_DICT && arg0->key_type) {

@@ -415,6 +415,11 @@ TypeInfo* type_get_array_cached(TypeKind elem_kind);
 TypeInfo* type_array(TypeInfo* element_type);
 TypeInfo* type_dict(TypeInfo* key_type, TypeInfo* value_type);
 TypeInfo* type_ptr_generic(TypeInfo* element_type);
+// Channel[T] / Thread[T]（TH4，2026-10-12）：元素槽 = `receive()` / `join()` 的返回类型。
+//   ⚠ 都**不是新 kind** —— 就在 TYPE_CHANNEL / TYPE_THREAD 的 element_type 槽上挂 ✓
+//   （element_type == NULL 即裸 `Channel` / `Thread` = 元素类型未知）
+TypeInfo* type_channel_generic(TypeInfo* element_type);
+TypeInfo* type_thread_generic(TypeInfo* element_type);
 TypeInfo* type_function(TypeInfo* return_type, TypeInfo** param_types, int param_count);
 TypeInfo* type_generic_param(const char* name);  // 创建泛型类型参数 T, U 等
 TypeInfo* type_generic_param_constrained(const char* name, const char* constraint);  // 创建带约束的泛型类型参数

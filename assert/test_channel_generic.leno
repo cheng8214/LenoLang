@@ -1,0 +1,115 @@
+// test_channel_generic.leno —— TH4：`Channel[T]`（回归）
+//
+// 背景（见 docs/线程并发能力修复追踪.md 的 TH4）：`ch.receive()` 的静态类型原先恒为 `any`
+//   ⇒ `var x: int = ch.receive()` 要显式转换、多返回值解构被拒；代码里为此留过一句
+//   「语言里没有 `Channel[T]` 标注」（`src/module/threads/threads.c`，已作废）。
+//   现在：`Channel[T]` 里的 T = **`receive()` 的返回类型**（走 element_type 槽，与 `Thread[T]` 同口径），
+//   语法照 `Ptr[T]`；裸 `Channel`（无 T）⇒ 回落 `any` ✓（宁漏勿误报）。
+//   ⚠ `try_receive()` **故意仍是 any**：空通道它会给 `null` ⇒ 说它是 T 就是**说谎**
+//     （要精确得先给类型系统一个"可空元素"的表达，属独立需求）。
+//
+// 判据：
+//   ① `Channel[int] ch` ⇒ `int v = ch.receive()` 无需转换
+//   ② `Channel[int]` 作函数形参（元素类型跨函数）
+//   ③ 元素是 struct ⇒ `Pt got = pc.receive()` 直接拿到 struct（TH1 + TH4 联用）
+//   ④ 裸 `Channel` 仍可用、`receive()` 回落 any
+//   ⑤ `Thread[int]` 标注现在也能写（此前只有原生规格内部能造）
+//   ⑥ 反例：元素类型**真的在约束**（不是摆设）—— 包括"裸 Channel 的 receive 是 any"这条
+
+import threads
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+
+struct Pt {
+    int x = 0
+    string tag = ""
+}
+
+func send_int(Channel[int] ch): int {
+    ch.send(42)
+    return 0
+}
+
+func twice(int v): int {
+    return v * 2
+}
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_channel_generic")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ---------- ① 声明 + receive 直接当 int 用 ----------
+    Channel[int] ch = threads.channel(4)
+    ch.send(7)
+    int v = ch.receive()
+    assert_eq(v, 7, "①Channel[int] 的 receive() 应直接是 int（无需 _int / 收窄）")
+
+    // ---------- ② Channel[T] 作形参 ----------
+    Channel[int] ch2 = threads.channel(4)
+    var t = threads.start(send_int, ch2)
+    int w = ch2.receive()
+    t.join()
+    assert_eq(w, 42, "②Channel[int] 作形参：元素类型跨函数传递")
+
+    // ---------- ③ 元素是 struct ----------
+    Channel[Pt] pc = threads.channel(4)
+    var pt = new Pt()
+    pt.x = 9
+    pt.tag = "hi"
+    pc.send(pt)
+    Pt got = pc.receive()
+    assert_eq(got.x, 9, "③Channel[Pt] 的 receive() 应直接得到 struct")
+    assert_eq(got.tag, "hi", "③struct 字段应完整送达（TH1 的深克隆）")
+
+    // ---------- ④ 裸 Channel 回落 any ----------
+    var raw = threads.channel(4)
+    raw.send(5)
+    var r = raw.receive()
+    assert_eq(_int(r), 5, "④裸 Channel 仍可用（receive 是 any ⇒ 要 _int）")
+
+    // ---------- ⑤ Thread[int] 标注 ----------
+    Thread[int] tt = threads.start(twice, 21)
+    assert_eq(tt.join(), 42, "⑤Thread[int] 标注可用（元素 = join 的返回类型）")
+
+    // ---------- ⑥ 反例：元素类型真的在约束 ----------
+    //   （三条都用编译器子进程跑，见 assert/helpers/compiler.leno ✓）
+    var f1 = dirs.join(work, "neg_elem_mismatch.leno")
+    files.write(f1, @"import threads
+
+main() {
+    Channel[string] ch = threads.channel(1)
+    int v = ch.receive()
+    print(v)
+}
+")
+    ce.expect_error(f1, "⑥string 元素的通道 ⇒ receive() 是 string（赋给 int 应报错）",
+        "实际类型: string", 5)
+
+    var f2 = dirs.join(work, "neg_channel_assign.leno")
+    files.write(f2, @"import threads
+
+main() {
+    Channel[int] a = threads.channel(1)
+    Channel[string] b = a
+    print(1)
+}
+")
+    ce.expect_error(f2, "⑥Channel[int] 不能赋给 Channel[string]（元素敏感 + 报错里带元素）",
+        "实际类型: Channel[int]", 5)
+
+    var f3 = dirs.join(work, "neg_bare_is_any.leno")
+    files.write(f3, @"import threads
+
+main() {
+    var ch = threads.channel(1)
+    int v = ch.receive()
+    print(v)
+}
+")
+    ce.expect_error(f3, "⑥裸 Channel ⇒ receive() 仍是 any（回落，不是悄悄当 int）",
+        "实际类型: any", 5)
+
+    print("test_channel_generic passed")
+}

@@ -108,10 +108,48 @@ static TypeInfo* parse_base_type(Parser* p) {
     }
     if (p->lex.current.type == TOK_CHANNEL_TYPE) {
         lexer_next(&p->lex);
+        // Channel[T]（TH4，2026-10-12）：T = `ch.receive()` 的返回类型
+        //   写法照 Ptr[T]（本函数下面那段 ✓）：不写 `[T]` 就是裸 `Channel`（元素未知 ✓）
+        if (p->lex.current.type == TOK_LBRACKET) {
+            lexer_next(&p->lex); // 消费 '['
+            TypeInfo* element_type = parse_type_internal(p);
+            if (!element_type) {
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                             "Channel 元素类型解析失败");
+                return type_new(TYPE_CHANNEL);
+            }
+            if (p->lex.current.type != TOK_RBRACKET) {
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                             "期望 ']' 结束 Channel 类型");
+                type_free(element_type);
+                return type_new(TYPE_CHANNEL);
+            }
+            lexer_next(&p->lex); // 消费 ']'
+            return type_channel_generic(element_type);
+        }
         return type_new(TYPE_CHANNEL);
     }
     if (p->lex.current.type == TOK_THREAD_TYPE) {
         lexer_next(&p->lex);
+        // Thread[T]（TH4 顺带）：此前**只有原生规格内部能造** Thread[T]，用户写不出来 ✗
+        //   ⇒ 现在 `Thread[int] t = threads.start(...)` 也能标注了 ✓（语义同 join 的返回类型）
+        if (p->lex.current.type == TOK_LBRACKET) {
+            lexer_next(&p->lex); // 消费 '['
+            TypeInfo* element_type = parse_type_internal(p);
+            if (!element_type) {
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                             "Thread 元素类型解析失败");
+                return type_new(TYPE_THREAD);
+            }
+            if (p->lex.current.type != TOK_RBRACKET) {
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                             "期望 ']' 结束 Thread 类型");
+                type_free(element_type);
+                return type_new(TYPE_THREAD);
+            }
+            lexer_next(&p->lex); // 消费 ']'
+            return type_thread_generic(element_type);
+        }
         return type_new(TYPE_THREAD);
     }
     if (p->lex.current.type == TOK_FUTURE_TYPE) {
