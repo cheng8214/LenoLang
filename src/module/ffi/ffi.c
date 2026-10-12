@@ -2844,18 +2844,27 @@ static FFIValue callback_dispatch_marshal(int cb_id, CallbackRegState* regs) {
 
     platform_mutex_lock(&g_pending_mutex);
 
-    /* 查找空闲槽位 */
+    /* 查找空闲槽位；**没有就等空位**（★ TH7，2026-10-12） */
     int slot = -1;
-    for (int i = 0; i < MAX_PENDING_CALLBACKS; i++) {
-        if (!g_pending_queue[i].in_use) {
-            slot = i;
-            break;
+    while (slot < 0) {
+        for (int i = 0; i < MAX_PENDING_CALLBACKS; i++) {
+            if (!g_pending_queue[i].in_use) {
+                slot = i;
+                break;
+            }
         }
-    }
-    if (slot < 0) {
-        /* 队列满，直接返回（极端情况，不应发生） */
-        platform_mutex_unlock(&g_pending_mutex);
-        return result;
+        if (slot < 0) {
+            /* ★ 队列满（64 个外部线程**同时**在回调里等主线程）：
+             *   原先这里是「直接返回 `result`」—— 而 `result = {0}` ⇒ 静默返回全 0 ✗
+             *   （比较函数返回 0 = "相等" ⇒ `qsort` 之类会**静默给出错序** ✗，
+             *    正是本仓最想消灭的"静默错值"✓）。
+             *   改成**等一个空位**：空位由"某次回调完成后 signal"（见本函数尾部 ✓）。
+             *   ⚠ 这不会引入新的失败模式：本路径本来就要求"主线程会 pump 回调"
+             *     （否则下面等 `completed` 同样会永久阻塞 ✓）⇒ 只是别撒谎 ✓
+             *   ⚠ 未覆盖自动化测试：造 64 个无 VM 的外部线程需要 C 侧线程池
+             *     （见 examples/ffi/test_callback_threadpool.leno 的路子 ✓） */
+            platform_cond_wait(&g_pending_cond, &g_pending_mutex);
+        }
     }
 
     /* 填入参数 */
