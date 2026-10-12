@@ -708,6 +708,11 @@ const char* type_kind_to_string(TypeKind kind) {
         case TYPE_FUNCTION: return "func";
         case TYPE_STRUCT:   return "struct";
         case TYPE_FACE:     return "face";
+        // 枚举对外统一为 int（同下面 TYPE_BIGINT 的处理）：成员折叠成 int、运行期
+        // `type(E.X)` 与 `type(枚举变量)` 都是 "int" ⇒ 报错文本里也该是 int ✓
+        // ⚠ 缺这一支时，默认落到 `default: return "unknown"`，于是出现
+        //   「期望 'i32', 实际 'unknown'」这种**看着像类型丢了**的误导性报文（2026-10-12 修 ✓）
+        case TYPE_ENUM:     return "int";
         // C 布局类型
         case TYPE_I8:       return "i8";
         case TYPE_U8:       return "u8";
@@ -930,6 +935,20 @@ int type_is_compatible(TypeInfo* target, TypeInfo* source) {
     if (target->kind == TYPE_INT && source->kind == TYPE_ENUM) {
         return 1;
     }
+    // ---- enum 与 **C 布局整型**互通（2026-10-12 补）----
+    //   口径同上（枚举 = int，成员折叠成 int、`type(E.X)` == "int"）：上面两条只覆盖了
+    //   TYPE_INT，漏了 i8/u8/…/i32/u32/…（TYPE_I8..TYPE_C_SSIZE）⇒ clib 形参写 `i32`
+    //   （= TYPE_I32）时被判不兼容 ✗
+    //   实测（sdl3 的 `SDL_SetTextureScaleMode(Ptr[u8], i32)`）：
+    //     `ScaleMode m = ScaleMode.LINEAR;  _lib.SDL_SetTextureScaleMode(tex, m)` ✗ 报
+    //         「clib 'sdl3' 函数 'SDL_SetTextureScaleMode' 参数 2 类型不匹配: 期望 'i32', 实际 'unknown'」
+    //     `int m = ScaleMode.LINEAR;        _lib.SDL_SetTextureScaleMode(tex, m)` ✓
+    //     `_lib.SDL_SetTextureScaleMode(tex, ScaleMode.NEAREST)` ✓（字面成员已折叠成 TYPE_INT）
+    //   （报文后半截写 'unknown' 是 type_kind_to_string 缺 TYPE_ENUM 分支的老毛病，已一并补 ✓）
+    if (target->kind == TYPE_ENUM &&
+        source->kind >= TYPE_I8 && source->kind <= TYPE_C_SSIZE) return 1;
+    if (source->kind == TYPE_ENUM &&
+        target->kind >= TYPE_I8 && target->kind <= TYPE_C_SSIZE) return 1;
 
     // （2026-10-02 说明）`clib → Ptr` 的规则在下面"clib 类型与 Ptr 的兼容性"一段里**本来就有**
     //   （target == TYPE_PTR && source == TYPE_CLIB ⇒ 1 ✓）⇒ 无需在这里重复一遍；

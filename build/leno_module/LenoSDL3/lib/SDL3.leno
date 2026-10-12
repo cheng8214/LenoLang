@@ -373,7 +373,7 @@ export func loadImageTexture(Ptr[u8] ren, string path): Ptr[u8]  { return img.lo
 // 改**已加载纹理**的缩放模式（2026-10-12 补 ✓）：loadImageTexture 一律设 LINEAR（圆/文字更顺 ✓），
 // 但**像素画**必须 NEAREST —— 否则精灵图四周"A=0 但带颜色"的像素会被双线性插值掺进来，
 // 放大后就是一圈白/脏边"描边"（《超级玛丽》的白边 ✓）。用法与理由见 sdl_image.leno ✓
-// ⚠ 形参是 `int` 而非 `ScaleMode`（用枚举类型声明变量/形参后喂 clib 会报 unknown，见 sdl_image.leno ✓）；传 `ScaleMode.NEAREST` 照旧 ✓
+// 形参是 `int`（同框架既有 FFI 风格 ✓）；传 `ScaleMode.NEAREST` 照旧 ✓（枚举↔C 整型的静态检查问题已修 ✓）
 export func setTextureScaleMode(Ptr[u8] tex, int mode)   { img.setTextureScaleMode(tex, mode) }
 export func saveImagePNG(Ptr[u8] surface, string path): bool           { return img.savePNG(surface, path) }
 export func saveImageJPG(Ptr[u8] surface, string path, int q = 90): bool    { return img.saveJPG(surface, path, q) }
