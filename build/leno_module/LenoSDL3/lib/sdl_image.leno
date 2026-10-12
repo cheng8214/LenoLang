@@ -54,6 +54,24 @@ export func loadTexture(Ptr[u8] renderer, string path): Ptr[u8] {
     }
     return tex
 }
+
+// 改变**已加载纹理**的缩放模式（2026-10-12 补 ✓）
+//   · 为什么需要它：上面的 `loadTexture` 一律设成 LINEAR（平滑边缘对圆形/文字更好 ✓），
+//     但**像素画**必须 NEAREST —— 精灵图四周那些"A=0 但带颜色"的像素会被双线性插值掺进来，
+//     放大后就是一圈白/脏边的"描边"（《超级玛丽》精灵白边就是这个原因 ✓）
+//   · 用法：`Ptr[u8] t = SDL3.loadImageTexture(ren, path);  SDL3.setTextureScaleMode(t, ScaleMode.NEAREST)`
+//   · 经 SDL3 门面转发（见 SDL3.leno ✓）；scaleMode 见 core.ScaleMode（NEAREST/LINEAR/BEST ✓）
+//   · ⚠ 形参类型写 `int` 而不是 `ScaleMode`（2026-10-12 实测）：用枚举**类型**声明变量/形参后，
+//     再把它喂给 clib 的 i32 形参会报「期望 'i32'，实际 'unknown'」（同文件枚举、跨模块枚举都如此；
+//     而 `ScaleMode.NEAREST` 字面成员直接喂、或先存进 `int` 变量再喂都正常 —— 运行期 `type(m)` 也
+//     确实是 "int"、值也对 ⇒ 只是**静态检查这一步**丢了类型 ✗）⇒ 这里用 int 收，
+//     调用方照旧传 `ScaleMode.NEAREST`（与本文件 loadTexture 里那两处同一写法 ✓）
+export func setTextureScaleMode(Ptr[u8] tex, int mode) {
+    if tex == null { return }
+    sdl3 _lib = core.lib()
+    _lib.SDL_SetTextureScaleMode(tex, mode)
+}
+
 // ==================== 保存 ====================
 
 // 保存为 PNG（无损压缩）
