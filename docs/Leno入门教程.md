@@ -5837,6 +5837,62 @@ main() {
 }
 ```
 
+#### `pri` 字段怎么填：工厂**不必**写一套 setter
+
+`pri` 是**字段级**私有 —— **只有该 struct 自己的方法**能读写它（跨模块会拦 ✓，**同一模块**里的普通函数、
+**兄弟 struct 的方法**也一律拦 ✓）。所以"工厂拿不到私有字段"是**有意**的边界，不是缺陷：要填初值就用
+**本 struct 自己的方法**（构造函数 / 自己的方法 / 析构函数都在这个允许范围内 ✓）。
+
+| 场景 | 写法 | 说明 |
+|---|---|---|
+| 固定初值 | `func T() { x = 7 }` | 构造函数：`new T()` 并完成字段赋值后自动跑；**不能有参数** ✓ |
+| 参数化初值 | 加一个自己的方法，如 `func init(Dict o) { … }` | 一次填完**所有** `pri` 字段 ⇒ 工厂只剩两行 ✓ |
+| 释放资源 | `func ~T() { … }` | 析构函数：与上两者成对，全部留在类型自己的代码里 ✓ |
+
+```leno
+int alive = 0
+
+struct T {
+    pri int x = 0
+    pri string name = ""
+
+    func T() {               // 固定初值（构造函数不能有参数 ✓）
+        x = 1
+        alive = alive + 1
+    }
+    func init(Dict o) {      // 参数化初值：一次填完所有 pri 字段 ✓
+        x = o.get("x", x)
+        name = o.get("name", "")
+    }
+    func ~T() {              // 析构（不能有参数/返回值 ✓）
+        alive = alive - 1
+    }
+    func show(): string { return _str(x) + "/" + name }
+}
+
+func make(Dict o): T {       // 工厂只要两行，不再"每个字段一个 setter" ✓
+    var t = new T()
+    t.init(o)
+    return t
+}
+
+main() {
+    print(alive)             // 0
+    func scope() {
+        var t = make({x: 7, name: "abc"})
+        print(t.show())      // 7/abc
+        print(alive)         // 1（构造函数已跑）
+    }
+    scope()
+    print(alive)             // 0（离开作用域析构已跑）
+}
+```
+
+> ⚠ 两条**不存在**的写法（别去找）：① `new T() { field: v, … }` 这种**字面初始化** —— Leno 不做这条
+> 语法（它会绕过字段校验/不变量，例如给 `value` 塞越界值 ✗）；② 把 `pri` 放宽成"同模块可见" ——
+> 那条边界正是"字段只能被本 struct 的代码改"，是**有意**的。完整理由（含实测与替代方案评估）见
+> `语言摩擦与隐式契约清单.md` 的 **M5c** ✓
+
 #### 引用语义：只有 new 变量负责析构
 
 Leno 的 struct 赋值是**引用**（不是拷贝），因此只有 `var x = new Struct()` 的变量承担析构义务，赋值产生的引用不会重复析构：
