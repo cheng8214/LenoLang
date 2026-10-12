@@ -765,21 +765,25 @@ TypeInfo* infer_field_type(Semantic* s, TypeInfo* obj_type, const char* field_na
 
 // ============================================================================
 // 辅助：检查 nullable 值类型是否参与算术运算（发出警告）
-// nullable 的值类型（如 int?, float?, bool?, bigint?）参与算术运算时，
+// nullable 的值类型（如 int?, float?, bool?, bigint?, **枚举?**）参与算术运算时，
 // 运行时可能为 null 导致错误，编译时发出警告提醒用户先做 null 检查
 // ============================================================================
+// ★ 判据**只有这一份**（2026-10-12 收）：原先 4 个调用点（加/减乘/除/位运算）各自抄了一遍
+//   `left->nullable && (kind == INT|FLOAT|BOOL|BIGINT)`，而本函数内又抄了一遍 ⇒ 5 份清单；
+//   加枚举时改错了地方都不生效 ✗（实测：只改本函数 ⇒ `E? v; v + 1` 仍然无警告，
+//   因为调用点的 guard 先把这次调用挡掉了 ✗）⇒ 收成一个谓词，调用点只问它 ✓
+//   口径：**枚举 = int**（成员折叠成 int、`type(E.X)` == "int"）⇒ `E?` 与 `int?` 同坑 ✓
+static int is_nullable_value_kind(TypeInfo* t) {
+    return t && t->nullable &&
+           (t->kind == TYPE_INT || t->kind == TYPE_FLOAT || t->kind == TYPE_BOOL ||
+            t->kind == TYPE_BIGINT || t->kind == TYPE_ENUM);
+}
+
 static void check_nullable_arith(TypeInfo* left, TypeInfo* right, int line, int column) {
-    int warned = 0;
-    if (left && left->nullable &&
-        (left->kind == TYPE_INT || left->kind == TYPE_FLOAT ||
-         left->kind == TYPE_BOOL || left->kind == TYPE_BIGINT)) {
+    if (is_nullable_value_kind(left)) {
         warning_add_at(WARN_NULLABLE_ARITH, line, column,
             "nullable 值类型参与算术运算，运行时可能为 null，请先检查变量是否为 null（如 if a != null）");
-        warned = 1;
-    }
-    if (!warned && right && right->nullable &&
-        (right->kind == TYPE_INT || right->kind == TYPE_FLOAT ||
-         right->kind == TYPE_BOOL || right->kind == TYPE_BIGINT)) {
+    } else if (is_nullable_value_kind(right)) {
         warning_add_at(WARN_NULLABLE_ARITH, line, column,
             "nullable 值类型参与算术运算，运行时可能为 null，请先检查变量是否为 null（如 if a != null）");
     }
@@ -1241,6 +1245,26 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
             TypeInfo* right = infer_expr_type(s, ast->u.binop.r);
             TypeInfo* result = NULL;
 
+            // ★ 枚举按 int 参与本 case 的**全部**推导（口径「枚举 = int」，2026-10-12 补）
+            //   枚举在语义期就是整数（成员折叠成 int、`type(E.X)` == "int"），但下面的数值推导链
+            //   只认 TYPE_INT ⇒ 枚举型**变量**（`E?` 与 `E` 都算）会落到两个末尾兜底上 ✗：
+            //     · 普通支末尾 `else ⇒ result = FLOAT` ⇒ `int n = 枚举变量 + 1` 报「期望 int，实际 float」✗
+            //     · nullable 支末尾 `else ⇒ result = ANY`  ⇒ 赋值/返回处再报「实际 any」✗
+            //   ⇒ 进 case 时把枚举归一成 int（**保留 nullable** —— 下面 is_nullable_value_kind
+            //     就靠它判可空警告 ✓；丢掉枚举名 —— 数值推导用不到，且 int ↔ 枚举本就不查名 ✓）
+            if (left && left->kind == TYPE_ENUM) {
+                TypeInfo* conv = type_new(TYPE_INT);
+                conv->nullable = left->nullable;
+                type_free(left);
+                left = conv;
+            }
+            if (right && right->kind == TYPE_ENUM) {
+                TypeInfo* conv = type_new(TYPE_INT);
+                conv->nullable = right->nullable;
+                type_free(right);
+                right = conv;
+            }
+
             // ★ T11：**确定是 null** 的操作数 ⇒ 编译错误
             //   （`var a = null; a + 1` / `int? a = null; a + 1`；不确定的走下面的警告 + VM 运行期检查）
             if (is_arith_or_bitop_for_null_check(ast->u.binop.op)) {
@@ -1262,9 +1286,7 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                         result = type_new(TYPE_ANY);
                     }
                     // nullable 值类型参与算术运算 -> 警告
-                    else if (left && right &&
-                        ((left->nullable && (left->kind == TYPE_INT || left->kind == TYPE_FLOAT || left->kind == TYPE_BOOL || left->kind == TYPE_BIGINT)) ||
-                         (right->nullable && (right->kind == TYPE_INT || right->kind == TYPE_FLOAT || right->kind == TYPE_BOOL || right->kind == TYPE_BIGINT)))) {
+                    else if (is_nullable_value_kind(left) || is_nullable_value_kind(right)) {
                         check_nullable_arith(left, right, ast->line, ast->column);
                         // 继续走数值类型推导
                         if (left->kind == TYPE_GENERIC_PARAM) {
@@ -1329,9 +1351,7 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                         result = type_new(TYPE_ANY);
                     }
                     // nullable 值类型参与算术运算 -> 警告
-                    else if (left && right &&
-                        ((left->nullable && (left->kind == TYPE_INT || left->kind == TYPE_FLOAT || left->kind == TYPE_BOOL || left->kind == TYPE_BIGINT)) ||
-                         (right->nullable && (right->kind == TYPE_INT || right->kind == TYPE_FLOAT || right->kind == TYPE_BOOL || right->kind == TYPE_BIGINT)))) {
+                    else if (is_nullable_value_kind(left) || is_nullable_value_kind(right)) {
                         check_nullable_arith(left, right, ast->line, ast->column);
                         if (left->kind == TYPE_GENERIC_PARAM) {
                             result = type_copy(left);
@@ -1396,9 +1416,7 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                         result = type_new(TYPE_ANY);
                     }
                     // nullable 值类型参与算术运算 -> 警告
-                    else if (left && right &&
-                        ((left->nullable && (left->kind == TYPE_INT || left->kind == TYPE_FLOAT || left->kind == TYPE_BOOL || left->kind == TYPE_BIGINT)) ||
-                         (right->nullable && (right->kind == TYPE_INT || right->kind == TYPE_FLOAT || right->kind == TYPE_BOOL || right->kind == TYPE_BIGINT)))) {
+                    else if (is_nullable_value_kind(left) || is_nullable_value_kind(right)) {
                         check_nullable_arith(left, right, ast->line, ast->column);
                         if (left->kind == TYPE_INT && right->kind == TYPE_INT) {
                             result = type_new(TYPE_INT);
@@ -1474,9 +1492,7 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                         result = type_new(TYPE_ANY);
                     }
                     // nullable 值类型参与位运算/取模 -> 警告
-                    else if (left && right &&
-                        ((left->nullable && (left->kind == TYPE_INT || left->kind == TYPE_FLOAT || left->kind == TYPE_BOOL || left->kind == TYPE_BIGINT)) ||
-                         (right->nullable && (right->kind == TYPE_INT || right->kind == TYPE_FLOAT || right->kind == TYPE_BOOL || right->kind == TYPE_BIGINT)))) {
+                    else if (is_nullable_value_kind(left) || is_nullable_value_kind(right)) {
                         check_nullable_arith(left, right, ast->line, ast->column);
                         if (left->kind == TYPE_BIGINT || right->kind == TYPE_BIGINT) {
                             result = type_new(TYPE_BIGINT);
@@ -1600,7 +1616,8 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                 // 负号：nullable 值类型参与 -> 警告
                 else if (operand && operand->nullable &&
                     (operand->kind == TYPE_INT || operand->kind == TYPE_FLOAT ||
-                     operand->kind == TYPE_BOOL || operand->kind == TYPE_BIGINT)) {
+                     operand->kind == TYPE_BOOL || operand->kind == TYPE_BIGINT ||
+                     operand->kind == TYPE_ENUM)) {   // 枚举 = int（2026-10-12 补，同上）
                     warning_add_at(WARN_NULLABLE_ARITH, ast->line, ast->column,
                         "nullable 值类型参与算术运算，运行时可能为 null，请先检查变量是否为 null（如 if a != null）");
                     result = operand;

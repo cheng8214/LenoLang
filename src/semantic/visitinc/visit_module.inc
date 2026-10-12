@@ -1876,34 +1876,18 @@
                                     } else if (expected_param_type != TYPE_ANY) {
                                         // 只有 kind 信息，进行简单类型比较
                                         if (arg_type->kind != expected_param_type) {
-                                            // 允许 int -> float, bigint -> int, bigint -> float, bool -> int/float/bigint 的隐式转换
-                                            bool type_compatible = false;
-                                            if ((expected_param_type == TYPE_FLOAT && arg_type->kind == TYPE_INT) ||
-                                                (expected_param_type == TYPE_INT && arg_type->kind == TYPE_BIGINT) ||
-                                                (expected_param_type == TYPE_FLOAT && arg_type->kind == TYPE_BIGINT) ||
-                                                ((expected_param_type == TYPE_INT || expected_param_type == TYPE_FLOAT || expected_param_type == TYPE_BIGINT) &&
-                                                 arg_type->kind == TYPE_BOOL)) {
-                                                type_compatible = true;
-                                            }
-                                            // 允许 Ptr[T] <-> Ptr 之间的隐式转换
-                                            if ((expected_param_type == TYPE_PTR && arg_type->kind == TYPE_PTR_GENERIC) ||
-                                                (expected_param_type == TYPE_PTR_GENERIC && arg_type->kind == TYPE_PTR)) {
-                                                type_compatible = true;
-                                            }
-                                            // C 布局类型隐式转换
-                                            if ((expected_param_type == TYPE_INT && arg_type->kind >= TYPE_I8 && arg_type->kind <= TYPE_C_SSIZE) ||
-                                                (arg_type->kind == TYPE_INT && expected_param_type >= TYPE_I8 && expected_param_type <= TYPE_C_SSIZE)) {
-                                                type_compatible = true;
-                                            }
-                                            if ((expected_param_type == TYPE_FLOAT && (arg_type->kind == TYPE_F32 || arg_type->kind == TYPE_F64)) ||
-                                                (arg_type->kind == TYPE_FLOAT && (expected_param_type == TYPE_F32 || expected_param_type == TYPE_F64))) {
-                                                type_compatible = true;
-                                            }
-                                            if ((expected_param_type == TYPE_STRING && (arg_type->kind == TYPE_STR8 || arg_type->kind == TYPE_STR16)) ||
-                                                (arg_type->kind == TYPE_STRING && (expected_param_type == TYPE_STR8 || expected_param_type == TYPE_STR16))) {
-                                                type_compatible = true;
-                                            }
-                                            if (!type_compatible) {
+                                            // ★ 2026-10-12：**不再**在这里手抄一份兼容小表（本处与
+                                            //   visit_expr.inc 的「全局内置函数」那处原本是同两份拷贝）——
+                                            //   手抄表的通病是"口径加了一处、漏掉另一处"，最近一次漏的是枚举：
+                                            //   原生形参是 int、实参是**枚举变量**（口径：枚举 = int）时报
+                                            //     「类型错误: 参数 1 期望 'int'，但传入 'int'」← 自相矛盾的假报错 ✗
+                                            //   ⇒ 合成一个「只有 kind」的 TypeInfo，交给 type_is_compatible（兼容
+                                            //     口径的唯一来源 ✓）。聚合类型走不到这里（kind 不同才进本分支，
+                                            //     而同 kind 的聚合在上一句就被放过了 ✓）
+                                            TypeInfo expected_ti;
+                                            memset(&expected_ti, 0, sizeof(expected_ti));
+                                            expected_ti.kind = expected_param_type;
+                                            if (!type_is_compatible(&expected_ti, arg_type)) {
                                                 char msg[BUFFER_MEDIUM];
                                                 const char* hint = get_type_conversion_hint(expected_param_type, arg_type->kind);
                                                 if (hint) {

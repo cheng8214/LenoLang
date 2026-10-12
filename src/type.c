@@ -685,6 +685,18 @@ const char* type_to_string(TypeInfo* type) {
     return buf;
 }
 
+// 整数类判定（口径：**枚举 = int**）——「必须是整数」的地方统一走这里，别各写一份小判据：
+//   枚举成员在语义期就折叠成 int、`type(E.X)` == "int"，所以**枚举类型**的变量/形参同样是整数；
+//   C 布局整型（i8..c_ssize）与 bigint 也属整数（前者与 int 双向兼容、后者与 int 互通 ✓）。
+//   为什么要有它：历史上多处写 `kind == TYPE_INT` 的小判据，抄漏枚举 ⇒ 出现
+//     · 数组下标：`a[枚举变量]` 报「数组索引必须是整数类型，实际为 int」（自相矛盾 ✗）
+//     · 原生形参：`a.insert(枚举变量, v)` 报「期望 'int'，但传入 'int'」✗
+//   （2026-10-12 修复的那批）
+int type_is_integer_kind(TypeKind kind) {
+    return kind == TYPE_INT || kind == TYPE_BIGINT || kind == TYPE_ENUM ||
+           (kind >= TYPE_I8 && kind <= TYPE_C_SSIZE);
+}
+
 // TypeKind 转字符串
 const char* type_kind_to_string(TypeKind kind) {
     switch (kind) {

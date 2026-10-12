@@ -28,6 +28,15 @@
 //      ③ 枚举变量与字面成员混写的数组，元素类型不再退化 any（type() 也应是 int 系）；
 //      ④ if 表达式同理；⑤ 反向对照：float → int 仍必须被拦（不许被这次放宽带跑）。
 
+// 补充（2026-10-12 第二轮，同一口径的其余漏点）：
+//   ⑤ **原生方法/内置函数**的 int 形参：`Array.insert(枚举变量, v)` / `Array.remove(枚举变量)`
+//      ⇒ 修前报「类型错误: 参数 1 期望 'int'，但传入 'int'」✗（自相矛盾的假报错 ——
+//        根因：那两处 native 通道**各自手抄**了一份兼容小表，枚举没被抄进去）
+//   ⑥ **数组下标 / 切片边界**：`a[枚举变量]` ⇒ 修前报「数组索引必须是整数类型，实际为 int」✗
+//   ⑦ 诊断侧的**对称性**（int 报、枚举也报）：`E? v; v + 1` 的可空算术警告、
+//      `struct S { E mode }` 的"标量字段未初始化"警告 ⇒ 修前两者对枚举都**漏报** ✗
+//      （那两条检查各把 kind 清单抄了 5 份 / 1 份，只加了枚举没加在调用点 ⇒ 仍不生效 ✗）
+
 import ffi
 
 clib mylib {
@@ -70,6 +79,36 @@ func viaParam(Mood v): float {
     return takesFloat(v)
 }
 
+// ⑤ 原生方法的 int 形参（修复前：期望 'int' / 传入 'int' 的假报错 ✗）
+func nativeIntParam(Mood v): int {
+    Array[int] a = [1, 2, 3]
+    a.insert(v, 9)          // insert(index:int, value:any)
+    a.remove(v)             // remove(index:int)
+    return a.len()
+}
+
+// ⑤' 枚举参与**算术**：类型推导按 int（修复前推到末尾兜底 ⇒ `E + 1` 推成 **float** ✗、
+//    nullable 支推成 **any** ✗ ⇒ `int n = 枚举变量 + 1` 报「期望 int，实际 float/any」）
+func arithByEnum(Mood v): int {
+    int n = v * 2 + 1       // 期望 3*2+1 = 7
+    return n
+}
+func arithMixedFloat(Mood v): float {
+    return v + 1.5          // 期望 3 + 1.5 = 4.5
+}
+
+// ⑥ 数组下标 / 切片边界（修复前：数组索引必须是整数类型，实际为 int ✗）
+enum Slot { ZERO = 0; ONE = 1; TWO = 2 }
+func indexByEnum(): int {
+    Array[int] a = [10, 20, 30]
+    return a[Slot.ONE]      // 期望 20
+}
+func sliceByEnum(): int {
+    Array[int] a = [10, 20, 30]
+    var s = a[Slot.ZERO:Slot.ONE]   // 切片终点是**闭区间**（VM: len = end - start + 1 ✓）
+    return s.len()                  // 期望 2
+}
+
 main() {
     Mood m = Mood.HAPPY
 
@@ -110,4 +149,18 @@ main() {
     int asInt = m
     assert_eq(asInt, 3)
     print("[5] enum is int (all views) passed")
+
+    // ⑥ 原生方法的 int 形参：编译过 + 取值对（3 个元素 → 插入 → 4 → 删除 → 3）
+    assert_eq(nativeIntParam(Mood.HAPPY), 3)
+    print("[6] native int param accepts enum passed")
+
+    // ⑦ 数组下标 / 切片边界：编译过 + 取值对
+    assert_eq(indexByEnum(), 20)
+    assert_eq(sliceByEnum(), 2)
+    print("[7] enum as array index / slice bound passed")
+
+    // ⑧ 枚举参与算术：类型推导按 int（修前 → float / any ✗）
+    assert_eq(arithByEnum(Mood.HAPPY), 7)
+    assert_eq(arithMixedFloat(Mood.HAPPY), 4.5)
+    print("[8] enum arithmetic infers int passed")
 }

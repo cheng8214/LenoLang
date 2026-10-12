@@ -76,10 +76,15 @@
                 if (as_src && as_dst) {
                     TypeKind sk = as_src->kind;
                     TypeKind dk = as_dst->kind;
-                    int dst_num = (dk == TYPE_INT || dk == TYPE_FLOAT ||
+                    // ⚠ 枚举算数值（2026-10-12 补）：口径「枚举 = int」（成员折叠成 int、
+                    //   `type(E.X)` == "int"）⇒ 它必须与 int 同权，否则下面两条诊断会**漏报**：
+                    //   `int 变量 as bool` 报错、同义的 `枚举变量 as bool` 却静默放行 ✗
+                    int dst_num = (dk == TYPE_INT || dk == TYPE_FLOAT || dk == TYPE_BIGINT ||
+                                   dk == TYPE_ENUM ||
                                    (dk >= TYPE_I8 && dk <= TYPE_U64) ||
                                    dk == TYPE_F32 || dk == TYPE_F64);
                     int src_num = (sk == TYPE_INT || sk == TYPE_FLOAT || sk == TYPE_BIGINT ||
+                                   sk == TYPE_ENUM ||
                                    (sk >= TYPE_I8 && sk <= TYPE_U64) ||
                                    sk == TYPE_F32 || sk == TYPE_F64);
                     // ① string → 数值类 / bool：as 不做字符串解析

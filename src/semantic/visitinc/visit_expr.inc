@@ -1690,34 +1690,14 @@
                                     //   此前编译期直接放行。
                                     if (arg_type) {
                                         if (arg_type->kind != expected_param_type) {
-                                            // 允许 int -> float, bigint -> int, bigint -> float, bool -> int/float/bigint 的隐式转换
-                                            bool type_compatible = false;
-                                            if ((expected_param_type == TYPE_FLOAT && arg_type->kind == TYPE_INT) ||
-                                                (expected_param_type == TYPE_INT && arg_type->kind == TYPE_BIGINT) ||
-                                                (expected_param_type == TYPE_FLOAT && arg_type->kind == TYPE_BIGINT) ||
-                                                ((expected_param_type == TYPE_INT || expected_param_type == TYPE_FLOAT || expected_param_type == TYPE_BIGINT) &&
-                                                 arg_type->kind == TYPE_BOOL)) {
-                                                type_compatible = true;
-                                            }
-                                            // 允许 Ptr[T] <-> Ptr 之间的隐式转换
-                                            if ((expected_param_type == TYPE_PTR && arg_type->kind == TYPE_PTR_GENERIC) ||
-                                                (expected_param_type == TYPE_PTR_GENERIC && arg_type->kind == TYPE_PTR)) {
-                                                type_compatible = true;
-                                            }
-                                            // C 布局类型隐式转换
-                                            if ((expected_param_type == TYPE_INT && arg_type->kind >= TYPE_I8 && arg_type->kind <= TYPE_C_SSIZE) ||
-                                                (arg_type->kind == TYPE_INT && expected_param_type >= TYPE_I8 && expected_param_type <= TYPE_C_SSIZE)) {
-                                                type_compatible = true;
-                                            }
-                                            if ((expected_param_type == TYPE_FLOAT && (arg_type->kind == TYPE_F32 || arg_type->kind == TYPE_F64)) ||
-                                                (arg_type->kind == TYPE_FLOAT && (expected_param_type == TYPE_F32 || expected_param_type == TYPE_F64))) {
-                                                type_compatible = true;
-                                            }
-                                            if ((expected_param_type == TYPE_STRING && (arg_type->kind == TYPE_STR8 || arg_type->kind == TYPE_STR16)) ||
-                                                (arg_type->kind == TYPE_STRING && (expected_param_type == TYPE_STR8 || expected_param_type == TYPE_STR16))) {
-                                                type_compatible = true;
-                                            }
-                                            if (!type_compatible) {
+                                            // ★ 2026-10-12：同 visit_module.inc 那处 —— 收掉手抄的兼容小表，
+                                            //   改为交给 type_is_compatible（口径唯一 ✓）。原来那份漏了枚举 ⇒
+                                            //   本通道（全局内置函数）会报「期望 'int'，但传入 'int'」这种
+                                            //   自相矛盾的假报错 ✗（实测 `abs(枚举变量)` 一类）
+                                            TypeInfo expected_ti;
+                                            memset(&expected_ti, 0, sizeof(expected_ti));
+                                            expected_ti.kind = expected_param_type;
+                                            if (!type_is_compatible(&expected_ti, arg_type)) {
                                                 char msg[BUFFER_MEDIUM];
                                                 const char* hint = get_type_conversion_hint(expected_param_type, arg_type->kind);
                                                 if (hint) {
@@ -2084,7 +2064,10 @@
 
             if (obj_type && obj_type->kind == TYPE_ARRAY) {
                 TypeInfo* index_type = infer_expr_type(s, ast->u.index.index);
-                if (index_type && index_type->kind != TYPE_INT && index_type->kind != TYPE_ANY) {
+                // ★ 2026-10-12：判据改用 `type_is_integer_kind`（口径：**枚举 = int**，C 布局整型亦算）
+                //   原来写死 `kind != TYPE_INT` ⇒ `a[枚举变量]` 报
+                //   「数组索引必须是整数类型，实际为 int」← 自相矛盾的假报错 ✗
+                if (index_type && !type_is_integer_kind(index_type->kind) && index_type->kind != TYPE_ANY) {
                     char msg[BUFFER_MEDIUM];
                     // ★ 2026-10-10 文案修正：`a.len`（**忘写括号**）会被解析器收成"字符串下标" ✓
                     //   原来只报「数组索引必须是整数类型，实际为 string」✗ —— 写的人看到这句话
@@ -2373,7 +2356,8 @@
             // 检查起始索引类型
             if (ast->u.slice.start) {
                 TypeInfo* start_type = infer_expr_type(s, ast->u.slice.start);
-                if (start_type && start_type->kind != TYPE_INT && start_type->kind != TYPE_ANY) {
+                // ★ 2026-10-12：同数组下标那处 —— 判据改用 `type_is_integer_kind`（枚举 = int ✓）
+                if (start_type && !type_is_integer_kind(start_type->kind) && start_type->kind != TYPE_ANY) {
                     char msg[BUFFER_MEDIUM];
                     snprintf(msg, sizeof(msg), "切片起始索引必须是整数类型，实际为 %s",
                              type_kind_to_string(start_type->kind));
@@ -2385,7 +2369,8 @@
             // 检查结束索引类型
             if (ast->u.slice.end) {
                 TypeInfo* end_type = infer_expr_type(s, ast->u.slice.end);
-                if (end_type && end_type->kind != TYPE_INT && end_type->kind != TYPE_ANY) {
+                // ★ 2026-10-12：同上（枚举 = int ✓）
+                if (end_type && !type_is_integer_kind(end_type->kind) && end_type->kind != TYPE_ANY) {
                     char msg[BUFFER_MEDIUM];
                     snprintf(msg, sizeof(msg), "切片结束索引必须是整数类型，实际为 %s",
                              type_kind_to_string(end_type->kind));
