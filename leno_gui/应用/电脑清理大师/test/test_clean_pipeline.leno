@@ -47,10 +47,11 @@ while j + 1 < r.len() {
 eq("chunk 单元数", chunk.len(), 50)
 
 // ==================== 后台线程清理 + channel 进度 + 轮询（同 UI pollClean） ====================
-// ★ 线程入口必须是**本文件**的具名函数 ✓（与 cleaner_master 的 delete_entry 同形 ✓）
-//   ⚠ 实测（2026-09-28）：把**别的模块**的函数直接当线程入口会失败 ✗ ——
-//     `join()` 只得到 "Thread error: unknown error"（信息全丢、且进不了函数体 ⇒ 连日志都写不出 ✗）
-//     换成同形的本文件包装立刻正常 ✓；应用一直用包装写法所以没事 ✓
+// ★ 这层包装（与 cleaner_master 的 delete_entry 同形 ✓）现在是**可选的** ✓
+//   —— 2026-10-12（TH2）之前，把**别的模块**的函数直接当线程入口会失败 ✗
+//     （`join()` 只给 "Thread error: unknown error"，进不了函数体）；
+//     那条限制已撤，模块函数可以直接作入口 ✓（见 docs/线程并发能力修复追踪.md 的 TH2）。
+//   ⚠ 包装写法仍然**正确且无害** ⇒ 这里保留，不动既有应用的行为 ✓
 func del_entry(Array[Array[string]] chunk, Array[string] roots, any ch, Array[string] enc): Array[string] {
     return rules.delete_worker(chunk, roots, ch, enc)
 }

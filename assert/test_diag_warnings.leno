@@ -337,24 +337,23 @@ main() {
     ce.expect_error(pe5b, "M2 反向：类型真的流过来了（应报 string 而非 any）",
         "实际类型: string", 6)
 
-    // E6（M1）：模块函数当线程入口 ⇒ 文案必须点名"**入口脚本（顶层文件）**"
-    //   （旧文案说"当前文件"✗ —— 同一次运行里"当前文件"有好几个 ✓ 照着改改不出对的结果 ✓）
+    // E6（M1）：模块函数当线程入口 —— ★ 2026-10-12（TH2）**限制已撤**，本判据跟着翻案：
+    //   原先 `threads.start(m.worker)` 被硬拦（判据 `closure->function->module != NULL`），
+    //   这条用例钉的是"报错文案要点名**入口脚本（顶层文件）**"（旧文案说"当前文件"✗）；
+    //   根因其实只是协程首帧漏设 `frame->module`（`src/vm/vm.c` 的 vm_run_coroutine_with_vm）✓
+    //   ⇒ 补上后模块函数**能直接作入口** ✓ ⇒ 从"必须抛错"翻成"必须能跑" ✓
+    //   （完整判据在 `assert\test_threads_module_entry.leno` ✓）
     var pe6m = dirs.join(work, "m1_mod.leno")
     files.write(pe6m, "export func worker():string {\n    return \"from module\"\n}\n")
     var pe6 = dirs.join(work, "m1_entry.leno")
     files.write(pe6,
         "import \"./m1_mod.leno\" as m\n"
         + "import threads\n"
-        + "import strings\n"
         + "main() {\n"
-        + "    try {\n"
-        + "        var t = threads.start(m.worker)\n"
-        + "        print(\"noThrow\\n\")\n"
-        + "    } catch e {\n"
-        + "        print(\"threw=\" + _str(strings.has(_str(e.msg), \"入口脚本（顶层文件）\")) + \"\\n\")\n"
-        + "    }\n"
+        + "    var t = threads.start(m.worker)\n"
+        + "    print(t.join() + \"\\n\")\n"
         + "}\n")
-    ce.expect_ok(pe6, "M1：模块函数当线程入口的文案点名入口脚本", "threw=true")
+    ce.expect_ok(pe6, "M1/TH2：模块函数能直接当线程入口（限制已撤）", "from module")
 
     // ============ F. 「枚举 = int」的诊断对称性（2026-10-12 加）============
     // 口径：枚举成员折叠成 int、`type(E.X)` == "int" ⇒ 枚举型变量与 int 型变量在**诊断**上

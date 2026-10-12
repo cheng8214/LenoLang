@@ -1631,6 +1631,15 @@ int vm_run_coroutine_with_vm(ObjCoroutine* co, VM* vm_ptr) {
         
         frame->closure = co->closure;
         frame->chunk = func->chunk;
+        // ★ 所属模块（TH2，2026-10-12）：模块字节码（OP_GET/SET_MODULE_VAR、
+        //   OP_GET_MODULE_FUNC、OP_DEFINE_MODULE_FUNC）全部经 `frame->module` 寻址
+        //   （见 `src/vm/vminc/run/10_vars_module.inc` 四处 `ObjModule* module = frame->module`）。
+        //   三条 call 路径（`vm_call.inc` 的 call / call_no_type_check / call_reg）都设了这一行，
+        //   **唯独本协程首帧漏了** ⇒ 后果不是"模块函数跑不起来"这么轻：子线程的线程入口
+        //   （`thread_entry_point` → vm_run_coroutine_with_vm）与主线程的 async 协程都会在
+        //   进函数体后的**第一条模块符号指令**上报「不在模块上下文中」。
+        //   入口脚本的函数 `func->module == NULL` ⇒ 此行是 no-op，不影响既有行为 ✓
+        frame->module = func->module;
         frame->ip = func->chunk->code;
         frame->stack_base = vm_ptr->sp;
         frame->slot_count = local_count;

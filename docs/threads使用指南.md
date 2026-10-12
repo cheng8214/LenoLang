@@ -789,34 +789,43 @@ Leno 的变量是动态类型的，声明类型（如 `int`）只是编译期提
 
 ---
 
-## 线程入口的模块限制（⚠ 模块化重构必看）
+## 线程入口：模块函数也能用（★ 2026-10-12 起）
 
-线程入口函数**必须是入口脚本（顶层文件）里的具名全局函数** ✓ —— **被 `import` 的模块里的函数不行** ✗。
-
-**为什么**：子线程只继承**主线程的全局变量**，且**不加载被导入模块的全局变量** ⇒ 模块函数在子线程里
-跑不起来。症状很坑：`join()` 只给 `Thread error: unknown error`，**连函数体都进不去**
-（catch 不到、日志也写不出来 ✗）。
+**模块里的函数现在可以直接当线程入口** ✓ —— 库可以**自己封装并发**：
 
 ```leno
-// ✗ 不行：worker 定义在模块里
-import "./worker.leno" as w
-var t = threads.start(w.do_work)      // 报「线程入口必须是入口脚本（顶层文件）里的具名全局函数」
-
-// ✓ 做法一：在入口脚本里写个具名包装函数
-func do_work_entry(): string { return w.do_work() }
-var t = threads.start(do_work_entry)
-
-// ✓ 做法二（模块化最常用）：宿主把函数**当值传进模块**
-//   模块侧：
-//     export struct Page { func():string worker = null }
-//     export func run(p: Page): string { var t = threads.start(p.worker)  return t.join() }
-//   ⇒ `p.worker` 仍是**入口脚本的函数**（module == NULL ✓）⇒ 子线程 globals 正常 ✓
+// 模块 side（lib/worker.leno）
+import threads
+export func do_work(int n): int { return n * 2 }
+export func run_parallel(int a, int b): int {
+    var t1 = threads.start(do_work, a)          // ✓ 模块开线程跑自己的函数
+    var t2 = threads.start(do_work, b)
+    return t1.join() + t2.join()
+}
 ```
 
-⚠ 两种做法都**实测过** ✓（做法二是 LenoMusic 三个页面模块的落地方式 ✓）。
-这条契约由编译器在 `threads.start` **调用点**直接报出（文案会点名是哪个模块的哪个函数 ✓）。
+```leno
+// 入口脚本
+import "./lib/worker.leno" as w
+var t = threads.start(w.do_work, 21)            // ✓ 直接拿模块函数当入口
+print(t.join())                                 // 42
+print(w.run_parallel(1, 2))                     // 6
+```
 
-> 另：入口函数的**实参个数必须严格对上** ✓ —— 线程入口由 VM 直接调用，**默认参数不会被补齐** ✗。
+**以前为什么不行**（历史记录，写在这儿免得再踩）：`threads.start` 会硬拦"入口必须是入口脚本
+里的具名全局函数"✗，根因是**协程首帧漏设 `frame->module`**，而模块字节码（读写模块级 `var`、
+取模块函数）全部经 `frame->module` 寻址 ⇒ 进函数体后第一条模块符号指令就报
+「不在模块上下文中」（症状是 `join()` 只给 `Thread error: unknown error`，连函数体都进不去 ✗）。
+补上那一行之后模块函数直接可用 ✓（改动与判据见 `docs/线程并发能力修复追踪.md` 的 TH2 ✓）。
+
+⚠ **两个仍然成立的注意点**：
+
+1. **模块级可变 `var` 是跨线程共享的**（模块对象由进程级缓存共享，不按线程隔离 ⇒ 不这么做是有意的，
+   见 `docs/线程并发能力修复追踪.md` 的「明确不做」表）。并发写同一个模块级变量就是数据竞争
+   —— 库要么把状态收进实例（`_ParseCtx` 那种写法），要么用 `Channel` 同步。
+2. **入口函数的实参个数必须严格对上** ✓ —— 线程入口由 VM 直接调用，**默认参数不会被补齐** ✗。
+   另：入口函数所属模块**必须在入口脚本的 import 链上**（否则模块的 `var` 还没初始化，
+   会明确报「所属的模块尚未初始化」✓）。
 
 ## API 参考
 

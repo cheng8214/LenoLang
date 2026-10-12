@@ -1,0 +1,50 @@
+// th2_mod.leno —— TH2 的辅助模块：验证「模块函数能直接当线程入口」
+//
+// 为什么单独一个文件：被 import 的模块里的函数，其 `func->module != NULL`
+//   —— 正是原先被 `threads.start` 硬拦的那一类（判据见
+//   `docs/语言摩擦与隐式契约清单.md` 的 M1）。
+//   ⚠ 本文件**故意带模块级可变状态**（`_g_calls`）：它是"模块 globals **跨线程共享**"
+//   这一已知口径的活样本（我们不隔离模块 globals，见
+//   `docs/线程并发能力修复追踪.md` 的「明确不做」表与 TH5）。
+//   ⚠ 文件名不以 `test_` 开头 ⇒ run_tests.leno 不会把它当用例跑 ✓
+
+import threads
+
+// 模块级可变状态（共享：子线程的写入主线程看得见）
+var _g_calls = 0
+
+export func add_base(int v): int {
+    _g_calls = _g_calls + 1
+    return v + 100
+}
+
+export func calls(): int {
+    return _g_calls
+}
+
+// 模块函数里**再调同模块的另一个函数**：走第二条模块符号寻址路径
+export func indirect(int v): int {
+    return add_base(v) * 2
+}
+
+// ⚠ 形参名不能叫 `from` / `to` —— 它们是 `for A : B` 的**关键字**（实测报「期望参数名」）
+func _sum_worker(int lo, int hi): int {
+    var s = 0
+    // ⚠ `for A : B` 是**闭区间**（见 docs/threads使用指南.md 的注意事项）
+    for lo : hi to var i {
+        s = s + i
+    }
+    return s
+}
+
+export func sum_range(int lo, int hi): int {
+    return _sum_worker(lo, hi)
+}
+
+// ★ TH2 的**真正价值**：模块**自己**开线程跑自己的函数
+//   （以前只能由宿主把函数当值传进模块才能实现，见 M1 的绕法②）
+export func parallel_sum(int lo, int mid, int hi): int {
+    var t1 = threads.start(_sum_worker, lo, mid)
+    var t2 = threads.start(_sum_worker, mid + 1, hi)
+    return t1.join() + t2.join()
+}

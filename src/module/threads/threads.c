@@ -118,38 +118,32 @@ static Value threads_start(int argc, Value* args) {
 
     ObjClosure* closure = (ObjClosure*)val_as_obj(args[0]);
 
-    // ★ 前置校验（2026-09-28，修一处"幽灵错误"；文案 2026-10-11 改准 —— 见
-    //   docs/语言摩擦与隐式契约清单.md 的 **M1**）：
-    //   线程入口**必须是入口脚本（顶层文件）里的具名全局函数** ✓ —— 直接传**被导入模块**的
-    //   函数会炸，而且炸得毫无线索：子线程里 `join()` 只给 "Thread error: unknown error"
-    //   （catch 不到、**进不了函数体** ⇒ 用户连日志都写不出来）。
-    //   根因（见 object_thread.c 的 ThreadStartArgs 快照）：子 VM 只继承**调用方 VM** 的
-    //   globals，且把自己的 `current_module_frame` 置 NULL ⇒ **模块函数**找不到本模块的
-    //   globals ⇒ 进函数体前就失败。
-    //   ⚠ 旧文案说"当前文件" ✗ —— 同一次运行里"当前文件"有好几个（每个被 import 的模块
-    //     都是"当前文件"之一）⇒ 用户照着改改不出对的结果（拆分 LenoMusic 时真撞过 ✗）。
-    //     判据其实是 `closure->function->module == NULL` ⇒ **入口脚本**的函数 ✓。
-    //   正确写法两种（都实测过 ✓）：
-    //     ① 在**入口脚本**里写个具名包装函数再 start（cleaner_master 的 scan_entry/delete_entry ✓）；
-    //     ② 让宿主把函数**当值传进模块**：模块里把字段声明成 `func(...):...`，
-    //        模块内 `threads.start(字段, …)` ✓ —— 此时它仍是**入口脚本的函数**
-    //        （module == NULL ✓），子线程 globals 正常 ✓（LenoMusic 三个页面模块全按此落地 ✓）。
+    // ★ 模块函数作线程入口：**2026-10-12 起支持**（TH2，见 docs/线程并发能力修复追踪.md）✓
+    //   原先这里硬拦"入口必须是入口脚本（顶层文件）里的具名全局函数" ✗（判据
+    //   `closure->function->module != NULL`，见 docs/语言摩擦与隐式契约清单.md 的 M1 ✓）。
+    //   根因其实只有一处：协程首帧漏设 `frame->module`（`src/vm/vm.c` 的
+    //   `vm_run_coroutine_with_vm`），而模块字节码全走 `frame->module` 寻址
+    //   ⇒ 模块函数体里第一条模块符号指令就报「不在模块上下文中」✗（症状是 join() 只给
+    //   "Thread error: unknown error"，连函数体都进不去 ✓）。补上那一行之后，
+    //   子线程直接跑模块函数是可行的 ✓（模块对象由 `loaded_modules` 进程级缓存共享，
+    //   init_chunk 主线程已跑过 ⇒ globals / 函数槽都在 ✓）。
+    //   ⚠ 仍要拦的**一种**情况：该模块此刻**还没初始化**（globals 全空）⇒ 进去只会拿到
+    //     一堆 null、报错毫无线索 ⇒ 这里把话说清楚（正常流程下不可能发生：入口脚本 import
+    //     的模块在其 chunk 开头就跑过 OP_INIT_LENOMODULE ✓）。
     if (closure->function && closure->function->module) {
         ObjModule* mod = (ObjModule*)closure->function->module;
-        char msg[1024];
-        snprintf(msg, sizeof(msg),
-            "threads.start(): 线程入口必须是**入口脚本（顶层文件）里的具名全局函数** ✗ —— "
-            "收到的是模块 '%s' 里的 '%s'。为什么：子线程只继承主线程的全局变量、"
-            "**不加载被导入模块的全局变量** ⇒ 模块函数在子线程里跑不起来 ✗"
-            "（症状是 join() 只给 'Thread error: unknown error'，连函数体都进不去）。"
-            "两种正确做法：① 在入口脚本里写一个具名包装函数，再 threads.start 它 ✓；"
-            "② 让宿主把函数**当值传进模块**（字段声明成 func(...):...，"
-            "模块里 threads.start(字段, …) ✓ —— 它仍是入口脚本的函数 ✓）。"
-            "详见 docs/threads使用指南.md 的「线程入口的模块限制」一节 ✓",
-            mod->name ? mod->name : "?",
-            closure->function->name ? closure->function->name : "?");
-        native_throw_error(msg);
-        return val_null();
+        if (!mod->initialized) {
+            char msg[512];
+            snprintf(msg, sizeof(msg),
+                "threads.start(): 入口函数 '%s' 所属的模块 '%s' 尚未初始化 ✗ —— "
+                "模块的 init_chunk 还没跑过（globals 是空的）⇒ 进去只会拿到 null。"
+                "常见原因：该模块没有出现在入口脚本的 import 链上（或用了非常规的加载方式）。"
+                "解决办法：在入口脚本里 `import` 该模块（正常用法）✓",
+                closure->function->name ? closure->function->name : "?",
+                mod->name ? mod->name : "?");
+            native_throw_error(msg);
+            return val_null();
+        }
     }
 
     // ★ 实参个数校验（B13，2026-10-07）：在**主线程**把话说清楚。
