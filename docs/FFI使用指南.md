@@ -2148,38 +2148,54 @@ main() {
 Leno 的 `threads.start()` 创建的线程有独立的 VM，但共享同一个进程地址空间：
 
 - **共享库句柄**：多个 Thread 可以共用同一个 `ffi.load` 返回的句柄
-- **共享内存**：`ffi.malloc` 分配的内存可以在多个 Thread 间传递（通过 `Ptr` 传递）
+- **共享内存**：`ffi.malloc` 分配的内存**进程级共享**。
+  ⚠ **但不是"通过 `Ptr` 传过去"**（★ 2026-10-12 更正，原文如此写且不成立 ✗）：
+  `Ptr` 属于**不可跨线程传值的类型** —— 作为 `threads.start` 实参、放进 `Channel`、
+  或被闭包捕获，都会报「不能跨线程传递此类型」（子线程有独立 GC 堆，假句柄比报错难查得多 ✗）。
+  真正让它"到了子线程"的机制是：**入口脚本顶层的全局变量会被复制到子线程**（浅拷贝 ✓）
+  ⇒ 子线程读那个全局名就能看到同一个地址 ✓（下面例子里 `sharedBuf` 就是这么用的 ✓）。
 - **不共享回调对象**：`ffi.callback` 创建的回调对象绑定到创建它的 VM，跨线程使用需通过跨线程回调编组机制（见 7.4 节）
 
 ```leno
 import ffi
 import threads
 
-// 共享库句柄和缓冲区
+// 入口脚本顶层：库句柄与缓冲区（子线程能读到的就是这两份"浅拷贝来的槽"）
 kernel32 lib = ffi.load("kernel32.dll")
 Ptr[u32] sharedBuf = ffi.malloc(1024)
 
-// 多线程安全调用
 func worker(int id) {
-    // 多个线程同时调用同一库句柄——安全
+    // 多个线程同时调用同一库句柄——安全（句柄是进程级资源，只读使用）
     int pid = ffi.call_int(lib, "GetCurrentProcessId")
     print("Thread " + id + " sees PID " + pid)
 
-    // 多个线程同时写共享内存——需要自己加锁！
-    // ffi.write_int(sharedBuf, id * 4, id)  // 并发写可能数据竞争
+    // ⚠ 多个线程同时写这块共享内存 ⇒ 数据竞争（没有锁可用，见下面的注意）
+    // ffi.write_int(sharedBuf, id * 4, id)
 }
 
 main() {
     var t1 = threads.start(worker, 1)
     var t2 = threads.start(worker, 2)
-    threads.join(t1)
-    threads.join(t2)
+    t1.join()          // ★ 是 `t.join()`（实例方法）；
+    t2.join()          //   `threads.join(t)` **不存在** ✗（原文此处写错，2026-10-12 更正）
     ffi.free(lib)
     ffi.free(sharedBuf)
 }
 ```
 
-> **⚠️ 注意**：如果 C 库本身不是线程安全的（如某些音频编解码库），需要在 Leno 侧用 `threads.Mutex` 或信号量自行加锁保护。
+> **⚠️ 注意（★ 2026-10-12 更正）**：原文说"用 `threads.Mutex` 或信号量加锁"—— **`threads.Mutex` 并不存在** ✗
+> （本语言有意不提供锁：每个线程是**独立 GC 堆**，普通 Leno 对象根本不可能被两个线程同时访问
+> ⇒ 锁要保护的东西不存在；会真正共享的只有 **FFI 句柄 / `ffi.malloc` 的裸内存 / 模块级可变 `var`**）。
+> 真要串行化对共享资源的访问，用**互斥通道**这条惯用法：
+>
+> ```leno
+> var token = threads.channel(1)
+> token.send(1)                       // 通道里只放一个"令牌"
+> // 每个线程进临界区前：token.receive()；出来：token.send(1)
+> ```
+>
+> 或者干脆别并发碰它（一个线程专用）；C 库自身不是线程安全时（如某些音频编解码库），
+> 只能**由调用方保证不并发调**或**在 C 侧加锁** —— Leno 侧给不了锁 ✓。
 
 ---
 
