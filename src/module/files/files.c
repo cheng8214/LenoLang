@@ -323,7 +323,9 @@ static Value file_method_tell(int argCount, Value* args) {
     }
 
     long pos = ftell(file->fp);
-    return val_int((int)pos);
+    // ⚠ `long` 在 LP64（Linux/macOS）是 64 位 ⇒ `val_int((int)pos)` 会截断（2026-10-12 修）。
+    //   文件偏移到不了 int48，故只需补 64 位口径、不必走 val_int_safe ✓（与 dirs.c 的文件大小同款 ✓）
+    return val_int((int64_t)pos);
 }
 
 // f.len()
@@ -345,7 +347,8 @@ static Value file_method_len(int argCount, Value* args) {
     long size = ftell(file->fp);
     fseek(file->fp, current, SEEK_SET);
 
-    return val_int((int)size);
+    // 同上：`long` 在 LP64 是 64 位 ⇒ 补 64 位口径（2026-10-12 修）
+    return val_int((int64_t)size);
 }
 
 // f.eof()

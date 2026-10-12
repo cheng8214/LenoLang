@@ -926,10 +926,13 @@ Value vm_as_cast(Value value, TypeKind expected_type, TypeKind elem_type, Value 
             if (val_is_int(value)) {
                 matches = 1;
             } else if (val_is_bigint(value)) {
-                value = val_int((int)bigint_to_int64(val_as_bigint(value)));
+                // ⚠ 目标宽度是 **64 位** ⇒ 不能写 `val_int((int)…)`（2026-10-12 修）：那会把
+                //   64 位实参截成低 32 位。实测（修前）：`281474976710657 as i64` = 1、
+                //   `4294967296.0 as i64` = 0 ✗（后者是浮点字面量，最容易撞上）
+                value = val_int_safe(bigint_to_int64(val_as_bigint(value)));
                 matches = 1;
             } else if (val_is_float(value)) {
-                value = val_int((int)(int64_t)val_as_double(value));
+                value = val_int_safe((int64_t)val_as_double(value));
                 matches = 1;
             } else if (val_is_bool(value)) {
                 value = val_int(val_as_bool(value) ? 1 : 0);
@@ -943,10 +946,17 @@ Value vm_as_cast(Value value, TypeKind expected_type, TypeKind elem_type, Value 
             if (val_is_int(value)) {
                 matches = 1;
             } else if (val_is_bigint(value)) {
-                value = val_int((int)(int64_t)(uint64_t)bigint_to_int64(val_as_bigint(value)));
+                // 与 `_uint64`（types.c 的 `native_to_uint64`）和 ffi 返回路径的 TYPE_U64
+                // 同一口径：按 **uint64 全宽**取，超 INT64_MAX 才用 `val_bigint_from_uint64`
+                // 保留无符号值（本轮顺手统一；修前这里也是 `(int)` 截断 ✗）
+                uint64_t u = (uint64_t)bigint_to_int64(val_as_bigint(value));
+                value = (u <= (uint64_t)INT64_MAX) ? val_int_safe((int64_t)u)
+                                                   : val_bigint_from_uint64(u);
                 matches = 1;
             } else if (val_is_float(value)) {
-                value = val_int((int)(uint64_t)val_as_double(value));
+                uint64_t u = (uint64_t)val_as_double(value);
+                value = (u <= (uint64_t)INT64_MAX) ? val_int_safe((int64_t)u)
+                                                   : val_bigint_from_uint64(u);
                 matches = 1;
             } else if (val_is_bool(value)) {
                 value = val_int(val_as_bool(value) ? 1 : 0);

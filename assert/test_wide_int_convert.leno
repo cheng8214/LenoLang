@@ -1,0 +1,62 @@
+// 宽整数转换的「32 位截断」审计（2026-10-12）—— 回归
+//
+// 判据：`val_int(int64_t)` 是 **`& PAYLOAD_MASK`（只留低 48 位、静默）**（src/include/leno_value.h:183）；
+//   `val_int_safe`（src/bigint.c:253）在 int48 内给 `int`、超出给 `BigInt` ⇒ 本该用它却写了
+//   `val_int((int)…)` 的地方，就会把 64 位值**静默截成低 32 位**。
+//   （同一个根因家族：2026-10-12 修的 ffi.callback 64 位实参截断 —— 见 test_ffi_callback_i64.leno ✓）
+//
+// 本轮按审计清单修了 6 处：
+//   A1 src/vm/vm.c              `as i64` / `as u64` 的 4 个分支（bigint 与 float 各两条）
+//   A2 src/module/ffi/ffi.c     `ffi.sizeof` 的 `ptr->size`（size_t）
+//   A3 src/module/files/files.c `f.tell()` / `f.len()` 的 `long`（LP64 下是 64 位）
+//   A4 src/module/types/types.c `_int(FFI 指针)`（与 `ffi.ptr_to_int` 口径不一）
+//   B1 src/module/ffi/ffi.c     `read_uint64` / `read_at(u64)` 按 INT32 判界（同值不同型）
+//   B2 src/module/types/types.c `_int(bigint)` 单 limb 也按 INT32 判界
+//
+// ⚠ A2 / A3 要 >2GB 的缓冲或文件才显形 ⇒ 不放进自动套件（改动靠代码注释钉住）；
+//   B2 的"单 limb BigInt"在语言层造不出来（所有算术都会归一化成 int）⇒ 同上。
+//
+// 修前实测（这正是本文件的断言要盯住的）：`4294967296.0 as i64` = 0、
+//   `281474976710657 as i64` = 1、`10000000000.0 as i64` = 1410065408
+import ffi
+
+main() {
+    // ---------- ① `as i64` / `as u64`：目标是 64 位 ⇒ 不许截成 32 位 ----------
+    float f = 4294967296.0            // 2^32：低 32 位恰好为 0 ⇒ 修前得 0（最容易被当成"真 0"）
+    assert_eq(f as i64, 4294967296, "①float as i64 不许截成 32 位（修前 = 0）")
+    assert_eq(f as u64, 4294967296, "①float as u64 同上")
+
+    var wide = 281474976710657        // 2^48 + 1 ⇒ 内部 BigInt；低 32 位 = 1
+    assert_eq(wide as i64, 281474976710657, "①宽整数 as i64 不许截成 32 位（修前 = 1）")
+    assert_eq(wide as u64, 281474976710657, "①宽整数 as u64 同上")
+
+    float g = 10000000000.0           // 1e10：低 32 位 = 1410065408
+    assert_eq(g as i64, 10000000000, "①1e10 as i64（修前 = 1410065408）")
+    assert_eq(type(g as i64), "int", "①宽整数对外类型仍是 int（本仓口径：不暴露 BigInt）")
+
+    // ---------- ② 32 位目标的截断是**语义本身**，不许被这轮改宽 ----------
+    assert_eq(f as i32, 0, "②as i32 保持截断（2^32 的低 32 位 = 0）")
+    assert_eq(g as i32, 1410065408, "②as i32 的截断值")
+    assert_eq(wide as i32, 1, "②宽整数 as i32 的截断值")
+
+    // ---------- ③ `_int(FFI 指针)`：高地址（≥ 2^47）不许被静默截 48 位 ----------
+    //   手法：往缓冲区写地址值，再用 `ffi.read_ptr` 当成指针读出来 ✓（只做数值转换、不解引用）
+    var buf = ffi.malloc(16)
+    ffi.memset(buf, 0, 16)
+    ffi.write_uint64(buf, 0, 140737488355328)          // 2^47 = INT48_MAX + 1
+    var p = ffi.read_ptr(buf, 0)
+    assert_eq(_int(p), 140737488355328, "③高地址指针 _int() 不许截（A4）")
+    assert_eq(_int(p), ffi.ptr_to_int(p), "③_int(ptr) 与 ffi.ptr_to_int(ptr) 必须同口径")
+
+    // ---------- ④ read_uint64 / read_int64：同值同型（B1 判界统一到 int64/int48）----------
+    ffi.memset(buf, 0, 16)
+    ffi.write_uint64(buf, 0, 4294967296)               // 2^32
+    var u = ffi.read_uint64(buf, 0)
+    var s = ffi.read_int64(buf, 0)
+    assert_eq(u, 4294967296, "④read_uint64(2^32) 数值（修前无错值，但内部型别不一致）")
+    assert_eq(u, s, "④同一块内存 read_uint64 / read_int64 必须相等")
+    assert_eq(type(u), "int", "④2^32 在 int48 内 ⇒ 内部应是 int（不再无谓装箱成 BigInt）")
+    ffi.free(buf)
+
+    print("test_wide_int_convert passed")
+}

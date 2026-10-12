@@ -649,22 +649,24 @@ static Value native_to_int(int argCount, Value* args) {
                 return val_int(0);
             } else if (val_as_obj(value)->type == OBJ_BIGINT) {
                 ObjBigInt* big = (ObjBigInt*)val_as_obj(value);
-                // 检查是否在 int32 范围内
-                if (big->limb_count == 1) {
-                    // 单个 limb，检查值是否在 int32 范围内
-                    uint32_t val = big->limbs[0];
-                    if (!big->is_negative && val <= INT32_MAX) {
-                        return val_int((int)val);
-                    } else if (big->is_negative && val <= ((uint32_t)INT32_MAX + 1)) {
-                        return val_int(-(int)val);
-                    }
+                // ★ 判界从 INT32 改成 **int48**（2026-10-12 统一口径）：
+                //   单个 limb 的绝对值 < 2^32 ⊂ int48 ⇒ **单 limb（含零）一律给 int** ✓
+                //   修前按 INT32 判 ⇒ `_int(0n4294967296)` 保持 BigInt，而 `_int(4294967296.0)`
+                //   是 int（float 那条路上面已按 int48 修过）⇒ 同一数值两种内部型别 ✗
+                //   （语言层看不出：`type()` 一律报 "int" ✓ —— 所以这纯粹是内部口径统一 ✓）
+                if (big->limb_count <= 1) {
+                    int64_t mag = (big->limb_count == 1) ? (int64_t)big->limbs[0] : 0;
+                    return val_int(big->is_negative ? -mag : mag);
                 }
-                // 超出 int32 范围，保持为 bigint 返回
+                // 多 limb ⇒ 绝对值 ≥ 2^32，保持 bigint 返回
                 return value;
             } else if (val_as_obj(value)->type == OBJ_FFI_POINTER) {
                 // FFI 指针 → int：返回指针地址作为整数
+                //   ⚠ 用 `val_int_safe`（2026-10-12 修）：`val_int` 只留低 48 位且**静默**，
+                //     指针 ≥ 2^47（高地址）会得错值；而同一件事在 `ffi.ptr_to_int`
+                //     （ffi.c 的 ffi_ptr_to_int_func）本来就走 val_int_safe ⇒ 统一口径 ✓
                 ObjFFIPointer* ptr = (ObjFFIPointer*)val_as_obj(value);
-                return val_int((int64_t)(intptr_t)ptr->ptr);
+                return val_int_safe((int64_t)(intptr_t)ptr->ptr);
             }
             break;
         default:

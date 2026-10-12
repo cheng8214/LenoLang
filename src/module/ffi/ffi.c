@@ -1207,7 +1207,9 @@ static Value ffi_free_func(int argc, Value* args) {
 static Value ffi_sizeof_func(int argc, Value* args) {
     (void)argc;
     ObjFFIPointer* ptr = val_as_ffi_ptr(args[0]);
-    return val_int((int)ptr->size);
+    /* ⚠ `ptr->size` 是 `size_t`，而 `ffi.malloc` 的长度来自 int48 ⇒ 不能 `val_int((int)…)`
+     *   （2026-10-12 修：>2GB 缓冲会给出截断后的错值）⇒ 走 val_int_safe ✓ */
+    return val_int_safe((int64_t)ptr->size);
 }
 
 /* ffi.assert_size(ptr, min_bytes) - 运行时断言缓冲区足够大
@@ -1435,8 +1437,13 @@ static Value ffi_read_uint64_func(int argc, Value* args) {
     CHECK_BOUNDS(ptr, offset, sizeof(uint64_t));
     uint64_t val;
     memcpy(&val, (char*)ptr->ptr + offset, sizeof(val));
-    if (val <= INT32_MAX) {
-        return val_int((int)val);
+    /* ⚠ 判界口径（2026-10-12 统一）：按 **int48/int64** 判，不再按 INT32_MAX ——
+     *   修前 `if (val <= INT32_MAX) val_int((int)val); else BigInt` ⇒ 2^32 会变成内部 BigInt，
+     *   而 `ffi.read_int64`（同文件 ffi_read_int64_func，走 val_int_safe）同值给 int：
+     *   同一个数值两种内部型别（语言层看不出 —— `type()` 一律 "int" ✓ —— 但属无谓的不一致 ✗）。
+     *   超 INT64_MAX 才需要 `val_bigint_from_uint64` 保留无符号值 ✓ */
+    if (val <= (uint64_t)INT64_MAX) {
+        return val_int_safe((int64_t)val);
     }
     return val_bigint_from_uint64(val);
 }
@@ -1559,7 +1566,8 @@ static Value ffi_read_at_func(int argc, Value* args) {
         }
         case TYPE_U64: {
             uint64_t val; memcpy(&val, addr, sizeof(val));
-            if (val <= INT32_MAX) return val_int((int)val);
+            // 与 read_uint64 / TYPE_I64（下一分支）统一：int64 内走 val_int_safe ✓（见 read_uint64 的说明）
+            if (val <= (uint64_t)INT64_MAX) return val_int_safe((int64_t)val);
             return val_bigint_from_uint64(val);
         }
         case TYPE_I64: {
