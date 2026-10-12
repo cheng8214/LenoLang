@@ -1937,6 +1937,34 @@ var view = ffi.offset(base, 10)
 ffi.free(base)
 ```
 
+#### 陷阱 9：回调的 64 位实参曾被截断成 32 位（2026-10-12 修）
+
+**已修复**（`ffi.c` 的 `callback_dispatch_direct` 曾在把回调实参转成 Leno 值时写
+`val_int((int)ffi_args[i].value.i)` —— `(int)` 是 32 位 ⇒ 回调里只拿到低 32 位，已改为
+`val_int_safe(...)`，与返回类型路径同口径 ✓）。
+
+```leno
+// 回调签名里的 i64/u64（以及一切 >32 位的实参）必须原样收到：
+cfunc WndProc(Ptr hwnd, u32 msg, i64 wp, i64 lp): i64
+//                                                        ↑ 指针类实参最常见
+// 修前：lp = 0x1234567890ABCDEF ⇒ 回调里读到 0xFFFFFFFF90ABCDEF（低 32 位符号扩展）✗
+// 修后：原样 0x1234567890ABCDEF ✓
+```
+
+**为什么这条特别阴**：被截断的**指针**只有在高于 4GB 时才会变成"不可读地址"
+（低于 4GB 时低 32 位就是它自己 ⇒ 截断无副作用）⇒ 表现为**偶发崩溃**，而不是每次都错。
+本站真实事故：`leno_module/LenoSDL3/lib/sdl_tray.leno` 的托盘窗口过程（子类化
+`SDL_TRAY` 窗口的 ffi.callback）把截断后的 `lParam` 经 `CallWindowProcW` 转交回 SDL；
+托盘窗口收到 `WM_SETTINGCHANGE` 时 SDL 会拿 `lParam` 当宽字符串比较
+（`SDL_wcscmp((wchar_t *)lParam, L"ImmersiveColorSet")`，见 SDL 源码
+`src/tray/windows/SDL_tray.c`）⇒ **0xC0000005 崩在 SDL3.dll+0x11AF30**（五次 WER 记录同一偏移，
+转储现场 `RCX = 0x3C1FA238` 正是栈地址 `0x0000005C_3C1FA238` 的低 32 位 ✓）。
+
+> **怎么自查**：写一个"把实参原样回传"的回调（如给 `EnumWindows` 传魔数 `lp`），
+> 断言回调收到的值 == 传入值。回归用例：`assert/test_ffi_callback_i64.leno` ✓
+> ⚠ 顺带记一条同源坑：**别拿 `0x….` 这种超 32 位魔数走 `SendMessage`/`PostMessage` 去测**
+> —— 系统投递系统消息时会先按字符串封送 `lParam`，而自己就是发送方 ⇒ 封送那一步先崩自己 ✗
+
 ### 8.5 cstruct 内存对齐与 padding
 
 FFI 最隐蔽的坑不是类型转换，而是结构体内存布局与 C 头文件不一致。C 编译器会自动在字段间插入 padding 字节，如果 Leno 的 cstruct 字段顺序或对齐方式与 C 不匹配，传进 API 后数据全乱。
@@ -2341,6 +2369,16 @@ main() {
 *最后更新: 2026-10-01*
 
 ### 更新记录
+
+- **(2026-10-12) 修回调实参的 64 位截断**：`callback_dispatch_direct` 把回调实参转成 Leno 值时
+  写的是 `val_int((int)ffi_args[i].value.i)` —— `(int)` 是 32 位 ⇒ **回调签名里的 i64/u64
+  （含指针）只能拿到低 32 位**（符号扩展）。改为 `val_int_safe(...)`（与返回类型路径同口径）。
+  本站真实事故：LenoSDL3 托盘窗口过程（`sdl_tray.leno` 的子类化 ffi.callback）把**截断后的
+  lParam** 转交回 SDL ⇒ 托盘窗口收到 `WM_SETTINGCHANGE` 时 SDL 拿它当宽字符串比 ⇒
+  `0xC0000005` 崩在 `SDL3.dll+0x11AF30`（Trae签到 10-03~10-11 共 5 次同偏移；转储现场
+  `RCX=0x3C1FA238` = 栈地址 `0x0000005C_3C1FA238` 的低 32 位）。**只在高地址指针上偶发**
+  （低 4GB 地址被截断后值不变）⇒ 以前一直没被发现。新增 8.4 陷阱 9 说明 + 回归
+  `assert/test_ffi_callback_i64.leno` ✓
 
 - **(2026-10-01) FFI 调用桩取代"枚举分发 + 位模式回退"**：混合参数分发在所有平台统一为
   "按 ABI 精确分类 + 汇编调用桩"（`leno_win64_call` / `leno_sysv_call` / `leno_aapcs_call`）。

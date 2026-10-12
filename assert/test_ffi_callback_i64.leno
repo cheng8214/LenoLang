@@ -1,0 +1,68 @@
+// 回归测试：ffi.callback 的 64 位实参不得被截断成 32 位
+//
+// 历史 bug（2026-10-12 从崩溃转储定位）：ffi.c 的 callback_dispatch_direct 把回调实参
+//   转成 Leno 值时写的是 `val_int((int)ffi_args[i].value.i)` —— `(int)` 是 **32 位**
+//   ⇒ 回调里读到的 64 位实参只剩低 32 位（符号扩展）。
+// 线上后果（Trae签到，10-03 / 10-07 / 10-09 / 10-10 / 10-11 共 5 次）：
+//   `sdl_tray.leno` 的托盘窗口过程是 ffi.callback，它把**截断后的 lParam**
+//   经 CallWindowProcW 转交回 SDL ⇒ 托盘窗口收到 WM_SETTINGCHANGE 时，SDL 拿 lParam
+//   当宽字符串比较（SDL_wcscmp）⇒ 0xC0000005 崩在 SDL3.dll+0x11AF30。
+//   崩溃现场 RCX = 0x3C1FA238 = 栈地址 0x0000005C_3C1FA238 的**低 32 位** ✓
+//   （只在指针高于 4GB 时才会被截成不可读地址 ⇒ 所以是"偶发"的 ✓）
+// 修复：改用 `val_int_safe(...)`（与本文件返回类型路径同口径）。
+//
+// 手法：EnumWindows 的 lp 会**原样**交给回调（Win64 调用桩按 64 位全宽传参 ✓）
+//   ⇒ 断言"回调收到的 lp" == "传进去的 lp"，即可同时看住"出参 + 回调入参"这条链 ✓
+import ffi
+import Sys
+
+clib user32 {
+    i32 EnumWindows(Ptr[u8] cb, i64 lp)
+}
+cfunc Cb(Ptr[u8] h, i64 lp):i32
+
+int _got = 0
+bool _first = true
+
+func _impl(Ptr[u8] h, int lp): int {
+    if _first {
+        _first = false
+        _got = lp
+    }
+    return 1                                                    // 继续枚举 ✓
+}
+
+func _roundTrip(int v): int {
+    _first = true
+    _got = 0
+    user32 u = ffi.load("user32.dll")
+    var cb = ffi.callback(_impl, Cb)
+    u.EnumWindows(cb, v)
+    return _got
+}
+
+main() {
+    if not Sys.isWindows() {
+        // 非 Windows 没有 user32 ⇒ 这条链在本平台无从复现（如实跳过，不算失败 ✓）
+        print("ffi.callback i64 截断回归测试：非 Windows ⇒ 跳过")
+        return
+    }
+
+    // ① 高位为 1 的 64 位值：被截断后是负数（旧 bug 的直接判据 ✓）
+    int high = 0x1234567890ABCDEF
+    assert_eq(_roundTrip(high), high)
+    // ② 线上那种形态：高位为 0、但超过 32 位的地址（0x0000005C_3C1FA238 的低半即 0x3C1FA238）
+    int stackLike = 0x5C3C1FA238
+    assert_eq(_roundTrip(stackLike), stackLike)
+    // ③ 2^32 边界两侧（截断后都会变成 0/1 ⇒ 也是直接判据 ✓）
+    int justOver = 4294967296
+    int justOver2 = 4294967297
+    assert_eq(_roundTrip(justOver), justOver)
+    assert_eq(_roundTrip(justOver2), justOver2)
+    // ④ 小值不受影响 ✓
+    int small = 12345
+    assert_eq(_roundTrip(small), small)
+    assert_eq(_roundTrip(0), 0)
+
+    print("ffi.callback 64 位实参不截断回归测试通过")
+}

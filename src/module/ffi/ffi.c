@@ -2729,7 +2729,21 @@ static FFIValue callback_dispatch_direct(int cb_id, CallbackRegState* regs) {
             case FFI_TYPE_UINT16:
             case FFI_TYPE_UINT32:
             case FFI_TYPE_BOOL:
-                leno_arg = val_int((int)ffi_args[i].value.i);
+                /* ⚠⚠ 这里**不能**写 `val_int((int)ffi_args[i].value.i)`：
+                 *   `(int)` 是 32 位 ⇒ 回调的 64 位实参被**截断成低 32 位** ✗
+                 *   （指针类实参最致命）。实测（2026-10-12，Trae签到 的托盘窗口过程）：
+                 *     ffi.callback 收到 lp=0x1234567890ABCDEF，回调里读到的却是
+                 *     0xFFFFFFFF90ABCDEF（低 32 位符号扩展）✓
+                 *   ⇒ 站在 SDL 前的那层子类化窗口过程（sdl_tray.leno 的 _trayWndProc）
+                 *     把**截断后的 lParam** 转交回 SDL ⇒ 系统托盘窗口收到
+                 *     WM_SETTINGCHANGE 时，SDL 拿 lParam 当字符串比较（SDL_wcscmp）
+                 *     ⇒ 0xC0000005 崩在 SDL3.dll（本机 10-03~10-11 共 5 次，
+                 *     现场 RCX=0x3C1FA238 正是栈地址 0x0000005C_3C1FA238 的低 32 位 ✓）。
+                 *   注意"只是偶尔崩"：只有当指针高于 4GB（如落在**线程栈**上的封送缓冲）
+                 *   时截断才会把它变成不可读地址；低地址堆上的封送缓冲被截断后值不变 ⇒ 不崩 ✓
+                 *   `val_int_safe` 与本文件返回类型路径（见下面的 TYPE_I64 分支）同口径：
+                 *   留在 int48 内 ⇒ 普通 int；超出 ⇒ BigInt ✓ */
+                leno_arg = val_int_safe(ffi_args[i].value.i);
                 break;
             case FFI_TYPE_DOUBLE:
             case FFI_TYPE_FLOAT:
@@ -2750,7 +2764,8 @@ static FFIValue callback_dispatch_direct(int cb_id, CallbackRegState* regs) {
                 }
                 break;
             default:
-                leno_arg = val_int((int)ffi_args[i].value.i);
+                /* 同上面那条：i64/u64（含 FFI_TYPE_SINT64/UINT64）也走 64 位全宽 ✓ */
+                leno_arg = val_int_safe(ffi_args[i].value.i);
                 break;
         }
         vm_stack_push(vm_ptr, leno_arg);
