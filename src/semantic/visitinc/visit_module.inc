@@ -1936,6 +1936,30 @@
                     if (mod_info && mod_info->sym_table) {
                         ModuleVarSymbol* mv = module_symbol_table_find_var(mod_info->sym_table, ast->u.module_access.member_name);
                         if (mv) {
+                            // ★ 2026-10-13：**没 export 的变量跨模块读不到** —— 这里以前静默放过 ✗
+                            //   症状（实测）：模块里 `var SECRET = 42`（没 export），
+                            //     别处 `var v = m.SECRET` ⇒ **编译 0 错**、运行期 v=null，
+                            //     直到拿它做运算才炸「加法运算: null 不能参与运算」✗（指不到真因）
+                            //   根因：模块符号表**收录了未导出的 var**（它服务模块内部 + use 传导）
+                            //     ⇒ "find_var 查得到" ≠ "跨模块可读"（两者不是同一件事）✗
+                            //   判据来源：与 `use` / `m.foo()` **同一份** export 名清单（provider ✓）
+                            //     —— 不另立第二套"什么算 export"的口径 ✓
+                            //   ⚠ 只在 `mv` 命中时判：enum 成员不在 vars 表里（走下面的 enum 兜底 ✓），
+                            //     所以这条不会误伤 `m.RED` 这类枚举成员访问 ✓
+                            const char* cur_file = error_get_filename();
+                            if (mod_info->file_path &&
+                                !module_has_export(mod_info->file_path, cur_file,
+                                                   ast->u.module_access.member_name)) {
+                                char msg[BUFFER_MEDIUM];
+                                snprintf(msg, sizeof(msg),
+                                         "模块 '%s' 里的变量 '%s' 没有 export —— 跨模块读不到"
+                                         "（请在模块里写成 `export var %s = ...` 或 `export const %s = ...`）",
+                                         ast->u.module_access.module_name,
+                                         ast->u.module_access.member_name,
+                                         ast->u.module_access.member_name,
+                                         ast->u.module_access.member_name);
+                                error_add_at(ERR_UNDEFINED_VAR, ast->line, ast->column, msg);
+                            }
                             member_type = mv->type;
                             // ★ 优先使用完整类型信息（支持 Array[int] 等泛型变量）
                             if (mv->type_info) {

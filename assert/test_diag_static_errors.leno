@@ -1454,5 +1454,34 @@ main() {
     ce.expect_ok(m9ok, "M9 正向：native 规格（DirEntry）不 use 也能标注 / 声明 / 守卫",
         "ok ")
 
+    // ---- U1（2026-10-13）：**跨模块读「未导出」的 var ⇒ 必须编译期报错** ----
+    //   症状（改之前实测）：模块里 `var SECRET = 42`（没 export），别处 `var v = m.SECRET`
+    //     ⇒ **编译 0 错**、运行期 `v=null`；直到拿它做运算才炸
+    //     「加法运算: null 不能参与运算」✗（报错点离病因很远，用户得自己猜）
+    //   根因：模块符号表**收录了未导出的 var**（它服务模块内部 + `use` 传导）
+    //     ⇒ "find_var 查得到" ≠ "跨模块可读" ✗（两者根本不是同一件事）
+    //   改法：在模块成员访问处，用与 `use` / `m.foo()` **同一份** export 名清单判一次 ✓
+    //     （不另立第二套"什么算 export"的口径 ✓）
+    //   ⚠ 只在"符号表里查得到该 var"时判 ⇒ enum 成员（不在 vars 表里、走 enum 兜底）
+    //     不受影响 ✓，实测 `m.Color.RED` 照常可读 ✓
+    var u1dir = dirs.join(work, "noexport_var")
+    dirs.delete(u1dir)
+    dirs.mkdir_p(u1dir)
+    files.write(dirs.join(u1dir, "nmod.leno"),
+        "var SECRET = 42\n\nexport func get(): int {\n    return 1\n}\n")
+    var u1bad = dirs.join(u1dir, "nuse.leno")
+    files.write(u1bad,
+        "import \"nmod.leno\" as m\n\nmain() {\n    var v = m.SECRET\n    print(\"v=\" + v)\n}\n")
+    ce.expect_error(u1bad, "U1：跨模块读**未导出**的 var ⇒ 编译期点名「没有 export」并给处方",
+        "没有 export", 4)
+
+    // 正向对照：**导出**的 var / const 照常可读（防止把这条检查做成一刀切 ✗）
+    files.write(dirs.join(u1dir, "emod.leno"),
+        "export var SHARED = 7\nexport const K = 9\n")
+    var u1ok = dirs.join(u1dir, "nuse_ok.leno")
+    files.write(u1ok,
+        "import \"emod.leno\" as m\n\nmain() {\n    print(\"S=\" + m.SHARED)\n    print(\"K=\" + m.K)\n}\n")
+    ce.expect_ok(u1ok, "U1 正向：**导出**的 var / const 跨模块照常可读", "S=7")
+
     print("=== test_diag_static_errors ALL passed ===")
 }

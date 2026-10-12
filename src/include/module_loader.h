@@ -50,6 +50,16 @@ void module_set_export_names_provider(ModuleExportNamesProvider provider);
 // 返回: 1 存在，0 不存在，-1 错误
 int module_has_method(const char* file_path, const char* current_file, const char* method_name);
 
+// 检查某个名字是不是模块**顶层 export 声明**导出的名字（**类型 / 函数 / 变量都算** ✓）
+// ----------------------------------------------------------------------------
+// ★ 2026-10-13 新增：与 module_has_method **同一份实现**（都走 export 名 provider）。
+//   存在的唯一理由是**名字**：module_has_method 那个名字会让人以为"只查函数"，
+//   但"跨模块可读"这件事对变量完全一样 —— 在"变量有没有 export"的地方写
+//   module_has_method(...) 会让人误读成"在查一个同名函数" ✗
+//   典型用途：`m.SOME_VAR` 里 SOME_VAR 在模块符号表**查得到**（符号表收录未导出的 var，
+//   它服务模块内部与 use 传导）但**没 export** ⇒ 运行期是 null ✗（见 visit_module.inc）✓
+int module_has_export(const char* file_path, const char* current_file, const char* name);
+
 // 扫描 chunk 常量池中的 cstruct/face 定义并注册到全局表
 void register_defs_from_chunk(Chunk* chunk);
 

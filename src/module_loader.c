@@ -471,6 +471,13 @@ int module_has_method(const char* file_path, const char* current_file, const cha
     return 0;   // 无提供者（VM-only）⇒ 同样判不了（VM 侧吃 .lenb ✓）
 }
 
+// ★ 2026-10-13：`module_has_method` 的**语义别名** —— 同一个实现、同一个 provider ✓
+//   只差一个"读起来对"的名字：它查的是"模块顶层 export 了声明的名字"（类型/函数/变量都算），
+//   不是"只查函数"。变量侧调用点写 module_has_method 会让人以为在查同名函数 ✗
+int module_has_export(const char* file_path, const char* current_file, const char* name) {
+    return module_has_method(file_path, current_file, name);
+}
+
 // 加载并编译模块文件
 ObjModule* load_module_file(const char* file_path, const char* current_file, const char* alias_name) {
     char full_path[MAX_PATH_LEN];
