@@ -19,8 +19,15 @@
 // 修前实测（这正是本文件的断言要盯住的）：`4294967296.0 as i64` = 0、
 //   `281474976710657 as i64` = 1、`10000000000.0 as i64` = 1410065408
 import ffi
+import "helpers/compiler.leno" as ce
+import dirs
+import files
 
 main() {
+    var work = dirs.join(_tmpdir(), "leno_wide_int_convert")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
     // ---------- ① `as i64` / `as u64`：目标是 64 位 ⇒ 不许截成 32 位 ----------
     float f = 4294967296.0            // 2^32：低 32 位恰好为 0 ⇒ 修前得 0（最容易被当成"真 0"）
     assert_eq(f as i64, 4294967296, "①float as i64 不许截成 32 位（修前 = 0）")
@@ -30,7 +37,7 @@ main() {
     assert_eq(wide as i64, 281474976710657, "①宽整数 as i64 不许截成 32 位（修前 = 1）")
     assert_eq(wide as u64, 281474976710657, "①宽整数 as u64 同上")
 
-    float g = 10000000000.0           // 1e10：低 32 位 = 1410065408
+    float g = 1e10                    // = 10000000000.0（低 32 位 = 1410065408；指数写法 2026-10-12 起 ✓）
     assert_eq(g as i64, 10000000000, "①1e10 as i64（修前 = 1410065408）")
     assert_eq(type(g as i64), "int", "①宽整数对外类型仍是 int（本仓口径：不暴露 BigInt）")
 
@@ -58,5 +65,21 @@ main() {
     assert_eq(type(u), "int", "④2^32 在 int48 内 ⇒ 内部应是 int（不再无谓装箱成 BigInt）")
     ffi.free(buf)
 
+    // ---------- ⑤ 契约：`as` 里的位宽类型名是「转换指令」，不是「可声明的类型」----------
+    //   2026-10-12 定的口径（保留这一族指令 ✓，见入门教程同款说明）：
+    //   · `as i8…u64` 能用，**结果是 Leno int**（①已钉 `type(...) == "int"` ✓）
+    //   · 变量声明 / 函数参数里写 `i64 x = 5` **仍然报错** ✓ —— 这条边界要一直钉住，
+    //     否则"`as i64` 能用"会被误读成"C 布局类型进了语言层"
+    assert_eq(_int64(f), f as i64, "⑤函数式 _int64 与 as i64 必须同口径")
+    assert_eq(_uint64(f), f as u64, "⑤函数式 _uint64 与 as u64 同口径")
+    var t7 = dirs.join(work, "i64_decl_rejected.leno")
+    files.write(t7, @"main() {
+    i64 x = 5
+    print(_str(x))
+}
+")
+    ce.expect_error(t7, "⑤C 布局类型不能用于变量声明（as 之外仍然拦）", "C 布局类型", 2)
+
+    dirs.delete(work)
     print("test_wide_int_convert passed")
 }
