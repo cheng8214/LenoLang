@@ -1,0 +1,113 @@
+// 模块限定类型名（`m.X`）在**每一个类型位置**都要能用 —— US1（2026-10-12）的验收矩阵
+//   台账：docs/类型可见性与use逃生阀修复追踪.md 的 US1
+//   语义：`m.Pt` = **隐式 `use m.Pt`**（复用 `use` 的唯一实现 ⇒ 报错文案/可用性判据不可能漂移 ✓），
+//         解析后**清空前缀** ⇒ 下游（字段校验 / 类型匹配 / 运行期）看到的与"用 use 导入的名字"一致 ✓
+//
+// ★ 本文件**故意一个 `use` 都不写** —— 这正是 US1 要证明的事：不写 use 也能写对 ✓
+//   （旧行为：类型位置写 `m.Pt` 直接报"不支持带模块前缀的类型名"，见
+//     assert/test_qualified_type_hint.leno 的头部历史 ✓）
+//
+// ⚠ 位置要**逐个钉**：类型位置是"全位置 × 递归"的，只改一半会造出
+//   "参数能过、字段报错"这种**更糟**的不一致（报错变得不可预期 ✓）
+
+import "qualified_type_mod.leno" as m
+
+// ② 形参
+func area_of(m.Pt p): int {
+    return p.x + p.y
+}
+
+// ③ 返回类型
+func origin(): m.Pt {
+    return m.mk(0, 0)
+}
+
+// ④ struct 字段（含跨模块 face 字段）
+struct Holder {
+    m.Pt p
+    m.Shape s
+    int tag = 7
+}
+
+// ⑥ 给 `is` / `as` 提供一个"静态类型宽化"的来源（`any` 只能出现在形参/返回类型 ✓）
+func to_any(m.Pt p): any {
+    return p
+}
+
+func probe(m.Pt p): string {
+    var out = ""
+    // ⑤ 泛型实参（Array / Dict / 跨模块泛型 struct）
+    Array[m.Pt] arr = [p]
+    Dict[string, m.Pt] d = {"k": p}
+    m.Box[m.Pt] box = new m.Box[m.Pt]()
+    box.v = p
+    out = "arr=" + arr.len() + " dict=" + d.len() + " box=" + box.v.x
+
+    // ⑥ is / case is
+    var v = to_any(p)
+    if v is m.Pt => q {
+        out = out + "|is=" + q.y
+    } else {
+        out = out + "|is=NO"
+    }
+    switch v {
+        case is m.Pt => w {
+            out = out + "|case=" + w.x
+        }
+        default {
+            out = out + "|case=NO"
+        }
+    }
+
+    // ⑦ as
+    var w2 = v as m.Pt
+    out = out + "|as=" + w2.x
+    return out
+}
+
+main() {
+    // ① var 声明
+    m.Pt p = m.mk(1, 2)
+    assert_eq(p.x, 1, "① 限定名声明：字段可读")
+    assert_eq(p.y, 2, "① 限定名声明：字段可读")
+    // ①b **顶层**形态的限定名声明（模块级全局变量）也在另一条用例里钉
+    //     （assert/test_diag_error_batteries.leno 的 qualified_type_ok ✓）
+
+    // ② 形参
+    assert_eq(area_of(p), 3, "② 限定名做形参类型")
+
+    // ③ 返回类型
+    m.Pt o = origin()
+    assert_eq(o.x + o.y, 0, "③ 限定名做返回类型")
+
+    // ④ 字段（struct 字段 + face 字段 + 普通字段混用）
+    var h = new Holder()
+    h.p = p
+    h.s = new m.Rect()
+    assert_eq(h.p.x, 1, "④ 限定名做 struct 字段类型")
+    assert_eq(h.tag, 7, "④ 同一 struct 里的普通字段不受影响")
+    assert_true(h.s.area() > 0.9, "④ 限定名做 **face** 字段类型（跨模块 face 实例）")
+
+    // ⑤⑥⑦ 一次性（泛型实参 / is / case is / as）
+    assert_eq(probe(p), "arr=1 dict=1 box=1|is=2|case=1|as=1",
+        "⑤ 泛型实参 / ⑥ is / case is / ⑦ as 四类位置")
+
+    // ⑧ `new m.X()`（表达式位置，本来就合法 —— 回归不许被改坏）
+    var n = new m.Pt()
+    n.x = 9
+    assert_eq(n.x, 9, "⑧ new m.Pt() 仍然合法")
+
+    // ⑨ cstruct / enum / alias（三条不同的注册通道，各钉一条）
+    m.Raw r = m.Raw.malloc()
+    r.v = 5
+    assert_eq(r.v, 5, "⑨ 限定名做 cstruct 类型（`m.Raw.malloc()`）")
+    m.Color c = m.Color.RED
+    assert_true(c == m.Color.RED, "⑨ 限定名做 enum 类型")
+    m.Size sz = {"w": 3}
+    assert_eq(sz.get("w", 0), 3, "⑨ 限定名做 alias 类型（`alias Size = Dict[string,int]`）")
+
+    // ⑩ 模块函数的**语句级调用**（前瞻必须把它留成表达式，不能被误判成类型声明）
+    assert_eq(m.hello(), 42, "⑩ 模块函数语句调用没被前瞻误判")
+
+    print("test_qualified_type_positions passed")
+}

@@ -169,6 +169,10 @@ void type_free(TypeInfo* type) {
     if (type->struct_name) {
         free(type->struct_name);
     }
+    if (type->module_qualifier) {
+        // US1：解析阶段的模块前缀（`m.Pt` 的 `m`）—— 归一化后通常是 NULL，但报错早退时会有值 ✓
+        free(type->module_qualifier);
+    }
     if (type->type_param_name) {
         free(type->type_param_name);
     }
@@ -228,6 +232,11 @@ int type_equals(TypeInfo* a, TypeInfo* b) {
         case TYPE_FACE:
         case TYPE_CLIB:
         case TYPE_CFUNC:
+            // ⚠ `module_qualifier`（US1 的 `m.Pt` 前缀）**故意不参与比较** —— 它是**解析阶段
+            //   的临时标记**，`resolve_alias_in_type` 见到它就做一次隐式 use 然后清空 ⇒
+            //   走到相等判断时通常已经是 NULL 了 ✓。若把它算进来，`m.Pt` 与 `Pt` 会被判成
+            //   不同类型 ⇒ 赋值/传参处冒出一堆假的不匹配报错 ✗（名字本来就是这套类型系统的
+            //   唯一身份，两个模块的同名 struct 在本仓本来就不可共存 ✓）。
             if (a->struct_name && b->struct_name) {
                 if (strcmp(a->struct_name, b->struct_name) != 0) return 0;
             } else if (a->struct_name != b->struct_name) {
@@ -303,6 +312,11 @@ TypeInfo* type_copy(TypeInfo* type) {
         case TYPE_ENUM:
             if (type->struct_name) {
                 copy->struct_name = strdup(type->struct_name);
+            }
+            if (type->module_qualifier) {
+                // US1：模块前缀也一起带走 —— 拷贝出来的类型（如泛型实参传递路径）同样需要被
+                //   解析成"隐式 use"（谁先解析谁清空，见 resolve_alias_in_type ✓）
+                copy->module_qualifier = strdup(type->module_qualifier);
             }
             // 深拷贝泛型参数
             if (type->generic_count > 0 && type->generic_args) {

@@ -223,13 +223,27 @@ Ast* parse_statement(Parser* p) {
                         }
                     }
                 } else if (p->lex.current.type == TOK_DOT) {
-                    // Module.Type varName = ... —— 带模块前缀的类型声明（Leno 不支持此写法）
-                    // 报出友好错误并给出正确写法提示，避免误解析为表达式产生级联误导错误
+                    // Module.Type varName = ... —— 带模块前缀的类型声明
+                    // ★ US1（2026-10-12）：**现在支持** ✓（此前报"不支持带模块前缀的类型声明"）。
+                    //   这段前瞻的职责从"报错"变成"**区分声明与表达式**"：
+                    //   类型名后面跟标识符 ⇒ 声明（`m.Pt p = …`）✓；跟别的东西 ⇒ 表达式（`m.func()`）✓
                     lexer_next(&p->lex);  // 消费 '.'
                     if (p->lex.current.type == TOK_IDENT) {
                         char* mod_name = copy_string(saved.current.text, saved.current.len);
                         char* type_name = copy_string(p->lex.current.text, p->lex.current.len);
                         lexer_next(&p->lex);  // 消费类型名
+                        // ★ US1：**多级**限定（`m.Pt.Sub`）也按"类型位置"处理 —— 这样它会走进
+                        //   parse_type_internal 的兜底拒绝，报出**正确**的那句（"类型位置最多只能写
+                        //   模块.类型 一级"✓）。不吞进来的话，整条语句会被当成**表达式**去解析 ⇒
+                        //   实测报「未定义的变量: x」✗ 完全指不到真因（用户得自己猜半天）。
+                        //   ⚠ 顺带把 `m.obj.field = 5` 这类**表达式**也吞一段，但下面 qualified_decl
+                        //   判不出来（`=` 不是标识符）⇒ 照旧走表达式路径 ✓（`saved` 会恢复 lexer ✓）
+                        while (p->lex.current.type == TOK_DOT) {
+                            Lexer cds = p->lex;
+                            lexer_next(&p->lex);
+                            if (p->lex.current.type != TOK_IDENT) { p->lex = cds; break; }
+                            lexer_next(&p->lex);
+                        }
                         int qualified_decl = 0;
                         if (p->lex.current.type == TOK_IDENT) {
                             // Module.Type varName = ...
@@ -260,19 +274,15 @@ Ast* parse_statement(Parser* p) {
                             }
                         }
                         if (qualified_decl) {
-                            char msg[BUFFER_MEDIUM];
-                            snprintf(msg, sizeof(msg),
-                                "不支持带模块前缀的类型声明 '%s.%s 变量名'：请先 use %s.%s，然后直接写 '%s 变量名 = ...'（use 会把类型导入当前作用域）",
-                                mod_name, type_name, mod_name, type_name, type_name);
-                            error_add_at(ERR_SYNTAX, saved.current.line, saved.current.column, msg);
-                            free(mod_name);
-                            free(type_name);
-                            // 消费当前行剩余 token，避免错误恢复时重复解析同一语句
-                            while (p->lex.current.type != TOK_EOF &&
-                                   p->lex.current.line == saved.current.line) {
-                                lexer_next(&p->lex);
-                            }
-                            return NULL;
+                            // ★ US1（2026-10-12，见 docs/类型可见性与use逃生阀修复追踪.md）：
+                            //   `模块.类型 变量名 = ...` **现在是合法声明** ✓ ——
+                            //   交给下面的普通声明路径（`parse_var_decl_internal` ⇒ `parse_type`
+                            //   里吃下 `m.Pt` 并记进 TypeInfo.module_qualifier ✓，
+                            //   真正的"去模块符号表查类型"在语义层归一化时做 ✓）。
+                            //   上面那段前瞻已经精确区分了"声明"与"表达式"：
+                            //   `m.func()` 在类型名后面跟的是 `(` 而不是标识符 ⇒ qualified_decl=0
+                            //   ⇒ 仍旧走表达式路径 ✓（不会把模块函数调用误判成声明 ✓）。
+                            is_type_decl = 1;
                         }
                         free(mod_name);
                         free(type_name);

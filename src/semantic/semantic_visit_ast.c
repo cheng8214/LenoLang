@@ -399,6 +399,424 @@ static const char* sem_as_kind_name(TypeKind k) {
     }
 }
 
+
+// ============================================================================
+// `use` 的类型/符号导入 —— **唯一实现**（US1，2026-10-12，见 docs/类型可见性与use逃生阀修复追踪.md）
+// ----------------------------------------------------------------------------
+// 两个调用方（必须同口径 ⇒ 共用同一份代码，而不是两份分派 ✗）：
+//   ① 源码里的 `use m.Pt`      —— visitinc/visit_module.inc 的 case AST_USE
+//   ② 类型位置写限定名 `m.Pt`   —— semantic_visit_func.c 的 resolve_alias_in_type
+//      （US1：`m.Pt` 等价于**隐式 use m.Pt** ⇒ 报错文案 / 可用性判据 / 重复导入的宽容度
+//        三条都不可能与 ① 漂移 ✓ —— 本仓纪律：单一事实来源 ✓）
+// ★ 文案前缀用「类型导入失败：」而不是「use 语句错误：」（2026-10-12 随 US1 改）——
+//   同一个实现现在也被**类型位置的限定名**（`m.Pt`）调用，那里源码里根本没有 `use` 语句
+//   ⇒ 原文案会让人去找一条不存在的语句 ✗（实测 `m.Nope x` 报"use 语句错误"）
+// 返回：1 = 导入成功（含"同一类型重复导入 ⇒ 静默跳过"，故**幂等** ✓）；0 = 已报错
+//   ⚠ 幂等必须守住：类型归一化会对同一个类型跑不止一遍（函数签名在 visit_func 与符号
+//     登记处各归一化一次 ✓）⇒ 第二遍必须无害通过 ✓
+// ============================================================================
+int semantic_import_use_symbol(Semantic* s, const char* module_name, const char* symbol_name,
+                               int line, int column) {
+            // use 语句：将模块中的 struct 类型导入到当前作用域
+            // 注意：use 只支持 struct 类型，不支持 func、var 和 enum
+            // - struct：编译时类型，需要用于变量声明（如 Point p）
+            // - func/var：运行时实体，必须通过模块名访问（如 module.func()）
+            // - enum：成员访问通过模块名（如 module.enum.member），不需要 use
+
+            // 查找导入的模块
+            ImportedModuleInfo* module_info = find_imported_module(s, module_name);
+            if (!module_info) {
+                char msg[BUFFER_MEDIUM];
+                // E2: 模块名拼错提示——在已导入模块的别名里找相似（use md.Point，别名是 m）
+                const char* alias_names[64];
+                int alias_count = 0;
+                for (int i = 0; i < s->imported_module_count && alias_count < 64; i++) {
+                    if (s->imported_modules[i].alias) {
+                        alias_names[alias_count++] = s->imported_modules[i].alias;
+                    }
+                }
+                const char* hint = get_similar_in_names(alias_names, alias_count, module_name);
+                if (!hint[0]) hint = native_builtin_module_hint(module_name);
+                if (hint[0]) {
+                    snprintf(msg, sizeof(msg), "类型导入失败：模块 '%s' 未导入%s", module_name, hint);
+                } else {
+                    snprintf(msg, sizeof(msg), "类型导入失败：模块 '%s' 未导入", module_name);
+                }
+                error_add_at(ERR_SEMANTIC, line, column, msg);
+            return 0;
+            }
+
+            // ★ native 模块的类型（2026-09-27）—— 走**独立通道**，且必须在下面的"没有符号表"检查之前：
+            //   native 模块的字段表在 native 类型规格注册表里，`sym_table` 恒为 NULL
+            //   ⇒ 过去 `use dirs.DirEntry` 只会得到"模块 'dirs' 没有符号表"这句废话。
+            //   位置放在"模块已导入"检查之后 ⇒ 与源码模块**同一规矩**：use 之前先 import ✓
+            {
+                const char* actual_module = native_resolve_module_alias(module_name);
+                if (native_is_module(actual_module)) {
+                    const NativeStructSpec* nss =
+                        native_find_module_struct_spec(actual_module, symbol_name);
+                    if (!nss) {
+                        // 模块是 native，但没这个类型 ⇒ 把**可用类型**列出来（照 builtin 模块提示的风格）
+                        char msg[BUFFER_MEDIUM];
+                        const char* names[16];
+                        int n = native_list_module_struct_specs(actual_module, names, 16);
+                        if (n > 0) {
+                            char list[192];
+                            int off = 0;
+                            list[0] = '\0';
+                            for (int i = 0; i < n; i++) {
+                                int w = snprintf(list + off, sizeof(list) - (size_t)off,
+                                                 "%s%s", i == 0 ? "" : " / ", names[i]);
+                                if (w <= 0) break;
+                                off += (w < (int)sizeof(list) - off) ? w : (int)sizeof(list) - off - 1;
+                                if (off >= (int)sizeof(list) - 1) break;
+                            }
+                            snprintf(msg, sizeof(msg),
+                                     "类型导入失败：native 模块 '%s' 没有类型 '%s'（可用类型: %s）",
+                                     module_name, symbol_name, list);
+                        } else {
+                            // ★ 2026-10-10 文案修正：原来只说"没有导出任何类型" ✗ ——
+                            //   实测 `use maths.not_a_real_func` 报的就是这句 ✗，而 maths 明明
+                            //   导出了一堆**函数** ✓ ⇒ 写的人以为是 maths 有问题，其实是用法不对 ✓：
+                            //   `use` 只能导入**类型** ✓（本仓既有写法 `use SDL3.(Event, Renderer, …)` ✓）。
+                            snprintf(msg, sizeof(msg),
+                                     "类型导入失败：native 模块 '%s' 里没有类型 '%s'，而且它一个类型都没导出"
+                                     "（use 只能导入**类型** ✓；模块里的函数/常量请直接写 '%s.名字(...)' 调用 ✓）",
+                                     module_name, symbol_name, module_name);
+                        }
+                        error_add_at(ERR_SEMANTIC, line, column, msg);
+            return 0;
+                    }
+                    // ⚠ 这里的 return 值分两种（**抽取函数时踩过坑**，见下）：
+                    //   成功 ⇒ 1（原 case 级 `break` = 正常结束本 case ✓）
+                    //   失败 ⇒ 0（原代码也是 break 出去，但那时错误已经报过 ⇒ 0 让 US1 侧去毒化 ✓）
+                    //   抽取时的教训：原 case 里这一句 `break;` 位于 `if (!…)` **之外**（是成功出口 ✓），
+                    //     我一开始当成"失败分支"改成了 `return 0` ⇒ 所有 native 限定名（`d.DirEntry`）
+                    //     都被判成"导入失败"、**静默毒化成 any** ✗（局部变量/形参位置因为 any 合法
+                    //     而看不出来，只有 struct 字段位置报"字段不能使用 any"才暴露 ✓）
+                    int native_ok = semantic_import_native_type(s, nss);
+                    if (!native_ok) {
+                        char msg[BUFFER_MEDIUM];
+                        snprintf(msg, sizeof(msg),
+                                 "类型导入失败：'%s' 已在当前作用域中定义（与 native 类型同名）"
+                                 "—— 请改用别的名字，或直接用该 native 类型",
+                                 symbol_name);
+                        error_add_at(ERR_SEMANTIC, line, column, msg);
+                    }
+                    return native_ok ? 1 : 0;
+                }
+            }
+
+            if (!module_info->sym_table) {
+                char msg[BUFFER_MEDIUM];
+                snprintf(msg, sizeof(msg), "类型导入失败：模块 '%s' 没有符号表", module_name);
+                error_add_at(ERR_SEMANTIC, line, column, msg);
+            return 0;
+            }
+
+            // 尝试查找 struct 定义
+            ModuleStructSymbol* struct_sym = module_symbol_table_find_struct(module_info->sym_table, symbol_name);
+            if (struct_sym) {
+                // 将 struct/cstruct 定义注册到当前作用域
+                // cstruct 使用 SYM_CSTRUCT，struct 使用 SYM_STRUCT，以便 codegen 生成正确的指令
+                SymKind kind;
+                if (struct_sym->is_cstruct) {
+                    kind = SYM_CSTRUCT;
+                } else {
+                    kind = SYM_STRUCT;
+                }
+                Symbol* sym = scope_define(s->current, symbol_name, kind);
+                if (!sym) {
+                    // scope_define 返回 NULL 可能是因为同名冲突
+                    Symbol* existing = scope_resolve_local(s->current, symbol_name);
+                    if (existing && existing->type && (existing->type->kind == TYPE_STRUCT || existing->type->kind == TYPE_CSTRUCT)) {
+                        // 检查是否是同一类型的重复导入（来自 import_type_deps 的隐式导入）
+                        // 如果现有符号是同一类型名，允许重复 use（跳过不报错）
+                        if (existing->type->struct_name && strcmp(existing->type->struct_name, symbol_name) == 0) {
+                            // 同一类型的重复导入，静默跳过
+            return 1;
+                        }
+                        char msg[BUFFER_MEDIUM];
+                        snprintf(msg, sizeof(msg), "类型导入失败：'%s' 已在当前作用域中定义（来自其他模块的 use），请使用模块名限定访问",
+                                 symbol_name);
+                        error_add_at(ERR_SEMANTIC, line, column, msg);
+                    }
+            return 0;
+                }
+                if (sym) {
+                    // 字段与泛型参数：走**唯一实现**（与 import_type_deps 那份收成一份 ——
+                    // 此前两份的字段重建深度不同：那份**不用 type_info**，实测把
+                    // Array[Array[int]] 搬成 Array[Array]。见 semantic_type_utils.c 的
+                    // semantic_attach_struct_fields 说明与
+                    // assert/test_alias_type_deps_struct_fields.leno）
+                    semantic_attach_struct_fields(sym, struct_sym);
+                }
+                // 全局 struct_def 注册 + 方法占位符注册：走**唯一实现**
+                // （此前这里与 import_type_deps 那份各写一遍，那份**不填 param_types /
+                //   type_params** ⇒ 泛型方法经 alias 那条路静默跳过类型检查。
+                //   见 semantic_type_utils.c 的 semantic_register_struct_from_module 说明
+                //   与 assert/test_generic_type_param_paths.leno）
+                semantic_register_struct_from_module(s, struct_sym);
+            return 1;
+            }
+
+            // 尝试查找 clib 类型（优先查符号表，再查函数返回类型）
+            {
+                int clib_found = 0;
+                // 先尝试从模块符号表的 clibs 中查找
+                ModuleClibSymbol* clib_sym_tbl = NULL;
+                if (module_info->sym_table) {
+                    clib_sym_tbl = module_symbol_table_find_clib(module_info->sym_table, symbol_name);
+                }
+                if (clib_sym_tbl) {
+                    clib_found = 1;
+                    SymKind kind = s->is_module ? SYM_MODULE : SYM_GLOBAL;
+                    Symbol* sym = scope_define(s->current, symbol_name, kind);
+                    if (sym) {
+                        sym->kind = SYM_TYPE;
+                        sym->type = type_new(TYPE_CLIB);
+                        sym->type->struct_name = strdup(symbol_name);
+                        // 填充 clib 函数签名
+                        sym->clib_func_count = clib_sym_tbl->func_count;
+                        sym->clib_func_names = (char**)malloc(sizeof(char*) * clib_sym_tbl->func_count);
+                        sym->clib_func_return_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * clib_sym_tbl->func_count);
+                        sym->clib_func_param_counts = (int*)malloc(sizeof(int) * clib_sym_tbl->func_count);
+                        sym->clib_func_param_types = (TypeInfo***)malloc(sizeof(TypeInfo**) * clib_sym_tbl->func_count);
+                        for (int fi = 0; fi < clib_sym_tbl->func_count; fi++) {
+                            sym->clib_func_names[fi] = strdup(clib_sym_tbl->funcs[fi].name);
+                            // 构造返回类型：Ptr[T] 需要 element_type
+                            if (clib_sym_tbl->funcs[fi].return_type == TYPE_PTR_GENERIC
+                                && clib_sym_tbl->funcs[fi].return_element_type != TYPE_PTR) {
+                                sym->clib_func_return_types[fi] = type_ptr_generic(
+                                    type_new(clib_sym_tbl->funcs[fi].return_element_type));
+                            } else {
+                                sym->clib_func_return_types[fi] = type_new(clib_sym_tbl->funcs[fi].return_type);
+                            }
+                            sym->clib_func_param_counts[fi] = clib_sym_tbl->funcs[fi].param_count;
+                            sym->clib_func_param_types[fi] = (TypeInfo**)malloc(sizeof(TypeInfo*) * clib_sym_tbl->funcs[fi].param_count);
+                            for (int pi = 0; pi < clib_sym_tbl->funcs[fi].param_count; pi++) {
+                                // 构造参数类型：Ptr[T] 需要 element_type
+                                if (clib_sym_tbl->funcs[fi].param_types[pi] == TYPE_PTR_GENERIC
+                                    && clib_sym_tbl->funcs[fi].param_element_types
+                                    && clib_sym_tbl->funcs[fi].param_element_types[pi] != TYPE_PTR) {
+                                    sym->clib_func_param_types[fi][pi] = type_ptr_generic(
+                                        type_new(clib_sym_tbl->funcs[fi].param_element_types[pi]));
+                                } else {
+                                    sym->clib_func_param_types[fi][pi] = type_new(clib_sym_tbl->funcs[fi].param_types[pi]);
+                                }
+                            }
+                        }
+                    }
+                }
+                // 回退：通过检查函数返回类型
+                if (!clib_found) {
+                    for (int fi = 0; fi < module_info->sym_table->func_count && !clib_found; fi++) {
+                        ModuleFuncSymbol* func = &module_info->sym_table->funcs[fi];
+                        if (func->return_type == TYPE_CLIB && func->return_struct_name &&
+                            strcmp(func->return_struct_name, symbol_name) == 0) {
+                            clib_found = 1;
+                            SymKind kind = s->is_module ? SYM_MODULE : SYM_GLOBAL;
+                            Symbol* sym = scope_define(s->current, symbol_name, kind);
+                            if (sym) {
+                                sym->kind = SYM_TYPE;
+                                sym->type = type_new(TYPE_CLIB);
+                                sym->type->struct_name = strdup(symbol_name);
+                                // 从源模块符号表复制 clib 函数签名，实现编译期参数检查
+                                ModuleClibSymbol* src_clib = module_symbol_table_find_clib(module_info->sym_table, symbol_name);
+                                if (src_clib && src_clib->func_count > 0) {
+                                    sym->clib_func_count = src_clib->func_count;
+                                    sym->clib_func_names = (char**)malloc(sizeof(char*) * src_clib->func_count);
+                                    sym->clib_func_return_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * src_clib->func_count);
+                                    sym->clib_func_param_counts = (int*)malloc(sizeof(int) * src_clib->func_count);
+                                    sym->clib_func_param_types = (TypeInfo***)malloc(sizeof(TypeInfo**) * src_clib->func_count);
+                                    for (int ci = 0; ci < src_clib->func_count; ci++) {
+                                        sym->clib_func_names[ci] = strdup(src_clib->funcs[ci].name);
+                                        if (src_clib->funcs[ci].return_type == TYPE_PTR_GENERIC
+                                            && src_clib->funcs[ci].return_element_type != TYPE_PTR) {
+                                            sym->clib_func_return_types[ci] = type_ptr_generic(
+                                                type_new(src_clib->funcs[ci].return_element_type));
+                                        } else {
+                                            sym->clib_func_return_types[ci] = type_new(src_clib->funcs[ci].return_type);
+                                        }
+                                        sym->clib_func_param_counts[ci] = src_clib->funcs[ci].param_count;
+                                        sym->clib_func_param_types[ci] = (TypeInfo**)malloc(sizeof(TypeInfo*) * src_clib->funcs[ci].param_count);
+                                        for (int pi = 0; pi < src_clib->funcs[ci].param_count; pi++) {
+                                            if (src_clib->funcs[ci].param_types[pi] == TYPE_PTR_GENERIC
+                                                && src_clib->funcs[ci].param_element_types
+                                                && src_clib->funcs[ci].param_element_types[pi] != TYPE_PTR) {
+                                                sym->clib_func_param_types[ci][pi] = type_ptr_generic(
+                                                    type_new(src_clib->funcs[ci].param_element_types[pi]));
+                                            } else {
+                                                sym->clib_func_param_types[ci][pi] = type_new(src_clib->funcs[ci].param_types[pi]);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // ⚠ 这一句原来写成 `if (clib_found) break;` —— 它是 **case 级** break（成功路径），
+                //   不是循环内的 break ⇒ 抽取函数时**必须**改成 `return 1` ✓
+                //   （2026-10-12 抽取时正是漏了它，编译器报 "break statement not within loop or switch"）
+                if (clib_found) return 1;
+            }
+
+            // 尝试查找 enum 定义
+            if (module_info->sym_table) {
+                ModuleEnumSymbol* enum_sym = module_symbol_table_find_enum(module_info->sym_table, symbol_name);
+                if (enum_sym) {
+                    Symbol* sym = scope_define(s->current, symbol_name, SYM_TYPE);
+                    if (sym) {
+                        sym->type = type_new(TYPE_ENUM);
+                        sym->type->struct_name = strdup(symbol_name);
+                        // 存储 enum 成员信息到 symbol，用于 AST_NUM 转换
+                        sym->enum_value_count = enum_sym->member_count;
+                        sym->enum_value_names = (char**)malloc(sizeof(char*) * enum_sym->member_count);
+                        sym->enum_values = (int64_t*)malloc(sizeof(int64_t) * enum_sym->member_count);
+                        for (int mi = 0; mi < enum_sym->member_count; mi++) {
+                            sym->enum_value_names[mi] = strdup(enum_sym->member_names[mi]);
+                            sym->enum_values[mi] = enum_sym->member_values[mi];
+                        }
+                    }
+            return 1;
+                }
+            }
+
+            // 尝试查找 face 定义
+            ModuleFaceSymbol* face_sym = module_symbol_table_find_face(module_info->sym_table, symbol_name);
+            if (face_sym) {
+                // 将 face 定义注册到当前作用域
+                // face 类型使用 SYM_TYPE，不占用运行时索引
+                Symbol* sym = scope_define(s->current, symbol_name, SYM_TYPE);
+                if (sym) {
+                    sym->type = type_new(TYPE_FACE);
+                    sym->type->struct_name = strdup(symbol_name);
+                }
+                // 同时注册 face 定义到全局表，用于类型检查
+                if (!face_def_find(symbol_name)) {
+                    ObjFaceDef* fdef = face_def_new(symbol_name, face_sym->method_count);
+                    if (fdef) {
+                        for (int i = 0; i < face_sym->method_count; i++) {
+                            fdef->methods[i].name = strdup(face_sym->methods[i].name);
+                            fdef->methods[i].return_type = type_new(face_sym->methods[i].return_type);
+                            fdef->methods[i].param_count = 0;
+                            fdef->methods[i].param_types = NULL;
+                        }
+                        face_def_register(fdef);
+                    }
+                }
+            return 1;
+            }
+
+            // 尝试查找 alias 定义
+            ModuleAliasSymbol* alias_sym = module_symbol_table_find_alias(module_info->sym_table, symbol_name);
+            if (alias_sym) {
+                // 将 alias 注册为类型符号，让后续类型解析能识别
+                // 注：import 时已将模块的 export alias 注册到解析器别名表，
+                // 这里只需注册到语义作用域即可
+                Symbol* sym = scope_define(s->current, symbol_name, SYM_TYPE);
+                if (sym && alias_sym->type_info) {
+                    sym->type = type_copy(alias_sym->type_info);
+                    // 递归导入 alias 底层类型依赖（如 EventHandler = func(Event):bool 中的 Event）
+                    import_type_deps(s, module_info, alias_sym->type_info);
+                }
+            return 1;
+            }
+
+            // 尝试查找函数定义（use module.funcName 导入函数）
+            ModuleFuncSymbol* func_sym = module_symbol_table_find_func(module_info->sym_table, symbol_name);
+            if (func_sym) {
+                Symbol* sym = scope_define(s->current, symbol_name, SYM_FUNC_ALIAS);
+                if (sym) {
+                    sym->alias_module_name = strdup(module_name);
+                    sym->alias_func_name = strdup(symbol_name);
+                    // 设置返回类型信息，用于类型推断
+                    if (func_sym->return_type != TYPE_ANY && func_sym->return_type != TYPE_INFER) {
+                        if (func_sym->return_type_info) {
+                            sym->type = type_copy(func_sym->return_type_info);
+                        } else {
+                            sym->type = type_new(func_sym->return_type);
+                            if (func_sym->return_struct_name) {
+                                sym->type->struct_name = strdup(func_sym->return_struct_name);
+                            }
+                        }
+                    } else {
+                        sym->type = type_new(TYPE_ANY);
+                    }
+                }
+            return 1;
+            }
+
+            // 尝试查找 const 常量定义
+            if (module_info->sym_table) {
+                ModuleVarSymbol* var_sym = module_symbol_table_find_var(module_info->sym_table, symbol_name);
+                if (var_sym && var_sym->is_const) {
+                    char msg[BUFFER_MEDIUM];
+                    snprintf(msg, sizeof(msg), "use 语句不能导入常量 '%s'，请使用 %s.%s 访问", symbol_name, module_name, symbol_name);
+                    error_add_at(ERR_SEMANTIC, line, column, msg);
+            return 0;
+                }
+            }
+
+            // 尝试查找 cfunc 定义（C 回调函数签名）
+            if (module_info->sym_table) {
+                ModuleCfuncSymbol* cfunc_sym = module_symbol_table_find_cfunc(module_info->sym_table, symbol_name);
+                if (cfunc_sym) {
+                    // 注册为 SYM_CFUNC 符号
+                    Symbol* sym = scope_define(s->current, symbol_name, SYM_CFUNC);
+                    if (sym) {
+                        TypeInfo* cfunc_type = type_new(TYPE_CFUNC);
+                        cfunc_type->struct_name = strdup(symbol_name);
+                        sym->type = cfunc_type;
+
+                        // 存储 cfunc 签名信息（从 TypeKind 重建 TypeInfo*）
+                        sym->cfunc_param_count = cfunc_sym->param_count;
+                        if (cfunc_sym->param_count > 0) {
+                            sym->cfunc_param_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * cfunc_sym->param_count);
+                            for (int pi = 0; pi < cfunc_sym->param_count; pi++) {
+                                // Ptr[T] 需要 element_type
+                                if (cfunc_sym->param_types[pi] == TYPE_PTR_GENERIC
+                                    && cfunc_sym->param_element_types
+                                    && cfunc_sym->param_element_types[pi] != TYPE_PTR) {
+                                    sym->cfunc_param_types[pi] = type_ptr_generic(
+                                        type_new(cfunc_sym->param_element_types[pi]));
+                                } else {
+                                    sym->cfunc_param_types[pi] = type_new(cfunc_sym->param_types[pi]);
+                                }
+                            }
+                        } else {
+                            sym->cfunc_param_types = NULL;
+                        }
+
+                        // 构造返回类型
+                        if (cfunc_sym->return_type == TYPE_PTR_GENERIC
+                            && cfunc_sym->return_element_type != TYPE_PTR) {
+                            sym->cfunc_return_type = type_ptr_generic(
+                                type_new(cfunc_sym->return_element_type));
+                        } else {
+                            sym->cfunc_return_type = type_new(cfunc_sym->return_type);
+                        }
+                    }
+            return 1;
+                }
+            }
+
+            // 没有找到 struct、clib、cfunc、face、alias 或函数
+            char msg[BUFFER_MEDIUM];
+            // E1: 符号名拼错提示——在模块符号表所有名字桶里找最相似的候选
+            const char* hint = module_symbol_table_hint(module_info->sym_table, symbol_name);
+            if (hint[0]) {
+                snprintf(msg, sizeof(msg), "类型导入失败：模块 '%s' 中没有类型或函数 '%s'%s",
+                         module_name, symbol_name, hint);
+            } else {
+                snprintf(msg, sizeof(msg), "类型导入失败：模块 '%s' 中没有类型或函数 '%s'",
+                         module_name, symbol_name);
+            }
+            error_add_at(ERR_SEMANTIC, line, column, msg);
+            return 0;   // 落到这里 = 模块里没有这个类型/符号（错误已由上面各分支报出 ✓）
+}
+
 void visit(Semantic* s, Ast* ast) {
     if (!ast) return;
 

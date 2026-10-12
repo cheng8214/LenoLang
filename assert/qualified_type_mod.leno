@@ -1,0 +1,43 @@
+// test_qualified_type_positions.leno 的**被测模块**（US1，2026-10-12）
+//   提供 5 类可导出的类型：struct / 泛型 struct / enum / alias / face / cstruct
+//   —— 覆盖"限定名 `m.X` 在不同 kind 上的解析"（它们在语义层的**注册通道各不相同** ✓：
+//      struct/cstruct 走 SYM_STRUCT/SYM_CSTRUCT、enum/face/alias 走 SYM_TYPE ✓）
+
+export struct Pt {
+    int x = 0
+    int y = 0
+}
+
+export struct Box[T] {
+    T v
+}
+
+export enum Color { RED = 1; GREEN = 2 }
+
+export alias Size = Dict[string,int]
+
+export face Shape {
+    func area(): float
+}
+
+export struct Rect impl Shape {
+    int w = 0
+    func area(): float {
+        return 1.0
+    }
+}
+
+export cstruct Raw {
+    u32 v
+}
+
+export func mk(int a, int b): Pt {
+    var p = new Pt()
+    p.x = a
+    p.y = b
+    return p
+}
+
+export func hello(): int {
+    return 42
+}

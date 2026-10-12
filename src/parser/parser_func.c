@@ -299,11 +299,33 @@ static TypeInfo* parse_base_type(Parser* p) {
         }
         
         lexer_next(&p->lex);
-        
-        // 检查是否是类型别名
+
+        // ★ US1（2026-10-12，见 docs/类型可见性与use逃生阀修复追踪.md）：**模块限定类型名**
+        //   `m.Pt` —— 第一个标识符是**模块别名**，真正的类型名在点号后面。
+        //   解析器只负责把**两个名字都记下来**（`module_qualifier` = `m`）；"去模块符号表查类型"
+        //   留给语义层（解析器不该知道模块加载状态 ✓；而类型名归一化有单一入口
+        //   `resolve_alias_in_type` ✓ ⇒ 在这里查会另开一套口径 ✗）。
+        //   ⚠ 必须"点号 + 标识符"**两个 token 都确认**才消费：只看点号就吃会破坏别的写法
+        //     （`m.Pt.Sub` 这类非法写法留给 `parser_reject_module_qualified_type` 兜底 ✓）。
+        char* module_qualifier = NULL;
+        if (p->lex.current.type == TOK_DOT) {
+            Lexer dot_saved = p->lex;
+            lexer_next(&p->lex);   // 消费 '.'
+            if (p->lex.current.type == TOK_IDENT) {
+                module_qualifier = type_name;                                       // `m`
+                type_name = copy_string(p->lex.current.text, p->lex.current.len);   // `Pt`
+                lexer_next(&p->lex);   // 消费类型名
+            } else {
+                p->lex = dot_saved;    // 不是 `模块.类型` ⇒ 回退（点号交给别的路径处理 ✓）
+            }
+        }
+
+        // 检查是否是类型别名（限定名不走这条：别名表是**本文件解析器**的，`m.Pt` 的类型在别的模块 ✓）
         char** alias_tp_names = NULL;
         int alias_tp_count = 0;
-        TypeInfo* alias_type = find_alias_with_params(p, type_name, &alias_tp_names, &alias_tp_count);
+        TypeInfo* alias_type = module_qualifier
+            ? NULL
+            : find_alias_with_params(p, type_name, &alias_tp_names, &alias_tp_count);
         if (alias_type) {
             // 检查是否有泛型参数：MyBox[int], MyPair[string, float] 等
             if (p->lex.current.type == TOK_LBRACKET && alias_tp_count > 0) {
@@ -346,12 +368,17 @@ static TypeInfo* parse_base_type(Parser* p) {
         }
         
         TypeInfo* struct_type;
-        if (face_def_find(type_name)) {
+        // 限定名（`m.Pt`）**一律先记成 TYPE_STRUCT**：它的真身是 struct / cstruct / clib /
+        //   face / enum 要到语义层查过**模块符号表**才知道 ✓。⚠ 这里不能拿 `face_def_find()`
+        //   去猜 —— 它只看本进程已注册的 face（`use` 过 / 本文件定义过），拿它判跨模块的
+        //   cstruct / enum 名字会**猜歪** ✗（US1：kind 由 resolve_alias_in_type 归一 ✓）。
+        if (!module_qualifier && face_def_find(type_name)) {
             struct_type = type_new(TYPE_FACE);
         } else {
             struct_type = type_new(TYPE_STRUCT);
         }
         struct_type->struct_name = type_name;
+        struct_type->module_qualifier = module_qualifier;   // NULL = 普通（非限定）类型名 ✓
         
         // 检查是否有泛型参数：Box[int], Pair[string, int] 等
         if (p->lex.current.type == TOK_LBRACKET) {
@@ -650,11 +677,13 @@ TypeInfo* parse_type(Parser* p) {
     return parse_type_internal(p);
 }
 
-// 类型位置不接受模块限定类型名（如 `a.Point`）—— 与声明处的既有提示
-// （src/parser/parser.c 的"不支持带模块前缀的类型声明…请先 use"）保持同一口径。
+// 类型位置**剩余的**非法点号兜底（`m.Pt.Sub` 这种多级、或 `m.` 后面不是标识符）——
+//   ★ US1（2026-10-12）后：**合法的**模块限定名 `m.Pt` 已由 `parse_base_type` 吃掉并记进
+//     `TypeInfo.module_qualifier` ✓ ⇒ 这里只剩"连限定名都不是"的写法要拦 ✓
+//   （声明处 `m.Pt 变量名 = …` 也已放行，见 src/parser/parser.c 的 qualified_decl 分支 ✓）。
 //
-// 为什么必须有（2026-09-16 实测）：`is` / `case is` / `as` 这些位置此前**静默 misparse** ——
-// parse_type_internal 只吃掉前面的标识符 `a`，剩下的 `.Point` 落到外层被当成属性访问，于是：
+// 为什么必须留（2026-09-16 实测）：这类写法此前**静默 misparse** —— parse_type_internal 只吃掉
+// 前面的标识符 `a`，剩下的 `.Point` 落到外层被当成属性访问，于是：
 //   `if v is a.Point {`      ⇒ 报 "if 语句体必须用大括号 {} 包裹"（完全指不到真正原因）
 //   `(v is a.Point)`         ⇒ 报 "类型 'bool' 不支持属性访问 '.Point'"
 //   `var w = v as a.Point`   ⇒ **语法通过**，运行期才炸 "索引操作需要对象类型，但实际类型为 'null'"
@@ -664,9 +693,11 @@ int parser_reject_module_qualified_type(Parser* p, TypeInfo* t) {
     if (p->lex.current.type != TOK_DOT) return 1;   // 后面不是点号 ⇒ 正常类型
 
     char msg[256];
+    // ★ US1（2026-10-12）：`a.Point` 本身**已经合法** ✓ ⇒ 走到这里的是更长的写法
+    //   （`a.Point.Sub` / `a.Box[int].Sub` …），照旧给处方（最省事的对照写法）
     snprintf(msg, sizeof(msg),
-             "不支持带模块前缀的类型名（如 'a.Point'）：请先 use a.Point，然后直接写 'Point'"
-             "（use 会把类型导入当前作用域）");
+             "不支持的模块限定类型名（类型位置最多只能写「模块.类型」一级，如 'a.Point'）："
+             "请改写 'a.Point' 形式，或先用 `use a.Point` 再直接写 'Point'");
     error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, msg);
     type_free(t);
     return 0;

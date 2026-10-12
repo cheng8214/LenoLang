@@ -293,6 +293,14 @@ struct TypeInfo {
     int param_count;         // 函数参数数量
     // 结构体类型相关
     char* struct_name;       // 结构体名称 / face 名称 / cstruct/clib/cfunc 名称
+    // ★ US1（2026-10-12，见 docs/类型可见性与use逃生阀修复追踪.md）：类型名**在源码里带的
+    //   模块前缀**（`m.Pt` 里的 `m` —— 写的是**模块别名**，不是模块真名 ✓）。
+    //   · 语义：只在"解析阶段"有意义 —— `resolve_alias_in_type()` 见到它就等价执行一次
+    //     **隐式 `use m.Pt`**（复用同一实现 ⇒ 报错文案与可用性判据不可能漂移 ✓），
+    //     随后**清空**（归一化之后，它与"用 use 导入的普通名字"完全无异 ✓）。
+    //   · ⚠ **不参与 `type_equals`**：它是归一化前的临时标记，参与比较会把 `m.Pt` 与 `Pt`
+    //     误判成不同类型（见 src/type.c 的说明 ✓）。
+    char* module_qualifier;
     // 泛型类型参数
     char* type_param_name;   // 泛型类型参数名（如 "T", "U"）
     char* constraint_name;   // 泛型约束 face 名（如 "Comparable"），NULL 表示无约束

@@ -136,13 +136,24 @@ main() {
     ce.expect_error(anyp, "any 形参赋给 int 变量要报错",
         "变量 'n' 声明类型与初始化值类型不匹配", 3)
 
-    // ---- `use` 语法指引（2026-09-28；实例五十三）----
-    //   带**模块前缀的类型声明**（`m.Helper h = ...`）不被支持，编译器要给"先 use 再直接写类型名"
-    //   的指引。收编自 examples/func/func类型/bug_repro_alias_use.leno（已删）—— 那个 repro 想演示
-    //   的"场景 3"根本走不到，**首条错误**就是这条指引 ⇒ 把这句钉住。
-    ce.expect_error("assert/error_cases/mod_prefixed_type.leno",
-        "带模块前缀的类型声明要报错并给指引（先说 use、再直接写类型名）",
-        "不支持带模块前缀的类型声明 'm.Helper 变量名'", 7)
+    // ---- 模块限定类型声明（2026-09-28 的"给指引"判据 → ★ 2026-10-12 **US1 翻案**）----
+    //   旧判据：`m.Helper h = ...` **不被支持**，编译器给"先 use 再直接写类型名"的指引 ✓
+    //     （收编自 examples/func/func类型/bug_repro_alias_use.leno（已删）的首条错误）
+    //   US1 起：这种写法**合法了** ✓ —— 语义 = **隐式 use**（`m.Helper` 直接可用，
+    //     `use m.Helper` 从"义务"变回"便利"），见 docs/类型可见性与use逃生阀修复追踪.md ✓
+    //   ⇒ 本条由**负例改成正向判据**；原来的负例 fixture
+    //     `assert/error_cases/mod_prefixed_type.leno` 已随本次改动删除 ✓
+    //   ⚠ 特意保留原 fixture 的**顶层全局变量**形态（不在 main 里）—— 那条路径也要通 ✓
+    var qroot = dirs.join(work, "qualified_type_ok")
+    dirs.delete(qroot)
+    dirs.mkdir_p(qroot)
+    files.write(dirs.join(qroot, "qm.leno"), "export struct Helper {\n    int v = 5\n}\n")
+    var qpath = dirs.join(qroot, "qmain.leno")
+    files.write(qpath,
+        "import \"qm.leno\" as m\n\n"
+        + "m.Helper h = new m.Helper()\n\n"
+        + "main() {\n    print(\"Q=\" + h.v)\n}\n")
+    ce.expect_ok(qpath, "模块限定类型声明（US1 翻案：合法 + 隐式 use；含顶层全局变量形态）", "Q=5")
 
     // ---- T11 / T27：`int? a = null` 的编译期判定（2026-09-30）----
     //   ① 无窄化 ⇒ 必须仍然编译报错（这是 T11 的**正当**报错，T27 的修复不得把它一起放宽）

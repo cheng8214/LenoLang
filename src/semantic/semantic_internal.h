@@ -166,6 +166,15 @@ void transform_method_body(Ast* ast, char** field_names, int field_count, char**
 // 类型工具函数
 // ============================================================================
 int resolve_alias_in_type(Semantic* s, TypeInfo** type_ptr, int line);
+
+// ★ US1（2026-10-12，见 docs/类型可见性与use逃生阀修复追踪.md）：
+//   `use m.Sym` 的**唯一实现**（原来整段分派体长在 visitinc/visit_module.inc 的 case AST_USE 里）。
+//   抽出来的目的：**类型位置写限定名**（`m.Pt`）走的是**同一条路径** ⇒ 报错文案、可用性判据、
+//   重复导入的宽容度三条不可能与源码 `use` 漂移 ✓。
+//   调用方：① visit_module.inc 的 case AST_USE；② resolve_alias_in_type（隐式 use ✓）。
+//   返回：1 = 成功（含"同名同类型重复导入 ⇒ 静默跳过" ⇒ **幂等** ✓）；0 = 已报错
+int semantic_import_use_symbol(Semantic* s, const char* module_name, const char* symbol_name,
+                               int line, int column);
 // 递归检查泛型实参/子类型中是否存在未定义类型（不查顶层）——B2 修复用。
 // 返回 1 = 报过"未定义"错（调用方应置 declared_type_undefined 跳过级联检查）
 int semantic_check_undefined_subtypes(Semantic* s, TypeInfo* type, int line, int column);

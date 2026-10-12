@@ -1,30 +1,40 @@
-// 模块限定类型名出现在"类型位置"时，必须给出明确提示（防回退：此前是 misparse + 误导报错）
+// 模块限定类型名（`m.Point`）在**类型位置**：US1（2026-10-12）起**支持**，本用例守它真的能用。
 //
-// 背景（2026-09-16 实测，S2 清理期间发现）：
-//   parse_type_internal 只吃单个类型名、不吃 `a.Point` ⇒ 它吃掉 `a`，剩下的 `.Point` 落到外层
-//   被当成属性访问，于是同一个 bug 有三种误导表现：
-//     `if v is a.Point { }`   ⇒ 报 "if 语句体必须用大括号 {} 包裹"（完全指不到原因）
-//     `(v is a.Point)`        ⇒ 报 "类型 'bool' 不支持属性访问 '.Point'"
-//     `var w = v as a.Point`  ⇒ **语法通过**，运行期才炸 "索引操作需要对象类型，但实际类型为 'null'"
-//   现在三处（含 `case is`）统一报"不支持带模块前缀的类型名（如 'a.Point'）：请先 use a.Point…"，
-//   与声明处 parser.c 里那条既有提示同口径。
+// 历史（别把这段删了 —— 它解释了为什么这个文件曾经守的是"报错"）：
+//   2026-09-16：`parse_type_internal` 只吃单个类型名、不吃 `a.Point` ⇒ 吃掉 `a`、剩下的 `.Point`
+//     落到外层被当成属性访问，同一个 bug 有三种**误导**表现：
+//       `if v is a.Point { }`   ⇒ 报 "if 语句体必须用大括号 {} 包裹"（完全指不到原因）
+//       `(v is a.Point)`        ⇒ 报 "类型 'bool' 不支持属性访问 '.Point'"
+//       `var w = v as a.Point`  ⇒ **语法通过**，运行期才炸 "索引操作需要对象类型，但实际类型为 'null'"
+//     ⇒ 当时的选择是**友好拒绝**（比静默 misparse 好 ✓），本用例守那三处 + case is 的提示文案。
+//   2026-10-12（US1，见 docs/类型可见性与use逃生阀修复追踪.md）：把它**升级成支持** ——
+//     语义 = **隐式 `use m.Point`**（复用 `use` 的唯一实现 ✓）⇒ 原来的四条"必须报错"判据
+//     **整体翻案成"必须能跑"** ✓；同时补一条**新的**负例：多级限定 `m.Point.Sub` 仍然拦住 ✓
 //
-// 注：声明处不支持限定名是**刻意设计**（parser.c 早就给了提示）；本用例守的是"漏了提示的那几处"。
-// 报错列号随位置变化，而 helpers/compiler.leno 的落点断言假定列 1，故这里只断言文案（expect_line=0）。
+// 为什么值得支持：不写 `use` 也能写对 ⇒ §0.2 那类"use 列表漏一个、报错点在 use 那一行"的
+//   坑整类消失；库的中间层也不必为了传类型而 `use` 一个自己用不到的名字 ✓
+//
+// 报错列号随位置变化，而 helpers/compiler.leno 的落点断言假定列 1 ⇒ 负例只断言文案（expect_line=0）。
 
 import dirs
 import files
 
 import "helpers/compiler.leno" as ce
 
-// 造一个"导入模块 m 并在 main 里踩坑"的入口，body 是被测语句（自带缩进）
+// 造一个"导入模块 m、并在 main 里写 body"的入口（body 自带缩进）
+//   prelude 里的 `func to_any(m.Point p): any` 本身就是 US1 的一处（形参用限定名 ✓），
+//   同时给下面 `is` / `case is` 提供一个**静态类型宽化**的来源（`any` 只能出现在形参/返回 ✓）
 func build_entry(string work, string name, string body):string {
     var root = dirs.join(work, name)
     dirs.delete(root)
     dirs.mkdir_p(dirs.join(root, "lib"))
-    files.write(dirs.join(root, "lib/m.leno"), "export struct Point {\n    int x\n}\n")
+    files.write(dirs.join(root, "lib/m.leno"),
+        "export struct Point {\n    int x = 0\n}\n")
     var path = dirs.join(root, "main.leno")
-    files.write(path, "import \"lib/m.leno\" as m\n\nmain() {\n" + body + "}\n")
+    files.write(path,
+        "import \"lib/m.leno\" as m\n\n"
+        + "func to_any(m.Point p): any { return p }\n\n"
+        + "main() {\n" + body + "}\n")
     return path
 }
 
@@ -33,41 +43,74 @@ main() {
     dirs.delete(work)
     dirs.mkdir_p(work)
 
-    var hint = "不支持带模块前缀的类型名"
-
-    // as 转型
+    // ① as 转型
     var p = build_entry(work, "as_cast",
-        "    var v = new m.Point()\n    var w = v as m.Point\n")
-    ce.expect_error(p, "as 后限定类型名", hint, 0)
+        "    var v = to_any(new m.Point())\n    var w = v as m.Point\n    print(\"A=\" + w.x)\n")
+    ce.expect_ok(p, "① as 后的限定类型名 ⇒ 能用（US1 翻案）", "A=0")
 
-    // 表达式里的 is
+    // ② 表达式里的 is
     p = build_entry(work, "is_expr",
-        "    var v = new m.Point()\n    var b = (v is m.Point)\n")
-    ce.expect_error(p, "表达式 is 后限定类型名", hint, 0)
+        "    var v = to_any(new m.Point())\n    var b = (v is m.Point)\n    print(\"B=\" + b)\n")
+    ce.expect_ok(p, "② 表达式 is 后的限定类型名 ⇒ 能用", "B=true")
 
-    // 类型守卫（if 条件）
+    // ③ 类型守卫（if 条件）
     p = build_entry(work, "is_guard",
-        "    var v = new m.Point()\n    if v is m.Point { print(1) }\n")
-    ce.expect_error(p, "类型守卫后限定类型名", hint, 0)
+        "    var v = to_any(new m.Point())\n"
+        + "    if v is m.Point => q {\n        print(\"C=\" + q.x)\n    } else {\n        print(\"C=NO\")\n    }\n")
+    ce.expect_ok(p, "③ 类型守卫里的限定类型名（含窄化绑定）⇒ 能用", "C=0")
 
-    // case is
+    // ④ case is
     p = build_entry(work, "case_is",
-        "    var v = new m.Point()\n    switch v {\n        case is m.Point { print(1) }\n    }\n")
-    ce.expect_error(p, "case is 后限定类型名", hint, 0)
+        "    var v = to_any(new m.Point())\n"
+        + "    switch v {\n        case is m.Point => w {\n            print(\"D=\" + w.x)\n        }\n"
+        + "        default {\n            print(\"D=NO\")\n        }\n    }\n")
+    ce.expect_ok(p, "④ case is 后的限定类型名 ⇒ 能用", "D=0")
 
-    // 对照组：use 导入后用裸名，四种写法都必须正常
+    // ⑤ **新负例**：多级限定（`m.Point.Sub`）仍然拦住，且要点名"最多一级"
+    //   （前瞻把这种写法当**类型位置**处理 ⇒ 交给 parse_type_internal 报**正确**的那句；
+    //    不这么做的话整条语句会被当成表达式，实测报「未定义的变量: x」✗ 完全指不到真因）
+    p = build_entry(work, "multi_level",
+        "    m.Point.Sub x = null\n    print(1)\n")
+    ce.expect_error(p, "⑤ 多级限定类型名 ⇒ 拦住并点名「最多只能写 模块.类型 一级」",
+        "不支持的模块限定类型名", 0)
+
+    // ⑥ 未导入的模块 ⇒ 报"模块未导入"（不是含糊的"未定义的类型"）
+    var nroot = dirs.join(work, "not_imported")
+    dirs.delete(nroot)
+    dirs.mkdir_p(nroot)
+    var npath = dirs.join(nroot, "main.leno")
+    files.write(npath,
+        "main() {\n    nope.Point x = null\n    print(1)\n}\n")
+    ce.expect_error(npath, "⑥ 限定了**没导入**的模块 ⇒ 报「模块 'nope' 未导入」",
+        "模块 'nope' 未导入", 0)
+
+    // ⑦ 模块导入了、但里面没这个类型 ⇒ 报"没有类型或函数"
+    var wroot = dirs.join(work, "no_such_type")
+    dirs.delete(wroot)
+    dirs.mkdir_p(dirs.join(wroot, "lib"))
+    files.write(dirs.join(wroot, "lib/m.leno"), "export struct Point {\n    int x = 0\n}\n")
+    var wpath = dirs.join(wroot, "main.leno")
+    files.write(wpath,
+        "import \"lib/m.leno\" as m\n\nmain() {\n    m.Nope x = null\n    print(1)\n}\n")
+    ce.expect_error(wpath, "⑦ 模块里没有这个类型 ⇒ 报「模块 'm' 中没有类型或函数 'Nope'」",
+        "中没有类型或函数 'Nope'", 0)
+
+    // ⑧ 对照组：use 导入后用裸名，四种写法仍然必须正常（老判据不许被改坏）
     var croot = dirs.join(work, "bare_ok")
     dirs.delete(croot)
     dirs.mkdir_p(dirs.join(croot, "lib"))
-    files.write(dirs.join(croot, "lib/m.leno"), "export struct Point {\n    int x\n}\n")
+    files.write(dirs.join(croot, "lib/m.leno"), "export struct Point {\n    int x = 0\n}\n")
     var cpath = dirs.join(croot, "main.leno")
     files.write(cpath,
-        "import \"lib/m.leno\" as m\nuse m.Point\n\nmain() {\n"
-        + "    var v = new m.Point()\n"
+        "import \"lib/m.leno\" as m\nuse m.Point\n\n"
+        + "func to_any(Point p): any { return p }\n\n"
+        + "main() {\n"
+        + "    var v = to_any(new m.Point())\n"
         + "    var w = v as Point\n"
         + "    var b = (v is Point)\n"
-        + "    switch v {\n        case is Point { print(\"C=\") }\n    }\n}\n")
-    ce.expect_ok(cpath, "对照组（use 后裸名）", "C=")
+        + "    switch v {\n        case is Point => q {\n            print(\"C=\" + q.x)\n        }\n"
+        + "        default {\n            print(\"C=NO\")\n        }\n    }\n}\n")
+    ce.expect_ok(cpath, "⑧ 对照组（use 后裸名）四种写法都正常", "C=0")
 
     dirs.delete(work)
     print("test_qualified_type_hint passed")

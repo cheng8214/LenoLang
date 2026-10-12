@@ -1,6 +1,6 @@
 # 类型可见性与 use 逃生阀修复追踪
 
-> **最后更新**：2026-10-12（建档）。
+> **最后更新**：2026-10-12（建档 + **US1 完成**）。
 > **关联**：`docs/import使用指南.md`（§0.2 漏列 / §8.2 规则表）、
 > `docs/语言摩擦与隐式契约清单.md` 的 **M9**、`docs/语言陷阱速查.md` 的 **㉝**。
 > **本文定位**：不是"use 怎么用"（那是 `import使用指南`），而是**这套类型可见性设计缺的那一环**——
@@ -70,7 +70,7 @@ m.Pt p = m.mk()         // ✗ 类型位置（parser_func.c:662 / parser.c:225 �
 
 | ID | 优先级 | 事项 | 判据（做完怎么算对） | 成本 | 风险 | 状态 |
 |---|---|---|---|---|---|---|
-| **US1** | **P0** | **类型位置支持模块限定名 `m.Pt`**（`m.Pt p` / `func f(m.Pt x)` / `: m.Pt` / 字段 / `Array[m.Pt]` / `is` / `as` / `new` 全位置） | ★ 上面**每个类型位置**各一条正例；未 import / 未导出 / 名字写错时给出**同一口径的处方**；类型位置与表达式位置**行为一致** | 中（动 parser 2 处 + `TypeInfo` 加字段 + `resolve_alias_in_type` 一处） | **中偏高**：类型位置是"全位置×递归"的，改一半会造出"参数能过、字段报错"的**不一致**（比现状更糟） | ⬜ |
+| **US1** | **P0** | ~~**类型位置支持模块限定名 `m.Pt`**（`m.Pt p` / `func f(m.Pt x)` / `: m.Pt` / 字段 / `Array[m.Pt]` / `is` / `as` / `new` 全位置）~~ ⇒ **已修**（2026-10-12，工作区未提交）：解析器记前缀 + 语义层**复用 `use` 的唯一实现**做隐式 use | 已完成 ✓（10 位置矩阵用例 + 3 条负例 + 模块模式） | — | — | ✅ |
 | **US2** | P1 | **报错定位**：漏 `use`（或用 `use m.(A,B)` 漏了 C）时，报错**指到真正使用它的那一行**，而不是 `use` 那一行 | 复现 §0.2 场景：报错行号 = 使用处 ✓ 且仍带 `use m.C` 的处方 ✓ | 低–中（先要探明报错到底在哪一步产生） | 低（只改诊断，不改语义） | ⬜ |
 | **US3** | 待定 | `use m.*` **通配**逃生阀 | 加则要有"与 `use m.C` 同名如何取舍"的明确规则 | 低（parser 一个分支） | 与"**显式优先 / 少报不误报**"的既有风格冲突 | ⏸ **US1 完成后重估**（US1 落地则本条很可能降级为"不做"） |
 | **US4** | P2 | **传导型 `use` 正式化**：区分"自用 use" vs "转出口 use"（`export use`?），或至少把它写成一条**正式纪律** | 中间层为了传递而 `use` 一个自己不用的类型时，**意图是可表达的**（或文档里明确命名这条纪律） | 低（文档）/ 中（真做 `export use`） | 低 | ⬜ |
@@ -78,7 +78,31 @@ m.Pt p = m.mk()         // ✗ 类型位置（parser_func.c:662 / parser.c:225 �
 
 ***
 
-## 3. US1 详述（P0）
+## 3. US1 详述（P0）—— ✅ 已修（2026-10-12，工作区未提交）
+
+### 落地（改了哪 8 处）
+
+| 文件 | 改动 |
+|---|---|
+| `src/include/leno_types.h` | `TypeInfo` 新增 `module_qualifier`（**只解析阶段有意义**；**不参与 `type_equals`** ✓） |
+| `src/type.c` | `type_free` / `type_copy` 带上该字段；`type_equals` 处写明**为什么不比较** ✓ |
+| `src/parser/parser_func.c` | `parse_base_type` 认 `IDENT . IDENT`（**两 token 都确认才消费** ✓）；限定名一律先记 TYPE_STRUCT（`face_def_find` 会猜歪 ✗）；`parser_reject_module_qualified_type` 降级为**多级限定**兜底 |
+| `src/parser/parser.c` | 声明处的 `qualified_decl` 从"报错"改成"走普通声明路径"；前瞻**多吞一段 `.` 链** ⇒ 多级限定能被当成类型位置、报出正确那句 ✓ |
+| `src/semantic/semantic_visit_ast.c` | **把 `case AST_USE` 的 390 行分派体抽成 `semantic_import_use_symbol()`**（逐字搬 + 定点变换：13 处 case 级 `break` → `return`） |
+| `src/semantic/semantic_visit_func.c` | `resolve_alias_in_type` 新增限定名分支：**隐式 use** + 成功后清空前缀（幂等 ✓）+ 失败毒化成 `any`（抑噪 ✓） |
+| `src/semantic/semantic.c` + `src/include/leno_semantic.h` | 新增 `in_type_prepass` 阶段标志（预归一化阶段跳过） |
+| 用例/文档 | 新增 `assert/test_qualified_type_positions.leno`（10 位置矩阵）+ `assert/qualified_type_mod.leno`；`test_qualified_type_hint.leno` **整体重写**（4 条负例翻案 + 新增多级/未导入/无此类型 3 条负例）；`test_diag_static_errors.leno` 的 M9 三条翻案；`test_diag_error_batteries.leno` 的声明处判据翻案（并删除负例 fixture）；3 篇文档同步 |
+
+### ⚠ 实施中踩到的两个坑（都很隐蔽，值得记住）
+
+1. **预注册阶段早于 `import`** —— 语义分析开头会先把所有函数签名归一化一遍，那一遍**跑在 `AST_IMPORT` / `AST_USE` 之前** ⇒ 那时模块别名还没登记，动手只会得到假错误「模块 'm' 未导入」（实测一个探针里 3 个位置全报）。
+   修法：加显式阶段标志 `in_type_prepass`，那一遍**原样留着**，主阶段再解析 ✓
+   （**不猜**"是不是预注册"—— 猜错就是假报错或漏报 ✓）。
+2. **两个"静默错"**（都靠套件才暴露，光看输出看不出来）：
+   - **抽取时把 native 成功出口改成了失败**：原 case 里那一句 `break;` 位于 `if (!semantic_import_native_type(…))` **之外**（= 成功出口 ✓），我按行号映射时当成失败分支 ⇒ **所有 native 限定名（`d.DirEntry`）静默变成 `any`** ✗。
+     为什么难发现：局部变量 / 形参 / 顶层变量的 `any` 是**合法**的 ⇒ 那几格"看起来正常"，只有 **struct 字段**位置报「字段不能使用 any」才把它顶出来 ✓。
+     ⇒ 教训：**搬代码必须按语法层级看，不能只按行号映射** ✓。
+   - **`semantic_init` 不是整体 memset**（本仓注释里专门警告过 ✓）：新加的 `in_type_prepass` 漏了显式清零 ⇒ **模块模式**下读到栈上垃圾（非零）⇒ 归一化整段被跳过 ⇒ 模块里写 `m.Pt` 报"未定义的类型" ✗（入口脚本模式恰好是 0，所以只有模块模式红 ✓）。
 
 ### 症状
 
@@ -160,6 +184,26 @@ var q = new m.Pt()       // ✓ 表达式位置一直合法
 - 套件：`.\\build\\leno.exe assert\\run_tests.leno build\\leno.exe assert` 全绿 ✓
 - 老判据翻案：`assert/test_diag_static_errors.leno` 里钉"不支持带模块前缀的类型名"的断言要**改**（M9 刚加的反例同理）✓
 
+### 验收（实测，2026-10-12）
+
+| # | 位置 | 用例 | 结果 |
+|---|---|---|---|
+| 1 | var 声明 | `m.Pt p = m.mk(1,2)` | ✓ |
+| 2 | 形参 | `func area_of(m.Pt p): int` | ✓ |
+| 3 | 返回 | `func origin(): m.Pt` | ✓ |
+| 4 | struct 字段 | `struct Holder { m.Pt p  m.Shape s }` | ✓（含 face 字段） |
+| 5 | 泛型实参 | `Array[m.Pt]` / `Dict[string,m.Pt]` / `new m.Box[m.Pt]()` | ✓ |
+| 6 | `is` / `case is` / 守卫 | 三种都跑通 | ✓ |
+| 7 | `as` | `v as m.Pt` | ✓ |
+| 8 | `new m.Pt()` | 回归（本来就合法） | ✓ |
+| 9 | cstruct / enum / alias | `m.Raw.malloc()` / `m.Color.RED` / `m.Size` | ✓（三条不同注册通道） |
+| 10 | 模块函数**语句级**调用 | `m.hello()`（前瞻不许误判成声明） | ✓ |
+| 11 | **顶层全局变量**的限定类型 | `m.Helper h = new m.Helper()` | ✓（`test_diag_error_batteries` 钉） |
+| 12 | **模块模式**（`semantic_analyze_module`） | 模块内部用 `m.Pt` 做字段/形参/返回 | ✓ |
+| — | native 类型（`dirs` 的 `DirEntry`） | 与源码模块**不是同一条通道**，单独钉 ✓ 且**真类型**（字段可访问、错字段会报） | ✓ |
+| — | 负例 | 多级限定 / 模块未导入 / 模块里无此类型 | ✓ 三条文案都点名真因 |
+| — | 套件 | `run_tests.leno` | **448 passed / 0 failed** |
+
 ### 顺带收益
 
 - §0.2 那类 bug（漏列 ⇒ 报错点错位）**从"难查"变成"不会发生"** ✓
@@ -185,3 +229,4 @@ var q = new m.Pt()       // ✓ 表达式位置一直合法
 | 日期 | 条目 | 动作 |
 |---|---|---|
 | 2026-10-12 | — | 建档；快照：设计评估结论（机制对 / 缺逃生阀）、现状事实 ⑪ 条、US1–US5 立项、"明确不做"五项 |
+| 2026-10-12 | US1 | **已完成（工作区未提交）**：解析器记模块前缀 + 语义层**复用 `use` 的唯一实现**（抽出 `semantic_import_use_symbol`）+ 新用例 `test_qualified_type_positions.leno`（10 位置矩阵）/ `test_qualified_type_hint.leno`（重写）/ `test_diag_*`（M9 三条翻案）+ 3 篇文档同步；套件 **448/0**。⚠ 顺带查实两个隐蔽坑：**预注册阶段早于 import**（要显式阶段标志）、**`semantic_init` 不是 memset**（新字段漏清 ⇒ 模块模式读到栈垃圾） |

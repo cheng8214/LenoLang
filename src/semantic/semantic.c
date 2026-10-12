@@ -148,6 +148,10 @@ void semantic_init(Semantic* s, Ast* root) {
     s->in_clib = 0;
     s->has_module_load_failure = 0;
     s->in_main_func = 0;
+    // ★ US1：同上 —— 本函数**不是**整体 memset ⇒ 漏清就是读栈上垃圾。
+    //   实测（2026-10-12）：漏了这一行时，**模块模式**下这个字段是垃圾非零 ⇒
+    //   类型归一化整段被跳过 ⇒ 模块里写 `m.Pt` 直接报"未定义的类型: Pt"✗（入口脚本模式恰好是 0）
+    s->in_type_prepass = 0;
     // ⚠ 泛型需求推断（B 方案）的三个字段**必须**在这里显式清零：本函数**不是**整体 memset
     //   （Semantic 是 main.c 的栈变量）⇒ 漏了就是读栈上垃圾 ⇒ 一调 native 检查点就段错误（实测 ✗）
     s->cur_generic_func = NULL;
@@ -455,6 +459,10 @@ void semantic_analyze(Semantic* s, Ast* ast) {
     //   与 visit_block.inc「第二轮：转换所有函数的参数类型」同口径（那份对 export func 还会漏 ✗）。
     if (ast && ast->kind == AST_BLOCK) {
         AstList* flist = &ast->u.block;
+        // ★ US1（2026-10-12）：这一段是**类型预归一化阶段** —— 它早于 AST_IMPORT / AST_USE 的访问
+        //   ⇒ 模块别名还没登记。置标志让归一化函数**跳过"模块限定名 `m.Pt` 的隐式 use"**
+        //   （留到主阶段那一遍 ✓），免得在这里报假错误「模块 'm' 未导入」✗
+        s->in_type_prepass = 1;
         for (int i = 0; i < flist->count; i++) {
             Ast* fstmt = flist->items[i];
             Ast* fn = NULL;
@@ -470,6 +478,7 @@ void semantic_analyze(Semantic* s, Ast* ast) {
             }
             resolve_alias_in_type(s, &fn->u.func.return_type, fn->line);
         }
+        s->in_type_prepass = 0;
     }
 
     // 预注册所有全局变量声明（支持前向引用）

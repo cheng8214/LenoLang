@@ -6,7 +6,9 @@ use core.CompareCb
 
 main() {
     // 如果 cfunc 跨模块 use 成功，编译不会报错
-    // use 语句错误：模块 'core' 中没有类型或函数 'WriteCb'
+    // （若导入失败，出错文案是：类型导入失败：模块 'core' 中没有类型或函数 'WriteCb'
+    //   —— 2026-10-12 随 US1 改：前缀从「use 语句错误：」改成「类型导入失败：」，
+    //      因为同一段实现也被"类型位置的限定名"复用，那里源码里没有 use 语句）
     assert(true, "cfunc cross-module use succeeded")
     print("cfunc cross-module use test passed")
 }

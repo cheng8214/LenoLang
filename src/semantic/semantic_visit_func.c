@@ -80,6 +80,44 @@ int resolve_alias_in_type(Semantic* s, TypeInfo** type_ptr, int line) {
     TypeInfo* type = *type_ptr;
     int changed = 0;
 
+    // ★ US1（2026-10-12，见 docs/类型可见性与use逃生阀修复追踪.md）：**模块限定类型名** `m.Pt`
+    //   （解析器记在 `module_qualifier` 里，见 parser_func.c 的 parse_base_type）。
+    //   语义 = **隐式 `use m.Pt`** ⇒ 直接复用 `use` 的**唯一实现**（报错文案 / 可用性判据 /
+    //   重复导入的宽容度三条都不可能漂移 ✓），随后**清空前缀** ⇒ 下面那段（以及所有下游校验点
+    //   `check_undefined_type` / `visit_var` / `visit_type_def` …）看到的就与"用 use 导入的名字"
+    //   完全一样 ✓ —— 这就是"只改一个函数就能覆盖全部类型位置"的原因 ✓
+    //   · 位置：必须放在下面 `if (type->kind == TYPE_STRUCT …)` **之前** —— 因为注册进作用域的
+    //     那条符号带着**真实 kind**（face / cstruct / clib / enum / alias），下面那段正好会据此归一 ✓
+    //   · 幂等：解析成功后前缀被清空 ⇒ 同一个类型被归一化第二遍时**不会再导一次** ✓
+    //     （类型归一化确实会跑多遍：函数签名在 visit_func 与符号登记处各一次 ✓）
+    //   · ⚠ **预归一化阶段要跳过**（`s->in_type_prepass`）：语义分析开头会先把所有函数的
+    //     形参/返回类型归一化一遍，而那一遍**早于** `AST_IMPORT` / `AST_USE` 的访问 ⇒
+    //     模块别名还没登记，在这里动手只会得到一句**假错误**「模块 'm' 未导入」✗
+    //     （实测踩到过：一个探针里 3 个位置全报"未导入"）。那时**原样留着**，主阶段那一遍再解析 ✓
+    //   · 主阶段：无论"模块登记没登记"都走 `use` 的唯一实现 —— 模块没登记时它报的正是
+    //     「模块 'm' 未导入」✓（不这么做的话，下游那句会指向**别的模块** ✗，见函数体内的注释）
+    //   · 失败时**毒化成 any**：错误已经报过，别让下游再报一句方向错的处方 ✓
+    if (type->module_qualifier && type->struct_name && !s->in_type_prepass) {
+        // 模块别名**登记没登记都要走** `use` 的唯一实现：
+        //   · 登记了 ⇒ 正常导入 / 报"模块里没有这个类型" ✓
+        //   · 没登记 ⇒ 报「模块 'm' 未导入」✓ —— **这正是该说的那句话**；换成不作为的话，
+        //     下游那句会是「未定义的类型: Pt（…请补一句 use other.Pt）」⇒ 指向**别的模块** ✗（实测）
+        int ok = semantic_import_use_symbol(s, type->module_qualifier, type->struct_name,
+                                            type->line, type->column);
+        free(type->module_qualifier);
+        type->module_qualifier = NULL;
+        changed = 1;
+        if (!ok) {
+            // 导入失败（模块未导入 / 模块里没这个类型）：错误**已经报过** ⇒ 把类型**毒化成 any**，
+            //   免得下游再报一句方向错的处方 —— 实测 `m.Nope x = null` 会多报一句
+            //   「未定义的类型: Nope（请检查是否已通过 use 语句导入该类型，如 use module.Nope）」✗
+            //   ⚠ 这不是"静默放过"：上面那句错误已经进 ERR_* ⇒ 编译照样失败 ✓（本仓口径：报错即失败）
+            //   ⚠ 毒化成 any 后同样不再触及其它类型的级联检查 —— 正是 visit_var.inc 的
+            //     `declared_type_undefined` 那套"报过一次就别级联"的同一意图 ✓
+            type->kind = TYPE_ANY;
+        }
+    }
+
     if (type->kind == TYPE_STRUCT && type->struct_name) {
         if (face_def_find(type->struct_name)) {
             type->kind = TYPE_FACE;
