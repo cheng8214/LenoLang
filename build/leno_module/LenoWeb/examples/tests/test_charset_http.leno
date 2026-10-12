@@ -9,7 +9,7 @@ import threads
 int PORT = 39611
 int MAXREQ = 512
 
-// ⚠ threads.start 的入口必须是**本文件**的函数（子线程不加载别的模块的框架）
+// ⚠ 2026-10-12 起：线程入口**可以是模块函数**了（TH2）—— 这层包装非必需，保留即可
 func serverEntry(int port, int maxReqs) { tk.serve(port, maxReqs) }
 
 main() {

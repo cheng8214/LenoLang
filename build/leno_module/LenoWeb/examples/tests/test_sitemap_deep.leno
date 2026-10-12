@@ -16,7 +16,7 @@ use web.SitemapEntry
 int PORT = 39616
 int MAXREQ = 512
 
-// ⚠ threads.start 的入口必须是**本文件**的函数
+// ⚠ 2026-10-12 起：线程入口**可以是模块函数**了（TH2）—— 这层包装非必需，保留即可
 func serverEntry(int port, int maxReqs) { tk.serve(port, maxReqs) }
 
 // 把条目拼成 "url|lastmod|changefreq|priority" 便于断言

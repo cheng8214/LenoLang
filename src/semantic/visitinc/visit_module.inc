@@ -697,6 +697,9 @@
 
                     // ★★ 2026-10-10（A 组第 3 条后半）：`threads.start` 的**跨线程实参**拦截 ✓
                     //   把"运行期才报不能跨线程传递此类型"提前到编译期 ✓ 见共享实现 ✓
+                    //   ★ 2026-10-12（TH1）口径已收窄：**只拦静态类型确定为 `cstruct`** 的实参 ✓
+                    //     —— struct / face 已能跨线程（深克隆 + 接收侧按定义重建），原先拦它们是**误报** ✗
+                    //     （见 docs/线程并发能力修复追踪.md 的 TH1 ✓）
                     if (strcmp(actual_module, "threads") == 0 &&
                         strcmp(ast->u.module_call.method_name, "start") == 0) {
                         semantic_check_cross_thread_args(s, &ast->u.module_call.args,

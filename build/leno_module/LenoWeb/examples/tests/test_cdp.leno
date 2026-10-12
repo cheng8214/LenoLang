@@ -29,7 +29,7 @@ use ws.(WsUrl, WsClient)
 int PORT = 39621
 int MAXREQ = 64
 
-// ⚠ threads.start 的入口必须是**本文件**的函数
+// ⚠ 2026-10-12 起：线程入口**可以是模块函数**了（TH2）—— 这层包装非必需，保留即可
 func serverEntry(int port, int maxReqs) { tk.serve(port, maxReqs) }
 
 // 从 /detect 页面里抠出 #out 的文本（诊断打印用；失败返回 ""）

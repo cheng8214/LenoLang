@@ -6,7 +6,9 @@
 //   2. 整层清理模式的「单元」= 根目录的**直接子项**——不会碰根外的任何东西
 //      前缀过滤模式只收**匹配前缀的文件**，绝不收目录（防误删 Explorer 整目录）
 //   3. delete_worker 逐路径做 starts_with(roots) 白名单校验，不匹配即计 failed
-// 全部 worker 为具名全局函数（threads.start 硬性要求，闭包会被 GC ✗）
+// 全部 worker 为具名函数（★ 2026-10-12 更正：这**不是** threads.start 的硬性要求 ——
+//   闭包与模块函数都能作入口 ✓（闭包不会被 GC：入口闭包在子线程堆上会重新建一份副本 ✓）；
+//   这里保持具名只是为了**可读、可复用、可单测** ✓ 见 docs/线程并发能力修复追踪.md）
 import dirs
 import strings
 import threads
@@ -644,7 +646,9 @@ func _wl_kept(Array[string] wlEnc, string p): bool {
 //   kept = 命中**保留清单**（有意不收 ⇒ 用户可据此确认清单真的生效了 ✓）
 //   成对明细从下标 `SCAN_HDR` 开始 ✓
 // （单元大小供 delete_worker 免二次 stat 统计释放量 ✓）
-// 参数用纯数组/字符串——**struct 实例不能跨线程传递** ✗ ⇒ 不收 CleanCategory
+// 参数用纯数组/字符串——★ 2026-10-12 更正：**struct 现在能跨线程了** ✓
+//   （深克隆 + 接收侧按定义重建，见 TH1）⇒ 不收 CleanCategory 是**风格选择**（string 免收窄 ✓），
+//   不再是语言限制 ✗
 // ch 允许 null（单测直调）；进度经 ch.try_send([idx, sizeDelta, cntDelta]) 上报（非阻塞，满了就丢）
 // ⚠ `wlEnc` **必须显式传**（不能给默认值 `= []`：本语言要求默认值是编译期常量 ✗ 实测报错）
 //   它是保留清单的**编码快照**（纯字符串数组 ⇒ 可安全跨线程 ✓，见 cleaner_whitelist.encode ✓）

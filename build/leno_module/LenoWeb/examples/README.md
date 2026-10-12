@@ -59,7 +59,8 @@ build\leno.exe build\leno_module\LenoWeb\examples\tests\test_charset_http.leno
 服务端跑在**子线程**里（范式来自仓库根 `assert/test_sockets_io.leno`）：
 
 ```leno
-// ⚠ threads.start 的入口必须是**本文件**的函数 —— 不能直接传 tk.serve
+// 2026-10-12 起线程入口可以是模块函数了（TH2）⇒ 这层包装非必需；
+// 传模块函数（如 tk.serve）现在也能跑，但包装写法无害、读起来更清楚 ✓
 func serverEntry(int port, int maxReqs) { tk.serve(port, maxReqs) }
 
 main() {

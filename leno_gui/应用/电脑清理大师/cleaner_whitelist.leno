@@ -5,14 +5,14 @@
 //   cleaner_rules.leno = **路径匹配的纯实现**（norm_path / match_encoded）+ worker
 //   cleaner_detail.leno = "点一行 ⇒ 加进保留清单"的 UI 入口
 //
-// ⚠⚠ 为什么不把匹配实现在这里（2026-09-28 踩坑记录，很值钱）：
-//   worker 线程里**首次使用一个尚未初始化的模块**会直接抛错 ✗ ——
-//   症状是 `join()` 只得到 `Thread error: unknown error`，且发生在**进入函数体之前**
-//   ⇒ try/catch 根本抓不到 ✗（实测：本地同形的线程函数都正常 ✓，
-//      一换成 rules.delete_worker（它新 import 了本模块）就必炸 ✓）
-//   旧代码没事，是因为主线程先调过 rules 的函数、把 rules 初始化了 ✓。
-//   ⇒ 铁律：**worker 要用到的一切都必须落在 cleaner_rules 模块内**（纯函数、无状态 ✓）
-//   本模块从此**只由主线程使用**（应用启动 / 明细弹窗）✓
+// ⚠⚠ 为什么不把匹配实现在这里（2026-09-28 踩坑记录 —— ★ 2026-10-12 追认根因并**撤销铁律**）：
+//   当时的症状：`rules.delete_worker` 当线程入口 ⇒ `join()` 只得到 `Thread error: unknown error`，
+//   且发生在**进入函数体之前**（try/catch 根本抓不到 ✗）；而本地同形的线程函数都正常 ✓。
+//   ⇒ 真正根因是**模块函数不能作线程入口**那个 bug（协程首帧漏设 `frame->module`，
+//     见 `docs/线程并发能力修复追踪.md` 的 TH2）—— 2026-10-12 已修 ✓
+//     ⇒ 当时那条"铁律"（worker 用到的一切必须落在同一模块内 / 本模块只由主线程使用）
+//       **不再是语言约束**，只是本应用的**分层选择**：状态归本文件、纯匹配归 cleaner_rules ✓
+//   保留这段是因为"症状与根因距离很远"这件事本身值钱（一个 bug 让整个应用改了架构 ✓）。
 //
 // 匹配语义（由 rules.norm_path / rules.match_encoded 实现 ✓）：
 //   * 大小写不敏感（`C:\Temp` == `c:\temp` ✓）、`/` 与 `\` 等价 ✓
@@ -84,7 +84,9 @@ export func remove_at(int i): bool {
 
 export func clear() { RULES = [] }
 
-// 编码成**纯字符串数组** ⇒ 唯一允许跨线程给 worker 的形式 ✓（见文件头铁律 ✓）
+// 编码成**纯字符串数组** ⇒ 给 worker 传保留清单的形式 ✓
+//   （⚠ 2026-10-12 起这不是"唯一允许"的形式了：struct 也能跨线程了 ✓ 见 TH1；
+//    但字符串数组**免收窄、跨版本最稳** ⇒ 本应用继续用它 ✓）
 //   `"1|c:\temp"` = 目录规则；`"0|c:\a\x.txt"` = 单文件规则 ✓
 export func encode(): Array[string] {
     Array[string] out = []

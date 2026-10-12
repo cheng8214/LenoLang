@@ -246,7 +246,8 @@ build\leno.exe ..\LenoGame\俄罗斯方块\tetris.leno
 - **Package management** — `leno.toml`, `leno --init`, `leno --install`
 
 **Concurrency**
-- **Multithreading** — `threads` module, `start()` / `join()` / Channel, global variables isolated between threads
+- **Multithreading** — `threads` module: `start()` / `join()` / `join_all()` / `parallel_for()` / `map()`;
+  values passed across threads are **deep-copied** (structs included — you always get an independent copy)
 - **Async coroutines** — `async` / `await` + event loop
 - **Channel** — buffered / unbuffered, Go-style CSP
 

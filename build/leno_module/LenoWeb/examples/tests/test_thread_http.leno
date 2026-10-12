@@ -15,7 +15,7 @@ int WORKERS = 8
 int ROUNDS = 6
 int MAXREQ = 4096
 
-// ⚠ threads.start 的入口必须是**本文件**的函数
+// ⚠ 2026-10-12 起：线程入口**可以是模块函数**了（TH2）—— 这层包装非必需，保留即可
 func serverEntry(int port, int maxReqs) { tk.serve(port, maxReqs) }
 
 // 每线程一个独立客户端（等价 Python 里每线程一个 requests.Session）

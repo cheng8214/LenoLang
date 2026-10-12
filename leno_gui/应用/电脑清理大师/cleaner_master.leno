@@ -10,7 +10,9 @@
 // 线程模型（照 file_search / cache_cleaner 套路）：
 //   扫描 = 6 类别并行 threads.start(scan_worker) + channel 实时增量 + 50ms 定时器排空
 //   清理 = 每勾选类别一条 delete_worker 线程，join 取权威结果
-//   worker 必须具名全局函数（scan_entry / delete_entry，闭包会被 GC ✗）
+//   worker 用**具名函数**（scan_entry / delete_entry）—— ★ 2026-10-12 更正：这不是硬性要求
+//     （闭包、模块函数都能作线程入口 ✓；入口闭包会在子线程堆上重建副本，不会被 GC ✗），
+//     写成具名是为了可读与可复用 ✓ 见 docs/线程并发能力修复追踪.md 的 TH2
 //
 // 运行：build\leno.exe cleaner_master.leno
 import "SDL3" as SDL3
@@ -42,7 +44,9 @@ func _dlog(string s) {
     } catch e { return }    // 日志失败无处可报：写 return 表明有意忽略（体非空 ⇒ 不触发「空catch吞异常」提示 ✓）
 }
 
-// ==================== 线程入口（具名全局 ✓；参数纯数组/字符串 ⇒ 可跨线程 ✓） ====================
+// ==================== 线程入口（具名 ✓；参数纯数组/字符串 ⇒ 可跨线程 ✓） ====================
+//   ⚠ 这层包装**现在可以直接传 rules.scan_worker**（2026-10-12 起模块函数可作入口 ✓）
+//     保留它是因为"入口位置集中在本文件"读起来更清楚 ✓
 func scan_entry(Array[string] roots, string prefix, any ch, int idx, Array[string] wlEnc): Array[string] {
     return rules.scan_worker(roots, prefix, ch, idx, wlEnc)
 }
@@ -511,7 +515,10 @@ struct CleanerMaster {
         updateSummary()
         scanCh = threads.channel(65536)
         // ★ 保留清单**取一次快照**再传给 worker（纯字符串数组 ⇒ 可安全跨线程 ✓）
-        //   为什么不能在 worker 里读模块级状态：新线程视角下可能是未初始化值 ⇒ 直接抛错 ✗（实测过 ✓）
+        //   ★ 2026-10-12 更正原因：worker 现在**能**读模块级状态了（模块 globals 与主线程是
+        //     同一份 ✓，当年"新线程视角下未初始化 ⇒ 抛错"是 TH2 那个 bug 的表现，已修）；
+        //     但**扫描期间用户可能改白名单** ⇒ 边扫边改会串台（跨线程共享 → 数据竞争）✗
+        //     ⇒ 取快照仍然是对的 ✓ 理由从"读不到"改成"读到了也会变" ✓
         Array[string] wlEnc = wl.encode()
         for 0 : cats.len() - 1 to i {
             scanThreads.add(threads.start(scan_entry, cats[i].roots, cats[i].file_prefix, scanCh, i, wlEnc))

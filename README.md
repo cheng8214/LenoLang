@@ -246,7 +246,8 @@ build\leno.exe ..\LenoGame\俄罗斯方块\tetris.leno
 - **包管理** —— `leno.toml`、`leno --init`、`leno --install`
 
 **并发**
-- **多线程** —— `threads` 模块，`start()` / `join()` / Channel，线程间全局变量隔离
+- **多线程** —— `threads` 模块：`start()` / `join()` / `join_all()` / `parallel_for()` / `map()`；
+  跨线程传值即**深拷贝**（struct 也能过 —— 收到的是一份独立副本 ✓）
 - **异步协程** —— `async` / `await` + 事件循环
 - **Channel** —— 有缓冲 / 无缓冲，Go 风格 CSP
 

@@ -58,7 +58,7 @@ func runSort(): Array[int] {
     return [acc.n, if sortedOk then 1 else 0]
 }
 
-// 子线程入口（必须是本文件的函数）
+// 子线程入口（2026-10-12 起模块函数也可以作入口了，这里保持本文件函数不变）
 func childEntry(Channel ch) {
     Array[int] r = runSort()
     ch.send(_str(r[0]) + "," + _str(r[1]))
