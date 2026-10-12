@@ -108,6 +108,61 @@ static Value channel_method_len(int argc, Value* args) {
     return val_num(count);
 }
 
+// ==================== 入口校验（start / parallel_for / map 共用 —— 单一实现）====================
+//
+// ★ 两条判据（都在**主线程**把话说清楚，别让用户从 join() 的垃圾文案里猜）：
+//   ① 所属模块必须**已初始化**（TH2，2026-10-12）：
+//      模块函数现在可以直接作线程入口 ✓（根因只是协程首帧漏设 `frame->module`，
+//      见 `docs/线程并发能力修复追踪.md` 的 TH2）。模块对象由 `loaded_modules` **进程级缓存**共享，
+//      init_chunk 主线程已跑过 ⇒ globals / 函数槽都在 ✓。**唯一例外**是模块此刻还没初始化
+//      （不在入口脚本的 import 链上）⇒ globals 全空、进去只会拿到一堆 null、报错毫无线索 ✗
+//      ⇒ 这里明确拦住（正常流程下不可能发生 ✓）。
+//   ② 实参个数必须**恰好**等于形参个数（B13，2026-10-07）：
+//      此前少传实参的症状是 `join()` 抛「非字符串异常…常见于进入函数体之前就失败」
+//      —— 把人往"模块没加载"上引 ✗。
+//      ⚠ 判据用**严格相等**：Leno 的默认参数是**调用点**补齐的（codegen 的 fill_default_args），
+//        而线程入口由 VM 直接调用 ⇒ 默认值不会被补，少传就是真错位 ✓。
+//
+// 返回 0 = 通过；返回 -1 = 已报错（调用方直接 `return val_null()`）
+static int threads_check_entry(ObjClosure* closure, int got_args, const char* who) {
+    if (!closure || !closure->function) {
+        char msg[128];
+        snprintf(msg, sizeof(msg), "%s: 入口不是函数", who);
+        native_throw_error(msg);
+        return -1;
+    }
+
+    if (closure->function->module) {
+        ObjModule* mod = (ObjModule*)closure->function->module;
+        if (!mod->initialized) {
+            char msg[512];
+            snprintf(msg, sizeof(msg),
+                "%s: 入口函数 '%s' 所属的模块 '%s' 尚未初始化 ✗ —— "
+                "模块的 init_chunk 还没跑过（globals 是空的）⇒ 进去只会拿到 null。"
+                "常见原因：该模块没有出现在入口脚本的 import 链上（或用了非常规的加载方式）。"
+                "解决办法：在入口脚本里 `import` 该模块（正常用法）✓",
+                who,
+                closure->function->name ? closure->function->name : "?",
+                mod->name ? mod->name : "?");
+            native_throw_error(msg);
+            return -1;
+        }
+    }
+
+    int want = closure->function->arity;
+    if (got_args != want) {
+        char msg[256];
+        snprintf(msg, sizeof(msg),
+            "%s: 入口函数期望 %d 个参数，实际传了 %d 个"
+            "（线程入口由 VM 直接调用，默认参数不会被补齐）",
+            who, want, got_args);
+        native_throw_error(msg);
+        return -1;
+    }
+
+    return 0;
+}
+
 // ==================== 模块静态方法 ====================
 
 static Value threads_start(int argc, Value* args) {
@@ -118,52 +173,8 @@ static Value threads_start(int argc, Value* args) {
 
     ObjClosure* closure = (ObjClosure*)val_as_obj(args[0]);
 
-    // ★ 模块函数作线程入口：**2026-10-12 起支持**（TH2，见 docs/线程并发能力修复追踪.md）✓
-    //   原先这里硬拦"入口必须是入口脚本（顶层文件）里的具名全局函数" ✗（判据
-    //   `closure->function->module != NULL`，见 docs/语言摩擦与隐式契约清单.md 的 M1 ✓）。
-    //   根因其实只有一处：协程首帧漏设 `frame->module`（`src/vm/vm.c` 的
-    //   `vm_run_coroutine_with_vm`），而模块字节码全走 `frame->module` 寻址
-    //   ⇒ 模块函数体里第一条模块符号指令就报「不在模块上下文中」✗（症状是 join() 只给
-    //   "Thread error: unknown error"，连函数体都进不去 ✓）。补上那一行之后，
-    //   子线程直接跑模块函数是可行的 ✓（模块对象由 `loaded_modules` 进程级缓存共享，
-    //   init_chunk 主线程已跑过 ⇒ globals / 函数槽都在 ✓）。
-    //   ⚠ 仍要拦的**一种**情况：该模块此刻**还没初始化**（globals 全空）⇒ 进去只会拿到
-    //     一堆 null、报错毫无线索 ⇒ 这里把话说清楚（正常流程下不可能发生：入口脚本 import
-    //     的模块在其 chunk 开头就跑过 OP_INIT_LENOMODULE ✓）。
-    if (closure->function && closure->function->module) {
-        ObjModule* mod = (ObjModule*)closure->function->module;
-        if (!mod->initialized) {
-            char msg[512];
-            snprintf(msg, sizeof(msg),
-                "threads.start(): 入口函数 '%s' 所属的模块 '%s' 尚未初始化 ✗ —— "
-                "模块的 init_chunk 还没跑过（globals 是空的）⇒ 进去只会拿到 null。"
-                "常见原因：该模块没有出现在入口脚本的 import 链上（或用了非常规的加载方式）。"
-                "解决办法：在入口脚本里 `import` 该模块（正常用法）✓",
-                closure->function->name ? closure->function->name : "?",
-                mod->name ? mod->name : "?");
-            native_throw_error(msg);
-            return val_null();
-        }
-    }
-
-    // ★ 实参个数校验（B13，2026-10-07）：在**主线程**把话说清楚。
-    //   此前少传实参的症状是 `join()` 抛
-    //   "Thread error: 非字符串异常（对象类型 2）—— 常见于**进入函数体之前**就失败
-    //   （如入口函数所属模块未加载）"，把人往"模块没加载"上引（实录 B13 副发现 1）。
-    //   ⚠ 判据用**严格相等**：Leno 的默认参数是**调用点**补齐的（codegen 的 fill_default_args），
-    //     而线程入口是 VM 直接调用 ⇒ 默认值不会被补，少传就是真错位。
-    if (closure->function) {
-        int want = closure->function->arity;
-        int got = argc - 1;
-        if (got != want) {
-            char amsg[256];
-            snprintf(amsg, sizeof(amsg),
-                "threads.start(): 入口函数期望 %d 个参数，实际传了 %d 个"
-                "（线程入口由 VM 直接调用，默认参数不会被补齐）",
-                want, got);
-            native_throw_error(amsg);
-            return val_null();
-        }
+    if (threads_check_entry(closure, argc - 1, "threads.start()") != 0) {
+        return val_null();
     }
 
     Value* call_args = NULL;
@@ -213,6 +224,118 @@ static Value threads_sleep(int argc, Value* args) {
     return val_null();
 }
 
+// ==================== 并行原语（TH3，2026-10-12）====================
+//
+// 设计取向：**不加新对象类型、不加新关键字**（语言对"新特性"的一贯取向是够用就行 ✓）
+//   ⇒ "凑齐 N 个线程"用 `join_all(Array[Thread])`、"分 N 份并行"用 `parallel_for(n, f)`、
+//     "并行 map"用 `map(arr, f)` —— 三个普通模块函数，零类型系统改动。
+// 见 `docs/线程并发能力修复追踪.md` 的 TH3 ✓
+
+// 等一组线程结束（“WaitGroup”的等价物）—— `Array[Thread]`，返回真正 joined 的个数（int）
+//   ⚠ 某个线程出错时：`thread_join` 会登记异常但**不跳转** ⇒ 这里把**剩下的也等完**再让异常浮出来
+//     （不然会留下没人 join 的活线程 ✓）
+static Value threads_join_all(int argc, Value* args) {
+    if (argc < 1 || !val_is_obj(args[0]) || val_as_obj(args[0])->type != OBJ_ARRAY) {
+        native_throw_error("threads.join_all() 需要一个 Array[Thread] 参数");
+        return val_null();
+    }
+    ObjArray* arr = (ObjArray*)val_as_obj(args[0]);
+    int joined = 0;
+    for (int i = 0; i < arr->count; i++) {
+        Value v = arr->elements[i];
+        if (val_is_obj(v) && val_as_obj(v)->type == OBJ_THREAD) {
+            thread_join((ObjThread*)val_as_obj(v));
+            joined++;
+        }
+    }
+    return val_int(joined);
+}
+
+// 分 n 份并行：`f(int index)` 在 n 个线程上各跑一次（index = 0..n-1），等全部结束。
+//   返回值 = **真正起来的线程数**（int；创建失败时可能小于 n）。
+//   ⚠ 并行度要自己控（`n` 不是"自动按核数"）—— 与 `parallelFor` 的语义一致：说几份就几份。
+static Value threads_parallel_for(int argc, Value* args) {
+    if (argc < 2 || !val_is_int(args[0]) ||
+        !val_is_obj(args[1]) || val_as_obj(args[1])->type != OBJ_CLOSURE) {
+        native_throw_error("threads.parallel_for(n, f) 需要 (int, 函数) 两个参数");
+        return val_null();
+    }
+
+    int n = (int)val_as_num(args[0]);
+    ObjClosure* closure = (ObjClosure*)val_as_obj(args[1]);
+
+    // 回调形态：f(index) —— 一个参数
+    if (threads_check_entry(closure, 1, "threads.parallel_for()") != 0) {
+        return val_null();
+    }
+    if (n <= 0) return val_int(0);
+
+    ObjThread** threads = (ObjThread**)malloc(sizeof(ObjThread*) * (size_t)n);
+    if (!threads) {
+        native_throw_error("threads.parallel_for(): 内存不足");
+        return val_null();
+    }
+
+    int started = 0;
+    for (int i = 0; i < n; i++) {
+        Value idx = val_int(i);
+        ObjThread* t = thread_new_with_args(closure, &idx, 1);
+        if (!t) break;                  // 起不来就停手，把已起来的等完
+        threads[started++] = t;
+    }
+    for (int i = 0; i < started; i++) {
+        thread_join(threads[i]);
+    }
+    free(threads);
+    return val_int(started);
+}
+
+// 并行 map：`f(item, index)` 每个元素起一个线程（**回调形态与 arrays.map 同口径** ✓），
+//   按**输入顺序**收回结果 ⇒ `Array[回调返回类型]`（返回类型规格见 threads_init_module ✓）。
+//   ⚠ 代价：线程数 = 元素数（元素多时线程开销会盖过收益）⇒ 重活请用 `parallel_for` 自己分块 ✓
+static Value threads_map(int argc, Value* args) {
+    if (argc < 2 ||
+        !val_is_obj(args[0]) || val_as_obj(args[0])->type != OBJ_ARRAY ||
+        !val_is_obj(args[1]) || val_as_obj(args[1])->type != OBJ_CLOSURE) {
+        native_throw_error("threads.map(arr, f) 需要 (Array, 函数) 两个参数");
+        return val_null();
+    }
+
+    ObjArray* arr = (ObjArray*)val_as_obj(args[0]);
+    ObjClosure* closure = (ObjClosure*)val_as_obj(args[1]);
+
+    if (threads_check_entry(closure, 2, "threads.map()") != 0) {
+        return val_null();
+    }
+
+    int count = arr->count;
+    ObjArray* result = arr_new(count > 0 ? count : 1);
+    if (!result) return val_null();
+    if (count == 0) return val_obj((Object*)result);
+
+    ObjThread** threads = (ObjThread**)malloc(sizeof(ObjThread*) * (size_t)count);
+    if (!threads) {
+        native_throw_error("threads.map(): 内存不足");
+        return val_null();
+    }
+
+    int started = 0;
+    for (int i = 0; i < count; i++) {
+        Value a[2];
+        a[0] = arr->elements[i];
+        a[1] = val_int(i);
+        ObjThread* t = thread_new_with_args(closure, a, 2);
+        if (!t) break;
+        threads[started++] = t;
+    }
+    // 按输入顺序 join 并收集（`thread_join` 已把结果克隆到本线程堆 ✓）
+    for (int i = 0; i < started; i++) {
+        arr_write(result, i, thread_join(threads[i]));
+    }
+    free(threads);
+    return val_obj((Object*)result);
+}
+
 // ==================== 实例方法初始化 ====================
 
 void threads_init_instance_methods(void) {
@@ -258,6 +381,20 @@ void threads_init_module(void) {
     TypeKind sleep_params[] = {TYPE_INT};
     // 返回 `null`（v3.2.6）：实现就是 `return val_null()`（睡完不产生值）⇒ 别再说它是 any。
     native_register_module_method("threads", "sleep", threads_sleep, &NATIVE_T_NULL, NATIVE_FIXED(sleep_params));
+
+    // ---- 并行原语（TH3，2026-10-12）----
+    // join_all(Array[Thread]) ⇒ int（真正 joined 的个数）
+    TypeKind join_all_params[] = {TYPE_ARRAY};
+    native_register_module_method("threads", "join_all", threads_join_all, &NATIVE_T_INT, NATIVE_FIXED(join_all_params));
+
+    // parallel_for(int n, func f) ⇒ int（真正起来的线程数）；f(index) 一个参数
+    TypeKind pfor_params[] = {TYPE_INT, TYPE_FUNCTION};
+    native_register_module_method("threads", "parallel_for", threads_parallel_for, &NATIVE_T_INT, NATIVE_FIXED(pfor_params));
+
+    // map(Array, func f) ⇒ Array[回调返回]（复用 arrays.map 的同一份规格：回调 = 第 1 实参 ✓）
+    //   f(item, index) 两个参数（与 arrays.map 同口径 ✓）
+    TypeKind tmap_params[] = {TYPE_ARRAY, TYPE_FUNCTION};
+    native_register_module_method("threads", "map", threads_map, &NATIVE_T_ARR_CB_RET1, NATIVE_FIXED(tmap_params));
 
     // 调用 threads_init_instance_methods 注册线程和通道实例方法
     threads_init_instance_methods();

@@ -827,6 +827,49 @@ print(w.run_parallel(1, 2))                     // 6
    另：入口函数所属模块**必须在入口脚本的 import 链上**（否则模块的 `var` 还没初始化，
    会明确报「所属的模块尚未初始化」✓）。
 
+## 并行原语（★ 2026-10-12 起）
+
+手写"起 N 个线程 + 收 N 条结果"的样板以前每个项目都要抄一遍 ⇒ 现在有三个现成的模块函数
+（**没有新增对象类型 / 关键字**，就是普通函数 ✓ 见 `docs/线程并发能力修复追踪.md` 的 TH3）：
+
+| 原语 | 作用 | 回调形态 | 返回 |
+|---|---|---|---|
+| `threads.join_all(Array[Thread])` | 等一组线程结束（“WaitGroup”的等价物） | — | `int`（真正等完的个数） |
+| `threads.parallel_for(n, f)` | 分 n 份并行：`f(index)` 在 n 个线程上各跑一次，等全部结束 | `f(int index)` | `int`（真正起来的线程数） |
+| `threads.map(arr, f)` | 并行 map，结果**按输入顺序**收回 | `f(item, index)` | `Array[回调返回类型]` |
+
+```leno
+import threads
+
+// 分 4 份并行；回调是闭包 ⇒ 可以用捕获的 channel 把结果带回来
+var ch = threads.channel(8)
+var started = threads.parallel_for(4, func(int i) {
+    ch.send(i * 10)
+})
+var sum = 0
+for 0 : 3 to var k { sum = sum + _int(ch.receive()) }
+print(sum)          // 60（0+10+20+30）
+
+// 并行 map：结果顺序与输入一致，静态类型直接是 Array[int]
+var doubled = threads.map([1, 2, 3, 4], func(int x, int idx): int {
+    return x * 10 + idx
+})
+print(doubled[3])   // 43（4*10+3）
+
+// 手工起的线程可以一次等完
+var ts = []
+ts.add(threads.start(work, 1))
+ts.add(threads.start(work, 2))
+print(threads.join_all(ts))   // 2
+```
+
+⚠ 三条注意：
+1. **`n` 要自己控**（`parallel_for` 不会自动按核数分）—— 说几份就几份。
+2. **`map` 的线程数 = 元素数**（每个元素一个线程）⇒ 元素多时线程开销会盖过收益；
+   重活请用 `parallel_for` 自己分块 ✓
+3. **回调的形参个数是硬校验**（线程入口由 VM 直接调用，默认参数不会被补齐 ✓）：
+   `parallel_for` 要 `f(int)`，`map` 要 `f(item, index)`（与 `arrays.map` 同口径 ✓）。
+
 ## API 参考
 
 ### threads 模块
@@ -836,6 +879,9 @@ print(w.run_parallel(1, 2))                     // 6
 | `threads.start(func, args...)` | 启动新线程 | `Thread` |
 | `threads.channel(capacity)` | 创建通道 | `Channel` |
 | `threads.sleep(ms)` | 当前线程休眠 | `null` |
+| `threads.join_all(Array[Thread])` | 等一组线程结束 | `int` |
+| `threads.parallel_for(n, f)` | 分 n 份并行（`f(index)`） | `int` |
+| `threads.map(arr, f)` | 并行 map（`f(item, index)`，按输入顺序） | `Array[回调返回]` |
 
 ### Thread 方法
 

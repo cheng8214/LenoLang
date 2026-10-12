@@ -116,6 +116,54 @@ main() {
 }
 ```
 
+### `threads.join_all(Array[Thread])`
+
+等一组线程结束（“WaitGroup”的等价物 —— **没有引入新对象类型**，见 TH3）。
+
+**参数:** 线程数组（非 `Thread` 元素会被跳过）
+**返回值:** `int` —— 真正等完的线程数
+
+> 某个线程出错时会**把剩下的也等完**，再让异常浮出来（不会留下没人 join 的活线程 ✓）。
+
+### `threads.parallel_for(n, f)`
+
+分 n 份并行：`f(index)` 在 n 个线程上各跑一次（`index` = `0..n-1`），等全部结束。
+
+**参数:** `n`（份数，`<= 0` ⇒ 空操作）、`f`（必须是 `func(int):…`，**恰好一个形参**）
+**返回值:** `int` —— 真正起来的线程数
+
+```leno
+import threads
+
+main() {
+    var ch = threads.channel(8)
+    // 回调是闭包 ⇒ 可以用捕获的 channel 把结果带回来
+    threads.parallel_for(4, func(int i) { ch.send(i * 10) })
+    var sum = 0
+    for 0 : 3 to var k { sum = sum + _int(ch.receive()) }
+    print(sum)   // 60
+}
+```
+
+> ⚠ `n` 不会自动按核数分（说几份就几份）；回调形参个数是**硬校验**（默认参数不补齐）。
+
+### `threads.map(arr, f)`
+
+并行 map：每个元素起一个线程跑 `f(item, index)`，结果**按输入顺序**收回。
+
+**参数:** `arr`（`Array`）、`f`（必须是 `func(item, index):…`，**恰好两个形参** —— 与 `arrays.map` 同口径）
+**返回值:** `Array[回调返回类型]`（由原生返回规格推断 ✓ 可直接当 `Array[int]` 用）
+
+```leno
+Array[int] doubled = threads.map([1, 2, 3, 4], func(int x, int idx): int {
+    return x * 10 + idx
+})
+print(doubled[3])   // 43（4*10+3）
+```
+
+> ⚠ **线程数 = 元素数**（每个元素一个线程）⇒ 元素多时线程开销会盖过收益；重活请用
+> `parallel_for` 自己分块 ✓。元素可以是 `struct`（走 TH1 的深克隆 ✓）。
+
 ## Thread 对象方法
 
 ### `thread.join()`

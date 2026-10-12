@@ -1,0 +1,103 @@
+// test_threads_parallel.leno —— TH3：并行原语（回归）
+//
+// 见 docs/线程并发能力修复追踪.md 的 TH3。三个原语（都是普通模块函数，**不加新类型/关键字**）：
+//   `threads.join_all(Array[Thread])` → int（真正 joined 的个数）—— "WaitGroup" 的等价物
+//   `threads.parallel_for(int n, func f)` → int（真正起来的线程数）；f(index) 一个参数
+//   `threads.map(Array, func f)` → Array[回调返回]；f(item, index) 两个参数（与 arrays.map 同口径）
+//
+// 判据：
+//   ① `parallel_for` 起够 n 个线程、每个都真的跑到
+//   ② **并发性**：n 个线程能同时处于运行中（用"都报到才发令"的栅栏证明 —— 若线程是串行跑的，
+//      这个栅栏会收不齐报到 ⇒ 挂住 ⇒ 套件超时抓到）。这条比"比单线程快"稳得多 ✓
+//   ③ `join_all` 能等完一组手工 start 的线程，并拿到返回值
+//   ④ `map` 结果**按输入顺序**对齐，且静态类型能直接当 Array[int] 用（规格 Array[回调返回] ✓）
+//   ⑤ `map` 的元素能是 struct（TH1 + TH3 联用）
+
+import threads
+
+// 栅栏：报到 → 等发令 → 返回
+func wait_go(Channel ready, Channel go, int idx): int {
+    ready.send(idx)
+    go.receive()
+    return idx * 2
+}
+
+// ⑤ 用：struct 过 map
+struct Item {
+    int v = 0
+    string tag = ""
+}
+
+func tag_of(Item it, int idx): string {
+    return it.tag + "#" + idx
+}
+
+main() {
+    // ---------- ①② parallel_for + 并发性栅栏 ----------
+    var ready = threads.channel(8)
+    var go = threads.channel(8)
+    var ts = []
+    for 0 : 2 to var i {
+        ts.add(threads.start(wait_go, ready, go, i))
+    }
+
+    // 三个都报到之后才发令：**串行执行的话这里收不齐**（会挂到套件超时）
+    var got = 0
+    for 0 : 2 to var i {
+        got = got + _int(ready.receive())
+    }
+    assert_eq(got, 3, "②三个线程应同时处于运行中（0+1+2 = 3）")
+    for 0 : 2 to var i {
+        go.send(1)
+    }
+
+    // ---------- ③ join_all ----------
+    assert_eq(threads.join_all(ts), 3, "③join_all 应等完 3 个线程")
+
+    // ---------- ① parallel_for 每个下标都跑到 ----------
+    var ch = threads.channel(8)
+    var started = threads.parallel_for(4, func(int i) {
+        ch.send(i * 10)
+    })
+    assert_eq(started, 4, "①parallel_for(4, …) 应起 4 个线程")
+    var sum = 0
+    for 0 : 3 to var k {
+        sum = sum + _int(ch.receive())
+    }
+    assert_eq(sum, 60, "①四个下标都应真的跑到（0+10+20+30）")
+
+    // parallel_for(0, …) 是空操作，不该起线程
+    assert_eq(threads.parallel_for(0, func(int i) { ch.send(i) }), 0, "①n<=0 时应起 0 个")
+
+    // ---------- ④ map：顺序对齐 + 类型精确 ----------
+    var arr = [1, 2, 3, 4]
+    Array[int] doubled = threads.map(arr, func(int x, int idx): int {
+        return x * 10 + idx
+    })
+    assert_eq(doubled.len(), 4, "④map 结果长度应等于输入长度")
+    assert_eq(doubled[0], 10, "④map[0] 应按**输入顺序**对齐（1*10+0）")
+    assert_eq(doubled[3], 43, "④map[3] 应按**输入顺序**对齐（4*10+3）")
+
+    // 空数组 ⇒ 空数组（不起线程）
+    var empty = threads.map([], func(int x, int idx): int { return x })
+    assert_eq(empty.len(), 0, "④空输入 ⇒ 空输出")
+
+    // ---------- ⑤ map 的元素可以是 struct（TH1 的深克隆 + TH3） ----------
+    var items = []
+    var it1 = new Item()
+    it1.v = 1
+    it1.tag = "a"
+    var it2 = new Item()
+    it2.v = 2
+    it2.tag = "b"
+    items.add(it1)
+    items.add(it2)
+    Array[string] tags = threads.map(items, func(Item it, int idx): string {
+        return tag_of(it, idx)
+    })
+    assert_eq(tags.len(), 2, "⑤struct 元素也能 map")
+    assert_eq(tags[0], "a#0", "⑤第 1 个 struct 的字段应完整送达")
+    assert_eq(tags[1], "b#1", "⑤第 2 个 struct 的字段应完整送达")
+
+    print("test_threads_parallel passed")
+}
