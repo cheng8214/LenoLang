@@ -629,6 +629,19 @@ static TypeInfo* parse_type_internal(Parser* p) {
         t->nullable = 1;
     }
 
+    // ★ 类型位置不接受**模块限定名**（`d.DirEntry`）—— 2026-10-12 收口到这一处 ✓
+    //   此前这道检查只在 `is` / `as` / 局部声明等几处**显式**调用（见
+    //   parser_expr.c / parser_stmt_control.c 的 5 个调用点 ✓）⇒ **函数形参/返回类型/
+    //   struct 字段**这些位置漏了 ✗，报出来的是一串看不懂的语法错误：
+    //   `func show(d.DirEntry e)` 实测报 **8 条 7 种** —— `期望参数名` / `期望 ')'` /
+    //   `期望 '{'` / 「字典解构期望字符串键名」…✗（全都在指向标点，看不出"这里不能写限定名"）。
+    //   放在这里 = **单一收口**：凡走 parse_type_internal 的位置（含 `Ptr[T]` / `Array[T]`
+    //   的元素、泛型实参）全部覆盖 ✓；返回值 NULL = 解析失败（既有调用点都有 NULL 分支 ✓），
+    //   错误已由该函数报出、t 也已被它释放 ✓（别在这里再 free ✗）。
+    if (t && !parser_reject_module_qualified_type(p, t)) {
+        return NULL;
+    }
+
     return t;
 }
 

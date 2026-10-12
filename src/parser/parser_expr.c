@@ -894,6 +894,14 @@ Ast* parse_index(Parser* p, Ast* obj) {
         int count = 0;
         int parse_ok = 1;
 
+        // ★ 这一段是**猜测**（失败会用上面的 saved_lex 回退词法器）⇒ 期间的诊断必须**一起回滚** ✗
+        //   否则下标访问会被猜测里的诊断冤枉：实测（2026-10-12，parse_type 收口"限定名检查"后）
+        //     `a[Slot.ONE]`      ⇒ 猜测里报「不支持带模块前缀的类型名」✗（它根本不是类型 ✓）
+        //     `colors[SDL3.X]` 这类同理 ⇒ 当时一次套件就红了 4 个用例 ✓
+        //   口径与枚举求值器（parser_func.c 的 parser_eval_const_expr_text）**一致**：
+        //   静默段内只要报过任何错，这次猜测就**不可信**（判失败、走回退）✓
+        error_silence_begin();
+
         do {
             if (count >= gt_capacity) {
                 gt_capacity *= 2;
@@ -907,6 +915,9 @@ Ast* parse_index(Parser* p, Ast* obj) {
             generic_type_args[count] = arg_type;
             count++;
         } while (p->lex.current.type == TOK_COMMA && (lexer_next(&p->lex), 1));
+
+        int silenced_in_speculation = error_silence_end();
+        if (silenced_in_speculation > 0) parse_ok = 0;   // 报过错 ⇒ 当类型看不可信 ✓
 
         if (parse_ok && p->lex.current.type == TOK_RBRACKET) {
             lexer_next(&p->lex); // 消费 ']'

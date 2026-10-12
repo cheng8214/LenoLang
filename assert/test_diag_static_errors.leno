@@ -1395,5 +1395,57 @@ main() {
 ")
     ce.expect_ok(g18, "struct 约束的合法实例化（Cell[string]）⇒ 编译并跑通", "6162")
 
+    // ---- M9：**限定名不能做类型标注**（2026-10-12）----
+    //   症状（改之前实测）：`func show(d.DirEntry e): string` 报 **8 条 7 种**语法错误 ——
+    //     `期望参数名` / `期望 ')'` / `期望 '{'` / 「字典解构期望字符串键名」/「解构声明期望 '(' …」
+    //     ⇒ **没有一条**指向真因（"类型位置不能写 `模块.类型`"）✗，写的人会去查参数名 ✗
+    //   根因：这道检查**早就存在**（`parser_reject_module_qualified_type`，2026-09-16 为
+    //     `is` / `as` 的静默 misparse 加的 ✓），但只在 **5 个位置显式调用** ✗ ⇒ 函数形参 /
+    //     返回类型 / struct 字段这些位置漏了 ✗
+    //   改法：收口到 `parse_type_internal` 的出口（所有走类型解析的位置一次覆盖 ✓）
+    //   ⚠ 判据用**首条**报错（`expect_error` 只判"含这句" ✓）—— 后面的级联是**既有的**
+    //     签名恢复噪声（改之前同样有 8 条，只是第一条是 `期望参数名` ✗），不在本条范围内 ✓
+    var m9a = dirs.join(work, "qualified_type_param.leno")
+    files.write(m9a, @"import dirs as d
+
+func show(d.DirEntry e): string {
+    return e.root
+}
+
+main() {
+    print(1)
+}
+")
+    ce.expect_error(m9a, "M9：限定名做**形参类型** ⇒ 点名「不支持带模块前缀的类型名」并给出 use 写法",
+        "不支持带模块前缀的类型名", 3)
+
+    var m9b = dirs.join(work, "qualified_type_field.leno")
+    files.write(m9b, @"import dirs as d
+
+struct Box {
+    d.DirEntry e
+}
+
+main() {
+    print(1)
+}
+")
+    ce.expect_error(m9b, "M9：限定名做**结构体字段类型** ⇒ 同一条诊断（证明不再只是那 5 个位置）",
+        "不支持带模块前缀的类型名", 4)
+
+    var m9c = dirs.join(work, "qualified_type_return.leno")
+    files.write(m9c, @"import dirs as d
+
+func pick(): d.DirEntry {
+    return null
+}
+
+main() {
+    print(1)
+}
+")
+    ce.expect_error(m9c, "M9：限定名做**返回类型** ⇒ 同一条诊断",
+        "不支持带模块前缀的类型名", 3)
+
     print("=== test_diag_static_errors ALL passed ===")
 }
