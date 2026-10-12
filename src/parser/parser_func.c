@@ -154,6 +154,26 @@ static TypeInfo* parse_base_type(Parser* p) {
     }
     if (p->lex.current.type == TOK_FUTURE_TYPE) {
         lexer_next(&p->lex);
+        // Future[T]（T3，2026-10-12）：T = `await` 解包出来的类型。写法照上面的 Channel[T] / Thread[T] ✓。
+        //   ⚠ 裸 `Future` 仍然合法（元素未知 ⇒ await 退回旧的"调用点启发式" ✓）——
+        //     所以这里只**多**支持一种写法，不改变既有代码 ✓
+        if (p->lex.current.type == TOK_LBRACKET) {
+            lexer_next(&p->lex); // 消费 '['
+            TypeInfo* element_type = parse_type_internal(p);
+            if (!element_type) {
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                             "Future 元素类型解析失败");
+                return type_new(TYPE_FUTURE);
+            }
+            if (p->lex.current.type != TOK_RBRACKET) {
+                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                             "期望 ']' 结束 Future 类型");
+                type_free(element_type);
+                return type_new(TYPE_FUTURE);
+            }
+            lexer_next(&p->lex); // 消费 ']'
+            return type_future_generic(element_type);
+        }
         return type_new(TYPE_FUTURE);
     }
     if (p->lex.current.type == TOK_PTR_TYPE) {

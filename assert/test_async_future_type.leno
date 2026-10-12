@@ -1,0 +1,110 @@
+// test_async_future_type.leno —— T3 判据：`Future` 带上**元素类型**（C3 + C6）
+//   台账：docs/待办与路线图.md 的 §T3
+//
+// 改了什么（2026-10-12）：给 `TYPE_FUTURE` 加 `element_type` 槽（与 TH4 的
+//   `Channel[T]` / `Thread[T]` **同一范式** ✓），并在四处填/用它：
+//     ① async 调用 ⇒ `Future[声明的返回类型]`（原来 `type_new(TYPE_FUTURE)` 把类型**丢了** ✗）
+//     ② `await X` ⇒ **元素类型优先**（原来只认"X 恰好是个调用"的启发式 ⇒ C3/C6 ✗）
+//     ③ `w?.method()`（async 方法）⇒ `Future[声明返回类型]`（原来给**声明类型本身** ⇒ `int?` ✗）
+//     ④ `a?.b` 的可空性 ⇒ **跟接收者一致**（原来"总是可空" ⇒ 非空 `w?.go()` 也被标可空 ⇒
+//        传给要非空 `Future` 的 `asyncs.is_done(...)` 假报「可空值不能直接传」✗）
+//   另：`Future[T]` 现在**能写了**（此前只有 native 规格内部造得出来，用户标注不出来 ✗）
+//
+// ⚠ 一条**有意为之**的口径（写用例时别当 bug）：**裸 `Future`（不写 `[T]`）元素未知**
+//   ⇒ `await x` 不猜、仍是 `any` ⇒ 在标了返回类型的函数里仍会报「期望 int，实际 any」✓
+//   —— 信息不足就不猜（本仓"少报不误报"口径 ✓）。要精确就写 `Future[int]` ✓（见下面 ③ 的负例 2）
+//
+// ⚠ 另一条：形参名别与**全局函数同名**（推断里名字解析不带作用域 ⇒ 会按全局函数推 ⇒ 假象 ✗），
+//   本文件形参用 `f` / `fn` ✓
+
+import asyncs
+import io
+import dirs
+import files
+
+import "helpers/compiler.leno" as ce
+
+struct W {
+    int v = 7
+    async func go(): int {
+        await asyncs.sleep(2)
+        return self.v
+    }
+}
+
+async func plain(): int {
+    await asyncs.sleep(1)
+    return 5
+}
+
+async func text(): string {
+    return "s"
+}
+
+// ③ 精确写法：Future[int] 形参 ⇒ await 解包成 int
+async func take_typed(Future[int] f): int {
+    return await f
+}
+
+async func driver(): int {
+    var w = new W()
+
+    // ① C3：`w?.go()` 的静态类型必须是 Future[int]（不是 int?）——
+    //   判据 a：能直接传给要**非空 Future** 的 native（`is_done`）
+    var b = w?.go()
+    assert_true(asyncs.is_done(b) == false,
+        "C3：`w?.go()` 可直接传给需要非空 Future 的 is_done（不再假报可空）")
+    //   判据 b：await 它拿到的是**方法体里真正返回的值**
+    var v1 = await b
+
+    // ② 老路径回归：`await <调用点>` 的启发式仍然必须可用（历史写法不许被改坏）
+    var v2 = await plain()
+
+    // ③ C6：`await` 作用在**声明为 Future[int] 的形参**上
+    var v3 = await take_typed(plain())
+
+    // ④ `Future[int]` 标注的**变量**也能 await（元素类型跟着走 ✓）
+    Future[int] g = plain()
+    var v4 = await g
+
+    return v1 + v2 + v3 + v4      // 7 + 5 + 5 + 5 = 22
+}
+
+// 造一个"导入 asyncs、body 在 main 里"的入口（负例用；body 自带缩进）
+func build_entry(string work, string name, string body):string {
+    var root = dirs.join(work, name)
+    dirs.delete(root)
+    dirs.mkdir_p(root)
+    var path = dirs.join(root, "main.leno")
+    files.write(path, "import asyncs\n\n" + body)
+    return path
+}
+
+main() {
+    var d = driver()
+    asyncs.run()
+    var r = asyncs.all([d])
+    assert_eq(r[0], 22, "T3：C3 + C6 解包出的值正确（7+5+5+5）")
+
+    var work = dirs.join(_tmpdir(), "leno_async_future_type")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // 负例 1：`Future[int]` 接到返回 string 的 async 调用 ⇒ 元素类型不匹配要报
+    //   （证明元素类型**真的参与兼容性判据**，而不是摆设 ✓）
+    var n1 = build_entry(work, "elem_mismatch",
+        "async func text(): string {\n    return \"s\"\n}\n\n"
+        + "main() {\n    Future[int] f = text()\n    f = null\n}\n")
+    ce.expect_error(n1, "负例 1：Future[int] 接 async func(): string ⇒ 元素类型不匹配", "不匹配", 0)
+
+    // 负例 2：**裸 Future** 的元素未知 ⇒ `await` 不猜（仍是 any）⇒ 标了返回类型就报
+    //   （有意为之的口径 ✓ —— 要精确请写 `Future[int]`）
+    var n2 = build_entry(work, "bare_future_unknown",
+        "async func take(Future f): int {\n    return await f\n}\n\n"
+        + "main() {\n    print(1)\n}\n")
+    ce.expect_error(n2, "负例 2：裸 Future 的元素未知 ⇒ 不猜（用 Future[int] 才有精确类型）",
+        "返回类型不匹配", 0)
+
+    dirs.delete(work)
+    io.print("test_async_future_type passed")
+}

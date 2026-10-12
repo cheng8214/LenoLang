@@ -469,6 +469,13 @@ TypeInfo* infer_method_return_type(Semantic* s, TypeInfo* obj_type, const char* 
             }
         }
 
+        // ★ T3（2026-10-12）：**async 方法 ⇒ Future[声明的返回类型]** ——
+        //   原来是直接给"声明的返回类型"（`go(): int` ⇒ `int`）⇒ `w?.go()` 的静态类型成了
+        //   `int?`，于是 `asyncs.is_done(w?.go())` 报「可空值不能直接传」（T3 的 C3 ✗）。
+        //   运行期本来就是 Future（实测 `w?.go()` 确实建协程 ✓）⇒ 这里修的是**静态类型** ✓
+        if (func_def->u.func.is_async) {
+            ret = type_future_generic(ret);
+        }
         return ret;
     }
 
@@ -1650,10 +1657,14 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     TypeInfo* ret = type_copy(sym->type->return_type);
                     
                     // async 函数返回 Future 而非声明的返回类型
+                    //   ★ T3（2026-10-12）：现在**带上元素类型** —— Future[声明的返回类型] ✓。
+                    //     原先是 `type_free(ret); ret = type_new(TYPE_FUTURE);` ⇒ 信息在这里被**丢掉**，
+                    //     于是只能靠 AST_AWAIT 里"表达式恰好是调用"的启发式去重新挖回来 ✗
+                    //     （Future 一旦来自变量 / 形参 / 字段 / `w?.go()` 就挖不到 ⇒ T3 的 C3 / C6 ✓）
+                    //     `ret` 直接**成为元素类型**（不 free ✓），wrap 一层即可 ✓
                     if (func_def_for_async && func_def_for_async->kind == AST_FUNC_DEF &&
                         func_def_for_async->u.func.is_async) {
-                        type_free(ret);
-                        ret = type_new(TYPE_FUTURE);
+                        ret = type_future_generic(ret);
                     }
                     
                     // 泛型函数调用：用推断的类型参数替换泛型参数
@@ -1678,9 +1689,14 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
 
                 if (func_def && func_def->kind == AST_FUNC_DEF) {
                     TypeInfo* ret = NULL;
-                    // async 函数返回 Future 而非声明的返回类型
+                    // async 函数返回 Future 而非声明的返回类型（★ T3：带元素类型 ✓，同上）
                     if (func_def->u.func.is_async) {
-                        ret = type_new(TYPE_FUTURE);
+                        if (func_def->u.func.return_type &&
+                            func_def->u.func.return_type->kind != TYPE_INFER) {
+                            ret = type_future_generic(type_copy(func_def->u.func.return_type));
+                        } else {
+                            ret = type_new(TYPE_FUTURE);   // 无注解 ⇒ 元素未知（退回启发式 ✓）
+                        }
                     } else if (func_def->u.func.return_type &&
                                func_def->u.func.return_type->kind != TYPE_INFER) {
                         ret = type_copy(func_def->u.func.return_type);
@@ -3052,8 +3068,18 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                 TypeInfo* inner_type = infer_expr_type(s, ast->u.await.expr);
                 if (inner_type) {
                     if (inner_type->kind == TYPE_FUTURE) {
+                        // ★ T3（2026-10-12）：**元素类型优先** —— `Future` 现在带 element_type
+                        //   （async 调用 / `w?.go()` / `Future[int]` 标注都会填上 ✓）
+                        //   ⇒ 任何"静态类型是 Future"的表达式都能直接解包 ✓
+                        //   原来只有下面那条启发式（要求"被等待的表达式**恰好是个调用**"）
+                        //   ⇒ Future 来自 变量 / 形参 / 字段 / 安全访问时全都推不出来（C3 / C6 ✗）
+                        if (inner_type->element_type) {
+                            result = type_copy(inner_type->element_type);
+                            type_free(inner_type);
+                            break;
+                        }
                         type_free(inner_type);
-                        // Future 类型：尝试从被等待的函数调用中提取声明返回类型
+                        // 元素未知（裸 `Future` / 非 async 来源）：退回启发式 —— 从调用点挖声明返回类型
                         // 例如 await inner_task(x) → inner_task 声明返回 int → await 返回 int
                         if (ast->u.await.expr->kind == AST_CALL &&
                             ast->u.await.expr->u.call.callee &&
@@ -3170,8 +3196,12 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                 result = infer_field_type(s, obj_type, safe_name, NULL);
             }
             if (!result) result = type_new(TYPE_ANY);
-            // 安全访问的结果总是可空的
-            result->nullable = 1;
+            // 安全访问的结果可空性**跟接收者一致**（★ T3，2026-10-12 收敛）——
+            //   原口径是"**总是可空**"✗：`w?.go()`（w 非空）也被标成可空 ⇒ 传给要非空 Future 的
+            //   `asyncs.is_done(...)` 时假报「可空值不能直接传」✗（T3 的 C3）。
+            //   规矩：`a?.b` 的结果"可能为 null"**当且仅当** a 可能为 null（a 非空 ⇒ `?.` 是空操作 ✓）；
+            //   至于 b 自身可不可空，由 infer_field_type / infer_method_return_type 给的结果类型带上来 ✓
+            if (obj_type && obj_type->nullable) result->nullable = 1;
             if (obj_type) type_free(obj_type);
             break;
         }

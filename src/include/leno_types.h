@@ -428,6 +428,9 @@ TypeInfo* type_ptr_generic(TypeInfo* element_type);
 //   （element_type == NULL 即裸 `Channel` / `Thread` = 元素类型未知）
 TypeInfo* type_channel_generic(TypeInfo* element_type);
 TypeInfo* type_thread_generic(TypeInfo* element_type);
+// Future[T]（T3，2026-10-12）：元素槽 = `await` 解包出来的类型。
+//   element_type == NULL 即裸 `Future`（元素未知 ⇒ `await` 退回旧的"调用点启发式" ✓）
+TypeInfo* type_future_generic(TypeInfo* element_type);
 TypeInfo* type_function(TypeInfo* return_type, TypeInfo** param_types, int param_count);
 TypeInfo* type_generic_param(const char* name);  // 创建泛型类型参数 T, U 等
 TypeInfo* type_generic_param_constrained(const char* name, const char* constraint);  // 创建带约束的泛型类型参数

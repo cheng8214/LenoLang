@@ -1,10 +1,16 @@
-// test_async_func_param.leno —— C5 现状用例：`func` 形参里 `await cb(x)`
+// test_async_func_param.leno —— C5 用例：`func` 形参里 `await cb(x)`
 //
 // 背景（差异清单 C5）：`async func call_it(func cb): int { return await cb(7) }` 里
-// `await cb(7)` 推不出结果类型 ⇒ **标了返回类型注解**就编译错
-// 「返回类型不匹配：期望 int，实际 func()」✗（2026-09-25 复核：仍复现，归 T3）。
-// 当初的绕过写法是**不写返回类型注解** —— 本用例钉住的就是这条：它是现在唯一可用的写法，
-// T3 修好之后也必须继续可用 ✓（**不要**在这里补"标注解"的用例：那会红，等 T3 一起加 ✓）。
+// `await cb(7)` 曾经推不出结果类型 ⇒ **标了返回类型注解**就编译错
+// 「返回类型不匹配：期望 int，实际 func()」✗（2026-09-25 复核时仍复现，归 T3）。
+// 当初的绕过写法是**不写返回类型注解** —— 本用例原先只钉住这一条。
+//
+// ★ 2026-10-12（T3 收口）：**标注解那条也通了** ✓ —— 本文件现已补上：
+//   `async func call_it_typed(func(int):int fn, int n): int { int v = await fn(n) … }`
+//   实测 `int v = await fn(n)` 编译通过且值正确 ⇒ **两条写法都要长期可用** ✓
+//   ⚠ 但先记一句：C5 的"编译错"症状在 T3 本轮动手**之前**就已经不复现了
+//     （T3 只改了 Future 的元素类型与 `?.` 的可空性，没动 `func` 形参那条推断路径）——
+//     具体是哪一轮顺带改好的没去二分；本条的价值是**把两条写法都钉住**，防止将来回退 ✓
 //
 // ⚠ 复核时踩过的一个坑（记下来免得再被骗）：把形参名起成与某个**全局函数同名**
 //   （例：形参 `cb` + 全局 `async func cb(int x): int`）时，类型推断会按那个全局函数推
@@ -17,15 +23,25 @@ async func double_it(int x): int {
     return x * 2
 }
 
-// 不标注解（当前唯一可用写法）
+// 写法一：不标注解（历史上唯一可用）
 async func call_it_bare(func fn) {
     return await fn(9)
 }
 
+// 写法二：**标注解 + 精确形参签名**（T3 起可用 ✓）——
+//   实测：`int v = await fn(n)` 若推成 `func()` 会报「期望 int，实际 func()」✗，
+//   本用例钉住它推的是 `int` ✓
+async func call_it_typed(func(int):int fn, int n): int {
+    int v = await fn(n)
+    return v + 1
+}
+
 main() {
-    var f = call_it_bare(double_it)
+    var a = call_it_bare(double_it)
+    var b = call_it_typed(double_it, 9)
     asyncs.run()
-    var r = asyncs.all([f])
-    assert_eq(r[0], 18)
-    io.print("[PASS] async 函数作 func 形参 + await（C5 现状：不标注解可用）")
+    var r = asyncs.all([a, b])
+    assert_eq(r[0], 18, "写法一（不标注解）")
+    assert_eq(r[1], 19, "写法二（标注解 + 精确签名）：9*2+1")
+    io.print("[PASS] async 函数作 func 形参 + await（两种写法都可用）")
 }

@@ -95,6 +95,19 @@ TypeInfo* type_thread_generic(TypeInfo* element_type) {
     return type;
 }
 
+// ★ T3（2026-10-12，见 docs/待办与路线图.md 的 §T3）：`Future[T]` —— T = `await` 解包出来的类型。
+//   与 type_channel_generic / type_thread_generic 同形（同一范式：`element_type` 槽 ✓）。
+//   为什么需要：此前 `Future` **不带元素类型** ⇒ `await X` 只能靠"被等待的表达式恰好是个调用"
+//   再去挖声明返回类型的启发式（semantic_type.c 的 AST_AWAIT）⇒ 只要 Future 来自
+//   **变量 / 形参 / 字段 / `w?.go()`**，就推不出来（T3 的 C3 / C6）✗
+TypeInfo* type_future_generic(TypeInfo* element_type) {
+    TypeInfo* type = type_new(TYPE_FUTURE);
+    if (type) {
+        type->element_type = element_type;
+    }
+    return type;
+}
+
 // 创建函数类型
 TypeInfo* type_function(TypeInfo* return_type, TypeInfo** param_types, int param_count) {
     TypeInfo* type = type_new(TYPE_FUNCTION);
@@ -207,6 +220,11 @@ int type_equals(TypeInfo* a, TypeInfo* b) {
             //   ⚠ 裸 `Channel`（element_type = NULL）与 `Channel[int]` **不相等** ⇒ 赋值兼容
             //     由 type_is_compatible 里的专门规则放行（见那里的 TYPE_CHANNEL 段 ✓）
             return type_equals(a->element_type, b->element_type);
+        case TYPE_FUTURE:
+            // Future[T]（T3，2026-10-12）：同 Channel/Thread 口径 —— 元素槽参与相等判断 ✓
+            //   ⚠ 裸 `Future` 与 `Future[int]` **不相等** ⇒ 赋值兼容由 type_is_compatible 放行 ✓
+            //     （native 形参规格基本都是裸 `Future`，靠那条规则收下 `Future[int]` ✓）
+            return type_equals(a->element_type, b->element_type);
         case TYPE_FUNCTION: {
             // 处理 return_type：NULL 指针等同于 TYPE_NULL（void 返回）
             // 无显式返回类型的函数 return_type=NULL，func(...):void 的 return_type=TYPE_NULL
@@ -286,6 +304,12 @@ TypeInfo* type_copy(TypeInfo* type) {
             break;
         case TYPE_CHANNEL:
             // Channel[T]（TH4，2026-10-12）：T = `receive()` 的返回类型，同用 element_type 槽 ✓
+            copy->element_type = type_copy(type->element_type);
+            break;
+        case TYPE_FUTURE:
+            // Future[T]（T3，2026-10-12）：T = `await` 解包出来的类型。
+            //   ⚠ 这里**必须**带上 —— 语义层到处 type_copy（表达式类型的 cached_type、符号类型 …），
+            //     漏了就是把元素类型悄悄丢掉 ⇒ `await` 又退回"挖调用点"的启发式（T3 的 C3/C6 复发）✗
             copy->element_type = type_copy(type->element_type);
             break;
         case TYPE_DICT:
@@ -466,6 +490,29 @@ static void build_generic_type_string(TypeInfo* type, char* buf, size_t buf_size
             if (*offset + tprefix_len < buf_size - 1) {
                 memcpy(buf + *offset, tprefix, tprefix_len);
                 *offset += tprefix_len;
+            }
+            if (type->element_type) {
+                if (*offset + 1 < buf_size) {
+                    buf[*offset] = '[';
+                    (*offset)++;
+                }
+                build_generic_type_string(type->element_type, buf, buf_size, offset);
+                if (*offset + 1 < buf_size) {
+                    buf[*offset] = ']';
+                    (*offset)++;
+                    buf[*offset] = '\0';
+                }
+            }
+            break;
+        }
+        case TYPE_FUTURE: {
+            // Future[T]（T3，2026-10-12）：T = `await` 解包出来的类型；无 T = 裸 Future
+            //   （报错/hover 里能看到元素类型 —— 否则 `Future[int]` 会被写成 `Future` ✓）
+            const char* fprefix = "Future";
+            size_t fprefix_len = strlen(fprefix);
+            if (*offset + fprefix_len < buf_size - 1) {
+                memcpy(buf + *offset, fprefix, fprefix_len);
+                *offset += fprefix_len;
             }
             if (type->element_type) {
                 if (*offset + 1 < buf_size) {
@@ -1261,6 +1308,17 @@ int type_is_compatible(TypeInfo* target, TypeInfo* source) {
         if (source->kind != TYPE_CHANNEL) return 0;
         if (!target->element_type) return 1;   // ①
         if (!source->element_type) return 1;   // ②
+        return type_is_compatible(target->element_type, source->element_type);   // ③
+    }
+
+    // Future[T] 的兼容性（T3，2026-10-12）—— 与上面的 Channel[T] **同口径** ✓
+    //   为什么必须有一条：`asyncs.is_done(f)` 这类 native 形参的规格是**裸 `Future`**，
+    //   而我们传进去的是 `w?.go()` 的 `Future[int]` ⇒ 没有这条规则就会被判"类型不匹配" ✗
+    //   （T3 的 C3 想修的就是它；判据是 `is_done(...)` 能编译 ✓）
+    if (target->kind == TYPE_FUTURE) {
+        if (source->kind != TYPE_FUTURE) return 0;
+        if (!target->element_type) return 1;   // ① 目标裸 Future ⇒ 任何 Future[…] 都收 ✓
+        if (!source->element_type) return 1;   // ② 源裸 Future ⇒ 放行（元素未知不猜 ✓）
         return type_is_compatible(target->element_type, source->element_type);   // ③
     }
 
