@@ -108,6 +108,9 @@ void vm_init_with_scope(Scope* global_scope) {
 
     // 初始化模块系统
     vm.current_module_frame = NULL;
+
+    // 线程局部存储（`threads.local_get/set`，TH5）：懒创建 ⇒ 先置 null ✓
+    vm.thread_local_store = val_null();
     
     // 初始化协程系统
     vm.event_loop = NULL;

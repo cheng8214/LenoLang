@@ -1044,6 +1044,11 @@ static void mark_roots(void) {
         gc_mark_value(gc.vm->globals[i]);
     }
 
+    // 3.4 标记**线程局部存储**（`threads.local_get/set` 的字典，TH5，2026-10-12）：
+    //   「本 VM 的字段」⇒ 主/子线程各一份，标记这一处即可 ✓
+    //   ⚠ 漏了它 ⇒ 该字典会被回收，而 `threads.local_get` 仍拿着指针 ⇒ use-after-free ✗
+    gc_mark_value(gc.vm->thread_local_store);
+
     // 3.5 标记当前模块帧及其全局变量
     ModuleFrame* module_frame = gc.vm->current_module_frame;
     while (module_frame) {

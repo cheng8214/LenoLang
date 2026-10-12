@@ -1053,6 +1053,13 @@ typedef struct VM {
     int pending_type_arg_count;  // 待处理数量
     int gc_return_counter;       // OP_RETURN 的 GC 检查计数器（放在 VM 结构体中避免 THREAD_LOCAL 开销）
     int gc_force_request;        // 测试钩子：LENO_GC_FORCE_EVERY 到点后在下一个安全点强制回收一次（§8.35）
+
+    // ★ `threads.local_get/set` 的**线程局部存储**（TH5，2026-10-12）
+    //   为什么放这里就天然"线程局部"：**子线程用的是自己的 VM 结构体**（`child_vm`）✓
+    //   ⇒ 同一个 VM 槽在主/子线程各有一份 ✓，不需要任何 TLS 机制 ✓。
+    //   类型 = `ObjDict`（懒创建）：key 用 string，value 任意可跨线程的值 ✓。
+    //   ⚠ 新增字段必须**同时**在 gc.c 的 mark_roots 里标记（否则会被回收 ⇒ use-after-free ✗）
+    Value thread_local_store;
 } VM;
 
 // 主线程使用全局 VM（效率第一）

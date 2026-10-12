@@ -2,6 +2,7 @@
 #include "../../include/leno_value.h"
 #include "../../include/platform_thread.h"
 #include "../../include/platform.h"
+#include "../../include/leno_vm.h"     // VM 结构体（threads.local_* 用 vm->thread_local_store，TH5）
 #include <string.h>
 
 extern ObjThread* thread_new_with_args(ObjClosure* closure, Value* call_args, int call_arg_count);
@@ -336,6 +337,76 @@ static Value threads_map(int argc, Value* args) {
     return val_obj((Object*)result);
 }
 
+// ==================== 线程局部存储（TH5，2026-10-12）====================
+//
+// 为什么需要：**模块级可变 `var` 是跨线程共享的**（`ObjModule.globals` 挂进程级
+//   `loaded_modules` 缓存，**有意不隔离** —— 见 docs/线程并发能力修复追踪.md 的「明确不做」表）
+//   ⇒ 库想"每个线程一份状态"时此前没有现成手段（只能把状态收进实例、由调用方传进来）。
+//
+// 实现要点：存储挂在 **VM 结构体**上（`vm->thread_local_store`）——
+//   子线程用的是**自己的 VM 结构体**（`thread_obj` 里的 `child_vm`）⇒ **天然每线程一份** ✓
+//   不需要任何 TLS 机制 ✓。字段的 GC 标记在 `src/gc.c` 的 mark_roots（**漏了就 use-after-free** ✗）。
+//
+// ⚠ 与"模块 globals"的区别：模块 globals 是**所有线程同一份**（故意）；这里是**每线程一份** ✓
+
+static inline VM* threads_current_vm(void) {
+    extern THREAD_LOCAL VM* current_exec_vm;
+    extern VM vm;
+    return current_exec_vm ? current_exec_vm : &vm;
+}
+
+// 取本线程的存储字典（不存在返回 NULL —— get / has 路径据此直接走默认值 ✓）
+//   ⚠ 不需要写屏障：`thread_local_store` 不是堆对象，字典本身又是**新对象**（无老→新引用）✓
+static ObjDict* threads_local_dict_existing(VM* v) {
+    if (!v || !val_is_obj(v->thread_local_store)) return NULL;
+    if (val_as_obj(v->thread_local_store)->type != OBJ_DICT) return NULL;
+    return (ObjDict*)val_as_obj(v->thread_local_store);
+}
+
+// 取（或懒建）本线程的存储字典
+static ObjDict* threads_local_dict(VM* v) {
+    ObjDict* d = threads_local_dict_existing(v);
+    if (d) return d;
+    d = dict_new(8);
+    if (!d) return NULL;
+    v->thread_local_store = val_obj((Object*)d);
+    return d;
+}
+
+// threads.local_get(key, default) ⇒ 本线程存过就给它，没存过给 default（**不写**）
+//   ⚠ 与 `local_has` 配套：存过 `null` 与"没存过"是两回事 ✓
+static Value threads_local_get(int argc, Value* args) {
+    if (argc < 2 || !val_is_obj(args[0]) || val_as_obj(args[0])->type != OBJ_STRING) {
+        native_throw_error("threads.local_get(key, default) 需要 (string, 任意) 两个参数");
+        return val_null();
+    }
+    ObjDict* d = threads_local_dict_existing(threads_current_vm());
+    if (!d || !dict_has(d, args[0])) return args[1];
+    return dict_get(d, args[0]);
+}
+
+// threads.local_has(key) ⇒ bool
+static Value threads_local_has(int argc, Value* args) {
+    if (argc < 1 || !val_is_obj(args[0]) || val_as_obj(args[0])->type != OBJ_STRING) {
+        native_throw_error("threads.local_has(key) 需要一个 string 参数");
+        return val_null();
+    }
+    ObjDict* d = threads_local_dict_existing(threads_current_vm());
+    return val_bool(d && dict_has(d, args[0]));
+}
+
+// threads.local_set(key, value) ⇒ null（只对**本线程**可见）
+static Value threads_local_set(int argc, Value* args) {
+    if (argc < 2 || !val_is_obj(args[0]) || val_as_obj(args[0])->type != OBJ_STRING) {
+        native_throw_error("threads.local_set(key, value) 需要 (string, 任意) 两个参数");
+        return val_null();
+    }
+    ObjDict* d = threads_local_dict(threads_current_vm());
+    if (!d) return val_null();
+    dict_set(d, args[0], args[1]);
+    return val_null();
+}
+
 // ==================== 实例方法初始化 ====================
 
 void threads_init_instance_methods(void) {
@@ -403,6 +474,17 @@ void threads_init_module(void) {
     //   f(item, index) 两个参数（与 arrays.map 同口径 ✓）
     TypeKind tmap_params[] = {TYPE_ARRAY, TYPE_FUNCTION};
     native_register_module_method("threads", "map", threads_map, &NATIVE_T_ARR_CB_RET1, NATIVE_FIXED(tmap_params));
+
+    // ---- 线程局部存储（TH5，2026-10-12）----
+    // 返回 any：存进去的与传进来的默认值可能不是一个类型 ⇒ 只能 any（宁漏勿误报 ✓）
+    TypeKind lget_params[] = {TYPE_STRING, TYPE_ANY};
+    native_register_module_method("threads", "local_get", threads_local_get, &NATIVE_T_ANY, NATIVE_FIXED(lget_params));
+
+    TypeKind lhas_params[] = {TYPE_STRING};
+    native_register_module_method("threads", "local_has", threads_local_has, &NATIVE_T_BOOL, NATIVE_FIXED(lhas_params));
+
+    TypeKind lset_params[] = {TYPE_STRING, TYPE_ANY};
+    native_register_module_method("threads", "local_set", threads_local_set, &NATIVE_T_NULL, NATIVE_FIXED(lset_params));
 
     // 调用 threads_init_instance_methods 注册线程和通道实例方法
     threads_init_instance_methods();

@@ -164,6 +164,31 @@ print(doubled[3])   // 43（4*10+3）
 > ⚠ **线程数 = 元素数**（每个元素一个线程）⇒ 元素多时线程开销会盖过收益；重活请用
 > `parallel_for` 自己分块 ✓。元素可以是 `struct`（走 TH1 的深克隆 ✓）。
 
+### `threads.local_get(key, default)` / `threads.local_has(key)` / `threads.local_set(key, value)`
+
+**线程局部存储**（★ 2026-10-12 起）：按**线程**隔离的键值存储，专门用来放"每个线程一份"的状态
+（模块级可变 `var` 是所有线程**共享**的 ⇒ 并发写就是数据竞争；这三个函数给了显式的替代手段）。
+
+| 函数 | 行为 | 返回 |
+|---|---|---|
+| `local_get(key, default)` | 本线程存过 `key` ⇒ 给它；没存过 ⇒ 给 `default`（**不写**） | `any` |
+| `local_has(key)` | 本线程是否存过 `key`（"存过 null" 与 "没存过" 是两回事 ✓） | `bool` |
+| `local_set(key, value)` | 只写**本线程**那份（其它线程读不到） | `null` |
+
+```leno
+main() {
+    threads.local_set("n", 1)
+    print(_int(threads.local_get("n", 0)))     // 1
+    print(threads.local_has("nope"))           // false
+    print(_int(threads.local_get("nope", 42))) // 42（默认值）
+}
+```
+
+**实现口径**：存储挂在 **VM 结构体**上（`vm->thread_local_store`，懒创建的 dict）——
+子线程用的是自己的 VM ⇒ **天然每线程一份** ✓ 不需要 TLS、也不需要锁 ✓。
+值不需要跨线程克隆（只在**同一个线程**里存取）⇒ 放 struct 实例也行 ✓。
+`key` 必须是 `string`；值类型不限（`local_get` 的返回是 `any` —— 存进去的与默认值可能不同型）。
+
 ## Thread 对象方法
 
 ### `thread.join()`

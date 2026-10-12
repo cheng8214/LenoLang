@@ -341,6 +341,9 @@ static void* thread_entry_point(void* arg) {
     child_vm.event_loop = NULL;
     child_vm.current_coroutine = NULL;
     child_vm.all_coroutines = NULL;
+    // ★ 子线程的**线程局部存储**是**独立一份**（TH5）—— 每个子线程的 VM 是自己的结构体，
+    //   这个槽天然隔离 ✓（`threads.local_get/set` 就是按这条实现"每线程一份"的 ✓）
+    child_vm.thread_local_store = val_null();
 
     // 复制全局变量（深拷贝，独立数据）
     // 注意：cstruct 定义是只读类型元数据，直接共享

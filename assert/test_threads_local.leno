@@ -1,0 +1,60 @@
+// test_threads_local.leno —— TH5：线程局部存储 `threads.local_*`（回归）
+//
+// 背景（见 docs/线程并发能力修复追踪.md 的 TH5）：**模块级可变 `var` 是跨线程共享的**
+//   （`ObjModule.globals` 挂进程级 `loaded_modules` 缓存，**有意不隔离** —— 见该文的「明确不做」表）
+//   ⇒ 库想"每个线程一份状态"时此前没有现成手段（只能把状态收进实例、由调用方传进来）。
+//   现在补三个函数：`local_get(key, default)` / `local_has(key)` / `local_set(key, value)`。
+//   实现挂在 **VM 结构体**上 ⇒ 子线程用自己的 VM ⇒ **天然每线程一份** ✓（无 TLS 机制，无锁 ✓）。
+//
+// 判据：
+//   ① 主线程自己读写自洽；没存过的键 ⇒ 默认值 / has=false
+//   ② 两个子线程各有一份：读写互不可见，也**动不到主线程**的值
+//   ③ 值可以是对象（同线程取值 ⇒ 不需要跨线程克隆）
+//   ⚠ 与两条相邻口径**别混**（各有判据）：
+//     · 模块级 `var` = 所有线程同一份（**故意**，见 TH5 的「明确不做」）；
+//     · 入口脚本顶层**标量** = 每个线程各一份，但**可变对象的内容是共享的**
+//       （`child_vm.globals` 是浅拷贝 —— 见 `file_search.leno` 的实测更正）✓
+
+import threads
+
+struct Pt {
+    int x = 0
+}
+
+// 子线程入口：先写自己的那份，再累加，再看一眼没存过的键
+func worker(int id): string {
+    threads.local_set("hits", id * 100)
+    var once = _int(threads.local_get("hits", -1))
+    threads.local_set("hits", once + 1)
+    var twice = _int(threads.local_get("hits", -1))
+    var miss = threads.local_has("nope")
+    return _str(once) + "/" + _str(twice) + "/" + _str(miss)
+}
+
+main() {
+    // ---------- ① 主线程自洽 ----------
+    assert_eq(threads.local_has("hits"), false, "①刚启动时没存过任何键")
+    assert_eq(_int(threads.local_get("hits", 42)), 42, "①没存过 ⇒ 给默认值")
+    threads.local_set("hits", 7)
+    assert_eq(_int(threads.local_get("hits", -1)), 7, "①存过之后能读回")
+    assert_eq(threads.local_has("hits"), true, "①local_has 认得出")
+
+    // ---------- ② 子线程各一份（且动不到主线程）----------
+    var t1 = threads.start(worker, 1)
+    assert_eq(t1.join(), "100/101/false", "②子线程读写的是自己那份")
+    var t2 = threads.start(worker, 2)
+    assert_eq(t2.join(), "200/201/false", "②第二个子线程同样独立")
+    assert_eq(_int(threads.local_get("hits", -1)), 7, "②子线程改不到主线程的值")
+
+    // ---------- ③ 值可以是对象（同线程取值，无跨线程克隆）----------
+    var p = new Pt()
+    p.x = 5
+    threads.local_set("pt", p)
+    var ok3 = false
+    if threads.local_get("pt", null) is Pt => q {
+        ok3 = q.x == 5
+    }
+    assert_true(ok3, "③线程局部存储里放 struct 也能取回")
+
+    print("test_threads_local passed")
+}

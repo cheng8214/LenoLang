@@ -906,6 +906,45 @@ main() {
 2. `threads.channel(n)` **推不出** T（工厂没有元素信息）⇒ 想看精确类型就**写标注**。
    顺带：`Thread[T]` 标注现在也能写了（`Thread[int] t = threads.start(f, 1)` ✓）。
 
+## 线程局部存储（`threads.local_*`，★ 2026-10-12 起）
+
+**模块级可变 `var` 是所有线程同一份**（故意不隔离 ⇒ 并发写就是数据竞争）。库想"每个线程一份
+状态"时，用这三个函数 —— 它们按**线程**隔离，不需要锁：
+
+| 函数 | 说明 |
+|---|---|
+| `threads.local_get(key, default)` | 本线程存过 `key` ⇒ 给它；没存过 ⇒ 给 `default`（**不写**） |
+| `threads.local_has(key)` | 本线程是否存过 `key`（⇒ `"存过 null"` 与 `"没存过"` 是两回事 ✓） |
+| `threads.local_set(key, value)` | 只写**本线程**那份 |
+
+```leno
+import threads
+
+func worker(int id): string {
+    threads.local_set("hits", id * 100)                 // 每个线程各写各的
+    var n = _int(threads.local_get("hits", -1))
+    threads.local_set("hits", n + 1)
+    return _str(_int(threads.local_get("hits", -1)))    // 101
+}
+
+main() {
+    threads.local_set("hits", 7)
+    print(threads.start(worker, 1).join())              // 101
+    print(threads.start(worker, 2).join())              // 201
+    print(_int(threads.local_get("hits", -1)))          // 7 —— 子线程动不到主线程那份
+    print(threads.local_has("nope"))                    // false
+}
+```
+
+⚠ 三条口径**别混**（各有不同语义）：
+
+| 状态放在哪 | 主/子线程之间 | 并发写 |
+|---|---|---|
+| **模块级 `var`**（`lib/xxx.leno` 顶层） | **同一份**（共享） | 数据竞争 ✗ ⇒ 要么收进实例，要么用 `threads.local_*` |
+| **入口脚本顶层标量**（`var count = 0`） | **各一份**（子线程里重新赋值主线程看不见） | 安全 ✓（但要靠 `join()` 返回值汇总） |
+| **入口脚本顶层的对象**（Array / Dict / struct） | 槽各一份，但**对象本身共享** | 改内容会互相看见 ✗ |
+| **`threads.local_*`** | **每线程一份**（子线程读不到主线程写的） | 安全 ✓ |
+
 ## API 参考
 
 ### threads 模块
@@ -918,6 +957,9 @@ main() {
 | `threads.join_all(Array[Thread])` | 等一组线程结束 | `int` |
 | `threads.parallel_for(n, f)` | 分 n 份并行（`f(index)`） | `int` |
 | `threads.map(arr, f)` | 并行 map（`f(item, index)`，按输入顺序） | `Array[回调返回]` |
+| `threads.local_get(key, default)` | 读本线程存的值（没存过给 `default`） | `any` |
+| `threads.local_has(key)` | 本线程是否存过该键 | `bool` |
+| `threads.local_set(key, value)` | 写本线程的值（其它线程看不见） | `null` |
 
 ### Channel 方法（返回类型与元素挂钩）
 
