@@ -181,7 +181,18 @@
 //   ⇒ LENO_MODCACHE_VERSION 同步升 ✓
 //   ⚠ 4 字节的 `ADD/SUB/MUL/LT/GT/LE/GE_INT_IMM` 族**加宽不了** ✗（A/B/C 三字段全占满，
 //     且它们没有随附的填充字）⇒ 超 int8 只能退回「LOADI + 寄存器版」= 现状 ✓
-#define LENO_BIN_VERSION    0x00030216  // v3.2.22 - **破坏性语义变更**（切片口径统一）：native
+#define LENO_BIN_VERSION    0x00030217  // v3.2.23（2026-10-12，T17 ①）—— **字符串 interning**：
+                                        //   字符串载荷段新增**两种编码**：
+                                        //     · 新串：`u32 len`（高位 = 0）+ XOR 载荷（与旧版逐字节相同）
+                                        //     · 重复：`u32 (len | 0x80000000)` + `u32 id`
+                                        //   （实测重复率：minilang 54.7% / pvz 84.5%，见
+                                        //     docs/待办与路线图.md §T17 ⇒ 省下这部分载荷 ✓）
+                                        //   **格式变了 ⇒ 必须 bump**：旧构建读新文件时会把
+                                        //   `len|0x80000000` 当成**长度**（21 亿）去读 ⇒ 越界/错读 ✗；
+                                        //   新构建读旧文件则永远见不到高位（旧文件全是新串 ✓ 其实兼容，
+                                        //   但按惯例一起失效，避免"单向兼容"的隐性假设 ✓）
+                                        //   ⇒ LENO_MODCACHE_VERSION 同步升 ✓
+                                        // v3.2.22 - **破坏性语义变更**（切片口径统一）：native
                                         //   `slice`/`byte_slice` 由"左闭右开"改成**闭区间**、
                                         //   `sub_str` 删除改名 `take`、`OP_SLICE` 的负索引改为
                                         //   "负起点从末尾数 / 负终点给空串"。
@@ -344,7 +355,11 @@
 // v13：ObjFunction 增加 is_async（运行期判定"调用即建协程"用）。旧缓存里的函数对象缺这个
 //      字段 ⇒ async 函数的**间接调用**（`var f = w; f()`、当参数传、绑定方法）会退回同步执行、
 //      静默错值，所以必须**作废旧缓存**。
-#define LENO_MODCACHE_VERSION  0x00000026  // v38 - 同 LENO_BIN_VERSION v3.2.22（切片口径的破坏性
+#define LENO_MODCACHE_VERSION  0x00000027  // v39 - 同 LENO_BIN_VERSION v3.2.23（**字符串 interning**：
+                                            //   字符串载荷段编码变了 ⇒ 旧缓存里的载荷会被新构建按
+                                            //   "引用"错读（`len|0x80000000` 当长度）⇒ 必须整体
+                                            //   失效重编译 ✓）
+                                            // v38 - 同 LENO_BIN_VERSION v3.2.22（切片口径的破坏性
                                             //   语义变更 ⇒ 旧模块字节码里可能烙着 `sub_str` 方法名、
                                             //   且是按旧口径编译的 ⇒ 整体失效重编译）
                                             // v37 - 同 LENO_BIN_VERSION v3.2.21（新增
@@ -479,6 +494,14 @@ typedef struct {
     uint8_t* data;
     size_t size;
     size_t pos;
+    // ---- 字符串去重（interning）读侧表 —— T17 ①（2026-10-12）----
+    //   ⚠ 这里**只记"载荷在 data 里的位置"**（不解码、不持有字符串、不额外分配）：
+    //     取用时现场 `memcpy + xor_encode_decode` ✓（XOR 是无状态对称变换 ✓）
+    //     ⇒ 不需要任何释放逻辑，也不可能读到悬空指针 ✓
+    //   id = **下标**（写入侧按"第几次出现的新串"编号 ✓）⇒ 越界即文件损坏 ⇒ fail-closed ✓
+    struct { uint32_t off; uint32_t len; }* in_refs;
+    uint32_t in_ref_count;
+    uint32_t in_ref_cap;
 } DeserializeCtx;
 
 // ============================================================================

@@ -120,16 +120,168 @@ static void xor_encode_decode(uint8_t* data, uint32_t len) {
 // 内部辅助：写入缓冲区
 // ============================================================================
 
+// ============================================================================
+// 字符串去重（interning）—— T17 ①（2026-10-12，见 docs/待办与路线图.md §T17）
+// ============================================================================
+// **为什么**：字符串载荷段占 `.lenb` 的 23~33%，而其中**重复的**占 54.7%（minilang）/
+//   84.5%（pvz）（2026-09-24 实测 ✓）⇒ 同一个字符串只写一次载荷、后续只写一个 id，
+//   就能把这段几乎整体省掉 ✓
+//
+// **编码**（刻意保持"每个字符串都以 u32 开头" ⇒ 读侧只多一个分支 ✓）：
+//   · 新串：`u32 len`（**高位 = 0**）+ XOR 载荷 —— 与旧版**逐字节相同** ✓
+//   · 重复：`u32 (len | 0x80000000)` + `u32 id`（id = **第几次出现的"新串"**，从 0 起 ✓）
+//   · `len == 0`（空串）与 `len >= 2^31`（借不到高位）：始终按新串写 ✓（省不了字节，也无风险 ✓）
+//
+// **作用域（两侧必须一致）**：去重表挂在 **WriteBuffer / DeserializeCtx** 上（不是全局 ✓）。
+//   两侧只要"调用 `wb_write_string` / `ctx_read_string` 的**顺序**一致"就对得上 ✓
+//   ⚠ 与**字节位置无关** —— 所以 `.modc` 那种"body 临时 buffer + 外层 header"的写法要当心：
+//     写侧 body 用自己的表（从 0 编号），读侧却是**一个 ctx** ⇒ 读 body 前必须
+//     `ctx_intern_reset()` ✓（读侧那一处已按此处理 ✓）
+//   ⚠ 哈希只在**写侧**要（读侧按 id 取 ✓）；两侧都不做"字符串内容表" ✓
+//
+// **失败降级**：内存不足 ⇒ 表退回 NULL / slot_count = 0 ⇒ **只是不去重**，格式与正确性
+//   完全不受影响 ✓（宁可不省字节，也不能写坏格式 ✓）
+#define INTERN_REF_FLAG 0x80000000u
+
+// **只有 `len >= 5` 才参与去重**（★ 算术理由，别改成"全部参与" ✗）：
+//   · 引用记录 = `u32(len|标志) + u32 id` = **8 字节** ✓（载荷不写 ✓）
+//   · 原样写   = `u32 len` + **len 字节载荷** = `4 + len` 字节
+//   ⇒ 引用更省 **当且仅当** `len > 4` ✓；`len ≤ 4` 时引用反而更大 ✗（如单字母名 `"x"`：
+//     原样 5 B → 引用 8 B ✗）。短名在真实产物里数量不小，所以这条阈值不是洁癖 ✓
+//   ⚠ **读侧必须用同一个判据**（`ctx_read_string` 里"读侧登记表"那行 ✓）：
+//     id 的编号规则是"第几次出现的新串"，两侧**必须同进同退**，规则写在两侧各一次 ✓
+#define INTERN_MIN_LEN 5
+
+typedef struct {
+    uint32_t hash;      // FNV-1a（与内容一一对应）
+    uint32_t id;        // 0 起的"第几次新串"
+    uint32_t len;
+    uint32_t off;       // 在这张表的 payload 缓冲里的偏移
+} InternEntry;
+
 typedef struct {
     uint8_t* data;
     size_t size;
     size_t capacity;
+    // ---- 字符串去重（T17 ①）----
+    char*        in_payload;      // 所有**首次出现**的字符串载荷（**明文**，便于 memcmp ✓）
+    size_t       in_payload_len;
+    size_t       in_payload_cap;
+    InternEntry* in_slots;        // 开放寻址哈希槽（容量恒为 2 的幂 ✓）
+    uint8_t*     in_used;         // 槽占用标记（1 字节/槽 —— 用标记而不用哨兵值 ⇒ 不歧义 ✓）
+    uint32_t     in_slot_count;   // 槽数（0 = 表不可用 ⇒ 不去重 ✓）
+    uint32_t     in_count;        // 已插入条数（= 下一个要发的 id ✓）
 } WriteBuffer;
 
 static void wb_init(WriteBuffer* wb) {
     wb->capacity = 4096;
     wb->data = (uint8_t*)malloc(wb->capacity);
     wb->size = 0;
+    wb->in_payload = NULL;
+    wb->in_payload_len = 0;
+    wb->in_payload_cap = 0;
+    wb->in_slots = NULL;
+    wb->in_used = NULL;
+    wb->in_slot_count = 0;
+    wb->in_count = 0;
+}
+
+// 去重表用的 FNV-1a（32 位版；与文件里 64 位的 serialize_source_hash 无关，别混用 ✓）
+static uint32_t intern_hash(const char* str, uint32_t len) {
+    uint32_t h = 2166136261u;
+    for (uint32_t i = 0; i < len; i++) {
+        h ^= (uint8_t)str[i];
+        h *= 16777619u;
+    }
+    return h;
+}
+
+// 扩容（容量 0 → 64，之后翻倍并重插）。**分配失败 ⇒ 表整体置空**（= 这轮不去重 ✓）：
+//   正确性不依赖去重 ✓（写侧只是"能省就省"，读侧照样能按原样读回来 ✓）
+static void intern_grow(WriteBuffer* wb) {
+    uint32_t old_count = wb->in_slot_count;
+    InternEntry* old_slots = wb->in_slots;
+    uint8_t* old_used = wb->in_used;
+
+    uint32_t new_count = old_count ? old_count * 2 : 64;
+    InternEntry* new_slots = (InternEntry*)calloc(new_count, sizeof(InternEntry));
+    uint8_t* new_used = (uint8_t*)calloc(new_count, 1);
+    if (!new_slots || !new_used) {
+        free(new_slots);
+        free(new_used);
+        free(old_slots);
+        free(old_used);
+        wb->in_slots = NULL;
+        wb->in_used = NULL;
+        wb->in_slot_count = 0;
+        return;
+    }
+
+    wb->in_slots = new_slots;
+    wb->in_used = new_used;
+    wb->in_slot_count = new_count;
+
+    uint32_t mask = new_count - 1;
+    for (uint32_t i = 0; i < old_count; i++) {
+        if (old_used && old_used[i]) {
+            uint32_t idx = old_slots[i].hash & mask;
+            while (wb->in_used[idx]) idx = (idx + 1) & mask;
+            wb->in_slots[idx] = old_slots[i];
+            wb->in_used[idx] = 1;
+        }
+    }
+    free(old_slots);
+    free(old_used);
+}
+
+// 查：命中返回 id（≥ 0），否则返回 -1
+static int32_t intern_find(WriteBuffer* wb, const char* str, uint32_t len, uint32_t hash) {
+    if (!wb->in_slots || !wb->in_used || wb->in_slot_count == 0) return -1;
+    uint32_t mask = wb->in_slot_count - 1;
+    uint32_t idx = hash & mask;
+    while (wb->in_used[idx]) {
+        InternEntry* e = &wb->in_slots[idx];
+        // ⚠ 必须比**内容**（哈希相同 ≠ 字符串相同 ⇒ 不能只比 hash ✗）
+        if (e->hash == hash && e->len == len &&
+            memcmp(wb->in_payload + e->off, str, len) == 0) {
+            return (int32_t)e->id;
+        }
+        idx = (idx + 1) & mask;
+    }
+    return -1;
+}
+
+// 插入并返回新 id；失败返回 -1（调用方按"未去重"继续 ✓）
+static int32_t intern_insert(WriteBuffer* wb, const char* str, uint32_t len, uint32_t hash) {
+    // 装载因子 ≥ 70% 就扩容（保持探测链短 ✓）
+    if (wb->in_slot_count == 0 ||
+        (wb->in_count + 1) * 10 >= wb->in_slot_count * 7) {
+        intern_grow(wb);
+        if (wb->in_slot_count == 0) return -1;
+    }
+
+    if (wb->in_payload_len + len > wb->in_payload_cap) {
+        size_t cap = wb->in_payload_cap ? wb->in_payload_cap * 2 : 4096;
+        while (cap < wb->in_payload_len + len) cap *= 2;
+        char* grown = (char*)realloc(wb->in_payload, cap);
+        if (!grown) return -1;
+        wb->in_payload = grown;
+        wb->in_payload_cap = cap;
+    }
+
+    uint32_t off = (uint32_t)wb->in_payload_len;
+    memcpy(wb->in_payload + off, str, len);
+    wb->in_payload_len += len;
+
+    uint32_t mask = wb->in_slot_count - 1;
+    uint32_t idx = hash & mask;
+    while (wb->in_used[idx]) idx = (idx + 1) & mask;
+    wb->in_slots[idx].hash = hash;
+    wb->in_slots[idx].len = len;
+    wb->in_slots[idx].off = off;
+    wb->in_slots[idx].id = wb->in_count;
+    wb->in_used[idx] = 1;
+    return (int32_t)wb->in_count++;
 }
 
 static void wb_ensure(WriteBuffer* wb, size_t additional) {
@@ -188,6 +340,22 @@ static void wb_write_double(WriteBuffer* wb, double val) {
 }
 
 static void wb_write_string(WriteBuffer* wb, const char* str, uint32_t len) {
+    // ★ T17 ①（2026-10-12）：**先试去重** —— 命中就只写 `u32(len|标志) + u32 id`，载荷一个字节都不写 ✓
+    //   ⚠ 三个前提：① `len < 2^31`（否则借不到高位当标志 ⇒ 走原样 ✓）；
+    //     ② `len >= INTERN_MIN_LEN`（引用 8 B vs 原样 4+len B ⇒ 短串引用反而更大 ✗）；
+    //     ③ 读侧用**同一条判据**决定要不要登记 ✓（否则 id 编号两侧错位 ✗）
+    if (len >= INTERN_MIN_LEN && len < INTERN_REF_FLAG) {
+        uint32_t hash = intern_hash(str, len);
+        int32_t hit = intern_find(wb, str, len, hash);
+        if (hit >= 0) {
+            wb_write_u32(wb, len | INTERN_REF_FLAG);
+            wb_write_u32(wb, (uint32_t)hit);
+            return;
+        }
+        // 首次出现：记进表（分配失败**不算错** —— 下次仍会当新串写 ✓ 只是这轮没省下 ✓）
+        (void)intern_insert(wb, str, len, hash);
+    }
+
     wb_write_u32(wb, len);
     if (len > 0) {
         // XOR 编码字符串
@@ -208,6 +376,17 @@ static void wb_free(WriteBuffer* wb) {
     wb->data = NULL;
     wb->size = 0;
     wb->capacity = 0;
+    // 去重表（T17 ①）也一起释放 —— 两个 buffer（body 临时 buffer + 外层）各自持一份 ✓
+    free(wb->in_payload);
+    wb->in_payload = NULL;
+    wb->in_payload_len = 0;
+    wb->in_payload_cap = 0;
+    free(wb->in_slots);
+    wb->in_slots = NULL;
+    free(wb->in_used);
+    wb->in_used = NULL;
+    wb->in_slot_count = 0;
+    wb->in_count = 0;
 }
 
 // ============================================================================
@@ -269,12 +448,68 @@ static int ctx_read_double(DeserializeCtx* ctx, double* out) {
     return ctx_read(ctx, out, 8);
 }
 
+// ---- 字符串去重（interning）读侧的三个小助手 —— T17 ①（2026-10-12）----
+//   ⚠ 表里**只存位置**（off/len），不存字符串本身 ⇒ 没有所有权问题、没有额外分配 ✓
+//   ⚠ `ctx_intern_reset` 是 `.modc` 那种"一个 ctx 读多个写入 buffer"的唯一解药：
+//     写侧 body 用自己的表（从 id 0 开始编号），读侧读 body 前必须把表归零 ⇒ 否则 id 错位 ✗
+static void ctx_intern_reset(DeserializeCtx* ctx) {
+    ctx->in_ref_count = 0;
+}
+
+static void ctx_intern_free(DeserializeCtx* ctx) {
+    free(ctx->in_refs);
+    ctx->in_refs = NULL;
+    ctx->in_ref_count = 0;
+    ctx->in_ref_cap = 0;
+}
+
+// 登记一条（id = 下标）。返回 0 = 内存不足（调用方判读取失败 ⇒ fail-closed ✓）
+static int ctx_intern_add(DeserializeCtx* ctx, uint32_t off, uint32_t len) {
+    if (ctx->in_ref_count >= ctx->in_ref_cap) {
+        uint32_t cap = ctx->in_ref_cap ? ctx->in_ref_cap * 2 : 256;
+        void* grown = realloc(ctx->in_refs, (size_t)cap * sizeof(*ctx->in_refs));
+        if (!grown) return 0;
+        ctx->in_refs = (void*)grown;
+        ctx->in_ref_cap = cap;
+    }
+    ctx->in_refs[ctx->in_ref_count].off = off;
+    ctx->in_refs[ctx->in_ref_count].len = len;
+    ctx->in_ref_count++;
+    return 1;
+}
+
 static char* ctx_read_string(DeserializeCtx* ctx, uint32_t* out_len) {
-    uint32_t len;
-    if (!ctx_read_u32(ctx, &len)) return NULL;
+    uint32_t raw;
+    if (!ctx_read_u32(ctx, &raw)) return NULL;
+
+    // ★ T17 ①：**高位 = 引用** ⇒ 只跟一个 id，载荷在文件里**根本没写第二遍** ✓
+    //   自校验两道（都指向"文件损坏"⇒ 直接失败，别往下错读 ✗）：
+    //     · id 必须**已经出现过**（id < 已登记条数 ✓）
+    //     · 引用里带的长度必须与该条目的长度一致 ✓
+    if (raw & INTERN_REF_FLAG) {
+        uint32_t len = raw & ~INTERN_REF_FLAG;
+        uint32_t id;
+        if (!ctx_read_u32(ctx, &id)) return NULL;
+        if (!ctx->in_refs || id >= ctx->in_ref_count) return NULL;
+        uint32_t off = ctx->in_refs[id].off;
+        uint32_t rlen = ctx->in_refs[id].len;
+        if (rlen != len) return NULL;
+        if ((size_t)off + rlen > ctx->size) return NULL;
+        char* str = (char*)malloc(rlen + 1);
+        if (!str) return NULL;
+        memcpy(str, ctx->data + off, rlen);
+        str[rlen] = '\0';
+        xor_encode_decode((uint8_t*)str, rlen);
+        if (out_len) *out_len = rlen;
+        return str;
+    }
+
+    // 新串：与旧版逐字节相同（`u32 len` + XOR 载荷 ✓）
+    uint32_t len = raw;
     if (out_len) *out_len = len;
     if (len == 0) return strdup("");
     if (ctx->pos + len > ctx->size) return NULL;
+    uint32_t payload_off = (uint32_t)ctx->pos;   // ★ 记**载荷位置**（未解码 ⇒ 以后现场解 ✓）
     char* str = (char*)malloc(len + 1);
     if (!str) return NULL;
     memcpy(str, ctx->data + ctx->pos, len);
@@ -282,6 +517,11 @@ static char* ctx_read_string(DeserializeCtx* ctx, uint32_t* out_len) {
     ctx->pos += len;
     // XOR 解码字符串
     xor_encode_decode((uint8_t*)str, len);
+    // ★ 登记（id = 下标；写侧编号规则 = "第几次出现的新串"，与该登记顺序一一对应 ✓）
+    //   ⚠ **判据必须与写侧逐字一致**（`len >= INTERN_MIN_LEN` + 高位判定隐含 len < 2^31 ✓）：
+    //     写侧只给"够长的串"发 id ⇒ 读侧也只给"够长的串"登记 ⇒ 两侧 id 序列才对齐 ✓
+    //     （空串已在上面提前返回 ⇒ 不占 id ✓ 与写侧一致 ✓）
+    if (len >= INTERN_MIN_LEN && !ctx_intern_add(ctx, payload_off, len)) return NULL;
     return str;
 }
 
@@ -1938,6 +2178,10 @@ SerializeResult chunk_deserialize(const char* path, Chunk* out_chunk, Scope** ou
     ctx.data = data;
     ctx.size = (size_t)file_size;
     ctx.pos = 0;
+    // 字符串去重表（T17 ①）：**栈上结构体必须显式清零**（这里不是整体 memset ✓）
+    ctx.in_refs = NULL;
+    ctx.in_ref_count = 0;
+    ctx.in_ref_cap = 0;
 
     uint32_t magic, version, flags;
     uint64_t src_hash;
@@ -1974,6 +2218,11 @@ SerializeResult chunk_deserialize(const char* path, Chunk* out_chunk, Scope** ou
     }
 
     *out_scope = scope;
+    // 字符串去重表（T17 ①）：只在**成功路径**释放。
+    //   错误路径要么在"读任何字符串之前"就返回（magic/版本不符 ⇒ `in_refs` 仍是 NULL ✓），
+    //   要么是"文件中途损坏"这类一次性失败（进程随后报错退出 ⇒ 泄漏有界、可接受 ✓）——
+    //   为了不在十几处 `return SERIALIZE_ERR_*` 上撒同一个 free，这里明确取这个取舍 ✓
+    ctx_intern_free(&ctx);
     free(data);
     return SERIALIZE_OK;
 }
@@ -2040,6 +2289,10 @@ SerializeResult chunk_deserialize_from_memory(uint8_t* data, size_t size,
     ctx.data = data;
     ctx.size = size;
     ctx.pos = 0;
+    // 字符串去重表（T17 ①）：栈上结构体必须显式清零（同上面那处 ✓）
+    ctx.in_refs = NULL;
+    ctx.in_ref_count = 0;
+    ctx.in_ref_cap = 0;
 
     uint32_t magic, version, flags;
     uint64_t src_hash;
@@ -2064,6 +2317,7 @@ SerializeResult chunk_deserialize_from_memory(uint8_t* data, size_t size,
     }
 
     *out_scope = scope;
+    ctx_intern_free(&ctx);   // 字符串去重表（T17 ①）—— 取舍同上（只在成功路径释放 ✓）
     return SERIALIZE_OK;
 }
 
@@ -2426,6 +2680,10 @@ ObjModule* module_cache_deserialize(const char* cache_path, const char* full_pat
     ctx.data = data;
     ctx.size = (size_t)file_size;
     ctx.pos = 0;
+    // 字符串去重表（T17 ①）：栈上结构体必须显式清零（同上面两处 ✓）
+    ctx.in_refs = NULL;
+    ctx.in_ref_count = 0;
+    ctx.in_ref_cap = 0;
 
     // 读 header（§8.112 起末尾多一个 bin_fp = 运行中 exe 的指纹）
     uint32_t magic, version;
@@ -2557,6 +2815,14 @@ ObjModule* module_cache_deserialize(const char* cache_path, const char* full_pat
     }
     free(dep_paths);
 
+    // ★ T17 ①（字符串去重）—— **这里必须把读侧去重表归零** ✓：
+    //   写侧 body 是先在**自己的临时 WriteBuffer** 里序列化的（`serialize_constant(&wb_body, …)`
+    //   ⇒ id 从 0 开始编号 ✓），随后才被**原样字节拷进**外层 `wb`（`wb_write(&wb, wb_body.data, …)`）。
+    //   而读侧只有**一个 ctx** ⇒ 若不清零，前面 dep_paths 的 `ctx_read_string` 已经占掉了
+    //   0..dep_count-1 这些 id ⇒ body 里的"引用 id 0"会被解析成**第一条依赖路径** ✗（错值）。
+    //   去重表按"**调用顺序**"编号（与字节位置无关 ✓）⇒ 归零后两侧顺序就一致了 ✓
+    ctx_intern_reset(&ctx);
+
     // 反序列化 body
     // CONST_TAG_MODULE 分支会 find_loaded_module(full_path) 复用占位 placeholder 并填充
     Value val;
@@ -2575,5 +2841,6 @@ ObjModule* module_cache_deserialize(const char* cache_path, const char* full_pat
     // 反序列化后修复函数 module 指针、注册 struct/face/cstruct/enum 定义
     fix_single_module(result_mod);
 
+    ctx_intern_free(&ctx);   // 字符串去重表（T17 ①）—— 取舍同前（只在成功路径释放 ✓）
     return result_mod;
 }
