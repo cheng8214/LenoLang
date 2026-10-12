@@ -659,17 +659,14 @@ main() { print(1) }
     ce.expect_error(mh, "`.slice()` ⇒ 保留专属的切片提示（回归守卫 ✓）",
         "arr[start:end]", 5)
 
-    // ★ 2026-10-10（A 组第 3 条 + 后半）：**跨线程传 struct 的两层拦截** ✓ 两层都钉 ✓
-    //   ① **编译期**（本轮后半新做 ✓）：静态类型确定为 struct 的实参 ⇒ 直接报 ✓
-    //      （以前 `threads.start(work, new P())` 要等到运行期才报 ✗ 实测 `-c` exit=0 ✓）
-    //   ② **运行期**（**仍然留着** ✓ 是安全底线 ✓）：把 struct 过一遍 `any` ⇒ 静态看不出来 ⇒
-    //      走到运行期报「不能跨线程传递此类型」✓（报在 `threads.start` 那一行 ✓）
-    //   ⚠ 为什么两层都要钉 ✗：只钉编译期会让人以为运行期那条可以删 ✓ —— 而它才是**兜底** ✓
-    //     （跨堆引用 ⇒ 收尾时双重释放 ⇒ `0xC0000374` **堆损坏** ✓ 见 object_thread.c 的实测 ✓）
-    //   ⚠ 另一句「字段访问需要结构体对象 —— 若该值来自**别的线程**…」（本轮补的半句 ✓
-    //     原版**一个字都不提"线程"** ✗）**故意不在这里钉** ✗：它只在"struct 真进了子线程
-    //     且访问了字段"时才出现 ✓ 而在编译期已拦的前提下这条路径**不好稳定构造** ✗
-    //     ⇒ 宁可不钉，也不写一条会飘的断言 ✓（它的原文与理由写在速查 §三 ② ✓）
+    // ★ 2026-10-12（TH1，见 docs/线程并发能力修复追踪.md）：**struct 跨线程已打通** ✓
+    //   两条判据**都翻了案**（原先钉的是"必须报错" ✗）：
+    //     ① 编译期：静态类型确定为 struct 的实参不再拦 ✓ —— 拦它成了**误报** ✓
+    //        （运行期闸门已能给 struct 深克隆 + 接收侧按定义重建 ✓）
+    //     ② 运行期：`any` 装 struct 也不再报 ✓ —— 走的是同一条深克隆路径 ✓
+    //   ⚠ **cstruct 仍然编译期就拦** ✓（裸 C 内存：字段里可能有指针 / 句柄 / 外部缓冲区 ✓
+    //     没有可安全克隆的语义 ✓）—— 这条是 TH1 换来的**新**判据 ✓
+    //   跨线程传值的完整判据在 `assert\test_channel_struct.leno`（深拷贝 / 嵌套 / 拒绝面 / 防环 ✓）
     var xth = dirs.join(work, "xthread_struct.leno")
     files.write(xth, @"import threads
 
@@ -677,29 +674,42 @@ struct P { int x = 7 }
 func work(P p): int { return p.x }
 
 main() {
-    threads.start(work, new P())
-    threads.sleep(400)
-    print(1)
+    var t = threads.start(work, new P())
+    print(t.join())
 }
 ")
-    ce.expect_error(xth, "跨线程传 struct ⇒ **编译期**就拦（不再等到运行期）",
-        "跨线程不能传 struct", 7)
+    ce.expect_ok(xth, "跨线程传 struct ⇒ 现在**能编译、能跑**（TH1 翻案）", "7")
 
     var xth2 = dirs.join(work, "xthread_struct_any.leno")
     files.write(xth2, @"import threads
 
 struct P { int x = 7 }
 func work(any p): int { return 1 }
-func go(any v) { threads.start(work, v) }
+func go(any v): int {
+    var t = threads.start(work, v)
+    return t.join()
+}
 
 main() {
-    go(new P())
-    threads.sleep(400)
-    print(1)
+    print(go(new P()))
 }
 ")
-    ce.expect_error(xth2, "`any` 装着 struct ⇒ 运行期兜底仍然拦住",
-        "不能跨线程传递此类型", 0)
+    ce.expect_ok(xth2, "`any` 装着 struct 也能过（同一条深克隆路径）", "1")
+
+    var xth3 = dirs.join(work, "xthread_cstruct.leno")
+    files.write(xth3, @"import threads
+
+cstruct Raw { u32 v }
+
+func work(Raw r): int { return 1 }
+
+main() {
+    var t = threads.start(work, Raw.malloc())
+    print(t.join())
+}
+")
+    ce.expect_error(xth3, "跨线程传 cstruct ⇒ **编译期**就拦（裸 C 内存不可克隆）",
+        "跨线程不能传 cstruct", 8)
 
     var ec2 = dirs.join(work, "struct_positional.leno")
     files.write(ec2, @"struct P {

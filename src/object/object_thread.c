@@ -71,7 +71,104 @@ void channel_mark_methods(void) {
 void channel_ref(ObjChannel* channel);
 void channel_unref(ObjChannel* channel);
 
-Value value_clone_for_channel(Value val) {
+// ============================================================================
+// 跨线程克隆的嵌套深度上限
+// ----------------------------------------------------------------------------
+// 为什么需要：struct 图**可以成环**（`a.b = a`）⇒ 纯递归会无限分配/爆栈。
+//   这里不做环检测（合理消息数据不该有环 ✓），超限就**明确报错** ✓（宁报勿挂 ✓）。
+//   容器（Array/Dict）同样受这个上限保护 ✓（多层嵌套的容器也是同一条路径 ✓）。
+// ============================================================================
+#define CHANNEL_CLONE_MAX_DEPTH 64
+
+// 诊断用：正在克隆的字段（形如 "Point.x"），只在"不可跨线程类型"的报错文案里带上。
+//   ⚠ 纯诊断、**不参与语义** ✓：写成静态是因为克隆全程在**同一个线程**内跑完（无 yield ✓）。
+static char g_channel_clone_ctx[192] = "";
+
+static Value channel_clone_value(Value val, int depth);
+
+// 不可跨线程类型的**统一报错**（单一文案来源 ✓，下面两处 default 都调它 ✓）
+//   ⚠ 报错**不是**可选项：放行跨堆引用 ⇒ 收尾时同一块内存被两个堆各释放一次 ⇒ 0xC0000374 堆损坏。
+//   `type_tag` 是运行时类型标记（VAL_* 或 ObjectType），只用于诊断。
+static void channel_clone_reject(int type_tag) {
+    const char* support = "跨线程只支持 标量 / string / Array / Dict / struct / Channel";
+    if (g_channel_clone_ctx[0] != '\0') {
+        // 上界 = 上下文 192 字节 + 提示 68 + 中文固定部分 ⇒ 320 会被 GCC 判 -Wformat-truncation
+        char msg[384];
+        snprintf(msg, sizeof(msg),
+                 "不能跨线程传递此类型（来自 %s，类型标记 %d）—— %s",
+                 g_channel_clone_ctx, type_tag, support);
+        native_throw_error(msg);
+        return;
+    }
+    char msg[192];
+    snprintf(msg, sizeof(msg), "不能跨线程传递此类型 —— %s", support);
+    native_throw_error(msg);
+}
+
+// struct 实例深克隆（跨线程）—— TH1（2026-10-12，见 docs/线程并发能力修复追踪.md）
+// ----------------------------------------------------------------------------
+// 为什么现在能做：struct **定义**的子线程快照机制早就落地（`struct_def_import_from_thread` ✓）
+//   ⇒ 接收侧一定查得到类型定义，重建实例没有障碍 ✓。
+// 语义：**深克隆**（与 Array/Dict 同口径 ✓）——
+//   接收线程拿到的是挂在自己堆上的**独立副本**，改它不影响发送方 ✓。
+// 拒绝面：字段里出现白名单之外的对象（`Ptr` / 闭包 / cstruct …）⇒ 走同一个 default 分支
+//   报「不能跨线程传递此类型」（由 g_channel_clone_ctx 指认是哪个字段 ✓）。
+//   ⚠ 这一层**必须**在（跨堆引用 ⇒ 收尾时同一块内存被两个堆各释放一次 ⇒ 0xC0000374 堆损坏）。
+static Value channel_clone_struct(ObjStruct* src, int depth) {
+    if (!src || !src->def) {
+        native_throw_error("跨线程传递 struct 失败：实例缺少结构体定义");
+        return val_null();
+    }
+    if (depth >= CHANNEL_CLONE_MAX_DEPTH) {
+        native_throw_error("跨线程传递 struct 失败：嵌套层数超过 64（可能含循环引用）");
+        return val_null();
+    }
+
+    ObjStructDef* def = src->def;
+    ObjStruct* copy = struct_instance_new(def);
+    if (!copy) return val_null();   // gc_alloc 失败时已报过
+
+    for (int i = 0; i < def->field_count; i++) {
+        Value fv = src->field_values[i];
+        // 记录"当前字段"供报错文案使用：保存/恢复成对出现，嵌套 struct 不会把外层上下文冲掉
+        char saved_ctx[sizeof(g_channel_clone_ctx)];
+        memcpy(saved_ctx, g_channel_clone_ctx, sizeof(saved_ctx));
+
+        const char* fname = (def->fields && def->fields[i].name) ? def->fields[i].name : "?";
+        snprintf(g_channel_clone_ctx, sizeof(g_channel_clone_ctx), "%s.%s",
+                 def->name ? def->name : "?", fname);
+
+        Value cloned = channel_clone_value(fv, depth + 1);
+
+        memcpy(g_channel_clone_ctx, saved_ctx, sizeof(g_channel_clone_ctx));
+
+        // 走 struct_set_field（struct 字段写入的**唯一入口** ✓）：它负责边界与写屏障 ✓
+        struct_set_field(copy, i, cloned);
+    }
+
+    // 元数据也要带上：face 声明（`Speaker s = new Dog()` ⇒ 跨线程后仍是 face ✓）
+    if (src->declared_face) {
+        ObjString* face = str_copy(src->declared_face->chars, src->declared_face->len);
+        copy->declared_face = face;
+        if (face) gc_write_barrier((Object*)copy, val_obj((Object*)face));
+    }
+    // 泛型实参（`Box[int]` 这类）：非 GC 托管内存（gc 用 free 释放 ✓）⇒ strdup 深拷贝 ✓
+    if (src->generic_type_args && src->generic_type_arg_count > 0) {
+        int n = src->generic_type_arg_count;
+        char** args = (char**)malloc(sizeof(char*) * (size_t)n);
+        if (args) {
+            for (int i = 0; i < n; i++) {
+                args[i] = src->generic_type_args[i] ? strdup(src->generic_type_args[i]) : NULL;
+            }
+            copy->generic_type_args = args;
+            copy->generic_type_arg_count = n;
+        }
+    }
+
+    return val_obj((Object*)copy);
+}
+
+static Value channel_clone_value(Value val, int depth) {
     switch (val_get_type(val)) {
         case VAL_NULL:
         case VAL_INT:
@@ -97,7 +194,7 @@ Value value_clone_for_channel(Value val) {
                         copy->elements = (Value*)malloc(copy->capacity * sizeof(Value));
                         if (!copy->elements) return val_null();
                         for (int i = 0; i < arr->count; i++) {
-                            copy->elements[i] = value_clone_for_channel(arr->elements[i]);
+                            copy->elements[i] = channel_clone_value(arr->elements[i], depth + 1);
                         }
                     }
                     return val_obj((Object*)copy);
@@ -120,7 +217,7 @@ Value value_clone_for_channel(Value val) {
                         for (int i = 0; i < dict->asize; i++) {
                             Value elem = dict->array[i];
                             if (val_is_null(elem)) continue;
-                            dict_set(copy, val_int(i), value_clone_for_channel(elem));
+                            dict_set(copy, val_int(i), channel_clone_value(elem, depth + 1));
                         }
                     }
                     // 拷贝哈希表部分
@@ -133,26 +230,34 @@ Value value_clone_for_channel(Value val) {
                             //   进程收尾时同一块内存被两个堆各释放一次 ⇒ **0xC0000374 堆损坏**。
                             //   实测对照（8 次采样）：跳过接收侧克隆 0/8、保留克隆 6/8；
                             //   消息换成**字符串**（无键）0/8 ⇒ 正是"dict 的键"这一条特有路径。
-                            dict_set(copy, value_clone_for_channel(entry_key),
-                                    value_clone_for_channel(dict->entries[i].value));
+                            dict_set(copy, channel_clone_value(entry_key, depth + 1),
+                                    channel_clone_value(dict->entries[i].value, depth + 1));
                         }
                     }
                     return val_obj((Object*)copy);
                 }
+                case OBJ_STRUCT:
+                    // TH1（2026-10-12）：struct 实例也能跨线程了（深克隆 + 接收侧重建）
+                    return channel_clone_struct((ObjStruct*)obj, depth);
                 case OBJ_CHANNEL: {
                     ObjChannel* ch = (ObjChannel*)obj;
                     channel_ref(ch);
                     return val_obj((Object*)ch);
                 }
                 default:
-                    native_throw_error("不能跨线程传递此类型");
+                    channel_clone_reject(obj->type);
                     return val_null();
             }
         }
         default:
-            native_throw_error("不能跨线程传递此类型");
+            channel_clone_reject((int)val_get_type(val));
             return val_null();
     }
+}
+
+// 跨线程传值的**唯一闸门**（对外入口，符号名不变 —— 多处调用点依赖它 ✓）
+Value value_clone_for_channel(Value val) {
+    return channel_clone_value(val, 0);
 }
 
 // ============================================================================

@@ -1,0 +1,198 @@
+// test_channel_struct.leno —— TH1：**struct 实例跨线程**（回归）
+//
+// 背景：`value_clone_for_channel` 原先只认 标量 / string / Array / Dict / Channel，
+//   struct 一律走 default 报「不能跨线程传递此类型」⇒ 想让并发库跑起来只能把 struct
+//   **拍平成 Array[string]** 在接收侧手工重建（见 docs/线程并发能力修复追踪.md 的 TH1）。
+//   现在：struct 走**深克隆 + 接收侧按定义重建**（`channel_clone_struct`）。
+//
+// 判据（每条都在下面钉住）：
+//   ① struct 能作 `threads.start` 实参；子线程改字段**不影响**主线程（深拷贝语义）
+//   ② struct 能过 Channel 往返（string / Array 字段一并带上）
+//   ③ 嵌套 struct 递归完整
+//   ④ **拒绝面**：字段里装了不可克隆的对象（cstruct 实例）⇒ 报错指认到字段，且**不崩**
+//   ⑤ **防环**：自引用 struct ⇒ 报「嵌套层数超过 64」而不是挂死
+//   ⚠ 用例写法上避开"容量 1 的通道上双方对称收发"——那本来就有竞态（父线程会收到自己发的
+//     消息、子线程永久阻塞在 receive）⇒ 这里一律"先发完 N 条、再收 N 条"。
+
+import threads
+import strings
+
+struct Point {
+    int x = 0
+    int y = 0
+    string name = ""
+    Array[int] tags = []
+}
+
+struct Line {
+    Point a
+    Point b
+}
+
+cstruct Raw {
+    u32 v
+}
+
+struct Holder {
+    int v = 1
+    Raw raw
+}
+
+struct Node {
+    int v = 0
+    Node? next = null
+}
+
+// ---------------------------------------------------------------- ① 深拷贝
+func bump(Point p): string {
+    p.x = 100
+    p.name = "child"
+    p.tags.add(99)
+    return p.name + ":" + p.x + ":" + p.tags.len()
+}
+
+// ---------------------------------------------------------------- ② Channel
+// ⚠ 收发**必须分两条通道**：同一条通道上"边收边发"时，发送者会先收到**自己刚发出去**的
+//   那条（通道语义就是"谁先 receive 谁拿"）⇒ 子线程会把自己的回包当成输入再跑一轮
+//   （实测：3 条输入变成 4 轮 `a,b,c,a`）。这不是 struct 的问题，是通道用法的问题。
+func worker(Channel in_ch, Channel out_ch): string {
+    var total = 0
+    var names = ""
+    // ⚠ `for A : B` 是**闭区间**（`for 0 : 3` 跑 0,1,2,3 共 4 轮 —— 实测）⇒ 三条输入写 0 : 2
+    for 0 : 2 to var i {
+        var v = in_ch.receive()
+        if v is Point => q {
+            total = total + q.x + q.y
+            names = names + q.name + ","
+            q.x = q.x * 10
+            out_ch.send(q)
+        }
+    }
+    return "total=" + total + "/" + names
+}
+
+// ---------------------------------------------------------------- ③ 嵌套
+func line_sum(Line l): int {
+    return (l.a.x + l.a.y) + (l.b.x + l.b.y)
+}
+
+// ④ 的 `threads.start` 侧对照（该函数体永远不会被真正执行）
+func holder_v(Holder h): int {
+    return h.v
+}
+
+main() {
+    // ---------- ① struct 作 start 实参 + 深拷贝 ----------
+    var p = new Point()
+    p.x = 1
+    p.y = 2
+    p.name = "main"
+    p.tags.add(7)
+
+    var t = threads.start(bump, p)
+    var childView = t.join()
+    assert_eq(childView, "child:100:2", "①子线程应看到自己改过的副本")
+    assert_eq(p.x, 1, "①深拷贝：子线程改 x 不影响主线程")
+    assert_eq(p.name, "main", "①深拷贝：子线程改 string 字段不影响主线程")
+    assert_eq(p.tags.len(), 1, "①深拷贝：子线程 add 不影响主线程的数组字段")
+
+    // ---------- ② struct 过 Channel 往返 ----------
+    var inCh = threads.channel(8)
+    var outCh = threads.channel(8)
+    var t2 = threads.start(worker, inCh, outCh)
+
+    var p1 = new Point()
+    p1.x = 1
+    p1.y = 10
+    p1.name = "a"
+    var p2 = new Point()
+    p2.x = 2
+    p2.y = 20
+    p2.name = "b"
+    var p3 = new Point()
+    p3.x = 3
+    p3.y = 30
+    p3.name = "c"
+    inCh.send(p1)
+    inCh.send(p2)
+    inCh.send(p3)
+
+    var r1 = outCh.receive()
+    var r2 = outCh.receive()
+    var r3 = outCh.receive()
+    var summary = t2.join()
+
+    assert_eq(summary, "total=66/a,b,c,", "②子线程应收到三条 struct（字段值正确）")
+    var ok2 = false
+    if r2 is Point => q2 {
+        ok2 = q2.x == 20 and q2.y == 20 and q2.name == "b"
+    }
+    assert_true(ok2, "②第二条回来的 struct 内容应为 20/20/b")
+
+    // 回来的 struct 仍是 struct，且是子线程改过的副本（x *= 10）
+    var ok1 = false
+    if r1 is Point => q1 {
+        ok1 = q1.x == 10 and q1.y == 10 and q1.name == "a"
+    }
+    assert_true(ok1, "②第一条回来的 struct 内容应为 10/10/a")
+    var ok3 = false
+    if r3 is Point => q3 {
+        ok3 = q3.x == 30 and q3.y == 30 and q3.name == "c"
+    }
+    assert_true(ok3, "②第三条回来的 struct 内容应为 30/30/c")
+
+    // 发送方的原件没被子线程改到（跨线程一律深拷贝）
+    assert_eq(p1.x, 1, "②子线程改的是副本，发送方原件不受影响")
+
+    // ---------- ③ 嵌套 struct ----------
+    var l = new Line()
+    l.a.x = 1
+    l.a.y = 2
+    l.b.x = 3
+    l.b.y = 4
+    var t3 = threads.start(line_sum, l)
+    assert_eq(t3.join(), 10, "③嵌套 struct（Line{Point,Point}）字段应完整送达")
+
+    // ---------- ④ 拒绝面：字段里装了 cstruct 实例（裸 C 内存，不可克隆） ----------
+    var h = new Holder()
+    h.v = 5
+    h.raw = Raw.malloc()          // 不装的话该字段是 null ⇒ null 本身可克隆、不算拒绝面
+    string msg4 = "(没报错)"
+    var ch4 = threads.channel(1)
+    try {
+        ch4.send(h)
+    } catch e4 {
+        msg4 = $"{e4}"
+    }
+    assert_true(strings.has(msg4, "不能跨线程传递此类型"),
+        "④含不可克隆字段的 struct 应明确报错；实际=" + msg4)
+    assert_true(strings.has(msg4, "Holder.raw"),
+        "④报错应指认到具体字段（Holder.raw）；实际=" + msg4)
+
+    // 同一条拒绝面走 `threads.start` 实参也要生效（两条通道共用同一个闸门）
+    string msg4b = "(没报错)"
+    try {
+        var t4 = threads.start(holder_v, h)
+        print("不该走到这里 " + t4.join())
+    } catch e4b {
+        msg4b = $"{e4b}"
+    }
+    assert_true(strings.has(msg4b, "Holder.raw"),
+        "④`threads.start` 实参通道同样应指认字段；实际=" + msg4b)
+
+    // ---------- ⑤ 防环：自引用 struct 不能挂死 ----------
+    var n = new Node()
+    n.v = 1
+    n.next = n
+    string msg5 = "(没报错)"
+    var ch5 = threads.channel(1)
+    try {
+        ch5.send(n)
+    } catch e5 {
+        msg5 = $"{e5}"
+    }
+    assert_true(strings.has(msg5, "嵌套层数超过 64"),
+        "⑤自引用 struct 应报嵌套超限而不是挂死；实际=" + msg5)
+
+    print("test_channel_struct passed")
+}
