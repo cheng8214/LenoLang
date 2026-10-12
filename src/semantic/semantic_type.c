@@ -1010,6 +1010,30 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     } else {
                         // 类型不同，尝试类型提升
                         int promoted = 0;
+
+                        // ---- 枚举按 int 参与统一（2026-10-12 补）----
+                        //   口径「枚举 = int」：**枚举变量**与（已折叠成 int 的）枚举成员/普通数值
+                        //   混在一根字面量里是常见写法（`[m, ScaleMode.NEAREST]`），此前没有规则
+                        //   ⇒ 落到本段末尾的 `!promoted` 分支，整根字面量退化 `Array[any]` ✗
+                        //   （实测：`Array[ScaleMode] a = [m, ScaleMode.NEAREST]` 报「实际 Array[any]」，
+                        //     而同义的 `[m, m]` / `[E.A, E.B]` 都 ✓ —— 只有"混合"这一种形状炸）
+                        //   ⇒ 先把"一侧是枚举、另一侧不是"的那个枚举归一成 int，后面的原链照跑
+                        //     （于是能自然升到 float / bigint ✓）
+                        //   ⚠ 两侧都是枚举时不改写：`type_equals` 对 TYPE_ENUM 落到 default ⇒ 判等
+                        //     （有意不查枚举名，见 type.c 的说明）⇒ 根本走不到这里 ✓
+                        if (element_type->kind == TYPE_ENUM && elem_type->kind != TYPE_ENUM) {
+                            type_free(element_type);
+                            element_type = type_new(TYPE_INT);
+                        } else if (elem_type->kind == TYPE_ENUM && element_type->kind != TYPE_ENUM) {
+                            type_free(elem_type);
+                            elem_type = type_new(TYPE_INT);
+                        }
+                        // 归一后两边都是 int（枚举变量 + 枚举成员）：保留 element_type(int) ✓
+                        //   注：这一支必须显式给，字面量这里没有 `kind 相同就取该类型` 的兜底 ✗
+                        if (element_type->kind == TYPE_INT && elem_type->kind == TYPE_INT) {
+                            type_free(elem_type);
+                            promoted = 1;
+                        }
                         
                         // int + float -> float
                         if ((element_type->kind == TYPE_INT && elem_type->kind == TYPE_FLOAT) ||
@@ -2955,6 +2979,17 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                 } else {
                     // 类型不同，尝试类型提升（复用数组推断中的逻辑）
                     int promoted = 0;
+
+                    // 枚举按 int 参与（2026-10-12 补，口径「枚举 = int」，同上面数组字面量那段 ✓）：
+                    //   `var x = if c then 枚举变量 else 1` 此前判成两个不同 kind ⇒ 兜底 TYPE_ANY ✗
+                    //   ⇒ 一侧枚举、另一侧不是 ⇒ 把枚举那侧归一成 int，后面原链 + same-kind 兜底照跑 ✓
+                    if (then_type->kind == TYPE_ENUM && else_type->kind != TYPE_ENUM) {
+                        type_free(then_type);
+                        then_type = type_new(TYPE_INT);
+                    } else if (else_type->kind == TYPE_ENUM && then_type->kind != TYPE_ENUM) {
+                        type_free(else_type);
+                        else_type = type_new(TYPE_INT);
+                    }
 
                     // int + float -> float
                     if ((then_type->kind == TYPE_INT && else_type->kind == TYPE_FLOAT) ||

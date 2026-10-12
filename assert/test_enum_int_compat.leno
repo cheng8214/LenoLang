@@ -1,0 +1,113 @@
+// 回归：**枚举 = int** 的口径没落到实处（2026-10-12）
+//
+// 症状（补 SDL3 的 setTextureScaleMode 时踩到）：用**枚举类型**声明变量/形参后，一进"数值"语境
+//   就报假错，而同义的 int 写法全过 —— 口径「枚举就是 int」只落实了一半：
+//     ① clib 形参：`clib sdl3 { bool f(Ptr[u8], i32) }` + `f(h, 枚举变量)`
+//        ⇒「参数 2 类型不匹配: 期望 'i32', 实际 'unknown'」✗
+//        （后半截 'unknown' 是**显示层**假象：真类型是 TYPE_ENUM，只是 type_kind_to_string
+//          没有它的分支 ⇒ 落到 default "unknown"；看着像"类型丢了"，误导排查方向）
+//     ② float 提升：`float f = 枚举变量` ⇒「期望 float, 实际 int」✗（而 `float f = E.A` 却能过）
+//     ③ 数组字面量混写：`Array[E] a = [枚举变量, E.A]` ⇒ 整根退化 `Array[any]` ✗
+//        （同义的 `[m, m]` / `[E.A, E.B]` 都 ✓ ⇒ 只有"枚举变量 + 字面成员"这一种形状炸：
+//          字面成员已折叠成 int，与枚举变量的 kind 对不上，而提升表里没有枚举 ⇒ 兜底 any）
+//     ④ if 表达式：`var x = if c then 枚举变量 else 0` ⇒ 同样兜底 TYPE_ANY ✗
+//
+// 根因（三处缺口 + 一处显示）：
+//   ① src/type.c `type_is_compatible()`：enum 互通规则只写了 TYPE_INT，漏了 **C 布局整型**
+//      （TYPE_I8..TYPE_C_SSIZE）⇒ clib 的 i32 形参接不上；同文件 `type_kind_to_string()`
+//      缺 `case TYPE_ENUM` ⇒ 报文显示 'unknown'
+//   ② src/type.c：「int 可隐式转 float」只认 TYPE_INT ⇒ 枚举没有同权
+//   ③ src/semantic/semantic_type.c：**数组字面量**与 **if 表达式**的元素类型提升表是硬编码的
+//      枚举清单（int↔float、↔bigint、struct↔face…），同样没有枚举
+//
+// 本用例的作用：①②③④ 都钉住 —— 任一处回退，本文件**编译失败**（四处全在语义期）✓
+//   （①的显示半边不会让编译失败，故额外用 `type()` 钉住"枚举对外就是 int"✓）
+//
+// 判据：① clib i32 形参收枚举变量/枚举形参，且**运行期取值正确**；
+//      ② 枚举 → float 变量/形参，取值正确；
+//      ③ 枚举变量与字面成员混写的数组，元素类型不再退化 any（type() 也应是 int 系）；
+//      ④ if 表达式同理；⑤ 反向对照：float → int 仍必须被拦（不许被这次放宽带跑）。
+
+import ffi
+
+clib mylib {
+    i32 abs(i32 n)              // ① 枚举 → clib i32 形参（本行是本次修复的直接目标）
+    u8  pin_u8(u8 v)            // 顺带钉住**其它宽度**的 C 整型（compile-time only，从不调用）
+    u64 pin_u64(u64 v)
+}
+
+mylib L = null
+func getLib(): mylib {
+    if L == null {
+        L = ffi.load(if _os() == "windows" then "msvcrt.dll" else "libc.so.6")
+    }
+    return L
+}
+
+enum Mood {
+    SAD = -5
+    HAPPY = 3
+}
+
+// ① 枚举**形参** → clib 的 i32 形参（修复前：期望 i32 / 实际 unknown ✗）
+func absOf(Mood v): int {
+    return getLib().abs(v)
+}
+
+// ①' 其它 C 整型宽度（只为编译期检查，函数从不调用 ⇒ 不会真去解析符号）
+func pinWidths(Mood v) {
+    getLib().pin_u8(v)
+    getLib().pin_u64(v)
+}
+
+// ② 枚举 → float（变量初始化 / 函数实参 两条路都要过）
+func asFloat(Mood v): float {
+    float f = v
+    return f
+}
+func takesFloat(float x): float { return x }
+func viaParam(Mood v): float {
+    return takesFloat(v)
+}
+
+main() {
+    Mood m = Mood.HAPPY
+
+    // ① clib i32：不但要编译过，**值**也要对（abs(-5) = 5）
+    assert_eq(absOf(Mood.SAD), 5)
+    assert_eq(absOf(m), 3)
+    print("[1] enum -> clib i32 param passed")
+
+    // ② float 提升：与 int 同权（`int n; float f = n` 的既有语义）
+    assert_eq(asFloat(m), 3.0)
+    assert_eq(viaParam(Mood.SAD), -5.0)
+    assert_eq(type(asFloat(m)), "float")
+    print("[2] enum -> float promotion passed")
+
+    // ③ 数组字面量：枚举变量 + 字面成员混写（修复前整根退化 Array[any] ✗）
+    Array[Mood] a = [m, Mood.SAD]
+    assert_eq(a[0], 3)
+    assert_eq(a[1], -5)
+    Array[int] b = [m, 7]
+    assert_eq(b[0], 3)
+    assert_eq(b[1], 7)
+    Array[float] c = [m, 1.5]
+    assert_eq(c[0], 3.0)
+    assert_eq(c[1], 1.5)
+    print("[3] enum array literal (mixed) passed")
+
+    // ④ if 表达式：枚举变量与 int/float 混合
+    var x = if m == 3 then m else 0
+    assert_eq(x, 3)
+    var y = if m == 3 then m else 1.5
+    assert_eq(y, 3.0)
+    print("[4] enum in if-expression passed")
+
+    // ⑤ 口径对照：枚举对外就是 int（成员、变量、数组 element 三处一致）
+    assert_eq(type(Mood.HAPPY), "int")
+    assert_eq(type(m), "int")
+    assert_eq(type(a), "Array[int]")
+    int asInt = m
+    assert_eq(asInt, 3)
+    print("[5] enum is int (all views) passed")
+}

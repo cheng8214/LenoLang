@@ -919,6 +919,13 @@ int type_is_compatible(TypeInfo* target, TypeInfo* source) {
     if (target->kind == TYPE_FLOAT && source->kind == TYPE_INT) {
         return 1;
     }
+    // 枚举 → float 的同一提升（2026-10-12 补）：口径「枚举 = int」⇒ 枚举变量必须与 int 同权。
+    //   此前只有 int 那一半 ⇒ `float f = 枚举变量` / `takesFloat(枚举变量)` 报
+    //   「期望 float, 实际 int」✗，而同义的 `float f = E.A`（字面成员，已折叠成 int）却能过
+    //   —— 同一语义两副面孔。反向**不补**：float → 枚举（等价 float → int）本就不允许隐式转换 ✓
+    if (target->kind == TYPE_FLOAT && source->kind == TYPE_ENUM) {
+        return 1;
+    }
 
     // ---- enum 与 int 互通（2026-10-02 补）----
     // 为什么必须互通：枚举成员的**编译期折叠**（visit_expr 的关联常量/enum 成员折叠）把
