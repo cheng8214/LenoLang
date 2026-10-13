@@ -1353,8 +1353,20 @@ win.set_widget_opacity(b, 0.5)      // 0.0~1.0，越界自动夹紧 ✓
   越界一律 1.0 ✓）⇒ 不必去改 40+ 处 `widgets.add` 调用点 ✓，后续新增控件天然是 1.0 ✓。
 - **容器设了透明度 ⇒ 整个子树一起淡出** ✓（子控件都在它的 `render()` 里画 ✓）。
 
-**⚠ v1 已知边界**：`drawTextureAt / drawTextureRect / drawTextureFromTo / drawTextureRounded`
-这四条**直绘纹理**路径没走批处理 ⇒ 暂不参与缩放 ✗（圆角海报、直贴图不会淡出 ✓ —— 待后续 ✓）。
+**直绘纹理也覆盖（2026-10-13 同日补齐 ✓）**：`drawTextureAt / drawTextureRect / drawTextureFromTo`
+三条都走 `_texScalePush` / `_texScalePop` —— 临时给纹理设 alpha 调制、画完**还原旧值** ✓
+（**不能一律还原 255** ✗：纹理可能被别人设过永久调制 ✓）；`drawTextureRounded` **自动被覆盖** ✓
+（它最后一步就是 `drawTextureAt` 贴回 ✓）⇒ **圆角海报也能淡出** ✓。
+  ⚠ 两个前置条件（都踩过 ✗）：① FFI 只认 clib 里**声明过**的函数 ⇒ 补声明了 `SDL_GetTextureAlphaMod`
+  （`sdl_core.leno` ✓）；② `&` 取址**只能取 cstruct 字段**（`&局部量` 直接报语义错误 ✗）⇒ 出参照
+  `getColor` 的现成写法用 `SDL_Color.malloc()` + `&c.r` ✓。
+
+**⚠ 踩坑（已修 ✓）：合成型绘制会"平方淡化"** —— `drawTextureRounded` 内部要**用顶点色乘蒙版**
+（`setColorFloat(1,1,1,1)` ✓），若合成期间缩放还开着，蒙版 alpha 也被压到 0.4，而贴回屏幕时纹理调制
+**又**乘一次 ⇒ 0.4² = 0.16 ✗（实测：opacity=0.4 的圆角海报看着像 0.16，且**逐通道与 0.16 的理论值吻合** ✓
+—— 这正是"像素验收必须逐点读"的价值 ✓）。**口径**：合成函数体内**临时关掉**缩放（`savedAS` 存起来），
+**只在最后一步贴回时还原** ⇒ 恰好乘一次 ✓。
+  ⭐ 一般规律：**凡是"中间结果也走同一套颜色管线"的绘制，缩放只能施加在最终出口** ✓。
 
 **验收**：`leno_gui/自测/test_opacity.leno`（同色按钮 100% / 50% / 25% 三档 + 容器 0.35 与对照组并排）
 ```

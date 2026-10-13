@@ -9,7 +9,7 @@
 //   另验"容器淡出带动子树"：把 0.35 设在 VBox 上，量它**里面那个按钮**是否也淡了 ✓
 //   用法：set SHOT=%TEMP%\op.png & build\leno.exe leno_gui\自测\test_opacity.leno
 import "SDL3" as SDL3
-use SDL3.(Event, Renderer, Window, VBox, Button)
+use SDL3.(Event, Renderer, Window, VBox, Button, Card)
 
 int steps = 0
 string shot = ""
@@ -22,7 +22,7 @@ func rep(string name, float x, float y, float w, float h) {
 func run() {
     SDL3.ttfInit()
     SDL3.setTheme(SDL3.darkTheme())          // 底色固定深灰 ⇒ 淡化后应向它靠拢 ✓
-    Window w = SDL3.createWindow({title: "test_opacity", w: 620, h: 260})
+    Window w = SDL3.createWindow({title: "test_opacity", w: 620, h: 460})
     if not w.ok { SDL3.ttfQuit(); return }
 
     // ---- 一、同色按钮三档（100% / 50% / 25%）----
@@ -41,6 +41,19 @@ func run() {
     // 对照组：同样长相、但没被淡化的按钮
     Button bRef = w.addButton({x: 220, y: 140, w: 180, h: 64, text: "对照组", type: "primary"})
 
+    // ---- 三、图片淡出（压"直绘纹理"那条补口 ✓）----
+    //   圆角海报走的是 `drawTextureRounded` → 最后一步 `drawTextureAt` 贴回 ✓
+    //   两张**同一张图** ⇒ 唯一差别就是透明度 ⇒ 可比 ✓（image_radius > 0 才会走圆角合成那条 ✓）
+    Card imgA = SDL3.createCard({x: 20, y: 230, w: 150, h: 210, title: "",
+                                 image_path: "leno_gui/应用/影视海报墙/images/p01.png",
+                                 image_aspect: 1.45, image_radius: 12, radius: 12})
+    w.add(imgA)
+    Card imgB = SDL3.createCard({x: 190, y: 230, w: 150, h: 210, title: "",
+                                 image_path: "leno_gui/应用/影视海报墙/images/p01.png",
+                                 image_aspect: 1.45, image_radius: 12, radius: 12})
+    w.add(imgB)
+    w.set_widget_opacity(imgB, 0.4)
+
     var s = _env("SHOT"); if s != null { shot = _str(s) }
     if shot == "" { shot = "op.png" }
 
@@ -52,6 +65,9 @@ func run() {
             rep("b25",  b25.x, b25.y, b25.w, b25.h)
             rep("bIn",  bIn.x, bIn.y, bIn.w, bIn.h)      // 容器里的子按钮（应被父容器一起淡出 ✓）
             rep("bRef", bRef.x, bRef.y, bRef.w, bRef.h)  // 对照组（满不透明 ✓）
+            // 海报卡：只报整卡矩形 ⇒ 离线取**上半部**（图片区，避开底部标题 ✓）
+            rep("imgA", imgA.x, imgA.y, imgA._w, imgA._h)
+            rep("imgB", imgB.x, imgB.y, imgB._w, imgB._h)
         }
         if steps >= 6 { _exit(0) }
     })

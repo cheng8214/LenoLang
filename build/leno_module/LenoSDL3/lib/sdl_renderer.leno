@@ -646,19 +646,45 @@ const BX_TEX    = 4   // 批处理文字纹理
     // 重置视口为全屏
     func resetViewport(): bool { flushBatches(); return _lib.SDL_SetRenderViewport(handle, null) }
 
+    // ==================== 直绘纹理的 alpha 缩放（`opacity` 的补口）====================
+    //   为什么单独做：下面这几条路**没走批处理**（`pushTexBatch` 那条线已经覆盖了矩形/线/文字/
+    //   批量纹理 ✓），可"整块控件淡出"必须对**图片**也成立 ✓ —— 圆角海报走的正是
+    //   `drawTextureRounded` → 最后一步 `drawTextureAt` 贴回 ✓ ⇒ 补这里就自动覆盖了它 ✓
+    //   做法：临时把缩放**并进纹理自己的 alpha 调制**，画完**还原旧值** ✓
+    //     ⚠ 不能一律还原成 255 ✗ —— 纹理可能被别人设过永久调制（`setTextureAlpha` 那类 ✓）
+    //   `_texScalePush` 返回"需要还原的旧值"，-1 = 没动过（alphaScale>=1 或空纹理）⇒ 免还原 ✓
+    pri func _texScalePush(Ptr[u8] texture): int {
+        if alphaScale >= 1.0 or texture == null { return -1 }
+        // ⚠ 出参用 cstruct 字段取址（`&局部量` 不被允许 ✗）；照 `getColor` 的现成写法 ✓
+        SDL_Color c = SDL_Color.malloc()
+        _lib.SDL_GetTextureAlphaMod(texture, &c.r)
+        int old = c.r
+        c.free()
+        _lib.SDL_SetTextureAlphaMod(texture, _int(_float(old) * alphaScale))
+        return old
+    }
+    pri func _texScalePop(Ptr[u8] texture, int old) {
+        if old >= 0 and texture != null { _lib.SDL_SetTextureAlphaMod(texture, old) }
+    }
+
     // 在指定位置绘制纹理（按 w×h 缩放）
     func drawTextureAt(Ptr[u8] texture, float x, float y, float w, float h): bool {
         flushBatches()
         SDL_FRect rect = SDL_FRect.malloc()
         rect.x = x; rect.y = y; rect.w = w; rect.h = h
+        int oldA = _texScalePush(texture)                    // ★ 直绘纹理也吃 opacity ✓
         bool ok = _lib.SDL_RenderTexture(handle, texture, null, rect.to_ptr())
+        _texScalePop(texture, oldA)
         rect.free(); return ok
     }
 
     // 绘制纹理（指定源矩形和目标矩形，null 表示完整）
     func drawTextureRect(Ptr[u8] texture, Ptr[u8] srcrect, Ptr[u8] dstrect): bool {
         flushBatches()
-        return _lib.SDL_RenderTexture(handle, texture, srcrect, dstrect)
+        int oldA = _texScalePush(texture)                    // ★ 同上
+        bool ok = _lib.SDL_RenderTexture(handle, texture, srcrect, dstrect)
+        _texScalePop(texture, oldA)
+        return ok
     }
 
     // 绘制纹理的裁剪区域到目标位置
@@ -671,7 +697,9 @@ const BX_TEX    = 4   // 批处理文字纹理
         SDL_FRect dst = SDL_FRect.malloc()
         src.x = sx; src.y = sy; src.w = sw; src.h = sh
         dst.x = dx; dst.y = dy; dst.w = dw; dst.h = dh
+        int oldA = _texScalePush(texture)                    // ★ 同上
         bool ok = _lib.SDL_RenderTexture(handle, texture, src.to_ptr(), dst.to_ptr())
+        _texScalePop(texture, oldA)
         src.free(); dst.free()
         return ok
     }
@@ -1669,6 +1697,13 @@ const BX_TEX    = 4   // 批处理文字纹理
         if tex == null or dstrect == null { return false }
         // 退化路径：没半径 / 已在离屏 target 里 / 开了 SSAA ⇒ 老老实实画方角 ✓
         if radius < 1.0 or bxTarget != null or ssaa { return drawTextureRect(tex, srcrect, dstrect) }
+        // ★ 2026-10-13：合成期间**临时关掉全局 alpha 缩放** —— 否则它会把下面"乘蒙版"那一步的
+        //   **顶点色 alpha** 也一起压掉（`setColorFloat(1,1,1,1)` ✓），而贴回屏幕时纹理调制又乘一次
+        //   ⇒ 变成"**平方淡化**"（实测：opacity=0.4 的圆角海报看着像 0.16 ✗）
+        //   口径：**只在最后一步 `drawTextureAt` 贴回时缩放一次** ✓（末尾还原 `savedAS` ✓）；
+        //   上面三条退化路径直接转 `drawTextureRect` ⇒ 那里面自己会缩放 ✓ 不受影响 ✓
+        float savedAS = alphaScale
+        alphaScale = 1.0
         SDL_FRect rd = SDL_FRect.from_ptr(dstrect)
         int tw = _int(rd.w + 0.5)
         int th = _int(rd.h + 0.5)
@@ -1731,6 +1766,7 @@ const BX_TEX    = 4   // 批处理文字纹理
         setColorFloat(cR, cG, cB, cA)
         // 纹理被当作 render target 用过后，SDL 可能把它的 blend 改成 NONE ⇒ 贴回前再确保 BLEND ✓
         _lib.SDL_SetTextureBlendMode(rrTgt, core.BlendMode.BLEND)
+        alphaScale = savedAS          // ★ 还原缩放 ⇒ 贴回那一步（drawTextureAt）**恰好乘一次** ✓
         return drawTextureAt(rrTgt, rd.x, rd.y, rd.w, rd.h)
     }
 

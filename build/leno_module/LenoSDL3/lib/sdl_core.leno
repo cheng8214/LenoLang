@@ -227,6 +227,9 @@ clib sdl3 {
 
     bool SDL_SetRenderTarget(Ptr[u8] renderer, Ptr[u8] texture)
     bool SDL_SetTextureAlphaMod(Ptr[u8] texture, u8 alpha)
+    // ★ 2026-10-13 补声明：控件级 `opacity` 需要"直绘纹理"路径**先取旧调制再还原** ✓
+    //   （纹理可能被别人设过永久调制 ⇒ 不能一律还原 255 ✗）
+    bool SDL_GetTextureAlphaMod(Ptr[u8] texture, Ptr[u8] alpha)
     bool SDL_SetTextureBlendMode(Ptr[u8] texture, i32 blendMode)
     // 组合自定义混合模式（见 sdl_renderer.leno 的 maskAlphaBlend ✓）：
     //   SDL 自带的 BLEND/ADD/MOD/MUL 都改 **rgb**、对 alpha 无能为力 ⇒「把图片裁成圆角」只能自组
