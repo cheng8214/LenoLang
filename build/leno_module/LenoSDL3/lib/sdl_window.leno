@@ -1243,6 +1243,11 @@ export struct Window {
                     if widget is Table { Table t = widget; t.on_window_resize(pt.x, pt.y) }
                     else if widget is TreeView { TreeView tv = widget; tv.on_window_resize(pt.x, pt.y) }
                     else if widget is Splitter { Splitter sp = widget; sp._bind_window_size(_runHnds[i], pt.x, pt.y) }
+                    // ★ Scrim 必须跟着铺满（2026-10-13 修 ✓）：否则拉大窗口后右下露一条**没遮住且点得动** ✗
+                    //   ⚠ 这里是**硬编码类型表**（本文件共 3 处：主循环 / 模态窗 / 悬停弹层窗）
+                    //     ⇒ 以后再加"想收 resize 的控件"得改这 3 处 ✗；理想是像 `_passWindowHandle`
+                    //     那样集中到布局模块一处（见速查"新控件收不到 resize"那条 ✓）
+                    else if widget is Scrim { Scrim sc = widget; sc.on_window_resize(pt.x, pt.y) }
                 }
                 // 根布局为 Splitter 时向下传播窗口尺寸（根布局内嵌的 Table 可能不在 _widgets 顶层）
                 var rw0 = rootWid
@@ -1498,6 +1503,8 @@ export struct Window {
                                     TreeView tv = widget; tv.on_window_resize(pt.x, pt.y)
                                 } else if widget is Splitter {
                                     Splitter sp = widget; sp._bind_window_size(_runHnds[k], pt.x, pt.y)
+                                } else if widget is Scrim {
+                                    Scrim sc = widget; sc.on_window_resize(pt.x, pt.y)   // 同主循环（见那里的注释 ✓）
                                 }
                             }
                             // ★ 根布局为 Splitter 时向下传播窗口尺寸（根布局内嵌的 Table 可能不在 _widgets 顶层）
@@ -1597,6 +1604,7 @@ export struct Window {
                                     if fw is Table { Table ft = fw; ft.on_window_resize(fpt.x, fpt.y) }
                                     else if fw is TreeView { TreeView ftv = fw; ftv.on_window_resize(fpt.x, fpt.y) }
                                     else if fw is Splitter { Splitter fsp = fw; fsp._bind_window_size(_runHnds[fi], fpt.x, fpt.y) }
+                                    else if fw is Scrim { Scrim fsc = fw; fsc.on_window_resize(fpt.x, fpt.y) }   // 同主循环 ✓
                                 }
                                 var frw = fRoot
                                 if frw is Splitter { Splitter fsp = frw; fsp._bind_window_size(_runHnds[fi], fpt.x, fpt.y) }
