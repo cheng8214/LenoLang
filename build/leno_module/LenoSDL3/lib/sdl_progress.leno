@@ -28,7 +28,7 @@ func _opts_keys(): Array[string] {
 "anim_speed", "clickable", "cursor", "enabled", "fill_color", "font_path", "font_size", "font_style", "h", "max", "min", "show_text", "text_color", "tip", "track_color", "value", "visible", "w", "x", "y"
 ]
 }
-export struct ProgressBar impl Widget {
+export struct ProgressBar impl Widget, Themeable {
     float x = 0.0, y = 0.0, w = 200.0, h = 20.0
     float minV = 0.0, maxV = 100.0, value = 0.0
     pri bool clickable = false, showText = true
@@ -245,6 +245,15 @@ export struct ProgressBar impl Widget {
 
     func dispose() {
         if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
+    }
+    // ==================== 运行时主题切换 ====================
+    //   ★ 2026-10-13 补：以前没有 `applyTheme` ⇒ 切主题后轨道/填充/文字仍是旧色 ✗
+    //     ★ 刻意**复用建时那三个映射函数**（`barTrackColor/barFillColor/barTextColor` ✓）——
+    //       否则"建时口径"与"切主题口径"迟早漂移 ✗（与 Table 那套"单一出口"同一个道理 ✓）
+    func applyTheme(Theme t) {
+        trkColor = barTrackColor(t)
+        fillColor = barFillColor(t)
+        txtColor = barTextColor(t)
     }
 }
 

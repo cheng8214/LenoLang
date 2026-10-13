@@ -39,6 +39,7 @@ use tgl.Toggle
 import "sdl_slider.leno" as sld
 use sld.Slider
 import "sdl_progress.leno" as prg
+import "sdl_ring.leno" as rng             // ★ 2026-10-13：主题点名表要用它（单类型 case 是静态调用 ⇒ 必须显式 import ✓）
 use prg.ProgressBar
 import "sdl_listbox.leno" as lb
 use lb.ListBox
@@ -586,6 +587,10 @@ export struct Window {
     // 遍历所有控件（含根布局和 MenuBar），对实现 Themeable 的调用 applyTheme
     // 无需关闭/重建窗口，立即生效
     func applyThemeAll(Theme t) {
+        // 0. ★ 2026-10-13：注册**主题递归出口** —— 深容器（ScrollView / Card / TabControl）在自己的
+        //    `applyTheme` 里把内容控件交回来，由本函数继续下钻 ✓（类型表只在本文件一处 ✓，
+        //    与 `lay.setExtraPassResize` 同款；`Card._content` 是 `pri` ✗ ⇒ 只能这么交 ✓）
+        lay.setExtraApplyThemeChild(func(Widget c, Theme ct) { applyThemeWidget(c, ct) })
         // 1. 更新全局主题单例
         theme.setTheme(t)
         // 2. 遍历 _widgets（覆盖层：MenuBar/TitleBar 等）
@@ -602,7 +607,15 @@ export struct Window {
     pri func applyThemeWidget(Widget w, Theme t) {
         switch w {
             // ★ 2026-10-10：合并 case 恢复（编译器侧已治本 ✓ 见 sdl_layout._passWindowHandle 与 docs §九 ✓）
-            case is Button, Label, Edit, Table, TreeView, ComboBox, MenuBar, TitleBar { w.applyTheme(t) }
+            // ★ 2026-10-13：**名称补全** —— 全库有 44 处 `impl Widget`，而这里原来只点了 8 个 ✗
+            //   ⇒ 下面这批控件的 `applyTheme` **早就写好了却从没被调用过**（切主题后仍是旧色 ✓）：
+            //     Canvas / ListBox / Slider / SpinBox / 三种图表 / Card / ScrollView / TabControl
+            //   ⚠ 以后新增控件实现了 Themeable，**必须**加进这张表（本表是全库唯一的"主题点名处" ✓）
+            //   ★ 2026-10-13（第二批）：把"表单/展示"这一族也补齐 —— 它们原来**连 `applyTheme` 都没有** ✗
+            //     （CheckBox/RadioButton/Toggle/ProgressBar/Spinner/Separator/RingProgress/ImageView/LinkButton ✓）
+            //   ⚠ 不需要进表的：`PopMenu`/`Tooltip`/`Dialog`（每帧现读 `getTheme()` ⇒ 本来就跟随 ✓）、
+            //     `Scrim`（纯黑 alpha 遮罩 ⇒ 无颜色可切 ✓）；`Calendar`/`Steps` 设计上不依赖主题（配色全靠 opts ✓）
+            case is Button, Label, Edit, Table, TreeView, ComboBox, MenuBar, TitleBar, Canvas, ListBox, Slider, SpinBox, BarChart, LineChart, PieChart, Card, ScrollView, TabControl, CheckBox, RadioButton, Toggle, ProgressBar, Spinner, Separator, RingProgress, ImageView, LinkButton { w.applyTheme(t) }
             case is Splitter {
                 w.applyTheme(t)
                 // 递归两侧子控件（_first / _second 为 Widget?）
@@ -634,6 +647,10 @@ export struct Window {
                 for w._c.len() to ci { applyThemeWidget(w._c[ci], t) }
             }
             case is GridLayout {
+                for w._c.len() to ci { applyThemeWidget(w._c[ci], t) }
+            }
+            // ★ 2026-10-13：AnchorBox 与 HBox/VBox 同族（同样持 `_c` ✓），原表漏了它 ✗
+            case is AnchorBox {
                 for w._c.len() to ci { applyThemeWidget(w._c[ci], t) }
             }
         }

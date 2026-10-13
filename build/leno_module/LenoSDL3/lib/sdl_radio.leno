@@ -22,7 +22,7 @@ func _opts_keys(): Array[string] {
 "border_color", "box", "checked", "checked_color", "cursor", "enabled", "font_path", "font_size", "font_style", "gap", "group", "text", "text_color", "tip", "unchecked_color", "visible", "x", "y"
 ]
 }
-export struct RadioButton impl Widget {
+export struct RadioButton impl Widget, Themeable {
     string text = ""
     string group = "default"
     float x = 0.0, y = 0.0
@@ -217,6 +217,15 @@ export struct RadioButton impl Widget {
     func dispose() {
         if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
         _unregisterRadio(self)   // 从注册表摘除自身，避免窗口销毁后悬空引用累积、跨窗口误互斥
+    }
+    // ==================== 运行时主题切换 ====================
+    //   ★ 2026-10-13 补：以前没有 `applyTheme` ⇒ 切主题后单选圈/文字仍是旧色 ✗
+    //     映射与 `set()` 里的建时取色逐字段对齐 ✓（禁用态的"向背景混合"在 render 里算 ⇒ 无需跟着改 ✓）
+    func applyTheme(Theme t) {
+        uncheckedColor = t.bgAlt
+        checkedColor = t.accent
+        txtColor = t.txt
+        brdColor = t.border
     }
 }
 

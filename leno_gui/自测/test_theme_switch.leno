@@ -1,0 +1,153 @@
+// test_theme_switch.leno — **运行时主题切换**（`applyThemeAll`）到底刷到了哪些控件？
+//   ★ 为什么要单独一件：仓里原来唯一的主题测试是 `leno_gui/控件/总览/test_theme.leno`，
+//     它自述"**关闭当前窗口、以另一主题重新创建**"（注释第 3 行 ✓）⇒ `applyThemeAll` 这条
+//     **运行时**路径从来没被验过 ✗（2026-10-13 读码因此发现两个洞，见下）。
+//
+//   本件钉住的两个洞（均已修 ✓）：
+//     ① 窗口里的"点名表"（`sdl_window.applyThemeWidget`）原来只列了 8 个类型 ✗
+//        而全库有 44 处 `impl Widget` ⇒ 一批控件的 `applyTheme` **写好了却从没被调用过**；
+//     ② 递归**不下钻** `ScrollView` / `Card` / `TabControl` ⇒ 装在这些容器里的控件
+//        永远收不到主题 ✗（海报墙的网格就在 ScrollView 里、列表在 TabControl 页里 ✓）。
+//
+//   判据：**同一次运行**内 —— 先截 A（dark）→ `applyThemeAll(lightTheme())` → 再截 B；
+//     离线逐点/逐区域比像素：下列每个目标都应**明显变色** ✓，没变的就是漏刷 ✗。
+//     特意覆盖三种"深容器"：ScrollView 里塞 Card、Card 的内容控件、TabControl 页里的控件。
+//
+//   用法（照仓里惯例：探针存 PNG、离线判像素 ✓）：
+//     set SHOT_A=%TEMP%\a.png & set SHOT_B=%TEMP%\b.png
+//     build\leno.exe leno_gui\自测\test_theme_switch.leno
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer, Window, VBox, GridLayout, ScrollView, TabControl, Card, Button,
+          CheckBox, Toggle, RadioButton, ProgressBar, Spinner, Separator, RingProgress,
+          ImageView, LinkButton)
+
+int steps = 0
+string shotA = ""
+string shotB = ""
+bool aDone = false               // 截图只做一次（overlay 每帧都会跑 ✓）
+bool bDone = false
+
+// 打一行"目标矩形"（**窗口绝对坐标** ⇒ 离线按它裁块比像素 ✓）
+func rep(string name, float x, float y, float w, float h) {
+    print("[theme] " + name + " rect=" + _str(_int(x)) + "," + _str(_int(y)) +
+          "," + _str(_int(w)) + "," + _str(_int(h)))
+}
+
+func run() {
+    SDL3.ttfInit()
+    SDL3.setTheme(SDL3.darkTheme())          // 起点固定为深色 ⇒ A/B 才可比 ✓
+    Window w = SDL3.createWindow({title: "test_theme_switch", w: 780, h: 500})
+    if not w.ok { SDL3.ttfQuit(); return }
+
+    // ---- 目标 1：ScrollView 自身 + 它内容里的 Card（压"深容器不下钻"）----
+    ScrollView sv = w.addScrollView({x: 20, y: 40, w: 230, h: 200,
+                                     content_w: 130.0, content_h: 74.0, border: true})
+    GridLayout g = SDL3.createGridLayout({x: 0, y: 0, w: 130, h: 74, cols: 1,
+                                          spacing: 6, padX: 6, padY: 6})
+    Card cIn = SDL3.createCard({x: 0, y: 0, w: 110, h: 62, title: "滚内卡"})
+    g.add(cIn, {align: 3})
+    sv.set_content(g)
+
+    // ---- 目标 2：Card 的**内容控件**（压 Card→content 下钻）----
+    Card c2 = SDL3.createCard({x: 280, y: 40, w: 230, h: 230, title: "带内容的卡"})
+    VBox cv = SDL3.createVBox({x: 0, y: 0, w: 210, h: 140, padX: 6, padY: 6, spacing: 6})
+    Button bIn = SDL3.createButton({text: "卡内按钮"})
+    cv.add(bIn, {grow: 0, shrink: 0, basis: 32, align: 3})
+    // ★ 嵌套一张卡：卡底在 dark/light 之间差异极大（bgAlt）⇒ 用它做**归因** ✓
+    //   （按钮默认是强调蓝，两套主题只差一点点 ⇒ 单独看说不清是"它变了"还是"底色顺带变了" ✗）
+    Card cDeep = SDL3.createCard({x: 0, y: 0, w: 190, h: 70, title: "卡中卡"})
+    cv.add(cDeep, {grow: 0, shrink: 0, basis: 70, align: 3})
+    c2.set_content(cv)
+    w.add(c2)
+
+    // ---- 目标 3：TabControl 页里的按钮（压"页不下钻"）----
+    TabControl tabs = w.addTabControl({x: 20, y: 270, w: 490, h: 200,
+                                       tabs: ["  页一  ", "  页二  "], active: 0})
+    VBox tp = SDL3.createVBox({x: 0, y: 0, w: 460, h: 160, padX: 10, padY: 10, spacing: 8})
+    Button bTab = SDL3.createButton({text: "页内按钮"})
+    tp.add(bTab, {grow: 0, shrink: 0, basis: 34, align: 3})
+    // ★ 同理：页里也嵌一张卡（归因用 ✓）—— 它能不能变色，直接说明"页有没有被下钻" ✓
+    Card tDeep = SDL3.createCard({x: 0, y: 0, w: 440, h: 90, title: "页内卡"})
+    tp.add(tDeep, {grow: 0, shrink: 0, basis: 90, align: 3})
+    tabs.setPageLayout(0, tp)
+
+    // ---- 目标 4：对照组（窗口直属控件：这两类本来就在点名表里 ✓，修前也应变色）----
+    Button bTop = w.addButton({x: 540, y: 60, w: 210, h: 38, text: "直属按钮"})
+
+    // ---- 目标 5：第二批补 `applyTheme` 的 9 个控件（表单/展示一族 ✓）----
+    //   这批的颜色字段**大多是 `pri`** ✗（外部读不到）⇒ 判据分两种：
+    //     ① 公开字段可直接读（Spinner/Separator/LinkButton 的 `_color` ✓）⇒ 打印前后值精确对照 ✓
+    //     ② 其余靠像素：切主题后该控件矩形内**暗像素占比应大幅下降**（它自己的深色填充变浅 ✓，
+    //        只剩文字/描边几个暗点 ✓；没被刷到则整块填充仍是深色 ✗）
+    CheckBox cbx = w.addCheckBox({x: 560, y: 120, w: 175, h: 26, text: "复选框", checked: true})
+    Toggle tgl = w.addToggle({x: 560, y: 154, w: 175, h: 28, text: "开关", on: true})
+    RadioButton rdo = w.addRadioButton({x: 560, y: 190, w: 175, h: 24, text: "单选", group: "g1", checked: true})
+    ProgressBar pgb = w.addProgressBar({x: 560, y: 220, w: 175, h: 18, value: 60})
+    Spinner spn = w.addSpinner({x: 560, y: 248, w: 28, h: 28})
+    Separator sep = w.addSeparator({x: 560, y: 288, w: 175, h: 2})
+    RingProgress rng2 = SDL3.createRingProgress({x: 560, y: 300, w: 60, h: 60, value: 60})
+    w.add(rng2)
+    ImageView ivw = w.addImageView({x: 632, y: 300, w: 100, h: 60})
+    LinkButton lnk = w.addLinkButton({x: 560, y: 372, w: 175, h: 24, text: "链接按钮"})
+
+    var a = _env("SHOT_A"); if a != null { shotA = _str(a) }
+    var b = _env("SHOT_B"); if b != null { shotB = _str(b) }
+    if shotA == "" { shotA = "theme_a.png" }
+    if shotB == "" { shotB = "theme_b.png" }
+
+    w.addTimer(100, func() {
+        steps = steps + 1
+
+        if steps == 2 {              // 布局稳定后再报矩形（此时坐标才准 ✓）
+            rep("sv",       sv.x, sv.y, sv.w, sv.h)
+            rep("inCard",   cIn.x, cIn.y, cIn._w, cIn._h)      // ScrollView 内容里的卡
+            rep("cardDeep", cDeep.x, cDeep.y, cDeep._w, cDeep._h)   // 卡内容里的嵌套卡（归因 ✓）
+            rep("tabDeep",  tDeep.x, tDeep.y, tDeep._w, tDeep._h)   // Tab 页里的嵌套卡（归因 ✓）
+            rep("tabBtn",   bTab.x, bTab.y, bTab.w, bTab.h)
+            rep("topBtn",   bTop.x, bTop.y, bTop.w, bTop.h)
+            // 这 9 个是绝对定位建的 ⇒ 直接写字面量（它们的 w/h 字段名不统一，读字段会编译不过 ✗）
+            rep("checkbox", 560, 120, 175, 26)
+            rep("toggle",   560, 154, 175, 28)
+            rep("radio",    560, 190, 175, 24)
+            rep("progress", 560, 220, 175, 18)
+            rep("ring",     560, 300, 60, 60)
+            rep("imgview",  632, 300, 100, 60)
+            rep("link",     560, 372, 175, 24)
+            print("[theme] 公开色(切前) spinner=" + _str(spn._color) +
+                  " separator=" + _str(sep._color) + " link=" + _str(lnk._color))
+            print("[theme] 步骤2：深色基准已就位（主题=" + SDL3.getTheme().name + "）")
+        }
+        if steps == 5 {
+            w.applyThemeAll(SDL3.lightTheme())      // ★ 被验的那条路径
+            print("[theme] 已 applyThemeAll(light) ⇒ 此时主题=" + SDL3.getTheme().name)
+        }
+        if steps == 6 {
+            // 切后立刻再读一遍公开色（应与"切前"那行**不同** ✓ 相同即漏刷 ✗）
+            print("[theme] 公开色(切后) spinner=" + _str(spn._color) +
+                  " separator=" + _str(sep._color) + " link=" + _str(lnk._color))
+        }
+        if steps >= 10 { _exit(0) }
+    })
+
+    // ★ 截图钩子必须放 `setOverlay`：它在**所有控件之后**、present 之前 ⇒ 读到的像素含界面 ✓
+    //   （放 onRender 只会拿到"只有底色"的空白帧 ✗ 见 dashboard_sidebar 的踩坑记录 ✓）
+    w.setOverlay(func(Renderer r) {
+        if steps >= 3 and steps < 5 and shotA != "" and not aDone {   // A：切之前
+            var sz = w.getSize()
+            var s = r.readPixelsAt(0, 0, sz.w, sz.h)
+            if s != null { print("[theme] 截图A(dark) " + shotA + " ok=" + _str(SDL3.saveImagePNG(s, shotA))) }
+            aDone = true
+        }
+        if steps >= 8 and shotB != "" and not bDone {                  // B：切之后
+            var sz2 = w.getSize()
+            var s2 = r.readPixelsAt(0, 0, sz2.w, sz2.h)
+            if s2 != null { print("[theme] 截图B(light) " + shotB + " ok=" + _str(SDL3.saveImagePNG(s2, shotB))) }
+            bDone = true
+        }
+    })
+
+    w.run(func(Event ev): bool { return true }, func(Renderer r) {})
+    SDL3.ttfQuit()
+}
+
+main() { run() }

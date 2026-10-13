@@ -16,7 +16,7 @@ func _opts_keys(): Array[string] {
 "alpha", "color", "dir", "h", "margin", "thickness", "visible", "w", "x", "y"
 ]
 }
-export struct Separator impl Widget {
+export struct Separator impl Widget, Themeable {
     const HORIZONTAL = 0      // 水平方向
     const VERTICAL   = 1      // 垂直方向
     const DEFAULT_THICKNESS = 1   // 默认线条粗细
@@ -93,6 +93,12 @@ export struct Separator impl Widget {
     }
 
     func dispose() {}
+    // ==================== 运行时主题切换 ====================
+    //   ★ 2026-10-13 补：以前没有 `applyTheme` ⇒ 切主题后分隔线仍是旧色（浅色主题下几乎看不见 ✗）
+    //     ⚠ `alpha` 是语义参数（用户可调透明度）⇒ **不动它**，只换颜色 ✓
+    func applyTheme(Theme t) {
+        _color = t.sep
+    }
 }
 
 // 工厂

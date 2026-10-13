@@ -32,7 +32,10 @@ func _opts_keys(): Array[string] {
 "bar_color", "bg_color", "border", "border_alpha", "border_color", "content_h", "content_w", "enabled", "fit_h", "fit_w", "h", "radius", "smooth", "step", "visible", "w", "x", "y"
 ]
 }
-export struct ScrollView impl Widget {
+// ★ 2026-10-13：补 `Themeable` —— 本控件以前**只有 `impl Widget`** ✗，
+//   于是 `Window.applyThemeAll` 那条类型表里没有它，**切主题时滚动区完全不响应** ✗
+//   （底色/边框/滚动条全停在建时的旧主题色 ✓）；内容控件靠 `lay.applyThemeChild` 继续下钻 ✓
+export struct ScrollView impl Widget, Themeable {
     float x = 0.0, y = 0.0, w = 300.0, h = 200.0
     float _contentW = -1.0, _contentH = -1.0   // 可滚动内容虚拟尺寸
     Widget? _content                       // 内部内容控件（通常 VBox/Panel）
@@ -488,6 +491,18 @@ export struct ScrollView impl Widget {
             r.setColor(theme.brighten(sbColor, 40))
             r.fillRoundedRect(hThumbX, ty + 2.0, hThumbW, gh - 4.0, (gh - 4.0) / 2.0)
         }
+    }
+
+    // ==================== 运行时主题切换 ====================
+    //   底色 / 边框 / 滚动条三色都从主题重取（本控件以前**不在** `applyThemeAll` 的名单里 ✗）
+    //   内容控件交给递归出口继续下钻：`_content` 通常是 VBox/Panel，里层还有一堆控件 ✓
+    func applyTheme(Theme t) {
+        bgColor = t.bg
+        bdrColor = t.border
+        sbColor = t.sb
+        var c = _content
+        if c is Widget { lay.applyThemeChild(c, t) }
+        core.markFrameRedraw()
     }
 
     func render(Renderer r) {

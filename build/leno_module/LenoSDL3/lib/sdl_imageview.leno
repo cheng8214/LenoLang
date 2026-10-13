@@ -18,7 +18,7 @@ func _opts_keys(): Array[string] {
 "alpha", "bg_color", "border", "border_alpha", "border_color", "cursor", "enabled", "h", "image_mode", "image_path", "image_tint", "radius", "tip", "visible", "w", "x", "y"
 ]
 }
-export struct ImageView impl Widget {
+export struct ImageView impl Widget, Themeable {
     // ==================== 关联常量 ====================
     const MODE_ASPECT_FIT  = 0   // 保持比例，完整显示（可能留边）
     const MODE_STRETCH     = 1   // 拉伸填满
@@ -194,6 +194,13 @@ export struct ImageView impl Widget {
 
     func dispose() {
         if tex != null { core.lib().SDL_DestroyTexture(tex); tex = null }
+    }
+    // ==================== 运行时主题切换 ====================
+    //   ★ 2026-10-13 补：以前没有 `applyTheme` ⇒ 切主题后边框仍旧色 ✗
+    //     ⚠ 只换 `bdrColor`：`bgColor`（图片区底色）与 `tint`（着色）在 set() 里也**不取主题** ✓
+    //       —— 它们是"用户显式指定"的语义 ⇒ 主题切换不该覆盖 ✓
+    func applyTheme(Theme t) {
+        bdrColor = t.border
     }
 }
 

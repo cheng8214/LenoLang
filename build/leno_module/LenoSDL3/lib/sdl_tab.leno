@@ -508,6 +508,8 @@ export struct TabControl impl Widget, Themeable {
         if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
     }
 
+    //   ★ 2026-10-13 补：原来只刷了**标签栏自己** ⇒ 页里的控件切主题后仍是旧色 ✗
+    //     现在把每页的**布局容器**交给递归出口下钻 ✓（类型表仍然只在 sdl_window 一处 ✓）
     func applyTheme(Theme t) {
         bgColor = t.bg
         barColor = t.bgInput
@@ -517,6 +519,8 @@ export struct TabControl impl Widget, Themeable {
         actTxtColor = t.txt
         accColor = t.accentBright
         brdColor = t.border
+        for _pageLayouts.len() to pi { lay.applyThemeChild(_pageLayouts[pi], t) }
+        core.markFrameRedraw()
     }
 }
 

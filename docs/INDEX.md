@@ -16,6 +16,33 @@
 >   ② 列表/下拉/菜单的**行高亮圆角锚错了边**（`atBottom` 拿行自己的矩形补圆角，而末行常只露一半 ⇒ 圆角落到面板底边下方 ⇒ 面板两个底角被方角铺满）+ 内容裁剪 `_int(ph)+1` 让末行文字出框 1px ⇒ 收敛成渲染器共用件 **`fillRowInPanel`**（只填「行矩形 ∩ 面板圆角矩形」，圆角**锚在面板的边**）+ 裁剪改 `ceil` 精确覆盖；`sdl_combobox` / `sdl_listbox` / `sdl_menu` 三处调用点改调它 ✓；
 >   ③ `leno_gui/应用/影视海报墙/` 新增**影片详情页**（点卡片进入：大海报 + 评分环 + 年份/分类/简介 + 收藏/播放；Esc/返回切回，网格状态原样保留 ✓；自检钩子 `WALL_DETAIL` / `WALL_BACK`）；
 >   速查附录 C 相应新增 3 条（圆角纹理用自定义混合 · 行高亮锚点与裁剪 · `setRootAt` 运行时换根）。
+>   **2026-10-13 追加（二十一）**：**按优先级修 A2：运行时主题切换（`applyThemeAll`）两个真洞**（真机实测对照 ✓）：
+>   ① **发现方式**：读码时注意到仓里唯一的主题测试 `leno_gui/控件/总览/test_theme.leno` 是
+>      "**关窗口重建**"式的（注释自述 ✓）⇒ `applyThemeAll` 这条**运行时**路径从来没被测过 ✗；
+>   ② **洞 1（点名表漏人）**：`sdl_window.applyThemeWidget` 的合并 `case` 只列了 8 个类型，而全库有
+>      **44 处 `impl Widget`** ✗ ⇒ `Canvas/ListBox/Slider/SpinBox/三种图表/Card/ScrollView/TabControl`
+>      的 `applyTheme` **写好了却从没被调用** ✓；
+>   ③ **洞 2（递归不下钻）**：只递归 `Splitter/Panel/GroupBox/HBox/VBox/GridLayout` ⇒
+>      `ScrollView`/`Card`/`TabControl` 里的控件**永远收不到主题** ✗；
+>   ④ **修法**：点名表补全 + 补 `AnchorBox` 递归；`sdl_scrollview` 补 `impl Widget, Themeable` + `applyTheme`；
+>      新增**主题递归出口** `lay.setExtraApplyThemeChild`（照 `_extraPassResize` 样板 ✓，容器把内容控件
+>      交回窗口继续下钻 ⇒ 类型表仍只在 `sdl_window` 一处 ✓，也绕开了 `Card._content` 是 `pri` 的问题 ✓）；
+>   ⑤ **验收（新增回归件 `leno_gui/自测/test_theme_switch.leno`）**：同一次运行内截 A(dark) →
+>      `applyThemeAll(light)` → 截 B，离线按矩形比区域平均色 ✓。**修前（真机 stash 对照）四个深容器 Δ 全是 0 ✗；
+>      修后 202 / 176 / 125 / 186 ✓**（窗口直属 Button 对照组 18 ✓ 两侧一致）✓；
+>   ⑥ **第二批（同日补完 ✓）**：`CheckBox / RadioButton / Toggle / ProgressBar / Spinner / Separator /
+>      RingProgress / ImageView / LinkButton` 这 9 个补上 `applyTheme` 并进点名表（`SDLK_window` 还补了
+>      `sdl_ring` 的 import —— 静态 `case` 必须显式 import ✓）；映射与各自 `set()` 的建时取色逐字段对齐 ✓，
+>      `ProgressBar` 直接复用建时那三个映射函数（防口径漂移 ✓）。
+>      另外 6 个**不是漏是不需要**：`PopMenu/Tooltip/Dialog` 每帧现读 `getTheme()` ✓；`Scrim` 纯 alpha 遮罩 ✓；
+>      `Calendar/Steps` 设计上不依赖主题（配色全靠 opts ✓）⇒ 产品语义，本次未动 ✓。
+>   ⑦ **第二批验收**（同一探针，判据强弱如实记 ✓）：`Spinner/LinkButton` 公开字段 `_color` **修前切前=切后（一字节没变）**
+>      ✗ → 修后变 ✓；`Separator` `#464A54` → `#D2D2DC` ✓；`ProgressBar/RingProgress/ImageView` 暗像素占比
+>      修前 42→**40** / 100→**34** / 100→**88** ✗ → 修后 42→3 / 100→0 / 100→0 ✓；`CheckBox/RadioButton` 框内
+>      22×22 平均色 修前 (66,78,95)/(95,107,124) 仍深 ✗ → 修后 (214,221,237)/(211,219,235) ✓；`Toggle` 最弱
+>      （轨道本就是 accent）(70,155,236)→(70,136,221) ✓。
+>   ⑧ 速查附录 C 新增该条（症状 / 两个洞 / 修法 / 两批验收命令与对照表 / "pri 字段只能靠像素"的记号 ✓）。
+>
 >   **2026-10-13 追加（二十）**：**把这一轮攒下的 13 个探针收进仓库当正式回归件**（用户要求：留着 ✓ 改名 ✓ 归文件夹 ✓）：
 >   ① **为什么必须搬出 `build/`**：`.gitignore` 明确按"`build/_*` 下划线前缀"排除临时探针 ✗（`build/` 本身是
 >      **要入库**的目录 ⇒ 不能整体忽略 ✓）⇒ 搬到新目录 **`leno_gui/自测/`**（沿用 `控件/特效/系统/应用` 的短双字风格 ✓），

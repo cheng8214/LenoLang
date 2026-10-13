@@ -18,7 +18,7 @@ func _opts_keys(): Array[string] {
 "anim", "anim_speed", "cursor", "enabled", "font_path", "font_size", "font_style", "h", "off_color", "on", "on_color", "text", "text_color", "tip", "visible", "w", "x", "y"
 ]
 }
-export struct Toggle impl Widget {
+export struct Toggle impl Widget, Themeable {
     string text = ""
     float x = 0.0, y = 0.0
     float w = 52.0, h = 28.0
@@ -241,6 +241,16 @@ export struct Toggle impl Widget {
 
     func dispose() {
         if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
+    }
+    // ==================== 运行时主题切换 ====================
+    //   ★ 2026-10-13 补：以前没有 `applyTheme` ⇒ 切主题后轨道/滑块/文字仍是旧色 ✗
+    //     映射与 `set()` 里的建时取色逐字段对齐 ✓
+    func applyTheme(Theme t) {
+        onColor = t.accent
+        offColor = t.bgAlt
+        txtColor = t.txt
+        knobColor = t.txtOnAccent
+        knobBrdColor = t.border
     }
 }
 

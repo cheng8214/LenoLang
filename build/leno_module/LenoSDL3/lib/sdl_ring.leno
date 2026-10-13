@@ -30,7 +30,7 @@ func _opts_keys(): Array[string] {
 //   信息，补掉毫无损失；而更大的余量（如 30°）依然保留轨道色，能表达"还有一类没算进来" ✓
 const float SEG_SNAP_DEG = 4.0
 
-export struct RingProgress impl Widget {
+export struct RingProgress impl Widget, Themeable {
     float x = 0.0, y = 0.0
     pri float size = 220.0            // 直径
     pri float thickness = 16.0        // 环带厚度
@@ -394,6 +394,15 @@ export struct RingProgress impl Widget {
     func dispose() {
         if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
         if subFont != null and subFont.ok { fnt.releaseFont(subFont) }; subFont = null
+    }
+    // ==================== 运行时主题切换 ====================
+    //   ★ 2026-10-13 补：以前没有 `applyTheme` ⇒ 切主题后环/轨道/圆心底色都是旧色 ✗
+    //     ⚠ `bg` 是**圆心抠底色**（不是装饰色）⇒ 必须跟父容器同色 ✓；父容器用主题底色时这里才对齐 ✓
+    func applyTheme(Theme t) {
+        track = t.bgAlt
+        fill = t.btnSuccess
+        txt = t.txt
+        bg = t.bg
     }
 }
 

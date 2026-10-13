@@ -19,7 +19,7 @@ func _opts_keys(): Array[string] {
 "color", "full_track", "running", "size", "speed", "thickness", "tip", "track_alpha", "track_color", "visible", "x", "y"
 ]
 }
-export struct Spinner impl Widget {
+export struct Spinner impl Widget, Themeable {
     float x = 0.0, y = 0.0
     pri float size = 32.0           // 直径
     pri float thickness = 3.0       // 线条粗细
@@ -186,6 +186,13 @@ export struct Spinner impl Widget {
     }
 
     func dispose() {}
+    // ==================== 运行时主题切换 ====================
+    //   ★ 2026-10-13 补：以前没有 `applyTheme` ⇒ 切主题后转圈/轨道仍是旧色 ✗
+    //     映射与 `set()` 逐字段对齐：主色是**提亮 accent**（不是 accent 本身 ✓）、轨道取 sep ✓
+    func applyTheme(Theme t) {
+        _color = theme.brighten(t.accent, 30)
+        trackColor = t.sep
+    }
 }
 
 // 工厂

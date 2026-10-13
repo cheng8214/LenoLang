@@ -18,7 +18,7 @@ func _opts_keys(): Array[string] {
 "color", "enabled", "font_path", "font_size", "font_style", "hover_color", "text", "tip", "underline", "underline_hover", "url", "visible", "visited", "x", "y"
 ]
 }
-export struct LinkButton impl Widget {
+export struct LinkButton impl Widget, Themeable {
     string text = "Link"
     pri string url = ""             // 关联 URL（可空，纯文字链接）
     float x = 0.0, y = 0.0
@@ -173,6 +173,14 @@ export struct LinkButton impl Widget {
 
     func dispose() {
         if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
+    }
+    // ==================== 运行时主题切换 ====================
+    //   ★ 2026-10-13 补：以前没有 `applyTheme` ⇒ 切主题后链接色/悬停色/禁用色都是旧色 ✗
+    //     映射与 `set()` 逐字段对齐：主色 = 提亮 accent ✓；悬停色 = 由主色再提亮派生 ✓（顺序不能反 ✓）
+    func applyTheme(Theme t) {
+        _color = theme.brighten(t.accent, 30)
+        hovColor = theme.brighten(_color, 30)
+        visColor = t.txtDim
     }
 }
 

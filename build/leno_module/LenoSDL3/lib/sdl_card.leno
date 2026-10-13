@@ -878,6 +878,10 @@ export struct Card impl Widget, Themeable {
     }
 
     // ==================== 运行时主题切换 ====================
+    //   ★ 2026-10-13 补：**内容控件也要下钻** —— 卡片里常放一排按钮/信息条（媒体库卡片 ✓），
+    //     原来只刷了卡片自身 ⇒ 切主题后内容区仍是旧色 ✗
+    //     ⚠ `_content` 是 `pri` ✗（外部拿不到）⇒ 走 `lay.applyThemeChild` 这个**递归出口**，
+    //       类型表仍然只在 `sdl_window.leno` 一处 ✓（与 `setExtraPassResize` 同款 ✓）
     func applyTheme(Theme t) {
         bgColor = t.bgAlt
         hovColor = theme.brighten(t.bgAlt, 14)
@@ -886,6 +890,9 @@ export struct Card impl Widget, Themeable {
         subColor = t.txtDim
         selectedColor = t.bgSel
         bdrSelColor = t.accent
+        var c = _content
+        if c is Widget { lay.applyThemeChild(c, t) }
+        core.markFrameRedraw()
     }
 }
 

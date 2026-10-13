@@ -1332,6 +1332,76 @@ SDL3.testClickAt(win.getID(), x, y)     // 再点（一步一行、走定时器 
 ⚠ 只有"看 hover 才认点击"的控件需要这样（Card 这类**按坐标判命中**的不受影响 ✓）——
 自测脚本里**统一先移动再点击**最省心 ✓
 
+### ⛔ 运行时切主题（`applyThemeAll`）：控件"没响应"的**两个真洞**（2026-10-13 实测 + 已修 ✓）
+
+**症状**：`win.applyThemeAll(SDL3.lightTheme())` 之后，一批控件**一个像素都不变**（仍停在旧主题）✗ ——
+高发位置：`ScrollView` 本体、以及放进 `ScrollView` / `Card` / `TabControl` 里的**任何控件** ✓
+（普通放在窗口/布局里的 Button、Label 等反而是好的 ⇒ 容易误判成"就这几个控件不支持" ✗）。
+
+⚠ 为什么活了很久：仓里原来唯一的主题测试 `leno_gui/控件/总览/test_theme.leno` 是
+"**关闭当前窗口、以另一主题重新创建**"式的（它自己的注释第 3 行就这么写 ✓）⇒ 走的根本不是
+`applyThemeAll` 这条**运行时**路径 ✗ ⇒ 两个洞都不在它的覆盖里 ✓。
+
+**两个洞（都在 `sdl_window.leno` 的 `applyThemeWidget`）**
+1. **点名表漏人**：合并 `case` 只列了 8 个类型（`Button/Label/Edit/Table/TreeView/ComboBox/MenuBar/TitleBar`），
+   而全库有 **44 处 `impl Widget`** ✗ ⇒ `Canvas / ListBox / Slider / SpinBox / BarChart / LineChart / PieChart /
+   Card / ScrollView / TabControl` 的 `applyTheme` **早就写好了、却从没被调用过** ✓；
+2. **递归不下钻**：只递归 `Splitter / Panel / GroupBox / HBox / VBox / GridLayout` ⇒
+   `ScrollView`（内容控件）/ `Card`（内容控件）/ `TabControl`（各页布局）里的控件**永远收不到主题** ✗。
+
+**修法**（口径：类型判断仍然**只在 `sdl_window.leno` 一处** ✓，别把类型表抄进各容器 ✗）
+- 点名表补成"**所有实现了 `Themeable` 的类型**"，并补上 `AnchorBox` 的递归 ✓；
+- `sdl_scrollview.leno`：补 `impl Widget, Themeable` + `applyTheme`（它以前连 `Themeable` 都没 impl ✗）；
+- 新增**主题递归出口** `lay.setExtraApplyThemeChild(...)`（照 `_extraPassResize` 的样板 ✓）：
+  容器在自己的 `applyTheme` 末尾调 `lay.applyThemeChild(内容控件, t)` ⇒ 交回窗口继续下钻 ✓
+  （`Card._content` 是 `pri` ✗ 外部拿不到，只能这么交 ✓；`ScrollView._content` / `TabControl._pageLayouts` 同理统一走它 ✓）。
+
+**验收**：`leno_gui/自测/test_theme_switch.leno`（**同一次运行**内先截 A(dark) → `applyThemeAll(light)` → 再截 B）
+```
+set SHOT_A=%TEMP%\a.png & set SHOT_B=%TEMP%\b.png
+build\leno.exe leno_gui\自测\test_theme_switch.leno
+```
+探针会把每个目标的矩形打出来（`[theme] 名字 rect=x,y,w,h`）⇒ 离线按矩形比 A/B **区域平均色**，
+`Δ ≥ 12` 视为"变色" ✓。实测（2026-10-13，同一探针、同一窗口）：
+
+| 目标 | 修前 Δ | 修后 Δ |
+|---|---|---|
+| `ScrollView` 自己的空白区 | **0 ✗ 没变** | 202 ✓ |
+| `ScrollView` 内容里的 Card | **0 ✗ 没变** | 176 ✓ |
+| Card 内容里的 Card | **0 ✗ 没变** | 125 ✓ |
+| `TabControl` 页里的 Card | **0 ✗ 没变** | 186 ✓ |
+| 窗口直属 Button（对照组） | 18 ✓ | 18 ✓ |
+
+（"修前"那组是**真机测出来的**：`git stash` 掉本次 5 个库文件、跑同一探针、再 `stash pop` ✓ ——
+不是靠读代码推断 ✓。）
+
+⚠ **第二批（同日补完 ✓）**：上面这批里 **9 个"表单/展示"控件补上了 `applyTheme` 并进表** ✓ ——
+`CheckBox / RadioButton / Toggle / ProgressBar / Spinner / Separator / RingProgress / ImageView / LinkButton`
+（映射与各自 `set()` 里"建时取主题"的取法**逐字段对齐** ✓；`ProgressBar` 直接复用建时那三个映射函数
+`barTrackColor/barFillColor/barTextColor` ✓ ⇒ 建时口径与切时口径不会漂移；重绘由 `applyThemeAll` 结尾的
+`core.requestRedraw()` 统一负责 ⇒ 各控件内**不必**再请求 ✓）。
+另外 6 个**不是漏，是不需要** ✓：`PopMenu` / `Tooltip` / `Dialog` 每帧现读 `getTheme()` ⇒ 本来就跟随主题 ✓；
+`Scrim` 是纯黑 alpha 遮罩、无颜色可切 ✓；`Calendar` / `Steps` **设计上就不依赖主题**（配色全靠 opts，
+文件头自述 ✓）⇒ "要不要跟主题"是**产品语义**，本次**没动**它们 ✓（要接主题再说 ✓）。
+
+**第二批验收证据**（同一探针；判据强弱不同，如实记 ✓）：
+
+| 控件 | 判据 | 修前 | 修后 |
+|---|---|---|---|
+| `Spinner` / `LinkButton` | 公开字段 `_color`（精确 ✓） | 切前 = 切后（**一个字节没变** ✗） | 切后变化 ✓ |
+| `Separator` | 公开字段 `_color`（精确 ✓） | `#464A54`（不变 ✗） | `#D2D2DC` ✓ |
+| `ProgressBar` | 矩形内暗像素占比 | 42% → **40%** ✗ | 42% → 3% ✓ |
+| `RingProgress` | 同上 | 100% → **34%** ✗ | 100% → 0% ✓ |
+| `ImageView` | 同上 | 100% → **88%** ✗ | 100% → 0% ✓ |
+| `CheckBox` | 框内 22×22 平均色 | (66,78,95) 仍深 ✗ | (214,221,237) ✓ |
+| `RadioButton` | 同上 | (95,107,124) 仍深 ✗ | (211,219,235) ✓ |
+| `Toggle` | 轨道平均色 | (70,155,236) 未变 ✗ | (70,136,221) ✓ |
+
+⚠ `Toggle` 那条最弱（轨道本来就是主题 `accent`，两套主题只差一点点 ✓）⇒ 它的"修前没变"另有一条硬依据：
+`set()` 里那次取色是**一次性的**、而当时**根本没有 `applyTheme`** ✓。
+⭐ 另记：`CheckBox/RadioButton/Toggle/ProgressBar/RingProgress/ImageView/Calendar/Steps` 的颜色字段**全是 `pri`** ✗
+（外部读不到）⇒ 这类控件的自测**只能靠像素**，别指望打印字段 ✓。
+
 ### ⛔ `Table`：表头的排序箭头会**说谎** —— 换数据分 `set_rows` / `clear`+`add_row` 两条路（2026-10-13 实测 + 已修 ✓）
 
 **症状**：点表头把「评分」排成降序（表头出现 `▼`），随后**换一批数据**（搜索 / 换筛选 / 刷新）

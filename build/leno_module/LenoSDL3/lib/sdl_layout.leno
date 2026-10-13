@@ -35,6 +35,7 @@ import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_edit.leno" as edt; use edt.Edit
 import "sdl_table.leno" as tbl; use tbl.Table
 import "sdl_treeview.leno" as tvlib; use tvlib.TreeView
+import "sdl_theme.leno" as thm; use thm.Theme   // ★ 2026-10-13：主题递归出口的钩子签名要用 Theme ✓
 // ⚠ 本文件 switch 里"点名"的类型必须显式 import（单类型 case 是**静态**调用 ✓）
 //   2026-10-13：`ListBox` 的 import 已删 —— 它跟着句柄路径一起挪进 `_extraPassWindow` 钩子了，
 //   本文件不再点名它 ✓（`Table`/`TreeView` 仍要点名：`_passWindowResize` 那处 switch 认识它们 ✓）
@@ -53,6 +54,19 @@ export func setExtraPassWindow(func(Widget, Ptr[u8], int, int):void cb) { _extra
 //     （主循环 / 模态窗 / 悬停弹层窗）⇒ 一起收敛到本模块一处，并留这个钩子（照 `_extraPassWindow` 的样板 ✓）
 func(Widget, Ptr[u8], int, int):void _extraPassResize
 export func setExtraPassResize(func(Widget, Ptr[u8], int, int):void cb) { _extraPassResize = cb }
+
+// 扩展**主题递归**出口（同样由 sdl_window 注册 ⇒ 本模块不 import 控件类型 ✓）
+//   ★ 2026-10-13 补：主题切换原来在窗口里只"点名"了 8 个类型、且**不下钻深容器** ✗
+//     （`ScrollView` / `Card` / `TabControl` 里的控件永远收不到主题 ✓）
+//   ⇒ 容器在自己的 `applyTheme` 末尾把**内容控件**交回来，由注册方继续递归 ✓；
+//     为什么要这个钩子：`Card._content` 是 `pri` ✗（外部拿不到），而"类型判断只在一处"的约定
+//     又不允许各容器自己点名类型 ⇒ 用回调出口两全 ✓（与 `setExtraPassResize` 同款 ✓）
+func(Widget, Theme):void _extraApplyThemeChild
+export func setExtraApplyThemeChild(func(Widget, Theme):void cb) { _extraApplyThemeChild = cb }
+// 容器侧入口：把一个**内容控件**交给注册方下钻（未注册时安全 no-op ✓）
+export func applyThemeChild(Widget c, Theme t) {
+    if _extraApplyThemeChild != null { _extraApplyThemeChild(c, t) }
+}
 
 // 交叉轴对齐方式
 export const LAYOUT_START   = 0   // 靠起始边（左/上）

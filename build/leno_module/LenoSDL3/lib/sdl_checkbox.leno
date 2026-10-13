@@ -18,7 +18,7 @@ func _opts_keys(): Array[string] {
 "border_color", "box", "checked", "checked_color", "cursor", "enabled", "font_path", "font_size", "font_style", "gap", "text", "text_color", "tip", "unchecked_color", "visible", "x", "y"
 ]
 }
-export struct CheckBox impl Widget {
+export struct CheckBox impl Widget, Themeable {
     string text = ""
     float x = 0.0, y = 0.0
     pri float box = 22.0       // 勾选框边长
@@ -202,6 +202,17 @@ export struct CheckBox impl Widget {
 
     func dispose() {
         if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
+    }
+    // ==================== 运行时主题切换 ====================
+    //   ★ 2026-10-13 补：本控件以前**没有 `applyTheme`** ⇒ `applyThemeAll` 切主题后它纹丝不动 ✗
+    //     映射与 `set()` 里"建时取主题"那一套**逐字段对齐**（改这里请同时改 set() ✓）；
+    //     重绘由 `applyThemeAll` 结尾的 `core.requestRedraw()` 统一负责 ✓（与 Table 等一致 ✓）
+    func applyTheme(Theme t) {
+        uncheckedColor = t.bgAlt
+        checkedColor = t.accent
+        txtColor = t.txt
+        brdColor = t.border
+        markColor = t.txtOnAccent
     }
 }
 
