@@ -1684,7 +1684,7 @@ const BX_TEX    = 4   // 批处理文字纹理
         // ② 图片铺满离屏（srcrect 原样透传 ⇒ 裁源/缩放口径与 drawTextureRect 完全一致 ✓）
         SDL_FRect full = SDL_FRect.malloc()
         full.x = 0.0; full.y = 0.0; full.w = _float(tw); full.h = _float(th)
-        bool okTex = _lib.SDL_RenderTexture(handle, tex, srcrect, full.to_ptr())
+        _lib.SDL_RenderTexture(handle, tex, srcrect, full.to_ptr())
         full.free()
         // ③ 蒙版乘上去（顶点色 = 白 ⇒ 只改 alpha ✓；corner 用**精确** M/S，同 fillRoundedRect ✓）
         //   ⚠ 混合模式必须是 `maskAlphaBlend()` 那个**自定义**模式 —— 用 MUL 是错的：
@@ -1698,7 +1698,7 @@ const BX_TEX    = 4   // 批处理文字纹理
         _lib.SDL_SetTextureBlendMode(mask, mm)
         setBlendMode(mm)
         float corner = _float(M) / bxSx
-        bool okMask = emitMask9(mask, Mq, 0.0, 0.0, _float(tw), _float(th), corner, corner)
+        emitMask9(mask, Mq, 0.0, 0.0, _float(tw), _float(th), corner, corner)
         _lib.SDL_SetTextureBlendMode(mask, core.BlendMode.BLEND)   // 共享蒙版：当场还原 ✓
         // ④ 恢复现场，再把合成结果贴回屏幕
         setBlendMode(oldBlend)
