@@ -1,0 +1,70 @@
+// M11 回归：struct **方法**里 `new B(键 = 隐式自字段)` —— 值那一段必须看得见隐式 self ✓
+//
+// 改之前（实测）：值里的裸字段名**没被改写成 `self.字段`** ⇒ 编译报「未定义的变量: id」✗
+//   根因：`transform_method_body` 的 switch 是**白名单**，漏了 `AST_STRUCT_INIT`
+//   ⇒ 落到 `default:` **静默跳过**（见 docs/语言摩擦与隐式契约清单.md 的 M11 ✓）。
+//   ⚠ 只在方法里犯：普通函数没有隐式 self、`self.` 显式写法则本来就走不到那条路 ✓
+//
+// 下面六条 = M11 边界表逐条对应（改之前 ① 和 ⑥ 是红的 ✗）：
+//   ① 隐式自字段 ✓        ② 显式 `self.` ✓      ③ 局部变量 ✓
+//   ④ 外层函数调用 ✓      ⑤ 构造之后其它语句读自字段 ✓
+//   ⑥ B **有同名字段** ⇒ 仍取**外层**那个（7）✓ —— 这条同时钉住"不是 self 被切成 B"：
+//     若真被切成 B，`k` 就会静默拿到 99（宁可报错也不要静默错值 ✗）
+
+struct Inner { int k = 0 }
+
+struct Inner2 {
+    int id = 99
+    int k = 0
+}
+
+func outerVal(): int {
+    return 5
+}
+
+struct Outer {
+    int id = 7
+
+    func m1(): int {
+        var x = new Inner(k = id)
+        return x.k
+    }
+
+    func m2(): int {
+        var x = new Inner(k = self.id)
+        return x.k
+    }
+
+    func m3(): int {
+        var loc = 3
+        var x = new Inner(k = loc)
+        return x.k
+    }
+
+    func m4(): int {
+        var x = new Inner(k = outerVal())
+        return x.k
+    }
+
+    func m5(): int {
+        var a = new Inner(k = 1)
+        return a.k + id
+    }
+
+    func m6(): int {
+        var x = new Inner2(k = id)
+        return x.k
+    }
+}
+
+main() {
+    var o = new Outer()
+    assert_eq(o.m1(), 7)
+    assert_eq(o.m2(), 7)
+    assert_eq(o.m3(), 3)
+    assert_eq(o.m4(), 5)
+    assert_eq(o.m5(), 8)
+    // ⑥ 取的是 Outer.id = 7，**不是** Inner2.id = 99 ✓
+    assert_eq(o.m6(), 7)
+    print("test_method_new_implicit_self passed")
+}

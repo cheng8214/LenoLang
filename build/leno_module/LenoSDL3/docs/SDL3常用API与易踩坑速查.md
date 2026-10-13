@@ -1694,19 +1694,24 @@ build\leno.exe leno_gui\自测\test_theme_switch.leno
   `set CSHOT=%TEMP%\combo.png & build\leno.exe build\_probe_combo_corner.leno`；
   再加 `set CSEL=7` 把"只露一半的末行"设成**选中** ⇒ 压高亮行的形状 ✓
 
-### ⛔ 在 A 的**方法**里写 `new B(键=值)`：参数值那一段**看不见隐式 `self`**（编译器怪癖 ✓）
+### ✅（原 ⛔，**2026-10-13 已修**）在 A 的**方法**里写 `new B(键=值)`：值里的裸字段名曾报"未定义变量"
 
-`Card` 里构造 `BadgeSpec` 时实测：`new BadgeSpec(text = badge, …)`（`badge` 是 **Card 的字段**）
-⇒ 编译器报 `未定义的变量: badge` / `字段 'text' 类型不匹配: 期望 'string'，实际 'unknown'`。
-**改法**（两条都行）：值里写显式 `self.badge` ✓，或先 `new BadgeSpec()` 再逐字段赋值
-（`b.text = badge` …）✓ —— 本次走的是后者 ✓。
+**现在直接写就行** ✓：`var b = new BadgeSpec(text = badge, …)`（`badge` 是 **Card 的字段**）✓ ——
+本条**不再需要任何绕法**（下面那些是历史记录，保留是为了让老代码 / 老笔记对得上 ✓）。
+
+**历史上的症状**：`Card` 里构造 `BadgeSpec` 时实测 `new BadgeSpec(text = badge, …)`
+⇒ 编译器报 `未定义的变量: badge` / `字段 'text' 类型不匹配: 期望 'string'，实际 'unknown'`；
+当时的改法有两条（值里写显式 `self.badge` ✓，或先 `new BadgeSpec()` 再逐字段赋值 ✓）。
+
+**真因（2026-10-13 查实，与早先的猜测都不同 ✗）**：**不是**"拿不到外层方法的 self" ——
+是**方法体改写器的 switch 白名单漏了 `AST_STRUCT_INIT`**（`src/semantic/semantic_visit_method.c`）：
+`new B(键=值)` 的**值**整段被 `default:` **静默跳过** ⇒ 值里的裸字段名没被改写成 `self.字段`
+⇒ 后面只按**变量**解析 ⇒ 报"未定义变量" ✗。
 
 ⚠ 旧说法"它把当前结构体上下文当成 `BadgeSpec` 了 / `self` 被切成 B"**不准确** ✗：
-`B` 若有**同名字段**，这里照样**响亮报错**、**不会**静默取到 B 的值 ✓；
-准确口径是「**构造参数的值按"变量"解析，拿不到外层方法的 self**」
-（所以**只在 struct 方法里犯**：局部量、参数、外层函数调用全正常 ✓）。
-完整边界表（6 个探针）与疑似定位点见 `docs/语言摩擦与隐式契约清单.md` 的 **M11**
-（⏳ 待修）/ `docs/语言陷阱速查.md` ㉟ ✓
+`B` 若有**同名字段**，同样**响亮报错**、**不会**静默取到 B 的值 ✓。
+完整边界表（6 条，含"取外层而不是 B 的同名值"这条防静默错值的钉子）与真因见
+`docs/语言摩擦与隐式契约清单.md` 的 **M11**（✅ 已修）/ `docs/语言陷阱速查.md` ㉟ ✓
 
 ### ✅ 卡片里别留"每帧测量"
 

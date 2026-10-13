@@ -875,6 +875,22 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
                 transform_method_body_ex(ast->u.safe_access.args.items[i], field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
             }
             break;
+        case AST_STRUCT_INIT: {
+            // ★ M11（2026-10-13）：`new B(键 = 值)` 的**值**也必须走同一套改写 ✓
+            //   此前本 switch **没有这个 case** ⇒ 落到 default 被**静默跳过** ✗
+            //   ⇒ 值里的裸字段名（`new Inner(k = id)` 里的 `id`）没被改写成 `self.id`
+            //     ⇒ 后面按**变量**解析 ⇒ 报「未定义的变量: id」✗
+            //   （而方法体其余语句正常 —— 因为它们在别的 case 里被递归到了 ✓；
+            //     这也解释了为什么"先 new B() 再逐字段赋值"能绕过去 ✓）
+            //   ⚠ 只递归**值**、不碰 `field_names`：那是 **B 的**字段名（构造目标），
+            //     不是本结构体的字段 ⇒ 当裸名改写会造出 `self.k` 这种**假字段** ✗
+            for (int i = 0; i < ast->u.struct_init.field_count; i++) {
+                if (ast->u.struct_init.field_values[i]) {
+                    transform_method_body_ex(ast->u.struct_init.field_values[i], field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
+                }
+            }
+            break;
+        }
         case AST_CLIB_DEF:
         default:
             break;
