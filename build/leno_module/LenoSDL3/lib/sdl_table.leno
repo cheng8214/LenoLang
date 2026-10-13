@@ -518,6 +518,11 @@ export struct Table impl Widget, Themeable {
         while rowColors.len() < nRows { rowColors.add(0) }
         checkedCount = -1
         update_check_header()
+        // ★ 2026-10-13：换数据后**重放**当前排序 —— 表头的排序箭头由 `sortCol/sortDesc` 决定，
+        //   而本函数**不清**它们（也不该悄悄清掉用户的意图 ✓）⇒ 那就必须让数据照它排好：
+        //   否则箭头在**说谎**（实测：点「评分▼」后再搜索/换筛选，9.3 掉到第 3 行、首行是 7.7 ✗）
+        //   ⚠ 与 `set()` 的取舍不同：那是"换配置"语义 ⇒ 重置排序 ✓；这里是"换数据" ⇒ 保持排序 ✓
+        if sortCol >= 0 and _rows.len() > 1 { sort_by(sortCol, sortDesc) }
     }
     func add_row(Array[string] row, string imgPath) {
         _rows.add(row)
@@ -529,6 +534,9 @@ export struct Table impl Widget, Themeable {
         selSet.add(false)
         if row.len() > ncols and _headers.len() == 0 { ncols = row.len(); recompute_cols() }
         clamp_scroll()
+        // ★ 2026-10-13：**追加行**同样会破坏"已排好的顺序" ⇒ 撤销排序状态（与 `clear()` 同款口径 ✓）
+        //   否则表头"▼"还在、新行却插在末尾 ⇒ 又是一次"箭头说谎" ✗（批量换数据请用 `set_rows` ✓）
+        sortCol = -1; sortDesc = false
         update_check_header()
     }
     func remove_row(int idx) {
@@ -555,7 +563,11 @@ export struct Table impl Widget, Themeable {
         clamp_scroll()
         update_check_header()
     }
-    func clear() { _rows = []; rowImages = []; rowTips = []; rowChecked = []; rowColors = []; selRow = -1; selCol = -1; selRows = []; selSet = []; scrollX = 0; scrollY = 0; checkHeaderState = false; checkedCount = -1; invalidate_fitted(); invalidate_sb() }
+    // ★ 2026-10-13：`clear()` 连**排序状态**一起清（表头箭头就是它画的）——
+    //   清空数据却留着"▼"的话，之后逐行 `add_row` 塞进来的新数据**必然是插入序** ⇒ 箭头立刻说谎 ✗
+    //   （口径：批量换数据用 `set_rows`（会重放排序 ✓）；`clear()`/`add_row()` 视为"改了行集合"⇒
+    //     排序状态作废 ✓ —— 要么别谎报、要么别乱序，两条路都得有一条 ✓）
+    func clear() { _rows = []; rowImages = []; rowTips = []; rowChecked = []; rowColors = []; selRow = -1; selCol = -1; selRows = []; selSet = []; scrollX = 0; scrollY = 0; checkHeaderState = false; checkedCount = -1; sortCol = -1; sortDesc = false; invalidate_fitted(); invalidate_sb() }
     func row_count(): int { return _rows.len() }
     func col_count(): int { return ncols }
     func get_row(int idx): Array[string] {

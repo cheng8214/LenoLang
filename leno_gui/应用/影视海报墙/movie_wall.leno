@@ -27,7 +27,7 @@ import "SDL3" as SDL3
 import "./movie_data.leno" as data
 import strings
 use SDL3.(Event, Renderer, Scancode, Window, TitleBar, Button, Label, Edit, Card,
-          HBox, VBox, ScrollView, GridLayout, RingProgress, Font)
+          HBox, VBox, ScrollView, GridLayout, RingProgress, Font, TabControl, Table)
 use data.Movie
 
 // ==================== 尺寸 / 调色板 ====================
@@ -132,6 +132,12 @@ struct Wall {
     bool emptyNow = false        // 当前筛选/搜索命中 0 部 ⇒ 网格区画空态提示 ✓
     Font? emptyFont              // 空态提示用的字体（懒建；run 收尾时 close ✓）
 
+    // ----- 视图页签：页 0 = 海报墙网格 / 页 1 = 列表（Table ✓）-----
+    TabControl tabs
+    Table tbList
+    int curView = 0
+    Array[int] tbMap = []        // 列表行号 → movies 下标（重建时同步 ⇒ 两个视图永不错位 ✓）
+
     // ----- 数据 -----
     Array[Movie] movies = []
     Array[Card] cards = []        // 与 movies **同序**（筛选时只换 add 名单 ⇒ 控件不重建 ✓）
@@ -147,16 +153,22 @@ struct Wall {
     int cols = 5                  // 当前网格列数（sync_cols 每帧校正 ✓）
 
     // ----- 无头自检状态（见 self_test ✓）-----
+    //   ★ 时间基准 = **定时器**（`STEP_MS` 一拍 = 一步），**不是帧号**：
+    //     本框架是**事件驱动重绘** —— 没有重绘请求时帧号根本不走 ⇒ "第 N 帧"既不定时、
+    //     还可能截到**旧画面** ✗（2026-10-13 用户点出 ✓；仓里既有惯例见 cleaner_master 的
+    //     `autoStep`（"自动化必须走定时器，与有没有事件无关 ✓"）与 dashboard_sidebar 那条
+    //     "无头下没有事件就永不重绘"的注释 ✓）。定时器触发时会自动 `requestRedraw` ⇒ 一定刷到 ✓
+    const int STEP_MS = 100      // 自检每步间隔（毫秒）
     string shotPath = ""
-    int shotAt = 10
-    int closeAt = 0
-    int clickSelAt = 0
-    int rclickAt = 0             // >0 ⇒ 该帧在第 1 张卡上注入右键（WALL_RCLICK ✓）
-    float rcX = 0.0, rcY = 0.0   // 注入的右键坐标（3 帧后按它推菜单项位置 ⇒ 验动作 ✓）
-    int detailAt = 0             // >0 ⇒ 该帧进详情页（WALL_DETAIL ✓）
-    int backAt = 0               // >0 ⇒ 该帧从详情页返回（WALL_BACK ✓）
-    int maxFrames = 0
-    int frames = 0
+    int shotAt = 10              // 第几步截图（步 × 100ms ⇒ 确定 ✓）
+    int closeAt = 0              // >0 ⇒ 第几步模拟点标题栏 ✕（WALL_CLOSE ✓）
+    int clickSelAt = 0           // >0 ⇒ 第几步点第 0 张卡的「收藏」按钮（WALL_CLICKSEL ✓）
+    int rclickAt = 0             // >0 ⇒ 第几步在第 1 张卡上注入右键（WALL_RCLICK ✓）
+    float rcX = 0.0, rcY = 0.0   // 注入的右键坐标（3 步后按它推菜单项位置 ⇒ 验动作 ✓）
+    int detailAt = 0             // >0 ⇒ 第几步进详情页（WALL_DETAIL ✓）
+    int backAt = 0               // >0 ⇒ 第几步从详情页返回（WALL_BACK ✓）
+    int maxSteps = 0             // >0 ⇒ 走到第几步就退出（WALL_FRAMES，语义=步数 ✓）
+    int steps = 0                // 已走步数（由步进定时器推进 ✓）
 
     // ==================== 入口 ====================
     func run() {
@@ -210,19 +222,25 @@ struct Wall {
     }
 
     // ==================== 无头自检（照 dashboard_sidebar / cleaner_master 的惯例 ✓）====================
+    //   ★★ **数字全是"步号"，一步 = 100ms（`STEP_MS`）** —— 由**定时器**驱动，不是帧号！
+    //      本框架是事件驱动重绘：没有重绘请求时帧号根本不走 ⇒ "第 N 帧"既不定时、还可能截到
+    //      旧画面 ✗（2026-10-13 用户点出；仓里惯例见 cleaner_master 的 autoStep、
+    //      dashboard_sidebar 的"无头下没事件就永不重绘"注解 ✓）
     //   set SDL_VIDEODRIVER=dummy          # 无窗口跑（无头也能验布局 ✓）
     //   set WALL_SHOT=%TEMP%\wall.png      # 存一张界面 PNG 后退出（核对界面正是靠它 ✓）
-    //   set WALL_AT=24                     # 第 24 帧再截（默认 10；前几帧布局才稳定 ✓）
+    //   set WALL_AT=12                     # 第 12 步（≈1.2s）再截（默认 10 ✓）
     //   set WALL_CAT=科幻 / WALL_CATIDX=6 / WALL_Q=星 / WALL_SORT=1   # 切分类（名字或下标）/ 搜索 / 换排序
     //     ⚠ Windows 控制台传中文 env 可能被代码页折损 ⇒ 自检脚本请用 WALL_CATIDX ✓
     //   set WALL_SIZE=900x600              # 启动就改窗口尺寸（验证列数自适应 ✓）
     //   set WALL_ACTIONS=1                 # 启动就打开「卡内操作」（验证 Card 容器化 ✓）
-    //   set WALL_CLICKSEL=20               # 第 20 帧点第 1 张卡的「收藏」按钮（验证"不穿透整卡" ✓）
-    //   set WALL_DETAIL=3                  # 第 3 帧进详情页（序号 = "当前筛选/排序下的第 n 部" ⇒ 确定 ✓）
-    //   set WALL_RCLICK=4                  # 第 4 帧在第 1 张卡上注入右键（验 Card 右键菜单 ✓）
-    //   set WALL_BACK=8                    # 第 8 帧从详情页返回（验"切得回来" ✓，配合 WALL_DETAIL）
-    //   set WALL_CLOSE=1                   # 第 5 帧模拟点标题栏 ✕（验证"能退出" ✓，配合 FRAMES 兜底）
-    //   set WALL_FRAMES=40                 # 只跑 40 帧就退出（冒烟）
+    //   set WALL_CLICKSEL=20               # 第 20 步点第 1 张卡的「收藏」按钮（验证"不穿透整卡" ✓）
+    //   set WALL_DETAIL=3                  # 第 3 步进详情页（序号 = "当前筛选/排序下的第 n 部" ⇒ 确定 ✓）
+    //   set WALL_RCLICK=4                  # 第 4 步在第 1 张卡上注入右键（验 Card 右键菜单 ✓）
+    //   set WALL_BACK=8                    # 第 8 步从详情页返回（验"切得回来" ✓，配合 WALL_DETAIL）
+    //   set WALL_VIEW=1                    # 启动切到「列表」页签（验 TabControl + Table ✓）
+    //   set WALL_TSORT=3 / WALL_TFILTER=1  # 列表按第 3 列（评分）降序；再换一批数据压"排序状态残留" ✓
+    //   set WALL_CLOSE=1                   # 第 1 步模拟点标题栏 ✕（验证"能退出" ✓）
+    //   set WALL_FRAMES=40                 # 走到第 40 步就退出（冒烟；数字=步数 ✓）
     pri func self_test() {
         var sh = _env("WALL_SHOT")
         if sh != null { shotPath = _str(sh) }
@@ -260,29 +278,53 @@ struct Wall {
         if rc != null { rclickAt = _int(_str(rc)) }      // >0 ⇒ 该帧注入右键（验 Card 右键菜单 ✓）
         var bk = _env("WALL_BACK")
         if bk != null { backAt = _int(_str(bk)) }        // >0 ⇒ 该帧返回（验"切得回来" ✓）
+        var vw = _env("WALL_VIEW")
+        if vw != null { on_view_change(_int(_str(vw))) }  // 0=海报墙 / 1=列表（验 TabControl 切页 ✓）
+        var ts = _env("WALL_TSORT")
+        if ts != null {
+            // ★ 压 Table 的"排序状态"：先按某列降序排，再**换一批数据**（rebuild ⇒ set_rows）
+            //   ⇒ 表头箭头与数据还对得上吗？（`set_rows` 不重置 sortCol/sortDesc ✗ 见速查 ✓）
+            tbList.sort_by(_int(_str(ts)), true)
+            Array[string] r0 = tbList.get_row(0)
+            if r0.len() > 3 { print("[墙] 列表按列 " + _str(_int(_str(ts))) + " 降序 ⇒ 首行 " + r0[0] + " 评分=" + r0[3]) }
+            var tf = _env("WALL_TFILTER")
+            if tf != null and _int(_str(tf)) > 0 {
+                rebuild()                                // 模拟"换了筛选/搜索" ⇒ 重新 set_rows ✓
+                Array[string] r1 = tbList.get_row(0)
+                if r1.len() > 3 { print("[墙] 换数据后 首行 " + r1[0] + " 评分=" + r1[3]) }
+            }
+        }
         var fr = _env("WALL_FRAMES")
-        if fr != null { maxFrames = _int(_str(fr)) }
+        if fr != null { maxSteps = _int(_str(fr)) }        // 语义 = **步数**（不是帧数 ✓）
+        // ★★ 自检的每一步都挂**定时器**（STEP_MS 一拍）—— 这是本框架做自动化的**唯一可靠时基**：
+        //   事件驱动重绘 ⇒ 没有重绘请求时帧号不走，"第 N 帧"不定时、还可能截到旧画面 ✗
+        //   （2026-10-13 用户点出 ✓；同 cleaner_master 的 autoStep 与 dashboard_sidebar 的注释 ✓）
+        //   只开任一自检开关才挂：纯交互运行不挂（否则每 100ms 一次无谓全量重绘 ✗）
+        bool anyTest = (shotPath != "") or (maxSteps > 0) or (closeAt > 0) or (clickSelAt > 0) or (rclickAt > 0) or (detailAt > 0) or (backAt > 0)
+        if anyTest { win.addTimer(STEP_MS, func() { selftest_step() }) }
         // ★ 叠加层**常驻**：空态提示也得画在控件之上 —— ScrollView 自己铺底色，
         //   放在 onRender（控件层之下）会被它整块盖掉 ✗（实测：文字一个像素都不出来 ✓）。
         //   这与"截图钩子必须放 setOverlay、放 onRender 只会拿到空白帧"是同一条规律 ✓
         win.setOverlay(func(Renderer r) {
             draw_empty_hint(r)
-            if shotPath != "" or maxFrames > 0 { selftest_overlay(r) }
+            if shotPath != "" { selftest_overlay(r) }
         })
     }
 
-    pri func selftest_overlay(Renderer r) {
-        frames = frames + 1
+    // 自检**每一步**：由 100ms 的步进定时器驱动（`WALL_*` 里的数字都是**步号** ✓）
+    //   ⚠ 别把它搬回渲染回调：渲染回调只在**真的重绘**时才被调用 ⇒ 步子会随"有没有事件"飘 ✗
+    pri func selftest_step() {
+        steps = steps + 1
         // 模拟点标题栏 ✕（窗口右上角那一格 ✓）：验证"关得掉" —— 没接 is_close_requested 时
-        //   这里会一直跑到 WALL_FRAMES 才退（日志里就看得出 ✗ ✓）
-        if closeAt > 0 and frames == closeAt {
+        //   这里会一直跑到 WALL_FRAMES（步数）才退（日志里就看得出 ✗ ✓）
+        if closeAt > 0 and steps == closeAt {
             var wsz = win.getSize()
             bool cok = SDL3.testClickAt(win.getID(), _float(wsz.w - 20), 17.0)
             print("[墙] 注入点击标题栏 ✕ ok=" + _str(cok))
         }
         // 容器化的关键断言：点**卡内按钮**应只触发按钮自己的回调，
         //   绝不顺带触发整卡 on_click（后者会打印 "[海报墙] 选中：…" ⇒ 日志里看得出来 ✓）
-        if clickSelAt > 0 and frames == clickSelAt and cards.len() > 0 {
+        if clickSelAt > 0 and steps == clickSelAt and cards.len() > 0 {
             Array[float] rct = cards[0].content_rect()   // [x, y, w, h]（窗口绝对坐标 ✓）
             // `_float(...)`：纯为兼容"符号表还没刷新的 LSP"（它会把返回值当 any ✗ 见文末备注）
             float px = _float(rct[0]) + 93.0             // 第 2 个按钮「收藏」的中心（58 + 6 + 58/2 ✓）
@@ -290,50 +332,54 @@ struct Wall {
             bool cok2 = SDL3.testClickAt(win.getID(), px, py)
             print("[墙] 注入点击卡内『收藏』(" + _str(px) + ", " + _str(py) + ") ok=" + _str(cok2))
         }
-        if clickSelAt > 0 and frames == clickSelAt + 3 and cards.len() > 0 {
+        if clickSelAt > 0 and steps == clickSelAt + 3 and cards.len() > 0 {
             print("[墙] 点卡内按钮后：card0.selected=" + _str(cards[0].is_selected()))
         }
         // 注入右键（验 Card 右键菜单 ✓）：点第 1 张卡**图片区**（内容区上方 12px ⇒ 仍在卡内 ✓）
-        if rclickAt > 0 and frames == rclickAt and cards.len() > 0 {
+        if rclickAt > 0 and steps == rclickAt and cards.len() > 0 {
             Array[float] rct = cards[0].content_rect()
             rcX = _float(rct[0]) + 40.0
             rcY = _float(rct[1]) - 12.0
             bool rok = SDL3.testRightClickAt(win.getID(), rcX, rcY)
             print("[墙] 注入右键(" + _str(rcX) + ", " + _str(rcY) + ") ok=" + _str(rok))
         }
-        // 3 帧后点菜单第 3 项「加入收藏」（走完"弹出 → 命中 → 动作 → 重绘"整条链 ✓）
+        // 3 步后点菜单第 3 项「加入收藏」（走完"弹出 → 命中 → 动作 → 重绘"整条链 ✓）
         //   菜单锚在右键点 ⇒ 第 3 项中心 ≈ 锚点 + (2*itemH + itemH/2)，itemH 默认 26 ✓
-        if rclickAt > 0 and frames == rclickAt + 3 and cards.len() > 0 {
+        if rclickAt > 0 and steps == rclickAt + 3 and cards.len() > 0 {
             bool mok = SDL3.testClickAt(win.getID(), rcX + 60.0, rcY + 2.0 * 26.0 + 13.0)
             print("[墙] 点菜单第 3 项 ok=" + _str(mok) + " ⇒ card0.selected=" + _str(cards[0].is_selected()) +
                   " 菜单还开着=" + _str(cards[0].is_context_menu_open()))
         }
         // 进详情页（验详情页布局 ✓）：序号指"当前筛选/排序下的第 n 部" ⇒ 与界面所见一致 ✓
-        if detailAt > 0 and frames == detailAt {
+        if detailAt > 0 and steps == detailAt {
             Array[int] ids = collect()
             int n = detailAt - 1
             if n >= 0 and n < ids.len() { open_detail(ids[n]) }
             else { print("[墙] WALL_DETAIL=" + _str(detailAt) + " 越界（命中 " + _str(ids.len()) + " 部）") }
         }
         // 返回海报墙（验证 round trip：换根 ⇒ 换回来 ✓）
-        if backAt > 0 and frames == backAt { close_detail() }
-        if shotPath != "" and frames >= shotAt {
-            var sz = win.getSize()
-            var s = r.readPixelsAt(0, 0, sz.w, sz.h)
-            if s != null {
-                bool ok = SDL3.saveImagePNG(s, shotPath)
-                print("[墙] 截图 " + shotPath + " ok=" + _str(ok) +
-                      "  分类=" + curCat + " 命中=" + _str(collect().len()) + " 列=" + _str(cols) +
-                      "  详情=" + _str(dOpen))
-            } else {
-                print("[墙] 读像素失败：" + SDL3.getError())
-            }
+        if backAt > 0 and steps == backAt { close_detail() }
+        // 走到步数上限就退（冒烟 ✓；`WALL_FRAMES` 的语义已改为**步数** ✓）
+        if maxSteps > 0 and steps >= maxSteps {
+            print("[墙] 步数=" + _str(steps) + " 命中=" + _str(collect().len()) + " 列=" + _str(cols))
             _exit(0)
         }
-        if maxFrames > 0 and frames >= maxFrames {
-            print("[墙] frames=" + _str(frames) + " 命中=" + _str(collect().len()) + " 列=" + _str(cols))
-            _exit(0)
+    }
+
+    // 叠加层：空态提示 + 截图（**必须在控件之上** —— 它在所有控件/弹层之后、present 之前 ✓）
+    pri func selftest_overlay(Renderer r) {
+        if shotPath == "" or steps < shotAt { return }
+        var sz = win.getSize()
+        var s = r.readPixelsAt(0, 0, sz.w, sz.h)
+        if s != null {
+            bool ok = SDL3.saveImagePNG(s, shotPath)
+            print("[墙] 截图 " + shotPath + " ok=" + _str(ok) +
+                  "  分类=" + curCat + " 命中=" + _str(collect().len()) + " 列=" + _str(cols) +
+                  "  页签=" + _str(tabs.get_active()) + "  详情=" + _str(dOpen))
+        } else {
+            print("[墙] 读像素失败：" + SDL3.getError())
         }
+        _exit(0)
     }
 
     // ==================== 事件 ====================
@@ -516,16 +562,91 @@ struct Wall {
         else { moreBtn.set_image(icon("chevron_down.png")); moreBtn.set_text("更多分类") }
     }
 
-    // ==================== 右侧网格 ====================
+    // ==================== 右侧：视图页签（海报墙 / 列表）====================
+    //   页内容一律走**布局模式**（`setPageLayout` + `addToPageLayout`）——
+    //   ⚠ 别和绝对定位模式（`addToPage`）混用：混用后绝对子控件**再也不会被 set_pos** ✗
+    //     （`sdl_tab.leno` 的 applyOffsets 对"布局页"直接 return ✓）⇒ 一页只用一种方式 ✓
+    //   ⚠ 容器用 `createXxx` + `add`（不要 `win.addXxx`：那会同时进窗口控件表 ⇒ 双重绘制/处理 ✗）
     pri func build_grid(HBox body) {
-        sv = SDL3.createScrollView({x: 0, y: 0, w: 900, h: 500, fit_w: true,
+        tabs = SDL3.createTabControl({x: 0, y: 0, w: 900, h: 500, tab_h: 34,
+                                      tabs: ["  海报墙  ", "  列表  "], active: 0,
+                                      font_size: 14, bg_color: C_BG,
+                                      border_color: C_PANEL, active_color: C_BG,
+                                      accent_color: C_ACCENT})
+        body.add(tabs, {grow: 1, shrink: 1, align: 3})
+        tabs.on_change(func(int p) { on_view_change(p) })
+
+        // ---- 页 0：海报墙网格（原样搬进来 ✓）----
+        VBox gpage = SDL3.createVBox({x: 0, y: 0, w: 900, h: 460, padX: 0, padY: 0, spacing: 0})
+        tabs.setPageLayout(0, gpage)
+        sv = SDL3.createScrollView({x: 0, y: 0, w: 900, h: 460, fit_w: true,
                                     step: 64, smooth: true, bg_color: C_BG,
                                     border: false, bar_color: C_BAR})
-        body.add(sv, {grow: 1, shrink: 1, align: 3})
-
-        grid = SDL3.createGridLayout({x: 0, y: 0, w: 900, h: 500, cols: cols,
+        tabs.addToPageLayout(0, sv, {grow: 1, shrink: 1, align: 3})
+        grid = SDL3.createGridLayout({x: 0, y: 0, w: 900, h: 460, cols: cols,
                                       spacing: GRID_GAP, padX: GRID_PAD, padY: GRID_PAD})
         sv.set_content(grid)     // ★ 内容控件用 createXxx（不要 win.addXxx ⇒ 会双重绘制/处理 ✗）
+
+        // ---- 页 1：列表（Table：同一份数据、同一套右键菜单语义 ✓）----
+        VBox lpage = SDL3.createVBox({x: 0, y: 0, w: 900, h: 460, padX: 0, padY: 0, spacing: 0})
+        tabs.setPageLayout(1, lpage)
+        build_table(lpage)
+    }
+
+    // 列表视图：表头可点排序 ✓、双击进详情 ✓、右键菜单与卡片**同名同义** ✓
+    pri func build_table(VBox page) {
+        tbList = SDL3.createTable({x: 0, y: 0, w: 900, h: 460, row_h: 26, header_h: 30,
+                                   headers: ["片名", "年份", "分类", "评分", "收藏"],
+                                   sortable: true, zebra: true, resizable: true,
+                                   font_size: 13, empty_text: "没有匹配的影片（换个词，或点左栏分类）",
+                                   tip: "双击进详情 · 点表头排序"})
+        page.add(tbList, {grow: 1, shrink: 1, align: 3})
+        tbList.on_dbl_click(func(int row, int col) { open_list_row(row) })
+        // 右键：文案/语义与卡片菜单**保持一致**（框架侧同名 API ⇒ 应用侧写法也一致 ✓）
+        //   ⚠ 行号必须在 `will_open` 里**当场**取：菜单弹出后用户还能滚动表 ⇒ 用旧行号会张冠李戴 ✗
+        tbList.on_context_will_open(func(int row) {
+            tbList.clearContextItems()
+            tbList.addContextItem({label: "进详情页", id: "open"})
+            tbList.addContextItem({label: "播放", id: "play"})
+            tbList.addContextItem({label: "复制片名", id: "copy"})
+        })
+        tbList.on_context_select(func(int row, string id) { on_list_menu(row, id) })
+    }
+
+    // 列表数据 = **同一份**命中名单（`collect()` ✓）⇒ 网格与列表永不各说各话 ✓
+    //   ⚠ 行号与 movies 下标不是一回事（筛选/排序后顺序不同 ✓）⇒ 一律过 `tbMap` ✓
+    pri func rebuild_table() {
+        tbMap = collect()
+        Array[Array[string]] rows = []
+        for 0 : tbMap.len() - 1 to i {
+            Movie m = movies[tbMap[i]]
+            rows.add(["  " + m.title, m.year, m.cat, m.score,
+                      if cards[tbMap[i]].is_selected() then "★ 已收藏" else ""])
+        }
+        // ★ 用**批量**接口 `set_rows`（会重放当前排序 ✓）—— 逐行 `clear()` + `add_row()` 是另一条路：
+        //   `clear/add_row` 会**撤销**排序状态 ⇒ 换数据后表头箭头与数据对不上 ✗（见 sdl_table 的注释 ✓）
+        tbList.set_rows(rows)
+    }
+
+    pri func on_view_change(int p) {
+        // ★ 这个函数是**双向**入口：用户点页签时由 `on_change` 回调进来、程序化切页（自检钩子）时
+        //   也要真的把页签切过去 —— 只改自己的 `curView` 的话，界面还停在第 0 页 ✗（实测踩过 ✓）
+        //   `set_active` 对**同值**直接 return ⇒ 上面那条回调不会递归 ✓
+        if tabs.get_active() != p { tabs.set_active(p) }
+        curView = p
+        if p == 1 { rebuild_table() }        // 切到列表：按当前筛选/排序刷一次 ✓
+        SDL3.markFrameRedraw()
+    }
+
+    pri func open_list_row(int row) {
+        if row < 0 or row >= tbMap.len() { return }
+        open_detail(tbMap[row])
+    }
+
+    pri func on_list_menu(int row, string id) {
+        if row < 0 or row >= tbMap.len() { return }
+        on_card_menu(tbMap[row], id)         // 与卡片右键**走同一条分发**（收藏/复制/播放一处定义 ✓）
+        rebuild_table()                      // 收藏列跟着变（否则列表上还是旧的 "★" ✗）
     }
 
     // ==================== 详情页（点卡片进入 ✓ 2026-10-13）====================
@@ -937,6 +1058,7 @@ struct Wall {
         emptyNow = idx.len() == 0        // 命中 0 部 ⇒ 网格区走空态提示（见 draw_empty_hint ✓）
         for 0 : idx.len() - 1 to i { grid.add(cards[idx[i]], {align: 3}) }
         sv.set_scroll(0.0, 0.0)     // 换筛选后回到顶部（否则停在"上一批"的位置 ✓）
+        rebuild_table()             // 列表视图同一份名单 ⇒ 一起刷（两视图永不错位 ✓）
         SDL3.markFrameRedraw()
     }
 
