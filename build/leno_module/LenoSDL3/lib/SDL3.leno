@@ -183,6 +183,9 @@ export func testFocusLost(int wid): bool                      { return wnd.testF
 // ★ 2026-10-13：注入一次按键（焦点链 Tab / Shift+Tab / Enter / Space 的自动回归要用 ✓）
 export func testKeyDown(int wid, int scancode, int mod = 0): bool { return wnd.testKeyDown(wid, scancode, mod) }
 export func testFocusGained(int wid): bool                    { return wnd.testFocusGained(wid) }
+// ★ 2026-10-13：读**上一次真正应用**的光标 kind（-1 = 从未应用过 ✓）——
+//   "悬停是手型、按下去不能变成箭头"这条回归要用 ✓（用法见 `leno_gui/自测/test_cursor_press.leno`）
+export func testLastAppliedCursor(): int                      { return core.testLastAppliedCursor() }
 
 // ==================== 对话框通用件（自绘标题栏 / 外框底色）====================
 //   详见 sdl_dialog.leno；应用自己手搓的弹窗照这三行接即可 ✓

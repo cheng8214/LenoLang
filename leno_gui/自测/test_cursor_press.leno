@@ -1,0 +1,73 @@
+// test_cursor_press.leno —— 光标帧语义回归：**悬停是手型，按下去不能变回普通箭头** ✓
+//   （框架侧问题 ⇒ 编号走『SDL3常用API与易踩坑速查.md』**附录 C**，不占语言摩擦清单的 Mxx ✓）
+//
+// 症状（用户报的）：鼠标移到按钮上是手型光标，**一按下去**却变成普通形状 ✗
+//
+// 病根（2026-10-13 查实）：`sdl_core` 的 `markFrameRedraw()` 把两件事混为一谈 ✗ ——
+//   "**要重绘**" 与 "**鼠标位置变了**"。它顺带把本帧标成"要重算光标"，
+//   而控件**只在 mouse motion 里**请求光标 ⇒ **按下 / 松开 / 键盘激活**这些**非 motion** 帧
+//   被当成"要重算光标"、可那一刻**没有任何控件请求** ⇒ `applyFrameCursor` 落到
+//   `无请求 ⇒ DEFAULT` 兜底 ⇒ **光标被打回箭头** ✗
+//
+// 修法（**核心两处，控件一行未改**）：见 `sdl_core.leno` 的 `_frameCursorSeen` 说明 ✓
+//   ① `markFrameRedraw()` **不再**置"seen"（它只管重绘 ✓）
+//   ② 由**窗口**在收到真 motion 事件时登记（`core.markFrameMotion()` ✓）
+//   ③ `requestCursor()` **自己**置 seen ⇒ "只在拖拽里请求"的控件（如 Table 列宽）仍生效 ✓
+//
+// 判据：注入**真事件**（`SDL3.testMoveAt` / `SDL3.testMouseAt` ✓）后，
+//   用 `SDL3.testLastAppliedCursor()` 读"上一次**真正应用**的光标"并断言 ——
+//     ① 移到按钮上            ⇒ POINTER(11) ✓
+//     ② **按下去**（无 motion）⇒ **仍是 11** ✗（修好前会变成 DEFAULT(0) ⇒ 本用例当场红 ✓）
+//     ③ 松开                  ⇒ 仍是 11 ✓
+//     ④ 移到空白              ⇒ DEFAULT(0) ✓（**反向对照**：箭头必须能回来 ✓ 防止"一律沿用"的假修 ✓）
+//
+// 用法：build\leno.exe leno_gui\自测\test_cursor_press.leno
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer, Window, Button, SystemCursor)
+
+int steps = 0
+int passN = 0
+int failN = 0
+
+func check(int got, int want, string tag) {
+    if got == want {
+        passN = passN + 1
+        print("[cursor] OK   " + tag + "   got=" + _str(got) + " want=" + _str(want))
+    } else {
+        failN = failN + 1
+        print("[cursor] FAIL " + tag + "   got=" + _str(got) + " want=" + _str(want))
+    }
+}
+
+func run() {
+    SDL3.ttfInit()
+    SDL3.setTheme(SDL3.darkTheme())
+    Window w = SDL3.createWindow({title: "test_cursor_press", w: 520, h: 260})
+    if not w.ok { SDL3.ttfQuit(); return }
+
+    Button b = w.addButton({x: 20, y: 30, w: 180, h: 40, text: "按钮（悬停应手型）"})
+    b.set_cursor(SystemCursor.POINTER)      // 显式声明（其实默认就是手型 ✓）
+    int wid = w.getID()
+
+    // 步进用**奇数**：注入的事件在下一帧才被派发、帧末才应用 ⇒ 留两拍余量再断言 ✓
+    w.addTimer(100, func() {
+        steps = steps + 1
+        if steps == 1  { SDL3.testMoveAt(wid, 60, 45) }                    // 移到按钮上
+        if steps == 3  { check(SDL3.testLastAppliedCursor(), SystemCursor.POINTER, "移到按钮上 ⇒ 手型") }
+        if steps == 5  { SDL3.testMouseAt(wid, 60, 45, true) }             // ★ **按下去**（无 motion）
+        if steps == 7  { check(SDL3.testLastAppliedCursor(), SystemCursor.POINTER, "★ 按下（无 motion）⇒ 仍手型") }
+        if steps == 9  { SDL3.testMouseAt(wid, 60, 45, false) }            // 松开
+        if steps == 11 { check(SDL3.testLastAppliedCursor(), SystemCursor.POINTER, "松开 ⇒ 仍手型") }
+        if steps == 13 { SDL3.testMoveAt(wid, 400, 200) }                  // 移到空白
+        if steps == 15 { check(SDL3.testLastAppliedCursor(), SystemCursor.DEFAULT, "移开 ⇒ 回箭头（反向对照）") }
+        if steps >= 18 {
+            print("[cursor] 结果: " + _str(passN) + " passed / " + _str(failN) + " failed")
+            if failN > 0 { _exit(1) } else { _exit(0) }
+        }
+    })
+
+    w.run(func(Event ev): bool { return true }, func(Renderer r) {})
+    SDL3.ttfQuit()
+}
+
+main() { run() }

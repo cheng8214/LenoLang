@@ -1718,3 +1718,36 @@ build\leno.exe leno_gui\自测\test_theme_switch.leno
 行高与省略号结果都带缓存（两槽：标题/副标题各一 ✓）⇒ 文本与字号不变时，**默认左对齐**路径
 每帧 `measureString` = 0 ✓。反过来：把省略号缓存写成**单槽**，标题与副标题会互相踢缓存、
 每帧各跑一次二分 ✗（v1 就是单槽 ✓ 已修）。
+
+### ⛔ 光标"**按下去变回箭头**"：`markFrameRedraw()` 把"要重绘"当成了"鼠标动过"（2026-10-13 实测 + 已修 ✓）
+
+**症状**：鼠标移到按钮上是**手型** ✓；**一按下去**（还没松开）光标**变回普通箭头** ✗；
+再动一下又变回手型 ⇒ 看着像"按下态把悬停丢了"。
+
+**病根**（集中在 `sdl_core.leno` 的"帧级光标决策"）：`_frameCursorSeen` 本该表示
+"**本帧要重新决定光标**"，但 `markFrameRedraw()` **也**把它置位 ✗ —— 而那是"**要重绘**"，
+与"鼠标位置变了"是**两件事** ✗。于是**按下 / 松开 / 键盘激活 / 任何 `set_xxx`** 触发的重绘帧
+都被当成"要重算光标"；可**控件只在 mouse motion 里请求光标** ⇒ 那一刻**没有任何请求** ⇒
+`applyFrameCursor` 走到「**无请求 ⇒ `DEFAULT`**」兜底 ⇒ **光标被打回箭头** ✗。
+
+**范围**（不是 Button 一家）：凡"**只在 motion 里请求光标**"的控件全中 ——
+Button / Card / CheckBox / Toggle / Radio / Edit / ImageView / LinkButton / Progress / Spinbox /
+Tab / TreeView …；**键盘 Enter 激活**、**`set_xxx` 触发的重绘**同样会打回箭头 ✓。
+
+**修法（核心两处，控件一行未改 ✓）**：
+
+1. `markFrameRedraw()` **只**请求重绘，**不再**置 "seen" ✓；
+2. 由**窗口**在派发 motion 事件时统一登记（`core.markFrameMotion()` ✓）——
+   判据唯一：**只有真的收到 motion 事件**才算"鼠标位置变了" ✓；
+3. `requestCursor()` **自己**置 seen ⇒ "只在拖拽里请求"的控件（`Table` 列宽分割线 / `Splitter`）
+   不依赖 motion 也能被应用 ✓。
+
+**判据（无人值守）**：`leno_gui/自测/test_cursor_press.leno` —— 注入真事件
+（`SDL3.testMoveAt` / `testMouseAt`）+ 读 `SDL3.testLastAppliedCursor()`：
+① 移上去 ⇒ `POINTER(11)`；② **按下（无 motion）⇒ 仍是 11**；③ 松开 ⇒ 11；
+④ 移开 ⇒ `DEFAULT(0)`（**反向对照** —— 防止"一律沿用"的假修 ✓）。
+实测：**修好前 ②③ 当场红（`got=0`）**、修好后 4/4 ✓ ⇒ 用例确实能抓住这个 bug ✓
+
+⚠ **自查口径**：**"本帧要重绘" ≠ "本帧鼠标动过"**。任何"集中式状态决策 + 各处 `mark*()` 打标记"
+的机制，都要检查它有没有被**别的语义**借用 —— 这一例就是被"重绘请求"借用了 ✓
+（同族的还有：`markFrameMotion()` 曾被当成"随便打个标记"，实际它决定要不要重算光标 ✓）。

@@ -412,6 +412,15 @@
 >      ⇒ 暴露 `bar_color` / `tab_color` / `text_color` / `active_text_color` 四个 opts（`_opts_keys` 同步 ✓）；
 >      ⚠ 仍**只跟主题**的：`Table` 的文字色与斑马色（`txtColor/hdrTxtColor/zebColor`）—— 暗色应用够用，本次未动 ✓。
 >
+>   **2026-10-13 追加（九）**：**修「鼠标按下去光标变回箭头」+ 做成无人值守回归**（**框架侧** ⇒ 进『SDL3常用API与易踩坑速查.md』**附录 C**，不占语言摩擦清单的 Mxx ✓）：
+>   ① 症状：鼠标移到按钮上是**手型**、**一按下去**变成**普通箭头**（松开 / 键盘 Enter 激活 / 任何 `set_xxx` 触发的重绘同样中 ✗）；
+>   ② 病根：`sdl_core` 的帧级光标决策里 `markFrameRedraw()` 把"**要重绘**"与"**鼠标动过**"混为一谈 ✗
+>      ⇒ 非 motion 的鼠标/键盘帧被当成"要重算光标"，而控件**只在 motion 里请求光标** ⇒ 那一刻无请求 ⇒ 落到 `DEFAULT` 兜底 ✗；
+>   ③ 修法（**核心两处，控件一行未改**）：`markFrameRedraw` 不再置 "seen"；改由**窗口**在派发 motion 事件时登记；`requestCursor` 自己置 seen（"只在拖拽里请求"的 `Table` 列宽 / `Splitter` 不受影响 ✓）；
+>   ④ 范围：**不是 Button 一家** —— 15+ 个"只在 motion 里请求"的控件全中（Card / CheckBox / Toggle / Radio / Edit / ImageView / LinkButton / Progress / Spinbox / Tab / TreeView …）✓；
+>   ⑤ 判据：新增 `leno_gui/自测/test_cursor_press.leno`（注入真事件 + 读 `SDL3.testLastAppliedCursor()`）；
+>      实测**修好前 ②③ 当场红（`got=0`）**、修好后 4/4 ✓ ⇒ 用例确实能抓住该 bug ✓；套件 **452 passed / 0 failed** ✓。
+>
 >   **2026-10-13 追加（七）**：**自检时基改为定时器 + 页签/列表视图 + 抓到并修掉 Table 排序说谎**：
 >   ① ⚠ **自检一律走 `Timer`**（`WALL_*` 里的数字 = 步号，100ms 一拍）：本框架是**事件驱动重绘**，
 >      没有重绘请求时帧号不走 ⇒ 旧的"第 N 帧注入/截图"既不定时、还可能截到**旧画面** ✗（用户点出 ✓；

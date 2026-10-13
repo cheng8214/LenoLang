@@ -597,20 +597,35 @@ export func setSystemCursor(int kind): Ptr[u8] {
 // DEFAULT(0) 优先级最低，其余（POINTER/HAND/TEXT...）取较大 kind，保证非默认光标优先。
 int  _frameCursorReq   = -1
 int  _frameCursorForce = -1   // 强制光标（拖拽等场景，优先级高于所有 requestCursor）
+// ★ 2026-10-13（光标帧语义）：`_frameCursorSeen` 的语义收窄成 **"本帧要重新决定光标"**，来源**只有两个**：
+//   ① **真有鼠标移动** —— 由**窗口**在派发 motion 事件时置位（`sdl_window` 的 `_isMotion` 分支 ✓）；
+//   ② **有控件明确请求了光标** —— `requestCursor()` 自己置位 ✓。
+//   ✗ **以前 `markFrameRedraw()` 也置位** —— 那是"**要重绘**"，与"鼠标位置变了"是**两件事** ✗
+//   ⇒ 按下 / 松开 / 键盘激活 / 任何 setter 都会请求重绘 ⇒ 本帧被当成"要重算光标"，
+//     而那一刻**没有任何控件请求**（当时控件**只在 motion 里**请求 ✗）⇒ 落到下面的 DEFAULT 兜底
+//     ⇒ **光标被打回箭头** ✗
+//   —— 这就是"**鼠标移到按钮上是手型、一按下去却变成普通形状**"的真因 ✓
+//      （松开、以及"键盘 Enter 激活按钮"同样会触发；凡是"非 motion 的鼠标/键盘帧"都中 ✓）
 bool _frameCursorSeen = false
+int  _lastAppliedCursor = -1   // 自测用：**上一次真正应用**的光标 kind（-1 = 从未应用过 ✓）
 
 // 每帧事件处理开始前调用，清空本帧请求
 export func resetFrameCursor() { _frameCursorReq = -1; _frameCursorForce = -1; _frameCursorSeen = false }
 
-// 控件在 mouse motion 时调用：标记本帧发生了鼠标移动
+// 本帧确实发生了鼠标移动 —— **窗口**在派发 motion 事件时调用 ✓
+//   （控件**不必**再自己调；保留此函数供"滚轮也改变了命中项"这类控件显式声明 ✓）
 export func markFrameMotion() { _frameCursorSeen = true }
 
-// 控件在视觉状态变化时调用：标记本帧发生了鼠标移动 + 请求下一帧重绘
-export func markFrameRedraw() { _frameCursorSeen = true; requestRedraw() }
+// 控件在视觉状态变化时调用：**只**请求下一帧重绘 ✓
+//   ★ 2026-10-13：**不再**顺带标记"鼠标动过"（那正是 光标帧语义 的病根 ✗ —— 见上面 `_frameCursorSeen` ✓）
+export func markFrameRedraw() { requestRedraw() }
 
 // 控件命中自身敏感区域时调用：请求使用某种光标（取较大 kind）
+//   ★ 2026-10-13：请求**自己**置 seen ⇒ "只在拖拽里请求"的控件（如 Table 列宽分割线）
+//     不依赖 motion 也能被应用 ✓
 export func requestCursor(int kind) {
     if kind > _frameCursorReq { _frameCursorReq = kind }
+    _frameCursorSeen = true
 }
 
 // 拖拽等场景强制光标：优先级高于所有 requestCursor 调用
@@ -620,7 +635,9 @@ export func forceFrameCursor(int kind) {
     _frameCursorSeen = true
 }
 
-// 帧末统一应用：仅当本帧有鼠标移动才设置（静止帧保持上帧结果，避免闪烁/覆盖）
+// 帧末统一应用：仅在**本帧要重新决定光标**时才设置（静止帧保持上帧结果，避免闪烁/覆盖）
+//   ⚠ `not _frameCursorSeen` 的早退**很重要**：按下 / 松开这种"没有请求的非 motion 帧"
+//     必须**原样沿用**上一帧的光标（以前因为 markFrameRedraw 置位而错误地重算成箭头 ✗ → 光标帧语义 ✓）
 export func applyFrameCursor() {
     if not _frameCursorSeen { return }
     int k = _frameCursorForce                     // 强制光标优先
@@ -629,8 +646,15 @@ export func applyFrameCursor() {
         if k < 0 { k = SystemCursor.DEFAULT }   // 无任何控件请求 → 默认箭头
     }
     _frameCursorForce = -1                        // 用后重置
+    _lastAppliedCursor = k                        // 自测用：记下"实际设成了哪个" ✓
     setSystemCursor(k)
 }
+
+// ★ 自测钩子（2026-10-13）：读**上一次真正应用**的光标 kind ✓
+//   断言用法见 `leno_gui/自测/test_cursor_press.leno`：
+//     移上去 ⇒ POINTER(11)；**按下去（无 motion）⇒ 仍是 11**（修好前会变成 DEFAULT(0) ✗）；
+//     移开 ⇒ DEFAULT(0) ✓
+export func testLastAppliedCursor(): int { return _lastAppliedCursor }
 
 // ==================== 重绘请求 ====================
 // 动画控件调用 requestRedraw() 请求下一帧重绘，Window 侧每帧检查并清除
