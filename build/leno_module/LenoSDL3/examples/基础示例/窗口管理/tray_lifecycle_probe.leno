@@ -124,7 +124,7 @@ main() {
     log_line("③ 托盘 OK（图标 surface 全程保留，退出时才释放 ✓）")
     // ⚠ 图标 surface **不在这里释放**：这正是要验的那条线（睡眠唤醒/Explorer 重启后系统会重读图标 ✓）
 
-    var pm = SDL3.createPopMenu({fontSize: 14.0})
+    var pm = SDL3.createPopMenu({font_size: 14.0})
     if pm.ok() {
         pm.addItem("显示窗口", "", func() { _actShow = true })
         pm.addSeparator()

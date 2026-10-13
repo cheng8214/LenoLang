@@ -66,7 +66,7 @@ main() {
                 {text: "模块", image: "d:\\tv_folder.png", children: [
                     {text: "net.leno", image: "d:\\tv_file.png"},
                     {text: "io.leno", image: "d:\\tv_file.png"},
-                    {text: "宽图(aspectFill裁边)", image: "d:\\tv_wide.png", imageMode: 2}
+                    {text: "宽图(aspectFill裁边)", image: "d:\\tv_wide.png", image_mode: 2}
                 ]}
             ]},
             {text: "docs", image: "d:\\tv_folder.png", children: [
@@ -88,9 +88,9 @@ main() {
     // ============ 右树：内容模式对比（同一张 2:1 宽图，三个节点分别用不同模式）============
     // 节点级 imageMode 优先于全局 set_image_mode：0=aspectFit(留边) 1=stretch(拉伸变形) 2=aspectFill(裁边)
     var rightItems = [
-        {text: "aspectFit(留边)", image: "d:\\tv_wide.png", imageMode: 0},
-        {text: "stretch(拉伸变形)", image: "d:\\tv_wide.png", imageMode: 1},
-        {text: "aspectFill(裁边)", image: "d:\\tv_wide.png", imageMode: 2}
+        {text: "aspectFit(留边)", image: "d:\\tv_wide.png", image_mode: 0},
+        {text: "stretch(拉伸变形)", image: "d:\\tv_wide.png", image_mode: 1},
+        {text: "aspectFill(裁边)", image: "d:\\tv_wide.png", image_mode: 2}
     ]
     var tv2 = win.addTreeView({x: 380, y: 60, w: 320, h: 420, items: rightItems, mode: 0})
     tv2.set_image_size(22.0)    // 三节点用同一尺寸，便于肉眼对比三种模式差异

@@ -479,18 +479,21 @@ export struct PopMenu {
 }
 
 // 工厂：建窗（隐藏）+ 字体 + 注册进 run 循环 ✓
-// opts：{fontSize: float}（默认 15.0 ✓）
+// opts：{font_size: float}（默认 15.0 ✓）
 // ★ 2026-10-13：补**选项对账** ✓ —— 本文件原来没有 `dochk.check` ✗ ⇒ 传错键一律**静默丢弃** ✓
 //   白名单按本文件全部 `.get("…")` 抽取 ⇒ 是超集（规则：可少报、不误报 ✓）
+// ★ 2026-10-13（选项命名统一）：`fontSize` → **`font_size`** ✓
+//   本仓其余 22 个控件都用 `font_size` ⇒ 这里是唯一的 camelCase 例外 ✗
+//   旧名**照旧可用**（下面 get 里兜着 ✓），但每次用到都会被 `dochk` 警告一次 ✓（见 sdl_opts 的改名表 ✓）
 func _opts_keys(): Array[string] {
-    return ["fontSize"]
+    return ["font_size", "fontSize"]
 }
 
 export func createPopMenu(Dict opts): PopMenu {
     dochk.check("sdl_popmenu", opts, _opts_keys())
     PopMenu pm = new PopMenu()
     fnt.ttfInit()                                     // 幂等（调用方可能没 init 过字体 ✓）
-    float fs = opts.get("fontSize", 15.0)
+    float fs = opts.get("font_size", opts.get("fontSize", 15.0))
     pm._font = fnt.createFontAuto(fs)
     int flags = WindowFlag.BORDERLESS | WindowFlag.ALWAYS_ON_TOP | WindowFlag.UTILITY
                 | WindowFlag.HIDDEN | WindowFlag.TRANSPARENT   // 透明：面板之间/四周透出桌面 ✓

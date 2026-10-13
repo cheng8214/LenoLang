@@ -22,7 +22,7 @@ main() {
 
     // ---- 行1：HBox grow 权重（2:1:1）---------------------------------------
     // 期望：第一个按钮占 2/4 的剩余宽度，后两个各占 1/4。
-    HBox rowGrow = win.addHBox({x: 10, y: 44, w: 800, h: 46, spacing: 8, padX: 6, padY: 6})
+    HBox rowGrow = win.addHBox({x: 10, y: 44, w: 800, h: 46, spacing: 8, pad_x: 6, pad_y: 6})
     rowGrow.add(SDL3.createButton({text: "grow:2", w: 80, h: 34}), {grow: 2})
     rowGrow.add(SDL3.createButton({text: "grow:1", w: 80, h: 34}), {grow: 1})
     rowGrow.add(SDL3.createButton({text: "grow:1", w: 80, h: 34}), {grow: 1})
@@ -44,33 +44,33 @@ main() {
     // ---- 行4：HBox shrink 收缩（容器比内容窄）------------------------------
     // 容器 w=400，三个按钮自然宽各 200（合计 600，超出约 200）。
     // 期望：第一个 shrink:0 保持 200 不被压缩；后两个按 shrink*basis 均摊压缩到约 94。
-    HBox rowShrink = win.addHBox({x: 10, y: 192, w: 400, h: 38, spacing: 6, padX: 4, padY: 4})
+    HBox rowShrink = win.addHBox({x: 10, y: 192, w: 400, h: 38, spacing: 6, pad_x: 4, pad_y: 4})
     rowShrink.add(SDL3.createButton({text: "s:0 w200", w: 200, h: 30}), {shrink: 0})
     rowShrink.add(SDL3.createButton({text: "s:1", w: 200, h: 30}), {shrink: 1})
     rowShrink.add(SDL3.createButton({text: "s:1", w: 200, h: 30}), {shrink: 1})
 
     // ---- 行5：HBox basis + min/max 约束 ------------------------------------
     // 期望：b1 用 basis:60 覆盖自然宽 200；b2 有 maxW:120 被截断；b3 有 minW:200 不被压太小。
-    HBox rowBasis = win.addHBox({x: 10, y: 238, w: 400, h: 38, spacing: 6, padX: 4, padY: 4})
+    HBox rowBasis = win.addHBox({x: 10, y: 238, w: 400, h: 38, spacing: 6, pad_x: 4, pad_y: 4})
     rowBasis.add(SDL3.createButton({text: "basis:60", w: 200, h: 30}), {basis: 60, grow: 1})
     rowBasis.add(SDL3.createButton({text: "maxW:120", w: 200, h: 30}), {grow: 1, maxW: 120})
     rowBasis.add(SDL3.createButton({text: "minW:200", w: 60, h: 30}), {grow: 1, minW: 200})
 
     // ---- 行6：HBox align 交叉轴（单按钮分别 start/center/end/stretch）------
-    HBox rowAlign = win.addHBox({x: 10, y: 284, w: 400, h: 50, spacing: 8, padX: 4, padY: 4})
+    HBox rowAlign = win.addHBox({x: 10, y: 284, w: 400, h: 50, spacing: 8, pad_x: 4, pad_y: 4})
     rowAlign.add(SDL3.createButton({text: "start", w: 70, h: 20}), {align: 0})
     rowAlign.add(SDL3.createButton({text: "center", w: 70, h: 20}), {align: 1})
     rowAlign.add(SDL3.createButton({text: "end", w: 70, h: 20}), {align: 2})
     rowAlign.add(SDL3.createButton({text: "stretch", w: 70, h: 20}), {align: 3})
 
     // ---- 行7：向后兼容 expand:true（等价于 grow:1）-------------------------
-    HBox rowExpand = win.addHBox({x: 10, y: 344, w: 400, h: 38, spacing: 8, padX: 4, padY: 4})
+    HBox rowExpand = win.addHBox({x: 10, y: 344, w: 400, h: 38, spacing: 8, pad_x: 4, pad_y: 4})
     rowExpand.add(SDL3.createLabel({text: "标题(expand)"}), {expand: true})
     rowExpand.add(SDL3.createButton({text: "帮助", w: 70, h: 30}), {})
     rowExpand.add(SDL3.createButton({text: "退出", w: 70, h: 30}), {})
 
     // ---- 左侧：VBox 垂直弹性（grow / shrink / basis / align）--------------
-    VBox colV = win.addVBox({x: 10, y: 410, w: 390, h: 350, spacing: 10, padX: 8, padY: 8})
+    VBox colV = win.addVBox({x: 10, y: 410, w: 390, h: 350, spacing: 10, pad_x: 8, pad_y: 8})
     colV.add(SDL3.createLabel({text: "VBox(垂直弹性)"}), {})
     colV.add(SDL3.createButton({text: "grow:2", w: 200, h: 30}), {grow: 2})
     colV.add(SDL3.createButton({text: "grow:1 + minH:60", w: 200, h: 30}), {grow: 1, minH: 60})

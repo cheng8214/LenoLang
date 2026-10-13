@@ -50,7 +50,7 @@ main() {
     })
 
     // 内容根：VBox，子控件从上到下排列，align:3 让子控件拉伸到 VBox 宽度
-    var content = SDL3.createVBox({w: 560, h: 2400, padX: 12, padY: 12, spacing: 10})
+    var content = SDL3.createVBox({w: 560, h: 2400, pad_x: 12, pad_y: 12, spacing: 10})
 
     // ==================== 右侧：控制面板 ====================
     win.addLabel({x: 640, y: 16, text: "滚动信息:", font_size: 14, text_color: #C8DCC8FF})
@@ -280,7 +280,7 @@ main() {
 
     // AnchorBox 锚点
     content.add(SDL3.createLabel({text: "AnchorBox 锚点:", font_size: 13, text_color: #C8C8C8FF}), {})
-    var nAb = SDL3.createAnchorBox({w: 536, h: 70, padX: 8, padY: 8})
+    var nAb = SDL3.createAnchorBox({w: 536, h: 70, pad_x: 8, pad_y: 8})
     nAb.add(SDL3.createButton({text: "左上", w: 70, h: 28}), {left: 0, top: 0})
     nAb.add(SDL3.createButton({text: "居中", w: 70, h: 28}), {centerX: true, centerY: true})
     nAb.add(SDL3.createButton({text: "右下", w: 70, h: 28}), {right: 0, bottom: 0})
@@ -293,7 +293,7 @@ main() {
     content.add(SDL3.createLabel({text: "Panel 用 setLayoutPadded(VBox)，子控件跟随滚动", font_size: 12, text_color: #A0A0AAFF}), {})
 
     var panel = SDL3.createPanel({w: 536, h: 120, bg_color: #282A34FF, border_color: #505564FF, radius: 8})
-    var panelVBox = SDL3.createVBox({w: 520, h: 104, padX: 8, padY: 8, spacing: 6})
+    var panelVBox = SDL3.createVBox({w: 520, h: 104, pad_x: 8, pad_y: 8, spacing: 6})
     panelVBox.add(SDL3.createLabel({text: "面板内 Label", font_size: 13, text_color: #C8C8C8FF}), {})
     var panelRow = SDL3.createHBox({w: 520, h: 34, spacing: 8})
     panelRow.add(SDL3.createButton({text: "面板内按钮A", w: 120, h: 32, type: "primary"}), {grow: 1})
@@ -328,7 +328,7 @@ main() {
     content.add(SDL3.createLabel({text: "GroupBox 现已支持 setLayoutPadded，子控件跟随滚动", font_size: 12, text_color: #64C864FF}), {})
 
     var gb = SDL3.createGroupBox({w: 536, h: 100, title: "分组示例", bg_color: #282A32FF, border_color: #5A5F6EFF})
-    var gbVBox = SDL3.createVBox({w: 520, h: 84, padX: 8, padY: 8, spacing: 6})
+    var gbVBox = SDL3.createVBox({w: 520, h: 84, pad_x: 8, pad_y: 8, spacing: 6})
     gbVBox.add(SDL3.createLabel({text: "GroupBox 内 Label（跟随滚动）", font_size: 13, text_color: #C8C8C8FF}), {})
     var gbRow = SDL3.createHBox({w: 520, h: 32, spacing: 8})
     gbRow.add(SDL3.createButton({text: "GB 按钮 A", w: 120, h: 32, type: "primary"}), {grow: 1})
@@ -360,7 +360,7 @@ main() {
 
     content.add(SDL3.createLabel({text: "3 列网格，子控件自动排列，align 0=左上 1=居中 2=右下 3=撑满", font_size: 12, text_color: #64C864FF}), {})
 
-    var grid = SDL3.createGridLayout({w: 536, h: 200, cols: 3, spacing: 8, padX: 8, padY: 8})
+    var grid = SDL3.createGridLayout({w: 536, h: 200, cols: 3, spacing: 8, pad_x: 8, pad_y: 8})
     grid.add(SDL3.createButton({text: "G(0,0) 左上", w: 120, h: 32}), {align: 0})
     grid.add(SDL3.createButton({text: "G(0,1) 居中", w: 120, h: 32}), {align: 1})
     grid.add(SDL3.createButton({text: "G(0,2) 右下", w: 120, h: 32}), {align: 2})

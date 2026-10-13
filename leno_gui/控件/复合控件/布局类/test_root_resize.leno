@@ -26,7 +26,7 @@ main() {
     var font = SDL3.createFontAuto(14.0)
 
     // 根布局：VBox 填满窗口，缩放时整棵树自动重排
-    var root = win.addVBox({x: 0, y: 0, w: 480, h: 360, spacing: 12, padX: 16, padY: 16})
+    var root = win.addVBox({x: 0, y: 0, w: 480, h: 360, spacing: 12, pad_x: 16, pad_y: 16})
     win.setRoot(root)
 
     root.add(SDL3.createLabel({text: "根布局自动填满窗口（拖动窗口试试）", font_size: 16}), {align: 3})

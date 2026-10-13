@@ -155,7 +155,7 @@ struct IDE4Way {
 
         // 根布局
         float topOffset = titleH
-        var root = SDL3.createVBox({padX: PAD, padY: PAD, spacing: 0})
+        var root = SDL3.createVBox({pad_x: PAD, pad_y: PAD, spacing: 0})
         root.add(statusLbl, {grow: 0, shrink: 0, basis: 20, align: 3})
         root.add(outerHSplit, {grow: 1, shrink: 1, align: 3})
         win.setRootAt(root, 0, topOffset)

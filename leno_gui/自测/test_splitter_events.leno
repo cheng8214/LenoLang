@@ -23,8 +23,8 @@ func run() {
                               orientation: Splitter.HORIZONTAL, ratio: 0.35})
     w.setRootAt(sp, 0, 0)
 
-    VBox left = SDL3.createVBox({x: 0, y: 0, w: 224, h: 360, padX: 10, padY: 10, spacing: 8})
-    HBox right = SDL3.createHBox({x: 0, y: 0, w: 416, h: 360, padX: 10, padY: 10})
+    VBox left = SDL3.createVBox({x: 0, y: 0, w: 224, h: 360, pad_x: 10, pad_y: 10, spacing: 8})
+    HBox right = SDL3.createHBox({x: 0, y: 0, w: 416, h: 360, pad_x: 10, pad_y: 10})
     sp.set_first(left)
     sp.set_second(right)
 

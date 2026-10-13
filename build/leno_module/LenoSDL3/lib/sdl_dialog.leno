@@ -89,7 +89,7 @@ export func dialogLabel(string text, float fontSize, Color color = 0, int align 
 //   - 对比 truncate=1（截断为 ...+tooltip）：路径等长文本用滚动更直观
 export func dialogPropRow(string label, string value, float maxW): HBox {
     // ★ w:1 而非硬编码 300，让 VBox align:3(stretch) 时 cw=innerW 自动撑满
-    HBox row = lay.createHBox({x:0, y:0, w:1, h:22, padX:0, padY:0, spacing:8})
+    HBox row = lay.createHBox({x:0, y:0, w:1, h:22, pad_x:0, pad_y:0, spacing:8})
     // ★ 从主题读取颜色，确保浅色/深色主题下文字都清晰可见
     Theme th = theme.getTheme()
     Color lc = th.txtDim   // 标签列用暗淡色
@@ -109,7 +109,7 @@ export func dialogPropRow(string label, string value, float maxW): HBox {
 // ★ 调用方需将返回的 HBox 添加到 VBox 时使用 {align:3}(stretch) 撑满宽度
 export func dialogButtonRow(Array[Button] buttons, float spacing = 8.0): HBox {
     // ★ w:1 而非硬编码 300，让 VBox align:3(stretch) 时 cw=innerW 自动撑满
-    HBox row = lay.createHBox({x:0, y:0, w:1, h:34, padX:0, padY:0, spacing:spacing, justify:1})
+    HBox row = lay.createHBox({x:0, y:0, w:1, h:34, pad_x:0, pad_y:0, spacing:spacing, justify:1})
     for buttons.len() to i {
         row.add(buttons[i], {grow:0, shrink:0, basis:buttons[i].get_w(), align:0})
     }
@@ -196,7 +196,7 @@ export func msgBox(string title, Array[string] lines, string okText, string canc
     // 自绘标题栏（公共件 ✓）：与主窗口同款 —— 见 dialogTitleBar 的注释（含"✕ 要接 on_close" ✓）
     TitleBar tb = dialogTitleBar(dlg, title)
     // 正文根布局要**让出标题栏高度**（与主窗口 `win.setRootAt(root, 0, titleH)` 同一写法 ✓）
-    VBox root = lay.createVBox({x: 0, y: 0, w: w, h: contentH, padX: 34, padY: 20, spacing: 6})
+    VBox root = lay.createVBox({x: 0, y: 0, w: w, h: contentH, pad_x: 34, pad_y: 20, spacing: 6})
     dlg.setRootAt(root, 0.0, tb.get_h())
     // ★ 正文**真居中**的正确写法（查代码归因过，别再靠猜 ✗）：
     //   ① 布局里"交叉轴 align=1"= **把子控件的盒子居中**（`(inner - child)/2`，见 sdl_layout 的 CX/CY ✓）

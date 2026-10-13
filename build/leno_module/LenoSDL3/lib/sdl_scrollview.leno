@@ -6,7 +6,7 @@
 //
 // 用法：
 //   var sv = win.addScrollView({x:20, y:20, w:300, h:200, content_w:300, content_h:800})
-//   var box = SDL3.createVBox({padX:10, padY:10, spacing:8})   // 用 createXxx，不要 win.add
+//   var box = SDL3.createVBox({pad_x:10, pad_y:10, spacing:8})   // 用 createXxx，不要 win.add
 //   box.add(SDL3.createButton({text:"A"}), {})
 //   sv.set_content(box)
 //

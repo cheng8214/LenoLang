@@ -37,7 +37,7 @@ main() {
     tab.on_change(func(int idx) { print("切换到第 " + idx + " 页：" + titles[idx]) })
 
     // ---- 页 0：表单（VBox 布局页，子控件随宽度撑满/自适应） ----
-    tab.setPageLayout(0, SDL3.createVBox({spacing: 10, padX: 16, padY: 16}) as VBox)
+    tab.setPageLayout(0, SDL3.createVBox({spacing: 10, pad_x: 16, pad_y: 16}) as VBox)
     tab.addToPageLayout(0, SDL3.createLabel({text: "账号设置", font_size: 16}), {align: 3})
     tab.addToPageLayout(0, SDL3.createLabel({text: "用户名", font_size: 13}), {align: 3})
     tab.addToPageLayout(0, SDL3.createEdit({w: 200, h: 32, placeholder: "请输入用户名"}), {align: 3})
@@ -52,7 +52,7 @@ main() {
     tab.addToPageLayout(0, row0 as Widget, {align: 3})
 
     // ---- 页 1：外观（VBox 布局页 + 滑块/开关撑满） ----
-    tab.setPageLayout(1, SDL3.createVBox({spacing: 10, padX: 16, padY: 16}) as VBox)
+    tab.setPageLayout(1, SDL3.createVBox({spacing: 10, pad_x: 16, pad_y: 16}) as VBox)
     tab.addToPageLayout(1, SDL3.createLabel({text: "外观设置", font_size: 16}), {align: 3})
     tab.addToPageLayout(1, SDL3.createLabel({text: "音量", font_size: 13}), {align: 3})
     tab.addToPageLayout(1, SDL3.createSlider({w: 240, h: 24, min: 0, max: 100, value: 60}), {align: 3})
@@ -60,7 +60,7 @@ main() {
     tab.addToPageLayout(1, SDL3.createToggle({w: 220, h: 30, text: "启用深色模式", on: true}), {align: 3})
 
     // ---- 页 2：关于（简单 VBox） ----
-    tab.setPageLayout(2, SDL3.createVBox({spacing: 10, padX: 16, padY: 16}) as VBox)
+    tab.setPageLayout(2, SDL3.createVBox({spacing: 10, pad_x: 16, pad_y: 16}) as VBox)
     tab.addToPageLayout(2, SDL3.createLabel({text: "LenoSDL3 Tab 布局页演示", font_size: 16}), {align: 3})
     tab.addToPageLayout(2, SDL3.createLabel({text: "每页都是一个布局容器，缩放窗口时页内自动重排。", font_size: 13}), {align: 3})
     tab.addToPageLayout(2, SDL3.createLabel({text: "隐藏页的子控件不参与事件与绘制。", font_size: 13}), {align: 3})

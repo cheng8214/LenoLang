@@ -14,7 +14,7 @@
 //   card.on_click(func() { openDetail() })
 //
 //   // 容器化（v2 ✓）：图片下方挂一行自己的控件（按钮/进度/开关都行）
-//   var bar = SDL3.createHBox({padX:0, padY:0, spacing:6})
+//   var bar = SDL3.createHBox({pad_x:0, pad_y:0, spacing:6})
 //   bar.add(SDL3.createButton({text:"播放", w:56, h:24}), {basis:56, align:1})
 //   card.set_content(bar)
 //   card.set_selected(true)

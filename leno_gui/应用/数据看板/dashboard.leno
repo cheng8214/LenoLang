@@ -324,7 +324,7 @@ func style_nav(Button b, bool active) {
 func scroll_page(int page): VBox {
     // `smooth:true`：滚轮不瞬间跳一格，而是逐帧逼近目标（每帧约 40% 收敛 ⇒ ~150ms 到位 ✓）
     //   原来是"瞬间跳 24px + 帧节流"⇒ 观感一顿一顿 ✗；`step` 可调每格步长 ✓
-    var pv = SDL3.createVBox({padX:0.0, padY:0.0, spacing:0.0})
+    var pv = SDL3.createVBox({pad_x:0.0, pad_y:0.0, spacing:0.0})
     TAB.setPageLayout(page, pv)
     var sv = SDL3.createScrollView({x:0, y:0, w:TAB_W, h:TAB_H, bg_color:C_BG,
                                     border:false, fit_w:true, fit_h:true, bar_color:#C8CDD4FF,
@@ -332,7 +332,7 @@ func scroll_page(int page): VBox {
     pv.add(sv, {grow:1.0, shrink:1.0, align:3})
     SV_PAGES.add(page)
     SV_LIST.add(sv)
-    var box = SDL3.createVBox({padX:24, padY:24, spacing:16})
+    var box = SDL3.createVBox({pad_x:24, pad_y:24, spacing:16})
     sv.set_content(box)
     return box
 }
@@ -516,7 +516,7 @@ func page_usage() {
     head_button(head, 0.0, 104.0, "拉取用量", true)
 
     // 四张统计卡一行
-    var row = SDL3.createHBox({padX:0.0, padY:0.0, spacing:16})
+    var row = SDL3.createHBox({pad_x:0.0, pad_y:0.0, spacing:16})
     box.add(row, {basis:112.0, align:3})
     stat_small(row, "记录会话", "0", "次", C_TXT)
     stat_small(row, "积分消耗", "0", "分", C_ORANGE)
@@ -527,7 +527,7 @@ func page_usage() {
     // ★ 自适应：这一行用 `grow:1` ⇒ 窗口变高时由它吸收多余空间、卡片跟着长高 ✓
     //   （前提是 ScrollView 开了 `fit_h`：内容高被顶到视图高，VBox 才有"多余空间"可分 ✓）
     //   ⚠ 卡片本体也要 `align:3` 才会跟着行高拉伸（已在 mk_card_h 里补上 ✓）
-    var row2 = SDL3.createHBox({padX:0.0, padY:0.0, spacing:16})
+    var row2 = SDL3.createHBox({pad_x:0.0, pad_y:0.0, spacing:16})
     box.add(row2, {grow:1.0, shrink:1.0, align:3})
     mk_card_h(row2, 520.0, 452.0, "逐会话用量", "最多展示 500 条，汇总按全部")
     mk_card_h(row2, 306.0, 452.0, "模型分布", "")
@@ -547,7 +547,7 @@ func page_accounts() {
     //     窗口变宽时按同一比例一起铺开 ✓
     //   （原来 4 个字段各写死一个 x ⇒ 宽窗口下全挤在卡片左边、右边一大片空 ✗ —— 用户实测抓到 ✓）
     var c1 = mk_card(box, 122.0, "", "")
-    var c1row = SDL3.createHBox({padX:0.0, padY:0.0, spacing:0.0})
+    var c1row = SDL3.createHBox({pad_x:0.0, pad_y:0.0, spacing:0.0})
     c1.add(c1row, {left:18.0, right:18.0, top:22.0})
     var c1a = SDL3.createAnchorBox({})
     var c1b = SDL3.createAnchorBox({})
@@ -581,7 +581,7 @@ func page_accounts() {
     //   （以前只给 basis ⇒ 窗口一高，下半页全空 ✗ —— 用户实测抓到 ✓）
     //   · 账号列表：按钮本来就是 bottom 锚定 ⇒ 自动跟到卡片底部 ✓
     //   · 切换守护：日志框改成 top→bottom 拉伸 ⇒ 卡片多高它就多高 ✓（见 log_box ✓）
-    var row = SDL3.createHBox({padX:0.0, padY:0.0, spacing:16})
+    var row = SDL3.createHBox({pad_x:0.0, pad_y:0.0, spacing:16})
     box.add(row, {basis:448.0, grow:1.0, shrink:1.0, align:3})
 
     var c2 = mk_card_h(row, 520.0, 448.0, "账号列表", "0 个账号")
@@ -648,10 +648,10 @@ func set_row_input(AnchorBox ca, float top, string title, string desc, string va
 
 // 两列卡片行：返回 [左列 VBox, 右列 VBox]（卡片用 mk_card 加进去 ✓）
 func two_cols(VBox box, float h): Array[VBox] {
-    var row = SDL3.createHBox({padX:0.0, padY:0.0, spacing:16})
+    var row = SDL3.createHBox({pad_x:0.0, pad_y:0.0, spacing:16})
     box.add(row, {basis:h, align:3})
-    var c1 = SDL3.createVBox({padX:0.0, padY:0.0, spacing:0})
-    var c2 = SDL3.createVBox({padX:0.0, padY:0.0, spacing:0})
+    var c1 = SDL3.createVBox({pad_x:0.0, pad_y:0.0, spacing:0})
+    var c2 = SDL3.createVBox({pad_x:0.0, pad_y:0.0, spacing:0})
     row.add(c1, {grow:1.0})
     row.add(c2, {grow:1.0})
     Array[VBox] out = [c1, c2]
@@ -694,7 +694,7 @@ func page_cloud() {
     // ★ 自适应：4 列改成 HBox 的 4 个子列（权重 = 原列间距 192/190/200/212，合计 794 ✓）
     //   ⇒ 1080 下逐像素落在原坐标（列起点 0/192/382/582 ⇒ 卡片内 18/210/400/600 ✓），
     //     窗口变宽时按同一比例铺开 ✓（原来 4 个写死 x ⇒ 全挤在左边 ✗）
-    var a3row = SDL3.createHBox({padX:0.0, padY:0.0, spacing:0.0})
+    var a3row = SDL3.createHBox({pad_x:0.0, pad_y:0.0, spacing:0.0})
     a3.add(a3row, {left:18.0, right:18.0, top:58.0})
     var a3a = SDL3.createAnchorBox({})
     var a3b = SDL3.createAnchorBox({})
@@ -870,7 +870,7 @@ func page_dashboard() {
              {right:15.0, top:66.0})       // 宽与「刷新状态」一致（86 ✓）；right:15 ⇒ 左边仍是 958 ✓
 
     // ---- 三张统计卡（HBox + grow 平分 ✓；间距 28 = 原版 ✓）----
-    var row = SDL3.createHBox({padX:0.0, padY:0.0, spacing:28.0})
+    var row = SDL3.createHBox({pad_x:0.0, pad_y:0.0, spacing:28.0})
     box.add(row, {basis:90.0, shrink:0, align:3})
     stat_card_l(row, "剩余积分", "0", "分", C_TXT, 28.0)
     stat_card_l(row, "今日签到", "未登录", "", C_GREEN, 18.0)
@@ -881,7 +881,7 @@ func page_dashboard() {
 
     // ---- 第二行：折线图卡（吃满）+ 账号概览卡（固定 314 ✓）
     //   整行 `grow:1` ⇒ 窗口变高时卡片一起变高 ✓（原版写死 277 ✗ —— 这就是"不变高"的原因 ✓）
-    var row2 = SDL3.createHBox({padX:0.0, padY:0.0, spacing:25.0})
+    var row2 = SDL3.createHBox({pad_x:0.0, pad_y:0.0, spacing:25.0})
     box.add(row2, {grow:1, shrink:1, align:3})
 
     //   ⚠ 卡片的内布局只能有一个（`setLayout` 是**替换** ✗）⇒ 标题也一并放进 `ta` ✓
@@ -995,7 +995,7 @@ func page_checkin() {
     label_center(ra, 64.0, 70.0, "连续天数", 10.0, #9AA6B8FF)
 
     // ---- 底部一行：日历卡（吃满剩余宽 + 吸收多余高）+ 签到记录卡（固定 306 ✓）----
-    var row = SDL3.createHBox({padX:0.0, padY:0.0, spacing:16.0})
+    var row = SDL3.createHBox({pad_x:0.0, pad_y:0.0, spacing:16.0})
     box.add(row, {grow:1.0, shrink:1.0, align:3})
     var calCard = mk_card_h(row, 520.0, 452.0, "本月签到日历", "")
     // 通用控件不认识"签到"✗ ⇒ 文案、状态色、图例全部由这里传进去 ✓
@@ -1016,7 +1016,7 @@ func build_ui(Window wt) {
     // ---- ★ 根布局：侧栏（固定 190） + 内容区（吃满剩余）----
     //   `wt.setRoot(root)` 之后：窗口被拖动缩放时，模块把根控件同步成新尺寸并**驱动内部重排** ✓
     //   ⚠ 两个子控件**不能再** `wt.add(...)`：进了 root 就由布局渲染，重复挂载会画两遍 ✗
-    var root = SDL3.createHBox({padX:0.0, padY:0.0, spacing:0.0})
+    var root = SDL3.createHBox({pad_x:0.0, pad_y:0.0, spacing:0.0})
 
     // ---- 左侧深色导航栏（它是普通 Panel，与内容区 Tab 无关 ✓）----
     var side = SDL3.createPanel({clip:false, x:0, y:0, w:SIDE_W, h:WIN_H, bg_color:C_SIDE, radius:0, border:false})

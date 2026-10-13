@@ -22,7 +22,7 @@ func run() {
                                   active: 0, font_size: 14})
     w.setRootAt(tabs, 0, 0)
 
-    VBox pg = SDL3.createVBox({x: 0, y: 0, w: 660, h: 320, padX: 12, padY: 12, spacing: 8})
+    VBox pg = SDL3.createVBox({x: 0, y: 0, w: 660, h: 320, pad_x: 12, pad_y: 12, spacing: 8})
     tabs.setPageLayout(0, pg)
     b = SDL3.createButton({text: "页 A 里的按钮（点我有日志）"})
     tabs.addToPageLayout(0, b, {grow: 0, shrink: 0, basis: 40, align: 3})

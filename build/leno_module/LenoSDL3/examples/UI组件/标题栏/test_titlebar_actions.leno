@@ -72,7 +72,7 @@ main() {
     }
 
     // ④ 交互：手点齿轮/太阳看气泡与回调；ESC 或 ✕ 退出 ✓
-    var root = SDL3.createVBox({padX: 16, padY: 16, spacing: 8})
+    var root = SDL3.createVBox({pad_x: 16, pad_y: 16, spacing: 8})
     root.add(SDL3.createLabel({text: "点标题栏右侧的齿轮 / 太阳；鼠标停一会儿会出气泡 ✓", font_size: 14}),
              {grow: 0, shrink: 0, align: 0})
     win.setRootAt(root, 0, tb.get_h())

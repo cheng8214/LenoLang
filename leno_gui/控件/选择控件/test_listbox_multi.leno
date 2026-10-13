@@ -104,7 +104,7 @@ func setupUI() {
     float titleH = titleBar.get_h()
 
     // 工具栏
-    var toolbar = SDL3.createHBox({x: 0, y: 0, w: 100, h: TOOLBAR_H, padX: 4, padY: 2, spacing: 6})
+    var toolbar = SDL3.createHBox({x: 0, y: 0, w: 100, h: TOOLBAR_H, pad_x: 4, pad_y: 2, spacing: 6})
 
     selectAllBtn = SDL3.createButton({x: 0, y: 0, w: 70, h: 28, text: "全选", font_size: 14})
     toolbar.add(selectAllBtn, {grow: 0, shrink: 0, basis: 70, align: 3})
@@ -123,7 +123,7 @@ func setupUI() {
     printBtn.on_click(func() { onPrint() })
 
     // 状态栏
-    var statusBar = SDL3.createHBox({x: 0, y: 0, w: 100, h: 24, padX: 0, padY: 0, spacing: 12})
+    var statusBar = SDL3.createHBox({x: 0, y: 0, w: 100, h: 24, pad_x: 0, pad_y: 0, spacing: 12})
     statusLbl = SDL3.createLabel({x: 0, y: 0, text: "点击列表项切换选中状态", font_size: 13})
     statusBar.add(statusLbl, {grow: 1, shrink: 1, align: 1})
     countLbl = SDL3.createLabel({x: 0, y: 0, text: "选中: 0/" + data.len() + "  首项: (无)", font_size: 13})
@@ -138,7 +138,7 @@ func setupUI() {
     lb.set_selected_indices([0, 1, 2])
 
     // 根布局
-    var root = SDL3.createVBox({x: 0, y: 0, w: W, h: H, padX: PAD, padY: PAD, spacing: 4})
+    var root = SDL3.createVBox({x: 0, y: 0, w: W, h: H, pad_x: PAD, pad_y: PAD, spacing: 4})
     root.add(toolbar, {grow: 0, shrink: 0, align: 3})
     root.add(statusBar, {grow: 0, shrink: 0, align: 3})
     root.add(lb, {grow: 1, shrink: 1, align: 3})

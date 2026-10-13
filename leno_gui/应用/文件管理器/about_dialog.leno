@@ -15,7 +15,7 @@ use SDL3.Scancode
 // 显示模态"关于"对话框
 export func show() {
     var dlg = SDL3.createDialogWindow({title:"关于", w:380, h:260})
-    VBox root = SDL3.createVBox({x:0, y:0, w:380, h:260, padX:40, padY:24, spacing:8})
+    VBox root = SDL3.createVBox({x:0, y:0, w:380, h:260, pad_x:40, pad_y:24, spacing:8})
     dlg.setRoot(root)
 
     // ★ 居中标题：dialogLabel(align:1) 内部 w:1，VBox align:1 定位到窗口中心

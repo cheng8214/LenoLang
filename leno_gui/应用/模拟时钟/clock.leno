@@ -413,7 +413,7 @@ main() {
     // 图标目录：随包资源目录下的 images/（与文件管理器同一套 ✓；未打包时 = 脚本旁边 ✓）
     _imgDir = dirs.join(dirs.res_dir(), "images")
     // 条目顺序见 _MI_* 常量（自检与同步标签都用它 ✓）；图标 = 本应用 images/ 下的 PNG ✓
-    _pm = SDL3.createPopMenu({fontSize: 15.0})
+    _pm = SDL3.createPopMenu({font_size: 15.0})
     if _pm.ok() {
         _pm.addItem("隐藏窗口", _imgPath("eye_off.png"), func() { _actToggle = true })    // _MI_TOGGLE
         _pm.addCheck("窗口置顶", _imgPath("pin.png"), false, func() { _actTop = true })    // _MI_TOP

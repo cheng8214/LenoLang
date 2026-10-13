@@ -152,7 +152,7 @@ struct CleanerMaster {
 
         // 顶部：C 盘空间条 —— **左对齐**（2026-09-29 用户要求 ✓）
         //   原来用 `driveGap`(grow:1) 把这一组顶到右边 ✗ ⇒ 现在直接从左边排起 ✓
-        var driveRow = SDL3.createHBox({h: 26, padX: 4, padY: 2, spacing: 8})
+        var driveRow = SDL3.createHBox({h: 26, pad_x: 4, pad_y: 2, spacing: 8})
         // ⚠ 左对齐这里必须**显式给盒宽**（w: 210）：标签是空文本创建 ⇒ 盒宽为 0 ✗
         //   那样就没给它留位置，文字会直接压在进度条上 ✗
         //   （右对齐那版靠"align:2 的锚点在右端"绕开了这点，左对齐没有等价技巧 ✓）
@@ -168,8 +168,8 @@ struct CleanerMaster {
         driveRow.add(driveBar, {grow: 0, shrink: 0, basis: 240, align: 3})
 
         // 中部：左圆环 + 摘要卡 + 右类别表
-        var mainRow = SDL3.createHBox({padX: 8, padY: 4, spacing: 8})
-        var leftCol = SDL3.createVBox({padX: 4, padY: 8, spacing: 10})
+        var mainRow = SDL3.createHBox({pad_x: 8, pad_y: 4, spacing: 8})
+        var leftCol = SDL3.createVBox({pad_x: 4, pad_y: 8, spacing: 10})
         ring = SDL3.createRingProgress({
             size: 220, thickness: 24, mode: "idle", font_size: 20, sub_font_size: 12,
             tip: "环 = 本次结果比例\n  绿段 = 已清理项 · 橙段 = 被占用跳过项\n（报告态显示；点环可重新扫描）",
@@ -234,7 +234,7 @@ struct CleanerMaster {
         //        bg_color = 页面底色 ✓ + border/shadow 全关 ✓ ⇒ 视觉上纯图标+文字 ✓
         //        text_color / image_tint = 主题文字色 ✓ ⇒ 浅底上看得见 ✓
         //        （因为仍走正常背景分支 ⇒ hover / 按下 反馈照常 ✓）
-        var toolRow = SDL3.createHBox({h: 70, padX: 0, padY: 0, spacing: 6})
+        var toolRow = SDL3.createHBox({h: 70, pad_x: 0, pad_y: 0, spacing: 6})
         previewBtn = SDL3.createButton({w: 92, h: 70, text: "预览", font_size: 12, type: "dark",
             bg_color: th0.bg, border: false, shadow: false,     // 底色 = 页面色 ⇒ 平时"看着无框" ✓
             hover_color: #E8EAEEFF, pressed_color: #DCE0E6FF,   // ★ 显式给悬停/按压色 ⇒ 反馈一定看得见 ✓
@@ -330,7 +330,7 @@ struct CleanerMaster {
         //   恒为「盒左边缘」⇒ 这里只能用 ALIGN_LEFT(0)：文字从盒内左边缘起画，恰在进度条右侧
         //   8px 处；用 align:2 会把文字画到盒外左边、压在进度条尾巴上 ✗
         // ★ 同样开启内嵌百分比（2026-09-29）⇒ 行高与条高一起抬到放得下数字 ✓
-        var cleanRow = SDL3.createHBox({h: 22, padX: 0, padY: 0, spacing: 8})
+        var cleanRow = SDL3.createHBox({h: 22, pad_x: 0, pad_y: 0, spacing: 8})
         cleanBar = SDL3.createProgressBar({h: 18, show_text: true, font_size: 11})
         cleanBar.set_value(0.0)
         cleanRow.add(cleanBar, {grow: 1, shrink: 1, align: 3})
@@ -347,7 +347,7 @@ struct CleanerMaster {
         //   ⚠ 盒高是**父容器给的**（HBox h:54 − padY 6×2 ✓）—— 原来这里还写了 `h: 42` 是**无效**的 ✗
         //     （Label 不读 `h` ⇒ 只会刷一条 [ui] 告警 ✓）⇒ 删掉，语义不变 ✓
         //   注意：框架的 wrap_w 只认写死的值（0 才退回 max_w，**不会**用控件自身宽度 ✓）
-        var bottomRow = SDL3.createHBox({h: 54, padX: 4, padY: 6, spacing: 10})
+        var bottomRow = SDL3.createHBox({h: 54, pad_x: 4, pad_y: 6, spacing: 10})
         statusLbl = SDL3.createLabel({
             text: "就绪 — 点「立即扫描」开始", font_size: 13,
             wrap: true, wrap_w: 660,
@@ -362,7 +362,7 @@ struct CleanerMaster {
         })
         bottomRow.add(mainBtn, {grow: 0, shrink: 0, basis: 190, align: 3})
 
-        var root = SDL3.createVBox({padX: 12, padY: 8, spacing: 6})
+        var root = SDL3.createVBox({pad_x: 12, pad_y: 8, spacing: 6})
         root.add(driveRow, {grow: 0, shrink: 0, align: 3})
         root.add(mainRow, {grow: 1, shrink: 1, align: 3})
         root.add(cleanRow, {grow: 0, shrink: 0, align: 3})
@@ -941,7 +941,7 @@ struct CleanerMaster {
         int tbH = SDL3.DIALOG_TB_H
         var dlg = SDL3.createDialogWindow({title: "预览（干跑）— 只统计，不删除", w: dw, h: tbH + dh})
         TitleBar tb = SDL3.dialogTitleBar(dlg, "预览（干跑）— 只统计，不删除")
-        var droot = SDL3.createVBox({x: 0, y: 0, w: dw, h: dh, padX: 16, padY: 14, spacing: 8})
+        var droot = SDL3.createVBox({x: 0, y: 0, w: dw, h: dh, pad_x: 16, pad_y: 14, spacing: 8})
         dlg.setRootAt(droot, 0, tb.get_h())
 
         droot.add(SDL3.dialogLabel(
@@ -1023,7 +1023,7 @@ struct CleanerMaster {
         int tbH = SDL3.DIALOG_TB_H
         var dlg = SDL3.createDialogWindow({title: "注册表清理 — 先扫描，再备份，最后才删", w: dw, h: tbH + dh})
         TitleBar tb = SDL3.dialogTitleBar(dlg, "注册表清理 — 先扫描，再备份，最后才删")
-        var droot = SDL3.createVBox({x: 0, y: 0, w: dw, h: dh, padX: 16, padY: 14, spacing: 8})
+        var droot = SDL3.createVBox({x: 0, y: 0, w: dw, h: dh, pad_x: 16, pad_y: 14, spacing: 8})
         dlg.setRootAt(droot, 0, tb.get_h())
 
         // 分类计数 + 表格行（一趟循环出 ✓）

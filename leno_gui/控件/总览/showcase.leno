@@ -174,19 +174,19 @@ main() {
     // ===================== 卡片7：三种布局 =====================
     var pLay = card(win, 864, 40, 400, 330, "布局 Layouts (HBox / VBox / AnchorBox)")
     pLay.add(SDL3.createLabel({x:878, y:74, text:"HBox 水平等分:", font_size:13}))
-    var hb = win.addHBox({x:878, y:94, w:372, h:40, spacing:8, padX:8})
+    var hb = win.addHBox({x:878, y:94, w:372, h:40, spacing:8, pad_x:8})
     hb.add(SDL3.createButton({text:"H1", w:80, h:32}), {grow:1})
     hb.add(SDL3.createButton({text:"H2", w:80, h:32}), {grow:1})
     hb.add(SDL3.createButton({text:"H3", w:80, h:32}), {grow:1})
 
     pLay.add(SDL3.createLabel({x:878, y:146, text:"VBox 竖直等分:", font_size:13}))
-    var vb = win.addVBox({x:878, y:166, w:180, h:180, spacing:8, padX:8, padY:8})
+    var vb = win.addVBox({x:878, y:166, w:180, h:180, spacing:8, pad_x:8, pad_y:8})
     vb.add(SDL3.createButton({text:"V1", h:32}), {grow:1})
     vb.add(SDL3.createButton({text:"V2", h:32}), {grow:1})
     vb.add(SDL3.createButton({text:"V3", h:32}), {grow:1})
 
     pLay.add(SDL3.createLabel({x:1070, y:146, text:"AnchorBox 锚点:", font_size:13}))
-    var ab = win.addAnchorBox({x:1070, y:166, w:180, h:180, padX:8, padY:8})
+    var ab = win.addAnchorBox({x:1070, y:166, w:180, h:180, pad_x:8, pad_y:8})
     ab.add(SDL3.createButton({text:"左上", w:70, h:30}), {left:0, top:0})
     ab.add(SDL3.createButton({text:"居中", w:70, h:30}), {centerX:true, centerY:true})
     ab.add(SDL3.createButton({text:"右下", w:70, h:30}), {right:0, bottom:0})
@@ -194,7 +194,7 @@ main() {
     // ===================== 卡片8：滚动容器 =====================
     var pSV = card(win, 864, 382, 400, 240, "滚动容器 ScrollView")
     var sv = win.addScrollView({x:878, y:426, w:372, h:180, content_w:340, content_h:520})
-    var svBox = SDL3.createVBox({padX:10, padY:10, spacing:8})
+    var svBox = SDL3.createVBox({pad_x:10, pad_y:10, spacing:8})
     for 12 to i {
         svBox.add(SDL3.createButton({text:"条目 " + i, h:32}), {})
     }

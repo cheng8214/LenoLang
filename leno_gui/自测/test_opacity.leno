@@ -33,7 +33,7 @@ func run() {
     w.set_widget_opacity(b25, 0.25)
 
     // ---- 二、容器淡出：0.35 设在 VBox 上，量它里面的按钮 ----
-    VBox box = SDL3.createVBox({x: 20, y: 140, w: 180, h: 64, padX: 0, padY: 0, spacing: 0})
+    VBox box = SDL3.createVBox({x: 20, y: 140, w: 180, h: 64, pad_x: 0, pad_y: 0, spacing: 0})
     Button bIn = SDL3.createButton({text: "在容器里", type: "primary"})
     box.add(bIn, {grow: 1, shrink: 1, align: 3})
     w.add(box)

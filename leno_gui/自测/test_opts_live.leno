@@ -30,7 +30,7 @@ main() {
     chk("VBox 传错键 ⇒ 报 1 条", l1.len() == 1)
     chk("提示里含控件名（HBox/VBox/AnchorBox 各自点名 ✓）", has(l1, "set()"))
     // ② 对键零报 —— 这是"对账能不能用"的分水岭 ✓
-    SDL3.createVBox({x: 0, y: 0, padX: 8, padY: 8, spacing: 6, bg_radius: 4})
+    SDL3.createVBox({x: 0, y: 0, pad_x: 8, pad_y: 8, spacing: 6, bg_radius: 4})
     chk("VBox 传对键 ⇒ 零报（不误报 ✓）", dochk.take_log().len() == 0)
     SDL3.createHBox({padLeft: 4, padRight: 4})
     chk("HBox 传四边非对称 pad ⇒ 零报 ✓", dochk.take_log().len() == 0)

@@ -121,7 +121,7 @@ export func show_detail(string catName, Array[string] res): bool {
     int tbH = SDL3.DIALOG_TB_H
     var dlg = SDL3.createDialogWindow({title: "明细清单 — " + catName, w: dw, h: tbH + dh})
     TitleBar tb = SDL3.dialogTitleBar(dlg, "明细清单 — " + catName)
-    var droot = SDL3.createVBox({x: 0, y: 0, w: dw, h: dh, padX: 16, padY: 14, spacing: 8})
+    var droot = SDL3.createVBox({x: 0, y: 0, w: dw, h: dh, pad_x: 16, pad_y: 14, spacing: 8})
     dlg.setRootAt(droot, 0, tb.get_h())
 
     // 标题写清"共几项 / 多大 / 是否只列了前 N 项"⇒ 不误导成"只有这么多" ✓

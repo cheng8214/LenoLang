@@ -8,15 +8,15 @@ main() {
     var win = SDL3.createWindow({title:"dump probe", w:800.0, h:400.0, bg_color:#F0F1F4FF})
     if not win.ok { print("窗口创建失败\n"); return }
     // 根 VBox：整窗
-    var root = SDL3.createVBox({padX:16.0, padY:16.0, spacing:12.0})
+    var root = SDL3.createVBox({pad_x:16.0, pad_y:16.0, spacing:12.0})
     win.setRoot(root)
     // 一行：两张卡按 520:306 平分（正确写法 ✓）
-    var rowA = SDL3.createHBox({padX:0.0, padY:0.0, spacing:12.0})
+    var rowA = SDL3.createHBox({pad_x:0.0, pad_y:0.0, spacing:12.0})
     root.add(rowA, {basis:120.0, grow:1.0, align:3})
     rowA.add(SDL3.createPanel({x:0, y:0, w:200.0, h:100.0}), {basis:520.0, grow:520.0, align:3})
     rowA.add(SDL3.createPanel({x:0, y:0, w:200.0, h:100.0}), {basis:306.0, grow:306.0, align:3})
     // 一行：只给 basis、没有 grow（= 曾经把"没铺开"写出来的那种 ✗）
-    var rowB = SDL3.createHBox({padX:0.0, padY:0.0, spacing:12.0})
+    var rowB = SDL3.createHBox({pad_x:0.0, pad_y:0.0, spacing:12.0})
     root.add(rowB, {basis:120.0, align:3})
     rowB.add(SDL3.createPanel({x:0, y:0, w:200.0, h:100.0}), {basis:300.0, align:3})
     rowB.add(SDL3.createPanel({x:0, y:0, w:200.0, h:100.0}), {basis:200.0, align:3})

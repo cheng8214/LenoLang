@@ -191,12 +191,12 @@ struct Wall {
 
         // ---- 根布局：顶栏（固定高）+ 主体（撑满）----
         root = SDL3.createVBox({x: 0, y: 0, w: WIN_W, h: WIN_H - tbH,
-                                padX: 0, padY: 0, spacing: 0})
+                                pad_x: 0, pad_y: 0, spacing: 0})
         win.setRootAt(root, 0, tbH)
         build_header(root)
 
         HBox body = SDL3.createHBox({x: 0, y: 0, w: WIN_W, h: WIN_H - tbH - HEADER_H,
-                                     padX: 0, padY: 0, spacing: 0})
+                                     pad_x: 0, pad_y: 0, spacing: 0})
         root.add(body, {grow: 1, shrink: 1, align: 3})
         build_side(body)
         build_grid(body)
@@ -421,7 +421,7 @@ struct Wall {
     // ==================== 顶栏 ====================
     pri func build_header(VBox root) {
         header = SDL3.createHBox({x: 0, y: 0, w: WIN_W, h: HEADER_H,
-                                  padX: 14, padY: 0, spacing: 10, bg_color: C_PANEL})
+                                  pad_x: 14, pad_y: 0, spacing: 10, bg_color: C_PANEL})
         root.add(header, {grow: 0, shrink: 0, basis: HEADER_H, align: 3})
 
         // 返回（参考图左上角 ✓）：清空搜索 + 回到「全部」
@@ -473,12 +473,12 @@ struct Wall {
     // ==================== 侧栏 ====================
     pri func build_side(HBox body) {
         side = SDL3.createVBox({x: 0, y: 0, w: SIDE_W, h: 400,
-                                padX: 12, padY: 14, spacing: 4, bg_color: C_PANEL})
+                                pad_x: 12, pad_y: 14, spacing: 4, bg_color: C_PANEL})
         body.add(side, {grow: 0, shrink: 0, basis: SIDE_W, align: 3})
 
         // 「来源选择」小标题：漏斗图标 + 文字（参考图左侧顶部就是这样 ✓）
         secLbl = SDL3.createLabel({text: "来源选择", font_size: 12, text_color: #6E7789FF})
-        secBox = SDL3.createHBox({x: 0, y: 0, w: 100, h: 20, padX: 8, padY: 0, spacing: 5})
+        secBox = SDL3.createHBox({x: 0, y: 0, w: 100, h: 20, pad_x: 8, pad_y: 0, spacing: 5})
         secBox.add(SDL3.createImageView({w: 13, h: 13, image_path: icon("funnel.png"),
                                          image_tint: #6E7789FF}), {grow: 0, shrink: 0, basis: 13, align: 1})
         secBox.add(secLbl, {grow: 1, shrink: 1, align: 1})
@@ -583,18 +583,18 @@ struct Wall {
         tabs.on_change(func(int p) { on_view_change(p) })
 
         // ---- 页 0：海报墙网格（原样搬进来 ✓）----
-        VBox gpage = SDL3.createVBox({x: 0, y: 0, w: 900, h: 460, padX: 0, padY: 0, spacing: 0})
+        VBox gpage = SDL3.createVBox({x: 0, y: 0, w: 900, h: 460, pad_x: 0, pad_y: 0, spacing: 0})
         tabs.setPageLayout(0, gpage)
         sv = SDL3.createScrollView({x: 0, y: 0, w: 900, h: 460, fit_w: true,
                                     step: 64, smooth: true, bg_color: C_BG,
                                     border: false, bar_color: C_BAR})
         tabs.addToPageLayout(0, sv, {grow: 1, shrink: 1, align: 3})
         grid = SDL3.createGridLayout({x: 0, y: 0, w: 900, h: 460, cols: cols,
-                                      spacing: GRID_GAP, padX: GRID_PAD, padY: GRID_PAD})
+                                      spacing: GRID_GAP, pad_x: GRID_PAD, pad_y: GRID_PAD})
         sv.set_content(grid)     // ★ 内容控件用 createXxx（不要 win.addXxx ⇒ 会双重绘制/处理 ✗）
 
         // ---- 页 1：列表（Table：同一份数据、同一套右键菜单语义 ✓）----
-        VBox lpage = SDL3.createVBox({x: 0, y: 0, w: 900, h: 460, padX: 0, padY: 0, spacing: 0})
+        VBox lpage = SDL3.createVBox({x: 0, y: 0, w: 900, h: 460, pad_x: 0, pad_y: 0, spacing: 0})
         tabs.setPageLayout(1, lpage)
         build_table(lpage)
     }
@@ -671,11 +671,11 @@ struct Wall {
     //   为什么不做"隐藏/显示"：VBox/HBox 只按子项**尺寸**排版，看不见的页照样占位 ✗
     //     （框架没有"停用排版"开关；而换根是它自己的既有能力 ✓ 标题栏是 win.add 的 ⇒ 不受影响 ✓）
     pri func build_detail() {
-        dpage = SDL3.createVBox({x: 0, y: 0, w: WIN_W, h: WIN_H - tbH, padX: 0, padY: 0, spacing: 0,
+        dpage = SDL3.createVBox({x: 0, y: 0, w: WIN_W, h: WIN_H - tbH, pad_x: 0, pad_y: 0, spacing: 0,
                                  bg_color: C_BG})
 
         // ---- 顶部条：与海报墙顶栏**同高同色** ⇒ 切页时视觉不跳 ✓ ----
-        dtop = SDL3.createHBox({x: 0, y: 0, w: WIN_W, h: HEADER_H, padX: 14, padY: 0, spacing: 10,
+        dtop = SDL3.createHBox({x: 0, y: 0, w: WIN_W, h: HEADER_H, pad_x: 14, pad_y: 0, spacing: 10,
                                 bg_color: C_PANEL})
         dpage.add(dtop, {grow: 0, shrink: 0, basis: HEADER_H, align: 3})
 
@@ -705,13 +705,13 @@ struct Wall {
         dtop.add(dPlay, {grow: 0, shrink: 0, basis: 96, align: 1})
 
         // ---- 主体：左大海报（复用 Card ⇒ 自带圆角 + 评分角标 ✓）+ 右信息 ----
-        dbody = SDL3.createHBox({x: 0, y: 0, w: WIN_W, h: 520, padX: 28, padY: 24, spacing: 30})
+        dbody = SDL3.createHBox({x: 0, y: 0, w: WIN_W, h: 520, pad_x: 28, pad_y: 24, spacing: 30})
         dpage.add(dbody, {grow: 1, shrink: 1, align: 3})
 
         hero = SDL3.createCard(hero_opts(movies[0]))
         dbody.add(hero, {grow: 0, shrink: 0, basis: HERO_W, align: 1})
 
-        VBox dinfo = SDL3.createVBox({x: 0, y: 0, w: 600, h: 480, padX: 0, padY: 0, spacing: 12})
+        VBox dinfo = SDL3.createVBox({x: 0, y: 0, w: 600, h: 480, pad_x: 0, pad_y: 0, spacing: 12})
         dbody.add(dinfo, {grow: 1, shrink: 1, align: 3})
 
         dTitle = SDL3.createLabel({text: "", font_size: 30, font_style: SDL3.STYLE_BOLD, text_color: C_TXT})
@@ -720,7 +720,7 @@ struct Wall {
         dinfo.add(dMeta, {grow: 0, shrink: 0, align: 0})
 
         // 评分环 + 三条键值（同一行 ⇒ 信息密度像"详情页" ✓）
-        HBox drow = SDL3.createHBox({x: 0, y: 0, w: 600, h: 132, padX: 0, padY: 0, spacing: 22})
+        HBox drow = SDL3.createHBox({x: 0, y: 0, w: 600, h: 132, pad_x: 0, pad_y: 0, spacing: 22})
         dinfo.add(drow, {grow: 0, shrink: 0, basis: 132, align: 3})
         dRing = SDL3.createRingProgress({size: 132, thickness: 13, mode: "value",
                                          font_size: 26, sub_font_size: 12,
@@ -729,7 +729,7 @@ struct Wall {
                                          sub_text_fn: func(): string { return D_RING_SUB },
                                          tip: "评分（满分 10 ⇒ 环 = 分数 ÷ 10 ✓）"})
         drow.add(dRing, {grow: 0, shrink: 0, basis: 132, align: 1})
-        VBox dkv = SDL3.createVBox({x: 0, y: 0, w: 300, h: 132, padX: 0, padY: 0, spacing: 7})
+        VBox dkv = SDL3.createVBox({x: 0, y: 0, w: 300, h: 132, pad_x: 0, pad_y: 0, spacing: 7})
         drow.add(dkv, {grow: 1, shrink: 1, align: 3})
         dKV1 = SDL3.createLabel({text: "", font_size: 14, text_color: C_TXT})
         dKV2 = SDL3.createLabel({text: "", font_size: 14, text_color: C_TXT})
@@ -756,7 +756,7 @@ struct Wall {
                                        step: 96.0})
         dpage.add(simSv, {grow: 0, shrink: 0, basis: SIM_H + 18, align: 3})
         simRow = SDL3.createHBox({x: 0, y: 0, w: _float(SIM_W * SIM_MAX), h: _float(SIM_H),
-                                  padX: SIM_PADX, padY: 0, spacing: SIM_GAP})
+                                  pad_x: SIM_PADX, pad_y: 0, spacing: SIM_GAP})
         simSv.set_content(simRow)
         simCards = []
         for 0 : SIM_MAX - 1 to k { simCards.add(SDL3.createCard(sim_opts(movies[0]))) }
@@ -889,7 +889,7 @@ struct Wall {
 
     // ==================== 底部状态栏 ====================
     pri func build_status(VBox root) {
-        statusBar = SDL3.createHBox({x: 0, y: 0, w: WIN_W, h: 28, padX: 14, padY: 0, spacing: 12,
+        statusBar = SDL3.createHBox({x: 0, y: 0, w: WIN_W, h: 28, pad_x: 14, pad_y: 0, spacing: 12,
                                      bg_color: C_PANEL})
         root.add(statusBar, {grow: 0, shrink: 0, basis: 28, align: 3})
         statLbl = SDL3.createLabel({text: "", font_size: 12, text_color: C_TXT_DIM})
@@ -968,7 +968,7 @@ struct Wall {
     // 卡内操作行（容器化的实拍件 ✓）：播放 + 收藏
     //   ⚠ 这两个按钮的点击**不会**顺带触发整卡 on_click（见 sdl_card.leno 的 inBody 闸门 ✓）
     pri func build_actions(int idx): HBox {
-        HBox row = SDL3.createHBox({x: 0, y: 0, w: 100, h: 32, padX: 0, padY: 0, spacing: 6})
+        HBox row = SDL3.createHBox({x: 0, y: 0, w: 100, h: 32, pad_x: 0, pad_y: 0, spacing: 6})
         Button pb = SDL3.createButton({text: "播放", w: 58, h: 26, font_size: 12, radius: 6,
                                        bg_color: C_ACCENT, text_color: C_ACC_TXT,
                                        border: false, shadow: false, tip: "打开详情（这里就是挂点 ✓）"})

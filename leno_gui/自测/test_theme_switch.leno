@@ -43,14 +43,14 @@ func run() {
     ScrollView sv = w.addScrollView({x: 20, y: 40, w: 230, h: 200,
                                      content_w: 130.0, content_h: 74.0, border: true})
     GridLayout g = SDL3.createGridLayout({x: 0, y: 0, w: 130, h: 74, cols: 1,
-                                          spacing: 6, padX: 6, padY: 6})
+                                          spacing: 6, pad_x: 6, pad_y: 6})
     Card cIn = SDL3.createCard({x: 0, y: 0, w: 110, h: 62, title: "滚内卡"})
     g.add(cIn, {align: 3})
     sv.set_content(g)
 
     // ---- 目标 2：Card 的**内容控件**（压 Card→content 下钻）----
     Card c2 = SDL3.createCard({x: 280, y: 40, w: 230, h: 230, title: "带内容的卡"})
-    VBox cv = SDL3.createVBox({x: 0, y: 0, w: 210, h: 140, padX: 6, padY: 6, spacing: 6})
+    VBox cv = SDL3.createVBox({x: 0, y: 0, w: 210, h: 140, pad_x: 6, pad_y: 6, spacing: 6})
     Button bIn = SDL3.createButton({text: "卡内按钮"})
     cv.add(bIn, {grow: 0, shrink: 0, basis: 32, align: 3})
     // ★ 嵌套一张卡：卡底在 dark/light 之间差异极大（bgAlt）⇒ 用它做**归因** ✓
@@ -63,7 +63,7 @@ func run() {
     // ---- 目标 3：TabControl 页里的按钮（压"页不下钻"）----
     TabControl tabs = w.addTabControl({x: 20, y: 270, w: 490, h: 200,
                                        tabs: ["  页一  ", "  页二  "], active: 0})
-    VBox tp = SDL3.createVBox({x: 0, y: 0, w: 460, h: 160, padX: 10, padY: 10, spacing: 8})
+    VBox tp = SDL3.createVBox({x: 0, y: 0, w: 460, h: 160, pad_x: 10, pad_y: 10, spacing: 8})
     Button bTab = SDL3.createButton({text: "页内按钮"})
     tp.add(bTab, {grow: 0, shrink: 0, basis: 34, align: 3})
     // ★ 同理：页里也嵌一张卡（归因用 ✓）—— 它能不能变色，直接说明"页有没有被下钻" ✓

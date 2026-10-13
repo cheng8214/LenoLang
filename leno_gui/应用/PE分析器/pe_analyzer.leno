@@ -213,7 +213,7 @@ struct PEAnalyzer {
         win.add(titleBar)
         float titleH = titleBar.get_h()
 
-        var toolbar = SDL3.createHBox({h: 36, padX: 4, padY: 2, spacing: 6})
+        var toolbar = SDL3.createHBox({h: 36, pad_x: 4, pad_y: 2, spacing: 6})
 
         browseBtn = SDL3.createButton({w: 80, h: 28, text: "浏览...", font_size: 14})
         toolbar.add(browseBtn, {grow: 0, shrink: 0, basis: 80, align: 3})
@@ -235,7 +235,7 @@ struct PEAnalyzer {
 
         // 概览页
         overviewBox = SDL3.createListBox({font_size: 13})
-        var overviewLayout = SDL3.createVBox({padX: PAD, padY: PAD, spacing: 0})
+        var overviewLayout = SDL3.createVBox({pad_x: PAD, pad_y: PAD, spacing: 0})
         overviewLayout.add(overviewBox, {grow: 1, shrink: 1, align: 3})
         tab.setPageLayout(0, overviewLayout)
 
@@ -245,7 +245,7 @@ struct PEAnalyzer {
             col_widths: [180.0, 200.0, 400.0],
             sortable: false, zebra: true, row_h: 24, header_h: 28, font_size: 13
         })
-        var dosLayout = SDL3.createVBox({padX: PAD, padY: PAD, spacing: 0})
+        var dosLayout = SDL3.createVBox({pad_x: PAD, pad_y: PAD, spacing: 0})
         dosLayout.add(dosTable, {grow: 1, shrink: 1, align: 3})
         tab.setPageLayout(1, dosLayout)
 
@@ -255,7 +255,7 @@ struct PEAnalyzer {
             col_widths: [180.0, 200.0, 400.0],
             sortable: false, zebra: true, row_h: 24, header_h: 28, font_size: 13
         })
-        var peLayout = SDL3.createVBox({padX: PAD, padY: PAD, spacing: 0})
+        var peLayout = SDL3.createVBox({pad_x: PAD, pad_y: PAD, spacing: 0})
         peLayout.add(peTable, {grow: 1, shrink: 1, align: 3})
         tab.setPageLayout(2, peLayout)
 
@@ -265,7 +265,7 @@ struct PEAnalyzer {
             col_widths: [50.0, 120.0, 100.0, 100.0, 100.0, 100.0, 150.0],
             sortable: true, zebra: true, row_h: 24, header_h: 28, font_size: 13
         })
-        var secLayout = SDL3.createVBox({padX: PAD, padY: PAD, spacing: 0})
+        var secLayout = SDL3.createVBox({pad_x: PAD, pad_y: PAD, spacing: 0})
         secLayout.add(sectionTable, {grow: 1, shrink: 1, align: 3})
         tab.setPageLayout(3, secLayout)
 
@@ -275,13 +275,13 @@ struct PEAnalyzer {
             col_widths: [200.0, 400.0, 100.0, 80.0],
             sortable: true, zebra: true, row_h: 24, header_h: 28, font_size: 13
         })
-        var impLayout = SDL3.createVBox({padX: PAD, padY: PAD, spacing: 0})
+        var impLayout = SDL3.createVBox({pad_x: PAD, pad_y: PAD, spacing: 0})
         impLayout.add(importTable, {grow: 1, shrink: 1, align: 3})
         tab.setPageLayout(4, impLayout)
 
         // LENB 页
         lenbBox = SDL3.createListBox({font_size: 13})
-        var lenbLayout = SDL3.createVBox({padX: PAD, padY: PAD, spacing: 0})
+        var lenbLayout = SDL3.createVBox({pad_x: PAD, pad_y: PAD, spacing: 0})
         lenbLayout.add(lenbBox, {grow: 1, shrink: 1, align: 3})
         tab.setPageLayout(5, lenbLayout)
 
@@ -291,12 +291,12 @@ struct PEAnalyzer {
             col_widths: [50.0, 120.0, 60.0, 600.0],
             sortable: true, zebra: true, row_h: 24, header_h: 28, font_size: 13
         })
-        var xorLayout = SDL3.createVBox({padX: PAD, padY: PAD, spacing: 0})
+        var xorLayout = SDL3.createVBox({pad_x: PAD, pad_y: PAD, spacing: 0})
         xorLayout.add(xorTable, {grow: 1, shrink: 1, align: 3})
         tab.setPageLayout(6, xorLayout)
 
         // 反汇编页
-        var disasmToolbar = SDL3.createHBox({h: 36, padX: 4, padY: 2, spacing: 6})
+        var disasmToolbar = SDL3.createHBox({h: 36, pad_x: 4, pad_y: 2, spacing: 6})
         disasmSearchEdit = SDL3.createEdit({w: 200, h: 28, font_size: 13, placeholder: "搜索指令/地址/操作数..."})
         disasmToolbar.add(disasmSearchEdit, {grow: 1, shrink: 1, align: 3})
         disasmSearchBtn = SDL3.createButton({w: 60, h: 28, text: "查找", font_size: 14})
@@ -316,7 +316,7 @@ struct PEAnalyzer {
             sortable: true, zebra: true, row_h: 22, header_h: 28, font_size: 12,
             editable: false, cell_select: true
         })
-        var disasmLayout = SDL3.createVBox({padX: PAD, padY: PAD, spacing: 4})
+        var disasmLayout = SDL3.createVBox({pad_x: PAD, pad_y: PAD, spacing: 4})
         disasmLayout.add(disasmToolbar, {grow: 0, shrink: 0, align: 3})
         disasmLayout.add(disasmTable, {grow: 1, shrink: 1, align: 3})
         tab.setPageLayout(7, disasmLayout)
@@ -339,7 +339,7 @@ struct PEAnalyzer {
         statusLbl = SDL3.createLabel({text: "就绪 - 点击[浏览...]选择 PE 文件", font_size: 13})
 
         // 根布局
-        var root = SDL3.createVBox({padX: PAD, padY: PAD, spacing: 4})
+        var root = SDL3.createVBox({pad_x: PAD, pad_y: PAD, spacing: 4})
         root.add(toolbar, {grow: 0, shrink: 0, align: 3})
         root.add(tab, {grow: 1, shrink: 1, align: 3})
         root.add(statusLbl, {grow: 0, shrink: 0, basis: 22, align: 3})

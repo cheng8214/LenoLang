@@ -59,7 +59,7 @@ main() {
     tab.addToPage(1, SDL3.createToggle({w: 220, h: 30, text: "启用深色模式", on: true}), 20, 102)
 
     // 在内容区 (20, 146) 放一个 HBox，里面两个按钮 —— 验证 Tab 与布局联动
-    var hb = SDL3.createHBox({w: 400, h: 36, spacing: 10, padX: 6, padY: 4})
+    var hb = SDL3.createHBox({w: 400, h: 36, spacing: 10, pad_x: 6, pad_y: 4})
     hb.add(SDL3.createButton({text: "布局A", w: 120, h: 28}), {expand: true})
     hb.add(SDL3.createButton({text: "布局B", w: 120, h: 28}), {})
     tab.addToPage(1, hb, 20, 146)

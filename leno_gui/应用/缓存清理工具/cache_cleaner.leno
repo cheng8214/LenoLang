@@ -556,7 +556,7 @@ struct CacheCleaner {
         float titleH = titleBar.get_h()
 
         // 顶部工具栏（自动布局：不指定 x/y/w，由父 VBox 分配）
-        var toolbar = SDL3.createHBox({h: 36, padX: 4, padY: 2, spacing: 6})
+        var toolbar = SDL3.createHBox({h: 36, pad_x: 4, pad_y: 2, spacing: 6})
 
         browseBtn = SDL3.createButton({w: 80, h: 28, text: "浏览...", font_size: 14})
         toolbar.add(browseBtn, {grow: 0, shrink: 0, basis: 80, align: 3})
@@ -595,7 +595,7 @@ struct CacheCleaner {
         progressBar.set_value(0.0)
 
         // 状态栏（自动布局）
-        var statusBar = SDL3.createHBox({h: 24, padX: 0, padY: 0, spacing: 12})
+        var statusBar = SDL3.createHBox({h: 24, pad_x: 0, pad_y: 0, spacing: 12})
         statusLbl = SDL3.createLabel({text: "就绪 - 点击[浏览...]选择要清理的目录", font_size: 13})
         statusBar.add(statusLbl, {grow: 1, shrink: 1, align: 1})
         countLbl = SDL3.createLabel({text: "选中: 0/0  大小: 0 B", font_size: 13})
@@ -612,7 +612,7 @@ struct CacheCleaner {
         resultTable.on_check(func(int col, Array[int] checkedRows) { onCheckChange(col, checkedRows) })
 
         // 设置根布局（w/h 由 setRootAt 根据窗口尺寸自动设置）
-        var root = SDL3.createVBox({padX: PAD, padY: PAD, spacing: 4})
+        var root = SDL3.createVBox({pad_x: PAD, pad_y: PAD, spacing: 4})
         root.add(toolbar, {grow: 0, shrink: 0, align: 3})
         root.add(progressBar, {grow: 0, shrink: 0, align: 3})
         root.add(statusBar, {grow: 0, shrink: 0, align: 3})

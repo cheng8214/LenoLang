@@ -317,7 +317,7 @@ func scroll_page(int page): VBox {
     add_p(page, sv, TAB_X, TAB_Y)
     SV_PAGES.add(page)
     SV_LIST.add(sv)
-    var box = SDL3.createVBox({padX:24, padY:24, spacing:16})
+    var box = SDL3.createVBox({pad_x:24, pad_y:24, spacing:16})
     sv.set_content(box)
     return box
 }
@@ -498,7 +498,7 @@ func page_usage() {
     head_button(head, 0.0, 104.0, "拉取用量", true)
 
     // 四张统计卡一行
-    var row = SDL3.createHBox({padX:0.0, padY:0.0, spacing:16})
+    var row = SDL3.createHBox({pad_x:0.0, pad_y:0.0, spacing:16})
     box.add(row, {basis:112.0, align:3})
     stat_small(row, "记录会话", "0", "次", C_TXT)
     stat_small(row, "积分消耗", "0", "分", C_ORANGE)
@@ -506,7 +506,7 @@ func page_usage() {
     stat_small(row, "缓存命中", "0", "%", C_GREEN)
 
     // 逐会话用量（左，宽） + 模型分布（右，窄）—— 两张空卡
-    var row2 = SDL3.createHBox({padX:0.0, padY:0.0, spacing:16})
+    var row2 = SDL3.createHBox({pad_x:0.0, pad_y:0.0, spacing:16})
     box.add(row2, {basis:452.0, align:3})
     mk_card_h(row2, 520.0, 452.0, "逐会话用量", "最多展示 500 条，汇总按全部")
     mk_card_h(row2, 306.0, 452.0, "模型分布", "")
@@ -541,7 +541,7 @@ func page_accounts() {
     // ⚠ 高度取 448 而不是 500：页 3 内容高 = 24+84+16+122+16+448+24 = **734 < 735** ⇒ 整页刚好放得下 ✓
     //   （500 时内容 786 > 735 ⇒ 默认位置下卡片底部/日志框会被**窗口底边切掉** ✗
     //     —— 这就是"这里溢出了"的观感来源；能一屏放下的页面就别留半截 ✗）
-    var row = SDL3.createHBox({padX:0.0, padY:0.0, spacing:16})
+    var row = SDL3.createHBox({pad_x:0.0, pad_y:0.0, spacing:16})
     box.add(row, {basis:448.0, align:3})
 
     var c2 = mk_card_h(row, 520.0, 448.0, "账号列表", "0 个账号")
@@ -618,10 +618,10 @@ func warn_box(AnchorBox ca, float left, float right, float top, float h, string 
 
 // 两列卡片行：返回 [左列 VBox, 右列 VBox]（卡片用 mk_card 加进去 ✓）
 func two_cols(VBox box, float h): Array[VBox] {
-    var row = SDL3.createHBox({padX:0.0, padY:0.0, spacing:16})
+    var row = SDL3.createHBox({pad_x:0.0, pad_y:0.0, spacing:16})
     box.add(row, {basis:h, align:3})
-    var c1 = SDL3.createVBox({padX:0.0, padY:0.0, spacing:0})
-    var c2 = SDL3.createVBox({padX:0.0, padY:0.0, spacing:0})
+    var c1 = SDL3.createVBox({pad_x:0.0, pad_y:0.0, spacing:0})
+    var c2 = SDL3.createVBox({pad_x:0.0, pad_y:0.0, spacing:0})
     row.add(c1, {grow:1.0})
     row.add(c2, {grow:1.0})
     Array[VBox] out = [c1, c2]

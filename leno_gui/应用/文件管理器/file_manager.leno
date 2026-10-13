@@ -202,7 +202,7 @@ Array[int]    _dragSelRows = []    // 鼠标按下时捕获的多选行（拖拽
                 string nm = names[i]
                 string fp = dirs.join(path, nm)
                 if dirs.is_dir(fp) {
-                    out.add({text: nm, data: {path: fp}, has_children: true, path: fp, image: imgPath("filetypes/folder_1.png"), imageExpanded: imgPath("filetypes/folder_2.png")})
+                    out.add({text: nm, data: {path: fp}, has_children: true, path: fp, image: imgPath("filetypes/folder_1.png"), image_expanded: imgPath("filetypes/folder_2.png")})
                 }
             }
         }
@@ -269,11 +269,11 @@ Array[int]    _dragSelRows = []    // 鼠标按下时捕获的多选行（拖拽
 string folderIcon = imgPath("filetypes/folder_1.png")
 string folderOpenIcon = imgPath("filetypes/folder_2.png")
 Array[Dict] roots = []
-roots.add({text:"此电脑", data:{type:"pc", path:""}, has_children:true, expanded:true, image:folderIcon, imageExpanded:folderOpenIcon})
+roots.add({text:"此电脑", data:{type:"pc", path:""}, has_children:true, expanded:true, image:folderIcon, image_expanded:folderOpenIcon})
 string root = dirs.dirname(dirs.script_dir())
 Array[Dict] qaKids = []
-qaKids.add({text:"当前位置", data:{type:"folder", path:root}, has_children:true, expanded:true, image:folderIcon, imageExpanded:folderOpenIcon, children: subFolders(root)})
-roots.add({text:"快速访问", data:{type:"qa", path:""}, has_children:true, expanded:true, image:folderIcon, imageExpanded:folderOpenIcon, children: qaKids})
+qaKids.add({text:"当前位置", data:{type:"folder", path:root}, has_children:true, expanded:true, image:folderIcon, image_expanded:folderOpenIcon, children: subFolders(root)})
+roots.add({text:"快速访问", data:{type:"qa", path:""}, has_children:true, expanded:true, image:folderIcon, image_expanded:folderOpenIcon, children: qaKids})
         return roots
     }
 
@@ -284,7 +284,7 @@ roots.add({text:"快速访问", data:{type:"qa", path:""}, has_children:true, ex
         if dv != null {
             for dv.len() to i {
                 string d = dv[i]
-Dict node = {text: driveLabel(d), data:{type:"drive", path:d}, has_children:true, image: imgPath("filetypes/folder_1.png"), imageExpanded: imgPath("filetypes/folder_2.png")}
+Dict node = {text: driveLabel(d), data:{type:"drive", path:d}, has_children:true, image: imgPath("filetypes/folder_1.png"), image_expanded: imgPath("filetypes/folder_2.png")}
 int nid = tree.add_child(pcId, node)
                 ensureNodeArr(nid)
                 nodePaths[nid - 1] = d
@@ -303,7 +303,7 @@ int nid = tree.add_child(pcId, node)
             if dv != null {
                 for dv.len() to i {
                     string d = dv[i]
-Dict node = {text: driveLabel(d), data:{type:"drive", path:d}, has_children:true, image: imgPath("filetypes/folder_1.png"), imageExpanded: imgPath("filetypes/folder_2.png")}
+Dict node = {text: driveLabel(d), data:{type:"drive", path:d}, has_children:true, image: imgPath("filetypes/folder_1.png"), image_expanded: imgPath("filetypes/folder_2.png")}
 int nid = tree.add_child(id, node)
                     ensureNodeArr(nid)
                     nodePaths[nid - 1] = d
@@ -1022,7 +1022,7 @@ case "exit"      { wantQuit = true }
     // ===================== UI 构建：工具栏 =====================
 
     func setupToolbar() {
-        toolbar = SDL3.createHBox({x:0, y:0, w:100, h:TOOLBAR_H, padX:4, padY:2, spacing:4})
+        toolbar = SDL3.createHBox({x:0, y:0, w:100, h:TOOLBAR_H, pad_x:4, pad_y:2, spacing:4})
         mainLayout.add(toolbar, {grow:0, shrink:0, basis:TOOLBAR_H, align:3})
 
 pathCombo = SDL3.createComboBox({x:0, y:0, w:300, h:28, font_size:14, editable:true, placeholder:"输入路径或选择历史...", popup_h:300})
@@ -1059,7 +1059,7 @@ pathCombo.on_enter(func(string text) {
         navPanel = SDL3.createPanel({x:0, y:0, w:NAV_W, h:100, radius:8})
         content.set_first(navPanel)
 
-        navVBox = SDL3.createVBox({x:0, y:0, w:100, h:100, padX:PAD, padY:PAD, spacing:6})
+        navVBox = SDL3.createVBox({x:0, y:0, w:100, h:100, pad_x:PAD, pad_y:PAD, spacing:6})
         navPanel.setLayoutPadded(navVBox, PAD)
 
         var navTitle = SDL3.createLabel({x:0, y:0, text:"导航", font_size:14})
@@ -1070,7 +1070,7 @@ pathCombo.on_enter(func(string text) {
         pathSearch.on_change(func() { onSearchChange() })
         pathSearch.on_enter(func() { onSearchEnter() })
 
-        navToolbar = SDL3.createHBox({x:0, y:0, w:100, h:26, padX:0, padY:0, spacing:4})
+        navToolbar = SDL3.createHBox({x:0, y:0, w:100, h:26, pad_x:0, pad_y:0, spacing:4})
         navVBox.add(navToolbar, {grow:0, shrink:0, align:3})
 
         btnNew = navBtn("new.png")
@@ -1262,7 +1262,7 @@ _dragTargetNode = -1
         loadBookmarks()
         refreshBookmarkMenu()
 
-        mainLayout = SDL3.createVBox({x:0, y:0, w:1000, h:680-TITLEBAR_H-MENU_H, padX:PAD, padY:PAD, spacing:4})
+        mainLayout = SDL3.createVBox({x:0, y:0, w:1000, h:680-TITLEBAR_H-MENU_H, pad_x:PAD, pad_y:PAD, spacing:4})
         win.setRootAt(mainLayout, 0, TITLEBAR_H + MENU_H)
 
         setupToolbar()

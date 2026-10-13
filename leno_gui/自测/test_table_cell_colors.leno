@@ -17,7 +17,7 @@ func run() {
     Window w = SDL3.createWindow({title: "probe_table2", w: 420, h: 300})
     if not w.ok { SDL3.ttfQuit(); return }
 
-    VBox root = SDL3.createVBox({x: 0, y: 0, w: 420, h: 300, padX: 10, padY: 10})
+    VBox root = SDL3.createVBox({x: 0, y: 0, w: 420, h: 300, pad_x: 10, pad_y: 10})
     w.setRootAt(root, 0, 0)
     tb = SDL3.createTable({x: 0, y: 0, w: 400, h: 280, row_h: 30, header_h: 28,
                            headers: ["行", "值"], font_size: 14, zebra: false})

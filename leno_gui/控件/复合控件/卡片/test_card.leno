@@ -118,7 +118,7 @@ func build_cards() {
         c.on_click(func() { select(i) })
         CARDS.add(c)
         // ④ 容器化：每张卡底部挂一行「播放 / 收藏」（`set_content` ✓）
-        HBox row = SDL3.createHBox({x: 0, y: 0, w: 100, h: 30, padX: 0, padY: 0, spacing: 6})
+        HBox row = SDL3.createHBox({x: 0, y: 0, w: 100, h: 30, pad_x: 0, pad_y: 0, spacing: 6})
         Button pb = SDL3.createButton({text: "播放", w: 62, h: 26, font_size: 12, radius: 6,
                                        bg_color: C_ACCENT, text_color: C_ACC_TXT,
                                        border: false, shadow: false})
@@ -191,10 +191,10 @@ func build(Window win) {
     win.add(tb)
 
     VBox root = SDL3.createVBox({x: 0, y: 0, w: WIN_W, h: WIN_H - TB_H,
-                                 padX: 0, padY: 0, spacing: 0, bg_color: C_BG})
+                                 pad_x: 0, pad_y: 0, spacing: 0, bg_color: C_BG})
     win.setRootAt(root, 0, tb.get_h())
 
-    HBox bar = SDL3.createHBox({x: 0, y: 0, w: WIN_W, h: 44, padX: 12, padY: 6, spacing: 8,
+    HBox bar = SDL3.createHBox({x: 0, y: 0, w: WIN_W, h: 44, pad_x: 12, pad_y: 6, spacing: 8,
                                 bg_color: C_BAR})
     root.add(bar, {grow: 0, shrink: 0, basis: 44, align: 3})
     bar.add(SDL3.createLabel({text: "Card 卡片控件", font_size: 16, font_style: SDL3.STYLE_BOLD,
@@ -231,7 +231,7 @@ func build(Window win) {
     root.add(SV, {grow: 1, shrink: 1, align: 3})
 
     GRID = SDL3.createGridLayout({x: 0, y: 0, w: WIN_W, h: 400, cols: COLS, spacing: 18,
-                                  padX: 18, padY: 18})
+                                  pad_x: 18, pad_y: 18})
     SV.set_content(GRID)
 
     HINT = SDL3.createLabel({text: "点卡片 ⇒ selected；点卡内按钮 ⇒ 只走按钮自己的回调 ✓",

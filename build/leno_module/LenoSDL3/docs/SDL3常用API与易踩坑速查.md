@@ -1785,3 +1785,71 @@ Toggle / RadioButton / Slider / ProgressBar / ListBox / Edit / LinkButton / Comb
    弹出的下拉面板盖住下方控件 ⇒ **它合法地继续请求手型**（`applyFrameCursor` 取**最大 kind** ✓），
    后面控件的断言就被"别人的弹层"污染了 ✓（实测：`Edit` 因此拿到 `11` 而不是 `1` ✗ —— 查了半天
    才发现是**用例的锅**，不是框架的 ✓）。
+
+---
+
+## 附录 D：选项命名统一（2026-10-13 —— 审计 + 改名表机制 + 四个仓库一起迁完 ✓）
+
+### 现状审计（全库 36 个控件 / 724 个键位 / **297 个不重名**）
+
+**底子是好的** —— 核心词汇高度一致，前 14 名全是共用名 ✓：
+`x`(30) · `y`(30) · `visible`(29) · `w`(25) · `h`(24) · `enabled`(23) · `font_size`(22) ·
+`bg_color`(19) · `border_color`(18) · `cursor`(17) · `tip`(17) · `font_path`(17) ·
+`text_color`(16) · `font_style`(15)
+⇒ **"背景色"这一族本来就是一致的**（`bg_color` 被 19 个控件采用 ✓；语义色后缀统一为 `*_color` ✓）。
+
+**三类不一致，只动两类**：
+
+| 类别 | 例子 | 处置 |
+|---|---|---|
+| ① 风格笔误（camelCase 混入） | `fontSize`(popmenu) / `padX`·`padY`(gridlayout、layout) / `imageMode`·`imageExpanded`(treeview) | ✅ **本轮改掉**（唯一没有争议的一类 ✓） |
+| ② 同概念不同名 | `h` vs `height`(titlebar) / `sel_color` vs `selected_color`(card) / `sep_color` vs `separator_color` vs `divider_color` / `head_*` vs `header_*` / `item_h` vs `row_h` | ⏳ 逐个评估（**下一轮** —— 有的差异是**刻意的**，见上面 ⑨ ✓） |
+| ③ 语义色名各指各的东西 | `fill_color` / `track_color` / `bar_color` / `thumb_color` / `on_color` / `off_color`… | ❌ **不动**：统一成一个通用名会把"哪个色是哪个"的信息丢掉 ✗；要统一的是**后缀**，而后缀已经一致 ✓ |
+
+### 本轮的机制（比"改了哪个名"更重要 ✓）
+
+改名的**最大风险**是"用户代码**悄悄**失效" ✗ ⇒ 所以先做了 `sdl_opts` 里的**改名表**：
+
+```leno
+Array[string] _renamed_old = ["fontSize", "padX", "padY", "imageMode", "imageExpanded"]
+Array[string] _renamed_new = ["font_size", "pad_x", "pad_y", "image_mode", "image_expanded"]
+```
+
+`dochk.check()` 在 `known` 判断**之前**查这张表 ⇒
+
+- 旧名**照旧可用**（各控件仍然读它 ✓）⇒ **现有代码零破坏** ✓
+- 但**每次用到都会警告**：
+  `[ui] sdl_popmenu：选项 'fontSize' 已改名为 'font_size'（旧名仍可用，但建议改过来 ✓）`
+- ⇒ **警告清零 = 迁移完成**，**可验证** ✓（本次就是这么验收的 ✓）
+
+⚠ **两条纪律**（踩错就白做 ✗）：
+
+1. **必须在 `known` 判断之前查** —— 旧名还在白名单里（控件还在读它）⇒ 放后面就**永远不报** ✗
+   （`assert/test_ui_opts_guard.leno` **⑩** 专门钉住这一条 ✓）
+2. **改名表里有的名，所有读它的控件都必须同时认新名** ✗ ——
+   否则会提示一个**根本不生效**的新名（比不提示更糟 ✗）。
+   本轮就是这么发现 `sdl_layout.leno` 的 VBox / HBox / AnchorBox **也读** `padX`/`padY` 的 ✓
+
+### 迁移结果（四个仓库一起迁 ✓）
+
+| 仓库 | 改动 | 验收 |
+|---|---|---|
+| `Leno`（含 `build/leno_module/LenoSDL3`） | 52 个文件 | 含新名的 **99 个文件逐个真编译：0 失败** ✓；断言套件 **452 passed / 0 failed** ✓ |
+| `LenoMusic` / `LenoGame` / `LenoTrae` | 各若干 | **32 个入口逐个真编译：0 失败、0 条旧名警告** ✓ |
+
+**迁移铁律**：只动**字典键位置**（`padY: 8`）与**字符串形式**（`"padY"`）；
+**字段名 / 局部变量 / 内部存储一律不动** ✓（`float padY = 8.0`、`2.0 * padY` 照旧 ✓）——
+它们不是"暴露给用户的字典名"，改了只徒增风险 ✗。
+**刻意保留**旧名的地方只有三处：改名表本身 / 读该键的 5 个控件的别名读取与白名单 / 钉住该机制的用例 ✓
+
+### 命名规约（新控件照这个写 ✓）
+
+- **颜色**：一律 `*_color` ✓（`bg_color` / `text_color` / `border_color` / `hover_color` /
+  `pressed_color`；语义色也 `*_color`：`track_color` / `fill_color` / `thumb_color` ✓）
+- **尺寸**：短名 `x` / `y` / `w` / `h` ✓（**不要**新造 `width` / `height` ✗）；
+  内边距 `pad_x` / `pad_y` / `gap` / `item_gap` ✓（**不要**驼峰 `padX` ✗）
+- **开关**：`show_*` ✓（`show_header` / `show_text` / `show_grid` / `show_lines` / `show_check` ✓）
+- **字号/字体**：`font_size` / `font_path` / `font_style` ✓（**不要** `fontSize` ✗）
+- **回调**：走 `on_xxx()` **方法**，**不进 opts** ✓（`btn.on_click(func(){…})` ✓）
+- **以后要改名**：只改 `sdl_opts` 的改名表 + 让**所有**读该键的控件同时认新名 ✓；
+  旧名留到"警告清零"**之后**再删 ✓

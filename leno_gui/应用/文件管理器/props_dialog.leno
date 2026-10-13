@@ -55,7 +55,7 @@ export func show(string path, bool isDir) {
     float propMaxW = innerW - 80.0 - 8.0  // label列80 + spacing8 = 322
 
     var dlg = SDL3.createDialogWindow({title:"属性 - " + nm, w:dlgW, h:dlgH})
-    VBox root = SDL3.createVBox({x:0, y:0, w:dlgW, h:dlgH, padX:padX, padY:16, spacing:6})
+    VBox root = SDL3.createVBox({x:0, y:0, w:dlgW, h:dlgH, pad_x:padX, pad_y:16, spacing:6})
     dlg.setRoot(root)
 
     // ★ 标题居中：dialogLabel(align:1) 内部用 w:1，VBox align:1 定位到中心
@@ -72,7 +72,7 @@ export func show(string path, bool isDir) {
 
     // 访问状态行（颜色按存在性变化，手动创建以支持自定义颜色 + 截断）
     // ★ w:1 让 VBox align:3(stretch) 自动撑满
-    HBox accessRow = SDL3.createHBox({x:0, y:0, w:1, h:22, padX:0, padY:0, spacing:8})
+    HBox accessRow = SDL3.createHBox({x:0, y:0, w:1, h:22, pad_x:0, pad_y:0, spacing:8})
     Label al = SDL3.createLabel({x:0, y:0, w:80, h:22, text:"访问状态:", font_size:13})
     // 访问状态值：存在=绿色调，不存在=红色调（这些是语义色，不随主题变）
     int accessR = if exists then 80 else 220

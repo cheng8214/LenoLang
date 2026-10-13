@@ -26,10 +26,10 @@ func run() {
     Window w = SDL3.createWindow({title: "probe_form", w: 560, h: 240})
     if not w.ok { SDL3.ttfQuit(); return }
 
-    VBox root = SDL3.createVBox({x: 0, y: 0, w: 560, h: 240, padX: 16, padY: 16, spacing: 12})
+    VBox root = SDL3.createVBox({x: 0, y: 0, w: 560, h: 240, pad_x: 16, pad_y: 16, spacing: 12})
     w.setRootAt(root, 0, 0)
 
-    HBox row = SDL3.createHBox({x: 0, y: 0, w: 520, h: 46, padX: 0, padY: 0, spacing: 12})
+    HBox row = SDL3.createHBox({x: 0, y: 0, w: 520, h: 46, pad_x: 0, pad_y: 0, spacing: 12})
     root.add(row, {grow: 0, shrink: 0, basis: 46, align: 3})
 
     tg = SDL3.createToggle({text: "循环播放"})
@@ -37,7 +37,7 @@ func run() {
     ck = SDL3.createCheckBox({text: "只看收藏"})
     row.add(ck, {grow: 0, shrink: 0, basis: 160, align: 1})
 
-    HBox row2 = SDL3.createHBox({x: 0, y: 0, w: 520, h: 46, padX: 0, padY: 0, spacing: 24})
+    HBox row2 = SDL3.createHBox({x: 0, y: 0, w: 520, h: 46, pad_x: 0, pad_y: 0, spacing: 24})
     root.add(row2, {grow: 0, shrink: 0, basis: 46, align: 3})
     r1 = SDL3.createRadioButton({text: "评分优先", group: "g1"})
     r2 = SDL3.createRadioButton({text: "年份优先", group: "g1"})

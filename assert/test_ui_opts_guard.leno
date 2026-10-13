@@ -99,6 +99,9 @@ main() {
     //   ⇒ 不强行统一（有几处是**刻意的**：Button 的 `padding` 是文字内边距、
     //     Card 的 `pad` 与 `content_pad` 语义不同、layout 的 `padTop/Left/…` 是四边非对称 ✓）
     //   ⇒ 退而求其次：**用错时必须被近名提示兜住** ✓（否则使用者只能瞎猜 ✓）
+    //   ★ 2026-10-13（选项命名统一）：`padX` / `padY`（gridlayout）已收敛成 **`pad_x` / `pad_y`** ✓
+    //     （同概念同写法：alert / badge / drag / card… 早就用后者 ✓）⇒ 进了**改名表** ✓
+    //     其余差异**保留**（上面那几处"刻意"的理由仍然成立 ✓）
     dochk.check("Badge", {pad: 6}, ["pad_x", "pad_y"])
     var l9 = dochk.take_log()
     check("Badge 传 pad ⇒ 报未知键", l9.len() == 1)
@@ -106,6 +109,29 @@ main() {
     // 反向：Canvas 那族用的是光杆 `pad` ✓ ⇒ 传 `pad_x` 也要被指回 `pad` ✓
     dochk.check("Canvas", {pad_x: 6}, ["pad"])
     check("Canvas 传 pad_x ⇒ 指回 pad ✓", has(dochk.take_log(), "pad"))
+
+    // ==================== ⑩ 改名表：旧名"**能用但会被告知**"（2026-10-13 补 ✓）====================
+    //   为什么必须有这一节：改名的最大风险是"用户代码**悄悄**失效" ✗。改名表给了两条保证：
+    //     · 旧名**照旧可用**（控件那边仍然读它 ✓）⇒ **现有代码零破坏** ✓
+    //     · 但会被 warn 一次 ⇒ **警告清零 = 迁移完成**，可验证 ✓
+    //   ⚠ 本节的**核心判据**：旧名**仍在白名单里**（因为控件还在读它）⇒ 必须**照样报** ✓
+    //     如果把改名判断放在 `known` 之后，旧名在白名单里就**永远不报** ✗（那这张表等于没用 ✓）
+    check("renamed_to(fontSize) ⇒ font_size", dochk.renamed_to("fontSize") == "font_size")
+    check("renamed_to(padY) ⇒ pad_y", dochk.renamed_to("padY") == "pad_y")
+    check("renamed_to(imageMode) ⇒ image_mode", dochk.renamed_to("imageMode") == "image_mode")
+    check("renamed_to 对正常键 ⇒ 空串 ✓", dochk.renamed_to("bg_color") == "")
+
+    dochk.check("探针I", {fontSize: 20.0}, ["font_size", "fontSize"])
+    var l10 = dochk.take_log()
+    check("★ 旧名**即使在白名单里**也必须报（否则永远发现不了 ✗）", l10.len() == 1)
+    check("提示里给出**新名** font_size ✓", has(l10, "font_size"))
+    check("口径是『已改名』（**不是**『不认识的选项』✓）", has(l10, "已改名"))
+    // 反向：新名**一条都不能报** ✓（否则迁移完了还有噪音 ✗）
+    dochk.check("探针J", {font_size: 20.0}, ["font_size", "fontSize"])
+    check("新名 ⇒ 零警告 ✓", dochk.take_log().len() == 0)
+    // 改名表**不是**近名建议的替代：真正拼错的键仍走"你是不是想要 xxx" ✓
+    dochk.check("探针K", {fontsize: 20.0}, ["font_size"])
+    check("拼错（fontsize）仍走近名建议 ✓", has(dochk.take_log(), "你是不是想要"))
 
     print("")
     if fails > 0 {
