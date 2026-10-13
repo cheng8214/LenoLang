@@ -16,6 +16,19 @@
 >   ② 列表/下拉/菜单的**行高亮圆角锚错了边**（`atBottom` 拿行自己的矩形补圆角，而末行常只露一半 ⇒ 圆角落到面板底边下方 ⇒ 面板两个底角被方角铺满）+ 内容裁剪 `_int(ph)+1` 让末行文字出框 1px ⇒ 收敛成渲染器共用件 **`fillRowInPanel`**（只填「行矩形 ∩ 面板圆角矩形」，圆角**锚在面板的边**）+ 裁剪改 `ceil` 精确覆盖；`sdl_combobox` / `sdl_listbox` / `sdl_menu` 三处调用点改调它 ✓；
 >   ③ `leno_gui/应用/影视海报墙/` 新增**影片详情页**（点卡片进入：大海报 + 评分环 + 年份/分类/简介 + 收藏/播放；Esc/返回切回，网格状态原样保留 ✓；自检钩子 `WALL_DETAIL` / `WALL_BACK`）；
 >   速查附录 C 相应新增 3 条（圆角纹理用自定义混合 · 行高亮锚点与裁剪 · `setRootAt` 运行时换根）。
+>   **2026-10-13 追加（十七）**：**修"失焦不收弹层"**（用户点名的第 ③ 项）+ 为此补自测钩子：
+>   ① ⛔ 症状：打开 ComboBox 下拉（或右键菜单）后 Alt+Tab / 切走 ⇒ 弹层**留在屏幕上、点不动也关不掉** ✗
+>      （实测：注入 `WINDOW_FOCUS_LOST` 后 `isOpen()` 仍是 true ✗；下拉区域可见像素 7205，修后 0 ✓）；
+>   ② 病因：这一支没人接 —— `ComboBox.process` 缺分支（`PopMenu` 早有 ✓）；右键菜单/顶部菜单下拉更收不到
+>      （它们不是宿主画的，按 `isOpen()` 第二遍统一画 ✗，与 `TabControl` 切页那个同源 bug 一样 ✓）；
+>   ③ 修法：`ComboBox.process` 加失焦分支 ✓ + 窗口**唯一派发点**集中收拾（`menu.closeContextMenus(hnd)` +
+>      逐个 `MenuBar.close()` ✓；全工程只有一处派发 ⇒ 模态窗/普通窗全覆盖 ✓）；
+>      ⚠ 踩到一个语法坑记在速查里：`for arr to x` 里 **x 是元素不是索引**（写成 `bars[b]` 编译不过 ✓）；
+>   ④ 新增自测钩子 `SDL3.testFocusLost(wid)` / `testFocusGained(wid)`（照 `testClickAt` 的思路补 ✓，
+>      以后这类"只有真机 Alt+Tab 才触发"的行为也能自动回归 ✓）；
+>   ⑤ 验收与回归：`_probe_combo`（true→false + 像素 7205→0 ✓）、`_probe_handle`（右键菜单 true→false ✓）、
+>      `test_menu` / `test_combobox` / `ide_layout` / 海报墙编译 ✓、海报墙真跑含 Card 右键链 ✓。
+>
 >   **2026-10-13 追加（十六）**：**用户实测报"Spinner 是多边形不是圆形" ⇒ 修掉一个渲染真 bug（含 3 个连带问题）**：
 >   ① ⛔ `sdl_spinner.draw_arc` 的段数公式 `radius*span/360*0.4` 在 r=26/120° 时算出 3.46 ⇒ 夹到 **4 段**、
 >      整圈轨道只有 **10 段**（十边形 ✗）；且 `thick` 形参**压根没用**（只画 1px `drawLine` ✗）

@@ -1055,6 +1055,40 @@ win.setRootAt(root, 0, tbH)       // 返回列表页（root 要**存字段**，�
 
 回归件：`leno_gui/应用/影视海报墙/movie_wall.leno`（`WALL_DETAIL=n` 进详情 / `WALL_BACK=n` 返回 ✓）
 
+### ⛔ **失焦不收弹层**：Alt+Tab 切走后下拉/菜单**留在屏幕上、点不动也关不掉**（2026-10-13 实测 + 已修 ✓）
+
+**症状**：打开 ComboBox 下拉（或任何右键菜单）后 `Alt+Tab` / 切到别的应用 ⇒ 弹层**照旧挂在屏幕上** ✗；
+又因为事件已经不在它那儿了 ⇒ **点不动也关不掉** ✗（只能切回去再点一下 ✓）。
+
+**病因**：`WINDOW_FOCUS_LOST`（`0x20F`）这一支没人接 ——
+- `ComboBox.process` 里**没有**这个分支（而 `PopMenu` 早就有：`if ev.isWindowFocusLost() { hide(); return }` ✓）
+- 右键上下文菜单（`MenuBar` 那套）与顶部菜单下拉**根本收不到**：它们不是宿主控件画的，而是按
+  `isOpen()` **第二遍统一画** ✗（与 `TabControl` 切页时那个同源 bug 一模一样 ✓）
+
+**修法（已落库 ✓，两处）**：
+1. `ComboBox.process` 开头：失焦 ⇒ `close()` + 清悬停/拖拽态 ✓（照 `PopMenu` 的既有写法 ✓）
+2. 窗口事件循环的**派发处集中收拾**（全工程只有这一处派发 ✓，模态窗/普通窗都走它 ✓）：
+```leno
+if ev.isWindowFocusLost() {
+    menu.closeContextMenus(_runHnds[j])       // 右键菜单（按窗口隔离 + 未登记句柄的兜底 ✓）
+    var bars = _runMenus[j]
+    for bars to b { b.close() }               // 顶部菜单下拉
+}
+```
+⚠ **`for arr to x` 里的 `x` 就是元素、不是索引**（第一版写成 `bars[b]` 直接编译不过 ✗；
+   仓库惯例见 `for widgets to w { w.dispose() }` ✓）
+
+**新增自测钩子**（本次为了能让它自动回归而补 ✓）：
+```leno
+SDL3.testFocusLost(win.getID())      // 注入一次窗口失焦（与 testClickAt 同一思路 ✓）
+SDL3.testFocusGained(win.getID())    // 配对
+```
+
+**验收**（两个探针，判据都是"修前 true / 修后 false"）：
+- `build/_probe_combo.leno`：点开下拉 ⇒ `isOpen()=true` ✓ ⇒ 注入失焦 ⇒ `isOpen()=false` ✓；
+  且截图里下拉区域可见像素 **7205 → 0** ✓（修前一直是 true、下拉挂着 ✗）
+- `build/_probe_handle.leno`：右键 `Table` 打开菜单 ✓ ⇒ 注入失焦 ⇒ `get_context_menu().isOpen()=false` ✓
+
 ### ⛔ `Spinner` 画出来是**多边形**（段数公式 + `thick` 形参没用上）（2026-10-13 实测 + 已修 ✓）
 
 **症状**：转圈指示器看着是**十边形**（棱角明显）而不是圆 ✗；粗细也跟 `thickness` 无关（像固定 1px ✗）。

@@ -179,6 +179,8 @@ export func testClickAt(int wid, float x, float y): bool      { return wnd.testC
 export func testRightClickAt(int wid, float x, float y): bool { return wnd.testRightClickAt(wid, x, y) }
 export func testMouseAt(int wid, float x, float y, bool pressed): bool { return wnd.testMouseAt(wid, x, y, pressed) }
 export func testMoveAt(int wid, float x, float y): bool       { return wnd.testMoveAt(wid, x, y) }
+export func testFocusLost(int wid): bool                      { return wnd.testFocusLost(wid) }
+export func testFocusGained(int wid): bool                    { return wnd.testFocusGained(wid) }
 
 // ==================== 对话框通用件（自绘标题栏 / 外框底色）====================
 //   详见 sdl_dialog.leno；应用自己手搓的弹窗照这三行接即可 ✓

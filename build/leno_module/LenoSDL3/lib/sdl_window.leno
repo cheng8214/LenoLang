@@ -340,6 +340,33 @@ export func testMoveAt(int wid, float x, float y): bool {
     return r
 }
 
+// 注入一次**窗口失去焦点**（自测用 ✓ 2026-10-13 补）
+//   为什么补：像 ComboBox 那种"失焦应收起下拉"的行为，**只有真机 Alt+Tab 才触发** ✗ ⇒ 以前无法自动回归；
+//   有了它就能在探针里"展开下拉 → 注入失焦 → 断言已收起" ✓（与 testClickAt 同一思路 ✓）
+//   ⚠ 只投递失焦本身；是否真的换了焦点由各控件自己按语义处理 ✓
+export func testFocusLost(int wid): bool {
+    Ptr[u8] e = ffi.malloc(128)
+    for 128 to i { ffi.write_byte(e, i, 0) }        // 先清零（未用字段别带垃圾 ✓）
+    SDL_WindowEvent we = SDL_WindowEvent.from_ptr(e)
+    we.type = core.EventType.WINDOW_FOCUS_LOST
+    we.windowID = wid
+    bool r = _lib.SDL_PushEvent(e)
+    ffi.free(e)
+    return r
+}
+
+// 注入一次**窗口获得焦点**（与 testFocusLost 配对；同样只用来自测 ✓）
+export func testFocusGained(int wid): bool {
+    Ptr[u8] e = ffi.malloc(128)
+    for 128 to i { ffi.write_byte(e, i, 0) }
+    SDL_WindowEvent we = SDL_WindowEvent.from_ptr(e)
+    we.type = core.EventType.WINDOW_FOCUS_GAINED
+    we.windowID = wid
+    bool r = _lib.SDL_PushEvent(e)
+    ffi.free(e)
+    return r
+}
+
 // 投递一条鼠标按键事件（内部用；SDL_Event 缓冲取 128 字节 ✓）
 //   ⚠ 模块级"私有"只用 `_` 前缀即可 —— 写成 `pri func` 会被解析器判成语法错误 ✗（实测 ✓）
 func _pushMouseEvent(bool pressed, int wid, float x, float y, int button = 1): bool {
@@ -1441,6 +1468,16 @@ export struct Window {
                         rootWid?.process(ev)
                         var ws = _runWidgets[j]
                         for ws to w { w.process(ev) }
+                        // ★ 2026-10-13：**失焦即收起"浮层"**（右键上下文菜单 + 顶部菜单下拉）——
+                        //   这些浮层不是由宿主控件画的，而是按 `isOpen()` **第二遍统一画** ✗（不看宿主在不在 ✓）
+                        //   ⇒ 不收拾的话，Alt+Tab 切走后菜单会**留在屏幕上**，而且点不动也关不掉 ✗✗
+                        //   （同源问题在 `TabControl` 切页时已修过一次 ✓ 见其 closePopups ✓）
+                        //   ⚠ 控件自己的弹层不在这里：ComboBox/Edit 各自在 process 里处理 ✓；PopMenu 是独立窗口 ✓
+                        if ev.isWindowFocusLost() {
+                            menu.closeContextMenus(_runHnds[j])
+                            var bars = _runMenus[j]
+                            for bars to b { b.close() }     // `for arr to x` 里 x **就是元素** ✓（仓库惯例 ✓）
+                        }
                         break
                     }
                 }
