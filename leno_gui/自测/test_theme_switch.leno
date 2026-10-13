@@ -79,16 +79,18 @@ func run() {
     //     ① 公开字段可直接读（Spinner/Separator/LinkButton 的 `_color` ✓）⇒ 打印前后值精确对照 ✓
     //     ② 其余靠像素：切主题后该控件矩形内**暗像素占比应大幅下降**（它自己的深色填充变浅 ✓，
     //        只剩文字/描边几个暗点 ✓；没被刷到则整块填充仍是深色 ✗）
-    CheckBox cbx = w.addCheckBox({x: 560, y: 120, w: 175, h: 26, text: "复选框", checked: true})
-    Toggle tgl = w.addToggle({x: 560, y: 154, w: 175, h: 28, text: "开关", on: true})
-    RadioButton rdo = w.addRadioButton({x: 560, y: 190, w: 175, h: 24, text: "单选", group: "g1", checked: true})
+    // ⚠ 这三个是**自量尺寸**控件 ⇒ **不要传 `w/h`** ✗（传了不生效、还会被对账报"不认识" ✓
+    //   实测：CheckBox/RadioButton 的白名单里没有 w/h ✓ —— 报得对，是我这条探针写错了 ✓）
+    CheckBox cbx = w.addCheckBox({x: 560, y: 120, text: "复选框", checked: true})
+    Toggle tgl = w.addToggle({x: 560, y: 154, text: "开关", on: true})
+    RadioButton rdo = w.addRadioButton({x: 560, y: 190, text: "单选", group: "g1", checked: true})
     ProgressBar pgb = w.addProgressBar({x: 560, y: 220, w: 175, h: 18, value: 60})
-    Spinner spn = w.addSpinner({x: 560, y: 248, w: 28, h: 28})
+    Spinner spn = w.addSpinner({x: 560, y: 248, size: 28})   // ⚠ 自量尺寸 ⇒ 用 `size`、不是 w/h ✓
     Separator sep = w.addSeparator({x: 560, y: 288, w: 175, h: 2})
-    RingProgress rng2 = SDL3.createRingProgress({x: 560, y: 300, w: 60, h: 60, value: 60})
+    RingProgress rng2 = SDL3.createRingProgress({x: 560, y: 300, size: 60, value: 60})   // 同上：`size` ✓
     w.add(rng2)
     ImageView ivw = w.addImageView({x: 632, y: 300, w: 100, h: 60})
-    LinkButton lnk = w.addLinkButton({x: 560, y: 372, w: 175, h: 24, text: "链接按钮"})
+    LinkButton lnk = w.addLinkButton({x: 560, y: 372, text: "链接按钮"})   // 自量尺寸 ⇒ 不要传 w/h ✓
 
     var a = _env("SHOT_A"); if a != null { shotA = _str(a) }
     var b = _env("SHOT_B"); if b != null { shotB = _str(b) }

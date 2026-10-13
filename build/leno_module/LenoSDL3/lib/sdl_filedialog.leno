@@ -24,6 +24,14 @@
 import ffi
 import dirs
 import "sdl_window.leno" as wnd
+import "sdl_opts.leno" as dochk    // ★ 2026-10-13：选项对账（本文件原来没接 ✗）
+
+// ★ 2026-10-13：三个入口**共用一套白名单** ✓（按本文件全部 `.get("…")` 抽取 ⇒ 超集 ✓）
+//   `filters` / `default_location` 三项都用 ✓，`allow_many` 只有"打开文件"用 ✓
+//   （原来传错键静默忽略 ⇒ 例如把 `filters` 拼成 `filter` 会**没有任何提示** ✗）
+func _opts_keys(): Array[string] {
+    return ["allow_many", "default_location", "filters"]
+}
 use wnd.Window
 
 // ============ SDL3 文件对话框函数（本模块私有 clib 块） ============
@@ -170,6 +178,7 @@ func _makeCStr(string s): Ptr[u8] {
 
 // 打开文件（opts: allow_many / filters / default_location）
 export func showOpenFileDialog(Window win, any onResult, Dict opts) {
+    dochk.check("showOpenFileDialog", opts, _opts_keys())
     if _active { print("[filedialog] BLOCKED: 上一个对话框尚未结束，已忽略本次调用"); return }
     _ensureCb()
     _onResult = onResult
@@ -184,6 +193,7 @@ export func showOpenFileDialog(Window win, any onResult, Dict opts) {
 
 // 保存文件（opts: filters / default_location）
 export func showSaveFileDialog(Window win, any onResult, Dict opts) {
+    dochk.check("showSaveFileDialog", opts, _opts_keys())
     if _active { print("[filedialog] BLOCKED: 上一个对话框尚未结束，已忽略本次调用"); return }
     _ensureCb()
     _onResult = onResult
@@ -197,6 +207,7 @@ export func showSaveFileDialog(Window win, any onResult, Dict opts) {
 
 // 选择文件夹（opts: filters / default_location）
 export func showOpenFolderDialog(Window win, any onResult, Dict opts) {
+    dochk.check("showOpenFolderDialog", opts, _opts_keys())
     if _active { print("[filedialog] BLOCKED: 上一个对话框尚未结束，已忽略本次调用"); return }
     _ensureCb()
     _onResult = onResult

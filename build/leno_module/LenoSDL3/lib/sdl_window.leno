@@ -95,6 +95,7 @@ import "sdl_card.leno" as crdlib          // 卡片（容器型：内容控件�
 use crdlib.Card
 import "sdl_titlebar.leno" as tbarlib
 import "sdl_canvas.leno" as cnv
+import "sdl_opts.leno" as dochk    // ★ 2026-10-13：选项对账（本文件原来没接 ✗）
 use tbarlib.TitleBar
 use cnv.Canvas
 
@@ -530,7 +531,15 @@ export struct Window {
     func setShortcutGuard(func():bool guard) { shortcutGuard = guard }
 
     // opts 支持字段：title(string), w(int), h(int), flags(int)
+    //   ★ 2026-10-13：补**选项对账** ✓ —— 本文件原来没有 `dochk.check` ✗
+    //     ⚠ 白名单**只列创建窗口自己读的键** ✓ —— 各 `addXxx` 的 opts 由**控件自己**对账 ✓
+    //       （`z` 是窗口侧通用键、`addXxx` 读它做层级 ✓ ⇒ 已在 `sdl_opts` 里**豁免** ✓
+    //        不然控件会把它当"不认识"报出来 ✗）
     func init(Dict opts): bool {
+        //   ⚠ 白名单里的 `icon` 是**门面**（`SDL3.createWindow`）收的键 ✓ —— 门面用它在
+        //     Linux/macOS 上补一次 `SDL_SetWindowIcon` ✓，然后**原样**把 opts 透传到这里 ✗
+        //     ⇒ 若这里不认 `icon` 就会**误报** ✓（实测：海报墙的 `icon:` 就是这么被报出来的 ✓）
+        dochk.check("createWindow", opts, ["title", "w", "h", "flags", "resizable", "aa", "icon"])
         if not core.initVideo() {
             print($"[LenoSDL3] init failed: {core.getError()}")
             return false

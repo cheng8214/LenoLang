@@ -1,0 +1,59 @@
+// test_opts_live.leno — **真控件**上的选项对账验收（2026-10-13 新增 ✓）
+//   为什么还要它：`assert/test_ui_opts_guard.leno` 只测 `sdl_opts` 那层纯逻辑 ✓ ——
+//     "**哪些入口真的接了 `check`**"它测不到 ✗（本轮刚给 `window.init` / `layout.set` /
+//     `filedialog` 三入口 / `popmenu` / `tray` 补上，之前**一个都没接** ✗）
+//   判据两面都要钉住（对账一旦误报就退化成噪音 ✗）：
+//     ① 故意传错键 ⇒ `take_log()` 必须收到 ✓ 且带**近名提示** ✓
+//     ② 传对键（含窗口侧通用键 `z` ✓）⇒ **一条都不能报** ✓
+//   用法：build\leno.exe leno_gui\自测\test_opts_live.leno
+//     （只建控件、**不进 run 循环** ⇒ 不需要手动关窗 ✓；加了 dummy 驱动也照跑 ✓）
+import "SDL3" as SDL3
+import "sdl_opts" as dochk
+import strings
+use SDL3.(Window, VBox, HBox)
+
+int fails = 0
+func chk(string name, bool ok) {
+    if ok { print("[通过] " + name) }
+    else { fails = fails + 1; print("[失败] " + name) }
+}
+func has(Array[string] log, string sub): bool {
+    for log to s { if strings.find(s, sub) >= 0 { return true } }
+    return false
+}
+
+main() {
+    // ==================== ① `layout.set()` 这条路（本轮新接 ✓）====================
+    //   历史：`add(child, opts)` 早就有对账 ✓，但**建容器**的 `set()` 完全没有 ✗
+    SDL3.createVBox({bogus_key: 1})
+    var l1 = dochk.take_log()
+    chk("VBox 传错键 ⇒ 报 1 条", l1.len() == 1)
+    chk("提示里含控件名（HBox/VBox/AnchorBox 各自点名 ✓）", has(l1, "set()"))
+    // ② 对键零报 —— 这是"对账能不能用"的分水岭 ✓
+    SDL3.createVBox({x: 0, y: 0, padX: 8, padY: 8, spacing: 6, bg_radius: 4})
+    chk("VBox 传对键 ⇒ 零报（不误报 ✓）", dochk.take_log().len() == 0)
+    SDL3.createHBox({padLeft: 4, padRight: 4})
+    chk("HBox 传四边非对称 pad ⇒ 零报 ✓", dochk.take_log().len() == 0)
+
+    // ==================== ③ `createWindow` 这条路（本轮新接 ✓）====================
+    SDL3.createWindow({title: "opts_live", w: 360, h: 80, bogusWin: 1})
+    var l3 = dochk.take_log()
+    chk("createWindow 传错键 ⇒ 报 1 条", l3.len() == 1)
+    chk("提示里点名 createWindow ✓", has(l3, "createWindow"))
+    Window w2 = SDL3.createWindow({title: "opts_live", w: 360, h: 80, resizable: true})
+    chk("createWindow 传对键 ⇒ 零报 ✓", dochk.take_log().len() == 0)
+
+    // ==================== ④ 窗口侧通用键 `z`：走真控件也不能报（2026-10-13 豁免 ✓）====
+    //   `z` 由 `Window.addXxx` 读走做层级 ✓、控件自己不认它 ✗ ⇒ 不豁免就会**误报** ✗
+    w2.addButton({x: 10, y: 10, w: 120, h: 30, text: "带 z 的按钮", z: 2.0})
+    chk("addButton 传 z ⇒ 零报（豁免生效 ✓）", dochk.take_log().len() == 0)
+    // ⑤ 但 `z` 的**错拼**（zz）仍要报 ✓ —— 豁免只针对那一个键 ✓
+    w2.addButton({x: 10, y: 50, w: 120, h: 30, text: "错拼", zz: 2.0})
+    var l5 = dochk.take_log()
+    chk("addButton 传 zz ⇒ 照报 ✓", l5.len() == 1)
+    chk("且提示近名 z ✓", has(l5, "z"))
+
+    print("")
+    if fails > 0 { print($"共 {fails} 项失败"); _exit(1) }
+    print("全部通过（真控件入口的对账：该拦的拦、不该报的不报 ✓）")
+}

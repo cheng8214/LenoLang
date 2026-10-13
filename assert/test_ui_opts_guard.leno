@@ -7,7 +7,9 @@
 //     只测 sdl_opts 这个纯逻辑层 ✓ ⇒ 不需要窗口/字体 ⇒ 哪里都能跑 ✓）
 //
 // 覆盖：错键必报 ✓ / 对键零报 ✓ / 近名建议 ✓（icon→image、basiss→basis ✓）/
-//       去重（循环里建控件不刷屏 ✓）/ 空 Dict 与 null 不炸 ✓ / STRICT 前缀 ✓
+//       去重（循环里建控件不刷屏 ✓）/ 空 Dict 与 null 不炸 ✓ / STRICT 前缀 ✓（★ 2026-10-13：
+//       这句原来**只是口号** ✗ —— 正文根本没断言过 ⇒ 本轮补上，并把前缀抽成可断言的纯函数 ✓）/
+//       窗口侧通用键 `z` 豁免（防误报 ✓ 2026-10-13 补）/ 内边距键**四套写法**用错时有近名提示 ✓
 import "sdl_opts" as dochk
 import strings
 
@@ -67,6 +69,43 @@ main() {
     check("near(basiss, [basis]) ⇒ basis", dochk.near("basiss", ["basis"]) == "basis")
     check("near(imiage, [image]) ⇒ image", dochk.near("imiage", ["image"]) == "image")
     check("near 完全相等 ⇒ 也给回自己（距离 0 ✓）", dochk.near("image", ["image"]) == "image")
+
+    // ==================== ⑦ STRICT 前缀（2026-10-13 补 ✓）====================
+    //   头注一直声称覆盖它 ✗ 但正文**没有断言** ✓ ⇒ 本轮补上 ✓
+    //   注意两个事实（都是实测出来的 ✓）：
+    //     · `take_log()` 里存的是**原文**（不带前缀 ✓）⇒ 断言里**没有** `[ui]` ✓
+    //     · 前缀由 `dochk.format_line()` 生成 ✓ ⇒ 断言这个纯函数即可（两种模式都对得上 ✓）
+    dochk.check("探针G", {nope: 1}, ["a"])
+    var l7 = dochk.take_log()
+    check("日志存的是**原文**（不带前缀 ✓ 便于子串断言）",
+          l7.len() == 1 and strings.find(l7[0], "[ui]") < 0 and strings.find(l7[0], "nope") >= 0)
+    string pfx = dochk.format_line("X")
+    if dochk._strict() {
+        check("STRICT 模式的可见前缀 = `[ui][STRICT] ` ✓", strings.find(pfx, "[ui][STRICT] ") == 0)
+    } else {
+        check("非 STRICT 的可见前缀 = `[ui] ` ✓", strings.find(pfx, "[ui] ") == 0)
+        check("非 STRICT 模式**不能**出现 STRICT 字样 ✓", strings.find(pfx, "[STRICT]") < 0)
+    }
+
+    // ==================== ⑧ 窗口侧通用键 `z` 不算未知（2026-10-13 补 ✓）====================
+    //   为什么：`z` 由 `Window.addXxx` 读走做层级 ✓，控件自己不认它 ⇒ 按未知键报就是**误报** ✗
+    dochk.check("探针H", {z: 3.0}, ["text"])
+    check("窗口侧键 z ⇒ 不报（防误报 ✓）", dochk.take_log().len() == 0)
+    dochk.check("探针H", {zz: 3.0}, ["text"])
+    check("豁免只针对 z：`zz` 仍要报 ✓", dochk.take_log().len() == 1)
+
+    // ==================== ⑨ 内边距键"分裂"必须被兜住（2026-10-13 补 ✓）====================
+    //   现状：全库**四套写法**（`pad` / `pad_x·pad_y` / `padX·padY` / `padding`）✗
+    //   ⇒ 不强行统一（有几处是**刻意的**：Button 的 `padding` 是文字内边距、
+    //     Card 的 `pad` 与 `content_pad` 语义不同、layout 的 `padTop/Left/…` 是四边非对称 ✓）
+    //   ⇒ 退而求其次：**用错时必须被近名提示兜住** ✓（否则使用者只能瞎猜 ✓）
+    dochk.check("Badge", {pad: 6}, ["pad_x", "pad_y"])
+    var l9 = dochk.take_log()
+    check("Badge 传 pad ⇒ 报未知键", l9.len() == 1)
+    check("并提示近名 pad_x ✓（分裂但可发现 ✓）", has(l9, "pad_x"))
+    // 反向：Canvas 那族用的是光杆 `pad` ✓ ⇒ 传 `pad_x` 也要被指回 `pad` ✓
+    dochk.check("Canvas", {pad_x: 6}, ["pad"])
+    check("Canvas 传 pad_x ⇒ 指回 pad ✓", has(dochk.take_log(), "pad"))
 
     print("")
     if fails > 0 {

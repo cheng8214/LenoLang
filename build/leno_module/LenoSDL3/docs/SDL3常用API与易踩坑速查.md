@@ -1349,6 +1349,39 @@ SDL3.testClickAt(win.getID(), x, y)     // 再点（一步一行、走定时器 
 ⇒ 依赖 `addTimer` 逐步推进的探针**不能**用它 ✗（会被"几帧就跑完"截断 —— 那种件自带退出就够了 ✓）；
 ② 想彻底无窗口就配 `SDL_VIDEODRIVER=dummy`，但**要截图的场合别开** ✗（会拿到空白帧 ✓）。
 
+### ⭐ 控件选项对账（`dochk`）：本轮把**覆盖铺满**（2026-10-13 ✓）
+
+**它是什么**：`sdl_opts.leno` 的 `dochk.check(who, opts, 白名单)` —— 在**入口**把 opts 的键与白名单比一遍，
+不认识的打一行警告 + "你是不是想要 'xxx'？"的**近名提示** ✓（`LENO_UI_STRICT=1` 时前缀变 `[ui][STRICT]` ✓）。
+**为什么值得**：框架早期对不认识的键**静默丢弃** ✗ ⇒ `icon` 拼成 `image`、给自量尺寸控件传 `w/h`
+这类"传了没生效"的坑只能靠读源码查 ✗（实测代价是"图标不出现、文字不显示"✓）。
+
+**本轮补的三件事**
+| 事 | 原来 | 现在 |
+|---|---|---|
+| **覆盖** | `window.init`（`createWindow`）/ `layout.set()`（建 HBox/VBox/AnchorBox）/ `filedialog` 三入口 / `popmenu` / `tray` —— **一个都没接** ✗ | 全接上 ✓（`layout` 尤其阴：`add(child,opts)` 那条**早就有** ✓、`set()` 这条路**完全没有** ✗） |
+| **误报** | 窗口侧通用键 `z`（由 `addXxx` 读走做层级 ✓）**33 份白名单里一个都没有** ✗ ⇒ 迟早"一传就报" | 在 `sdl_opts` **一处豁免** ✓（不去改 33 份白名单 ✓）；`zz` 这类错拼**照报** ✓ |
+| **可断言** | "STRICT 前缀"只写在注释里 ✗（`take_log()` 存的是**原文**、前缀只打 stdout ⇒ 断言不到 ✗） | 抽成纯函数 `format_line(msg)` ✓ ⇒ 自测**直接断言**它 ✓ |
+
+**白名单口径**（照此写就不会误报 ✓）：按本文件**全部 `.get("…")`** 抽取 ⇒ **宁可是超集**（可少报、不误报 ✓）。
+⚠ 还要含**门面收的键**：`createWindow` 的 `icon` 是 `SDL3.createWindow` 收的（它在 Linux/macOS 上
+补一次 `SDL_SetWindowIcon` ✓）然后**原样透传**给 `init` ✗ ⇒ 漏了它就把海报墙的合法用法报出来 ✓（实测踩到 ✓）。
+
+**验收**（两件缺一不可 ✓）
+```
+build\leno.exe assert\test_ui_opts_guard.leno      # ① 纯逻辑：拦得住 / 不误报 / 去重 / STRICT / z 豁免 / 内边距分裂
+build\leno.exe leno_gui\自测\test_opts_live.leno   # ② 真控件入口：VBox / createWindow / addButton 真的接上了
+```
+**规模验证**：`leno_gui/应用/` 下**十个应用**各跑一遍筛 `[ui]` ⇒ **零误报** ✓
+（按上一节"无人值守跑法"配 `LENO_SDL_FRAMES=30` ✓ 不需要手动关窗 ✓）。
+
+**内边距键为什么**没**统一**（仍是**四套** ✗，但**用错会被指出来** ✓）：`pad`（Canvas/Calendar/Card）、
+`pad_x·pad_y`（Badge/Alert/DragHint/TreeView）、`padX·padY`（layout/GridLayout）、`padding`（Button ⇒ 那是
+**文字内边距** ✓ 语义不同）。其中若干是**刻意的**：Card 的 `pad` 与 `content_pad` 是两种内边距 ✓、
+layout 的 `padTop/Left/…` 是**四边非对称** ✓（收敛成标量会丢表达力 ✗）
+⇒ **不强行改名**（牵动 10 个文件、还伤表达力 ✗），改为自测钉住"**跨套用错时必有近名提示**" ✓：
+`Badge` 传 `pad` ⇒ 提示 `pad_x` ✓；`Canvas` 传 `pad_x` ⇒ 指回 `pad` ✓。
+
 ### ⭐ 焦点链与键盘导航（2026-10-13 第一批 ✓ Tab / Shift+Tab / Enter / Space）
 
 **为什么加**：全库原来只有 `Edit` / `Canvas` 自己管焦点 ⇒ **Tab 键根本不换焦点** ✗ ——

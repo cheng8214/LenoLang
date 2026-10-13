@@ -32,6 +32,7 @@ import "sdl_image.leno" as img
 import "sdl_font.leno" as fnt
 import "sdl_theme.leno" as thm
 import "sdl_event.leno" as evt
+import "sdl_opts.leno" as dochk    // ★ 2026-10-13：选项对账（本文件原来没接 ✗）
 use core.(Color, SDL_Rect, sdl3, Scancode, WindowFlag)
 use wnd.Window
 use rnd.Renderer
@@ -479,7 +480,14 @@ export struct PopMenu {
 
 // 工厂：建窗（隐藏）+ 字体 + 注册进 run 循环 ✓
 // opts：{fontSize: float}（默认 15.0 ✓）
+// ★ 2026-10-13：补**选项对账** ✓ —— 本文件原来没有 `dochk.check` ✗ ⇒ 传错键一律**静默丢弃** ✓
+//   白名单按本文件全部 `.get("…")` 抽取 ⇒ 是超集（规则：可少报、不误报 ✓）
+func _opts_keys(): Array[string] {
+    return ["fontSize"]
+}
+
 export func createPopMenu(Dict opts): PopMenu {
+    dochk.check("sdl_popmenu", opts, _opts_keys())
     PopMenu pm = new PopMenu()
     fnt.ttfInit()                                     // 幂等（调用方可能没 init 过字体 ✓）
     float fs = opts.get("fontSize", 15.0)

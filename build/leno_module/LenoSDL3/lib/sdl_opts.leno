@@ -79,14 +79,29 @@ export func near(string k, Array[string] known): string {
     return ""
 }
 
+// 给一行警告**加前缀** —— 抽成纯函数是有原因的 ✓：
+//   ★ 2026-10-13：原来"STRICT 时前缀变成 `[ui][STRICT]`"这句**只写在注释里** ✗、
+//     自测也断言不到 ✗（`take_log()` 存的是**原文**、前缀只打在 stdout ✓）
+//   ⇒ 抽出来 ⇒ 自测可以**直接断言这个函数**（两种模式都对得上 ✓ 见 test_ui_opts_guard ⑦ ✓）
+export func format_line(string msg): string {
+    if _strict() { return "[ui][STRICT] " + msg }
+    return "[ui] " + msg
+}
+
 // 只报一次（同一 (who,key) ✓）；STRICT 时加醒目前缀 ✓
 export func warn_once(string who, string key, string msg) {
     string tag = who + ":" + key
     if _in(_warned, tag) { return }
     _warned.add(tag)
-    _log.add(msg)      // ★ 同时收集一份（供自测断言 ✓）
-    if _strict() { print("[ui][STRICT] " + msg) } else { print("[ui] " + msg) }
+    _log.add(msg)      // ★ 收集的是**原文**（不带前缀 ✓）⇒ 自测做子串断言最方便 ✓
+    print(format_line(msg))
 }
+
+// **窗口侧通用键**：由 `Window.addXxx` 读走做层级 ✓，控件自己不认它 ⇒ 不该算"未知键" ✗
+//   ★ 2026-10-13 补：实测全库**没有一个控件白名单含 `z`** ✗、应用里也没人传过 ✓
+//   ⇒ 这是"以后一传 `z:` 就被误报"的隐患 ✓（对账最怕误报 ⇒ 一旦刷屏就退化成噪音 ✗）
+//   ⇒ 在**这一处**豁免最省：不用去改 33 份白名单 ✓
+Array[string] _window_keys = ["z"]
 
 // 对账：opts 里出现不在 known 里的键 ⇒ 警告 ✓（默认每个只报一次 ✓）
 export func check(string who, Dict opts, Array[string] known) {
@@ -97,7 +112,7 @@ export func check(string who, Dict opts, Array[string] known) {
         //   （否则报 "期望 string, 实际 any" ✓ —— 与 RegValueInfo 那个坑同源 ✓）
         string key = _str(k)
         if key == "" { continue }
-        if _in(known, key) { continue }
+        if _in(known, key) or _in(_window_keys, key) { continue }
         string hint = near(key, known)
         string msg = $"{who}：不认识的选项 '{key}'"
         if hint != "" { msg = msg + $" —— 你是不是想要 '{hint}'？" }

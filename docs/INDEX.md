@@ -54,6 +54,27 @@
 >      `test_nested_context_menu` ✓）、清理大师 exit=0 ✓、主题件 ✓。速查附录 C 已补第六批与两条方法论 ✓；
 >   ⑧ 仍未进链条：`TreeView`（下一轮 ✓）。
 >
+>   **2026-10-13 追加（三十二）**：**A3：选项对账（`dochk`）覆盖铺满 + 修两类误报**：
+>   ① 覆盖缺口（原来**一个都没接** ✗）：`Window.init`（`createWindow`）/ `layout.set()`（建
+>      HBox/VBox/AnchorBox）/ `filedialog` 三入口 / `popmenu` / `tray` ✓ 全接上；
+>      ⚠ `layout` 是"半接入"陷阱：`add(child, opts)` 那条**早就有对账** ✓、`set()` 这条路**完全没有** ✗；
+>   ② 误报（对账一旦误报就退化成噪音 ✗）：窗口侧通用键 `z`（`addXxx` 读它做层级 ✓）**33 份白名单里
+>      一个都没有** ✗ ⇒ 在 `sdl_opts` **一处豁免** ✓（`zz` 这类错拼照报 ✓）；`createWindow` 的**门面键**
+>      `icon`（`SDL3.createWindow` 收下、再**原样透传**给 `init` ✗）漏在白名单外 ⇒ 把海报墙的合法用法
+>      **报了出来** ✓（实测踩到 —— 这正是"跑真应用查误报"的价值 ✓）；
+>   ③ "STRICT 前缀"原来只是**注释里的口号** ✗（`take_log()` 存**原文**、前缀只打 stdout ⇒ 断言不到 ✗）
+>      ⇒ 抽成纯函数 `dochk.format_line()` ✓ ⇒ 自测**直接断言** ✓；
+>   ④ 新增验收件 `leno_gui/自测/test_opts_live.leno` ✓（纯逻辑那个件测不到"**哪些入口真的接了**" ✗）：
+>      VBox 错键必报 ✓ / 对键零报 ✓ / `createWindow` 同 ✓ / `addButton` 传 `z` **零报**、传 `zz` **照报** ✓ 全通过；
+>   ⑤ `assert/test_ui_opts_guard.leno` 补三组断言（STRICT 前缀 ✓ / `z` 豁免 ✓ / 内边距键四套写法的近名提示 ✓）；
+>   ⑥ **规模验证**：`leno_gui/应用/` **十个应用**各跑一遍筛 `[ui]` ⇒ **零误报** ✓（按新定规配
+>      `LENO_SDL_FRAMES=30` ✓ 全程无人值守 ✓）；顺手修掉我自己探针里的两处无效键
+>      （主题探针给自量尺寸控件传 `w/h` ✗ ⇒ CheckBox/Radio 删掉、Spinner/Ring 改 `size` ✓）；
+>   ⑦ **内边距键仍是四套**（`pad` / `pad_x·pad_y` / `padX·padY` / `padding`）⇒ **不强行改名**：
+>      Button 的 `padding` 是**文字内边距**、Card 有 `pad`+`content_pad` 两种语义、layout 是**四边非对称**
+>      ⇒ 收敛会丢表达力 ✗（且牵动 10 个文件）⇒ 改为自测钉住"**跨套用错必有近名提示**" ✓；
+>   ⑧ 编译检查：三个 UI 断言件 + 十个应用 `--check` 全绿 ✓。
+>
 >   **2026-10-13 追加（三十一）**：**A1 第八批：焦点链递归进容器（A1 真正收尾 ✓）**：
 >   ① 病根：`Window._focusables()` **只扫 `widgets`** ✗ ⇒ 装进容器（HBox/VBox/AnchorBox/GridLayout/
 >      Panel/GroupBox/Splitter/ScrollView/Card/页签页）的控件 **Tab 永远到不了** ✗（连根布局 `root`
