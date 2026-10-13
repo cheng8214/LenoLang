@@ -322,12 +322,29 @@ const BX_TEX    = 4   // 批处理文字纹理
     }
 
 
+    // ==================== 全局 alpha 缩放（控件级 `opacity` 的地基）====================
+    //   ★ 2026-10-13 加：框架原来**没有**通用控件透明度 —— 只有 `imageview/scrim/separator` 各自
+    //     一个语义化的 `alpha` key ✓，想"把某个控件整体淡出"做不到 ✗
+    //   语义：所有"带颜色/纹理的绘制"（矩形 · 线 · 圆角矩形 · 文字 · 纹理批）统一乘上它 ✓
+    //   谁用它：`sdl_window` 在渲染某个控件**前后** push/pop ⇒ **一处覆盖全部控件** ✓、
+    //     控件侧零改动 ✓；且容器被设透明度时**整个子树一起淡出** ✓（子控件都在它的 render 里画 ✓）
+    //   ⚠ v1 已知边界：`drawTextureAt/Rect/FromTo` 与 `drawTextureRounded` 这几条**直绘纹理**的
+    //     路径没走批处理 ⇒ 暂不参与缩放 ✗（圆角海报/直贴图不会淡出，见速查附录 C ✓）
+    pri float alphaScale = 1.0
+    func setAlphaScale(float s) {
+        if s < 0.0 { s = 0.0 }
+        if s > 1.0 { s = 1.0 }
+        alphaScale = s
+    }
+    func getAlphaScale(): float { return alphaScale }
+
     // 设置绘制颜色（#RRGGBBAA 打包整数，Alpha 在最高字节）
     func setColor(Color color): bool {
         int aa = (color >> 24) & 0xFF
         int rr = (color >> 16) & 0xFF
         int gg = (color >> 8) & 0xFF
         int bb = color & 0xFF
+        if alphaScale < 1.0 { aa = _int(_float(aa) * alphaScale) }   // ★ 缩放要放在"缓存比较"**之前** ✓
         if not bxIsFloat and rr == bxR and gg == bxG and bb == bxB and aa == bxA {
             return true
         }
@@ -338,6 +355,7 @@ const BX_TEX    = 4   // 批处理文字纹理
 
     // 设置绘制颜色（浮点 RGBA，0.0~1.0；a 默认完全不透明）
     func setColorFloat(float r, float g, float b, float a = 1.0): bool {
+        if alphaScale < 1.0 { a = a * alphaScale }      // ★ 同上：放缓存比较之前 ✓
         if bxIsFloat and r == bxFr and g == bxFg and b == bxFb and a == bxFa {
             return true
         }
@@ -718,6 +736,10 @@ const BX_TEX    = 4   // 批处理文字纹理
     // 文字纹理批处理：收集到缓冲，不打断 fillRect/drawRect/drawLine 的批处理
     // 当缓冲满或纹理切换（由 _flushBatches 统一处理）时批量提交
     pri func pushTexBatch(Ptr[u8] texture, float x, float y, float w, float h, float alpha) {
+        // ★ 2026-10-13：这里是**纹理批的唯一收口** ⇒ 全局 alpha 缩放放这一处最省 ✓
+        //   ⚠ 文字也走这里（drawText 的两个分支都调它 ✓）⇒ **不要在 drawText 里再乘一次** ✗
+        //     否则会"平方淡化"（0.5 × 0.5 = 0.25 ✗）
+        if alphaScale < 1.0 { alpha = alpha * alphaScale }
         // 如果当前批处理类型不是 TEX，先 flush 之前的状态（fillRect/drawRect 等）
         if bxCur != BX_EMPTY and bxCur != BX_TEX { flushBatches() }
         // 缓冲满则先提交

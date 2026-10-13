@@ -439,6 +439,11 @@ export struct Window {
     pri int maxFPS = 60
     pri Array[Widget] widgets = []
     pri Array[float]  widgetZ = []   // 各控件的 z 值（与 _widgets 并行），渲染时按 z 升序排列
+    // ★ 2026-10-13：控件级不透明度（与 `widgets` **按下标对齐**，但是**稀疏**的 ✓）
+    //   为什么稀疏：`widgets.add` 的调用点有 40+ 处（每个 `addXxx` 各一处 ✗）—— 不想为了一个
+    //   新特性去改 40 处注册代码 ✗ ⇒ 只有被 `set_widget_opacity` 显式设过的下标才有值，
+    //   查表越界一律当 1.0 ✓（后续新加的控件天然是 1.0 ✓）
+    pri Array[float]  widgetOpac = []
     pri Array[MenuBar]  menus  = []   // 菜单栏集合，第二遍画下拉层（盖在最上层）
     pri MenuBar? ctxBar              // 窗口级右击上下文菜单（setContextMenu 注册，run 自动接管弹出）
     pri int    ctxIdx = -1             // 对应的上下文菜单索引（-1 表示未注册）
@@ -807,6 +812,36 @@ export struct Window {
         for widgets.len() to i {
             if widgets[i] == w { widgetZ[i] = z; return }
         }
+    }
+
+    // 找个控件在 `widgets` 里的下标（不是本窗口注册的 ⇒ -1 ✓）
+    pri func _indexOfWidget(Widget w): int {
+        for widgets.len() to i {
+            if widgets[i] == w { return i }
+        }
+        return -1
+    }
+
+    // ==================== 控件级不透明度（`opacity`）====================
+    //   用法：`Button b = win.addButton({...}); win.set_widget_opacity(b, 0.5)` ✓
+    //   ★ 实现只有**一处**：渲染该控件前后 `setAlphaScale(op)` / `setAlphaScale(1.0)`（见下面渲染循环 ✓）
+    //     ⇒ 控件侧**零改动** ✓；容器被设透明度时**整个子树一起淡出** ✓（子控件都在它的 render 里画 ✓）
+    //   ⚠ 只作用于 `win.add*` / `win.addZ` 注册到窗口的控件 ✓（排进布局的孙控件靠"淡出父容器"整体处理 ✓）
+    //   ⚠ v1 不覆盖渲染器里那几条**直绘纹理**路径（圆角图/直贴图）—— 见 sdl_renderer 的已知边界 ✓
+    func set_widget_opacity(Widget w, float a) {
+        int idx = _indexOfWidget(w)
+        if idx < 0 { return }                        // 不是本窗口的控件：静默忽略（不崩 ✓）
+        if a < 0.0 { a = 0.0 }
+        if a > 1.0 { a = 1.0 }
+        while widgetOpac.len() <= idx { widgetOpac.add(1.0) }   // 稀疏补齐 ✓
+        widgetOpac[idx] = a
+        core.requestRedraw()
+    }
+
+    // 读取某下标控件的不透明度（越界 = 1.0 ⇒ 绝大多数控件走的就是这条"零开销"路径 ✓）
+    pri func _opacAt(int i): float {
+        if i >= 0 and i < widgetOpac.len() { return widgetOpac[i] }
+        return 1.0
     }
 
     // 设置根布局控件：窗口缩放时自动把根控件尺寸设为窗口大小并驱动内部布局重排
@@ -1709,7 +1744,16 @@ export struct Window {
                         for wn to k {
                             var w = ws[order[k]]
                             if rootWid != null and w == rootWid { continue }
-                            w.render(_runRens[i])
+                            // ★ 2026-10-13：控件级不透明度 —— **只在此处包一层** ✓（控件侧零改动 ✓）
+                            //   `op >= 1.0` 是绝大多数控件的路径 ⇒ 不引入任何多余调用 ✓
+                            float op = _opacAt(order[k])
+                            if op >= 1.0 {
+                                w.render(_runRens[i])
+                            } else {
+                                _runRens[i].setAlphaScale(op)
+                                w.render(_runRens[i])
+                                _runRens[i].setAlphaScale(1.0)      // 必须还原 ⇒ 否则后面所有绘制都跟着淡 ✗
+                            }
                         }
                     }
                     // 第二遍：所有展开的下拉框画在最上层（按窗口隔离；含经 panel/tab/布局添加的，由 registerComboBox 兜底）

@@ -1,0 +1,73 @@
+// test_opacity.leno — 控件级不透明度（`set_widget_opacity`）的客观判据
+//   ★ 这是 2026-10-13 新加的能力：框架原来**没有**通用控件透明度 ✗（只有 imageview/scrim/separator
+//     各自一个语义化 `alpha` key ✓）⇒ 想"把某个控件整体淡出"（禁用态、加载中、逐层揭示…）做不到 ✓
+//   实现（见 sdl_renderer / sdl_window）：
+//     · 渲染器加"全局 alpha 缩放"旋钮（矩形/线/圆角矩形/文字/纹理批统一乘 ✓）
+//     · 窗口在渲染某个控件**前后** push/pop ⇒ 一处覆盖全部控件 ✓、控件侧零改动 ✓
+//   判据：同色按钮按 100% / 50% / 25% 三档并排 ⇒ 截图后逐块取平均色，
+//     **蓝通道应单调下降、且向窗口底色（深灰）靠拢** ✓（不淡/恒定 = 没生效 ✗）
+//   另验"容器淡出带动子树"：把 0.35 设在 VBox 上，量它**里面那个按钮**是否也淡了 ✓
+//   用法：set SHOT=%TEMP%\op.png & build\leno.exe leno_gui\自测\test_opacity.leno
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer, Window, VBox, Button)
+
+int steps = 0
+string shot = ""
+
+func rep(string name, float x, float y, float w, float h) {
+    print("[op] " + name + " rect=" + _str(_int(x)) + "," + _str(_int(y)) +
+          "," + _str(_int(w)) + "," + _str(_int(h)))
+}
+
+func run() {
+    SDL3.ttfInit()
+    SDL3.setTheme(SDL3.darkTheme())          // 底色固定深灰 ⇒ 淡化后应向它靠拢 ✓
+    Window w = SDL3.createWindow({title: "test_opacity", w: 620, h: 260})
+    if not w.ok { SDL3.ttfQuit(); return }
+
+    // ---- 一、同色按钮三档（100% / 50% / 25%）----
+    Button b100 = w.addButton({x: 20, y: 40, w: 180, h: 64, text: "100%", type: "primary"})
+    Button b50  = w.addButton({x: 220, y: 40, w: 180, h: 64, text: "50%",  type: "primary"})
+    Button b25  = w.addButton({x: 420, y: 40, w: 180, h: 64, text: "25%",  type: "primary"})
+    w.set_widget_opacity(b50, 0.5)
+    w.set_widget_opacity(b25, 0.25)
+
+    // ---- 二、容器淡出：0.35 设在 VBox 上，量它里面的按钮 ----
+    VBox box = SDL3.createVBox({x: 20, y: 140, w: 180, h: 64, padX: 0, padY: 0, spacing: 0})
+    Button bIn = SDL3.createButton({text: "在容器里", type: "primary"})
+    box.add(bIn, {grow: 1, shrink: 1, align: 3})
+    w.add(box)
+    w.set_widget_opacity(box, 0.35)
+    // 对照组：同样长相、但没被淡化的按钮
+    Button bRef = w.addButton({x: 220, y: 140, w: 180, h: 64, text: "对照组", type: "primary"})
+
+    var s = _env("SHOT"); if s != null { shot = _str(s) }
+    if shot == "" { shot = "op.png" }
+
+    w.addTimer(100, func() {
+        steps = steps + 1
+        if steps == 2 {
+            rep("b100", b100.x, b100.y, b100.w, b100.h)
+            rep("b50",  b50.x, b50.y, b50.w, b50.h)
+            rep("b25",  b25.x, b25.y, b25.w, b25.h)
+            rep("bIn",  bIn.x, bIn.y, bIn.w, bIn.h)      // 容器里的子按钮（应被父容器一起淡出 ✓）
+            rep("bRef", bRef.x, bRef.y, bRef.w, bRef.h)  // 对照组（满不透明 ✓）
+        }
+        if steps >= 6 { _exit(0) }
+    })
+
+    // 截图钩子放 setOverlay（在控件之上 ⇒ 读到的像素含界面 ✓）
+    w.setOverlay(func(Renderer r) {
+        if steps >= 3 and shot != "" {
+            var sz = w.getSize()
+            var px = r.readPixelsAt(0, 0, sz.w, sz.h)
+            if px != null { print("[op] 截图 " + shot + " ok=" + _str(SDL3.saveImagePNG(px, shot))) }
+            _exit(0)
+        }
+    })
+
+    w.run(func(Event ev): bool { return true }, func(Renderer r) {})
+    SDL3.ttfQuit()
+}
+
+main() { run() }
