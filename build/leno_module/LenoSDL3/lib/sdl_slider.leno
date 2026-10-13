@@ -106,6 +106,35 @@ export struct Slider impl Widget, Themeable {
 
     func on_change(func(float):void cb) { onChange = cb }
 
+    // ==================== 焦点（供窗口的"焦点链"调用 ✓ 2026-10-13 第三批）====================
+    //   键盘语义：←/↓ 减、→/↑ 加（垂直滑块同样能用 ✓）、Home / End 到两端 ✓
+    //   ★ 微调**只走 `set_value`** ✓ —— 量化 / 夹取 / 回调全在它里面 ⇒ 与鼠标那条路同口径 ✓
+    //   ⚠ `activate()`（Enter/Space）对滑块**没有标准语义** ⇒ 空实现 ✓
+    //     （但仍要有这个方法 ⇒ 它才能进窗口那张类型表、焦点链才能停到它身上 ✓）
+    bool focusable = true
+    bool focused = false
+    func set_focusable(bool b) { focusable = b; if not b { focused = false } }
+    func is_focusable(): bool { return focusable }
+    func focus() { if focusable and not focused { focused = true; core.markFrameRedraw() } }
+    func blur() { if focused { focused = false; core.markFrameRedraw() } }
+    func is_focused(): bool { return focused }
+    func activate() { }                  // 滑块按 Enter/Space 无标准语义 ✓（留给应用自己扩展 ✓）
+    // 键盘微调（由 `process` 调用 ✓）：步长用 `step`，没设就取范围的 1/100 ✓
+    pri func nudge(int sc) {
+        float stp = if step > 0.0 then step else (maxV - minV) / 100.0
+        if stp <= 0.0 { stp = 1.0 }
+        if sc == core.Scancode.LEFT or sc == core.Scancode.DOWN { set_value(value - stp) }
+        eif sc == core.Scancode.RIGHT or sc == core.Scancode.UP { set_value(value + stp) }
+        eif sc == core.Scancode.HOME { set_value(minV) }
+        eif sc == core.Scancode.END { set_value(maxV) }
+    }
+    func draw_focus_ring(Renderer r) {
+        if not focused { return }
+        Theme th = theme.getTheme()
+        r.setColor(th.accentFocus)
+        r.drawRect(x - 2.0, y - 2.0, w + 4.0, h + 4.0)
+    }
+
     // 当前值在轴上的归一化比例 [0,1]
     pri func ratio(): float {
         float span = maxV - minV
@@ -145,6 +174,11 @@ export struct Slider impl Widget, Themeable {
         var[float, float](mx, my) = ev.mousePos()
         if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
         if core.inPopupCapture(mx, my) { return }
+
+        // ★ 2026-10-13：键盘微调 —— `focused` 是**自己**的焦点标记 ✓
+        //   （键事件是"广播给所有控件"的 ⇒ 必须自己按焦点过滤 ✓ 与 Edit 的做法一致 ✓）
+        //   不聚焦时**不消费**任何键 ⇒ 不影响别的控件 ✓（窗口那边只拦 Tab/Enter/Space ✓）
+        if focused and ev.isKeyDown() { nudge(ev.scancode()) }
 
 
         if ev.isMouseMotion() {

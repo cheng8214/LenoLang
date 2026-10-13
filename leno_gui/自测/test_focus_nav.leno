@@ -10,7 +10,7 @@
 //        Button ⇒ on_click 计数 +1；CheckBox/Toggle ⇒ 值真的翻转；RadioButton ⇒ 选中自己 ✓
 //   用法：set SHOT=%TEMP%\focus.png & build\leno.exe leno_gui\自测\test_focus_nav.leno
 import "SDL3" as SDL3
-use SDL3.(Event, Renderer, Scancode, Window, Button, CheckBox, Toggle, RadioButton)
+use SDL3.(Event, Renderer, Scancode, Window, Button, CheckBox, Toggle, RadioButton, Slider)
 
 int steps = 0
 string shot = ""
@@ -54,6 +54,10 @@ func run() {
     Toggle tg = w.addToggle({x: 220, y: 110, w: 180, h: 28, text: "开关", on: false})
     RadioButton rd = w.addRadioButton({x: 420, y: 110, w: 180, h: 24, text: "单选", group: "g9", checked: false})
     ck.on_change(func(bool v) { hitsCk = hitsCk + 1; ckVal = if v then 1 else 0 })
+
+    // 第三行：滑块（第三批进链条 ✓；键盘微调 ←/↓ 减、→/↑ 加、Home/End 两端 ✓）
+    //   值用公开的 `get_value()` 断言 ✓（`value` 字段虽是公有 ✓，但走 getter 更贴使用者视角 ✓）
+    Slider sl2 = w.addSlider({x: 20, y: 156, w: 400, h: 24, min: 0, max: 100, value: 50, step: 5})
     tg.on_change(func(bool v) { tgHits = tgHits + 1; tgVal = if v then 1 else 0 })
     rd.on_change(func(bool v) { if v { rdHits = rdHits + 1 } })     // 选中时回调 true ✓
 
@@ -92,14 +96,26 @@ func run() {
         if steps == 23 { snapSw(ck, tg, rd, "Tab→ 单选（应 rd.focus=true ✓）") }
         if steps == 24 { SDL3.testKeyDown(wid, Scancode.RETURN, 0) }    // Enter ⇒ 选中自己
         if steps == 25 { snapSw(ck, tg, rd, "Enter（应 checked=true ✓）") }
-        if steps == 26 { SDL3.testKeyDown(wid, Scancode.TAB, 0) }       // 从最后一个继续 ⇒ 应回卷
-        if steps == 27 { snap(a, b, c, "Tab×6（应回卷到 A ✓ —— 链条末尾回卷 ✓）") }
-        if steps >= 30 { _exit(0) }
+        // ---- 第三行：滑块（键盘微调 ✓）----
+        if steps == 26 { SDL3.testKeyDown(wid, Scancode.TAB, 0) }       // → 滑块
+        if steps == 27 { print("[focus] Tab→ 滑块（应 focus=true、值=50 ✓）  focus=" + _str(sl2.is_focused()) +
+                                " 值=" + _str(sl2.get_value())) }
+        if steps == 28 { SDL3.testKeyDown(wid, Scancode.RIGHT, 0) }     // → 加 5
+        if steps == 29 { print("[focus] →（应 55 ✓）  值=" + _str(sl2.get_value())) }
+        if steps == 30 { SDL3.testKeyDown(wid, Scancode.LEFT, 0) }      // ← 减 5
+        if steps == 31 { print("[focus] ←（应 50 ✓）  值=" + _str(sl2.get_value())) }
+        if steps == 32 { SDL3.testKeyDown(wid, Scancode.END, 0) }       // End ⇒ 上限
+        if steps == 33 { print("[focus] End（应 100 ✓）  值=" + _str(sl2.get_value())) }
+        if steps == 34 { SDL3.testKeyDown(wid, Scancode.HOME, 0) }      // Home ⇒ 下限
+        if steps == 35 { print("[focus] Home（应 0 ✓）  值=" + _str(sl2.get_value())) }
+        if steps == 36 { SDL3.testKeyDown(wid, Scancode.TAB, 0) }       // 从最后一项继续 ⇒ 回卷
+        if steps == 37 { snap(a, b, c, "Tab×7（应回卷到 A ✓ —— 链条末尾回卷 ✓）") }
+        if steps >= 40 { _exit(0) }
     })
 
     // 截图（看焦点环 ✓）：钩子必须在 setOverlay（控件之上 ⇒ 像素含界面 ✓）
     w.setOverlay(func(Renderer r) {
-        if steps >= 28 and shot != "" {
+        if steps >= 38 and shot != "" {
             var sz = w.getSize()
             var px = r.readPixelsAt(0, 0, sz.w, sz.h)
             if px != null { print("[focus] 截图 " + shot + " ok=" + _str(SDL3.saveImagePNG(px, shot))) }

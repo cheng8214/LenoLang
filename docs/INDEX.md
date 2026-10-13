@@ -16,6 +16,19 @@
 >   ② 列表/下拉/菜单的**行高亮圆角锚错了边**（`atBottom` 拿行自己的矩形补圆角，而末行常只露一半 ⇒ 圆角落到面板底边下方 ⇒ 面板两个底角被方角铺满）+ 内容裁剪 `_int(ph)+1` 让末行文字出框 1px ⇒ 收敛成渲染器共用件 **`fillRowInPanel`**（只填「行矩形 ∩ 面板圆角矩形」，圆角**锚在面板的边**）+ 裁剪改 `ceil` 精确覆盖；`sdl_combobox` / `sdl_listbox` / `sdl_menu` 三处调用点改调它 ✓；
 >   ③ `leno_gui/应用/影视海报墙/` 新增**影片详情页**（点卡片进入：大海报 + 评分环 + 年份/分类/简介 + 收藏/播放；Esc/返回切回，网格状态原样保留 ✓；自检钩子 `WALL_DETAIL` / `WALL_BACK`）；
 >   速查附录 C 相应新增 3 条（圆角纹理用自定义混合 · 行高亮锚点与裁剪 · `setRootAt` 运行时换根）。
+>   **2026-10-13 追加（二十五）**：**A1 第三批：`Slider` 进焦点链 + 键盘微调** ✓：
+>   ① `←/↓` 减、`→/↑` 加（垂直滑块同样可用 ✓）、`Home/End` 到两端 ✓；★ 微调**只走 `set_value`** ✓
+>      （量化 / 夹取 / 回调全在它里面 ⇒ 与鼠标那条路同口径 ✓）；`activate()` 对滑块无标准语义 ⇒ 空实现 ✓
+>      （但方法要在 ⇒ 才能进窗口那张类型表 ✓）；
+>   ② 控件自己收键的**通用注意点**（写进速查 ✓）：键事件是**广播**的 ✗ ⇒ 必须 `if focused and ev.isKeyDown()`
+>      自己按焦点过滤 ✓（不聚焦时不消费、不影响别的控件 ✓，与 `Edit` 一致 ✓；窗口只拦 Tab/Enter/Space ✓）；
+>   ③ 验收（`test_focus_nav.leno` 加第三行滑块 ✓，值走公开 `get_value()` 断言 ✓）：
+>      Tab→ 滑块（focus=true、值=50）→ `→` 55 → `←` 50 → End 100 → Home 0 → Tab×7 **回卷到 A** ✓；
+>   ④ 回归：海报墙 ✓、主题件 ✓、opacity 件 ✓、清理大师 exit=0 ✓。速查附录 C 已补第三批 ✓。
+>   ⑤ 仍未进链条（按需推进）：`ListBox/ComboBox/Table/TreeView/TabControl` —— 要先定"Enter 是激活选中项
+>      还是进编辑"（建议：列表/树/表格 ⇒ 激活选中项；`Table` 的 Enter 留给进单元格编辑 ✓）；
+>      方向键在兄弟控件间移动 ✗、`tabIndex` ✗。
+>
 >   **2026-10-13 追加（二十四）**：**A1 第二批：开关类（`CheckBox`/`Toggle`/`RadioButton`）进焦点链** ✓：
 >   ① 三个控件各补同一套焦点方法（`set_focusable/is_focusable/focus/blur/is_focused/draw_focus_ring/activate` ✓），
 >      窗口那张类型表同步扩到 4 处（可聚焦 / 应用焦点 / 激活 / 画 ring ✓）；
