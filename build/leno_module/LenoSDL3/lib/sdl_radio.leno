@@ -108,6 +108,11 @@ export struct RadioButton impl Widget {
     }
     func get_h(): float          { return box }
     func set_pos(float px, float py) { x = px; y = py }
+    // ⚠ 尺寸是**自量**的（圆环 = `box`、总宽还要加文字宽 ⇒ 见 get_w ✓）⇒ 这里**故意**不接收
+    //   布局给的尺寸（收了也没用 ✓，见速查"自量尺寸控件"那条 ✓）：
+    //   `grow` / `basis` 只决定它**占的位置与间距**，改不了它画多大 ✓
+    //   （实测：set_size(180,44) 之后 get_w 仍是 90、get_h 仍是 22 ✓）
+    //   要改尺寸请在建的时候给：`createRadioButton({box: 26, font_size: 16})` ✓
     func set_size(float sw, float sh) {}
 
     func on_change(func(bool):void cb) { onChange = cb }
@@ -129,11 +134,23 @@ export struct RadioButton impl Widget {
         for _radioRegistry.len() to i {
             RadioButton rb = _radioRegistry[i]
             if rb.group == group and rb != self and rb.getWindowHandle() == winHnd {
-                rb.checked = false
+                if rb.checked {
+                    rb.checked = false
+                    // ★ 2026-10-13 修：互斥取消**也要回调**（原来是只改字段、不通知 ✗）——
+                    //   应用常靠 `on_change` 维护自己的状态（如"当前排序 = 评分优先"）⇒ 静默改字段
+                    //   会让"界面上没选、应用还以为选着"✗。实测：先点 r1 再点 r2，r1 收到 **0 次** on=false ✗
+                    rb.notify_change(false)
+                }
             }
         }
         if onChange != null { onChange(true) }
     }
+
+    // 供互斥路径调用：把状态变化**如实告诉监听方**（`on_change` 是应用侧状态的唯一来源 ✓）
+    //   ⚠ 与 `set_checked(bool)` 的区别要记牢（与 CheckBox/Toggle 同款约定 ✓）：
+    //     **用户操作**（点击自己 / 被同组挤掉）⇒ 回调 ✓；**程序化** `set_checked` ⇒ 不回调 ✓
+    //     （否则"设值 → 回调 → 又设值"会互相打架 ✗）
+    func notify_change(bool on) { if onChange != null { onChange(on) } }
 
     func process(Event ev) {
         if not _loaded { return }

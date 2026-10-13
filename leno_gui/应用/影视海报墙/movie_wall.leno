@@ -64,6 +64,8 @@ var C_FIELD   = #1B202BFF    // 搜索框/次要按钮底
 var C_FIELD_B = #2A3242FF    // 搜索框描边
 var C_BAR     = #39404EFF    // 滚动条
 var C_TRANS   = #00000000    // 透明
+var SEL_ROW   = #2A2318FF    // 列表选中行底（暗琥珀 ⇒ 与橙色主色同族 ✓）
+var SEP_LINE  = #1B212BFF    // 列表分隔线（贴近底色 ⇒ 不要"Excel 网格"感 ✓）
 
 // 图标路径（只读随包资源 ⇒ 一律 res_dir() ✓ 见 movie_data.leno 的 poster_path/images_dir）
 func icon(string n): string {
@@ -568,11 +570,15 @@ struct Wall {
     //     （`sdl_tab.leno` 的 applyOffsets 对"布局页"直接 return ✓）⇒ 一页只用一种方式 ✓
     //   ⚠ 容器用 `createXxx` + `add`（不要 `win.addXxx`：那会同时进窗口控件表 ⇒ 双重绘制/处理 ✗）
     pri func build_grid(HBox body) {
-        tabs = SDL3.createTabControl({x: 0, y: 0, w: 900, h: 500, tab_h: 34,
+        //   配色上让页签**融进应用**：标签栏/标签底一律 = 内容底色 ⇒ 只剩文字 + 激活页的橙色下划线
+        //   （默认那套"灰条 + 方框标签"是主题色 ⇒ 顶在暗色海报墙上像外挂的一块 ✗）
+        tabs = SDL3.createTabControl({x: 0, y: 0, w: 900, h: 500, tab_h: 36,
                                       tabs: ["  海报墙  ", "  列表  "], active: 0,
                                       font_size: 14, bg_color: C_BG,
-                                      border_color: C_PANEL, active_color: C_BG,
-                                      accent_color: C_ACCENT})
+                                      bar_color: C_BG, tab_color: C_BG,
+                                      active_color: C_BG, accent_color: C_ACCENT,
+                                      text_color: C_TXT_DIM, active_text_color: C_TXT,
+                                      border_color: C_TRANS})
         body.add(tabs, {grow: 1, shrink: 1, align: 3})
         tabs.on_change(func(int p) { on_view_change(p) })
 
@@ -594,11 +600,18 @@ struct Wall {
     }
 
     // 列表视图：表头可点排序 ✓、双击进详情 ✓、右键菜单与卡片**同名同义** ✓
+    //   ★ 2026-10-13：**照"媒体库列表"的样子调**（原来 5 列等宽 + 默认灰底 ⇒ 像外挂一块后台表格 ✗）：
+    //     ① 第 0 列带**海报缩略图**（`image_col` + 逐行 `set_row_image` ✓）；② 行高 46（不是 24 ✓）；
+    //     ③ 去掉空荡荡的「收藏」列 ⇒ 收藏改用片名前的 ★ 表达 ✓（省得 21/22 行都是空白 ✗）；
+    //     ④ 底/表头/选中/分隔线**全部对齐本应用色板**（默认那套是主题色，跟海报墙不是一家人 ✗）
     pri func build_table(VBox page) {
-        tbList = SDL3.createTable({x: 0, y: 0, w: 900, h: 460, row_h: 26, header_h: 30,
-                                   headers: ["片名", "年份", "分类", "评分", "收藏"],
-                                   sortable: true, zebra: true, resizable: true,
-                                   font_size: 13, empty_text: "没有匹配的影片（换个词，或点左栏分类）",
+        tbList = SDL3.createTable({x: 0, y: 0, w: 900, h: 460, row_h: 46, header_h: 34,
+                                   font_size: 14, image_size: 32, image_mode: 2,
+                                   headers: ["片名", "年份", "分类", "评分"], image_col: 0,
+                                   sortable: true, zebra: false, resizable: true,
+                                   bg_color: C_BG, header_color: C_PANEL,
+                                   sel_color: SEL_ROW, sep_color: SEP_LINE,
+                                   empty_text: "没有匹配的影片（换个词，或点左栏分类）",
                                    tip: "双击进详情 · 点表头排序"})
         page.add(tbList, {grow: 1, shrink: 1, align: 3})
         tbList.on_dbl_click(func(int row, int col) { open_list_row(row) })
@@ -620,12 +633,16 @@ struct Wall {
         Array[Array[string]] rows = []
         for 0 : tbMap.len() - 1 to i {
             Movie m = movies[tbMap[i]]
-            rows.add(["  " + m.title, m.year, m.cat, m.score,
-                      if cards[tbMap[i]].is_selected() then "★ 已收藏" else ""])
+            string star = if cards[tbMap[i]].is_selected() then "★ " else ""   // 收藏用 ★ 表达（省一列 ✓）
+            rows.add([star + m.title, m.year, m.cat, m.score])
         }
         // ★ 用**批量**接口 `set_rows`（会重放当前排序 ✓）—— 逐行 `clear()` + `add_row()` 是另一条路：
         //   `clear/add_row` 会**撤销**排序状态 ⇒ 换数据后表头箭头与数据对不上 ✗（见 sdl_table 的注释 ✓）
         tbList.set_rows(rows)
+        // 缩略图**逐行**贴，且必须在 `set_rows` **之后**（它会把 rowImages 冲成空串 ✗ 见 sdl_table ✓）
+        for 0 : tbMap.len() - 1 to i {
+            tbList.set_row_image(i, data.poster_path(movies[tbMap[i]].file))
+        }
     }
 
     pri func on_view_change(int p) {

@@ -1055,6 +1055,52 @@ win.setRootAt(root, 0, tbH)       // 返回列表页（root 要**存字段**，�
 
 回归件：`leno_gui/应用/影视海报墙/movie_wall.leno`（`WALL_DETAIL=n` 进详情 / `WALL_BACK=n` 返回 ✓）
 
+### ⛔ `RadioButton` 同组互斥：**被挤掉那一项也要有回调**（2026-10-13 实测 + 已修 ✓）
+
+**症状**：两组单选各挂 `on_change`，点第二个 ⇒ 界面是对的（第一个的圆点消失 ✓），
+但**第一个的 `on_change(false)` 从来不响** ✗ ⇒ 靠回调维护状态的应用会"界面上没选、自己还以为选着" ✗
+（最坑的是**静默**：没有报错、画面也对，只有背后的状态错了 ✓）。
+
+**病因**：`RadioButton.select()` 取消同组其它项时**直接改字段**（`rb.checked = false`），没走回调 ✗。
+
+**修法（已落库 ✓）**：取消时照样通知（`rb.notify_change(false)` ✓）。记牢这条契约（与 `CheckBox`/`Toggle` 一致 ✓）：
+- **用户操作**（点自己 / 被同组挤掉）⇒ 回调 ✓
+- **程序化** `set_checked(true/false)` / `set_on(...)` ⇒ **不回调** ✓（否则"设值 → 回调 → 又设值"互相打架 ✗）
+
+**验收**（探针 `build/_probe_form.leno`）：先点 r1、再点 r2 ⇒ 依次应看到
+`r1 收到回调 on=true` → `r1 收到回调 on=false` → `r2 收到回调 on=true`，终态 **r1 回调 2 次 / r2 回调 1 次** ✓
+（修前 r1 只有 1 次 ✗）
+
+### ⛔ `Toggle` / `CheckBox` / `RadioButton`：尺寸**自量**，布局给的尺寸被忽略（2026-10-13 实测 ✓）
+
+**症状**：`hbox.add(tg, {grow: 1, basis: 300})`、或到处 `set_size(...)` 想拉长它 ⇒ **毫无变化** ✗
+（它照自己的老尺寸画，只是在布局里多占了空位 ✓）。
+
+**病因**：这三个控件的 `set_size(float, float) {}` 是**空实现**（设计使然：开关宽 = `w`、方框 = `box`、
+总宽还要加文字宽 ⇒ 见各自的 `get_w()` ✓）。实测：`set_size(200,44)` 之后 `get_w` 仍是 122、`get_h` 仍是 28 ✓。
+
+**怎么办**：
+- 尺寸**建的时候**给：`createToggle({w: 64, h: 32})` / `createCheckBox({box: 26})` / `createRadioButton({box: 26})` ✓
+- `grow` / `basis` 只决定它**占的位置与间距**，改不了它画多大 ✓（要横向铺满得换分组方式 ✓）
+- ⚠ 同类"自量尺寸"控件还有 `Badge` / `LinkButton`（`get_w()` 也是算出来的 ✓）
+
+### ⛔ 自测：合成点击前**必须先投一条鼠标移动**（`testMoveAt`）—— 否则被 hover 门吃掉（2026-10-13 实测 ✓）
+
+**症状**：`SDL3.testClickAt(win.getID(), x, y)` 返回 **true**（两条事件确实都投出去了 ✓），
+但控件**毫无反应** ✗（回调不响、状态不变 ⇒ 极易被误判成"控件坏了" ✗）。
+
+**病因**：一批控件的点击判据是 `ev.isMouseButtonDown() and hover`
+（`RadioButton` / `CheckBox` / `Toggle` 都是 ✓），而 `hover` **只在 `MouseMotion` 里置位** ⇒
+只投 click 的话 `hover=false`，点击被**静默忽略** ✗。
+
+**怎么办**：注入点击前先补一条**同坐标**的移动 ✓：
+```leno
+SDL3.testMoveAt(win.getID(), x, y)      // ★ 先把 hover 点亮
+SDL3.testClickAt(win.getID(), x, y)     // 再点（一步一行、走定时器 ✓）
+```
+⚠ 只有"看 hover 才认点击"的控件需要这样（Card 这类**按坐标判命中**的不受影响 ✓）——
+自测脚本里**统一先移动再点击**最省心 ✓
+
 ### ⛔ `Table`：表头的排序箭头会**说谎** —— 换数据分 `set_rows` / `clear`+`add_row` 两条路（2026-10-13 实测 + 已修 ✓）
 
 **症状**：点表头把「评分」排成降序（表头出现 `▼`），随后**换一批数据**（搜索 / 换筛选 / 刷新）

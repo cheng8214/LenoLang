@@ -32,7 +32,7 @@ use theme.Color
 //   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
 func _opts_keys(): Array[string] {
     return [
-"accent_color", "active", "active_color", "bg_color", "border", "border_color", "clip", "cursor", "enabled", "font_path", "font_size", "font_style", "h", "show_header", "tab_h", "tabs", "visible", "w", "x", "y"
+"accent_color", "active", "active_color", "active_text_color", "bar_color", "bg_color", "border", "border_color", "clip", "cursor", "enabled", "font_path", "font_size", "font_style", "h", "show_header", "tab_color", "tab_h", "tabs", "text_color", "visible", "w", "x", "y"
 ]
 }
 export struct TabControl impl Widget, Themeable {
@@ -142,6 +142,13 @@ export struct TabControl impl Widget, Themeable {
         if opts.get("border_color") is Color => t { brdColor = t }
         if opts.get("active_color") is Color => t { actColor = t }
         if opts.get("accent_color") is Color => t { accColor = t }
+        // ★ 2026-10-13 补：**标签栏底 / 非激活标签底 / 两种文字色**以前**只能跟主题** ✗ ——
+        //   应用想把页签融进自己的配色（暗色内容区 + 橙色下划线）时做不到，只能顶着主题那套灰条
+        //   （海报墙实测："列表"那排看着像外挂进来的一块 ✗）⇒ 一并暴露成 opts ✓
+        if opts.get("bar_color") is Color => t { barColor = t }
+        if opts.get("tab_color") is Color => t { tabColor = t }
+        if opts.get("text_color") is Color => t { txtColor = t }
+        if opts.get("active_text_color") is Color => t { actTxtColor = t }
 
         cursor = opts.get("cursor", SystemCursor.POINTER)
         hover = -1   // 重置悬停标签（二次 set 时归零）
