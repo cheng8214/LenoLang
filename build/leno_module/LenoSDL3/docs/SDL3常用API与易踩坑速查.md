@@ -1034,6 +1034,28 @@ _lib.SDL_SetTextureBlendMode(mask, core.BlendMode.BLEND)  // ★ 蒙版是**共�
   （SDL 报 `Parameter 'renderer' is invalid`，于是建纹理/离屏全失败 ✗）⇒
   探针里所有纹理都要用**回调参数里给的** `Renderer r` 创建（`r.handle` ✓）
 
+### ⛔ 列表/下拉/菜单的"行高亮"：圆角要**锚在面板边上**（否则底角冒方块 + 文字出框 ✓ 2026-10-13 实测）
+
+`sdl_combobox` 弹层 / `sdl_listbox` / `sdl_menu` 下拉 三个控件原来**各抄了一份**"行底色"画法：
+`atTop` → 圆角 + 补行底两角；`atBottom` → 圆角 + 补行顶两角。看着对，但**圆角锚错了边** ✗：
+
+- 面板底边**通常不落在**行边界上：弹层高 200、行高 26 ⇒ 最后一行只露 18px，
+  它的"底边"在面板底边**下方 8px** ⇒ 照它自己补的圆角也落在下面 ⇒
+  面板真正的两个底角仍是**方角**、被这行整行铺满：症状 =「面板左下/右下各冒出一小块底色方块」
+  （实测像素：面板底行整行铺到边框线上，左下/右下各约 6×4px 方角色块 ✗）
+- 同族第二处：内容裁剪矩形写成 `_int(ph) + 1`（本意是"覆盖浮点截断的亚像素"），
+  它比面板真身**多 1px** ⇒ 末行（常只露一半）的**文字下沿**漏到面板/边框**外面** 1px ✗
+  （症状：「字体下沿有一丢丢出框」✓）
+
+**怎么办**（已收敛成**单一实现** ✓，别再各写一份 ✗）：
+
+- 行底色一律走 `Renderer.fillRowInPanel(px, py, pw, ph, radius, rx, ry, rw, rh)` ——
+  只填 **(行矩形 ∩ 面板圆角矩形)**，圆角**锚在面板的上/下边**上 ✓（首行/末行/只露半行都对 ✓）
+- 裁剪矩形要**正好等于面板**：`clip.w = _int(maths.ceil(px + pw)) - _int(px)`（`h` 同理 ✓）
+- 验证件：`build/_probe_combo_corner.leno`（行高 26 / 弹层高 200 / 12 项 ⇒ 必出"只露一半"的末行 ✓）
+  `set CSHOT=%TEMP%\combo.png & build\leno.exe build\_probe_combo_corner.leno`；
+  再加 `set CSEL=7` 把"只露一半的末行"设成**选中** ⇒ 压高亮行的形状 ✓
+
 ### ⛔ 在 A 的**方法**里写 `new B(键=值)`：参数值那一段**看不见隐式 `self`**（编译器怪癖 ✓）
 
 `Card` 里构造 `BadgeSpec` 时实测：`new BadgeSpec(text = badge, …)`（`badge` 是 **Card 的字段**）

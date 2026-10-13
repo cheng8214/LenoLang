@@ -456,7 +456,12 @@ export struct ComboBox impl Widget, Themeable {
 
         SDL_Rect clip = SDL_Rect.malloc()
         clip.x = _int(px); clip.y = _int(py)
-        clip.w = _int(pw) + 1; clip.h = _int(ph) + 1   // +1 覆盖浮点截断的亚像素
+        // ★ 2026-10-13：裁剪矩形要**正好等于面板**，别给 +1 —— 旧代码 `_int(ph) + 1` 本意是
+        //   "覆盖浮点截断的亚像素"，但它比面板真身还多 1px ⇒ 末行（常只露一半）的**文字下沿**
+        //   会漏到面板/边框**外面** 1px ✗（实测症状："字体下沿有一丢丢出框" ✓）
+        //   ⇒ 用 ceil 算出面板的真实覆盖（永不超出 ✓，也永不缺一角 ✓）
+        clip.w = _int(maths.ceil(px + pw)) - _int(px)
+        clip.h = _int(maths.ceil(py + ph)) - _int(py)
         r.pushClipRect(clip.to_ptr())
 
         float radius = 6.0
@@ -469,22 +474,11 @@ export struct ComboBox impl Widget, Themeable {
             if i == sel { rowC = selColor }
             else if i == hover { rowC = hovColor }
             r.setColor(rowC)
-            // 首行/末行需用圆角矩形 + 填补缺口，否则高亮背景会溢出弹层的圆角边界
-            bool atTop = (iy <= py + 0.5)
-            bool atBottom = (iy + itemH >= py + ph - 0.5)
-            if atTop and atBottom {
-                r.fillRoundedRect(px, iy, pw, itemH, radius)
-            } else if atTop {
-                r.fillRoundedRect(px, iy, pw, itemH, radius)
-                r.fillRect(px, iy + itemH - radius, radius, radius)
-                r.fillRect(px + pw - radius, iy + itemH - radius, radius, radius)
-            } else if atBottom {
-                r.fillRoundedRect(px, iy, pw, itemH, radius)
-                r.fillRect(px, iy, radius, radius)
-                r.fillRect(px + pw - radius, iy, radius, radius)
-            } else {
-                r.fillRect(px, iy, pw, itemH)
-            }
+            // 行底色统一走渲染器的共用件：圆角**锚在面板的边**上（首行/末行/只露半行都对 ✓）
+            //   ⚠ 旧写法是"按行自己的矩形补圆角 + 补缺口"：末行只露 18px（200/26=7.69 行）时
+            //     圆角落到了面板底边**下方 8px** ⇒ 面板两个底角仍是方角、被这行铺满 ✗
+            //     （2026-10-13 实测：面板底行整行铺满到边框线上，左下/右下各一块方角底色 ✓）
+            r.fillRowInPanel(px, py, pw, ph, radius, px, iy, pw, itemH)
 
             if textH > 0.0 {
                 Color tcC = txtColor

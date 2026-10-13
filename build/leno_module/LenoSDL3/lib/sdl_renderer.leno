@@ -1551,6 +1551,66 @@ const BX_TEX    = 4   // 批处理文字纹理
         return drawRoundedGeom(x, y, w, h, r)
     }
 
+    // ==================== 「圆角面板里的一行」====================
+    // 用途：下拉 / 菜单 / 列表那种"面板底色先铺好圆角，再一行行盖上去"的行底色（含高亮行 ✓）。
+    // 语义：只填 **(行矩形 ∩ 面板圆角矩形)**，并且行的圆角**锚在面板的上/下边**上。
+    //
+    // ★ 为什么必须锚在**面板边**（三个控件原来都写成"按行自己的矩形补圆角" ✗，2026-10-13 实测改）：
+    //   面板的底边**通常不落在**行边界上 —— 下拉层高 200、行高 26 ⇒ 最后一行只露 18px，
+    //   那一行的"底边"在面板底边**下方 8px** ⇒ 照它自己补的圆角也落在下面 ✗
+    //   ⇒ 面板真正的两个底角仍是**方角**，被这行铺满：视觉上"面板底部两角各冒出一小块底色方块"
+    //     （实测像素：面板的底行整行铺满到边框线上，左下/右下各约 6×4px 的方角色块 ✗；
+    //       同族的"字体下沿出框"是内容裁剪矩形给了 +1px，见调用方的 pushClipRect ✓）
+    //   ⇒ 判据只看"行**碰到**面板的哪条边"，圆角一律拿面板的边来锚 ✓
+    //
+    // 参数：面板 (px, py, pw, ph, radius)；行 (rx, ry, rw, rh) —— rx/rw 允许 ≠ px/pw（缩进项/多列 ✓）
+    // ⚠ 只负责把行画满，颜色由调用方 `setColor` 决定 ✓（与 fillRoundedRect 同约定 ✓）
+    func fillRowInPanel(float px, float py, float pw, float ph, float radius,
+                        float rx, float ry, float rw, float rh) {
+        if pw <= 0.0 or ph <= 0.0 or rw <= 0.0 or rh <= 0.0 { return }
+        float r = radius
+        if r > pw * 0.5 { r = pw * 0.5 }
+        if r > ph * 0.5 { r = ph * 0.5 }
+        // 行 ∩ 面板：行可能整个在面板外、或比面板还高 ⇒ 先夹进面板，绝不画到面板外面 ✓
+        float x0 = rx
+        if x0 < px { x0 = px }
+        float x1 = rx + rw
+        if x1 > px + pw { x1 = px + pw }
+        if x1 <= x0 { return }
+        float yA = ry
+        if yA < py { yA = py }
+        float yB = ry + rh
+        if yB > py + ph { yB = py + ph }
+        if yB <= yA { return }
+        // 行**碰到**面板哪条边（0.5 容差：吸收调用方的 snap/浮点误差 ✓）
+        bool atTop = ry <= py + 0.5
+        bool atBottom = ry + rh >= py + ph - 0.5
+        if atTop and atBottom {                 // 整块面板就这一行 ⇒ 直接按面板圆角画 ✓
+            fillRoundedRect(px, py, pw, ph, r)
+            return
+        }
+        if atTop {                              // 上边贴齐面板顶 ⇒ 圆角锚在**面板顶** ✓
+            fillRoundedRect(x0, py, x1 - x0, yB - py, r)
+            if yB - py > r {                    // 该行**底**两角在面板内部 ⇒ 补回方角（否则被切圆 ✗）
+                fillRect(x0, yB - r, r, r)
+                fillRect(x1 - r, yB - r, r, r)
+            }
+            return
+        }
+        if atBottom {                           // 下边越出面板底 ⇒ 圆角锚在**面板底** ✓
+            float by = py + ph - rh             // ★ 锚定：把行顶挪到"让行底正好落在面板底边"
+            if by < py { by = py }
+            if by > ry { fillRect(x0, ry, x1 - x0, by - ry) }   // 锚点以上仍是直边段（方角 ✓）
+            fillRoundedRect(x0, by, x1 - x0, py + ph - by, r)
+            if py + ph - by > r {               // 该行**顶**两角在面板内部 ⇒ 补回方角 ✓
+                fillRect(x0, by, r, r)
+                fillRect(x1 - r, by, r, r)
+            }
+            return
+        }
+        fillRect(x0, yA, x1 - x0, yB - yA)      // 中间行：整条直边 ✓
+    }
+
     // ==================== 圆角**纹理**（2026-10-13 新增 ✓）====================
     // 为什么需要它：`fillRoundedRect` 能把**颜色**画成圆角，但把**图片**画成圆角做不到 ——
     //   蒙版路径是「一次 RenderGeometry = 一张纹理 × 顶点色」（见 emitMask9），
