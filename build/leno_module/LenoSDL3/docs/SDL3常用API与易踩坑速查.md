@@ -511,7 +511,7 @@ build\leno.exe --no-cache leno_gui\应用\Trae签到\trae_gui.leno
 应用侧只要三行：
 
 ```leno
-TitleBar tb = SDL3.createTitleBar({title: "我的应用", height: 32, actions: [
+TitleBar tb = SDL3.createTitleBar({title: "我的应用", h: 32, actions: [
     {id: "settings", icon: "gear", tip: "设置"},
     {id: "theme",    icon: "sun",  tip: "换主题"}
 ]})
@@ -1803,7 +1803,7 @@ Toggle / RadioButton / Slider / ProgressBar / ListBox / Edit / LinkButton / Comb
 | 类别 | 例子 | 处置 |
 |---|---|---|
 | ① 风格笔误（camelCase 混入） | `fontSize`(popmenu) / `padX`·`padY`(gridlayout、layout) / `imageMode`·`imageExpanded`(treeview) | ✅ **本轮改掉**（唯一没有争议的一类 ✓） |
-| ② 同概念不同名 | `h` vs `height`(titlebar) / `sel_color` vs `selected_color`(card) / `sep_color` vs `separator_color` vs `divider_color` / `head_*` vs `header_*` / `item_h` vs `row_h` | ⏳ 逐个评估（**下一轮** —— 有的差异是**刻意的**，见上面 ⑨ ✓） |
+| ② 同概念不同名 | `h` vs `height`(titlebar) / `sel_color` vs `selected_color`(card) / `sep_color` vs `separator_color` vs `divider_color` / `head_*` vs `header_*` / `item_h` vs `row_h` | ✅ **同日第二轮处理完**（逐组判"是不是刻意的" ⇒ 见下面的第二轮小节 ✓） |
 | ③ 语义色名各指各的东西 | `fill_color` / `track_color` / `bar_color` / `thumb_color` / `on_color` / `off_color`… | ❌ **不动**：统一成一个通用名会把"哪个色是哪个"的信息丢掉 ✗；要统一的是**后缀**，而后缀已经一致 ✓ |
 
 ### 本轮的机制：**改名表（过渡用 —— 当天已撤）**，过程比结论更值得记 ✓
@@ -1858,3 +1858,61 @@ Array[string] _renamed_new = ["font_size", "pad_x", "pad_y", "image_mode", "imag
   （"旧名仍可用"若还留着就是**假话** ✗）；改名表是**过渡件**、迁完即撤 ✓
 - **以后再要改名时**：**先把改名表加回来**（保证"零破坏 + 迁移可验证" ✓），
   让**所有**读该键的控件同时认新名，迁完、警告清零后再撤 ✓
+- **状态色一族**（多状态控件）：`{状态}_color`（底）+ `{状态}_text_color`（文字）+
+  `{状态}_border_color`（边）✓（`pending_color` / `alert_text_color` / `today_border_color` ✓）
+
+---
+
+## 附录 E：选项命名统一 · 第二轮（第②类"同概念不同名"，2026-10-13 同日 ✓）
+
+第一轮只清掉了 5 个 camelCase 笔误（附录 D ✓）；第二轮逐组判"**是不是刻意的**"，**只统一真同概念的**：
+
+### 统一的 9 组
+
+| 概念 | 统一为 | 改掉 |
+|---|---|---|
+| 高 | `h` | titlebar 的 `height` |
+| 分隔色 / 宽 | `sep_color` / `sep_width` | titlebar `separator_color`；splitter `divider_color` / `divider_width` |
+| 线宽后缀 | `*_w` | canvas `border_width` → `border_w` |
+| 表头 | `header_*` | calendar `head_h` / `head_text_color` / `show_head` |
+| 状态色 | `{状态}_color` + `{状态}_text_color` | calendar `plain_bg/fg`、`filled_bg/fg`、`alert_bg/fg`、`today_bg/fg`、`today_border`→`today_border_color`；steps `pending_bg`→`pending_color`、`pending_border`→`pending_border_color`、`pending_text`→`pending_text_color` |
+| 选中色 | `sel_color` | card `selected_color` |
+| 行高 | `item_h` | table / treeview 的 `row_h` |
+| 别名 | 删掉 | table 的 `multi`（`multi_select` 的旧别名 ✓） |
+
+### 刻意保留（不同对象 / 不同概念 ⇒ **不统一** ✓）
+
+| 名 | 在哪 | 为什么保留 |
+|---|---|---|
+| `active_color` / `active_text_color` | tab | 页签的"**激活页**"是独立概念（配套 `active` / `set_active()` ✓），与"选中行"不同 |
+| `separator` | menu（**菜单项**级） | 它是"**这一项就是分隔线**"的**项种类**标记，不是开关 ⇒ 改成 `show_*` 反而错 ✗ |
+| `size` | ring · spinner | 圆环/转子的**形状尺寸**（不是 `w`/`h` 两个方向 ✓） |
+| `thickness` | ring · separator · spinner | 环粗 / 线粗 —— 对象各不相同；且分隔线横竖都算"厚" ⇒ 比 `line_w` 更准 ✓ |
+| `line_w` | steps | 连接线宽度 ✓（`_w` 后缀本就合规 ✓） |
+
+### ⚠ 本轮踩到并纠正的**自己的错**（最值得记的一条 ✓）
+
+calendar 的颜色是 `{状态}_{bg,fg}` **矩阵**（plain / filled / alert / today × 背景·文字 + `today_border`）。
+第一遍我**只改了一半**（`plain_*` / `alert_*` ✗，`filled_*` / `today_*` 没动 ✗）——
+**那比不改更糟** ✗：同一族里出现两种写法，看图的人再也猜不出规律 ✓。
+⇒ 规矩：**一族要么整族不动、要么整族改完** ✓。本轮选了**改完**
+（`{状态}_color` / `{状态}_text_color` / `{状态}_border_color` ✓，与 `header_color`/`header_text_color`、
+以及 steps 的 `pending_*_color` 完全一致 ✓）。
+
+### 验收（本轮）
+
+| 检查 | 结果 |
+|---|---|
+| 全仓旧名（**键位置**）残留 | **归零** ✓（四个仓库的 `*.leno` 逐个扫 ✓） |
+| **GUI 全部 107 个文件**逐个真编译 | **0 失败、0 选项警告** ✓（用户要求"重点跑 GUI" ✓） |
+| 框架 `examples` 56 文件 + 三个应用 **32 个入口** | **0 失败、0 警告** ✓ |
+| 断言套件 | **452 passed / 0 failed** ✓ |
+| `leno_gui/自测` **19 个用例逐个真跑** | 全 0 ✓ |
+
+⚠ 其中 `test_chart_labels.leno` 在批量跑时看着"超时" —— 查实是**它读的环境变量是 `PROBE_SHOT` 而不是
+`SHOT`** ✗ ⇒ 不给它那个变量就**不会自动退出**（设计如此：等人看窗口 ✓）⇒ **不是回归** ✓；
+补上 `PROBE_SHOT` 后 `exit=0` ✓。批量跑自测时**每条的 SHOT 变量名要单独确认** ✓。
+
+⚠ 迁移铁律同第一轮：只动**字典键位置**，字段/局部变量一律不动 ✓；
+`height` 这种**常用词**必须**限定作用域**（只改 `createTitleBar(...)` 调用内部 ✓）——
+否则会误伤 HTML 字符串里的 `height:` 和普通 dict ✓（本轮实测有这个假阳性 ✓）。

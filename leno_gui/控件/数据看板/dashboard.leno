@@ -186,7 +186,7 @@ main() {
     var table = SDL3.createTable({
         x:32, y:248, w:588, h:236,
         headers:["主机","指标","数值","状态","时间"],
-        rows:[], sortable:true, zebra:true, row_h:26, header_h:30, font_size:14
+        rows:[], sortable:true, zebra:true, item_h:26, header_h:30, font_size:14
     })
     tblCard.add(table)
     var filterLbl = SDL3.createLabel({x:32, y:486, text:"", font_size:12, text_color: #96A0AFFF})

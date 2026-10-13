@@ -37,7 +37,7 @@ main() {
 
     // ① 声明式：齿轮 + 太阳 —— **都是内置矢量图标 ⇒ 0 资源文件** ✓
     //    位置：与最小化/最大化/关闭**同一排**、在它们内侧；声明顺序 = 从系统按钮往内侧排 ✓
-    TitleBar tb = SDL3.createTitleBar({title: "标题栏动作按钮示例", height: 32, font_size: 14,
+    TitleBar tb = SDL3.createTitleBar({title: "标题栏动作按钮示例", h: 32, font_size: 14,
         actions: [{id: "settings", icon: "gear", tip: "设置（点我试试）"},
                   {id: "theme", icon: "sun", tip: "换主题"}]})
     win.add(tb)

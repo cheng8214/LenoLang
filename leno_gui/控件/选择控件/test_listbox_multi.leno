@@ -99,7 +99,7 @@ func setupUI() {
     float TOOLBAR_H = 36.0
 
     // 标题栏
-    titleBar = SDL3.createTitleBar({title: "ListBox 多选测试", height: 32, font_size: 14})
+    titleBar = SDL3.createTitleBar({title: "ListBox 多选测试", h: 32, font_size: 14})
     win.add(titleBar)
     float titleH = titleBar.get_h()
 

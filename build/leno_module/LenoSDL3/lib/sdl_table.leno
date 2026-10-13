@@ -32,7 +32,7 @@ use theme.Color
 //   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
 func _opts_keys(): Array[string] {
     return [
-"aligns", "bg_color", "cell_select", "cell_types", "check_col", "check_color", "col_reorder", "col_widths", "cursor", "editable", "editable_cols", "empty_color", "empty_text", "enabled", "font_path", "font_size", "font_style", "frozen_cols", "h", "header_aligns", "header_color", "header_h", "headers", "image_cache_max", "image_col", "image_gap", "image_mode", "image_pad", "image_path", "image_size", "max_col_width", "min_col_width", "multi", "multi_select", "numeric_cols", "resizable", "row_h", "row_images", "row_reorder", "rows", "sel_color", "sep_color", "sort_disabled_cols", "sortable", "tip", "visible", "w", "x", "y", "zebra"
+"aligns", "bg_color", "cell_select", "cell_types", "check_col", "check_color", "col_reorder", "col_widths", "cursor", "editable", "editable_cols", "empty_color", "empty_text", "enabled", "font_path", "font_size", "font_style", "frozen_cols", "h", "header_aligns", "header_color", "header_h", "headers", "image_cache_max", "image_col", "image_gap", "image_mode", "image_pad", "image_path", "image_size", "max_col_width", "min_col_width", "multi_select", "numeric_cols", "resizable", "item_h", "row_images", "row_reorder", "rows", "sel_color", "sep_color", "sort_disabled_cols", "sortable", "tip", "visible", "w", "x", "y", "zebra"
 ]
 }
 export struct Table impl Widget, Themeable {
@@ -356,7 +356,7 @@ export struct Table impl Widget, Themeable {
         w = opts.get("w", 360)
         h = opts.get("h", 240)
         headerH = opts.get("header_h", 28)
-        rowH = opts.get("row_h", 24)
+        rowH = opts.get("item_h", 24)
         _fontSize = opts.get("font_size", 15)
         fontPath = opts.get("font_path", "")
         fontStyle = opts.get("font_style", 0)
@@ -436,7 +436,7 @@ export struct Table impl Widget, Themeable {
         visible = opts.get("visible", true)
         _tip = opts.get("tip", "")
         selRow = -1; selCol = -1; hoverRow = -1; selRows = []; rebuild_sel_set()
-        _multi = opts.get("multi_select", opts.get("multi", false))
+        _multi = opts.get("multi_select", false)
         scrollX = 0.0; scrollY = 0.0
         sortCol = -1; sortDesc = false
         draggingV = false; draggingH = false

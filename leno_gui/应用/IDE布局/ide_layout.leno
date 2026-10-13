@@ -51,7 +51,7 @@ struct IDE {
         // ★ 标题栏（VSCode 风格：高度加大以容纳菜单栏，标题居中）
         titleBar = SDL3.createTitleBar({
             title: "LenoIDE - ide_layout",
-            height: 36,
+            h: 36,
             font_size: 12,
             title_align: "center"
         })
@@ -128,7 +128,7 @@ struct IDE {
             ratio: 0.7,
             min_first: 100,
             min_second: 60,
-            divider_width: 4,
+            sep_width: 4,
             hit_pad: 4
         })
         rightSplit.set_first(editor)
@@ -140,7 +140,7 @@ struct IDE {
             ratio: 0.2,
             min_first: 120,
             min_second: 200,
-            divider_width: 4,
+            sep_width: 4,
             hit_pad: 4
         })
         mainSplit.set_first(sidebar)

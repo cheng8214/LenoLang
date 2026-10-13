@@ -185,7 +185,7 @@ struct Wall {
         win.setMinSize(820, 560)
 
         // ---- 自绘标题栏（win.add 后自动去掉系统标题栏边框 ✓）----
-        tb = SDL3.createTitleBar({title: "影视海报墙", height: TB_H, font_size: 13})
+        tb = SDL3.createTitleBar({title: "影视海报墙", h: TB_H, font_size: 13})
         win.add(tb)
         tbH = tb.get_h()                     // 存字段：详情页换根时也要让开它 ✓
 
@@ -605,7 +605,7 @@ struct Wall {
     //     ③ 去掉空荡荡的「收藏」列 ⇒ 收藏改用片名前的 ★ 表达 ✓（省得 21/22 行都是空白 ✗）；
     //     ④ 底/表头/选中/分隔线**全部对齐本应用色板**（默认那套是主题色，跟海报墙不是一家人 ✗）
     pri func build_table(VBox page) {
-        tbList = SDL3.createTable({x: 0, y: 0, w: 900, h: 460, row_h: 46, header_h: 34,
+        tbList = SDL3.createTable({x: 0, y: 0, w: 900, h: 460, item_h: 46, header_h: 34,
                                    font_size: 14, image_size: 32, image_mode: 2,
                                    headers: ["片名", "年份", "分类", "评分"], image_col: 0,
                                    sortable: true, zebra: false, resizable: true,

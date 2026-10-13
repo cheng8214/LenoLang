@@ -45,7 +45,7 @@ struct IDE4Way {
         // ===== 标题栏 =====
         titleBar = SDL3.createTitleBar({
             title: "LenoIDE - 四向布局",
-            height: 36, font_size: 12, title_align: "center"
+            h: 36, font_size: 12, title_align: "center"
         })
         win.add(titleBar)
         float titleH = titleBar.get_h()
@@ -130,7 +130,7 @@ struct IDE4Way {
         midVSplit = SDL3.createSplitter({
             orientation: 1, ratio: 0.7,
             min_first: 100, min_second: 60,
-            divider_width: 4, hit_pad: 5
+            sep_width: 4, hit_pad: 5
         })
         midVSplit.set_first(editor)
         midVSplit.set_second(terminal)
@@ -139,7 +139,7 @@ struct IDE4Way {
         innerHSplit = SDL3.createSplitter({
             orientation: 0, ratio: 0.75,
             min_first: 200, min_second: 100,
-            divider_width: 5, hit_pad: 5
+            sep_width: 5, hit_pad: 5
         })
         innerHSplit.set_first(midVSplit)
         innerHSplit.set_second(outline)
@@ -148,7 +148,7 @@ struct IDE4Way {
         outerHSplit = SDL3.createSplitter({
             orientation: 0, ratio: 0.2,
             min_first: 100, min_second: 300,
-            divider_width: 5, hit_pad: 5
+            sep_width: 5, hit_pad: 5
         })
         outerHSplit.set_first(explorer)
         outerHSplit.set_second(innerHSplit)

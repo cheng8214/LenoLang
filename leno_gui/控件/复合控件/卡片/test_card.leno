@@ -187,7 +187,7 @@ func toggle_view() {
 func build(Window win) {
     MOVIES = data.movies()
 
-    TitleBar tb = SDL3.createTitleBar({title: "Card 卡片控件演示", height: TB_H, font_size: 13})
+    TitleBar tb = SDL3.createTitleBar({title: "Card 卡片控件演示", h: TB_H, font_size: 13})
     win.add(tb)
 
     VBox root = SDL3.createVBox({x: 0, y: 0, w: WIN_W, h: WIN_H - TB_H,

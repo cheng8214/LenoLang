@@ -209,7 +209,7 @@ struct PEAnalyzer {
     // ==================== UI 构建 ====================
 
     func setupUI() {
-        titleBar = SDL3.createTitleBar({title: "Leno PE 分析器", height: 32, font_size: 14})
+        titleBar = SDL3.createTitleBar({title: "Leno PE 分析器", h: 32, font_size: 14})
         win.add(titleBar)
         float titleH = titleBar.get_h()
 
@@ -243,7 +243,7 @@ struct PEAnalyzer {
         dosTable = SDL3.createTable({
             headers: ["字段", "值", "说明"],
             col_widths: [180.0, 200.0, 400.0],
-            sortable: false, zebra: true, row_h: 24, header_h: 28, font_size: 13
+            sortable: false, zebra: true, item_h: 24, header_h: 28, font_size: 13
         })
         var dosLayout = SDL3.createVBox({pad_x: PAD, pad_y: PAD, spacing: 0})
         dosLayout.add(dosTable, {grow: 1, shrink: 1, align: 3})
@@ -253,7 +253,7 @@ struct PEAnalyzer {
         peTable = SDL3.createTable({
             headers: ["字段", "值", "说明"],
             col_widths: [180.0, 200.0, 400.0],
-            sortable: false, zebra: true, row_h: 24, header_h: 28, font_size: 13
+            sortable: false, zebra: true, item_h: 24, header_h: 28, font_size: 13
         })
         var peLayout = SDL3.createVBox({pad_x: PAD, pad_y: PAD, spacing: 0})
         peLayout.add(peTable, {grow: 1, shrink: 1, align: 3})
@@ -263,7 +263,7 @@ struct PEAnalyzer {
         sectionTable = SDL3.createTable({
             headers: ["序号", "名称", "虚拟大小", "虚拟地址", "原始大小", "原始偏移", "特征值"],
             col_widths: [50.0, 120.0, 100.0, 100.0, 100.0, 100.0, 150.0],
-            sortable: true, zebra: true, row_h: 24, header_h: 28, font_size: 13
+            sortable: true, zebra: true, item_h: 24, header_h: 28, font_size: 13
         })
         var secLayout = SDL3.createVBox({pad_x: PAD, pad_y: PAD, spacing: 0})
         secLayout.add(sectionTable, {grow: 1, shrink: 1, align: 3})
@@ -273,7 +273,7 @@ struct PEAnalyzer {
         importTable = SDL3.createTable({
             headers: ["DLL", "函数名", "RVA", "序号"],
             col_widths: [200.0, 400.0, 100.0, 80.0],
-            sortable: true, zebra: true, row_h: 24, header_h: 28, font_size: 13
+            sortable: true, zebra: true, item_h: 24, header_h: 28, font_size: 13
         })
         var impLayout = SDL3.createVBox({pad_x: PAD, pad_y: PAD, spacing: 0})
         impLayout.add(importTable, {grow: 1, shrink: 1, align: 3})
@@ -289,7 +289,7 @@ struct PEAnalyzer {
         xorTable = SDL3.createTable({
             headers: ["序号", "偏移", "长度", "解密内容"],
             col_widths: [50.0, 120.0, 60.0, 600.0],
-            sortable: true, zebra: true, row_h: 24, header_h: 28, font_size: 13
+            sortable: true, zebra: true, item_h: 24, header_h: 28, font_size: 13
         })
         var xorLayout = SDL3.createVBox({pad_x: PAD, pad_y: PAD, spacing: 0})
         xorLayout.add(xorTable, {grow: 1, shrink: 1, align: 3})
@@ -313,7 +313,7 @@ struct PEAnalyzer {
         disasmTable = SDL3.createTable({
             headers: ["地址", "行号", "指令", "操作数", "原始字节"],
             col_widths: [110.0, 60.0, 160.0, 200.0, 300.0],
-            sortable: true, zebra: true, row_h: 22, header_h: 28, font_size: 12,
+            sortable: true, zebra: true, item_h: 22, header_h: 28, font_size: 12,
             editable: false, cell_select: true
         })
         var disasmLayout = SDL3.createVBox({pad_x: PAD, pad_y: PAD, spacing: 4})

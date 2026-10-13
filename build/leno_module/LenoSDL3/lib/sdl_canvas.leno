@@ -41,7 +41,7 @@ use theme.Color
 //   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
 func _opts_keys(): Array[string] {
     return [
-"bg_color", "border", "border_color", "border_width", "clip", "cursor", "enabled", "focus_border", "focus_color", "focusable", "h", "pad", "visible", "w", "x", "y"
+"bg_color", "border", "border_color", "border_w", "clip", "cursor", "enabled", "focus_border", "focus_color", "focusable", "h", "pad", "visible", "w", "x", "y"
 ]
 }
 export struct Canvas impl Widget, Themeable {
@@ -111,7 +111,7 @@ export struct Canvas impl Widget, Themeable {
         w    = opts.get("w", 400)
         h    = opts.get("h", 300)
         _pad = opts.get("pad", 0.0)
-        borderWidth = opts.get("border_width", 1.0)
+        borderWidth = opts.get("border_w", 1.0)
         _drawBorder = opts.get("border", true)
         _clip = opts.get("clip", true)
         enabled = opts.get("enabled", true)

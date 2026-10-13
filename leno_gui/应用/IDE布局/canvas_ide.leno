@@ -61,7 +61,7 @@ struct CanvasIDE {
         // ★ 标题栏
         titleBar = SDL3.createTitleBar({
             title: "CanvasIDE — 画布布局测试",
-            height: 36,
+            h: 36,
             font_size: 12,
             title_align: "center"
         })
@@ -255,7 +255,7 @@ struct CanvasIDE {
             ratio: 0.75,
             min_first: 100,
             min_second: 60,
-            divider_width: 4,
+            sep_width: 4,
             hit_pad: 4
         })
         rightSplit.set_first(canvas)
@@ -267,7 +267,7 @@ struct CanvasIDE {
             ratio: 0.18,
             min_first: 120,
             min_second: 200,
-            divider_width: 4,
+            sep_width: 4,
             hit_pad: 4
         })
         mainSplit.set_first(sidebar)

@@ -84,7 +84,7 @@ main() {
         image_mode: 0,           // 0=aspectFit
         image_pad: 4,            // 图标左侧内边距
         image_gap: 4,            // 图标与文字间距
-        sortable: true, resizable: true, zebra: true, row_h: 28, header_h: 28
+        sortable: true, resizable: true, zebra: true, item_h: 28, header_h: 28
     })
 
     int curMode = 0

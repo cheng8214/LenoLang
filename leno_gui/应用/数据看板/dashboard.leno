@@ -1002,10 +1002,10 @@ func page_checkin() {
     // （不传就是中性外观：无图例、未标记的日子没有底色 ✓）
     var cal = SDL3.createCalendar({year:ty, month:tm, today:td, pad:16.0, rows:6,
                                    month_fmt:"%d 年 %d 月", arrow_left:"←", arrow_right:"→",
-                                   plain_bg:#F1F5F9FF, plain_fg:#6B7280FF,
-                                   filled_bg:#2B6BE4FF, filled_fg:#FFFFFFFF,
-                                   alert_bg:#FEE4E2FF, alert_fg:#D92D20FF,
-                                   today_bg:#FFFFFFFF, today_fg:#2B6BE4FF, today_border:#2B6BE4FF})
+                                   plain_color:#F1F5F9FF, plain_text_color:#6B7280FF,
+                                   filled_color:#2B6BE4FF, filled_text_color:#FFFFFFFF,
+                                   alert_color:#FEE4E2FF, alert_text_color:#D92D20FF,
+                                   today_color:#FFFFFFFF, today_text_color:#2B6BE4FF, today_border_color:#2B6BE4FF})
     cal.set_legend([1, SDL3.Calendar.LEG_TODAY, 2, 0], ["已签", "今日", "漏签", "未签"])
     calCard.add(cal, {left:16.0, right:16.0, top:8.0, bottom:14.0})
     mk_card_h(row, 306.0, 452.0, "签到记录", "")

@@ -87,7 +87,7 @@ func run() {
     TabControl tc = w.addTabControl({x: 20, y: 240, w: 260, h: 130,
                                      tabs: ["  甲页  ", "  乙页  ", "  丙页  "], active: 0})
     // 第七行：表格（第六批 ✓；↑/↓/Home/End 移动选中行 ✓；Enter = **无编辑列时**走"双击"那条回调 ✓）
-    Table tb2 = w.addTable({x: 300, y: 240, w: 300, h: 130, row_h: 26, header_h: 28,
+    Table tb2 = w.addTable({x: 300, y: 240, w: 300, h: 130, item_h: 26, header_h: 28,
                             headers: ["名", "值"], sortable: false})
     tb2.set_rows([["一", "1"], ["二", "2"], ["三", "3"], ["四", "4"]])
     int dblN = 0

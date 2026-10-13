@@ -61,7 +61,7 @@ struct BadgeSpec {
 //   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
 func _opts_keys(): Array[string] {
     return [
-"auto_h", "badge", "badge_bg", "badge_color", "badge_icon", "badge_pos", "badge_size", "badges", "bg_color", "border", "border_color", "border_selected_color", "content_bg", "content_click_through", "content_clip", "content_h", "content_pad", "cursor", "enabled", "gap", "h", "hover_color", "hover_lift", "image_aspect", "image_bg", "image_h", "image_mode", "image_path", "image_radius", "image_tint", "pad", "pressed_color", "radius", "selected", "selected_color", "subtitle", "subtitle_color", "subtitle_size", "text_align", "text_color", "tip", "title", "title_bold", "title_size", "visible", "w", "x", "y"
+"auto_h", "badge", "badge_bg", "badge_color", "badge_icon", "badge_pos", "badge_size", "badges", "bg_color", "border", "border_color", "border_selected_color", "content_bg", "content_click_through", "content_clip", "content_h", "content_pad", "cursor", "enabled", "gap", "h", "hover_color", "hover_lift", "image_aspect", "image_bg", "image_h", "image_mode", "image_path", "image_radius", "image_tint", "pad", "pressed_color", "radius", "selected", "sel_color", "subtitle", "subtitle_color", "subtitle_size", "text_align", "text_color", "tip", "title", "title_bold", "title_size", "visible", "w", "x", "y"
 ]
 }
 export struct Card impl Widget, Themeable {
@@ -247,7 +247,7 @@ export struct Card impl Widget, Themeable {
         if opts.get("pressed_color") is Color => t { prColor = t }
         if opts.get("border_color") is Color => t { bdrColor = t }
         if opts.get("border_selected_color") is Color => t { bdrSelColor = t }
-        if opts.get("selected_color") is Color => t { selectedColor = t }
+        if opts.get("sel_color") is Color => t { selectedColor = t }
         if opts.get("text_color") is Color => t { titleColor = t }
         if opts.get("subtitle_color") is Color => t { subColor = t }
         if opts.get("badge_bg") is Color => t { badgeBg = t }

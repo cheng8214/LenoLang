@@ -37,7 +37,7 @@ use theme.Color
 //   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
 func _opts_keys(): Array[string] {
     return [
-"divider_color", "divider_width", "first", "h", "hit_pad", "hover_color", "min_first", "min_second", "orientation", "ratio", "second", "w", "x", "y"
+"sep_color", "sep_width", "first", "h", "hit_pad", "hover_color", "min_first", "min_second", "orientation", "ratio", "second", "w", "x", "y"
 ]
 }
 export struct Splitter impl Widget, Themeable {
@@ -81,12 +81,12 @@ export struct Splitter impl Widget, Themeable {
         h           = opts.get("h", 300)
         orientation = opts.get("orientation", HORIZONTAL)
         ratio       = opts.get("ratio", 0.3)
-        dividerW    = opts.get("divider_width", 4)
+        dividerW    = opts.get("sep_width", 4)
         hitPad      = opts.get("hit_pad", 4)
         minFirst    = opts.get("min_first", 80)
         minSecond   = opts.get("min_second", 80)
         // 颜色：opts 未传则保持默认值
-        if opts.get("divider_color") is Color => t { divColor = t }
+        if opts.get("sep_color") is Color => t { divColor = t }
         if opts.get("hover_color") is Color => t { hovColor = t }
         // 构造时传入子控件
         var f = opts.get("first")

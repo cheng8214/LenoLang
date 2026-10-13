@@ -23,7 +23,7 @@ func run() {
     VBox col = SDL3.createVBox({x: 0, y: 0, w: 660, h: 430, pad_x: 0, pad_y: 0, spacing: 8})
     root.add(col, {grow: 1, shrink: 1, align: 3})
 
-    tb = SDL3.createTable({x: 0, y: 0, w: 640, h: 400, headers: ["片名", "评分"], row_h: 30, font_size: 14})
+    tb = SDL3.createTable({x: 0, y: 0, w: 640, h: 400, headers: ["片名", "评分"], item_h: 30, font_size: 14})
     tb.set_rows([["银河快车", "7.7"], ["无间追踪", "8.2"], ["光影百年", "9.3"]])
     tb.addContextItem({label: "这是一个比较长的菜单项，用来把菜单撑宽", id: "t1"})
     tb.addContextItem({label: "另一项", id: "t2"})

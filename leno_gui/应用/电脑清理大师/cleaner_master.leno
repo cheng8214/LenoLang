@@ -146,7 +146,7 @@ struct CleanerMaster {
 
     // ==================== UI 构建 ====================
     func setupUI() {
-        titleBar = SDL3.createTitleBar({title: "电脑清理大师", height: 32, font_size: 14})
+        titleBar = SDL3.createTitleBar({title: "电脑清理大师", h: 32, font_size: 14})
         win.add(titleBar)
         float titleH = titleBar.get_h()
 
@@ -309,7 +309,7 @@ struct CleanerMaster {
         catTable = SDL3.createTable({
             headers: ["", "类别", "大小", "项目数", "结果"],
             col_widths: [40.0, 160.0, 92.0, 64.0, 150.0],
-            zebra: true, row_h: 34, header_h: 32, font_size: 14,
+            zebra: true, item_h: 34, header_h: 32, font_size: 14,
             check_col: 0,
             image_col: 1, image_size: 18, image_pad: 4, image_gap: 6,
             row_images: catIcons,
@@ -959,7 +959,7 @@ struct CleanerMaster {
         Table pt = SDL3.createTable({
             headers: ["类别", "将清理", "大小", "跳过", "保留清单", "抽查存活"],
             col_widths: [260.0, 90.0, 120.0, 80.0, 110.0, 120.0],
-            zebra: true, row_h: 26, header_h: 28, font_size: 13,
+            zebra: true, item_h: 26, header_h: 28, font_size: 13,
             col_reorder: false, resizable: false
         })
         Array[Array[string]] rows = []
@@ -1066,7 +1066,7 @@ struct CleanerMaster {
         Table rt = SDL3.createTable({
             headers: ["类别", "位置", "项目", "指向的（已不存在的）文件"],
             col_widths: [96.0, 210.0, 180.0, 480.0],
-            zebra: true, row_h: 26, header_h: 28, font_size: 13,
+            zebra: true, item_h: 26, header_h: 28, font_size: 13,
             col_reorder: false, resizable: false
         })
         rt.set_rows(rows)

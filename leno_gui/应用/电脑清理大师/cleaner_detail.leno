@@ -140,7 +140,7 @@ export func show_detail(string catName, Array[string] res): bool {
     Table dt = SDL3.createTable({
         headers: ["路径", "大小", "占比"],
         col_widths: [530.0, 110.0, 80.0],
-        zebra: true, row_h: 26, header_h: 28, font_size: 13,
+        zebra: true, item_h: 26, header_h: 28, font_size: 13,
         col_reorder: false, resizable: false
     })
     Array[Array[string]] rows = []

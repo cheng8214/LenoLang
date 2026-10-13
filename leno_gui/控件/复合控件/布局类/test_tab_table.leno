@@ -104,7 +104,7 @@ main() {
         col_widths: [80, 200, 80, 100, 120],
         rows: genProducts(),
         sortable: true, resizable: true, zebra: true,
-        row_h: 26, header_h: 28, multi_select: true,
+        item_h: 26, header_h: 28, multi_select: true,
         font_size: 14
     })
     pTable.set_window_size(920, 600)
@@ -151,7 +151,7 @@ main() {
         col_widths: [50, 160, 120, 100, 100],
         rows: genStudents(),
         sortable: true, resizable: true, zebra: true,
-        row_h: 26, header_h: 28, multi_select: false,
+        item_h: 26, header_h: 28, multi_select: false,
         numeric_cols: [2, 3],
         frozen_cols: 1,
         col_reorder: true,
@@ -197,7 +197,7 @@ main() {
         col_widths: [60, 80, 120, 620],
         rows: _logRows,
         sortable: true, resizable: true, zebra: true,
-        row_h: 24, header_h: 28, multi_select: true,
+        item_h: 24, header_h: 28, multi_select: true,
         font_size: 13
     })
     lTable.set_window_size(920, 600)

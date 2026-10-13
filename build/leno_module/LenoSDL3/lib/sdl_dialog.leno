@@ -148,7 +148,7 @@ export func dialogTitleBar(Window dlg, string title): TitleBar {
     //   主窗口就没法拖边缩放了 ✓）；可弹窗也挂了标题栏 ⇒ 一并被"解放" ⇒ 用户实测
     //   "msg 弹窗居然能改变大小" ✗（标题栏那套**手动边缘缩放**也会跟着生效，连光标都变 ✗）
     //   ⇒ 弹窗这里显式声明"不可缩放" ✓；显式选项见 sdl_titlebar 的 `resizable` ✓
-    TitleBar tb = createTitleBar({title: title, height: _float(DIALOG_TB_H), font_size: 13,
+    TitleBar tb = createTitleBar({title: title, h: _float(DIALOG_TB_H), font_size: 13,
         title_icon: tbar.appTitleIcon(),
         resizable: false,
         show_minimize: false, show_maximize: false})

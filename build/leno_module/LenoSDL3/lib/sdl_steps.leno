@@ -26,7 +26,7 @@ import "sdl_core.leno" as core
 //   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
 func _opts_keys(): Array[string] {
     return [
-"circle", "desc_color", "desc_size", "dir", "done_color", "font_size", "gap", "item_h", "line_color", "line_w", "pending_bg", "pending_border", "pending_text", "text_side", "title_color", "visible", "w", "x", "y"
+"circle", "desc_color", "desc_size", "dir", "done_color", "font_size", "gap", "item_h", "line_color", "line_w", "pending_color", "pending_border_color", "pending_text_color", "text_side", "title_color", "visible", "w", "x", "y"
 ]
 }
 export struct Steps impl Widget {
@@ -84,9 +84,9 @@ export struct Steps impl Widget {
         lineW = opts.get("line_w", 2.0)
         textSide = opts.get("text_side", false)
         if opts.get("done_color") is Color => t { doneBg = t; lineDone = t }
-        if opts.get("pending_bg") is Color => t { pendBg = t }
-        if opts.get("pending_border") is Color => t { pendBd = t }
-        if opts.get("pending_text") is Color => t { pendTx = t }
+        if opts.get("pending_color") is Color => t { pendBg = t }
+        if opts.get("pending_border_color") is Color => t { pendBd = t }
+        if opts.get("pending_text_color") is Color => t { pendTx = t }
         if opts.get("line_color") is Color => t { linePend = t }
         if opts.get("title_color") is Color => t { titleC = t }
         if opts.get("desc_color") is Color => t { descC = t }

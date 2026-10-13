@@ -91,7 +91,7 @@ main() {
         aligns: [0, 1, 2, 1, 0],
         header_aligns: [0, 1, 2, 1, 0],
         rows: rows,
-        zebra: true, row_h: 30, header_h: 30, font_size: 14,
+        zebra: true, item_h: 30, header_h: 30, font_size: 14,
         sortable: false, col_reorder: true, resizable: false,
         empty_text: "没有任务",
         // ★ 第 3 列 = 进度条（值取自该列文本 ✓）；其余列照旧文本 ✓

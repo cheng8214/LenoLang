@@ -1,7 +1,7 @@
 // sdl_titlebar.leno — 自绘标题栏组件（impl Widget）
 //
 // 用法：
-//   TitleBar tb = SDL3.createTitleBar({title:"我的应用", height:32})
+//   TitleBar tb = SDL3.createTitleBar({title:"我的应用", h:32})
 //   win.add(tb)              // 自动去掉系统标题栏，组件接管绘制和事件
 //   tb.on_close(func() { ... })       // 可选：自定义关闭回调
 //   tb.on_minimize(func() { ... })    // 可选：自定义最小化回调
@@ -66,7 +66,7 @@ import "sdl_tooltip.leno" as tooltip    // 悬停提示复用框架那一套（�
 //   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
 func _opts_keys(): Array[string] {
     return [
-"actions", "bg_color", "btn_align", "btn_spacing", "btn_width", "close", "close_hover_color", "font_path", "font_size", "height", "hover_color", "icon_close", "icon_color", "icon_maximize", "icon_minimize", "icon_restore", "icon_size", "maximize", "minimize", "resizable", "separator_color", "show_close", "show_maximize", "show_minimize", "show_separator", "text_color", "title", "title_align", "title_icon", "title_icon_gap", "title_icon_size", "title_pad"
+"actions", "bg_color", "btn_align", "btn_spacing", "btn_width", "close", "close_hover_color", "font_path", "font_size", "h", "hover_color", "icon_close", "icon_color", "icon_maximize", "icon_minimize", "icon_restore", "icon_size", "maximize", "minimize", "resizable", "sep_color", "show_close", "show_maximize", "show_minimize", "show_separator", "text_color", "title", "title_align", "title_icon", "title_icon_gap", "title_icon_size", "title_pad"
 ]
 }
 
@@ -245,7 +245,7 @@ export struct TitleBar impl Widget, Themeable {
 
     func set(Dict opts) {
         dochk.check("sdl_titlebar", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
-        h = opts.get("height", 32.0)
+        h = opts.get("h", 32.0)
         title = opts.get("title", "")
         _fontSize = opts.get("font_size", 15.0)
         fontPath = opts.get("font_path", "")
@@ -272,7 +272,7 @@ export struct TitleBar impl Widget, Themeable {
         if opts.get("hover_color") is Color => t { hovColor = t }
         if opts.get("close_hover_color") is Color => t { closeHovColor = t }
         if opts.get("icon_color") is Color => t { iconColor = t }
-        if opts.get("separator_color") is Color => t { sepColor = t }
+        if opts.get("sep_color") is Color => t { sepColor = t }
 
         imgMin = opts.get("icon_minimize", "")
         imgMax = opts.get("icon_maximize", "")

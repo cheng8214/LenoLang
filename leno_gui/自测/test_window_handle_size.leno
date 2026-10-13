@@ -24,7 +24,7 @@ func run() {
     })
 
     tb = w.addTable({x: 260, y: 16, w: 420, h: 380, headers: ["片名", "评分"],
-                     row_h: 30, sortable: true, font_size: 14})
+                     item_h: 30, sortable: true, font_size: 14})
     tb.set_rows([["银河快车", "7.7"], ["无间追踪", "8.2"], ["光影百年", "9.3"]])
     tb.addContextItem({label: "测试项", id: "t1"})
     tb.on_context_select(func(int row, string id) {

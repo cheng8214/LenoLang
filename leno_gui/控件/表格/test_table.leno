@@ -39,7 +39,7 @@ main() {
     var tbl = win.addTable({
         x: 30, y: 64, w: 500, h: 260,
         headers: headers, aligns: aligns, header_aligns: hAligns, rows: genRows(),
-        sortable: true, resizable: true, zebra: true, row_h: 24, header_h: 28,
+        sortable: true, resizable: true, zebra: true, item_h: 24, header_h: 28,
         multi_select: true
     })
     tbl.on_select(func(int row) {

@@ -48,7 +48,7 @@ main() {
         x: 20, y: 64, w: 860, h: 340,
         headers: headers, aligns: aligns, header_aligns: hAligns, rows: rows,
         col_widths: [50, 160, 120, 100, 100],
-        sortable: true, resizable: true, zebra: true, row_h: 26, header_h: 28,
+        sortable: true, resizable: true, zebra: true, item_h: 26, header_h: 28,
         // ★ 新功能 1: numeric_cols — 分数(2)和年龄(3)列按数值排序
         numeric_cols: [2, 3],
         // ★ 新功能 2: col_reorder — 允许拖拽表头重排列

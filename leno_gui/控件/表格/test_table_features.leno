@@ -35,7 +35,7 @@ main() {
         headers: headers, aligns: aligns, header_aligns: hAligns, rows: rows,
         col_widths: [40, 220, 140, 100],
         check_col: 0,               // 第 0 列为复选框列
-        sortable: true, resizable: true, zebra: true, row_h: 28, header_h: 28,
+        sortable: true, resizable: true, zebra: true, item_h: 28, header_h: 28,
         empty_text: "暂无数据 — 点击\"添加行\"恢复"
     })
 

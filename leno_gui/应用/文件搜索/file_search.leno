@@ -540,7 +540,7 @@ struct FileSearcher {
 
     func setupUI() {
         // 标题栏
-        titleBar = SDL3.createTitleBar({title: "多线程文件搜索 - Leno threads + SDL3 UI", height: 32, font_size: 14})
+        titleBar = SDL3.createTitleBar({title: "多线程文件搜索 - Leno threads + SDL3 UI", h: 32, font_size: 14})
         win.add(titleBar)
         float titleH = titleBar.get_h()
 

@@ -431,6 +431,13 @@
 >   ④ **验收**：Leno 含新名的 **99 个文件逐个真编译 0 失败** + 套件 **452/0** ✓；三个应用 **32 个入口逐个真编译 0 失败、0 条旧名警告** ✓；
 >   ⑤ 文档：『SDL3常用API与易踩坑速查.md』新增 **附录 D**（审计数据 + 改名表机制 + 迁移铁律 + **命名规约**：颜色一律 `*_color`、尺寸用短名 `w`/`h`、内边距 `pad_*`、开关 `show_*`、回调走方法不进 opts ✓）；**未动**语义色名（`fill_color`/`track_color`… 各指各的东西 ✗）与 `h` vs `height` 等"同概念不同名"（**下一轮**评估，有的差异是刻意的 ✓）。
 >
+>   **2026-10-13 追加（十一）**：**选项命名统一（第二轮）** —— 第②类"同概念不同名"逐组判"是不是刻意的"：
+>   ① **统一 9 组**：`height`→`h`（titlebar）、`separator_color`/`divider_color`→**`sep_color`** + `divider_width`→**`sep_width`**、`border_width`→`border_w`（canvas）、calendar `head_h`/`head_text_color`/`show_head`→**`header_*`**、**状态色** `{状态}_bg/_fg`→**`{状态}_color`/`{状态}_text_color`**（calendar 的 plain/filled/alert/today + `today_border`→`today_border_color`；steps 的 `pending_bg`/`pending_border`/`pending_text`→`pending_color`/`pending_border_color`/`pending_text_color`）、card `selected_color`→**`sel_color`**、table·treeview `row_h`→**`item_h`**、**删掉** table 的 `multi`（`multi_select` 的旧别名 ✓）；
+>   ② **刻意保留 5 项**（不同对象/不同概念）：tab `active_color`（"**激活页**"≠"选中行"，配套 `active`/`set_active()` ✓）、menu `separator`（**菜单项种类**标记、不是开关 ⇒ 改 `show_*` 反而错 ✗）、ring/spinner `size`（形状尺寸）、`thickness` 族（环粗/线粗，对象不同）、steps `line_w`（本就合规 ✓）；
+>   ③ ⚠ **踩到并纠正了我自己的错**：calendar 颜色是 `{状态}_{bg,fg}` **矩阵**，第一遍**只改了一半**（plain/alert ✗，filled/today 没动 ✗）⇒ **比不改更糟**（同族两种写法 ✗）⇒ 整族改完 ✓；**规矩：一族要么整族不动、要么整族改完** ✓；
+>   ④ **验收**：全仓旧名（键位置）**归零** ✓；**GUI 全部 107 个文件逐个真编译 0 失败 / 0 选项警告** ✓；框架 examples 56 + 三应用 **32 个入口** 0 失败/0 警告 ✓；套件 **452/0** ✓；`leno_gui/自测` **19 个用例逐个真跑全 0** ✓（⚠ `test_chart_labels` 读的是 `PROBE_SHOT` 而非 `SHOT` ⇒ 不给那变量就**不自动退出**、看着像超时 —— **不是回归** ✓）；
+>   ⑤ 文档：SDL3速查新增 **附录 E**（9 组统一表 + 刻意保留表 + 教训 + 验收）；`height` 这类**常用词**必须**限定作用域**（只改 `createTitleBar(...)` 内部 ✓，否则误伤 HTML 字符串与普通 dict ✗）。
+>
 >   **2026-10-13 追加（七）**：**自检时基改为定时器 + 页签/列表视图 + 抓到并修掉 Table 排序说谎**：
 >   ① ⚠ **自检一律走 `Timer`**（`WALL_*` 里的数字 = 步号，100ms 一拍）：本框架是**事件驱动重绘**，
 >      没有重绘请求时帧号不走 ⇒ 旧的"第 N 帧注入/截图"既不定时、还可能截到**旧画面** ✗（用户点出 ✓；

@@ -551,7 +551,7 @@ struct CacheCleaner {
 
     func setupUI() {
         // 标题栏
-        titleBar = SDL3.createTitleBar({title: "Leno 缓存清理工具 - 清理 .lenb 和 .lenocache", height: 32, font_size: 14})
+        titleBar = SDL3.createTitleBar({title: "Leno 缓存清理工具 - 清理 .lenb 和 .lenocache", h: 32, font_size: 14})
         win.add(titleBar)
         float titleH = titleBar.get_h()
 
@@ -605,7 +605,7 @@ struct CacheCleaner {
         resultTable = SDL3.createTable({
             headers: ["", "类型", "大小", "路径"],
             col_widths: [40.0, 80.0, 100.0, 600.0],
-            sortable: true, zebra: true, row_h: 26, header_h: 30, font_size: 14,
+            sortable: true, zebra: true, item_h: 26, header_h: 30, font_size: 14,
             check_col: 0,
             col_reorder: false, resizable: true
         })
