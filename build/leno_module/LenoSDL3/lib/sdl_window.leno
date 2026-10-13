@@ -879,7 +879,7 @@ export struct Window {
             var w = widgets[i]
             switch w {
                 // ★ 2026-10-13 第二批：开关类也进链条（各自 `activate()` = 切一下 ✓）
-                case is Button, CheckBox, RadioButton, Toggle, Slider, ListBox { if w.is_focusable() { r.add(w) } }
+                case is Button, CheckBox, RadioButton, Toggle, Slider, ListBox, ComboBox { if w.is_focusable() { r.add(w) } }
             }
         }
         return r
@@ -890,7 +890,7 @@ export struct Window {
         for fs.len() to i {
             var w = fs[i]
             switch w {
-                case is Button, CheckBox, RadioButton, Toggle, Slider, ListBox { if i == focusIdx { w.focus() } else { w.blur() } }
+                case is Button, CheckBox, RadioButton, Toggle, Slider, ListBox, ComboBox { if i == focusIdx { w.focus() } else { w.blur() } }
             }
         }
     }
@@ -916,7 +916,7 @@ export struct Window {
         if focusIdx < 0 or focusIdx >= fs.len() { return }
         var w = fs[focusIdx]
         switch w {
-            case is Button, CheckBox, RadioButton, Toggle, Slider, ListBox { w.activate() }
+            case is Button, CheckBox, RadioButton, Toggle, Slider, ListBox, ComboBox { w.activate() }
         }
     }
     pri func _moveFocus(int dir) {
@@ -1868,7 +1868,7 @@ export struct Window {
                             // ★ 2026-10-13：聚焦 ring —— 由**控件自绘**、窗口只叫一下 ✓
                             //   （控件自检 `focused` ⇒ 没聚焦时是空调用 ✓；ring 放在 opacity 之后 ⇒ 环始终清晰 ✓）
                             switch w {
-                                case is Button, CheckBox, RadioButton, Toggle, Slider, ListBox { w.draw_focus_ring(_runRens[i]) }
+                                case is Button, CheckBox, RadioButton, Toggle, Slider, ListBox, ComboBox { w.draw_focus_ring(_runRens[i]) }
                             }
                         }
                     }

@@ -10,7 +10,7 @@
 //        Button ⇒ on_click 计数 +1；CheckBox/Toggle ⇒ 值真的翻转；RadioButton ⇒ 选中自己 ✓
 //   用法：set SHOT=%TEMP%\focus.png & build\leno.exe leno_gui\自测\test_focus_nav.leno
 import "SDL3" as SDL3
-use SDL3.(Event, Renderer, Scancode, Window, Button, CheckBox, Toggle, RadioButton, Slider, ListBox)
+use SDL3.(Event, Renderer, Scancode, Window, Button, CheckBox, Toggle, RadioButton, Slider, ListBox, ComboBox)
 
 int steps = 0
 string shot = ""
@@ -38,7 +38,7 @@ func snapSw(CheckBox ck, Toggle tg, RadioButton rd, string tag) {
 func run() {
     SDL3.ttfInit()
     SDL3.setTheme(SDL3.darkTheme())
-    Window w = SDL3.createWindow({title: "test_focus_nav", w: 620, h: 340})
+    Window w = SDL3.createWindow({title: "test_focus_nav", w: 620, h: 380})
     if not w.ok { SDL3.ttfQuit(); return }
 
     // 第一行：注册顺序 A → B → C，其中 **B 退出焦点链** ⇒ Tab 必须跳过它 ✓
@@ -65,8 +65,16 @@ func run() {
                                items: ["甲", "乙", "丙", "丁", "戊", "己"], selected: 0})
     int hitsLb = 0       // on_change 次数
     int actLb = -1       // on_activate 收到的下标
+    int actN = 0         // on_activate 次数（★ 用来盯"Enter 被处理两次"这类问题 ✓）
     lb.on_change(func(Array[int] v) { hitsLb = hitsLb + 1 })
-    lb.on_activate(func(int i) { actLb = i })
+    lb.on_activate(func(int i) { actLb = i; actN = actN + 1 })
+
+    // 第五行：下拉框（第五批进链条 ✓；↓/↑ 移动选中 ✓、Enter 开关下拉 ✓、Esc 收起 ✓）
+    //   ⚠ 语义：开着下拉时**键盘照常工作** ✓（鼠标事件会被弹层捕获区拦掉，但键盘不能受影响 ✓）
+    ComboBox cb2 = w.addComboBox({x: 300, y: 196, w: 200, h: 30,
+                                  items: ["北京", "上海", "广州", "深圳"], selected: 0})
+    int hitsCb = 0
+    cb2.on_change(func(int i) { hitsCb = hitsCb + 1 })
     tg.on_change(func(bool v) { tgHits = tgHits + 1; tgVal = if v then 1 else 0 })
     rd.on_change(func(bool v) { if v { rdHits = rdHits + 1 } })     // 选中时回调 true ✓
 
@@ -131,15 +139,32 @@ func run() {
         if steps == 44 { SDL3.testKeyDown(wid, Scancode.HOME, 0) }       // Home ⇒ 首项
         if steps == 45 { print("[focus] Home（应 0 ✓）  选中=" + _str(lb.get_selected_index())) }
         if steps == 46 { SDL3.testKeyDown(wid, Scancode.RETURN, 0) }     // Enter ⇒ 激活选中项
-        if steps == 47 { print("[focus] Enter（应 actLb=0 ✓）  actLb=" + _str(actLb)) }
-        if steps == 48 { SDL3.testKeyDown(wid, Scancode.TAB, 0) }        // 从最后一项继续 ⇒ 回卷
-        if steps == 49 { snap(a, b, c, "Tab×9（应回卷到 A ✓ —— 链条末尾回卷 ✓）") }
-        if steps >= 52 { _exit(0) }
+        if steps == 47 { print("[focus] Enter（应 actLb=0、且**次数=1** ✓ —— 两次就是双触发 ✗）  actLb=" +
+                                _str(actLb) + " 次数=" + _str(actN)) }
+        // ---- 第五行：下拉框（开合 + 选中 ✓）----
+        if steps == 48 { SDL3.testKeyDown(wid, Scancode.TAB, 0) }        // → 下拉框
+        if steps == 49 { print("[focus] Tab→ 下拉框（应 focus=true、选中=0、未展开 ✓）  focus=" + _str(cb2.is_focused()) +
+                                " 选中=" + _str(cb2.get_selected()) + " 展开=" + _str(cb2.isOpen())) }
+        if steps == 50 { SDL3.testKeyDown(wid, Scancode.DOWN, 0) }       // 收起态 ↓ ⇒ 换选中
+        if steps == 51 { print("[focus] ↓（应 1、on_change=1 ✓）  选中=" + _str(cb2.get_selected()) +
+                                " on_change次数=" + _str(hitsCb)) }
+        if steps == 52 { SDL3.testKeyDown(wid, Scancode.RETURN, 0) }     // Enter ⇒ 展开
+        if steps == 53 { print("[focus] Enter（应 展开=true ✓）  展开=" + _str(cb2.isOpen())) }
+        if steps == 54 { SDL3.testKeyDown(wid, Scancode.DOWN, 0) }       // 展开态 ↓ 仍能换选中 ✓
+        if steps == 55 { print("[focus] 展开后 ↓（应 2 ✓）  选中=" + _str(cb2.get_selected())) }
+        if steps == 56 { SDL3.testKeyDown(wid, Scancode.RETURN, 0) }     // Enter ⇒ 收起（选定 ✓）
+        if steps == 57 { print("[focus] Enter（应 展开=false ✓）  展开=" + _str(cb2.isOpen())) }
+        if steps == 58 { SDL3.testKeyDown(wid, Scancode.RETURN, 0) }     // 再开
+        if steps == 59 { SDL3.testKeyDown(wid, Scancode.ESCAPE, 0) }     // Esc ⇒ 收起
+        if steps == 60 { print("[focus] Esc（应 展开=false ✓）  展开=" + _str(cb2.isOpen())) }
+        if steps == 61 { SDL3.testKeyDown(wid, Scancode.TAB, 0) }        // 从最后一项继续 ⇒ 回卷
+        if steps == 62 { snap(a, b, c, "Tab（应回卷到 A ✓ —— 链条末尾回卷 ✓）") }
+        if steps >= 66 { _exit(0) }
     })
 
     // 截图（看焦点环 ✓）：钩子必须在 setOverlay（控件之上 ⇒ 像素含界面 ✓）
     w.setOverlay(func(Renderer r) {
-        if steps >= 50 and shot != "" {
+        if steps >= 64 and shot != "" {
             var sz = w.getSize()
             var px = r.readPixelsAt(0, 0, sz.w, sz.h)
             if px != null { print("[focus] 截图 " + shot + " ok=" + _str(SDL3.saveImagePNG(px, shot))) }

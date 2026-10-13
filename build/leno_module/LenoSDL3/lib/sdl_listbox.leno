@@ -460,11 +460,10 @@ export struct ListBox impl Widget, Themeable {
         //   必须自己按焦点过滤 ✓ 与 Edit 的做法一致 ✓；不聚焦时不消费任何键 ⇒ 不影响别人 ✓）
         //   ⚠⚠ 位置很关键：必须落在**主流程**里 —— 上面那个"菜单已展开"分支只该处理菜单自己的事件 ✗
         //     第一次就是插进那个分支里的 ⇒ 只有菜单开着时键盘才生效 ✗（实测：↓ 后选中不动、回调也不触发 ✓）
-        if focused and ev.isKeyDown() {
-            int _sc = ev.scancode()
-            if _sc == core.Scancode.RETURN or _sc == core.Scancode.SPACE { activate() }
-            else { nudge_sel(_sc) }
-        }
+        //   ⚠⚠ **Enter/Space 不在这里处理** ✗ —— 那是**窗口**的活（窗口会调 `activate()` ✓）：
+        //     键事件是**广播**的 ⇒ 控件这边再处理一次就会"两份都生效"：
+        //     开关类会翻回去、列表会**回调发两次**、下拉会"开了又关"（实测 `isOpen()` 仍是 false ✓）
+        if focused and ev.isKeyDown() { nudge_sel(ev.scancode()) }
 
         // 拖拽结束
         if ev.isMouseButtonUp() and draggingScroll { draggingScroll = false; return }

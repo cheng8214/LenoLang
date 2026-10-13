@@ -207,6 +207,48 @@ export struct ComboBox impl Widget, Themeable {
     }
 
     func on_change(func(int):void cb) { onChange = cb }
+
+    // ==================== 焦点与键盘（供窗口的"焦点链"调用 ✓ 2026-10-13 第五批）====================
+    //   语义：↓/↑ 移动选中（走 `set_selected` ⇒ 回调 + 滚入视野 + **内嵌 Edit 文本同步**一起 ✓）、
+    //     Home/End 首末、Enter/Space **开关下拉**（开着时按 = 选定并收起 ✓）、Esc 收起 ✓
+    bool focusable = true
+    bool focused = false
+    func set_focusable(bool b) { focusable = b; if not b { focused = false } }
+    func is_focusable(): bool { return focusable }
+    func focus() { if focusable and not focused { focused = true; core.markFrameRedraw() } }
+    func blur() { if focused { focused = false; core.markFrameRedraw() } }
+    func is_focused(): bool { return focused }
+    // ★ 打开下拉抽成**一个入口** ⇒ 键盘与鼠标点击共用 ✓
+    //   （原来这段逻辑**内联在点击路径里** ✗ —— 那份"滚到选中项"的代码要是抄第二遍，迟早漂 ✓）
+    func open_list() {
+        open = true
+        scroll = 0.0
+        if sel >= 0 {
+            float iy = sel * itemH
+            if iy + itemH > _ph() { scroll = iy + itemH - _ph() }
+            clamp_scroll()
+        }
+    }
+    func toggle_list() { if open { close() } else { open_list() } }
+    func activate() { toggle_list(); core.markFrameRedraw() }   // Enter/Space ≡ "点一下下拉框" ✓
+    pri func nudge_sel(int sc) {
+        if items.len() == 0 { return }
+        int n = get_selected()
+        if sc == core.Scancode.DOWN {
+            if n < 0 { n = 0 } else { if n + 1 >= items.len() { n = items.len() - 1 } else { n = n + 1 } }
+        }
+        eif sc == core.Scancode.UP { n = if n <= 0 then 0 else n - 1 }
+        eif sc == core.Scancode.HOME { n = 0 }
+        eif sc == core.Scancode.END { n = items.len() - 1 }
+        else { return }
+        if n >= 0 { set_selected(n) }
+    }
+    func draw_focus_ring(Renderer r) {
+        if not focused { return }
+        Theme th = theme.getTheme()
+        r.setColor(th.accentFocus)
+        r.drawRect(x - 2.0, y - 2.0, w + 4.0, h + 4.0)
+    }
     func on_enter(func(string):void cb) { onEnter = cb }
     func set_editable(bool e) { editable = e }
     func is_editing(): bool { return editable and edit != null and edit.is_focused() }
@@ -274,6 +316,17 @@ export struct ComboBox impl Widget, Themeable {
             return
         }
 
+        // ★ 2026-10-13：键盘（第五批）—— 只在**自己聚焦**时响应 ✓（键事件是广播的 ⇒ 自己过滤 ✓）
+        //   ⚠ 位置刻意放在**所有"弹层捕获"守卫之前** ✓：下拉开着时鼠标事件会被捕获区拦掉，
+        //     但**键盘必须照常工作**（否则"开着下拉就没法用键盘选"✗ 实测同类问题在 ListBox 上踩过 ✓）
+        //   ⚠⚠ 这里**只处理 Esc 与方向键** ✓：Enter/Space 归**窗口**（窗口会调 `activate()` ⇒ `toggle_list()` ✓）
+        //     两边都处理会互相抵消：实测 Enter 被处理两次 ⇒ 下拉"开了又关"、`isOpen()` 仍是 false ✗
+        if focused and ev.isKeyDown() {
+            int _sc = ev.scancode()
+            if _sc == core.Scancode.ESCAPE { if open { close(); core.markFrameRedraw() } }
+            eif _sc == core.Scancode.DOWN or _sc == core.Scancode.UP or _sc == core.Scancode.HOME or _sc == core.Scancode.END { nudge_sel(_sc) }
+        }
+
         var[float, float](mx, my) = ev.mousePos()
         if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
 
@@ -283,8 +336,8 @@ export struct ComboBox impl Widget, Themeable {
             edit.process(ev)
             // 点击箭头区域：展开/收起下拉
             if ev.isMouseButtonDown() and contains(mx, my) and mx >= x + w - 20.0 {
-                if not open { open = true; scroll = 0.0; if sel >= 0 { float iy = sel * itemH; if iy + itemH > _ph() { scroll = iy + itemH - _ph() }; clamp_scroll() } }
-                else { open = false }
+                // ★ 2026-10-13：改走 `open_list()` / `close()` —— 与键盘**同一个入口** ✓（不抄第二份 ⇒ 不会漂 ✓）
+                if not open { open_list() } else { close() }
                 edit.blur()
             } eif ev.isMouseButtonDown() and not edit.contains(mx, my) {
                 edit.blur()
