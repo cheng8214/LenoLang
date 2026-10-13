@@ -228,6 +228,10 @@ clib sdl3 {
     bool SDL_SetRenderTarget(Ptr[u8] renderer, Ptr[u8] texture)
     bool SDL_SetTextureAlphaMod(Ptr[u8] texture, u8 alpha)
     bool SDL_SetTextureBlendMode(Ptr[u8] texture, i32 blendMode)
+    // 组合自定义混合模式（见 sdl_renderer.leno 的 maskAlphaBlend ✓）：
+    //   SDL 自带的 BLEND/ADD/MOD/MUL 都改 **rgb**、对 alpha 无能为力 ⇒「把图片裁成圆角」只能自组
+    u32  SDL_ComposeCustomBlendMode(i32 srcColorFactor, i32 dstColorFactor, i32 colorOp,
+                                    i32 srcAlphaFactor, i32 dstAlphaFactor, i32 alphaOp)
     bool SDL_SetTextureColorMod(Ptr[u8] texture, u8 r, u8 g, u8 b)
     bool SDL_SetTextureScaleMode(Ptr[u8] texture, i32 scaleMode)
     bool SDL_GetTextureScaleMode(Ptr[u8] texture, Ptr[i32] scaleMode)
@@ -407,6 +411,17 @@ export enum Scancode {
 export enum MouseButton { LEFT = 1; MIDDLE = 2; RIGHT = 3 }
 
 export enum BlendMode { NONE = 0; BLEND = 1; ADD = 2; MOD = 4; MUL = 8 }
+
+// SDL_BlendFactor / SDL_BlendOperation —— 只服务于 SDL_ComposeCustomBlendMode（见本文件上方 clib ✓）
+//   ⚠ 数值是 SDL 头文件里的**原值**（1..10 / 1..5，不是连号枚举 ✓ 别顺手改成 0/1/2）
+export enum BlendFactor {
+    ZERO = 1; ONE = 2
+    SRC_COLOR = 3; ONE_MINUS_SRC_COLOR = 4
+    SRC_ALPHA = 5; ONE_MINUS_SRC_ALPHA = 6
+    DST_COLOR = 7; ONE_MINUS_DST_COLOR = 8
+    DST_ALPHA = 9; ONE_MINUS_DST_ALPHA = 10
+}
+export enum BlendOp { ADD = 1; SUBTRACT = 2; REV_SUBTRACT = 3; MINIMUM = 4; MAXIMUM = 5 }
 
 export enum Flip { NONE = 0; HORIZONTAL = 1; VERTICAL = 2 }
 

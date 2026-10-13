@@ -12,6 +12,7 @@ sdl3 _lib = core.lib()
 
 // 批处理统计（性能分析 / 测试用，模块级全局；单渲染器场景精确）
 // Submits = 提交 SDL 批量调用的次数；Batched = 累计经批处理提交的图元数
+bool _rrTgtWarned = false   // "圆角纹理合成不可用"只提示一次（否则每帧每卡刷屏 ✗）
 int _gFillSubmits = 0, _gFillBatched = 0
 int _gOutSubmits = 0, _gOutBatched = 0
 int _gLineSubmits = 0, _gLineBatched = 0
@@ -108,6 +109,10 @@ const BX_TEX    = 4   // 批处理文字纹理
     //   见 _rrMask：透明区必须逐像素等于这个常量（不能是 (0,0,0,0) ✗），
     //   而逐像素填要 25 万次 ffi 调用（≈10ms ✗）⇒ 按行 memcpy 一次铺好（C 速度 ✓）
     pri Ptr[u8] rrTmpl; pri int rrTmplN = 0
+    // ── 圆角**纹理**合成用离屏 target（2026-10-13 新增 ✓，见 drawTextureRounded）──
+    //   渲染器级**共享一张**、按尺寸缓存 ⇒ 不是"每张卡一张纹理" ✗（海报墙 22 张卡就是 22 张 ✗）
+    pri Ptr[u8] rrTgt; pri int rrTgtW = 0, rrTgtH = 0
+    pri int maskAlphaMode = -1        // 「只乘 alpha」的自定义混合模式（懒创建；见 maskAlphaBlend ✓）
 
     // ---- 批处理缓冲：透明自动合并连续同材质 fillRect/drawRect/drawLine ----
     pri Ptr[f32] bxFill; pri int bxFillN = 0, bxFillCap = 0
@@ -1412,6 +1417,8 @@ const BX_TEX    = 4   // 批处理文字纹理
             if rrTex[i] != null { _lib.SDL_DestroyTexture(rrTex[i]) }
         }
         rrTex = []; rrM = []; rrLW = []
+        if rrTgt != null { _lib.SDL_DestroyTexture(rrTgt) }; rrTgt = null
+        rrTgtW = 0; rrTgtH = 0
     }
 
     // 把蒙版按**九宫格**拉伸到目标矩形：一次 RenderGeometry 提交 ✓（顶点色 = 当前绘制颜色 ✓）
@@ -1542,6 +1549,119 @@ const BX_TEX    = 4   // 批处理文字纹理
             }
         }
         return drawRoundedGeom(x, y, w, h, r)
+    }
+
+    // ==================== 圆角**纹理**（2026-10-13 新增 ✓）====================
+    // 为什么需要它：`fillRoundedRect` 能把**颜色**画成圆角，但把**图片**画成圆角做不到 ——
+    //   蒙版路径是「一次 RenderGeometry = 一张纹理 × 顶点色」（见 emitMask9），
+    //   而圆角图要的是「图片 × 蒙版 alpha」**两张纹理相乘** ⇒ 只能先合成、再贴回 ✓
+    // 实现：① 图片画进渲染器级共享的离屏 target；② 圆角蒙版以 **MUL** 混合乘上去 ——
+    //   `SDL_BLENDMODE_MUL` 的语义是 `dst.rgb *= src.rgb; dst.a *= src.a`，而蒙版中间是全白、
+    //   角上是 alpha=0 ⇒ **图片颜色不动、只有 alpha 被按覆盖率裁掉** ✓（顶点色给白即可 ✓）
+    // 安全边界（重要 ✓）：
+    //   · 只在**直绘窗口**时启用（`bxTarget == null` 且未开 SSAA）⇒ 开着 SSAA、或已经在别人的
+    //     离屏 target 里时**退化为普通 drawTextureRect**（宁可不圆角，也绝不扰动 SSAA 流水线 ✗）
+    //   · 离屏纹理**渲染器级共享一张**，只在尺寸变化时重建 ✓（不是每张卡一张 ✗ —— 海报墙 22 张
+    //     卡若各一张就是 22 张离屏纹理 ✗）
+    //   · 进出都恢复现场：blend / target / 绘制颜色 ✓
+    func currentTarget(): Ptr[u8] { return bxTarget }
+
+    // 蒙版「**只**乘 alpha」的自定义混合模式（懒创建 ⇒ 全进程只组合一次 ✓）
+    //   为什么不能用现成的：SDL 的 BLEND/ADD/MOD/MUL **没有一个**能 `dst.a *= src.a` ——
+    //     · MOD/MUL 动的都是 **rgb**：MUL = `dst.rgb = src.rgb*dst.rgb + dst.rgb*(1-src.a)`、
+    //       且 **alpha 原样不动** ⇒ 蒙版 a=0 的角上 rgb 反被放大成 **2 倍**、alpha 还是 1
+    //       ⇒ 圆角切口里照原图（且更亮）画出来，看上去就是"切了圆角又补回一块直角原色"✗
+    //       （2026-10-13 实测像素抓到：图内 0f1f3c、切口 1e3e78 ≈ ×2 ✓）
+    //   ⇒ 自组：色域因子 **ZERO/ONE + ADD** ⇒ `dst.rgb` 原样；alpha 因子 **DST_ALPHA/ZERO + ADD**
+    //     ⇒ `dst.a = src.a * dst.a` ✓（贴回屏幕时按普通 BLEND 合成 ⇒ 切口露出底下的卡片底色 ✓）
+    pri func maskAlphaBlend(): int {
+        if maskAlphaMode < 0 {
+            maskAlphaMode = _lib.SDL_ComposeCustomBlendMode(
+                core.BlendFactor.ZERO, core.BlendFactor.ONE, core.BlendOp.ADD,
+                core.BlendFactor.DST_ALPHA, core.BlendFactor.ZERO, core.BlendOp.ADD)
+        }
+        return maskAlphaMode
+    }
+
+    func drawTextureRounded(Ptr[u8] tex, Ptr[u8] srcrect, Ptr[u8] dstrect, float radius): bool {
+        if tex == null or dstrect == null { return false }
+        // 退化路径：没半径 / 已在离屏 target 里 / 开了 SSAA ⇒ 老老实实画方角 ✓
+        if radius < 1.0 or bxTarget != null or ssaa { return drawTextureRect(tex, srcrect, dstrect) }
+        SDL_FRect rd = SDL_FRect.from_ptr(dstrect)
+        int tw = _int(rd.w + 0.5)
+        int th = _int(rd.h + 0.5)
+        if tw < 4 or th < 4 { return drawTextureRect(tex, srcrect, dstrect) }
+        int M = _int(radius * bxSx + 0.5)
+        if M < 1 { M = 1 }
+        int Mq = rrLadder(M)
+        Ptr[u8] mask = rrGet(Mq, 0)
+        if mask == null or not rrTgtReady(tw, th) {
+            // ⚠ 只提示**一次**：软件渲染器（如 `SDL_VIDEODRIVER=dummy`）建不了蒙版/离屏纹理，
+            //   每帧每卡都打会刷屏 ✗（海报墙 22 张卡 × 60fps = 一秒上千行 ✗）
+            if not _rrTgtWarned {
+                _rrTgtWarned = true
+                print("[LenoSDL3] 圆角纹理合成不可用（蒙版/离屏纹理创建失败），已回退方角绘制")
+            }
+            return drawTextureRect(tex, srcrect, dstrect)
+        }
+
+        var[float, float, float, float](cR, cG, cB, cA) = getColorFloat()
+        flushBatches()
+        int oldBlend = bxBlend
+        // ⓪ ★★ 合成期间必须**临时关掉裁剪** ★★
+        //   离屏 target 的尺寸 = 这一张图（如 299×210），而当前裁剪是**窗口坐标系**的
+        //   （如 ScrollView 视口 200..1168 × 88..718）⇒ 不关的话，离屏里只有"落在该矩形内"的
+        //   那一块会被画上 ⇒ 蒙版只在右下生效 ⇒ 症状正是「上/左是直角、下/右是圆角」✗
+        //   （2026-10-13 实测抓到 ✓；`SDL_SetRenderTarget` **不会**替你清掉裁剪 ✗）
+        //   框架自己的裁剪状态（bxClip/bxClipPtr）不动，只改 SDL 那边，贴回前按原状态还原 ✓
+        Ptr[u8] savedClip = bxClipPtr
+        bool hadClip = bxClip
+        _lib.SDL_SetRenderClipRect(handle, null)
+        // ① 离屏底清成透明黑（`SDL_RenderClear` 不看混合模式 ⇒ 直接写 (0,0,0,0) ✓）
+        setRenderTarget(rrTgt)
+        setColorFloat(0.0, 0.0, 0.0, 0.0)
+        _lib.SDL_RenderClear(handle)
+        // ② 图片铺满离屏（srcrect 原样透传 ⇒ 裁源/缩放口径与 drawTextureRect 完全一致 ✓）
+        SDL_FRect full = SDL_FRect.malloc()
+        full.x = 0.0; full.y = 0.0; full.w = _float(tw); full.h = _float(th)
+        bool okTex = _lib.SDL_RenderTexture(handle, tex, srcrect, full.to_ptr())
+        full.free()
+        // ③ 蒙版乘上去（顶点色 = 白 ⇒ 只改 alpha ✓；corner 用**精确** M/S，同 fillRoundedRect ✓）
+        //   ⚠ 混合模式必须是 `maskAlphaBlend()` 那个**自定义**模式 —— 用 MUL 是错的：
+        //     MUL 只乘 rgb、**alpha 原样**⇒ 切口里原图反而被放大 2 倍照样画出来 ✗（见 maskAlphaBlend ✓）
+        //   ⚠ `SDL_RenderGeometry` 看的是**纹理自身**的混合模式（不认 `SDL_SetRenderDrawBlendMode`
+        //     ⇒ 只设渲染器级的话，蒙版会被当普通 BLEND 盖上去 ⇒ 整块变白 ✗ 实测抓到 ✓）
+        //     ⇒ **两边都设**；蒙版是**共享缓存**，画完必须还原成 BLEND（否则后面的
+        //       fillRoundedRect 全糊 ✗）
+        setColorFloat(1.0, 1.0, 1.0, 1.0)
+        int mm = maskAlphaBlend()
+        _lib.SDL_SetTextureBlendMode(mask, mm)
+        setBlendMode(mm)
+        float corner = _float(M) / bxSx
+        bool okMask = emitMask9(mask, Mq, 0.0, 0.0, _float(tw), _float(th), corner, corner)
+        _lib.SDL_SetTextureBlendMode(mask, core.BlendMode.BLEND)   // 共享蒙版：当场还原 ✓
+        // ④ 恢复现场，再把合成结果贴回屏幕
+        setBlendMode(oldBlend)
+        setRenderTarget(null)
+        // 裁剪还原：框架的状态没变（`bxClipPtr`），把它重新交给 SDL ✓
+        flushBatches()
+        if hadClip and savedClip != null { _lib.SDL_SetRenderClipRect(handle, savedClip) }
+        setColorFloat(cR, cG, cB, cA)
+        // 纹理被当作 render target 用过后，SDL 可能把它的 blend 改成 NONE ⇒ 贴回前再确保 BLEND ✓
+        _lib.SDL_SetTextureBlendMode(rrTgt, core.BlendMode.BLEND)
+        return drawTextureAt(rrTgt, rd.x, rd.y, rd.w, rd.h)
+    }
+
+    // 离屏 target：按尺寸缓存一张（尺寸一致就复用 ✓）
+    pri func rrTgtReady(int w, int h): bool {
+        if rrTgt != null and rrTgtW == w and rrTgtH == h { return true }
+        if rrTgt != null { _lib.SDL_DestroyTexture(rrTgt); rrTgt = null }
+        rrTgt = _lib.SDL_CreateTexture(handle, core.PIXELFORMAT_RGBA8888, 2, w, h)   // 2 = TARGET ✓
+        if rrTgt == null { return false }
+        _lib.SDL_SetTextureBlendMode(rrTgt, core.BlendMode.BLEND)
+        _lib.SDL_SetTextureScaleMode(rrTgt, core.ScaleMode.LINEAR)
+        rrTgtW = w; rrTgtH = h
+        return true
     }
 
     // 老几何实现（三角扇，**无 AA** ✗）—— 保留作回退：半径过小/过大、或混合模式非 BLEND 时用 ✓

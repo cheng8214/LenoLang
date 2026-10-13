@@ -939,3 +939,110 @@ tbl.on_cell_draw(func(Renderer r, int row, int col, float x, float y, float w, f
 - 纯逻辑：`assert\test_table_progress_cells.leno`（进度值解析 + 列类型边界，**不建窗口、不加载字体** ✓）
 - 真渲染：`leno_gui\控件\表格\test_table_cells.leno`（自带 `DSHOT` 钩子 ⇒ 截图后退出，见 §七 ✓）
   它在 `assert\run_gui_checks.leno` 的无头清单里 ✓
+
+---
+
+## 附录 C：`Card` 卡片控件（2026-10-13 新增 ✓）—— 本轮实测的坑
+
+`Card` = 「图片 + 标题 + 副标题 + 角标 + **可挂子控件的内容区**」的网格单元（`sdl_card.leno`）。
+为什么不能用 `Panel` 拼：Panel 的子控件走**窗口绝对坐标**、`Panel.set_pos()` 只挪自己（`sdl_panel.leno:99`），
+而 GridLayout / ScrollView 只会对**子控件本身**调 `set_pos` ⇒ 卡里的图和字**原地不动** ✗。
+设计文档：`docs/LenoSDL3_Card卡片控件设计文档.md`；首个使用方：`leno_gui\应用\影视海报墙\`。
+
+### ⛔ 纹理绘制的 dst 必须是 `SDL_FRect` —— 传 `SDL_Rect` 画面直接"空掉"（实测 ✓）
+
+SDL3 的 `SDL_RenderTexture(ren, tex, const SDL_FRect* src, const SDL_FRect* dst)` **两个都是浮点矩形**，
+而框架的 `Renderer.drawTextureRect(tex, srcrect, dstrect)` 收的是裸 `Ptr[u8]`（**不做类型检查** ✗）——
+把一个 `SDL_Rect`（i32）传进去**不会报任何错**，只是字节被当成浮点解释 ⇒ `w/h` 变成约 1e-45 ⇒
+海报全变深色空板 ✗（本控件 v2 首版就这么栽的：22 张卡全空、文字与角标却正常 ✓）。
+
+```leno
+// ✗ 空板：SDL_Rect 是 i32
+SDL_Rect dst = SDL_Rect.malloc(); r.drawTextureRect(tex, null, dst.to_ptr())
+// ✅ 正确：源/目标都用 SDL_FRect
+SDL_FRect dst = SDL_FRect.malloc(); r.drawTextureRect(tex, null, dst.to_ptr())
+// 高层 helper 也是浮点口径，照它们抄就对了 ✓
+//   drawTextureAt(sdl_renderer:627) / drawTextureFromTo(:643) —— 内部用 SDL_FRect ✓
+```
+
+- 对照：`pushClipRect` 要的**就是** `SDL_Rect`（`SDL_SetRenderClipRect` 是整型 ✓）⇒ 两者**别混用同一个变量** ✓
+- 排查手法：`r.getTextureSize(tex)` 正常、纹理非 null，但画面是空的 ⇒ **先怀疑 dst 矩形类型** ✓
+
+### ✅ 图片"覆盖填满"要**裁源**，不要裁屏（目标：整卡每帧 0 次 `pushClipRect`）
+
+`pushClipRect` / `popClipRect` 每次都先 `flushBatches()`（`sdl_renderer:562,595`）⇒ 每张卡每帧 2 次 flush；
+22 张卡 = 44 次/帧，正是 `LenoSDL3_裁剪过多导致闪烁排查记录.md` 里那条隐患 ✓。
+正解：把居中裁切算进**源矩形**（`image_mode:2` / `MODE_ASPECT_FILL`），dst 就等于图片区
+⇒ 零裁剪、零溢出、还少画被丢弃的像素 ✓（v1 走裁屏、本仓海报墙 **100% 命中** ✗；v2 改裁源后为 0 ✓）
+
+### ✅ 容器化（`set_content`）的两条硬约束
+
+1. 内容控件要**每帧**跟着卡片走：`process` 与 `render` 里都 `set_pos/set_size`（照 `Panel.syncLayoutChild` ✓）
+   —— 只在一个地方同步的话，滚动/换筛选后的第一帧命中会错位 ✓
+2. 卡内控件的点击**不能再触发整卡 `on_click`**（"点收藏 ⇒ 又打开了详情" ✗）：
+   命中点落在内容区时直接跳过 `onClick`；确实要穿透就给 `content_click_through:true` ✓
+   自测手法：`Card.content_rect()` 取内容区几何 → `SDL3.testClickAt(wid, x, y)` 注入点击 →
+   断言日志里**没有**整卡回调那一条（`leno_gui\应用\影视海报墙` 的 `WALL_CLICKSEL` 就是这么验的 ✓）
+
+### ⚠ 卡片高度是 `GridLayout` 在 `add` 时**捕获**的
+
+行高取该行子项的**自然高**（`sdl_gridlayout.leno:181-193` 用的是 `_natH` ✗）⇒ 运行时改卡片高度
+（例如挂了内容行之后变高）必须 `grid.clear()` 后重新 `add` 一遍；光 `set_size` **不会**让行高变 ✓
+（对照：`grid.set_cols()` 是每帧重算 ⇒ 下一帧即生效 ✓ —— 两者行为不同，别记混 ✓）
+
+### ⛔ 圆角**纹理**合成：「只乘 alpha」的混合模式要**自组**，且 `SDL_RenderGeometry` 看**纹理自身**的 blend（2026-10-13 实测 ✓）
+
+`Renderer.drawTextureRounded` 是「图 → 离屏 → 圆角蒙版乘上去（**只裁 alpha**、图片颜色不动）→ 贴回」。
+这里连着踩了两个坑，第二个的症状很像"圆角根本没生效"：
+
+**① SDL 自带的 BLEND / ADD / MOD / MUL 一个都不能用**
+
+第一版按"MUL = `dst.rgb *= src.rgb; dst.a *= src.a`"写（**这个理解是错的** ✗），结果圆角切口里
+照原图**又画了一遍**：SDL3 的 MUL 实际是 `dst.rgb = src.rgb*dst.rgb + dst.rgb*(1-src.a)`、
+**alpha 原样不动**（MOD 同样只动 rgb）⇒ 蒙版 a=0 处 rgb 反被放大成 **2 倍**、alpha 还是 1
+⇒ 症状就是"圆角切了，又补回一块更亮的直角原色"（像素实证：图内 `0f1f3c`、切口 `1e3e78` ≈ ×2 ✗）。
+
+正解是**自组**一个混合模式（`sdl_renderer.maskAlphaBlend()`：懒创建一次、全进程复用 ✓，
+底下的 C API 是 `SDL_ComposeCustomBlendMode` ✓）：
+色域因子 `ZERO/ONE + ADD` ⇒ `dst.rgb` **原样**；alpha 因子 `DST_ALPHA/ZERO + ADD` ⇒ `dst.a = src.a * dst.a` ✓
+
+**② 纹理级 blend 才是生效的那一份**
+
+第一版只设了**渲染器级** MUL（`setBlendMode(MUL)`）⇒ 蒙版被当普通 BLEND 盖上去 ⇒ **整块变白** ✗
+（`SDL_RenderGeometry` 用的是**纹理的** blend，不认 `SDL_SetRenderDrawBlendMode`）⇒ **两边都设**。
+
+```leno
+int mm = maskAlphaBlend()                                 // ★ 只乘 alpha 的自定义模式
+_lib.SDL_SetTextureBlendMode(mask, mm)                    // ★ 关键：纹理级
+setBlendMode(mm)                                          // 渲染器级也设一份（双保险）
+emitMask9(mask, Mq, 0.0, 0.0, tw, th, corner, corner)
+_lib.SDL_SetTextureBlendMode(mask, core.BlendMode.BLEND)  // ★ 蒙版是**共享缓存**，必须当场还原 ✗
+```
+- 蒙版来自 `rrGet()` 的**缓存**（`fillRoundedRect` 也在用）⇒ 不还原的话，之后所有圆角矩形全糊 ✗
+- 贴回前还要把**离屏 target 纹理**的 blend 再设成 BLEND（被当作 target 用过后 SDL 可能改成 NONE ✗）
+- 顶点色给白即可（这也顺带解释了为什么不能用 `fillRoundedRect` 那种"顶点色染蒙版"的路子 ✗）
+
+### ⛔ 软件渲染器建不了离屏/蒙版纹理 ⇒ 圆角**静默回退方角**（验证必须真机 ✓）
+
+`SDL_VIDEODRIVER=dummy`（软件渲染器）下 `SDL_CreateTexture(RGBA8888, TARGET)` 与蒙版创建都失败，
+`drawTextureRounded` 会**静默走 `drawTextureRect`**（方角）⇒ **对着 dummy 截图永远看不出圆角有没有生效** ✗
+（本轮一开始就是这么误判的：以为圆角没做出来，实际是 dummy 下走了回退 ✓）
+- 回退时有**一次**提示行（`[LenoSDL3] 圆角纹理合成不可用…`）；只提示一次，否则 22 卡 × 60fps 会刷屏 ✗
+- **验证圆角必须真机**：`Remove-Item Env:SDL_VIDEODRIVER`（或新开 shell）后直接跑，
+  自带 `CSHOT`/`CAT` 钩子截图（本仓惯例 ✓，窗口闪一下即退 ✓）
+- ⛔ 顺带一个探针坑：**自己 `createRenderer` 的句柄在 `win.run` 跑起来后会失效**
+  （SDL 报 `Parameter 'renderer' is invalid`，于是建纹理/离屏全失败 ✗）⇒
+  探针里所有纹理都要用**回调参数里给的** `Renderer r` 创建（`r.handle` ✓）
+
+### ⛔ 在 A 结构体的方法里写 `new B(键=值)` ⇒ `self` 被切成 B（编译器怪癖 ✓）
+
+`Card` 里构造 `BadgeSpec` 时实测：`new BadgeSpec(text = badge, …)`（`badge` 是 **Card 的字段**）
+⇒ 编译器报 `未定义的变量: badge` / `字段 'text' 类型不匹配: 期望 'string'，实际 'unknown'`
+（它把当前结构体上下文当成 `BadgeSpec` 了 ✗）。
+**改法**：先 `new BadgeSpec()` 再逐字段赋值（`b.text = badge` …）⇒ 立刻正常 ✓（本次就是这么做通的 ✓）
+
+### ✅ 卡片里别留"每帧测量"
+
+行高与省略号结果都带缓存（两槽：标题/副标题各一 ✓）⇒ 文本与字号不变时，**默认左对齐**路径
+每帧 `measureString` = 0 ✓。反过来：把省略号缓存写成**单槽**，标题与副标题会互相踢缓存、
+每帧各跑一次二分 ✗（v1 就是单槽 ✓ 已修）。

@@ -104,6 +104,11 @@ export struct GridLayout impl Widget {
     func get_h(): float { return h }
     func set_pos(float px, float py) { x = px; y = py }
     func set_size(float sw, float sh) { w = sw; h = sh }
+    // ★ 运行时改列数（2026-10-13 补 ✓）：响应式海报墙/商品列表要按窗口宽度重排列，
+    //   而 `cols` 是 pri 字段、外面设不了 ⇒ 此前只能整个 GridLayout 重建（旧卡片得重新 add ✗）。
+    //   下一帧 `relayout()` 即生效（列宽、行高、measure_h 都是每帧按 `cols` 重算的 ✓）
+    func set_cols(int c) { if c >= 1 { cols = c } }
+    func get_cols(): int { return cols }
     func set_enabled(bool e) { enabled = e }
     func set_visible(bool v) { visible = v }
     func is_visible(): bool { return visible }

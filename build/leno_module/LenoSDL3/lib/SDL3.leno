@@ -44,6 +44,7 @@ import "sdl_spinner.leno" as spn
 import "sdl_ring.leno" as ring; use ring.RingProgress   // 圆环进度（donut：idle/sweep/value 三态 ✓）
 import "sdl_groupbox.leno" as gbx
 import "sdl_gridlayout.leno" as grd
+import "sdl_card.leno" as crd; use crd.Card     // 卡片（图片 + 标题 + 副标题 + 角标；海报墙/商品列表的单元 ✓）
 import "sdl_splitter.leno" as spl
 use spl.Splitter
 import "sdl_drag.leno" as drag
@@ -97,6 +98,7 @@ use lnk.LinkButton
 use spn.Spinner
 use gbx.GroupBox
 use grd.GridLayout
+use crd.Card
 use spl.Splitter
 export func createCheckBox(Dict opts): CheckBox     { return chk.createCheckBox(opts) }
 export func createButton(Dict opts): Button          { return btn.createButton(opts) }
@@ -134,6 +136,7 @@ export func createSpinner(Dict opts): Spinner       { return spn.createSpinner(o
 export func createRingProgress(Dict opts): RingProgress { return ring.createRingProgress(opts) }
 export func createGroupBox(Dict opts): GroupBox    { return gbx.createGroupBox(opts) }
 export func createGridLayout(Dict opts): GridLayout { return grd.createGridLayout(opts) }
+export func createCard(Dict opts): Card             { return crd.createCard(opts) }
 export func createSplitter(Dict opts): Splitter    { return spl.createSplitter(opts) }
 export func createDragHint(Dict opts): DragHint     { return drag.createDragHint(opts) }
 export func createTitleBar(Dict opts): TitleBar       { return tbar.createTitleBar(opts) }

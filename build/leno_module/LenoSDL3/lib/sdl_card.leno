@@ -1,0 +1,805 @@
+// sdl_card.leno — 卡片控件（图片 + 标题 + 副标题 + 角标 + **可挂子控件的内容区**）
+//
+// 为什么需要它（框架缺口 ✓，2026-10-13）：
+//   「图 + 文」的小单元此前只能用 Panel 拼 —— **拼不出来** ✗：
+//   Panel 的子控件走**窗口绝对坐标**，而 `Panel.set_pos()` 只挪自己（见 sdl_panel.leno）⇒
+//   一旦被 GridLayout / ScrollView 摆位（它们只会 `set_pos` 卡片本身），
+//   卡片里的图片与文字**原地不动** ⇒ 全糊在一起 ✗。
+//   ⇒ 卡片这种"整体移动的最小单元"只能自己实现 Widget（本控件就是它 ✓）
+//
+// 用法：
+//   var card = SDL3.createCard({w:180, h:310, image_path: path,
+//       title: "暗夜追凶", subtitle: "2024 / 悬疑", badge: "8.7", badge_pos: 0})
+//   grid.add(card, {align: 3})                 // 网格里撑满格子
+//   card.on_click(func() { openDetail() })
+//
+//   // 容器化（v2 ✓）：图片下方挂一行自己的控件（按钮/进度/开关都行）
+//   var bar = SDL3.createHBox({padX:0, padY:0, spacing:6})
+//   bar.add(SDL3.createButton({text:"播放", w:56, h:24}), {basis:56, align:1})
+//   card.set_content(bar)
+//   card.set_selected(true)
+//
+// 设计文档：`docs/LenoSDL3_Card卡片控件设计文档.md`（尺寸模型 / 状态优先级 / 裁剪预算都在那）
+//
+// 三条不变式（改本文件时必须守住）：
+//   ① 图片永不挤掉文字与内容区（见 layout() 的 maxIH ✓）
+//   ② **整卡每帧 0 次 pushClipRect、0 次 malloc**（图片溢出一律靠**源矩形裁切**解决 ✓；
+//      这正是"裁剪过多会闪"那条记录（docs/LenoSDL3_裁剪过多导致闪烁排查记录.md）的正解 ✓）
+//   ③ `hover_lift` 只影响绘制，不改 x/y（hit-test 与布局容器的 set_pos 都不能被污染 ✓）
+import "sdl_renderer.leno" as ren; use ren.Renderer
+import "sdl_opts.leno" as dochk    // 选项对账：不认识的键会报一行警告（见 sdl_opts.leno ✓）
+import "sdl_font.leno" as fnt; use fnt.Font
+import "sdl_event.leno" as evt; use evt.Event
+import "sdl_core.leno" as core; use core.(SystemCursor, SDL_Rect, SDL_FRect, sdl3)
+import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_layout.leno" as lay    // 内容控件的窗口句柄下发（passWindowHandle ✓）
+import "sdl_image.leno" as img
+import "sdl_tooltip.leno" as tip
+import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
+use theme.Color
+import strings
+
+
+// 角标规格（多角标 ✓）：opts 里用 Dict 描述，进控件时**只转一次**成结构体（不是每帧转 ✗）
+//   键与主角标 opts 同名同义：`text` / `pos`(0 右上 1 左上 2 左下 3 右下) / `size` / `bg` / `color` / `icon`
+//   不传的键 ⇒ 回落到主角标的对应值（`badge_size` / `badge_bg` / `badge_color`）✓
+struct BadgeSpec {
+    string text = ""
+    int pos = 0
+    float size = 0.0            // 0 = 用主角标字号
+    Color bg = 0                // 0 = 用主角标底色
+    Color color = 0             // 0 = 用主角标文字色
+    string icon = ""
+    Ptr[u8]? tex                // 图标纹理（懒加载 ✓）
+    string loaded = ""
+    Font? f                     // 字号字体（按 spec 各自缓存 ✓ —— 多角标可以各用各的字号）
+    float fSize = 0.0           // 上面那个字体对应的字号
+}
+
+// 本控件认的键 —— 由本文件全部 `.get("…")` **自动抽取**（是超集 ⇒ 可少报、不误报 ✓）
+//   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
+func _opts_keys(): Array[string] {
+    return [
+"auto_h", "badge", "badge_bg", "badge_color", "badge_icon", "badge_pos", "badge_size", "badges", "bg_color", "border", "border_color", "border_selected_color", "content_bg", "content_click_through", "content_clip", "content_h", "content_pad", "cursor", "enabled", "gap", "h", "hover_color", "hover_lift", "image_aspect", "image_bg", "image_h", "image_mode", "image_path", "image_radius", "image_tint", "pad", "pressed_color", "radius", "selected", "selected_color", "subtitle", "subtitle_color", "subtitle_size", "text_align", "text_color", "tip", "title", "title_bold", "title_size", "visible", "w", "x", "y"
+]
+}
+export struct Card impl Widget, Themeable {
+    // ==================== 关联常量 ====================
+    const MODE_ASPECT_FIT  = 0   // 保持比例，完整显示（可能留边）
+    const MODE_STRETCH     = 1   // 拉伸填满
+    const MODE_ASPECT_FILL = 2   // 覆盖填满（源矩形裁切；海报墙默认 ✓）
+
+    const BADGE_RT = 0           // 角标位置：右上 / 左上 / 左下 / 右下
+    const BADGE_LT = 1
+    const BADGE_LB = 2
+    const BADGE_RB = 3
+
+    const ALIGN_LEFT   = 0       // 文本对齐（与 Label 同名同值 ✓）
+    const ALIGN_CENTER = 1
+    const ALIGN_RIGHT  = 2
+
+    // ==================== 位置尺寸 ====================
+    float x = 0.0, y = 0.0
+    float _w = 180.0, _h = 310.0
+    bool autoH = false           // true ⇒ get_h() 由内容反算（图片+文字+内容区 ✓）
+
+    // ==================== 内容 ====================
+    string title = ""
+    string subtitle = ""
+    string badge = ""             // 角标文字（空 = 不画；评分/时长/新片都放这 ✓）
+
+    // ==================== 图片 ====================
+    pri string imagePath = ""
+    pri Ptr[u8]? tex                  // 图片纹理（懒加载）
+    pri bool ownTex = true            // false = 别人共享给我的纹理 ⇒ dispose 不释放 ✓
+    pri string loadedPath = ""        // 已加载的路径（避免重复加载/失败重试 ✓）
+    pri float natW = 0.0, natH = 0.0  // 图片原始尺寸（算裁切/缩放用 ✓）
+    pri int imgMode = MODE_ASPECT_FILL
+    pri float imgH = 0.0              // 图片区高度（0 = 按 imgAspect 算 ✓）
+    pri float imgAspect = 1.45        // 图片区高/宽（1.45 ≈ 2:3 竖版海报 ✓）
+    pri Color tint = -1               // 图片着色（-1 = 不着色）
+    pri Color imgBg = 0               // 图片区底色（留边/加载失败时露出 ✓）
+    pri float pad = 0.0               // 图片区与卡片边的内边距
+    pri float imgRadius = 0.0         // 图片**自身**圆角（0 = 方角；>0 走 drawTextureRounded 合成 ✓）
+    // 源/目标矩形：**分配一次、每帧复用** ⇒ 每帧零 malloc（不变式 ② ✓）
+    //   ⚠ 纹理绘制必须用 **SDL_FRect**（`SDL_RenderTexture` 的 src/dst 是浮点矩形 ✓）：
+    //     v2 首版拿 SDL_Rect（i32）传进去 ⇒ 字节被当成浮点解释 ⇒ 图片整片画不出来 ✗（实测抓到 ✓）
+    //     而 `pushClipRect` 要的是 **SDL_Rect**（`SDL_SetRenderClipRect` 是整型 ✓）⇒ 两者分开存 ✓
+    pri SDL_FRect? srectF
+    pri SDL_FRect? drectF
+    pri SDL_Rect? crect
+
+    // ==================== 文本 ====================
+    pri float titleSize = 14.0
+    pri float subSize = 12.0
+    pri bool titleBold = true
+    pri int txtAlign = ALIGN_LEFT
+    pri float titleLineH = 0.0, subLineH = 0.0    // 行高缓存（脏了才重量 ⇒ 每帧 0 次测量 ✓）
+    pri bool metricsDirty = true
+    // 省略号缓存 **两槽**（标题/副标题各一）：v1 单槽会让两者每帧互相踢缓存 ✗
+    pri string ck0 = "\x01"; pri float cm0 = -1.0; pri string co0 = ""
+    pri string ck1 = "\x01"; pri float cm1 = -1.0; pri string co1 = ""
+
+    // ==================== 角标（支持多个 ✓）====================
+    pri float badgeSize = 12.0
+    pri int badgePos = BADGE_RT
+    pri string badgeIcon = ""         // 可选小图标（白色形状 + tint ✓）
+    pri Ptr[u8]? badgeTex
+    pri string badgeLoaded = ""
+    pri Array[BadgeSpec] badges = []  // 规格表：`badge` 是第 0 个，`badges` 追加其后（同角标自动错位 ✓）
+
+    // ==================== 内容区（容器化 ✓）====================
+    pri Widget? _content
+    pri float contentH = 0.0          // 内容区高度（0 = 占满剩余 ✓）
+    pri float contentPad = 8.0        // 内容区与卡片边的内边距
+    pri Color contentBg = 0           // 内容区底色（0 = 不画 ✓）
+    pri bool contentClip = false      // 是否裁剪内容区（**默认关**：裁一次 = 一次 flush ✓）
+    pri bool clickThrough = false     // true ⇒ 内容区内的点击也触发整卡 on_click
+    pri float gap = 7.0               // 图片 ↔ 文字 ↔ 内容区 的间距
+
+    // ==================== 状态 ====================
+    pri bool selected = false
+    // ⚠ 标量字段必须显式初值（否则默认 null，参与运算会直接报错 —— 见编译器 W017 ✓）
+    pri Color selectedColor = 0
+    pri Color bdrSelColor = 0
+    pri Color bgColor = 0
+    pri Color hovColor = 0
+    pri Color prColor = 0             // 0 = 自动（hover 再暗一档 ✓）
+    pri Color bdrColor = 0
+    pri Color titleColor = 0
+    pri Color subColor = 0
+    pri Color badgeBg = 0
+    pri Color badgeColor = 0
+    pri float radius = 10.0
+    pri bool showBorder = false
+    pri int cursor = SystemCursor.POINTER
+    pri float hoverLift = 0.0         // 悬停时**视觉**上移像素（不改 x/y ✓）
+    pri func():void onClick
+    bool hover = false
+    pri bool pressed = false
+    pri bool wasHover = false
+    bool enabled = true, visible = true, _loaded = false
+    string tipText = ""               // 悬停提示（字段不能叫 `tip` —— 本文件已把 tip 用作模块别名 ✓）
+    pri Font? fTitle
+    pri Font? fSub
+    pri Font? fBadge
+    pri Ptr[u8]? hwnd                 // 所属窗口句柄（下发给内容控件用 ✓）
+
+    // 布局结果缓存：`layout()` 每帧填一次，`process`/`render` 共用（零分配、不重复算 ✓）
+    pri float _ix = 0.0, _iy = 0.0, _iw = 0.0, _ih = 0.0   // 图片区
+    pri float _ty = 0.0                                     // 文字块起始 y
+    pri float _cx = 0.0, _cy = 0.0, _cw = 0.0, _ch = 0.0   // 内容区
+
+
+    func set(Dict opts) {
+        dochk.check("sdl_card", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
+        Theme th = theme.getTheme()
+        bgColor = th.bgAlt
+        hovColor = theme.brighten(th.bgAlt, 14)
+        bdrColor = th.border
+        titleColor = th.txt
+        subColor = th.txtDim
+        selectedColor = th.bgSel
+        bdrSelColor = th.accent
+        badgeBg = #000000B0              // 半透明底 ⇒ 压在图上也看得清 ✓
+        badgeColor = #F5C451FF            // 金色分数 ✓
+        x = opts.get("x", 0)
+        y = opts.get("y", 0)
+        _w = opts.get("w", 180)
+        _h = opts.get("h", 310)
+        autoH = opts.get("auto_h", false)
+        title = opts.get("title", "")
+        subtitle = opts.get("subtitle", "")
+        badge = opts.get("badge", "")
+        imagePath = opts.get("image_path", "")
+        imgMode = opts.get("image_mode", MODE_ASPECT_FILL)
+        imgH = opts.get("image_h", 0.0)
+        imgAspect = opts.get("image_aspect", 1.45)
+        radius = opts.get("radius", 10.0)
+        pad = opts.get("pad", 0.0)
+        imgRadius = opts.get("image_radius", 0.0)
+        gap = opts.get("gap", 7.0)
+        titleSize = opts.get("title_size", 14.0)
+        subSize = opts.get("subtitle_size", 12.0)
+        titleBold = opts.get("title_bold", true)
+        txtAlign = opts.get("text_align", ALIGN_LEFT)
+        badgeSize = opts.get("badge_size", 12.0)
+        badgePos = opts.get("badge_pos", BADGE_RT)
+        badgeIcon = opts.get("badge_icon", "")
+        contentH = opts.get("content_h", 0.0)
+        contentPad = opts.get("content_pad", 8.0)
+        contentClip = opts.get("content_clip", false)
+        clickThrough = opts.get("content_click_through", false)
+        selected = opts.get("selected", false)
+        hoverLift = opts.get("hover_lift", 0.0)
+        if opts.get("bg_color") is Color => t { bgColor = t }
+        if opts.get("hover_color") is Color => t { hovColor = t }
+        if opts.get("pressed_color") is Color => t { prColor = t }
+        if opts.get("border_color") is Color => t { bdrColor = t }
+        if opts.get("border_selected_color") is Color => t { bdrSelColor = t }
+        if opts.get("selected_color") is Color => t { selectedColor = t }
+        if opts.get("text_color") is Color => t { titleColor = t }
+        if opts.get("subtitle_color") is Color => t { subColor = t }
+        if opts.get("badge_bg") is Color => t { badgeBg = t }
+        if opts.get("badge_color") is Color => t { badgeColor = t }
+        if opts.get("image_tint") is Color => t { tint = t }
+        if opts.get("image_bg") is Color => t { imgBg = t }
+        if opts.get("content_bg") is Color => t { contentBg = t }
+        showBorder = opts.get("border", false)
+        cursor = opts.get("cursor", SystemCursor.POINTER)
+        enabled = opts.get("enabled", true)
+        visible = opts.get("visible", true)
+        tipText = opts.get("tip", "")
+        clear_tex()                  // ★ A2：二次 set = 换卡 ⇒ 旧纹理**当场释放**（v1 漏过 ✓）
+        clear_badges()               // 角标规格表重建（含图标纹理释放 ✓）
+        // 多角标：`badge` 是第 0 个（主角标），`badges` 追加其后 ✓
+        if badge != "" or badgeIcon != "" {
+            // ⚠ 这里**不能**写 `new BadgeSpec(text = badge, …)`：在另一个结构体的方法里用
+            //   `new X(键=值)` 会让编译器把 self 切到 X ⇒ 右边这些**本结构体字段**被判"未定义" ✗
+            //   （2026-10-13 实测；改成先 new 再逐字段赋值就正常 ✓）
+            BadgeSpec b0 = new BadgeSpec()
+            b0.text = badge
+            b0.pos = badgePos
+            b0.size = badgeSize
+            b0.bg = badgeBg
+            b0.color = badgeColor
+            b0.icon = badgeIcon
+            badges.add(b0)
+        }
+        var bs = opts.get("badges")
+        if bs is Array[Dict] {
+            for 0 : bs.len() - 1 to i {
+                BadgeSpec sp = parse_badge(bs[i])
+                badges.add(sp)
+            }
+        }
+        metricsDirty = true
+        ck0 = "\x01"; ck1 = "\x01"
+        _loaded = true
+    }
+
+    // Dict → BadgeSpec（未给的键回落到主角标值 ✓）
+    //   ⚠ `is Color => 绑定` 是**语句**形式，不能塞进表达式里当三元用 ✗ ⇒ 先给默认再逐项覆盖 ✓
+    pri func parse_badge(Dict o): BadgeSpec {
+        BadgeSpec s = new BadgeSpec()
+        s.text = o.get("text", "")
+        s.pos = o.get("pos", badgePos)
+        s.size = o.get("size", badgeSize)
+        s.icon = o.get("icon", "")
+        s.bg = badgeBg
+        s.color = badgeColor
+        if o.get("bg") is Color => c { s.bg = c }
+        if o.get("color") is Color => c2 { s.color = c2 }
+        return s
+    }
+
+    // ==================== 纹理所有权 ====================
+    pri func clear_tex() {
+        if tex != null and ownTex { core.lib().SDL_DestroyTexture(tex) }
+        tex = null; ownTex = true        // 下次 set_image 又是自己的 ✓
+        loadedPath = ""
+        natW = 0.0; natH = 0.0
+    }
+
+    // ==================== 设置方法 ====================
+    func set_title(string t) { title = t; metricsDirty = true; ck0 = "\x01" }
+    func set_subtitle(string t) { subtitle = t; metricsDirty = true; ck1 = "\x01" }
+    func set_badge(string b) {
+        badge = b
+        if badges.len() == 0 {
+            if b != "" {
+                BadgeSpec s = new BadgeSpec()
+                s.text = b
+                s.pos = badgePos
+                s.size = badgeSize
+                s.bg = badgeBg
+                s.color = badgeColor
+                s.icon = badgeIcon
+                badges.add(s)
+            }
+        } else {
+            badges[0].text = b
+        }
+    }
+    // 追加一个角标（吃与 `badges` 元素同名的键 ✓）；同一角标上多个会自动**沿边错位** ✓
+    func add_badge(Dict o) { badges.add(parse_badge(o)) }
+    func clear_badges() {
+        for 0 : badges.len() - 1 to i {
+            if badges[i].tex != null { core.lib().SDL_DestroyTexture(badges[i].tex) }
+        }
+        badges = []
+        badge = ""
+        if badgeTex != null { core.lib().SDL_DestroyTexture(badgeTex) }; badgeTex = null
+        badgeLoaded = ""
+    }
+    func set_image(string path) {
+        clear_tex()
+        imagePath = path
+    }
+    // 直接挂一张**已有纹理**（多卡共享同一张图 ⇒ 只解码一次 ✓）；
+    //   own=false ⇒ 本卡只借用，`dispose` 不释放它（谁建谁释放 ✓）
+    func set_texture(Ptr[u8] t, bool own) {
+        clear_tex()
+        imagePath = ""
+        tex = t
+        ownTex = own
+        if t != null {            // 借用时不查原图尺寸 ⇒ 退化按图片区拉伸（调用方可用 image_h 控高 ✓）
+            loadedPath = "\x02shared"
+        }
+    }
+    // ==================== 运行时 setter（网格 ⇄ 列表切换这类场景必需 ✓）====================
+    //   凡影响**布局**的都要请求重绘；字号类还要把字体与行高缓存一并失效 ✓
+    func set_image_aspect(float a) { imgAspect = a; core.markFrameRedraw() }
+    func set_image_h(float h) { imgH = h; core.markFrameRedraw() }
+    func set_image_mode(int m) { imgMode = m; core.markFrameRedraw() }
+    func set_image_radius(float r) { imgRadius = r; core.markFrameRedraw() }
+    func set_pad(float p) { pad = p; core.markFrameRedraw() }
+    func set_gap(float g) { gap = g; core.markFrameRedraw() }
+    func set_text_align(int a) { txtAlign = a; core.markFrameRedraw() }
+    func set_radius(float r) { radius = r; core.markFrameRedraw() }
+    func set_hover_lift(float v) { hoverLift = v; core.markFrameRedraw() }
+    func set_content_h(float h) { contentH = h; core.markFrameRedraw() }
+    func set_content_pad(float p) { contentPad = p; core.markFrameRedraw() }
+    func set_bg_color(Color c) { bgColor = c; core.markFrameRedraw() }
+    func set_hover_color(Color c) { hovColor = c; core.markFrameRedraw() }
+    func set_selected_color(Color c) { selectedColor = c; core.markFrameRedraw() }
+    func set_border(bool b) { showBorder = b; core.markFrameRedraw() }
+    func set_tip(string t) { tipText = t }
+    func set_auto_h(bool v) { autoH = v }
+    func set_badge_pos(int p) { badgePos = p; if badges.len() > 0 { badges[0].pos = p } }
+    func set_badge_size(float s) { badgeSize = s; release_fonts(); core.markFrameRedraw() }
+    func set_title_size(float s) { titleSize = s; release_fonts(); core.markFrameRedraw() }
+    func set_subtitle_size(float s) { subSize = s; release_fonts(); core.markFrameRedraw() }
+    // 释放三支字体 + 让行高/省略号缓存失效（字号改了必须走这里 ✓）
+    pri func release_fonts() {
+        if fTitle != null and fTitle.ok { fnt.releaseFont(fTitle) }; fTitle = null
+        if fSub != null and fSub.ok { fnt.releaseFont(fSub) }; fSub = null
+        if fBadge != null and fBadge.ok { fnt.releaseFont(fBadge) }; fBadge = null
+        metricsDirty = true
+        ck0 = "\x01"; ck1 = "\x01"
+    }
+
+    func set_enabled(bool e) { enabled = e }
+    func set_visible(bool v) { visible = v }
+    func is_visible(): bool { return visible }
+    func on_click(func():void cb) { onClick = cb }
+
+    // ==================== 状态 ====================
+    func set_selected(bool v) { if selected != v { selected = v; core.markFrameRedraw() } }
+    func is_selected(): bool { return selected }
+    func is_hover(): bool { return hover }
+    func is_pressed(): bool { return pressed }
+
+    // ==================== 容器化（v2 ✓）====================
+    func set_content(Widget c): Widget {
+        _content = c
+        metricsDirty = true
+        if c != null and hwnd != null { lay.passWindowHandle(c, hwnd) }
+        core.markFrameRedraw()
+        return c
+    }
+    func clear_content() { _content = null; metricsDirty = true; core.markFrameRedraw() }
+    func content_widget(): Widget {
+        var c = _content
+        if c is Widget { return c }
+        return null
+    }
+    // 内容区几何 [x, y, w, h]（**窗口绝对坐标** ✓）：外部做命中测试 / 往内容区锚弹层 / 自测都要用
+    //   （查询用 ⇒ 每次调用重新 layout，保证是当前值 ✓）
+    func content_rect(): Array[float] {
+        layout()
+        Array[float] r = []
+        r.add(_cx); r.add(_cy); r.add(_cw); r.add(_ch)
+        return r
+    }
+    // 窗口句柄下发：记下自己，并转交给内容控件（卡内 Edit 的 IME 定位要用 ✓）
+    func _bind_window(Ptr[u8] h) {
+        hwnd = h
+        var c = _content
+        if c is Widget { lay.passWindowHandle(c, h) }
+    }
+    // 把内容控件摆到内容区（`process` 与 `render` 都调 ⇒ 跟着卡片滚/动 ✓，同 Panel.syncLayoutChild）
+    pri func sync_content() {
+        var c = _content
+        if c is Widget {
+            c.set_pos(_cx, _cy)
+            c.set_size(_cw, _ch)
+        }
+    }
+    pri func in_content(float mx, float my): bool {
+        if _content == null { return false }
+        return mx >= _cx and mx <= _cx + _cw and my >= _cy and my <= _cy + _ch
+    }
+
+    // ==================== 尺寸 / 命中 ====================
+    func get_x(): float { return x }
+    func get_y(): float { return y }
+    func get_w(): float { return _w }
+    func get_h(): float {
+        if autoH { return measure_h() }
+        return _h
+    }
+    // 自然高（auto_h / 容器测量用 ✓）：图片 + 文字块 + 内容区 + 内边距
+    func measure_h(): float {
+        ensure_font()
+        measure_metrics()
+        // 与 layout() 的 textH **同一公式**（这里曾写成三分支链，只有标题没副标题时会算成 0 ✗）
+        float textH = 0.0
+        if title != "" { textH = titleLineH + 2.0 }
+        if subtitle != "" { textH = textH + subLineH }
+        float iw = _w - 2.0 * pad
+        float ih = imgH
+        if ih <= 0.0 { ih = iw * imgAspect }
+        float total = pad + ih + gap + textH + pad
+        if contentH > 0.0 { total = total + gap + contentH }
+        else if _content != null { total = total + gap + 24.0 }
+        return total
+    }
+    func set_pos(float px, float py) { x = px; y = py }
+    func set_size(float sw, float sh) { _w = sw; _h = sh }
+    func contains(float mx, float my): bool {
+        return mx >= x and mx <= x + _w and my >= y and my <= y + _h
+    }
+
+    // ==================== 资源 ====================
+    pri func ensure_font() {
+        if fTitle == null or not fTitle.ok {
+            if fTitle != null and fTitle.ok { fnt.releaseFont(fTitle) }
+            fTitle = fnt.acquireFontAuto(titleSize)
+            if fTitle.ok and titleBold { fTitle.setStyle(fnt.STYLE_BOLD) }
+            metricsDirty = true
+        }
+        if fSub == null or not fSub.ok { fSub = fnt.acquireFontAuto(subSize); metricsDirty = true }
+        if fBadge == null or not fBadge.ok { fBadge = fnt.acquireFontAuto(badgeSize) }
+    }
+    pri func fonts_ok(): bool {
+        return fTitle != null and fTitle.ok and fSub != null and fSub.ok and fBadge != null and fBadge.ok
+    }
+    // 行高缓存：只在脏时量（文本/字号变了才脏 ⇒ 每帧 0 次 measureString ✓）
+    pri func measure_metrics() {
+        if not metricsDirty or not fonts_ok() { return }
+        titleLineH = 0.0; subLineH = 0.0
+        if title != "" { var[float, float](_m0, _m1) = fTitle.measureString("Ag"); titleLineH = _m1 }
+        if subtitle != "" { var[float, float](_m2, _m3) = fSub.measureString("Ag"); subLineH = _m3 }
+        metricsDirty = false
+    }
+    // 懒加载图片纹理（需要有效渲染器）
+    pri func ensure_tex(Renderer r) {
+        if imagePath != "" and tex == null and loadedPath != imagePath {
+            tex = img.loadTexture(r.handle, imagePath)
+            ownTex = true
+            loadedPath = imagePath
+            if tex != null {
+                var[float, float](nw, nh) = r.getTextureSize(tex)
+                natW = nw; natH = nh
+            }
+        }
+        if badgeIcon != "" and badgeTex == null and badgeLoaded != badgeIcon {
+            badgeTex = img.loadTexture(r.handle, badgeIcon)
+            badgeLoaded = badgeIcon
+        }
+        // 多角标图标：每个规格各自懒加载 ✓（结构体是引用语义 ⇒ 写回这张表就行 ✓）
+        for 0 : badges.len() - 1 to i {
+            string ic = badges[i].icon
+            if ic != "" and badges[i].tex == null and badges[i].loaded != ic {
+                badges[i].tex = img.loadTexture(r.handle, ic)
+                badges[i].loaded = ic
+            }
+        }
+    }
+
+    // 超宽时裁到能放下并加省略号（二分找最长可容纳前缀 ✓）
+    pri func meas_w(string t, bool big): float {
+        if big { var[float, float](w0, _a) = fTitle.measureString(t); return w0 }
+        var[float, float](w1, _b) = fSub.measureString(t)
+        return w1
+    }
+    pri func ellipsize(string t, float maxW, bool big): string {
+        if t == "" or maxW <= 8.0 { return t }
+        if meas_w(t, big) <= maxW { return t }
+        int n = strings.len(t)
+        int lo = 1, hi = n, best = 0
+        while lo <= hi {
+            int mid = (lo + hi) / 2
+            string cand = strings.take(t, 0, mid) + "…"
+            if meas_w(cand, big) <= maxW { best = mid; lo = mid + 1 } else { hi = mid - 1 }
+        }
+        if best <= 0 { return "" }
+        return strings.take(t, 0, best) + "…"
+    }
+    // 两槽缓存：标题/副标题各一槽 ⇒ 不会互相踢（A3 的修法 ✓）
+    pri func fit(string t, float maxW, bool big): string {
+        if big {
+            if ck0 == t and cm0 == maxW { return co0 }
+            string o0 = ellipsize(t, maxW, true)
+            ck0 = t; cm0 = maxW; co0 = o0
+            return o0
+        }
+        if ck1 == t and cm1 == maxW { return co1 }
+        string o1 = ellipsize(t, maxW, false)
+        ck1 = t; cm1 = maxW; co1 = o1
+        return o1
+    }
+
+    // ==================== 布局（不变式 ①）====================
+    pri func layout() {
+        measure_metrics()
+        float textH = 0.0
+        if title != "" { textH = textH + titleLineH + 2.0 }
+        if subtitle != "" { textH = textH + subLineH }
+        // 底部预留：文字块 + 内容区（有内容但没给 content_h ⇒ 至少留 24px ✓）
+        float needBottom = textH + 12.0
+        if contentH > 0.0 { needBottom = needBottom + gap + contentH + contentPad }
+        else if _content != null { needBottom = needBottom + gap + contentPad + 24.0 }
+
+        float iw = _w - 2.0 * pad
+        float ih = imgH
+        if ih <= 0.0 { ih = iw * imgAspect }
+        float maxIH = _h - needBottom
+        if maxIH < 16.0 { maxIH = _h * 0.5 }
+        if ih > maxIH { ih = maxIH }          // ★ 图片让位，文字/内容永不被挤掉 ✓
+        if iw < 1.0 or ih < 1.0 { iw = 0.0; ih = 0.0 }
+
+        _ix = x + pad
+        _iy = y + pad
+        _iw = iw
+        _ih = ih
+        _ty = _iy + ih + gap
+        _cx = x + contentPad
+        _cy = _ty + textH
+        _cw = _w - 2.0 * contentPad
+        if contentH > 0.0 { _ch = contentH } else { _ch = y + _h - contentPad - _cy }
+        if _ch < 0.0 { _ch = 0.0 }
+        if _cw < 0.0 { _cw = 0.0 }
+    }
+
+    // ==================== 交互 ====================
+    func process(Event ev) {
+        if not _loaded or not visible { return }
+        if not enabled { hover = false; pressed = false; return }
+        layout()
+        sync_content()
+        var[float, float](mx, my) = ev.mousePos()
+        if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
+        if core.inPopupCapture(mx, my) { return }
+
+        bool inside = contains(mx, my)
+        bool inBody = inside and not in_content(mx, my)     // "卡片本体"= 不含内容区
+        // 子控件先拿事件（卡内按钮/开关优先 ✓）
+        var c = _content
+        if c is Widget { c.process(ev) }
+
+        if ev.isMouseMotion() {
+            wasHover = hover
+            hover = inside
+            if hover != wasHover { core.markFrameRedraw() } else { core.markFrameMotion() }
+            if cursor >= 0 and hover { core.requestCursor(cursor) }
+            if hover and tipText != "" { tip.tipReport(tipText, mx, my) }
+        }
+        if ev.isMouseButtonDown() and inside {
+            // ★ 内容区是子控件的地盘：点卡内按钮不该顺带"打开详情" ✗（要穿透就 content_click_through:true ✓）
+            if inBody or clickThrough {
+                pressed = true
+                hover = true
+                core.markFrameRedraw()
+                if onClick != null { onClick() }
+            }
+        }
+        if ev.isMouseButtonUp() and pressed {
+            pressed = false
+            core.markFrameRedraw()
+        }
+    }
+
+    // ==================== 渲染 ====================
+    func render(Renderer r) {
+        if not _loaded or not visible { return }
+        ensure_font()
+        if not fonts_ok() { return }
+        ensure_tex(r)
+        layout()
+        sync_content()
+
+        // 绘制坐标（hover_lift 只动绘制，不动 x/y ✓ 不变式 ③）
+        float vy = y
+        if hover and hoverLift > 0.0 { vy = y - hoverLift }
+
+        // ① 卡片底（颜色优先级：selected → pressed → hover → 正常；禁用另走混背景 ✓）
+        Color bg = bgColor
+        if not enabled { bg = theme.mixbg(bgColor, theme.getTheme().bg, 60) }
+        else if selected { bg = selectedColor }
+        else if pressed { bg = if prColor != 0 then prColor else theme.darken(hovColor, 10) }
+        else if hover { bg = hovColor }
+        r.setColor(bg)
+        r.fillRoundedRect(x, vy, _w, _h, radius)
+
+        float fud = vy - y        // 绘制偏移（角标/文字/内容区跟着走 ✓）
+
+        // ② 图片区（底色 + 图片）
+        if _iw >= 1.0 and _ih >= 1.0 {
+            if imgBg != 0 {
+                r.setColor(imgBg)
+                r.fillRect(_ix, _iy + fud, _iw, _ih)
+            }
+            if tex != null {
+                if tint >= 0 { r.setTextureColor(tex, tint) } else { r.setTextureColor(tex, #FFFFFFFF) }
+                r.setTextureAlpha(tex, 255)
+                if srectF == null { srectF = SDL_FRect.malloc() }
+                if drectF == null { drectF = SDL_FRect.malloc() }
+                bool whole = natW <= 0.0 or natH <= 0.0 or imgMode == MODE_STRETCH
+                Ptr[u8] srcPtr = null
+                if imgMode == MODE_ASPECT_FIT {
+                    float sc = _iw / natW
+                    if _ih / natH < sc { sc = _ih / natH }
+                    float dw = natW * sc, dh = natH * sc
+                    drectF.x = _ix + (_iw - dw) / 2.0
+                    drectF.y = _iy + fud + (_ih - dh) / 2.0
+                    drectF.w = dw; drectF.h = dh
+                } eif whole {
+                    drectF.x = _ix; drectF.y = _iy + fud
+                    drectF.w = _iw; drectF.h = _ih
+                } else {
+                    // 覆盖填满：**裁源**而不是裁屏 ⇒ 零 pushClipRect、零溢出（不变式 ② ✓）
+                    float sc = _iw / natW
+                    if _ih / natH > sc { sc = _ih / natH }
+                    float swf = _iw / sc, shf = _ih / sc
+                    if swf > natW { swf = natW }
+                    if shf > natH { shf = natH }
+                    srectF.x = (natW - swf) / 2.0
+                    srectF.y = (natH - shf) / 2.0
+                    srectF.w = swf; srectF.h = shf
+                    drectF.x = _ix; drectF.y = _iy + fud
+                    drectF.w = _iw; drectF.h = _ih
+                    srcPtr = srectF.to_ptr()
+                }
+                // 图片圆角（opt-in ✓）：走渲染器的「图 × 圆角蒙版」合成；半径 0 时零开销 ✓
+                if imgRadius > 0.0 { r.drawTextureRounded(tex, srcPtr, drectF.to_ptr(), imgRadius) }
+                else { r.drawTextureRect(tex, srcPtr, drectF.to_ptr()) }
+            }
+        }
+
+        // ③ 角标（**可多个** ✓：位置/字号/底色/图标各自可配；同一个角上自动沿边错位）
+        //    ⚠ 错位量用 4 个局部 float（不是每帧新建数组 ✗ —— 不变式 ② 的"零分配"）
+        if badges.len() > 0 {
+            float offRT = 0.0, offLT = 0.0, offLB = 0.0, offRB = 0.0
+            for 0 : badges.len() - 1 to i {
+                BadgeSpec b = badges[i]
+                if b.text == "" and b.tex == null { continue }
+                float bsz = if b.size > 0.0 then b.size else badgeSize
+                Color bbg = if b.bg != 0 then b.bg else badgeBg
+                Color bfg = if b.color != 0 then b.color else badgeColor
+                // 字号可以各不相同 ⇒ 字体按 spec 缓存（只在该字号首次出现时创建 ✓）
+                if b.f == null or not b.f.ok or b.fSize != bsz {
+                    if b.f != null and b.f.ok { fnt.releaseFont(b.f) }
+                    b.f = fnt.acquireFontAuto(bsz)
+                    b.fSize = bsz
+                }
+                if b.f == null or not b.f.ok { continue }
+                var[float, float](btw, bth) = b.f.measureString(b.text)
+                float icw = 0.0
+                if b.tex != null { icw = bth + 4.0 }
+                float pw = btw + icw + 14.0
+                float ph = bth + 8.0
+                float m = 6.0
+                float bx = _ix + _iw - pw - m - offRT
+                float by = _iy + fud + m
+                if b.pos == BADGE_LT {
+                    bx = _ix + m + offLT
+                    by = _iy + fud + m
+                    offLT = offLT + pw + 4.0
+                } eif b.pos == BADGE_LB {
+                    bx = _ix + m + offLB
+                    by = _iy + fud + _ih - ph - m - offLB
+                    offLB = offLB + ph + 4.0
+                } eif b.pos == BADGE_RB {
+                    bx = _ix + _iw - pw - m - offRB
+                    by = _iy + fud + _ih - ph - m - offRB
+                    offRB = offRB + ph + 4.0
+                } else {
+                    offRT = offRT + pw + 4.0
+                }
+                if bx < _ix { bx = _ix }
+                if by < _iy + fud { by = _iy + fud }
+                r.setColor(bbg)
+                r.fillRoundedRect(bx, by, pw, ph, ph / 2.0)
+                float tx0 = bx + 7.0
+                if b.tex != null {
+                    r.setTextureColor(b.tex, bfg)
+                    r.drawTextureAt(b.tex, tx0, by + 4.0, bth, bth)
+                    tx0 = tx0 + icw
+                }
+                r.drawText(b.f, b.text, tx0, by + 4.0, bfg)
+            }
+        }
+
+        // ④ 标题 / 副标题（对齐可配 ✓）
+        //    ★ 每帧测量压到 0：`fit()` 命中 (文本, 上限宽) 缓存就直接返回；
+        //      宽度只在**需要居中/右对齐**时才量（默认左对齐一路零测量 ✓ —— 见不变式 ② 的 G5）
+        float maxTW = _w - 16.0
+        float ty = _ty + fud
+        if title != "" {
+            string ts = fit(title, maxTW, true)
+            float tx = x + 8.0
+            if txtAlign != ALIGN_LEFT {
+                var[float, float](t0w, _t0h) = fTitle.measureString(ts)
+                if txtAlign == ALIGN_CENTER { tx = x + (_w - t0w) / 2.0 }
+                else { tx = x + _w - 8.0 - t0w }
+            }
+            r.drawText(fTitle, ts, tx, ty, titleColor)
+            ty = ty + titleLineH + 2.0
+        }
+        if subtitle != "" {
+            string ss = fit(subtitle, maxTW, false)     // 超宽才加省略号；不超宽原样返回（走缓存 ✓）
+            float sx = x + 8.0
+            if txtAlign != ALIGN_LEFT {
+                var[float, float](s1w, _s1h) = fSub.measureString(ss)
+                if txtAlign == ALIGN_CENTER { sx = x + (_w - s1w) / 2.0 }
+                else { sx = x + _w - 8.0 - s1w }
+            }
+            r.drawText(fSub, ss, sx, ty, subColor)
+        }
+
+        // ⑤ 内容区（容器化 ✓）：底色 → 子控件（裁剪默认关：省一次 flush ✓）
+        if _content != null and _cw >= 1.0 and _ch >= 1.0 {
+            if contentBg != 0 {
+                r.setColor(contentBg)
+                r.fillRoundedRect(_cx, _cy + fud, _cw, _ch, 4.0)
+            }
+            if contentClip {
+                if crect == null { crect = SDL_Rect.malloc() }
+                float sy = _cy + fud
+                crect.x = _int(_cx); crect.y = _int(sy)
+                crect.w = _int(_cw) + 1; crect.h = _int(_ch) + 1
+                r.pushClipRect(crect.to_ptr())
+                var c = _content
+                c?.render(r)
+                r.popClipRect()
+            } else {
+                var c = _content
+                c?.render(r)
+            }
+        }
+
+        // ⑥ 边框（opt-in；selected 换强调色 ✓）
+        if showBorder {
+            Color bc = if selected then bdrSelColor else bdrColor
+            if hover { bc = theme.brighten(bc, 20) }
+            r.setColor(bc)
+            r.drawRoundedRect(x, vy, _w, _h, radius)
+        }
+    }
+
+    func dispose() {
+        clear_tex()
+        // 角标：规格纹理 + 各自缓存的字号字体，一并释放 ✓
+        for 0 : badges.len() - 1 to i {
+            if badges[i].f != null and badges[i].f.ok { fnt.releaseFont(badges[i].f) }
+            badges[i].f = null
+        }
+        clear_badges()
+        if srectF != null { srectF.free() }; srectF = null
+        if drectF != null { drectF.free() }; drectF = null
+        if crect != null { crect.free() }; crect = null
+        if fTitle != null and fTitle.ok { fnt.releaseFont(fTitle) }; fTitle = null
+        if fSub != null and fSub.ok { fnt.releaseFont(fSub) }; fSub = null
+        if fBadge != null and fBadge.ok { fnt.releaseFont(fBadge) }; fBadge = null
+        var c = _content
+        if c is Widget { c.dispose() }
+    }
+
+    // ==================== 运行时主题切换 ====================
+    func applyTheme(Theme t) {
+        bgColor = t.bgAlt
+        hovColor = theme.brighten(t.bgAlt, 14)
+        bdrColor = t.border
+        titleColor = t.txt
+        subColor = t.txtDim
+        selectedColor = t.bgSel
+        bdrSelColor = t.accent
+    }
+}
+
+// 工厂
+export func createCard(Dict opts): Card {
+    Card c = new Card(); c.set(opts); return c
+}
