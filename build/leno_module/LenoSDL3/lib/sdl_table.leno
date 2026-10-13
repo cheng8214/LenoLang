@@ -651,6 +651,33 @@ export struct Table impl Widget, Themeable {
     func set_selected(int idx) { selRows = []; rebuild_sel_set(); if idx >= 0 and idx < _rows.len() { selRow = idx; selRows.add(idx); if idx < selSet.len() { selSet[idx] = true } } }
     func get_selected_row(): int { return selRow }
     func get_selected_rows(): Array[int] { return selRows }
+
+    // ==================== 焦点与键盘（供窗口的"焦点链"调用 ✓ 2026-10-13 第六批）====================
+    //   语义：↑/↓/Home/End 移动选中行（走内部 `select_key` ⇒ 与鼠标点行**同一个入口** ✓）、
+    //     **Enter = 有可编辑列就"进单元格编辑" ✓，否则走"双击"那条回调**（应用层拿它当"打开" ✓）
+    //   ⚠ Enter/Space 归**窗口**（统一调 `activate()` ✓）⇒ 这里只处理方向/首末键 ✗（两边都处理会互相抵消 ✓）
+    bool focusable = true
+    bool focused = false
+    func set_focusable(bool b) { focusable = b; if not b { focused = false } }
+    func is_focusable(): bool { return focusable }
+    func focus() { if focusable and not focused { focused = true; core.markFrameRedraw() } }
+    func blur() { if focused { focused = false; core.markFrameRedraw() } }
+    func is_focused(): bool { return focused }
+    // Enter/Space：**优先进编辑**（表格的本职 ✓）；没有可编辑列时才当"打开/确认"用 ✓
+    func activate() {
+        if selRow < 0 { return }
+        int c = if selCol >= 0 then selCol else 0
+        if is_col_editable(c) { _begin_edit(selRow, c) }
+        else { if onDblClick != null { onDblClick(selRow, selCol) } }
+    }
+    // （原来这里还写了一份 `nudge_row`/`is_editing_cell` ✓ 已删 —— 本控件**既有**的
+    //   "键盘导航"块已经覆盖方向/首末/翻页/Ctrl+A ✓，再写一份就是双触发 ✗ 见 `process` 里的注释 ✓）
+    func draw_focus_ring(Renderer r) {
+        if not focused { return }
+        Theme th = theme.getTheme()
+        r.setColor(th.accentFocus)
+        r.drawRect(x - 2.0, y - 2.0, get_w() + 4.0, get_h() + 4.0)
+    }
     func set_aligns(Array[int] als) { _aligns = als; if _aligns.len() != ncols { recompute_cols() } }
     func set_header_aligns(Array[int] als) { headerAligns = als; if headerAligns.len() != ncols { recompute_cols() } }
     func set_multi_select(bool m) { _multi = m }
@@ -1228,6 +1255,10 @@ export struct Table impl Widget, Themeable {
             return
         }
 
+        // ★ 2026-10-13：**这里不再自己写键盘分支** ✗ —— 本控件**早就有**一套键盘导航
+        //   （见下面"键盘导航：表格聚焦时…"，方向键/Enter/PageUp/PageDown/Home/End/Ctrl+A ✓）。
+        //   我最初又插了一份 ⇒ 同一颗键被处理两次 ⇒ 选中/回调双触发 ✗（与 ListBox/ComboBox 同一个坑 ✓）
+        //   正确做法是**给既有那一套补上焦点守卫**（本次已补 ✓），而不是再写一份 ✓。
         // ★ 修复：编辑中且 Edit 的右击菜单展开时，事件必须经 Edit 转发给菜单处理。
         //   若先走 inPopupCapture 拦截，Edit 的菜单将收不到点击事件，导致菜单项无法选中。
         //   菜单因点击菜单项而关闭后，Edit 应保持编辑状态（不提交），下一次真正点击 Edit
@@ -1271,7 +1302,10 @@ export struct Table impl Widget, Themeable {
         }
 
         // 键盘导航：表格聚焦时处理方向键/Enter/PageUp/PageDown/Home/End/Ctrl+A
-        if ev.isKeyDown() {
+        // ★ 2026-10-13 修：**必须真的判焦点** ✗ —— 这里原来只有 `if ev.isKeyDown()`，
+        //   注释写着"表格聚焦时"、代码却没查 ⇒ 表格**没聚焦也在吃键** ✓
+        //   （实测：给滑块/列表发的 ↓/Home/End 同时被表格吃掉 ⇒ 它在别处偷偷换了选中行 ✓）
+        if focused and ev.isKeyDown() {
             int sc = ev.scancode()
             int mod = ev.keyMod()
             switch sc {

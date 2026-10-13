@@ -10,7 +10,7 @@
 //        Button ⇒ on_click 计数 +1；CheckBox/Toggle ⇒ 值真的翻转；RadioButton ⇒ 选中自己 ✓
 //   用法：set SHOT=%TEMP%\focus.png & build\leno.exe leno_gui\自测\test_focus_nav.leno
 import "SDL3" as SDL3
-use SDL3.(Event, Renderer, Scancode, Window, Button, CheckBox, Toggle, RadioButton, Slider, ListBox, ComboBox)
+use SDL3.(Event, Renderer, Scancode, Window, Button, CheckBox, Toggle, RadioButton, Slider, ListBox, ComboBox, TabControl, Table)
 
 int steps = 0
 string shot = ""
@@ -38,7 +38,7 @@ func snapSw(CheckBox ck, Toggle tg, RadioButton rd, string tag) {
 func run() {
     SDL3.ttfInit()
     SDL3.setTheme(SDL3.darkTheme())
-    Window w = SDL3.createWindow({title: "test_focus_nav", w: 620, h: 380})
+    Window w = SDL3.createWindow({title: "test_focus_nav", w: 620, h: 520})
     if not w.ok { SDL3.ttfQuit(); return }
 
     // 第一行：注册顺序 A → B → C，其中 **B 退出焦点链** ⇒ Tab 必须跳过它 ✓
@@ -75,6 +75,16 @@ func run() {
                                   items: ["北京", "上海", "广州", "深圳"], selected: 0})
     int hitsCb = 0
     cb2.on_change(func(int i) { hitsCb = hitsCb + 1 })
+
+    // 第六行：页签（第六批 ✓；←/→ 切页 ✓ —— 走 `set_active`，与鼠标点页签**同一入口** ✓）
+    TabControl tc = w.addTabControl({x: 20, y: 240, w: 260, h: 130,
+                                     tabs: ["  甲页  ", "  乙页  ", "  丙页  "], active: 0})
+    // 第七行：表格（第六批 ✓；↑/↓/Home/End 移动选中行 ✓；Enter = **无编辑列时**走"双击"那条回调 ✓）
+    Table tb2 = w.addTable({x: 300, y: 240, w: 300, h: 130, row_h: 26, header_h: 28,
+                            headers: ["名", "值"], sortable: false})
+    tb2.set_rows([["一", "1"], ["二", "2"], ["三", "3"], ["四", "4"]])
+    int dblN = 0
+    tb2.on_dbl_click(func(int r, int c) { dblN = dblN + 1 })
     tg.on_change(func(bool v) { tgHits = tgHits + 1; tgVal = if v then 1 else 0 })
     rd.on_change(func(bool v) { if v { rdHits = rdHits + 1 } })     // 选中时回调 true ✓
 
@@ -157,14 +167,41 @@ func run() {
         if steps == 58 { SDL3.testKeyDown(wid, Scancode.RETURN, 0) }     // 再开
         if steps == 59 { SDL3.testKeyDown(wid, Scancode.ESCAPE, 0) }     // Esc ⇒ 收起
         if steps == 60 { print("[focus] Esc（应 展开=false ✓）  展开=" + _str(cb2.isOpen())) }
-        if steps == 61 { SDL3.testKeyDown(wid, Scancode.TAB, 0) }        // 从最后一项继续 ⇒ 回卷
-        if steps == 62 { snap(a, b, c, "Tab（应回卷到 A ✓ —— 链条末尾回卷 ✓）") }
-        if steps >= 66 { _exit(0) }
+        // ---- 第六行：页签（←/→ 切页 ✓）----
+        if steps == 61 { SDL3.testKeyDown(wid, Scancode.TAB, 0) }        // → 页签
+        if steps == 62 { print("[focus] Tab→ 页签（应 focus=true、页=0 ✓）  focus=" + _str(tc.is_focused()) +
+                                " 页=" + _str(tc.get_active())) }
+        if steps == 63 { SDL3.testKeyDown(wid, Scancode.RIGHT, 0) }
+        if steps == 64 { print("[focus] →（应 1 ✓）  页=" + _str(tc.get_active())) }
+        if steps == 65 { SDL3.testKeyDown(wid, Scancode.RIGHT, 0) }
+        if steps == 66 { print("[focus] →（应 2 ✓）  页=" + _str(tc.get_active())) }
+        if steps == 67 { SDL3.testKeyDown(wid, Scancode.LEFT, 0) }
+        if steps == 68 { print("[focus] ←（应 1 ✓）  页=" + _str(tc.get_active())) }
+
+        // ---- 第七行：表格（移动选中行 + Enter 语义 ✓）----
+        if steps == 69 { print("[focus] （进表格前）行=" + _str(tb2.get_selected_row()) + " 双击次数=" + _str(dblN));
+                         SDL3.testKeyDown(wid, Scancode.TAB, 0) }        // → 表格
+        if steps == 70 { print("[focus] Tab→ 表格（应 focus=true、行=-1 ✓）  focus=" + _str(tb2.is_focused()) +
+                                " 行=" + _str(tb2.get_selected_row())) }
+        if steps == 71 { print("[focus] （↓ 前）行=" + _str(tb2.get_selected_row()) + " 双击次数=" + _str(dblN));
+                         SDL3.testKeyDown(wid, Scancode.DOWN, 0) }
+        if steps == 72 { print("[focus] ↓（应 0 ✓）  行=" + _str(tb2.get_selected_row())) }
+        if steps == 73 { SDL3.testKeyDown(wid, Scancode.DOWN, 0) }
+        if steps == 74 { print("[focus] ↓（应 1 ✓）  行=" + _str(tb2.get_selected_row())) }
+        if steps == 75 { SDL3.testKeyDown(wid, Scancode.END, 0) }
+        if steps == 76 { print("[focus] End（应 3 ✓）  行=" + _str(tb2.get_selected_row())) }
+        if steps == 77 { SDL3.testKeyDown(wid, Scancode.HOME, 0) }
+        if steps == 78 { print("[focus] Home（应 0 ✓）  行=" + _str(tb2.get_selected_row())) }
+        if steps == 79 { SDL3.testKeyDown(wid, Scancode.RETURN, 0) }
+        if steps == 80 { print("[focus] Enter（应 双击回调=1 ✓ —— 本例没有可编辑列 ⇒ 走双击那条 ✓）  次数=" + _str(dblN)) }
+        if steps == 81 { SDL3.testKeyDown(wid, Scancode.TAB, 0) }        // 从最后一项继续 ⇒ 回卷
+        if steps == 82 { snap(a, b, c, "Tab（应回卷到 A ✓ —— 链条末尾回卷 ✓）") }
+        if steps >= 86 { _exit(0) }
     })
 
     // 截图（看焦点环 ✓）：钩子必须在 setOverlay（控件之上 ⇒ 像素含界面 ✓）
     w.setOverlay(func(Renderer r) {
-        if steps >= 64 and shot != "" {
+        if steps >= 84 and shot != "" {
             var sz = w.getSize()
             var px = r.readPixelsAt(0, 0, sz.w, sz.h)
             if px != null { print("[focus] 截图 " + shot + " ok=" + _str(SDL3.saveImagePNG(px, shot))) }

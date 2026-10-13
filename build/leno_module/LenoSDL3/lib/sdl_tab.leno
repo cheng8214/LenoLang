@@ -277,6 +277,26 @@ export struct TabControl impl Widget, Themeable {
     func is_visible(): bool { return visible }
     func set_font_size(float s) { _fontSize = s; if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null; tabDirty = true }
     func on_change(func(int):void cb) { onChange = cb }
+
+    // ==================== 焦点与键盘（供窗口的"焦点链"调用 ✓ 2026-10-13 第六批）====================
+    //   语义：←/→ 切页签（走 `set_active` ⇒ 与鼠标点页签**同一个入口** ⇒ `on_change` / 页内容切换都不漂 ✓）
+    //   ⚠ 本版**让它可停靠**（进焦点链 ✓）：不然 ←/→ 根本没有触发时机 ✗
+    //     （代价：焦点链里多一个停靠点 ✓；`show_header:false` 的页签控件也可以 `set_focusable(false)` 退出 ✓）
+    //   ⚠ Enter/Space 归**窗口**（统一调 `activate()` ✓）⇒ 这里不处理 ✗
+    bool focusable = true
+    bool focused = false
+    func set_focusable(bool b) { focusable = b; if not b { focused = false } }
+    func is_focusable(): bool { return focusable }
+    func focus() { if focusable and not focused { focused = true; core.markFrameRedraw() } }
+    func blur() { if focused { focused = false; core.markFrameRedraw() } }
+    func is_focused(): bool { return focused }
+    func activate() { }                  // 页签栏按 Enter 无标准语义 ✓（切页用 ←/→ ✓）
+    func draw_focus_ring(Renderer r) {
+        if not focused { return }
+        Theme th = theme.getTheme()
+        r.setColor(th.accentFocus)
+        r.drawRect(x - 2.0, y - 2.0, w + 4.0, h + 4.0)
+    }
     // 绑定窗口句柄（由 Window.addTabControl 调用）
     func _bind_window(Ptr[u8] hwnd) {
         self.hwnd = hwnd      // 形参遮蔽字段 ⇒ 必须显式 self.
@@ -356,6 +376,14 @@ export struct TabControl impl Widget, Themeable {
     func process(Event ev) {
         if not _loaded or not enabled or not visible { return }
         applyOffsets(_active)
+
+        // ★ 2026-10-13：键盘（第六批）—— 只在**自己聚焦**时响应 ✓（键事件广播 ⇒ 必须自己过滤 ✓）
+        //   ←/→ 切页签：走 `set_active` ⇒ 与鼠标点页签**同一个入口** ✓（页内容偏移、on_change 都在里面 ✓）
+        if focused and ev.isKeyDown() {
+            int _sc = ev.scancode()
+            if _sc == core.Scancode.LEFT { set_active(get_active() - 1) }
+            eif _sc == core.Scancode.RIGHT { set_active(get_active() + 1) }
+        }
         var[float, float](mx, my) = ev.mousePos()
 
 
