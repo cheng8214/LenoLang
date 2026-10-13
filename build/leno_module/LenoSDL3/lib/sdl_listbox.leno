@@ -380,6 +380,45 @@ export struct ListBox impl Widget, Themeable {
 
     func on_change(func(Array[int]):void cb) { onChange = cb }
 
+    // ==================== 焦点与键盘（供窗口的"焦点链"调用 ✓ 2026-10-13 第四批）====================
+    //   键盘语义：↑/↓ 移动选中（会自动**滚到可见** ✓ 因为走的是 `set_selected` ✓）、Home/End 到首/末、
+    //     **Enter = 激活选中项** ✓ —— 列表原来只有 `on_change`（"选中变了"），**没有"确认/打开"这个语义** ✗
+    //     ⇒ 补一个 `on_activate` ✓（与菜单选中、Table 双击属同一种"确认"动作 ✓）
+    //   ★ 一律复用公开入口 `set_selected` ✓（夹取 + 滚入视野 + 回调全在它里面 ⇒ 与鼠标点选**同口径** ✓）
+    pri func(int):void onActivate            // ★ 新增：Enter 激活（将来双击也可以接这里 ✓）
+    bool focusable = true
+    bool focused = false
+    func set_focusable(bool b) { focusable = b; if not b { focused = false } }
+    func is_focusable(): bool { return focusable }
+    func focus() { if focusable and not focused { focused = true; core.markFrameRedraw() } }
+    func blur() { if focused { focused = false; core.markFrameRedraw() } }
+    func is_focused(): bool { return focused }
+    func on_activate(func(int):void cb) { onActivate = cb }
+    func activate() {
+        int i = get_selected_index()
+        if i < 0 { return }                  // 没选中就不激活 ✓
+        if onActivate != null { onActivate(i) }
+    }
+    // 键盘移动选中（只认上下/首末四个键 ✓ 其它键交给别人 ⇒ 不消费 ✓）
+    pri func nudge_sel(int sc) {
+        if items.len() == 0 { return }
+        int n = get_selected_index()
+        if sc == core.Scancode.UP { n = if n <= 0 then 0 else n - 1 }
+        eif sc == core.Scancode.DOWN {
+            if n < 0 { n = 0 } else { if n + 1 >= items.len() { n = items.len() - 1 } else { n = n + 1 } }
+        }
+        eif sc == core.Scancode.HOME { n = 0 }
+        eif sc == core.Scancode.END { n = items.len() - 1 }
+        else { return }
+        if n >= 0 { set_selected(n) }
+    }
+    func draw_focus_ring(Renderer r) {
+        if not focused { return }
+        Theme th = theme.getTheme()
+        r.setColor(th.accentFocus)
+        r.drawRect(x - 2.0, y - 2.0, w + 4.0, h + 4.0)
+    }
+
     func contains(float mx, float my): bool {
         return mx >= x and mx <= x + w and my >= y and my <= y + h
     }
@@ -417,6 +456,15 @@ export struct ListBox impl Widget, Themeable {
 
         if core.inPopupCapture(mx, my) { return }
 
+        // ★ 2026-10-13：键盘（只在**自己聚焦**时响应 ✓ —— 键事件是广播给所有控件的，
+        //   必须自己按焦点过滤 ✓ 与 Edit 的做法一致 ✓；不聚焦时不消费任何键 ⇒ 不影响别人 ✓）
+        //   ⚠⚠ 位置很关键：必须落在**主流程**里 —— 上面那个"菜单已展开"分支只该处理菜单自己的事件 ✗
+        //     第一次就是插进那个分支里的 ⇒ 只有菜单开着时键盘才生效 ✗（实测：↓ 后选中不动、回调也不触发 ✓）
+        if focused and ev.isKeyDown() {
+            int _sc = ev.scancode()
+            if _sc == core.Scancode.RETURN or _sc == core.Scancode.SPACE { activate() }
+            else { nudge_sel(_sc) }
+        }
 
         // 拖拽结束
         if ev.isMouseButtonUp() and draggingScroll { draggingScroll = false; return }

@@ -1386,9 +1386,22 @@ Enter/Space            hitsC=1 → 2（激活与鼠标点击同一条回调 ✓�
   ⚠ 控件自己收键要注意：**键事件是广播的** ✗ ⇒ 必须 `if focused and ev.isKeyDown()` **自己按焦点过滤** ✓
   （不聚焦时不消费、不影响别的控件 ✓ —— 与 `Edit` 的做法一致 ✓；窗口那边只拦 Tab / Enter / Space ✓）。
 
-⚠ **仍未进链条的**：`ListBox/ComboBox/Table/TreeView/TabControl` —— 它们都有**内部选中/导航语义** ⇒
-进去之前要先定"Enter 是激活选中项还是进编辑" ✓（建议：列表/树/表格 ⇒ **激活选中项** ✓，
-`Table` 的 Enter 留给"进单元格编辑" ✓）；方向键在**兄弟控件间**移动 ✗（WPF 风格，未做 ✓）；`tabIndex` ✗。
+**第四批（2026-10-13 同日 ✓）：`ListBox` 进链条** —— `↑/↓` 移动选中（会自动**滚到可见** ✓，因为走的是
+`set_selected` ✓）、`Home/End` 到首末 ✓、**Enter = 激活选中项** ✓。
+  ★ 列表原来**只有 `on_change`**（"选中变了"）✗、没有"确认/打开"这个语义 ⇒ 本轮补了 **`on_activate(func(int))`**
+  ✓（与菜单选中、`Table` 双击属同一种"确认"动作 ✓；将来双击也可以接到这里 ✓）。
+  ⚠ `activate()` 里"没选中就不激活" ✓（`get_selected_index() < 0` ⇒ 直接 return ✓）。
+
+⛔ **写控件事件分支时的坑（实测踩到 ✓）**：`if ev.isMouseButtonDown() and ev.mouseButton() == 3 {`
+这类句子在同一个文件里**可能出现两次**（一次在"菜单已展开"分支里、一次在主流程 ✓）⇒
+用文本替换插代码时**命中了第一处** ✗ ⇒ 结果"只有菜单开着时键盘才生效"（实测：`↓` 后选中不动、
+`on_change` 也不触发 ✗）。**口径**：插事件分支一律**带上前后的独特上下文**（如
+`if core.inPopupCapture(mx, my) { return }` 那一段 ✓），插完再**读一遍确认落在主流程** ✓。
+
+⚠ **仍未进链条的**：`ComboBox` / `Table` / `TreeView` / `TabControl` —— 都有**内部选中/导航语义** ⇒
+进去之前先定语义 ✓（建议：`ComboBox` 的 Enter = 开下拉、展开后 `↑/↓` 选项 + Enter 选定 + Esc 收起 ✓；
+`Table` 的 Enter 优先"**进单元格编辑**" ✓（无编辑列时才走激活 ✓）；`TreeView`、`TabControl` 同列表思路 ✓）；
+方向键在**兄弟控件间**移动 ✗（WPF 风格，未做 ✓）；`tabIndex` ✗。
 
 ⭐ **写这类自测件时注意**：`CheckBox.checked` / `Toggle.on` 等**值字段是 `pri` 私有** ✗
 （探针直读会被编译器拦下 ✓）⇒ 断言一律走**公开回调**（`on_change` ✓ 它本来就是"值变了"的官方出口 ✓）。
