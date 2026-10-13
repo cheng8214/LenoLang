@@ -265,7 +265,7 @@ export struct ComboBox impl Widget, Themeable {
         // ★ 2026-10-13 修：**失焦即收起下拉** —— Alt+Tab / 切到别的应用时下拉层会一直挂在屏幕上 ✗
         //   （`PopMenu` 早就是这个写法：`if ev.isWindowFocusLost() { hide(); return }` ✓，ComboBox 漏了这一步 ✓）
         //   实测：注入 WINDOW_FOCUS_LOST 后 `isOpen()` 仍是 true ✗ ⇒ 现在应收起 ✓
-        //   自测钩子：`SDL3.testFocusLost(win.getID())`（2026-10-13 补 ✓）⇒ 探针 build/_probe_combo.leno ✓
+        //   自测钩子：`SDL3.testFocusLost(win.getID())`（2026-10-13 补 ✓）⇒ 探针 leno_gui/自测/test_combobox_focus.leno ✓
         if ev.isWindowFocusLost() {
             if open { close() }
             hover = -1

@@ -1,0 +1,49 @@
+// test_spinner_shape.leno — Spinner 圆度/厚度的**客观判据**（回归件 ✓，随仓入库）
+//   fix 前：draw_arc 用 drawLine 折线 + 段数公式 ⇒ r=96 的整圈只有 ~10 段（十边形，弦中点内凹 ≈4.7px）
+//           且 thick 形参没用 ⇒ 线宽只有 1px
+//   fix 后：一串抗锯齿小实心圆密排 ⇒ 逐角度量弧带，中心偏差应 ≤ ~0.5px、厚度应 ≈ thickness
+//   用法：跑完拿 PROBE_SHOT 的图，用 PowerShell 沿各角度量（见调用命令 ✓）
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer, Window, Spinner)
+
+int steps = 0
+string shot = ""
+Spinner sp
+
+func run() {
+    SDL3.ttfInit()
+    SDL3.setTheme(SDL3.darkTheme())
+    Window w = SDL3.createWindow({title: "probe_spin_shape", w: 320, h: 300})
+    if not w.ok { SDL3.ttfQuit(); return }
+
+    // 大号 + 静态（running:false、但 full_track:true ⇒ 整圈轨道 + 一段静止弧都画出来 ✓）
+    sp = SDL3.createSpinner({x: 30, y: 20, size: 220, thickness: 14,
+                             running: false, full_track: true,
+                             track_color: #303840FF, color: #59A8FFFF})
+    w.add(sp)
+    print("[probe] 几何：x=" + _str(sp.get_x()) + " y=" + _str(sp.get_y()) +
+          " w=" + _str(sp.get_w()) + " h=" + _str(sp.get_h()) +
+          " ⇒ 圆心=(" + _str(sp.get_x() + sp.get_w() / 2.0) + "," + _str(sp.get_y() + sp.get_h() / 2.0) + ")" +
+          " 理想半径=" + _str(sp.get_w() / 2.0 - 14.0))
+
+    var s = _env("PROBE_SHOT")
+    if s != null { shot = _str(s) }
+
+    w.setOverlay(func(Renderer r) {
+        steps = steps + 1
+        if steps >= 3 and shot != "" {
+            var sz = w.getSize()
+            var s2 = r.readPixelsAt(0, 0, sz.w, sz.h)
+            if s2 != null {
+                bool ok = SDL3.saveImagePNG(s2, shot)
+                print("[probe] 截图 " + shot + " ok=" + _str(ok))
+            }
+            _exit(0)
+        }
+    })
+
+    w.run(func(Event ev): bool { return true }, func(Renderer r) { r.clearColor(#101418FF) })
+    SDL3.ttfQuit()
+}
+
+main() { run() }

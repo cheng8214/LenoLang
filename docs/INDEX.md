@@ -16,6 +16,49 @@
 >   ② 列表/下拉/菜单的**行高亮圆角锚错了边**（`atBottom` 拿行自己的矩形补圆角，而末行常只露一半 ⇒ 圆角落到面板底边下方 ⇒ 面板两个底角被方角铺满）+ 内容裁剪 `_int(ph)+1` 让末行文字出框 1px ⇒ 收敛成渲染器共用件 **`fillRowInPanel`**（只填「行矩形 ∩ 面板圆角矩形」，圆角**锚在面板的边**）+ 裁剪改 `ceil` 精确覆盖；`sdl_combobox` / `sdl_listbox` / `sdl_menu` 三处调用点改调它 ✓；
 >   ③ `leno_gui/应用/影视海报墙/` 新增**影片详情页**（点卡片进入：大海报 + 评分环 + 年份/分类/简介 + 收藏/播放；Esc/返回切回，网格状态原样保留 ✓；自检钩子 `WALL_DETAIL` / `WALL_BACK`）；
 >   速查附录 C 相应新增 3 条（圆角纹理用自定义混合 · 行高亮锚点与裁剪 · `setRootAt` 运行时换根）。
+>   **2026-10-13 追加（二十）**：**把这一轮攒下的 13 个探针收进仓库当正式回归件**（用户要求：留着 ✓ 改名 ✓ 归文件夹 ✓）：
+>   ① **为什么必须搬出 `build/`**：`.gitignore` 明确按"`build/_*` 下划线前缀"排除临时探针 ✗（`build/` 本身是
+>      **要入库**的目录 ⇒ 不能整体忽略 ✓）⇒ 搬到新目录 **`leno_gui/自测/`**（沿用 `控件/特效/系统/应用` 的短双字风格 ✓），
+>      文件名统一为 **`test_*.leno`**（与 `leno_gui/控件/**/test_*.leno` 一致 ✓）；每个文件头都写明"验什么 + 怎么判" ✓；
+>   ② 13 个回归件：
+>
+>      | 文件 | 验什么 |
+>      |---|---|
+>      | `test_form_controls.leno` | Toggle/CheckBox/Radio 的 `set_size` 空实现 · Radio 互斥回调 · Slider 量化 |
+>      | `test_chart_labels.leno` | 图表数值标签丢小数（柱上 / Y 轴 / 饼图图例） |
+>      | `test_scrim_resize.leno` | Scrim 不跟随窗口缩放（像素判据） |
+>      | `test_table_cell_colors.leno` | Table 格色：删行错位 / 换数据残留（三段截图） |
+>      | `test_tabcontrol_reset.leno` | TabControl 二次 `set()` 丢页 |
+>      | `test_spinner_enabled_tip.leno` | Spinner `set_enabled` / `tip` / 帧率对照 |
+>      | `test_spinner_shape.leno` | Spinner 圆度与厚度（逐 2° 采样 180 个角度） |
+>      | `test_splitter_events.leno` | Splitter 事件转发 / 拖拽 / resize |
+>      | `test_combobox_focus.leno` | 失焦收起下拉（像素 7205→0） |
+>      | `test_window_handle_size.leno` | 句柄/尺寸下发（ListBox 点击 + resize 后右键菜单） |
+>      | `test_table_image_cache.leno` | 图标纹理缓存上限（`PROBE_MAX` A/B） |
+>      | `test_nested_context_menu.leno` | 嵌套控件右键菜单夹紧 + 缩窗后重开 |
+>      | `test_lang_closure_capture.leno` | **语言**：闭包捕获语义六种形态 |
+>   ③ 全仓引用一并改路径（扫出 57 处 ⇒ **只换我这 13 个名字** ✓；`_probe_combo_corner` / `_probe_round` /
+>      `_probe_call` / `_probe_facebound` / `_probe_new_*` 是**别人/旧轮**的名字 ⇒ 一个没动 ✓）；
+>      ⚠ 替换时踩到两个坑：映射键**自带下划线**、我又前缀 `build/_` ⇒ 实际匹配 `build/__probe_*` **全不匹配** ✗
+>      （第一遍只改掉了裸名）；短语里的 `build/_*` 中 `*` 被当成**正则量词** ⇒ 那条也没匹配 ✗（第二遍才修净 ✓）；
+>   ④ 验证：搬家后**照跑** ✓（闭包六形态 ✓、图标缓存 `img_cache_count()=3` ✓ ⇒ 说明探针内部的**相对路径仍然对** ✓）；
+>      `git check-ignore` 退出码 1 ⇒ **没被忽略** ✓（可入库 ✓）；速查/INDEX/库注释里的验收命令已全部指向新路径 ✓；
+>      海报墙回归 ✓。
+>
+>   **2026-10-13 追加（十九）**：**查"嵌套控件拿不到窗口尺寸"（用户点名的第 ⑤ 项）⇒ 结论与预想相反**：
+>   ① **先纠正误判**：嵌套控件收到的尺寸确实是 `-1`（未知 ✓），但 `sdl_menu.clampRect` 里**早有兜底** ——
+>      尺寸 ≤ 0 且有句柄时直接 `SDL_GetWindowSize(winHnd)` ✓。实测（探针 `leno_gui/自测/test_nested_context_menu.leno`：
+>      Table 嵌在 根→HBox→VBox 三层、尺寸字段恒为 0）：窗口右下角右键 ⇒ 菜单**被正确翻转**、完整留在窗口内 ✓
+>      ⇒ **容器层层传尺寸那条路不需要走** ✓（原本以为"最难"的一项，实测是虚警 ✓）；
+>   ② **但同一支代码里有个真缺口（实测抓到）**：兜底**只查一次就缓存** ✗ ⇒ 窗口 resize 后再弹（菜单关着 ⇒
+>      没人刷新它）会先用**旧值**算一遍；日志实证 `_winW=700` 先算、同帧稍后才刷成 420 重算（画的位置会被纠正 ✓，
+>      但 `openContext` 已拿第一遍的结果 `setPopupCapture(...)` 登记**弹层捕获区** ✗ ⇒ 那一帧捕获区是歪的 ✓）；
+>   ③ **修法**：`openContext` 弹出前按句柄刷一次真实窗口尺寸（6 行 ✓）；验收：修复前日志
+>      `夹紧用尺寸 700x460 ⇒ 捕获区=365,366` ✗ → 修复后 `420x340 ⇒ 捕获区=85,256` ✓（= 翻转后的正确位置 ✓）；
+>   ④ 回归：`test_menu`/`test_table`/海报墙 编译 ✓、海报墙真跑含 Card 右键链 ✓；
+>      速查附录 C 新增该条（**含"别再重复怀疑这条"的结论** ✓）。
+>   至此，用户列的五项（Spinner 多边形 / Splitter 双 relayout / ComboBox 失焦 / Table 缓存上限 / 嵌套尺寸）全部收敛 ✓。
+>
 >   **2026-10-13 追加（十八）**：**修 `Table` 图标纹理缓存"只增不减"**（用户点名的第 ④ 项）：
 >   ① 病因：`get_tex` 只有"未命中 ⇒ 加载 + `add`"一条路 ✗ ⇒ 表格里"每行一个不同图标/缩略图"时显存一路涨 ✓；
 >   ② 修法：照 `sdl_font.texCap` 的**环形覆盖 + 当场回收**样板（`SDL_DestroyTexture(old)` ✓，不是"丢引用" ✗）+
@@ -23,7 +66,7 @@
 >      `img_cache_count()`（调试/自测 ✓）；覆盖 MRU 那一格时把 MRU 指向**新**纹理（否则会返回已销毁的 ✗）；
 >   ③ 安全性说明（写进速查）：`IMG_LoadTexture` 每次都新建、**不共享** ⇒ 淘汰时销毁安全 ✓；
 >      淘汰后已从数组移除 ⇒ `dispose` 不会再碰 ✓；⚠ 明确写下"别把这句销毁抄进 `dispose`"（那里有 double-free 教训 ✓）；
->   ④ 验收：探针 `build/_probe_tablecache.leno`（6 行各一张不同海报，A/B 用 `PROBE_MAX` 切）⇒
+>   ④ 验收：探针 `leno_gui/自测/test_table_image_cache.leno`（6 行各一张不同海报，A/B 用 `PROBE_MAX` 切）⇒
 >      `max=3` 时 `img_cache_count()=3` ✓、`max=0` 时 `=6` ✓；且截图里 **6 行缩略图全正常** ✓
 >      （上限 3 < 6 行 ⇒ 渲染中途就在回收也没画坏 ✓）；`test_table_features`/`test_table_advanced`/
 >      `cleaner_master`/`file_manager` 编译 ✓、海报墙列表页真跑 ✓。
@@ -41,7 +84,7 @@
 >      ⚠ 踩到一个语法坑记在速查里：`for arr to x` 里 **x 是元素不是索引**（写成 `bars[b]` 编译不过 ✓）；
 >   ④ 新增自测钩子 `SDL3.testFocusLost(wid)` / `testFocusGained(wid)`（照 `testClickAt` 的思路补 ✓，
 >      以后这类"只有真机 Alt+Tab 才触发"的行为也能自动回归 ✓）；
->   ⑤ 验收与回归：`_probe_combo`（true→false + 像素 7205→0 ✓）、`_probe_handle`（右键菜单 true→false ✓）、
+>   ⑤ 验收与回归：`test_combobox_focus`（true→false + 像素 7205→0 ✓）、`test_window_handle_size`（右键菜单 true→false ✓）、
 >      `test_menu` / `test_combobox` / `ide_layout` / 海报墙编译 ✓、海报墙真跑含 Card 右键链 ✓。
 >
 >   **2026-10-13 追加（十六）**：**用户实测报"Spinner 是多边形不是圆形" ⇒ 修掉一个渲染真 bug（含 3 个连带问题）**：
@@ -55,9 +98,9 @@
 >      `step()` 角度归一化只会减一次 360 ✗（卡顿后弧段跳变）⇒ 改 `while`，并**一并修掉 `RingProgress.step_sweep` 的同款** ✓；
 >   ③ 还掉（用户点名的第二条）：`Splitter` 每帧**双 relayout**（`process` 与 `render` 各调一次、值还一样 ✗）
 >      ⇒ 加"上次几何"去重（(x,y,w,h,ratio) 一致就跳过 ✓；`set_first/second` 会作废缓存 ✓）；
->   ④ 验收：探针 `build/_probe_spin_shape.leno`（size220/厚14/静态整圈）逐 2° 采样 180 个角度 ⇒
+>   ④ 验收：探针 `leno_gui/自测/test_spinner_shape.leno`（size220/厚14/静态整圈）逐 2° 采样 180 个角度 ⇒
 >      **0 未命中**、弧带中心偏差 **-1.0…+1.25px**、厚度 **13.5…16.5**（老实现内凹 ~4.7px、线宽 ~1px ✗）；
->      `_probe_splitter` 与海报墙回归照旧通过 ✓（速查附录 C 新增 Spinner 那条，含公式、修法与验收命令 ✓）。
+>      `test_splitter_events` 与海报墙回归照旧通过 ✓（速查附录 C 新增 Spinner 那条，含公式、修法与验收命令 ✓）。
 >
 >   **2026-10-13 追加（十五）**：**把（十四）提到的"句柄路径同类债"也还掉，顺带治好一处漂移**：
 >   ① `sdl_layout._extraPassWindow` 钩子签名补 **窗口逻辑宽高**（`ww < 0` = 尺寸未知 ⇒ 容器路径传 `-1` ✓）；
@@ -66,8 +109,8 @@
 >      只调新导出的 `passWindowHandleSized` ✓ ⇒ 句柄相关类型判断也**只剩一处** ✓；
 >   ② **顺带治好漂移** ✗→✓：那两份表原本不一致（一份有 `ListBox`/`GridLayout`，另一份有 `Card` 却**漏 `ListBox`**，
 >      靠"每帧安全网"掩盖 ✓）⇒ 现在合并成一份，两边行为一致 ✓；
->   ③ 回归（均实测 ✓）：`_probe_handle.leno` —— `win.addListBox` 点击 `on_change` 触发 ✓（合并 case 没被剪空 ✓）、
->      窗口 resize 后**右键 Table 菜单仍能打开** ✓；`_probe_scrim/splitter` 探针 ④ resize 断言仍过
+>   ③ 回归（均实测 ✓）：`test_window_handle_size.leno` —— `win.addListBox` 点击 `on_change` 触发 ✓（合并 case 没被剪空 ✓）、
+>      窗口 resize 后**右键 Table 菜单仍能打开** ✓；`test_scrim_resize/splitter` 探针 ④ resize 断言仍过
 >      （`splitter=840×420` ✓）；海报墙网格 + Card 右键链 ✓、列表页 ✓；`ide_layout`/`test_listbox`/`test_listbox_multi`/
 >      `test_treeview`/`test_treeview_image`/`test_table`/`file_manager` 编译通过 ✓；
 >   ④ ⚠ **仍未覆盖**（如实记）：**嵌套**在容器里的 `Table`/`Splitter` 拿不到窗口尺寸（容器只有句柄 ⇒ `ww=-1` ✓）——
@@ -86,8 +129,8 @@
 >      **窗口拉到 840×420 后 `splitter=840.0x420.0`** ✓（Splitter 经钩子收到 resize ✓）；海报墙 +
 >      `ide_layout` / `test_table` / `file_manager` 编译通过 ✓。
 >
->   **2026-10-13 追加（十三）**：**继续压 Splitter / ProgressBar / TabControl**（探针 `build/_probe_splitter.leno`、
->   `build/_probe_tabs.leno`）：
+>   **2026-10-13 追加（十三）**：**继续压 Splitter / ProgressBar / TabControl**（探针 `leno_gui/自测/test_splitter_events.leno`、
+>   `leno_gui/自测/test_tabcontrol_reset.leno`）：
 >   ① ⛔ **修掉真 bug**：`TabControl` **二次 `set()`** 会重建 `pages/rel/_pageLayouts` ⇒ **整页内容被丢弃** ✗
 >      （实测：`set(同 opts + 改一个颜色)` 后页里的按钮当场消失、`on_click` 停在 1 ✗）。修法：**页数没变就不重建**
 >      页容器 ✓ + `active` 缺省值改取**当前页**（否则改配色会把页签跳回第 0 页 ✗）+ 页数真变时**故意不 dispose**
@@ -100,7 +143,7 @@
 >      `Splitter.dispose` 递归 dispose 子控件（与"子控件归应用所有"的口径不一致，**双 dispose 风险**）·
 >      `Table` 图标纹理缓存无上限 · `Spinner.set_enabled` 空实现 + `tip` 死代码。
 >
->   **2026-10-13 追加（十二）**：**压 Table 的自定义格色（探针 `build/_probe_table2.leno`）⇒ 又两个"张冠李戴"**：
+>   **2026-10-13 追加（十二）**：**压 Table 的自定义格色（探针 `leno_gui/自测/test_table_cell_colors.leno`）⇒ 又两个"张冠李戴"**：
 >   ⛔ 单元格级颜色存在 `_cellFgColors/_cellBgColors`（`Dict`，键 `"row,col"` ✓），而 `remove_row` 不重排键、
 >   `set_rows`/`clear` 也不清 ⇒ ① 删一行后下面的格色**整体错位一行**（实测：R2 绿/R3 红，`remove_row(0)` 后
 >   绿红停在同一屏幕行 ⇒ 实际染上 R3/R4 ✗）；② 换成全新数据后旧格色**原样残留** ✗。
@@ -108,7 +151,7 @@
 >   `set_rows`/`clear` 清掉两个色表与 `rowColors` ✓（应用想换数据后染色就在 `set_rows` 之后 set —— `cleaner_master` 本就如此 ✓）。
 >   验收：三段截图读同一列像素 ⇒ B 应"绿红整体上移一行" ✓、C 应"全无染色" ✓（速查附录 C 新增该条，含流程与判据 ✓）。
 >
->   **2026-10-13 追加（十一）**：**压 Scrim（探针 `build/_probe_scrim.leno`）⇒ 又一个真 bug + 一条设计债**：
+>   **2026-10-13 追加（十一）**：**压 Scrim（探针 `leno_gui/自测/test_scrim_resize.leno`）⇒ 又一个真 bug + 一条设计债**：
 >   ① ⛔ `Scrim`（模态遮罩）**不跟随窗口缩放**：尺寸只在 `win.addScrim` 创建时下发一次 ✗ ⇒ 拉大窗口后
 >      右下**露一条没遮住的原色**，而且那条**点得动**（`process` 按自己的矩形吞事件 ✓）—— 模态漏半边 ✓。
 >      实测（白底 + alpha120）：600×400 全灰 ✓；拉到 880×580 后 (640,200)/(300,460)/(820,540) 仍是纯白 `ffffff` ✗。
@@ -117,7 +160,7 @@
 >   ② 记**设计债**：窗口的 resize 通知是**硬编码类型表**（`Table`/`TreeView`/`Splitter`，**同一份写了 3 遍** ✗）
 >      ⇒ 新控件想收 resize 得改 3 处；建议照 `_passWindowHandle` 集中到布局模块一处 + 留扩展钩子 ✓（**本次未动** ✓）。
 >
->   **2026-10-13 追加（十）**：**压图表（探针 `build/_probe_chart.leno`）⇒ 又修一个"界面说谎"**：
+>   **2026-10-13 追加（十）**：**压图表（探针 `leno_gui/自测/test_chart_labels.leno`）⇒ 又修一个"界面说谎"**：
 >   ⛔ `_fmtNum(float) = _int(v) as string` ⇒ 图上数字**全被取整**：实测把评分 `7.7/8.2/9.3/8.4`
 >   画成柱状图，柱上标签显示 `7/8/9/8` ✗、Y 轴把 2.5/7.5 的位置写成 `2/7` ✗ —— 而它同时供
 >   **Y 轴刻度 / 柱上数值 / 悬停提示 / 折线·饼图图例**用（一处错、全图错 ✓）。
@@ -126,7 +169,7 @@
 >   ⚠ 本轮**没有**给海报墙加"统计页"：图表能力已单独验过，而这个应用的形态刚按你的意见定稿 ⇒
 >   不主动再塞新视图（要加随时说 ✓）。
 >
->   **2026-10-13 追加（九）**：**继续压表单控件**（探针 `build/_probe_form.leno`，本机临时件不入库 ✓）：
+>   **2026-10-13 追加（九）**：**继续压表单控件**（探针 `leno_gui/自测/test_form_controls.leno` ✓（回归件，随仓入库 ✓））：
 >   ① ⛔ **修掉真 bug**：`RadioButton` 同组互斥时**不给被取消那一项回调** —— `select()` 直接改 `rb.checked = false`
 >      不走 `on_change` ⇒ 靠回调维护状态的应用"界面没选、自己以为选着"✗（实测：先点 r1 再点 r2，r1 收到 **0 次** on=false）。
 >      修法：按「**用户操作**（点击/被挤掉）回调 / **程序化** `set_checked` 不回调」的口径补 `notify_change(false)` ✓

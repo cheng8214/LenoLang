@@ -1,0 +1,83 @@
+// test_nested_context_menu.leno — **嵌套在容器里**的控件，右键菜单还能不能正确夹紧到窗口内？
+//   背景：窗口尺寸走"句柄 + 尺寸"下发（见 sdl_layout 的 ww<0 = 尺寸未知 ✗）⇒ 嵌套控件的尺寸字段一直是 0
+//   读码发现 `sdl_menu.clampRect` 里**已有兜底**：尺寸 <=0 且拿得到句柄时，直接 `SDL_GetWindowSize` ✓
+//   ⇒ 本探针就是验这条兜底**真的管用**：把 Table 塞进 HBox/VBox 里（永远收不到尺寸 ✓），
+//     在窗口**右下角**附近右键 ⇒ 菜单应被翻转到锚点左上方、**完整留在窗口内** ✓
+//     （若兜底失效：winW 会退化成 1920 的保守估计 ⇒ 菜单会按"窗口很宽"算 ⇒ 直接顶出右边界被截断 ✗）
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer, Window, Table, HBox, VBox)
+
+int steps = 0
+string shot = ""
+Table tb
+
+func run() {
+    SDL3.ttfInit()
+    SDL3.setTheme(SDL3.darkTheme())
+    Window w = SDL3.createWindow({title: "probe_nested_menu", w: 700, h: 460})
+    if not w.ok { SDL3.ttfQuit(); return }
+
+    // ★ 嵌套三层（根 → HBox → VBox → Table）⇒ Table 的 winW/winH 永远是 0 ✓
+    HBox root = SDL3.createHBox({x: 0, y: 0, w: 700, h: 460, padX: 12, padY: 12, spacing: 10})
+    w.setRootAt(root, 0, 0)
+    VBox col = SDL3.createVBox({x: 0, y: 0, w: 660, h: 430, padX: 0, padY: 0, spacing: 8})
+    root.add(col, {grow: 1, shrink: 1, align: 3})
+
+    tb = SDL3.createTable({x: 0, y: 0, w: 640, h: 400, headers: ["片名", "评分"], row_h: 30, font_size: 14})
+    tb.set_rows([["银河快车", "7.7"], ["无间追踪", "8.2"], ["光影百年", "9.3"]])
+    tb.addContextItem({label: "这是一个比较长的菜单项，用来把菜单撑宽", id: "t1"})
+    tb.addContextItem({label: "另一项", id: "t2"})
+    tb.on_context_select(func(int row, string id) { print("[probe] 菜单动作 row=" + _str(row) + " id=" + id) })
+    col.add(tb, {grow: 1, shrink: 1, align: 3})
+
+    var s = _env("PROBE_SHOT")
+    if s != null { shot = _str(s) }
+
+    w.setOverlay(func(Renderer r) {
+        if steps >= 10 and shot != "" {
+            var sz = w.getSize()
+            var s2 = r.readPixelsAt(0, 0, sz.w, sz.h)
+            if s2 != null {
+                bool ok = SDL3.saveImagePNG(s2, shot)
+                print("[probe] 截图 " + shot + " ok=" + _str(ok) + " 窗口=" + _str(sz.w) + "x" + _str(sz.h))
+            }
+            _exit(0)
+        }
+    })
+
+    w.addTimer(100, func() {
+        steps = steps + 1
+        if steps == 2 {
+            // ① 在**右下角附近**右键 ⇒ 菜单必然溢出 ⇒ 必须被夹紧/翻转 ✓（顺带把窗口尺寸查一次并缓存住 ✓）
+            float px = 700.0 - 30.0
+            float py = 460.0 - 40.0
+            SDL3.testMoveAt(w.getID(), px, py)
+            bool rok = SDL3.testRightClickAt(w.getID(), px, py)
+            print("[probe] ① 嵌套 Table 右下角右键 @" + _str(px) + "," + _str(py) + " ok=" + _str(rok))
+        }
+        if steps == 4 {
+            print("[probe] ① 菜单开着=" + _str(tb.get_context_menu().isOpen()) + "（true ⇒ 嵌套控件也能弹 ✓）")
+            tb.get_context_menu().close()          // 收起来（模拟"关掉菜单后窗口被拖小" ✓）
+        }
+        if steps == 5 {
+            w.setSize(420, 340)                     // ★ 窗口缩小 ⇒ 若夹紧尺寸是**缓存住的旧值(700)** ⇒ 菜单会被截断 ✗
+            print("[probe] ② 已把窗口缩到 420x340（菜单此刻是收起的 ✓）")
+        }
+        if steps == 7 {
+            float px2 = 420.0 - 30.0
+            float py2 = 340.0 - 30.0
+            SDL3.testMoveAt(w.getID(), px2, py2)
+            bool rok2 = SDL3.testRightClickAt(w.getID(), px2, py2)
+            print("[probe] ② 缩窗后在右下角右键 @" + _str(px2) + "," + _str(py2) + " ok=" + _str(rok2))
+        }
+        if steps == 9 {
+            print("[probe] ② 菜单开着=" + _str(tb.get_context_menu().isOpen()) +
+                  " ⇒ 看截图：菜单应**完整落在 420 宽窗口内** ✓（被截断 ⇒ 夹紧尺寸是旧值 ✗）")
+        }
+    })
+
+    w.run(func(Event ev): bool { return true }, func(Renderer r) { r.clearColor(#101418FF) })
+    SDL3.ttfQuit()
+}
+
+main() { run() }

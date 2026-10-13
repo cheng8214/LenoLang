@@ -1,0 +1,103 @@
+// test_form_controls.leno — 表单控件三个疑点（回归件 ✓，随仓入库）
+//   ① Toggle / CheckBox / RadioButton 的 `set_size` 是不是空实现（⇒ 布局 basis/grow 对它们无效？）
+//   ② Radio 同组互斥时，**被取消的那一项**会不会收到 on_change(false)？
+//   ③ Slider.set_range / set_value 会不会量化到 step、会不会回调？
+// 时间基准：定时器（本框架事件驱动重绘 ⇒ 不能按帧数 ✓）
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer, Window, TitleBar, Toggle, CheckBox, RadioButton, Slider, HBox, VBox, Label)
+
+int firedA = 0
+int firedB = 0
+int sliderCb = 0
+string trace = ""
+int steps = 0
+
+Slider sl
+Toggle tg
+CheckBox ck
+RadioButton r1
+RadioButton r2
+
+func log(string s) { print("[probe] " + s) }
+
+func run() {
+    SDL3.ttfInit()
+    SDL3.setTheme(SDL3.darkTheme())
+    Window w = SDL3.createWindow({title: "probe_form", w: 560, h: 240})
+    if not w.ok { SDL3.ttfQuit(); return }
+
+    VBox root = SDL3.createVBox({x: 0, y: 0, w: 560, h: 240, padX: 16, padY: 16, spacing: 12})
+    w.setRootAt(root, 0, 0)
+
+    HBox row = SDL3.createHBox({x: 0, y: 0, w: 520, h: 46, padX: 0, padY: 0, spacing: 12})
+    root.add(row, {grow: 0, shrink: 0, basis: 46, align: 3})
+
+    tg = SDL3.createToggle({text: "循环播放"})
+    row.add(tg, {grow: 0, shrink: 0, basis: 200, align: 1})
+    ck = SDL3.createCheckBox({text: "只看收藏"})
+    row.add(ck, {grow: 0, shrink: 0, basis: 160, align: 1})
+
+    HBox row2 = SDL3.createHBox({x: 0, y: 0, w: 520, h: 46, padX: 0, padY: 0, spacing: 24})
+    root.add(row2, {grow: 0, shrink: 0, basis: 46, align: 3})
+    r1 = SDL3.createRadioButton({text: "评分优先", group: "g1"})
+    r2 = SDL3.createRadioButton({text: "年份优先", group: "g1"})
+    r1.on_change(func(bool on) { firedA = firedA + 1; trace = trace + " r1(" + _str(on) + ")"; log("★ r1 收到回调 on=" + _str(on)) })
+    r2.on_change(func(bool on) { firedB = firedB + 1; trace = trace + " r2(" + _str(on) + ")"; log("★ r2 收到回调 on=" + _str(on)) })
+    row2.add(r1, {grow: 0, shrink: 0, basis: 180, align: 1})
+    row2.add(r2, {grow: 0, shrink: 0, basis: 180, align: 1})
+
+    sl = SDL3.createSlider({min: 0, max: 10, value: 5, step: 1, w: 300, h: 26})
+    sl.on_change(func(float v) { sliderCb = sliderCb + 1; log("★ slider 收到回调 v=" + _str(v)) })
+    root.add(sl, {grow: 0, shrink: 0, basis: 26, align: 3})
+
+    // 步进定时器（100ms 一拍 ✓）
+    w.addTimer(100, func() {
+        steps = steps + 1
+        if steps == 2 {
+            // ① set_size 到底管不管用
+            tg.set_size(200.0, 44.0)
+            ck.set_size(160.0, 44.0)
+            r1.set_size(180.0, 44.0)
+            log("① Toggle  set_size(200,44) ⇒ get_w=" + _str(tg.get_w()) + " get_h=" + _str(tg.get_h()))
+            log("① CheckBox set_size(160,44) ⇒ get_w=" + _str(ck.get_w()) + " get_h=" + _str(ck.get_h()))
+            log("① Radio   set_size(180,44) ⇒ get_w=" + _str(r1.get_w()) + " get_h=" + _str(r1.get_h()))
+            // 布局给的 basis 生效了吗（看布局后的实际 x/宽 ⇒ 用下一个控件的位置反推）
+            log("① 布局后 r1.x=" + _str(r1.get_x()) + " r2.x=" + _str(r2.get_x()) + "（basis 180+间距 24 ⇒ 差 204 才算生效）")
+            // ③ Slider
+            sl.set_range(0.0, 5.0)
+            log("③ slider set_range(0,5) ⇒ value=" + _str(sl.get_value()) + " 回调次数=" + _str(sliderCb))
+            sl.set_value(3.7)
+            log("③ slider set_value(3.7)（step=1）⇒ value=" + _str(sl.get_value()) + " 回调次数=" + _str(sliderCb))
+        }
+        if steps == 4 {
+            // ★ 合成点击前**必须先投一条移动**：Radio/CheckBox/Toggle 这类控件的点击判据是
+            //   `isMouseButtonDown() and hover`，而 hover 只在 MouseMotion 里置位 ✗
+            //   ⇒ 只投 `testClickAt` 的话 ok=true 但**回调不响**（实测踩过 ✓）
+            bool mv = SDL3.testMoveAt(w.getID(), r1.get_x() + 11.0, r1.get_y() + 11.0)
+            bool ok = SDL3.testClickAt(w.getID(), r1.get_x() + 11.0, r1.get_y() + 11.0)
+            log("② 点 r1 移动=" + _str(mv) + " 点击=" + _str(ok))
+        }
+        if steps == 5 {
+            SDL3.testMoveAt(w.getID(), r2.get_x() + 11.0, r2.get_y() + 11.0)
+        }
+        if steps == 6 {
+            bool ok2 = SDL3.testClickAt(w.getID(), r2.get_x() + 11.0, r2.get_y() + 11.0)
+            log("② 点 r2 ok=" + _str(ok2) + "（此刻 r1.checked=" + _str(r1.is_checked()) + " r2.checked=" + _str(r2.is_checked()) + "）")
+            log("② 回调轨迹：" + trace + "  ⇒ r1 回调次数=" + _str(firedA) + "（互斥取消 r1 时**应有**一次 on=false）")
+        }
+        if steps == 8 {
+            log("② 终态 r1.is_checked=" + _str(r1.is_checked()) + " r2.is_checked=" + _str(r2.is_checked()) +
+                " r1 回调次数=" + _str(firedA) + " r2 回调次数=" + _str(firedB))
+            log("③ slider 终值=" + _str(sl.get_value()) + " 回调次数=" + _str(sliderCb) + "（若 3.7 未量化成 4 ⇒ step 未生效）")
+            _exit(0)
+        }
+    })
+
+    w.run(func(Event ev): bool { return true }, func(Renderer r) { r.clearColor(#101418FF) })
+    SDL3.ttfQuit()
+}
+
+// ==================== 程序入口（惯例：顶层 main() ✓ 见 movie_wall.leno 末尾）====================
+main() {
+    run()
+}

@@ -1,0 +1,58 @@
+// test_combobox_focus.leno — ComboBox：**失焦应收起下拉**（回归件 ✓，随仓入库）
+//   步骤：点开下拉 → 截图 A（应能看到列表）→ 注入 WINDOW_FOCUS_LOST → 截图 B
+//   判据：展开后 isOpen=true ✓；注入失焦后 isOpen 应=false ✓
+//         （修前：窗口层没拦这个事件、ComboBox.process 也没有这一支 ⇒ 切到别的应用后下拉**挂在屏幕上** ✗）
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer, Window, ComboBox)
+
+int steps = 0
+string shotA = ""
+string shotB = ""
+ComboBox cb
+
+func run() {
+    SDL3.ttfInit()
+    SDL3.setTheme(SDL3.darkTheme())
+    Window w = SDL3.createWindow({title: "probe_combo", w: 520, h: 320})
+    if not w.ok { SDL3.ttfQuit(); return }
+
+    cb = w.addComboBox({x: 40, y: 40, w: 220, h: 32, items: ["全部", "科幻", "票房热映", "华语佳作"],
+                        selected: 0, item_h: 28})
+    cb.on_change(func(int idx) { print("[probe] on_change idx=" + _str(idx)) })
+
+    var a = _env("PROBE_SHOT_A"); if a != null { shotA = _str(a) }
+    var b = _env("PROBE_SHOT_B"); if b != null { shotB = _str(b) }
+
+    w.setOverlay(func(Renderer r) {
+        var sz = w.getSize()
+        if steps == 3 and shotA != "" {
+            var s = r.readPixelsAt(0, 0, sz.w, sz.h)
+            if s != null { SDL3.saveImagePNG(s, shotA); print("[probe] 截图A(展开时) " + shotA) }
+        }
+        if steps == 7 and shotB != "" {
+            var s2 = r.readPixelsAt(0, 0, sz.w, sz.h)
+            if s2 != null { SDL3.saveImagePNG(s2, shotB); print("[probe] 截图B(失焦后) " + shotB) }
+        }
+        if steps >= 9 { _exit(0) }
+    })
+
+    w.addTimer(100, func() {
+        steps = steps + 1
+        if steps == 1 {
+            SDL3.testMoveAt(w.getID(), 150.0, 56.0)
+            bool ok = SDL3.testClickAt(w.getID(), 150.0, 56.0)
+            print("[probe] 点下拉箱 ok=" + _str(ok))
+        }
+        if steps == 2 { print("[probe] ① 展开后 isOpen=" + _str(cb.isOpen()) + "（应 true ✓）") }
+        if steps == 4 {
+            bool f = SDL3.testFocusLost(w.getID())
+            print("[probe] ② 已注入窗口失焦 ok=" + _str(f))
+        }
+        if steps == 5 { print("[probe] ② 失焦后 isOpen=" + _str(cb.isOpen()) + "（应 false ✓；修前 true ✗）") }
+    })
+
+    w.run(func(Event ev): bool { return true }, func(Renderer r) { r.clearColor(#101418FF) })
+    SDL3.ttfQuit()
+}
+
+main() { run() }

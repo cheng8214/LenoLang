@@ -1,0 +1,79 @@
+// test_tabcontrol_reset.leno — TabControl 二次 set() 之后，页内容还在不在？事件还灵不灵？
+//   读码怀疑：`set()` 会重建 pages / rel / _pageLayouts（**丢弃**已加的子控件）且**不 dispose** ⇒
+//     ① 页内容整体消失 ✗（应用"运行时改配色/字号"就会踩）
+//     ② 被丢掉的子控件（含字体/纹理）泄漏 ✗
+//   判据：二次 set 后再点页里的按钮 —— 计数从 1 变 2 才算还在 ✓
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer, Window, TabControl, VBox, Button)
+
+int steps = 0
+int clicks = 0
+string shot = ""
+TabControl tabs
+Button b
+
+func run() {
+    SDL3.ttfInit()
+    SDL3.setTheme(SDL3.darkTheme())
+    Window w = SDL3.createWindow({title: "probe_tabs", w: 660, h: 380})
+    if not w.ok { SDL3.ttfQuit(); return }
+
+    tabs = SDL3.createTabControl({x: 0, y: 0, w: 660, h: 360, tabs: ["页 A", "页 B"],
+                                  active: 0, font_size: 14})
+    w.setRootAt(tabs, 0, 0)
+
+    VBox pg = SDL3.createVBox({x: 0, y: 0, w: 660, h: 320, padX: 12, padY: 12, spacing: 8})
+    tabs.setPageLayout(0, pg)
+    b = SDL3.createButton({text: "页 A 里的按钮（点我有日志）"})
+    tabs.addToPageLayout(0, b, {grow: 0, shrink: 0, basis: 40, align: 3})
+    b.on_click(func() { clicks = clicks + 1; print("[probe] ★ 按钮 on_click 计数=" + _str(clicks)) })
+
+    var sp = _env("PROBE_SHOT")
+    if sp != null { shot = _str(sp) }
+
+    w.setOverlay(func(Renderer r) {
+        if steps >= 10 and shot != "" {
+            var sz = w.getSize()
+            var s = r.readPixelsAt(0, 0, sz.w, sz.h)
+            if s != null {
+                bool ok = SDL3.saveImagePNG(s, shot)
+                print("[probe] 截图 " + shot + " ok=" + _str(ok))
+            }
+            _exit(0)
+        }
+    })
+
+    w.addTimer(100, func() {
+        steps = steps + 1
+        if steps == 2 {
+            print("[probe] 二次 set 前：按钮@" + _str(b.get_x()) + "," + _str(b.get_y()) +
+                  " " + _str(b.get_w()) + "x" + _str(b.get_h()))
+            SDL3.testMoveAt(w.getID(), b.get_x() + b.get_w() / 2.0, b.get_y() + b.get_h() / 2.0)
+            bool ok = SDL3.testClickAt(w.getID(), b.get_x() + b.get_w() / 2.0, b.get_y() + b.get_h() / 2.0)
+            print("[probe] ① 首次点按钮 ok=" + _str(ok))
+        }
+        if steps == 4 {
+            print("[probe] ① 结果 clicks=" + _str(clicks) + "（应为 1 ✓）")
+        }
+        if steps == 5 {
+            // ★ 二次 set（运行时改配色/字号就是这个路径）
+            tabs.set({x: 0, y: 0, w: 660, h: 360, tabs: ["页 A", "页 B"], active: 0, font_size: 14})
+            print("[probe] ② 已二次 set ⇒ 看页内容还在不在")
+        }
+        if steps == 7 {
+            print("[probe] ② 二次 set 后：按钮@" + _str(b.get_x()) + "," + _str(b.get_y()) +
+                  " " + _str(b.get_w()) + "x" + _str(b.get_h()))
+            SDL3.testMoveAt(w.getID(), b.get_x() + b.get_w() / 2.0, b.get_y() + b.get_h() / 2.0)
+            bool ok2 = SDL3.testClickAt(w.getID(), b.get_x() + b.get_w() / 2.0, b.get_y() + b.get_h() / 2.0)
+            print("[probe] ② 二次 set 后再点按钮 ok=" + _str(ok2))
+        }
+        if steps == 9 {
+            print("[probe] ② 结果 clicks=" + _str(clicks) + "（仍为 1 ⇒ 二次 set 把页内容丢了 ✗；2 ⇒ 正常 ✓）")
+        }
+    })
+
+    w.run(func(Event ev): bool { return true }, func(Renderer r) { r.clearColor(#101418FF) })
+    SDL3.ttfQuit()
+}
+
+main() { run() }

@@ -1055,6 +1055,31 @@ win.setRootAt(root, 0, tbH)       // 返回列表页（root 要**存字段**，�
 
 回归件：`leno_gui/应用/影视海报墙/movie_wall.leno`（`WALL_DETAIL=n` 进详情 / `WALL_BACK=n` 返回 ✓）
 
+### ⚠ 嵌套控件"拿不到窗口尺寸"：**菜单其实自己会兜底**，真正的缺口是"弹出瞬间用了缓存旧值"（2026-10-13 实测 + 已修 ✓）
+
+**先纠正一个很容易误判的点**：`sdl_layout` 的尺寸下发里，**嵌套在容器里**的控件收到的是 `ww = -1`（尺寸未知 ✓）
+⇒ `Table`/`TreeView`/`ListBox` 的窗口尺寸字段一直是 0 ✓。**但这不等于弹层会跑偏** ——
+`sdl_menu.clampRect` 里早就有一条兜底：尺寸 ≤ 0 且拿得到句柄时，直接 `SDL_GetWindowSize(winHnd)` ✓。
+
+实测（探针 `leno_gui/自测/test_nested_context_menu.leno`：Table 嵌在 `根 → HBox → VBox` 三层里、尺寸字段恒为 0）：
+在窗口**右下角**右键 ⇒ 菜单被**正确翻转**、完整留在窗口内 ✓ ⇒ **不需要**让容器层层携带尺寸 ✓✓
+（所以"给句柄路径层层加尺寸参数"那条路可以不走 ✓）
+
+**真正的小缺口**（同一支代码里，实测抓到）：那条兜底**只查一次就缓存住** ✗ ⇒ 窗口 resize 之后再弹
+（此刻菜单是关着的 ⇒ 没有任何人刷新这个字段 ✓）会**先用旧值算一遍**。日志实证：
+```
+clampRect：_winW=700（旧）锚点=390,310   ← 第一遍用旧值
+clampRect：_winW=420（新）锚点=390,310   ← 同帧稍后 renderContextMenus 刷成新值并重算（画的位置对了 ✓）
+```
+画的位置会被纠正 ✓，但 `openContext` 正是拿**第一遍**的结果去 `setPopupCapture(...)` 登记**弹层捕获区** ✗
+⇒ 那一帧的捕获区是歪的（点击可能穿透 / 被误吞 ✓）。
+
+**修法（已落库 ✓）**：`openContext` 弹出前**按句柄刷一次真实窗口尺寸**（6 行 ✓），两处都用新值 ✓。
+
+**验收**：探针里"开一次（700×460）→ 关掉 → 窗口缩到 420×340 → 再右键右下角"：
+- 修复前日志：`openContext 夹紧用尺寸 700x460 ⇒ 捕获区=365,366` ✗（与菜单实际画的位置不符）
+- 修复后日志：`420x340 ⇒ 捕获区=85,256` ✓（85 = 390 − 305 = 翻转后的正确位置 ✓）
+
 ### ⛔ `Table` 的图标纹理缓存**只增不减** ⇒ 显存一路涨（2026-10-13 实测 + 已修 ✓）
 
 **症状**：表格有"**每行一个不同图标**"的场景（最典型就是"每行一张缩略图/海报"）⇒ 用久了显存持续增长 ✗
@@ -1080,10 +1105,10 @@ if imgCacheMax > 0 and imgCachePaths.len() >= imgCacheMax {
   且淘汰时已从数组移除 ⇒ `dispose` 不会再碰到它 ✓（`dispose` 里剩下那 ≤ max 张仍交给渲染器统一释放 ✓）
 - ⚠ **别把这句"销毁"照抄到 `dispose` 里** —— 那里有 double-free 的历史教训（见 `sdl_font.leno` 注释 ✓）
 
-**验收**（探针 `build/_probe_tablecache.leno`：6 行各贴一张不同海报 p01..p06）：
+**验收**（探针 `leno_gui/自测/test_table_image_cache.leno`：6 行各贴一张不同海报 p01..p06）：
 ```bash
-set PROBE_MAX=3 & build\leno.exe build\_probe_tablecache.leno     # ⇒ img_cache_count()=3 ✓（上限生效）
-set PROBE_MAX=0 & build\leno.exe build\_probe_tablecache.leno     # ⇒ =6 ✓（老行为）
+set PROBE_MAX=3 & build\leno.exe leno_gui\自测\test_table_image_cache.leno     # ⇒ img_cache_count()=3 ✓（上限生效）
+set PROBE_MAX=0 & build\leno.exe leno_gui\自测\test_table_image_cache.leno     # ⇒ =6 ✓（老行为）
 ```
 且截图里 **6 行缩略图全部正常** ✓（上限 3 < 6 行 ⇒ 渲染中途就在回收，也没画坏 ✓）
 
@@ -1117,9 +1142,9 @@ SDL3.testFocusGained(win.getID())    // 配对
 ```
 
 **验收**（两个探针，判据都是"修前 true / 修后 false"）：
-- `build/_probe_combo.leno`：点开下拉 ⇒ `isOpen()=true` ✓ ⇒ 注入失焦 ⇒ `isOpen()=false` ✓；
+- `leno_gui/自测/test_combobox_focus.leno`：点开下拉 ⇒ `isOpen()=true` ✓ ⇒ 注入失焦 ⇒ `isOpen()=false` ✓；
   且截图里下拉区域可见像素 **7205 → 0** ✓（修前一直是 true、下拉挂着 ✗）
-- `build/_probe_handle.leno`：右键 `Table` 打开菜单 ✓ ⇒ 注入失焦 ⇒ `get_context_menu().isOpen()=false` ✓
+- `leno_gui/自测/test_window_handle_size.leno`：右键 `Table` 打开菜单 ✓ ⇒ 注入失焦 ⇒ `get_context_menu().isOpen()=false` ✓
 
 ### ⛔ `Spinner` 画出来是**多边形**（段数公式 + `thick` 形参没用上）（2026-10-13 实测 + 已修 ✓）
 
@@ -1157,9 +1182,9 @@ for 0 : steps to i {
 - `tip` 原来是**死代码** ✗（`process` 是空实现，从不上报）⇒ 现在照 `RadioButton` 写法在 motion 里上报 ✓（悬停实测弹出 ✓）
 - `step()` 的角度归一化只减一次 360 ✗ ⇒ 一次卡顿（dt 大）后弧段会**跳变** ⇒ 改用 `while` ✓（`RingProgress.step_sweep` 同款一并修 ✓）
 
-**验收**（探针 `build/_probe_spin_shape.leno`：size 220 / thickness 14 / `running:false` + `full_track:true` ⇒ 静态整圈）：
+**验收**（探针 `leno_gui/自测/test_spinner_shape.leno`：size 220 / thickness 14 / `running:false` + `full_track:true` ⇒ 静态整圈）：
 ```bash
-set PROBE_SHOT=%TEMP%\s.png & build\leno.exe build\_probe_spin_shape.leno
+set PROBE_SHOT=%TEMP%\s.png & build\leno.exe leno_gui\自测\test_spinner_shape.leno
 ```
 用 PowerShell 逐 2° 采样（共 180 个角度）沿射线找弧带 ⇒ 修后：**0 个未命中**、
 弧带中心相对理想半径偏差 **-1.0 … +1.25px**（只剩量化 + AA 噪声 ✓）、弧带厚度 **13.5 … 16.5**（≈14 ✓）。
@@ -1178,7 +1203,7 @@ set PROBE_SHOT=%TEMP%\s.png & build\leno.exe build\_probe_spin_shape.leno
 - `active` 缺省值改取**当前页**（`opts.get("active", _active)` ✓）—— 否则只改个配色也会把页签**跳回第 0 页** ✗
 - 页数**真的变了**才重建；此时旧页子控件**故意不 dispose**（它们是应用创建并持有的，框架替它释会变成"释放后再用" ✗）
 
-**验收**（探针 `build/_probe_tabs.leno`）：页 A 放一个按钮 → 点一次（计数 1 ✓）→ `tabs.set(同 opts)` → 再点：
+**验收**（探针 `leno_gui/自测/test_tabcontrol_reset.leno`）：页 A 放一个按钮 → 点一次（计数 1 ✓）→ `tabs.set(同 opts)` → 再点：
 ⇒ 计数应为 **2** ✓ 且截图里按钮仍在 ✓（修前：计数停在 1、按钮消失 ✗）
 
 ### ⛔ `Table` 的自定义格色**不跟着数据走**：`remove_row` 后错位一行、`set_rows` 后残留（2026-10-13 实测 + 已修 ✓）
@@ -1197,10 +1222,10 @@ set PROBE_SHOT=%TEMP%\s.png & build\leno.exe build\_probe_spin_shape.leno
 - `set_rows` / `clear`（**换整批数据**）⇒ 清掉 `_cellFgColors/_cellBgColors` 与 `rowColors` ✓
   （应用想换数据后染色，就在 `set_rows` **之后**再 set —— `cleaner_master` 本来就这么写 ✓）
 
-**验收**（探针 `build/_probe_table2.leno`：行 R0..R4，R2 绿 / R3 红）：
+**验收**（探针 `leno_gui/自测/test_table_cell_colors.leno`：行 R0..R4，R2 绿 / R3 红）：
 ```bash
 set PROBE_SHOT_A=%TEMP%\a.png & set PROBE_SHOT_B=%TEMP%\b.png & set PROBE_SHOT_C=%TEMP%\c.png
-build\leno.exe build\_probe_table2.leno
+build\leno.exe leno_gui\自测\test_table_cell_colors.leno
 ```
 流程：截图 A → `remove_row(0)` → 截图 B → `set_rows(N0..N4)` → 截图 C；然后读**同一列**各行像素：
 - A：绿在行 2、红在行 3 ✓
@@ -1218,9 +1243,9 @@ resize 通知是一张**硬编码类型表**（只认 `Table` / `TreeView` / `Sp
 **修法（已落库 ✓）**：给 `Scrim` 加 `on_window_resize(ww,hh) { set_size(...) }`，并把 `Scrim`
 接进窗口那 3 处类型表（主循环 / 模态窗 / 悬停弹层窗 ✓）。
 
-**验收**（探针 `build/_probe_scrim.leno`：底色纯白 + 遮罩 alpha 120 ⇒ 被盖住处 ≈ `878787`、露出处仍是纯白 ✗）：
+**验收**（探针 `leno_gui/自测/test_scrim_resize.leno`：底色纯白 + 遮罩 alpha 120 ⇒ 被盖住处 ≈ `878787`、露出处仍是纯白 ✗）：
 ```bash
-set PROBE_SHOT=%TEMP%\s.png & build\leno.exe build\_probe_scrim.leno
+set PROBE_SHOT=%TEMP%\s.png & build\leno.exe leno_gui\自测\test_scrim_resize.leno
 ```
 600×400 → `show()` → `setSize(880,580)`，然后逐点读像素：
 修前 `(640,200)` / `(300,460)` / `(820,540)` 全是 `ffffff` ✗ ⇒ 修后 6 个采样点全 `878787` ✓
@@ -1255,9 +1280,9 @@ if d < 0.0001 { return (i as string) } // 整数值 ⇒ "8"（别写成 "8.0" �
 return _str(v)                         // 有小数 ⇒ 如实（实测 `_str(7.7)="7.7"`、尾随 0 会去掉 ✓）
 ```
 
-**验收**（探针 `build/_probe_chart.leno`，数据 7.7 / 8.2 / 9.3 / 8.4）：
+**验收**（探针 `leno_gui/自测/test_chart_labels.leno`，数据 7.7 / 8.2 / 9.3 / 8.4）：
 ```bash
-set PROBE_SHOT=%TEMP%\c.png & build\leno.exe build\_probe_chart.leno
+set PROBE_SHOT=%TEMP%\c.png & build\leno.exe leno_gui\自测\test_chart_labels.leno
 ```
 ⇒ 柱上标签应为 `7.7 / 8.2 / 9.3 / 8.4` ✓、Y 轴出现 `2.5 / 7.5` ✓、饼图图例带小数 ✓（修前全是整数 ✗）
 
@@ -1273,7 +1298,7 @@ set PROBE_SHOT=%TEMP%\c.png & build\leno.exe build\_probe_chart.leno
 - **用户操作**（点自己 / 被同组挤掉）⇒ 回调 ✓
 - **程序化** `set_checked(true/false)` / `set_on(...)` ⇒ **不回调** ✓（否则"设值 → 回调 → 又设值"互相打架 ✗）
 
-**验收**（探针 `build/_probe_form.leno`）：先点 r1、再点 r2 ⇒ 依次应看到
+**验收**（探针 `leno_gui/自测/test_form_controls.leno`）：先点 r1、再点 r2 ⇒ 依次应看到
 `r1 收到回调 on=true` → `r1 收到回调 on=false` → `r2 收到回调 on=true`，终态 **r1 回调 2 次 / r2 回调 1 次** ✓
 （修前 r1 只有 1 次 ✗）
 

@@ -1,0 +1,69 @@
+// test_table_cell_colors.leno — Table 的"自定义格色"在换行集合后会不会错位/残留？
+//   读码怀疑：`_cellFgColors/_cellBgColors` 以 "row,col" 为键，而 `remove_row` 不重排这些键、
+//             `set_rows` 也不清 ⇒ ①删一行后下面的格色整体错位一行 ✗ ②换新数据后旧格色仍然生效 ✗
+//   判据：给 R2 上绿、R3 上红 ⇒ 截图看**哪一行**带色（颜色该跟着数据的行号走 ✓，不是跟着下标 ✗）
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer, Window, VBox, Table)
+
+int steps = 0
+string shotA = ""
+string shotB = ""
+string shotC = ""
+Table tb
+
+func run() {
+    SDL3.ttfInit()
+    SDL3.setTheme(SDL3.darkTheme())
+    Window w = SDL3.createWindow({title: "probe_table2", w: 420, h: 300})
+    if not w.ok { SDL3.ttfQuit(); return }
+
+    VBox root = SDL3.createVBox({x: 0, y: 0, w: 420, h: 300, padX: 10, padY: 10})
+    w.setRootAt(root, 0, 0)
+    tb = SDL3.createTable({x: 0, y: 0, w: 400, h: 280, row_h: 30, header_h: 28,
+                           headers: ["行", "值"], font_size: 14, zebra: false})
+    root.add(tb, {grow: 1, shrink: 1, align: 3})
+
+    var a = _env("PROBE_SHOT_A"); if a != null { shotA = _str(a) }
+    var b = _env("PROBE_SHOT_B"); if b != null { shotB = _str(b) }
+    var c = _env("PROBE_SHOT_C"); if c != null { shotC = _str(c) }
+
+    tb.set_rows([["R0", "0"], ["R1", "1"], ["R2", "2"], ["R3", "3"], ["R4", "4"]])
+    // ★ R2 整行上绿、R3 整行上红（列 0 就够了：整格底色足以看清"颜色落在哪一行" ✓）
+    tb.set_cell_bg(2, 0, #22AA55FF)
+    tb.set_cell_bg(3, 0, #CC3333FF)
+    print("[probe] 初始 5 行 R0..R4：R2=绿 R3=红（截图 A = 基准 ✓）")
+
+    w.setOverlay(func(Renderer r) {
+        var sz = w.getSize()
+        string path = ""
+        string tag = ""
+        if steps == 3 { path = shotA; tag = "A 基准" }
+        if steps == 6 { path = shotB; tag = "B 删第 0 行后" }
+        if steps == 9 { path = shotC; tag = "C set_rows 换新数据后" }
+        if path != "" {
+            var s = r.readPixelsAt(0, 0, sz.w, sz.h)
+            if s != null {
+                bool ok = SDL3.saveImagePNG(s, path)
+                print("[probe] 截图(" + tag + ") " + path + " ok=" + _str(ok))
+            }
+        }
+        if steps >= 10 { _exit(0) }
+    })
+
+    w.addTimer(100, func() {
+        steps = steps + 1
+        if steps == 4 {
+            tb.remove_row(0)            // 删掉 R0 ⇒ 数据整体上移一行
+            print("[probe] remove_row(0) ⇒ 现在是 R1..R4（绿/红该跟着 R2/R3 走 ✓）")
+        }
+        if steps == 7 {
+            tb.set_rows([["N0", "n0"], ["N1", "n1"], ["N2", "n2"], ["N3", "n3"], ["N4", "n4"]])
+            print("[probe] set_rows 换成全新 5 行 N0..N4 ⇒ 旧格色**不该**再出现 ✓")
+        }
+    })
+
+    w.run(func(Event ev): bool { return true }, func(Renderer r) { r.clearColor(#101418FF) })
+    SDL3.ttfQuit()
+}
+
+main() { run() }

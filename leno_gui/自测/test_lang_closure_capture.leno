@@ -1,0 +1,66 @@
+// leno_gui/自测/test_lang_closure_capture.leno — 闭包捕获语义探针（**六种形态** A~F 一次测完 ✓）
+//   问题：Leno 的闭包到底"捕获什么、什么时候取值"？ 拿它当"动态文案"会不会冻住？
+//   判据：A/B/C 应读到**新值**（实时 ✓）；D 是 0/1/2（循环量每轮独立 ✓）；E 是 2/2/2（外层共享变量共用末值 ✗）；
+//         F 是 1/2/3（真 upvalue：创建者返回后仍存活可变 ✓）。结论记在 docs/语言陷阱速查.md §闭包 ✓
+// 用法：build\leno.exe leno_gui\自测\test_lang_closure_capture.leno
+var G = "G1"                                   // ① 模块级变量
+
+func mk_local(): func(): string {
+    var L = "L1"
+    var f = func(): string { return "局部=" + L }
+    L = "L2"                                   // 捕获**之后**改局部量
+    return f
+}
+
+func mk_global(): func(): string {
+    return func(): string { return "模块级=" + G }
+}
+
+struct Box {
+    string name = "B1"
+    func mk(): func(): string {
+        return func(): string { return "字段=" + name }    // 隐式 self 字段
+    }
+}
+
+// 闭包自己改写被捕获的局部量：真 upvalue 会在多次调用间**累积** ✓
+func mk_counter(): func(): string {
+    var n = 0
+    return func(): string {
+        n = n + 1
+        return _str(n)
+    }
+}
+
+main() {
+    var f1 = mk_local()
+    print("A 局部量：捕获后改成 L2 ⇒ 闭包读到 " + f1() + "（L1 = 快照 / L2 = 实时）")
+
+    var f2 = mk_global()
+    G = "G2"                                   // 捕获之后改模块级
+    print("B 模块级：捕获后改成 G2 ⇒ 闭包读到 " + f2() + "（G1 = 快照 / G2 = 实时）")
+
+    var b = new Box()
+    var f3 = b.mk()
+    b.name = "B2"                              // 捕获之后改**同一个对象**的字段
+    print("C 结构体字段：同一对象改成 B2 ⇒ 闭包读到 " + f3() + "（B1 = 快照 / B2 = 实时）")
+
+    Array[func(): string] fs = []
+    for 0 : 2 to i { fs.add(func(): string { return _str(i) }) }
+    print("D 循环里捕获循环量 ⇒ " + fs[0]() + " / " + fs[1]() + " / " + fs[2]() +
+          "（0/1/2 = 每轮各一份 / 2/2/2 = 共用末值）")
+
+    // E：外层**共享**的那个变量（不是循环量本身）—— 循环里反复改它再捕获
+    Array[func(): string] gs = []
+    var shared = 0
+    for 0 : 2 to k {
+        shared = k
+        gs.add(func(): string { return _str(shared) })
+    }
+    print("E 共享外层变量 ⇒ " + gs[0]() + " / " + gs[1]() + " / " + gs[2]() +
+          "（0/1/2 = 每份独立 / 2/2/2 = 共用末值）")
+
+    // F：创建它的函数已返回，且闭包**自己改写**被捕获的局部量 ⇒ 看是否累积（真 upvalue = 累积 ✓）
+    var f4 = mk_counter()
+    print("F 捕获的局部量能跨调用累积 ⇒ " + f4() + " / " + f4() + " / " + f4())
+}

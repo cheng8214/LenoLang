@@ -1,0 +1,58 @@
+// test_scrim_resize.leno — Scrim（遮罩）在**窗口缩放后**还盖得满吗？
+//   读码怀疑：`addScrim` 只在创建时 `set_size(_w,_h)` 一次 ✗ ⇒ resize 后右边/下边露一条原色 ✓
+//   判据：底色画成纯白 ⇒ 被遮罩盖住的地方是灰（alpha 120 ⇒ ≈ #808080 ✓），露出来的那条是**纯白** ✗
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer, Window, Scrim, VBox, Button)
+
+int steps = 0
+string shot = ""
+Scrim sc
+
+func run() {
+    SDL3.ttfInit()
+    SDL3.setTheme(SDL3.darkTheme())
+    Window w = SDL3.createWindow({title: "probe_scrim", w: 600, h: 400})
+    if not w.ok { SDL3.ttfQuit(); return }
+
+    VBox root = SDL3.createVBox({x: 0, y: 0, w: 600, h: 400, padX: 14, padY: 14, spacing: 8})
+    w.setRootAt(root, 0, 0)
+    Button b = SDL3.createButton({text: "被遮罩盖住的按钮"})
+    root.add(b, {grow: 0, shrink: 0, basis: 38, align: 3})
+
+    // ★ 必须用 `win.addScrim`（或自己给 w/h）：`createScrim({alpha:…})` 不带尺寸 ⇒ w/h=0 ⇒ 什么都不画 ✗
+    //   `addScrim` 内部会 `set_size(_w,_h)` —— 但那正是本次要验的点：**只在创建时设一次** ✗
+    sc = w.addScrim({alpha: 120})
+
+    var sp = _env("PROBE_SHOT")
+    if sp != null { shot = _str(sp) }
+
+    w.setOverlay(func(Renderer r) {
+        if steps >= 10 and shot != "" {
+            var sz = w.getSize()
+            var s = r.readPixelsAt(0, 0, sz.w, sz.h)
+            if s != null {
+                bool ok = SDL3.saveImagePNG(s, shot)
+                print("[probe] 截图 " + shot + " ok=" + _str(ok) + " 窗口=" + _str(sz.w) + "x" + _str(sz.h))
+            } else { print("[probe] 读像素失败：" + SDL3.getError()) }
+            _exit(0)
+        }
+    })
+
+    w.addTimer(100, func() {
+        steps = steps + 1
+        if steps == 2 {
+            sc.show()
+            var s0 = w.getSize()
+            print("[probe] scrim.show() 此时窗口=" + _str(s0.w) + "x" + _str(s0.h))
+        }
+        if steps == 3 {
+            w.setSize(880, 580)
+            print("[probe] 已 resize 到 880x580（若遮罩不跟 ⇒ 右侧/下侧会露白条 ✗）")
+        }
+    })
+
+    w.run(func(Event ev): bool { return true }, func(Renderer r) { r.clearColor(#FFFFFFFF) })
+    SDL3.ttfQuit()
+}
+
+main() { run() }

@@ -1,0 +1,70 @@
+// test_spinner_enabled_tip.leno — Spinner 三处修复的验收（回归件 ✓，随仓入库）
+//   ① `set_enabled(false)`：不再推进角度、**不再每帧请求重绘**、弧线**变暗**
+//   ② `tip` 不再是死代码（悬停会弹提示）
+//   ③ 角度归一化改用 while（卡顿不跳变）—— 代码级修复，探针只覆盖前两条 + 顺带看帧率
+//   用法：默认跑（sp2 禁用）；再 `set PROBE_SPIN=off` 跑一遍（两个都禁用）⇒ 帧数应显著下降 ✓
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer, Window, Spinner)
+
+int steps = 0
+string shot = ""
+Spinner sp1
+Spinner sp2
+int frames = 0
+
+func run() {
+    SDL3.ttfInit()
+    SDL3.setTheme(SDL3.darkTheme())
+    Window w = SDL3.createWindow({title: "probe_spinner", w: 520, h: 260})
+    if not w.ok { SDL3.ttfQuit(); return }
+
+    var off = _env("PROBE_SPIN")
+    bool disableBoth = off != null and _str(off) == "off"
+
+    sp1 = SDL3.createSpinner({x: 60, y: 60, size: 64, thickness: 6, tip: "加载中（悬停应弹这行）"})
+    w.add(sp1)
+    sp2 = SDL3.createSpinner({x: 220, y: 60, size: 64, thickness: 6})
+    w.add(sp2)
+    if disableBoth { sp1.set_enabled(false); sp2.set_enabled(false) }
+
+    var s = _env("PROBE_SHOT")
+    if s != null { shot = _str(s) }
+
+    w.setOverlay(func(Renderer r) {
+        frames = frames + 1
+        if steps == 6 { print("[probe] t≈0.6s 累计帧=" + _str(frames)) }
+        if steps == 20 {
+            print("[probe] t≈2.0s 累计帧=" + _str(frames) +
+                  "（默认应≈120=60fps 重绘 ✓；PROBE_SPIN=off 时应远小于此 ⇒ 禁用后不再空转 ✓）")
+        }
+        if steps >= 22 and shot != "" {
+            var sz = w.getSize()
+            var s2 = r.readPixelsAt(0, 0, sz.w, sz.h)
+            if s2 != null {
+                bool ok = SDL3.saveImagePNG(s2, shot)
+                print("[probe] 截图 " + shot + " ok=" + _str(ok))
+            }
+            _exit(0)
+        }
+    })
+
+    w.addTimer(100, func() {
+        steps = steps + 1
+        if steps == 2 {
+            print("[probe] ① sp1.enabled=" + _str(sp1.is_enabled()) + " running=" + _str(sp1.is_running()) +
+                  " / sp2.enabled=" + _str(sp2.is_enabled()) + " running=" + _str(sp2.is_running()))
+            if not disableBoth {
+                sp2.set_enabled(false)
+                print("[probe] ① 已把 sp2 禁用 ⇒ running 仍是 true（设计：禁用 ≠ 停止 ✓）")
+            }
+            // ② 悬停 sp1 触发 tip（tip 有延迟 ⇒ 后面几拍才弹 ✓）
+            SDL3.testMoveAt(w.getID(), 92.0, 92.0)
+            print("[probe] ② 鼠标已移到 sp1 上（等 tip 延迟）")
+        }
+    })
+
+    w.run(func(Event ev): bool { return true }, func(Renderer r) { r.clearColor(#101418FF) })
+    SDL3.ttfQuit()
+}
+
+main() { run() }

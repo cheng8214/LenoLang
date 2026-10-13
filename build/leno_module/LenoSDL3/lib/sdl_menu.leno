@@ -442,6 +442,18 @@ export struct MenuBar impl Widget, Themeable {
         ctxAnchor[ctxIdx] = [x, y]
         openSub = -1; hoverItem = -1; hoverSub = -1
         ensure_font()
+        // ★ 2026-10-13：弹出前**按句柄刷一次真实窗口尺寸**。
+        //   为什么必须有：`clampRect` 的 SDL 兜底只在 `_winW <= 0` 时查一次并**缓存** ✗ ⇒
+        //   窗口 resize 之后再弹（此时菜单是关着的 ⇒ 没有任何人刷新这个字段 ✓）会先用**旧值**算一遍：
+        //   实测日志（探针 test_nested_context_menu）：`_winW=700`（旧）算出的矩形被拿去登记**弹层捕获区** ✗，
+        //   同帧稍后 `renderContextMenus` 才把它刷成 420 并重算（画的位置对了 ✓，但捕获区已经歪了 ✗）。
+        //   ⇒ 这里先刷一次，两处都用新值 ✓（顺带把"嵌套控件拿不到尺寸"的兜底也一起对上 ✓）
+        if winHnd != null {
+            SDL_Point pt = SDL_Point.malloc()
+            core.lib().SDL_GetWindowSize(winHnd, &pt.x, &pt.y)
+            if pt.x > 0 { _winW = pt.x; _winH = pt.y }
+            pt.free()
+        }
         // 统一经 _panelRect 做窗口边界夹紧（主面板与子菜单共用同一逻辑）
         // ★ _ctxAnchor 保持原始鼠标位置不变，_panelRect 每帧从原始锚点重新计算夹紧位置，
         //   避免覆盖锚点后 _clampRect 在 renderPopup 中基于已夹紧位置二次计算导致漂移

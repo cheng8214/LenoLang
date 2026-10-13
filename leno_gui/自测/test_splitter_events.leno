@@ -1,0 +1,99 @@
+// test_splitter_events.leno — Splitter 三连问（读码怀疑，逐条实测）
+//   ① 点击能不能**穿到子控件**（左栏里的按钮 on_click 会不会触发）
+//   ② 拖分隔条改比例：拖完位置对不对（get_ratio ✓）
+//   ③ **拖过之后**再点子控件还灵不灵（读码怀疑：拖拽中的事件被 splitter `return` 吞掉 ✗，
+//      子控件可能停在"按下未抬起"态 ⇒ 后续点击失灵 ✗）
+//   时间基准：定时器（本框架事件驱动重绘 ✓）；点击前必须先 testMoveAt（hover 门 ✓）
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer, Window, Splitter, VBox, HBox, Button, Label)
+
+int steps = 0
+int clicks = 0
+string shot = ""
+Splitter sp
+Button b
+
+func run() {
+    SDL3.ttfInit()
+    SDL3.setTheme(SDL3.darkTheme())
+    Window w = SDL3.createWindow({title: "probe_splitter", w: 640, h: 360})
+    if not w.ok { SDL3.ttfQuit(); return }
+
+    sp = SDL3.createSplitter({x: 0, y: 0, w: 640, h: 360,
+                              orientation: Splitter.HORIZONTAL, ratio: 0.35})
+    w.setRootAt(sp, 0, 0)
+
+    VBox left = SDL3.createVBox({x: 0, y: 0, w: 224, h: 360, padX: 10, padY: 10, spacing: 8})
+    HBox right = SDL3.createHBox({x: 0, y: 0, w: 416, h: 360, padX: 10, padY: 10})
+    sp.set_first(left)
+    sp.set_second(right)
+
+    b = SDL3.createButton({text: "左栏按钮"})
+    left.add(b, {grow: 0, shrink: 0, basis: 40, align: 3})
+    Label lab = SDL3.createLabel({text: "右栏占位（拖分隔条看它让位 ✓）", font_size: 13})
+    right.add(lab, {grow: 1, shrink: 1, align: 1})
+    b.on_click(func() { clicks = clicks + 1; print("[probe] ★ 按钮 on_click 触发，计数=" + _str(clicks)) })
+
+    var sp_env = _env("PROBE_SHOT")
+    if sp_env != null { shot = _str(sp_env) }
+
+    w.setOverlay(func(Renderer r) {
+        if steps >= 11 and shot != "" {
+            var sz = w.getSize()
+            var s = r.readPixelsAt(0, 0, sz.w, sz.h)
+            if s != null {
+                bool ok = SDL3.saveImagePNG(s, shot)
+                print("[probe] 截图 " + shot + " ok=" + _str(ok))
+            }
+            _exit(0)
+        }
+    })
+
+    w.addTimer(100, func() {
+        steps = steps + 1
+        if steps == 2 {
+            print("[probe] 几何：splitter=" + _str(sp.get_w()) + "x" + _str(sp.get_h()) +
+                  " ratio=" + _str(sp.get_ratio()) +
+                  " 按钮@" + _str(b.get_x()) + "," + _str(b.get_y()) + " " + _str(b.get_w()) + "x" + _str(b.get_h()))
+        }
+        if steps == 3 {
+            // ① 点左栏按钮
+            SDL3.testMoveAt(w.getID(), b.get_x() + b.get_w() / 2.0, b.get_y() + b.get_h() / 2.0)
+            bool ok = SDL3.testClickAt(w.getID(), b.get_x() + b.get_w() / 2.0, b.get_y() + b.get_h() / 2.0)
+            print("[probe] ① 点左栏按钮（预期 on_click）ok=" + _str(ok))
+        }
+        if steps == 5 {
+            print("[probe] ① 结果：clicks=" + _str(clicks) + "（应为 1 ✓）")
+            // ② 拖分隔条：x = ratio*w ≈ 224 ⇒ 拖到 320
+            float dx = sp.get_w() * sp.get_ratio()
+            SDL3.testMoveAt(w.getID(), dx, 180.0)
+            bool dn = SDL3.testMouseAt(w.getID(), dx, 180.0, true)
+            bool mv = SDL3.testMoveAt(w.getID(), 320.0, 180.0)
+            bool up = SDL3.testMouseAt(w.getID(), 320.0, 180.0, false)
+            print("[probe] ② 拖分隔条 下=" + _str(dn) + " 移=" + _str(mv) + " 抬=" + _str(up) +
+                  "（拖动中 ✓；抬起了才会落定 ✓）")
+        }
+        if steps == 7 {
+            print("[probe] ② 拖后 ratio=" + _str(sp.get_ratio()) + "（预期 ≈0.5 ⇒ 320/640 ✓）")
+            // ③ 拖完之后再点同一个按钮
+            SDL3.testMoveAt(w.getID(), b.get_x() + b.get_w() / 2.0, b.get_y() + b.get_h() / 2.0)
+            bool ok2 = SDL3.testClickAt(w.getID(), b.get_x() + b.get_w() / 2.0, b.get_y() + b.get_h() / 2.0)
+            print("[probe] ③ 拖后再点按钮 ok=" + _str(ok2))
+        }
+        if steps == 9 {
+            print("[probe] ③ 结果：clicks=" + _str(clicks) + "（应为 2 ✓；若仍为 1 ⇒ 拖拽后子控件失灵 ✗）")
+            // ④ 验"窗口 resize 真的走到了 Splitter"（走的是本次收敛后的入路：窗口 → sdl_layout → 钩子 ✓）
+            w.setSize(840, 420)
+            print("[probe] ④ 已把窗口拉到 840x420")
+        }
+        if steps == 10 {
+            print("[probe] ④ resize 后 splitter=" + _str(sp.get_w()) + "x" + _str(sp.get_h()) +
+                  "（应为 840x420 ⇒ Splitter 收到了窗口 resize ✓）")
+        }
+    })
+
+    w.run(func(Event ev): bool { return true }, func(Renderer r) { r.clearColor(#101418FF) })
+    SDL3.ttfQuit()
+}
+
+main() { run() }

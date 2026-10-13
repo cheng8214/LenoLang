@@ -1,0 +1,66 @@
+// test_table_image_cache.leno — Table 图标纹理缓存**上限**验收（回归件 ✓，随仓入库）
+//   读码怀疑（已确认）：`get_tex` 的缓存**只增不减** ✗ ⇒ 每行一个不同图标（如"每行一张海报"）时显存一路涨
+//   修法：环形覆盖 + 覆盖时 SDL_DestroyTexture 回收（照 sdl_font 的 texCap 样板 ✓）
+//   判据（A/B 两轮，用 PROBE_MAX 切）：
+//     · PROBE_MAX=3 ⇒ 6 行不同图渲染后 img_cache_count() 应 **= 3**（上限生效 ✓）
+//     · PROBE_MAX=0 ⇒ 应 **= 6**（不限制 = 老行为 ✓）
+//     另：截图里 6 行缩略图都应正常显示（缓存回收不能画坏 ✓）
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer, Window, Table)
+
+int steps = 0
+string shot = ""
+Table tb
+
+const string IMG_DIR = "leno_gui/应用/影视海报墙/images/"
+
+func run() {
+    SDL3.ttfInit()
+    SDL3.setTheme(SDL3.darkTheme())
+    Window w = SDL3.createWindow({title: "probe_tablecache", w: 560, h: 430})
+    if not w.ok { SDL3.ttfQuit(); return }
+
+    int maxv = 3
+    var mv = _env("PROBE_MAX")
+    if mv != null { maxv = _int(_str(mv)) }
+
+    tb = w.addTable({x: 20, y: 20, w: 520, h: 380, headers: ["图标", "名称"],
+                     row_h: 52, header_h: 30, font_size: 14,
+                     image_col: 0, image_size: 44, image_mode: 2,
+                     image_cache_max: maxv})
+
+    Array[Array[string]] rows = []
+    for 1 : 6 to i { rows.add(["", "第 " + _str(i) + " 行"]) }
+    tb.set_rows(rows)
+    // 逐行贴**不同**的海报（p01..p06 ✓）
+    for 1 : 6 to i {
+        tb.set_row_image(i - 1, IMG_DIR + "p0" + _str(i) + ".png")
+    }
+    print("[probe] image_cache_max=" + _str(maxv) + " ⇒ 6 行各一张不同图")
+
+    var s = _env("PROBE_SHOT")
+    if s != null { shot = _str(s) }
+
+    w.setOverlay(func(Renderer r) {
+        if steps >= 6 {
+            print("[probe] 渲染后 img_cache_count()=" + _str(tb.img_cache_count()) +
+                  "（max=3 应=3 ✓；max=0 应=6 ✓）")
+            if shot != "" {
+                var sz = w.getSize()
+                var s2 = r.readPixelsAt(0, 0, sz.w, sz.h)
+                if s2 != null {
+                    bool ok = SDL3.saveImagePNG(s2, shot)
+                    print("[probe] 截图 " + shot + " ok=" + _str(ok))
+                }
+            }
+            _exit(0)
+        }
+    })
+
+    w.addTimer(100, func() { steps = steps + 1 })
+
+    w.run(func(Event ev): bool { return true }, func(Renderer r) { r.clearColor(#101418FF) })
+    SDL3.ttfQuit()
+}
+
+main() { run() }

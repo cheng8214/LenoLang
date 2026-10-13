@@ -1,0 +1,89 @@
+// test_window_handle_size.leno — 定点压"句柄/尺寸下发"的统一分支（走 `case is Table, ListBox` 那条合并 case ✓）
+//   ① `win.addListBox` 之后能正常点（⇒ 句柄路径没被剪成空桩 ✓，仓里记过"合并 case 曾被 DCE 剪空"的历史 ✓）
+//   ② 窗口 resize（走新收敛的 `passWindowResize` ✓）之后，`Table` 的**右键菜单仍能打开** ✓
+//      —— 它的菜单要"窗口尺寸"做弹层边界夹紧 ⇒ 句柄+尺寸没下达到才会出问题 ✓
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer, Window, Table, ListBox)
+
+int steps = 0
+string shot = ""
+Table tb
+ListBox lb
+int lbHits = 0
+
+func run() {
+    SDL3.ttfInit()
+    SDL3.setTheme(SDL3.darkTheme())
+    Window w = SDL3.createWindow({title: "probe_handle", w: 700, h: 420})
+    if not w.ok { SDL3.ttfQuit(); return }
+
+    lb = w.addListBox({x: 16, y: 16, w: 220, h: 180, items: ["甲", "乙", "丙", "丁"], selected: 0})
+    lb.on_change(func(Array[int] idxs) {
+        lbHits = lbHits + 1
+        print("[probe] ListBox on_change 触发，选中数=" + _str(idxs.len()) + " 文本=" + lb.get_selected_text())
+    })
+
+    tb = w.addTable({x: 260, y: 16, w: 420, h: 380, headers: ["片名", "评分"],
+                     row_h: 30, sortable: true, font_size: 14})
+    tb.set_rows([["银河快车", "7.7"], ["无间追踪", "8.2"], ["光影百年", "9.3"]])
+    tb.addContextItem({label: "测试项", id: "t1"})
+    tb.on_context_select(func(int row, string id) {
+        print("[probe] Table 右键菜单动作 row=" + _str(row) + " id=" + id)
+    })
+
+    var sp = _env("PROBE_SHOT")
+    if sp != null { shot = _str(sp) }
+
+    w.setOverlay(func(Renderer r) {
+        if steps >= 13 and shot != "" {
+            var sz = w.getSize()
+            var s = r.readPixelsAt(0, 0, sz.w, sz.h)
+            if s != null {
+                bool ok = SDL3.saveImagePNG(s, shot)
+                print("[probe] 截图 " + shot + " ok=" + _str(ok) + " 窗口=" + _str(sz.w) + "x" + _str(sz.h))
+            }
+            _exit(0)
+        }
+    })
+
+    w.addTimer(100, func() {
+        steps = steps + 1
+        if steps == 2 {
+            // ① 点 ListBox 第 3 项（先移动点亮 hover ✓）
+            float px = lb.get_x() + 60.0
+            float py = lb.get_y() + 34.0 * 2.0 + 17.0
+            SDL3.testMoveAt(w.getID(), px, py)
+            bool ok = SDL3.testClickAt(w.getID(), px, py)
+            print("[probe] ① 点 ListBox(第 3 项) @" + _str(px) + "," + _str(py) + " ok=" + _str(ok))
+        }
+        if steps == 4 {
+            print("[probe] ① ListBox 命中次数=" + _str(lbHits) + "（≥1 ⇒ 句柄路径正常 ✓）")
+            w.setSize(860, 520)
+            print("[probe] ② 已 resize 到 860x520（走新收敛的 passWindowResize ✓）")
+        }
+        if steps == 6 {
+            // ③ resize 之后再右键 Table 第 1 行 ⇒ 菜单应能打开（句柄 + 尺寸都还正常 ✓）
+            float px = tb.get_x() + 40.0
+            float py = tb.get_y() + 30.0 + 15.0
+            SDL3.testMoveAt(w.getID(), px, py)
+            bool rok = SDL3.testRightClickAt(w.getID(), px, py)
+            print("[probe] ③ resize 后右键 Table @" + _str(px) + "," + _str(py) + " ok=" + _str(rok))
+        }
+        if steps == 8 {
+            bool isOpen = tb.get_context_menu().isOpen()
+            print("[probe] ③ Table 右键菜单开着=" + _str(isOpen) + "（true ⇒ 句柄+尺寸路径正常 ✓）")
+            // ④ 失焦应收起右键菜单（否则 Alt+Tab 后菜单留在屏幕上、点不动也关不掉 ✗）
+            bool fl = SDL3.testFocusLost(w.getID())
+            print("[probe] ④ 已注入窗口失焦 ok=" + _str(fl))
+        }
+        if steps == 10 {
+            bool stillOpen = tb.get_context_menu().isOpen()
+            print("[probe] ④ 失焦后右键菜单开着=" + _str(stillOpen) + "（应 false ✓；修前 true ✗）")
+        }
+    })
+
+    w.run(func(Event ev): bool { return true }, func(Renderer r) { r.clearColor(#101418FF) })
+    SDL3.ttfQuit()
+}
+
+main() { run() }

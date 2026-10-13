@@ -1,0 +1,54 @@
+// test_chart_labels.leno — 图表数值标签会不会丢小数（读码怀疑：_fmtNum = _int(v) as string ✗）
+//   验四个落点：柱上数值 / Y 轴刻度 / 悬停提示 / 饼图图例（都走 _fmtNum ✓）
+//   时间基准：定时器（本框架事件驱动重绘 ⇒ 不能按帧 ✓）；截图必须放 setOverlay ✓
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer, Window, VBox, BarChart, PieChart)
+
+Array[string] CATS = ["银河快车", "无间追踪", "光影百年", "胶片时代"]
+Array[float] VALS = [7.7, 8.2, 9.3, 8.4]
+int steps = 0
+string shot = ""
+
+func run() {
+    SDL3.ttfInit()
+    SDL3.setTheme(SDL3.darkTheme())
+    Window w = SDL3.createWindow({title: "probe_chart", w: 780, h: 430})
+    if not w.ok { SDL3.ttfQuit(); return }
+
+    VBox root = SDL3.createVBox({x: 0, y: 0, w: 780, h: 430, padX: 14, padY: 12, spacing: 8})
+    w.setRootAt(root, 0, 0)
+
+    BarChart bar = SDL3.createBarChart({x: 0, y: 0, w: 740, h: 230, font_size: 13,
+                                        title: "评分（柱上标签应显示 7.7 / 9.3）"})
+    bar.set_data(CATS, VALS)
+    root.add(bar, {grow: 0, shrink: 0, basis: 230, align: 3})
+
+    PieChart pie = SDL3.createPieChart({x: 0, y: 0, w: 740, h: 170, font_size: 13,
+                                        title: "评分占比（图例应显示小数）"})
+    pie.set_data(CATS, VALS)
+    root.add(pie, {grow: 0, shrink: 0, basis: 170, align: 3})
+
+    // 参照：语言的浮点转字符串是什么样（修 _fmtNum 时要用 ✓）
+    print("[probe] _str(7.7)=" + _str(7.7) + " _str(9.3)=" + _str(9.3) + " _str(8.0)=" + _str(8.0))
+
+    var sp = _env("PROBE_SHOT")      // 内建：取环境变量（与海报墙自检同款 ✓）
+    if sp != null { shot = _str(sp) }
+    w.setOverlay(func(Renderer r) {
+        if steps >= 8 and shot != "" {
+            var sz = w.getSize()
+            var s = r.readPixelsAt(0, 0, sz.w, sz.h)
+            if s != null {
+                bool ok = SDL3.saveImagePNG(s, shot)
+                print("[probe] 截图 " + shot + " ok=" + _str(ok))
+            } else { print("[probe] 读像素失败：" + SDL3.getError()) }
+            _exit(0)
+        }
+    })
+
+    w.addTimer(100, func() { steps = steps + 1 })
+
+    w.run(func(Event ev): bool { return true }, func(Renderer r) { r.clearColor(#101418FF) })
+    SDL3.ttfQuit()
+}
+
+main() { run() }

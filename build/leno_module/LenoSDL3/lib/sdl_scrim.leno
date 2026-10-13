@@ -54,7 +54,7 @@ export struct Scrim impl Widget {
     // ★ Widget 接口：窗口 resize 时**跟着铺满**（2026-10-13 修 ✓）
     //   原来尺寸只在 `win.addScrim` 创建时下发一次 ⇒ 拉大窗口后右下**露一条没遮住的区域**，
     //   而且那条**点得动** ✗（`process` 正是按这个矩形吞事件的 ✓）。
-    //   实测（探针 build/_probe_scrim.leno，白底 + alpha 120）：600×400 时全灰 ✓；
+    //   实测（探针 leno_gui/自测/test_scrim_resize.leno，白底 + alpha 120）：600×400 时全灰 ✓；
     //   拉大到 880×580 后，(640,200)/(300,460)/(820,540) 仍是**纯白** ✗（被遮住的点 ≈ 878787 ✓）
     func on_window_resize(int ww, int hh) { set_size(_float(ww), _float(hh)) }
 
