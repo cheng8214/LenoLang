@@ -65,6 +65,9 @@ export struct Splitter impl Widget, Themeable {
     bool   enabled = true, visible = true
     pri Ptr[u8] hwnd                   // 绑定的窗口句柄
     pri int    winW = 0, winH = 0     // 窗口尺寸（供向下传递）
+    // ★ 2026-10-13：**重排去重**用的"上次几何" —— `process` 与 `render` 各调一次 `relayout()`，
+    //   而两者看到的是同一组 (x,y,w,h,ratio) ⇒ 第二次纯属白做 ✗（子控件的 set_pos/set_size 被白调一遍 ✓）
+    pri float lastX = -1.0, lastY = -1.0, lastW = -1.0, lastH = -1.0, lastRatio = -1.0
 
 
     func set(Dict opts) {
@@ -95,8 +98,9 @@ export struct Splitter impl Widget, Themeable {
     }
 
     // ==================== 子控件管理 ====================
-    func set_first(Widget c)  { _first = c; if hwnd != null { pass_hwnd(c, hwnd) } }
-    func set_second(Widget c) { _second = c; if hwnd != null { pass_hwnd(c, hwnd) } }
+    // ⚠ 换子控件要**作废 `relayout` 的去重缓存**（几何没变、但"排的是谁"变了 ✓）
+    func set_first(Widget c)  { _first = c;  lastX = -1.0; if hwnd != null { pass_hwnd(c, hwnd) } }
+    func set_second(Widget c) { _second = c; lastX = -1.0; if hwnd != null { pass_hwnd(c, hwnd) } }
 
     func _bind_window(Ptr[u8] hwnd) {
         self.hwnd = hwnd      // 形参遮蔽字段 ⇒ 必须显式 self.
@@ -181,6 +185,11 @@ export struct Splitter impl Widget, Themeable {
 
     // ==================== 布局计算 ====================
     pri func relayout() {
+        // ★ 2026-10-13：**只在几何真的变了时才重排** —— `process` 与 `render` 都会调到这里，
+        //   两次的 (x,y,w,h,ratio) 完全一样 ⇒ 第二次纯做无用功 ✗
+        //   判据安全：两个子控件的尺寸**只由这五个值决定**（按 ratio 切，与子控件自身自然尺寸无关 ✓）
+        if x == lastX and y == lastY and w == lastW and h == lastH and ratio == lastRatio { return }
+        lastX = x; lastY = y; lastW = w; lastH = h; lastRatio = ratio
         float dp = divider_pos()
         var f = _first
         var s = _second

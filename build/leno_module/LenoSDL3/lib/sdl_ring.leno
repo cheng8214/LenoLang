@@ -254,7 +254,11 @@ export struct RingProgress impl Widget {
         if sweepLast > 0.0 {
             float dt = (now - sweepLast) / 1000.0
             angle = angle + speed * dt
-            if angle >= 360.0 { angle = angle - 360.0 }
+            // ★ 2026-10-13：归一化改用 **while**（与 sdl_spinner.step 同批修 ✓）——
+            //   原来是 `if angle >= 360 { angle -= 360 }`，一次卡顿（dt 大）就会让 angle 停在
+            //   360 以上 ⇒ 扫描弧**跳变**一下 ✗
+            while angle >= 360.0 { angle = angle - 360.0 }
+            while angle < 0.0 { angle = angle + 360.0 }
         }
         sweepLast = now
     }

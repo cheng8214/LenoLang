@@ -1055,6 +1055,50 @@ win.setRootAt(root, 0, tbH)       // 返回列表页（root 要**存字段**，�
 
 回归件：`leno_gui/应用/影视海报墙/movie_wall.leno`（`WALL_DETAIL=n` 进详情 / `WALL_BACK=n` 返回 ✓）
 
+### ⛔ `Spinner` 画出来是**多边形**（段数公式 + `thick` 形参没用上）（2026-10-13 实测 + 已修 ✓）
+
+**症状**：转圈指示器看着是**十边形**（棱角明显）而不是圆 ✗；粗细也跟 `thickness` 无关（像固定 1px ✗）。
+
+**病因**（`sdl_spinner.draw_arc` 老实现）：
+```leno
+int segs = _int(radius * span / 360.0 * 0.4)   // r=26、span=120° ⇒ 3.46 ⇒ 被夹到 4 段 ✗
+if segs < 4 { segs = 4 }
+...
+r.drawLine(x1, y1, x2, y2)                     // ⚠ `thick` 形参**压根没用** ✗
+```
+⇒ 120° 的弧只有 **4 段**、整圈轨道只有 **10 段** ⇒ 十边形 ✓（弦中点内凹 `r(1-cos 18°)`，r=96 时约 **4.7px** ✓）
+
+**修法（已落库 ✓）**：**别走"把段数调大"这条路** —— `drawLine` **没有抗锯齿、也不能设线宽** ⇒ 加密只会得到
+"更细腻的多边形" ✗。改用 `fillCircle`（**抗锯齿** ✓；走圆角蒙版缓存 ⇒ 同半径复用同一张蒙版、开销很低 ✓）
+沿弧线**密排**：
+
+```leno
+float rad = thick / 2.0
+float stepLen = rad * 0.5; if stepLen < 1.0 { stepLen = 1.0 }   // 相邻圆必重叠 ✓
+int steps = _int(radius * span * d2r / stepLen); /* 上限 720 保护 ✓ */
+for 0 : steps to i {
+    float aa = a0 + stepA * (_float(i) + 0.5)
+    r.fillCircle(cx + radius * maths.cos(aa * d2r), cy + radius * maths.sin(aa * d2r), rad)
+}
+```
+⇒ 边缘无棱角 ✓、天然圆角端点 ✓、粗细就是 `thickness` ✓、**不依赖背景色** ✓
+（⚠ 没照 `RingProgress` 的 "fillPie + fillCircle 抠底"：那要求知道**内圆底色**（它会露在环内侧 ✓），
+而本控件是盖在任意父容器上的 ⇒ 抠底会露出错色 ✗，除非新增 bg 选项、DX 变差 ✗）
+
+**同批修的另外三条**（同一文件）：
+- `set_enabled` 原来是**空实现** ✗ ⇒ 现在真的停转 + **不再每帧请求重绘** + 弧线变暗 ✓
+  （实测帧率：启用 **2s / 103 帧** ⇒ 两个都禁用 **2s / 20 帧** ✓，那 20 帧是自检定时器自己的 ✓）
+- `tip` 原来是**死代码** ✗（`process` 是空实现，从不上报）⇒ 现在照 `RadioButton` 写法在 motion 里上报 ✓（悬停实测弹出 ✓）
+- `step()` 的角度归一化只减一次 360 ✗ ⇒ 一次卡顿（dt 大）后弧段会**跳变** ⇒ 改用 `while` ✓（`RingProgress.step_sweep` 同款一并修 ✓）
+
+**验收**（探针 `build/_probe_spin_shape.leno`：size 220 / thickness 14 / `running:false` + `full_track:true` ⇒ 静态整圈）：
+```bash
+set PROBE_SHOT=%TEMP%\s.png & build\leno.exe build\_probe_spin_shape.leno
+```
+用 PowerShell 逐 2° 采样（共 180 个角度）沿射线找弧带 ⇒ 修后：**0 个未命中**、
+弧带中心相对理想半径偏差 **-1.0 … +1.25px**（只剩量化 + AA 噪声 ✓）、弧带厚度 **13.5 … 16.5**（≈14 ✓）。
+老实现：按公式 10 段 ⇒ 内凹 ~4.7px、线宽 ~1px ✗
+
 ### ⛔ `TabControl` 二次 `set()` 会把**整页内容丢掉**（"运行时改配色/字号"就会踩）（2026-10-13 实测 + 已修 ✓）
 
 **症状**：页里放好的按钮/表格，**运行时改一下外观就当场消失**、点击也不再响应 ✗ ——

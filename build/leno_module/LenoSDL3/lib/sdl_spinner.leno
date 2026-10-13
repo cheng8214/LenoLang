@@ -6,6 +6,7 @@ import "sdl_opts.leno" as dochk    // 选项对账：不认识的键会报一行
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core
 import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_tooltip.leno" as tip
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 use theme.Color
 import maths
@@ -32,6 +33,9 @@ export struct Spinner impl Widget {
     pri bool full = false           // 是否画整圆轨道（true=整圈背景+旋转缺口）
     bool visible = true, _loaded = false
     string _tip = ""
+    // ★ 2026-10-13 补：启用开关与悬停（原来 `set_enabled` 是**空实现** ✗、`tip` 是**死代码** ✗）
+    bool _enabled = true
+    pri bool _hover = false
 
 
     func set(Dict opts) {
@@ -64,7 +68,17 @@ export struct Spinner impl Widget {
     func is_running(): bool { return _running }
     func set_visible(bool v) { visible = v }
     func is_visible(): bool { return visible }
-    func set_enabled(bool e) {}
+    // 启用/禁用（2026-10-13 修：原来是 `func set_enabled(bool e) {}` **空实现** ✗ ——
+    //   调用方以为它停了，其实照转、还每帧请求重绘 ✗）
+    //   禁用后：**不推进角度**、**不再每帧请求重绘**、弧线**变暗**（照 RadioButton 的禁用观感 ✓）、
+    //   且不参与交互（与其它控件"禁用即不响应"一致 ✓）
+    func set_enabled(bool e) {
+        _enabled = e
+        _hover = false
+        lastTick = 0.0      // 重新启用时从"现在"重新计时 ⇒ 不会把停顿时长一次性补进角度 ✗
+        core.markFrameRedraw()
+    }
+    func is_enabled(): bool { return _enabled }
     func set_tip(string t) { _tip = t }
 
     // ==================== 查询方法 ====================
@@ -75,16 +89,34 @@ export struct Spinner impl Widget {
     func set_pos(float px, float py) { x = px; y = py }
     func set_size(float sw, float sh) { size = if sw < sh then sw else sh }
 
-    func process(Event ev) {}
+    func contains(float mx, float my): bool {
+        return mx >= x and mx <= x + size and my >= y and my <= y + size
+    }
+
+    // 事件：本控件没有点击语义，只做**悬停提示**
+    //   ⚠ 2026-10-13 修：原来这里是 `func process(Event ev) {}` **空实现** ⇒ `tip` 选项是**死代码** ✗
+    //     （写了 tip 也不会有任何提示 ✓）⇒ 现在照 RadioButton 的写法上报，离开由 Window 的 tipEndMotion 清 ✓
+    func process(Event ev) {
+        if not _loaded or not visible { return }
+        if not _enabled { _hover = false; return }        // 禁用不参与交互 ✓
+        if ev.isMouseMotion() {
+            var[float, float](mx, my) = ev.mousePos()
+            _hover = contains(mx, my)
+            if _hover and _tip != "" { tip.tipReport(_tip, mx, my) }
+        }
+    }
 
     // ==================== 动画步进 ====================
     pri func step() {
-        if not _running { return }
+        if not _running or not _enabled { return }
         float now = _float(core.getTicks())
         if lastTick > 0.0 {
             float dt = (now - lastTick) / 1000.0
             angle = angle + speed * dt
-            if angle >= 360.0 { angle = angle - 360.0 }
+            // ★ 2026-10-13：归一化改用 **while** —— 原来是 `if angle >= 360 { angle -= 360 }`，
+            //   一次卡顿（dt 偏大，比如窗口被拖住/断点）就会让 angle 停在 360 以上 ⇒ 弧段**跳变** ✗
+            while angle >= 360.0 { angle = angle - 360.0 }
+            while angle < 0.0 { angle = angle + 360.0 }
         }
         lastTick = now
     }
@@ -93,15 +125,24 @@ export struct Spinner impl Widget {
     func render(Renderer r) {
         if not _loaded or not visible { return }
         step()
-        if _running { core.requestRedraw() }
+        // ⚠ `_enabled` 也要看：禁用后**不能再每帧请求重绘** ✗（否则"停下来了"却还在 60fps 空转 ✓）
+        if _running and _enabled { core.requestRedraw() }
 
         float cx = x + size / 2.0
         float cy = y + size / 2.0
         float radius = size / 2.0 - thickness
 
+        // 禁用 ⇒ 变暗（照 RadioButton 的禁用观感：各分量减半 ✓）
+        Color arcC = _color
+        int ta = trackA
+        if not _enabled {
+            arcC = theme.packColor(theme.colorR(_color) / 2, theme.colorG(_color) / 2, theme.colorB(_color) / 2)
+            ta = trackA / 2
+        }
+
         // 背景轨道（整圆）
-        if full or trackA > 0 {
-            r.setColor(theme.withAlpha(trackColor, trackA))
+        if full or ta > 0 {
+            r.setColor(theme.withAlpha(trackColor, ta))
             draw_arc(r, cx, cy, radius, 0.0, 360.0, thickness)
         }
 
@@ -109,29 +150,38 @@ export struct Spinner impl Widget {
         if _running or full {
             float a0 = angle
             float a1 = angle + 120.0
-            r.setColor(_color)
+            r.setColor(arcC)
             draw_arc(r, cx, cy, radius, a0, a1, thickness)
         }
     }
 
-    // 用线段逼近圆弧（SDL3 无原生圆弧绘制）
+    // 画一段**圆环弧**：用一串**抗锯齿小实心圆**沿弧线密排而成 ✓
+    //   ★ 2026-10-13 重写（用户实测："Spinner 是多边形不是圆形" ✓）：
+    //     · 老实现的段数公式 `radius*span/360*0.4` ⇒ r=26、120° 只有 **4 段**、整圈只有 **10 段**（十边形 ✗）
+    //     · 老实现的 `thick` 形参**压根没用** ⇒ 画的是 `drawLine` 细线 ✗
+    //   · 为什么不是"把段数调大"：`drawLine` **没有抗锯齿**、也不能设线宽 ⇒ 加密只是"更细腻的多边形"✗；
+    //   · 为什么不学 `RingProgress` 的 "fillPie + fillCircle 抠底"：那要求知道**内圆底色**
+    //     （它会露在环内侧 ✓）—— 本控件是"盖在任意父容器上"的 ⇒ 抠底会露出错误颜色 ✗（除非新增 bg 选项，DX 变差 ✗）；
+    //   ⇒ 用 `fillCircle`（**抗锯齿** ✓，走圆角蒙版缓存 ⇒ 同半径复用同一张蒙版、开销很低 ✓）密排：
+    //     相邻圆重叠 ⇒ 边缘看不出棱角 ✓、天然圆角端点 ✓、粗细任意 ✓、不依赖背景色 ✓
     pri func draw_arc(Renderer r, float cx, float cy, float radius, float a0, float a1, float thick) {
-        if radius <= 0.0 { return }
+        if radius <= 0.0 or thick <= 0.0 { return }
         float span = a1 - a0
         if span <= 0.0 { return }
-        int segs = _int(radius * span / 360.0 * 0.4)
-        if segs < 4 { segs = 4 }
-        if segs > 120 { segs = 120 }
-        float step = span / _float(segs)
+        float rad = thick / 2.0
         float d2r = 3.14159265 / 180.0
-        for 0 : segs to i {
-            float aa = a0 + step * _float(i)
-            float ab = a0 + step * _float(i + 1)
-            float x1 = cx + radius * maths.cos(aa * d2r)
-            float y1 = cy + radius * maths.sin(aa * d2r)
-            float x2 = cx + radius * maths.cos(ab * d2r)
-            float y2 = cy + radius * maths.sin(ab * d2r)
-            r.drawLine(x1, y1, x2, y2)
+        // 步长 ≤ 圆半径的一半（相邻圆必重叠 ✓）；下限 1px 防止小半径时步数爆掉 ✓
+        float stepLen = rad * 0.5
+        if stepLen < 1.0 { stepLen = 1.0 }
+        float arcLen = radius * span * d2r
+        int steps = _int(arcLen / stepLen)
+        if steps < 2 { steps = 2 }
+        if steps > 720 { steps = 720 }          // 上限保护（超大半环也不会画爆 ✓）
+        float stepA = span / _float(steps)
+        for 0 : steps to i {
+            float aa = a0 + stepA * (_float(i) + 0.5)      // 取每小段中点 ⇒ 两端对称 ✓
+            r.fillCircle(cx + radius * maths.cos(aa * d2r),
+                         cy + radius * maths.sin(aa * d2r), rad)
         }
     }
 
