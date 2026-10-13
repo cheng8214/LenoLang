@@ -54,6 +54,21 @@
 >      `test_nested_context_menu` ✓）、清理大师 exit=0 ✓、主题件 ✓。速查附录 C 已补第六批与两条方法论 ✓；
 >   ⑧ 仍未进链条：`TreeView`（下一轮 ✓）。
 >
+>   **2026-10-13 追加（三十一）**：**A1 第八批：焦点链递归进容器（A1 真正收尾 ✓）**：
+>   ① 病根：`Window._focusables()` **只扫 `widgets`** ✗ ⇒ 装进容器（HBox/VBox/AnchorBox/GridLayout/
+>      Panel/GroupBox/Splitter/ScrollView/Card/页签页）的控件 **Tab 永远到不了** ✗（连根布局 `root`
+>      都不扫 ✓ ⇒ 走 `setRoot` 布局的应用里所有控件都不在链条里 ✗）；
+>   ② 复现（先抓实证 ✓）：面板里放按钮 ⇒ 链尾本该是它，实际 Tab **直接回卷到 A** ✓（`D.focus=false` /
+>      `A=true`，**零报错** ⇒ 又是"少停一站"这类静默失效 ✗）；
+>   ③ 修法：`_focusables()` 递归收集 + **去重** ✓（同一控件既在 `widgets` 又在子树里 ⇒ 不去重会两次停靠 ✗）；
+>      容器取子控件**全走公开 API** ✓（`Panel/GroupBox.children`、`Splitter._first·_second`、
+>      `ScrollView._content`、`TabControl._pageLayouts` ✓；`Card._content` 是 `pri` ✗ ⇒ 用公开的
+>      `content_widget()` ✓ —— **不用**再加"回调出口"，比主题那次省事 ✓）；
+>   ④ 修后：`D.focus=true` → Space ⇒ `hitsD=1`（与鼠标同路 ✓）→ 再 Tab 才回卷 A ✓；第一~第七批断言
+>      **一条没回归** ✓；
+>   ⑤ 回归（全部无人值守 ✓）：海报墙（走 `setRoot` ⇒ 现在 root 也进链条 ✓）/ 清理大师 `--autotest` /
+>      主题验收件 / 不透明度探针 / Splitter 探针 ✓ 全绿。
+>
 >   **2026-10-13 追加（三十 ①）**：**定规：自测跑应用一律带"无人值守"参数**（用户点名 ✓）：
 >   我此前回归里**裸跑清理大师** ⇒ 窗口一直挂着**等手动关闭** ✗（每次都让作者手动点掉 ✓）。
 >   其实库和示例**早就备好了钩子** ✓：任意应用 `LENO_SDL_FRAMES=<n>`（`sdl_window.leno:1448`，

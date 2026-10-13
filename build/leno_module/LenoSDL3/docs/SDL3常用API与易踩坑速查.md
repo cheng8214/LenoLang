@@ -1459,10 +1459,26 @@ Enter/Space            hitsC=1 → 2（激活与鼠标点击同一条回调 ✓�
 （`get_visible_count()==0` ✓ 没有任何报错 ✗，是那种"静默不生效"的老毛病 ✓；
 好在 `dochk.check` 现在会提示"不认识的选项 'nodes'" ✓）。
 
+**第八批（2026-10-13 同日 ✓）：递归进容器 —— 容器里的控件也能 Tab 到** ⭐
+**病根**：`Window._focusables()` 原来**只扫 `widgets`** ✗ ⇒ 装在 `HBox/VBox/AnchorBox/GridLayout/`
+`Panel/GroupBox/Splitter/ScrollView/Card/页签页` 里的控件 **Tab 永远到不了** ✗
+（连**根布局 `root`** 都不扫 ⇒ 走 `setRoot` 布局的应用里**所有控件都不在链条里** ✓）。
+**实测复现**（很典型）：面板里放一个按钮 ⇒ 链尾本该是它，结果 Tab **直接回卷到 A** ✓
+（探针输出 `D.focus=false` / `A=true` ✓ —— **零报错**，只是"少停一站" ✗，又一种静默失效 ✓）。
+**修法**：`_focusables()` 改成**递归收集** ✓ —— 自己可聚焦就收，然后继续下钻容器的**直接子控件** ✓
+（表的口径与 `applyThemeWidget` **同一张** ✓；⚠ 以后新增容器类型，**这两处都要加** ✓）。
+容器取子控件**全走公开 API** ✓：`Panel.children` / `GroupBox.children` / `Splitter._first·_second` /
+`ScrollView._content` / `TabControl._pageLayouts`（含 `HBox/VBox/AnchorBox/GridLayout._c` ✓）；
+`Card._content` 是 `pri` ✗ ⇒ 走它公开的 `content_widget()` ✓ —— **不用**再加"回调出口" ✓（比主题那次省事 ✓）。
+  ⚠ **去重**：同一个控件可能既在 `widgets`、又在某容器子树里 ⇒ 必须"已收过就跳过" ✓
+  （不然会**两次 Tab 停在同一控件** ✗）。
+  ⚠ `focusIdx` 是**序号** ⇒ 树的增删会改变链条长度 ✓（与第一批同口径：每次按键现算 ✓）。
+**修后实测**：`D.focus=true` ✓ → Space ⇒ `hitsD=1`（与鼠标同一条回调 ✓）→ 再 Tab 才回卷到 A ✓；
+第一批~第七批的断言**一条没回归** ✓。
+
 **A1 现状（2026-10-13 收尾 ✓）**：进链条的控件 = `Button / CheckBox / RadioButton / Toggle / Slider /
 ListBox / ComboBox / TabControl / Table / TreeView` ✓。
-**仍未做**：① 链只扫**顶层控件** ⇒ 装进容器（HBox/VBox/ScrollView/Card/页签页）里的子控件**Tab 到不了** ✗
-（修法同主题递归：走"回调出口"那把容器内容交回来 ✓）；② 方向键在**兄弟控件间**移动 ✗（WPF 风格）；
+**仍未做**：① 链只扫**顶层控件** ⇒ **已修（第八批 ✓ 见上）**；② 方向键在**兄弟控件间**移动 ✗（WPF 风格）；
 ③ `tabIndex` 显式排序 ✗。
 
 ⭐ **写这类自测件时注意**：`CheckBox.checked` / `Toggle.on` 等**值字段是 `pri` 私有** ✗

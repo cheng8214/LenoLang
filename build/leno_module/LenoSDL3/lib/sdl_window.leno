@@ -873,16 +873,67 @@ export struct Window {
     pri int focusIdx = -1                      // 当前焦点在"可聚焦列表"里的序号（-1 = 无焦点 ✓）
 
     // 懒收集当前所有可聚焦控件（按注册顺序 ✓）—— 不维护注册表 ⇒ 不会与 widgets 失同步 ✓
+    //   ★ 2026-10-13（第八批）：**递归进容器** —— 原来**只扫 `widgets`** ✗
+    //     ⇒ 装在 `HBox/VBox/AnchorBox/GridLayout/Panel/GroupBox/Splitter/ScrollView/Card/页签页`
+    //       里的控件 **Tab 永远到不了** ✗
+    //       （实测复现：面板里放一个按钮 ⇒ 链尾本该是它，结果 Tab **直接回卷到 A** ✓）
+    //     ⇒ 顺带把**根布局 `root`** 也纳入（原来连它都不扫 ✗ —— 走 `setRoot` 的应用里
+    //       所有控件都不在链条里 ✓）
+    //   ⚠ 去重：同一个控件可能既在 `widgets`、又在某容器子树里 ⇒ 不去重会"两次 Tab 停靠"✗
     pri func _focusables(): Array[Widget] {
         Array[Widget] r = []
-        for widgets.len() to i {
-            var w = widgets[i]
-            switch w {
-                // ★ 2026-10-13 第二批：开关类也进链条（各自 `activate()` = 切一下 ✓）
-                case is Button, CheckBox, RadioButton, Toggle, Slider, ListBox, ComboBox, TabControl, Table, TreeView { if w.is_focusable() { r.add(w) } }
+        for widgets.len() to i { _collectFocus(widgets[i], r) }
+        if root != null { _collectFocus(root, r) }
+        return r
+    }
+
+    // 收一棵子树里的可聚焦控件：自己可聚焦就收，然后**继续下钻容器的子控件** ✓
+    pri func _collectFocus(Widget w, Array[Widget] out) {
+        if _inList(out, w) { return }        // 已收过 ⇒ 跳过（防重复停靠 ✓）
+        switch w {
+            // ★ 2026-10-13 第二批：开关类也进链条（各自 `activate()` = 切一下 ✓）
+            case is Button, CheckBox, RadioButton, Toggle, Slider, ListBox, ComboBox, TabControl, Table, TreeView { if w.is_focusable() { out.add(w) } }
+        }
+        _collectChildren(w, out)
+    }
+
+    pri func _inList(Array[Widget] out, Widget w): bool {
+        for out.len() to i { if out[i] == w { return true } }
+        return false
+    }
+
+    // 容器的**直接子控件**是谁 —— 口径与 `applyThemeWidget` 同一张表 ✓
+    //   （`Card._content` 是 `pri` ✗ ⇒ 走它公开的 `content_widget()` ✓；
+    //     `ScrollView._content` / `TabControl._pageLayouts` / `Splitter._first·_second` 本来就是公开字段 ✓）
+    //   ⚠ 以后新增容器类型：**这两处都要加**（本表 + `applyThemeWidget` ✓）
+    pri func _collectChildren(Widget w, Array[Widget] out) {
+        switch w {
+            case is HBox, VBox, AnchorBox, GridLayout {
+                for w._c.len() to i { _collectFocus(w._c[i], out) }
+            }
+            case is Panel, GroupBox {
+                var lc = w._layoutChild
+                if lc is Widget { _collectFocus(lc, out) }
+                for w.children.len() to i { _collectFocus(w.children[i], out) }
+            }
+            case is Splitter {
+                var f = w._first
+                if f is Widget { _collectFocus(f, out) }
+                var s2 = w._second
+                if s2 is Widget { _collectFocus(s2, out) }
+            }
+            case is ScrollView {
+                var c = w._content
+                if c is Widget { _collectFocus(c, out) }
+            }
+            case is Card {
+                var cw = w.content_widget()
+                if cw is Widget { _collectFocus(cw, out) }
+            }
+            case is TabControl {
+                for w._pageLayouts.len() to i { _collectFocus(w._pageLayouts[i], out) }
             }
         }
-        return r
     }
 
     // 把焦点状态**一次性**刷到列表上（只让 `focusIdx` 那个亮 ⇒ 不会"两个都以为有焦点" ✗）
