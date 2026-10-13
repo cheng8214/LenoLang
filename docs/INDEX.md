@@ -16,6 +16,21 @@
 >   ② 列表/下拉/菜单的**行高亮圆角锚错了边**（`atBottom` 拿行自己的矩形补圆角，而末行常只露一半 ⇒ 圆角落到面板底边下方 ⇒ 面板两个底角被方角铺满）+ 内容裁剪 `_int(ph)+1` 让末行文字出框 1px ⇒ 收敛成渲染器共用件 **`fillRowInPanel`**（只填「行矩形 ∩ 面板圆角矩形」，圆角**锚在面板的边**）+ 裁剪改 `ceil` 精确覆盖；`sdl_combobox` / `sdl_listbox` / `sdl_menu` 三处调用点改调它 ✓；
 >   ③ `leno_gui/应用/影视海报墙/` 新增**影片详情页**（点卡片进入：大海报 + 评分环 + 年份/分类/简介 + 收藏/播放；Esc/返回切回，网格状态原样保留 ✓；自检钩子 `WALL_DETAIL` / `WALL_BACK`）；
 >   速查附录 C 相应新增 3 条（圆角纹理用自定义混合 · 行高亮锚点与裁剪 · `setRootAt` 运行时换根）。
+>   **2026-10-13 追加（十八）**：**修 `Table` 图标纹理缓存"只增不减"**（用户点名的第 ④ 项）：
+>   ① 病因：`get_tex` 只有"未命中 ⇒ 加载 + `add`"一条路 ✗ ⇒ 表格里"每行一个不同图标/缩略图"时显存一路涨 ✓；
+>   ② 修法：照 `sdl_font.texCap` 的**环形覆盖 + 当场回收**样板（`SDL_DestroyTexture(old)` ✓，不是"丢引用" ✗）+
+>      新选项 **`image_cache_max`**（默认 64，`0` = 不限制 = 老行为 ✓）+ `set_image_cache_max(n)` +
+>      `img_cache_count()`（调试/自测 ✓）；覆盖 MRU 那一格时把 MRU 指向**新**纹理（否则会返回已销毁的 ✗）；
+>   ③ 安全性说明（写进速查）：`IMG_LoadTexture` 每次都新建、**不共享** ⇒ 淘汰时销毁安全 ✓；
+>      淘汰后已从数组移除 ⇒ `dispose` 不会再碰 ✓；⚠ 明确写下"别把这句销毁抄进 `dispose`"（那里有 double-free 教训 ✓）；
+>   ④ 验收：探针 `build/_probe_tablecache.leno`（6 行各一张不同海报，A/B 用 `PROBE_MAX` 切）⇒
+>      `max=3` 时 `img_cache_count()=3` ✓、`max=0` 时 `=6` ✓；且截图里 **6 行缩略图全正常** ✓
+>      （上限 3 < 6 行 ⇒ 渲染中途就在回收也没画坏 ✓）；`test_table_features`/`test_table_advanced`/
+>      `cleaner_master`/`file_manager` 编译 ✓、海报墙列表页真跑 ✓。
+>   ⑤ 顺带记两个**踩坑**（本轮实际被编译器拦下）：库内要用 `SDL_DestroyTexture` 得先 `use core.sdl3` ✓；
+>      改 import 行时**别只匹配到行首那一段**（尾段 `; use core.SDL_Rect` 会被后加的 `//` 注释吃掉 ✗，
+>      表现为别处一片"SDL_Rect 未定义"✗）。
+>
 >   **2026-10-13 追加（十七）**：**修"失焦不收弹层"**（用户点名的第 ③ 项）+ 为此补自测钩子：
 >   ① ⛔ 症状：打开 ComboBox 下拉（或右键菜单）后 Alt+Tab / 切走 ⇒ 弹层**留在屏幕上、点不动也关不掉** ✗
 >      （实测：注入 `WINDOW_FOCUS_LOST` 后 `isOpen()` 仍是 true ✗；下拉区域可见像素 7205，修后 0 ✓）；

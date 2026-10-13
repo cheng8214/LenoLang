@@ -17,6 +17,7 @@ import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.SystemCursor; use core.SDL_Rect
+use core.sdl3        // 2026-10-13：图标缓存回收要调 SDL_DestroyTexture ⇒ 得先能命名 clib ✓
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_edit.leno" as edt; use edt.Edit
 import "sdl_tooltip.leno" as tip
@@ -31,7 +32,7 @@ use theme.Color
 //   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
 func _opts_keys(): Array[string] {
     return [
-"aligns", "bg_color", "cell_select", "cell_types", "check_col", "check_color", "col_reorder", "col_widths", "cursor", "editable", "editable_cols", "empty_color", "empty_text", "enabled", "font_path", "font_size", "font_style", "frozen_cols", "h", "header_aligns", "header_color", "header_h", "headers", "image_col", "image_gap", "image_mode", "image_pad", "image_path", "image_size", "max_col_width", "min_col_width", "multi", "multi_select", "numeric_cols", "resizable", "row_h", "row_images", "row_reorder", "rows", "sel_color", "sep_color", "sort_disabled_cols", "sortable", "tip", "visible", "w", "x", "y", "zebra"
+"aligns", "bg_color", "cell_select", "cell_types", "check_col", "check_color", "col_reorder", "col_widths", "cursor", "editable", "editable_cols", "empty_color", "empty_text", "enabled", "font_path", "font_size", "font_style", "frozen_cols", "h", "header_aligns", "header_color", "header_h", "headers", "image_cache_max", "image_col", "image_gap", "image_mode", "image_pad", "image_path", "image_size", "max_col_width", "min_col_width", "multi", "multi_select", "numeric_cols", "resizable", "row_h", "row_images", "row_reorder", "rows", "sel_color", "sep_color", "sort_disabled_cols", "sortable", "tip", "visible", "w", "x", "y", "zebra"
 ]
 }
 export struct Table impl Widget, Themeable {
@@ -110,6 +111,11 @@ export struct Table impl Widget, Themeable {
     pri Array[Ptr[u8]] imgCacheTex = []      // 纹理缓存指针
     pri string imgLastPath = ""               // MRU 快路径：上次命中的图标路径
     pri Ptr[u8] imgLastTex = null             // MRU 快路径：上次命中的纹理指针
+    // ★ 2026-10-13：图标纹理缓存**上限 + 环形覆盖**（原来只增不减 ✗）——
+    //   表格每行一个**不同**图标时（如"每行一张海报"）显存会一路涨 ✓
+    //   0 = 不限制（老行为）；覆盖最旧一格时会 `SDL_DestroyTexture` 回收 ✓（照 `sdl_font` 的 `texCap` 样板 ✓）
+    pri int imgCacheMax = 64
+    pri int imgCacheHead = 0                 // 环形写指针
     // === 拟合文本缓存 ===
     // 预计算可见单元格的截断文本和宽度，避免 render 路径每帧调用 _fit_cell_text + measureString。
     // ★ 优化：只缓存当前视口可见行（_fittedStartRow ~ _fittedEndRow），滚动时惰性重建对应区间，
@@ -407,6 +413,7 @@ export struct Table impl Widget, Themeable {
         imgMode = opts.get("image_mode", 0)
         imgPad = opts.get("image_pad", 4.0)
         imgGap = opts.get("image_gap", 4.0)
+        imgCacheMax = opts.get("image_cache_max", 64)   // 图标纹理缓存上限（0 = 不限制 ✓ 见 get_tex ✓）
 
         // 复选框列配置
         checkCol = opts.get("check_col", -1)
@@ -1882,10 +1889,27 @@ export struct Table impl Widget, Themeable {
             }
         }
         Ptr[u8] t = img.loadTexture(r.handle, path)
+        // ★ 2026-10-13：满了就**覆盖最旧一格**并回收它的纹理（否则缓存只增不减 ⇒ 显存泄漏 ✗）
+        if imgCacheMax > 0 and imgCachePaths.len() >= imgCacheMax {
+            Ptr[u8] old = imgCacheTex[imgCacheHead]
+            if old != null and old != t { core.lib().SDL_DestroyTexture(old) }
+            imgCachePaths[imgCacheHead] = path
+            imgCacheTex[imgCacheHead] = t
+            imgCacheHead = (imgCacheHead + 1) % imgCacheMax
+            // ⚠ 被覆盖的那一格可能正是 MRU 快路径指着的 ⇒ 必须指向**新**纹理，
+            //   否则下一次"同路径命中"会返回**已销毁**的旧纹理 ✗（下面的赋值正好覆盖这一点 ✓）
+            imgLastPath = path; imgLastTex = t
+            return t
+        }
         imgCachePaths.add(path); imgCacheTex.add(t)
         imgLastPath = path; imgLastTex = t
         return t
     }
+
+    // 图标纹理缓存上限（0 = 不限制）；比"同时可见的行数"大一些最稳（否则每帧反复重载 ✗）
+    func set_image_cache_max(int n) { if n >= 0 { imgCacheMax = n } }
+    // 当前缓存条数（调试/自测用 ✓）
+    func img_cache_count(): int { return imgCachePaths.len() }
 
     // 在图标列单元格内绘制 [图标+文字]（对齐 Treeview 的 icon+text 模式）
     // 返回图标占据的宽度（0 = 无图标），供调用方在文字绘制时偏移
@@ -2228,7 +2252,10 @@ export struct Table impl Widget, Themeable {
         ctxMenu?.dispose(); ctxMenu = null
         // 纹理缓存仅清空引用：其由所属渲染器在销毁时统一释放，
         // 此处再 SDL_DestroyTexture 会造成 double-free/崩溃（见 sdl_font.leno 注释）
+        //   ★ 2026-10-13 补充：`get_tex` 里**已被覆盖淘汰**的那些纹理是**当场销毁**的（照 sdl_font 的 texCap ✓），
+        //     这里剩下的只是"还没被淘汰的那 ≤ imgCacheMax 张"⇒ 交给渲染器统一释放 ✓（两条路不重叠 ⇒ 不会 double-free ✓）
         imgCacheTex = []; imgCachePaths = []
+        imgCacheHead = 0
         imgLastPath = ""; imgLastTex = null
         fittedText = []; fittedW = []; fittedValid = false; fittedStartRow = 0; fittedEndRow = 0
         selSet = []; checkedCount = -1

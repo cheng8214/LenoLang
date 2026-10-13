@@ -1055,6 +1055,38 @@ win.setRootAt(root, 0, tbH)       // 返回列表页（root 要**存字段**，�
 
 回归件：`leno_gui/应用/影视海报墙/movie_wall.leno`（`WALL_DETAIL=n` 进详情 / `WALL_BACK=n` 返回 ✓）
 
+### ⛔ `Table` 的图标纹理缓存**只增不减** ⇒ 显存一路涨（2026-10-13 实测 + 已修 ✓）
+
+**症状**：表格有"**每行一个不同图标**"的场景（最典型就是"每行一张缩略图/海报"）⇒ 用久了显存持续增长 ✗
+（缓存按 path 存 ⇒ 路径一多就无限累积 ✓）。
+
+**病因**：`get_tex` 只有"没命中 ⇒ 加载 + add"这一条路 ✗，**没有任何上限 / 淘汰** ✓。
+
+**修法（已落库 ✓）**：照 `sdl_font` 的 `texCap` 样板做**环形覆盖 + 当场回收** ✓：
+
+```leno
+if imgCacheMax > 0 and imgCachePaths.len() >= imgCacheMax {
+    Ptr[u8] old = imgCacheTex[imgCacheHead]
+    if old != null and old != t { core.lib().SDL_DestroyTexture(old) }   // ★ 是"回收"，不是"丢引用" ✗
+    imgCachePaths[imgCacheHead] = path; imgCacheTex[imgCacheHead] = t
+    imgCacheHead = (imgCacheHead + 1) % imgCacheMax
+    imgLastPath = path; imgLastTex = t     // ⚠ 被覆盖那格可能正是 MRU 快路径指着的 ⇒ 必须指向新纹理 ✓
+    return t
+}
+```
+- 新选项 **`image_cache_max`**（默认 **64**；`0` = 不限制 = 老行为 ✓）+ `set_image_cache_max(n)` + `img_cache_count()`（调试/自测 ✓）
+- ⚠ 上限要**比"同时可见的行数"大一些**（否则每帧反复重载 ✗）
+- ⚠ 这里销毁是**安全**的：纹理由 `IMG_LoadTexture` 新建、**不共享**（每次调用都是新纹理 ✓），
+  且淘汰时已从数组移除 ⇒ `dispose` 不会再碰到它 ✓（`dispose` 里剩下那 ≤ max 张仍交给渲染器统一释放 ✓）
+- ⚠ **别把这句"销毁"照抄到 `dispose` 里** —— 那里有 double-free 的历史教训（见 `sdl_font.leno` 注释 ✓）
+
+**验收**（探针 `build/_probe_tablecache.leno`：6 行各贴一张不同海报 p01..p06）：
+```bash
+set PROBE_MAX=3 & build\leno.exe build\_probe_tablecache.leno     # ⇒ img_cache_count()=3 ✓（上限生效）
+set PROBE_MAX=0 & build\leno.exe build\_probe_tablecache.leno     # ⇒ =6 ✓（老行为）
+```
+且截图里 **6 行缩略图全部正常** ✓（上限 3 < 6 行 ⇒ 渲染中途就在回收，也没画坏 ✓）
+
 ### ⛔ **失焦不收弹层**：Alt+Tab 切走后下拉/菜单**留在屏幕上、点不动也关不掉**（2026-10-13 实测 + 已修 ✓）
 
 **症状**：打开 ComboBox 下拉（或任何右键菜单）后 `Alt+Tab` / 切到别的应用 ⇒ 弹层**照旧挂在屏幕上** ✗；
