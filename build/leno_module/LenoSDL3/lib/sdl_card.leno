@@ -234,9 +234,11 @@ export struct Card impl Widget, Themeable {
         clear_badges()               // 角标规格表重建（含图标纹理释放 ✓）
         // 多角标：`badge` 是第 0 个（主角标），`badges` 追加其后 ✓
         if badge != "" or badgeIcon != "" {
-            // ⚠ 这里**不能**写 `new BadgeSpec(text = badge, …)`：在另一个结构体的方法里用
-            //   `new X(键=值)` 会让编译器把 self 切到 X ⇒ 右边这些**本结构体字段**被判"未定义" ✗
-            //   （2026-10-13 实测；改成先 new 再逐字段赋值就正常 ✓）
+            // ⚠ 这里**不能**写 `new BadgeSpec(text = badge, …)`：在**本结构体的方法里**用
+            //   `new X(键=值)`，参数值那一段**看不见隐式 self**（本结构体字段被判"未定义变量"）✗
+            //   ⇒ 值里写显式 `self.badge`、或像下面这样先 new 再逐字段赋值就正常 ✓
+            //   （2026-10-13 实测；完整边界表 + 疑似定位点见 docs/语言摩擦与隐式契约清单.md 的 M11 ✓）
+            //   ⚠ 注意它**不是**"self 被切成 X"：X 有同名字段时也照样响亮报错、不会静默取值 ✓
             BadgeSpec b0 = new BadgeSpec()
             b0.text = badge
             b0.pos = badgePos

@@ -1034,12 +1034,19 @@ _lib.SDL_SetTextureBlendMode(mask, core.BlendMode.BLEND)  // ★ 蒙版是**共�
   （SDL 报 `Parameter 'renderer' is invalid`，于是建纹理/离屏全失败 ✗）⇒
   探针里所有纹理都要用**回调参数里给的** `Renderer r` 创建（`r.handle` ✓）
 
-### ⛔ 在 A 结构体的方法里写 `new B(键=值)` ⇒ `self` 被切成 B（编译器怪癖 ✓）
+### ⛔ 在 A 的**方法**里写 `new B(键=值)`：参数值那一段**看不见隐式 `self`**（编译器怪癖 ✓）
 
 `Card` 里构造 `BadgeSpec` 时实测：`new BadgeSpec(text = badge, …)`（`badge` 是 **Card 的字段**）
-⇒ 编译器报 `未定义的变量: badge` / `字段 'text' 类型不匹配: 期望 'string'，实际 'unknown'`
-（它把当前结构体上下文当成 `BadgeSpec` 了 ✗）。
-**改法**：先 `new BadgeSpec()` 再逐字段赋值（`b.text = badge` …）⇒ 立刻正常 ✓（本次就是这么做通的 ✓）
+⇒ 编译器报 `未定义的变量: badge` / `字段 'text' 类型不匹配: 期望 'string'，实际 'unknown'`。
+**改法**（两条都行）：值里写显式 `self.badge` ✓，或先 `new BadgeSpec()` 再逐字段赋值
+（`b.text = badge` …）✓ —— 本次走的是后者 ✓。
+
+⚠ 旧说法"它把当前结构体上下文当成 `BadgeSpec` 了 / `self` 被切成 B"**不准确** ✗：
+`B` 若有**同名字段**，这里照样**响亮报错**、**不会**静默取到 B 的值 ✓；
+准确口径是「**构造参数的值按"变量"解析，拿不到外层方法的 self**」
+（所以**只在 struct 方法里犯**：局部量、参数、外层函数调用全正常 ✓）。
+完整边界表（6 个探针）与疑似定位点见 `docs/语言摩擦与隐式契约清单.md` 的 **M11**
+（⏳ 待修）/ `docs/语言陷阱速查.md` ㉟ ✓
 
 ### ✅ 卡片里别留"每帧测量"
 
