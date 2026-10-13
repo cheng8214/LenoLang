@@ -419,7 +419,10 @@
 >   ③ 修法（**核心两处，控件一行未改**）：`markFrameRedraw` 不再置 "seen"；改由**窗口**在派发 motion 事件时登记；`requestCursor` 自己置 seen（"只在拖拽里请求"的 `Table` 列宽 / `Splitter` 不受影响 ✓）；
 >   ④ 范围：**不是 Button 一家** —— 15+ 个"只在 motion 里请求"的控件全中（Card / CheckBox / Toggle / Radio / Edit / ImageView / LinkButton / Progress / Spinbox / Tab / TreeView …）✓；
 >   ⑤ 判据：新增 `leno_gui/自测/test_cursor_press.leno`（注入真事件 + 读 `SDL3.testLastAppliedCursor()`）；
->      实测**修好前 ②③ 当场红（`got=0`）**、修好后 4/4 ✓ ⇒ 用例确实能抓住该 bug ✓；套件 **452 passed / 0 failed** ✓。
+>      实测**修好前 ②③ 当场红（`got=0`）**、修好后 4/4 ✓ ⇒ 用例确实能抓住该 bug ✓；套件 **452 passed / 0 failed** ✓；
+>   ⑥ **同族审计（逐个控件查完 ✓）**：谁直接 `setSystemCursor` / 谁有 `cursor` 字段却不请求 / 谁在**非 motion** 场景调 `markFrameMotion`（会把 bug 带回来）/ 谁**无条件**请求光标（会劫持别人）——**四项全过**，无第二处同类漏洞 ✓；
+>      **顺带查出并修掉 3 处真不一致**：`CheckBox` / `Toggle` / `RadioButton` 的默认光标是 `DEFAULT`（箭头）⇒ 与同为可点击的 `Button` 不一致 ⇒ 统一改 `Pointer` ✓（其余控件默认本就 `Pointer`；`progress` 只读模式下不请求，**不是** bug ✓）；
+>   ⑦ 新增**多控件横扫**用例 `leno_gui/自测/test_cursor_press_multi.leno`（10 类控件 × 悬停/按下/松开/移开，**41 条断言全过** ✓；`Edit` 另钉"悬停 = `TEXT(1)`" ✓），并把写这类用例的两个**假失败坑**记进附录 C（自量控件忽略 `w`/`h`；会弹层的 `ComboBox` 要放最后测 ✓）。
 >
 >   **2026-10-13 追加（七）**：**自检时基改为定时器 + 页签/列表视图 + 抓到并修掉 Table 排序说谎**：
 >   ① ⚠ **自检一律走 `Timer`**（`WALL_*` 里的数字 = 步号，100ms 一拍）：本框架是**事件驱动重绘**，

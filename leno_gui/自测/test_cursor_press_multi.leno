@@ -1,0 +1,120 @@
+// test_cursor_press_multi.leno —— 光标帧语义**多控件横扫**：确认"按下不改光标"不是 Button 一家的特例 ✓
+//   （框架侧问题 ⇒ 编号走『SDL3常用API与易踩坑速查.md』**附录 C** ✓）
+//
+// 为什么要有它：`markFrameRedraw()` 曾经把"要重绘"当成"鼠标动过" ✗ ⇒ 所有"只在 motion 里请求光标"
+//   的控件都会在**按下 / 松开 / 键盘激活 / set_xxx 重绘**这些**非 motion 帧**被打回箭头 ✗。
+//   修法是**核心两处**（`markFrameRedraw` 不再置 seen + 窗口登记真 motion + `requestCursor` 自己置 seen）✓
+//   ⇒ 但"修在核心"不等于"每个控件都对"，所以这里**逐个控件实测**一遍 ✓
+//
+// 判据（每控件 8 步，注入真事件 + 读 `SDL3.testLastAppliedCursor()`）：
+//   ① 悬停 ⇒ 拿到一个**非默认**光标 a（证明它有手型/文本等光标 ✓）
+//   ② **按下** ⇒ 光标仍是 a（**这条就是用户报的 bug** ✓ 修好前会变成 DEFAULT ✗）
+//   ③ **松开** ⇒ 仍是 a
+//   ④ 移开 ⇒ DEFAULT(0)（**反向对照**：箭头必须能回来 ✓）
+//
+// ★ 落点一律取控件**真实几何的中心**（`get_x/get_w`…）⇒ **不猜坐标** ✓
+//   （自量控件 CheckBox / Toggle / RadioButton / LinkButton **忽略 `w`/`h`** ✗，
+//    硬写坐标会打偏 ⇒ 第一版就是这么假失败的 ✓）
+//
+// ⚠ 两条踩过的坑（都写进用例，免得下次再撞）：
+//   1. **自量控件不能传 `w`/`h`**（会报「不认识的选项」并**忽略**它 ✗）；
+//   2. **会弹层的控件（ComboBox）最后测** ✗ —— 测它时要"按下"，那一下就把它**点开**了，
+//      弹出的下拉面板会盖住下方控件 ⇒ 它**合法地**继续请求手型（`applyFrameCursor` 取**最大 kind** ✓），
+//      后面那些控件的断言就会被这个"别人的弹层"污染 ✓（第一版把 ComboBox 放在 Edit 之前，Edit 因此拿到 11 ✗）
+//
+// 用法：build\leno.exe leno_gui\自测\test_cursor_press_multi.leno
+
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer, Window, Button, CheckBox, Toggle, RadioButton, Slider, ProgressBar, ListBox, ComboBox, Edit, LinkButton, SystemCursor)
+
+int steps = 0
+int idx = 0            // 当前控件下标
+int s = 0              // 该控件内的步号 1..8
+int hoverCur = -1      // ① 悬停时实际拿到的光标
+int passN = 0
+int failN = 0
+
+Array[float]  pxs = []
+Array[float]  pys = []
+Array[string] tags = []
+
+func ok(bool cond, string tag) {
+    if cond {
+        passN = passN + 1
+        print("[multi] OK   " + tag)
+    } else {
+        failN = failN + 1
+        print("[multi] FAIL " + tag)
+    }
+}
+
+func addProbe(string tag, float cx, float cy) {
+    tags.add(tag); pxs.add(cx); pys.add(cy)
+}
+
+func run() {
+    SDL3.ttfInit()
+    SDL3.setTheme(SDL3.darkTheme())
+    Window w = SDL3.createWindow({title: "test_cursor_press_multi", w: 520, h: 470})
+    if not w.ok { SDL3.ttfQuit(); return }
+
+    Button bt = w.addButton({x: 20, y: 30, w: 180, h: 32, text: "Button"})
+    // ⚠ 下面四个是**自量**控件（不认识 `w`/`h`，传了会报「不认识的选项」✗ ⇒ 一律不传 ✓）
+    CheckBox ck = w.addCheckBox({x: 20, y: 70, text: "CheckBox", checked: false})
+    Toggle tgl = w.addToggle({x: 20, y: 100, text: "Toggle", on: false})
+    RadioButton rd = w.addRadioButton({x: 20, y: 134, text: "Radio", group: "g1", checked: false})
+    Slider sl = w.addSlider({x: 20, y: 164, w: 180, h: 24, min: 0, max: 100, value: 50, step: 5})
+    // ★ ProgressBar 默认 `clickable=false`（**只读**）⇒ 它**不进 hover 分支、也不该有手型** ✓
+    //   要测它的光标就必须显式 `clickable: true` ✓（这本身不是 bug ✓）
+    ProgressBar pb = w.addProgressBar({x: 20, y: 196, w: 180, h: 20, value: 40, clickable: true})
+    ListBox lb = w.addListBox({x: 20, y: 224, w: 180, h: 90, items: ["甲", "乙", "丙"], selected: 0})
+    Edit ed = w.addEdit({x: 20, y: 360, w: 180, h: 30, text: "abc"})
+    LinkButton lk = w.addLinkButton({x: 20, y: 400, text: "链接"})
+    // ★ ComboBox **放最后**：测它要"按下"，那一下就把它点开了 ⇒ 弹层会盖住下方（见文件头 ⚠ 2 ✓）
+    ComboBox cb = w.addComboBox({x: 20, y: 322, w: 180, h: 30, items: ["北京", "上海"], selected: 0})
+
+    addProbe("Button",      bt.get_x() + bt.get_w() / 2.0, bt.get_y() + bt.get_h() / 2.0)
+    addProbe("CheckBox",    ck.get_x() + ck.get_w() / 2.0, ck.get_y() + ck.get_h() / 2.0)
+    addProbe("Toggle",      tgl.get_x() + tgl.get_w() / 2.0, tgl.get_y() + tgl.get_h() / 2.0)
+    addProbe("RadioButton", rd.get_x() + rd.get_w() / 2.0, rd.get_y() + rd.get_h() / 2.0)
+    addProbe("Slider",      sl.get_x() + sl.get_w() / 2.0, sl.get_y() + sl.get_h() / 2.0)
+    addProbe("ProgressBar", pb.get_x() + pb.get_w() / 2.0, pb.get_y() + pb.get_h() / 2.0)
+    addProbe("ListBox",     lb.get_x() + lb.get_w() / 2.0, lb.get_y() + lb.get_h() / 2.0)
+    // ⚠ Edit 只暴露 get_w/get_h（没有 get_x/get_y）⇒ 用声明时的 x/y ✓
+    addProbe("Edit",        20.0 + ed.get_w() / 2.0, 360.0 + ed.get_h() / 2.0)
+    addProbe("LinkButton",  lk.get_x() + lk.get_w() / 2.0, lk.get_y() + lk.get_h() / 2.0)
+    addProbe("ComboBox",    cb.get_x() + cb.get_w() / 2.0, cb.get_y() + cb.get_h() / 2.0)
+    print("[multi] 落点表已建：共 " + _str(tags.len()) + " 个控件")
+
+    int wid = w.getID()
+
+    w.addTimer(100, func() {
+        s = s + 1
+        if s > 8 { s = 1; idx = idx + 1 }
+        if idx >= tags.len() {
+            print("[multi] 结果: " + _str(passN) + " passed / " + _str(failN) + " failed")
+            if failN > 0 { _exit(1) } else { _exit(0) }
+        }
+        string tg = tags[idx]
+        if s == 1 { SDL3.testMoveAt(wid, pxs[idx], pys[idx]) }
+        if s == 2 {
+            hoverCur = SDL3.testLastAppliedCursor()
+            ok(hoverCur != SystemCursor.DEFAULT, tg + "：悬停 ⇒ 有非默认光标（拿到 " + _str(hoverCur) + "）")
+            // Edit 额外钉一条**具体**期望：文本区应是 TEXT(1)，不是手型 ✓
+            if tg == "Edit" {
+                ok(hoverCur == SystemCursor.TEXT, "Edit：悬停 ⇒ 文本光标 TEXT(1)（拿到 " + _str(hoverCur) + "）")
+            }
+        }
+        if s == 3 { SDL3.testMouseAt(wid, pxs[idx], pys[idx], true) }        // ★ 按下（无 motion）
+        if s == 4 { ok(SDL3.testLastAppliedCursor() == hoverCur, tg + "：★ **按下**不改光标（应仍 " + _str(hoverCur) + "）") }
+        if s == 5 { SDL3.testMouseAt(wid, pxs[idx], pys[idx], false) }       // 松开
+        if s == 6 { ok(SDL3.testLastAppliedCursor() == hoverCur, tg + "：松开不改光标") }
+        if s == 7 { SDL3.testMoveAt(wid, 470.0, 445.0) }                     // 移到空白（右下角，无控件 ✓）
+        if s == 8 { ok(SDL3.testLastAppliedCursor() == SystemCursor.DEFAULT, tg + "：移开 ⇒ 回箭头（反向对照）") }
+    })
+
+    w.run(func(Event ev): bool { return true }, func(Renderer r) {})
+    SDL3.ttfQuit()
+}
+
+main() { run() }

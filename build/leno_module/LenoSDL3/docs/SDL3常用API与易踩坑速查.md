@@ -1751,3 +1751,37 @@ Tab / TreeView …；**键盘 Enter 激活**、**`set_xxx` 触发的重绘**同�
 ⚠ **自查口径**：**"本帧要重绘" ≠ "本帧鼠标动过"**。任何"集中式状态决策 + 各处 `mark*()` 打标记"
 的机制，都要检查它有没有被**别的语义**借用 —— 这一例就是被"重绘请求"借用了 ✓
 （同族的还有：`markFrameMotion()` 曾被当成"随便打个标记"，实际它决定要不要重算光标 ✓）。
+
+**同族审计：其他控件有没有同样的问题？（2026-10-13 逐个查完 ✓）**
+
+修在核心 ⇒ 该类问题**一次全消**；在此之上又按"写法特征"把全库控件扫了一遍：
+
+| 查什么 | 结论 |
+|---|---|
+| 谁**直接** `setSystemCursor()`（绕过集中式决策 ✗） | 只有 `core` 自己与 `SDL3` 门面的转发 ✓（`sdl_image` 那处是**注释** ✓） |
+| 有 `cursor` 字段却**从不请求**光标 | 无 ✓（每个可点击控件都有 `requestCursor` ✓） |
+| `markFrameMotion()` 是否被**非 motion** 场景调用（会把 bug 带回来 ✗） | 全部 19 处**都在 motion 守卫内** ✓（`label` / `ring` / `listbox` / `menu` / `canvas` / `combobox` / `progress` / `splitter` / `tab` / `table` / `button` / `card` / `edit` / `imageview` / `linkbutton` / `spinbox` / `treeview` / `calendar` ✓） |
+| `requestCursor()` 是否都**被 hover/命中守卫**（无条件请求会**劫持**别人 ✗） | 全部有守卫 ✓ |
+
+⇒ **没有第二个环节有同类漏洞** ✓。但审计**顺带查出 3 处真不一致**（已修）：
+
+- **`CheckBox` / `Toggle` / `RadioButton` 的默认光标是 `DEFAULT`（箭头）** ✗ ——
+  它们和 `Button` 一样是**可点击**控件，悬停却是箭头 ⇒ 现统一改成 `Pointer` ✓
+  （不想手型就传 `cursor: SystemCursor.DEFAULT` ✓）。
+  ⚠ 同一轮核对：其余控件默认都是 `Pointer`（`canvas` = `Crosshair`、`imageview` = `-1`「不设」，
+  均**有意** ✓）；`progress` 默认 `Pointer`，但它默认 `clickable: false`（只读）⇒
+  只读时**不会**进 hover 分支、也就不会请求 ✓（**不是** bug：只读控件本来不该有手型 ✓）。
+
+**实测判据**：`leno_gui/自测/test_cursor_press_multi.leno` —— **10 类控件**（Button / CheckBox /
+Toggle / RadioButton / Slider / ProgressBar / ListBox / Edit / LinkButton / ComboBox）逐个
+"悬停 → 按下 → 松开 → 移开"，**41 条断言全过** ✓（`Edit` 额外钉"悬停 = 文本光标 `TEXT(1)`" ✓）。
+
+**写这类用例踩的两个坑**（会造出**假失败**，记下来 ✓）：
+
+1. **自量控件不能传 `w`/`h`** —— `CheckBox` / `Toggle` / `RadioButton` / `LinkButton` **忽略**它们
+   （还会报「不认识的选项」✗）⇒ 按声明坐标去点会**打偏**、断言假红 ✗；
+   正解：落点取**真实几何**（`get_x/get_y/get_w/get_h` ✓）。
+2. **会弹层的控件（`ComboBox`）要放最后测** —— 测它时那一下"按下"会**把它点开** ✗，
+   弹出的下拉面板盖住下方控件 ⇒ **它合法地继续请求手型**（`applyFrameCursor` 取**最大 kind** ✓），
+   后面控件的断言就被"别人的弹层"污染了 ✓（实测：`Edit` 因此拿到 `11` 而不是 `1` ✗ —— 查了半天
+   才发现是**用例的锅**，不是框架的 ✓）。

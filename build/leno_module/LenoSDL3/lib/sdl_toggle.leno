@@ -32,7 +32,7 @@ export struct Toggle impl Widget, Themeable {
     pri Color txtColor = #EBEBF5FF
     pri Color knobColor = #FFFFFFFF       // 滑块填充色
     pri Color knobBrdColor = #C8C8D2FF // 滑块边框色（浅色主题下确保可见）
-    pri int cursor = SystemCursor.DEFAULT
+    pri int cursor = SystemCursor.POINTER
     pri bool hover = false, wasHover = false, pressed = false, enabled = true, visible = true, _loaded = false
     string _tip = ""           // 悬停提示文本（空 = 不提示）
     pri bool animate = false
@@ -76,7 +76,7 @@ export struct Toggle impl Widget, Themeable {
         if opts.get("off_color") is Color => t { offColor = t }
         if opts.get("text_color") is Color => t { txtColor = t }
 
-        cursor = opts.get("cursor", SystemCursor.DEFAULT)
+        cursor = opts.get("cursor", SystemCursor.POINTER)
         on = opts.get("on", false)
         enabled = opts.get("enabled", true)
         visible = opts.get("visible", true)

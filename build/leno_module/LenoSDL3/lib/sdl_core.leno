@@ -608,6 +608,8 @@ int  _frameCursorForce = -1   // 强制光标（拖拽等场景，优先级高�
 //      （松开、以及"键盘 Enter 激活按钮"同样会触发；凡是"非 motion 的鼠标/键盘帧"都中 ✓）
 bool _frameCursorSeen = false
 int  _lastAppliedCursor = -1   // 自测用：**上一次真正应用**的光标 kind（-1 = 从未应用过 ✓）
+int  _lastAppliedReq    = -1   // 自测用：那次应用时 `_frameCursorReq` 的值（-1 = 无人请求 ✓）
+int  _lastAppliedForce  = -1   // 自测用：那次应用时 `_frameCursorForce` 的值（-1 = 无强制 ✓）
 
 // 每帧事件处理开始前调用，清空本帧请求
 export func resetFrameCursor() { _frameCursorReq = -1; _frameCursorForce = -1; _frameCursorSeen = false }
@@ -645,6 +647,8 @@ export func applyFrameCursor() {
         k = _frameCursorReq
         if k < 0 { k = SystemCursor.DEFAULT }   // 无任何控件请求 → 默认箭头
     }
+    _lastAppliedReq   = _frameCursorReq           // 自测用：记下这次应用的两个来源 ✓
+    _lastAppliedForce = _frameCursorForce
     _frameCursorForce = -1                        // 用后重置
     _lastAppliedCursor = k                        // 自测用：记下"实际设成了哪个" ✓
     setSystemCursor(k)
@@ -655,6 +659,9 @@ export func applyFrameCursor() {
 //     移上去 ⇒ POINTER(11)；**按下去（无 motion）⇒ 仍是 11**（修好前会变成 DEFAULT(0) ✗）；
 //     移开 ⇒ DEFAULT(0) ✓
 export func testLastAppliedCursor(): int { return _lastAppliedCursor }
+// 诊断用：上一次应用时的**两个来源**（谁把光标设成那样的 ✓）
+export func testLastAppliedReq(): int   { return _lastAppliedReq }
+export func testLastAppliedForce(): int { return _lastAppliedForce }
 
 // ==================== 重绘请求 ====================
 // 动画控件调用 requestRedraw() 请求下一帧重绘，Window 侧每帧检查并清除

@@ -186,6 +186,9 @@ export func testFocusGained(int wid): bool                    { return wnd.testF
 // ★ 2026-10-13：读**上一次真正应用**的光标 kind（-1 = 从未应用过 ✓）——
 //   "悬停是手型、按下去不能变成箭头"这条回归要用 ✓（用法见 `leno_gui/自测/test_cursor_press.leno`）
 export func testLastAppliedCursor(): int                      { return core.testLastAppliedCursor() }
+// 诊断用：上一次应用光标时的**两个来源**（无人请求 / 被强制 ⇒ -1 ✓）
+export func testLastAppliedReq(): int                         { return core.testLastAppliedReq() }
+export func testLastAppliedForce(): int                       { return core.testLastAppliedForce() }
 
 // ==================== 对话框通用件（自绘标题栏 / 外框底色）====================
 //   详见 sdl_dialog.leno；应用自己手搓的弹窗照这三行接即可 ✓
