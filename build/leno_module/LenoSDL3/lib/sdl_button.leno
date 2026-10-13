@@ -394,6 +394,28 @@ export struct Button impl Widget, Themeable {
     // ==================== 交互 ====================
     func on_click(func():void callback) { onClick = callback }
 
+    // ==================== 焦点与键盘激活（2026-10-13 加，供窗口的"焦点链"调用 ✓）====================
+    //   为什么要它：全库原来只有 `Edit` / `Canvas` 自己管焦点 ⇒ **Tab 键走到按钮上毫无反应** ✗
+    //   分工：窗口只管"把焦点挪过来"（`focus()/blur()`）和"Enter/Space 激活"（`activate()` ✓）；
+    //     控件自己负责"我看起来被聚焦了"（ring **自绘** ✓ —— 它知道自己的几何 ✓ 窗口不必知道 ✓）
+    bool focusable = true            // 默认进焦点链 ✓；要退出就 `set_focusable(false)` ✓
+    bool focused = false
+    func set_focusable(bool b) { focusable = b; if not b { focused = false } }
+    func is_focusable(): bool { return focusable }
+    func focus() { if focusable and not focused { focused = true; core.markFrameRedraw() } }
+    func blur() { if focused { focused = false; core.markFrameRedraw() } }
+    func is_focused(): bool { return focused }
+    // 键盘激活（Enter / Space）：与鼠标点击**走同一条回调** ✓（都只触发 on_click ✓ 不重复写两份 ✓）
+    func activate() { if onClick != null { onClick() }; core.markFrameRedraw() }
+    // 焦点环：由**窗口**在渲染该控件后统一调用 ⇒ 窗口不需要知道任何控件的几何 ✓
+    //   ⚠ v1 只有 Button 画环 ✓（其它控件按速查"焦点链"条逐步补齐 ✓）
+    func draw_focus_ring(Renderer r) {
+        if not focused { return }
+        Theme th = theme.getTheme()
+        r.setColor(th.accentFocus)
+        r.drawRect(x - 2.0, y - 2.0, w + 4.0, h + 4.0)
+    }
+
     func contains(float mx, float my): bool {
         return mx >= x and mx <= x + w and my >= y and my <= y + h
     }

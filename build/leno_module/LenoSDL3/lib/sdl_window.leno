@@ -11,6 +11,7 @@
 //    while running { while ev.poll() { ... } ren.clear(); ...; ren.present() }
 import ffi
 import "sdl_core.leno" as core
+use core.SDL_KeyboardEvent     // ★ 2026-10-13：testKeyDown 注入按键要用（Leno 要求"出现它的每一处都在 use 列表里" ✓）
 use core.(sdl3, SDL_Point, Size, SDL_WindowEvent, SDL_MouseButtonEvent, SDL_MouseMotionEvent)   // 后两个供自测注入点击/移动 ✓
 
 sdl3 _lib = core.lib()
@@ -363,6 +364,23 @@ export func testFocusGained(int wid): bool {
     SDL_WindowEvent we = SDL_WindowEvent.from_ptr(e)
     we.type = core.EventType.WINDOW_FOCUS_GAINED
     we.windowID = wid
+    bool r = _lib.SDL_PushEvent(e)
+    ffi.free(e)
+    return r
+}
+
+// 注入一次**按键**（自测用 ✓ 2026-10-13 补）
+//   为什么补：焦点链（Tab / Shift+Tab / Enter / Space）**只有真键盘才会触发** ✗ ⇒ 以前无法自动回归 ✓
+//   scancode 用 `core.Scancode.TAB` / `.RETURN` / `.SPACE` 这类常量 ✓；mod 用 SDL 修饰位掩码（Shift = 0x0003 ✓）
+//   ⚠ 与 testClickAt 同款：**只投递事件**，是否消费由窗口/控件按语义自己决定 ✓
+export func testKeyDown(int wid, int scancode, int mod = 0): bool {
+    Ptr[u8] e = ffi.malloc(128)
+    for 128 to i { ffi.write_byte(e, i, 0) }        // 先清零（未用字段别带垃圾 ✓）
+    SDL_KeyboardEvent ke = SDL_KeyboardEvent.from_ptr(e)
+    ke.type = core.EventType.KEY_DOWN
+    ke.windowID = wid
+    ke.scancode = scancode
+    ke.mod = mod
     bool r = _lib.SDL_PushEvent(e)
     ffi.free(e)
     return r
@@ -842,6 +860,95 @@ export struct Window {
     pri func _opacAt(int i): float {
         if i >= 0 and i < widgetOpac.len() { return widgetOpac[i] }
         return 1.0
+    }
+
+    // ==================== 焦点链（键盘导航）====================
+    //   ★ 2026-10-13 加：全库原来只有 `Edit` / `Canvas` 自己管焦点 ⇒ **Tab 键不会换焦点** ✗
+    //   本版口径（都是可改的默认 ✓，别当死规矩 ✓）：
+    //     · 焦点链顺序 = **注册顺序**（`widgets` 的加入先后）⇒ 稳定可预期 ✓；暂不做 `tabIndex` ✓
+    //     · 窗口只接管 **Tab / Shift+Tab 换焦点** + **Enter / Space 激活** ✓
+    //       方向键**留给控件自己**（ListBox/Table/TreeView/ComboBox 的内部导航不归窗口管 ✓）
+    //     · "谁能聚焦"用一张**类型表**（全库唯一一处 ✓，与主题点名表同款口径 ✓）
+    //     · ring 由控件**自绘**（`draw_focus_ring` ✓），窗口只在渲染后统一叫一下 ✓
+    pri int focusIdx = -1                      // 当前焦点在"可聚焦列表"里的序号（-1 = 无焦点 ✓）
+
+    // 懒收集当前所有可聚焦控件（按注册顺序 ✓）—— 不维护注册表 ⇒ 不会与 widgets 失同步 ✓
+    pri func _focusables(): Array[Widget] {
+        Array[Widget] r = []
+        for widgets.len() to i {
+            var w = widgets[i]
+            switch w {
+                case is Button { if w.is_focusable() { r.add(w) } }
+            }
+        }
+        return r
+    }
+
+    // 把焦点状态**一次性**刷到列表上（只让 `focusIdx` 那个亮 ⇒ 不会"两个都以为有焦点" ✗）
+    pri func _applyFocus(Array[Widget] fs) {
+        for fs.len() to i {
+            var w = fs[i]
+            switch w {
+                case is Button { if i == focusIdx { w.focus() } else { w.blur() } }
+            }
+        }
+    }
+
+    func focus_next() { _moveFocus(1) }
+    func focus_prev() { _moveFocus(-1) }
+    func clear_focus() {
+        Array[Widget] fs = _focusables()
+        focusIdx = -1
+        _applyFocus(fs)
+        core.requestRedraw()
+    }
+    // 指定焦点（`w` 不在焦点链里 ⇒ 静默忽略 ✓）
+    func focus_widget(Widget w) {
+        Array[Widget] fs = _focusables()
+        for fs.len() to i {
+            if fs[i] == w { focusIdx = i; _applyFocus(fs); core.requestRedraw(); return }
+        }
+    }
+    // 激活当前焦点控件（Enter / Space ⇒ 与鼠标点击同一条回调 ✓）
+    pri func _activateFocused() {
+        Array[Widget] fs = _focusables()
+        if focusIdx < 0 or focusIdx >= fs.len() { return }
+        var w = fs[focusIdx]
+        switch w {
+            case is Button { w.activate() }
+        }
+    }
+    pri func _moveFocus(int dir) {
+        Array[Widget] fs = _focusables()
+        if fs.len() == 0 { return }
+        int n = focusIdx
+        if dir > 0 {
+            n = n + 1
+            if n >= fs.len() { n = 0 }                    // 末尾回卷到首个 ✓
+        } else {
+            if n < 0 { n = fs.len() - 1 }
+            else {
+                n = n - 1
+                if n < 0 { n = fs.len() - 1 }
+            }
+        }
+        focusIdx = n
+        _applyFocus(fs)
+        core.requestRedraw()
+    }
+    // 键盘：Tab / Shift+Tab 换焦点、Enter / Space 激活（返回 true = 已消费 ✓）
+    pri func _focusKey(Event ev): bool {
+        if not ev.isKeyDown() { return false }
+        int sc = ev.scancode()
+        if sc == core.Scancode.TAB {
+            if (ev.keyMod() & 3) != 0 { _moveFocus(-1) } else { _moveFocus(1) }   // 0x0003 = Shift ✓
+            return true
+        }
+        if sc == core.Scancode.RETURN or sc == core.Scancode.SPACE {
+            _activateFocused()
+            return true
+        }
+        return false
     }
 
     // 设置根布局控件：窗口缩放时自动把根控件尺寸设为窗口大小并驱动内部布局重排
@@ -1463,6 +1570,9 @@ export struct Window {
                         //   守卫回调返回 true 时阻止快捷键（如 Edit/Table 编辑中）
                         bool _shortcutHandled = false
                         if ev.isKeyDown() { _shortcutHandled = _tryShortcut(i, ev) }
+                        // ★ 2026-10-13：快捷键没接住的键，先给**焦点链**（Tab / Shift+Tab / Enter / Space ✓）
+                        //   放在"广播给所有控件"**之前** ⇒ 换焦点这类键不会漏给每个控件各处理一遍 ✓
+                        if not _shortcutHandled { _shortcutHandled = _focusKey(ev) }
                         // ★ 关闭拦截：处理器可在 ev.isWindowClose() 里调用 win.cancelClose() ⇒ 不销毁窗口
                         //   （"关闭到托盘"✓）。标记每次处理前清零 ⇒ 只对本次事件有效、无跨事件残留 ✓
                         _closeCanceled = false
@@ -1753,6 +1863,11 @@ export struct Window {
                                 _runRens[i].setAlphaScale(op)
                                 w.render(_runRens[i])
                                 _runRens[i].setAlphaScale(1.0)      // 必须还原 ⇒ 否则后面所有绘制都跟着淡 ✗
+                            }
+                            // ★ 2026-10-13：聚焦 ring —— 由**控件自绘**、窗口只叫一下 ✓
+                            //   （控件自检 `focused` ⇒ 没聚焦时是空调用 ✓；ring 放在 opacity 之后 ⇒ 环始终清晰 ✓）
+                            switch w {
+                                case is Button { w.draw_focus_ring(_runRens[i]) }
                             }
                         }
                     }

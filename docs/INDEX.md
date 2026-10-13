@@ -16,6 +16,25 @@
 >   ② 列表/下拉/菜单的**行高亮圆角锚错了边**（`atBottom` 拿行自己的矩形补圆角，而末行常只露一半 ⇒ 圆角落到面板底边下方 ⇒ 面板两个底角被方角铺满）+ 内容裁剪 `_int(ph)+1` 让末行文字出框 1px ⇒ 收敛成渲染器共用件 **`fillRowInPanel`**（只填「行矩形 ∩ 面板圆角矩形」，圆角**锚在面板的边**）+ 裁剪改 `ceil` 精确覆盖；`sdl_combobox` / `sdl_listbox` / `sdl_menu` 三处调用点改调它 ✓；
 >   ③ `leno_gui/应用/影视海报墙/` 新增**影片详情页**（点卡片进入：大海报 + 评分环 + 年份/分类/简介 + 收藏/播放；Esc/返回切回，网格状态原样保留 ✓；自检钩子 `WALL_DETAIL` / `WALL_BACK`）；
 >   速查附录 C 相应新增 3 条（圆角纹理用自定义混合 · 行高亮锚点与裁剪 · `setRootAt` 运行时换根）。
+>   **2026-10-13 追加（二十三）**：**按优先级修 A1 的第一批：焦点链 / 键盘导航**（Tab · Shift+Tab · Enter · Space ✓）：
+>   ① 缺口：全库原来只有 `Edit` / `Canvas` 自己管焦点 ⇒ **Tab 键根本不换焦点** ✗（`Widget` face 只有 7 个
+>      方法、没有焦点槽 ✓；事件是"广播给所有控件" ✗）；本版定的默认口径（可改 ✓）：焦点链 = **注册顺序**、
+>      窗口只管 Tab/Shift+Tab 换焦点 + Enter/Space 激活（方向键留给控件内部 ✓）、"谁能聚焦"用**一张类型表**
+>      （本版只有 `Button` ✓）、**焦点环由控件自绘**（窗口渲染后统一叫一下 ✓ ⇒ 窗口不需要知道控件几何 ✓）、
+>      `activate()` 只触发 `on_click`（与鼠标点击**同一条回调** ✓）；
+>   ② 实现（`sdl_window.leno`）：焦点链**懒收集**（每次按键现扫 `widgets` ⇒ 不维护注册表 ⇒ 不会失同步 ✓）、
+>      `focusIdx` + `_applyFocus` 一次性刷全部（不会"两个都以为有焦点" ✗）、键盘挂在 `_tryShortcut`
+>      **之后、广播之前**（快捷键优先 ✓ 且不漏给每个控件各处理一遍 ✓）；
+>   ③ 顺带补了**自测钩子** `SDL3.testKeyDown(wid, scancode, mod)`（照 `testFocusLost` 的 malloc+from_ptr ✓，
+>      门面 `SDL3.leno` 同步转出 ✓ —— 上一版就是漏了门面那一步 ⇒ 探针报"模块 SDL3 中没有方法" ✗）；
+>   ④ 验收（新增 `leno_gui/自测/test_focus_nav.leno`，注入**真按键** ✓）：初始全 false → Tab×1 到 A →
+>      Tab×2 **跳过 `set_focusable(false)` 的 B** 到 C → Tab×3 回卷到 A → Shift+Tab 反向到 C →
+>      Enter/Space 让 `hitsC` 1→2 ✓；焦点环**客观取色**：C 左沿外 2px = `(100,180,255)` = 主题 `accentFocus` ✓，
+>      未聚焦的 A 同位置只有底色 ✓ ⇒ 环只在聚焦控件外沿出现 ✓；
+>   ⑤ 未做（按需推进 ✓）：`CheckBox/RadioButton/Toggle/Slider/ListBox/ComboBox/Table/TreeView/TabControl`
+>      进类型表（要先给它们补 `focus()/blur()/is_focused()/draw_focus_ring()` ✓）、方向键在兄弟控件间移动 ✗、
+>      `tabIndex` ✗。回归：海报墙 ✓、主题验收件 ✓、opacity 验收件 ✓、清理大师 exit=0 ✓。速查附录 C 新增该条 ✓。
+>
 >   **2026-10-13 追加（二十二）**：**新增框架能力：控件级不透明度 `win.set_widget_opacity(w, a)`**（真机实测 ✓）：
 >   ① 动机：框架原来**没有**通用控件透明度 ✗（只有 `imageview/scrim/separator` 各自的语义化 `alpha` key ✓），
 >      "把某个控件整体淡出"（禁用态 / 加载中 / 逐层揭示）做不到 ✓；

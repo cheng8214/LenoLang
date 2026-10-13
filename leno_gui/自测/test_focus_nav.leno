@@ -1,0 +1,77 @@
+// test_focus_nav.leno — 焦点链（键盘导航）的第一批验收：Tab / Shift+Tab / Enter / Space
+//   ★ 2026-10-13 新加能力：全库原来只有 `Edit` / `Canvas` 自己管焦点 ⇒ **Tab 键不会换焦点** ✗
+//   本版口径（速查附录 C 有记 ✓）：
+//     · 焦点链顺序 = **注册顺序**（addXxx 的先后 ✓）；暂不做 tabIndex ✓
+//     · 窗口只接管 Tab / Shift+Tab 换焦点 + Enter / Space 激活；方向键留给控件自己 ✓
+//     · "谁能聚焦"用一张类型表（本版只有 Button ✓）、ring 由控件**自绘** ✓
+//   判据：注入真按键（`SDL3.testKeyDown` ✓ 本轮新加的钩子），逐步骤断言
+//     ① 焦点按注册顺序前进、末尾回卷 ✓  ② 跳过 `set_focusable(false)` 的按钮 ✓
+//     ③ Shift+Tab 反向 ✓  ④ Enter / Space 触发 `on_click`（计数 +1 ✓，与鼠标点击同一条路 ✓）
+//   用法：set SHOT=%TEMP%\focus.png & build\leno.exe leno_gui\自测\test_focus_nav.leno
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer, Scancode, Window, Button)
+
+int steps = 0
+string shot = ""
+int hitsA = 0        // b1 的点按次数（Enter/Space 应让它 +1 ✓）
+int hitsC = 0        // b3 的点按次数
+
+// 把三个按钮的聚焦态与计数打出来（每步一行 ⇒ 焦点序列一目了然 ✓）
+func snap(Button a, Button b, Button c, string tag) {
+    print("[focus] " + tag + "  A=" + _str(a.is_focused()) + " B=" + _str(b.is_focused()) +
+          " C=" + _str(c.is_focused()) + "  hitsA=" + _str(hitsA) + " hitsC=" + _str(hitsC))
+}
+
+func run() {
+    SDL3.ttfInit()
+    SDL3.setTheme(SDL3.darkTheme())
+    Window w = SDL3.createWindow({title: "test_focus_nav", w: 620, h: 200})
+    if not w.ok { SDL3.ttfQuit(); return }
+
+    // 注册顺序 A → B → C；其中 **B 退出焦点链** ⇒ Tab 必须跳过它 ✓
+    Button a = w.addButton({x: 20, y: 40, w: 180, h: 44, text: "A（可聚焦）"})
+    Button b = w.addButton({x: 220, y: 40, w: 180, h: 44, text: "B（不可聚焦）"})
+    Button c = w.addButton({x: 420, y: 40, w: 180, h: 44, text: "C（可聚焦）"})
+    b.set_focusable(false)
+    a.on_click(func() { hitsA = hitsA + 1 })
+    c.on_click(func() { hitsC = hitsC + 1 })
+
+    var s = _env("SHOT"); if s != null { shot = _str(s) }
+    if shot == "" { shot = "focus.png" }
+
+    int wid = w.getID()
+    w.addTimer(100, func() {
+        steps = steps + 1
+        if steps == 1 { snap(a, b, c, "初始（应全 false）") }
+        if steps == 2 {
+            SDL3.testKeyDown(wid, Scancode.TAB, 0)
+        }
+        if steps == 3 { snap(a, b, c, "Tab×1（应 A）") }
+        if steps == 4 { SDL3.testKeyDown(wid, Scancode.TAB, 0) }
+        if steps == 5 { snap(a, b, c, "Tab×2（应 C —— 跳过 B ✓）") }
+        if steps == 6 { SDL3.testKeyDown(wid, Scancode.TAB, 0) }
+        if steps == 7 { snap(a, b, c, "Tab×3（应回卷到 A ✓）") }
+        if steps == 8 { SDL3.testKeyDown(wid, Scancode.TAB, 3) }        // 3 = Shift 位掩码 ✓
+        if steps == 9 { snap(a, b, c, "Shift+Tab（应反向到 C ✓）") }
+        if steps == 10 { SDL3.testKeyDown(wid, Scancode.RETURN, 0) }    // Enter ⇒ 激活 C
+        if steps == 11 { snap(a, b, c, "Enter（应 hitsC=1 ✓）") }
+        if steps == 12 { SDL3.testKeyDown(wid, Scancode.SPACE, 0) }     // Space ⇒ 再激活 C
+        if steps == 13 { snap(a, b, c, "Space（应 hitsC=2 ✓）") }
+        if steps >= 16 { _exit(0) }
+    })
+
+    // 截图（看焦点环 ✓）：钩子必须在 setOverlay（控件之上 ⇒ 像素含界面 ✓）
+    w.setOverlay(func(Renderer r) {
+        if steps >= 14 and shot != "" {
+            var sz = w.getSize()
+            var px = r.readPixelsAt(0, 0, sz.w, sz.h)
+            if px != null { print("[focus] 截图 " + shot + " ok=" + _str(SDL3.saveImagePNG(px, shot))) }
+            _exit(0)
+        }
+    })
+
+    w.run(func(Event ev): bool { return true }, func(Renderer r) {})
+    SDL3.ttfQuit()
+}
+
+main() { run() }

@@ -1332,6 +1332,50 @@ SDL3.testClickAt(win.getID(), x, y)     // 再点（一步一行、走定时器 
 ⚠ 只有"看 hover 才认点击"的控件需要这样（Card 这类**按坐标判命中**的不受影响 ✓）——
 自测脚本里**统一先移动再点击**最省心 ✓
 
+### ⭐ 焦点链与键盘导航（2026-10-13 第一批 ✓ Tab / Shift+Tab / Enter / Space）
+
+**为什么加**：全库原来只有 `Edit` / `Canvas` 自己管焦点 ⇒ **Tab 键根本不换焦点** ✗ ——
+`Widget` face（`sdl_widget.leno`）只有 7 个方法、**没有焦点槽** ✗，事件又是"广播给所有控件" ✗。
+
+**本版口径**（都是**可改的默认** ✓，别当死规矩 ✓）
+| 项 | 取值 | 理由 |
+|---|---|---|
+| 焦点链顺序 | **注册顺序**（`addXxx` 的先后 ✓） | 稳定可预期 ✓；`tabIndex` 留待后续 ✓ |
+| 窗口管什么 | 只接管 **Tab / Shift+Tab 换焦点** + **Enter / Space 激活** ✓ | 方向键留给控件自己（ListBox/Table/TreeView/ComboBox 内部导航 ✓） |
+| 谁能聚焦 | 一张**类型表**（本版只有 `Button` ✓） | 与"主题点名表"同款口径：类型判断只在窗口**一处** ✓ |
+| 焦点环 | 控件**自绘**（`draw_focus_ring` ✓），窗口渲染后统一叫一下 ✓ | 控件知道自己的几何 ⇒ 窗口不必知道 ✓ |
+| 激活语义 | `activate()` = **只触发 `on_click`** ✓ | 与鼠标点击**同一条回调**，不写两份 ✓ |
+
+**API**：窗口 `focus_next()` / `focus_prev()` / `focus_widget(w)` / `clear_focus()`；
+控件（本版 `Button`）`set_focusable(b)` / `is_focusable()` / `focus()` / `blur()` / `is_focused()` / `activate()`。
+
+**实现落点**（`sdl_window.leno`）：焦点链**懒收集** ✓（每次按键现扫 `widgets` 挑可聚焦的 ⇒
+不维护注册表 ⇒ **不会与控件列表失同步** ✓）；`focusIdx` 存序号、`_applyFocus` **一次性**刷全部
+（只让一个亮 ⇒ 不会"两个都以为有焦点" ✗）；键盘挂在 `_tryShortcut` **之后、广播之前** ✓
+（快捷键优先 ✓，且换焦点这类键不会漏给每个控件各处理一遍 ✓）。
+
+**验收**：`leno_gui/自测/test_focus_nav.leno` —— **注入真按键**（本轮为此新增钩子
+`SDL3.testKeyDown(wid, scancode, mod)`，照 `testFocusLost` 的 malloc+from_ptr 套路 ✓，
+门面 `SDL3.leno` 也要转出 ✓）
+```
+set SHOT=%TEMP%\focus.png & build\leno.exe leno_gui\自测\test_focus_nav.leno
+```
+实测（A 可聚焦 / B `set_focusable(false)` / C 可聚焦；注册顺序 A→B→C ✓）：
+```
+初始        A=false B=false C=false
+Tab×1       A=true                ← 焦点到手 ✓
+Tab×2                  C=true     ← **跳过了不可聚焦的 B** ✓
+Tab×3       A=true                ← 末尾回卷 ✓
+Shift+Tab              C=true     ← 反向 ✓
+Enter/Space            hitsC=1 → 2（激活与鼠标点击同一条回调 ✓）
+```
+焦点环**客观取色**（不靠肉眼 ✓）：C 聚焦时，其左沿外 2px = `(100,180,255)` = 主题 `accentFocus` ✓；
+未聚焦的 A 同位置只有底色 `(38,40,48)` ✓ ⇒ **环只在聚焦控件外沿出现** ✓（1px ✓）。
+
+⚠ **本版没做的**（按需推进 ✓）：`CheckBox/RadioButton/Toggle/Slider/ListBox/ComboBox/Table/TreeView/
+TabControl` 还没进类型表（进去要先给它们补 `focus()/blur()/is_focused()/draw_focus_ring()` ✓）；
+方向键在**兄弟控件间**移动 ✗（WPF 风格，未做 ✓）；`tabIndex` 显式排序 ✗。
+
 ### ⭐ 控件级不透明度：`win.set_widget_opacity(w, a)`（2026-10-13 新增能力 ✓）
 
 **为什么加**：框架原来**没有**通用控件透明度 ✗（只有 `imageview/scrim/separator` 各自一个语义化 `alpha` key ✓）

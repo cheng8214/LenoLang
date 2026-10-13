@@ -180,6 +180,8 @@ export func testRightClickAt(int wid, float x, float y): bool { return wnd.testR
 export func testMouseAt(int wid, float x, float y, bool pressed): bool { return wnd.testMouseAt(wid, x, y, pressed) }
 export func testMoveAt(int wid, float x, float y): bool       { return wnd.testMoveAt(wid, x, y) }
 export func testFocusLost(int wid): bool                      { return wnd.testFocusLost(wid) }
+// ★ 2026-10-13：注入一次按键（焦点链 Tab / Shift+Tab / Enter / Space 的自动回归要用 ✓）
+export func testKeyDown(int wid, int scancode, int mod = 0): bool { return wnd.testKeyDown(wid, scancode, mod) }
 export func testFocusGained(int wid): bool                    { return wnd.testFocusGained(wid) }
 
 // ==================== 对话框通用件（自绘标题栏 / 外框底色）====================
