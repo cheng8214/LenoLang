@@ -1,0 +1,304 @@
+// test_card.leno — `Card` 卡片控件演示（v2 全能力 ✓）
+//
+// 演示/回归点（每条都有对应按钮，截图即可核对）：
+//   ① 基础：图 + 标题 + 副标题 + 右上评分角标
+//   ② **图片圆角**（`image_radius`）—— 走渲染器的「图 × 圆角蒙版」合成（见 sdl_renderer.drawTextureRounded）
+//   ③ **多角标**（`badges`）—— 同一个角上自动沿边错位；各自字号/底色/图标
+//   ④ **容器化**（`set_content`）—— 卡内按钮可点，且**不会**顺带触发整卡 on_click
+//   ⑤ **状态** —— 点击卡片 ⇒ selected 描边；悬停 ⇒ hover + hover_lift
+//   ⑥ **运行时改布局** —— 竖版 ⇄ 横幅（`set_image_aspect` + 重新 add 让 GridLayout 重取行高）
+//
+// 运行：build\leno.exe leno_gui\控件\复合控件\卡片\test_card.leno
+// 无头自检（照仓内惯例 ✓，截图后退出）：
+//   set SDL_VIDEODRIVER=dummy
+//   set CSHOT=%TEMP%\card.png   # 存界面 PNG 后退出
+//   set CAT=20                  # 第 20 帧再截（默认 10）
+//   set CRBN=1                  # 启动就开图片圆角
+//   set CBADGE=1                # 启动就开多角标
+//   set CVIEW=1                 # 启动就切横幅
+//   set CSEL=3                  # 启动就选中第 3 张（0 基）
+//   set CFRAMES=40              # 只跑 40 帧退出（冒烟）
+//
+// 海报图借用「影视海报墙」的演示图（`../../../应用/影视海报墙/images/` ⇒ 不重复存二进制 ✓）
+import "SDL3" as SDL3
+import "../../../应用/影视海报墙/movie_data.leno" as data
+import dirs
+import strings
+use SDL3.(Event, Renderer, Scancode, Window, TitleBar, Card, Button, Label,
+          HBox, VBox, ScrollView, GridLayout)
+use data.Movie
+
+// ==================== 尺寸 / 调色板 ====================
+const int WIN_W = 980
+const int WIN_H = 640
+const int TB_H = 32
+const int COLS = 3
+const int CARD_W = 240
+const int CARD_H = 300      // 竖版
+const int CARD_H_WIDE = 208 // 横幅（图变矮）
+
+var C_BG      = #0E1116FF
+var C_BAR     = #141821FF
+var C_CARD    = #171C25FF
+var C_CARD_HV = #232B38FF
+var C_ACCENT  = #F5A623FF
+var C_ACC_TXT = #20180AFF
+var C_TXT     = #E9EDF4FF
+var C_TXT_DIM = #8B94A5FF
+var C_FIELD   = #1B202BFF
+var C_NAV_HV  = #1E2531FF
+
+// ==================== 状态 ====================
+Array[Movie] MOVIES = []
+Array[Card] CARDS = []
+GridLayout GRID = null
+ScrollView SV = null
+Label HINT = null
+Button BTN_VIEW = null
+Button BTN_RBN = null
+Button BTN_BADGE = null
+Button BTN_SEL = null
+bool ROUND = false
+bool BADGES2 = false
+bool WIDE = false
+int SEL = -1
+
+// 自检
+string SHOT = ""
+int SHOT_AT = 10
+int FRAMES = 0
+int MAXF = 0
+
+// 海报路径 —— ⚠ **不能**用 `data.poster_path()`：它内部拼的是 `dirs.res_dir()`，
+//   而 res_dir() = **运行脚本**所在目录（不是被 import 的模块目录 ✗）⇒ 从本目录跑就找不到图
+//   ⇒ 这里显式按"本 demo 目录 → 海报墙 images"拼相对路径 ✓（借图 = 不在控件目录重复存二进制 ✓）
+func poster(string f): string {
+    return dirs.join(dirs.res_dir(), "../../../应用/影视海报墙/images", f)
+}
+
+// ==================== 卡片 ====================
+// 主角标（评分）+ 可选的两个附加角标（新 / 4K）—— 多角标演示 ✓
+func apply_badges(int idx) {
+    Card c = CARDS[idx]
+    c.clear_badges()
+    Movie m = MOVIES[idx]
+    c.add_badge({text: m.score, pos: 0, size: 13.0, bg: #000000B0, color: #F5C451FF})
+    if BADGES2 {
+        c.add_badge({text: "新", pos: 1, size: 11.0, bg: #C8102EFF, color: #FFFFFFFF})
+        c.add_badge({text: "4K", pos: 2, size: 11.0, bg: #12305AFF, color: #9CC8FFFF})
+    }
+}
+
+func build_cards() {
+    CARDS = []
+    for 0 : MOVIES.len() - 1 to i {
+        Movie m = MOVIES[i]
+        // 角标走**选项**路径（`badges` = Array[Dict] ✓）；运行时开关走 `add_badge` 方法 ✓ 两条都覆盖
+        Array[Dict] bs = []
+        bs.add({text: m.score, pos: 0, size: 13.0, bg: #000000B0, color: #F5C451FF})
+        if BADGES2 {
+            bs.add({text: "新", pos: 1, size: 11.0, bg: #C8102EFF, color: #FFFFFFFF})
+            bs.add({text: "4K", pos: 2, size: 11.0, bg: #12305AFF, color: #9CC8FFFF})
+        }
+        Card c = SDL3.createCard({x: 0, y: 0, w: CARD_W, h: CARD_H,
+                                  image_path: poster(m.file),
+                                  image_aspect: 1.45,
+                                  title: m.title,
+                                  subtitle: m.year + " / " + m.cat,
+                                  badges: bs,
+                                  radius: 12,
+                                  border: true, border_color: #232A36FF,
+                                  border_selected_color: C_ACCENT,
+                                  hover_lift: 3.0,
+                                  image_radius: if ROUND then 16.0 else 0.0,
+                                  bg_color: C_CARD, hover_color: C_CARD_HV,
+                                  text_color: C_TXT, subtitle_color: C_TXT_DIM,
+                                  content_h: 30, content_pad: 6, gap: 6,
+                                  tip: m.title + "（" + m.year + "）"})
+        c.on_click(func() { select(i) })
+        CARDS.add(c)
+        // ④ 容器化：每张卡底部挂一行「播放 / 收藏」（`set_content` ✓）
+        HBox row = SDL3.createHBox({x: 0, y: 0, w: 100, h: 30, padX: 0, padY: 0, spacing: 6})
+        Button pb = SDL3.createButton({text: "播放", w: 62, h: 26, font_size: 12, radius: 6,
+                                       bg_color: C_ACCENT, text_color: C_ACC_TXT,
+                                       border: false, shadow: false})
+        pb.on_click(func() { print("[card] 播放 " + MOVIES[i].title) })
+        row.add(pb, {grow: 0, shrink: 0, basis: 62, align: 1})
+        Button fb = SDL3.createButton({text: "收藏", w: 62, h: 26, font_size: 12, radius: 6,
+                                       bg_color: C_FIELD, hover_color: C_NAV_HV, text_color: C_TXT,
+                                       border: false, shadow: false})
+        fb.on_click(func() { toggle_sel(i) })
+        row.add(fb, {grow: 0, shrink: 0, basis: 62, align: 1})
+        row.add(SDL3.createLabel({text: ""}), {grow: 1, shrink: 1, align: 1})
+        c.set_content(row)
+    }
+}
+
+// 重新排进网格：**尺寸变了必须 clear + 重新 add**（GridLayout 的行高是 add 时捕获的 ✗ 见速查附录 C）
+func relayout_cards() {
+    GRID.clear()
+    for 0 : CARDS.len() - 1 to i { GRID.add(CARDS[i], {align: 3}) }
+    SDL3.markFrameRedraw()
+}
+
+// ==================== 交互 ====================
+func select(int idx) {
+    SEL = idx
+    for 0 : CARDS.len() - 1 to i { CARDS[i].set_selected(i == idx) }
+    if SEL >= 0 { HINT.set_text("已选中：" + MOVIES[SEL].title + "（selected ⇒ 橙色描边 ✓）") }
+}
+func toggle_sel(int idx) {
+    bool now = not CARDS[idx].is_selected()
+    CARDS[idx].set_selected(now)
+    if now { SEL = idx }
+    HINT.set_text("卡内「收藏」点击 ⇒ " + MOVIES[idx].title + " selected=" + _str(now) + "（未触发整卡回调 ✓）")
+}
+
+func toggle_round() {
+    ROUND = not ROUND
+    for 0 : CARDS.len() - 1 to i { CARDS[i].set_image_radius(if ROUND then 16.0 else 0.0) }
+    BTN_RBN.set_text(if ROUND then "图片圆角：开" else "图片圆角：关")
+    HINT.set_text("image_radius = " + (if ROUND then "16" else "0"))
+}
+func toggle_badges() {
+    BADGES2 = not BADGES2
+    for 0 : CARDS.len() - 1 to i { apply_badges(i) }
+    BTN_BADGE.set_text(if BADGES2 then "多角标：开" else "多角标：关")
+    HINT.set_text("badges：右上评分 + 左上「新」+ 左下「4K」（同角自动错位 ✓）")
+}
+func toggle_view() {
+    WIDE = not WIDE
+    for 0 : CARDS.len() - 1 to i {
+        Card c = CARDS[i]
+        if WIDE {
+            c.set_size(CARD_W, CARD_H_WIDE)
+            c.set_image_aspect(0.52)     // 横幅：图矮下来
+        } else {
+            c.set_size(CARD_W, CARD_H)
+            c.set_image_aspect(1.45)
+        }
+    }
+    BTN_VIEW.set_text(if WIDE then "视图：横幅" else "视图：竖版")
+    relayout_cards()                     // ★ 高度变了 ⇒ 必须重排（见速查附录 C ✓）
+    HINT.set_text("set_image_aspect 运行时改比例 ⇒ GridLayout 行高跟着变 ✓")
+}
+
+// ==================== 组装 ====================
+func build(Window win) {
+    MOVIES = data.movies()
+
+    TitleBar tb = SDL3.createTitleBar({title: "Card 卡片控件演示", height: TB_H, font_size: 13})
+    win.add(tb)
+
+    VBox root = SDL3.createVBox({x: 0, y: 0, w: WIN_W, h: WIN_H - TB_H,
+                                 padX: 0, padY: 0, spacing: 0, bg_color: C_BG})
+    win.setRootAt(root, 0, tb.get_h())
+
+    HBox bar = SDL3.createHBox({x: 0, y: 0, w: WIN_W, h: 44, padX: 12, padY: 6, spacing: 8,
+                                bg_color: C_BAR})
+    root.add(bar, {grow: 0, shrink: 0, basis: 44, align: 3})
+    bar.add(SDL3.createLabel({text: "Card 卡片控件", font_size: 16, font_style: SDL3.STYLE_BOLD,
+                              text_color: C_TXT}), {grow: 0, shrink: 0, align: 1})
+    bar.add(SDL3.createLabel({text: ""}), {grow: 1, shrink: 1, align: 1})
+
+    BTN_VIEW = SDL3.createButton({text: "视图：竖版", w: 108, h: 30, font_size: 13, radius: 8,
+                                  bg_color: C_FIELD, hover_color: C_NAV_HV, text_color: C_TXT,
+                                  border: false, shadow: false})
+    BTN_VIEW.on_click(func() { toggle_view() })
+    bar.add(BTN_VIEW, {grow: 0, shrink: 0, basis: 108, align: 1})
+
+    BTN_RBN = SDL3.createButton({text: "图片圆角：关", w: 124, h: 30, font_size: 13, radius: 8,
+                                 bg_color: C_FIELD, hover_color: C_NAV_HV, text_color: C_TXT,
+                                 border: false, shadow: false})
+    BTN_RBN.on_click(func() { toggle_round() })
+    bar.add(BTN_RBN, {grow: 0, shrink: 0, basis: 124, align: 1})
+
+    BTN_BADGE = SDL3.createButton({text: "多角标：关", w: 112, h: 30, font_size: 13, radius: 8,
+                                   bg_color: C_FIELD, hover_color: C_NAV_HV, text_color: C_TXT,
+                                   border: false, shadow: false})
+    BTN_BADGE.on_click(func() { toggle_badges() })
+    bar.add(BTN_BADGE, {grow: 0, shrink: 0, basis: 112, align: 1})
+
+    BTN_SEL = SDL3.createButton({text: "选中第 1 张", w: 116, h: 30, font_size: 13, radius: 8,
+                                 bg_color: C_FIELD, hover_color: C_NAV_HV, text_color: C_TXT,
+                                 border: false, shadow: false})
+    BTN_SEL.on_click(func() { select(0) })
+    bar.add(BTN_SEL, {grow: 0, shrink: 0, basis: 116, align: 1})
+
+    SV = SDL3.createScrollView({x: 0, y: 0, w: WIN_W, h: WIN_H - TB_H - 44 - 26,
+                                fit_w: true, step: 56, smooth: true, bg_color: C_BG,
+                                border: false, bar_color: #39404EFF})
+    root.add(SV, {grow: 1, shrink: 1, align: 3})
+
+    GRID = SDL3.createGridLayout({x: 0, y: 0, w: WIN_W, h: 400, cols: COLS, spacing: 18,
+                                  padX: 18, padY: 18})
+    SV.set_content(GRID)
+
+    HINT = SDL3.createLabel({text: "点卡片 ⇒ selected；点卡内按钮 ⇒ 只走按钮自己的回调 ✓",
+                             font_size: 12, text_color: C_TXT_DIM})
+    root.add(HINT, {grow: 0, shrink: 0, basis: 26, align: 0})
+
+    build_cards()
+    relayout_cards()
+}
+
+func selftest() {
+    var sh = _env("CSHOT")
+    if sh != null { SHOT = _str(sh) }
+    var at = _env("CAT")
+    if at != null { SHOT_AT = _int(_str(at)) }
+    var fr = _env("CFRAMES")
+    if fr != null { MAXF = _int(_str(fr)) }
+    var rb = _env("CRBN")
+    if rb != null and _int(_str(rb)) > 0 { toggle_round() }
+    var bd = _env("CBADGE")
+    if bd != null and _int(_str(bd)) > 0 { toggle_badges() }
+    var vw = _env("CVIEW")
+    if vw != null and _int(_str(vw)) > 0 { toggle_view() }
+    var se = _env("CSEL")
+    if se != null {
+        int k = _int(_str(se))
+        if k >= 0 and k < CARDS.len() { select(k) }
+    }
+}
+
+// 截图/自动退出**必须**放在叠加层里（`setOverlay`）：控件是在 onRender 回调**之后**画的，
+//   在回调里 readPixelsAt 只能拿到"只有底色"的空白帧 ✗（仓内踩过，见速查 §八 ✓）—— 本次又踩了一次 ✓
+func shot_tick(Renderer r, Window win) {
+    FRAMES = FRAMES + 1
+    if SHOT != "" and FRAMES >= SHOT_AT {
+        var sz = win.getSize()
+        var s = r.readPixelsAt(0, 0, sz.w, sz.h)
+        if s != null {
+            bool ok = SDL3.saveImagePNG(s, SHOT)
+            print("[card] 截图 " + SHOT + " ok=" + _str(ok) + " 圆角=" + _str(ROUND) +
+                  " 多角标=" + _str(BADGES2) + " 横幅=" + _str(WIDE) + " 选中=" + _str(SEL))
+        }
+        _exit(0)
+    }
+    if MAXF > 0 and FRAMES >= MAXF {
+        print("[card] frames=" + _str(FRAMES))
+        _exit(0)
+    }
+}
+
+main() {
+    SDL3.ttfInit()
+    SDL3.setTheme(SDL3.darkTheme())
+    var win = SDL3.createWindow({title: "Card 卡片控件演示", w: WIN_W, h: WIN_H, flags: 0x20,
+                                 icon: poster("app.png")})
+    if not win.ok { SDL3.ttfQuit(); return }
+    build(win)
+    selftest()
+    win.setOverlay(func(Renderer r) { shot_tick(r, win) })
+
+    win.run(
+        func(Event ev): bool {
+            if ev.isQuit() or ev.isWindowClose() { return false }
+            if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) { r.clearColor(C_BG) }
+    )
+    SDL3.ttfQuit()
+}

@@ -1,0 +1,90 @@
+// movie_data.leno — 影片数据 + 分类表（演示数据 ✓）
+//
+// 海报**不是真图**：由 tools\gen_assets.leno 用 SDL3 程序化画出来（抽象风格 ⇒ 无版权问题 ✓）
+//   想换成真海报：用同名文件覆盖 images\pXX.png 即可，本文件只改 `file` 字段 ✓
+//   （尺寸建议 2:3 竖版，如 300×450 或更大；卡片会按 `image_aspect` 覆盖填满 ✓）
+import dirs
+
+// ==================== 数据结构 ====================
+export struct Movie {
+    string title = ""    // 片名（卡片标题 ✓）
+    string year = ""     // 年份
+    string score = ""    // 评分（卡片右上角角标 ✓）
+    string cat = ""      // 所属分类（必须出现在 cats() 里 ✓ 见下方注释）
+    string file = ""     // images\ 下的海报文件名
+    string desc = ""     // 一句话简介（点开时用来展示 ✓）
+}
+
+// 「全部」是伪分类（不筛选）；其它分类名必须与 Movie.cat 完全一致（含中文字符 ✓）
+export const CAT_ALL = "全部"
+
+// ==================== 分类表（顺序 = 左侧导航顺序 ✓）====================
+//   前 5 个常驻显示；其余在点「更多」展开后才出现（见 movie_wall.leno 的侧栏 ✓）
+export func cats_base(): Array[string] {
+    return ["票房热映", "电影专题", "华语佳片", "欧美精选", "动作冒险"]
+}
+export func cats_more(): Array[string] {
+    return ["科幻", "悬疑", "动画"]
+}
+
+// ==================== 影片表 ====================
+//   ⚠ 新增影片时：`file` 指向的海报要由 gen_assets 生成（或自己放一张同名 PNG ✓），
+//     否则卡片只会显示深色底 + 文字（**不会崩**：纹理加载失败就是 null，见 sdl_card.leno ✓）
+export func movies(): Array[Movie] {
+    Array[Movie] out = []
+    out.add(new Movie(title = "银河快车", year = "2026", score = "7.7", cat = "票房热映", file = "p01.png",
+        desc = "末班列车驶离地球轨道，乘客们发现车票上印着自己的死亡日期。"))
+    out.add(new Movie(title = "无间追踪", year = "2025", score = "8.2", cat = "票房热映", file = "p02.png",
+        desc = "一名刑警用十二年追一个从未露面的对手。"))
+    out.add(new Movie(title = "光影百年", year = "2024", score = "9.3", cat = "电影专题", file = "p03.png",
+        desc = "从胶片到数字：一百年里，我们如何学会看见。"))
+    out.add(new Movie(title = "胶片时代", year = "2023", score = "8.4", cat = "电影专题", file = "p04.png",
+        desc = "一家老影院最后三十天的营业记录。"))
+    out.add(new Movie(title = "长街旧事", year = "2022", score = "8.9", cat = "华语佳片", file = "p05.png",
+        desc = "拆迁前最后一个夏天，街口的理发店还开着。"))
+    out.add(new Movie(title = "山河故人书", year = "2024", score = "9.0", cat = "华语佳片", file = "p06.png",
+        desc = "一封没寄出的信，走了三十年才到。"))
+    out.add(new Movie(title = "春江花月", year = "2021", score = "8.1", cat = "华语佳片", file = "p07.png",
+        desc = "江上的一夜，岸上的一生。"))
+    out.add(new Movie(title = "孤星旅人", year = "2025", score = "8.5", cat = "欧美精选", file = "p08.png",
+        desc = "他开着一辆报废的车，去找一个只在梦里出现的坐标。"))
+    out.add(new Movie(title = "静默之城", year = "2023", score = "8.6", cat = "欧美精选", file = "p09.png",
+        desc = "整座城市失去了声音，只有一个人还在唱歌。"))
+    out.add(new Movie(title = "北纬五十三度", year = "2022", score = "7.9", cat = "欧美精选", file = "p10.png",
+        desc = "零下四十度的荒原上，一次没有归途的勘探。"))
+    out.add(new Movie(title = "极地营救", year = "2026", score = "8.0", cat = "动作冒险", file = "p11.png",
+        desc = "冰层断裂前 90 分钟，救援队要带走所有人。"))
+    out.add(new Movie(title = "铁血航线", year = "2024", score = "7.6", cat = "动作冒险", file = "p12.png",
+        desc = "一艘货轮、二十名船员，和一场不该来的风暴。"))
+    out.add(new Movie(title = "荒野逐日", year = "2025", score = "8.3", cat = "动作冒险", file = "p13.png",
+        desc = "追着日落跑了三千公里，只为说一句话。"))
+    out.add(new Movie(title = "星海归途", year = "2025", score = "9.1", cat = "科幻", file = "p14.png",
+        desc = "最后一次跃迁之后，家已经过了两百年。"))
+    out.add(new Movie(title = "时间褶皱", year = "2024", score = "8.4", cat = "科幻", file = "p15.png",
+        desc = "她在同一天里醒来第七十三次，终于发现多出来的那八分钟。"))
+    out.add(new Movie(title = "机械黎明", year = "2023", score = "7.8", cat = "科幻", file = "p16.png",
+        desc = "当第一台机器学会说谎，人类才意识到它会做梦。"))
+    out.add(new Movie(title = "暗夜追凶", year = "2025", score = "8.7", cat = "悬疑", file = "p17.png",
+        desc = "凶手每次都在案发现场留下一张自己的照片。"))
+    out.add(new Movie(title = "第七个证人", year = "2024", score = "8.2", cat = "悬疑", file = "p18.png",
+        desc = "六个证人的证词完全一致，而这正是问题所在。"))
+    out.add(new Movie(title = "雾港疑云", year = "2022", score = "7.5", cat = "悬疑", file = "p19.png",
+        desc = "海雾散开的那天，港口少了一个人。"))
+    out.add(new Movie(title = "猫与星轨", year = "2026", score = "9.2", cat = "动画", file = "p20.png",
+        desc = "一只猫沿着星轨走，去找它走丢的影子。"))
+    out.add(new Movie(title = "云端小镇", year = "2024", score = "8.8", cat = "动画", file = "p21.png",
+        desc = "住在云上的小镇，每年只落地一次。"))
+    out.add(new Movie(title = "木偶奇旅", year = "2023", score = "8.0", cat = "动画", file = "p22.png",
+        desc = "一个木偶把自己的线剪断了，然后学会了走路。"))
+    return out
+}
+
+// ==================== 资源路径 ====================
+//   一律走 `res_dir()`：未打包 = 脚本所在目录；打包后 = 内嵌资源的释放目录 ✓
+//   （写成 script_dir() 的话，`-p --onefile` 打包后取不到图 ✗ —— 仓内踩过 ✓）
+export func images_dir(): string {
+    return dirs.join(dirs.res_dir(), "images")
+}
+export func poster_path(string file): string {
+    return dirs.join(images_dir(), file)
+}

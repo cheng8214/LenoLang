@@ -1,0 +1,620 @@
+// movie_wall.leno — 影视海报墙（暗色媒体库：顶栏 + 左侧分类导航 + 可滚动海报网格）
+//
+// 界面构成（对着参考图搭的 ✓）：
+//   ① 自绘标题栏 TitleBar —— 窗口控制（去系统边框 ✓）
+//   ② 顶栏 HBox —— 返回箭头 + 「电影（共 N 部）」+ 搜索框 + 「菜单键筛选」
+//   ③ 左侧导航 VBox（整条底色带 ✓）—— 来源选择 / 搜索 / 全部（橙色胶囊）/ 分类项 / 底部「更多」
+//   ④ 右侧 ScrollView + GridLayout —— 海报网格（**列数随窗口宽度自适应** ✓）
+//      卡片 = 库里的新控件 `Card`（图片 + 片名 + 年份/分类 + 右上角评分角标 ✓）
+//
+// 运行：build\leno.exe leno_gui\应用\影视海报墙\movie_wall.leno
+// 资源：images\*.png（`tools\gen_assets.leno` 程序化生成；可直接换成真海报同名覆盖 ✓）
+//
+// 几个实现要点（都是踩过才写下的 ✓）：
+//   · 侧栏用 **VBox + bg_color**（框架 2026-10-09 起容器自带底色 ✓）而不是 Panel：
+//     Panel 的子控件走**绝对坐标**、且 `Panel.set_pos()` 只挪自己 ⇒ 放进自动布局就错位 ✗
+//   · 卡片不复用「Panel + ImageView + Label」拼：同样会错位（见 sdl_card.leno 头部说明 ✓）
+//     ⇒ 用新加的 `Card` 控件（一个 Widget 自己画完图/角标/文字 ✓）
+//   · 网格列数自适应：`GridLayout.set_cols()`（本次补的运行时 setter ✓）+
+//     每帧用 ScrollView 的**实际宽度**反推列数（窗口缩放 ⇒ 列数立刻跟着变 ✓）
+//   · 筛选/搜索都是「同一批 Card 对象重新 add 进网格」（`grid.clear()` 只清布局，
+//     不 dispose 卡片 ⇒ 纹理不会来回重建/泄漏 ✓ —— 见 sdl_gridlayout.leno 的 clear ✓）
+//   · 闭包是**按值**捕获的（见 dashboard_sidebar.leno 的实测结论 ✓）⇒ 循环里
+//     `c.on_click(func() { open_movie(i) })` 每个卡片各记各的下标，不会互相串 ✓
+import "SDL3" as SDL3
+import "./movie_data.leno" as data
+import strings
+use SDL3.(Event, Renderer, Scancode, Window, TitleBar, Button, Label, Edit, Card,
+          HBox, VBox, ScrollView, GridLayout)
+use data.Movie
+
+// ==================== 尺寸 / 调色板 ====================
+const int WIN_W = 1180
+const int WIN_H = 780
+const int TB_H = 34          // 自绘标题栏高度
+const int HEADER_H = 62      // 顶栏高度
+const int SIDE_W = 200       // 侧栏宽度
+const int CARD_W = 172       // 卡片自然宽（网格会等分列宽后拉伸它 ✓）
+const int CARD_H = 300       // 卡片自然高（行高取该行最高子项 ⇒ 统一才对齐 ✓）
+const float CARD_ASPECT = 1.45   // 图片区 高/宽（2:3 竖版海报 ✓）
+const int GRID_PAD = 18      // 网格内边距
+const int GRID_GAP = 18      // 卡片间距
+const float BAR_W = 12.0     // ScrollView 滚动条宽（算内容宽用，与 sdl_scrollview 的 barW 一致 ✓）
+
+var C_BG      = #0E1116FF    // 内容区底（参考图的近黑深蓝 ✓）
+var C_PANEL   = #141821FF    // 侧栏 / 顶栏底
+var C_CARD    = #171C25FF    // 卡片底
+var C_CARD_HV = #232B38FF    // 卡片悬停底
+var C_ACCENT  = #F5A623FF    // 主色（橙色胶囊 = 选中项 ✓）
+var C_ACC_TXT = #20180AFF    // 主色上的文字（深色 ✓）
+var C_TXT     = #E9EDF4FF    // 主文字
+var C_TXT_DIM = #8B94A5FF    // 次要文字
+var C_NAV     = #B9C2D0FF    // 导航常规文字
+var C_NAV_HV  = #1E2531FF    // 导航悬停底
+var C_FIELD   = #1B202BFF    // 搜索框/次要按钮底
+var C_FIELD_B = #2A3242FF    // 搜索框描边
+var C_BAR     = #39404EFF    // 滚动条
+var C_TRANS   = #00000000    // 透明
+
+// 图标路径（只读随包资源 ⇒ 一律 res_dir() ✓ 见 movie_data.leno 的 poster_path/images_dir）
+func icon(string n): string {
+    return data.poster_path(n)
+}
+
+// ==================== 主结构 ====================
+struct Wall {
+    // ----- 控件 -----
+    Window win
+    TitleBar tb
+    HBox header
+    VBox side
+    ScrollView sv
+    GridLayout grid
+    Label titleLbl
+    Label totalLbl
+    Edit search
+    Button backBtn
+    Button filterBtn
+    Button moreBtn
+    HBox secBox
+    Label secLbl
+    Button searchBtn
+    Label gapLbl
+
+    // ----- 数据 -----
+    Array[Movie] movies = []
+    Array[Card] cards = []        // 与 movies **同序**（筛选时只换 add 名单 ⇒ 控件不重建 ✓）
+    Array[HBox] actRows = []      // 每张卡的「卡内操作」行（v2 容器化 ✓；只建一次、开关只挂/摘 ✓）
+    Button actBtn                // 顶栏「卡内操作」开关
+    bool cardActions = false
+    Array[Button] navs = []       // 分类导航按钮（含「更多」展开出来的 ✓）
+    Array[string] navNames = []   // 与 navs 同序的名字（判选中态用 ✓）
+    bool moreOpen = false
+    string curCat = ""            // 当前分类（"" = 全部，见 run() 里赋 data.CAT_ALL ✓）
+    string query = ""             // 搜索关键词（空 = 不筛 ✓）
+    int sortMode = 0              // 0 默认 / 1 评分优先 / 2 年份优先
+    int cols = 5                  // 当前网格列数（sync_cols 每帧校正 ✓）
+
+    // ----- 无头自检状态（见 self_test ✓）-----
+    string shotPath = ""
+    int shotAt = 10
+    int closeAt = 0
+    int clickSelAt = 0
+    int maxFrames = 0
+    int frames = 0
+
+    // ==================== 入口 ====================
+    func run() {
+        SDL3.ttfInit()
+        SDL3.setTheme(SDL3.darkTheme())      // 暗色（本文件颜色基本显式指定，主题只管兜底 ✓）
+        curCat = data.CAT_ALL
+
+        win = SDL3.createWindow({title: "影视海报墙 — LenoSDL3", w: WIN_W, h: WIN_H,
+                                 flags: 0x20,                     // RESIZABLE
+                                 icon: icon("app.png")})
+        if not win.ok { SDL3.ttfQuit(); return }
+        win.setMinSize(820, 560)
+
+        // ---- 自绘标题栏（win.add 后自动去掉系统标题栏边框 ✓）----
+        tb = SDL3.createTitleBar({title: "影视海报墙", height: TB_H, font_size: 13})
+        win.add(tb)
+        float tbh = tb.get_h()
+
+        // ---- 根布局：顶栏（固定高）+ 主体（撑满）----
+        VBox root = SDL3.createVBox({x: 0, y: 0, w: WIN_W, h: WIN_H - tbh,
+                                     padX: 0, padY: 0, spacing: 0})
+        win.setRootAt(root, 0, tbh)
+        build_header(root)
+
+        HBox body = SDL3.createHBox({x: 0, y: 0, w: WIN_W, h: WIN_H - tbh - HEADER_H,
+                                     padX: 0, padY: 0, spacing: 0})
+        root.add(body, {grow: 1, shrink: 1, align: 3})
+        build_side(body)
+        build_grid(body)
+
+        movies = data.movies()
+        make_cards()
+        rebuild_side()
+        rebuild()
+        update_total()
+        self_test()
+
+        // ---- 主循环 ----
+        win.run(
+            func(Event ev): bool { return on_event(ev) },
+            func(Renderer r) {
+                r.clearColor(C_BG)        // 画在控件之下（网格区没铺满时露出的就是它 ✓）
+                sync_cols()               // 每帧一次比较：窗口缩放 ⇒ 网格列数跟着变 ✓
+            }
+        )
+        SDL3.ttfQuit()
+    }
+
+    // ==================== 无头自检（照 dashboard_sidebar / cleaner_master 的惯例 ✓）====================
+    //   set SDL_VIDEODRIVER=dummy          # 无窗口跑（无头也能验布局 ✓）
+    //   set WALL_SHOT=%TEMP%\wall.png      # 存一张界面 PNG 后退出（核对界面正是靠它 ✓）
+    //   set WALL_AT=24                     # 第 24 帧再截（默认 10；前几帧布局才稳定 ✓）
+    //   set WALL_CAT=科幻 / WALL_CATIDX=6 / WALL_Q=星 / WALL_SORT=1   # 切分类（名字或下标）/ 搜索 / 换排序
+    //     ⚠ Windows 控制台传中文 env 可能被代码页折损 ⇒ 自检脚本请用 WALL_CATIDX ✓
+    //   set WALL_SIZE=900x600              # 启动就改窗口尺寸（验证列数自适应 ✓）
+    //   set WALL_ACTIONS=1                 # 启动就打开「卡内操作」（验证 Card 容器化 ✓）
+    //   set WALL_CLICKSEL=20               # 第 20 帧点第 1 张卡的「收藏」按钮（验证"不穿透整卡" ✓）
+    //   set WALL_CLOSE=1                   # 第 5 帧模拟点标题栏 ✕（验证"能退出" ✓，配合 FRAMES 兜底）
+    //   set WALL_FRAMES=40                 # 只跑 40 帧就退出（冒烟）
+    pri func self_test() {
+        var sh = _env("WALL_SHOT")
+        if sh != null { shotPath = _str(sh) }
+        var at = _env("WALL_AT")
+        if at != null { shotAt = _int(_str(at)) }
+        var ca = _env("WALL_CAT")
+        if ca != null { set_cat(_str(ca)) }
+        var ci = _env("WALL_CATIDX")     // 按下标切分类（纯 ASCII ⇒ 自检脚本不受控制台编码影响 ✓）
+        if ci != null {
+            int k = _int(_str(ci))
+            if k >= 0 and k < navNames.len() { set_cat(navNames[k]) }
+        }
+        var q = _env("WALL_Q")
+        if q != null {
+            search.set_text(_str(q))
+            query = _str(q)
+            rebuild(); update_total()
+        }
+        var sm = _env("WALL_SIZE")
+        if sm != null {
+            var parts = strings.split(_str(sm), "x")         // 形如 "900x600"（验列数自适应 ✓）
+            if parts.len() == 2 { win.setSize(_int(parts[0]), _int(parts[1])) }
+        }
+        var so = _env("WALL_SORT")
+        if so != null { for 0 : _int(_str(so)) to i { on_filter() } }   // 走同一条路径（按钮文案一起同步 ✓）
+        var cl = _env("WALL_CLOSE")
+        if cl != null { closeAt = _int(_str(cl)) }       // >0 ⇒ 该帧模拟点标题栏 ✕ ✓
+        var ac = _env("WALL_ACTIONS")
+        if ac != null and _int(_str(ac)) > 0 { set_card_actions(true) }
+        var cs = _env("WALL_CLICKSEL")
+        if cs != null { clickSelAt = _int(_str(cs)) }    // >0 ⇒ 该帧点第 0 张卡的「收藏」按钮 ✓
+        var fr = _env("WALL_FRAMES")
+        if fr != null { maxFrames = _int(_str(fr)) }
+        if shotPath != "" or maxFrames > 0 {
+            // 截图/自动退出必须放 setOverlay（**在控件之上** ⇒ 读到的像素含界面 ✓）；
+            // 放 onRender 回调里只会拿到"只有底色"的空白帧 ✗（见 dashboard_sidebar 的踩坑记录 ✓）
+            win.setOverlay(func(Renderer r) { selftest_overlay(r) })
+        }
+    }
+
+    pri func selftest_overlay(Renderer r) {
+        frames = frames + 1
+        // 模拟点标题栏 ✕（窗口右上角那一格 ✓）：验证"关得掉" —— 没接 is_close_requested 时
+        //   这里会一直跑到 WALL_FRAMES 才退（日志里就看得出 ✗ ✓）
+        if closeAt > 0 and frames == closeAt {
+            var wsz = win.getSize()
+            bool cok = SDL3.testClickAt(win.getID(), _float(wsz.w - 20), 17.0)
+            print("[墙] 注入点击标题栏 ✕ ok=" + _str(cok))
+        }
+        // 容器化的关键断言：点**卡内按钮**应只触发按钮自己的回调，
+        //   绝不顺带触发整卡 on_click（后者会打印 "[海报墙] 选中：…" ⇒ 日志里看得出来 ✓）
+        if clickSelAt > 0 and frames == clickSelAt and cards.len() > 0 {
+            Array[float] rct = cards[0].content_rect()   // [x, y, w, h]（窗口绝对坐标 ✓）
+            // `_float(...)`：纯为兼容"符号表还没刷新的 LSP"（它会把返回值当 any ✗ 见文末备注）
+            float px = _float(rct[0]) + 93.0             // 第 2 个按钮「收藏」的中心（58 + 6 + 58/2 ✓）
+            float py = _float(rct[1]) + _float(rct[3]) / 2.0
+            bool cok2 = SDL3.testClickAt(win.getID(), px, py)
+            print("[墙] 注入点击卡内『收藏』(" + _str(px) + ", " + _str(py) + ") ok=" + _str(cok2))
+        }
+        if clickSelAt > 0 and frames == clickSelAt + 3 and cards.len() > 0 {
+            print("[墙] 点卡内按钮后：card0.selected=" + _str(cards[0].is_selected()))
+        }
+        if shotPath != "" and frames >= shotAt {
+            var sz = win.getSize()
+            var s = r.readPixelsAt(0, 0, sz.w, sz.h)
+            if s != null {
+                bool ok = SDL3.saveImagePNG(s, shotPath)
+                print("[墙] 截图 " + shotPath + " ok=" + _str(ok) +
+                      "  分类=" + curCat + " 命中=" + _str(collect().len()) + " 列=" + _str(cols))
+            } else {
+                print("[墙] 读像素失败：" + SDL3.getError())
+            }
+            _exit(0)
+        }
+        if maxFrames > 0 and frames >= maxFrames {
+            print("[墙] frames=" + _str(frames) + " 命中=" + _str(collect().len()) + " 列=" + _str(cols))
+            _exit(0)
+        }
+    }
+
+    // ==================== 事件 ====================
+    pri func on_event(Event ev): bool {
+        if ev.isQuit() or ev.isWindowClose() { return false }
+        // ★ 自绘标题栏的 ✕ **必须自己接**：TitleBar 只把 `closeRequested` 置真，
+        //   没人查它就等于"点了 ✕ 毫无反应" ✗（见 sdl_titlebar.leno 头部"默认行为"那条 ✓；
+        //   file_manager / IDE布局 / sdl_dialog 都是这么接的 ✓）
+        if tb._loaded and tb.is_close_requested() {
+            tb.clear_close_request()
+            print("[墙] 标题栏 ✕ ⇒ 退出")
+            return false
+        }
+        if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
+        if ev.isWindowResized() { sync_cols() }
+        return true
+    }
+
+    // 网格列数 = 用 ScrollView 的**实际宽度**反推（卡片宽 = 列宽，尽量贴近 CARD_W ✓）
+    pri func sync_cols() {
+        float svw = sv.get_w()
+        if svw < 120.0 { return }                      // 首帧前尺寸还没排 ⇒ 不猜 ✓
+        float innerW = svw - BAR_W - 2.0 * _float(GRID_PAD)
+        int want = _int((innerW + _float(GRID_GAP)) / (_float(CARD_W) + _float(GRID_GAP)))
+        if want < 2 { want = 2 }
+        if want != cols {
+            cols = want
+            grid.set_cols(want)
+            SDL3.markFrameRedraw()
+        }
+    }
+
+    // ==================== 顶栏 ====================
+    pri func build_header(VBox root) {
+        header = SDL3.createHBox({x: 0, y: 0, w: WIN_W, h: HEADER_H,
+                                  padX: 14, padY: 0, spacing: 10, bg_color: C_PANEL})
+        root.add(header, {grow: 0, shrink: 0, basis: HEADER_H, align: 3})
+
+        // 返回（参考图左上角 ✓）：清空搜索 + 回到「全部」
+        backBtn = SDL3.createButton({text: "", w: 34, h: 34, radius: 8, border: false, shadow: false,
+                                     bg_color: C_TRANS, hover_color: C_NAV_HV,
+                                     image_path: icon("chevron_left.png"), image_size: 18,
+                                     image_tint: C_TXT_DIM, tip: "返回（清空筛选）"})
+        backBtn.on_click(func() { go_home() })
+        header.add(backBtn, {grow: 0, shrink: 0, basis: 34, align: 1})
+
+        titleLbl = SDL3.createLabel({text: "电影", font_size: 19, font_style: SDL3.STYLE_BOLD,
+                                     text_color: C_TXT})
+        header.add(titleLbl, {grow: 0, shrink: 0, align: 1})
+
+        totalLbl = SDL3.createLabel({text: "（共 0 部）", font_size: 13, text_color: C_TXT_DIM})
+        header.add(totalLbl, {grow: 0, shrink: 0, align: 1})
+
+        // 中间弹性空隙（把搜索/筛选推到右边 ✓）
+        header.add(SDL3.createLabel({text: ""}), {grow: 1, shrink: 1, align: 1})
+
+        // 搜索框（输入即时筛选 ✓）
+        search = SDL3.createEdit({w: 210, h: 32, font_size: 13, radius: 16,
+                                  placeholder: "搜索片名 / 分类", bg_color: C_FIELD,
+                                  border_color: C_FIELD_B, text_color: C_TXT})
+        search.on_change(func() { on_search() })
+        header.add(search, {grow: 0, shrink: 0, basis: 210, align: 1})
+
+        // 「菜单键筛选」：点一下切换排序（默认 → 评分优先 → 年份优先 ✓）
+        filterBtn = SDL3.createButton({text: "菜单键筛选", w: 124, h: 32, font_size: 13,
+                                       align: "left", padding: 10.0, radius: 8,
+                                       bg_color: C_FIELD, hover_color: C_NAV_HV, text_color: C_TXT,
+                                       image_path: icon("filter.png"), image_size: 14,
+                                       image_tint: C_ACCENT, border: false, shadow: false,
+                                       tip: "切换排序：默认 / 评分优先 / 年份优先"})
+        filterBtn.on_click(func() { on_filter() })
+        header.add(filterBtn, {grow: 0, shrink: 0, basis: 124, align: 1})
+
+        // ★ 「卡内操作」：演示 **Card 容器化**（给每张卡挂一行「播放 / 收藏」）
+        //   默认关 ⇒ 界面与参考图一致；打开 ⇒ 卡片变高、图片让位（不变式 ① 的实拍验证 ✓）
+        actBtn = SDL3.createButton({text: "卡内操作", w: 116, h: 32, font_size: 13, align: "left",
+                                    padding: 10.0, radius: 8, bg_color: C_FIELD, hover_color: C_NAV_HV,
+                                    text_color: C_TXT, image_path: icon("play.png"), image_size: 13,
+                                    image_tint: C_ACCENT, border: false, shadow: false,
+                                    tip: "在卡片底部挂一行按钮（验证 Card.set_content ✓）"})
+        actBtn.on_click(func() { set_card_actions(not cardActions) })
+        header.add(actBtn, {grow: 0, shrink: 0, basis: 116, align: 1})
+    }
+
+    // ==================== 侧栏 ====================
+    pri func build_side(HBox body) {
+        side = SDL3.createVBox({x: 0, y: 0, w: SIDE_W, h: 400,
+                                padX: 12, padY: 14, spacing: 4, bg_color: C_PANEL})
+        body.add(side, {grow: 0, shrink: 0, basis: SIDE_W, align: 3})
+
+        // 「来源选择」小标题：漏斗图标 + 文字（参考图左侧顶部就是这样 ✓）
+        secLbl = SDL3.createLabel({text: "来源选择", font_size: 12, text_color: #6E7789FF})
+        secBox = SDL3.createHBox({x: 0, y: 0, w: 100, h: 20, padX: 8, padY: 0, spacing: 5})
+        secBox.add(SDL3.createImageView({w: 13, h: 13, image_path: icon("funnel.png"),
+                                         image_tint: #6E7789FF}), {grow: 0, shrink: 0, basis: 13, align: 1})
+        secBox.add(secLbl, {grow: 1, shrink: 1, align: 1})
+        gapLbl = SDL3.createLabel({text: ""})
+
+        // 「搜索」：点了把焦点丢给顶栏的搜索框（参考图里它是导航第一项 ✓）
+        searchBtn = SDL3.createButton({text: "搜索", font_size: 14, align: "left", padding: 14.0,
+                                       radius: 8, image_path: icon("search.png"), image_size: 15,
+                                       image_tint: C_NAV})
+        style_nav(searchBtn, false)
+        searchBtn.on_click(func() { search.focus(); SDL3.markFrameRedraw() })
+
+        // 「更多」：展开/收起额外分类（图标随状态换 ✓）
+        moreBtn = SDL3.createButton({text: "更多分类", font_size: 13, align: "left", padding: 14.0,
+                                     radius: 8, image_path: icon("chevron_down.png"), image_size: 15,
+                                     image_tint: C_NAV})
+        style_nav(moreBtn, false)
+        moreBtn.on_click(func() { toggle_more() })
+
+        // 分类按钮（先建好 ⇒ 展开/收起只改「加不加进布局」✓）
+        navs = []
+        navNames = []
+        new_nav(data.CAT_ALL)
+        var base = data.cats_base()
+        for 0 : base.len() - 1 to i { new_nav(base[i]) }
+        var more = data.cats_more()
+        for 0 : more.len() - 1 to i { new_nav(more[i]) }
+    }
+
+    // 建一个分类按钮并登记（**不**进布局 —— 由 rebuild_side 决定谁上场 ✓）
+    pri func new_nav(string name) {
+        Button b = SDL3.createButton({text: name, font_size: 14, align: "left", padding: 14.0, radius: 8})
+        style_nav(b, name == curCat)
+        b.on_click(func() { set_cat(name) })     // 按值捕获 ⇒ 每个按钮各记各的名字 ✓
+        navs.add(b)
+        navNames.add(name)
+    }
+
+    // 侧栏内容 = 小标题 + 搜索 + 分类（常驻 / 展开）+ 弹性空隙 + 「更多」（**固定末尾** ✓）
+    //   ⚠ VBox/HBox **只能 append**（没有 insert）⇒ 展开的分类要排在「更多」**上面**，
+    //     只能整条重排（`clear()` + 按顺序重新 add ✓ —— clear 只清布局数组，不 dispose 子控件 ✓）
+    pri func rebuild_side() {
+        side.clear()
+        side.add(secBox, {grow: 0, shrink: 0, basis: 26, align: 3})
+        side.add(searchBtn, {grow: 0, shrink: 0, basis: 40, align: 3})
+
+        int keep = 1 + data.cats_base().len()      // 「全部」+ 常驻分类
+        for 0 : keep - 1 to i { side.add(navs[i], {grow: 0, shrink: 0, basis: 40, align: 3}) }
+        if moreOpen {
+            for keep : navs.len() - 1 to i { side.add(navs[i], {grow: 0, shrink: 0, basis: 40, align: 3}) }
+        }
+
+        side.add(gapLbl, {grow: 1, shrink: 1, align: 3})    // 弹性空隙 ⇒ 「更多」贴底 ✓
+        side.add(moreBtn, {grow: 0, shrink: 0, basis: 36, align: 3})
+    }
+
+    // 导航项样式：选中 = 橙色胶囊 + 深色字；未选中 = 透明底 + 浅灰字（悬停有底 ✓）
+    //   初始化与切换都走这里 ⇒ 只有一处定义，不会漂移 ✓
+    pri func style_nav(Button b, bool active) {
+        b.set_background(true)
+        b.set_border(false)
+        b.set_shadow(false)
+        if active {
+            b.set_bg_color(C_ACCENT)
+            b.set_hover_color(SDL3.brighten(C_ACCENT, 20))
+            b.set_text_color(C_ACC_TXT)
+        } else {
+            b.set_bg_color(C_TRANS)
+            b.set_hover_color(C_NAV_HV)
+            b.set_text_color(C_NAV)
+        }
+    }
+
+    pri func toggle_more() {
+        moreOpen = not moreOpen
+        sync_more_btn()
+        rebuild_side()
+        SDL3.markFrameRedraw()
+    }
+
+    pri func sync_more_btn() {
+        if moreOpen { moreBtn.set_image(icon("chevron_up.png")); moreBtn.set_text("收起分类") }
+        else { moreBtn.set_image(icon("chevron_down.png")); moreBtn.set_text("更多分类") }
+    }
+
+    // ==================== 右侧网格 ====================
+    pri func build_grid(HBox body) {
+        sv = SDL3.createScrollView({x: 0, y: 0, w: 900, h: 500, fit_w: true,
+                                    step: 64, smooth: true, bg_color: C_BG,
+                                    border: false, bar_color: C_BAR})
+        body.add(sv, {grow: 1, shrink: 1, align: 3})
+
+        grid = SDL3.createGridLayout({x: 0, y: 0, w: 900, h: 500, cols: cols,
+                                      spacing: GRID_GAP, padX: GRID_PAD, padY: GRID_PAD})
+        sv.set_content(grid)     // ★ 内容控件用 createXxx（不要 win.addXxx ⇒ 会双重绘制/处理 ✗）
+    }
+
+    pri func make_cards() {
+        cards = []
+        actRows = []
+        for 0 : movies.len() - 1 to i {
+            Movie m = movies[i]
+            Card c = SDL3.createCard({x: 0, y: 0, w: CARD_W, h: CARD_H,
+                                      image_path: data.poster_path(m.file),
+                                      image_aspect: CARD_ASPECT,
+                                      title: m.title,
+                                      subtitle: m.year + " / " + m.cat,
+                                      badge: m.score, badge_pos: 0,      // 0 = 右上（v2 可配 ✓）
+                                      image_radius: 10,                  // 图片自身圆角（v2.1 ✓ 不再把卡片圆角盖掉）
+                                      radius: 10,
+                                      border: true, border_color: #232A36FF,   // 常态近乎看不见 ✓
+                                      border_selected_color: C_ACCENT,         // 选中 ⇒ 橙色描边（selected 态 ✓）
+                                      content_h: 32, content_pad: 6, gap: 6,   // 容器化预留（先不挂 ✓）
+                                      hover_lift: 3.0,                   // 悬停视觉上移（只动绘制 ✓）
+                                      bg_color: C_CARD, hover_color: C_CARD_HV,
+                                      text_color: C_TXT, subtitle_color: C_TXT_DIM,
+                                      badge_bg: #000000B0, badge_color: #F5C451FF,
+                                      tip: m.title + "（" + m.year + "）评分 " + m.score})
+            // ★ 多角标（v2.1 ✓）：最新年份的片子左上角再挂一个「新」
+            if m.year == "2026" {
+                c.add_badge({text: "新", pos: 1, size: 11.0, bg: #C8102EFF, color: #FFFFFFFF})
+            }
+            c.on_click(func() { on_card_click(i) })
+            cards.add(c)
+            actRows.add(build_actions(i))     // 只建一次，开关只负责挂/摘 ✓（避免反复 new 泄漏）
+        }
+    }
+
+    // 卡内操作行（容器化的实拍件 ✓）：播放 + 收藏
+    //   ⚠ 这两个按钮的点击**不会**顺带触发整卡 on_click（见 sdl_card.leno 的 inBody 闸门 ✓）
+    pri func build_actions(int idx): HBox {
+        HBox row = SDL3.createHBox({x: 0, y: 0, w: 100, h: 32, padX: 0, padY: 0, spacing: 6})
+        Button pb = SDL3.createButton({text: "播放", w: 58, h: 26, font_size: 12, radius: 6,
+                                       bg_color: C_ACCENT, text_color: C_ACC_TXT,
+                                       border: false, shadow: false, tip: "打开详情（这里就是挂点 ✓）"})
+        pb.on_click(func() { open_movie(idx) })
+        row.add(pb, {grow: 0, shrink: 0, basis: 58, align: 1})
+        Button fb = SDL3.createButton({text: "收藏", w: 58, h: 26, font_size: 12, radius: 6,
+                                       bg_color: C_FIELD, hover_color: C_NAV_HV, text_color: C_TXT,
+                                       border: false, shadow: false, tip: "选中 / 取消选中（selected 态 ✓）"})
+        fb.on_click(func() { toggle_card_sel(idx) })
+        row.add(fb, {grow: 0, shrink: 0, basis: 58, align: 1})
+        row.add(SDL3.createLabel({text: ""}), {grow: 1, shrink: 1, align: 1})
+        return row
+    }
+
+    // 开/关「卡内操作」：卡片变高（图片让位）、内容行挂上/摘下
+    //   ⚠ 卡片高度变了 ⇒ 必须让 GridLayout **重新捕获**行高：`grid.clear()` 后再 add（见 rebuild ✓）
+    pri func set_card_actions(bool on) {
+        cardActions = on
+        actBtn.set_text(if on then "收起操作" else "卡内操作")
+        for 0 : cards.len() - 1 to i {
+            if on {
+                cards[i].set_size(CARD_W, CARD_H + 38)
+                cards[i].set_content(actRows[i])
+            } else {
+                cards[i].clear_content()
+                cards[i].set_size(CARD_W, CARD_H)
+            }
+        }
+        rebuild()
+        SDL3.markFrameRedraw()
+    }
+
+    // 单选：点卡片本体 = 选中它（其余取消）+ 打印（详情页的挂点）
+    pri func on_card_click(int idx) {
+        for 0 : cards.len() - 1 to i { cards[i].set_selected(i == idx) }
+        open_movie(idx)
+    }
+    pri func toggle_card_sel(int idx) {
+        cards[idx].set_selected(not cards[idx].is_selected())
+    }
+
+    // ==================== 筛选 / 排序 ====================
+    pri func match(Movie m): bool {
+        if curCat != data.CAT_ALL and m.cat != curCat { return false }
+        if query != "" {
+            // 片名 / 分类 / 简介 / 年份 都能搜（年份是纯数字 ⇒ 输入 "2024" 也能筛出来 ✓）
+            if strings.has(m.title, query) or strings.has(m.cat, query)
+               or strings.has(m.desc, query) or strings.has(m.year, query) {
+                return true
+            }
+            return false
+        }
+        return true
+    }
+
+    // 命中下标（按当前排序 ✓）。★ 数值排序用 `_float(字符串)`：把 "9.1" 解析成浮点
+    //   ⇒ 比字符串比较可靠（"10.0" < "9.1" 那种坑不会出现 ✓；`_float` 支持字符串 ✓）
+    pri func collect(): Array[int] {
+        Array[int] idx = []
+        for 0 : movies.len() - 1 to i { if match(movies[i]) { idx.add(i) } }
+        if sortMode != 0 { sort_idx(idx) }
+        return idx
+    }
+
+    // 插入排序（数据量小 ⇒ 够用 ✓）。sortMode 1 = 评分降序 / 2 = 年份降序
+    pri func sort_idx(Array[int] idx) {
+        int n = idx.len()
+        for 1 : n - 1 to i {
+            int key = idx[i]
+            float kv = if sortMode == 1 then _float(movies[key].score) else _float(movies[key].year)
+            int j = i - 1
+            while j >= 0 {
+                float jv = if sortMode == 1 then _float(movies[idx[j]].score) else _float(movies[idx[j]].year)
+                if jv >= kv { break }
+                idx[j + 1] = idx[j]
+                j = j - 1
+            }
+            idx[j + 1] = key
+        }
+    }
+
+    // 按命中名单重排网格（只换 add 名单 ⇒ 卡片对象/纹理都复用 ✓）
+    pri func rebuild() {
+        grid.clear()
+        Array[int] idx = collect()
+        for 0 : idx.len() - 1 to i { grid.add(cards[idx[i]], {align: 3}) }
+        sv.set_scroll(0.0, 0.0)     // 换筛选后回到顶部（否则停在"上一批"的位置 ✓）
+        SDL3.markFrameRedraw()
+    }
+
+    pri func update_total() {
+        int n = collect().len()
+        if curCat == data.CAT_ALL { totalLbl.set_text("（共 " + _str(n) + " 部）") }
+        else { totalLbl.set_text("（" + curCat + " / " + _str(n) + " 部）") }
+        if query != "" { totalLbl.set_text(totalLbl.get_text() + "  搜索：" + query) }
+    }
+
+    // ==================== 交互回调 ====================
+    pri func set_cat(string c) {
+        curCat = c
+        // 选中的分类若藏在「更多」里 ⇒ 自动展开（否则侧栏上**看不到任何选中态** ✗）
+        if not moreOpen {
+            var more = data.cats_more()
+            for 0 : more.len() - 1 to i {
+                if more[i] == c {
+                    moreOpen = true
+                    sync_more_btn()
+                    rebuild_side()
+                    break
+                }
+            }
+        }
+        for 0 : navs.len() - 1 to i { style_nav(navs[i], navNames[i] == curCat) }
+        rebuild()
+        update_total()
+    }
+
+    pri func on_search() {
+        query = strings.trim(search.get_text())
+        rebuild()
+        update_total()
+    }
+
+    pri func on_filter() {
+        sortMode = (sortMode + 1) % 3
+        if sortMode == 0 { filterBtn.set_text("菜单键筛选") }
+        eif sortMode == 1 { filterBtn.set_text("评分优先") }
+        else { filterBtn.set_text("年份优先") }
+        rebuild()
+        SDL3.markFrameRedraw()
+    }
+
+    pri func go_home() {
+        search.set_text("")
+        query = ""
+        sortMode = 0
+        filterBtn.set_text("菜单键筛选")
+        set_cat(data.CAT_ALL)
+    }
+
+    // 点卡片 —— 这里就是「打开详情页 / 弹播放窗」的挂点（本示例只打印，界面与参考图一致 ✓）
+    pri func open_movie(int idx) {
+        if idx < 0 or idx >= movies.len() { return }
+        Movie m = movies[idx]
+        print("[海报墙] 选中：" + m.title + "（" + m.year + " / " + m.cat + "）评分 " + m.score)
+        print("         " + m.desc)
+    }
+}
+
+// ==================== 程序入口 ====================
+main() {
+    Wall w = new Wall()
+    w.run()
+}
