@@ -418,3 +418,274 @@ export func aes128_cbc_encrypt_bytes(Array[int] key16, Array[int] iv16, Array[in
     return out
 }
 
+// ============================================================================
+// 追加（2026-10-14）：AES-256 与 GCM（AEAD）
+//
+// 为什么加：现在不少客户端的"落盘加密"用的是 **AES-256-GCM + 自定义 AAD**
+//   （如 WorkBuddy 桌面端的凭据信封 `sym-v1`：密钥 32 字节、nonce 12 字节、
+//   AAD = WB-AAD\0 | 0x01 | lp('WBEV1') | lp('sym-v1') | ... | lp(keyId) | 2,0,0）。
+//   本库原先只有 AES-128（ECB 单块 + CBC）⇒ 遇到这类信封只能去借 Node/openssl ✗。
+//
+// 组织方式沿用本文件既有约定（核 + 模式）：上面是块核与 CBC，这里是**参数化的块核（Nk=4/8）
+//   与 GCM**。AES-128 那三个老函数（`key_expansion` / `aes_encrypt_block` / `aes_decrypt_block`）
+//   **逐字未动** —— 它们被现有调用方依赖且已过向量校验，不做"顺手重构"。
+// ============================================================================
+
+func block16(int fill):Array[int] {
+    var out = []
+    for 0:15 to i { out.add(_uint8(fill)) }
+    return out
+}
+
+// ---- 通用密钥扩展：Nk = 4（AES-128，Nr=10）/ 8（AES-256，Nr=14）----
+export func key_expansion_n(Array[int] key, int nk):Array[int] {
+    int total = 4 * (nk + 7)          // Nr = Nk + 6；轮密钥字数 = 4*(Nr+1)
+    var w = []
+    for 0:4 * nk - 1 to i { w.add(_uint8(key[i])) }
+    int i = nk
+    while i < total {
+        int t0 = w[(i - 1) * 4]
+        int t1 = w[(i - 1) * 4 + 1]
+        int t2 = w[(i - 1) * 4 + 2]
+        int t3 = w[(i - 1) * 4 + 3]
+        if i % nk == 0 {
+            // SubWord(RotWord(temp)) ^ Rcon[i/Nk]：旋转与替换的执行顺序可交换，结果一致
+            int keep = t0
+            t0 = SBOX[t1] ^ RCON[i / nk - 1]
+            t1 = SBOX[t2]
+            t2 = SBOX[t3]
+            t3 = SBOX[keep]
+        } else if nk > 6 and i % nk == 4 {
+            // ⚠ AES-256 独有分支：**不做 RotWord**，只做 SubWord。
+            //   漏掉它，密钥表从第 5 个字起全错 —— 加密看着"能跑"，解密只会静默出错值
+            t0 = SBOX[t0]; t1 = SBOX[t1]; t2 = SBOX[t2]; t3 = SBOX[t3]
+        }
+        w.add(w[(i - nk) * 4] ^ t0)
+        w.add(w[(i - nk) * 4 + 1] ^ t1)
+        w.add(w[(i - nk) * 4 + 2] ^ t2)
+        w.add(w[(i - nk) * 4 + 3] ^ t3)
+        i = i + 1
+    }
+    return w
+}
+
+// 按轮数加解密一个块（AES-128 是 nr=10，AES-256 是 nr=14）
+export func encrypt_block_nr(Array[int] plaintext, Array[int] w, int nr):Array[int] {
+    var state = add_round_key(plaintext, get_round_key(w, 0))
+    for 1:nr - 1 to round {
+        state = sub_bytes(state)
+        state = shift_rows(state)
+        state = mix_columns(state)
+        state = add_round_key(state, get_round_key(w, round))
+    }
+    state = sub_bytes(state)
+    state = shift_rows(state)
+    state = add_round_key(state, get_round_key(w, nr))
+    return state
+}
+
+export func decrypt_block_nr(Array[int] ciphertext, Array[int] w, int nr):Array[int] {
+    var state = add_round_key(ciphertext, get_round_key(w, nr))
+    for nr - 1:1:-1 to round {
+        state = inv_shift_rows(state)
+        state = inv_sub_bytes(state)
+        state = add_round_key(state, get_round_key(w, round))
+        state = inv_mix_columns(state)
+    }
+    state = inv_shift_rows(state)
+    state = inv_sub_bytes(state)
+    state = add_round_key(state, get_round_key(w, 0))
+    return state
+}
+
+// AES-256 单块（32 字节密钥）
+export func aes256_encrypt_block(Array[int] plaintext, Array[int] key32):Array[int] {
+    return encrypt_block_nr(plaintext, key_expansion_n(key32, 8), 14)
+}
+
+export func aes256_decrypt_block(Array[int] ciphertext, Array[int] key32):Array[int] {
+    return decrypt_block_nr(ciphertext, key_expansion_n(key32, 8), 14)
+}
+
+// ==================== GCM（NIST SP 800-38D）====================
+// 位序约定（最容易写错的一处）：GCM 把 16 字节块当**大端位串**——"第 0 位"是**字节 0 的最高位**。
+// 下面的乘法用规范里的右移型参考算法（而不是常见于软件的"小端整数"版）：
+//     Z = 0，V = X
+//     对 Y 的每一位（从最高位到最低位）：该位为 1 ⇒ Z ^= V；V 右移一位，移出的是 1 ⇒ V ^= R
+//     R = 0xe1 || 0^120
+// 用错位序的典型症状：空输入/单块能对上，一多块就全错（正好会漏掉本项目要解的 1KB+ 信封）。
+
+// 16 字节块整体右移 1 位（跨字节借位）
+func gcm_shr1(Array[int] blk):Array[int] {
+    var out = []
+    for 0:15 to i {
+        int carried = 0
+        if i > 0 { carried = blk[i - 1] & 1 }
+        out.add(_uint8((blk[i] >> 1) | (carried << 7)))
+    }
+    return out
+}
+
+// GF(2^128) 乘法（GCM 口径）
+export func gcm_mul(Array[int] x, Array[int] y):Array[int] {
+    var z = block16(0)
+    var v = x.copy()
+    for 0:127 to bit {
+        int mask = 0x80 >> (bit % 8)
+        if (y[bit / 8] & mask) != 0 {
+            for 0:15 to i { z[i] = z[i] ^ v[i] }
+        }
+        int carryOut = v[15] & 1
+        v = gcm_shr1(v)
+        if carryOut != 0 { v[0] = v[0] ^ 0xe1 }
+    }
+    return z
+}
+
+// 计数器自增：只动最后 4 个字节（大端、模 2^32）
+func gcm_inc32(Array[int] ctr):Array[int] {
+    var out = ctr.copy()
+    int i = 15
+    while i >= 12 {
+        if out[i] == 255 {
+            out[i] = 0
+            i = i - 1
+        } else {
+            out[i] = out[i] + 1
+            return out
+        }
+    }
+    return out                      // 4 字节全 0xff ⇒ 回绕成 0（规范要求模 2^32）
+}
+
+// GHASH_H(data)：按 16 字节分块（末块补零），逐块异或后做一次 GF(2^128) 乘法
+export func ghash(Array[int] h, Array[int] data):Array[int] {
+    var y = block16(0)
+    int i = 0
+    while i < data.len() {
+        for 0:15 to j {
+            if i + j < data.len() { y[j] = y[j] ^ data[i + j] }
+        }
+        y = gcm_mul(y, h)
+        i = i + 16
+    }
+    return y
+}
+
+// GCTR：对 data 逐块做 CTR（末块只取需要的字节数，**不补零**）
+func gcm_ctr(Array[int] w, int nr, Array[int] icb, Array[int] data):Array[int] {
+    var out = []
+    var ctr = icb.copy()
+    int i = 0
+    while i < data.len() {
+        Array[int] ks = encrypt_block_nr(ctr, w, nr)
+        for 0:15 to j {
+            if i + j < data.len() { out.add(_uint8(data[i + j] ^ ks[j])) }
+        }
+        ctr = gcm_inc32(ctr)
+        i = i + 16
+    }
+    return out
+}
+
+// 84 位长度的大端编码（8 字节；GCM 用**位**数）
+func gcm_len64(int bytes):string {
+    int v = bytes * 8
+    var b = []
+    for 0:7 to i { b.add(_uint8(v >> (8 * (7 - i)))) }
+    return block_to_str(b)
+}
+
+// J0：12 字节 nonce ⇒ nonce || 0x00000001（推荐用法，官方实现都走这条）；
+//     其余长度按规范用 GHASH 构造（兼容老实现，但**性能与安全性都不如 12 字节**）
+func gcm_j0(Array[int] h, Array[int] nonce):Array[int] {
+    if nonce.len() == 12 {
+        var j0 = []
+        for 0:11 to i { j0.add(nonce[i]) }
+        j0.add(0); j0.add(0); j0.add(0); j0.add(1)
+        return j0
+    }
+    // GHASH_H(IV || 0^s || 0^64 || [len(IV)]_64)：
+    //   先把 IV 用零补到 16 的整数倍（s 个零），再补 **8 字节零**，最后 8 字节是 IV 的**位**长度。
+    //   ⚠ 这里补的是 8 字节零、不是 16 —— 补错 8 个字节时整块不再对齐 16，
+    //     而且 GHASH 的分块边界全错 ⇒ 密文与标签一起错（且 12 字节 nonce 的路径看不出问题）
+    var buf = block_to_str(nonce)
+    while buf.byte_len() % 16 != 0 { buf = buf + strings.char(0) }
+    var zero8 = []
+    for 0:7 to i { zero8.add(0) }
+    buf = buf + block_to_str(zero8) + gcm_len64(nonce.len())
+    return ghash(h, strings.to_bytes(buf))
+}
+
+// S = GHASH_H(A || pad || C || pad || [len(A)]_64 || [len(C)]_64)
+func gcm_s(Array[int] h, Array[int] aad, Array[int] ct):Array[int] {
+    var buf = block_to_str(aad)
+    while buf.byte_len() % 16 != 0 { buf = buf + strings.char(0) }
+    buf = buf + block_to_str(ct)
+    while buf.byte_len() % 16 != 0 { buf = buf + strings.char(0) }
+    buf = buf + gcm_len64(aad.len()) + gcm_len64(ct.len())
+    return ghash(h, strings.to_bytes(buf))
+}
+
+// 认证标签（16 字节）
+func gcm_tag(Array[int] key, Array[int] nonce, Array[int] aad, Array[int] ct):Array[int] {
+    int nk = 4
+    if key.len() == 32 { nk = 8 }
+    else if key.len() != 16 { throw "GCM 密钥必须是 16 或 32 字节" }
+    int nr = nk + 6
+    Array[int] w = key_expansion_n(key, nk)
+    Array[int] h = encrypt_block_nr(block16(0), w, nr)          // H = E_K(0^128)
+    Array[int] j0 = gcm_j0(h, nonce)
+    Array[int] s = gcm_s(h, aad, ct)
+    Array[int] ek = encrypt_block_nr(j0, w, nr)                 // E_K(J0)
+    var tag = []
+    for 0:15 to i { tag.add(_uint8(ek[i] ^ s[i])) }
+    return tag
+}
+
+// ---- 对外接口（seal = 密文 || 标签；open = 校验标签后解出明文）----
+export func aes_gcm_seal(Array[int] key, Array[int] nonce, Array[int] aad, Array[int] pt):Array[int] {
+    int nk = 4
+    if key.len() == 32 { nk = 8 }
+    else if key.len() != 16 { throw "GCM 密钥必须是 16 或 32 字节" }
+    int nr = nk + 6
+    Array[int] w = key_expansion_n(key, nk)
+    Array[int] h = encrypt_block_nr(block16(0), w, nr)
+    Array[int] j0 = gcm_j0(h, nonce)
+    Array[int] ct = gcm_ctr(w, nr, gcm_inc32(j0), pt)
+    Array[int] tag = gcm_tag(key, nonce, aad, ct)
+    var out = ct.copy()
+    for 0:15 to i { out.add(tag[i]) }
+    return out
+}
+
+// 标签不符一律抛错（**绝不**返回"部分明文"——AEAD 的语义就是不认证不交付）
+export func aes_gcm_open(Array[int] key, Array[int] nonce, Array[int] aad, Array[int] sealed):Array[int] {
+    if sealed.len() < 16 { throw "GCM 数据太短：缺少认证标签" }
+    var ct = []
+    for 0:sealed.len() - 17 to i { ct.add(sealed[i]) }
+    var tag = []
+    for sealed.len() - 16:sealed.len() - 1 to i { tag.add(sealed[i]) }
+    return gcm_open_parts(key, nonce, aad, ct, tag)
+}
+
+// 信封把"密文 / 标签"分成两个字段时（如 WorkBuddy 的 sym-v1）用这个
+export func gcm_open_parts(Array[int] key, Array[int] nonce, Array[int] aad, Array[int] ct, Array[int] tag):Array[int] {
+    Array[int] want = gcm_tag(key, nonce, aad, ct)
+    int diff = 0
+    for 0:15 to i { diff = diff | (want[i] ^ tag[i]) }         // 不做提前返回，避免把比较时间泄露成先验信息
+    if diff != 0 { throw "GCM 认证失败：密文/标签/AAD 不匹配" }
+    int nk = 4
+    if key.len() == 32 { nk = 8 }
+    int nr = nk + 6
+    Array[int] w = key_expansion_n(key, nk)
+    Array[int] h = encrypt_block_nr(block16(0), w, nr)
+    Array[int] j0 = gcm_j0(h, nonce)
+    return gcm_ctr(w, nr, gcm_inc32(j0), ct)
+}
+
+// 单独算标签（用于"只校验不取明文"或自己做分帧的场景）
+export func gcm_tag_bytes(Array[int] key, Array[int] nonce, Array[int] aad, Array[int] ct):Array[int] {
+    return gcm_tag(key, nonce, aad, ct)
+}
+

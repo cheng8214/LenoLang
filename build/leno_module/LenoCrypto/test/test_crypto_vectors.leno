@@ -63,5 +63,118 @@ main() {
     assert_eq(crypto.bytes_to_hex(crypto.aes_decrypt_block(crypto.aes_encrypt_block(blk, key), key)),
         crypto.bytes_to_hex(blk))
 
+    // ==================== AES-256 / GCM（2026-10-14 追加）====================
+    // 向量来源：FIPS-197 附录 C（单块）与 NIST SP 800-38D 用例，全部用 node:crypto 复算一致 ✓
+    var fips_pt = crypto.hex_to_bytes("00112233445566778899aabbccddeeff")
+    var k128 = crypto.hex_to_bytes("000102030405060708090a0b0c0d0e0f")
+    var k256 = crypto.hex_to_bytes("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
+    // C.1 / C.3：原先只有"自洽往返"，现在补上**权威期望值**（自洽测不出密钥扩展写错）
+    assert_eq(crypto.bytes_to_hex(crypto.aes_encrypt_block(fips_pt, k128)), "69c4e0d86a7b0430d8cdb78070b4c55a")
+    assert_eq(crypto.bytes_to_hex(crypto.aes256_encrypt_block(fips_pt, k256)), "8ea2b7ca516745bfeafc49904b496089")
+    assert_eq(crypto.bytes_to_hex(crypto.aes256_decrypt_block(crypto.hex_to_bytes("8ea2b7ca516745bfeafc49904b496089"), k256)),
+        "00112233445566778899aabbccddeeff")
+
+    // GCM case 13/14（AES-256、全零 key/iv、无 AAD）
+    var z32 = crypto.hex_to_bytes("0000000000000000000000000000000000000000000000000000000000000000")
+    var z12 = crypto.hex_to_bytes("000000000000000000000000")
+    assert_eq(crypto.bytes_to_hex(crypto.gcm_tag_bytes(z32, z12, [], [])), "530f8afbc74536b9a963b4f1c4cb738b")
+    assert_eq(crypto.bytes_to_hex(crypto.aes_gcm_seal(z32, z12, [], crypto.hex_to_bytes("00000000000000000000000000000000"))),
+        "cea7403d4d606b6e074ec5d3baf39d18d0d1c8a799996bf0265b98b5d48ab919")   // 密文 || 标签
+
+    // GCM case 15（AES-256、60 字节明文 + 20 字节 AAD）与 case 3（同一组参数换 AES-128）
+    var g_iv = crypto.hex_to_bytes("cafebabefacedbaddecaf888")
+    var g_aad = crypto.hex_to_bytes("feedfacedeadbeeffeedfacedeadbeefabaddad2")
+    var g_pt = crypto.hex_to_bytes("d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a721c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b39")
+    var g_ct256 = "522dc1f099567d07f47f37a32a84427d643a8cdcbfe5c0c97598a2bd2555d1aa8cb08e48590dbb3da7b08b1056828838c5f61e6393ba7a0abcc9f662"
+    var g_k256 = crypto.hex_to_bytes("feffe9928665731c6d6a8f9467308308feffe9928665731c6d6a8f9467308308")
+    assert_eq(crypto.bytes_to_hex(crypto.aes_gcm_seal(g_k256, g_iv, g_aad, g_pt)),
+        g_ct256 + "76fc6ece0f4e1768cddf8853bb2d551b")
+    var g_ct128 = "42831ec2217774244b7221b784d0d49ce3aa212f2c02a4e035c17e2329aca12e21d514b25466931c7d8f6a5aac84aa051ba30b396a0aac973d58e091"
+    assert_eq(crypto.bytes_to_hex(crypto.aes_gcm_seal(crypto.hex_to_bytes("feffe9928665731c6d6a8f9467308308"), g_iv, g_aad, g_pt)),
+        g_ct128 + "5bc94fbc3221a5db94fae95ae7121a47")
+
+    // 解密方向：标签正确 ⇒ 原文逐字节一致；`open` 的入参是"密文||标签"
+    assert_eq(crypto.bytes_to_hex(crypto.aes_gcm_open(g_k256, g_iv, g_aad, crypto.hex_to_bytes(g_ct256 + "76fc6ece0f4e1768cddf8853bb2d551b"))),
+        crypto.bytes_to_hex(g_pt))
+    // 信封把密文/标签拆成两个字段（WorkBuddy 的 sym-v1 就是这种）⇒ 走 gcm_open_parts
+    assert_eq(crypto.bytes_to_hex(crypto.gcm_open_parts(g_k256, g_iv, g_aad,
+        crypto.hex_to_bytes(g_ct256), crypto.hex_to_bytes("76fc6ece0f4e1768cddf8853bb2d551b"))),
+        crypto.bytes_to_hex(g_pt))
+
+    // 非 12 字节 IV：走规范里 GHASH 构造 J0 的**兼容路径**（key/iv 全零、明文 16 字节零、无 AAD）
+    // 这条路径单独锁一次：它比 12 字节那条多一处"补多少零"的坑（补错 8 字节时密文与标签一起错）
+    var iv16 = crypto.hex_to_bytes("00000000000000000000000000000000")
+    assert_eq(crypto.bytes_to_hex(crypto.aes_gcm_seal(z32, iv16, [], crypto.hex_to_bytes("00000000000000000000000000000000"))),
+        "df53c00d30173e8b9cde3ddd2ca3c6bf3008621a70b1607f62fd7703232430f1")
+
+    // ---- WorkBuddy 形态：key = sha256(44 字符密钥串)、nonce 12 字节、AAD 为 WB-AAD 布局、275 字节明文 ----
+    // 这一步专门盯"位序 / 多块 GHASH"：单块能过、多块全错的实现会在这里露馅
+    var wb_key = crypto.hex_to_bytes("5987bfb3e926560e8a0cb50d19daed51a64b35ee92a8855b866697a78d1a708c")
+    var wb_nonce = crypto.hex_to_bytes("466367574f6559624337516f")
+    var wb_key_id = "01bd4aaa144fbaa1"
+    // 先在 Leno 侧按客户端口径拼出 AAD，与 node 的字节序对齐（布局写错会立刻在这里失败）
+    assert_eq(strings.to_hex(wb_aad_bytes(wb_key_id)),
+        "57422d41414400010000000557424556310000000673796d2d7631000000010000001030316264346161613134346662616131020000")
+    var wb_aad = strings.to_bytes(wb_aad_bytes(wb_key_id))
+    // 明文按 node 侧同一构造拼出来（比手抄 550 位 hex 可靠）
+    var xs = "x"
+    var wb_pt = strings.to_bytes("eyJhbGciOiJIUzI1NiJ9." + xs.rep(250) + ".sig")
+    var wb_ct_hex = "b5b06b3e10c0d19f68f1bee6d138e80834e5be9eaf3ea9573462c18ef99509cb45a9eaba3967ad12905a299100d4fc89b9a7e4fc0cc31a0fc7781a0997dff7f12c8d5d901eb392cd6e36f5e52e214f3e9673c1f6e8780738fdb69f239c2342c2d6fcea3174b8521f35b52c3910c6b6c97727edd81334e2671b1687b80099762a0dfd74625c1d834011c6a4d978a192d63277bfc8a4d6084b8f40dab21e41e8c0e99ac3a6a2c0c3592137fa37b9e5d581b81de043108e028c88d5d468d3be52b080fd07db0e28545eabf4ab72b2ea7e575db5699dc8d122912e20cfa6c06f0a167afd74b8d89231356c44e779b0493e1799b1a13d57ddf1712664ca66ed68c7b69e46644e027d42eaa4a1ef4940e8c3961966b6"
+    // 加密方向一次性覆盖 CTR + GHASH（两者任一出错都会在这里断）
+    assert_eq(crypto.bytes_to_hex(crypto.aes_gcm_seal(wb_key, wb_nonce, wb_aad, wb_pt)),
+        wb_ct_hex + "e9d5c26004c56578ef8e37474d2dfc8b")
+    assert_eq(crypto.bytes_to_hex(crypto.gcm_tag_bytes(wb_key, wb_nonce, wb_aad, crypto.hex_to_bytes(wb_ct_hex))),
+        "e9d5c26004c56578ef8e37474d2dfc8b")
+    // 解密方向：入参是"密文/标签两个字段"（sym-v1 信封就是这种）
+    assert_eq(crypto.bytes_to_hex(crypto.gcm_open_parts(wb_key, wb_nonce, wb_aad,
+        crypto.hex_to_bytes(wb_ct_hex), crypto.hex_to_bytes("e9d5c26004c56578ef8e37474d2dfc8b"))),
+        strings.to_hex(strings.from_bytes(wb_pt)))
+
+    // ---- 篡改必须被拒（AEAD 的意义所在）：标签 / 密文 / AAD / 密钥 任一改动都不许交付明文 ----
+    var tampered = false
+    try {
+        crypto.gcm_open_parts(g_k256, g_iv, g_aad, crypto.hex_to_bytes(g_ct256),
+            crypto.hex_to_bytes("76fc6ece0f4e1768cddf8853bb2d551c"))
+    } catch e { tampered = true }
+    assert_true(tampered, "标签被改必须抛错")
+    tampered = false
+    try {
+        crypto.gcm_open_parts(g_k256, g_iv, g_aad,
+            crypto.hex_to_bytes("012dc1f099567d07f47f37a32a84427d643a8cdcbfe5c0c97598a2bd2555d1aa8cb08e48590dbb3da7b08b1056828838c5f61e6393ba7a0abcc9f662"),
+            crypto.hex_to_bytes("76fc6ece0f4e1768cddf8853bb2d551b"))
+    } catch e { tampered = true }
+    assert_true(tampered, "密文被改必须抛错")
+    tampered = false
+    try {
+        crypto.gcm_open_parts(g_k256, g_iv, crypto.hex_to_bytes("feedfacedeadbeeffeedfacedeadbeefabaddad3"),
+            crypto.hex_to_bytes(g_ct256), crypto.hex_to_bytes("76fc6ece0f4e1768cddf8853bb2d551b"))
+    } catch e { tampered = true }
+    assert_true(tampered, "AAD 被改必须抛错")
+    tampered = false
+    try {
+        crypto.gcm_open_parts(crypto.hex_to_bytes("feffe9928665731c6d6a8f9467308309feffe9928665731c6d6a8f9467308308"),
+            g_iv, g_aad, crypto.hex_to_bytes(g_ct256), crypto.hex_to_bytes("76fc6ece0f4e1768cddf8853bb2d551b"))
+    } catch e { tampered = true }
+    assert_true(tampered, "密钥被改必须抛错")
+    tampered = false
+    try {
+        crypto.aes_gcm_seal(crypto.hex_to_bytes("00112233"), g_iv, [], g_pt)
+    } catch e { tampered = true }
+    assert_true(tampered, "密钥长度非法必须抛错")
+
     print("test_crypto_vectors passed")
+}
+
+// GCM 的 AAD 构造：客户端口径为
+//   WB-AAD\0 | 0x01 | lp('WBEV1') | lp('sym-v1') | 0,0,0,1 | lp(keyId) | 2,0,0
+// 其中 lp(s) = 4 字节**大端**长度 + UTF-8 字节
+func lp_bytes(string s):string {
+    var n = s.byte_len()
+    return strings.char(_uint8(n >> 24)) + strings.char(_uint8(n >> 16)) + strings.char(_uint8(n >> 8)) + strings.char(_uint8(n)) + s
+}
+
+func wb_aad_bytes(string key_id):string {
+    return "WB-AAD" + strings.char(0) + strings.char(1) + lp_bytes("WBEV1") + lp_bytes("sym-v1")
+        + strings.char(0) + strings.char(0) + strings.char(0) + strings.char(1) + lp_bytes(key_id)
+        + strings.char(2) + strings.char(0) + strings.char(0)
 }

@@ -67,3 +67,29 @@ export func aes128_cbc_decrypt_str(Array[int] key16, Array[int] iv16, Array[int]
 // ==================== hex ====================
 export func hex_to_bytes(string hex):Array[int] { return aes.hex_to_bytes(hex) }
 export func bytes_to_hex(Array[int] bytes):string { return aes.bytes_to_hex(bytes) }
+
+// ==================== AES-256（2026-10-14 追加）====================
+// 与 AES-128 同一套核，只是 Nk=8 / Nr=14（老函数逐字未动，避免影响既有调用方）
+export func aes256_encrypt_block(Array[int] plaintext, Array[int] key32):Array[int] { return aes.aes256_encrypt_block(plaintext, key32) }
+export func aes256_decrypt_block(Array[int] ciphertext, Array[int] key32):Array[int] { return aes.aes256_decrypt_block(ciphertext, key32) }
+export func key_expansion_n(Array[int] key, int nk):Array[int] { return aes.key_expansion_n(key, nk) }
+
+// ==================== GCM / AEAD（2026-10-14 追加）====================
+// 密钥长度 16 ⇒ AES-128-GCM；32 ⇒ AES-256-GCM（按 key.len() 自动选择）。
+// `seal` 返回 **密文 || 标签(16 字节)**；`open` 先校验标签，不符**抛错**（AEAD 不交付未认证的明文）。
+// 信封把密文与标签拆成两个字段时用 `gcm_open_parts` / `gcm_tag_bytes`。
+export func aes_gcm_seal(Array[int] key, Array[int] nonce, Array[int] aad, Array[int] pt):Array[int] {
+    return aes.aes_gcm_seal(key, nonce, aad, pt)
+}
+export func aes_gcm_open(Array[int] key, Array[int] nonce, Array[int] aad, Array[int] sealed):Array[int] {
+    return aes.aes_gcm_open(key, nonce, aad, sealed)
+}
+export func gcm_open_parts(Array[int] key, Array[int] nonce, Array[int] aad, Array[int] ct, Array[int] tag):Array[int] {
+    return aes.gcm_open_parts(key, nonce, aad, ct, tag)
+}
+export func gcm_tag_bytes(Array[int] key, Array[int] nonce, Array[int] aad, Array[int] ct):Array[int] {
+    return aes.gcm_tag_bytes(key, nonce, aad, ct)
+}
+// GF(2^128) 乘法（GCM 口径）—— 供自测与"只需要 GHASH"的场景
+export func gcm_mul(Array[int] x, Array[int] y):Array[int] { return aes.gcm_mul(x, y) }
+export func ghash(Array[int] h, Array[int] data):Array[int] { return aes.ghash(h, data) }
