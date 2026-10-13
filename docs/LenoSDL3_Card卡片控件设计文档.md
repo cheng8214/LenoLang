@@ -199,18 +199,32 @@ disabled 单独走 mixbg(…, bg, 60) 那一档（不用 packColor(通道/2)，�
 
 ```
 若 radius < 1 / 已在离屏 target / 开着 SSAA ⇒ 退化为 drawTextureRect（绝不扰动离屏流水线 ✓）
-否则：图 → 渲染器级**共享**离屏 target（按尺寸缓存一张）
-      → 圆角蒙版以**自定义混合**乘上去（只裁 alpha、图片颜色不动 ✓；顶点色给白）
-      → 恢复现场（blend/target/颜色 + **蒙版纹理的 blend 还原**）→ 贴回屏幕
+否则：**首次 / 键变化时**：图 → 离屏纹理（**本卡持有** ✓）→ 圆角蒙版以**自定义混合**乘上去
+                          （只裁 alpha、图片颜色不动 ✓；顶点色给白）→ 恢复现场 → 存进 rrTex
+      之后每帧只：drawTextureRect(rrTex, null, dstrect)   // 一张普通纹理 ✓
 ```
 
+- ★ **2026-10-14：合成结果按卡缓存（`rrTex`）—— 这条是硬要求，别退回"每帧现合成" ✗**
+  合成一次要「关裁剪 → `setRenderTarget` → **`SDL_RenderClear`** → 贴回」✗
+  ⇒ 不缓存就是"**每帧每卡一次**"（海报墙 22 张卡 ⇒ **每帧 22 次切 target + 22 次 Clear** ✗）。
+  而框架自己的注释就写着：D3D 后端上 `SDL_RenderClear` 会出现**短暂黑闪**
+  （窗口层特意用 `fillRect` 代替它 ✓）⇒ 放大到每帧 22 次 = **肉眼可见的卡片闪烁** ✗
+  （2026-10-13 用户报"Card 闪烁"、2026-10-14 修复后实测确认**不闪了** ✓；
+  机制/验证/排查坑见 `LenoSDL3_裁剪过多导致闪烁排查记录.md` §7.1 ✓）。
+  缓存键 = 源纹理 / 裁切源矩形 / 目标尺寸 / 半径 / 着色（任一变化才重建 ✓）；
+  `clear_tex`（换图）、`set_image_radius`、`dispose` 都会 `drop_rr()` ✓。
+  渲染器侧由 `Renderer.composeRoundedTexture(out, …)` 提供（`out` 尺寸不符时**返回 null 而不销毁它** ✓）。
+- **观感保证**：改缓存前后**逐像素一致**（同尺寸截图 MD5 相同 ✓）
+  ⇒ 这是"零观感损失"的时序修复，不是视觉改动 ✓
 - 蒙版复用 `sdl_renderer` 既有的覆盖率蒙版（`rrGet` ✓）⇒ **抗锯齿与圆角矩形同源**、观感一致 ✓
 - 四个必须记住的点（都实测踩过，详见速查附录 C）：
   ① **不能用 MUL / MOD**：SDL 那两种只动 **rgb**、**不动 alpha** ⇒ 圆角切口里原图被放大 2 倍照画 ✗
      ⇒ 必须自组「颜色不动、alpha = srcA × dstA」的模式（`sdl_renderer.maskAlphaBlend()` ✓）；
   ② `SDL_RenderGeometry` 认**纹理**的 blend（不是渲染器级）⇒ 两边都要设；
   ③ 蒙版是**共享缓存** ⇒ 画完当场还原 BLEND，否则后续圆角矩形全糊；
-  ④ 离屏 target 纹理贴回前要重设 BLEND（SDL 可能把它改成 NONE）。
+  ④ 离屏 target 纹理贴回前要重设 BLEND（SDL 可能把它改成 NONE）；
+  ⑤ **alpha 缩放（opacity）只在贴回那一步乘一次**：合成期 `alphaScale` 临时置 1
+     ⇒ 否则变"**平方淡化**"（0.4 看着像 0.16 ✗）—— 缓存路径必须守住同一条口径 ✓。
 - ⚠ **软件渲染器（`SDL_VIDEODRIVER=dummy`）建不了蒙版/离屏纹理** ⇒ 静默回退方角
   （有一次提示行）⇒ **圆角必须在真机验证**，dummy 截图看不出来 ✗
 
@@ -321,7 +335,7 @@ build\leno.exe leno_gui\应用\影视海报墙\movie_wall.leno
 | **P1** | `set_texture(tex, own)` · `badge_pos` / `badge_icon` · `text_align` · `auto_h` · `image_bg` · `content_rect()` | V5 + 截图 | ✅ 2026-10-13 |
 | **P1** | 圆角图片（`image_radius`，复用 `_rrMask` 合成）· 多角标（`badges` + `add_badge`）· 运行时 setter 全家桶 · 演示/回归件 `test_card.leno` | V9/V10/V11/V12 | ✅ 2026-10-13（v2.1） |
 | **P1 余项** | `content_clip` 的 D3D 实测 · **列表行变体**（图在左/文在右 ⇒ 需新增 `image_pos`）· 横幅变体已可做 ✓ | — | ⏳ 下轮 |
-| **P2** | 多角标再加"图标+文字"组合细节 · 圆角图的 9 宫格优化（少一次离屏） | 需改 `sdl_renderer` | ⏳ 待定 |
+| **P2** | 多角标再加"图标+文字"组合细节 · ~~圆角图的 9 宫格优化（少一次离屏）~~ | 需改 `sdl_renderer` | ✅ 2026-10-14（**改走"合成结果缓存"达成本目标**：稳态每帧 0 次离屏合成 ⇒ 不用再省那一次 ✗） |
 | **P3** | 虚拟化网格（可见区计算）· 键盘焦点链 | 属于 ScrollView/框架层 | ⏳ 待定 |
 
 每批落地后：更新本文"状态"、`docs/INDEX.md` 第三节、以及 `leno_gui/应用/影视海报墙` 的实拍截图判据。

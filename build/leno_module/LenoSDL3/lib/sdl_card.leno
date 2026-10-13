@@ -21,11 +21,15 @@
 //
 // 设计文档：`docs/LenoSDL3_Card卡片控件设计文档.md`（尺寸模型 / 状态优先级 / 裁剪预算都在那）
 //
-// 三条不变式（改本文件时必须守住）：
+// 四条不变式（改本文件时必须守住）：
 //   ① 图片永不挤掉文字与内容区（见 layout() 的 maxIH ✓）
 //   ② **整卡每帧 0 次 pushClipRect、0 次 malloc**（图片溢出一律靠**源矩形裁切**解决 ✓；
 //      这正是"裁剪过多会闪"那条记录（docs/LenoSDL3_裁剪过多导致闪烁排查记录.md）的正解 ✓）
 //   ③ `hover_lift` 只影响绘制，不改 x/y（hit-test 与布局容器的 set_pos 都不能被污染 ✓）
+//   ④ **圆角图片（`image_radius>0`）每帧 0 次离屏合成** —— 必须走 `rrTex` 缓存 ✓
+//      （现合成的代价是"关裁剪 + 切 render target + `SDL_RenderClear` + 贴回" ✗；
+//        每帧每卡一次 = 每帧 22 次 Clear ⇒ 真机实测**卡片闪烁** ✓，见上面的排查记录 §7.1 ✓
+//        换图/变尺寸/换半径/换着色才重建 ⇒ 稳态每帧只是贴一张普通纹理 ✓）
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_opts.leno" as dochk    // 选项对账：不认识的键会报一行警告（见 sdl_opts.leno ✓）
 import "sdl_font.leno" as fnt; use fnt.Font
