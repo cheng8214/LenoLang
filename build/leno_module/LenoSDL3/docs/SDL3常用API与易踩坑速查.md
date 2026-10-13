@@ -1055,6 +1055,22 @@ win.setRootAt(root, 0, tbH)       // 返回列表页（root 要**存字段**，�
 
 回归件：`leno_gui/应用/影视海报墙/movie_wall.leno`（`WALL_DETAIL=n` 进详情 / `WALL_BACK=n` 返回 ✓）
 
+### ⛔ `TabControl` 二次 `set()` 会把**整页内容丢掉**（"运行时改配色/字号"就会踩）（2026-10-13 实测 + 已修 ✓）
+
+**症状**：页里放好的按钮/表格，**运行时改一下外观就当场消失**、点击也不再响应 ✗ ——
+实测：`tabs.set(同 opts + 改一个颜色)` 之后，页里的按钮从界面消失、`on_click` 计数停在 1 ✗（截图只剩标签条 ✓）。
+
+**病因**：`set()` 每次都**无条件重建** `pages / rel / _pageLayouts`（页子控件数组）✗ ⇒ 已加进页里的控件
+连同 `setPageLayout` 设过的布局一起被丢弃 ✓。而"二次 set"在别处**是常见用法**（`Card.set` 就是运行时改样式 ✓）。
+
+**修法（已落库 ✓）**：
+- **页数没变就不重建**页容器（同数量的重配只该改外观、不该动内容 ✓）
+- `active` 缺省值改取**当前页**（`opts.get("active", _active)` ✓）—— 否则只改个配色也会把页签**跳回第 0 页** ✗
+- 页数**真的变了**才重建；此时旧页子控件**故意不 dispose**（它们是应用创建并持有的，框架替它释会变成"释放后再用" ✗）
+
+**验收**（探针 `build/_probe_tabs.leno`）：页 A 放一个按钮 → 点一次（计数 1 ✓）→ `tabs.set(同 opts)` → 再点：
+⇒ 计数应为 **2** ✓ 且截图里按钮仍在 ✓（修前：计数停在 1、按钮消失 ✗）
+
 ### ⛔ `Table` 的自定义格色**不跟着数据走**：`remove_row` 后错位一行、`set_rows` 后残留（2026-10-13 实测 + 已修 ✓）
 
 **症状**（两条都是"张冠李戴"，实测过 ✓）：
@@ -1099,9 +1115,18 @@ set PROBE_SHOT=%TEMP%\s.png & build\leno.exe build\_probe_scrim.leno
 600×400 → `show()` → `setSize(880,580)`，然后逐点读像素：
 修前 `(640,200)` / `(300,460)` / `(820,540)` 全是 `ffffff` ✗ ⇒ 修后 6 个采样点全 `878787` ✓
 
-⚠ **顺带记一条框架设计债**：窗口的 resize 通知是**硬编码类型表**（`Table`/`TreeView`/`Splitter`，
-且**同一份写了 3 遍** ✗）⇒ 以后任何新控件想收 resize 都得改这 3 处。理想做法与 `_passWindowHandle` 一致
-（集中到布局模块一处 + 像 `_extraPassWindow` 那样留扩展钩子 ✓）
+⚠ ~~顺带记一条框架设计债~~ ⇒ **债已还（2026-10-13 ✓）**：窗口那条 resize 通知原来是**硬编码类型表、
+同一份写了 3 遍**（主循环 / 模态窗 / 悬停弹层窗）✗，现已照 `_passWindowHandle` 的样板收敛到
+`sdl_layout._passWindowResize` **一处** + `setExtraPassResize` 扩展钩子（由 `sdl_window` 注册 ✓）⇒
+**以后新控件想收 resize，只加一处即可** ✓（`sdl_window` 那三个循环现在一个具体控件类型都不认识了 ✓）
+
+⚠ 同一批还掉了**句柄路径**的同类债（2026-10-13 ✓）：`sdl_layout` 的 `_extraPassWindow` 钩子签名补上
+**窗口逻辑宽高**（`ww < 0` = 尺寸未知 ✓，容器路径就传 -1 ✓）；`Table/TreeView/ListBox` 从布局那层挪进钩子
+（它们要"句柄 **+ 尺寸**" ⇒ 得由认识窗口尺寸的一方下发 ✓）；`sdl_window` 里原先**两份**类型表
+（`_refreshWindowHandle` 与 `Window._passWindowHandle`）**全部删掉**、只调 `passWindowHandleSized` ✓
+—— 顺带治好它俩的**漂移** ✗（一份有 `ListBox`/`GridLayout`、另一份有 `Card` 却漏 `ListBox`，靠"每帧安全网"掩盖 ✓）。
+⚠ **仍未覆盖**：嵌套在容器里的 `Table`/`Splitter` 拿不到窗口尺寸（容器只知道句柄 ⇒ `ww = -1` ✓）——
+实际影响≈0（右键菜单每帧由 `menu.renderContextMenus` 用**当前窗口尺寸**刷新 ✓），要彻底修得让容器层层带尺寸 ✗
 
 ### ⛔ 图表数值标签会**丢小数**（`_fmtNum` 拿 `_int(v)` 截断）—— 2026-10-13 实测 + 已修 ✓
 

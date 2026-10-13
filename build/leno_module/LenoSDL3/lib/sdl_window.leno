@@ -99,13 +99,38 @@ use cnv.Canvas
 // ★ 注册扩展窗口句柄下发回调：布局容器（HBox/VBox/AnchorBox）遇到 Splitter/Panel/TabControl/
 // SpinBox/GroupBox/ScrollView/ComboBox 等后续扩展类型时，通过此回调下发窗口句柄，无需在 sdl_layout 中
 // import 这些类型（避免循环依赖）。此前示例需手动调用 _content._bind_window()，现在自动完成。
-lay.setExtraPassWindow(func(Widget c, Ptr[u8] hwnd) {
+lay.setExtraPassWindow(func(Widget c, Ptr[u8] hwnd, int ww, int hh) {
     // ★ 2026-10-10：合并 `case is A, B, ...` 可以用 ✓（样板见 sdl_layout._passWindowHandle 的说明 ✓）
+    // ★ 2026-10-13：签名补了**窗口逻辑宽高**；`ww < 0` = 尺寸未知（容器路径 ✓）⇒ 只下发句柄 ✓
+    //   ⚠ 这里是**全工程唯一**的"控件 ← 窗口句柄/尺寸"类型表（原来窗口里另有两份、还漂移了 ✗）
+    bool hasSize = ww >= 0
     switch c {
-        case is Panel, ScrollView, TabControl, SpinBox, GroupBox, Splitter, ComboBox { c._bind_window(hwnd); return }
-        case is Card { c._bind_window(hwnd); c.set_window_handle(hwnd); return }   // 卡片：子控件 IME + 右键菜单句柄 ✓
         case is Edit { c.set_window(hwnd); return }
-        case is Table, TreeView, ListBox, TitleBar { c.set_window_handle(hwnd); return }
+        // 容器：只吃句柄，自己递归往下传 ✓
+        case is Panel, ScrollView, TabControl, SpinBox, GroupBox, GridLayout, ComboBox { c._bind_window(hwnd); return }
+        case is Card { c._bind_window(hwnd); c.set_window_handle(hwnd); return }   // 卡片：子控件 IME + 右键菜单句柄 ✓
+        case is TitleBar { c.set_window_handle(hwnd); return }
+        // "句柄 + 尺寸"三件套：内嵌右键菜单要按窗口夹紧 ✓
+        //   ★ 2026-10-08：ListBox 也把窗口尺寸收下 —— 它的右击上下文菜单要按窗口隔离绘制 ✓
+        case is TreeView { c.set_window_handle(hwnd); if hasSize { c.set_window(ww, hh) }; return }
+        case is Table, ListBox { c.set_window_handle(hwnd); if hasSize { c.set_window_size(ww, hh) }; return }
+        // Splitter：有尺寸就带着尺寸往下传播（内层 Table/TreeView 才拿得到 ✓）；没有就只给句柄 ✓
+        case is Splitter {
+            if hasSize { c._bind_window_size(hwnd, ww, hh) } else { c._bind_window(hwnd) }
+            return
+        }
+    }
+})
+
+// ★ 2026-10-13：注册**窗口尺寸变化**下发回调 —— 同一张类型表原来在本文件写了 3 遍 ✗
+//   （主循环 / 模态窗 / 悬停弹层窗）⇒ 现在收敛到 `sdl_layout._passWindowResize` 一处，本文件只留这一处注册 ✓
+//   ⚠ 以后新增"想收 resize 的控件"：**加成上面那个 switch 的一个分支**（或在 sdl_layout 里加 ✓），
+//     不用再翻窗口的三个循环 ✓
+lay.setExtraPassResize(func(Widget c, Ptr[u8] hwnd, int ww, int hh) {
+    switch c {
+        case is Splitter { c._bind_window_size(hwnd, ww, hh); return }
+        // ★ Scrim 必须跟着铺满（2026-10-13 修 ✓）：否则拉大窗口后右下露一条**没遮住且点得动** ✗
+        case is Scrim { c.on_window_resize(ww, hh); return }
     }
 })
 
@@ -197,16 +222,10 @@ var _closeCanceled = false    // 本次关闭请求被拦截（Window.cancelClos
 // ★ 安全网：每帧向根控件下发窗口句柄，确保所有子控件（含动态添加的）都能拿到 _hwnd。
 //   与 Window._passWindowHandle 逻辑一致，但作为模块级函数供事件循环调用（可处理多窗口）。
 func _refreshWindowHandle(Widget w, Ptr[u8] hwnd, int ww, int hh) {
-    // ★ 2026-10-10：合并 case 恢复（编译器侧已治本 ✓ 见 sdl_layout._passWindowHandle 与 docs §九 ✓）
-    switch w {
-        case is Splitter { w._bind_window_size(hwnd, ww, hh); return }
-        case is Panel, ScrollView, HBox, VBox, AnchorBox, TabControl, SpinBox, GroupBox, GridLayout, ComboBox { w._bind_window(hwnd); return }
-        case is Edit { w.set_window(hwnd); return }
-        case is TreeView { w.set_window_handle(hwnd); w.set_window(ww, hh); return }
-        // ★ 2026-10-08：ListBox 也把"句柄 + 窗口尺寸"收下 —— 它的右击上下文菜单要按窗口隔离绘制 ✓
-        case is Table, ListBox { w.set_window_handle(hwnd); w.set_window_size(ww, hh); return }
-        case is TitleBar { w.set_window_handle(hwnd); return }
-    }
+    // ★ 2026-10-13：类型表**收敛到 `sdl_layout.passWindowHandleSized`** ✓ ——
+    //   原来本文件与 `Window._passWindowHandle` **各写了一份、还漂移了** ✗
+    //   （这份有 ListBox/GridLayout；那份有 Card 却**漏了 ListBox**，靠"每帧安全网"掩盖着 ✓）
+    lay.passWindowHandleSized(w, hwnd, ww, hh)
 }
 
 // 模块级快捷键尝试匹配（事件循环中调用，必须在 _runShortcuts/_runShortcutGuards 定义之后）
@@ -789,32 +808,11 @@ export struct Window {
         }
     }
 
-    // 向控件下发窗口句柄（与 add() 中的 switch 逻辑一致）
-    // 容器类型递归向下传递；Edit/TreeView/Table 直接设置
+    // 向控件下发窗口句柄（**带窗口逻辑宽高** ✓ —— 有一批控件还要尺寸）
+    //   ★ 2026-10-13：类型判断收敛到 `sdl_layout.passWindowHandleSized` ✓
+    //     （原来这里自己一份 switch、还和 `_refreshWindowHandle` 漂移了 ✗ —— 前者有 Card、后者有 ListBox ✓）
     func _passWindowHandle(Widget w) {
-        // ★ 2026-10-10：合并 case 恢复（编译器侧已治本 ✓ 见 sdl_layout._passWindowHandle 与 docs §九 ✓）
-        switch w {
-            case is Splitter {
-                // ★ Splitter 需要传递窗口尺寸，以便向下传播给内嵌的 Table/TreeView
-                w._bind_window_size(handle, _w, _h); return
-            }
-            case is Panel, ScrollView, HBox, VBox, AnchorBox, TabControl, SpinBox, GroupBox { w._bind_window(handle); return }
-            case is Card { w._bind_window(handle); w.set_window_handle(handle); return }   // 卡片多一步：右键菜单要句柄 ✓
-            case is Edit {
-                w.set_window(handle); return
-            }
-            case is TreeView {
-                w.set_window_handle(handle)
-                w.set_window(_w, _h); return
-            }
-            case is Table {
-                w.set_window_handle(handle)
-                w.set_window_size(_w, _h); return
-            }
-            case is TitleBar {
-                w.set_window_handle(handle); return
-            }
-        }
+        lay.passWindowHandleSized(w, handle, _w, _h)
     }
 
     // 添加复选框，opts: {text, x, y, box, checked, on_change}
@@ -1239,19 +1237,14 @@ export struct Window {
                 // ★ 同步 Table/TreeView 窗口尺寸 + Splitter 向下传播（供内部右键菜单边界夹紧）
                 var widgets0 = _runWidgets[i]
                 for widgets0.len() to wi0 {
-                    var widget = widgets0[wi0]
-                    if widget is Table { Table t = widget; t.on_window_resize(pt.x, pt.y) }
-                    else if widget is TreeView { TreeView tv = widget; tv.on_window_resize(pt.x, pt.y) }
-                    else if widget is Splitter { Splitter sp = widget; sp._bind_window_size(_runHnds[i], pt.x, pt.y) }
-                    // ★ Scrim 必须跟着铺满（2026-10-13 修 ✓）：否则拉大窗口后右下露一条**没遮住且点得动** ✗
-                    //   ⚠ 这里是**硬编码类型表**（本文件共 3 处：主循环 / 模态窗 / 悬停弹层窗）
-                    //     ⇒ 以后再加"想收 resize 的控件"得改这 3 处 ✗；理想是像 `_passWindowHandle`
-                    //     那样集中到布局模块一处（见速查"新控件收不到 resize"那条 ✓）
-                    else if widget is Scrim { Scrim sc = widget; sc.on_window_resize(pt.x, pt.y) }
+                    // ★ 2026-10-13：类型表**收敛到 sdl_layout.passWindowResize 一处** ✓
+                    //   （原来是硬编码 3 遍：主循环 / 模态窗 / 悬停弹层窗 ⇒ 新增控件要改 3 处 ✗）
+                    lay.passWindowResize(widgets0[wi0], _runHnds[i], pt.x, pt.y)
                 }
-                // 根布局为 Splitter 时向下传播窗口尺寸（根布局内嵌的 Table 可能不在 _widgets 顶层）
+                // 根控件也要收 resize（**根可能是 Splitter** —— 它不在 `_widgets` 顶层 ✓）
+                //   ★ 类型判断同样收敛到 `sdl_layout.passWindowResize` ⇒ 本文件不再认识任何具体控件类型 ✓
                 var rw0 = rootWid
-                if rw0 is Splitter { Splitter sp = rw0; sp._bind_window_size(_runHnds[i], pt.x, pt.y) }
+                if rw0 != null { lay.passWindowResize(rw0, _runHnds[i], pt.x, pt.y) }
             }
             pt.free()
         }
@@ -1496,22 +1489,11 @@ export struct Window {
                             // ★ 自动同步窗口尺寸到 Table/TreeView/Splitter（供内部右键菜单边界夹紧）
                             var widgets = _runWidgets[k]
                             for widgets.len() to w {
-                                var widget = widgets[w]
-                                if widget is Table {
-                                    Table t = widget; t.on_window_resize(pt.x, pt.y)
-                                } else if widget is TreeView {
-                                    TreeView tv = widget; tv.on_window_resize(pt.x, pt.y)
-                                } else if widget is Splitter {
-                                    Splitter sp = widget; sp._bind_window_size(_runHnds[k], pt.x, pt.y)
-                                } else if widget is Scrim {
-                                    Scrim sc = widget; sc.on_window_resize(pt.x, pt.y)   // 同主循环（见那里的注释 ✓）
-                                }
+                                lay.passWindowResize(widgets[w], _runHnds[k], pt.x, pt.y)   // 类型表见 sdl_layout ✓
                             }
-                            // ★ 根布局为 Splitter 时向下传播窗口尺寸（根布局内嵌的 Table 可能不在 _widgets 顶层）
+                            // 根控件也要收 resize（根可能是 Splitter ⇒ 不在 `_widgets` 顶层 ✓；类型判断见 sdl_layout ✓）
                             var rootWid2 = _runRoots[k]
-                            if rootWid2 is Splitter {
-                                Splitter sp = rootWid2; sp._bind_window_size(_runHnds[k], pt.x, pt.y)
-                            }
+                            if rootWid2 != null { lay.passWindowResize(rootWid2, _runHnds[k], pt.x, pt.y) }
                             pt.free()
                             break
                         }
@@ -1600,14 +1582,10 @@ export struct Window {
                                 }
                                 var fWidgets = _runWidgets[fi]
                                 for fWidgets.len() to fwi {
-                                    var fw = fWidgets[fwi]
-                                    if fw is Table { Table ft = fw; ft.on_window_resize(fpt.x, fpt.y) }
-                                    else if fw is TreeView { TreeView ftv = fw; ftv.on_window_resize(fpt.x, fpt.y) }
-                                    else if fw is Splitter { Splitter fsp = fw; fsp._bind_window_size(_runHnds[fi], fpt.x, fpt.y) }
-                                    else if fw is Scrim { Scrim fsc = fw; fsc.on_window_resize(fpt.x, fpt.y) }   // 同主循环 ✓
+                                    lay.passWindowResize(fWidgets[fwi], _runHnds[fi], fpt.x, fpt.y)   // 类型表见 sdl_layout ✓
                                 }
                                 var frw = fRoot
-                                if frw is Splitter { Splitter fsp = frw; fsp._bind_window_size(_runHnds[fi], fpt.x, fpt.y) }
+                                if frw != null { lay.passWindowResize(frw, _runHnds[fi], fpt.x, fpt.y) }   // 类型判断见 sdl_layout ✓
                             }
                             fpt.free()
                         }

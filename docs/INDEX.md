@@ -16,6 +16,47 @@
 >   ② 列表/下拉/菜单的**行高亮圆角锚错了边**（`atBottom` 拿行自己的矩形补圆角，而末行常只露一半 ⇒ 圆角落到面板底边下方 ⇒ 面板两个底角被方角铺满）+ 内容裁剪 `_int(ph)+1` 让末行文字出框 1px ⇒ 收敛成渲染器共用件 **`fillRowInPanel`**（只填「行矩形 ∩ 面板圆角矩形」，圆角**锚在面板的边**）+ 裁剪改 `ceil` 精确覆盖；`sdl_combobox` / `sdl_listbox` / `sdl_menu` 三处调用点改调它 ✓；
 >   ③ `leno_gui/应用/影视海报墙/` 新增**影片详情页**（点卡片进入：大海报 + 评分环 + 年份/分类/简介 + 收藏/播放；Esc/返回切回，网格状态原样保留 ✓；自检钩子 `WALL_DETAIL` / `WALL_BACK`）；
 >   速查附录 C 相应新增 3 条（圆角纹理用自定义混合 · 行高亮锚点与裁剪 · `setRootAt` 运行时换根）。
+>   **2026-10-13 追加（十五）**：**把（十四）提到的"句柄路径同类债"也还掉，顺带治好一处漂移**：
+>   ① `sdl_layout._extraPassWindow` 钩子签名补 **窗口逻辑宽高**（`ww < 0` = 尺寸未知 ⇒ 容器路径传 `-1` ✓）；
+>      `Table`/`TreeView`/`ListBox` 从布局那层 switch **挪进钩子**（它们要"句柄 **+ 尺寸**"，得由认识窗口尺寸的一方下发 ✓）；
+>      `sdl_window` 里原先**两份**类型表（`_refreshWindowHandle` / `Window._passWindowHandle`）**全删**，
+>      只调新导出的 `passWindowHandleSized` ✓ ⇒ 句柄相关类型判断也**只剩一处** ✓；
+>   ② **顺带治好漂移** ✗→✓：那两份表原本不一致（一份有 `ListBox`/`GridLayout`，另一份有 `Card` 却**漏 `ListBox`**，
+>      靠"每帧安全网"掩盖 ✓）⇒ 现在合并成一份，两边行为一致 ✓；
+>   ③ 回归（均实测 ✓）：`_probe_handle.leno` —— `win.addListBox` 点击 `on_change` 触发 ✓（合并 case 没被剪空 ✓）、
+>      窗口 resize 后**右键 Table 菜单仍能打开** ✓；`_probe_scrim/splitter` 探针 ④ resize 断言仍过
+>      （`splitter=840×420` ✓）；海报墙网格 + Card 右键链 ✓、列表页 ✓；`ide_layout`/`test_listbox`/`test_listbox_multi`/
+>      `test_treeview`/`test_treeview_image`/`test_table`/`file_manager` 编译通过 ✓；
+>   ④ ⚠ **仍未覆盖**（如实记）：**嵌套**在容器里的 `Table`/`Splitter` 拿不到窗口尺寸（容器只有句柄 ⇒ `ww=-1` ✓）——
+>      实际影响≈0（右键菜单每帧用当前窗口尺寸刷新 ✓）；要彻底修需让容器层层携带尺寸 ✗（未做 ✓）。
+>
+>   **2026-10-13 追加（十四）**：**还掉（十一）记的那条设计债 —— 窗口 resize 通知的硬编码类型表收敛到一处**：
+>   ① 原来 `sdl_window` 里**同一张类型表写了 3 遍**（主循环 / 模态窗 / 悬停弹层窗，只认 `Table`/`TreeView`/`Splitter`）
+>      ✗ ⇒ 新控件想收 resize 得改 3 处。现照 `_passWindowHandle` 的样板做：
+>      `sdl_layout` 新增 `_passWindowResize` + 导出 `passWindowResize` + `setExtraPassResize` 扩展钩子
+>      （与 `setExtraPassWindow` 同款 ✓，避开循环依赖：布局模块仍不 import 扩展类型 ✓）；
+>      `sdl_window` 只留**一处注册**（`Splitter → _bind_window_size`、`Scrim → on_window_resize` ✓），
+>      三个循环与三处"根为 Splitter"的特殊分支全部改成 `lay.passWindowResize(...)` ✓
+>      ⇒ **`sdl_window` 的 resize 逻辑现在一个具体控件类型都不认识** ✓（新控件只加一处 ✓）；
+>   ② 回归（三条，均实测 ✓）：Scrim 探针 —— 缩放到 880×580 后采样点全 `878787`（无白条 ✓，说明 resize 经新路径
+>      仍到达 Scrim ✓）；Splitter 探针 —— 点左栏子控件 `clicks=1` ✓、拖分隔条 `ratio 0.35→0.5` ✓、
+>      **窗口拉到 840×420 后 `splitter=840.0x420.0`** ✓（Splitter 经钩子收到 resize ✓）；海报墙 +
+>      `ide_layout` / `test_table` / `file_manager` 编译通过 ✓。
+>
+>   **2026-10-13 追加（十三）**：**继续压 Splitter / ProgressBar / TabControl**（探针 `build/_probe_splitter.leno`、
+>   `build/_probe_tabs.leno`）：
+>   ① ⛔ **修掉真 bug**：`TabControl` **二次 `set()`** 会重建 `pages/rel/_pageLayouts` ⇒ **整页内容被丢弃** ✗
+>      （实测：`set(同 opts + 改一个颜色)` 后页里的按钮当场消失、`on_click` 停在 1 ✗）。修法：**页数没变就不重建**
+>      页容器 ✓ + `active` 缺省值改取**当前页**（否则改配色会把页签跳回第 0 页 ✗）+ 页数真变时**故意不 dispose**
+>      旧子控件（应用持有，替它释会"释放后再用"✗）。修后探针计数 1→2 ✓、按钮还在 ✓（速查附录 C 新增该条 ✓）；
+>   ② **未复现（如实记，不当作问题 ✓）**：`Splitter` 的事件转发与拖拽都正确 —— 点左栏子控件 `on_click` 照常触发 ✓、
+>      拖分隔条 `ratio 0.35→0.5` 精确 ✓、**拖完再点子控件照样灵** ✓（读码怀疑的"拖拽吞事件 ⇒ 子控件卡在按下态"✗不成立）；
+>      `ProgressBar` 那句"无条件 `markFrameMotion` ⇒ 空转重绘"✗也不成立 —— `markFrameMotion` **只标记本帧有鼠标移动**
+>      （供帧末统一应用光标 ✓、见 `sdl_core.applyFrameCursor`），**不请求重绘** ✓（读码时看着吓人而已 ✓）。
+>   ③ 仍**未验**的读码怀疑：`ComboBox` 失焦不收下拉（无头难验）· `Splitter` 每帧双 relayout（幂等 ⇒ 只是白做）·
+>      `Splitter.dispose` 递归 dispose 子控件（与"子控件归应用所有"的口径不一致，**双 dispose 风险**）·
+>      `Table` 图标纹理缓存无上限 · `Spinner.set_enabled` 空实现 + `tip` 死代码。
+>
 >   **2026-10-13 追加（十二）**：**压 Table 的自定义格色（探针 `build/_probe_table2.leno`）⇒ 又两个"张冠李戴"**：
 >   ⛔ 单元格级颜色存在 `_cellFgColors/_cellBgColors`（`Dict`，键 `"row,col"` ✓），而 `remove_row` 不重排键、
 >   `set_rows`/`clear` 也不清 ⇒ ① 删一行后下面的格色**整体错位一行**（实测：R2 绿/R3 红，`remove_row(0)` 后

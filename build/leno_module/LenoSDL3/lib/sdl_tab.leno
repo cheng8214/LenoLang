@@ -116,21 +116,33 @@ export struct TabControl impl Widget, Themeable {
         clipContent = opts.get("clip", true)
 
         var ts = opts.get("tabs", [])
-        if ts is Array[string] { _tabs = ts as Array[string] } else { _tabs = [] }
+        Array[string] newTabs = []
+        if ts is Array[string] { newTabs = ts as Array[string] }
+        bool samePages = (newTabs.len() == _tabs.len()) and (_pageLayouts.len() == newTabs.len())
+        _tabs = newTabs
         tabDirty = true   // 标签列表变化，宽度需重算
-        // 每页一个子控件数组 + 对应的相对偏移数组
-        pages = []
-        rel = []
-        _pageLayouts = []
-        _hasLayout = []
-        for _tabs.len() to i {
-            pages.add([])
-            rel.add([])
-            _pageLayouts.add(new VBox())
-            _hasLayout.add(false)
+        // ★ 2026-10-13 修：**页数没变就不重建页容器** —— 原来每次 `set()` 都把 `pages/rel/_pageLayouts`
+        //   整个清空 ✗ ⇒ "运行时改配色/字号"（`set(同 opts + 改一个颜色)`）会把**整页内容丢掉**：
+        //   实测页里的按钮**当场消失**、点击也不再响应 ✗（截图只剩标签条 ✓）。
+        //   同数量的重配只该改外观，不该动内容 ✓ —— 这也与 `Card.set` 那种"运行时改样式"的用法一致 ✓
+        //   ⚠ 页数**变了**才重建（此时旧的页子控件会被丢弃）：**故意不 dispose** —— 那些控件是
+        //     应用创建并持有的（等会儿可能又要重新 add ✓），框架替它释会变成"释放后再用"✗
+        if not samePages {
+            pages = []
+            rel = []
+            _pageLayouts = []
+            _hasLayout = []
+            for _tabs.len() to i {
+                pages.add([])
+                rel.add([])
+                _pageLayouts.add(new VBox())
+                _hasLayout.add(false)
+            }
         }
 
-        _active = opts.get("active", 0)
+        // ⚠ `active` 缺省值取**当前页**（不是 0 ✓）：二次 set 只改配色时不该把页签跳回第 0 页 ✗
+        //   （首次 set 时 `_active` 就是字段初值 0 ⇒ 与老行为一致 ✓）
+        _active = opts.get("active", _active)
         if _active < 0 or _active >= _tabs.len() { _active = 0 }
 
         _fontSize = opts.get("font_size", 15)
