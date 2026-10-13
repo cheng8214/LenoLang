@@ -134,6 +134,34 @@ export struct Toggle impl Widget, Themeable {
 
     func on_change(func(bool):void cb) { onChange = cb }
 
+    // ==================== 焦点（供窗口的"焦点链"调用 ✓ 2026-10-13 第二批）====================
+    //   ★ 激活语义 = 切一下：**连动画状态机一起照抄鼠标那条路** ✓（否则键盘切换会是"瞬跳"而鼠标是平滑 ✗）
+    bool focusable = true
+    bool focused = false
+    func set_focusable(bool b) { focusable = b; if not b { focused = false } }
+    func is_focusable(): bool { return focusable }
+    func focus() { if focusable and not focused { focused = true; core.markFrameRedraw() } }
+    func blur() { if focused { focused = false; core.markFrameRedraw() } }
+    func is_focused(): bool { return focused }
+    func activate() {
+        on = not on
+        if animate {
+            animTarget = if on then 1.0 else 0.0
+            animating = true
+            animLast = 0.0
+        } else {
+            animPos = if on then 1.0 else 0.0
+        }
+        if onChange != null { onChange(on) }
+        core.markFrameRedraw()
+    }
+    func draw_focus_ring(Renderer r) {
+        if not focused { return }
+        Theme th = theme.getTheme()
+        r.setColor(th.accentFocus)
+        r.drawRect(x - 2.0, y - 2.0, get_w() + 4.0, get_h() + 4.0)
+    }
+
     func contains(float mx, float my): bool {
         float tw = 0.0
         if _font != null and _font.ok and text != "" { var[float, float](_tw, _th) = _font.measureString(text); tw = _tw }

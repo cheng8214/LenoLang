@@ -1372,9 +1372,20 @@ Enter/Space            hitsC=1 → 2（激活与鼠标点击同一条回调 ✓�
 焦点环**客观取色**（不靠肉眼 ✓）：C 聚焦时，其左沿外 2px = `(100,180,255)` = 主题 `accentFocus` ✓；
 未聚焦的 A 同位置只有底色 `(38,40,48)` ✓ ⇒ **环只在聚焦控件外沿出现** ✓（1px ✓）。
 
-⚠ **本版没做的**（按需推进 ✓）：`CheckBox/RadioButton/Toggle/Slider/ListBox/ComboBox/Table/TreeView/
-TabControl` 还没进类型表（进去要先给它们补 `focus()/blur()/is_focused()/draw_focus_ring()` ✓）；
-方向键在**兄弟控件间**移动 ✗（WPF 风格，未做 ✓）；`tabIndex` 显式排序 ✗。
+**第二批（2026-10-13 同日 ✓）：开关类进链条** —— `CheckBox` / `Toggle` / `RadioButton` 各补了同一套
+方法（`set_focusable/is_focusable/focus/blur/is_focused/draw_focus_ring/activate` ✓），
+**激活语义 = "切一下"**，而且刻意**与鼠标点击那条路逐字段对齐** ✓：
+`CheckBox` 切值+回调 ✓；`Toggle` **连动画状态机一起照抄** ✓（否则键盘切换会是"瞬跳"、鼠标是平滑 ✗）；
+`RadioButton` 直接调 `select()` ✓（与鼠标**同一个入口** ⇒ 互斥/回调都不会漂 ✗）。
+  ⚠ 焦点环要用 `get_w()/get_h()` ✗ 不能读 `w/h` —— 开关类是**自量尺寸**控件、**根本没有 `w/h` 字段** ✓
+  （实测：探针里写 `ck.w` 直接编译不过 ✓）。
+
+⚠ **仍未进链条的**（按需推进 ✓）：`Slider`（它的键盘语义是**方向键微调** ⇒ 要自带按键处理 ✓）、
+`ListBox/ComboBox/Table/TreeView/TabControl`（都有**内部选中/导航语义** ⇒ Enter 该"激活选中项"还是
+"进编辑"要先定语义 ✓）；方向键在**兄弟控件间**移动 ✗（WPF 风格，未做 ✓）；`tabIndex` 显式排序 ✗。
+
+⭐ **写这类自测件时注意**：`CheckBox.checked` / `Toggle.on` 等**值字段是 `pri` 私有** ✗
+（探针直读会被编译器拦下 ✓）⇒ 断言一律走**公开回调**（`on_change` ✓ 它本来就是"值变了"的官方出口 ✓）。
 
 ### ⭐ 控件级不透明度：`win.set_widget_opacity(w, a)`（2026-10-13 新增能力 ✓）
 

@@ -116,6 +116,23 @@ export struct RadioButton impl Widget, Themeable {
     func set_size(float sw, float sh) {}
 
     func on_change(func(bool):void cb) { onChange = cb }
+
+    // ==================== 焦点（供窗口的"焦点链"调用 ✓ 2026-10-13 第二批）====================
+    //   ★ 激活语义 = 选中自己：直接走 `select()` ✓（与鼠标那条路**同一个入口** ⇒ 互斥/回调/动画都不会漂 ✗）
+    bool focusable = true
+    bool focused = false
+    func set_focusable(bool b) { focusable = b; if not b { focused = false } }
+    func is_focusable(): bool { return focusable }
+    func focus() { if focusable and not focused { focused = true; core.markFrameRedraw() } }
+    func blur() { if focused { focused = false; core.markFrameRedraw() } }
+    func is_focused(): bool { return focused }
+    func activate() { select(); core.markFrameRedraw() }
+    func draw_focus_ring(Renderer r) {
+        if not focused { return }
+        Theme th = theme.getTheme()
+        r.setColor(th.accentFocus)
+        r.drawRect(x - 2.0, y - 2.0, get_w() + 4.0, get_h() + 4.0)
+    }
     // 记录所属窗口句柄，供同组互斥按窗口隔离（_select 只取消同窗口同组其它项）
     func setWindowHandle(Ptr[u8] hwnd) { winHnd = hwnd }
     func getWindowHandle(): Ptr[u8] { return winHnd }

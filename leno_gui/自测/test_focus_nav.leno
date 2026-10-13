@@ -1,25 +1,38 @@
-// test_focus_nav.leno — 焦点链（键盘导航）的第一批验收：Tab / Shift+Tab / Enter / Space
-//   ★ 2026-10-13 新加能力：全库原来只有 `Edit` / `Canvas` 自己管焦点 ⇒ **Tab 键不会换焦点** ✗
-//   本版口径（速查附录 C 有记 ✓）：
-//     · 焦点链顺序 = **注册顺序**（addXxx 的先后 ✓）；暂不做 tabIndex ✓
-//     · 窗口只接管 Tab / Shift+Tab 换焦点 + Enter / Space 激活；方向键留给控件自己 ✓
-//     · "谁能聚焦"用一张类型表（本版只有 Button ✓）、ring 由控件**自绘** ✓
-//   判据：注入真按键（`SDL3.testKeyDown` ✓ 本轮新加的钩子），逐步骤断言
-//     ① 焦点按注册顺序前进、末尾回卷 ✓  ② 跳过 `set_focusable(false)` 的按钮 ✓
-//     ③ Shift+Tab 反向 ✓  ④ Enter / Space 触发 `on_click`（计数 +1 ✓，与鼠标点击同一条路 ✓）
+// test_focus_nav.leno — 焦点链（键盘导航）验收：Tab / Shift+Tab / Enter / Space
+//   ★ 2026-10-13 新加能力（两批）：
+//     第一批：焦点链本体 + `Button`（Tab 换焦点 / Enter·Space 激活 / 焦点环自绘 ✓）
+//     第二批：开关类进场 —— `CheckBox` / `Toggle` / `RadioButton`（激活语义 = **切一下** ✓）
+//   口径（速查附录 C 有记 ✓）：焦点链 = **注册顺序**；窗口只管 Tab/Shift+Tab + Enter/Space；
+//     "谁能聚焦"用一张类型表（在 sdl_window 一处 ✓）；ring 由控件自绘 ✓
+//   判据：注入真按键（`SDL3.testKeyDown` ✓），逐步骤断言
+//     ① 焦点按注册顺序前进、末尾回卷、**跳过 `set_focusable(false)` 的** ✓
+//     ② Shift+Tab 反向 ✓  ③ Enter/Space 走**与鼠标点击同一条路** ✓：
+//        Button ⇒ on_click 计数 +1；CheckBox/Toggle ⇒ 值真的翻转；RadioButton ⇒ 选中自己 ✓
 //   用法：set SHOT=%TEMP%\focus.png & build\leno.exe leno_gui\自测\test_focus_nav.leno
 import "SDL3" as SDL3
-use SDL3.(Event, Renderer, Scancode, Window, Button)
+use SDL3.(Event, Renderer, Scancode, Window, Button, CheckBox, Toggle, RadioButton)
 
 int steps = 0
 string shot = ""
-int hitsA = 0        // b1 的点按次数（Enter/Space 应让它 +1 ✓）
-int hitsC = 0        // b3 的点按次数
+int hitsA = 0        // Button A 的点按次数
+int hitsC = 0        // Button C 的点按次数
+int hitsCk = 0       // 复选框的 on_change 次数
+// ⚠ 这三个控件的 `checked` / `on` 是 **`pri` 私有字段** ✗（探针读不到 ✓ 编译器会直接拦下 ✓）
+//   ⇒ 断言一律走**公开回调**（它们本来就是"值变了"的官方出口 ✓，比直读字段更接近使用者视角 ✓）
+int ckVal = 0        // 复选框当前值（0/1）
+int tgVal = 0        // 开关当前值（0/1）
+int tgHits = 0
+int rdHits = 0       // 单选被选中的回调次数
 
-// 把三个按钮的聚焦态与计数打出来（每步一行 ⇒ 焦点序列一目了然 ✓）
 func snap(Button a, Button b, Button c, string tag) {
     print("[focus] " + tag + "  A=" + _str(a.is_focused()) + " B=" + _str(b.is_focused()) +
           " C=" + _str(c.is_focused()) + "  hitsA=" + _str(hitsA) + " hitsC=" + _str(hitsC))
+}
+
+func snapSw(CheckBox ck, Toggle tg, RadioButton rd, string tag) {
+    print("[focus] " + tag + "  ck(focus=" + _str(ck.is_focused()) + " 回调=" + _str(hitsCk) +
+          " 值=" + _str(ckVal) + ")  tg(focus=" + _str(tg.is_focused()) + " 回调=" + _str(tgHits) +
+          " 值=" + _str(tgVal) + ")  rd(focus=" + _str(rd.is_focused()) + " 回调=" + _str(rdHits) + ")")
 }
 
 func run() {
@@ -28,13 +41,21 @@ func run() {
     Window w = SDL3.createWindow({title: "test_focus_nav", w: 620, h: 200})
     if not w.ok { SDL3.ttfQuit(); return }
 
-    // 注册顺序 A → B → C；其中 **B 退出焦点链** ⇒ Tab 必须跳过它 ✓
-    Button a = w.addButton({x: 20, y: 40, w: 180, h: 44, text: "A（可聚焦）"})
-    Button b = w.addButton({x: 220, y: 40, w: 180, h: 44, text: "B（不可聚焦）"})
-    Button c = w.addButton({x: 420, y: 40, w: 180, h: 44, text: "C（可聚焦）"})
+    // 第一行：注册顺序 A → B → C，其中 **B 退出焦点链** ⇒ Tab 必须跳过它 ✓
+    Button a = w.addButton({x: 20, y: 30, w: 180, h: 40, text: "A（可聚焦）"})
+    Button b = w.addButton({x: 220, y: 30, w: 180, h: 40, text: "B（不可聚焦）"})
+    Button c = w.addButton({x: 420, y: 30, w: 180, h: 40, text: "C（可聚焦）"})
     b.set_focusable(false)
     a.on_click(func() { hitsA = hitsA + 1 })
     c.on_click(func() { hitsC = hitsC + 1 })
+
+    // 第二行：开关类（第二批进链条 ✓）
+    CheckBox ck = w.addCheckBox({x: 20, y: 110, w: 180, h: 26, text: "复选框", checked: false})
+    Toggle tg = w.addToggle({x: 220, y: 110, w: 180, h: 28, text: "开关", on: false})
+    RadioButton rd = w.addRadioButton({x: 420, y: 110, w: 180, h: 24, text: "单选", group: "g9", checked: false})
+    ck.on_change(func(bool v) { hitsCk = hitsCk + 1; ckVal = if v then 1 else 0 })
+    tg.on_change(func(bool v) { tgHits = tgHits + 1; tgVal = if v then 1 else 0 })
+    rd.on_change(func(bool v) { if v { rdHits = rdHits + 1 } })     // 选中时回调 true ✓
 
     var s = _env("SHOT"); if s != null { shot = _str(s) }
     if shot == "" { shot = "focus.png" }
@@ -43,26 +64,42 @@ func run() {
     w.addTimer(100, func() {
         steps = steps + 1
         if steps == 1 { snap(a, b, c, "初始（应全 false）") }
-        if steps == 2 {
-            SDL3.testKeyDown(wid, Scancode.TAB, 0)
-        }
+        if steps == 2 { SDL3.testKeyDown(wid, Scancode.TAB, 0) }
         if steps == 3 { snap(a, b, c, "Tab×1（应 A）") }
         if steps == 4 { SDL3.testKeyDown(wid, Scancode.TAB, 0) }
         if steps == 5 { snap(a, b, c, "Tab×2（应 C —— 跳过 B ✓）") }
         if steps == 6 { SDL3.testKeyDown(wid, Scancode.TAB, 0) }
-        if steps == 7 { snap(a, b, c, "Tab×3（应回卷到 A ✓）") }
+        // ⚠ 焦点链现在是 **A→C→ck→tg→rd 五个**（B 被排除 ✓）⇒ Tab×3 应走到**复选框** ✓
+        //   （按钮行三个全 false 是**正确**的 ✓ —— 第一批只有三个按钮时这里才是"回卷到 A" ✓）
+        if steps == 7 { snap(a, b, c, "Tab×3（按钮行应全 false ⇒ 焦点已交给第四项 ✓）"); snapSw(ck, tg, rd, "Tab×3（应轮到复选框 ck ✓）") }
         if steps == 8 { SDL3.testKeyDown(wid, Scancode.TAB, 3) }        // 3 = Shift 位掩码 ✓
         if steps == 9 { snap(a, b, c, "Shift+Tab（应反向到 C ✓）") }
         if steps == 10 { SDL3.testKeyDown(wid, Scancode.RETURN, 0) }    // Enter ⇒ 激活 C
         if steps == 11 { snap(a, b, c, "Enter（应 hitsC=1 ✓）") }
         if steps == 12 { SDL3.testKeyDown(wid, Scancode.SPACE, 0) }     // Space ⇒ 再激活 C
         if steps == 13 { snap(a, b, c, "Space（应 hitsC=2 ✓）") }
-        if steps >= 16 { _exit(0) }
+
+        // ---- 第二行：开关类 ----
+        if steps == 14 { SDL3.testKeyDown(wid, Scancode.TAB, 0) }       // → 复选框
+        if steps == 15 { snapSw(ck, tg, rd, "Tab→ 复选框（应 ck.focus=true ✓）") }
+        if steps == 16 { SDL3.testKeyDown(wid, Scancode.RETURN, 0) }    // Enter ⇒ 切一下
+        if steps == 17 { snapSw(ck, tg, rd, "Enter（应 checked=true、回调=1 ✓）") }
+        if steps == 18 { SDL3.testKeyDown(wid, Scancode.TAB, 0) }       // → 开关
+        if steps == 19 { snapSw(ck, tg, rd, "Tab→ 开关（应 tg.focus=true ✓）") }
+        if steps == 20 { SDL3.testKeyDown(wid, Scancode.SPACE, 0) }     // Space ⇒ 切一下
+        if steps == 21 { snapSw(ck, tg, rd, "Space（应 on=true ✓）") }
+        if steps == 22 { SDL3.testKeyDown(wid, Scancode.TAB, 0) }       // → 单选
+        if steps == 23 { snapSw(ck, tg, rd, "Tab→ 单选（应 rd.focus=true ✓）") }
+        if steps == 24 { SDL3.testKeyDown(wid, Scancode.RETURN, 0) }    // Enter ⇒ 选中自己
+        if steps == 25 { snapSw(ck, tg, rd, "Enter（应 checked=true ✓）") }
+        if steps == 26 { SDL3.testKeyDown(wid, Scancode.TAB, 0) }       // 从最后一个继续 ⇒ 应回卷
+        if steps == 27 { snap(a, b, c, "Tab×6（应回卷到 A ✓ —— 链条末尾回卷 ✓）") }
+        if steps >= 30 { _exit(0) }
     })
 
     // 截图（看焦点环 ✓）：钩子必须在 setOverlay（控件之上 ⇒ 像素含界面 ✓）
     w.setOverlay(func(Renderer r) {
-        if steps >= 14 and shot != "" {
+        if steps >= 28 and shot != "" {
             var sz = w.getSize()
             var px = r.readPixelsAt(0, 0, sz.w, sz.h)
             if px != null { print("[focus] 截图 " + shot + " ok=" + _str(SDL3.saveImagePNG(px, shot))) }

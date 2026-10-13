@@ -16,6 +16,21 @@
 >   ② 列表/下拉/菜单的**行高亮圆角锚错了边**（`atBottom` 拿行自己的矩形补圆角，而末行常只露一半 ⇒ 圆角落到面板底边下方 ⇒ 面板两个底角被方角铺满）+ 内容裁剪 `_int(ph)+1` 让末行文字出框 1px ⇒ 收敛成渲染器共用件 **`fillRowInPanel`**（只填「行矩形 ∩ 面板圆角矩形」，圆角**锚在面板的边**）+ 裁剪改 `ceil` 精确覆盖；`sdl_combobox` / `sdl_listbox` / `sdl_menu` 三处调用点改调它 ✓；
 >   ③ `leno_gui/应用/影视海报墙/` 新增**影片详情页**（点卡片进入：大海报 + 评分环 + 年份/分类/简介 + 收藏/播放；Esc/返回切回，网格状态原样保留 ✓；自检钩子 `WALL_DETAIL` / `WALL_BACK`）；
 >   速查附录 C 相应新增 3 条（圆角纹理用自定义混合 · 行高亮锚点与裁剪 · `setRootAt` 运行时换根）。
+>   **2026-10-13 追加（二十四）**：**A1 第二批：开关类（`CheckBox`/`Toggle`/`RadioButton`）进焦点链** ✓：
+>   ① 三个控件各补同一套焦点方法（`set_focusable/is_focusable/focus/blur/is_focused/draw_focus_ring/activate` ✓），
+>      窗口那张类型表同步扩到 4 处（可聚焦 / 应用焦点 / 激活 / 画 ring ✓）；
+>   ② **激活语义 = "切一下"，且刻意与鼠标点击那条路逐字段对齐** ✓：`CheckBox` 切值+回调；
+>      `Toggle` **连动画状态机一起照抄**（否则键盘切换是"瞬跳"、鼠标是平滑 ✗）；`RadioButton` 直接调
+>      `select()`（与鼠标**同一个入口** ⇒ 互斥/回调都不会漂 ✗）；
+>   ③ 坑：焦点环要用 `get_w()/get_h()` —— 开关类是**自量尺寸**控件、**没有 `w/h` 字段** ✗（写 `ck.w` 直接编译不过 ✓）；
+>      另：`CheckBox.checked`/`Toggle.on` 是 **`pri` 私有** ✗ ⇒ 探针断言一律走**公开回调** `on_change` ✓
+>      （它本来就是"值变了"的官方出口 ✓）；
+>   ④ 验收（`leno_gui/自测/test_focus_nav.leno` 扩到两行、注入真按键 ✓）：Tab×1→A、Tab×2 **跳过
+>      `set_focusable(false)` 的 B** 到 C、Tab×3→复选框（按钮行全 false ✓）、Shift+Tab 反向到 C、
+>      Enter/Space 让 `hitsC` 1→2、Tab→开关→Space 让开关值=1（回调=1 ✓）、Tab→单选→Enter 选中（回调=1 ✓）、
+>      Tab×6 末尾**回卷到 A** ✓；焦点环客观取色仍为 `accentFocus` ✓；
+>   ⑤ 回归：海报墙 ✓、opacity 验收件 ✓、清理大师 exit=0 ✓。速查附录 C 已补第二批与"pri 字段只能靠回调"这条 ✓。
+>
 >   **2026-10-13 追加（二十三）**：**按优先级修 A1 的第一批：焦点链 / 键盘导航**（Tab · Shift+Tab · Enter · Space ✓）：
 >   ① 缺口：全库原来只有 `Edit` / `Canvas` 自己管焦点 ⇒ **Tab 键根本不换焦点** ✗（`Widget` face 只有 7 个
 >      方法、没有焦点槽 ✓；事件是"广播给所有控件" ✗）；本版定的默认口径（可改 ✓）：焦点链 = **注册顺序**、
