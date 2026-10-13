@@ -101,7 +101,20 @@ export struct Card impl Widget, Themeable {
     pri Color tint = -1               // 图片着色（-1 = 不着色）
     pri Color imgBg = 0               // 图片区底色（留边/加载失败时露出 ✓）
     pri float pad = 0.0               // 图片区与卡片边的内边距
-    pri float imgRadius = 0.0         // 图片**自身**圆角（0 = 方角；>0 走 drawTextureRounded 合成 ✓）
+    pri float imgRadius = 0.0         // 图片**自身**圆角（0 = 方角；>0 走「图 × 圆角蒙版」合成 ✓）
+    // ★ 2026-10-13：圆角图片的**合成缓存**（`image_radius>0` 时才用 ✓）
+    //   为什么必须缓存：合成一次 = 关裁剪 + 切 render target + `SDL_RenderClear` + 贴回 ✗
+    //     ⇒ 不缓存就是"**每帧每卡一次**"（海报墙 22 张卡 ⇒ 每帧 22 次 ✗；而窗口层自己的注释写着
+    //       D3D 后端上 `SDL_RenderClear` 会出现「短暂黑闪」⇒ 鼠标一动就整帧重绘、**卡片在闪** ✓）
+    //     ⇒ 缓存之后：稳态**每帧只贴一张普通纹理**（0 次切 target、0 次 Clear ✓）
+    //   命中判据（任一变化才重建 ✓）：源纹理 / 裁切源矩形 / 目标尺寸 / 半径 / 着色
+    //   持有与释放：本卡自建自销（`drop_rr` ✓；`clear_tex`/`dispose` 会连带清掉 ✓）
+    pri Ptr[u8]? rrTex = null         // 合成结果（缓存 ✓）
+    pri Ptr[u8]? rrKeySrc = null      // 缓存对应的**源纹理**（换图即失效 ✓）
+    pri int rrKeyTint = -2            // 缓存对应的着色（-1 = 不着色 ✓）
+    pri float rkW = 0.0, rkH = 0.0, rkR = 0.0
+    pri float rkSX = 0.0, rkSY = 0.0, rkSW = 0.0, rkSH = 0.0
+    pri bool rrOff = false            // 环境不支持（软件渲染器）⇒ 永久回落方角，不再每帧重试 ✗
     // 源/目标矩形：**分配一次、每帧复用** ⇒ 每帧零 malloc（不变式 ② ✓）
     //   ⚠ 纹理绘制必须用 **SDL_FRect**（`SDL_RenderTexture` 的 src/dst 是浮点矩形 ✓）：
     //     v2 首版拿 SDL_Rect（i32）传进去 ⇒ 字节被当成浮点解释 ⇒ 图片整片画不出来 ✗（实测抓到 ✓）
@@ -313,6 +326,16 @@ export struct Card impl Widget, Themeable {
         tex = null; ownTex = true        // 下次 set_image 又是自己的 ✓
         loadedPath = ""
         natW = 0.0; natH = 0.0
+        drop_rr()                        // ★ 换图 ⇒ 圆角合成缓存**必须一起作废** ✗（否则贴的是旧图 ✓）
+    }
+
+    // ★ 2026-10-13：释放**圆角合成缓存**（换图 / 半径变 / 尺寸变重建前 / dispose ✓）
+    //   ⚠ 不能"重建时直接覆盖指针"：旧纹理不释放就是**泄漏** ✗（一张 299×210 ≈ 250KB ✓）
+    pri func drop_rr() {
+        if rrTex != null { core.lib().SDL_DestroyTexture(rrTex) }
+        rrTex = null; rrKeySrc = null; rrKeyTint = -2
+        rkW = 0.0; rkH = 0.0; rkR = 0.0
+        rkSX = 0.0; rkSY = 0.0; rkSW = 0.0; rkSH = 0.0
     }
 
     // ==================== 设置方法 ====================
@@ -366,7 +389,7 @@ export struct Card impl Widget, Themeable {
     func set_image_aspect(float a) { imgAspect = a; core.markFrameRedraw() }
     func set_image_h(float h) { imgH = h; core.markFrameRedraw() }
     func set_image_mode(int m) { imgMode = m; core.markFrameRedraw() }
-    func set_image_radius(float r) { imgRadius = r; core.markFrameRedraw() }
+    func set_image_radius(float r) { if r != imgRadius { drop_rr() }; imgRadius = r; core.markFrameRedraw() }
     func set_pad(float p) { pad = p; core.markFrameRedraw() }
     func set_gap(float g) { gap = g; core.markFrameRedraw() }
     func set_text_align(int a) { txtAlign = a; core.markFrameRedraw() }
@@ -742,8 +765,37 @@ export struct Card impl Widget, Themeable {
                     drectF.w = _iw; drectF.h = _ih
                     srcPtr = srectF.to_ptr()
                 }
-                // 图片圆角（opt-in ✓）：走渲染器的「图 × 圆角蒙版」合成；半径 0 时零开销 ✓
-                if imgRadius > 0.0 { r.drawTextureRounded(tex, srcPtr, drectF.to_ptr(), imgRadius) }
+                // 图片圆角（opt-in ✓）：走「图 × 圆角蒙版」合成 —— 但**结果要缓存** ✓
+                //   缓存前：每帧每卡一次合成 = 关裁剪 + 切 target + `SDL_RenderClear` + 贴回 ✗
+                //     （窗口自己的注释：D3D 后端上 `SDL_RenderClear` 会「短暂黑闪」✗）
+                //     ⇒ 实测症状：鼠标移过卡片触发整帧重绘时，**卡片区域在闪** ✓
+                //   缓存后：稳态每帧只是**贴一张普通纹理** ✓（0 次切 target / 0 次 Clear ✓）
+                if imgRadius > 0.0 {
+                    // 裁切源矩形（走"覆盖填满"时才有；其余为空 ⇒ 整幅 ✓）——它也是缓存键的一部分 ✓
+                    float sx = 0.0, sy = 0.0, sw = 0.0, sh = 0.0
+                    if srcPtr != null { sx = srectF.x; sy = srectF.y; sw = srectF.w; sh = srectF.h }
+                    int nw = _int(drectF.w + 0.5)
+                    int nh = _int(drectF.h + 0.5)
+                    bool hit = rrTex != null and rrKeySrc == tex and rrKeyTint == tint
+                            and rkW == drectF.w and rkH == drectF.h and rkR == imgRadius
+                            and rkSX == sx and rkSY == sy and rkSW == sw and rkSH == sh
+                    if not hit and not rrOff {
+                        // 尺寸变了 ⇒ 旧缓存尺寸不符：先释放（`compose` 不销毁别人的纹理 ✗ ⇒ 这里自己来 ✓）
+                        if rrTex != null {
+                            var[float, float](ow, oh) = r.getTextureSize(rrTex)
+                            if _int(ow + 0.5) != nw or _int(oh + 0.5) != nh { drop_rr() }
+                        }
+                        Ptr[u8] nt = r.composeRoundedTexture(rrTex, tex, srcPtr, nw, nh, imgRadius)
+                        if nt == null { rrOff = true; drop_rr() }      // 环境不支持 ⇒ 本卡永久回落方角 ✓
+                        else {
+                            rrTex = nt; rrKeySrc = tex; rrKeyTint = tint
+                            rkW = drectF.w; rkH = drectF.h; rkR = imgRadius
+                            rkSX = sx; rkSY = sy; rkSW = sw; rkSH = sh
+                        }
+                    }
+                    if rrTex != null { r.drawTextureRect(rrTex, null, drectF.to_ptr()) }
+                    else { r.drawTextureRect(tex, srcPtr, drectF.to_ptr()) }
+                }
                 else { r.drawTextureRect(tex, srcPtr, drectF.to_ptr()) }
             }
         }
