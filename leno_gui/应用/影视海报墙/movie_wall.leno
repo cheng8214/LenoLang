@@ -27,7 +27,7 @@ import "SDL3" as SDL3
 import "./movie_data.leno" as data
 import strings
 use SDL3.(Event, Renderer, Scancode, Window, TitleBar, Button, Label, Edit, Card,
-          HBox, VBox, ScrollView, GridLayout, RingProgress)
+          HBox, VBox, ScrollView, GridLayout, RingProgress, Font)
 use data.Movie
 
 // ==================== 尺寸 / 调色板 ====================
@@ -40,6 +40,11 @@ const int CARD_W = 172       // 卡片自然宽（网格会等分列宽后拉伸
 const int CARD_H = 300       // 卡片自然高（行高取该行最高子项 ⇒ 统一才对齐 ✓）
 const int HERO_W = 280       // 详情页大海报宽
 const int HERO_H = 420       // 详情页大海报高（2:3 ⇒ image_aspect = 1.5 ✓；矮窗口 600 高也放得下 ✓）
+const int SIM_W = 132        // 详情页「相似推荐」小卡宽
+const int SIM_H = 196        // 相似小卡高（≈2:3 ✓）
+const int SIM_GAP = 12       // 相似小卡间距
+const int SIM_MAX = 6        // 相似位最多放几张（横向滚动 ✓）
+const int SIM_PADX = 28      // 相似行的左右内边距（必须计入内容宽 ✗ 见 refresh_similar ✓）
 const float CARD_ASPECT = 1.45   // 图片区 高/宽（2:3 竖版海报 ✓）
 const int GRID_PAD = 18      // 网格内边距
 const int GRID_GAP = 18      // 卡片间距
@@ -114,6 +119,19 @@ struct Wall {
     float dWrapW = 0.0           // 简介折行宽度（随窗口校正 ✓）
     float tbH = 0.0              // 自绘标题栏高度（详情页根要让开它 ✓）
 
+    // ----- 详情页：相似推荐（横向 ScrollView ✓ 用上框架的 content_w + 横向条）-----
+    ScrollView simSv
+    HBox simRow
+    Array[Card] simCards = []
+    int simCount = 0             // 本次推荐了几张（决定 content_w ✓）
+
+    // ----- 网格页：底部状态栏 + 空态 -----
+    HBox statusBar
+    Label statLbl
+    Label sortLbl
+    bool emptyNow = false        // 当前筛选/搜索命中 0 部 ⇒ 网格区画空态提示 ✓
+    Font? emptyFont              // 空态提示用的字体（懒建；run 收尾时 close ✓）
+
     // ----- 数据 -----
     Array[Movie] movies = []
     Array[Card] cards = []        // 与 movies **同序**（筛选时只换 add 名单 ⇒ 控件不重建 ✓）
@@ -133,6 +151,8 @@ struct Wall {
     int shotAt = 10
     int closeAt = 0
     int clickSelAt = 0
+    int rclickAt = 0             // >0 ⇒ 该帧在第 1 张卡上注入右键（WALL_RCLICK ✓）
+    float rcX = 0.0, rcY = 0.0   // 注入的右键坐标（3 帧后按它推菜单项位置 ⇒ 验动作 ✓）
     int detailAt = 0             // >0 ⇒ 该帧进详情页（WALL_DETAIL ✓）
     int backAt = 0               // >0 ⇒ 该帧从详情页返回（WALL_BACK ✓）
     int maxFrames = 0
@@ -166,6 +186,7 @@ struct Wall {
         root.add(body, {grow: 1, shrink: 1, align: 3})
         build_side(body)
         build_grid(body)
+        build_status(root)   // 底部状态栏（应用"现在是什么状态"的单一出口 ✓）
 
         movies = data.movies()
         make_cards()
@@ -184,6 +205,7 @@ struct Wall {
                 sync_detail_layout()      // 详情页开着时：简介折行宽度跟着窗口宽 ✓
             }
         )
+        if emptyFont != null and emptyFont.ok { emptyFont.close() }; emptyFont = null   // 自建字体自己收 ✓
         SDL3.ttfQuit()
     }
 
@@ -197,6 +219,7 @@ struct Wall {
     //   set WALL_ACTIONS=1                 # 启动就打开「卡内操作」（验证 Card 容器化 ✓）
     //   set WALL_CLICKSEL=20               # 第 20 帧点第 1 张卡的「收藏」按钮（验证"不穿透整卡" ✓）
     //   set WALL_DETAIL=3                  # 第 3 帧进详情页（序号 = "当前筛选/排序下的第 n 部" ⇒ 确定 ✓）
+    //   set WALL_RCLICK=4                  # 第 4 帧在第 1 张卡上注入右键（验 Card 右键菜单 ✓）
     //   set WALL_BACK=8                    # 第 8 帧从详情页返回（验"切得回来" ✓，配合 WALL_DETAIL）
     //   set WALL_CLOSE=1                   # 第 5 帧模拟点标题栏 ✕（验证"能退出" ✓，配合 FRAMES 兜底）
     //   set WALL_FRAMES=40                 # 只跑 40 帧就退出（冒烟）
@@ -233,15 +256,19 @@ struct Wall {
         if cs != null { clickSelAt = _int(_str(cs)) }    // >0 ⇒ 该帧点第 0 张卡的「收藏」按钮 ✓
         var dt = _env("WALL_DETAIL")
         if dt != null { detailAt = _int(_str(dt)) }      // >0 ⇒ 该帧进详情页（验详情页布局 ✓）
+        var rc = _env("WALL_RCLICK")
+        if rc != null { rclickAt = _int(_str(rc)) }      // >0 ⇒ 该帧注入右键（验 Card 右键菜单 ✓）
         var bk = _env("WALL_BACK")
         if bk != null { backAt = _int(_str(bk)) }        // >0 ⇒ 该帧返回（验"切得回来" ✓）
         var fr = _env("WALL_FRAMES")
         if fr != null { maxFrames = _int(_str(fr)) }
-        if shotPath != "" or maxFrames > 0 {
-            // 截图/自动退出必须放 setOverlay（**在控件之上** ⇒ 读到的像素含界面 ✓）；
-            // 放 onRender 回调里只会拿到"只有底色"的空白帧 ✗（见 dashboard_sidebar 的踩坑记录 ✓）
-            win.setOverlay(func(Renderer r) { selftest_overlay(r) })
-        }
+        // ★ 叠加层**常驻**：空态提示也得画在控件之上 —— ScrollView 自己铺底色，
+        //   放在 onRender（控件层之下）会被它整块盖掉 ✗（实测：文字一个像素都不出来 ✓）。
+        //   这与"截图钩子必须放 setOverlay、放 onRender 只会拿到空白帧"是同一条规律 ✓
+        win.setOverlay(func(Renderer r) {
+            draw_empty_hint(r)
+            if shotPath != "" or maxFrames > 0 { selftest_overlay(r) }
+        })
     }
 
     pri func selftest_overlay(Renderer r) {
@@ -265,6 +292,21 @@ struct Wall {
         }
         if clickSelAt > 0 and frames == clickSelAt + 3 and cards.len() > 0 {
             print("[墙] 点卡内按钮后：card0.selected=" + _str(cards[0].is_selected()))
+        }
+        // 注入右键（验 Card 右键菜单 ✓）：点第 1 张卡**图片区**（内容区上方 12px ⇒ 仍在卡内 ✓）
+        if rclickAt > 0 and frames == rclickAt and cards.len() > 0 {
+            Array[float] rct = cards[0].content_rect()
+            rcX = _float(rct[0]) + 40.0
+            rcY = _float(rct[1]) - 12.0
+            bool rok = SDL3.testRightClickAt(win.getID(), rcX, rcY)
+            print("[墙] 注入右键(" + _str(rcX) + ", " + _str(rcY) + ") ok=" + _str(rok))
+        }
+        // 3 帧后点菜单第 3 项「加入收藏」（走完"弹出 → 命中 → 动作 → 重绘"整条链 ✓）
+        //   菜单锚在右键点 ⇒ 第 3 项中心 ≈ 锚点 + (2*itemH + itemH/2)，itemH 默认 26 ✓
+        if rclickAt > 0 and frames == rclickAt + 3 and cards.len() > 0 {
+            bool mok = SDL3.testClickAt(win.getID(), rcX + 60.0, rcY + 2.0 * 26.0 + 13.0)
+            print("[墙] 点菜单第 3 项 ok=" + _str(mok) + " ⇒ card0.selected=" + _str(cards[0].is_selected()) +
+                  " 菜单还开着=" + _str(cards[0].is_context_menu_open()))
         }
         // 进详情页（验详情页布局 ✓）：序号指"当前筛选/排序下的第 n 部" ⇒ 与界面所见一致 ✓
         if detailAt > 0 and frames == detailAt {
@@ -566,6 +608,21 @@ struct Wall {
         dinfo.add(SDL3.createLabel({text: ""}), {grow: 1, shrink: 1, align: 1})
         dinfo.add(SDL3.createLabel({text: "点「返回」或按 Esc 回到海报墙", font_size: 12,
                                     text_color: #6E7789FF}), {grow: 0, shrink: 0, align: 0})
+
+        // ---- 相似推荐：横向滚动行（换片时由 refresh_similar 重建名单 ✓）----
+        dpage.add(SDL3.createLabel({text: "  相似推荐（同分类）", font_size: 12, text_color: #6E7789FF}),
+                  {grow: 0, shrink: 0, basis: 22, align: 0})
+        simSv = SDL3.createScrollView({x: 0, y: 0, w: WIN_W - 56, h: SIM_H + 18, radius: 0,
+                                       bg_color: C_BG, border: false, bar_color: C_BAR,
+                                       content_w: _float(SIM_W * SIM_MAX), content_h: _float(SIM_H),
+                                       step: 96.0})
+        dpage.add(simSv, {grow: 0, shrink: 0, basis: SIM_H + 18, align: 3})
+        simRow = SDL3.createHBox({x: 0, y: 0, w: _float(SIM_W * SIM_MAX), h: _float(SIM_H),
+                                  padX: SIM_PADX, padY: 0, spacing: SIM_GAP})
+        simSv.set_content(simRow)
+        simCards = []
+        for 0 : SIM_MAX - 1 to k { simCards.add(SDL3.createCard(sim_opts(movies[0]))) }
+        for 0 : SIM_MAX - 1 to k { wire_card_menu(simCards[k], k) }   // 首次接线（open_detail 会重接 ✓）
     }
 
     // 大海报的选项（Card.set 会**按默认值补齐**缺的键 ⇒ 每次都给全 ⚠ 否则颜色/圆角被重置 ✗）
@@ -598,6 +655,7 @@ struct Wall {
         dKV3.set_text("海报：" + m.file)
         dDesc.set_text(m.desc)
         sync_detail_fav()
+        refresh_similar(idx)                 // 相似推荐跟着换（同分类 ✓）
         dOpen = true
         win.setRootAt(dpage, 0, tbH)
         SDL3.markFrameRedraw()
@@ -640,6 +698,101 @@ struct Wall {
         SDL3.markFrameRedraw()
     }
 
+    // ==================== 详情页：相似推荐（横向滚动 ✓）====================
+    //   为什么单独做一行：横向列表是"推荐位 / 时间轴 / 缩略图条"的通用形态 ✓
+    //   框架侧用 `content_w`（虚拟内容宽 > 视口 ⇒ 自动出横向条 ✓；滚轮/拖动/Home/End 都通 ✓）
+    pri func sim_opts(Movie m): Dict {
+        return {x: 0, y: 0, w: SIM_W, h: SIM_H, pad: 0,
+                image_path: data.poster_path(m.file), image_aspect: 1.5,
+                image_radius: 10, radius: 10, hover_lift: 0.0,
+                bg_color: C_CARD, border: true, border_color: #232A36FF,
+                badge: m.score, badge_pos: 0, badge_size: 12.0,
+                badge_bg: #000000B0, badge_color: #F5C451FF,
+                tip: m.title + "（" + m.year + "）"}
+    }
+
+    // 同分类里除自己以外的前 SIM_MAX 部（点进去可以一路跳 ✓）
+    //   ⚠ 每次都 `simRow.clear()` 重建名单：**不 dispose 卡片** ⇒ 纹理复用、不来回重建 ✓
+    //     （与网格页"同一批 Card 重新 add"是同一手法 ✓）
+    pri func refresh_similar(int idx) {
+        Array[int] same = []
+        string cat = movies[idx].cat
+        for 0 : movies.len() - 1 to i { if i != idx and movies[i].cat == cat { same.add(i) } }
+        while same.len() > SIM_MAX { same.remove(same.len() - 1) }
+        simRow.clear()
+        for 0 : same.len() - 1 to k {
+            int mi = same[k]
+            simCards[k].set(sim_opts(movies[mi]))
+            wire_card_menu(simCards[k], mi)          // 推荐位也能右键（同一套菜单 ✓）
+            simRow.add(simCards[k], {align: 1})
+        }
+        simCount = same.len()
+        // ⚠ 内容宽必须把 `simRow` 自己的**左右内边距**也算进去 ✗：只算"n 张 + 间距"的话，
+        //   容器内宽 = 内容宽 − 2×28 ⇒ 卡片被压扁（实测：132 宽的卡被压成 76 ✗）
+        int gaps = if simCount > 0 then simCount - 1 else 0
+        float cw = _float(SIM_PADX * 2 + simCount * SIM_W + gaps * SIM_GAP)
+        simSv.set_content_size(cw, _float(SIM_H))
+        simSv.set_scroll(0.0, 0.0)                   // 换片后回到最左（否则停在上一部的偏移 ✓）
+    }
+
+    // ==================== 卡片右键菜单接线（网格卡与推荐位**共用一份** ✓）====================
+    //   为什么抽出来：两处各写一份必然漂移 ✗（菜单项/回调一改就得改两遍）
+    pri func wire_card_menu(Card c, int idx) {
+        c.on_context_will_open(func() {
+            c.clearContextItems()
+            c.addContextItem({label: "进详情页", id: "open"})
+            c.addContextItem({label: "播放", id: "play"})
+            c.addContextItem({label: if c.is_selected() then "取消收藏" else "加入收藏", id: "fav"})
+            c.addContextSeparator()
+            c.addContextItem({label: "复制片名", id: "copy"})
+        })
+        c.on_context_select(func(string id) { on_card_menu(idx, id) })   // 闭包按值 ⇒ 每张卡各记各的下标 ✓
+    }
+
+    // ==================== 底部状态栏 ====================
+    pri func build_status(VBox root) {
+        statusBar = SDL3.createHBox({x: 0, y: 0, w: WIN_W, h: 28, padX: 14, padY: 0, spacing: 12,
+                                     bg_color: C_PANEL})
+        root.add(statusBar, {grow: 0, shrink: 0, basis: 28, align: 3})
+        statLbl = SDL3.createLabel({text: "", font_size: 12, text_color: C_TXT_DIM})
+        statusBar.add(statLbl, {grow: 0, shrink: 1, align: 1})
+        // ★ 中间放一个 `grow:1` 的空标签吃掉自由空间 —— **别让文字标签去 grow** ✗：
+        //   实测它会把右侧那项挤到只剩几十像素（文字被窗口右边裁掉 ✓）；同款撑位见顶部栏的 gapLbl ✓
+        statusBar.add(SDL3.createLabel({text: ""}), {grow: 1, shrink: 1, align: 1})
+        sortLbl = SDL3.createLabel({text: "", font_size: 12, text_color: C_TXT_DIM})
+        // ⚠ 右侧这项必须给**显式 basis** ✗：`Label` 是"按加入时的自然宽"参与排版的 ——
+        //   空文本建出来自然宽 = 0 ⇒ 盒子宽 0 ⇒ 之后 `set_text` 的文字**从盒子里溢出去**，
+        //   被窗口右边缘裁掉（实测症状：右边那串只剩「默…」✓）。给了 basis 就有固定盒子 ✓
+        statusBar.add(sortLbl, {grow: 0, shrink: 1, basis: 300, align: 1})
+        update_status()
+    }
+
+    // 状态栏文案（**唯一出口**：筛选 / 搜索 / 排序 / 收藏 变化都调它 ✓）
+    pri func update_status() {
+        int fav = 0
+        for 0 : cards.len() - 1 to i { if cards[i].is_selected() { fav = fav + 1 } }
+        statLbl.set_text("共 " + _str(movies.len()) + " 部 · 当前 " + _str(collect().len()) +
+                         " 部 · 收藏 " + _str(fav) + " 部")
+        string sm = "默认排序"
+        if sortMode == 1 { sm = "评分优先" }
+        eif sortMode == 2 { sm = "年份优先" }
+        string tail = if query != "" then " · 搜索：" + query else ""
+        sortLbl.set_text(sm + " · 分类：" + curCat + tail)
+    }
+
+    // 空态提示：网格区一张卡都没有时画一行字（画在控件层之下 ⇒ 网格空了才看得见 ✓）
+    //   ⚠ 不能拿 Label 藏在网格里：布局容器**不认 `visible=false`** ⇒ 它会照样占一排格子 ✗
+    //     （这条同"详情页换根而不是隐藏"的取舍 ✓）
+    pri func draw_empty_hint(Renderer r) {
+        if not emptyNow or dOpen { return }
+        if emptyFont == null { emptyFont = SDL3.createFontAuto(15.0) }
+        if emptyFont == null or not emptyFont.ok { return }
+        string t = "没有匹配的影片 —— 换个词，或点左栏的分类看看"
+        var[float, float](tw, th) = emptyFont.measureString(t)
+        // 直接量网格视口（`sv` 自己就知道在哪 ⇒ 不写死坐标 ✓）
+        r.drawText(emptyFont, t, sv.x + (sv.w - tw) / 2.0, sv.y + (sv.h - th) / 2.0, #6E7789FF)
+    }
+
     pri func make_cards() {
         cards = []
         actRows = []
@@ -666,6 +819,9 @@ struct Wall {
                 c.add_badge({text: "新", pos: 1, size: 11.0, bg: #C8102EFF, color: #FFFFFFFF})
             }
             c.on_click(func() { on_card_click(i) })
+            // ★ 右键上下文菜单（Card 2026-10-13 新增能力 ✓）：
+            //   详情 / 播放 / 收藏 ⇄ 取消 / 复制片名（接线与推荐位**共用 wire_card_menu** ✓）
+            wire_card_menu(c, i)
             cards.add(c)
             actRows.add(build_actions(i))     // 只建一次，开关只负责挂/摘 ✓（避免反复 new 泄漏）
         }
@@ -714,6 +870,24 @@ struct Wall {
     }
     pri func toggle_card_sel(int idx) {
         cards[idx].set_selected(not cards[idx].is_selected())
+        update_status()                  // 收藏数变了 ⇒ 底栏跟着走 ✓
+    }
+
+    // 卡片右键菜单的动作分发（菜单项 id 见 make_cards 的 on_context_will_open ✓）
+    pri func on_card_menu(int idx, string id) {
+        if idx < 0 or idx >= movies.len() { return }
+        string t = movies[idx].title
+        if id == "open" { on_card_click(idx); return }        // 走同一条路：选中 + 进详情 ✓
+        eif id == "play" { print("[墙] 右键播放：" + t) }
+        eif id == "fav" {
+            toggle_card_sel(idx)
+            print("[墙] 右键收藏切换：" + t + " ⇒ " + _str(cards[idx].is_selected()))
+        }
+        eif id == "copy" {
+            SDL3.setClipboardText(t)                          // 真复制到系统剪贴板 ✓
+            print("[墙] 已复制片名：" + t)
+        }
+        SDL3.markFrameRedraw()
     }
 
     // ==================== 筛选 / 排序 ====================
@@ -760,6 +934,7 @@ struct Wall {
     pri func rebuild() {
         grid.clear()
         Array[int] idx = collect()
+        emptyNow = idx.len() == 0        // 命中 0 部 ⇒ 网格区走空态提示（见 draw_empty_hint ✓）
         for 0 : idx.len() - 1 to i { grid.add(cards[idx[i]], {align: 3}) }
         sv.set_scroll(0.0, 0.0)     // 换筛选后回到顶部（否则停在"上一批"的位置 ✓）
         SDL3.markFrameRedraw()
@@ -770,6 +945,7 @@ struct Wall {
         if curCat == data.CAT_ALL { totalLbl.set_text("（共 " + _str(n) + " 部）") }
         else { totalLbl.set_text("（" + curCat + " / " + _str(n) + " 部）") }
         if query != "" { totalLbl.set_text(totalLbl.get_text() + "  搜索：" + query) }
+        update_status()                  // 顶栏总数与底栏状态**同一出口**更新 ⇒ 不会各说各话 ✓
     }
 
     // ==================== 交互回调 ====================

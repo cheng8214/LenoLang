@@ -103,7 +103,7 @@ lay.setExtraPassWindow(func(Widget c, Ptr[u8] hwnd) {
     // ★ 2026-10-10：合并 `case is A, B, ...` 可以用 ✓（样板见 sdl_layout._passWindowHandle 的说明 ✓）
     switch c {
         case is Panel, ScrollView, TabControl, SpinBox, GroupBox, Splitter, ComboBox { c._bind_window(hwnd); return }
-        case is Card { c._bind_window(hwnd); return }     // 卡片：转交给卡内子控件（Edit 的 IME 要靠它 ✓）
+        case is Card { c._bind_window(hwnd); c.set_window_handle(hwnd); return }   // 卡片：子控件 IME + 右键菜单句柄 ✓
         case is Edit { c.set_window(hwnd); return }
         case is Table, TreeView, ListBox, TitleBar { c.set_window_handle(hwnd); return }
     }
@@ -798,7 +798,8 @@ export struct Window {
                 // ★ Splitter 需要传递窗口尺寸，以便向下传播给内嵌的 Table/TreeView
                 w._bind_window_size(handle, _w, _h); return
             }
-            case is Panel, ScrollView, HBox, VBox, AnchorBox, TabControl, SpinBox, GroupBox, Card { w._bind_window(handle); return }
+            case is Panel, ScrollView, HBox, VBox, AnchorBox, TabControl, SpinBox, GroupBox { w._bind_window(handle); return }
+            case is Card { w._bind_window(handle); w.set_window_handle(handle); return }   // 卡片多一步：右键菜单要句柄 ✓
             case is Edit {
                 w.set_window(handle); return
             }

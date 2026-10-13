@@ -37,6 +37,7 @@ import "sdl_image.leno" as img
 import "sdl_tooltip.leno" as tip
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 use theme.Color
+import "sdl_menu.leno" as menu; use menu.MenuBar   // 右键上下文菜单（菜单本体共用 sdl_menu ✓）
 import strings
 
 
@@ -136,6 +137,35 @@ export struct Card impl Widget, Themeable {
     pri bool contentClip = false      // 是否裁剪内容区（**默认关**：裁一次 = 一次 flush ✓）
     pri bool clickThrough = false     // true ⇒ 内容区内的点击也触发整卡 on_click
     pri float gap = 7.0               // 图片 ↔ 文字 ↔ 内容区 的间距
+
+    // ==================== 右键上下文菜单（2026-10-13 补 ✓ 框架缺口）====================
+    //   为什么补：`Card` 原来**只有 on_click** ✗ —— 而"媒体库/商品墙/文件卡片"最常用的
+    //   「右键 → 播放 / 收藏 / 详情 / 复制片名」根本挂不上（此前只有 Table / TreeView / ListBox 有 ✓）。
+    //   实现照 `sdl_table.leno` / `sdl_listbox.leno` 那套**原样搬**（同一范式，三处同名同义 ✓）：
+    //     · 菜单本体共用 `sdl_menu.leno`（弹出 / 命中 / 关闭 / 边界夹紧都由它管 ✓）
+    //     · 绘制由窗口第二遍 `menu.renderContextMenus` 按窗口隔离统一画 ✓
+    //     · 窗口尺寸：菜单自己按句柄查（见 `sdl_menu.clampRect`）⇒ 卡片嵌在网格里也不用额外下发 ✓
+    //   ⚠ 用起来跟 ListBox 一样：`addContextItem({label,id})` + `on_context_select(func(id){…})` ✓
+    pri MenuBar? ctxMenu
+    pri int ctxMenuH = -1                 // 菜单句柄（-1 = 还没建）
+    pri bool ctxMenuEnabled = true
+    pri func(string):void onCtxSelect
+    pri func():void onCtxWillOpen
+    pri Ptr[u8]? ctxHwnd                   // 所属窗口句柄（句柄先到、菜单后建 ⇒ 得先存着 ✓）
+
+    // 懒建（**只建一次** ⇒ 必须判空：`set()` 可以被反复调用 —— 详情页的大海报就反复 set ✗，
+    //   不判空的话每 set 一次就往全局注册表塞一个菜单 ✗）
+    //   ⚠ 不在 `set()` 里建：22 张卡各留一个没人用的 MenuBar 是纯浪费 ⇒ 只在**真要用**时建
+    //     （`addContextItem` / 右键）✓ 句柄若已先到，这里补下发给它 ✓
+    pri func ensure_ctx_menu() {
+        if ctxMenu == null {
+            ctxMenu = menu.createMenuBar({})
+            ctxMenuH = ctxMenu.addContextMenu("card_ctx")
+            ctxMenu.on_select(func(string m, string id) { if onCtxSelect != null { onCtxSelect(id) } })
+            menu.registerContextMenu(ctxMenu)
+        }
+        if ctxHwnd != null { ctxMenu.setWindowHandle(ctxHwnd) }
+    }
 
     // ==================== 状态 ====================
     pri bool selected = false
@@ -372,6 +402,43 @@ export struct Card impl Widget, Themeable {
     func is_hover(): bool { return hover }
     func is_pressed(): bool { return pressed }
 
+    // ==================== 右键上下文菜单 API（与 ListBox / Table **同名同义** ✓ 应用层照写就熟）====================
+    // 记录所属窗口句柄（菜单要按窗口隔离绘制 ✓ 见 menu.renderContextMenus ✓）
+    //   ⚠ 菜单还没建时**只存字段**、不急着建（见 ensure_ctx_menu 的说明 ✓）
+    func set_window_handle(Ptr[u8] hwnd) { ctxHwnd = hwnd; ctxMenu?.setWindowHandle(hwnd) }
+    func set_window_size(int ww, int hh) { ctxMenu?.setWindowSize(ww, hh) }   // 兜底：菜单自己也会按句柄查 ✓
+    func on_window_resize(int ww, int hh) { set_window_size(ww, hh) }
+    func set_context_menu_enabled(bool en) { ctxMenuEnabled = en }
+    func is_context_menu_enabled(): bool { return ctxMenuEnabled }
+    // 追加一项，返回项在菜单内的索引（可用于挂子菜单 ✓）
+    func addContextItem(Dict opts): int {
+        ensure_ctx_menu()
+        if ctxMenuH < 0 { return -1 }
+        return ctxMenu.addContextItem(ctxMenuH, opts)
+    }
+    func addContextSeparator() {
+        if ctxMenu != null and ctxMenuH >= 0 { ctxMenu.addContextSeparator(ctxMenuH) }
+    }
+    func clearContextItems() {
+        if ctxMenu != null and ctxMenuH >= 0 { ctxMenu.clearContextItems(ctxMenuH) }
+    }
+    func get_context_menu(): MenuBar { return ctxMenu }
+    func get_context_menu_handle(): int { return ctxMenuH }
+    func is_context_menu_open(): bool { return ctxMenu != null and ctxMenu.isOpen() }
+    // 回调：`id` = 被点菜单项的 id（哪张卡由应用自己的闭包记着 ⇒ 不必回传行号 ✓）
+    func on_context_select(func(string):void cb) { onCtxSelect = cb }
+    // 弹出**之前**调一次 ⇒ 应用层在这里按当前卡重建菜单项（有/无收藏各不同 ✓，ListBox 同款 ✓）
+    func on_context_will_open(func():void cb) { onCtxWillOpen = cb }
+
+    // 在光标处弹出（照 ListBox 的 `open_ctx_menu` ✓）
+    pri func open_ctx_menu(float mx, float my, int keyMod) {
+        ensure_ctx_menu()
+        if onCtxWillOpen != null { onCtxWillOpen() }          // 应用层重建菜单项 ✓
+        if ctxMenu == null or ctxMenuH < 0 { return }
+        if ctxMenu.contextItemCount(ctxMenuH) == 0 { return }  // 一个有效项都没有 ⇒ 不弹（免得留条横线 ✗）
+        ctxMenu.openContext(ctxMenuH, mx, my)
+    }
+
     // ==================== 容器化（v2 ✓）====================
     func set_content(Widget c): Widget {
         _content = c
@@ -563,6 +630,19 @@ export struct Card impl Widget, Themeable {
         sync_content()
         var[float, float](mx, my) = ev.mousePos()
         if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
+
+        // ★ 右键菜单已展开：事件**先**交菜单（选择 / 关闭由菜单自身负责 ✓）
+        //   ⚠ 必须排在下面那句"弹层捕获"**之前** ✗✗ —— 菜单打开时它自己也算一个弹层 ✓，
+        //     先判捕获就会把菜单自己的事件全吃掉 ⇒ 菜单能弹、却点不动 ✗（照 ListBox 的顺序 ✓）
+        if ctxMenuEnabled and ctxMenu != null and ctxMenu.isOpen() {
+            if ev.isMouseButtonDown() and ev.mouseButton() == 3 {
+                ctxMenu.close()                          // 再右击一次 ⇒ 关上并按新位置重开 ✓
+                if contains(mx, my) { open_ctx_menu(mx, my, ev.keyMod()) }
+                return
+            }
+            ctxMenu.process(ev)
+            return
+        }
         if core.inPopupCapture(mx, my) { return }
 
         bool inside = contains(mx, my)
@@ -579,6 +659,12 @@ export struct Card impl Widget, Themeable {
             if hover and tipText != "" { tip.tipReport(tipText, mx, my) }
         }
         if ev.isMouseButtonDown() and inside {
+            // ★ 右键：弹上下文菜单（默认无预置项 ⇒ 应用层在 on_context_will_open 里按当前卡重建 ✓）
+            //   ⚠ 必须**先于**左键分支 ✗ —— 否则右键会顺带触发整卡 on_click（"打开详情"）✗
+            if ctxMenuEnabled and ev.mouseButton() == 3 {
+                open_ctx_menu(mx, my, ev.keyMod())
+                return
+            }
             // ★ 内容区是子控件的地盘：点卡内按钮不该顺带"打开详情" ✗（要穿透就 content_click_through:true ✓）
             if inBody or clickThrough {
                 pressed = true
@@ -787,6 +873,8 @@ export struct Card impl Widget, Themeable {
         if fBadge != null and fBadge.ok { fnt.releaseFont(fBadge) }; fBadge = null
         var c = _content
         if c is Widget { c.dispose() }
+        // 右键菜单：dispose 会把自己从**全局菜单注册表**摘除 ✓（否则窗口销毁后残留悬空 ✗）
+        ctxMenu?.dispose(); ctxMenu = null; ctxMenuH = -1
     }
 
     // ==================== 运行时主题切换 ====================

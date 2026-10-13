@@ -16,6 +16,11 @@
 >   ② 列表/下拉/菜单的**行高亮圆角锚错了边**（`atBottom` 拿行自己的矩形补圆角，而末行常只露一半 ⇒ 圆角落到面板底边下方 ⇒ 面板两个底角被方角铺满）+ 内容裁剪 `_int(ph)+1` 让末行文字出框 1px ⇒ 收敛成渲染器共用件 **`fillRowInPanel`**（只填「行矩形 ∩ 面板圆角矩形」，圆角**锚在面板的边**）+ 裁剪改 `ceil` 精确覆盖；`sdl_combobox` / `sdl_listbox` / `sdl_menu` 三处调用点改调它 ✓；
 >   ③ `leno_gui/应用/影视海报墙/` 新增**影片详情页**（点卡片进入：大海报 + 评分环 + 年份/分类/简介 + 收藏/播放；Esc/返回切回，网格状态原样保留 ✓；自检钩子 `WALL_DETAIL` / `WALL_BACK`）；
 >   速查附录 C 相应新增 3 条（圆角纹理用自定义混合 · 行高亮锚点与裁剪 · `setRootAt` 运行时换根）。
+>   **2026-10-13 追加（六）**：**框架补 2 项能力 + 应用侧把海报墙做厚**（均真机实测）：
+>   ① `sdl_card.leno` 新增**右键上下文菜单**（框架缺口 ⇒ 媒体库/商品墙必用的「右键 → 播放/收藏/详情」以前挂不上，只有 Table/TreeView/ListBox 有）：API 与那三者**同名同义**（`addContextItem` / `on_context_select(func(id))` / `on_context_will_open` / `clearContextItems` / `is_context_menu_open` …），菜单本体共用 `sdl_menu`、由窗口第二遍统一画；懒建（`ensure_ctx_menu`，22 张卡不会各留一个空菜单）+ `dispose` 摘注册表 ✓；顺带修掉"右键也会触发整卡 `on_click`"✗；
+>   ② `sdl_scrollview.leno`：**只有横向能滚时，纵向滚轮也用来横滚**（横向列表/推荐位在普通鼠标下以前"滚轮毫无反应"✗；纵向能滚时行为不变 ✓）；
+>   ③ `leno_gui/应用/影视海报墙/`：详情页加**相似推荐横排**（横向 `ScrollView` + `content_w`，推荐位复用卡片右键菜单）、网格页加**底部状态栏**（共 N 部 / 当前 / 收藏 / 排序 · 分类，`update_status` 单一出口）与**空态提示**（命中 0 部时网格区写字 —— ⚠ 必须走 `setOverlay`，放 `onRender` 会被 `ScrollView` 自己的底色整块盖掉 ✗ 同"截图钩子"那条规律）；
+>   ④ 速查附录 C 新增 **1 条坑**：文本会变的 `Label` 在布局里必须给 `basis`（或 `grow`）——空文本建出来盒子宽 ≈ 0，之后 `set_text` 的文字会**溢出被窗口裁掉**（实测症状：右项只剩「默…」）。
 >   **2026-10-13 追加（五）**：**澄清一条被误传的语义**（**不是 bug** —— 实现 `semantic_upvalue.c` + 回归 `assert/test_closure_value_capture.leno` 都在 ✓）：闭包的「值捕获」**只发生在循环体内**（每轮各一份 ✓）；循环外的局部量 / 模块级 / `self` 字段都是 **by-upvalue（实时）** ⇒ 捕获后改它，闭包读得到新值 ✓。『语言陷阱速查.md』新增 **㊱**（6 形态实测表 + 唯一的真坑：循环里改**外层共享**变量 ⇒ 几个闭包全读末值 ✗）；同日**全仓订正 4 个文件里的 8 处旧说法**（原文把"循环体内声明的变量才是值捕获"说成"闭包按值捕获" ✗，范围说宽了）：`leno_gui/应用/数据看板/dashboard.leno`（2 处）、`leno_gui/控件/数据看板/dashboard_sidebar.leno`（2 处）、`leno_gui/应用/影视海报墙/movie_wall.leno`（3 处，含我 2026-10-13 写详情页时顺手抄错的）、`build/leno_module/LenoSDL3/examples/基础示例/窗口管理/test_filedialog.leno`（1 处）；**剩下的"值捕获"提法都核对过**（`assert/test_closure_value_capture.leno`、`examples/性能测试/R5R6形态基准.leno`、`docs/archive/JIT闭包与upvalue设计_R5.md` 讲的都是**循环体内**那个形态 ⇒ 正确 ✓ 未动）。
 > - 状态图例：**✅ 现行**（可照着写代码）· **🟡 现行但含过时段落**（文件头部已加"历史 / 局部过时"块，
 >   引用前先看那一段）· **📜 历史留档**（功能已不存在或已完结，只作考古）· **🧭 台账**（待办与路线图）。

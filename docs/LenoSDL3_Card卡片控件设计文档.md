@@ -341,6 +341,14 @@ build\leno.exe leno_gui\应用\影视海报墙\movie_wall.leno
 ## 十、遗留与后续（P1/P2/P3 待办）
 
 - [x] 圆角图片（`image_radius`）：**已落地** —— 复用 `sdl_renderer` 的圆角覆盖率蒙版 + 离屏合成（`drawTextureRounded`，混合模式为自定义「只乘 alpha」`maskAlphaBlend()` ✓）
+- [x] **右键上下文菜单**（2026-10-13 补 ✓ **框架缺口**：媒体库/商品墙必用的「右键 → 播放/收藏/详情」以前挂不上，只有 `Table`/`TreeView`/`ListBox` 有 ✓）：
+      API 与那三者**同名同义**（`addContextItem` / `on_context_select(func(id):void)` / `on_context_will_open` /
+      `clearContextItems` / `is_context_menu_open` / `set_context_menu_enabled` …）；
+      菜单本体共用 `sdl_menu`（弹出/命中/关闭/边界夹紧都由它管 ✓、窗口第二遍 `renderContextMenus` 统一画 ✓）；
+      **懒建**（`ensure_ctx_menu`：不用的卡不各留一个空菜单 ✓，句柄先到就先存着 ✓）、`dispose` 摘全局注册表 ✓；
+      顺带修掉一个旧毛病：**右键也会触发整卡 `on_click`**（等于"右键打开详情"✗）—— 现在右键先拦下并弹菜单 ✓
+      （回归件：`leno_gui/应用/影视海报墙/movie_wall.leno` 的 `WALL_RCLICK=n` 钩子 —— 注入右键 + 3 帧后点第 3 项，
+      日志应**各只出现一次** ✓ 实测 ✓）
 - [x] 多角标（`badge` 单值 → `badges` / `add_badge`，旧键与旧行为全保留 ⇒ 零破坏 ✓）
 - [ ] **列表行变体（图在左、文/内容在右）**：当前 `image_pos` 固定"图在上" ⇒ 真列表行需要新增
   `image_pos: left/right` + `image_w`（图占宽/占高两种口径）——**下一批的首选项**
