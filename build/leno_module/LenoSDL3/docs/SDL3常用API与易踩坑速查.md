@@ -1055,6 +1055,32 @@ win.setRootAt(root, 0, tbH)       // 返回列表页（root 要**存字段**，�
 
 回归件：`leno_gui/应用/影视海报墙/movie_wall.leno`（`WALL_DETAIL=n` 进详情 / `WALL_BACK=n` 返回 ✓）
 
+### ⛔ `Table` 的自定义格色**不跟着数据走**：`remove_row` 后错位一行、`set_rows` 后残留（2026-10-13 实测 + 已修 ✓）
+
+**症状**（两条都是"张冠李戴"，实测过 ✓）：
+- **删行**：给 R2 上绿、R3 上红 ⇒ `remove_row(0)`（数据整体上移一行）之后，绿/红**停在同一屏幕行** ✗
+  ⇒ 等于染错了行（实际染上 R3/R4 ✓）
+- **换数据**：`set_rows(全新 N0..N4)` 之后，上一批的绿/红**原样还在** ✗ ⇒ 新数据莫名其妙带着颜色 ✓
+
+**病因**：单元格级颜色存在 `_cellFgColors/_cellBgColors`（`Dict`，键是 **`"row,col"`** ✓）里，
+而 `remove_row` **不动**这些键（下面的行上移了、键没跟上 ✗）、`set_rows` / `clear` 也**不清** ✗。
+（`swap_rows` 里**早有**同款同步 ⇒ 缺的就是这两处 ✓）
+
+**修法（已落库 ✓）**：口径与"排序不许说谎"**完全一致** —— **要么别张冠李戴**：
+- `remove_row(idx)` ⇒ 老行 `o > idx` 的键整体搬成 `o-1`（照 `swap_rows` 的思路；用新行数 `n` 表达 ⇒ 搬 `(r+1)→(r)` ✓）
+- `set_rows` / `clear`（**换整批数据**）⇒ 清掉 `_cellFgColors/_cellBgColors` 与 `rowColors` ✓
+  （应用想换数据后染色，就在 `set_rows` **之后**再 set —— `cleaner_master` 本来就这么写 ✓）
+
+**验收**（探针 `build/_probe_table2.leno`：行 R0..R4，R2 绿 / R3 红）：
+```bash
+set PROBE_SHOT_A=%TEMP%\a.png & set PROBE_SHOT_B=%TEMP%\b.png & set PROBE_SHOT_C=%TEMP%\c.png
+build\leno.exe build\_probe_table2.leno
+```
+流程：截图 A → `remove_row(0)` → 截图 B → `set_rows(N0..N4)` → 截图 C；然后读**同一列**各行像素：
+- A：绿在行 2、红在行 3 ✓
+- B：绿/红应**整体上移一行** ✓（修前停在原位 ✗）
+- C：**全无染色** ✓（修前绿/红原样残留 ✗）
+
 ### ⛔ `Scrim`（模态遮罩）**不跟随窗口缩放** ⇒ 拉大窗口后右下露一条"没遮住、还点得动"（2026-10-13 实测 + 已修 ✓）
 
 **症状**：模态遮罩本来铺满得好好的；**一拉大窗口**，右侧/下侧就露一条**没被压暗**的原色 ✗ ——

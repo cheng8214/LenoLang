@@ -494,6 +494,11 @@ export struct Table impl Widget, Themeable {
     // ==================== 数据操作 ====================
     func set_rows(Array[Array[string]] rs) {
         _rows = rs
+        // ★ 2026-10-13：换**整批数据** ⇒ 旧的单元格级颜色与行色**作废清掉**（口径同排序：要么别张冠李戴 ✓）
+        //   原来 `_cellFgColors/_cellBgColors`（键 "row,col"）在 set_rows 后**仍然生效** ✗ ⇒
+        //   新数据的第 2/3 行会继承上一批的染色（实测：换成 N0..N4 后旧的绿/红原样还在 ✓）
+        //   ⇒ 应用想在换数据后重新染色，就照 `cleaner_master` 那样在 set_rows **之后**再 set ✓
+        _cellFgColors.clear(); _cellBgColors.clear(); rowColors = []
         invalidate_fitted(); invalidate_sb()
         int m = 0
         for _rows.len() to i { if _rows[i].len() > m { m = _rows[i].len() } }
@@ -560,6 +565,27 @@ export struct Table impl Widget, Themeable {
         }
         selRows = ns
         rebuild_sel_set()
+        // ★ 2026-10-13 修：**单元格级颜色要跟着数据搬家** —— 键是 "row,col"，删掉 idx 行后，
+        //   它下面所有行的键必须整体上移一位（老行 o > idx ⇒ o-1），否则格色**错位一行** ✗
+        //   实测：R2 绿 / R3 红，删掉 R0 后绿红**停在同一屏幕行** ⇒ 实际染上了 R3/R4 ✗
+        //   （`swap_rows` 早有同款同步 ✓，这里同思路：用新行数 n = `_rows.len()` ⇒ 搬 (r+1)→(r) ✓）
+        if _cellFgColors.len() > 0 or _cellBgColors.len() > 0 {
+            int n = _rows.len()
+            for idx : n - 1 to r {
+                int rp = r + 1
+                for 0 : ncols - 1 to c {
+                    string ks = $"{rp},{c}"; string kd = $"{r},{c}"
+                    Color fg = _cellFgColors.get(ks, 0)
+                    if fg != 0 { _cellFgColors[kd] = fg } else { _cellFgColors.remove(kd) }
+                    Color bg = _cellBgColors.get(ks, 0)
+                    if bg != 0 { _cellBgColors[kd] = bg } else { _cellBgColors.remove(kd) }
+                }
+            }
+            for 0 : ncols - 1 to c {          // 末行的键已搬到 n-1 ⇒ 旧键 n 摘掉 ✓
+                _cellFgColors.remove($"{n},{c}")
+                _cellBgColors.remove($"{n},{c}")
+            }
+        }
         clamp_scroll()
         update_check_header()
     }
@@ -567,7 +593,8 @@ export struct Table impl Widget, Themeable {
     //   清空数据却留着"▼"的话，之后逐行 `add_row` 塞进来的新数据**必然是插入序** ⇒ 箭头立刻说谎 ✗
     //   （口径：批量换数据用 `set_rows`（会重放排序 ✓）；`clear()`/`add_row()` 视为"改了行集合"⇒
     //     排序状态作废 ✓ —— 要么别谎报、要么别乱序，两条路都得有一条 ✓）
-    func clear() { _rows = []; rowImages = []; rowTips = []; rowChecked = []; rowColors = []; selRow = -1; selCol = -1; selRows = []; selSet = []; scrollX = 0; scrollY = 0; checkHeaderState = false; checkedCount = -1; sortCol = -1; sortDesc = false; invalidate_fitted(); invalidate_sb() }
+    //   ★ 同口径：清空时**单元格级颜色也一起清**（键 "row,col" 指的是旧行 ✗），rowColors 本来就清 ✓
+    func clear() { _rows = []; rowImages = []; rowTips = []; rowChecked = []; rowColors = []; _cellFgColors.clear(); _cellBgColors.clear(); selRow = -1; selCol = -1; selRows = []; selSet = []; scrollX = 0; scrollY = 0; checkHeaderState = false; checkedCount = -1; sortCol = -1; sortDesc = false; invalidate_fitted(); invalidate_sb() }
     func row_count(): int { return _rows.len() }
     func col_count(): int { return ncols }
     func get_row(int idx): Array[string] {
