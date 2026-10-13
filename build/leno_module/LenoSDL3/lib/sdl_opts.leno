@@ -103,41 +103,17 @@ export func warn_once(string who, string key, string msg) {
 //   ⇒ 在**这一处**豁免最省：不用去改 33 份白名单 ✓
 Array[string] _window_keys = ["z"]
 
-// ============================================================================
-// ★ 2026-10-13：**改名表**（旧名 → 新名）—— "统一选项命名"的**安全网** ✓
-// ----------------------------------------------------------------------------
-// 为什么要有它（这是改名能不能做成的关键）：
-//   改名的最大风险是"用户的代码**悄悄**失效" ✗。有了这张表：
-//     ① 旧名**仍然可用**（各控件照旧读它 ⇒ 白名单 `_opts_keys()` 里也还留着它 ✓）
-//        ⇒ **现有代码零破坏** ✓（这一步比"直接改名"重要得多）
-//     ② 但**每次用到都会警告**：本表在 `known` 判断**之前**查 ⇒
-//        旧名虽然还在白名单里，照样每次都报 ✓ ⇒ **警告清零 = 迁移完成**，**可验证** ✓
-//     ③ 加一处改名只改**这一处** ✓
-//   ⚠ 口径与"不认识的选项"**分开**：改名是**有对应新名的** ⇒ 直接给出新名，
-//     不走"你是不是想要 xxx"的近名猜测（那对改名场景是误导 ✗）
-//   ⚠ 旧名**别急着**删：白名单与 `.get("…")` 里的旧读法要一直留到"警告清零"之后再删 ✓
-//
-// 两列**平行**（不用字符串解析：更直白、也少一处可能出错的地方 ✓）
-Array[string] _renamed_old = [
-    "fontSize",        // popmenu：其余 22 个控件都用 font_size ✓
-    "padX", "padY",    // gridlayout：alert / badge / drag / card… 早就用 pad_x / pad_y ✓
-    "imageMode",       // treeview：button / card 用 image_mode ✓
-    "imageExpanded",   // treeview
-]
-Array[string] _renamed_new = [
-    "font_size",
-    "pad_x", "pad_y",
-    "image_mode",
-    "image_expanded",
-]
-
-// 查旧名 ⇒ 新名（不是旧名时返回 ""✓）
-export func renamed_to(string key): string {
-    for 0 : _renamed_old.len() - 1 to i {
-        if _renamed_old[i] == key { return _renamed_new[i] }
-    }
-    return ""
-}
+// ★ 2026-10-13 留档：这里**曾经**有过一张"改名表"（旧名 → 新名）——
+//   目的是让改名"零破坏"：旧名照旧可用、但每次用到都警告 ⇒ "警告清零 = 迁移完成"，可验证 ✓。
+//   它**当天就被撤掉了**，因为决定是「**旧名全部放弃**」✓：
+//     · 四个仓库（Leno / LenoMusic / LenoGame / LenoTrae）**已经一次迁完**（52 + 7 + 1 + 2 个文件 ✓）
+//       ⇒ 旧名在这里**一个使用者都没有**了 ✓
+//     · 于是"旧名仍可用"这句话反而变成**假话** ✗（表还在、却没有任何控件再读旧名 ✓）
+//     · 而**发现能力并没有丢**：传旧名 ⇒ 现在走"不认识的选项 + **你是不是想要 `pad_x`？**" ✓
+//       （`near()` 的编辑距离 ≤2 对这一族（`padY`→`pad_x`？）不总是命中，
+//        所以**规矩**是：以后**不再**改名；真要大改，就再把这张表连同"零破坏"的纪律一起加回来 ✓）
+//   ⚠ 取舍说清：这等于**放弃对外兼容**——本仓的三个应用是自家仓库、一起迁 ✓；
+//     若以后有第三方使用者，改名前必须重新启用改名表（这正是它当初存在的理由 ✓）
 
 // 对账：opts 里出现不在 known 里的键 ⇒ 警告 ✓（默认每个只报一次 ✓）
 export func check(string who, Dict opts, Array[string] known) {
@@ -148,13 +124,6 @@ export func check(string who, Dict opts, Array[string] known) {
         //   （否则报 "期望 string, 实际 any" ✓ —— 与 RegValueInfo 那个坑同源 ✓）
         string key = _str(k)
         if key == "" { continue }
-        // ★ 改名过的旧名：**照旧能用**，但每次都提醒一次 ✓
-        //   ⚠ 必须在 `known` 判断**之前** —— 旧名还在白名单里（控件还在读它）⇒ 放后面就永远不报 ✗
-        string nn = renamed_to(key)
-        if nn != "" {
-            warn_once(who, key, $"{who}：选项 '{key}' 已改名为 '{nn}'（旧名仍可用，但建议改过来 ✓）")
-            continue
-        }
         if _in(known, key) or _in(_window_keys, key) { continue }
         string hint = near(key, known)
         string msg = $"{who}：不认识的选项 '{key}'"

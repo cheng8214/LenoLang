@@ -9,7 +9,8 @@
 // 覆盖：错键必报 ✓ / 对键零报 ✓ / 近名建议 ✓（icon→image、basiss→basis ✓）/
 //       去重（循环里建控件不刷屏 ✓）/ 空 Dict 与 null 不炸 ✓ / STRICT 前缀 ✓（★ 2026-10-13：
 //       这句原来**只是口号** ✗ —— 正文根本没断言过 ⇒ 本轮补上，并把前缀抽成可断言的纯函数 ✓）/
-//       窗口侧通用键 `z` 豁免（防误报 ✓ 2026-10-13 补）/ 内边距键**四套写法**用错时有近名提示 ✓
+//       窗口侧通用键 `z` 豁免（防误报 ✓ 2026-10-13 补）/ 内边距键**四套写法**用错时有近名提示 ✓ /
+//       旧名**已放弃**：改名表当天撤掉，旧名现在**不再被接受**（⑩ ✓ 2026-10-13）
 import "sdl_opts" as dochk
 import strings
 
@@ -110,26 +111,22 @@ main() {
     dochk.check("Canvas", {pad_x: 6}, ["pad"])
     check("Canvas 传 pad_x ⇒ 指回 pad ✓", has(dochk.take_log(), "pad"))
 
-    // ==================== ⑩ 改名表：旧名"**能用但会被告知**"（2026-10-13 补 ✓）====================
-    //   为什么必须有这一节：改名的最大风险是"用户代码**悄悄**失效" ✗。改名表给了两条保证：
-    //     · 旧名**照旧可用**（控件那边仍然读它 ✓）⇒ **现有代码零破坏** ✓
-    //     · 但会被 warn 一次 ⇒ **警告清零 = 迁移完成**，可验证 ✓
-    //   ⚠ 本节的**核心判据**：旧名**仍在白名单里**（因为控件还在读它）⇒ 必须**照样报** ✓
-    //     如果把改名判断放在 `known` 之后，旧名在白名单里就**永远不报** ✗（那这张表等于没用 ✓）
-    check("renamed_to(fontSize) ⇒ font_size", dochk.renamed_to("fontSize") == "font_size")
-    check("renamed_to(padY) ⇒ pad_y", dochk.renamed_to("padY") == "pad_y")
-    check("renamed_to(imageMode) ⇒ image_mode", dochk.renamed_to("imageMode") == "image_mode")
-    check("renamed_to 对正常键 ⇒ 空串 ✓", dochk.renamed_to("bg_color") == "")
-
-    dochk.check("探针I", {fontSize: 20.0}, ["font_size", "fontSize"])
-    var l10 = dochk.take_log()
-    check("★ 旧名**即使在白名单里**也必须报（否则永远发现不了 ✗）", l10.len() == 1)
-    check("提示里给出**新名** font_size ✓", has(l10, "font_size"))
-    check("口径是『已改名』（**不是**『不认识的选项』✓）", has(l10, "已改名"))
-    // 反向：新名**一条都不能报** ✓（否则迁移完了还有噪音 ✗）
-    dochk.check("探针J", {font_size: 20.0}, ["font_size", "fontSize"])
-    check("新名 ⇒ 零警告 ✓", dochk.take_log().len() == 0)
-    // 改名表**不是**近名建议的替代：真正拼错的键仍走"你是不是想要 xxx" ✓
+    // ==================== ⑩ 旧名**已放弃**（2026-10-13 定 ✓）====================
+    //   经过（留档 ✓）：本轮先是加了一张"**改名表**"——旧名仍可用 + 每次用到都警告
+    //     ⇒ "**警告清零 = 迁移完成**"，可验证 ✓（改名最怕的是用户代码**悄悄**失效 ✗）。
+    //     靠它把四个仓库（Leno / LenoMusic / LenoGame / LenoTrae）**一次迁完** ✓；
+    //     随后决定「**旧名全部放弃**」⇒ 旧名的**别名读取**与**白名单项**一并删掉，
+    //     改名表也随之撤掉 ✓（否则"旧名仍可用"就变成**假话** ✗ —— 表还在、却没人再读旧名 ✓）。
+    //   ⚠ 本节的判据 = **"旧名现在不再被接受"** ✓ —— 这才是"放弃"这个决定的**可执行证据** ✓
+    //     （不是靠注释声明"我们放弃了"，而是断言它**真的**报未知键 ✓）
+    dochk.check("探针L", {padY: 8}, ["pad_x", "pad_y"])
+    var l11 = dochk.take_log()
+    check("旧名 padY ⇒ **不再被接受**（报未知键 ✓）", l11.len() == 1)
+    check("提示里含键名 padY ✓", has(l11, "padY"))
+    // 反向：新名一条都不报 ✓（迁完之后**必须**没有任何噪音 ✗）
+    dochk.check("探针M", {pad_x: 8, pad_y: 8}, ["pad_x", "pad_y"])
+    check("新名 pad_x / pad_y ⇒ 零警告 ✓", dochk.take_log().len() == 0)
+    // 真正拼错的键仍走"你是不是想要 xxx" ✓（近名机制与改名无关，一直有效 ✓）
     dochk.check("探针K", {fontsize: 20.0}, ["font_size"])
     check("拼错（fontsize）仍走近名建议 ✓", has(dochk.take_log(), "你是不是想要"))
 

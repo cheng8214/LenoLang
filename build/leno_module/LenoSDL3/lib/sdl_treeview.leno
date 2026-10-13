@@ -36,7 +36,7 @@ import "sdl_image.leno" as img
 //   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
 func _opts_keys(): Array[string] {
     return [
-"arrow_color", "bg_color", "border_color", "check_color", "checkable", "checked", "children", "context_menu", "cursor", "data", "enabled", "expanded", "font_path", "font_size", "font_style", "h", "has_children", "hover_color", "image", "image_expanded", "image_mode", "imageExpanded", "imageMode", "image_gap", "image_size", "indent", "items", "line_color", "mode", "pad_x", "row_h", "scroll_color", "sel_color", "show_check", "show_lines", "text", "text_color", "tip", "visible", "w", "x", "y"
+"arrow_color", "bg_color", "border_color", "check_color", "checkable", "checked", "children", "context_menu", "cursor", "data", "enabled", "expanded", "font_path", "font_size", "font_style", "h", "has_children", "hover_color", "image", "image_expanded", "image_mode", "image_gap", "image_size", "indent", "items", "line_color", "mode", "pad_x", "row_h", "scroll_color", "sel_color", "show_check", "show_lines", "text", "text_color", "tip", "visible", "w", "x", "y"
 ]
 }
 export struct TreeViewNode {
@@ -144,9 +144,11 @@ export struct TreeView impl Widget, Themeable {
         n.text = d.get("text", "")
         n.image = d.get("image", "")
 // ★ 2026-10-13（选项命名统一）：`imageExpanded`/`imageMode` → **`image_expanded`/`image_mode`** ✓
-        //   （button / card 早就是 `image_mode` ✓）；旧名**照旧可用**，用到即被 `dochk` 警告 ✓
-        n.imageExpanded = d.get("image_expanded", d.get("imageExpanded", ""))
-        n.imageMode = d.get("image_mode", d.get("imageMode", -1))
+        //   （button / card 早就是 `image_mode` ✓）
+        //   ⚠ **旧名已放弃**（不留别名）；节点结构体上的字段名仍叫 `imageExpanded`/`imageMode`
+        //     （那是**公开字段**、不是"字典键"⇒ 不在本次统一范围内 ✓）
+        n.imageExpanded = d.get("image_expanded", "")
+        n.imageMode = d.get("image_mode", -1)
         n._parent = parentId
         n._depth = depth
         n.expanded = d.get("expanded", false)

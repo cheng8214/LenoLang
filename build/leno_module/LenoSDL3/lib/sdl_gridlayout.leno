@@ -37,7 +37,7 @@ import "sdl_theme.leno" as theme; use theme.Theme
 //   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
 func _opts_keys(): Array[string] {
     return [
-"align", "col_spacing", "col_weights", "cols", "enabled", "h", "pad_x", "pad_y", "padX", "padY", "row_spacing", "spacing", "visible", "w", "x", "y"
+"align", "col_spacing", "col_weights", "cols", "enabled", "h", "pad_x", "pad_y", "row_spacing", "spacing", "visible", "w", "x", "y"
 ]
 }
 export struct GridLayout impl Widget {
@@ -67,9 +67,10 @@ export struct GridLayout impl Widget {
         if cols < 1 { cols = 1 }
         // ★ 2026-10-13（选项命名统一）：`padX` / `padY` → **`pad_x` / `pad_y`** ✓
         //   本仓其它控件（alert / badge / drag / card…）早就用 `pad_x` / `pad_y` ⇒ 这里曾是唯一例外 ✗
-        //   旧名**照旧可用**（下面兜着 ✓），但用到即被 `dochk` 警告 ✓（见 sdl_opts 的改名表 ✓）
-        padX   = opts.get("pad_x", opts.get("padX", 8))
-        padY   = opts.get("pad_y", opts.get("padY", 8))
+        //   ⚠ **旧名已放弃**（不留别名 ✓）；注意字段名仍叫 `padX`/`padY`（那是**内部/公开字段**、
+        //     不是"暴露给用户的字典名" ⇒ 不在本次统一范围内 ✓）
+        padX   = opts.get("pad_x", 8)
+        padY   = opts.get("pad_y", 8)
         spacing = opts.get("spacing", 8)
         colSpacing = opts.get("col_spacing", -1.0)
         rowSpacing = opts.get("row_spacing", -1.0)
