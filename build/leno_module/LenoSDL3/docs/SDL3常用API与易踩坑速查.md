@@ -1034,6 +1034,27 @@ _lib.SDL_SetTextureBlendMode(mask, core.BlendMode.BLEND)  // ★ 蒙版是**共�
   （SDL 报 `Parameter 'renderer' is invalid`，于是建纹理/离屏全失败 ✗）⇒
   探针里所有纹理都要用**回调参数里给的** `Renderer r` 创建（`r.handle` ✓）
 
+### ⛔ `win.setRootAt` 在 **run() 之后**换根以前是**静默 no-op**（整页切换必踩 ✓ 2026-10-13 修）
+
+症状：想在运行时"整页切换"（列表页 ⇄ 详情页），于是 `win.setRootAt(detailPage, 0, tbH)` ——
+**日志说换成功、界面纹丝不动** ✗（还是旧页）。自己 `createXxx` + `add` 的新页一个像素都不画。
+
+病因：`run()` → `registerOnly()` 会把本窗口的根**拷一份**进主循环的快照 `_runRoots[i]`，
+而主循环的**绘制与事件派发**只认那份快照（`rootWid?.render` / `rootWid?.process`）⇒
+`setRootAt` 只改了 `self.root` 这个布局字段 ⇒ 快照里还是旧根 ⇒ 换了等于没换 ✗。
+
+**怎么办**（框架侧已修 ✓）：`setRoot` / `setRootAt` 末尾都会调 `_syncRunRoot()`，
+把当前根同步回 `_runRoots[i]` ⇒ 运行中换根**当场生效** ✓（run() 之前调用时找不到 wid，什么都不做 ✓）。
+写法照旧：
+
+```leno
+// 整页切换 = 换根（比"隐藏/显示"干净：隐藏的页在 VBox 里照样占位 ✗）
+win.setRootAt(dpage, 0, tbH)      // 进详情页
+win.setRootAt(root, 0, tbH)       // 返回列表页（root 要**存字段**，别只留局部量 ✓）
+```
+
+回归件：`leno_gui/应用/影视海报墙/movie_wall.leno`（`WALL_DETAIL=n` 进详情 / `WALL_BACK=n` 返回 ✓）
+
 ### ⛔ 列表/下拉/菜单的"行高亮"：圆角要**锚在面板边上**（否则底角冒方块 + 文字出框 ✓ 2026-10-13 实测）
 
 `sdl_combobox` 弹层 / `sdl_listbox` / `sdl_menu` 下拉 三个控件原来**各抄了一份**"行底色"画法：

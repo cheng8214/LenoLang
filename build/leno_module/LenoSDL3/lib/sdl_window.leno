@@ -755,16 +755,38 @@ export struct Window {
         root.set_pos(0, 0)
         root.set_size(_w, _h)
         _passWindowHandle(root)
+        _syncRunRoot()
     }
 
     // 设置根布局控件（带偏移）：窗口缩放时自动把根控件位置/尺寸设为 (x,y,winW-x,winH-y)
     // 典型场景：顶部 MenuBar 占 h=30，根布局从 (0,30) 开始填满剩余空间
+    // ★ 2026-10-13：**run() 之后再调用它也能生效**（整页切换 = 换根 ✓ 见 _syncRunRoot ✓）
     func setRootAt(Widget root, float ox, float oy) {
         self.root = root      // 同上：必须显式 self.（形参遮蔽字段 ✓）
         rootX = ox; rootY = oy
         root.set_pos(ox, oy)
         root.set_size(_float(_w) - ox, _float(_h) - oy)
         _passWindowHandle(root)
+        _syncRunRoot()
+    }
+
+    // ★ 2026-10-13：把"当前根"同步进主循环的快照 `_runRoots[i]`。
+    //   为什么必须同步：`registerOnly()`（run 里调）会把本窗口的根**拷进** `_runRoots[i]`，
+    //   而主循环的**绘制与事件派发**都只看那份快照（见 run 里的 render/process 段）⇒
+    //   以前在 run 之后换根是**静默 no-op** ✗：`self.root` 换了、界面照旧、
+    //   日志里却显示"换页成功"（实测：详情页开了但屏幕还是列表页 ✓ 就是这条）。
+    //   用途：整页切换（列表 ⇄ 详情）= 换根 —— 比"隐藏/显示"干净（隐藏的页照样占位 ✗）。
+    //   未注册（run 之前）时找不到对应 wid ⇒ 什么都不做（此时快照本就取自 self.root ✓）。
+    pri func _syncRunRoot() {
+        int wid = getID()
+        for _runWids.len() to i {
+            if _runWids[i] == wid {
+                _runRoots[i] = root
+                _runRootX[i] = rootX
+                _runRootY[i] = rootY
+                return
+            }
+        }
     }
 
     // 向控件下发窗口句柄（与 add() 中的 switch 逻辑一致）

@@ -101,8 +101,11 @@
 //     （曾误判成"左闭右开"，把渲染器的圆角循环改成 `0 : 4` ⇒ ci=4 不匹配任何 case ⇒ `null` 崩 ✗）；
 //   · 一屏能放下的页面**别留半截**：内容高要 ≤ 735（本页曾 786 ⇒ 卡片底部/日志框被**窗口底边**切掉 ✗，
 //     看起来就像"溢出了" ✓ —— 要么排到刚好放得下，要么明确让它能滚 ✓）；
-//   · Leno 闭包捕获是**按值** ✓（探针实测：循环里 3 个闭包分别输出 0/1/2）⇒ 导航项可以放心写
-//     `on_click(func():void { set_page(idx) })` ✓；
+//   · 闭包捕获**按位置分叉**（2026-10-13 实测澄清 ✓）：**循环体内声明的变量 = 值捕获**
+//     （每轮各一份 ⇒ 循环里 3 个闭包分别输出 0/1/2 ✓，见 assert/test_closure_value_capture.leno ✓）；
+//     循环外的变量/字段 = **by-upvalue（实时）** ⇒ 之后改它闭包照样读得到 ⇒ 导航项可以放心写
+//     `on_click(func():void { set_page(idx) })` ✓
+//     （⚠ 但"每份独立"的状态必须在**循环体内**新建：若改的是**外层共享**变量，几个闭包全读末值 ✗ 实测 2/2/2）；
 //   · VBox 里的子控件要撑满宽度必须 `{align:3}` **或** `grow>0`（默认 align:0 = 只占自然宽 ✗）；
 //   · VBox/HBox/AnchorBox 的 `add(child, {...})` **没有 `h` 键**（固定高用 `basis:<像素>` ✓，
 //   · `VBox.measure_h` 会把 `basis` 计入 ✓（实测：页 4 内容高 948、可滚 213 完全对得上 ✓）。
@@ -282,7 +285,8 @@ func nav_item(Panel side, float y, string text, int idx) {
     var b = SDL3.createButton({x:12, y:y, w:166, h:34, text:text, font_size:13, align:"left", padding:14.0})
     NAVS.add(b)
     style_nav(b, idx == CUR_PAGE)
-    // `idx` 是**按值**捕获的 ✓（探针实测）⇒ 每个导航项的闭包各记各的下标，不会互相串 ✓
+    // `idx` 是**函数参数**（循环外）⇒ by-upvalue 捕获 ⇒ 每个导航项各记各的那一份 ✓
+    //   ⚠ 别写成"按值捕获" ✗（那是**循环体内声明**的变量才有的形态，见 docs/语言陷阱速查.md ㊱ ✓）
     b.on_click(func():void { set_page(idx) })
     side.add(b)
 }

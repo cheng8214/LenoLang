@@ -19,13 +19,15 @@
 //     每帧用 ScrollView 的**实际宽度**反推列数（窗口缩放 ⇒ 列数立刻跟着变 ✓）
 //   · 筛选/搜索都是「同一批 Card 对象重新 add 进网格」（`grid.clear()` 只清布局，
 //     不 dispose 卡片 ⇒ 纹理不会来回重建/泄漏 ✓ —— 见 sdl_gridlayout.leno 的 clear ✓）
-//   · 闭包是**按值**捕获的（见 dashboard_sidebar.leno 的实测结论 ✓）⇒ 循环里
-//     `c.on_click(func() { open_movie(i) })` 每个卡片各记各的下标，不会互相串 ✓
+//   · 闭包捕获**按位置分叉**（2026-10-13 实测澄清 ✓）：**循环体内声明的变量 = 值捕获**
+//     （每轮各一份 ⇒ 循环里每个回调各记各的下标，不会互相串 ✓）；
+//     循环外的局部量/模块级/字段 = **by-upvalue（实时）** ⇒ 后改也读得到 ✓
+//     （金标准 `assert/test_closure_value_capture.leno`；别再说成"闭包一律按值捕获" ✗）
 import "SDL3" as SDL3
 import "./movie_data.leno" as data
 import strings
 use SDL3.(Event, Renderer, Scancode, Window, TitleBar, Button, Label, Edit, Card,
-          HBox, VBox, ScrollView, GridLayout)
+          HBox, VBox, ScrollView, GridLayout, RingProgress)
 use data.Movie
 
 // ==================== 尺寸 / 调色板 ====================
@@ -36,6 +38,8 @@ const int HEADER_H = 62      // 顶栏高度
 const int SIDE_W = 200       // 侧栏宽度
 const int CARD_W = 172       // 卡片自然宽（网格会等分列宽后拉伸它 ✓）
 const int CARD_H = 300       // 卡片自然高（行高取该行最高子项 ⇒ 统一才对齐 ✓）
+const int HERO_W = 280       // 详情页大海报宽
+const int HERO_H = 420       // 详情页大海报高（2:3 ⇒ image_aspect = 1.5 ✓；矮窗口 600 高也放得下 ✓）
 const float CARD_ASPECT = 1.45   // 图片区 高/宽（2:3 竖版海报 ✓）
 const int GRID_PAD = 18      // 网格内边距
 const int GRID_GAP = 18      // 卡片间距
@@ -61,6 +65,14 @@ func icon(string n): string {
     return data.poster_path(n)
 }
 
+// ==================== 详情页的动态文案（模块级变量 ✓）====================
+//   ⚠ 圆环的 `text_fn` / `sub_text_fn` 是**闭包**：读的是**实时值** —— 循环外的局部量 / 模块级 /
+//     字段都是 **by-upvalue** ✓（捕获之后改它，闭包读到的是新值 ✓ 实测见 `docs/语言陷阱速查.md` ㊱）；
+//     **只有「循环体内声明的变量」才是值捕获**（每轮各一份，金标准 `assert/test_closure_value_capture.leno` ✓）
+//   ⇒ 这里用模块级只是"少带一个 self"的写法选择，**不是**必需（写成局部量同样实时 ✓）
+var D_RING_TXT = "—"
+var D_RING_SUB = "评分"
+
 // ==================== 主结构 ====================
 struct Wall {
     // ----- 控件 -----
@@ -81,6 +93,27 @@ struct Wall {
     Button searchBtn
     Label gapLbl
 
+    // ----- 详情页（点卡片进入 ✓ 见 build_detail / open_detail）-----
+    VBox root                    // 海报墙的根（切页后要切回来 ⇒ 必须存字段 ✓）
+    VBox dpage                   // 详情页的根
+    HBox dtop                    //   顶栏（返回 / 标题 / 收藏 / 播放）
+    HBox dbody                   //   主体（左海报 + 右信息）
+    Card hero                    //   大海报（复用 Card：自带圆角 + 评分角标 ✓）
+    Label dTitle
+    Label dMeta
+    RingProgress dRing           //   评分环（value 模式 ✓）
+    Label dKV1
+    Label dKV2
+    Label dKV3
+    Label dCap
+    Label dDesc                  //   简介（wrap 自动折行 ✓）
+    Button dPlay
+    Button dFav
+    bool dOpen = false           // 详情页是否在前台（Esc / 渲染回调都要看它 ✓）
+    int dIdx = -1                // 当前详情的影片下标
+    float dWrapW = 0.0           // 简介折行宽度（随窗口校正 ✓）
+    float tbH = 0.0              // 自绘标题栏高度（详情页根要让开它 ✓）
+
     // ----- 数据 -----
     Array[Movie] movies = []
     Array[Card] cards = []        // 与 movies **同序**（筛选时只换 add 名单 ⇒ 控件不重建 ✓）
@@ -100,6 +133,8 @@ struct Wall {
     int shotAt = 10
     int closeAt = 0
     int clickSelAt = 0
+    int detailAt = 0             // >0 ⇒ 该帧进详情页（WALL_DETAIL ✓）
+    int backAt = 0               // >0 ⇒ 该帧从详情页返回（WALL_BACK ✓）
     int maxFrames = 0
     int frames = 0
 
@@ -118,15 +153,15 @@ struct Wall {
         // ---- 自绘标题栏（win.add 后自动去掉系统标题栏边框 ✓）----
         tb = SDL3.createTitleBar({title: "影视海报墙", height: TB_H, font_size: 13})
         win.add(tb)
-        float tbh = tb.get_h()
+        tbH = tb.get_h()                     // 存字段：详情页换根时也要让开它 ✓
 
         // ---- 根布局：顶栏（固定高）+ 主体（撑满）----
-        VBox root = SDL3.createVBox({x: 0, y: 0, w: WIN_W, h: WIN_H - tbh,
-                                     padX: 0, padY: 0, spacing: 0})
-        win.setRootAt(root, 0, tbh)
+        root = SDL3.createVBox({x: 0, y: 0, w: WIN_W, h: WIN_H - tbH,
+                                padX: 0, padY: 0, spacing: 0})
+        win.setRootAt(root, 0, tbH)
         build_header(root)
 
-        HBox body = SDL3.createHBox({x: 0, y: 0, w: WIN_W, h: WIN_H - tbh - HEADER_H,
+        HBox body = SDL3.createHBox({x: 0, y: 0, w: WIN_W, h: WIN_H - tbH - HEADER_H,
                                      padX: 0, padY: 0, spacing: 0})
         root.add(body, {grow: 1, shrink: 1, align: 3})
         build_side(body)
@@ -137,6 +172,7 @@ struct Wall {
         rebuild_side()
         rebuild()
         update_total()
+        build_detail()       // 详情页也先建好：切页只是换根 ⇒ 建一次、之后只改数据 ✓
         self_test()
 
         // ---- 主循环 ----
@@ -145,6 +181,7 @@ struct Wall {
             func(Renderer r) {
                 r.clearColor(C_BG)        // 画在控件之下（网格区没铺满时露出的就是它 ✓）
                 sync_cols()               // 每帧一次比较：窗口缩放 ⇒ 网格列数跟着变 ✓
+                sync_detail_layout()      // 详情页开着时：简介折行宽度跟着窗口宽 ✓
             }
         )
         SDL3.ttfQuit()
@@ -159,6 +196,8 @@ struct Wall {
     //   set WALL_SIZE=900x600              # 启动就改窗口尺寸（验证列数自适应 ✓）
     //   set WALL_ACTIONS=1                 # 启动就打开「卡内操作」（验证 Card 容器化 ✓）
     //   set WALL_CLICKSEL=20               # 第 20 帧点第 1 张卡的「收藏」按钮（验证"不穿透整卡" ✓）
+    //   set WALL_DETAIL=3                  # 第 3 帧进详情页（序号 = "当前筛选/排序下的第 n 部" ⇒ 确定 ✓）
+    //   set WALL_BACK=8                    # 第 8 帧从详情页返回（验"切得回来" ✓，配合 WALL_DETAIL）
     //   set WALL_CLOSE=1                   # 第 5 帧模拟点标题栏 ✕（验证"能退出" ✓，配合 FRAMES 兜底）
     //   set WALL_FRAMES=40                 # 只跑 40 帧就退出（冒烟）
     pri func self_test() {
@@ -192,6 +231,10 @@ struct Wall {
         if ac != null and _int(_str(ac)) > 0 { set_card_actions(true) }
         var cs = _env("WALL_CLICKSEL")
         if cs != null { clickSelAt = _int(_str(cs)) }    // >0 ⇒ 该帧点第 0 张卡的「收藏」按钮 ✓
+        var dt = _env("WALL_DETAIL")
+        if dt != null { detailAt = _int(_str(dt)) }      // >0 ⇒ 该帧进详情页（验详情页布局 ✓）
+        var bk = _env("WALL_BACK")
+        if bk != null { backAt = _int(_str(bk)) }        // >0 ⇒ 该帧返回（验"切得回来" ✓）
         var fr = _env("WALL_FRAMES")
         if fr != null { maxFrames = _int(_str(fr)) }
         if shotPath != "" or maxFrames > 0 {
@@ -223,13 +266,23 @@ struct Wall {
         if clickSelAt > 0 and frames == clickSelAt + 3 and cards.len() > 0 {
             print("[墙] 点卡内按钮后：card0.selected=" + _str(cards[0].is_selected()))
         }
+        // 进详情页（验详情页布局 ✓）：序号指"当前筛选/排序下的第 n 部" ⇒ 与界面所见一致 ✓
+        if detailAt > 0 and frames == detailAt {
+            Array[int] ids = collect()
+            int n = detailAt - 1
+            if n >= 0 and n < ids.len() { open_detail(ids[n]) }
+            else { print("[墙] WALL_DETAIL=" + _str(detailAt) + " 越界（命中 " + _str(ids.len()) + " 部）") }
+        }
+        // 返回海报墙（验证 round trip：换根 ⇒ 换回来 ✓）
+        if backAt > 0 and frames == backAt { close_detail() }
         if shotPath != "" and frames >= shotAt {
             var sz = win.getSize()
             var s = r.readPixelsAt(0, 0, sz.w, sz.h)
             if s != null {
                 bool ok = SDL3.saveImagePNG(s, shotPath)
                 print("[墙] 截图 " + shotPath + " ok=" + _str(ok) +
-                      "  分类=" + curCat + " 命中=" + _str(collect().len()) + " 列=" + _str(cols))
+                      "  分类=" + curCat + " 命中=" + _str(collect().len()) + " 列=" + _str(cols) +
+                      "  详情=" + _str(dOpen))
             } else {
                 print("[墙] 读像素失败：" + SDL3.getError())
             }
@@ -252,8 +305,12 @@ struct Wall {
             print("[墙] 标题栏 ✕ ⇒ 退出")
             return false
         }
-        if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
-        if ev.isWindowResized() { sync_cols() }
+        // Esc：详情页里 = **返回海报墙**（别顺手退出程序 ✗）；海报墙里 = 退出 ✓
+        if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE {
+            if dOpen { close_detail(); return true }
+            return false
+        }
+        if ev.isWindowResized() { sync_cols(); sync_detail_layout() }
         return true
     }
 
@@ -365,7 +422,7 @@ struct Wall {
     pri func new_nav(string name) {
         Button b = SDL3.createButton({text: name, font_size: 14, align: "left", padding: 14.0, radius: 8})
         style_nav(b, name == curCat)
-        b.on_click(func() { set_cat(name) })     // 按值捕获 ⇒ 每个按钮各记各的名字 ✓
+        b.on_click(func() { set_cat(name) })     // 循环量每轮独立 ⇒ 每个按钮各记各的名字 ✓
         navs.add(b)
         navNames.add(name)
     }
@@ -427,6 +484,160 @@ struct Wall {
         grid = SDL3.createGridLayout({x: 0, y: 0, w: 900, h: 500, cols: cols,
                                       spacing: GRID_GAP, padX: GRID_PAD, padY: GRID_PAD})
         sv.set_content(grid)     // ★ 内容控件用 createXxx（不要 win.addXxx ⇒ 会双重绘制/处理 ✗）
+    }
+
+    // ==================== 详情页（点卡片进入 ✓ 2026-10-13）====================
+    //   整页切换 = 换**根容器**：`win.setRootAt(dpage, 0, tbH)` / 切回 `win.setRootAt(root, 0, tbH)` ✓
+    //   为什么不做"隐藏/显示"：VBox/HBox 只按子项**尺寸**排版，看不见的页照样占位 ✗
+    //     （框架没有"停用排版"开关；而换根是它自己的既有能力 ✓ 标题栏是 win.add 的 ⇒ 不受影响 ✓）
+    pri func build_detail() {
+        dpage = SDL3.createVBox({x: 0, y: 0, w: WIN_W, h: WIN_H - tbH, padX: 0, padY: 0, spacing: 0,
+                                 bg_color: C_BG})
+
+        // ---- 顶部条：与海报墙顶栏**同高同色** ⇒ 切页时视觉不跳 ✓ ----
+        dtop = SDL3.createHBox({x: 0, y: 0, w: WIN_W, h: HEADER_H, padX: 14, padY: 0, spacing: 10,
+                                bg_color: C_PANEL})
+        dpage.add(dtop, {grow: 0, shrink: 0, basis: HEADER_H, align: 3})
+
+        Button dBack = SDL3.createButton({text: "返回", w: 84, h: 34, font_size: 13, radius: 8,
+                                          bg_color: C_FIELD, hover_color: C_NAV_HV, text_color: C_TXT,
+                                          image_path: icon("chevron_left.png"), image_size: 16,
+                                          image_tint: C_TXT, border: false, shadow: false,
+                                          align: "left", padding: 10.0, tip: "回到海报墙（Esc 同效）"})
+        dBack.on_click(func() { close_detail() })
+        dtop.add(dBack, {grow: 0, shrink: 0, basis: 84, align: 1})
+
+        dtop.add(SDL3.createLabel({text: "影片详情", font_size: 19, font_style: SDL3.STYLE_BOLD,
+                                    text_color: C_TXT}), {grow: 0, shrink: 0, align: 1})
+        dtop.add(SDL3.createLabel({text: ""}), {grow: 1, shrink: 1, align: 1})
+
+        dFav = SDL3.createButton({text: "收藏", w: 92, h: 32, font_size: 13, radius: 8,
+                                  bg_color: C_FIELD, hover_color: C_NAV_HV, text_color: C_TXT,
+                                  border: false, shadow: false, tip: "收藏 ⇄ 取消（同一份状态：卡片会亮橙边 ✓）"})
+        dFav.on_click(func() { toggle_detail_fav() })
+        dtop.add(dFav, {grow: 0, shrink: 0, basis: 92, align: 1})
+
+        dPlay = SDL3.createButton({text: "播放", w: 96, h: 32, font_size: 13, radius: 8,
+                                   bg_color: C_ACCENT, text_color: C_ACC_TXT, border: false, shadow: false,
+                                   image_path: icon("play.png"), image_size: 14, image_tint: C_ACC_TXT,
+                                   align: "left", padding: 10.0, tip: "播放（示例只打印 ✓）"})
+        dPlay.on_click(func() { play_current() })
+        dtop.add(dPlay, {grow: 0, shrink: 0, basis: 96, align: 1})
+
+        // ---- 主体：左大海报（复用 Card ⇒ 自带圆角 + 评分角标 ✓）+ 右信息 ----
+        dbody = SDL3.createHBox({x: 0, y: 0, w: WIN_W, h: 520, padX: 28, padY: 24, spacing: 30})
+        dpage.add(dbody, {grow: 1, shrink: 1, align: 3})
+
+        hero = SDL3.createCard(hero_opts(movies[0]))
+        dbody.add(hero, {grow: 0, shrink: 0, basis: HERO_W, align: 1})
+
+        VBox dinfo = SDL3.createVBox({x: 0, y: 0, w: 600, h: 480, padX: 0, padY: 0, spacing: 12})
+        dbody.add(dinfo, {grow: 1, shrink: 1, align: 3})
+
+        dTitle = SDL3.createLabel({text: "", font_size: 30, font_style: SDL3.STYLE_BOLD, text_color: C_TXT})
+        dinfo.add(dTitle, {grow: 0, shrink: 0, align: 0})
+        dMeta = SDL3.createLabel({text: "", font_size: 14, text_color: C_TXT_DIM})
+        dinfo.add(dMeta, {grow: 0, shrink: 0, align: 0})
+
+        // 评分环 + 三条键值（同一行 ⇒ 信息密度像"详情页" ✓）
+        HBox drow = SDL3.createHBox({x: 0, y: 0, w: 600, h: 132, padX: 0, padY: 0, spacing: 22})
+        dinfo.add(drow, {grow: 0, shrink: 0, basis: 132, align: 3})
+        dRing = SDL3.createRingProgress({size: 132, thickness: 13, mode: "value",
+                                         font_size: 26, sub_font_size: 12,
+                                         fill_color: C_ACCENT, track_color: #262C38FF, text_color: C_TXT,
+                                         text_fn: func(): string { return D_RING_TXT },
+                                         sub_text_fn: func(): string { return D_RING_SUB },
+                                         tip: "评分（满分 10 ⇒ 环 = 分数 ÷ 10 ✓）"})
+        drow.add(dRing, {grow: 0, shrink: 0, basis: 132, align: 1})
+        VBox dkv = SDL3.createVBox({x: 0, y: 0, w: 300, h: 132, padX: 0, padY: 0, spacing: 7})
+        drow.add(dkv, {grow: 1, shrink: 1, align: 3})
+        dKV1 = SDL3.createLabel({text: "", font_size: 14, text_color: C_TXT})
+        dKV2 = SDL3.createLabel({text: "", font_size: 14, text_color: C_TXT})
+        dKV3 = SDL3.createLabel({text: "", font_size: 13, text_color: C_TXT_DIM})
+        dkv.add(dKV1, {grow: 0, shrink: 0, align: 0})
+        dkv.add(dKV2, {grow: 0, shrink: 0, align: 0})
+        dkv.add(dKV3, {grow: 0, shrink: 0, align: 0})
+
+        dCap = SDL3.createLabel({text: "简介", font_size: 12, text_color: #6E7789FF})
+        dinfo.add(dCap, {grow: 0, shrink: 0, align: 0})
+        // 简介：**自动折行**（Label 的 wrap ✓；宽度由 sync_detail_layout 跟着窗口校正 ✓）
+        dDesc = SDL3.createLabel({text: "", font_size: 15, text_color: C_NAV, wrap: true, wrap_w: 640.0})
+        dinfo.add(dDesc, {grow: 0, shrink: 0, align: 0})
+        dinfo.add(SDL3.createLabel({text: ""}), {grow: 1, shrink: 1, align: 1})
+        dinfo.add(SDL3.createLabel({text: "点「返回」或按 Esc 回到海报墙", font_size: 12,
+                                    text_color: #6E7789FF}), {grow: 0, shrink: 0, align: 0})
+    }
+
+    // 大海报的选项（Card.set 会**按默认值补齐**缺的键 ⇒ 每次都给全 ⚠ 否则颜色/圆角被重置 ✗）
+    pri func hero_opts(Movie m): Dict {
+        return {x: 0, y: 0, w: HERO_W, h: HERO_H, pad: 0,
+                image_path: data.poster_path(m.file), image_aspect: 1.5,
+                image_radius: 14, radius: 14, hover_lift: 0.0,
+                bg_color: C_CARD, border: true, border_color: #232A36FF,
+                badge: m.score, badge_pos: 0, badge_size: 15.0,
+                badge_bg: #000000B0, badge_color: #F5C451FF,
+                tip: m.title + "（" + m.year + "）评分 " + m.score}
+    }
+
+    // 打开详情页（idx = movies 里的下标 ✓）
+    pri func open_detail(int idx) {
+        if idx < 0 or idx >= movies.len() { return }
+        dIdx = idx
+        Movie m = movies[idx]
+        hero.set(hero_opts(m))
+        if m.year == "2026" {      // 与卡片一致：最新年份挂「新」（set() 会清 badges ⇒ 重新挂 ✓）
+            hero.add_badge({text: "新", pos: 1, size: 11.0, bg: #C8102EFF, color: #FFFFFFFF})
+        }
+        dTitle.set_text(m.title)
+        dMeta.set_text(m.year + " · " + m.cat + " · " + m.score + " 分")
+        D_RING_TXT = m.score
+        D_RING_SUB = "评分"
+        dRing.set_value(_float(m.score) / 10.0)
+        dKV1.set_text("年份：" + m.year)
+        dKV2.set_text("分类：" + m.cat)
+        dKV3.set_text("海报：" + m.file)
+        dDesc.set_text(m.desc)
+        sync_detail_fav()
+        dOpen = true
+        win.setRootAt(dpage, 0, tbH)
+        SDL3.markFrameRedraw()
+        print("[墙] 进入详情页：" + m.title + "（" + m.year + " / " + m.cat + "）评分 " + m.score +
+              "  收藏=" + _str(cards[idx].is_selected()))
+    }
+
+    pri func close_detail() {
+        if not dOpen { return }
+        dOpen = false
+        win.setRootAt(root, 0, tbH)      // 换回海报墙的根 ✓（网格/卡片都是同一批对象 ⇒ 状态原样保留 ✓）
+        SDL3.markFrameRedraw()
+        print("[墙] 返回海报墙")
+    }
+
+    // 收藏状态与网格里的卡片**同一份**（详情页 ⇄ 卡片橙边联动 ✓）
+    pri func sync_detail_fav() {
+        if dIdx < 0 or dIdx >= cards.len() { return }
+        dFav.set_text(if cards[dIdx].is_selected() then "已收藏" else "收藏")
+    }
+    pri func toggle_detail_fav() {
+        if dIdx < 0 { return }
+        toggle_card_sel(dIdx)
+        sync_detail_fav()
+        SDL3.markFrameRedraw()
+    }
+    pri func play_current() {
+        if dIdx < 0 { return }
+        print("[墙] 播放：" + movies[dIdx].title)
+    }
+
+    // 简介折行宽度跟随窗口（只在详情页开着时做；值没变就早退 ⇒ 零开销 ✓）
+    pri func sync_detail_layout() {
+        if not dOpen { return }
+        float w = _float(win.getSize().w) - HERO_W - 28.0 * 2.0 - 30.0 - 46.0
+        if w < 240.0 { w = 240.0 }
+        if _int(w) == _int(dWrapW) { return }
+        dWrapW = w
+        dDesc.set_wrap_w(w)
+        SDL3.markFrameRedraw()
     }
 
     pri func make_cards() {
@@ -496,10 +707,10 @@ struct Wall {
         SDL3.markFrameRedraw()
     }
 
-    // 单选：点卡片本体 = 选中它（其余取消）+ 打印（详情页的挂点）
+    // 单选：点卡片本体 = 选中它（其余取消）**并进入详情页** ✓（2026-10-13：原来是只打印 ✓）
     pri func on_card_click(int idx) {
         for 0 : cards.len() - 1 to i { cards[i].set_selected(i == idx) }
-        open_movie(idx)
+        open_detail(idx)
     }
     pri func toggle_card_sel(int idx) {
         cards[idx].set_selected(not cards[idx].is_selected())
@@ -604,12 +815,9 @@ struct Wall {
         set_cat(data.CAT_ALL)
     }
 
-    // 点卡片 —— 这里就是「打开详情页 / 弹播放窗」的挂点（本示例只打印，界面与参考图一致 ✓）
+    // 卡内「播放」按钮的挂点：直接进详情页（真实应用里可换成"起播 + 进详情" ✓）
     pri func open_movie(int idx) {
-        if idx < 0 or idx >= movies.len() { return }
-        Movie m = movies[idx]
-        print("[海报墙] 选中：" + m.title + "（" + m.year + " / " + m.cat + "）评分 " + m.score)
-        print("         " + m.desc)
+        open_detail(idx)
     }
 }
 
