@@ -10,7 +10,7 @@
 //        Button ⇒ on_click 计数 +1；CheckBox/Toggle ⇒ 值真的翻转；RadioButton ⇒ 选中自己 ✓
 //   用法：set SHOT=%TEMP%\focus.png & build\leno.exe leno_gui\自测\test_focus_nav.leno
 import "SDL3" as SDL3
-use SDL3.(Event, Renderer, Scancode, Window, Button, CheckBox, Toggle, RadioButton, Slider, ListBox, ComboBox, TabControl, Table)
+use SDL3.(Event, Renderer, Scancode, Window, Button, CheckBox, Toggle, RadioButton, Slider, ListBox, ComboBox, TabControl, Table, TreeView)
 
 int steps = 0
 string shot = ""
@@ -38,7 +38,7 @@ func snapSw(CheckBox ck, Toggle tg, RadioButton rd, string tag) {
 func run() {
     SDL3.ttfInit()
     SDL3.setTheme(SDL3.darkTheme())
-    Window w = SDL3.createWindow({title: "test_focus_nav", w: 620, h: 520})
+    Window w = SDL3.createWindow({title: "test_focus_nav", w: 620, h: 560})
     if not w.ok { SDL3.ttfQuit(); return }
 
     // 第一行：注册顺序 A → B → C，其中 **B 退出焦点链** ⇒ Tab 必须跳过它 ✓
@@ -85,6 +85,16 @@ func run() {
     tb2.set_rows([["一", "1"], ["二", "2"], ["三", "3"], ["四", "4"]])
     int dblN = 0
     tb2.on_dbl_click(func(int r, int c) { dblN = dblN + 1 })
+
+    // 第八行：树（第七批 ✓；↑/↓ 走**可见行** ✓、→ 展开、← 收起、Enter 激活 ✓）
+    //   ★ 根节点**折叠**起步 ⇒ "可见行数"就是展开/收起的客观判据 ✓（1 → 3 → 1 ✓）
+    //   ⚠ 建树的键名是 **`items`**（不是 `nodes` ✗ —— 实测写成 nodes 会得到"可见行=0"的空树 ✓）
+    TreeView tv = w.addTreeView({x: 20, y: 380, w: 260, h: 120,
+                                 items: [{text: "根", expanded: false,
+                                          children: [{text: "子1"}, {text: "子2"}]}]})
+    int actTv = -1
+    int actTvN = 0
+    tv.on_activate(func(int i) { actTv = i; actTvN = actTvN + 1 })
     tg.on_change(func(bool v) { tgHits = tgHits + 1; tgVal = if v then 1 else 0 })
     rd.on_change(func(bool v) { if v { rdHits = rdHits + 1 } })     // 选中时回调 true ✓
 
@@ -194,14 +204,32 @@ func run() {
         if steps == 78 { print("[focus] Home（应 0 ✓）  行=" + _str(tb2.get_selected_row())) }
         if steps == 79 { SDL3.testKeyDown(wid, Scancode.RETURN, 0) }
         if steps == 80 { print("[focus] Enter（应 双击回调=1 ✓ —— 本例没有可编辑列 ⇒ 走双击那条 ✓）  次数=" + _str(dblN)) }
-        if steps == 81 { SDL3.testKeyDown(wid, Scancode.TAB, 0) }        // 从最后一项继续 ⇒ 回卷
-        if steps == 82 { snap(a, b, c, "Tab（应回卷到 A ✓ —— 链条末尾回卷 ✓）") }
-        if steps >= 86 { _exit(0) }
+        // ---- 第八行：树（可见行导航 + 展开/收起 + 激活 ✓）----
+        if steps == 81 { SDL3.testKeyDown(wid, Scancode.TAB, 0) }        // → 树
+        if steps == 82 { print("[focus] Tab→ 树（应 focus=true、可见行=1 ✓）  focus=" + _str(tv.is_focused()) +
+                                " 可见行=" + _str(tv.get_visible_count())) }
+        if steps == 83 { SDL3.testKeyDown(wid, Scancode.DOWN, 0) }
+        if steps == 84 { print("[focus] ↓（应选中首行 id>=0 ✓）  选中=" + _str(tv.get_selected_id()) +
+                                " 可见行=" + _str(tv.get_visible_count())) }
+        if steps == 85 { SDL3.testKeyDown(wid, Scancode.RIGHT, 0) }      // → 展开
+        if steps == 86 { print("[focus] →（应展开 ⇒ 可见行=3 ✓）  可见行=" + _str(tv.get_visible_count())) }
+        if steps == 87 { SDL3.testKeyDown(wid, Scancode.DOWN, 0) }       // 展开后能走到子节点
+        if steps == 88 { print("[focus] 展开后 ↓（应换到子节点 ✓）  选中=" + _str(tv.get_selected_id())) }
+        if steps == 89 { SDL3.testKeyDown(wid, Scancode.UP, 0) }         // ↑ 回到根
+        if steps == 90 { print("[focus] ↑（应回根 ✓）  选中=" + _str(tv.get_selected_id())) }
+        //   ⚠ ← 只对"可收起的节点"有效：叶子上按 ← 不会跳回父级（标准行为 ✓ 本版未做 ⇒ 见速查 v1 边界 ✓）
+        if steps == 91 { SDL3.testKeyDown(wid, Scancode.LEFT, 0) }       // ← 收起根
+        if steps == 92 { print("[focus] ←（应收起根 ⇒ 可见行=1 ✓）  可见行=" + _str(tv.get_visible_count())) }
+        if steps == 93 { SDL3.testKeyDown(wid, Scancode.RETURN, 0) }     // Enter ⇒ 激活
+        if steps == 94 { print("[focus] Enter（应 激活次数=1 ✓）  次数=" + _str(actTvN) + " 收到 id=" + _str(actTv)) }
+        if steps == 95 { SDL3.testKeyDown(wid, Scancode.TAB, 0) }        // 从最后一项继续 ⇒ 回卷
+        if steps == 96 { snap(a, b, c, "Tab（应回卷到 A ✓ —— 链条末尾回卷 ✓）") }
+        if steps >= 100 { _exit(0) }
     })
 
     // 截图（看焦点环 ✓）：钩子必须在 setOverlay（控件之上 ⇒ 像素含界面 ✓）
     w.setOverlay(func(Renderer r) {
-        if steps >= 84 and shot != "" {
+        if steps >= 96 and shot != "" {
             var sz = w.getSize()
             var px = r.readPixelsAt(0, 0, sz.w, sz.h)
             if px != null { print("[focus] 截图 " + shot + " ok=" + _str(SDL3.saveImagePNG(px, shot))) }

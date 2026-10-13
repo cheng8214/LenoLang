@@ -1332,6 +1332,23 @@ SDL3.testClickAt(win.getID(), x, y)     // 再点（一步一行、走定时器 
 ⚠ 只有"看 hover 才认点击"的控件需要这样（Card 这类**按坐标判命中**的不受影响 ✓）——
 自测脚本里**统一先移动再点击**最省心 ✓
 
+### ⭐ 自测跑法：**应用一律带"无人值守"参数**（2026-10-13 定规 ✓）
+
+**为什么定这条**：自动化回归里**裸跑应用**，窗口会一直挂着**等手动关闭** ✗ ——
+实测：清理大师被跑了好几次，每次都要作者手动点掉 ✗（直接干扰人 ✓）。而**库和示例早就备好了钩子** ✓，
+用起来只是多加一个参数 ✓：
+
+| 场景 | 跑法 | 效果 |
+|---|---|---|
+| 任意应用（冒烟 / 量帧） | `set LENO_SDL_FRAMES=30` + 应用路径 | 跑满 N 帧**自动退出**并打印确定性摘要 ✓（`sdl_window.leno:1448`；配 `SDL_VIDEODRIVER=dummy` 可完全无窗口 ✓） |
+| 海报墙 | `set WALL_SHOT=%TEMP%\w.png` + `set WALL_AT=8` | 第 8 步截图后自行退出 ✓ |
+| 清理大师 | `build\leno.exe leno_gui\应用\电脑清理大师\cleaner_master.leno **--autotest**` | 扫到 done ⇒ 存图 ⇒ `_exit(0)` ✓（`--autoclean` 走真实清理管线 ✓） |
+| `leno_gui\自测\test_*.leno` | 直接跑 | 这些回归件**自带 `_exit(0)`** ✓，本就无人值守 ✓ |
+
+⚠ 两个注意：① `LENO_SDL_FRAMES` 会**去掉帧率节流**（每帧都真渲染 ✓）⇒ 它数的是**帧**、不是定时器步数 ✓
+⇒ 依赖 `addTimer` 逐步推进的探针**不能**用它 ✗（会被"几帧就跑完"截断 —— 那种件自带退出就够了 ✓）；
+② 想彻底无窗口就配 `SDL_VIDEODRIVER=dummy`，但**要截图的场合别开** ✗（会拿到空白帧 ✓）。
+
 ### ⭐ 焦点链与键盘导航（2026-10-13 第一批 ✓ Tab / Shift+Tab / Enter / Space）
 
 **为什么加**：全库原来只有 `Edit` / `Canvas` 自己管焦点 ⇒ **Tab 键根本不换焦点** ✗ ——
@@ -1430,10 +1447,23 @@ Enter/Space            hitsC=1 → 2（激活与鼠标点击同一条回调 ✓�
 `on_change` 也不触发 ✗）。**口径**：插事件分支一律**带上前后的独特上下文**（如
 `if core.inPopupCapture(mx, my) { return }` 那一段 ✓），插完再**读一遍确认落在主流程** ✓。
 
-⚠ **仍未进链条的**：`ComboBox` / `Table` / `TreeView` / `TabControl` —— 都有**内部选中/导航语义** ⇒
-进去之前先定语义 ✓（建议：`ComboBox` 的 Enter = 开下拉、展开后 `↑/↓` 选项 + Enter 选定 + Esc 收起 ✓；
-`Table` 的 Enter 优先"**进单元格编辑**" ✓（无编辑列时才走激活 ✓）；`TreeView`、`TabControl` 同列表思路 ✓）；
-方向键在**兄弟控件间**移动 ✗（WPF 风格，未做 ✓）；`tabIndex` ✗。
+**第七批（2026-10-13 同日 ✓）：`TreeView` 进链条（A1 到此收尾 ✓）** —— `↑/↓` 在**可见行**里移动
+（`flatten()` 出来的 `flatIds` ✓）、`Home/End` 首末、`→` 展开当前节点、`←` 收起当前节点、
+**Enter = 激活**（新增 `on_activate(func(id))` ✓ 与 `ListBox` 同款 ✓）。
+  ★ 一律复用公开入口：移动用 `select(flatIds[i])` ✓、展开收起用 `expand(id, bool)` ✓
+  ⇒ 与鼠标那条路同口径（选中回调 / 滚入视野 / 重排可见行都在里面 ✓）。
+  ⚠ 本控件**本来确实没有**键盘导航 ✓（按"先 grep"的口径查过 ✓ —— 与 `Table` 那次不同，这次是真要新写 ✓）。
+  ⚠ v1 边界：`←` 对**叶子**不做"回父级" ✗（标准行为会回父级 ✓ 未做 ✓）。
+
+⭐ **建树用的键名是 `items`**（不是 `nodes` ✗）—— 实测写成 `nodes` 只会得到一棵**空树**
+（`get_visible_count()==0` ✓ 没有任何报错 ✗，是那种"静默不生效"的老毛病 ✓；
+好在 `dochk.check` 现在会提示"不认识的选项 'nodes'" ✓）。
+
+**A1 现状（2026-10-13 收尾 ✓）**：进链条的控件 = `Button / CheckBox / RadioButton / Toggle / Slider /
+ListBox / ComboBox / TabControl / Table / TreeView` ✓。
+**仍未做**：① 链只扫**顶层控件** ⇒ 装进容器（HBox/VBox/ScrollView/Card/页签页）里的子控件**Tab 到不了** ✗
+（修法同主题递归：走"回调出口"那把容器内容交回来 ✓）；② 方向键在**兄弟控件间**移动 ✗（WPF 风格）；
+③ `tabIndex` 显式排序 ✗。
 
 ⭐ **写这类自测件时注意**：`CheckBox.checked` / `Toggle.on` 等**值字段是 `pri` 私有** ✗
 （探针直读会被编译器拦下 ✓）⇒ 断言一律走**公开回调**（`on_change` ✓ 它本来就是"值变了"的官方出口 ✓）。

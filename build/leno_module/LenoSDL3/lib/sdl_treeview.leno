@@ -617,6 +617,49 @@ n.imageExpanded = d.get("imageExpanded", "")
     }
 
     func on_change(func(Array[int]):void cb) { onChange = cb }
+
+    // ==================== 焦点与键盘（供窗口的"焦点链"调用 ✓ 2026-10-13 第七批）====================
+    //   语义：↑/↓ 在**可见行**里移动（`flatten()` 出来的 `flatIds` ✓）、Home/End 首末、
+    //     → 展开当前节点、← 收起当前节点、**Enter = 激活**（新增 `on_activate` ✓ 与 ListBox 同款 ✓）
+    //   ★ 一律复用公开入口：移动用 `select(flatIds[i])` ✓、展开收起用 `expand(id, bool)` ✓
+    //     ⇒ 与鼠标那条路**同口径**（选中回调、滚入视野、重排可见行都在里面 ✓ 不写第二份 ✗）
+    //   ⚠ 本控件**本来没有**键盘导航（先 grep 过 ✓ 与 Table 不同 ⇒ 这次是真要新写 ✓）
+    pri func(int):void onActivate
+    bool focusable = true
+    bool focused = false
+    func set_focusable(bool b) { focusable = b; if not b { focused = false } }
+    func is_focusable(): bool { return focusable }
+    func focus() { if focusable and not focused { focused = true; core.markFrameRedraw() } }
+    func blur() { if focused { focused = false; core.markFrameRedraw() } }
+    func is_focused(): bool { return focused }
+    func on_activate(func(int):void cb) { onActivate = cb }
+    func activate() {
+        int i = get_selected_id()
+        if i < 0 { return }                  // 没选中就不激活 ✓
+        if onActivate != null { onActivate(i) }
+    }
+    pri func nudge_tree(int sc) {
+        if sc == core.Scancode.RIGHT { if sel >= 0 { expand(sel, true) }; return }    // → 展开 ✓
+        eif sc == core.Scancode.LEFT { if sel >= 0 { expand(sel, false) }; return }   // ← 收起 ✓
+        flatten()                            // 先刷可见列表（展开状态可能刚变过 ✓）
+        if flatIds.len() == 0 { return }
+        int idx = -1
+        for flatIds.len() to k { if flatIds[k] == sel { idx = k } }
+        if sc == core.Scancode.DOWN {
+            if idx < 0 { idx = 0 } else { if idx + 1 >= flatIds.len() { idx = flatIds.len() - 1 } else { idx = idx + 1 } }
+        }
+        eif sc == core.Scancode.UP { idx = if idx <= 0 then 0 else idx - 1 }
+        eif sc == core.Scancode.HOME { idx = 0 }
+        eif sc == core.Scancode.END { idx = flatIds.len() - 1 }
+        else { return }
+        if idx >= 0 and idx < flatIds.len() { select(flatIds[idx]) }
+    }
+    func draw_focus_ring(Renderer r) {
+        if not focused { return }
+        Theme th = theme.getTheme()
+        r.setColor(th.accentFocus)
+        r.drawRect(x - 2.0, y - 2.0, get_w() + 4.0, get_h() + 4.0)
+    }
     func on_context(func(int, float, float):void cb) { onContext = cb }
     func on_toggle(func(int, bool):void cb) { onToggle = cb }
     func on_check(func(int, bool):void cb) { onCheck = cb }
@@ -655,6 +698,11 @@ n.imageExpanded = d.get("imageExpanded", "")
             ctxMenu.process(ev)
             return
         }
+
+        // ★ 2026-10-13：键盘（第七批）—— 只在**自己聚焦**时响应 ✓（键事件广播 ⇒ 必须自己过滤 ✓）
+        //   ⚠ 位置落在主流程、且在**"菜单已展开"分支之后** ✓（菜单开着时键归菜单 ✓）
+        //   ⚠ Enter/Space 归**窗口**（它统一调 `activate()` ✓）⇒ 这里只处理方向/展开键 ✗
+        if focused and ev.isKeyDown() { nudge_tree(ev.scancode()) }
 
         var[float, float](mx, my) = ev.mousePos()
         if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
