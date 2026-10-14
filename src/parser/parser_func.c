@@ -712,13 +712,11 @@ int parser_reject_module_qualified_type(Parser* p, TypeInfo* t) {
     if (!t) return 0;
     if (p->lex.current.type != TOK_DOT) return 1;   // 后面不是点号 ⇒ 正常类型
 
-    char msg[256];
     // ★ US1（2026-10-12）：`a.Point` 本身**已经合法** ✓ ⇒ 走到这里的是更长的写法
     //   （`a.Point.Sub` / `a.Box[int].Sub` …），照旧给处方（最省事的对照写法）
-    snprintf(msg, sizeof(msg),
+    error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
              "不支持的模块限定类型名（类型位置最多只能写「模块.类型」一级，如 'a.Point'）："
              "请改写 'a.Point' 形式，或先用 `use a.Point` 再直接写 'Point'");
-    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, msg);
     type_free(t);
     return 0;
 }
@@ -738,20 +736,18 @@ Ast* parse_alias_stmt(Parser* p) {
         //   ⇒ 这里把两条出路都说清：① 真要写别名 ⇒ `alias 名字 = 类型` ✓；
         //     ② 其实是想声明变量 ⇒ **换个变量名**（保留字不能当名字 ✓）。
         const char* kw = lexer_keyword_text(p->lex.current.type);
-        char msg[384];
         if (kw) {
-            snprintf(msg, sizeof(msg),
+            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
                 "'alias' 是**保留字**（它开启一条**类型别名声明**，形如 `alias 名字 = 类型`）✗ —— "
                 "这里需要别名名字，却拿到了保留字 '%s'。若你本来是想**声明变量**"
                 "（`类型 名字 = 值`）⇒ 换个变量名即可 ✓（保留字不能当名字）", kw);
         } else {
-            snprintf(msg, sizeof(msg),
+            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
                 "'alias' 是**保留字**（它开启一条**类型别名声明**，形如 `alias 名字 = 类型`）✗ —— "
                 "这里需要的是别名名字。若你本来是想**声明变量**（`类型 名字 = 值`，"
                 "如 `Outer alias = o`）⇒ 换个变量名即可 ✓（保留字不能当名字："
                 "alias / struct / for / func / const / return …）");
         }
-        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, msg);
         return NULL;
     }
 
@@ -882,7 +878,6 @@ static void check_var_decl_boundary(Parser* p, int decl_line) {
     }
     // 同一行出现非分隔符 token，说明缺少换行或分号
     if (p->lex.current.line == decl_line) {
-        char msg[128];
         const char* found;
         if (t == TOK_NUM) {
             found = "数字";
@@ -893,8 +888,8 @@ static void check_var_decl_boundary(Parser* p, int decl_line) {
         } else {
             found = "符号";
         }
-        snprintf(msg, sizeof(msg), "声明语句后期望换行或 ';'，但同一行出现%s", found);
-        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, msg);
+        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                         "声明语句后期望换行或 ';'，但同一行出现%s", found);
     }
 }
 
@@ -1099,9 +1094,8 @@ Ast* parse_destruct_decl(Parser* p, TypeInfo* base_type, int is_const, int line,
 
     // 检查槽位数量与变量名数量一致
     if (slot_count != name_count) {
-        char msg[128];
-        snprintf(msg, sizeof(msg), "解构槽位数量(%d)与变量数量(%d)不匹配", slot_count, name_count);
-        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, msg);
+        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                         "解构槽位数量(%d)与变量数量(%d)不匹配", slot_count, name_count);
     }
 
     // 解析 = expr
@@ -1218,10 +1212,9 @@ Ast* parse_var_decl_internal(Parser* p) {
     // 解析第一个变量名
     if (p->lex.current.type != TOK_IDENT) {
         if (is_type_keyword(p->lex.current.type)) {
-            char msg[64];
-            snprintf(msg, sizeof(msg), "不能使用关键字(%.*s)作为变量名", 
+            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                     "不能使用关键字(%.*s)作为变量名",
                      p->lex.current.len, p->lex.current.text);
-            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, msg);
         } else if (p->lex.current.type == TOK_LPAREN) {
             // `var (a, b) = ...` ⇒ 定向提示（文案与 const 路径共用，见 error_destruct_shape_hint）
             error_destruct_shape_hint(p);
@@ -1232,12 +1225,10 @@ Ast* parse_var_decl_internal(Parser* p) {
             //   判据用 lexer 反查（不是类型关键字的那批也覆盖 ✓：struct / for / const / return …）
             const char* kw = lexer_keyword_text(p->lex.current.type);
             if (kw) {
-                char msg[192];
-                snprintf(msg, sizeof(msg),
+                error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
                     "'%s' 是**保留字** ✗ 不能用作变量名 —— 换个名字 ✓"
                     "（保留字是语法的一部分，如 alias / struct / for / func / const / return …）",
                     kw);
-                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, msg);
             } else {
                 error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望变量名");
             }
@@ -2299,9 +2290,8 @@ Ast* parse_struct_stmt(Parser* p) {
                 func_ast->u.func.is_private = member_private;   // ★ pri 方法 ✓（默认 0 = 公有 ✓）
                 // 构造/析构函数不能有显式参数
                 if ((is_ctor || is_dtor) && func_ast->u.func.pcnt > 0) {
-                    char msg[BUFFER_MEDIUM];
-                    snprintf(msg, sizeof(msg), "%s不能有参数", is_ctor ? "构造函数" : "析构函数");
-                    error_add_at(ERR_SYNTAX, func_line, p->lex.current.column, msg);
+                    error_add_at_fmt(ERR_SYNTAX, func_line, p->lex.current.column,
+                                     "%s不能有参数", is_ctor ? "构造函数" : "析构函数");
                 }
                 // 扩容检查
                 if (method_count >= method_capacity) {
@@ -2695,15 +2685,13 @@ Ast* parse_cstruct_stmt(Parser* p) {
             }
             int align_val = (int)p->lex.current.num_val;
             if (align_val <= 0 || (align_val & (align_val - 1)) != 0) {
-                char msg[128];
-                snprintf(msg, sizeof(msg), "align 参数 %d 不是有效的 2 的幂（1/2/4/8/16/32/64）", align_val);
-                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, msg);
+                error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                                 "align 参数 %d 不是有效的 2 的幂（1/2/4/8/16/32/64）", align_val);
                 return NULL;
             }
             if (align_val > 64) {
-                char msg[128];
-                snprintf(msg, sizeof(msg), "align 参数 %d 超过最大值 64", align_val);
-                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, msg);
+                error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                                 "align 参数 %d 超过最大值 64", align_val);
                 return NULL;
             }
             explicit_align = align_val;
