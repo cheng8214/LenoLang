@@ -299,22 +299,23 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
         if (!base) base = strrchr(full_path, '/');
         base = base ? base + 1 : full_path;
 
-        // ⚠ 这一处**不能用** `error_add_at_fmt`（全仓迁移时唯一的两类例外之一 ✓）：
-        //   消息是**按依赖链长度增量拼接**的（先写头 → 逐个追加 ` <- 模块名` → 末尾加处置建议），
-        //   一次 `vsnprintf` 表达不了 ✗。这里只统一**尺寸**（`BUFFER_MSG` ✓），
-        //   超长时由下面那些 `off < sizeof(msg) - …` 判断自然截断 ✓。
-        char msg[BUFFER_MSG];
-        int off = snprintf(msg, sizeof(msg), "检测到循环依赖: %s", base);
+        // ⚠ 这里的缓冲是**数据**、不是"报错缓冲"：依赖链长度随扫描栈而变 ⇒ 只能循环 append 拼
+        //   （这一步 `vsnprintf` 确实表达不了 ✓）。但**报错本身仍走统一入口** ⇒
+        //   文案尺寸、截断收尾、入库判重全都只有一份实现 ✓（不再自己维护一条报错通道 ✗）。
+        char chain[BUFFER_MSG];
+        int off = 0;
         for (int i = g_scan_stack_count - 1; i >= 0; i--) {
             const char* bn = strrchr(g_scan_stack[i], '\\');
             if (!bn) bn = strrchr(g_scan_stack[i], '/');
             bn = bn ? bn + 1 : g_scan_stack[i];
-            if (off < (int)sizeof(msg) - (int)strlen(bn) - 8)
-                off += snprintf(msg + off, sizeof(msg) - off, " <- %s", bn);
+            int w = snprintf(chain + off, sizeof(chain) - (size_t)off, " <- %s", bn);
+            if (w <= 0) break;
+            off += (w < (int)sizeof(chain) - off) ? w : (int)sizeof(chain) - off - 1;
+            if (off >= (int)sizeof(chain) - 1) break;
         }
-        if (off < (int)sizeof(msg) - 32)
-            off += snprintf(msg + off, sizeof(msg) - off, "。请使用接口(face)解耦或移除相互导入中的任一方");
-        error_add_at(ERR_SEMANTIC, 0, 0, msg);
+        error_add_at_fmt(ERR_SEMANTIC, 0, 0,
+                         "检测到循环依赖: %s%s。请使用接口(face)解耦或移除相互导入中的任一方",
+                         base, chain);
         return -1;
     }
 

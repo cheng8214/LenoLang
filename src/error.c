@@ -207,6 +207,24 @@ void warning_add_at_fmt(WarnType type, int line, int column, const char* fmt, ..
     warning_add_at(type, line, column, buf);
 }
 
+// ★ 2026-10-15：**带去重**的统一入口 —— 格式化 → 问一句"这句话在该行该列报过没" → 再入库。
+//   为什么需要它（把最后两处"自开缓冲"也收进统一入口）：语义层有**两条路径命中同一处**
+//   （裸字段名的成员访问走索引路 ✗ + 访问器那条 ✓，见 semantic_type.c 的 AST_INDEX 分支），
+//   必须先拿**拼好的那句话**去问 `error_has_at` 才能避免同一句话报两遍
+//   （实测：不去重会显示 "(重复 2 次)" ✗ —— 那只是计数、不是折叠 ✓）。
+//   原来只能四步走（自开 msg 缓冲 → snprintf → error_has_at → error_add_at）✗，现在一行 ✓；
+//   尺寸仍是 `BUFFER_MSG`、截断仍走同一份安全收尾（error_format_v ✓）⇒ **改长度只改一处** ✓。
+void error_add_at_fmt_dedup(ErrorType type, int line, int column, const char* fmt, ...) {
+    if (!fmt) return;
+    char buf[BUFFER_MSG];
+    va_list ap;
+    va_start(ap, fmt);
+    error_format_v(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    if (error_has_at(line, column, buf)) return;   // 同一处、同一句话 ⇒ 不重复入库 ✓
+    error_add_at(type, line, column, buf);
+}
+
 int error_has_any(void) {
     return errors.count > 0;
 }

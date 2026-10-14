@@ -42,14 +42,11 @@ void error_add_at(ErrorType type, int line, int column, const char* msg);
 // ⇒ 现在收到这四个入口里：内部用 `BUFFER_MSG`(1024) 缓冲，**截断时回退到完整字符边界、
 //   并以 "…" 收尾**（明确表示"这里还有内容"，而不是静默丢字符 ✓）；最终仍调既有的
 //   `error_add_at` / `warning_add_at` ⇒ 去重、上限、入库**只有一份实现** ✓。
-// ⚠ 新代码一律用这四个（直接写格式串，别再自己开 msg 缓冲 ✗）。
-//   **本仓编译期诊断已全量迁移**（2026-10-14：parser / semantic / optimize / codegen /
-//   module_symbol_table 共 262 处 ✓）；仅 4 处保留自开缓冲，各有硬理由 ——
-//     · `parser_utils.c` 的 `consume(p, type, msg)`：那个 msg 是**函数参数**（调用方传的文案）✗
-//     · `semantic_type.c:2512` / `:3285`：要先用 `error_has_at(.., msg)` **去重**，
-//       而它必须拿到**拼好的那句话** ⇒ 走不了 fmt（一调就入库 ✗）
-//     · `sym_table_entry.inc` 的循环依赖链：消息是**增量拼接**（循环 append）✗
-//   这 4 处只把尺寸并入 `BUFFER_MSG` ✓。
+// ⚠ 新代码一律用这些入口（直接写格式串，别再自己开 msg 缓冲 ✗）。
+//   **本仓编译期诊断已全量迁移**（2026-10-14~15：parser / semantic / optimize / codegen /
+//   module_symbol_table 共 262 处 ✓）—— "自开 msg 缓冲 + snprintf + 传 msg"的写法**已清零** ✓。
+//   仅剩一处**不是**该写法：`parser_utils.c` 的 `consume(p, type, msg)`，那里的 msg 是
+//   **函数参数**（调用方直接传字面量 ✓），不是本地缓冲 ✓。
 // ⚠ 参数格式同 printf（GCC / Clang 下会做格式串检查 ✓）。
 // ============================================================================
 void error_add_fmt(ErrorType type, int line, const char* fmt, ...)
@@ -59,6 +56,14 @@ void error_add_at_fmt(ErrorType type, int line, int column, const char* fmt, ...
 void warning_add_fmt(WarnType type, int line, const char* fmt, ...)
     LENO_ATTR_PRINTF(3, 4);
 void warning_add_at_fmt(WarnType type, int line, int column, const char* fmt, ...)
+    LENO_ATTR_PRINTF(4, 5);
+
+// ★ 2026-10-15：**带去重**的统一入口（格式化 → `error_has_at` 判重 → 入库）
+//   用途：**两条路径会命中同一处**的检查点 —— 必须先用拼好的那句话判重，否则同一句话报两遍
+//   （实测不去重会显示 "(重复 2 次)" ✗，那只是计数不是折叠 ✓）。
+//   例：semantic_type.c 的 AST_INDEX 分支（裸字段名走索引路 = 访问器那条已报过 ✓）。
+//   ⇒ 这类调用点从此不必自己开缓冲（原来要四步：开缓冲 → snprintf → error_has_at → error_add_at ✗）
+void error_add_at_fmt_dedup(ErrorType type, int line, int column, const char* fmt, ...)
     LENO_ATTR_PRINTF(4, 5);
 
 /* 同一处（行、列）是否已经报过**一字不差**的这句话 —— 2026-09-30 加。

@@ -2501,16 +2501,11 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                                 }
                             }
                             if (!known) {
-                                // ⚠ 这里**保留缓冲**（不是旧写法残留）：去重要用 `error_has_at(.., msg)`，
-                                //   它必须拿到**拼好的那句话** ⇒ 走不了 `error_add_at_fmt`（那条路一调就入库 ✗）。
-                                //   缓冲尺寸统一走 `BUFFER_MSG` ✓（原来写死的 256 已在迁移中换掉 ✓）
-                                char msg[BUFFER_MSG];
-                                snprintf(msg, sizeof(msg), "struct '%s' 没有字段 '%s'",
-                                         recv->struct_name, key);
-                                // 同样先去重 ✓（与上面 AST_FIELD_ACCESS 那条同一理由 ✓）
-                                if (!error_has_at(ast->line, ast->column, msg)) {
-                                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
-                                }
+                                // 同样先去重再报 ✓（与上面 AST_FIELD_ACCESS 那条同一理由 ✓）——
+                                //   走**谓词去重版**入口，不必自己开缓冲 ✓
+                                error_add_at_fmt_dedup(ERR_SEMANTIC, ast->line, ast->column,
+                                                       "struct '%s' 没有字段 '%s'",
+                                                       recv->struct_name, key);
                             }
 
                             // ★ 顺带把 **pri 私有** 也在索引路上拦住（2026-09-30 ✓）
@@ -3275,15 +3270,13 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                         }
                     }
                     if (!known) {
-                        char msg[256];
-                        snprintf(msg, sizeof(msg), "struct '%s' 没有字段 '%s'",
-                                 obj_type->struct_name, fname);
                         // ★ 先去重再报 ✓：显式 `self.b.xxx` 形态会被**访问器那条**先报一遍
                         //   （visit_field_access.inc ✓）⇒ 这里再报就是同一处、同一句话的第二遍 ✗
                         //   （实测：不去重会显示 "(重复 2 次)" ✗ —— 那只是计数不是折叠 ✓）
-                        if (!error_has_at(ast->line, ast->column, msg)) {
-                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
-                        }
+                        //   ⇒ 走**谓词去重版**入口（不必自己开缓冲 ✓）
+                        error_add_at_fmt_dedup(ERR_SEMANTIC, ast->line, ast->column,
+                                               "struct '%s' 没有字段 '%s'",
+                                               obj_type->struct_name, fname);
                     }
                 }
             }
