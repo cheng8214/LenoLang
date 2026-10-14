@@ -352,15 +352,13 @@ int semantic_check_cross_thread_args(Semantic* s, AstList* args, int line, int c
         if (!at) continue;
         if (at->kind == TYPE_CSTRUCT) {
             // 文案较长 + 类型名 ⇒ BUFFER_MEDIUM(256) 会截断（GCC 判 -Wformat-truncation）⇒ LARGE ✓
-            char msg[BUFFER_LARGE];
-            snprintf(msg, sizeof(msg),
+            error_add_at_fmt(ERR_SEMANTIC, line, column,
                      "跨线程不能传 cstruct —— 第 %d 个实参的类型是 '%s' ✓：cstruct 是**裸 C 内存**"
                      "（字段里可能有指针 / 句柄 / 外部缓冲区 ✓），没有可安全克隆的语义 ✗ ⇒ 运行期会报"
                      "「不能跨线程传递此类型」✗。跨线程请传**纯数据**：标量 / string / Array / Dict / "
                      "**struct**（这些会深克隆 ✓）、Channel（按引用共享 ✓）——"
                      "在接收侧用数据重建 cstruct 即可 ✓（见速查 §三 ②）",
                      i + 1, type_to_string(at));
-            error_add_at(ERR_SEMANTIC, line, column, msg);
             reported++;
         }
         type_free(at);   // infer_expr_type 归调用方释放（本仓口径 ✓）
@@ -503,10 +501,9 @@ int semantic_check_method_args_from_placeholder(Semantic* s, const char* struct_
     int param_count = ph->u.func.pcnt - 1;   // 去掉 self
 
     if (arity > param_count) {
-        char msg[BUFFER_MEDIUM];
-        snprintf(msg, sizeof(msg), "方法 '%s' 参数过多: 最多 %d 个, 实际 %d",
+        error_add_at_fmt(ERR_SEMANTIC, line, column,
+                 "方法 '%s' 参数过多: 最多 %d 个, 实际 %d",
                  method_name, param_count, arity);
-        error_add_at(ERR_SEMANTIC, line, column, msg);
         return 1;
     }
 
@@ -572,10 +569,9 @@ int semantic_check_method_args_from_placeholder(Semantic* s, const char* struct_
 
             int m_param_count = ssym->methods[k].param_count;
             if (arity > m_param_count) {
-                char msg[BUFFER_MEDIUM];
-                snprintf(msg, sizeof(msg), "方法 '%s' 参数过多: 最多 %d 个, 实际 %d",
+                error_add_at_fmt(ERR_SEMANTIC, line, column,
+                         "方法 '%s' 参数过多: 最多 %d 个, 实际 %d",
                          method_name, m_param_count, arity);
-                error_add_at(ERR_SEMANTIC, line, column, msg);
                 return 1;
             }
 
@@ -652,10 +648,9 @@ int semantic_check_face_method_args(Semantic* s, const char* face_name, const ch
                 if (strcmp(stmt->u.face_def.method_names[j], method_name) != 0) continue;
                 int pc = stmt->u.face_def.method_param_counts ? stmt->u.face_def.method_param_counts[j] : -1;
                 if (pc >= 0 && arity > pc) {
-                    char msg[BUFFER_MEDIUM];
-                    snprintf(msg, sizeof(msg), "方法 '%s' 参数过多: 最多 %d 个, 实际 %d",
+                    error_add_at_fmt(ERR_SEMANTIC, line, column,
+                             "方法 '%s' 参数过多: 最多 %d 个, 实际 %d",
                              method_name, pc, arity);
-                    error_add_at(ERR_SEMANTIC, line, column, msg);
                     return 1;
                 }
                 TypeInfo*** pts = stmt->u.face_def.method_param_types;
@@ -742,10 +737,9 @@ int semantic_check_face_method_args(Semantic* s, const char* face_name, const ch
         for (int fi = 0; fi < fs->method_count; fi++) {
             if (!fs->methods[fi].name || strcmp(fs->methods[fi].name, method_name) != 0) continue;
             if (arity > fs->methods[fi].param_count) {
-                char msg[BUFFER_MEDIUM];
-                snprintf(msg, sizeof(msg), "方法 '%s' 参数过多: 最多 %d 个, 实际 %d",
+                error_add_at_fmt(ERR_SEMANTIC, line, column,
+                         "方法 '%s' 参数过多: 最多 %d 个, 实际 %d",
                          method_name, fs->methods[fi].param_count, arity);
-                error_add_at(ERR_SEMANTIC, line, column, msg);
                 return 1;
             }
             if (!fs->methods[fi].param_types) return 1;   // 旧缓存/未记录 ⇒ 只判个数
@@ -1757,8 +1751,7 @@ int semantic_check_native_arg(Semantic* s, Ast* ast, TypeInfo* arg_type, TypeKin
     //   （native 侧 `val_as_obj(args[0])` 对 null 直接解引用；`_uint8`/`val_as_int` 之类则拿到垃圾值）
     //   口径：native 形参**没有可空标记** ⇒ 静态可空类型一律不许直传（要传就先收窄：x as T / _str(x) ✓）
     if (arg_type->nullable) {
-        char msg[BUFFER_LARGE];
-        snprintf(msg, sizeof(msg),
+        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                  "可空值不能直接传给 %s 的第 %d 个参数（期望非可空的具体类型 '%s'）\n"
                  "  提示: native 侧**没有 null 校验**（盲转会崩）⇒ 请先收窄：`if x is %s { ... }`（is 收窄对可空类型有效 ✓），\n"
                  "        或显式转换 `x as %s` / `_str(x)` / `_int(x)`（⚠ `if x != null` 不构成收窄 ✗）",
@@ -1766,7 +1759,6 @@ int semantic_check_native_arg(Semantic* s, Ast* ast, TypeInfo* arg_type, TypeKin
                  type_kind_to_string(expected),      // 「期望非可空的具体类型 '%s'」
                  type_kind_to_string(expected),      // 「if x is %s { ... }」
                  type_kind_to_string(expected));     // 「x as %s」
-        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
         return 1;
     }
 
