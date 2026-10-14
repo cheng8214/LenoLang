@@ -15,15 +15,13 @@
                 {
                     const NativeStructSpec* ns = native_find_struct_spec(ast->u.struct_def.name);
                     if (ns) {
-                        char msg[BUFFER_MEDIUM];
                         const char* owner = (ns->module_name && ns->module_name[0]) ? ns->module_name : "?";
-                        snprintf(msg, sizeof(msg),
+                        warning_add_at_fmt(WARN_NATIVE_TYPE_NAME_CLASH, ast->line, ast->column,
                                  "struct '%s' 与 native 类型同名（来自 '%s'）：字段解析会优先用你这个"
                                  "脚本定义，而 native 值按 native 规格解释 —— 形状不一致时运行期会"
                                  "直接报错。建议改名（如 'My%s'），或 `use %s.%s` 直接用 native 类型",
                                  ast->u.struct_def.name, owner,
                                  ast->u.struct_def.name, owner, ast->u.struct_def.name);
-                        warning_add_at(WARN_NATIVE_TYPE_NAME_CLASH, ast->line, ast->column, msg);
                     }
                 }
 
@@ -63,10 +61,9 @@
                                 if (!an || !bn || strcmp(an, bn) != 0) { same_shape = 0; break; }
                             }
                         }
-                        char msg[BUFFER_LARGE];
                         const char* alias = mi->alias ? mi->alias : "?";
                         if (shape_known && !same_shape) {
-                            snprintf(msg, sizeof(msg),
+                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                                 "struct '%s' 与已导入模块 '%s' 导出的同名 struct **字段布局不一致**"
                                 "（本文件 %d 个字段 / 对方 %d 个，或顺序不同）⇒ 字段索引按本文件这份算、"
                                 "对象却按对方的布局存 ⇒ **读 A 的字段会拿到 B 的值**，而且运行期"
@@ -74,14 +71,12 @@
                                 ast->u.struct_def.name, alias,
                                 ast->u.struct_def.field_count, ssym->field_count,
                                 ast->u.struct_def.name, alias, ast->u.struct_def.name);
-                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                         } else {
-                            snprintf(msg, sizeof(msg),
+                            warning_add_at_fmt(WARN_STRUCT_NAME_CLASH, ast->line, ast->column,
                                 "struct '%s' 与已导入模块 '%s' 导出的同名 struct 撞名（形状一致）——"
                                 "当前能跑，但**任一方改了字段就会静默读错值** ✗（实测：两边字段同名、顺序"
                                 "不同时，读 A 的字段会拿到 B 的值且全无报错）。建议改名（如 'My%s'）✓",
                                 ast->u.struct_def.name, alias, ast->u.struct_def.name);
-                            warning_add_at(WARN_STRUCT_NAME_CLASH, ast->line, ast->column, msg);
                         }
                         break;
                     }
@@ -129,11 +124,10 @@
 
                     // struct 字段不能使用 var 或 any，必须有具体类型
                     if (field_type && (field_type->kind == TYPE_INFER || field_type->kind == TYPE_ANY)) {
-                        char msg[BUFFER_MEDIUM];
                         const char* kind_str = (field_type->kind == TYPE_INFER) ? "var" : "any";
-                        snprintf(msg, sizeof(msg), "struct '%s' 的字段 '%s' 不能使用 %s，必须使用具体类型",
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                 "struct '%s' 的字段 '%s' 不能使用 %s，必须使用具体类型",
                                  ast->u.struct_def.name, ast->u.struct_def.field_names[i], kind_str);
-                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     }
 
                     // 如果字段类型是 struct/clib/cstruct/face，验证是否已定义
@@ -157,16 +151,14 @@
                                      ref_type->type->kind != TYPE_CLIB &&
                                      ref_type->type->kind != TYPE_CSTRUCT &&
                                      ref_type->type->kind != TYPE_FACE)) {
-                                    char msg[1024];   /* 大于 BUFFER_MEDIUM：容纳中文 + 提示（同 §"方法不存在"那处 ✓） */
                                     char hint[BUFFER_MEDIUM];
                                     // ★ 2026-10-10：提示走共享实现 ⇒ 会去已导入模块里找它 ✓
                                     semantic_undefined_type_hint(s, field_type->struct_name, hint, sizeof(hint));
-                                    snprintf(msg, sizeof(msg), "%s: struct '%s' 的字段 '%s' 使用了未定义的类型 '%s'",
+                                    error_add_at_fmt(ERR_UNDEFINED_VAR, ast->line, ast->column,
+                                             "%s: struct '%s' 的字段 '%s' 使用了未定义的类型 '%s'%s",
                                              "未定义的类型", ast->u.struct_def.name,
                                              ast->u.struct_def.field_names[i],
-                                             field_type->struct_name);
-                                    strncat(msg, hint, sizeof(msg) - strlen(msg) - 1);
-                                    error_add_at(ERR_UNDEFINED_VAR, ast->line, ast->column, msg);
+                                             field_type->struct_name, hint);
                                 } else if (ref_type->type->kind == TYPE_CLIB) {
                                     // 修正字段类型为 TYPE_CLIB
                                     field_type->kind = TYPE_CLIB;
@@ -203,9 +195,8 @@
                     // 此前这里只看 kind 就无条件复用，于是 `struct E1 {..}` 写两遍静默通过，
                     // 且第二份把第一份的字段整份顶掉（直到用 E1.x 才报"没有字段 x"，归因跑偏）。
                     if (sym->type_decl_ast && sym->type_decl_ast != (const void*)ast) {
-                        char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg), "struct '%s' 重复定义", ast->u.struct_def.name);
-                        error_add_at(ERR_DUPLICATE_VAR, ast->line, ast->column, msg);
+                        error_add_at_fmt(ERR_DUPLICATE_VAR, ast->line, ast->column,
+                                         "struct '%s' 重复定义", ast->u.struct_def.name);
                         type_free(struct_type);
                         break;  // 不更新符号、不写全局定义表
                     }
@@ -330,11 +321,9 @@
                                 // 求值为常量 Value
                                 Value cv = ast_default_to_value(ast->u.struct_def.const_values[ci]);
                                 if (val_is_null(cv) && ast->u.struct_def.const_values[ci]->kind != AST_NULL) {
-                                    char msg[BUFFER_MEDIUM];
-                                    snprintf(msg, sizeof(msg),
+                                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                                         "struct '%s' 的关联常量 '%s' 不是常量表达式（仅支持数字、字符串、bool、null、数组字面量、字典字面量）",
                                         ast->u.struct_def.name, ast->u.struct_def.const_names[ci]);
-                                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                 }
                                 cdef->const_values[ci] = cv;
                             } else {
@@ -551,42 +540,38 @@
                                                         type_match = 1;
                                                     }
                                                     if (!impl_ret_unknown && !type_match) {
-                                                        char msg[256];
-                                                        snprintf(msg, sizeof(msg), "struct '%s' 的方法 '%s' 返回类型与 face '%s' 不匹配: 期望 %s, 实际 %s",
+                                                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                                 "struct '%s' 的方法 '%s' 返回类型与 face '%s' 不匹配: 期望 %s, 实际 %s",
                                                                  ast->u.struct_def.name, mname, face_name,
                                                                  type_kind_to_string(face_ret),
                                                                  type_kind_to_string(impl_ret));
-                                                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                                     }
                                                 }
                                                 if (mface->methods[j].param_count >= 0 && ast->u.struct_def.methods[k]->u.func.pcnt >= 1) {
                                                     int expected_params = mface->methods[j].param_count;
                                                     int actual_params = ast->u.struct_def.methods[k]->u.func.pcnt - 1;
                                                     if (expected_params != actual_params) {
-                                                        char msg[256];
-                                                        snprintf(msg, sizeof(msg), "struct '%s' 的方法 '%s' 参数数量与 face '%s' 不匹配: 期望 %d, 实际 %d",
+                                                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                                 "struct '%s' 的方法 '%s' 参数数量与 face '%s' 不匹配: 期望 %d, 实际 %d",
                                                                  ast->u.struct_def.name, mname, face_name,
                                                                  expected_params, actual_params);
-                                                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                                     }
                                                 }
                                                 break;
                                             }
                                         }
                                         if (!found) {
-                                            char msg[256];
-                                            snprintf(msg, sizeof(msg), "struct '%s' 声明 impl '%s' 但缺少方法 '%s'",
+                                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                     "struct '%s' 声明 impl '%s' 但缺少方法 '%s'",
                                                      ast->u.struct_def.name, face_name, mname);
-                                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                         }
                                     }
                                 }
                             }
                         }
                         if (!found_in_module) {
-                            char msg[256];
-                            snprintf(msg, sizeof(msg), "未定义的 face: '%s'", face_name);
-                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                             "未定义的 face: '%s'", face_name);
                         }
                         continue;
                     }
