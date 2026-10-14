@@ -167,7 +167,6 @@
                         }
 
                         if (!field_found) {
-                            char msg[BUFFER_MEDIUM];
                             // ★ 文案必须与**类型推断那条检查**（semantic_type.c 的 AST_FIELD_ACCESS /
                             //   AST_INDEX）**一字不差** ✓ —— 两处覆盖的是**不同路径**（访问器这条看不见
                             //   "裸字段名"✗，推断那条才看得见 ✓），但同一处错会**同时命中两边** ✗

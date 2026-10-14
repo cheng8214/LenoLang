@@ -248,10 +248,9 @@
                     for (int j = 0; j < ast->u.clib_def.func_param_counts[i]; j++) {
                         TypeInfo* param_type = ast->u.clib_def.func_param_types[i][j];
                         if (param_type->kind == TYPE_INT) {
-                            char msg[BUFFER_MEDIUM];
-                            snprintf(msg, sizeof(msg), "clib 函数 '%s' 参数 %d 类型不能使用 'int'，请使用 'i32' 或 'i64'",
+                            error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                                     "clib 函数 '%s' 参数 %d 类型不能使用 'int'，请使用 'i32' 或 'i64'",
                                      ast->u.clib_def.func_names[i], j + 1);
-                            error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                         } else if (param_type->kind == TYPE_FLOAT) {
                             error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
                                      "clib 函数 '%s' 参数 %d 类型不能使用 'float'，请使用 'f32' 或 'f64'",
@@ -294,10 +293,9 @@
                                     ast->u.clib_def.func_param_types[i][j] = type_new(TYPE_CSTRUCT);
                                     ast->u.clib_def.func_param_types[i][j]->struct_name = name;
                                 } else {
-                                    char msg[BUFFER_MEDIUM];
-                                    snprintf(msg, sizeof(msg), "clib 函数 '%s' 参数 %d 类型 '%s' 不是有效的 C 布局类型，请使用 i32/i64/f32/f64/str8/str16/ptr/bool/void",
+                                    error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                                             "clib 函数 '%s' 参数 %d 类型 '%s' 不是有效的 C 布局类型，请使用 i32/i64/f32/f64/str8/str16/ptr/bool/void",
                                              ast->u.clib_def.func_names[i], j + 1, param_type->struct_name);
-                                    error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                                 }
                             }
                         }
