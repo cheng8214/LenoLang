@@ -9,6 +9,7 @@
 #include "include/module_symbol_table.h"       // module_symbol_table_get_shared / _export_names
 #include "include/module_loader.h"             // module_set_export_names_provider / MAX_EXPORT_NAME_LEN
 #include "include/module_ast_exports.h"
+#include "include/leno_serialize.h"            // serialize_source_hash：导出名缓存的失效判据 ✓
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -168,24 +169,46 @@ void module_ast_exports_free(AstExportList* list) {
 //   为什么必须有：`module_has_method` 在语义分析里会被**反复**调用，每次 parse 一遍模块
 //   （几十 ms/次）⇒ 秒级开销，不可接受 ✗（扫描链侧本来就有等价的进程内记忆化 ✓）
 //   键用 file_path 原样：调用点传的形式不同（相对/绝对）只会多缓存一份，不影响正确性 ✓
+//
+//   ★ 2026-10-14 修：**补内容哈希失效判据**（此前只按路径命中、**永不失效** ✗）。
+//     为什么必须（实测根因）：本缓存对 CLI 无害 —— 一次性进程，同一轮编译内文件不可能变；
+//     但 **LSP 是长驻进程** ⇒ 用户改了被 import 的模块（保存）之后，语义分析仍拿
+//     **第一次读到的**那份导出名清单 ⇒ 波浪线不更新 ✗
+//     （现场：`模块 'A' 中没有方法 'X'` —— X 明明刚加上 ✓，IDE 却一直报；
+//       同一份代码用 CLI 编译就是对的 ⇒ 典型的"宿主进程内缓存漏了失效"✓）。
+//     判据用**内容哈希**（`serialize_source_hash`：文本模式读入 + FNV-1a，与
+//     `module_source_snapshot_now` 同族 ✓）而**不是** mtime/size：Windows 的 st_mtime
+//     只到**秒** ⇒ 同一秒内改文件会漏 ✗（哈希没这个问题 ✓）。
 #define AST_EXPORT_CACHE_MAX 512
 typedef struct {
     char* key;
     char** names;
     int count;
+    uint64_t src_hash;    // 写入这份清单时源文件的**内容哈希**（0 = 取不到 ⇒ 永不命中）
 } AstExportCacheEntry;
 
 static AstExportCacheEntry g_ast_export_cache[AST_EXPORT_CACHE_MAX];
 static int g_ast_export_cache_count = 0;
 
-static const AstExportCacheEntry* ast_export_cache_lookup(const char* key) {
+// 按「路径 + 内容哈希」查缓存。哈希不符 ⇒ 判未命中，并**当场丢弃**旧条目
+//   （它已无价值，留着只会继续占坑；丢弃后调用方会重新 parse 并写入新条目 ✓）
+static const AstExportCacheEntry* ast_export_cache_lookup(const char* key, uint64_t src_hash) {
+    if (src_hash == 0) return NULL;      // 哈希取不到 ⇒ 不信任缓存（fail-closed ✓）
     for (int i = 0; i < g_ast_export_cache_count; i++) {
-        if (strcmp(g_ast_export_cache[i].key, key) == 0) return &g_ast_export_cache[i];
+        if (strcmp(g_ast_export_cache[i].key, key) != 0) continue;
+        if (g_ast_export_cache[i].src_hash == src_hash) return &g_ast_export_cache[i];
+        for (int k = 0; k < g_ast_export_cache[i].count; k++) free(g_ast_export_cache[i].names[k]);
+        free(g_ast_export_cache[i].names);
+        free(g_ast_export_cache[i].key);
+        g_ast_export_cache[i] = g_ast_export_cache[g_ast_export_cache_count - 1];  // 末尾补洞
+        g_ast_export_cache_count--;
+        return NULL;
     }
     return NULL;
 }
 
-static void ast_export_cache_store(const char* key, char** names, int count) {
+static void ast_export_cache_store(const char* key, char** names, int count, uint64_t src_hash) {
+    if (!key || src_hash == 0) return;   // 哈希未知 ⇒ 不缓存（宁可不缓存，也不要永不过期的旧值 ✗）
     if (g_ast_export_cache_count >= AST_EXPORT_CACHE_MAX) return;   // 满了不再缓存（正确性不受影响 ✓）
     AstExportCacheEntry* e = &g_ast_export_cache[g_ast_export_cache_count];
     e->key = strdup(key);
@@ -197,7 +220,26 @@ static void ast_export_cache_store(const char* key, char** names, int count) {
     }
     for (int i = 0; i < count; i++) e->names[i] = strdup(names[i]);
     e->count = count;
+    e->src_hash = src_hash;
     g_ast_export_cache_count++;
+}
+
+// ★ 2026-10-14 新增：清空导出名缓存（连同名字串一起释放）。
+//   给**常驻宿主**（LSP）用 —— 与 `module_symbol_table_reset_memo()` **同一个调用时机**
+//   （每次分析/编译前），让"编译期进程内缓存"在宿主侧有一个统一的收口 ✓
+void module_ast_exports_cache_clear(void) {
+    for (int i = 0; i < g_ast_export_cache_count; i++) {
+        if (g_ast_export_cache[i].names) {
+            for (int k = 0; k < g_ast_export_cache[i].count; k++) free(g_ast_export_cache[i].names[k]);
+            free(g_ast_export_cache[i].names);
+        }
+        free(g_ast_export_cache[i].key);
+        g_ast_export_cache[i].key = NULL;
+        g_ast_export_cache[i].names = NULL;
+        g_ast_export_cache[i].count = 0;
+        g_ast_export_cache[i].src_hash = 0;
+    }
+    g_ast_export_cache_count = 0;
 }
 
 // 提供者：签名与 module_loader 的 copy_module_export_names 同形（固定二维缓冲 ✓）
@@ -206,18 +248,24 @@ static int ast_export_names_provider(const char* file_path, const char* current_
                                      char (*out)[MAX_EXPORT_NAME_LEN], int max_names) {
     if (!file_path || !out || max_names <= 0) return -1;
 
-    const AstExportCacheEntry* hit = ast_export_cache_lookup(file_path);
+    // ⚠ 顺序（2026-10-14 调整）：**先读源码**再查缓存 —— 失效判据要用它的内容哈希。
+    //   未命中时**直接用这份 src** 去 parse ⇒ 不重复读文件 ✓；
+    //   命中时多付"读一次文件 + 一次 FNV"（微秒级），换掉"永不失效"完全值得 ✓
+    char* src = read_module_file(file_path, current_file);
+    if (!src) return -1;      // 读不了 ⇒ 回退（由回退路径按原样报错 ✓）
+    uint64_t src_hash = serialize_source_hash(src, strlen(src));
+
+    const AstExportCacheEntry* hit = ast_export_cache_lookup(file_path, src_hash);
     if (hit) {
         int n = hit->count < max_names ? hit->count : max_names;
         for (int i = 0; i < n; i++) {
             strncpy(out[i], hit->names[i], MAX_EXPORT_NAME_LEN - 1);
             out[i][MAX_EXPORT_NAME_LEN - 1] = '\0';
         }
+        free(src);
         return n;
     }
 
-    char* src = read_module_file(file_path, current_file);
-    if (!src) return -1;      // 读不了 ⇒ 回退（由回退路径按原样报错 ✓）
     AstExportList list;
     // ⚠ 解析的是**这个模块**的源码 ⇒ 当前文件必须切成它（否则包内裸文件名 import 会被
     //   解析到外层目录的同名文件上，见 AstFileCtx 的说明）
@@ -245,7 +293,7 @@ static int ast_export_names_provider(const char* file_path, const char* current_
         }
     }
 
-    ast_export_cache_store(file_path, list.names, list.count);
+    ast_export_cache_store(file_path, list.names, list.count, src_hash);
     int n = list.count < max_names ? list.count : max_names;
     for (int i = 0; i < n; i++) {
         strncpy(out[i], list.names[i], MAX_EXPORT_NAME_LEN - 1);

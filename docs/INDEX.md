@@ -114,6 +114,33 @@
 >   （符号表没有"内存源码覆盖"入口）⇒ 磁盘上还没有的编辑，符号类能力看不到 ✗。
 >   要治 (b)：给 `module_symbol_table` 加一个"源码 provider"入口（LSP 注册回调，scan 时优先用
 >   编辑器里的文本、并跳过磁盘缓存），属**独立一项**，待与用户确认现象后再做。
+>   **2026-10-14 追加（五）**：**LSP「波浪线陈旧」真因查明并修复 —— 是**进程内**缓存，不是磁盘缓存**
+>   （用户报的现象是**波浪线**，据此重新定位；⚠ **订正本文件（四）⑤(b)**：那里写"诊断用内存文本
+>   ⇒ 实时"**不完整** ✗ —— 诊断**自身**的语法/类型判断确实走内存文本，但它**解析 import 的依赖**
+>   时用的是**进程内缓存**（导出名 / 符号表）⇒ 依赖改了，诊断照样陈旧 ✗）：
+>   ① **两处进程内缓存都没被 LSP 管住**：
+>   · `module_ast_exports.c` 的 `g_ast_export_cache`（路径 → 导出名清单）——**连失效判据都没有** ✗
+>     （路径命中就返回，永不过期），也没有清理入口；语义分析判「模块 'm' 中没有方法 'x'」
+>     走的就是它（`visit_module.inc` → `module_has_method` → provider）⇒ **正是波浪线的来源** ✓
+>   · `module_symbol_table` 的 `g_sym_memo`（符号表记忆化）—— 有 mtime/size 判据、**也有**
+>     `module_symbol_table_reset_memo()`，头文件注释白纸黑字写着「**LSP 这类常驻宿主应在每次
+>     请求前调用**」，而 **LSP 一次都没调** ✗（只有 `main.c` 两个编译入口调了）；
+>   ② 修：`g_ast_export_cache` 补**内容哈希**判据（`serialize_source_hash`，文本读入 + FNV-1a）
+>     + 新增 `module_ast_exports_cache_clear()`；LSP 在 `compiler_analyze_with_filename` 开头
+>     **每轮分析前**调用 `module_symbol_table_reset_memo()` + `module_ast_exports_cache_clear()`
+>     （与 `main.c` 两处口径一致 ✓，`main.c` 也补上了后者）；provider 改为**先读源码算哈希再查缓存**
+>     （未命中时直接用这份 src 去 parse ⇒ 不重复读文件 ✓，命中多付"读一次文件 + 一次 FNV"）；
+>   ⚠ 判据用**内容哈希**而不是 mtime/size：Windows 的 `st_mtime` 只到**秒** ⇒ 同一秒内改文件会漏 ✗；
+>   ③ **对照实验**（同一场景，旧 exe vs 新 exe；`b.leno` 内容一字未改，只给 `a.leno` 补上 `world()`）：
+>     · 修复前：`改依赖前 count=1` → **`补上 world() 之后 count=1`**（仍报"模块 'a' 中没有方法 'world'"✗）
+>     · 修复后：`改依赖前 count=1` → **`补上 world() 之后 count=0`**（错误消失 ✓）
+>     ⇒ 症状复现 + 修复生效，双向坐实 ✓；
+>   ④ 该修复**进不了 assert 套件**（套件跑 CLI = 一次性进程，复现不出"同一进程内跨请求、中间改文件"
+>     ⇒ 新增独立自检 `leno_lsp/test_cache_refresh.ps1`（判据 1 → 0，退出码 0/1）✓；
+>   ⚠ **仍未做**（与本次无关、但仍是 (b) 的剩余部分）：**未保存的编辑** —— hover/补全/跳转里
+>     那些"符号信息"走 `module_symbol_table_create(path) + scan()` ⇒ 从磁盘读，
+>     磁盘上还没有的编辑看不到；要治它才需要给符号表加"源码 provider"入口 ✓
+>   验收：重建 `build\leno.exe` 后套件 **456 passed / 0 failed** ✓（CLI 侧无回归）。
 >   **2026-10-13 追加（三）**：登记 **M11**（⏳ **待修**）—— struct **方法**里 `new B(键 = 隐式自字段)` 会报「未定义的变量」（写 `self.` 或先 `new B()` 再赋值都正常；**只在方法里犯、不静默错值**）：『语言摩擦与隐式契约清单.md』新增 **M11** 节（6 个探针的边界表 + 疑似定位点，**实现侧 `src/semantic` 未动**）、『语言陷阱速查.md』新增 **㉟**；同日**订正三处**旧说法（曾写成"编译器把 self 切成 B"，不准确 ✗）：`sdl_card.leno` 注释、『LenoSDL3_Card卡片控件设计文档.md』第 4 条坑、『SDL3常用API与易踩坑速查.md』**附录 C** 那条标题。
 >   **2026-10-13 追加（三-修）**：**M11 ✅ 已修** —— 真因**不是**"隐式 `self` 失效"✗，而是**方法体改写器**（`transform_method_body`，`src/semantic/semantic_visit_method.c`）的 **switch 白名单漏了 `AST_STRUCT_INIT`** ⇒ `new B(键 = 值)` 的**值**整段落进 `default:` 被**静默跳过** ⇒ 值里的裸字段名没被改写成 `self.字段` ⇒ 报「未定义的变量」。修法：补一个 case、**只递归 `field_values[]`**（⚠ 不碰构造目标的字段名 —— 当裸名改写会造出 `self.k` 假字段 ✗）。**同族排查**：把该白名单与 `leno_ast.h` 的 AST 枚举**逐项对了一遍**（只剩 `AST_RANGE` 未递归，但**构造不出可复现失败用例** ⇒ 不当作 bug 修、仅登记）。验收：`assert/test_method_new_implicit_self.leno`（6 条边界逐条对应，含 ⑥「B 有同名字段 ⇒ 取**外层** 7、**不是** 99」这条防**静默错值**的钉子）；套件 **452 passed / 0 failed**。『语言摩擦与隐式契约清单.md』M11 收口、『语言陷阱速查.md』**㉟ 翻案**（"⏳ 待修"→"✅ 已修"，并写明真因与当初猜测不同 ✗）。
 >   **2026-10-13 追加（四）**：**框架侧修 2 处 + 应用侧新增 1 页**（都真机实测过，坑都进速查 ✓）：

@@ -7,6 +7,8 @@
 #include "../src/include/lenolang.h"
 #include "../src/include/native.h"
 #include "../src/include/leno_package.h"   // T19：package_scan_shadowed_modules（撞名扫描）
+#include "../src/include/module_symbol_table.h"   // module_symbol_table_reset_memo（常驻宿主每轮分析前清缓存）
+#include "../src/include/module_ast_exports.h"    // module_ast_exports_cache_clear（同上）
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -99,6 +101,18 @@ bool compiler_analyze_with_filename(CompilerContext* ctx, const char* source, co
     // 重置错误状态
     error_clear();
     warning_clear();
+
+    // ★ 2026-10-14：**常驻宿主必须每次分析前清空「编译期进程内缓存」** —— 否则复用旧数据 ✗
+    //   这两句与 main.c 两个编译入口处的同一对调用**口径一致**（那边一直有，LSP 这边漏了 ✗）：
+    //   · module_symbol_table_reset_memo() —— 符号表的进程内记忆化。**头文件注释本就写着
+    //     "LSP 这类常驻宿主应在每次请求前调用"，而 LSP 此前一次都没调** ✗
+    //     ⇒ 改完被 import 的模块后，诊断仍复用旧符号表 ⇒ 波浪线不更新。
+    //   · module_ast_exports_cache_clear() —— 导出名清单缓存（本次新增清理口；它此前
+    //     **连失效判据都没有** ✗，见 module_ast_exports.c 的说明）。
+    //   代价：重置后符号表扫描改走磁盘 .lenosymc —— 它的失效判据是**内容哈希**（严格 ✓）
+    //   ⇒ 依赖没变时命中缓存，只付"读文件 + 反序列化"；换回来的是"改完依赖文件立刻生效" ✓
+    module_symbol_table_reset_memo();
+    module_ast_exports_cache_clear();
 
     // 设置文件名（用于模块路径解析，read_module_file 依赖此值解析相对路径）
     if (filename) {

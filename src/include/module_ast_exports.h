@@ -37,6 +37,14 @@ void module_ast_exports_free(AstExportList* list);
 //   ⇒ 之后 `module_loader` 的 copy_module_export_names / module_has_method 都走语法实现 ✓
 void module_ast_exports_register(void);
 
+// ★ 2026-10-14 新增：清空"导出名清单"的**进程内缓存**。
+//   常驻宿主（LSP）应在**每次分析前**调用 —— 与 `module_symbol_table_reset_memo()` 同一时机，
+//   两者合起来 = "编译期进程内缓存"在宿主侧的统一收口 ✓
+//   为什么需要它：该缓存此前**连失效判据都没有**（路径命中就返回、永不更新 ✗）
+//   ⇒ 长驻进程里改完被 import 的模块也看不到新导出名 ⇒ 波浪线一直报旧错 ✗
+//   （现在既补了内容哈希判据、也留了这个主动清理口 ✓）
+void module_ast_exports_cache_clear(void);
+
 // S10：注册"AST 符号填充器"（编译期在 main.c 调一次）
 //   ⇒ 扫描链跑完后，按声明种类由 AST 建表/覆盖；7 类文本扫描已于 2026-10-01 全部退役 ✓
 void module_ast_symbols_register(void);

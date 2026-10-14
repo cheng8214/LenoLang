@@ -640,6 +640,7 @@ int lenolang_run(const char* source) {
     module_symbol_table_reset_scan_stack();
     check_ambiguous_modules();   // T19：必须在上面两句 clear 之后
     module_symbol_table_reset_memo();
+    module_ast_exports_cache_clear();   // ★ 2026-10-14：同族的进程内缓存一并清（口径见 lenolang_compile 处）
     warn_if_source_empty(source);
      if (debugMode) {
          printf("debug模式:进入语法分析阶段\n");
@@ -878,6 +879,12 @@ int lenolang_compile(const char* source, const char* output_path) {
     module_symbol_table_reset_scan_stack();
     check_ambiguous_modules();   // T19：必须在上面两句 clear 之后
     module_symbol_table_reset_memo();
+    // ★ 2026-10-14：**编译期进程内缓存必须成对清理**。此前只清了符号表 memo，
+    //   而"导出名清单"（module_ast_exports 的 g_ast_export_cache）**没有失效判据、
+    //   也没有清理入口** ⇒ 同一进程里的第二次编译（`-p` 打包 = 编译 + 内嵌校验）
+    //   会看到上一次的导出名清单 ✗（一次性进程里碰不到，但口径必须一致 ✓）。
+    //   LSP 侧的对应调用见 leno_lsp/leno_compiler_lib.c（那边是**每轮分析**都要清 ✓）。
+    module_ast_exports_cache_clear();
     warn_if_source_empty(source);   // 空源文件别"假成功"（-c / -p 也走这里）
 
     gc_init();
