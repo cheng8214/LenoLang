@@ -27,6 +27,66 @@
                     }
                 }
 
+                // ★ 2026-10-14 新增：与**已导入模块导出的** struct 撞名 ⇒ 警告
+                //   为什么必须（实测**静默错值** ✗）：字段索引是编译期按"本文件看得见的那份
+                //   struct 定义"算出来的**常量**，而对象是按**定义它的那个模块**的布局创建的
+                //   ⇒ 两个同名 struct 字段顺序不同时，读 `s.name` 会拿到 `s.count` 的槽 ✗
+                //   实测（两个 Session，字段同名、顺序相反）：`name = 7` / `count = from_a`
+                //   —— **一个字都不报错** ✓✗
+                //   现场：用户的文件里定义了 `struct Session`，同时又 import 了 LenoWeb
+                //   （`web_net.leno` 也 `export struct Session`）⇒ 静默读错字段（用户实测踩到 ✓）。
+                //   ⚠ 同族检查此前只覆盖 **native 类型**（WARN_NATIVE_TYPE_NAME_CLASH）
+                //     ⇒ "脚本 struct 撞脚本 struct"这一格是空的 ✗
+                //   判据：本文件 import 的模块符号表里能查到同名 struct ⇒ 警告（每个定义最多报一次 ✓）
+                //   （显式 `use 模块.X` 的场景会先撞"重复定义"报错 ⇒ 走不到这里 ✓）
+                if (s->imported_module_count > 0) {
+                    for (int im = 0; im < s->imported_module_count; im++) {
+                        ImportedModuleInfo* mi = &s->imported_modules[im];
+                        if (!mi->sym_table || mi->load_failed) continue;
+                        ModuleStructSymbol* ssym = module_symbol_table_find_struct(
+                            mi->sym_table, ast->u.struct_def.name);
+                        if (!ssym) continue;
+
+                        // ★ 形状比对 —— 决定"报错"还是"只警告"（2026-10-14）：
+                        //   判据 = 字段**数量 + 逐字段名（顺序敏感）**（类型不比：名字序列已足以
+                        //   区分"碰巧同形"与"必然错位"，而误报错误比漏报更烦人 ✓）
+                        //   · **异形** ⇒ 字段索引必然错位 ⇒ **静默读错值** ⇒ **报错**（本次核心判断 ✓）
+                        //   · **同形** ⇒ 两个定义碰巧一样、可能是有意重用 ⇒ **警告**
+                        //     （与 native 那条 WARN_NATIVE_TYPE_NAME_CLASH 同口径 ✓）
+                        //   ⚠ 符号表没记字段（老缓存 / 只有数量）⇒ 判不了 ⇒ 退回警告（宁轻勿误报错 ✓）
+                        int same_shape = (ssym->field_count == ast->u.struct_def.field_count);
+                        int shape_known = (ssym->field_count == 0) || (ssym->fields != NULL);
+                        if (same_shape && ssym->fields != NULL && ast->u.struct_def.field_names != NULL) {
+                            for (int fi = 0; fi < ssym->field_count; fi++) {
+                                const char* an = ssym->fields[fi].name;
+                                const char* bn = ast->u.struct_def.field_names[fi];
+                                if (!an || !bn || strcmp(an, bn) != 0) { same_shape = 0; break; }
+                            }
+                        }
+                        char msg[BUFFER_LARGE];
+                        const char* alias = mi->alias ? mi->alias : "?";
+                        if (shape_known && !same_shape) {
+                            snprintf(msg, sizeof(msg),
+                                "struct '%s' 与已导入模块 '%s' 导出的同名 struct **字段布局不一致**"
+                                "（本文件 %d 个字段 / 对方 %d 个，或顺序不同）⇒ 字段索引按本文件这份算、"
+                                "对象却按对方的布局存 ⇒ **读 A 的字段会拿到 B 的值**，而且运行期"
+                                "**不会有任何报错** ✗。请改名（如 'My%s'），或 `use %s.%s` 明确用对方那个 ✓",
+                                ast->u.struct_def.name, alias,
+                                ast->u.struct_def.field_count, ssym->field_count,
+                                ast->u.struct_def.name, alias, ast->u.struct_def.name);
+                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                        } else {
+                            snprintf(msg, sizeof(msg),
+                                "struct '%s' 与已导入模块 '%s' 导出的同名 struct 撞名（形状一致）——"
+                                "当前能跑，但**任一方改了字段就会静默读错值** ✗（实测：两边字段同名、顺序"
+                                "不同时，读 A 的字段会拿到 B 的值且全无报错）。建议改名（如 'My%s'）✓",
+                                ast->u.struct_def.name, alias, ast->u.struct_def.name);
+                            warning_add_at(WARN_STRUCT_NAME_CLASH, ast->line, ast->column, msg);
+                        }
+                        break;
+                    }
+                }
+
                 // 泛型 struct：将字段类型中的泛型参数标记为 TYPE_GENERIC_PARAM
                 if (ast->u.struct_def.type_param_count > 0 && ast->u.struct_def.type_params) {
                     for (int i = 0; i < ast->u.struct_def.field_count; i++) {

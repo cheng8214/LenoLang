@@ -1,0 +1,105 @@
+// test_diag_struct_name_clash.leno —— 跨模块 struct 撞名（2026-10-14）
+//
+// 踩坑实录（用户报告）：文件里定义 `struct Session`，同时又 import 了 LenoWeb
+//   （`web_net.leno` 也 `export struct Session`）⇒ **静默读错字段** ✗
+//   最小复现（两个同名 struct，字段同名、顺序相反）：
+//     name = 7        ← 期望 "from_a"
+//     count = from_a  ← 期望 7
+//   —— **一个字都不报错** ✓✗
+//   机制：字段索引是编译期按"本文件看得见的那份定义"算出来的**常量**，而对象按
+//   "定义它的那个模块"的布局创建 ⇒ 两份定义不一致就串台 ✓
+//
+// 本用例钉住三条判据：
+//   · **异形**（字段数量 / 名字 / 顺序不同）⇒ **编译错误**（必然静默错值，不能放过 ✗）
+//   · **同形**（字段名与顺序完全一致）⇒ 只**警告**（可能是有意重用；与 native 那条
+//     `WARN_NATIVE_TYPE_NAME_CLASH` 同口径 ✓）
+//   · 不撞名 ⇒ 什么也不报（防误报 ✓）
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+import strings
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_struct_name_clash")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // 被导入的模块：导出 Session（字段 name, count）
+    var modp = dirs.join(work, "mod_a.leno")
+    files.write(modp, @"export struct Session {
+    string name = """"
+    int count = 0
+}
+")
+
+    // ---- ① 异形：字段**顺序相反** ⇒ 必须报错（这一条正是用户踩的坑）----
+    var hostBad = dirs.join(work, "host_bad.leno")
+    files.write(hostBad, @"import ""mod_a.leno"" as a
+
+struct Session {
+    int count = 0
+    string name = """"
+}
+
+main() {
+    print(""never"")
+}
+")
+    ce.expect_error(hostBad, "同名 struct 字段布局不一致 ⇒ 报错（否则静默读错字段）",
+        "字段布局不一致", 3)
+
+    // ---- ② 异形（字段名不同）：数量相同但名字不同 ⇒ 同样报错 ----
+    var hostBad2 = dirs.join(work, "host_bad2.leno")
+    files.write(hostBad2, @"import ""mod_a.leno"" as a
+
+struct Session {
+    int first = 0
+    string second = """"
+}
+
+main() {
+    print(""never"")
+}
+")
+    ce.expect_error(hostBad2, "同名 struct 字段名不同 ⇒ 报错",
+        "字段布局不一致", 3)
+
+    // ---- ③ 同形：字段名与顺序完全一致 ⇒ 只警告，程序照常跑 ----
+    var modSame = dirs.join(work, "mod_same.leno")
+    files.write(modSame, @"export struct Same {
+    int a = 0
+    string b = """"
+}
+")
+    var hostSame = dirs.join(work, "host_same.leno")
+    files.write(hostSame, @"import ""mod_same.leno"" as m
+
+struct Same {
+    int a = 0
+    string b = """"
+}
+
+main() {
+    print(""SAME_OK"")
+}
+")
+    ce.expect_ok(hostSame, "同名 struct 形状一致 ⇒ 只警告、照常运行（不阻断 ✓）", "SAME_OK")
+
+    // ---- ④ 反向：不与已导入模块撞名 ⇒ 不该出现这条警告（防误报 ✓）----
+    var hostOk = dirs.join(work, "host_ok.leno")
+    files.write(hostOk, @"import ""mod_a.leno"" as a
+
+struct MySession {
+    int count = 0
+}
+
+main() {
+    print(""OK"")
+}
+")
+    var outOk = ce.expect_ok(hostOk, "不撞名不该报（防误报）", "OK")
+    ce.expect_no_warning(outOk, "不撞名时不该出现撞名警告", "撞名")
+
+    print("test_diag_struct_name_clash passed")
+}
