@@ -1901,10 +1901,9 @@
                     if (!found) {
                         // 不是常量，可能是方法名被误解析为 MODULE_ACCESS
                         // 报告错误
-                        char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg), "模块 '%s' 中没有常量 '%s'，如果是方法调用请加括号 ()",
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                 "模块 '%s' 中没有常量 '%s'，如果是方法调用请加括号 ()",
                                  actual_module, ast->u.module_access.member_name);
-                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     }
                     // 原生模块常量：保留 AST_MODULE_ACCESS，设置类型为 TYPE_INT
                     ast->u.module_access.ref.kind = SYM_MODULE;
@@ -1938,15 +1937,13 @@
                             if (mod_info->file_path &&
                                 !module_has_export(mod_info->file_path, cur_file,
                                                    ast->u.module_access.member_name)) {
-                                char msg[BUFFER_MEDIUM];
-                                snprintf(msg, sizeof(msg),
+                                error_add_at_fmt(ERR_UNDEFINED_VAR, ast->line, ast->column,
                                          "模块 '%s' 里的变量 '%s' 没有 export —— 跨模块读不到"
                                          "（请在模块里写成 `export var %s = ...` 或 `export const %s = ...`）",
                                          ast->u.module_access.module_name,
                                          ast->u.module_access.member_name,
                                          ast->u.module_access.member_name,
                                          ast->u.module_access.member_name);
-                                error_add_at(ERR_UNDEFINED_VAR, ast->line, ast->column, msg);
                             }
                             member_type = mv->type;
                             // ★ 优先使用完整类型信息（支持 Array[int] 等泛型变量）
