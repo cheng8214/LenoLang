@@ -208,10 +208,9 @@
                 // 运行期，native_init_module 找不到（此前是静默 no-op），直到调用该模块的
                 // 方法才失败 —— 报错位置与真实原因不符，且从不调用就永不报错。
                 if (!native_module_is_registered(ast->u.import.module_name)) {
-                    char msg[1024];
-                    snprintf(msg, sizeof(msg), "未知的原生模块 '%s'（可用的原生模块: %s）",
+                    error_add_at_fmt(ERR_UNDEFINED_VAR, ast->line, ast->column,
+                             "未知的原生模块 '%s'（可用的原生模块: %s）",
                              ast->u.import.module_name, native_module_names_csv());
-                    error_add_at(ERR_UNDEFINED_VAR, ast->line, ast->column, msg);
                     break;
                 }
 
@@ -264,10 +263,9 @@
 
             // 检查模块是否已导入：原生模块必须显式导入，用户模块也必须导入
             if (is_native_module && !is_imported_module) {
-                char msg[BUFFER_MEDIUM];
-                snprintf(msg, sizeof(msg), "模块 '%s' 未导入，请先使用 'import %s' 导入模块",
+                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                         "模块 '%s' 未导入，请先使用 'import %s' 导入模块",
                          ast->u.module_call.module_name, ast->u.module_call.module_name);
-                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                 break;
             }
 
@@ -325,29 +323,28 @@
 
                     // arity >= 0: 固定参数数量
                     if (expected_arity >= 0 && actual_arity != expected_arity) {
-                        char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg), "%s.%s 参数数量不匹配: 期望 %d, 实际 %d",
-                                 actual_module, ast->u.module_call.method_name, expected_arity, actual_arity);
-                        if (strcmp(ast->u.module_call.method_name, "map") == 0 && actual_arity == 1 && expected_arity == 2) {
-                            strncat(msg, "\n  提示: .map() 会传递 (item, index) 两个参数，\n"
-                                    "     函数签名需加第二个参数，如 func compress(string w, int _): string",
-                                    sizeof(msg) - strlen(msg) - 1);
-                        }
-                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                        // `.map()` 那条提示做成尾串（原来是往 msg 尾部 strncat ✓ 等价）
+                        const char* map_hint =
+                            (strcmp(ast->u.module_call.method_name, "map") == 0 && actual_arity == 1 && expected_arity == 2)
+                            ? "\n  提示: .map() 会传递 (item, index) 两个参数，\n"
+                              "     函数签名需加第二个参数，如 func compress(string w, int _): string"
+                            : "";
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                 "%s.%s 参数数量不匹配: 期望 %d, 实际 %d%s",
+                                 actual_module, ast->u.module_call.method_name, expected_arity, actual_arity,
+                                 map_hint);
                     }
                     // arity < 0: 可变参数，检查是否少于 min_arity
                     else if (expected_arity < 0 && meta->min_arity >= 0 && actual_arity < meta->min_arity) {
-                        char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg), "%s.%s 参数过少: 最少 %d 个, 实际 %d",
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                 "%s.%s 参数过少: 最少 %d 个, 实际 %d",
                                  actual_module, ast->u.module_call.method_name, meta->min_arity, actual_arity);
-                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     }
                     // arity < 0: 可变参数，检查是否超过 max_arity
                     else if (expected_arity < 0 && meta->max_arity >= 0 && actual_arity > meta->max_arity) {
-                        char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg), "%s.%s 参数过多: 最多 %d 个, 实际 %d",
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                 "%s.%s 参数过多: 最多 %d 个, 实际 %d",
                                  actual_module, ast->u.module_call.method_name, meta->max_arity, actual_arity);
-                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     }
                     
                     // const 检查：模块方法调用不能修改 const 容器
@@ -514,10 +511,9 @@
                     int has_method = module_has_method(module_info->file_path, current_file, 
                                                        ast->u.module_call.method_name);
                     if (has_method == 0) {
-                        char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg), "模块 '%s' 中没有方法 '%s'",
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                 "模块 '%s' 中没有方法 '%s'",
                                  ast->u.module_call.module_name, ast->u.module_call.method_name);
-                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     } else if (module_info->sym_table) {
                         // 从模块符号表推断返回类型
                         ModuleFuncSymbol* func_sym = module_symbol_table_find_func(
@@ -529,17 +525,17 @@
                             int default_cnt = func_sym->default_count;
                             int required_cnt = expected_cnt - default_cnt;
                             if (actual_cnt < required_cnt || actual_cnt > expected_cnt) {
-                                char msg[BUFFER_MEDIUM];
                                 if (actual_cnt < required_cnt) {
-                                    snprintf(msg, sizeof(msg), "%s.%s 参数数量不足: 至少需要 %d 个参数，实际传入 %d 个",
+                                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                             "%s.%s 参数数量不足: 至少需要 %d 个参数，实际传入 %d 个",
                                              ast->u.module_call.module_name, ast->u.module_call.method_name,
                                              required_cnt, actual_cnt);
                                 } else {
-                                    snprintf(msg, sizeof(msg), "%s.%s 参数数量过多: 最多接受 %d 个参数，实际传入 %d 个",
+                                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                             "%s.%s 参数数量过多: 最多接受 %d 个参数，实际传入 %d 个",
                                              ast->u.module_call.module_name, ast->u.module_call.method_name,
                                              expected_cnt, actual_cnt);
                                 }
-                                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                             }
                             // ★ 参数**类型**检查（⑱）：此前只查个数 ⇒ 跨模块 `a.take("oops")`
                             //   （`take(int v)`）**零诊断**（同文件会报 —— 那条走 AST 里的 func_def）。
@@ -585,14 +581,12 @@
                                             }
                                         }
                                         if (!skip && !type_is_compatible(expected_type, arg_type)) {
-                                            char msg[BUFFER_MEDIUM];
                                             char idx_str[16];
                                             snprintf(idx_str, sizeof(idx_str), "%d", pi + 1);
-                                            format_type_error(msg, sizeof(msg),
-                                                "%s3 第 %s4 个参数类型不匹配: 期望 %s1, 实际 %s2",
-                                                expected_type, arg_type,
-                                                ast->u.module_call.method_name, idx_str);
-                                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column, "%s",
+                                                format_type_error_text("%s3 第 %s4 个参数类型不匹配: 期望 %s1, 实际 %s2",
+                                                    expected_type, arg_type,
+                                                    ast->u.module_call.method_name, idx_str));
                                         }
                                     }
                                     if (arg_type) type_free(arg_type);
@@ -651,13 +645,11 @@
                 //   ⇒ 只认脚本 struct ✓：cstruct / clib 的 `Vec.malloc()` 这类**静态写法是合法的** ✓
                 //     不能误伤 ✓（见 07_collections.inc 里那条兜底注释 ✓）。全套 434 条用例过后无回归 ✓。
                 if (obj_sym && obj_sym->kind == SYM_STRUCT) {
-                    char msg[BUFFER_MEDIUM];
-                    snprintf(msg, sizeof(msg),
+                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                              "'%s' 是 struct **类型名**，不能直接当接收者用（本语言没有静态方法 ✓）——"
                              "想调它的方法请先造实例：var x = new %s()，然后 x.%s(...)",
                              ast->u.module_call.module_name, ast->u.module_call.module_name,
                              ast->u.module_call.method_name);
-                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     break;
                 }
                 if (obj_sym) {
@@ -695,10 +687,9 @@
                                     int expected_count = clib_sym->clib_func_param_counts[fi];
                                     int actual_count = ast->u.module_call.args.count;
                                     if (actual_count != expected_count) {
-                                        char msg[BUFFER_MEDIUM];
-                                        snprintf(msg, sizeof(msg), "clib '%s' 函数 '%s' 参数数量不匹配: 期望 %d, 实际 %d",
+                                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                 "clib '%s' 函数 '%s' 参数数量不匹配: 期望 %d, 实际 %d",
                                                  obj_type->struct_name, method_name, expected_count, actual_count);
-                                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                     }
                                     // 检查每个参数类型
                                     for (int pi = 0; pi < actual_count && pi < expected_count; pi++) {
@@ -726,17 +717,17 @@
                             is_clib_call = 1;
                         }
                         if (!is_clib_call) {
-                            char msg[BUFFER_MEDIUM];
                             // 检查是否是因为未 use 导入 clib 类型
                             Symbol* local_clib = scope_resolve(s->current, obj_type->struct_name);
                             if (!local_clib) {
-                                snprintf(msg, sizeof(msg), "clib '%s' 函数 '%s' 未找到，请添加 use 语句导入 clib 类型（如 use module.%s）",
+                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                         "clib '%s' 函数 '%s' 未找到，请添加 use 语句导入 clib 类型（如 use module.%s）",
                                          obj_type->struct_name, method_name, obj_type->struct_name);
                             } else {
-                                snprintf(msg, sizeof(msg), "clib '%s' 没有声明函数 '%s'",
+                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                         "clib '%s' 没有声明函数 '%s'",
                                          obj_type->struct_name, method_name);
                             }
-                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                         } else {
                             // clib 调用验证通过，标记 cached_type 让 codegen 识别
                             ast->cached_type = type_new(TYPE_CLIB);

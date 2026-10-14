@@ -19,17 +19,17 @@
                             }
                         }
                         if (!func_found) {
-                            char msg[BUFFER_MEDIUM];
                             // 检查是否是因为未 use 导入 clib 类型
                             Symbol* local_clib = scope_resolve(s->current, obj_type->struct_name);
                             if (!local_clib) {
-                                snprintf(msg, sizeof(msg), "clib '%s' 函数 '%s' 未找到，请添加 use 语句导入 clib 类型（如 use module.%s）",
+                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                         "clib '%s' 函数 '%s' 未找到，请添加 use 语句导入 clib 类型（如 use module.%s）",
                                          obj_type->struct_name, func_name, obj_type->struct_name);
                             } else {
-                                snprintf(msg, sizeof(msg), "clib '%s' 没有声明函数 '%s'",
+                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                         "clib '%s' 没有声明函数 '%s'",
                                          obj_type->struct_name, func_name);
                             }
-                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                         }
                     }
                 type_free(obj_type);
@@ -44,12 +44,10 @@
                     ok != TYPE_ENUM && ok != TYPE_CLIB && ok != TYPE_PTR_GENERIC &&
                     ok != TYPE_ANY && ok != TYPE_INFER && ok != TYPE_UNKNOWN &&
                     ok != TYPE_GENERIC_PARAM && ok != TYPE_MULTI_RET) {
-                    char msg[BUFFER_MEDIUM];
                     const char* field_name = ast->u.field_access.field_name;
-                    snprintf(msg, sizeof(msg),
+                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                         "类型 '%s' 不支持属性访问 '.%s'（只有 struct、dict、array 等类型才能访问属性）",
                         type_kind_to_string(ok), field_name);
-                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                 }
             }
 
@@ -72,9 +70,8 @@
                     }
                 }
                 if (!found) {
-                    char msg[BUFFER_MEDIUM];
-                    snprintf(msg, sizeof(msg), "enum '%s' 没有成员 '%s'", obj_type->struct_name, member_name);
-                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                     "enum '%s' 没有成员 '%s'", obj_type->struct_name, member_name);
                 }
                 type_free(obj_type);
                 break;
@@ -100,10 +97,9 @@
                                 }
                             }
                             if (!is_face_method) {
-                                char msg[BUFFER_MEDIUM];
-                                snprintf(msg, sizeof(msg), "face '%s' 没有字段或方法 '%s'（使用 'as' 转型访问底层 struct）",
+                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                         "face '%s' 没有字段或方法 '%s'（使用 'as' 转型访问底层 struct）",
                                          obj_type->struct_name, field_name);
-                                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                 type_free(obj_type);
                                 break;
                             }
@@ -180,9 +176,9 @@
                             //   ⇒ 统一后编译器按文案合并重复（输出里的"已合并重复"✓）⇒ 只报一条 ✓✓
                             //   顺带带上 struct 名 ✓（比原来裸的 "struct 没有字段 'x'" 更能定位 ✓）
                             const char* skind = (obj_type->kind == TYPE_CSTRUCT) ? "cstruct" : "struct";
-                            snprintf(msg, sizeof(msg), "%s '%s' 没有字段 '%s'",
+                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                     "%s '%s' 没有字段 '%s'",
                                      skind, obj_type->struct_name ? obj_type->struct_name : "?", field_name);
-                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                         }
 
                         // ★ pri：私有字段的编译期检查（默认全公有 ⇒ 只有标了 pri 的才拦 ✓）
@@ -197,10 +193,9 @@
                         // native struct（v3.2.3）：字段存在时上面的 infer_field_type 已把索引补上；
                         // 到这里还 < 0 ⇒ 名字真的不存在，给出比 codegen 兜底更准的报错
                         if (ast->u.field_access.field_index < 0) {
-                            char msg[BUFFER_MEDIUM];
-                            snprintf(msg, sizeof(msg), "struct '%s' 没有字段 '%s'",
+                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                     "struct '%s' 没有字段 '%s'",
                                      obj_type->struct_name, field_name);
-                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                         }
                     } else if (!struct_sym && obj_type->kind == TYPE_CSTRUCT && obj_type->struct_name) {
                         // 从全局 cstruct 定义表查找（跨模块导入的 cstruct）
