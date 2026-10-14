@@ -359,9 +359,8 @@
                                     memset(&tmp_ref, 0, sizeof(tmp_ref));
                                     Symbol* sym = resolve_variable_with_upvalue(s, first_arg->u.var.name, &tmp_ref);
                                     if (sym && sym->is_const) {
-                                        char msg[BUFFER_MEDIUM];
-                                        snprintf(msg, sizeof(msg), "不能对 const 变量 '%s' 调用修改方法 '%s'", first_arg->u.var.name, m_name);
-                                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                         "不能对 const 变量 '%s' 调用修改方法 '%s'", first_arg->u.var.name, m_name);
                                     }
                                 } else if (first_arg && first_arg->kind == AST_MODULE_ACCESS) {
                                     const char* mod_name = first_arg->u.module_access.module_name;
@@ -370,9 +369,8 @@
                                     if (mod_info && mod_info->sym_table) {
                                         ModuleVarSymbol* var_sym = module_symbol_table_find_var(mod_info->sym_table, mem_name);
                                         if (var_sym && var_sym->is_const) {
-                                            char msg[BUFFER_MEDIUM];
-                                            snprintf(msg, sizeof(msg), "不能对 const 变量 '%s.%s' 调用修改方法 '%s'", mod_name, mem_name, m_name);
-                                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                             "不能对 const 变量 '%s.%s' 调用修改方法 '%s'", mod_name, mem_name, m_name);
                                         }
                                     }
                                 }
@@ -462,18 +460,18 @@
                             type_compatible = (type_is_compatible(&expected_ti, arg_type) != 0);
                         }
                         if (!type_compatible) {
-                            char msg[BUFFER_MEDIUM];
                             const char* hint = get_type_conversion_hint(expected_type, arg_type->kind);
                             if (hint) {
-                                snprintf(msg, sizeof(msg), "%s.%s 参数 %d 类型错误: 期望 '%s'，但传入 '%s'\n%s",
+                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                         "%s.%s 参数 %d 类型错误: 期望 '%s'，但传入 '%s'\n%s",
                                          actual_module, ast->u.module_call.method_name, i + 1,
                                          type_kind_to_string(expected_type), type_to_string(arg_type), hint);
                             } else {
-                                snprintf(msg, sizeof(msg), "%s.%s 参数 %d 类型错误: 期望 '%s'，但传入 '%s'",
+                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                         "%s.%s 参数 %d 类型错误: 期望 '%s'，但传入 '%s'",
                                          actual_module, ast->u.module_call.method_name, i + 1,
                                          type_kind_to_string(expected_type), type_to_string(arg_type));
                             }
-                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                         }
                     }
                     
@@ -498,11 +496,10 @@
                     if (struct_sym) {
                         is_struct = 1;
                         // 是 struct 定义，提示使用 new 关键字实例化
-                        char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg), "struct '%s.%s' 需要使用 new 关键字实例化，例如: new %s.%s()",
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                "struct '%s.%s' 需要使用 new 关键字实例化，例如: new %s.%s()",
                                 ast->u.module_call.module_name, struct_sym->name,
                                 ast->u.module_call.module_name, struct_sym->name);
-                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     }
                 }
                 
@@ -1262,13 +1259,11 @@
                             return_type = TYPE_ANY;
                         } else {
                             // any 类型不能调用方法，提示用户使用类型收窄或指定参数类型
-                            char msg[BUFFER_MEDIUM];
-                            snprintf(msg, sizeof(msg),
+                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                                 "不能在 any 类型上调用方法 '%s'\n"
                                 "  提示: 使用 if x is Type { x.%s() } 类型收窄\n"
                                 "  或者将参数声明为具体类型",
                                 method_name, method_name);
-                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                             expected_arity = -1;
                             return_type = TYPE_ANY;
                         }
@@ -1350,10 +1345,9 @@
                         if (obj_sym->is_const &&
                             (type_utils_is_array_element_mutator(method_name) ||
                              type_utils_is_dict_element_mutator(method_name))) {
-                            char msg[BUFFER_MEDIUM];
-                            snprintf(msg, sizeof(msg), "不能对 const 变量 '%s' 调用修改方法 '%s'",
+                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                     "不能对 const 变量 '%s' 调用修改方法 '%s'",
                                      ast->u.module_call.module_name, method_name);
-                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                         }
 
                         const InstanceMethodMeta* inst_meta = NULL;
@@ -1363,24 +1357,21 @@
 
                         // arity >= 0: 固定参数数量
                         if (expected_arity >= 0 && actual_arity != expected_arity) {
-                            char msg[BUFFER_MEDIUM];
-                            snprintf(msg, sizeof(msg), "调用方法 '%s' 时参数数量不匹配: 期望 %d, 实际 %d",
+                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                     "调用方法 '%s' 时参数数量不匹配: 期望 %d, 实际 %d",
                                      method_name, expected_arity, actual_arity);
-                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                         }
                         // arity < 0: 可变参数，检查是否少于 min_arity
                         else if (expected_arity < 0 && inst_meta && inst_meta->min_arity >= 0 && actual_arity < inst_meta->min_arity) {
-                            char msg[BUFFER_MEDIUM];
-                            snprintf(msg, sizeof(msg), "调用方法 '%s' 时参数过少: 最少 %d 个, 实际 %d",
+                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                     "调用方法 '%s' 时参数过少: 最少 %d 个, 实际 %d",
                                      method_name, inst_meta->min_arity, actual_arity);
-                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                         }
                         // arity < 0: 可变参数，检查是否超过 max_arity
                         else if (expected_arity < 0 && inst_meta && inst_meta->max_arity >= 0 && actual_arity > inst_meta->max_arity) {
-                            char msg[BUFFER_MEDIUM];
-                            snprintf(msg, sizeof(msg), "调用方法 '%s' 时参数过多: 最多 %d 个, 实际 %d",
+                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                     "调用方法 '%s' 时参数过多: 最多 %d 个, 实际 %d",
                                      method_name, inst_meta->max_arity, actual_arity);
-                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                         }
 
                         // 检查参数类型（仅当参数数量匹配或可变参数时；可变参数的 arity 是 NATIVE_ARITY_VARARG）
@@ -1528,10 +1519,9 @@
                         // 函数类型字段调用（如 t.cb() 其中 cb 是 func():void 字段），合法调用，不报错
                     } else if (!obj_sym->type || obj_sym->type->kind == TYPE_ANY) {
                         // 未初始化变量
-                        char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg), "不能对未初始化的变量 '%s' 调用方法 '%s'",
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                 "不能对未初始化的变量 '%s' 调用方法 '%s'",
                                  ast->u.module_call.module_name, method_name);
-                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     } else {
                         // 方法不存在于该类型
                         char msg[1024];   /* 大于 BUFFER_MEDIUM：下面要拼共享提示（中文较长 ✓） */
