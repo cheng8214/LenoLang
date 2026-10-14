@@ -535,7 +535,7 @@ int semantic_check_method_args_from_placeholder(Semantic* s, const char* struct_
             snprintf(idx_str, sizeof(idx_str), "%d", i + 1);
             error_add_at_fmt(ERR_SEMANTIC, line, column, "%s",
                 format_type_error_text("%s3 第 %s4 个参数类型不匹配: 期望 %s1, 实际 %s2",
-                    expected_type, arg_type, method_name, idx_str));
+                    expected_type, arg_type, method_name, idx_str, NULL));
         }
         if (arg_type) type_free(arg_type);
     }
@@ -589,7 +589,7 @@ int semantic_check_method_args_from_placeholder(Semantic* s, const char* struct_
                     snprintf(idx_str, sizeof(idx_str), "%d", i + 1);
                     error_add_at_fmt(ERR_SEMANTIC, line, column, "%s",
                         format_type_error_text("%s3 第 %s4 个参数类型不匹配: 期望 %s1, 实际 %s2",
-                            expected_type, arg_type, method_name, idx_str));
+                            expected_type, arg_type, method_name, idx_str, NULL));
                 }
                 if (arg_type) type_free(arg_type);
                 type_free(expected_type);
@@ -706,7 +706,7 @@ int semantic_check_face_method_args(Semantic* s, const char* face_name, const ch
                         snprintf(idx_str, sizeof(idx_str), "%d", ai + 1);
                         error_add_at_fmt(ERR_SEMANTIC, line, column, "%s",
                             format_type_error_text("%s3 第 %s4 个参数类型不匹配: 期望 %s1, 实际 %s2",
-                                expected_type, arg_type, method_name, idx_str));
+                                expected_type, arg_type, method_name, idx_str, NULL));
                     }
                     type_free(arg_type);
                     if (expected_owned) type_free(expected_owned);
@@ -764,7 +764,7 @@ int semantic_check_face_method_args(Semantic* s, const char* face_name, const ch
                         snprintf(idx_str, sizeof(idx_str), "%d", ai + 1);
                         error_add_at_fmt(ERR_SEMANTIC, line, column, "%s",
                             format_type_error_text("%s3 第 %s4 个参数类型不匹配: 期望 %s1, 实际 %s2",
-                                expected_type, arg_type, method_name, idx_str));
+                                expected_type, arg_type, method_name, idx_str, NULL));
                     }
                 }
                 if (arg_type) type_free(arg_type);
@@ -1039,9 +1039,11 @@ const char* type_utils_dict_lock_hint(Symbol* dict_sym) {
 //   fmt - 格式字符串，支持 %s 占位符（会被替换为 type1/type2/str1/str2）
 //   type1, type2 - 要格式化的类型（可为 NULL）
 //   str1, str2 - 额外的字符串参数（可为 NULL）
-void format_type_error(char* buf, size_t buf_size, const char* fmt,
+// ★ 2026-10-15：**buf 版收为本文件内部实现**（对外只有 `format_type_error_text` ✓）——
+//   理由同下面那对 `format_detailed_type_error*`：调用点已全走统一入口 ✗
+static void format_type_error(char* buf, size_t buf_size, const char* fmt,
                        TypeInfo* type1, TypeInfo* type2,
-                       const char* str1, const char* str2) {
+                       const char* str1, const char* str2, const char* str3) {
     char type1_buf[128] = "";
     char type2_buf[128] = "";
 
@@ -1100,6 +1102,18 @@ void format_type_error(char* buf, size_t buf_size, const char* fmt,
                     size_t len = strlen(str2);
                     if (offset + len < buf_size - 1) {
                         memcpy(buf + offset, str2, len);
+                        offset += len;
+                    }
+                }
+                p += 3;
+            } else if (*(p + 2) == '5') {
+                // ★ 2026-10-15：%s5 -> str3（第 5 槽，供\"clib 参数检查\"那条用 ——
+                //   它要 5 个替换位：期望/实际两个类型 + 结构名 + 方法名 + 参数序号 ✓
+                //   有了这一槽，那两处调用点就不必\"先出模板、再 snprintf 填 %d\"了 ✓）
+                if (str3) {
+                    size_t len = strlen(str3);
+                    if (offset + len < buf_size - 1) {
+                        memcpy(buf + offset, str3, len);
                         offset += len;
                     }
                 }
@@ -1481,6 +1495,15 @@ const char* get_type_conversion_hint(TypeKind expected, TypeKind actual) {
     return NULL;  // 没有特定提示
 }
 
+// ★ 2026-10-15：**buf 版收为本文件的内部实现**（对外只剩 `*_text` 返回串版 ✓）。
+//   为什么收：全仓调用点已全走统一入口（`error_add_at_fmt(.., "%s", xxx_text(..))`）
+//   ⇒ 这两个 buf 版除了被下面的 `_text` 包装调用，**再没有别的调用者** ✗；
+//   留在公共头里只会让人照旧写出"自开缓冲"的写法 ✗ —— 那正是本次要杜绝的。
+//   前置声明：`format_detailed_type_error` 要先调 `_ex`，而 `_ex` 的定义在它后面 ✓
+static void format_detailed_type_error_ex(char* buf, size_t buf_size,
+                                          TypeInfo* expected, TypeInfo* actual,
+                                          const char* context, const char* var_name);
+
 // 生成详细的类型错误信息
 // 参数：
 //   buf - 输出缓冲区
@@ -1489,14 +1512,14 @@ const char* get_type_conversion_hint(TypeKind expected, TypeKind actual) {
 //   actual - 实际类型
 //   context - 错误上下文（如"变量赋值"、"函数参数"等）
 //   var_name - 相关变量名（可为NULL，用于在错误信息中显示具体变量名）
-void format_detailed_type_error(char* buf, size_t buf_size,
+static void format_detailed_type_error(char* buf, size_t buf_size,
                                 TypeInfo* expected, TypeInfo* actual,
                                 const char* context) {
     format_detailed_type_error_ex(buf, buf_size, expected, actual, context, NULL);
 }
 
 // 扩展版本：支持变量名
-void format_detailed_type_error_ex(char* buf, size_t buf_size,
+static void format_detailed_type_error_ex(char* buf, size_t buf_size,
                                 TypeInfo* expected, TypeInfo* actual,
                                 const char* context, const char* var_name) {
     char expected_buf[128] = "";
@@ -1549,9 +1572,9 @@ void format_detailed_type_error_ex(char* buf, size_t buf_size,
 //     `error_add_at_fmt` 内部兜底 ✓。
 // ============================================================================
 const char* format_type_error_text(const char* fmt, TypeInfo* type1, TypeInfo* type2,
-                                   const char* str1, const char* str2) {
+                                   const char* str1, const char* str2, const char* str3) {
     static char buf[BUFFER_MSG];
-    format_type_error(buf, sizeof(buf), fmt, type1, type2, str1, str2);
+    format_type_error(buf, sizeof(buf), fmt, type1, type2, str1, str2, str3);
     return buf;
 }
 

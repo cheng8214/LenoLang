@@ -16,12 +16,14 @@ int match(Parser* p, LenoTokenType type) {
 }
 
 // 消费指定类型的 token，如果不匹配则报错
+//   ⚠ `msg` 是**固定的整句话**（调用点全部传字面量 ✓、无格式串 ✓）⇒ 透传时用 `"%s"`：
+//     既走统一入口（尺寸/截断只有一份实现 ✓），又保证文案里万一有 `%` 也不会被当格式串 ✗
 int consume(Parser* p, LenoTokenType type, const char* msg) {
     if (p->lex.current.type == type) {
         lexer_next(&p->lex);
         return 1;
     }
-    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, msg);
+    error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "%s", msg);
     return 0;
 }
 

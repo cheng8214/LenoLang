@@ -393,7 +393,7 @@
                             error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "%s",
                                 format_type_error_text("字段 '%s3' 类型不匹配: 期望 '%s1'，实际 '%s2'",
                                     expected_type, value_type,
-                                    field_name, NULL));
+                                    field_name, NULL, NULL));
                         }
 
                         if (value_type) type_free(value_type);
@@ -592,20 +592,16 @@
                                             Ast* arg = ast->u.call.args.items[pi];
                                             TypeInfo* arg_type = infer_expr_type(s, arg);
                                             if (expected_param && arg_type && !type_is_compatible(expected_param, arg_type)) {
-                                                // ⚠ 本处**保留两层缓冲**（全仓唯一的一类例外，共 2 处：这里与
-                                                //   visit_module.inc 的同名分支）：`format_type_error` 只认
-                                                //   `%s1..%s4` 四个占位符，而这条文案要用 5 个替换位
-                                                //   （期望/实际两个类型 + 结构名 + 方法名 + 参数序号）✗
-                                                //   ⇒ 先出模板、再把模板里的 `%d` 填掉。若哪天给
-                                                //   format_type_error 加第 5 个槽位（`%s5`），这两处即可一行收 ✓
-                                                char msg[BUFFER_MEDIUM];
-                                                format_type_error(msg, sizeof(msg),
-                                                    "clib '%s3' 函数 '%s4' 参数 %d 类型不匹配: 期望 '%s1', 实际 '%s2'",
-                                                    expected_param, arg_type,
-                                                    receiver_type->struct_name, method_name);
-                                                char final_msg[BUFFER_MEDIUM];
-                                                snprintf(final_msg, sizeof(final_msg), msg, pi + 1);
-                                                error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, final_msg);
+                                                // ★ 参数序号走 `%s5`（format_type_error 的第 5 槽 ✓）⇒ 一行收尾：
+                                                //   原来这里要"先出模板、再 snprintf 把 %d 填掉"两层缓冲，
+                                                //   因为 `%s1..%s4` 四个槽被（两个类型 + 结构名 + 方法名）占满了 ✗
+                                                char pi_str[16];
+                                                snprintf(pi_str, sizeof(pi_str), "%d", pi + 1);
+                                                error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "%s",
+                                                    format_type_error_text(
+                                                        "clib '%s3' 函数 '%s4' 参数 %s5 类型不匹配: 期望 '%s1', 实际 '%s2'",
+                                                        expected_param, arg_type,
+                                                        receiver_type->struct_name, method_name, pi_str));
                                             }
                                             if (arg_type) type_free(arg_type);
                                         }
@@ -1368,7 +1364,7 @@
                                                         error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column, "%s",
                                                             format_type_error_text("%s3 第 %s4 个参数类型不匹配: 期望 %s1, 实际 %s2",
                                                                 check_type, arg_type,
-                                                                method_name, idx_str));
+                                                                method_name, idx_str, NULL));
                                                     }
                                                 }
                                                 if (arg_type) type_free(arg_type);
@@ -1869,7 +1865,7 @@
                                     }
                                     error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "%s%s",
                                         format_type_error_text("%s3 第 %s4 个参数类型不匹配: 期望 %s1, 实际 %s2",
-                                            check_type, arg_type, func_name, idx_str),
+                                            check_type, arg_type, func_name, idx_str, NULL),
                                         face_hint);
                                 }
                             }

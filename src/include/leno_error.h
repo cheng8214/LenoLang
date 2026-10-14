@@ -49,11 +49,19 @@ void error_add_at(ErrorType type, int line, int column, const char* msg);
 //     · 另有 207 处「直接传字面量」由**带严格跳过条件**的脚本改（末参必须纯字面量、
 //       不含任何 %、≤1000 字节、不在 # 行 ⇒ 全程零语义变化，并由编译 + 套件 + 逐字节对拍验证）✓
 //     · 随后把 20 余处「末参是变量（单条 snprintf 紧邻报错）」也逐处收进来 ✓
-//   ⇒ "自开 msg 缓冲"的写法**已清零** ✓；全仓只剩 3 处**不是**该写法的匹配：
-//     ① `parser_utils.c` 的 `consume(p, type, msg)` —— 那个 msg 是**函数参数**（调用方传字面量）✗
-//     ②③ `visit_expr.inc` / `visit_module.inc` 的 clib 参数检查 —— `format_type_error` 只认
-//        `%s1..%s4` 四个占位符，而该文案要 5 个替换位 ⇒ 保留"先出模板、再填 %d"两层 ✗
-//        （要让这两处也一行收，得给 format_type_error 加第 5 槽 `%s5` ✓ 属另一件事）
+//   ⇒ **编译期诊断里的旧写法已 100% 清零**（2026-10-15 复查：parser / semantic / optimize /
+//     codegen / module_symbol_table 里**没有一处**直调 `error_add` / `error_add_at` /
+//     `warning_add` / `warning_add_at` ✓ —— 全仓唯一的字符串匹配是 semantic_type_utils.c
+//     注释里的**举例文字** ✗，不是代码）。
+//   收尾三件事（2026-10-15）：
+//     · `consume(p, type, msg)` 内部改走 `error_add_at_fmt(.., "%s", msg)` ✓（msg 是整句话）
+//     · 给 `format_type_error` 加**第 5 槽 `%s5`** ⇒ 原先那两处"先出模板、再 snprintf 填 %d"
+//       的 clib 参数检查也一行收尾了 ✓
+//     · 三个 **buf 输出型**辅助（`format_type_error` / `format_detailed_type_error(_ex)`）
+//       已收为 `semantic_type_utils.c` 内部的 static ⇒ **对外只剩 `*_text` 返回串版** ✓
+//   ⚠ 下面这四个底层 API **保留**（不是"旧实现残留"）：它们是"入库"的唯一实现
+//     （去重 / 上限 / 计数都在这儿），统一入口内部就调它们 ✓；运行期（vm / object / 顶层）
+//     也还有约 55 处在用 ⇒ 编译期**一律不得**直调，走 `_fmt` 入口 ✓
 // ⚠ 参数格式同 printf（GCC / Clang 下会做格式串检查 ✓）。
 // ============================================================================
 void error_add_fmt(ErrorType type, int line, const char* fmt, ...)

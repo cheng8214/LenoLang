@@ -212,7 +212,7 @@
                                     error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "%s",
                                         format_type_error_text("字段 '%s3' 类型不匹配: 期望 '%s1'，实际 '%s2'",
                                             check_type, actual_type,
-                                            field_name, NULL));
+                                            field_name, NULL, NULL));
                                 }
                                 type_free(actual_type);
                             }

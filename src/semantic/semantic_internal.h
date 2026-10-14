@@ -231,10 +231,14 @@ int type_utils_try_update_dict_value_type(Symbol* dict_sym, TypeInfo* value_type
 const char* type_utils_dict_lock_hint(Symbol* dict_sym);
 
 
-// 安全格式化类型错误信息（避免 type_to_string 缓冲区覆盖）
-void format_type_error(char* buf, size_t buf_size, const char* fmt,
-                       TypeInfo* type1, TypeInfo* type2,
-                       const char* str1, const char* str2);
+// ⚠ 2026-10-15：`format_type_error` / `format_detailed_type_error(_ex)` 的 **buf 版已删**
+//   （它们现在只是 semantic_type_utils.c 内部的 static 实现 ✓，被下面那些 `_text` 包装调用）。
+//   ⇒ 外部**只能用返回串版**（配合统一入口一行收尾 ✓）：
+//        error_add_at_fmt(ERR_TYPE_MISMATCH, line, col, "%s",
+//                         format_type_error_text("字段 '%s3' 类型不匹配: 期望 '%s1'，实际 '%s2'",
+//                                                expected, actual, field_name, NULL, NULL));
+//   占位符：`%s1..%s2` = 两个类型（各自先拷进独立缓冲，避免 type_to_string 互相覆盖 ✓）、
+//   `%s3..%s5` = 三个字符串槽（★ `%s5` 是**第 5 槽**；不用的传 NULL ✓）
 
 // 获取类型转换建议
 const char* get_type_conversion_hint(TypeKind expected, TypeKind actual);
@@ -250,20 +254,13 @@ const char* get_similar_struct_method_hint(Semantic* s, const char* struct_name,
 // E5：未定义的 struct 类型若是已导入模块的导出类型，提示先 use 导入
 const char* get_module_with_struct_hint(Semantic* s, const char* struct_name);
 
-// 生成详细的类型错误信息（包含转换建议）
-void format_detailed_type_error(char* buf, size_t buf_size,
-                                TypeInfo* expected, TypeInfo* actual,
-                                const char* context);
-// 扩展版本：支持变量名
-void format_detailed_type_error_ex(char* buf, size_t buf_size,
-                                TypeInfo* expected, TypeInfo* actual,
-                                const char* context, const char* var_name);
+// 生成详细的类型错误信息（包含转换建议）—— ⚠ 只有返回串版（buf 版已收为内部实现，见上）
 
 // ★ 2026-10-14：上面几个的**返回串**版本（静态缓冲，一次调用有效 ✓）
 //   用途：一行收尾的报错—— `error_add_at_fmt(.., "%s", format_xxx_text(..))` ✓
 //   （原来每个调用点都得自己开 msg 缓冲 + snprintf + 传 msg，24 处样板 ✗）
 const char* format_type_error_text(const char* fmt, TypeInfo* type1, TypeInfo* type2,
-                                   const char* str1, const char* str2);
+                                   const char* str1, const char* str2, const char* str3);
 const char* format_detailed_type_error_text(TypeInfo* expected, TypeInfo* actual,
                                             const char* context);
 const char* format_detailed_type_error_ex_text(TypeInfo* expected, TypeInfo* actual,
