@@ -957,13 +957,13 @@ advance(lex);
                     }
                 }
             } else {
-                char err_msg[64];
                 if (c >= 32 && c < 127) {
-                    snprintf(err_msg, sizeof(err_msg), "意外的字符 '%c'", c);
+                    error_add_at_fmt(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1,
+                                     "意外的字符 '%c'", c);
                 } else {
-                    snprintf(err_msg, sizeof(err_msg), "意外的字符 (0x%02X)", (unsigned char)c);
+                    error_add_at_fmt(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1,
+                                     "意外的字符 (0x%02X)", (unsigned char)c);
                 }
-                error_add_at(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1, err_msg);
                 advance(lex);
                 lex->current = make_token(lex, TOK_ERROR);
             }

@@ -90,11 +90,9 @@ void scope_free(Scope* scope) {
         // 编译期合成的名字（作用域守卫会造出 `s.age` / `d[key]` 这类 ✗）不查 ✓
         if (strchr(wsym->name, '.') || strchr(wsym->name, '[')) continue;
 
-        char wmsg[BUFFER_MEDIUM];
-        snprintf(wmsg, sizeof(wmsg),
+        warning_add_at_fmt(WARN_UNUSED_VAR, wsym->decl_line, 1,
                  "局部变量 '%s' 声明后从未被使用（名字此后再没出现过）—— 删掉它，"
                  "或若是有意保留占位请改名为 '_%s'", wsym->name, wsym->name);
-        warning_add_at(WARN_UNUSED_VAR, wsym->decl_line, 1, wmsg);
     }
 
     // 递归释放所有子作用域
