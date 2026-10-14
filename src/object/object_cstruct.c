@@ -258,7 +258,7 @@ static int cstruct_def_same_shape(ObjCStructDef* a, ObjCStructDef* b) {
 void cstruct_def_register(ObjCStructDef* def) {
     // 确保容量足够（需要 count + 1 个位置）
     if (!cstruct_def_ensure_capacity(cstruct_def_count + 1)) {
-        error_add_at(ERR_RUNTIME, 0, 0, "C 布局结构体定义表内存分配失败");
+        error_add_at_fmt(ERR_RUNTIME, 0, 0, "C 布局结构体定义表内存分配失败");
         return;
     }
 

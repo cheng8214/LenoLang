@@ -137,7 +137,8 @@ static inline void runtime_error(const char* msg, int line) {
         error_set_filename(filename);
     }
     
-    error_add_at(ERR_RUNTIME, line, 0, msg);
+    // ★ 2026-10-15：走统一入口（`msg` 是 `runtime_error(msg, line)` 的**函数参数** ⇒ 用 %s 透传）✓
+    error_add_at_fmt(ERR_RUNTIME, line, 0, "%s", msg);
     
     // 恢复原来的文件名
     error_set_filename(old_filename);

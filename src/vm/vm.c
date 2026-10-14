@@ -1826,7 +1826,8 @@ int vm_run_coroutine_with_vm(ObjCoroutine* co, VM* vm_ptr) {
                         uline = co->saved_frames[0].chunk->lines[0];
                     }
                     char* umsg = exception_msg_dup();
-                    error_add_at(ERR_RUNTIME, uline, 0, umsg ? umsg : "未捕获的异步异常");
+                    error_add_at_fmt(ERR_RUNTIME, uline, 0, "%s",
+                                 umsg ? umsg : "未捕获的异步异常");
                     free(umsg);
                 }
             } else {

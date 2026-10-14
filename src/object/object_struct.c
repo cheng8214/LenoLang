@@ -231,14 +231,14 @@ int def_owner_conflict(const char* kind, const char* name,
     if (!old_owner || !new_owner || old_owner == new_owner) return 0;
     if (same_shape) return 0;   // 形状一致 ⇒ 覆盖是空操作，放行
 
-    char msg[BUFFER_XLARGE];
-    snprintf(msg, sizeof(msg),
+    // ★ 2026-10-15：走统一入口（原来是 `char msg[BUFFER_XLARGE]`(4096) 手工缓冲 ✗）——
+    //   尺寸只由 `BUFFER_MSG`(1024) 定，超长有**安全截断**（退到完整字符 + `…` 收尾）✓
+    error_add_at_fmt(ERR_RUNTIME, 0, 0,
              "跨模块同名%s '%s'：%s 与 %s 各定义了一份且无法证明等价（字段/成员不完全相同，"
              "或带方法体/构造析构/impl 等本判定比不出来的成员），而四张类型表全局只按名字索引、"
              "运行期只能保留一份（保留先注册的定义）。字段索引、方法体、成员值在编译期都按各自"
              "模块的定义确定，混用会静默读到同序号的错误字段、或跑到另一份的方法体 —— 请给其中一个改名。",
              kind, name, def_owner_label(old_owner), def_owner_label(new_owner));
-    error_add_at(ERR_RUNTIME, 0, 0, msg);
     return 1;
 }
 
@@ -273,7 +273,7 @@ static void struct_def_replace(int i, ObjStructDef* def) {
 
 void struct_def_register(ObjStructDef* def) {
     if (struct_def_count >= MAX_STRUCT_DEFS) {
-        error_add_at(ERR_RUNTIME, 0, 0, "结构体定义数量超过上限");
+        error_add_at_fmt(ERR_RUNTIME, 0, 0, "结构体定义数量超过上限");
         return;
     }
 
@@ -612,7 +612,7 @@ int enum_def_lookup_member_value(ObjEnumDef* def, const char* name, int64_t* out
 // 注册 enum 定义
 void enum_def_register(ObjEnumDef* def) {
     if (enum_def_count >= MAX_ENUM_DEFS) {
-        error_add_at(ERR_RUNTIME, 0, 0, "enum 定义数量超过上限");
+        error_add_at_fmt(ERR_RUNTIME, 0, 0, "enum 定义数量超过上限");
         return;
     }
 

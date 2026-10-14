@@ -289,7 +289,7 @@ static Token read_string(Lexer* lex, char quote) {
         tok.len = (lex->src + lex->pos) - tok.text;
         advance(lex);
     } else {
-        error_add_at(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1, "未终止的字符串");
+        error_add_at_fmt(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1, "未终止的字符串");
     }
 
     return tok;
@@ -301,7 +301,7 @@ static Token read_raw_string(Lexer* lex) {
     advance(lex); // 跳过 @
     
     if (peek(lex) != '"') {
-        error_add_at(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1, "原始字符串需要使用 @\"...\"");
+        error_add_at_fmt(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1, "原始字符串需要使用 @\"...\"");
         return tok;
     }
     advance(lex); // 跳过 "
@@ -332,7 +332,7 @@ static Token read_raw_string(Lexer* lex) {
         tok.len = raw_len;
         advance(lex); // 跳过结尾的 "
     } else {
-        error_add_at(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1, "未终止的原始字符串");
+        error_add_at_fmt(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1, "未终止的原始字符串");
     }
     
     return tok;
@@ -382,7 +382,7 @@ static Token read_color(Lexer* lex) {
 
     // 校验长度：仅支持 3、6、8 位
     if (hex_len != 3 && hex_len != 6 && hex_len != 8) {
-        error_add_at(ERR_SYNTAX, lex->line, lex->pos - hex_len - lex->line_start + 1,
+        error_add_at_fmt(ERR_SYNTAX, lex->line, lex->pos - hex_len - lex->line_start + 1,
                      "颜色字面量格式错误：# 后需 3(RGB)、6(RRGGBB) 或 8(RRGGBBAA) 位十六进制数字");
         tok.text = start;
         tok.len = (lex->src + lex->pos) - start;
@@ -454,7 +454,7 @@ static Token read_number(Lexer* lex) {
         }
         // F4: 0x 后无数字此前静默按 0 解析（strtoull 停在前缀上）——与 0b 同样响亮报错
         if (hex_digits == 0) {
-            error_add_at(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1,
+            error_add_at_fmt(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1,
                          "十六进制字面量需要 0x 后跟至少一位十六进制数字");
         }
     } else if (peek(lex) == '0' && (peek_next(lex) == 'b' || peek_next(lex) == 'B')) {
@@ -466,7 +466,7 @@ static Token read_number(Lexer* lex) {
             bin_digits++;
         }
         if (bin_digits == 0) {
-            error_add_at(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1,
+            error_add_at_fmt(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1,
                          "二进制字面量需要 0b 后跟至少一位 0/1");
         }
     } else {
@@ -521,7 +521,7 @@ static Token read_number(Lexer* lex) {
         // 会停在 'b' 上得到 0（这正是以前静默错值的来源）。
         if (bin_digits > 63) {
             // 超 63 位：响亮报错，不再留静默值（跨模块比对需要编译期确定的值）
-            error_add_at(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1,
+            error_add_at_fmt(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1,
                          "二进制字面量超过 63 位，超出 int64 可表示范围");
             tok.is_bigint = 0;
             tok.bigint_str = NULL;
@@ -767,7 +767,7 @@ void lexer_next(Lexer* lex) {
                 lex->brace_depth = 0;
                 lex->current = make_token(lex, TOK_INTERP_STRING);
             } else {
-                error_add_at(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1, "意外的字符 '$'，插值字符串需要使用 $\"...\"");
+                error_add_at_fmt(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1, "意外的字符 '$'，插值字符串需要使用 $\"...\"");
                 advance(lex);
                 lex->current = make_token(lex, TOK_ERROR);
             }
@@ -776,7 +776,7 @@ void lexer_next(Lexer* lex) {
             if (peek_next(lex) == '"') {
                 lex->current = read_raw_string(lex);
             } else {
-                error_add_at(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1, "意外的字符 '@'，原始字符串需要使用 @\"...\"");
+                error_add_at_fmt(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1, "意外的字符 '@'，原始字符串需要使用 @\"...\"");
                 advance(lex);
                 lex->current = make_token(lex, TOK_ERROR);
             }
@@ -801,7 +801,7 @@ advance(lex);
                 advance(lex);
                 advance(lex);
             } else {
-                error_add_at(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1, "意外的字符 '!'，请使用 'not' 关键字表示逻辑非");
+                error_add_at_fmt(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1, "意外的字符 '!'，请使用 'not' 关键字表示逻辑非");
                 advance(lex);
                 lex->current = make_token(lex, TOK_ERROR);
             }
@@ -855,7 +855,7 @@ advance(lex);
             break;
         case '&':
             if (peek_next(lex) == '&') {
-                error_add_at(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1, "意外的字符 '&&'，请使用 'and' 关键字表示逻辑与");
+                error_add_at_fmt(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1, "意外的字符 '&&'，请使用 'and' 关键字表示逻辑与");
                 advance(lex);
                 advance(lex);
                 lex->current = make_token(lex, TOK_ERROR);
@@ -870,7 +870,7 @@ advance(lex);
             break;
         case '|':
             if (peek_next(lex) == '|') {
-                error_add_at(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1, "意外的字符 '||'，请使用 'or' 关键字表示逻辑或");
+                error_add_at_fmt(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1, "意外的字符 '||'，请使用 'or' 关键字表示逻辑或");
                 advance(lex);
                 advance(lex);
                 lex->current = make_token(lex, TOK_ERROR);
@@ -917,7 +917,7 @@ advance(lex);
             if (isxdigit(peek_next(lex))) {
                 lex->current = read_color(lex);
             } else {
-                error_add_at(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1, "意外的字符 '#'，颜色字面量需要 # 后跟十六进制数字（如 #FF0000）");
+                error_add_at_fmt(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1, "意外的字符 '#'，颜色字面量需要 # 后跟十六进制数字（如 #FF0000）");
                 advance(lex);
                 lex->current = make_token(lex, TOK_ERROR);
             }

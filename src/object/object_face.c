@@ -51,7 +51,7 @@ static int face_def_same_shape(ObjFaceDef* a, ObjFaceDef* b) {
 
 void face_def_register(ObjFaceDef* def) {
     if (face_def_count >= MAX_FACE_DEFS) {
-        error_add_at(ERR_RUNTIME, 0, 0, "face 定义数量超过上限");
+        error_add_at_fmt(ERR_RUNTIME, 0, 0, "face 定义数量超过上限");
         return;
     }
 

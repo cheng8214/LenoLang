@@ -2213,7 +2213,8 @@ void native_throw_error(const char* msg) {
 
     ObjString* err_str = str_copy(msg, strlen(msg));
     if (!err_str) {
-        error_add_at(ERR_RUNTIME, line, 0, msg);
+        // ★ 2026-10-15：走统一入口（`msg` 是 `native_throw_error(msg)` 的**函数参数** ⇒ %s 透传）✓
+        error_add_at_fmt(ERR_RUNTIME, line, 0, "%s", msg);
         return;
     }
 

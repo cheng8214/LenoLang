@@ -84,7 +84,7 @@ void vm_init_with_scope(Scope* global_scope) {
     vm.global_capacity = 8;  // 初始容量
     vm.globals = (Value*)malloc(vm.global_capacity * sizeof(Value));
     if (!vm.globals) {
-        error_add_at(ERR_RUNTIME, 0, 0, "全局变量数组内存分配失败");
+        error_add_at_fmt(ERR_RUNTIME, 0, 0, "全局变量数组内存分配失败");
         return;
     }
     for (int i = 0; i < vm.global_capacity; i++) {
@@ -96,7 +96,7 @@ void vm_init_with_scope(Scope* global_scope) {
     vm.global_func_capacity = 8;  // 初始容量
     vm.global_funcs = (Value*)malloc(vm.global_func_capacity * sizeof(Value));
     if (!vm.global_funcs) {
-        error_add_at(ERR_RUNTIME, 0, 0, "全局函数数组内存分配失败");
+        error_add_at_fmt(ERR_RUNTIME, 0, 0, "全局函数数组内存分配失败");
         free(vm.globals);
         return;
     }
@@ -171,7 +171,7 @@ void vm_load(Chunk* c) {
     // 确保调用帧容量
     if (vm.frame_cnt >= vm.frame_capacity) {
         if (!vm_grow_frames(&vm)) {
-            error_add_at(ERR_RUNTIME, 0, 0, "调用栈内存分配失败");
+            error_add_at_fmt(ERR_RUNTIME, 0, 0, "调用栈内存分配失败");
             return;
         }
     }
@@ -193,7 +193,7 @@ void vm_load(Chunk* c) {
     } else {
         locals = (Value*)malloc(local_count * sizeof(Value));
         if (!locals) {
-            error_add_at(ERR_RUNTIME, 0, 0, "主帧locals内存分配失败");
+            error_add_at_fmt(ERR_RUNTIME, 0, 0, "主帧locals内存分配失败");
             return;
         }
         locals_is_dynamic = 1;

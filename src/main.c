@@ -626,7 +626,7 @@ static void warn_if_source_empty(const char* source) {
             return;   // 有实义字符
         }
     }
-    warning_add_at(WARN_EMPTY_SOURCE, 1, 1,
+    warning_add_at_fmt(WARN_EMPTY_SOURCE, 1, 1,
                    "源文件为空（或只有空白）：编译出来的程序不会做任何事");
 }
 
