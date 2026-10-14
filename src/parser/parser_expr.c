@@ -157,7 +157,34 @@ Ast* parse_precedence(Parser* p, Precedence precedence) {
         if (new_left == left) break;
         left = new_left;
     }
-    
+
+    // ★ 2026-10-14：`条件 ? a : b`（C/Java/JS 风格三元）⇒ **定向报错 + 给出 Leno 写法**
+    //   为什么钉在这里：`?` 在表达式位置**没有中缀规则**（PREC_NONE ⇒ 上面那个 while
+    //   压根不进入），于是外层只会报「期望 ';'」「期望 ')'」这类**指不出真因**的话 ✗ ——
+    //   而写惯 C/Java/JS 的人第一反应就是 `a ? b : c`（用户提出 ✓）。
+    //   `?` 在 Leno 里另有三个**合法**用途，都不会走到这里：
+    //     · **类型位置**的 `Type?`（由 parse_type 内部消费 ✓）
+    //     · `?.` 安全访问 / `??` 空合并（**是不同的 token** ✓）
+    //   ⇒ 走到这里的 `TOK_QUESTION` 只可能是"想写三元" ✓
+    //   处理：报一条错，然后把 `? expr : expr` **整段吃掉** —— 只报一条，且不把残渣丢给
+    //   外层（否则 `:` 与 else 分支会再刷一串级联错误，反而盖住这条真因 ✗）。
+    //   返回值照旧是左侧表达式（解析能继续往下走 ✓）。
+    if (p->lex.current.type == TOK_QUESTION) {
+        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+            "Leno **没有** `条件 ? a : b` 这种三元表达式 ✗ —— 请写成 "
+            "`if 条件 then a else b`（多分支可链 `eif`："
+            "`if c1 then a eif c2 then b else d`，`then` 是三元表达式的专属标记 ✓）");
+        lexer_next(&p->lex);                       // 吃掉 '?'
+        Ast* then_branch = parse_expression(p);    // then 分支（丢弃，只为跳过）
+        if (then_branch) ast_free(then_branch);
+        if (p->lex.current.type == TOK_COLON) {
+            lexer_next(&p->lex);                   // 吃掉 ':'
+            Ast* else_branch = parse_expression(p);
+            if (else_branch) ast_free(else_branch);
+        }
+        return left;
+    }
+
     return left;
 }
 

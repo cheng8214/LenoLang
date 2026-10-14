@@ -1,0 +1,52 @@
+// test_diag_c_style_ternary.leno —— C/Java/JS 风格三元 `? :` 的定向报错（2026-10-14）
+//
+// 缘起（用户提出）：写惯 C/Java/JS 的人会直接写 `a ? b : c`，而 Leno 的三元表达式是
+//   `if 条件 then a else b`（多分支可链 `eif`）⇒ 此前只报「期望 ';'」「期望 ')'」
+//   这类**指不出真因**的话 ✗。
+//   现在：**一条**定向错误，直接把正确写法给出来 ✓；而且整段 `? expr : expr` 会被
+//   吃掉 ⇒ `:` 与 else 分支**不再刷一串级联错误**（级联会盖住这条真因 ✗）。
+//
+// 反向用例（防误报）：`?` 在 Leno 里另有三个**合法**用途，必须照常工作 ——
+//   **类型位置**的 `Type?`、`?.` 安全访问、`??` 空合并。
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+import strings
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_c_ternary")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ---- ① C 风格三元 ⇒ 定向报错 ----
+    var bad = dirs.join(work, "c_ternary.leno")
+    files.write(bad, @"main() {
+    var a = 10
+    var b = 20
+    var max = a > b ? a : b
+    print(_str(max))
+}
+")
+    var out = ce.expect_error(bad, "C 风格三元应给定向报错（并给出 Leno 写法）",
+        "没有** `条件 ? a : b`", 4)
+    // 只该报 1 条：`? expr : expr` 整段被吃掉 ⇒ `:` 与 else 分支不再刷级联错误 ✓
+    assert_eq(strings.count(out, "error:"), 1,
+        "三元报错应当**只有 1 条**（不该有级联错误）：" + out)
+
+    // ---- ② 合法写法逐条不得误报（防误报）----
+    var good = dirs.join(work, "leno_ternary.leno")
+    files.write(good, @"main() {
+    var a = 10
+    var b = 20
+    var max = if a > b then a else b
+    var grade = if a > 90 then ""A"" eif a > 5 then ""B"" else ""C""
+    int? maybe = null
+    var v = maybe ?? 0
+    print(_str(max) + "" "" + grade + "" "" + _str(v))
+}
+")
+    ce.expect_ok(good, "Leno 三元 / eif 链 / Type? / ?? 都不该被误报", "20 B 0")
+
+    print("test_diag_c_style_ternary passed")
+}
