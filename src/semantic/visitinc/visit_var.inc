@@ -661,9 +661,8 @@
             } else {
                 // 检查是否对 const 变量复合赋值
                 if (sym->is_const) {
-                    char msg[BUFFER_MEDIUM];
-                    snprintf(msg, sizeof(msg), "不能对 const 变量 '%s' 重新赋值", ast->u.compound_assign.name);
-                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                     "不能对 const 变量 '%s' 重新赋值", ast->u.compound_assign.name);
                 }
                 // ★ 清「确定为 null」标志（T11，写点见普通赋值那处的说明）。
                 //   这一处同时**报错**：`int? a = null; a += 1` 编译期就能确定是 null
@@ -681,11 +680,9 @@
                 TypeInfo* value_type = infer_expr_type(s, ast->u.compound_assign.value);
                 if (value_type) {
                     if (!type_is_compatible(sym->type, value_type)) {
-                        char msg[BUFFER_MEDIUM];
-                        format_detailed_type_error_ex(msg, sizeof(msg),
-                            sym->type, value_type,
-                            "复合赋值类型不匹配", ast->u.compound_assign.name);
-                        error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
+                        error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "%s",
+                            format_detailed_type_error_ex_text(sym->type, value_type,
+                                "复合赋值类型不匹配", ast->u.compound_assign.name));
                     }
                                         type_free(value_type);
                 }

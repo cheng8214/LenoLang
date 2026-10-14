@@ -330,16 +330,14 @@
             if (obj_type && obj_type->kind == TYPE_STRUCT) {
                 TypeInfo* idx_type = infer_expr_type(s, ast->u.index_assign.index);
                 if (idx_type && idx_type->kind != TYPE_STRING && idx_type->kind != TYPE_ANY) {
-                    char msg[BUFFER_MEDIUM];
                     // ⚠ 与 AST_INDEX 分支**同一句文案**（单一事实来源）：本分支覆盖的是
                     //   **复合赋值**（`x[1] += v`）与 `.field = v` 的脱糖形态，而**普通赋值**
                     //   `x[1] = v` 在 parser 里是 `AST_ASSIGN(target=AST_INDEX)` ⇒ 由读分支拦下
                     //   （实测：早先这里写"字段赋值请用…"时，普通赋值用例报的却是读分支文案）。
                     //   所以文案不能带"访问/赋值"这类语境词 —— 否则总有一半场合对不上。
-                    snprintf(msg, sizeof(msg),
+                    error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
                         "struct 的字段请用 'x.field'（动态形态是 x[\"field\"]），不能用 %s 下标",
                         type_kind_to_string(idx_type->kind));
-                    error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                 }
                 if (idx_type) type_free(idx_type);
             }
@@ -2039,21 +2037,20 @@
                 //   原来写死 `kind != TYPE_INT` ⇒ `a[枚举变量]` 报
                 //   「数组索引必须是整数类型，实际为 int」← 自相矛盾的假报错 ✗
                 if (index_type && !type_is_integer_kind(index_type->kind) && index_type->kind != TYPE_ANY) {
-                    char msg[BUFFER_MEDIUM];
                     // ★ 2026-10-10 文案修正：`a.len`（**忘写括号**）会被解析器收成"字符串下标" ✓
                     //   原来只报「数组索引必须是整数类型，实际为 string」✗ —— 写的人看到这句话
                     //   根本想不到"原来是忘写括号" ✗（实测：`print(_str(a.len) + "\n")` 报的就是它 ✓）。
                     //   只在**字符串字面量**下标时给专门话术 ✓（下标是变量的话可能是真错 ✓
                     //   也可能是 a[i] 里 i 写错类型 ⇒ 不特殊对待 ✓ 少说不误说 ✓）。
                     if (ast->u.index.index->kind == AST_STRING) {
-                        snprintf(msg, sizeof(msg),
+                        error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
                                  "数组不能按字符串取元素 —— 这一处像是把属性/方法写成了下标："
                                  "取长度请写 'x.len()'（**要带括号** ✓）；按名字取元素请改用 Dict");
                     } else {
-                        snprintf(msg, sizeof(msg), "数组索引必须是整数类型，实际为 %s",
+                        error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                                 "数组索引必须是整数类型，实际为 %s",
                                  type_kind_to_string(index_type->kind));
                     }
-                    error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                 }
                 if (index_type) type_free(index_type);
             }
@@ -2070,15 +2067,13 @@
             if (obj_type && obj_type->kind == TYPE_STRUCT) {
                 TypeInfo* idx_type = infer_expr_type(s, ast->u.index.index);
                 if (idx_type && idx_type->kind != TYPE_STRING && idx_type->kind != TYPE_ANY) {
-                    char msg[BUFFER_MEDIUM];
                     // 文案要点（用户指出的）：**首选写法是 `x.field`**，`x["field"]` 只是它的
                     //   动态形态（AST 层才长这样）⇒ 先给 `x.field`，否则会让人以为字段访问
                     //   就长成下标的样子。文案**不带语境词**（见 AST_INDEX_ASSIGN 分支的说明）：
                     //   这条同时兜住 `print(r[0])` 与 `r[1] = 5`（普通赋值的 LHS 也走读路径）。
-                    snprintf(msg, sizeof(msg),
+                    error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
                         "struct 的字段请用 'x.field'（动态形态是 x[\"field\"]），不能用 %s 下标",
                         type_kind_to_string(idx_type->kind));
-                    error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                 }
                 if (idx_type) type_free(idx_type);
             }
