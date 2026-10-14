@@ -153,6 +153,19 @@ static Value dict_method_items(int argc, Value* args) {
     return arr_val;
 }
 
+// copy()：**深拷贝**（与 `Array.copy()` 同一口径 —— 逐元素递归，走 native.c 的 value_copy ✓）
+//   ★ 2026-10-14 补：此前 Array / struct 都有 copy()，只有 Dict 没有 ✗（写 LenoWordBuddy 时撞到，
+//     用户原话"Dict.copy() 没有（Array 有）"✓）。语义按"与 Array 对齐"定 ⇒ **深**（不是浅引用）：
+//     `d.copy()` 之后改副本的嵌套数组/字典不会影响原字典 ✓。
+//   ⚠ 代价要说清：值里若装着大块二进制（如 `Array[int]` 的信封，每字节一个 8 字节 Value）
+//     深拷贝不便宜 ⇒ **只读场景直接传引用即可**，别为"试试看"拷贝 ✓。
+//   ⚠ 为什么不是一行 `value_copy(args[0])` 就完事：字典那一支原先**丢插入序 + 丢 type_info**
+//     ⇒ 已在 native.c 的 OBJ_DICT 分支一并修好（否则 `keys()` / `items()` 的顺序会被打乱）。
+static Value dict_method_copy(int argc, Value* args) {
+    (void)argc;
+    return value_copy(args[0]);
+}
+
 static Value dict_method_clear(int argc, Value* args) {
     (void)argc;
     ObjDict* dict = (ObjDict*)val_as_obj(args[0]);
@@ -247,4 +260,16 @@ void dicts_init_instance_methods(void) {
 
     dict_register_method("items", make_native(dict_method_items, 1, "items"), TYPE_ARRAY, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
     native_register_instance_method_return_spec("Dict", "items", &S_DICTENTRY_ARR);
+
+    // copy()：深拷贝，返回**与接收者同型**的字典（2026-10-14 追加）
+    //   返回类型用关系型标签就地组合 `Dict[ARG0_KEY, ARG0_VALUE]` ⇒ `Dict[string,int].copy()`
+    //   仍是 `Dict[string,int]` ✓（若标成预制 `NATIVE_T_DICT`（裸 Dict）⇒ 拷完就丢泛型、
+    //   取值退化成 any ⇒ 正是"裸容器 → any 传染"那类问题，不能这么标 ✗）。
+    //   规格解析器对 `NTYPE_DICT` 是**递归**处理 sub/sub2 的（native.c：
+    //   `key_type = impl(sub, …)` / `value_type = impl(sub2, …)`），且
+    //   `native_type_spec_has_arg_ref` 也是递归判定 ⇒ 嵌套的关系标签能生效 ✓。
+    //   裸 `Dict` 接收者 ⇒ 两个子标签都解析不出 ⇒ 自然退化成裸 Dict（与旧行为一致 ✓）。
+    static const NativeTypeSpec S_DICT_ARG0 = { NTYPE_DICT, NULL, &NATIVE_T_ARG0_KEY, &NATIVE_T_ARG0_VALUE, 0, -1 };
+    dict_register_method("copy", make_native(dict_method_copy, 1, "copy"), TYPE_DICT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
+    native_register_instance_method_return_spec("Dict", "copy", &S_DICT_ARG0);
 }

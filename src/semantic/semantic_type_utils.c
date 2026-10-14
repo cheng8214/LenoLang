@@ -991,9 +991,10 @@ int type_utils_get_dict_element_param_index(const char* method_name) {
 // 参数：
 //   dict_sym - 字典变量符号
 //   value_type - 要设置的值类型
+//   line/column - 本次写入的位置（2026-10-14 加）⇒ 成功"锁定"时记到 Symbol 上 ✓
 // 返回：
 //   1 = 更新了类型，0 = 未更新（字典已有具体类型或不是字典）
-int type_utils_try_update_dict_value_type(Symbol* dict_sym, TypeInfo* value_type) {
+int type_utils_try_update_dict_value_type(Symbol* dict_sym, TypeInfo* value_type, int line, int column) {
     if (!dict_sym || !dict_sym->type || dict_sym->type->kind != TYPE_DICT) {
         return 0;
     }
@@ -1005,11 +1006,42 @@ int type_utils_try_update_dict_value_type(Symbol* dict_sym, TypeInfo* value_type
     if (!current_value) {
         if (value_type && value_type->kind != TYPE_ANY) {
             dict_sym->type->value_type = type_copy(value_type);
+            // ★ 2026-10-14：记下"锁定点" ⇒ 之后在这个变量上写别的类型时，
+            //   报错能回溯指到**这里**，而不是让用户对着第二处 set 发懵 ✓
+            //   （背景与最小复现见 leno_vm.h 的 Symbol.dict_value_lock_* 注释）
+            dict_sym->dict_value_lock_line = line;
+            dict_sym->dict_value_lock_column = column;
             return 1;
         }
     }
 
     return 0;
+}
+
+// 「字典值类型被锁定」的回溯提示（2026-10-14）
+//   为什么需要：元素类型是在**第一次写入**时被静默定死的（见上），而类型不匹配的报错
+//   落在**第二处**，字面完全不提"是谁定的" ✗（实录：写 LenoWordBuddy 时对着
+//   「参数 2 期望 'string'，但传入 'bool'」查不出所以然 —— 真正的源头在 20 行之前的
+//   一个 `var out = mk()`（mk 返回裸 Dict）+ 第一次 `set` 上 ✓）。
+//   这里把锁定点（行/列）附到消息尾部。
+//   ⚠ 只在**报错路径**调用（不进热路径 ✓）；符号不是字典 / 没锁过 ⇒ 原样不动 ✓。
+//   ⚠ msg 是调用方的栈缓冲（BUFFER_MEDIUM）⇒ 只做"够不够长"的判断，不做任何分配 ✓
+void type_utils_append_dict_lock_hint(char* msg, size_t msg_cap, Symbol* dict_sym) {
+    if (!msg || msg_cap == 0 || !dict_sym) return;
+    if (!dict_sym->type || dict_sym->type->kind != TYPE_DICT) return;
+    if (dict_sym->dict_value_lock_line <= 0) return;
+
+    size_t used = strlen(msg);
+    if (used + 1 >= msg_cap) return;
+    // ⚠ 文案刻意短：msg 是调用方的 `BUFFER_MEDIUM`(256) **栈**缓冲，而原报错本身
+    //   可能已占掉一大半（字典索引那条是三行格式 ⇒ 实测 ~75 字节）⇒ 太长会被
+    //   snprintf 从中间截断，切在 UTF-8 字符中间还会打出乱码 ✗（第一版 ~220 字节
+    //   实测正是如此 ✓）。这里控制在 ~140 字节内，两个调用点都放得下 ✓。
+    snprintf(msg + used, msg_cap - used,
+        "\n提示：'%s' 的元素类型是 **第 %d 行第 %d 列** 那次写入定死的"
+        "（裸 Dict 会被第一次写入定死）—— 多类型请用 Dict[..., any] ✓",
+        dict_sym->name ? dict_sym->name : "?",
+        dict_sym->dict_value_lock_line, dict_sym->dict_value_lock_column);
 }
 
 // ============================================================================
@@ -1598,7 +1630,7 @@ int type_utils_check_dict_index_assignment(Symbol* dict_sym, TypeInfo* assign_ty
     }
     
     // 首先尝试更新字典值类型（如果是第一次赋值）
-    int type_updated = type_utils_try_update_dict_value_type(dict_sym, assign_type);
+    int type_updated = type_utils_try_update_dict_value_type(dict_sym, assign_type, line, column);
     if (type_updated) {
         return 1;  // 类型已更新，不需要进一步检查
     }
@@ -1614,6 +1646,7 @@ int type_utils_check_dict_index_assignment(Symbol* dict_sym, TypeInfo* assign_ty
         char msg[BUFFER_MEDIUM];
         format_detailed_type_error(msg, sizeof(msg),
             value_type, assign_type, "字典值类型不匹配");
+        type_utils_append_dict_lock_hint(msg, sizeof(msg), dict_sym);   // 回溯锁定点 ✓
         error_add_at(ERR_SEMANTIC, line, column, msg);
         return 0;
     }
@@ -1646,6 +1679,7 @@ int type_utils_check_dict_index_assignment(Symbol* dict_sym, TypeInfo* assign_ty
     char msg[BUFFER_MEDIUM];
     format_detailed_type_error(msg, sizeof(msg),
         value_type, assign_type, "字典值类型不匹配");
+    type_utils_append_dict_lock_hint(msg, sizeof(msg), dict_sym);   // 回溯锁定点 ✓
     error_add_at(ERR_SEMANTIC, line, column, msg);
 
     return 0;

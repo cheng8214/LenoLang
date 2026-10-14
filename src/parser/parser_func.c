@@ -1442,7 +1442,35 @@ Ast* parse_func_body_and_create(Parser* p, char* name, int line, int column) {
             }
 
             if (p->lex.current.type != TOK_IDENT) {
-                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望参数名");
+                // ★ M5b 同族（2026-10-14）：参数名撞**保留字**要说清 ✓
+                //   实测：`func slice2(Array[int] arr, int from, int to)` 报的是**8 条**错误、
+                //   首条"期望参数名"，全部指向标点 ⇒ 看不出问题出在 `to` 是保留字上 ✗
+                //   （实测 2026-10-14，来源：写 LenoWordBuddy 时的一次真实卡壳 ✓）。
+                //   ⚠ 顺带记一条容易误判的事实：`from` **不是**保留字（Leno 没有 from 关键字），
+                //     只有 `to` 是（来自 `for x to y`）⇒ 反查函数天然只对前者放行 ✓。
+                //   两分法与 `error_use_list_name_hint` / 「不能使用关键字作变量名」那两处同款
+                //   （**内建类型 ≠ 保留字** ✓）：`func f(int)`（漏了名字）和 `func f(int to)`
+                //   （撞了保留字）该给不同的话 ✓。
+                if (is_type_keyword(p->lex.current.type)) {
+                    char msg[224];
+                    snprintf(msg, sizeof(msg),
+                        "'%.*s' 是**内建类型**（Leno 自带）✗ 不能用作参数名 —— "
+                        "若你本来想写「类型 名字」，这里是**漏了名字**（写成 `func f(int n)` ✓）；"
+                        "若确实想用它当名字，换个名字 ✓",
+                        p->lex.current.len, p->lex.current.text);
+                    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, msg);
+                } else {
+                    const char* kw = lexer_keyword_text(p->lex.current.type);
+                    if (kw) {
+                        char msg[256];
+                        snprintf(msg, sizeof(msg),
+                            "'%s' 是**保留字** ✗ 不能用作参数名 —— 换个名字 ✓"
+                            "（保留字是语法的一部分，如 to / for / func / var / const / return …）", kw);
+                        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, msg);
+                    } else {
+                        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望参数名");
+                    }
+                }
                 type_free(param_type);
                 break;
             }

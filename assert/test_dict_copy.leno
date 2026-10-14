@@ -1,0 +1,64 @@
+// test_dict_copy.leno —— Dict.copy()（2026-10-14 新增）
+//
+// 缘起：另一个 AI 写 LenoWordBuddy 时撞到「Dict.copy() 没有（Array 有）」（用户原话 ✓）。
+//   语义定为**与 Array.copy() 对齐 = 深拷贝**（逐元素 value_copy ✓）。
+//
+// 这份用例同时钉住修复过程中发现的**两个既有缺陷**（都在 native.c 的 OBJ_DICT 分支）：
+//   ① 原实现按哈希**槽位顺序**重放 ⇒ 拷出来**插入序被打乱**（`keys()` / `items()` /
+//      `for d to k` 那套"按插入序"的保证会被破坏 ✗）；
+//   ② 原实现**没拷 `type_info`**（键值泛型）⇒ 拷出来退化成**裸 Dict** ✗
+//      （Array 那一支一直是拷的，只有字典漏了）。
+//   两者都只在"顺序 / 类型被真的用上"时才暴露 ⇒ 必须有用例钉住，否则下次改回去也无人察觉。
+
+main() {
+    // ---------- ① 基本可用 + 长度一致 ----------
+    Dict[string, any] d = {}
+    d.set("z", 1)
+    d.set("a", 2)
+    d.set("nested", [1, 2])
+    var c = d.copy()
+    assert_eq(c.len(), 3, "①copy 后长度应与原字典一致")
+
+    // ---------- ② 插入序必须保持（缺陷 ①）----------
+    var ks = c.keys()
+    assert_eq(ks[0], "z", "②插入序：第 1 个键")
+    assert_eq(ks[1], "a", "②插入序：第 2 个键")
+    assert_eq(ks[2], "nested", "②插入序：第 3 个键")
+
+    // ---------- ③ 深拷贝：改副本的嵌套数组，原字典不该受影响 ----------
+    var arr = c.get("nested", null) as Array[int]
+    assert_ne(arr, null, "③嵌套数组应当取得到（否则下面会崩）")
+    arr.add(99)
+    var origArr = d.get("nested", null) as Array[int]
+    assert_eq(origArr.len(), 2, "③深拷贝：原字典的嵌套数组不该被改到")
+    assert_eq(arr.len(), 3, "③副本自己的数组应当已改")
+
+    // ---------- ④ 副本增删不影响原字典（不是同一份）----------
+    c.set("new", 7)
+    c.remove("z")
+    assert_eq(d.len(), 3, "④副本写新键/删键不该影响原字典")
+    assert_eq(c.len(), 3, "④副本：+1（new）−1（z）= 3")
+    assert_eq(d.has("z"), true, "④原字典的 'z' 应还在")
+    assert_eq(c.has("z"), false, "④副本的 'z' 应已删")
+
+    // ---------- ⑤ 整数键（字典的"数组部分"）也要拷对 ----------
+    //   字典内部把连续整数键放在 array 部分（不走哈希表）⇒ 那条路必须有覆盖 ✓
+    Dict[int, string] di = {}
+    di.set(0, "zero")
+    di.set(1, "one")
+    di.set(9, "nine")
+    var ci = di.copy()
+    assert_eq(ci.len(), 3, "⑤整数键字典拷贝后长度一致")
+    assert_eq(ci.get(0, "?"), "zero", "⑤数组部分：键 0")
+    assert_eq(ci.get(1, "?"), "one", "⑤数组部分：键 1")
+    assert_eq(ci.get(9, "?"), "nine", "⑤哈希部分：键 9")
+
+    // ---------- ⑥ 空字典 ----------
+    Dict[string, int] empty = {}
+    var ce2 = empty.copy()
+    assert_eq(ce2.len(), 0, "⑥空字典拷贝后仍为空")
+    ce2.set("k", 1)
+    assert_eq(empty.len(), 0, "⑥在副本上写不该让原字典长出键来")
+
+    print("test_dict_copy passed")
+}

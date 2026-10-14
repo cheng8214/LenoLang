@@ -761,6 +761,22 @@ struct Symbol {
     int decl_line;
     int track_unused;
 
+    // ★ 编译期专用：「该变量的**字典值类型**是在哪一行被锁定的」（2026-10-14 加）
+    //   背景（写 LenoWordBuddy 时的实录）：`d` 若是**裸 `Dict`**（键值类型未指定），
+    //   第一次 `d.set(k, v)` / `d[k] = v` 会把 `value_type` **静默定死**，此后第二处
+    //   传别的类型就报「参数 2 期望 'string'，但传入 'bool'」—— 而报错落在**第二处**，
+    //   字面完全不提前因 ✗。实测最小复现：
+    //     func mk(): Dict { return {"s": "hi"} }     // ← 返回类型是**裸 Dict**
+    //     var out = mk()
+    //     out.set("s", "hi")                          // ← 这里把元素类型定成 string（静默 ✗）
+    //     out.set("b", true)                          // ← 报错指向**这里**，看不出是上一行定的
+    //   ⇒ 记下锁定点（行/列），报错时回溯指过去。
+    //   ⚠ 位置存在 **Symbol** 上而不是 TypeInfo 上：TypeInfo 有驻留/共享实例
+    //     （`Array[int]` 全程序一份）⇒ 挂位置必然串台 ✗；Symbol 天然一个变量一份 ✓。
+    //   ⚠ 0 = 没锁过（Symbol 由 calloc 建立 ⇒ 天然为 0 ✓）。
+    int dict_value_lock_line;
+    int dict_value_lock_column;
+
     Scope* scope;
     Symbol* next;
     TypeInfo* type;

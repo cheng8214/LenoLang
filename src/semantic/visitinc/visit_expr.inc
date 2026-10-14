@@ -1108,6 +1108,10 @@
                                     // 处理字典 set 方法的值类型检查
                                     else if (receiver_type && receiver_type->kind == TYPE_DICT) {
                                         // 对于字典的 set 方法，从 receiver_type 获取值类型（如果有的话）
+                                        // ★ dict_sym 提到本块顶部（2026-10-14）：下面的类型报错要用它做
+                                        //   "锁定点回溯"（原本它只在 `i == elem_param_idx` 的分支里声明 ⇒
+                                        //   报错处看不见 ✗）
+                                        Symbol* dict_sym = NULL;
                                         TypeKind dict_value_kind = TYPE_ANY;
                                         TypeInfo* dict_value_type = NULL;
                                         if (receiver_type->value_type) {
@@ -1129,9 +1133,10 @@
                                                 int elem_param_idx = type_utils_get_dict_element_param_index(method_name);
                                                 if (i == elem_param_idx) {
                                                     // 获取字典变量符号
-                                                    Symbol* dict_sym = type_utils_resolve_var_symbol(s, index_ast->u.index.obj);
+                                                    dict_sym = type_utils_resolve_var_symbol(s, index_ast->u.index.obj);
                                                     // 首先尝试更新字典值类型（如果是第一次 set）
-                                                    if (type_utils_try_update_dict_value_type(dict_sym, arg_type)) {
+                                                    //   （位置一并传下去 ⇒ 锁定点会被记下，供后面的报错回溯 ✓）
+                                                    if (type_utils_try_update_dict_value_type(dict_sym, arg_type, ast->line, ast->column)) {
                                                         // 类型已更新，同时更新期望参数类型
                                                         expected_param_type = arg_type->kind;
                                                     } else if (dict_value_kind != TYPE_ANY) {
@@ -1171,6 +1176,7 @@
                                                             snprintf(msg, sizeof(msg), "类型错误: 参数 %d 期望 '%s'，但传入 '%s'",
                                                                      i + 1, exp_buf, type_to_string(arg_type));
                                                         }
+                                                        type_utils_append_dict_lock_hint(msg, sizeof(msg), dict_sym);  // 回溯锁定点 ✓
                                                         error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                                     }
                                                 } else if (expected_param_type != TYPE_ANY) {
@@ -1199,6 +1205,7 @@
                                                                 snprintf(msg, sizeof(msg), "类型错误: 参数 %d 期望 '%s'，但传入 '%s'",
                                                                          i + 1, type_kind_to_string(expected_param_type), type_to_string(arg_type));
                                                             }
+                                                            type_utils_append_dict_lock_hint(msg, sizeof(msg), dict_sym);  // 回溯锁定点 ✓
                                                             error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                                         }
                                                     }

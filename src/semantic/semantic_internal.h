@@ -222,7 +222,10 @@ Symbol* type_utils_resolve_var_symbol(Semantic* s, Ast* ast);
 // 字典类型检查工具函数
 int type_utils_is_dict_element_mutator(const char* method_name);
 int type_utils_get_dict_element_param_index(const char* method_name);
-int type_utils_try_update_dict_value_type(Symbol* dict_sym, TypeInfo* value_type);
+// line/column = 本次写入（`d.set(k,v)` / `d[k] = v`）的位置 ⇒ 锁定时记下来，供报错回溯 ✓
+int type_utils_try_update_dict_value_type(Symbol* dict_sym, TypeInfo* value_type, int line, int column);
+// 「字典值类型被锁定」的回溯提示：把它追加到消息尾部（无锁定 / 不是字典 ⇒ 原样不动 ✓）
+void type_utils_append_dict_lock_hint(char* msg, size_t msg_cap, Symbol* dict_sym);
 
 
 // 安全格式化类型错误信息（避免 type_to_string 缓冲区覆盖）

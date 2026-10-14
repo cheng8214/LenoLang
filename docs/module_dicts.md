@@ -51,17 +51,20 @@ Array[int]    vs = m.values()    // 元素类型就是 int（可直接参与运�
 
 ## 使用方式
 
+字典的方法**只有实例方法这一种形式**（`d.len()` / `d.set(k, v)` …）：
+
 ```leno
-// 方式1：实例方法（推荐）
 var dict = {"name": "Alice", "age": 25}
 print(dict.len())
 dict.set("city", "Beijing")
-
-// 方式2：模块方法
-import dicts
-print(dicts.len(dict))
-dicts.set(dict, "city", "Beijing")
 ```
+
+> ⚠ **订正（2026-10-14）**：本节此前还列了一条"方式2：模块方法"（`import dicts` +
+> `dicts.len(dict)`）—— 实测**不成立** ✗：`dicts` 根本不是可导入的原生模块，写 `import dicts`
+> 直接报「未知的原生模块 'dicts'」（可用列表里没有它：io / times / arrays / strings / maths /
+> rands / files / asyncs / dirs / jsons / sockets / ffi / threads / regexs / types / sys ✓）。
+> 有模块形式的是**数组**（`arrays.len(arr)` / `arrays.copy(arr)` ✓）；字典没有 ——
+> 下面「实例方法 vs 模块方法」那张对照表已按实情订正 ✓。
 
 ---
 
@@ -377,6 +380,42 @@ print(dict)  // {y: 20}
 
 ---
 
+### `copy()`
+
+**深拷贝**：返回一个内容相同、但**完全独立**的新字典（2026-10-14 新增）。
+嵌套的数组 / 字典 / 结构体**递归拷贝** ⇒ 改副本不影响原字典，反之亦然 ✓。
+
+**参数**: 无
+**返回**: 与接收者**同型**的字典（`Dict[string, int].copy()` 仍是 `Dict[string, int]` ✓；
+裸 `Dict` 拷出来还是裸 `Dict`）；**插入序保持** ✓。
+
+```leno
+var d = {"z": 1, "a": 2}
+var c = d.copy()
+
+c.set("b", 3)
+print(d.len())      // 2（原字典不受影响）
+print(c.len())      // 3
+print(c.keys())     // z, a, b（插入序 ✓）
+
+// 嵌套容器也是深拷贝
+var src = {"list": [1, 2]}
+var dup = src.copy()
+var arr = dup.get("list", null) as Array[int]
+arr.add(3)
+print((src.get("list", []) as Array[int]).len())   // 2（原字典的数组没被改到 ✓）
+print(arr.len())                                   // 3
+```
+
+> ⚠ **代价**：深拷贝要递归复制每个值。值里装着**大块二进制**（如 `Array[int]` 的信封 ——
+> 每个字节占一个 8 字节的 `Value`）时并不便宜 ⇒ **只读场景直接传引用即可**，别顺手 copy ✓。
+> ⚠ 口径与 `Array.copy()` 一致（那也是深拷贝 ✓）。`Dict` 此前**一直没有** `copy()`
+> （Array / struct 都有）——这次补齐（来源：写 LenoWordBuddy 时的实录 ✓）。
+> ⚠ 语义由 `assert/test_dict_copy.leno` 钉住（长度 / 插入序 / 深拷贝 / 整数键 / 空字典，
+> 五组 ✓）；改实现时先跑它 ✓。
+
+---
+
 ### 遍历键值对
 
 使用 `keys()` 和 `get()` 配合遍历：
@@ -398,35 +437,28 @@ for dict.keys() to key {
 
 ## 实例方法 vs 模块方法
 
-所有字典方法都支持两种调用方式：
+⚠ **订正（2026-10-14）**：本题此前写的是"所有字典方法都支持两种调用方式"并配了一张
+`dicts.xxx(dict, …)` 对照表 —— 实测**第二种不成立** ✗：`dicts` 不是可导入的原生模块
+（`import dicts` ⇒ 「未知的原生模块 'dicts'」），`dicts.len(d)` 这类写法从来跑不通。
+字典的方法**只有实例方法一种形式**：
 
-| 实例方法 | 模块方法 | 说明 |
-|---------|---------|------|
-| `dict.len()` | `dicts.len(dict)` | 获取键值对数量 |
-| `dict.has(key)` | `dicts.has(dict, key)` | 检查键是否存在 |
-| `dict.get(key)` | `dicts.get(dict, key)` | 获取值 |
-| `dict.set(key, val)` | `dicts.set(dict, key, val)` | 设置键值对 |
-| `dict.remove(key)` | `dicts.remove(dict, key)` | 删除键值对 |
-| `dict.keys()` | `dicts.keys(dict)` | 获取所有键 |
-| `dict.values()` | `dicts.values(dict)` | 获取所有值 |
-| `dict.clear()` | `dicts.clear(dict)` | 清空所有键值对 |
+| 实例方法 | 说明 |
+|---------|------|
+| `dict.len()` | 获取键值对数量 |
+| `dict.has(key)` | 检查键是否存在 |
+| `dict.get(key[, default])` | 获取值（类型跟默认值实参走，见上） |
+| `dict.set(key, val)` | 设置键值对 |
+| `dict.remove(key)` | 删除键值对 |
+| `dict.setdefault(key, default)` | 键在 ⇒ 返回现值；键不在 ⇒ 写入 default 并返回它 |
+| `dict.keys()` | 获取所有键（`Array[K]`） |
+| `dict.values()` | 获取所有值（`Array[V]`） |
+| `dict.items()` | 摊平成 `Array[DictEntry]`（按插入序） |
+| `dict.copy()` | **深拷贝**（2026-10-14 新增，见下） |
+| `dict.clear()` | 清空所有键值对 |
 
-### 选择建议
-
-- **实例方法**：代码更简洁，推荐日常使用
-- **模块方法**：需要动态方法名或函数式编程时使用
-
-```leno
-// 实例方法（推荐）
-var dict = {"a": 1, "b": 2}
-dict.set("c", 3)
-print(dict.get("a"))
-
-// 模块方法（特殊场景）
-import dicts
-var method = "get"
-print(dicts[method](dict, "a"))  // 动态调用
-```
+> 对照：**数组**有 `arrays` 模块（`arrays.len(arr)` / `arrays.copy(arr)` ✓ 都能用），
+> 因为它在 `native_register_module_method("arrays", …)` 里注册过；字典没有对应的注册 ⇒
+> 没有模块形式。要"动态方法名"只能自己做一层分发（如用 `switch` 或嵌套字典存闭包 ✓）。
 
 ---
 

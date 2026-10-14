@@ -2227,26 +2227,21 @@ Value value_copy(Value v) {
             }
             case OBJ_DICT: {
                 // 字典深拷贝
+                //   ★ 2026-10-14 修两处（为 Dict.copy() 铺路，见 dicts.c 的说明）：
+                //     ① **插入序**：原实现按 `entries` **槽位顺序**重放 ⇒ 拷出来的字典顺序 ≠ 插入序
+                //        （`keys()` / `items()` / `for d to k` 那套"按插入序 ✓"的保证会被打乱 ✗）；
+                //     ② **type_info**（键值泛型）原本没跟着拷 ⇒ 拷出来退化成一个**裸 Dict** ✗
+                //        （Array 分支一直是 `type_copy` 的，只有字典这一支漏了）。
+                //   改法：照 `order`（插入序的**权威来源** —— dict_delete 会同步维护，不会含已删键）
+                //   逐键重放。顺序 ✓、type_info ✓、数组部分/哈希部分的分流交给 dict_set ✓
+                //   （不再手搓 `array`：原写法设了 asize 却没设 acount，本身就不一致）。
                 ObjDict* dict = (ObjDict*)obj;
                 ObjDict* copy = dict_new(dict->capacity);
                 if (!copy) return val_null();
-                // 拷贝数组部分
-                if (dict->array && dict->asize > 0) {
-                    copy->array = (Value*)malloc(dict->asize * sizeof(Value));
-                    if (copy->array) {
-                        copy->asize = dict->asize;
-                        for (int i = 0; i < dict->asize; i++) {
-                            copy->array[i] = value_copy(dict->array[i]);
-                        }
-                    }
-                }
-                // 拷贝哈希部分
-                for (int i = 0; i < dict->capacity; i++) {
-                    Value entry_key = dict->entries[i].key;
-                    if (!val_is_null(entry_key) && entry_key != DICT_TOMBSTONE_VAL) {
-                        dict_set(copy, entry_key,
-                                value_copy(dict->entries[i].value));
-                    }
+                copy->type_info = dict->type_info ? type_copy(dict->type_info) : NULL;
+                for (int i = 0; i < dict->order_count; i++) {
+                    Value k = dict->order[i];
+                    dict_set(copy, k, value_copy(dict_get(dict, k)));
                 }
                 return val_obj((Object*)copy);
             }

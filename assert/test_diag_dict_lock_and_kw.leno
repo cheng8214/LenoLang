@@ -1,0 +1,125 @@
+// test_diag_dict_lock_and_kw.leno —— 两条"报错说不清真因"的补全（2026-10-14）
+//
+// 来源：另一个 AI 写 LenoWordBuddy 时列出的问题 6 / 7（用户转述 ✓）。
+//   两条的共同毛病都是「报错落点/文案指不出真因」，用户只能对着错误干猜：
+//   ⑥ **保留字作参数名**：`func slice2(Array[int] arr, int from, int to)` 实测报 **8 条**
+//      错误、首条是「期望参数名」，全部指向标点 ⇒ 看不出问题出在 `to` 是**保留字**上 ✗
+//      （顺带钉一个容易误判的事实：`from` **不是**保留字 —— Leno 只有 `to`，来自
+//        `for x to y` ✓ ⇒ 同样的写法只把 `to` 换名就能编译 ✓）
+//   ⑦ **裸 Dict 被第一次写入锁死元素类型**：`var out = mk()`（mk 返回**裸 Dict**）
+//      + 第一次 `set` 把元素类型静默定成 string ⇒ 第二次 `set` 报「参数 2 期望 'string'，
+//      但传入 'bool'」，而报错落在**第二处**、字面不提"是谁定的" ✗
+//      ⇒ 现在回溯成「'out' 的元素类型是 **第 N 行第 M 列** 那次写入定死的」✓
+//
+// 覆盖两条写入路径（它们实现是分开的）：实例方法 `d.set(k,v)` 与索引赋值 `d[k]=v`。
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_diag_dict_lock")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ==================== ⑥ 保留字作参数名 ====================
+
+    var k1 = dirs.join(work, "kw_param.leno")
+    files.write(k1, @"func slice2(Array[int] arr, int from, int to): Array[int] { return arr }
+main() {
+    print(slice2([1, 2], 0, 1).len())
+}
+")
+    ce.expect_error(k1, "参数名撞保留字要说清（旧文案只有「期望参数名」）",
+        "'to' 是**保留字** ✗ 不能用作参数名", 1)
+
+    // 反向：`from` 不是保留字 ⇒ 把 `to` 换成 `to2` 后同样的代码必须能编译、能跑
+    var k2 = dirs.join(work, "kw_param_ok.leno")
+    files.write(k2, @"func tail(Array[int] arr, int from, int to2): Array[int] {
+    Array[int] out = []
+    for arr to x {
+        if x >= from and x <= to2 { out.add(x) }
+    }
+    return out
+}
+main() {
+    print(tail([1, 2, 3, 4], 2, 3).len())
+}
+")
+    ce.expect_ok(k2, "from 不是保留字（只有 to 是）—— 换掉 to 即可编译", "2")
+
+    // ==================== ⑦ 裸 Dict 锁死 ⇒ 回溯锁定点 ====================
+
+    // 路径 A：实例方法 `d.set(k, v)`
+    var l1 = dirs.join(work, "dict_lock_method.leno")
+    files.write(l1, @"func mk(): Dict {
+    return {""n"": 1}
+}
+main() {
+    var out = mk()
+    out.set(""a"", ""str"")
+    out.set(""b"", true)
+    print(""ok"")
+}
+")
+    // 锁定点 = 第 6 行（第一次 set），报错落点 = 第 7 行（第二次 set）✓
+    ce.expect_error(l1, "实例方法路径：报错要回溯到锁定点（第 6 行）",
+        "的元素类型是 **第 6 行", 7)
+
+    // 路径 B：索引赋值 `d[k] = v`（与路径 A 是两处独立实现 ✓）
+    var l2 = dirs.join(work, "dict_lock_index.leno")
+    files.write(l2, @"func mk(): Dict {
+    return {""n"": 1}
+}
+main() {
+    var out = mk()
+    out[""a""] = ""str""
+    out[""b""] = true
+    print(""ok"")
+}
+")
+    ce.expect_error(l2, "索引赋值路径：报错要回溯到锁定点（第 6 行）",
+        "的元素类型是 **第 6 行", 7)
+
+    // 反向：显式 `Dict[string, any]` 是"值类型已指定为 any"⇒ **不锁**（不得误报）✓
+    //   这条是 ⑦ 的关键对照：锁死只该发生在"裸 Dict 第一次写入"上。
+    var l3 = dirs.join(work, "dict_any_ok.leno")
+    files.write(l3, @"main() {
+    Dict[string, any] d = {}
+    d.set(""a"", ""str"")
+    d.set(""b"", true)
+    d.set(""c"", [1, 2])
+    print(""ok"" + _str(d.len()))
+}
+")
+    ce.expect_ok(l3, "Dict[..., any] 的值类型已指定 ⇒ 不该被锁死", "ok3")
+
+    // ==================== Dict.copy() 的编译期保证 ====================
+
+    // copy() 的返回类型必须**跟接收者走**（`Dict[string,int]` ⇒ 仍是 `Dict[string,int]`）。
+    //   若规格标成预制 `NATIVE_T_DICT`（裸 Dict）⇒ 拷贝完就丢泛型、取值退化成 any，
+    //   这条 set 就会被放过（那是"裸容器 → any 传染"那类问题 ✓）。
+    var c1 = dirs.join(work, "dict_copy_generic.leno")
+    files.write(c1, @"main() {
+    Dict[string, int] di = {""k"": 1}
+    var ci = di.copy()
+    ci.set(""j"", ""字符串"")
+    print(""ok"")
+}
+")
+    ce.expect_error(c1, "copy() 要保住键值泛型（Dict[string,int] ⇒ set 拒 string）",
+        "期望 'int'", 4)
+
+    // 反向：同型写入必须照常通过（别把泛型收得连合法写入都拦了）✓
+    var c2 = dirs.join(work, "dict_copy_generic_ok.leno")
+    files.write(c2, @"main() {
+    Dict[string, int] di = {""k"": 1}
+    var ci = di.copy()
+    ci.set(""j"", 2)
+    print(""ok"" + _str(ci.len()))
+}
+")
+    ce.expect_ok(c2, "copy() 后同型写入应照常通过", "ok2")
+
+    print("test_diag_dict_lock_and_kw passed")
+}
