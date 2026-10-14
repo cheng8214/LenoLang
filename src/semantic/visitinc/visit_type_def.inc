@@ -286,24 +286,27 @@
                         }
                     }
                 } else {
-                    char msg[BUFFER_MEDIUM];
                     // 检查是否已经被定义为其他类型（cstruct/enum/face）
                     Symbol* existing = scope_resolve_local(s->current, ast->u.struct_def.name);
                     if (existing && existing->type) {
                         if (existing->type->kind == TYPE_CSTRUCT) {
-                            snprintf(msg, sizeof(msg), "类型 '%s' 已经定义为 cstruct，不能重复定义为 struct", ast->u.struct_def.name);
+                            error_add_at_fmt(ERR_DUPLICATE_VAR, ast->line, ast->column,
+                                "类型 '%s' 已经定义为 cstruct，不能重复定义为 struct", ast->u.struct_def.name);
                         } else if (existing->type->kind == TYPE_ENUM) {
-                            snprintf(msg, sizeof(msg), "类型 '%s' 已经定义为 enum，不能重复定义为 struct", ast->u.struct_def.name);
+                            error_add_at_fmt(ERR_DUPLICATE_VAR, ast->line, ast->column,
+                                "类型 '%s' 已经定义为 enum，不能重复定义为 struct", ast->u.struct_def.name);
                         } else if (existing->type->kind == TYPE_FACE) {
-                            snprintf(msg, sizeof(msg), "类型 '%s' 已经定义为 face，不能重复定义为 struct", ast->u.struct_def.name);
+                            error_add_at_fmt(ERR_DUPLICATE_VAR, ast->line, ast->column,
+                                "类型 '%s' 已经定义为 face，不能重复定义为 struct", ast->u.struct_def.name);
                         } else {
-                            snprintf(msg, sizeof(msg), "struct '%s' 重复定义", ast->u.struct_def.name);
+                            error_add_at_fmt(ERR_DUPLICATE_VAR, ast->line, ast->column,
+                                "struct '%s' 重复定义", ast->u.struct_def.name);
                         }
                     } else {
-                        snprintf(msg, sizeof(msg), "struct '%s' 重复定义", ast->u.struct_def.name);
+                        error_add_at_fmt(ERR_DUPLICATE_VAR, ast->line, ast->column,
+                            "struct '%s' 重复定义", ast->u.struct_def.name);
                     }
                     struct_dup = 1;
-                    error_add_at(ERR_DUPLICATE_VAR, ast->line, ast->column, msg);
                 }
 
                 // 处理关联常量：语义检查 + 求值存入 ObjStructDef
@@ -631,33 +634,30 @@
                                         type_match2 = 1;
                                     }
                                     if (!impl_ret2_unknown && expected_kind != TYPE_ANY && !type_match2) {
-                                        char msg[256];
-                                        snprintf(msg, sizeof(msg), "struct '%s' 的方法 '%s' 返回类型与 face '%s' 不匹配: 期望 %s, 实际 %s",
+                                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                 "struct '%s' 的方法 '%s' 返回类型与 face '%s' 不匹配: 期望 %s, 实际 %s",
                                                  ast->u.struct_def.name, mname, face_name,
                                                  type_kind_to_string(expected_kind),
                                                  type_kind_to_string(impl_ret2));
-                                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                     }
                                 }
                                 if (fdef->methods[j].param_count >= 0 && ast->u.struct_def.methods[k]->u.func.pcnt >= 0) {
                                     int expected_params = fdef->methods[j].param_count;
                                     int actual_params = ast->u.struct_def.methods[k]->u.func.pcnt - 1;
                                     if (expected_params != actual_params) {
-                                        char msg[256];
-                                        snprintf(msg, sizeof(msg), "struct '%s' 的方法 '%s' 参数数量与 face '%s' 不匹配: 期望 %d, 实际 %d",
+                                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                 "struct '%s' 的方法 '%s' 参数数量与 face '%s' 不匹配: 期望 %d, 实际 %d",
                                                  ast->u.struct_def.name, mname, face_name,
                                                  expected_params, actual_params);
-                                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                     }
                                 }
                                 break;
                             }
                         }
                         if (!found) {
-                            char msg[256];
-                            snprintf(msg, sizeof(msg), "struct '%s' 声明 impl '%s' 但缺少方法 '%s'",
+                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                     "struct '%s' 声明 impl '%s' 但缺少方法 '%s'",
                                      ast->u.struct_def.name, face_name, mname);
-                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                         }
                     }
                 }
@@ -739,9 +739,8 @@
                     // 已有值且不等于当前 AST = 源码里真的又写了一条同种类同名声明 ⇒ 报重复定义。
                     // 此前只看 kind 就无条件复用，`face E1 {..}` 写两遍静默通过、后写的那份生效。
                     if (existing->type_decl_ast && existing->type_decl_ast != (const void*)ast) {
-                        char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg), "face '%s' 重复定义", ast->u.face_def.name);
-                        error_add_at(ERR_DUPLICATE_VAR, ast->line, ast->column, msg);
+                        error_add_at_fmt(ERR_DUPLICATE_VAR, ast->line, ast->column,
+                                         "face '%s' 重复定义", ast->u.face_def.name);
                         type_free(face_type);
                         break;  // 不更新符号、不写全局定义表
                     }
@@ -752,18 +751,20 @@
                     // 跨种类同名：struct 分支早已检查（cstruct/enum 亦然），唯独 face 漏了，
                     // 于是 `struct Foo` + `face Foo` 不报错、两张全局表各存一份，后续按名查
                     // 全局表会取到"碰巧先命中的那份"。这里补齐同一套检查。
-                    char msg[BUFFER_MEDIUM];
                     if (existing->type->kind == TYPE_STRUCT) {
-                        snprintf(msg, sizeof(msg), "类型 '%s' 已经定义为 struct，不能重复定义为 face", ast->u.face_def.name);
+                        error_add_at_fmt(ERR_DUPLICATE_VAR, ast->line, ast->column,
+                            "类型 '%s' 已经定义为 struct，不能重复定义为 face", ast->u.face_def.name);
                     } else if (existing->type->kind == TYPE_CSTRUCT) {
-                        snprintf(msg, sizeof(msg), "类型 '%s' 已经定义为 cstruct，不能重复定义为 face", ast->u.face_def.name);
+                        error_add_at_fmt(ERR_DUPLICATE_VAR, ast->line, ast->column,
+                            "类型 '%s' 已经定义为 cstruct，不能重复定义为 face", ast->u.face_def.name);
                     } else if (existing->type->kind == TYPE_ENUM) {
-                        snprintf(msg, sizeof(msg), "类型 '%s' 已经定义为 enum，不能重复定义为 face", ast->u.face_def.name);
+                        error_add_at_fmt(ERR_DUPLICATE_VAR, ast->line, ast->column,
+                            "类型 '%s' 已经定义为 enum，不能重复定义为 face", ast->u.face_def.name);
                     } else {
-                        snprintf(msg, sizeof(msg), "face '%s' 重复定义", ast->u.face_def.name);
+                        error_add_at_fmt(ERR_DUPLICATE_VAR, ast->line, ast->column,
+                            "face '%s' 重复定义", ast->u.face_def.name);
                     }
                     face_dup = 1;
-                    error_add_at(ERR_DUPLICATE_VAR, ast->line, ast->column, msg);
                     type_free(face_type);   // 未挂到任何 symbol 上，避免泄漏
                 } else {
                     SymKind kind = SYM_TYPE;

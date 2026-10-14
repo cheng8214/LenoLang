@@ -277,7 +277,6 @@
                 
                 if (!meta) {
                     // 方法不存在，尝试列出该模块的可用方法作为提示
-                    char msg[1024];  /* 大于 BUFFER_MEDIUM，容纳中文 + 多个 %s */
                     extern ModuleMethodMeta* native_get_module_method_metas(const char* module_name, int* count);
                     int method_count = 0;
                     ModuleMethodMeta* all_methods = native_get_module_method_metas(actual_module, &method_count);
@@ -289,14 +288,15 @@
                             if (mi > 0) pos += snprintf(available + pos, BUFFER_MEDIUM - pos, ", ");
                             pos += snprintf(available + pos, BUFFER_MEDIUM - pos, "%s", all_methods[mi].method_name);
                         }
-                        snprintf(msg, sizeof(msg), "未找到模块方法: %s.%s（可用: %s）",
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                 "未找到模块方法: %s.%s（可用: %s）",
                                  actual_module, ast->u.module_call.method_name, available);
                         free(all_methods);
                     } else {
-                        snprintf(msg, sizeof(msg), "未找到模块方法: %s.%s",
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                 "未找到模块方法: %s.%s",
                                  actual_module, ast->u.module_call.method_name);
                     }
-                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                 } else {
                     // 方法存在，检查参数数量
                     int expected_arity = meta->arity;
@@ -1034,20 +1034,21 @@
                                         int default_cnt = method_ast->u.func.default_count;
                                         int required_cnt = method_param_count - default_cnt;
                                         if (actual_arity < required_cnt || actual_arity > method_param_count) {
-                                            char msg[BUFFER_MEDIUM];
+                                            // `.map()` 那条提示做成尾串（原来是往 msg 尾部 strncat ✓ 等价）
+                                            const char* map_hint =
+                                                (strcmp(method_name, "map") == 0 && actual_arity == 1 && method_param_count == 2)
+                                                ? "\n  提示: .map() 会传递 (item, index) 两个参数，\n"
+                                                  "     函数签名需加第二个参数，如 func compress(string w, int _): string"
+                                                : "";
                                             if (actual_arity < required_cnt) {
-                                                snprintf(msg, sizeof(msg), "方法 '%s' 参数不足: 至少需要 %d 个, 实际 %d",
-                                                         method_name, required_cnt, actual_arity);
+                                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                         "方法 '%s' 参数不足: 至少需要 %d 个, 实际 %d%s",
+                                                         method_name, required_cnt, actual_arity, map_hint);
                                             } else {
-                                                snprintf(msg, sizeof(msg), "方法 '%s' 参数过多: 最多 %d 个, 实际 %d",
-                                                         method_name, method_param_count, actual_arity);
+                                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                         "方法 '%s' 参数过多: 最多 %d 个, 实际 %d%s",
+                                                         method_name, method_param_count, actual_arity, map_hint);
                                             }
-                                            if (strcmp(method_name, "map") == 0 && actual_arity == 1 && method_param_count == 2) {
-                                                strncat(msg, "\n  提示: .map() 会传递 (item, index) 两个参数，\n"
-                                                        "     函数签名需加第二个参数，如 func compress(string w, int _): string",
-                                                        sizeof(msg) - strlen(msg) - 1);
-                                            }
-                                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                         } else {
                                             // 构建泛型参数替换表（包含 struct 的泛型参数和方法的泛型参数）
                                             char** gp_names = NULL;
@@ -1135,14 +1136,12 @@
                                                         }
                                                     }
                                                     if (!is_generic && !type_is_compatible(check_type, arg_type)) {
-                                                        char msg[BUFFER_MEDIUM];
                                                         char idx_str[16];
                                                         snprintf(idx_str, sizeof(idx_str), "%d", i + 1);
-                                                        format_type_error(msg, sizeof(msg),
-                                                            "%s3 第 %s4 个参数类型不匹配: 期望 %s1, 实际 %s2",
-                                                            check_type, arg_type,
-                                                            method_name, idx_str);
-                                                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                                                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column, "%s",
+                                                            format_type_error_text("%s3 第 %s4 个参数类型不匹配: 期望 %s1, 实际 %s2",
+                                                                check_type, arg_type,
+                                                                method_name, idx_str));
                                                     }
                                                 }
                                                 if (arg_type) type_free(arg_type);
@@ -1524,11 +1523,11 @@
                                  ast->u.module_call.module_name, method_name);
                     } else {
                         // 方法不存在于该类型
-                        char msg[1024];   /* 大于 BUFFER_MEDIUM：下面要拼共享提示（中文较长 ✓） */
                         // ★ 增强报错：当类型是 TYPE_STRING 且方法名是 contains/includes 时，提示用 has
                         if (obj_sym->type->kind == TYPE_STRING &&
                             (strcmp(method_name, "contains") == 0 || strcmp(method_name, "includes") == 0)) {
-                            snprintf(msg, sizeof(msg), "类型 'string' 没有方法 '%s'，是否想用 'has'？（如 s.has(sub)）", method_name);
+                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                     "类型 'string' 没有方法 '%s'，是否想用 'has'？（如 s.has(sub)）", method_name);
                         } else if (obj_sym->type->kind == TYPE_STRUCT && obj_sym->type->struct_name) {
                             // ★ 增强报错：当类型是 TYPE_STRUCT 且无定义时，提示可能是未 use 导入的 clib/cstruct 类型
                             const char* tn = obj_sym->type->struct_name;
@@ -1539,10 +1538,12 @@
                                 //    这一处藏在"类型没有方法"里 ✓ 说明"照着报错文案 grep"才找得全 ✓）
                                 char hint[BUFFER_MEDIUM];
                                 semantic_undefined_type_hint(s, tn, hint, sizeof(hint));
-                                snprintf(msg, sizeof(msg), "类型 '%s' 没有方法 '%s'：类型 '%s' 未定义%s",
+                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                         "类型 '%s' 没有方法 '%s'：类型 '%s' 未定义%s",
                                          type_to_string(obj_sym->type), method_name, tn, hint);
                             } else {
-                                snprintf(msg, sizeof(msg), "类型 '%s' 没有方法 '%s'%s",
+                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                         "类型 '%s' 没有方法 '%s'%s",
                                          type_to_string(obj_sym->type), method_name,
                                          get_similar_struct_method_hint(s, tn, method_name));
                             }
@@ -1550,11 +1551,11 @@
                             // ★ 2026-10-10（A 组第 7 条）：改走**共享分级提示** ✓
                             //   （`slice*` ⇒ 切片提示优先 ✓ 其次相似名 ✓）—— 实测 `arr.slice(0,1)`
                             //   走的正是**这一处**（不是 visit_expr 那处 ✓），所以两处必须同一份 ✓
-                            snprintf(msg, sizeof(msg), "类型 '%s' 没有方法 '%s'%s",
+                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                     "类型 '%s' 没有方法 '%s'%s",
                                      type_to_string(obj_sym->type), method_name,
                                      semantic_no_such_method_hint(obj_sym->type, method_name));
                         }
-                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     }
 
                     // 转换为实例方法调用：obj.method(args) -> obj["method"](args)
@@ -1591,7 +1592,6 @@
                 }
             } else {
                 // 模块和变量都未定义
-                char msg[BUFFER_MEDIUM];
                 // D1: 模块名拼错提示——先在已导入模块的别名里找相似，再在内置模块名里找。
                 // 两个 hint 函数都返回"提示串"（\n  提示: ...），找不到返回空串。
                 const char* alias_names[64];
@@ -1605,12 +1605,13 @@
                                                         ast->u.module_call.module_name);
                 if (!hint[0]) hint = native_builtin_module_hint(ast->u.module_call.module_name);
                 if (hint[0]) {
-                    snprintf(msg, sizeof(msg), "未定义的模块或变量: %s%s",
-                             ast->u.module_call.module_name, hint);
+                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                     "未定义的模块或变量: %s%s",
+                                     ast->u.module_call.module_name, hint);
                 } else {
-                    snprintf(msg, sizeof(msg), "未定义的模块或变量: %s", ast->u.module_call.module_name);
+                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                     "未定义的模块或变量: %s", ast->u.module_call.module_name);
                 }
-                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
             }
             }
 
@@ -1669,11 +1670,9 @@
                     var_ast->u.var.ref.type_kind = var_sym->type ? var_sym->type->kind : TYPE_ANY;
                     var_ast->u.var.ref.struct_name = (var_sym->type && var_sym->type->struct_name) ? strdup(var_sym->type->struct_name) : NULL;
                 } else {
-                    char msg[BUFFER_MEDIUM];
-                    snprintf(msg, sizeof(msg), "未定义的变量: %s", ast->u.module_access.module_name);
                     const char* hint = get_similar_name_hint(s->current, ast->u.module_access.module_name);
-                    if (hint[0]) strncat(msg, hint, sizeof(msg) - strlen(msg) - 1);
-                    error_add_at(ERR_UNDEFINED_VAR, ast->line, ast->column, msg);
+                    error_add_at_fmt(ERR_UNDEFINED_VAR, ast->line, ast->column,
+                                     "未定义的变量: %s%s", ast->u.module_access.module_name, hint);
                 }
                 if (var_sym && var_sym->type) {
                     var_ast->cached_type = type_copy(var_sym->type);
@@ -1756,7 +1755,6 @@
                             var_ast = NULL;
                         }
                     } else {
-                        char msg[BUFFER_MEDIUM];
                         // G1: 枚举成员拼错提示——在成员名列表里找最相似的候选
                         const char* hint = "";
                         if (var_sym->enum_value_names) {
@@ -1764,13 +1762,14 @@
                                                         var_sym->enum_value_count, mname);
                         }
                         if (hint[0]) {
-                            snprintf(msg, sizeof(msg), "枚举 '%s' 中没有成员 '%s'%s",
+                            error_add_at_fmt(ERR_UNDEFINED_VAR, ast->line, ast->column,
+                                     "枚举 '%s' 中没有成员 '%s'%s",
                                      ast->u.module_access.module_name, mname, hint);
                         } else {
-                            snprintf(msg, sizeof(msg), "枚举 '%s' 中没有成员 '%s'",
+                            error_add_at_fmt(ERR_UNDEFINED_VAR, ast->line, ast->column,
+                                     "枚举 '%s' 中没有成员 '%s'",
                                      ast->u.module_access.module_name, mname);
                         }
-                        error_add_at(ERR_UNDEFINED_VAR, ast->line, ast->column, msg);
                     }
                 } else if (is_struct_type) {
                     // 检查是否是 struct 关联常量访问（StructName.CONST_NAME）

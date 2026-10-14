@@ -215,22 +215,21 @@
                         } else if (!type_is_compatible(ast->u.var_decl.type, init_type)) {
                             // 1024（不是 BUFFER_MEDIUM）：报文尾部还要追加"转换/收窄"提示，
                             // 缓冲太小时提示会被截断（实测「…（如」✗）
-                            char msg[1024];
                             char context[256];
                             snprintf(context, sizeof(context), "变量 '%s' 声明类型与初始化值类型不匹配",
                                      ast->u.var_decl.name);
-                            format_detailed_type_error(msg, sizeof(msg),
-                                ast->u.var_decl.type, init_type, context);
-                            // 如果是 struct 未实现 face，追加提示
+                            // 如果是 struct 未实现 face，追加提示（做成尾串 ⇒ 不必先拼整条消息 ✓）
+                            char face_hint[256];
+                            face_hint[0] = '\0';
                             if (ast->u.var_decl.type->kind == TYPE_FACE && init_type->kind == TYPE_STRUCT
                                 && ast->u.var_decl.type->struct_name && init_type->struct_name) {
-                                char hint[256];
-                                snprintf(hint, sizeof(hint), " (struct '%s' 未实现 face '%s'，请添加 impl: struct %s impl %s { ... })",
+                                snprintf(face_hint, sizeof(face_hint), " (struct '%s' 未实现 face '%s'，请添加 impl: struct %s impl %s { ... })",
                                     init_type->struct_name, ast->u.var_decl.type->struct_name,
                                     init_type->struct_name, ast->u.var_decl.type->struct_name);
-                                { size_t _ml = strlen(msg); snprintf(msg + _ml, sizeof(msg) - _ml, "%s", hint); }
                             }
-                            error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
+                            error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "%s%s",
+                                format_detailed_type_error_text(ast->u.var_decl.type, init_type, context),
+                                face_hint);
                             sym->type = type_copy(ast->u.var_decl.type);
                         } else {
                             // 检查是否需要更新类型（如 Dict -> Dict[string, any]）
@@ -524,11 +523,9 @@
                     if (sym && sym->type) {
                         if (value_type) {
                             if (!type_is_compatible(sym->type, value_type)) {
-                                char msg[BUFFER_MEDIUM];
-                                format_detailed_type_error_ex(msg, sizeof(msg),
-                                    sym->type, value_type,
-                                    "无法将值赋值给变量", ast->u.assign.names[i]);
-                                error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
+                                error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "%s",
+                                    format_detailed_type_error_ex_text(sym->type, value_type,
+                                        "无法将值赋值给变量", ast->u.assign.names[i]));
                             } else {
                                 // var 声明的变量（类型为 any），第一次赋非 null 值时锁定类型
                                 if (sym->type->kind == TYPE_ANY && value_type->kind != TYPE_NULL) {
@@ -566,11 +563,9 @@
                         const char* field_name = target->u.index.index->u.string.value;
                         TypeInfo* field_type = infer_field_type(s, obj_type, field_name, NULL);
                         if (field_type && value_type && !type_is_compatible(field_type, value_type)) {
-                            char msg[BUFFER_MEDIUM];
-                            format_detailed_type_error_ex(msg, sizeof(msg),
-                                field_type, value_type,
-                                "字段赋值类型不匹配", field_name);
-                            error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
+                            error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "%s",
+                                format_detailed_type_error_ex_text(field_type, value_type,
+                                    "字段赋值类型不匹配", field_name));
                         }
                         if (field_type) type_free(field_type);
                     }
@@ -605,11 +600,9 @@
                                         check_owned = 1;
                                     }
                                     if (check_type && !type_is_compatible(check_type, value_type)) {
-                                        char msg[BUFFER_MEDIUM];
-                                        format_detailed_type_error_ex(msg, sizeof(msg),
-                                            check_type, value_type,
-                                            "字段赋值类型不匹配", field_name);
-                                        error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
+                                        error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "%s",
+                                            format_detailed_type_error_ex_text(check_type, value_type,
+                                                "字段赋值类型不匹配", field_name));
                                     }
                                     if (check_owned) type_free(check_type);
                                     break;
@@ -627,11 +620,9 @@
                             TypeInfo* field_type = infer_field_type(s, obj_type, field_name, NULL);
                             if (field_type) {
                                 if (!type_is_compatible(field_type, value_type)) {
-                                    char msg[BUFFER_MEDIUM];
-                                    format_detailed_type_error_ex(msg, sizeof(msg),
-                                        field_type, value_type,
-                                        "字段赋值类型不匹配", field_name);
-                                    error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
+                                    error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "%s",
+                                        format_detailed_type_error_ex_text(field_type, value_type,
+                                            "字段赋值类型不匹配", field_name));
                                 }
                                 type_free(field_type);
                             }

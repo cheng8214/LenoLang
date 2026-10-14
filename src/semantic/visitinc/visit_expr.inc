@@ -1852,23 +1852,21 @@
                             if (arg_type) {
                                 // 使用类型兼容性检查
                                 if (!type_is_compatible(check_type, arg_type)) {
-                                    char msg[BUFFER_MEDIUM];
                                     char idx_str[16];
                                     snprintf(idx_str, sizeof(idx_str), "%d", i + 1);
-                                    format_type_error(msg, sizeof(msg),
-                                        "%s3 第 %s4 个参数类型不匹配: 期望 %s1, 实际 %s2",
-                                        check_type, arg_type,
-                                        func_name, idx_str);
-                                    // 如果是 struct 未实现 face，追加提示
+                                    // 如果是 struct 未实现 face，追加提示（做成尾串 ⇒ 不必先拼整条消息 ✓）
+                                    char face_hint[256];
+                                    face_hint[0] = '\0';
                                     if (check_type->kind == TYPE_FACE && arg_type->kind == TYPE_STRUCT
                                         && check_type->struct_name && arg_type->struct_name) {
-                                        char hint[256];
-                                        snprintf(hint, sizeof(hint), " (struct '%s' 未实现 face '%s'，请添加 impl: struct %s impl %s { ... })",
+                                        snprintf(face_hint, sizeof(face_hint), " (struct '%s' 未实现 face '%s'，请添加 impl: struct %s impl %s { ... })",
                                             arg_type->struct_name, check_type->struct_name,
                                             arg_type->struct_name, check_type->struct_name);
-                                        { size_t _ml = strlen(msg); snprintf(msg + _ml, sizeof(msg) - _ml, "%s", hint); }
                                     }
-                                    error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
+                                    error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "%s%s",
+                                        format_type_error_text("%s3 第 %s4 个参数类型不匹配: 期望 %s1, 实际 %s2",
+                                            check_type, arg_type, func_name, idx_str),
+                                        face_hint);
                                 }
                             }
                             if (arg_type) type_free(arg_type);
@@ -2164,17 +2162,15 @@
                             if (strcmp(struct_sym->struct_field_names[i], inner_field) == 0) {
                                 int is_nullable_type = (struct_sym->struct_field_types[i] && struct_sym->struct_field_types[i]->nullable);
                                 if (struct_sym->struct_field_null_default[i] && !is_nullable_type) {
-                                    char msg[BUFFER_MEDIUM];
                                     if (outer_field) {
-                                        snprintf(msg, sizeof(msg),
+                                        warning_add_at_fmt(WARN_NULL_FIELD_CHAIN, ast->line, ast->column,
                                             "字段 'self.%s' 默认值为 null，访问其字段 '%s' 可能导致运行时错误",
                                             inner_field, outer_field);
                                     } else {
-                                        snprintf(msg, sizeof(msg),
+                                        warning_add_at_fmt(WARN_NULL_FIELD_CHAIN, ast->line, ast->column,
                                             "字段 'self.%s' 默认值为 null，访问其成员可能导致运行时错误",
                                             inner_field);
                                     }
-                                    warning_add_at(WARN_NULL_FIELD_CHAIN, ast->line, ast->column, msg);
                                 }
                                 break;
                             }
@@ -2232,25 +2228,23 @@
                         if (strcmp(struct_sym->struct_field_names[i], inner_field) == 0) {
                             int is_nullable_type = (struct_sym->struct_field_types[i] && struct_sym->struct_field_types[i]->nullable);
                             if (struct_sym->struct_field_null_default[i] && !is_nullable_type) {
-                                char msg[BUFFER_MEDIUM];
                                 if (base_var_name && outer_field) {
-                                    snprintf(msg, sizeof(msg),
+                                    warning_add_at_fmt(WARN_NULL_FIELD_CHAIN, ast->line, ast->column,
                                         "字段 '%s.%s' 默认值为 null，访问其字段 '%s' 可能导致运行时错误",
                                         base_var_name, inner_field, outer_field);
                                 } else if (base_var_name) {
-                                    snprintf(msg, sizeof(msg),
+                                    warning_add_at_fmt(WARN_NULL_FIELD_CHAIN, ast->line, ast->column,
                                         "字段 '%s.%s' 默认值为 null，访问其成员可能导致运行时错误",
                                         base_var_name, inner_field);
                                 } else if (outer_field) {
-                                    snprintf(msg, sizeof(msg),
+                                    warning_add_at_fmt(WARN_NULL_FIELD_CHAIN, ast->line, ast->column,
                                         "字段 '%s' 默认值为 null，访问其字段 '%s' 可能导致运行时错误",
                                         inner_field, outer_field);
                                 } else {
-                                    snprintf(msg, sizeof(msg),
+                                    warning_add_at_fmt(WARN_NULL_FIELD_CHAIN, ast->line, ast->column,
                                         "字段 '%s' 默认值为 null，访问其成员可能导致运行时错误",
                                         inner_field);
                                 }
-                                warning_add_at(WARN_NULL_FIELD_CHAIN, ast->line, ast->column, msg);
                             }
                             break;
                         }

@@ -299,7 +299,11 @@ int module_symbol_table_scan(ModuleSymbolTable* table, const char* current_file)
         if (!base) base = strrchr(full_path, '/');
         base = base ? base + 1 : full_path;
 
-        char msg[BUFFER_MEDIUM];
+        // ⚠ 这一处**不能用** `error_add_at_fmt`（全仓迁移时唯一的两类例外之一 ✓）：
+        //   消息是**按依赖链长度增量拼接**的（先写头 → 逐个追加 ` <- 模块名` → 末尾加处置建议），
+        //   一次 `vsnprintf` 表达不了 ✗。这里只统一**尺寸**（`BUFFER_MSG` ✓），
+        //   超长时由下面那些 `off < sizeof(msg) - …` 判断自然截断 ✓。
+        char msg[BUFFER_MSG];
         int off = snprintf(msg, sizeof(msg), "检测到循环依赖: %s", base);
         for (int i = g_scan_stack_count - 1; i >= 0; i--) {
             const char* bn = strrchr(g_scan_stack[i], '\\');

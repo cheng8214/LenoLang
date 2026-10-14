@@ -16,11 +16,9 @@
                         if (return_type_info->kind != TYPE_ANY &&
                             return_type_info->kind != TYPE_INFER &&
                             return_type_info->kind != TYPE_INT) {
-                            char msg[BUFFER_MEDIUM];
-                            snprintf(msg, sizeof(msg),
+                            error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
                                 "main 函数的返回值将作为进程退出码，只能返回 int，实际 %s",
                                 type_kind_to_string(return_type_info->kind));
-                            error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                         }
                     } else if (!expected_type || expected_type->kind == TYPE_INFER) {
                         // 省略返回类型的函数返回 any，不进行推断
@@ -32,10 +30,9 @@
                         strncpy(expected_buf, expected_str, 63);
                         expected_buf[63] = '\0';
                         const char* actual_str = type_to_string(return_type_info);
-                        char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg), "返回类型不匹配：期望 %s，实际 %s",
+                        error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                                 "返回类型不匹配：期望 %s，实际 %s",
                                  expected_buf, actual_str);
-                        error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                     }
                     type_free(return_type_info);
                 }
@@ -49,10 +46,8 @@
 
             // main 的返回值作为进程退出码，不支持多值返回
             if (s->in_main_func) {
-                char msg[BUFFER_MEDIUM];
-                snprintf(msg, sizeof(msg),
+                error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
                     "main 函数的返回值将作为进程退出码，不支持多值返回");
-                error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
             }
             
             // 访问每个返回值表达式
@@ -66,11 +61,9 @@
                 if (expected_type && expected_type->kind == TYPE_MULTI_RET) {
                     // 函数声明了多返回值类型，检查数量和类型
                     if (count != expected_type->param_count) {
-                        char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg),
+                        error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
                             "多返回值数量不匹配：期望 %d 个，实际 %d 个",
                             expected_type->param_count, count);
-                        error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                     } else {
                         // 逐个检查类型兼容性
                         for (int i = 0; i < count; i++) {

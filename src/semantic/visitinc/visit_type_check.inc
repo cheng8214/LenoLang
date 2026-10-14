@@ -89,13 +89,11 @@
                                    sk == TYPE_F32 || sk == TYPE_F64);
                     // ① string → 数值类 / bool：as 不做字符串解析
                     if (sk == TYPE_STRING && (dst_num || dk == TYPE_BOOL)) {
-                        char msg[384];
-                        snprintf(msg, sizeof(msg),
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                             "as 不做字符串解析：string 无法 as %s（运行期必回 null）。"
                             "as 只做表示/数值转换（数值→string、float→int 截断、bool→1/0）；"
                             "要解析字符串请用 _int()（严格版，坏串会抛异常）或 _int_or(v, 默认)（宽容版）",
                             sem_as_kind_name(dk));
-                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     }
                     // ② 数值类 → bool：as bool 只认 bool（int/float/bigint as bool 恒失败）
                     else if (dk == TYPE_BOOL && sk != TYPE_BOOL && src_num) {

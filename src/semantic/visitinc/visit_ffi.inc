@@ -156,23 +156,26 @@
                         sym->cstruct_field_offsets[i] = field_offsets[i];
                     }
                 } else {
-                    char msg[BUFFER_MEDIUM];
                     // 检查是否已经被定义为其他类型（struct/enum/face）
                     Symbol* existing = scope_resolve_local(s->current, ast->u.cstruct_def.name);
                     if (existing && existing->type) {
                         if (existing->type->kind == TYPE_STRUCT) {
-                            snprintf(msg, sizeof(msg), "类型 '%s' 已经定义为 struct，不能重复定义为 cstruct", ast->u.cstruct_def.name);
+                            error_add_at_fmt(ERR_DUPLICATE_VAR, ast->line, ast->column,
+                                "类型 '%s' 已经定义为 struct，不能重复定义为 cstruct", ast->u.cstruct_def.name);
                         } else if (existing->type->kind == TYPE_ENUM) {
-                            snprintf(msg, sizeof(msg), "类型 '%s' 已经定义为 enum，不能重复定义为 cstruct", ast->u.cstruct_def.name);
+                            error_add_at_fmt(ERR_DUPLICATE_VAR, ast->line, ast->column,
+                                "类型 '%s' 已经定义为 enum，不能重复定义为 cstruct", ast->u.cstruct_def.name);
                         } else if (existing->type->kind == TYPE_FACE) {
-                            snprintf(msg, sizeof(msg), "类型 '%s' 已经定义为 face，不能重复定义为 cstruct", ast->u.cstruct_def.name);
+                            error_add_at_fmt(ERR_DUPLICATE_VAR, ast->line, ast->column,
+                                "类型 '%s' 已经定义为 face，不能重复定义为 cstruct", ast->u.cstruct_def.name);
                         } else {
-                            snprintf(msg, sizeof(msg), "cstruct '%s' 重复定义", ast->u.cstruct_def.name);
+                            error_add_at_fmt(ERR_DUPLICATE_VAR, ast->line, ast->column,
+                                "cstruct '%s' 重复定义", ast->u.cstruct_def.name);
                         }
                     } else {
-                        snprintf(msg, sizeof(msg), "cstruct '%s' 重复定义", ast->u.cstruct_def.name);
+                        error_add_at_fmt(ERR_DUPLICATE_VAR, ast->line, ast->column,
+                            "cstruct '%s' 重复定义", ast->u.cstruct_def.name);
                     }
-                    error_add_at(ERR_DUPLICATE_VAR, ast->line, ast->column, msg);
                 }
             }
             break;
@@ -191,15 +194,13 @@
                                  "clib 函数 '%s' 返回类型不能使用 'int'，请使用 'i32' 或 'i64'",
                                  ast->u.clib_def.func_names[i]);
                     } else if (ret_type->kind == TYPE_FLOAT) {
-                        char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg), "clib 函数 '%s' 返回类型不能使用 'float'，请使用 'f32' 或 'f64'",
+                        error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                                 "clib 函数 '%s' 返回类型不能使用 'float'，请使用 'f32' 或 'f64'",
                                  ast->u.clib_def.func_names[i]);
-                        error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                     } else if (ret_type->kind == TYPE_STRING) {
-                        char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg), "clib 函数 '%s' 返回类型不能使用 'string'，请使用 'str8' 或 'ptr'",
+                        error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                                 "clib 函数 '%s' 返回类型不能使用 'string'，请使用 'str8' 或 'ptr'",
                                  ast->u.clib_def.func_names[i]);
-                        error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                     } else if (ret_type->kind == TYPE_STRUCT && ret_type->struct_name) {
                         // 可能是自定义类型名（如 Ptr 被解析为 TYPE_STRUCT 带 struct_name="Ptr"）
                         if (strcmp(ret_type->struct_name, "Ptr") == 0) {
@@ -208,10 +209,9 @@
                             ast->u.clib_def.func_return_types[i]->struct_name = strdup("Ptr");
                         } else if (strcmp(ret_type->struct_name, "string") == 0 ||
                                    strcmp(ret_type->struct_name, "String") == 0) {
-                            char msg[BUFFER_MEDIUM];
-                            snprintf(msg, sizeof(msg), "clib 函数 '%s' 返回类型不能使用 'string'，请使用 'str8' 或 'ptr'",
+                            error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                                     "clib 函数 '%s' 返回类型不能使用 'string'，请使用 'str8' 或 'ptr'",
                                      ast->u.clib_def.func_names[i]);
-                            error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                         } else if (strcmp(ret_type->struct_name, "str8") == 0 ||
                                    strcmp(ret_type->struct_name, "Str8") == 0) {
                             type_free(ret_type);
@@ -236,10 +236,9 @@
                                 ast->u.clib_def.func_return_types[i] = type_new(TYPE_CSTRUCT);
                                 ast->u.clib_def.func_return_types[i]->struct_name = name;
                             } else {
-                                char msg[BUFFER_MEDIUM];
-                                snprintf(msg, sizeof(msg), "clib 函数 '%s' 返回类型 '%s' 不是有效的 C 布局类型，请使用 i32/i64/f32/f64/str8/str16/ptr/bool/void",
+                                error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                                         "clib 函数 '%s' 返回类型 '%s' 不是有效的 C 布局类型，请使用 i32/i64/f32/f64/str8/str16/ptr/bool/void",
                                          ast->u.clib_def.func_names[i], ret_type->struct_name);
-                                error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                             }
                         }
                     }
@@ -341,9 +340,8 @@
                         }
                     }
                 } else {
-                    char msg[BUFFER_MEDIUM];
-                    snprintf(msg, sizeof(msg), "clib '%s' 重复定义", ast->u.clib_def.name);
-                    error_add_at(ERR_DUPLICATE_VAR, ast->line, ast->column, msg);
+                    error_add_at_fmt(ERR_DUPLICATE_VAR, ast->line, ast->column,
+                                     "clib '%s' 重复定义", ast->u.clib_def.name);
                 }
             }
             break;
@@ -355,17 +353,14 @@
                 TypeInfo* ret_type = ast->u.cfunc_decl.return_type;
                 if (ret_type) {
                     if (ret_type->kind == TYPE_INT) {
-                        char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg), "cfunc '%s' 返回类型不能使用 'int'，请使用 'i32' 或 'i64'", ast->u.cfunc_decl.name);
-                        error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
+                        error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                                         "cfunc '%s' 返回类型不能使用 'int'，请使用 'i32' 或 'i64'", ast->u.cfunc_decl.name);
                     } else if (ret_type->kind == TYPE_FLOAT) {
-                        char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg), "cfunc '%s' 返回类型不能使用 'float'，请使用 'f32' 或 'f64'", ast->u.cfunc_decl.name);
-                        error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
+                        error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                                         "cfunc '%s' 返回类型不能使用 'float'，请使用 'f32' 或 'f64'", ast->u.cfunc_decl.name);
                     } else if (ret_type->kind == TYPE_STRING) {
-                        char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg), "cfunc '%s' 返回类型不能使用 'string'，请使用 'str8' 或 'ptr'", ast->u.cfunc_decl.name);
-                        error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
+                        error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                                         "cfunc '%s' 返回类型不能使用 'string'，请使用 'str8' 或 'ptr'", ast->u.cfunc_decl.name);
                     } else if (ret_type->kind == TYPE_STRUCT && ret_type->struct_name) {
                         if (strcmp(ret_type->struct_name, "Ptr") == 0) {
                             type_free(ret_type);
@@ -378,9 +373,8 @@
                             type_free(ret_type);
                             ast->u.cfunc_decl.return_type = type_new(TYPE_STR16);
                         } else {
-                            char msg[BUFFER_MEDIUM];
-                            snprintf(msg, sizeof(msg), "cfunc '%s' 返回类型 '%s' 不是有效的 C 布局类型", ast->u.cfunc_decl.name, ret_type->struct_name);
-                            error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
+                            error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                                             "cfunc '%s' 返回类型 '%s' 不是有效的 C 布局类型", ast->u.cfunc_decl.name, ret_type->struct_name);
                         }
                     }
                 }
@@ -389,13 +383,11 @@
                 for (int j = 0; j < ast->u.cfunc_decl.param_count; j++) {
                     TypeInfo* ptype = ast->u.cfunc_decl.param_types[j];
                     if (ptype->kind == TYPE_INT) {
-                        char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg), "cfunc '%s' 参数 %d 类型不能使用 'int'，请使用 'i32' 或 'i64'", ast->u.cfunc_decl.name, j + 1);
-                        error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
+                        error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                                         "cfunc '%s' 参数 %d 类型不能使用 'int'，请使用 'i32' 或 'i64'", ast->u.cfunc_decl.name, j + 1);
                     } else if (ptype->kind == TYPE_FLOAT) {
-                        char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg), "cfunc '%s' 参数 %d 类型不能使用 'float'，请使用 'f32' 或 'f64'", ast->u.cfunc_decl.name, j + 1);
-                        error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
+                        error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                                         "cfunc '%s' 参数 %d 类型不能使用 'float'，请使用 'f32' 或 'f64'", ast->u.cfunc_decl.name, j + 1);
                     } else if (ptype->kind == TYPE_STRING) {
                         error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
                                  "cfunc '%s' 参数 %d 类型不能使用 'string'，请使用 'str8' 或 'ptr'", ast->u.cfunc_decl.name, j + 1);

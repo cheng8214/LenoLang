@@ -230,32 +230,29 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
                 if (!tname) continue;
                 int is_field = (field_index_of(tname, field_names, field_count) >= 0);
                 int shadowed = is_shadowed(tname, shadowed_names, shadowed_count);
-                char msg[BUFFER_MEDIUM];
                 if (rhs_var_before[0] && strcmp(rhs_var_before, tname) == 0) {
                     // ① 自赋值 `X = X`
                     if (is_field && shadowed) {
-                        snprintf(msg, sizeof(msg),
+                        warning_add_at_fmt(WARN_FIELD_SHADOW_ASSIGN, ast->line, ast->column,
                             "自赋值 `%s = %s` 不产生任何效果：此处的 `%s` 是形参/局部变量（它遮蔽了同名字段 "
                             "`%s`）⇒ 字段不会被修改。要改字段请写 `self.%s = %s`；要读字段请写 `self.%s`",
                             tname, tname, tname, tname, tname, tname, tname);
                     } else if (is_field) {
-                        snprintf(msg, sizeof(msg),
+                        warning_add_at_fmt(WARN_FIELD_SHADOW_ASSIGN, ast->line, ast->column,
                             "自赋值 `%s = %s` 不产生任何效果（字段 `%s` 的值不变）—— 请检查是否漏写 `self.`",
                             tname, tname, tname);
                     } else {
-                        snprintf(msg, sizeof(msg),
+                        warning_add_at_fmt(WARN_FIELD_SHADOW_ASSIGN, ast->line, ast->column,
                             "自赋值 `%s = %s` 不产生任何效果（形参/局部变量赋给自己）—— 请检查是否漏写",
                             tname, tname);
                     }
-                    warning_add_at(WARN_FIELD_SHADOW_ASSIGN, ast->line, ast->column, msg);
                 } else if (is_field && shadowed && !is_self_field_access(value) &&
                            is_param_name(tname, param_names, param_count)) {
                     // ② 形参遮蔽字段后被赋了"别的值"
-                    snprintf(msg, sizeof(msg),
+                    warning_add_at_fmt(WARN_FIELD_SHADOW_ASSIGN, ast->line, ast->column,
                         "赋值只作用于形参 `%s`（它遮蔽了同名字段 `%s`）⇒ 字段不会被修改；"
                         "要改字段请写 `self.%s = ...`；若确实只想改这个形参，请给它改名避免遮蔽",
                         tname, tname, tname);
-                    warning_add_at(WARN_FIELD_SHADOW_ASSIGN, ast->line, ast->column, msg);
                 }
             }
 

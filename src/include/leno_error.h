@@ -43,6 +43,13 @@ void error_add_at(ErrorType type, int line, int column, const char* msg);
 //   并以 "…" 收尾**（明确表示"这里还有内容"，而不是静默丢字符 ✓）；最终仍调既有的
 //   `error_add_at` / `warning_add_at` ⇒ 去重、上限、入库**只有一份实现** ✓。
 // ⚠ 新代码一律用这四个（直接写格式串，别再自己开 msg 缓冲 ✗）。
+//   **本仓编译期诊断已全量迁移**（2026-10-14：parser / semantic / optimize / codegen /
+//   module_symbol_table 共 262 处 ✓）；仅 4 处保留自开缓冲，各有硬理由 ——
+//     · `parser_utils.c` 的 `consume(p, type, msg)`：那个 msg 是**函数参数**（调用方传的文案）✗
+//     · `semantic_type.c:2512` / `:3285`：要先用 `error_has_at(.., msg)` **去重**，
+//       而它必须拿到**拼好的那句话** ⇒ 走不了 fmt（一调就入库 ✗）
+//     · `sym_table_entry.inc` 的循环依赖链：消息是**增量拼接**（循环 append）✗
+//   这 4 处只把尺寸并入 `BUFFER_MSG` ✓。
 // ⚠ 参数格式同 printf（GCC / Clang 下会做格式串检查 ✓）。
 // ============================================================================
 void error_add_fmt(ErrorType type, int line, const char* fmt, ...)

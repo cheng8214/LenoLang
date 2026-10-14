@@ -296,7 +296,6 @@ static TypeInfo* parse_base_type(Parser* p) {
         int is_ptr = (strcmp(type_name, "ptr") == 0 || strcmp(type_name, "Ptr") == 0 || strcmp(type_name, "PTR") == 0);
         
         if (is_dict || is_array || is_int || is_float || is_string || is_bool || is_any || is_var || is_null || is_file || is_ptr) {
-            char msg[BUFFER_MEDIUM];
             const char* correct_name = type_name;
             if (is_dict) correct_name = "Dict";
             else if (is_array) correct_name = "Array";
@@ -309,10 +308,10 @@ static TypeInfo* parse_base_type(Parser* p) {
             else if (is_null) correct_name = "null";
             else if (is_file) correct_name = "File";
             else if (is_ptr) correct_name = "Ptr";
-            
-            snprintf(msg, sizeof(msg), "未知类型 '%s'，您是否想使用 '%s'？", 
+
+            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                     "未知类型 '%s'，您是否想使用 '%s'？",
                      type_name, correct_name);
-            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, msg);
             free(type_name);
             lexer_next(&p->lex);
             return type_new(TYPE_ANY); // 返回 any 类型继续解析
@@ -1443,21 +1442,17 @@ Ast* parse_func_body_and_create(Parser* p, char* name, int line, int column) {
                 //   （**内建类型 ≠ 保留字** ✓）：`func f(int)`（漏了名字）和 `func f(int to)`
                 //   （撞了保留字）该给不同的话 ✓。
                 if (is_type_keyword(p->lex.current.type)) {
-                    char msg[224];
-                    snprintf(msg, sizeof(msg),
+                    error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
                         "'%.*s' 是**内建类型**（Leno 自带）✗ 不能用作参数名 —— "
                         "若你本来想写「类型 名字」，这里是**漏了名字**（写成 `func f(int n)` ✓）；"
                         "若确实想用它当名字，换个名字 ✓",
                         p->lex.current.len, p->lex.current.text);
-                    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, msg);
                 } else {
                     const char* kw = lexer_keyword_text(p->lex.current.type);
                     if (kw) {
-                        char msg[256];
-                        snprintf(msg, sizeof(msg),
+                        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
                             "'%s' 是**保留字** ✗ 不能用作参数名 —— 换个名字 ✓"
                             "（保留字是语法的一部分，如 to / for / func / var / const / return …）", kw);
-                        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, msg);
                     } else {
                         error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望参数名");
                     }
@@ -2275,9 +2270,8 @@ Ast* parse_struct_stmt(Parser* p) {
             }
             // 析构函数名必须与 struct 名相同
             if (is_dtor && strcmp(method_name, struct_name) != 0) {
-                char msg[BUFFER_MEDIUM];
-                snprintf(msg, sizeof(msg), "析构函数名必须为 ~%s，而不是 ~%s", struct_name, method_name);
-                error_add_at(ERR_SYNTAX, func_line, p->lex.current.column, msg);
+                error_add_at_fmt(ERR_SYNTAX, func_line, p->lex.current.column,
+                                 "析构函数名必须为 ~%s，而不是 ~%s", struct_name, method_name);
             }
 
             // 解析函数体

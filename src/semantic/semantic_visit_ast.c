@@ -133,12 +133,10 @@ static int pri_imported_method_private(Semantic* s, const char* struct_name,
 static void pri_report(Semantic* s, Ast* ast, const char* kind, const char* struct_name,
                        const char* member, int decl_line) {
     (void)s;
-    char msg[BUFFER_MEDIUM];
-    snprintf(msg, sizeof(msg),
+    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
         "'%s.%s' 是 pri 私有%s（%s 第 %d 行）—— 只有 %s 自己的方法内部可以访问它；"
         "要对外开放就把 'pri' 去掉（默认全公有）",
         struct_name, member, kind, error_get_filename(), decl_line, struct_name);
-    error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
 }
 
 // 字段访问检查（读 ✓ 写 ✓ 都走 AST_FIELD_ACCESS ✓ ⇒ 一处即可 ✓）
@@ -426,7 +424,6 @@ int semantic_import_use_symbol(Semantic* s, const char* module_name, const char*
             // 查找导入的模块
             ImportedModuleInfo* module_info = find_imported_module(s, module_name);
             if (!module_info) {
-                char msg[BUFFER_MEDIUM];
                 // E2: 模块名拼错提示——在已导入模块的别名里找相似（use md.Point，别名是 m）
                 const char* alias_names[64];
                 int alias_count = 0;
@@ -438,11 +435,12 @@ int semantic_import_use_symbol(Semantic* s, const char* module_name, const char*
                 const char* hint = get_similar_in_names(alias_names, alias_count, module_name);
                 if (!hint[0]) hint = native_builtin_module_hint(module_name);
                 if (hint[0]) {
-                    snprintf(msg, sizeof(msg), "类型导入失败：模块 '%s' 未导入%s", module_name, hint);
+                    error_add_at_fmt(ERR_SEMANTIC, line, column,
+                                     "类型导入失败：模块 '%s' 未导入%s", module_name, hint);
                 } else {
-                    snprintf(msg, sizeof(msg), "类型导入失败：模块 '%s' 未导入", module_name);
+                    error_add_at_fmt(ERR_SEMANTIC, line, column,
+                                     "类型导入失败：模块 '%s' 未导入", module_name);
                 }
-                error_add_at(ERR_SEMANTIC, line, column, msg);
             return 0;
             }
 
@@ -457,7 +455,6 @@ int semantic_import_use_symbol(Semantic* s, const char* module_name, const char*
                         native_find_module_struct_spec(actual_module, symbol_name);
                     if (!nss) {
                         // 模块是 native，但没这个类型 ⇒ 把**可用类型**列出来（照 builtin 模块提示的风格）
-                        char msg[BUFFER_MEDIUM];
                         const char* names[16];
                         int n = native_list_module_struct_specs(actual_module, names, 16);
                         if (n > 0) {
@@ -471,7 +468,7 @@ int semantic_import_use_symbol(Semantic* s, const char* module_name, const char*
                                 off += (w < (int)sizeof(list) - off) ? w : (int)sizeof(list) - off - 1;
                                 if (off >= (int)sizeof(list) - 1) break;
                             }
-                            snprintf(msg, sizeof(msg),
+                            error_add_at_fmt(ERR_SEMANTIC, line, column,
                                      "类型导入失败：native 模块 '%s' 没有类型 '%s'（可用类型: %s）",
                                      module_name, symbol_name, list);
                         } else {
@@ -479,12 +476,11 @@ int semantic_import_use_symbol(Semantic* s, const char* module_name, const char*
                             //   实测 `use maths.not_a_real_func` 报的就是这句 ✗，而 maths 明明
                             //   导出了一堆**函数** ✓ ⇒ 写的人以为是 maths 有问题，其实是用法不对 ✓：
                             //   `use` 只能导入**类型** ✓（本仓既有写法 `use SDL3.(Event, Renderer, …)` ✓）。
-                            snprintf(msg, sizeof(msg),
+                            error_add_at_fmt(ERR_SEMANTIC, line, column,
                                      "类型导入失败：native 模块 '%s' 里没有类型 '%s'，而且它一个类型都没导出"
                                      "（use 只能导入**类型** ✓；模块里的函数/常量请直接写 '%s.名字(...)' 调用 ✓）",
                                      module_name, symbol_name, module_name);
                         }
-                        error_add_at(ERR_SEMANTIC, line, column, msg);
             return 0;
                     }
                     // ⚠ 这里的 return 值分两种（**抽取函数时踩过坑**，见下）：
@@ -496,21 +492,18 @@ int semantic_import_use_symbol(Semantic* s, const char* module_name, const char*
                     //     而看不出来，只有 struct 字段位置报"字段不能使用 any"才暴露 ✓）
                     int native_ok = semantic_import_native_type(s, nss);
                     if (!native_ok) {
-                        char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg),
+                        error_add_at_fmt(ERR_SEMANTIC, line, column,
                                  "类型导入失败：'%s' 已在当前作用域中定义（与 native 类型同名）"
                                  "—— 请改用别的名字，或直接用该 native 类型",
                                  symbol_name);
-                        error_add_at(ERR_SEMANTIC, line, column, msg);
                     }
                     return native_ok ? 1 : 0;
                 }
             }
 
             if (!module_info->sym_table) {
-                char msg[BUFFER_MEDIUM];
-                snprintf(msg, sizeof(msg), "类型导入失败：模块 '%s' 没有符号表", module_name);
-                error_add_at(ERR_SEMANTIC, line, column, msg);
+                error_add_at_fmt(ERR_SEMANTIC, line, column,
+                                 "类型导入失败：模块 '%s' 没有符号表", module_name);
             return 0;
             }
 
@@ -536,10 +529,9 @@ int semantic_import_use_symbol(Semantic* s, const char* module_name, const char*
                             // 同一类型的重复导入，静默跳过
             return 1;
                         }
-                        char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg), "类型导入失败：'%s' 已在当前作用域中定义（来自其他模块的 use），请使用模块名限定访问",
+                        error_add_at_fmt(ERR_SEMANTIC, line, column,
+                                 "类型导入失败：'%s' 已在当前作用域中定义（来自其他模块的 use），请使用模块名限定访问",
                                  symbol_name);
-                        error_add_at(ERR_SEMANTIC, line, column, msg);
                     }
             return 0;
                 }
@@ -752,9 +744,8 @@ int semantic_import_use_symbol(Semantic* s, const char* module_name, const char*
             if (module_info->sym_table) {
                 ModuleVarSymbol* var_sym = module_symbol_table_find_var(module_info->sym_table, symbol_name);
                 if (var_sym && var_sym->is_const) {
-                    char msg[BUFFER_MEDIUM];
-                    snprintf(msg, sizeof(msg), "use 语句不能导入常量 '%s'，请使用 %s.%s 访问", symbol_name, module_name, symbol_name);
-                    error_add_at(ERR_SEMANTIC, line, column, msg);
+                    error_add_at_fmt(ERR_SEMANTIC, line, column,
+                                     "use 语句不能导入常量 '%s'，请使用 %s.%s 访问", symbol_name, module_name, symbol_name);
             return 0;
                 }
             }
@@ -803,17 +794,17 @@ int semantic_import_use_symbol(Semantic* s, const char* module_name, const char*
             }
 
             // 没有找到 struct、clib、cfunc、face、alias 或函数
-            char msg[BUFFER_MEDIUM];
             // E1: 符号名拼错提示——在模块符号表所有名字桶里找最相似的候选
             const char* hint = module_symbol_table_hint(module_info->sym_table, symbol_name);
             if (hint[0]) {
-                snprintf(msg, sizeof(msg), "类型导入失败：模块 '%s' 中没有类型或函数 '%s'%s",
+                error_add_at_fmt(ERR_SEMANTIC, line, column,
+                         "类型导入失败：模块 '%s' 中没有类型或函数 '%s'%s",
                          module_name, symbol_name, hint);
             } else {
-                snprintf(msg, sizeof(msg), "类型导入失败：模块 '%s' 中没有类型或函数 '%s'",
+                error_add_at_fmt(ERR_SEMANTIC, line, column,
+                         "类型导入失败：模块 '%s' 中没有类型或函数 '%s'",
                          module_name, symbol_name);
             }
-            error_add_at(ERR_SEMANTIC, line, column, msg);
             return 0;   // 落到这里 = 模块里没有这个类型/符号（错误已由上面各分支报出 ✓）
 }
 

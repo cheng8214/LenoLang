@@ -387,21 +387,19 @@ void semantic_check_not_precedence(Ast* operand, int line, int column, int kind)
     if (operand->u.unary.op != TOK_NOT) return;
 
     // 文案 383 字节 ⇒ BUFFER_MEDIUM(256) 会截断（GCC 判 -Wformat-truncation）⇒ LARGE ✓
-    char msg[BUFFER_LARGE];
     if (kind == 0) {
-        snprintf(msg, sizeof(msg),
+        warning_add_at_fmt(WARN_NOT_PRECEDENCE, line, column,
                  "这一处看起来是 `not x is T` ✗ —— `not` 比 `is` **先算** ⇒ 它其实等价于 "
                  "`(not x) is T` ✓，结果常与你想要的**相反** ✗（实测：x = 42 时 "
                  "`not x is string` = false ✗，而 `not (x is string)` = true ✓）。"
                  "取反请写 `not (x is T)` ✓（表达式里）；if / for **条件位置**还可以写 "
                  "`x not is T` ✓（否定类型守卫 ✓）");
     } else {
-        snprintf(msg, sizeof(msg),
+        warning_add_at_fmt(WARN_NOT_PRECEDENCE, line, column,
                  "这一处看起来是 `not x in arr` ✗ —— `not` 比 `in` **先算** ⇒ 它其实等价于 "
                  "`(not x) in arr` ✓（`not x` 是个 bool ⇒ 几乎恒 false ✗）。"
                  "要判「不在里面」请写 `x not in arr` ✓ 或 `not (x in arr)` ✓");
     }
-    warning_add_at(WARN_NOT_PRECEDENCE, line, column, msg);
 }
 
 // ============================================================================
@@ -423,15 +421,11 @@ void semantic_check_alias_shadow(Semantic* s, const char* name, const char* what
     for (int i = 0; i < s->imported_module_count; i++) {
         ImportedModuleInfo* im = &s->imported_modules[i];
         if (!im->alias || strcmp(im->alias, name) != 0) continue;
-        // ⚠ 缓冲要够大 ✓：这条文案有 6 处 %s + 中文 ⇒ BUFFER_MEDIUM(100) 装不下 ✗
-        //   （实测被 gcc 抓到 -Wformat-truncation ✗ —— 本仓的口径是构建 **0 warning** ✓）
-        char msg[512];
-        snprintf(msg, sizeof(msg),
+        warning_add_at_fmt(WARN_MODULE_ALIAS_SHADOWED, line, column,
                  "「%s」既是**模块别名**（import … as %s ✓）又是这里的%s —— 名字解析优先给%s，"
                  "**模块成员在这个位置不可达** ✗（症状：`%s.某方法(...)` 报「在该对象上找不到方法」、"
                  "看不出是遮蔽 ✗）。改法二选一：给模块别名改名（如 `as %spg` ✓），或给这处%s改名 ✓",
                  name, name, what, what, name, name, what);
-        warning_add_at(WARN_MODULE_ALIAS_SHADOWED, line, column, msg);
         return;
     }
 }
@@ -457,16 +451,13 @@ void semantic_check_printf_style(const char* callee, AstList* args, int line, in
     const char* fmt = first->u.string.value;
     if (!fmt || !strchr(fmt, '%')) return;
 
-    // 文案 ~250 字节 + 被调名 ⇒ BUFFER_MEDIUM(256) 差 1 字节就溢出（GCC 判 -Wformat-truncation）⇒ LARGE ✓
-    char msg[BUFFER_LARGE];
-    snprintf(msg, sizeof(msg),
+    warning_add_at_fmt(WARN_PRINTF_NO_FORMAT, line, column,
              "%s 只做「**不换行打印**」，**不做 %% 格式化** ✗ —— 这里的 %% 会**原样打出来**，"
              "后面几个实参只是按空格拼在末尾 ✓。要格式化请用 format(\"…%%d…\", n) ✓"
              "（与 printf 同族的**真格式化**函数，支持 %%s/%%d/%%f/%%e/%%g/%%c ✓）；"
              "也可以用插值 $\"…{n}\" ✓ 或拼串 \"…\" + _str(n) ✓；"
              "只想「打印并换行」就用 print ✓",
              callee);
-    warning_add_at(WARN_PRINTF_NO_FORMAT, line, column, msg);
 }
 
 // ============================================================================
@@ -1844,13 +1835,11 @@ int semantic_check_native_arg(Semantic* s, Ast* ast, TypeInfo* arg_type, TypeKin
     //   比"静默放过去"好（这类路径在调用点查不到 —— struct 泛型参数的绑定来自接收者，B 暂不覆盖 ✓）
     if (arg_type->kind != TYPE_GENERIC_PARAM) return 0;   // "struct T" 但不是本函数的参数 ⇒ 交给常规比较
 
-    char msg[BUFFER_MEDIUM];
-    snprintf(msg, sizeof(msg),
+    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
              "泛型参数 '%s' 的类型在编译期未知，不能直接传给 %s 的第 %d 个参数（期望具体类型 '%s'）\n"
              "  提示: 先显式转换（_str() / _int() / as 具体类型），或把该调用放到具体类型上再做",
              nm, callee_desc ? callee_desc : "native 方法", arg_index + 1,
              type_kind_to_string(expected));
-    error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
     return 1;
 }
 
@@ -1923,16 +1912,12 @@ void semantic_check_generic_requirements(Semantic* s, const char* owner_struct, 
                  (type_is_compatible(&expected_ti, actual) != 0);
         if (ok) continue;
 
-        // 用超大缓冲：本消息拼了 5 个可能很长的片段（参数名/函数名/类型名/需求来源描述）✗
-        //   （用 BUFFER_MEDIUM 会被 GCC 判「可能截断」告警 ✓；仓库要求零告警）
-        char msg[BUFFER_XLARGE];
-        snprintf(msg, sizeof(msg),
+        error_add_at_fmt(ERR_SEMANTIC, call_ast->line, call_ast->column,
                  "泛型参数 '%s' 的需求不满足: %s 要求它兼容 '%s'"
                  "（定义处第 %d 行把它用在了 %s 的 native 形参上），但这里推断出的是 '%s'\n"
                  "  提示: 换满足该需求的类型实参，或先显式转换（_str() / _int() / as 具体类型）",
                  param_name, func_name, type_kind_to_string(r->expected), r->line,
                  r->callee ? r->callee : "native", type_kind_to_string(actual->kind));
-        error_add_at(ERR_SEMANTIC, call_ast->line, call_ast->column, msg);
     }
 }
 

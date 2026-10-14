@@ -817,12 +817,10 @@ static void check_nullable_arith(TypeInfo* left, TypeInfo* right, int line, int 
 void report_known_null_name(Semantic* s, const char* name, int line, int column) {
     (void)s; // 避免未使用警告
     if (!name) return;
-    char msg[BUFFER_MEDIUM];
-    snprintf(msg, sizeof(msg),
+    error_add_at_fmt(ERR_TYPE_MISMATCH, line, column,
              "变量 '%s' 的值确定为 null（声明为 null 之后未重新赋值），不能参与算术运算"
              " —— 请先赋初值，或在 `if %s != null` 分支内使用",
              name, name);
-    error_add_at(ERR_TYPE_MISMATCH, line, column, msg);
 }
 
 // 表达式形态的入口：只有**普通变量**才可能带这个标志（见 Symbol.is_null_value 的说明）
@@ -2440,12 +2438,11 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     }
                     // 无类型守卫，报错（但如果已有模块加载失败，抑制级联 any 错误）
                     if (!s->has_module_load_failure) {
-                        char msg[512];
                         // ★ 2026-09-18（P1）：原提示只说"用 if x is Type 收窄"，但**收窄到裸容器**
                         //   （如 Dict）取元素仍是 any ⇒ 照提示改完还是失败（实测 5~6 轮编译失败）。
                         //   补两句关键：① 容器要**带泛型参数**；② 语言既有 `x as T` **安全转换**
                         //   （不匹配返回 null、静态类型即目标类型）—— 这才是最省事的那条路 ✓。
-                        snprintf(msg, sizeof(msg),
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                             "不能在 any 类型 '%s' 上直接访问字段 '%s'\n"
                             "  提示: 用 if %s is Type { %s.%s } 收窄，"
                             "或用 x as T 安全转换（如 raw as Dict[string, any]，不匹配给 null）\n"
@@ -2453,7 +2450,6 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                             "要按类型取元素请收窄到带泛型参数的容器（如 Dict[string, any]、Array[string]），"
                             "见 docs/类型收窄与绑定语法改进.md",
                             var_name, member_name, var_name, var_name, member_name);
-                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     }
                     ast->cached_type = type_new(TYPE_ANY);
                     return type_copy(ast->cached_type);
@@ -2505,7 +2501,10 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                                 }
                             }
                             if (!known) {
-                                char msg[256];
+                                // ⚠ 这里**保留缓冲**（不是旧写法残留）：去重要用 `error_has_at(.., msg)`，
+                                //   它必须拿到**拼好的那句话** ⇒ 走不了 `error_add_at_fmt`（那条路一调就入库 ✗）。
+                                //   缓冲尺寸统一走 `BUFFER_MSG` ✓（原来写死的 256 已在迁移中换掉 ✓）
+                                char msg[BUFFER_MSG];
                                 snprintf(msg, sizeof(msg), "struct '%s' 没有字段 '%s'",
                                          recv->struct_name, key);
                                 // 同样先去重 ✓（与上面 AST_FIELD_ACCESS 那条同一理由 ✓）
@@ -2558,12 +2557,10 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                                     own = 1;
                                 }
                                 if (!own) {
-                                    char msg[256];
-                                    snprintf(msg, sizeof(msg),
+                                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                                         "'%s.%s' 是 pri 私有字段 —— 只有 %s 自己的方法内部可以访问它；"
                                         "要对外开放就把 'pri' 去掉（默认全公有）",
                                         recv->struct_name, key, recv->struct_name);
-                                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                 }
                             }
                         }
@@ -2719,7 +2716,6 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     }
                     // 如果已有模块加载失败，抑制级联 any 错误
                     if (!s->has_module_load_failure) {
-                        char msg[768];
                         // ★ 2026-09-18（P1）：同上一处 —— 补"裸容器收窄后取元素仍是 any"这句，
                         //   否则用户照提示改完仍然失败（这是本次 TraeSign 移植最费时的一处 ✗）。
                         const char* caveat =
@@ -2729,22 +2725,21 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                             "要按类型取元素请收窄到带泛型参数的容器（如 Dict[string, any]、Array[string]），"
                             "见 docs/类型收窄与绑定语法改进.md";
                         if (var_name && field_name) {
-                            snprintf(msg, sizeof(msg),
+                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                                 "不能在 any 类型 '%s' 上直接访问字段 '%s'\n"
                                 "  提示: 使用 if %s is Type { %s.%s } 进行类型收窄%s",
                                 var_name, field_name, var_name, var_name, field_name, caveat);
                         } else if (field_name) {
-                            snprintf(msg, sizeof(msg),
+                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                                 "不能在 any 类型上直接访问字段 '%s'\n"
                                 "  提示: 使用 if x is Type { x.%s } 进行类型收窄%s",
                                 field_name, field_name, caveat);
                         } else {
-                            snprintf(msg, sizeof(msg),
+                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                                 "不能在 any 类型上进行索引访问\n"
                                 "  提示: 使用 if x is Array { x[i] } 进行类型收窄%s",
                                 caveat);
                         }
-                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     }
                     type_free(obj_type);
                     ast->cached_type = type_new(TYPE_ANY);
@@ -2759,11 +2754,9 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                         ok != TYPE_ANY && ok != TYPE_INFER && ok != TYPE_UNKNOWN &&
                         ok != TYPE_GENERIC_PARAM && ok != TYPE_MULTI_RET) {
                         const char* field_name = ast->u.index.index->u.string.value;
-                        char msg[256];
-                        snprintf(msg, sizeof(msg),
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                             "类型 '%s' 不支持属性访问 '.%s'（只有 struct、dict、array 等类型才能访问属性）",
                             type_kind_to_string(ok), field_name);
-                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     }
                 }
                 if (obj_type->kind == TYPE_ARRAY) {
@@ -3304,11 +3297,9 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     ok != TYPE_ANY && ok != TYPE_INFER && ok != TYPE_UNKNOWN &&
                     ok != TYPE_GENERIC_PARAM && ok != TYPE_MULTI_RET) {
                     const char* field_name = ast->u.field_access.field_name;
-                    char msg[256];
-                    snprintf(msg, sizeof(msg),
+                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                         "类型 '%s' 不支持属性访问 '.%s'（只有 struct、dict、array 等类型才能访问属性）",
                         type_kind_to_string(ok), field_name);
-                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                 }
             }
 

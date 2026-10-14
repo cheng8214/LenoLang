@@ -204,9 +204,8 @@
                             if (idx >= 0) {
                                 ast->u.field_access.field_index = idx;
                             } else {
-                                char msg[BUFFER_MEDIUM];
-                                snprintf(msg, sizeof(msg), "cstruct 没有字段 '%s'", field_name);
-                                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                 "cstruct 没有字段 '%s'", field_name);
                             }
                         } else {
                             // 全局表可能还没注册（语义分析阶段模块尚未编译执行），从导入模块的符号表查找
@@ -227,9 +226,8 @@
                                 }
                             }
                             if (!found) {
-                                char msg[BUFFER_MEDIUM];
-                                snprintf(msg, sizeof(msg), "cstruct 没有字段 '%s'", field_name);
-                                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                 "cstruct 没有字段 '%s'", field_name);
                             }
                         }
                     } else if (!struct_sym && obj_type->kind == TYPE_STRUCT && obj_type->struct_name) {
@@ -260,10 +258,9 @@
                                 }
                             }
                             if (!hit) {
-                                char msg[BUFFER_MEDIUM];
-                                snprintf(msg, sizeof(msg), "struct '%s' 没有字段 '%s'",
+                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                         "struct '%s' 没有字段 '%s'",
                                          obj_type->struct_name, field_name);
-                                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                             }
                             break;   // 该 struct 已在本模块符号表里找到 ⇒ 判完即止 ✓
                         }
@@ -430,10 +427,9 @@
                                 }
                             }
                             if (!field_found) {
-                                char msg[BUFFER_MEDIUM];
                                 const char* type_kind_name = (obj_type->kind == TYPE_CSTRUCT) ? "cstruct" : "struct";
-                                snprintf(msg, sizeof(msg), "%s 没有字段 '%s'", type_kind_name, name);
-                                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                 "%s 没有字段 '%s'", type_kind_name, name);
                             }
                         }
                     } else if (!struct_sym && obj_type->kind == TYPE_CSTRUCT && obj_type->struct_name) {
@@ -444,9 +440,8 @@
                             if (idx >= 0) {
                                 ast->u.safe_access.field_index = idx;
                             } else {
-                                char msg[BUFFER_MEDIUM];
-                                snprintf(msg, sizeof(msg), "cstruct 没有字段 '%s'", name);
-                                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                 "cstruct 没有字段 '%s'", name);
                             }
                         }
                     }

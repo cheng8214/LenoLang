@@ -61,13 +61,11 @@
                                  "未定义的 struct 类型 '%s'", ast->u.struct_init.struct_name);
                     }
                 } else if (sym->type->kind == TYPE_FACE) {
-                    char msg[BUFFER_MEDIUM];
-                    snprintf(msg, sizeof(msg), "face '%s' 不能实例化", ast->u.struct_init.struct_name);
-                    error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
+                    error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                                     "face '%s' 不能实例化", ast->u.struct_init.struct_name);
                 } else if (sym->type->kind != TYPE_STRUCT) {
-                    char msg[BUFFER_MEDIUM];
-                    snprintf(msg, sizeof(msg), "'%s' 不是 struct 类型", ast->u.struct_init.struct_name);
-                    error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
+                    error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                                     "'%s' 不是 struct 类型", ast->u.struct_init.struct_name);
                 } else if (sym->struct_type_param_count > 0 && ast->u.struct_init.generic_type_count == 0) {
                     // 检查是否有默认类型参数
                     int found_defaults = 0;
@@ -109,10 +107,9 @@
                         }
                     }
                     if (!found_defaults) {
-                        char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg), "泛型 struct '%s' 需要类型参数（如 %s[类型]）",
-                                 ast->u.struct_init.struct_name, ast->u.struct_init.struct_name);
-                        error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
+                        error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                                         "泛型 struct '%s' 需要类型参数（如 %s[类型]）",
+                                         ast->u.struct_init.struct_name, ast->u.struct_init.struct_name);
                     }
                 } else {
                     // 检查 struct 是否有析构函数，设置 has_dtor 标志供 codegen 使用
@@ -147,10 +144,9 @@
                         }
 
                         if (!expected_type) {
-                            char msg[BUFFER_MEDIUM];
-                            snprintf(msg, sizeof(msg), "struct '%s' 没有字段 '%s'",
-                                     ast->u.struct_init.struct_name, field_name);
-                            error_add_at(ERR_UNDEFINED_VAR, ast->line, ast->column, msg);
+                            error_add_at_fmt(ERR_UNDEFINED_VAR, ast->line, ast->column,
+                                             "struct '%s' 没有字段 '%s'",
+                                             ast->u.struct_init.struct_name, field_name);
                         } else if (field_value) {
                             // 推断参数字段的类型
                             TypeInfo* actual_type = infer_expr_type(s, field_value);
