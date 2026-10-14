@@ -259,7 +259,7 @@ static int target_cond_eval(Ast* cond) {
 
     if (t >= 0) return t;
     if (!g_tc_diag_reported && cond) {
-        error_add_at(ERR_SEMANTIC, cond->line, cond->column,
+        error_add_at_fmt(ERR_SEMANTIC, cond->line, cond->column,
             "target 条件必须是编译期可判定的常量表达式"
             "（只允许 target.os / arch / family / pointer_bits 与字面量，配合 == != and or not）");
     }
@@ -1326,7 +1326,7 @@ void optimize_target_prune(Ast* ast) {
             int saw = 0;
             (void)tc_eval(it->u.if_.cond, &saw);
             if (saw) {
-                error_add_at(ERR_SEMANTIC, it->line, it->column,
+                error_add_at_fmt(ERR_SEMANTIC, it->line, it->column,
                     "模块级的编译期 target 条件暂不支持（export 级还牵涉模块符号表的文本扫描器）；"
                     "请把它放进函数体内，或用运行期的 _os() 判断 ✓");
                 return;   /* 已报错 ⇒ 别再往下剪（调用方会在本 pass 之后停住 ✓）*/

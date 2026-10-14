@@ -414,14 +414,12 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
                                 }
                             }
                             if (all_params) {
-                                char cmsg[BUFFER_LARGE];
-                                snprintf(cmsg, sizeof(cmsg),
+                                warning_add_at_fmt(WARN_SELF_FORWARD, ast->line, ast->column,
                                     "裸调用 `%s(...)` 与所在方法同名，实参就是它自己的形参 ⇒ 会被解析成"
                                     "**调用自身** ⇒ 无限递归（栈溢出）。若本意是调同文件的模块级函数 `%s`"
                                     "（去下划线改名后两者撞名了），请给这个方法改名区分开；确实要递归"
                                     "请改实参或加终止条件",
                                     saved_method_name, saved_method_name);
-                                warning_add_at(WARN_SELF_FORWARD, ast->line, ast->column, cmsg);
                                 warned_self_forward = 1;   // 已报更具体的那条 ⇒ 不必再报"同名歧义" ✓
                             }
                         }
@@ -440,13 +438,11 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
                                 cur_method_name && strcmp(saved_method_name, cur_method_name) == 0 &&
                                 ast->u.call.args.count == cur_amb_pcnts[ai] &&
                                 (!cur_amb_meth_pcnts || ast->u.call.args.count == cur_amb_meth_pcnts[ai])) {
-                                char amsg[BUFFER_LARGE];
-                                snprintf(amsg, sizeof(amsg),
+                                warning_add_at_fmt(WARN_METHOD_NAME_AMBIGUOUS, ast->line, ast->column,
                                     "裸调用 `%s(...)` 有歧义：它与所在方法同名，而这个名字还能按裸名解析到"
                                     "形参个数相同的全局/模块函数 `%s`，**实际会调用本 struct 的方法**"
                                     "（方法优先）。要调方法请显式写 `self.%s(...)`；要调那个函数请改名区分",
                                     saved_method_name, saved_method_name, saved_method_name);
-                                warning_add_at(WARN_METHOD_NAME_AMBIGUOUS, ast->line, ast->column, amsg);
                                 break;
                             }
                         }

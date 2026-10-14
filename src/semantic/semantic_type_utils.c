@@ -1789,12 +1789,10 @@ int semantic_check_native_arg(Semantic* s, Ast* ast, TypeInfo* arg_type, TypeKin
                 TypeKind ck = semantic_constraint_builtin_kind(cons);
                 if (ck != TYPE_UNKNOWN) {
                     if (expected == ck) return 1;   // 约束已保证 native 形参相容 ✓（无需记需求）
-                    char m[BUFFER_MEDIUM];
-                    snprintf(m, sizeof(m),
+                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                              "泛型参数 '%s' 约束为 '%s'，但 %s 的第 %d 个参数期望 '%s' —— 两者不相容",
                              nm, cons, callee_desc ? callee_desc : "native 方法", arg_index + 1,
                              type_kind_to_string(expected));
-                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, m);
                     return 1;
                 }
                 semantic_record_generic_requirement(s, nm, expected, ast->line, callee_desc);
@@ -1817,12 +1815,10 @@ int semantic_check_native_arg(Semantic* s, Ast* ast, TypeInfo* arg_type, TypeKin
                 TypeKind ck = semantic_constraint_builtin_kind(cons);
                 if (ck != TYPE_UNKNOWN) {
                     if (expected == ck) return 1;   // 约束已保证 ✓
-                    char m[BUFFER_MEDIUM];
-                    snprintf(m, sizeof(m),
+                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                              "泛型参数 '%s' 约束为 '%s'，但 %s 的第 %d 个参数期望 '%s' —— 两者不相容",
                              nm, cons, callee_desc ? callee_desc : "native 方法", arg_index + 1,
                              type_kind_to_string(expected));
-                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, m);
                     return 1;
                 }
                 semantic_record_generic_requirement(s, nm, expected, ast->line, callee_desc);

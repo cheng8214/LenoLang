@@ -20,10 +20,8 @@ void visit_list(Semantic* s, AstList* list) {
         else if (ucur->kind == AST_BREAK) uwhat = "break";
         else if (ucur->kind == AST_CONTINUE) uwhat = "continue";
         if (!uwhat) continue;
-        char urmsg[BUFFER_MEDIUM];
-        snprintf(urmsg, sizeof(urmsg),
+        warning_add_at_fmt(WARN_UNREACHABLE, unxt->line, unxt->column,
                  "这条语句在 '%s' 之后，永远不会被执行（不可达代码）", uwhat);
-        warning_add_at(WARN_UNREACHABLE, unxt->line, unxt->column, urmsg);
         break;
     }
 

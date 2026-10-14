@@ -135,7 +135,7 @@ Ast* parse_precedence(Parser* p, Precedence precedence) {
     // 没有前缀解析器，报错并消费错误 token 后返回 NULL
     // 消费 token 确保高级别错误恢复不会重复遇到同一个无法解析的 token
     if (!rule->prefix) {
-        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望表达式");
+        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望表达式");
         if (p->lex.current.type != TOK_EOF) {
             lexer_next(&p->lex);
         }
@@ -170,7 +170,7 @@ Ast* parse_precedence(Parser* p, Precedence precedence) {
     //   外层（否则 `:` 与 else 分支会再刷一串级联错误，反而盖住这条真因 ✗）。
     //   返回值照旧是左侧表达式（解析能继续往下走 ✓）。
     if (p->lex.current.type == TOK_QUESTION) {
-        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
             "Leno **没有** `条件 ? a : b` 这种三元表达式 ✗ —— 请写成 "
             "`if 条件 then a else b`（多分支可链 `eif`："
             "`if c1 then a eif c2 then b else d`，`then` 是三元表达式的专属标记 ✓）");
@@ -292,7 +292,7 @@ Ast* parse_interp_string(Parser* p) {
             if (p->lex.current.type == TOK_RBRACE) {
                 lexer_next(&p->lex); // 消费 }
             } else {
-                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 '}'");
+                error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 '}'");
                 break;
             }
 
@@ -477,7 +477,7 @@ Ast* parse_dict(Parser* p) {
             int key_col = p->lex.current.column;
             key_ast = parse_number(p);
             if (key_ast && key_ast->kind == AST_NUM && key_ast->u.num.is_float) {
-                error_add_at(ERR_SYNTAX, key_line, key_col,
+                error_add_at_fmt(ERR_SYNTAX, key_line, key_col,
                              "字典键必须是字符串、标识符或整数（浮点数不能作键）");
                 ast_free(key_ast);
                 // 恢复：吃掉本字典剩下的 token 到配对的 '}'（含）为止 —— 不这么做的话调用方会在
@@ -501,7 +501,7 @@ Ast* parse_dict(Parser* p) {
                          "不能使用关键字(%.*s)作为字典键",
                          p->lex.current.len, p->lex.current.text);
             } else {
-                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "字典键必须是字符串、标识符或整数");
+                error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "字典键必须是字符串、标识符或整数");
             }
             break;
         }
@@ -521,7 +521,7 @@ Ast* parse_dict(Parser* p) {
             DictEntry* new_entries = (DictEntry*)realloc(ast->u.dict.entries, sizeof(DictEntry) * new_capacity);
             if (!new_entries) {
                 ast_free(key_ast);
-                error_add_at(ERR_RUNTIME, line, p->lex.current.column, "内存分配失败");
+                error_add_at_fmt(ERR_RUNTIME, line, p->lex.current.column, "内存分配失败");
                 break;
             }
             ast->u.dict.entries = new_entries;
@@ -557,7 +557,7 @@ Ast* parse_if_expr(Parser* p) {
     if (p->lex.current.type == TOK_IF || p->lex.current.type == TOK_EIF) {
         lexer_next(&p->lex); // 消费 if/eif
     } else {
-        error_add_at(ERR_SYNTAX, line, p->lex.current.column, "期望 if 或 eif 关键字");
+        error_add_at_fmt(ERR_SYNTAX, line, p->lex.current.column, "期望 if 或 eif 关键字");
         return NULL;
     }
 
@@ -746,7 +746,7 @@ Ast* parse_new(Parser* p) {
 
     // 期望 struct 名称（标识符）
     if (p->lex.current.type != TOK_IDENT) {
-        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "new 后面期望 struct 名称");
+        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "new 后面期望 struct 名称");
         return ast_new(AST_NULL, line);
     }
 
@@ -758,7 +758,7 @@ Ast* parse_new(Parser* p) {
     if (p->lex.current.type == TOK_DOT) {
         lexer_next(&p->lex); // 消费 '.'
         if (p->lex.current.type != TOK_IDENT) {
-            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 struct 名称");
+            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 struct 名称");
             free(struct_name);
             return ast_new(AST_NULL, line);
         }
@@ -806,7 +806,7 @@ Ast* parse_new(Parser* p) {
             }
             TypeInfo* type_arg = parse_type(p);
             if (!type_arg) {
-                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望类型参数");
+                error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望类型参数");
                 type_arg = type_new(TYPE_ANY);
             }
             generic_type_args[generic_type_count++] = type_arg;
@@ -852,7 +852,7 @@ Ast* parse_new(Parser* p) {
             if (p->lex.current.type == TOK_RPAREN) break;
             // 期望字段名
             if (p->lex.current.type != TOK_IDENT) {
-                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望字段名");
+                error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望字段名");
                 break;
             }
 
@@ -1069,7 +1069,7 @@ Ast* parse_dot(Parser* p, Ast* left) {
                      "不能使用关键字(%.*s)作为属性名",
                      p->lex.current.len, p->lex.current.text);
         } else {
-            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望属性名");
+            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望属性名");
         }
         return left;
     }
@@ -1184,7 +1184,7 @@ Ast* parse_safe_dot(Parser* p, Ast* left) {
     lexer_next(&p->lex); // 消费 '?.'
     // 期望标识符
     if (p->lex.current.type != TOK_IDENT) {
-        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "?. 后期望属性名");
+        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "?. 后期望属性名");
         return left;
     }
     char* name = copy_string(p->lex.current.text, p->lex.current.len);
@@ -1343,7 +1343,7 @@ Ast* parse_assignment(Parser* p, Ast* left) {
     }
 
     if (left->kind != AST_VAR) {
-        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "赋值目标必须是变量");
+        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "赋值目标必须是变量");
         return NULL;
     }
 
@@ -1416,7 +1416,7 @@ Ast* parse_type_check(Parser* p, Ast* left) {
 
     // ★ `is not`：紧跟 `is` 之后的 `not` ⇒ 单条说清"不支持" ✓（别让它变成两条噪音 ✗）
     if (p->lex.current.type == TOK_NOT) {
-        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
                      "本语言不支持 `is not` —— 取反请写 `x not is 类型`"
                      "（if / for 条件里 ✓ 如 if a not is string）或 `not (x is 类型)`（表达式里 ✓）");
         lexer_next(&p->lex);   // 消费 `not` ✓ 让后面按正常的 `is 类型` 继续解析（不当场再喷一条 ✗）
@@ -1425,7 +1425,7 @@ Ast* parse_type_check(Parser* p, Ast* left) {
     // 解析类型
     TypeInfo* type_info = parse_type(p);
     if (!type_info) {
-        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "类型检查表达式期望类型名（如 int, float, string, bool, Array[int] 等）");
+        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "类型检查表达式期望类型名（如 int, float, string, bool, Array[int] 等）");
         return left;
     }
     // 模块限定类型名（`v is a.Point`）：此前会静默 misparse 成 `(v is a).Point`
@@ -1444,7 +1444,7 @@ Ast* parse_as_cast(Parser* p, Ast* left) {
 
     TypeInfo* type_info = parse_type(p);
     if (!type_info) {
-        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "as 转型表达式期望类型名");
+        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "as 转型表达式期望类型名");
         return left;
     }
     // 模块限定类型名（`v as a.Point`）：此前**语法通过**、运行期才炸（最坏的一种）

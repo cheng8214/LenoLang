@@ -882,12 +882,10 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
     if (ast->u.func.return_type && ast->u.func.return_type->kind != TYPE_INFER &&
         ast->u.func.return_type->kind != TYPE_NULL &&
         ast->u.func.body && !stmt_always_exits(ast->u.func.body)) {
-        char mrmsg[BUFFER_MEDIUM];
-        snprintf(mrmsg, sizeof(mrmsg),
+        warning_add_at_fmt(WARN_MISSING_RETURN, ast->line, ast->column,
                  "函数 '%s' 声明了返回值，但存在没有 return 的路径 ⇒ 漏写 return 时调用点会"
                  "**静默拿到 null**（实测如此 ✓，请补 return 或在末尾 return 兜底值）",
                  ast->u.func.name ? ast->u.func.name : "?");
-        warning_add_at(WARN_MISSING_RETURN, ast->line, ast->column, mrmsg);
     }
 
     s->cur_generic_func = saved_generic_func;

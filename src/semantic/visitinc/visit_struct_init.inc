@@ -191,13 +191,11 @@
                                         TypeInfo* arg_ti = ast->u.struct_init.generic_type_args[gi];
                                         if (ck != TYPE_UNKNOWN && arg_ti &&
                                             !(arg_ti->kind == ck || (ck == TYPE_INT && arg_ti->kind == TYPE_BIGINT))) {
-                                            char cmsg[BUFFER_MEDIUM];
-                                            snprintf(cmsg, sizeof(cmsg),
+                                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                                                      "类型 '%s' 不满足约束 '%s'（struct '%s' 的类型参数 '%s' 被约束为具体类型）",
                                                      type_kind_to_string(arg_ti->kind), cons,
                                                      ast->u.struct_init.struct_name,
                                                      struct_def_ast->u.struct_def.type_params[gi]);
-                                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, cmsg);
                                         }
                                         TypeInfo* sub = semantic_substitute_generic_param(check_type,
                                             struct_def_ast->u.struct_def.type_params[gi],

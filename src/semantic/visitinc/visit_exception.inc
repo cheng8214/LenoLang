@@ -28,7 +28,7 @@
                     // ⚠ 2026-09-28 起由**警告升为错误**（用户要求 ✓）：空 catch 一律不允许 ✗，
                     //   体里放一个真语句即可 —— `catch e { return }` / `catch e { continue }` /
                     //   `catch e { _dlog(...) }` ✓（只写注释不算 ⇒ 注释不是 AST 节点 ✗）
-                    error_add_at(ERR_SEMANTIC, ast->line, ast->column,
+                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                         "[空catch吞异常] 空 catch 会静默吞掉异常（含 as 收窄失败等运行期错误 ⇒ "
                         "功能会「没反应」）；请至少记一行日志，确定要忽略就写 catch e { return }");
                 }

@@ -1552,7 +1552,7 @@ void gen_unary(CodeGen* gen, Ast* ast, int dst) {
     if (op == TOK_INC || op == TOK_DEC) {
         if (!operand_ast || operand_ast->kind != AST_VAR) {
             // 字段/索引等非变量目标：设计上不支持（且静默不动会让 `pa.x++` 变成空操作 ✗）
-            error_add_at(ERR_SEMANTIC, ast->line, ast->column, "++ 和 -- 只能用于变量");
+            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column, "++ 和 -- 只能用于变量");
             emit_loadnil_to(gen, dst, ast->line);
             return;
         }

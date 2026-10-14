@@ -2438,9 +2438,8 @@ static void gen_import(CodeGen* gen, Ast* ast) {
 
     if (!module) {
         if (!error_has_any()) {
-            char err_msg[BUFFER_MEDIUM];
-            snprintf(err_msg, sizeof(err_msg), "无法加载模块 '%s'", mod);
-            error_add_at(ERR_SEMANTIC, ast->line, ast->column, err_msg);
+            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                             "无法加载模块 '%s'", mod);
         }
         if (extracted) free(extracted);
         return;

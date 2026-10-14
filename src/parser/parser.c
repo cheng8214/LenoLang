@@ -41,7 +41,7 @@ Ast* parse_statement(Parser* p) {
         }
         if (sub) {
             int bad_line = p->lex.current.line;
-            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, sub);
+            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "%s", sub);
             // 跳到本行末尾（但**见了 `{` 就停**）：这些词后面多半还跟着一截旧语法 ⇒
             //   不跳会再刷一串级联错误 ✗。
             //   ⚠ 必须保留那个 `{` 并整块跳掉 —— 否则 `function f() {` 的 `{` 被吃掉后，
@@ -140,7 +140,7 @@ Ast* parse_statement(Parser* p) {
         //   ★ 顺带说明为什么不需要它：模块级**不加 export 就是文件私有**（Leno 的可见性规则 ✓）
         //     ⇒ 顶层根本用不到 pri；pri 只用于 struct 内"仅本 struct 可见"的字段/方法/关联常量 ✓
         case TOK_PRI:
-            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
                 "pri 只能用于 struct 成员；模块级不加 'export' 就是文件私有，请去掉 'pri'");
             lexer_next(&p->lex);   // 跳过 pri，让后面的 func/var 照常解析（尽量不连带报错 ✓）
             return NULL;
@@ -224,7 +224,7 @@ Ast* parse_statement(Parser* p) {
                 int ident_len = p->lex.current.len;
                 const char* ident_text = p->lex.current.text;
                 if (ident_len == 4 && strncmp(ident_text, "this", 4) == 0) {
-                    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                    error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
                         "不支持的关键字 'this'，请使用 'self' 引用当前对象");
                     lexer_next(&p->lex);  // 跳过 this
                     return NULL;

@@ -215,11 +215,9 @@
                                     }
                                 }
                                 if (!has_c) {
-                                    char wmsg[BUFFER_MEDIUM];
-                                    snprintf(wmsg, sizeof(wmsg),
+                                    warning_add_at_fmt(WARN_GENERIC_NO_CONSTRAINT, ast->line, ast->column,
                                         "泛型参数 '%s' 参与%s运算无约束",
                                         gname, is_arith ? "算术" : "比较");
-                                    warning_add_at(WARN_GENERIC_NO_CONSTRAINT, ast->line, ast->column, wmsg);
                                 }
                             }
                         }
@@ -594,6 +592,12 @@
                                             Ast* arg = ast->u.call.args.items[pi];
                                             TypeInfo* arg_type = infer_expr_type(s, arg);
                                             if (expected_param && arg_type && !type_is_compatible(expected_param, arg_type)) {
+                                                // ⚠ 本处**保留两层缓冲**（全仓唯一的一类例外，共 2 处：这里与
+                                                //   visit_module.inc 的同名分支）：`format_type_error` 只认
+                                                //   `%s1..%s4` 四个占位符，而这条文案要用 5 个替换位
+                                                //   （期望/实际两个类型 + 结构名 + 方法名 + 参数序号）✗
+                                                //   ⇒ 先出模板、再把模板里的 `%d` 填掉。若哪天给
+                                                //   format_type_error 加第 5 个槽位（`%s5`），这两处即可一行收 ✓
                                                 char msg[BUFFER_MEDIUM];
                                                 format_type_error(msg, sizeof(msg),
                                                     "clib '%s3' 函数 '%s4' 参数 %d 类型不匹配: 期望 '%s1', 实际 '%s2'",

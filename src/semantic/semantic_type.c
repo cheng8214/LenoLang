@@ -642,13 +642,11 @@ TypeInfo* infer_field_type(Semantic* s, TypeInfo* obj_type, const char* field_na
                             inside_own = 1;
                         }
                         if (!inside_own) {
-                            char pri_msg[BUFFER_MEDIUM];
-                            snprintf(pri_msg, sizeof(pri_msg),
+                            error_add_at_fmt(ERR_SEMANTIC, ssym->fields[fi].line, 1,
                                 "'%s.%s' 是 pri 私有字段（%s 第 %d 行）—— 只有 %s 自己的方法内部可以访问它；"
                                 "要对外开放就把 'pri' 去掉（默认全公有）",
                                 obj_type->struct_name, field_name, error_get_filename(),
                                 ssym->fields[fi].line, obj_type->struct_name);
-                            error_add_at(ERR_SEMANTIC, ssym->fields[fi].line, 1, pri_msg);
                         }
                     }
                     TypeInfo* result = type_new(ssym->fields[fi].type);
@@ -788,10 +786,10 @@ static int is_nullable_value_kind(TypeInfo* t) {
 
 static void check_nullable_arith(TypeInfo* left, TypeInfo* right, int line, int column) {
     if (is_nullable_value_kind(left)) {
-        warning_add_at(WARN_NULLABLE_ARITH, line, column,
+        warning_add_at_fmt(WARN_NULLABLE_ARITH, line, column,
             "nullable 值类型参与算术运算，运行时可能为 null，请先检查变量是否为 null（如 if a != null）");
     } else if (is_nullable_value_kind(right)) {
-        warning_add_at(WARN_NULLABLE_ARITH, line, column,
+        warning_add_at_fmt(WARN_NULLABLE_ARITH, line, column,
             "nullable 值类型参与算术运算，运行时可能为 null，请先检查变量是否为 null（如 if a != null）");
     }
 }
@@ -1287,7 +1285,7 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     // null 参与加法 -> 编译错误
                     else if (left && right &&
                         (left->kind == TYPE_NULL || right->kind == TYPE_NULL)) {
-                        error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, "null 类型不能参与算术运算，请先检查变量是否为 null");
+                        error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "null 类型不能参与算术运算，请先检查变量是否为 null");
                         result = type_new(TYPE_ANY);
                     }
                     // nullable 值类型参与算术运算 -> 警告
@@ -1316,7 +1314,7 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     // bool 参与加法 -> 编译错误
                     else if (left && right &&
                         (left->kind == TYPE_BOOL || right->kind == TYPE_BOOL)) {
-                        error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, "bool 类型不能参与算术运算");
+                        error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "bool 类型不能参与算术运算");
                         result = type_new(TYPE_ANY);
                     }
                     // 数值类型推导：int + int = int, int + float = float, float + float = float
@@ -1337,7 +1335,7 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                             result = type_copy(left);
                         } else if (left->kind == TYPE_CLIB || right->kind == TYPE_CLIB) {
                             // clib 类型：返回的是 C 类型（i32/i64/f32 等），需要 as int/as float 显式转换
-                            error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, "clib 返回的 C 类型不能直接参与运算，请用 as int 或 as float 显式转换");
+                            error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "clib 返回的 C 类型不能直接参与运算，请用 as int 或 as float 显式转换");
                             result = type_new(TYPE_ANY);
                         } else {
                             result = type_new(TYPE_FLOAT);
@@ -1352,7 +1350,7 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     // null 参与减法/乘法 -> 编译错误
                     if (left && right &&
                         (left->kind == TYPE_NULL || right->kind == TYPE_NULL)) {
-                        error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, "null 类型不能参与算术运算，请先检查变量是否为 null");
+                        error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "null 类型不能参与算术运算，请先检查变量是否为 null");
                         result = type_new(TYPE_ANY);
                     }
                     // nullable 值类型参与算术运算 -> 警告
@@ -1380,13 +1378,13 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     // bool 参与减法/乘法 -> 编译错误
                     else if (left && right &&
                         (left->kind == TYPE_BOOL || right->kind == TYPE_BOOL)) {
-                        error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, "bool 类型不能参与算术运算");
+                        error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "bool 类型不能参与算术运算");
                         result = type_new(TYPE_ANY);
                     }
                     // string 参与减法/乘法 -> 编译错误
                     else if (left && right &&
                         (left->kind == TYPE_STRING || right->kind == TYPE_STRING)) {
-                        error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, "string 类型不能参与算术运算");
+                        error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "string 类型不能参与算术运算");
                         result = type_new(TYPE_ANY);
                     }
                     // 数值类型推导
@@ -1403,7 +1401,7 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                         } else if (type_equals(left, right)) {
                             result = type_copy(left);
                         } else if (left->kind == TYPE_CLIB || right->kind == TYPE_CLIB) {
-                            error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, "clib 返回的 C 类型不能直接参与运算，请用 as int 或 as float 显式转换");
+                            error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "clib 返回的 C 类型不能直接参与运算，请用 as int 或 as float 显式转换");
                             result = type_new(TYPE_ANY);
                         } else {
                             result = type_new(TYPE_FLOAT);
@@ -1417,7 +1415,7 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     // null 参与除法 -> 编译错误
                     if (left && right &&
                         (left->kind == TYPE_NULL || right->kind == TYPE_NULL)) {
-                        error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, "null 类型不能参与算术运算，请先检查变量是否为 null");
+                        error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "null 类型不能参与算术运算，请先检查变量是否为 null");
                         result = type_new(TYPE_ANY);
                     }
                     // nullable 值类型参与算术运算 -> 警告
@@ -1441,13 +1439,13 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     // bool 参与除法 -> 编译错误
                     else if (left && right &&
                         (left->kind == TYPE_BOOL || right->kind == TYPE_BOOL)) {
-                        error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, "bool 类型不能参与算术运算");
+                        error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "bool 类型不能参与算术运算");
                         result = type_new(TYPE_ANY);
                     }
                     // string 参与除法 -> 编译错误
                     else if (left && right &&
                         (left->kind == TYPE_STRING || right->kind == TYPE_STRING)) {
-                        error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, "string 类型不能参与算术运算");
+                        error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "string 类型不能参与算术运算");
                         result = type_new(TYPE_ANY);
                     }
                     // 泛型参数参与运算：T / 1 = T（保持泛型类型）
@@ -1476,7 +1474,7 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     }
                     else if (left && right &&
                              (left->kind == TYPE_CLIB || right->kind == TYPE_CLIB)) {
-                        error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, "clib 返回的 C 类型不能直接参与运算，请用 as int 或 as float 显式转换");
+                        error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "clib 返回的 C 类型不能直接参与运算，请用 as int 或 as float 显式转换");
                         result = type_new(TYPE_ANY);
                     }
                     else {
@@ -1493,7 +1491,7 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     // null 参与位运算/取模 -> 编译错误
                     if (left && right &&
                         (left->kind == TYPE_NULL || right->kind == TYPE_NULL)) {
-                        error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, "null 类型不能参与算术运算，请先检查变量是否为 null");
+                        error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "null 类型不能参与算术运算，请先检查变量是否为 null");
                         result = type_new(TYPE_ANY);
                     }
                     // nullable 值类型参与位运算/取模 -> 警告
@@ -1508,13 +1506,13 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     // bool 参与位运算/取模 -> 编译错误
                     else if (left && right &&
                         (left->kind == TYPE_BOOL || right->kind == TYPE_BOOL)) {
-                        error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, "bool 类型不能参与算术运算");
+                        error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "bool 类型不能参与算术运算");
                         result = type_new(TYPE_ANY);
                     }
                     // string 参与位运算/取模 -> 编译错误
                     else if (left && right &&
                         (left->kind == TYPE_STRING || right->kind == TYPE_STRING)) {
-                        error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, "string 类型不能参与算术运算");
+                        error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "string 类型不能参与算术运算");
                         result = type_new(TYPE_ANY);
                     }
                     // 位运算和取模：如果任一操作数是 bigint，返回 bigint
@@ -1545,20 +1543,20 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                         int right_is_generic = (right->kind == TYPE_GENERIC_PARAM);
                         // 检查不兼容的组合
                         if ((left_is_num && right_is_string) || (left_is_string && right_is_num)) {
-                            error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, "数值类型不能和 string 类型进行大小比较");
+                            error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "数值类型不能和 string 类型进行大小比较");
                         } else if (left_is_string && right_is_string) {
                             // string 和 string 比较是允许的
                         } else if (!left_is_num && !right_is_num && !left_is_string && !right_is_string
                                    && !left_is_generic && !right_is_generic) {
                             // 其他不兼容类型（排除泛型参数）
-                            error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, "不兼容的类型不能进行大小比较");
+                            error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "不兼容的类型不能进行大小比较");
                         }
                     }
                     // any 类型不能参与大小比较（如无类型参数的 Array 元素）：
                     // 编译期能确定的类型问题不放过到运行时
                     else if (left && right &&
                                (left->kind == TYPE_ANY || right->kind == TYPE_ANY)) {
-                        error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                        error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
                             "any 类型不能参与大小比较，请指定数组元素类型（如 Array[int]）");
                     }
                     result = type_new(TYPE_BOOL);
@@ -1602,19 +1600,19 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                 report_known_null_operand(s, ast->u.unary.operand, ast);   // ★ T11：同口径
                 // 负号：bool 参与 -> 编译错误
                 if (operand && operand->kind == TYPE_BOOL) {
-                    error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, "bool 类型不能参与算术运算");
+                    error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "bool 类型不能参与算术运算");
                     type_free(operand);
                     result = type_new(TYPE_ANY);
                 }
                 // 负号：string 参与 -> 编译错误
                 else if (operand && operand->kind == TYPE_STRING) {
-                    error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, "string 类型不能参与算术运算");
+                    error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "string 类型不能参与算术运算");
                     type_free(operand);
                     result = type_new(TYPE_ANY);
                 }
                 // 负号：null 参与 -> 编译错误
                 else if (operand && operand->kind == TYPE_NULL) {
-                    error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, "null 类型不能参与算术运算，请先检查变量是否为 null");
+                    error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "null 类型不能参与算术运算，请先检查变量是否为 null");
                     type_free(operand);
                     result = type_new(TYPE_ANY);
                 }
@@ -1623,7 +1621,7 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     (operand->kind == TYPE_INT || operand->kind == TYPE_FLOAT ||
                      operand->kind == TYPE_BOOL || operand->kind == TYPE_BIGINT ||
                      operand->kind == TYPE_ENUM)) {   // 枚举 = int（2026-10-12 补，同上）
-                    warning_add_at(WARN_NULLABLE_ARITH, ast->line, ast->column,
+                    warning_add_at_fmt(WARN_NULLABLE_ARITH, ast->line, ast->column,
                         "nullable 值类型参与算术运算，运行时可能为 null，请先检查变量是否为 null（如 if a != null）");
                     result = operand;
                 }

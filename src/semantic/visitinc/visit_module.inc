@@ -46,9 +46,8 @@
                     info->sym_table = module_symbol_table_get_shared(ast->u.import.file_path, current_file);
                     if (!info->sym_table) {
                         // 注册错误并跳过后续注册：否则空符号表会让下游变量被推断为 any，掩盖根因
-                        char err_msg[BUFFER_MEDIUM];
-                        snprintf(err_msg, sizeof(err_msg), "找不到模块文件: %s", ast->u.import.file_path);
-                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, err_msg);
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                         "找不到模块文件: %s", ast->u.import.file_path);
                         // 标记模块信息为加载失败，避免后续任何注册
                         info->load_failed = 1;
                         // 设置全局标志，抑制下游级联 any 错误
@@ -694,6 +693,10 @@
                                         Ast* arg = ast->u.module_call.args.items[pi];
                                         TypeInfo* arg_type = infer_expr_type(s, arg);
                                         if (expected_param && arg_type && !type_is_compatible(expected_param, arg_type)) {
+                                            // ⚠ 本处与 visit_expr.inc 的同名分支是全仓**唯一**保留两层缓冲的地方：
+                                            //   `format_type_error` 只认 `%s1..%s4` 四个占位符，而这条文案要用 5 个
+                                            //   替换位 ⇒ 先出模板、再把模板里的 `%d` 填掉 ✓
+                                            //   （若给 format_type_error 加第 5 槽 `%s5`，这两处即可一行收 ✓）
                                             char msg[BUFFER_MEDIUM];
                                             format_type_error(msg, sizeof(msg),
                                                 "clib '%s3' 函数 '%s4' 参数 %d 类型不匹配: 期望 '%s1', 实际 '%s2'",

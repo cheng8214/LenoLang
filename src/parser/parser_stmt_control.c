@@ -43,7 +43,7 @@ Ast* parse_if_stmt(Parser* p) {
     if (p->lex.current.type == TOK_IF || p->lex.current.type == TOK_EIF) {
         lexer_next(&p->lex); // 消费 if/eif
     } else {
-        error_add_at(ERR_SYNTAX, line, p->lex.current.column, "期望 if 或 eif 关键字");
+        error_add_at_fmt(ERR_SYNTAX, line, p->lex.current.column, "期望 if 或 eif 关键字");
         return NULL;
     }
 
@@ -124,7 +124,7 @@ Ast* parse_if_stmt(Parser* p) {
             // 使用新的类型解析函数解析类型（支持 Array[int], Dict[string, int] 等）
             TypeInfo* type_info = parse_type(p);
             if (!type_info) {
-                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "类型守卫期望类型名（如 int, Array[int], Dict[string, int] 等）");
+                error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "类型守卫期望类型名（如 int, Array[int], Dict[string, int] 等）");
                 free(var_name);
                 if (field_name) free(field_name);
                 return NULL;
@@ -197,7 +197,7 @@ Ast* parse_if_stmt(Parser* p) {
             if (p->lex.current.type == TOK_FAT_ARROW && cond && cond->kind == AST_TYPE_CHECK) {
                 lexer_next(&p->lex); // 消费 "=>"
                 if (p->lex.current.type != TOK_IDENT) {
-                    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "=> 后面期望标识符作为绑定变量名");
+                    error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "=> 后面期望标识符作为绑定变量名");
                     return NULL;
                 }
                 guard_bind_var = (char*)malloc(p->lex.current.len + 1);
@@ -249,7 +249,7 @@ Ast* parse_if_stmt(Parser* p) {
                         // 使用新的类型解析函数
                         TypeInfo* next_type_info = parse_type(p);
                         if (!next_type_info) {
-                            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望类型名");
+                            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望类型名");
                             free(next_var_name);
                             if (next_field_name) free(next_field_name);
                             type_guard_list_free(&guard_conds);
@@ -379,7 +379,7 @@ Ast* parse_if_stmt(Parser* p) {
     if (guard_bind_var == NULL && p->lex.current.type == TOK_FAT_ARROW && cond && cond->kind == AST_TYPE_CHECK) {
         lexer_next(&p->lex); // 消费 "=>"
         if (p->lex.current.type != TOK_IDENT) {
-            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "=> 后面期望标识符作为绑定变量名");
+            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "=> 后面期望标识符作为绑定变量名");
             return NULL;
         }
         guard_bind_var = (char*)malloc(p->lex.current.len + 1);
@@ -411,7 +411,7 @@ Ast* parse_if_stmt(Parser* p) {
 
     // then 分支必须是代码块 {}
     if (p->lex.current.type != TOK_LBRACE) {
-        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "if 语句体必须用大括号 {} 包裹");
+        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "if 语句体必须用大括号 {} 包裹");
         return NULL;
     }
     Ast* then_branch = parse_block_internal(p);
@@ -426,12 +426,12 @@ Ast* parse_if_stmt(Parser* p) {
             else_branch = parse_if_stmt(p);
         } else if (p->lex.current.type == TOK_EIF) {
             // else eif 不合法，报错
-            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "else 后面不能直接跟 eif，请使用 else if 或单独的 eif");
+            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "else 后面不能直接跟 eif，请使用 else if 或单独的 eif");
             return NULL;
         } else {
             // else 分支必须是代码块 {}
             if (p->lex.current.type != TOK_LBRACE) {
-                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "else 语句体必须用大括号 {} 包裹");
+                error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "else 语句体必须用大括号 {} 包裹");
                 return NULL;
             }
             else_branch = parse_block_internal(p);
@@ -472,7 +472,7 @@ Ast* parse_while_stmt(Parser* p) {
 
     // while 循环体必须是代码块 {}
     if (p->lex.current.type != TOK_LBRACE) {
-        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "while 循环体必须用大括号 {} 包裹");
+        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "while 循环体必须用大括号 {} 包裹");
         return NULL;
     }
     Ast* body = parse_block_internal(p);
@@ -513,7 +513,7 @@ Ast* parse_for_stmt(Parser* p) {
         }
         p->lex = saved;
         if (saw_semi) {
-            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
                 "Leno 的 for **不是 C 风格**（没有 `for (初始化; 条件; 步进)`）✗ —— "
                 "数次数写 `for 5 to i { }`、含端点区间写 `for 2:5 to i { }`、"
                 "步进/倒序写 `for 0:5:2 to i { }` / `for 5:0:-1 to i { }`、"
@@ -611,7 +611,7 @@ Ast* parse_for_stmt(Parser* p) {
             }
             lexer_next(&p->lex);
         } else {
-            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "for 循环变量名必须是标识符");
+            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "for 循环变量名必须是标识符");
             return NULL;
         }
         
@@ -631,7 +631,7 @@ Ast* parse_for_stmt(Parser* p) {
                 }
                 lexer_next(&p->lex);
             } else {
-                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "for 循环索引变量名必须是标识符");
+                error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "for 循环索引变量名必须是标识符");
                 return NULL;
             }
         }
@@ -639,7 +639,7 @@ Ast* parse_for_stmt(Parser* p) {
 
     // for 循环体必须是代码块 {}
     if (p->lex.current.type != TOK_LBRACE) {
-        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "for 循环体必须用大括号 {} 包裹");
+        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "for 循环体必须用大括号 {} 包裹");
         return NULL;
     }
     Ast* body = parse_block_internal(p);
@@ -674,7 +674,7 @@ Ast* parse_switch_stmt(Parser* p) {
     
     // switch 体必须用大括号包裹
     if (p->lex.current.type != TOK_LBRACE) {
-        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "switch 语句体必须用大括号 {} 包裹");
+        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "switch 语句体必须用大括号 {} 包裹");
         free(switch_var_name);
         return NULL;
     }
@@ -723,7 +723,7 @@ Ast* parse_switch_stmt(Parser* p) {
 
                 TypeInfo* type_info = parse_type(p);
                 if (!type_info) {
-                    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "case is 后期望类型名");
+                    error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "case is 后期望类型名");
                     free(mt_arr);
                     free(switch_var_name);
                     free(cases);
@@ -743,7 +743,7 @@ Ast* parse_switch_stmt(Parser* p) {
                     lexer_next(&p->lex); // ,
                     TypeInfo* extra_type = parse_type(p);
                     if (!extra_type) {
-                        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "case is 逗号后期望类型名");
+                        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "case is 逗号后期望类型名");
                         for (int t = 0; t < mt_count; t++) type_free(mt_arr[t]);
                         free(mt_arr);
                         free(switch_var_name);
@@ -768,7 +768,7 @@ Ast* parse_switch_stmt(Parser* p) {
                 // 解构变量：case is Point(x, y)（仅单类型时允许）
                 if (p->lex.current.type == TOK_LPAREN) {
                     if (mt_count > 1) {
-                        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
                             "case is 逗号合并不支持解构（case is A, B 不允许 (x, y)）");
                     } else {
                         lexer_next(&p->lex); // (
@@ -778,7 +778,7 @@ Ast* parse_switch_stmt(Parser* p) {
 
                         while (p->lex.current.type != TOK_RPAREN && p->lex.current.type != TOK_EOF) {
                             if (p->lex.current.type != TOK_IDENT) {
-                                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "解构变量名期望标识符");
+                                error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "解构变量名期望标识符");
                                 free(var_names);
                                 free(switch_var_name);
                                 free(cases);
@@ -811,12 +811,12 @@ Ast* parse_switch_stmt(Parser* p) {
                 if (p->lex.current.type == TOK_FAT_ARROW) {
                     // 逗号合并不允许 => 绑定
                     if (mt_count > 1) {
-                        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
                             "case is 逗号合并不支持 => 绑定（case is A, B 不允许 => var）");
                     } else {
                         lexer_next(&p->lex); // 消费 "=>"
                         if (p->lex.current.type != TOK_IDENT) {
-                            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
                                 "=> 后面期望标识符作为绑定变量名");
                             free(switch_var_name);
                             free(cases);
@@ -831,7 +831,7 @@ Ast* parse_switch_stmt(Parser* p) {
                         // switch case 不支持 and 守卫（switch 的 codegen 结构无法 fallthrough）
                         // 如需"类型匹配 + 额外条件"，请用 if-else if 链
                         if (p->lex.current.type == TOK_AND) {
-                            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
                                 "switch case 不支持 and 守卫（case is Type => var and ...），请改用 if-else if 链");
                             free(switch_var_name);
                             free(cases);
@@ -851,7 +851,7 @@ Ast* parse_switch_stmt(Parser* p) {
             
             // case 体必须用大括号包裹
             if (p->lex.current.type != TOK_LBRACE) {
-                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "case 语句体必须用大括号 {} 包裹");
+                error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "case 语句体必须用大括号 {} 包裹");
                 free(switch_var_name);
                 free(cases);
                 return NULL;
@@ -863,14 +863,14 @@ Ast* parse_switch_stmt(Parser* p) {
             
             // default 体必须用大括号包裹
             if (p->lex.current.type != TOK_LBRACE) {
-                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "default 语句体必须用大括号 {} 包裹");
+                error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "default 语句体必须用大括号 {} 包裹");
                 free(switch_var_name);
                 free(cases);
                 return NULL;
             }
             default_body = parse_block_internal(p);
         } else {
-            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "switch 语句中期望 case 或 default");
+            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "switch 语句中期望 case 或 default");
             free(switch_var_name);
             free(cases);
             return NULL;

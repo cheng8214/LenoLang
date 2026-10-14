@@ -58,9 +58,8 @@ char* process_escape_sequences(const char* text, int len, int* out_len, int line
                         i += 3; // 跳过 x 和两位十六进制
                     } else {
                         // \x 后不是两位hex，保留反斜杠原样，并给出警告
-                        char wmsg[BUFFER_SMALL];
-                        snprintf(wmsg, sizeof(wmsg), "无效的转义序列 '\\x'（后跟非两位十六进制），已按原样保留");
-                        warning_add_at(WARN_BAD_ESCAPE, line, column, wmsg);
+                        warning_add_at_fmt(WARN_BAD_ESCAPE, line, column,
+                            "无效的转义序列 '\\x'（后跟非两位十六进制），已按原样保留");
                         str[j++] = text[i];
                     }
                     break;
@@ -91,9 +90,8 @@ char* process_escape_sequences(const char* text, int len, int* out_len, int line
                 }
                 default: {
                     // 未知的转义序列，保留反斜杠，并给出警告
-                    char wmsg[BUFFER_SMALL];
-                    snprintf(wmsg, sizeof(wmsg), "无效的转义序列 '\\%c'，已按原样保留", next);
-                    warning_add_at(WARN_BAD_ESCAPE, line, column, wmsg);
+                    warning_add_at_fmt(WARN_BAD_ESCAPE, line, column,
+                        "无效的转义序列 '\\%c'，已按原样保留", next);
                     str[j++] = text[i];
                     break;
                 }

@@ -44,9 +44,16 @@ void error_add_at(ErrorType type, int line, int column, const char* msg);
 //   `error_add_at` / `warning_add_at` ⇒ 去重、上限、入库**只有一份实现** ✓。
 // ⚠ 新代码一律用这些入口（直接写格式串，别再自己开 msg 缓冲 ✗）。
 //   **本仓编译期诊断已全量迁移**（2026-10-14~15：parser / semantic / optimize / codegen /
-//   module_symbol_table 共 262 处 ✓）—— "自开 msg 缓冲 + snprintf + 传 msg"的写法**已清零** ✓。
-//   仅剩一处**不是**该写法：`parser_utils.c` 的 `consume(p, type, msg)`，那里的 msg 是
-//   **函数参数**（调用方直接传字面量 ✓），不是本地缓冲 ✓。
+//   module_symbol_table）——
+//     · 262 处「自开 msg 缓冲 + snprintf / format_xxx + 传 msg」逐处手改 ✓
+//     · 另有 207 处「直接传字面量」由**带严格跳过条件**的脚本改（末参必须纯字面量、
+//       不含任何 %、≤1000 字节、不在 # 行 ⇒ 全程零语义变化，并由编译 + 套件 + 逐字节对拍验证）✓
+//     · 随后把 20 余处「末参是变量（单条 snprintf 紧邻报错）」也逐处收进来 ✓
+//   ⇒ "自开 msg 缓冲"的写法**已清零** ✓；全仓只剩 3 处**不是**该写法的匹配：
+//     ① `parser_utils.c` 的 `consume(p, type, msg)` —— 那个 msg 是**函数参数**（调用方传字面量）✗
+//     ②③ `visit_expr.inc` / `visit_module.inc` 的 clib 参数检查 —— `format_type_error` 只认
+//        `%s1..%s4` 四个占位符，而该文案要 5 个替换位 ⇒ 保留"先出模板、再填 %d"两层 ✗
+//        （要让这两处也一行收，得给 format_type_error 加第 5 槽 `%s5` ✓ 属另一件事）
 // ⚠ 参数格式同 printf（GCC / Clang 下会做格式串检查 ✓）。
 // ============================================================================
 void error_add_fmt(ErrorType type, int line, const char* fmt, ...)

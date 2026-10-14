@@ -8,7 +8,7 @@
             // 赋值表达式会把值写入变量并以该值作为条件——静默通过是 C 语言经典坑。
             if (ast->u.if_.cond && (ast->u.if_.cond->kind == AST_ASSIGN ||
                                     ast->u.if_.cond->kind == AST_COMPOUND_ASSIGN)) {
-                warning_add_at(WARN_ASSIGN_IN_COND, ast->u.if_.cond->line, ast->u.if_.cond->column,
+                warning_add_at_fmt(WARN_ASSIGN_IN_COND, ast->u.if_.cond->line, ast->u.if_.cond->column,
                     "if 条件中是赋值表达式（会把值写入变量并以该值作为条件）；若想做相等比较请写 '=='");
             }
 
@@ -169,7 +169,7 @@
                         } else if (node->kind == AST_BINOP && node->u.binop.op == TOK_OR) {
                             // or 连接：检查是否包含类型守卫，给出警告
                             if (node->u.binop.l && node->u.binop.l->kind == AST_TYPE_CHECK) {
-                                warning_add_at(WARN_OR_TYPE_GUARD, node->line, node->column,
+                                warning_add_at_fmt(WARN_OR_TYPE_GUARD, node->line, node->column,
                                     "or 条件中的类型守卫不会触发类型收窄，"
                                     "因为 or 的短路语义意味着两侧条件不一定都成立");
                             }
@@ -183,7 +183,7 @@
                 // 检查条件树中是否有 or 连接的类型守卫（不安全，不收窄）
                 if (ast->u.if_.cond && ast->u.if_.cond->kind == AST_BINOP &&
                     ast->u.if_.cond->u.binop.op == TOK_OR) {
-                    warning_add_at(WARN_OR_TYPE_GUARD, ast->u.if_.cond->line, ast->u.if_.cond->column,
+                    warning_add_at_fmt(WARN_OR_TYPE_GUARD, ast->u.if_.cond->line, ast->u.if_.cond->column,
                         "or 条件中的类型守卫不会触发类型收窄，"
                         "因为 or 的短路语义意味着两侧条件不一定都成立");
                 }
@@ -559,7 +559,7 @@
             // 但仍提示，避免漏写 '=' 被静默吞掉。
             if (ast->u.while_.cond && (ast->u.while_.cond->kind == AST_ASSIGN ||
                                        ast->u.while_.cond->kind == AST_COMPOUND_ASSIGN)) {
-                warning_add_at(WARN_ASSIGN_IN_COND, ast->u.while_.cond->line, ast->u.while_.cond->column,
+                warning_add_at_fmt(WARN_ASSIGN_IN_COND, ast->u.while_.cond->line, ast->u.while_.cond->column,
                     "while 条件中是赋值表达式（会把值写入变量并以该值作为条件）；若想做相等比较请写 '=='");
             }
             visit(s, ast->u.while_.cond);
@@ -597,7 +597,7 @@
             if (for_cond && for_cond->kind == AST_BINOP &&
                 (for_cond->u.binop.op == TOK_IN || for_cond->u.binop.op == TOK_NOT_IN) &&
                 for_cond->u.binop.l && for_cond->u.binop.l->kind == AST_VAR) {
-                warning_add_at(WARN_FOR_IN_COND, for_cond->line, for_cond->column,
+                warning_add_at_fmt(WARN_FOR_IN_COND, for_cond->line, for_cond->column,
                     "for 头的 'x in arr' 是条件循环（in 为成员测试运算符，x 需是已定义的外部变量）；若想遍历集合请写 'for x to arr'");
             }
 

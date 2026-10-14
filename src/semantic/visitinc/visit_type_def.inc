@@ -247,12 +247,11 @@
                                                     ftt->kind == TYPE_BOOL || ftt->kind == TYPE_STRING ||
                                                     ftt->kind == TYPE_ENUM);
                             if (is_scalar && !ftt->nullable && !ast->u.struct_def.field_defaults[i]) {
-                                char wmsg[BUFFER_MEDIUM];
                                 if (ftt->kind == TYPE_ENUM) {
                                     // 枚举字段的初值示例**不能**沿用 `= 0`（枚举没有这种写法 ✗）⇒
                                     //   用枚举名 + 成员示例（枚举名就在 struct_name 里 ✓）；可空写法同理 ✓
                                     const char* en = ftt->struct_name ? ftt->struct_name : "枚举名";
-                                    snprintf(wmsg, sizeof(wmsg),
+                                    warning_add_at_fmt(WARN_FIELD_NO_INIT, ast->line, ast->column,
                                              "struct '%s' 的字段 '%s' 未显式初始化 —— 标量字段默认是 null（不是 0），"
                                              "参与运算会直接报错；请写明初值（如 '%s %s = %s.某个成员'）"
                                              "或改用可空类型 '%s? %s'",
@@ -260,14 +259,13 @@
                                              en, ast->u.struct_def.field_names[i], en, en,
                                              ast->u.struct_def.field_names[i]);
                                 } else {
-                                    snprintf(wmsg, sizeof(wmsg),
+                                    warning_add_at_fmt(WARN_FIELD_NO_INIT, ast->line, ast->column,
                                              "struct '%s' 的字段 '%s' 未显式初始化 —— 标量字段默认是 null（不是 0），"
                                              "参与运算会直接报错；请写明初值（如 '%s %s = 0'）或改用可空类型 '%s? %s'",
                                              ast->u.struct_def.name, ast->u.struct_def.field_names[i],
                                              type_kind_to_string(ftt->kind), ast->u.struct_def.field_names[i],
                                              type_kind_to_string(ftt->kind), ast->u.struct_def.field_names[i]);
                                 }
-                                warning_add_at(WARN_FIELD_NO_INIT, ast->line, ast->column, wmsg);
                             }
                         }
 
@@ -671,14 +669,14 @@
                     for (int i = 0; i < ast->u.struct_def.method_count; i++) {
                         if (ast->u.struct_def.methods[i]->u.func.is_ctor) {
                             if (early_def->has_ctor) {
-                                error_add_at(ERR_SEMANTIC, ast->line, ast->column, "结构体不能有多个构造函数");
+                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column, "结构体不能有多个构造函数");
                             }
                             early_def->has_ctor = 1;
                             early_def->ctor_index = i;
                         }
                         if (ast->u.struct_def.methods[i]->u.func.is_dtor) {
                             if (early_def->has_dtor) {
-                                error_add_at(ERR_SEMANTIC, ast->line, ast->column, "结构体不能有多个析构函数");
+                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column, "结构体不能有多个析构函数");
                             }
                             early_def->has_dtor = 1;
                             early_def->dtor_index = i;
@@ -706,14 +704,14 @@
                             // 检查构造/析构函数
                             if (ast->u.struct_def.methods[i]->u.func.is_ctor) {
                                 if (early_def->has_ctor) {
-                                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, "结构体不能有多个构造函数");
+                                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column, "结构体不能有多个构造函数");
                                 }
                                 early_def->has_ctor = 1;
                                 early_def->ctor_index = i;
                             }
                             if (ast->u.struct_def.methods[i]->u.func.is_dtor) {
                                 if (early_def->has_dtor) {
-                                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, "结构体不能有多个析构函数");
+                                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column, "结构体不能有多个析构函数");
                                 }
                                 early_def->has_dtor = 1;
                                 early_def->dtor_index = i;

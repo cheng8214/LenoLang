@@ -49,7 +49,7 @@
                     if (src_num && dst_obj) {
                         // ⚠ 2026-09-28 起由**警告升为错误**（用户要求 ✓）。
                         //   措辞经**实测**校正（`as` 到容器不会当场炸，而是原样带过 ✗）✓
-                        error_add_at(ERR_SEMANTIC, ast->line, ast->column,
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                             "[不可能收窄] 左边是确定的数值标量（int/float），右边是容器/struct ⇒ "
                             "这个 as 收窄不可能成功：as 会把原值原样带过 ✗，后面当容器用时"
                             "（索引/取字段/调方法）才失败。若确实要动态收窄，请先经 any 中转"

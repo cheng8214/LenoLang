@@ -379,12 +379,10 @@ static int instr_bytes_at(Chunk* chunk, int pos) {
 static void report_jump_overflow(CodeGen* gen, int pos, int offset, int limit) {
     int line = (pos >= 0 && pos < gen->chunk->len && gen->chunk->lines)
                    ? gen->chunk->lines[pos] : 0;
-    char msg[BUFFER_MEDIUM];
-    snprintf(msg, sizeof(msg),
+    error_add_fmt(ERR_SEMANTIC, line,
              "跳转距离超出指令可达范围：需要 %+d 字节，该指令上限 ±%d 字节"
              "（单个分支或循环体的字节码过大，请拆成独立函数）",
              offset, limit);
-    error_add(ERR_SEMANTIC, line, msg);
 }
 
 // T34：寄存器号越过 8 位上限 ⇒ **编译硬错误**（T34 之前只 fprintf 告警、随后照样把 &0xFF
@@ -394,15 +392,13 @@ static void report_jump_overflow(CodeGen* gen, int pos, int offset, int limit) {
 //   背景：指令里的 A/B/C 各 8 位 ⇒ 寄存器号 ≥ 256 无法寻址（历史事故：SDL 的 Window.run
 //   寄存器高水位 655 ⇒ 循环变量被截断到别的槽位 ⇒ 现象却是「数组索引必须是数字」✗）
 void codegen_reg_overflow_error(OpCode op, int a, int b, int c, int line) {
-    //   ⚠ 缓冲区必须给足：中文在 UTF-8 里一个字 3 字节，这条提示正文就 ~180 字节 ⇒
-    //     BUFFER_MEDIUM(256) 会被 snprintf 截断（-Wformat-truncation 也是这么报的），
-    //     用户看到半句提示 = 白报错。用 BUFFER_LARGE。
-    char msg[BUFFER_LARGE];
-    snprintf(msg, sizeof(msg),
+    //   ⚠ 长度：中文在 UTF-8 里一个字 3 字节，这条提示正文就 ~180 字节 ⇒ 早先自己开
+    //     BUFFER_LARGE 才够（BUFFER_MEDIUM(256) 会被截断 ⇒ 用户看到半句提示 = 白报错）。
+    //     现在走统一入口 ⇒ 内部就是 BUFFER_MSG(1024) ✓ 且超长会安全截断（退到完整字符 + …）✓
+    error_add_fmt(ERR_SEMANTIC, line,
              "寄存器号超出 8 位上限（opcode %d：A=%d B=%d C=%d）：单个函数的寄存器高水位不能超过 255；"
              "请把该函数拆小、或把长表达式拆成多条语句（详见 docs/待办与路线图.md 的「寄存器号 8 位上限」一节）",
              (int)op, a, b, c);
-    error_add(ERR_SEMANTIC, line, msg);
 }
 
 static void patch_common(CodeGen* gen, int pos, int offset) {
