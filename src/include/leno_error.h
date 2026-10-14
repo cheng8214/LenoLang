@@ -28,8 +28,11 @@ void error_set_filename(const char* filename);
 void error_set_column(int column);
 int error_get_column(void);
 const char* error_get_filename(void);
-void error_add(ErrorType type, int line, const char* msg);
-void error_add_at(ErrorType type, int line, int column, const char* msg);
+// ★ 2026-10-15：`error_add` / `error_add_at` / `warning_add` / `warning_add_at` **已删除声明**
+//   —— 它们是「入库」的唯一实现，但**只能由本文件内的 `_fmt` 入口调用**（现已是 error.c 内的
+//   static ✓）。全仓（含运行期）调用点已 100% 迁到 `_fmt` 入口，所以外部再写
+//   "自开缓冲 + 传 msg" 会在**编译期**直接撞墙 ✓ —— 这正是"统一"的落地方式。
+//   ⇒ 报错/警告一律用下面四个（外加带去重的 `error_add_at_fmt_dedup`）。
 
 // ============================================================================
 // ★ 2026-10-14：报错 / 警告**文案的统一入口**（格式化 + 安全截断）
@@ -122,8 +125,8 @@ typedef struct {
 
 extern WarningCollector warnings;
 
-void warning_add(WarnType type, int line, const char* msg);
-void warning_add_at(WarnType type, int line, int column, const char* msg);
+// ★ 2026-10-15：`warning_add` / `warning_add_at` 同样**已删声明**（收为 error.c 内 static，
+//   理由见上面 `error_add` 那段 ✓）。警告一律走 `warning_add_fmt` / `warning_add_at_fmt`。
 
 // ============================================================================
 // ★ 2026-10-11：无控制台发布版的**错误可见性**（实现在 error.c 末尾，含完整说明）

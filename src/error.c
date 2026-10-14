@@ -81,7 +81,11 @@ int error_silence_end(void) {
     return silenced;
 }
 
-void error_add(ErrorType type, int line, const char* msg) {
+// ★ 2026-10-15：**收为文件内部实现**（对外只剩 `error_add_fmt` 一族 ✓）。
+//   为什么能收：全仓（含运行期）调用点已 100% 迁到 `_fmt` 入口 ⇒ 本文件之外**再没有调用者** ✗
+//   ⇒ 从 leno_error.h 删掉声明后，别人想写"自开缓冲 + 传 msg"会在**编译期**就撞墙 ✓
+//   （这四个仍是"入库"的唯一实现：去重 / 上限 / 计数都在这儿 ✓ 统一入口内部调它们 ✓）
+static void error_add(ErrorType type, int line, const char* msg) {
     if (silence_depth > 0) { silenced_errors++; return; }
     // 检查是否与最后一条错误相同（同类型、同文件、同行、同消息），相同则合并
     if (errors.count > 0) {
@@ -124,7 +128,7 @@ void error_add(ErrorType type, int line, const char* msg) {
     }
 }
 
-void error_add_at(ErrorType type, int line, int column, const char* msg) {
+static void error_add_at(ErrorType type, int line, int column, const char* msg) {
     int saved_column = current_column;
     current_column = column;
     error_add(type, line, msg);
@@ -140,6 +144,12 @@ void error_add_at(ErrorType type, int line, int column, const char* msg) {
 //     ⇒ 尾部留下孤立首字节 ⇒ 终端打出乱码 ✗（实测切中文必现 ✓）
 //   · 最终仍调**既有**的 error_add_at / warning_add_at ⇒ 去重、上限、入库不另起一份 ✓
 // ============================================================================
+
+// 前置声明：下面那四个 `_fmt` 入口要调 `warning_add` / `warning_add_at`，而它们的**定义在
+//   本文件靠后**（原来靠头文件里的非 static 声明兜着，收成 static 后就没了 ⇒ 补一句 ✓）
+//   （`error_add` / `error_add_at` 的定义在这之前，不需要 ✓）
+static void warning_add(WarnType type, int line, const char* msg);
+static void warning_add_at(WarnType type, int line, int column, const char* msg);
 
 // 截断收尾：把"被 vsnprintf 硬切"的尾巴修成"完整字符 + …"
 //   want：vsnprintf 的返回值（<0 = 编码出错；<cap = 没截断）⇒ 只有真截断才动手 ✓
@@ -378,7 +388,7 @@ void error_print_all(void) {
 // 警告系统（"担心系统"）
 // ============================================================================
 
-void warning_add(WarnType type, int line, const char* msg) {
+static void warning_add(WarnType type, int line, const char* msg) {
     if (silence_depth > 0) { silenced_warnings++; return; }
     // 合并相同警告（同类型、同文件、同行、同消息）
     if (warnings.count > 0) {
@@ -417,7 +427,7 @@ void warning_add(WarnType type, int line, const char* msg) {
     }
 }
 
-void warning_add_at(WarnType type, int line, int column, const char* msg) {
+static void warning_add_at(WarnType type, int line, int column, const char* msg) {
     int saved_column = current_column;
     current_column = column;
     warning_add(type, line, msg);
