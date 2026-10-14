@@ -5,8 +5,60 @@
 // 语句解析分发器
 // ============================================================================
 
+// ★ 2026-10-14：当前 token 是不是**指定的那个词**（长度 + 内容都比 ⇒ `let` 不会误配 `letter` ✓）
+//   用途：识别"跨语言关键字"（它们在 Leno 里都**不是关键字** ⇒ 会被当标识符往下走，
+//   最后报一串指不出真因的语法错 ✗，见 parse_statement 里的说明 ✓）
+static int cur_ident_is(Parser* p, const char* word) {
+    if (p->lex.current.type != TOK_IDENT) return 0;
+    size_t n = strlen(word);
+    return (size_t)p->lex.current.len == n &&
+           strncmp(p->lex.current.text, word, n) == 0;
+}
+
 Ast* parse_statement(Parser* p) {
     Ast* stmt = NULL;
+
+    // ★ 2026-10-14：**跨语言关键字** ⇒ 定向报错（AI / 跨语言作者的高频笔误）
+    //   这些词在 Leno 里都**不是关键字** ⇒ 解析器把它们当"类型名"或"表达式"继续往下走，
+    //   最后报的是「声明语句后期望换行或 ';'」「期望表达式」这类**指不出真因**的话 ✗
+    //   （实测：同一个文件里写 `let x = 1` + `function f(){}` 报 **9 条**、`elif` 报 2 条 ✓）。
+    //   放在**语句入口这一处** = 单一收口（不必在每个声明分支里各写一遍 ✓）。
+    //   ⚠ 只在**行首/语句开头**命中 ⇒ `var let = 1` 这类"真有个同名变量"的写法完全不受影响 ✓
+    if (p->lex.current.type == TOK_IDENT) {
+        const char* sub = NULL;
+        if (cur_ident_is(p, "let")) {
+            sub = "Leno **没有 `let`** ✗ —— 声明变量写 `int x = 1`（显式类型）"
+                  "或 `var x = 1`（按初值推断）✓";
+        } else if (cur_ident_is(p, "function")) {
+            sub = "Leno **没有 `function`** ✗ —— 函数定义写 `func 名字(参数): 返回类型 { … }`"
+                  "（返回类型可省 ⇒ 推断为 any）✓";
+        } else if (cur_ident_is(p, "def")) {
+            sub = "Leno **没有 `def`** ✗（那是 Python 的写法）—— 函数定义写 "
+                  "`func 名字(参数): 返回类型 { … }` ✓";
+        } else if (cur_ident_is(p, "elif") || cur_ident_is(p, "elseif")) {
+            sub = "Leno **没有 `elif` / `elseif`** ✗ —— 用 `eif`："
+                  "`if c1 { … } eif c2 { … } else { … }`（`else if` 两个词的写法也合法 ✓）";
+        }
+        if (sub) {
+            int bad_line = p->lex.current.line;
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, sub);
+            // 跳到本行末尾（但**见了 `{` 就停**）：这些词后面多半还跟着一截旧语法 ⇒
+            //   不跳会再刷一串级联错误 ✗。
+            //   ⚠ 必须保留那个 `{` 并整块跳掉 —— 否则 `function f() {` 的 `{` 被吃掉后，
+            //     函数体会退化成**顶层语句**、末尾那个 `}` 再报一条「期望表达式」✗
+            //     （实测：不保留时 `let` + `function` 一个文件报 5 条而非 3 条 ✓）。
+            while (p->lex.current.type != TOK_EOF &&
+                   p->lex.current.line == bad_line &&
+                   p->lex.current.type != TOK_LBRACE) {
+                lexer_next(&p->lex);
+            }
+            if (p->lex.current.type == TOK_LBRACE) {
+                Ast* skipped_body = parse_block_internal(p);
+                if (skipped_body) ast_free(skipped_body);
+            }
+            return NULL;
+        }
+    }
 
     switch (p->lex.current.type) {
         // 词法错误：跳过错误 token 并返回 NULL，让 parser 继续解析

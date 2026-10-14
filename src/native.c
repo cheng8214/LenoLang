@@ -2092,6 +2092,44 @@ const char* native_instance_method_hint(const char* type_name, const char* metho
     static char hint[128];
     hint[0] = '\0';
     if (!type_name || !method_name || !method_name[0] || !instanceMethodTable.entries) return hint;
+
+    // ★ 2026-10-14：**跨语言方法名别名**（编辑距离兜不住的那一批）
+    //   为什么必须单独一张表：`push` 与 `add` 的编辑距离是 **3** ⇒ 下面那套"相似名"机制
+    //   （最多 2）**永远命不中** ✗（实测 `arr.push(3)` 只报「类型 'Array[int]' 没有方法 'push'」、
+    //   零建议 ✓）。这些是"**同义不同名**"，不是"拼错" ⇒ 靠白名单映射才准 ✓。
+    //   ⚠ 只在"该方法确实不存在"时才会被调到（调用点保证 ✓）⇒ 给建议不会误伤 ✓。
+    //   ⚠ 比较**不区分大小写**：覆盖 `indexOf` / `removeAt` 这类 camelCase ✓。
+    {
+        static const struct { const char* from; const char* to; } alias[] = {
+            {"push",     "add"},       // JS / Java / Python 的追加
+            {"append",   "add"},       // Python list.append
+            {"size",     "len"},       // JS Map/Set.size()、Java size()
+            {"length",   "len"},       // 当方法调用时（当属性读另有一条更准的提示 ✓）
+            {"count",    "len"},
+            {"contains", "has"},       // Java / C# contains
+            {"indexof",  "index_of"},  // JS indexOf / C# IndexOf
+            {"removeat", "remove"},    // C# / Java removeAt
+            {"delete",   "remove"},    // JS Map.delete 等
+        };
+        for (size_t i = 0; i < sizeof(alias) / sizeof(alias[0]); i++) {
+            size_t n = strlen(alias[i].from);
+            if (strlen(method_name) != n) continue;
+            int same = 1;
+            for (size_t k = 0; k < n; k++) {
+                char a = method_name[k], b = alias[i].from[k];
+                if (a >= 'A' && a <= 'Z') a = (char)(a - 'A' + 'a');
+                if (b >= 'A' && b <= 'Z') b = (char)(b - 'A' + 'a');
+                if (a != b) { same = 0; break; }
+            }
+            if (same) {
+                // 只报"它叫什么"，**不**写 `x.xxx(...)` —— 形参个数因方法而异，
+                //   写成带括号的样子会让人以为要传参（`len` 恰恰是无参的 ✓）
+                snprintf(hint, sizeof(hint), "\n  提示: Leno 里它叫 '%s' ✓", alias[i].to);
+                return hint;
+            }
+        }
+    }
+
     const char* best = NULL;
     int best_dist = 3;  // 最多允许 2 次编辑距离
     for (int i = 0; i < instanceMethodTable.capacity; i++) {

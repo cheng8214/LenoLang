@@ -1,0 +1,101 @@
+// test_diag_xlang_habits.leno —— 跨语言习惯的定向报错（2026-10-14）
+//
+// 缘起：C / Java / JS / Python 过来的人（与**生成 Leno 代码的 AI**）会按肌肉记忆写一些
+//   在 Leno 里**不存在**的写法 ⇒ 此前解析器把它们当"类型名/表达式"继续走，最后报的是
+//   「声明语句后期望换行或 ';'」「期望表达式」这类**指不出真因**的话 ✗
+//   （实测：`let` + `function` 一个文件报 9 条、`elif` 报 2 条、C 风格 for 报 7 条 ✓）。
+//
+// 本用例钉住三件事（各**只报一条**、不给级联；且反向写法一个都不能误伤）：
+//   ① C 风格 `for (初始化; 条件; 步进)` ⇒ 告诉它 Leno 的四种 for 写法
+//   ② `let` / `function` / `def` / `elif` ⇒ 告诉它对应的 Leno 写法
+//   ③ `.push` / `.size()` / `.contains()` 这类**同义不同名** ⇒ 告诉它 Leno 里叫什么
+//      （编辑距离兜不住：`push`→`add` 差 3 ⇒ 得靠白名单 ✓）
+//
+// 反向（防误伤）：
+//   · `for (-3):(-1) to k` —— **括号边界**是合法写法（判据是"括号里有 `;`"而不是"见到 `(`"✓）
+//   · `var let = 5` —— 真有个叫 let 的变量，合法（判据只在**语句开头**命中 ✓）
+//   · `else if` 两个词的写法**本来就合法**（不是必须写 `eif` ✓）
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+import strings
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_xlang_habits")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ---- ① C 风格 for ⇒ 1 条定向错 ----
+    var f1 = dirs.join(work, "c_for.leno")
+    files.write(f1, @"main() {
+    for (int i = 0; i < 3; i++) {
+        print(_str(i))
+    }
+}
+")
+    var out1 = ce.expect_error(f1, "C 风格 for 应给定向报错", "不是 C 风格", 2)
+    assert_eq(strings.count(out1, "error:"), 1, "C 风格 for 应当只报 1 条：" + out1)
+
+    // ---- ② let / function / elif ⇒ 各 1 条（合起来 3 条，无级联）----
+    var f2 = dirs.join(work, "xlang_kw.leno")
+    files.write(f2, @"let x = 1
+
+function add(int a, int b): int {
+    return a + b
+}
+
+main() {
+    if x > 2 {
+        print(""big"")
+    } elif x > 0 {
+        print(""small"")
+    }
+}
+")
+    var out2 = ce.expect_error(f2, "let 应给定向报错", "没有 `let`", 1)
+    assert_true(strings.has(out2, "没有 `function`"), "function 也该被点名：" + out2)
+    assert_true(strings.has(out2, "没有 `elif`"), "elif 也该被点名：" + out2)
+    assert_eq(strings.count(out2, "error:"), 3, "三个词各报 1 条、不该刷级联：" + out2)
+
+    // ---- ③ 同义不同名的方法 ⇒ 报错要带"它叫什么" ----
+    var f3 = dirs.join(work, "xlang_methods.leno")
+    files.write(f3, @"main() {
+    var arr = [1, 2]
+    arr.push(3)
+    print(_str(arr.size()))
+}
+")
+    var out3 = ce.expect_error(f3, "push 应给出别名建议", "Leno 里它叫 'add'", 3)
+    assert_true(strings.has(out3, "Leno 里它叫 'len'"), "size 也该给出别名建议：" + out3)
+
+    // ---- ④ 反向：四种合法 for（含"括号边界"，一见 ( 就报会误伤它 ✗）----
+    var ok1 = dirs.join(work, "ok_for.leno")
+    files.write(ok1, @"main() {
+    for 3 to i { print(""a"" + _str(i)) }
+    for 2:4 to j { print(""b"" + _str(j)) }
+    for (-3):(-1) to k { print(""c"" + _str(k)) }
+    var arr = [7, 8]
+    for arr to v, idx { print(""d"" + _str(v) + ""@"" + _str(idx)) }
+}
+")
+    ce.expect_ok(ok1, "四种合法 for 都不该被误伤（含括号边界）", "d8@1")
+
+    // ---- ⑤ 反向：同名变量 let / else if / 正确方法名 ----
+    var ok2 = dirs.join(work, "ok_misc.leno")
+    files.write(ok2, @"main() {
+    var let = 5
+    if let > 9 {
+        print(""big"")
+    } else if let > 0 {
+        print(""small"")
+    }
+    var arr = [1]
+    arr.add(2)
+    print(_str(arr.len()) + _str(arr.has(1)))
+}
+")
+    ce.expect_ok(ok2, "var let / else if / add·len·has 都该正常", "2true")
+
+    print("test_diag_xlang_habits passed")
+}

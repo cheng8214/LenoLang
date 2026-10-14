@@ -491,6 +491,51 @@ Ast* parse_for_stmt(Parser* p) {
     int line = p->lex.current.line;
     lexer_next(&p->lex); // for
 
+    // ★ 2026-10-14：C / Java / JS 风格 `for (int i = 0; i < n; i++)` ⇒ **定向报错**
+    //   判据用「括号里出现 `;`」而**不是**「见到 `(` 就报」—— 因为 `for (-5):(-1)` 这种
+    //   **括号边界**是 Leno 的合法写法（见下面"接受可作范围起点的 token"的注释 ✓）
+    //   ⇒ 一见 `(` 就报会误伤 ✗；而 C 风格的三段式必然含 `;` ⇒ 判据既准又不误伤 ✓
+    //   报完把 `( … )` 与紧跟的 `{ }` 体整块跳掉 ⇒ **只留这一条错**（否则后面会刷一串级联 ✗）
+    if (p->lex.current.type == TOK_LPAREN) {
+        Lexer saved = p->lex;
+        int depth = 0, saw_semi = 0;
+        while (p->lex.current.type != TOK_EOF) {
+            if (p->lex.current.type == TOK_LPAREN) {
+                depth++;
+            } else if (p->lex.current.type == TOK_RPAREN) {
+                depth--;
+                if (depth == 0) break;
+            } else if (p->lex.current.type == TOK_SEMI && depth == 1) {
+                saw_semi = 1;
+                break;
+            }
+            lexer_next(&p->lex);
+        }
+        p->lex = saved;
+        if (saw_semi) {
+            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                "Leno 的 for **不是 C 风格**（没有 `for (初始化; 条件; 步进)`）✗ —— "
+                "数次数写 `for 5 to i { }`、含端点区间写 `for 2:5 to i { }`、"
+                "步进/倒序写 `for 0:5:2 to i { }` / `for 5:0:-1 to i { }`、"
+                "遍历容器写 `for arr to x { }`（带索引再加一个变量：`for arr to x, i`）✓");
+            int d = 0;
+            while (p->lex.current.type != TOK_EOF) {
+                if (p->lex.current.type == TOK_LPAREN) {
+                    d++;
+                } else if (p->lex.current.type == TOK_RPAREN) {
+                    d--;
+                    if (d == 0) { lexer_next(&p->lex); break; }
+                }
+                lexer_next(&p->lex);
+            }
+            if (p->lex.current.type == TOK_LBRACE) {
+                Ast* skipped_body = parse_block_internal(p);
+                if (skipped_body) ast_free(skipped_body);
+            }
+            return NULL;
+        }
+    }
+
     Ast* start = NULL;
     Ast* end = NULL;
     Ast* step = NULL;
