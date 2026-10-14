@@ -514,21 +514,51 @@ char* lsp_handle_initialize(LspServer* server, int id, JsonValue* params) {
         fflush(stderr);
     }
     
-    // 设置模块符号表缓存目录（与编译器共享 .lenocache/ 目录）
-    // 这是 LSP 性能的关键：没有缓存目录，每次分析都要重新扫描所有导入的模块源文件
-    if (server->root_path) {
+    // 设置模块符号表缓存目录
+    //   ★ 2026-10-14 改：**LSP 用自己的缓存目录**（此前与编译器**共享** .lenocache/ ✗）
+    //
+    //   为什么必须分开（是机制，不是猜测）：缓存 header 里烙着「运行中 exe 的指纹」
+    //   —— `bin_fp`（§8.112），取自 `GetModuleFileNameW(NULL)`，即**当前进程自己的 exe**，
+    //   口径 = size + mtime + 内容 FNV-1a（见 serialize.c 的 cache_runtime_binary_fingerprint）。
+    //   而 `leno_lsp.exe` 与 `leno.exe` **是两个不同的文件** ⇒ 两边写出的缓存
+    //   **必然互判失效**（`sym_cache_deserialize` / `module_cache_deserialize` 都按
+    //   fail-closed 校验它）。共享同一目录的后果**不是**"互相污染"，而是
+    //   **互相判死 + 互相覆盖**：任一方写下的缓存对方一读就丢，还要**白重扫一遍再写回去**
+    //   ⇒ 在"边写代码边跑 CLI 验证"的典型工作流里两边反复交替失效
+    //   （CLI 编译一次 ⇒ IDE 侧下一轮全扫；IDE 分析一次 ⇒ CLI 下一轮全扫）✗。
+    //   分开后各自命中自己的缓存 ✓（代价：各自首次全扫一遍建缓存，一次性）。
+    //
+    //   环境变量：
+    //     · `LENO_LSP_NO_CACHE=1` ⇒ **完全禁用磁盘缓存**：每次分析都实时全量扫描
+    //       （最干净、绝不依赖任何缓存；代价是大项目每次请求都要重扫依赖树）。
+    //       它也是**一键判定**"某个提示到底是不是缓存引起的"的开关 ✓
+    //     · 默认：LSP 自己的缓存目录 `<项目根>/.lenocache_lsp/`（与 CLI 的 `.lenocache/` 分开）
+    //
+    //   ⚠ 跨会话陈旧为什么不另加"启动时清空缓存目录"：任何 exe 变化（含重建 LSP 自己）
+    //     都会让 bin_fp 变 ⇒ 旧缓存**自动**全失效 ✓；再加一层清目录只会白付一次全扫
+    //     （YAGNI —— 真正会造成"陈旧"的是"exe 没重建"或"文件没保存"，两者都不是缓存的事 ✓）。
+    if (server->root_path && !getenv("LENO_LSP_NO_CACHE")) {
+        char root_dir[1024];
         char cache_dir[1024];
-#ifdef _WIN32
-        snprintf(cache_dir, sizeof(cache_dir), "%s\\.lenocache\\", server->root_path);
-#else
-        snprintf(cache_dir, sizeof(cache_dir), "%s/.lenocache/", server->root_path);
-#endif
+        // ⚠ root_path 由 `rootUri` 转来、**不带尾随分隔符**（实测是 `d:/CLeno/Leno`）⇒ 得自己补一个：
+        //   第一版格式串写成 `"%s.lenocache_lsp%c"` ⇒ 拼出 `d:/CLeno/Leno.lenocache_lsp\`
+        //   —— 项目目录名与缓存目录名**粘连**，目录被建到**上一级**去了 ✗（实测冒烟抓到 ✓）。
+        //   这里复用本文件既有的 `lsp_to_dir_with_sep`（"统一成以分隔符结尾的目录"的唯一实现 ✓）。
+        if (lsp_to_dir_with_sep(server->root_path, root_dir, sizeof(root_dir)) == 0) {
+            snprintf(cache_dir, sizeof(cache_dir), "%s.lenocache_lsp%c", root_dir, LSP_SEP);
+        } else {
+            // 兜底：规范化失败也要拼对（宁可多一个分隔符，也不要粘连 ✗）
+            snprintf(cache_dir, sizeof(cache_dir), "%s%c.lenocache_lsp%c",
+                     server->root_path, LSP_SEP, LSP_SEP);
+        }
         module_loader_set_cache_enabled(1);
         module_loader_set_cache_dir(cache_dir);
         fprintf(stderr, "[LSP-CACHE] cache_dir=%s\n", cache_dir);
         fflush(stderr);
     } else {
-        fprintf(stderr, "[LSP-CACHE] WARNING: root_path is NULL, module cache disabled\n");
+        module_loader_set_cache_enabled(0);
+        fprintf(stderr, "[LSP-CACHE] disk cache DISABLED (%s)\n",
+                server->root_path ? "LENO_LSP_NO_CACHE=1" : "root_path is NULL");
         fflush(stderr);
     }
 

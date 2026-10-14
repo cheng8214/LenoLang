@@ -82,6 +82,38 @@
 >   内存 + GC 压力，正是用户实测"1KB 信封 27ms"的来源 ✓）；第 5 条（`create*` 工厂返回类型该不该带
 >   `?`）宜先给"真会失败的工厂"收窄，再上「返回类型不可空却 `return null`」的编译期检查
 >   （顺序反了会一次刷出几百条告警 ✗）。
+>   **2026-10-14 追加（四）**：**LSP 缓存策略修正 —— 与编译器分开目录 + 一键禁用开关**：
+>   ① **根因（机制，已实测坐实）**：符号表/模块缓存的 header 里烙着「运行中 exe 的指纹」
+>   （`bin_fp`，§8.112；取自 `GetModuleFileNameW(NULL)` ⇒ **当前进程自己的 exe**，口径 = size +
+>   mtime + 内容 FNV-1a），而 `leno_lsp.exe` 与 `leno.exe` 是**两个文件** ⇒ 两边写出的缓存
+>   **必然互判失效**（`sym_cache_deserialize` / `module_cache_deserialize` 都按 fail-closed 校验它）。
+>   两者共享 `.lenocache/` 的后果**不是**"互相污染"，而是**互相判死 + 互相覆盖**：任一方写下的
+>   缓存对方一读就丢，还要**白重扫一遍再写回去** ⇒ 在"边写代码边跑 CLI 验证"的典型工作流里
+>   两边反复交替失效（CLI 编译一次 ⇒ IDE 侧下一轮全扫；IDE 分析一次 ⇒ CLI 下一轮全扫）✗；
+>   ② 修：LSP 改用**自己的** `<项目根>/.lenocache_lsp/`（`.gitignore` 同步加一行）⇒ 各自命中
+>   自己的缓存 ✓（代价：各自首次全扫一遍建缓存，一次性）。
+>   ⚠ 实测抓到一个拼接 bug：`root_path` 由 `rootUri` 转来**不带尾随分隔符**（实测是
+>   `d:/CLeno/Leno`），第一版格式串拼出 `d:/CLeno/Leno.lenocache_lsp\` —— 项目目录名与缓存目录名
+>   **粘连**、目录被建到**上一级**去了 ✗ ⇒ 复用本文件既有的 `lsp_to_dir_with_sep` 归一化 ✓；
+>   ③ 新增 `LENO_LSP_NO_CACHE=1` ⇒ **完全禁用磁盘缓存**（每次分析都实时全量扫描）。
+>   它同时是**一键判定**"某个提示到底是不是缓存引起的"的开关 ✓
+>   （另记：**不加**"启动时清空缓存目录" —— 任何 exe 变化都会让 `bin_fp` 变 ⇒ 旧缓存自动全失效，
+>   再加一层清目录只会白付一次全扫，YAGNI ✓）；
+>   ④ 验证（命令行直接喂 LSP 协议，绕开 IDE）：默认模式 stderr 打出
+>   `[LSP-CACHE] cache_dir=d:/CLeno/Leno\.lenocache_lsp\` ✓、`LENO_LSP_NO_CACHE=1` 打出
+>   `disk cache DISABLED` ✓；再发一次真实 `initialize` + `didOpen` + `hover` ⇒
+>   **`.lenocache_lsp/faf03662c4378767.lenosymc` 真被写出** ✓（证明 LSP 的分析缓存现在落在
+>   自己的目录里，而不是与 CLI 混在 `.lenocache/`）；
+>   ⑤ ⚠ **本次没动的两条**（用户观察到的"提示陈旧"若仍在，主因大概率在这两条，**不在**缓存）：
+>   (a) **LSP exe 陈旧** —— 本次就亲身撞到：`Dict.copy()` 明明已实现，IDE 却报
+>   「`Dict[string, any]` 没有方法 `copy`」，根因是 `leno_lsp/build/leno_lsp.exe` 还是旧版
+>   （**native 方法表是烙在 exe 里的**）⇒ 改完 native 侧必须**重建 LSP**；
+>   (b) **未保存的编辑** —— LSP 的**诊断**用的是内存文本（`lsp_compile_and_get_errors(content,
+>   filename)` ✓ 实时），但 **hover / 补全 / 定义跳转**里的"符号信息"走
+>   `module_symbol_table_create(path) + module_symbol_table_scan()` ⇒ **从磁盘读**
+>   （符号表没有"内存源码覆盖"入口）⇒ 磁盘上还没有的编辑，符号类能力看不到 ✗。
+>   要治 (b)：给 `module_symbol_table` 加一个"源码 provider"入口（LSP 注册回调，scan 时优先用
+>   编辑器里的文本、并跳过磁盘缓存），属**独立一项**，待与用户确认现象后再做。
 >   **2026-10-13 追加（三）**：登记 **M11**（⏳ **待修**）—— struct **方法**里 `new B(键 = 隐式自字段)` 会报「未定义的变量」（写 `self.` 或先 `new B()` 再赋值都正常；**只在方法里犯、不静默错值**）：『语言摩擦与隐式契约清单.md』新增 **M11** 节（6 个探针的边界表 + 疑似定位点，**实现侧 `src/semantic` 未动**）、『语言陷阱速查.md』新增 **㉟**；同日**订正三处**旧说法（曾写成"编译器把 self 切成 B"，不准确 ✗）：`sdl_card.leno` 注释、『LenoSDL3_Card卡片控件设计文档.md』第 4 条坑、『SDL3常用API与易踩坑速查.md』**附录 C** 那条标题。
 >   **2026-10-13 追加（三-修）**：**M11 ✅ 已修** —— 真因**不是**"隐式 `self` 失效"✗，而是**方法体改写器**（`transform_method_body`，`src/semantic/semantic_visit_method.c`）的 **switch 白名单漏了 `AST_STRUCT_INIT`** ⇒ `new B(键 = 值)` 的**值**整段落进 `default:` 被**静默跳过** ⇒ 值里的裸字段名没被改写成 `self.字段` ⇒ 报「未定义的变量」。修法：补一个 case、**只递归 `field_values[]`**（⚠ 不碰构造目标的字段名 —— 当裸名改写会造出 `self.k` 假字段 ✗）。**同族排查**：把该白名单与 `leno_ast.h` 的 AST 枚举**逐项对了一遍**（只剩 `AST_RANGE` 未递归，但**构造不出可复现失败用例** ⇒ 不当作 bug 修、仅登记）。验收：`assert/test_method_new_implicit_self.leno`（6 条边界逐条对应，含 ⑥「B 有同名字段 ⇒ 取**外层** 7、**不是** 99」这条防**静默错值**的钉子）；套件 **452 passed / 0 failed**。『语言摩擦与隐式契约清单.md』M11 收口、『语言陷阱速查.md』**㉟ 翻案**（"⏳ 待修"→"✅ 已修"，并写明真因与当初猜测不同 ✗）。
 >   **2026-10-13 追加（四）**：**框架侧修 2 处 + 应用侧新增 1 页**（都真机实测过，坑都进速查 ✓）：
