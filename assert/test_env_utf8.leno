@@ -1,0 +1,66 @@
+// _env 的 UTF-8 边界 —— 回归测试（2026-10-14）
+//
+// 背景（真实事故）：`_env("X", "中文")` **写失败**（返回 false），子进程里该变量 UNDEF，
+//   而纯 ASCII 值、含换行的值、8000 字节的长值全都好好的 ⇒ 一开始被误判成"多行截断"。
+//   根因：老实现走 `_putenv_s`（**窄口**），Windows 上它要按 **ANSI 代码页**（本机 CP936）
+//   把 UTF-8 字节转成宽字符再设进环境块 —— UTF-8 的"中文"在 GBK 下不是合法序列 ⇒ 转换失败、
+//   变量从没进 Win32 环境块 ⇒ 子进程什么都看不到；而 CRT 自己的窄副本**已经被写进去了**
+//   ⇒ 表现为"本进程读得回、子进程读不到"，极具欺骗性。
+//   修法：非 ASCII 走 `SetEnvironmentVariableW`（UTF-8 → UTF-16，不经代码页）、读走
+//   `GetEnvironmentVariableW`；**纯 ASCII 仍走原来的窄口**（那条路同时同步 CRT 窄副本，
+//   进程内的窄口消费者 —— libcurl 之类直接 `getenv` 的 C 库 —— 只认那个副本）。
+//
+// 判据：
+//   ① ASCII：写成功、读回一致、未设置 ⇒ null（老行为逐条守卫）；
+//   ② 非 ASCII：写成功（**这就是老 bug 的失败点**）、读回逐字节一致、`_env_or` 也拿得到；
+//   ③ 跨进程（仅 Windows）：**子进程**必须看到同一个值；
+//   ④ 长值 / 多行值：仍然可用（免得将来"只留宽口"把窄副本那条路改坏）。
+import strings
+
+main() {
+    var is_win = _os() == "windows"
+
+    // ① ASCII 老行为
+    assert_eq(_env("LENO_ENV_ASCII", "hello"), true, "①ASCII 写应成功")
+    assert_eq(_env("LENO_ENV_ASCII"), "hello", "①ASCII 读回应一致")
+    assert_eq(_env("LENO_ENV_NOT_SET_XYZ"), null, "①未设置的变量应返回 null")
+
+    // ② 非 ASCII（老 bug 就死在这一步：返回 false + 读回一致但子进程看不到）
+    var cn = "中文值"
+    assert_eq(_env("LENO_ENV_UTF8", cn), true,
+        "②非 ASCII 写应成功（老实现在这里返回 false）")
+    assert_eq(_env("LENO_ENV_UTF8"), cn, "②非 ASCII 读回应逐字节一致")
+    assert_eq(strings.byte_len(_env("LENO_ENV_UTF8")), 9, "②非 ASCII 应是 9 个 UTF-8 字节")
+    assert_eq(_env_or("LENO_ENV_UTF8", "兜底"), cn, "②_env_or 也应读到非 ASCII 值")
+    assert_eq(_env_or("LENO_ENV_NOPE_XYZ", "兜底"), "兜底", "②取不到时应回默认值")
+
+    // ③ 跨进程（仅 Windows）：子进程必须看到**同一个值**
+    //   ⚠ 不让子进程回吐原文：它的 stdout 走控制台代码页（本机 GBK），中文回来会被转坏 ⇒
+    //     回吐**纯 ASCII 的数字对**"字符数:UTF-8 字节数"。正确值 = 3:9；
+    //     被代码页转坏的典型形态会给出别的数字（例如按 GBK 解成 6 个字符）✓
+    if is_win {
+        var probe = "powershell -NoProfile -Command \"'' + [Environment]::GetEnvironmentVariable('LENO_ENV_UTF8').Length + ':' + [Text.Encoding]::UTF8.GetBytes([Environment]::GetEnvironmentVariable('LENO_ENV_UTF8')).Length\""
+        var r = _exec(probe, 30000)
+        assert_ne(r, null, "③powershell 起不来")
+        var got = strings.trim(_str(r.output))
+        assert_true(strings.has(got, "3:9"),
+            "③子进程应看到同样的值（字符数:UTF-8字节数 = 3:9；老实现是 UNDEF/异常）；实际=" + got)
+
+        // 反向对照：ASCII 变量在子进程里应是 5:5（证明上面的探法本身有效，不是恒真）
+        var probe2 = "powershell -NoProfile -Command \"'' + [Environment]::GetEnvironmentVariable('LENO_ENV_ASCII').Length + ':' + [Text.Encoding]::UTF8.GetBytes([Environment]::GetEnvironmentVariable('LENO_ENV_ASCII')).Length\""
+        var r2 = _exec(probe2, 30000)
+        assert_ne(r2, null, "③powershell 起不来（对照）")
+        assert_true(strings.has(strings.trim(_str(r2.output)), "5:5"),
+            "③ASCII 对照应为 5:5；实际=" + strings.trim(_str(r2.output)))
+    }
+
+    // ④ 长值 / 多行值仍然可用（窄副本那条路不许被改坏）
+    var longv = strings.rep("A", 8000)
+    assert_eq(_env("LENO_ENV_LONG", longv), true, "④8000 字节写应成功")
+    assert_eq(strings.byte_len(_env("LENO_ENV_LONG")), 8000, "④8000 字节读回应完整")
+    var multi = "第一行\n第二行\n"
+    assert_eq(_env("LENO_ENV_MULTI", multi), true, "④多行（含非 ASCII）写应成功")
+    assert_eq(_env("LENO_ENV_MULTI"), multi, "④多行读回应逐字节一致")
+
+    print("test_env_utf8 passed")
+}

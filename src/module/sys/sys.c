@@ -32,17 +32,22 @@ extern char** g_argv;
 //   调用点只好用 `r[0]` / `r[1]` **位置取值**、拿到的是 any（不可读，且顺序一改就静默错位）。
 // 改结构体后字段类型**编译期已知**、零收窄 —— 与 `DirEntry`（dirs.walk）/ `DirInfo`（dirs.stat）/
 //   `RegexMatch`（regexs.find_all）同一套做法（编译期字段表 + 运行期 ObjStructDef **同源**）。
-// 字段：`output`（stdout+stderr 合并文本）、`code`（退出码；超时是 **124**，见 P6）。
+// 字段：`output`（**合并**文本：stdout 后接 stderr）、`out` / `err`（两流**分开**，2026-10-14 补）、
+//   `code`（退出码；超时是 **124**，见 P6）。
 // ⚠ 它属于**全局内置函数**（`_exec` 无模块前缀）⇒ 走的是内置返回规格通道
 //   `native_register_meta_spec()`（v3.2.8 新开，此前内置通道只有 Kind 槽）。
 static const NativeTypeSpec S_EXEC_STR = { NTYPE_STRING, NULL, NULL, NULL, 0, -1 };
 static const NativeTypeSpec S_EXEC_INT = { NTYPE_INT,    NULL, NULL, NULL, 0, -1 };
 static const NativeTypeSpec S_EXECRESULT_SPEC = { NTYPE_STRUCT, "ExecResult", NULL, NULL, 0, -1 };
 
-static const char* EXECRESULT_FIELD_NAMES[] = { "output", "code" };
-static const NativeTypeSpec* EXECRESULT_FIELD_TYPES[] = { &S_EXEC_STR, &S_EXEC_INT };
+// ⚠ 为什么保留 `output` 又加 `out`/`err`（而不是把 output 改成"仅 stdout"）：
+//   全仓 800+ 处调用点读的是 `output`，其中相当一部分**正靠它拿 stderr**（编译器的诊断全走 stderr）
+//   ⇒ 改语义等于当场打掉它们；而"两个流分别是哪个"是确定信息、行序本来就不确定
+//   （共享一个文件时行序由 OS 写入时机决定、跨平台还不一样）⇒ 拆成两组字段最诚实 ✓
+static const char* EXECRESULT_FIELD_NAMES[] = { "output", "out", "err", "code" };
+static const NativeTypeSpec* EXECRESULT_FIELD_TYPES[] = { &S_EXEC_STR, &S_EXEC_STR, &S_EXEC_STR, &S_EXEC_INT };
 static const NativeStructSpec EXECRESULT_STRUCT_SPEC = {
-    "sys", "ExecResult", 2, EXECRESULT_FIELD_NAMES, EXECRESULT_FIELD_TYPES
+    "sys", "ExecResult", 4, EXECRESULT_FIELD_NAMES, EXECRESULT_FIELD_TYPES
 };
 
 // ==================== _env 的类型规格（双形态内置，2026-09-28） ====================
@@ -242,6 +247,77 @@ static Value native_console(int argCount, Value* args) {
     #endif
 }
 
+// ==================== 环境变量的 UTF-8 边界（2026-10-14） ====================
+// 事故：`_env("X", "中文")` **写失败**（返回 false），子进程里该变量 UNDEF；而纯 ASCII 值、
+//   含换行的值、8000 字节的长值全都好好的。定位过程见 docs/module_sys.md 的"已知坑"一节。
+// 根因：老实现走 `_putenv_s`（**窄口**）。Windows 上它要把 UTF-8 字节按 **ANSI 代码页**
+//   （本机 CP936）转成宽字符再设进环境块 —— UTF-8 的"中文"在 GBK 下不是合法序列 ⇒ 转换失败、
+//   变量从没进 Win32 环境块 ⇒ 子进程什么都看不到 ✗。更坏的是它**同时**更新了 CRT 自己的窄副本
+//   ⇒ 表现为"本进程能读回、子进程读不到"，很有欺骗性。
+// 修法：Windows 侧把**环境块当权威 UTF-8 通道**：
+//   · 写：非 ASCII 值直接 `SetEnvironmentVariableW`（UTF-8 → UTF-16，全程不经代码页）✓
+//   · 读：先 `GetEnvironmentVariableW`（UTF-16 → UTF-8），拿不到再退窄口 `getenv` ✓
+//   ⚠ 纯 ASCII 值**继续走原来的 `_putenv_s`**（一个字节都不改）：那条路会同步更新 CRT 的**窄副本**，
+//     而进程内的窄口消费者（libcurl 等直接用 `getenv` 的 C 库）只认那个副本 —— 动它才是回归。
+//     非 ASCII 值本来就没法用窄副本表达（这正是不走窄口的原因）⇒ 只设宽副本，窄侧任其保持旧值。
+static int env_ascii_only(const char* s) {
+    for (; *s; s++) {
+        if ((unsigned char)*s >= 0x80) return 0;
+    }
+    return 1;
+}
+
+// 读环境变量：宽口优先（权威、UTF-8 无损），拿不到再退窄口。
+// 返回 malloc 的 UTF-8 串（调用方 free）；**变量不存在 ⇒ NULL**（与 `getenv` 同口径）
+static char* env_read_utf8(const char* name) {
+#ifdef _WIN32
+    wchar_t* wname = utf8_to_utf16(name);
+    if (wname) {
+        DWORD need = GetEnvironmentVariableW(wname, NULL, 0);   // 含结尾 NUL 的宽字符数
+        if (need > 0) {
+            wchar_t* wbuf = (wchar_t*)malloc((size_t)need * sizeof(wchar_t));
+            if (wbuf) {
+                DWORD got = GetEnvironmentVariableW(wname, wbuf, need);
+                free(wname);
+                char* out = (got > 0 && got < need) ? utf16_to_utf8(wbuf) : NULL;
+                free(wbuf);
+                return out;   // 宽口命中 ⇒ 不再看窄口（权威副本已经作答）
+            }
+        }
+        free(wname);
+    }
+#endif
+    const char* val = getenv(name);
+    if (val == NULL) return NULL;
+    size_t n = strlen(val);
+    char* out = (char*)malloc(n + 1);
+    if (!out) return NULL;
+    memcpy(out, val, n + 1);
+    return out;
+}
+
+// 写环境变量：ASCII ⇒ 窄口（同时喂饱 CRT 窄副本），非 ASCII ⇒ 宽口（不经代码页）
+static int env_write_utf8(const char* name, const char* value) {
+#ifdef _WIN32
+    if (env_ascii_only(name) && env_ascii_only(value)) {
+        return _putenv_s(name, value) == 0;
+    }
+    wchar_t* wname = utf8_to_utf16(name);
+    wchar_t* wvalue = utf8_to_utf16(value);
+    if (!wname || !wvalue) {
+        free(wname);
+        free(wvalue);
+        return 0;
+    }
+    int ok = SetEnvironmentVariableW(wname, wvalue) ? 1 : 0;
+    free(wname);
+    free(wvalue);
+    return ok;
+#else
+    return setenv(name, value, 1) == 0;
+#endif
+}
+
 // _env(name) - 获取环境变量
 // _env(name, value) - 设置环境变量，返回是否成功
 static Value native_env(int argCount, Value* args) {
@@ -253,22 +329,19 @@ static Value native_env(int argCount, Value* args) {
     ObjString* name = (ObjString*)val_as_obj(args[0]);
 
     if (argCount >= 2 && val_is_string(args[1])) {
-        // 设置环境变量
+        // 设置环境变量（UTF-8 边界见 env_write_utf8）
         ObjString* value = (ObjString*)val_as_obj(args[1]);
-        #ifdef _WIN32
-            int result = _putenv_s(name->chars, value->chars);
-        #else
-            int result = setenv(name->chars, value->chars, 1);
-        #endif
-        return val_bool(result == 0);
+        return val_bool(env_write_utf8(name->chars, value->chars) != 0);
     }
 
     // 获取环境变量
-    const char* val = getenv(name->chars);
+    char* val = env_read_utf8(name->chars);
     if (val == NULL) {
         return val_null();
     }
-    return val_obj((Object*)str_copy(val, (int)strlen(val)));
+    Value out = val_obj((Object*)str_copy(val, (int)strlen(val)));
+    free(val);
+    return out;
 }
 
 // _env_or(name, default) - 取环境变量；**取不到或为空串** ⇒ `default`（返回 string）
@@ -288,11 +361,14 @@ static Value native_env_or(int argCount, Value* args) {
         return def ? val_obj((Object*)def) : val_obj((Object*)str_copy("", 0));
     }
 
-    const char* val = getenv(((ObjString*)val_as_obj(args[0]))->chars);
+    char* val = env_read_utf8(((ObjString*)val_as_obj(args[0]))->chars);
     if (val == NULL || val[0] == '\0') {
+        free(val);
         return def ? val_obj((Object*)def) : val_obj((Object*)str_copy("", 0));
     }
-    return val_obj((Object*)str_copy(val, (int)strlen(val)));
+    Value out = val_obj((Object*)str_copy(val, (int)strlen(val)));
+    free(val);
+    return out;
 }
 
 // _exit(code) - 以指定退出码终止程序
@@ -343,19 +419,88 @@ static Value native_arch(int argCount, Value* args) {
     #endif
 }
 
-// _exec(cmd[, timeout_ms]) - 执行系统命令并返回 [stdout, exit_code]
+// ==================== _exec 的临时文件（两平台各一份） ====================
+// 为什么两个流各用一个临时文件（而不是 `2>&1` 合成一个）：`out` / `err` 要**分开**交给脚本层。
+//   代价说清楚：合并文本的行序不再是"真实交错"（共享一个文件时行序由 OS 的写入时机决定、
+//   跨平台还不一样），但"这一行属于哪个流"是确定信息 ⇒ 宁可给确定的那一半。
+//   `output` 字段仍然保留（= out 后接 err）⇒ 800+ 处老调用点零改动 ✓。
+
+#ifdef _WIN32
+// 读整个文件（宽路径）。成功返回 malloc 缓冲（调用方 free），失败 ⇒ NULL 且 *out_len = 0
+static char* exec_read_file_wide(const wchar_t* path, long* out_len) {
+    *out_len = 0;
+    FILE* f = _wfopen(path, L"rb");
+    if (!f) return NULL;
+    fseek(f, 0, SEEK_END);
+    long n = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (n < 0) n = 0;
+    char* buf = (char*)malloc((size_t)n + 1);
+    if (!buf) { fclose(f); return NULL; }
+    size_t got = fread(buf, 1, (size_t)n, f);
+    buf[got] = '\0';
+    *out_len = (long)got;
+    fclose(f);
+    return buf;
+}
+
+// out / err / in 三个临时路径（`win` 传 NULL ⇒ 不算 stdin 那份）
+//   ⚠ GetTempPathW 返回的路径**自带结尾反斜杠** ⇒ `%ls` 之后直接接文件名 ✓
+static void exec_temp_paths(const wchar_t* wtmp, unsigned long seq,
+                            wchar_t* wout, wchar_t* werr, wchar_t* win) {
+    unsigned long pid = (unsigned long)GetCurrentProcessId();
+    swprintf(wout, MAX_PATH, L"%lsleno_exec_%lu_%lu.out", wtmp, pid, seq);
+    swprintf(werr, MAX_PATH, L"%lsleno_exec_%lu_%lu.err", wtmp, pid, seq);
+    if (win) swprintf(win, MAX_PATH, L"%lsleno_exec_%lu_%lu.in", wtmp, pid, seq);
+}
+#else
+// POSIX 侧的同款（窄路径：临时目录来自 TMPDIR / /tmp）
+static char* exec_read_file(const char* path, long* out_len) {
+    *out_len = 0;
+    FILE* f = fopen(path, "rb");
+    if (!f) return NULL;
+    fseek(f, 0, SEEK_END);
+    long n = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (n < 0) n = 0;
+    char* buf = (char*)malloc((size_t)n + 1);
+    if (!buf) { fclose(f); return NULL; }
+    size_t got = fread(buf, 1, (size_t)n, f);
+    buf[got] = '\0';
+    *out_len = (long)got;
+    fclose(f);
+    return buf;
+}
+#endif
+
+// _exec(cmd[, timeout_ms])            - 执行系统命令并返回 ExecResult
+// _exec(cmd, stdin_text)              - 同上，并把 `stdin_text` 喂给子进程的 **stdin**
+// _exec(cmd, timeout_ms, stdin_text)  - 两者兼有
+//   第 2 个实参**按类型**分流（int ⇒ 超时、string ⇒ stdin）—— 与 `_env` 按实参形态分流同一取向
+//   （规格侧仍是 1..3 个实参，类型留给运行时判）。
 //   timeout_ms > 0 ⇒ 超时**杀掉**子进程，退出码返回 **124**（GNU `timeout` 的惯例）；
 //   不传 / 传 0 = 不限制（旧行为）。Windows 走 CreateProcessW + WaitForSingleObject +
 //   TerminateProcess；POSIX 用 coreutils 的 `timeout` 包一层（没有该命令时会以 127 **响亮**失败，
 //   不是静默）。加这个参数的原因（P6）：此前子进程一挂住，父进程乃至整套断言一起挂 ✗。
+// 返回 `ExecResult{ output（合并）, out（仅 stdout）, err（仅 stderr）, code }`。
 // 使用 + 临时文件避免 _popen 在大量并发调用时不稳定的问题
 // Windows 版使用 UTF-16 转换以支持中文/Unicode 路径
 static Value native_exec(int argCount, Value* args) {
-    // 个数（>= 1）由编译期把关（实测：`_exec()` ⇒「参数过少: 最少 1 个」）⇒ 这里只守类型
+    // 个数（1..3）由编译期把关（实测：`_exec()` ⇒「参数过少: 最少 1 个」）⇒ 这里只守类型
     if (!val_is_string(args[0])) {
         return val_null();
     }
     ObjString* cmd = (ObjString*)val_as_obj(args[0]);
+
+    // 第 2 参按类型分流、第 3 参固定是 stdin（见函数头注释）
+    int timeout_ms = 0;
+    ObjString* stdin_text = NULL;
+    if (argCount >= 2) {
+        if (val_is_string(args[1])) stdin_text = (ObjString*)val_as_obj(args[1]);
+        else if (val_is_int(args[1])) timeout_ms = (int)val_as_int(args[1]);
+        else if (val_is_num(args[1])) timeout_ms = (int)val_as_num(args[1]);
+    }
+    if (argCount >= 3 && val_is_string(args[2])) stdin_text = (ObjString*)val_as_obj(args[2]);
 
 #ifdef _WIN32
     // 将 UTF-8 cmd 转为 UTF-16 宽字符
@@ -374,27 +519,40 @@ static Value native_exec(int argCount, Value* args) {
     //   「The process cannot access the file because it is being used by another process」✗
     //   实测：一次"被杀的子进程"之后，**后面所有** `_exec` 全坏，套件 241/330 挂 ✗。
     static unsigned long s_exec_seq = 0;
-    swprintf(wtmp_path + tlen, MAX_PATH - tlen, L"leno_exec_%lu_%lu.txt",
-             GetCurrentProcessId(), ++s_exec_seq);
+    wchar_t wout_path[MAX_PATH], werr_path[MAX_PATH], win_path[MAX_PATH];
+    exec_temp_paths(wtmp_path, ++s_exec_seq, wout_path, werr_path, stdin_text ? win_path : NULL);
 
-    // 构建宽字符命令: cmd /c "command" > tmp 2>&1
-    size_t full_len = wcslen(wcmd) + wcslen(wtmp_path) + 64;
+    // stdin ⇒ 先落盘（`< file` 是 cmd 认的写法；为什么不用管道见函数头）
+    // ⚠ 用 `->len`（UTF-8 **字节**数）而不是 `strlen`：stdin 允许二进制内容
+    if (stdin_text) {
+        FILE* fin = _wfopen(win_path, L"wb");
+        if (!fin) { free(wcmd); return val_null(); }
+        fwrite(stdin_text->chars, 1, (size_t)stdin_text->len, fin);
+        fclose(fin);
+    }
+
+    // 构建宽字符命令: cmd /c ( <cmd> ) > out 2> err [< in]
+    // ⚠ 外面那对括号是**必需**的，不是装饰：`cmd /c A & B > f` 里重定向只绑在 `&` 的**后半句**上
+    //   ⇒ A 的输出漏到父进程控制台、而 f 里只有 B 的输出（实测踩到：`echo OUT & echo ERR 1>&2`
+    //   的结果是 out 里出现 ERR、err 空）✗。用 `( )` 把用户命令行整个包起来，重定向才作用于整组 ✓
+    size_t full_len = wcslen(wcmd) + 2 * MAX_PATH + 64;
     wchar_t* wfull = malloc(full_len * sizeof(wchar_t));
-    if (!wfull) { free(wcmd); return val_null(); }
+    if (!wfull) { free(wcmd); if (stdin_text) DeleteFileW(win_path); return val_null(); }
     // ⚠ `%ls` 不是笔误：宽版 printf 的 `%s` 吃 wchar_t* 只是 MSVC/UCRT 的非标准扩展语义，
     //   换 msvcrt 版 MinGW / 开 __USE_MINGW_ANSI_STDIO 后 `%s` 是"窄串" ⇒ 宽路径只剩首字符（详见 vm_main.c）
-    swprintf(wfull, full_len, L"cmd /c %ls > \"%ls\" 2>&1", wcmd, wtmp_path);
+    if (stdin_text) {
+        swprintf(wfull, full_len, L"cmd /c ( %ls ) > \"%ls\" 2> \"%ls\" < \"%ls\"",
+                 wcmd, wout_path, werr_path, win_path);
+    } else {
+        swprintf(wfull, full_len, L"cmd /c ( %ls ) > \"%ls\" 2> \"%ls\"", wcmd, wout_path, werr_path);
+    }
 
     // ★ P6（2026-09-19）：带超时执行 —— 此前是 _wsystem（阻塞、无超时）⇒ 子进程挂住就把
     //   父进程（乃至整套断言）一起拖死 ✗。现在等不到就收掉，退出码返回 124。
     //   ⚠ 超时必须杀**整棵树**：`TerminateProcess` 只杀 `cmd` 自己，它的孙子（如 `ping`）会活下来
     //   继续握着临时文件 ✗ ⇒ 用 Job Object（`KILL_ON_JOB_CLOSE`）+ **CREATE_SUSPENDED**
     //   （先入 job 再放行，避免"还没入 job 就 fork 出孙子"这个竞态）✓。
-    int timeout_ms = 0;
-    if (argCount >= 2) {
-        if (val_is_int(args[1])) timeout_ms = (int)val_as_int(args[1]);
-        else if (val_is_num(args[1])) timeout_ms = (int)val_as_num(args[1]);
-    }
+    // （timeout / stdin 的解析已挪到函数开头 —— 第 2 参按类型分流）
     int rc = 0;
     {
         // Job Object：**只**为了超时时把 cmd + 它的孙子一起收掉（下面 TerminateJobObject）✓
@@ -414,7 +572,9 @@ static Value native_exec(int argCount, Value* args) {
             if (job) CloseHandle(job);
             free(wfull);
             free(wcmd);
-            DeleteFileW(wtmp_path);
+            DeleteFileW(wout_path);
+            DeleteFileW(werr_path);
+            if (stdin_text) DeleteFileW(win_path);
             return val_null();
         }
         if (job) AssignProcessToJobObject(job, pi.hProcess);
@@ -438,82 +598,122 @@ static Value native_exec(int argCount, Value* args) {
     free(wfull);
     free(wcmd);
 
-    // 读取临时文件 (宽字符路径)
-    FILE* f = _wfopen(wtmp_path, L"rb");
-    if (!f) { DeleteFileW(wtmp_path); return val_null(); }
-    fseek(f, 0, SEEK_END);
-    long flen = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    char* output = malloc(flen + 1);
-    if (!output) { fclose(f); DeleteFileW(wtmp_path); return val_null(); }
-    fread(output, 1, flen, f);
-    output[flen] = '\0';
-    fclose(f);
-    DeleteFileW(wtmp_path);
+    // 分别读取 out / err（异步拉起的孙子可能还握着文件 ⇒ 删不掉也无所谓，下次会盖写新名字）
+    long olen = 0, elen = 0;
+    char* out_buf = exec_read_file_wide(wout_path, &olen);
+    char* err_buf = exec_read_file_wide(werr_path, &elen);
+    DeleteFileW(wout_path);
+    DeleteFileW(werr_path);
+    if (stdin_text) DeleteFileW(win_path);
+    // 读不到（文件没生成 / 打不开）⇒ 按**空串**处理：退出码仍然是真实信息，
+    //   比整个返回 null 更有用（"命令跑了但没输出"与"根本没跑起来"由 code 区分）
+    if (!out_buf) { out_buf = (char*)malloc(1); if (out_buf) out_buf[0] = '\0'; olen = 0; }
+    if (!err_buf) { err_buf = (char*)malloc(1); if (err_buf) err_buf[0] = '\0'; elen = 0; }
+    if (!out_buf || !err_buf) { free(out_buf); free(err_buf); return val_null(); }
 
-    // 返回 `ExecResult{ output, code }`（v3.2.8；见文件顶部的规格说明）
+    long total = olen + elen;
+    char* merged = (char*)malloc((size_t)total + 1);
+    if (!merged) { free(out_buf); free(err_buf); return val_null(); }
+    memcpy(merged, out_buf, (size_t)olen);
+    memcpy(merged + olen, err_buf, (size_t)elen);
+    merged[total] = '\0';
+
+    // 返回 `ExecResult{ output, out, err, code }`（v3.2.8 / 流分流与 stdin 于 2026-10-14 补）
     ObjStruct* result = native_struct_new("ExecResult");
-    if (!result) { free(output); return val_null(); }
+    if (!result) { free(merged); free(out_buf); free(err_buf); return val_null(); }
     Value result_val = val_obj((Object*)result);
     gc_push_root(&result_val);   // 填字段期间它还没交出去 ⇒ 自己护住（str_copy 会分配）
-    native_struct_set(result, "output", val_obj((Object*)str_copy(output, (int)flen)));
+    native_struct_set(result, "output", val_obj((Object*)str_copy(merged, (int)total)));
+    native_struct_set(result, "out", val_obj((Object*)str_copy(out_buf, (int)olen)));
+    native_struct_set(result, "err", val_obj((Object*)str_copy(err_buf, (int)elen)));
     native_struct_set(result, "code", val_int(rc));
     gc_pop_root();
-    free(output);
+    free(merged);
+    free(out_buf);
+    free(err_buf);
     return result_val;
 #else
     // ★ P6：POSIX 侧用 coreutils 的 `timeout` 包一层（超时同样得到退出码 124）。
     //   若系统没有 timeout（如部分 macOS 默认不带），命令会以 127 失败 —— 那是**响亮**的失败 ✓。
-    int timeout_ms = 0;
-    if (argCount >= 2) {
-        if (val_is_int(args[1])) timeout_ms = (int)val_as_int(args[1]);
-        else if (val_is_num(args[1])) timeout_ms = (int)val_as_num(args[1]);
+    //   （timeout / stdin 的解析已在函数开头完成）
+    // ★ 两个流**分开**重定向到临时文件 —— 与 Windows 分支同契约：
+    //   `output` = out 后接 err；`out` / `err` 各自独立；stdin 走 `'< in'`
+    //   ⚠ 从 popen 换成 system()：popen 只能收一个流，分流就做不到（sh 同一个入口，退出码同口径 ✓）
+    const char* tmpdir = getenv("TMPDIR");
+    if (!tmpdir || !*tmpdir) tmpdir = "/tmp";
+    static unsigned long s_exec_seq = 0;
+    unsigned long seq = ++s_exec_seq;
+    char out_path[512], err_path[512], in_path[512];
+    snprintf(out_path, sizeof(out_path), "%s/leno_exec_%d_%lu.out", tmpdir, (int)getpid(), seq);
+    snprintf(err_path, sizeof(err_path), "%s/leno_exec_%d_%lu.err", tmpdir, (int)getpid(), seq);
+    snprintf(in_path,  sizeof(in_path),  "%s/leno_exec_%d_%lu.in",  tmpdir, (int)getpid(), seq);
+
+    // stdin ⇒ 先落盘（用 `->len` UTF-8 字节数，允许二进制内容）
+    if (stdin_text) {
+        FILE* fin = fopen(in_path, "wb");
+        if (!fin) return val_null();
+        fwrite(stdin_text->chars, 1, (size_t)stdin_text->len, fin);
+        fclose(fin);
     }
-    // ★ 追加 `2>&1`：popen 只收 stdout，而编译器等子进程的诊断全走 stderr ⇒
-    //   不合并的话 output 恒为空，与 Windows 分支（`cmd /c <cmd> > tmp 2>&1`）契约不一致 ✗
-    //   （实测：assert/helpers/compiler.leno 断言「输出=空」、run_tests 的失败摘要也抓不到文案）
-    size_t need = strlen(cmd->chars) + 64;
+
+    size_t need = strlen(cmd->chars) + sizeof(out_path) + sizeof(err_path) + sizeof(in_path) + 64;
     char* run_buf = (char*)malloc(need);
-    if (!run_buf) return val_null();
+    if (!run_buf) { if (stdin_text) unlink(in_path); return val_null(); }
+    // ⚠ 与 Windows 分支同款：用户命令行必须**整组**包进 `( )`，否则 `A & B > f` 的重定向只绑后半句 ✗
+    //   `timeout` 放在分组**里面**（`timeout N ( cmd )` 是 sh 的语法错）
     if (timeout_ms > 0) {
-        snprintf(run_buf, need, "timeout %d %s 2>&1", (timeout_ms + 999) / 1000, cmd->chars);
+        snprintf(run_buf, need, "( timeout %d %s )", (timeout_ms + 999) / 1000, cmd->chars);
     } else {
-        snprintf(run_buf, need, "%s 2>&1", cmd->chars);
+        snprintf(run_buf, need, "( %s )", cmd->chars);
     }
-    char* run_cmd = run_buf;
-    FILE* fp = popen(run_cmd, "r");
-    if (!fp) { free(run_buf); return val_null(); }
-
-    char buffer[256];
-    size_t capacity = 1024, len = 0;
-    char* output = malloc(capacity);
-    if (!output) { pclose(fp); free(run_buf); return val_null(); }
-    output[0] = '\0';
-
-    while (fgets(buffer, sizeof(buffer), fp)) {
-        size_t bl = strlen(buffer);
-        if (len + bl + 1 > capacity) {
-            capacity = (len + bl + 1) * 2;
-            char* newer = realloc(output, capacity);
-            if (!newer) { free(output); pclose(fp); free(run_buf); return val_null(); }
-            output = newer;
-        }
-        memcpy(output + len, buffer, bl);
-        len += bl;
-        output[len] = '\0';
+    if (stdin_text) {
+        snprintf(tail, sizeof(tail), " > '%s' 2> '%s' < '%s'", out_path, err_path, in_path);
+    } else {
+        snprintf(tail, sizeof(tail), " > '%s' 2> '%s'", out_path, err_path);
     }
-    int status = pclose(fp);
-    int rc = WIFEXITED(status) ? WEXITSTATUS(status) : 1;
+    size_t rlen = strlen(run_buf);
+    if (rlen + strlen(tail) + 1 > need) {
+        // 分组括号/超时前缀都可能把命令撑长 ⇒ 按实际长度再取一次缓冲（不猜）
+        char* grown = (char*)realloc(run_buf, rlen + strlen(tail) + 1);
+        if (!grown) { free(run_buf); if (stdin_text) unlink(in_path); return val_null(); }
+        run_buf = grown;
+        need = rlen + strlen(tail) + 1;
+    }
+    strncat(run_buf, tail, need - rlen - 1);
 
-    // 返回 `ExecResult{ output, code }`（v3.2.8；见文件顶部的规格说明）
+    int status = system(run_buf);
+    int rc = (status == -1) ? 1 : (WIFEXITED(status) ? WEXITSTATUS(status) : 1);
+
+    long olen = 0, elen = 0;
+    char* out_buf = exec_read_file(out_path, &olen);
+    char* err_buf = exec_read_file(err_path, &elen);
+    unlink(out_path);
+    unlink(err_path);
+    if (stdin_text) unlink(in_path);
+    if (!out_buf) { out_buf = (char*)malloc(1); if (out_buf) out_buf[0] = '\0'; olen = 0; }
+    if (!err_buf) { err_buf = (char*)malloc(1); if (err_buf) err_buf[0] = '\0'; elen = 0; }
+    if (!out_buf || !err_buf) { free(out_buf); free(err_buf); free(run_buf); return val_null(); }
+
+    long total = olen + elen;
+    char* merged = (char*)malloc((size_t)total + 1);
+    if (!merged) { free(out_buf); free(err_buf); free(run_buf); return val_null(); }
+    memcpy(merged, out_buf, (size_t)olen);
+    memcpy(merged + olen, err_buf, (size_t)elen);
+    merged[total] = '\0';
+
+    // 返回 `ExecResult{ output, out, err, code }`（v3.2.8 / 流分流与 stdin 于 2026-10-14 补）
     ObjStruct* result = native_struct_new("ExecResult");
-    if (!result) { free(output); free(run_buf); return val_null(); }
+    if (!result) { free(merged); free(out_buf); free(err_buf); free(run_buf); return val_null(); }
     Value result_val = val_obj((Object*)result);
     gc_push_root(&result_val);
-    native_struct_set(result, "output", val_obj((Object*)str_copy(output, (int)len)));
+    native_struct_set(result, "output", val_obj((Object*)str_copy(merged, (int)total)));
+    native_struct_set(result, "out", val_obj((Object*)str_copy(out_buf, (int)olen)));
+    native_struct_set(result, "err", val_obj((Object*)str_copy(err_buf, (int)elen)));
     native_struct_set(result, "code", val_int(rc));
     gc_pop_root();
-    free(output);
+    free(merged);
+    free(out_buf);
+    free(err_buf);
     free(run_buf);
     return result_val;
 #endif
@@ -941,12 +1141,14 @@ void sys_init_globals(void) {
     // 注册全局 _arch 函数（CPU架构，0 个参数）
     vm_register_native("_arch", native_arch, TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
 
-    // 注册全局 _exec 函数（返回 [stdout_string, exit_code] 数组，混合类型用 TYPE_ANY）
-    // ⚠ 参数个数是**可变 1..2**（`_exec(cmd[, timeout_ms])`，P6）—— 语义侧读的就是这里的
-    //   arity/min/max：arity 写死成 1 时，`_exec(cmd, ms)` 会被判「参数数量不匹配: 期望 1」✗
-    //   （实测踩过：新用例与 run_tests.leno 一起编译不过）。对照 `_gc` 的 (-1, 0, 1) 写法。
-    vm_register_native("_exec", native_exec, TYPE_ARRAY, TYPE_ANY, NATIVE_VARARG(1, 2, 0, NULL, TYPE_ANY));
-    // `_exec` 的真实返回是 `ExecResult{ string output, int code }`（v3.2.8）——
+    // 注册全局 _exec 函数（返回 ExecResult，见文件顶部的规格说明）
+    // ⚠ 参数个数是**可变 1..3**（`_exec(cmd[, timeout_ms][, stdin_text])`，P6 / 2026-10-14）——
+    //   语义侧读的就是这里的 arity/min/max：
+    //     · arity 写死成 1 ⇒ `_exec(cmd, ms)` 会被判「参数数量不匹配: 期望 1」✗（实测踩过）
+    //     · max 停在 2   ⇒ 带 stdin 的三参形态同样编译不过 ✗
+    //   第 2 参按**类型**分流（int ⇒ 超时、string ⇒ stdin），规格层表达不了就留给运行时判 ✓
+    vm_register_native("_exec", native_exec, TYPE_ARRAY, TYPE_ANY, NATIVE_VARARG(1, 3, 0, NULL, TYPE_ANY));
+    // `_exec` 的真实返回是 `ExecResult{ string output, string out, string err, int code }`（v3.2.8）——
     //   内置通道的规格版声明（必须在 vm_register_native **之后**：那是"查找并更新"）
     native_register_struct_spec(&EXECRESULT_STRUCT_SPEC);
     native_register_meta_spec("_exec", &S_EXECRESULT_SPEC);

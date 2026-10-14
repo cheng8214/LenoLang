@@ -34,7 +34,7 @@ Sys 模块提供与运行时环境、命令行参数和系统信息相关的全�
 | `_env(name, value)` | 设置环境变量 | `Bool` |
 | `_env_or(name, default)` | 获取环境变量（取不到或空串返回 default） | `String` |
 | `_exit(code)` | 以指定退出码终止程序 | 无 |
-| `_exec(cmd[, timeout_ms])` | 执行系统命令并返回 `ExecResult{ output, code }`（可带超时；超时码 124）| `ExecResult` / `null` |
+| `_exec(cmd[, timeout_ms][, stdin_text])` | 执行系统命令（可带超时与 stdin）；返回 `ExecResult{ output, out, err, code }` | `ExecResult` / `null` |
 | `_spawn(exe, args)` | **异步**拉起长驻进程并**保留句柄**（失败 -1）| `Int` |
 | `_kill(handle)` | 收掉句柄对应的**整棵进程树**（幂等）| `Bool` |
 | `_username()` | 获取当前登录用户名 | `String` / `null` |
@@ -391,6 +391,21 @@ _env("MY_VAR", "")
 
 **注意**: 设置的环境变量仅在当前进程及其子进程中有效，不会影响父进程或系统级环境变量。
 
+> ⚠ **非 ASCII 值（2026-10-14 修）**：此前 `_env("X", "中文")` 在 Windows 上会**写失败**（返回
+> `false`），且**子进程看不到**这个变量；而纯 ASCII 值、含换行的值、8000 字节的长值全都正常 ——
+> 很容易被误判成"多行截断"。
+> 根因：老实现走窄口 `_putenv_s`，Windows 上它要按 **ANSI 代码页**把 UTF-8 字节转成宽字符再写进
+> 环境块；UTF-8 的"中文"在 GBK（CP936）下不是合法序列 ⇒ 转换失败、变量从没进 Win32 环境块；
+> 而 CRT 自己的**窄副本却已被写入** ⇒ 表现为"本进程读得回、子进程读不到"，很有欺骗性。
+> 修法：非 ASCII 值走 `SetEnvironmentVariableW`（UTF-8 → UTF-16，**全程不经代码页**）、
+> 读走 `GetEnvironmentVariableW`；**纯 ASCII 值仍走原路**（那条路会同步 CRT 窄副本 ——
+> 进程内直接用 `getenv` 的 C 库（如 libcurl）只认那个副本）✓。
+> 回归用例：`assert/test_env_utf8.leno`（含"子进程必须看到同一个值"的跨进程断言）。
+>
+> ⚠ 反过来说：**别用 `_env` 传二进制**（值里不能有 NUL、长度也有平台上限）；
+> 要传一段数据给子进程请用 `_exec` 的 `stdin_text` ✓。
+> 顺带：`_env` 的**返回值要接**——写失败时返回 `false`，忽略它就等于把"没设上"当成"设上了" ✗。
+
 ### `_env_or(name, default)`
 
 获取指定环境变量的值；**取不到**或**为空串**时返回 `default`。
@@ -472,21 +487,32 @@ var path = "folder" + _sep() + "subfolder" + _sep() + "file.txt"
 
 ## 命令执行
 
-### `_exec(cmd[, timeout_ms])`
+### `_exec(cmd[, timeout_ms][, stdin_text])`
 
-执行系统命令并返回结构体 `ExecResult{ string output, int code }`（**字段类型编译期已知**，v3.2.8 起）。
+执行系统命令并返回结构体 `ExecResult{ string output, string out, string err, int code }`
+（**字段类型编译期已知**，v3.2.8 起；`out` / `err` 与 `stdin_text` 于 **2026-10-14** 补）。
 
 **参数**:
 - `cmd` (String): 要执行的命令
-- `timeout_ms` (Int, 可选): **超时毫秒数**。> 0 时超时即**杀掉**子进程，退出码返回 **`124`**
+- `timeout_ms` (Int, 可选): **超时毫秒数**。> 0 时超时即**杀掉**子进程（整棵树），退出码返回 **`124`**
   （GNU `timeout` 的惯例）；不传 / 传 `0` = 不限制（旧行为）
+- `stdin_text` (String, 可选): 喂给子进程 **stdin** 的内容（按 UTF-8**字节**原样写入，二进制安全）
+
+> 第 2 个实参**按类型分流**：`Int` ⇒ 超时、`String` ⇒ stdin ⇒ 以下四种写法都合法：
+> `_exec(cmd)` · `_exec(cmd, 5000)` · `_exec(cmd, "输入")` · `_exec(cmd, 5000, "输入")`
 
 **返回**: `ExecResult` / `null` - 执行失败返回 `null`
 
 | 字段 | 类型 | 含义 |
 | --- | --- | --- |
-| `output` | `string` | 命令输出（stdout 与 stderr 合并的文本） |
+| `output` | `string` | **合并文本** = `out` 后接 `err`（老调用点零改动） |
+| `out` | `string` | **仅 stdout** |
+| `err` | `string` | **仅 stderr** |
 | `code` | `int` | 退出码；**超时是 124** |
+
+> ⚠ **合并文本的行序不是"真实交错"**：`out` / `err` 各自重定向到独立的临时文件；
+> "哪一行属于哪个流"是**确定**信息，行序不是（共享一个文件时行序由 OS 写入时机决定、跨平台还不一样）
+> ⇒ 要分流的场合请直接用 `out` / `err`，别拿 `output` 猜。`output` 保留只为兼容既有调用点 ✓。
 
 > ⚠ **v3.2.8 起返回结构体、不再是 `[output, code]` 数组**：旧写法 `r[0]` / `r[1]` 要改成
 > `r.output` / `r.code`（数组下标会落到"struct 字段名必须是字符串"的运行期错误）。
@@ -513,8 +539,20 @@ var path = "folder" + _sep() + "subfolder" + _sep() + "file.txt"
 ```leno
 // 执行命令并获取输出和退出码（v3.2.8 起是字段取值）
 var r = _exec("echo hello")
-print("输出:", r.output)
+print("输出:", r.output)          // 合并文本（= out 后接 err）
 print("退出码:", r.code)
+
+// 分流：正常结果与诊断分开判断（2026-10-14 起有 out / err）
+var b = _exec("mytool --build")
+if b.code != 0 {
+    print("失败原因（stderr）: " + b.err)
+} else {
+    print("产物信息（stdout）: " + b.out)
+}
+
+// stdin：把一段数据直接喂给子进程（不必再自己写临时文件 / 塞环境变量）
+var rr = _exec("node -e \"let d='';process.stdin.on('data',c=>d+=c).on('end',()=>console.log(d))\"",
+               20000, "喂给 node stdin 的内容")
 
 // 检查命令是否成功
 var result = _exec("leno.exe test.leno")
@@ -527,9 +565,18 @@ if result.code == 0 {
 
 **注意**:
 - `_exec()` 会等待命令执行完毕后返回
-- 返回值是 `ExecResult{ output, code }` 结构体，可同时获取输出和退出码（v3.2.8 起；此前是数组）
-- 如需获取 stderr，在命令中加 `2>&1` 重定向：`_exec("mycmd 2>&1")`
-- **Windows `_popen` 路径问题**：如果命令路径中包含引号 `"`，`_popen` 可能返回错误。建议不使用引号包裹路径，直接拼接：`_exec(leno + " " + test_file)` 而非 `_exec("\"" + leno + "\" \"" + test_file + "\"")`
+- 返回值是 `ExecResult{ output, out, err, code }` 结构体（v3.2.8 起；此前是 `[output, code]` 数组）
+- **不再需要 `2>&1`**：两个流本来就分开采集；老代码里写的 `2>&1` 照旧可用，只是多余
+- ⚠ **命令里的 `&` / `|` 也整组受重定向约束**（2026-10-14 修）：实现把整条命令行包进 `( )` 再重定向
+  （`cmd /c ( <cmd> ) > out 2> err`）。此前 `_exec("echo A & echo B")` 里 `A` 的输出会**漏到父进程
+  控制台** ✗（重定向只绑在 `&` 的后半句上），现在不会了 ✓
+- ⚠ **Windows 引号坑**：`_exec` 走 `cmd /c`，把带空格的路径用引号包起来再拼进命令时，引号可能被
+  `cmd` 吞掉 ⇒ 更稳的是 `_spawn(exe, args)`（CreateProcessW，**不经 `cmd`**），
+  或先把命令写进 `.bat` 再 `_exec(那个文件)`
+- ℹ **`%TEMP%` 里可能出现 `leno_exec_<pid>_<序号>.out/.err/.in`**：这是本次执行的重定向文件。
+  它在命令跑完后**总是尝试删除**，但若**子进程自己拉起的后台进程**（`cmd /c start …` 那类）继承了
+  重定向句柄并还活着，删除会失败 ⇒ 留下文件。文件名每次唯一 ⇒ 不影响后续调用（这是"临时文件"方案的
+  固有取舍）；**别去手工清理正在跑的**，跑完再删无妨
 
 ---
 

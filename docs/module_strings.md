@@ -844,7 +844,7 @@ print(s[0])          // "你" - 第0个字符
 print(s[1])          // "好" - 第1个字符
 print(s[2])          // "c"  - 第2个字符
 print(s.len())       // 6    - 6个字符
-print(s.byte_len())  // 9    - 6字节(中文) + 5字节(ASCII) = 9字节
+print(s.byte_len())  // 11   - 6字节(中文) + 5字节(ASCII) = 11字节
 ```
 
 ### 0-based 索引

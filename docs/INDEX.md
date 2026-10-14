@@ -21,6 +21,26 @@
 >   同步『LenoSDL3_裁剪过多导致闪烁排查记录.md』**新增 §7.1**（机制/修法/验收表 + 一个排查坑：
 >   用户正在动鼠标会让 hover 变化 ⇒ 截帧必然不同 ⇒ **别把"鼠标移动"误判成"闪烁"** ✗）、
 >   『LenoSDL3_Card卡片控件设计文档.md』§5.4b/台账、`sdl_card.leno` 文件头（不变式 ③→**四条** ✓）。
+>   **2026-10-14 追加（二）**：**修 VM 侧两处「传数据」基础设施 + 补 LenoWeb 首份文档**：
+>   ① **`_env` 非 ASCII**：此前 `_env("X", "中文")` 在 Windows 上**写失败**（返回 `false`）且**子进程看不到**
+>   （根因：窄口 `_putenv_s` 按 ANSI 代码页转 UTF-8 字节，CP936 下转换失败 ⇒ 值从没进 Win32 环境块，
+>   而 CRT 窄副本**已被写入** ⇒ 表现为"本进程读得回、子进程读不到"，极易被误判成"多行截断"✗）⇒
+>   修：非 ASCII 走 `SetEnvironmentVariableW`、读走 `GetEnvironmentVariableW`；**纯 ASCII 仍走原路**
+>   （那条路会同步 CRT 窄副本 —— 进程内直接 `getenv` 的 C 库（如 libcurl）只认它 ✓）；
+>   ② **`_exec` 补 stdin 喂入 + stdout/stderr 分流**：`ExecResult` 增 `out`/`err`，**保留 `output` = out 后接 err**
+>   （800+ 处老调用点零改动 ✓）；命令行整组包 `( )` ⇒ `A & B` 里 A 的输出不再漏到父控制台 ✓；
+>   第 2 实参按类型分流（`Int`=超时 / `String`=stdin）⇒ `_exec(cmd[, timeout][, stdin])` 四种写法都合法；
+>   ③ 新增 **`module_web.md`（LenoWeb 首份参考文档）** —— 此前它的能力只在源码头注释与开发记录里，
+>   从 `docs/` 入口发现不了（实际后果：`web_gzip.leno` 635 行纯 Leno gzip 被误判成"Leno 没有 gzip"✗）；
+>   ④ 订正 `module_strings.md` 的 `byte_len` 示例算术错（`6字节(中文)+5字节(ASCII)` 写成 **9** ✗→**11** ✓）；
+>   ⑤ 新增用例 `assert/test_exec_streams_stdin.leno`（流分离 / stdin / 退出码 / 超时 124 / `&` 整组重定向）
+>   与 `assert/test_env_utf8.leno`（ASCII 老行为 + 非 ASCII 写读 + **跨进程**取值 + 长值/多行）⇒
+>   套件 **452 → 454 passed / 0 failed** ✓；
+>   ⑥ 『语言陷阱速查.md』**新增 ㊱**（二进制串上 `len()` 是字符数、不是字节数 —— 实测同一份 146 字节
+>   gzip 流 `len()` 报 127 ✗ / `byte_len()` 报 146 ✓，与 `GzipResult.inBytes` 对齐；顺带记 `slice` 闭区间）。
+>   ⚠ **验收边界**：POSIX 侧改动与 Windows 同构（`( cmd ) > out 2> err < in` + 临时文件），但这台机器
+>   **没有 WSL 发行版**、无法实测 ⇒ **POSIX 分支本次未经运行验证**，需在 Linux/macOS 上跑一遍
+>   `assert/test_exec_streams_stdin.leno` 与 `assert/test_env_utf8.leno` 才算收口。
 >   **2026-10-13 追加（三）**：登记 **M11**（⏳ **待修**）—— struct **方法**里 `new B(键 = 隐式自字段)` 会报「未定义的变量」（写 `self.` 或先 `new B()` 再赋值都正常；**只在方法里犯、不静默错值**）：『语言摩擦与隐式契约清单.md』新增 **M11** 节（6 个探针的边界表 + 疑似定位点，**实现侧 `src/semantic` 未动**）、『语言陷阱速查.md』新增 **㉟**；同日**订正三处**旧说法（曾写成"编译器把 self 切成 B"，不准确 ✗）：`sdl_card.leno` 注释、『LenoSDL3_Card卡片控件设计文档.md』第 4 条坑、『SDL3常用API与易踩坑速查.md』**附录 C** 那条标题。
 >   **2026-10-13 追加（三-修）**：**M11 ✅ 已修** —— 真因**不是**"隐式 `self` 失效"✗，而是**方法体改写器**（`transform_method_body`，`src/semantic/semantic_visit_method.c`）的 **switch 白名单漏了 `AST_STRUCT_INIT`** ⇒ `new B(键 = 值)` 的**值**整段落进 `default:` 被**静默跳过** ⇒ 值里的裸字段名没被改写成 `self.字段` ⇒ 报「未定义的变量」。修法：补一个 case、**只递归 `field_values[]`**（⚠ 不碰构造目标的字段名 —— 当裸名改写会造出 `self.k` 假字段 ✗）。**同族排查**：把该白名单与 `leno_ast.h` 的 AST 枚举**逐项对了一遍**（只剩 `AST_RANGE` 未递归，但**构造不出可复现失败用例** ⇒ 不当作 bug 修、仅登记）。验收：`assert/test_method_new_implicit_self.leno`（6 条边界逐条对应，含 ⑥「B 有同名字段 ⇒ 取**外层** 7、**不是** 99」这条防**静默错值**的钉子）；套件 **452 passed / 0 failed**。『语言摩擦与隐式契约清单.md』M11 收口、『语言陷阱速查.md』**㉟ 翻案**（"⏳ 待修"→"✅ 已修"，并写明真因与当初猜测不同 ✗）。
 >   **2026-10-13 追加（四）**：**框架侧修 2 处 + 应用侧新增 1 页**（都真机实测过，坑都进速查 ✓）：
@@ -516,6 +536,7 @@
 | [module_ffi_api.md](module_ffi_api.md) | FFI（命名带 `_api`，历史遗留） |
 | [module_cstructs.md](module_cstructs.md) | cstruct 内存布局 |
 | [module_threads_api.md](module_threads_api.md) | 线程 / Channel（命名带 `_api`，历史遗留） |
+| [module_web.md](module_web.md) | **LenoWeb**（HTTP / HTML / 字符集 / **gzip 解压** / 爬虫 / 无头浏览器）；2026-10-14 首份文档 |
 
 ## 三、GUI / LenoSDL3
 

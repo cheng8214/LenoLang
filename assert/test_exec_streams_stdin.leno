@@ -1,0 +1,80 @@
+// _exec 的流分离与 stdin 喂入 —— 回归测试（2026-10-14）
+//
+// 背景：`_exec` 原先只有**一个合并文本**（`cmd /c <cmd> > tmp 2>&1`），而且没有 stdin 通道：
+//   · 分不开 stdout / stderr ⇒ 判断"这行是正常结果还是诊断"只能靠猜；
+//   · 想给子进程喂一段数据，只能绕道"自己写个临时文件 + 命令行传路径"或"塞环境变量"。
+// 本次改动：`_exec(cmd[, timeout_ms][, stdin_text])`；ExecResult 增 `out` / `err` 两个字段
+//   （**保留 `output` = out 后接 err** ⇒ 800+ 处老调用点零改动）。
+//
+// 判据：
+//   ① 两个流分别落到 out / err（互不串味），合并字段 output 里两条都在；
+//   ② stdin 的文本能被子进程完整读到；
+//   ③ 三参形态（stdin + 超时）能编译能跑（规格层 arity 是 1..3）；
+//   ④ 守卫：退出码透传、超时仍是 124、单参老形态照旧 —— 一律不许回归；
+//   ⑤ 诊断走 err 而不是 out（不许静默成空输出）；
+//   ⑥ `&` 联结的命令行**整组**受重定向约束（`cmd /c A & B > f` 会把 A 漏到父控制台 ✗）。
+import strings
+
+main() {
+    var is_win = _os() == "windows"
+    // Windows 上"把 stdin 原样吐到 stdout"的最稳选择是 `findstr "^"`（实测 code=0、原文回吐）
+    var cat = if is_win then "findstr \"^\"" else "cat"
+
+    // ① 流分离
+    var both = if is_win then "echo OUT-MARK & echo ERR-MARK 1>&2" else "echo OUT-MARK; echo ERR-MARK 1>&2"
+    var r1 = _exec(both)
+    assert_ne(r1, null, "①_exec 返回 null")
+    var o1 = _str(r1.out)
+    var e1 = _str(r1.err)
+    assert_true(strings.has(o1, "OUT-MARK"), "①out 应含 OUT-MARK；实际 out=[" + o1 + "] err=[" + e1 + "]")
+    assert_true(strings.has(e1, "ERR-MARK"), "①err 应含 ERR-MARK；实际 out=[" + o1 + "] err=[" + e1 + "]")
+    assert_eq(strings.has(o1, "ERR-MARK"), false, "①stderr 的行不许出现在 out 里；out=[" + o1 + "]")
+    assert_eq(strings.has(e1, "OUT-MARK"), false, "①stdout 的行不许出现在 err 里；err=[" + e1 + "]")
+    var merged = _str(r1.output)
+    assert_true(strings.has(merged, "OUT-MARK") and strings.has(merged, "ERR-MARK"),
+        "①合并字段 output 应两条都在；实际 output=[" + merged + "]")
+
+    // ② stdin 喂入
+    var r2 = _exec(cat, "LENO_IN_MARK\n")
+    assert_ne(r2, null, "②_exec 返回 null")
+    assert_true(strings.has(_str(r2.out), "LENO_IN_MARK"),
+        "②stdin 内容应被原样读回；out=[" + _str(r2.out) + "] err=[" + _str(r2.err) + "]")
+
+    // ③ 三参形态：stdin + 超时
+    var r3 = _exec(cat, 20000, "LENO_IN_MARK_2\n")
+    assert_ne(r3, null, "③_exec 返回 null")
+    assert_eq(r3.code, 0, "③应正常退出；err=[" + _str(r3.err) + "]")
+    assert_true(strings.has(_str(r3.out), "LENO_IN_MARK_2"),
+        "③三参形态的 stdin 未生效；out=[" + _str(r3.out) + "]")
+
+    // ④ 守卫：退出码透传
+    var r4 = _exec(if is_win then "cmd /c exit 3" else "exit 3")
+    assert_eq(r4.code, 3, "④退出码应透传；实际=" + r4.code)
+
+    // ④ 守卫：超时仍是 124（GNU timeout 惯例）
+    var slow = if is_win then "ping -n 6 127.0.0.1" else "sleep 5"
+    var r5 = _exec(slow, 1000)
+    assert_eq(r5.code, 124, "④超时的退出码应为 124；实际=" + r5.code)
+
+    // ④ 守卫：单参 / 两参（超时）老形态
+    var r6 = _exec("echo LENO_SINGLE_ARG")
+    assert_eq(r6.code, 0, "④单参形态应成功；err=[" + _str(r6.err) + "]")
+    assert_true(strings.has(_str(r6.out), "LENO_SINGLE_ARG"), "④单参形态输出不对；out=[" + _str(r6.out) + "]")
+
+    // ⑤ 诊断走 err：不存在的命令
+    var bad = if is_win then "cmd /c nosuchcommand_leno_xyz" else "nosuchcommand_leno_xyz"
+    var r7 = _exec(bad)
+    assert_true(r7.code != 0, "⑤不存在的命令应给出非 0 退出码；实际=" + r7.code)
+    assert_true(strings.byte_len(_str(r7.err)) > 0,
+        "⑤诊断应落在 err 里（可读原因，不许静默空）；err=[" + _str(r7.err) + "]")
+
+    // ⑥ `&` 整组受重定向约束（背景见函数头注释：不加分组括号时 A 会漏到父控制台）
+    if is_win {
+        var r8 = _exec("echo GRP-A & echo GRP-B")
+        assert_true(strings.has(_str(r8.out), "GRP-A"),
+            "⑥`&` 左半句的输出也必须进 out（漏到父控制台就是没被重定向覆盖）；out=[" + _str(r8.out) + "]")
+        assert_true(strings.has(_str(r8.out), "GRP-B"), "⑥`&` 右半句应进 out；out=[" + _str(r8.out) + "]")
+    }
+
+    print("test_exec_streams_stdin passed")
+}
