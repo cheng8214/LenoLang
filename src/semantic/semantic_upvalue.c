@@ -254,11 +254,9 @@ Symbol* resolve_variable_with_upvalue_raw(Semantic* s, const char* name, SymRef*
         //   若将来真要支持"方法捕获"，得让 `new` 时把外层帧的局部绑进方法闭包（另一条路，见 docs 实例三十二）。
         if (func && func->kind == AST_FUNC_DEF && func->u.func.pcnt > 0 && func->u.func.params &&
             func->u.func.params[0] && strcmp(func->u.func.params[0], "self") == 0) {
-            char msg[BUFFER_MEDIUM];
-            snprintf(msg, sizeof(msg),
+            error_add_at_fmt(ERR_SEMANTIC, func->line, func->column,
                 "struct 方法不能捕获外层局部变量 '%s'（方法不是闭包、没有捕获能力）—— "
                 "请改用参数传入，或用字段在 new 时承接该值", name);
-            error_add_at(ERR_SEMANTIC, func->line, func->column, msg);
             return target_sym;   // 不再建立 upvalue（编译已失败，避免继续发射崩溃代码）
         }
         int idx = add_upvalue(func, name, upvalue_index, is_local, is_value_capture);

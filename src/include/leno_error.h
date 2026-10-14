@@ -30,6 +30,30 @@ int error_get_column(void);
 const char* error_get_filename(void);
 void error_add(ErrorType type, int line, const char* msg);
 void error_add_at(ErrorType type, int line, int column, const char* msg);
+
+// ============================================================================
+// ★ 2026-10-14：报错 / 警告**文案的统一入口**（格式化 + 安全截断）
+// ----------------------------------------------------------------------------
+// 为什么要它（单一原则）：此前**每个调用点**各自 `char msg[BUFFER_*]` + `snprintf`
+//   ⇒ ① 缓冲尺寸各写各的（全仓几十种写法）✗；
+//      ② 长文案被**静默截断**，还可能切在 UTF-8 多字节序列中间 ⇒ 终端打出乱码 ✗
+//         （2026-10-14 实测：字典"锁定点回溯"那条第一版 ~220 字节，正被切在中文中间 ✓）；
+//      ③ 想把文案放宽一点，得回去改 N 个调用点 ✗。
+// ⇒ 现在收到这四个入口里：内部用 `BUFFER_MSG`(1024) 缓冲，**截断时回退到完整字符边界、
+//   并以 "…" 收尾**（明确表示"这里还有内容"，而不是静默丢字符 ✓）；最终仍调既有的
+//   `error_add_at` / `warning_add_at` ⇒ 去重、上限、入库**只有一份实现** ✓。
+// ⚠ 新代码一律用这四个（直接写格式串，别再自己开 msg 缓冲 ✗）。
+// ⚠ 参数格式同 printf（GCC / Clang 下会做格式串检查 ✓）。
+// ============================================================================
+void error_add_fmt(ErrorType type, int line, const char* fmt, ...)
+    LENO_ATTR_PRINTF(3, 4);
+void error_add_at_fmt(ErrorType type, int line, int column, const char* fmt, ...)
+    LENO_ATTR_PRINTF(4, 5);
+void warning_add_fmt(WarnType type, int line, const char* fmt, ...)
+    LENO_ATTR_PRINTF(3, 4);
+void warning_add_at_fmt(WarnType type, int line, int column, const char* fmt, ...)
+    LENO_ATTR_PRINTF(4, 5);
+
 /* 同一处（行、列）是否已经报过**一字不差**的这句话 —— 2026-09-30 加。
  * 场景：同一处错会被两处检查同时发现 —— visit_field_access.inc 的访问器那条（走 AST 访问 ✓）
  * 与 semantic_type.c 的类型推断那条（走推断 ✓）：两者覆盖的路径不同但会**重叠**（显式 self. 形态 ✓）

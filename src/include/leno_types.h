@@ -38,10 +38,27 @@
 // ============================================================================
 
 #define BUFFER_SMALL 128      // 小型缓冲区（文件名等）
-#define BUFFER_MEDIUM 256     // 中型缓冲区（错误信息等）
+#define BUFFER_MEDIUM 256     // 中型缓冲区（临时串、短消息等）
 #define BUFFER_LARGE 512      // 大型缓冲区（路径等）
 #define BUFFER_XLARGE 1024    // 超大缓冲区（行读取等）
 #define BUFFER_XXLARGE 4096   // 最大缓冲区（文件读取等）
+
+// ★ 2026-10-14：**报错 / 警告文案**的统一缓冲尺寸（单一来源 ✓）
+//   为什么不复用 BUFFER_MEDIUM(256)：文案要"说清原因 + 给怎么办"，中文每字 3 字节
+//   ⇒ 256 只够 ~85 个汉字，写长一点就被 `snprintf` **静默截断**，还可能切在 UTF-8
+//   多字节序列中间 ⇒ 终端打出乱码 ✗（2026-10-14 实测：字典"锁定点回溯"那条第一版
+//   ~220 字节，被截在中文中间 ✓）。
+//   ⇒ 收口到 `error_add_fmt` / `error_add_at_fmt` / `warning_add_fmt` /
+//     `warning_add_at_fmt` 四个入口里（见 leno_error.h）——**改长度只改这里** ✓
+#define BUFFER_MSG 1024
+
+// printf 风格格式串检查（只对自己实现了 printf 语义的函数有用 ✓）
+//   GCC / Clang 支持；其它编译器退化为空宏（不报错、也不检查 ✓）
+#if defined(__GNUC__) || defined(__clang__)
+#define LENO_ATTR_PRINTF(fmt_idx, arg_idx) __attribute__((format(printf, fmt_idx, arg_idx)))
+#else
+#define LENO_ATTR_PRINTF(fmt_idx, arg_idx)
+#endif
 
 // ============================================================================
 // 路径相关常量

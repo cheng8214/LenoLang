@@ -6,6 +6,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+// ★ 2026-10-14：报错/警告文案统一入口要用 vsnprintf（见 error_add_fmt 一族 ✓）
+#include <stdarg.h>
 // ★ signal / raise / SIGSEGV / SIGABRT / SIGBUS / SIGFPE / SIGILL / SIG_DFL 全在这里 ✓
 //   ⚠ 2026-10-11 补：Windows 侧被 <windows.h> **间接**带进来了 ⇒ Linux 首编当场报
 //     “‘SIGSEGV’ undeclared / implicit declaration of ‘signal’” ✗（实测 ✓）。
@@ -127,6 +129,82 @@ void error_add_at(ErrorType type, int line, int column, const char* msg) {
     current_column = column;
     error_add(type, line, msg);
     current_column = saved_column;
+}
+
+// ============================================================================
+// ★ 2026-10-14：报错 / 警告文案的**统一入口**（单一原则 —— 改长度只改这里 ✓）
+// ----------------------------------------------------------------------------
+// 完整动机见 leno_error.h 的说明。要点：
+//   · 内部用 `BUFFER_MSG`(1024)：文案"说清原因 + 给怎么办"要长度，中文 3 字节/字 ✓
+//   · **截断要安全**：`vsnprintf` 在 cap 处**硬切**，可能切在 UTF-8 多字节序列中间
+//     ⇒ 尾部留下孤立首字节 ⇒ 终端打出乱码 ✗（实测切中文必现 ✓）
+//   · 最终仍调**既有**的 error_add_at / warning_add_at ⇒ 去重、上限、入库不另起一份 ✓
+// ============================================================================
+
+// 截断收尾：把"被 vsnprintf 硬切"的尾巴修成"完整字符 + …"
+//   want：vsnprintf 的返回值（<0 = 编码出错；<cap = 没截断）⇒ 只有真截断才动手 ✓
+//   为什么补 "…"：静默丢字符会让读者以为"文案就这么长" ✗；一个省略号明确表示"还有内容"
+static void error_tidy_truncated(char* buf, size_t cap, int want) {
+    if (!buf || cap == 0) return;
+    if (want < 0 || (size_t)want < cap) return;       // 没截断（或编码出错）⇒ 原样 ✓
+    size_t n = strlen(buf);
+    // ① 退掉尾部的**续字节**（UTF-8 续字节形如 0b10xxxxxx）
+    while (n > 0 && ((unsigned char)buf[n - 1] & 0xC0) == 0x80) n--;
+    // ② 退掉那个**孤立的首字节**（0b11xxxxxx —— 它的续字节在切点之后，已经没了）
+    if (n > 0 && ((unsigned char)buf[n - 1] & 0xC0) == 0xC0) n--;
+    // ③ 用 "…"（U+2026，3 字节）收尾；放不下就只做截断（不强塞）
+    if (n + 4 <= cap) {
+        memcpy(buf + n, "\xE2\x80\xA6", 3);
+        buf[n + 3] = '\0';
+    } else {
+        buf[n] = '\0';
+    }
+}
+
+// 四个入口共用的样板：展开 va_list 进 buf 并做截断收尾 ✓
+static void error_format_v(char* buf, size_t cap, const char* fmt, va_list ap) {
+    int want = vsnprintf(buf, cap, fmt, ap);
+    error_tidy_truncated(buf, cap, want);
+}
+
+void error_add_fmt(ErrorType type, int line, const char* fmt, ...) {
+    if (!fmt) return;
+    char buf[BUFFER_MSG];
+    va_list ap;
+    va_start(ap, fmt);
+    error_format_v(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    error_add(type, line, buf);
+}
+
+void error_add_at_fmt(ErrorType type, int line, int column, const char* fmt, ...) {
+    if (!fmt) return;
+    char buf[BUFFER_MSG];
+    va_list ap;
+    va_start(ap, fmt);
+    error_format_v(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    error_add_at(type, line, column, buf);
+}
+
+void warning_add_fmt(WarnType type, int line, const char* fmt, ...) {
+    if (!fmt) return;
+    char buf[BUFFER_MSG];
+    va_list ap;
+    va_start(ap, fmt);
+    error_format_v(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    warning_add(type, line, buf);
+}
+
+void warning_add_at_fmt(WarnType type, int line, int column, const char* fmt, ...) {
+    if (!fmt) return;
+    char buf[BUFFER_MSG];
+    va_list ap;
+    va_start(ap, fmt);
+    error_format_v(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    warning_add_at(type, line, column, buf);
 }
 
 int error_has_any(void) {

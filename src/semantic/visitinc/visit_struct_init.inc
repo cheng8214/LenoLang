@@ -50,16 +50,16 @@
                 }
 
                 if (!sym) {
-                    char msg[BUFFER_MEDIUM];
                     // E5: 漏 use 提示——未定义的 struct 若是已导入模块的导出类型，指出 use 写法
                     const char* use_hint = get_module_with_struct_hint(s, ast->u.struct_init.struct_name);
                     if (use_hint[0]) {
-                        snprintf(msg, sizeof(msg), "未定义的 struct 类型 '%s'%s",
+                        error_add_at_fmt(ERR_UNDEFINED_VAR, ast->line, ast->column,
+                                 "未定义的 struct 类型 '%s'%s",
                                  ast->u.struct_init.struct_name, use_hint);
                     } else {
-                        snprintf(msg, sizeof(msg), "未定义的 struct 类型 '%s'", ast->u.struct_init.struct_name);
+                        error_add_at_fmt(ERR_UNDEFINED_VAR, ast->line, ast->column,
+                                 "未定义的 struct 类型 '%s'", ast->u.struct_init.struct_name);
                     }
-                    error_add_at(ERR_UNDEFINED_VAR, ast->line, ast->column, msg);
                 } else if (sym->type->kind == TYPE_FACE) {
                     char msg[BUFFER_MEDIUM];
                     snprintf(msg, sizeof(msg), "face '%s' 不能实例化", ast->u.struct_init.struct_name);
@@ -215,12 +215,10 @@
                             // 检查类型兼容性
                             if (actual_type) {
                                 if (!type_is_compatible(check_type, actual_type)) {
-                                    char msg[BUFFER_MEDIUM];
-                                    format_type_error(msg, sizeof(msg),
-                                        "字段 '%s3' 类型不匹配: 期望 '%s1'，实际 '%s2'",
-                                        check_type, actual_type,
-                                        field_name, NULL);
-                                    error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
+                                    error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "%s",
+                                        format_type_error_text("字段 '%s3' 类型不匹配: 期望 '%s1'，实际 '%s2'",
+                                            check_type, actual_type,
+                                            field_name, NULL));
                                 }
                                 type_free(actual_type);
                             }

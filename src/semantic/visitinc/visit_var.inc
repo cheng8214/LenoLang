@@ -2,10 +2,9 @@
             // 检查变量声明类型是否使用了 C 布局类型（i32/u8/f32 等）
             // C 布局类型只能在 clib 声明、cstruct 字段、Ptr[T] 中使用
             if (ast->u.var_decl.type && is_c_layout_type(ast->u.var_decl.type->kind)) {
-                char msg[BUFFER_MEDIUM];
                 const char* type_str = type_kind_to_string(ast->u.var_decl.type->kind);
-                snprintf(msg, sizeof(msg), "C 布局类型 '%s' 不能用于变量声明，请使用 Leno 类型（如 int/float/string）", type_str);
-                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                 "C 布局类型 '%s' 不能用于变量声明，请使用 Leno 类型（如 int/float/string）", type_str);
             }
             // 检查 any 类型：any 只能用于函数参数和返回类型，不能用于变量声明
             // 变量声明请使用 var（类型推断）或指定具体类型
@@ -73,9 +72,8 @@
                 ast->u.var_decl.ref.name = strdup(sym->name);
             } else {
                 // 重复定义错误 - 报告准确的行号
-                char msg[BUFFER_MEDIUM];
-                snprintf(msg, sizeof(msg), "变量 '%s' 重复定义", ast->u.var_decl.name);
-                error_add_at(ERR_DUPLICATE_VAR, ast->line, ast->column, msg);
+                error_add_at_fmt(ERR_DUPLICATE_VAR, ast->line, ast->column,
+                                 "变量 '%s' 重复定义", ast->u.var_decl.name);
                 break;
             }
 
@@ -114,10 +112,9 @@
                 if (ast->u.var_decl.type && ast->u.var_decl.type->kind != TYPE_INFER) {
                     TypeKind parent_kind = TYPE_UNKNOWN;
                     if (type_has_infer_as_param(ast->u.var_decl.type, &parent_kind)) {
-                        char msg[BUFFER_MEDIUM];
                         const char* parent_name = type_kind_to_string(parent_kind);
-                        snprintf(msg, sizeof(msg), "var 不能用作类型参数，请改用 any（如 %s[any]）", parent_name);
-                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                         "var 不能用作类型参数，请改用 any（如 %s[any]）", parent_name);
                         infer_as_param = 1;
                     }
                 }
@@ -136,14 +133,13 @@
                             //   这类标注合法 —— 名字不在符号表里，但字段表由 native 规格提供
                             //   （与字段解析、运行期 ObjStructDef 同源）⇒ 保持 TYPE_STRUCT + 名字即可
                         } else if (!struct_def) {
-                            char msg[1024];   /* 大于 BUFFER_MEDIUM：容纳中文 + 共享提示 ✓ */
                             char hint[BUFFER_MEDIUM];
                             // ★ 2026-10-10：提示改由**共享实现**生成 —— 它会去已导入模块里
                             //   按名字找（命中就说清是哪个模块导出的 ✓），`double` 的专门
                             //   话术也归它 ✓（原来这八处各写一份 ✗）
                             semantic_undefined_type_hint(s, type_name, hint, sizeof(hint));
-                            snprintf(msg, sizeof(msg), "未定义的类型: %s%s", type_name, hint);
-                            error_add_at(ERR_UNDEFINED_VAR, ast->line, ast->column, msg);
+                            error_add_at_fmt(ERR_UNDEFINED_VAR, ast->line, ast->column,
+                                             "未定义的类型: %s%s", type_name, hint);
                             declared_type_undefined = 1;
                         } else if (struct_def->kind == SYM_TYPE && struct_def->type) {
                             // 类型是 alias（如 FSize = Dict[string,float]），解析为实际类型
@@ -158,11 +154,10 @@
                         } else if (!struct_def->type ||
                                    (struct_def->type->kind != TYPE_STRUCT &&
                                     struct_def->type->kind != TYPE_FACE)) {
-                            char msg[1024];   /* 同上一处：容纳中文 + 共享提示 ✓ */
                             char hint[BUFFER_MEDIUM];
                             semantic_undefined_type_hint(s, type_name, hint, sizeof(hint));
-                            snprintf(msg, sizeof(msg), "未定义的类型: %s%s", type_name, hint);
-                            error_add_at(ERR_UNDEFINED_VAR, ast->line, ast->column, msg);
+                            error_add_at_fmt(ERR_UNDEFINED_VAR, ast->line, ast->column,
+                                             "未定义的类型: %s%s", type_name, hint);
                             declared_type_undefined = 1;
                         }
                     }
@@ -185,11 +180,10 @@
                                 type_free(ast->u.var_decl.type);
                                 ast->u.var_decl.type = type_copy(struct_def->type);
                             } else {
-                                char msg[1024];   /* 同上一处：容纳中文 + 共享提示 ✓ */
                                 char hint[BUFFER_MEDIUM];
                                 semantic_undefined_type_hint(s, type_name, hint, sizeof(hint));
-                                snprintf(msg, sizeof(msg), "未定义的类型: %s%s", type_name, hint);
-                                error_add_at(ERR_UNDEFINED_VAR, ast->line, ast->column, msg);
+                                error_add_at_fmt(ERR_UNDEFINED_VAR, ast->line, ast->column,
+                                                 "未定义的类型: %s%s", type_name, hint);
                                 declared_type_undefined = 1;
                             }
                         } else if (struct_def && struct_def->type->kind == TYPE_CSTRUCT) {
@@ -339,12 +333,11 @@
                                    (struct_def->type->kind != TYPE_STRUCT &&
                                     struct_def->type->kind != TYPE_CSTRUCT &&
                                     struct_def->type->kind != TYPE_FACE)) {
-                            char msg[1024];   /* 同上一处：容纳中文 + 共享提示 ✓ */
                             char hint[BUFFER_MEDIUM];
                             semantic_undefined_type_hint(s, sym->type->struct_name, hint, sizeof(hint));
-                            snprintf(msg, sizeof(msg), "未定义的类型: %s%s",
-                                     sym->type->struct_name, hint);
-                            error_add_at(ERR_UNDEFINED_VAR, ast->line, ast->column, msg);
+                            error_add_at_fmt(ERR_UNDEFINED_VAR, ast->line, ast->column,
+                                             "未定义的类型: %s%s",
+                                             sym->type->struct_name, hint);
                         }
                     }
                 } else {
@@ -369,16 +362,13 @@
             //    不会误报 ✓ 方向是安全的 —— 未使用变量的诊断宁漏勿误报 ✓）
             if (sym) sym->is_read = 1;
             if (!sym) {
-                char msg[BUFFER_MEDIUM];
-                snprintf(msg, sizeof(msg), "未定义的变量: %s", ast->u.var.name);
                 const char* hint = get_similar_name_hint(s->current, ast->u.var.name);
-                if (hint[0]) strncat(msg, hint, sizeof(msg) - strlen(msg) - 1);
-                error_add_at(ERR_UNDEFINED_VAR, ast->line, ast->column, msg);
+                error_add_at_fmt(ERR_UNDEFINED_VAR, ast->line, ast->column,
+                                 "未定义的变量: %s%s", ast->u.var.name, hint);
             } else if (sym->is_initialized == 2) {
                 // 变量正在初始化中，不允许引用自身
-                char msg[BUFFER_MEDIUM];
-                snprintf(msg, sizeof(msg), "变量 '%s' 在初始化前使用", ast->u.var.name);
-                error_add_at(ERR_UNDEFINED_VAR, ast->line, ast->column, msg);
+                error_add_at_fmt(ERR_UNDEFINED_VAR, ast->line, ast->column,
+                                 "变量 '%s' 在初始化前使用", ast->u.var.name);
                 // 但仍然设置类型信息（从声明的类型获取），避免后续类型推断产生级联错误
                 if (sym->type) {
                     ast->u.var.ref.type_kind = sym->type->kind;
@@ -419,10 +409,9 @@
             
             // 检查左右数量是否相等
             if (left_count != right_count) {
-                char msg[BUFFER_MEDIUM];
-                snprintf(msg, sizeof(msg), "并行赋值数量不匹配：左侧 %d 个变量，右侧 %d 个值",
-                         left_count, right_count);
-                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                 "并行赋值数量不匹配：左侧 %d 个变量，右侧 %d 个值",
+                                 left_count, right_count);
                 break;
             }
             
@@ -438,9 +427,8 @@
                         memset(&tmp_ref, 0, sizeof(tmp_ref));
                         Symbol* sym = resolve_variable_with_upvalue(s, obj_name, &tmp_ref);
                         if (sym && sym->is_const) {
-                            char msg[BUFFER_MEDIUM];
-                            snprintf(msg, sizeof(msg), "不能对 const 变量 '%s' 的元素重新赋值", obj_name);
-                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                             "不能对 const 变量 '%s' 的元素重新赋值", obj_name);
                         }
                     }
                     // 检查模块变量是否为 const（如 m.arr[0] = 99）
@@ -451,9 +439,8 @@
                         if (mod_info && mod_info->sym_table) {
                             ModuleVarSymbol* var_sym = module_symbol_table_find_var(mod_info->sym_table, mem_name);
                             if (var_sym && var_sym->is_const) {
-                                char msg[BUFFER_MEDIUM];
-                                snprintf(msg, sizeof(msg), "不能对 const 变量 '%s.%s' 的元素重新赋值", mod_name, mem_name);
-                                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                 "不能对 const 变量 '%s.%s' 的元素重新赋值", mod_name, mem_name);
                             }
                         }
                     }
@@ -478,9 +465,7 @@
                     visit(s, target);
                     if (target->kind == AST_NUM || target->kind == AST_STRING ||
                         target->kind == AST_BOOL || target->kind == AST_NULL) {
-                        char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg), "不能对常量重新赋值");
-                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column, "不能对常量重新赋值");
                     }
                 } else if (target->kind == AST_MODULE_ACCESS) {
                     // 模块访问（可能是 struct/cstruct 字段访问）：访问节点进行语义分析
@@ -494,25 +479,21 @@
                     visit(s, target);
                     if (target->kind == AST_NUM || target->kind == AST_STRING ||
                         target->kind == AST_BOOL || target->kind == AST_NULL) {
-                        char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg), "不能对常量 '%s' 重新赋值", orig_buf);
-                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                         "不能对常量 '%s' 重新赋值", orig_buf);
                     }
                 } else if (target->kind == AST_VAR && ast->u.assign.names[i]) {
                     // 简单变量：解析符号
                     Symbol* sym = resolve_variable_with_upvalue(s, ast->u.assign.names[i], &ast->u.assign.refs[i]);
                     if (!sym) {
-                        char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg), "未定义的变量: %s", ast->u.assign.names[i]);
                         const char* hint = get_similar_name_hint(s->current, ast->u.assign.names[i]);
-                        if (hint[0]) strncat(msg, hint, sizeof(msg) - strlen(msg) - 1);
-                        error_add_at(ERR_UNDEFINED_VAR, ast->line, ast->column, msg);
+                        error_add_at_fmt(ERR_UNDEFINED_VAR, ast->line, ast->column,
+                                         "未定义的变量: %s%s", ast->u.assign.names[i], hint);
                     } else {
                         // 检查是否对 const 变量赋值
                         if (sym->is_const) {
-                            char msg[BUFFER_MEDIUM];
-                            snprintf(msg, sizeof(msg), "不能对 const 变量 '%s' 重新赋值", ast->u.assign.names[i]);
-                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                             "不能对 const 变量 '%s' 重新赋值", ast->u.assign.names[i]);
                         }
                         // ★ 清「确定为 null」标志（T11）：这个变量被写过了 ⇒ 之后不能再断定它是 null。
                         //   ⚠ 所有写变量的地方都要清（`a = v` / `a += v` / for 的迭代变量…）——
@@ -673,11 +654,9 @@
                     // 类型将在后续从 struct 定义推断
                     ast->u.compound_assign.ref.type_kind = TYPE_ANY;
                 } else {
-                    char msg[BUFFER_MEDIUM];
-                    snprintf(msg, sizeof(msg), "未定义的变量: %s", ast->u.compound_assign.name);
                     const char* hint = get_similar_name_hint(s->current, ast->u.compound_assign.name);
-                    if (hint[0]) strncat(msg, hint, sizeof(msg) - strlen(msg) - 1);
-                    error_add_at(ERR_UNDEFINED_VAR, ast->line, ast->column, msg);
+                    error_add_at_fmt(ERR_UNDEFINED_VAR, ast->line, ast->column,
+                                     "未定义的变量: %s%s", ast->u.compound_assign.name, hint);
                 }
             } else {
                 // 检查是否对 const 变量复合赋值
@@ -766,9 +745,8 @@
                     // 递归解析 alias
                     resolve_alias_in_type(s, &ast->u.destruct_decl.slot_types[i], ast->line);
                 } else {
-                    char msg[BUFFER_MEDIUM];
-                    snprintf(msg, sizeof(msg), "变量 '%s' 重复定义", ast->u.destruct_decl.names[i]);
-                    error_add_at(ERR_DUPLICATE_VAR, ast->line, ast->column, msg);
+                    error_add_at_fmt(ERR_DUPLICATE_VAR, ast->line, ast->column,
+                                     "变量 '%s' 重复定义", ast->u.destruct_decl.names[i]);
                 }
             }
 
@@ -819,19 +797,15 @@
                             }
                             // 检查槽位是否超出返回值数量
                             if (i >= ret_count) {
-                                char msg[BUFFER_MEDIUM];
-                                snprintf(msg, sizeof(msg),
+                                error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
                                     "解构槽位 %d ('%s') 超出返回值数量 %d",
                                     i, ast->u.destruct_decl.names[i], ret_count);
-                                error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                             } else if (!type_is_compatible(slot_type, init_type->param_types[i])) {
-                                char msg[BUFFER_MEDIUM];
-                                snprintf(msg, sizeof(msg),
+                                error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
                                     "解构槽位 %d ('%s') 类型 %s 与返回值类型 %s 不兼容",
                                     i, ast->u.destruct_decl.names[i],
                                     type_kind_to_string(slot_kind),
                                     type_kind_to_string(init_type->param_types[i]->kind));
-                                error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                             }
                         }
                     } else if (ast->u.destruct_decl.is_dict) {
@@ -849,37 +823,29 @@
                                 if (slot_kind == TYPE_ANY || slot_kind == TYPE_INFER) continue;
                                 // 具体类型槽位：需要源值类型也是具体类型
                                 if (val_is_any) {
-                                    char msg[BUFFER_MEDIUM];
-                                    snprintf(msg, sizeof(msg),
+                                    error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
                                         "解构声明槽位 %d ('%s') 类型 %s 与字典值类型 %s 不兼容（源值类型为 any，无法转换为具体类型）",
                                         i, ast->u.destruct_decl.names[i],
                                         type_kind_to_string(slot_kind),
                                         type_kind_to_string(val_kind));
-                                    error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                                 } else if (!type_is_compatible(slot_type, init_type->value_type)) {
-                                    char msg[BUFFER_MEDIUM];
-                                    snprintf(msg, sizeof(msg),
+                                    error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
                                         "解构声明槽位 %d ('%s') 类型 %s 与字典值类型 %s 不兼容",
                                         i, ast->u.destruct_decl.names[i],
                                         type_kind_to_string(slot_kind),
                                         type_kind_to_string(val_kind));
-                                    error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                                 }
                             }
                         } else if (init_type->kind == TYPE_ANY || init_type->kind == TYPE_INFER) {
                             // 返回类型为 any 或 infer（如无返回类型注解的函数），不允许解构
-                            char msg[BUFFER_MEDIUM];
-                            snprintf(msg, sizeof(msg),
+                            error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
                                 "字典解构要求初始化值为具体类型的 Dict（如 Dict[string, int]），"
                                 "实际类型为 %s，无法保证类型安全",
                                 type_kind_to_string(init_type->kind));
-                            error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                         } else if (init_type->kind != TYPE_NULL) {
-                            char msg[BUFFER_MEDIUM];
-                            snprintf(msg, sizeof(msg),
+                            error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
                                 "字典解构要求初始化值为 Dict 类型，实际为 %s",
                                 type_kind_to_string(init_type->kind));
-                            error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                         }
                     } else {
                         // 数组解构：检查 init 是否为 Array 类型
@@ -909,37 +875,29 @@
                                 }
                                 // 具体类型槽位：需要源元素类型也是具体类型
                                 if (elem_is_any) {
-                                    char msg[BUFFER_MEDIUM];
-                                    snprintf(msg, sizeof(msg),
+                                    error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
                                         "解构声明槽位 %d ('%s') 类型 %s 与数组元素类型 %s 不兼容（源元素类型为 any，无法转换为具体类型）",
                                         i, ast->u.destruct_decl.names[i],
                                         type_kind_to_string(slot_kind),
                                         type_kind_to_string(elem_kind));
-                                    error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                                 } else if (!type_is_compatible(slot_type, init_type->element_type)) {
-                                    char msg[BUFFER_MEDIUM];
-                                    snprintf(msg, sizeof(msg),
+                                    error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
                                         "解构声明槽位 %d ('%s') 类型 %s 与数组元素类型 %s 不兼容",
                                         i, ast->u.destruct_decl.names[i],
                                         type_kind_to_string(slot_kind),
                                         type_kind_to_string(elem_kind));
-                                    error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                                 }
                             }
                         } else if (init_type->kind == TYPE_ANY || init_type->kind == TYPE_INFER) {
                             // 返回类型为 any 或 infer（如无返回类型注解的函数），不允许解构
-                            char msg[BUFFER_MEDIUM];
-                            snprintf(msg, sizeof(msg),
+                            error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
                                 "数组解构要求初始化值为具体类型的 Array（如 Array[int]），"
                                 "实际类型为 %s，无法保证类型安全",
                                 type_kind_to_string(init_type->kind));
-                            error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                         } else if (init_type->kind != TYPE_NULL) {
-                            char msg[BUFFER_MEDIUM];
-                            snprintf(msg, sizeof(msg),
+                            error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
                                 "数组解构要求初始化值为 Array 类型，实际为 %s",
                                 type_kind_to_string(init_type->kind));
-                            error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                         }
                     }
                     type_free(init_type);

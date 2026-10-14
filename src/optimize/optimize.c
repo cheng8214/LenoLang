@@ -169,10 +169,8 @@ static TCVal tc_target_field(const char* base, const char* field, Ast* node, int
     /* 未知字段名 ⇒ **响亮报错**，而不是静默当未知
      *   （静默的话会一路飘到语义层变成"未定义的变量: target"，指向性很差 ✗） */
     {
-        char msg[192];
-        snprintf(msg, sizeof(msg),
-                 "target 没有字段 '%s'（可用：os / arch / family / pointer_bits）", field);
-        error_add_at(ERR_SEMANTIC, node->line, node->column, msg);
+        error_add_at_fmt(ERR_SEMANTIC, node->line, node->column,
+                         "target 没有字段 '%s'（可用：os / arch / family / pointer_bits）", field);
         g_tc_diag_reported = 1;   /* 已报具体错 ⇒ 别再补一句笼统的（见 target_cond_eval ✓）*/
     }
     return tcv_unknown();
@@ -276,10 +274,8 @@ static void target_cond_reject(Ast* e, const char* where) {
     int saw = 0;
     (void)tc_eval(e, &saw);
     if (saw) {
-        char msg[192];
-        snprintf(msg, sizeof(msg),
-                 "target 条件只支持用在 if（语句或 if 表达式）里，不能用在 %s", where);
-        error_add_at(ERR_SEMANTIC, e->line, e->column, msg);
+        error_add_at_fmt(ERR_SEMANTIC, e->line, e->column,
+                         "target 条件只支持用在 if（语句或 if 表达式）里，不能用在 %s", where);
     }
 }
 

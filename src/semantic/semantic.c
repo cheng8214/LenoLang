@@ -206,11 +206,10 @@ void semantic_analyze(Semantic* s, Ast* ast) {
                         for (int k = 0; k < j; k++) {
                             if (stmt->u.struct_def.field_names[j] && stmt->u.struct_def.field_names[k] &&
                                 strcmp(stmt->u.struct_def.field_names[j], stmt->u.struct_def.field_names[k]) == 0) {
-                                char msg[BUFFER_SMALL];
-                                snprintf(msg, sizeof(msg), "struct '%s' 存在重复字段 '%s'（字段 %d 与字段 %d 重名）",
+                                error_add_at_fmt(ERR_SEMANTIC, stmt->line, stmt->column,
+                                         "struct '%s' 存在重复字段 '%s'（字段 %d 与字段 %d 重名）",
                                          stmt->u.struct_def.name ? stmt->u.struct_def.name : "?",
                                          stmt->u.struct_def.field_names[j], k + 1, j + 1);
-                                error_add_at(ERR_SEMANTIC, stmt->line, stmt->column, msg);
                             }
                         }
                         sym->struct_field_names[j] = strdup(stmt->u.struct_def.field_names[j]);
@@ -322,11 +321,10 @@ void semantic_analyze(Semantic* s, Ast* ast) {
                             for (int k = 0; k < j; k++) {
                                 if (decl->u.struct_def.field_names[j] && decl->u.struct_def.field_names[k] &&
                                     strcmp(decl->u.struct_def.field_names[j], decl->u.struct_def.field_names[k]) == 0) {
-                                    char msg[BUFFER_SMALL];
-                                    snprintf(msg, sizeof(msg), "struct '%s' 存在重复字段 '%s'（字段 %d 与字段 %d 重名）",
+                                    error_add_at_fmt(ERR_SEMANTIC, decl->line, decl->column,
+                                             "struct '%s' 存在重复字段 '%s'（字段 %d 与字段 %d 重名）",
                                              decl->u.struct_def.name ? decl->u.struct_def.name : "?",
                                              decl->u.struct_def.field_names[j], k + 1, j + 1);
-                                    error_add_at(ERR_SEMANTIC, decl->line, decl->column, msg);
                                 }
                             }
                             sym->struct_field_names[j] = strdup(decl->u.struct_def.field_names[j]);
@@ -684,11 +682,10 @@ void semantic_analyze_module(Semantic* s, Ast* ast) {
                             for (int k = 0; k < j; k++) {
                                 if (decl->u.struct_def.field_names[j] && decl->u.struct_def.field_names[k] &&
                                     strcmp(decl->u.struct_def.field_names[j], decl->u.struct_def.field_names[k]) == 0) {
-                                    char msg[BUFFER_SMALL];
-                                    snprintf(msg, sizeof(msg), "struct '%s' 存在重复字段 '%s'（字段 %d 与字段 %d 重名）",
+                                    error_add_at_fmt(ERR_SEMANTIC, decl->line, decl->column,
+                                             "struct '%s' 存在重复字段 '%s'（字段 %d 与字段 %d 重名）",
                                              decl->u.struct_def.name ? decl->u.struct_def.name : "?",
                                              decl->u.struct_def.field_names[j], k + 1, j + 1);
-                                    error_add_at(ERR_SEMANTIC, decl->line, decl->column, msg);
                                 }
                             }
                             sym->struct_field_names[j] = strdup(decl->u.struct_def.field_names[j]);

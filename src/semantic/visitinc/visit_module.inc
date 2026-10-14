@@ -1478,7 +1478,6 @@
                                     if (expected_type_for_check) {
                                         // 有完整类型信息，进行深度类型比较（支持嵌套类型）
                                         if (!type_is_compatible(expected_type_for_check, arg_type)) {
-                                            char msg[BUFFER_MEDIUM];
                                             // 先保存字符串避免 buffer 覆盖
                                             const char* exp_str = type_to_string(expected_type_for_check);
                                             char exp_buf[BUFFER_SMALL];
@@ -1486,14 +1485,16 @@
                                             exp_buf[sizeof(exp_buf) - 1] = '\0';
                                             const char* hint = get_type_conversion_hint(expected_type_for_check->kind, arg_type->kind);
                                             if (hint) {
-                                                snprintf(msg, sizeof(msg), "类型错误: 参数 %d 期望 '%s'，但传入 '%s'\n%s",
-                                                         i + 1, exp_buf, type_to_string(arg_type), hint);
+                                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                    "类型错误: 参数 %d 期望 '%s'，但传入 '%s'\n%s%s",
+                                                    i + 1, exp_buf, type_to_string(arg_type), hint,
+                                                    type_utils_dict_lock_hint(obj_sym));
                                             } else {
-                                                snprintf(msg, sizeof(msg), "类型错误: 参数 %d 期望 '%s'，但传入 '%s'",
-                                                         i + 1, exp_buf, type_to_string(arg_type));
+                                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                    "类型错误: 参数 %d 期望 '%s'，但传入 '%s'%s",
+                                                    i + 1, exp_buf, type_to_string(arg_type),
+                                                    type_utils_dict_lock_hint(obj_sym));
                                             }
-                                            type_utils_append_dict_lock_hint(msg, sizeof(msg), obj_sym);  // 回溯锁定点 ✓
-                                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                         }
                                     } else if (expected_param_type != TYPE_ANY) {
                                         // 只有 kind 信息，进行简单类型比较
@@ -1510,17 +1511,20 @@
                                             memset(&expected_ti, 0, sizeof(expected_ti));
                                             expected_ti.kind = expected_param_type;
                                             if (!type_is_compatible(&expected_ti, arg_type)) {
-                                                char msg[BUFFER_MEDIUM];
                                                 const char* hint = get_type_conversion_hint(expected_param_type, arg_type->kind);
                                                 if (hint) {
-                                                    snprintf(msg, sizeof(msg), "类型错误: 参数 %d 期望 '%s'，但传入 '%s'\n%s",
-                                                             i + 1, type_kind_to_string(expected_param_type), type_to_string(arg_type), hint);
+                                                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                        "类型错误: 参数 %d 期望 '%s'，但传入 '%s'\n%s%s",
+                                                        i + 1, type_kind_to_string(expected_param_type),
+                                                        type_to_string(arg_type), hint,
+                                                        type_utils_dict_lock_hint(obj_sym));
                                                 } else {
-                                                    snprintf(msg, sizeof(msg), "类型错误: 参数 %d 期望 '%s'，但传入 '%s'",
-                                                             i + 1, type_kind_to_string(expected_param_type), type_to_string(arg_type));
+                                                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                        "类型错误: 参数 %d 期望 '%s'，但传入 '%s'%s",
+                                                        i + 1, type_kind_to_string(expected_param_type),
+                                                        type_to_string(arg_type),
+                                                        type_utils_dict_lock_hint(obj_sym));
                                                 }
-                                                type_utils_append_dict_lock_hint(msg, sizeof(msg), obj_sym);  // 回溯锁定点 ✓
-                                                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                             }
                                         }
                                     }

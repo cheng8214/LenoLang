@@ -728,13 +728,11 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
             if (is_shadowed(ast->u.compound_assign.name, shadowed_names, shadowed_count) &&
                 field_index_of(ast->u.compound_assign.name, field_names, field_count) >= 0 &&
                 is_param_name(ast->u.compound_assign.name, param_names, param_count)) {
-                char msg[BUFFER_MEDIUM];
-                snprintf(msg, sizeof(msg),
+                warning_add_at_fmt(WARN_FIELD_SHADOW_ASSIGN, ast->line, ast->column,
                     "复合赋值只作用于形参 `%s`（它遮蔽了同名字段 `%s`）⇒ 字段不会被修改；"
                     "要改字段请写成 `self.%s` 的复合赋值；若确实只想改这个形参，请给它改名避免遮蔽",
                     ast->u.compound_assign.name, ast->u.compound_assign.name,
                     ast->u.compound_assign.name);
-                warning_add_at(WARN_FIELD_SHADOW_ASSIGN, ast->line, ast->column, msg);
             }
             if (!is_shadowed(ast->u.compound_assign.name, shadowed_names, shadowed_count)) {
             // 检查是否是字段名的复合赋值

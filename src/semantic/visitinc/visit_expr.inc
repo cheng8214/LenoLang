@@ -239,12 +239,10 @@
                     int struct_vs_null = (lt && lt->kind == TYPE_STRUCT && !lt->nullable && ra && ra->kind == AST_NULL) ||
                                          (rt && rt->kind == TYPE_STRUCT && !rt->nullable && la && la->kind == AST_NULL);
                     if (struct_vs_null) {
-                        char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg),
+                        warning_add_at_fmt(WARN_STRUCT_EQ_NULL, ast->line, ast->column,
                             "struct 值类型默认被立即分配（不为 null），%s null 仅在显式赋 null 后才成立；"
                             "懒初始化请使用 Type? 可空类型",
                             (op == TOK_EQEQ) ? "==" : "!=");
-                        warning_add_at(WARN_STRUCT_EQ_NULL, ast->line, ast->column, msg);
                     }
                 }
             }
@@ -264,9 +262,8 @@
                 memset(&tmp_ref, 0, sizeof(tmp_ref));
                 Symbol* sym = resolve_variable_with_upvalue(s, obj_name, &tmp_ref);
                 if (sym && sym->is_const) {
-                    char msg[BUFFER_MEDIUM];
-                    snprintf(msg, sizeof(msg), "不能对 const 变量 '%s' 的元素重新赋值", obj_name);
-                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                     "不能对 const 变量 '%s' 的元素重新赋值", obj_name);
                 }
             } else if (obj && obj->kind == AST_MODULE_ACCESS) {
                 const char* mod_name = obj->u.module_access.module_name;
@@ -275,9 +272,8 @@
                 if (mod_info && mod_info->sym_table) {
                     ModuleVarSymbol* var_sym = module_symbol_table_find_var(mod_info->sym_table, mem_name);
                     if (var_sym && var_sym->is_const) {
-                        char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg), "不能对 const 变量 '%s.%s' 的元素重新赋值", mod_name, mem_name);
-                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                         "不能对 const 变量 '%s.%s' 的元素重新赋值", mod_name, mem_name);
                     }
                 }
             }
@@ -290,12 +286,11 @@
             //   折叠成字面量（AST_NUM 等）⇒ `Cfg.MAX[0] = 1` 这类写入会被静默丢弃，报错拦截。
             if (ast->u.index_assign.obj->kind == AST_NUM || ast->u.index_assign.obj->kind == AST_STRING ||
                 ast->u.index_assign.obj->kind == AST_BOOL || ast->u.index_assign.obj->kind == AST_NULL) {
-                char msg[BUFFER_MEDIUM];
-                snprintf(msg, sizeof(msg), "不能对常量的元素赋值（'%s' 是常量值）",
+                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                         "不能对常量的元素赋值（'%s' 是常量值）",
                          ast->u.index_assign.obj->kind == AST_NUM ? "数值" :
                          ast->u.index_assign.obj->kind == AST_STRING ? "字符串" :
                          ast->u.index_assign.obj->kind == AST_BOOL ? "布尔" : "null");
-                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
             }
 
             // 获取被赋值对象的类型（支持嵌套字段访问如 r.position.x）
@@ -315,10 +310,9 @@
                         }
                     }
                     if (!is_face_method) {
-                        char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg), "face '%s' 没有字段 '%s'（使用 'as' 转型访问底层 struct）",
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                 "face '%s' 没有字段 '%s'（使用 'as' 转型访问底层 struct）",
                                  obj_type->struct_name, field_name);
-                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     }
                 }
             }
@@ -400,12 +394,10 @@
 
                         // 检查类型兼容性
                         if (value_type && !type_is_compatible(expected_type, value_type)) {
-                            char msg[BUFFER_MEDIUM];
-                            format_type_error(msg, sizeof(msg),
-                                "字段 '%s3' 类型不匹配: 期望 '%s1'，实际 '%s2'",
-                                expected_type, value_type,
-                                field_name, NULL);
-                            error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
+                            error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "%s",
+                                format_type_error_text("字段 '%s3' 类型不匹配: 期望 '%s1'，实际 '%s2'",
+                                    expected_type, value_type,
+                                    field_name, NULL));
                         }
 
                         if (value_type) type_free(value_type);
@@ -415,11 +407,10 @@
                         //   不补的话这条会一直拖到**运行时**才报「struct 不存在字段 'nope'」✗ ——
                         //   实测：`inner.nope = 1.0`（基座是**本 struct 的字段**）此前只报运行时错，
                         //   而同一句经局部量（`o.inner.nope = 1.0`）是编译期错 ⇒ 两条路不一致 ✓
-                        char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg), "struct '%s' 没有字段 '%s'",
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                 "struct '%s' 没有字段 '%s'",
                                  obj_type->struct_name ? obj_type->struct_name : "?",
                                  field_name);
-                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     }
                     // 推断来的类型是我们的副本，用完释放（原路径的类型归符号所有，不能放）
                     if (expected_is_owned && expected_type) type_free(expected_type);
@@ -440,11 +431,9 @@
                             TypeInfo* field_type = infer_field_type(s, obj_type, field_name, NULL);
                             if (field_type) {
                                 if (!type_is_compatible(field_type, value_type)) {
-                                    char msg[BUFFER_MEDIUM];
-                                    format_detailed_type_error_ex(msg, sizeof(msg),
-                                        field_type, value_type,
-                                        "字段赋值类型不匹配", field_name);
-                                    error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
+                                    error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "%s",
+                                        format_detailed_type_error_ex_text(field_type, value_type,
+                                            "字段赋值类型不匹配", field_name));
                                 }
                                 type_free(field_type);
                             }
@@ -548,9 +537,9 @@
                             memset(&tmp_ref, 0, sizeof(tmp_ref));
                             Symbol* sym = resolve_variable_with_upvalue(s, obj->u.var.name, &tmp_ref);
                             if (sym && sym->is_const) {
-                                char msg[BUFFER_MEDIUM];
-                                snprintf(msg, sizeof(msg), "不能对 const 变量 '%s' 调用修改方法 '%s'", obj->u.var.name, method_name);
-                                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                 "不能对 const 变量 '%s' 调用修改方法 '%s'",
+                                                 obj->u.var.name, method_name);
                             }
                         } else if (obj && obj->kind == AST_MODULE_ACCESS) {
                             const char* mod_name = obj->u.module_access.module_name;
@@ -559,9 +548,9 @@
                             if (mod_info && mod_info->sym_table) {
                                 ModuleVarSymbol* var_sym = module_symbol_table_find_var(mod_info->sym_table, mem_name);
                                 if (var_sym && var_sym->is_const) {
-                                    char msg[BUFFER_MEDIUM];
-                                    snprintf(msg, sizeof(msg), "不能对 const 变量 '%s.%s' 调用修改方法 '%s'", mod_name, mem_name, method_name);
-                                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                     "不能对 const 变量 '%s.%s' 调用修改方法 '%s'",
+                                                     mod_name, mem_name, method_name);
                                 }
                             }
                         }
@@ -598,10 +587,9 @@
                                         int expected_count = clib_sym->clib_func_param_counts[fi];
                                         int actual_count = ast->u.call.args.count;
                                         if (actual_count != expected_count) {
-                                            char msg[BUFFER_MEDIUM];
-                                            snprintf(msg, sizeof(msg), "clib '%s' 函数 '%s' 参数数量不匹配: 期望 %d, 实际 %d",
+                                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                     "clib '%s' 函数 '%s' 参数数量不匹配: 期望 %d, 实际 %d",
                                                      receiver_type->struct_name, method_name, expected_count, actual_count);
-                                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                         }
                                         for (int pi = 0; pi < actual_count && pi < expected_count; pi++) {
                                             TypeInfo* expected_param = clib_sym->clib_func_param_types[fi][pi];
@@ -659,18 +647,18 @@
                                 is_clib_call = 1;
                             }
                             if (!is_clib_call) {
-                                char msg[BUFFER_MEDIUM];
                                 // 检查是否是因为未 use 导入 clib 类型
                                 Symbol* local_clib = scope_resolve(s->current, receiver_type->struct_name);
                                 if (!local_clib) {
                                     // 当前作用域没有 clib 类型符号，提示用户添加 use
-                                    snprintf(msg, sizeof(msg), "clib '%s' 函数 '%s' 未找到，请添加 use 语句导入 clib 类型（如 use module.%s）",
+                                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                             "clib '%s' 函数 '%s' 未找到，请添加 use 语句导入 clib 类型（如 use module.%s）",
                                              receiver_type->struct_name, method_name, receiver_type->struct_name);
                                 } else {
-                                    snprintf(msg, sizeof(msg), "clib '%s' 没有声明函数 '%s'",
+                                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                             "clib '%s' 没有声明函数 '%s'",
                                              receiver_type->struct_name, method_name);
                                 }
-                                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                             }
                             type_free(receiver_type);
                             break;
@@ -708,10 +696,9 @@
                                 }
                             }
                             if (!face_method_found) {
-                                char msg[BUFFER_MEDIUM];
-                                snprintf(msg, sizeof(msg), "face '%s' 没有方法 '%s'",
+                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                         "face '%s' 没有方法 '%s'",
                                          receiver_type->struct_name, method_name);
-                                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                             }
                             type_free(receiver_type);
                             break;
@@ -719,12 +706,10 @@
                         
                         if (!type_name) {
                             // any 类型不能调用方法
-                            char msg[BUFFER_MEDIUM];
-                            snprintf(msg, sizeof(msg),
+                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                                 "不能在 any 类型上调用方法 '%s'\n"
                                 "  提示: 使用 if ... is Type { ... } 类型收窄或指定参数类型",
                                 method_name);
-                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                         }
                         if (type_name) {
                             int expected_arity;
@@ -855,7 +840,6 @@
                                     }
                                     // 如果 struct 定义在 AST 中找到了但方法没找到，是真正的错误
                                     if (!method_found) {
-                                        char msg[BUFFER_MEDIUM];
                                         const char* type_str = type_to_string(receiver_type);
                                         // C1：在 struct 方法列表里找相似名给出提示
                                         const char* mnames[64];
@@ -865,10 +849,10 @@
                                             Ast* m = struct_def_ast->u.struct_def.methods[q];
                                             mnames[q] = (m && m->kind == AST_FUNC_DEF) ? m->u.func.name : NULL;
                                         }
-                                        snprintf(msg, sizeof(msg), "类型 '%s' 没有方法 '%s'%s",
-                                                 type_str, method_name,
-                                                 get_similar_in_names(mnames, mcount, method_name));
-                                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                         "类型 '%s' 没有方法 '%s'%s",
+                                                         type_str, method_name,
+                                                         get_similar_in_names(mnames, mcount, method_name));
                                     }
                                 }
                                 // 如果 struct 定义不在当前 AST 中（跨模块导入），跳过编译时检查
@@ -896,13 +880,11 @@
                                 }
                                 if (cstruct_found_in_ast) {
                                     // cstruct 没有方法，编译时报错
-                                    char msg[BUFFER_MEDIUM];
                                     const char* type_str = type_to_string(receiver_type);
-                                    snprintf(msg, sizeof(msg),
+                                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                                         "类型 '%s' 没有方法 '%s'\n"
                                         "  提示: cstruct 只有字段，没有方法",
                                         type_str, method_name);
-                                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                 }
                                 // 找不到 cstruct 定义（跨模块），跳过编译时检查
                             }
@@ -939,14 +921,13 @@
                                 //   现在：① 先问**相似名**工具（`startsWith` ⇒ 提示 `starts_with` ✓，
                                 //   与 `d.hass`/`arr.reverze` 那两条路径**同一份实现** ✓）；
                                 //   ② 只有名字确实是 `slice*` 那种习惯写法时，才给切片提示 ✓。
-                                char msg[BUFFER_MEDIUM];
                                 const char* type_str = type_to_string(receiver_type);
                                 // 分级提示走**共享实现** ✓（`slice*` 优先 ✓ 其次相似名 ✓
                                 // 顺序为什么是这样、我第一版怎么踩的 ⇒ 见 semantic_type_utils.c）
-                                snprintf(msg, sizeof(msg), "类型 '%s' 没有方法 '%s'%s",
+                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                         "类型 '%s' 没有方法 '%s'%s",
                                          type_str, method_name,
                                          semantic_no_such_method_hint(receiver_type, method_name));
-                                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                             } else if (method_found) {
                                 // 是实例方法，检查参数
                                 int actual_arity = ast->u.call.args.count;
@@ -963,34 +944,33 @@
                                 // arity >= 0: 固定参数数量（考虑默认参数）
                                 int required_arity = expected_arity - fallback_default_count;
                                 if (expected_arity >= 0 && (actual_arity < required_arity || actual_arity > expected_arity)) {
-                                    char msg[BUFFER_MEDIUM];
+                                    // `.map()` 那条提示做成尾串（原来是往 msg 尾部 strncat ✓ 等价）
+                                    const char* map_hint =
+                                        (strcmp(method_name, "map") == 0 && actual_arity == 1 && expected_arity == 2)
+                                        ? "\n  提示: .map() 会传递 (item, index) 两个参数，"
+                                          "\n     函数签名需加第二个参数，如 func compress(string w, int _): string"
+                                        : "";
                                     if (actual_arity < required_arity) {
-                                        snprintf(msg, sizeof(msg), "调用方法 '%s' 时参数不足: 至少需要 %d, 实际 %d",
-                                                 method_name, required_arity, actual_arity);
+                                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                 "调用方法 '%s' 时参数不足: 至少需要 %d, 实际 %d%s",
+                                                 method_name, required_arity, actual_arity, map_hint);
                                     } else {
-                                        snprintf(msg, sizeof(msg), "调用方法 '%s' 时参数过多: 最多 %d, 实际 %d",
-                                                 method_name, expected_arity, actual_arity);
+                                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                 "调用方法 '%s' 时参数过多: 最多 %d, 实际 %d%s",
+                                                 method_name, expected_arity, actual_arity, map_hint);
                                     }
-                                    if (strcmp(method_name, "map") == 0 && actual_arity == 1 && expected_arity == 2) {
-                                        strncat(msg, "\n  提示: .map() 会传递 (item, index) 两个参数，"
-                                                "\n     函数签名需加第二个参数，如 func compress(string w, int _): string",
-                                                sizeof(msg) - strlen(msg) - 1);
-                                    }
-                                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                 }
                                 // arity < 0: 可变参数，检查是否少于 min_arity
                                 else if (expected_arity < 0 && meta && meta->min_arity >= 0 && actual_arity < meta->min_arity) {
-                                    char msg[BUFFER_MEDIUM];
-                                    snprintf(msg, sizeof(msg), "调用方法 '%s' 时参数过少: 最少 %d 个, 实际 %d",
+                                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                             "调用方法 '%s' 时参数过少: 最少 %d 个, 实际 %d",
                                              method_name, meta->min_arity, actual_arity);
-                                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                 }
                                 // arity < 0: 可变参数，检查是否超过 max_arity
                                 else if (expected_arity < 0 && meta && meta->max_arity >= 0 && actual_arity > meta->max_arity) {
-                                    char msg[BUFFER_MEDIUM];
-                                    snprintf(msg, sizeof(msg), "调用方法 '%s' 时参数过多: 最多 %d 个, 实际 %d",
+                                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                             "调用方法 '%s' 时参数过多: 最多 %d 个, 实际 %d",
                                              method_name, meta->max_arity, actual_arity);
-                                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                 }
 
                                 // 检查参数类型（可变参数方法的 arity 是 NATIVE_ARITY_VARARG，个数由 min/max 管）
@@ -1090,15 +1070,14 @@
                                                     }
 
                                                     if (!type_compatible) {
-                                                        char msg[BUFFER_MEDIUM];
+                                                        // 两步（context 要先拼出来）⇒ 用宽缓冲 + 返回串 helper ✓
                                                         char context[256];
                                                         snprintf(context, sizeof(context), "函数 '%s' 的参数 %d 类型不匹配",
                                                                  method_name, i + 1);
                                                         TypeInfo* expected_type = type_new(expected_param_type);
-                                                        format_detailed_type_error(msg, sizeof(msg),
-                                                            expected_type, arg_type, context);
+                                                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column, "%s",
+                                                            format_detailed_type_error_text(expected_type, arg_type, context));
                                                         type_free(expected_type);
-                                                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                                     }
                                                 }
                                             }
@@ -1162,7 +1141,6 @@
                                                 if (expected_type_for_check) {
                                                     // 有完整类型信息，进行深度类型比较（支持嵌套类型）
                                                     if (!type_is_compatible(expected_type_for_check, arg_type)) {
-                                                        char msg[BUFFER_MEDIUM];
                                                         // 先保存字符串避免 buffer 覆盖
                                                         const char* exp_str = type_to_string(expected_type_for_check);
                                                         char exp_buf[BUFFER_SMALL];
@@ -1170,14 +1148,16 @@
                                                         exp_buf[sizeof(exp_buf) - 1] = '\0';
                                                         const char* hint = get_type_conversion_hint(expected_type_for_check->kind, arg_type->kind);
                                                         if (hint) {
-                                                            snprintf(msg, sizeof(msg), "类型错误: 参数 %d 期望 '%s'，但传入 '%s'\n%s",
-                                                                     i + 1, exp_buf, type_to_string(arg_type), hint);
+                                                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                                "类型错误: 参数 %d 期望 '%s'，但传入 '%s'\n%s%s",
+                                                                i + 1, exp_buf, type_to_string(arg_type), hint,
+                                                                type_utils_dict_lock_hint(dict_sym));
                                                         } else {
-                                                            snprintf(msg, sizeof(msg), "类型错误: 参数 %d 期望 '%s'，但传入 '%s'",
-                                                                     i + 1, exp_buf, type_to_string(arg_type));
+                                                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                                "类型错误: 参数 %d 期望 '%s'，但传入 '%s'%s",
+                                                                i + 1, exp_buf, type_to_string(arg_type),
+                                                                type_utils_dict_lock_hint(dict_sym));
                                                         }
-                                                        type_utils_append_dict_lock_hint(msg, sizeof(msg), dict_sym);  // 回溯锁定点 ✓
-                                                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                                     }
                                                 } else if (expected_param_type != TYPE_ANY) {
                                                     // 只有 kind 信息，进行简单类型比较
@@ -1196,17 +1176,20 @@
                                                         }
 
                                                         if (!type_compatible) {
-                                                            char msg[BUFFER_MEDIUM];
                                                             const char* hint = get_type_conversion_hint(expected_param_type, arg_type->kind);
                                                             if (hint) {
-                                                                snprintf(msg, sizeof(msg), "类型错误: 参数 %d 期望 '%s'，但传入 '%s'\n%s",
-                                                                         i + 1, type_kind_to_string(expected_param_type), type_to_string(arg_type), hint);
+                                                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                                    "类型错误: 参数 %d 期望 '%s'，但传入 '%s'\n%s%s",
+                                                                    i + 1, type_kind_to_string(expected_param_type),
+                                                                    type_to_string(arg_type), hint,
+                                                                    type_utils_dict_lock_hint(dict_sym));
                                                             } else {
-                                                                snprintf(msg, sizeof(msg), "类型错误: 参数 %d 期望 '%s'，但传入 '%s'",
-                                                                         i + 1, type_kind_to_string(expected_param_type), type_to_string(arg_type));
+                                                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                                    "类型错误: 参数 %d 期望 '%s'，但传入 '%s'%s",
+                                                                    i + 1, type_kind_to_string(expected_param_type),
+                                                                    type_to_string(arg_type),
+                                                                    type_utils_dict_lock_hint(dict_sym));
                                                             }
-                                                            type_utils_append_dict_lock_hint(msg, sizeof(msg), dict_sym);  // 回溯锁定点 ✓
-                                                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                                         }
                                                     }
                                                 }
@@ -1252,18 +1235,18 @@
                                                 ok = (type_is_compatible(&expected_ti, arg_type) != 0);
                                             }
                                             if (!ok) {
-                                                char msg[BUFFER_MEDIUM];
                                                 const char* hint = get_type_conversion_hint(expected_param_type, arg_type->kind);
                                                 if (hint) {
-                                                    snprintf(msg, sizeof(msg), "调用方法 '%s' 时参数 %d 类型错误: 期望 '%s'，但传入 '%s'\n%s",
+                                                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                             "调用方法 '%s' 时参数 %d 类型错误: 期望 '%s'，但传入 '%s'\n%s",
                                                              method_name, i + 1, type_kind_to_string(expected_param_type),
                                                              type_to_string(arg_type), hint);
                                                 } else {
-                                                    snprintf(msg, sizeof(msg), "调用方法 '%s' 时参数 %d 类型错误: 期望 '%s'，但传入 '%s'",
+                                                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                             "调用方法 '%s' 时参数 %d 类型错误: 期望 '%s'，但传入 '%s'",
                                                              method_name, i + 1, type_kind_to_string(expected_param_type),
                                                              type_to_string(arg_type));
                                                 }
-                                                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                             }
                                             type_free(arg_type);
                                         }
@@ -1305,15 +1288,15 @@
                                                 int default_cnt = method_ast->u.func.default_count;
                                                 int required_cnt = method_param_count - default_cnt;
                                                 if (actual_arity < required_cnt || actual_arity > method_param_count) {
-                                                    char msg[BUFFER_MEDIUM];
                                                     if (actual_arity < required_cnt) {
-                                                        snprintf(msg, sizeof(msg), "方法 '%s' 参数不足: 至少需要 %d 个, 实际 %d",
+                                                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                                 "方法 '%s' 参数不足: 至少需要 %d 个, 实际 %d",
                                                                  method_name, required_cnt, actual_arity);
                                                     } else {
-                                                        snprintf(msg, sizeof(msg), "方法 '%s' 参数过多: 最多 %d 个, 实际 %d",
+                                                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                                 "方法 '%s' 参数过多: 最多 %d 个, 实际 %d",
                                                                  method_name, method_param_count, actual_arity);
                                                     }
-                                                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                                 } else {
                                             // 构建泛型参数替换表
                                             char** gp_names = NULL;
@@ -1378,14 +1361,12 @@
                                                         }
                                                     }
                                                     if (!is_generic && !type_is_compatible(check_type, arg_type)) {
-                                                        char msg[BUFFER_MEDIUM];
                                                         char idx_str[16];
                                                         snprintf(idx_str, sizeof(idx_str), "%d", i + 1);
-                                                        format_type_error(msg, sizeof(msg),
-                                                            "%s3 第 %s4 个参数类型不匹配: 期望 %s1, 实际 %s2",
-                                                            check_type, arg_type,
-                                                            method_name, idx_str);
-                                                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                                                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column, "%s",
+                                                            format_type_error_text("%s3 第 %s4 个参数类型不匹配: 期望 %s1, 实际 %s2",
+                                                                check_type, arg_type,
+                                                                method_name, idx_str));
                                                     }
                                                 }
                                                 if (arg_type) type_free(arg_type);
@@ -1444,10 +1425,9 @@
 
                                 // 检查参数数量
                                 if (actual_params != expected_params) {
-                                    char msg[BUFFER_MEDIUM];
-                                    snprintf(msg, sizeof(msg), "clib '%s' 的函数 '%s' 参数数量不匹配: 期望 %d, 实际 %d",
+                                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                             "clib '%s' 的函数 '%s' 参数数量不匹配: 期望 %d, 实际 %d",
                                              obj_type->struct_name, func_name, expected_params, actual_params);
-                                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                 }
 
                                 // 设置缓存类型：C 类型映射为 Leno 类型（零摩擦）
@@ -1495,17 +1475,17 @@
                         }
 
                         if (!func_found) {
-                            char msg[BUFFER_MEDIUM];
                             // 检查是否是因为未 use 导入 clib 类型
                             Symbol* local_clib = scope_resolve(s->current, obj_type->struct_name);
                             if (!local_clib) {
-                                snprintf(msg, sizeof(msg), "clib '%s' 函数 '%s' 未找到，请添加 use 语句导入 clib 类型（如 use module.%s）",
+                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                         "clib '%s' 函数 '%s' 未找到，请添加 use 语句导入 clib 类型（如 use module.%s）",
                                          obj_type->struct_name, func_name, obj_type->struct_name);
                             } else {
-                                snprintf(msg, sizeof(msg), "clib '%s' 没有声明函数 '%s'",
+                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                         "clib '%s' 没有声明函数 '%s'",
                                          obj_type->struct_name, func_name);
                             }
-                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                         }
                     }
                 }
@@ -1539,10 +1519,9 @@
                         }
                     }
                     if (!face_method_found) {
-                        char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg), "face '%s' 没有方法 '%s'",
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                 "face '%s' 没有方法 '%s'",
                                  obj_type->struct_name, method_name);
-                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     }
                 }
                 if (obj_type) type_free(obj_type);
@@ -1574,15 +1553,13 @@
                     Symbol* struct_sym = scope_resolve(s->current, func_name);
                     if (struct_sym && struct_sym->type && struct_sym->type->kind == TYPE_STRUCT) {
                         // 是 struct 类型，提示使用 new 关键字
-                        char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg), "struct '%s' 需要使用 new 关键字实例化，例如: new %s()",
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                "struct '%s' 需要使用 new 关键字实例化，例如: new %s()",
                                 func_name, func_name);
-                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     } else {
-                        char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg), "未定义的函数: %s%s", func_name,
+                        error_add_at_fmt(ERR_UNDEFINED_FUNC, ast->line, ast->column,
+                                "未定义的函数: %s%s", func_name,
                                  get_undefined_func_hint(s, func_name));
-                        error_add_at(ERR_UNDEFINED_FUNC, ast->line, ast->column, msg);
                     }
                 } else {
                     ast->u.call.callee->u.var.ref.type_kind = sym->type ? sym->type->kind : TYPE_ANY;
@@ -1621,26 +1598,24 @@
                     //   ⇒ 现在分两句说清：① `i` 是**实例**、不能当函数调 ✓；
                     //     ② 想实例化该类型写 `new 类型名()` ✓、想调方法写 `实例.方法()` ✓。
                     if (sym->type && sym->type->kind == TYPE_STRUCT) {
-                        char msg[BUFFER_MEDIUM];
                         const char* tname = sym->type->struct_name ? sym->type->struct_name
-                                                                   : func_name;
+                                                                  : func_name;
                         // ⚠ 必须**按符号种类**分两句说 ✗ —— 我第一版只看"类型是 struct"就一律
                         //   说成"实例" ✓ ⇒ 实测把 `Info()`（**类型名**当函数调 ✓）也误标成
                         //   "`Info` 是 struct 实例" ✗（旧文案在那里本来是对的 ✓ 我改坏了 ✓）。
                         //   判据：脚本 struct 的**类型符号** kind = SYM_STRUCT ✓（A 组那一轮探针
                         //   实测过 ✓ 与"类型名当接收者"那条用同一判据 ✓）；变量/局部量则不是 ✓。
                         if (sym->kind == SYM_STRUCT) {
-                            snprintf(msg, sizeof(msg),
+                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                                      "`%s` 是 struct **类型名**，不能当函数调用 ✗ —— "
                                      "实例化请写 `new %s()` ✓",
                                      func_name, tname);
                         } else {
-                            snprintf(msg, sizeof(msg),
+                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                                      "`%s` 是 struct **实例**（类型 '%s'），不能当函数调用 ✗ —— "
                                      "想实例化该类型请写 `new %s()` ✓；想调它的方法请写 `%s.方法名(...)` ✓",
                                      func_name, tname, tname, func_name);
                         }
-                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     }
                 }
             } else {
@@ -1657,24 +1632,21 @@
                         int actual_arity = ast->u.call.args.count;
                         // arity >= 0: 固定参数数量
                         if (builtins[i].arity >= 0 && actual_arity != builtins[i].arity) {
-                            char msg[BUFFER_MEDIUM];
-                            snprintf(msg, sizeof(msg), "%s 参数数量不匹配: 期望 %d, 实际 %d",
+                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                     "%s 参数数量不匹配: 期望 %d, 实际 %d",
                                      func_name, builtins[i].arity, actual_arity);
-                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                         }
                         // arity < 0: 可变参数，检查是否少于 min_arity
                         else if (builtins[i].arity < 0 && builtins[i].min_arity >= 0 && actual_arity < builtins[i].min_arity) {
-                            char msg[BUFFER_MEDIUM];
-                            snprintf(msg, sizeof(msg), "%s 参数过少: 最少 %d 个, 实际 %d",
+                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                     "%s 参数过少: 最少 %d 个, 实际 %d",
                                      func_name, builtins[i].min_arity, actual_arity);
-                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                         }
                         // arity < 0: 可变参数，检查是否超过 max_arity
                         else if (builtins[i].arity < 0 && builtins[i].max_arity >= 0 && actual_arity > builtins[i].max_arity) {
-                            char msg[BUFFER_MEDIUM];
-                            snprintf(msg, sizeof(msg), "%s 参数过多: 最多 %d 个, 实际 %d",
+                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                     "%s 参数过多: 最多 %d 个, 实际 %d",
                                      func_name, builtins[i].max_arity, actual_arity);
-                            error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                         }
                         else if (actual_arity > 0) {
                             // 参数数量已在上面的分支校验过（定长 = 相等；可变参数 = 在 min/max 之间）
@@ -1705,16 +1677,16 @@
                                             memset(&expected_ti, 0, sizeof(expected_ti));
                                             expected_ti.kind = expected_param_type;
                                             if (!type_is_compatible(&expected_ti, arg_type)) {
-                                                char msg[BUFFER_MEDIUM];
                                                 const char* hint = get_type_conversion_hint(expected_param_type, arg_type->kind);
                                                 if (hint) {
-                                                    snprintf(msg, sizeof(msg), "类型错误: 函数 '%s' 的参数 %d 期望 '%s'，但传入 '%s'\n%s",
+                                                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                             "类型错误: 函数 '%s' 的参数 %d 期望 '%s'，但传入 '%s'\n%s",
                                                              func_name, j + 1, type_kind_to_string(expected_param_type), type_to_string(arg_type), hint);
                                                 } else {
-                                                    snprintf(msg, sizeof(msg), "类型错误: 函数 '%s' 的参数 %d 期望 '%s'，但传入 '%s'",
+                                                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                             "类型错误: 函数 '%s' 的参数 %d 期望 '%s'，但传入 '%s'",
                                                              func_name, j + 1, type_kind_to_string(expected_param_type), type_to_string(arg_type));
                                                 }
-                                                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                             }
                                         }
                                     }
@@ -1798,11 +1770,9 @@
                                     int ok_ck = (inferred->kind == ck) ||
                                                 (ck == TYPE_INT && inferred->kind == TYPE_BIGINT);
                                     if (!ok_ck) {
-                                        char msg[BUFFER_MEDIUM];
-                                        snprintf(msg, sizeof(msg),
+                                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                                             "类型 '%s' 不满足约束 '%s'（该泛型参数被约束为具体类型）",
                                             type_kind_to_string(inferred->kind), constraint);
-                                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                     }
                                     continue;   // 具体类型约束已判完，不再走 face 那条 ✓
                                 }
@@ -1812,11 +1782,9 @@
                                     ObjStructDef* sdef = struct_def_find(inferred->struct_name);
                                     ObjFaceDef* fdef = face_def_find(constraint);
                                     if (sdef && fdef && !struct_implements_face(sdef, fdef)) {
-                                        char msg[BUFFER_MEDIUM];
-                                        snprintf(msg, sizeof(msg),
+                                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                                             "类型 '%s' 不满足约束 '%s': 需要实现 face '%s'",
                                             inferred->struct_name, constraint, constraint);
-                                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                                     }
                                 }
                             }
@@ -1855,15 +1823,15 @@
                     
                     // 检查参数数量（支持默认参数）
                     if (actual_cnt < required_cnt || actual_cnt > expected_cnt) {
-                        char msg[BUFFER_MEDIUM];
                         if (actual_cnt < required_cnt) {
-                            snprintf(msg, sizeof(msg), "%s 参数数量不足: 至少需要 %d 个参数，实际传入 %d 个",
+                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                     "%s 参数数量不足: 至少需要 %d 个参数，实际传入 %d 个",
                                      func_name, required_cnt, actual_cnt);
                         } else {
-                            snprintf(msg, sizeof(msg), "%s 参数数量过多: 最多接受 %d 个参数，实际传入 %d 个",
+                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                     "%s 参数数量过多: 最多接受 %d 个参数，实际传入 %d 个",
                                      func_name, expected_cnt, actual_cnt);
                         }
-                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     } else {
                         // 检查每个提供的参数的类型
                         for (int i = 0; i < actual_cnt; i++) {
@@ -1941,10 +1909,9 @@
                         }
                     }
                     if (!is_face_method) {
-                        char msg[BUFFER_MEDIUM];
-                        snprintf(msg, sizeof(msg), "face '%s' 没有字段或方法 '%s'（使用 'as' 转型访问底层 struct）",
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                 "face '%s' 没有字段或方法 '%s'（使用 'as' 转型访问底层 struct）",
                                  obj_type->struct_name, field_name);
-                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     }
                 }
             }
@@ -1969,9 +1936,8 @@
                     }
                 }
                 if (!found) {
-                    char msg[BUFFER_MEDIUM];
-                    snprintf(msg, sizeof(msg), "enum '%s' 没有成员 '%s'", obj_type->struct_name, member_name);
-                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
+                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                     "enum '%s' 没有成员 '%s'", obj_type->struct_name, member_name);
                 }
             }
 
@@ -2060,12 +2026,10 @@
                     ok != TYPE_ENUM && ok != TYPE_CLIB && ok != TYPE_PTR_GENERIC &&
                     ok != TYPE_ANY && ok != TYPE_INFER && ok != TYPE_UNKNOWN &&
                     ok != TYPE_GENERIC_PARAM && ok != TYPE_MULTI_RET) {
-                    char msg[BUFFER_MEDIUM];
                     const char* field_name = ast->u.index.index->u.string.value;
-                    snprintf(msg, sizeof(msg),
+                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                         "类型 '%s' 不支持属性访问 '.%s'（只有 struct、dict、array 等类型才能访问属性）",
                         type_kind_to_string(ok), field_name);
-                    error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                 }
             }
 
@@ -2134,11 +2098,9 @@
             if (obj_type && obj_type->kind == TYPE_STRING &&
                 ast->u.index.obj->kind == AST_STRING &&
                 ast->u.index.index->kind == AST_STRING) {
-                char msg[BUFFER_MEDIUM];
-                snprintf(msg, sizeof(msg),
+                error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
                     "字符串不支持字符串下标 '%s'：取字符请用数字下标 s[0]，方法调用请加括号 ()",
                     ast->u.index.index->u.string.value);
-                error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
             }
 
             // 检查嵌套字段访问中的 null 默认值（如 self["head"]["next"] 或 self["items"][0]）
@@ -2352,10 +2314,9 @@
                 }
                 
                 if (!is_valid_slice_target) {
-                    char msg[BUFFER_MEDIUM];
-                    snprintf(msg, sizeof(msg), "切片操作需要数组类型，实际为 %s",
+                    error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                             "切片操作需要数组类型，实际为 %s",
                              type_kind_to_string(slice_obj_type->kind));
-                    error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                 }
             }
             if (slice_obj_type) type_free(slice_obj_type);
@@ -2365,10 +2326,9 @@
                 TypeInfo* start_type = infer_expr_type(s, ast->u.slice.start);
                 // ★ 2026-10-12：同数组下标那处 —— 判据改用 `type_is_integer_kind`（枚举 = int ✓）
                 if (start_type && !type_is_integer_kind(start_type->kind) && start_type->kind != TYPE_ANY) {
-                    char msg[BUFFER_MEDIUM];
-                    snprintf(msg, sizeof(msg), "切片起始索引必须是整数类型，实际为 %s",
+                    error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                             "切片起始索引必须是整数类型，实际为 %s",
                              type_kind_to_string(start_type->kind));
-                    error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                 }
                 if (start_type) type_free(start_type);
             }
@@ -2378,10 +2338,9 @@
                 TypeInfo* end_type = infer_expr_type(s, ast->u.slice.end);
                 // ★ 2026-10-12：同上（枚举 = int ✓）
                 if (end_type && !type_is_integer_kind(end_type->kind) && end_type->kind != TYPE_ANY) {
-                    char msg[BUFFER_MEDIUM];
-                    snprintf(msg, sizeof(msg), "切片结束索引必须是整数类型，实际为 %s",
+                    error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                             "切片结束索引必须是整数类型，实际为 %s",
                              type_kind_to_string(end_type->kind));
-                    error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                 }
                 if (end_type) type_free(end_type);
             }

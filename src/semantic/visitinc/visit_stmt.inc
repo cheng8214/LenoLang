@@ -85,11 +85,9 @@
                                     expected_buf[63] = '\0';
                                     strncpy(actual_buf, type_to_string(actual), 63);
                                     actual_buf[63] = '\0';
-                                    char msg[BUFFER_MEDIUM];
-                                    snprintf(msg, sizeof(msg),
+                                    error_add_at_fmt(ERR_TYPE_MISMATCH, ast->u.ret_multi.exprs[i]->line, ast->u.ret_multi.exprs[i]->column,
                                         "返回值 %d 类型不匹配：期望 %s，实际 %s",
                                         i + 1, expected_buf, actual_buf);
-                                    error_add_at(ERR_TYPE_MISMATCH, ast->u.ret_multi.exprs[i]->line, ast->u.ret_multi.exprs[i]->column, msg);
                                 }
                                 type_free(actual);
                             }
@@ -97,10 +95,8 @@
                     }
                 } else if (expected_type && expected_type->kind != TYPE_INFER) {
                     // 函数声明了单返回值类型但 return 了多个值
-                    char msg[BUFFER_MEDIUM];
-                    snprintf(msg, sizeof(msg),
+                    error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
                         "函数声明返回单个值，但 return 语句返回了 %d 个值", count);
-                    error_add_at(ERR_TYPE_MISMATCH, ast->line, ast->column, msg);
                 }
                 // TYPE_INFER（无注解）允许多返回值，不报错
             }
@@ -142,11 +138,9 @@
                 if (sc->is_func) break;
             }
             if (!in_loop) {
-                char msg[BUFFER_SMALL];
-                snprintf(msg, sizeof(msg),
+                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                          "'%s' 不能用在循环外（只能出现在 for/while 循环体内）",
                          ast->kind == AST_BREAK ? "break" : "continue");
-                error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
             }
             break;
         }

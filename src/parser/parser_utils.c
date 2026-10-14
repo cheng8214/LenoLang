@@ -219,26 +219,21 @@ int is_type_keyword(LenoTokenType type) {
 void error_use_list_name_hint(Parser* p, int bulk) {
     const char* where = bulk ? "use 批量导入" : "use 语句";
     if (is_type_keyword(p->lex.current.type)) {
-        char msg[320];
-        snprintf(msg, sizeof(msg),
+        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
             "%s: '%.*s' 是**内建类型**（Leno 自带，不属于任何模块）⇒ 不用也不能放进 use 列表 ✗ —— "
             "直接从列表里去掉它 ✓（use 只列**模块导出的**类型：模块里 `export struct` / `export face` / "
             "`export enum` / `export alias` 的那些 ✓）",
             where, p->lex.current.len, p->lex.current.text);
-        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, msg);
         return;
     }
     const char* kw = lexer_keyword_text(p->lex.current.type);
     if (kw) {
-        char msg[224];
-        snprintf(msg, sizeof(msg),
+        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
             "%s: '%s' 是**保留字** ✗ 不能当类型名 —— 换个名字 ✓", where, kw);
-        error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, msg);
         return;
     }
-    char msg[80];
-    snprintf(msg, sizeof(msg), "%s期望类型名", where);
-    error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, msg);
+    error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+        "%s期望类型名", where);
 }
 
 // 检查当前 token 是否是 cstruct 布局属性标识符（packed / align）

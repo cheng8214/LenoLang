@@ -497,10 +497,9 @@ Ast* parse_dict(Parser* p) {
             }
         } else {
             if (is_type_keyword(p->lex.current.type)) {
-                char msg[64];
-                snprintf(msg, sizeof(msg), "不能使用关键字(%.*s)作为字典键", 
+                error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                         "不能使用关键字(%.*s)作为字典键",
                          p->lex.current.len, p->lex.current.text);
-                error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, msg);
             } else {
                 error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "字典键必须是字符串、标识符或整数");
             }
@@ -1066,10 +1065,9 @@ Ast* parse_dot(Parser* p, Ast* left) {
     // 点号后面必须是标识符
     if (p->lex.current.type != TOK_IDENT) {
         if (is_type_keyword(p->lex.current.type)) {
-            char msg[64];
-            snprintf(msg, sizeof(msg), "不能使用关键字(%.*s)作为属性名", 
+            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                     "不能使用关键字(%.*s)作为属性名",
                      p->lex.current.len, p->lex.current.text);
-            error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, msg);
         } else {
             error_add_at(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望属性名");
         }

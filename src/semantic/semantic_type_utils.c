@@ -543,13 +543,11 @@ int semantic_check_method_args_from_placeholder(Semantic* s, const char* struct_
         TypeInfo* arg_type = infer_expr_type(s, args->items[i]);
         if (arg_type && arg_type->kind != TYPE_ANY &&
             !type_is_compatible(expected_type, arg_type)) {
-            char msg[BUFFER_MEDIUM];
             char idx_str[16];
             snprintf(idx_str, sizeof(idx_str), "%d", i + 1);
-            format_type_error(msg, sizeof(msg),
-                "%s3 第 %s4 个参数类型不匹配: 期望 %s1, 实际 %s2",
-                expected_type, arg_type, method_name, idx_str);
-            error_add_at(ERR_SEMANTIC, line, column, msg);
+            error_add_at_fmt(ERR_SEMANTIC, line, column, "%s",
+                format_type_error_text("%s3 第 %s4 个参数类型不匹配: 期望 %s1, 实际 %s2",
+                    expected_type, arg_type, method_name, idx_str));
         }
         if (arg_type) type_free(arg_type);
     }
@@ -600,13 +598,11 @@ int semantic_check_method_args_from_placeholder(Semantic* s, const char* struct_
                 TypeInfo* arg_type = infer_expr_type(s, args->items[i]);
                 if (arg_type && arg_type->kind != TYPE_ANY &&
                     !type_is_compatible(expected_type, arg_type)) {
-                    char msg[BUFFER_MEDIUM];
                     char idx_str[16];
                     snprintf(idx_str, sizeof(idx_str), "%d", i + 1);
-                    format_type_error(msg, sizeof(msg),
-                        "%s3 第 %s4 个参数类型不匹配: 期望 %s1, 实际 %s2",
-                        expected_type, arg_type, method_name, idx_str);
-                    error_add_at(ERR_SEMANTIC, line, column, msg);
+                    error_add_at_fmt(ERR_SEMANTIC, line, column, "%s",
+                        format_type_error_text("%s3 第 %s4 个参数类型不匹配: 期望 %s1, 实际 %s2",
+                            expected_type, arg_type, method_name, idx_str));
                 }
                 if (arg_type) type_free(arg_type);
                 type_free(expected_type);
@@ -720,13 +716,11 @@ int semantic_check_face_method_args(Semantic* s, const char* face_name, const ch
                         continue;
                     }
                     if (!type_is_compatible(expected_type, arg_type)) {
-                        char msg[BUFFER_MEDIUM];
                         char idx_str[16];
                         snprintf(idx_str, sizeof(idx_str), "%d", ai + 1);
-                        format_type_error(msg, sizeof(msg),
-                            "%s3 第 %s4 个参数类型不匹配: 期望 %s1, 实际 %s2",
-                            expected_type, arg_type, method_name, idx_str);
-                        error_add_at(ERR_SEMANTIC, line, column, msg);
+                        error_add_at_fmt(ERR_SEMANTIC, line, column, "%s",
+                            format_type_error_text("%s3 第 %s4 个参数类型不匹配: 期望 %s1, 实际 %s2",
+                                expected_type, arg_type, method_name, idx_str));
                     }
                     type_free(arg_type);
                     if (expected_owned) type_free(expected_owned);
@@ -781,13 +775,11 @@ int semantic_check_face_method_args(Semantic* s, const char* face_name, const ch
                         skip = 1;   // 两边都是聚合：保守（与同文件那支同规矩）
                     }
                     if (!skip && !type_is_compatible(expected_type, arg_type)) {
-                        char msg[BUFFER_MEDIUM];
                         char idx_str[16];
                         snprintf(idx_str, sizeof(idx_str), "%d", ai + 1);
-                        format_type_error(msg, sizeof(msg),
-                            "%s3 第 %s4 个参数类型不匹配: 期望 %s1, 实际 %s2",
-                            expected_type, arg_type, method_name, idx_str);
-                        error_add_at(ERR_SEMANTIC, line, column, msg);
+                        error_add_at_fmt(ERR_SEMANTIC, line, column, "%s",
+                            format_type_error_text("%s3 第 %s4 个参数类型不匹配: 期望 %s1, 实际 %s2",
+                                expected_type, arg_type, method_name, idx_str));
                     }
                 }
                 if (arg_type) type_free(arg_type);
@@ -1026,22 +1018,29 @@ int type_utils_try_update_dict_value_type(Symbol* dict_sym, TypeInfo* value_type
 //   这里把锁定点（行/列）附到消息尾部。
 //   ⚠ 只在**报错路径**调用（不进热路径 ✓）；符号不是字典 / 没锁过 ⇒ 原样不动 ✓。
 //   ⚠ msg 是调用方的栈缓冲（BUFFER_MEDIUM）⇒ 只做"够不够长"的判断，不做任何分配 ✓
-void type_utils_append_dict_lock_hint(char* msg, size_t msg_cap, Symbol* dict_sym) {
-    if (!msg || msg_cap == 0 || !dict_sym) return;
-    if (!dict_sym->type || dict_sym->type->kind != TYPE_DICT) return;
-    if (dict_sym->dict_value_lock_line <= 0) return;
+// ★ 2026-10-14：改为**返回串**（单一原则）——
+//   原来它是「往调用方的 msg 缓冲尾部追加」⇒ 调用点必须先 `char msg[..]` + snprintf +
+//   再 append（6~8 处样板 ✗，尺寸还散在各处）。
+//   现在返回一段能直接当 `%s` 用的文本（**无锁定时是空串** ⇒ 拼上去无影响 ✓）：
+//     error_add_at_fmt(ERR_SEMANTIC, line, col, "%s%s",
+//                      format_detailed_type_error_text(...), type_utils_dict_lock_hint(sym));
+//   ⚠ 返回**静态缓冲**（一次调用有效 ✓，与 format_*_text 同口径 ✓）。
+//   ⚠ 尺寸用 `BUFFER_MSG` ✓ ⇒ 文案可以写全（上一版为适配调用方的 256 缓冲硬压到 140 字节 ✗）。
+const char* type_utils_dict_lock_hint(Symbol* dict_sym) {
+    static char hint[BUFFER_MSG];
+    hint[0] = '\0';
+    if (!dict_sym) return hint;
+    if (!dict_sym->type || dict_sym->type->kind != TYPE_DICT) return hint;
+    if (dict_sym->dict_value_lock_line <= 0) return hint;
 
-    size_t used = strlen(msg);
-    if (used + 1 >= msg_cap) return;
-    // ⚠ 文案刻意短：msg 是调用方的 `BUFFER_MEDIUM`(256) **栈**缓冲，而原报错本身
-    //   可能已占掉一大半（字典索引那条是三行格式 ⇒ 实测 ~75 字节）⇒ 太长会被
-    //   snprintf 从中间截断，切在 UTF-8 字符中间还会打出乱码 ✗（第一版 ~220 字节
-    //   实测正是如此 ✓）。这里控制在 ~140 字节内，两个调用点都放得下 ✓。
-    snprintf(msg + used, msg_cap - used,
-        "\n提示：'%s' 的元素类型是 **第 %d 行第 %d 列** 那次写入定死的"
-        "（裸 Dict 会被第一次写入定死）—— 多类型请用 Dict[..., any] ✓",
+    snprintf(hint, sizeof(hint),
+        "\n提示：'%s' 的元素类型 '%s' 是**第 %d 行第 %d 列**那次写入定下的 —— "
+        "裸 Dict 的元素类型会被**第一次写入**定死（之后写别的类型就报这条）；"
+        "要同时装多种类型，把接收者声明成 `Dict[..., any]` ✓",
         dict_sym->name ? dict_sym->name : "?",
+        dict_sym->type->value_type ? type_to_string(dict_sym->type->value_type) : "?",
         dict_sym->dict_value_lock_line, dict_sym->dict_value_lock_column);
+    return hint;
 }
 
 // ============================================================================
@@ -1552,6 +1551,40 @@ void format_detailed_type_error_ex(char* buf, size_t buf_size,
 }
 
 // ============================================================================
+// ★ 2026-10-14：上面几个格式化函数的**返回串**版本
+// ----------------------------------------------------------------------------
+// 为什么要它们：调用点原本是「char msg[..] → format_xxx(msg, ..) → error_add_at(.., msg)」
+//   三行样板（本仓 24 处 ✗）。有了返回串版就能一行收尾：
+//     error_add_at_fmt(ERR_TYPE_MISMATCH, line, col, "%s",
+//                      format_detailed_type_error_text(expected, actual, "字段赋值类型不匹配"));
+//   ⚠ 返回的是**静态缓冲**（与 native_instance_method_hint 同一口径 ✓）：只保证"一次调用
+//     有效"，不要把两次调用的结果同时拿着用（会互相覆盖 ✗）——本文件的调用点都是
+//     "立刻作为 %s 传走" ✓。
+//   ⚠ 缓冲尺寸用 `BUFFER_MSG`（报错文案的统一尺寸 ✓）；超长时的**安全截断**由
+//     `error_add_at_fmt` 内部兜底 ✓。
+// ============================================================================
+const char* format_type_error_text(const char* fmt, TypeInfo* type1, TypeInfo* type2,
+                                   const char* str1, const char* str2) {
+    static char buf[BUFFER_MSG];
+    format_type_error(buf, sizeof(buf), fmt, type1, type2, str1, str2);
+    return buf;
+}
+
+const char* format_detailed_type_error_text(TypeInfo* expected, TypeInfo* actual,
+                                            const char* context) {
+    static char buf[BUFFER_MSG];
+    format_detailed_type_error(buf, sizeof(buf), expected, actual, context);
+    return buf;
+}
+
+const char* format_detailed_type_error_ex_text(TypeInfo* expected, TypeInfo* actual,
+                                               const char* context, const char* var_name) {
+    static char buf[BUFFER_MSG];
+    format_detailed_type_error_ex(buf, sizeof(buf), expected, actual, context, var_name);
+    return buf;
+}
+
+// ============================================================================
 // 数组索引赋值类型检查工具函数
 // ============================================================================
 
@@ -1578,10 +1611,8 @@ int type_utils_check_array_index_assignment(TypeInfo* obj_type, TypeInfo* value_
     
     // any 不能赋值给具体类型（从不确定到确定需要显式转换）
     if (value_type->kind == TYPE_ANY) {
-        char msg[BUFFER_MEDIUM];
-        format_detailed_type_error(msg, sizeof(msg),
-            elem_type, value_type, "数组元素类型不匹配");
-        error_add_at(ERR_SEMANTIC, line, column, msg);
+        error_add_at_fmt(ERR_SEMANTIC, line, column, "%s",
+            format_detailed_type_error_text(elem_type, value_type, "数组元素类型不匹配"));
         return 0;
     }
     
@@ -1601,10 +1632,8 @@ int type_utils_check_array_index_assignment(TypeInfo* obj_type, TypeInfo* value_
     }
 
     // 类型不兼容，报告错误
-    char msg[BUFFER_MEDIUM];
-    format_detailed_type_error(msg, sizeof(msg),
-        elem_type, value_type, "数组元素类型不匹配");
-    error_add_at(ERR_SEMANTIC, line, column, msg);
+    error_add_at_fmt(ERR_SEMANTIC, line, column, "%s",
+        format_detailed_type_error_text(elem_type, value_type, "数组元素类型不匹配"));
     
     return 0;
 }
@@ -1643,11 +1672,9 @@ int type_utils_check_dict_index_assignment(Symbol* dict_sym, TypeInfo* assign_ty
     
     // any 不能赋值给具体类型（从不确定到确定需要显式转换）
     if (assign_type->kind == TYPE_ANY) {
-        char msg[BUFFER_MEDIUM];
-        format_detailed_type_error(msg, sizeof(msg),
-            value_type, assign_type, "字典值类型不匹配");
-        type_utils_append_dict_lock_hint(msg, sizeof(msg), dict_sym);   // 回溯锁定点 ✓
-        error_add_at(ERR_SEMANTIC, line, column, msg);
+        error_add_at_fmt(ERR_SEMANTIC, line, column, "%s%s",
+            format_detailed_type_error_text(value_type, assign_type, "字典值类型不匹配"),
+            type_utils_dict_lock_hint(dict_sym));
         return 0;
     }
     
@@ -1676,11 +1703,9 @@ int type_utils_check_dict_index_assignment(Symbol* dict_sym, TypeInfo* assign_ty
     }
 
     // 类型不兼容，报告错误
-    char msg[BUFFER_MEDIUM];
-    format_detailed_type_error(msg, sizeof(msg),
-        value_type, assign_type, "字典值类型不匹配");
-    type_utils_append_dict_lock_hint(msg, sizeof(msg), dict_sym);   // 回溯锁定点 ✓
-    error_add_at(ERR_SEMANTIC, line, column, msg);
+    error_add_at_fmt(ERR_SEMANTIC, line, column, "%s%s",
+        format_detailed_type_error_text(value_type, assign_type, "字典值类型不匹配"),
+        type_utils_dict_lock_hint(dict_sym));
 
     return 0;
 }

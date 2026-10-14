@@ -224,8 +224,11 @@ int type_utils_is_dict_element_mutator(const char* method_name);
 int type_utils_get_dict_element_param_index(const char* method_name);
 // line/column = 本次写入（`d.set(k,v)` / `d[k] = v`）的位置 ⇒ 锁定时记下来，供报错回溯 ✓
 int type_utils_try_update_dict_value_type(Symbol* dict_sym, TypeInfo* value_type, int line, int column);
-// 「字典值类型被锁定」的回溯提示：把它追加到消息尾部（无锁定 / 不是字典 ⇒ 原样不动 ✓）
-void type_utils_append_dict_lock_hint(char* msg, size_t msg_cap, Symbol* dict_sym);
+// 「字典值类型被锁定」的回溯提示（★ 2026-10-14 改为**返回串**）
+//   返回一段能直接当 `%s` 用的文本；**无锁定 / 不是字典 ⇒ 空串**（拼上去无影响 ✓）。
+//   用法：`error_add_at_fmt(ERR_SEMANTIC, line, col, "%s%s", 主文案, type_utils_dict_lock_hint(sym))`
+//   （原来是"往调用方缓冲尾部追加"，逼着每个调用点自己开 msg 缓冲 ✗）
+const char* type_utils_dict_lock_hint(Symbol* dict_sym);
 
 
 // 安全格式化类型错误信息（避免 type_to_string 缓冲区覆盖）
@@ -255,6 +258,16 @@ void format_detailed_type_error(char* buf, size_t buf_size,
 void format_detailed_type_error_ex(char* buf, size_t buf_size,
                                 TypeInfo* expected, TypeInfo* actual,
                                 const char* context, const char* var_name);
+
+// ★ 2026-10-14：上面几个的**返回串**版本（静态缓冲，一次调用有效 ✓）
+//   用途：一行收尾的报错—— `error_add_at_fmt(.., "%s", format_xxx_text(..))` ✓
+//   （原来每个调用点都得自己开 msg 缓冲 + snprintf + 传 msg，24 处样板 ✗）
+const char* format_type_error_text(const char* fmt, TypeInfo* type1, TypeInfo* type2,
+                                   const char* str1, const char* str2);
+const char* format_detailed_type_error_text(TypeInfo* expected, TypeInfo* actual,
+                                            const char* context);
+const char* format_detailed_type_error_ex_text(TypeInfo* expected, TypeInfo* actual,
+                                               const char* context, const char* var_name);
 
 // 数组索引赋值类型检查工具函数
 int type_utils_check_array_index_assignment(TypeInfo* obj_type, TypeInfo* value_type, int line, int column);

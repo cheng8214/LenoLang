@@ -99,12 +99,10 @@
                     }
                     // ② 数值类 → bool：as bool 只认 bool（int/float/bigint as bool 恒失败）
                     else if (dk == TYPE_BOOL && sk != TYPE_BOOL && src_num) {
-                        char msg[384];
-                        snprintf(msg, sizeof(msg),
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                             "as bool 只认 bool：%s 无法 as bool（运行期必回 null）。"
                             "要取真值请显式比较（如 x != 0）",
                             sem_as_kind_name(sk));
-                        error_add_at(ERR_SEMANTIC, ast->line, ast->column, msg);
                     }
                 }
                 if (as_src) type_free(as_src);
