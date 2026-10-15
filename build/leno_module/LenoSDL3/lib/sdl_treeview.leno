@@ -36,7 +36,7 @@ import "sdl_image.leno" as img
 //   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
 func _opts_keys(): Array[string] {
     return [
-"arrow_color", "bg_color", "border_color", "check_color", "checkable", "checked", "children", "context_menu", "cursor", "data", "enabled", "expanded", "font_path", "font_size", "font_style", "h", "has_children", "hover_color", "image", "image_expanded", "image_mode", "image_gap", "image_size", "indent", "items", "line_color", "mode", "pad_x", "item_h", "scroll_color", "sel_color", "show_check", "show_lines", "text", "text_color", "tip", "visible", "w", "x", "y"
+"arrow_color", "bg_color", "border_color", "check_color", "checkable", "checked", "children", "context_menu", "cursor", "data", "enabled", "expanded", "font_path", "font_size", "font_style", "h", "has_children", "hover_color", "image", "image_expanded", "image_mode", "image_gap", "image_size", "indent", "items", "line_color", "mode", "pad_x", "placeholder", "item_h", "scroll_color", "sel_color", "show_check", "show_lines", "text", "text_color", "tip", "visible", "w", "x", "y"
 ]
 }
 export struct TreeViewNode {
@@ -87,6 +87,12 @@ export struct TreeView impl Widget, Themeable {
     pri string imgLastPath = ""
     pri Ptr[u8] imgLastTex = null
     pri float textH = 16.0         // 缓存字体行高，避免渲染时每行重复 measureString
+    // ★ 2026-10-15：**空态提示**（`placeholder`）—— 没有节点时居中显示一行暗色文字 ✓
+    //   为什么需要：树被清空、或还没加载数据时，控件只剩一块空底色 ⇒
+    //   使用者分不清"是空的"还是"坏了" ✓
+    //   实测来源：`应用/IDE布局/ide_4way.leno` 早就传了 `placeholder: "资源管理器"` ✗
+    //   但 TreeView 白名单里**没有这个键** ⇒ **静默无效** ✓（被选项对账 `[ui]` 抓出来 ✓）
+    pri string phText = ""
 
     pri float rowH = 24.0
     float _indent = 16.0
@@ -366,6 +372,7 @@ export struct TreeView impl Widget, Themeable {
         fontPath = opts.get("font_path", "")
         fontStyle = opts.get("font_style", 0)
         _mode     = opts.get("mode", 0)
+        phText    = opts.get("placeholder", "")   // ★ 2026-10-15：空态提示（没有节点时居中显示 ✓）
         showCheck = opts.get("show_check", false)
         // ★ 2026-09-30：补上图标尺寸/间距的**选项读取** ✓ —— 此前只有 set_image_size()
         //   setter ✗ ⇒ 应用写 `createTreeView({…, image_size:16, image_gap:4})` 是
@@ -923,6 +930,20 @@ export struct TreeView impl Widget, Themeable {
                 if not enabled { tcR = theme.darken(txtColor, 60) }
                 float ty = r.snapY(rowY + (rowH - th) / 2.0)
                 r.drawText(_font, flatText[i], r.snapX(tx), ty, tcR)
+            }
+        }
+
+        // ★ 2026-10-15：**空态提示** —— 没有节点时居中显示一行暗色文字 ✓
+        //   （画在**裁剪区内、边框之前** ⇒ 与内容同层、不会被圆角切掉 ✓；
+        //     `measureString` 只在空态这一支调用 ⇒ 不违反"别在每帧渲染里量字"那条 ✓）
+        if flatIds.len() == 0 and phText != "" {
+            if _font != null and _font.ok {
+                var[float, float](ew, eh) = _font.measureString(phText)
+                Color pc = theme.darken(txtColor, 60)
+                if not enabled { pc = theme.darken(txtColor, 90) }
+                float ex = r.snapX(x + (w - ew) / 2.0)
+                float ey = r.snapY(y + (h - eh) / 2.0)
+                r.drawText(_font, phText, ex, ey, pc)
             }
         }
 

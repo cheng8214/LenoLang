@@ -366,9 +366,9 @@ main() {
     grid.add(SDL3.createButton({text: "G(0,2) 右下", w: 120, h: 32}), {align: 2})
     grid.add(SDL3.createButton({text: "G(1,0) 撑满", w: 120, h: 32, type: "primary"}), {align: 3})
     grid.add(SDL3.createLabel({text: "Label(1,1)", font_size: 13, text_color: #C8C8C8FF}), {align: 1})
-    grid.add(SDL3.createCheckBox({text: "Check(1,2)", w: 120, h: 24}), {align: 1})
+    grid.add(SDL3.createCheckBox({text: "Check(1,2)"}), {align: 1})
     grid.add(SDL3.createToggle({text: "Toggle(2,0)", w: 120, h: 24}), {align: 0})
-    grid.add(SDL3.createRadioButton({text: "Radio(2,1)", w: 120, h: 24}), {align: 1})
+    grid.add(SDL3.createRadioButton({text: "Radio(2,1)"}), {align: 1})
     grid.add(SDL3.createSlider({w: 120, h: 24, min: 0, max: 100, value: 50}), {align: 3})
     content.add(grid, {align: 3})
 

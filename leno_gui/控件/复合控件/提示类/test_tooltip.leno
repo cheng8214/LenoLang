@@ -33,7 +33,7 @@ main() {
                    tip: "删除后不可恢复，请谨慎操作"})
 
     // 复选框 tip
-    win.addCheckBox({x: 20, y: 110, w: 260, h: 26, text: "自动保存", checked: true,
+    win.addCheckBox({x: 20, y: 110, text: "自动保存", checked: true,
                      tip: "每隔 5 分钟自动保存一次"})
 
     // 开关 tip

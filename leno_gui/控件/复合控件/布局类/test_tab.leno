@@ -44,7 +44,7 @@ main() {
     tab.addToPage(0, SDL3.createLabel({text: "密码：", font_size: 14}), 20, 58)
     var pwd = SDL3.createEdit({w: 200, h: 32, placeholder: "请输入密码", password: true})
     tab.addToPage(0, pwd, 100, 52)
-    tab.addToPage(0, SDL3.createCheckBox({w: 200, h: 24, text: "记住我", checked: true}), 20, 102)
+    tab.addToPage(0, SDL3.createCheckBox({text: "记住我", checked: true}), 20, 102)
     var loginBtn = SDL3.createButton({w: 120, h: 34, text: "登录"})
     tab.addToPage(0, loginBtn, 20, 142)
     loginBtn.on_click(func() {

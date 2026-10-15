@@ -1392,6 +1392,22 @@ layout 的 `padTop/Left/…` 是**四边非对称** ✓（收敛成标量会丢�
 ⇒ **不强行改名**（牵动 10 个文件、还伤表达力 ✗），改为自测钉住"**跨套用错时必有近名提示**" ✓：
 `Badge` 传 `pad` ⇒ 提示 `pad_x` ✓；`Canvas` 传 `pad_x` ⇒ 指回 `pad` ✓。
 
+**2026-10-15：把对账当场扫出的"传了没生效"逐条修掉** ✓（这三条都是**真命中**，不是误报 ✓）
+| 位置 | 症状 | 处置 |
+|---|---|---|
+| `应用/IDE布局/ide_4way.leno` | `createTreeView({placeholder: "资源管理器"})` ✗ TreeView 没这个键 ⇒ 静默无效 | **补功能** ✓ —— TreeView 新增**空态提示**：没有节点时居中画一行暗色文字（`theme.darken(txtColor, 60)` ✓），白名单同步 ✓；空态才调一次 `measureString` ✓ 不违反"别在每帧渲染里量字" ✓ |
+| `控件/复合控件/布局类/test_tab_table.leno` | ListBox 传 `multi_select` ✗ —— 那是 **Table** 的键 ✓ | 改成 **`mode: 1`**（= ListBox 的 `MODE_MULTI` ✓） |
+| 5 个样例（`test_tooltip` / `test_panel` / `test_scrollview_all` / `test_tab` / `test_tab_layout` ✓） | 给**自量尺寸**的 `CheckBox`·`RadioButton` 传 `w/h` ✗（传了不生效 ✓） | 去掉 ✓。⚠ 但 `Toggle` 的白名单**含** `w/h` ⇒ 同样写法它**不报** ✗ —— 这处不一致先记档（哪天真要统一，再连同"自量尺寸控件到底接不接受尺寸键"一起定 ✓） |
+
+**验收**：`leno_gui/自测/test_treeview_placeholder.leno` ✓ —— **A/B 对照**（左树传 `placeholder`、右树不传，
+两棵都**没有节点** ✓）⇒ 同一张截图里比两块内区的"文字像素"：
+```
+left  (with placeholder): max=178 avg=46 bright(>60)px=904   ← 提示文字真的画了 ✓
+right (no placeholder)  : max=42  avg=42 bright(>60)px=0     ← 只有底色 ✓
+```
+命令：`build\leno.exe leno_gui\自测\test_treeview_placeholder.leno`（配 `SHOT_PH` 指定出图路径 ✓）。
+7 个改过的入口 `--check` 全通过 ✓、`[ui]` 全清零 ✓。
+
 ### ⭐ 焦点链与键盘导航（2026-10-13 第一批 ✓ Tab / Shift+Tab / Enter / Space）
 
 **为什么加**：全库原来只有 `Edit` / `Canvas` 自己管焦点 ⇒ **Tab 键根本不换焦点** ✗ ——

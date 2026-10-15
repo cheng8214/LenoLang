@@ -43,7 +43,7 @@ main() {
     tab.addToPageLayout(0, SDL3.createEdit({w: 200, h: 32, placeholder: "请输入用户名"}), {align: 3})
     tab.addToPageLayout(0, SDL3.createLabel({text: "密码", font_size: 13}), {align: 3})
     tab.addToPageLayout(0, SDL3.createEdit({w: 200, h: 32, placeholder: "请输入密码", password: true}), {align: 3})
-    tab.addToPageLayout(0, SDL3.createCheckBox({w: 200, h: 24, text: "记住我", checked: true}), {align: 3})
+    tab.addToPageLayout(0, SDL3.createCheckBox({text: "记住我", checked: true}), {align: 3})
 
     // 页内嵌套 HBox：登录按钮 expand 占满剩余宽度
     var row0 = SDL3.createHBox({w: 400, h: 36, spacing: 10})

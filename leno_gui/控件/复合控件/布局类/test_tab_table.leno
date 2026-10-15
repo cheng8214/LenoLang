@@ -238,7 +238,9 @@ main() {
     var listBox = SDL3.createListBox({
         x: 0, y: 0, w: 880, h: 420,
         items: lbItems, font_size: 14,
-        multi_select: true
+        // ★ 2026-10-15：ListBox 的多选键是 **`mode: 1`**（= `MODE_MULTI` ✓）；
+        //   `multi_select` 是 **Table** 的键 ✗ —— 写错会被选项对账报"不认识" ✓（本行原来就是错的 ✓）
+        mode: 1
     })
     tab.addToPage(3, listBox, 20, 20)
     listBox.on_change(func(Array[int] sels) {

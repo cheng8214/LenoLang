@@ -1,0 +1,49 @@
+// test_treeview_placeholder.leno — TreeView **空态提示**（`placeholder`）验收（2026-10-15 新增 ✓）
+//   为什么有它：`应用/IDE布局/ide_4way.leno` 早就传了 `placeholder: "资源管理器"` ✗，
+//   但 TreeView 的选项白名单里**没有这个键** ⇒ **静默无效** ✓（被选项对账 `[ui]` 抓到的 ✓）。
+//   本轮把功能补上 ⇒ 必须有个件钉住"**真的画出来了**" ✓（不然又是"我明明设了啊" ✓）
+//   判据（**A/B 对照 + 离线比像素** ✓ 仓库惯例）：
+//     左树传 `placeholder` ✓、右树不传 ✓，都**没有节点** ⇒ 同一张截图里比两块内区：
+//       左树内区应有**文字像素**（提示文字 ✓）、右树内区应只有底色 ✓ ⇒ 两者最大亮度明显不同 ✓
+//   用法：set SHOT_PH=%TEMP%\ph.png & build\leno.exe leno_gui\自测\test_treeview_placeholder.leno
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer, Window, TreeView)
+
+int steps = 0
+string shot = ""
+bool done = false
+
+func run() {
+    SDL3.ttfInit()
+    SDL3.setTheme(SDL3.darkTheme())
+    Window w = SDL3.createWindow({title: "treeview placeholder", w: 660, h: 300})
+    if not w.ok { SDL3.ttfQuit(); return }
+
+    // 左：空树 + 提示（被验的那条路 ✓）；右：空树、不传提示（对照 ✓）
+    w.addTreeView({x: 20, y: 20, w: 300, h: 250, placeholder: "暂无节点（placeholder ✓）"})
+    w.addTreeView({x: 340, y: 20, w: 300, h: 250})
+
+    var s = _env("SHOT_PH"); if s != null { shot = _str(s) }
+    if shot == "" { shot = "ph.png" }
+
+    w.addTimer(100, func() {
+        steps = steps + 1
+        if steps >= 6 { _exit(0) }
+    })
+
+    // 截图钩子放叠加层：它在**所有控件之后**、present 之前 ⇒ 读到的像素含界面 ✓
+    w.setOverlay(func(Renderer r) {
+        if steps >= 3 and not done and shot != "" {
+            var sz = w.getSize()
+            var px = r.readPixelsAt(0, 0, sz.w, sz.h)
+            if px != null { print("[ph] 截图 " + shot + " ok=" + _str(SDL3.saveImagePNG(px, shot))) }
+            done = true
+            _exit(0)
+        }
+    })
+
+    w.run(func(Event ev): bool { return true }, func(Renderer r) {})
+    SDL3.ttfQuit()
+}
+
+main() { run() }

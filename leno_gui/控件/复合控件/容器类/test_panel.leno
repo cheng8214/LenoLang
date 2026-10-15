@@ -25,7 +25,7 @@ main() {
     panel.add(pBtn)
     var pLb = SDL3.createLabel({text: "面板内说明文字", x: 45, y: 145, font_size: 13})
     panel.add(pLb)
-    var pChk = SDL3.createCheckBox({x: 45, y: 175, w: 180, h: 24, text: "面板内复选框"})
+    var pChk = SDL3.createCheckBox({x: 45, y: 175, text: "面板内复选框"})
     panel.add(pChk)
 
     // 面板 2：无裁剪（clip:false），同样溢出但完整显示

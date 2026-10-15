@@ -239,6 +239,18 @@
 >      `test_nested_context_menu` ✓）、清理大师 exit=0 ✓、主题件 ✓。速查附录 C 已补第六批与两条方法论 ✓；
 >   ⑧ 仍未进链条：`TreeView`（下一轮 ✓）。
 >
+>   **2026-10-15 追加（三十三）**：**把选项对账扫出的三条"传了没生效"逐条修掉** ✓（都是真命中 ✓）：
+>   ① `应用/IDE布局/ide_4way.leno` 的 `createTreeView({placeholder: …})` ✗ —— TreeView 白名单没这个键
+>      ⇒ 静默无效 ✓ ⇒ **补功能**：TreeView 新增**空态提示**（没有节点时居中画一行暗色文字 ✓、
+>      白名单同步 ✓；只在空态调一次 `measureString` ✓ 不违反"别在每帧渲染里量字" ✓）；
+>   ② `控件/…/test_tab_table.leno` 的 ListBox 传 `multi_select` ✗（那是 **Table** 的键 ✓）⇒ 改 `mode: 1`
+>      （= `MODE_MULTI` ✓）；
+>   ③ 5 个样例给**自量尺寸**的 `CheckBox`/`RadioButton` 传 `w/h` ✗（传了不生效 ✓）⇒ 去掉 ✓；
+>      ⚠ `Toggle` 白名单**含** `w/h` ⇒ 同样写法它不报 ✗ —— 不一致先记档 ✓；
+>   ④ 新增验收件 `leno_gui/自测/test_treeview_placeholder.leno` ✓ —— **A/B 对照 + 离线比像素**：
+>      左树传 placeholder、右树不传（都无节点 ✓）⇒ 左 **904** 个文字像素（max 178）、右 **0** 个（max 42）✓；
+>   ⑤ 编译检查：7 个改过的入口 `--check` 全通过 ✓、`[ui]` 警告全清零 ✓。
+>
 >   **2026-10-13 追加（三十二）**：**A3：选项对账（`dochk`）覆盖铺满 + 修两类误报**：
 >   ① 覆盖缺口（原来**一个都没接** ✗）：`Window.init`（`createWindow`）/ `layout.set()`（建
 >      HBox/VBox/AnchorBox）/ `filedialog` 三入口 / `popmenu` / `tray` ✓ 全接上；
