@@ -260,12 +260,14 @@ static Value native_console(int argCount, Value* args) {
 //   ⚠ 纯 ASCII 值**继续走原来的 `_putenv_s`**（一个字节都不改）：那条路会同步更新 CRT 的**窄副本**，
 //     而进程内的窄口消费者（libcurl 等直接用 `getenv` 的 C 库）只认那个副本 —— 动它才是回归。
 //     非 ASCII 值本来就没法用窄副本表达（这正是不走窄口的原因）⇒ 只设宽副本，窄侧任其保持旧值。
+#ifdef _WIN32
 static int env_ascii_only(const char* s) {
     for (; *s; s++) {
         if ((unsigned char)*s >= 0x80) return 0;
     }
     return 1;
 }
+#endif
 
 // 读环境变量：宽口优先（权威、UTF-8 无损），拿不到再退窄口。
 // 返回 malloc 的 UTF-8 串（调用方 free）；**变量不存在 ⇒ NULL**（与 `getenv` 同口径）
@@ -644,6 +646,8 @@ static Value native_exec(int argCount, Value* args) {
     static unsigned long s_exec_seq = 0;
     unsigned long seq = ++s_exec_seq;
     char out_path[512], err_path[512], in_path[512];
+    // 重定向尾巴 `" > 'out' 2> 'err' < 'in'"`：三个路径各占一份 + 引号/空格/空终止的余量
+    char tail[sizeof(out_path) + sizeof(err_path) + sizeof(in_path) + 64];
     snprintf(out_path, sizeof(out_path), "%s/leno_exec_%d_%lu.out", tmpdir, (int)getpid(), seq);
     snprintf(err_path, sizeof(err_path), "%s/leno_exec_%d_%lu.err", tmpdir, (int)getpid(), seq);
     snprintf(in_path,  sizeof(in_path),  "%s/leno_exec_%d_%lu.in",  tmpdir, (int)getpid(), seq);
