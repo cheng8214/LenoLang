@@ -3,7 +3,7 @@ name = "LenoCrypto"
 version = "1.1.0"
 description = "Leno 通用加密库（Base64 / SHA-256 / SHA-512 / HMAC-SHA256 / AES-128 与 AES-256 含 CBC+PKCS7+GCM/AEAD），纯 Leno 实现"
 authors = ""
-license = "MIT"
+license = "Apache-2.0"
 
 [modules]
 root = "lib"

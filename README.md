@@ -2,7 +2,7 @@
 
 **简体中文** | [English](README_EN.md)
 
-![license](https://img.shields.io/badge/license-MIT-blue.svg)
+![license](https://img.shields.io/badge/license-Apache%202.0-blue.svg)
 ![platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)
 ![build](https://img.shields.io/badge/build-build.bat%20%2F%20build.sh-success.svg)
 ![impl](https://img.shields.io/badge/impl-C99-orange.svg)
@@ -22,7 +22,7 @@ Leno 诞生于对编程语言设计的热爱与探索，虽非完美，但乐在
 | | |
 | --- | --- |
 | 版本 | 0.2.2 |
-| 许可 | MIT |
+| 许可 | Apache 2.0 |
 | 构建脚本 | Windows `build.bat` / Linux · macOS `build.sh` |
 | 仓库规模 | 内置模块 20 个 · SDL3 源文件 46 个 · 测试 469 文件 · 示例 1016 文件 · 文档 67 篇 |
 
@@ -472,4 +472,4 @@ Leno/
 
 ## 许可证
 
-[MIT](LICENSE)
+[Apache 2.0](LICENSE)

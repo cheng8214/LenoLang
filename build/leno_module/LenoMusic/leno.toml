@@ -3,7 +3,7 @@ name = "LenoMusic"
 version = "2.0.0"
 description = "Leno audio module (streaming playback) based on miniaudio"
 authors = ""
-license = "MIT"
+license = "Apache-2.0"
 
 [modules]
 root = "lib"

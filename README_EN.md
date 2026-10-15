@@ -2,7 +2,7 @@
 
 **English** | [简体中文](README.md)
 
-![license](https://img.shields.io/badge/license-MIT-blue.svg)
+![license](https://img.shields.io/badge/license-Apache%202.0-blue.svg)
 ![platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)
 ![build](https://img.shields.io/badge/build-build.bat%20%2F%20build.sh-success.svg)
 ![impl](https://img.shields.io/badge/impl-C99-orange.svg)
@@ -22,7 +22,7 @@ Leno was born from a love of and exploration into programming language design; i
 | | |
 | --- | --- |
 | Version | 0.2.2 |
-| License | MIT |
+| License | Apache 2.0 |
 | Build script | Windows `build.bat` / Linux · macOS `build.sh` |
 | Repo size | 20 built-in modules · 46 SDL3 source files · 469 test files · 1016 example files · 67 docs |
 
@@ -470,4 +470,4 @@ Leno/
 
 ## License
 
-[MIT](LICENSE)
+[Apache 2.0](LICENSE)

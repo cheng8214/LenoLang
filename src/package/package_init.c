@@ -95,7 +95,7 @@ int package_init(const char* dir_path, const char* package_name) {
         "version = \"0.1.0\"\n"
         "description = \"A Leno package\"\n"
         "authors = \"\"\n"
-        "license = \"MIT\"\n"
+        "license = \"Apache-2.0\"\n"
         "leno_version = \">=0.1.0\"\n"
         "\n"
         "[dependencies]\n"

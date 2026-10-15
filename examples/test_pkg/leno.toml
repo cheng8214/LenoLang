@@ -3,7 +3,7 @@ name = "test_pkg"
 version = "0.1.0"
 description = "测试搜索路径导入的包"
 authors = "Leno Dev"
-license = "MIT"
+license = "Apache-2.0"
 leno_version = ">=1.0.0"
 
 [dependencies]

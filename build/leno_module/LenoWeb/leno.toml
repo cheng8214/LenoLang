@@ -3,7 +3,7 @@ name = "LenoWeb"
 version = "1.0.0"
 description = "Leno Web 网络模块（HTTP 客户端 + HTML 解析 + 爬虫框架）"
 authors = ""
-license = "MIT"
+license = "Apache-2.0"
 
 [modules]
 root = "lib"
