@@ -5,6 +5,7 @@
 //   就能在 Windows 机器上把这些解析全部钉死 ✓（没有 Linux 机器也不再是盲区 ✓）
 import "../build/leno_module/LenoSys/lib/sys_parse.leno" as sp
 import jsons
+import strings
 
 main() {
     print("=== LenoSys 解析层回归 ===")
@@ -271,5 +272,75 @@ main() {
     assert_eq(sp.build_kill_cmd(42, true), "kill -9 42")
     print("shell 引号 通过!")
 
+    // ---------- Windows：whoami /user 的 SID（回收站按 SID 找目录 ✓）----------
+    //   ★ 样本 = **本机实测输出**（含表头、分隔线、`域\用户` 前缀）⇒ 判据必须能穿过这些噪音 ✓
+    var who = "USER INFORMATION\n----------------\n\nUser Name                     SID\n"
+            + "============================= =============================================\n"
+            + "desktop-g9snlii\\administrator S-1-5-21-3292028396-4221411052-2427840571-500\n"
+    assert_eq(sp.parse_whoami_sid(who), "S-1-5-21-3292028396-4221411052-2427840571-500")
+    assert_eq(sp.parse_whoami_sid("no sid in here\n"), "", "找不到 ⇒ 空（**不猜** ✓）")
+    assert_eq(sp.parse_whoami_sid(""), "")
+
+    // ---------- Windows：回收站 `$I` 账本（**二进制**）----------
+    //   ★ 样本 = 本机 `C:\$Recycle.Bin\<SID>\$I0UFLFU` 的**真实 82 字节**
+    //     偏移：版本(0..4) 补零(4..8) 大小(8..16) FILETIME(16..24) 路径长度(24..28) 路径(28..)
+    //   ⚠ 路径长度字段（偏移 24）实测是"**UTF-16 单元数（含结尾 NUL）**"：24 + 27*2 = 82 ✓
+    //     （网上"字节数"那套说法对不上 —— 这正是把它抽成纯函数、用真实样本钉死的原因 ✓）
+    Array[int] ri = [2,0,0,0, 0,0,0,0, 21,89,159,3, 0,0,0,0, 128,55,238,88, 237,233,220,1, 27,0,0,0]
+    var riTail = _u16le("C:\\Program Files (x86)\\Doc")
+    for riTail to b { ri.add(b) }
+    var it = sp.parse_recycle_item(strings.from_bytes(ri))
+    assert_eq(it.ok, true)
+    assert_eq(it.version, 2)
+    assert_eq(it.sizeBytes, 60774677, "大小 = 0x039F5915")
+    assert_eq(it.path, "C:\\Program Files (x86)\\Doc", "原路径必须逐字还原")
+    //   删除时间：**不写死秒数**（那是机器相关值 ✗），但必须落在一个真实时间区间里 ✓
+    //   ⚠ Dict 取出来的字段是 any ⇒ 参与大小比较前要 `_int()` 收一下（直接比会被检查器拦 ✓）
+    int delSec = _int(it.deletedAtSec)
+    assert_true(delSec > 1700000000 and delSec < 1800000000,
+                "FILETIME → Unix 秒该是 2023..2027 之间的一个时间（实际 " + _str(delSec) + "）")
+
+    //   结构不认识（太短 / 空）⇒ ok=false（调用方据此跳过该条目，**不猜** ✓）
+    assert_eq(sp.parse_recycle_item("").ok, false)
+    assert_eq(sp.parse_recycle_item(strings.from_bytes([2, 0])).ok, false)
+    //   版本 1（老系统）：没有长度字段，路径从偏移 **24** 起 ✓
+    Array[int] r1 = [1,0,0,0, 0,0,0,0, 9,0,0,0,0,0,0,0, 128,55,238,88, 237,233,220,1]
+    var r1Tail = _u16le("C:\\old.txt")
+    for r1Tail to b { r1.add(b) }
+    var it1 = sp.parse_recycle_item(strings.from_bytes(r1))
+    assert_eq(it1.version, 1)
+    assert_eq(it1.path, "C:\\old.txt", "版本 1 的路径从偏移 24 起 ✓")
+
+    //   FILETIME → Unix 秒：单位必须掐准（常数少写几个 0 会静默给出**看似合理**的时间 ✗）
+    assert_eq(sp.filetime_to_epoch(116444736000000000), 0, "1601→1970 的差值本身对应 epoch 0 ✓")
+    assert_eq(sp.filetime_to_epoch(116444736000000000 + 10000000), 1, "每 10^7 个 100ns = 1 秒 ✓")
+    assert_eq(sp.filetime_to_epoch(116444736000000000 + 1700000000 * 10000000), 1700000000)
+    assert_eq(sp.filetime_to_epoch(0), 0, "异常值 ⇒ 0（不返回负数 ✓）")
+
+    //   UTF-16LE → UTF-8 解码
+    assert_eq(sp.decode_utf16le([45, 78, 0, 0], 0, 0), "中", "单单元（BMP）⇒ 3 字节 UTF-8 ✓")
+    assert_eq(sp.decode_utf16le([61, 216, 0, 222, 0, 0], 0, 0), strings.from_bytes([240, 159, 152, 128]),
+              "代理对（U+1F600）⇒ 4 字节 UTF-8 ✓")
+    assert_eq(sp.decode_utf16le([65, 0, 0, 0, 66, 0], 0, 0), "A", "NUL 即停（后面的不该读出来 ✓）")
+    assert_eq(sp.decode_utf16le([0, 216, 65, 0, 0, 0], 0, 0), "A", "孤立代理 ⇒ 丢弃（不产出非法字节 ✓）")
+    assert_eq(sp.decode_utf16le([], 0, 0), "", "空 ⇒ 空（不抛 ✓）")
+    assert_eq(sp.decode_utf16le([65, 0, 66, 0], 0, 1), "A", "maxUnits 生效：只读 1 个单元 ✓")
+
+    print("Windows（whoami SID / 回收站 $I / FILETIME / UTF-16）通过!")
+
     print("=== LenoSys 解析层：全部通过 ===")
+}
+
+// 把 ASCII 串转成 UTF-16LE 字节（构造 `$I` 样本用 ✓；本文件只测解析 ⇒ 够用即可 ✓）
+func _u16le(string s): Array[int] {
+    Array[int] out = []
+    int i = 0
+    while (i < strings.byte_len(s)) {
+        out.add(strings.byte(s, i))
+        out.add(0)
+        i = i + 1
+    }
+    out.add(0)
+    out.add(0)
+    return out
 }

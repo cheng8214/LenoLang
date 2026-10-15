@@ -1,0 +1,410 @@
+// win_check.leno — LenoSys **Windows 后端**逐项真机对账（2026-10-15 与 Linux 后端对齐后写的 ✓）
+//
+// 用法（仓库根）：
+//   Windows:  build\leno.exe build\leno_module\LenoSys\examples\win_check.leno
+//   （只在 Windows 上有意义；别的平台请跑 examples\selftest.leno ✓）
+//   --live   ：**真去**开窗口 / 定位文件 / 发通知（默认**不做**，见下 ✓）
+//
+// ★ 默认**不碰用户环境**：不清回收站、不删文件、不开窗口、不发通知 ✓
+//   （`--live` 才会真打开/真发通知 —— 那是给"肉眼确认"用的，会打扰屏幕上的人 ✓）
+// ★ 判据的取向（与 assert\ 里的用例同一套）：
+//   · 能跟**外部事实**对上的就**对账** —— `ver` / `whoami` / `reg query` / 环境变量 / 目录实况
+//     例：`kernel` 不是"跟自己比非空"，而是与 **cmd 的 `ver`** 逐字对上 ✓
+//   · 只能自证的（如内存总量）就只验"量纲与关系"（>0、可用 ≤ 总量、KB 对齐）✓
+//   · **不猜**：读不到就报 FAIL 并打印原始返回，让人看得见到底哪一项不对 ✓
+
+import Sys
+import dirs
+import files
+import strings
+import jsons
+import times
+
+// ==================== 小工具（用例自身的输出脚手架）====================
+Array[string] FAILS = []
+int PASSED = 0
+
+func chk(string name, bool cond, string detail) {
+    if cond {
+        PASSED = PASSED + 1
+        print("  [ok]   " + name + (if detail != "" then "   " + detail else ""))
+    } else {
+        FAILS.add(name)
+        print("  [FAIL] " + name + (if detail != "" then "   " + detail else ""))
+    }
+}
+
+func info(string s) { print("  --     " + s) }
+func head(string s) { print(""); print("=== " + s + " ===") }
+
+// 命令输出（失败返回 ""；**不改环境**，只读 ✓）
+func sh(string cmd): string {
+    var r = Sys.exec(cmd)
+    if not jsons.get_bool(r, "ok", false) { return "" }
+    return jsons.get_str(r, "out", "")
+}
+
+func live(): bool {
+    var a = _args()
+    for a to x {
+        if x == "--live" { return true }
+    }
+    return false
+}
+
+main() {
+    print("============ LenoSys Windows 后端对账 ============")
+    print("os = " + Sys.os() + "   live = " + _str(live()))
+
+    if not Sys.isWindows() {
+        print("⚠ 本用例面向 Windows 后端（别的平台请跑 examples\\selftest.leno）")
+        return
+    }
+
+    _platform()
+    _sysInfo()
+    _elevated()
+    _process()
+    _disk()
+    _trash()
+    _desktop()
+    _items()
+    _autostart()
+
+    head("汇总")
+    print("  通过 " + _str(PASSED) + " 项，失败 " + _str(FAILS.len()) + " 项")
+    for FAILS to f { print("    ✗ " + f) }
+    if FAILS.len() == 0 { print("  ==> 全部对上 ✓") } else { print("  ==> 有未对上项，见上 ✗") }
+}
+
+// ==================== ① 平台 / 常用目录 ====================
+func _platform() {
+    head("平台 / 常用目录")
+    chk("pathSep == 反斜杠", Sys.pathSep() == "\\", "实际 '" + Sys.pathSep() + "'")
+    chk("systemRoot 是存在的目录", dirs.is_dir(Sys.systemRoot()), Sys.systemRoot())
+
+    Array[string] names = ["homeDir", "tempDir", "configDir", "dataDir", "cacheDir"]
+    Array[string] vals = [Sys.homeDir(), Sys.tempDir(), Sys.configDir(), Sys.dataDir(), Sys.cacheDir()]
+    int i = 0
+    while (i < names.len()) {
+        string v = vals[i]
+        chk(names[i] + " 非空且存在", v != "" and dirs.exists(v), v)
+        i = i + 1
+    }
+
+    // 环境变量展开（两种风格都认；**取不到的必须原样保留** ✓ —— 静默变空串最危险：路径会"看似可用" ✗）
+    chk("expandEnv：未知 %VAR% / $VAR 原样保留",
+        Sys.expandEnv("%LENOSYS_NO_SUCH%") == "%LENOSYS_NO_SUCH%"
+        and Sys.expandEnv("$LENOSYS_NO_SUCH") == "$LENOSYS_NO_SUCH",
+        Sys.expandEnv("$LENOSYS_NO_SUCH"))
+    chk("joinPath 用本平台分隔符",
+        Sys.joinPath(["a", "b"]) == "a\\b" and Sys.joinPath(["a", "", "b"]) == "a\\b",
+        Sys.joinPath(["a", "b"]))
+
+    // tempDir 可写（写一个探针文件再删掉 ⇒ 不留痕 ✓）
+    string probe = Sys.joinPath([Sys.tempDir(), "lenosys_win_check.tmp"])
+    bool wrote = false
+    try {
+        files.write(probe, "ok")
+        wrote = files.exists(probe)
+        try { files.delete(probe) } catch e { info("探针文件删不掉：" + probe) }
+    } catch e { info("tempDir 写不进去：" + probe) }
+    chk("tempDir 可写且能删干净", wrote and not files.exists(probe), probe)
+}
+
+// ==================== ② 系统信息（逐项与外部事实对账）====================
+func _sysInfo() {
+    head("系统信息（sysInfo）")
+    var si = Sys.sysInfo()
+    info("osName   = '" + si.osName + "'")
+    info("kernel   = '" + si.kernel + "'")
+    info("host     = '" + si.host + "'   user = '" + si.user + "'")
+    info("cpuModel = '" + si.cpuModel + "' × " + _str(si.cpuCount))
+    info("mem      = " + _str(si.memAvailKb) + " / " + _str(si.memTotalKb) + " KB")
+    info("uptime   = " + _str(si.uptimeSec) + " s（≈ " + _str(si.uptimeSec / 3600) + " 小时）")
+
+    // ① osName：注册表 ProductName + DisplayVersion（本地化产品名 ⇒ 只验含 "Windows" ✓）
+    chk("osName 形如 Windows …", strings.has(si.osName, "Windows"), si.osName)
+
+    // ② kernel：与 **cmd 的 `ver`** 逐字对账（独立来源 ⇒ 这条硬 ✓）
+    string ver = strings.trim(sh("ver"))
+    info("ver      = " + ver)
+    chk("kernel 与 cmd 的 ver 一致", si.kernel != "" and strings.has(ver, si.kernel),
+        "kernel='" + si.kernel + "'")
+
+    // ③ host / user：与系统环境变量对账（大小写归一 —— Windows 这两项是大写口径 ✓）
+    string envHost = strings.to_upper(strings.trim(Sys.env("COMPUTERNAME", "")))
+    string envUser = strings.to_upper(strings.trim(Sys.env("USERNAME", "")))
+    chk("host 与 COMPUTERNAME 一致", envHost != "" and strings.to_upper(si.host) == envHost,
+        si.host + " vs " + envHost)
+    chk("user 与 USERNAME 一致", envUser != "" and strings.to_upper(si.user) == envUser,
+        si.user + " vs " + envUser)
+
+    // ④ 核数：与 NUMBER_OF_PROCESSORS 对账；再与 `wmic cpu get NumberOfLogicalProcessors` 无关（可能没 wmic）
+    string envCpu = strings.trim(Sys.env("NUMBER_OF_PROCESSORS", ""))
+    chk("cpuCount 与 NUMBER_OF_PROCESSORS 一致", envCpu != "" and _str(si.cpuCount) == envCpu,
+        _str(si.cpuCount) + " vs " + envCpu)
+
+    // ⑤ 内存：拿 **PowerShell 的 TotalPhysicalMemory（字节）**独立对账（允许 2% 差异：
+    //     `ullTotalPhys` 与 WMI 的口径在个别机器上会差一点点 ✓）；拿不到才退回"量纲 sanity" ✓
+    //   ⚠ 别写"memTotalKb 能被 1024 整除"那种断言 —— 物理内存本来就不是整 KB 数（实测 33328172 KB ✓）
+    string psTxt = strings.trim(sh("powershell -NoProfile -Command \"(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory\""))
+    int psKb = 0
+    try {
+        int psBytes = _int(psTxt)
+        if psBytes > 0 { psKb = psBytes / 1024 }
+    } catch e { psKb = 0 }
+    if psKb > 0 {
+        int diff = if si.memTotalKb > psKb then si.memTotalKb - psKb else psKb - si.memTotalKb
+        chk("memTotalKb 与 PowerShell TotalPhysicalMemory 一致（±2%）",
+            diff * 100 <= psKb * 2, _str(si.memTotalKb) + " vs " + _str(psKb) + " KB")
+    } else {
+        info("（PowerShell 拿不到 TotalPhysicalMemory ⇒ 内存只做量纲校验）")
+    }
+    //   量纲 sanity：写错单位（字节/KB/GB 差 1024 倍）会立刻露出来 ✓
+    chk("memTotalKb 量纲合理（1GB..1TB 之间）",
+        si.memTotalKb > 1000000 and si.memTotalKb < 1000000000, _str(si.memTotalKb) + " KB")
+    chk("memAvailKb <= memTotalKb", si.memAvailKb > 0 and si.memAvailKb <= si.memTotalKb,
+        _str(si.memAvailKb) + " <= " + _str(si.memTotalKb))
+
+    // ⑥ uptime：与 `net statistics workstation` 的"启动时间"对不上就算了（依赖服务，不一定有）
+    //    ⇒ 改为**区间**校验：> 60 秒、且换算成"自 1970 以来的天数"要晚于 2000 年（明显荒谬的值会露出来 ✓）
+    int bootTs = _int(times.now()) - si.uptimeSec
+    info("推算开机时刻 = " + times.format(bootTs, "%Y-%m-%d %H:%M:%S"))
+    chk("uptimeSec 合理（> 1 分钟，且推算出的开机时刻在 2000 年后）",
+        si.uptimeSec > 60 and bootTs > 946684800, _str(si.uptimeSec) + " s")
+
+    // ⑦ cpuModel：注册表 CentralProcessor\0 ⇒ 用 reg query **独立**对账 ✓
+    string rq = strings.trim(sh("reg query \"HKLM\\HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0\" /v ProcessorNameString"))
+    chk("cpuModel 与注册表 ProcessorNameString 一致",
+        si.cpuModel != "" and strings.has(rq, si.cpuModel), si.cpuModel)
+}
+
+// ==================== ③ 提权（与 whoami /groups 对账）====================
+func _elevated() {
+    head("提权（isElevated）")
+    bool e = Sys.isElevated()
+    string g = sh("whoami /groups")
+    // 完整性级别：S-1-16-12288 = 高（已提权）、S-1-16-8192 = 中（未提权）✓ —— 独立来源 ✓
+    bool high = strings.has(g, "S-1-16-12288")
+    bool medium = strings.has(g, "S-1-16-8192")
+    info("whoami /groups 里的完整性级别：High=" + _str(high) + " Medium=" + _str(medium))
+    chk("isElevated() 与令牌完整性级别一致", (high and e) or (medium and not e),
+        "isElevated=" + _str(e))
+    // sysInfo 里的那一栏必须与它同源（单一实现 ✓）
+    chk("sysInfo.elevated == isElevated()", Sys.sysInfo().elevated == e, _str(e))
+}
+
+// ==================== ④ 进程 ====================
+func _process() {
+    head("进程")
+    int pid = Sys.currentPid()
+    chk("currentPid > 0", pid > 0, _str(pid))
+    chk("processExists(self)", Sys.processExists(pid), _str(pid))
+    chk("processMemoryKb(self) > 0", Sys.processMemoryKb(pid) > 0, _str(Sys.processMemoryKb(pid)) + " KB")
+
+    string exe = Sys.exePath()
+    chk("exePath 存在", exe != "" and files.exists(exe), exe)
+
+    // ★ 2026-10-15 新实现：processPath —— 与 exePath 对账（同一件事的两个入口 ✓）
+    string pp = Sys.processPath(pid)
+    chk("processPath(self) 非空", pp != "", pp)
+    chk("processPath(self) 与 exePath 一致（大小写不敏感）",
+        pp != "" and strings.to_lower(pp) == strings.to_lower(exe), pp + " vs " + exe)
+
+    chk("processPath(0) == ''", Sys.processPath(0) == "", "")
+    chk("processPath(-1) == ''", Sys.processPath(-1) == "", "")
+    chk("processPath(不存在的 pid) == ''", Sys.processPath(999999999) == "", "")
+
+    var ps = Sys.listProcesses()
+    chk("listProcesses 非空", ps.len() > 0, _str(ps.len()) + " 个")
+    int badPid = 0
+    for ps to p {
+        if p.pid <= 0 { badPid = badPid + 1 }
+    }
+    chk("每个进程都有 pid", badPid == 0, "异常 " + _str(badPid) + " 个")
+
+    // 抽查别的进程：拿 explorer.exe 试一下（拿不到路径**不算失败** —— 权限/会话差异很常见 ✓）
+    var ex = Sys.findProcess("explorer")
+    if ex.len() > 0 {
+        string ep = Sys.processPath(ex[0].pid)
+        info("explorer.exe(pid=" + _str(ex[0].pid) + ") → " + (if ep == "" then "（读不到，正常：受保护/权限）" else ep))
+    } else {
+        info("本机没在跑 explorer.exe（跳过抽查）")
+    }
+
+    chk("killProcess(0) 安全返回 false", not Sys.killProcess(0), "")
+    chk("processExists(-1) == false", not Sys.processExists(-1), "")
+}
+
+// ==================== ⑤ 磁盘 / 卷 ====================
+func _disk() {
+    head("磁盘 / 卷")
+    string root = Sys.systemRoot()
+    var d = Sys.diskSpace(root)
+    int total = jsons.get_int(d, "total", -1)
+    int free = jsons.get_int(d, "free", -1)
+    chk("diskSpace(systemRoot) ok", jsons.get_bool(d, "ok", false), root)
+    chk("total > 0 且 0 <= free <= total", total > 0 and free >= 0 and free <= total,
+        "总 " + _str(total) + " / 剩 " + _str(free))
+    int pct = Sys.diskUsagePercent(root)
+    chk("使用率在 0..100", pct >= 0 and pct <= 100, _str(pct) + "%")
+
+    var dr = Sys.listDrives()
+    int badDrive = 0
+    for dr to x {
+        if not strings.ends_with(x, "\\") { badDrive = badDrive + 1 }
+    }
+    chk("listDrives 非空且都是 'X:\\' 形态", dr.len() > 0 and badDrive == 0,
+        _str(dr.len()) + " 个：" + _str(badDrive) + " 个形态不对")
+    for dr to x { info("盘符 " + x + "  存在=" + _str(dirs.is_dir(x))) }
+
+    string vol = Sys.volumeOf(root)
+    chk("volumeOf(systemRoot) == systemRoot", vol == root, vol)
+    chk("volumeOf 幂等", Sys.volumeOf(vol) == vol, Sys.volumeOf(vol))
+    chk("volumeOf('') == ''（判不出，绝不兜底成某个盘 ✗）", Sys.volumeOf("") == "", "")
+    string exe = Sys.exePath()
+    if exe != "" {
+        string ve = Sys.volumeOf(exe)
+        chk("volumeOf(exe) 是 exe 路径的前缀", ve != "" and strings.starts_with(exe, ve), ve + " vs " + exe)
+    }
+}
+
+// ==================== ⑥ 回收站（**只读** ✓）====================
+func _trash() {
+    head("回收站（listTrash，只读）")
+    // 空列表必须安全（不抛、不删任何东西 ✓）
+    var del0 = Sys.deleteToTrash([])
+    chk("deleteToTrash([]) ⇒ ok=true, count=0",
+        jsons.get_bool(del0, "ok", false) and jsons.get_int(del0, "count", -1) == 0, "")
+
+    var tl = Sys.listTrash()
+    info("本机（自己 SID）回收站共 " + _str(tl.len()) + " 条")
+    int badName = 0
+    int badPath = 0
+    int badTime = 0
+    int badDir = 0
+    int badBase = 0
+    for tl to it {
+        if it.name == "" { badName = badName + 1 }
+        if not strings.has(it.originalPath, ":\\") { badPath = badPath + 1 }
+        // deletedAt 必须是 `YYYY-MM-DDTHH:MM:SS`（与 Linux 侧同格式 ✓）
+        if it.deletedAt.len() != 19 or strings.find(it.deletedAt, "T") < 0 { badTime = badTime + 1 }
+        if not strings.has(it.trashDir, "$Recycle.Bin") or not dirs.is_dir(it.trashDir) { badDir = badDir + 1 }
+        // Windows 侧的约定：name = **原文件名**（不是 `$R…`）⇒ 必须等于 originalPath 的 basename ✓
+        if it.name != dirs.basename(it.originalPath) { badBase = badBase + 1 }
+    }
+    chk("每条都有 name", badName == 0, "异常 " + _str(badName) + " 条")
+    chk("originalPath 是盘符绝对路径", badPath == 0, "异常 " + _str(badPath) + " 条")
+    chk("deletedAt 是 YYYY-MM-DDTHH:MM:SS", badTime == 0, "异常 " + _str(badTime) + " 条")
+    chk("trashDir 含 $Recycle.Bin 且确实存在", badDir == 0, "异常 " + _str(badDir) + " 条")
+    chk("name == basename(originalPath)（Windows 侧口径 ✓）", badBase == 0, "异常 " + _str(badBase) + " 条")
+
+    int k = 0
+    for tl to it {
+        if k >= 5 { break }
+        info("[" + _str(k) + "] " + it.deletedAt + "  " + it.name)
+        info("      原路径 " + it.originalPath)
+        info("      回收站 " + it.trashDir)
+        k = k + 1
+    }
+    info("（本用例**不会**清空回收站 —— 那是危险动作，只由人工探针做 ✓）")
+}
+
+// ==================== ⑦ 桌面集成（空入参必须无副作用 ✓）====================
+func _desktop() {
+    head("桌面集成（openWith / revealInFolder / notify）")
+    // 契约：空 / 纯空白 / 不存在的路径 ⇒ false，且**什么都没发生** ✓（默认也就在这里止步）
+    chk("openWith('') == false", not Sys.openWith(""), "")
+    chk("openWith('   ') == false", not Sys.openWith("   "), "")
+    chk("revealInFolder('') == false", not Sys.revealInFolder(""), "")
+    chk("notify('') == false", not Sys.notify(""), "")
+    chk("notify('   ', '正文') == false", not Sys.notify("   ", "正文"), "")
+
+    string ghost = Sys.systemRoot() + "lenosys_不存在_9f3a.txt"
+    chk("openWith(不存在的路径) == false", not Sys.openWith(ghost), ghost)
+    chk("revealInFolder(不存在的路径) == false", not Sys.revealInFolder(ghost), ghost)
+
+    // 存在的路径：默认**不真开**（会打扰屏幕上的人 ✗）⇒ 只报出来
+    string mine = Sys.joinPath([dirs.dirname(Sys.exePath()), "leno_module", "LenoSys", "examples", "win_check.leno"])
+    if files.exists(mine) {
+        info("样本文件（--live 时会打开它）：" + mine)
+    } else {
+        info("（样本文件不在预期位置，--live 的开窗口两项会跳过）")
+    }
+
+    if not live() {
+        info("（真打开 / 真通知**未测** —— 加 `--live` 参数才会做：那会弹出窗口与气泡 ✓）")
+        return
+    }
+
+    // ---- --live：真做一遍（**这就是给肉眼确认用的**）----
+    print("  ---- --live：下面会真的弹东西，请肉眼看屏幕 ----")
+    if files.exists(mine) {
+        chk("openWith(样本文件) 已发起", Sys.openWith(mine), mine)
+        chk("revealInFolder(样本文件) 已发起（资源管理器里应选中它）", Sys.revealInFolder(mine), mine)
+    }
+    chk("notify(标题, 正文) 已登记", Sys.notify("LenoSys 对账", "看到这条气泡就说明 notify 通了 ✓"),
+        "⚠ 返回 true 只代表'已登记到通知区域'，不代表用户一定看见（通知开关/专注助手会拦 ✓）")
+    info("若没看到气泡：先查 系统设置→通知 与 专注助手；再看托盘图标是否被藏进溢出区 ✓")
+}
+
+// ==================== ⑧ 启动项 / 已装软件 / 最近文件 ====================
+func _items() {
+    head("启动项 / 已装软件 / 最近文件")
+    var su = Sys.listStartupItems()
+    int bad = 0
+    for su to it {
+        if it.id == "" or it.name == "" { bad = bad + 1 }
+        if it.source != "registry" and it.source != "startup-folder" { bad = bad + 1 }
+    }
+    chk("启动项：每项都有 id/name 且 source 合法", bad == 0, "共 " + _str(su.len()) + " 项")
+    int i = 0
+    for su to it {
+        if i >= 5 { break }
+        info("[" + it.scope + "/" + it.source + "] " + it.name + "  =>  " + it.cmd)
+        i = i + 1
+    }
+
+    var sw = Sys.listInstalledSoftware()
+    int badSw = 0
+    for sw to it {
+        if it.name == "" { badSw = badSw + 1 }
+    }
+    chk("已装软件：每项都有名字", badSw == 0, "共 " + _str(sw.len()) + " 个")
+    i = 0
+    for sw to it {
+        if i >= 5 { break }
+        info(it.name + "  " + it.version)
+        i = i + 1
+    }
+
+    var rec = Sys.recentFiles(5)
+    chk("recentFiles(5) 不超 5 条", rec.len() <= 5, _str(rec.len()) + " 条")
+    //   ⚠ 0 条也可能是**真的没有**（`%APPDATA%\Microsoft\Windows\Recent` 为空）⇒ 不当失败 ✓
+    for rec to r { info("最近 " + r) }
+}
+
+// ==================== ⑨ 开机自启动三件套（临时 id，跑完删净 ✓）====================
+func _autostart() {
+    head("开机自启动（临时 id，跑完删净）")
+    string tid = "LenoSysWinCheck_" + _str(times.now())
+    string cmd = "echo lenosys"
+    string runKey = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"
+
+    chk("临时 id 一开始读不到", Sys.getAutostart(tid) == "", tid)
+    chk("setAutostart 成功", Sys.setAutostart(tid, "对账用", cmd), tid)
+    chk("读回来与写入**逐字一致**", Sys.getAutostart(tid) == cmd, Sys.getAutostart(tid))
+
+    // ★ 独立对账：直接问注册表（`reg query`）—— 证明它真写进了 Run 键 ✓
+    string q = strings.trim(sh("reg query \"" + runKey + "\" /v " + tid))
+    chk("reg query 能在 Run 键里查到这一项", strings.has(q, tid) and strings.has(q, cmd), q)
+
+    chk("removeAutostart 成功", Sys.removeAutostart(tid), "")
+    chk("删完读不到（不留痕）", Sys.getAutostart(tid) == "", "")
+    string q2 = strings.trim(sh("reg query \"" + runKey + "\" /v " + tid))
+    chk("reg query 也查不到了", not strings.has(q2, tid), "")
+    chk("再删一次仍返回 true（幂等 ✓）", Sys.removeAutostart(tid), "")
+    chk("setAutostart('', …) == false", not Sys.setAutostart("", "空 id", cmd), "")
+    chk("setAutostart(id, …, '') == false", not Sys.setAutostart(tid, "空命令", ""), "")
+}

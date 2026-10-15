@@ -95,8 +95,7 @@ main() {
     assert_eq(jsons.get_int(del0, "count", -1), 0, "空列表 count 应为 0")
 
     // 列出回收站：**只读**（本用例不删任何东西 ✓）
-    //   ⚠ 0 条也可能是"回收站真的空" ⇒ 这里只验结构，不验数量 ✓
-    //   ⚠ Windows 侧未实现 ⇒ 恒空（不是"回收站空"✗）⇒ 因此不把"非空"写成硬断言 ✓
+    //   ⚠ 0 条也可能是"回收站真的空" ⇒ 这里只验结构，不验数量 ✓（两端都已实现 ★ 2026-10-15）
     var tl = Sys.listTrash()
     for tl to it {
         assert_true(it.name != "", "回收站条目必须有名字")
@@ -111,11 +110,19 @@ main() {
     print("回收站 通过（当前 " + _str(tl.len()) + " 条）!")
 
     // ---------- 进程路径（processPath）----------
-    //   ⚠ Windows 侧未实现（桩恒 ""）⇒ 只在 Linux 侧把"非空"写成硬断言 ✓
+    //   ★ 2026-10-15：Windows 侧已实现 ⇒ 两端都把"非空"写成硬断言 ✓
     int me2 = Sys.currentPid()
-    if not Sys.isWindows() {
-        string pp = Sys.processPath(me2)
-        assert_true(pp != "", "自己进程的 exe 路径应可读（实际 '" + pp + "'）")
+    string pp = Sys.processPath(me2)
+    assert_true(pp != "", "自己进程的 exe 路径应可读（实际 '" + pp + "'）")
+    if Sys.isWindows() {
+        assert_true(strings.find(pp, ":\\") > 0, "Windows 的 exe 路径应是盘符绝对路径（实际 '" + pp + "'）")
+        //   交叉校验：processPath(self) 与 exePath() 说的应是**同一个文件**（大小写可能不同 ✓）
+        string exeSelf = Sys.exePath()
+        if exeSelf != "" {
+            assert_eq(strings.to_lower(pp), strings.to_lower(exeSelf),
+                      "processPath(self) 应与 exePath() 一致")
+        }
+    } else {
         assert_true(strings.starts_with(pp, "/"), "应是绝对路径")
     }
     assert_eq(Sys.processPath(0), "", "pid 0 ⇒ 空（不抛 ✓）")
@@ -129,7 +136,7 @@ main() {
     //   · `memAvailKb <= memTotalKb`（可用不该超过总量 ✓ —— 这条任何平台都成立 ✓）
     //   · 各计数/字节字段**不为负**（未知用 0 ✓）
     //   · `sysInfo().elevated` 与 `isElevated()` **必须一致**（前者内部就是调后者 ⇒ 单一实现 ✓）
-    //   ⚠ 具体"非空/大于 0"只在 **Linux 侧**硬断（Windows 侧是未实现桩 ⇒ 字段全空 ✗）
+    //   ★ 2026-10-15：Windows 侧由"未实现桩"改为真读 ⇒ **两端**都可以把"非空/大于 0"硬断 ✓
     var si = Sys.sysInfo()
     assert_true(si.cpuCount >= 0, "cpuCount 不该为负")
     assert_true(si.memTotalKb >= 0 and si.memAvailKb >= 0, "内存字段不该为负")
@@ -139,14 +146,32 @@ main() {
                     + _str(si.memAvailKb) + " > " + _str(si.memTotalKb))
     }
     assert_eq(si.elevated, Sys.isElevated(), "sysInfo.elevated 必须与 isElevated() 一致（单一实现 ✓）")
+    // ★ 2026-10-15：Windows 侧已实现（注册表 + 直连 API）⇒ 这些字段两端都应为真 ✓
+    //   ⚠ 大小写归一后再比：Windows 的主机名/用户名是**大写**的，而环境变量兜底那一路未必 ✓
+    assert_true(si.host != "", "host 应可读（Win: GetComputerNameW / Linux: /proc/sys/kernel/hostname）")
+    assert_true(si.user != "", "user 应可读（Win: GetUserNameW / Linux: id -un）")
+    assert_true(si.cpuCount > 0, "cpuCount 应 > 0（Win: GetActiveProcessorCount / Linux: /proc/cpuinfo）")
+    assert_true(si.memTotalKb > 0, "memTotalKb 应 > 0（Win: GlobalMemoryStatusEx / Linux: /proc/meminfo）")
+    assert_true(si.uptimeSec > 0, "uptimeSec 应 > 0（Win: GetTickCount64 / Linux: /proc/uptime）")
+    if Sys.isWindows() {
+        //   交叉校验①：主机的名字必须与"系统自己说的 COMPUTERNAME"一致（大写口径 ✓）
+        string envHost = strings.to_upper(Sys.env("COMPUTERNAME", ""))
+        if envHost != "" {
+            assert_eq(strings.to_upper(si.host), envHost, "计算机名应与 COMPUTERNAME 一致")
+        }
+        //   交叉校验②：核数必须与 NUMBER_OF_PROCESSORS 一致（两者都来自系统 ✓）
+        string envCpus = strings.trim(Sys.env("NUMBER_OF_PROCESSORS", ""))
+        if envCpus != "" {
+            assert_eq(_str(si.cpuCount), envCpus, "cpuCount 应与 NUMBER_OF_PROCESSORS 一致")
+        }
+        //   交叉校验③：osName/kernel 来自注册表 ≠ 桩（原先全空）⇒ 至少该有版本号 ✓
+        assert_true(si.osName != "", "osName 应可读（注册表 CurrentVersion）")
+        assert_true(si.kernel != "", "kernel 应可读（主.次.内部版本号.UBR）")
+        assert_true(si.cpuModel != "", "cpuModel 应可读（注册表 CentralProcessor\\0）")
+    }
     if not Sys.isWindows() {
         assert_true(si.osName != "", "osName 应可读（/etc/os-release）")
         assert_true(si.kernel != "", "kernel 应可读（/proc/sys/kernel/osrelease）")
-        assert_true(si.host != "", "host 应可读（/proc/sys/kernel/hostname）")
-        assert_true(si.user != "", "user 应可读（id -un）")
-        assert_true(si.cpuCount > 0, "cpuCount 应 > 0（/proc/cpuinfo）")
-        assert_true(si.memTotalKb > 0, "memTotalKb 应 > 0（/proc/meminfo）")
-        assert_true(si.uptimeSec > 0, "uptimeSec 应 > 0（/proc/uptime）")
         //   ★ 交叉校验 isElevated：Linux 的判据就是 `uid == 0` ⇒ 与 `id -u` 的读数必须一致 ✓
         //     （这条把"实现"与"外部事实"对上 —— 不是自己跟自己对 ✓）
         //     ⚠ `Sys.exec` 返回的键是 **out**（不是 output ✓）
@@ -171,10 +196,13 @@ main() {
     assert_eq(Sys.revealInFolder(""), false, "空路径 ⇒ false ✓")
     assert_eq(Sys.notify(""), false, "空标题 ⇒ false（标题必填 ✓）")
     assert_eq(Sys.notify("   ", "正文"), false, "纯空白标题 ⇒ false ✓")
+    // ★ 2026-10-15：不存在的路径**两端**都必须挡住 —— 这条现在可以跨平台硬断了 ✓
+    //   （Windows 的 ShellExecuteW 对不存在的路径会给错误码 ≤32，我们**先**用 dirs.exists 挡一道，
+    //     不依赖"Shell 会不会报错"这种不确定行为 ✓）
+    string ghost = Sys.systemRoot() + "definitely_not_here_xyz_9f3a.txt"
+    assert_eq(Sys.openWith(ghost), false, "不存在的路径 ⇒ false ✓")
+    assert_eq(Sys.revealInFolder(ghost), false, "不存在的路径 ⇒ false ✓")
     if not Sys.isWindows() {
-        //   不存在的路径也要挡住（否则 xdg-open 会静默失败而我们后台发起后拿不到退出码 ✗）
-        assert_eq(Sys.openWith("/definitely/not/here_xyz"), false, "不存在的路径 ⇒ false ✓")
-        assert_eq(Sys.revealInFolder("/definitely/not/here_xyz"), false, "不存在的路径 ⇒ false ✓")
         //   ⚠ 不测"工具在不在"：裸 Linux 容器里可能真没有 xdg-open/notify-send
         //     ⇒ 那属于环境差异，写成硬断言会变成机器相关用例 ✗
     }

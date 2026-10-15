@@ -3,16 +3,22 @@
 // ★ 设计约定（与 Linux 后端一致，门面才好统一转换）：
 //   · 后端**只返回 Dict**（元素也用 Dict）⇒ 门面负责转成导出的结构体（ProcInfo / …）
 //   · 后端**不 import 门面 Sys.leno**（否则成环 ✗）
+//   · **绝不静默返回假数据** ✗ —— 取不到就如实给 `""`/0/false，并在注释里写明为什么取不到 ✓
 //
-// ★ 关于 Win32 依赖：**没有改动 LenoWin32**，只是复用它的门面 `Win32` ✓
+// ★ 关于 Win32 依赖：**没有改动 LenoWin32 的既有能力**，只是复用它的门面 `Win32` ✓
 //   ⚠ 裸名 `import Win32` 走全局搜索路径、**先到先得**（见 LenoWin32\lib\Win32.leno 头部记录：
 //     曾因 LenoHack\lib 下有同名陈旧副本而被顶掉 ✗）。若哪天出现"行为像旧版"的怪事，
 //     Sys.selfTest() 会实测磁盘/进程调用 ⇒ 先查这里 ✓
+//   ★ 2026-10-15：本文件需要的那几个"直连 Win32 API"（内存/提权/进程路径/Shell 打开/通知）
+//     按约定**加在 LenoWin32**（新文件 w32_sys.leno + 门面转发 ✓）—— 本模块**刻意不 import ffi**
+//     （不碰手写 ABI 结构 ⇒ 没有"结构体布局错了静默崩"的风险 ✓，与 Linux 侧同一条理由 ✓）
 import Win32
 import dirs
 import files
 import strings
 import jsons
+import times as ti
+import "./sys_parse.leno" as sp
 // ★ 必须有：`regEnumValues` 的元素是**无类型 Array** ⇒ 读字段前要 `as RegValueInfo` 收窄
 //   （Win32.leno 的注释里点过这个坑；实测漏了它 ⇒ 启动项/已装软件**恒为 0 条** ✗✗）
 use Win32.RegValueInfo
@@ -32,26 +38,100 @@ export func systemRoot(): string {
 
 export func pathSep(): string { return "\\" }
 
-// ⚠⚠ **未实现桩**（2026-10-15 加；Linux 侧已实现 ✓）—— 与下面 processPath / listTrash 同款：
-//   宁可留空并写明补法，也**绝不静默返回假数据** ✗（见 Sys.leno 顶部约定 ✓）
-//   补法（都是直连 API，不必引 ffi 到本模块 —— 声明放 LenoWin32 更合适 ✓）：
-//     · osName      ⇒ `RtlGetVersion`（或读 HKLM\...\CurrentVersion\ProductName + DisplayVersion）
-//     · kernel      ⇒ `RtlGetVersion` 的 dwMajorVersion.dwMinorVersion.dwBuildNumber
-//     · host        ⇒ `GetComputerNameW`（也可先用环境变量 `COMPUTERNAME` 顶一阵 ✓）
-//     · user        ⇒ `GetUserNameW`（同理可用 `USERNAME` ✓）
-//     · cpuModel    ⇒ 注册表 `HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\0\ProcessorNameString`
-//     · cpuCount    ⇒ `GetSystemInfo`（或环境变量 `NUMBER_OF_PROCESSORS` ✓）
-//     · memTotalKb / memAvailKb ⇒ `GlobalMemoryStatusEx`（*1024 得 KB）
-//     · uptimeSec   ⇒ `GetTickCount64` / 1000（注意：它含睡眠时间，与 Linux 的 uptime 口径略不同 ✓）
+// ==================== 系统信息（sysInfo）====================
+// ★ 2026-10-15：由"全空桩"改为**真读**（对标 Linux 侧 ✓）—— 取值来源逐项如下，
+//   一律**只读**、不跑外部命令（`whoami` 只用在回收站那节，见下 ✓）：
+//     · osName/kernel ⇒ 注册表 `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion`
+//       （`ProductName` + `DisplayVersion`；kernel = 主.次.内部版本号.UBR ✓）
+//       ⚠ 不用 `GetVersionEx`：没有清单（manifest）时它会对新系统**撒谎**（报 6.2 ✗）
+//       ⚠ 也不用 RtlGetVersion：那要 ffi，而本模块刻意不引（见文件头 ✓）—— 注册表值同样是
+//         "系统自己写的"，且 `CurrentBuildNumber` 不受兼容性垫片影响 ✓
+//     · cpuModel ⇒ 注册表 `HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\0\ProcessorNameString`
+//     · host/user/cpuCount/mem/uptime ⇒ LenoWin32\w32_sys（GetComputerNameW / GetUserNameW /
+//       GetActiveProcessorCount / GlobalMemoryStatusEx / GetTickCount64 ✓）
+//   ⚠ 任何一项取不到 ⇒ 该字段留 `""`/0（**不编** ✓）；调用方须按"未知"处理（见 SysInfo 注释 ✓）
+//   ⚠ `elevated` 不在这里 —— 它由门面单独取 isElevated()，避免两处实现 ✓
+const _WIN_CV = "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion"
+
 export func sysInfo(): Dict {
-    return {osName: "", kernel: "", host: "", user: "", cpuModel: "",
-            cpuCount: 0, memTotalKb: 0, memAvailKb: 0, uptimeSec: 0}
+    // ① 版本（打开失败/部分值缺失 ⇒ 对应字段留空 ✓）
+    string product = ""
+    string display = ""
+    string buildNo = ""
+    int major = 0
+    int minor = 0
+    int ubr = 0
+    var k = Win32.regOpenKey(Win32.HKEY_LOCAL_MACHINE, _WIN_CV, Win32.KEY_READ)
+    if k.errorCode == 0 {
+        Ptr h = k.handle
+        try {
+            product = _regField(h, "ProductName")
+            display = _regField(h, "DisplayVersion")
+            buildNo = _regField(h, "CurrentBuildNumber")
+            major = _regValueInt(h, "CurrentMajorVersionNumber")
+            minor = _regValueInt(h, "CurrentMinorVersionNumber")
+            ubr = _regValueInt(h, "UBR")
+        } finally {
+            Win32.regCloseKey(h)
+        }
+    }
+
+    // osName 形如 `Windows 10 Pro 22H2`（DisplayVersion 在旧系统上不存在 ⇒ 只有前者 ✓）
+    string osName = product
+    if display != "" {
+        if osName == "" { osName = display } else { osName = osName + " " + display }
+    }
+
+    // kernel 形如 `10.0.26100.1742`（缺哪段就少哪段，绝不补零凑格式 ✓）
+    string kernel = ""
+    if major > 0 or minor > 0 { kernel = _str(major) + "." + _str(minor) }
+    if buildNo != "" {
+        if kernel == "" { kernel = buildNo } else { kernel = kernel + "." + buildNo }
+    }
+    if ubr > 0 { kernel = kernel + "." + _str(ubr) }
+
+    // ② CPU 型号（子键 0 = 第一个逻辑处理器；多路/多核机器上型号相同 ⇒ 取一个即可 ✓）
+    string cpuModel = ""
+    var ck = Win32.regOpenKey(Win32.HKEY_LOCAL_MACHINE,
+                              "HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0", Win32.KEY_READ)
+    if ck.errorCode == 0 {
+        Ptr ch = ck.handle
+        try { cpuModel = _regField(ch, "ProcessorNameString") } finally { Win32.regCloseKey(ch) }
+    }
+
+    // ③ 物理内存（KB）—— ✅ 取不到 ⇒ 0（不是"没有内存"✗，是"读不到"⇒ 0 与未知在本结构里同形 ✓）
+    int memTotal = 0
+    int memAvail = 0
+    var mem = Win32.memoryKb()
+    if jsons.get_bool(mem, "ok", false) {
+        memTotal = jsons.get_int(mem, "totalKb", 0)
+        memAvail = jsons.get_int(mem, "availKb", 0)
+    }
+
+    // ④ 逻辑核数（API 取不到 ⇒ 退回环境变量 NUMBER_OF_PROCESSORS ✓）
+    int cpus = Win32.cpuCount()
+    if cpus <= 0 { cpus = sp.first_int_in(_env_or("NUMBER_OF_PROCESSORS", ""), 0) }
+
+    // ⑤ 主机名 / 用户名：**系统 API 优先**，取不到才退回环境变量
+    //   （环境变量谁都能改 ⇒ 只能当兜底 ✓ —— 与 Linux 侧"用户名走 `id -un` 而非 $USER"同取向 ✓）
+    string host = Win32.computerName()
+    if host == "" { host = _env_or("COMPUTERNAME", "") }
+    string user = Win32.userName()
+    if user == "" { user = _env_or("USERNAME", "") }
+
+    // ⑥ 运行时长（秒；⚠ 含睡眠时间 ⇒ 与 Linux 的 /proc/uptime 口径略有差别 ✓；取不到 ⇒ 0）
+    int up = Win32.uptimeSec()
+    if up < 0 { up = 0 }
+
+    return {osName: osName, kernel: kernel, host: host, user: user, cpuModel: cpuModel,
+            cpuCount: cpus, memTotalKb: memTotal, memAvailKb: memAvail, uptimeSec: up}
 }
 
-// 是否 **管理员**（提权令牌）—— 补法：`GetTokenInformation(TokenElevation)` 或 `shell32.IsUserAnAdmin`
-//   ⚠ **不要**用"用户名是 Administrator"来判（那是账户名，不是当前令牌的提权状态 ✗）
+// 是否 **管理员**（提权令牌）—— 判据是令牌的 TokenElevation ✓
+//   ⚠ **不是**"用户名是 Administrator"：那是账户名，与"当前进程有没有提权"是两件事 ✗
+//     （UAC 下管理员账户跑的程序默认也未提权 ⇒ 拿账户名判会**恒真**，正好是最危险的假阳性 ✗）
 export func isElevated(): bool {
-    return false
+    return Win32.isElevated()
 }
 
 // ==================== 进程 ====================
@@ -91,6 +171,16 @@ export func processExists(int pid): bool { return Win32.processExists(pid) }
 export func currentPid(): int { return Win32.getCurrentPid() }
 export func exePath(): string { return Win32.exePath() }
 
+// 指定进程的可执行文件**全路径**（取不到 ⇒ `""`）
+//   ★ 2026-10-15 起**已实现**（原来是桩 ✓）：`OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)` +
+//     `QueryFullProcessImageNameW`（声明在 LenoWin32\w32_sys.leno ✓）
+//   ⚠ 为什么不做进 listProcesses 的 path 字段：那要给每个 pid 付一次开句柄 + 查询的代价
+//     （几百个进程 ⇒ 明显变慢 ✗ —— 与 Linux 侧"逐 pid readlink 很慢"同一条理由 ✓）
+//   ⚠ 空串的含义仍是"**读不到**"（进程已退出 / 权限不足 / 受保护进程），不是"这个进程没有 exe" ✗
+export func processPath(int pid): string {
+    return Win32.processPath(pid)
+}
+
 // ==================== 磁盘 ====================
 
 export func listDrives(): Array[string] {
@@ -119,53 +209,80 @@ export func volumeOf(string path): string {
     return driveRootOf(path)
 }
 
-// ⚠⚠ **显式未实现桩**（2026-10-15 加门面时立的；Linux 侧已实现 ✓）
-//   按本模块约定（见 Sys.leno 顶部「macOS autostart 未实现 ⇒ 返回 false/""，绝不写假文件」）：
-//   **宁可返回空并在此写明补法，也绝不静默返回假数据** ✗
-//   `processPath` 的补法：`OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)` +
-//     `QueryFullProcessImageNameW`（Vista+ 首选）或 psapi 的 `GetModuleFileNameExW`
-//     —— 需要往 LenoWin32 加 FFI 声明；本模块**刻意不 import ffi**（见文件头 ✓）⇒ 留给后端补 ✓
-export func processPath(int pid): string {
-    return ""
-}
-
-// `listTrash` 的补法：Windows 的回收站**没有枚举 API** ⇒ 得解析每个卷的
-//   `$Recycle.Bin\<SID>\$I*` 记录（`$I` 存原始路径/时间，`$R*` 是实际内容），
-//   或走 shell 扩展；两者都比 Linux 侧重 ⇒ 同样留给后端补 ✓
-export func listTrash(): Array {
-    Array none = []
-    return none
-}
-
-// ==================== 桌面集成（打开 / 定位 / 通知）====================
-// ⚠⚠ 三个都是**未实现桩**（与 sysInfo / processPath / listTrash 同款 ✓）：
-//   宁可返回 false 并写明补法，也**不假装成功** ✗（见 Sys.leno 顶部约定 ✓）
-//   补法（前两个是 `_exec` 一行就能做掉的 —— 但**没在 Windows 上验过就不写** ✗）：
-//     · openWith       ⇒ `ShellExecuteW(NULL, L"open", path, NULL, NULL, SW_SHOWNORMAL)`
-//       （轻量替代 `cmd /c start "" "<path>"`：**start 对引号与 & | ^ 等特殊字符有坑** ✗）
-//     · revealInFolder ⇒ `explorer /select,"<path>"` —— 这条**没有对应 API**，就是命令行开关 ✓
-//       （注意 `/select,` 后面**不能有空格**，且路径要**反斜杠**形式 ✓）
-//     · notify         ⇒ 系统**没有**直接 API：要么 `Shell_NotifyIcon` + 托盘气泡，
-//       要么 Toast（WinRT `Windows.UI.Notifications`，XML 模板）—— 都比 Linux 侧重 ✗
-export func openWith(string path): bool {
-    return false
-}
-
-export func revealInFolder(string path): bool {
-    return false
-}
-
-export func notify(string title, string body): bool {
-    return false
-}
-
 export func diskSpace(string path): Dict {
     var r = Win32.diskSpace(driveRootOf(path))
     if not jsons.get_bool(r, "ok", false) { return {ok: false, total: 0, free: 0} }
     return {ok: true, total: jsons.get_int(r, "total", 0), free: jsons.get_int(r, "free", 0)}
 }
 
+// ==================== 桌面集成（打开 / 定位 / 通知）====================
+// ★ 2026-10-15：三个都由桩改为**真实现**（对标 Linux 侧 ✓）
+//   与 Linux 侧刻意保持同一套语义（应用代码换平台不用改判断 ✓）：
+//     · 空 / 纯空白入参 ⇒ **false 且无副作用** ✓
+//     · 非 URI 的路径**必须存在**（否则别假装发了请求 ✗）
+//     · `openWith` 的 true = "**已发起**"（不等于目标程序真的起来了 ✓）
+//     · `notify` 的标题**必填** ✓
+
+// 粗略判 URI：含 `://`（http/https/file…）或以 `mailto:` 起首 ✓（与 Linux 侧逐字同判据 ✓）
+func _isUri(string s): bool {
+    if strings.find(s, "://") >= 0 { return true }
+    return strings.starts_with(s, "mailto:")
+}
+
+// 用系统默认程序打开一个**文件 / 目录 / URI** ✓
+//   ⚠ Windows 侧比 Linux 侧省事：**URI 与本地路径是同一个 API**（ShellExecuteW 原生认
+//     http/https/mailto/file 等协议 ⇒ 不必区分 `xdg-open` 那种"要靠 .desktop 关联"的路 ✓）
+//   ⚠ 不用 `cmd /c start "" <path>`：`start` 对 `&`/`|`/`^` 与引号的处理有坑 ✗
+//     ── 那正是本模块"不经 shell 执行"这条取向的来源（ShellExecuteW 直接进 Shell ✓）
+//   ⚠ 返回 true 只代表"Shell 收下了"，**不代表**目标程序起来了 ✓（与门面注释同步 ✓）
+export func openWith(string path): bool {
+    string p = strings.trim(path)
+    if p == "" { return false }
+    if not _isUri(p) and not dirs.exists(p) { return false }
+    return Win32.shellOpen(p)
+}
+
+// 在文件管理器里**打开它所在的目录**（**不保证"选中该文件"** ✗ —— 这条与 Linux 侧同口径）
+//   ★ Windows 其实**能**选中：`explorer /select,"<路径>"` —— 本函数就这么做（比 Linux 侧更强 ✓）
+//   ⚠ `/select,` 后面**不能有空格**（有空格会被当成两个参数 ⇒ 只开目录不选中 ✗）
+//   ⚠ 路径要给**反斜杠**形式（正斜杠它能认一部分，但不保证 —— 统一转掉最稳 ✓）
+//   ⚠ 这一句走 `_exec` ⇒ Windows 侧是 **CreateProcessW**（不经 cmd ⇒ 没有 shell 解析 ✓），
+//     引号由 explorer 自己的命令行解析处理：`/select,"a b.txt"` 会合成**一个**参数
+//     `/select,a b.txt` ✓（实测见探针 ✓）
+//   ⚠ 返回值同样是"**已发起**"（explorer 会把请求转交给已在跑的桌面进程后**立刻退出**，
+//     退出码并不是"选中成功没有" ✓ ⇒ 只判"进程起没起来" ✓）
+export func revealInFolder(string path): bool {
+    string p = strings.trim(path)
+    if p == "" or not dirs.exists(p) { return false }
+    string win = strings.replace(p, "/", "\\")
+    ExecResult? r = _exec("explorer /select,\"" + win + "\"", 15000)
+    return r != null
+}
+
+// 发一条通知气泡（标题必填；正文可空 ✓）
+//   ★ Windows 没有 notify-send 那种一行 API ⇒ 走"通知区域（托盘）气泡"：
+//     隐藏窗口 + `Shell_NotifyIconW(NIF_INFO)`（声明在 LenoWin32\w32_sys.leno ✓）
+//   ⚠ 语义与 Linux 侧**不完全相同**，这里如实写清：
+//     · Linux：`notify-send` 是**同步**的，退出码 = "守护进程收没收" ⇒ 能如实回答投递结果
+//     · Windows：登记到通知区域这个动作**有**返回值（成功/失败），但"用户会不会看到"
+//       （通知开关、专注助手、气泡被系统转成 Toast…）**我们无从得知** ⇒ 返回的是"**已登记**"
+//   ⚠ 没有通知服务（非 Windows / 窗口都建不出来）⇒ `false` ⇒ 调用方应降级为打日志 ✓
+export func notify(string title, string body): bool {
+    string t = strings.trim(title)
+    if t == "" { return false }
+    return Win32.notify(t, strings.trim(body))
+}
+
 // ==================== 回收站 ====================
+//
+//   Windows 的回收站是**每个卷一份**、且**每个用户一个子目录**：
+//     <盘符>:\$Recycle.Bin\<SID>\$I…  ← 账本（原始路径 / 删除时间 / 原大小，**二进制** ✓）
+//     <盘符>:\$Recycle.Bin\<SID>\$R…  ← 实际内容（名字与 `$I` 只差第 2 个字母 ✓）
+//   ★ 只碰**自己 SID** 那一份（别人的不列也不动 ✓ —— 与 Linux 只管家目录回收站同口径 ✓）
+//   ★ `$I` 在、`$R` 不在 ⇒ **不列**（列出来点"还原"必然失败 ✗ —— 与 Linux 侧同规则 ✓）
+//   ⚠ 这是 Windows 比 Linux 麻烦的地方：Linux 有 freedesktop 规范的**文本**账本
+//     （`info/*.trashinfo` ✓），Windows 的 `$I` 是**定长二进制** ⇒ 解析放在 sys_parse
+//     （纯函数 ⇒ 能在任何平台回归 ✓，见 assert\test_sys_parse.leno ✓）
 
 export func deleteToTrash(Array[string] paths): Dict {
     var r = Win32.deleteToRecycleBin(paths)
@@ -176,6 +293,82 @@ export func deleteToTrash(Array[string] paths): Dict {
 }
 
 export func emptyTrash(): bool { return Win32.emptyRecycleBin() }
+
+// 当前用户 SID（`whoami /user`）—— 判不出 ⇒ `""`
+//   ⚠ 拿不到就**返回空表**、绝不去"扫所有 SID 目录"：那会把别的用户的回收站列出来 ✗
+//     （Linux 侧同理：读不到自己的 uid 就只清家目录、不猜路径 ✓）
+//   ★ 为什么用 `whoami` 而不是 FFI（GetTokenInformation(TokenUser) + ConvertSidToStringSidW）：
+//     本模块刻意不 import ffi（见文件头 ✓）；而 `whoami.exe` 是 Vista+ 自带 ✓，
+//     解析放在 sp.parse_whoami_sid（纯函数 ⇒ 可回归 ✓）—— 与 Linux 用 `id -u` 同一手法 ✓
+func _sid(): string {
+    ExecResult? r = _exec("whoami /user", 15000)
+    if r == null { return "" }
+    return sp.parse_whoami_sid(r.output)
+}
+
+// 拼 Windows 路径（**避免 `C:\\` + `\\x` 拼出双反斜杠** —— 那种路径偶尔会被 API 拒 ✓）
+func _joinWin(string a, string b): string {
+    if a == "" { return b }
+    if strings.ends_with(a, "\\") { return a + b }
+    return a + "\\" + b
+}
+
+// 某个盘上的、属于 sid 的回收站根（不存在 ⇒ `""` —— 没插盘/没删过东西的卷很常见 ✓）
+func _recycleRootOf(string drive, string sid): string {
+    string root = _joinWin(_joinWin(drive, "$Recycle.Bin"), sid)
+    if not dirs.exists(root) { return "" }
+    return root
+}
+
+// 列一个回收站根里的条目（`$I` + `$R` 成对才算数 ✓）
+func _scanRecycle(Array out, string root) {
+    Array[string] names = []
+    try { names = dirs.listdir(root) } catch e { return }   // 读不了该卷的回收站 ⇒ 跳过（不抛 ✓）
+
+    for names to n {
+        if not strings.starts_with(n, "$I") { continue }     // `$R…` / `desktop.ini` 一律跳过 ✓
+        string raw = ""
+        try { raw = files.read(_joinWin(root, n)) } catch e { continue }
+        if raw == "" { continue }
+
+        var it = sp.parse_recycle_item(raw)
+        if not jsons.get_bool(it, "ok", false) { continue }  // 结构不认识 ⇒ 不猜（跳过 ✓）
+
+        // `$R` 配对：与 `$I` 同名、只把第 2 个字母换成 R（实测 `$I0UFLFU` ↔ `$R0UFLFU` ✓）
+        string rname = "$R" + strings.slice(n, 2, n.len() - 1)
+        if not dirs.exists(_joinWin(root, rname)) { continue }   // 内容已不在 ⇒ 不列 ✓
+
+        string orig = jsons.get_str(it, "path", "")
+        int sec = jsons.get_int(it, "deletedAtSec", 0)
+        string when = ""
+        if sec > 0 { when = ti.format(sec, "%Y-%m-%dT%H:%M:%S") }
+
+        // ⚠ `name` 与 Linux 侧不同：Linux 是"回收站里那个文件名（可能被改成 `a.txt.2`）"，
+        //   而 Windows 的 `$R0UFLFU` 对用户毫无意义 ⇒ 这里给**原文件名**
+        //   （用户认得出的那个 ✓；`trashDir` + `$R` 名要的话可以自己拼 ✓）
+        string nm = dirs.basename(orig)
+        if nm == "" { nm = rname }
+        out.add({name: nm, originalPath: orig, deletedAt: when, trashDir: root})
+    }
+}
+
+// 列回收站内容（自己 SID、所有盘 ✓）
+//   返回 `Array` of Dict{name, originalPath, deletedAt, trashDir}（门面转 `TrashItem` ✓）
+//   ⚠ 本版**不给大小**（与 Linux 侧同口径：拿 `$I` 里的大小要额外解一个字段，
+//     且逐条 walk 会让大回收站明显卡 ✗ —— 需要就自己解 `$I` 或用 `dirs.stat` ✓）
+export func listTrash(): Array {
+    Array out = []
+    string sid = _sid()
+    if sid == "" { return out }
+
+    // 各盘都看一遍（`D:\$Recycle.Bin\...` 与 `C:\` 是两套独立目录 ✓ —— 实测本机两块盘都有 ✓）
+    for listDrives() to d {
+        string root = _recycleRootOf(d, sid)
+        if root == "" { continue }
+        _scanRecycle(out, root)
+    }
+    return out
+}
 
 // ==================== 开机启动项（注册表 Run/RunOnce + 启动文件夹）====================
 

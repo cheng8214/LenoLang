@@ -13,6 +13,7 @@ import "w32_hotkey.leno" as hotkey
 import "w32_message.leno" as msg
 import "w32_clipboard.leno" as cb
 import "./w32_shell.leno" as shell   // 磁盘空间/回收站（./ 钉死 sibling，防全局同名顶掉 ✓）
+import "./w32_sys.leno" as sysinfo   // 系统信息/提权/进程路径/Shell 打开/通知（★ 2026-10-15 加 ✓）
 
 // 注册表结果类型：引入后用裸名给下面的转发函数标注返回类型
 // （与 Web.leno 的 use net.(Response, HttpClient, Session) 同一写法）
@@ -285,4 +286,66 @@ export func emptyRecycleBin(int flags = 7): bool {
 export func deleteToRecycleBin(Array[string] paths): Dict {
     if not _is_supported() { return {ok: false, count: 0, aborted: false} }
     return shell.deleteToRecycleBin(paths)
+}
+
+// ==================== 系统信息 / 提权 / 桌面集成 ====================
+// ★ 2026-10-15 加：这批是 **LenoSys 的 Windows 后端**（build/leno_module/LenoSys/lib/sys_win.leno）
+//   要用的直连 API —— 那一边**刻意不 import ffi**（见其文件头：不碰手写 ABI 结构 ⇒
+//   没有"结构体布局错了静默崩"的风险）⇒ 声明只能落在本模块 ✓
+// ⚠ 与上面的进程/注册表不同：这些**只**给 LenoSys 用（不是"给应用直接调"的通用包装）✓
+//   门面仍是 `Sys.sysInfo()` / `Sys.isElevated()` / `Sys.processPath()` / `Sys.openWith()` ✓
+
+// 物理内存（KB）：{ok, totalKb, availKb}（取不到 ⇒ ok=false，**不要**把 0 当成"没内存" ✗）
+export func memoryKb(): Dict {
+    if not _is_supported() { return {ok: false, totalKb: 0, availKb: 0} }
+    return sysinfo.memoryKb()
+}
+
+// 开机以来秒数（⚠ 含睡眠时间）；取不到 ⇒ -1
+export func uptimeSec(): int {
+    if not _is_supported() { return -1 }
+    return sysinfo.uptimeSec()
+}
+
+// 主机名（系统 API 的答案，不是环境变量 ✓）；取不到 ⇒ ""
+export func computerName(): string {
+    if not _is_supported() { return "" }
+    return sysinfo.computerName()
+}
+
+// 当前登录用户名（不含域）；取不到 ⇒ ""
+export func userName(): string {
+    if not _is_supported() { return "" }
+    return sysinfo.userName()
+}
+
+// 逻辑处理器数；取不到 ⇒ 0
+export func cpuCount(): int {
+    if not _is_supported() { return 0 }
+    return sysinfo.cpuCount()
+}
+
+// 当前进程是否**已提权**（令牌的 TokenElevation ✓ —— 不是"用户名是不是 Administrator" ✗）
+export func isElevated(): bool {
+    if not _is_supported() { return false }
+    return sysinfo.isElevated()
+}
+
+// 指定 pid 的 exe 全路径（取不到 ⇒ ""，不猜 ✓）
+export func processPath(int pid): string {
+    if not _is_supported() { return "" }
+    return sysinfo.processPath(pid)
+}
+
+// 用系统默认程序打开文件/目录/URI（true = 已交给 Shell，**不等于**程序起来了 ✓）
+//   ⚠ 不用 `cmd /c start "" x`：start 对 `&`/`|`/`^` 与引号有坑 ✗
+export func shellOpen(string path): bool {
+    if not _is_supported() { return false }
+    return sysinfo.shellOpen(path)
+}
+
+// 弹一条通知气泡（标题必填；true = 已登记到通知区域 ✓）
+export func notify(string title, string body): bool {
+    if not _is_supported() { return false }
+    return sysinfo.notify(title, body)
 }

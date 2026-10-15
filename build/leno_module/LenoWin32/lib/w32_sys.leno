@@ -1,0 +1,355 @@
+// w32_sys.leno — Windows 系统信息 / 提权 / 进程路径 / Shell 打开 / 通知气泡
+//
+// ★ 为什么单独一个文件（不塞进 w32_process / w32_shell / w32_reg）：
+//   这一批 API 是给 **LenoSys 的 Windows 后端**用的（sysInfo / isElevated / processPath /
+//   openWith / notify）—— 它们不属于任何一个既有专题（进程管理 / 注册表 / 托盘…），
+//   共同点是"**取不到就如实说取不到**"（`""`/0/false，绝不编 ✗）。
+//   LenoSys 的 Windows 后端**刻意不 import ffi**（见其文件头：不碰手写 ABI 结构 ⇒
+//   没有"结构体布局错了静默崩"的风险）⇒ 这些直连调用只能落在本模块 ✓
+//
+// ★ 设计约定：这里每个 export 只回答**一个事实**（一个数 / 一个字符串 / 一个 bool），
+//   不做"拼字段"的活 —— 拼装与降级（宿主名取不到就退回环境变量之类）留在 LenoSys 后端 ✓
+//   理由：本文件只能在 **Windows 真机**上验（别处跑不了），而拼装逻辑要能在两端对账 ✓
+//
+// ★ 全是 **W 版** API（UTF-16）：UTF-8 ↔ UTF-16 走 ffi.utf8_to_utf16 / ffi.utf16_to_utf8 ✓
+//   （A 版给的是系统 ANSI（GBK），中文路径会乱码 ✗ —— 同 w32_process.exePath 的注释 ✓）
+import ffi
+
+// ==================== KERNEL32 ====================
+clib kernel32 {
+    Ptr GetCurrentProcess()
+    i32 CloseHandle(Ptr h)
+    // 查询进程 exe 路径：PROCESS_QUERY_LIMITED_INFORMATION(0x1000) 就够（Vista+ ✓）
+    Ptr OpenProcess(u32 access, i32 inherit, i32 pid)
+    // Vista+ 首选（比 psapi 的 GetModuleFileNameExW 权限要求低、且不受位数影响 ✓）
+    i32 QueryFullProcessImageNameW(Ptr hProcess, u32 flags, Ptr[u16] name, Ptr size)
+
+    // 物理内存：出参 MEMORYSTATUSEX（必须先写 dwLength ✓）
+    i32 GlobalMemoryStatusEx(Ptr buf)
+
+    // 开机以来的毫秒数（**含睡眠时间** ⇒ 与 Linux 的 /proc/uptime 口径略不同 ✓）
+    //   ⚠ 用 64 位版：32 位的 GetTickCount 49.7 天就回绕（长期开机的机器上会给出假的小值 ✗）
+    u64 GetTickCount64()
+
+    i32 GetComputerNameW(Ptr[u16] buf, Ptr size)
+    // 逻辑核数（ProcGroup 传 0xFFFF = ALL_PROCESSOR_GROUPS ⇒ 大于 64 核的机器也算全 ✓）
+    u32 GetActiveProcessorCount(u16 group)
+
+    // UTF-16 串长（不含结尾 null）——写 NOTIFYICONDATAW 里的 szInfo/szInfoTitle 用 ✓
+    i32 lstrlenW(Ptr[u16] s)
+}
+
+kernel32 _krnl = null
+func _krnlLib(): kernel32 {
+    if _krnl == null { _krnl = ffi.load("kernel32.dll") }
+    return _krnl
+}
+
+// ==================== ADVAPI32 ====================
+clib advapi32 {
+    i32 OpenProcessToken(Ptr proc, u32 access, Ptr outToken)
+    // TokenElevation = 20（⚠ 不是 18：18 是 TokenElevationType，判"是不是管理员"要用 20 ✓）
+    i32 GetTokenInformation(Ptr token, i32 cls, Ptr info, u32 len, Ptr retLen)
+    i32 GetUserNameW(Ptr[u16] buf, Ptr size)
+}
+
+advapi32 _adv = null
+func _advLib(): advapi32 {
+    if _adv == null { _adv = ffi.load("advapi32.dll") }
+    return _adv
+}
+
+// ==================== SHELL32 ====================
+clib shell32 {
+    // 用系统默认程序打开（返回值是 HINSTANCE；**> 32 才算成功** —— 小值是错误码 ✓）
+    Ptr ShellExecuteW(Ptr hwnd, Ptr[u16] op, Ptr[u16] file, Ptr[u16] params, Ptr[u16] dir, i32 show)
+    // 通知区域（托盘）气泡：msg = NIM_ADD(0) / NIM_MODIFY(1) / NIM_DELETE(2) ✓
+    i32 Shell_NotifyIconW(u32 msg, Ptr data)
+}
+
+shell32 _shell = null
+func _shellLib(): shell32 {
+    if _shell == null { _shell = ffi.load("shell32.dll") }
+    return _shell
+}
+
+// ==================== USER32 ====================
+clib user32 {
+    // 只为拿到一个"能挂托盘图标"的隐藏窗口（Shell_NotifyIconW 要求有 HWND ✓）
+    Ptr CreateWindowExW(u32 exStyle, Ptr[u16] cls, Ptr[u16] name, u32 style,
+                        i32 x, i32 y, i32 w, i32 h, Ptr parent, Ptr menu, Ptr inst, Ptr param)
+    i32 DestroyWindow(Ptr hwnd)
+    // 取系统自带图标（hInstance=null + 资源号；返回 HICON）—— 气泡**必须**有真图标才能弹 ✓
+    Ptr LoadIconW(Ptr hInstance, Ptr name)
+}
+
+user32 _usr = null
+func _usrLib(): user32 {
+    if _usr == null { _usr = ffi.load("user32.dll") }
+    return _usr
+}
+
+// ==================== 通知气泡 ====================
+// ★ 写法照 **.NET WinForms 的 `NotifyIcon.ShowBalloonTip`**（D:\软件\TraeSign-main\TraeCheckinApp.cs
+//   就是这么发通知的 ✓）—— 它内部也是 `Shell_NotifyIconW`，但有两处**必须照抄**的细节：
+//     ① **必须给真图标**（`hIcon`）：托盘项没有图标时，Shell 会把它当成无效项 ⇒ 气泡根本不画 ✗
+//        （我第一版 `hIcon = NULL` + 一步 `NIM_ADD` ⇒ `Shell_NotifyIconW` 返回真、屏幕上什么都没有 ✗）
+//     ② **两步**：先 `NIM_ADD`（`NIF_MESSAGE|NIF_ICON|NIF_TIP` 登记图标），再 `NIM_MODIFY`
+//        （加 `NIF_INFO` 让气泡弹出来）✓ —— WinForms 的 `Visible=true` / `ShowBalloonTip()` 正是这两步 ✓
+//   实测证据见 examples\win_check.leno 的 `--live` ✓
+const IDI_INFORMATION = 32516        // 系统自带"信息"图标（hInstance=null + 资源号 ✓ 不依赖图片文件 ✓）
+
+// ==================== 常量 ====================
+const TOKEN_QUERY                  = 0x0008
+const TOKEN_ELEVATION_CLASS        = 20          // TokenElevation ✓
+const PROCESS_QUERY_LIMITED_INFO   = 0x1000
+const SW_SHOWNORMAL                = 1
+
+// MEMORYSTATUSEX 的 dwLength（= sizeof(MEMORYSTATUSEX)：4+4 之后 6 个 u64 ⇒ 8 + 48 = 56 ✗）
+//   ⚠ 实际是 **64 字节**：4(dwLength) + 4(dwMemoryLoad) + 7 个 u64（含 AvailExtendedVirtual）
+//     ⇒ dwLength 必须写**结构体真实大小**，写小了 API 直接失败(0) ✗
+const MEMORYSTATUSEX_SIZE = 64
+
+// 通知识别号与标志
+const NIM_ADD        = 0
+const NIM_MODIFY     = 1
+const NIF_MESSAGE    = 0x01
+const NIF_ICON       = 0x02
+const NIF_TIP        = 0x04
+const NIF_INFO       = 0x10
+const NIIF_INFO      = 0x01
+const WM_APP         = 0x8000
+// sizeof(NOTIFYICONDATAW) = 976（x64，Vista+ / NOTIFYICON_VERSION_4 的尺寸 ✓）
+const NID_SIZE       = 976
+// NOTIFYICONDATAW 里各字段的偏移（x64，手排 —— 与 w32_shell 手排 SHFILEOPSTRUCTW 同一理由：
+//   这是**定长**结构，写死偏移比再引入一个 cstruct 更不容易出错 ✓）
+//   布局：cbSize(0) hWnd(8) uID(16) uFlags(20) uCallbackMessage(24) hIcon(32)
+//         szTip[128](40) dwState(296) dwStateMask(300) szInfo[256](304) uTimeout/uVersion(816)
+//         szInfoTitle[64](820) dwInfoFlags(948) guidItem(952) hBalloonIcon(968)
+const NID_OFF_CBSIZE     = 0
+const NID_OFF_HWND       = 8
+const NID_OFF_UID        = 16
+const NID_OFF_UFLAGS     = 20
+const NID_OFF_CALLBACK   = 24
+const NID_OFF_HICON      = 32
+const NID_OFF_SZTIP      = 40           // WCHAR[128] ⇒ 256 字节
+const NID_OFF_SZINFO     = 304          // WCHAR[256] ⇒ 512 字节
+const NID_OFF_SZTITLE    = 820          // WCHAR[64]  ⇒ 128 字节
+const NID_OFF_INFOFLAGS  = 948
+
+// ==================== 内存 ====================
+// MEMORYSTATUSEX（x64）：dwLength(0) dwMemoryLoad(4) 然后 7 个 u64（偏移 8,16,24,32,40,48,56 ✓）
+cstruct MEMORYSTATUSEX {
+    u32 dwLength
+    u32 dwMemoryLoad
+    u64 ullTotalPhys
+    u64 ullAvailPhys
+    u64 ullTotalPageFile
+    u64 ullAvailPageFile
+    u64 ullTotalVirtual
+    u64 ullAvailVirtual
+    u64 ullAvailExtendedVirtual
+}
+
+// 物理内存（KB）——取不到 ⇒ ok=false（调用方按"未知"处理，**不当成 0 内存** ✗）
+export func memoryKb(): Dict {
+    var m = MEMORYSTATUSEX.malloc()
+    try {
+        m.dwLength = MEMORYSTATUSEX_SIZE
+        if _krnlLib().GlobalMemoryStatusEx(m.to_ptr()) == 0 {
+            return {ok: false, totalKb: 0, availKb: 0}
+        }
+        return {ok: true, totalKb: m.ullTotalPhys / 1024, availKb: m.ullAvailPhys / 1024}
+    } finally {
+        m.free()
+    }
+}
+
+// 开机以来的秒数（⚠ 含睡眠时间 ⇒ 与 Linux uptime 口径略有差别 ✓）；取不到 ⇒ -1
+export func uptimeSec(): int {
+    int ms = _krnlLib().GetTickCount64()
+    if ms <= 0 { return -1 }
+    return ms / 1000
+}
+
+// ==================== 主机名 / 用户名 ====================
+
+// 主机名（**由系统回答**，不是读环境变量 —— 环境变量谁都能改 ✗）
+export func computerName(): string {
+    Ptr[u16] buf = ffi.malloc(512)          // 256 wchar（NetBIOS 上限 15 ⇒ 够宽 ✓）
+    Ptr sz = ffi.malloc(4)
+    try {
+        ffi.write_int(sz, 0, 256)
+        if _krnlLib().GetComputerNameW(buf, sz) == 0 { return "" }
+        return ffi.utf16_to_utf8(buf)
+    } finally {
+        ffi.free(buf)
+        ffi.free(sz)
+    }
+}
+
+// 当前**登录用户名**（不含域；取不到 ⇒ ""）
+//   ⚠ 与 sys_win 里读 `USERNAME` 的区别：这条是系统 API 的回答（`id -un` 的等价位 ✓）
+export func userName(): string {
+    Ptr[u16] buf = ffi.malloc(1024)          // 512 wchar（UNLEN 上限 256 ✓）
+    Ptr sz = ffi.malloc(4)
+    try {
+        ffi.write_int(sz, 0, 512)
+        if _advLib().GetUserNameW(buf, sz) == 0 { return "" }
+        return ffi.utf16_to_utf8(buf)
+    } finally {
+        ffi.free(buf)
+        ffi.free(sz)
+    }
+}
+
+// 逻辑处理器数；取不到 ⇒ 0（调用方可退回 NUMBER_OF_PROCESSORS ✓）
+export func cpuCount(): int {
+    int n = _krnlLib().GetActiveProcessorCount(65535)     // 0xFFFF = ALL_PROCESSOR_GROUPS ✓
+    if n <= 0 { return 0 }
+    return n
+}
+
+// ==================== 提权（管理员令牌）====================
+// ★ 判据 = **令牌里的 TokenElevation**，不是"用户名是不是 Administrator" ✗
+//   （账户名与"当前进程是否提权"是两件事：UAC 下管理员账户跑的程序默认也是**未提权**的 ✓）
+export func isElevated(): bool {
+    Ptr tokOut = ffi.malloc(8)
+    try {
+        if _advLib().OpenProcessToken(_krnlLib().GetCurrentProcess(), TOKEN_QUERY, tokOut) == 0 {
+            return false          // 打不开自己的令牌 ⇒ 保守说"没有提权" ✓（与 Linux 侧 uid 取不到同口径）
+        }
+        Ptr token = ffi.read_ptr(tokOut, 0)
+        Ptr info = ffi.malloc(4)          // TOKEN_ELEVATION { DWORD TokenIsElevated; } ✓
+        Ptr ret = ffi.malloc(4)
+        try {
+            ffi.write_int(info, 0, 0)
+            int ok = _advLib().GetTokenInformation(token, TOKEN_ELEVATION_CLASS, info, 4, ret)
+            if ok == 0 { return false }
+            return ffi.read_int(info, 0) != 0
+        } finally {
+            ffi.free(info)
+            ffi.free(ret)
+            _krnlLib().CloseHandle(token)
+        }
+    } finally {
+        ffi.free(tokOut)
+    }
+}
+
+// ==================== 进程 exe 全路径 ====================
+// 指定 pid 的 exe 全路径；取不到（进程已退出 / 权限不足 / 受保护进程）⇒ ""
+//   ⚠ 打不开就返回 ""，**不**退回"猜一个路径" ✗（LenoSys 侧据此如实报"读不到" ✓）
+export func processPath(int pid): string {
+    if pid <= 0 { return "" }
+    Ptr h = _krnlLib().OpenProcess(PROCESS_QUERY_LIMITED_INFO, 0, pid)
+    if h == null { return "" }
+    try {
+        Ptr[u16] buf = ffi.malloc(65536)     // 32768 wchar（长路径 + 长 \\?\ 前缀都够 ✓）
+        Ptr sz = ffi.malloc(4)
+        try {
+            ffi.write_int(sz, 0, 32768)
+            if _krnlLib().QueryFullProcessImageNameW(h, 0, buf, sz) == 0 { return "" }
+            return ffi.utf16_to_utf8(buf)
+        } finally {
+            ffi.free(buf)
+            ffi.free(sz)
+        }
+    } finally {
+        _krnlLib().CloseHandle(h)
+    }
+}
+
+// ==================== 用系统默认程序打开 ====================
+// 返回 true = "已把请求交给 Shell"（**不等于**目标程序真的起来了 ✓ —— 与 LenoSys 门面同口径）
+//   ⚠ 用 ShellExecuteW 而**不是** `cmd /c start "" x`：start 对 `&`/`|`/`^` 与引号有坑 ✗
+//   ⚠ 返回值 > 32 才算成功（≤ 32 是错误码：文件找不到=2、没有关联程序=31 …✓）
+export func shellOpen(string path): bool {
+    if path == "" { return false }
+    Ptr[u16] op = ffi.utf8_to_utf16("open")
+    Ptr[u16] file = ffi.utf8_to_utf16(path)
+    try {
+        Ptr r = _shellLib().ShellExecuteW(null, op, file, null, null, SW_SHOWNORMAL)
+        return ffi.ptr_to_int(r) > 32
+    } finally {
+        ffi.free(op)
+        ffi.free(file)
+    }
+}
+
+// ==================== 通知气泡（托盘）====================
+// ★ Windows **没有** notify-send 那种一行 API ✗ —— 最短路径是
+//   `Shell_NotifyIconW` + 一个隐藏窗口（托盘项必须挂在某个 HWND 上 ✓）
+// ★ 为什么 dwState 写 NIS_HIDDEN：气泡显示与"图标在不在托盘"是两件事，
+//   而我们**不想**往用户托盘里留一个没有图标的空位 ✓（保持"发个通知"这件事无残留 ✓）
+// ★ 为什么不需要消息泵：气泡是 **explorer** 画的（它是通知区域的主人），
+//   我们只负责"登记 + 给出文案"；只有想收 NIN_BALLOONUSERCLICK 之类回调才需要泵 ✗
+//   ⚠ 必须**显式标类型**：`var x = null` 会被推成 any，拿去 return/传参都过不了类型检查 ✗
+//     （写法是"类型前置"：`Ptr[u8] x = null` —— `var x: Ptr[u8]` 这种标注本语言不支持 ✓）
+Ptr[u8] _notifyHwnd = null
+
+// 惰性建一个永不显示的窗口（STATIC 是系统**预定义类** ⇒ hInstance 传 null ✓）
+func _hwnd(): Ptr[u8] {
+    if _notifyHwnd != null { return _notifyHwnd }
+    Ptr[u16] cls = ffi.utf8_to_utf16("STATIC")
+    try {
+        // WS_POPUP(0x80000000)：从不 ShowWindow ⇒ 用户永远看不见它 ✓
+        _notifyHwnd = _usrLib().CreateWindowExW(0, cls, cls, 0x80000000,
+                                                0, 0, 0, 0, null, null, null, null)
+    } finally {
+        ffi.free(cls)
+    }
+    return _notifyHwnd
+}
+
+// 把一个 UTF-8 串按 maxUnits 个 UTF-16 单元（含结尾 null）写进 dst 的 off 处
+func _putWide(Ptr dst, int off, int maxUnits, string s) {
+    Ptr[u16] w = ffi.utf8_to_utf16(s)
+    try {
+        int n = _krnlLib().lstrlenW(w)
+        if n > maxUnits - 1 { n = maxUnits - 1 }        // 超长就截断（不越界 ✗）
+        if n > 0 { ffi.memcpy(ffi.offset(dst, off), w, n * 2) }
+    } finally {
+        ffi.free(w)
+    }
+}
+
+// 弹一条通知气泡（标题必填）；返回 = **已登记到通知区域**（投递语义，与 Linux 的
+//   notify-send "守护进程收没收" 略不同 —— 后者是同步等应答，Windows 这条没有应答通道 ✓）
+//   ⚠ 用户关了通知 / 开了专注助手 ⇒ 系统不显示，但登记仍然成功 ⇒ 返回值仍为 true
+//     （如实反映"我们能知道的部分" ✓ —— 这一点与 Linux 侧的强语义刻意不同，门面注释里写清了 ✓）
+//   ⚠ 托盘图标会留到**本进程退出**（Windows 之后会在鼠标划过时清掉死图标）。
+//     长驻应用别指望它消失：那属于"应用自己的托盘图标"该管的事（如 LenoSDL3 的 Tray ✓）
+export func notify(string title, string body): bool {
+    if title == "" { return false }
+    Ptr hwnd = _hwnd()
+    if hwnd == null { return false }          // 窗口建不出来（极罕见）⇒ 如实 false ✓
+    Ptr icon = _usrLib().LoadIconW(null, ffi.ptr_from_int(IDI_INFORMATION))
+    if icon == null { return false }          // 拿不到图标 ⇒ 别登记（没图标的气泡根本不会画 ✗）
+
+    Ptr d = ffi.malloc(NID_SIZE)
+    try {
+        int i = 0
+        while (i < NID_SIZE) { ffi.write_byte(d, i, 0); i = i + 1 }   // 先清零（未用字段必须为 0 ✓）
+
+        ffi.write_int(d, NID_OFF_CBSIZE, NID_SIZE)
+        ffi.write_ptr(d, NID_OFF_HWND, hwnd)
+        ffi.write_int(d, NID_OFF_UID, 1)                            // 进程内唯一即可 ✓
+        ffi.write_int(d, NID_OFF_CALLBACK, WM_APP + 1)              // 不收回调，但字段要合法 ✓
+        ffi.write_ptr(d, NID_OFF_HICON, icon)                       // ★ 真图标（没它气泡不画 ✗）
+        _putWide(d, NID_OFF_SZTIP, 128, title)                      // szTip（光标悬停提示 ✓）
+
+        // ---- 第一步：登记托盘项（WinForms 的 `Visible = true` ✓）----
+        ffi.write_int(d, NID_OFF_UFLAGS, NIF_MESSAGE | NIF_ICON | NIF_TIP)
+        if _shellLib().Shell_NotifyIconW(NIM_ADD, d) == 0 { return false }
+
+        // ---- 第二步：同一条目加 `NIF_INFO` ⇒ 气泡弹出来（WinForms 的 ShowBalloonTip ✓）----
+        ffi.write_int(d, NID_OFF_UFLAGS, NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_INFO)
+        _putWide(d, NID_OFF_SZINFO, 256, body)                      // szInfo（WCHAR[256] ✓）
+        _putWide(d, NID_OFF_SZTITLE, 64, title)                     // szInfoTitle（WCHAR[64] ✓）
+        ffi.write_int(d, NID_OFF_INFOFLAGS, NIIF_INFO)              // 用系统"信息"图标 ✓
+        return _shellLib().Shell_NotifyIconW(NIM_MODIFY, d) != 0
+    } finally {
+        ffi.free(d)
+    }
+}
