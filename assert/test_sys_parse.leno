@@ -108,6 +108,63 @@ main() {
     assert_eq(sp.path_under("/a", ""), false)
     print("挂载点归属解析 通过!")
 
+    // ---------- /etc/os-release（发行版信息）----------
+    // ★ 关键点①：值**多半带引号** ⇒ 必须剥掉成对的（否则界面上会显示 `"Ubuntu 22.04"` ✗）
+    // ★ 关键点②：不成对的引号 / 畸形行 ⇒ **原样**（不猜 ✓）
+    var o1 = sp.parse_os_release(
+        "# 注释行\nNAME=\"Ubuntu\"\nPRETTY_NAME=\"Ubuntu 22.04.5 LTS\"\nID=ubuntu\nVERSION_ID=\"22.04\"\n")
+    assert_eq(o1.ok, true)
+    assert_eq(o1.pretty, "Ubuntu 22.04.5 LTS", "引号必须剥掉")
+    assert_eq(o1.id, "ubuntu")
+    assert_eq(o1.version, "22.04")
+
+    //   单引号也要认；不带引号的值原样 ✓
+    var o2 = sp.parse_os_release("PRETTY_NAME='Arch Linux'\n")
+    assert_eq(o2.pretty, "Arch Linux")
+    //   只有 ID、没有 PRETTY_NAME ⇒ 拿 ID 顶上（真值，不是编的 ✓）
+    var o3 = sp.parse_os_release("ID=alpine\n")
+    assert_eq(o3.ok, true)
+    assert_eq(o3.pretty, "alpine", "缺 PRETTY_NAME ⇒ 用 ID 顶上")
+    //   空文本 / 无相关键 ⇒ ok=false（不抛 ✓）
+    assert_eq(sp.parse_os_release("").ok, false)
+    assert_eq(sp.parse_os_release("NAME=NoPretty\n").ok, false)
+    //   不成对引号 ⇒ 原样（不猜 ✓）
+    assert_eq(sp.unquote("\"half"), "\"half")
+    assert_eq(sp.unquote("x"), "x")
+    print("os-release 解析 通过!")
+
+    // ---------- /proc/cpuinfo（型号 + 逻辑核数）----------
+    var c1 = sp.parse_cpuinfo("processor\t: 0\nmodel name\t: Intel(R) Core(TM) i7-9700\n\nprocessor\t: 1\nmodel name\t: Intel(R) Core(TM) i7-9700\n")
+    assert_eq(c1.ok, true)
+    assert_eq(c1.count, 2, "核数 = `processor` 行数")
+    assert_eq(c1.model, "Intel(R) Core(TM) i7-9700", "取第一个型号即可（多核会重复 ✓）")
+    //   ★ ARM 形态：没有 `model name`，用 `Processor` / `Hardware` ⇒ 型号能取到、核数照样准 ✓
+    var c2 = sp.parse_cpuinfo("processor\t: 0\nProcessor\t: ARMv8 Processor rev 1\n\nprocessor\t: 1\n")
+    assert_eq(c2.count, 2, "ARM 侧核数必须照样数对")
+    assert_eq(c2.model, "ARMv8 Processor rev 1", "ARM 的等价位字段也要认")
+    //   空 / 只有别的字段 ⇒ ok=false（不抛 ✓）
+    assert_eq(sp.parse_cpuinfo("").ok, false)
+    assert_eq(sp.parse_cpuinfo("bogomips : 6000\n").ok, false)
+    print("cpuinfo 解析 通过!")
+
+    // ---------- /proc/meminfo（物理内存）----------
+    //   ⚠ 变量名别用 `m1`/`m2`：本文件前面（挂载点那节）已经用过了 ⇒ 会撞"重复定义" ✗
+    var mi1 = sp.parse_meminfo("MemTotal:        4041932 kB\nMemFree:          112345 kB\nMemAvailable:    3985532 kB\nBuffers:  34 kB\n")
+    assert_eq(mi1.ok, true)
+    assert_eq(mi1.totalKb, 4041932)
+    assert_eq(mi1.availKb, 3985532, "优先用 MemAvailable（口径是'还能拿来用' ✓）")
+    assert_eq(mi1.fallback, false)
+    //   ★ 关键边界：老内核 / 容器**没有 MemAvailable** ⇒ 降级到 MemFree，并**如实标记** fallback ✓
+    //     （这两个数口径不同 ⇒ 不能让调用方以为拿到的是一样的东西 ✗）
+    var mi2 = sp.parse_meminfo("MemTotal:  4041932 kB\nMemFree:  112345 kB\n")
+    assert_eq(mi2.totalKb, 4041932)
+    assert_eq(mi2.availKb, 112345, "缺 MemAvailable ⇒ 退回 MemFree")
+    assert_eq(mi2.fallback, true, "降级必须被标出来（口径不同 ✗）")
+    //   MemFree 也没有 ⇒ 留 0（不编 ✓）
+    assert_eq(sp.parse_meminfo("MemTotal: 100 kB\n").availKb, 0)
+    assert_eq(sp.parse_meminfo("").ok, false)
+    print("meminfo 解析 通过!")
+
     // ---------- .trashinfo（回收站账本，listTrash 用）----------
     // ★ 关键点①：`Path` 是**百分号编码**的 ⇒ 必须解码，否则 `%20`/`%E4%B8%AD` 会留在路径里
     //   （拿去"还原/打开"必然打不开 ✗）

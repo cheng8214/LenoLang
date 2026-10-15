@@ -32,6 +32,28 @@ export func systemRoot(): string {
 
 export func pathSep(): string { return "\\" }
 
+// ⚠⚠ **未实现桩**（2026-10-15 加；Linux 侧已实现 ✓）—— 与下面 processPath / listTrash 同款：
+//   宁可留空并写明补法，也**绝不静默返回假数据** ✗（见 Sys.leno 顶部约定 ✓）
+//   补法（都是直连 API，不必引 ffi 到本模块 —— 声明放 LenoWin32 更合适 ✓）：
+//     · osName      ⇒ `RtlGetVersion`（或读 HKLM\...\CurrentVersion\ProductName + DisplayVersion）
+//     · kernel      ⇒ `RtlGetVersion` 的 dwMajorVersion.dwMinorVersion.dwBuildNumber
+//     · host        ⇒ `GetComputerNameW`（也可先用环境变量 `COMPUTERNAME` 顶一阵 ✓）
+//     · user        ⇒ `GetUserNameW`（同理可用 `USERNAME` ✓）
+//     · cpuModel    ⇒ 注册表 `HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\0\ProcessorNameString`
+//     · cpuCount    ⇒ `GetSystemInfo`（或环境变量 `NUMBER_OF_PROCESSORS` ✓）
+//     · memTotalKb / memAvailKb ⇒ `GlobalMemoryStatusEx`（*1024 得 KB）
+//     · uptimeSec   ⇒ `GetTickCount64` / 1000（注意：它含睡眠时间，与 Linux 的 uptime 口径略不同 ✓）
+export func sysInfo(): Dict {
+    return {osName: "", kernel: "", host: "", user: "", cpuModel: "",
+            cpuCount: 0, memTotalKb: 0, memAvailKb: 0, uptimeSec: 0}
+}
+
+// 是否 **管理员**（提权令牌）—— 补法：`GetTokenInformation(TokenElevation)` 或 `shell32.IsUserAnAdmin`
+//   ⚠ **不要**用"用户名是 Administrator"来判（那是账户名，不是当前令牌的提权状态 ✗）
+export func isElevated(): bool {
+    return false
+}
+
 // ==================== 进程 ====================
 
 // 返回 {ok, errorCode, processes:[{pid,name}]}

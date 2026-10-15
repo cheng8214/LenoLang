@@ -369,6 +369,95 @@ export func parse_xbel_recents(string text, int max): Array[string] {
     return out
 }
 
+// ==================== /etc/os-release（发行版信息）====================
+// 形态：`KEY=值` 或 `KEY="值"`（**值多半带引号** ✓），`#` 起首是注释 ✓
+//   要的键：PRETTY_NAME（给人看的全名）/ ID / VERSION_ID ✓
+// ⚠ 值两端**成对**的引号必须剥掉 —— 带引号原样返回会显示成 `"Ubuntu 22.04.5 LTS"` ✗
+//   只剥成对的（`"` 与 `'` 都认）；不成对（畸形行）⇒ **原样** ✓ 不猜
+// ⚠ 只有 `ID`、没有 `PRETTY_NAME` ⇒ 拿 `ID` 顶上（是**真值**，不是编的 ✓）
+export func parse_os_release(string text): Dict {
+    string pretty = ""
+    string id = ""
+    string ver = ""
+    var ls = split_lines(text)
+    for ls to l {
+        string t = strings.trim(l)
+        if t == "" or strings.starts_with(t, "#") { continue }
+        int eq = strings.find(t, "=")
+        if eq <= 0 { continue }
+        string k = strings.trim(strings.slice(t, 0, eq - 1))
+        string v = unquote(strings.trim(strings.slice(t, eq + 1, t.len())))
+        if k == "PRETTY_NAME" { pretty = v }
+        eif k == "ID" { id = v }
+        eif k == "VERSION_ID" { ver = v }
+    }
+    if pretty == "" { pretty = id }
+    return {ok: pretty != "", pretty: pretty, id: id, version: ver}
+}
+
+// 剥掉两端**成对**的引号（`"x"` / `'x'` ⇒ `x`；不成对 / 太短 ⇒ 原样 ✓）
+export func unquote(string s): string {
+    if s.len() >= 2 {
+        string a = strings.slice(s, 0, 0)
+        string b = strings.slice(s, s.len() - 1, s.len() - 1)
+        if (a == "\"" and b == "\"") or (a == "'" and b == "'") {
+            return strings.slice(s, 1, s.len() - 2)
+        }
+    }
+    return s
+}
+
+// ==================== /proc/cpuinfo（CPU 型号 / 逻辑核数）====================
+// ★ 一个解析出两个字段，只因"读一次文件就够"（省一次读 ✓）
+//   核数 = `processor` 行数；型号 = 第一个非空 `model name` ✓
+// ⚠ 字段名**分架构不同**：x86 是 `model name`，ARM 常写作 `Processor` / `Hardware`
+//   ⇒ ARM 上可能取不到型号（返回 ""）；但**核数照样数得对**（`processor` 行两边都有 ✓）
+// ⚠ 多路 / 多核机器会**重复**同一串型号 ⇒ 取第一个即可（不必去重 ✓）
+export func parse_cpuinfo(string text): Dict {
+    string model = ""
+    int count = 0
+    var ls = split_lines(text)
+    for ls to l {
+        int colon = strings.find(l, ":")
+        if colon <= 0 { continue }
+        string k = strings.trim(strings.slice(l, 0, colon - 1))
+        string v = strings.trim(strings.slice(l, colon + 1, l.len()))
+        if k == "processor" { count = count + 1 }
+        if model == "" {
+            if k == "model name" { model = v }
+            eif k == "Processor" { model = v }        // ARM 侧的等价位 ✓
+        }
+    }
+    return {ok: count > 0, model: model, count: count}
+}
+
+// ==================== /proc/meminfo（物理内存）====================
+// 形态：`MemTotal:       4041932 kB`（**单位 kB** ✓）；整行里第一个整数就是我们要的值 ✓
+//   MemTotal     = 物理内存总量
+//   MemAvailable = 内核估算的"还能拿来用"（Linux 3.14+ 才有 ✓）
+// ⚠ 老内核 / 部分容器**没有** `MemAvailable` ⇒ 退回 `MemFree`（降级**但不缺席** ✓，
+//   并用 `fallback` 如实标出来 —— 这两个数**口径不同**，调用方要能知道 ✗）
+export func parse_meminfo(string text): Dict {
+    int total = 0
+    int avail = 0
+    int freeKb = 0
+    var ls = split_lines(text)
+    for ls to l {
+        int colon = strings.find(l, ":")
+        if colon <= 0 { continue }
+        string k = strings.trim(strings.slice(l, 0, colon - 1))
+        if k == "MemTotal" { total = first_int_in(l, 0) }
+        eif k == "MemAvailable" { avail = first_int_in(l, 0) }
+        eif k == "MemFree" { freeKb = first_int_in(l, 0) }
+    }
+    bool fallback = false
+    if avail <= 0 and freeKb > 0 {
+        avail = freeKb
+        fallback = true
+    }
+    return {ok: total > 0, totalKb: total, availKb: avail, fallback: fallback}
+}
+
 // ==================== .trashinfo（回收站条目，listTrash 用）====================
 // 规范（freedesktop Trash）里每个条目在 `<回收站>/info/<名字>.trashinfo` 留一份账本：
 //   [Trash Info]

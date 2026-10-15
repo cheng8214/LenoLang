@@ -61,6 +61,22 @@ export struct TrashItem {
     string trashDir = ""      // 它属于哪个回收站根（家目录 / 某分区 ✓ —— 跨分区时靠它区分 ✓）
 }
 
+// ★ 2026-10-15 新增：系统信息（`sysInfo()` 的返回 ✓）
+//   ⚠ 每个字段都可能为空 / 0（读不到、权限不足、平台未实现）
+//     ⇒ 调用方必须按"未知"处理，**不要**把 0 当成真的 0 ✗
+export struct SysInfo {
+    string osName = ""        // 发行版全名（Linux `PRETTY_NAME`）/ Windows 版本
+    string kernel = ""        // 内核版本（Linux `osrelease`）/ Windows 内部版本
+    string host = ""          // 主机名
+    string user = ""          // 当前**登录用户**名（不是显示名 ✓）
+    string cpuModel = ""      // CPU 型号（ARM 上可能取不到 ⇒ ""）
+    int cpuCount = 0          // 逻辑核数
+    int memTotalKb = 0        // 物理内存总量（KB）
+    int memAvailKb = 0        // 当前**可用**内存（KB）
+    int uptimeSec = 0         // 已运行秒数
+    bool elevated = false     // 当前是否 root / 管理员（= `isElevated()` ✓ 单一实现 ✓）
+}
+
 // ==================== 平台 ====================
 
 export func os(): string { return _os() }
@@ -261,8 +277,39 @@ export func listDrives(): Array[string] {
     return l.listDrives()
 }
 
-// ==================== 卷 / 分区 ====================
+// ==================== 系统信息 ====================
 
+// 系统信息汇总（发行版 / 内核 / 主机名 / 用户 / CPU / 内存 / 运行时长 / 是否提权 ✓）
+//   Linux：全部来自只读的 `/etc/os-release` 与 `/proc`（**不跑外部命令**例外只有 `id -un` ✓）
+//   取不到的字段 ⇒ 空 / 0（**不要**当成真的 0 ✗ —— 见 SysInfo 的注释 ✓）
+//   ⚠ **Windows 侧尚未实现**（桩：字段全空 / 0）⇒ 目前只有 `elevated` 一栏也不可靠（桩恒 false）✗
+//     补法（逐个 API）写在 sys_win.leno 的 `sysInfo` 注释里 ✓
+//   ⚠ `elevated` 由这里统一填（内部就调 `isElevated()` ⇒ 只有一处实现 ✓）
+export func sysInfo(): SysInfo {
+    // ⚠ 用**三元形态**（`if … then … else …`）取后端结果：它可作右值 ✓
+    //   （写成"先 `var d = {}` 再在 if/else 里赋值"要多一个空字典字面量，本语言里没必要 ✓）
+    var d = if _isW() then w.sysInfo() else l.sysInfo()
+    return new SysInfo(osName = jsons.get_str(d, "osName", ""),
+                       kernel = jsons.get_str(d, "kernel", ""),
+                       host = jsons.get_str(d, "host", ""),
+                       user = jsons.get_str(d, "user", ""),
+                       cpuModel = jsons.get_str(d, "cpuModel", ""),
+                       cpuCount = jsons.get_int(d, "cpuCount", 0),
+                       memTotalKb = jsons.get_int(d, "memTotalKb", 0),
+                       memAvailKb = jsons.get_int(d, "memAvailKb", 0),
+                       uptimeSec = jsons.get_int(d, "uptimeSec", 0),
+                       elevated = isElevated())
+}
+
+// 当前是否 **已提权**（Linux = root；Windows = 管理员令牌 ⇒ 侧未实现前恒 false ✓）
+//   ★ 用途：清理/安装类应用**区分"没权限"与"被占用"** —— 没提权时该如实说"需要管理员" ✓
+//   ⚠ Linux 判据是 `uid == 0`；`uid` 取不到 ⇒ **保守 false**（见 sys_linux 注释 ✓）
+export func isElevated(): bool {
+    if _isW() { return w.isElevated() }
+    return l.isElevated()
+}
+
+// ==================== 卷 / 分区 ====================
 // `path` 所在的**卷/分区根**：Linux 是挂载点（`/home/u/x` ⇒ `/`；`/media/u/U盘/x` ⇒ `/media/u/U盘`）；
 //   Windows 是盘符根（`C:\Users\x` ⇒ `C:\`）✓
 //   判不出 ⇒ **`""`**（调用方须按"未知"处理 —— 本模块从不猜路径 ✗）
@@ -436,6 +483,21 @@ export func selfTest(): Dict {
 
     var tl = listTrash()
     lines.add("listTrash = " + _str(tl.len()) + " 条（0 也可能是真没有 ✓；Windows 侧未实现 ⇒ 恒 0）")
+
+    // ★ 2026-10-15 系统信息（Linux 侧全部可读；Windows 侧是桩 ⇒ 那里只报"可调用"、不计失败 ✓）
+    var si = sysInfo()
+    lines.add("sysInfo.osName = '" + si.osName + "' · kernel '" + si.kernel + "' · host '" + si.host + "'")
+    lines.add("sysInfo.user = '" + si.user + "' · cpu '" + si.cpuModel + "' × " + _str(si.cpuCount))
+    lines.add("sysInfo.mem = " + _str(si.memAvailKb) + " / " + _str(si.memTotalKb) + " KB · uptime "
+              + _str(si.uptimeSec) + " s")
+    lines.add("isElevated = " + (if si.elevated then "true" else "false"))
+    if not _isW() {
+        if si.host == "" { lines.add("  ✗ sysInfo.host 读不到"); bad = bad + 1 }
+        if si.user == "" { lines.add("  ✗ sysInfo.user 读不到"); bad = bad + 1 }
+        if si.cpuCount <= 0 { lines.add("  ✗ sysInfo.cpuCount 读不到"); bad = bad + 1 }
+        if si.memTotalKb <= 0 { lines.add("  ✗ sysInfo.memTotalKb 读不到"); bad = bad + 1 }
+        if si.uptimeSec <= 0 { lines.add("  ✗ sysInfo.uptimeSec 读不到"); bad = bad + 1 }
+    }
 
     var su = listStartupItems()
     lines.add("listStartupItems = " + _str(su.len()) + " 项（0 也可能是真没有 ✓）")

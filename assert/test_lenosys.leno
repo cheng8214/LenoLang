@@ -123,6 +123,44 @@ main() {
     assert_eq(Sys.processPath(999999999), "", "不存在的 pid ⇒ 空（不抛 ✓）")
     print("进程路径 通过!")
 
+    // ---------- 系统信息（sysInfo / isElevated）----------
+    // ★ 跨平台不变量（两端都成立 ⇒ 可无脑断 ✓）：
+    //   · 不抛异常
+    //   · `memAvailKb <= memTotalKb`（可用不该超过总量 ✓ —— 这条任何平台都成立 ✓）
+    //   · 各计数/字节字段**不为负**（未知用 0 ✓）
+    //   · `sysInfo().elevated` 与 `isElevated()` **必须一致**（前者内部就是调后者 ⇒ 单一实现 ✓）
+    //   ⚠ 具体"非空/大于 0"只在 **Linux 侧**硬断（Windows 侧是未实现桩 ⇒ 字段全空 ✗）
+    var si = Sys.sysInfo()
+    assert_true(si.cpuCount >= 0, "cpuCount 不该为负")
+    assert_true(si.memTotalKb >= 0 and si.memAvailKb >= 0, "内存字段不该为负")
+    assert_true(si.uptimeSec >= 0, "uptime 不该为负")
+    if si.memTotalKb > 0 {
+        assert_true(si.memAvailKb <= si.memTotalKb, "可用内存不该超过总量："
+                    + _str(si.memAvailKb) + " > " + _str(si.memTotalKb))
+    }
+    assert_eq(si.elevated, Sys.isElevated(), "sysInfo.elevated 必须与 isElevated() 一致（单一实现 ✓）")
+    if not Sys.isWindows() {
+        assert_true(si.osName != "", "osName 应可读（/etc/os-release）")
+        assert_true(si.kernel != "", "kernel 应可读（/proc/sys/kernel/osrelease）")
+        assert_true(si.host != "", "host 应可读（/proc/sys/kernel/hostname）")
+        assert_true(si.user != "", "user 应可读（id -un）")
+        assert_true(si.cpuCount > 0, "cpuCount 应 > 0（/proc/cpuinfo）")
+        assert_true(si.memTotalKb > 0, "memTotalKb 应 > 0（/proc/meminfo）")
+        assert_true(si.uptimeSec > 0, "uptimeSec 应 > 0（/proc/uptime）")
+        //   ★ 交叉校验 isElevated：Linux 的判据就是 `uid == 0` ⇒ 与 `id -u` 的读数必须一致 ✓
+        //     （这条把"实现"与"外部事实"对上 —— 不是自己跟自己对 ✓）
+        //     ⚠ `Sys.exec` 返回的键是 **out**（不是 output ✓）
+        var idr = Sys.exec("id -u")
+        string uidTxt = ""
+        if jsons.get_bool(idr, "ok", false) {
+            uidTxt = strings.trim(jsons.get_str(idr, "out", ""))
+        }
+        if uidTxt != "" {
+            assert_eq(Sys.isElevated(), uidTxt == "0", "isElevated 必须等价于 `id -u == 0`")
+        }
+    }
+    print("系统信息 通过（osName='" + si.osName + "' cpu×" + _str(si.cpuCount) + "）!")
+
     // ---------- 启动项 / 已装软件 / 最近文件：只验"可调用 + 结构对" ----------
     var su = Sys.listStartupItems()
     for su to it { assert_true(it.id != "" or it.name != "", "启动项应有 id 或 name") }

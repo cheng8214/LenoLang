@@ -49,6 +49,55 @@ export func cacheDir(): string {
 export func systemRoot(): string { return "/" }
 export func pathSep(): string { return "/" }
 
+// ==================== 系统信息（sysInfo）====================
+// 全部来自**只读的 /proc 与 /etc**（不跑外部命令、不引 ffi ⇒ 没有手写 ABI 风险 ✓）
+//   · 读不到某个文件（受限容器 / 非 Linux）⇒ 该字段留 `""`/`0`，**绝不编** ✗
+//   · 解析全在 sys_parse（纯函数 ⇒ 已在 Windows 上被 assert\test_sys_parse 钉死 ✓）
+// 返回 Dict{osName, kernel, host, user, cpuModel, cpuCount, memTotalKb, memAvailKb, uptimeSec}
+//   （`elevated` 不在这里 —— 它由门面单独取 `isElevated()`，避免两处实现 ✓）
+export func sysInfo(): Dict {
+    // ① 发行版全名：`/etc/os-release`
+    var osr = sp.parse_os_release(_read_text("/etc/os-release"))
+    // ② 内核版本 / 主机名：各是一行一个值的 /proc 文件 ✓
+    string kernel = _read_text("/proc/sys/kernel/osrelease")
+    string host = _read_text("/proc/sys/kernel/hostname")
+    // ③ CPU：读一次 cpuinfo 拿型号 + 核数 ✓（ARM 上型号可能取不到，核数照样准 ✓）
+    var ci = sp.parse_cpuinfo(_read_text("/proc/cpuinfo"))
+    // ④ 内存：总量 + 可用（老内核缺 MemAvailable 时解析层会降级到 MemFree ✓）
+    var mi = sp.parse_meminfo(_read_text("/proc/meminfo"))
+    // ⑤ 运行时长：`/proc/uptime` 第一个数是秒（带小数 ⇒ 取整 ✓）
+    int uptimeSec = sp.first_int_in(_read_text("/proc/uptime"), 0)
+    // ⑥ 用户名：走 `id -un`（**比 $USER 权威** —— 环境变量谁都能改 ✗）
+    string user = ""
+    ExecResult? r = _exec("id -un", CMD_TIMEOUT_MS)
+    if r != null and r.code == 0 { user = strings.trim(r.output) }
+
+    return {osName: jsons.get_str(osr, "pretty", ""),
+            kernel: kernel,
+            host: host,
+            user: user,
+            cpuModel: jsons.get_str(ci, "model", ""),
+            cpuCount: jsons.get_int(ci, "count", 0),
+            memTotalKb: jsons.get_int(mi, "totalKb", 0),
+            memAvailKb: jsons.get_int(mi, "availKb", 0),
+            uptimeSec: uptimeSec}
+}
+
+// 读一个"一行一值"的 /proc 文件（读不到 ⇒ `""`；顺带去掉行尾换行 ✓）
+func _read_text(string path): string {
+    string txt = ""
+    try { txt = files.read(path) } catch e { return "" }
+    return strings.trim(txt)
+}
+
+// 当前是否 **root**（门面 `isElevated()` 的 Linux 实现 ✓）
+//   ⚠ 判据就是 `uid == 0`（Linux 没有 Windows 那套"提权令牌"概念）✓
+//   ⚠ `_uid()` 拿不到（-1）⇒ **保守返回 false**（"不确定是不是 root" 会误导调用方去删
+//     系统文件 ⇒ 宁可说"不是" ✓）
+export func isElevated(): bool {
+    return _uid() == 0
+}
+
 // ==================== 进程（/proc）====================
 
 // 返回 {ok, errorCode, processes:[{pid,name,path}]}
