@@ -325,6 +325,14 @@ export func cpuCount(): int {
     return sysinfo.cpuCount()
 }
 
+// 当前**前台窗口**属于哪个进程（0 = 取不到）
+//   用途：验证"唤起已有窗口"是否真的生效 —— 调完 `_instance_activate()` 后问一句
+//   "前台窗口的 pid 是不是那个应用"就能**机器判定**（assert\test_single_instance.leno 就是这么验的 ✓）
+export func foregroundWindowPid(): int {
+    if not _is_supported() { return 0 }
+    return sysinfo.foregroundWindowPid()
+}
+
 // 当前进程是否**已提权**（令牌的 TokenElevation ✓ —— 不是"用户名是不是 Administrator" ✗）
 export func isElevated(): bool {
     if not _is_supported() { return false }

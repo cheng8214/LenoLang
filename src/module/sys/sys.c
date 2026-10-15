@@ -15,8 +15,10 @@
     #include <unistd.h>
     #include <pwd.h>
     #include <signal.h>     // kill / SIGKILL（_kill 收整个进程组）
-    #include <errno.h>      // ESRCH（"整组都没了"也算收干净）
+    #include <errno.h>      // ESRCH（"整组都没了"也算收干净）；EWOULDBLOCK（_single_instance 判"已被占"）
     #include <sys/wait.h>   // waitpid（reap 子进程，别积僵尸）
+    #include <fcntl.h>      // open(O_CREAT|O_RDWR) —— _single_instance 的锁文件
+    #include <sys/file.h>   // flock(LOCK_EX|LOCK_NB) —— 内核持有、进程一死自动释放 ✓
     #ifdef __linux__
         #include <sys/prctl.h>  // PR_SET_PDEATHSIG —— "父进程一死就杀我"（仅 Linux 有）
     #endif
@@ -1102,6 +1104,333 @@ static Value native_kill(int argCount, Value* args) {
 #endif
 }
 
+// ==================== 单实例互斥：_single_instance([name])（2026-10-15） ====================
+//
+// 由来（用户实测）：`leno -p` 打出的**单文件 exe**，双击两次就会**起两个程序** —— 托盘应用 /
+//   清理工具这类当场打架：两边同写一份配置与日志、托盘里两个图标、两边抢同一台设备/同一批文件。
+//   任何系统都**不会**替我们判重：macOS 只对 **.app bundle** 由 Finder 保证单实例（双击第二次
+//   只是激活已运行的那个），而我们产出的是**裸二进制** ⇒ 一样开两个；Linux 双击 .desktop 同理。
+//
+// 语义：`_single_instance([name])`
+//   · 返回 **true**  = 本进程拿到了锁（它是第一个实例，可以继续跑）
+//   · 返回 **false** = 已经有实例在跑（调用方该干的是：把已有窗口顶到前台，然后自己退出）
+//   · `name` 省略 / 空串 / 全空白 ⇒ 用**本进程 exe 的绝对路径**当名字
+//     ⇒ "同一个程序只许一个实例"，**零配置**（打包 exe 双击场景要的就是这个 ✓）
+//   · `name` 给了 ⇒ 用它（同一个 exe 想分多个身份时用，如 "LenoDumate" / "LenoDumate-portable"）
+//   ⚠ 同一进程内重复调**同一个名字**也返回 false —— 因为事实就是"已经有一个实例在跑了"，
+//     不管那个实例是不是自己（要"重入"请自己开个名字 ✓）
+//
+// ★ 两端都用**内核持有**的锁 ⇒ 进程正常退出 / 崩溃 / 被 taskkill，内核自动释放
+//   ⇒ **不存在"上次崩了留下死锁、以后永远起不来"** —— 这正是选内核锁、而不是"锁文件存不存在"
+//   那种做法的唯一理由（后者崩溃后必须靠人删文件，且"谁先创建"没有原子性 ✗）
+//     · Windows：命名互斥体 `CreateMutexW` + `GetLastError() == ERROR_ALREADY_EXISTS`
+//     · POSIX  ：`open(..., O_CREAT|O_RDWR, 0600)` + `flock(fd, LOCK_EX|LOCK_NB)`
+//       （`flock` 的锁挂在**打开文件描述**上 ⇒ 同进程再 open 一次同一个文件也会被拒 ✓
+//         与 Windows 那边"重复调用返回 false"行为一致 ✓）
+//   ⚠ 锁的寿命 = 句柄/fd 的寿命 ⇒ 句柄**一直留着**（存进下表，进程退出时才由内核交还）✓
+//
+// ⚠ 失败（极少见：句柄/fd/文件建不出来）⇒ **放行**（返回 true）并往 stderr 打一行警告：
+//   宁可"可能多起一个"，也不要"用户双击了、程序却起不来"（fail-open ✓ —— 单实例是锦上添花，
+//   不是运行的前提）。
+// ⚠ 名字要**净化**：Windows 的互斥体名**不许含反斜杠**（那被当成 `Global\` / `Local\` 命名空间
+//   分隔符）；POSIX 的文件名不许含 `/`。⇒ 非法字符一律换成 `_`。
+// ⚠ 过长（> 120）⇒ 截断并**接一段 FNV-1a 哈希后缀**：不接哈希的话，两个长名字截断后会**撞成同
+//   一把锁** ⇒ 两个不同的应用互相顶掉（比"没做单实例"更难查 ✗）。
+// ⚠ Windows 侧**只对"默认名"（exe 路径）折叠大小写**：NTFS 路径大小写不敏感 ⇒ 同一个 exe
+//   写成 `D:\App\a.exe` / `d:\app\A.EXE` 必须落到同一把锁 ✓。
+//   **显式给的名字一律原样用**（两端都不折）—— 否则 `_single_instance("MyApp")` 与
+//   `_single_instance("myapp")` 在 Windows 上是同一把锁、在 Linux 上却是两把 ⇒ 同一份代码
+//   两端行为不一致 ✗（这种"平台间悄悄不同"最难查）。
+#define LENO_INSTANCE_MAX 16
+#define LENO_INSTANCE_NAME_MAX 160
+
+#ifdef _WIN32
+static HANDLE s_instance_handles[LENO_INSTANCE_MAX];
+#else
+static int s_instance_fds[LENO_INSTANCE_MAX];
+#endif
+static int s_instance_count = 0;
+
+// 名字净化（见上面两条 ⚠）；fold_lower 只在 Windows 侧为 1
+static void instance_sanitize(const char* in, char* out, size_t outsz, int fold_lower) {
+    unsigned long hash = 2166136261u;   // FNV-1a 32：只在需要截断时用来补后缀 ✓
+    const char* p;
+    for (p = in; *p; p++) {
+        hash = (hash ^ (unsigned char)*p) * 16777619u;
+    }
+
+    size_t limit = outsz - 10;          // 给 "_%08lx" 留位（多余位一律不用）
+    int truncated = 0;
+    if (strlen(in) > 120) { limit = 120; truncated = 1; }
+
+    size_t j = 0;
+    for (p = in; *p && j < limit; p++) {
+        unsigned char c = (unsigned char)*p;
+        if (fold_lower && c >= 'A' && c <= 'Z') c = (unsigned char)(c - 'A' + 'a');
+        // ⚠ 保留集**必须同时含大小写**：fold_lower=0 时大写字母不会被折成小写，
+        //   只写 `a-z` 的话它们会被当成非法字符换成 `_` ✗（2026-10-15 实测：显式名字
+        //   "LenoTestInstMainX" 被净成 "...X→_"，与另一个名字撞成同一把锁 ⇒ 用例当场红 ✓）
+        int keep = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+                   || c == '_' || c == '-' || c == '.';
+        out[j++] = keep ? (char)c : '_';
+    }
+    if (truncated) {
+        snprintf(out + j, outsz - j, "_%08lx", hash);
+        j += 9;
+    }
+    out[j] = '\0';
+    if (j == 0) snprintf(out, outsz, "default");
+}
+
+// 解析出"名字"与"记 pid 的文件路径"（两个内置函数共用；失败返回 0）
+//   · 名字：`given` 为空 ⇒ 本进程 exe 的绝对路径（Windows 侧才折大小写，见上）
+//   · pid 文件：Windows 用 `%TEMP%\leno-inst-<名字>.pid`（TEMP 本来就是"每个用户一份" ✓）；
+//     POSIX 用**锁文件本身**（`_single_instance` 拿到锁后就把 pid 写进去 ✓）
+static int instance_resolve(const char* given, char* nm, size_t nmsz,
+                            char* pid_path, size_t ppsz) {
+    char base[MAX_PATH_LEN];
+    base[0] = '\0';
+    if (given) {
+        snprintf(base, sizeof(base), "%s", given);
+    } else {
+#ifdef _WIN32
+        wchar_t wexe[4096];
+        DWORD n = GetModuleFileNameW(NULL, wexe, 4096);
+        if (n > 0 && n < 4096) {
+            char* u8 = utf16_to_utf8(wexe);
+            if (u8) { snprintf(base, sizeof(base), "%s", u8); free(u8); }
+        }
+#else
+        if (!platform_self_exe_path(base, sizeof(base))) base[0] = '\0';
+#endif
+    }
+    // ⚠ 取不到自身路径 ⇒ 让调用方**放行**，绝不退回某个"公共名字"
+    //   （那会让**不相干的应用**互相顶掉 ✗✗）
+    if (base[0] == '\0') return 0;
+
+#ifdef _WIN32
+    instance_sanitize(base, nm, nmsz, given ? 0 : 1);   // 只对默认名（路径）折大小写 ✓
+    wchar_t wtmp[MAX_PATH_LEN];
+    if (GetTempPathW(MAX_PATH_LEN, wtmp) == 0) return 0;
+    char* tmp = utf16_to_utf8(wtmp);                    // 走 UTF-8：用户名带中文也不能乱码 ✓
+    if (!tmp) return 0;
+    int ok = snprintf(pid_path, ppsz, "%sleno-inst-%s.pid", tmp, nm) < (int)ppsz;
+    free(tmp);
+    return ok;
+#else
+    instance_sanitize(base, nm, nmsz, 0);
+    // 放"每个用户一份"的地方：XDG_RUNTIME_DIR（systemd 会给，登录时清空 ✓）优先，否则 TMPDIR / /tmp
+    const char* dir = getenv("XDG_RUNTIME_DIR");
+    if (!dir || dir[0] == '\0') dir = getenv("TMPDIR");
+    if (!dir || dir[0] == '\0') dir = "/tmp";
+    // ⚠ 文件名里带 uid ⇒ 多用户机器上互不影响（"全局单实例"对桌面应用没意义 ✗）
+    return snprintf(pid_path, ppsz, "%s/leno-%s-%u.lock", dir, nm, (unsigned)getuid()) < (int)ppsz;
+#endif
+}
+
+// 把 pid 写进 pid 文件 —— **只服务于 `_instance_activate`（找持锁进程的窗口）** ✓
+//   ⚠ 判重**不看**这个文件（全靠锁本身）⇒ 内容陈旧/写失败都不影响单实例语义 ✓
+static void instance_write_pid(const char* path, int pid) {
+    char buf[32];
+    int len = snprintf(buf, sizeof(buf), "%d\n", pid);
+    if (len <= 0) return;
+#ifdef _WIN32
+    wchar_t* wp = utf8_to_utf16(path);
+    if (!wp) return;
+    FILE* f = _wfopen(wp, L"w");
+    free(wp);
+#else
+    FILE* f = fopen(path, "w");
+#endif
+    if (!f) return;
+    fwrite(buf, 1, (size_t)len, f);
+    fclose(f);
+}
+
+// 读 pid 文件（读不到 / 内容不是数字 ⇒ 0 ⇒ 调用方"如实说找不到" ✓）
+static int instance_read_pid(const char* path) {
+#ifdef _WIN32
+    wchar_t* wp = utf8_to_utf16(path);
+    if (!wp) return 0;
+    FILE* f = _wfopen(wp, L"r");
+    free(wp);
+#else
+    FILE* f = fopen(path, "r");
+#endif
+    if (!f) return 0;
+    int pid = 0;
+    if (fscanf(f, "%d", &pid) != 1) pid = 0;
+    fclose(f);
+    return pid;
+}
+
+static Value native_single_instance(int argCount, Value* args) {
+    const char* given = NULL;
+    if (argCount >= 1 && val_is_string(args[0])) {
+        const char* s = ((ObjString*)val_as_obj(args[0]))->chars;
+        const char* q = s;
+        while (*q == ' ' || *q == '\t') q++;
+        if (*q != '\0') given = s;      // 空 / 全空白 ⇒ 当"没给"（用默认名）
+    }
+
+    char nm[LENO_INSTANCE_NAME_MAX];
+    char path[MAX_PATH_LEN * 2];
+    if (!instance_resolve(given, nm, sizeof(nm), path, sizeof(path))) {
+        fprintf(stderr, "[_single_instance] 解析不出名字/路径 ⇒ 本次不做单实例检查（放行）\n");
+        return val_bool(1);
+    }
+    if (s_instance_count >= LENO_INSTANCE_MAX) {
+        fprintf(stderr, "[_single_instance] 实例锁已达上限 %d ⇒ 本次跳过（放行）\n", LENO_INSTANCE_MAX);
+        return val_bool(1);
+    }
+
+#ifdef _WIN32
+    char full[LENO_INSTANCE_NAME_MAX + 8];
+    // `Local\` = 本登录会话内唯一（桌面应用要的正是"每个登录用户一份" ✓）——
+    //   用 `Global\` 会跨会话/跨用户互斥（服务与多用户机器上语义不对 ✗）
+    snprintf(full, sizeof(full), "Local\\%s", nm);
+    wchar_t* wname = utf8_to_utf16(full);
+    if (!wname) {
+        fprintf(stderr, "[_single_instance] 名字转宽字符失败 ⇒ 本次跳过（放行）\n");
+        return val_bool(1);
+    }
+    // bInitialOwner = FALSE：只问"这个名字被占住没有"，不要求立刻持有（要的是判重，不是递归锁 ✓）
+    HANDLE h = CreateMutexW(NULL, FALSE, wname);
+    DWORD err = GetLastError();
+    free(wname);
+    if (!h) {
+        fprintf(stderr, "[_single_instance] CreateMutexW 失败（err=%lu）⇒ 本次跳过（放行）\n",
+                (unsigned long)err);
+        return val_bool(1);
+    }
+    if (err == ERROR_ALREADY_EXISTS) {
+        CloseHandle(h);                 // 别人的 ⇒ 关掉我们自己拿到的这个引用，别让计数虚涨
+        return val_bool(0);
+    }
+    s_instance_handles[s_instance_count++] = h;   // ★ 留着不放：它就是锁本身 ✓
+    instance_write_pid(path, (int)GetCurrentProcessId());   // 供 _instance_activate 找窗口 ✓
+    return val_bool(1);
+#else
+    int fd = open(path, O_CREAT | O_RDWR, 0600);
+    if (fd < 0) {
+        fprintf(stderr, "[_single_instance] 打不开锁文件 %s（errno=%d）⇒ 本次跳过（放行）\n", path, errno);
+        return val_bool(1);
+    }
+    if (flock(fd, LOCK_EX | LOCK_NB) != 0) {
+        int e = errno;
+        close(fd);
+        if (e == EWOULDBLOCK) return val_bool(0);   // 别人拿着 ⇒ 这就是"已有实例在跑" ✓
+        fprintf(stderr, "[_single_instance] flock 失败（errno=%d）⇒ 本次跳过（放行）\n", e);
+        return val_bool(1);
+    }
+    // 顺手把 pid 写进**锁文件本身**（`_instance_activate` 会来读它找窗口 ✓；`cat` 一下也知道谁占着 ✓）
+    //   ⚠ 判重不看内容（全靠 flock）⇒ 写不进去也不影响锁的语义 ✓
+    if (ftruncate(fd, 0) == 0) {
+        char buf[32];
+        int len = snprintf(buf, sizeof(buf), "%d\n", (int)getpid());
+        if (len > 0) {
+            ssize_t w = write(fd, buf, (size_t)len);
+            (void)w;
+        }
+    }
+    s_instance_fds[s_instance_count++] = fd;        // ★ 留着不关：关掉就等于放锁 ✓
+    return val_bool(1);
+#endif
+}
+
+// ==================== 唤起已有实例的窗口：_instance_activate([name])（2026-10-15） ====================
+//
+// 为什么要它（**没有它，单实例反而更差**）：加了 `_single_instance` 之后，"双击快捷方式"会变成
+//   "闪一下就没"—— 用户看到的现象从"窗口到最前面了"退化成"点了没反应" ✗。所以两者是**一对**：
+//     if not _single_instance() { _instance_activate(); _exit(0) }
+//   （就是 .NET 里 `Mutex` + `SetForegroundWindow` 那套的等价位 ✓）
+//
+// 语义：找"**当前持锁那个进程**"的**第一个可见顶层窗口**，显示（SW_RESTORE）并请求顶到前台；
+//   找到并请求过 ⇒ true；找不到（没窗口 / 拿不到 pid / 平台不支持）⇒ false —— **绝不假装** ✗
+//   · Windows：持锁进程的 pid 从 pid 文件读（`_single_instance` 写的 ✓）⇒ `EnumWindows` 按 **pid**
+//     找窗口（**不**按窗口标题/类名找：标题会变、类名会撞，两者都比 pid 不可靠 ✗）
+//   · POSIX  ：`wmctrl -lp` 按 pid 找窗口、`wmctrl -i -a <id>` 激活；**wmctrl 不在 ⇒ false**
+//     （X11 要连 X 服务器才能 XRaiseWindow，Wayland 更是没有跨 WM 的做法 ⇒ 不装工具就只能如实说做不到 ✓）
+//   ⚠ **自己持有锁**时调用它没有意义（不会有人需要"激活自己"）⇒ 直接 false ✓
+//   ⚠ Windows 的前台切换受"前台窗口锁"限制 ⇒ 我们只能**请求**（ShowWindow + SetForegroundWindow
+//     + BringWindowToTop）：返回 true 的含义是"**找到了窗口并且请求过了**"，
+//     **不代表**它一定成了前台 ✓（要更强的话得走 AllowSetForegroundWindow / 附加输入队列那一套 ✗）
+#ifdef _WIN32
+typedef struct {
+    DWORD pid;
+    HWND found;
+} LenoInstFind;
+
+// 只要**可见的顶层**窗口（有 owner 的是对话框/工具窗 ⇒ 不是主窗口 ✓）
+static BOOL CALLBACK leno_instance_enum_cb(HWND hwnd, LPARAM lp) {
+    LenoInstFind* ctx = (LenoInstFind*)lp;
+    DWORD wpid = 0;
+    GetWindowThreadProcessId(hwnd, &wpid);
+    if (wpid != ctx->pid) return TRUE;
+    if (!IsWindowVisible(hwnd)) return TRUE;
+    if (GetWindow(hwnd, GW_OWNER) != NULL) return TRUE;
+    ctx->found = hwnd;
+    return FALSE;                        // 找到第一个就停手 ✓
+}
+#endif
+
+static Value native_instance_activate(int argCount, Value* args) {
+    const char* given = NULL;
+    if (argCount >= 1 && val_is_string(args[0])) {
+        const char* s = ((ObjString*)val_as_obj(args[0]))->chars;
+        const char* q = s;
+        while (*q == ' ' || *q == '\t') q++;
+        if (*q != '\0') given = s;
+    }
+
+    char nm[LENO_INSTANCE_NAME_MAX];
+    char path[MAX_PATH_LEN * 2];
+    if (!instance_resolve(given, nm, sizeof(nm), path, sizeof(path))) return val_bool(0);
+
+#ifdef _WIN32
+    int owner = instance_read_pid(path);
+    if (owner <= 0) return val_bool(0);                          // 没有 pid ⇒ 找不到（不猜 ✓）
+    if (owner == (int)GetCurrentProcessId()) return val_bool(0); // 自己拿着锁 ⇒ 无需"唤起自己"
+
+    LenoInstFind ctx;
+    ctx.pid = (DWORD)owner;
+    ctx.found = NULL;
+    EnumWindows(leno_instance_enum_cb, (LPARAM)&ctx);
+    if (ctx.found == NULL) return val_bool(0);                   // 那个进程没有可见顶层窗口 ✓
+    ShowWindow(ctx.found, SW_RESTORE);                           // 最小化的先还原 ✓
+    SetForegroundWindow(ctx.found);
+    BringWindowToTop(ctx.found);
+    return val_bool(1);
+#else
+    int owner = instance_read_pid(path);
+    if (owner <= 0) return val_bool(0);
+    if (owner == (int)getpid()) return val_bool(0);
+
+    // 探测 + 使用都交给 wmctrl（**真二进制**；不在就如实 false ✓ —— 与 LenoSys 的 openWith 同取向）
+    if (system("command -v wmctrl >/dev/null 2>&1") != 0) return val_bool(0);
+    FILE* p = popen("wmctrl -lp", "r");
+    if (!p) return val_bool(0);
+    char wid[32];
+    wid[0] = '\0';
+    char line[512];
+    while (fgets(line, sizeof(line), p) != NULL) {
+        unsigned long w = 0;
+        long desk = 0, wpid = 0;
+        // 形态：`0x03400007  0 12345  host  Window title`（窗口id 桌面  pid 主机 标题 ✓）
+        if (sscanf(line, "%lx %ld %ld", &w, &desk, &wpid) >= 3 && (int)wpid == owner) {
+            snprintf(wid, sizeof(wid), "0x%lx", w);
+            break;
+        }
+    }
+    pclose(p);
+    if (wid[0] == '\0') return val_bool(0);
+
+    char cmd[96];
+    snprintf(cmd, sizeof(cmd), "wmctrl -i -a %s", wid);
+    return val_bool(system(cmd) == 0);
+#endif
+}
+
 // ==================== 初始化 ====================
 
 void sys_init_globals(void) {
@@ -1179,4 +1508,20 @@ void sys_init_globals(void) {
     TypeKind kill_params[] = { TYPE_INT };
     vm_register_native("_kill", native_kill, TYPE_BOOL, TYPE_UNKNOWN, NATIVE_FIXED(kill_params));
     spawn_init_once();
+
+    // 注册全局 _single_instance([name]) —— **单实例互斥**（2026-10-15，见函数头注释）
+    //   `_single_instance()`      ⇒ 名字 = 本 exe 路径（"同一个程序只许一个实例" ✓）
+    //   `_single_instance("app")` ⇒ 显式名字（同一个 exe 分多个身份 ✓）
+    //   返回 bool：true = 我拿到了（第一个实例）；false = 已有实例在跑
+    //   ⚠ 参数个数 0..1；那 1 个按 string 查表（VARARG 的 min 可以小于声明数 ✓，同 strings.to_hex）
+    TypeKind instance_params[] = { TYPE_STRING };
+    vm_register_native("_single_instance", native_single_instance, TYPE_BOOL, TYPE_UNKNOWN,
+                       NATIVE_VARARG(0, 1, 1, instance_params, TYPE_ANY));
+
+    // 注册全局 _instance_activate([name]) —— 把**持锁那个进程**的窗口顶到前台（见函数头注释）
+    //   ⚠ 与 `_single_instance` 是**一对**：只有它俩一起用，"双击第二次"才是"切到已有窗口"
+    //     而不是"闪一下就没" ✓
+    //   返回 bool：true = 找到窗口并请求过（**不代表**一定成了前台 ✓）；false = 没找到/平台不支持
+    vm_register_native("_instance_activate", native_instance_activate, TYPE_BOOL, TYPE_UNKNOWN,
+                       NATIVE_VARARG(0, 1, 1, instance_params, TYPE_ANY));
 }

@@ -1,0 +1,174 @@
+// _single_instance 单实例互斥回归（2026-10-15）
+//
+// 由来：`leno -p` 打出的单文件 exe 双击两次会起两个程序（托盘应用/清理工具当场打架）。
+// 这个用例要钉死的是**四条性质**，尤其是第 ④ 条（它才是选内核锁的理由）：
+//   ① 同一个名字只能被拿到一次（**同一进程内重复调也 false** ✓）
+//   ② 不同名字互不影响
+//   ③ **跨进程**真的互斥（不是只在同进程里自说自话）
+//   ④ ★ 持锁进程一死（被杀 / 崩溃），锁**由内核自动释放** ⇒ 不存在"崩一次以后永远起不来"
+//
+// ⚠ 用例假设测试是**串行**跑的（assert/run_tests.leno 就是一个个 _exec）：只有这样，
+//   "默认名 = 本 exe 路径" 那条断言才稳定（同一 exe 的另一个实例同时在跑就会 false ✓）。
+import dirs
+import files
+import strings
+import Sys        // 找 notepad 的 pid（⑤ 唤起窗口的验证用 ✓）
+import Win32      // foregroundWindowPid()：机器判定"前台窗口是不是它" ✓
+
+// 等一个文件出现（最多 ~5 秒）；出现则返回其内容，超时返回 ""
+func waitFile(string path, int ms): string {
+    int waited = 0
+    while (waited < ms) {
+        if files.exists(path) {
+            try { return strings.trim(files.read(path)) } catch e { return "" }
+        }
+        sleep(50)
+        waited = waited + 50
+    }
+    return ""
+}
+
+main() {
+    print("=== _single_instance 回归 ===")
+
+    // ---------- ① 同进程内：拿到一次之后，同一个名字必须失败 ----------
+    string n1 = "LenoTestInstMain"
+    assert_eq(_single_instance(n1), true, "第一次应当拿到锁")
+    assert_eq(_single_instance(n1), false, "同一个名字第二次必须失败（同一进程内也算'已在跑' ✓）")
+    assert_eq(_single_instance(n1), false, "第三次还是 false（幂等，不抛 ✓）")
+
+    // ---------- ② 不同名字互不影响 ----------
+    string n2 = n1 + "B"
+    assert_eq(_single_instance(n2), true, "不同名字应当互不影响")
+
+    // ---------- 默认名（省略 / 空 / 全空白 ⇒ 本 exe 路径）----------
+    assert_eq(_single_instance(), true, "默认名（本 exe）第一次应拿到")
+    assert_eq(_single_instance(), false, "默认名第二次必须失败")
+    assert_eq(_single_instance(""), false, "空串 ⇒ 与省略等价 ⇒ 同一个默认名 ⇒ false")
+    assert_eq(_single_instance("   "), false, "全空白 ⇒ 同上")
+
+    // ---------- 名字净化：非法字符不崩；净化后同名的两个原始名 = **同一把锁** ----------
+    //   ⚠ 这是净化的**已知代价**（Windows 的互斥体名不许含 `\`、POSIX 文件名不许含 `/`）
+    //     ⇒ 如实钉在这里，别让它变成"以后偶然发现两个应用互相顶掉"的悬案 ✓
+    assert_eq(_single_instance("LenoTestInstSan*itize"), true,
+              "带非法字符的名字应被净化后正常工作（不抛 ✓）")
+    assert_eq(_single_instance("LenoTestInstSan?itize"), false,
+              "`*` 与 `?` 都被净化成 `_` ⇒ 是**同一把锁**（已知代价，不是 bug ✓）")
+
+    // ---------- 大小写：**显式名字两端都原样用**（只有默认名=exe 路径在 Windows 侧折叠）----------
+    //   ⚠ 这条是跨平台一致性断言：`MyApp` 与 `myapp` 在任何平台都该是**两把不同的锁** ✓
+    //     （Windows 路径大小写不敏感 ⇒ 只有"默认名（exe 路径）"才折叠，见 sys.c 的注释 ✓）
+    assert_eq(_single_instance("LenoCaseProbe"), true, "显式名字第一次应拿到")
+    assert_eq(_single_instance("lenocaseprobe"), true,
+              "显式名字大小写敏感（两端一致 ✓）；只有默认名（exe 路径）在 Windows 侧折叠")
+
+    print("①② 同进程判重 / 不同名字 / 默认名 / 净化 / 大小写 通过!")
+
+    // ---------- ③④ 跨进程互斥 + 进程一死自动放锁 ----------
+    var work = dirs.join(_tmpdir(), "leno_inst_test")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // 子脚本：拿到/没拿到锁都**写进 ready 文件**（父进程靠它判断，不靠 sleep 猜时间 ✓）
+    string child = dirs.join(work, "child.leno")
+    files.write(child,
+        "import files\n"
+        + "main() {\n"
+        + "    var a = _args()\n"
+        + "    string nm = if a.len() > 0 then a[0] else \"x\"\n"
+        + "    string ready = if a.len() > 1 then a[1] else \"\"\n"
+        + "    int hold = if a.len() > 2 then _int(a[2]) else 8000\n"
+        + "    bool got = _single_instance(nm)\n"
+        + "    if ready != \"\" { files.write(ready, if got then \"LOCKED\" else \"DENIED\") }\n"
+        + "    sleep(hold)\n"
+        + "}\n")
+
+    string exe = _executable()
+    string nm4 = n1 + "X"
+    string readyA = dirs.join(work, "a.ready")
+    string readyB = dirs.join(work, "b.ready")
+
+    // 起一个**持锁不放**的子进程（它会 sleep 8 秒，等着被父进程收掉）
+    int h = _spawn(exe, "\"" + child + "\" " + nm4 + " " + readyA)
+    assert_true(h > 0, "子进程应当起得来")
+
+    string a = waitFile(readyA, 5000)
+    assert_eq(a, "LOCKED", "子进程应当拿到锁（实际 '" + a + "'）")
+
+    // ★ ③ 跨进程：别人拿着名字时，本进程必须失败
+    assert_eq(_single_instance(nm4), false, "跨进程：另一个进程持锁时本进程必须失败")
+
+    // ★ 更强的独立证据：**再起一个子进程**去抢同一个名字 ⇒ 它也必须 DENIED
+    var r2 = _exec(exe + " \"" + child + "\" " + nm4 + " " + readyB + " 0")
+    assert_ne(r2, null, "第二个子进程应当能起来")
+    string b = waitFile(readyB, 5000)
+    assert_eq(b, "DENIED", "第二个子进程必须被拒（实际 '" + b + "'）")
+
+    // ★ ④ 收掉持锁进程 ⇒ 锁必须由**内核**自动释放（这是本实现最关键的性质 ✓）
+    assert_true(_kill(h), "应当能收掉持锁的子进程")
+    bool gotIt = false
+    int tries = 0
+    while (tries < 30) {
+        if _single_instance(nm4) {
+            gotIt = true
+            break
+        }
+        sleep(100)
+        tries = tries + 1
+    }
+    assert_true(gotIt, "持锁进程被杀 ⇒ 锁必须自动释放（内核持有 ✓；不再需要人工删锁文件 ✓）")
+
+    print("③④ 跨进程互斥 / 持锁进程被杀后锁自动释放 通过!")
+
+    // ---------- ⑤ 唤起已有窗口：`_instance_activate([name])`（Windows ✓）----------
+    //   ★ 为什么必须验它：单实例**单独用**会把"双击第二次"变成"闪一下就没"（比多开更差 ✗）
+    //     ⇒ 它俩是一对：`if not _single_instance() { _instance_activate(); _exit(0) }`
+    //   ★ 怎么验（**机器判定**，不靠肉眼）：拿一个有可见窗口的进程当"持锁进程"（这里用 notepad），
+    //     把它的 pid 写进 pid 文件（名字→文件路径是契约的一部分 ✓），然后：
+    //       ① `_instance_activate(名字)` 必须返回 true（找到了那个进程的可见顶层窗口 ✓）
+    //       ② 再问 `Win32.foregroundWindowPid()`：前台窗口的 pid 应**就是**它 ✓
+    //     ⚠ 直接起一个"持锁的 leno 进程"验不了：控制台窗口属于 **conhost**，不在 leno 进程名下 ✗
+    if Sys.os() == "windows" {
+        string an = "LenoActTest"
+        string pidFile = _tmpdir() + "leno-inst-" + an + ".pid"
+        var nh = _spawn("notepad.exe", "")
+        assert_true(nh > 0, "notepad 应当起得来（拿它当'有窗口的持锁进程'）")
+        sleep(700)   // 等它把窗口建出来
+
+        var nps = Sys.findProcess("notepad")
+        assert_true(nps.len() > 0, "应当能找到 notepad 进程")
+        int npid = nps[0].pid
+        files.write(pidFile, _str(npid))
+
+        bool got = false
+        int tries2 = 0
+        while (tries2 < 20) {                     // 给它点时间建窗口（首次启动会慢一点）
+            if _instance_activate(an) { got = true; break }
+            sleep(150)
+            tries2 = tries2 + 1
+        }
+        assert_true(got, "应当找到 notepad 的可见顶层窗口并请求激活")
+
+        int fg = Win32.foregroundWindowPid()
+        assert_eq(fg, npid, "前台窗口应当就是 notepad（实际 pid " + _str(fg) + " / 期望 "
+                  + _str(npid) + "）")
+
+        // 自持锁时不该"激活自己"（没有意义 ⇒ 明确返回 false ✓）
+        assert_true(not _instance_activate(), "自己拿着锁时 ⇒ false（不假装 ✓）")
+
+        print("⑤ 唤起已有窗口（拿 notepad 当持锁进程：找到窗口 + 前台 pid 对得上）通过!")
+
+        assert_true(_kill(nh), "收掉 notepad")
+        // 清理我们手工造的 pid 文件（⚠ 本语言**不许空 catch**：确定忽略也要写明 ✓）
+        if files.exists(pidFile) {
+            try { files.delete(pidFile) } catch e { print("（pid 文件没删掉：" + pidFile + "）") }
+        }
+    } else {
+        print("（POSIX 侧的唤起走 wmctrl，本机验不了 ⇒ 跳过该节 ✓）")
+    }
+
+    // 收尾：临时目录删干净（锁文件在系统临时目录，不在这里 ✓）
+    dirs.delete(work)
+
+    print("=== _single_instance：全部通过 ===")
+}

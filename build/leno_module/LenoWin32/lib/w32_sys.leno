@@ -81,6 +81,9 @@ clib user32 {
     i32 DestroyWindow(Ptr hwnd)
     // 取系统自带图标（hInstance=null + 资源号；返回 HICON）—— 气泡**必须**有真图标才能弹 ✓
     Ptr LoadIconW(Ptr hInstance, Ptr name)
+    // 前台窗口 / "这个窗口属于哪个进程"—— 用于**验证**"唤起已有窗口"到底成没成 ✓
+    Ptr GetForegroundWindow()
+    u32 GetWindowThreadProcessId(Ptr hwnd, Ptr outPid)
 }
 
 user32 _usr = null
@@ -200,6 +203,21 @@ export func userName(): string {
     } finally {
         ffi.free(buf)
         ffi.free(sz)
+    }
+}
+
+// 当前**前台窗口**属于哪个进程（0 = 取不到）—— 主要给"唤起已有窗口"的验证用：
+//   调完 `_instance_activate()` 后问一句"前台窗口的 pid 是不是那个应用"，就能**机器判定** ✓
+export func foregroundWindowPid(): int {
+    Ptr h = _usrLib().GetForegroundWindow()
+    if h == null { return 0 }
+    Ptr out = ffi.malloc(4)
+    try {
+        ffi.write_int(out, 0, 0)
+        _usrLib().GetWindowThreadProcessId(h, out)
+        return ffi.read_int(out, 0)
+    } finally {
+        ffi.free(out)
     }
 }
 
