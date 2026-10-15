@@ -498,6 +498,87 @@ func _rm_rf(string p) {
     }
 }
 
+// ==================== 桌面集成（打开 / 定位 / 通知）====================
+// 三个都靠 freedesktop 约定的小工具（`xdg-open` / `notify-send`），**先探测再调用** ✓
+//   ⚠ 工具不在 ⇒ 直接 `false`：**绝不假装成功** ✗
+//     （"返回 true、屏幕上却什么都没发生"是最坏的一种 —— 调用方据此没法置灰按钮 ✗）
+//   ⚠ `xdg-open` 的 generic 分支是**前台 exec**（会一直等到目标程序退出）⇒ 前台跑必然
+//     被 `CMD_TIMEOUT_MS` 掐掉、还会误报失败 ✗ ⇒ 打开类一律**后台发起**（见下 ✓）
+//   ⚠ `notify-send` 是**同步**的（等通知守护进程应答，毫秒级）⇒ 它前台跑，能用退出码
+//     如实回答"投递出去没有" ✓ —— 两者语义不同，不要统一样子 ✗
+
+// 某命令是否可用
+//   ⚠ 判据用 `which`（**真二进制**），**不能**用 `command -v` ✗ —— 这条踩过实测：
+//     `_exec` 把命令包成 `( timeout N <cmd> )` 再交给 sh，而 `timeout` 是用 `execvp` 跑命令词的
+//     ⇒ **命令词必须是真二进制**；shell 内建（`command` / `type` / `test`）当命令词会直接失败 ✗
+//     （实测复现：`timeout 5 command -v xdg-open` ⇒ `timeout: 无法运行命令 "command"` rc=127 ✓
+//       而 `timeout 5 whoami` 正常 ✓）
+//   ⚠ 反过来，用 sh 能解释的语法（`&` / 重定向）是**可以**的 —— 因为最终走 `system()` ✓
+//   ⚠ `which` 本身缺席（极小容器）⇒ 返回 false = 当成"不可用"（保守方向 ✓ 见文件头）
+func _hasCmd(string name): bool {
+    ExecResult? r = _exec("which " + sp.sh_quote(name), CMD_TIMEOUT_MS)
+    if r == null or r.code != 0 { return false }
+    return strings.trim(r.output) != ""
+}
+
+// 粗略判 URI：含 `://`（http/https/file…）或以 `mailto:` 起首 ✓
+func _isUri(string s): bool {
+    if strings.find(s, "://") >= 0 { return true }
+    return strings.starts_with(s, "mailto:")
+}
+
+// 用系统默认程序打开一个**文件 / 目录 / URI**（`https://…` 也认 ✓）
+//   ⚠ 非 URI 的话要求它**存在**：xdg-open 对不存在的路径会静默失败，而我们后台发起后
+//     根本拿不到它的退出码 ⇒ 先自己挡一道 ✓
+//   ⚠ 返回 `true` 的含义是"**已发起**打开请求"，不等于目标程序真的起来了 ✓（注释与门面同步）
+//   ★ 2026-10-15 更正：这一句里有**两个各自独立**的手法，别把它们混成一条（我第一版就写错了 ✗）：
+//     · `&` ⇒ **sh 立刻返回**（不等程序退出）—— 这才是"不卡住"的原因 ✓
+//       （xdg-open 的 generic 分支是前台 exec，会一直等到程序退出 ⇒ 前台跑必被超时掐掉 ✗）
+//     · `>/dev/null 2>&1` ⇒ **不让应用的输出混进本次捕获的 out/err** ✓
+//       （`_exec` 会把整组的 stdout/stderr 收进临时文件当返回值返回；不隔离的话，被打开的
+//        程序会往我们这两个文件里写东西 ⇒ 本次 `_exec` 的 out/err 被污染 ✗）
+//       ⚠ 第一版我把这条理由写成"子进程攥着 popen 管道写端不放 ⇒ pclose 一直等" —— **那是错的** ✗：
+//         这条路径根本没有 popen（`_exec` 走的是 `system()` + 临时文件，见 src/module/sys/sys.c ✓）
+//   ⚠⚠ 这一整句**故意不传超时参数**（`_exec` 第 2 参缺省 ⇒ `timeout_ms=0` ⇒ 不套 `timeout`）：
+//     · 若套上 `timeout`，超时那一刻它会**连同刚启动起来的程序一起** TERM 掉 ✗✗
+//       （GNU timeout 默认把子进程放进新**进程组**、超时按**组**发信号 ⇒ 用 `&` 起的子进程会被连坐 ✓）
+//       实测两条（build/_openwith_probe.leno 里钉着）：带超时的后台命令会被收掉（pgrep 退出码 1）、
+//       不带超时的活着（退出码 0）✓
+//     · 也**不能**改成"用 `exec` 包一层" —— 门面的 `exec` 固定 30s 超时、没有退出通道 ✗
+export func openWith(string path): bool {
+    string p = strings.trim(path)
+    if p == "" { return false }
+    if not _isUri(p) and not dirs.exists(p) { return false }
+    if not _hasCmd("xdg-open") { return false }
+    _exec("xdg-open " + sp.sh_quote(p) + " >/dev/null 2>&1 &")
+    return true
+}
+
+// 在文件管理器里**打开它所在的目录**（**不保证"选中该文件"** ✗）
+//   ⚠ 精确选中要 D-Bus `org.freedesktop.FileManager1.ShowItems`，而它**并非所有文件管理器
+//     都实现**（且要 dbus-send/gdbus 多一个依赖 ✗）⇒ 这里选**朴素但处处可用**的做法：
+//     打开父目录 ✓ —— 宁可少一点功能，也要真能用 ✓
+export func revealInFolder(string path): bool {
+    string p = strings.trim(path)
+    if p == "" or not dirs.exists(p) { return false }
+    string parent = dirs.dirname(p)
+    if parent == "" { parent = "/" }
+    return openWith(parent)
+}
+
+// 发一条桌面通知（标题必填；正文可空 ✓）
+//   ⚠ 退出码就是"守护进程收没收" ⇒ 如实返回 ✓（不是"已发起"那种弱语义 ✓）
+//   ⚠ 没装 notify-send / 没有通知守护进程（纯服务器）⇒ false ✓ 调用方据此降级为打日志 ✓
+export func notify(string title, string body): bool {
+    string t = strings.trim(title)
+    if t == "" { return false }
+    if not _hasCmd("notify-send") { return false }
+    ExecResult? r = _exec("notify-send " + sp.sh_quote(t) + " " + sp.sh_quote(strings.trim(body)),
+                          CMD_TIMEOUT_MS)
+    if r == null { return false }
+    return r.code == 0
+}
+
 // ==================== 开机启动项（freedesktop autostart 规范）====================
 //
 //   用户级：`~/.config/autostart/*.desktop`     系统级：`/etc/xdg/autostart/*.desktop`

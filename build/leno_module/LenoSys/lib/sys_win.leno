@@ -137,6 +137,28 @@ export func listTrash(): Array {
     return none
 }
 
+// ==================== 桌面集成（打开 / 定位 / 通知）====================
+// ⚠⚠ 三个都是**未实现桩**（与 sysInfo / processPath / listTrash 同款 ✓）：
+//   宁可返回 false 并写明补法，也**不假装成功** ✗（见 Sys.leno 顶部约定 ✓）
+//   补法（前两个是 `_exec` 一行就能做掉的 —— 但**没在 Windows 上验过就不写** ✗）：
+//     · openWith       ⇒ `ShellExecuteW(NULL, L"open", path, NULL, NULL, SW_SHOWNORMAL)`
+//       （轻量替代 `cmd /c start "" "<path>"`：**start 对引号与 & | ^ 等特殊字符有坑** ✗）
+//     · revealInFolder ⇒ `explorer /select,"<path>"` —— 这条**没有对应 API**，就是命令行开关 ✓
+//       （注意 `/select,` 后面**不能有空格**，且路径要**反斜杠**形式 ✓）
+//     · notify         ⇒ 系统**没有**直接 API：要么 `Shell_NotifyIcon` + 托盘气泡，
+//       要么 Toast（WinRT `Windows.UI.Notifications`，XML 模板）—— 都比 Linux 侧重 ✗
+export func openWith(string path): bool {
+    return false
+}
+
+export func revealInFolder(string path): bool {
+    return false
+}
+
+export func notify(string title, string body): bool {
+    return false
+}
+
 export func diskSpace(string path): Dict {
     var r = Win32.diskSpace(driveRootOf(path))
     if not jsons.get_bool(r, "ok", false) { return {ok: false, total: 0, free: 0} }

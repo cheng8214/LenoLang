@@ -161,6 +161,25 @@ main() {
     }
     print("系统信息 通过（osName='" + si.osName + "' cpu×" + _str(si.cpuCount) + "）!")
 
+    // ---------- 桌面集成（openWith / revealInFolder / notify）----------
+    // ★ 本用例的规矩是"**不碰用户环境**"（见文件头）⇒ 这里**只喂空/非法入参**：
+    //   它们按契约必须返回 false 且**不产生任何副作用**（不会开窗口、不会弹通知 ✓）。
+    //   ⚠ 真开窗口/真发通知的路径**不在这里验**（那会打扰跑测试的人 ✗）⇒ 交给探针/
+    //     人工 ✓ —— 这也是本模块一贯的做法（真删/真清空同样只由人工探针验 ✓）
+    assert_eq(Sys.openWith(""), false, "空路径 ⇒ false（不抛、不开任何东西 ✓）")
+    assert_eq(Sys.openWith("   "), false, "纯空白 ⇒ false ✓")
+    assert_eq(Sys.revealInFolder(""), false, "空路径 ⇒ false ✓")
+    assert_eq(Sys.notify(""), false, "空标题 ⇒ false（标题必填 ✓）")
+    assert_eq(Sys.notify("   ", "正文"), false, "纯空白标题 ⇒ false ✓")
+    if not Sys.isWindows() {
+        //   不存在的路径也要挡住（否则 xdg-open 会静默失败而我们后台发起后拿不到退出码 ✗）
+        assert_eq(Sys.openWith("/definitely/not/here_xyz"), false, "不存在的路径 ⇒ false ✓")
+        assert_eq(Sys.revealInFolder("/definitely/not/here_xyz"), false, "不存在的路径 ⇒ false ✓")
+        //   ⚠ 不测"工具在不在"：裸 Linux 容器里可能真没有 xdg-open/notify-send
+        //     ⇒ 那属于环境差异，写成硬断言会变成机器相关用例 ✗
+    }
+    print("桌面集成 通过（只验空/非法入参 ⇒ 无副作用 ✓）!")
+
     // ---------- 启动项 / 已装软件 / 最近文件：只验"可调用 + 结构对" ----------
     var su = Sys.listStartupItems()
     for su to it { assert_true(it.id != "" or it.name != "", "启动项应有 id 或 name") }

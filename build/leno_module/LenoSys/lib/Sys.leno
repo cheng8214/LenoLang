@@ -174,11 +174,16 @@ export func joinPath(Array[string] parts): string {
 
 // ==================== 执行命令 ====================
 
-// 在**平台 shell** 里执行（Win: `cmd /c`；Linux: `sh` ⇒ popen 自带 ✓）
+// 在**平台 shell** 里执行（Win: `cmd /c`；Linux: `sh` ✓）
 //   返回 {ok, code, out}；起不来 ⇒ ok=false, code=-1 ✓
+//   ★ 2026-10-15 更正（本轮实测踩到才查清的）：Linux 侧**不是 popen，是 `system()`** —— 效果同样是
+//     "有 sh"（所以 `&`、重定向、管道都能用 ✓），但 **`_exec` 会在命令前面套一层 `timeout`**，
+//     而 `timeout` 用 `execvp` 跑命令词 ⇒ **shell 内建（`command`/`type`/`test`）当命令词会直接失败**
+//     （`timeout: 无法运行命令 "command"` rc=127 ✗）⇒ 需要内建就走 `sh -c '…'`，或改用真二进制
+//     （如探测命令用 `which` ✓）。另外固定带的 30s 超时还有个陷阱：见 sys_linux 的 openWith 注释 ✓
 export func exec(string cmd): Dict {
     // Windows 必须显式 `cmd /c`（`_exec` 在 Windows 走后 CreateProcessW，**不套 shell** ✓）；
-    // Linux 走 popen ⇒ 自带 `/bin/sh -c` ✓ 不用再包一层
+    // Linux **不用再包一层**：`_exec` 最终走 `system()` ⇒ 本来就带 `/bin/sh -c` ✓
     string full = cmd
     if _isW() { full = "cmd /c " + cmd }
     ExecResult? r = _exec(full, 30000)
@@ -275,6 +280,38 @@ export func diskUsagePercent(string path): int {
 export func listDrives(): Array[string] {
     if _isW() { return w.listDrives() }
     return l.listDrives()
+}
+
+// ==================== 桌面集成 ====================
+
+// 用**系统默认程序**打开一个文件 / 目录 / URI（`https://…` 也认 ✓）
+//   Linux ：`xdg-open`（**后台发起** —— 它前台跑会一直等到目标程序退出 ⇒ 必被超时掐掉 ✗）
+//   Windows：桩（补法见 sys_win.leno ✓）
+//   ⚠ 返回 `true` = "**已发起**打开请求"，**不等于**目标程序真的开起来了 ✓
+//     （要"确实开起来了"只能等目标进程出现，那是另一件事 ✗）
+//   ⚠ 非 URI 的入参要求**路径存在**；工具不在（如无 xdg-open）⇒ `false` ✓
+//     ⇒ 应用可以拿 false 把按钮**置灰**，而不是点了没反应 ✓
+export func openWith(string path): bool {
+    if _isW() { return w.openWith(path) }
+    return l.openWith(path)
+}
+
+// 在文件管理器里**打开它所在的目录**（**不保证选中该文件** ✗）
+//   Linux ：打开父目录（精确选中要 D-Bus FileManager1，不是每个文件管理器都实现 ✓）
+//   Windows：桩（补法：`explorer /select,"…"` ✓）
+//   ⚠ 传目录自身 ⇒ 打开的就是它本身（dirname 的结果）✓
+export func revealInFolder(string path): bool {
+    if _isW() { return w.revealInFolder(path) }
+    return l.revealInFolder(path)
+}
+
+// 发一条**桌面通知**（标题必填；正文可空 ✓）
+//   Linux ：`notify-send`（**同步**，退出码即"守护进程收没收" ⇒ 如实返回 ✓）
+//   Windows：桩（补法：Shell_NotifyIcon + 托盘气泡 / Toast ✓）
+//   ⚠ 没有通知服务（纯服务器 / 未装 notify-send）⇒ `false` ⇒ 调用方应降级为打日志 ✓
+export func notify(string title, string body = ""): bool {
+    if _isW() { return w.notify(title, body) }
+    return l.notify(title, body)
 }
 
 // ==================== 系统信息 ====================
@@ -483,6 +520,26 @@ export func selfTest(): Dict {
 
     var tl = listTrash()
     lines.add("listTrash = " + _str(tl.len()) + " 条（0 也可能是真没有 ✓；Windows 侧未实现 ⇒ 恒 0）")
+
+    // ★ 2026-10-15 桌面集成：**只报"可调用"，不真去开窗口/发通知** ✗
+    //   （自检不该打扰用户 —— 真开一个文件管理器窗口、弹一条通知都是打扰 ✓）
+    //   ⇒ 用**空入参**探一下：按契约它必须返回 false 且不产生任何副作用 ✓
+    lines.add("openWith('') = " + (if openWith("") then "true" else "false") + "（空入参应恒 false ✓）")
+    lines.add("revealInFolder('') = " + (if revealInFolder("") then "true" else "false") + "（同上 ✓）")
+    lines.add("notify('') = " + (if notify("") then "true" else "false") + "（标题必填 ⇒ false ✓）")
+    if not _isW() {
+        //   Linux 侧顺带报"工具在不在"（这才是决定这三个能不能用的东西 ✓；只读探测、无副作用 ✓）
+        //   ⚠ 这里用 `which`（**真二进制**）而**不是** `command -v`：`exec` 固定带 30s 超时 ⇒
+        //     命令会被包进 `timeout`，而 `timeout` 用 execvp 跑命令词 ⇒ shell 内建当命令词会失败 ✗
+        //     （同 sys_linux 的 `_hasCmd` 注释，实测复现过 ✓）
+        var lo = exec("which xdg-open")
+        var lnc = exec("which notify-send")
+        string xo = "无"
+        string ns = "无"
+        if jsons.get_bool(lo, "ok", false) { xo = strings.trim(jsons.get_str(lo, "out", "")) }
+        if jsons.get_bool(lnc, "ok", false) { ns = strings.trim(jsons.get_str(lnc, "out", "")) }
+        lines.add("xdg-open = " + xo + " · notify-send = " + ns)
+    }
 
     // ★ 2026-10-15 系统信息（Linux 侧全部可读；Windows 侧是桩 ⇒ 那里只报"可调用"、不计失败 ✓）
     var si = sysInfo()
