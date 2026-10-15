@@ -26,6 +26,12 @@ typedef struct {
     int line;
     int line_start;     // 当前行起始位置（用于计算列号）
     Token current;
+    // ★ 2026-10-15：**上一个 token**（每次 `lexer_next` 把旧的 current 挪进来）——
+    //   用途：后缀 `++`/`--` 的**跨行判定**（`parse_postfix_inc_dec` 要"操作符与左表达式必须在同一行"，
+    //   否则上一行表达式会把下一行行首的 `++i` 吃成 `表达式++` ✗，见那里的注释 ✓）。
+    //   用 Token 整体拷贝（≈48 字节）：只在 `lexer_next` 顶部赋值一次，编译期开销可忽略 ✓
+    //   ⚠ `Lexer saved = p->lex` 这类**整体保存/恢复**会把 prev 一并带上 ⇒ 行为一致 ✓
+    Token prev;
     // 插值字符串状态
     int in_interp;      // 是否在插值字符串中
     int in_expr;        // 是否在表达式中

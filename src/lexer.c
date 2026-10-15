@@ -643,6 +643,11 @@ void lexer_init(Lexer* lex, const char* source) {
 }
 
 void lexer_next(Lexer* lex) {
+    // ★ 2026-10-15：把"即将被替换掉的 current"留一份到 prev（后缀 ++/-- 的跨行判定要用它 ✓）。
+    //   放在**最顶部**：本函数后面有 20+ 处提前 return（每个 token 种类一支），
+    //   写在顶部 = 所有路径都覆盖（不必逐个分支补 ✗）
+    lex->prev = lex->current;
+
     // 在插值字符串中（不在表达式内）不要跳过空格，空格是字符串的一部分
     if (!(lex->in_interp && !lex->in_expr)) {
         skip_whitespace(lex);
