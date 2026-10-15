@@ -108,6 +108,31 @@ main() {
     assert_eq(sp.path_under("/a", ""), false)
     print("挂载点归属解析 通过!")
 
+    // ---------- .trashinfo（回收站账本，listTrash 用）----------
+    // ★ 关键点①：`Path` 是**百分号编码**的 ⇒ 必须解码，否则 `%20`/`%E4%B8%AD` 会留在路径里
+    //   （拿去"还原/打开"必然打不开 ✗）
+    var t1 = sp.parse_trashinfo("[Trash Info]\nPath=/home/u/My%20File.txt\nDeletionDate=2026-10-01T12:34:56\n")
+    assert_eq(t1.ok, true)
+    assert_eq(t1.path, "/home/u/My File.txt", "Path 必须解码（%20 → 空格）")
+    assert_eq(t1.deletedAt, "2026-10-01T12:34:56")
+
+    //   多字节 UTF-8（中文文件名）同样要还原对 ✓
+    var t2 = sp.parse_trashinfo("[Trash Info]\nPath=/home/u/%E4%B8%AD%E6%96%87.txt\n")
+    assert_eq(t2.path, "/home/u/中文.txt", "UTF-8 百分号编码也必须逐字节还原")
+
+    // ★ 关键点②：缺 `Path` ⇒ **ok=false**（没账本就别猜路径 ✗）
+    var t3 = sp.parse_trashinfo("[Trash Info]\nDeletionDate=2026-10-01T12:34:56\n")
+    assert_eq(t3.ok, false, "没有 Path ⇒ 不猜（调用方据此跳过该条目）")
+
+    // ★ 关键点③：只认 `[Trash Info]` 段 —— 别的段里的 `Path=` 不算数（与 desktop 解析同风格 ✓）
+    var t4 = sp.parse_trashinfo("[Desktop Entry]\nPath=/should/not/count\n")
+    assert_eq(t4.ok, false, "非 `[Trash Info]` 段里的键必须无效")
+
+    //   空文本 / 只有段头 ⇒ 不抛、ok=false ✓
+    assert_eq(sp.parse_trashinfo("").ok, false)
+    assert_eq(sp.parse_trashinfo("[Trash Info]\n").ok, false)
+    print(".trashinfo 解析 通过!")
+
     // ---------- /proc/<pid>/stat ----------
     // ⚠ 关键边界：comm 里**带空格和括号** ⇒ 必须按最后一个 ')' 切（按第一个切会错位 ✗）
     //   后半段共 22 段：state(0) ppid(1) … rss(21) ✓

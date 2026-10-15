@@ -112,6 +112,16 @@ export func exePath(): string {
     return strings.trim(r.output)
 }
 
+// 指定进程的可执行文件**全路径**（取不到 ⇒ `""`）
+//   与门面的 `exePath()`（只看自己）互补：这是**按需**查一个 pid ✓
+//   ⚠ 为什么不做进 `listProcesses` 的 `path` 字段：那要给每个 pid 付一次进程开销（见该函数注释 ✓）
+export func processPath(int pid): string {
+    if pid <= 0 { return "" }
+    ExecResult? r = _exec("readlink -f /proc/" + _str(pid) + "/exe", CMD_TIMEOUT_MS)
+    if r == null or r.code != 0 { return "" }
+    return strings.trim(r.output)
+}
+
 // ==================== 磁盘 ====================
 
 export func listDrives(): Array[string] {
@@ -122,6 +132,23 @@ export func listDrives(): Array[string] {
     } catch e { return out }
     if out.len() == 0 { out.add("/") }
     return out
+}
+
+// 该路径所在的**卷/分区根**（判不出 ⇒ `""`，绝不猜 ✓）
+//   Linux = 挂载点（`/` 或 `/media/u/U盘` …）；Windows 侧的门面对等物是盘符根（`C:\` ✓）
+//   ⚠ `dirs.abspath` 走 `realpath`（POSIX 语义）⇒ **符号链接会被解析到真实位置**，
+//     得到的是文件**实际所在**的分区 ✓（这对"跨分区回收站/清理"恰恰是想要的 ✓）
+//   ⚠ 路径不存在时 `dirs.abspath` 会退回词法拼接（仍可用）⇒ 但判分区只看前缀是否命中挂载点 ✓
+export func volumeOf(string path): string {
+    if strings.trim(path) == "" { return "" }        // 空 ⇒ 判不出（与 Windows 侧同口径 ✓）
+    string abs = path
+    try {
+        string a = dirs.abspath(path)
+        if a != "" { abs = a }
+    } catch e {
+        abs = path                                   // 解析失败 ⇒ 用原值（不猜、不抛 ✓）
+    }
+    return _mountOf(abs)
 }
 
 // `df -B1`（GNU coreutils / busybox 都有 ✓）；单位字节 ✓
@@ -290,26 +317,70 @@ export func deleteToTrash(Array[string] paths): Dict {
 
 // 清空回收站：**家目录 + 各挂载点**（与 Windows 侧 SHEmptyRecycleBin"清所有驱动器"同口径 ✓）
 //   ★ 2026-10-15 补跨分区（原来只清家目录 ⇒ 外挂盘 / 其他分区的回收站清不掉 ✗）
-//   规范规定的两种布局都清：
+//   覆盖范围交给 `_trashDirs()`（与 `listTrash` **共用同一套** —— 否则"列得出来却清不掉"
+//   或反过来"清得掉却列不出来"，两边必然漂 ✗）
+export func emptyTrash(): bool {
+    for _trashDirs() to t {
+        _clearTrashAt(t)
+    }
+    return true
+}
+
+// 本机**所有**回收站根（家目录 + 各挂载点）—— `emptyTrash` / `listTrash` 共用 ✓
+//   规范规定的两种跨分区布局都收（存在才收 ⇒ 不会平白建目录 ✗）：
 //     · `<挂载点>/.Trash-<uid>`                      ← 现代布局（较常用）
 //     · `<挂载点>/.Trash/<uid>`（分区根的 `.Trash` 为 sticky 且属 root 时才有）
-//     · 以及家目录回收站里的 `expunged/`（规范定义的"删除中转区"，不顺手清会一直留垃圾 ✓）
-//   ⚠ **只动本 uid 自己那一份** ⇒ 不需要 sticky / 属主判据（规范也正是这么要求实现的 ✓，
-//     别人的 `<uid>` 子目录根本不碰 ✓）
-export func emptyTrash(): bool {
-    // ① 家目录回收站
-    _clearTrashAt(_trashDir())
-    // ② 其他挂载点（拿不到 uid / 挂载点 ⇒ 就只清家目录，**不猜路径** ✓）
+//   ⚠ 家目录那个**不删 .Trash/<uid>** 那一份（同一分区时它就是家目录回收站的镜像布局）
+func _trashDirs(): Array[string] {
+    Array[string] out = [_trashDir()]
     int uid = _uid()
     if uid >= 0 {
         for _mountPoints() to m {
             string base = m
             if base == "/" { base = "" }        // 免得拼出 `//.Trash-1000` ✓
-            _clearTrashAt(base + "/.Trash-" + _str(uid))
-            _clearTrashAt(base + "/.Trash/" + _str(uid))
+            for [base + "/.Trash-" + _str(uid), base + "/.Trash/" + _str(uid)] to cand {
+                if cand == "" or not dirs.exists(cand) { continue }
+                bool dup = false
+                for out to o {
+                    if o == cand { dup = true }
+                }
+                if not dup { out.add(cand) }
+            }
         }
     }
-    return true
+    return out
+}
+
+// 列回收站内容（家目录 + 各分区 ✓）
+//   返回 `Array` of Dict{name, originalPath, deletedAt, trashDir}（门面转 `TrashItem` ✓）
+//   ⚠ 只认 `info/*.trashinfo`（规范账本）⇒ 能拿到**原始路径与删除时间**；
+//     `files/` 里没有对应账本的条目**不列**（没账可查，宁缺勿猜 ✗）
+//   ⚠ 账本在、但 `files/<名字>` 已不在 ⇒ **也不列**（列出来点"还原"必然失败 ✗）
+//   ⚠ 本版**不给大小**：每条目都 walk 一次，回收站大时会明显卡 ✗
+//     （调用方要大小就自己 `dirs.stat`/`walk`：拿 `trashDir + "/files/" + name` 即可 ✓）
+//   ⚠ 修不动/读不了某个 `<info>` 目录 ⇒ 跳过该根（不抛；读不到 ≠ 回收站是空的 ✓）
+export func listTrash(): Array {
+    Array out = []
+    for _trashDirs() to t {
+        string infoDir = t + "/info"
+        Array[string] names = []
+        try { names = dirs.listdir(infoDir) } catch e { continue }
+        for names to n {
+            if not strings.ends_with(n, ".trashinfo") { continue }
+            string nm = strings.slice(n, 0, n.len() - 11)      // 去掉 ".trashinfo"（10 字符 ✓）
+            if nm == "" { continue }
+            if not dirs.exists(t + "/files/" + nm) { continue }  // 文件已不在 ⇒ 不列 ✓
+            string txt = ""
+            try { txt = files.read(dirs.join(infoDir, n)) } catch e { continue }
+            var d = sp.parse_trashinfo(txt)
+            if not jsons.get_bool(d, "ok", false) { continue }
+            out.add({name: nm,
+                     originalPath: jsons.get_str(d, "path", ""),
+                     deletedAt: jsons.get_str(d, "deletedAt", ""),
+                     trashDir: t})
+        }
+    }
+    return out
 }
 
 // 清一个回收站目录：`files/` + `info/` + `expunged/`（目录不存在 ⇒ 各自 no-op ✓）

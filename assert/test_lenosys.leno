@@ -67,11 +67,61 @@ main() {
     assert_true(pct >= 0 and pct <= 100, "使用率应在 0..100（实测 " + _str(pct) + "）")
     print("磁盘 通过!")
 
+    // ---------- 卷 / 分区（volumeOf）----------
+    // ★ 跨平台不变量（任何平台都成立 ⇒ 可以无脑断 ✓）：
+    //   · 系统盘/家目录必然能判出卷
+    //   · **幂等**：卷根归属它自己（`volumeOf(volumeOf(x)) == volumeOf(x)` ✓）
+    //   · 空路径 ⇒ ""（判不出；绝不能兜底成某个盘 ✗）
+    string volSys = Sys.volumeOf(Sys.systemRoot())
+    assert_true(volSys != "", "volumeOf(systemRoot) 不该为空")
+    string volHome = Sys.volumeOf(Sys.homeDir())
+    if Sys.homeDir() != "" {
+        assert_true(volHome != "", "volumeOf(homeDir) 不该为空")
+    }
+    assert_eq(Sys.volumeOf(volSys), volSys, "volumeOf 必须幂等（卷根归属它自己）")
+    assert_eq(Sys.volumeOf(""), "", "空路径 ⇒ 空（判不出，且不抛 ✓）")
+    //   卷根必须是"路径的前缀"（拿一个卷下的真实文件回来验 ✓）
+    string exe2 = Sys.exePath()
+    if exe2 != "" {
+        string volExe = Sys.volumeOf(exe2)
+        assert_true(strings.starts_with(exe2, volExe), "exe 路径必须落在 volumeOf(exe) 之下："
+                    + volExe + " vs " + exe2)
+    }
+    print("卷 / 分区 通过!")
+
     // ---------- 回收站（**非破坏性**断言 ✓）----------
     var del0 = Sys.deleteToTrash([])
     assert_true(jsons.get_bool(del0, "ok", false), "空列表必须安全返回 ok=true")
     assert_eq(jsons.get_int(del0, "count", -1), 0, "空列表 count 应为 0")
-    print("回收站 通过!")
+
+    // 列出回收站：**只读**（本用例不删任何东西 ✓）
+    //   ⚠ 0 条也可能是"回收站真的空" ⇒ 这里只验结构，不验数量 ✓
+    //   ⚠ Windows 侧未实现 ⇒ 恒空（不是"回收站空"✗）⇒ 因此不把"非空"写成硬断言 ✓
+    var tl = Sys.listTrash()
+    for tl to it {
+        assert_true(it.name != "", "回收站条目必须有名字")
+        assert_true(it.trashDir != "", "回收站条目必须报出它属于哪个回收站根")
+        if it.originalPath != "" {
+            // 账本里写了原始路径 ⇒ 必须是**绝对路径**（解码后不该还留着 %XX 之类 ✓）
+            assert_true(strings.starts_with(it.originalPath, "/") or Sys.isWindows(),
+                        "原始路径应是绝对路径（实际 " + it.originalPath + "）")
+            assert_true(strings.find(it.originalPath, "%") < 0, "原始路径必须已解码（不该留 %XX）")
+        }
+    }
+    print("回收站 通过（当前 " + _str(tl.len()) + " 条）!")
+
+    // ---------- 进程路径（processPath）----------
+    //   ⚠ Windows 侧未实现（桩恒 ""）⇒ 只在 Linux 侧把"非空"写成硬断言 ✓
+    int me2 = Sys.currentPid()
+    if not Sys.isWindows() {
+        string pp = Sys.processPath(me2)
+        assert_true(pp != "", "自己进程的 exe 路径应可读（实际 '" + pp + "'）")
+        assert_true(strings.starts_with(pp, "/"), "应是绝对路径")
+    }
+    assert_eq(Sys.processPath(0), "", "pid 0 ⇒ 空（不抛 ✓）")
+    assert_eq(Sys.processPath(-1), "", "非法 pid ⇒ 空（不抛 ✓）")
+    assert_eq(Sys.processPath(999999999), "", "不存在的 pid ⇒ 空（不抛 ✓）")
+    print("进程路径 通过!")
 
     // ---------- 启动项 / 已装软件 / 最近文件：只验"可调用 + 结构对" ----------
     var su = Sys.listStartupItems()

@@ -369,6 +369,38 @@ export func parse_xbel_recents(string text, int max): Array[string] {
     return out
 }
 
+// ==================== .trashinfo（回收站条目，listTrash 用）====================
+// 规范（freedesktop Trash）里每个条目在 `<回收站>/info/<名字>.trashinfo` 留一份账本：
+//   [Trash Info]
+//   Path=/home/u/My%20File.txt          ← **原始绝对路径**（百分号编码 ✓）
+//   DeletionDate=2026-10-01T12:34:56    ← 本地时间 ✓
+// ★ 这里就把 `Path` **解码**（`percent_decode` 就在本文件 ✓）⇒ 调用方直接拿到可用路径 ✓
+//   ⚠ 不解码的话路径里会原样留着 `%20`/`%E4%B8%AD` ⇒ 拿去"还原/打开"全都打不开 ✗
+// ⚠ 只认 `[Trash Info]` 段（`[Desktop Entry]` 那类段一律跳过 ✓，与 parse_desktop_entry 同风格）
+// ⚠ 缺 `Path` ⇒ `ok=false`（**没账本就不猜路径** ✗ —— 调用方据此跳过该条目 ✓）
+export func parse_trashinfo(string text): Dict {
+    string path = ""
+    string when = ""
+    bool inMain = false
+    var ls = split_lines(text)
+    for ls to l {
+        string t = strings.trim(l)
+        if t == "" { continue }
+        if strings.starts_with(t, "[") {
+            inMain = (t == "[Trash Info]")
+            continue
+        }
+        if not inMain { continue }
+        int eq = strings.find(t, "=")
+        if eq <= 0 { continue }
+        string k = strings.trim(strings.slice(t, 0, eq - 1))
+        string v = strings.trim(strings.slice(t, eq + 1, t.len()))
+        if k == "Path" { path = percent_decode(v) }
+        eif k == "DeletionDate" { when = v }
+    }
+    return {ok: path != "", path: path, deletedAt: when}
+}
+
 // ==================== URL / 百分号编解码 ====================
 
 func _hex_val(string c): int {

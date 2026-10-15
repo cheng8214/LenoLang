@@ -89,6 +89,32 @@ export func driveRootOf(string path): string {
     return systemRoot()
 }
 
+// 门面对等物：`volumeOf(path)` —— Windows 的"卷"就是盘符根 ✓（直接透出上面那个 ✓）
+//   ⚠ 空路径要**判不出**（`""`），与 Linux 侧 `volumeOf("") == ""` 同口径 ✓
+//     （`driveRootOf("")` 会兜底成 systemRoot ⇒ 语义不对 ⇒ 这里先拦一道 ✓）
+export func volumeOf(string path): string {
+    if strings.trim(path) == "" { return "" }
+    return driveRootOf(path)
+}
+
+// ⚠⚠ **显式未实现桩**（2026-10-15 加门面时立的；Linux 侧已实现 ✓）
+//   按本模块约定（见 Sys.leno 顶部「macOS autostart 未实现 ⇒ 返回 false/""，绝不写假文件」）：
+//   **宁可返回空并在此写明补法，也绝不静默返回假数据** ✗
+//   `processPath` 的补法：`OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)` +
+//     `QueryFullProcessImageNameW`（Vista+ 首选）或 psapi 的 `GetModuleFileNameExW`
+//     —— 需要往 LenoWin32 加 FFI 声明；本模块**刻意不 import ffi**（见文件头 ✓）⇒ 留给后端补 ✓
+export func processPath(int pid): string {
+    return ""
+}
+
+// `listTrash` 的补法：Windows 的回收站**没有枚举 API** ⇒ 得解析每个卷的
+//   `$Recycle.Bin\<SID>\$I*` 记录（`$I` 存原始路径/时间，`$R*` 是实际内容），
+//   或走 shell 扩展；两者都比 Linux 侧重 ⇒ 同样留给后端补 ✓
+export func listTrash(): Array {
+    Array none = []
+    return none
+}
+
 export func diskSpace(string path): Dict {
     var r = Win32.diskSpace(driveRootOf(path))
     if not jsons.get_bool(r, "ok", false) { return {ok: false, total: 0, free: 0} }

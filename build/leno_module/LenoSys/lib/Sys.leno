@@ -53,6 +53,14 @@ export struct SoftwareItem {
     string source = ""    // registry / dpkg
 }
 
+// ★ 2026-10-15 新增：回收站条目（`listTrash` 的返回元素 ✓）
+export struct TrashItem {
+    string name = ""          // 回收站里的名字（`files/` 下那个文件名 ✓）
+    string originalPath = ""  // **原始路径**（还原用；来自 `.trashinfo` 的 Path，已解码 ✓）
+    string deletedAt = ""     // 删除时间（`.trashinfo` 的 DeletionDate；空 = 账本没写 ✓）
+    string trashDir = ""      // 它属于哪个回收站根（家目录 / 某分区 ✓ —— 跨分区时靠它区分 ✓）
+}
+
 // ==================== 平台 ====================
 
 export func os(): string { return _os() }
@@ -218,6 +226,19 @@ export func processMemoryKb(int pid): int {
 export func currentPid(): int { if _isW() { return w.currentPid() } return l.currentPid() }
 export func exePath(): string { if _isW() { return w.exePath() } return l.exePath() }
 
+// 指定进程的可执行文件**全路径**（取不到 ⇒ `""`：进程已退出 / 无权限 / 二进制已被删 ✓）
+//   ★ 为什么单独一个函数：`listProcesses` 的 `path` 字段**恒空**是**有意**的
+//     （逐 pid readlink / 开句柄 = 批量时很慢，见 ProcInfo 注释 ✓）⇒ 这里是**按需**版本：
+//     只查你要的那一个 pid，就不必付批量成本 ✓
+//   ⚠ Linux：走 `readlink -f /proc/<pid>/exe`（需权限；别人的进程多半读不到 ⇒ 空 ✓）
+//   ⚠ **Windows 侧尚未实现**（桩返回 `""`）⇒ 空**不等于**"进程没有 exe" ✗
+//     补法见 sys_win.leno（`QueryFullProcessImageNameW` / `GetModuleFileNameExW`✓）
+export func processPath(int pid): string {
+    if pid <= 0 { return "" }
+    if _isW() { return w.processPath(pid) }
+    return l.processPath(pid)
+}
+
 // ==================== 磁盘 ====================
 
 export func diskSpace(string path): Dict {
@@ -240,6 +261,19 @@ export func listDrives(): Array[string] {
     return l.listDrives()
 }
 
+// ==================== 卷 / 分区 ====================
+
+// `path` 所在的**卷/分区根**：Linux 是挂载点（`/home/u/x` ⇒ `/`；`/media/u/U盘/x` ⇒ `/media/u/U盘`）；
+//   Windows 是盘符根（`C:\Users\x` ⇒ `C:\`）✓
+//   判不出 ⇒ **`""`**（调用方须按"未知"处理 —— 本模块从不猜路径 ✗）
+//   ★ 用途：判断"目标在哪个分区"（跨分区回收站、清理范围、给用户显示分区 ✓）
+//   ⚠ POSIX 侧 `dirs.abspath` 走 realpath ⇒ **符号链接会解析到真实位置**，
+//     得到的是文件**实际所在**的分区（这对清理/回收站恰恰是想要的 ✓）
+export func volumeOf(string path): string {
+    if _isW() { return w.volumeOf(path) }
+    return l.volumeOf(path)
+}
+
 // ==================== 回收站 ====================
 
 // paths 里的路径**必须存在**；返回 {ok, count, aborted, errors}
@@ -251,6 +285,28 @@ export func deleteToTrash(Array[string] paths): Dict {
 export func emptyTrash(): bool {
     if _isW() { return w.emptyTrash() }
     return l.emptyTrash()
+}
+
+// 列出回收站里的条目（Linux 侧已实现：家目录 + **各分区**，与 `emptyTrash` 覆盖同一套目录 ✓）
+//   ⚠ 只有 `info/*.trashinfo`（规范账本）在、且 `files/<名字>` 也在的条目才会被列出 ✓
+//     ⇒ 没账本的 / 内容已没了的一律不列（宁缺勿猜；列出来点"还原"必然失败 ✗）
+//   ⚠ 本版**不给大小**（每条目 walk 一次会让大回收站明显卡 ✗）；要大小就自己
+//     `dirs.stat` / `dirs.walk` 拼 `item.trashDir + "/files/" + item.name` ✓
+//   ⚠ **Windows 侧尚未实现**（桩返回空数组）⇒ 空数组**不等于**"回收站是空的" ✗
+//     调用方拿不准时先看 `os()`，或等 Windows 后端补上（补法见 sys_win.leno 注释 ✓）
+export func listTrash(): Array[TrashItem] {
+    Array[TrashItem] out = []
+    Array raw = []
+    if _isW() { raw = w.listTrash() } else { raw = l.listTrash() }
+    for raw to it {
+        string nm = jsons.get_str(it, "name", "")
+        if nm == "" { continue }
+        out.add(new TrashItem(name = nm,
+                              originalPath = jsons.get_str(it, "originalPath", ""),
+                              deletedAt = jsons.get_str(it, "deletedAt", ""),
+                              trashDir = jsons.get_str(it, "trashDir", "")))
+    }
+    return out
 }
 
 // ==================== 开机启动项 ====================
@@ -364,6 +420,22 @@ export func selfTest(): Dict {
     string dtxt = if dok then _str(jsons.get_int(d, "total", 0)) + " 字节 / 剩 " + _str(jsons.get_int(d, "free", 0)) else "失败"
     lines.add("diskSpace(" + systemRoot() + ") = " + dtxt + (if dok then " ✓" else " ✗"))
     if not dok { bad = bad + 1 }
+
+    // ★ 2026-10-15 新增三件套（volumeOf / processPath / listTrash）
+    string vol = volumeOf(systemRoot())
+    lines.add("volumeOf(" + systemRoot() + ") = " + vol + (if vol != "" then " ✓" else " ✗"))
+    if vol == "" { bad = bad + 1 }
+
+    if pid > 0 {
+        string pp = processPath(pid)
+        //   ⚠ Windows 侧是**未实现桩**（恒 ""）⇒ 那里只报"可调用"，不计失败 ✓
+        lines.add("processPath(self) = " + pp
+                  + (if pp != "" then " ✓" else if _isW() then "（Windows 未实现）" else " ✗"))
+        if pp == "" and not _isW() { bad = bad + 1 }
+    }
+
+    var tl = listTrash()
+    lines.add("listTrash = " + _str(tl.len()) + " 条（0 也可能是真没有 ✓；Windows 侧未实现 ⇒ 恒 0）")
 
     var su = listStartupItems()
     lines.add("listStartupItems = " + _str(su.len()) + " 项（0 也可能是真没有 ✓）")
