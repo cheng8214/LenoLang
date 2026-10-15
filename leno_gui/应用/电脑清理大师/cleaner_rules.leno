@@ -32,7 +32,14 @@ export struct CleanCategory {
     //   为什么需要（`temp` 用的就是它）：`/tmp`、`/var/tmp` 整层删"根的直接子项"会把
     //   **别的进程正在用的**临时目录一起删 ✗；而 `/var/tmp` 按 FHS 语义本就要求跨重启保留
     //   ⇒ 按年龄过滤是这两处唯一稳妥的判据 ✓
+    //   这也是**类别默认值**：某根没在 `root_age_days` 里另设 ⇒ 用它 ✓
     int min_age_days = 0
+    // ★ 2026-10-15 新增：**按根**覆盖上面的默认值（`/tmp` 与 `/var/tmp` 的合理门槛不同：
+    //   FHS 要求后者跨重启保留 ⇒ 给更长 ✓）
+    //   ⚠ 与 `roots` **逐位对齐**；构建**只能**走 `_add_aged_roots`（它保证两个数组同进同退 ✓）
+    //   ⚠ 对齐关系是硬约束（`effective_root_days` 按位取）；测试里钉住它 ✓
+    //   ⚠ 纯 int 数组 ⇒ 可安全跨线程 ✓
+    Array[int] root_age_days = []
 }
 
 // 每类别清理单元上限（正常垃圾远达不到；超出部分只计数不删）
@@ -174,6 +181,33 @@ func _add_roots(Array[string] out, Array[string] cand) {
     for cand to c {
         if c != "" and dirs.exists(c) and not _in_list(out, c) { out.add(c) }
     }
+}
+
+// 与 `_add_roots` 同款（去重 + 存在性过滤），额外把**每个根自己的年龄门槛**同序记进 `days` ✓
+//   ★ 2026-10-15 新增（`/tmp` 与 `/var/tmp` 门槛不同 ⇒ 必须按根记 ✓）
+//   ⚠ **两个数组的逐位对齐由本函数独家保证**：候选被过滤掉时（"" / 不存在 / 已收录）
+//     **两个都不加** ⇒ 绝不会因为"某个根恰好不存在"而错位 ✗（这是这个并行数组能站住的唯一前提 ✓）
+func _add_aged_roots(Array[string] out, Array[int] days, Array[string] cand, int d) {
+    for cand to c {
+        if c != "" and dirs.exists(c) and not _in_list(out, c) {
+            out.add(c)
+            days.add(d)
+        }
+    }
+}
+
+// 某类别**每个根**的有效年龄门槛（类别默认值 + 按根覆盖 ⇒ 逐位对齐的结果 ✓）
+//   ★ 2026-10-15 新增：worker 拿不到 CleanCategory（只吃纯数组）⇒ 由**主线程/调用方**先摊平 ✓
+//   ⚠ `root_age_days` 比 `roots` 短（理论上不该发生）⇒ 多出来的根一律退回类别默认值
+//     —— **保守方向**：宁可沿用（可能较长的）默认门槛，也不要突然变成"不过滤" ✗
+export func effective_root_days(CleanCategory c): Array[int] {
+    Array[int] out = []
+    for 0 : c.roots.len() - 1 to i {
+        int d = c.min_age_days
+        if i < c.root_age_days.len() { d = c.root_age_days[i] }
+        out.add(d)
+    }
+    return out
 }
 
 // 递归目录大小（stat 逐文件；无权限子树静默跳过）
@@ -420,16 +454,20 @@ func _build_linux(): Array[CleanCategory] {
     string cache = _xdg_dir("XDG_CACHE_HOME", ".cache")
     string cfg = _xdg_dir("XDG_CONFIG_HOME", ".config")
 
-    // 1) 系统临时文件：$TMPDIR（默认 /tmp）+ /var/tmp
-    //   ★ 2026-10-15：加 `min_age_days = 7` —— **只清超过 7 天**的单元。
+    // 1) 系统临时文件：$TMPDIR（默认 /tmp）与 /var/tmp
+    //   ★ 2026-10-15：加年龄门槛（`min_age_days` + 按根的 `root_age_days`）—— **只清旧的**。
     //     原先"整层删根的直接子项"会连**别的进程正在用的**临时目录一起删 ✗
-    //     （X11 socket、systemd 私有目录、编译中间产物……）；`/var/tmp` 按 FHS 语义
-    //     更要跨重启保留 ⇒ 按年龄过滤这两处才站得住 ✓
+    //     （X11 socket、systemd 私有目录、编译中间产物……）⇒ 按年龄过滤才站得住 ✓
+    //   ★ 两处门槛**刻意不同**：`/tmp` 7 天；`/var/tmp` 给 **30 天** —— FHS 明确要求后者的
+    //     内容**跨重启保留**（它是"慢速临时区"，本来就更长命）⇒ 拿同一把尺子量是不对的 ✗
     Array[string] tempRoots = []
-    _add_roots(tempRoots, [_env_or("TMPDIR", "/tmp"), "/var/tmp"])
+    Array[int] tempDays = []
+    _add_aged_roots(tempRoots, tempDays, [_env_or("TMPDIR", "/tmp")], 7)
+    _add_aged_roots(tempRoots, tempDays, ["/var/tmp"], 30)
     cats.add(new CleanCategory(id = "temp", name = "系统临时文件", roots = tempRoots,
         min_age_days = 7,
-        hint = "只清超过 7 天的临时文件（/tmp 与 /var/tmp）；更新的不动 —— 可能正被别的程序使用"))
+        root_age_days = tempDays,
+        hint = "只清旧的临时文件（/tmp 超过 7 天、/var/tmp 超过 30 天）；更新的不动 —— 可能正被别的程序使用"))
 
     // 2) 浏览器缓存（Chromium 系 + Firefox）
     cats.add(new CleanCategory(id = "browser", name = "浏览器缓存",
@@ -737,13 +775,15 @@ func _wl_kept(Array[string] wlEnc, string p): bool {
 // ch 允许 null（单测直调）；进度经 ch.try_send([idx, sizeDelta, cntDelta]) 上报（非阻塞，满了就丢）
 // ⚠ `wlEnc` **必须显式传**（不能给默认值 `= []`：本语言要求默认值是编译期常量 ✗ 实测报错）
 //   它是保留清单的**编码快照**（纯字符串数组 ⇒ 可安全跨线程 ✓，见 cleaner_whitelist.encode ✓）
-// ★ `cutoff`（2026-10-15 加）= "够老"的时间戳下界（**秒**）；`<= 0` ⇒ 不过滤（与旧行为逐字等价 ✓）。
-//   ⚠ 为什么传**时间戳**而不是传 `min_age_days`：worker 里算 `now` 就要动 `ti` 模块，
-//     而"线程里首次使用某个模块"正是本文件头部记的那个坑 ✗（TH2 之前必炸）
-//     ⇒ 由**主线程**算好 cutoff 传进来，worker 只做纯数值比较 ✓
-//   ⚠ 另有意义的一点：年龄判据**只在扫描期做**。删除期不必再判 —— 时间只会往前走，
-//     扫描时"够老"的单元在删除时只会更老（不会反过来变新）✓
-export func scan_worker(Array[string] roots, string file_prefix, any ch, int idx, Array[string] wlEnc, int cutoff): Array[string] {
+// ★ `rootDays` / `nowSec`（2026-10-15 加）= **按根**的年龄门槛（天）+ 基准时刻（**秒**）：
+//   · `rootDays` 与 `roots` **逐位对齐**（已含类别默认值 ⇒ 调用方走 `effective_root_days` ✓）；
+//     缺少对应项（数组偏短）⇒ 该项**不过滤**（保守方向见 `effective_root_days` 的说明 ✓）
+//   · `nowSec <= 0` ⇒ 一律不过滤（旧行为 ✓）；`days <= 0` ⇒ 该根不过滤 ✓
+//   ⚠ 为什么传 `nowSec` 而不是各根算好的 `cutoff`：门槛是**按根**的，摊平在调用方做容易漏 ✗；
+//     而 worker 里**只做数值运算** ⇒ 依然不碰 `ti` 模块（避开"线程里首次使用某模块"那个坑 ✓）
+//   ⚠ 年龄判据**只在扫描期做**。删除期不必再判 —— 时间只会往前走，扫描时"够老"的单元
+//     在删除时只会更老（不会反过来变新）✓
+export func scan_worker(Array[string] roots, Array[int] rootDays, string file_prefix, any ch, int idx, Array[string] wlEnc, int nowSec): Array[string] {
     int totalSize = 0
     int totalCnt = 0
     int skipped = 0
@@ -751,7 +791,12 @@ export func scan_worker(Array[string] roots, string file_prefix, any ch, int idx
     Array[string] units = []
     Array[string] unitSizes = []
 
-    for roots to root {
+    for 0 : roots.len() - 1 to ri {
+        string root = roots[ri]
+        int cutoff = 0                  // 该根的"够老"下界（<= 0 ⇒ 不过滤 ✓）
+        if ri < rootDays.len() and rootDays[ri] > 0 and nowSec > 0 {
+            cutoff = nowSec - rootDays[ri] * 86400
+        }
         if file_prefix != "" {
             // ---- 前缀白名单模式：递归收集匹配文件，绝不收目录 ----
             for dirs.walk(root) to e {

@@ -87,6 +87,27 @@ main() {
     assert_eq(sp.unescape_mount("/media/我的\\040U盘"), "/media/我的 U盘")
     print("proc/mounts 挂载点解析 通过!")
 
+    // ---------- 路径归属哪个挂载点（跨分区回收站靠它挑目录）----------
+    // ★ 关键边界①：挂载点会**嵌套** ⇒ 必须取**最长**前缀（否则文件被判到外层分区 ⇒ 回收站建错 ✗）
+    // ★ 关键边界②：**边界敏感** —— 纯 starts_with 会把 `/run/user/1000` 当成 `/run/user/10` 的子树 ✗
+    Array[string] mnts = ["/", "/media/x", "/run/user/10", "/run/user/1000"]
+    assert_eq(sp.mount_of(mnts, "/run/user/1000/tmp/a"), "/run/user/1000", "必须取最长前缀")
+    assert_eq(sp.mount_of(mnts, "/run/user/10/tmp/a"), "/run/user/10")
+    assert_eq(sp.mount_of(mnts, "/media/x/disk/f.txt"), "/media/x", "U 盘上的文件归该挂载点")
+    assert_eq(sp.mount_of(mnts, "/etc/hosts"), "/", "家目录那类路径落在根分区")
+    assert_eq(sp.mount_of(mnts, "/media/x"), "/media/x", "路径恰是挂载点本身 ⇒ 也算命中")
+    //   兄弟目录不得互相命中（这条就是 `path_under` 存在的理由 ✓）
+    assert_eq(sp.mount_of(["/", "/run/user/10"], "/run/user/1000/f"), "/", "`/run/user/10` 不该命中 `/run/user/1000`")
+    assert_eq(sp.path_under("/run/user/1000/f", "/run/user/10"), false)
+    assert_eq(sp.path_under("/run/user/10/f", "/run/user/10"), true)
+    assert_eq(sp.path_under("/run/user/10", "/run/user/10"), true, "自身算命中")
+    assert_eq(sp.path_under("/run/userx", "/run/user"), false, "同前缀但不是子路径 ⇒ 不命中")
+    //   退化输入：空表 / 空串 ⇒ ""/false（不抛 ✓）
+    assert_eq(sp.mount_of([], "/a/b"), "", "空挂载点表 ⇒ 判不出（调用方须如实报错 ✓）")
+    assert_eq(sp.path_under("", "/"), false)
+    assert_eq(sp.path_under("/a", ""), false)
+    print("挂载点归属解析 通过!")
+
     // ---------- /proc/<pid>/stat ----------
     // ⚠ 关键边界：comm 里**带空格和括号** ⇒ 必须按最后一个 ')' 切（按第一个切会错位 ✗）
     //   后半段共 22 段：state(0) ppid(1) … rss(21) ✓

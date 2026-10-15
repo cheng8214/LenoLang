@@ -149,13 +149,79 @@ export func diskSpace(string path): Dict {
 //   ~/.local/share/Trash/files/<名字>          ← 实际文件
 //   ~/.local/share/Trash/info/<名字>.trashinfo ← 还原信息（原始绝对路径 + 删除时间）
 //   ⚠ 规范里"其它分区"放 `<挂载点>/.Trash-<uid>`（或 `<挂载点>/.Trash/<uid>`）✓
-//   ★ 2026-10-15 起**分两半看**（此前只有前半 ✓）：
-//     · **清空** `emptyTrash()` ⇒ 已覆盖家目录 + 各挂载点 + `expunged/` ✓
-//     · **移入** `deleteToTrash()` ⇒ 仍只做家目录：跨分区时 `mv` 会失败 ⇒ **如实报错**
-//       （不假装成功 ✗）；要做跨分区移入，得按目标路径找它所在的挂载点、并在那里
-//       建 `<挂载点>/.Trash-<uid>`（还要管权限）—— 那是另一件事，未做 ✓
+//   ★ 2026-10-15 起**两半都做了**：
+//     · **清空** `emptyTrash()` ⇒ 家目录 + 各挂载点 + `expunged/` ✓
+//     · **移入** `deleteToTrash()` ⇒ **按目标文件所在的分区**挑回收站 ✓
+//       （同分区用家目录那个；异分区用该分区的 `<挂载点>/.Trash-<uid>`）✓
+//   这么做还顺带解决了一个隐患：跨分区 `mv` 会**退化成"复制 + 删除"**（不是原子改名 ✗，
+//   大文件既慢又可能中途失败）⇒ 现在目标目录与源**同分区**，`mv` 一定是原子的 rename ✓
 
 func _trashDir(): string { return dataDir() + "/Trash" }
+
+// ==================== 各分区的回收站目录 ====================
+// 规范（freedesktop Trash）对"非家目录分区"给两种布局，优先前者：
+//   ① `<挂载点>/.Trash/<uid>` —— **仅当** `<挂载点>/.Trash` 存在、是 sticky 目录且归 root
+//      （多用户共享的机器上，管理员会这么建；此时每个用户占其中一个 `<uid>` 子目录 ✓）
+//   ② `<挂载点>/.Trash-<uid>` —— 否则用/建这个"用户专属"的（权限 0700 ✓）
+// ⚠ 两种都放"只有自己能进"的目录 ⇒ 不碰别人的回收站 ✓
+
+// 该路径所在分区应当使用的回收站目录（判不出 ⇒ ""，调用方**如实报错**而不是猜 ✓）
+func _trashDirForAbs(string abs): string {
+    string homeTrash = _trashDir()
+    string mnt = _mountOf(abs)
+    if mnt == "" { return "" }
+    // 与家目录回收站**同分区** ⇒ 直接用家目录那个 ✓（规范推荐；此时 mv 是原子改名 ✓）
+    if mnt == _mountOf(_trashDir()) { return homeTrash }
+    return _trashOnMount(mnt)
+}
+
+// 某挂载点上的回收站目录（不存在则创建；创建不出来 ⇒ ""）
+func _trashOnMount(string mnt): string {
+    int uid = _uid()
+    if uid < 0 { return "" }
+    string us = _str(uid)
+    string top = mnt
+    if top == "/" { top = "" }              // 免得拼出 `//…` ✓
+    // ① 共享布局：`<挂载点>/.Trash/<uid>`（先看顶层 `.Trash` 够不够格 ✓）
+    string shared = top + "/.Trash"
+    if _isStickyRootDir(shared) {
+        string d = shared + "/" + us
+        if _mkdirTrash(d) { return d }
+    }
+    // ② 用户专属布局：`<挂载点>/.Trash-<uid>`（需要时创建，权限 0700 ✓）
+    string own = top + "/.Trash-" + us
+    if _mkdirTrash(own) { return own }
+    return ""
+}
+
+// 建一个回收站目录（要 files/ + info/ 两个子目录一起 ✓）；失败（如只读挂载 / 无权限）⇒ false
+func _mkdirTrash(string d): bool {
+    dirs.mkdir_p(d + "/files")
+    dirs.mkdir_p(d + "/info")
+    // ⚠ `mkdir_p` **不报"已存在"与"没权限"的区别** ⇒ 建完再 stat 一次确认（不假装成功 ✓）
+    if not dirs.is_dir(d + "/files") { return false }
+    // 规范要求 `.Trash-<uid>` 是 0700（只有自己进得去 ✓）；`mkdir_p` 用的是 umask ⇒ 显式收一下
+    //   ⚠ 失败不改判（有些文件系统不支持 chmod，如 FAT 挂载 ⇒ 不该因此判"不能回收" ✗）
+    //   ⚠ 返回值**有意丢掉** ⇒ 直接裸调（别 `var r = ...`：那样会报"未使用变量"警告 ✗）
+    _exec("chmod 700 " + sp.sh_quote(d) + " " + sp.sh_quote(d + "/files")
+          + " " + sp.sh_quote(d + "/info"), CMD_TIMEOUT_MS)
+    return true
+}
+
+// `<dir>` 是不是"sticky 且属 root"的目录（回收站共享布局的前置条件 ✓）
+//   用 `stat -c '%a %u'`（GNU/busybox 都有 ✓）—— 本模块**不 import ffi**（见文件头 ✓）
+//   判据：mode 带 sticky 位（八进制 ≥ 1000，如 /tmp 的 1777 ✓）且属主 uid == 0 ✓
+func _isStickyRootDir(string d): bool {
+    if not dirs.exists(d) { return false }
+    ExecResult? r = _exec("stat -c '%a %u' " + sp.sh_quote(d), CMD_TIMEOUT_MS)
+    if r == null or r.code != 0 { return false }
+    var t = sp.tokens(r.output)
+    if t.len() < 2 { return false }
+    int mode = sp.first_int_in(sp.at(t, 0), -1)
+    int owner = sp.first_int_in(sp.at(t, 1), -1)
+    //   ⚠ `%a` 的 `1777` 这种**带粘滞位**写法 ⇒ 数值必然 ≥ 1000；`755` ⇒ 755 ✗
+    return mode >= 1000 and owner == 0
+}
 
 // 目标名去重：`a.txt` 已存在 ⇒ `a.txt.2`、`a.txt.3` … ✓
 func _uniqueName(string dirPath, string base): string {
@@ -183,12 +249,6 @@ func _nowIso(): string {
 }
 
 export func deleteToTrash(Array[string] paths): Dict {
-    string root = _trashDir()
-    string filesDir = root + "/files"
-    string infoDir = root + "/info"
-    dirs.mkdir_p(filesDir)
-    dirs.mkdir_p(infoDir)
-
     int okCount = 0
     Array[string] errs = []
     for paths to p {
@@ -197,6 +257,15 @@ export func deleteToTrash(Array[string] paths): Dict {
             errs.add(abs + "：不存在")
             continue
         }
+        // ★ 2026-10-15：**每个路径各自**挑回收站 —— 它可能不在家目录那个分区上 ✓
+        //   （同一批里混着家目录文件与 U 盘文件是完全正常的 ✓）
+        string root = _trashDirForAbs(abs)
+        if root == "" {
+            errs.add(abs + "：判不出所在分区/建不出该分区的回收站")
+            continue
+        }
+        string filesDir = root + "/files"
+        string infoDir = root + "/info"
 
         string target = _uniqueName(filesDir, dirs.basename(abs))
         ExecResult? mv = _exec("mv -f " + sp.sh_quote(abs) + " " + sp.sh_quote(filesDir + "/" + target), CMD_TIMEOUT_MS)
@@ -270,6 +339,13 @@ func _mountPoints(): Array[string] {
     try { txt = files.read("/proc/mounts") } catch e { return none }
     if txt == "" { return none }
     return sp.parse_proc_mounts(txt)
+}
+
+// 该路径归属的挂载点（`""` = 判不出 ⇒ 调用方**如实报错**，不猜 ✓）
+//   ★ 选择逻辑（最长前缀 + 边界敏感）全在 `sp.mount_of` 里 —— 纯函数 ⇒ 已被
+//     assert\test_sys_parse.leno 钉死（含"`/run/user/10` 不该命中 `/run/user/1000`" ✓）
+func _mountOf(string abs): string {
+    return sp.mount_of(_mountPoints(), abs)
 }
 
 func _clearDir(string d) {

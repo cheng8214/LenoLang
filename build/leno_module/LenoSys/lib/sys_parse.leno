@@ -184,6 +184,32 @@ func _oct_digit(int b): int {
     return -1
 }
 
+// ==================== 路径 → 归属哪个挂载点（回收站跨分区用）====================
+// 用途：`deleteToTrash` 要先知道目标文件在**哪个分区**上 —— 同分区走家目录回收站，
+//   异分区才去用/建 `<挂载点>/.Trash-<uid>` ✓（freedesktop Trash 规范正是按分区定的 ✓）
+// ★ 判据 = **最长的**前缀匹配：挂载点会**嵌套**（`/`、`/media/x`、`/run/user/1000`…），
+//   取到较短的那个会把文件判到外层分区 ⇒ 回收站建错地方 ✗
+//   ⚠ 空表 ⇒ 返回 ""（调用方按"判不出分区"处理，**不猜** ✓）
+export func mount_of(Array[string] mounts, string path): string {
+    string best = ""
+    for mounts to m {
+        if not path_under(path, m) { continue }
+        if m.len() > best.len() { best = m }
+    }
+    return best
+}
+
+// `path` 是否位于挂载点 `mnt` **之下**（**边界敏感** —— 这是本函数存在的唯一理由）
+//   ⚠ 纯 `starts_with` 不够：`/run/user/1000` 会被 `/run/user/10` 命中 ✗
+//     ⇒ 那样"1000"与"10"会被当成父子关系，跨分区回收站就建错了 ✗
+//   ⚠ 根挂载点 `/` 特殊处理：`"/" + "/"` 拼出 `//`（语义怪）⇒ 直接按"是绝对路径"判 ✓
+export func path_under(string path, string mnt): bool {
+    if mnt == "" or path == "" { return false }
+    if mnt == "/" { return strings.starts_with(path, "/") }
+    if path == mnt { return true }
+    return strings.starts_with(path, mnt + "/")
+}
+
 // ==================== /proc/<pid>/stat ====================
 
 // 形如：`1234 (my proc) S 1 1234 ...`（第 2 段 comm 可能含空格/括号 ⇒ 按最后一个 ')' 切 ✓）

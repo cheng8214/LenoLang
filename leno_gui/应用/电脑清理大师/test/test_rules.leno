@@ -50,7 +50,7 @@ files.write(dirs.join(base, "other.txt"), "x")           // 1 字节（整层模
 
 // ==================== 3. 整层清理模式扫描 ====================
 var cat = new rules.CleanCategory(id = "t1", name = "整层", roots = [base])
-var r = rules.scan_worker([base], "", null, 0, [], 0)
+var r = rules.scan_worker([base], [0], "", null, 0, [], 0)
 int size = _int(r[0])
 int cnt = _int(r[1])
 int skip = _int(r[2])
@@ -75,7 +75,7 @@ check("整层: 单元含文件 c.log", hasC)
 
 // ==================== 4. 前缀过滤模式扫描 ====================
 var cat2 = new rules.CleanCategory(id = "t2", name = "前缀", roots = [base], file_prefix = "thumbcache_")
-var r2 = rules.scan_worker([base], "thumbcache_", null, 0, [], 0)
+var r2 = rules.scan_worker([base], [0], "thumbcache_", null, 0, [], 0)
 eq("前缀: 单元数", _int(r2[1]), 1)
 eq("前缀: 大小", _int(r2[0]), 10)
 check("前缀: 单元是 thumbcache 文件", r2[rules.SCAN_HDR] == dirs.join(base, "thumbcache_1.db"))
@@ -150,7 +150,7 @@ check("build_categories: 所有登记根均存在", allExist)
 // ==================== 7. 线程通道冒烟（try_send 不炸） ====================
 import threads
 Channel ch = threads.channel(16)
-var r3 = rules.scan_worker([base], "", ch, 0, [], 0)
+var r3 = rules.scan_worker([base], [0], "", ch, 0, [], 0)
 ch.close()
 check("通道: 扫描正常返回", _int(r3[1]) == 0)   // base 已被 5b 清空 ⇒ 0 单元
 
@@ -241,7 +241,7 @@ check("match_encoded: 目录命中", rules.match_encoded(enc, dirs.join(wbase, "
 check("match_encoded: 同前缀兄弟不命中", not rules.match_encoded(enc, dirs.join(wbase, "keepdir2", "x.tmp")))
 check("match_encoded: 空规则表不命中", not rules.match_encoded([], dirs.join(wbase, "keepdir", "x.tmp")))
 
-var rw = rules.scan_worker([wbase], "", null, 0, wl.encode(), 0)
+var rw = rules.scan_worker([wbase], [0], "", null, 0, wl.encode(), 0)
 eq("保留: 只统计未豁免单元", _int(rw[1]), 1)
 eq("保留: 大小只算未豁免", _int(rw[0]), 10)
 eq("保留: kept 计数", _int(rw[3]), 1)
@@ -272,11 +272,12 @@ if _os() == "windows" {
 wl.clear()      // 收尾：别影响别的测试 ✓
 dirs.delete(wbase)
 
-// ==================== 12. 年龄过滤（min_age_days → scan_worker 的 cutoff） ====================
-// 语义：`cutoff` = "够老"的**时间戳下界（秒）**；`<= 0` ⇒ 不过滤（旧行为 ✓）
+// ==================== 12. 年龄过滤（按根的 rootDays + nowSec → 每根各自 cutoff） ====================
+// 语义：某根的"够老"下界 = `nowSec - days*86400`（秒）；`days <= 0` 或 `nowSec <= 0` ⇒ 该根不过滤 ✓
 //   ★ 2026-10-15 加。为什么必须有：`temp` 类（/tmp 与 /var/tmp）整层删"根的直接子项"
 //     会连**别的进程正在用的**临时目录一起删 ✗ ⇒ 改为只收"超过 N 天"的 ✓
-//   ⚠ 夹具是**刚写出来的**（mtime ≈ 现在）⇒ 用"一天前 / 一天后"两个远端 cutoff 就能
+//   ★ 门槛**按根**给（/tmp 7 天、/var/tmp 30 天 —— FHS 要求后者跨重启保留 ✓）
+//   ⚠ 夹具是**刚写出来的**（mtime ≈ 现在）⇒ 用"一天/两天前"这类远端门槛就能
 //     **确定性**地判（不依赖秒级抖动 ✓）
 string abase = dirs.join(_tmpdir(), "cmaster_age_test")
 if dirs.exists(abase) { dirs.delete(abase) }
@@ -288,39 +289,84 @@ files.write(dirs.join(dirs.join(abase, "sub_new"), "f.txt"), "0123456789")
 //   ⚠ 本文件的时间模块别名是 `tms`，**不能叫 `ti`**：第 9 节已有个局部变量叫 `ti` ✗
 int nowSec = tms.now()
 
-// ① cutoff = 0 ⇒ 不过滤 ⇒ 3 个单元（两个文件 + 一个子目录）全收 ✓（= 旧行为）
-var ra0 = rules.scan_worker([abase], "", null, 0, [], 0)
-eq("年龄: cutoff=0 ⇒ 单元数", _int(ra0[1]), 3)
-eq("年龄: cutoff=0 ⇒ 跳过", _int(ra0[2]), 0)
-eq("年龄: cutoff=0 ⇒ 大小", _int(ra0[0]), 30)
+// ① days = 0 ⇒ 该根不过滤 ⇒ 3 个单元（两个文件 + 一个子目录）全收 ✓（= 旧行为）
+var ra0 = rules.scan_worker([abase], [0], "", null, 0, [], nowSec)
+eq("年龄: days=0 ⇒ 单元数", _int(ra0[1]), 3)
+eq("年龄: days=0 ⇒ 跳过", _int(ra0[2]), 0)
+eq("年龄: days=0 ⇒ 大小", _int(ra0[0]), 30)
 
-// ② cutoff = 一天前（晚于夹具 mtime）⇒ 全都"太新" ⇒ 一个都不收，全部计入 skipped ✓
-var ra1 = rules.scan_worker([abase], "", null, 0, [], nowSec - 86400)
+// ② days = 1（门槛 = 一天前，晚于夹具 mtime）⇒ 全都"太新" ⇒ 一个都不收，全部计入 skipped ✓
+var ra1 = rules.scan_worker([abase], [1], "", null, 0, [], nowSec)
 eq("年龄: 未到期 ⇒ 单元数 0", _int(ra1[1]), 0)
 eq("年龄: 未到期 ⇒ 跳过 3", _int(ra1[2]), 3)
 eq("年龄: 未到期 ⇒ 大小 0", _int(ra1[0]), 0)
 
-// ③ cutoff = 一天后 ⇒ 全都"够老" ⇒ 3 个单元全收（与 ① 同结果，验证判据方向没写反 ✓）
-var ra2 = rules.scan_worker([abase], "", null, 0, [], nowSec + 86400)
+// ③ **把 nowSec 往前推** ⇒ 门槛落回夹具 mtime **之后** ⇒ 全都"够老" ⇒ 3 个单元全收 ✓
+//    ⚠ 方向别写反：门槛 = `nowSec - days*86400`，要它**变晚**得让 `nowSec` **变大** ✗
+//      （第一版我把它写成"取过去时刻"，结果门槛更早 ⇒ 反而全被跳过 ⇒ 断言当场翻红 ✓）
+var ra2 = rules.scan_worker([abase], [1], "", null, 0, [], nowSec + 2 * 86400)
 eq("年龄: 已到期 ⇒ 单元数 3", _int(ra2[1]), 3)
 eq("年龄: 已到期 ⇒ 跳过 0", _int(ra2[2]), 0)
 
-// ④ 前缀模式**同样**受 cutoff 约束（两处分支都要覆盖 ✓）
-var ra3 = rules.scan_worker([abase], "old", null, 0, [], nowSec - 86400)
+// ④ nowSec = 0（基准缺失）⇒ **一律不过滤** ⇒ 收敛到旧行为，绝不能反过来"全跳过" ✗
+var ra2b = rules.scan_worker([abase], [365], "", null, 0, [], 0)
+eq("年龄: nowSec=0 ⇒ 不过滤（3 项）", _int(ra2b[1]), 3)
+eq("年龄: nowSec=0 ⇒ 跳过 0", _int(ra2b[2]), 0)
+
+// ⑤ 前缀模式**同样**受约束（两处分支都要覆盖 ✓）
+var ra3 = rules.scan_worker([abase], [1], "old", null, 0, [], nowSec)
 eq("年龄: 前缀模式 + 未到期 ⇒ 单元数 0", _int(ra3[1]), 0)
 eq("年龄: 前缀模式 + 未到期 ⇒ 跳过 2", _int(ra3[2]), 2)
-var ra4 = rules.scan_worker([abase], "old", null, 0, [], 0)
+var ra4 = rules.scan_worker([abase], [0], "old", null, 0, [], nowSec)
 eq("年龄: 前缀模式 + 不过滤 ⇒ 单元数 2", _int(ra4[1]), 2)
 
-// ⑤ 类别上确实配了年龄门槛（`temp` = 7 天 ✓ —— 免得有人把它当"死字段"删掉）
-//   ⚠ 只有 **Linux 表**的 temp 配了 7 天；Windows 侧刻意保持原样（行为零变化 ✓）⇒ 分平台断 ✓
+// ⑥ **同一类别内两个根门槛不同**（这才是本轮的重点）：
+//    rootA 门槛 1 天（⇒ 夹具太新，全跳过）、rootB 不设（⇒ 照收）✓
+string bbase = dirs.join(_tmpdir(), "cmaster_age_test_b")
+if dirs.exists(bbase) { dirs.delete(bbase) }
+dirs.mkdir(bbase)
+files.write(dirs.join(bbase, "b1.tmp"), "0123456789")
+var ra5 = rules.scan_worker([abase, bbase], [1, 0], "", null, 0, [], nowSec)
+eq("年龄: 两个根门槛不同 ⇒ 只收不设门槛的那个根", _int(ra5[1]), 1)
+eq("年龄: 两个根门槛不同 ⇒ 跳过 3", _int(ra5[2]), 3)
+eq("年龄: 两个根门槛不同 ⇒ 大小只算第二个根", _int(ra5[0]), 10)
+
+// ⑦ rootDays 比 roots **短**（理论上不该发生）⇒ 缺的那一项**不过滤**（不静默变成全跳过 ✓）
+var ra6 = rules.scan_worker([abase, bbase], [1], "", null, 0, [], nowSec)
+eq("年龄: rootDays 偏短 ⇒ 第二个根不过滤（1 项）", _int(ra6[1]), 1)
+
+// ⑧ 类别上确实配了门槛，且 **temp 两个根的门槛不同** ✓
+//   ⚠ 只有 **Linux 表**的 temp 配了门槛；Windows 侧刻意保持原样（行为零变化 ✓）⇒ 分平台断 ✓
 if _os() != "windows" {
-    bool tempAged = false
     for rules.build_categories() to c {
-        if c.id == "temp" and c.min_age_days > 0 { tempAged = true }
+        if c.id == "temp" {
+            check("年龄: temp 的 roots 与 root_age_days 逐位对齐", c.roots.len() == c.root_age_days.len())
+            int dTmp = -1
+            int dVar = -1
+            for 0 : c.roots.len() - 1 to k {
+                if strings.ends_with(c.roots[k], "var/tmp") { dVar = c.root_age_days[k] }
+                else { dTmp = c.root_age_days[k] }
+            }
+            check("年龄: /tmp 门槛 = 7 天", dTmp == 7)
+            check("年龄: /var/tmp 门槛 = 30 天（与 /tmp 不同 ✓）", dVar == 30)
+            // effective_root_days：摊平结果必须与逐位取值一致 ✓
+            var eff = rules.effective_root_days(c)
+            check("年龄: effective_root_days 与 roots 等长", eff.len() == c.roots.len())
+        }
     }
-    check("年龄: Linux 的 temp 类别配了 min_age_days", tempAged)
+    // 没设 root_age_days 的类别 ⇒ 摊平结果应全部等于类别默认值（这里是 0）✓
+    for rules.build_categories() to c {
+        if c.id == "browser" {
+            var eff2 = rules.effective_root_days(c)
+            bool allZero = true
+            for eff2 to d {
+                if d != c.min_age_days { allZero = false }
+            }
+            check("年龄: 未设按根门槛的类别 ⇒ 摊平全用类别默认值", allZero)
+        }
+    }
 }
+dirs.delete(bbase)
 
 dirs.delete(abase)
 
