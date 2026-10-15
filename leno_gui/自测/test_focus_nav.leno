@@ -57,9 +57,11 @@ func run() {
     c.on_click(func() { hitsC = hitsC + 1 })
 
     // 第二行：开关类（第二批进链条 ✓）
-    CheckBox ck = w.addCheckBox({x: 20, y: 110, w: 180, h: 26, text: "复选框", checked: false})
+    // ⚠ CheckBox / RadioButton 是**自量尺寸**控件 ⇒ **不要传 `w/h`** ✗（传了不生效，
+    //   且会被对账报"不认识" ✓ —— 实测：本探针原来就漏了这处，被 `[ui] sdl_checkbox` 抓到 ✓）
+    CheckBox ck = w.addCheckBox({x: 20, y: 110, text: "复选框", checked: false})
     Toggle tg = w.addToggle({x: 220, y: 110, w: 180, h: 28, text: "开关", on: false})
-    RadioButton rd = w.addRadioButton({x: 420, y: 110, w: 180, h: 24, text: "单选", group: "g9", checked: false})
+    RadioButton rd = w.addRadioButton({x: 420, y: 110, text: "单选", group: "g9", checked: false})
     ck.on_change(func(bool v) { hitsCk = hitsCk + 1; ckVal = if v then 1 else 0 })
 
     // 第三行：滑块（第三批进链条 ✓；键盘微调 ←/↓ 减、→/↑ 加、Home/End 两端 ✓）
