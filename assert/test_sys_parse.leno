@@ -50,6 +50,43 @@ main() {
     assert_eq(dC.ok, false)
     print("df 解析 通过!")
 
+    // ---------- /proc/mounts 挂载点列表（回收站跨分区用）----------
+    // ★ 关键边界①：**挂载点可以含空格**，`/proc/mounts` 里写成 `\040` ⇒ 必须还原 ✓
+    //   （这正是放弃 `df -P` 的原因：那种挂载点会被按列切成 `amd64` ✗ —— 外挂盘卷标常带空格）
+    // ★ 关键边界②：设备名列自己也是路径（`/dev/sda1` / `/dev/loop0`）⇒ 只能取**第 1 列** ✓
+    var m1 = sp.parse_proc_mounts(
+        "sysfs /sys sysfs rw,nosuid 0 0\n" +
+        "/dev/sda3 / ext4 rw,relatime 0 0\n" +
+        "/dev/sr1 /media/cheng8214/Ubuntu\\04022.04.5\\040LTS\\040amd64 iso9660 ro 0 0\n" +
+        "proc /proc proc rw 0 0\n")
+    assert_eq(m1.len(), 4, "应取到 4 个挂载点（设备名不是挂载点 ✗）")
+    assert_eq(m1[0], "/sys")
+    assert_eq(m1[1], "/")
+    assert_eq(m1[2], "/media/cheng8214/Ubuntu 22.04.5 LTS amd64", "`\\040` 必须还原成空格")
+    assert_eq(m1[3], "/proc")
+
+    // 非 `/` 开头的第 1 列（swap 之类）必须被排除 ✓
+    var m2 = sp.parse_proc_mounts("/dev/sda4 none swap sw 0 0\n")
+    assert_eq(m2.len(), 0, "非绝对路径的挂载点应被排除")
+
+    // 重复挂载点（bind mount）⇒ 去重 ✓
+    var m3 = sp.parse_proc_mounts("/dev/sda3 / ext4 rw 0 0\n/dev/sda3 / ext4 rw 0 0\n")
+    assert_eq(m3.len(), 1, "重复挂载点应去重")
+
+    // 空串 / 行数不足 ⇒ 空列表（不抛 ✓）
+    assert_eq(sp.parse_proc_mounts("").len(), 0)
+    assert_eq(sp.parse_proc_mounts("onlyone\n").len(), 0)
+
+    // 转义还原单测：`\040`→空格、`\134`→反斜杠、非法转义**原样保留**（不静默丢字符 ✓）
+    assert_eq(sp.unescape_mount("/a\\040b"), "/a b")
+    assert_eq(sp.unescape_mount("/a\\134b"), "/a\\b")
+    assert_eq(sp.unescape_mount("/a\\04b"), "/a\\04b", "不足 3 位八进制 ⇒ 原样")
+    assert_eq(sp.unescape_mount("/a\\999"), "/a\\999", "非八进制数字 ⇒ 原样")
+    assert_eq(sp.unescape_mount("/末尾反斜杠\\"), "/末尾反斜杠\\", "结尾反斜杠 ⇒ 原样（不越界 ✓）")
+    // 多字节 UTF-8（中文卷标）：逐**字节**处理 ⇒ 中文必须原样来回 ✓
+    assert_eq(sp.unescape_mount("/media/我的\\040U盘"), "/media/我的 U盘")
+    print("proc/mounts 挂载点解析 通过!")
+
     // ---------- /proc/<pid>/stat ----------
     // ⚠ 关键边界：comm 里**带空格和括号** ⇒ 必须按最后一个 ')' 切（按第一个切会错位 ✗）
     //   后半段共 22 段：state(0) ppid(1) … rss(21) ✓

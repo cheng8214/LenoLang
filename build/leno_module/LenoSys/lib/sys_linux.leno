@@ -148,8 +148,12 @@ export func diskSpace(string path): Dict {
 //
 //   ~/.local/share/Trash/files/<名字>          ← 实际文件
 //   ~/.local/share/Trash/info/<名字>.trashinfo ← 还原信息（原始绝对路径 + 删除时间）
-//   ⚠ 规范里"其它分区"应放 `<挂载点>/.Trash-<uid>`；本版只做家目录回收站，
-//     跨分区时 `mv` 会失败 ⇒ **如实报错**（不假装成功 ✗）；后续版本再补 .Trash-uid ✓
+//   ⚠ 规范里"其它分区"放 `<挂载点>/.Trash-<uid>`（或 `<挂载点>/.Trash/<uid>`）✓
+//   ★ 2026-10-15 起**分两半看**（此前只有前半 ✓）：
+//     · **清空** `emptyTrash()` ⇒ 已覆盖家目录 + 各挂载点 + `expunged/` ✓
+//     · **移入** `deleteToTrash()` ⇒ 仍只做家目录：跨分区时 `mv` 会失败 ⇒ **如实报错**
+//       （不假装成功 ✗）；要做跨分区移入，得按目标路径找它所在的挂载点、并在那里
+//       建 `<挂载点>/.Trash-<uid>`（还要管权限）—— 那是另一件事，未做 ✓
 
 func _trashDir(): string { return dataDir() + "/Trash" }
 
@@ -215,11 +219,57 @@ export func deleteToTrash(Array[string] paths): Dict {
     return {ok: errs.len() == 0, count: paths.len(), aborted: false, errors: errs, moved: okCount}
 }
 
-// 清空回收站：递归删 `files/` 与 `info/` 的内容 ✓
+// 清空回收站：**家目录 + 各挂载点**（与 Windows 侧 SHEmptyRecycleBin"清所有驱动器"同口径 ✓）
+//   ★ 2026-10-15 补跨分区（原来只清家目录 ⇒ 外挂盘 / 其他分区的回收站清不掉 ✗）
+//   规范规定的两种布局都清：
+//     · `<挂载点>/.Trash-<uid>`                      ← 现代布局（较常用）
+//     · `<挂载点>/.Trash/<uid>`（分区根的 `.Trash` 为 sticky 且属 root 时才有）
+//     · 以及家目录回收站里的 `expunged/`（规范定义的"删除中转区"，不顺手清会一直留垃圾 ✓）
+//   ⚠ **只动本 uid 自己那一份** ⇒ 不需要 sticky / 属主判据（规范也正是这么要求实现的 ✓，
+//     别人的 `<uid>` 子目录根本不碰 ✓）
 export func emptyTrash(): bool {
-    _clearDir(_trashDir() + "/files")
-    _clearDir(_trashDir() + "/info")
+    // ① 家目录回收站
+    _clearTrashAt(_trashDir())
+    // ② 其他挂载点（拿不到 uid / 挂载点 ⇒ 就只清家目录，**不猜路径** ✓）
+    int uid = _uid()
+    if uid >= 0 {
+        for _mountPoints() to m {
+            string base = m
+            if base == "/" { base = "" }        // 免得拼出 `//.Trash-1000` ✓
+            _clearTrashAt(base + "/.Trash-" + _str(uid))
+            _clearTrashAt(base + "/.Trash/" + _str(uid))
+        }
+    }
     return true
+}
+
+// 清一个回收站目录：`files/` + `info/` + `expunged/`（目录不存在 ⇒ 各自 no-op ✓）
+func _clearTrashAt(string t) {
+    _clearDir(t + "/files")
+    _clearDir(t + "/info")
+    _clearDir(t + "/expunged")
+}
+
+// 当前 uid（拿不到 ⇒ -1）：走 `id -u`（coreutils / busybox 都有 ✓）
+//   ⚠ 本模块**刻意不 import ffi**（见文件头）⇒ 不碰 `getuid()` 那种手写 ABI ✓
+func _uid(): int {
+    ExecResult? r = _exec("id -u", CMD_TIMEOUT_MS)
+    if r == null { return -1 }
+    return sp.first_int_in(r.output, -1)
+}
+
+// 挂载点列表（回收站按挂载点找 `.Trash-<uid>` ✓）
+//   ★ 读 `/proc/mounts`（**不是 `df -P`**）：挂载点允许含空格，而 df 按列取会把
+//     `/media/<用户>/Ubuntu 22.04.5 LTS amd64` 这种**外挂盘**整个漏掉 ✗（本轮实测踩到 ✓）
+//     `/proc/mounts` 用 `\040` 转义空格 ⇒ 列号无歧义 ✓
+//   ⚠ 解析全在 `sp.parse_proc_mounts`（纯函数 ⇒ 已在 assert\test_sys_parse.leno 钉死 ✓）
+//   ⚠ 读不到 /proc/mounts（非 Linux / 受限容器）⇒ 返回空表 ⇒ 只清家目录，**不猜路径** ✓
+func _mountPoints(): Array[string] {
+    Array[string] none = []
+    string txt = ""
+    try { txt = files.read("/proc/mounts") } catch e { return none }
+    if txt == "" { return none }
+    return sp.parse_proc_mounts(txt)
 }
 
 func _clearDir(string d) {

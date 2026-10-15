@@ -28,6 +28,11 @@ export struct CleanCategory {
     Array[string] roots = []    // 扫描根列表（构建时解析环境变量 + 存在性过滤）
     string file_prefix = ""     // 非空 ⇒ 只收该前缀的文件（如 thumbcache_）；空 ⇒ 整层清理
     string hint = ""            // 行悬停提示（讲清这类的性质/技巧）；纯 UI 用 ⇒ 不跨线程 ✓
+    // ★ 2026-10-15 新增：只收"超过 N 天"的单元（0 = 不限 ⇒ 与旧行为**逐字等价** ✓）
+    //   为什么需要（`temp` 用的就是它）：`/tmp`、`/var/tmp` 整层删"根的直接子项"会把
+    //   **别的进程正在用的**临时目录一起删 ✗；而 `/var/tmp` 按 FHS 语义本就要求跨重启保留
+    //   ⇒ 按年龄过滤是这两处唯一稳妥的判据 ✓
+    int min_age_days = 0
 }
 
 // 每类别清理单元上限（正常垃圾远达不到；超出部分只计数不删）
@@ -40,7 +45,7 @@ export const int SCAN_HDR = 4
 
 // ==================== ② 预览·干跑：只算"将会发生什么"（纯逻辑 ⇒ 可单测 ✓）====================
 // 为什么要有它：清理**不可撤销** ✗ ⇒ 点「一键清理」之前，用户该先看到一张账单：
-//   本次将清理 N 项 / 释放 X / 其中 M 项会被跳过（占用）/ K 项被保留清单豁免 ✓
+//   本次将清理 N 项 / 释放 X / 其中 M 项会被跳过（占用 / 未到期）/ K 项被保留清单豁免 ✓
 // ⚠ 本段**只读**已有扫描结果 ⇒ 不碰磁盘、不删除 ✓（"干跑"的本质 ✓）
 //   唯一的碰盘动作在 alive_top（只 stat ✓，纯读 ✓）—— 用来指出"扫描之后文件还都在吗" ✓
 export struct PreviewRow {
@@ -48,7 +53,7 @@ export struct PreviewRow {
     string name = ""     // 类别名（展示用 ✓）
     int cnt = 0          // 将清理项数
     int bytes = 0        // 将释放字节
-    int skip = 0         // 将跳过（被占用 / 探测失败）
+    int skip = 0         // 将跳过（被占用 / 探测失败 / **未到期**——见 CleanCategory.min_age_days ✓）
     int kept = 0         // 保留清单豁免（有意不删 ✓）
 }
 
@@ -383,6 +388,20 @@ func _build_windows(): Array[CleanCategory] {
     cats.add(new CleanCategory(id = "swcache", name = "网页离线缓存", roots = swRoots,
         hint = "浏览器 Service Worker / 网页离线缓存（关掉浏览器后能清更多）"))
 
+    // ==================== 12~15：与 Linux 表对齐的**占位**类别 ====================
+    // ★ 2026-10-15：`test_rules_platform` 钉死"两表**同 id、同顺序**"（应用侧按 id 查类别、
+    //   图标按 `id.png` 取）⇒ Linux 表新增类别时，这张表必须有**同名同位**的兄弟 ✓
+    // 这四类在 Windows 上要么不存在、要么属**系统级**（需管理员）⇒ 一律**留空 + hint**
+    //   （与 Linux 表的 wer / crashdump 同款：宁可不给，也**不编造假路径** ✗）
+    cats.add(new CleanCategory(id = "fontcache", name = "字体缓存",
+        hint = "Windows 字体缓存是系统文件（FNTCACHE.DAT，需管理员）⇒ 本平台不处理"))
+    cats.add(new CleanCategory(id = "deskcache", name = "桌面缓存",
+        hint = "本平台无桌面索引缓存（Windows Search 索引位于 %PROGRAMDATA%\\Microsoft\\Search，需管理员）⇒ 不处理"))
+    cats.add(new CleanCategory(id = "sandboxcache", name = "沙箱应用缓存",
+        hint = "Windows 沙箱应用（UWP）缓存位于 %LOCALAPPDATA%\\Packages\\*\\LocalCache；本版未启用（避免误删应用状态）"))
+    cats.add(new CleanCategory(id = "gamecache", name = "游戏着色器缓存",
+        hint = "Windows 游戏着色器缓存（NVIDIA DXCache / AMD DxCache）位于 %LOCALAPPDATA%；本版未启用"))
+
     return cats
 }
 
@@ -393,6 +412,8 @@ func _build_windows(): Array[CleanCategory] {
 //     ⇒ 这两类**留空**（界面上就是 0 项，并给出 hint 说明为什么 ✓）
 //   · 着色器缓存（d3d）：换成 Mesa / NVIDIA 的 shader cache ✓
 //   · 缩略图（thumbs）：`~/.cache/thumbnails` 是**专用目录** ⇒ 不需要 `thumbcache_` 前缀过滤 ✓
+// ★ 2026-10-15：另有 4 类**本平台独占**（fontcache / deskcache / sandboxcache / gamecache，
+//   编在 12~15 ✓）—— Windows 表里是留空的占位兄弟（只为满足"两表同 id 同顺序"的硬约束 ✓）
 func _build_linux(): Array[CleanCategory] {
     Array[CleanCategory] cats = []
     string home = _env_or("HOME", "")
@@ -400,9 +421,15 @@ func _build_linux(): Array[CleanCategory] {
     string cfg = _xdg_dir("XDG_CONFIG_HOME", ".config")
 
     // 1) 系统临时文件：$TMPDIR（默认 /tmp）+ /var/tmp
+    //   ★ 2026-10-15：加 `min_age_days = 7` —— **只清超过 7 天**的单元。
+    //     原先"整层删根的直接子项"会连**别的进程正在用的**临时目录一起删 ✗
+    //     （X11 socket、systemd 私有目录、编译中间产物……）；`/var/tmp` 按 FHS 语义
+    //     更要跨重启保留 ⇒ 按年龄过滤这两处才站得住 ✓
     Array[string] tempRoots = []
     _add_roots(tempRoots, [_env_or("TMPDIR", "/tmp"), "/var/tmp"])
-    cats.add(new CleanCategory(id = "temp", name = "系统临时文件", roots = tempRoots))
+    cats.add(new CleanCategory(id = "temp", name = "系统临时文件", roots = tempRoots,
+        min_age_days = 7,
+        hint = "只清超过 7 天的临时文件（/tmp 与 /var/tmp）；更新的不动 —— 可能正被别的程序使用"))
 
     // 2) 浏览器缓存（Chromium 系 + Firefox）
     cats.add(new CleanCategory(id = "browser", name = "浏览器缓存",
@@ -472,6 +499,44 @@ func _build_linux(): Array[CleanCategory] {
         roots = linux_sw_roots(cache),
         hint = "浏览器 Service Worker / 网页离线缓存（关掉浏览器后能清更多）"))
 
+    // ==================== 以下为「Linux 独占类别」（一律追加在回收站之后 ✓）====================
+    // ★ 2026-10-15：Windows 表里也有同名同位的兄弟（那边留空 + hint ✓ 见其注释）
+
+    // 12) 字体缓存：fontconfig 的字体索引（`$XDG_CACHE_HOME/fontconfig`）
+    Array[string] fontRoots = []
+    if cache != "" { _add_roots(fontRoots, [dirs.join(cache, "fontconfig")]) }
+    cats.add(new CleanCategory(id = "fontcache", name = "字体缓存", roots = fontRoots,
+        hint = "fontconfig 的字体索引缓存；删后首次渲染/启动会重建（可能略慢）"))
+
+    // 13) 桌面缓存：GNOME Tracker 索引 / GNOME Shell / KDE Plasma / Xfce 的会话缓存
+    //   ⚠ 只收**明确的缓存目录名**（都属"删了会自己重建"的索引/渲染缓存）；
+    //     不要整层清 `~/.cache` —— 里面混着大量**别的应用**的缓存与状态 ✗
+    Array[string] deskRoots = []
+    if cache != "" {
+        _add_roots(deskRoots, [dirs.join(cache, "tracker3"), dirs.join(cache, "tracker"),
+                               dirs.join(cache, "gnome-shell"), dirs.join(cache, "plasmashell"),
+                               dirs.join(cache, "xfce4")])
+    }
+    cats.add(new CleanCategory(id = "deskcache", name = "桌面缓存", roots = deskRoots,
+        hint = "桌面环境的索引/会话缓存（GNOME Tracker / GNOME Shell / KDE Plasma / Xfce）；会自动重建"))
+
+    // 14) 沙箱应用缓存：Flatpak 的 `~/.var/app/<应用id>/cache`（只收 cache 那一层 ✓）
+    Array[string] sbRoots = []
+    if home != "" { _add_roots(sbRoots, linux_sandbox_caches(home)) }
+    cats.add(new CleanCategory(id = "sandboxcache", name = "沙箱应用缓存", roots = sbRoots,
+        hint = "Flatpak 沙箱应用的缓存（关掉对应应用后能清更多；不碰其 data/config）"))
+
+    // 15) 游戏着色器缓存：Steam 的 shadercache（删后首次进游戏重新编译 ⇒ 加载略慢）
+    //   ⚠ 路径用**多段字面量**（`dirs.join(x, "a/b/c")` 实测能被正确解析，见下方
+    //     linux_prof_caches 处的同一说明 ✓）—— 四层嵌套 join 只为拆分分隔符，反而更难读
+    Array[string] gameRoots = []
+    if home != "" {
+        _add_roots(gameRoots, [dirs.join(home, ".steam/steam/steamapps/shadercache"),
+                               dirs.join(home, ".local/share/Steam/steamapps/shadercache")])
+    }
+    cats.add(new CleanCategory(id = "gamecache", name = "游戏着色器缓存", roots = gameRoots,
+        hint = "Steam 游戏的着色器编译缓存；删后首次进游戏会重新编译（加载略慢）"))
+
     return cats
 }
 
@@ -493,6 +558,26 @@ export func linux_app_caches(string base, Array[string] products): Array[string]
         string root = dirs.join(base, n)
         if not dirs.exists(root) { continue }
         for subs to s { _add_roots(out, [dirs.join(root, s)]) }
+    }
+    return out
+}
+
+// Flatpak 沙箱应用的缓存根：`~/.var/app/<应用id>/cache`（逐个应用目录探测 ✓）
+//   ⚠ **只收 `cache` 这一层**：同级还有 `data` / `config`（**用户数据/配置**）✗ 绝不能整层清
+//   ⚠ 与 `linux_app_caches` 的区别：沙箱应用**自带一整套目录布局**（data/config/cache）
+//     ⇒ 不能照搬"`<应用>/{Cache,GPUCache,…}`"那套子目录名 ✓
+export func linux_sandbox_caches(string home): Array[string] {
+    Array[string] out = []
+    if home == "" { return out }
+    string apps = dirs.join(dirs.join(home, ".var"), "app")
+    if not dirs.exists(apps) { return out }
+    try {
+        for dirs.listdir(apps) to a {
+            string p = dirs.join(apps, a)
+            if dirs.is_dir(p) { _add_roots(out, [dirs.join(p, "cache")]) }
+        }
+    } catch e {
+        return out        // 读不动（无权限等）⇒ 返回已收到的；不编造 ✗
     }
     return out
 }
@@ -642,7 +727,7 @@ func _wl_kept(Array[string] wlEnc, string p): bool {
 
 // ==================== 扫描 worker ====================
 // 扫描一个类别。返回 [sizeStr, cntStr, skipStr, keptStr, 路径1, 大小1, 路径2, 大小2, ...]
-//   skip = stat 失败/无权限（跳过 ✓）
+//   skip = stat 失败/无权限**或"还没到年龄"**（都属"本次不动" ✓）
 //   kept = 命中**保留清单**（有意不收 ⇒ 用户可据此确认清单真的生效了 ✓）
 //   成对明细从下标 `SCAN_HDR` 开始 ✓
 // （单元大小供 delete_worker 免二次 stat 统计释放量 ✓）
@@ -652,7 +737,13 @@ func _wl_kept(Array[string] wlEnc, string p): bool {
 // ch 允许 null（单测直调）；进度经 ch.try_send([idx, sizeDelta, cntDelta]) 上报（非阻塞，满了就丢）
 // ⚠ `wlEnc` **必须显式传**（不能给默认值 `= []`：本语言要求默认值是编译期常量 ✗ 实测报错）
 //   它是保留清单的**编码快照**（纯字符串数组 ⇒ 可安全跨线程 ✓，见 cleaner_whitelist.encode ✓）
-export func scan_worker(Array[string] roots, string file_prefix, any ch, int idx, Array[string] wlEnc): Array[string] {
+// ★ `cutoff`（2026-10-15 加）= "够老"的时间戳下界（**秒**）；`<= 0` ⇒ 不过滤（与旧行为逐字等价 ✓）。
+//   ⚠ 为什么传**时间戳**而不是传 `min_age_days`：worker 里算 `now` 就要动 `ti` 模块，
+//     而"线程里首次使用某个模块"正是本文件头部记的那个坑 ✗（TH2 之前必炸）
+//     ⇒ 由**主线程**算好 cutoff 传进来，worker 只做纯数值比较 ✓
+//   ⚠ 另有意义的一点：年龄判据**只在扫描期做**。删除期不必再判 —— 时间只会往前走，
+//     扫描时"够老"的单元在删除时只会更老（不会反过来变新）✓
+export func scan_worker(Array[string] roots, string file_prefix, any ch, int idx, Array[string] wlEnc, int cutoff): Array[string] {
     int totalSize = 0
     int totalCnt = 0
     int skipped = 0
@@ -672,6 +763,7 @@ export func scan_worker(Array[string] roots, string file_prefix, any ch, int idx
                     try {
                         var di = dirs.stat(p)
                         if not di.exists { skipped = skipped + 1; continue }
+                        if _too_new(di, cutoff) { skipped = skipped + 1; continue }   // ★ 未到期 ⇒ 本次不动 ✓
                         sz = di.size
                     } catch {
                         skipped = skipped + 1
@@ -698,6 +790,7 @@ export func scan_worker(Array[string] roots, string file_prefix, any ch, int idx
                         skipped = skipped + 1
                         continue
                     }
+                    if _too_new(di, cutoff) { skipped = skipped + 1; continue }       // ★ 未到期 ⇒ 本次不动 ✓
                     if di.is_file { sz = di.size } else { sz = _dir_size(p) }
                 } catch {
                     skipped = skipped + 1
@@ -720,6 +813,15 @@ export func scan_worker(Array[string] roots, string file_prefix, any ch, int idx
         out.add(unitSizes[i])
     }
     return out
+}
+
+// "还没到年龄"判定（纯数值比较 ⇒ worker 里可安全调用 ✓）
+//   cutoff <= 0 ⇒ 恒 false（不过滤 ✓）；mtime == 0（stat 拿不到时间）⇒ 也当**没过期**处理？
+//   ✗ 不行：mtime=0 是 1970 年，按"更老"算会**误收**一个时间未知的单元 ⇒ 这里当**未到期**保守跳过 ✓
+func _too_new(DirInfo di, int cutoff): bool {
+    if cutoff <= 0 { return false }
+    if di.mtime <= 0 { return true }
+    return di.mtime > cutoff
 }
 
 func _report(any ch, int idx, int sizeDelta, int cntDelta) {

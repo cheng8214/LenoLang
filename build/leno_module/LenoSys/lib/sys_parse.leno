@@ -124,6 +124,66 @@ export func parse_df(string out): Dict {
     return {ok: false, total: 0, free: 0}
 }
 
+// ==================== /proc/mounts（挂载点列表，回收站跨分区用）====================
+// 为什么需要：freedesktop Trash 规范要求**其它分区**的回收站放在
+//   `<挂载点>/.Trash-<uid>`（或 `<挂载点>/.Trash/<uid>`）⇒ 清空回收站得先知道有哪些挂载点 ✓
+// ★ 为什么用 `/proc/mounts` 而**不是 `df -P`**（本轮实测踩到的）：
+//   `df -P` 的挂载点列是"最后一列"，而挂载点**允许含空格** —— 本机就有一个
+//   `/media/cheng8214/Ubuntu 22.04.5 LTS amd64` ⇒ 按列取只会拿到 `amd64`（不以 `/` 开头 ⇒
+//   整个挂载点被**漏掉** ✗）。外挂盘恰恰最常带空格（卷标）⇒ 正好漏在最需要覆盖的地方 ✗
+//   `/proc/mounts` 则把空格写成 `\040` ⇒ **字段边界无歧义** ✓（读 /proc 也与本模块主线一致 ✓）
+// 形态：`<设备> <挂载点> <文件系统> <选项> <dump> <pass>`（空白分隔，每行一个挂载 ✓）
+//   ⇒ 第 **1** 列就是挂载点（设备名的空格同样被转义 ⇒ 列号不会错位 ✓）
+// ⚠ 只认以 `/` 开头的挂载点（排除 swap 之类不以路径挂载的条目 ✓）；输出去重（bind mount 会重复 ✓）
+export func parse_proc_mounts(string text): Array[string] {
+    Array[string] res = []
+    var ls = split_lines(text)
+    for ls to l {
+        var t = tokens(l)
+        if t.len() < 2 { continue }
+        string mp = unescape_mount(at(t, 1))
+        if not strings.starts_with(mp, "/") { continue }
+        bool dup = false
+        for res to r {
+            if r == mp { dup = true }
+        }
+        if not dup { res.add(mp) }
+    }
+    return res
+}
+
+// `/proc/mounts` 字段里的八进制转义还原：`\040`→空格、`\011`→Tab、`\012`→换行、`\134`→`\`
+//   ⚠ 按**字节**处理（不是码点）：转义本身就是字节级规则，而挂载点里的中文是多字节 UTF-8
+//     ⇒ 逐码点处理会把"从字节流里拣出来的某个字节"变成非法码点 ✗（`from_bytes` 才严格互逆 ✓）
+//   ⚠ 非法转义（`\` 后不是 3 个八进制数字）⇒ **原样保留**（不静默丢字符 —— 宁可路径怪一点，
+//     也不要"看起来对、其实少了个字符"的路径 ✗）
+export func unescape_mount(string s): string {
+    Array[int] out = []
+    var by = strings.to_bytes(s)
+    int i = 0
+    while i < by.len() {
+        if by[i] == 92 and i + 3 < by.len() {        // 92 = '\\'
+            int d1 = _oct_digit(by[i + 1])
+            int d2 = _oct_digit(by[i + 2])
+            int d3 = _oct_digit(by[i + 3])
+            if d1 >= 0 and d2 >= 0 and d3 >= 0 {
+                out.add(d1 * 64 + d2 * 8 + d3)
+                i = i + 4
+                continue
+            }
+        }
+        out.add(by[i])
+        i = i + 1
+    }
+    return strings.from_bytes(out)
+}
+
+// 字节值 → 八进制数字（`'0'..'7'` ⇒ 0..7；其它 ⇒ -1）
+func _oct_digit(int b): int {
+    if b >= 48 and b <= 55 { return b - 48 }
+    return -1
+}
+
 // ==================== /proc/<pid>/stat ====================
 
 // 形如：`1234 (my proc) S 1 1234 ...`（第 2 段 comm 可能含空格/括号 ⇒ 按最后一个 ')' 切 ✓）

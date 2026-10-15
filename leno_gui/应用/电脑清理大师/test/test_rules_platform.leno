@@ -131,6 +131,13 @@ main() {
     dirs.mkdir_p(dirs.join(fakeCache, "pip"))
     dirs.mkdir_p(dirs.join(dirs.join(fakeHome, ".npm"), "_cacache"))
     dirs.mkdir_p(fakeTmp)
+    // ★ 2026-10-15 新增的 4 类 Linux 独占类别（合成它们各自的根，验"判据"而非"本机是否装了"）
+    dirs.mkdir_p(dirs.join(fakeCache, "fontconfig"))
+    dirs.mkdir_p(dirs.join(fakeCache, "tracker3"))
+    string fakeApp = dirs.join(dirs.join(dirs.join(fakeHome, ".var"), "app"), "org.example.App")
+    dirs.mkdir_p(dirs.join(fakeApp, "cache"))
+    dirs.mkdir_p(dirs.join(fakeApp, "data"))       // 用户数据：**不得**被收进来 ✗
+    dirs.mkdir_p(dirs.join(fakeHome, ".steam/steam/steamapps/shadercache"))
 
     _env("HOME", fakeHome)
     _env("TMPDIR", fakeTmp)
@@ -143,6 +150,14 @@ main() {
     assert_true(_cat_has(lc2, "d3d", dirs.join(fakeCache, "mesa_shader_cache")), "着色器缓存应含 mesa_shader_cache")
     assert_true(_cat_has(lc2, "devcache", dirs.join(dirs.join(fakeHome, ".npm"), "_cacache")), "包管理器缓存应含 ~/.npm/_cacache")
     assert_true(_cat_has(lc2, "devcache", dirs.join(fakeCache, "pip")), "包管理器缓存应含 ~/.cache/pip")
+    // ★ 2026-10-15 新增的 4 类：各自都要能"认出"合成出来的根 ✓
+    assert_true(_cat_has(lc2, "fontcache", dirs.join(fakeCache, "fontconfig")), "字体缓存应含 ~/.cache/fontconfig")
+    assert_true(_cat_has(lc2, "deskcache", dirs.join(fakeCache, "tracker3")), "桌面缓存应含 ~/.cache/tracker3")
+    assert_true(_cat_has(lc2, "sandboxcache", dirs.join(fakeApp, "cache")), "沙箱缓存应含 ~/.var/app/<应用>/cache")
+    // ★ 沙箱应用**只收 cache 那一层**：同级 data/config 是用户数据 ⇒ 多收一个都是 bug ✗
+    assert_eq(_cat_roots(lc2, "sandboxcache").len(), 1, "沙箱缓存根应恰好 1 个（实际 " + _str(_cat_roots(lc2, "sandboxcache")) + "）")
+    assert_true(_cat_has(lc2, "gamecache", dirs.join(fakeHome, ".steam/steam/steamapps/shadercache")),
+        "游戏着色器缓存应含 Steam 的 shadercache")
     // ★ 这三条是"不编造"的硬约束：Linux 上确实没有的类别必须**留空**（不塞假路径 ✗）
     assert_eq(_cat_roots(lc2, "wer").len(), 0, "wer 在 Linux 上应留空（不编造 ✗）")
     assert_eq(_cat_roots(lc2, "crashdump").len(), 0, "crashdump 在 Linux 上应留空（core dump 需 root ✗）")
@@ -153,7 +168,7 @@ main() {
     _env("TMPDIR", oldTmp)
     _env("XDG_CACHE_HOME", oldCache)
     _env("XDG_CONFIG_HOME", oldCfg)
-    _ok("整张 Linux 表（合成 HOME/TMPDIR/XDG ⇒ temp/thumbs/d3d/devcache 全部命中）")
+    _ok("整张 Linux 表（合成 HOME/TMPDIR/XDG ⇒ temp/thumbs/d3d/devcache/fontcache/deskcache/sandboxcache/gamecache 全部命中）")
 
     // ---------- 收尾：清掉合成目录 ----------
     if dirs.exists(base) { dirs.delete(base) }

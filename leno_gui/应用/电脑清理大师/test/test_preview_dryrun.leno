@@ -85,7 +85,7 @@ for subs to sub {
 }
 Array[Array[string]] results = []
 for cats to c {
-    results.add(rules.scan_worker(c.roots, c.file_prefix, null, 0, []))
+    results.add(rules.scan_worker(c.roots, c.file_prefix, null, 0, [], 0))
 }
 
 // ==================== 预览（干跑 ✓）====================
