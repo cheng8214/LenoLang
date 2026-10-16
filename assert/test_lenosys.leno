@@ -208,6 +208,31 @@ main() {
     }
     print("桌面集成 通过（只验空/非法入参 ⇒ 无副作用 ✓）!")
 
+    // ---------- 命令执行的**超时参数**（★ 2026-10-16 新增）----------
+    // ★ 这一段的关键是**判别性**：老实现把超时**写死 30s** ⇒ 参数会被忽略 ⇒ 下面第一条就会
+    //   "跑满 2s 后返回 code=0"（而不是 124）⇒ 用例**必红** ✓（不是"看着像验过" ✓）
+    //   ⚠ 只有"给出更小限额"这一侧能在用例里廉价判别；"0 = 不超时 / 负值退回 30s"
+    //     都需要跑 31s+ 才能判别 ⇒ 放探针（本文件规矩：慢的/碰环境的交给探针 ✓）
+    // ⚠ 只验 POSIX：`sleep` 是 sh 的东西，Windows 的 cmd 没有等价物 ⇒ 硬断会变成机器相关用例 ✗
+    //   （`_exec` 自身的超时语义已由 assert/test_exec_timeout.leno 覆盖 ✓，这里验的是**门面参数** ✓）
+    if not Sys.isWindows() {
+        var t0 = times.ms()
+        var to1 = Sys.exec("sleep 2", 300)                    // 300ms 限额 ⇒ 必超时
+        var el1 = times.ms() - t0
+        assert_eq(jsons.get_int(to1, "code", -1), 124, "超时的退出码应为 124（GNU 惯例）")
+        assert_true(el1 < 1500,
+            "应在 ~300ms 内返回（证明子进程真被杀，没等它跑完）；实际 " + _str(el1) + "ms")
+        var to2 = Sys.exec("sleep 2", 8000)                   // 限额足够 ⇒ 正常跑完
+        assert_eq(jsons.get_int(to2, "code", -1), 0, "限额足够时应正常结束（code=0）")
+        // ⚠ 负值**绝不能**退化成"不超时"（内置 `_exec` 对非正数一律不套超时 ⇒ 透传就等于摘掉守卫 ✗）
+        //   这里只验"照样正常返回" ✓；"负值确实按缺省 30s 算"由探针用 31s 睡眠判别 ✓
+        var to3 = Sys.exec("sleep 1", -5)
+        assert_eq(jsons.get_int(to3, "code", -1), 0, "负值应退回缺省（本条 1s 内跑得完 ✓）")
+        print("命令超时参数 通过!")
+    } else {
+        print("命令超时参数 跳过（本段用 POSIX sh 的 sleep 语义 ✓）")
+    }
+
     // ---------- 启动项 / 已装软件 / 最近文件：只验"可调用 + 结构对" ----------
     var su = Sys.listStartupItems()
     for su to it { assert_true(it.id != "" or it.name != "", "启动项应有 id 或 name") }

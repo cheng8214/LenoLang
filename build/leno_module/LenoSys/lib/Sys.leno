@@ -184,12 +184,25 @@ export func joinPath(Array[string] parts): string {
 //     而 `timeout` 用 `execvp` 跑命令词 ⇒ **shell 内建（`command`/`type`/`test`）当命令词会直接失败**
 //     （`timeout: 无法运行命令 "command"` rc=127 ✗）⇒ 需要内建就走 `sh -c '…'`，或改用真二进制
 //     （如探测命令用 `which` ✓）。另外固定带的 30s 超时还有个陷阱：见 sys_linux 的 openWith 注释 ✓
-export func exec(string cmd): Dict {
+//   ★ 2026-10-16 新增**可选超时参数** `timeoutMs`（缺省 30000）—— 此前写死 30s、调用方**没法**表达
+//     "这条命令可能要跑几分钟"，也没法表达"别超时" ✗（`_exec` 本身支持，是这层门面把能力藏住了 ✓）：
+//     · `exec(cmd)`            ⇒ 老行为不变（30s ✓）—— **既有调用点零改动** ✓
+//     · `exec(cmd, 600000)`    ⇒ 允许跑 10 分钟（编译 / 打包 / 大文件校验要用 ✓）
+//     · `exec(cmd, 0)`         ⇒ **不套超时**（与内置 `_exec` 的口径一致；实测确认过 ✓）
+//   ⚠ `0` 的代价必须说清：命令一旦卡住 ⇒ 本调用**永远不返回**（这是**同步阻塞**调用 ✗）
+//     "发起后不管它"的正确做法是 `&` 后台（见 sys_linux 的 openWith ✓），**不是**传 0 ✗
+//   ⚠ 负数**不能原样透传**：实测内置 `_exec` 把**任何非正数**都当"不套超时"（`-1` 也一样 ✓）
+//     ⇒ 若直接透传，一个手滑的 `-5` 就把 30s 守卫**悄悄摘掉**了 ✗ ⇒ 这里负值**退回缺省 30s** ✓
+//     （选保守方向：给错值只是"按老行为走"，而不是"失去保护" ✓）
+//   ⚠ 超时的退出码是 **124**（GNU `timeout` 惯例 ✓）⇒ 调用方可据此区别"超时"与"命令自己失败"
+export func exec(string cmd, int timeoutMs = 30000): Dict {
     // Windows 必须显式 `cmd /c`（`_exec` 在 Windows 走后 CreateProcessW，**不套 shell** ✓）；
     // Linux **不用再包一层**：`_exec` 最终走 `system()` ⇒ 本来就带 `/bin/sh -c` ✓
     string full = cmd
     if _isW() { full = "cmd /c " + cmd }
-    ExecResult? r = _exec(full, 30000)
+    int ms = timeoutMs
+    if ms < 0 { ms = 30000 }          // 负值 ⇒ 退回缺省（**不能**退化成"不超时" ✗，见上）
+    ExecResult? r = _exec(full, ms)
     if r == null { return {ok: false, code: -1, out: ""} }
     return {ok: r.code == 0, code: r.code, out: r.output}
 }

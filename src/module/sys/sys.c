@@ -1230,22 +1230,24 @@ static int instance_resolve(const char* given, char* nm, size_t nmsz,
 
 // 把 pid 写进 pid 文件 —— **只服务于 `_instance_activate`（找持锁进程的窗口）** ✓
 //   ⚠ 判重**不看**这个文件（全靠锁本身）⇒ 内容陈旧/写失败都不影响单实例语义 ✓
+//   ★ 2026-10-16：本函数**只在 Windows 被调用** ⇒ 整个定义必须包在 `_WIN32` 里 ✓
+//     为什么 Windows 需要它、POSIX 不需要：Windows 手里是 **mutex**（不是文件句柄），要写 pid
+//     只能另开一次 `_wfopen` ✓；POSIX 手里就是**锁文件那个 fd**，在加锁成功后**就地**写进去即可 ✓
+//     （见 `native_single_instance` 的 POSIX 分支）⇒ 不包的话 Linux 构建会报 `-Wunused-function` ✗
+#ifdef _WIN32
 static void instance_write_pid(const char* path, int pid) {
     char buf[32];
     int len = snprintf(buf, sizeof(buf), "%d\n", pid);
     if (len <= 0) return;
-#ifdef _WIN32
     wchar_t* wp = utf8_to_utf16(path);
     if (!wp) return;
     FILE* f = _wfopen(wp, L"w");
     free(wp);
-#else
-    FILE* f = fopen(path, "w");
-#endif
     if (!f) return;
     fwrite(buf, 1, (size_t)len, f);
     fclose(f);
 }
+#endif
 
 // 读 pid 文件（读不到 / 内容不是数字 ⇒ 0 ⇒ 调用方"如实说找不到" ✓）
 static int instance_read_pid(const char* path) {
