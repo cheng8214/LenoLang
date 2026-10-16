@@ -3,6 +3,12 @@
             if (ast->u.field_access.obj) {
                 visit(s, ast->u.field_access.obj);
 
+                // ★ 2026-10-16：多类型 case（`case is A, B { … }`）里访问字段 ⇒ 编译期拦下 ✓
+                //   （窄化只按首类型 ⇒ 下标不一致时会越界崩溃或静默读错字段 ✗ —— 见
+                //     semantic_check_union_field 的说明；这里放在**字段解析之前**，
+                //     报错位置就是那句字段访问本身 ✓）
+                semantic_check_union_field(s, ast);
+
                 // 检查 clib 类型的函数调用
                 TypeInfo* obj_type = infer_expr_type(s, ast->u.field_access.obj);
                 if (obj_type && obj_type->kind == TYPE_CLIB && obj_type->struct_name) {

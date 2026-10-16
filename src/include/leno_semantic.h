@@ -18,6 +18,30 @@ typedef struct {
 } ImportedModuleInfo;
 
 // ============================================================================
+// 多类型 case 的窄化上下文（`case is A, B { … }`，2026-10-16）
+// ============================================================================
+// 由来（LenoMusic 实测崩溃）：多类型 case 的类型窄化**只按第一个类型**
+//   （见 parser_stmt_control.c：`match_type = mt_arr[0];  // 首类型，用于类型窄化`）
+//   ⇒ case 体里 `x.f` 的字段下标是按**第一个类型的字段表**取出来的。而同一个字段名在
+//   各个类型里的下标**根本不必相同**（实测：`_c` 在 HBox/VBox 是 12、AnchorBox 是 6、
+//   GridLayout 是 11）⇒ 命中后面的类型时要么**下标越界**（运行期崩溃 ✗），要么**静默读到
+//   另一个字段**（GridLayout 更阴：HBox 下标 11 是 `justify` ✗✗）。
+//
+// 「能不能让它真的可用」：**不**给语言加"按名动态取字段" —— 字段在本语言里一直是
+//   编译期定下标（静态检查与性能都依赖它）；TS/Swift/Kotlin 在同款场景也都要求分开写 ✓。
+// ⇒ 这里的职责是**编译期拦下**：多类型 case 里访问字段时，逐个候选类型查该字段的下标，
+//   一旦不一致（或某类型根本没有）就报错并给出修法 ✓
+//   ⚠ **只拦字段**：合并 case 的正当用法是"共享一段调方法的处理"（方法走 face 按名动态派发，
+//     与字段下标无关 ✓）—— 那条路不受任何影响 ✓
+typedef struct {
+    const char* var;       // 被窄化的变量名（指向 case AST 的 `guard_var`，生命周期覆盖整个 case ✓）
+    TypeInfo** types;      // 候选类型（指向 case 的 `match_types`，同上 ✓）
+    int type_count;        // 候选类型个数（≥ 2 才有意义 ✓）
+} SemUnionNarrow;
+
+#define SEM_UNION_NARROW_MAX 4   // 嵌套深度上界（`case is A,B { … case is X,Y { … } }` ✓）
+
+// ============================================================================
 // 函数表哈希表条目
 // ============================================================================
 
@@ -128,6 +152,12 @@ typedef struct {
     PendingReqCheck* pending;   // 待复查的调用点（收尾统一判 ⇒ 顺序无关 ✓）
     int pending_count;
     int pending_capacity;
+
+    // ---- 多类型 case（`case is A, B { … }`）的窄化上下文（2026-10-16）----
+    //   进 case 体前压栈、出体后弹栈；字段访问时据此**编译期拦下**"下标不一致"的取值 ✗
+    //   （由来与取舍见上面 SemUnionNarrow 的说明块 ✓）
+    SemUnionNarrow union_narrow[SEM_UNION_NARROW_MAX];
+    int union_narrow_count;
 } Semantic;
 
 // 函数表 API

@@ -163,6 +163,10 @@ void semantic_init(Semantic* s, Ast* root) {
     s->pending = NULL;
     s->pending_count = 0;
     s->pending_capacity = 0;
+    // ★ 2026-10-16：多类型 case 的窄化上下文 —— 同上，**漏清就是读栈上垃圾**
+    //   （实测：漏了这行 ⇒ union_narrow_count 是垃圾 7688 ⇒ 检查函数一进去就乱翻数组 ✗）
+    s->union_narrow_count = 0;
+    memset(s->union_narrow, 0, sizeof(s->union_narrow));
 
     // 初始化 imported_modules 数组
     memset(s->imported_modules, 0, sizeof(s->imported_modules));

@@ -34,6 +34,13 @@ main() {
     ce.expect_error("assert/error_cases/struct_scope_resolution.leno",
         "作用域写错要报语法错", "期望表达式", 15)
 
+    // ---- 多类型 case 的字段访问（2026-10-16）----
+    //   窄化只取**首类型** ⇒ case 体里 `x.f` 的下标按首类型取；各类型下标不一致时
+    //   运行期会越界崩溃（AnchorBox）或静默读到别的字段（GridLayout）✗
+    //   实测出处：LenoSDL3 的 `_collectChildren` 里 `w._c` ✓
+    ce.expect_error("assert/error_cases/switch_union_field.leno",
+        "多类型 case 里访问字段要报错（给出'一个类型写一条'）", "多类型 case", 26)
+
     // ---- face ----
     ce.expect_error("assert/error_cases/face_missing_method.leno",
         "声明 impl 但缺方法要报错", "但缺少方法 'speak'", 16)

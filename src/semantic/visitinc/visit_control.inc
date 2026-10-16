@@ -846,11 +846,30 @@
                     visit(s, ast->u.switch_.cases[i].values.items[j]);
                 }
 
+                // ★ 2026-10-16：**多类型 case 的窄化上下文**压栈（出体后弹 ✓）
+                //   窄化只取首类型（上面 `guard_sym->type = match_type` 就是它）⇒ case 体里
+                //   `x.f` 的下标按首类型取；候选类型间下标不一致时必须**编译期拦下** ✗
+                //   （由来与取舍见 SemUnionNarrow 的说明块；检查在 semantic_check_union_field ✓）
+                int _pushed_union = 0;
+                if (ast->u.switch_.cases[i].is_type_match &&
+                    ast->u.switch_.cases[i].match_type_count > 1 &&
+                    ast->u.switch_.cases[i].guard_var &&
+                    ast->u.switch_.cases[i].match_types &&
+                    s->union_narrow_count < SEM_UNION_NARROW_MAX) {
+                    SemUnionNarrow* uc = &s->union_narrow[s->union_narrow_count++];
+                    uc->var = ast->u.switch_.cases[i].guard_var;
+                    uc->types = ast->u.switch_.cases[i].match_types;
+                    uc->type_count = ast->u.switch_.cases[i].match_type_count;
+                    _pushed_union = 1;
+                }
+
                 if (ast->u.switch_.cases[i].body->kind == AST_BLOCK) {
                     visit_list(s, &ast->u.switch_.cases[i].body->u.block);
                 } else {
                     visit(s, ast->u.switch_.cases[i].body);
                 }
+
+                if (_pushed_union) s->union_narrow_count--;   // 出了 case 体就弹（不泄漏到别的分支 ✓）
 
                 s->current = case_scope->parent;
                 if (!s->is_lsp_mode) {

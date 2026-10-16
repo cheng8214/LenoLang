@@ -551,6 +551,90 @@ TypeInfo* semantic_substitute_generic_param(TypeInfo* type, const char* param_na
     return type_substitute(type, param_name, concrete);
 }
 
+// ============================================================================
+// 多类型 case（`case is A, B { … }`）里访问字段 ⇒ **编译期拦下**（2026-10-16）
+// ----------------------------------------------------------------------------
+// 用在两处：① 字段访问的 visit 路径（visit_field_access.inc）
+//           ② 表达式侧的类型推断路径（下面 AST_FIELD_ACCESS 那一支）
+//   两处**都调**才不会漏：字段下标有两条赋值路径（见那里的注释"同族第 5 例"✓）。
+//   文案在两处**完全一致** ⇒ 编译器按文案合并重复 ⇒ 用户只看到一条 ✓
+//
+// 判据：`x` 正被某个 `case is T0, T1, … { … }` 窄化，且 ast 是 `x.f`：
+//   · 逐个候选类型求 `f` 的下标（复用 infer_field_type ⇒ 与正式解析**同源** ✓）
+//   · 与**第一个类型**（= 窄化真正采用的那个，见 parser 的 `match_type = mt_arr[0]`）不一致
+//     ⇒ 报错并给出"一个类型写一条"的修法 ✓
+// ⚠ 保守起见只在**所有**候选类型都是 struct/cstruct 时才判（其余形态如
+//   `case is Array[int], Array[string]` 的下标语义与字段无关 ⇒ 不插手，免得误报 ✗）
+// ⚠ 第一个类型就没有该字段时不报（那是普通的"没有字段"错，由正式路径报 ✓）—— 不叠加噪音 ✓
+void semantic_check_union_field(Semantic* s, Ast* ast) {
+    if (!s || !ast || s->union_narrow_count <= 0) return;
+    if (ast->kind != AST_FIELD_ACCESS) return;
+
+    Ast* obj = ast->u.field_access.obj;
+    if (!obj || obj->kind != AST_VAR || !obj->u.var.name) return;   // 只管最朴素的 `x.f` ✓
+    const char* field = ast->u.field_access.field_name;
+    if (!field) return;
+
+    // 取**最内层**匹配的上下文（嵌套时内层更具体 ✓）
+    for (int k = s->union_narrow_count - 1; k >= 0; k--) {
+        const SemUnionNarrow* uc = &s->union_narrow[k];
+        if (!uc->var || strcmp(uc->var, obj->u.var.name) != 0) continue;
+        if (uc->type_count < 2) return;
+
+        // 先决条件：候选类型**全是** struct/cstruct（否则不插手 ✓）
+        for (int i = 0; i < uc->type_count; i++) {
+            TypeInfo* t = uc->types[i];
+            if (!t) return;
+            if (t->kind != TYPE_STRUCT && t->kind != TYPE_CSTRUCT) return;
+        }
+
+        int first_idx = -2;
+        char first_name[96] = "";
+        int bad_idx = -2;
+        char bad_name[96] = "";
+        for (int i = 0; i < uc->type_count; i++) {
+            TypeInfo* t = uc->types[i];
+            TypeInfo* cp = type_copy(t);            // infer_field_type 不动入参，但拷贝一份更稳 ✓
+            int idx = -1;
+            TypeInfo* ft = infer_field_type(s, cp, field, &idx);
+            if (ft) type_free(ft);
+            type_free(cp);
+            const char* nm = (t->struct_name && t->struct_name[0])
+                             ? t->struct_name : type_kind_to_string(t->kind);
+            if (i == 0) {
+                first_idx = idx;
+                snprintf(first_name, sizeof(first_name), "%s", nm);
+                if (idx < 0) return;                // 首类型都没这个字段 ⇒ 交给普通路径报 ✓
+            } else if (idx != first_idx) {
+                bad_idx = idx;
+                snprintf(bad_name, sizeof(bad_name), "%s", nm);
+                break;                              // 报一条就够（不刷重复 ✓）
+            }
+        }
+        if (bad_idx == -2) return;
+
+        if (bad_idx < 0) {
+            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                "多类型 case（变量 '%s'）里访问字段 '%s' ✗ —— `case is %s, %s, …` **只按第一个类型 '%s' "
+                "窄化**，而 '%s' 里**没有**这个字段（'%s' 里在第 %d 个）⇒ 运行期必然崩。"
+                "要访问字段请**一个类型写一条**：`case is %s { … }` / `case is %s { … }`；"
+                "共享的合并写法只适合**调方法**（方法按名动态派发 ✓）",
+                obj->u.var.name, field, first_name, bad_name, first_name,
+                bad_name, first_name, first_idx, first_name, bad_name);
+        } else {
+            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                "多类型 case（变量 '%s'）里访问字段 '%s' ✗ —— `case is %s, %s, …` **只按第一个类型 '%s' "
+                "窄化**，而该字段在两个类型里的下标不同（'%s' = 第 %d 个 / '%s' = 第 %d 个）"
+                "⇒ 运行期会**越界崩溃**或**静默读到别的字段**。"
+                "要访问字段请**一个类型写一条**：`case is %s { … }` / `case is %s { … }`；"
+                "共享的合并写法只适合**调方法**（方法按名动态派发 ✓）",
+                obj->u.var.name, field, first_name, bad_name, first_name,
+                first_name, first_idx, bad_name, bad_idx, first_name, bad_name);
+        }
+        return;
+    }
+}
+
 // 推断 struct/cstruct/clib/dict 对象访问 field_name 的字段类型
 // 包含泛型替换、cstruct 特殊处理（c_layout_type_to_leno）、变量符号回退、全局 cstruct 表查找
 // out_field_index: 输出字段索引（可为 NULL 表示不需要）
@@ -3227,6 +3311,12 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
         case AST_FIELD_ACCESS: {
             // 字段访问：需要知道对象的类型和字段的类型
             TypeInfo* obj_type = infer_expr_type(s, ast->u.field_access.obj);
+
+            // ★ 2026-10-16：多类型 case（`case is A, B { … }`）里访问字段 ⇒ 编译期拦下 ✓
+            //   推断这条路**也要调**：字段下标有两条赋值路径（见下面那条"来访器那条看不见
+            //   裸字段名"的注释 ✓），漏一边就会漏报 ✗；文案与访问器那条**完全一致**
+            //   ⇒ 编译器按文案去重 ⇒ 用户只看到一条 ✓
+            semantic_check_union_field(s, ast);
 
             // ★★ 字段存在性检查（2026-09-30 补 ✓）—— 放在**推断这条路**上，而不是只在
             //   visit_field_access.inc（访问器那条 ✗）

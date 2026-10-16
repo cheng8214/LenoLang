@@ -18,6 +18,13 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast);
 TypeInfo* infer_method_return_type(Semantic* s, TypeInfo* obj_type, const char* method_name);
 TypeInfo* infer_field_type(Semantic* s, TypeInfo* obj_type, const char* field_name, int* out_field_index);
 
+// ★ 多类型 case（`case is A, B { … }`）里访问字段 ⇒ 编译期拦下（实现见 semantic_type.c ✓）
+//   为什么：窄化只按**第一个类型** ⇒ 字段下标按它取；下标在各类型间不一致时，运行期会
+//   越界崩溃或静默读到别的字段 ✗（LenoMusic 实测；由来与取舍见 SemUnionNarrow 的说明块 ✓）
+//   两处都要调（字段下标有两条赋值路径）：visit_field_access.inc + semantic_type.c 的推断分支 ✓
+//   文案两处一致 ⇒ 编译器按文案去重 ⇒ 用户只看到一条 ✓
+void semantic_check_union_field(Semantic* s, Ast* ast);
+
 // ★ pri：私有成员的字段访问检查（实现见 semantic_visit_ast.c ✓）
 //   非 static：semantic_type.c 的 infer_expr_type 里也要调它 ——
 //   因为只有那里跑得够晚，导入模块的符号表才**已经懒加载** ✓（实测早查会拿到 NULL ✗）

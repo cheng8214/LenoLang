@@ -1,0 +1,33 @@
+// 多类型 case（`case is A, B`）里访问字段 ⇒ 必须**编译期报错**（2026-10-16）
+// 缘由：类型窄化只按**首类型** ⇒ 字段下标按首类型取；各类型下标不一致时
+//   运行期会**越界崩溃**或**静默读到别的字段** ✗
+// 实测出处：LenoSDL3 的 `_collectChildren`（`w._c`：AnchorBox 崩、GridLayout 静默错 ✗）
+// ⇒ 期望：编译期报一条点名真因的错（给出"一个类型写一条"的修法 ✓）
+face F {
+    func v(): int
+}
+
+struct A impl F {
+    int p = 1
+    int q = 2
+    int f = 111          // f 在下标 2
+    func v(): int { return 1 }
+}
+
+struct B impl F {
+    int f = 222          // f 在下标 0
+    int z = 9
+    func v(): int { return 2 }
+}
+
+func show(F x) {
+    switch x {
+        case is A, B {
+            print(_str(x.f))     // ← 必须报错（A: 第 2 个 / B: 第 0 个）
+        }
+    }
+}
+
+main() {
+    show(new A())
+}

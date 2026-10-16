@@ -915,12 +915,42 @@ export struct Window {
     //   （`Card._content` 是 `pri` ✗ ⇒ 走它公开的 `content_widget()` ✓；
     //     `ScrollView._content` / `TabControl._pageLayouts` / `Splitter._first·_second` 本来就是公开字段 ✓）
     //   ⚠ 以后新增容器类型：**这两处都要加**（本表 + `applyThemeWidget` ✓）
+    //
+    // ★★ 2026-10-16 修（LenoMusic 崩溃）：**多类型 case 里不要访问字段** ★★
+    //   `case is HBox, VBox, AnchorBox, GridLayout { … w._c … }` 看着很整齐，但多类型 case 的
+    //   窄化**只按第一个类型**（Leno 里就是这样，实测最小复现 20 行见下）⇒ `w._c` 用的是
+    //   **第一个类型（HBox）的字段下标**，而 `_c` 在各容器里的下标**根本不同**：
+    //       HBox/VBox: 12   ·   AnchorBox: 6   ·   GridLayout: 11
+    //   ⇒ 遇到 AnchorBox 直接「**字段索引越界**」崩溃；遇到 GridLayout **不越界但读的是
+    //     HBox 下标 11 的那个字段**（静默取错 ⇒ 比崩溃更难查 ✗）。Panel/GroupBox 同款：
+    //       `children` 4 vs 12 · `_layoutChild` 5 vs 13
+    //   复现（`build/_switch_multi.leno`，已删）：A 的 `f` 在 index 2、B 的 `f` 在 index 0
+    //     ⇒ `case is A, B { x.f }` 对 B 取值时越界 ⇒ 这条规则**不是猜的** ✓
+    //   ⇒ 规矩：**要访问字段就一个类型写一条** ✓
+    //     （合并写法仍然是安全的、也是推荐的 —— 但只**调方法**时：方法走 face 动态派发，
+    //      与字段下标无关 ⇒ 本文件其它 `case is A, B, …` 都是这种 ✓）
     pri func _collectChildren(Widget w, Array[Widget] out) {
         switch w {
-            case is HBox, VBox, AnchorBox, GridLayout {
+            // ①②③④ 四个布局容器：孩子都在 `_c`，但**下标各不相同** ⇒ 必须分开写 ✓
+            case is HBox {
                 for w._c.len() to i { _collectFocus(w._c[i], out) }
             }
-            case is Panel, GroupBox {
+            case is VBox {
+                for w._c.len() to i { _collectFocus(w._c[i], out) }
+            }
+            case is AnchorBox {
+                for w._c.len() to i { _collectFocus(w._c[i], out) }
+            }
+            case is GridLayout {
+                for w._c.len() to i { _collectFocus(w._c[i], out) }
+            }
+            // ⑤⑥ `children` 4 vs 12、`_layoutChild` 5 vs 13 ⇒ 同理分开写 ✓
+            case is Panel {
+                var lc = w._layoutChild
+                if lc is Widget { _collectFocus(lc, out) }
+                for w.children.len() to i { _collectFocus(w.children[i], out) }
+            }
+            case is GroupBox {
                 var lc = w._layoutChild
                 if lc is Widget { _collectFocus(lc, out) }
                 for w.children.len() to i { _collectFocus(w.children[i], out) }
