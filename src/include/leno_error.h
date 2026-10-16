@@ -143,6 +143,13 @@ extern WarningCollector warnings;
 void leno_error_init(void);
 // 当前日志文件的绝对路径（没开日志则返回 NULL ✓）——弹窗与提示要显示它 ✓
 const char* leno_error_log_path(void);
+// ★ 2026-10-16：**延迟创建**日志（用户实测两轮后的最终口径）
+//   成功运行 ⇒ **全程连 `logs\` 目录都不出现** ✓（上一版"启动就建、成功再删"被用户一眼看穿 ✗）
+//   只有"真要写"的那一刻才建：① 运行期错误打印前（vm_exception.inc ✓）；
+//     ② 非零退出时（`leno_error_report_exit` ✓）；③ 崩溃兜底里现建（见 error.c ④ ✓）；
+//     ④ `LENO_LOG=<路径>`（用户显式要 = 立刻接管，含成功运行 ✓）
+//   幂等 ✓；建不出来（只读目录等）⇒ 放弃并清 pending ✓
+void leno_log_ensure_open(void);
 // 进程即将以非零码退出时调用（弹窗只在"输出已被日志接管"时才会真弹 ✓；
 // `LENO_NO_DIALOG=1` 可强制关掉 ✓；exit_code == 0 时直接返回 ✓）
 void leno_error_report_exit(int exit_code);

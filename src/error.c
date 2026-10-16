@@ -16,10 +16,12 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <direct.h>
+#include <wchar.h>      // ★ 2026-10-16：wcsncpy（提前备好宽字符路径给崩溃兜底用 ✓）
 #else
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <fcntl.h>      // ★ 2026-10-16：open(O_CREAT|O_APPEND) —— 崩溃兜底里现建日志用 ✓
 #endif
 
 // 全局错误收集器
@@ -622,6 +624,16 @@ static char g_leno_log_path[MAX_PATH_LEN] = "";   // 日志绝对路径（空 = 
 static int  g_leno_log_fd = -1;                   // 崩溃兜底要用的**异步安全** fd（见 ④ ✓）
 static int  g_leno_err_inited = 0;                // 幂等（多个入口调用只生效一次 ✓）
 static int  g_leno_logging_active = 0;            // 输出是否已被日志接管（= 允许弹框的唯一前提 ✓）
+// ★ 2026-10-16（用户实测两轮）：**日志文件与 logs 目录都不该"先建出来"** ✗
+//   第一版是"启动就建、成功再删"—— 用户一眼就看出来了（"文件夹还是出现了，关闭后才自动删除，
+//   感觉很奇葩" ✗✗）。正解是**延迟创建**：路径先算好放这儿，**等真要写那一刻**才建 ✓
+//   ⇒ 成功运行全程**连目录都不出现** ✓；出错/崩溃时那一刻才建（那才是要留证据的时候 ✓）
+static int  g_leno_log_pending = 0;               // 路径已定、但**还没建**（1 = 待建 ✓）
+static char g_leno_log_dir[MAX_PATH_LEN] = "";    // 日志所在目录（崩溃兜底里要它来 mkdir ✓）
+#ifdef _WIN32
+static wchar_t g_leno_log_path_w[MAX_PATH_LEN] = L"";   // 宽字符路径：崩溃兜底里 CreateFileW 用
+static wchar_t g_leno_log_dir_w[MAX_PATH_LEN] = L"";    //   （崩溃上下文**不能** snprintf/转码 ✗ ⇒ 提前算好 ✓）
+#endif
 
 static void leno_install_crash_handlers(void);    // ④ 的实现在本节之后 ✓
 
@@ -832,17 +844,73 @@ void leno_error_init(void) {
     if (!leno_is_gui_subsystem()) return;
 #endif
 
-    // ② 真·双击：stdout/stderr 一起接到日志（**无缓冲** ✓ —— 崩溃时缓冲里的内容会丢 ✗）
+    // ② 真·双击（无控制台）：**先把路径算好，但什么都不建** ✓
+    //   ★★ 2026-10-16（用户实测两轮）★★
+    //     第一版：启动就建日志 + 成功跑完再删 —— 用户一眼看出来了："文件夹还是出现了，
+    //       只是关闭软件后就自动删除，感觉很奇葩" ✗✗（"先脏一下再擦"本来就不该做 ✓）
+    //     现在：**路径算好挂着（g_leno_log_pending），等真要写的那一刻才建** ✓
+    //       · 成功运行 ⇒ 全程**连目录都不出现** ✓✓
+    //       · 运行时出错 ⇒ 错误打印前那一刻建（`leno_log_ensure_open` ✓）
+    //       · 崩溃 ⇒ 崩溃兜底里建（见 ④ ✓）
+    //   ⚠ 唯一例外是 `LENO_LOG=<路径>`：那是用户**显式要**日志 ⇒ 立刻接管（要的是全程捕获 ✓）
     char path[MAX_PATH_LEN];
     leno_pick_log_path(path, sizeof(path));
     if (!path[0]) return;
-    leno_ensure_parent_dir(path);
-    // ⚠ 日志是**追加**的 ✓ ⇒ 不加约束会无上限长大 ✗（实测：同一程序反复启动会一段段堆头 ✓）：
+    snprintf(g_leno_log_path, sizeof(g_leno_log_path), "%s", path);
+    // 目录也先算出来（崩溃兜底要拿它 mkdir；崩溃上下文里不能再 snprintf/转码 ✗）
+    {
+        snprintf(g_leno_log_dir, sizeof(g_leno_log_dir), "%s", path);
+        char* sep1 = strrchr(g_leno_log_dir, '\\');
+        char* sep2 = strrchr(g_leno_log_dir, '/');
+        char* sep = (sep1 && (!sep2 || sep1 > sep2)) ? sep1 : sep2;
+        if (sep && sep != g_leno_log_dir) *(sep) = '\0';
+    }
+#ifdef _WIN32
+    {
+        wchar_t* wp = utf8_to_utf16(g_leno_log_path);
+        wchar_t* wd = utf8_to_utf16(g_leno_log_dir);
+        if (wp) { wcsncpy(g_leno_log_path_w, wp, MAX_PATH_LEN - 1); free(wp); }
+        if (wd) { wcsncpy(g_leno_log_dir_w, wd, MAX_PATH_LEN - 1); free(wd); }
+    }
+#endif
+    g_leno_log_pending = 1;
+
+    // 崩溃兜底**现在**就装 ✓ —— 它自己会在崩溃那一刻把日志建出来（见 ④ ✓）
+    leno_install_crash_handlers();
+
+    // 显式指定路径 ⇒ 立刻接管（用户要的就是"从头到尾都在" ✓）；否则**什么都不做** ✓
+    {
+        const char* envLog = getenv("LENO_LOG");
+        if (envLog && envLog[0]) leno_log_ensure_open();
+    }
+}
+
+// ============================================================================
+// ③b **延迟创建**日志（2026-10-16）：真要写的那一刻才建文件（含 logs 目录）
+// ----------------------------------------------------------------------------
+// 调用点：
+//   · 运行期错误打印之前（vm_exception.inc）—— 错误信息与调用栈要落盘 ✓
+//   · `leno_error_report_exit`（非零退出时）—— 拿到那一刻才建的兜底 ✓
+//   · `LENO_LOG=<路径>`（init 里）—— 用户显式要日志 ⇒ 立刻接管 ✓
+// 为什么"建文件"这一步**必须**推迟到这里（而不是启动就建）：
+//   用户实测两轮 —— 启动就建 + 成功再删 ⇒ "文件夹还是出现了" ✗（先脏后擦一样难看 ✓）
+//   ⇒ 只有**真要有内容**时才建 ⇒ 成功运行全程连目录都不出现 ✓✓
+// ⚠ 幂等：已开 ⇒ 直接返回 ✓；建不出来（只读目录 / 无权限）⇒ 放弃并清 pending（不再重试 ✓，
+//   下次仍按"没日志"处理 ⇒ 弹框也会照旧被 `g_leno_logging_active` 挡住 ✓）
+// ⚠ **追加**语义 + 超 256KB 重开一份（见下面的说明 ✓）
+// ============================================================================
+void leno_log_ensure_open(void) {
+    if (g_leno_logging_active) return;                        // 已经开着 ✓
+    if (!g_leno_log_pending || g_leno_log_path[0] == '\0') return;
+
+    leno_ensure_parent_dir(g_leno_log_path);                  // ★ 到这一刻才建目录 ✓
+
+    // ⚠ 日志是**追加**的 ✓ ⇒ 不加约束会无上限长大 ✗（同一程序反复启动会一段段堆头 ✓）：
     //   · 只在**空文件**（或刚重开 ✓）时写那段说明头 ✓；
     //   · 超过 256KB 就**重开一份** ✓（上次的错已经没意义了 ✓ 本次的错误一定在后面 ✓）
     long old_size = 0;
     {
-        FILE* probe = fopen(path, "rb");
+        FILE* probe = fopen(g_leno_log_path, "rb");
         if (probe) {
             if (fseek(probe, 0, SEEK_END) == 0) old_size = ftell(probe);
             fclose(probe);
@@ -850,11 +918,15 @@ void leno_error_init(void) {
     }
     int fresh = (old_size <= 0);
     if (old_size > 256 * 1024) {
-        remove(path);
+        remove(g_leno_log_path);
         fresh = 1;
     }
-    FILE* f = freopen(path, "a", stdout);
-    if (!f) return;
+
+    FILE* f = freopen(g_leno_log_path, "a", stdout);
+    if (!f) {                                                 // 建不出来 ⇒ 放弃（不再重试 ✓）
+        g_leno_log_pending = 0;
+        return;
+    }
     // ★ 让 stderr **共用 stdout 那个文件位置** ✓ —— 直接再 freopen(stderr) 同一路径会得到
     //   两个**独立**位置 ⇒ 两路输出在日志里互相插队、一行被另一行劈成两半 ✗
     //   （实测撞到过：print 的整行被 [崩溃] 行从中间切开 ✓）
@@ -871,9 +943,9 @@ void leno_error_init(void) {
     //   （顺序不能反：先 dup2 的话，在"stderr 未关联"的场合它会直接失败 ✗）
 #ifdef _WIN32
     {
-        FILE* fe = freopen(path, "a", stderr);   // ① 关联（这步是关键，缺了就整段丢 ✗）
+        FILE* fe = freopen(g_leno_log_path, "a", stderr);   // ① 关联（这步是关键，缺了就整段丢 ✗）
         if (fe) {
-            _dup2(_fileno(stdout), _fileno(stderr));   // ② 统一到 stdout 的文件位置 ✓
+            _dup2(_fileno(stdout), _fileno(stderr));        // ② 统一到 stdout 的文件位置 ✓
         }
     }
 #else
@@ -882,13 +954,12 @@ void leno_error_init(void) {
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
     g_leno_log_fd = fileno(stdout);
-    snprintf(g_leno_log_path, sizeof(g_leno_log_path), "%s", path);
 
     if (fresh) {
         fprintf(stderr,
                 "\n===== Leno 运行时日志（本文件是无控制台发布版的**唯一**输出通道 ✓）=====\n"
-                "启动时间：程序启动即写；出错时会带上位置与调用栈 ✓\n"
-                "提示：把本文件整个发给作者即可定位 ✓（路径：%s）\n\n", path);
+                "本文件**只在本程序出错时才生成**（正常运行不会建它 ✓）；出错时会带上位置与调用栈 ✓\n"
+                "提示：把本文件整个发给作者即可定位 ✓（路径：%s）\n\n", g_leno_log_path);
     } else {
         // 追加场景：只留一行分隔，别再堆一遍说明头 ✗（同一程序反复启动会把日志堆满 ✓）
         fprintf(stderr, "\n--- 新的启动 ---\n");
@@ -896,7 +967,6 @@ void leno_error_init(void) {
     fflush(stderr);
 
     g_leno_logging_active = 1;   // 弹窗判据：只有"接管了输出"时才允许弹 ✓（见下 ✓）
-    leno_install_crash_handlers();
 }
 
 // ============================================================================
@@ -929,15 +999,70 @@ static void leno_crash_write(const char* kind, unsigned long code) {
     buf[n++] = '\0';
 #ifdef _WIN32
     {
-        HANDLE h = (HANDLE)_get_osfhandle(g_leno_log_fd >= 0 ? g_leno_log_fd : 2);
+        HANDLE h = INVALID_HANDLE_VALUE;
+        int opened_here = 0;
+        static const char hdr[] =
+            "\n===== Leno 运行时日志（崩溃兜底新建）=====\n"
+            "本文件**只在本程序出错/崩溃时才生成**（正常运行不会建它 ✓）\n\n";
+        if (g_leno_logging_active && g_leno_log_fd >= 0) {
+            h = (HANDLE)_get_osfhandle(g_leno_log_fd);       // 日志已经开着 ⇒ 写它 ✓
+        } else if (g_leno_log_pending && g_leno_log_path_w[0] != L'\0') {
+            // ★ 2026-10-16：日志是**延迟创建**的 ⇒ 崩溃这一刻它通常还不存在（成功运行不建 ✓）
+            //   ⇒ 在这里**现建**（这是唯一还能留下证据的机会 ✗）：目录 + 文件，再写崩溃行 ✓
+            //   ⚠ 崩溃上下文**只能**用内核 API：路径已在 init 里转成宽字符备好（不能 snprintf/转码 ✗）
+            //   ⚠⚠ 判据**必须**是"日志有没有开着"，**绝不能**拿"fd 2 像不像有效"来猜 ✗✗ ——
+            //     真·双击时 fd 2 很可能是**从资源管理器继承来的 NUL 设备句柄**（`_get_osfhandle(2)`
+            //     看着有效 ✗）⇒ 按老写法会**跳过建文件**、把崩溃行写进 NUL ⇒ 一点证据都不剩 ✗
+            //     （本轮实测就是这么漏的：显式 LENO_LOG 那次有 `[崩溃]` 行，双击那次什么都没有 ✓）
+            CreateDirectoryW(g_leno_log_dir_w, NULL);        // 已存在 ⇒ 失败也无妨 ✓
+            h = CreateFileW(g_leno_log_path_w, FILE_APPEND_DATA,
+                            FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                            OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+            if (h != INVALID_HANDLE_VALUE) {
+                opened_here = 1;
+                DWORD w0 = 0;
+                WriteFile(h, hdr, (DWORD)(sizeof(hdr) - 1), &w0, NULL);
+            }
+        }
         DWORD wrote = 0;
-        if (h != INVALID_HANDLE_VALUE && h != NULL) WriteFile(h, buf, (DWORD)(n - 1), &wrote, NULL);
+        if (h != INVALID_HANDLE_VALUE && h != NULL) {
+            WriteFile(h, buf, (DWORD)(n - 1), &wrote, NULL);
+            if (opened_here) CloseHandle(h);
+        }
+        // 终端里跑（有真控制台）时，fprintf 那一路仍然要看得见 ✓ —— 与日志无关，各写各的 ✓
+        if (!g_leno_logging_active) {
+            HANDLE h2 = (HANDLE)_get_osfhandle(2);
+            if (h2 != INVALID_HANDLE_VALUE && h2 != NULL) {
+                DWORD w2 = 0;
+                WriteFile(h2, buf, (DWORD)(n - 1), &w2, NULL);
+            }
+        }
     }
 #else
     {
-        ssize_t r = write(g_leno_log_fd >= 0 ? g_leno_log_fd : 2, buf, (size_t)(n - 1));
-        (void)r;
-        if (g_leno_log_fd >= 0) {
+        // 同上：判据是"日志有没有开着"（不是猜 fd 2 ✓）
+        static const char hdr[] =
+            "\n===== Leno 运行时日志（崩溃兜底新建）=====\n"
+            "本文件**只在本程序出错/崩溃时才生成**（正常运行不会建它 ✓）\n\n";
+        int fd = -1;
+        int opened_here = 0;
+        if (g_leno_logging_active && g_leno_log_fd >= 0) {
+            fd = g_leno_log_fd;
+        } else if (g_leno_log_pending && g_leno_log_path[0]) {
+            mkdir(g_leno_log_dir, 0700);                     // 已存在 ⇒ 失败无妨 ✓
+            fd = open(g_leno_log_path, O_CREAT | O_WRONLY | O_APPEND, 0600);
+            if (fd >= 0) {
+                opened_here = 1;
+                ssize_t r0 = write(fd, hdr, sizeof(hdr) - 1);
+                (void)r0;
+            }
+        }
+        if (fd >= 0) {
+            ssize_t r = write(fd, buf, (size_t)(n - 1));
+            (void)r;
+            if (opened_here) close(fd);
+        }
+        if (!g_leno_logging_active) {
             ssize_t r2 = write(2, buf, (size_t)(n - 1));
             (void)r2;
         }
@@ -1000,8 +1125,21 @@ static void leno_read_log_tail(char* out, size_t n) {
 }
 
 void leno_error_report_exit(int exit_code) {
+    // ★ 2026-10-16：**成功（退出码 0）⇒ 什么都不做** ✓ —— 延迟创建的意义正在于此：
+    //   这一路从来没建过文件/目录 ⇒ 成功运行全程连 `logs\` 都不会出现 ✓✓
+    //   （上一版是"启动就建、成功再删"，用户实测一眼就看出来了 ✗）
     if (exit_code == 0) return;
-    if (!g_leno_logging_active) return;              // 输出有人接 ⇒ 绝不弹框 ✓
+
+    // 非零退出 ⇒ 这一刻才建日志（若还没建：运行时错误已经在打印前建过了 ✓）
+    //   建完补一行说明 ⇒ 文件不会是空的（不然"弹了框、日志却是空的"又会重演 ✗）
+    int was_active = g_leno_logging_active;
+    leno_log_ensure_open();
+    if (g_leno_logging_active && !was_active) {
+        fprintf(stderr, "[提示] 程序以非零退出码结束（%d），但没有打印更多错误信息\n", exit_code);
+        fflush(stderr);
+    }
+
+    if (!g_leno_logging_active) return;              // 输出有人接 / 建不出来 ⇒ 绝不弹框 ✓
     if (!g_leno_log_path[0]) return;
     const char* noDlg = getenv("LENO_NO_DIALOG");
     if (noDlg && noDlg[0] && strcmp(noDlg, "0") != 0) {

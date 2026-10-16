@@ -268,6 +268,14 @@ static void print_unhandled_exception(Value exception, int line) {
         has_stack = (stack_arr != NULL);
     }
 
+    // ★ 2026-10-16：**这是运行期错误唯一的打印点** ⇒ 无控制台发布版的日志就在这一刻**现建** ✓
+    //   为什么必须在这儿（而不是启动时/program 退出时）：
+    //     · 启动就建 ⇒ 成功运行也会留下 logs\ 目录（用户实测："文件夹还是出现了" ✗✗）
+    //     · 退出时才建 ⇒ 错误文本早就打到"没有去处的 stderr"上了，捞不回来 ✗
+    //   ⇒ 只有"**真要写这几行**"的当下建，才是既不留垃圾、又不丢证据 ✓
+    //   （幂等：已经开着 ⇒ 立刻返回 ✓；这不是 GUI/无控制台场景 ⇒ pending 未置位 ⇒ 什么都不做 ✓）
+    leno_log_ensure_open();
+
     // 打印错误信息和调用栈
     fprintf(stderr, "[错误] %s:%d: %s\n", filename, line, msg);
     // ★ 2026-10-02：msg 里**已含** [调用栈]（统一文案，见 throw_runtime_error）
