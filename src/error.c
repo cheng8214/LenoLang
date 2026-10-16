@@ -858,8 +858,24 @@ void leno_error_init(void) {
     // ★ 让 stderr **共用 stdout 那个文件位置** ✓ —— 直接再 freopen(stderr) 同一路径会得到
     //   两个**独立**位置 ⇒ 两路输出在日志里互相插队、一行被另一行劈成两半 ✗
     //   （实测撞到过：print 的整行被 [崩溃] 行从中间切开 ✓）
+    //
+    // ★★ 2026-10-16 修（用户实测：**弹了错误框、日志却是空的** ✗✗）★★
+    //   真因：**无控制台的 GUI 进程里 `stderr` 根本没关联到任何 fd**（`_fileno(stderr)` 是 -2，
+    //     不是 2 ✓）⇒ 单独一句 `_dup2(_fileno(stdout), 2)` 必然失败（EBADF）⇒ 此后所有
+    //     `fprintf(stderr, …)` 全部**静默丢弃** ✗ —— 而错误信息、带位置的调用栈、
+    //     日志头部**全走 stderr** ⇒ 日志里只剩 stdout 的 `print`（用户那个程序出错前没打过
+    //     任何 stdout 输出 ⇒ 文件就是 **0 字节** ✓ 与现象完全对上 ✓）。
+    //   `stdout` 没这个问题：它是靠上面那句 `freopen` 才**真正关联**上的 ✓
+    //   ⇒ 修法：**先 freopen 把 stderr 也关联上**（此时两路的文件位置暂时独立 ✗），
+    //     **再 dup2** 把 stderr 的 fd 重定向到 stdout 的 fd ⇒ 位置统一、不插队 ✓✓
+    //   （顺序不能反：先 dup2 的话，在"stderr 未关联"的场合它会直接失败 ✗）
 #ifdef _WIN32
-    _dup2(_fileno(stdout), _fileno(stderr));
+    {
+        FILE* fe = freopen(path, "a", stderr);   // ① 关联（这步是关键，缺了就整段丢 ✗）
+        if (fe) {
+            _dup2(_fileno(stdout), _fileno(stderr));   // ② 统一到 stdout 的文件位置 ✓
+        }
+    }
 #else
     dup2(fileno(stdout), fileno(stderr));
 #endif
@@ -993,6 +1009,11 @@ void leno_error_report_exit(int exit_code) {
         fflush(stderr);
         return;
     }
+
+    // ★ 2026-10-16：弹框内容是从**日志文件**里回读的 ⇒ 先把所有流刷干净 ✓
+    //   （否则"盘上还没落、框里就是空的"—— 本次那个 bug 的表现之一就是这个 ✓）
+    //   正常路径下面都是无缓冲（_IONBF）直接就落盘，这一句是纯粹的兜底 ✓
+    fflush(NULL);
 
     char tail[1800];
     leno_read_log_tail(tail, sizeof(tail));
