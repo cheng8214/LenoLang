@@ -22,7 +22,7 @@ main() {
 | `web_charset.leno` | **字符集探测与转码**（GBK/BIG5/… ↔ UTF-8） |
 | `web_html.leno` | HTML 解析 + CSS 选择器 + 文本/表格/表单提取 |
 | `web_crawler.leno` | `Crawler` 调度 + URL 工具 + robots/sitemap + CSV |
-| `web_gzip.leno` | **纯 Leno 的 gzip / DEFLATE 解压**（零依赖，`.gz` sitemap 用） |
+| `web_gzip.leno` | **转发层**：gzip / DEFLATE 解压实现已收编到 `LenoCompress`（函数名不变，`.gz` sitemap 用） |
 | `web_ws.leno` | **纯 Leno 的 WebSocket 客户端**（CDP 的通道） |
 | `web_cdp.leno` | **无头浏览器 / 动态渲染**（CDP 驱动 Chrome/Edge + 进程管理） |
 | `web_generic.leno` | `Result[T]` 等泛型小工具 |
@@ -173,7 +173,11 @@ for web.parseSitemapEntries(xml) to e { print(e.url, e.lastmod, e.changefreq, e.
   真解不开（截断/损坏）才计入 `gzip_skipped` 并给出原因——**不会**把压缩字节当 XML 解析出乱码"URL"
 - `web.robotsUrl(base)` 单独给出（原先是从 `sitemapUrl().replace(...)` 拼的，前辍一变就失效）
 
-### gzip / DEFLATE 解压（`web_gzip`，2026-10-06 新增）
+### gzip / DEFLATE 解压（`web_gzip` → `LenoCompress`，2026-10-06 新增 / 10-17 收编）
+
+> 2026-10-17：实现搬到了独立包 **LenoCompress**（`LenoZip` 也要裸 DEFLATE，归档不该依赖 HTTP 模块）。
+> 本包的 `web_gzip.leno` 现在是**转发层**：`web.gunzip` / `web.inflateRaw` / `web.inflateZlib` /
+> `web.isGzip` 的签名与行为完全不变。**打包 LenoWeb 应用时 `LenoCompress` 必须一起在 `leno_module` 下。**
 
 ```leno
 import "Web" as web
@@ -518,7 +522,7 @@ var rs = web.renderMany(b, urls, opt, 3)
 **POSIX 的 iconv 路径未经实测**（开发环境是 Windows）：`_iconvConvert` / `_iconvDoEx`
 只做静态审查，请在 Linux/macOS 上跑一遍 `examples/tests/test_charset_unit.leno` 确认。
 
-**gzip 解压不做 CRC32 校验**：`web_gzip` 校验了头、块结构、`ISIZE`（原文字节数）与各种越界，
+**gzip 解压不做 CRC32 校验**：`LenoCompress`（原 `web_gzip`）校验了头、块结构、`ISIZE`（原文字节数）与各种越界，
 但不逐字节算 CRC32（要按字节跑 8 次位运算，收益不抵成本）。截断与大多数损坏都能报出来，
 但"内容被改过、长度没变"的极端情况不会被发现。
 

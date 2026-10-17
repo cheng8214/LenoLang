@@ -37,8 +37,9 @@ int c = z.crc32("123456789")   // 3421780262
 本模块的 inflate 是从 `LenoWeb/lib/web_gzip.leno` **抽出来的**（2026-10-17），
 因为 zip（以及 xlsx）也需要裸 DEFLATE，不能让归档功能反过来依赖 HTTP 模块。
 
-⚠ 目前 `LenoWeb/lib/web_gzip.leno` **仍留着一份同名实现** ⇒ 两处需要同步。
-下一步把 LenoWeb 那份改成对本模块的 re-export（一次只动一个包，避免连锁回归）。
+**已收编（同日）**：`LenoWeb/lib/web_gzip.leno` 现在是对本模块的**转发层**
+（函数名/签名不变，`Web.gunzip` 一族照旧可用）。LenoWeb 因此**依赖本包存在**；
+它的 gzip 自检（`examples/tests/test_gzip.leno`，51 项）在收编后仍全过。
 
 ## 验证
 
