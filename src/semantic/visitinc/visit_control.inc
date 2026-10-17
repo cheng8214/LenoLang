@@ -601,6 +601,32 @@
                     "for 头的 'x in arr' 是条件循环（in 为成员测试运算符，x 需是已定义的外部变量）；若想遍历集合请写 'for x to arr'");
             }
 
+            // ★ WARN_FOR_EMPTY_RANGE（2026-10-17 实现；枚举与类别名早就有、一直零调用点）：
+            //   本语言的 for 是**升序闭区间**，倒序必须显式写 `for 5:0:-1`；
+            //   `for 5:0`（不写步长）**一次都不执行**，且编译期一声不吭 ✗
+            //   —— 实测踩过：zigzag 放置第一版写成 `for col-1:col`，整张矩阵错位。
+            //   只在**两端都是整数字面量**时判（变量边界无法静态确定 ⇒ 不猜 ✓）
+            {
+                long long lo = 0, hi = 0;
+                long long st = 1;                       // 不写步长 = 升序
+                int has_lo = ast_const_int(ast->u.for_.start, &lo);
+                int has_hi = ast_const_int(ast->u.for_.end, &hi);
+                int has_st = ast->u.for_.step ? ast_const_int(ast->u.for_.step, &st) : 1;
+                if (has_lo && has_hi && has_st) {
+                    if (st >= 0 && lo > hi) {
+                        warning_add_at_fmt(WARN_FOR_EMPTY_RANGE, ast->line, ast->column,
+                            "for %lld:%lld 是**空区间**（一次都不执行）：本语言的 for 是升序闭区间，"
+                            "倒序要显式写 `for %lld:%lld:-1`",
+                            lo, hi, lo, hi);
+                    } else if (st < 0 && lo < hi) {
+                        warning_add_at_fmt(WARN_FOR_EMPTY_RANGE, ast->line, ast->column,
+                            "for %lld:%lld:%lld 是**空区间**（步长为负却把两端写反了）："
+                            "倒序应写 `for %lld:%lld:-1`",
+                            lo, hi, st, hi, lo);
+                    }
+                }
+            }
+
             if (ast->u.for_.start) visit(s, ast->u.for_.start);
             if (ast->u.for_.end) visit(s, ast->u.for_.end);
             if (ast->u.for_.step) visit(s, ast->u.for_.step);

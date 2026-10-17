@@ -1993,5 +1993,29 @@
         case AST_EXPORT:
             if (ast->u.export.decl) {
                 visit(s, ast->u.export.decl);
+                // ★ WARN_DEFAULT_VAR_SNAPSHOT（2026-10-17）：**导出函数**的默认值引用
+                //   **可变的模块变量**时，跨模块与同模块的求值时机不同 ——
+                //   跨模块：调用点拿不到被调 AST，默认值在定义模块编译期折叠 ⇒ **定义时**取一次；
+                //   同模块：仍按**调用时**读取 ⇒ 变量被改写后两边得到不同的值（静默分叉 ✗）。
+                //   只对导出函数报：非导出函数不可能被别的模块调用，不可能分叉 ✓
+                //   const / enum / 字面量 / 表达式（无变量）都不报：它们前后恒等 ✓
+                Ast* d = ast->u.export.decl;
+                if (d->kind == AST_FUNC_DEF && d->u.func.param_defaults) {
+                    for (int pi = 0; pi < d->u.func.pcnt; pi++) {
+                        Ast* def = d->u.func.param_defaults[pi];
+                        if (!def || def->kind != AST_VAR || !def->u.var.name) continue;
+                        SymRef tref;
+                        memset(&tref, 0, sizeof(tref));
+                        Symbol* dsym = resolve_variable_with_upvalue_raw(s, def->u.var.name, &tref);
+                        if (!dsym || dsym->is_const) continue;
+                        if (tref.kind != SYM_GLOBAL && tref.kind != SYM_MODULE) continue;
+                        warning_add_at_fmt(WARN_DEFAULT_VAR_SNAPSHOT, d->line, d->column,
+                            "函数 '%s' 的参数 '%s' 默认值引用了**可变的模块变量 '%s'**："
+                            "跨模块调用按**定义时**取值、同模块调用按**调用时**取值 ⇒ 变量被改写后"
+                            "两边可能不同。建议改成 `const`，或不写默认值、在函数体里处理",
+                            d->u.func.name ? d->u.func.name : "?",
+                            d->u.func.params ? d->u.func.params[pi] : "?", def->u.var.name);
+                    }
+                }
             }
             break;

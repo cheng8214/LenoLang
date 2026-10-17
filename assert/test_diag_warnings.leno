@@ -411,6 +411,62 @@ main() {
     var of4 = ce.expect_ok(pf4, "F4 对照：枚举字段有初值", "ok")
     ce.expect_no_warning(of4, "F4 对照：枚举字段有初值", "[字段未初始化]")
 
+    // ============ G. 空循环 + 默认值快照（2026-10-17 加）============
+    // 两条都是"枚举与类别名早就有、**全仓零调用点**"那类洞（同 A / B 的教训 ✓）：
+    //   · [空循环] WARN_FOR_EMPTY_RANGE：`for 5:1` 一次都不执行，编译期一声不吭 ✗
+    //     （本语言 for 是**升序闭区间**，倒序必须显式 `for 5:0:-1`）
+    //   · [默认值快照] WARN_DEFAULT_VAR_SNAPSHOT：导出函数的默认值引用**可变模块变量**时，
+    //     跨模块按定义时取值、同模块按调用时取值 ⇒ 两边可能不同（静默分叉 ✗）
+
+    // G1：不写步长且 A>B ⇒ 报（落在 for 那一行）
+    var pg1 = dirs.join(work, "for_empty.leno")
+    files.write(pg1,
+        "main() {\n"
+        + "    for 5:1 to i { print(_str(i)) }\n"
+        + "    print(\"done\\n\")\n"
+        + "}\n")
+    ce.expect_warning(pg1, "G1：for 5:1 是空区间", "[空循环]", 2)
+
+    // G2：步长为负却把两端写反（for 0:5:-1）⇒ 同样报
+    var pg2 = dirs.join(work, "for_empty_neg.leno")
+    files.write(pg2,
+        "main() {\n"
+        + "    for 0:5:-1 to i { print(_str(i)) }\n"
+        + "    print(\"done\\n\")\n"
+        + "}\n")
+    ce.expect_warning(pg2, "G2：for 0:5:-1 也是空区间", "[空循环]", 2)
+
+    // G3（防误报 ✓）：正常升序与正常倒序都不该报 ✗
+    var pg3 = dirs.join(work, "for_ok.leno")
+    files.write(pg3,
+        "main() {\n"
+        + "    var n = 0\n"
+        + "    for 0:5 to i { n = n + 1 }\n"
+        + "    for 5:0:-1 to i { n = n + 1 }\n"
+        + "    print(_str(n) + \"\\n\")\n"
+        + "}\n")
+    var og3 = ce.expect_ok(pg3, "G3 对照：正常升序/倒序", "12")
+    ce.expect_no_warning(og3, "G3 对照：正常升序/倒序", "[空循环]")
+
+    // G4：导出函数 + 默认值引用**可变**模块变量 ⇒ 报
+    var pg4 = dirs.join(work, "default_var_snapshot.leno")
+    files.write(pg4,
+        "var MUTABLE = 5\n"
+        + "export func f(int a = MUTABLE): int { return a }\n"
+        + "main() { print(_str(f()) + \"\\n\") }\n")
+    ce.expect_warning(pg4, "G4：导出函数默认值引用可变模块变量", "[默认值快照]", 2)
+
+    // G5（防误报 ✓）：const 默认值 / 非导出函数引用 var ⇒ 都不该报 ✗
+    var pg5 = dirs.join(work, "default_var_ok.leno")
+    files.write(pg5,
+        "var MUTABLE = 5\n"
+        + "const FIXED = 6\n"
+        + "func local_one(int a = MUTABLE): int { return a }\n"
+        + "export func g(int a = FIXED): int { return a }\n"
+        + "main() { print(_str(local_one()) + \"|\" + _str(g()) + \"\\n\") }\n")
+    var og5 = ce.expect_ok(pg5, "G5 对照：const 与非导出函数", "5|6")
+    ce.expect_no_warning(og5, "G5 对照：const 与非导出函数", "[默认值快照]")
+
     // 清理临时文件（含对照用例成功编译产生的 .lenocache ✓）
     dirs.delete(work)
 

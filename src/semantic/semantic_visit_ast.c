@@ -808,6 +808,25 @@ int semantic_import_use_symbol(Semantic* s, const char* module_name, const char*
             return 0;   // 落到这里 = 模块里没有这个类型/符号（错误已由上面各分支报出 ✓）
 }
 
+// 常量整数求值：字面量 + **负数字面量**（`-1` 在 AST 里是 AST_UNARY(TOK_MINUS, AST_NUM)，
+//   不是 AST_NUM ✓）。只服务"两端都是编译期常量才下判断"的检查（如 for 空区间）——
+//   变量边界无法静态确定 ⇒ 返回 0（调用方不猜 ✓）
+static int ast_const_int(Ast* e, long long* out) {
+    if (!e || !out) return 0;
+    if (e->kind == AST_NUM && !e->u.num.is_float && !e->u.num.is_bigint) {
+        *out = (long long)e->u.num.value;
+        return 1;
+    }
+    if (e->kind == AST_UNARY && !e->u.unary.is_postfix && e->u.unary.operand &&
+        e->u.unary.operand->kind == AST_NUM && !e->u.unary.operand->u.num.is_float &&
+        !e->u.unary.operand->u.num.is_bigint) {
+        long long v = (long long)e->u.unary.operand->u.num.value;
+        if (e->u.unary.op == TOK_MINUS) { *out = -v; return 1; }
+        if (e->u.unary.op == TOK_PLUS)  { *out = v;  return 1; }
+    }
+    return 0;
+}
+
 void visit(Semantic* s, Ast* ast) {
     if (!ast) return;
 
