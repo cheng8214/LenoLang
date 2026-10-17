@@ -1,0 +1,21 @@
+// dev_compress.leno -- 压缩文件（**开发期工具，不是用例**）
+//
+// 用法：dev_compress.leno <raw|gzip|zlib> <in> <out>
+import files
+import "Compress" as z
+
+main() {
+    Array[string] args = _args()
+    if args.len() < 3 {
+        print("用法: dev_compress.leno <raw|gzip|zlib> <in> <out>")
+        return
+    }
+    string mode = args[0]
+    string data = files.read(args[1])
+    var out = ""
+    if mode == "raw" { out = z.deflateRaw(data) }
+    else if mode == "gzip" { out = z.gzip(data) }
+    else { out = z.zlib(data) }
+    files.write(args[2], out)
+    print("OK " + _str(data.byte_len()) + " -> " + _str(out.byte_len()))
+}

@@ -1,0 +1,24 @@
+// dev_decompress.leno -- 解压文件（**开发期工具，不是用例**）
+//
+// 用法：dev_decompress.leno <raw|gzip|zlib> <in> <out>
+import files
+import "Compress" as z
+
+main() {
+    Array[string] args = _args()
+    if args.len() < 3 {
+        print("用法: dev_decompress.leno <raw|gzip|zlib> <in> <out>")
+        return
+    }
+    string mode = args[0]
+    string data = files.read(args[1])
+    var r = z.gunzip(data)
+    if mode == "raw" { r = z.inflateRaw(data) }
+    else if mode == "zlib" { r = z.inflateZlib(data) }
+    if not r.ok {
+        print("ERR " + r.error)
+        return
+    }
+    files.write(args[2], r.data)
+    print("OK " + _str(r.outBytes))
+}

@@ -1,6 +1,6 @@
 [package]
 name = "LenoXLSX"
-version = "0.1.0"
+version = "0.2.0"
 description = "Leno XLSX module: minimal Excel workbook read/write on top of LenoZip (pure Leno)"
 authors = ""
 license = "Apache-2.0"

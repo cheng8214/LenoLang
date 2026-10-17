@@ -6,7 +6,7 @@
 # 两条方向：
 #   ① Python 写（ZIP_DEFLATED）→ LenoZip 解到目录 → 逐字节比对
 #      ⇒ 这条会真正走到 LenoCompress 的裸 DEFLATE 解码（stored 之外的方法）
-#   ② LenoZip 写（stored）→ Python zipfile 读 + testzip()（CRC）→ 逐字节比对
+#   ② LenoZip 写（deflate，默认）→ Python zipfile 读 + testzip()（CRC）→ 逐字节比对
 #
 # 用法（仓库根目录）：
 #     python build/leno_module/LenoZip/test/dev_crosscheck_python.py
@@ -104,7 +104,7 @@ def main():
     except Exception as e:
         print("[FAIL] Python 打不开 LenoZip 写的包：", e)
         return 1
-    print(f"② LenoZip(stored) -> Python：{len(LENO_ENTRIES)} 条，CRC 与内容{'全一致' if fails == 0 else '有差异'}")
+    print(f"② LenoZip(deflate) -> Python：{len(LENO_ENTRIES)} 条，CRC 与内容{'全一致' if fails == 0 else '有差异'}")
 
     print("FAILS =", fails)
     return 1 if fails else 0

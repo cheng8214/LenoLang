@@ -63,6 +63,16 @@ main() {
     eq(cell(got, 3, 2), "3.5", "① 小数（文本模式）")
     eq(cell(got, 4, 0), "", "① 空单元格")
 
+    // 容器层：xlsx 里的 zip 条目必须是 deflate（method 8）且 CRC 全过
+    var zz = zip.decode(files.read(p))
+    if not (zz["ok"] as bool) { fail("① xlsx 的 zip 层解析失败") }
+    Array[Dict] zes = zz["entries"] as Array[Dict]
+    for zes to e {
+        if (e["method"] as int) != 8 { fail("① xlsx 条目应为 deflate：" + (e["name"] as string)) }
+        if not (e["crcOk"] as bool) { fail("① xlsx 条目 CRC 不符：" + (e["name"] as string)) }
+    }
+    print("① xlsx 容器 ok：" + _str(zes.len()) + " 个 deflate 条目，CRC 全过，" + _str(files.read(p).byte_len()) + " 字节")
+
     // ---------- ② 多 sheet + 数字模式 ----------
     Array[Array[string]] nums = []
     nums.add(["整数", "小数", "编号", "负数", "超长"])

@@ -144,5 +144,6 @@ export func encode(Dict wb): string {
         entries.add(zip.entry(nm, _sheet(sheets[i]["rows"] as Array[Array[string]],
                                         sheets[i]["numeric"] as bool)))
     }
-    return zip.encode(entries)
+    // deflate 压缩（XML 重复度高，通常能压到 1/5–1/10）
+    return zip.encode(entries, true)
 }

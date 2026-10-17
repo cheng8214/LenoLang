@@ -1,0 +1,89 @@
+// LenoCompress 0.2.0 自测：DEFLATE **压缩**（回环 / 压缩率 / 头与校验 / 两档 level）
+//
+// 跑法（仓库根目录）：
+//   build\leno.exe build\leno_module\LenoCompress\test\test_deflate.leno
+//
+// 与 Python zlib 的双向交叉验证见 test/dev_crosscheck_python.py（这才是"格式对不对"的判据；
+// 本文件守的是"自家压 → 自家解"与比率/头部不退化）
+import strings
+import "Compress" as z
+
+func fail(string msg) {
+    print("[FAIL] " + msg)
+    _exit(1)
+}
+
+func eqInt(int got, int want, string tag) {
+    if got != want { fail(tag + "：得到 " + _str(got) + " 期望 " + _str(want)) }
+}
+
+func rep(string s, int n): string {
+    // 用字节缓冲累积（逐次 `s + s` 是 O(n²)，大输入会慢）
+    Array[int] out = []
+    for 0:n-1 to i {
+        for s.to_bytes() to b { out.add(b) }
+    }
+    return strings.from_bytes(out)
+}
+
+main() {
+    // ---------- ① 各种输入的压缩 → 解压回环 ----------
+    Array[string] samples = []
+    samples.add("")
+    samples.add("a")
+    samples.add("hello world")
+    samples.add(rep("abcdefgh", 1250))                    // 10KB 高重复
+    samples.add(rep("你好，Leno 压缩测试。", 50))           // 中文
+    samples.add(rep("{\"k\":\"v\",\"n\":123}\n", 300))     // 类 JSON
+
+    for 0:samples.len()-1 to i {
+        string s = samples[i]
+        string c = z.deflateRaw(s)
+        var r = z.inflateRaw(c)
+        if not r.ok { fail("① 第 " + _str(i) + " 个样本解压失败：" + r.error) }
+        if r.data != s { fail("① 第 " + _str(i) + " 个样本内容不符") }
+    }
+    print("① 压缩/解压回环 6 个样本 ok")
+
+    // ---------- ② 压缩率底线（高重复文本必须显著变小）----------
+    string big = rep("LenoCompress deflate raw stream 测试 ", 500)
+    string cb = z.deflateRaw(big)
+    int n = big.byte_len()
+    int c = cb.byte_len()
+    if c * 100 / n > 5 { fail("② 高重复文本压缩率应为 <5%，实际 " + _str(c * 100 / n) + "%") }
+    print("② 压缩率 ok：" + _str(n) + "B → " + _str(c) + "B（" + _str(c * 100 / n) + "%）")
+
+    // ---------- ③ gzip 头 / trailer ----------
+    string gz = z.gzip("hello")
+    if gz.byte(0) != 31 or gz.byte(1) != 139 { fail("③ gzip 魔数不对") }
+    if gz.byte(2) != 8 { fail("③ gzip CM 应为 8") }
+    // ISIZE 是原文长度的低 32 位（小端）：hello = 5
+    int tail = gz.byte_len()
+    eqInt(gz.byte(tail - 4), 5, "③ gzip ISIZE 低字节")
+    var gr = z.gunzip(gz)
+    if not gr.ok or gr.data != "hello" { fail("③ gzip 回环失败") }
+
+    // ---------- ④ zlib 头 + adler32 ----------
+    string zl = z.zlib("abc")
+    eqInt(zl.byte(0), 0x78, "④ zlib CMF")
+    eqInt(zl.byte(1), 0x9C, "④ zlib FLG")
+    eqInt(z.adler32("abc"), 38600999, "④ adler32(abc)")
+    eqInt(z.adler32(""), 1, "④ adler32(空)")
+    var zr = z.inflateZlib(zl)
+    if not zr.ok or zr.data != "abc" { fail("④ zlib 回环失败") }
+
+    // ---------- ⑤ level 1 / 2 都要能解回（level 1 可能更大）----------
+    string l1 = z.deflateLevel(big, 1)
+    string l2 = z.deflateLevel(big, 2)
+    var r1 = z.inflateRaw(l1)
+    var r2 = z.inflateRaw(l2)
+    if not r1.ok or r1.data != big { fail("⑤ level 1 回环失败") }
+    if not r2.ok or r2.data != big { fail("⑤ level 2 回环失败") }
+    print("⑤ level 1 = " + _str(l1.byte_len()) + "B，level 2 = " + _str(l2.byte_len()) + "B")
+
+    // ---------- ⑥ CRC 向量（zip/gzip 都用它，别被压缩改动带歪）----------
+    eqInt(z.crc32("abc"), 891568578, "⑥ crc32(abc)")
+    eqInt(z.crc32("123456789"), 3421780262, "⑥ crc32(123456789)")
+
+    print("test_deflate passed（6 组断言）")
+}

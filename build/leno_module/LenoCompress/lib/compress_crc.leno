@@ -39,6 +39,19 @@ export func crc32(string s): int {
     return crc32_bytes(s.to_bytes())
 }
 
+// Adler-32（RFC1950 的 zlib 校验）：a=1,b=0 起，逐字节 mod 65521
+//   ⚠ 与 CRC32 不是一回事：zlib 流尾部用它，gzip/zip 用 CRC32
+export func adler32(string s): int {
+    Array[int] bs = s.to_bytes()
+    var a = 1
+    var b = 0
+    for bs to v {
+        a = (a + v) % 65521
+        b = (b + a) % 65521
+    }
+    return ((b << 16) | a) & 0xFFFFFFFF
+}
+
 // CRC 表本身（自检用：table[1] 必须是 0x77073096）
 export func table_entry(int i): int {
     _crc_init()

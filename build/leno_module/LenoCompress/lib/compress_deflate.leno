@@ -1,0 +1,212 @@
+// compress_deflate.leno -- DEFLATE **压缩**（RFC1951，纯 Leno）
+//
+// 实现范围：**fixed Huffman（BTYPE=01）+ LZ77**，单个 BFINAL 块。
+//   · 为什么不先做 dynamic Huffman：它要多算码长、构树、把码表写进流里，
+//     复杂度约是 fixed 的 3 倍；而 fixed 对"XML/CSV/JSON 这类重复度高的文本"
+//     通常已能到 2–4 倍压缩，先把"能压"这条路打通更划算。
+//   · 解码端（compress_inflate.leno）本来就支持 fixed/dynamic 两种 ⇒ 我们自己
+//     压出来的流、别人（python zlib / 7z / Excel）压出来的流用的是同一套解码路径。
+//
+// LZ77 参数：窗口 32KB、最小匹配 3、最大匹配 258；哈希 = 3 字节，8192 槽；
+//   level 1 = 只试最近一次出现（快）；level 2 = 顺着链最多试 32 个（压得更小）
+import strings
+import "compress_crc.leno" as crc
+
+// ==================== 位输出（LSB 先出）====================
+struct BitOut {
+    Array[int] bytes = []
+    int acc = 0
+    int nbits = 0
+}
+
+// 写 nbits 位（value 低位先出）
+func _put(BitOut bw, int value, int nbits) {
+    bw.acc = bw.acc | (value << bw.nbits)
+    bw.nbits = bw.nbits + nbits
+    while bw.nbits >= 8 {
+        bw.bytes.add(bw.acc & 0xFF)
+        bw.acc = bw.acc >> 8
+        bw.nbits = bw.nbits - 8
+    }
+}
+
+// Huffman 码是**高位先出**的 ⇒ 先反转，再交给 LSB 的 _put
+func _rev(int code, int nbits): int {
+    var r = 0
+    for 0:nbits-1 to k {
+        r = (r << 1) | ((code >> k) & 1)
+    }
+    return r
+}
+
+func _put_code(BitOut bw, int code, int nbits) {
+    _put(bw, _rev(code, nbits), nbits)
+}
+
+func _flush(BitOut bw): string {
+    if bw.nbits > 0 {
+        bw.bytes.add(bw.acc & 0xFF)
+        bw.acc = 0
+        bw.nbits = 0
+    }
+    return strings.from_bytes(bw.bytes)
+}
+
+// ==================== fixed Huffman 码表 ====================
+// 字面量/长度符号 0..287（RFC1951 §3.2.6）
+func _lit_code(BitOut bw, int sym) {
+    if sym <= 143 { _put_code(bw, 0x30 + sym, 8) }
+    else if sym <= 255 { _put_code(bw, 0x190 + (sym - 144), 9) }
+    else if sym <= 279 { _put_code(bw, sym - 256, 7) }
+    else { _put_code(bw, 0xC0 + (sym - 280), 8) }
+}
+
+// 长度 3..258 → (符号, 额外位数, 额外值)
+Array[int] LEN_BASE = [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27,
+                       31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258]
+Array[int] LEN_EXTRA = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2,
+                        2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0]
+
+Array[int] DIST_BASE = [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129,
+                        193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097,
+                        6145, 8193, 12289, 16385, 24577]
+Array[int] DIST_EXTRA = [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6,
+                         6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13]
+
+func _emit_match(BitOut bw, int length, int dist) {
+    // 长度符号：257 + i
+    var i = 28
+    while i > 0 and LEN_BASE[i] > length { i = i - 1 }
+    int extraBits = LEN_EXTRA[i]
+    _lit_code(bw, 257 + i)
+    if extraBits > 0 { _put(bw, length - LEN_BASE[i], extraBits) }
+
+    // 距离符号：0 + i（5 位定长码）
+    var j = 29
+    while j > 0 and DIST_BASE[j] > dist { j = j - 1 }
+    int de = DIST_EXTRA[j]
+    _put_code(bw, j, 5)
+    if de > 0 { _put(bw, dist - DIST_BASE[j], de) }
+}
+
+// ==================== LZ77 + 打包 ====================
+var WINDOW = 32768
+var HASH_SIZE = 8192
+var MIN_MATCH = 3
+var MAX_MATCH = 258
+
+func _hash(Array[int] bs, int i): int {
+    return ((bs[i] << 8) ^ (bs[i + 1] << 4) ^ bs[i + 2]) & (HASH_SIZE - 1)
+}
+
+// data → 裸 DEFLATE 流（无头无尾，zip 条目里存的就是它）
+//   level: 1 = 单候选（快），2 = 链式最多 32 个候选（压得更小）
+export func deflate_level(string data, int level): string {
+    Array[int] bs = data.to_bytes()
+    int n = bs.len()
+    BitOut bw = new BitOut()
+    _put(bw, 1, 1)          // BFINAL
+    _put(bw, 1, 2)          // BTYPE = 01（fixed Huffman）
+
+    if n == 0 {
+        _lit_code(bw, 256)  // 空输入：只有一个 EOB
+        return _flush(bw)
+    }
+
+    Array[int] head = []
+    for 0:HASH_SIZE-1 to k { head.add(-1) }
+    Array[int] prev = []
+    for 0:WINDOW-1 to k { prev.add(-1) }
+
+    var i = 0
+    while i < n {
+        var bestLen = 0
+        var bestDist = 0
+        var hashed = false
+        if i + MIN_MATCH <= n {
+            int h = _hash(bs, i)
+            var cand = head[h]
+            var tries = 0
+            int maxTry = if level >= 2 then 32 else 1
+            while cand >= 0 and tries < maxTry and i - cand <= WINDOW {
+                int maxL = n - i
+                if maxL > MAX_MATCH { maxL = MAX_MATCH }
+                var l = 0
+                while l < maxL and bs[cand + l] == bs[i + l] { l = l + 1 }
+                if l > bestLen {
+                    bestLen = l
+                    bestDist = i - cand
+                    if l >= MAX_MATCH { break }
+                }
+                cand = prev[cand & (WINDOW - 1)]
+                tries = tries + 1
+            }
+            // 把当前位置挂进哈希链
+            prev[i & (WINDOW - 1)] = head[h]
+            head[h] = i
+            hashed = true
+        }
+
+        if bestLen >= MIN_MATCH {
+            _emit_match(bw, bestLen, bestDist)
+            // 匹配段内部各位置也要进链（否则后续匹配会漏；链 32 个候选下收益明显）
+            if hashed {
+                for 1:bestLen-1 to k {
+                    int p = i + k
+                    if p + MIN_MATCH <= n {
+                        int hh = _hash(bs, p)
+                        prev[p & (WINDOW - 1)] = head[hh]
+                        head[hh] = p
+                    }
+                }
+            }
+            i = i + bestLen
+        } else {
+            _lit_code(bw, bs[i])
+            i = i + 1
+        }
+    }
+    _lit_code(bw, 256)      // EOB
+    return _flush(bw)
+}
+
+export func deflate_raw(string data): string {
+    return deflate_level(data, 2)
+}
+
+// ==================== gzip / zlib 包装 ====================
+// gzip（RFC1952）：10 字节头 + DEFLATE + CRC32/ISIZE（小端）
+export func gzip(string data): string {
+    Array[int] out = []
+    out.add(31)              // ID1
+    out.add(139)             // ID2
+    out.add(8)               // CM = deflate
+    out.add(0)               // FLG
+    for 0:3 to k { out.add(0) }   // MTIME = 0（不写时间：可复现，便于对拍）
+    out.add(0)               // XFL
+    out.add(255)             // OS = unknown
+
+    string body = deflate_raw(data)
+    for body.to_bytes() to b { out.add(b) }
+
+    int c = crc.crc32(data)
+    for 0:3 to k { out.add((c >> (8 * k)) & 0xFF) }
+    int isz = data.to_bytes().len() & 0xFFFFFFFF
+    for 0:3 to k { out.add((isz >> (8 * k)) & 0xFF) }
+    return strings.from_bytes(out)
+}
+
+// zlib（RFC1950）：2 字节头（0x78 0x9C）+ DEFLATE + adler32（大端）
+export func zlib(string data): string {
+    Array[int] out = []
+    out.add(0x78)
+    out.add(0x9C)
+    string body = deflate_raw(data)
+    for body.to_bytes() to b { out.add(b) }
+    int a = crc.adler32(data)
+    out.add((a >> 24) & 0xFF)
+    out.add((a >> 16) & 0xFF)
+    out.add((a >> 8) & 0xFF)
+    out.add(a & 0xFF)
+    return strings.from_bytes(out)
+}

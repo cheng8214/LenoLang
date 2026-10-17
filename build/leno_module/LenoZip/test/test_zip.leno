@@ -91,5 +91,30 @@ main() {
     if t["ok"] as bool { fail("⑤ 截断的 zip 不该 ok=true") }
     print("⑤ 截断报错 ok：" + (t["err"] as string))
 
-    print("test_zip passed（5 组断言）")
+    // ---------- ⑥ 压缩（deflate）条目：往返 + 体积确实变小 ----------
+    Array[Dict] many = []
+    many.add(zip.entry("repeat.txt", rep("LenoZip deflate 测试 ", 800)))
+    string storedZip = zip.encode(many, false)
+    string packedZip = zip.encode(many, true)
+    if packedZip.byte_len() >= storedZip.byte_len() {
+        fail("⑥ 压缩后不该更大：stored " + _str(storedZip.byte_len())
+            + "B vs packed " + _str(packedZip.byte_len()) + "B")
+    }
+    var zc = zip.decode(packedZip)
+    if not (zc["ok"] as bool) { fail("⑥ 压缩包解不开：" + (zc["err"] as string)) }
+    Array[Dict] ce = zc["entries"] as Array[Dict]
+    eq(ce[0]["data"] as string, rep("LenoZip deflate 测试 ", 800), "⑥ 压缩条目内容")
+    eqInt(ce[0]["method"] as int, 8, "⑥ method 应为 8（deflate）")
+    if not (ce[0]["crcOk"] as bool) { fail("⑥ 压缩条目 CRC 没通过") }
+    print("⑥ deflate 条目 ok：" + _str(storedZip.byte_len()) + "B → " + _str(packedZip.byte_len()) + "B")
+
+    print("test_zip passed（6 组断言）")
+}
+
+func rep(string s, int n): string {
+    Array[int] out = []
+    for 0:n-1 to i {
+        for s.to_bytes() to b { out.add(b) }
+    }
+    return strings.from_bytes(out)
 }

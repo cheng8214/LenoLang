@@ -12,6 +12,7 @@
 //   int c = z.crc32("123456789")   // 3421780262
 import "compress_inflate.leno" as inf
 import "compress_crc.leno" as crc
+import "compress_deflate.leno" as dfl
 use inf.GzipResult
 
 // ==================== 解压 ====================
@@ -30,7 +31,19 @@ export func isGzip(string raw): bool { return inf.isGzip(raw) }
 // RFC1951 码表自检（返回空串表示正常）
 export func rfcTableCheck(): string { return inf.rfcTableCheck() }
 
+// ==================== 压缩 ====================
+// 裸 DEFLATE（fixed Huffman + LZ77；zip 条目/XLSX 用）
+export func deflateRaw(string s): string { return dfl.deflate_raw(s) }
+export func deflateLevel(string s, int level): string { return dfl.deflate_level(s, level) }
+
+// gzip（RFC1952）：头 + DEFLATE + CRC32/ISIZE
+export func gzip(string s): string { return dfl.gzip(s) }
+
+// zlib（RFC1950）：头 + DEFLATE + adler32
+export func zlib(string s): string { return dfl.zlib(s) }
+
 // ==================== 校验和 ====================
 export func crc32(string s): int { return crc.crc32(s) }
 export func crc32Bytes(Array[int] bs): int { return crc.crc32_bytes(bs) }
 export func crcTableEntry(int i): int { return crc.table_entry(i) }
+export func adler32(string s): int { return crc.adler32(s) }

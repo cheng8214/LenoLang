@@ -32,12 +32,13 @@ export func entry(string name, string data): Dict {
     return {name: name, data: data}
 }
 
-export func encode(Array[Dict] entries): string {
-    return zw.encode(entries)
+// compress 默认 true（deflate）；要"任何解压器都能读、但更大"用 false（stored）
+export func encode(Array[Dict] entries, bool compress = true): string {
+    return zw.encode(entries, compress)
 }
 
-export func save(string path, Array[Dict] entries): bool {
-    files.write(path, zw.encode(entries))
+export func save(string path, Array[Dict] entries, bool compress = true): bool {
+    files.write(path, zw.encode(entries, compress))
     return files.exists(path)
 }
 

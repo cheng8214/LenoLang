@@ -45,7 +45,9 @@ func _dos_stamp(): Array[int] {
 }
 
 // entries: [{name: string, data: string}] → zip 字节（字符串载体）
-export func encode(Array[Dict] entries): string {
+//   compress=true ⇒ method 8（deflate）；false ⇒ method 0（stored）
+//   ⚠ 头里的 CRC / usize 永远按**原文**算；csize 才是压缩后的长度
+export func encode(Array[Dict] entries, bool compress): string {
     Array[int] out = []
     Array[int] cds = []
     Array[int] stamp = _dos_stamp()
@@ -59,33 +61,39 @@ export func encode(Array[Dict] entries): string {
         Array[int] nb = name.to_bytes()
         Array[int] db = data.to_bytes()
         int crc = z.crc32Bytes(db)
+
+        var payload = data
+        var method = 0
+        if compress { payload = z.deflateRaw(data) }
+        if compress { method = 8 }
+        Array[int] pb = payload.to_bytes()
         int off = out.len()
 
         // ---- local file header ----
         _u32(out, 0x04034b50)
         _u16(out, 20)              // version needed 2.0
         _u16(out, 0x0800)          // flag: UTF-8 文件名
-        _u16(out, 0)               // method: stored
+        _u16(out, method)
         _u16(out, dt)
         _u16(out, dd)
         _u32(out, crc)
-        _u32(out, db.len())        // compressed size
+        _u32(out, pb.len())        // compressed size
         _u32(out, db.len())        // uncompressed size
         _u16(out, nb.len())
         _u16(out, 0)               // extra len
         for nb to b { out.add(b) }
-        for db to b { out.add(b) }
+        for pb to b { out.add(b) }
 
         // ---- central directory record ----
         _u32(cds, 0x02014b50)
         _u16(cds, 20)              // version made by（低字节 2.0，高字节 0 = MS-DOS）
         _u16(cds, 20)              // version needed
         _u16(cds, 0x0800)
-        _u16(cds, 0)
+        _u16(cds, method)
         _u16(cds, dt)
         _u16(cds, dd)
         _u32(cds, crc)
-        _u32(cds, db.len())
+        _u32(cds, pb.len())
         _u32(cds, db.len())
         _u16(cds, nb.len())
         _u16(cds, 0)               // extra

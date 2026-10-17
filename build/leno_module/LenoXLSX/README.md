@@ -1,4 +1,4 @@
-# LenoXLSX v0.1.0
+# LenoXLSX v0.2.0
 
 Leno 的 Excel（.xlsx）读写模块（**纯 Leno，零原生依赖**）。建立在 `LenoZip` 之上，
 读 zip 内的 deflate 条目时走 `LenoCompress`。
@@ -49,7 +49,7 @@ xl/worksheets/sheetN.xml       ← <sheetData><row><c>…
 - 纯整数（≤15 位、无前导零、可选负号）在 `numeric=true` 时写成 `<v>42</v>` 数字单元格
 - 前后空格写 `xml:space="preserve"`
 - 空串**不落单元格**（文件更小；读回仍是 `""`）
-- zip 条目是 **stored**（不压缩）—— `LenoZip` 的写端还没接 deflate 压缩
+- zip 条目是 **deflate**（`LenoZip` 的默认；XML 重复度高，通常能压到 1/10 以下）
 
 ## 边界（v0.1 明确不做）
 
@@ -66,13 +66,17 @@ xl/worksheets/sheetN.xml       ← <sheetData><row><c>…
 
 ## 实测（Windows x64）
 
-| 规模 | 写 | 读 |
-|---|---|---|
-| 100×10 = 1000 格 | 7 ms | 20 ms |
-| 1000×10 = 10000 格 | 80 ms | 195 ms |
+| 规模 | 写（deflate） | 读 | 文件体积 |
+|---|---|---|---|
+| 100×10 = 1000 格 | 8 ms | 20 ms | — |
+| 1000×10 = 10000 格 | 428 ms | 231 ms | **58 KB**（stored 时约 1.5 MB） |
 
-写是线性的（`Array[int]` 累积后再 `from_bytes`；**逐格 `s = s + …` 是 O(n²)**，万格实测 1.8 秒，
-已改掉）。读约 20µs/格，瓶颈在按标签切块时的字符串拷贝；10 万格量级约 2 秒，v0.1 可接受。
+写里约 **350ms 花在压缩**上（10k 格 × 每格 deflate 的 LZ77 搜索）；要更快可以
+`Zip.save(..., compress=false)` 换体积（xlsx_write 目前固定压缩）。
+读约 23µs/格，瓶颈在按标签切块时的字符串拷贝。
+
+两处已修掉的 O(n²)：逐格 `s = s + …` 拼接（万格 1.8 秒 → 80ms）、`find_from`
+每次 `to_bytes()` 整份 XML（92ms → 24ms）。
 
 ## 验证
 
@@ -88,7 +92,7 @@ python build\leno_module\LenoXLSX\test\dev_crosscheck_python.py
 
 | 方向 | 判据 | 结果 |
 |---|---|---|
-| LenoXLSX 写 → Python | `zipfile.testzip()`（CRC）+ 必备部件齐全 + **每个 XML 部件用 ElementTree 解析** + 用 ET 独立取单元格值比对 | 全过 |
+| LenoXLSX 写 → Python | `zipfile.testzip()`（CRC）+ 必备部件齐全 + **每个 XML 部件用 ElementTree 解析** + 用 ET 独立取单元格值比对（条目是 deflate，Python 正常解压） | 全过 |
 | Python 独立造（sharedStrings + inlineStr + bool + 数字，`ZIP_DEFLATED`）→ LenoXLSX 读 | 逐格比对（含中文、`&`/`<` 转义、前后空格、布尔） | 逐格一致 |
 
 > ⚠ 没有在真实的 Excel / WPS / LibreOffice 里打开验证过（本机没有 Office）。
