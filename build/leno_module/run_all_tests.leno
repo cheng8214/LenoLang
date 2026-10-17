@@ -1,0 +1,187 @@
+// run_all_tests.leno -- 模块级测试总入口（**不属于语言断言**）
+//
+// 分层约定（别混）：
+//   assert/                        语言级断言（编译器/VM 语义，460 条）→ assert/run_tests.leno
+//   build/leno_module/<Mod>/test/  模块级断言（本 runner 负责）
+//
+// 用法（仓库根目录）：
+//   build\leno.exe build\leno_module\run_all_tests.leno
+//   build\leno.exe build\leno_module\run_all_tests.leno --only LenoCSV,LenoZip
+//   build\leno.exe build\leno_module\run_all_tests.leno --list
+//
+// 行为：
+//   · 扫 `*/test/test_*.leno`，逐个用**当前 exe** 跑，收集 passed / failed / skipped
+//   · 缺原生库（leno.toml 里当前平台声明的 .dll/.so 不存在）⇒ 标 SKIP，不算失败
+//   · 单个用例 120s 超时（防止网络/死循环把总入口挂住）
+//   · 失败时打印该用例输出的最后几行，便于一眼定位
+import dirs
+import files
+import strings
+import times
+
+func fail_usage(string msg) {
+    print(msg)
+    print("用法: run_all_tests.leno [--only Mod1,Mod2] [--list]")
+    _exit(2)
+}
+
+// 取一行里所有 "..." 的内容
+func quoted(string line): Array[string] {
+    Array[string] out = []
+    Array[int] bs = line.to_bytes()
+    var i = 0
+    while i < bs.len() {
+        if bs[i] == 34 {
+            var j = i + 1
+            while j < bs.len() and bs[j] != 34 { j = j + 1 }
+            if j < bs.len() and j > i + 1 { out.add(strings.byte_slice(line, i + 1, j - 1)) }
+            i = j + 1
+        } else {
+            i = i + 1
+        }
+    }
+    return out
+}
+
+// 当前平台在 leno.toml 里声明的原生库若有缺失，返回该相对路径；否则 ""
+func missing_lib(string modDir): string {
+    string p = dirs.join(modDir, "leno.toml")
+    if not files.exists(p) { return "" }
+    var osKey = "win"
+    if _os() == "linux" { osKey = "linux" }
+    if _os() == "mac" { osKey = "mac" }
+    var text = files.read(p)
+    for strings.split(text, "\n") to rawLine {
+        string line = rawLine.trim()
+        if line == "" or strings.starts_with(line, "#") { continue }
+        if not strings.starts_with(line, osKey) { continue }
+        for quoted(line) to q {
+            if strings.ends_with(q, ".dll") or strings.ends_with(q, ".so") or strings.ends_with(q, ".dylib") {
+                if not files.exists(dirs.join(modDir, q)) { return q }
+            }
+        }
+    }
+    return ""
+}
+
+func tail(string text, int lines, int chars): string {
+    var t = text
+    if t.byte_len() > chars { t = t.byte_slice(t.byte_len() - chars, t.byte_len() - 1) }
+    Array[string] parts = strings.split(t, "\n")
+    var out = ""
+    var start = 0
+    if parts.len() > lines { start = parts.len() - lines }
+    for start:parts.len()-1 to k {
+        if parts[k].trim() != "" { out = out + "    " + parts[k] + "\n" }
+    }
+    return out
+}
+
+main() {
+    Array[string] args = []
+    for _args() to a { args.add(_str(a)) }
+
+    Array[string] only = []
+    var listOnly = false
+    var i = 0
+    while i < args.len() {
+        if args[i] == "--list" { listOnly = true; i = i + 1; continue }
+        if args[i] == "--only" {
+            if i + 1 >= args.len() { fail_usage("--only 后面要跟模块名（逗号分隔）") }
+            for strings.split(args[i + 1], ",") to m {
+                if m.trim() != "" { only.add(m.trim()) }
+            }
+            i = i + 2
+            continue
+        }
+        if args[i] == "-h" or args[i] == "--help" { fail_usage("模块级测试总入口"); return }
+        fail_usage("未知参数：" + args[i])
+    }
+
+    string modRoot = dirs.dirname(_script())
+    string exe = _executable()
+
+    Array[string] mods = dirs.listdir(modRoot)
+    Array[string] names = []
+    // 排序：结果稳定（listdir 顺序不保证）
+    for mods to m { names.add(m) }
+    for 1:names.len()-1 to k {
+        string key = names[k]
+        var j = k - 1
+        while j >= 0 and names[j] > key {
+            names[j + 1] = names[j]
+            j = j - 1
+        }
+        names[j + 1] = key
+    }
+
+    // 先收集要跑的用例
+    Array[string] testMods = []
+    Array[string] testPaths = []
+    for names to mod {
+        var wanted = true
+        if only.len() > 0 {
+            wanted = false
+            for only to o { if o == mod { wanted = true } }
+        }
+        if not wanted { continue }
+        string testDir = dirs.join(modRoot, mod + "/test")
+        if not dirs.is_dir(testDir) { continue }
+        for dirs.listdir(testDir) to f {
+            if not strings.starts_with(f, "test_") { continue }
+            if not strings.ends_with(f, ".leno") { continue }
+            testMods.add(mod)
+            testPaths.add(dirs.join(testDir, f))
+        }
+    }
+
+    if listOnly {
+        for 0:testPaths.len()-1 to k {
+            print(testMods[k] + "/test/" + dirs.basename(testPaths[k]))
+        }
+        return
+    }
+    if testPaths.len() == 0 {
+        print("没有找到模块用例（目录：" + modRoot + "）")
+        return
+    }
+
+    var passed = 0
+    var failed = 0
+    var skipped = 0
+    Array[string] failures = []
+
+    for 0:testPaths.len()-1 to k {
+        string path = testPaths[k]
+        string modDir = dirs.join(modRoot, testMods[k])
+        string rel = testMods[k] + "/test/" + dirs.basename(path)
+        string miss = missing_lib(modDir)
+        if miss != "" {
+            skipped = skipped + 1
+            print("[SKIP] " + rel + "（缺原生库 " + miss + "）")
+            continue
+        }
+        var t0 = times.ms()
+        var r = _exec("\"" + exe + "\" \"" + path + "\"", 120000)
+        var t1 = times.ms()
+        int code = r.code as int
+        if code == 0 {
+            passed = passed + 1
+            print("[PASS] " + rel + " (" + _str(_int(t1 - t0)) + " ms)")
+        } else {
+            failed = failed + 1
+            failures.add(rel)
+            print("[FAIL] " + rel + "（exit=" + _str(code) + "）")
+            print(tail(_str(r.output), 8, 1200))
+        }
+    }
+
+    print("")
+    print("Results: " + _str(passed) + " passed, " + _str(failed) + " failed, "
+        + _str(skipped) + " skipped (total " + _str(testPaths.len()) + ")")
+    if failed > 0 {
+        print("失败清单：")
+        for failures to f { print("  - " + f) }
+        _exit(1)
+    }
+}
