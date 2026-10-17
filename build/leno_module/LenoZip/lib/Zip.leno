@@ -1,0 +1,79 @@
+// Zip.leno -- LenoZip entry point（纯 Leno，无原生库）
+//
+// 用法：
+//   import "Zip" as zip
+//
+//   // ① 打包
+//   Array[Dict] entries = []
+//   entries.add(zip.entry("readme.txt", "hello"))
+//   entries.add(zip.entry("doc/说明.txt", "中文内容"))
+//   string bytes = zip.encode(entries)          // zip 字节（字符串载体）
+//   zip.save("out.zip", entries)
+//
+//   // ② 解包
+//   var z = zip.load("in.zip")                  // {ok, err, count, entries}
+//   for z.entries to e { print(e.name + "  " + _str(e.size)) }
+//   var one = zip.read("in.zip", "readme.txt")  // {ok, data, err}
+//
+// 条目结构：[{name: string, data: string}]（data 可以是任意字节，含 NUL）
+// 解出的条目：{name, data, size, method, crcOk, isDir, err}
+//
+// 现状与边界：
+//   · 写：**stored（不压缩）** —— deflate 压缩端还没实现（见 LenoCompress 的 TODO）
+//   · 读：stored + deflate 都支持（deflate 走 LenoCompress 的裸 DEFLATE 解码）
+//   · 不支持：zip64、加密条目、bzip2/lzma 等其它压缩方法
+//   · 整包读进内存（v0.1；超大归档需要流式接口再说）
+import files
+import "zip_write.leno" as zw
+import "zip_read.leno" as zr
+
+// ==================== 写 ====================
+export func entry(string name, string data): Dict {
+    return {name: name, data: data}
+}
+
+export func encode(Array[Dict] entries): string {
+    return zw.encode(entries)
+}
+
+export func save(string path, Array[Dict] entries): bool {
+    files.write(path, zw.encode(entries))
+    return files.exists(path)
+}
+
+// ==================== 读 ====================
+export func decode(string raw): Dict { return zr.decode(raw) }
+export func load(string path): Dict { return zr.load(path) }
+
+// 取单个条目：{ok, data, err}
+export func read(string path, string name): Dict {
+    var z = zr.load(path)
+    if not (z["ok"] as bool) { return {ok: false, data: "", err: z["err"] as string} }
+    Array[Dict] entries = z["entries"] as Array[Dict]
+    for entries to e {
+        if (e["name"] as string) == name {
+            if (e["err"] as string) != "" { return {ok: false, data: "", err: e["err"] as string} }
+            return {ok: true, data: e["data"] as string, err: ""}
+        }
+    }
+    return {ok: false, data: "", err: "归档里没有这个条目：" + name}
+}
+
+// 条目名列表（按归档内顺序；目录条目也包含）
+export func names(Dict z): Array[string] {
+    Array[string] out = []
+    if not (z["ok"] as bool) { return out }
+    Array[Dict] entries = z["entries"] as Array[Dict]
+    for entries to e { out.add(e["name"] as string) }
+    return out
+}
+
+// CRC 全部通过？（crcOk 是逐条目的，这里汇总；目录条目不计）
+export func crcAllOk(Dict z): bool {
+    if not (z["ok"] as bool) { return false }
+    Array[Dict] entries = z["entries"] as Array[Dict]
+    for entries to e {
+        if not (e["isDir"] as bool) and not (e["crcOk"] as bool) { return false }
+    }
+    return true
+}

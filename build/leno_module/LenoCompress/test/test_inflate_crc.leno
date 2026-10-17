@@ -1,0 +1,80 @@
+// LenoCompress 0.1.0 自测：CRC32 向量 + gzip/zlib/裸 DEFLATE 解压
+//
+// 跑法（仓库根目录）：
+//   build\leno.exe build\leno_module\LenoCompress\test\test_inflate_crc.leno
+//
+// 固定输入（全部由 python zlib / gzip 生成，权威期望值）：
+//   plain = "LenoCompress 测试：你好"（UTF-8 24 字节）
+//   gzip   = gzip.compress(plain, 9)                    —— 49 字节
+//   zlib   = zlib.compress(plain, 9)                    —— 37 字节
+//   raw    = zlib.compressobj(9, DEFLATED, -15)         —— 31 字节（裸 DEFLATE）
+import strings
+import "Compress" as z
+
+func fail(string msg) {
+    print("[FAIL] " + msg)
+    _exit(1)
+}
+
+func eq(string got, string want, string tag) {
+    if got != want { fail(tag + "：得到「" + got + "」期望「" + want + "」") }
+}
+
+main() {
+    string plain = "LenoCompress 测试：你好"
+
+    // ---------- ① CRC32 向量 ----------
+    if z.crc32("123456789") != 3421780262 { fail("① crc32(123456789) 应为 3421780262") }
+    if z.crc32("") != 0 { fail("① crc32(\"\") 应为 0") }
+    if z.crc32("abc") != 891568578 { fail("① crc32(abc) 应为 891568578") }
+    if z.crcTableEntry(1) != 0x77073096 { fail("① CRC 表第 1 项应为 0x77073096") }
+    print("① CRC32 向量 ok")
+
+    // ---------- ② gzip ----------
+    string gz = strings.from_bytes([
+        31, 139, 8, 0, 176, 119, 211, 106, 2, 255, 243, 73, 205, 203, 119, 206, 207, 45,
+        40, 74, 45, 46, 86, 120, 182, 181, 251, 197, 250, 169, 239, 247, 204, 122, 178,
+        119, 193, 211, 165, 123, 1, 87, 221, 232, 251, 28, 0, 0, 0
+    ])
+    if not z.isGzip(gz) { fail("② 魔数判断失败") }
+    var r1 = z.gunzip(gz)
+    if not r1.ok { fail("② gunzip 失败：" + r1.error) }
+    eq(r1.data, plain, "② gunzip 内容")
+    if r1.outBytes != plain.byte_len() { fail("② outBytes 不符：" + _str(r1.outBytes)) }
+    print("② gzip ok（" + _str(r1.inBytes) + " → " + _str(r1.outBytes) + " 字节）")
+
+    // ---------- ③ zlib ----------
+    string zl = strings.from_bytes([
+        120, 218, 243, 73, 205, 203, 119, 206, 207, 45, 40, 74, 45, 46, 86, 120, 182, 181,
+        251, 197, 250, 169, 239, 247, 204, 122, 178, 119, 193, 211, 165, 123, 1, 199, 103,
+        16, 26
+    ])
+    var r2 = z.inflateZlib(zl)
+    if not r2.ok { fail("③ inflateZlib 失败：" + r2.error) }
+    eq(r2.data, plain, "③ zlib 内容")
+    print("③ zlib ok")
+
+    // ---------- ④ 裸 DEFLATE（zip 条目用的就是它）----------
+    string raw = strings.from_bytes([
+        243, 73, 205, 203, 119, 206, 207, 45, 40, 74, 45, 46, 86, 120, 182, 181, 251,
+        197, 250, 169, 239, 247, 204, 122, 178, 119, 193, 211, 165, 123, 1
+    ])
+    var r3 = z.inflateRaw(raw)
+    if not r3.ok { fail("④ inflateRaw 失败：" + r3.error) }
+    eq(r3.data, plain, "④ 裸 DEFLATE 内容")
+    print("④ 裸 DEFLATE ok")
+
+    // ---------- ⑤ 损坏数据必须报错（不能静默给半截）----------
+    var bad = z.gunzip(strings.from_bytes([31, 139, 8, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255]))
+    if bad.ok { fail("⑤ 损坏的 gzip 不该 ok=true") }
+    if bad.error == "" { fail("⑤ 损坏的 gzip 应给出原因") }
+    print("⑤ 损坏数据报错 ok：" + bad.error)
+
+    // ---------- ⑥ 空输入的边界 ----------
+    if z.gunzip("").ok { fail("⑥ 空串不该被当成 gzip") }
+    var er = z.inflateRaw("")
+    if er.ok and er.outBytes != 0 { fail("⑥ 空 DEFLATE 若成功也只能是 0 字节") }
+    print("⑥ 空输入边界 ok")
+
+    print("test_inflate_crc passed")
+}

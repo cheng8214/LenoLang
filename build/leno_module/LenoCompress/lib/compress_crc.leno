@@ -1,0 +1,46 @@
+// compress_crc.leno -- CRC-32（IEEE 802.3，多项式 0xEDB88320 反射式）
+//
+// 为什么需要：ZIP 的每个条目都要在头里写 CRC32，读的时候也要校验（否则"解出来是垃圾"
+//   会被当成成功）。gzip 的 trailer 也是同一个 CRC32 —— 只是 web_gzip 当年出于性能
+//   取舍没校验（那时只有解压、没有压缩）。
+//
+// 实现：256 项查表（懒初始化一次）。表值最大 0xFFFFFFFF，Leno 的 int 是 64 位 ⇒ 不必
+//   担心符号位；最后统一 `& 0xFFFFFFFF` 再返回，避免出现负数。
+Array[int] g_crc_table = []
+var g_crc_ready = false
+
+func _crc_init() {
+    if g_crc_ready { return }
+    g_crc_ready = true
+    Array[int] t = []
+    for 0:255 to n {
+        var c = n
+        for 0:7 to k {
+            if (c & 1) == 1 { c = 0xEDB88320 ^ (c >> 1) }
+            else { c = c >> 1 }
+        }
+        t.add(c & 0xFFFFFFFF)
+    }
+    g_crc_table = t
+}
+
+// 字节数组 → CRC32（内部用；避免同一份数据先转字符串再转回来）
+export func crc32_bytes(Array[int] bs): int {
+    _crc_init()
+    var crc = 0xFFFFFFFF
+    for bs to b {
+        crc = (crc >> 8) ^ g_crc_table[(crc ^ b) & 0xFF]
+    }
+    return (crc ^ 0xFFFFFFFF) & 0xFFFFFFFF
+}
+
+// 字符串（按 UTF-8 字节）→ CRC32
+export func crc32(string s): int {
+    return crc32_bytes(s.to_bytes())
+}
+
+// CRC 表本身（自检用：table[1] 必须是 0x77073096）
+export func table_entry(int i): int {
+    _crc_init()
+    return g_crc_table[i]
+}

@@ -1,0 +1,11 @@
+[package]
+name = "LenoCompress"
+version = "0.1.0"
+description = "Leno compression module: pure-Leno DEFLATE/gzip/zlib inflate + CRC32"
+authors = ""
+license = "Apache-2.0"
+
+[modules]
+root = "lib"
+
+# 纯 Leno，无原生库

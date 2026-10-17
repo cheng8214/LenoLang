@@ -1,0 +1,36 @@
+// Compress.leno -- LenoCompress 门面（纯 Leno，零原生依赖）
+//
+// 现状：**解压**可用（gzip / zlib / 裸 DEFLATE）+ CRC32。
+// 下一步：DEFLATE **压缩**（fixed + dynamic Huffman + LZ77）—— 有了它，zip 才能把
+//   条目压小、gzip 才能"写"出来。当前 LenoZip 写出的条目用 stored（不压缩），
+//   读的时候两种都支持 ✓
+//
+// 用法：
+//   import "Compress" as z
+//   var r = z.gunzip(bytes)        // {ok, data, error, inBytes, outBytes}
+//   var r2 = z.inflateRaw(deflate) // 裸 DEFLATE（zip 条目里存的就是它）
+//   int c = z.crc32("123456789")   // 3421780262
+import "compress_inflate.leno" as inf
+import "compress_crc.leno" as crc
+use inf.GzipResult
+
+// ==================== 解压 ====================
+// gzip（RFC1952）：头 + DEFLATE + trailer（ISIZE 校验；不做 CRC32）
+export func gunzip(string raw): GzipResult { return inf.gunzip(raw) }
+
+// zlib（RFC1950）：2 字节头 + DEFLATE + 4 字节 adler32（不校验 adler32）
+export func inflateZlib(string raw): GzipResult { return inf.inflateZlib(raw) }
+
+// 裸 DEFLATE 流（RFC1951，无头无尾）—— zip 条目 / PNG IDAT 都是这个
+export func inflateRaw(string raw): GzipResult { return inf.inflateRaw(raw) }
+
+// 魔数判断
+export func isGzip(string raw): bool { return inf.isGzip(raw) }
+
+// RFC1951 码表自检（返回空串表示正常）
+export func rfcTableCheck(): string { return inf.rfcTableCheck() }
+
+// ==================== 校验和 ====================
+export func crc32(string s): int { return crc.crc32(s) }
+export func crc32Bytes(Array[int] bs): int { return crc.crc32_bytes(bs) }
+export func crcTableEntry(int i): int { return crc.table_entry(i) }

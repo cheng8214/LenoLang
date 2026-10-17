@@ -1,0 +1,11 @@
+[package]
+name = "LenoZip"
+version = "0.1.0"
+description = "Leno ZIP module: pure-Leno archive read/write (stored write, stored+deflate read)"
+authors = ""
+license = "Apache-2.0"
+
+[modules]
+root = "lib"
+
+# 纯 Leno，无原生库；依赖 LenoCompress（裸 DEFLATE 解压 + CRC32）

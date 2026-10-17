@@ -1,0 +1,24 @@
+// dev_makezip.leno -- 生成固定内容的 zip（**开发期工具，不是用例**）
+//
+// 用法：dev_makezip.leno <out.zip>
+// 内容与 dev_crosscheck_python.py 里的 EXPECT 完全对应
+import strings
+import "Zip" as zip
+
+main() {
+    Array[string] args = _args()
+    if args.len() < 1 {
+        print("用法: dev_makezip.leno <out.zip>")
+        return
+    }
+    Array[Dict] entries = []
+    entries.add(zip.entry("hello.txt", "hello from LenoZip"))
+    entries.add(zip.entry("dir/中文.txt", "中文内容\n第二行"))
+    entries.add(zip.entry("bin.dat", strings.from_bytes([0, 1, 2, 127, 128, 255, 10, 13])))
+    entries.add(zip.entry("empty.txt", ""))
+    if not zip.save(args[0], entries) {
+        print("ERR 写文件失败")
+        return
+    }
+    print("OK 4")
+}

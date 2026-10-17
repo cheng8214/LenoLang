@@ -1,0 +1,114 @@
+// zip_write.leno -- 写 ZIP（PKZIP 2.0 格式，纯 Leno）
+//
+// 现状：条目一律用 **stored（method 0，不压缩）**。
+//   为什么不压缩：deflate **压缩端**还没实现（LenoCompress 目前只有解压）。
+//   stored 的好处是"任何解压器都能读"，代价是体积（xlsx/文本会明显变大）。
+//   等 LenoCompress 补上 deflate，这里只需把 method 换成 8 + 调一次压缩函数。
+//
+// 结构（3 段，全部小端）：
+//   [local header + data] × N  →  [central directory]  →  [EOCD]
+// 关键点：
+//   · CRC32 / csize / usize **必须写对**（很多解压器只信 CD 里的值）
+//   · flag 置 0x0800（UTF-8 文件名），否则中文名在 Windows 资源管理器里会乱码
+//   · DOS 时间/日期用当前时间（1980 为基准；秒只有 2 秒精度）
+import strings
+import times
+import "Compress" as z
+
+func _u16(Array[int] out, int v) {
+    out.add(v & 0xFF)
+    out.add((v >> 8) & 0xFF)
+}
+
+func _u32(Array[int] out, int v) {
+    out.add(v & 0xFF)
+    out.add((v >> 8) & 0xFF)
+    out.add((v >> 16) & 0xFF)
+    out.add((v >> 24) & 0xFF)
+}
+
+// [DOS time, DOS date]
+func _dos_stamp(): Array[int] {
+    var ts = times.now()
+    var year = _int(times.format(ts, "%Y"))
+    var mon = _int(times.format(ts, "%m"))
+    var day = _int(times.format(ts, "%d"))
+    var hh = _int(times.format(ts, "%H"))
+    var mm = _int(times.format(ts, "%M"))
+    var ss = _int(times.format(ts, "%S"))
+    if year < 1980 { year = 1980 }
+    if year > 2107 { year = 2107 }
+    Array[int] r = []
+    r.add((hh << 11) | (mm << 5) | (ss / 2))
+    r.add(((year - 1980) << 9) | (mon << 5) | day)
+    return r
+}
+
+// entries: [{name: string, data: string}] → zip 字节（字符串载体）
+export func encode(Array[Dict] entries): string {
+    Array[int] out = []
+    Array[int] cds = []
+    Array[int] stamp = _dos_stamp()
+    int dt = stamp[0]
+    int dd = stamp[1]
+
+    for entries to e {
+        string name = e["name"] as string
+        var data = ""
+        if e.has("data") { data = e["data"] as string }
+        Array[int] nb = name.to_bytes()
+        Array[int] db = data.to_bytes()
+        int crc = z.crc32Bytes(db)
+        int off = out.len()
+
+        // ---- local file header ----
+        _u32(out, 0x04034b50)
+        _u16(out, 20)              // version needed 2.0
+        _u16(out, 0x0800)          // flag: UTF-8 文件名
+        _u16(out, 0)               // method: stored
+        _u16(out, dt)
+        _u16(out, dd)
+        _u32(out, crc)
+        _u32(out, db.len())        // compressed size
+        _u32(out, db.len())        // uncompressed size
+        _u16(out, nb.len())
+        _u16(out, 0)               // extra len
+        for nb to b { out.add(b) }
+        for db to b { out.add(b) }
+
+        // ---- central directory record ----
+        _u32(cds, 0x02014b50)
+        _u16(cds, 20)              // version made by（低字节 2.0，高字节 0 = MS-DOS）
+        _u16(cds, 20)              // version needed
+        _u16(cds, 0x0800)
+        _u16(cds, 0)
+        _u16(cds, dt)
+        _u16(cds, dd)
+        _u32(cds, crc)
+        _u32(cds, db.len())
+        _u32(cds, db.len())
+        _u16(cds, nb.len())
+        _u16(cds, 0)               // extra
+        _u16(cds, 0)               // comment
+        _u16(cds, 0)               // disk start
+        _u16(cds, 0)               // internal attrs
+        _u32(cds, 0)               // external attrs
+        _u32(cds, off)             // local header offset
+        for nb to b { cds.add(b) }
+    }
+
+    int cdOff = out.len()
+    for cds to b { out.add(b) }
+
+    // ---- EOCD ----
+    _u32(out, 0x06054b50)
+    _u16(out, 0)                   // disk number
+    _u16(out, 0)                   // disk with CD
+    _u16(out, entries.len())
+    _u16(out, entries.len())
+    _u32(out, cds.len())
+    _u32(out, cdOff)
+    _u16(out, 0)                   // comment len
+
+    return strings.from_bytes(out)
+}

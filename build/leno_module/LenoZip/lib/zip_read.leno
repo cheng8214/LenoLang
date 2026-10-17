@@ -1,0 +1,144 @@
+// zip_read.leno -- 读 ZIP（纯 Leno；stored + deflate 两种条目都支持）
+//
+// 流程：找 EOCD → 逐条解析中央目录 → 用 CD 里的 local header offset 定位数据
+//   ⚠ 数据偏移必须重新读 **local header** 的 name/extra 长度：CD 里的长度与 local
+//     的可以不同（写入方允许 local 留占位、CD 写真实值）⇒ 直接 CD 长度加偏移会错位 ✗
+//
+// 返回：
+//   {ok, err, count, entries: [{name, data, size, method, crcOk, isDir, err}]}
+//   · ok=true 表示**容器**解析成功；单个条目失败会体现在该条目的 err 上，并把整包 ok 置 false
+//   · crcOk=false 说明解出来的数据与头里的 CRC 不符（损坏 / 写错了）
+//   · method: 0=stored, 8=deflate；其它方法不支持（如 bzip2/lzma）
+import strings
+import files
+import "Compress" as z
+
+func _u16(Array[int] bs, int o): int {
+    return bs[o] | (bs[o + 1] << 8)
+}
+
+func _u32(Array[int] bs, int o): int {
+    return bs[o] | (bs[o + 1] << 8) | (bs[o + 2] << 16) | (bs[o + 3] << 24)
+}
+
+func _err(string msg): Dict {
+    return {ok: false, err: msg, count: 0, entries: []}
+}
+
+// 从尾部往前找 EOCD（注释最长 65535，所以最多回扫 64KB + 22）
+func _find_eocd(Array[int] bs): int {
+    int n = bs.len()
+    if n < 22 { return -1 }
+    var lo = n - 22 - 65535
+    if lo < 0 { lo = 0 }
+    var i = n - 22
+    while i >= lo {
+        if bs[i] == 0x50 and bs[i + 1] == 0x4B and bs[i + 2] == 0x05 and bs[i + 3] == 0x06 {
+            return i
+        }
+        i = i - 1
+    }
+    return -1
+}
+
+export func decode(string raw): Dict {
+    Array[int] bs = raw.to_bytes()
+    int n = bs.len()
+    int eocd = _find_eocd(bs)
+    if eocd < 0 { return _err("不是 zip：找不到 EOCD（文件可能被截断，或不是 zip）") }
+
+    int count = _u16(bs, eocd + 10)
+    int cdSize = _u32(bs, eocd + 12)
+    int cdOff = _u32(bs, eocd + 16)
+    if count == 0xFFFF or cdOff == 0xFFFFFFFF or cdSize == 0xFFFFFFFF {
+        return _err("不支持 zip64（条目数/偏移超过 4GB 或 65535 项的归档）")
+    }
+    if cdOff + cdSize > n { return _err("中央目录越界：文件被截断？") }
+
+    Array[Dict] entries = []
+    var pos = cdOff
+    var firstErr = ""
+
+    for 0:count-1 to idx {
+        if pos + 46 > n { return _err("中央目录项越界（第 " + _str(idx + 1) + " 项）") }
+        if _u32(bs, pos) != 0x02014b50 {
+            return _err("第 " + _str(idx + 1) + " 个中央目录项签名不对")
+        }
+        int flags = _u16(bs, pos + 8)
+        int method = _u16(bs, pos + 10)
+        int crc = _u32(bs, pos + 16)
+        int csz = _u32(bs, pos + 20)
+        int usz = _u32(bs, pos + 24)
+        int nlen = _u16(bs, pos + 28)
+        int elen = _u16(bs, pos + 30)
+        int clen = _u16(bs, pos + 32)
+        int loff = _u32(bs, pos + 42)
+
+        var name = ""
+        if nlen > 0 { name = strings.byte_slice(raw, pos + 46, pos + 46 + nlen - 1) }
+        var isDir = false
+        if name.byte_len() > 0 and name.byte(name.byte_len() - 1) == 47 { isDir = true }   // '/'
+
+        var data = ""
+        var entryErr = ""
+        var crcOk = false
+
+        if (flags & 1) != 0 {
+            entryErr = "条目已加密（本库不支持）"
+        } else if loff + 30 > n {
+            entryErr = "local header 越界"
+        } else if _u32(bs, loff) != 0x04034b50 {
+            entryErr = "local header 签名不对"
+        } else {
+            int lnlen = _u16(bs, loff + 26)
+            int lelen = _u16(bs, loff + 28)
+            int dstart = loff + 30 + lnlen + lelen
+            if dstart + csz > n {
+                entryErr = "条目数据越界：文件被截断"
+            } else if method == 0 {
+                if csz > 0 { data = strings.byte_slice(raw, dstart, dstart + csz - 1) }
+                crcOk = (z.crc32Bytes(data.to_bytes()) == crc)
+            } else if method == 8 {
+                var comp = ""
+                if csz > 0 { comp = strings.byte_slice(raw, dstart, dstart + csz - 1) }
+                var r = z.inflateRaw(comp)
+                if not r.ok {
+                    entryErr = "deflate 解压失败：" + r.error
+                } else {
+                    data = r.data
+                    crcOk = (z.crc32Bytes(data.to_bytes()) == crc)
+                }
+            } else {
+                entryErr = "不支持的压缩方法 " + _str(method) + "（只支持 0=stored / 8=deflate）"
+            }
+        }
+
+        if entryErr != "" and firstErr == "" { firstErr = name + "：" + entryErr }
+        entries.add({
+            name: name,
+            data: data,
+            size: usz,
+            method: method,
+            crcOk: crcOk,
+            isDir: isDir,
+            err: entryErr
+        })
+
+        pos = pos + 46 + nlen + elen + clen
+    }
+
+    bool ok = (firstErr == "")
+    return {ok: ok, err: firstErr, count: count, entries: entries}
+}
+
+// 文件 → 同上结构
+export func load(string path): Dict {
+    if not files.exists(path) { return _err("文件不存在：" + path) }
+    var text = ""
+    try {
+        text = files.read(path)
+    } catch ex {
+        return _err("读文件失败：" + path)
+    }
+    return decode(text)
+}

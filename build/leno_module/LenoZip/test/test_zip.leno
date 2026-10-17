@@ -1,0 +1,95 @@
+// LenoZip 0.1.0 自测：写 → 读回（stored）/ 文件往返 / 异常输入 / 助手
+//
+// 跑法（仓库根目录）：
+//   build\leno.exe build\leno_module\LenoZip\test\test_zip.leno
+//
+// 与 Python 的双向交叉验证（含 deflate 条目）见 test/dev_crosscheck_python.py
+import strings
+import dirs
+import files
+import "Zip" as zip
+
+func fail(string msg) {
+    print("[FAIL] " + msg)
+    _exit(1)
+}
+
+func eq(string got, string want, string tag) {
+    if got != want { fail(tag + "：得到「" + got + "」期望「" + want + "」") }
+}
+
+func eqInt(int got, int want, string tag) {
+    if got != want { fail(tag + "：得到 " + _str(got) + " 期望 " + _str(want)) }
+}
+
+main() {
+    // ---------- ① 自往返：文本 / 中文名 / 嵌套路径 / 空文件 / 二进制 ----------
+    Array[Dict] entries = []
+    entries.add(zip.entry("a.txt", "hello"))
+    entries.add(zip.entry("dir/b.txt", "中文内容，含逗号"))
+    entries.add(zip.entry("empty.txt", ""))
+    entries.add(zip.entry("说明.txt", "文件名与内容都是中文"))
+    // 二进制：0x00 / 0xFF / 0x80（字符串是字节载体，可以装）
+    string bin = strings.from_bytes([0, 1, 2, 127, 128, 255])
+    entries.add(zip.entry("bin.dat", bin))
+
+    string raw = zip.encode(entries)
+    if raw.byte_len() < 22 { fail("① 生成的 zip 太短") }
+
+    var z = zip.decode(raw)
+    if not (z["ok"] as bool) { fail("① decode 失败：" + (z["err"] as string)) }
+    eqInt(z["count"] as int, 5, "① 条目数")
+
+    Array[Dict] got = z["entries"] as Array[Dict]
+    eqInt(got.len(), 5, "① 返回条目数")
+    eq(got[0]["name"] as string, "a.txt", "① 第 1 个名字")
+    eq(got[0]["data"] as string, "hello", "① 第 1 个内容")
+    eq(got[1]["name"] as string, "dir/b.txt", "① 第 2 个名字")
+    eq(got[1]["data"] as string, "中文内容，含逗号", "① 第 2 个内容")
+    eq(got[2]["data"] as string, "", "① 空条目内容")
+    eq(got[3]["name"] as string, "说明.txt", "① 中文文件名")
+    eq(got[4]["data"] as string, bin, "① 二进制内容（含 NUL/0xFF）")
+    eqInt((got[4]["data"] as string).byte_len(), 6, "① 二进制长度")
+
+    // 每条都必须 CRC 通过（写错的 CRC 会让解压器报损坏）
+    if not zip.crcAllOk(z) { fail("① CRC 校验没全过") }
+
+    // ---------- ② 保存 / 读取 / 单条提取 ----------
+    string p = dirs.join(_tmpdir(), "lenozip_test.zip")
+    if not zip.save(p, entries) { fail("② save 失败") }
+    var z2 = zip.load(p)
+    if not (z2["ok"] as bool) { fail("② load 失败：" + (z2["err"] as string)) }
+    eqInt(z2["count"] as int, 5, "② 文件条目数")
+
+    var one = zip.read(p, "dir/b.txt")
+    if not (one["ok"] as bool) { fail("② read 失败：" + (one["err"] as string)) }
+    eq(one["data"] as string, "中文内容，含逗号", "② 单条提取内容")
+
+    var missing = zip.read(p, "no_such.txt")
+    if missing["ok"] as bool { fail("② 不存在的条目不该 ok=true") }
+
+    Array[string] ns = zip.names(z2)
+    eqInt(ns.len(), 5, "② names 数量")
+    eq(ns[4], "bin.dat", "② names 顺序")
+    files.delete(p)
+
+    // ---------- ③ 空归档 ----------
+    Array[Dict] none = []
+    var emptyZip = zip.decode(zip.encode(none))
+    if not (emptyZip["ok"] as bool) { fail("③ 空归档应能读") }
+    eqInt(emptyZip["count"] as int, 0, "③ 空归档条目数")
+
+    // ---------- ④ 不是 zip 的输入：必须明确报错 ----------
+    var bad = zip.decode("this is not a zip file")
+    if bad["ok"] as bool { fail("④ 非 zip 不该 ok=true") }
+    if (bad["err"] as string) == "" { fail("④ 应给出原因") }
+    print("④ 非 zip 报错 ok：" + (bad["err"] as string))
+
+    // ---------- ⑤ 截断的 zip：必须报错（不能解出半截还 ok=true）----------
+    string truncated = strings.byte_slice(raw, 0, raw.byte_len() - 10)
+    var t = zip.decode(truncated)
+    if t["ok"] as bool { fail("⑤ 截断的 zip 不该 ok=true") }
+    print("⑤ 截断报错 ok：" + (t["err"] as string))
+
+    print("test_zip passed（5 组断言）")
+}
