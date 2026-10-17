@@ -1,0 +1,11 @@
+[package]
+name = "LenoLog"
+version = "0.1.0"
+description = "Leno logging module: levels, console + append-to-file, per-logger filter (pure Leno)"
+authors = ""
+license = "Apache-2.0"
+
+[modules]
+root = "lib"
+
+# 纯 Leno，无原生库

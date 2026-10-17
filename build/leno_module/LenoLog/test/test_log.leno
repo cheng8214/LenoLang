@@ -1,0 +1,67 @@
+import files
+import dirs
+import strings
+import "Log" as log
+func fail(string msg) { print("[FAIL] " + msg); _exit(1) }
+func eqInt(int got, int want, string tag) { if got != want { fail(tag + "：得到 " + _str(got) + " 期望 " + _str(want)) } }
+func lineCount(string path): int {
+    if not files.exists(path) { return 0 }
+    var text = files.read(path)
+    int n = 0
+    for text.to_bytes() to b { if b == 10 { n = n + 1 } }
+    return n
+}
+main() {
+    string dir = dirs.join(_tmpdir(), "lenolog_test")
+    string p = dirs.join(dir, "app.log")
+    if files.exists(p) { files.delete(p) }
+
+    var lg = log.create("app")
+    log.addFile(lg, p)
+    log.debug(lg, "不该出现")
+    log.info(lg, "启动完成")
+    log.warn(lg, "磁盘快满了")
+    log.error(lg, "任务失败：ID=42")
+    eqInt(lineCount(p), 3, "① 只应写 3 行（debug 被过滤）")
+
+    var text = files.read(p)
+    if not strings.has(text, "[INFO ] app: 启动完成") { fail("② 行格式不对") }
+    if not strings.has(text, "[WARN ] app: 磁盘快满了") { fail("② WARN 行格式不对") }
+    if not strings.has(text, "[ERROR] app: 任务失败：ID=42") { fail("② ERROR 行格式不对") }
+    if text.byte(4) != 45 or text.byte(7) != 45 or text.byte(10) != 32 { fail("② 时间戳格式不对") }
+    if text.byte(13) != 58 or text.byte(16) != 58 { fail("② 时分秒分隔不对") }
+    print("② 行格式 ok：" + text.byte_slice(0, 18))
+
+    log.setLevel(lg, log.DEBUG)
+    log.debug(lg, "现在可见")
+    eqInt(lineCount(p), 4, "③ debug 应被写入")
+    if not strings.has(files.read(p), "[DEBUG] app: 现在可见") { fail("③ DEBUG 行格式不对") }
+
+    var lg2 = log.create("worker", log.INFO)
+    log.addFile(lg2, p)
+    log.info(lg2, "第二条链路")
+    eqInt(lineCount(p), 5, "④ 应追加而不是覆盖")
+    if not strings.has(files.read(p), "worker: 第二条链路") { fail("④ 第二个 logger 没写进去") }
+
+    log.info(lg, "中文：你好，世界")
+    if not strings.has(files.read(p), "中文：你好，世界") { fail("⑤ 中文丢失") }
+
+    var sub = log.child(lg, "db")
+    log.info(sub, "连接池就绪")
+    if not strings.has(files.read(p), "app.db: 连接池就绪") { fail("⑥ 子 logger 名字不对") }
+
+    if log.levelName(log.DEBUG) != "DEBUG" { fail("⑦ levelName(DEBUG)") }
+    if log.levelName(log.INFO) != "INFO" { fail("⑦ levelName(INFO)") }
+    if log.levelName(log.OFF) != "OFF" { fail("⑦ levelName(OFF)") }
+
+    log.setLevel(lg, log.OFF)
+    int before = lineCount(p)
+    log.error(lg, "不该出现")
+    eqInt(lineCount(p), before, "⑧ OFF 时不应写入")
+
+    var cl = log.create("console", log.INFO, true)
+    log.info(cl, "这条应该打到控制台")
+
+    files.delete(p)
+    print("test_log passed（8 组断言）")
+}

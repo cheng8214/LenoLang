@@ -1,0 +1,11 @@
+[package]
+name = "LenoUUID"
+version = "0.1.0"
+description = "Leno UUID module: v4 / v7 / short ids (pure Leno)"
+authors = ""
+license = "Apache-2.0"
+
+[modules]
+root = "lib"
+
+# 纯 Leno，无原生库（随机数走内置 rands）

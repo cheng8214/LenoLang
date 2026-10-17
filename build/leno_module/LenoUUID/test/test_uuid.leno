@@ -1,0 +1,75 @@
+// LenoUUID 0.1.0 自测：格式 / 版本位 / 唯一性 / v7 有序 / 校验 / 短 ID
+//
+// 跑法（仓库根目录）：
+//   build\leno.exe build\leno_module\LenoUUID\test\test_uuid.leno
+import "UUID" as uuid
+
+func fail(string msg) {
+    print("[FAIL] " + msg)
+    _exit(1)
+}
+
+func eqInt(int got, int want, string tag) {
+    if got != want { fail(tag + "：得到 " + _str(got) + " 期望 " + _str(want)) }
+}
+
+main() {
+    // ---------- ① v4 格式 ----------
+    string a = uuid.v4()
+    eqInt(a.byte_len(), 36, "① v4 长度")
+    if a.byte(8) != 45 or a.byte(13) != 45 or a.byte(18) != 45 or a.byte(23) != 45 {
+        fail("① v4 的 '-' 位置不对")
+    }
+    if a.byte(14) != 52 { fail("① v4 的 version 位应为 '4'，实际 " + a.byte(14)) }
+    int vb = a.byte(19)
+    if not (vb == 56 or vb == 57 or vb == 97 or vb == 98) { fail("① v4 的 variant 位不对") }
+    if not uuid.isValid(a) { fail("① 自己生成的 v4 应通过校验") }
+    eqInt(uuid.versionOf(a), 4, "① versionOf")
+
+    // ---------- ② 唯一性（500 个不重复）----------
+    Dict seen = {}
+    for 0:499 to i {
+        string s = uuid.v4()
+        if seen.has(s) { fail("② 生成重复 UUID：" + s) }
+        seen.set(s, true)
+    }
+    print("② 500 个 v4 无重复")
+
+    // ---------- ③ v7 带时间前缀且可排序 ----------
+    string v71 = uuid.v7()
+    string v72 = uuid.v7()
+    if v71.byte(14) != 55 { fail("③ v7 的 version 位应为 '7'") }
+    if not uuid.isValid(v71) { fail("③ v7 应通过校验") }
+    // 同一秒内前 13 个字符（时间戳 hex）相同；跨秒则字典序不下降
+    string p1 = v71.byte_slice(0, 12)
+    string p2 = v72.byte_slice(0, 12)
+    if p1 > p2 { fail("③ v7 前缀应单调不减：" + p1 + " > " + p2) }
+    print("③ v7 ok：前缀 " + p1)
+
+    // ---------- ④ 校验的反例 ----------
+    if uuid.isValid("not-a-uuid") { fail("④ 乱串不该通过") }
+    if uuid.isValid("00000000-0000-0000-0000-00000000000") { fail("④ 35 位不该通过") }
+    if uuid.isValid("00000000-0000-0000-0000-0000000000000") { fail("④ 37 位不该通过") }
+    if uuid.isValid("g0000000-0000-4000-8000-000000000000") { fail("④ 非十六进制不该通过") }
+    if not uuid.isValid("00000000-0000-0000-0000-000000000000") { fail("④ 全零 UUID 应合法") }
+    if not uuid.isValid("550E8400-E29B-41D4-A716-446655440000") { fail("④ 大写 UUID 应合法") }
+    print("④ 校验正反例 ok")
+
+    // ---------- ⑤ 短 ID ----------
+    string s1 = uuid.short()
+    eqInt(s1.byte_len(), 12, "⑤ short 默认长度")
+    string s2 = uuid.short(8)
+    eqInt(s2.byte_len(), 8, "⑤ short 指定长度")
+    eqInt(uuid.short(0).byte_len(), 1, "⑤ short(0) 至少 1 位")
+    for s2.to_bytes() to c {
+        bool ok = (c >= 48 and c <= 57) or (c >= 97 and c <= 102)
+        if not ok { fail("⑤ short 应只含十六进制字符") }
+    }
+    print("⑤ 短 ID ok：" + s1 + " / " + s2)
+
+    // ---------- ⑥ nil ----------
+    if uuid.nil() != "00000000-0000-0000-0000-000000000000" { fail("⑥ nil 格式不对") }
+    eqInt(uuid.versionOf(uuid.nil()), 0, "⑥ versionOf(nil) 应为 0")
+
+    print("test_uuid passed（6 组断言）")
+}

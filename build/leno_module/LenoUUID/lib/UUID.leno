@@ -1,0 +1,96 @@
+// UUID.leno -- UUID 生成/校验（纯 Leno，随机数走内置 rands）
+//
+// 为什么需要：任务 ID / 会话 ID / 临时文件名 / 幂等键 —— 这些"要一个不会撞的字符串"
+//   的地方，此前每个工具都在手搓 `rands.str(16, ...)`，既没有格式约定也没有校验手段。
+//
+// 提供三种：
+//   v4()  —— 随机 UUID（最常见；不可排序）
+//   v7()  —— **按时间排序**的 UUID（前 48 位是时间戳；做数据库主键/日志关联很友好）
+//   short(n) —— n 位十六进制短 ID（日志行、临时文件；长度必须自己保证唯一性）
+//
+// ⚠ v7 的时间精度是**秒**（`times.now()` 是秒级墙钟，本语言没有毫秒墙钟）⇒
+//   同一秒内生成多个 v7 时，前 48 位相同、靠后面的随机位区分 —— 仍可排序，
+//   但"同秒内严格递增"不保证。需要严格单调请在调用方自己加计数器。
+import rands
+import times
+import strings
+
+const HEX = "0123456789abcdef"
+
+func _fmt(Array[int] b): string {
+    Array[int] out = []
+    for 0:15 to i {
+        if i == 4 or i == 6 or i == 8 or i == 10 { out.add(45) }   // '-'
+        out.add(HEX.byte((b[i] >> 4) & 0x0F))
+        out.add(HEX.byte(b[i] & 0x0F))
+    }
+    return strings.from_bytes(out)
+}
+
+// 随机 UUID（RFC 4122 v4）
+export func v4(): string {
+    Array[int] b = []
+    for 0:15 to i { b.add(rands.ints(0, 255)) }
+    b[6] = (b[6] & 0x0F) | 0x40        // version = 4
+    b[8] = (b[8] & 0x3F) | 0x80        // variant = 10xx
+    return _fmt(b)
+}
+
+// 时间有序 UUID（RFC 9562 v7）：48 位秒级时间戳 + 随机位
+export func v7(): string {
+    int secs = times.now()
+    Array[int] b = []
+    for 0:5 to i { b.add((secs >> (8 * (5 - i))) & 0xFF) }
+    for 0:9 to i { b.add(rands.ints(0, 255)) }
+    b[6] = (b[6] & 0x0F) | 0x70        // version = 7
+    b[8] = (b[8] & 0x3F) | 0x80
+    return _fmt(b)
+}
+
+// 短 ID（默认 12 位十六进制）。⚠ 只适合"碰撞概率可接受"的场景
+export func short(int n = 12): string {
+    if n <= 0 { n = 1 }
+    return rands.str(n, HEX)
+}
+
+// 全零 UUID（00000000-0000-0000-0000-000000000000）
+export func nil(): string {
+    Array[int] b = []
+    for 0:15 to i { b.add(0) }
+    return _fmt(b)
+}
+
+func _isHex(int c): bool {
+    if c >= 48 and c <= 57 { return true }
+    if c >= 97 and c <= 102 { return true }
+    if c >= 65 and c <= 70 { return true }      // RFC 允许大写
+    return false
+}
+
+// 格式校验：36 位、四个 '-' 在固定位置、其余是十六进制；
+//   并检查 version ∈ 1..8、variant ∈ {8,9,a,b}；特例：全零 UUID 也算合法
+export func isValid(string s): bool {
+    if s == "00000000-0000-0000-0000-000000000000" { return true }
+    Array[int] bs = s.to_bytes()
+    if bs.len() != 36 { return false }
+    for 0:35 to i {
+        int c = bs[i]
+        if i == 8 or i == 13 or i == 18 or i == 23 {
+            if c != 45 { return false }
+        } else if not _isHex(c) {
+            return false
+        }
+    }
+    int ver = bs[14]
+    if ver < 49 or ver > 56 { return false }
+    int vb = bs[19]
+    if not (vb == 56 or vb == 57 or vb == 97 or vb == 98
+            or vb == 65 or vb == 66) { return false }
+    return true
+}
+
+// 取 version 数字（非法返回 -1）
+export func versionOf(string s): int {
+    if not isValid(s) { return -1 }
+    return s.byte(14) - 48
+}

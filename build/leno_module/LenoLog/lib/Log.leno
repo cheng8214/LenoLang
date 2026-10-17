@@ -1,0 +1,69 @@
+import files
+import dirs
+import times
+
+export var DEBUG = 10
+export var INFO = 20
+export var WARN = 30
+export var ERROR = 40
+export var OFF = 100
+
+export func levelName(int lv): string {
+    if lv <= DEBUG { return "DEBUG" }
+    if lv <= INFO { return "INFO" }
+    if lv <= WARN { return "WARN" }
+    if lv <= ERROR { return "ERROR" }
+    return "OFF"
+}
+
+func _pad(string s): string {
+    var r = s
+    while r.byte_len() < 5 { r = r + " " }
+    return r
+}
+
+// ⚠ 默认值必须写**字面量**（20 = INFO）：写成 `int level = INFO` 时默认值会变成 0
+//    ⇒ "默认 INFO" 实际是"什么都输出"（实测踩过：DEBUG 没被过滤）
+export func create(string name, int level = 20, bool console = false): Dict {
+    return {name: name, level: level, console: console, files: []}
+}
+
+export func setLevel(Dict lg, int lv) { lg.set("level", lv) }
+export func getLevel(Dict lg): int { return lg["level"] as int }
+export func addConsole(Dict lg) { lg.set("console", true) }
+
+export func addFile(Dict lg, string path) {
+    Array[string] fs = lg["files"] as Array[string]
+    fs.add(path)
+    lg.set("files", fs)
+    string parent = dirs.dirname(path)
+    if parent != "" { dirs.mkdir_p(parent) }
+}
+
+func _stamp(): string {
+    return times.format(times.now(), "%Y-%m-%d %H:%M:%S")
+}
+
+export func logAt(Dict lg, int lv, string msg) {
+    if lv < (lg["level"] as int) { return }
+    string line = _stamp() + " [" + _pad(levelName(lv)) + "] " + (lg["name"] as string) + ": " + msg
+    if lg["console"] as bool { print(line) }
+    Array[string] fs = lg["files"] as Array[string]
+    for fs to p {
+        var f = files.open(p, "a")
+        if f != null {
+            f.writeln(line)
+            f.close()
+        }
+    }
+}
+
+export func debug(Dict lg, string msg) { logAt(lg, DEBUG, msg) }
+export func info(Dict lg, string msg) { logAt(lg, INFO, msg) }
+export func warn(Dict lg, string msg) { logAt(lg, WARN, msg) }
+export func error(Dict lg, string msg) { logAt(lg, ERROR, msg) }
+
+export func child(Dict lg, string sub): Dict {
+    return {name: (lg["name"] as string) + "." + sub, level: getLevel(lg),
+            console: lg["console"] as bool, files: lg["files"] as Array[string]}
+}
