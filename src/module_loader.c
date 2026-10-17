@@ -140,6 +140,11 @@ static void ensure_cache_dir(const char* dir) {
 }
 
 // 设置模块缓存目录
+// ★ 2026-10-17：**只记路径，不建目录**（延迟创建）——
+//   此前这里一设就 mkdir：LSP 一启动就留下一个**空的** `.lenocache_lsp/`，
+//   CLI 的 `--check` 之类"其实没东西要缓存"的跑法也会留下空的 `.lenocache/`。
+//   目录改由真正要写缓存文件的那一刻建（module_loader_ensure_cache_dir），
+//   与 error.c 的日志目录同一取向：正常跑完不该留下任何空壳 ✓
 void module_loader_set_cache_dir(const char* dir) {
     if (g_cache_dir) {
         free(g_cache_dir);
@@ -147,8 +152,12 @@ void module_loader_set_cache_dir(const char* dir) {
     }
     if (dir && *dir) {
         g_cache_dir = strdup(dir);
-        ensure_cache_dir(g_cache_dir);
     }
+}
+
+// 确保缓存目录存在（延迟创建：写缓存文件之前调）
+void module_loader_ensure_cache_dir(void) {
+    ensure_cache_dir(g_cache_dir);
 }
 
 // 添加已加载模块
@@ -701,6 +710,8 @@ ObjModule* load_module_file(const char* file_path, const char* current_file, con
         if (g_cache_enabled && g_cache_dir && placeholder_module->source_path) {
             char* cache_path = module_cache_path_for(full_path, g_cache_dir);
             if (cache_path) {
+                // 延迟创建缓存目录（见 module_loader_set_cache_dir 的说明）：真要写文件时才建
+                module_loader_ensure_cache_dir();
                 module_cache_serialize(cache_path, placeholder_module, source);
                 free(cache_path);
             }

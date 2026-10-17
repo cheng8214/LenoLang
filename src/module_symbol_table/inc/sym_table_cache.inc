@@ -233,6 +233,8 @@ static int sym_cache_serialize(const char* cache_path, ModuleSymbolTable* table,
     // （在打开文件**之前**算：失败时不留下半截文件。）
     uint64_t bin_fp = cache_runtime_binary_fingerprint();
     if (bin_fp == 0) return -1;
+    // 延迟创建缓存目录：set_cache_dir 只记路径，真到写 .lenosymc 这一刻才建
+    module_loader_ensure_cache_dir();
 #ifdef _WIN32
     int wl = MultiByteToWideChar(CP_UTF8, 0, cache_path, -1, NULL, 0);
     wchar_t* wp = (wchar_t*)malloc(wl * sizeof(wchar_t));

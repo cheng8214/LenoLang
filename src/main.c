@@ -700,6 +700,9 @@ int lenolang_run(const char* source) {
             // 入口文件缓存写入：将序列化结果落盘，下次运行可直接加载跳过编译
             if (g_entry_cache_enabled && g_entry_cache_path[0]) {
                 int entry_written = 0;
+                // 延迟创建缓存目录：set_cache_dir 只记路径，真到写这一刻才建
+                // （否则"其实没有模块需要缓存"的跑法也会留下一个空的 .lenocache/）
+                module_loader_ensure_cache_dir();
 #ifdef _WIN32
                 int wlen2 = MultiByteToWideChar(CP_UTF8, 0, g_entry_cache_path, -1, NULL, 0);
                 if (wlen2 > 0) {

@@ -68,8 +68,13 @@ void register_defs_from_chunk(Chunk* chunk);
 // ============================================================================
 
 // 设置模块缓存目录（NULL 表示不启用磁盘缓存）
-// 内部会 strdup 保存并确保目录存在
+// 内部只 strdup 保存路径，**不建目录**（延迟到真要写缓存文件时）。
+// 写缓存文件之前必须调一次 module_loader_ensure_cache_dir()。
 void module_loader_set_cache_dir(const char* dir);
+
+// 确保缓存目录存在（延迟创建；未配置缓存目录时什么也不做）。
+// 只在「即将写 .lenomc / .lenosymc / 入口 entry_*.lenb」时调用 —— 正常跑完不留下空目录。
+void module_loader_ensure_cache_dir(void);
 
 // 启用/禁用模块编译缓存
 void module_loader_set_cache_enabled(int enabled);
