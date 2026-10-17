@@ -1,0 +1,58 @@
+// examples/gen_png.leno -- 纯 Leno 生成二维码并写成 PNG
+//
+// 跑法（仓库根目录）：
+//     build\leno.exe build\leno_module\LenoQR\examples\gen_png.leno "https://gitee.com/cheng8214/LenoLang" out.png
+//     build\leno.exe ...\gen_png.leno "文本" out.png Q 10      ← 指定纠错档 / 每模块像素
+//
+// 说明：
+//   · 编码本身（GF(256) / RS / 矩阵 / 掩码）是**纯 Leno**，不加载任何原生库；
+//   · 只有"存 PNG"这一步借 LenoSDL3 的 IMG_SavePNG（图片格式不是 QR 模块的职责）；
+//   · 不想依赖 SDL 的场合可以拿 rows（'0'/'1' 矩阵）自己画 —— qr.encode() 的返回值里就有。
+import ffi
+import "QR" as qr
+import "SDL3" as SDL3
+
+main() {
+    Array[string] args = _args()
+    if args.len() < 1 {
+        print("用法: gen_png.leno <文本> [输出.png] [ecc=L/M/Q/H] [scale=8]")
+        return
+    }
+    string text = args[0]
+    string out = if args.len() > 1 then args[1] else "qrcode.png"
+    string ecc = if args.len() > 2 then args[2] else "M"
+    int scale = if args.len() > 3 then _int(args[3]) else 8
+
+    var r = qr.encode(text, ecc)
+    if not (r.ok as bool) {
+        print("[错误] " + (r.err as string))
+        return
+    }
+
+    int size = r["size"] as int
+    int quiet = 4
+    int side = (size + quiet * 2) * scale
+    string argb = qr.toARGB(r, scale, quiet)
+
+    Ptr[u8] px = ffi.malloc(side * side * 4)
+    if px == null { print("[错误] 内存不足"); return }
+    ffi.write_bytes(px, 0, argb)
+
+    Ptr[u8] surf = SDL3.createSurfaceFromRaw(side, side, SDL3.PIXELFORMAT_ARGB8888, px, side * 4)
+    if surf == null {
+        ffi.free(px)
+        print("[错误] 创建 surface 失败")
+        return
+    }
+    bool ok = SDL3.saveImagePNG(surf, out)
+    SDL3.destroySurface(surf)
+    ffi.free(px)
+
+    if not ok {
+        print("[错误] 写 PNG 失败：" + out)
+        return
+    }
+    print("已生成：" + out + "  v" + _str(r.version) + "/" + (r.eccName as string)
+        + " mask=" + _str(r.mask) + "  " + _str(size) + "×" + _str(size)
+        + " 模块 · 图片 " + _str(side) + "×" + _str(side))
+}

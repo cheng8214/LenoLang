@@ -1,0 +1,84 @@
+// LenoQR 集成自测：**生成 → 真的写成 PNG 文件 → 读回图片 → 解码**
+//
+// 跑法（仓库根目录）：
+//   build\leno.exe build\leno_module\LenoQR\test\test_roundtrip_png.leno
+//
+// 与 test_encode_decode 的分工：
+//   · test_encode_decode：编码器 ↔ 解码器的**纯内存**回环（不碰文件/图片格式）
+//   · 本文件：补上"真实二维码图片"这一段 —— PNG 落盘、再从盘上读回来解
+// 图片读写交给 LenoSDL3（IMG_SavePNG / IMG_Load），所以本用例依赖 SDL3 模块；
+// 纯识别场景只要像素，不需要 SDL。
+import ffi
+import dirs
+import files
+import "QR" as qr
+import "SDL3" as SDL3
+
+func fail(string msg) {
+    print("[FAIL] " + msg)
+    _exit(1)
+}
+
+main() {
+    string text = "https://gitee.com/cheng8214/LenoLang"
+    var r = qr.encode(text, "M")
+    if not (r.ok as bool) { fail("encode 失败：" + (r.err as string)) }
+
+    int size = r["size"] as int
+    int scale = 6
+    int quiet = 4
+    int side = (size + quiet * 2) * scale
+    print("矩阵 v" + _str(r.version) + "/" + (r.eccName as string)
+        + " mask=" + _str(r.mask) + " · " + _str(size) + "×" + _str(size)
+        + " · 图片 " + _str(side) + "×" + _str(side))
+
+    // ---- ① 生成 ARGB8888 像素 → surface → PNG ----
+    string argb = qr.toARGB(r, scale, quiet)
+    if argb.byte_len() != side * side * 4 { fail("ARGB 缓冲长度不符") }
+
+    Ptr[u8] px = ffi.malloc(side * side * 4)
+    if px == null { fail("ffi.malloc 失败") }
+    ffi.write_bytes(px, 0, argb)
+
+    Ptr[u8] surf = SDL3.createSurfaceFromRaw(side, side, SDL3.PIXELFORMAT_ARGB8888, px, side * 4)
+    if surf == null { fail("createSurfaceFromRaw 失败") }
+
+    string path = dirs.join(_tmpdir(), "lenoqr_roundtrip.png")
+    bool saved = SDL3.saveImagePNG(surf, path)
+    SDL3.destroySurface(surf)
+    ffi.free(px)
+    if not saved { fail("IMG_SavePNG 失败：" + path) }
+    if not files.exists(path) { fail("PNG 没落盘：" + path) }
+    print("PNG 已写出：" + path)
+
+    // ---- ② 从盘上读回 → 解码 ----
+    var d = SDL3.pngFileToPixels(path)
+    if d.len() == 0 { fail("pngFileToPixels 读图失败") }
+
+    int w = d["w"] as int
+    int h = d["h"] as int
+    int pitch = d["pitch"] as int
+    Ptr[u8] back = d["pixels"] as Ptr[u8]
+    if w != side or h != side { fail("读回的图片尺寸不符：" + _str(w) + "×" + _str(h)) }
+
+    var dec = qr.decodeARGB(back, w, h, pitch)
+    ffi.free(back)
+    files.delete(path)
+
+    if (dec.err as string) != "" { fail("解码报错：" + (dec.err as string)) }
+    if not (dec.found as bool) { fail("从 PNG 里没解出二维码") }
+    if (dec.text as string) != text {
+        fail("内容不符：得到「" + (dec.text as string) + "」")
+    }
+
+    // ---- ③ 反向对照：把图涂白 ⇒ 必须 found=false 且不报错 ----
+    Ptr[u8] blank = ffi.malloc(side * side * 4)
+    var i = 0
+    while i < side * side * 4 { ffi.write_byte(blank, i, 255); i = i + 1 }
+    var nb = qr.decodeARGB(blank, side, side, side * 4)
+    ffi.free(blank)
+    if nb.found as bool { fail("白图上不该识别出二维码") }
+    if (nb.err as string) != "" { fail("白图应返回 err 空串，实际：" + (nb.err as string)) }
+
+    print("test_roundtrip_png passed（PNG 落盘 → 读回 → 解码，内容逐字一致）")
+}

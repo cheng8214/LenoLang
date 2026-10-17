@@ -1,0 +1,104 @@
+// LenoQR 编码端自测：**纯 Leno 生成 → 渲染成灰度 → quirc 解码回环**
+//
+// 跑法（仓库根目录）：
+//   build\leno.exe build\leno_module\LenoQR\test\test_encode_decode.leno
+//
+// 覆盖：GF(256) 向量、数字/字母数字/字节三种模式、L/M/Q/H 四档、版本边界、
+//       自动版本选择、大版本（v10，16 位字符计数）、超长报错。
+// 矩阵级"逐格对拍 python qrcode"是开发期脚本（build/_qr_diff.py），不入库 ——
+// 这里守的是**回环**：自己生成的码，自己解得回来，且内容逐字一致。
+import ffi
+import "QR" as qr
+
+var g_pass = 0
+
+func fail(string msg) {
+    print("[FAIL] " + msg)
+    _exit(1)
+}
+
+func roundtrip(string text, string ecc) {
+    var r = qr.encode(text, ecc)
+    if not (r.ok as bool) { fail("encode 失败（" + ecc + "）：" + (r.err as string)); return }
+
+    int size = r["size"] as int
+    int scale = 4
+    int quiet = 4
+    int side = (size + quiet * 2) * scale
+    string gray = qr.toGray(r, scale, quiet)
+    if gray.byte_len() != side * side { fail("灰度缓冲长度不符") }
+
+    Ptr[u8] buf = ffi.malloc(side * side)
+    if buf == null { fail("ffi.malloc 失败") }
+    ffi.write_bytes(buf, 0, gray)
+    var d = qr.decodeGray(buf, side, side, side)
+    ffi.free(buf)
+
+    if not (d.found as bool) {
+        fail("decode 没扫到（" + ecc + "，v" + _str(size) + "）：" + (d.err as string))
+        return
+    }
+    if (d.text as string) != text {
+        fail("decode 内容不符：得到「" + (d.text as string) + "」，期望「" + text + "」")
+        return
+    }
+    print("  ok  v" + _str(r.version) + "/" + (r.eccName as string)
+        + " mask=" + _str(r.mask) + "  " + _str(text.byte_len()) + "B  " + text)
+    g_pass = g_pass + 1
+}
+
+main() {
+    // ---------- ① GF(256)（本原多项式 0x11D）向量 ----------
+    assert_eq(qr.gfMul(0x53, 0xCA), 0x8F)
+    assert_eq(qr.gfMul(1, 1), 1)
+    assert_eq(qr.gfMul(2, 128), 0x1D)
+    assert_eq(qr.gfMul(255, 2), 0xE3)
+    assert_eq(qr.gfMul(0x11, 0x22), 0x38)
+    assert_eq(qr.gfMul(0, 123), 0)
+    print("GF(256)/0x11D 向量 ok")
+
+    // ---------- ② 容量表：v1/L 字节模式 = 17 字节 ----------
+    assert_eq(qr.capacityBytes(1, 0), 17)
+    assert_eq(qr.dataCodewords(1, 0), 19)
+    assert_eq(qr.dataCodewords(1, 3), 9)
+    print("容量表 ok（v1/L = 17B）")
+
+    // ---------- ③ 版本边界：17 → v1，18 → v2 ----------
+    var a17 = qr.encode("a" + "aaaaaaaaaaaaaaaa", "L")       // 17 个 'a'
+    var a18 = qr.encode("a" + "aaaaaaaaaaaaaaaaa", "L")      // 18 个 'a'
+    if (a17.version as int) != 1 { fail("17 字节应为 v1，实际 v" + _str(a17.version)) }
+    if (a18.version as int) != 2 { fail("18 字节应为 v2，实际 v" + _str(a18.version)) }
+    print("版本边界 ok（17→v1，18→v2）")
+
+    // ---------- ④ 模式选择 ----------
+    var mn = qr.encode("1234567890", "M")
+    var ma = qr.encode("HELLO WORLD", "M")
+    var mb = qr.encode("Hello, 世界", "M")
+    assert_eq(mn.mode as int, 0)
+    assert_eq(ma.mode as int, 1)
+    assert_eq(mb.mode as int, 2)
+    print("模式选择 ok（数字 / 字母数字 / 字节）")
+
+    // ---------- ⑤ 回环（渲染 → quirc 解码）----------
+    roundtrip("LENOQR TEST 001", "M")
+    roundtrip("1234567890", "L")
+    roundtrip("HELLO WORLD 123", "Q")
+    roundtrip("https://gitee.com/cheng8214/LenoLang", "M")
+    roundtrip("你好，Leno 二维码", "H")                  // UTF-8 字节模式
+    roundtrip("The quick brown fox jumps over the lazy dog. 0123456789", "Q")
+    roundtrip("a" + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "L")   // 100B → v5
+
+    // 大版本：v10（16 位字符计数）；同时验证 v7+ 的 version info
+    string longText = ""
+    var i = 0
+    while i < 300 { longText = longText + "A"; i = i + 1 }
+    roundtrip(longText, "M")
+
+    // ---------- ⑥ 超长：必须响亮报错，而不是生成一个坏码 ----------
+    var tooLong = qr.encodeVersion("x" + "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "H", 1)
+    if tooLong.ok as bool { fail("v1/H 装不下 100 字节，却返回 ok") }
+    if (tooLong.err as string) == "" { fail("超容量应给出 err 文案") }
+    print("超容量报错 ok：" + (tooLong.err as string))
+
+    print("test_encode_decode passed（" + _str(g_pass) + " 条回环）")
+}

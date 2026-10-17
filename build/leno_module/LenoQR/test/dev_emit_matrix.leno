@@ -1,0 +1,29 @@
+// dev_emit_matrix.leno -- 供 test/dev_diff_vs_python.py 调用（**开发期工具，不是用例**）
+//
+// 文件名不以 test_ 开头：仓库的 assert/run_tests.leno 只收集 assert/ 下的 test_*.leno，
+// 本文件在模块内、也不会被当成用例跑。
+//
+// 输出（stdout）：VERSION/ECC/MASK/SIZE 四行 + size 行 '0'/'1' 矩阵
+import "QR" as qr
+
+main() {
+    var args = _args()
+    if args.len() < 1 {
+        print("用法: dev_emit_matrix.leno <文本> [ecc]")
+        return
+    }
+    string text = args[0]
+    string ecc = "M"
+    if args.len() > 1 { ecc = args[1] }
+
+    var r = qr.encode(text, ecc)
+    if not (r.ok as bool) {
+        print("ERR " + (r.err as string))
+        return
+    }
+    print("VERSION " + _str(r.version))
+    print("ECC " + (r.eccName as string))
+    print("MASK " + _str(r.mask))
+    print("SIZE " + _str(r.size))
+    for (r.rows as Array[string]) to row { print(row) }
+}

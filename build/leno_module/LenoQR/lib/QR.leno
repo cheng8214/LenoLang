@@ -17,6 +17,7 @@
 //      found=false 且 err="" ⇒ 图里没有二维码（正常，不是错误）
 import "qr_native.leno" as nat
 import "qr_decode.leno" as dec
+import "qr_encode.leno" as enc
 
 // ==================== 环境信息（诊断用）====================
 export func libName(): string { return nat.lib_name() }
@@ -38,3 +39,31 @@ export func decodeARGB(Ptr[u8] px, int w, int h, int pitch): Dict {
 export func decodeRGB24(Ptr[u8] px, int w, int h, int pitch): Dict {
     return dec.decodeRGB24(px, w, h, pitch)
 }
+
+// ==================== 生成（纯 Leno）====================
+// 返回 {ok, err, text, version, ecc, eccName, mask, size, mode, rows}
+//   rows = size 行字符串，每行 '0'/'1'（'1' = 黑）
+//   ⚠ 矩阵生成与解码无关：不加载原生库也能用（DLL 只服务识别端）
+export func encode(string text, string ecc = "M"): Dict {
+    return enc.encode(text, ecc)
+}
+
+// 指定版本（不做自动选择；容量不够会 ok=false）
+export func encodeVersion(string text, string ecc, int version): Dict {
+    return enc.encode(text, ecc, version)
+}
+
+// 矩阵 → 灰度字节串（1 字节/像素，0=黑 255=白）⇒ 可直接喂 decodeGray 做回环
+export func toGray(Dict res, int scale = 4, int quiet = 4): string {
+    return enc.toGray(res, scale, quiet)
+}
+
+// 矩阵 → ARGB8888 字节串（B,G,R,A）
+export func toARGB(Dict res, int scale = 4, int quiet = 4): string {
+    return enc.toARGB(res, scale, quiet)
+}
+
+// 规格表查询（做容量提示用）
+export func dataCodewords(int version, int ecc): int { return enc.data_codewords(version, ecc) }
+export func capacityBytes(int version, int ecc): int { return enc.capacity_bytes(version, ecc) }
+export func gfMul(int a, int b): int { return enc.gf_mul(a, b) }
