@@ -17,6 +17,24 @@ export func no_default(int a, int b): int {
     return a + b
 }
 
+// ==================== 非字面量默认值（2026-10-17 修）====================
+// 以前：跨模块调用点只认字面量文本 ⇒ `= INFO` / `= Flags.ALL` / `= 10+20` 一律变 null
+//   （静默错值）。现在在**定义模块**做常量折叠，折成字面量文本再给调用点。
+export var INFO = 20
+export const LIMIT = 99
+
+export enum Flags {
+    ALL  = 0xFF
+    NONE = 0
+}
+
+export func def_var(int level = INFO): int { return level }
+export func def_const(int x = LIMIT): int { return x }
+export func def_enum(int f = Flags.ALL): int { return f }
+export func def_expr(int x = 10 + 20): int { return x }
+export func def_float(float k = 1.5 * 2.0): float { return k }
+export func def_str(string s = "a" + "b"): string { return s }
+
 export func typed_default(bool flag = true): bool {
     return flag
 }
@@ -38,6 +56,11 @@ export struct Calc {
 
     func tag(string s = "hi", int n = 7): string {
         return $"s={s} n={n}"
+    }
+
+    // 方法默认值引用**本模块 const**（折叠路径与模块函数同一套）
+    func plus_def(int v = LIMIT): int {
+        return base + v
     }
 
     func no_default(int a, int b): int {

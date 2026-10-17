@@ -45,5 +45,15 @@ main() {
     assert_eq(c.tag("x", 1), "s=x n=1")
     // 对照组：无默认值的方法照旧
     assert_eq(c.no_default(3, 4), 34)
+
+    // ⑧ 非字面量默认值（2026-10-17 修）——定义模块做常量折叠后跨模块才能拿到值
+    assert_eq(m.def_var(), 20)          // 顶层 var 初值
+    assert_eq(m.def_const(), 99)        // 顶层 const
+    assert_eq(m.def_enum(), 255)        // enum 成员 Flags.ALL
+    assert_eq(m.def_expr(), 30)         // 10 + 20
+    assert_eq(m.def_float(), 3.0)       // 1.5 * 2.0
+    assert_eq(m.def_str(), "ab")        // 字符串拼接
+    assert_eq(c.plus_def(), 1 + 99)     // struct 方法默认值引用 const
+    print("[8] cross-module non-literal default args passed")
     print("[7] cross-module struct method default args passed")
 }

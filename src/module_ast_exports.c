@@ -332,6 +332,9 @@ static const char* ast_type_param_name(Ast* sd, Ast* fn, TypeInfo* ti);
 // 前向声明：字面量 → 值文本（定义见下；**func 的默认值**也要用它 ✓）
 static char* ast_const_value_text(Ast* v);
 
+// 前向声明：默认参数表达式 → 字面量文本（常量折叠；定义见下）
+static char* ast_default_text(Ast* v);
+
 // 别名展开：把 `export alias Color = int` 这类名字解析到**最底层**的 kind ✓
 //   为什么必须有它（2026-10-01 实测）：parser 不认识别名（那是模块符号表的知识）⇒
 //   对 `setColor(Color color)` 里的 `Color` 一律给 TYPE_STRUCT + struct_name="Color" ✗；
@@ -528,7 +531,9 @@ static void ast_fill_one_func(ModuleSymbolTable* table, Ast* fn) {
             if (dtexts && fn->u.func.param_defaults) {
                 for (int i = 0; i < fn->u.func.pcnt; i++) {
                     if (fn->u.func.param_defaults[i]) {
-                        dtexts[i] = ast_const_value_text(fn->u.func.param_defaults[i]);
+                        // 常量折叠（不是只认字面量）：`= INFO` / `= Flags.X` / `= 10+20`
+                        //   都要能在跨模块调用点还原成值，否则实参静默变 null
+                        dtexts[i] = ast_default_text(fn->u.func.param_defaults[i]);
                     }
                 }
             }
@@ -1254,6 +1259,228 @@ static char* ast_const_value_text(Ast* v) {
     }
 }
 
+// ============================================================================
+// 默认参数的**常量折叠**（2026-10-17：修跨模块默认值）
+// ----------------------------------------------------------------------------
+// 背景：跨模块调用点拿不到被调函数的 AST，只能读符号表里的 `param_default_texts`，
+//   而生成文本的 ast_const_value_text **只认字面量** ⇒ `= INFO` / `= Flags.X` / `= 10+20`
+//   一律返回 NULL ⇒ 实参静默变 null（LenoLog 的 `level = INFO` 就这么踩的）。
+// 这里在**定义模块**（编译期，AST 还在）把默认值折成字面量文本：
+//   · 顶层 const / var 的初始值（递归，深度上限 8）
+//   · enum 成员（`Flags.ALL`）
+//   · 一元 ± / !、二元 + - * / % << >> & | ^、字符串拼接
+// 折不出来的（函数调用、非本模块符号…）仍返回 NULL —— 与旧行为一致，但**不再覆盖绝大多数写法**。
+// ⚠ 语义口径：跨模块默认值按**定义时**取值（同 C++/Python 的默认参数）；同模块仍按调用时求值
+//   ⇒ 可变全局变量被改写后两边可能不同。默认值建议只用常量（本文件的口径）。
+static Ast* g_fold_program = NULL;
+
+typedef struct { int kind; long long i; double d; char* s; } FoldVal;
+enum { FV_NONE = 0, FV_INT, FV_FLOAT, FV_STR, FV_BOOL, FV_NULL };
+
+static FoldVal fv_none(void) { FoldVal v; v.kind = FV_NONE; v.i = 0; v.d = 0; v.s = NULL; return v; }
+
+static Ast* fold_find_top_init(const char* name) {
+    if (!g_fold_program || g_fold_program->kind != AST_BLOCK || !name) return NULL;
+    for (int i = 0; i < g_fold_program->u.block.count; i++) {
+        Ast* st = g_fold_program->u.block.items[i];
+        Ast* d = (st && st->kind == AST_EXPORT && st->u.export.decl) ? st->u.export.decl : st;
+        if (d && d->kind == AST_VAR_DECL && d->u.var_decl.name &&
+            strcmp(d->u.var_decl.name, name) == 0) {
+            return d->u.var_decl.init;
+        }
+    }
+    return NULL;
+}
+
+static int fold_enum_member(const char* ename, const char* mname, long long* out) {
+    if (!g_fold_program || !ename || !mname) return 0;
+    for (int i = 0; i < g_fold_program->u.block.count; i++) {
+        Ast* st = g_fold_program->u.block.items[i];
+        Ast* d = (st && st->kind == AST_EXPORT && st->u.export.decl) ? st->u.export.decl : st;
+        if (!d || d->kind != AST_ENUM_DEF || !d->u.enum_def.name) continue;
+        if (strcmp(d->u.enum_def.name, ename) != 0) continue;
+        for (int k = 0; k < d->u.enum_def.member_count; k++) {
+            if (d->u.enum_def.member_names[k] &&
+                strcmp(d->u.enum_def.member_names[k], mname) == 0) {
+                *out = d->u.enum_def.member_values[k];
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+static FoldVal fold_expr(Ast* v, int depth);
+
+static int fold_is_numeric(FoldVal v) { return v.kind == FV_INT || v.kind == FV_FLOAT; }
+static double fold_as_d(FoldVal v) { return v.kind == FV_INT ? (double)v.i : v.d; }
+static void fold_free(FoldVal* v) { if (v->s) { free(v->s); v->s = NULL; } v->kind = FV_NONE; }
+
+static FoldVal fold_expr(Ast* v, int depth) {
+    FoldVal none = fv_none();
+    if (!v || depth > 8) return none;
+    switch (v->kind) {
+        case AST_NUM: {
+            FoldVal r = fv_none();
+            if (v->u.num.is_bigint) return none;
+            if (v->u.num.is_float) { r.kind = FV_FLOAT; r.d = v->u.num.value; }
+            else { r.kind = FV_INT; r.i = (long long)v->u.num.value; }
+            return r;
+        }
+        case AST_STRING: {
+            FoldVal r = fv_none();
+            if (!v->u.string.value) return none;
+            r.kind = FV_STR;
+            r.s = strdup(v->u.string.value);
+            return r;
+        }
+        case AST_BOOL: { FoldVal r = fv_none(); r.kind = FV_BOOL; r.i = v->u.boolean ? 1 : 0; return r; }
+        case AST_NULL: { FoldVal r = fv_none(); r.kind = FV_NULL; return r; }
+        case AST_VAR: {
+            Ast* init = fold_find_top_init(v->u.var.name);
+            if (!init) return none;
+            return fold_expr(init, depth + 1);
+        }
+        case AST_MODULE_ACCESS: {
+            long long val = 0;
+            if (fold_enum_member(v->u.module_access.module_name,
+                                 v->u.module_access.member_name, &val)) {
+                FoldVal r = fv_none(); r.kind = FV_INT; r.i = val; return r;
+            }
+            return none;
+        }
+        case AST_FIELD_ACCESS: {
+            Ast* obj = v->u.field_access.obj;
+            long long val = 0;
+            if (obj && obj->kind == AST_VAR &&
+                fold_enum_member(obj->u.var.name, v->u.field_access.field_name, &val)) {
+                FoldVal r = fv_none(); r.kind = FV_INT; r.i = val; return r;
+            }
+            return none;
+        }
+        case AST_UNARY: {
+            if (v->u.unary.is_postfix) return none;
+            FoldVal a = fold_expr(v->u.unary.operand, depth + 1);
+            if (v->u.unary.op == TOK_NOT) {
+                if (a.kind == FV_BOOL) { a.i = a.i ? 0 : 1; return a; }
+                fold_free(&a);
+                return none;
+            }
+            if (!fold_is_numeric(a)) { fold_free(&a); return none; }
+            if (v->u.unary.op == TOK_MINUS) {
+                if (a.kind == FV_INT) a.i = -a.i; else a.d = -a.d;
+                return a;
+            }
+            if (v->u.unary.op == TOK_PLUS) return a;
+            fold_free(&a);
+            return none;
+        }
+        case AST_BINOP: {
+            FoldVal a = fold_expr(v->u.binop.l, depth + 1);
+            FoldVal b = fold_expr(v->u.binop.r, depth + 1);
+            FoldVal r = fv_none();
+            LenoTokenType op = v->u.binop.op;
+            if (a.kind == FV_STR && b.kind == FV_STR && op == TOK_PLUS) {
+                size_t la = strlen(a.s), lb = strlen(b.s);
+                r.kind = FV_STR;
+                r.s = (char*)malloc(la + lb + 1);
+                if (r.s) {
+                    memcpy(r.s, a.s, la);
+                    memcpy(r.s + la, b.s, lb);
+                    r.s[la + lb] = '\0';
+                }
+                fold_free(&a); fold_free(&b);
+                return r;
+            }
+            if (!fold_is_numeric(a) || !fold_is_numeric(b)) {
+                fold_free(&a); fold_free(&b);
+                return none;
+            }
+            int use_float = (a.kind == FV_FLOAT || b.kind == FV_FLOAT);
+            if (!use_float) {
+                long long x = a.i, y = b.i;
+                switch (op) {
+                    case TOK_PLUS:  r.kind = FV_INT; r.i = x + y; break;
+                    case TOK_MINUS: r.kind = FV_INT; r.i = x - y; break;
+                    case TOK_STAR:  r.kind = FV_INT; r.i = x * y; break;
+                    case TOK_SLASH: if (y == 0) { fold_free(&a); fold_free(&b); return none; } r.kind = FV_INT; r.i = x / y; break;
+                    case TOK_MOD:   if (y == 0) { fold_free(&a); fold_free(&b); return none; } r.kind = FV_INT; r.i = x % y; break;
+                    case TOK_SHL:   r.kind = FV_INT; r.i = (y >= 0 && y < 63) ? (x << y) : 0; break;
+                    case TOK_SHR:   r.kind = FV_INT; r.i = (y >= 0 && y < 63) ? (x >> y) : 0; break;
+                    case TOK_BITAND: r.kind = FV_INT; r.i = x & y; break;
+                    case TOK_BITOR:  r.kind = FV_INT; r.i = x | y; break;
+                    case TOK_BITXOR: r.kind = FV_INT; r.i = x ^ y; break;
+                    default: fold_free(&a); fold_free(&b); return none;
+                }
+            } else {
+                double x = fold_as_d(a), y = fold_as_d(b);
+                r.kind = FV_FLOAT;
+                switch (op) {
+                    case TOK_PLUS:  r.d = x + y; break;
+                    case TOK_MINUS: r.d = x - y; break;
+                    case TOK_STAR:  r.d = x * y; break;
+                    case TOK_SLASH: if (y == 0.0) { fold_free(&a); fold_free(&b); return none; } r.d = x / y; break;
+                    default: fold_free(&a); fold_free(&b); return none;
+                }
+            }
+            fold_free(&a);
+            fold_free(&b);
+            return r;
+        }
+        default: return none;
+    }
+}
+
+static char* fold_text_quoted(const char* s) {
+    size_t n = strlen(s);
+    char* out = (char*)malloc(n * 4 + 3);
+    if (!out) return NULL;
+    size_t o = 0;
+    out[o++] = '"';
+    for (size_t i = 0; i < n; i++) {
+        unsigned char c = (unsigned char)s[i];
+        switch (c) {
+            case '"':  out[o++] = '\\'; out[o++] = '"';  break;
+            case '\\': out[o++] = '\\'; out[o++] = '\\'; break;
+            case '\n': out[o++] = '\\'; out[o++] = 'n';  break;
+            case '\t': out[o++] = '\\'; out[o++] = 't';  break;
+            case '\r': out[o++] = '\\'; out[o++] = 'r';  break;
+            default:   out[o++] = (char)c; break;
+        }
+    }
+    out[o++] = '"';
+    out[o] = '\0';
+    return out;
+}
+
+// 折出字面量文本；折不出来返回 NULL（调用方保持旧行为：跨模块该实参为 null）
+static char* ast_default_text(Ast* v) {
+    FoldVal f = fold_expr(v, 0);
+    char buf[64];
+    char* out = NULL;
+    switch (f.kind) {
+        case FV_INT:
+            snprintf(buf, sizeof(buf), "%lld", (long long)f.i);
+            out = strdup(buf);
+            break;
+        case FV_FLOAT:
+            snprintf(buf, sizeof(buf), "%g", f.d);
+            // 消费者按"含 . / e"判浮点 ⇒ 2.0 必须写成 2.0，不能退化成 2
+            if (!strchr(buf, '.') && !strchr(buf, 'e') && !strchr(buf, 'E')) {
+                size_t n = strlen(buf);
+                snprintf(buf + n, sizeof(buf) - n, ".0");
+            }
+            out = strdup(buf);
+            break;
+        case FV_STR:  out = fold_text_quoted(f.s ? f.s : ""); break;
+        case FV_BOOL: out = strdup(f.i ? "true" : "false"); break;
+        case FV_NULL: out = strdup("null"); break;
+        default:      out = NULL; break;
+    }
+    fold_free(&f);
+    return out;
+}
+
 // 该类型名是否是"泛型形参"（本 struct 的 T/U… 或本方法的）⇒ 返回形参名，否则 NULL ✓
 //   为什么要单独认它：泛型形参在符号表里**不是聚合类型**，而是 TYPE_GENERIC_PARAM + 形参名
 //   （扫描链经 mod_resolve_param_type 的**唯一实现**这么归，见 scan_struct.inc:335/369）
@@ -1416,8 +1643,9 @@ static void ast_fill_one_struct_meta(ModuleSymbolTable* table, Ast* sd) {
                 if (methods[i].param_default_texts && fn->u.func.param_defaults) {
                     for (int k = 0; k < pc; k++) {
                         if (fn->u.func.param_defaults[k]) {
+                            // 同 ast_fill_one_func：struct 方法的默认值也要折叠
                             methods[i].param_default_texts[k] =
-                                ast_const_value_text(fn->u.func.param_defaults[k]);
+                                ast_default_text(fn->u.func.param_defaults[k]);
                         }
                     }
                 }
@@ -1807,6 +2035,10 @@ static void ast_symbol_fill_provider(ModuleSymbolTable* table, const char* src) 
         return;         // 语法错 ⇒ 不覆盖（编译本来就会在 parse 阶段报错 ✓）
     }
     Ast* root = p.root;
+    // 默认参数常量折叠需要**本模块的顶层 AST**（解析 const/var/enum）⇒ 存进全局
+    //   save/restore：下面解析依赖会触发对方的填充器，不能把外层在用的根覆盖掉
+    Ast* saved_fold_program = g_fold_program;
+    g_fold_program = root;
     // 本模块 import 别名表（供 `export const X = base.Y` 递归解析依赖模块 ✓）
     //   ⚠ save/restore 必须成对：下面解析依赖会触发**对方的**填充器 ⇒ 不能覆盖外层在用的表 ✗
     AstImportRef* saved_imports = g_ast_imports;
@@ -1845,6 +2077,7 @@ static void ast_symbol_fill_provider(ModuleSymbolTable* table, const char* src) 
             //   于是"接管"变成了"什么都不做"，才表现为 396/10 / 399/7 那些红 ✓
         }
     }
+    g_fold_program = saved_fold_program;
     ast_imports_free(g_ast_imports, g_ast_import_count);
     g_ast_imports = saved_imports;
     g_ast_import_count = saved_import_count;
@@ -1864,6 +2097,8 @@ void module_ast_symbols_fill_from_ast(void* table_v, void* ast_root) {
     ModuleSymbolTable* table = (ModuleSymbolTable*)table_v;
     Ast* root = (Ast*)ast_root;
     if (!table || !root || root->kind != AST_BLOCK) return;
+    Ast* saved_fold_program = g_fold_program;
+    g_fold_program = root;      // 默认参数折叠用（同上）
     for (int i = 0; i < root->u.block.count; i++) {
         Ast* st = root->u.block.items[i];
         if (!st) continue;
@@ -1878,6 +2113,7 @@ void module_ast_symbols_fill_from_ast(void* table_v, void* ast_root) {
         else if (d->kind == AST_CSTRUCT_DEF) ast_fill_one_cstruct(table, d);
         else if (d->kind == AST_VAR_DECL) ast_fill_one_var(table, d);
     }
+    g_fold_program = saved_fold_program;
 }
 
 void module_ast_symbols_register(void) {
