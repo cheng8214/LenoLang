@@ -1,0 +1,89 @@
+// LenoQR：ECI(UTF-8) 与 Kanji 模式自测
+//
+// 跑法（仓库根目录）：
+//   build\leno.exe build\leno_module\LenoQR\test\test_eci_kanji.leno
+//
+// 为什么这两条只能靠"自编码 → quirc 解码"验证（不能像字节模式那样与 python qrcode
+// 逐格对拍）：python qrcode **没有** Kanji 写入器（MODE_KANJI 会直接 TypeError），
+// 也没有 ECI 写入接口 ⇒ 这里用 quirc（独立实现）把码解回来当判据：
+//   · ECI 26：解出的 payload 必须与原文本逐字一致（quirc 会解析 ECI 但载荷仍是 UTF-8 字节）
+//   · Kanji ：解出的 payload 是 **Shift-JIS 字节**，且 meta 的 data_type 必须是 8(Kanji)
+import ffi
+import strings
+import "QR" as qr
+
+func fail(string msg) {
+    print("[FAIL] " + msg)
+    _exit(1)
+}
+
+// 把编码结果渲染成灰度并解回来（返回 decodeAll 的结果）
+func decodeBack(Dict r): Dict {
+    int size = r["size"] as int
+    int scale = 4
+    int quiet = 4
+    int side = (size + quiet * 2) * scale
+    string gray = qr.toGray(r, scale, quiet)
+    Ptr[u8] buf = ffi.malloc(side * side)
+    if buf == null { fail("ffi.malloc 失败") }
+    ffi.write_bytes(buf, 0, gray)
+    var d = qr.decodeAllGray(buf, side, side, side)
+    ffi.free(buf)
+    return d
+}
+
+main() {
+    if qr.abi() != 2 { fail("ABI 不符（期望 2）") }
+
+    // ---------- ① ECI 26（UTF-8 显式声明）----------
+    string zh = "你好，ECI UTF-8"
+    var re = qr.encodeEci(zh, "M")
+    if not (re.ok as bool) { fail("encodeEci 失败：" + (re.err as string)) }
+    if (re.eci as int) != 1 { fail("encodeEci 的结果里 eci 应为 1") }
+    print("ECI 码：v" + _str(re.version) + "/" + (re.eccName as string)
+        + " mask=" + _str(re.mask) + "  size=" + _str(re.size))
+
+    var de = decodeBack(re)
+    if (de.err as string) != "" { fail("ECI 码解码报错：" + (de.err as string)) }
+    Array[string] te = de["texts"] as Array[string]
+    if te.len() < 1 { fail("ECI 码没解出内容") }
+    if te[0] != zh { fail("ECI 载荷不符：得到「" + te[0] + "」") }
+    print("ECI 回环 ok：" + te[0])
+
+    // ECI 会比普通字节模式多花 12 bit ⇒ 同样内容版本可能更大；这里只做个不崩的对照
+    var rb = qr.encode(zh, "M")
+    if (rb.version as int) > (re.version as int) + 1 {
+        fail("ECI 版版本号异常（" + _str(re.version) + " vs " + _str(rb.version) + "）")
+    }
+
+    // ---------- ② Kanji 模式（Shift-JIS 字节）----------
+    // "こんにちは" 的 Shift-JIS 字节（由 python 'こんにちは'.encode('shift_jis') 取得）
+    string sjis = strings.from_bytes([130, 177, 130, 241, 130, 201, 130, 191, 130, 205])
+    var rk = qr.encodeKanjiSJIS(sjis, "M")
+    if not (rk.ok as bool) { fail("encodeKanjiSJIS 失败：" + (rk.err as string)) }
+    if (rk.mode as int) != 3 { fail("Kanji 模式 mode 应为 3") }
+    print("Kanji 码：v" + _str(rk.version) + "/" + (rk.eccName as string)
+        + " mask=" + _str(rk.mask) + "  size=" + _str(rk.size))
+
+    var dk = decodeBack(rk)
+    if (dk.err as string) != "" { fail("Kanji 码解码报错：" + (dk.err as string)) }
+    Array[string] tk = dk["texts"] as Array[string]
+    if tk.len() < 1 { fail("Kanji 码没解出内容") }
+    // quirc 对 Kanji 返回的是 **Shift-JIS 原始字节**，与输入逐字节相同
+    if tk[0].byte_len() != sjis.byte_len() { fail("Kanji 载荷长度不符") }
+    if tk[0] != sjis { fail("Kanji 载荷字节不符") }
+
+    // meta：[version, ecc_level, mask, data_type]；data_type 8 = Kanji
+    Array[int] metas = dk["metas"] as Array[int]
+    if metas.len() < 4 { fail("metas 不足 4 项") }
+    if metas[3] != 8 { fail("data_type 应为 8(Kanji)，实际 " + _str(metas[3])) }
+    print("Kanji 回环 ok：data_type=" + _str(metas[3]) + "（8 = Kanji）· 载荷 "
+        + _str(tk[0].byte_len()) + " 字节")
+
+    // ---------- ③ 非法输入必须响亮报错 ----------
+    var bad = qr.encodeKanjiSJIS(strings.from_bytes([130]), "M")
+    if bad.ok as bool { fail("奇数长度的 SJIS 应报错") }
+    print("非法 SJIS 报错 ok：" + (bad.err as string))
+
+    print("test_eci_kanji passed")
+}

@@ -37,7 +37,7 @@
  *   参数个数/顺序对不上的调用在 x64 上**不会崩**，只会读出垃圾 ⇒ 静默错值）。
  *   .leno 侧把它和模块里的常量比对，不等就直接报"请重跑 src/build_dll.*"。
  * -------------------------------------------------------------------------- */
-#define LENO_QR_ABI 1
+#define LENO_QR_ABI 2   /* 2：新增多码枚举（begin/count/get/meta/end） */
 
 LQ_EXPORT int32_t leno_qr_abi(void) { return LENO_QR_ABI; }
 
@@ -136,4 +136,125 @@ LQ_EXPORT int32_t leno_qr_scan_argb(const uint8_t *px, int32_t w, int32_t h,
     rc = leno_qr_scan_gray(gray, w, h, stride, out, cap);
     free(gray);
     return rc;
+}
+
+/* ============================================================================
+ * 多码枚举（ABI 2 新增）
+ * ----------------------------------------------------------------------------
+ * 为什么用"上下文句柄"而不是"一次调用返回全部"：
+ *   quirc 的流程是 begin(填像素) → end(检测) → count/extract/decode。
+ *   若每个码都从头再来一遍，一张图要**检测 N 次**（检测远贵于解码）；
+ *   这里把检测结果挂在句柄上，调用方按 index 取 payload。
+ *
+ * 生命周期：begin → count/get/meta 任意次 → end（**必须调**，内部持有 malloc 的 quirc 对象）
+ *
+ * 返回码：
+ *   begin : 句柄（NULL = 参数错或内存不足）
+ *   count : >=0 检测到的码数；-2 句柄为空
+ *   get   : >=0 payload 字节数；-1 该码**检出但解不开**（纠错失败/不是 QR 等）；-2 参数错
+ *   meta  : 0 成功，-2 参数错。out 四个 int32 = [version, ecc_level, mask, data_type]
+ *           ⚠ ecc_level 是 quirc 的口径（M=0, L=1, H=2, Q=3），**不是** L/M/Q/H 下标
+ * ========================================================================== */
+
+static struct quirc *lq_detect_gray(const uint8_t *gray, int32_t w, int32_t h, int32_t stride)
+{
+    struct quirc *q;
+    uint8_t *buf;
+    int bw = 0, bh = 0, i;
+
+    if (!gray || w <= 0 || h <= 0 || stride < w) return NULL;
+
+    q = quirc_new();
+    if (!q) return NULL;
+    if (quirc_resize(q, (int)w, (int)h) < 0) { quirc_destroy(q); return NULL; }
+    buf = quirc_begin(q, &bw, &bh);
+    if (!buf) { quirc_destroy(q); return NULL; }
+    for (i = 0; i < h; i++) {
+        memcpy(buf + (size_t)i * (size_t)w, gray + (size_t)i * (size_t)stride, (size_t)w);
+    }
+    quirc_end(q);
+    return q;
+}
+
+LQ_EXPORT void *leno_qr_begin(const uint8_t *gray, int32_t w, int32_t h, int32_t stride)
+{
+    return (void *)lq_detect_gray(gray, w, h, stride);
+}
+
+LQ_EXPORT void *leno_qr_begin_argb(const uint8_t *px, int32_t w, int32_t h,
+                                   int32_t pitch, int32_t bpp)
+{
+    uint8_t *gray;
+    struct quirc *q;
+    int32_t y, x;
+
+    if (!px || w <= 0 || h <= 0) return NULL;
+    if (bpp != 3 && bpp != 4) return NULL;
+    if (pitch < w * bpp) return NULL;
+
+    gray = (uint8_t *)malloc((size_t)w * (size_t)h);
+    if (!gray) return NULL;
+    for (y = 0; y < h; y++) {
+        const uint8_t *row = px + (size_t)y * (size_t)pitch;
+        uint8_t *dst = gray + (size_t)y * (size_t)w;
+        for (x = 0; x < w; x++) {
+            int b = row[x * bpp + 0];
+            int g = row[x * bpp + 1];
+            int r = row[x * bpp + 2];
+            dst[x] = (uint8_t)((r * 299 + g * 587 + b * 114 + 500) / 1000);
+        }
+    }
+    q = lq_detect_gray(gray, w, h, w);
+    free(gray);
+    return (void *)q;
+}
+
+LQ_EXPORT int32_t leno_qr_count(void *handle)
+{
+    if (!handle) return -2;
+    return (int32_t)quirc_count((const struct quirc *)handle);
+}
+
+LQ_EXPORT int32_t leno_qr_get(void *handle, int32_t index, uint8_t *out, int32_t cap)
+{
+    struct quirc_code code;
+    struct quirc_data data;
+    int n, len;
+
+    if (!handle || !out || cap <= 0 || index < 0) return -2;
+    n = quirc_count((const struct quirc *)handle);
+    if (index >= n) return -2;
+
+    quirc_extract((const struct quirc *)handle, (int)index, &code);
+    if (quirc_decode(&code, &data) != QUIRC_SUCCESS) return -1;
+
+    len = data.payload_len;
+    if (len > (int)cap) len = (int)cap;
+    memcpy(out, data.payload, (size_t)len);
+    return (int32_t)len;
+}
+
+LQ_EXPORT int32_t leno_qr_meta(void *handle, int32_t index, int32_t *out4)
+{
+    struct quirc_code code;
+    struct quirc_data data;
+    int n;
+
+    if (!handle || !out4 || index < 0) return -2;
+    n = quirc_count((const struct quirc *)handle);
+    if (index >= n) return -2;
+
+    quirc_extract((const struct quirc *)handle, (int)index, &code);
+    if (quirc_decode(&code, &data) != QUIRC_SUCCESS) return -1;
+
+    out4[0] = data.version;
+    out4[1] = data.ecc_level;
+    out4[2] = data.mask;
+    out4[3] = data.data_type;
+    return 0;
+}
+
+LQ_EXPORT void leno_qr_end(void *handle)
+{
+    if (handle) quirc_destroy((struct quirc *)handle);
 }

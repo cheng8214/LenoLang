@@ -87,7 +87,7 @@ main() {
         fail("找不到原生库 —— 先跑 build\\leno_module\\LenoQR\\src\\build_dll.bat")
     }
     print("quirc = " + qr.version() + " · abi = " + _str(qr.abi()))
-    if qr.abi() != 1 { fail("ABI 不符（期望 1，实际 " + _str(qr.abi()) + "）") }
+    if qr.abi() != 2 { fail("ABI 不符（期望 2，实际 " + _str(qr.abi()) + "）") }
 
     int scale = 4
     int quiet = 4

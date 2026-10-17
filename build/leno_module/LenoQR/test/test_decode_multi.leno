@@ -1,0 +1,115 @@
+// LenoQR 多码识别自测：**一张图里放两枚码**，一次检测把它们都解出来
+//
+// 跑法（仓库根目录）：
+//   build\leno.exe build\leno_module\LenoQR\test\test_decode_multi.leno
+//
+// 为什么要有这条用例：单码接口只会返回"第一枚能解开的"，而真实场景（海报拼图、
+// 成对贴纸、界面截图）常见多枚并存。多码接口的语义是"检测一次、按 index 取 N 枚"，
+// 所以这里要同时验证 count（检出数）与 texts（解出的载荷集合），而不只是"找到了一个"。
+import ffi
+import "QR" as qr
+
+func fail(string msg) {
+    print("[FAIL] " + msg)
+    _exit(1)
+}
+
+// 渲染一枚码 → 灰度字节串
+func render(string text, string ecc): Dict {
+    var r = qr.encode(text, ecc)
+    if not (r.ok as bool) { fail("encode 失败：" + (r.err as string)) }
+    int quiet = 4
+    int scale = 4
+    int side = ((r["size"] as int) + quiet * 2) * scale
+    return {gray: qr.toGray(r, scale, quiet), side: side, text: text}
+}
+
+// 把两枚码横向拼进一张白底画布（中间留 8 个模块宽的白缝，避免相互干扰定位）
+func compose(Dict a, Dict b): Dict {
+    int gap = 32
+    int sa = a["side"] as int
+    int sb = b["side"] as int
+    int w = sa + gap + sb
+    int h = sa
+    if sb > sa { h = sb }
+    Array[int] canvas = []
+    var i = 0
+    while i < w * h { canvas.add(255); i = i + 1 }
+
+    string ga = a["gray"] as string
+    string gb = b["gray"] as string
+    var y = 0
+    var x = 0
+    while y < h {
+        // 两枚码的边长可能不同 ⇒ 各自只拷自己的行数（否则会越界读对方的缓冲）
+        if y < sa {
+            x = 0
+            while x < sa {
+                canvas[y * w + x] = ga.byte(y * sa + x)
+                x = x + 1
+            }
+        }
+        if y < sb {
+            x = 0
+            while x < sb {
+                canvas[y * w + (sa + gap) + x] = gb.byte(y * sb + x)
+                x = x + 1
+            }
+        }
+        y = y + 1
+    }
+    return {gray: "", side: 0, w: w, h: h, bytes: canvas, count: 2}
+}
+
+func contains(Array[string] arr, string want): bool {
+    for arr to s {
+        if s == want { return true }
+    }
+    return false
+}
+
+main() {
+    print("lib  = " + qr.libName() + " · abi = " + _str(qr.abi()))
+    if qr.abi() != 2 { fail("ABI 不符（期望 2，实际 " + _str(qr.abi()) + "）") }
+
+    Dict a = render("https://gitee.com/cheng8214/LenoLang", "M")
+    Dict b = render("LENOQR MULTI 002", "Q")
+    Dict canvas = compose(a, b)
+
+    int w = canvas["w"] as int
+    int h = canvas["h"] as int
+    Array[int] bytes = canvas["bytes"] as Array[int]
+    var i = 0
+    Ptr[u8] buf = ffi.malloc(w * h)
+    if buf == null { fail("ffi.malloc 失败") }
+    // 逐字节写太慢，但这里只是一次性自测（w*h ≈ 4 万）
+    i = 0
+    while i < w * h {
+        ffi.write_byte(buf, i, bytes[i])
+        i = i + 1
+    }
+
+    // 多码：应当检出 2 枚、并解出两条载荷
+    var all = qr.decodeAllGray(buf, w, h, w)
+    if (all.err as string) != "" { fail("decodeAll 报错：" + (all.err as string)) }
+    int count = all["count"] as int
+    Array[string] texts = all["texts"] as Array[string]
+    print("检测到 " + _str(count) + " 枚；解出 " + _str(texts.len()) + " 条")
+    for texts to t { print("  - " + t) }
+
+    if count < 2 { fail("应检出 2 枚，实际 " + _str(count)) }
+    if not contains(texts, "https://gitee.com/cheng8214/LenoLang") { fail("缺少第一枚载荷") }
+    if not contains(texts, "LENOQR MULTI 002") { fail("缺少第二枚载荷") }
+
+    // 单码接口：只给"第一枚"，但必须也给得出某一条（不要求是特定哪一条）
+    var one = qr.decodeGray(buf, w, h, w)
+    if not (one.found as bool) { fail("单码接口在双码图上应至少解出一枚") }
+    print("单码接口返回：" + (one.text as string))
+
+    // metas 结构：每枚成功解开的码 4 个整数（version, ecc, mask, data_type）
+    Array[int] metas = all["metas"] as Array[int]
+    if metas.len() != texts.len() * 4 { fail("metas 长度不符（" + _str(metas.len()) + "）") }
+
+    ffi.free(buf)
+    print("test_decode_multi passed（2 枚同图，全部解出）")
+}

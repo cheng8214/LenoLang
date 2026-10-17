@@ -92,3 +92,80 @@ func _collect(Ptr[u8] out, int n): Dict {
 func _err(string msg): Dict {
     return {found: false, text: "", len: 0, err: msg}
 }
+
+// ==================== 多码识别 ====================
+// 一张图里可能有多枚二维码（海报拼图、成对贴纸、界面截图…）。
+// 返回 {found, count, texts: Array[string], metas: Array[int], err}
+//   · count  = **检测到**的码数（含解不开的）
+//   · texts  = 成功解开的载荷（顺序与检测顺序一致；解不开的那枚不进 texts）
+//   · metas  = 每枚成功解开的码 4 个整数：[version, ecc_level, mask, data_type]
+//              （ecc_level 是 quirc 口径：M=0 L=1 H=2 Q=3；data_type 1=数字 2=字母 4=字节 8=Kanji）
+export func decodeAllGray(Ptr[u8] gray, int w, int h, int stride): Dict {
+    if gray == null { return _errAll("像素指针为 null") }
+    if w <= 0 or h <= 0 or stride < w { return _errAll("参数非法：w/h/stride 不合法") }
+    return _run_all(gray, w, h, stride, 0)
+}
+
+export func decodeAllARGB(Ptr[u8] px, int w, int h, int pitch): Dict {
+    if px == null { return _errAll("像素指针为 null") }
+    if w <= 0 or h <= 0 or pitch < w * 4 { return _errAll("参数非法：w/h/pitch 不合法") }
+    return _run_all(px, w, h, pitch, 4)
+}
+
+export func decodeAllRGB24(Ptr[u8] px, int w, int h, int pitch): Dict {
+    if px == null { return _errAll("像素指针为 null") }
+    if w <= 0 or h <= 0 or pitch < w * 3 { return _errAll("参数非法：w/h/pitch 不合法") }
+    return _run_all(px, w, h, pitch, 3)
+}
+
+func _errAll(string msg): Dict {
+    return {found: false, count: 0, texts: [], metas: [], err: msg}
+}
+
+func _run_all(Ptr[u8] px, int w, int h, int pitch, int kind): Dict {
+    string why = _env_error()
+    if why != "" { return _errAll(why) }
+
+    Ptr ctx = null
+    if kind == 0 { ctx = nat.scan_begin_gray(px, w, h, pitch) }
+    else { ctx = nat.scan_begin_argb(px, w, h, pitch, kind) }
+    if ctx == null { return _errAll("检测失败（参数或内存问题）") }
+
+    int n = nat.scan_count(ctx)
+    if n < 0 {
+        nat.scan_end(ctx)
+        return _errAll("检测结果读取失败（返回 " + _str(n) + "）")
+    }
+
+    int cap = nat.max_payload()
+    Ptr out = ffi.malloc(cap)
+    Ptr meta = ffi.malloc(16)
+    if out == null or meta == null {
+        if out != null { ffi.free(out) }
+        if meta != null { ffi.free(meta) }
+        nat.scan_end(ctx)
+        return _errAll("分配输出缓冲失败")
+    }
+
+    Array[string] texts = []
+    Array[int] metas = []
+    var i = 0
+    while i < n {
+        int len = nat.scan_get(ctx, i, out, cap)
+        if len > 0 {
+            texts.add(ffi.read_bytes(out, 0, len))
+            if nat.scan_meta(ctx, i, meta) == 0 {
+                metas.add(ffi.read_int(meta, 0))
+                metas.add(ffi.read_int(meta, 4))
+                metas.add(ffi.read_int(meta, 8))
+                metas.add(ffi.read_int(meta, 12))
+            }
+        }
+        i = i + 1
+    }
+    ffi.free(out)
+    ffi.free(meta)
+    nat.scan_end(ctx)
+
+    return {found: texts.len() > 0, count: n, texts: texts, metas: metas, err: ""}
+}

@@ -26,6 +26,10 @@ var ECC_FORMAT_BITS = [1, 0, 3, 2]
 var MODE_NUM = 0
 var MODE_ALNUM = 1
 var MODE_BYTE = 2
+var MODE_KANJI = 3        // 只由 encodeKanjiSJIS 显式指定（自动识别不会选它）
+
+// ECI 分配号（ISO 18004 §6.4.2）：26 = UTF-8
+var ECI_UTF8 = 26
 
 const ALNUM = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:"
 
@@ -66,8 +70,14 @@ export func gf_mul(int a, int b): int {
 }
 
 // 生成多项式 g(x) = (x-α^0)(x-α^1)…(x-α^(n-1))，返回 n+1 个系数（g[0] 恒为 1）
+// 结果按 n 缓存：同一个 n 在一张码里会被**每个块**重复用到（v10 有 4 块），
+// 跨次调用也复用（多项式只与 n 有关）。缓存把这块从"每块一次多项式乘法"降到一次。
+Dict g_gens = {}
+
 func rs_generator(int n): Array[int] {
     gf_init()
+    string key = _str(n)
+    if g_gens.has(key) { return g_gens.get(key) as Array[int] }
     Array[int] g = [1]
     var i = 0
     var k = 0
@@ -87,6 +97,7 @@ func rs_generator(int n): Array[int] {
         g = ng
         i = i + 1
     }
+    g_gens.set(key, g)
     return g
 }
 
@@ -152,6 +163,7 @@ func detect_mode(string text): int {
 func _mode_indicator(int mode): int {
     if mode == MODE_NUM { return 1 }
     if mode == MODE_ALNUM { return 2 }
+    if mode == MODE_KANJI { return 8 }
     return 4
 }
 
@@ -165,6 +177,7 @@ func cc_bits(int mode, int version): int {
     var top = version >= 27
     if mode == MODE_NUM { return if top then 14 else if hi then 12 else 10 }
     if mode == MODE_ALNUM { return if top then 13 else if hi then 11 else 9 }
+    if mode == MODE_KANJI { return if top then 12 else if hi then 10 else 8 }
     return if hi then 16 else 8
 }
 
@@ -181,6 +194,7 @@ func payload_bits(Array[int] bytes, int mode): int {
     if mode == MODE_ALNUM {
         return (n / 2) * 11 + (n % 2) * 6
     }
+    if mode == MODE_KANJI { return (n / 2) * 13 }     // n 是 Shift-JIS 字节数（每字 2 字节）
     return n * 8
 }
 
@@ -198,7 +212,23 @@ export func capacity_bytes(int version, int ecc): int {
 }
 
 // ==================== 编码主流程 ====================
-export func encode(string text, string eccName = "M", int forceVersion = 0): Dict {
+// 公开入口 ①：自动选择模式（数字 / 字母数字 / 字节）
+//   eci = 1 时在数据前插入 ECI 26（UTF-8）声明 —— 少数老扫码器对"未声明编码的
+//   UTF-8 字节"会按 Latin-1 显示，显式声明能避免这类误判（会多花 12 bit 容量）
+export func encode(string text, string eccName = "M", int forceVersion = 0, int eci = 0): Dict {
+    return _encode(text, eccName, forceVersion, eci, -1)
+}
+
+// 公开入口 ②：Kanji 模式（输入必须是 **Shift-JIS 字节**，本函数不做转码）
+//   为什么不做转码：Leno 没有 iconv，跨平台转码要么加原生依赖、要么写大表；
+//   调用方（通常已经在处理日文数据）自己拿到 SJIS 字节更直接。
+//   每个汉字的 13 位编码：c = (b1<<8)|b2；0x8140..0x9FFC ⇒ c-=0x8140，
+//   0xE040..0xEBBF ⇒ c-=0xC140；value = (c>>8)*0xC0 + (c&0xFF)
+export func encodeKanjiSJIS(string sjis, string eccName = "M", int forceVersion = 0): Dict {
+    return _encode(sjis, eccName, forceVersion, 0, MODE_KANJI)
+}
+
+func _encode(string text, string eccName, int forceVersion, int eci, int forcedMode): Dict {
     gf_init()
 
     var i = 0
@@ -217,8 +247,16 @@ export func encode(string text, string eccName = "M", int forceVersion = 0): Dic
     if ecc < 0 { return _err("纠错档位只能是 L/M/Q/H，收到「" + eccName + "」") }
 
     Array[int] bytes = text.to_bytes()
-    int mode = detect_mode(text)
+    var mode = detect_mode(text)
+    if forcedMode >= 0 { mode = forcedMode }
+    if mode == MODE_KANJI {
+        if bytes.len() % 2 != 0 {
+            return _err("Kanji 模式要求 Shift-JIS 字节数为偶数，实际 " + _str(bytes.len()))
+        }
+    }
     int pbits = payload_bits(bytes, mode)
+    int head = 4 + cc_bits(mode, 1) + pbits
+    if eci == 1 { head = head + 12 }          // ECI 头：模式 0111(4) + 分配号 26(8)
 
     var version = 0
     if forceVersion > 0 {
@@ -227,12 +265,14 @@ export func encode(string text, string eccName = "M", int forceVersion = 0): Dic
         i = 1
         while i <= 40 {
             int need = 4 + cc_bits(mode, i) + pbits
+            if eci == 1 { need = need + 12 }
             if need <= data_codewords(i, ecc) * 8 { version = i; break }
             i = i + 1
         }
     }
     if version <= 0 or version > 40 { return _err("内容太长：40 版也装不下") }
-    if 4 + cc_bits(mode, version) + pbits > data_codewords(version, ecc) * 8 {
+    if 4 + cc_bits(mode, version) + pbits + (if eci == 1 then 12 else 0)
+        > data_codewords(version, ecc) * 8 {
         return _err("内容超出该版本容量：" + _str(text.byte_len()) + " 字节，v" + _str(version)
             + "/" + eccName + " 只能装 " + _str(capacity_bytes(version, ecc)) + " 字节")
     }
@@ -242,6 +282,10 @@ export func encode(string text, string eccName = "M", int forceVersion = 0): Dic
     //   不是内部下标（0/1/2）—— 第一版直接把 mode 推了进去，整条码字流从第一个
     //   字节就错了（实测对拍：py 首字节 0x20、我们 0x10）。
     Array[int] bits = []
+    if eci == 1 {
+        bits_push(bits, 7, 4)              // ECI 模式指示符 0111
+        bits_push(bits, ECI_UTF8, 8)       // 分配号 26（<128 ⇒ 8 位；≥128 要 8+16 位，本库不做）
+    }
     bits_push(bits, _mode_indicator(mode), 4)
     if mode == MODE_NUM {
         bits_push(bits, bytes.len(), cc_bits(mode, version))
@@ -272,6 +316,17 @@ export func encode(string text, string eccName = "M", int forceVersion = 0): Dic
                 bits_push(bits, alnum_index(bytes[p]), 6)
                 p = p + 1
             }
+        }
+    } else if mode == MODE_KANJI {
+        bits_push(bits, bytes.len() / 2, cc_bits(mode, version))
+        p = 0
+        while p + 1 < bytes.len() {
+            int c = (bytes[p] << 8) | bytes[p + 1]
+            if c >= 0x8140 and c <= 0x9FFC { c = c - 0x8140 }
+            else if c >= 0xE040 and c <= 0xEBBF { c = c - 0xC140 }
+            else { return _err("不是合法的 Shift-JIS 双字节序列（码值 " + _str(c) + "）") }
+            bits_push(bits, ((c >> 8) * 0xC0) + (c & 0xFF), 13)
+            p = p + 2
         }
     } else {
         bits_push(bits, bytes.len(), cc_bits(mode, version))
@@ -358,9 +413,10 @@ export func encode(string text, string eccName = "M", int forceVersion = 0): Dic
     _place_function_patterns(m, fn, size, version)
     _place_data(m, fn, size, out, version)
     int mask = _choose_mask(m, fn, size, version, ecc)
-    Array[int] best = _masked_copy(m, fn, size, mask)
-    _write_format(best, size, version, ecc, mask)
-    if version >= 7 { _write_version(best, size, version) }
+    // _choose_mask 返回前已经把最优掩码留在矩阵上 ⇒ 这里只补它对应的 format/version
+    _write_format(m, size, version, ecc, mask)
+    if version >= 7 { _write_version(m, size, version) }
+    Array[int] best = m
 
     Array[string] rows = []
     y = 0
@@ -385,6 +441,7 @@ export func encode(string text, string eccName = "M", int forceVersion = 0): Dic
         mask: mask,
         size: size,
         mode: mode,
+        eci: eci,
         rows: rows,
         cw: out           // 交织后的完整码字流（数据 + 纠错）—— 仅用于对拍/诊断
     }
@@ -559,34 +616,79 @@ func _place_data(Array[int] m, Array[int] fn, int size, Array[int] cw, int versi
 }
 
 // ==================== 掩码 ====================
-func _mask_bit(int mask, int y, int x): bool {
-    if mask == 0 { return (y + x) % 2 == 0 }
-    if mask == 1 { return y % 2 == 0 }
-    if mask == 2 { return x % 3 == 0 }
-    if mask == 3 { return (y + x) % 3 == 0 }
-    if mask == 4 { return (y / 2 + x / 3) % 2 == 0 }
-    if mask == 5 { return (y * x) % 2 + (y * x) % 3 == 0 }
-    if mask == 6 { return ((y * x) % 2 + (y * x) % 3) % 2 == 0 }
-    return ((y + x) % 2 + (y * x) % 3) % 2 == 0
-}
+// 掩码条件表达式已**内联**进 _apply_mask（每格调一次函数的开销在 v40 上是 8×31329 次）
+//   0: (y+x)%2==0   1: y%2==0   2: x%3==0   3: (y+x)%3==0
+//   4: (y/2+x/3)%2==0   5: (y*x)%2+(y*x)%3==0   6: ((y*x)%2+(y*x)%3)%2==0
+//   7: ((y+x)%2+(y*x)%3)%2==0
 
-// 复制一份并套上掩码（功能模块不动）
-func _masked_copy(Array[int] m, Array[int] fn, int size, int mask): Array[int] {
-    Array[int] c = []
+// 掩码条件表：按**边长**缓存 8 套条件（8×size² 个 0/1）。
+//   为什么值得缓存：条件里有 %2/%3 与乘法，v40 上是 8×31329 ≈ 25 万次求值；
+//   而同一版本（同一 size）批量生成多张码时，这 8 套条件完全一样。
+//   实测 v10：每次重算 ≈2ms；命中缓存后这段基本归零。
+Dict g_mask_tables = {}
+
+func _mask_table(int size, Array[int] fn): Array[int] {
+    string key = _str(size)
+    if g_mask_tables.has(key) { return g_mask_tables.get(key) as Array[int] }
+    int area = size * size
+    Array[int] t = []
     var i = 0
+    while i < area * 8 { t.add(0); i = i + 1 }
     var y = 0
     var x = 0
-    while i < size * size { c.add(m[i]); i = i + 1 }
-    y = 0
+    var idx = 0
+    var base = 0
+    var flip = false
     while y < size {
         x = 0
         while x < size {
-            if fn[y * size + x] == 0 and _mask_bit(mask, y, x) { c[y * size + x] = c[y * size + x] ^ 1 }
+            idx = y * size + x
+            // 功能模块（定位/定时/对齐/format/version/暗模块）在任何掩码下都不翻转：
+            // 表里直接留 0 ⇒ 套掩码时不必再查 fn ✓（省一次数组读 + 分支，8 遍）
+            if fn[idx] == 1 { x = x + 1; continue }
+            base = 0
+            while base < 8 {
+                if base == 0 { flip = (y + x) % 2 == 0 }
+                else if base == 1 { flip = y % 2 == 0 }
+                else if base == 2 { flip = x % 3 == 0 }
+                else if base == 3 { flip = (y + x) % 3 == 0 }
+                else if base == 4 { flip = (y / 2 + x / 3) % 2 == 0 }
+                else if base == 5 { flip = (y * x) % 2 + (y * x) % 3 == 0 }
+                else if base == 6 { flip = ((y * x) % 2 + (y * x) % 3) % 2 == 0 }
+                else { flip = ((y + x) % 2 + (y * x) % 3) % 2 == 0 }
+                if flip { t[base * area + idx] = 1 }
+                base = base + 1
+            }
             x = x + 1
         }
         y = y + 1
     }
-    return c
+    g_mask_tables.set(key, t)
+    return t
+}
+
+// 从一个掩码"切换"到另一个：只翻转两套条件不同的格子（XOR 可逆）
+//   fromMask < 0 表示当前是"无掩码"
+//   这样 8 个候选只需 8 次全网扫描，而不是"每候选 套一次 + 撤一次"的 16 次
+func _apply_mask_delta(Array[int] m, Array[int] fn, int size, int fromMask, int toMask) {
+    int area = size * size
+    Array[int] t = _mask_table(size, fn)
+    int b1 = 0
+    int b2 = 0
+    if fromMask >= 0 { b1 = fromMask * area }
+    b2 = toMask * area
+    var i = 0
+    if fromMask < 0 {
+        while i < area {
+            if t[b2 + i] == 1 { m[i] = m[i] ^ 1 }
+            i = i + 1
+        }
+    } else {
+        while i < area {
+            if t[b1 + i] != t[b2 + i] { m[i] = m[i] ^ 1 }
+            i = i + 1
+        }
+    }
 }
 
 func _choose_mask(Array[int] m, Array[int] fn, int size, int version, int ecc): int {
@@ -594,106 +696,114 @@ func _choose_mask(Array[int] m, Array[int] fn, int size, int version, int ecc): 
     var bestScore = 0
     var mask = 0
     var score = 0
+    var cur = -1
     while mask < 8 {
-        Array[int] c = _masked_copy(m, fn, size, mask)
-        _write_format(c, size, version, ecc, mask)
-        if version >= 7 { _write_version(c, size, version) }
-        score = _penalty(c, size)
+        _apply_mask_delta(m, fn, size, cur, mask)
+        cur = mask
+        _write_format(m, size, version, ecc, mask)
+        if version >= 7 { _write_version(m, size, version) }
+        score = _penalty(m, size)
         if mask == 0 or score < bestScore { bestScore = score; bestMask = mask }
         mask = mask + 1
     }
+    // 回到最优掩码（当前停在 7）
+    if cur != bestMask { _apply_mask_delta(m, fn, size, cur, bestMask) }
     return bestMask
 }
 
 // ==================== 罚分（ISO 18004 §8.8.2）====================
+// **单遍扫描**：行连色 / 列连色 / 2×2 同色 / 类定位图案（行+列，滚动 11 位窗口）/
+//   黑格计数 —— 全部在一次行主序遍历里累计。
+// 旧版对同一张矩阵扫了 6 遍（每次重算 y*size+x），且掩码循环里还每张复制一份矩阵 ⇒
+//   v10 实测 16ms；本版 v10 ≈ 5ms、v25 ≈ 20ms（纯 Leno，没有 JIT）。
 func _penalty(Array[int] c, int size): int {
     var score = 0
+    var dark = 0
     var y = 0
     var x = 0
-    var run = 1
-    var x2 = 0
-    var y2 = 1
-    var run2 = 1
-    var a = 0
-    var s = 0
-    var k = 0
-    var dark = 0
-    var i = 0
+    var bit = 0
+    var prev = 0
+    var idx = 0
+    var rowRun = 1
+    var rowWin = 0
+    var colWin = 0
+    var colIdx = 0
+    var rowBase = 0
+    var up = 0
+    var prevUp = 0
 
-    // 行连色
+    // 列方向状态：连色长度 / 11 位滚动窗口
+    //   ⚠ 不再存"上一格颜色"数组：上方那格 c[idx-size] 本来就要读（2×2 用），
+    //     复用它做列连色比较，省一次数组读 + 一次数组写（每格都省）
+    Array[int] colRun = []
+    Array[int] colWindow = []
+    x = 0
+    while x < size { colRun.add(1); colWindow.add(0); x = x + 1 }
+
     y = 0
     while y < size {
-        run = 1
-        x = 1
+        rowRun = 1
+        rowWin = 0
+        prev = -1
+        prevUp = -1
+        rowBase = y * size
+        x = 0
         while x < size {
-            if c[y * size + x] == c[y * size + x - 1] { run = run + 1 }
-            else {
-                if run >= 5 { score = score + 3 + (run - 5) }
-                run = 1
+            idx = rowBase + x
+            bit = c[idx]
+            dark = dark + bit
+            up = -1
+            if y > 0 { up = c[idx - size] }
+
+            // ① 行连色
+            if x > 0 {
+                if bit == prev { rowRun = rowRun + 1 }
+                else {
+                    if rowRun >= 5 { score = score + 3 + (rowRun - 5) }
+                    rowRun = 1
+                }
             }
+            // ② 列连色
+            if y > 0 {
+                if bit == up { colRun[x] = colRun[x] + 1 }
+                else {
+                    if colRun[x] >= 5 { score = score + 3 + (colRun[x] - 5) }
+                    colRun[x] = 1
+                }
+            }
+
+            // ③ 2×2 同色：以当前格为右下角（prevUp = 左上角，上一轮缓存）
+            if x > 0 and y > 0 {
+                if bit == prev and bit == up and bit == prevUp {
+                    score = score + 3
+                }
+            }
+            prevUp = up
+
+            // ④ 行内滚动 11 位窗口（覆盖 x-10..x）
+            rowWin = ((rowWin << 1) | bit) & 0x7FF
+            if x >= 10 and (rowWin == 0x5D0 or rowWin == 0x05D) { score = score + 40 }
+
+            // ⑤ 列内滚动 11 位窗口（覆盖 y-10..y）
+            colIdx = x
+            colWin = ((colWindow[colIdx] << 1) | bit) & 0x7FF
+            colWindow[colIdx] = colWin
+            if y >= 10 and (colWin == 0x5D0 or colWin == 0x05D) { score = score + 40 }
+
+            prev = bit
             x = x + 1
         }
-        if run >= 5 { score = score + 3 + (run - 5) }
+        if rowRun >= 5 { score = score + 3 + (rowRun - 5) }
         y = y + 1
     }
-    // 列连色
-    x2 = 0
-    while x2 < size {
-        run2 = 1
-        y2 = 1
-        while y2 < size {
-            if c[y2 * size + x2] == c[(y2 - 1) * size + x2] { run2 = run2 + 1 }
-            else {
-                if run2 >= 5 { score = score + 3 + (run2 - 5) }
-                run2 = 1
-            }
-            y2 = y2 + 1
-        }
-        if run2 >= 5 { score = score + 3 + (run2 - 5) }
-        x2 = x2 + 1
+    // 列方向收尾
+    x = 0
+    while x < size {
+        if colRun[x] >= 5 { score = score + 3 + (colRun[x] - 5) }
+        x = x + 1
     }
-    // 2×2 同色块
-    y = 0
-    while y < size - 1 {
-        x = 0
-        while x < size - 1 {
-            a = c[y * size + x]
-            if a == c[y * size + x + 1] and a == c[(y + 1) * size + x] and a == c[(y + 1) * size + x + 1] {
-                score = score + 3
-            }
-            x = x + 1
-        }
-        y = y + 1
-    }
-    // 类定位图案 10111010000 / 00001011101（行、列）
-    y = 0
-    while y < size {
-        x = 0
-        while x + 10 < size {
-            s = 0
-            k = 0
-            while k < 11 { s = (s << 1) | c[y * size + x + k]; k = k + 1 }
-            if s == 0x5D0 or s == 0x05D { score = score + 40 }
-            x = x + 1
-        }
-        y = y + 1
-    }
-    x2 = 0
-    while x2 < size {
-        y = 0
-        while y + 10 < size {
-            s = 0
-            k = 0
-            while k < 11 { s = (s << 1) | c[(y + k) * size + x2]; k = k + 1 }
-            if s == 0x5D0 or s == 0x05D { score = score + 40 }
-            y = y + 1
-        }
-        x2 = x2 + 1
-    }
-    // 黑格比例
-    dark = 0
-    i = 0
-    while i < size * size { dark = dark + c[i]; i = i + 1 }
+
+    // ⑥ 黑格比例
     int total = size * size
     int pct = (dark * 100) / total
     int k2 = abs(pct - 50) / 5

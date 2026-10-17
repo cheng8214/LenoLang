@@ -40,6 +40,19 @@ export func decodeRGB24(Ptr[u8] px, int w, int h, int pitch): Dict {
     return dec.decodeRGB24(px, w, h, pitch)
 }
 
+// ==================== 多码识别 ====================
+// {found, count, texts: Array[string], metas: Array[int], err}
+//   metas 每枚码 4 个整数：[version, ecc_level, mask, data_type]
+export func decodeAllGray(Ptr[u8] gray, int w, int h, int stride): Dict {
+    return dec.decodeAllGray(gray, w, h, stride)
+}
+export func decodeAllARGB(Ptr[u8] px, int w, int h, int pitch): Dict {
+    return dec.decodeAllARGB(px, w, h, pitch)
+}
+export func decodeAllRGB24(Ptr[u8] px, int w, int h, int pitch): Dict {
+    return dec.decodeAllRGB24(px, w, h, pitch)
+}
+
 // ==================== 生成（纯 Leno）====================
 // 返回 {ok, err, text, version, ecc, eccName, mask, size, mode, rows}
 //   rows = size 行字符串，每行 '0'/'1'（'1' = 黑）
@@ -51,6 +64,16 @@ export func encode(string text, string ecc = "M"): Dict {
 // 指定版本（不做自动选择；容量不够会 ok=false）
 export func encodeVersion(string text, string ecc, int version): Dict {
     return enc.encode(text, ecc, version)
+}
+
+// ECI 26（UTF-8）显式声明：兼容少数"未声明编码就按 Latin-1 显示"的老扫码器
+export func encodeEci(string text, string ecc = "M"): Dict {
+    return enc.encode(text, ecc, 0, 1)
+}
+
+// Kanji 模式：入参必须是 **Shift-JIS 字节**（本库不做转码）
+export func encodeKanjiSJIS(string sjis, string ecc = "M"): Dict {
+    return enc.encodeKanjiSJIS(sjis, ecc)
 }
 
 // 矩阵 → 灰度字节串（1 字节/像素，0=黑 255=白）⇒ 可直接喂 decodeGray 做回环

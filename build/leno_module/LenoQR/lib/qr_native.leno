@@ -14,11 +14,18 @@ clib quirc {
     i32  leno_qr_max_payload()
     i32  leno_qr_scan_gray(Ptr[u8] gray, i32 w, i32 h, i32 stride, Ptr[u8] out, i32 cap)
     i32  leno_qr_scan_argb(Ptr[u8] px, i32 w, i32 h, i32 pitch, i32 bpp, Ptr[u8] out, i32 cap)
+    // ABI 2：多码枚举（begin → count/get/meta → end）
+    Ptr  leno_qr_begin(Ptr[u8] gray, i32 w, i32 h, i32 stride)
+    Ptr  leno_qr_begin_argb(Ptr[u8] px, i32 w, i32 h, i32 pitch, i32 bpp)
+    i32  leno_qr_count(Ptr handle)
+    i32  leno_qr_get(Ptr handle, i32 index, Ptr[u8] out, i32 cap)
+    i32  leno_qr_meta(Ptr handle, i32 index, Ptr out4)
+    void leno_qr_end(Ptr handle)
 }
 
 // ==================== ABI ====================
 // 必须等于 src/leno_qr.c 里的 LENO_QR_ABI
-export var ABI = 1
+export var ABI = 2
 
 export var ERR_ARGS = -2
 export var ERR_MEM = -3
@@ -117,4 +124,42 @@ export func scan_rgb24(Ptr[u8] px, int w, int h, int pitch, Ptr[u8] out, int cap
     var l = lib()
     if l == null { return ERR_NO_LIB }
     return l.leno_qr_scan_argb(px, w, h, pitch, 3, out, cap)
+}
+
+// ==================== 多码枚举（ABI 2）====================
+// 生命周期：scan_begin_* → scan_count / scan_get / scan_meta → scan_end（必须调）
+export func scan_begin_gray(Ptr[u8] gray, int w, int h, int stride): Ptr {
+    var l = lib()
+    if l == null { return null }
+    return l.leno_qr_begin(gray, w, h, stride)
+}
+
+export func scan_begin_argb(Ptr[u8] px, int w, int h, int pitch, int bpp): Ptr {
+    var l = lib()
+    if l == null { return null }
+    return l.leno_qr_begin_argb(px, w, h, pitch, bpp)
+}
+
+export func scan_count(Ptr handle): int {
+    var l = lib()
+    if l == null { return ERR_NO_LIB }
+    return l.leno_qr_count(handle)
+}
+
+export func scan_get(Ptr handle, int index, Ptr[u8] out, int cap): int {
+    var l = lib()
+    if l == null { return ERR_NO_LIB }
+    return l.leno_qr_get(handle, index, out, cap)
+}
+
+export func scan_meta(Ptr handle, int index, Ptr out4): int {
+    var l = lib()
+    if l == null { return ERR_NO_LIB }
+    return l.leno_qr_meta(handle, index, out4)
+}
+
+export func scan_end(Ptr handle) {
+    var l = lib()
+    if l == null { return }
+    l.leno_qr_end(handle)
 }

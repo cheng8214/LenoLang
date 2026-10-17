@@ -1,4 +1,4 @@
-# LenoQR v0.2.0
+# LenoQR v0.3.0
 
 Leno 的二维码模块。形态与 LenoCrypto 一致：**编码端纯 Leno、解码端 FFI**。
 
@@ -44,6 +44,24 @@ qr.dataCodewords(1, 0)                      // v1/L 数据码字 = 19
 qr.gfMul(a, b)                              // GF(256)/0x11D 乘法（自测用）
 ```
 
+**ECI 26（UTF-8 显式声明）**：少数老扫码器会按 Latin-1 解释未声明编码的字节，
+显式声明能避免乱码（代价 +12 bit 容量）：
+
+```leno
+var r = qr.encodeEci("你好，Leno", "M")     // r.eci == 1
+```
+
+**Kanji 模式**（`Shift-JIS` 字节 → 每字 13 bit；**本库不做转码**）：
+
+```leno
+import strings
+// "こんにちは" 的 SJIS 字节
+string sjis = strings.from_bytes([130, 177, 130, 241, 130, 201, 130, 191, 130, 205])
+var r = qr.encodeKanjiSJIS(sjis, "M")       // r.mode == 3
+```
+不做自动转码的理由：Leno 没有 iconv，跨平台转码要么加原生依赖、要么维护大表；
+调用方通常本来就在处理 SJIS 数据（从文件/网络拿到的就是字节）。
+
 存成 PNG 的完整例子：`examples/gen_png.leno`（编码纯 Leno，只有"写 PNG"借 LenoSDL3 的 `IMG_SavePNG`）。
 不想依赖 SDL 的场合，直接拿 `rows` 自己画即可。
 
@@ -75,6 +93,23 @@ if r.found { print(r.text) }
 
 **`found=false` 且 `err=""` 表示"图里没有二维码"** —— 扫一张截图没扫到码是日常，不是异常，
 所以这里不抛异常（与 LenoSDL3 的 capture 系列返回 Dict 是同一口径）。
+
+**多码**（一张图里多枚码：海报拼图、成对贴纸、界面截图）—— 检测**只做一次**，
+按 index 逐个解：
+
+```leno
+var all = qr.decodeAllARGB(px, w, h, pitch)
+// {found, count, texts: Array[string], metas: Array[int], err}
+//   count = 检测到的枚数（含解不开的）
+//   texts = 成功解开的载荷
+//   metas = 每枚 4 个整数 [version, ecc_level, mask, data_type]
+//           ecc_level 是 quirc 口径：M=0 L=1 H=2 Q=3；data_type：1=数字 2=字母 4=字节 8=Kanji
+print(_str(all.count) + " 枚")
+for (all.texts as Array[string]) to t { print("  - " + t) }
+```
+
+单码接口（`decodeGray/ARGB/RGB24`）在多码图上只返回**第一枚**能解开的 ——
+不确定图里有几枚时用 `decodeAll*`。
 
 其它诊断/元信息：
 
@@ -148,8 +183,10 @@ win   = "lib/quirc.dll"
 `-p --onefile` 会把它内嵌进 exe，首次运行时解包到用户缓存目录（实测：897KB 单文件产物，
 `[pack] 内嵌 1 个原生库`，运行后能正常调 `qr.abi()`）。
 
-⚠ **POSIX 那一行还没加**：本机（Windows）产不出 `.so`。在 Linux/macOS 上跑一次
-`build_so.sh` 后，把 `linux = "lib/quirc.so"` / `mac = "lib/quirc.so"` 补进上面的表即可
+⚠ **POSIX 那一行还没加**：本机（Windows）产不出 `.so`，也没有 bash / WSL / Docker
+可以验证脚本 —— 所以 `build_so.sh` **未经运行验证**（脚本本身用 `cc` 而非写死 gcc，
+macOS 上 `cc` 就是 clang）。在 Linux/macOS 上跑一次并跑通五个测试后，把
+`linux = "lib/quirc.so"` / `mac = "lib/quirc.so"` 补进上面的表即可
 （声明了但文件不存在 ⇒ 打包会直接报错，所以现在不写）。
 
 ## 测试
@@ -165,6 +202,12 @@ build\leno.exe build\leno_module\LenoQR\test\test_encode_decode.leno
 
 :: ③ 真实图片：生成 → 写 PNG → 读回 → 解码（依赖 LenoSDL3 的图片编解码）
 build\leno.exe build\leno_module\LenoQR\test\test_roundtrip_png.leno
+
+:: ④ 多码：两枚码拼一张图，一次检测全部解出（count / texts / metas）
+build\leno.exe build\leno_module\LenoQR\test\test_decode_multi.leno
+
+:: ⑤ ECI(UTF-8) + Kanji(Shift-JIS) 回环 + data_type 校验 + 非法输入
+build\leno.exe build\leno_module\LenoQR\test\test_eci_kanji.leno
 ```
 
 **矩阵级对拍（开发期工具，随模块入库但不参与运行时）**：
@@ -189,17 +232,26 @@ python build\leno_module\LenoQR\test\dev_diff_vs_python.py
 
 ## 实测（Windows x64 · gcc 15.2.0）
 
-- 编码耗时（纯 Leno，含 8 掩码评分）：**v1 ≈ 1.6 ms / v10 ≈ 16 ms / v25 ≈ 69 ms**
-  （够用；如需更快：缓存 RS 生成多项式、掩码只算一遍罚分增量）
-- 识别耗时：一张 328×328 PNG（v4/Q）从读盘到出文本 **≈ 5 ms**
-- 生成的 PNG 头/尺寸经独立解析核对（328×328 / 360×360，5–6 KB，无外部依赖的调色板）
+- 编码耗时（纯 Leno，含 8 掩码评分）—— 优化前后：
+
+| 内容 | 优化前 | 优化后 |
+|---|---|---|
+| 15B（v1/M） | 1.6 ms | **0.67 ms** |
+| 300B（v10/M） | 16.2 ms | **5.4 ms** |
+| 1200B（v25/L） | 69 ms | **24 ms** |
+
+  优化点：① 罚分**单遍扫描**（原 6 遍）；② 掩码**就地切/撤**（原每掩码复制整张矩阵）；
+  ③ 掩码条件表按 size 缓存（批量生成同版本时零重算）；④ RS 生成多项式按 n 缓存。
+- 识别耗时：一张 328×328 PNG（v4/Q）从读盘到出文本 **≈ 5 ms**；多码检测与单码同量级
+  （检测只做一次，逐枚解码另算）
+- 生成的 PNG 头/尺寸经独立解析核对（328×328 / 360×360，5–6 KB）
 
 ## 边界与已知限制
 
-- **不做**：Kanji 模式、ECI 显式声明（非 UTF-8 文本）、Structured Append、Micro QR。
-  数字 / 字母数字 / 字节(UTF-8) 三种模式已覆盖绝大多数真实场景。
+- **不做**：Structured Append、Micro QR、ECI 分配号 ≥128（只支持单字节分配号，
+  足够覆盖 UTF-8/ISO-8859/SJIS 等常见值）、Kanji 的自动转码（要调用方给 SJIS 字节）。
 - 编码只吃 `string`（UTF-8 字节）：二进制载荷请先自己转成字符串载体。
-- 只返回**第一枚**能解开的码。一张图多枚码的枚举（坐标 + 逐个 payload）等有真实需求再加。
+- 单码接口在多码图上只返回**第一枚**；需要全部用 `decodeAll*`。
 - 二维码四周必须留 **≥4 模块静区**，否则定位图案认不出来（这是 QR 规范，不是库的毛病）。
 - `text` 是 quirc 给出的**原始载荷字节**：UTF-8 载荷（绝大多数生成器）直接用；
   Kanji/Shift-JIS 或 ECI 声明了别的编码时，需要调用方自行转码（quirc 里 `eci` / `data_type`
@@ -225,7 +277,9 @@ python build\leno_module\LenoQR\test\dev_diff_vs_python.py
 
 ## 后续可选（都不阻塞现在）
 
-- **性能**：缓存 RS 生成多项式（现在每次重算）、掩码评分改成增量；目标是 v10 降到 ~5ms。
-- **识别增强**：多码枚举（`leno_qr.c` 加"第 N 枚"出口）、暴露 `version/ecc/eci` 元信息。
-- **编码增强**：Kanji 模式、ECI（GB18030 之类）、SVG 输出（不需要 SDL）。
-- **POSIX**：在 Linux/macOS 上跑 `build_so.sh` + 三个测试，再往 `leno.toml` 补 `linux`/`mac`。
+- **性能**：v10 已从 16ms 降到 5.4ms；若还要更快，下一步是把矩阵按"每行一个 int 位图"
+  表示（罚分与掩码都用整型位运算），预计能再快 3–5 倍，但要重写放置与罚分。
+- **识别增强**：多码的**坐标**（quirc 的 corners 已有，只是没往上暴露）、ECI 编号
+  透传（`quirc_data.eci`）。
+- **编码增强**：ECI 分配号 ≥128（GB18030 等）、SVG 输出（不需要 SDL）。
+- **POSIX**：在 Linux/macOS 上跑 `build_so.sh` + 五个测试，再往 `leno.toml` 补 `linux`/`mac`。

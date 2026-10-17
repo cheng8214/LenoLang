@@ -1,6 +1,6 @@
 [package]
 name = "LenoQR"
-version = "0.2.0"
+version = "0.3.0"
 description = "Leno QR module: pure-Leno encoder + quirc-backed decoder"
 authors = ""
 license = "Apache-2.0"
