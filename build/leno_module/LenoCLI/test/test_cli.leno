@@ -1,0 +1,115 @@
+// LenoCLI 0.1.0 自测：旗标 / 带值选项 / = 形式 / 短选项连写 / int / 默认值 /
+//                   位置参数 / -- 终止符 / 未知选项 / 缺值 / 缺必填 / help
+//
+// 跑法（仓库根目录）：
+//   build\leno.exe build\leno_module\LenoCLI\test\test_cli.leno
+import strings
+import "CLI" as cli
+
+func fail(string msg) {
+    print("[FAIL] " + msg)
+    _exit(1)
+}
+
+func eq(string got, string want, string tag) {
+    if got != want { fail(tag + "：得到「" + got + "」期望「" + want + "」") }
+}
+
+func eqInt(int got, int want, string tag) {
+    if got != want { fail(tag + "：得到 " + _str(got) + " 期望 " + _str(want)) }
+}
+
+func makeSpec(): Dict {
+    var p = cli.spec("mytool", "示例工具", "mytool [选项] <input> [extra]")
+    cli.flag(p, "-v", "--verbose", "详细输出")
+    cli.option(p, "-o", "--output", "输出文件", "out.txt")
+    cli.optionInt(p, "-n", "--count", "次数", 3)
+    cli.positional(p, "input", "输入文件")
+    cli.positional(p, "extra", "附加参数", false)
+    return p
+}
+
+func valStr(Dict r, string k): string {
+    Dict values = r["values"] as Dict
+    if not values.has(k) { return "" }
+    return _str(values.get(k, ""))
+}
+
+func valInt(Dict r, string k): int {
+    Dict values = r["values"] as Dict
+    if not values.has(k) { return -999 }
+    return values.get(k, -999) as int
+}
+
+main() {
+    var p = makeSpec()
+
+    // ---------- ① 默认值 ----------
+    var r1 = cli.parse(p, ["in.txt"])
+    if not (r1["ok"] as bool) { fail("① 解析失败：" + (r1["err"] as string)) }
+    eq(valStr(r1, "output"), "out.txt", "① output 默认值")
+    eqInt(valInt(r1, "count"), 3, "① count 默认值")
+    if (r1["values"] as Dict).get("verbose", true) as bool { fail("① verbose 默认应为 false") }
+    eq((r1["positionals"] as Dict).get("input", "") as string, "in.txt", "① 位置参数")
+
+    // ---------- ② 长选项：空格与 = 两种写法 ----------
+    var r2 = cli.parse(p, ["--output", "a.txt", "--count=5", "in.txt"])
+    if not (r2["ok"] as bool) { fail("② 解析失败：" + (r2["err"] as string)) }
+    eq(valStr(r2, "output"), "a.txt", "② --output 空格形式")
+    eqInt(valInt(r2, "count"), 5, "② --count=5")
+
+    // ---------- ③ 短选项：-o 值 / -ovalue / 组合 -v ----------
+    var r3 = cli.parse(p, ["-o", "b.txt", "-n7", "-v", "in.txt"])
+    if not (r3["ok"] as bool) { fail("③ 解析失败：" + (r3["err"] as string)) }
+    eq(valStr(r3, "output"), "b.txt", "③ -o 值")
+    eqInt(valInt(r3, "count"), 7, "③ -n7 连写")
+    if not ((r3["values"] as Dict).get("verbose", false) as bool) { fail("③ -v 应置 true") }
+
+    // ---------- ④ 位置参数与 -- 终止符 ----------
+    var r4 = cli.parse(p, ["in.txt", "x", "--", "-y", "z"])
+    if not (r4["ok"] as bool) { fail("④ 解析失败：" + (r4["err"] as string)) }
+    eq((r4["positionals"] as Dict).get("extra", "") as string, "x", "④ 第二个位置参数")
+    Array[string] rest = r4["rest"] as Array[string]
+    eqInt(rest.len(), 2, "④ -- 之后都进 rest")
+    eq(rest[0], "-y", "④ rest[0]")
+
+    // ---------- ⑤ 错误：未知选项 / 缺值 / 缺必填 / int 非法 ----------
+    var e1 = cli.parse(p, ["--nope", "in.txt"])
+    if e1["ok"] as bool { fail("⑤ 未知选项应报错") }
+    if not strings.has(e1["err"] as string, "未知选项") { fail("⑤ 未知选项文案：" + (e1["err"] as string)) }
+
+    var e2 = cli.parse(p, ["--output"])
+    if e2["ok"] as bool { fail("⑤ 缺值应报错") }
+
+    var e3 = cli.parse(p, [])
+    if e3["ok"] as bool { fail("⑤ 缺必填位置参数应报错") }
+    if not strings.has(e3["err"] as string, "缺少参数") { fail("⑤ 缺参文案：" + (e3["err"] as string)) }
+
+    var e4 = cli.parse(p, ["--count", "abc", "in.txt"])
+    if e4["ok"] as bool { fail("⑤ int 非法应报错") }
+    if not strings.has(e4["err"] as string, "整数") { fail("⑤ int 文案：" + (e4["err"] as string)) }
+
+    // ---------- ⑥ help ----------
+    var h = cli.parse(p, ["--help"])
+    if not (h["help"] as bool) { fail("⑥ --help 应置 help=true") }
+    var text = cli.helpText(p)
+    if not strings.has(text, "用法：mytool") { fail("⑥ 帮助缺用法行") }
+    if not strings.has(text, "--verbose") { fail("⑥ 帮助缺选项") }
+    if not strings.has(text, "input") { fail("⑥ 帮助缺位置参数") }
+    if not strings.has(text, "（默认：out.txt）") { fail("⑥ 帮助缺默认值") }
+    print("⑥ 帮助文本前两行：")
+    var lines = strings.split(text, "\n")
+    print("  " + lines[0])
+    if lines.len() > 1 { print("  " + lines[1]) }
+
+    // ---------- ⑦ 组合短旗标（两个 bool 合并）----------
+    var p2 = cli.spec("t")
+    cli.flag(p2, "-a", "--all", "全部")
+    cli.flag(p2, "-b", "--brief", "简略")
+    var r7 = cli.parse(p2, ["-ab"])
+    if not (r7["ok"] as bool) { fail("⑦ 组合短旗标失败：" + (r7["err"] as string)) }
+    if not ((r7["values"] as Dict).get("all", false) as bool) { fail("⑦ -a 未置位") }
+    if not ((r7["values"] as Dict).get("brief", false) as bool) { fail("⑦ -b 未置位") }
+
+    print("test_cli passed（7 组断言）")
+}

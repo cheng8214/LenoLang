@@ -1,0 +1,78 @@
+// LenoStats 0.1.0 自测：mean/median/percentile/stdev + 金额整数分
+//
+// 跑法（仓库根目录）：
+//   build\leno.exe build\leno_module\LenoStats\test\test_stats.leno
+import "Stats" as st
+
+func fail(string msg) {
+    print("[FAIL] " + msg)
+    _exit(1)
+}
+
+func close(float got, float want, float eps, string tag) {
+    var d = got - want
+    if d < 0.0 { d = -d }
+    if d > eps { fail(tag + "：得到 " + _str(got) + " 期望 " + _str(want)) }
+}
+
+func eqInt(int got, int want, string tag) {
+    if got != want { fail(tag + "：得到 " + _str(got) + " 期望 " + _str(want)) }
+}
+
+main() {
+    Array[float] xs = [1.0, 2.0, 3.0, 4.0]
+
+    // ---------- ① 均值 ----------
+    close(st.mean(xs), 2.5, 0.000001, "① mean")
+    Array[int] xi = [2, 4, 6]
+    close(st.meanInt(xi), 4.0, 0.000001, "① meanInt")
+    close(st.mean([1.0]), 1.0, 0.000001, "① 单元素均值")
+    close(st.mean([]), 0.0, 0.000001, "① 空数组均值")
+
+    // ---------- ② 中位数 ----------
+    close(st.median([3.0, 1.0, 2.0]), 2.0, 0.000001, "② 奇数个")
+    close(st.median([4.0, 1.0, 3.0, 2.0]), 2.5, 0.000001, "② 偶数个")
+
+    // ---------- ③ 百分位（线性插值）----------
+    close(st.percentile(xs, 50.0), 2.5, 0.000001, "③ p50")
+    close(st.percentile(xs, 0.0), 1.0, 0.000001, "③ p0")
+    close(st.percentile(xs, 100.0), 4.0, 0.000001, "③ p100")
+    close(st.percentile(xs, 25.0), 1.75, 0.000001, "③ p25")
+
+    // ---------- ④ 标准差 ----------
+    Array[float] d = [2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0]
+    close(st.stdevPop(d), 2.0, 0.000001, "④ 总体标准差")
+    close(st.stdevSample(d), 2.138089935, 0.00001, "④ 样本标准差")
+    close(st.stdevPop([5.0]), 0.0, 0.000001, "④ 单点总体标准差")
+
+    // ---------- ⑤ 整数聚合 ----------
+    eqInt(st.sumInt([1, 2, 3]), 6, "⑤ sumInt")
+    eqInt(st.minInt([3, 1, 2]), 1, "⑤ minInt")
+    eqInt(st.maxInt([3, 1, 2]), 3, "⑤ maxInt")
+
+    // ---------- ⑥ 金额解析 ----------
+    var m1 = st.money("12.34")
+    if not (m1["ok"] as bool) { fail("⑥ money(12.34) 失败") }
+    eqInt(m1["cents"] as int, 1234, "⑥ 12.34")
+    eqInt((st.money("-1.5"))["cents"] as int, -150, "⑥ -1.5")
+    eqInt((st.money(".5"))["cents"] as int, 50, "⑥ .5")
+    eqInt((st.money("12."))["cents"] as int, 1200, "⑥ 12.")
+    eqInt((st.money("0"))["cents"] as int, 0, "⑥ 0")
+    if (st.money("1.234"))["ok"] as bool { fail("⑥ 三位小数应报错") }
+    if (st.money("abc"))["ok"] as bool { fail("⑥ 非数字应报错") }
+    if (st.money(""))["ok"] as bool { fail("⑥ 空串应报错") }
+
+    // ---------- ⑦ 金额格式化 ----------
+    if st.formatCents(1234) != "12.34" { fail("⑦ 1234 → 12.34") }
+    if st.formatCents(-150) != "-1.50" { fail("⑦ -150 → -1.50") }
+    if st.formatCents(0) != "0.00" { fail("⑦ 0 → 0.00") }
+    if st.formatCents(5) != "0.05" { fail("⑦ 5 → 0.05") }
+
+    // ---------- ⑧ 金额乘比例（四舍五入到分）----------
+    eqInt(st.centsMul(1000, 7, 100), 70, "⑧ 打 7 折")
+    eqInt(st.centsMul(101, 1, 2), 51, "⑧ 50.5 分进位到 51")
+    eqInt(st.centsMul(100, 1, 3), 33, "⑧ 33.33 舍到 33")
+    eqInt(st.centsMul(-101, 1, 2), -51, "⑧ 负数对称")
+
+    print("test_stats passed（8 组断言）")
+}

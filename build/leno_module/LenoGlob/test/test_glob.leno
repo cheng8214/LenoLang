@@ -1,0 +1,105 @@
+// LenoGlob 0.1.0 自测：* / ? / [a-z] / [!..] / ** 与真实目录查找
+//
+// 跑法（仓库根目录）：
+//   build\leno.exe build\leno_module\LenoGlob\test\test_glob.leno
+import dirs
+import files
+import strings
+import "Glob" as glob
+
+func fail(string msg) {
+    print("[FAIL] " + msg)
+    _exit(1)
+}
+
+func eqInt(int got, int want, string tag) {
+    if got != want { fail(tag + "：得到 " + _str(got) + " 期望 " + _str(want)) }
+}
+
+func has(Array[string] arr, string want): bool {
+    for arr to s { if s == want { return true } }
+    return false
+}
+
+func stripPrefix(string base, Array[string] arr): Array[string] {
+    Array[string] out = []
+    for arr to p {
+        var q = p
+        if strings.starts_with(q, base) { q = q.byte_slice(base.byte_len() + 1, q.byte_len() - 1) }
+        out.add(q)
+    }
+    return out
+}
+
+main() {
+    // ---------- ① 纯匹配 ----------
+    if not glob.match("*.txt", "a.txt") { fail("① *.txt 应匹配 a.txt") }
+    if glob.match("*.txt", "a/b.txt") { fail("① * 不该跨目录") }
+    if not glob.match("**/*.txt", "a/b/c.txt") { fail("① **/ 应跨目录") }
+    if not glob.match("**/*.txt", "a.txt") { fail("① **/ 应能匹配零层") }
+    if not glob.match("a?c", "abc") { fail("① ? 单字符") }
+    if glob.match("a?c", "a/c") { fail("① ? 不该匹配 /") }
+    if not glob.match("[ab]x", "ax") { fail("① 字符类 a") }
+    if not glob.match("[ab]x", "bx") { fail("① 字符类 b") }
+    if glob.match("[ab]x", "cx") { fail("① 字符类不应匹配 c") }
+    if not glob.match("[!a]x", "bx") { fail("① 反字符类") }
+    if glob.match("[!a]x", "ax") { fail("① 反字符类不该匹配 a") }
+    if not glob.match("[0-9].log", "7.log") { fail("① 范围字符类") }
+    if glob.match("[0-9].log", "a.log") { fail("① 范围字符类不该匹配字母") }
+    if not glob.match("a\\b.txt", "a/b.txt") { fail("① 反斜杠应归一化成 /") }
+    print("① 匹配规则 12 条 ok")
+
+    // ---------- ② 真实目录 ----------
+    string base = dirs.join(_tmpdir(), "lenoglob_test")
+    if files.exists(base) {
+        // 简单清空：已知结构，逐个删
+        files.delete(dirs.join(base, "top.txt"))
+        files.delete(dirs.join(base, "a", "x.txt"))
+        files.delete(dirs.join(base, "a", "b", "y.txt"))
+        files.delete(dirs.join(base, "a", "b", "z.md"))
+        files.delete(dirs.join(base, "a", "c.log"))
+    }
+    dirs.mkdir_p(dirs.join(base, "a", "b"))
+    files.write(dirs.join(base, "top.txt"), "top")
+    files.write(dirs.join(base, "a", "x.txt"), "x")
+    files.write(dirs.join(base, "a", "b", "y.txt"), "y")
+    files.write(dirs.join(base, "a", "b", "z.md"), "z")
+    files.write(dirs.join(base, "a", "c.log"), "c")
+
+    Array[string] t1 = stripPrefix(base, glob.globIn(base, "**/*.txt"))
+    eqInt(t1.len(), 3, "② **/*.txt 数量")
+    if not has(t1, "top.txt") or not has(t1, "a/x.txt") or not has(t1, "a/b/y.txt") {
+        fail("② **/*.txt 结果不对：" + _str(t1))
+    }
+
+    Array[string] t2 = stripPrefix(base, glob.globIn(base, "*.txt"))
+    eqInt(t2.len(), 1, "② *.txt 只应命中根目录")
+    if not has(t2, "top.txt") { fail("② *.txt 结果不对") }
+
+    Array[string] t3 = stripPrefix(base, glob.globIn(base, "a/*.txt"))
+    eqInt(t3.len(), 1, "② a/*.txt 数量")
+    if not has(t3, "a/x.txt") { fail("② a/*.txt 应只命中 a/x.txt") }
+
+    Array[string] t4 = stripPrefix(base, glob.globIn(base, "a/**/z.md"))
+    eqInt(t4.len(), 1, "② a/**/z.md 数量")
+    if not has(t4, "a/b/z.md") { fail("② a/**/z.md 结果不对") }
+
+    eqInt(glob.globIn(base, "**/*.log").len(), 1, "② *.log 数量")
+    eqInt(glob.globIn(base, "**/*.nothing").len(), 0, "② 不存在的扩展名")
+    print("② 目录查找 ok（" + _str(t1.len()) + " 个 txt）")
+
+    // ---------- ③ filter ----------
+    Array[string] all = ["a.txt", "b.md", "c.txt"]
+    Array[string] ft = glob.filter("*.txt", all)
+    eqInt(ft.len(), 2, "③ filter 数量")
+    if not has(ft, "c.txt") { fail("③ filter 结果不对") }
+
+    // 清理
+    files.delete(dirs.join(base, "top.txt"))
+    files.delete(dirs.join(base, "a", "x.txt"))
+    files.delete(dirs.join(base, "a", "b", "y.txt"))
+    files.delete(dirs.join(base, "a", "b", "z.md"))
+    files.delete(dirs.join(base, "a", "c.log"))
+
+    print("test_glob passed（3 组断言）")
+}

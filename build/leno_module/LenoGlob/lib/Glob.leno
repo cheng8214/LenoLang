@@ -1,0 +1,168 @@
+// Glob.leno -- 通配符匹配与文件查找（纯 Leno）
+//
+// 为什么需要：`files` 只有 open/exists/delete/read/write，没有 glob；文件搜索类工具
+//   只能 `dirs.walk` 后自己写匹配 —— 每个工具重写一遍，还各带各的 bug。
+//
+// 用法：
+//   import "Glob" as glob
+//   glob.match("**/*.txt", "a/b/c.txt")     // true
+//   glob.glob("src/**/*.leno")              // 相对路径数组
+//   glob.globIn("D:/www", "**/*.css")       // 指定根目录
+//   glob.filter("*.md", list)               // 过滤已有列表
+//
+// 语义（有意与 shell/glob 对齐）：
+//   *     匹配**一个路径段内**的任意串（不跨 '/'）
+//   ?     匹配一个非 '/' 字符
+//   [abc] / [a-z] / [!0-9]  字符类（`!` 或 `^` 取反）
+//   **    跨目录任意层级；`**/` 还能匹配"零层"（所以 `**/*.txt` 也命中根目录的 a.txt）
+// 路径分隔符统一按 '/' 处理（Windows 的 '\' 会先归一化）。
+// 大小写**区分**（与 Linux/shell 一致；要忽略大小写请自己 to_lower 两侧再比）。
+import strings
+import dirs
+import files
+
+func _slash(string p): string {
+    Array[int] out = []
+    for p.to_bytes() to b {
+        if b == 92 { out.add(47) } else { out.add(b) }     // '\' → '/'
+    }
+    return strings.from_bytes(out)
+}
+
+func _m(Array[int] p, Array[int] s, int pi, int si): bool {
+    if pi >= p.len() { return si >= s.len() }
+    int c = p[pi]
+    if c == 42 {                                   // '*'
+        bool dbl = (pi + 1 < p.len() and p[pi + 1] == 42)
+        if dbl {
+            var next = pi + 2
+            if next < p.len() and p[next] == 47 { next = next + 1 }   // "**/" 吃掉斜杠
+            var k = si
+            while true {
+                if _m(p, s, next, k) { return true }
+                if k >= s.len() { break }
+                k = k + 1
+            }
+            return false
+        }
+        var k = si
+        while true {
+            if _m(p, s, pi + 1, k) { return true }
+            if k >= s.len() { break }
+            if s[k] == 47 { break }                // 单 '*' 不跨目录
+            k = k + 1
+        }
+        return false
+    }
+    if c == 63 {                                   // '?'
+        if si >= s.len() or s[si] == 47 { return false }
+        return _m(p, s, pi + 1, si + 1)
+    }
+    if c == 91 {                                   // '['
+        if si >= s.len() { return false }
+        var j = pi + 1
+        var neg = false
+        if j < p.len() and (p[j] == 33 or p[j] == 94) { neg = true; j = j + 1 }
+        var matched = false
+        var closed = false
+        while j < p.len() {
+            if p[j] == 93 { closed = true; break }         // ']'
+            if j + 2 < p.len() and p[j + 1] == 45 and p[j + 2] != 93 {   // a-z
+                if s[si] >= p[j] and s[si] <= p[j + 2] { matched = true }
+                j = j + 3
+            } else {
+                if s[si] == p[j] { matched = true }
+                j = j + 1
+            }
+        }
+        if not closed { return false }
+        if neg { matched = not matched }
+        if not matched { return false }
+        return _m(p, s, j + 1, si + 1)
+    }
+    if si >= s.len() { return false }
+    if c != s[si] { return false }
+    return _m(p, s, pi + 1, si + 1)
+}
+
+// 整个路径与模式是否匹配
+export func match(string pattern, string path): bool {
+    return _m(_slash(pattern).to_bytes(), _slash(path).to_bytes(), 0, 0)
+}
+
+func _hasWild(string p): bool {
+    for p.to_bytes() to b {
+        if b == 42 or b == 63 or b == 91 { return true }
+    }
+    return false
+}
+
+// 相对化：root 去掉 base 前缀与多余的分隔符
+func _rel(string base, string root): string {
+    var b = _slash(base)
+    var r = _slash(root)
+    if b == "." or b == "" { return r }
+    if strings.starts_with(r, b) {
+        var rest = r.byte_slice(b.byte_len(), r.byte_len() - 1)
+        while strings.starts_with(rest, "/") { rest = rest.byte_slice(1, rest.byte_len() - 1) }
+        return rest
+    }
+    return r
+}
+
+func _sort(Array[string] a): Array[string] {
+    // 插入排序：结果数量小（列目录），只要确定顺序即可
+    for 1:a.len()-1 to i {
+        string key = a[i]
+        var j = i - 1
+        while j >= 0 and a[j] > key {
+            a[j + 1] = a[j]
+            j = j - 1
+        }
+        a[j + 1] = key
+    }
+    return a
+}
+
+// 在 base 目录下按 pattern 查找（pattern 相对 base；结果路径含 base 前缀）
+export func globIn(string base, string pattern): Array[string] {
+    string pat = _slash(pattern)
+    string root0 = base
+    if root0 == "" { root0 = "." }
+    Array[string] out = []
+
+    if not _hasWild(pat) {
+        var p = root0
+        if p != "." { p = p + "/" + pat } else { p = pat }
+        if files.exists(p) { out.add(p) }
+        return out
+    }
+
+    Array[DirEntry] es = dirs.walk(root0)
+    for es to e {
+        string relRoot = _rel(root0, e.root as string)
+        for (e.files as Array[string]) to f {
+            var cand = f
+            if relRoot != "" and relRoot != "." { cand = relRoot + "/" + f }
+            if match(pat, cand) {
+                if root0 == "." { out.add(cand) }
+                else { out.add(root0 + "/" + cand) }
+            }
+        }
+    }
+    return _sort(out)
+}
+
+// 相对当前工作目录查找
+export func glob(string pattern): Array[string] {
+    return globIn(".", pattern)
+}
+
+// 过滤已有路径列表（不访问磁盘）
+export func filter(string pattern, Array[string] paths): Array[string] {
+    Array[string] out = []
+    for paths to p {
+        if match(pattern, p) { out.add(p) }
+    }
+    return out
+}

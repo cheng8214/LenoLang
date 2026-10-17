@@ -1,0 +1,194 @@
+// Stats.leno -- 统计与"金额用整数分"（纯 Leno）
+//
+// 补两件事：
+//   ① statistics：mean / median / percentile / stdev（样本与总体两种）
+//   ② decimal 的实用替代：**金额一律用"分"（int）**，只在显示时格式化。
+//      float 存 0.1 会得到 0.100000000000000005 这类误差；财务场景必须走整数分。
+//
+// 用法：
+//   import "Stats" as st
+//   st.mean([1.0, 2.0, 3.0])            // 2.0
+//   st.median([3.0, 1.0, 2.0])          // 2.0
+//   st.percentile(xs, 90.0)             // 线性插值（Excel PERCENTILE.INC 口径）
+//   st.stdevSample(xs) / st.stdevPop(xs)
+//   var m = st.money("12.34")           // {ok:true, cents:1234, err:""}
+//   st.formatCents(1234)                // "12.34"
+//   st.centsMul(1234, 7, 100)           // 打 7 折（四舍五入到分）
+import maths
+import strings
+
+func _sorted(Array[float] xs): Array[float] {
+    Array[float] a = []
+    for xs to v { a.add(v) }
+    // 插入排序（样本量通常很小）
+    for 1:a.len()-1 to i {
+        float key = a[i]
+        var j = i - 1
+        while j >= 0 and a[j] > key {
+            a[j + 1] = a[j]
+            j = j - 1
+        }
+        a[j + 1] = key
+    }
+    return a
+}
+
+// ==================== 统计 ====================
+export func mean(Array[float] xs): float {
+    if xs.len() == 0 { return 0.0 }
+    var s = 0.0
+    for xs to v { s = s + v }
+    return s / _float(xs.len())
+}
+
+export func meanInt(Array[int] xs): float {
+    if xs.len() == 0 { return 0.0 }
+    var s = 0
+    for xs to v { s = s + v }
+    return _float(s) / _float(xs.len())
+}
+
+export func median(Array[float] xs): float {
+    int n = xs.len()
+    if n == 0 { return 0.0 }
+    Array[float] a = _sorted(xs)
+    if n % 2 == 1 { return a[n / 2] }
+    return (a[n / 2 - 1] + a[n / 2]) / 2.0
+}
+
+// p ∈ [0,100]；线性插值（与 Excel PERCENTILE.INC 一致）
+export func percentile(Array[float] xs, float p): float {
+    int n = xs.len()
+    if n == 0 { return 0.0 }
+    if p <= 0.0 { return _sorted(xs)[0] }
+    if p >= 100.0 { return _sorted(xs)[n - 1] }
+    Array[float] a = _sorted(xs)
+    float rank = p / 100.0 * _float(n - 1)
+    int lo = maths.floor(rank) as int
+    int hi = lo + 1
+    if hi > n - 1 { hi = n - 1 }
+    float frac = rank - _float(lo)
+    return a[lo] + (a[hi] - a[lo]) * frac
+}
+
+// 样本标准差（除以 n-1）
+export func stdevSample(Array[float] xs): float {
+    int n = xs.len()
+    if n < 2 { return 0.0 }
+    float m = mean(xs)
+    var s = 0.0
+    for xs to v { s = s + (v - m) * (v - m) }
+    return maths.sqrt(s / _float(n - 1))
+}
+
+// 总体标准差（除以 n）
+export func stdevPop(Array[float] xs): float {
+    int n = xs.len()
+    if n < 1 { return 0.0 }
+    float m = mean(xs)
+    var s = 0.0
+    for xs to v { s = s + (v - m) * (v - m) }
+    return maths.sqrt(s / _float(n))
+}
+
+export func sumInt(Array[int] xs): int {
+    var s = 0
+    for xs to v { s = s + v }
+    return s
+}
+
+export func minInt(Array[int] xs): int {
+    if xs.len() == 0 { return 0 }
+    var m = xs[0]
+    for xs to v {
+        if v < m { m = v }
+    }
+    return m
+}
+
+export func maxInt(Array[int] xs): int {
+    if xs.len() == 0 { return 0 }
+    var m = xs[0]
+    for xs to v {
+        if v > m { m = v }
+    }
+    return m
+}
+
+// ==================== 金额（整数分）====================
+// "12.34" → 1234；"-1.5" → -150；".5" → 50；"12." → 1200
+// 规则：最多两位小数（多了报错 —— 静默四舍五入会让账目对不上）
+export func money(string s): Dict {
+    var t = s
+    if t == "" { return {ok: false, cents: 0, err: "空字符串"} }
+    var neg = false
+    Array[int] bs = t.to_bytes()
+    var i = 0
+    if bs[0] == 45 { neg = true; i = 1 }
+    if i >= bs.len() { return {ok: false, cents: 0, err: "只有符号"} }
+
+    var intPart = 0
+    var gotDigit = false
+    while i < bs.len() and bs[i] != 46 {
+        int c = bs[i]
+        if c < 48 or c > 57 { return {ok: false, cents: 0, err: "非法字符：" + s} }
+        intPart = intPart * 10 + (c - 48)
+        gotDigit = true
+        i = i + 1
+    }
+    var frac = 0
+    var fracDigits = 0
+    if i < bs.len() and bs[i] == 46 {          // '.'
+        i = i + 1
+        while i < bs.len() {
+            int c = bs[i]
+            if c < 48 or c > 57 { return {ok: false, cents: 0, err: "非法字符：" + s} }
+            if fracDigits >= 2 { return {ok: false, cents: 0, err: "最多两位小数：" + s} }
+            frac = frac * 10 + (c - 48)
+            fracDigits = fracDigits + 1
+            gotDigit = true
+            i = i + 1
+        }
+    }
+    if not gotDigit { return {ok: false, cents: 0, err: "没有数字：" + s} }
+    if fracDigits == 0 { frac = 0 }
+    if fracDigits == 1 { frac = frac * 10 }
+
+    int cents = intPart * 100 + frac
+    if neg { cents = -cents }
+    return {ok: true, cents: cents, err: ""}
+}
+
+export func formatCents(int cents): string {
+    var c = cents
+    var neg = false
+    if c < 0 { neg = true; c = -c }
+    int ip = c / 100
+    int fp = c % 100
+    var fs = _str(fp)
+    if fp < 10 { fs = "0" + fs }
+    var out = _str(ip) + "." + fs
+    if neg { out = "-" + out }
+    return out
+}
+
+// cents * num / den（四舍五入到分；den 必须 > 0）
+export func centsMul(int cents, int num, int den): int {
+    if den <= 0 { return cents }
+    var n = cents * num
+    var sign = 1
+    if n < 0 { sign = -1; n = -n }
+    int q = (n * 2 + den) / (den * 2)          // 半个单位进位
+    return sign * q
+}
+
+// 浮点转 int 的安全写法（避免 `as int` 在小数上截断的歧义）
+func _float(int v): float {
+    return _to_float(v)
+}
+
+func _to_float(int v): float {
+    var f = 0.0
+    f = f + v
+    return f
+}

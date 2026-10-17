@@ -1,0 +1,283 @@
+// CLI.leno -- 命令行参数解析（argparse 的常用子集，纯 Leno）
+//
+// 为什么需要：`sys._args()` 只给原始数组，仓库里每个 CLI 工具（LenoVersion /
+//   LenoWorkBuddy / LenoMusic …）都在手写同一段 while + if 解析。这里收成模块。
+//
+// 用法：
+//   import "CLI" as cli
+//   var p = cli.spec("mytool", "做某事的工具", "mytool [选项] <input>")
+//   cli.flag(p, "-v", "--verbose", "详细输出")
+//   cli.option(p, "-o", "--output", "输出文件", "out.txt")
+//   cli.optionInt(p, "-n", "--count", "次数", 3)
+//   cli.positional(p, "input", "输入文件")
+//
+//   var r = cli.parse(p, _args())
+//   if not r.ok { print(r.err); print(cli.helpText(p)); return }
+//   if r.help { print(cli.helpText(p)); return }
+//   string input = (r.positionals as Dict).get("input", "") as string
+//
+// 支持：
+//   --name value / --name=value / -o value / -ovalue / 组合短旗标 -abc / -- 终止符
+//   未知选项 ⇒ ok=false + 可读原因；缺少值 / 缺必填位置参数 / int 解析失败 同样报错
+//   自动识别 -h / --help（ok=true 且 help=true，由调用方打印帮助）
+//
+// 不做：子命令嵌套、参数组、从环境变量取默认值、shell 式引号解析。
+import strings
+
+// ==================== 规格 ====================
+export func spec(string name, string desc = "", string usage = ""): Dict {
+    return {name: name, desc: desc, usage: usage, options: [], positionals: []}
+}
+
+func _dest(string long): string {
+    var s = long
+    if strings.starts_with(s, "--") { s = s.byte_slice(2, s.byte_len() - 1) }
+    Array[int] out = []
+    for s.to_bytes() to b {
+        if b == 45 { out.add(95) } else { out.add(b) }     // '-' → '_'
+    }
+    return strings.from_bytes(out)
+}
+
+export func flag(Dict p, string short, string long, string desc = "") {
+    Array[Dict] os = p["options"] as Array[Dict]
+    os.add({short: short, long: long, desc: desc, takesValue: false, isInt: false,
+            def: false, dest: _dest(long)})
+    p.set("options", os)
+}
+
+export func option(Dict p, string short, string long, string desc, string def) {
+    Array[Dict] os = p["options"] as Array[Dict]
+    os.add({short: short, long: long, desc: desc, takesValue: true, isInt: false,
+            def: def, dest: _dest(long)})
+    p.set("options", os)
+}
+
+export func optionInt(Dict p, string short, string long, string desc, int def) {
+    Array[Dict] os = p["options"] as Array[Dict]
+    os.add({short: short, long: long, desc: desc, takesValue: true, isInt: true,
+            def: def, dest: _dest(long)})
+    p.set("options", os)
+}
+
+export func positional(Dict p, string name, string desc = "", bool required = true) {
+    Array[Dict] ps = p["positionals"] as Array[Dict]
+    ps.add({name: name, desc: desc, required: required})
+    p.set("positionals", ps)
+}
+
+// ==================== 工具 ====================
+func _find(string hay, string needle): int {
+    Array[int] h = hay.to_bytes()
+    Array[int] n = needle.to_bytes()
+    if n.len() == 0 { return -1 }
+    var i = 0
+    while i + n.len() <= h.len() {
+        var hit = true
+        for 0:n.len()-1 to k {
+            if h[i + k] != n[k] { hit = false; break }
+        }
+        if hit { return i }
+        i = i + 1
+    }
+    return -1
+}
+
+func _isInt(string s): bool {
+    if s.byte_len() == 0 { return false }
+    Array[int] bs = s.to_bytes()
+    var i = 0
+    if bs[0] == 45 { i = 1 }
+    if i >= bs.len() { return false }
+    for i:bs.len()-1 to k {
+        if bs[k] < 48 or bs[k] > 57 { return false }
+    }
+    return true
+}
+
+func _findOptionByLong(Dict p, string long): Dict {
+    Array[Dict] os = p["options"] as Array[Dict]
+    for os to o {
+        if (o["long"] as string) == long { return o }
+    }
+    return {}
+}
+
+func _findOptionByShort(Dict p, string s): Dict {
+    Array[Dict] os = p["options"] as Array[Dict]
+    for os to o {
+        if (o["short"] as string) == s { return o }
+    }
+    return {}
+}
+
+// ⚠ values 必须声明成 Dict[string, any]：裸 Dict 的元素类型会被第一次写入定死
+//   （先塞 bool 默认值，后面就塞不进 string/int 了）
+func _apply(Dict[string, any] values, Dict o, string rawValue, string tag): string {
+    if o["takesValue"] as bool {
+        if o["isInt"] as bool {
+            if not _isInt(rawValue) {
+                return tag + " 需要一个整数，收到「" + rawValue + "」"
+            }
+            values.set(o["dest"] as string, _int(rawValue))
+        } else {
+            values.set(o["dest"] as string, rawValue)
+        }
+    } else {
+        values.set(o["dest"] as string, true)
+    }
+    return ""
+}
+
+// ==================== 解析 ====================
+export func parse(Dict p, Array[string] args): Dict {
+    Dict[string, any] values = {}
+    Array[Dict] os = p["options"] as Array[Dict]
+    for os to o {
+        values.set(o["dest"] as string, o["def"])
+    }
+    Dict pos = {}
+    Array[Dict] ps = p["positionals"] as Array[Dict]
+    Array[string] rest = []
+    var posIdx = 0
+    var terminated = false
+    var i = 0
+
+    while i < args.len() {
+        string a = args[i]
+        if not terminated and a == "--" { terminated = true; i = i + 1; continue }
+        if not terminated and (a == "-h" or a == "--help") {
+            return {ok: true, err: "", help: true, values: values, positionals: pos, rest: rest}
+        }
+        if not terminated and strings.starts_with(a, "--") {
+            int eq = _find(a, "=")
+            var name = a
+            var val = ""
+            var hasVal = false
+            if eq > 0 {
+                name = a.byte_slice(0, eq - 1)
+                val = a.byte_slice(eq + 1, a.byte_len() - 1)
+                hasVal = true
+            }
+            Dict o = _findOptionByLong(p, name)
+            if o.len() == 0 { return _err("未知选项：" + name + _hint(p)) }
+            if o["takesValue"] as bool {
+                if not hasVal {
+                    if i + 1 >= args.len() { return _err(name + " 缺少值") }
+                    val = args[i + 1]
+                    i = i + 1
+                }
+                string e = _apply(values, o, val, name)
+                if e != "" { return _err(e) }
+            } else {
+                if hasVal { return _err(name + " 不接受值") }
+                values.set(o["dest"] as string, true)
+            }
+            i = i + 1
+            continue
+        }
+        if not terminated and strings.starts_with(a, "-") and a.byte_len() > 1 {
+            // 短选项：-o value / -ovalue / 组合 -abc
+            var j = 1
+            var consumedNext = false
+            while j < a.byte_len() {
+                string sh = "-" + a.byte_slice(j, j)
+                Dict o = _findOptionByShort(p, sh)
+                if o.len() == 0 { return _err("未知选项：" + sh + _hint(p)) }
+                if o["takesValue"] as bool {
+                    var val = ""
+                    if j + 1 < a.byte_len() {
+                        val = a.byte_slice(j + 1, a.byte_len() - 1)   // -ovalue
+                    } else {
+                        if i + 1 >= args.len() { return _err(sh + " 缺少值") }
+                        val = args[i + 1]
+                        consumedNext = true
+                    }
+                    string e = _apply(values, o, val, sh)
+                    if e != "" { return _err(e) }
+                    j = a.byte_len()
+                } else {
+                    values.set(o["dest"] as string, true)
+                    j = j + 1
+                }
+            }
+            i = i + 1
+            if consumedNext { i = i + 1 }
+            continue
+        }
+        // 位置参数
+        if posIdx < ps.len() {
+            pos.set(ps[posIdx]["name"] as string, a)
+            posIdx = posIdx + 1
+        } else {
+            rest.add(a)
+        }
+        i = i + 1
+    }
+
+    // 必填位置参数检查
+    for 0:ps.len()-1 to k {
+        if (ps[k]["required"] as bool) and not pos.has(ps[k]["name"] as string) {
+            return _err("缺少参数 <" + (ps[k]["name"] as string) + ">")
+        }
+        if not pos.has(ps[k]["name"] as string) {
+            pos.set(ps[k]["name"] as string, "")
+        }
+    }
+    return {ok: true, err: "", help: false, values: values, positionals: pos, rest: rest}
+}
+
+func _err(string msg): Dict {
+    return {ok: false, err: msg, help: false, values: {}, positionals: {}, rest: []}
+}
+
+func _hint(Dict p): string {
+    Array[string] names = []
+    Array[Dict] os = p["options"] as Array[Dict]
+    for os to o { names.add(o["long"] as string) }
+    var joined = ""
+    for 0:names.len()-1 to k {
+        if k > 0 { joined = joined + ", " }
+        joined = joined + names[k]
+    }
+    return "（可用：" + joined + "；-h 查看帮助）"
+}
+
+// ==================== 帮助文本 ====================
+export func helpText(Dict p): string {
+    var out = ""
+    string name = p["name"] as string
+    string usage = p["usage"] as string
+    if usage == "" { usage = name + " [选项]" }
+    out = "用法：" + usage + "\n"
+    if (p["desc"] as string) != "" { out = out + (p["desc"] as string) + "\n" }
+    out = out + "\n选项：\n"
+    out = out + "  -h, --help            显示本帮助\n"
+    Array[Dict] os = p["options"] as Array[Dict]
+    for os to o {
+        var head = "  "
+        string sh = o["short"] as string
+        if sh != "" { head = head + sh + ", " }
+        else { head = head + "    " }
+        head = head + (o["long"] as string)
+        if o["takesValue"] as bool { head = head + " <值>" }
+        while head.byte_len() < 26 { head = head + " " }
+        var line = head + (o["desc"] as string)
+        if o["takesValue"] as bool {
+            line = line + "（默认：" + _str(o["def"]) + "）"
+        }
+        out = out + line + "\n"
+    }
+    Array[Dict] ps = p["positionals"] as Array[Dict]
+    if ps.len() > 0 {
+        out = out + "\n参数：\n"
+        for ps to q {
+            var head = "  " + (q["name"] as string)
+            while head.byte_len() < 26 { head = head + " " }
+            var line = head + (q["desc"] as string)
+            if not (q["required"] as bool) { line = line + "（可选）" }
+            out = out + line + "\n"
+        }
+    }
+    return out
+}

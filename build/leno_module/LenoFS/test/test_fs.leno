@@ -1,0 +1,81 @@
+// LenoFS 0.1.0 自测：copytree / copy / rmtree / count（含二进制与嵌套目录）
+//
+// 跑法（仓库根目录）：
+//   build\leno.exe build\leno_module\LenoFS\test\test_fs.leno
+import files
+import dirs
+import strings
+import "FS" as fs
+
+func fail(string msg) {
+    print("[FAIL] " + msg)
+    _exit(1)
+}
+
+func eqInt(int got, int want, string tag) {
+    if got != want { fail(tag + "：得到 " + _str(got) + " 期望 " + _str(want)) }
+}
+
+func main_tree(string base) {
+    dirs.mkdir_p(dirs.join(base, "a", "b"))
+    files.write(dirs.join(base, "root.txt"), "root")
+    files.write(dirs.join(base, "a", "x.txt"), "中文 x")
+    files.write(dirs.join(base, "a", "b", "y.bin"), strings.from_bytes([0, 1, 2, 127, 128, 255]))
+}
+
+main() {
+    string tmp = _tmpdir()
+    string src = dirs.join(tmp, "lenofs_src")
+    string dst = dirs.join(tmp, "lenofs_dst")
+
+    // 清理上一次可能的残留
+    fs.rmtree(src)
+    fs.rmtree(dst)
+
+    // ---------- ① count ----------
+    main_tree(src)
+    var c1 = fs.count(src)
+    eqInt(c1["files"] as int, 3, "① 文件数")
+    eqInt(c1["dirs"] as int, 3, "① 目录数（src/a/b）")
+
+    // ---------- ② copytree ----------
+    var cp = fs.copytree(src, dst)
+    if not (cp["ok"] as bool) { fail("② copytree 失败：" + (cp["err"] as string)) }
+    eqInt(cp["files"] as int, 3, "② 复制文件数")
+    eqInt(cp["dirs"] as int, 3, "② 复制目录数")
+
+    if files.read(dirs.join(dst, "root.txt")) != "root" { fail("② 根文件内容不符") }
+    if files.read(dirs.join(dst, "a", "x.txt")) != "中文 x" { fail("② 中文文件内容不符") }
+    string bin = files.read(dirs.join(dst, "a", "b", "y.bin"))
+    eqInt(bin.byte_len(), 6, "② 二进制长度")
+    if bin.byte(0) != 0 or bin.byte(5) != 255 { fail("② 二进制内容不符（NUL/0xFF）") }
+    print("② copytree ok（3 文件 / 3 目录，含二进制）")
+
+    // ---------- ③ copy 单文件 ----------
+    string one = dirs.join(tmp, "lenofs_one.txt")
+    var c3 = fs.copy(dirs.join(src, "a", "x.txt"), one)
+    if not (c3["ok"] as bool) { fail("③ copy 失败：" + (c3["err"] as string)) }
+    if files.read(one) != "中文 x" { fail("③ copy 内容不符") }
+    var c3b = fs.copy(dirs.join(tmp, "no_such_file_xyz"), one)
+    if c3b["ok"] as bool { fail("③ 源不存在应报错") }
+    files.delete(one)
+
+    // ---------- ④ rmtree ----------
+    var rm = fs.rmtree(dst)
+    if not (rm["ok"] as bool) { fail("④ rmtree 失败：" + (rm["err"] as string)) }
+    eqInt(rm["files"] as int, 3, "④ 删除文件数")
+    eqInt(rm["dirs"] as int, 3, "④ 删除目录数")
+    if files.exists(dst) { fail("④ 目标仍存在") }
+
+    // ---------- ⑤ 删除不存在的路径：ok 且计数 0 ----------
+    var rm2 = fs.rmtree(dirs.join(tmp, "lenofs_nothing_here"))
+    if not (rm2["ok"] as bool) { fail("⑤ 删除不存在路径应 ok=true") }
+    eqInt(rm2["files"] as int, 0, "⑤ 文件数")
+
+    // ---------- ⑥ 清掉源树 ----------
+    var rm3 = fs.rmtree(src)
+    if not (rm3["ok"] as bool) { fail("⑥ 清理失败") }
+    if files.exists(src) { fail("⑥ 源树仍存在") }
+
+    print("test_fs passed（6 组断言）")
+}

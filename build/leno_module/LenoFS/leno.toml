@@ -1,0 +1,11 @@
+[package]
+name = "LenoFS"
+version = "0.1.0"
+description = "Leno filesystem extras: rmtree / copytree / copy (pure Leno)"
+authors = ""
+license = "Apache-2.0"
+
+[modules]
+root = "lib"
+
+# 纯 Leno，无原生库

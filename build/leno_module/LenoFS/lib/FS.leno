@@ -1,0 +1,125 @@
+// FS.leno -- 文件系统扩展（纯 Leno）
+//
+// 补的是 `dirs` 缺的那三件（这正是 shutil 的核心）：
+//   rmtree(path)     递归删除（文件或目录），删不掉会报原因
+//   copytree(src,dst) 整树复制（自动建父目录；目标已存在则合并覆盖）
+//   copy(src,dst)     单文件复制（二进制安全：files.read/write 按字节）
+//
+// 取向：
+//   · **不跟随符号链接**（与 dirs.walk 同口径）：链接本身会被删除/复制，但不会递归进去，
+//     避免 junction 指回祖先时无限展开
+//   · 返回 Dict `{ok, files, dirs, err}`，不抛异常（与 LenoQR/LenoCSV 一致）
+//   · 不保留 mtime/权限/属性（跨平台一致的成本太高；要保留请自己调系统工具）
+import files
+import dirs
+import strings
+
+func _ok(int f, int d): Dict {
+    return {ok: true, files: f, dirs: d, err: ""}
+}
+
+func _bad(string msg): Dict {
+    return {ok: false, files: 0, dirs: 0, err: msg}
+}
+
+// ==================== 删除 ====================
+func _rm(string path, Dict st) {
+    if dirs.is_symlink(path) {
+        // 链接（含目录 junction）：删链接本身，不递归
+        if dirs.is_dir(path) { dirs.rmdir(path) }
+        else { files.delete(path) }
+        st.set("files", (st["files"] as int) + 1)
+        return
+    }
+    if dirs.is_dir(path) {
+        Array[string] names = dirs.listdir(path)
+        for names to n {
+            _rm(dirs.join(path, n), st)
+        }
+        dirs.rmdir(path)
+        st.set("dirs", (st["dirs"] as int) + 1)
+    } else {
+        files.delete(path)
+        st.set("files", (st["files"] as int) + 1)
+    }
+}
+
+export func rmtree(string path): Dict {
+    if not files.exists(path) and not dirs.exists(path) { return _ok(0, 0) }
+    Dict st = {files: 0, dirs: 0}
+    _rm(path, st)
+    if files.exists(path) or dirs.exists(path) {
+        return _bad("删除后仍存在（权限 / 被占用？）：" + path)
+    }
+    return _ok(st["files"] as int, st["dirs"] as int)
+}
+
+// ==================== 复制 ====================
+func _cp(string src, string dst, Dict st) {
+    if dirs.is_symlink(src) {
+        // 链接：按"复制内容"处理（不复制链接本身）—— 与 cp -L 同口径，跨平台最稳
+        if dirs.is_dir(src) {
+            _cp_dir(src, dst, st)
+        } else {
+            files.write(dst, files.read(src))
+            st.set("files", (st["files"] as int) + 1)
+        }
+        return
+    }
+    if dirs.is_dir(src) {
+        _cp_dir(src, dst, st)
+    } else {
+        string parent = dirs.dirname(dst)
+        if parent != "" { dirs.mkdir_p(parent) }
+        files.write(dst, files.read(src))
+        st.set("files", (st["files"] as int) + 1)
+    }
+}
+
+func _cp_dir(string src, string dst, Dict st) {
+    dirs.mkdir_p(dst)
+    Array[string] names = dirs.listdir(src)
+    for names to n {
+        _cp(dirs.join(src, n), dirs.join(dst, n), st)
+    }
+    st.set("dirs", (st["dirs"] as int) + 1)
+}
+
+// 单文件复制（目标已存在则覆盖）
+export func copy(string src, string dst): Dict {
+    if not files.exists(src) { return _bad("源文件不存在：" + src) }
+    if dirs.is_dir(src) { return _bad("源是目录，请用 copytree：" + src) }
+    Dict st = {files: 0, dirs: 0}
+    _cp(src, dst, st)
+    return _ok(st["files"] as int, st["dirs"] as int)
+}
+
+// 整树复制（src 是目录；dst 不存在会创建，已存在则合并）
+export func copytree(string src, string dst): Dict {
+    if not dirs.is_dir(src) { return _bad("源目录不存在：" + src) }
+    if files.exists(dst) and not dirs.is_dir(dst) { return _bad("目标已存在且不是目录：" + dst) }
+    Dict st = {files: 0, dirs: 0}
+    _cp_dir(src, dst, st)
+    return _ok(st["files"] as int, st["dirs"] as int)
+}
+
+// 目录项数量（供"删前确认/复制后核对"用）
+export func count(string path): Dict {
+    Dict st = {files: 0, dirs: 0}
+    if not dirs.is_dir(path) {
+        if files.exists(path) { return {files: 1, dirs: 0} }
+        return {files: 0, dirs: 0}
+    }
+    _count(path, st)
+    return {files: st["files"] as int, dirs: st["dirs"] as int}
+}
+
+func _count(string path, Dict st) {
+    st.set("dirs", (st["dirs"] as int) + 1)
+    Array[string] names = dirs.listdir(path)
+    for names to n {
+        string p = dirs.join(path, n)
+        if dirs.is_dir(p) and not dirs.is_symlink(p) { _count(p, st) }
+        else { st.set("files", (st["files"] as int) + 1) }
+    }
+}
