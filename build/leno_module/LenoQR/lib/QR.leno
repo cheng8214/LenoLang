@@ -1,0 +1,40 @@
+// QR.leno -- LenoQR entry point
+//
+// 现状（v0.1.0）：**识别端**可用（quirc 后端，FFI）。
+// 编码端（纯 Leno 写 QR，位流 + GF(256) 纠错）在下一阶段落地，届时本文件会多出
+//   encode(text, opt) / toPNG(...) / matrix(...) 一族；解码 API 保持不动。
+//
+// 用法：
+//   import "QR" as qr
+//   var r = qr.decodeARGB(pixels, w, h, pitch)
+//   if r.found { print(r.text) }
+//
+// 三种输入（都返回同一种 Dict）：
+//   · decodeGray(gray, w, h, stride)   —— 每像素 1 字节，0=黑 255=白
+//   · decodeARGB(px, w, h, pitch)      —— 内存序 B,G,R,A（SDL PIXELFORMAT_ARGB8888）
+//   · decodeRGB24(px, w, h, pitch)     —— 内存序 B,G,R（24 位 PNG 解出来的那种）
+//   ⇒ {found: bool, text: string, len: int, err: string}
+//      found=false 且 err="" ⇒ 图里没有二维码（正常，不是错误）
+import "qr_native.leno" as nat
+import "qr_decode.leno" as dec
+
+// ==================== 环境信息（诊断用）====================
+export func libName(): string { return nat.lib_name() }
+export func libPath(): string { return nat.path() }
+export func available(): bool { return nat.available() }
+export func version(): string { return nat.version() }
+export func abi(): int { return nat.abi() }
+export func maxPayload(): int { return nat.max_payload() }
+
+// ==================== 识别 ====================
+export func decodeGray(Ptr[u8] gray, int w, int h, int stride): Dict {
+    return dec.decodeGray(gray, w, h, stride)
+}
+
+export func decodeARGB(Ptr[u8] px, int w, int h, int pitch): Dict {
+    return dec.decodeARGB(px, w, h, pitch)
+}
+
+export func decodeRGB24(Ptr[u8] px, int w, int h, int pitch): Dict {
+    return dec.decodeRGB24(px, w, h, pitch)
+}

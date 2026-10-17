@@ -1,0 +1,143 @@
+// LenoQR 0.1.0 自测：**已知矩阵 → 放大成灰度图 → 原生库识别**
+//
+// 为什么不用 PNG/截图做首个用例：这两条都依赖"图像怎么来的"。这里把矩阵**直接画进
+// 灰度缓冲**，于是这条用例只考"原生库 + FFI + 数据布局"三件事，跑在哪台机器上都一样。
+// （PNG / 屏幕框选走 examples，属于集成用例。）
+//
+// 矩阵：版本 1 · ECC M · "LENOQR TEST 001"，由 python qrcode 8.2 的
+//   QRCode(version=1, error_correction=ERROR_CORRECT_M, border=0).get_matrix() 产出
+//   ⇒ 权威期望值，不是"自己画着玩"。
+// 跑法（在仓库根目录）：build\leno.exe build\leno_module\LenoQR\test\test_decode_gray.leno
+import ffi
+import strings
+import "QR" as qr
+
+var MODS = [
+    "XXXXXXX...X.X.XXXXXXX",
+    "X.....X.X...X.X.....X",
+    "X.XXX.X....X..X.XXX.X",
+    "X.XXX.X..XX.X.X.XXX.X",
+    "X.XXX.X.XX..X.X.XXX.X",
+    "X.....X.....X.X.....X",
+    "XXXXXXX.X.X.X.XXXXXXX",
+    "...........XX........",
+    "X.X.X.X..XXX....X..X.",
+    ".XX.X...XXX....XXXX.X",
+    "..X..XX.XXX.XX....XX.",
+    ".X.XX..X.....XXXX...X",
+    ".X...XXX.XX.X...X.X..",
+    "........XXXX.X......X",
+    "XXXXXXX...XX..X..X...",
+    "X.....X..XXXXX.XXX..X",
+    "X.XXX.X.XX.X..X....XX",
+    "X.XXX.X..X.X.X.X.XXX.",
+    "X.XXX.X.XX..X.X..X..X",
+    "X.....X....X.X..X..XX",
+    "XXXXXXX.XXX.XXX.XX..X"
+]
+
+// 矩阵 → 灰度字节串（每个模块放大 scale 像素，四周留 quiet 个模块的静区）
+//   静区不是"好看"：定位图案外侧必须有 ≥4 模块空白，否则 quirc 找不到码。
+func render(int scale, int quiet): string {
+    int n = MODS.len()
+    int side = (n + quiet * 2) * scale
+    Array[int] px = []
+    var y = 0
+    while y < side {
+        int my = y / scale - quiet
+        var x = 0
+        while x < side {
+            int mx = x / scale - quiet
+            var dark = false
+            if my >= 0 and my < n and mx >= 0 and mx < n {
+                dark = MODS[my].byte(mx) == 88    // 88 = 'X'
+            }
+            px.add(if dark then 0 else 255)
+            x = x + 1
+        }
+        y = y + 1
+    }
+    return strings.from_bytes(px)
+}
+
+// 灰度 → ARGB8888（内存序 B,G,R,A）—— 模拟 SDL 截屏/PNG 解出来的那种缓冲
+func renderARGB(string gray, int side): string {
+    Array[int] px = []
+    var i = 0
+    while i < side * side {
+        int v = gray.byte(i)
+        px.add(v)      // B
+        px.add(v)      // G
+        px.add(v)      // R
+        px.add(255)    // A
+        i = i + 1
+    }
+    return strings.from_bytes(px)
+}
+
+func fail(string msg) {
+    print("[FAIL] " + msg)
+    _exit(1)
+}
+
+main() {
+    print("lib  = " + qr.libName())
+    print("path = " + qr.libPath())
+    if not qr.available() {
+        fail("找不到原生库 —— 先跑 build\\leno_module\\LenoQR\\src\\build_dll.bat")
+    }
+    print("quirc = " + qr.version() + " · abi = " + _str(qr.abi()))
+    if qr.abi() != 1 { fail("ABI 不符（期望 1，实际 " + _str(qr.abi()) + "）") }
+
+    int scale = 4
+    int quiet = 4
+    int n = MODS.len()
+    int side = (n + quiet * 2) * scale
+
+    string g = render(scale, quiet)
+    if g.byte_len() != side * side { fail("灰度缓冲长度不符") }
+
+    Ptr[u8] buf = ffi.malloc(side * side)
+    if buf == null { fail("ffi.malloc 失败") }
+    ffi.write_bytes(buf, 0, g)
+
+    var r = qr.decodeGray(buf, side, side, side)
+    ffi.free(buf)
+
+    bool found = r.found as bool
+    string text = r.text as string
+    string err = r.err as string
+
+    if not found {
+        fail("没识别到二维码（err=\"" + err + "\"）")
+    }
+    print("decoded = \"" + text + "\"  (" + _str(r.len) + " 字节)")
+    if text != "LENOQR TEST 001" {
+        fail("内容不符：期望 \"LENOQR TEST 001\"")
+    }
+
+    // ARGB8888 路径（真实用法：SDL3 的 surf 是 B,G,R,A 字节序）+ 内部灰度转换
+    string argb = renderARGB(g, side)
+    if argb.byte_len() != side * side * 4 { fail("ARGB 缓冲长度不符") }
+    Ptr[u8] ab = ffi.malloc(side * side * 4)
+    if ab == null { fail("ffi.malloc 失败（ARGB）") }
+    ffi.write_bytes(ab, 0, argb)
+    var ra = qr.decodeARGB(ab, side, side, side * 4)
+    ffi.free(ab)
+    if not (ra.found as bool) { fail("ARGB 路径没识别到二维码") }
+    if (ra.text as string) != "LENOQR TEST 001" { fail("ARGB 路径内容不符") }
+
+    // 反向对照：全白图 ⇒ 必须 found=false 且不报错（证明"没码"与"出错"是两件事）
+    Array[int] white = []
+    var i = 0
+    while i < 64 * 64 { white.add(255); i = i + 1 }
+    string w = strings.from_bytes(white)
+    Ptr[u8] wb = ffi.malloc(64 * 64)
+    ffi.write_bytes(wb, 0, w)
+    var r2 = qr.decodeGray(wb, 64, 64, 64)
+    ffi.free(wb)
+    if r2.found as bool { fail("空白图上不该识别出二维码") }
+    if (r2.err as string) != "" { fail("空白图应返回 err=\"\"（未找到 ≠ 错误），实际：" + (r2.err as string)) }
+
+    print("test_decode_gray passed")
+}

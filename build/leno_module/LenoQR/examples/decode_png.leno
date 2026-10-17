@@ -1,0 +1,48 @@
+// examples/decode_png.leno -- 从 PNG 图片里识别二维码
+//
+// 跑法（仓库根目录）：
+//     build\leno.exe build\leno_module\LenoQR\examples\decode_png.leno 二维码.png
+//
+// 为什么这里要 import "SDL3"：LenoQR 的识别入口只吃**像素**，不碰图片格式
+//   （保持原生库只有一个 ~70KB 的 quirc，而不是再塞一个解码器）。
+//   PNG/JPEG 的解码交给 LenoSDL3 的 pngFileToPixels —— 它顺手统一成 ARGB8888，
+//   正好是 decodeARGB 的输入口径。
+//   · 只扫二维码、不加载 SDL 窗口的应用，也可以自己用别的库解像素；
+//   · 屏幕框选识别：LenoSDL3.captureScreen()（非 Windows）/ LenoWin32.captureScreen()
+//     （Windows）返回同形 Dict ⇒ 直接把它喂给 decodeARGB 即可。
+import "QR" as qr
+import "SDL3" as SDL3
+import ffi
+
+main() {
+    Array[string] args = _args()
+    if args.len() < 1 {
+        print("用法: leno.exe decode_png.leno <图片.png>")
+        return
+    }
+    string path = args[0]
+
+    var d = SDL3.pngFileToPixels(path)
+    if d.len() == 0 {
+        print("读图失败（文件不存在 / 不是 PNG / SDL_image 加载失败）: " + path)
+        return
+    }
+
+    int w = d["w"] as int
+    int h = d["h"] as int
+    int pitch = d["pitch"] as int
+    Ptr[u8] px = d["pixels"] as Ptr[u8]
+
+    var r = qr.decodeARGB(px, w, h, pitch)
+    ffi.free(px)          // pngFileToPixels 的 pixels 是 ffi.malloc 的，调用方负责 free
+
+    if (r.err as string) != "" {
+        print("[错误] " + (r.err as string))
+        return
+    }
+    if not (r.found as bool) {
+        print("图里没有二维码: " + path)
+        return
+    }
+    print("识别结果: " + (r.text as string))
+}

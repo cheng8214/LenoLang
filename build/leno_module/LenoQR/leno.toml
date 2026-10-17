@@ -1,0 +1,22 @@
+[package]
+name = "LenoQR"
+version = "0.1.0"
+description = "Leno QR module: pure-Leno encoder + quirc-backed decoder"
+authors = ""
+license = "Apache-2.0"
+
+[modules]
+root = "lib"
+
+# 原生库：只声明**随包实际分发**的文件（打包时按当前平台键复制到 exe 同目录）。
+# 声明了而文件不存在 ⇒ 打包直接报错，故本包未随附的平台不列键。
+#
+# 产物来自 src/build_dll.bat（Windows）与 src/build_so.sh（Linux/macOS）：
+#   · Windows：lib/quirc.dll    —— 已随包提供 ✓
+#   · POSIX  ：lib/quirc.so     —— 本机（Windows）无法产出，需在目标平台跑一次
+#                                  src/build_so.sh 后再补下面两行（名字同 SDL3 的
+#                                  mac = "lib/SDL3.so" 口径：macOS 也用 .so）：
+#                                    linux = "lib/quirc.so"
+#                                    mac   = "lib/quirc.so"
+[native-libs.quirc]
+win   = "lib/quirc.dll"

@@ -1,0 +1,94 @@
+// qr_decode.leno -- 识别（quirc 后端）
+//
+// 返回口径统一为 Dict（与 LenoSDL3 的 capture 系列同一习惯）：
+//   {found: bool, text: string, len: int, err: string}
+//   · found=true  ⇒ text 是二维码载荷（UTF-8/ASCII 字节，按原样转成 Leno string）
+//   · found=false ⇒ err 为空字符串 = "图里没有二维码"（正常情形，不是错误）
+//                 ⇒ err 非空     = 真错误（库没编 / ABI 不符 / 参数非法 …）
+// 为什么不抛异常：扫一张截图没扫到码是**日常**，不是异常。
+//
+// ⚠ 本文件**不碰 clib 句柄**（跨文件把 clib 当返回类型会被当成 struct ⇒
+//   方法查找失败 ✗）⇒ 一切原生调用都走 qr_native 的 int 包装。
+import ffi
+import "qr_native.leno" as nat
+
+// 灰度缓冲（每像素 1 字节，0=黑 255=白）→ {found,text,len,err}
+//   stride = 每行字节数（>= w）
+export func decodeGray(Ptr[u8] gray, int w, int h, int stride): Dict {
+    if gray == null { return _err("像素指针为 null") }
+    if w <= 0 or h <= 0 or stride < w { return _err("参数非法：w/h/stride 不合法") }
+    return _run(gray, w, h, stride, 0)
+}
+
+// ARGB8888（内存序 B,G,R,A —— SDL 的 PIXELFORMAT_ARGB8888 在小端机就是这个）
+//   pitch = 每行字节数（SDL surf 的 pitch，通常 = w*4）
+export func decodeARGB(Ptr[u8] px, int w, int h, int pitch): Dict {
+    if px == null { return _err("像素指针为 null") }
+    if w <= 0 or h <= 0 or pitch < w * 4 { return _err("参数非法：w/h/pitch 不合法") }
+    return _run(px, w, h, pitch, 4)
+}
+
+// RGB24（内存序 B,G,R，如 PNG 解码后未转格式的 24 位缓冲）
+export func decodeRGB24(Ptr[u8] px, int w, int h, int pitch): Dict {
+    if px == null { return _err("像素指针为 null") }
+    if w <= 0 or h <= 0 or pitch < w * 3 { return _err("参数非法：w/h/pitch 不合法") }
+    return _run(px, w, h, pitch, 3)
+}
+
+// ==================== 内部 ====================
+
+// kind: 0 = 灰度（此时 pitch 参数里装的是 stride），4 = ARGB8888，3 = RGB24
+func _run(Ptr[u8] px, int w, int h, int pitch, int kind): Dict {
+    string why = _env_error()
+    if why != "" { return _err(why) }
+
+    int cap = nat.max_payload()
+    if cap <= 0 { return _err("原生库返回的 max_payload 非法：" + _str(cap)) }
+
+    Ptr[u8] out = ffi.malloc(cap)
+    if out == null { return _err("分配输出缓冲失败（" + _str(cap) + " 字节）") }
+
+    int n = 0
+    if kind == 0 {
+        n = nat.scan_gray(px, w, h, pitch, out, cap)   // 灰度：pitch 就是 stride
+    } else if kind == 4 {
+        n = nat.scan_argb(px, w, h, pitch, out, cap)
+    } else {
+        n = nat.scan_rgb24(px, w, h, pitch, out, cap)
+    }
+
+    var r = _collect(out, n)
+    ffi.free(out)
+    return r
+}
+
+// 原生库可用性 + ABI 握手。返回空串 = 一切就绪；否则是可执行的错误文案。
+func _env_error(): string {
+    if not nat.available() {
+        return "加载原生库 " + nat.lib_name() + " 失败：先跑 src/build_dll.bat（POSIX 跑 src/build_so.sh）；"
+            + "该库必须与 lib\\qr_native.leno 同目录，或放在 exe 同目录（-p 打包时由 leno.toml 自动内嵌）"
+    }
+    int a = nat.abi()
+    if a == 0 {
+        return "加载原生库失败：" + nat.path() + "（DLL 与 exe 位数是否一致？）"
+    }
+    if a != nat.ABI {
+        return "原生库 ABI 不匹配（库=" + _str(a) + "，模块=" + _str(nat.ABI) + "）⇒ 重跑 src/build_dll.bat"
+    }
+    return ""
+}
+
+func _collect(Ptr[u8] out, int n): Dict {
+    if n > 0 {
+        return {found: true, text: ffi.read_bytes(out, 0, n), len: n, err: ""}
+    }
+    if n == 0 { return {found: false, text: "", len: 0, err: ""} }
+    if n == nat.ERR_NO_LIB { return _err(_env_error()) }
+    if n == nat.ERR_ARGS { return _err("参数非法（原生库返回 -2：w/h/stride/pitch 不合法）") }
+    if n == nat.ERR_MEM { return _err("quirc 初始化或内存分配失败（返回 -3）") }
+    return _err("未知返回码 " + _str(n))
+}
+
+func _err(string msg): Dict {
+    return {found: false, text: "", len: 0, err: msg}
+}

@@ -1,0 +1,120 @@
+// qr_native.leno -- quirc 原生库的 clib 声明 + 加载
+//
+// 唯一事实来源：src/leno_qr.c 的导出函数。改这里的签名必须同步改那边，
+// 反之亦然（ABI 常量就是为了让"版本对不上"变成响亮报错而不是静默错值）。
+import ffi
+
+// ==================== clib ====================
+// 约定（与 src/leno_qr.c 文件头逐字一致）：
+//   leno_qr_scan_* 返回值：>=0 = 写进 out 的字节数（0 = 图里没有二维码）；
+//                         -2 = 参数非法；-3 = quirc 初始化/内存失败
+clib quirc {
+    i32  leno_qr_abi()
+    str8 leno_qr_version()
+    i32  leno_qr_max_payload()
+    i32  leno_qr_scan_gray(Ptr[u8] gray, i32 w, i32 h, i32 stride, Ptr[u8] out, i32 cap)
+    i32  leno_qr_scan_argb(Ptr[u8] px, i32 w, i32 h, i32 pitch, i32 bpp, Ptr[u8] out, i32 cap)
+}
+
+// ==================== ABI ====================
+// 必须等于 src/leno_qr.c 里的 LENO_QR_ABI
+export var ABI = 1
+
+export var ERR_ARGS = -2
+export var ERR_MEM = -3
+export var ERR_NO_LIB = -100
+
+// ==================== 库加载 ====================
+// 文件名随平台：Windows 是 quirc.dll（src/build_dll.bat 产物），
+//   POSIX 是 quirc.so（src/build_so.sh 产物；macOS 同样产 .so，与 LenoSDL3 的
+//   mac = "lib/SDL3.so" 同一口径 ⇒ dlopen 直接可加载）
+//
+// ★ 这里**只传裸文件名**，不自己拼路径：ffi.load 的搜索顺序本身就覆盖了
+//   「当前模块目录/bin → 当前模块目录 → 所有已加载模块目录 → 单文件打包资源目录
+//    → exe 目录 → PATH」（见 src/module/ffi/ffi.c 的 ffi_load_func 注释）。
+//   quirc.dll 与**本文件同目录**（lib/）⇒ 走"当前模块目录"那条即命中 ✓
+//   （第一版我按 LenoMusic 的 find_dll 抄了一套 dirs.script_dir() 拼接 —— 那是错的：
+//     dirs.script_dir() 给的是**入口脚本**所在目录，不是模块目录，
+//     从 test/ 跑时拼出来的是 leno_module/lib/ 这个不存在的路径 ✗）
+export func lib_name(): string {
+    if _os() == "windows" { return "quirc.dll" }
+    return "quirc.so"
+}
+
+string g_name = ""
+var g_tried = false
+var g_loaded = false
+quirc g_lib = null
+
+export func lib(): quirc {
+    if not g_tried {
+        g_tried = true
+        g_name = lib_name()
+        // 加载失败 = 抛异常：这里捕获后**保持 null**，让上层给出可执行的文案
+        // （而不是把异常抛到用户面前，只看到一句英文系统错误）
+        try { g_lib = ffi.load(g_name) }
+        catch e { g_lib = null }
+        g_loaded = g_lib != null
+    }
+    return g_lib
+}
+
+// 库是否可用（= 能加载）。注意：会**真实加载一次**（结果缓存），不是只看文件在不在。
+export func available(): bool {
+    if not g_tried { lib() }
+    return g_loaded
+}
+
+// 诊断用：传给 ffi.load 的库文件名
+export func path(): string {
+    if not g_tried { lib() }
+    return g_name
+}
+
+// 原生库版本串（quirc 自己的版本，静态内存）
+export func version(): string {
+    var l = lib()
+    if l == null { return "" }
+    return l.leno_qr_version()
+}
+
+export func abi(): int {
+    var l = lib()
+    if l == null { return 0 }
+    return l.leno_qr_abi()
+}
+
+export func max_payload(): int {
+    var l = lib()
+    if l == null { return 0 }
+    return l.leno_qr_max_payload()
+}
+
+// ==================== 扫描入口（把 clib 调用关在本文件内）====================
+// 为什么不让 qr_decode.leno 直接拿 clib 句柄调：
+//   clib 类型**跨文件**当函数返回类型时，语义层会把它当成 "struct quirc"，
+//   于是 `l.leno_qr_scan_gray(...)` 报「类型 'struct quirc' 没有方法 …」✗
+//   （实测：加 use nat.quirc 也不解决）。本仓既有做法是**声明与调用同文件**
+//   （见 LenoMusic：music_core 里声明 clib 并调用，music_player 只调 core 的包装）
+//   ⇒ 这里补 3 个薄包装，qr_decode 只跟 int 打交道 ✓
+//
+// 约定：ERR_NO_LIB(-100) = 库不可用 —— 调用方要有专门的提示文案；
+//       其余返回值语义与 C 侧一致（>=0 字节数，0 没找到，-2 参数，-3 内存）
+
+export func scan_gray(Ptr[u8] gray, int w, int h, int stride, Ptr[u8] out, int cap): int {
+    var l = lib()
+    if l == null { return ERR_NO_LIB }
+    return l.leno_qr_scan_gray(gray, w, h, stride, out, cap)
+}
+
+export func scan_argb(Ptr[u8] px, int w, int h, int pitch, Ptr[u8] out, int cap): int {
+    var l = lib()
+    if l == null { return ERR_NO_LIB }
+    return l.leno_qr_scan_argb(px, w, h, pitch, 4, out, cap)
+}
+
+export func scan_rgb24(Ptr[u8] px, int w, int h, int pitch, Ptr[u8] out, int cap): int {
+    var l = lib()
+    if l == null { return ERR_NO_LIB }
+    return l.leno_qr_scan_argb(px, w, h, pitch, 3, out, cap)
+}
