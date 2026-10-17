@@ -11,12 +11,14 @@ root = "lib"
 # 原生库：只声明**随包实际分发**的文件（打包时按当前平台键复制到 exe 同目录）。
 # 声明了而文件不存在 ⇒ 打包直接报错，故本包未随附的平台不列键。
 #
-# 产物来自 src/build_dll.bat（Windows）与 src/build_so.sh（Linux/macOS）：
-#   · Windows：lib/quirc.dll    —— 已随包提供 ✓
-#   · POSIX  ：lib/quirc.so     —— 本机（Windows）无法产出，需在目标平台跑一次
-#                                  src/build_so.sh 后再补下面两行（名字同 SDL3 的
-#                                  mac = "lib/SDL3.so" 口径：macOS 也用 .so）：
-#                                    linux = "lib/quirc.so"
-#                                    mac   = "lib/quirc.so"
+# 产物来自 src/build_dll.bat（Windows）与 src/build_so.sh（Linux/macOS），
+# 两者与 LenoSDL3 / LenoWeb 同口径：**预编译的原生库一并入库**，随包分发。
+#   · Windows：lib/quirc.dll    —— 随包提供 ✓（build_dll.bat 产出）
+#   · Linux  ：lib/quirc.so     —— 随包提供 ✓（src/build_so.sh 产出，2026-10-17 本机生成）
+#   · macOS  ：**不列键** —— 随包的这个 .so 是 ELF（Linux 产物），macOS dlopen 必失败；
+#              写上 mac = "lib/quirc.so" 反倒会让"文件不存在就报错"的检查变成假通过 ✗
+#              ⇒ 待 macOS 上跑一次 src/build_so.sh 产出 Mach-O 后再补：
+#                  mac = "lib/quirc.so"
 [native-libs.quirc]
 win   = "lib/quirc.dll"
+linux = "lib/quirc.so"

@@ -10,5 +10,14 @@ root = "lib"
 
 # 原生库：只声明**随包实际分发**的文件（打包时按当前平台键复制到 exe 同目录）。
 # 声明了而文件不存在 ⇒ 打包直接报错，故本包未随附的平台不列键。
+#
+# ★ 2026-10-17 补 `linux`：此前只声明 win，而 lib/miniaudio.so 是**随包入库**的
+#   （src/build_so.sh 产出）⇒ 漏声明导致 Linux 打包**一份原生库都不复制**
+#   （[pack] 无需复制原生库），分发出的 exe 在没有源码树的机器上会直接挂在
+#   music_core.leno 的 ffi.load（实测：删掉源码树后跑打包产物报
+#   「加载库 'miniaudio.so' 失败 … 已搜索: … exe目录 …」）。
+#   exe 目录本就是 FFI 搜索路径之一 ⇒ 把库复制过去就能救 ✓
+#   macOS 不列键：本包没有 macOS 侧产物（随包这个 .so 是 Linux ELF，macOS dlopen 必失败）。
 [native-libs.miniaudio]
 win   = "lib/miniaudio.dll"
+linux = "lib/miniaudio.so"
