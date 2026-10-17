@@ -58,3 +58,15 @@ Results: 12 passed, 0 failed, 1 skipped (total 13)
 
 > 各模块 README 里的“单跑命令”仍然有效（`build\leno.exe build\leno_module\<Mod>\test\<file>.leno`），
 > 适合开发时只跑一个；提交前请跑总入口。
+
+## 什么时候才需要跑 `assert/`
+
+| 改动范围 | 要跑的 |
+|---|---|
+| 只改 `build/leno_module/**`（纯 `.leno` 模块） | **只跑模块总入口** `run_all_tests.leno` |
+| 动 `src/`（编译器 / VM / 内置模块的 C 实现，如 `sockets.c`） | `build.bat`（涉及入口行为还要 `build_vm.bat`）**+ assert 全量 460 条** |
+| 动 `assert/` 本身（新增语言级用例） | assert 全量 |
+
+理由：`assert/` 守的是“语言是否健康”（编译器/VM 语义），纯 Leno 模块改了不该让这个信号变红；
+反过来，动了 `src/` 就必须跑 —— 例如 2026-10-17 修 `sockets.send` 的截断问题时，
+因为改了 C 实现，所以重建 + assert 全量是必须的。
