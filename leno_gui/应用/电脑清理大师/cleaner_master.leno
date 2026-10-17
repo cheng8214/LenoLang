@@ -28,20 +28,25 @@ import files
 import threads
 import jsons
 import times as ti
+import "Log" as log      // 调试日志（原手写 _dlog 已收编）
 use SDL3.(Event, Renderer, Window, TitleBar, Label, Button, CheckBox, Table, ProgressBar, HBox, VBox, Scancode, Timer)
 use SDL3.RingProgress
 use rules.CleanCategory
 use reg.(RegItem, RegScan, RegBackup, RegClean)
 
-// ==================== 调试日志（--autoclean 用；主线程+worker 都可能调 ⇒ try/catch 兜底） ====================
+// ==================== 调试日志（--autoclean 用；主线程+worker 都可能调） ====================
+// 2026-10-17：手写的 open("a")+writeln+close+try/catch 收编到 LenoLog
+//   （写失败由模块内部吞掉 ⇒ 日志不会拖垮清理流程；格式统一成「时间 [等级] 名字: 内容」）
+var _LOG = _mkLog()
+
+func _mkLog(): Dict {
+    var l = log.create("cleaner", 10)        // 10 = DEBUG（默认参数只能写字面量）
+    log.addFile(l, dirs.join(_tmpdir(), "cmaster_debug.log"))
+    return l
+}
+
 func _dlog(string s) {
-    try {
-        // ★ 2026-10-01 换 `dirs.join`：原先写死 `"\\"` ⇒ Linux 下会生成一个名叫 `\cmaster_debug.log` 的怪文件 ✗
-        string p = dirs.join(_tmpdir(), "cmaster_debug.log")
-        var f = files.open(p, "a")
-        f.writeln(s)
-        f.close()
-    } catch e { return }    // 日志失败无处可报：写 return 表明有意忽略（体非空 ⇒ 不触发「空catch吞异常」提示 ✓）
+    log.debug(_LOG, s)
 }
 
 // ==================== 线程入口（具名 ✓；参数纯数组/字符串 ⇒ 可跨线程 ✓） ====================

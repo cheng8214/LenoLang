@@ -50,12 +50,39 @@ export func logAt(Dict lg, int lv, string msg) {
     if lg["console"] as bool { print(line) }
     Array[string] fs = lg["files"] as Array[string]
     for fs to p {
-        var f = files.open(p, "a")
-        if f != null {
-            f.writeln(line)
-            f.close()
+        // 日志失败**不能拖垮业务**（磁盘满 / 权限 / 文件被占用 / 目录被删）
+        // —— 这是从各应用"手写 _dlog + try/catch 吞异常"里提炼出来的硬要求
+        try {
+            var f = files.open(p, "a")
+            if f != null {
+                f.writeln(line)
+                f.close()
+            }
+        } catch e {
+            continue
         }
     }
+}
+
+// 原样写一行（**不加**时间戳/等级/名字）—— 给"日志行格式已经定死、且被外部解析"的
+//   调用方用：它们要的是"写文件不抛异常"，不是"统一的日志格式"。
+// 返回 true = 至少写成功一个目的地（便于调用方保留原先的"换路径重试"逻辑）
+export func raw(Dict lg, string line): bool {
+    var wrote = false
+    Array[string] fs = lg["files"] as Array[string]
+    for fs to p {
+        try {
+            var f = files.open(p, "a")
+            if f != null {
+                f.writeln(line)
+                f.close()
+                wrote = true
+            }
+        } catch e {
+            continue
+        }
+    }
+    return wrote
 }
 
 export func debug(Dict lg, string msg) { logAt(lg, DEBUG, msg) }
