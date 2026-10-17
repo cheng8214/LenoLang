@@ -1505,26 +1505,23 @@ export func fetchSitemapUrls(string siteUrl, string userAgent): Array[string] {
 }
 
 // ==================== 数据落地：CSV ====================
-// 爬虫最常见的出口是"一张表"，此前只能靠 files.write 自己拼 —— 引号/逗号/换行
-// 一旦进到字段里就会把表格撑坏，所以这里提供规范转义。
+// **实现已收编到独立模块 LenoCSV**（2026-10-17）：这里只保留旧签名做转发，
+//   让 web.toCsv / web.csvField / web.writeCsv 的既有调用点（含 examples）零改动。
+// 为什么值得收编：这套转义逻辑与 LenoCSV 完全同源（RFC 4180），留着就是第二份要同步的实现。
+//
+// ⚠ 有一个**刻意保留的旧差异**：本模块的 toCsv 以 "\r\n" **结尾**（老调用方按行拼接），
+//   而 LenoCSV.encode 不写尾部换行 ⇒ 这里补一个；空行集合仍返回 "\r\n"（保持逐字节兼容）。
+import "CSV" as csvlib
 
-// 转义单个字段：含 , " 换行 时用双引号包裹，内部双引号双写（RFC 4180）
+// 转义单个字段：用 1×1 表走同一套编码器（口径严格一致；含 , " 换行 时才加引号）
 export func csvField(string v): string {
-    if not (strings.has(v, ",") or strings.has(v, "\"") or strings.has(v, "\n") or strings.has(v, "\r")) {
-        return v
-    }
-    return "\"" + v.replace("\"", "\"\"") + "\""
+    return csvlib.encode([[v]], ",", false)
 }
 
-// 行集合 → CSV 文本（CRLF 行尾，Excel 友好）
+// 行集合 → CSV 文本（CRLF 行尾 + 结尾换行，Excel 友好）
 export func toCsv(Array[Array[string]] rows): string {
-    Array[string] lines = []
-    for rows to row {
-        Array[string] cells = []
-        for row to cell { cells.add(csvField(cell)) }
-        lines.add(strings.join(cells, ","))
-    }
-    return strings.join(lines, "\r\n") + "\r\n"
+    if rows.len() == 0 { return "\r\n" }
+    return csvlib.encode(rows, ",", true) + "\r\n"
 }
 
 // 写 CSV 文件，返回写入的数据行数（不含表头）。
