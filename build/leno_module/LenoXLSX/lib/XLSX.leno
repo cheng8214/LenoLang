@@ -1,0 +1,61 @@
+// XLSX.leno -- LenoXLSX entry point（纯 Leno，无原生库）
+//
+// 用法：
+//   import "XLSX" as xlsx
+//
+//   var wb = xlsx.blank()
+//   xlsx.addSheet(wb, "数据", rows)              // rows: Array[Array[string]]（文本）
+//   xlsx.addSheet(wb, "数值", nums, true)        // numeric=true：纯整数写成数字单元格
+//   xlsx.save("out.xlsx", wb)
+//
+//   var r = xlsx.read("out.xlsx")                // {ok, sheets:[{name, rows}]}
+//   for r.sheets to s { print(s.name + "  " + _str(s.rows.len()) + " 行") }
+//
+// 边界（v0.1，明确写下来）：
+//   · 写：单文件多 sheet；**不支持**样式（字体/颜色/列宽/合并单元格/公式/日期格式）
+//   · 写：小数、日期、带前导零的编号都按**文本**写（避免"看着像数字其实错"）
+//   · 读：数值原样返回字符串；日期读到的是 Excel 序列号（没有样式就无法还原）
+//   · 读：只认 sheet 数据与共享字符串；图片/图表/数据透视表一律忽略
+//   · 容器：LenoZip 写的是 stored（不压缩），xlsx 会比 Excel 存的大一些
+import files
+import "xlsx_write.leno" as w
+import "xlsx_read.leno" as r
+
+// ==================== 写 ====================
+// 空工作簿（真正的 sheet 由 addSheet 加；一个都没有时会自动补 Sheet1）
+export func blank(): Dict {
+    return {sheets: []}
+}
+
+export func addSheet(Dict wb, string name, Array[Array[string]] rows, bool numeric = false) {
+    Array[Dict] sheets = wb["sheets"] as Array[Dict]
+    sheets.add({name: name, rows: rows, numeric: numeric})
+    wb.set("sheets", sheets)
+}
+
+export func encode(Dict wb): string { return w.encode(wb) }
+
+export func save(string path, Dict wb): bool {
+    files.write(path, w.encode(wb))
+    return files.exists(path)
+}
+
+// ==================== 读 ====================
+export func readBytes(string raw): Dict { return r.decode(raw) }
+export func read(string path): Dict { return r.load(path) }
+
+export func sheetNames(Dict book): Array[string] {
+    Array[string] out = []
+    if not (book["ok"] as bool) { return out }
+    Array[Dict] ss = book["sheets"] as Array[Dict]
+    for ss to s { out.add(s["name"] as string) }
+    return out
+}
+
+// 第 i 个 sheet 的行（越界返回空数组）
+export func rowsOf(Dict book, int i): Array[Array[string]] {
+    if not (book["ok"] as bool) { return [] }
+    Array[Dict] ss = book["sheets"] as Array[Dict]
+    if i < 0 or i >= ss.len() { return [] }
+    return ss[i]["rows"] as Array[Array[string]]
+}

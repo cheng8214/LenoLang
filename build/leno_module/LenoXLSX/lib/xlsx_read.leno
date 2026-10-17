@@ -1,0 +1,149 @@
+// xlsx_read.leno -- 读 xlsx（纯 Leno；容器用 LenoZip，zip 内 deflate 走 LenoCompress）
+//
+// 支持的数据来源（真实 xlsx 的两种主流写法都要认）：
+//   · t="inlineStr"  → <is><t>文本</t></is>（本模块写出的就是这种）
+//   · t="s"          → 共享字符串表 xl/sharedStrings.xml 的下标
+//   · t="b"          → 布尔（1/0 ⇒ true/false）
+//   · t="str"        → 公式的字符串结果
+//   · 无 t           → 数字（原样当字符串返回）
+//
+// 返回：{ok, err, sheets: [{name, rows: Array[Array[string]]}]}
+//   · 行/列按 `r` 属性定位（稀疏行、空单元格都能对齐）
+//   · 所有值统一成 string（数字不转 float：Excel 里的 1 与 1.0 语义不同，交给调用方判断）
+import strings
+import files
+import "Zip" as zip
+import "xlsx_xml.leno" as x
+
+func _err(string msg): Dict {
+    return {ok: false, err: msg, sheets: []}
+}
+
+// 从解开的 zip 里取部件文本（不存在返回 ""）
+func entryOf(Dict z, string name): string {
+    Array[Dict] es = z["entries"] as Array[Dict]
+    for es to e {
+        if (e["name"] as string) == name { return e["data"] as string }
+    }
+    return ""
+}
+
+func _resolve(string target): string {
+    if strings.starts_with(target, "/") { return target.byte_slice(1, target.byte_len() - 1) }
+    if strings.starts_with(target, "xl/") { return target }
+    return "xl/" + target
+}
+
+// 共享字符串表：每个 <si> 里可能有多个 <t>（富文本分段）⇒ 拼接
+func _sharedStrings(string xml): Array[string] {
+    Array[string] out = []
+    for x.blocks(xml, "si") to si {
+        var txt = ""
+        // ⚠ 必须 unescape：XML 里的 &amp; 等实体不解就是"照抄转义"
+        for x.blocks(x.inner(si, "si"), "t") to t { txt = txt + x.unescape(x.inner(t, "t")) }
+        out.add(txt)
+    }
+    return out
+}
+
+func _parseSheet(string xml, Array[string] shared): Array[Array[string]] {
+    Array[Array[string]] rows = []
+    for x.blocks(xml, "row") to rb {
+        string rAttr = x.attr(rb, "r")
+        var rIdx = rows.len()
+        if rAttr != "" { rIdx = _int(rAttr) - 1 }
+        if rIdx < 0 { rIdx = 0 }
+        while rows.len() <= rIdx {
+            Array[string] blankRow = []
+            rows.add(blankRow)
+        }
+        Array[string] cur = rows[rIdx]
+
+        for x.blocks(rb, "c") to cb {
+            string ref = x.attr(cb, "r")
+            var colIdx = cur.len()
+            if ref != "" {
+                int ci = x.colOfRef(ref)
+                if ci >= 0 { colIdx = ci }
+            }
+            while cur.len() <= colIdx { cur.add("") }
+
+            string t = x.attr(cb, "t")
+            var val = ""
+            if t == "inlineStr" {
+                var txt = ""
+                for x.blocks(x.inner(cb, "c"), "t") to tb { txt = txt + x.unescape(x.inner(tb, "t")) }
+                val = txt
+            } else {
+                var vtext = ""
+                Array[string] vs = x.blocks(cb, "v")
+                if vs.len() > 0 { vtext = x.inner(vs[0], "v") }
+                if t == "s" {
+                    var si = 0
+                    if vtext != "" { si = _int(vtext) }
+                    if si >= 0 and si < shared.len() { val = shared[si] }
+                } else if t == "b" {
+                    val = if vtext == "1" then "true" else "false"
+                } else {
+                    val = vtext          // 数字 / 公式字符串 / 空
+                }
+            }
+            cur[colIdx] = val
+        }
+        rows[rIdx] = cur
+    }
+    return rows
+}
+
+export func decode(string raw): Dict {
+    var z = zip.decode(raw)
+    if not (z["ok"] as bool) {
+        return _err("不是有效的 xlsx（zip 层失败）：" + (z["err"] as string))
+    }
+
+    string ssXml = entryOf(z, "xl/sharedStrings.xml")
+    Array[string] shared = []
+    if ssXml != "" { shared = _sharedStrings(ssXml) }
+
+    string wb = entryOf(z, "xl/workbook.xml")
+    if wb == "" { return _err("缺少 xl/workbook.xml（不是 xlsx？）") }
+
+    Dict rels = {}
+    string relXml = entryOf(z, "xl/_rels/workbook.xml.rels")
+    for x.blocks(relXml, "Relationship") to r {
+        rels.set(x.attr(r, "Id"), x.attr(r, "Target"))
+    }
+
+    Array[Dict] out = []
+    var idx = 0
+    for x.blocks(wb, "sheet") to sh {
+        idx = idx + 1
+        string nm = x.attr(sh, "name")
+        string rid = x.attr(sh, "r:id")
+        string target = rels.get(rid, "") as string
+        var path = ""
+        if target != "" { path = _resolve(target) }
+        else {
+            // 有些生成器不写 rels（少见）⇒ 退回按序号猜
+            path = "xl/worksheets/sheet" + _str(idx) + ".xml"
+        }
+        string sheetXml = entryOf(z, path)
+        Array[Array[string]] rows = []
+        if sheetXml != "" { rows = _parseSheet(sheetXml, shared) }
+        out.add({name: nm, rows: rows})
+    }
+
+    if out.len() == 0 { return _err("workbook 里没有任何 sheet") }
+    return {ok: true, err: "", sheets: out}
+}
+
+export func load(string path): Dict {
+    if not files.exists(path) { return _err("文件不存在：" + path) }
+    var text = ""
+    try {
+        text = files.read(path)
+    } catch ex {
+        return _err("读文件失败：" + path)
+    }
+    return decode(text)
+}

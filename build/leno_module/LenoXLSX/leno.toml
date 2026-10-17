@@ -1,0 +1,11 @@
+[package]
+name = "LenoXLSX"
+version = "0.1.0"
+description = "Leno XLSX module: minimal Excel workbook read/write on top of LenoZip (pure Leno)"
+authors = ""
+license = "Apache-2.0"
+
+[modules]
+root = "lib"
+
+# 纯 Leno，无原生库；依赖 LenoZip（容器）与 LenoCompress（zip 内 deflate 条目解压）

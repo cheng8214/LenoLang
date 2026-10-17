@@ -1,0 +1,258 @@
+// xlsx_xml.leno -- xlsx 需要的极小 XML 工具（纯 Leno）
+//
+// 为什么不上通用 XML 解析器：xlsx 里我们只读三种形状 ——
+//   <si><t>…</t></si>（共享字符串）、<row r="1"><c r="A1" t="s"><v>0</v></c></row>、
+//   <sheet name="…" r:id="rId1"/>。写一个通用解析器（命名空间、CDATA、实体、DTD…）
+//   成本远大于收益，而且新增的抽象以后还得维护。
+// 所以这里只做"按标签名切块 + 取属性 + 取内部文本"，并**明确记录边界**：
+//   · 假定标签名后跟空格、'>' 或 '/'（正常 XML 都满足）
+//   · 不处理 CDATA、注释里的同名标签（xlsx 的这几种部件里不会出现）
+//   · 实体只解 5 个命名实体 + 数字实体（&#NN; / &#xHH;）
+import strings
+
+// ==================== 转义 / 反转义 ====================
+export func escape(string s): string {
+    // 快路径：绝大多数单元格不含特殊字符 ⇒ 直接返回原串（避免每格建一次数组）
+    var need = false
+    for s.to_bytes() to b {
+        if b == 38 or b == 60 or b == 62 or b == 34 or b == 39 { need = true; break }
+    }
+    if not need { return s }
+
+    Array[int] out = []
+    for s.to_bytes() to b {
+        if b == 38 { out.add(38); out.add(97); out.add(109); out.add(112); out.add(59) }        // &amp;
+        else if b == 60 { out.add(38); out.add(108); out.add(116); out.add(59) }                 // &lt;
+        else if b == 62 { out.add(38); out.add(103); out.add(116); out.add(59) }                 // &gt;
+        else if b == 34 { out.add(38); out.add(113); out.add(117); out.add(111); out.add(116); out.add(59) }  // &quot;
+        else if b == 39 { out.add(38); out.add(97); out.add(112); out.add(111); out.add(115); out.add(59) }   // &apos;
+        else { out.add(b) }
+    }
+    return strings.from_bytes(out)
+}
+
+// 解命名实体 + 数字实体；不认识的实体原样保留（不吞数据）
+export func unescape(string s): string {
+    // 快路径：没有 '&' 就没有实体
+    Array[int] bs = s.to_bytes()
+    var hasAmp = false
+    for bs to b {
+        if b == 38 { hasAmp = true; break }
+    }
+    if not hasAmp { return s }
+
+    Array[int] out = []
+    var i = 0
+    int n = bs.len()
+    while i < n {
+        if bs[i] != 38 {                      // '&'
+            out.add(bs[i])
+            i = i + 1
+            continue
+        }
+        // 找分号（最多 10 字节）
+        var j = i + 1
+        var semi = -1
+        while j < n and j <= i + 10 {
+            if bs[j] == 59 { semi = j; break }
+            j = j + 1
+        }
+        if semi < 0 {
+            out.add(38)
+            i = i + 1
+            continue
+        }
+        string ent = strings.byte_slice(s, i + 1, semi - 1)
+        if ent == "amp" { out.add(38) }
+        else if ent == "lt" { out.add(60) }
+        else if ent == "gt" { out.add(62) }
+        else if ent == "quot" { out.add(34) }
+        else if ent == "apos" { out.add(39) }
+        else if ent.byte(0) == 35 {          // '#'
+            var code = 0
+            if ent.byte_len() > 1 and (ent.byte(1) == 120 or ent.byte(1) == 88) {
+                // &#xHH;
+                var k = 2
+                while k < ent.byte_len() {
+                    code = code * 16 + _hexval(ent.byte(k))
+                    k = k + 1
+                }
+            } else {
+                code = _int(strings.byte_slice(ent, 1, ent.byte_len() - 1))
+            }
+            if code > 0 and code <= 1114111 {
+                for strings.char(code).to_bytes() to b { out.add(b) }
+            }
+        } else {
+            // 不认识的实体：原样保留整段
+            for i:semi to b { out.add(bs[b]) }
+        }
+        i = semi + 1
+    }
+    return strings.from_bytes(out)
+}
+
+func _hexval(int b): int {
+    if b >= 48 and b <= 57 { return b - 48 }
+    if b >= 97 and b <= 102 { return b - 87 }
+    if b >= 65 and b <= 70 { return b - 55 }
+    return 0
+}
+
+// ==================== 单元格引用 ====================
+// 0 → A，25 → Z，26 → AA（Excel 列名是"26 进制但无 0"）
+export func colName(int idx): string {
+    var v = idx
+    Array[int] out = []
+    while v >= 0 {
+        int r = v % 26
+        out.add(65 + r)
+        v = v / 26 - 1
+    }
+    // 逆序
+    Array[int] rev = []
+    var i = out.len() - 1
+    while i >= 0 {
+        rev.add(out[i])
+        i = i - 1
+    }
+    return strings.from_bytes(rev)
+}
+
+export func cellRef(int row0, int col0): string {
+    return colName(col0) + _str(row0 + 1)
+}
+
+// "AA12" → 列下标 26（返回 -1 表示不合法）
+export func colOfRef(string ref): int {
+    Array[int] bs = ref.to_bytes()
+    var col = 0
+    var got = false
+    for bs to b {
+        if b >= 65 and b <= 90 {
+            col = col * 26 + (b - 64)
+            got = true
+        } else if b >= 97 and b <= 122 {
+            col = col * 26 + (b - 96)
+            got = true
+        } else {
+            break
+        }
+    }
+    if not got { return -1 }
+    return col - 1
+}
+
+// "AA12" → 行下标 11（返回 -1 表示没有数字部分）
+export func rowOfRef(string ref): int {
+    Array[int] bs = ref.to_bytes()
+    var row = 0
+    var got = false
+    for bs to b {
+        if b >= 48 and b <= 57 {
+            row = row * 10 + (b - 48)
+            got = true
+        }
+    }
+    if not got { return -1 }
+    return row - 1
+}
+
+// ==================== 按标签切块 ====================
+// 在**已转成字节数组**的 haystack 里找 needle（O(n·m)，但只转一次）
+//   ⚠ 不要写成"每次调用都 hay.to_bytes()"：读 1000 格时那样会把整份 XML 反复转上万次，
+//     92ms 里 90% 都花在转换上（实测改为"调用方转一次 + 传数组"后降到 ~10ms）
+func _find_bytes(Array[int] h, Array[int] nd, int from): int {
+    int hn = h.len()
+    int nn = nd.len()
+    if nn == 0 { return -1 }
+    var i = from
+    while i + nn <= hn {
+        var hit = true
+        for 0:nn-1 to k {
+            if h[i + k] != nd[k] { hit = false; break }
+        }
+        if hit { return i }
+        i = i + 1
+    }
+    return -1
+}
+
+// 返回所有 `<tag ...>…</tag>` 的**整段**（自闭合只返回标签本身）
+export func blocks(string xml, string tag): Array[string] {
+    Array[string] out = []
+    Array[int] bs = xml.to_bytes()
+    Array[int] ob = ("<" + tag).to_bytes()
+    Array[int] cb = ("</" + tag + ">").to_bytes()
+    int n = bs.len()
+    var pos = 0
+    while pos < n {
+        int open = _find_bytes(bs, ob, pos)
+        if open < 0 { break }
+        int after = open + ob.len()
+        if after >= n { break }
+        int c = bs[after]
+        if not (c == 32 or c == 62 or c == 47 or c == 9 or c == 10 or c == 13) {
+            pos = open + 1
+            continue
+        }
+        var gt = -1
+        var i = after
+        while i < n {
+            if bs[i] == 62 { gt = i; break }
+            i = i + 1
+        }
+        if gt < 0 { break }
+        // 自闭合？
+        if bs[gt - 1] == 47 {
+            out.add(strings.byte_slice(xml, open, gt))
+            pos = gt + 1
+            continue
+        }
+        int close = _find_bytes(bs, cb, gt + 1)
+        if close < 0 { break }
+        int closeEnd = close + cb.len() - 1
+        out.add(strings.byte_slice(xml, open, closeEnd))
+        pos = closeEnd + 1
+    }
+    return out
+}
+
+// 取一个标签块**内部**的文本（不含标签本身）；自闭合返回 ""
+export func inner(string block, string tag): string {
+    Array[int] bs = block.to_bytes()
+    var i = 0
+    while i < bs.len() and bs[i] != 62 { i = i + 1 }     // '>'
+    if i >= bs.len() { return "" }
+    if i > 0 and bs[i - 1] == 47 { return "" }           // "/>"
+    int start = i + 1
+    Array[int] cb = ("</" + tag + ">").to_bytes()
+    int close = _find_bytes(bs, cb, start)
+    if close <= start { return "" }
+    return strings.byte_slice(block, start, close - 1)
+}
+
+// 标签块里的属性值（名对名精确匹配；找不到返回 ""）
+export func attr(string block, string name): string {
+    Array[int] bs = block.to_bytes()
+    Array[int] nb = name.to_bytes()
+    int nn = nb.len()
+    var i = 0
+    while i < bs.len() {
+        int hit = _find_bytes(bs, nb, i)
+        if hit < 0 { return "" }
+        int eq = hit + nn
+        if eq < bs.len() and bs[eq] == 61 {              // '='
+            int q = eq + 1
+            if q < bs.len() and (bs[q] == 34 or bs[q] == 39) {
+                int quote = bs[q]
+                var end = q + 1
+                while end < bs.len() and bs[end] != quote { end = end + 1 }
+                if end <= q + 1 { return "" }
+                return unescape(strings.byte_slice(block, q + 1, end - 1))
+            }
+        }
+        i = hit + nn
+    }
+    return ""
+}

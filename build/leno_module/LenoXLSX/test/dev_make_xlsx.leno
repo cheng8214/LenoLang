@@ -1,0 +1,30 @@
+// dev_make_xlsx.leno -- 生成固定内容的 xlsx（**开发期工具，不是用例**）
+//
+// 用法：dev_make_xlsx.leno <out.xlsx>
+// 内容与 dev_crosscheck_python.py 的 EXPECT 对应
+import "XLSX" as xlsx
+
+main() {
+    Array[string] args = _args()
+    if args.len() < 1 {
+        print("用法: dev_make_xlsx.leno <out.xlsx>")
+        return
+    }
+    Array[Array[string]] rows = []
+    rows.add(["name", "note", "id"])
+    rows.add(["张三", "含 & < > \" '", "00123"])
+    rows.add(["Alice", " padded ", "42"])
+
+    Array[Array[string]] nums = []
+    nums.add(["n1", "n2"])
+    nums.add(["7", "3.5"])
+
+    var wb = xlsx.blank()
+    xlsx.addSheet(wb, "数据", rows)
+    xlsx.addSheet(wb, "数值", nums, true)
+    if not xlsx.save(args[0], wb) {
+        print("ERR 写文件失败")
+        return
+    }
+    print("OK 2")
+}

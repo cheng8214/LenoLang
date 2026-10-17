@@ -1,0 +1,33 @@
+// dev_dump.leno -- 把 xlsx 的单元格导成 TSV（**开发期工具，不是用例**）
+//
+// 用法：dev_dump.leno <in.xlsx> <out.txt>
+// 输出行：SHEET<TAB>名字 / CELL<TAB>行<TAB>列<TAB>值
+import files
+import "XLSX" as xlsx
+
+main() {
+    Array[string] args = _args()
+    if args.len() < 2 {
+        print("用法: dev_dump.leno <in.xlsx> <out.txt>")
+        return
+    }
+    var b = xlsx.read(args[0])
+    if not (b["ok"] as bool) {
+        print("ERR " + (b["err"] as string))
+        return
+    }
+    Array[Dict] ss = b["sheets"] as Array[Dict]
+    var s = ""
+    for ss to sh {
+        s = s + "SHEET\t" + (sh["name"] as string) + "\n"
+        Array[Array[string]] rows = sh["rows"] as Array[Array[string]]
+        for 0:rows.len()-1 to r {
+            Array[string] row = rows[r]
+            for 0:row.len()-1 to c {
+                s = s + "CELL\t" + _str(r) + "\t" + _str(c) + "\t" + row[c] + "\n"
+            }
+        }
+    }
+    files.write(args[1], s)
+    print("OK " + _str(ss.len()))
+}

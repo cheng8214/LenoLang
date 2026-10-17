@@ -1,0 +1,115 @@
+// LenoXLSX 0.1.0 自测：写 → 读回（多 sheet / 数字 / 中文 / 空格 / 特殊字符 / 空单元格）
+//
+// 跑法（仓库根目录）：
+//   build\leno.exe build\leno_module\LenoXLSX\test\test_xlsx.leno
+//
+// 与 Python 的交叉验证（zip 完整性 + XML 合法性 + 独立解析）见 test/dev_crosscheck_python.py
+import dirs
+import files
+import "XLSX" as xlsx
+import "Zip" as zip
+
+func fail(string msg) {
+    print("[FAIL] " + msg)
+    _exit(1)
+}
+
+func eq(string got, string want, string tag) {
+    if got != want { fail(tag + "：得到「" + got + "」期望「" + want + "」") }
+}
+
+func eqInt(int got, int want, string tag) {
+    if got != want { fail(tag + "：得到 " + _str(got) + " 期望 " + _str(want)) }
+}
+
+// 越界取格（写的时候空串不落单元格，读回来行可能变短）
+func cell(Array[Array[string]] rows, int r, int c): string {
+    if r < 0 or r >= rows.len() { return "" }
+    Array[string] row = rows[r]
+    if c < 0 or c >= row.len() { return "" }
+    return row[c]
+}
+
+main() {
+    // ---------- ① 单 sheet：文本 / 特殊字符 / 中文 / 空格 / 空串 ----------
+    Array[Array[string]] rows = []
+    rows.add(["姓名", "备注", "编号"])
+    rows.add(["张三", "含 & < > \" '", "00123"])       // 前导零必须当文本
+    rows.add(["李四", " leading and trailing ", "42"])
+    rows.add(["王五", "", "3.5"])
+    rows.add(["", "空名字", ""])
+
+    var wb = xlsx.blank()
+    xlsx.addSheet(wb, "数据", rows)
+
+    string p = dirs.join(_tmpdir(), "lenoxlsx_test.xlsx")
+    if not xlsx.save(p, wb) { fail("① save 失败") }
+    if not files.exists(p) { fail("① 文件没落盘") }
+
+    var book = xlsx.read(p)
+    if not (book["ok"] as bool) { fail("① read 失败：" + (book["err"] as string)) }
+    Array[string] names = xlsx.sheetNames(book)
+    eqInt(names.len(), 1, "① sheet 数")
+    eq(names[0], "数据", "① sheet 名")
+
+    Array[Array[string]] got = xlsx.rowsOf(book, 0)
+    eqInt(got.len(), 5, "① 行数")
+    eq(cell(got, 0, 0), "姓名", "① 表头")
+    eq(cell(got, 1, 0), "张三", "① 中文")
+    eq(cell(got, 1, 1), "含 & < > \" '", "① XML 特殊字符往返")
+    eq(cell(got, 1, 2), "00123", "① 前导零保持文本")
+    eq(cell(got, 2, 1), " leading and trailing ", "① 前后空格保留")
+    eq(cell(got, 2, 2), "42", "① 数字（文本模式）")
+    eq(cell(got, 3, 2), "3.5", "① 小数（文本模式）")
+    eq(cell(got, 4, 0), "", "① 空单元格")
+
+    // ---------- ② 多 sheet + 数字模式 ----------
+    Array[Array[string]] nums = []
+    nums.add(["整数", "小数", "编号", "负数", "超长"])
+    nums.add(["42", "3.5", "00123", "-7", "12345678901234567890"])
+
+    var wb2 = xlsx.blank()
+    xlsx.addSheet(wb2, "文本表", rows)
+    xlsx.addSheet(wb2, "数值表", nums, true)
+
+    string p2 = dirs.join(_tmpdir(), "lenoxlsx_multi.xlsx")
+    if not xlsx.save(p2, wb2) { fail("② save 失败") }
+    var book2 = xlsx.read(p2)
+    if not (book2["ok"] as bool) { fail("② read 失败：" + (book2["err"] as string)) }
+    Array[string] n2 = xlsx.sheetNames(book2)
+    eqInt(n2.len(), 2, "② sheet 数")
+    eq(n2[0], "文本表", "② 第 1 个 sheet")
+    eq(n2[1], "数值表", "② 第 2 个 sheet")
+
+    Array[Array[string]] g2 = xlsx.rowsOf(book2, 1)
+    eq(cell(g2, 1, 0), "42", "② 整数")
+    eq(cell(g2, 1, 1), "3.5", "② 小数仍是文本")
+    eq(cell(g2, 1, 2), "00123", "② 前导零不会被当数字")
+    eq(cell(g2, 1, 3), "-7", "② 负数")
+    eq(cell(g2, 1, 4), "12345678901234567890", "② 超 15 位不写数字（防精度丢失）")
+
+    files.delete(p)
+    files.delete(p2)
+
+    // ---------- ③ 空工作簿：自动补 Sheet1，仍能读回 ----------
+    var emptyBook = xlsx.readBytes(xlsx.encode(xlsx.blank()))
+    if not (emptyBook["ok"] as bool) { fail("③ 空工作簿读失败") }
+    Array[string] en = xlsx.sheetNames(emptyBook)
+    eqInt(en.len(), 1, "③ 空工作簿应自动有一个 sheet")
+    eq(en[0], "Sheet1", "③ 默认 sheet 名")
+
+    // ---------- ④ 非法输入：明确报错 ----------
+    var bad = xlsx.readBytes("not a zip at all")
+    if bad["ok"] as bool { fail("④ 非 xlsx 不该 ok=true") }
+    print("④ 非 xlsx 报错 ok：" + (bad["err"] as string))
+
+    // ---------- ⑤ 合法 zip 但缺 workbook：明确报错 ----------
+    //      （用一个只有 readme.txt 的 zip 冒充）
+    Array[Dict] fake = []
+    fake.add(zip.entry("readme.txt", "hi"))
+    var fakeBook = xlsx.readBytes(zip.encode(fake))
+    if fakeBook["ok"] as bool { fail("⑤ 缺 workbook 不该 ok=true") }
+    print("⑤ 缺 workbook 报错 ok：" + (fakeBook["err"] as string))
+
+    print("test_xlsx passed（5 组断言）")
+}

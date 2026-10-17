@@ -1,0 +1,148 @@
+// xlsx_write.leno -- 写 xlsx（纯 Leno；容器用 LenoZip，条目一律 stored）
+//
+// xlsx 的最小合法结构（Excel / WPS / openpyxl 都认）：
+//   [Content_Types].xml
+//   _rels/.rels                         → 指向 xl/workbook.xml
+//   xl/workbook.xml                     → <sheets><sheet name r:id/></sheets>
+//   xl/_rels/workbook.xml.rels          → 每个 sheet 一条 Relationship
+//   xl/worksheets/sheetN.xml            → <sheetData><row><c>…
+//
+// 取值策略：
+//   · 文本 → t="inlineStr"（**不用 sharedStrings**：省一张表与一轮索引，文件稍大）
+//   · 纯整数（可选 numeric=true）→ <v>42</v>（数字单元格，Excel 里可直接求和）
+//   · 不会自动把 "00123" 当数字（保前导零的编号），也不会把小数当数字
+//     （小数需要样式/格式支持，v0.1 先按文本写，宁可"看起来是数字"也不写错）
+import strings
+import "Zip" as zip
+import "xlsx_xml.leno" as x
+
+// Excel 的 sheet 名限制：≤31 字符，且不能含 : \ / ? * [ ]
+func safeSheetName(string name): string {
+    var s = name
+    if s.byte_len() == 0 { s = "Sheet" }
+    Array[string] bad = [":", "\\", "/", "?", "*", "[", "]"]
+    for bad to c { s = strings.replace(s, c, "_") }
+    if s.len() > 31 { s = s.slice(0, 30) }
+    return s
+}
+
+func _contentTypes(int count): string {
+    var s = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+    s = s + "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">"
+    s = s + "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>"
+    s = s + "<Default Extension=\"xml\" ContentType=\"application/xml\"/>"
+    s = s + "<Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>"
+    for 1:count to i {
+        s = s + "<Override PartName=\"/xl/worksheets/sheet" + _str(i)
+            + ".xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>"
+    }
+    s = s + "</Types>"
+    return s
+}
+
+func _rootRels(): string {
+    var s = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+    s = s + "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+    s = s + "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"xl/workbook.xml\"/>"
+    s = s + "</Relationships>"
+    return s
+}
+
+func _workbook(Array[Dict] sheets): string {
+    var s = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+    s = s + "<workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\""
+    s = s + " xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">"
+    s = s + "<sheets>"
+    for 0:sheets.len()-1 to i {
+        string nm = safeSheetName(sheets[i]["name"] as string)
+        s = s + "<sheet name=\"" + x.escape(nm) + "\" sheetId=\"" + _str(i + 1)
+            + "\" r:id=\"rId" + _str(i + 1) + "\"/>"
+    }
+    s = s + "</sheets></workbook>"
+    return s
+}
+
+func _workbookRels(int count): string {
+    var s = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+    s = s + "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+    for 1:count to i {
+        s = s + "<Relationship Id=\"rId" + _str(i)
+            + "\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\""
+            + " Target=\"worksheets/sheet" + _str(i) + ".xml\"/>"
+    }
+    s = s + "</Relationships>"
+    return s
+}
+
+func _isInt(string v): bool {
+    int n = v.byte_len()
+    if n == 0 or n > 15 { return false }         // 超过 15 位会丢精度（Excel 的数字是 double）
+    Array[int] bs = v.to_bytes()
+    var i = 0
+    if bs[0] == 45 {                              // '-'
+        if n == 1 { return false }
+        i = 1
+    }
+    if bs[i] == 48 and n - i > 1 { return false } // 前导零：保留为文本（编号 00123）
+    for i:n-1 to k {
+        if bs[k] < 48 or bs[k] > 57 { return false }
+    }
+    return true
+}
+
+func _cell(string ref, string value, bool numeric): string {
+    if value.byte_len() == 0 { return "" }        // 空串不写单元格（文件更小，读回仍是 ""）
+    if numeric and _isInt(value) {
+        return "<c r=\"" + ref + "\"><v>" + value + "</v></c>"
+    }
+    var preserve = ""
+    if value.byte(0) == 32 or value.byte(value.byte_len() - 1) == 32 {
+        preserve = " xml:space=\"preserve\""      // 前后空格不被 Excel 吃掉
+    }
+    return "<c r=\"" + ref + "\" t=\"inlineStr\"><is><t" + preserve + ">"
+        + x.escape(value) + "</t></is></c>"
+}
+
+// 追加字符串到字节缓冲（**不要**在循环里 `s = s + …`：Leno 字符串不可变，
+//   逐格拼接是 O(n²) —— 万格实测 1.8 秒；改成 Array[int] 累积后是线性）
+func _put(Array[int] out, string s) {
+    for s.to_bytes() to b { out.add(b) }
+}
+
+func _sheet(Array[Array[string]] rows, bool numeric): string {
+    Array[int] out = []
+    _put(out, "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>")
+    _put(out, "<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><sheetData>")
+    for 0:rows.len()-1 to r {
+        _put(out, "<row r=\"" + _str(r + 1) + "\">")
+        Array[string] row = rows[r]
+        for 0:row.len()-1 to c {
+            _put(out, _cell(x.cellRef(r, c), row[c], numeric))
+        }
+        _put(out, "</row>")
+    }
+    _put(out, "</sheetData></worksheet>")
+    return strings.from_bytes(out)
+}
+
+// wb = {sheets: [{name, rows: Array[Array[string]], numeric: bool}]}
+export func encode(Dict wb): string {
+    Array[Dict] sheets = wb["sheets"] as Array[Dict]
+    if sheets.len() == 0 {
+        Array[Array[string]] none = []
+        sheets = []
+        sheets.add({name: "Sheet1", rows: none, numeric: false})
+    }
+
+    Array[Dict] entries = []
+    entries.add(zip.entry("[Content_Types].xml", _contentTypes(sheets.len())))
+    entries.add(zip.entry("_rels/.rels", _rootRels()))
+    entries.add(zip.entry("xl/workbook.xml", _workbook(sheets)))
+    entries.add(zip.entry("xl/_rels/workbook.xml.rels", _workbookRels(sheets.len())))
+    for 0:sheets.len()-1 to i {
+        string nm = "xl/worksheets/sheet" + _str(i + 1) + ".xml"
+        entries.add(zip.entry(nm, _sheet(sheets[i]["rows"] as Array[Array[string]],
+                                        sheets[i]["numeric"] as bool)))
+    }
+    return zip.encode(entries)
+}
