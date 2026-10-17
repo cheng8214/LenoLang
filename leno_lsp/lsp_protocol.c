@@ -539,7 +539,9 @@ char* lsp_handle_initialize(LspServer* server, int id, JsonValue* params) {
     //     （YAGNI —— 真正会造成"陈旧"的是"exe 没重建"或"文件没保存"，两者都不是缓存的事 ✓）。
     if (server->root_path && !getenv("LENO_LSP_NO_CACHE")) {
         char root_dir[1024];
-        char cache_dir[1024];
+        // cache_dir 要比 root_dir 多留出 "\\.lenocache_lsp\\" 的长度（14 + 分隔符 + NUL）：
+        //   否则 GCC 的 -Wformat-truncation 会报"可能被截断"（构建时唯一的告警来源 ✗）
+        char cache_dir[1088];
         // ⚠ root_path 由 `rootUri` 转来、**不带尾随分隔符**（实测是 `d:/CLeno/Leno`）⇒ 得自己补一个：
         //   第一版格式串写成 `"%s.lenocache_lsp%c"` ⇒ 拼出 `d:/CLeno/Leno.lenocache_lsp\`
         //   —— 项目目录名与缓存目录名**粘连**，目录被建到**上一级**去了 ✗（实测冒烟抓到 ✓）。
