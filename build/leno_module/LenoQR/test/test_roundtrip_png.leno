@@ -73,8 +73,7 @@ main() {
 
     // ---- ③ 反向对照：把图涂白 ⇒ 必须 found=false 且不报错 ----
     Ptr[u8] blank = ffi.malloc(side * side * 4)
-    var i = 0
-    while i < side * side * 4 { ffi.write_byte(blank, i, 255); i = i + 1 }
+    for 0:side*side*4-1 to i { ffi.write_byte(blank, i, 255) }
     var nb = qr.decodeARGB(blank, side, side, side * 4)
     ffi.free(blank)
     if nb.found as bool { fail("白图上不该识别出二维码") }

@@ -33,30 +33,22 @@ func compose(Dict a, Dict b): Dict {
     int h = sa
     if sb > sa { h = sb }
     Array[int] canvas = []
-    var i = 0
-    while i < w * h { canvas.add(255); i = i + 1 }
+    for 0:w*h-1 to i { canvas.add(255) }
 
     string ga = a["gray"] as string
     string gb = b["gray"] as string
-    var y = 0
-    var x = 0
-    while y < h {
+    for 0:h-1 to y {
         // 两枚码的边长可能不同 ⇒ 各自只拷自己的行数（否则会越界读对方的缓冲）
         if y < sa {
-            x = 0
-            while x < sa {
+            for 0:sa-1 to x {
                 canvas[y * w + x] = ga.byte(y * sa + x)
-                x = x + 1
             }
         }
         if y < sb {
-            x = 0
-            while x < sb {
+            for 0:sb-1 to x {
                 canvas[y * w + (sa + gap) + x] = gb.byte(y * sb + x)
-                x = x + 1
             }
         }
-        y = y + 1
     }
     return {gray: "", side: 0, w: w, h: h, bytes: canvas, count: 2}
 }
@@ -79,14 +71,11 @@ main() {
     int w = canvas["w"] as int
     int h = canvas["h"] as int
     Array[int] bytes = canvas["bytes"] as Array[int]
-    var i = 0
     Ptr[u8] buf = ffi.malloc(w * h)
     if buf == null { fail("ffi.malloc 失败") }
     // 逐字节写太慢，但这里只是一次性自测（w*h ≈ 4 万）
-    i = 0
-    while i < w * h {
+    for 0:w*h-1 to i {
         ffi.write_byte(buf, i, bytes[i])
-        i = i + 1
     }
 
     // 多码：应当检出 2 枚、并解出两条载荷

@@ -1,15 +1,20 @@
 // qr_encode.leno -- 纯 Leno 的 QR 编码器（ISO/IEC 18004）
 //
-// 覆盖：版本 1–40 自动选择、纠错 L/M/Q/H、数字 / 字母数字 / 字节（UTF-8）三种模式、
-//       8 个掩码 + 4 条罚分选最优、format/version 的 BCH。
-// 不做：Kanji 模式、ECI 显式声明、Structured Append、Micro QR。
+// 覆盖：版本 1–40 自动选择、纠错 L/M/Q/H、
+//       数字 / 字母数字 / 字节(UTF-8) / Kanji(Shift-JIS) 四种模式、
+//       8 个掩码 + 4 条罚分选最优、format/version 的 BCH、ECI 26(UTF-8)。
+// 不做：ECI 分配号 ≥128、Structured Append、Micro QR。
 //
 // ⚠ GF(256) 用的本原多项式是 **0x11D** —— 与 LenoCrypto 里 AES 的 0x11B **不同**，
 //   两边的 exp/log 表不能混用（QR 的 Reed-Solomon 是 18004 规定的域）。
 //
-// ⚠ 本文件所有循环变量都在**函数顶部**声明（不用 `var` 在各分支里重复声明）：
-//   Leno 的 `var` 是块作用域，在 while 体里 `var x` 出了循环就不可见（实测报
-//   「未定义的变量: x」）—— 这不是风格问题，是硬约束。
+// ⚠ 循环写法（2026-10-17 统一）：
+//   · 计数器 +1 的循环一律 `for a:b to i`（**闭区间**，两端都含）——
+//     实测 100 万次空转 for 4.2ms vs while 6.4ms，且空区间（如 n=0 时 `for 0:n-1`）
+//     执行 0 次，不需要为"可能为空"退回 while ✓
+//   · 步长不是 1（位流按 3 位/2 位一组、按 8 位取码字、zigzag 两列一跳）或条件是状态的
+//     （终止符、补位、`cw.len() < 上限`）保留 while —— 硬套 for 会把语义拧歪 ✗
+//   · 递减区间 `for 3:0` **不执行**（不是倒序），所以倒着扫的地方写成升序 + 反向取下标
 import strings
 import "qr_tables.leno" as T
 
@@ -43,22 +48,17 @@ func gf_init() {
     g_gf_ready = true
     Array[int] ex = []
     Array[int] lg = []
-    var i = 0
-    while i < 512 { ex.add(0); i = i + 1 }
-    i = 0
-    while i < 256 { lg.add(0); i = i + 1 }
+    for 0:511 to i { ex.add(0) }
+    for 0:255 to i { lg.add(0) }
     var x = 1
-    i = 0
-    while i < 255 {
+    for 0:254 to i {
         ex[i] = x
         lg[x] = i
         x = x << 1
         if x >= 256 { x = x ^ 285 }      // 285 = 0x11D
-        i = i + 1
     }
     // exp 扩到 512：乘法时 log[a]+log[b] 最大 508，免去取模
-    i = 255
-    while i < 512 { ex[i] = ex[i - 255]; i = i + 1 }
+    for 255:511 to i { ex[i] = ex[i - 255] }
     g_exp = ex
     g_log = lg
 }
@@ -79,23 +79,16 @@ func rs_generator(int n): Array[int] {
     string key = _str(n)
     if g_gens.has(key) { return g_gens.get(key) as Array[int] }
     Array[int] g = [1]
-    var i = 0
-    var k = 0
-    var factor = 0
     Array[int] ng = []
-    while i < n {
-        factor = g_exp[i]
+    for 0:n-1 to i {
+        int factor = g_exp[i]
         ng = []
-        k = 0
-        while k < g.len() + 1 { ng.add(0); k = k + 1 }
-        k = 0
-        while k < g.len() {
+        for 0:g.len() to k { ng.add(0) }
+        for 0:g.len()-1 to k {
             ng[k] = ng[k] ^ g[k]
             ng[k + 1] = ng[k + 1] ^ gf_mul(g[k], factor)
-            k = k + 1
         }
         g = ng
-        i = i + 1
     }
     g_gens.set(key, g)
     return g
@@ -105,43 +98,30 @@ func rs_generator(int n): Array[int] {
 func rs_ecc(Array[int] data, int n): Array[int] {
     Array[int] gen = rs_generator(n)
     Array[int] rem = []
-    var i = 0
-    var j = 0
-    var factor = 0
-    while i < n { rem.add(0); i = i + 1 }
-    i = 0
-    while i < data.len() {
-        factor = data[i] ^ rem[0]
-        j = 0
-        while j < n - 1 { rem[j] = rem[j + 1]; j = j + 1 }
+    for 0:n-1 to i { rem.add(0) }
+    for 0:data.len()-1 to i {
+        int factor = data[i] ^ rem[0]
+        for 0:n-2 to j { rem[j] = rem[j + 1] }
         rem[n - 1] = 0
         if factor != 0 {
-            j = 0
-            while j < n {
-                rem[j] = rem[j] ^ gf_mul(gen[j + 1], factor)
-                j = j + 1
-            }
+            for 0:n-1 to j { rem[j] = rem[j] ^ gf_mul(gen[j + 1], factor) }
         }
-        i = i + 1
     }
     return rem
 }
 
 // ==================== 位缓冲 ====================
+// 倒序要**显式写步长** `for 3:0:-1`：`for 3:0`（不写步长）是**空区间**、执行 0 次 ✓
 func bits_push(Array[int] bits, int value, int nbits) {
-    var i = nbits - 1
-    while i >= 0 {
-        bits.add((value >> i) & 1)
-        i = i - 1
+    for nbits-1:0:-1 to k {
+        bits.add((value >> k) & 1)
     }
 }
 
 // ==================== 模式与容量 ====================
 func alnum_index(int b): int {
-    var i = 0
-    while i < 45 {
+    for 0:44 to i {
         if ALNUM.byte(i) == b { return i }
-        i = i + 1
     }
     return -1
 }
@@ -169,7 +149,7 @@ func _mode_indicator(int mode): int {
 
 // 字符计数位宽：**三段**，不是两段（ISO 18004 表 3）
 //   v1–9 / v10–26 / v27–40
-//   numeric 10/12/14、alnum 9/11/13、byte 8/16/16
+//   numeric 10/12/14、alnum 9/11/13、byte 8/16/16、kanji 8/10/12
 // ⚠ 第一版只写了「<10 / >=10」两段 ⇒ v27+ 的数字/字母数字模式计数位少 2 位，
 //   整条码字流从第 1 个字节就歪（实测：5000 位数字在 v34 上对不上 python qrcode）。
 func cc_bits(int mode, int version): int {
@@ -231,18 +211,9 @@ export func encodeKanjiSJIS(string sjis, string eccName = "M", int forceVersion 
 func _encode(string text, string eccName, int forceVersion, int eci, int forcedMode): Dict {
     gf_init()
 
-    var i = 0
-    var k = 0
-    var b = 0
-    var p = 0
-    var y = 0
-    var x = 0
-
     var ecc = -1
-    i = 0
-    while i < 4 {
+    for 0:3 to i {
         if ECC_NAMES[i] == eccName { ecc = i }
-        i = i + 1
     }
     if ecc < 0 { return _err("纠错档位只能是 L/M/Q/H，收到「" + eccName + "」") }
 
@@ -255,19 +226,15 @@ func _encode(string text, string eccName, int forceVersion, int eci, int forcedM
         }
     }
     int pbits = payload_bits(bytes, mode)
-    int head = 4 + cc_bits(mode, 1) + pbits
-    if eci == 1 { head = head + 12 }          // ECI 头：模式 0111(4) + 分配号 26(8)
 
     var version = 0
     if forceVersion > 0 {
         version = forceVersion
     } else {
-        i = 1
-        while i <= 40 {
-            int need = 4 + cc_bits(mode, i) + pbits
+        for 1:40 to v {
+            int need = 4 + cc_bits(mode, v) + pbits
             if eci == 1 { need = need + 12 }
-            if need <= data_codewords(i, ecc) * 8 { version = i; break }
-            i = i + 1
+            if need <= data_codewords(v, ecc) * 8 { version = v; break }
         }
     }
     if version <= 0 or version > 40 { return _err("内容太长：40 版也装不下") }
@@ -278,8 +245,8 @@ func _encode(string text, string eccName, int forceVersion, int eci, int forcedM
     }
 
     // ---- 位流：模式指示 + 字符计数 + 载荷 ----
-    // ⚠ 这里要写的是**模式指示符**（numeric=0001 / alnum=0010 / byte=0100），
-    //   不是内部下标（0/1/2）—— 第一版直接把 mode 推了进去，整条码字流从第一个
+    // ⚠ 这里要写的是**模式指示符**（numeric=0001 / alnum=0010 / byte=0100 / kanji=1000），
+    //   不是内部下标（0/1/2/3）—— 第一版直接把 mode 推了进去，整条码字流从第一个
     //   字节就错了（实测对拍：py 首字节 0x20、我们 0x10）。
     Array[int] bits = []
     if eci == 1 {
@@ -289,7 +256,8 @@ func _encode(string text, string eccName, int forceVersion, int eci, int forcedM
     bits_push(bits, _mode_indicator(mode), 4)
     if mode == MODE_NUM {
         bits_push(bits, bytes.len(), cc_bits(mode, version))
-        p = 0
+        // 数字模式按 3 位一组打包，步长 3/2/1 ⇒ 保留 while
+        var p = 0
         while p < bytes.len() {
             int left = bytes.len() - p
             if left >= 3 {
@@ -307,7 +275,7 @@ func _encode(string text, string eccName, int forceVersion, int eci, int forcedM
         }
     } else if mode == MODE_ALNUM {
         bits_push(bits, bytes.len(), cc_bits(mode, version))
-        p = 0
+        var p = 0
         while p < bytes.len() {
             if p + 1 < bytes.len() {
                 bits_push(bits, alnum_index(bytes[p]) * 45 + alnum_index(bytes[p + 1]), 11)
@@ -319,7 +287,7 @@ func _encode(string text, string eccName, int forceVersion, int eci, int forcedM
         }
     } else if mode == MODE_KANJI {
         bits_push(bits, bytes.len() / 2, cc_bits(mode, version))
-        p = 0
+        var p = 0
         while p + 1 < bytes.len() {
             int c = (bytes[p] << 8) | bytes[p + 1]
             if c >= 0x8140 and c <= 0x9FFC { c = c - 0x8140 }
@@ -334,22 +302,21 @@ func _encode(string text, string eccName, int forceVersion, int eci, int forcedM
     }
 
     int cap = data_codewords(version, ecc) * 8
-    // 终止符（不足 4 位就给剩余位）
+    // 终止符（不足 4 位就给剩余位）—— 条件含"装到上限就停"，保留 while
     var t = 4
     while t > 0 and bits.len() < cap { bits.add(0); t = t - 1 }
     // 补到字节边界
     while bits.len() % 8 != 0 { bits.add(0) }
-    // 位 → 码字
+    // 位 → 码字（步长 8）⇒ 保留 while
     Array[int] cw = []
-    i = 0
+    var i = 0
     while i < bits.len() {
         int v = 0
-        k = 0
-        while k < 8 { v = (v << 1) | bits[i + k]; k = k + 1 }
+        for 0:7 to k { v = (v << 1) | bits[i + k] }
         cw.add(v)
         i = i + 8
     }
-    // 填充码字：0xEC / 0x11 交替
+    // 填充码字：0xEC / 0x11 交替 —— 条件是"还差几个"，保留 while
     var pad = 0
     while cw.len() < data_codewords(version, ecc) {
         cw.add(if pad % 2 == 0 then 236 else 17)
@@ -368,47 +335,33 @@ func _encode(string text, string eccName, int forceVersion, int eci, int forcedM
     Array[int] blkOff = []
     Array[int] blkLen = []
     var pos = 0
-    i = 0
-    while i < g1b { blkOff.add(pos); blkLen.add(g1d); pos = pos + g1d; i = i + 1 }
-    i = 0
-    while i < g2b { blkOff.add(pos); blkLen.add(g2d); pos = pos + g2d; i = i + 1 }
+    for 0:g1b-1 to b { blkOff.add(pos); blkLen.add(g1d); pos = pos + g1d }
+    for 0:g2b-1 to b { blkOff.add(pos); blkLen.add(g2d); pos = pos + g2d }
     int maxD = if g2d > g1d then g2d else g1d
 
     Array[int] out = []
-    k = 0
-    while k < maxD {
-        b = 0
-        while b < totalBlocks {
+    for 0:maxD-1 to k {
+        for 0:totalBlocks-1 to b {
             if k < blkLen[b] { out.add(cw[blkOff[b] + k]) }
-            b = b + 1
         }
-        k = k + 1
     }
 
     Array[int] eccs = []
-    b = 0
-    while b < totalBlocks {
+    for 0:totalBlocks-1 to b {
         Array[int] blk = []
-        k = 0
-        while k < blkLen[b] { blk.add(cw[blkOff[b] + k]); k = k + 1 }
+        for 0:blkLen[b]-1 to k { blk.add(cw[blkOff[b] + k]) }
         Array[int] e = rs_ecc(blk, ecpb)
-        k = 0
-        while k < ecpb { eccs.add(e[k]); k = k + 1 }
-        b = b + 1
+        for 0:ecpb-1 to k { eccs.add(e[k]) }
     }
-    k = 0
-    while k < ecpb {
-        b = 0
-        while b < totalBlocks { out.add(eccs[b * ecpb + k]); b = b + 1 }
-        k = k + 1
+    for 0:ecpb-1 to k {
+        for 0:totalBlocks-1 to b { out.add(eccs[b * ecpb + k]) }
     }
 
     // ---- 矩阵 ----
     int size = version * 4 + 17
     Array[int] m = []
     Array[int] fn = []
-    i = 0
-    while i < size * size { m.add(-1); fn.add(0); i = i + 1 }
+    for 0:size*size-1 to idx { m.add(-1); fn.add(0) }
 
     _place_function_patterns(m, fn, size, version)
     _place_data(m, fn, size, out, version)
@@ -416,19 +369,14 @@ func _encode(string text, string eccName, int forceVersion, int eci, int forcedM
     // _choose_mask 返回前已经把最优掩码留在矩阵上 ⇒ 这里只补它对应的 format/version
     _write_format(m, size, version, ecc, mask)
     if version >= 7 { _write_version(m, size, version) }
-    Array[int] best = m
 
     Array[string] rows = []
-    y = 0
-    while y < size {
+    for 0:size-1 to y {
         Array[int] rb = []
-        x = 0
-        while x < size {
-            rb.add(if best[y * size + x] == 1 then 49 else 48)   // '1' / '0'
-            x = x + 1
+        for 0:size-1 to x {
+            rb.add(if m[y * size + x] == 1 then 49 else 48)   // '1' / '0'
         }
         rows.add(strings.from_bytes(rb))
-        y = y + 1
     }
 
     return {
@@ -461,24 +409,16 @@ func _set(Array[int] m, Array[int] fn, int size, int x, int y, int v) {
 
 // 7×7 定位图案（含 1 格白色分隔符）
 func _finder(Array[int] m, Array[int] fn, int size, int cx, int cy) {
-    var dy = -1
-    var dx = -1
-    var v = 0
-    var edge = false
-    var core = false
-    while dy <= 7 {
-        dx = -1
-        while dx <= 7 {
-            v = 0
+    for -1:7 to dy {
+        for -1:7 to dx {
+            var v = 0
             if dx >= 0 and dx <= 6 and dy >= 0 and dy <= 6 {
-                edge = (dx == 0 or dx == 6 or dy == 0 or dy == 6)
-                core = (dx >= 2 and dx <= 4 and dy >= 2 and dy <= 4)
+                bool edge = (dx == 0 or dx == 6 or dy == 0 or dy == 6)
+                bool core = (dx >= 2 and dx <= 4 and dy >= 2 and dy <= 4)
                 v = if edge or core then 1 else 0
             }
             _set(m, fn, size, cx + dx, cy + dy, v)
-            dx = dx + 1
         }
-        dy = dy + 1
     }
 }
 
@@ -488,53 +428,32 @@ func _place_function_patterns(Array[int] m, Array[int] fn, int size, int version
     _finder(m, fn, size, 0, size - 7)
 
     // 定时图案（第 6 行 / 第 6 列）
-    var i = 8
-    var v = 0
-    while i <= size - 9 {
-        v = if i % 2 == 0 then 1 else 0
+    for 8:size-9 to i {
+        int v = if i % 2 == 0 then 1 else 0
         _set(m, fn, size, i, 6, v)
         _set(m, fn, size, 6, i, v)
-        i = i + 1
     }
 
     // 对齐图案（v1 没有）
-    var base = 0
-    var vv = 0
-    var a = 0
-    var b2 = 0
-    var cx = 0
-    var cy = 0
-    var dy = 0
-    var dx = 0
-    var skip = false
-    var dark = false
     if version >= 2 {
-        base = 0
-        vv = 0
-        while vv < version - 1 { base = base + T.ALIGN_COUNT[vv]; vv = vv + 1 }
+        var base = 0
+        for 0:version-2 to vv { base = base + T.ALIGN_COUNT[vv] }
         int cnt = T.ALIGN_COUNT[version - 1]
-        a = 0
-        while a < cnt {
-            b2 = 0
-            while b2 < cnt {
-                cx = T.ALIGN[base + a]
-                cy = T.ALIGN[base + b2]
-                skip = (cx == 6 and cy == 6) or (cx == 6 and cy == size - 7) or (cx == size - 7 and cy == 6)
+        for 0:cnt-1 to a {
+            for 0:cnt-1 to b2 {
+                int cx = T.ALIGN[base + a]
+                int cy = T.ALIGN[base + b2]
+                // 三个定位图案覆盖的角落要跳过（否则会把定位图案擦掉）
+                bool skip = (cx == 6 and cy == 6) or (cx == 6 and cy == size - 7) or (cx == size - 7 and cy == 6)
                 if not skip {
-                    dy = -2
-                    while dy <= 2 {
-                        dx = -2
-                        while dx <= 2 {
-                            dark = (dx == 0 and dy == 0) or (abs(dx) == 2) or (abs(dy) == 2)
+                    for -2:2 to dy {
+                        for -2:2 to dx {
+                            bool dark = (dx == 0 and dy == 0) or (abs(dx) == 2) or (abs(dy) == 2)
                             _set(m, fn, size, cx + dx, cy + dy, if dark then 1 else 0)
-                            dx = dx + 1
                         }
-                        dy = dy + 1
                     }
                 }
-                b2 = b2 + 1
             }
-            a = a + 1
         }
     }
 
@@ -542,35 +461,26 @@ func _place_function_patterns(Array[int] m, Array[int] fn, int size, int version
     // ⚠ 必须跳过 (8,6) / (6,8)：这两格属于**定时图案**（第 6 行 / 第 6 列），
     //   format 信息的 15 位本来就不占它们（见 _write_format 的 rowV 映射）。
     //   第一版整段 0..8 都覆盖成 2 ⇒ 定时图案被抹掉一格，矩阵从 (6,8) 起与参考实现不符 ✗
-    i = 0
-    while i < 9 {
+    for 0:8 to i {
         if i != 6 {
             _set(m, fn, size, 8, i, 2)
             _set(m, fn, size, i, 8, 2)
         }
-        i = i + 1
     }
-    i = 0
-    while i < 8 {
+    for 0:7 to i {
         _set(m, fn, size, size - 1 - i, 8, 2)
         _set(m, fn, size, 8, size - 1 - i, 2)
-        i = i + 1
     }
     // 暗模块
     _set(m, fn, size, 8, size - 8, 1)
 
     // 预留 version 区（v≥7）
     if version >= 7 {
-        i = 0
-        var j = 0
-        while i < 6 {
-            j = 0
-            while j < 3 {
+        for 0:5 to i {
+            for 0:2 to j {
                 _set(m, fn, size, i, size - 11 + j, 2)
                 _set(m, fn, size, size - 11 + j, i, 2)
-                j = j + 1
             }
-            i = i + 1
         }
     }
 }
@@ -578,6 +488,7 @@ func _place_function_patterns(Array[int] m, Array[int] fn, int size, int version
 func abs(int x): int { return if x < 0 then -x else x }
 
 // ==================== 数据放置（zigzag）====================
+// 这一段刻意保留 while：列每次跳 2、行方向每轮翻转（inc ±1），不是计数循环
 func _place_data(Array[int] m, Array[int] fn, int size, Array[int] cw, int version) {
     int totalBits = cw.len() * 8
     var bitIdx = 0
@@ -585,24 +496,22 @@ func _place_data(Array[int] m, Array[int] fn, int size, Array[int] cw, int versi
     var row = size - 1
     var col = size - 1
     var done = false
-    var c = 0
-    var bit = 0
     while col > 0 {
         if col == 6 { col = col - 1 }
         // 本次两列内的行扫描
         done = false
         while not done {
-            c = col
-            while c >= col - 1 {
+            // ⚠ 顺序是**右列 → 左列**（col, col-1）⇒ 步长写 -1 倒着来：
+            //   第一版写成 `for col-1:col`（升序），填充顺序反过来 ⇒ 整张矩阵从第一对列就错位 ✗
+            for col:col-1:-1 to c {
                 if fn[row * size + c] == 0 {
-                    bit = 0
+                    var bit = 0
                     if bitIdx < totalBits {
                         bit = (cw[bitIdx / 8] >> (7 - (bitIdx % 8))) & 1
                     }
                     m[row * size + c] = bit
                     bitIdx = bitIdx + 1
                 }
-                c = c - 1
             }
             row = row + inc
             if row < 0 or row >= size {
@@ -616,7 +525,7 @@ func _place_data(Array[int] m, Array[int] fn, int size, Array[int] cw, int versi
 }
 
 // ==================== 掩码 ====================
-// 掩码条件表达式已**内联**进 _apply_mask（每格调一次函数的开销在 v40 上是 8×31329 次）
+// 掩码条件表达式已**内联**（每格调一次函数的开销在 v40 上是 8×31329 次）
 //   0: (y+x)%2==0   1: y%2==0   2: x%3==0   3: (y+x)%3==0
 //   4: (y/2+x/3)%2==0   5: (y*x)%2+(y*x)%3==0   6: ((y*x)%2+(y*x)%3)%2==0
 //   7: ((y+x)%2+(y*x)%3)%2==0
@@ -632,22 +541,15 @@ func _mask_table(int size, Array[int] fn): Array[int] {
     if g_mask_tables.has(key) { return g_mask_tables.get(key) as Array[int] }
     int area = size * size
     Array[int] t = []
-    var i = 0
-    while i < area * 8 { t.add(0); i = i + 1 }
-    var y = 0
-    var x = 0
-    var idx = 0
-    var base = 0
-    var flip = false
-    while y < size {
-        x = 0
-        while x < size {
-            idx = y * size + x
+    for 0:area*8-1 to i { t.add(0) }
+    for 0:size-1 to y {
+        for 0:size-1 to x {
+            int idx = y * size + x
             // 功能模块（定位/定时/对齐/format/version/暗模块）在任何掩码下都不翻转：
             // 表里直接留 0 ⇒ 套掩码时不必再查 fn ✓（省一次数组读 + 分支，8 遍）
-            if fn[idx] == 1 { x = x + 1; continue }
-            base = 0
-            while base < 8 {
+            if fn[idx] == 1 { continue }
+            for 0:7 to base {
+                var flip = false
                 if base == 0 { flip = (y + x) % 2 == 0 }
                 else if base == 1 { flip = y % 2 == 0 }
                 else if base == 2 { flip = x % 3 == 0 }
@@ -657,11 +559,8 @@ func _mask_table(int size, Array[int] fn): Array[int] {
                 else if base == 6 { flip = ((y * x) % 2 + (y * x) % 3) % 2 == 0 }
                 else { flip = ((y + x) % 2 + (y * x) % 3) % 2 == 0 }
                 if flip { t[base * area + idx] = 1 }
-                base = base + 1
             }
-            x = x + 1
         }
-        y = y + 1
     }
     g_mask_tables.set(key, t)
     return t
@@ -674,19 +573,15 @@ func _apply_mask_delta(Array[int] m, Array[int] fn, int size, int fromMask, int 
     int area = size * size
     Array[int] t = _mask_table(size, fn)
     int b1 = 0
-    int b2 = 0
     if fromMask >= 0 { b1 = fromMask * area }
-    b2 = toMask * area
-    var i = 0
+    int b2 = toMask * area
     if fromMask < 0 {
-        while i < area {
+        for 0:area-1 to i {
             if t[b2 + i] == 1 { m[i] = m[i] ^ 1 }
-            i = i + 1
         }
     } else {
-        while i < area {
+        for 0:area-1 to i {
             if t[b1 + i] != t[b2 + i] { m[i] = m[i] ^ 1 }
-            i = i + 1
         }
     }
 }
@@ -694,17 +589,14 @@ func _apply_mask_delta(Array[int] m, Array[int] fn, int size, int fromMask, int 
 func _choose_mask(Array[int] m, Array[int] fn, int size, int version, int ecc): int {
     var bestMask = 0
     var bestScore = 0
-    var mask = 0
-    var score = 0
     var cur = -1
-    while mask < 8 {
+    for 0:7 to mask {
         _apply_mask_delta(m, fn, size, cur, mask)
         cur = mask
         _write_format(m, size, version, ecc, mask)
         if version >= 7 { _write_version(m, size, version) }
-        score = _penalty(m, size)
+        int score = _penalty(m, size)
         if mask == 0 or score < bestScore { bestScore = score; bestMask = mask }
-        mask = mask + 1
     }
     // 回到最优掩码（当前停在 7）
     if cur != bestMask { _apply_mask_delta(m, fn, size, cur, bestMask) }
@@ -715,42 +607,32 @@ func _choose_mask(Array[int] m, Array[int] fn, int size, int version, int ecc): 
 // **单遍扫描**：行连色 / 列连色 / 2×2 同色 / 类定位图案（行+列，滚动 11 位窗口）/
 //   黑格计数 —— 全部在一次行主序遍历里累计。
 // 旧版对同一张矩阵扫了 6 遍（每次重算 y*size+x），且掩码循环里还每张复制一份矩阵 ⇒
-//   v10 实测 16ms；本版 v10 ≈ 5ms、v25 ≈ 20ms（纯 Leno，没有 JIT）。
+//   v10 实测 16ms；本版 v10 ≈ 5ms、v25 ≈ 24ms（纯 Leno，没有 JIT）。
 func _penalty(Array[int] c, int size): int {
     var score = 0
     var dark = 0
-    var y = 0
-    var x = 0
-    var bit = 0
-    var prev = 0
-    var idx = 0
     var rowRun = 1
     var rowWin = 0
-    var colWin = 0
-    var colIdx = 0
-    var rowBase = 0
+    var prev = 0
     var up = 0
     var prevUp = 0
 
     // 列方向状态：连色长度 / 11 位滚动窗口
-    //   ⚠ 不再存"上一格颜色"数组：上方那格 c[idx-size] 本来就要读（2×2 用），
+    //   ⚠ 不存"上一格颜色"数组：上方那格 c[idx-size] 本来就要读（2×2 用），
     //     复用它做列连色比较，省一次数组读 + 一次数组写（每格都省）
     Array[int] colRun = []
     Array[int] colWindow = []
-    x = 0
-    while x < size { colRun.add(1); colWindow.add(0); x = x + 1 }
+    for 0:size-1 to x { colRun.add(1); colWindow.add(0) }
 
-    y = 0
-    while y < size {
+    for 0:size-1 to y {
         rowRun = 1
         rowWin = 0
         prev = -1
         prevUp = -1
-        rowBase = y * size
-        x = 0
-        while x < size {
-            idx = rowBase + x
-            bit = c[idx]
+        int rowBase = y * size
+        for 0:size-1 to x {
+            int idx = rowBase + x
+            int bit = c[idx]
             dark = dark + bit
             up = -1
             if y > 0 { up = c[idx - size] }
@@ -785,22 +667,17 @@ func _penalty(Array[int] c, int size): int {
             if x >= 10 and (rowWin == 0x5D0 or rowWin == 0x05D) { score = score + 40 }
 
             // ⑤ 列内滚动 11 位窗口（覆盖 y-10..y）
-            colIdx = x
-            colWin = ((colWindow[colIdx] << 1) | bit) & 0x7FF
-            colWindow[colIdx] = colWin
+            int colWin = ((colWindow[x] << 1) | bit) & 0x7FF
+            colWindow[x] = colWin
             if y >= 10 and (colWin == 0x5D0 or colWin == 0x05D) { score = score + 40 }
 
             prev = bit
-            x = x + 1
         }
         if rowRun >= 5 { score = score + 3 + (rowRun - 5) }
-        y = y + 1
     }
     // 列方向收尾
-    x = 0
-    while x < size {
+    for 0:size-1 to x {
         if colRun[x] >= 5 { score = score + 3 + (colRun[x] - 5) }
-        x = x + 1
     }
 
     // ⑥ 黑格比例
@@ -834,24 +711,21 @@ func _bch18(int data): int {
 func _write_format(Array[int] c, int size, int version, int ecc, int mask) {
     int data = (ECC_FORMAT_BITS[ecc] << 3) | mask
     int bits = _bch15(data)
-    var i = 0
-    var bit = 0
-    var rowV = 0
-    var colH = 0
-    while i < 15 {
-        bit = (bits >> i) & 1
+    for 0:14 to i {
+        int bit = (bits >> i) & 1
         // 左上：竖列（行 0..5 / 7..8 / size-7..size-1）
+        var rowV = 0
         if i < 6 { rowV = i }
         else if i < 8 { rowV = i + 1 }
         else { rowV = size - 15 + i }
         c[rowV * size + 8] = bit
         // 左上：横行（i=8 落在第 7 列 —— 不是第 8 列：第 8 列那格是**暗模块**，
         //   它在下面单独写；这里写错会与参考实现差一格，且只在部分掩码下显形）
+        var colH = 0
         if i < 8 { colH = size - i - 1 }
         else if i < 9 { colH = 7 }
         else { colH = 15 - i - 1 }
         c[8 * size + colH] = bit
-        i = i + 1
     }
     // 暗模块
     c[(size - 8) * size + 8] = 1
@@ -859,13 +733,10 @@ func _write_format(Array[int] c, int size, int version, int ecc, int mask) {
 
 func _write_version(Array[int] c, int size, int version) {
     int bits = _bch18(version)
-    var i = 0
-    var bit = 0
-    while i < 18 {
-        bit = (bits >> i) & 1
+    for 0:17 to i {
+        int bit = (bits >> i) & 1
         c[(i / 3) * size + (size - 11 + i % 3)] = bit
         c[(size - 11 + i % 3) * size + (i / 3)] = bit
-        i = i + 1
     }
 }
 
@@ -877,24 +748,16 @@ export func toGray(Dict res, int scale = 4, int quiet = 4): string {
     Array[string] rows = res["rows"] as Array[string]
     int side = (size + quiet * 2) * scale
     Array[int] px = []
-    var y = 0
-    var x = 0
-    var my = 0
-    var mx = 0
-    var dark = false
-    while y < side {
-        my = y / scale - quiet
-        x = 0
-        while x < side {
-            mx = x / scale - quiet
-            dark = false
+    for 0:side-1 to y {
+        int my = y / scale - quiet
+        for 0:side-1 to x {
+            int mx = x / scale - quiet
+            var dark = false
             if my >= 0 and my < size and mx >= 0 and mx < size {
                 dark = rows[my].byte(mx) == 49
             }
             px.add(if dark then 0 else 255)
-            x = x + 1
         }
-        y = y + 1
     }
     return strings.from_bytes(px)
 }

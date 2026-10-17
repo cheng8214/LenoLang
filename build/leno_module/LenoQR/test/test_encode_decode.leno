@@ -90,8 +90,7 @@ main() {
 
     // 大版本：v10（16 位字符计数）；同时验证 v7+ 的 version info
     string longText = ""
-    var i = 0
-    while i < 300 { longText = longText + "A"; i = i + 1 }
+    for 0:299 to i { longText = longText + "A" }
     roundtrip(longText, "M")
 
     // ---------- ⑥ 超长：必须响亮报错，而不是生成一个坏码 ----------

@@ -149,8 +149,7 @@ func _run_all(Ptr[u8] px, int w, int h, int pitch, int kind): Dict {
 
     Array[string] texts = []
     Array[int] metas = []
-    var i = 0
-    while i < n {
+    for 0:n-1 to i {
         int len = nat.scan_get(ctx, i, out, cap)
         if len > 0 {
             texts.add(ffi.read_bytes(out, 0, len))
@@ -161,7 +160,6 @@ func _run_all(Ptr[u8] px, int w, int h, int pitch, int kind): Dict {
                 metas.add(ffi.read_int(meta, 12))
             }
         }
-        i = i + 1
     }
     ffi.free(out)
     ffi.free(meta)

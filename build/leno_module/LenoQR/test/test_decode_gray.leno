@@ -42,20 +42,16 @@ func render(int scale, int quiet): string {
     int n = MODS.len()
     int side = (n + quiet * 2) * scale
     Array[int] px = []
-    var y = 0
-    while y < side {
+    for 0:side-1 to y {
         int my = y / scale - quiet
-        var x = 0
-        while x < side {
+        for 0:side-1 to x {
             int mx = x / scale - quiet
             var dark = false
             if my >= 0 and my < n and mx >= 0 and mx < n {
                 dark = MODS[my].byte(mx) == 88    // 88 = 'X'
             }
             px.add(if dark then 0 else 255)
-            x = x + 1
         }
-        y = y + 1
     }
     return strings.from_bytes(px)
 }
@@ -63,14 +59,12 @@ func render(int scale, int quiet): string {
 // 灰度 → ARGB8888（内存序 B,G,R,A）—— 模拟 SDL 截屏/PNG 解出来的那种缓冲
 func renderARGB(string gray, int side): string {
     Array[int] px = []
-    var i = 0
-    while i < side * side {
+    for 0:side*side-1 to i {
         int v = gray.byte(i)
         px.add(v)      // B
         px.add(v)      // G
         px.add(v)      // R
         px.add(255)    // A
-        i = i + 1
     }
     return strings.from_bytes(px)
 }
@@ -129,8 +123,7 @@ main() {
 
     // 反向对照：全白图 ⇒ 必须 found=false 且不报错（证明"没码"与"出错"是两件事）
     Array[int] white = []
-    var i = 0
-    while i < 64 * 64 { white.add(255); i = i + 1 }
+    for 0:64*64-1 to i { white.add(255) }
     string w = strings.from_bytes(white)
     Ptr[u8] wb = ffi.malloc(64 * 64)
     ffi.write_bytes(wb, 0, w)
