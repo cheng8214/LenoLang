@@ -1,0 +1,133 @@
+// LenoCSV 自测：解析 / 生成 / 表头 / 文件往返 / 中文 / 容错
+//
+// 跑法（仓库根目录）：
+//   build\leno.exe build\leno_module\LenoCSV\test\test_csv.leno
+import strings
+import dirs
+import files
+import "CSV" as csv
+
+func fail(string msg) {
+    print("[FAIL] " + msg)
+    _exit(1)
+}
+
+func eq(string got, string want, string tag) {
+    if got != want { fail(tag + "：得到「" + got + "」期望「" + want + "」") }
+}
+
+func eqInt(int got, int want, string tag) {
+    if got != want { fail(tag + "：得到 " + _str(got) + " 期望 " + _str(want)) }
+}
+
+main() {
+    // ---------- ① 基本：2 行 2 列，行尾换行不多出一行 ----------
+    var r1 = csv.parse("a,b\n1,2\n")
+    eqInt(r1.len(), 2, "① 行数")
+    eqInt(r1[0].len(), 2, "① 列数")
+    eq(r1[0][0], "a", "① 0,0")
+    eq(r1[1][1], "2", "① 1,1")
+
+    // ---------- ② 引号内逗号 / 换行 / 双引号转义 ----------
+    var r2 = csv.parse("\"a,b\",c\n")
+    eqInt(r2[0].len(), 2, "② 列数")
+    eq(r2[0][0], "a,b", "② 引号内逗号")
+
+    var r3 = csv.parse("\"he said \"\"hi\"\"\",x\n")
+    eq(r3[0][0], "he said \"hi\"", "③ 双引号转义")
+
+    var r4 = csv.parse("\"line1\nline2\",x\n")
+    eqInt(r4.len(), 1, "④ 引号内换行不该断行")
+    eq(r4[0][0], "line1\nline2", "④ 引号内换行内容")
+    eq(r4[0][1], "x", "④ 换行后的下一列")
+
+    // ---------- ⑤ CRLF / 单独 CR ----------
+    var r5 = csv.parse("a,b\r\n1,2\r\n")
+    eqInt(r5.len(), 2, "⑤ CRLF 行数")
+    eq(r5[1][0], "1", "⑤ CRLF 内容")
+    var r5b = csv.parse("a,b\r1,2\r")
+    eqInt(r5b.len(), 2, "⑤ 单独 CR 行数")
+
+    // ---------- ⑥ UTF-8 BOM ----------
+    string bom = strings.from_bytes([0xEF, 0xBB, 0xBF])
+    var r6 = csv.parse(bom + "a,b\n1,2\n")
+    eq(r6[0][0], "a", "⑥ BOM 应被剥掉（首字段不能带不可见字符）")
+
+    // ---------- ⑦ 空行跳过 / 空字段保留 ----------
+    var r7 = csv.parse("a\n\nb\n")
+    eqInt(r7.len(), 2, "⑦ 空行应跳过")
+    var r8 = csv.parse("a,,\n")
+    eqInt(r8[0].len(), 3, "⑦ 空字段必须保留")
+    eq(r8[0][1], "", "⑦ 中间空字段")
+    eq(r8[0][2], "", "⑦ 末尾空字段")
+
+    // ---------- ⑧ 自定义分隔符 ----------
+    var r9 = csv.parse("a;b;c\n", ";")
+    eqInt(r9[0].len(), 3, "⑧ 分号分隔")
+    var r10 = csv.parse("a\tb\n", "\t")
+    eqInt(r10[0].len(), 2, "⑧ 制表符分隔")
+
+    // ---------- ⑨ 生成：最小引号 + 转义 + 换行口径 ----------
+    Array[Array[string]] rows = []
+    rows.add(["a", "b,c", "he said \"hi\"", "l1\nl2"])
+    string out = csv.encode(rows, ",", false)          // LF
+    eq(out, "a,\"b,c\",\"he said \"\"hi\"\"\",\"l1\nl2\"", "⑨ 生成内容")
+    string outCrlf = csv.encode(rows, ",", true)       // CRLF
+    eq(strings.replace(outCrlf, "\r", ""), out, "⑨ CRLF 与 LF 只差 \\r")
+
+    // ---------- ⑩ 往返：解析 → 生成 → 再解析 必须逐格相同 ----------
+    var back = csv.parse(out, ",")
+    eqInt(back.len(), 1, "⑩ 往返行数")
+    eqInt(back[0].len(), 4, "⑩ 往返列数")
+    for 0:3 to c {
+        eq(back[0][c], rows[0][c], "⑩ 往返第 " + _str(c) + " 格")
+    }
+
+    // ---------- ⑪ 表头 + toDicts ----------
+    var t = csv.parseTable("name,age\nAlice,30\nBob,25\n")
+    eqInt((t["header"] as Array[string]).len(), 2, "⑪ 表头列数")
+    eqInt((t["rows"] as Array[Array[string]]).len(), 2, "⑪ 记录数")
+    var recs = csv.toDicts(t["header"] as Array[string], t["rows"] as Array[Array[string]])
+    eq(recs[0].get("name", "") as string, "Alice", "⑪ 记录 name")
+    eq(recs[1].get("age", "") as string, "25", "⑪ 记录 age")
+
+    // 缺列补空串（不齐的行）
+    var t2 = csv.parseTable("a,b,c\n1\n")
+    var recs2 = csv.toDicts(t2["header"] as Array[string], t2["rows"] as Array[Array[string]])
+    eq(recs2[0].get("c", "x") as string, "", "⑪ 缺列补空串")
+
+    // ---------- ⑫ 文件往返（含中文 / emoji）----------
+    string dir = _tmpdir()
+    string p = dirs.join(dir, "lenocsv_roundtrip.csv")
+    Array[Array[string]] fr = []
+    fr.add(["城市", "备注"])
+    fr.add(["北京", "中文,带逗号"])
+    fr.add(["上海", "含\"引号\"与\n换行"])
+    fr.add(["深圳", "emoji 😀"])
+    if not csv.save(p, fr, ",", true) { fail("⑫ save 失败：" + p) }
+    var loaded = csv.load(p, ",", true)
+    if not (loaded["ok"] as bool) { fail("⑫ load 失败：" + (loaded["err"] as string)) }
+    Array[Array[string]] lrows = loaded["rows"] as Array[Array[string]]
+    eqInt(lrows.len(), 3, "⑫ 文件往返记录数")
+    eq(lrows[0][0], "北京", "⑫ 中文城市")
+    eq(lrows[1][1], "含\"引号\"与\n换行", "⑫ 引号+换行")
+    eq(lrows[2][1], "emoji 😀", "⑫ emoji")
+    files.delete(p)
+
+    // ---------- ⑬ 不齐的行：widths 如实报告 ----------
+    var ragged = csv.parse("a,b\nc\n")
+    Array[int] w = csv.widths(ragged)
+    eqInt(w[0], 2, "⑬ 第 1 行 2 列")
+    eqInt(w[1], 1, "⑬ 第 2 行 1 列")
+
+    // ---------- ⑭ 空输入 ----------
+    eqInt(csv.parse("").len(), 0, "⑭ 空文本应为 0 行")
+    eqInt(csv.parse("\n").len(), 0, "⑭ 只有换行应为 0 行")
+
+    // ---------- ⑮ 不存在的文件：ok=false 且带原因 ----------
+    var missing = csv.load(dirs.join(dir, "no_such_file_xyz.csv"), ",", true)
+    if missing["ok"] as bool { fail("⑮ 不存在的文件不该 ok=true") }
+    if (missing["err"] as string) == "" { fail("⑮ 应给出原因") }
+
+    print("test_csv passed（15 组断言）")
+}

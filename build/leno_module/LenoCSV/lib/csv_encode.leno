@@ -1,0 +1,58 @@
+// csv_encode.leno -- RFC 4180 生成（纯 Leno）
+//
+// 何时加引号（**最小惊讶**：只有必须时才加，保证 Excel / pandas / 自家 parse 都能读回）：
+//   · 字段含分隔符、双引号、CR、LF
+//   · 字段以双引号开头（否则读回来会被当成引号模式）
+// 不做"前后空格自动加引号"：会改变"空格是数据"的语义，宁可让用户自己决定。
+import strings
+import "csv_parse.leno" as p
+
+func _needs_quote(string f, int db): bool {
+    if f.byte_len() == 0 { return false }
+    if f.byte(0) == 34 { return true }
+    for f.to_bytes() to b {
+        if b == db or b == 34 or b == 13 or b == 10 { return true }
+    }
+    return false
+}
+
+func _append_quoted(string f, Array[int] out) {
+    out.add(34)
+    for f.to_bytes() to b {
+        if b == 34 { out.add(34) }     // 双引号翻倍
+        out.add(b)
+    }
+    out.add(34)
+}
+
+// 行×列 → CSV 文本。crlf=true 用 \r\n（Excel/Windows 友好），否则 \n
+export func encode(Array[Array[string]] rows, string delim, bool crlf): string {
+    Array[int] out = []
+    int db = p.delim_byte(delim)
+
+    for 0:rows.len()-1 to r {
+        if r > 0 {
+            if crlf { out.add(13) }
+            out.add(10)
+        }
+        Array[string] row = rows[r]
+        for 0:row.len()-1 to c {
+            if c > 0 { out.add(db) }
+            if _needs_quote(row[c], db) {
+                _append_quoted(row[c], out)
+            } else {
+                for row[c].to_bytes() to b { out.add(b) }
+            }
+        }
+    }
+    return strings.from_bytes(out)
+}
+
+// 表头 + 记录 → CSV 文本（表头作为第一行）
+export func encode_records(Array[string] header, Array[Array[string]] rows,
+                           string delim, bool crlf): string {
+    Array[Array[string]] all = []
+    all.add(header)
+    for rows to r { all.add(r) }
+    return encode(all, delim, crlf)
+}

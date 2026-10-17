@@ -1,0 +1,24 @@
+// dev_roundtrip.leno -- 供 test/dev_crosscheck_python.py 调用（**开发期工具，不是用例**）
+//
+// 用法：dev_roundtrip.leno <输入.csv> <输出.csv>
+// 语义：读进来 → 按 LF 重新写出（不回写表头判断，纯行×列搬运）
+import "CSV" as csv
+
+main() {
+    Array[string] args = _args()
+    if args.len() < 2 {
+        print("用法: dev_roundtrip.leno <输入.csv> <输出.csv>")
+        return
+    }
+    var d = csv.load(args[0], ",", false)
+    if not (d["ok"] as bool) {
+        print("ERR " + (d["err"] as string))
+        return
+    }
+    Array[Array[string]] rows = d["rows"] as Array[Array[string]]
+    if not csv.save(args[1], rows, ",", false) {
+        print("ERR 写文件失败")
+        return
+    }
+    print("OK " + _str(rows.len()))
+}

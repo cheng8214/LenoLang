@@ -1,0 +1,104 @@
+// csv_parse.leno -- RFC 4180 解析（纯 Leno，按字节扫描）
+//
+// 为什么按**字节**而不是字符：CSV 的引号、逗号、换行都是 ASCII；按字符处理会让
+//   「字段中间有个多字节汉字」时的下标计算变麻烦（而且 byte(i) 是 O(1)）。
+//   字段最终用 strings.from_bytes 还原成文本 ⇒ 中文/emoji 原样保留。
+//
+// 容错取向（"读得进来"优先，但绝不静默改数据）：
+//   · 引号只在**字段开头**才有特殊含义；字段中间的 `"` 当普通字符（Excel 也是这么干的）
+//   · 闭合引号后到分隔符之间的杂字符**保留**（不吞 —— 吞掉就是改数据）
+//   · 空行（只有换行符）跳过；`a,,` 这种**空字段保留**
+//   · 行尾 CRLF / LF / 单独 CR 都认
+//   · 开头 UTF-8 BOM 去掉（Excel 导出常见）
+import strings
+
+// 单字节分隔符（"," / ";" / "\t" / "|" …）。传多字节时只取首字节。
+export func delim_byte(string delim): int {
+    if delim.byte_len() == 0 { return 44 }      // 44 = ','
+    return delim.byte(0)
+}
+
+// CSV 文本 → 行×列（Array[Array[string]]）
+export func parse(string text, string delim): Array[Array[string]] {
+    Array[int] bs = text.to_bytes()
+    int n = bs.len()
+    int db = delim_byte(delim)
+
+    var start = 0
+    // UTF-8 BOM（EF BB BF）
+    if n >= 3 and bs[0] == 0xEF and bs[1] == 0xBB and bs[2] == 0xBF { start = 3 }
+
+    Array[Array[string]] rows = []
+    Array[string] row = []
+    Array[int] field = []
+    var inQuotes = false
+    var lineStarted = false
+    var i = start
+
+    while i < n {
+        int c = bs[i]
+
+        if inQuotes {
+            if c == 34 {                     // '"'
+                // 连续两个引号 ⇒ 一个字面引号
+                if i + 1 < n and bs[i + 1] == 34 {
+                    field.add(34)
+                    i = i + 2
+                    continue
+                }
+                inQuotes = false
+                i = i + 1
+                continue
+            }
+            field.add(c)                     // 引号内的逗号/换行都算字段内容
+            i = i + 1
+            continue
+        }
+
+        if c == 34 and field.len() == 0 {    // 字段开头的引号 ⇒ 进入引号模式
+            inQuotes = true
+            lineStarted = true
+            i = i + 1
+            continue
+        }
+
+        if c == db {
+            row.add(strings.from_bytes(field))
+            field = []
+            lineStarted = true
+            i = i + 1
+            continue
+        }
+
+        if c == 13 or c == 10 {              // CR / LF（CRLF 一起吃）
+            bool crlf = (c == 13 and i + 1 < n and bs[i + 1] == 10)
+            if lineStarted or row.len() > 0 or field.len() > 0 {
+                row.add(strings.from_bytes(field))
+                rows.add(row)
+                row = []
+                field = []
+            }
+            lineStarted = false
+            i = i + (if crlf then 2 else 1)
+            continue
+        }
+
+        field.add(c)
+        lineStarted = true
+        i = i + 1
+    }
+
+    // 收尾：文件不以换行结束时，最后一行也要收
+    if lineStarted or row.len() > 0 or field.len() > 0 {
+        row.add(strings.from_bytes(field))
+        rows.add(row)
+    }
+    return rows
+}
+
+// 列数（给"每行列数不一致"的诊断用）
+export func widths(Array[Array[string]] rows): Array[int] {
+    Array[int] w = []
+    for rows to r { w.add(r.len()) }
+    return w
+}

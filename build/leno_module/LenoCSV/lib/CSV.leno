@@ -1,0 +1,71 @@
+// CSV.leno -- LenoCSV entry point（纯 Leno，无原生库）
+//
+// 用法：
+//   import "CSV" as csv
+//
+//   // ① 文本 ⇄ 行×列
+//   var rows = csv.parse("a,b\n1,2\n")          // [["a","b"], ["1","2"]]
+//   var text = csv.encode(rows)                  // "a,b\r\n1,2"
+//
+//   // ② 带表头
+//   var t = csv.parseTable(text)                 // {header, rows}
+//   var recs = csv.toDicts(t.header, t.rows)     // [{a:"1", b:"2"}]
+//
+//   // ③ 文件
+//   var d = csv.load("data.csv", ",", true)      // {ok, header, rows, err}
+//   csv.save("out.csv", d.rows, ",", true)
+//
+// 约定：
+//   · 解析是**容错**的（引号内逗号/换行、"" 转义、CRLF/LF/CR、BOM、空行、不齐的行都能读）
+//   · 生成是**最小引号**的（只在必须时加），并默认 CRLF（Excel 友好）
+//   · 所有值都是 string（不做数字/日期推断 —— 那是调用方的业务判断，猜错更难查）
+import "csv_parse.leno" as p
+import "csv_encode.leno" as e
+import "csv_io.leno" as cio     // ⚠ 别名不能叫 io：`io` 是内部模块名（import 别名禁用）
+
+// ==================== 文本 ⇄ 行×列 ====================
+export func parse(string text, string delim = ","): Array[Array[string]] {
+    return p.parse(text, delim)
+}
+
+export func encode(Array[Array[string]] rows, string delim = ",", bool crlf = true): string {
+    return e.encode(rows, delim, crlf)
+}
+
+// 表头 + 记录（表头作为第一行）
+export func encodeRecords(Array[string] header, Array[Array[string]] rows,
+                          string delim = ",", bool crlf = true): string {
+    return e.encode_records(header, rows, delim, crlf)
+}
+
+// ==================== 带表头 ====================
+// {ok, header: Array[string], rows: Array[Array[string]], err}
+export func parseTable(string text, string delim = ",", bool hasHeader = true): Dict {
+    return cio.parse_table(text, delim, hasHeader)
+}
+
+// 行×列 + 表头 → Array[Dict]
+export func toDicts(Array[string] header, Array[Array[string]] rows): Array[Dict] {
+    return cio.to_dicts(header, rows)
+}
+
+// ==================== 文件 ====================
+export func load(string path, string delim = ",", bool hasHeader = true): Dict {
+    return cio.load(path, delim, hasHeader)
+}
+
+export func save(string path, Array[Array[string]] rows,
+                 string delim = ",", bool crlf = true): bool {
+    return cio.save(path, rows, delim, crlf)
+}
+
+// ==================== 诊断 ====================
+// 每行列数（排查"第 3 行少了一列"这类问题）
+export func widths(Array[Array[string]] rows): Array[int] {
+    return p.widths(rows)
+}
+
+// 分隔符首字节（自定义分隔符时用于自检）
+export func delimByte(string delim): int {
+    return p.delim_byte(delim)
+}

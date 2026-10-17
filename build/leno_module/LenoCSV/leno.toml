@@ -1,0 +1,11 @@
+[package]
+name = "LenoCSV"
+version = "0.1.0"
+description = "Leno CSV module: RFC 4180 parse/encode + table helpers (no native deps)"
+authors = ""
+license = "Apache-2.0"
+
+[modules]
+root = "lib"
+
+# 纯 Leno，无原生库
