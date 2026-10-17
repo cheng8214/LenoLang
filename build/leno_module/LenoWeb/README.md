@@ -440,10 +440,12 @@ var rs = web.renderMany(b, urls, opt, 3)
 //   web.createTarget(b) → web.renderOn(b, tabId, url, opt) → web.closeTarget(b, tabId)
 ```
 
-> ⚠ **库模块里不能起线程**（这是踩出来的硬约束）：`threads.start` 的入口函数只能来自
-> **主脚本文件**，传库里的函数会让进程**直接崩溃**（不是报错，是崩）。实测在 `web_cdp` 里做
-> 分片渲染：线程从未运行、主线程在 `channel.receive()` 上死等（表现为"命令挂了十几分钟没输出"）。
-> 所以 `renderMany` 是**顺序**的，只提供多 tab 轮转；真并发按上面那个模式在你的文件里写。
+> ⚠ **为什么 `renderMany` 是顺序的**（★ 2026-10-12 更正）：旧版这里写的理由
+> "库模块里不能起线程 —— `threads.start` 的入口函数只能来自主脚本文件，传库里的函数
+> 会让进程直接崩溃"**已经作废**：TH2 起模块函数可以直接作线程入口，库**能**自己开线程 ✓
+> （见 [`docs/线程并发能力修复追踪.md`](../../../docs/线程并发能力修复追踪.md)）。
+> 这里仍保持顺序，是**刻意不用线程池**的取舍（同线程 + 无锁更稳）；真并发由调用方
+> 在自己文件里起线程 + `renderOn` 到各自的 tab ✓。
 >
 > ⚠ **后台标签的定时器会被节流**：Chrome 把隐藏标签里的 `setTimeout` 钳到 ≥1s。批量/并发渲染时
 > 只有第一个 tab 是活跃的，页面里"延时 60ms 再写内容"的脚本会迟到 ⇒ 取值拿到半成品（实测：
@@ -527,8 +529,10 @@ var rs = web.renderMany(b, urls, opt, 3)
 - 交互：`clickSelector` 是 JS 点击（`isTrusted=false`），需要真事件用 `realClickSelector`。
   **拖拽 / 滚轮 / 键盘组合键还没做**（要真事件键盘序列得走 `Input.dispatchKeyEvent` 逐个按键）
 - 反检测只做到"抹掉无头特征"（见上），**不做** Canvas/字体/Audio 指纹伪装
-- **并发渲染不在库里做**：`threads.start` 的入口只能是主脚本文件的函数，库模块里起线程会让
-  进程崩溃 ⇒ `renderMany` 是顺序的，真并发由调用方起线程（模式见「批量与并发」）
+- **并发渲染不在库里做**（★ 2026-10-12 更正：旧理由"`threads.start` 的入口只能是主脚本
+  文件的函数、库模块里起线程会让进程崩溃"已撤 —— TH2 起模块函数可以直接作线程入口 ✓）：
+  这是**刻意不用线程池**的取舍（同线程 + 无锁更稳，见「多线程」一节），`renderMany` 仍是
+  顺序的，真并发由调用方起线程（模式见「批量与并发」）
 - `pageWsUrl` 的选择顺序是"**我们自己创建的 target**（`Target.createTarget` 拿到的 targetId 精确匹配）
   → http 页面 → 非内部 scheme 的页面"。**不能取"第一个 page"**：实测 Edge 首启会自带
   `edge://sync-confirmation-dialog/` 这类内部页，取第一个就会连到它上面
