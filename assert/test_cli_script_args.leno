@@ -17,6 +17,13 @@
 //   ⑤ 与**内置名撞名**的旗标写在脚本之后也归脚本（P2 彻底化，2026-09-26；修前 `-v` 会打印版本、
 //      脚本不跑 ✗）；
 //   ⑥ 守卫：内置旗标写在脚本**之前**仍归解释器（`-v` 照旧打印版本）—— 口径 = 内置旗标前置。
+//   ⑦ **打包版**（2026-10-17 修）：打包产物的命令行里**根本没有脚本路径**（脚本嵌在 exe 里）
+//      ⇒ 第一个用户参数不许被当成脚本吃掉，且 `_script()` / `dirs.script_dir()` 要按 **exe 自身**取。
+//      修前判据是"第一个非选项参数有没有 `.exe` 后缀"，两处都错 ✗（那个位置在打包版下就是
+//      第一个**用户参数**；且 Linux 打包产物没有 .exe 后缀）⇒ 判定恒假、退化成"解释器 + 脚本"
+//      切分 ⇒ `app a b -c` 得到 `["b","-c"]`（a 被吃）、`_script()` 返回 'a'、
+//      `script_dir()` 跟着 'a' 跑到 CWD ✗（真实症状：LenoQR 的打包版 `gen_png URL out.png`
+//      把 out.png 当成要编码的文本 ✓）。
 
 import dirs
 import files
@@ -89,6 +96,57 @@ main() {
     var o6 = _str(r6.output)
     assert_eq(r6.code, 0, "⑥前置 -v 应正常退出；输出=" + o6)
     assert_true(strings.has(o6, "LenoLang Compiler"), "⑥前置 -v 仍必须打印版本；输出=" + o6)
+
+    // ⑦ 打包版：命令行里没有脚本路径 ⇒ 第一个用户参数不许被当脚本吃掉（2026-10-17 修，见文件头）
+    //   判据用**关系式**（打包版 _script() 必须 == _executable()、script_dir() 必须 == 它的 dirname），
+    //   这样不受 /tmp 软链规范化影响（macOS 的 /tmp → /private/tmp 之类）✓
+    //   另一个脚本把这两条关系**自己算一遍**并打印 SELFCHECK ⇒ 断言只看结果，不看路径字面量 ✓
+    var dist = dirs.join(work, "dist")
+    var paths = dirs.join(work, "paths.leno")
+    files.write(paths,
+        "import dirs\n"
+        + "main() {\n"
+        + "    var s = _script()\n"
+        + "    var e = _executable()\n"
+        + "    print(\"SCRIPT=\" + (if s == null then \"(null)\" else s))\n"
+        + "    print(\"DIR=\" + dirs.script_dir())\n"
+        + "    print(\"EXE=\" + e)\n"
+        + "    var ok = s != null and s == e and dirs.script_dir() == dirs.dirname(e)\n"
+        + "    print(\"SELFCHECK=\" + (if ok then \"OK\" else \"FAIL\"))\n"
+        + "}\n")
+
+    var packedArgs = dirs.join(dist, "echoargs")
+    var packedPaths = dirs.join(dist, "paths")
+    if _os() == "windows" { packedArgs = packedArgs + ".exe"; packedPaths = packedPaths + ".exe" }
+
+    var pr1 = _exec(exe + " -p -o \"" + dist + "\" \"" + echo + "\"", 120000)
+    assert_ne(pr1, null, "⑦打包 echoargs：_exec 返回 null")
+    assert_eq(pr1.code, 0, "⑦打包 echoargs 应成功；输出=" + _str(pr1.output))
+    var pr2 = _exec(exe + " -p -o \"" + dist + "\" \"" + paths + "\"", 120000)
+    assert_ne(pr2, null, "⑦打包 paths：_exec 返回 null")
+    assert_eq(pr2.code, 0, "⑦打包 paths 应成功；输出=" + _str(pr2.output))
+    assert_true(files.exists(packedArgs), "⑦打包产物应存在：" + packedArgs)
+
+    var r7 = _exec(packedArgs + " a b -c")
+    assert_ne(r7, null, "⑦_exec 返回 null")
+    var o7 = _str(r7.output)
+    assert_eq(r7.code, 0, "⑦打包版应正常退出；输出=" + o7)
+    assert_true(strings.has(o7, "N=3"), "★⑦第一个用户参数不许被吃掉（修前 N=2）；输出=" + o7)
+    assert_true(strings.has(o7, "A=a"), "★⑦_args() 应含第一个参数 a（修前被当脚本吃掉）；输出=" + o7)
+    assert_true(strings.has(o7, "A=b"), "⑦_args() 应含 b；输出=" + o7)
+    assert_true(strings.has(o7, "A=-c"), "⑦_args() 应含 -c；输出=" + o7)
+
+    // 带一个参数跑：修前 `_script()` 会返回这个参数、`script_dir()` 会跟着它跑到 CWD ⇒ 双红 ✓
+    var r8 = _exec(packedPaths + " x")
+    assert_ne(r8, null, "⑦_exec 返回 null")
+    var o8 = _str(r8.output)
+    assert_eq(r8.code, 0, "⑦打包版 paths 应正常退出；输出=" + o8)
+    assert_true(strings.has(o8, "SELFCHECK=OK"),
+        "★⑦打包版 _script()/_script_dir() 必须按 exe 自身取（修前会取到用户参数 'x' 及其 CWD）；输出=" + o8)
+    assert_true(strings.has(o8, "SCRIPT=" + packedPaths),
+        "★⑦_script() 应等于 exe 自身路径；输出=" + o8)
+    assert_true(strings.has(o8, "DIR=" + dirs.dirname(packedPaths)),
+        "★⑦script_dir() 应为 exe 所在目录；输出=" + o8)
 
     dirs.delete(work)
     print("test_cli_script_args passed")

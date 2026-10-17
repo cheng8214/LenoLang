@@ -203,6 +203,14 @@ static void debug_dump_all_bytecode(Chunk* main_chunk) {
 int g_argc = 0;
 char** g_argv = NULL;
 
+// 是否"打包版"运行（= 本进程自己就是那个应用 exe，命令行里**没有脚本路径**）。
+// ★ 2026-10-17 新增：此前三处（_args / _script / dirs.script_dir）都靠
+//   "第一个非选项参数是不是 .exe" 猜这件事 —— 猜法本身是错的（见 sys.c 的说明），
+//   这里改成由**入口自己**如实上报：vm_main.c 检测到尾部内嵌 lenb 时置 1；
+//   编译器（main.c，永远不可能是打包版）恒为 0。
+//   ⚠ 两个入口各自定义一份（main.c 与 vm_main.c 互斥，见 build.sh / build_vm.sh 的源清单）。
+int g_packaged_mode = 0;
+
 // 设置控制台UTF-8编码（Windows）
 static void setupConsole(void) {
 #ifdef _WIN32

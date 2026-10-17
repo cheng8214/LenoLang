@@ -29,6 +29,11 @@ extern VM vm;
 int g_argc = 0;
 char** g_argv = NULL;
 
+// 是否"打包版"运行（本进程就是那个应用 exe；命令行里没有脚本路径）。
+// 见 main.c 同名变量处的说明 —— 由本文件的"尾部内嵌 lenb"检测**如实上报**，
+// 而不是让 _args / _script / dirs.script_dir 去猜（猜法此前是错的 ✓）。
+int g_packaged_mode = 0;
+
 // lenb 文件魔数
 #define LENB_MAGIC 0x424E454C
 // 内嵌资源段魔数（"LENR"，小端）
@@ -833,6 +838,9 @@ static int vm_run_main(int argc, char** argv) {
             extract_embedded_resources(exe_path, embedded_res, embedded_res_size);
             free(embedded_res);
         }
+        // 有嵌入数据 ⇒ 本进程就是**应用 exe 自己**（不是解释器 + 脚本两个参数）
+        //   ⇒ 如实上报，供 _args / _script / dirs.script_dir 取正确边界（2026-10-17）
+        g_packaged_mode = 1;
         // 有嵌入数据，直接执行
         int ret = run_lenb_from_memory(embedded_data, embedded_size);
         free(embedded_data);

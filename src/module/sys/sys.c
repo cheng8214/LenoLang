@@ -27,6 +27,7 @@
 // 外部声明：main.c 中定义的命令行参数
 extern int g_argc;
 extern char** g_argv;
+extern int g_packaged_mode;   // 打包版（入口如实上报，见 main.c/vm_main.c 的定义处）
 
 // ==================== ExecResult 的类型规格（`_exec` 的返回，v3.2.8） ====================
 // `_exec(cmd[, timeout_ms])` 此前返回 `[output, code]` **二元数组** —— 两个元素**类型不齐**
@@ -66,27 +67,34 @@ static Value native_args(int argCount, Value* args) {
     (void)argCount;
     (void)args;
 
-    // 找到脚本路径的位置（第一个非选项参数；'--' 之后的一切都按位置参数看待）
+    // 取"用户参数从哪开始"，两种模式**边界不同**，来源也不同：
+    //
+    // ★ 打包版（`g_packaged_mode`，由入口如实上报）：本进程**就是**应用 exe 自己，
+    //   命令行形如 `app.exe a b` ⇒ argv[0] 是 exe、argv[1] 起就是用户参数 ⇒ start = 1。
+    //   ⚠ 此前这里是**猜**的：看"第一个非选项参数"有没有 `.exe` 后缀。两处都错 ✗：
+    //     · 那个位置在打包版下是**第一个用户参数**（`a`），不是 exe ⇒ 判定恒为假；
+    //     · Linux 打包产物**根本没有 .exe 后缀**（Windows 才有）⇒ 判据本身就不成立。
+    //   后果（实测 2026-10-17）：打包版按"解释器 + 脚本"切分 ⇒ **第一个用户参数被当脚本吃掉**
+    //   （`./gen_png URL out.png` 把 out.png 当文本编码；`./decode_png <png>` 报"用法"）✗
+    //   ⇒ 现在不再猜：入口检测到"尾部内嵌 lenb"就置位（vm_main.c），编译器的恒为 0 ✓
+    //
+    // 解释器模式（`leno app.leno a b`）：找脚本路径的位置（第一个非选项参数；
+    //   '--' 之后的一切都按位置参数看待），用户参数从它之后开始。
     // ⚠ 这条边界必须与 main.c 的选项解析**同规矩**（P2）：脚本路径之后的参数（含 '-' 开头的）
     //   本就是"脚本参数"，两边若不按同一条边界切分，`_args()` 就会与解释器的判断不一致。
-    int script_idx = -1;
-    int past_ddash = 0;
-    for (int i = 1; i < g_argc; i++) {
-        if (!past_ddash && strcmp(g_argv[i], "--") == 0) { past_ddash = 1; continue; }
-        if (past_ddash || g_argv[i][0] != '-') { script_idx = i; break; }
+    int start_idx;
+    if (g_packaged_mode) {
+        start_idx = 1;
+    } else {
+        int script_idx = -1;
+        int past_ddash = 0;
+        for (int i = 1; i < g_argc; i++) {
+            if (!past_ddash && strcmp(g_argv[i], "--") == 0) { past_ddash = 1; continue; }
+            if (past_ddash || g_argv[i][0] != '-') { script_idx = i; break; }
+        }
+        if (script_idx < 0) script_idx = g_argc;   // 没找到脚本（REPL 等）⇒ 参数数组为空
+        start_idx = script_idx + 1;                // 跳过解释器 + 脚本
     }
-    if (script_idx < 0) script_idx = g_argc;   // 没找到脚本（REPL 等）⇒ 参数数组为空
-    
-    // 检查是否是打包版（第一个非选项参数是 .exe 本身）
-    int is_packaged = 0;
-    if (script_idx < g_argc) {
-        const char* first_arg = g_argv[script_idx];
-        int len = (int)strlen(first_arg);
-        is_packaged = (len > 4 && strcmp(first_arg + len - 4, ".exe") == 0);
-    }
-    
-    // 打包版：跳过 exe 自身即可；普通模式：跳过解释器+脚本
-    int start_idx = is_packaged ? 1 : script_idx + 1;
     int real_argc = g_argc - start_idx;
     if (real_argc < 0) real_argc = 0;
     
@@ -100,10 +108,18 @@ static Value native_args(int argCount, Value* args) {
     return val_obj((Object*)arr);
 }
 
+static Value native_executable(int argCount, Value* args);   // 见下方定义（打包版 _script() 复用它 ✓）
+
 // _script() - 返回当前脚本路径（第一个非选项参数；'--' 之后按位置参数看待）
+// ★ 2026-10-17 打包版：这里**没有脚本文件** —— 脚本已嵌进 exe 里 ⇒ 返回 exe 自身路径
+//   （= `_executable()` 的口径）。此前它按"第一个非选项参数"取，在打包版下取到的是
+//   **第一个用户参数**（实测 `_args_probe a b -c` ⇒ `_script()` 返回 'a'）✗；
+//   `dirs.script_dir()` 同源，于是连脚本目录都被带到用户参数所在的 CWD ✗
 static Value native_script(int argCount, Value* args) {
     (void)argCount;
     (void)args;
+
+    if (g_packaged_mode) { return native_executable(argCount, args); }
 
     int past_ddash = 0;
     for (int i = 1; i < g_argc; i++) {

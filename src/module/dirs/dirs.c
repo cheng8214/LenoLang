@@ -577,15 +577,22 @@ static Value native_dirs_script_dir(int argCount, Value* args) {
     // 外部声明全局参数
     extern int g_argc;
     extern char** g_argv;
+    extern int g_packaged_mode;   // 打包版（入口如实上报，见 main.c/vm_main.c 的定义处）
 
     const char* target = NULL;
     char* target_heap = NULL;  // 若 target 来自 GetModuleFileNameW，需 free
 
-    // 优先从参数中找脚本路径（第一个非选项参数）
-    for (int i = 1; i < g_argc; i++) {
-        if (g_argv[i][0] != '-') {
-            target = g_argv[i];
-            break;
+    // ★ 2026-10-17 打包版：命令行里**没有脚本路径**（脚本嵌在 exe 里）⇒ 别去参数里找：
+    //   那个位置在打包版下是**第一个用户参数**，会让脚本目录变成"用户参数所在目录" ✗
+    //   （实测 `_args_probe a b -c` 在 /tmp 下跑 ⇒ script_dir() 返回 /tmp）⇒ 直接落到下面的
+    //   exe 路径分支（本函数注释第 572 行写的正是"直接运行 exe ⇒ 返回 exe 所在目录" ✓）
+    // 解释器模式：优先从参数中找脚本路径（第一个非选项参数）
+    if (!g_packaged_mode) {
+        for (int i = 1; i < g_argc; i++) {
+            if (g_argv[i][0] != '-') {
+                target = g_argv[i];
+                break;
+            }
         }
     }
 
