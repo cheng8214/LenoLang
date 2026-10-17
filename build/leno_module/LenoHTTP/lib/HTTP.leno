@@ -1,0 +1,61 @@
+// HTTP.leno -- LenoHTTP entry point（纯 Leno，零原生依赖）
+//
+// 用法（阻塞式服务）：
+//   import "HTTP" as http
+//
+//   var app = http.newApp()
+//   http.get(app, "/", func(Dict req): Dict { return http.text("hello") })
+//   http.get(app, "/echo", func(Dict req): Dict {
+//       return http.json({"q": req["query"]["q"]})
+//   })
+//   http.static(app, "/assets", "D:/www")
+//   http.serve(app, "0.0.0.0", 8080)
+//
+// 请求 Dict：{method, target, path, query, headers, body, form, version, keepAlive, remote}
+// 响应 Dict：{status, body, contentType, headers}（handler 也可以直接返回 string）
+//
+// 边界（v0.1）：
+//   · **单线程顺序处理**：Socket 不能跨线程（threads.start 只允许标量/string/Array/Dict/
+//     struct/Channel）⇒ 无法"每连接一个线程"；慢客户端会占住后续连接
+//   · 不做 chunked 请求体 / multipart / WebSocket / HTTP/2 / TLS
+//   · 请求体上限 8MB、请求头上限 64KB、单连接最多 100 个请求（keep-alive）
+//   · 静态文件整读进内存（大文件下载请用反向代理或自己流式发）
+import "http_app.leno" as a
+import "http_server.leno" as srv
+
+// ==================== 应用与路由 ====================
+export func newApp(): Dict { return a.new_app() }
+export func get(Dict app, string path, any handler): void { a.get(app, path, handler) }
+export func post(Dict app, string path, any handler): void { a.post(app, path, handler) }
+export func put(Dict app, string path, any handler): void { a.put(app, path, handler) }
+export func del(Dict app, string path, any handler): void { a.del(app, path, handler) }
+export func route(Dict app, string method, string path, any handler): void {
+    a.route(app, method, path, handler)
+}
+export func static(Dict app, string prefix, string dir): void { a.static(app, prefix, dir) }
+export func stop(Dict app): void { a.stop(app) }
+
+// ==================== 响应助手 ====================
+export func text(string s): Dict { return a.text(s) }
+export func html(string s): Dict { return a.html(s) }
+export func json(any obj): Dict { return a.json(obj) }
+export func bytes(string s, string ctype): Dict { return a.bytes(s, ctype) }
+export func status(int code, string body): Dict { return a.status(code, body) }
+export func redirect(string url, int code = 302): Dict { return a.redirect(url, code) }
+export func notFound(): Dict { return a.not_found() }
+
+// ==================== 服务 ====================
+// {ok, sock, host, port, err} —— 端口传 0 由系统分配（测试/临时服务常用）
+export func listen(string host, int port): Dict { return srv.listen(host, port) }
+
+// 处理一个已接受的连接（含 keep-alive）
+export func acceptOne(Dict server, Dict app): Dict { return srv.accept_one(server, app) }
+
+// 在已有监听器上跑主循环（listen 之后用；避免 serve 再 bind 一次）
+export func run(Dict server, Dict app): Dict { return srv.run(server, app) }
+
+// 阻塞式主循环，直到 http.stop(app)
+export func serve(Dict app, string host, int port): Dict { return srv.serve(app, host, port) }
+
+// 便捷：只给端口（监听 127.0.0.1 之外的所有网卡用 "0.0.0.0"）
+export func serveOn(Dict app, int port): Dict { return srv.serve(app, "0.0.0.0", port) }

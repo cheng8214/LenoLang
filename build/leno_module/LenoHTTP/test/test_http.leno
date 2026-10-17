@@ -1,0 +1,217 @@
+// LenoHTTP 0.1.0 自测：路由 / 查询串 / 表单 / 404 / 405 / 静态文件 / keep-alive / 大响应
+//
+// 跑法（仓库根目录）：
+//   build\leno.exe build\leno_module\LenoHTTP\test\test_http.leno
+//
+// 结构：**主线程跑服务器**（acceptOne）+ **子线程跑客户端**（Socket 不能跨线程传，
+//   所以线程里自己 connect 是允许的；两边只通过端口号 int 与 Channel 通信）。
+import sockets
+import threads
+import strings
+import files
+import dirs
+import "HTTP" as http
+
+var g_staticDir = ""
+
+// ==================== 客户端工具 ====================
+func find_sub(string hay, string needle, int from): int {
+    Array[int] h = hay.to_bytes()
+    Array[int] n = needle.to_bytes()
+    if n.len() == 0 { return -1 }
+    var i = from
+    while i + n.len() <= h.len() {
+        var hit = true
+        for 0:n.len()-1 to k {
+            if h[i + k] != n[k] { hit = false; break }
+        }
+        if hit { return i }
+        i = i + 1
+    }
+    return -1
+}
+
+// 读一个完整响应（含按 Content-Length 补体）
+func read_resp(Socket c): Dict {
+    var buf = ""
+    var he = -1
+    while he < 0 {
+        he = find_sub(buf, "\r\n\r\n", 0)
+        if he >= 0 { break }
+        var d = c.recv(65536)
+        if d == null { return {status: 0, body: "", raw: buf} }
+        buf = buf + (d as string)
+    }
+    int cl = 0
+    int pos = find_sub(buf, "Content-Length: ", 0)
+    if pos >= 0 {
+        int eol = find_sub(buf, "\r\n", pos)
+        if eol > pos { cl = _int(buf.byte_slice(pos + 16, eol - 1)) }
+    }
+    int bodyStart = he + 4
+    while buf.byte_len() - bodyStart < cl {
+        var d = c.recv(65536)
+        if d == null { break }
+        buf = buf + (d as string)
+    }
+    var body = ""
+    if cl > 0 and buf.byte_len() >= bodyStart + cl {
+        body = buf.byte_slice(bodyStart, bodyStart + cl - 1)
+    }
+    // 状态码：第 9..11 字节
+    int st = 0
+    if buf.byte_len() >= 12 { st = _int(buf.byte_slice(9, 11)) }
+    return {status: st, body: body, raw: buf}
+}
+
+func get_once(int port, string path): Dict {
+    Socket c = sockets.connect("127.0.0.1", port)
+    if c == null { return {status: 0, body: "", raw: "connect 失败"} }
+    c.set_timeout(5000)
+    c.send("GET " + path + " HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n")
+    var r = read_resp(c)
+    c.close()
+    return r
+}
+
+// ==================== 断言 ====================
+func expect_status(Dict r, int want, string tag): string {
+    if (r["status"] as int) != want {
+        return "E " + tag + "：状态码 " + _str(r["status"] as int) + "（期望 " + _str(want) + "）"
+    }
+    return ""
+}
+
+func expect_body(Dict r, string want, string tag): string {
+    if (r["body"] as string) != want { return "E " + tag + "：body 不符（" + _str((r["body"] as string).byte_len()) + " 字节）" }
+    return ""
+}
+
+// ==================== 客户端线程 ====================
+func client(int port, Channel[string] ch) {
+    var errs = ""
+
+    // ① keep-alive：同一连接上两个请求
+    Socket c = sockets.connect("127.0.0.1", port)
+    if c == null { ch.send("E connect 失败"); return }
+    c.set_timeout(5000)
+    c.send("GET / HTTP/1.1\r\nHost: t\r\n\r\n")
+    var r1 = read_resp(c)
+    c.send("GET /echo?q=%E4%BD%A0%E5%A5%BD HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n")
+    var r2 = read_resp(c)
+    c.close()
+    errs = errs + expect_status(r1, 200, "① keep-alive 第 1 个")
+    errs = errs + expect_body(r1, "hello", "① keep-alive 第 1 个 body")
+    errs = errs + expect_status(r2, 200, "① keep-alive 第 2 个")
+    if find_sub(r2["body"] as string, "你好", 0) < 0 { errs = errs + "E ① 查询串未解码" }
+
+    // ② 表单 POST（urlencoded）
+    Socket c2 = sockets.connect("127.0.0.1", port)
+    if c2 == null { ch.send(errs + "E connect2 失败"); return }
+    c2.set_timeout(5000)
+    string form = "name=%E5%BC%A0%E4%B8%89&age=30"
+    c2.send("POST /form HTTP/1.1\r\nHost: t\r\nContent-Type: application/x-www-form-urlencoded\r\n"
+        + "Content-Length: " + _str(form.byte_len()) + "\r\nConnection: close\r\n\r\n" + form)
+    var r3 = read_resp(c2)
+    c2.close()
+    errs = errs + expect_status(r3, 200, "② 表单")
+    errs = errs + expect_body(r3, "name=张三 age=30", "② 表单字段")
+
+    // ③ 404
+    var r4 = get_once(port, "/missing")
+    errs = errs + expect_status(r4, 404, "③ 404")
+
+    // ④ 静态文件（小）
+    var r5 = get_once(port, "/assets/hello.txt")
+    errs = errs + expect_status(r5, 200, "④ 静态文件")
+    errs = errs + expect_body(r5, "static-ok", "④ 静态文件内容")
+
+    // ⑤ 静态文件（200KB，专门考 sockets.send 的分片）
+    var r6 = get_once(port, "/assets/big.bin")
+    errs = errs + expect_status(r6, 200, "⑤ 大文件")
+    if (r6["body"] as string).byte_len() != 200000 {
+        errs = errs + "E ⑤ 大文件长度 " + _str((r6["body"] as string).byte_len()) + "（期望 200000）"
+    }
+
+    // ⑥ 405：/ 只注册了 GET
+    Socket c3 = sockets.connect("127.0.0.1", port)
+    if c3 == null { ch.send(errs + "E connect3 失败"); return }
+    c3.set_timeout(5000)
+    c3.send("DELETE / HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n")
+    var r7 = read_resp(c3)
+    c3.close()
+    errs = errs + expect_status(r7, 405, "⑥ 405")
+
+    if errs == "" { ch.send("OK") } else { ch.send(errs) }
+}
+
+// ==================== 应用 ====================
+func h_root(Dict req): Dict { return http.text("hello") }
+
+func h_echo(Dict req): Dict {
+    Dict q = req["query"] as Dict
+    var v = ""
+    if q.has("q") { v = q.get("q", "") as string }
+    return http.json({"q": v})
+}
+
+func h_form(Dict req): Dict {
+    Dict f = req["form"] as Dict
+    var name = ""
+    var age = ""
+    if f.has("name") { name = f.get("name", "") as string }
+    if f.has("age") { age = f.get("age", "") as string }
+    return http.text("name=" + name + " age=" + age)
+}
+
+// ==================== 主流程 ====================
+func fail(string msg) {
+    print("[FAIL] " + msg)
+    _exit(1)
+}
+
+main() {
+    // 静态目录
+    string dir = dirs.join(_tmpdir(), "lenohttp_static")
+    dirs.mkdir_p(dir)
+    files.write(dirs.join(dir, "hello.txt"), "static-ok")
+    Array[int] big = []
+    for 0:199999 to i { big.add(65 + (i % 26)) }
+    files.write(dirs.join(dir, "big.bin"), strings.from_bytes(big))
+    g_staticDir = dir
+
+    var app = http.newApp()
+    http.get(app, "/", h_root)
+    http.get(app, "/echo", h_echo)
+    http.post(app, "/form", h_form)
+    http.static(app, "/assets", dir)
+
+    var srv = http.listen("127.0.0.1", 0)
+    if not (srv["ok"] as bool) { fail(srv["err"] as string) }
+    int port = srv["port"] as int
+    print("服务启动于 127.0.0.1:" + _str(port))
+
+    Channel[string] ch = threads.channel(1)
+    var t = threads.start(client, port, ch)
+
+    // 客户端会开 6 个连接：① keep-alive（2 个请求）/ ② 表单 / ③ 404 / ④ 小静态 /
+    //   ⑤ 大静态 / ⑥ 405
+    var handled = 0
+    var guard = 0
+    while handled < 6 and guard < 20000 {
+        var r = http.acceptOne(srv, app)
+        if r["ok"] as bool { handled = handled + 1 }
+        else { threads.sleep(2) }
+        guard = guard + 1
+    }
+
+    var report = ch.receive() as string
+    threads.join_all([t])
+    Socket listener = srv["sock"] as Socket
+    listener.close()
+    files.delete(dirs.join(dir, "hello.txt"))
+    files.delete(dirs.join(dir, "big.bin"))
+
+    if report != "OK" { fail(report) }
+    print("test_http passed（6 组断言，含 200KB 大响应）")
+}

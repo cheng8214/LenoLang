@@ -1,0 +1,53 @@
+// hello_server.leno -- 最小 HTTP 服务示例（也是压力测试的被测服务端）
+//
+// 用法：
+//   build\leno.exe build\leno_module\LenoHTTP\examples\hello_server.leno [端口] [静态目录]
+//
+// 路由：
+//   GET  /          纯文本 hello
+//   GET  /echo      回显查询串（JSON）
+//   POST /form      回显表单字段（JSON）
+//   POST /json      回显请求体字节数（JSON）
+//   GET  /assets/*  静态目录（给了静态目录参数才挂）
+import jsons
+import "HTTP" as http
+
+func h_root(Dict req): Dict {
+    return http.text("hello")
+}
+
+func h_echo(Dict req): Dict {
+    Dict q = req["query"] as Dict
+    var v = ""
+    if q.has("q") { v = q.get("q", "") as string }
+    return http.json({q: v, path: req["path"] as string})
+}
+
+func h_form(Dict req): Dict {
+    return http.json(req["form"] as Dict)
+}
+
+func h_json(Dict req): Dict {
+    return http.json({bytes: (req["body"] as string).byte_len(), keepAlive: req["keepAlive"] as bool})
+}
+
+main() {
+    Array[string] args = _args()
+    var port = 8080
+    if args.len() >= 1 { port = _int(args[0]) }
+
+    var app = http.newApp()
+    http.get(app, "/", h_root)
+    http.get(app, "/echo", h_echo)
+    http.post(app, "/form", h_form)
+    http.post(app, "/json", h_json)
+    if args.len() >= 2 { http.static(app, "/assets", args[1]) }
+
+    var server = http.listen("127.0.0.1", port)
+    if not (server["ok"] as bool) {
+        print("ERR " + (server["err"] as string))
+        return
+    }
+    print("LenoHTTP listening on http://127.0.0.1:" + _str(server["port"] as int))
+    http.run(server, app)
+}

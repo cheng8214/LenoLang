@@ -1,0 +1,11 @@
+[package]
+name = "LenoHTTP"
+version = "0.1.0"
+description = "Leno HTTP/1.1 server subset on top of sockets (routes, static files, query, forms)"
+authors = ""
+license = "Apache-2.0"
+
+[modules]
+root = "lib"
+
+# 纯 Leno，无原生库；依赖内置 sockets / files / strings / jsons

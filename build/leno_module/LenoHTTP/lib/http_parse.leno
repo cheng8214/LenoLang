@@ -1,0 +1,164 @@
+// http_parse.leno -- HTTP 报文解析（纯 Leno，按字节）
+//
+// 只做 HTTP/1.x 的**常见形状**（RFC 7230 的子集）：
+//   · 请求行 "METHOD target HTTP/1.1"
+//   · 头部每行 "Name: Value"，名字统一转小写（查询时不必关心大小写）
+//   · 查询串 & 表单用 application/x-www-form-urlencoded 解析（%XX 与 '+'）
+// 明确不做：分块传输（chunked 请求体）、multipart、HTTP/2、头部折行（obs-fold）。
+import strings
+
+func lower(string s): string {
+    Array[int] out = []
+    for s.to_bytes() to b {
+        if b >= 65 and b <= 90 { out.add(b + 32) } else { out.add(b) }
+    }
+    return strings.from_bytes(out)
+}
+
+// 去掉首尾空格 / 制表符
+export func trim(string s): string {
+    Array[int] bs = s.to_bytes()
+    var a = 0
+    var b = bs.len() - 1
+    while a <= b and (bs[a] == 32 or bs[a] == 9) { a = a + 1 }
+    while b >= a and (bs[b] == 32 or bs[b] == 9) { b = b - 1 }
+    if b < a { return "" }
+    return strings.byte_slice(s, a, b)
+}
+
+export func find(string hay, string needle, int from): int {
+    Array[int] h = hay.to_bytes()
+    Array[int] n = needle.to_bytes()
+    if n.len() == 0 { return -1 }
+    var i = from
+    while i + n.len() <= h.len() {
+        var hit = true
+        for 0:n.len()-1 to k {
+            if h[i + k] != n[k] { hit = false; break }
+        }
+        if hit { return i }
+        i = i + 1
+    }
+    return -1
+}
+
+export func split(string s, string sep): Array[string] {
+    Array[string] out = []
+    var start = 0
+    while true {
+        int idx = find(s, sep, start)
+        if idx < 0 {
+            if start <= s.byte_len() - 1 { out.add(strings.byte_slice(s, start, s.byte_len() - 1)) }
+            else if s.byte_len() == 0 { } else { }
+            break
+        }
+        if idx == start { out.add("") }
+        else { out.add(strings.byte_slice(s, start, idx - 1)) }
+        start = idx + sep.byte_len()
+        if start >= s.byte_len() { out.add(""); break }
+    }
+    return out
+}
+
+func _hexval(int b): int {
+    if b >= 48 and b <= 57 { return b - 48 }
+    if b >= 97 and b <= 102 { return b - 87 }
+    if b >= 65 and b <= 70 { return b - 55 }
+    return -1
+}
+
+// %XX 解码；plusAsSpace=true 时 '+' 也当空格（查询串/表单；路径里 '+' 是字面量）
+export func url_decode(string s, bool plusAsSpace): string {
+    Array[int] bs = s.to_bytes()
+    Array[int] out = []
+    var i = 0
+    while i < bs.len() {
+        int b = bs[i]
+        if b == 37 and i + 2 < bs.len() {
+            int hi = _hexval(bs[i + 1])
+            int lo = _hexval(bs[i + 2])
+            if hi >= 0 and lo >= 0 {
+                out.add(hi * 16 + lo)
+                i = i + 3
+                continue
+            }
+        }
+        if b == 43 and plusAsSpace { out.add(32) }
+        else { out.add(b) }
+        i = i + 1
+    }
+    return strings.from_bytes(out)
+}
+
+// "a=1&b=2" → {a:"1", b:"2"}（同键后者覆盖前者；空值保留为 ""）
+export func parse_kv(string s): Dict {
+    Dict d = {}
+    if s == "" { return d }
+    for split(s, "&") to part {
+        if part == "" { continue }
+        int eq = find(part, "=", 0)
+        var k = part
+        var v = ""
+        if eq >= 0 {
+            k = strings.byte_slice(part, 0, eq - 1)
+            if eq + 1 <= part.byte_len() - 1 { v = strings.byte_slice(part, eq + 1, part.byte_len() - 1) }
+        }
+        d.set(url_decode(k, true), url_decode(v, true))
+    }
+    return d
+}
+
+// 头部行数组 → {小写名: 值}
+export func parse_headers(Array[string] lines): Dict {
+    Dict h = {}
+    for lines to line {
+        if line == "" { continue }
+        int c = find(line, ":", 0)
+        if c <= 0 { continue }
+        string k = lower(trim(strings.byte_slice(line, 0, c - 1)))
+        string v = trim(strings.byte_slice(line, c + 1, line.byte_len() - 1))
+        h.set(k, v)
+    }
+    return h
+}
+
+// 请求行 → [method, target, version]
+export func split_request_line(string line): Array[string] {
+    Array[string] out = []
+    var start = 0
+    var i = 0
+    while i < line.byte_len() {
+        if line.byte(i) == 32 {
+            if i > start { out.add(strings.byte_slice(line, start, i - 1)) }
+            start = i + 1
+        }
+        i = i + 1
+    }
+    if start <= line.byte_len() - 1 { out.add(strings.byte_slice(line, start, line.byte_len() - 1)) }
+    return out
+}
+
+// "path?x=1" → [path, "x=1"]（没有 ? 时第二项为 ""）
+export func split_target(string target): Array[string] {
+    int q = find(target, "?", 0)
+    Array[string] out = []
+    if q < 0 {
+        out.add(target)
+        out.add("")
+        return out
+    }
+    out.add(strings.byte_slice(target, 0, q - 1))
+    if q + 1 <= target.byte_len() - 1 {
+        out.add(strings.byte_slice(target, q + 1, target.byte_len() - 1))
+    } else {
+        out.add("")
+    }
+    return out
+}
+
+// 返回 "\r\n\r\n" 的**结束位置**（即正文起点），找不到 -1
+export func header_end(string buf): int {
+    int i = find(buf, "\r\n\r\n", 0)
+    if i < 0 { return -1 }
+    return i + 4
+}

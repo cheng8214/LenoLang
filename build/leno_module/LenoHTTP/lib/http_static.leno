@@ -1,0 +1,67 @@
+// http_static.leno -- 静态文件（纯 Leno）
+//
+// 安全要点：**必须先挡目录穿越**再拼路径
+//   requested "/assets/../../secret.txt" ⇒ 归一化后可能跳出根目录 ⇒ 一律 403。
+//   这里用"拒绝任何 .. 段"的保守策略（不做 realpath 归一化：那需要目录遍历，
+//   而且在 Windows 上符号链接/短路径还有别的花样；静态站点用不到 ..）。
+import files
+import dirs
+import strings
+
+export func content_type(string path): string {
+    string p = strings.to_lower(path)
+    if strings.ends_with(p, ".html") or strings.ends_with(p, ".htm") { return "text/html; charset=utf-8" }
+    if strings.ends_with(p, ".css") { return "text/css; charset=utf-8" }
+    if strings.ends_with(p, ".js") { return "application/javascript; charset=utf-8" }
+    if strings.ends_with(p, ".json") { return "application/json; charset=utf-8" }
+    if strings.ends_with(p, ".txt") or strings.ends_with(p, ".md") { return "text/plain; charset=utf-8" }
+    if strings.ends_with(p, ".svg") { return "image/svg+xml" }
+    if strings.ends_with(p, ".png") { return "image/png" }
+    if strings.ends_with(p, ".jpg") or strings.ends_with(p, ".jpeg") { return "image/jpeg" }
+    if strings.ends_with(p, ".gif") { return "image/gif" }
+    if strings.ends_with(p, ".webp") { return "image/webp" }
+    if strings.ends_with(p, ".ico") { return "image/x-icon" }
+    if strings.ends_with(p, ".pdf") { return "application/pdf" }
+    if strings.ends_with(p, ".mp4") { return "video/mp4" }
+    if strings.ends_with(p, ".woff2") { return "font/woff2" }
+    if strings.ends_with(p, ".zip") { return "application/zip" }
+    return "application/octet-stream"
+}
+
+func has_dotdot(string rel): bool {
+    // 按 / 与 \ 切段，任何一段等于 ".." 就拒绝
+    Array[int] bs = rel.to_bytes()
+    var start = 0
+    var i = 0
+    while i <= bs.len() {
+        if i == bs.len() or bs[i] == 47 or bs[i] == 92 {
+            int segLen = i - start
+            if segLen == 2 and bs[start] == 46 and bs[start + 1] == 46 { return true }
+            start = i + 1
+        }
+        i = i + 1
+    }
+    return false
+}
+
+// rel 形如 "/a/b.txt" 或 "/"（目录）
+export func serve(string root, string rel): Dict {
+    if has_dotdot(rel) {
+        return {found: false, data: "", ctype: "", err: "403"}
+    }
+    var sub = rel
+    if strings.starts_with(sub, "/") { sub = sub.byte_slice(1, sub.byte_len() - 1) }
+    if sub == "" or strings.ends_with(sub, "/") { sub = sub + "index.html" }
+    // 统一用 / 拼（dirs.join 在 Windows 上给 \，files 两种都认）
+    string full = dirs.join(root, sub)
+    if not files.exists(full) {
+        return {found: false, data: "", ctype: "", err: "404"}
+    }
+    var data = ""
+    try {
+        data = files.read(full)
+    } catch ex {
+        return {found: false, data: "", ctype: "", err: "读取失败"}
+    }
+    return {found: true, data: data, ctype: content_type(sub), err: ""}
+}

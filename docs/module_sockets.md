@@ -193,7 +193,7 @@ var addr_h  = sockets.ntohl(addr_be)     // 网络序 -> 主机序 (32位)
 **参数**:
 - `data` (string): 要发送的数据
 
-**返回**: `bool` - 是否发送成功
+**返回**: `bool` - 是否发送成功（**整段**写入成功才算 true）
 
 ```leno
 Socket conn = sockets.connect("127.0.0.1", 8080)
@@ -202,6 +202,11 @@ if conn != null {
     io.print("发送成功: " + sent)
 }
 ```
+
+> **2026-10-17 修复**：此前只调用一次 `send()` 且**忽略返回值** ⇒ TCP 只写进去一部分时
+> 大响应会被**静默截断**（实测发 1MB，客户端只收到前几十 KB，而 Leno 侧拿到的是 `true`）。
+> 现在内部**循环发完**（EINTR 重试、EWOULDBLOCK 有限重试），返回 true 即"全部写完"。
+> 空字符串仍是合法的无操作（返回 true，但不会唤醒对端 `arecv`）。
 
 ---
 
@@ -252,6 +257,12 @@ if client != null {
     io.print("客户端来自: " + client.peer_addr() + ":" + client.peer_port())
 }
 ```
+
+> ⚠ **accept 出来的 socket 会继承监听端的 `nonblocking` 状态**（Windows 上尤其明显）。
+> 如果监听端为了配合 `select()` 设了 `set_nonblocking(true)`，那么新连接在"数据还没到"时
+> `recv()` 会**立刻返回 null**，看起来像"对端关闭了"（典型症状：HTTP keep-alive 的第二个
+> 请求永远收不到）。
+> ⇒ 拿到连接后先 `client.set_nonblocking(false)`，再 `client.set_timeout(5000)`。
 
 ---
 

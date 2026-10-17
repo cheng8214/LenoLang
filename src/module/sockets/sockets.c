@@ -411,10 +411,42 @@ static Value socket_send_func(int argc, Value* args) {
         return val_bool(true);
     }
 
-    int sent = send(sock->fd, data->chars, (int)data->len, 0);
-    if (sent == SOCKET_ERROR_VAL) {
-        sock->last_error = GET_ERROR();
-        return val_bool(false);
+    /* ★ 2026-10-17：**必须循环发完** —— send() 在 TCP 上只保证"写进去一部分"，
+     *   原来单次调用 + 忽略返回值 ⇒ 大响应（静态文件、图片、几十 KB 的 HTML）
+     *   会被**静默截断**，而调用方拿到 true 完全看不出来 ✗
+     *   （实测：HTTP 服务器发 1MB 文件，客户端只收到前几十 KB）
+     *   现在：EINTR 重试、EWOULDBLOCK 有限重试（非阻塞 socket 不会被卡死）、
+     *   其余错误置 last_error 并返回 false。 */
+    int total = 0;
+    int len = (int)data->len;
+    int spins = 0;
+    while (total < len) {
+        int sent = send(sock->fd, data->chars + total, len - total, 0);
+        if (sent == SOCKET_ERROR_VAL) {
+            int err = GET_ERROR();
+#ifdef _WIN32
+            if (err == WSAEINTR) continue;
+            if (err == WSAEWOULDBLOCK) {
+#else
+            if (err == EINTR) continue;
+            if (err == EAGAIN || err == EWOULDBLOCK) {
+#endif
+                /* 非阻塞 socket：让出后重试（有上限，避免死循环） */
+                spins++;
+                if (spins > 100000) {
+                    sock->last_error = err;
+                    return val_bool(false);
+                }
+                continue;
+            }
+            sock->last_error = err;
+            return val_bool(false);
+        }
+        if (sent == 0) {
+            sock->last_error = 0;
+            return val_bool(false);   /* 对端已关闭 */
+        }
+        total += sent;
     }
     return val_bool(true);
 }

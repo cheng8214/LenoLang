@@ -1,0 +1,226 @@
+// http_server.leno -- 监听 / 收请求 / 发响应（纯 Leno，基于内置 sockets）
+//
+// 并发模型（v0.1 明确）：**单线程顺序处理** —— 一个连接处理完（或 keep-alive 用完）
+//   再 accept 下一个。原因：`Socket` 不能跨线程传递（`threads.start` 的实参只允许
+//   标量/string/Array/Dict/struct/Channel；Socket 是对象 ⇒ 运行期直接拒绝），
+//   所以"每连接一个线程"在本语言里做不到 —— 这条限制写在 README 里。
+//
+// 已对 sockets 做的修复（本模块的副产品）：
+//   `sock.send()` 原来是单次 send + 忽略返回值 ⇒ 大响应被**静默截断**
+//   （实测 1MB 文件客户端只收到前几十 KB）。现在改成循环发完（EINTR/EWOULDBLOCK 重试）
+import sockets
+import strings
+import files
+import "http_parse.leno" as p
+import "http_app.leno" as appmod
+
+var MAX_HEADER = 65536
+var MAX_BODY = 8388608          // 8MB（v0.1 整包读进内存）
+var MAX_REQ_PER_CONN = 100
+
+// ==================== 监听 ====================
+// 返回 {ok, sock, host, port, err}；端口传 0 由系统分配（测试用）
+export func listen(string host, int port): Dict {
+    Socket s = sockets.listen(host, port)
+    if s == null {
+        return {ok: false, sock: null, host: host, port: port,
+                err: "监听失败（端口被占用 / 无权限 / 地址不可用）：" + host + ":" + _str(port)}
+    }
+    s.set_nonblocking(true)      // 让 accept 可被 select 驱动，便于 stop()
+    return {ok: true, sock: s, host: host, port: s.local_port(), err: ""}
+}
+
+// ==================== 单个连接 ====================
+func _status_text(int code): string {
+    if code == 200 { return "OK" }
+    if code == 201 { return "Created" }
+    if code == 204 { return "No Content" }
+    if code == 301 { return "Moved Permanently" }
+    if code == 302 { return "Found" }
+    if code == 304 { return "Not Modified" }
+    if code == 400 { return "Bad Request" }
+    if code == 403 { return "Forbidden" }
+    if code == 404 { return "Not Found" }
+    if code == 405 { return "Method Not Allowed" }
+    if code == 413 { return "Payload Too Large" }
+    if code == 500 { return "Internal Server Error" }
+    return "OK"
+}
+
+func _put(Array[int] out, string s) {
+    for s.to_bytes() to b { out.add(b) }
+}
+
+func _write_response(Socket c, Dict res, bool keep): bool {
+    int st = res["status"] as int
+    string body = res["body"] as string
+    Array[int] out = []
+    _put(out, "HTTP/1.1 " + _str(st) + " " + _status_text(st) + "\r\n")
+    _put(out, "Content-Type: " + (res["contentType"] as string) + "\r\n")
+    _put(out, "Content-Length: " + _str(body.byte_len()) + "\r\n")
+    _put(out, "Connection: " + (if keep then "keep-alive" else "close") + "\r\n")
+    Dict hs = res["headers"] as Dict
+    for hs.keys() to k {
+        _put(out, k + ": " + (hs[k] as string) + "\r\n")
+    }
+    _put(out, "\r\n")
+    for body.to_bytes() to b { out.add(b) }
+    return c.send(strings.from_bytes(out))
+}
+
+// 读一个完整请求（含请求体）。carry = 上个请求多读到的字节。
+// 返回 {ok, req, rest, err}；对端关闭/超时 ⇒ ok=false 且 err=""（正常收尾，不报错）
+func _read_request(Socket c, string carry): Dict {
+    var buf = carry
+    var he = p.header_end(buf)
+    while he < 0 {
+        var chunk = c.recv(65536)
+        if chunk == null { return {ok: false, req: null, rest: "", err: ""} }
+        string s = chunk as string
+        if s.byte_len() == 0 { return {ok: false, req: null, rest: "", err: ""} }
+        buf = buf + s
+        if buf.byte_len() > MAX_HEADER {
+            return {ok: false, req: null, rest: "", err: "请求头超过 " + _str(MAX_HEADER) + " 字节"}
+        }
+        he = p.header_end(buf)
+    }
+
+    string head = buf.byte_slice(0, he - 5)          // 去掉尾部 \r\n\r\n
+    var rest = ""
+    if he <= buf.byte_len() - 1 { rest = buf.byte_slice(he, buf.byte_len() - 1) }
+
+    Array[string] lines = p.split(head, "\r\n")
+    if lines.len() == 0 { return {ok: false, req: null, rest: "", err: "空请求"} }
+    Array[string] rl = p.split_request_line(lines[0])
+    if rl.len() < 3 { return {ok: false, req: null, rest: "", err: "请求行不完整"} }
+
+    string method = rl[0].to_upper()
+    string target = rl[1]
+    string version = rl[2]
+
+    Array[string] headers = []
+    for 1:lines.len()-1 to i { headers.add(lines[i]) }
+    Dict h = p.parse_headers(headers)
+
+    Array[string] pt = p.split_target(target)
+    string path = p.url_decode(pt[0], false)
+    Dict query = p.parse_kv(pt[1])
+
+    // 请求体：按 Content-Length 补齐（chunked 不支持）
+    var clen = 0
+    if h.has("content-length") { clen = _int(h.get("content-length", "0")) }
+    if clen > MAX_BODY {
+        return {ok: false, req: null, rest: "", err: "请求体超过 " + _str(MAX_BODY) + " 字节"}
+    }
+    var raw = rest
+    while raw.byte_len() < clen {
+        var chunk = c.recv(65536)
+        if chunk == null { break }
+        raw = raw + (chunk as string)
+    }
+    var body = ""
+    if clen > 0 and raw.byte_len() >= clen { body = raw.byte_slice(0, clen - 1) }
+    else if raw.byte_len() > 0 { body = raw }
+    var leftover = ""
+    if raw.byte_len() > clen { leftover = raw.byte_slice(clen, raw.byte_len() - 1) }
+
+    // 表单：只在 urlencoded 时解析（multipart 见 README 的边界）
+    Dict form = {}
+    if h.has("content-type") {
+        string ct = h.get("content-type", "") as string
+        if p.find(ct.to_lower(), "application/x-www-form-urlencoded", 0) >= 0 {
+            form = p.parse_kv(body)
+        }
+    }
+
+    // keep-alive：HTTP/1.1 默认保持（除非 Connection: close）；HTTP/1.0 默认关闭
+    string conn = ""
+    if h.has("connection") { conn = (h.get("connection", "") as string).to_lower() }
+    var keep = false
+    if version == "HTTP/1.1" and conn != "close" { keep = true }
+    if version == "HTTP/1.0" and conn == "keep-alive" { keep = true }
+
+    Dict req = {
+        method: method,
+        target: target,
+        path: path,
+        query: query,
+        headers: h,
+        body: body,
+        form: form,
+        version: version,
+        keepAlive: keep,
+        remote: c.peer_addr() + ":" + _str(c.peer_port())
+    }
+    return {ok: true, req: req, rest: leftover, err: ""}
+}
+
+// 处理一个已接受的连接（含 keep-alive 的多次请求）
+export func handle_conn(Socket c, Dict app): Dict {
+    // ⚠ 两个坑（实测踩出来的）：
+    //   ① **accept 出来的 socket 会继承监听端的 nonblocking**（Windows 尤其明显）⇒
+    //      若不显式关掉，recv 在"数据还没到"时立刻返回 null，keep-alive 的第二个请求
+    //      会被误判成"对端关闭"（症状：第一个请求正常，第二个永远收不到 ✗）。
+    //   ② 必须先转回阻塞再设超时，顺序反了超时也不生效。
+    c.set_nonblocking(false)
+    c.set_timeout(5000)          // 5s 收包超时：防慢速连接长期占着
+    var carry = ""
+    var count = 0
+    while count < MAX_REQ_PER_CONN {
+        var rr = _read_request(c, carry)
+        if not (rr["ok"] as bool) {
+            string e = rr["err"] as string
+            if e != "" {
+                _write_response(c, appmod.status(400, "400 Bad Request：" + e), false)
+            }
+            break
+        }
+        Dict req = rr["req"] as Dict
+        carry = rr["rest"] as string
+        Dict res = appmod.dispatch(app, req)
+        bool keep = (req["keepAlive"] as bool) and count < MAX_REQ_PER_CONN - 1
+        if app.has("debug") {
+            print("[http] " + (req["method"] as string) + " " + (req["target"] as string)
+                + " -> " + _str(res["status"] as int) + " keep=" + _str(keep)
+                + " carry=" + _str(carry.byte_len()))
+        }
+        if not _write_response(c, res, keep) {
+            if app.has("debug") { print("[http] send 失败（连接被对端关闭？）") }
+            break
+        }
+        count = count + 1
+        if not keep { break }
+    }
+    c.close()
+    return {ok: true, requests: count, err: ""}
+}
+
+// 接受一个连接并处理（测试/自定义循环用）
+export func accept_one(Dict server, Dict app): Dict {
+    Socket srv = server["sock"] as Socket
+    Socket c = srv.accept()
+    if c == null { return {ok: false, requests: 0, err: "没有待处理的连接"} }
+    return handle_conn(c, app)
+}
+
+// 在**已有的监听器**上跑主循环（测试/自定义启动流程用，避免二次 bind）
+export func run(Dict server, Dict app): Dict {
+    Socket srv = server["sock"] as Socket
+    app.set("running", true)
+    while app["running"] as bool {
+        var ready = sockets.select([srv], 200)
+        if ready.len() == 0 { continue }
+        var c = srv.accept()
+        if c == null { continue }
+        handle_conn(c, app)
+    }
+    srv.close()
+    return {ok: true, requests: 0, err: ""}
+}
+
+// 阻塞式主循环（真正对外服务用）。app 里 running=false 或 http.stop(app) 可退出。
+export func serve(Dict app, string host, int port): Dict {
+    var server = listen(host, port)
+    if not (server["ok"] as bool) { return server }
+    return run(server, app)
+}

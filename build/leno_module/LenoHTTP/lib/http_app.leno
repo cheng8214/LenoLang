@@ -1,0 +1,131 @@
+// http_app.leno -- 应用对象、路由表、响应助手（纯 Leno）
+//
+// 设计取向（与 LenoQR/LenoCSV 一致）：**用 Dict 而不是类**
+//   app   = {routes: Array[Dict], statics: Array[Dict], running: bool}
+//   route = {method, path, handler}
+//   req   = {method, target, path, query, headers, body, form, remote, version, keepAlive}
+//   res   = {status, body, contentType, headers}
+//
+// 为什么 handler 是"函数值"：Leno 的函数可以存进变量/数组/字典并直接调用（已实测），
+//   所以路由表不需要额外的闭包容器。
+import strings
+import jsons
+import "http_static.leno" as st
+
+// ==================== 应用 ====================
+export func new_app(): Dict {
+    return {routes: [], statics: [], running: false}
+}
+
+export func route(Dict app, string method, string path, any handler) {
+    Array[Dict] routes = app["routes"] as Array[Dict]
+    routes.add({method: method, path: path, handler: handler})
+    app.set("routes", routes)
+}
+
+export func get(Dict app, string path, any handler): void { route(app, "GET", path, handler) }
+export func post(Dict app, string path, any handler): void { route(app, "POST", path, handler) }
+export func put(Dict app, string path, any handler): void { route(app, "PUT", path, handler) }
+export func del(Dict app, string path, any handler): void { route(app, "DELETE", path, handler) }
+
+export func stop(Dict app) {
+    app.set("running", false)
+}
+
+// ==================== 响应助手 ====================
+export func text(string s): Dict {
+    return {status: 200, body: s, contentType: "text/plain; charset=utf-8", headers: {}}
+}
+
+export func html(string s): Dict {
+    return {status: 200, body: s, contentType: "text/html; charset=utf-8", headers: {}}
+}
+
+export func json(any obj): Dict {
+    return {status: 200, body: jsons.encode(obj), contentType: "application/json; charset=utf-8",
+            headers: {}}
+}
+
+export func bytes(string s, string ctype): Dict {
+    return {status: 200, body: s, contentType: ctype, headers: {}}
+}
+
+export func status(int code, string body): Dict {
+    return {status: code, body: body, contentType: "text/plain; charset=utf-8", headers: {}}
+}
+
+export func redirect(string url, int code): Dict {
+    Dict h = {}
+    h.set("Location", url)
+    return {status: code, body: "", contentType: "text/plain; charset=utf-8", headers: h}
+}
+
+export func not_found(): Dict { return status(404, "404 Not Found") }
+
+// handler 允许返回 Dict（推荐）、string（自动按 text/plain）或其它（_str 兜底）
+// ⚠ 不要对 `res` 原地 set：裸 Dict 的元素类型会被**第一次写入**定死
+//   （先 set int 的 status，再 set string 的 body 就编译报"期望 int"）。
+//   这里改成"读出来 → 造一个新的响应 Dict"，类型各自独立 ✓
+func normalize(any res): Dict {
+    if res is Dict {
+        Dict d = res as Dict
+        var code = 200
+        var body = ""
+        var ct = "text/plain; charset=utf-8"
+        var hs = {}
+        if d.has("status") { code = _int(d.get("status", 200)) }
+        if d.has("body") { body = d.get("body", "") as string }
+        if d.has("contentType") { ct = d.get("contentType", "") as string }
+        if d.has("headers") { hs = d.get("headers", {}) as Dict }
+        return {status: code, body: body, contentType: ct, headers: hs}
+    }
+    if res is string { return text(res as string) }
+    return text(_str(res))
+}
+
+// ==================== 路由分发 ====================
+// 顺序：精确路由（按注册顺序）→ 静态目录（按注册顺序）→ 404
+//   路径命中但方法不符 ⇒ 405（有路由表的情况下，这比 404 更容易排查）
+export func dispatch(Dict app, Dict req): Dict {
+    string method = req["method"] as string
+    string path = req["path"] as string
+    var pathMatched = false
+
+    Array[Dict] routes = app["routes"] as Array[Dict]
+    for routes to r {
+        if (r["path"] as string) != path { continue }
+        pathMatched = true
+        string m = r["method"] as string
+        if m == method or m == "*" {
+            var out = (r["handler"] as any)(req)
+            return normalize(out)
+        }
+    }
+
+    Array[Dict] statics = app["statics"] as Array[Dict]
+    for statics to sm {
+        string prefix = sm["prefix"] as string
+        if strings.starts_with(path, prefix) {
+            string rel = path
+            if path.byte_len() >= prefix.byte_len() {
+                rel = path.byte_slice(prefix.byte_len(), path.byte_len() - 1)
+            }
+            var hit = st.serve(sm["dir"] as string, rel)
+            if hit["found"] as bool {
+                return {status: 200, body: hit["data"] as string,
+                        contentType: hit["ctype"] as string, headers: {}}
+            }
+            return not_found()
+        }
+    }
+
+    if pathMatched { return status(405, "405 Method Not Allowed") }
+    return not_found()
+}
+
+// 注册静态目录（prefix 形如 "/assets"）
+export func static(Dict app, string prefix, string dir) {
+    Array[Dict] statics = app["statics"] as Array[Dict]
+    statics.add({prefix: prefix, dir: dir})
+    app.set("statics", statics)
+}
