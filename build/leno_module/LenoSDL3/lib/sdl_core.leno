@@ -701,6 +701,13 @@ export func clearDispatchWindow() { _capWid = -1 }
 
 // 登记本窗口的弹层矩形（同窗口旧登记先撤 ⇒ 每窗口同时只认一块 ✓）
 export func setPopupCapture(float x, float y, float w, float h) {
+    // ★★ 2026-10-18 修（用户实测："歌单有时右击不出菜单"）：
+    //   **没有派发上下文时一律不登记** ✗ —— 应用在事件回调里"直投"浮层（`lb.process(ev)`）
+    //   时 `_capWid = -1`；若这时登记，就会写进"无窗口"那一槽，而那个槽**永远不会被清**
+    //   （窗口渲染前只清自己 wid 的那块 ✓）⇒ 之后所有直投事件都被它挡住 ✗✗
+    //   现象：右键菜单**只能弹一次**，关掉后再右击就再也不出来（左键/滚轮同样被挡 ✓）。
+    //   对齐文件头的设计：那一槽本来就该"查不到"（见上面的说明 ✓），**只读不写** ✓
+    if _capWid < 0 { return }
     float key = _float(_capWid)
     Array[Array[float]] keep = []
     for _popupCaps to c { if c[0] != key { keep.add(c) } }
