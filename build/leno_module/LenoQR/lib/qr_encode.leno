@@ -80,8 +80,8 @@ func rs_generator(int n): Array[int] {
     if g_gens.has(key) { return g_gens.get(key) as Array[int] }
     Array[int] g = [1]
     Array[int] ng = []
-    for 0:n-1 to i {
-        int factor = g_exp[i]
+    // `for 集合 to 元素` 直接遍历元素（不是下标）；g_exp 有 256 项 ⇒ 用切片取前 n 个
+    for g_exp[0:n-1] to factor {
         ng = []
         for 0:g.len() to k { ng.add(0) }
         for 0:g.len()-1 to k {
