@@ -11,6 +11,7 @@
 import strings
 import jsons
 import "http_static.leno" as st
+import "http_parse.leno" as p        // 复用 find（模板扫描用）
 
 // ==================== 应用 ====================
 export func new_app(): Dict {
@@ -61,6 +62,64 @@ export func redirect(string url, int code): Dict {
 }
 
 export func not_found(): Dict { return status(404, "404 Not Found") }
+
+// ==================== HTML 转义 / 模板（2026-10-18）====================
+// 为什么要有：手写 `s + "<p>" + user_input` 是最常见的 XSS 来源（演示站里我专门写了
+//   esc() 做对照）。这里把"转义"变成默认行为：
+//     {{name}}    ⇒ **转义**输出（默认，安全）
+//     {{{name}}}  ⇒ **原样**输出（明确信任时才用）
+//   缺键 ⇒ 空串（模板里少给一个变量不该把 "{{x}}" 印到页面上 ✗）
+export func esc(string s): string {
+    Array[int] out = []
+    for s.to_bytes() to b {
+        if b == 38 { for "&amp;".to_bytes() to x { out.add(x) } }
+        else if b == 60 { for "&lt;".to_bytes() to x { out.add(x) } }
+        else if b == 62 { for "&gt;".to_bytes() to x { out.add(x) } }
+        else if b == 34 { for "&quot;".to_bytes() to x { out.add(x) } }
+        else if b == 39 { for "&#39;".to_bytes() to x { out.add(x) } }
+        else { out.add(b) }
+    }
+    return strings.from_bytes(out)
+}
+
+export func render(string tpl, Dict vars): string {
+    Array[int] out = []
+    int n = tpl.byte_len()
+    var i = 0
+    while i < n {
+        int open = p.find(tpl, "{{", i)
+        if open < 0 {
+            for tpl.byte_slice(i, n - 1).to_bytes() to b { out.add(b) }
+            break
+        }
+        if open > i {
+            for tpl.byte_slice(i, open - 1).to_bytes() to b { out.add(b) }
+        }
+        bool raw = false
+        var kstart = open + 2
+        var closer = "}}"
+        if kstart < n and tpl.byte(kstart) == 123 {      // 第三个 '{'
+            raw = true
+            kstart = kstart + 1
+            closer = "}}}"
+        }
+        int cend = p.find(tpl, closer, kstart)
+        if cend < 0 {
+            // 没闭合：原样输出剩余（不猜、不报错 —— 模板写错的排查成本比崩掉低）
+            for tpl.byte_slice(open, n - 1).to_bytes() to b { out.add(b) }
+            break
+        }
+        string key = tpl.byte_slice(kstart, cend - 1).trim()
+        var val = ""
+        if vars.has(key) { val = _str(vars.get(key, "")) }
+        for (if raw then val else esc(val)).to_bytes() to b { out.add(b) }
+        i = cend + closer.byte_len()
+    }
+    return strings.from_bytes(out)
+}
+
+// 便捷：模板 → text/html 响应
+export func html_template(string tpl, Dict vars): Dict { return html(render(tpl, vars)) }
 
 // handler 允许返回 Dict（推荐）、string（自动按 text/plain）或其它（_str 兜底）
 // ⚠ 不要对 `res` 原地 set：裸 Dict 的元素类型会被**第一次写入**定死

@@ -13,6 +13,8 @@ import strings
 import files
 import "http_parse.leno" as p
 import "http_app.leno" as appmod
+// gzip 响应（2026-10-18）：压缩端在 LenoCompress（纯 Leno 的 DEFLATE）
+import "Compress" as z
 
 var MAX_HEADER = 65536
 var MAX_BODY = 8388608          // 8MB（v0.1 整包读进内存）
@@ -51,15 +53,42 @@ func _put(Array[int] out, string s) {
     for s.to_bytes() to b { out.add(b) }
 }
 
-func _write_response(Socket c, Dict res, bool keep): bool {
+// 这个 Content-Type 值不值得压（图片/压缩包再压一遍纯属浪费 CPU）
+func _compressible(string ct): bool {
+    string c = ct.to_lower()
+    if strings.has(c, "text/") { return true }
+    if strings.has(c, "json") { return true }
+    if strings.has(c, "javascript") { return true }
+    if strings.has(c, "xml") { return true }
+    if strings.has(c, "svg") { return true }
+    return false
+}
+
+// acceptGzip：调用方按请求的 Accept-Encoding 传（不看请求头就不压 —— 有些老客户端不认）
+//   判据三条：客户端要 gzip、体积 ≥ 1KB、类型可压，且响应**没自带** Content-Encoding
+//   ⚠ Content-Length 必须写**压缩后**的长度（写错浏览器会一直等，表现为"页面转圈"✗）
+func _write_response(Socket c, Dict res, bool keep, bool acceptGzip): bool {
     int st = res["status"] as int
-    string body = res["body"] as string
+    var body = res["body"] as string
+    string ct = res["contentType"] as string
+    Dict hs = res["headers"] as Dict
+    var gz = false
+    if acceptGzip and not hs.has("Content-Encoding") and body.byte_len() >= 1024 and _compressible(ct) {
+        var packed = z.gzip(body)
+        if packed.byte_len() < body.byte_len() {
+            body = packed
+            gz = true
+        }
+    }
     Array[int] out = []
     _put(out, "HTTP/1.1 " + _str(st) + " " + _status_text(st) + "\r\n")
-    _put(out, "Content-Type: " + (res["contentType"] as string) + "\r\n")
+    _put(out, "Content-Type: " + ct + "\r\n")
     _put(out, "Content-Length: " + _str(body.byte_len()) + "\r\n")
     _put(out, "Connection: " + (if keep then "keep-alive" else "close") + "\r\n")
-    Dict hs = res["headers"] as Dict
+    if gz {
+        _put(out, "Content-Encoding: gzip\r\n")
+        _put(out, "Vary: Accept-Encoding\r\n")
+    }
     for hs.keys() to k {
         _put(out, k + ": " + (hs[k] as string) + "\r\n")
     }
@@ -171,20 +200,25 @@ export func handle_conn(Socket c, Dict app): Dict {
         if not (rr["ok"] as bool) {
             string e = rr["err"] as string
             if e != "" {
-                _write_response(c, appmod.status(400, "400 Bad Request：" + e), false)
+                _write_response(c, appmod.status(400, "400 Bad Request：" + e), false, false)
             }
             break
         }
         Dict req = rr["req"] as Dict
         carry = rr["rest"] as string
         Dict res = appmod.dispatch(app, req)
+        // gzip 协商：只有客户端声明要 gzip 才压（不看请求头就不压）
+        var ae = ""
+        Dict hhs = req["headers"] as Dict
+        if hhs.has("accept-encoding") { ae = (hhs.get("accept-encoding", "") as string).to_lower() }
+        bool acceptGzip = strings.has(ae, "gzip")
         bool keep = (req["keepAlive"] as bool) and count < MAX_REQ_PER_CONN - 1
         if app.has("debug") {
             print("[http] " + (req["method"] as string) + " " + (req["target"] as string)
                 + " -> " + _str(res["status"] as int) + " keep=" + _str(keep)
                 + " carry=" + _str(carry.byte_len()))
         }
-        if not _write_response(c, res, keep) {
+        if not _write_response(c, res, keep, acceptGzip) {
             if app.has("debug") { print("[http] send 失败（连接被对端关闭？）") }
             break
         }

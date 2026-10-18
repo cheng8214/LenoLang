@@ -38,6 +38,14 @@ build\leno.exe build\leno_module\LenoHTTP\examples\hello_server.leno 8080 D:\www
 | `acceptOne(server, app)` | 只处理一个连接（测试/自定义循环） |
 | `stop(app)` | 让 `serve/run` 退出 |
 | `text/html/json/bytes/status/redirect/notFound` | 响应助手 |
+| `esc(s)` | HTML 转义（`& < > " '`） |
+| `render(tpl, vars)` | 模板：`{{x}}` **转义**输出、`{{{x}}}` 原样输出、缺键给空串 |
+| `htmlTemplate(tpl, vars)` | 模板 → `text/html` 响应 |
+
+**gzip 响应（2026-10-18，自动）**：请求带 `Accept-Encoding: gzip` 且响应体 ≥ 1KB、
+类型可压（`text/*` / json / javascript / xml / svg）时自动压缩，头里给
+`Content-Encoding: gzip` 与 `Vary: Accept-Encoding`，`Content-Length` 是**压缩后**长度。
+要关掉就自己设 `headers["Content-Encoding"]`（有值即跳过压缩）。
 
 **请求** `req`：
 
@@ -108,6 +116,11 @@ Python 压测（Windows x64，同一台机器）：
 | TLS / HTTP/2 / WebSocket | 没有；需要时套反向代理（nginx/caddy） |
 | Range / 断点续传 / gzip 响应 | 没有（`LenoCompress` 有压缩能力，但响应侧还没接） |
 | 大文件流式发送 | 整读进内存（<几十 MB 还行） |
+
+## 能力缺口与路线
+
+见 [`docs/LenoWeb能力缺口与修复路线.md`](../../../docs/LenoWeb能力缺口与修复路线.md)：
+并发（`Socket` 跨线程）、multipart、Range/缓存头、中间件、路径参数等，都写了修法与验收标准。
 
 ## 下一步
 

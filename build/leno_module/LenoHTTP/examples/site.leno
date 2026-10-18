@@ -1,0 +1,186 @@
+// site.leno -- 用 LenoHTTP 写的演示站（纯 Leno，零依赖）
+//
+// 跑法：
+//   build\leno.exe build\leno_module\LenoHTTP\examples\site.leno 8080
+//   然后浏览器打开 http://127.0.0.1:8080
+//
+// 覆盖：路由（GET/POST）、查询串、表单、JSON API、静态文件、404、请求计数/运行时长
+import dirs
+import strings
+import files
+import times
+import "HTTP" as http
+
+// ---------------- 站点状态（模块级变量；handler 是普通函数，直接读） ----------------
+int gHits = 0
+int gStartMs = 0
+
+// ---------------- 小工具 ----------------
+// HTML 转义（用户输入直接进页面时必须做）
+func esc(string s): string {
+    Array[int] out = []
+    for s.to_bytes() to b {
+        if b == 38 { for "&amp;".to_bytes() to x { out.add(x) } }
+        else if b == 60 { for "&lt;".to_bytes() to x { out.add(x) } }
+        else if b == 62 { for "&gt;".to_bytes() to x { out.add(x) } }
+        else if b == 34 { for "&quot;".to_bytes() to x { out.add(x) } }
+        else if b == 39 { for "&#39;".to_bytes() to x { out.add(x) } }
+        else { out.add(b) }
+    }
+    return strings.from_bytes(out)
+}
+
+func uptime(): string {
+    int ms = _int(times.ms()) - gStartMs      // times.ms() 返回 float
+    int s = ms / 1000
+    if s < 60 { return _str(s) + " 秒" }
+    int m = s / 60
+    if m < 60 { return _str(m) + " 分 " + _str(s % 60) + " 秒" }
+    return _str(m / 60) + " 小时 " + _str(m % 60) + " 分"
+}
+
+func page(string title, string body): string {
+    return "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\">"
+        + "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+        + "<title>" + title + " · Leno</title>"
+        + "<link rel=\"stylesheet\" href=\"/assets/style.css\">"
+        + "</head><body><div class=\"wrap\">"
+        + "<header class=\"hero\"><div class=\"badge\">LenoHTTP 0.1 · 纯 Leno</div>"
+        + "<h1>用 Leno 内置库写的网站</h1>"
+        + "<p class=\"sub\">没有 Flask、没有 Node —— 只有 <code>sockets</code> 上的 "
+        + "<code>LenoHTTP</code> 和一套自己写的路由。</p></header>"
+        + body
+        + "<footer>进程内请求数 <b>" + _str(gHits) + "</b> · 已运行 <b>" + uptime()
+        + "</b> · <code>http.stop(app)</code> 可退出</footer>"
+        + "</div></body></html>"
+}
+
+// ---------------- 路由：首页 ----------------
+func home(Dict req): Dict {
+    gHits = gHits + 1
+    var cards = ""
+    cards = cards + "<div class=\"card\"><h3>/hello?name=你的名字</h3>"
+        + "<p>查询串解析 + HTML 转义（试试注入 <code>&lt;script&gt;</code>）</p>"
+        + "<a href=\"/hello?name=Leno\">试一个 →</a></div>"
+    cards = cards + "<div class=\"card\"><h3>/form</h3>"
+        + "<p>urlencoded 表单：提交后服务端解析并回显</p><a href=\"/form\">打开表单 →</a></div>"
+    cards = cards + "<div class=\"card\"><h3>/api/stats</h3>"
+        + "<p>JSON 接口：运行时长 / 请求数 / 语言信息</p><a href=\"/api/stats\">看 JSON →</a></div>"
+    cards = cards + "<div class=\"card\"><h3>/assets/style.css</h3>"
+        + "<p>静态文件服务：本页样式就是它（目录穿越已拦）</p>"
+        + "<a href=\"/assets/style.css\">看 CSS →</a></div>"
+
+    var body = "<main><section class=\"grid\">" + cards + "</section>"
+        + "<section class=\"card wide\"><h3>这个站是怎么跑起来的</h3>"
+        + "<pre>var app = http.newApp()\n"
+        + "http.get(app, \"/\", home)\n"
+        + "http.post(app, \"/form\", submit)\n"
+        + "http.static(app, \"/assets\", dirs.join(dirs.script_dir(), \"assets\"))\n"
+        + "http.serve(app, \"127.0.0.1\", 8080)</pre>"
+        + "<p class=\"muted\">单线程顺序处理 · keep-alive 单连接最多 100 请求 · "
+        + "请求头 64KB / 请求体 8MB 上限</p></section></main>"
+    return http.html(page("首页", body))
+}
+
+// ---------------- 路由：查询串 ----------------
+func hello(Dict req): Dict {
+    gHits = gHits + 1
+    var q = req["query"] as Dict
+    var raw = ""
+    if q.has("name") { raw = q.get("name", "") as string }
+    if raw == "" { raw = "（没给 name）" }
+    // 用模板渲染（2026-10-18 新增）：{{name}} 自动转义，缺键给空串
+    var body = http.render("<main><section class=\"card wide\"><h3>/hello</h3>"
+        + "<p>你传的 <code>name</code> 是：</p>"
+        + "<p class=\"echo\">{{value}}</p>"
+        + "<p class=\"muted\">上面这行走的是 <code>http.render</code> 的 <code>{{...}}</code>，"
+        + "插值点默认转义 ⇒ <code>&lt;script&gt;</code> 只会显示成文字。</p>"
+        + "<p><a href=\"/\">← 回首页</a></p></section></main>",
+        {value: raw})
+    return http.html(page("hello", body))
+}
+
+// ---------------- 路由：表单 GET ----------------
+func formPage(Dict req): Dict {
+    gHits = gHits + 1
+    var body = "<main><section class=\"card wide\"><h3>表单（POST /form）</h3>"
+        + "<form method=\"post\" action=\"/form\">"
+        + "<label>昵称 <input name=\"name\" value=\"Leno 用户\" maxlength=\"40\"></label>"
+        + "<label>想说的话 <input name=\"msg\" value=\"你好，世界\" maxlength=\"80\"></label>"
+        + "<button type=\"submit\">提交</button></form>"
+        + "<p class=\"muted\">Content-Type: application/x-www-form-urlencoded</p>"
+        + "</section></main>"
+    return http.html(page("表单", body))
+}
+
+// ---------------- 路由：表单 POST ----------------
+func submit(Dict req): Dict {
+    gHits = gHits + 1
+    var f = req["form"] as Dict
+    var name = ""
+    var msg = ""
+    if f.has("name") { name = f.get("name", "") as string }
+    if f.has("msg") { msg = f.get("msg", "") as string }
+    var body = "<main><section class=\"card wide\"><h3>服务端收到了</h3>"
+        + "<table class=\"kv\"><tr><th>name</th><td>" + esc(name) + "</td></tr>"
+        + "<tr><th>msg</th><td>" + esc(msg) + "</td></tr>"
+        + "<tr><th>Content-Length</th><td>" + _str((req["body"] as string).byte_len()) + " 字节</td></tr>"
+        + "</table><p><a href=\"/form\">← 再填一次</a> · <a href=\"/\">回首页</a></p>"
+        + "</section></main>"
+    return http.html(page("表单结果", body))
+}
+
+// ---------------- 路由：JSON ----------------
+func apiStats(Dict req): Dict {
+    gHits = gHits + 1
+    Dict info = {
+        uptimeMs: _int(times.ms()) - gStartMs,
+        hits: gHits,
+        now: times.format(times.now(), "%Y-%m-%d %H:%M:%S"),
+        runtime: "LenoLang 自举编译器 + 本仓 LenoHTTP",
+        nativeDeps: "无（纯 Leno）"
+    }
+    return http.json(info)
+}
+
+// ---------------- 兜底 ----------------
+func notFoundPage(Dict req): Dict {
+    gHits = gHits + 1
+    var body = "<main><section class=\"card wide\"><h3>404</h3>"
+        + "<p>没有这个地址：<code>" + esc(req["path"] as string) + "</code></p>"
+        + "<p><a href=\"/\">回首页</a></p></section></main>"
+    return http.status(404, page("404", body))
+}
+
+// ---------------- main ----------------
+main() {
+    var args = _args()
+    int port = 8080
+    if args.len() > 0 {
+        var p = _str(args[0]).trim()
+        if p != "" { port = _int(p) }
+    }
+
+    gStartMs = _int(times.ms())
+
+    var app = http.newApp()
+    http.get(app, "/", home)
+    http.get(app, "/hello", hello)
+    http.get(app, "/form", formPage)
+    http.post(app, "/form", submit)
+    http.get(app, "/api/stats", apiStats)
+
+    // 静态目录：本文件同级的 assets/
+    string assets = dirs.join(dirs.script_dir(), "assets")
+    if not dirs.exists(assets) { dirs.mkdir_p(assets) }
+    http.static(app, "/assets", assets)
+
+    print("[" + times.format(times.now(), "%H:%M:%S") + "] Leno 演示站启动：")
+    print("  http://127.0.0.1:" + _str(port) + "/")
+    print("  （Ctrl+C 或杀掉进程退出）")
+
+    var r = http.serve(app, "127.0.0.1", port)
+    if not (r["ok"] as bool) {
+        print("启动失败：" + (r["err"] as string))
+    }
+}

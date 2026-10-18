@@ -44,6 +44,12 @@ export func status(int code, string body): Dict { return a.status(code, body) }
 export func redirect(string url, int code = 302): Dict { return a.redirect(url, code) }
 export func notFound(): Dict { return a.not_found() }
 
+// ==================== HTML 转义 / 模板（2026-10-18）====================
+// `{{name}}` 转义输出（默认安全）、`{{{name}}}` 原样输出；缺键给空串
+export func esc(string s): string { return a.esc(s) }
+export func render(string tpl, Dict vars): string { return a.render(tpl, vars) }
+export func htmlTemplate(string tpl, Dict vars): Dict { return a.html_template(tpl, vars) }
+
 // ==================== 服务 ====================
 // {ok, sock, host, port, err} —— 端口传 0 由系统分配（测试/临时服务常用）
 export func listen(string host, int port): Dict { return srv.listen(host, port) }

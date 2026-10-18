@@ -1,0 +1,92 @@
+:root {
+  --bg: #0b1020;
+  --card: #151c33;
+  --line: #24304f;
+  --fg: #e8ecf8;
+  --muted: #93a0c0;
+  --acc: #7cc4ff;
+  --acc2: #9ef7c8;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(900px 500px at 15% -10%, #1b2a55 0%, transparent 60%),
+    radial-gradient(700px 400px at 110% 10%, #143c3a 0%, transparent 55%),
+    var(--bg);
+  color: var(--fg);
+  font: 15px/1.65 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+}
+
+.wrap { max-width: 980px; margin: 0 auto; padding: 40px 22px 60px; }
+
+.hero { padding: 18px 0 26px; }
+.badge {
+  display: inline-block; padding: 4px 10px; border: 1px solid var(--line);
+  border-radius: 999px; color: var(--acc2); font-size: 12px; letter-spacing: .04em;
+}
+.hero h1 { font-size: 34px; margin: 14px 0 8px; letter-spacing: -.02em; }
+.hero .sub { color: var(--muted); margin: 0; max-width: 62ch; }
+
+code {
+  background: #0e1730; border: 1px solid var(--line);
+  padding: 1px 6px; border-radius: 6px; font-size: 13px;
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  color: var(--acc2);
+}
+
+.grid {
+  display: grid; gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  margin: 10px 0 18px;
+}
+
+.card {
+  background: linear-gradient(180deg, rgba(255,255,255,.03), transparent), var(--card);
+  border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px;
+}
+.card h3 { margin: 0 0 6px; font-size: 15px; color: var(--acc); font-family: ui-monospace, Consolas, monospace; }
+.card p { margin: 0 0 10px; color: var(--muted); font-size: 14px; }
+.card a { color: var(--acc2); text-decoration: none; font-size: 14px; }
+.card a:hover { text-decoration: underline; }
+.card.wide { margin: 6px 0 0; }
+
+pre {
+  overflow: auto; background: #0a1226; border: 1px solid var(--line);
+  border-radius: 10px; padding: 14px; color: #cfe0ff; font-size: 13px;
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+}
+
+.echo {
+  font-family: ui-monospace, Consolas, monospace; font-size: 18px;
+  color: var(--acc2); background: #0a1226; border: 1px solid var(--line);
+  border-radius: 10px; padding: 12px 14px; word-break: break-all;
+}
+
+form label { display: block; margin: 10px 0; color: var(--muted); font-size: 14px; }
+form input {
+  display: block; width: 100%; margin-top: 6px; padding: 10px 12px;
+  background: #0a1226; border: 1px solid var(--line); border-radius: 10px;
+  color: var(--fg); font-size: 15px; outline: none;
+}
+form input:focus { border-color: var(--acc); }
+form button {
+  margin-top: 6px; padding: 10px 18px; border-radius: 10px; border: 0;
+  background: linear-gradient(180deg, #7cc4ff, #4a9fe0); color: #06122a;
+  font-weight: 700; font-size: 14px; cursor: pointer;
+}
+form button:hover { filter: brightness(1.08); }
+
+table.kv { border-collapse: collapse; margin: 8px 0 14px; }
+table.kv th, table.kv td { border-bottom: 1px solid var(--line); padding: 8px 12px; text-align: left; }
+table.kv th { color: var(--muted); font-weight: 500; font-size: 13px; width: 160px; }
+
+.muted { color: var(--muted); font-size: 13px; }
+
+footer {
+  margin-top: 26px; padding-top: 14px; border-top: 1px solid var(--line);
+  color: var(--muted); font-size: 13px;
+}
+footer b { color: var(--fg); }

@@ -11,8 +11,16 @@ import strings
 import files
 import dirs
 import "HTTP" as http
+import "Compress" as z
 
 var g_staticDir = ""
+
+// 固定 2000 字节文本（gzip 用例的"原文"，服务端与客户端都用它比对）
+func big_text(): string {
+    Array[int] out = []
+    for 0:1999 to i { out.add(65 + (i % 26)) }
+    return strings.from_bytes(out)
+}
 
 // ==================== 客户端工具 ====================
 func find_sub(string hay, string needle, int from): int {
@@ -69,6 +77,18 @@ func get_once(int port, string path): Dict {
     if c == null { return {status: 0, body: "", raw: "connect 失败"} }
     c.set_timeout(5000)
     c.send("GET " + path + " HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n")
+    var r = read_resp(c)
+    c.close()
+    return r
+}
+
+// 带 Accept-Encoding: gzip 的请求（响应体是压缩后的字节，别直接当文本比）
+func get_gzip(int port, string path): Dict {
+    Socket c = sockets.connect("127.0.0.1", port)
+    if c == null { return {status: 0, body: "", raw: "connect 失败"} }
+    c.set_timeout(5000)
+    c.send("GET " + path + " HTTP/1.1\r\nHost: t\r\nAccept-Encoding: gzip, deflate\r\n"
+        + "Connection: close\r\n\r\n")
     var r = read_resp(c)
     c.close()
     return r
@@ -142,11 +162,34 @@ func client(int port, Channel[string] ch) {
     c3.close()
     errs = errs + expect_status(r7, 405, "⑥ 405")
 
+    // ⑦ gzip 响应：/big 是 2000 字节可压文本（≥1KB 阈值）
+    var r8 = get_gzip(port, "/big")
+    errs = errs + expect_status(r8, 200, "⑦ gzip")
+    string raw7 = r8["raw"] as string
+    if find_sub(raw7, "Content-Encoding: gzip", 0) < 0 { errs = errs + "E ⑦ 缺 Content-Encoding: gzip" }
+    if find_sub(raw7, "Vary: Accept-Encoding", 0) < 0 { errs = errs + "E ⑦ 缺 Vary: Accept-Encoding" }
+    var packed = r8["body"] as string
+    if packed.byte_len() < 2 or packed.byte(0) != 31 or packed.byte(1) != 139 {
+        errs = errs + "E ⑦ 响应体不是 gzip（魔数不符，长度 " + _str(packed.byte_len()) + "）"
+    } else {
+        var ung = z.gunzip(packed)
+        if not (ung.ok as bool) {
+            errs = errs + "E ⑦ gunzip 失败：" + (ung.error as string)
+        } else if (ung.data as string) != big_text() {
+            errs = errs + "E ⑦ 解压内容与原文不符"
+        } else if packed.byte_len() >= 2000 {
+            errs = errs + "E ⑦ 压缩后没变小（" + _str(packed.byte_len()) + " 字节）"
+        }
+    }
+
     if errs == "" { ch.send("OK") } else { ch.send(errs) }
 }
 
 // ==================== 应用 ====================
 func h_root(Dict req): Dict { return http.text("hello") }
+
+// 2000 字节可压文本（gzip 用例）
+func h_big(Dict req): Dict { return http.text(big_text()) }
 
 func h_echo(Dict req): Dict {
     Dict q = req["query"] as Dict
@@ -180,8 +223,17 @@ main() {
     files.write(dirs.join(dir, "big.bin"), strings.from_bytes(big))
     g_staticDir = dir
 
+    // 模板（纯函数，先于服务端验证）：{{x}} 转义、{{{x}}} 原样、缺键空串
+    string t1 = http.render("Hi {{n}}! {{x}}", {n: "Leno", x: "<b>"})
+    if t1 != "Hi Leno! &lt;b&gt;" { fail("模板转义不对：" + t1) }
+    string t2 = http.render("raw={{{x}}}", {x: "<b>"})
+    if t2 != "raw=<b>" { fail("模板原样输出不对：" + t2) }
+    string t3 = http.render("miss=[{{nope}}]", {})
+    if t3 != "miss=[]" { fail("模板缺键应为空串：" + t3) }
+
     var app = http.newApp()
     http.get(app, "/", h_root)
+    http.get(app, "/big", h_big)
     http.get(app, "/echo", h_echo)
     http.post(app, "/form", h_form)
     http.static(app, "/assets", dir)
@@ -194,11 +246,11 @@ main() {
     Channel[string] ch = threads.channel(1)
     var t = threads.start(client, port, ch)
 
-    // 客户端会开 6 个连接：① keep-alive（2 个请求）/ ② 表单 / ③ 404 / ④ 小静态 /
-    //   ⑤ 大静态 / ⑥ 405
+    // 客户端会开 7 个连接：① keep-alive（2 个请求）/ ② 表单 / ③ 404 / ④ 小静态 /
+    //   ⑤ 大静态 / ⑥ 405 / ⑦ gzip
     var handled = 0
     var guard = 0
-    while handled < 6 and guard < 20000 {
+    while handled < 7 and guard < 20000 {
         var r = http.acceptOne(srv, app)
         if r["ok"] as bool { handled = handled + 1 }
         else { threads.sleep(2) }
@@ -213,5 +265,5 @@ main() {
     files.delete(dirs.join(dir, "big.bin"))
 
     if report != "OK" { fail(report) }
-    print("test_http passed（6 组断言，含 200KB 大响应）")
+    print("test_http passed（8 组断言：路由/表单/404/405/静态/大响应/gzip/模板）")
 }
