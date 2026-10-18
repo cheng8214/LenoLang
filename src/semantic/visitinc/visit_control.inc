@@ -598,7 +598,7 @@
                 (for_cond->u.binop.op == TOK_IN || for_cond->u.binop.op == TOK_NOT_IN) &&
                 for_cond->u.binop.l && for_cond->u.binop.l->kind == AST_VAR) {
                 warning_add_at_fmt(WARN_FOR_IN_COND, for_cond->line, for_cond->column,
-                    "for 头的 'x in arr' 是条件循环（in 为成员测试运算符，x 需是已定义的外部变量）；若想遍历集合请写 'for x to arr'");
+                    "for 头的 'x in arr' 是条件循环（in 为成员测试运算符，x 需是已定义的外部变量）；若想遍历集合请写 'for arr to x'（**集合在前**）");
             }
 
             // ★ WARN_FOR_EMPTY_RANGE（2026-10-17 实现；枚举与类别名早就有、一直零调用点）：
@@ -630,6 +630,11 @@
             if (ast->u.for_.start) visit(s, ast->u.for_.start);
             if (ast->u.for_.end) visit(s, ast->u.for_.end);
             if (ast->u.for_.step) visit(s, ast->u.for_.step);
+
+            // 注（2026-10-18）：这里曾试过加 WARN_FOR_REVERSED（"`for 变量 to 集合` 写反"），
+            //   实测后**撤掉**了 —— 前提是错的：`for s to G` 不是"写反"，而是把 **s 当集合**
+            //   （字符串按字符遍历：`for "abc" to ch` ⇒ a/b/c；空串 ⇒ 0 次）。本语言只有
+            //   `for 集合 to 元素` 一种形状，不存在"两个操作数可交换"的写法 ⇒ 没有可判据的反转。
 
             ast->u.for_.loop_var_index = allocate_local_index(s);
             ast->u.for_.end_index = allocate_local_index(s);
