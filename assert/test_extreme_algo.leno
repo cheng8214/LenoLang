@@ -1,0 +1,196 @@
+// 极端算法回归（2026-10-19）：大整数 / 素数 / 快排 / 矩阵 / 字典 / 深递归 / 位移
+//
+// 期望值全部由 **Python 独立算出**再写死（不是"跑一遍看输出"）：
+//   1000! 2568 位、2^1000 302 位、fib(1000) mod 1e9+7、Collatz ≤1e5、埃氏筛 ≤1e6、
+//   10 万快排的 first/mid/last/sum、100³ 矩阵乘、int48 边界、10^30 除法/取模。
+// 目的：把"大数/大容器/深递归"这些**极端路径**钉住（普通单测覆盖不到）。
+import times
+
+var fails = 0
+var tstart = 0
+
+func eq(string tag, any got, any want) {
+    if _str(got) != _str(want) {
+        fails = fails + 1
+        print("[FAIL] " + tag + " got=" + _str(got) + " want=" + _str(want) + "\n")
+    }
+}
+
+func qsort(Array[int] a, int lo, int hi) {
+    if lo >= hi { return }
+    var i = lo
+    var j = hi
+    var pivot = a[(lo + hi) / 2]
+    while i <= j {
+        while a[i] < pivot { i = i + 1 }
+        while a[j] > pivot { j = j - 1 }
+        if i <= j {
+            var t = a[i]
+            a[i] = a[j]
+            a[j] = t
+            i = i + 1
+            j = j - 1
+        }
+    }
+    if lo < j { qsort(a, lo, j) }
+    if i < hi { qsort(a, i, hi) }
+}
+
+func depth(int n): int {
+    if n <= 0 { return 0 }
+    return 1 + depth(n - 1)
+}
+
+main() {
+    tstart = _int(times.ms())
+
+    // ① 1000!（2568 位）
+    var f = 1
+    for 1:1000 to i { f = f * i }
+    var fs = _str(f)
+    eq("fact1000.digits", fs.byte_len(), 2568)
+    eq("fact1000.head", fs.byte_slice(0, 19), "40238726007709377354")
+    eq("fact1000.tail", fs.byte_slice(fs.byte_len() - 20, fs.byte_len() - 1), "00000000000000000000")
+
+    // ② 2^1000（302 位）
+    var p = 1
+    for 0:999 to i { p = p * 2 }
+    var ps = _str(p)
+    eq("pow2.digits", ps.byte_len(), 302)
+    eq("pow2.head", ps.byte_slice(0, 19), "10715086071862673209")
+    eq("pow2.tail", ps.byte_slice(ps.byte_len() - 20, ps.byte_len() - 1), "24386837205668069376")
+
+    // ③ fib(1000) mod 1e9+7
+    var a = 0
+    var b = 1
+    for 0:999 to i {
+        var nb = (a + b) % 1000000007
+        a = b
+        b = nb
+    }
+    eq("fib1000.mod", a, 517691607)
+
+    // ④ Collatz ≤ 10 万：最长链
+    var bestN = 0
+    var bestC = 0
+    for 1:100000 to n {
+        var x = n
+        var c = 0
+        while x != 1 {
+            if x % 2 == 1 { x = 3 * x + 1 } else { x = x / 2 }
+            c = c + 1
+        }
+        if c > bestC {
+            bestC = c
+            bestN = n
+        }
+    }
+    eq("collatz.n", bestN, 77031)
+    eq("collatz.steps", bestC, 350)
+
+    // ⑤ 埃氏筛 ≤ 100 万
+    var N = 1000000
+    var sv = []
+    for 0:N to i { sv.add(1) }
+    sv[0] = 0
+    sv[1] = 0
+    var i2 = 2
+    while i2 * i2 <= N {
+        if sv[i2] == 1 {
+            var j = i2 * i2
+            while j <= N {
+                sv[j] = 0
+                j = j + i2
+            }
+        }
+        i2 = i2 + 1
+    }
+    var cnt = 0
+    var sum = 0
+    for 0:N to k {
+        if sv[k] == 1 {
+            cnt = cnt + 1
+            sum = sum + k
+        }
+    }
+    eq("sieve.count", cnt, 78498)
+    eq("sieve.sum", sum, 37550402023)
+
+    // ⑥ 快排 10 万（Park–Miller，全程留在 int48 内）
+    var arr = []
+    var seed = 12345
+    for 0:99999 to r {
+        seed = (seed * 16807) % 2147483647
+        arr.add(seed)
+    }
+    qsort(arr, 0, arr.len() - 1)
+    var ssum = 0
+    for 0:arr.len() - 1 to q { ssum = (ssum + arr[q]) % 1000000007 }
+    eq("qsort.first", arr[0], 26102)
+    eq("qsort.mid", arr[50000], 1072296224)
+    eq("qsort.last", arr[99999], 2147481261)
+    eq("qsort.sum", ssum, 802434268)
+
+    // ⑦ 100×100 矩阵乘（模 1e9+7）
+    var n2 = 100
+    var A = []
+    var B = []
+    for 0:n2 - 1 to ri {
+        var ra = []
+        var rb = []
+        for 0:n2 - 1 to ci {
+            ra.add((ri * 131 + ci * 17) % 97)
+            rb.add((ri * 29 + ci * 7) % 89)
+        }
+        A.add(ra)
+        B.add(rb)
+    }
+    var tr = 0
+    var msum = 0
+    for 0:n2 - 1 to ri2 {
+        for 0:n2 - 1 to cj {
+            var acc = 0
+            for 0:n2 - 1 to kk { acc = acc + A[ri2][kk] * B[kk][cj] }
+            acc = acc % 1000000007
+            msum = (msum + acc) % 1000000007
+            if ri2 == cj { tr = (tr + acc) % 1000000007 }
+        }
+    }
+    eq("matmul.trace", tr, 21123639)
+    eq("matmul.sum", msum, 111228702)
+
+    // ⑧ 字典 1 万键：插入 / 查找 / 删一半
+    //   ⚠ 规模刻意压小：`dict.remove` 目前是 O(n) 扫描（10 万键删 5 万要 4 秒 ✗，
+    //     已单独记录为性能问题）；这里只钉**语义**，不把慢路径塞进每次套件。
+    var d = {}
+    for 0:9999 to di { d.set(_str(di), di) }
+    var dsum = 0
+    for 0:9999 to dj { dsum = dsum + (d.get(_str(dj), -1) as int) }
+    eq("dict.sum", dsum, 49995000)
+    for 0:4999 to dk { d.remove(_str(dk * 2)) }
+    eq("dict.size", d.len(), 5000)
+    eq("dict.removed_miss", d.get("0", -1), -1)
+    eq("dict.kept", d.get("1", -1), 1)
+
+    // ⑨ 深递归 2000 层
+    eq("depth2000", depth(2000), 2000)
+
+    // ⑩ 10^30 的整除/取模（大整数除法路径）
+    var big = 1
+    for 0:29 to bi { big = big * 10 }
+    big = big + 7
+    eq("bigdiv.q", _str(big / 13), "76923076923076923076923076923")
+    eq("bigdiv.r", _str(big % 13), "8")
+
+    // ⑪ int48 边界与位移（越界必须提升为 bigint，不能截断）
+    eq("int48+1", 140737488355327 + 1, 140737488355328)
+    eq("shift63", 1 << 63, 9223372036854775808)
+
+    // ⑫ 负数除法/取模：本语言按 **C 口径**（-7/2=-3, -7%2=-1）——
+    //   与 Python 的 floor 口径（-4 / 1）不同是**设计选择**，这里只钉住"不要漂"
+    eq("negdiv", -7 / 2, -3)
+    eq("negmod", -7 % 2, -1)
+
+    eq("fails", fails, 0)
+    print("test_extreme_algo passed（" + _str(_int(times.ms()) - tstart) + " ms）\n")
+}
