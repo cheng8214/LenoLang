@@ -3,6 +3,9 @@
 
 import threads
 
+// 测试11：返回**对象**的线程延迟 join（钉子：只有标量结果才允许退出时立刻释放堆）
+func ret_str(int n): string { return "s-" + _str(n) }
+
 main()
 {
     // 测试1: 子线程异常通过 join() 传播到主线程 try-catch
@@ -128,6 +131,25 @@ main()
     //   原因：该 bug 的症状是**进程静默退出且 exit code = 0**（实测 3/3），
     //   而 run_tests 只按退出码判定 ⇒ 用例抓不到（假绿），还会偶发崩溃。
     //   这条只能用手工探针验（对照实验见提交信息），不进 assert。
+
+    // 测试11（2026-10-19）：返回 **string** 的线程**延迟 join**
+    //   背景：runtime 现在对"标量结果"在退出时立刻释放子线程堆（fire-and-forget 不泄漏）；
+    //   对象结果**不能**这么做（join 还要从那个堆克隆）⇒ 这里在 join 前做大量分配/触发 GC，
+    //   再逐个 join 并比对字符串。若哪天判据被改成"一律立刻释放"，这一步会读到脏内存 ✗
+    var ts11 = []
+    for 0:19 to k11 { ts11.add(threads.start(ret_str, k11)) }
+    for 0:50 to r11 {
+        var junk11 = []
+        for 0:2000 to j11 { junk11.add(j11) }
+        if junk11.len() != 2001 { print("测试11：junk 异常") }
+    }
+    for 0:ts11.len()-1 to k11 {
+        var s11 = ts11[k11].join() as string
+        if s11 != ("s-" + _str(k11)) {
+            print("测试11 FAIL：延迟 join 拿到 " + s11)
+            _exit(1)
+        }
+    }
 
     print("test_threads_edge passed")
 }

@@ -678,7 +678,19 @@ static void* thread_entry_point(void* arg) {
     //     `active_thread_count == 0` = 起过的子线程都 join 过了（join 会把自己从表里移除 ✓）；
     //     有未 join 的（哪怕已跑完）就放弃本次整堆回收 —— 宁可少回收，不能 UAF ✓
     if (child_vm.active_thread_count == 0 && gc_heap_detach_allowed()) {
-        thread_obj->dead_heap = gc_detach_heap();
+        void* detached = gc_detach_heap();
+        // ★★ 2026-10-19：结果是**标量**（int/float/bool/null，或没有返回值）时，
+        //   join 根本不需要这个堆 ⇒ **立刻释放**，不必等 join / 也不必等 major GC。
+        //   为什么值得：fire-and-forget 的线程绝大多数只返回"计数/是否成功"。
+        //   之前它们要等 major GC（实测这类负载里 major 根本不跑）或进程退出才回收
+        //   ⇒ 50 条 × 800KB 的探针峰值 60MB ✗
+        //   ⚠ 结果是对象（string/Array/Dict/struct）时**不能**在这里放：
+        //     join 还要从堆里克隆它 ⇒ 仍挂到 dead_heap，交给 join / GC 兜底 ✓
+        if (!thread_obj->has_result || !val_is_obj(thread_obj->result)) {
+            gc_free_detached(detached);
+        } else {
+            thread_obj->dead_heap = detached;
+        }
     }
     // 子线程都 join 过 ⇒ 本 VM 的活动线程表没人再用了（原来每条线程漏一份 malloc 数组）
     if (child_vm.active_thread_count == 0 && child_vm.active_threads) {
