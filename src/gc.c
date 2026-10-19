@@ -132,6 +132,21 @@ static void remembered_set_remove(Object* obj) {
 // 计数必须发生在 marked 检查之前：已标记的年轻代对象同样代表老年代条目持有年轻引用。
 static THREAD_LOCAL int in_remembered_scan = 0;
 static THREAD_LOCAL int young_mark_counter = 0;
+// ★ 2026-10-19：本线程有没有往 channel 里发过东西（见 gc_heap_detach_allowed ✓）
+static THREAD_LOCAL int channel_used = 0;
+
+void gc_note_channel_use(void) { channel_used = 1; }
+int gc_heap_detach_allowed(void) { return channel_used == 0; }
+
+// --- 显式标记栈 ---
+// ★ 必须是 THREAD_LOCAL：GC 状态（LenoGC gc）是线程局部的，
+// 每个 worker 线程独立触发 GC。如果 mark_stack 是全局共享的，
+// 多个线程同时 GC 时会互相冲覆 mark_stack（一个线程 push 的对象
+// 被另一个线程 pop，或 realloc 导致指针失效），导致标记遗漏 →
+// 存活对象被误回收 → use-after-free → 内存损坏。
+static THREAD_LOCAL Object** mark_stack = NULL;
+static THREAD_LOCAL int mark_stack_count = 0;
+static THREAD_LOCAL int mark_stack_capacity = 0;
 
 // 晋升专用入集：无去重直接加入。
 // 新晋升对象此前是年轻代，不可能已在 remembered set 中（集合只持有 GEN_OLD 对象），
@@ -364,6 +379,80 @@ static void gc_pool_free_all(void) {
 }
 
 // ============================================================================
+// ★ 2026-10-19：子线程堆的“摘下 → 主线程释放”
+//   背景：`gc` / `pool_block_list` 都是 THREAD_LOCAL ⇒ 子线程退出后整堆没人回收 ✗
+//   做法：子线程退出前把三条链表头摘下来存进 ObjThread；主线程 join 时（先把 result
+//         克隆到主堆）再统一释放。**只在子线程没用过 channel 时允许** —— 用过 channel
+//         的话，buffer 里可能还压着这个堆上的克隆值，提前释放会 use-after-free ✗
+// ============================================================================
+typedef struct GCDeadHeap {
+    Object* young_heap;
+    Object* old_heap;
+    PoolBlockHdr* pool_blocks;
+} GCDeadHeap;
+
+static void free_object_resources_ex(Object* obj, int remove_intern);   // 定义在本文件后面 ✓
+
+void* gc_detach_heap(void) {
+    GCDeadHeap* d = (GCDeadHeap*)malloc(sizeof(GCDeadHeap));
+    if (!d) return NULL;
+    d->young_heap = gc.young_heap;
+    d->old_heap = gc.old_heap;
+    d->pool_blocks = pool_block_list;
+    // 摘走：本线程后面不再用它（子线程马上退出 ✓）
+    gc.young_heap = NULL;
+    gc.old_heap = NULL;
+    gc.young_allocated = 0;
+    gc.old_allocated = 0;
+    pool_block_list = NULL;
+    pool_total = 0;
+    for (int i = 0; i < GC_POOL_CLASSES; i++) { pool_free_list[i] = NULL; }
+    // ★ 顺带把子线程的 GC 辅助结构也释放掉（它们同样是 THREAD_LOCAL，退出后没人回收）
+    //   mark_stack 会随 major GC 长到与活对象同量级 ⇒ 不释放的话每条线程还要漏几百 KB ✗
+    free(mark_stack);
+    mark_stack = NULL;
+    mark_stack_count = 0;
+    mark_stack_capacity = 0;
+    free(gc.remembered_set);
+    gc.remembered_set = NULL;
+    gc.remembered_count = 0;
+    gc.remembered_capacity = 0;
+    free(gc.extra_roots);
+    gc.extra_roots = NULL;
+    gc.extra_root_count = 0;
+    gc.extra_root_capacity = 0;
+    intern_table_free();        // 子线程自己的字符串表（表项本身；字符串随上面整堆释放 ✓）
+    return d;
+}
+
+void gc_free_detached(void* p) {
+    GCDeadHeap* d = (GCDeadHeap*)p;
+    if (!d) return;
+    // 年轻代 / 老年代：逐个释放（池化对象的槽归池块所有 ⇒ 只释放字符串等资源，不 free 槽 ✓）
+    Object* obj = d->young_heap;
+    while (obj) {
+        Object* next = obj->next;
+        free_object_resources_ex(obj, 0);       // 不做 intern_remove：子线程的字符串表也一并废弃 ✓
+        if ((obj->flags & OBJ_FLAG_POOLED) == 0) { free(obj); }
+        obj = next;
+    }
+    obj = d->old_heap;
+    while (obj) {
+        Object* next = obj->next;
+        free_object_resources_ex(obj, 0);
+        if ((obj->flags & OBJ_FLAG_POOLED) == 0) { free(obj); }
+        obj = next;
+    }
+    PoolBlockHdr* blk = d->pool_blocks;
+    while (blk) {
+        PoolBlockHdr* next = blk->next;
+        free(blk);
+        blk = next;
+    }
+    free(d);
+}
+
+// ============================================================================
 // 对象分配
 // ============================================================================
 
@@ -549,16 +638,7 @@ void gc_track_memory(Object* obj, size_t old_size, size_t new_size) {
 // --- 前向声明 ---
 void gc_scan_children(Object* obj);
 
-// --- 显式标记栈 ---
-// ★ 必须是 THREAD_LOCAL：GC 状态（LenoGC gc）是线程局部的，
-// 每个 worker 线程独立触发 GC。如果 mark_stack 是全局共享的，
-// 多个线程同时 GC 时会互相冲覆 mark_stack（一个线程 push 的对象
-// 被另一个线程 pop，或 realloc 导致指针失效），导致标记遗漏 →
-// 存活对象被误回收 → use-after-free → 内存损坏。
-static THREAD_LOCAL Object** mark_stack = NULL;
-static THREAD_LOCAL int mark_stack_count = 0;
-static THREAD_LOCAL int mark_stack_capacity = 0;
-
+// --- 显式标记栈（定义在上面的 THREAD_LOCAL 段；这里直接使用 ✓）---
 static void mark_stack_push(Object* obj) {
     if (mark_stack_count >= mark_stack_capacity) {
         int new_cap = mark_stack_capacity * 2;
@@ -1357,14 +1437,16 @@ static size_t get_object_size(Object* obj) {
 // ============================================================================
 
 // 释放对象持有的动态资源（不释放对象本身）
-static void free_object_resources(Object* obj) {
+// ★ 2026-10-19：加 `remove_intern` 开关 —— 释放**子线程整堆**时不做 intern_remove
+//   （那个堆的字符串表本身也随线程废弃；从别的线程去动本线程的表反而危险 ✓）
+static void free_object_resources_ex(Object* obj, int remove_intern) {
     if (!obj) return;
 
     switch (obj->type) {
         // 字符串：释放字符数组，并从字符串表中移除
         case OBJ_STRING: {
             ObjString* str = (ObjString*)obj;
-            intern_remove(str);
+            if (remove_intern) { intern_remove(str); }
             free(str->chars);
             break;
         }
@@ -1615,6 +1697,11 @@ static void free_object_resources(Object* obj) {
                 free(thread->pending_args);
                 thread->pending_args = NULL;
             }
+            // ★ 2026-10-19：没人 join 就进了回收 ⇒ 子线程堆也要在这里释放（否则照样漏 ✓）
+            if (thread->dead_heap) {
+                gc_free_detached(thread->dead_heap);
+                thread->dead_heap = NULL;
+            }
             platform_mutex_destroy(&thread->mutex);
             platform_cond_destroy(&thread->done_cond);
             break;
@@ -1701,6 +1788,11 @@ static void free_object_resources(Object* obj) {
         default:
             break;
     }
+}
+
+// 兼容包装：正常回收路径仍然要维护 intern 表 ✓
+static void free_object_resources(Object* obj) {
+    free_object_resources_ex(obj, 1);
 }
 
 // ============================================================================

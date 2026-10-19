@@ -631,6 +631,26 @@ static void* thread_entry_point(void* arg) {
     if (child_vm.globals) free(child_vm.globals);
     if (child_vm.global_funcs) free(child_vm.global_funcs);
 
+    // ★★ 2026-10-19：把子线程的 GC 堆**交给 join 去释放**（THREAD_LOCAL 堆没人会回收 ✗）
+    //   · 只在**没用过 channel** 时允许：buffer 里可能压着本堆的克隆值，提前释放 = UAF ✗
+    //   · result 也在这个堆上 ⇒ 由 `thread_join` **先克隆到主堆**、再调 gc_free_detached ✓
+    //   · 没人 join 的 Thread 对象被 GC 时，free_object_resources 里也会兜底释放 ✓
+    //   ⚠⚠ 还有一个**必须**满足的条件：本线程**没有活着的子线程**。
+    //     子线程的 ObjThread（含 mutex/cond）与 pending_args 都分配在**本线程的堆**上；
+    //     若本线程先退出、heap 被主线程 join 释放，而子线程还在跑（要拿 mutex 写 state、
+    //     读 pending_args）⇒ 读写已释放内存（实测：进程**静默退出**，连后续 print 都不执行 ✗）。
+    //     `active_thread_count == 0` = 起过的子线程都 join 过了（join 会把自己从表里移除 ✓）；
+    //     有未 join 的（哪怕已跑完）就放弃本次整堆回收 —— 宁可少回收，不能 UAF ✓
+    if (child_vm.active_thread_count == 0 && gc_heap_detach_allowed()) {
+        thread_obj->dead_heap = gc_detach_heap();
+    }
+    // 子线程都 join 过 ⇒ 本 VM 的活动线程表没人再用了（原来每条线程漏一份 malloc 数组）
+    if (child_vm.active_thread_count == 0 && child_vm.active_threads) {
+        free(child_vm.active_threads);
+        child_vm.active_threads = NULL;
+        child_vm.active_thread_capacity = 0;
+    }
+
     return NULL;
 }
 
@@ -651,6 +671,7 @@ ObjThread* thread_new_with_args(ObjClosure* closure, Value* call_args, int call_
     thread->joined = 0;
     thread->pending_args = NULL;
     thread->pending_arg_count = 0;
+    thread->dead_heap = NULL;
 
     platform_mutex_init(&thread->mutex);
     platform_cond_init(&thread->done_cond);
@@ -783,6 +804,12 @@ Value thread_join(ObjThread* thread) {
         thread->joined = 1;
     }
 
+    // ★★ 2026-10-19：result 已经克隆到主线程堆（上面那段）⇒ 子线程那个堆可以整个释放了 ✓
+    if (thread->dead_heap) {
+        gc_free_detached(thread->dead_heap);
+        thread->dead_heap = NULL;
+    }
+
     // 从 active_threads 中移除
     extern THREAD_LOCAL VM* current_exec_vm;
     extern VM vm;
@@ -890,6 +917,7 @@ void channel_close(ObjChannel* channel) {
 }
 
 int channel_send(ObjChannel* channel, Value value) {
+    gc_note_channel_use();          // ★ 本线程用过 channel ⇒ 退出时不能整堆释放（见 object_thread.c ✓）
     Value cloned = value_clone_for_channel(value);
 
     platform_mutex_lock(&channel->mutex);
@@ -958,6 +986,7 @@ Value channel_receive(ObjChannel* channel) {
 }
 
 int channel_try_send(ObjChannel* channel, Value value) {
+    gc_note_channel_use();          // ★ 同上
     Value cloned = value_clone_for_channel(value);
 
     platform_mutex_lock(&channel->mutex);

@@ -744,6 +744,12 @@ typedef struct ObjThread {
     // 读取前回收它们（这是多线程崩溃的主要根因）。
     Value* pending_args;
     int pending_arg_count;
+    // ★ 2026-10-19：子线程退出时的 GC 堆快照（join / 对象回收时释放 ✓）
+    //   为什么需要：子线程的 LenoGC 是 THREAD_LOCAL，退出后没人再碰它 ⇒ 整堆被遗弃 ✗
+    //   （榜单每切一次会起 8~9 条线程，每条线程的堆都留着 ⇒ 一次涨 100MB+ ✓）
+    //   子线程若**没用过 channel**（结果只走 join 返回）⇒ 可在退出时把整堆摘下来，
+    //   等主线程 join（先把 result 克隆到主堆）之后再释放 ✓
+    void* dead_heap;
 } ObjThread;
 
 // Channel 对象
@@ -846,6 +852,13 @@ void gc_minor_collect(void);
 void gc_major_collect(void);
 Object* gc_alloc(size_t size, ObjType type);
 void gc_free_all(void);
+// ★ 2026-10-19：子线程堆的“摘下 → 主线程释放”（见 ObjThread.dead_heap 注释 ✓）
+//   `gc_detach_heap` 只能在**子线程自己**里调（它操作的是当前线程的 THREAD_LOCAL 堆 ✓）
+void* gc_detach_heap(void);
+void gc_free_detached(void* dead_heap);
+// 本线程有没有用过 channel（用过就不敢在退出时整堆释放：buffer 里可能还压着这堆的对象 ✗）
+void gc_note_channel_use(void);
+int gc_heap_detach_allowed(void);
 void gc_track_memory(Object* obj, size_t old_size, size_t new_size);
 // 写屏障：老年代 holder 被写入年轻代引用时，需要把 holder 记入 remembered set。
 // 内联在这里（而非 gc.c 导出函数）是因为它在「字段写入」热路径上每字段一次：
