@@ -261,6 +261,9 @@ void gc_init(void) {
 // 设置 GC 开关（1=启用，0=禁用）
 void gc_set_enabled(int enabled) {
     gc.enabled = enabled;
+    // 禁用期间回边不该反复"看到请求但收不了" ⇒ 把镜像清掉；
+    // 重新启用后下一次分配超过阈值会再置位 ✓
+    if (!enabled && gc.vm) gc.vm->gc_deferred_request = 0;
 }
 
 // 获取 GC 开关状态
@@ -464,6 +467,8 @@ Object* gc_alloc(size_t size, ObjType type) {
     // 年轻代分配超阈值时设置延迟 GC 标志（不在此处同步执行）
     if (gc.enabled && gc.young_allocated + size > gc.young_threshold && !gc.running) {
         gc.deferred_gc = 1;
+        // 镜像到 VM（回边检查用它，避免每轮一次 THREAD_LOCAL 读）
+        if (gc.vm) gc.vm->gc_deferred_request = 1;
         /* ★ 为什么只置标志、不当场回收（§8.37）：
          * 回收只发生在**解释器安全点** —— `OP_RETURN` / `OP_RETURN_MULTI`
          * （每 256 次摊销检查一次，见 op_call.inc）以及 GUI 帧间的
@@ -471,11 +476,12 @@ Object* gc_alloc(size_t size, ObjType type) {
          * `mark_roots` 看得到全部活值；而在分配中途就地回收会打断正在进行的
          * 运算，尚未入根的中间对象会被当垃圾（§8.36 实测过的静默 use-after-free）。
          *
-         * 已知边界（实测过，别"优化"掉）：`deferred_gc` 只被"返回 / 帧间"消费 ⇒
-         * **只有分配、既没有调用也没有返回**的热循环（如 `for N { new Pair(..) }`）
-         * 会一路涨到函数返回才回收（§8.31 实测堆涨到 ~960MB）。要让它中途也能回收，
-         * 正确做法是**让回边也查回收请求**（回边目前只查 `vm.gc_force_request` 这个
-         * 测试钩子，见 op_jump.inc / op_for_loop.inc），而不是把回收挪进分配点。 */
+         * ★ 2026-10-19 已修：回边也消费 `deferred_gc` 了（此前只查测试钩子
+         *   `vm.gc_force_request`）—— 见 `OP_JMP` / `OP_JMP_IF_TRUE` / `OP_CMPJMP_*` /
+         *   `OP_CMPJMP_ITER` / `OP_FOR_LOOP` 五处**向后跳**分支。
+         *   所以"只分配、不调用不返回"的热循环现在会在循环中途回收
+         *   （实测：300 万次 `new Pair` 峰值 273MB → 15MB，耗时 310ms → 278ms）。
+         *   仍然坚持"只在安全点回收"——**不要**把回收挪进分配点（§8.36 的静默 UAF）。 */
     }
 
     // 测试钩子 LENO_GC_FORCE_EVERY（§8.35）：每 N 次分配把「强制回收」请求挂到
@@ -587,6 +593,7 @@ void gc_force_collect(void) {
     /* 与 gc_try_collect_deferred 一样，只在解释器安全点被调用（活值全可见 ✓）。
      * 这里额外清掉 deferred_gc：本次已经回收过了，别让标志残留再触发一次无用回收。 */
     gc.deferred_gc = 0;
+    if (gc.vm) gc.vm->gc_deferred_request = 0;
     gc_minor_collect();
     // Minor 之后仍超阈值 → 升级一次 Major（与 gc_try_collect_deferred 同形）
     if (gc.young_allocated > gc.young_threshold &&
@@ -1954,6 +1961,7 @@ void gc_try_collect_deferred(void) {
      * ⇒ **将来若再引入任何"活值不在 vm.stack / frame->locals 里"的执行态，
      *    必须在这个入口加守卫**（那时回收只能延后到该执行态退出之后）。 */
     gc.deferred_gc = 0;
+    if (gc.vm) gc.vm->gc_deferred_request = 0;
 
     // 使用与原 gc_alloc 相同的判断逻辑：先 Minor，不够再 Major
     if (gc.young_allocated > gc.young_threshold) {

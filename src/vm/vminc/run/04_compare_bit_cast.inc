@@ -171,7 +171,14 @@
             truthy = !val_is_null(bv) && !val_is_null(cv) &&                       \
                      (VM_IO(bv) int_cmp VM_IO(cv));                                \
         }                                                                          \
-        if (truthy == want_true) frame->ip += (bx - 32768);                        \
+        if (truthy == want_true) {                                                 \
+            int off_ = (bx - 32768);                                               \
+            frame->ip += off_;                                                     \
+            /* ★ 2026-10-19：融合后的 while 回边也是 GC 安全点（向后跳才查） */     \
+            if (unlikely(off_ < 0) && unlikely(vm.gc_deferred_request)) {           \
+                gc_try_collect_deferred();                                         \
+            }                                                                      \
+        }                                                                          \
         DISPATCH();                                                                \
     }
     LABEL(OP_CMPJMP_LT): CMPJMP_IMPL(<)

@@ -91,7 +91,14 @@
             R(a) = VM_INT_RESULT(idx);      /* 与 OP_INC 同口径（超 int48 提升 bigint） */
         }
         int truthy = (idx < vm_container_len(R(b)));
-        if (truthy == ((c & 0x40) != 0)) frame->ip += (bx - 32768);
+        if (truthy == ((c & 0x40) != 0)) {
+            int off = (bx - 32768);
+            frame->ip += off;
+            // ★ 2026-10-19：容器迭代的回边也是 GC 安全点（向后跳才查）
+            if (unlikely(off < 0) && unlikely(vm.gc_deferred_request)) {
+                gc_try_collect_deferred();
+            }
+        }
         DISPATCH();
     }
 

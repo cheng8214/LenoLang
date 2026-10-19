@@ -115,6 +115,12 @@
         if (unlikely(vm.gc_force_request)) {
             vm.gc_force_request = 0;
             gc_force_collect();
+        } else if (unlikely(vm.gc_deferred_request)) {
+            /* ★ 2026-10-19：消费**延迟回收请求**（此前这里只查测试钩子）——
+             *   `for N { new Pair(..) }` 这类"只分配、不调用不返回"的热循环
+             *   否则会一路涨到函数返回（实测 300 万次分配峰值 273MB ✗）。
+             *   回边是安全点（活值都在 vm.stack / frame->locals 里 ✓）。 */
+            gc_try_collect_deferred();
         }
 
         Value end_or_count = frame->locals[end_slot];

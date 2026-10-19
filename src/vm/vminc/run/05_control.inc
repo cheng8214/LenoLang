@@ -1,6 +1,13 @@
     LABEL(OP_JMP): {
         int sj = READ_sJ();
         frame->ip += sj;  // ip 已经 ADVANCE 了 4 字节，sj 是相对于下一条指令的偏移
+        // ★ 2026-10-19：**回边**（sj<0）也是 GC 安全点 —— 消费延迟回收请求。
+        //   此前只有 OP_RETURN 每 256 次摊销检查一次 ⇒ "只分配、不调用不返回"的热循环
+        //   （`while … { s = s + x }` / `for … { new Pair(..) }`）会一路涨到函数返回才回收
+        //   （实测 300 万次 new Pair 峰值 273MB）。这里只在**向后跳**时检查，前向跳零成本。
+        if (unlikely(sj < 0) && unlikely(vm.gc_deferred_request)) {
+            gc_try_collect_deferred();
+        }
         DISPATCH();
     }
     LABEL(OP_JMP_IF_FALSE): {
@@ -16,6 +23,10 @@
         int sbx = READ_sBx();
         if (val_is_truthy(R(a))) {
             frame->ip += sbx;
+            // ★ 2026-10-19：while 的回边（条件为真 + 向后跳）也是安全点
+            if (unlikely(sbx < 0) && unlikely(vm.gc_deferred_request)) {
+                gc_try_collect_deferred();
+            }
         }
         DISPATCH();
     }
