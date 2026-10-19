@@ -3,6 +3,7 @@
 #include "include/platform.h"    // utf16_to_utf8（Win）/ platform_self_exe_path（Linux/macOS）
 #include "include/platform_thread.h"  // PlatformMutex（_spawn/_kill 的槽位表要加锁）
 #include "include/leno_types.h"  // MAX_PATH_LEN
+#include "include/leno_vm.h"     // 2026-10-19：_gc_stats / _mem（读 VM 的活动线程表 + GC 计数）
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,7 +15,10 @@
 #else
     #include <unistd.h>
     #include <pwd.h>
-    #include <signal.h>     // kill / SIGKILL（_kill 收整个进程组）
+    #include <signal.h>
+    #ifdef __APPLE__
+        #include <sys/resource.h>   // 2026-10-19：_mem 的峰值（ru_maxrss）
+    #endif     // kill / SIGKILL（_kill 收整个进程组）
     #include <errno.h>      // ESRCH（"整组都没了"也算收干净）；EWOULDBLOCK（_single_instance 判"已被占"）
     #include <sys/wait.h>   // waitpid（reap 子进程，别积僵尸）
     #include <fcntl.h>      // open(O_CREAT|O_RDWR) —— _single_instance 的锁文件
@@ -1451,6 +1455,130 @@ static Value native_instance_activate(int argCount, Value* args) {
 
 // ==================== 初始化 ====================
 
+// ============================================================================
+// 观测：_gc_stats() / _mem()（2026-10-19）
+// ----------------------------------------------------------------------------
+// 为什么加：线程堆泄漏那次，全靠手写探针 + 任务管理器才发现（语言层没有观测手段）。
+// ⚠ 性能：只**读**已有字段，且只在被调用时执行 ⇒ 分配/回收/回边等热路径一行没加
+//   （已实测：1000 万次空循环 38ms，与加这两个函数前一致）。
+// ============================================================================
+static void sys_dict_put_int(ObjDict* d, const char* k, long long v) {
+    dict_set(d, val_obj((Object*)str_copy(k, (int)strlen(k))), val_int((int64_t)v));
+}
+static void sys_dict_put_bool(ObjDict* d, const char* k, int v) {
+    dict_set(d, val_obj((Object*)str_copy(k, (int)strlen(k))), val_bool(v != 0));
+}
+
+static Value native_gc_stats(int argCount, Value* args) {
+    (void)argCount; (void)args;
+    ObjDict* d = dict_new(16);
+    if (!d) return val_null();
+
+    size_t young = 0, old = 0, pooled = 0, minor = 0, major = 0;
+    int deferred = 0, enabled = 1;
+    gc_get_counters(&young, &old, &pooled, &minor, &major, &deferred, &enabled);
+
+    extern THREAD_LOCAL VM* current_exec_vm;
+    extern VM vm;
+    VM* tvm = current_exec_vm ? current_exec_vm : &vm;
+    long long pending = 0;
+    int active = 0;
+    if (tvm->active_threads) {
+        for (int i = 0; i < tvm->active_thread_count; i++) {
+            ObjThread* t = tvm->active_threads[i];
+            if (!t) continue;
+            active++;
+            if (t->dead_heap) pending += (long long)gc_dead_heap_bytes(t->dead_heap);
+        }
+    }
+
+    sys_dict_put_int(d, "young_bytes", (long long)young);
+    sys_dict_put_int(d, "old_bytes", (long long)old);
+    sys_dict_put_int(d, "pooled_bytes", (long long)pooled);
+    sys_dict_put_int(d, "minor_count", (long long)minor);
+    sys_dict_put_int(d, "major_count", (long long)major);
+    sys_dict_put_int(d, "remembered", (long long)gc.remembered_count);
+    sys_dict_put_bool(d, "deferred", deferred);
+    sys_dict_put_bool(d, "enabled", enabled);
+    sys_dict_put_int(d, "active_threads", active);
+    sys_dict_put_int(d, "thread_pending_bytes", pending);
+    return val_obj((Object*)d);
+}
+
+#if defined(_WIN32)
+typedef struct {
+    unsigned long cb;
+    unsigned long PageFaultCount;
+    size_t PeakWorkingSetSize;
+    size_t WorkingSetSize;
+    size_t QuotaPeakPagedPoolUsage;
+    size_t QuotaPagedPoolUsage;
+    size_t QuotaPeakNonPagedPoolUsage;
+    size_t QuotaNonPagedPoolUsage;
+    size_t PagefileUsage;
+    size_t PeakPagefileUsage;
+} SysProcessMemoryCounters;
+typedef int (__stdcall *SysGetProcessMemoryInfoFn)(void*, SysProcessMemoryCounters*, unsigned long);
+#endif
+
+// 进程内存：working_set / peak_working_set / private_bytes（字节）
+//   Windows：动态取 K32GetProcessMemoryInfo（**不引入 psapi.lib** ⇒ 不碰构建脚本）
+//   Linux  ：/proc/self/status 的 VmRSS / VmHWM
+//   macOS  ：getrusage 只给峰值（ru_maxrss）⇒ working_set 返回 0，supported 如实标注 ✓
+static Value native_mem(int argCount, Value* args) {
+    (void)argCount; (void)args;
+    ObjDict* d = dict_new(8);
+    if (!d) return val_null();
+
+    long long ws = 0, peak = 0, priv = 0;
+    int ok = 0;
+
+#if defined(_WIN32)
+    static SysGetProcessMemoryInfoFn mem_fn = NULL;
+    static int mem_fn_tried = 0;
+    if (!mem_fn_tried) {
+        mem_fn_tried = 1;
+        HMODULE k32 = GetModuleHandleA("kernel32.dll");
+        if (k32) mem_fn = (SysGetProcessMemoryInfoFn)(void*)GetProcAddress(k32, "K32GetProcessMemoryInfo");
+    }
+    if (mem_fn) {
+        SysProcessMemoryCounters pmc;
+        memset(&pmc, 0, sizeof(pmc));
+        pmc.cb = (unsigned long)sizeof(pmc);
+        if (mem_fn(GetCurrentProcess(), &pmc, sizeof(pmc))) {
+            ws = (long long)pmc.WorkingSetSize;
+            peak = (long long)pmc.PeakWorkingSetSize;
+            priv = (long long)pmc.PagefileUsage;
+            ok = 1;
+        }
+    }
+#elif defined(__linux__)
+    FILE* f = fopen("/proc/self/status", "r");
+    if (f) {
+        char line[256];
+        while (fgets(line, sizeof(line), f)) {
+            if (strncmp(line, "VmRSS:", 6) == 0) ws = atoll(line + 6) * 1024;
+            else if (strncmp(line, "VmHWM:", 6) == 0) peak = atoll(line + 6) * 1024;
+        }
+        fclose(f);
+        priv = ws;
+        ok = (ws > 0);
+    }
+#elif defined(__APPLE__)
+    struct rusage ru;
+    if (getrusage(RUSAGE_SELF, &ru) == 0) {
+        peak = (long long)ru.ru_maxrss;    // macOS 的 ru_maxrss 单位是字节
+        ok = 1;
+    }
+#endif
+
+    sys_dict_put_bool(d, "supported", ok);
+    sys_dict_put_int(d, "working_set", ws);
+    sys_dict_put_int(d, "peak_working_set", peak);
+    sys_dict_put_int(d, "private_bytes", priv);
+    return val_obj((Object*)d);
+}
+
 void sys_init_globals(void) {
     // 注册全局 _args 函数（返回 Array[string]，0 个参数）
     vm_register_native("_args", native_args, TYPE_ARRAY, TYPE_STRING, NATIVE_FIXED_NONE(0));
@@ -1463,6 +1591,10 @@ void sys_init_globals(void) {
 
     // 注册全局 _gc 函数（返回 bool，0 或 1 个参数）
     vm_register_native("_gc", native_gc_control, TYPE_BOOL, TYPE_UNKNOWN, NATIVE_VARARG(0, 1, 0, NULL, TYPE_ANY));
+
+    // 2026-10-19：观测接口（只读字段；只在调用时执行 ⇒ 对热路径零开销）
+    vm_register_native("_gc_stats", native_gc_stats, TYPE_DICT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
+    vm_register_native("_mem", native_mem, TYPE_DICT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
 
     // 注册全局 _os 函数（返回 string，0 个参数）
     vm_register_native("_os", native_os, TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));

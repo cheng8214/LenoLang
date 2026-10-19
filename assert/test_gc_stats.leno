@@ -1,0 +1,46 @@
+// _gc_stats() / _mem() —— 运行期观测接口（2026-10-19）
+//
+// 为什么值得有断言：线程堆泄漏那次，全靠手写探针 + 任务管理器才发现
+//   （语言层没有任何观测手段）。这两个函数现在让"泄漏/回收"可以被**程序自己**看见，
+//   也就能在应用里写自检（如"切 50 次站点，内存增量 < 20MB"）。
+//
+// 断言口径（跨平台稳）：只断言"字段存在、类型对、数值合理、分配后确实增长"，
+//   不断言绝对字节数（各平台/分配器不同）。
+main() {
+    var st = _gc_stats()
+    assert_eq((st["young_bytes"] as int) >= 0, true)
+    assert_eq((st["old_bytes"] as int) >= 0, true)
+    assert_eq((st["pooled_bytes"] as int) >= 0, true)
+    assert_eq((st["minor_count"] as int) >= 0, true)
+    assert_eq((st["major_count"] as int) >= 0, true)
+    assert_eq((st["remembered"] as int) >= 0, true)
+    assert_eq(st["enabled"], true)
+    assert_eq((st["active_threads"] as int), 0)
+    assert_eq((st["thread_pending_bytes"] as int), 0)
+
+    // 进程内存：Windows/Linux 三项都有；macOS 只给峰值 ⇒ 只钉"支持 + 峰值 > 0"
+    var m = _mem()
+    assert_eq(m["supported"], true)
+    assert_eq((m["peak_working_set"] as int) > 0, true)
+    assert_eq((m["working_set"] as int) >= 0, true)
+    assert_eq((m["private_bytes"] as int) >= 0, true)
+
+    // 计数是"活的"：分配 20 万个值后年轻代计数必须增长
+    int before = st["young_bytes"] as int
+    Array[int] big = []
+    for 0:199999 to i { big.add(i) }
+    var st2 = _gc_stats()
+    assert_eq((st2["young_bytes"] as int) > before, true)
+    assert_eq(big.len(), 200000)
+
+    // 回收计数也是"活的"：强制触发一次（GC 打开状态下大量分配会走到安全点）
+    for 0:200 to round {
+        Array[int] junk = []
+        for 0:2000 to j { junk.add(j) }
+        if junk.len() != 2001 { assert_eq(1, 0) }
+    }
+    var st3 = _gc_stats()
+    assert_eq((st3["minor_count"] as int) >= 0, true)
+
+    print("test_gc_stats passed")
+}

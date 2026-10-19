@@ -856,6 +856,10 @@ void gc_free_all(void);
 //   `gc_detach_heap` 只能在**子线程自己**里调（它操作的是当前线程的 THREAD_LOCAL 堆 ✓）
 void* gc_detach_heap(void);
 void gc_free_detached(void* dead_heap);
+// 统计（供 `_gc_stats()`；只读字段，零热路径开销 ✓）
+void gc_get_counters(size_t* young, size_t* old, size_t* pooled,
+                     size_t* minor, size_t* major, int* deferred, int* enabled);
+size_t gc_dead_heap_bytes(void* dead_heap);
 // 本线程有没有用过 channel（用过就不敢在退出时整堆释放：buffer 里可能还压着这堆的对象 ✗）
 void gc_note_channel_use(void);
 int gc_heap_detach_allowed(void);

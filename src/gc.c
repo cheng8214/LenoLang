@@ -392,7 +392,30 @@ typedef struct GCDeadHeap {
     Object* young_heap;
     Object* old_heap;
     PoolBlockHdr* pool_blocks;
+    size_t bytes;               // 摘下来时的堆大小（young+old+pool；供 _gc_stats 观测 ✓）
 } GCDeadHeap;
+
+// ============================================================================
+// 统计接口（供 `_gc_stats()` 使用）
+// ----------------------------------------------------------------------------
+// ⚠ 性能：这里**只读**已有字段，且只在 `_gc_stats()` 被调用时执行 ——
+//   分配 / 回收 / 回边 等热路径**一行都没加**（除 detach 时记一个 `bytes`）。
+// ============================================================================
+void gc_get_counters(size_t* young, size_t* old, size_t* pooled,
+                     size_t* minor, size_t* major, int* deferred, int* enabled) {
+    if (young) *young = gc.young_allocated;
+    if (old) *old = gc.old_allocated;
+    if (pooled) *pooled = pool_total;
+    if (minor) *minor = gc.minor_gc_count;
+    if (major) *major = gc.major_gc_count;
+    if (deferred) *deferred = gc.deferred_gc;
+    if (enabled) *enabled = gc.enabled;
+}
+
+size_t gc_dead_heap_bytes(void* p) {
+    GCDeadHeap* d = (GCDeadHeap*)p;
+    return d ? d->bytes : 0;
+}
 
 static void free_object_resources_ex(Object* obj, int remove_intern);   // 定义在本文件后面 ✓
 
@@ -402,6 +425,7 @@ void* gc_detach_heap(void) {
     d->young_heap = gc.young_heap;
     d->old_heap = gc.old_heap;
     d->pool_blocks = pool_block_list;
+    d->bytes = gc.young_allocated + gc.old_allocated + pool_total;
     // 摘走：本线程后面不再用它（子线程马上退出 ✓）
     gc.young_heap = NULL;
     gc.old_heap = NULL;
