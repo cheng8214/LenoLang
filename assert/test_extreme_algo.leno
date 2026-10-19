@@ -191,6 +191,23 @@ main() {
     eq("negdiv", -7 / 2, -3)
     eq("negmod", -7 % 2, -1)
 
+    // ⑬ 字典：同一个**整数键**先走哈希、后落数组部分 ⇒ 不能出现两份
+    //   （2026-10-19 随机差分抓到：keys() 里出现重复的 108/148、len() 多算）
+    //   构造：先插一个远大于 asize 的整数键（稀疏保护 ⇒ 进哈希），
+    //   再把 0..127 全插一遍（数组扩容到 128，108 也被数组接管）⇒ 哈希那份必须被摘掉
+    var dm = {}
+    dm.set(108, 1080)              // asize=4 ⇒ 108 > 8 且 > 64 ⇒ 走哈希
+    for 0:127 to mi { dm.set(mi, mi) }
+    eq("dict.mixed.len", dm.len(), 128)
+    eq("dict.mixed.get", dm.get(108, -1), 108)     // 数组部分的值（后插覆盖）
+    var mks = dm.keys()
+    eq("dict.mixed.keys", mks.len(), 128)
+    var seenm = {}
+    for 0:mks.len() - 1 to mk {
+        seenm.set(_str(mks[mk]), 1)
+    }
+    eq("dict.mixed.unique", seenm.len(), 128)
+
     eq("fails", fails, 0)
     print("test_extreme_algo passed（" + _str(_int(times.ms()) - tstart) + " ms）\n")
 }

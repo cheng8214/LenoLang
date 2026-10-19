@@ -1309,6 +1309,7 @@ static size_t get_object_size(Object* obj) {
             ObjDict* dict = (ObjDict*)obj;
             return sizeof(ObjDict)
                  + dict->asize * sizeof(Value)
+                 + dict->asize * sizeof(int)          // aorder（2026-10-19）
                  + dict->capacity * sizeof(ObjDictEntry)
                  + dict->order_capacity * sizeof(ObjString*);
         }
@@ -1539,6 +1540,7 @@ static void free_object_resources_ex(Object* obj, int remove_intern) {
             ObjDict* dict = (ObjDict*)obj;
             type_free(dict->type_info);
             free(dict->array);
+            free(dict->aorder);   // 2026-10-19：数组部分的 order 下标表
             free(dict->entries);
             free(dict->order);
             break;

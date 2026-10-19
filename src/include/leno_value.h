@@ -328,6 +328,10 @@ typedef struct {
 typedef struct {
     Value key;        // 键（支持 int/string/float/bool），NULL_VAL 表示空槽
     Value value;
+    // ★ 2026-10-19：该键在 `order[]` 里的下标（-1 = 不在顺序表里）
+    //   用途：`dict.remove` 要维护插入顺序，原来靠**线性扫描** order 数组找 key
+    //   ⇒ 删除是 O(n)：10 万键删 5 万要 **4.0 秒** ✗。有下标后 swap-remove O(1) ✓
+    int order_index;
 } ObjDictEntry;
 
 // 字典对象
@@ -357,6 +361,10 @@ typedef struct {
     Value* order;           // 插入顺序的键数组
     int order_count;        // 当前顺序数组元素数
     int order_capacity;     // 顺序数组容量
+
+    // ★ 2026-10-19：数组部分的 order 下标（与 array 同长；-1 = 不在顺序表里）
+    //   哈希部分的下标存在 ObjDictEntry.order_index 上；两边合起来让删除 O(1) ✓
+    int* aorder;
 } ObjDict;
 
 // 函数对象

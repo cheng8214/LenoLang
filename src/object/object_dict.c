@@ -141,6 +141,7 @@ static void dict_resize(ObjDict* dict, int new_capacity) {
     for (int i = 0; i < new_capacity; i++) {
         dict->entries[i].key = NULL_VAL;
         dict->entries[i].value = val_null();
+        dict->entries[i].order_index = -1;
     }
 
     dict->capacity = new_capacity;
@@ -155,6 +156,7 @@ static void dict_resize(ObjDict* dict, int new_capacity) {
                     int index = dict_find_slot(dict, key);
                     dict->entries[index].key = key;
                     dict->entries[index].value = old_entries[i].value;
+                    dict->entries[index].order_index = old_entries[i].order_index;  // 顺序下标跟着搬 ✓
                     dict->count++;
                 }
             }
@@ -199,9 +201,14 @@ static int dict_array_resize(ObjDict* dict, int new_size) {
     for (int i = dict->asize; i < capacity; i++) {
         new_array[i] = val_null();
     }
+    // ★ 2026-10-19：数组部分的 order 下标（与 array 同长）
+    int* new_aorder = (int*)realloc(dict->aorder, (size_t)capacity * sizeof(int));
+    if (!new_aorder) { dict->array = new_array; return 0; }   // 回滚价值不大：至少别越界
+    for (int i = dict->asize; i < capacity; i++) { new_aorder[i] = -1; }
     // 追踪数组部分内存变化，确保 GC 正确计算字典的内存占用
     gc_track_memory((Object*)dict, old_size, new_cap_size);
     dict->array = new_array;
+    dict->aorder = new_aorder;
     dict->asize = capacity;
     return 1;
 }
@@ -216,6 +223,7 @@ ObjDict* dict_new(int capacity) {
     if (!dict) return NULL;
 
     dict->array = NULL;
+    dict->aorder = NULL;
     dict->asize = 0;
     dict->acount = 0;
 
@@ -241,26 +249,31 @@ ObjDict* dict_new(int capacity) {
     return dict;
 }
 
-// 添加键到插入顺序数组
-static void dict_add_to_order(ObjDict* dict, Value key) {
+// 前向声明（dict_set 里"数组部分优先 ⇒ 摘掉哈希里那份"要用 ✓）
+static void dict_order_remove_at(ObjDict* dict, int pos);
+
+// 添加键到插入顺序数组；返回它在 order 里的下标（失败 -1）
+static int dict_add_to_order(ObjDict* dict, Value key) {
     if (dict->order_count >= dict->order_capacity) {
         int old_capacity = dict->order_capacity;
         int new_capacity = old_capacity < 8 ? 8 : old_capacity * 2;
         size_t old_size = (size_t)old_capacity * sizeof(Value);
         size_t new_size = (size_t)new_capacity * sizeof(Value);
         Value* new_order = (Value*)realloc(dict->order, new_size);
-        if (!new_order) return;
+        if (!new_order) return -1;
         // 追踪 order 数组内存变化，确保 GC 正确计算字典的内存占用
         gc_track_memory((Object*)dict, old_size, new_size);
         dict->order = new_order;
         dict->order_capacity = new_capacity;
     }
 
+    int pos = dict->order_count;
     dict->order[dict->order_count++] = key;
     // GC 写屏障：仅当键是对象时才需要
     if (val_is_obj(key)) {
         gc_write_barrier((Object*)dict, key);
     }
+    return pos;
 }
 
 void dict_set(ObjDict* dict, Value key, Value value) {
@@ -281,10 +294,27 @@ void dict_set(ObjDict* dict, Value key, Value value) {
                 goto use_hash;
             }
         }
+        // ★★ 2026-10-19（fuzz 抓到）：同一个整数键可能**先走哈希**（稀疏保护：下标远超 asize），
+        //   之后又落进数组部分 ⇒ 两处各存一份 ⇒ `len()` 多算 1、`keys()` 出现重复键 ✗
+        //   （实测：随机增删 5000 次后 keys() 里出现重复的 108 / 148）
+        //   口径：数组部分优先 ⇒ 写数组前先把哈希里那份摘掉（连它的顺序表项一起 ✓ O(1)）
+        if (dict->count > 0) {
+            int hidx = dict_find_entry(dict, key);
+            if (hidx >= 0) {
+                int hpos = dict->entries[hidx].order_index;
+                dict->entries[hidx].key = DICT_TOMBSTONE_VAL;
+                dict->entries[hidx].value = val_null();
+                dict->entries[hidx].order_index = -1;
+                dict->count--;
+                dict->tombstone_count++;
+                dict_order_remove_at(dict, hpos);
+            }
+        }
+
         int is_new = val_is_null(dict->array[array_index]);
         if (is_new) {
             dict->acount++;
-            dict_add_to_order(dict, key);
+            dict->aorder[array_index] = dict_add_to_order(dict, key);
         }
         dict->array[array_index] = value;
         gc_write_barrier((Object*)dict, value);
@@ -314,7 +344,7 @@ use_hash:
         }
         gc_write_barrier((Object*)dict, value);
         dict->count++;
-        dict_add_to_order(dict, key);
+        dict->entries[index].order_index = dict_add_to_order(dict, key);
     } else if (is_tombstone_val(existing_key)) {
         // 复用 tombstone
         dict->entries[index].key = key;
@@ -325,7 +355,7 @@ use_hash:
         gc_write_barrier((Object*)dict, value);
         dict->count++;
         dict->tombstone_count--;
-        dict_add_to_order(dict, key);
+        dict->entries[index].order_index = dict_add_to_order(dict, key);
     } else {
         // 更新现有键
         dict->entries[index].value = value;
@@ -393,17 +423,25 @@ int dict_has(ObjDict* dict, Value key) {
     return dict_find_entry(dict, key) >= 0;
 }
 
-// 从 order 数组移除指定 key
-static void dict_remove_from_order(ObjDict* dict, Value key) {
-    for (int i = 0; i < dict->order_count; i++) {
-        Value entry = dict->order[i];
-        if (dict_key_equals(entry, key)) {
-            // swap-remove
-            dict->order[i] = dict->order[dict->order_count - 1];
-            dict->order_count--;
-            return;
-        }
+// 从 order 数组移除**指定下标**（swap-remove）+ 回填被搬动那条的索引 ⇒ **O(1)**
+//   ★ 2026-10-19：原实现按 key **线性扫描** order 数组 ⇒ 删除 O(n)：
+//     10 万键删 1k/10k/50k = 116ms/1053ms/**4022ms** ✗（实测）。
+//   现在下标存在两处：哈希条目 `entries[i].order_index`、数组部分 `aorder[idx]` ✓
+static void dict_order_remove_at(ObjDict* dict, int pos) {
+    if (pos < 0 || pos >= dict->order_count) return;
+    int last = dict->order_count - 1;
+    Value moved = dict->order[last];
+    dict->order_count = last;
+    if (pos == last) return;
+    dict->order[pos] = moved;
+    // 被搬动的那条：把它的下标从 last 改成 pos
+    int ai = key_to_array_index(moved);
+    if (ai >= 0 && ai < dict->asize && dict->aorder && !val_is_null(dict->array[ai])) {
+        dict->aorder[ai] = pos;
+        return;
     }
+    int slot = dict_find_entry(dict, moved);
+    if (slot >= 0) dict->entries[slot].order_index = pos;
 }
 
 void dict_try_shrink(ObjDict* dict) {
@@ -446,6 +484,9 @@ void dict_try_shrink(ObjDict* dict) {
             if (new_array) {
                 gc_track_memory((Object*)dict, (size_t)dict->asize * sizeof(Value), (size_t)new_asize * sizeof(Value));
                 dict->array = new_array;
+                // aorder 与 array 同长（收缩时一起缩；失败的旧指针仍然有效，只是多占一点 ✓）
+                int* new_aorder = (int*)realloc(dict->aorder, (size_t)new_asize * sizeof(int));
+                if (new_aorder) dict->aorder = new_aorder;
                 dict->asize = new_asize;
             }
         }
@@ -459,9 +500,11 @@ void dict_delete(ObjDict* dict, Value key) {
     int array_index = key_to_array_index(key);
     if (array_index >= 0 && array_index < dict->asize) {
         if (!val_is_null(dict->array[array_index])) {
+            int pos = (dict->aorder && array_index < dict->asize) ? dict->aorder[array_index] : -1;
             dict->array[array_index] = val_null();
+            if (dict->aorder && array_index < dict->asize) dict->aorder[array_index] = -1;
             dict->acount--;
-            dict_remove_from_order(dict, key);
+            dict_order_remove_at(dict, pos);
             dict_try_shrink(dict);
             return;
         }
@@ -472,11 +515,13 @@ void dict_delete(ObjDict* dict, Value key) {
 
     int index = dict_find_entry(dict, key);
     if (index >= 0) {
+        int pos = dict->entries[index].order_index;
         dict->entries[index].key = DICT_TOMBSTONE_VAL;
         dict->entries[index].value = val_null();
+        dict->entries[index].order_index = -1;
         dict->count--;
         dict->tombstone_count++;
-        dict_remove_from_order(dict, key);
+        dict_order_remove_at(dict, pos);
         dict_try_shrink(dict);
     }
 }
