@@ -544,6 +544,9 @@ void cstruct_def_mark_all(void) {
 
 static THREAD_LOCAL MethodTable cstructMethodTable = {NULL, 0, 0};
 
+// 2026-10-19：线程退出清理（见 object_array.c 的同名函数说明）
+void cstruct_method_table_cleanup(void) { method_table_free(&cstructMethodTable); }
+
 // 注册 cstruct 方法（带参数类型）
 void cstruct_register_method(const char* name, ObjNative* method,
                                   TypeKind return_type, TypeKind return_element_type,

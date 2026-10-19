@@ -20,6 +20,10 @@ extern int vm_run_coroutine(ObjCoroutine* co);
 
 static THREAD_LOCAL MethodTable threadMethodTable = {NULL, 0, 0};
 
+// 2026-10-19：线程退出清理（见 object_array.c 的同名函数说明）
+void thread_method_table_cleanup(void) { method_table_free(&threadMethodTable); }
+void channel_method_table_cleanup(void);
+
 void thread_register_method(const char* name, ObjNative* method,
                                   TypeKind return_type, TypeKind return_element_type,
                                   NativeParamSpec params) {
@@ -45,6 +49,8 @@ void thread_mark_methods(void) {
 #define CHANNEL_METHOD_TABLE_INITIAL_CAPACITY 16
 
 static THREAD_LOCAL MethodTable channelMethodTable = {NULL, 0, 0};
+
+void channel_method_table_cleanup(void) { method_table_free(&channelMethodTable); }
 
 void channel_register_method(const char* name, ObjNative* method,
                                   TypeKind return_type, TypeKind return_element_type,
@@ -630,6 +636,36 @@ static void* thread_entry_point(void* arg) {
     if (child_vm.stack) free(child_vm.stack);
     if (child_vm.globals) free(child_vm.globals);
     if (child_vm.global_funcs) free(child_vm.global_funcs);
+
+    // ★ 2026-10-19：释放本线程的**注册表**（它们也是 THREAD_LOCAL，且都在线程初始化时各自分配）
+    //   与堆无关：即使因为 channel / 未 join 子线程而**不**整堆释放，这些表也必须释放
+    //   （表里存的是 ObjNative* 指针，不拥有对象；释放表本身不会动堆里的对象 ✓）
+    {
+        extern void native_thread_cleanup(void);
+        extern void array_method_table_cleanup(void);
+        extern void string_method_table_cleanup(void);
+        extern void number_method_table_cleanup(void);
+        extern void file_method_table_cleanup(void);
+        extern void dict_method_table_cleanup(void);
+        extern void cstruct_method_table_cleanup(void);
+        extern void socket_method_table_cleanup(void);
+        extern void thread_method_table_cleanup(void);
+        extern void channel_method_table_cleanup(void);
+        extern void struct_method_table_cleanup(void);
+        extern void arr_free_list_release_all(void);
+        native_thread_cleanup();
+        array_method_table_cleanup();
+        string_method_table_cleanup();
+        number_method_table_cleanup();
+        file_method_table_cleanup();
+        dict_method_table_cleanup();
+        cstruct_method_table_cleanup();
+        socket_method_table_cleanup();
+        thread_method_table_cleanup();
+        channel_method_table_cleanup();
+        struct_method_table_cleanup();
+        arr_free_list_release_all();
+    }
 
     // ★★ 2026-10-19：把子线程的 GC 堆**交给 join 去释放**（THREAD_LOCAL 堆没人会回收 ✗）
     //   · 只在**没用过 channel** 时允许：buffer 里可能压着本堆的克隆值，提前释放 = UAF ✗

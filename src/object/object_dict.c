@@ -538,6 +538,9 @@ Value dict_get_value_by_index(ObjDict* dict, int index) {
 
 static THREAD_LOCAL MethodTable dictMethodTable = {NULL, 0, 0};
 
+// 2026-10-19：线程退出清理（见 object_array.c 的同名函数说明）
+void dict_method_table_cleanup(void) { method_table_free(&dictMethodTable); }
+
 void dict_register_method(const char* name, ObjNative* method,
                                   TypeKind return_type, TypeKind return_element_type,
                                   NativeParamSpec params) {

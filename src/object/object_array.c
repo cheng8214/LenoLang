@@ -159,6 +159,27 @@ int arr_grow(ObjArray* arr) {
 
 static THREAD_LOCAL MethodTable arrayMethodTable = {NULL, 0, 0};
 
+// 2026-10-19：线程退出清理（每线程 init 时各分配一份；不释放 = 每线程漏一份，实测 ~95KB/线程）
+void array_method_table_cleanup(void) { method_table_free(&arrayMethodTable); }
+
+// 释放本线程的数组 free-list（arr_try_recycle 把数组从 GC 链上摘下来了 ⇒ detach 收不到）
+void arr_free_list_release_all(void) {
+    ArrayFreeSlot* slot = array_free_list;
+    while (slot) {
+        ArrayFreeSlot* next = slot->next;
+        ObjArray* arr = slot->array;
+        if (arr) {
+            gc_track_memory((Object*)arr, arr->capacity * sizeof(Value), 0);
+            free(arr->elements);
+            free(arr);
+        }
+        free(slot);
+        slot = next;
+    }
+    array_free_list = NULL;
+    array_free_count = 0;
+}
+
 #define ARRAY_METHOD_TABLE_INITIAL_CAPACITY 32
 
 // 注册数组方法（带参数类型）

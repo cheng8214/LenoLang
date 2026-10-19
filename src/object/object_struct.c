@@ -534,6 +534,9 @@ Value struct_get_field(ObjStruct* obj, int index) {
 
 static THREAD_LOCAL MethodTable structMethodTable = {NULL, 0, 0};
 
+// 2026-10-19：线程退出清理（见 object_array.c 的同名函数说明）
+void struct_method_table_cleanup(void) { method_table_free(&structMethodTable); }
+
 // 注册结构体方法（带参数类型）
 void struct_register_method(const char* name, ObjNative* method,
                                   TypeKind return_type, TypeKind return_element_type,

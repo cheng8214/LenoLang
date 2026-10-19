@@ -1968,6 +1968,15 @@ const char* native_find_instance_method_type(const char* method_name, int* out_a
     return NULL;
 }
 
+// ★ 2026-10-19：子线程退出时释放本线程的注册表
+//   每条线程 `native_init_module()` 15 次 + 各实例方法表 init，各分配一份 hash 表；
+//   这些表都是 THREAD_LOCAL，线程退出后没人释放 ⇒ 实测 ~95KB/线程（1000 条线程 ≈ 95MB ✗）
+void native_thread_cleanup(void) {
+    module_method_table_free();
+    module_const_table_free();
+    instance_method_table_free();
+}
+
 // 重置实例方法元信息表（编译前调用）
 void native_reset_instance_method_metas(void) {
     instance_method_table_free();

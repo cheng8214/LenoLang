@@ -336,6 +336,9 @@ ObjString* str_append_inplace(ObjString* a, Value b) {
 
 static THREAD_LOCAL MethodTable stringMethodTable = {NULL, 0, 0};
 
+// 2026-10-19：线程退出清理（见 object_array.c 的同名函数说明）
+void string_method_table_cleanup(void) { method_table_free(&stringMethodTable); }
+
 // 注册字符串方法（带参数类型）
 void string_register_method(const char* name, ObjNative* method,
                                   TypeKind return_type, TypeKind return_element_type,

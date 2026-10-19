@@ -14,6 +14,9 @@
 
 static THREAD_LOCAL MethodTable fileMethodTable = {NULL, 0, 0};
 
+// 2026-10-19：线程退出清理（见 object_array.c 的同名函数说明）
+void file_method_table_cleanup(void) { method_table_free(&fileMethodTable); }
+
 // 注册文件方法（带参数类型）
 void file_register_method(const char* name, ObjNative* method,
                                   TypeKind return_type, TypeKind return_element_type,
