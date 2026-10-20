@@ -45,6 +45,41 @@ static Value native_async_sleep(int arg_count, Value* args) {
     return val_obj((Object*)future);
 }
 
+// 把 loop->errors 里收集到的协程异常抛给调用方（run / run_for 共用）
+//   返回 1 = 已抛出（调用方直接返回），0 = 没有错误
+static int asyncs_raise_collected_errors(VM* target_vm) {
+    EventLoop* loop = target_vm->event_loop;
+    if (!loop || loop->error_count <= 0) return 0;
+
+    if (loop->error_count == 1) {
+        // 单个错误：直接设置异常，让 try-catch 捕获
+        Value err = loop->errors[0];
+        loop->error_count = 0;
+        target_vm->exception = err;
+        target_vm->has_exception = 1;
+        target_vm->exception_line = native_get_current_line();
+        return 1;
+    }
+
+    // 多个错误：汇总为字符串异常
+    char buf[512];
+    int offset = snprintf(buf, sizeof(buf), "%d 个协程失败: ", loop->error_count);
+    for (int i = 0; i < loop->error_count && offset < (int)sizeof(buf) - 64; i++) {
+        if (i > 0) {
+            offset += snprintf(buf + offset, sizeof(buf) - offset, "; ");
+        }
+        char* err_str = value_to_string(loop->errors[i]);
+        offset += snprintf(buf + offset, sizeof(buf) - offset, "%s", err_str);
+        free(err_str);
+    }
+    loop->error_count = 0;
+    ObjString* err_obj = str_copy(buf, strlen(buf));
+    target_vm->exception = val_obj((Object*)err_obj);
+    target_vm->has_exception = 1;
+    target_vm->exception_line = native_get_current_line();
+    return 1;
+}
+
 // async.run() - 启动事件循环，运行所有协程直到全部完成
 static Value native_async_run(int arg_count, Value* args) {
     (void)arg_count;
@@ -65,40 +100,39 @@ static Value native_async_run(int arg_count, Value* args) {
     }
     
     event_loop_run(target_vm->event_loop);
-    
-    // 检查是否有失败的协程
-    EventLoop* loop = target_vm->event_loop;
-    if (loop->error_count > 0) {
-        if (loop->error_count == 1) {
-            // 单个错误：直接设置异常，让 try-catch 捕获
-            Value err = loop->errors[0];
-            loop->error_count = 0;
-            target_vm->exception = err;
-            target_vm->has_exception = 1;
-            target_vm->exception_line = native_get_current_line();
-            return val_null();
-        } else {
-            // 多个错误：汇总为字符串异常
-            char buf[512];
-            int offset = snprintf(buf, sizeof(buf), "%d 个协程失败: ", loop->error_count);
-            for (int i = 0; i < loop->error_count && offset < (int)sizeof(buf) - 64; i++) {
-                if (i > 0) {
-                    offset += snprintf(buf + offset, sizeof(buf) - offset, "; ");
-                }
-                char* err_str = value_to_string(loop->errors[i]);
-                offset += snprintf(buf + offset, sizeof(buf) - offset, "%s", err_str);
-                free(err_str);
-            }
-            loop->error_count = 0;
-            ObjString* err_obj = str_copy(buf, strlen(buf));
-            target_vm->exception = val_obj((Object*)err_obj);
-            target_vm->has_exception = 1;
-            target_vm->exception_line = native_get_current_line();
-            return val_null();
-        }
-    }
-    
+
+    // 检查是否有失败的协程（与 run_for 共用同一份实现）
+    if (asyncs_raise_collected_errors(target_vm)) return val_null();
+
     return val_null();
+}
+
+// asyncs.run_for(ms) -> bool（TH17，2026-10-20）
+//   跑事件循环最多 ms 毫秒：true = 所有协程都完成了；false = 超时（状态保留，可再 run）
+//   ms <= 0 = 无限（等价 run，但返回 bool）
+//   ⚠ 协程失败时与 run 一样**抛异常**（错误比超时更需要看见），调用方用 try/catch
+static Value native_async_run_for(int arg_count, Value* args) {
+    if (arg_count < 1 || !val_is_int(args[0])) {
+        native_throw_error("asyncs.run_for(ms) 需要一个毫秒整数");
+        return val_bool(false);
+    }
+    int ms = (int)val_as_int(args[0]);
+
+    extern THREAD_LOCAL VM* current_exec_vm;
+    if (!current_exec_vm) {
+        native_throw_error("asyncs.run_for() 只能在主线程调用，子线程不支持事件循环");
+        return val_bool(false);
+    }
+    VM* target_vm = current_exec_vm;
+    if (!target_vm->event_loop) {
+        native_throw_error("asyncs.run_for 需要在初始化事件循环后调用");
+        return val_bool(false);
+    }
+
+    int finished = event_loop_run_for(target_vm->event_loop, (uint64_t)(ms > 0 ? ms : 0));
+
+    if (asyncs_raise_collected_errors(target_vm)) return val_bool(false);
+    return val_bool(finished != 0);
 }
 
 // async.yield() - 主动让出执行权
@@ -322,6 +356,10 @@ void asyncs_init_module(void) {
     native_register_module_method("asyncs", "sleep", native_async_sleep, &NATIVE_T_FUTURE, NATIVE_FIXED(sleep_params));
 
     native_register_module_method("asyncs", "run", native_async_run, &NATIVE_T_NULL, NATIVE_FIXED_NONE(0));
+
+    // run_for(ms) -> bool（TH17）：最多跑 ms 毫秒，超时给 false（状态保留）
+    TypeKind run_for_params[] = {TYPE_INT};
+    native_register_module_method("asyncs", "run_for", native_async_run_for, &NATIVE_T_BOOL, NATIVE_FIXED(run_for_params));
 
     native_register_module_method("asyncs", "yield", native_async_yield, &NATIVE_T_FUTURE, NATIVE_FIXED_NONE(0));
 

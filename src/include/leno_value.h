@@ -1583,6 +1583,10 @@ void event_loop_init(EventLoop* loop);
 // 运行事件循环直到所有协程完成
 void event_loop_run(EventLoop* loop);
 
+// 带超时地运行事件循环（TH17）：timeout_ms > 0 最多跑这么久
+//   返回 1 = 全部完成；0 = 超时停下（状态保留，可再次 run / run_for）
+int event_loop_run_for(EventLoop* loop, uint64_t timeout_ms);
+
 // 停止事件循环
 void event_loop_stop(EventLoop* loop);
 

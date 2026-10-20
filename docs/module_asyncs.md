@@ -403,8 +403,22 @@ main() {
 （不会因为前 1024 个长期不可读而饿死后面的）。
 ⇒ 单进程同时挂起的 `arecv`/`aaccept` 实测 **70 个并发正常**（`assert\test_async_io_limit.leno`）。
 
-**已知缺口**：没有 `aconnect` —— `sockets.connect` 是阻塞的，在协程里会卡住整个事件循环；
-`asyncs.run()` 也没有全局超时（只能对单个 Future 用 `timeout`）。
+**异步 connect**：`sockets.aconnect(host, port)`（2026-10-20 起）—— 非阻塞 connect，
+在 async 函数里 `await` 得到 `Socket|null`。`sockets.connect` 是**阻塞**的，在协程里会卡住
+整个事件循环，高并发客户端请用它：
+
+```leno
+var raw = await sockets.aconnect("127.0.0.1", 8080)
+if raw != null {
+    var c = raw as Socket        // ⚠ 返回的 Future 未标注元素类型 ⇒ await 出来是 any
+    c.send("hello")
+    var r = await c.arecv(1024)
+}
+```
+
+**全局超时**：`asyncs.run_for(ms) -> bool`（2026-10-20 起）—— `run()` 会等**所有**协程结束，
+一个挂在永不完成 Future 上的协程就能让它永不返回。`run_for` 最多跑 `ms` 毫秒，
+超时返回 `false`，协程 / 定时器 / IO 状态**全部保留**（可再次 run），`ms <= 0` 等价 `run()`。
 
 **`timeout(future, ms)` 会取消底层 IO**：超时后不仅 Future 变成 `null`，
 `sockets` 里对应的 `arecv`/`aaccept` 请求也会被取消并释放缓冲区。
@@ -789,6 +803,7 @@ main() {
 | `sleep(ms)` | 毫秒数 | null | 暂停协程 |
 | `yield()` | 无 | null | 主动让出 |
 | `run()` | 无 | null | 启动事件循环 |
+| `run_for(ms)` | 毫秒数 | bool | 事件循环最多跑 ms：true=全部完成，false=超时（状态保留） |
 | `current()` | 无 | int | 获取协程 ID |
 | `is_done(f)` | Future | bool | 检查是否完成 |
 | `get_result(f)` | Future | any | 获取结果 |

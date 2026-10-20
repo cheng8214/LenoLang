@@ -243,13 +243,23 @@ extern int sockets_poll_async_io(uint64_t timeout_ms);
 // 外部声明：查询是否有待处理的异步 I/O 请求
 extern int sockets_has_async_io(void);
 
-// 运行事件循环直到所有协程完成
-void event_loop_run(EventLoop* loop) {
+// 运行事件循环直到所有协程完成；timeout_ms > 0 时**最多**跑这么久（TH17）
+//   返回 1 = 全部完成；0 = 超时停下（协程 / 定时器 / 未完成的 IO 状态**全部保留**，可再次 run）
+//   为什么要它：`asyncs.run()` 会等所有协程结束 ⇒ 只要有一个协程挂在永不完成的 Future 上
+//   就永远不返回（没有全局超时只能 kill 进程）。有了它就能"跑一会儿，没完成先出来"。
+int event_loop_run_for(EventLoop* loop, uint64_t timeout_ms) {
     loop->running = 1;
     // 重置错误收集
     loop->error_count = 0;
-    
+
+    uint64_t deadline = (timeout_ms > 0) ? (current_time_ms() + timeout_ms) : 0;
+    int timed_out = 0;
+
     while (loop->running) {
+        if (deadline != 0 && current_time_ms() >= deadline) {
+            timed_out = 1;
+            break;
+        }
         // 1. 检查并处理到期的定时器
         event_loop_check_timers(loop);
         
@@ -303,12 +313,25 @@ void event_loop_run(EventLoop* loop) {
                 timeout = 0;
             }
 
+            // 有 deadline 时，单次等待不能越过它（否则超时精度会差一整个 poll 周期）
+            if (deadline != 0) {
+                uint64_t now2 = current_time_ms();
+                uint64_t remain = (deadline > now2) ? (deadline - now2) : 0;
+                if (remain < timeout) timeout = remain;
+            }
+
             // 用 sockets_poll_async_io 等待 I/O 就绪或定时器到期
             sockets_poll_async_io(timeout);
         }
     }
-    
+
     loop->running = 0;
+    return timed_out ? 0 : 1;
+}
+
+// 无限期运行（旧行为，保留给 internal 调用）
+void event_loop_run(EventLoop* loop) {
+    (void)event_loop_run_for(loop, 0);
 }
 
 // ============================================================================

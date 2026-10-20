@@ -1,0 +1,87 @@
+// test_sockets_aconnect.leno —— TH17：异步 connect（回归）
+//
+// 背景（见 docs/线程并发能力修复追踪.md 的 TH17）：
+//   `sockets.connect` 是**阻塞**调用，在协程里会卡住整个事件循环
+//   ⇒ 高并发 async 客户端会被串行化，甚至在 backlog 满时死锁（实测踩过）。
+//   新增 `sockets.aconnect(host, port) -> Future`：非阻塞 connect + select 可写 + SO_ERROR。
+//
+// 判据：
+//   ① `await sockets.aconnect(...)` 拿到可用 Socket，能 send/arecv 拿到回包
+//   ② 连一个**没人监听**的端口 ⇒ 拿到 null（不是卡住、不是抛异常）
+//   ③ 多路并发：4 个客户端同时 aconnect，全部成功
+import sockets
+import asyncs
+import threads
+
+int PORT = 39791
+int BAD_PORT = 39799
+
+async func echoOnce(Socket c) {
+    var d = await c.arecv(1024)
+    if d != null { c.send("echo:" + (d as string)) }
+    c.close()
+}
+
+async func server(Socket srv, int n) {
+    for n to i {
+        var c = await srv.aaccept()
+        if c == null { break }
+        echoOnce(c)
+    }
+    await asyncs.sleep(300)
+    srv.close()
+}
+
+async func client(int id, Channel out) {
+    // ⚠ aconnect 返回 Future（元素类型未标注）⇒ await 出来是 any，要 as Socket 收窄
+    var raw = await sockets.aconnect("127.0.0.1", PORT)
+    if raw == null {
+        out.send(-1)
+        return
+    }
+    var c = raw as Socket
+    c.send("c" + _str(id))
+    var r = await c.arecv(1024)
+    var expect = "echo:c" + _str(id)
+    if r == null {
+        out.send(-2)
+    } else {
+        var got = r as string
+        if got == expect {
+            out.send(1)
+        } else {
+            out.send(-3)
+        }
+    }
+    c.close()
+}
+
+async func badClient(Channel out) {
+    var c = await sockets.aconnect("127.0.0.1", BAD_PORT)   // 没人监听
+    out.send(if c == null then 1 else 0)
+}
+
+main() {
+    var srv = sockets.listen("127.0.0.1", PORT)
+    if srv == null {
+        print("[FAIL] 监听失败（端口被占用？）")
+        _exit(1)
+    }
+
+    int N = 4
+    var out = threads.channel(N + 4)
+    var badOut = threads.channel(2)
+
+    server(srv, N)
+    for N to i { client(i, out) }
+    badClient(badOut)
+
+    asyncs.run()
+
+    var ok = 0
+    for N to i { ok = ok + _int(out.receive()) }
+    assert_eq(ok, N, "①③" + _str(N) + " 个并发 aconnect + echo 全部成功")
+    assert_eq(_int(badOut.receive()), 1, "②连没人监听的端口拿到 null")
+
+    print("test_sockets_aconnect passed（" + _str(ok) + "/" + _str(N) + "）")
+}

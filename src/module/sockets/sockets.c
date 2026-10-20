@@ -83,7 +83,7 @@ static inline int socket_is_valid(ObjSocket* sock);
 #define ASYNC_IO_INITIAL_CAPACITY 64
 
 // 异步操作类型
-typedef enum { ASYNC_OP_RECV = 1, ASYNC_OP_ACCEPT } AsyncOpType;
+typedef enum { ASYNC_OP_RECV = 1, ASYNC_OP_ACCEPT, ASYNC_OP_CONNECT } AsyncOpType;
 
 // 异步 I/O 请求
 typedef struct {
@@ -153,9 +153,10 @@ int sockets_poll_async_io(uint64_t timeout_ms) {
     async_compact();
     if (g_async_count == 0) return 0;          // 全是已取消的请求 ⇒ 没事可等
 
-    fd_set readfds, writefds;
+    fd_set readfds, writefds, exceptfds;
     FD_ZERO(&readfds);
     FD_ZERO(&writefds);
+    FD_ZERO(&exceptfds);
     socket_fd_t max_fd = 0;
     int has_pending = 0;
 
@@ -166,7 +167,16 @@ int sockets_poll_async_io(uint64_t timeout_ms) {
         int i = (g_async_scan_start + k) % total;
         AsyncIORequest* r = &g_async_requests[i];
         if (!r->active || !socket_is_valid(r->sock)) continue;
-        FD_SET(r->sock->fd, &readfds);
+        // connect 的"就绪"通常是**可写**（握手完成），但**连接被拒绝时 Windows 只报可读**
+        //   ⇒ 两个集合都登记，处理时取"任一"（TH17 实测：只登记可写会让 connect 失败
+        //     的那次永远不被处理 ⇒ 协程永久挂起 ⇒ run() 卡死）
+        if (r->op == ASYNC_OP_CONNECT) {
+            FD_SET(r->sock->fd, &writefds);
+            FD_SET(r->sock->fd, &readfds);
+            FD_SET(r->sock->fd, &exceptfds);
+        } else {
+            FD_SET(r->sock->fd, &readfds);
+        }
         if (r->sock->fd > max_fd) max_fd = r->sock->fd;
         nset++;
         has_pending = 1;
@@ -180,16 +190,38 @@ int sockets_poll_async_io(uint64_t timeout_ms) {
     tv.tv_sec  = (long)(timeout_ms / 1000);
     tv.tv_usec = (long)((timeout_ms % 1000) * 1000);
 
-    int ret = select((int)(max_fd + 1), &readfds, &writefds, NULL, &tv);
+    int ret = select((int)(max_fd + 1), &readfds, &writefds, &exceptfds, &tv);
     if (ret <= 0) return 0;
 
     int done = 0;
     for (int i = 0; i < g_async_count; i++) {
         AsyncIORequest* r = &g_async_requests[i];
         if (!r->active) continue;
-        if (!FD_ISSET(r->sock->fd, &readfds)) continue;
+        int ready = (r->op == ASYNC_OP_CONNECT)
+                      ? (FD_ISSET(r->sock->fd, &writefds)
+                         || FD_ISSET(r->sock->fd, &readfds)
+                         || FD_ISSET(r->sock->fd, &exceptfds))
+                      : FD_ISSET(r->sock->fd, &readfds);
+        if (!ready) continue;
 
-        if (r->op == ASYNC_OP_RECV) {
+        if (r->op == ASYNC_OP_CONNECT) {
+            // 三次握手完成（或失败）：用 SO_ERROR 判定结果（TH17）
+            int so_err = 0;
+            socklen_t elen = sizeof(so_err);
+            getsockopt(r->sock->fd, SOL_SOCKET, SO_ERROR, (char*)&so_err, &elen);
+
+            r->active = 0;
+            if (so_err == 0) {
+                r->sock->is_connected = 1;
+                future_complete(r->future, val_obj((Object*)r->sock));
+            } else {
+                r->sock->last_error = so_err;
+                CLOSE_SOCKET(r->sock->fd);
+                r->sock->fd = INVALID_SOCKET_FD;
+                future_complete(r->future, val_null());
+            }
+            done++;
+        } else if (r->op == ASYNC_OP_RECV) {
             int n = recv(r->sock->fd, r->buffer, r->buf_size, 0);
             r->active = 0;
             if (n > 0) {
@@ -452,6 +484,96 @@ static Value socket_aaccept_func(int argc, Value* args) {
     co->waiting_for = future;
     // GC 写屏障：协程可能已晋升老年代而 Future 是新分配的年轻代对象
     gc_write_barrier_obj((Object*)co, (Object*)future);
+    return val_obj((Object*)future);
+}
+
+/* sockets.aconnect(host, port) -> Future（TH17，2026-10-20）
+ *   async 函数里 `var c = await sockets.aconnect(h, p)` ⇒ Socket|null
+ *   为什么需要：`sockets.connect` 是**阻塞**调用，在协程里会把整个事件循环卡住
+ *   （高并发客户端会被串行化甚至死锁）。这里走非阻塞 connect + select 可写 + SO_ERROR。
+ */
+static Value sockets_aconnect_func(int argc, Value* args) {
+    (void)argc;
+    if (!init_sockets()) return val_null();
+
+    ObjCoroutine* co = vm_current_coroutine();
+    if (!co) {
+        native_throw_error("sockets.aconnect 只能在 async 函数中使用");
+        return val_null();
+    }
+
+    ObjString* host = (ObjString*)val_as_obj(args[0]);
+    int port = val_as_int(args[1]);
+
+    socket_fd_t fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd == INVALID_SOCKET_FD) return val_null();
+
+    // 地址解析（与 sockets.connect 同口径）
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons((short)port);
+    if (inet_pton(AF_INET, host->chars, &addr.sin_addr) <= 0) {
+        struct hostent* he = gethostbyname(host->chars);
+        if (!he || !he->h_addr_list[0]) {
+            CLOSE_SOCKET(fd);
+            return val_null();
+        }
+        memcpy(&addr.sin_addr, he->h_addr_list[0], he->h_length);
+    }
+
+    // 非阻塞
+#ifdef _WIN32
+    u_long mode = 1;
+    ioctlsocket(fd, FIONBIO, &mode);
+#else
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags != -1) fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+#endif
+
+    ObjSocket* sock = create_socket_obj(fd, SOCKET_TYPE_TCP);
+    if (!sock) {
+        CLOSE_SOCKET(fd);
+        return val_null();
+    }
+    sock->is_nonblocking = 1;
+
+    if (connect(fd, (struct sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR_VAL) {
+        int err = GET_ERROR();
+#ifdef _WIN32
+        int pending = (err == WSAEWOULDBLOCK || err == WSAEINPROGRESS || err == WSAEALREADY);
+#else
+        int pending = (err == EINPROGRESS || err == EWOULDBLOCK || err == EALREADY);
+#endif
+
+        if (!pending) {
+            // 立即失败（拒绝/不可达）：给一个已完成的 null Future，别让调用方白等
+            sock->last_error = err;
+            CLOSE_SOCKET(fd);
+            sock->fd = INVALID_SOCKET_FD;
+            ObjFuture* failed = future_new();
+            future_complete(failed, val_null());
+            return val_obj((Object*)failed);
+        }
+
+        ObjFuture* future = future_new();
+        future->waiter = co;
+        gc_write_barrier_obj((Object*)future, (Object*)co);
+        if (async_add(sock, future, ASYNC_OP_CONNECT, NULL, 0) != 0) {
+            CLOSE_SOCKET(fd);
+            sock->fd = INVALID_SOCKET_FD;
+            native_throw_error("注册异步 connect 失败");
+            return val_null();
+        }
+        co->waiting_for = future;
+        gc_write_barrier_obj((Object*)co, (Object*)future);
+        return val_obj((Object*)future);
+    }
+
+    // 立即连上（本机回环常见）：返回已完成 Future
+    sock->is_connected = 1;
+    ObjFuture* future = future_new();
+    future_complete(future, val_obj((Object*)sock));
     return val_obj((Object*)future);
 }
 
@@ -1300,6 +1422,9 @@ void sockets_init_module(void) {
     // TCP 客户端
     TypeKind connect_params[] = {TYPE_STRING, TYPE_INT};
     native_register_module_method("sockets", "connect", sockets_connect_func, &NATIVE_T_SOCKET, NATIVE_FIXED(connect_params));
+
+    // 异步 connect（TH17）：只能 async 函数里 await；非阻塞 + select 可写 + SO_ERROR
+    native_register_module_method("sockets", "aconnect", sockets_aconnect_func, &NATIVE_T_FUTURE, NATIVE_FIXED(connect_params));
 
     // TCP 服务器
     TypeKind listen_params[] = {TYPE_STRING, TYPE_INT};

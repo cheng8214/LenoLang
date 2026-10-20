@@ -1,0 +1,65 @@
+// test_async_run_for.leno —— TH17：事件循环全局超时 `asyncs.run_for(ms)`（回归）
+//
+// 背景（见 docs/线程并发能力修复追踪.md 的 TH17）：
+//   `asyncs.run()` 会等**所有**协程结束 ⇒ 只要有一个协程挂在永不完成的 Future 上
+//   （比如一个不回包的 arecv），run 就永远不返回，只能 kill 进程。
+//   新增 `asyncs.run_for(ms) -> bool`：最多跑 ms 毫秒，超时返回 false，状态保留可再跑。
+//
+// 判据：
+//   ① 有协程永久挂起 ⇒ run_for(300) 返回 false，耗时约 300ms
+//   ② 状态保留：再 run_for(200) 仍返回 false（协程/IO 没被破坏）
+//   ③ 能走到最后一行 = 没有卡死（修复前本用例会被外部超时 kill）
+import sockets
+import asyncs
+import threads
+import times
+
+int PORT = 39792
+
+async func silentServer(Socket srv, Array[Socket] held, Channel out) {
+    var c = await srv.aaccept()
+    if c == null { out.send(0); return }
+    held.add(c)          // 收下、不回包、不关
+    out.send(1)
+}
+
+async func stuckClient(Channel out) {
+    var raw = await sockets.aconnect("127.0.0.1", PORT)
+    if raw == null { out.send(-1); return }
+    var c = raw as Socket
+    c.send("ping")
+    var r = await c.arecv(1024)      // 服务端永远不回 ⇒ 永远挂着
+    out.send(if r == null then 2 else 1)
+}
+
+main() {
+    var srv = sockets.listen("127.0.0.1", PORT)
+    if srv == null {
+        print("[FAIL] 监听失败（端口被占用？）")
+        _exit(1)
+    }
+
+    Array[Socket] held = []
+    var srvOut = threads.channel(2)
+    var cliOut = threads.channel(2)
+
+    silentServer(srv, held, srvOut)
+    stuckClient(cliOut)
+
+    // ---------- ① 超时 ----------
+    var t0 = times.ms()
+    var finished = asyncs.run_for(300)
+    var ms1 = times.ms() - t0
+    assert_eq(finished, false, "①有协程挂死 ⇒ run_for 超时返回 false")
+    assert_true(ms1 >= 250.0, "①确实等到了接近 300ms（实际 " + _str(ms1) + "ms）")
+    assert_true(ms1 < 2000.0, "①没有无限等（实际 " + _str(ms1) + "ms）")
+    assert_eq(_int(srvOut.receive()), 1, "①服务端接过连接")
+
+    // ---------- ② 状态保留 ----------
+    var t1 = times.ms()
+    var again = asyncs.run_for(200)
+    assert_eq(again, false, "②未完成的协程仍在 ⇒ 再次 run_for 仍 false")
+
+    // ---------- ③ 能走到这里就说明没卡死 ----------
+    print("test_async_run_for passed（首次 " + _str(ms1) + "ms，二次 " + _str(times.ms() - t1) + "ms）")
+}
