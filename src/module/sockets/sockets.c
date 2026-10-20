@@ -98,6 +98,10 @@ typedef struct {
 static AsyncIORequest* g_async_requests = NULL;
 static int g_async_count = 0;        // 已用槽位数（含 inactive；poll 里会压缩掉）
 static int g_async_capacity = 0;
+// 每轮 poll 从哪里开始把 socket 塞进 fd_set（TH16）
+//   为什么需要：fd_set 最多装 FD_SETSIZE 个，若每轮都从下标 0 开始，
+//   前 1024 个长期不可读的请求会把名额占满 ⇒ **后面的请求永远轮不到** ✗
+static int g_async_scan_start = 0;
 
 // 注册异步操作，返回 0 成功
 static int async_add(ObjSocket* sock, ObjFuture* future, AsyncOpType op, char* buf, int buf_size) {
@@ -135,6 +139,12 @@ static void async_compact(void) {
         }
     }
     g_async_count = w;
+    // 重排后游标要收进新长度内（否则取模会跳过一批）
+    if (g_async_count > 0) {
+        g_async_scan_start %= g_async_count;
+    } else {
+        g_async_scan_start = 0;
+    }
 }
 
 // 供 event_loop_run 调用: 用 select 等待就绪的 socket，执行真正的 I/O，完成 Future
@@ -150,14 +160,19 @@ int sockets_poll_async_io(uint64_t timeout_ms) {
     int has_pending = 0;
 
     int nset = 0;
-    for (int i = 0; i < g_async_count; i++) {
+    int total = g_async_count;
+    // 从游标处环形扫描：保证"超过 FD_SETSIZE 的部分"下一轮也能轮到（TH16）
+    for (int k = 0; k < total && nset < FD_SETSIZE; k++) {
+        int i = (g_async_scan_start + k) % total;
         AsyncIORequest* r = &g_async_requests[i];
         if (!r->active || !socket_is_valid(r->sock)) continue;
-        if (nset >= FD_SETSIZE) break;      // 防越界：超过上限的请求留到下一轮（fd_set 是定长数组）
         FD_SET(r->sock->fd, &readfds);
         if (r->sock->fd > max_fd) max_fd = r->sock->fd;
         nset++;
         has_pending = 1;
+    }
+    if (total > 0) {
+        g_async_scan_start = (g_async_scan_start + nset) % total;   // 下一轮从没查过的开始
     }
     if (!has_pending) return 0;
 

@@ -1,0 +1,33 @@
+// test_async_after_thread.leno —— TH16：起过线程之后，主线程的 async 必须仍能工作（回归）
+//
+// 背景（见 docs/线程并发能力修复追踪.md 的 TH16）：
+//   `g_event_loop` 是**进程级**全局指针，而 `asyncs_init_globals()` 在 `native_register_globals()`
+//   里被调用 —— 每个 `threads.start()` 起的子线程都会跑一遍它 ⇒ 把 `g_event_loop` 指向
+//   **子线程自己的** event_loop（子线程退出后就是个废弃的循环）。
+//   之后主线程的 `future_complete()` 会把协程塞进那个废弃队列 ⇒ 主线程的 `asyncs.run()` 卡死 ✗
+//
+// 判据：先起一个线程并 join（触发上面的覆盖），再做一次 30ms 的 async sleep，
+//   `asyncs.run()` 必须正常返回（修复前会永久卡住，需要外部超时 kill）。
+import threads
+import asyncs
+
+func worker(): int { return 1 }
+
+async func tick(Channel out) {
+    await asyncs.sleep(30)
+    out.send(1)
+}
+
+main() {
+    // ① 先起一个真实线程 —— 这一步会调用 native_register_globals()
+    var t = threads.start(worker)
+    assert_eq(t.join(), 1, "①子线程正常结束")
+
+    // ② 主线程再跑 async
+    var out = threads.channel(2)
+    tick(out)
+    asyncs.run()
+    assert_eq(_int(out.receive()), 1, "②起过线程后 async 仍能正常完成")
+
+    print("test_async_after_thread passed")
+}

@@ -398,9 +398,13 @@ main() {
 
 ### 2.5 并发上限与超时（2026-10-20 实战修正）
 
-**并发上限**：异步 I/O 表已从"固定 64 项"改为**动态扩容**；真正的上限来自
-Windows 的 `fd_set`（`FD_SETSIZE` 已放宽到 **1024**，超出的请求排到下一轮）。
+**并发上限**：异步 I/O 表已从"固定 64 项"改为**动态扩容**；每轮 `select` 最多装
+`FD_SETSIZE`（已放宽到 **1024**）个 socket，超出的用**环形游标**排到下一轮
+（不会因为前 1024 个长期不可读而饿死后面的）。
 ⇒ 单进程同时挂起的 `arecv`/`aaccept` 实测 **70 个并发正常**（`assert\test_async_io_limit.leno`）。
+
+**已知缺口**：没有 `aconnect` —— `sockets.connect` 是阻塞的，在协程里会卡住整个事件循环；
+`asyncs.run()` 也没有全局超时（只能对单个 Future 用 `timeout`）。
 
 **`timeout(future, ms)` 会取消底层 IO**：超时后不仅 Future 变成 `null`，
 `sockets` 里对应的 `arecv`/`aaccept` 请求也会被取消并释放缓冲区。
