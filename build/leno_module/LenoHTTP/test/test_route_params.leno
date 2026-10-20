@@ -1,0 +1,111 @@
+// test_route_params.leno —— 路径参数（2026-10-20）
+//
+//   http.get(app, "/api/song/:id", h)   ⇒  h 里取 `req["params"]["id"]`
+//
+// 判据：
+//   ① 单参数捕获 `/api/song/42` ⇒ params.id == "42"
+//   ② 多参数 `/u/:uid/p/:pid` ⇒ 两个都对
+//   ③ 段数不匹配 ⇒ 404（不能把 `/api/song/42/x` 当命中）
+//   ④ **精确路由优先**：`/a/b` 与 `/a/:x` 同时注册时，`/a/b` 走精确那条
+//   ⑤ 模式命中但方法不符 ⇒ 405（不是 404，方便排查）
+//   ⑥ 参数路由 + 鉴权可以叠加（auth 检查器能看到 req，params 在鉴权后仍可用）
+import sockets
+import threads
+import "HTTP" as http
+
+func clientSend(int port, string raw, Channel out) {
+    Socket c = sockets.connect("127.0.0.1", port)
+    if c == null { out.send(""); return }
+    c.send(raw)
+    var resp = ""
+    while true {
+        var chunk = c.recv(65536)
+        if chunk == null { break }
+        resp = resp + (chunk as string)
+    }
+    c.close()
+    out.send(resp)
+}
+
+func oneReq(Dict app, string raw): string {
+    var srv = http.listen("127.0.0.1", 0)
+    if not (srv["ok"] as bool) { return "" }
+    int port = srv["port"] as int
+    var out = threads.channel(1)
+    threads.start(clientSend, port, raw, out)
+    http.acceptOne(srv, app)
+    return out.receive() as string
+}
+
+func getRaw(string path, string extra): string {
+    return "GET " + path + " HTTP/1.1\r\nHost: t\r\nConnection: close\r\n" + extra + "\r\n"
+}
+
+// ==================== handler ====================
+func hSong(Dict req): Dict {
+    Dict p = req["params"] as Dict
+    return http.json({ok: true, id: p.get("id", "")})
+}
+
+func hDual(Dict req): Dict {
+    Dict p = req["params"] as Dict
+    return http.json({uid: p.get("uid", ""), pid: p.get("pid", "")})
+}
+
+func hStatic(Dict req): Dict { return http.json({hit: "static"}) }
+
+func hParamAuth(Dict req): Dict {
+    Dict p = req["params"] as Dict
+    return http.json({user: req["user"] as string, id: p.get("id", "")})
+}
+
+func tokenOf(Dict req): string {
+    if http.header(req, "x-token", "") == "good" { return "alice" }
+    return ""
+}
+
+main() {
+    var app = http.newApp()
+    http.get(app, "/api/song/:id", hSong)
+    http.get(app, "/u/:uid/p/:pid", hDual)
+    http.get(app, "/a/b", hStatic)
+    http.get(app, "/a/:id", hSong)      // 参数名要用 id（hSong 取的是 id）
+
+    // ① 单参数
+    var r1 = oneReq(app, getRaw("/api/song/42", ""))
+    assert_true(r1.has("200 OK"), "①状态 200")
+    assert_true(r1.has("\"id\":\"42\""), "①params.id 捕获正确")
+
+    // ② 多参数
+    var r2 = oneReq(app, getRaw("/u/7/p/9", ""))
+    assert_true(r2.has("\"uid\":\"7\""), "②uid 捕获")
+    assert_true(r2.has("\"pid\":\"9\""), "②pid 捕获")
+
+    // ③ 段数不匹配 ⇒ 404
+    var r3 = oneReq(app, getRaw("/api/song/42/x", ""))
+    assert_true(r3.has("404"), "③段数不匹配 ⇒ 404")
+
+    // ④ 精确优先
+    var r4 = oneReq(app, getRaw("/a/b", ""))
+    assert_true(r4.has("static"), "④精确路由赢（不是参数路由）")
+    var r5 = oneReq(app, getRaw("/a/zzz", ""))
+    assert_true(r5.has("\"id\":\"zzz\""), "④其余落到参数路由")
+
+    // ⑤ 方法不符 ⇒ 405
+    var r6 = oneReq(app, "POST /api/song/1 HTTP/1.1\r\nHost: t\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")
+    assert_true(r6.has("405"), "⑤模式命中但方法不符 ⇒ 405")
+
+    // ⑥ 参数路由 + 鉴权叠加
+    var appAuth = http.newApp()
+    http.auth(appAuth, tokenOf)
+    http.get(appAuth, "/api/song/:id", hParamAuth, {auth: true})
+
+    var r7 = oneReq(appAuth, getRaw("/api/song/5", ""))
+    assert_true(r7.has("401 Unauthorized"), "⑥无 token ⇒ 401")
+    var r8 = oneReq(appAuth, getRaw("/api/song/5", "X-Token: good\r\n"))
+    assert_true(r8.has("200 OK"), "⑥带 token ⇒ 200")
+    assert_true(r8.has("\"user\":\"alice\""), "⑥鉴权给的 user 在 handler 里可见")
+    assert_true(r8.has("\"id\":\"5\""), "⑥params 也在")
+
+    print("test_route_params passed（单/多参数 / 404 / 精确优先 / 405 / 叠加鉴权）")
+}

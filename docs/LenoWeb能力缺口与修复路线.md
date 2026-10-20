@@ -33,7 +33,7 @@
 |---|---|---|---|
 | 2.1 | gzip 响应 | ✅ **本轮已做**：`Accept-Encoding: gzip` + 体积 ≥ 1KB + 可压缩类型 ⇒ `Content-Encoding: gzip` + `Vary` | 客户端带 gzip 头时体积降 ≥ 50%，`Content-Length` 与解压后长度分别正确 |
 | 2.2 | 模板自动转义 | ✅ **本轮已做**：`http.esc()` / `http.render(tpl, vars)`（`{{x}}` 转义、`{{{x}}}` 原样） | XSS 输入渲染成 `&lt;script&gt;`；缺键给空串 |
-| 2.3 | 路径参数路由 | `http.get(app, "/user/:id", h)` ⇒ `req["params"]["id"]` | `/user/42` 命中并取到 `"42"`；`/user/a/b` 不命中 |
+| 2.3 | 路径参数路由 | ✅ **已做（2026-10-20）**：`http.get(app, "/user/:id", h)` ⇒ `req["params"]["id"]`；精确路由优先、段数必须相同、方法不符仍 405 | `test_route_params.leno` 六组：单/多参数、段数不匹配 404、精确优先、405、与鉴权叠加 |
 | 2.4 | 中间件链 | ✅ **部分已做（2026-10-20）**：`http.before(app, fn)` 全局前置管道（返回 `null` 放行、返回响应短路）+ **声明式鉴权** `http.auth(app, fn)` + 路由标 `{auth: true}`。**不做** `next()` 洋葱模型（同步 handler 用不上，改响应走 `_write_response`） | `test_middleware.leno` 六组：公开路由 / 401 / 带 token 拿到 `req["user"]` / 缺检查器 500 / `before` 短路 503 / 中间件抛异常后同一连接仍正常 |
 | 2.5 | multipart/form-data | 按 boundary 切分，解析 `name` / `filename` / 体 | 上传 1 个中文名文本文件，能取到名字与内容 |
 | 2.6 | Range + 缓存头 | 静态文件支持 `Range: bytes=a-b`（206）、`ETag`/`If-None-Match`（304）、`Last-Modified` | 断点续传拿到正确片段；二次请求返回 304 |

@@ -78,6 +78,23 @@ web.codepage("gb18030")              // → 54936
 var rows = web.select(web.parse(html), "table tr:nth-child(2n+1) td:not(.hidden)")
 ```
 
+### 选择器 + 取值一步到位（2026-10-20）
+
+爬虫里 90% 的写法是"选一批节点，再逐个取文本 / 取属性"，以前要三行：
+
+```leno
+var nodes = web.select(root, "div.item h3")
+Array[string] names = []
+for nodes to n { names.add(web.textContent(n)) }
+```
+
+现在一行（语义与逐个调用完全一致，顺序也一致）：
+
+```leno
+var names = web.selectText(root, "div.item h3")            // 批量文本（去标签 + 合并空白）
+var hrefs = web.selectAttr(root, "div.item a", "href")     // 批量属性（缺失 ⇒ 空串）
+```
+
 两处语义细节（与 CSS 一致）：
 
 - 位置类伪类与 `nth-*` **只数元素**（`#text` 不计入编号）

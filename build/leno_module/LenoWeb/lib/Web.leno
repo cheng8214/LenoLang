@@ -146,6 +146,11 @@ export func attr(HtmlNode node, string name): string { return htmls.attr(node, n
 export func children(HtmlNode node): Array[HtmlNode] { return htmls.children(node) }
 export func getLinks(string html): Array[string] { return htmls.getLinks(html) }
 export func select(HtmlNode root, string selector): Array[HtmlNode] { return htmls.select(root, selector) }
+// 选择器 + 取值一步到位（2026-10-20）：批量取文本 / 批量取属性
+export func selectText(HtmlNode root, string selector): Array[string] { return htmls.selectText(root, selector) }
+export func selectAttr(HtmlNode root, string selector, string name): Array[string] {
+    return htmls.selectAttr(root, selector, name)
+}
 export func selectOne(HtmlNode root, string selector): HtmlNode? { return htmls.selectOne(root, selector) }
 export func getElementById(HtmlNode root, string id): HtmlNode? { return htmls.getElementById(root, id) }
 export func getElementsByTag(HtmlNode root, string tagName): Array[HtmlNode] { return htmls.getElementsByTag(root, tagName) }

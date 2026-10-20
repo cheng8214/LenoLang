@@ -168,6 +168,19 @@ func search(Dict req): Dict {
     return http.json({ok: true, count: items.len(), items: items, user: user})
 }
 
+// GET /api/song/:id  → 单曲详情（演示**路径参数**：`req["params"]["id"]`）
+func songDetail(Dict req): Dict {
+    Dict p = req["params"] as Dict
+    string id = p.get("id", "")
+    if id == "" { return badRequest("缺少 id") }
+    int sid = 0
+    try { sid = _int(id) } catch e { return badRequest("id 必须是数字") }
+
+    var row = first("SELECT id, title, artist, album, year FROM songs WHERE id = ?", [sid])
+    if row.len() == 0 { return http.jsonStatus(404, {ok: false, error: "没有这首"}) }
+    return http.json({ok: true, song: row})
+}
+
 // GET /api/stats  → 同样标 auth:true（不再手写校验）
 func stats(Dict req): Dict {
     string user = req["user"] as string
@@ -206,11 +219,12 @@ main() {
     // ③ 集中路由表：**哪些接口、哪些要鉴权，一眼看全**
     //     （等价 C# 的 MapGet(...).RequireAuthorization() 集中声明版）
     var n = http.routes(app, [
-        {method: "POST", path: "/api/login",  handler: login},
-        {method: "GET",  path: "/api/search", handler: search, auth: true},
-        {method: "GET",  path: "/api/stats",  handler: stats,  auth: true}
+        {method: "POST", path: "/api/login",     handler: login},
+        {method: "GET",  path: "/api/search",    handler: search, auth: true},
+        {method: "GET",  path: "/api/song/:id",  handler: songDetail, auth: true},   // ← 路径参数
+        {method: "GET",  path: "/api/stats",     handler: stats,  auth: true}
     ])
-    if n != 3 {
+    if n != 4 {
         print("路由注册异常：只成功 " + _str(n) + " 条")
         return
     }

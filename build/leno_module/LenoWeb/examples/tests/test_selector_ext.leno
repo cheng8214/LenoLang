@@ -106,5 +106,17 @@ main() {
     tk.check("中文 class 选择器", texts("<p class='标题'>A</p><p>B</p>", "p.标题"), "A")
     tk.check(".class 里的中文（多字节）不被截断", count("<p class='标签一'>A</p>", "p.标签一"), 1)
 
+    print("--- selectText / selectAttr（选择器 + 取值一步到位，2026-10-20）---")
+    string CARD = "<div class='item'><h3> 标题 A </h3><a href='/a'>x</a></div>"
+        + "<div class='item'><h3>标题 B</h3><a href='/b'>y</a></div>"
+        + "<div class='item'><h3>标题 C</h3></div>"
+    var root2 = htmls.parse(CARD)
+    tk.check("selectText 批量取文本（合并空白）", strings.join(htmls.selectText(root2, "div.item h3"), ","),
+             "标题 A,标题 B,标题 C")
+    var hrefs = htmls.selectAttr(root2, "div.item a", "href")
+    tk.check("selectAttr 批量取属性", strings.join(hrefs, ","), "/a,/b")
+    tk.check("selectAttr 数量 = 命中的 a 数（第三个 item 没 a）", _str(hrefs.len()), "2")
+    tk.check("空结果 ⇒ 空数组", _str(htmls.selectText(root2, "div.nope").len()), "0")
+
     if tk.summary("selector_ext") != 0 { _exit(1) }
 }

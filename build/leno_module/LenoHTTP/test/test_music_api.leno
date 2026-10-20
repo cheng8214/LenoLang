@@ -88,6 +88,15 @@ main() {
     var r5 = get("/api/search", "Authorization: Bearer " + token + "\r\n")
     if not r5.has("400 Bad Request") { print("[FAIL] 空 q 应 400:\n" + r5); _kill(h); _exit(1) }
 
+    // ⑤b 路径参数：/api/song/1 取到单曲（需鉴权）
+    var r5b = get("/api/song/1", "Authorization: Bearer " + token + "\r\n")
+    assert_true(r5b.has("200 OK"), "⑤b路径参数命中")
+    assert_true(r5b.has("\"title\""), "⑤b返回歌曲字段")
+    var r5c = get("/api/song/999", "Authorization: Bearer " + token + "\r\n")
+    assert_true(r5c.has("404"), "⑤b不存在的 id ⇒ 404")
+    var r5d = get("/api/song/1", "")
+    assert_true(r5d.has("401"), "⑤b路径参数同样受鉴权保护")
+
     // ⑥ cookie 鉴权
     var r6 = get("/api/stats", "Cookie: sid=" + token + "\r\n")
     if not r6.has("200 OK") { print("[FAIL] cookie 鉴权失败:\n" + r6); _kill(h); _exit(1) }

@@ -972,6 +972,28 @@ export func textContent(HtmlNode node): string {
     return cleanText(allText(node))
 }
 
+// ==================== 选择器 + 取值的一步到位（2026-10-20）====================
+// 爬虫里 90% 的写法是"选一批节点，然后逐个取文本 / 取某个属性"。以前要三行：
+//   var nodes = web.select(root, "h3")
+//   for nodes to n { names.add(web.textContent(n)) }
+// 现在一行：
+//   var names = web.selectText(root, "h3")
+//   var hrefs = web.selectAttr(root, "a.item", "href")
+// 语义与逐个调用 `textContent` / `attr` 完全一致（顺序也一致）。
+export func selectText(HtmlNode root, string selector): Array[string] {
+    Array[HtmlNode] nodes = select(root, selector)
+    Array[string] out = []
+    for nodes.len() to i { out.add(textContent(nodes[i])) }
+    return out
+}
+
+export func selectAttr(HtmlNode root, string selector, string name): Array[string] {
+    Array[HtmlNode] nodes = select(root, selector)
+    Array[string] out = []
+    for nodes.len() to i { out.add(attr(nodes[i], name)) }
+    return out
+}
+
 // 提取 HTML 中第一个表格为二维数组（每行=一行，每格=cleanText 后的文本）
 // 每行中 th（表头单元格）排在前、td（数据单元格）排在后，与 pandas read_html 的"表头优先"语义一致
 export func extractTable(HtmlNode root): Array[Array[string]] {

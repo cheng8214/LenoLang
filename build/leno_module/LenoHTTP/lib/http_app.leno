@@ -353,8 +353,86 @@ func normalize(any res): Dict {
     return text(_str(res))
 }
 
+// ==================== 路径参数（2026-10-20）====================
+//   http.get(app, "/api/song/:id", h)   ⇒  h 里取 `req["params"]["id"]`
+// 规则：
+//   · 只认**整段**参数：`/:id` 是参数，`/a:b` 不是（`: ` 必须在段首）
+//   · **精确路由优先**：同时注册 `/a/b` 与 `/a/:x` 时，`/a/b` 走前者（快路径）
+//   · 段数必须相同；参数值不做 URL 解码（`req["path"]` 本身也未解码，保持一致）
+//   · 混用多个参数、`/u/:uid/p/:pid` 都支持
+//   ⚠ 参数名别叫 `p`：本文件有 `import "http_parse.leno" as p`，参数会把模块名**遮蔽**掉，
+//     于是 `p.to_bytes()` 被解析成"模块 p 的方法" ⇒ 报「模块 'p' 中没有方法 'to_bytes'」
+//     （这个报错本身没错，但第一眼容易以为是模块缺方法）
+func _has_param(string pat): bool {
+    for pat.to_bytes() to b {
+        if b == 58 { return true }        // ':'
+    }
+    return false
+}
+
+func _match_pattern(string pattern, string path): Dict? {
+    Array[string] ps = strings.split(pattern, "/")
+    Array[string] ps2 = strings.split(path, "/")
+    if ps.len() != ps2.len() { return null }
+    Dict params = {}
+    for ps.len() to i {
+        string seg = ps[i]
+        string got = ps2[i]
+        if seg.byte_len() > 0 and seg.byte(0) == 58 {
+            string name = seg.byte_slice(1, seg.byte_len() - 1)
+            if name == "" { return null }
+            params.set(name, got)
+        } else if seg != got {
+            return null
+        }
+    }
+    return params
+}
+
+// 执行一个已命中的路由：塞 params → 声明式鉴权 → 调 handler（异常兜成 500）
+func _run_route(Dict app, Dict req, Dict r, Dict params): Dict {
+    string method = req["method"] as string
+    string path = req["path"] as string
+    // ⚠ `params as any` 不是多余的：`req` 是裸 `Dict`（元素类型未定），**第一次 set 会把元素类型定死**
+    //   ⇒ 先 `set("params", Dict)` 再 `set("user", string)` 就报「参数 2 期望 'Dict'，但传入 'string'」。
+    //   写成 `as any` 让元素类型保持 any，后面塞什么类型都行。
+    //   （这条摩擦的报错本身很准 —— 它会指出"元素类型是第 N 行写入定下的" ✓）
+    if params.len() > 0 { req.set("params", params as any) }
+
+    // ★★ handler / 鉴权检查器抛异常**不能把服务带走**。
+    //   实测：一个 `throw` 的 handler 让进程直接没了 —— 之后的请求全部被拒（连接拒绝 ✗）。
+    try {
+        var meta = r.get("meta", null)
+        if meta is Dict {
+            Dict md = meta as Dict
+            var need = false
+            if md.has("auth") { need = md.get("auth", false) as bool }
+            if need {
+                if not app.has("authFn") or app["authFn"] == null {
+                    // 标了要鉴权却没注册检查器：宁可 500 也不放行（静默放行 = 安全漏洞）
+                    print("[http] 路由 " + method + " " + path
+                        + " 标了 auth:true，但没调用 http.auth(app, fn)\n")
+                    return status(500, "500 服务端未配置鉴权检查器（http.auth）")
+                }
+                var checker = app["authFn"] as any
+                var user = _str(checker(req))
+                if user == "" {
+                    return json_status(401, {ok: false, error: "unauthorized"})
+                }
+                req.set("user", user)          // 交给 handler（等价 HttpContext.Items）
+            }
+        }
+
+        var out = (r["handler"] as any)(req)
+        return normalize(out)
+    } catch e {
+        print("[http] handler 异常 " + method + " " + path + "：" + e + "\n")
+        return status(500, "500 Internal Server Error")
+    }
+}
+
 // ==================== 路由分发 ====================
-// 顺序：精确路由（按注册顺序）→ 静态目录（按注册顺序）→ 404
+// 顺序：精确路由 → **参数路由** → 静态目录 → 404/405
 //   路径命中但方法不符 ⇒ 405（有路由表的情况下，这比 404 更容易排查）
 export func dispatch(Dict app, Dict req): Dict {
     string method = req["method"] as string
@@ -362,7 +440,6 @@ export func dispatch(Dict app, Dict req): Dict {
 
     // ① 全局中间件（注册顺序；返回非 null = 短路）。
     //    ⚠ 必须自己也兜 try/catch —— 一个坏中间件不能把整个服务带走
-    //      （handler 那条 try 是后来补的，代价是一次"一个 throw 打死整个站点"）
     if app.has("middlewares") {
         Array mws = app["middlewares"] as Array
         for mws to mw {
@@ -377,45 +454,28 @@ export func dispatch(Dict app, Dict req): Dict {
     }
 
     var pathMatched = false
-
     Array[Dict] routes = app["routes"] as Array[Dict]
+
+    // ② 精确匹配（快路径：只比字符串，绝大多数请求走这里）
     for routes to r {
         if (r["path"] as string) != path { continue }
         pathMatched = true
         string m = r["method"] as string
         if m == method or m == "*" {
-            // ★★ 2026-10-20：handler 抛异常**不能把服务带走**。
-            //   实测：一个 `throw` 的 handler 让进程直接没了 —— 之后的请求全部被拒（连接拒绝 ✗），
-            //   也就是"一个坏请求打死整个站点"。这里兜成 500 + 一行日志。
-            try {
-                // ② 声明式鉴权（注册时 `{auth: true}`）
-                var meta = r.get("meta", null)
-                if meta is Dict {
-                    Dict md = meta as Dict
-                    var need = false
-                    if md.has("auth") { need = md.get("auth", false) as bool }
-                    if need {
-                        if not app.has("authFn") or app["authFn"] == null {
-                            // 标了要鉴权却没注册检查器：宁可 500 也不放行（静默放行 = 安全漏洞）
-                            print("[http] 路由 " + method + " " + path
-                                + " 标了 auth:true，但没调用 http.auth(app, fn)\n")
-                            return status(500, "500 服务端未配置鉴权检查器（http.auth）")
-                        }
-                        var checker = app["authFn"] as any
-                        var user = _str(checker(req))
-                        if user == "" {
-                            return json_status(401, {ok: false, error: "unauthorized"})
-                        }
-                        req.set("user", user)      // 交给 handler（等价 HttpContext.Items）
-                    }
-                }
+            return _run_route(app, req, r, {})
+        }
+    }
 
-                var out = (r["handler"] as any)(req)
-                return normalize(out)
-            } catch e {
-                print("[http] handler 异常 " + method + " " + path + "：" + e + "\n")
-                return status(500, "500 Internal Server Error")
-            }
+    // ③ 参数路由（含 `:` 段）。**放在精确之后** ⇒ 静态路径永远赢，不会被 `:x` 抢走
+    for routes to r {
+        string rp = r["path"] as string
+        if not _has_param(rp) { continue }
+        var pm = _match_pattern(rp, path)
+        if pm == null { continue }
+        pathMatched = true
+        string m = r["method"] as string
+        if m == method or m == "*" {
+            return _run_route(app, req, r, pm as Dict)
         }
     }
 
