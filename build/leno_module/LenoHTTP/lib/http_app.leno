@@ -202,8 +202,16 @@ export func dispatch(Dict app, Dict req): Dict {
         pathMatched = true
         string m = r["method"] as string
         if m == method or m == "*" {
-            var out = (r["handler"] as any)(req)
-            return normalize(out)
+            // ★★ 2026-10-20：handler 抛异常**不能把服务带走**。
+            //   实测：一个 `throw` 的 handler 让进程直接没了 —— 之后的请求全部被拒（连接拒绝 ✗），
+            //   也就是"一个坏请求打死整个站点"。这里兜成 500 + 一行日志。
+            try {
+                var out = (r["handler"] as any)(req)
+                return normalize(out)
+            } catch e {
+                print("[http] handler 异常 " + method + " " + path + "：" + e + "\n")
+                return status(500, "500 Internal Server Error")
+            }
         }
     }
 

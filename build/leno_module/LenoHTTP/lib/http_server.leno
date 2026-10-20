@@ -223,10 +223,13 @@ export func handle_conn(Socket c, Dict app): Dict {
     //      若不显式关掉，recv 在"数据还没到"时立刻返回 null，keep-alive 的第二个请求
     //      会被误判成"对端关闭"（症状：第一个请求正常，第二个永远收不到 ✗）。
     //   ② 必须先转回阻塞再设超时，顺序反了超时也不生效。
+    var count = 0
+    // ★ 2026-10-20：整个连接处理兜一层 —— 读/写/静态文件任何一步抛异常，
+    //   都只应断掉**这一个连接**，不能让 accept 循环（整个服务）跟着退出 ✗
+    try {
     c.set_nonblocking(false)
     c.set_timeout(5000)          // 5s 收包超时：防慢速连接长期占着
     var carry = ""
-    var count = 0
     while count < MAX_REQ_PER_CONN {
         var rr = _read_request(c, carry)
         if not (rr["ok"] as bool) {
@@ -256,6 +259,9 @@ export func handle_conn(Socket c, Dict app): Dict {
         }
         count = count + 1
         if not keep { break }
+    }
+    } catch e {
+        print("[http] 连接处理异常（只断这一个连接）：" + e + "\n")
     }
     c.close()
     return {ok: true, requests: count, err: ""}
