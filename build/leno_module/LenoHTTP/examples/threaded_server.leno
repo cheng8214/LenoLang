@@ -1,0 +1,46 @@
+// threaded_server.leno -- 线程池版服务示例（多线程并发处理连接）
+//
+// 用法：
+//   build\leno.exe build\leno_module\LenoHTTP\examples\threaded_server.leno [端口] [worker 数]
+//
+// 关键点（也是唯一和 hello_server.leno 不同的地方）：
+//   · 每个 worker 线程在**自己的堆上** buildApp() —— handler 是闭包，不能跨线程传
+//   · worker 入口必须是具名模块函数，参数固定 (int idx, Channel conns)
+//   · 主线程那份 app 只用来当 running 开关 / debug 日志开关
+import "HTTP" as http
+
+func h_root(Dict req): Dict { return http.text("hello") }
+
+func h_echo(Dict req): Dict {
+    Dict q = req["query"] as Dict
+    var v = ""
+    if q.has("q") { v = q.get("q", "") as string }
+    return http.json({q: v, path: req["path"] as string})
+}
+
+// 每个 worker 线程各调一次
+func buildApp(): Dict {
+    var app = http.newApp()
+    http.get(app, "/", h_root)
+    http.get(app, "/echo", h_echo)
+    return app
+}
+
+// 线程入口：拿 fd → 重建 Socket → 处理 → close（都在 workerLoop 里）
+func worker(int idx, Channel conns): int { return http.workerLoop(buildApp(), conns) }
+
+main() {
+    Array[string] args = _args()
+    var port = 8080
+    var workers = 8
+    if args.len() >= 1 { port = _int(args[0]) }
+    if args.len() >= 2 { workers = _int(args[1]) }
+
+    var app = buildApp()
+    print("LenoHTTP 线程池 listening on http://127.0.0.1:" + _str(port)
+        + "（" + _str(workers) + " workers）")
+
+    var r = http.serveWorkers(app, "127.0.0.1", port, workers, worker)
+    print("退出：处理连接 " + _str(r["requests"] as int)
+        + "，丢弃 " + _str(r["dropped"] as int))
+}

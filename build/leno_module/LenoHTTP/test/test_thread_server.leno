@@ -1,0 +1,135 @@
+// test_thread_server.leno —— 线程池并发自测
+//
+// 验的是什么（不是"能跑起来"，而是**并发真的生效**）：
+//   3 个"慢连接"（连上后一个字节都不发，挂着 3 秒，各占一个 worker）
+//   + 5 个正常请求（/fast）。
+//   单线程模型下正常请求会被慢连接堵到 3 秒以上；线程池应当**秒回**。
+//
+// 跑法（仓库根目录）：
+//   build\leno.exe build\leno_module\LenoHTTP\test\test_thread_server.leno
+//
+// 结构：主线程跑服务（serveWorkers 阻塞），客户端都在子线程里（Socket 不跨线程，各自 connect）。
+//   app 只在主线程用来当 running 开关；worker 线程里各自 buildApp()（handler 闭包不能跨线程）。
+import sockets
+import threads
+import times
+import "HTTP" as http
+
+int PORT = 39731
+int SLOW_MS = 3000
+int SLOW_N = 3
+int FAST_N = 5
+int WORKERS = 8
+
+// ==================== 服务端 ====================
+func h_fast(Dict req): Dict { return http.text("fast") }
+
+// 每个 worker 线程各调一次：路由/闭包只建在**本线程堆**上
+func buildApp(): Dict {
+    var app = http.newApp()
+    http.get(app, "/fast", h_fast)
+    return app
+}
+
+// worker 入口：必须是具名模块函数，arity 恰好 2
+func worker(int idx, Channel conns): int { return http.workerLoop(buildApp(), conns) }
+
+// ==================== 客户端工具 ====================
+func find_sub(string hay, string needle, int from): int {
+    Array[int] h = hay.to_bytes()
+    Array[int] n = needle.to_bytes()
+    if n.len() == 0 { return -1 }
+    var i = from
+    while i + n.len() <= h.len() {
+        var hit = true
+        for 0:n.len()-1 to k {
+            if h[i + k] != n[k] { hit = false; break }
+        }
+        if hit { return i }
+        i = i + 1
+    }
+    return -1
+}
+
+// 连到本机服务（服务端可能还没开始 listen ⇒ 重试）
+// 仍失败时返回 null（与 sockets.connect 同口径，由调用方判空）
+func dial(): Socket {
+    Socket last = sockets.connect("127.0.0.1", PORT)
+    for 300 to i {
+        if last != null { return last }
+        threads.sleep(20)
+        last = sockets.connect("127.0.0.1", PORT)
+    }
+    return last
+}
+
+// 慢连接（slowloris）：只发**半截请求头**（没有结尾的 \r\n\r\n），然后挂住 ms 毫秒。
+//   为什么不能只 connect 不发数据：连接可能还躺在 backlog 里没被 accept，
+//   那样服务端根本没占用 worker，测的就不是并发能力了 ✗
+func slowClient(int ms, Channel ready) {
+    Socket c = dial()
+    if c == null { ready.send(-1); return }
+    c.send("GET /slow HTTP/1.1\r\nHost: t\r\n")     // 故意不补空行
+    ready.send(1)
+    threads.sleep(ms)
+    c.close()
+}
+
+// 正常请求：先等 SLOW_N 个慢连接都建立，再连打 FAST_N 次，报告 (错误数, 总耗时ms)
+func fastClient(Channel ready, Channel out) {
+    for SLOW_N to i { ready.receive() }
+    var errs = ""
+    var t0 = times.ms()
+    for FAST_N to i {
+        Socket c = dial()
+        if c == null { errs = errs + "E connect"; continue }
+        c.set_timeout(5000)
+        c.send("GET /fast HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n")
+        var buf = ""
+        while find_sub(buf, "fast", 0) < 0 {
+            var d = c.recv(65536)
+            if d == null { break }
+            buf = buf + (d as string)
+        }
+        c.close()
+        if find_sub(buf, "200 OK", 0) < 0 { errs = errs + "E 状态码" }
+        if find_sub(buf, "fast", 0) < 0 { errs = errs + "E body" }
+    }
+    out.send({errs: errs, ms: times.ms() - t0})
+}
+
+// ==================== 主流程 ====================
+main() {
+    // 主线程这一份只提供 running 开关与 debug，worker 不用它
+    var app = buildApp()
+    var ready = threads.channel(8)
+    var out = threads.channel(1)
+
+    var tc = threads.start(fastClient, ready, out)
+    for SLOW_N to i { threads.start(slowClient, SLOW_MS, ready) }
+
+    // 3 慢 + 5 快 = 8 个连接；处理满就收工（慢连接最多 3s，join 会等它们退出）
+    var r = http.serveWorkers(app, "127.0.0.1", PORT, WORKERS, worker, 64, SLOW_N + FAST_N)
+    var res = out.receive() as Dict
+    var errs = res["errs"] as string
+    var ms = res["ms"] as float
+    tc.join()
+
+    if not (r["ok"] as bool) {
+        print("[FAIL] 服务未起来：" + (r["err"] as string))
+        _exit(1)
+    }
+    if errs != "" {
+        print("[FAIL] 正常请求出错：" + errs)
+        _exit(1)
+    }
+    // 关键断言：3 个慢连接各占一个 worker 时，5 个正常请求仍然在 1.5s 内跑完
+    // （单线程模型下必然 ≥ 3000ms）
+    if ms >= 1500.0 {
+        print("[FAIL] 慢连接阻塞了正常请求：" + _str(ms) + "ms（期望 < 1500ms）")
+        _exit(1)
+    }
+    print("[PASS] thread_server: " + _str(WORKERS) + " workers, 慢连接 " + _str(SLOW_N)
+        + " 个 × " + _str(SLOW_MS) + "ms；" + _str(FAST_N) + " 个正常请求共 " + _str(ms) + "ms"
+        + "；服务端处理连接 " + _str(r["requests"] as int))
+}

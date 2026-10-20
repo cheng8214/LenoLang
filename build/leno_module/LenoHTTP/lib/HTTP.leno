@@ -73,3 +73,12 @@ export func serve(Dict app, string host, int port): Dict { return srv.serve(app,
 
 // 便捷：只给端口（监听 127.0.0.1 之外的所有网卡用 "0.0.0.0"）
 export func serveOn(Dict app, int port): Dict { return srv.serve(app, "0.0.0.0", port) }
+
+// ==================== 线程池（多线程并发）====================
+// entry 必须形如 `func worker(int idx, Channel conns)`，且是**具名模块函数**；
+// 里面要自己 buildApp()（handler 闭包不能跨线程传），再调 http.workerLoop(app, conns)。
+export func serveWorkers(Dict app, string host, int port, int workers, any entry,
+                         int queue = 0, int maxConns = 0): Dict {
+    return srv.serve_workers(app, host, port, workers, entry, queue, maxConns)
+}
+export func workerLoop(Dict app, Channel conns): int { return srv.worker_loop(app, conns) }

@@ -1,7 +1,7 @@
-# LenoHTTP v0.1.0
+# LenoHTTP v0.2.0
 
 Leno 的 **HTTP/1.1 服务端**（纯 Leno，零原生依赖，基于内置 `sockets`）。
-路由、查询串、表单、静态文件、keep-alive。
+路由、查询串、表单、静态文件、keep-alive、**线程池并发**。
 
 ```leno
 import "HTTP" as http
@@ -15,13 +15,31 @@ http.get(app, "/echo", func(Dict req): Dict {    // …也可以是闭包
 http.post(app, "/form", handler_form)            // req["form"] 已解析好
 http.static(app, "/assets", "D:/www")            // 静态目录
 
-http.serve(app, "0.0.0.0", 8080)                 // 阻塞式服务
+http.serve(app, "0.0.0.0", 8080)                 // 阻塞式服务（单线程）
 ```
 
-完整可跑示例：`examples/hello_server.leno`
+多线程并发（0.2）：
+
+```leno
+func buildApp(): Dict {                          // 每个 worker 线程各调一次
+    var app = http.newApp()
+    http.get(app, "/", handler_home)
+    return app
+}
+func worker(int idx, Channel conns): int {       // 线程入口：具名模块函数，arity=2
+    return http.workerLoop(buildApp(), conns)
+}
+main() {
+    var app = buildApp()                         // 主线程这份只当 running 开关
+    http.serveWorkers(app, "0.0.0.0", 8080, 8, worker)
+}
+```
+
+完整可跑示例：`examples/hello_server.leno`（单线程）、`examples/threaded_server.leno`（线程池）
 
 ```bat
 build\leno.exe build\leno_module\LenoHTTP\examples\hello_server.leno 8080 D:\www
+build\leno.exe build\leno_module\LenoHTTP\examples\threaded_server.leno 8080 8
 ```
 
 ## API
@@ -34,9 +52,11 @@ build\leno.exe build\leno_module\LenoHTTP\examples\hello_server.leno 8080 D:\www
 | `static(app, prefix, dir)` | 挂静态目录（`/assets` → `dir`） |
 | `listen(host, port)` | 监听 → `{ok, sock, host, port, err}`；`port=0` 由系统分配 |
 | `run(server, app)` | 在已有监听器上跑主循环（避免二次 bind） |
-| `serve(app, host, port)` / `serveOn(app, port)` | 监听 + 主循环（阻塞） |
+| `serve(app, host, port)` / `serveOn(app, port)` | 监听 + 主循环（阻塞，单线程） |
+| `serveWorkers(app, host, port, n, entry, queue=0, maxConns=0)` | **线程池**：主线程只 accept，连接交给 n 个 worker |
+| `workerLoop(app, conns)` | worker 侧循环：拿 fd → `from_fd` → `handle_conn` |
 | `acceptOne(server, app)` | 只处理一个连接（测试/自定义循环） |
-| `stop(app)` | 让 `serve/run` 退出 |
+| `stop(app)` | 让 `serve/run` 退出（`serveWorkers` 用 `maxConns` 或进程退出） |
 | `text/html/json/bytes/status/redirect/notFound` | 响应助手 |
 | `esc(s)` | HTML 转义（`& < > " '`） |
 | `render(tpl, vars)` | 模板：`{{x}}` **转义**输出、`{{{x}}}` 原样输出、缺键给空串 |
@@ -46,8 +66,8 @@ build\leno.exe build\leno_module\LenoHTTP\examples\hello_server.leno 8080 D:\www
 | `clearCookie(res, name)` | 删除 cookie |
 
 **慢连接保护（2026-10-20）**：单个请求的读入总时长上限 `MAX_REQUEST_SECONDS = 10`（秒），
-用 `select` 等"剩余时间"实现 ⇒ 滴水式客户端（每 4.9s 送一个字节）也不会把单线程服务占死。
-超时返回 400 并关闭连接。
+用 `select` 等"剩余时间"实现 ⇒ 滴水式客户端（每 4.9s 送一个字节）也不会把连接占死。
+超时返回 400 并关闭连接。线程池下每个 worker 仍受这条约束（最多被占 10s，不会永久卡住）。
 
 **gzip 响应（2026-10-18，自动）**：请求带 `Accept-Encoding: gzip` 且响应体 ≥ 1KB、
 类型可压（`text/*` / json / javascript / xml / svg）时自动压缩，头里给
@@ -75,9 +95,16 @@ build\leno.exe build\leno_module\LenoHTTP\examples\hello_server.leno 8080 D:\www
 - **上限**：请求头 64KB、请求体 8MB（超出报 413/400）
 - **静态文件**：拒绝任何含 `..` 的路径段（防目录穿越）；目录请求补 `index.html`；
   按扩展名给 Content-Type；文件整读进内存
-- **并发模型**：**单线程顺序处理**。原因不是偷懒 —— `Socket` **不能跨线程传递**
-  （`threads.start` 的实参只允许标量/string/Array/Dict/struct/Channel，Socket 是对象
-  ⇒ 运行期直接拒绝），所以"每连接一个线程"在本语言里做不到。慢客户端会占住后续连接。
+- **并发模型**：两条路 —— `run/serve` 单线程顺序处理；`serveWorkers` 是**线程池**：
+  主线程只 `accept`，`sock.detach()` 拿到 fd（整数）经 `Channel` 交给 worker，
+  worker 用 `sockets.from_fd(fd)` 在自己堆上重建 Socket 再处理（`Socket` 对象本身仍不能跨线程）。
+  - ⚠ **app 必须在 worker 线程内构建**：路由表里存的是 handler 闭包，闭包不能跨线程传，
+    所以入口要自己 `buildApp()`（每个线程一份路由表）。
+  - ⚠ worker 入口必须是**同模块的具名函数**（`func(int, Channel)`）：跨模块取到的裸函数对象
+    会被 `threads.start` 拒绝。
+  - ⚠ **可变共享状态**：模块级 `var` 是所有线程同一份且无锁，计数/缓存/session 请用
+    `Channel` 汇到单点线程处理，或每线程一份。
+  - 队列满（默认 `workers*4`）时直接回 503 关连接，不阻塞 accept。
 - **debug 日志**：`app.set("debug", true)` 会为每个请求打印一行
   （方法 / target / 状态 / keep / carry 字节数），排查"请求收不到"很快。
 
@@ -97,6 +124,9 @@ build\leno.exe build\leno_module\LenoHTTP\examples\hello_server.leno 8080 D:\www
 :: Leno 侧自测：路由 / 查询串 / 表单 / 404 / 405 / 静态文件 / keep-alive / 200KB 大响应
 build\leno.exe build\leno_module\LenoHTTP\test\test_http.leno
 
+:: 线程池并发：3 个 slowloris 慢连接挂着时，正常请求必须 < 1500ms（1 worker 对照会失败）
+build\leno.exe build\leno_module\LenoHTTP\test\test_thread_server.leno
+
 :: Python 独立客户端压测（开发期工具；http.client + socket，与 Leno 实现完全无关）
 python build\leno_module\LenoHTTP\test\dev_stress_python.py
 ```
@@ -107,7 +137,10 @@ Python 压测（Windows x64，同一台机器）：
 |---|---|
 | keep-alive 单连接 100 请求 | **0.27 ms/请求（≈3686 req/s）** |
 | 每次新建连接 100 请求 | 8.2–9.3 ms/请求 —— **本机 Python→Python 的 connect/close 基线就是 7.0ms**（安全软件/回环开销），服务端只多 1–2ms |
-| 10 线程 × 10 请求并发 | 122 ms 总计（≈823 req/s），0 错误 |
+| 10 线程 × 10 请求并发 | 122 ms 总计（≈823 req/s），0 错误 —— 这是**单线程** serve 的数据（靠 backlog 排队） |
+| **线程池**：20 线程 × 20 请求（keep-alive，8 workers） | **42 ms 总计（≈9500 req/s），0 错误** |
+| **线程池**：3 个 slowloris 慢连接（各挂 3s）+ 5 个正常请求，8 workers | 正常请求共 **2.3 ms** |
+| 同上，但只用 **1 worker**（对照，验证测试判别力） | 正常请求 **3009 ms** —— 被慢连接堵住 |
 | POST 表单（中文 urlencoded） | 字段回显正确 |
 | POST JSON 4KB | 字节数正确 |
 | 404 / 405 / 畸形请求 | 404 / 405 / 400 |
@@ -118,7 +151,6 @@ Python 压测（Windows x64，同一台机器）：
 
 | 不做 | 说明 |
 |---|---|
-| 并发处理 | 单线程（原因见上）；压测里并发请求靠 backlog 排队，不会出错但会串行 |
 | chunked 请求体 / multipart | 只按 `Content-Length` 读；文件上传后续版本再说 |
 | TLS / HTTP/2 / WebSocket | 没有；需要时套反向代理（nginx/caddy） |
 | Range / 断点续传 / gzip 响应 | 没有（`LenoCompress` 有压缩能力，但响应侧还没接） |
@@ -133,6 +165,5 @@ Python 压测（Windows x64，同一台机器）：
 
 - `multipart/form-data`（文件上传）
 - 响应 gzip（接 `LenoCompress.deflateRaw`）+ 静态文件 ETag/Last-Modified
-- 连接处理下沉到线程（**前提**：运行期允许 Socket 跨线程，或改成"线程内自建连接"的
-  模型 —— 当前语言限制下做不了）
+- ~~连接处理下沉到线程~~ ✅ 0.2 已用 `fd` 交接 + 线程池落地（见 `serveWorkers`）
 - 简单中间件（日志/超时/鉴权）与 `:param` 路由

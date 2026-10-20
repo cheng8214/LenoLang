@@ -1,9 +1,16 @@
 // http_server.leno -- 监听 / 收请求 / 发响应（纯 Leno，基于内置 sockets）
 //
-// 并发模型（v0.1 明确）：**单线程顺序处理** —— 一个连接处理完（或 keep-alive 用完）
-//   再 accept 下一个。原因：`Socket` 不能跨线程传递（`threads.start` 的实参只允许
-//   标量/string/Array/Dict/struct/Channel；Socket 是对象 ⇒ 运行期直接拒绝），
-//   所以"每连接一个线程"在本语言里做不到 —— 这条限制写在 README 里。
+// 并发模型（0.2，2026-10-20 起）：
+//   · `run/serve` —— 单线程顺序处理（保持原样，适合低流量/调试）
+//   · `serve_workers/worker_loop` —— **线程池**：主线程只做 accept，把连接 fd 交给
+//     worker 线程处理（`sock.detach()` → Channel[int] → `sockets.from_fd()`）。
+//
+//     `Socket` 对象仍不能跨线程（它在创建者的 GC 堆上），但 **fd 是整数**：
+//     `detach()` 交出所有权（原对象立刻失效，不会 double close），
+//     worker 侧 `from_fd(fd)` 在自己的堆上重建 ⇒ 每连接一线程在本语言里是可行的 ✓
+//
+//   ⚠ handler 是闭包，闭包同样不能跨线程 ⇒ **app 必须在 worker 线程内构建**
+//     （`buildApp()` 里注册的路由只存在于那一个线程的堆上）。见 `worker_loop` 注释。
 //
 // 已对 sockets 做的修复（本模块的副产品）：
 //   `sock.send()` 原来是单次 send + 忽略返回值 ⇒ 大响应被**静默截断**
@@ -12,6 +19,7 @@ import sockets
 import strings
 import files
 import times     // 2026-10-20：慢速连接的整体截止时间（单线程服务必须有个上界）
+import threads   // 线程池（serve_workers / worker_loop）
 import "http_parse.leno" as p
 import "http_app.leno" as appmod
 // gzip 响应（2026-10-18）：压缩端在 LenoCompress（纯 Leno 的 DEFLATE）
@@ -234,6 +242,7 @@ export func handle_conn(Socket c, Dict app): Dict {
         var rr = _read_request(c, carry)
         if not (rr["ok"] as bool) {
             string e = rr["err"] as string
+            if app.has("debug") and e != "" { print("[http] 读请求失败：" + e) }
             if e != "" {
                 _write_response(c, appmod.status(400, "400 Bad Request：" + e), false, false)
             }
@@ -295,4 +304,104 @@ export func serve(Dict app, string host, int port): Dict {
     var server = listen(host, port)
     if not (server["ok"] as bool) { return server }
     return run(server, app)
+}
+
+// ==================== 线程池（多线程并发处理连接）====================
+//
+// 为什么必须"每线程自己建 app"：
+//   `threads.start` 的**入口闭包**会被重建（upvalue 重新克隆），但**实参**走
+//   `value_clone_for_channel`，其白名单是 标量/string/Array/Dict/struct/Channel ——
+//   `OBJ_CLOSURE` / `OBJ_FUNCTION` 会被明确拒绝（跨堆引用会 double-free）。
+//   路由表里存的正是 handler 闭包 ⇒ app 不能从主线程传进来 ✗
+//   ⇒ 约定：worker 入口函数内部调 `buildApp()`，路由只建在本线程堆上 ✓
+//
+// 用法（worker 必须是**具名模块函数**，arity 恰好 2）：
+//
+//   func buildApp(): Dict { var app = http.newApp(); http.get(app, "/", h); return app }
+//   func worker(int idx, Channel conns) { http.workerLoop(buildApp(), conns) }
+//   main() { http.serveWorkers(app, "0.0.0.0", 8080, 8, worker) }
+//
+// ⚠ 共享状态：**模块级 `var` 是所有线程同一份且无锁**（`ObjModule.globals` 进程级共享）。
+//   计数/缓存/session 表这类可变状态不要直接写，改用 Channel 汇到单点线程处理。
+
+// worker 侧的消费循环：从 Channel 拿 fd → 重建 Socket → 处理 → close（handle_conn 负责）
+// 返回本线程处理过的连接数（join 时汇总）
+export func worker_loop(Dict app, Channel conns): int {
+    var handled = 0
+    while true {
+        var v = conns.receive()
+        if v == null { break }              // 通道被关闭
+        int fd = _int(v)
+        if fd < 0 { break }                 // 收工信号
+        Socket c = sockets.from_fd(fd)
+        if c == null { continue }           // fd 已被对端关掉 / 重建失败
+        var t0 = times.ms()
+        handle_conn(c, app)                 // 内部 try/catch + close（只断这一个连接）
+        if app.has("debug") {
+            print("[http] worker 处理完 fd " + _str(fd) + "（" + _str(times.ms() - t0) + "ms）")
+        }
+        handled = handled + 1
+    }
+    return handled
+}
+
+// 线程池主循环：主线程只 accept + 交接 fd，业务全在 worker 里跑。
+//   app      —— 主线程那一份（只用它的 running 做退出开关、debug 打日志）
+//   workers  —— worker 线程数（建议 = CPU 核数；I/O 重可适当放大）
+//   entry    —— worker 入口，签名固定为 `func(int idx, Channel conns)`
+//   queue    —— 待处理连接队列长度（默认 workers*4）；满了直接回 503，**不让 accept 阻塞**
+//   maxConns —— 处理满 N 个连接就自动收工（0 = 不限；测试/一次性服务用）
+// 返回 {ok, requests（worker 处理总数）, accepted, dropped, err}
+export func serve_workers(Dict app, string host, int port, int workers, any entry,
+                          int queue = 0, int maxConns = 0): Dict {
+    var server = listen(host, port)
+    if not (server["ok"] as bool) { return server }
+    Socket srv = server["sock"] as Socket
+
+    if workers < 1 { workers = 1 }
+    if queue < 1 { queue = workers * 4 }
+
+    var conns = threads.channel(queue)
+    Array[Thread] ts = []
+    for workers to i {
+        var t = threads.start(entry, i, conns)
+        if t == null { break }
+        ts.add(t)
+    }
+    if ts.len() == 0 {
+        srv.close()
+        return {ok: false, requests: 0, accepted: 0, dropped: 0,
+                err: "worker 线程一个都没起来（检查入口函数签名 func(int, Channel)）"}
+    }
+
+    var accepted = 0
+    var dropped = 0
+    app.set("running", true)
+    while app["running"] as bool {
+        if maxConns > 0 and accepted >= maxConns { break }
+        var ready = sockets.select([srv], 200)
+        if ready.len() == 0 { continue }
+        var c = srv.accept()
+        if c == null { continue }
+        // ★ 交出 fd 所有权：原 Socket 立刻失效（GC 之后不会重复 close）
+        int fd = c.detach()
+        if fd < 0 { continue }
+        if not conns.try_send(fd) {
+            // 队列满 = 已经过载：立刻回 503 关掉，避免主线程被 send 阻塞住 accept
+            Socket tmp = sockets.from_fd(fd)
+            if tmp != null {
+                _write_response(tmp, appmod.status(503, "503 Service Unavailable（连接队列已满）"), false, false)
+                tmp.close()
+            }
+            dropped = dropped + 1
+            continue
+        }
+        accepted = accepted + 1
+    }
+
+    // 收工：每个 worker 一个 -1（Channel 里可能还压着未处理的 fd，先让它们跑完）
+    for ts.len() to i { conns.send(-1) }
+    var handled = 0
+    for ts to t { handled = handled + _int(t.join()) }
+    return {ok: true, requests: handled, accepted: accepted, dropped: dropped, err: ""}
 }
