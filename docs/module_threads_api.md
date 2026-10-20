@@ -207,6 +207,28 @@ var result = t.join()
 print(result)  // 输出: 42
 ```
 
+### `thread.join_for(timeout_ms)`
+
+**带超时的等待**（TH9，2026-10-20）。`join()` 是无限等；线程卡在阻塞 IO（`recv` / 文件 / FFI 调用）时
+主线程只能干等 ⇒ 用这个给等待设上限。
+
+**参数:** `timeout_ms`（`int`；**负数 = 无限等**，等价 `join()` 但只给 bool）
+**返回值:** `bool`
+- `true` = 线程已结束，并且已收尾（result 已克隆、子线程堆已释放；之后 `join()` 仍能拿到返回值）
+- `false` = **超时**，线程仍在跑、状态不变（之后还能再 `join_for()` / `join()` 等）
+
+> ⚠ 线程出错时与 `join()` 一样**抛异常**（`"Thread error: …"`）—— 布尔值表示不了"结束了但失败了"。
+> ⚠ 超时是"最多等约 `timeout_ms`"：被唤醒但状态还没变（spurious wakeup）时会重新计一次。
+> 用例：`assert\test_threads_join_for.leno`。
+
+```leno
+var t = threads.start(worker)          // worker 里 sleep(300)
+print(t.join_for(50))                  // false —— 还在跑
+print(t.state())                        // running
+print(t.join_for(5000))                 // true
+print(t.join())                         // 线程的返回值（收尾只做一次）
+```
+
 ### `thread.state()`
 
 获取线程当前状态。
@@ -249,7 +271,8 @@ print(t.state())  // 输出: done
 | `int` / `float` / `bool` / `string` | ✅ | 直接克隆 |
 | `Array[T]` / `Dict[K,V]` | ✅ | 逐元素克隆（**键也要克隆**，见 `object_thread.c` 的历史坑）|
 | **struct 实例** | ✅ | **2026-10-12 起**：深克隆 + 接收侧按定义重建（含嵌套 struct、face 声明、泛型实参）。见下文 |
-| **cstruct 实例**（以及字段里装了 cstruct / `Ptr` / 闭包的 struct） | ❌ | 裸 C 内存 / 假句柄 ⇒ 报「不能跨线程传递此类型（来自 结构体.字段）」，**编译期**先拦静态可判定的 cstruct |
+| **闭包 / 函数** | ✅ | **2026-10-20 起（TH10）**：`function`（只读字节码）共享，`upvalue` 递归克隆成 closed upvalue ⇒ 子线程调用时拿到的是**捕获值的副本**。环形捕获（闭包↔容器）超 64 层报错 |
+| **cstruct 实例**（以及字段里装了 cstruct / `Ptr` 的 struct） | ❌ | 裸 C 内存 / 假句柄 ⇒ 报「不能跨线程传递此类型（来自 结构体.字段）」，**编译期**先拦静态可判定的 cstruct |
 | **多返回值 tuple** | ⚠ 能 send，但**收回来用不了** | 见下 |
 
 > **struct 的语义是深拷贝**：接收线程拿到的是**独立副本**，改它不影响发送方
@@ -262,8 +285,8 @@ print(t.state())  // 输出: done
 > **为什么 cstruct 不行**：cstruct 是**裸 C 内存**（`Ptr` / `ffi` 句柄 / SDL 纹理 / socket fd /
 > 文件句柄），拷出来是**假句柄**（比当场报错难查一百倍）；子线程分配的对象还挂在子线程的堆上，
 > 子线程退出后该堆被遗弃，主线程 GC 若扫到它就会访问已释放内存。要跨线程就传**纯数据**
-> （标量 / `string` / `Array` / `Dict` / **struct**），在接收方重建 cstruct —— 这也是很多框架
-> 约定"对外一律传字符串数组行"的原因 ✓
+> （标量 / `string` / `Array` / `Dict` / **struct** / **闭包**），在接收方重建 cstruct ——
+> 这也是很多框架约定"对外一律传字符串数组行"的原因 ✓
 
 > ⚠ **多返回值（tuple）跨线程的两个坑**（实测）：
 > ① `ch.send(多返回值函数())` **能发出去**（不报错），但接收端拿到的静态类型是 `any`
@@ -512,6 +535,7 @@ main() {
    - 子线程抛出异常时，`t.state()` 返回 `"error"`
    - 调用 `t.join()` 会在主线程抛出异常，格式为 `"Thread error: <子线程错误信息>"`
    - 可用 `try-catch` 包裹 `join()`，或先检查 `t.state()` 再 join
+   - **不想无限等**就用 `t.join_for(ms)`（`false` = 超时，线程继续跑）
 
 7. **threads 与 async 不应混用**
    - `threads.start()` 是 OS 线程 + 隔离 VM，真正并行

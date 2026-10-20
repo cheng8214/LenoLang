@@ -7,6 +7,7 @@
 
 extern ObjThread* thread_new_with_args(ObjClosure* closure, Value* call_args, int call_arg_count);
 extern Value thread_join(ObjThread* thread);
+extern int thread_join_for(ObjThread* thread, int timeout_ms);   // TH9：带超时的等待
 extern ThreadState thread_get_state(ObjThread* thread);
 extern ObjChannel* channel_new(int capacity);
 extern void channel_close(ObjChannel* channel);
@@ -34,6 +35,23 @@ static Value thread_method_join(int argc, Value* args) {
     (void)argc;
     ObjThread* thread = (ObjThread*)val_as_obj(args[0]);
     return thread_join(thread);
+}
+
+// t.join_for(timeout_ms) -> bool（TH9）
+//   true  = 线程已结束（已收尾，之后 join() 仍能拿到返回值）
+//   false = 超时（线程还在跑，状态未动）
+//   负数 = 无限等（等价于 join()，但只给 bool）
+static Value thread_method_join_for(int argc, Value* args) {
+    (void)argc;
+    ObjThread* thread = (ObjThread*)val_as_obj(args[0]);
+    int timeout_ms = 0;
+    if (val_is_int(args[1])) {
+        timeout_ms = (int)val_as_num(args[1]);
+    } else {
+        native_throw_error("Thread.join_for() 需要一个整数毫秒参数");
+        return val_null();
+    }
+    return val_bool(thread_join_for(thread, timeout_ms) != 0);
 }
 
 static Value thread_method_state(int argc, Value* args) {
@@ -418,6 +436,9 @@ void threads_init_instance_methods(void) {
     // Thread 实例方法
     thread_register_method("join", make_native(thread_method_join, 1, "join"), TYPE_ANY, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
     thread_register_method("state", make_native(thread_method_state, 1, "state"), TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
+    // join_for(timeout_ms) -> bool（TH9）：超时返回 false，线程继续跑（之后仍可 join 取结果）
+    TypeKind join_for_params[] = {TYPE_INT};
+    thread_register_method("join_for", make_native(thread_method_join_for, 2, "join_for"), TYPE_BOOL, TYPE_UNKNOWN, NATIVE_FIXED(join_for_params));
     // join 返回规格 = **接收者的 T**（ARG0_ELEM）：`threads.start` 的语义特判返回 Thread[T]
     //   （T = 闭包/函数的返回类型，见 semantic_type.c 的 ⓪-b）⇒ `t.join()` 直接得到 T，
     //   调用点不再需要 `is Array[string] => x` 手工收窄 ✓（推不出 T 时 start 回落裸 Thread、

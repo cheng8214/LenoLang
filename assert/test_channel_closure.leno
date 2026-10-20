@@ -1,0 +1,71 @@
+// test_channel_closure.leno —— TH10：闭包 / 函数跨线程（回归）
+//
+// 背景（见 docs/线程并发能力修复追踪.md 的 TH10）：
+//   `value_clone_for_channel()` 原本把 `OBJ_CLOSURE` / `OBJ_FUNCTION` 归为"不能跨线程"，
+//   后果是"主线程建好的路由表（handler 闭包）/ 一组回调"传不进线程 —— LenoHTTP 只能每线程 buildApp。
+//   现在：`function`（只读字节码）直接共享，`upvalue` 递归 clone 成 closed upvalue。
+//
+// 判据：
+//   ① 闭包捕获局部变量 ⇒ 经 Channel 传子线程，调用结果用的是**捕获值的副本**
+//   ② struct 字段里装闭包 ⇒ 作 threads.start 实参跨线程，仍能调用（TH1 + TH10 联动）
+//   ③ 嵌套捕获（闭包捕获闭包）⇒ 调用链完整
+//   ④ 环形捕获（闭包捕获自己）⇒ 报"嵌套层数超过 64"，不挂死
+import threads
+import strings
+
+func worker(Channel ch, Channel out) {
+    var f = ch.receive()
+    out.send(_str((f as any)(3)))
+}
+
+// Dict 里装闭包（跨线程时走同一个 clone 分支）
+func workerHolder(Dict h, Channel out) {
+    out.send(_str((h["f"] as any)(7)))
+}
+
+main() {
+    var base = 100
+
+    // ---------- ① 闭包经 Channel 跨线程 ----------
+    var ch = threads.channel(1)
+    var out = threads.channel(1)
+    var t = threads.start(worker, ch, out)
+    ch.send(func(int x): int { return base + x })
+    assert_eq(out.receive() as string, "103", "①捕获值 100 + 3")
+    t.join()
+
+    // ---------- ② Dict 里的闭包（作为 threads.start 实参深克隆）----------
+    Dict h = {}
+    h.set("f", func(int x): int { return base * 2 + x })
+    var out2 = threads.channel(1)
+    var t2 = threads.start(workerHolder, h, out2)
+    assert_eq(out2.receive() as string, "207", "②Dict 里的闭包（100*2+7）")
+    t2.join()
+
+    // ---------- ③ 嵌套捕获 ----------
+    var inner = func(int x): int { return x * 2 }
+    var outer = func(int x): int { return inner(x) + 1 }
+    var ch3 = threads.channel(1)
+    var out3 = threads.channel(1)
+    var t3 = threads.start(worker, ch3, out3)
+    ch3.send(outer)
+    assert_eq(out3.receive() as string, "7", "③闭包捕获闭包（3*2+1）")
+    t3.join()
+
+    // ---------- ④ 环形捕获：应报错而不是挂死 ----------
+    // 闭包 ←→ Dict 互相持有，形成环
+    Dict d = {}
+    var selfRef = func(): any { return d }
+    d.set("f", selfRef)
+    var msg = ""
+    var ch4 = threads.channel(1)
+    try {
+        ch4.send(selfRef)
+    } catch e {
+        msg = _str(e)
+    }
+    assert_true(msg != "", "④环形捕获应报错（实际：" + msg + "）")
+    assert_true(strings.has(msg, "64"), "④报错文案应指出嵌套上限（实际：" + msg + "）")
+
+    print("test_channel_closure passed")
+}

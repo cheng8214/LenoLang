@@ -96,7 +96,7 @@ static Value channel_clone_value(Value val, int depth);
 //   ⚠ 报错**不是**可选项：放行跨堆引用 ⇒ 收尾时同一块内存被两个堆各释放一次 ⇒ 0xC0000374 堆损坏。
 //   `type_tag` 是运行时类型标记（VAL_* 或 ObjectType），只用于诊断。
 static void channel_clone_reject(int type_tag) {
-    const char* support = "跨线程只支持 标量 / string / Array / Dict / struct / Channel";
+    const char* support = "跨线程只支持 标量 / string / Array / Dict / struct / Channel / 闭包 / 函数";
     if (g_channel_clone_ctx[0] != '\0') {
         // 上界 = 上下文 192 字节 + 提示 68 + 中文固定部分 ⇒ 320 会被 GCC 判 -Wformat-truncation
         char msg[384];
@@ -117,7 +117,8 @@ static void channel_clone_reject(int type_tag) {
 //   ⇒ 接收侧一定查得到类型定义，重建实例没有障碍 ✓。
 // 语义：**深克隆**（与 Array/Dict 同口径 ✓）——
 //   接收线程拿到的是挂在自己堆上的**独立副本**，改它不影响发送方 ✓。
-// 拒绝面：字段里出现白名单之外的对象（`Ptr` / 闭包 / cstruct …）⇒ 走同一个 default 分支
+// 拒绝面：字段里出现白名单之外的对象（`Ptr` / cstruct …）⇒ 走同一个 default 分支
+//   （闭包/函数自 TH10 起已支持跨线程，不再是拒绝面 ✓）
 //   报「不能跨线程传递此类型」（由 g_channel_clone_ctx 指认是哪个字段 ✓）。
 //   ⚠ 这一层**必须**在（跨堆引用 ⇒ 收尾时同一块内存被两个堆各释放一次 ⇒ 0xC0000374 堆损坏）。
 static Value channel_clone_struct(ObjStruct* src, int depth) {
@@ -245,6 +246,46 @@ static Value channel_clone_value(Value val, int depth) {
                 case OBJ_STRUCT:
                     // TH1（2026-10-12）：struct 实例也能跨线程了（深克隆 + 接收侧重建）
                     return channel_clone_struct((ObjStruct*)obj, depth);
+                case OBJ_CLOSURE: {
+                    // TH10（2026-10-20）：闭包也能跨线程（深克隆）
+                    //   ① `function` 是**只读字节码**，直接共享 —— 与"线程入口闭包"的重建同口径
+                    //      （`thread_entry_point` 里就是 `child_closure->function = closure->function`）
+                    //   ② `upvalue` 必须递归克隆：原 upvalue 的 location 可能指着**发送线程的栈**
+                    //      ⇒ 取值后建成 closed upvalue（`location = &uv->closed`），否则子线程读别家栈 ✗
+                    //   ③ 泛型实参（type_param_args）不深拷 —— 与入口闭包一致（`type_param_count = 0`）
+                    if (depth >= CHANNEL_CLONE_MAX_DEPTH) {
+                        native_throw_error("跨线程传递闭包失败：捕获嵌套超过 64 层（可能互相捕获成环）");
+                        return val_null();
+                    }
+                    ObjClosure* src = (ObjClosure*)obj;
+                    ObjClosure* copy = (ObjClosure*)gc_alloc(sizeof(ObjClosure), OBJ_CLOSURE);
+                    if (!copy) return val_null();
+                    copy->function = src->function;
+                    copy->upvalue_count = src->upvalue_count;
+                    copy->type_param_count = 0;
+                    copy->type_param_args = NULL;
+                    for (int ui = 0; ui < MAX_UPVALUES; ui++) copy->upvalues[ui] = NULL;
+
+                    for (int i = 0; i < src->upvalue_count && i < MAX_UPVALUES; i++) {
+                        Upvalue* suv = src->upvalues[i];
+                        Value captured = suv ? *suv->location : val_null();
+                        Value cloned = channel_clone_value(captured, depth + 1);
+                        Upvalue* uv = (Upvalue*)gc_alloc(sizeof(Upvalue), OBJ_UPVALUE);
+                        if (!uv) {
+                            copy->upvalue_count = i;   // 部分初始化（调用时缺捕获会报未定义）
+                            return val_obj((Object*)copy);
+                        }
+                        uv->location = &uv->closed;
+                        uv->closed = cloned;
+                        uv->next = NULL;
+                        copy->upvalues[i] = uv;
+                    }
+                    return val_obj((Object*)copy);
+                }
+                case OBJ_FUNCTION:
+                    // TH10：裸函数对象（跨模块 exports 里取到的那种）是**只读代码**，直接共享 ✓
+                    //   子线程调用时由 OP_CALL 的 OBJ_FUNCTION 分支现场包一层闭包（分配在子线程堆）
+                    return val;
                 case OBJ_CHANNEL: {
                     ObjChannel* ch = (ObjChannel*)obj;
                     channel_ref(ch);
@@ -351,28 +392,12 @@ static void* thread_entry_point(void* arg) {
     //   这个槽天然隔离 ✓（`threads.local_get/set` 就是按这条实现"每线程一份"的 ✓）
     child_vm.thread_local_store = val_null();
 
-    // 复制全局变量（深拷贝，独立数据）
-    // 注意：cstruct 定义是只读类型元数据，直接共享
+    // 复制全局变量：这里**只分配槽位 + 填 null**，真正的克隆延后到 gc_init() 之后
+    //   （TH8：数据对象要克隆进子线程堆，而 clone 要 gc_alloc ⇒ 必须等 GC 初始化）
     if (saved_globals && saved_global_count > 0) {
         child_vm.globals = (Value*)malloc(saved_global_capacity * sizeof(Value));
         if (child_vm.globals) {
-            // 逐个复制全局变量，对 cstruct 定义进行特殊处理
-            for (int i = 0; i < saved_global_count; i++) {
-                Value val = saved_globals[i];
-                if (val_is_obj(val)) {
-                    Object* obj = val_as_obj(val);
-                    if (obj->type == OBJ_CSTRUCT_DEF) {
-                        // cstruct 定义是只读类型元数据，直接共享
-                        child_vm.globals[i] = val;
-                    } else {
-                        // 其他对象类型，浅拷贝 Value（对象本身共享）
-                        child_vm.globals[i] = val;
-                    }
-                } else {
-                    // 基本类型，直接复制
-                    child_vm.globals[i] = val;
-                }
-            }
+            for (int i = 0; i < saved_global_capacity; i++) child_vm.globals[i] = val_null();
             child_vm.global_count = saved_global_count;
             child_vm.global_capacity = saved_global_capacity;
         }
@@ -446,6 +471,54 @@ static void* thread_entry_point(void* arg) {
     // struct 定义是只读类型元数据，与 cstruct 一样可跨线程共享。
     if (saved_struct_defs && saved_struct_def_count > 0) {
         struct_def_import_from_thread(saved_struct_defs, saved_struct_def_count);
+    }
+
+    // ==================== 全局变量：数据对象深拷贝（TH8，2026-10-20）====================
+    // 旧行为：只把 Value 指针抄过去 ⇒ 主线程与子线程**共用同一个** Array / Dict / struct
+    //   ⇒ 子线程改内容时走的是**子线程的写屏障**，却在改**主线程堆**上的对象
+    //   ⇒ 两个堆对同一块内存的标记/释放状态不一致 ⇒ 偶发 `0xC0000374` 堆损坏 ✗
+    //   （实测：`arr.add(4)` / `box.set("n", 99)` 主线程全看得见）
+    // 现在：数据对象克隆到子线程堆；**只读元数据 / 资源句柄仍共享**（它们克隆不了，共享也对）：
+    //   module（进程级 loaded_modules 缓存）、function（只读字节码）、native、cstruct_def、
+    //   socket / file / ffi 句柄（克隆出来是假句柄）、channel / thread（引用语义）
+    // ⚠ 位置有讲究：必须在 `gc_init()` 之后（clone 要 gc_alloc），且在上面的 struct 定义导入之后
+    //   （全局 struct 实例重建时要靠它的 def 找回字段布局）。
+    if (saved_globals && child_vm.globals) {
+        extern THREAD_LOCAL VM* current_exec_vm;
+        VM* saved_exec_vm = current_exec_vm;
+        current_exec_vm = &child_vm;      // ★ clone 失败时报错要落到**子线程** VM，不能污染主 VM
+        int saved_gc_enabled = gc_get_enabled();
+        gc_set_enabled(0);                // saved_globals 是 malloc 数组、不在 GC 根集合里
+        for (int i = 0; i < child_vm.global_count; i++) {
+            Value val = saved_globals[i];
+            if (!val_is_obj(val)) {
+                child_vm.globals[i] = val;   // 标量：自带副本
+                continue;
+            }
+            switch (val_as_obj(val)->type) {
+                case OBJ_STRING:
+                case OBJ_ARRAY:
+                case OBJ_DICT:
+                case OBJ_STRUCT:
+                case OBJ_CLOSURE: {
+                    Value cloned = value_clone_for_channel(val);
+                    if (val_is_null(cloned) || child_vm.has_exception) {
+                        // 含 Ptr / cstruct 的容器克隆不了 ⇒ 回退成共享（旧行为），
+                        //   **不让一个全局变量把整条线程搞挂** ✗
+                        child_vm.exception = val_null();
+                        child_vm.has_exception = 0;
+                        cloned = val;
+                    }
+                    child_vm.globals[i] = cloned;
+                    break;
+                }
+                default:
+                    child_vm.globals[i] = val;   // 只读元数据 / 资源句柄 / 引用语义对象
+                    break;
+            }
+        }
+        gc_set_enabled(saved_gc_enabled);
+        current_exec_vm = saved_exec_vm;
     }
 
     // ★ 始终在子线程 GC 堆上创建新的闭包副本。
@@ -820,11 +893,29 @@ ObjThread* thread_new_with_args(ObjClosure* closure, Value* call_args, int call_
     return thread;
 }
 
-Value thread_join(ObjThread* thread) {
+// 等待线程结束：timeout_ms < 0 ⇒ 无限等。返回 1 = 已结束，0 = 超时（线程仍在跑，状态未动）
+//   ⚠ 超时是"最多等约 timeout_ms"的近似：被 signal 但 state 还没变（spurious wakeup）时
+//     循环会重新计满 timeout_ms。平台层没有统一取毫秒时钟的函数，不值得为这点精度引入一个。
+static int thread_wait(ObjThread* thread, int timeout_ms) {
     platform_mutex_lock(&thread->mutex);
-    while (thread->state == THREAD_RUNNING) {
-        platform_cond_wait(&thread->done_cond, &thread->mutex);
+    if (timeout_ms < 0) {
+        while (thread->state == THREAD_RUNNING) {
+            platform_cond_wait(&thread->done_cond, &thread->mutex);
+        }
+    } else {
+        while (thread->state == THREAD_RUNNING) {
+            if (platform_cond_timedwait(&thread->done_cond, &thread->mutex, timeout_ms) != 0) break;
+        }
     }
+    int done = (thread->state != THREAD_RUNNING) ? 1 : 0;
+    platform_mutex_unlock(&thread->mutex);
+    return done;
+}
+
+// 收尾（必须在"线程已结束"后调用）：克隆 result 到本线程堆 → join OS 线程 → 释放子线程堆
+//   → 从 active_threads 摘除 → 线程出错则抛异常。重复调用是幂等的（joined / dead_heap 都有守卫）
+static Value thread_reap(ObjThread* thread) {
+    platform_mutex_lock(&thread->mutex);
 
     // ★ 在 mutex 内克隆 result 到主线程 GC 堆。
     // thread->result 是子线程在 thread_entry_point 中通过 value_clone_for_channel
@@ -883,6 +974,22 @@ Value thread_join(ObjThread* thread) {
     }
 
     return thread->has_result ? thread->result : val_null();
+}
+
+Value thread_join(ObjThread* thread) {
+    thread_wait(thread, -1);
+    return thread_reap(thread);
+}
+
+// join 的超时版本（TH9，2026-10-20）：
+//   1 = 线程已结束（并且已收尾：result 克隆到本线程堆、子线程堆已释放）
+//   0 = 超时，**状态不变** —— 线程继续跑，之后还能再 join() / join_for() 取结果
+//   ⚠ 线程出错时与 join() 一样**抛异常**（布尔返回值表示不了"结束了但失败了"）
+int thread_join_for(ObjThread* thread, int timeout_ms) {
+    if (thread->joined) return 1;              // 已收尾过 ⇒ 幂等返回，不重复克隆/抛异常
+    if (!thread_wait(thread, timeout_ms)) return 0;
+    thread_reap(thread);
+    return 1;
 }
 
 ThreadState thread_get_state(ObjThread* thread) {

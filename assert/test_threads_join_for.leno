@@ -1,0 +1,53 @@
+// test_threads_join_for.leno —— TH9：`t.join_for(ms)` 带超时的 join（回归）
+//
+// 背景（见 docs/线程并发能力修复追踪.md 的 TH9）：`join()` 是无限等待，
+//   线程卡在阻塞 IO（recv / 文件 / FFI）时主线程只能干等。
+//   新增 `join_for(ms): bool`：true = 已结束并收尾；false = 超时（线程继续跑，状态不变）。
+//   ⚠ 负数 = 无限等（等价 join，但只给 bool）；线程出错时与 join 一样抛异常。
+//
+// 判据：
+//   ① 300ms 的线程 join_for(50) ⇒ false，state 仍是 running
+//   ② 等够时间 ⇒ true，且之后 join() 仍能拿到返回值（收尾只做一次）
+//   ③ 已结束的线程 join_for ⇒ 立刻 true（幂等）
+//   ④ 负数 = 无限等
+//   ⑤ 超时后线程自己跑完，结果不丢
+import threads
+
+func worker(): int {
+    threads.sleep(300)
+    return 42
+}
+
+func quick(): int { return 7 }
+
+main() {
+    // ---------- ① 超时 ----------
+    var t = threads.start(worker)
+    assert_eq(t.join_for(50), false, "①50ms 内不可能跑完 300ms 的线程")
+    assert_eq(t.state(), "running", "①超时后线程仍在跑（状态没被改）")
+    assert_eq(t.join_for(0), false, "①0ms ⇒ 立即超时")
+
+    // ---------- ② 等够时间 ----------
+    assert_eq(t.join_for(5000), true, "②等够时间应该 true")
+    assert_eq(t.join(), 42, "②收尾后 join() 仍能拿结果")
+    assert_eq(t.join_for(1000), true, "②已结束 ⇒ join_for 幂等 true")
+
+    // ---------- ③ 快线程 ----------
+    var q = threads.start(quick)
+    assert_eq(q.join_for(5000), true, "③快线程 join_for 返回 true")
+    assert_eq(q.join(), 7, "③结果正确")
+
+    // ---------- ④ 负数 = 无限等 ----------
+    var r = threads.start(quick)
+    assert_eq(r.join_for(-1), true, "④负数等价无限等")
+    assert_eq(r.join(), 7, "④结果正确")
+
+    // ---------- ⑤ 超时后线程继续跑完，结果不丢 ----------
+    var s = threads.start(worker)
+    assert_eq(s.join_for(10), false, "⑤第一次超时")
+    threads.sleep(400)
+    assert_eq(s.state(), "done", "⑤之后线程自己跑完了")
+    assert_eq(s.join(), 42, "⑤join 仍能拿到结果")
+
+    print("test_threads_join_for passed")
+}

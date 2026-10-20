@@ -14,6 +14,7 @@ Leno 提供基于 **隔离 VM + Channel** 的多线程支持，参考 Go 语言�
 | `Channel` | 通道对象，线程间安全通讯的桥梁 |
 | `threads.start(func, args...)` | 启动新线程，可传递参数 |
 | `t.join()` | 等待线程结束，获取返回值 |
+| `t.join_for(ms)` | 带超时的等待：`true`=已结束，`false`=超时（线程继续跑） |
 | `ch.send(value)` | 向通道发送值（阻塞） |
 | `ch.receive()` | 从通道接收值（阻塞） |
 | `ch.try_send(value)` | 非阻塞发送，成功返回 true |
@@ -527,50 +528,43 @@ var t = threads.start(func(int n){ return prefix + " " + n }, 42)
 print(t.join())  // hello 42
 ```
 
-### 2. 全局变量：**标量独立，对象共享**（⚠ 2026-10-20 实测订正）
+### 2. 全局变量：**每线程一份**（对象也深拷贝，2026-10-20 起）
 
-子线程启动时把全局变量表**逐个 Value 复制**过去，不递归：
+子线程启动时把全局变量表复制一份：
 
-- 标量（`int` / `float` / `bool` / `null`）⇒ 真·独立副本 ✓
-- `string` / `Array` / `Dict` / struct 等**对象** ⇒ 只抄指针，两个线程共用同一份 ✗
-
-标量的情况（原示例仍然成立）：
+| 值 | 子线程拿到的是 |
+|---|---|
+| 标量（`int` / `float` / `bool` / `null`） | 独立副本 ✓ |
+| `string` / `Array` / `Dict` / `struct` / **闭包** | **克隆进子线程堆**（TH8，2026-10-20）✓ 改内容主线程看不见 |
+| `module` / 函数 / `socket` / 文件句柄 / `Channel` / `Thread` | 共享（只读元数据或引用语义） |
 
 ```leno
 var count = 0
+var arr = [1, 2, 3]
 
 func worker() {
     count = count + 1
-    print("子线程: " + count)    // 子线程: 1
+    arr.add(4)
 }
 
 main() {
     count = 100
+    arr = [1, 2, 3]
     var t = threads.start(worker)
     t.join()
-    print("主线程: " + count)    // 主线程: 100（不受子线程影响）
+    print(count)       // 100 —— 标量各一份
+    print(arr.len())   // 3   —— 数组是副本（旧版这里会是 4 ✗）
 }
 ```
 
-对象的情况（实测，**旧文档写的"互不影响"是错的**）：
+结果要带回来请用 `join()` 的返回值或 `Channel`（别指望改全局对象）。
 
-```leno
-var arr = [1, 2, 3]
-func w() { arr.add(4) }
-main() {
-    arr = [1, 2, 3]
-    var t = threads.start(w)
-    t.join()
-    print(arr.len())     // 4 —— 子线程改到了主线程的数组
-}
-```
-
-⚠ 危害不止"数据被改"：子线程写共享对象会走**子线程堆的写屏障**，而对象挂在主线程堆上
-⇒ 偶发 `0xC0000374` 堆损坏。所以：
-
-- 全局对象**只读**才安全（配置、常量表）
-- 要可变状态 ⇒ `threads.local_set/get`（每线程一份，TH5）或 `Channel` 汇到单点线程
-- 模块级 `var` 同理（`ObjModule.globals` 进程级共享，且**无锁**）
+> **历史注记**：2026-10-20 之前这里是"只抄指针、对象共享"——子线程写全局 `Array`/`Dict`
+> 会走**子线程的写屏障**去改**主线程堆**，偶发 `0xC0000374` 堆损坏。已修（TH8）。
+>
+> ⚠ **模块级 `var`（`ObjModule.globals`）仍然是所有线程同一份、且无锁** —— 那是另一件事
+> （`loaded_modules` 是进程级缓存，见 TH5 的「明确不做」）。并发写模块级可变状态依旧不安全，
+> 要么只读，要么走 Channel 单点化。
 
 ### 3. Channel 的缓冲大小
 
@@ -582,8 +576,11 @@ main() {
 - 每个线程拥有独立的 GC，无需担心 GC 冲突
 - Channel 内部使用互斥锁和条件变量，线程安全
 - `send()` 和 `receive()` 可以安全地在不同线程中并发调用
-- ⚠ 但**全局/模块级对象是跨堆共享的**（见第 2 条），并发写它们没有锁保护 ⇒ 只读或改走 Channel
-- ⚠ 目前**没有 `Mutex` / 原子变量**（`threads` 只提供 start/channel/sleep/join_all/parallel_for/map/local_*）
+- ✅ 入口脚本的**全局对象**是每线程一份（TH8，2026-10-20）⇒ 并发写它不会互相影响
+- ⚠ 但**模块级 `var`（`ObjModule.globals`）仍是所有线程同一份、且无锁** ⇒ 并发写它就是数据竞争，
+  只读或改走 Channel 单点化（见第 2 条末尾）
+- ⚠ 目前**没有 `Mutex` / 原子变量**（`threads` 只提供 start/channel/sleep/join_all/parallel_for/map/local_*），
+  共享可变状态的正确写法是 `Channel` 汇到单点线程，或 `threads.local_*` 每线程一份
 
 ### 5. 跨线程能传什么（**传值即深拷贝**）
 
@@ -592,8 +589,9 @@ main() {
 | `int` / `float` / `bool` / `null` / `string` | ✅ | 按值 / 复制 |
 | `Array` / `Dict` | ✅ | 深克隆（连字典的键一起） |
 | **struct 实例** | ✅ | 深克隆 + 接收侧按定义重建（2026-10-12 起；嵌套 struct / face 声明也一并带上） |
+| **闭包 / 函数** | ✅ | **2026-10-20 起**：字节码共享、捕获值递归克隆 ⇒ 子线程调用时用的是**副本**（环形捕获超 64 层报错） |
 | `Channel` | ✅ | **按引用**共享（同一把句柄） |
-| cstruct，或字段里装了 cstruct / `Ptr` / 闭包的 struct | ❌ | 报「不能跨线程传递此类型（来自 结构体.字段）」—— cstruct 是裸 C 内存，错的是给它克隆出**假句柄** |
+| cstruct，或字段里装了 cstruct / `Ptr` 的 struct | ❌ | 报「不能跨线程传递此类型（来自 结构体.字段）」—— cstruct 是裸 C 内存，错的是给它克隆出**假句柄** |
 | **自引用（环形）struct** | ❌ | 报「嵌套层数超过 64」而不是挂死 |
 
 **因为是深拷贝，子线程改了字段主线程看不见** —— 结果要靠 `join()` 的返回值或 `Channel` 带回来：
