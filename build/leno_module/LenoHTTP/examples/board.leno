@@ -64,10 +64,22 @@ func nowText(): string {
 }
 
 // ==================== 会话 / 用户 ====================
+// 会话 7 天过期：**服务端也要判**（cookie 只是客户端提示，能被改/被重放）
+const SESSION_TTL = 7 * 24 * 3600
+
+func nowSec(): int {
+    return _int(times.now())
+}
+
+// 每次登录顺手清一次过期会话（避免 sessions 表只增不减 ⇒ 长跑后拖慢查询）
+func purgeExpiredSessions() {
+    run("DELETE FROM sessions WHERE expires <= ?", [nowSec()])
+}
+
 func sessionUser(Dict req): string {
     string sid = http.cookie(req, "sid", "")
     if sid == "" { return "" }
-    var r = first("SELECT user FROM sessions WHERE token = ?", [sid])
+    var r = first("SELECT user FROM sessions WHERE token = ? AND expires > ?", [sid, nowSec()])
     if r.len() == 0 { return "" }
     return r.get("user", "") as string
 }
@@ -182,8 +194,9 @@ func registerPost(Dict req): Dict {
         [name, salt, hashPass(salt, pass), nowText()])
     // 注册即登录
     string sid = uuid.v4() + uuid.short(8)
-    run("INSERT INTO sessions (token, user, created) VALUES (?, ?, ?)", [sid, name, nowText()])
-    return http.setCookie(http.redirect("/"), "sid", sid, "/", 0)
+    run("INSERT INTO sessions (token, user, created, expires) VALUES (?, ?, ?, ?)",
+        [sid, name, nowText(), nowSec() + SESSION_TTL])
+    return http.setCookie(http.redirect("/"), "sid", sid, "/", SESSION_TTL)
 }
 
 // ==================== 登录 / 退出 ====================
@@ -206,9 +219,11 @@ func loginPost(Dict req): Dict {
     if hashPass(u.get("salt", "") as string, pass) != (u.get("pass_hash", "") as string) {
         return loginForm(req, "用户名或密码不对")
     }
+    purgeExpiredSessions()
     string sid = uuid.v4() + uuid.short(8)
-    run("INSERT INTO sessions (token, user, created) VALUES (?, ?, ?)", [sid, name, nowText()])
-    return http.setCookie(http.redirect("/"), "sid", sid, "/", 0)
+    run("INSERT INTO sessions (token, user, created, expires) VALUES (?, ?, ?, ?)",
+        [sid, name, nowText(), nowSec() + SESSION_TTL])
+    return http.setCookie(http.redirect("/"), "sid", sid, "/", SESSION_TTL)
 }
 
 func logoutPost(Dict req): Dict {
@@ -252,7 +267,8 @@ func initSchema() {
     GDB.exec("CREATE TABLE IF NOT EXISTS sessions ("
         + "token TEXT PRIMARY KEY,"
         + "user TEXT NOT NULL,"
-        + "created TEXT NOT NULL)")
+        + "created TEXT NOT NULL,"
+        + "expires INTEGER NOT NULL)")
 }
 
 main() {

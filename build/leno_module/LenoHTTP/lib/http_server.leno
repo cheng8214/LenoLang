@@ -11,6 +11,7 @@
 import sockets
 import strings
 import files
+import times     // 2026-10-20：慢速连接的整体截止时间（单线程服务必须有个上界）
 import "http_parse.leno" as p
 import "http_app.leno" as appmod
 // gzip 响应（2026-10-18）：压缩端在 LenoCompress（纯 Leno 的 DEFLATE）
@@ -19,6 +20,10 @@ import "Compress" as z
 var MAX_HEADER = 65536
 var MAX_BODY = 8388608          // 8MB（v0.1 整包读进内存）
 var MAX_REQ_PER_CONN = 100
+// ★ 2026-10-20：**整个请求**的读入截止时间（秒）
+//   为什么不能只靠 socket 的 5s 收包超时：慢速客户端可以每 4.9s 送一个字节，
+//   单个 recv 永远不超时 ⇒ 单线程服务被**一个连接**卡死（slowloris）✗
+var MAX_REQ_SECONDS = 10
 
 // ==================== 监听 ====================
 // 返回 {ok, sock, host, port, err}；端口传 0 由系统分配（测试用）
@@ -109,8 +114,19 @@ func _write_response(Socket c, Dict res, bool keep, bool acceptGzip): bool {
 // 返回 {ok, req, rest, err}；对端关闭/超时 ⇒ ok=false 且 err=""（正常收尾，不报错）
 func _read_request(Socket c, string carry): Dict {
     var buf = carry
+    int t_start = _int(times.now())
     var he = p.header_end(buf)
     while he < 0 {
+        // ★ 只靠 recv 的 5s 超时挡不住"每 4.9s 送一个字节"：单个 recv 永远不超时 ✗
+        //   ⇒ 用 select 等"剩余时间"，到点就放弃（单线程服务不能被一个连接占死）
+        int remain = MAX_REQ_SECONDS - (_int(times.now()) - t_start);
+        if remain <= 0 {
+            return {ok: false, req: null, rest: "", err: "读请求头超时（慢速连接占用 " + _str(MAX_REQ_SECONDS) + "s）"}
+        }
+        var ready = sockets.select([c], remain * 1000)
+        if ready.len() == 0 {
+            return {ok: false, req: null, rest: "", err: "读请求头超时（慢速连接占用 " + _str(MAX_REQ_SECONDS) + "s）"}
+        }
         var chunk = c.recv(65536)
         if chunk == null { return {ok: false, req: null, rest: "", err: ""} }
         string s = chunk as string
@@ -151,6 +167,14 @@ func _read_request(Socket c, string carry): Dict {
     }
     var raw = rest
     while raw.byte_len() < clen {
+        int remain = MAX_REQ_SECONDS - (_int(times.now()) - t_start);
+        if remain <= 0 {
+            return {ok: false, req: null, rest: "", err: "读请求体超时（慢速连接占用 " + _str(MAX_REQ_SECONDS) + "s）"}
+        }
+        var ready = sockets.select([c], remain * 1000)
+        if ready.len() == 0 {
+            return {ok: false, req: null, rest: "", err: "读请求体超时（慢速连接占用 " + _str(MAX_REQ_SECONDS) + "s）"}
+        }
         var chunk = c.recv(65536)
         if chunk == null { break }
         raw = raw + (chunk as string)

@@ -45,6 +45,10 @@ build\leno.exe build\leno_module\LenoHTTP\examples\hello_server.leno 8080 D:\www
 | `setCookie(res, name, value, path, maxAge)` | 写 `Set-Cookie`（`maxAge=0` = 会话 cookie；可多次调用，逐行发出） |
 | `clearCookie(res, name)` | 删除 cookie |
 
+**慢连接保护（2026-10-20）**：单个请求的读入总时长上限 `MAX_REQUEST_SECONDS = 10`（秒），
+用 `select` 等"剩余时间"实现 ⇒ 滴水式客户端（每 4.9s 送一个字节）也不会把单线程服务占死。
+超时返回 400 并关闭连接。
+
 **gzip 响应（2026-10-18，自动）**：请求带 `Accept-Encoding: gzip` 且响应体 ≥ 1KB、
 类型可压（`text/*` / json / javascript / xml / svg）时自动压缩，头里给
 `Content-Encoding: gzip` 与 `Vary: Accept-Encoding`，`Content-Length` 是**压缩后**长度。
