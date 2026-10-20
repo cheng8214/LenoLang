@@ -10,6 +10,8 @@
 //   所以路由表不需要额外的闭包容器。
 import strings
 import jsons
+import dirs
+import files
 import "http_static.leno" as st
 import "http_parse.leno" as p        // 复用 find（模板扫描用）
 
@@ -62,6 +64,83 @@ export func redirect(string url, int code): Dict {
 }
 
 export func not_found(): Dict { return status(404, "404 Not Found") }
+
+// ==================== 请求取值助手（2026-10-20）====================
+// 为什么加：以前每取一个参数都要四行样板 ——
+//   var q = req["query"] as Dict
+//   var v = ""
+//   if q.has("name") { v = q.get("name", "") as string }
+//   if v == "" { v = "默认" }
+// 现在一行：`http.query(req, "name", "默认")`
+//   缺键 / 值为空串 ⇒ 给默认值（表单里"留空"通常等于没填）
+
+export func query(Dict req, string name, string def): string {
+    Dict q = req["query"] as Dict
+    if not q.has(name) { return def }
+    string v = q.get(name, "") as string
+    if v == "" { return def }
+    return v
+}
+
+export func form(Dict req, string name, string def): string {
+    Dict f = req["form"] as Dict
+    if not f.has(name) { return def }
+    string v = f.get(name, "") as string
+    if v == "" { return def }
+    return v
+}
+
+// 头部名不区分大小写（解析侧已统一小写，这里 also 兜一层）
+export func header(Dict req, string name, string def): string {
+    Dict hs = req["headers"] as Dict
+    string k = name.to_lower()
+    if not hs.has(k) { return def }
+    string v = hs.get(k, "") as string
+    if v == "" { return def }
+    return v
+}
+
+// ==================== 视图文件（2026-10-20）====================
+// 约定：
+//   views(app, "views")          —— 指定视图目录
+//   view(app, "hello", {x: 1})   —— 渲染 views/hello.html，并自动套 views/layout.html
+//   layout.html 用 `{{{body}}}` 插入页面内容（三花括号 = 原样，不转义）
+//
+// 为什么值得：HTML 从此放独立文件（编辑器高亮 / 不用在字符串里数反斜杠），
+//   handler 里一行出页面。缺文件时给 500 + 明确路径（不是静默空白页）。
+// ⚠ 每次请求都读盘（本地几 KB 约 0.1ms）；要更快就自己在外面加缓存层。
+export func views(Dict app, string dir) {
+    app.set("viewsDir", dir)
+}
+
+export func view(Dict app, string name, Dict vars): Dict {
+    string dir = ""
+    if app.has("viewsDir") { dir = app.get("viewsDir", "") as string }
+    if dir == "" {
+        return status(500, "500 未配置视图目录（先调 http.views(app, \"views\")）")
+    }
+
+    string file = dirs.join(dir, name + ".html")
+    if not files.exists(file) {
+        return status(500, $"500 视图不存在：{file}")
+    }
+
+    string body = render(files.read(file), vars)
+
+    string layout = dirs.join(dir, "layout.html")
+    if files.exists(layout) {
+        // layout 里除了 {{{body}}}，也可以直接用页面传进来的变量（title 等）
+        Dict lv = {}
+        var ks = vars.keys()
+        for ks to k {
+            string key = _str(k)          // keys() 的元素是无类型 any ⇒ 显式转 string
+            lv.set(key, vars.get(key, ""))
+        }
+        lv.set("body", body)
+        return html(render(files.read(layout), lv))
+    }
+    return html(body)
+}
 
 // ==================== Cookie（2026-10-20）====================
 // 为什么加：写"注册/留言板"这种有登录态的应用时，每个 handler 都要自己
@@ -184,7 +263,9 @@ func normalize(any res): Dict {
         if d.has("headers") { hs = d.get("headers", {}) as Dict }
         return {status: code, body: body, contentType: ct, headers: hs}
     }
-    if res is string { return text(res as string) }
+    // 直接返回字符串 ⇒ 按 **text/html**（写网页的默认口味，省掉 http.html(...)）
+    //   要纯文本请显式 `return http.text(...)`
+    if res is string { return html(res as string) }
     return text(_str(res))
 }
 

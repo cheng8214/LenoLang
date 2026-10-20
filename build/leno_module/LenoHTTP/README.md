@@ -1,7 +1,7 @@
-# LenoHTTP v0.2.0
+# LenoHTTP v0.2.1
 
 Leno 的 **HTTP/1.1 服务端**（纯 Leno，零原生依赖，基于内置 `sockets`）。
-路由、查询串、表单、静态文件、keep-alive、**线程池并发**。
+路由、查询串、表单、静态文件、keep-alive、**线程池并发**、**视图文件**。
 
 ```leno
 import "HTTP" as http
@@ -61,6 +61,11 @@ build\leno.exe build\leno_module\LenoHTTP\examples\threaded_server.leno 8080 8
 | `esc(s)` | HTML 转义（`& < > " '`） |
 | `render(tpl, vars)` | 模板：`{{x}}` **转义**输出、`{{{x}}}` 原样输出、缺键给空串 |
 | `htmlTemplate(tpl, vars)` | 模板 → `text/html` 响应 |
+| `query(req, name, def="")` | 取查询参数（缺键/空串 ⇒ 默认值）**0.2.1 新增** |
+| `formValue(req, name, def="")` | 取表单字段（同上） |
+| `header(req, name, def="")` | 取请求头（名字不区分大小写） |
+| `views(app, dir)` | 指定视图目录 **0.2.1 新增** |
+| `view(app, name, vars)` | 渲染 `dir/name.html`，自动套 `dir/layout.html`（`{{{body}}}`） |
 | `cookie(req, name, def)` | 读 cookie（`Cookie: a=1; b=2`） |
 | `setCookie(res, name, value, path, maxAge)` | 写 `Set-Cookie`（`maxAge=0` = 会话 cookie；可多次调用，逐行发出） |
 | `clearCookie(res, name)` | 删除 cookie |
@@ -86,6 +91,44 @@ build\leno.exe build\leno_module\LenoHTTP\examples\threaded_server.leno 8080 8
 ```leno
 {status: 200, body: "...", contentType: "text/plain; charset=utf-8", headers: Dict}
 ```
+
+> handler 直接 `return "<h1>hi</h1>"` 时按 **`text/html`** 发出（0.2.1 起；旧版是 text/plain）。
+> 要纯文本请显式 `return http.text(...)`。
+
+## HTML 怎么写才不啰嗦（0.2.1）
+
+Leno 有**多行插值字符串** `$"..."`，HTML 不需要 `+` 拼接：
+
+```leno
+func hello(Dict req): string {
+    var name = http.query(req, "name", "世界")        // 一行取参数
+    return $"<main><section class=\"card\">
+  <h1>你好 {http.esc(name)}</h1>
+  <p>注意：<b>插值不会自动转义</b>，用户输入一律 http.esc(...)</p>
+</section></main>"
+}
+```
+
+> `\"` 只是属性引号；换行直接写在字符串里（`$"..."` 支持跨行）。
+> 想彻底不数反斜杠就用**视图文件**：HTML 放 `views/hello.html`，handler 里一行
+> `return http.view(app, "hello", {name: name})`。
+
+视图文件约定：
+
+```
+views/
+  layout.html   ← 用 {{{body}}} 插入页面；title 等变量也能直接用
+  hello.html    ← <h1>你好 {{name}}</h1>
+```
+
+```leno
+http.views(app, "views")
+http.get(app, "/hello", func(Dict req): Dict {
+    return http.view(app, "hello", {name: "Leno", title: "问候"})
+})
+```
+
+`{{x}}` 默认**转义**（防 XSS），`{{{x}}}` 原样输出（只对可信内容用）。
 
 ## 行为与设计
 
@@ -126,6 +169,9 @@ build\leno.exe build\leno_module\LenoHTTP\test\test_http.leno
 
 :: 线程池并发：3 个 slowloris 慢连接挂着时，正常请求必须 < 1500ms（1 worker 对照会失败）
 build\leno.exe build\leno_module\LenoHTTP\test\test_thread_server.leno
+
+:: 视图文件：渲染 / layout 生效 / 默认转义 / 缺文件报错（不起网络）
+build\leno.exe build\leno_module\LenoHTTP\test\test_view.leno
 
 :: Python 独立客户端压测（开发期工具；http.client + socket，与 Leno 实现完全无关）
 python build\leno_module\LenoHTTP\test\dev_stress_python.py

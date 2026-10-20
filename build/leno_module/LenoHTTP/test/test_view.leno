@@ -1,0 +1,49 @@
+// test_view.leno —— 视图文件（http.views / http.view）回归
+//
+// 为什么要有：以前 HTML 只能写在字符串里（`"<div>" + x + "</div>"`），
+//   本仓的示例也因此写得很啰嗦。现在：
+//     http.views(app, "views")      —— 指定目录
+//     http.view(app, "hello", {...})—— 渲染 views/hello.html 并自动套 views/layout.html
+//
+// 判据：
+//   ① 200 + 内容正确（占位符被替换）
+//   ② layout.html 生效（{{{body}}} 插入页面内容）
+//   ③ 占位符**默认转义**（{{name}} 里的 <script> 变成 &lt;script&gt;）
+//   ④ 视图不存在 ⇒ 500 + 明确路径（不是空白页）
+//   ⑤ 没配置目录 ⇒ 500 + 提示（不是崩溃）
+import dirs
+import "HTTP" as http
+
+main() {
+    string root = dirs.join(dirs.script_dir(), "views")
+
+    var app = http.newApp()
+    http.views(app, root)
+
+    // ① ② 正常渲染 + 布局
+    var res = http.view(app, "hello", {name: "Leno", title: "视图测试"})
+    assert_eq(res["status"] as int, 200, "①状态 200")
+    var body = res["body"] as string
+    assert_true(body.has("你好 Leno"), "①占位符被替换")
+    assert_true(body.has("class=\"layout\""), "②layout.html 生效（body 被套进去了）")
+    assert_true(body.has("<title>视图测试</title>"), "②layout 里的占位符也生效")
+
+    // ③ 默认转义
+    var xss = http.view(app, "hello", {name: "<script>alert(1)</script>"})
+    var xbody = xss["body"] as string
+    assert_true(xbody.has("&lt;script&gt;"), "③{{name}} 默认转义")
+    assert_true(not xbody.has("<script>alert(1)"), "③原样标签没有漏出去")
+
+    // ④ 视图不存在
+    var missing = http.view(app, "nope", {})
+    assert_eq(missing["status"] as int, 500, "④缺视图 ⇒ 500")
+    assert_true((missing["body"] as string).has("nope.html"), "④报错里带文件名")
+
+    // ⑤ 没配置目录
+    var bare = http.newApp()
+    var noconf = http.view(bare, "hello", {})
+    assert_eq(noconf["status"] as int, 500, "⑤未配置 ⇒ 500")
+    assert_true((noconf["body"] as string).has("http.views"), "⑤提示怎么配")
+
+    print("test_view passed（4 组断言）")
+}

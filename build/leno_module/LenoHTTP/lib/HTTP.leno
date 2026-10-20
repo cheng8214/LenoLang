@@ -50,6 +50,21 @@ export func esc(string s): string { return a.esc(s) }
 export func render(string tpl, Dict vars): string { return a.render(tpl, vars) }
 export func htmlTemplate(string tpl, Dict vars): Dict { return a.html_template(tpl, vars) }
 
+// ==================== 请求取值助手（2026-10-20）====================
+// 以前取一个参数要四行（`req["query"] as Dict` + has + get + as string），现在一行：
+//   var name = http.query(req, "name", "默认")
+// 缺键 / 空串 ⇒ 默认值
+export func query(Dict req, string name, string def = ""): string { return a.query(req, name, def) }
+export func formValue(Dict req, string name, string def = ""): string { return a.form(req, name, def) }
+export func header(Dict req, string name, string def = ""): string { return a.header(req, name, def) }
+
+// ==================== 视图文件（2026-10-20）====================
+//   http.views(app, "views")            —— 指定目录
+//   http.view(app, "hello", {x: 1})     —— 渲染 views/hello.html，自动套 views/layout.html
+//   layout.html 里用 `{{{body}}}` 插入页面内容
+export func views(Dict app, string dir): void { a.views(app, dir) }
+export func view(Dict app, string name, Dict vars): Dict { return a.view(app, name, vars) }
+
 // ==================== Cookie（2026-10-20）====================
 // `cookie(req, "sid", "")` 读；`setCookie(res, "sid", tok, "/", 0)` 写（0 = 会话 cookie）
 export func cookie(Dict req, string name, string def = ""): string { return a.cookie(req, name, def) }
