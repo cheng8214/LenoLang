@@ -1,7 +1,7 @@
-# LenoHTTP v0.2.1
+# LenoHTTP v0.2.2
 
 Leno 的 **HTTP/1.1 服务端**（纯 Leno，零原生依赖，基于内置 `sockets`）。
-路由、查询串、表单、静态文件、keep-alive、**线程池并发**、**视图文件**。
+路由、查询串、表单、静态文件、keep-alive、**线程池并发**、**视图文件**、**声明式鉴权 + 全局管道**。
 
 ```leno
 import "HTTP" as http
@@ -56,8 +56,11 @@ build\leno.exe build\leno_module\LenoHTTP\examples\music_api.leno 8090
 | 函数 | 说明 |
 |---|---|
 | `newApp()` | 新建应用 `{routes, statics, running}` |
-| `get/post/put/del(app, path, handler)` | 注册路由（精确匹配） |
-| `route(app, method, path, handler)` | 任意方法（`"*"` = 全部） |
+| `get/post/put/del(app, path, handler, opts=null)` | 注册路由（精确匹配）；`opts` 是声明式元数据，如 `{auth: true}` |
+| `route(app, method, path, handler, opts=null)` | 任意方法（`"*"` = 全部） |
+| `auth(app, fn)` | 注册**唯一**的鉴权检查器：`fn(req) -> 用户名 / ""`（空串 = 未登录）**0.2.2** |
+| `before(app, fn)` | 全局前置管道：`fn(req)` 返回 `null` 放行、返回响应 Dict 短路 **0.2.2** |
+| `jsonStatus(code, obj)` | 带状态码的 JSON 响应（`json()` 固定 200）**0.2.2** |
 | `static(app, prefix, dir)` | 挂静态目录（`/assets` → `dir`） |
 | `listen(host, port)` | 监听 → `{ok, sock, host, port, err}`；`port=0` 由系统分配 |
 | `run(server, app)` | 在已有监听器上跑主循环（避免二次 bind） |
@@ -140,6 +143,52 @@ http.get(app, "/hello", func(Dict req): Dict {
 
 `{{x}}` 默认**转义**（防 XSS），`{{{x}}}` 原样输出（只对可信内容用）。
 
+## 鉴权与中间件（0.2.2）
+
+照 ASP.NET Core 的分工：**鉴权用声明、日志用管道**。
+
+```leno
+var app = http.newApp()
+
+// ① 检查器只注册一次：返回用户名 / 空串
+http.auth(app, func(Dict req): string {
+    string t = http.header(req, "authorization", "")
+    if t == "" { t = http.cookie(req, "sid", "") }
+    return lookup_session(t)          // "" = 未登录
+})
+
+// ② 受保护的路由标一下（等价 [Authorize]）
+http.get(app, "/api/search", search, {auth: true})
+http.post(app, "/api/login", login)              // 不标 = 公开
+
+// ③ 全局管道：访问日志（返回 null = 放行）
+http.before(app, func(Dict req): Dict {
+    print("[" + (req["method"] as string) + "] " + (req["path"] as string))
+    return null
+})
+```
+
+handler 里直接取用户（框架塞好的）：
+
+```leno
+func search(Dict req): Dict {
+    string user = req["user"] as string          // 不用自己校验
+    return http.json({ok: true, user: user, ...})
+}
+```
+
+**四条定死的语义**：
+
+| 情况 | 行为 |
+|---|---|
+| 路由标了 `{auth: true}`、检查器返回空串 | `401` + JSON（`http.jsonStatus`） |
+| 标了 `{auth: true}`，但**没调 `http.auth`** | **500 + 指向 `http.auth`** —— 绝不静默放行 |
+| `before` 返回非 `null` | 短路，直接把它当响应发出（维护模式/限流） |
+| `before` 或 handler 抛异常 | `500`，**只断这一个请求**，服务不死 |
+
+**为什么不用"路径前缀中间件"**：漏保护最难发现。标注写在同一行、改路径时跟着走；
+前缀方案一旦路径变了就静默失效。`use` 是保留字，所以名字是 `before`。
+
 ## 行为与设计
 
 - **路由顺序**：精确路径（注册顺序）→ 静态目录 → 404；**路径命中但方法不符 ⇒ 405**
@@ -161,7 +210,7 @@ http.get(app, "/hello", func(Dict req): Dict {
 - **debug 日志**：`app.set("debug", true)` 会为每个请求打印一行
   （方法 / target / 状态 / keep / carry 字节数），排查"请求收不到"很快。
 
-## 顺带修掉的三个问题（本模块的副产品）
+## 顺带修掉的四个问题（本模块的副产品）
 
 1. **`sock.send()` 原来只调一次 `send()` 且忽略返回值** ⇒ 大响应被**静默截断**
    （实测发 1MB 静态文件，客户端只收到前几十 KB，而 Leno 侧拿到的是 `true`）。
@@ -173,6 +222,10 @@ http.get(app, "/hello", func(Dict req): Dict {
 3. **状态短语表缺 401/409/429/502/503** ⇒ 这些状态码全被兜成 `HTTP/1.1 401 OK`
    （写鉴权接口时实测发现，客户端和日志都很别扭）。已补齐，并对未列出的码按
    `4xx → Client Error` / `5xx → Server Error` 兜底，不再把错误说成 OK。
+4. **`acceptOne` 不等连接**：`listen` 把监听 socket 设成非阻塞（为了 `stop()`），
+   而 `acceptOne` 直接 `accept()` ⇒ 客户端稍晚一点连上来就返回"没有待处理连接"，
+   连接其实还在 backlog 里（测试里表现为客户端永久卡在 `recv`）。
+   现在先 `select` 等可读（默认 5s，可传超时）再 `accept`。
 
 ## 验证
 
@@ -188,6 +241,9 @@ build\leno.exe build\leno_module\LenoHTTP\test\test_view.leno
 
 :: 鉴权接口：401 / 登录拿 token / 带 token 搜索 / SQL 注入当字符串 / 空参 400 / cookie 鉴权
 build\leno.exe build\leno_module\LenoHTTP\test\test_music_api.leno
+
+:: 鉴权 + 中间件：公开路由 / 401 / 带 token / 缺检查器 500 / before 短路 / 异常后仍活
+build\leno.exe build\leno_module\LenoHTTP\test\test_middleware.leno
 
 :: Python 独立客户端压测（开发期工具；http.client + socket，与 Leno 实现完全无关）
 python build\leno_module\LenoHTTP\test\dev_stress_python.py

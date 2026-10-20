@@ -288,10 +288,16 @@ export func handle_conn(Socket c, Dict app): Dict {
 }
 
 // 接受一个连接并处理（测试/自定义循环用）
-export func accept_one(Dict server, Dict app): Dict {
+//   ★ 2026-10-20：监听器在 `listen` 里被设成**非阻塞**（便于 stop()），
+//     所以这里**必须先 select 等可读**再 accept —— 否则客户端稍晚一点连上来，
+//     `accept()` 会立刻返回 null，调用方以为"处理完了"，实际连接还躺在 backlog 里 ✗
+//     （实测：测试里刚 `threads.start` 起客户端就调 acceptOne，客户端会一直卡在 recv）
+export func accept_one(Dict server, Dict app, int timeout_ms = 5000): Dict {
     Socket srv = server["sock"] as Socket
+    var ready = sockets.select([srv], timeout_ms)
+    if ready.len() == 0 { return {ok: false, requests: 0, err: "等待连接超时"} }
     Socket c = srv.accept()
-    if c == null { return {ok: false, requests: 0, err: "没有待处理的连接"} }
+    if c == null { return {ok: false, requests: 0, err: "accept 失败"} }
     return handle_conn(c, app)
 }
 

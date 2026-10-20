@@ -108,18 +108,14 @@ func auth_user(Dict req): string {
     return r.get("user", "") as string
 }
 
+// 两个 JSON 错误响应：用 http.jsonStatus（json 固定 200，这里要 401/400）
 func unauthorized(): Dict {
-    return {status: 401,
-            body: "{\"ok\":false,\"error\":\"unauthorized\",\"hint\":\"先 POST /api/login 拿 token\"}",
-            contentType: "application/json; charset=utf-8", headers: {}}
+    return http.jsonStatus(401, {ok: false, error: "unauthorized",
+                                hint: "先 POST /api/login 拿 token"})
 }
 
-// ⚠ 这里不用 http.esc：JSON 需要的是 \" 和 \\ 转义，HTML 转义会把内容变成 &quot; 之类。
-//   本文件的错误文案都是内部常量（不含引号），直接拼即可。
 func badRequest(string msg): Dict {
-    return {status: 400,
-            body: "{\"ok\":false,\"error\":\"" + msg + "\"}",
-            contentType: "application/json; charset=utf-8", headers: {}}
+    return http.jsonStatus(400, {ok: false, error: msg})
 }
 
 // ==================== 路由 ====================
@@ -150,9 +146,9 @@ func login(Dict req): Dict {
 }
 
 // GET /api/search?q=关键词  → {ok, count, items:[...]}
+//   鉴权不在这里做 —— 注册时标了 `{auth: true}`，框架先跑检查器并塞好 `req["user"]`
 func search(Dict req): Dict {
-    string user = auth_user(req)                 // ★ 受保护接口的第一步
-    if user == "" { return unauthorized() }
+    string user = req["user"] as string
 
     string q = http.query(req, "q", "")
     if q == "" { return badRequest("缺少 q") }
@@ -172,12 +168,20 @@ func search(Dict req): Dict {
     return http.json({ok: true, count: items.len(), items: items, user: user})
 }
 
-// GET /api/stats  → 需要鉴权的小接口（证明"每个受保护接口都校验"也不重）
+// GET /api/stats  → 同样标 auth:true（不再手写校验）
 func stats(Dict req): Dict {
-    string user = auth_user(req)
-    if user == "" { return unauthorized() }
+    string user = req["user"] as string
     var n = first("SELECT COUNT(*) AS n FROM songs", [])
     return http.json({ok: true, songs: _int(n.get("n", "0")), user: user})
+}
+
+// 全局访问日志（管道式中间件：返回 null 放行）
+func logMw(Dict req): Dict {
+    string m = req["method"] as string
+    string p = req["path"] as string
+    var t = times.format(times.now(), "%H:%M:%S")
+    print("[" + t + "] " + m + " " + p)
+    return null
 }
 
 main() {
@@ -193,9 +197,16 @@ main() {
     seed()
 
     var app = http.newApp()
+
+    // ① 鉴权检查器只注册一次（返回用户名 / 空串）
+    http.auth(app, auth_user)
+    // ② 全局管道：访问日志（返回 null = 放行）
+    http.before(app, logMw)
+
+    // ③ 路由：受保护的标 `{auth: true}`，公开的不标
     http.post(app, "/api/login", login)
-    http.get(app, "/api/search", search)
-    http.get(app, "/api/stats", stats)
+    http.get(app, "/api/search", search, {auth: true})
+    http.get(app, "/api/stats", stats, {auth: true})
 
     print("音乐搜索 API：")
     print("  POST http://127.0.0.1:" + _str(port) + "/api/login  (user=demo&pass=demo)")

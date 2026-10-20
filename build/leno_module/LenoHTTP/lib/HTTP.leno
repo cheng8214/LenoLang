@@ -25,15 +25,31 @@ import "http_server.leno" as srv
 
 // ==================== 应用与路由 ====================
 export func newApp(): Dict { return a.new_app() }
-export func get(Dict app, string path, any handler): void { a.get(app, path, handler) }
-export func post(Dict app, string path, any handler): void { a.post(app, path, handler) }
-export func put(Dict app, string path, any handler): void { a.put(app, path, handler) }
-export func del(Dict app, string path, any handler): void { a.del(app, path, handler) }
-export func route(Dict app, string method, string path, any handler): void {
-    a.route(app, method, path, handler)
+// 第 4 参 opts = 声明式元数据（目前支持 `{auth: true}`），见下方「鉴权 / 中间件」
+export func get(Dict app, string path, any handler, any opts = null): void { a.get(app, path, handler, opts) }
+export func post(Dict app, string path, any handler, any opts = null): void { a.post(app, path, handler, opts) }
+export func put(Dict app, string path, any handler, any opts = null): void { a.put(app, path, handler, opts) }
+export func del(Dict app, string path, any handler, any opts = null): void { a.del(app, path, handler, opts) }
+export func route(Dict app, string method, string path, any handler, any opts = null): void {
+    a.route(app, method, path, handler, opts)
 }
 export func static(Dict app, string prefix, string dir): void { a.static(app, prefix, dir) }
 export func stop(Dict app): void { a.stop(app) }
+
+// ==================== 鉴权 / 中间件（2026-10-20）====================
+// 声明式：路由注册第 4 参 `{auth: true}` 表示需要鉴权（等价 C# 的 [Authorize]）
+//   http.auth(app, func(Dict req): string { ... })   注册唯一的检查器（返回用户名 / ""）
+//   http.get(app, "/api/x", h, {auth: true})         该路由需要登录
+//   handler 里 `req["user"] as string` 拿用户名
+export func auth(Dict app, any fn): void { a.auth(app, fn) }
+
+// 管道式：全局中间件，fn(req) 返回 null = 放行，返回响应 Dict = 短路
+//   适合访问日志 / 耗时 / CORS / 维护模式；鉴权请用 {auth: true}
+//   ⚠ 不叫 `use`（保留字），对外名字是 `before`
+export func before(Dict app, any fn): void { a.before(app, fn) }
+
+// 带状态码的 JSON（http.json 固定 200）
+export func jsonStatus(int code, any obj): Dict { return a.json_status(code, obj) }
 
 // ==================== 响应助手 ====================
 export func text(string s): Dict { return a.text(s) }
@@ -77,8 +93,10 @@ export func clearCookie(Dict res, string name): Dict { return a.clear_cookie(res
 // {ok, sock, host, port, err} —— 端口传 0 由系统分配（测试/临时服务常用）
 export func listen(string host, int port): Dict { return srv.listen(host, port) }
 
-// 处理一个已接受的连接（含 keep-alive）
-export func acceptOne(Dict server, Dict app): Dict { return srv.accept_one(server, app) }
+// 等一个连接并处理（含 keep-alive）；timeout_ms 默认 5s
+export func acceptOne(Dict server, Dict app, int timeout_ms = 5000): Dict {
+    return srv.accept_one(server, app, timeout_ms)
+}
 
 // 在已有监听器上跑主循环（listen 之后用；避免 serve 再 bind 一次）
 export func run(Dict server, Dict app): Dict { return srv.run(server, app) }

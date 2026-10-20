@@ -17,19 +17,60 @@ import "http_parse.leno" as p        // 复用 find（模板扫描用）
 
 // ==================== 应用 ====================
 export func new_app(): Dict {
-    return {routes: [], statics: [], running: false}
+    return {routes: [], statics: [], running: false, middlewares: [], authFn: null}
 }
 
-export func route(Dict app, string method, string path, any handler) {
+// 路由注册：第 5 参 opts 是**声明式元数据**（等价 C# 的 [Authorize] 特性）
+//   目前支持 `{auth: true}` —— 该路由需要鉴权；以后要加 role/rateLimit 就往这里塞
+//   ⚠ 默认值不能写 `{}`（Leno 要求默认值是字面量常量）⇒ 用 null 表示"没有元数据"
+export func route(Dict app, string method, string path, any handler, any opts = null): void {
+    Dict meta = {}
+    if opts is Dict { meta = opts as Dict }
     Array[Dict] routes = app["routes"] as Array[Dict]
-    routes.add({method: method, path: path, handler: handler})
+    routes.add({method: method, path: path, handler: handler, meta: meta})
     app.set("routes", routes)
 }
 
-export func get(Dict app, string path, any handler): void { route(app, "GET", path, handler) }
-export func post(Dict app, string path, any handler): void { route(app, "POST", path, handler) }
-export func put(Dict app, string path, any handler): void { route(app, "PUT", path, handler) }
-export func del(Dict app, string path, any handler): void { route(app, "DELETE", path, handler) }
+export func get(Dict app, string path, any handler, any opts = null): void { route(app, "GET", path, handler, opts) }
+export func post(Dict app, string path, any handler, any opts = null): void { route(app, "POST", path, handler, opts) }
+export func put(Dict app, string path, any handler, any opts = null): void { route(app, "PUT", path, handler, opts) }
+export func del(Dict app, string path, any handler, any opts = null): void { route(app, "DELETE", path, handler, opts) }
+
+// ==================== 鉴权（声明式）====================
+//   http.auth(app, fn)                    —— 注册**唯一的**鉴权检查器：fn(req) -> 用户名 / ""（空串 = 未登录）
+//   http.get(app, path, h, {auth: true})  —— 该路由需要鉴权
+//
+// 为什么是"路由上标"而不是"按路径前缀套中间件"：
+//   ① 漏保护最难发生 —— 标注与路由写在同一行，review 一眼看见；前缀方案改了路径就静默失效 ✗
+//   ② 没有前缀优先级问题（`/api/` 与 `/api/admin/` 谁先）
+//   ③ 与 ASP.NET Core 的分工一致：鉴权用特性、日志用管道
+//
+// ⚠ 路由标了 `{auth: true}` 但没注册检查器 ⇒ **500 + 明确提示**（绝不静默放行，那是安全漏洞）
+export func auth(Dict app, any fn) {
+    app.set("authFn", fn)
+}
+
+// ==================== 全局中间件（管道）====================
+//   http.before(app, fn) —— fn(req) 返回 null 表示放行；返回响应 Dict 表示**短路**（直接发出）
+// 适用：访问日志、耗时统计、CORS、维护模式；鉴权请用 `{auth: true}`（见上）
+// ⚠ 名字不叫 `use`：`use` 是**保留字**（`use m.Type`）⇒ `http.use(...)` 解析失败（实测）
+export func before(Dict app, any fn) {
+    Array mws = []
+    if app.has("middlewares") { mws = app["middlewares"] as Array }
+    mws.add(fn)
+    app.set("middlewares", mws)
+}
+
+// 带状态码的 JSON 响应（http.json 固定 200，401/400 要自己搓）
+export func json_status(int code, any obj): Dict {
+    Dict res = json(obj)
+    res.set("status", code)
+    return res
+}
+
+export func stop(Dict app) {
+    app.set("running", false)
+}
 
 export func stop(Dict app) {
     app.set("running", false)
@@ -275,6 +316,23 @@ func normalize(any res): Dict {
 export func dispatch(Dict app, Dict req): Dict {
     string method = req["method"] as string
     string path = req["path"] as string
+
+    // ① 全局中间件（注册顺序；返回非 null = 短路）。
+    //    ⚠ 必须自己也兜 try/catch —— 一个坏中间件不能把整个服务带走
+    //      （handler 那条 try 是后来补的，代价是一次"一个 throw 打死整个站点"）
+    if app.has("middlewares") {
+        Array mws = app["middlewares"] as Array
+        for mws to mw {
+            try {
+                var out = (mw as any)(req)
+                if out != null { return normalize(out) }
+            } catch e {
+                print("[http] 中间件异常 " + method + " " + path + "：" + _str(e) + "\n")
+                return status(500, "500 Internal Server Error")
+            }
+        }
+    }
+
     var pathMatched = false
 
     Array[Dict] routes = app["routes"] as Array[Dict]
@@ -287,6 +345,28 @@ export func dispatch(Dict app, Dict req): Dict {
             //   实测：一个 `throw` 的 handler 让进程直接没了 —— 之后的请求全部被拒（连接拒绝 ✗），
             //   也就是"一个坏请求打死整个站点"。这里兜成 500 + 一行日志。
             try {
+                // ② 声明式鉴权（注册时 `{auth: true}`）
+                var meta = r.get("meta", null)
+                if meta is Dict {
+                    Dict md = meta as Dict
+                    var need = false
+                    if md.has("auth") { need = md.get("auth", false) as bool }
+                    if need {
+                        if not app.has("authFn") or app["authFn"] == null {
+                            // 标了要鉴权却没注册检查器：宁可 500 也不放行（静默放行 = 安全漏洞）
+                            print("[http] 路由 " + method + " " + path
+                                + " 标了 auth:true，但没调用 http.auth(app, fn)\n")
+                            return status(500, "500 服务端未配置鉴权检查器（http.auth）")
+                        }
+                        var checker = app["authFn"] as any
+                        var user = _str(checker(req))
+                        if user == "" {
+                            return json_status(401, {ok: false, error: "unauthorized"})
+                        }
+                        req.set("user", user)      // 交给 handler（等价 HttpContext.Items）
+                    }
+                }
+
                 var out = (r["handler"] as any)(req)
                 return normalize(out)
             } catch e {

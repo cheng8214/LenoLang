@@ -34,7 +34,7 @@
 | 2.1 | gzip 响应 | ✅ **本轮已做**：`Accept-Encoding: gzip` + 体积 ≥ 1KB + 可压缩类型 ⇒ `Content-Encoding: gzip` + `Vary` | 客户端带 gzip 头时体积降 ≥ 50%，`Content-Length` 与解压后长度分别正确 |
 | 2.2 | 模板自动转义 | ✅ **本轮已做**：`http.esc()` / `http.render(tpl, vars)`（`{{x}}` 转义、`{{{x}}}` 原样） | XSS 输入渲染成 `&lt;script&gt;`；缺键给空串 |
 | 2.3 | 路径参数路由 | `http.get(app, "/user/:id", h)` ⇒ `req["params"]["id"]` | `/user/42` 命中并取到 `"42"`；`/user/a/b` 不命中 |
-| 2.4 | 中间件链 | `http.use(app, fn)`，`fn(app, req, next)`；内置请求日志/计时 | 两条中间件按注册顺序执行，`next()` 能短路 |
+| 2.4 | 中间件链 | ✅ **部分已做（2026-10-20）**：`http.before(app, fn)` 全局前置管道（返回 `null` 放行、返回响应短路）+ **声明式鉴权** `http.auth(app, fn)` + 路由标 `{auth: true}`。**不做** `next()` 洋葱模型（同步 handler 用不上，改响应走 `_write_response`） | `test_middleware.leno` 六组：公开路由 / 401 / 带 token 拿到 `req["user"]` / 缺检查器 500 / `before` 短路 503 / 中间件抛异常后同一连接仍正常 |
 | 2.5 | multipart/form-data | 按 boundary 切分，解析 `name` / `filename` / 体 | 上传 1 个中文名文本文件，能取到名字与内容 |
 | 2.6 | Range + 缓存头 | 静态文件支持 `Range: bytes=a-b`（206）、`ETag`/`If-None-Match`（304）、`Last-Modified` | 断点续传拿到正确片段；二次请求返回 304 |
 | 2.7 | 大文件不整读内存 | 静态文件 > 4MB 走分块发送 | 下载 100MB 文件进程内存不暴涨 |
@@ -44,7 +44,7 @@
 | # | 缺口 | 说明 |
 |---|---|---|
 | 3.1 | SSE（`text/event-stream`） | 成本最低的"实时"方案，长连接 + `data:` 帧，适合进度/日志推送 |
-| 3.2 | Cookie / Session | `Cookie` 解析助手 + 内存/文件 Session；`Set-Cookie` 构造 |
+| 3.2 | Cookie / Session | ✅ **已做（2026-10-20）**：`http.cookie/setCookie/clearCookie`；Session 由应用建表（见 `examples/board.leno`、`music_api.leno`） |
 | 3.3 | HEAD / OPTIONS / CORS 助手 | 预检与跨域开发常用 |
 | 3.4 | WebSocket | 握手 + 帧解析，工作量明显大于 SSE，按需 |
 | 3.5 | 请求日志中间件 | 与 2.4 一起做：`方法 路径 状态 耗时 字节` |
@@ -102,7 +102,7 @@ dispatcher 统一 `try/catch` → 500 页面（本轮未做，列为 2.4 的配�
 
 ## 5. 下一步顺序
 
-1. 2.3 路径参数 + 2.4 中间件（含 3.4 的 500 兜底）—— 写大站点前必须先有
+1. ~~2.4 中间件~~ ✅ 已做（2026-10-20：声明式鉴权 `{auth: true}` + 全局管道 `before` + 500 兜底）；**剩下 2.3 路径参数**
 2. 2.6 Range/缓存头 + 2.7 分块发送 —— 静态资源是每个站都有的
 3. 2.5 multipart —— 有上传需求时立刻做
 4. ~~3.1 并发~~ ✅ 已完成（2026-10-20，线程池 `serveWorkers`，见 §3.1）

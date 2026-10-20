@@ -1,0 +1,126 @@
+// test_middleware.leno —— 声明式鉴权 `{auth: true}` + 全局管道 `http.before`（回归）
+//
+// 设计（对着 docs 里的取舍看）：
+//   · 鉴权用**路由上的标注**（等价 C# 的 [Authorize]），不用路径前缀匹配 —— 漏保护最难发生
+//   · 全局管道只做横切（日志/维护模式），返回非 null 即短路
+//
+// 判据：
+//   ① 公开路由不受影响
+//   ② 标了 `{auth: true}` 且没带 token ⇒ 401
+//   ③ 带合法 token ⇒ 200，且 handler 能拿到 `req["user"]`
+//   ④ 标了 auth 但**没注册检查器** ⇒ 500 + 明确提示（绝不静默放行）
+//   ⑤ `before` 返回响应 ⇒ 短路（维护模式）
+//   ⑥ `before` 抛异常 ⇒ 500，且**同一连接的下一个请求照常**（服务不死）
+import sockets
+import threads
+import "HTTP" as http
+
+// 客户端：发一条原始请求，把完整响应塞回通道
+func clientSend(int port, string raw, Channel out) {
+    Socket c = sockets.connect("127.0.0.1", port)
+    if c == null { out.send(""); return }
+    c.send(raw)
+    var resp = ""
+    while true {
+        var chunk = c.recv(65536)
+        if chunk == null { break }
+        resp = resp + (chunk as string)
+    }
+    c.close()
+    out.send(resp)
+}
+
+// 起一个临时服务（端口 0 由系统分配），处理**一个连接**，返回响应原文
+func oneReq(Dict app, string raw): string {
+    var srv = http.listen("127.0.0.1", 0)
+    if not (srv["ok"] as bool) { return "" }
+    int port = srv["port"] as int
+    var out = threads.channel(1)
+    threads.start(clientSend, port, raw, out)
+    http.acceptOne(srv, app)
+    return out.receive() as string
+}
+
+func getRaw(string path, string extra): string {
+    return "GET " + path + " HTTP/1.1\r\nHost: t\r\nConnection: close\r\n" + extra + "\r\n"
+}
+
+// ==================== 被测 handler ====================
+func hOpen(Dict req): Dict { return http.json({ok: true, path: "/open"}) }
+
+func hApi(Dict req): Dict {
+    string user = req["user"] as string       // 由框架塞进来
+    return http.json({ok: true, user: user})
+}
+
+func hBoom(Dict req): Dict { throw "业务炸了" }
+
+// 检查器：只有 token == "good" 才放行
+func checker(Dict req): string {
+    return http.header(req, "x-token", "")
+}
+
+func tokenOf(Dict req): string {
+    if http.header(req, "x-token", "") == "good" { return "alice" }
+    return ""
+}
+
+main() {
+    // ---------- ① ② ③ 正常 app ----------
+    var app = http.newApp()
+    http.auth(app, tokenOf)
+    http.get(app, "/open", hOpen)
+    http.get(app, "/api/x", hApi, {auth: true})
+
+    var r1 = oneReq(app, getRaw("/open", ""))
+    assert_true(r1.has("200 OK"), "①公开路由 200")
+    assert_true(r1.has("/open"), "①公开路由命中了")
+
+    var r2 = oneReq(app, getRaw("/api/x", ""))
+    assert_true(r2.has("401 Unauthorized"), "②无 token ⇒ 401")
+    assert_true(r2.has("unauthorized"), "②401 体是 JSON")
+
+    var r3 = oneReq(app, getRaw("/api/x", "X-Token: good\r\n"))
+    assert_true(r3.has("200 OK"), "③带 token ⇒ 200")
+    assert_true(r3.has("alice"), "③handler 拿到 req[user]")
+
+    // ---------- ④ 标了 auth 但没注册检查器 ----------
+    var appNoAuth = http.newApp()
+    http.get(appNoAuth, "/api/y", hApi, {auth: true})
+    var r4 = oneReq(appNoAuth, getRaw("/api/y", "X-Token: good\r\n"))
+    assert_true(r4.has("500"), "④没注册检查器 ⇒ 500（不静默放行）")
+    assert_true(r4.has("http.auth"), "④提示怎么修")
+
+    // ---------- ⑤ before 短路（维护模式） ----------
+    var appMaint = http.newApp()
+    http.before(appMaint, func(Dict req): Dict {
+        return http.jsonStatus(503, {ok: false, msg: "维护中"})
+    })
+    http.get(appMaint, "/open", hOpen)
+    var r5 = oneReq(appMaint, getRaw("/open", ""))
+    assert_true(r5.has("503"), "⑤before 短路成 503")
+    assert_true(r5.has("维护中"), "⑤短路响应体生效")
+
+    // ---------- ⑥ before 抛异常：500，且同一连接下一个请求照常 ----------
+    var appBad = http.newApp()
+    http.before(appBad, func(Dict req): Dict {
+        if (req["path"] as string) == "/boom" { throw "中间件炸了" }
+        return null
+    })
+    http.get(appBad, "/boom", hBoom)
+    http.get(appBad, "/open", hOpen)
+
+    // 同一连接发两个请求（keep-alive），第一个炸、第二个必须正常
+    var srv = http.listen("127.0.0.1", 0)
+    int port = srv["port"] as int
+    var out = threads.channel(1)
+    var twoReq = "GET /boom HTTP/1.1\r\nHost: t\r\n\r\n"
+        + "GET /open HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n"
+    threads.start(clientSend, port, twoReq, out)
+    http.acceptOne(srv, appBad)
+    var r6 = out.receive() as string
+    assert_true(r6.has("500"), "⑥中间件炸 ⇒ 500")
+    assert_true(r6.has("200 OK"), "⑥同一连接的下一个请求仍正常（服务没死）")
+
+    print("test_middleware passed（公开 / 401 / 带 token / 缺检查器 500 / 短路 503 / 异常后仍活）")
+}
