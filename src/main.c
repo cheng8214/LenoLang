@@ -114,7 +114,7 @@ int debugMode = 0;
 static int pauseMode = 0;
 static int compileMode = 0;
 static int packMode = 0;
-static int checkMode = 0;   // --check：只做解析 + 语义检查（不产出 .lenb、不执行）（B12）
+static int checkMode = 0;   // --check：完整编译检查（parse + 语义 + codegen，含被 import 的模块），不产出 .lenb、不执行（B12；2026-10-20 修范围）
 static int initMode = 0;
 static int installMode = 0;
 static char* debugOutFile = NULL;  // --debug-out 指定的输出文件路径
@@ -236,7 +236,7 @@ static void printHelp(const char* program) {
     printf("  --debug           启用调试模式（输出字节码）\n");
     printf("  --debug-out <file> 字节码输出到指定文件（自动启用 --debug）\n");
     printf("  -c, --compile     编译为二进制文件（.lenb），不执行\n");
-    printf("  --check           只做解析 + 语义检查（不产出 .lenb），有错非零退出\n");
+    printf("  --check           完整编译检查（含被 import 的模块），不产出 .lenb，有错非零退出\n");
     printf("  -p, --pack        编译并打包为独立可执行文件（嵌入 leno_vm）\n");
     printf("  -o, --pack-dir <目录>  指定打包输出目录（默认 <源码目录>/dist）\n");
     printf("                    输出的 exe 与依赖的原生库（leno.toml 的 [native-libs]）\n");
@@ -948,33 +948,15 @@ int lenolang_compile(const char* source, const char* output_path) {
     fprintf(stderr, "[TIME] semantic: %.1f ms\n", (double)(t_sem1 - t_sem0) / CLOCKS_PER_SEC * 1000.0);
     if (error_has_any()) goto compile_fail;
 
-    // `--check`：到这儿（解析 + 语义都过了）就可以收了 —— **不 codegen、不写 .lenb**（B12）
-    //   ⚠ 清理顺序与正常出口一致；`codegen_cleanup` 在 codegen 之前调用也是安全的
-    //     （`compile_fail` 就能从语义之前跳过来 ✓）
-    if (checkMode) {
-        // ⚠ `chunk.filename` 要到 codegen 阶段才填 ⇒ 走 --check 时它还是空（会打成 "stdin"）。
-        //   改用 `error_get_filename()`（入口文件绝对路径，进本函数前就设好了 ✓）
-        const char* shown = error_get_filename();
-        if (!shown || !shown[0]) shown = chunk.filename;
-        if (!shown || !shown[0]) shown = "stdin";
-        // ★ 检查范围必须说清（2026-10-11，B7 / 改进 6 ②）：`--check` 只跑**入口文件自己**的
-        //   解析 + 语义 —— 被 import 的模块**函数体一条都不查** ✗（模块符号表由 parser AST
-        //   填充器产出，不走语义 ⇒ 模块里的类型错误它看不见）。
-        //   实测：把 `int x = "oops"` 放进被 import 的模块，`--check 入口` 照样打印"检查通过"，
-        //   而 `-c` 会报出来 ⇒ "我已经 check 过了"是假的安心（B6 正是这么混过第一道筛子的 ✓）。
-        //   不做"顺手把模块也查一遍"（改进 6 ①）的原因：那要把模块编译管线（parse + 语义）
-        //   对每个被引用模块跑一遍，还得管住副作用（.lenomc 缓存写入）与错误归属 —— 收益不抵
-        //   风险 ⇒ 先按文档给的更便宜那条落地：**把范围印出来** ✓
-        printf("检查通过: %s（仅入口文件；未产出 .lenb）\n", shown);
-        printf("          ⚠ 被 import 的模块「函数体」未检查 —— 发版前请真编译一次：leno -c <入口>\n");
-        codegen_cleanup(&gen);
-        ast_free(parser.root);
-        semantic_cleanup(&sem);
-        chunk_free(&chunk);
-        gc_free_all();
-        warning_print_all();
-        return 0;
-    }
+    // ★ 2026-10-20 改造 `--check`：早退点从"语义之后"挪到"codegen 之后"。
+    //   原实现（B12）在语义后就返回，看似省了 codegen，实际**留下了个大坑**：
+    //     import 的模块是在 **codegen 遇到 OP_IMPORT 时**才真正编译的（DCE 需要完整引用图，
+    //     见下方 compileMode 的注释）⇒ 早退在 codegen 之前 = **模块体一条都没检查**。
+    //   实测（2026-10-20）：模块里写 `int x = "oops"`，`--check` 打印"检查通过"，
+    //     而 `-c` 报「m.leno(3,5) 类型错误：变量 'x' 声明类型与初始化值类型不匹配」⇒
+    //     "我已经 check 过了"是**假的安心**（用户原话：--check 没啥暖用，判断成立 ✓）。
+    //   现在的代价：check 也要跑一遍 codegen（实测 site.leno 39ms → 约 67ms，与 `-c` 持平），
+    //     换来的是**"通过"真的可信**；省掉的只有写 .lenb 那 1ms 与产物副作用。
 
     clock_t t_opt0 = clock();
     optimize_constant_fold(parser.root);
@@ -990,6 +972,23 @@ int lenolang_compile(const char* source, const char* output_path) {
 
     if (debugMode) {
         debug_dump_all_bytecode(&chunk);
+    }
+
+    // `--check`：编译（含被 import 的模块）全部走完，**只是不写 .lenb**
+    //   ⚠ 到这一步模块已经编译过 ⇒ 模块里的语法/类型错误都会报出来（旧版做不到，见上）
+    //   ⚠ 副作用：模块的 `.lenomc` 缓存会照常写（与 `-c` 一致；缓存可重建，不是产物）
+    if (checkMode) {
+        const char* shown = error_get_filename();
+        if (!shown || !shown[0]) shown = chunk.filename;
+        if (!shown || !shown[0]) shown = "stdin";
+        printf("编译检查通过: %s（未产出 .lenb）\n", shown);
+        codegen_cleanup(&gen);
+        ast_free(parser.root);
+        semantic_cleanup(&sem);
+        chunk_free(&chunk);
+        gc_free_all();
+        warning_print_all();
+        return 0;
     }
 
     clock_t t_ser0 = clock();
@@ -2311,9 +2310,14 @@ static int main_logic(int argc, char** argv) {
             compileMode = 1;
             continue;
         } else if (strcmp(argv[i], "--check") == 0) {
-            // 只验证"能不能过编译"：跑 parse + 语义，有错非零退出，**不写 .lenb**（B12）
-            //   为什么需要：此前只能借 `-c`，而 `-c` 会产出 .lenb（脚本化时还得回来删产物 ✗）。
-            //   收益：编辑器 / CI / 预提交钩子的"无副作用"入口。
+            // 完整编译检查：parse + 语义 + codegen（**含被 import 的模块**），有错非零退出，
+            //   **不写 .lenb**（B12）。
+            //   ★ 2026-10-20 修：原来早退在"语义之后"，而模块是在 **codegen 遇到 import 时**
+            //     才编译的 ⇒ 模块体一条都没查，`int x = "oops"` 也能打印"检查通过"（假的安心 ✗）。
+            //     现在早退点挪到 codegen 之后，代价是也要跑一遍 codegen（约 +30ms），
+            //     换来"通过"真的可信。
+            //   用途：编辑器 / CI / 预提交钩子的"不产生产物"入口。
+            //   ⚠ 副作用：模块的 `.lenomc` 缓存会照常写（与 `-c` 一致，缓存可重建）
             //   ⚠ 与内部的 `--check-bin`（校验**已打包的** .lenb，见 pack 分支）不是一回事。
             checkMode = 1;
             continue;
