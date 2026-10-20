@@ -269,7 +269,7 @@ build\leno.exe ..\LenoGame\俄罗斯方块\tetris.leno
 **Built-in Containers and Strings**
 - `Array[T]` / `Dict[K, V]`, `map` / `filter` / `reduce`
 - Array slicing `arr[2:8]`, `arr[:5]`, `arr[3:]`; string slicing (UTF-8 character level)
-- String interpolation `$"Hello, {name}!"`, raw strings `@"..."`, `format("%02d: %-10s", i, name)`
+- String interpolation `$"Hello, {name}!"`, raw strings `@"..."`, **raw interpolation** `$@"<div class=""x"">{y}</div>"` (`\` verbatim, `""` = one quote, `{}` interpolates), `format("%02d: %-10s", i, name)`
   - **Both forms of concatenation are valid**: whole-segment interpolation `$"a{b}c"` or explicit per-segment `+ _str(x)` (the repo contains **both**, and per-segment `_str` is a legitimate style, not a sign that "the language lacks interpolation")
   - ⚠ **Do not mix** them within the same output: when mixed, `{x}` inside an ordinary literal is **output verbatim** and the compiler does not warn you (see "`$` only applies to the literal immediately following it" in the tutorial)
 - ⚠ **Indexes must be non-negative** — `arr[-1]` throws an index-out-of-bounds error (this is **intentional design**, see `assert/test_string_edge.leno`)
