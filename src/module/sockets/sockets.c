@@ -236,6 +236,10 @@ void sockets_init_instance_methods(void) {
     /* sock.local_port() -> int|null */
     native_register_instance_method_meta_with_params("Socket", "local_port", 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, no_params);
 
+    /* sock.fd() / sock.detach() -> int（2026-10-20：跨线程交接） */
+    native_register_instance_method_meta_with_params("Socket", "fd", 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, no_params);
+    native_register_instance_method_meta_with_params("Socket", "detach", 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, no_params);
+
     /* sock.error() -> int */
     native_register_instance_method_meta_with_params("Socket", "error", 0, -1, -1, TYPE_INT, TYPE_UNKNOWN, no_params);
 
@@ -495,6 +499,43 @@ static Value socket_recv_func(int argc, Value* args) {
     free(buffer);
 
     return val_obj((Object*)result);
+}
+
+/* sock.fd() -> int
+   2026-10-20：把底层 fd 暴露成**整数**，用于跨线程交接。
+   为什么需要：`Socket` 对象不能跨线程传递（它在创建者的 GC 堆上），
+   而"线程池处理连接"必须先能把连接交给别的线程 ⇒ 传 fd，由对方 `from_fd` 重新包装 ✓ */
+static Value socket_fd_getter(int argc, Value* args) {
+    (void)argc;
+    if (!val_is_obj(args[0]) || val_as_obj(args[0])->type != OBJ_SOCKET) return val_int(-1);
+    ObjSocket* sock = (ObjSocket*)val_as_obj(args[0]);
+    return val_int((int64_t)sock->fd);
+}
+
+/* sock.detach() -> int
+   交出 fd **所有权**：原 Socket 立刻失效（fd = INVALID）⇒ 之后不再 close 它，
+   由 `sockets.from_fd(fd)` 造出的新 Socket 负责关闭。
+   为什么必须有它：只调 `fd()` 拿数字、又让原对象被 GC ⇒ 两边都 close 同一个 fd ✗ */
+static Value socket_detach_func(int argc, Value* args) {
+    (void)argc;
+    if (!val_is_obj(args[0]) || val_as_obj(args[0])->type != OBJ_SOCKET) return val_int(-1);
+    ObjSocket* sock = (ObjSocket*)val_as_obj(args[0]);
+    int64_t fd = (int64_t)sock->fd;
+    sock->fd = INVALID_SOCKET_FD;
+    sock->is_connected = 0;
+    sock->is_listening = 0;
+    return val_int(fd);
+}
+
+/* sockets.from_fd(fd) -> Socket|null（与 sock.detach() 配对：所有权交给新对象 ⇒ 新对象负责 close） */
+static Value socket_from_fd_func(int argc, Value* args) {
+    if (argc < 1 || !val_is_int(args[0])) return val_null();
+    int64_t v = val_as_int(args[0]);
+    if (v < 0) return val_null();
+    ObjSocket* sock = create_socket_obj((socket_fd_t)v, SOCKET_TYPE_TCP);
+    if (!sock) return val_null();
+    sock->is_connected = 1;
+    return val_obj((Object*)sock);
 }
 
 /* sock.close() -> null */
@@ -1133,6 +1174,12 @@ void sockets_init_module(void) {
     TypeKind recv_params[] = {TYPE_INT};
     socket_register_method("recv", make_native(socket_recv_func, 2, "recv"), TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED(recv_params));
 
+    /* sock.fd() -> int（跨线程交接用；-1 = 已关闭） */
+    socket_register_method("fd", make_native(socket_fd_getter, 1, "fd"), TYPE_INT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
+
+    /* sock.detach() -> int（交出 fd 所有权，原对象失效） */
+    socket_register_method("detach", make_native(socket_detach_func, 1, "detach"), TYPE_INT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
+
     /* sock.close() -> null */
     socket_register_method("close", make_native(socket_close_func, 1, "close"), TYPE_NULL, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
 
@@ -1219,4 +1266,8 @@ void sockets_init_module(void) {
     //   （关系型规格，v3.2.6）。原来标的是裸 `Array`（元素未指定）⇒ `select(socks)[0]` 是 any、要收窄。
     TypeKind select_params[] = {TYPE_ARRAY, TYPE_INT};
     native_register_module_method("sockets", "select", sockets_select_func, &NATIVE_T_ARR_ARG0_ELEM, NATIVE_FIXED(select_params));
+
+    // 2026-10-20：fd 交接（Socket 对象不能跨线程，integer fd 可以）
+    TypeKind from_fd_params[] = {TYPE_INT};
+    native_register_module_method("sockets", "from_fd", socket_from_fd_func, &NATIVE_T_SOCKET, NATIVE_FIXED(from_fd_params));
 }
