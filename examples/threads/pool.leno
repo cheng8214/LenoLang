@@ -1,0 +1,68 @@
+// pool.leno —— 通用线程池配方（任务 = 闭包）
+//
+// 跑法（仓库根目录）：
+//   build\leno.exe examples\threads\pool.leno
+//
+// 为什么现在能做：2026-10-20 起**闭包可以跨线程**（TH10）⇒ 任务可以直接是闭包，
+//   不用再"每种任务写一个具名函数 + 一堆参数"。实现只有三样东西：
+//
+//   tasks    （Channel）主线程塞闭包 → worker 取
+//   results  （Channel）worker 把 {ok, value} 塞回来
+//   worker   （线程）取出 → 在本线程执行 → 回传结果 → 循环
+//
+// 三个要点：
+//   ① **背压**：tasks/results 都有容量，满了 send 会阻塞（自然限流，不会无限堆任务）
+//   ② **异常不丢**：worker 里 try/catch，把错误作为结果回传（线程池最怕"静默失败"）
+//   ③ **停机**：发 worker 个数个 null，再 join 全部（别 close 后还 send —— send 会报错）
+import threads
+
+// 一个任务 = 一个无参闭包 `func(): 任意`
+func worker(Channel tasks, Channel results): int {
+    var done = 0
+    while true {
+        var job = tasks.receive()
+        if job == null { break }              // 停机信号
+        try {
+            var v = (job as any)()
+            results.send({ok: true, value: _str(v)})
+        } catch e {
+            results.send({ok: false, value: _str(e)})
+        }
+        done = done + 1
+    }
+    return done
+}
+
+main() {
+    int WORKERS = 4
+    int N = 20
+
+    var tasks = threads.channel(64)
+    var results = threads.channel(64)
+
+    Array[Thread] ws = []
+    for WORKERS to i { ws.add(threads.start(worker, tasks, results)) }
+
+    // 提交任务：闭包捕获循环变量，必须**先拷到局部**（否则所有闭包看到同一个槽）
+    for N to i {
+        int x = i
+        tasks.send(func(): int { return x * x })
+    }
+
+    // 收集结果（完成顺序不保证，所以按"收到几条"计数而不是按下标）
+    var sum = 0
+    var bad = 0
+    for N to k {
+        var r = results.receive() as Dict
+        if r["ok"] as bool { sum = sum + _int(r["value"] as string) }
+        else { bad = bad + 1 }
+    }
+
+    // 停机：每个 worker 一个 null，然后 join
+    for WORKERS to i { tasks.send(null) }
+    var handled = 0
+    for ws to w { handled = handled + _int(w.join()) }
+
+    print("任务 " + _str(N) + "，失败 " + _str(bad) + "，平方和 " + _str(sum)
+        + "（期望 2470），各 worker 处理数合计 " + _str(handled))
+}

@@ -116,6 +116,15 @@ main() {
 }
 ```
 
+### `threads.current_id()`
+
+当前 OS 线程 id（`int`）。**只用于诊断/日志**（分清是哪条 worker 打的行）——OS 会复用线程 id，
+不要拿它做业务判断。TH11（2026-10-20）。
+
+```leno
+print("[worker " + _str(threads.current_id()) + "] start")
+```
+
 ### `threads.join_all(Array[Thread])`
 
 等一组线程结束（“WaitGroup”的等价物 —— **没有引入新对象类型**，见 TH3）。
@@ -228,6 +237,25 @@ print(t.state())                        // running
 print(t.join_for(5000))                 // true
 print(t.join())                         // 线程的返回值（收尾只做一次）
 ```
+
+### `thread.error()`
+
+取线程的错误信息（`string`；没出错 ⇒ 空串）。TH11（2026-10-20）。
+
+**为什么需要**：fire-and-forget 的线程抛异常时，错误只存在线程对象里，**没人 `join` 就永远看不到**
+（症状是"任务静默没结果"）。有了它可以先看 `error()` 再决定要不要 `join`。
+
+```leno
+var t = threads.start(work)
+if t.state() == "error" {
+    print("线程失败：" + t.error())     // 不必 join（join 会抛异常）
+} else {
+    t.join()
+}
+```
+
+> `throw "xxx"` 的错误文案现在能正确透传（旧版会报成「非字符串异常（对象类型 2）」——
+> 因为 `throw` 的异常值其实是 `{msg, line, file, stack}` 的 Dict，见 TH11）。
 
 ### `thread.state()`
 

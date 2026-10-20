@@ -54,6 +54,35 @@ static Value thread_method_join_for(int argc, Value* args) {
     return val_bool(thread_join_for(thread, timeout_ms) != 0);
 }
 
+// t.error() -> string（TH11，2026-10-20）：取线程的错误信息
+//   为什么需要：fire-and-forget 的线程（没人 join）出错时，错误只存在 thread_obj->error_msg 里
+//   ⇒ 没有 join 就永远看不到（表现为"任务静默没结果"✗）。有了它就能先 error() 再决定是否 join。
+//   没有错误 ⇒ 空串（不是 null，省掉调用方判空）
+static Value thread_method_error(int argc, Value* args) {
+    (void)argc;
+    ObjThread* thread = (ObjThread*)val_as_obj(args[0]);
+    Value out = val_null();
+    platform_mutex_lock(&thread->mutex);
+    const char* msg = thread->error_msg;
+    if (msg && msg[0] != '\0') {
+        ObjString* s = str_copy(msg, (int)strlen(msg));
+        if (s) out = val_obj((Object*)s);
+    } else {
+        ObjString* s = str_copy("", 0);
+        if (s) out = val_obj((Object*)s);
+    }
+    platform_mutex_unlock(&thread->mutex);
+    return out;
+}
+
+// threads.current_id() -> int（TH11）：当前 OS 线程 id（诊断用：日志里分清是哪个 worker）
+//   ⚠ 只在诊断/日志里用，**不要**拿它做业务判断（id 会被 OS 复用）
+static Value threads_current_id(int argc, Value* args) {
+    (void)argc;
+    (void)args;
+    return val_int((int64_t)(uintptr_t)platform_thread_self());
+}
+
 static Value thread_method_state(int argc, Value* args) {
     (void)argc;
     ObjThread* thread = (ObjThread*)val_as_obj(args[0]);
@@ -436,6 +465,8 @@ void threads_init_instance_methods(void) {
     // Thread 实例方法
     thread_register_method("join", make_native(thread_method_join, 1, "join"), TYPE_ANY, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
     thread_register_method("state", make_native(thread_method_state, 1, "state"), TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
+    // error() -> string（TH11）：fire-and-forget 线程的错误也能看见（空串 = 没出错）
+    thread_register_method("error", make_native(thread_method_error, 1, "error"), TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
     // join_for(timeout_ms) -> bool（TH9）：超时返回 false，线程继续跑（之后仍可 join 取结果）
     TypeKind join_for_params[] = {TYPE_INT};
     thread_register_method("join_for", make_native(thread_method_join_for, 2, "join_for"), TYPE_BOOL, TYPE_UNKNOWN, NATIVE_FIXED(join_for_params));
@@ -481,6 +512,9 @@ void threads_init_module(void) {
     TypeKind sleep_params[] = {TYPE_INT};
     // 返回 `null`（v3.2.6）：实现就是 `return val_null()`（睡完不产生值）⇒ 别再说它是 any。
     native_register_module_method("threads", "sleep", threads_sleep, &NATIVE_T_NULL, NATIVE_FIXED(sleep_params));
+
+    // current_id() -> int（TH11）：当前 OS 线程 id（诊断/日志）
+    native_register_module_method("threads", "current_id", threads_current_id, &NATIVE_T_INT, NATIVE_FIXED_NONE(0));
 
     // ---- 并行原语（TH3，2026-10-12）----
     // join_all(Array[Thread]) ⇒ int（真正 joined 的个数）

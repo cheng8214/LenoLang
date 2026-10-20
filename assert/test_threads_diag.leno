@@ -1,0 +1,51 @@
+// test_threads_diag.leno —— TH11：线程诊断（current_id / error）
+//
+// 背景（见 docs/线程并发能力修复追踪.md 的 TH11）：
+//   · 没有线程 id ⇒ 日志分不清是哪个 worker；
+//   · fire-and-forget 线程抛异常时，错误只存在 `thread_obj->error_msg` 里，
+//     没人 join 就永远看不到（症状是"任务静默没结果"）。
+//
+// 判据：
+//   ① `threads.current_id()` 非 0；子线程的 id 与主线程不同
+//   ② 正常线程 `t.error()` 是空串
+//   ③ 出错线程：`t.error()` 能读到异常文案（**不用 join**）
+import threads
+import strings
+
+func ok(): int { return 1 }
+
+func boom(): int { throw "boom-in-thread" }
+
+func idWorker(Channel out) { out.send(threads.current_id()) }
+
+main() {
+    // ---------- ① 线程 id ----------
+    var mainId = threads.current_id()
+    assert_true(mainId != 0, "①主线程 current_id 非 0")
+
+    var ch = threads.channel(1)
+    var t = threads.start(idWorker, ch)
+    var childId = _int(ch.receive())
+    t.join()
+    assert_true(childId != 0, "②子线程 current_id 非 0")
+    assert_true(childId != mainId, "②子线程 id 与主线程不同")
+
+    // ---------- ② 正常线程 ----------
+    var a = threads.start(ok)
+    assert_eq(a.join(), 1, "③正常线程返回值")
+    assert_eq(a.error(), "", "③正常线程 error() 是空串")
+
+    // ---------- ③ 出错线程：不 join 也能看到错误 ----------
+    var b = threads.start(boom)
+    var caught = ""
+    try {
+        b.join_for(2000)
+    } catch e {
+        caught = _str(e)
+    }
+    assert_true(strings.has(caught, "boom-in-thread"), "④join 会抛异常（实际：" + caught + "）")
+    assert_true(strings.has(b.error(), "boom-in-thread"), "④error() 也能读到（实际：" + b.error() + "）")
+    assert_eq(b.state(), "error", "④state 是 error")
+
+    print("test_threads_diag passed")
+}

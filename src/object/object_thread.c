@@ -643,6 +643,19 @@ static void* thread_entry_point(void* arg) {
         if (child_vm.has_exception && val_is_obj(child_vm.exception) && val_as_obj(child_vm.exception)->type == OBJ_STRING) {
             ObjString* err = (ObjString*)val_as_obj(child_vm.exception);
             thread_obj->error_msg = strdup(err->chars);
+        } else if (child_vm.has_exception && val_is_obj(child_vm.exception)
+                   && val_as_obj(child_vm.exception)->type == OBJ_DICT) {
+            // ★ TH11（2026-10-20）：`throw "xxx"` 会被 `wrap_string_exception` 包成
+            //   `{msg, line, file, stack}`（见 `vm_exception.inc:295`）⇒ 异常值其实是 **Dict**。
+            //   旧代码只认 OBJ_STRING，于是**所有**用户 `throw "..."` 都被写成
+            //   "非字符串异常（对象类型 2）—— 常见于进入函数体之前就失败" ⇒ 把人往"模块没加载"上引 ✗
+            ObjString* mk = str_copy("msg", 3);
+            Value mv = mk ? dict_get((ObjDict*)val_as_obj(child_vm.exception), val_obj((Object*)mk)) : val_null();
+            if (val_is_string(mv)) {
+                thread_obj->error_msg = strdup(((ObjString*)val_as_obj(mv))->chars);
+            } else {
+                thread_obj->error_msg = strdup("非字符串异常（错误对象里没有 msg 字段）");
+            }
         } else if (child_vm.has_exception && val_is_obj(child_vm.exception)) {
             char buf[200];
             snprintf(buf, sizeof(buf),

@@ -15,6 +15,8 @@ Leno 提供基于 **隔离 VM + Channel** 的多线程支持，参考 Go 语言�
 | `threads.start(func, args...)` | 启动新线程，可传递参数 |
 | `t.join()` | 等待线程结束，获取返回值 |
 | `t.join_for(ms)` | 带超时的等待：`true`=已结束，`false`=超时（线程继续跑） |
+| `t.error()` | 线程的错误文案（空串 = 没出错；**不用 join 也能看到**） |
+| `threads.current_id()` | 当前 OS 线程 id（诊断/日志用，别做业务判断） |
 | `ch.send(value)` | 向通道发送值（阻塞） |
 | `ch.receive()` | 从通道接收值（阻塞） |
 | `ch.try_send(value)` | 非阻塞发送，成功返回 true |
@@ -719,6 +721,8 @@ while true {
 
 - 子线程正常运行：`t.join()` 返回线程函数的返回值
 - 子线程抛出异常：`t.state()` 返回 `"error"`，`t.join()` 会在主线程**抛出异常**，错误信息格式为 `"Thread error: <子线程错误信息>"`
+- **不想 join 又想看错误**：`t.error()`（空串 = 没出错）。fire-and-forget 的线程出错时，
+  没人 `join` 就只剩这一个入口能看见（`throw "x"` 的原文能正确带出，TH11）
 
 ```leno
 var t = threads.start(func(){
@@ -747,6 +751,33 @@ try {
     print("线程出错: " + e)
 }
 ```
+
+### 11.5 线程池（任务 = 闭包）
+
+完整可跑示例：`examples/threads/pool.leno`（4 worker / 20 任务，实测平方和 2470）。骨架：
+
+```leno
+func worker(Channel tasks, Channel results): int {
+    var done = 0
+    while true {
+        var job = tasks.receive()
+        if job == null { break }                    // 停机信号
+        try {
+            results.send({ok: true, value: _str((job as any)())})
+        } catch e {
+            results.send({ok: false, value: _str(e)})
+        }
+        done = done + 1
+    }
+    return done
+}
+```
+
+三个要点：
+1. **背压**：`tasks` / `results` 都设容量，满了 `send` 阻塞（自然限流，不会无限堆任务）
+2. **异常别静默**：worker 里 `try/catch` 把错误当结果回传 —— 线程池最怕"任务没结果也没报错"
+3. **循环变量先拷局部**：`for N to i { int x = i; tasks.send(func(){ return x*x }) }`
+   （直接捕获 `i` 会让所有闭包看到同一个槽）
 
 ### 12. threads 与 async 的交互规则
 
