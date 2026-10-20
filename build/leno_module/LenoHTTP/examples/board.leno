@@ -1,0 +1,285 @@
+// board.leno —— 注册 + 留言板（LenoHTTP + LenoSqlite + LenoCrypto + LenoUUID）
+//
+// 目的：用真实应用把模块的"最后一公里"压出来（不是 demo 好看，而是**能登录、能发言、不怕注入**）。
+// 运行：build\leno.exe build\leno_module\LenoHTTP\examples\board.leno 8090
+//
+// 设计要点
+//   · 密码：salt + sha256(salt + ":" + 密码)  —— LenoCrypto；生产应换 argon2/scrypt（本机没绑定）
+//   · 会话：随机 token 存 sessions 表 + HttpOnly cookie（SameSite=Lax）
+//   · CSRF：表单带 `_csrf`，值必须等于会话 token（简单双提交）
+//   · SQL：**全部预编译绑定**（`?` 占位）—— 用户名/留言里带 `'` `--` 都只是数据
+//   · 输出：一律走模板 `{{…}}`（自动转义）—— 留言里写 <script> 只会显示成文字
+import strings
+import times
+import jsons
+import dirs
+import "HTTP" as http
+import "Crypto" as crypto
+import "UUID" as uuid
+import "sqlite3" as sqlite3
+use sqlite3.Statement
+
+// 数据库：main 里换成文件（同一目录 board.db）；模块级先给内存库，避免导入期失败
+var GDB = sqlite3.openMemory()
+var GDB_OK = false
+
+// ==================== SQL 小工具（全部走绑定参数）====================
+func all(string sql, Array params): Array[Dict] {
+    Array[Dict] out = []
+    GDB.queryWithParams(sql, params, func(Statement s): bool {
+        Dict d = {}
+        for 0:s.columnCount() - 1 to i {
+            d.set(s.columnName(i), s.column_text(i))
+        }
+        out.add(d)
+        return true
+    })
+    return out
+}
+
+func first(string sql, Array params): Dict {
+    Dict d = {}
+    GDB.queryWithParams(sql, params, func(Statement s): bool {
+        for 0:s.columnCount() - 1 to i {
+            d.set(s.columnName(i), s.column_text(i))
+        }
+        return false
+    })
+    return d
+}
+
+func run(string sql, Array params): int {
+    var st = GDB.prepare(sql)
+    if not st.isOk() { return -1 }
+    for 0:params.len() - 1 to i {
+        st.bind(i + 1, params[i])
+    }
+    var rc = st.step()
+    st.finalize()
+    return rc
+}
+
+func nowText(): string {
+    return times.format(times.now(), "%Y-%m-%d %H:%M:%S")
+}
+
+// ==================== 会话 / 用户 ====================
+func sessionUser(Dict req): string {
+    string sid = http.cookie(req, "sid", "")
+    if sid == "" { return "" }
+    var r = first("SELECT user FROM sessions WHERE token = ?", [sid])
+    if r.len() == 0 { return "" }
+    return r.get("user", "") as string
+}
+
+func sessionToken(Dict req): string {
+    return http.cookie(req, "sid", "")
+}
+
+func validName(string s): bool {
+    if s.byte_len() < 3 or s.byte_len() > 20 { return false }
+    for s.to_bytes() to b {
+        if b >= 48 and b <= 57 { continue }        // 0-9
+        if b >= 65 and b <= 90 { continue }        // A-Z
+        if b >= 97 and b <= 122 { continue }       // a-z
+        if b == 95 { continue }                    // _
+        return false
+    }
+    return true
+}
+
+func hashPass(string salt, string pass): string {
+    return crypto.sha256(salt + ":" + pass)
+}
+
+// ==================== 页面骨架 ====================
+func page(string title, string body, string user): string {
+    string nav = "<a href=\"/\">留言板</a>"
+    if user == "" {
+        nav = nav + " · <a href=\"/register\">注册</a> · <a href=\"/login\">登录</a>"
+    } else {
+        nav = nav + " · <b>" + http.esc(user) + "</b> · <form class=\"inline\" method=\"post\" action=\"/logout\">"
+            + "<button class=\"link\">退出</button></form>"
+    }
+    return "<!doctype html><html lang=\"zh\"><head><meta charset=\"utf-8\">"
+        + "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+        + "<title>" + http.esc(title) + " · Leno 留言板</title><style>"
+        + "body{margin:0;background:#0e1116;color:#dfe6ee;font:15px/1.6 system-ui,'Segoe UI',sans-serif}"
+        + ".wrap{max-width:760px;margin:0 auto;padding:28px 18px 60px}"
+        + "h1{font-size:22px;margin:0 0 4px}h1 small{color:#8b98a9;font-size:13px;font-weight:400}"
+        + "nav{margin:14px 0 22px;color:#8b98a9;font-size:14px}"
+        + "nav a{color:#7cc4ff;text-decoration:none}nav b{color:#e8eef7}"
+        + ".card{background:#151a21;border:1px solid #232b36;border-radius:12px;padding:18px;margin:14px 0}"
+        + ".card h3{margin:0 0 10px;font-size:15px;color:#9fb0c4;font-weight:600}"
+        + "input,textarea{width:100%;box-sizing:border-box;background:#0e1116;border:1px solid #2a3442;"
+        + "border-radius:8px;color:#dfe6ee;padding:9px 11px;font:inherit;margin:6px 0 12px}"
+        + "button{background:#2f6feb;border:0;border-radius:8px;color:#fff;padding:9px 16px;font:inherit;cursor:pointer}"
+        + "button.link{background:none;color:#7cc4ff;padding:0;font-size:14px}"
+        + "form.inline{display:inline}.msg{border-top:1px solid #232b36;padding:12px 0}"
+        + ".msg:first-child{border-top:0}.meta{color:#8b98a9;font-size:13px;margin-bottom:4px}"
+        + ".err{color:#ff8a8a;background:#2a1719;border:1px solid #5a2a2f;border-radius:8px;padding:9px 12px;margin:0 0 14px}"
+        + ".ok{color:#9be3a6}.muted{color:#8b98a9;font-size:13px}"
+        + "</style></head><body><div class=\"wrap\"><h1>" + http.esc(title)
+        + " <small>LenoHTTP + LenoSqlite</small></h1><nav>" + nav + "</nav>" + body + "</div></body></html>"
+}
+
+func fmtErr(string msg): string {
+    if msg == "" { return "" }
+    return "<p class=\"err\">" + http.esc(msg) + "</p>"
+}
+
+// ==================== 首页：留言列表 + 发言框 ====================
+func home(Dict req): Dict {
+    var user = sessionUser(req)
+    var rows = all("SELECT p.body, p.created, u.name AS name FROM posts p JOIN users u ON u.id = p.user_id ORDER BY p.id DESC LIMIT 50", [])
+    Array[string] items = []
+    for rows to r {
+        items.add("<div class=\"msg\"><div class=\"meta\"><b>" + http.esc(r.get("name", "") as string)
+            + "</b> · " + http.esc(r.get("created", "") as string) + "</div><div>"
+            + http.esc(r.get("body", "") as string) + "</div></div>")
+    }
+    var list = "还没有留言，来写第一条吧。"
+    if items.len() > 0 { list = "" }
+    for items to it { list = list + it }
+
+    var composer = "<div class=\"card\"><h3>登录后发言</h3><p class=\"muted\">"
+        + "<a href=\"/login\">登录</a> 或 <a href=\"/register\">注册</a> 后即可留言。</p></div>"
+    if user != "" {
+        composer = "<div class=\"card\"><h3>写留言</h3><form method=\"post\" action=\"/post\">"
+            + "<input type=\"hidden\" name=\"_csrf\" value=\"" + http.esc(sessionToken(req)) + "\">"
+            + "<textarea name=\"body\" rows=\"3\" maxlength=\"500\" placeholder=\"说点什么…\"></textarea>"
+            + "<button>发布</button></form></div>"
+    }
+
+    var body = composer + "<div class=\"card\"><h3>最新留言</h3>" + list + "</div>"
+    return http.html(page("留言板", body, user))
+}
+
+// ==================== 注册 ====================
+func registerForm(Dict req, string err): Dict {
+    var body = fmtErr(err) + "<div class=\"card\"><h3>注册</h3><form method=\"post\" action=\"/register\">"
+        + "<label>用户名（3-20 位字母/数字/下划线）</label><input name=\"name\" autocomplete=\"username\">"
+        + "<label>密码（至少 6 位）</label><input name=\"pass\" type=\"password\" autocomplete=\"new-password\">"
+        + "<label>再输一次</label><input name=\"pass2\" type=\"password\" autocomplete=\"new-password\">"
+        + "<button>注册</button></form></div>"
+    return http.html(page("注册", body, sessionUser(req)))
+}
+
+func registerPost(Dict req): Dict {
+    var f = req["form"] as Dict
+    string name = (f.get("name", "") as string).trim()
+    string pass = f.get("pass", "") as string
+    string pass2 = f.get("pass2", "") as string
+    if not validName(name) { return registerForm(req, "用户名不合法：3-20 位字母/数字/下划线") }
+    if pass.byte_len() < 6 { return registerForm(req, "密码至少 6 位") }
+    if pass != pass2 { return registerForm(req, "两次密码不一致") }
+
+    var existing = first("SELECT id FROM users WHERE name = ?", [name])
+    if existing.len() > 0 { return registerForm(req, "用户名已被占用") }
+
+    string salt = uuid.short(16)
+    run("INSERT INTO users (name, salt, pass_hash, created) VALUES (?, ?, ?, ?)",
+        [name, salt, hashPass(salt, pass), nowText()])
+    // 注册即登录
+    string sid = uuid.v4() + uuid.short(8)
+    run("INSERT INTO sessions (token, user, created) VALUES (?, ?, ?)", [sid, name, nowText()])
+    return http.setCookie(http.redirect("/"), "sid", sid, "/", 0)
+}
+
+// ==================== 登录 / 退出 ====================
+func loginForm(Dict req, string err): Dict {
+    var body = fmtErr(err) + "<div class=\"card\"><h3>登录</h3><form method=\"post\" action=\"/login\">"
+        + "<label>用户名</label><input name=\"name\" autocomplete=\"username\">"
+        + "<label>密码</label><input name=\"pass\" type=\"password\" autocomplete=\"current-password\">"
+        + "<button>登录</button></form></div>"
+    return http.html(page("登录", body, sessionUser(req)))
+}
+
+func loginPost(Dict req): Dict {
+    var f = req["form"] as Dict
+    string name = (f.get("name", "") as string).trim()
+    string pass = f.get("pass", "") as string
+    if name == "" or pass == "" { return loginForm(req, "用户名和密码都要填") }
+
+    var u = first("SELECT name, salt, pass_hash FROM users WHERE name = ?", [name])
+    if u.len() == 0 { return loginForm(req, "用户名或密码不对") }
+    if hashPass(u.get("salt", "") as string, pass) != (u.get("pass_hash", "") as string) {
+        return loginForm(req, "用户名或密码不对")
+    }
+    string sid = uuid.v4() + uuid.short(8)
+    run("INSERT INTO sessions (token, user, created) VALUES (?, ?, ?)", [sid, name, nowText()])
+    return http.setCookie(http.redirect("/"), "sid", sid, "/", 0)
+}
+
+func logoutPost(Dict req): Dict {
+    string sid = sessionToken(req)
+    if sid != "" { run("DELETE FROM sessions WHERE token = ?", [sid]) }
+    Dict res = http.clearCookie(http.redirect("/"), "sid")
+    return res
+}
+
+// ==================== 发留言 ====================
+func createPost(Dict req): Dict {
+    var user = sessionUser(req)
+    if user == "" { return http.redirect("/login") }
+    var f = req["form"] as Dict
+    string csrf = f.get("_csrf", "") as string
+    if csrf == "" or csrf != sessionToken(req) { return http.status(400, "CSRF 校验失败") }
+    string body = (f.get("body", "") as string).trim()
+    if body == "" { return http.redirect("/") }
+    if body.byte_len() > 500 { body = strings.byte_slice(body, 0, 499) }
+
+    var u = first("SELECT id FROM users WHERE name = ?", [user])
+    if u.len() == 0 { return http.redirect("/login") }
+    run("INSERT INTO posts (user_id, body, created) VALUES (?, ?, ?)",
+        [u.get("id", "0") as string, body, nowText()])
+    return http.redirect("/")
+}
+
+// ==================== 建表 / 启动 ====================
+func initSchema() {
+    GDB.exec("CREATE TABLE IF NOT EXISTS users ("
+        + "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        + "name TEXT UNIQUE NOT NULL,"
+        + "salt TEXT NOT NULL,"
+        + "pass_hash TEXT NOT NULL,"
+        + "created TEXT NOT NULL)")
+    GDB.exec("CREATE TABLE IF NOT EXISTS posts ("
+        + "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        + "user_id INTEGER NOT NULL,"
+        + "body TEXT NOT NULL,"
+        + "created TEXT NOT NULL)")
+    GDB.exec("CREATE TABLE IF NOT EXISTS sessions ("
+        + "token TEXT PRIMARY KEY,"
+        + "user TEXT NOT NULL,"
+        + "created TEXT NOT NULL)")
+}
+
+main() {
+    sqlite3.initialize()
+    string dbPath = dirs.join(dirs.script_dir(), "board.db")
+    GDB = sqlite3.open(dbPath)
+    GDB_OK = GDB.isOk()
+    if not GDB_OK {
+        print("打开数据库失败：" + GDB.errmsg() + "\n")
+        return
+    }
+    GDB.busyTimeout(3000)
+    initSchema()
+
+    var app = http.newApp()
+    http.get(app, "/", home)
+    http.get(app, "/register", func(Dict req): Dict { return registerForm(req, "") })
+    http.post(app, "/register", registerPost)
+    http.get(app, "/login", func(Dict req): Dict { return loginForm(req, "") })
+    http.post(app, "/login", loginPost)
+    http.post(app, "/logout", logoutPost)
+    http.post(app, "/post", createPost)
+
+    int port = 8090
+    var args = _args()
+    if args.len() > 0 { port = _int(_str(args[0])) }
+
+    print("留言板已启动：http://127.0.0.1:" + _str(port) + "/   数据库：" + dbPath + "\n")
+    http.serve(app, "127.0.0.1", port)
+}

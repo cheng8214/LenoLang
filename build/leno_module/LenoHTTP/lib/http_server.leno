@@ -90,7 +90,15 @@ func _write_response(Socket c, Dict res, bool keep, bool acceptGzip): bool {
         _put(out, "Vary: Accept-Encoding\r\n")
     }
     for hs.keys() to k {
-        _put(out, k + ": " + (hs[k] as string) + "\r\n")
+        var hv = hs.get(k, "")
+        // 2026-10-20：值可以是 Array[string] ⇒ 逐行写（多枚 Set-Cookie 要各占一行 ✓）
+        if hv is Array {
+            for (hv as Array[string]) to line {
+                _put(out, k + ": " + line + "\r\n")
+            }
+        } else {
+            _put(out, k + ": " + _str(hv) + "\r\n")
+        }
     }
     _put(out, "\r\n")
     for body.to_bytes() to b { out.add(b) }

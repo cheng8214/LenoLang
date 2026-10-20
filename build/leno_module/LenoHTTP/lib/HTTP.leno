@@ -50,6 +50,14 @@ export func esc(string s): string { return a.esc(s) }
 export func render(string tpl, Dict vars): string { return a.render(tpl, vars) }
 export func htmlTemplate(string tpl, Dict vars): Dict { return a.html_template(tpl, vars) }
 
+// ==================== Cookie（2026-10-20）====================
+// `cookie(req, "sid", "")` 读；`setCookie(res, "sid", tok, "/", 0)` 写（0 = 会话 cookie）
+export func cookie(Dict req, string name, string def = ""): string { return a.cookie(req, name, def) }
+export func setCookie(Dict res, string name, string value, string path = "/", int maxAge = 0): Dict {
+    return a.set_cookie(res, name, value, path, maxAge)
+}
+export func clearCookie(Dict res, string name): Dict { return a.clear_cookie(res, name) }
+
 // ==================== 服务 ====================
 // {ok, sock, host, port, err} —— 端口传 0 由系统分配（测试/临时服务常用）
 export func listen(string host, int port): Dict { return srv.listen(host, port) }

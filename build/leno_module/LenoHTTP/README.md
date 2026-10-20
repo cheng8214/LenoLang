@@ -41,6 +41,9 @@ build\leno.exe build\leno_module\LenoHTTP\examples\hello_server.leno 8080 D:\www
 | `esc(s)` | HTML 转义（`& < > " '`） |
 | `render(tpl, vars)` | 模板：`{{x}}` **转义**输出、`{{{x}}}` 原样输出、缺键给空串 |
 | `htmlTemplate(tpl, vars)` | 模板 → `text/html` 响应 |
+| `cookie(req, name, def)` | 读 cookie（`Cookie: a=1; b=2`） |
+| `setCookie(res, name, value, path, maxAge)` | 写 `Set-Cookie`（`maxAge=0` = 会话 cookie；可多次调用，逐行发出） |
+| `clearCookie(res, name)` | 删除 cookie |
 
 **gzip 响应（2026-10-18，自动）**：请求带 `Accept-Encoding: gzip` 且响应体 ≥ 1KB、
 类型可压（`text/*` / json / javascript / xml / svg）时自动压缩，头里给

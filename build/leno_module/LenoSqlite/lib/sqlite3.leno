@@ -406,7 +406,11 @@ export struct Database {
 
     // 便捷查询：执行带参数的 SQL 并对每行调用回调
     // params: 参数数组（按 ? 顺序绑定）
-    func queryWithParams(string sql, Array[any] params, RowCallback cb): int {
+    // ★ 2026-10-20：参数类型从 `Array[any]` 放宽成裸 `Array`
+    //   原因（写 board.leno 时被卡住）：`Array[string]` / `Array[int]` **不能**传给
+    //   `Array[any]`（无协变）⇒ 每个调用点都要手搓 `Array[any]`，同一句 SQL 的
+    //   `[name, salt, hash]` 直接编译不过。绑定本身逐元素 `bind(any)` ⇒ 放宽不损失检查。
+    func queryWithParams(string sql, Array params, RowCallback cb): int {
         Statement stmt = prepare(sql)
         for params.len() to i {
             stmt.bind(i + 1, params[i])

@@ -63,6 +63,52 @@ export func redirect(string url, int code): Dict {
 
 export func not_found(): Dict { return status(404, "404 Not Found") }
 
+// ==================== Cookie（2026-10-20）====================
+// 为什么加：写"注册/留言板"这种有登录态的应用时，每个 handler 都要自己
+//   ① 从 `req["headers"]["cookie"]` 里按 "a=1; b=2" 切字符串；
+//   ② 想发**多枚** Set-Cookie 时无路可走（headers 只接受字符串）✗
+//   ⇒ 提供读/写各一个助手，并把"数组值 header"支持进响应写出。
+// 读：`http.cookie(req, "sid", "")`
+export func cookie(Dict req, string name, string def): string {
+    Dict hs = req["headers"] as Dict
+    if not hs.has("cookie") { return def }
+    string raw = hs.get("cookie", "") as string
+    if raw == "" { return def }
+    for strings.split(raw, ";") to part {
+        string kv = part.trim()
+        if kv == "" { continue }
+        int eq = p.find(kv, "=", 0)
+        if eq <= 0 { continue }
+        if kv.byte_slice(0, eq - 1).trim() == name {
+            return kv.byte_slice(eq + 1, kv.byte_len() - 1).trim()
+        }
+    }
+    return def
+}
+
+// 写：`return http.set_cookie(http.redirect("/"), "sid", tok, "/", 0)`
+//   maxAge = 0 ⇒ 会话 cookie（关浏览器就失效）；> 0 ⇒ Max-Age 秒
+//   ⚠ 多枚 cookie：headers["Set-Cookie"] 存成 Array[string]，由 _write_response 逐行写出 ✓
+export func set_cookie(Dict res, string name, string value, string path, int maxAge): Dict {
+    string line = name + "=" + value + "; Path=" + path + "; HttpOnly; SameSite=Lax"
+    if maxAge > 0 { line = line + "; Max-Age=" + _str(maxAge) }
+    Dict hs = res["headers"] as Dict
+    var existing = hs.get("Set-Cookie", null)
+    if existing is Array {
+        (existing as Array[string]).add(line)
+    } else {
+        Array[string] arr = []
+        arr.add(line)
+        hs.set("Set-Cookie", arr)
+    }
+    return res
+}
+
+// 删除 cookie（Max-Age=0 + 空值）
+export func clear_cookie(Dict res, string name): Dict {
+    return set_cookie(res, name, "", "/", 0)
+}
+
 // ==================== HTML 转义 / 模板（2026-10-18）====================
 // 为什么要有：手写 `s + "<p>" + user_input` 是最常见的 XSS 来源（演示站里我专门写了
 //   esc() 做对照）。这里把"转义"变成默认行为：
