@@ -17,6 +17,13 @@
 
 // 必须在任何其他头文件之前包含 winsock2.h，否则会导致 windows.h 被先包含的警告
 #ifdef _WIN32
+    // ★ 必须在 winsock2.h 之前定义（TH14，2026-10-20）
+    //   Windows 的 `fd_set` 是**固定 64 项**的数组（FD_SETSIZE=64），`FD_SET` 只写不检查上限
+    //   ⇒ 挂起的 async IO / select 入参超过 64 个时**越界写栈**，表现为"跑到 65 个连接就卡死/崩溃"。
+    //   实测：N=2 正常、N=70 必卡。这里放宽到 1024（每份 fd_set ≈ 8KB 栈，可接受）。
+    #ifndef FD_SETSIZE
+        #define FD_SETSIZE 1024
+    #endif
     #include <winsock2.h>
     #include <ws2tcpip.h>
     #include <windows.h>
@@ -69,8 +76,11 @@ extern ObjNative* make_native(NativeFn fn, int arity, const char* name);
 static ObjSocket* create_socket_obj(socket_fd_t fd, int type);
 static inline int socket_is_valid(ObjSocket* sock);
 
-// 最大并发异步 I/O 数
-#define MAX_ASYNC_IO 64
+// 异步 I/O 表：**动态扩容**（TH14，2026-10-20）
+//   原先固定 64 项（`AsyncIORequest g_async_requests[64]`），第 65 个并发挂起直接
+//   报「注册异步 I/O 失败（可能已达上限）」—— 64 个连接就到顶，根本不是"海量连接"。
+//   现在按需翻倍；初始容量保持 64（绝大多数小脚本不会因此多占内存）。
+#define ASYNC_IO_INITIAL_CAPACITY 64
 
 // 异步操作类型
 typedef enum { ASYNC_OP_RECV = 1, ASYNC_OP_ACCEPT } AsyncOpType;
@@ -85,12 +95,20 @@ typedef struct {
     int           active;      // 是否仍在等待
 } AsyncIORequest;
 
-static AsyncIORequest g_async_requests[MAX_ASYNC_IO];
-static int g_async_count = 0;
+static AsyncIORequest* g_async_requests = NULL;
+static int g_async_count = 0;        // 已用槽位数（含 inactive；poll 里会压缩掉）
+static int g_async_capacity = 0;
 
 // 注册异步操作，返回 0 成功
 static int async_add(ObjSocket* sock, ObjFuture* future, AsyncOpType op, char* buf, int buf_size) {
-    if (g_async_count >= MAX_ASYNC_IO) return -1;
+    if (g_async_count >= g_async_capacity) {
+        int new_cap = (g_async_capacity == 0) ? ASYNC_IO_INITIAL_CAPACITY : g_async_capacity * 2;
+        AsyncIORequest* grown = (AsyncIORequest*)realloc(g_async_requests,
+                                                         sizeof(AsyncIORequest) * (size_t)new_cap);
+        if (!grown) return -1;
+        g_async_requests = grown;
+        g_async_capacity = new_cap;
+    }
     AsyncIORequest* r = &g_async_requests[g_async_count++];
     r->sock = sock;
     r->future = future;
@@ -101,9 +119,29 @@ static int async_add(ObjSocket* sock, ObjFuture* future, AsyncOpType op, char* b
     return 0;
 }
 
+// 把 inactive 的槽位压掉（并释放它们的 buffer）
+//   为什么必须单独有个函数：取消（超时 / 协程结束）只把 active 置 0，槽位还占着；
+//   若"全部 inactive"时 poll 直接 return，就永远等不到压缩 ⇒ 泄漏 + `has_async_io` 恒 > 0
+//   ⇒ `asyncs.run()` 永不返回 ✗
+static void async_compact(void) {
+    int w = 0;
+    for (int i = 0; i < g_async_count; i++) {
+        if (g_async_requests[i].active) {
+            if (w != i) g_async_requests[w] = g_async_requests[i];
+            w++;
+        } else if (g_async_requests[i].buffer) {
+            free(g_async_requests[i].buffer);
+            g_async_requests[i].buffer = NULL;
+        }
+    }
+    g_async_count = w;
+}
+
 // 供 event_loop_run 调用: 用 select 等待就绪的 socket，执行真正的 I/O，完成 Future
 int sockets_poll_async_io(uint64_t timeout_ms) {
     if (g_async_count == 0) return 0;
+    async_compact();
+    if (g_async_count == 0) return 0;          // 全是已取消的请求 ⇒ 没事可等
 
     fd_set readfds, writefds;
     FD_ZERO(&readfds);
@@ -111,11 +149,14 @@ int sockets_poll_async_io(uint64_t timeout_ms) {
     socket_fd_t max_fd = 0;
     int has_pending = 0;
 
+    int nset = 0;
     for (int i = 0; i < g_async_count; i++) {
         AsyncIORequest* r = &g_async_requests[i];
         if (!r->active || !socket_is_valid(r->sock)) continue;
+        if (nset >= FD_SETSIZE) break;      // 防越界：超过上限的请求留到下一轮（fd_set 是定长数组）
         FD_SET(r->sock->fd, &readfds);
         if (r->sock->fd > max_fd) max_fd = r->sock->fd;
+        nset++;
         has_pending = 1;
     }
     if (!has_pending) return 0;
@@ -165,29 +206,34 @@ int sockets_poll_async_io(uint64_t timeout_ms) {
         }
     }
 
-    // 压缩数组：移除 inactive 项
-    int w = 0;
-    for (int i = 0; i < g_async_count; i++) {
-        if (g_async_requests[i].active) {
-            g_async_requests[w++] = g_async_requests[i];
-        } else {
-            if (g_async_requests[i].buffer) free(g_async_requests[i].buffer);
-        }
-    }
-    g_async_count = w;
+    async_compact();          // 移除本轮完成/取消的项
     return done;
 }
 
 // 查询是否有待处理的异步 I/O 请求
+//   ★ 只数 **active**（TH15）：以前返回 g_async_count（含已取消但还没压缩的槽位）
+//   ⇒ 超时取消后 run() 仍以为"有活要干"，永远不返回 ✗
 int sockets_has_async_io(void) {
-    return g_async_count;
+    int n = 0;
+    for (int i = 0; i < g_async_count; i++) {
+        if (g_async_requests[i].active) n++;
+    }
+    return n;
 }
 
-// 清理某个协程关联的所有异步请求（协程结束时调用）
+// 清理某个协程关联的所有异步请求（协程结束 / **超时**时调用，TH15）
+//   ★ 顺手释放 buffer：否则取消掉的 recv 会带着自己的 malloc 缓冲区一直留着
+//     （以前只在 poll 的压缩里 free，而"全部 inactive"时 poll 根本走不到那里）
 void sockets_cancel_async(ObjCoroutine* co) {
     for (int i = 0; i < g_async_count; i++) {
-        if (g_async_requests[i].future && g_async_requests[i].future->waiter == co) {
-            g_async_requests[i].active = 0;
+        AsyncIORequest* r = &g_async_requests[i];
+        if (!r->active) continue;
+        if (r->future && r->future->waiter == co) {
+            r->active = 0;
+            if (r->buffer) {
+                free(r->buffer);
+                r->buffer = NULL;
+            }
         }
     }
 }
@@ -907,13 +953,17 @@ static Value sockets_select_func(int argc, Value* args) {
 #endif
 
     // 将所有 socket 加入集合
+    //   ⚠ 上限 FD_SETSIZE：Windows 的 fd_set 是定长数组，超了会越界写栈（TH14）
+    int nset = 0;
     for (int i = 0; i < socks_arr->count; i++) {
         ObjSocket* sock = (ObjSocket*)val_as_obj(socks_arr->elements[i]);
         if (sock->fd != INVALID_SOCKET_FD) {
+            if (nset >= FD_SETSIZE) break;
             FD_SET(sock->fd, &readfds);
 #ifndef _WIN32
             if (sock->fd > max_fd) max_fd = sock->fd;
 #endif
+            nset++;
         }
     }
 

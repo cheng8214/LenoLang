@@ -190,6 +190,8 @@ void event_loop_add_timer(EventLoop* loop, uint64_t wake_time, ObjCoroutine* cor
     loop->timer_count++;
 }
 
+extern void sockets_cancel_async(ObjCoroutine* co);   // TH15：超时后取消底层 async IO
+
 // 检查并处理到期的定时器
 static void event_loop_check_timers(EventLoop* loop) {
     uint64_t now = current_time_ms();
@@ -208,6 +210,12 @@ static void event_loop_check_timers(EventLoop* loop) {
         if (co->waiting_for && !co->waiting_for->completed) {
             co->waiting_for->completed = 1;
             co->waiting_for->result = val_null();
+            // ★ TH15（2026-10-20）：定时器到期 = 这次等待超时（`asyncs.timeout` 或 `sleep`）。
+            //   如果它是挂在 socket 上的异步 IO（arecv / aaccept），**必须把请求一并取消** ——
+            //   否则 g_async_requests 里那一项仍 active ⇒ `sockets_has_async_io() > 0`
+            //   ⇒ `asyncs.run()` 的退出条件永远不满足 ⇒ **整个事件循环卡死** ✗
+            //   （实测：一个不回包的连接 + `asyncs.timeout(f, 1000)` 就能让 run() 永不返回）
+            sockets_cancel_async(co);
         }
         
         // 将协程加入就绪队列（保持 SUSPENDED 状态，让 vm_run_coroutine 恢复）

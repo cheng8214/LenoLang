@@ -1,0 +1,65 @@
+// test_async_timeout.leno —— TH15：asyncs.timeout 超时后必须取消底层 async IO（回归）
+//
+// 背景（见 docs/线程并发能力修复追踪.md 的 TH15）：
+//   `asyncs.timeout(f, ms)` 只在定时器到期时把 Future 标成完成（result=null），
+//   **没有取消** `f` 背后的 `arecv` 请求 ⇒ `g_async_requests` 里那一项仍 active
+//   ⇒ `sockets_has_async_io() > 0` ⇒ `asyncs.run()` 的退出条件永远不满足
+//   ⇒ **整个程序卡死**（实测：一个不回包的连接就能让 run() 永不返回）。
+//
+// 判据（关键在于服务端**保持连接不关**，否则"对端关闭"会让 arecv 正常完成，测不出取消）：
+//   ① `arecv + timeout(300)` 拿到 null
+//   ② 服务端协程已结束、连接被全局 `held` 持有 → run() 仍能在超时后 ~300ms 返回
+//      （修复前：请求没被取消 ⇒ run() 永久卡住 ⇒ 本用例会被外部超时 kill）
+import sockets
+import asyncs
+import threads
+import times
+
+int PORT = 39772
+
+// 全局持有已接受的连接：协程结束后 Socket 也不会被 GC 关掉
+Array[Socket] held = []
+
+async func silentServer(Socket srv, Channel out) {
+    var c = await srv.aaccept()
+    if c == null {
+        out.send(0)
+    } else {
+        held.add(c)          // 收下但不回包、也不 close
+        out.send(1)
+    }
+    // 协程到此结束：srv 不关，连接仍在
+}
+
+async func timedClient(Channel out) {
+    var c = sockets.connect("127.0.0.1", PORT)
+    if c == null { out.send(-1); return }
+    c.send("ping")
+    var f = c.arecv(1024)
+    var r = await asyncs.timeout(f, 300)      // 300ms 后超时 ⇒ null
+    out.send(if r == null then 1 else 0)
+    c.close()
+}
+
+main() {
+    var srv = sockets.listen("127.0.0.1", PORT)
+    if srv == null {
+        print("[FAIL] 监听失败（端口被占用？）")
+        _exit(1)
+    }
+
+    var srvOut = threads.channel(2)
+    var out = threads.channel(2)
+    var t0 = times.ms()
+
+    silentServer(srv, srvOut)
+    timedClient(out)
+    asyncs.run()                               // 修复前：这里会永久卡住
+
+    var ms = times.ms() - t0
+    assert_eq(_int(srvOut.receive()), 1, "①服务端接到了连接")
+    assert_eq(_int(out.receive()), 1, "②arecv + timeout(300) 应拿到 null")
+    // 服务端协程已退出、连接还开着 ⇒ 只有"取消 IO"才能让 run 在这时返回
+    assert_true(ms < 2000.0, "③run() 应在超时后不久返回（实际 " + _str(ms) + "ms；卡死即失败）")
+    print("test_async_timeout passed（" + _str(ms) + "ms）")
+}

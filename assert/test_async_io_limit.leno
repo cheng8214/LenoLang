@@ -1,0 +1,59 @@
+// test_async_io_limit.leno —— TH14：async 并发上限不再是 64（回归）
+//
+// 背景（见 docs/线程并发能力修复追踪.md 的 TH14）：
+//   `sockets.c` 的异步 I/O 表原本是**固定 64 项**的静态数组，第 65 个并发挂起的
+//   `arecv`/`aaccept` 会直接报「注册异步 I/O 失败（可能已达上限）」—— 64 个连接就到顶。
+//   现在按需翻倍扩容。
+//
+// 判据：70 个客户端同时 `arecv` 挂起 ⇒ **全部**收到回包（修复前第 65+ 个必然失败）：
+//   服务端每个连接一个协程、各自挂一个 arecv ⇒ 需要同时存在的异步 IO 至少 70 个。
+import sockets
+import asyncs
+import threads
+
+int PORT = 39771
+int N = 70
+
+async func echoHandle(Socket c) {
+    var d = await c.arecv(4096)
+    if d != null { c.send(d as string) }
+    c.close()
+}
+
+// ⚠ 监听器由主线程同步建好再传进来（async 函数体要等 run() 才开始执行）
+async func server(Socket srv, int n) {
+    for n to i {
+        var c = await srv.aaccept()
+        if c == null { break }
+        echoHandle(c)                       // 不 await ⇒ 每个连接一个协程
+    }
+    await asyncs.sleep(600)                 // 等最后一个 handle 收尾
+    srv.close()
+}
+
+async func client(int id, Channel out) {
+    var c = sockets.connect("127.0.0.1", PORT)
+    if c == null { out.send(0); return }
+    c.send("hello-" + _str(id))
+    var r = await c.arecv(64)
+    out.send(if r == null then 0 else 1)
+    c.close()
+}
+
+main() {
+    var srv = sockets.listen("127.0.0.1", PORT)
+    if srv == null {
+        print("[FAIL] 监听失败（端口被占用？）")
+        _exit(1)
+    }
+
+    var out = threads.channel(N + 8)
+    server(srv, N)
+    for N to i { client(i, out) }
+    asyncs.run()
+
+    var ok = 0
+    for N to i { ok = ok + _int(out.receive()) }
+    assert_eq(ok, N, "70 个并发 arecv 都应成功（修复前受 64 上限，后 6 个失败）")
+    print("test_async_io_limit passed（" + _str(ok) + "/" + _str(N) + "）")
+}
