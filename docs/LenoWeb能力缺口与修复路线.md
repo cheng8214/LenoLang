@@ -13,7 +13,7 @@
 | keep-alive（单连接 100 请求、5s 空闲超时） | ✅ |
 | 响应助手（text/html/json/bytes/status/redirect/notFound） | ✅ |
 | 单连接 100 请求 | **0.27 ms/请求 ≈ 3686 req/s**（Python `http.client` 测） |
-| 并发 | ❌ 单线程顺序处理（`Socket` 不能跨线程） |
+| 并发 | ✅ **线程池**（2026-10-20）：`sock.detach()` → `Channel[int]` → `sockets.from_fd()`，见 §3.1 |
 | TLS | ❌ 无 |
 | 文件上传（multipart） | ❌ 无 |
 | Range / 缓存头 / gzip 响应 | ❌ 无（gzip 已在 2026-10-18 补上，见 §2.1） |
@@ -24,7 +24,7 @@
 
 | # | 缺口 | 现状影响 | 修法 | 验收 |
 |---|---|---|---|---|
-| 1.1 | **并发** | 慢客户端占住后续所有连接；压测/真实流量下不可用 | 见 §3.1 三条路线（推荐 `Socket.fd()/from_fd()`） | 10 个慢连接并行时，普通请求仍 < 50ms |
+| 1.1 | **并发** | ✅ **已修（2026-10-20）**：`serveWorkers(app, host, port, n, worker)` 线程池 | 见 §3.1（`detach/from_fd` 方案已落地） | 3 个 slowloris 慢连接挂着时，5 个正常请求共 **2.3ms**（1 worker 对照 **3009ms**） |
 | 1.2 | **TLS** | 公网不可用 | **建议不做**：前面挂 Caddy/nginx 反代（一行配置）；真要内建再 FFI OpenSSL | 文档写明"仅内网/反代" |
 
 ### P1 —— 决定"好不好用"
@@ -65,14 +65,20 @@
 
 ## 3. 语言 / 运行时层（比补库更值钱）
 
-### 3.1 `Socket` 跨线程（P0 的根因）
+### 3.1 `Socket` 跨线程（P0 的根因）— ✅ 已落地（路线 1）
 `threads.start` 实参白名单不含 Socket ⇒ 写不出"每连接一线程"。三条路线：
 
-1. **`fd()` + `from_fd()`**（推荐，改动最小）：Socket → int → 线程内重建。
-   需要保证：`from_fd` 出来的 Socket 不再重复 close（所有权明确）。
-2. 把 Socket 加入跨线程白名单：要处理引用计数、双端关闭竞争。
-3. 单线程事件循环：非阻塞 + `select` + **HTTP 增量解析**（现在的解析是"阻塞读到完整请求"，
-   要改状态机，工作量中等，但可彻底解决"一个慢连接卡所有人"）。
+1. **`fd()` + `from_fd()`**（✅ 2026-10-20 落地）：Socket → int → 线程内重建。
+   - `sockets.c` 新增 `sock.fd()` / `sock.detach()`（交出所有权，原对象 fd 置 INVALID ⇒ 不 double close）
+     与 `sockets.from_fd(fd)`（新对象负责 close）。
+   - LenoHTTP 侧：`serve_workers/worker_loop`（`lib/http_server.leno`）+ `HTTP.serveWorkers/workerLoop`。
+   - ⚠ **app 不能传进线程**：路由表里是 handler 闭包，`value_clone_for_channel` 拒绝闭包
+     ⇒ worker 入口必须自己 `buildApp()`（每线程一份路由表）。
+   - ⚠ 模块级 `var` 跨线程共享且无锁 ⇒ 可变状态走 Channel 单点化。
+   - 验收：3 个 slowloris 慢连接（各挂 3s）+ 5 个正常请求，8 workers 时正常请求 **2.3ms**；
+     1 worker 对照 **3009ms**（`test/test_thread_server.leno`）。
+2. 把 Socket 加入跨线程白名单：要处理引用计数、双端关闭竞争 —— **不做**（路线 1 已够）。
+3. 单线程事件循环：非阻塞 + `select` + **HTTP 增量解析** —— 暂不做；连接数远超核数时再考虑。
 
 ### 3.2 字符串累加是 O(n²)
 实测：XLSX 1 万格逐格 `s = s + x` **1.8 秒**，`Array[int]` 累积后 **80ms**。
@@ -99,4 +105,4 @@ dispatcher 统一 `try/catch` → 500 页面（本轮未做，列为 2.4 的配�
 1. 2.3 路径参数 + 2.4 中间件（含 3.4 的 500 兜底）—— 写大站点前必须先有
 2. 2.6 Range/缓存头 + 2.7 分块发送 —— 静态资源是每个站都有的
 3. 2.5 multipart —— 有上传需求时立刻做
-4. 3.1 并发 —— 决定能不能对外，投入最大，建议单独排期
+4. ~~3.1 并发~~ ✅ 已完成（2026-10-20，线程池 `serveWorkers`，见 §3.1）
