@@ -246,3 +246,29 @@ parser 的 `AST_INDEX_ASSIGN` 分支，不经这里 ⇒ 才出现"两种写法�
 
 > 附带影响：`http.get(app, path, handler, Dict opts = {})` 因此写成 `any opts = null`（函数内判空）。
 > 这是受该限制影响的真实写法，见 `LenoHTTP/lib/http_app.leno`。
+
+### 3. `x.use(...)` 报「期望属性名」+「use 语句期望模块名」—— ✅ 已改成说清"保留字"
+
+**现象**：给 LenoHTTP 加中间件时把方法名起成 `use`（`http.use(app, fn)`）：
+
+```
+error: [语法错误] 期望属性名          ← 看不出是 `use` 的问题
+error: [语法错误] use 语句期望模块名   ← 更远，因为 `use` 又被当成语句开头
+```
+
+**根因**（`parser_expr.c` 的 `parse_dot`）：`.` 后面不是标识符时，旧代码只区分
+"内建类型关键字"与"其他"两种，后者一律说「期望属性名」；而 `use` 恰好在"其他"里。
+报错后返回也没吞掉这个 token ⇒ 外层又把它当语句开头，再报一条。
+
+**修法**（与 M5b 的「保留字撞名」同族，`parser_func.c` 的参数名那处同款）：
+
+```
+error: [语法错误] 'use' 是**保留字** ✗ 不能用作方法名/字段名 —— 换个名字（如 before / apply / with）；
+       若确实要用这个键名，写成 x["use"] ✓
+```
+
+- `parse_dot` 与 `parse_safe_dot`（`?.`）都改
+- 报错后 `lexer_next` 吞掉非法 token，避免它再被当语句开头
+- 用例：`assert\test_diag_static_errors.leno` 的 E2 组（`f.use(1)` ⇒ 文案含"是**保留字**"，落点行 3）
+- ⚠ 仍会伴随 1–2 条「期望 ')'」之类的**级联**（解析器恢复的老问题，见 T20）；
+  但**第一条就是真因**，不再把人往"忘写属性名"上引

@@ -1066,13 +1066,27 @@ Ast* parse_dot(Parser* p, Ast* left) {
     
     // 点号后面必须是标识符
     if (p->lex.current.type != TOK_IDENT) {
+        // ★ 2026-10-20（M5b 同族）：`.` 后撞**保留字**要说清，别再只给「期望属性名」
+        //   实测来源：给 LenoHTTP 加中间件时把方法名起成 `use`（`http.use(app, fn)`）
+        //   ⇒ 第一条只说「期望属性名」，随后 `use` 又被当语句开头 ⇒ 再冒第二条
+        //   「use 语句期望模块名」。两条都指不到"`use` 是保留字"这个真因 ✗
         if (is_type_keyword(p->lex.current.type)) {
             error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
                      "不能使用关键字(%.*s)作为属性名",
                      p->lex.current.len, p->lex.current.text);
         } else {
-            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望属性名");
+            const char* kw = lexer_keyword_text(p->lex.current.type);
+            if (kw) {
+                error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                    "'%s' 是**保留字** ✗ 不能用作方法名/字段名 —— 换个名字（如 before / apply / with）；"
+                    "若确实要用这个键名，写成 x[\"%s\"] ✓", kw, kw);
+            } else {
+                error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望属性名");
+            }
         }
+        // 吞掉这个非法 token：否则外层还会把它当语句开头（`use` ⇒ "use 语句期望模块名"），
+        //   再加"期望 ')'" "期望表达式" 一串级联噪音（实测 1 条真因 + 4 条噪音 ✗）
+        lexer_next(&p->lex);
         return left;
     }
     
@@ -1184,9 +1198,17 @@ Ast* parse_dot(Parser* p, Ast* left) {
 Ast* parse_safe_dot(Parser* p, Ast* left) {
     int line = p->lex.current.line;
     lexer_next(&p->lex); // 消费 '?.'
-    // 期望标识符
+    // 期望标识符（与 parse_dot 同款：撞保留字要说清，别只说「期望属性名」）
     if (p->lex.current.type != TOK_IDENT) {
-        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "?. 后期望属性名");
+        const char* kw = lexer_keyword_text(p->lex.current.type);
+        if (kw) {
+            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                "'%s' 是**保留字** ✗ 不能用作方法名/字段名 —— 换个名字；"
+                "若确实要用这个键名，写成 x[\"%s\"] ✓", kw, kw);
+        } else {
+            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "?. 后期望属性名");
+        }
+        lexer_next(&p->lex);      // 吞掉非法 token，避免外层再把它当语句开头（同 parse_dot）
         return left;
     }
     char* name = copy_string(p->lex.current.text, p->lex.current.len);

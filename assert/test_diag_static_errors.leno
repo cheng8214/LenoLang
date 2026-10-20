@@ -1047,6 +1047,18 @@ main() {
 ")
     ce.expect_ok(s2, "数字下标 + 带括号方法调用不受影响", ".....abc")
 
+    // ---- E2：方法名 / 字段名撞**保留字**（2026-10-20）----
+    //   实测来源：给 LenoHTTP 加中间件时把方法起成 `use`（`http.use(app, fn)`）——
+    //   `.` 后不是标识符时旧代码只会说「期望属性名」，紧接着 `use` 又被当语句开头
+    //   ⇒ 再冒一条「use 语句期望模块名」，两条都指不到"`use` 是保留字"这个真因 ✗
+    var s3 = dirs.join(work, "kw_as_member.leno")
+    files.write(s3, @"func f(int x):int { return x }
+main() {
+    print(f.use(1))
+}
+")
+    ce.expect_error(s3, "方法名撞保留字要说清是保留字", "是**保留字**", 3)
+
     // ---- const 的**元素**不可改（2026-09-28；实例四十三）----
     //   收编 `examples/测试/export array or dict` 下 4 个"只演示会报错"的脚本
     //   （test_const_mutate / test_const_syntax / test_dict_const / test_dict_const2 —— 都跑不通，
