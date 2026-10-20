@@ -97,20 +97,21 @@ build\leno.exe build\leno_module\LenoHTTP\examples\threaded_server.leno 8080 8
 
 ## HTML 怎么写才不啰嗦（0.2.1）
 
-Leno 有**多行插值字符串** `$"..."`，HTML 不需要 `+` 拼接：
+用**原始插值字符串** `$@"..."`：属性引号写 `""`、反斜杠原样、`{expr}` 插值，HTML 不需要 `+` 拼接：
 
 ```leno
 func hello(Dict req): string {
     var name = http.query(req, "name", "世界")        // 一行取参数
-    return $"<main><section class=\"card\">
+    return $@"<main><section class=""card"">
   <h1>你好 {http.esc(name)}</h1>
   <p>注意：<b>插值不会自动转义</b>，用户输入一律 http.esc(...)</p>
 </section></main>"
 }
 ```
 
-> `\"` 只是属性引号；换行直接写在字符串里（`$"..."` 支持跨行）。
-> 想彻底不数反斜杠就用**视图文件**：HTML 放 `views/hello.html`，handler 里一行
+> `""` = 一个引号；换行直接写在字符串里（支持跨行）。
+> 也可以改用 `$"..."`（这时引号要写 `\"`），两者结果一致。
+> 想彻底不碰引号就用**视图文件**：HTML 放 `views/hello.html`，handler 里一行
 > `return http.view(app, "hello", {name: name})`。
 
 视图文件约定：

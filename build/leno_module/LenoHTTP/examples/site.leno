@@ -7,7 +7,8 @@
 // 覆盖：路由（GET/POST）、查询串、表单、JSON API、静态文件、404、请求计数/运行时长
 //
 // ⚠ 这个文件就是"怎么写才不啰嗦"的示范（2026-10-20 重写）：
-//   · HTML 用**多行插值字符串** `$"..."`（`\"` 表示属性引号），不再 `"..." + "..."` 拼接
+//   · HTML 用**原始插值字符串** `$@"..."`：属性引号写 `""`、`\` 原样、`{expr}` 插值
+//     —— 不再 `"..." + "..."` 拼接，也不用逐个写 `\"`
 //   · 取参数用 `http.query/formValue` 一行搞定
 //   · handler 直接 `return page(...)`（返回 string ⇒ 自动按 text/html）
 //   · 插值**不会自动转义** ⇒ 用户输入一律 `http.esc(...)`（或用 `http.render`）
@@ -30,14 +31,14 @@ func uptime(): string {
 
 // ---------------- 布局：一整块 HTML，没有任何字符串拼接 ----------------
 func page(string title, string body): string {
-    return $"<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\">
-<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
+    return $@"<!doctype html><html lang=""zh-CN""><head><meta charset=""utf-8"">
+<meta name=""viewport"" content=""width=device-width,initial-scale=1"">
 <title>{title} · Leno</title>
-<link rel=\"stylesheet\" href=\"/assets/style.css\">
-</head><body><div class=\"wrap\">
-<header class=\"hero\"><div class=\"badge\">LenoHTTP 0.2 · 纯 Leno</div>
+<link rel=""stylesheet"" href=""/assets/style.css"">
+</head><body><div class=""wrap"">
+<header class=""hero""><div class=""badge"">LenoHTTP 0.2 · 纯 Leno</div>
 <h1>用 Leno 内置库写的网站</h1>
-<p class=\"sub\">没有 Flask、没有 Node —— 只有 <code>sockets</code> 上的 <code>LenoHTTP</code> 和一套自己写的路由。</p></header>
+<p class=""sub"">没有 Flask、没有 Node —— 只有 <code>sockets</code> 上的 <code>LenoHTTP</code> 和一套自己写的路由。</p></header>
 {body}
 <footer>进程内请求数 <b>{gHits}</b> · 已运行 <b>{uptime()}</b> · <code>http.stop(app)</code> 可退出</footer>
 </div></body></html>"
@@ -47,24 +48,24 @@ func page(string title, string body): string {
 func home(Dict req): string {
     gHits = gHits + 1
 
-    var cards = $"<div class=\"card\"><h3>/hello?name=你的名字</h3>
+    var cards = $@"<div class=""card""><h3>/hello?name=你的名字</h3>
 <p>查询串解析 + HTML 转义（试试注入 <code>&lt;script&gt;</code>）</p>
-<a href=\"/hello?name=Leno\">试一个 →</a></div>
-<div class=\"card\"><h3>/form</h3>
-<p>urlencoded 表单：提交后服务端解析并回显</p><a href=\"/form\">打开表单 →</a></div>
-<div class=\"card\"><h3>/api/stats</h3>
-<p>JSON 接口：运行时长 / 请求数 / 语言信息</p><a href=\"/api/stats\">看 JSON →</a></div>
-<div class=\"card\"><h3>/assets/style.css</h3>
-<p>静态文件服务：本页样式就是它（目录穿越已拦）</p><a href=\"/assets/style.css\">看 CSS →</a></div>"
+<a href=""/hello?name=Leno"">试一个 →</a></div>
+<div class=""card""><h3>/form</h3>
+<p>urlencoded 表单：提交后服务端解析并回显</p><a href=""/form"">打开表单 →</a></div>
+<div class=""card""><h3>/api/stats</h3>
+<p>JSON 接口：运行时长 / 请求数 / 语言信息</p><a href=""/api/stats"">看 JSON →</a></div>
+<div class=""card""><h3>/assets/style.css</h3>
+<p>静态文件服务：本页样式就是它（目录穿越已拦）</p><a href=""/assets/style.css"">看 CSS →</a></div>"
 
-    return page("首页", $"<main><section class=\"grid\">{cards}</section>
-<section class=\"card wide\"><h3>这个站是怎么跑起来的</h3>
+    return page("首页", $@"<main><section class=""grid"">{cards}</section>
+<section class=""card wide""><h3>这个站是怎么跑起来的</h3>
 <pre>var app = http.newApp()
-http.get(app, \"/\", home)
-http.post(app, \"/form\", submit)
-http.static(app, \"/assets\", dirs.join(dirs.script_dir(), \"assets\"))
-http.serve(app, \"127.0.0.1\", 8080)</pre>
-<p class=\"muted\">单线程顺序处理 · keep-alive 单连接最多 100 请求 ·
+http.get(app, '/', home)
+http.post(app, '/form', submit)
+http.static(app, '/assets', dirs.join(dirs.script_dir(), 'assets'))
+http.serve(app, '127.0.0.1', 8080)</pre>
+<p class=""muted"">单线程顺序处理 · keep-alive 单连接最多 100 请求 ·
 请求头 64KB / 请求体 8MB 上限</p></section></main>")
 }
 
@@ -72,23 +73,23 @@ http.serve(app, \"127.0.0.1\", 8080)</pre>
 func hello(Dict req): string {
     gHits = gHits + 1
     var name = http.query(req, "name", "（没给 name）")
-    return page("hello", $"<main><section class=\"card wide\"><h3>/hello</h3>
+    return page("hello", $@"<main><section class=""card wide""><h3>/hello</h3>
 <p>你传的 <code>name</code> 是：</p>
-<p class=\"echo\">{http.esc(name)}</p>
-<p class=\"muted\">插值<b>不会</b>自动转义 ⇒ 用户输入必须 <code>http.esc(...)</code>；
+<p class=""echo"">{http.esc(name)}</p>
+<p class=""muted"">插值<b>不会</b>自动转义 ⇒ 用户输入必须 <code>http.esc(...)</code>；
 也可以改用 <code>http.render(tpl, vars)</code>（它的占位符默认转义）。</p>
-<p><a href=\"/\">← 回首页</a></p></section></main>")
+<p><a href=""/"">← 回首页</a></p></section></main>")
 }
 
 // ---------------- 路由：表单 GET ----------------
 func formPage(Dict req): string {
     gHits = gHits + 1
-    return page("表单", $"<main><section class=\"card wide\"><h3>表单（POST /form）</h3>
-<form method=\"post\" action=\"/form\">
-<label>昵称 <input name=\"name\" value=\"Leno 用户\" maxlength=\"40\"></label>
-<label>想说的话 <input name=\"msg\" value=\"你好，世界\" maxlength=\"80\"></label>
-<button type=\"submit\">提交</button></form>
-<p class=\"muted\">Content-Type: application/x-www-form-urlencoded</p>
+    return page("表单", $@"<main><section class=""card wide""><h3>表单（POST /form）</h3>
+<form method=""post"" action=""/form"">
+<label>昵称 <input name=""name"" value=""Leno 用户"" maxlength=""40""></label>
+<label>想说的话 <input name=""msg"" value=""你好，世界"" maxlength=""80""></label>
+<button type=""submit"">提交</button></form>
+<p class=""muted"">Content-Type: application/x-www-form-urlencoded</p>
 </section></main>")
 }
 
@@ -98,11 +99,11 @@ func submit(Dict req): string {
     var name = http.formValue(req, "name", "")
     var msg = http.formValue(req, "msg", "")
     var bodyLen = (req["body"] as string).byte_len()
-    return page("表单结果", $"<main><section class=\"card wide\"><h3>服务端收到了</h3>
-<table class=\"kv\"><tr><th>name</th><td>{http.esc(name)}</td></tr>
+    return page("表单结果", $@"<main><section class=""card wide""><h3>服务端收到了</h3>
+<table class=""kv""><tr><th>name</th><td>{http.esc(name)}</td></tr>
 <tr><th>msg</th><td>{http.esc(msg)}</td></tr>
 <tr><th>Content-Length</th><td>{bodyLen} 字节</td></tr>
-</table><p><a href=\"/form\">← 再填一次</a> · <a href=\"/\">回首页</a></p>
+</table><p><a href=""/form"">← 再填一次</a> · <a href=""/"">回首页</a></p>
 </section></main>")
 }
 
@@ -123,9 +124,9 @@ func apiStats(Dict req): Dict {
 func notFoundPage(Dict req): Dict {
     gHits = gHits + 1
     var path = req["path"] as string
-    return http.status(404, page("404", $"<main><section class=\"card wide\"><h3>404</h3>
+    return http.status(404, page("404", $@"<main><section class=""card wide""><h3>404</h3>
 <p>没有这个地址：<code>{http.esc(path)}</code></p>
-<p><a href=\"/\">回首页</a></p></section></main>"))
+<p><a href=""/"">回首页</a></p></section></main>"))
 }
 
 // ---------------- main ----------------

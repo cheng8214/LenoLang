@@ -256,10 +256,17 @@ Ast* parse_interp_string(Parser* p) {
 
     while (true) {
         // 读取字符串片段
-        if (p->lex.current.type == TOK_INTERP_PART) {
+        //   TOK_INTERP_RAW_PART = `$@"..."` 里的原始片段：**不处理 \ 转义**，只把 `""` 折叠成 `"`
+        if (p->lex.current.type == TOK_INTERP_PART
+            || p->lex.current.type == TOK_INTERP_RAW_PART) {
             int processed_len;
-            char* text = process_escape_sequences(p->lex.current.text, p->lex.current.len, &processed_len,
-                                                   p->lex.current.line, p->lex.current.column);
+            char* text;
+            if (p->lex.current.type == TOK_INTERP_RAW_PART) {
+                text = process_raw_string(p->lex.current.text, p->lex.current.len, &processed_len);
+            } else {
+                text = process_escape_sequences(p->lex.current.text, p->lex.current.len, &processed_len,
+                                                p->lex.current.line, p->lex.current.column);
+            }
 
             if (processed_len > 0) {
                 // 扩展数组

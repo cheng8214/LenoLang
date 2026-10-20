@@ -338,6 +338,32 @@ static Token read_raw_string(Lexer* lex) {
     return tok;
 }
 
+// 读取**原始**插值字符串片段（`$@"..."`）
+//   规则与 `@"..."` 一致：`\` 不转义、`""` 表示一个字面引号；
+//   另外 `{` 开启插值（与普通 `$"..."` 相同）。
+static Token read_interp_raw_part(Lexer* lex) {
+    Token tok = make_token(lex, TOK_INTERP_RAW_PART);
+    const char* start = lex->src + lex->pos;
+
+    while (peek(lex) != '\0') {
+        char c = peek(lex);
+        if (c == '{') break;                 // 插值开始
+        if (c == '"') {
+            if (peek_next(lex) == '"') {     // "" ⇒ 一个字面引号，继续读
+                advance(lex);
+                advance(lex);
+                continue;
+            }
+            break;                           // 单个 " ⇒ 整个字符串结束
+        }
+        advance(lex);
+    }
+
+    tok.text = start;
+    tok.len = (int)((lex->src + lex->pos) - start);
+    return tok;
+}
+
 // 读取插值字符串片段（到 { 或 " 为止）
 static Token read_interp_part(Lexer* lex) {
     Token tok = make_token(lex, TOK_INTERP_PART);
@@ -633,6 +659,7 @@ void lexer_init(Lexer* lex, const char* source) {
     lex->in_interp = 0;
     lex->in_expr = 0;
     lex->brace_depth = 0;
+    lex->in_interp_raw = 0;
     if ((unsigned char)source[0] == 0xEF &&
         (unsigned char)source[1] == 0xBB &&
         (unsigned char)source[2] == 0xBF) {
@@ -665,10 +692,15 @@ void lexer_next(Lexer* lex) {
 
     // 如果在插值字符串中但不在表达式中
     if (lex->in_interp && !lex->in_expr) {
-        // 检查是否是字符串结束
+        // 检查是否是字符串结束（原始形式下 `""` 是字面引号，不是结束）
         if (c == '"') {
+            if (lex->in_interp_raw && peek_next(lex) == '"') {
+                lex->current = read_interp_raw_part(lex);
+                return;
+            }
             advance(lex);
             lex->in_interp = 0;
+            lex->in_interp_raw = 0;
             lex->current = make_token(lex, TOK_INTERP_END);
             return;
         }
@@ -681,7 +713,7 @@ void lexer_next(Lexer* lex) {
             return;
         }
         // 读取字符串片段
-        lex->current = read_interp_part(lex);
+        lex->current = lex->in_interp_raw ? read_interp_raw_part(lex) : read_interp_part(lex);
         return;
     }
 
@@ -770,9 +802,21 @@ void lexer_next(Lexer* lex) {
                 lex->in_interp = 1;
                 lex->in_expr = 0;
                 lex->brace_depth = 0;
+                lex->in_interp_raw = 0;
+                lex->current = make_token(lex, TOK_INTERP_STRING);
+            } else if (peek_next(lex) == '@' && lex->src[lex->pos + 2] == '"') {
+                // `$@"..."` —— 插值 + 原始（2026-10-20）
+                //   写 HTML 时属性引号不用再逐个别 `\"`；`""` = 一个字面引号；`\` 原样
+                advance(lex); // 跳过 $
+                advance(lex); // 跳过 @
+                advance(lex); // 跳过 "
+                lex->in_interp = 1;
+                lex->in_expr = 0;
+                lex->brace_depth = 0;
+                lex->in_interp_raw = 1;
                 lex->current = make_token(lex, TOK_INTERP_STRING);
             } else {
-                error_add_at_fmt(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1, "意外的字符 '$'，插值字符串需要使用 $\"...\"");
+                error_add_at_fmt(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1, "意外的字符 '$'，插值字符串需要使用 $\"...\" 或 $\"@...\"");
                 advance(lex);
                 lex->current = make_token(lex, TOK_ERROR);
             }

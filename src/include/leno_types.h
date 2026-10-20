@@ -258,6 +258,7 @@ typedef enum {
     TOK_INTERP_END,      // " 结束
     // 原始字符串字面量
     TOK_RAW_STRING,      // @" 开始
+    TOK_INTERP_RAW_PART, // $@"..." 里的文本片段（不处理 \ 转义，"" 表示一个引号）
     // 协程关键字
     TOK_ASYNC,           // async 关键字
     TOK_AWAIT,           // await 关键字

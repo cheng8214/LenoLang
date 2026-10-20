@@ -36,6 +36,8 @@ typedef struct {
     int in_interp;      // 是否在插值字符串中
     int in_expr;        // 是否在表达式中
     int brace_depth;    // 大括号嵌套深度
+    // 当前插值字符串是否是**原始**形式（`$@"..."`）—— 片段不处理 `\` 转义、`""` = 一个字面引号
+    int in_interp_raw;
 } Lexer;
 
 void lexer_init(Lexer* lex, const char* source);

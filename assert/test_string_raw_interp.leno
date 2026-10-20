@@ -1,0 +1,42 @@
+// test_string_raw_interp.leno —— `$@"..."`：插值 + 原始（2026-10-20）
+//
+// 为什么加：写 HTML 时 `$"<div class=\"card\">"` 要逐个转义引号，
+//   而 `@"..."` 不插值。两者组合：
+//     · `\` **原样**（与 `@"..."` 一致）
+//     · `""` 表示一个字面引号（与 `@"..."` 一致）
+//     · `{expr}` 照常插值（与 `$"..."` 一致）
+//   ⇒ `<div class=""card"">{name}</div>` 即可，不用数反斜杠
+main() {
+    var name = "Leno"
+    int n = 3
+
+    // ① 双引号属性："" ⇒ "
+    var tpl = $@"<div class=""card"">{name}</div>"
+    assert_eq(tpl, "<div class=\"card\">Leno</div>", "① \"\" 折叠成一个引号")
+
+    // ② 跨行保留真实换行（⚠ 源码换行可能是 \r\n，别拿 "\n" 精确比较）
+    var ml = $@"line1
+line2 {n}"
+    assert_true(ml.has("line1") and ml.has("line2 3"), "② 支持跨行")
+    assert_true(ml.has("\n"), "② 换行被保留")
+
+    // ③ 反斜杠原样（不转义）
+    var p = $@"C:\temp\{name}"
+    assert_eq(p, "C:\\temp\\Leno", "③ 反斜杠不处理")
+
+    // ④ 与普通插值等价（同一段 HTML 两种写法）
+    var normal = $"<div class=\"card\">{name}</div>"
+    assert_eq(normal, tpl, "④ 两种写法结果一致")
+
+    // ⑤ 插值里可写表达式 / 字符串字面量
+    Dict d = {"k": 7}
+    assert_eq($@"v={d["k"] + 1}", "v=8", "⑤ 表达式与下标")
+
+    // ⑥ 只有插值、没有文本
+    assert_eq($@"{n}", "3", "⑥ 纯表达式")
+
+    // ⑦ 空字符串
+    assert_eq($@"", "", "⑦ 空串")
+
+    print("test_string_raw_interp passed")
+}
