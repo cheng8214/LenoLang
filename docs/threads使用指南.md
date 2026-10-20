@@ -527,9 +527,14 @@ var t = threads.start(func(int n){ return prefix + " " + n }, 42)
 print(t.join())  // hello 42
 ```
 
-### 2. 全局变量是独立的
+### 2. 全局变量：**标量独立，对象共享**（⚠ 2026-10-20 实测订正）
 
-子线程启动时会深拷贝主线程的全局变量，之后互不影响：
+子线程启动时把全局变量表**逐个 Value 复制**过去，不递归：
+
+- 标量（`int` / `float` / `bool` / `null`）⇒ 真·独立副本 ✓
+- `string` / `Array` / `Dict` / struct 等**对象** ⇒ 只抄指针，两个线程共用同一份 ✗
+
+标量的情况（原示例仍然成立）：
 
 ```leno
 var count = 0
@@ -547,6 +552,26 @@ main() {
 }
 ```
 
+对象的情况（实测，**旧文档写的"互不影响"是错的**）：
+
+```leno
+var arr = [1, 2, 3]
+func w() { arr.add(4) }
+main() {
+    arr = [1, 2, 3]
+    var t = threads.start(w)
+    t.join()
+    print(arr.len())     // 4 —— 子线程改到了主线程的数组
+}
+```
+
+⚠ 危害不止"数据被改"：子线程写共享对象会走**子线程堆的写屏障**，而对象挂在主线程堆上
+⇒ 偶发 `0xC0000374` 堆损坏。所以：
+
+- 全局对象**只读**才安全（配置、常量表）
+- 要可变状态 ⇒ `threads.local_set/get`（每线程一份，TH5）或 `Channel` 汇到单点线程
+- 模块级 `var` 同理（`ObjModule.globals` 进程级共享，且**无锁**）
+
 ### 3. Channel 的缓冲大小
 
 - **有缓冲** `threads.channel(N)`：缓冲区满时 `send()` 阻塞，适合异步通讯
@@ -557,6 +582,8 @@ main() {
 - 每个线程拥有独立的 GC，无需担心 GC 冲突
 - Channel 内部使用互斥锁和条件变量，线程安全
 - `send()` 和 `receive()` 可以安全地在不同线程中并发调用
+- ⚠ 但**全局/模块级对象是跨堆共享的**（见第 2 条），并发写它们没有锁保护 ⇒ 只读或改走 Channel
+- ⚠ 目前**没有 `Mutex` / 原子变量**（`threads` 只提供 start/channel/sleep/join_all/parallel_for/map/local_*）
 
 ### 5. 跨线程能传什么（**传值即深拷贝**）
 

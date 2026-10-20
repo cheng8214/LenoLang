@@ -100,8 +100,8 @@ build\leno.exe build\leno_module\LenoHTTP\examples\threaded_server.leno 8080 8
   worker 用 `sockets.from_fd(fd)` 在自己堆上重建 Socket 再处理（`Socket` 对象本身仍不能跨线程）。
   - ⚠ **app 必须在 worker 线程内构建**：路由表里存的是 handler 闭包，闭包不能跨线程传，
     所以入口要自己 `buildApp()`（每个线程一份路由表）。
-  - ⚠ worker 入口必须是**同模块的具名函数**（`func(int, Channel)`）：跨模块取到的裸函数对象
-    会被 `threads.start` 拒绝。
+  - worker 入口建议写成**同模块的具名函数**（`func(int, Channel)`）：`threads.start` 只认真实闭包，
+    个别路径取到的裸 `ObjFunction` 会被拒绝，具名函数最稳。
   - ⚠ **可变共享状态**：模块级 `var` 是所有线程同一份且无锁，计数/缓存/session 请用
     `Channel` 汇到单点线程处理，或每线程一份。
   - 队列满（默认 `workers*4`）时直接回 503 关连接，不阻塞 accept。
