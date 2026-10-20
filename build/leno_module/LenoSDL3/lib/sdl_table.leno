@@ -49,6 +49,11 @@ export struct Table impl Widget, Themeable {
     pri int selRow = -1, selCol = -1, hoverRow = -1, hoverCol = -1; bool _multi = false; pri Array[int] selRows = []
     pri Array[bool] selSet = []           // 选中行标志数组（与 _rows 平行），让 _is_sel O(1) 避免 render 中线性扫描 _selRows
     bool _sortable = false; pri int sortCol = -1; pri bool sortDesc = false, _zebra = true
+    // ★ 2026-10-20：显示行 → **调用方数据行**的映射（与 `_rows` 同序、随排序/拖拽一起搬 ✓）
+    //   为什么需要：`sort_by` 只重排本控件内部的 `_rows`，而调用方的歌曲数组不会跟着动
+    //   ⇒ 双击/右键/勾选回调拿到的是**显示行号**，按它取 songs[row] 就会"点 A 放 B"✗✗
+    //   ⇒ 用 `source_row(display)` 换回原始下标（应用层所有"按行号取数据"的地方都走它 ✓）
+    Array[int] _srcIdx = []
     pri Array[int] numericCols = []    // 数值排序列索引集合（点击表头时按数值而非字符串比较）
     pri Array[int] sortDisabledCols = []  // 禁用排序的列索引集合（黑名单；空数组=全部列可排序，受 _sortable 控制）
     pri bool colReorder = true         // 是否允许拖拽表头重排列顺序
@@ -388,6 +393,8 @@ export struct Table impl Widget, Themeable {
 
         var rs = opts.get("rows", [])
         if rs is Array[Array[string]] { _rows = rs } else { _rows = [] }
+        _srcIdx = []
+        for _rows.len() to i { _srcIdx.add(i) }
 
         ncols = _headers.len()
         if ncols == 0 {
@@ -501,6 +508,9 @@ export struct Table impl Widget, Themeable {
     // ==================== 数据操作 ====================
     func set_rows(Array[Array[string]] rs) {
         _rows = rs
+        // 新一批数据 ⇒ 映射先恢复成 0..n-1（随后 `sort_by` 重放排序时会一起重排 ✓）
+        _srcIdx = []
+        for _rows.len() to i { _srcIdx.add(i) }
         // ★ 2026-10-13：换**整批数据** ⇒ 旧的单元格级颜色与行色**作废清掉**（口径同排序：要么别张冠李戴 ✓）
         //   原来 `_cellFgColors/_cellBgColors`（键 "row,col"）在 set_rows 后**仍然生效** ✗ ⇒
         //   新数据的第 2/3 行会继承上一批的染色（实测：换成 N0..N4 后旧的绿/红原样还在 ✓）
@@ -538,6 +548,7 @@ export struct Table impl Widget, Themeable {
     }
     func add_row(Array[string] row, string imgPath) {
         _rows.add(row)
+        _srcIdx.add(_srcIdx.len())          // 追加行 = 数据数组末尾那一行（排序状态马上会被清 ✓）
         invalidate_fitted(); invalidate_sb()
         rowImages.add(imgPath)
         rowTips.add("")
@@ -554,6 +565,7 @@ export struct Table impl Widget, Themeable {
     func remove_row(int idx) {
         invalidate_fitted(); invalidate_sb()
         if idx >= 0 and idx < _rows.len() { _rows.remove(idx) }
+        if idx >= 0 and idx < _srcIdx.len() { _srcIdx.remove(idx) }
         if idx >= 0 and idx < rowImages.len() { rowImages.remove(idx) }
         if idx >= 0 and idx < rowTips.len() { rowTips.remove(idx) }
         if idx >= 0 and idx < rowChecked.len() {
@@ -601,12 +613,18 @@ export struct Table impl Widget, Themeable {
     //   （口径：批量换数据用 `set_rows`（会重放排序 ✓）；`clear()`/`add_row()` 视为"改了行集合"⇒
     //     排序状态作废 ✓ —— 要么别谎报、要么别乱序，两条路都得有一条 ✓）
     //   ★ 同口径：清空时**单元格级颜色也一起清**（键 "row,col" 指的是旧行 ✗），rowColors 本来就清 ✓
-    func clear() { _rows = []; rowImages = []; rowTips = []; rowChecked = []; rowColors = []; _cellFgColors.clear(); _cellBgColors.clear(); selRow = -1; selCol = -1; selRows = []; selSet = []; scrollX = 0; scrollY = 0; checkHeaderState = false; checkedCount = -1; sortCol = -1; sortDesc = false; invalidate_fitted(); invalidate_sb() }
+    func clear() { _rows = []; _srcIdx = []; rowImages = []; rowTips = []; rowChecked = []; rowColors = []; _cellFgColors.clear(); _cellBgColors.clear(); selRow = -1; selCol = -1; selRows = []; selSet = []; scrollX = 0; scrollY = 0; checkHeaderState = false; checkedCount = -1; sortCol = -1; sortDesc = false; invalidate_fitted(); invalidate_sb() }
     func row_count(): int { return _rows.len() }
     func col_count(): int { return ncols }
     func get_row(int idx): Array[string] {
         if idx >= 0 and idx < _rows.len() { return _rows[idx] }
         return []
+    }
+    // ★ 2026-10-20：显示行号 → 调用方数据行号（排序/拖拽之后也正确 ✓）
+    //   应用层凡是要"按表格行号取自己数组"的地方都必须过这一层 ✓
+    func source_row(int display): int {
+        if display >= 0 and display < _srcIdx.len() { return _srcIdx[display] }
+        return display
     }
     func set_cell(int r, int c, string v) {
         if r >= 0 and r < _rows.len() {
@@ -695,6 +713,7 @@ export struct Table impl Widget, Themeable {
     // ★ 交换两行数据及所有并行数组（图标/tip/勾选/颜色），保持对齐
     pri func swap_rows(int i, int j) {
         var tmp = _rows[i]; _rows[i] = _rows[j]; _rows[j] = tmp
+        if i < _srcIdx.len() and j < _srcIdx.len() { int ts = _srcIdx[i]; _srcIdx[i] = _srcIdx[j]; _srcIdx[j] = ts }
         if i < rowImages.len() and j < rowImages.len() {
             string ti = rowImages[i]; rowImages[i] = rowImages[j]; rowImages[j] = ti
         }
@@ -821,6 +840,8 @@ export struct Table impl Widget, Themeable {
         invalidate_fitted(); invalidate_sb()
         // 提取源行数据
         var row = _rows[srcIdx]
+        int srcS = srcIdx
+        if srcIdx < _srcIdx.len() { srcS = _srcIdx[srcIdx] }
         string imgP = ""; string tipP = ""; bool chkP = false; int colP = 0
         if srcIdx < rowImages.len() { imgP = rowImages[srcIdx] }
         if srcIdx < rowTips.len() { tipP = rowTips[srcIdx] }
@@ -828,6 +849,7 @@ export struct Table impl Widget, Themeable {
         if srcIdx < rowColors.len() { colP = rowColors[srcIdx] }
         // 移除源行
         _rows.remove(srcIdx)
+        if srcIdx < _srcIdx.len() { _srcIdx.remove(srcIdx) }
         if srcIdx < rowImages.len() { rowImages.remove(srcIdx) }
         if srcIdx < rowTips.len() { rowTips.remove(srcIdx) }
         if srcIdx < rowChecked.len() { rowChecked.remove(srcIdx) }
@@ -836,6 +858,7 @@ export struct Table impl Widget, Themeable {
         int insertAt = dstIdx
         if dstIdx > srcIdx { insertAt = dstIdx - 1 }  // 移除后索引偏移
         _rows.insert(insertAt, row)
+        _srcIdx.insert(insertAt, srcS)
         rowImages.insert(insertAt, imgP)
         rowTips.insert(insertAt, tipP)
         rowChecked.insert(insertAt, chkP)
