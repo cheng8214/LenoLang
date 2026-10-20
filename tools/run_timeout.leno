@@ -1,0 +1,46 @@
+// run_timeout.leno —— 带硬超时跑一条命令（网络/线程/async 测试禁止裸跑）
+//
+// 用法（仓库根目录）：
+//   build\leno.exe tools\run_timeout.leno <超时毫秒> <命令...>
+//
+// 例：
+//   build\leno.exe tools\run_timeout.leno 15000 build\leno.exe assert\test_async_timeout.leno
+//
+// 行为：
+//   · 超时 ⇒ `_exec` 会**杀掉子进程整棵树**（Windows 用 Job Object），退出码 124（GNU 惯例）
+//   · 正常 ⇒ 透传子进程的 stdout/stderr 与退出码
+//   · 为什么要有它：async/网络类测试可能死锁，前台裸跑会把终端挂住（实际踩过三次）
+//
+// ⚠ 命令行按空格拼接，参数里带空格时请自己加引号（如 `"C:\Program Files\x.exe"`）。
+
+main() {
+    Array[string] args = []
+    for _args() to a { args.add(_str(a)) }
+
+    if args.len() < 2 {
+        print("用法: build\\leno.exe tools\\run_timeout.leno <超时毫秒> <命令...>")
+        _exit(2)
+    }
+
+    int timeout_ms = _int(args[0])
+    if timeout_ms <= 0 {
+        print("超时必须 > 0（毫秒）")
+        _exit(2)
+    }
+
+    // 剩余参数拼成一条命令行（`_exec` 收的是整串）
+    var cmd = ""
+    for 1:args.len()-1 to i {
+        if cmd != "" { cmd = cmd + " " }
+        cmd = cmd + args[i]
+    }
+
+    var r = _exec(cmd, timeout_ms)
+    int code = r.code as int
+
+    if r.output != "" { print(r.output) }
+    if code == 124 {
+        print("[run_timeout] 超过 " + _str(timeout_ms) + "ms 未结束，已 kill 子进程树")
+    }
+    _exit(code)
+}
