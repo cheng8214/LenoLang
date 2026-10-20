@@ -54,11 +54,22 @@ func _status_text(int code): string {
     if code == 302 { return "Found" }
     if code == 304 { return "Not Modified" }
     if code == 400 { return "Bad Request" }
+    // ★ 2026-10-20：原来缺 401/409/429/502/503 ⇒ 全被兜成 "OK"
+    //   （实测写鉴权接口时发出 `HTTP/1.1 401 OK`，客户端/日志都很别扭）
+    if code == 401 { return "Unauthorized" }
     if code == 403 { return "Forbidden" }
     if code == 404 { return "Not Found" }
     if code == 405 { return "Method Not Allowed" }
+    if code == 409 { return "Conflict" }
     if code == 413 { return "Payload Too Large" }
+    if code == 422 { return "Unprocessable Entity" }
+    if code == 429 { return "Too Many Requests" }
     if code == 500 { return "Internal Server Error" }
+    if code == 502 { return "Bad Gateway" }
+    if code == 503 { return "Service Unavailable" }
+    // 兜底：按类别给一个不会说谎的短语（别再把 4xx 说成 OK）
+    if code >= 500 { return "Server Error" }
+    if code >= 400 { return "Client Error" }
     return "OK"
 }
 

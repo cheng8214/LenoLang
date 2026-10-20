@@ -1,0 +1,98 @@
+// test_music_api.leno —— 鉴权 + SQLite 检索 + JSON 接口（端到端回归）
+//
+// 被测：examples/music_api.leno（起真实服务，用真实 HTTP 请求打）
+//
+// 判据：
+//   ① 无 token ⇒ 401 且响应体是 JSON（不是 HTML 页面）
+//   ② POST /api/login 正确凭证 ⇒ 200 + Set-Cookie 里拿到 token
+//   ③ 带 Bearer token 搜「月」⇒ 200 + 3 条 + 含「月光」
+//   ④ SQL 注入 `' OR 1=1 --` ⇒ 当普通字符串（count=0），不报错、不返回全表
+//   ⑤ 空 q ⇒ 400
+//   ⑥ 用 Cookie 也能鉴权（不用 Authorization 头）
+import sockets
+import threads
+
+int PORT = 8096
+
+func req(string raw): string {
+    Socket c = sockets.connect("127.0.0.1", PORT)
+    if c == null { return "" }
+    c.send(raw)
+    var out = ""
+    while true {
+        var chunk = c.recv(65536)
+        if chunk == null { break }
+        out = out + (chunk as string)
+    }
+    c.close()
+    return out
+}
+
+func get(string path, string extra): string {
+    return req("GET " + path + " HTTP/1.1\r\nHost: t\r\nConnection: close\r\n" + extra + "\r\n")
+}
+
+func postForm(string path, string body): string {
+    return req("POST " + path + " HTTP/1.1\r\nHost: t\r\nConnection: close\r\n"
+        + "Content-Type: application/x-www-form-urlencoded\r\n"
+        + "Content-Length: " + _str(body.byte_len()) + "\r\n\r\n" + body)
+}
+
+// 从响应里抠 `marker` 之后的值（到 ; \r \n " 为止）
+func after(string text, string marker): string {
+    int n = text.byte_len()
+    int m = marker.byte_len()
+    int pos = -1
+    for 0:n-1 to i {
+        if i + m > n { break }
+        if text.byte_slice(i, i + m - 1) == marker { pos = i; break }
+    }
+    if pos < 0 { return "" }
+    int s = pos + m
+    var out = ""
+    for s:n-1 to j {
+        var ch = text.byte_slice(j, j)
+        if ch == ";" or ch == "\r" or ch == "\n" or ch == "\"" { break }
+        out = out + ch
+    }
+    return out
+}
+
+main() {
+    var h = _spawn("build\\leno.exe", "build\\leno_module\\LenoHTTP\\examples\\music_api.leno " + _str(PORT))
+    threads.sleep(1200)
+
+    // ① 无 token ⇒ 401 + JSON
+    var r1 = get("/api/search?q=%E6%9C%88", "")
+    if not r1.has("401 Unauthorized") { print("[FAIL] 无 token 应 401:\n" + r1); _kill(h); _exit(1) }
+    if not r1.has("unauthorized") { print("[FAIL] 401 体不是 JSON"); _kill(h); _exit(1) }
+
+    // ② 登录拿 token
+    var r2 = postForm("/api/login", "user=demo&pass=demo")
+    if not r2.has("200 OK") { print("[FAIL] 登录失败:\n" + r2); _kill(h); _exit(1) }
+    var token = after(r2, "sid=")
+    if token == "" { print("[FAIL] 没拿到 token"); _kill(h); _exit(1) }
+
+    // ③ 带 token 搜索「月」⇒ 3 条
+    var r3 = get("/api/search?q=%E6%9C%88", "Authorization: Bearer " + token + "\r\n")
+    if not r3.has("200 OK") { print("[FAIL] 带 token 仍失败:\n" + r3); _kill(h); _exit(1) }
+    if not r3.has("月光") { print("[FAIL] 没搜到 月光:\n" + r3); _kill(h); _exit(1) }
+    if not r3.has("\"count\":3") { print("[FAIL] count 不是 3:\n" + r3); _kill(h); _exit(1) }
+
+    // ④ SQL 注入只当普通字符串
+    var r4 = get("/api/search?q=%27%20OR%201%3D1%20--", "Authorization: Bearer " + token + "\r\n")
+    if not r4.has("200 OK") { print("[FAIL] 注入查询报错:\n" + r4); _kill(h); _exit(1) }
+    if not r4.has("\"count\":0") { print("[FAIL] 注入没被当字符串:\n" + r4); _kill(h); _exit(1) }
+
+    // ⑤ 空 q ⇒ 400
+    var r5 = get("/api/search", "Authorization: Bearer " + token + "\r\n")
+    if not r5.has("400 Bad Request") { print("[FAIL] 空 q 应 400:\n" + r5); _kill(h); _exit(1) }
+
+    // ⑥ cookie 鉴权
+    var r6 = get("/api/stats", "Cookie: sid=" + token + "\r\n")
+    if not r6.has("200 OK") { print("[FAIL] cookie 鉴权失败:\n" + r6); _kill(h); _exit(1) }
+    if not r6.has("\"songs\":6") { print("[FAIL] stats 歌曲数不对:\n" + r6); _kill(h); _exit(1) }
+
+    _kill(h)
+    print("test_music_api passed（401 / 登录 / 搜索 3 条 / 注入 0 条 / 空参 400 / cookie 鉴权）")
+}

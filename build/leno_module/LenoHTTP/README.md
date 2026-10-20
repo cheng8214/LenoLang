@@ -35,11 +35,20 @@ main() {
 }
 ```
 
-完整可跑示例：`examples/hello_server.leno`（单线程）、`examples/threaded_server.leno`（线程池）
+完整可跑示例：
+
+| 示例 | 内容 |
+|---|---|
+| `examples/hello_server.leno` | 最小单线程服务 |
+| `examples/threaded_server.leno` | 线程池（`serveWorkers`） |
+| `examples/site.leno` | 演示站：路由 / 表单 / JSON / 静态 / 404（用 `$@"..."` 写 HTML） |
+| `examples/music_api.leno` | **鉴权 + SQLite 检索 + JSON 接口**（Bearer/cookie 两种鉴权、参数绑定防注入） |
+| `examples/board.leno` | 注册 / 登录 / 留言（会话 + CSRF + 模板转义） |
 
 ```bat
 build\leno.exe build\leno_module\LenoHTTP\examples\hello_server.leno 8080 D:\www
 build\leno.exe build\leno_module\LenoHTTP\examples\threaded_server.leno 8080 8
+build\leno.exe build\leno_module\LenoHTTP\examples\music_api.leno 8090
 ```
 
 ## API
@@ -152,7 +161,7 @@ http.get(app, "/hello", func(Dict req): Dict {
 - **debug 日志**：`app.set("debug", true)` 会为每个请求打印一行
   （方法 / target / 状态 / keep / carry 字节数），排查"请求收不到"很快。
 
-## 顺带修掉的两个 sockets 问题（本模块的副产品）
+## 顺带修掉的三个问题（本模块的副产品）
 
 1. **`sock.send()` 原来只调一次 `send()` 且忽略返回值** ⇒ 大响应被**静默截断**
    （实测发 1MB 静态文件，客户端只收到前几十 KB，而 Leno 侧拿到的是 `true`）。
@@ -161,6 +170,9 @@ http.get(app, "/hello", func(Dict req): Dict {
    不显式转回阻塞，`recv` 在"数据还没到"时立刻返回 null，keep-alive 的第二个请求
    会被误判成"对端关闭"（症状：第一个请求正常、第二个永远收不到）。
    LenoHTTP 在 `handle_conn` 里显式 `set_nonblocking(false)` 再 `set_timeout(5000)`。
+3. **状态短语表缺 401/409/429/502/503** ⇒ 这些状态码全被兜成 `HTTP/1.1 401 OK`
+   （写鉴权接口时实测发现，客户端和日志都很别扭）。已补齐，并对未列出的码按
+   `4xx → Client Error` / `5xx → Server Error` 兜底，不再把错误说成 OK。
 
 ## 验证
 
@@ -173,6 +185,9 @@ build\leno.exe build\leno_module\LenoHTTP\test\test_thread_server.leno
 
 :: 视图文件：渲染 / layout 生效 / 默认转义 / 缺文件报错（不起网络）
 build\leno.exe build\leno_module\LenoHTTP\test\test_view.leno
+
+:: 鉴权接口：401 / 登录拿 token / 带 token 搜索 / SQL 注入当字符串 / 空参 400 / cookie 鉴权
+build\leno.exe build\leno_module\LenoHTTP\test\test_music_api.leno
 
 :: Python 独立客户端压测（开发期工具；http.client + socket，与 Leno 实现完全无关）
 python build\leno_module\LenoHTTP\test\dev_stress_python.py

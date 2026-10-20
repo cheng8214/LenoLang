@@ -1,0 +1,205 @@
+// music_api.leno —— 「鉴权 + 数据库检索 + JSON 接口」的最小真实样本
+//
+// 场景：音乐搜索接口，必须带 token 才能访问；数据在 SQLite 里（预置若干曲目）。
+//
+// 跑法：
+//   build\leno.exe build\leno_module\LenoHTTP\examples\music_api.leno 8090
+//
+// 验证：
+//   curl -i "http://127.0.0.1:8090/api/search?q=月"                      # 401 unauthorized
+//   curl -i -X POST -d "user=demo&pass=demo" http://127.0.0.1:8090/api/login   # 拿 token
+//   curl -i -H "Authorization: Bearer <token>" "http://127.0.0.1:8090/api/search?q=月"   # 200 + JSON
+//
+// 三个关键点（对着看代码）：
+//   ① **鉴权**：没有中间件 ⇒ 需要保护的 handler 自己调 `auth_user(req)`（一行），
+//      拿不到用户就立刻 `unauthorized()` 返回 401 —— 别忘了每个受保护接口都要写。
+//   ② **SQL 注入**：全部走 `?` 占位 + 绑定（`queryWithParams`），`' OR 1=1 --` 只是普通字符串。
+//   ③ **SQLite 句柄不能跨线程**：本示例用单线程 `serve`；若改用 `serveWorkers`，
+//      每个 worker 必须自己 `sqlite3.open(path)`（句柄是 cstruct/Ptr，跨线程传会被拒）。
+import times
+import dirs
+import "HTTP" as http
+import "Crypto" as crypto
+import "sqlite3" as sqlite3
+use sqlite3.Statement
+
+const TOKEN_TTL = 3600            // token 有效期（秒）
+const DB_FILE = "music.db"
+
+var GDB = sqlite3.openMemory()    // 演示用内存库（要持久化见 main 里的注释）
+
+// ==================== SQL 小工具（全部绑定参数）====================
+func all(string sql, Array params): Array[Dict] {
+    Array[Dict] out = []
+    GDB.queryWithParams(sql, params, func(Statement s): bool {
+        Dict d = {}
+        for 0:s.columnCount() - 1 to i {
+            d.set(s.columnName(i), s.column_text(i))
+        }
+        out.add(d)
+        return true
+    })
+    return out
+}
+
+func first(string sql, Array params): Dict {
+    Dict d = {}
+    GDB.queryWithParams(sql, params, func(Statement s): bool {
+        for 0:s.columnCount() - 1 to i {
+            d.set(s.columnName(i), s.column_text(i))
+        }
+        return false
+    })
+    return d
+}
+
+func run(string sql, Array params): int {
+    var st = GDB.prepare(sql)
+    if not st.isOk() { return -1 }
+    for 0:params.len() - 1 to i {
+        st.bind(i + 1, params[i])
+    }
+    var rc = st.step()
+    st.finalize()
+    return rc
+}
+
+func nowSec(): int { return _int(times.now()) }
+
+// ==================== 建库 + 预置数据 ====================
+func seed() {
+    run("CREATE TABLE IF NOT EXISTS songs(id INTEGER PRIMARY KEY, title TEXT, artist TEXT, album TEXT, year INTEGER)", [])
+    run("CREATE TABLE IF NOT EXISTS tokens(token TEXT PRIMARY KEY, user TEXT, expires INTEGER)", [])
+    run("CREATE TABLE IF NOT EXISTS users(name TEXT PRIMARY KEY, pass TEXT)", [])
+
+    var n = first("SELECT COUNT(*) AS n FROM songs", [])
+    if _int(n.get("n", "0")) > 0 { return }        // 已有数据，不重复灌
+
+    // 演示账号 demo / demo（生产请用 argon2/scrypt + 真正的用户表）
+    run("INSERT INTO users(name, pass) VALUES(?, ?)", ["demo", crypto.sha256("demo:" + "demo")])
+
+    Array[Array] rows = [
+        ["月光", "李健", "依然", 2011],
+        ["海阔天空", "Beyond", "乐与怒", 1993],
+        ["月半小夜曲", "李克勤", "命运符号", 1987],
+        ["月亮代表我的心", "邓丽君", "岛国之情歌", 1977],
+        ["夜空中最亮的星", "逃跑计划", "世界", 2011],
+        ["Hotel California", "Eagles", "Hotel California", 1976]
+    ]
+    for rows to r {
+        run("INSERT INTO songs(title, artist, album, year) VALUES(?, ?, ?, ?)", r)
+    }
+}
+
+// ==================== 鉴权 ====================
+// 支持两种携带方式：`Authorization: Bearer <token>` 优先，其次 cookie `sid`
+func token_of(Dict req): string {
+    string h = http.header(req, "authorization", "")
+    if h.has("Bearer ") { return h.byte_slice(7, h.byte_len() - 1) }
+    return http.cookie(req, "sid", "")
+}
+
+// 返回用户名；空串 = 未登录 / token 过期
+func auth_user(Dict req): string {
+    string t = token_of(req)
+    if t == "" { return "" }
+    var r = first("SELECT user FROM tokens WHERE token = ? AND expires > ?", [t, nowSec()])
+    if r.len() == 0 { return "" }
+    return r.get("user", "") as string
+}
+
+func unauthorized(): Dict {
+    return {status: 401,
+            body: "{\"ok\":false,\"error\":\"unauthorized\",\"hint\":\"先 POST /api/login 拿 token\"}",
+            contentType: "application/json; charset=utf-8", headers: {}}
+}
+
+// ⚠ 这里不用 http.esc：JSON 需要的是 \" 和 \\ 转义，HTML 转义会把内容变成 &quot; 之类。
+//   本文件的错误文案都是内部常量（不含引号），直接拼即可。
+func badRequest(string msg): Dict {
+    return {status: 400,
+            body: "{\"ok\":false,\"error\":\"" + msg + "\"}",
+            contentType: "application/json; charset=utf-8", headers: {}}
+}
+
+// ==================== 路由 ====================
+// POST /api/login  (form: user=..&pass=..) → {ok, token, expiresIn}
+func login(Dict req): Dict {
+    string user = http.formValue(req, "user", "")
+    string pass = http.formValue(req, "pass", "")
+    if user == "" or pass == "" { return badRequest("user / pass 都要给") }
+
+    var u = first("SELECT pass FROM users WHERE name = ?", [user])
+    if u.len() == 0 { return {status: 401, body: "{\"ok\":false,\"error\":\"bad credentials\"}",
+                              contentType: "application/json; charset=utf-8", headers: {}} }
+    if (u.get("pass", "") as string) != crypto.sha256(user + ":" + pass) {
+        return {status: 401, body: "{\"ok\":false,\"error\":\"bad credentials\"}",
+                contentType: "application/json; charset=utf-8", headers: {}}
+    }
+
+    // 发 token（这里用 sha256 拼时间戳；真正随机可用 LenoUUID）
+    string seedText = user + ":" + _str(nowSec()) + ":" + _str(_int(times.ms()))
+    string token = crypto.sha256(seedText)
+    int exp = nowSec() + TOKEN_TTL
+    run("DELETE FROM tokens WHERE expires <= ?", [nowSec()])
+    run("INSERT INTO tokens(token, user, expires) VALUES(?, ?, ?)", [token, user, exp])
+
+    Dict body = {ok: true, token: token, expiresIn: TOKEN_TTL}
+    Dict res = http.json(body)
+    return http.setCookie(res, "sid", token, "/", TOKEN_TTL)
+}
+
+// GET /api/search?q=关键词  → {ok, count, items:[...]}
+func search(Dict req): Dict {
+    string user = auth_user(req)                 // ★ 受保护接口的第一步
+    if user == "" { return unauthorized() }
+
+    string q = http.query(req, "q", "")
+    if q == "" { return badRequest("缺少 q") }
+    if q.byte_len() > 64 { return badRequest("q 太长") }
+
+    string like = "%" + q + "%"
+    Array[Dict] rows = all(
+        "SELECT id, title, artist, album, year FROM songs WHERE title LIKE ? OR artist LIKE ? ORDER BY year LIMIT 20",
+        [like, like])
+
+    Array[Dict] items = []
+    for rows to r {
+        items.add({id: _int(r.get("id", "0")), title: r.get("title", ""),
+                   artist: r.get("artist", ""), album: r.get("album", ""),
+                   year: _int(r.get("year", "0"))})
+    }
+    return http.json({ok: true, count: items.len(), items: items, user: user})
+}
+
+// GET /api/stats  → 需要鉴权的小接口（证明"每个受保护接口都校验"也不重）
+func stats(Dict req): Dict {
+    string user = auth_user(req)
+    if user == "" { return unauthorized() }
+    var n = first("SELECT COUNT(*) AS n FROM songs", [])
+    return http.json({ok: true, songs: _int(n.get("n", "0")), user: user})
+}
+
+main() {
+    var args = _args()
+    int port = 8090
+    if args.len() > 0 {
+        var p = _str(args[0]).trim()
+        if p != "" { port = _int(p) }
+    }
+
+    // 演示用**内存库**（重启即清空，跑完不留垃圾文件）。
+    //   要持久化就换成文件库：`GDB = sqlite3.open(dirs.join(dirs.script_dir(), "music.db"))`
+    seed()
+
+    var app = http.newApp()
+    http.post(app, "/api/login", login)
+    http.get(app, "/api/search", search)
+    http.get(app, "/api/stats", stats)
+
+    print("音乐搜索 API：")
+    print("  POST http://127.0.0.1:" + _str(port) + "/api/login  (user=demo&pass=demo)")
+    print("  GET  http://127.0.0.1:" + _str(port) + "/api/search?q=月   (需 Authorization: Bearer <token>)")
+    var r = http.serve(app, "127.0.0.1", port)
+    if not (r["ok"] as bool) { print("启动失败：" + (r["err"] as string)) }
+}
