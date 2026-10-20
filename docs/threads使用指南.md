@@ -18,6 +18,8 @@ Leno 提供基于 **隔离 VM + Channel** 的多线程支持，参考 Go 语言�
 | `t.error()` | 线程的错误文案（空串 = 没出错；**不用 join 也能看到**） |
 | `threads.current_id()` | 当前 OS 线程 id（诊断/日志用，别做业务判断） |
 | `ch.send(value)` | 向通道发送值（阻塞） |
+| `ch.send_for(v, ms)` | 带超时的发送：满了最多等 `ms`，超时 `false`（不写入） |
+| `threads.select([ch…], ms)` | 多路等待：返回第一个有数据的通道 `{index, value}`，超时 `null` |
 | `ch.receive()` | 从通道接收值（阻塞） |
 | `ch.try_send(value)` | 非阻塞发送，成功返回 true |
 | `ch.try_receive()` | 非阻塞接收，成功返回值，失败返回 null |

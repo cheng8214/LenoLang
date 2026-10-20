@@ -332,6 +332,43 @@ ch.send(42)
 ch.send([1, 2, 3])
 ```
 
+### `channel.send_for(value, timeout_ms)`
+
+带超时的发送（TH13，2026-10-20）：通道满时最多等 `timeout_ms`，超时**放弃发送**。
+
+**返回值:** `bool` —— `true` = 已发送；`false` = 超时或通道已关闭（**值没写进去**）
+**负数** = 无限等（等价 `send`）
+
+```leno
+var ch = threads.channel(1)       // 容量 1
+ch.send("a")
+print(ch.send_for("b", 50))        // false —— 满了，等了 50ms 后放弃
+print(ch.receive())                // a（"b" 没进通道）
+```
+
+> 用途：`send` 满了会**无限阻塞**，一个忘记取值的消费者就能把生产者永久卡死。
+> 用例：`assert\test_channel_send_for.leno`。
+
+### `threads.select(Array[Channel], timeout_ms = 0)`
+
+多路等待（TH13）：同时等多个通道，返回**第一个有数据的**那个。
+
+**返回值:** `Dict|null` —— `{index: int, value: any}`；没有数据（超时）⇒ `null`
+**timeout_ms:** `0`（默认）= 只查一次；`<0` = 无限等；`>0` = 最多等这么多毫秒
+
+```leno
+var a = threads.channel(1)
+var b = threads.channel(1)
+b.send(42)
+var r = threads.select([a, b], 0) as Dict
+print(r["index"])   // 1
+print(r["value"])   // 42
+```
+
+> 实现是 **1ms 粒度轮询**（平台上没有"等待多个 channel"的现成原语）⇒ 延迟上限约 1ms。
+> **值是 `null` 也能选中**（与"通道为空"区分，`try_receive` 做不到这一点）。
+> 用例：`assert\test_threads_select.leno`。
+
 ### `channel.receive()`
 
 从通道接收一个值。

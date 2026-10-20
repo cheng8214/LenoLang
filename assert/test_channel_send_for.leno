@@ -1,0 +1,38 @@
+// test_channel_send_for.leno —— TH13：带超时的发送 `ch.send_for(v, ms)`（回归）
+//
+// 背景：`send` 在缓冲满时**无限阻塞**，一个忘记取值的消费者能让生产者永久卡死。
+//   `send_for` 超时返回 false（不写入），语义其余与 send 一致（跨线程深拷贝）。
+//
+// 判据：
+//   ① 有空位 ⇒ true，值能收到
+//   ② 缓冲满 ⇒ 超时 false（值**没写进去**，通道里还是原来那条）
+//   ③ 消费者取走后再发 ⇒ 又能成功
+//   ④ 负数 = 无限等（有空位时立即成功）
+import threads
+import times
+
+main() {
+    var ch = threads.channel(1)          // 容量 1，故意做小
+
+    // ---------- ① 有空位 ----------
+    assert_eq(ch.send_for("a", 50), true, "①空通道立即发送成功")
+    assert_eq(ch.receive() as string, "a", "①收到 a")
+
+    // ---------- ② 满了 ----------
+    assert_eq(ch.send_for(1, 50), true, "②先塞满")
+    var t0 = times.ms()
+    assert_eq(ch.send_for(2, 50), false, "②满了 ⇒ 超时 false")
+    var waited = times.ms() - t0
+    assert_true(waited >= 40.0, "②确实等了约 50ms（实际 " + _str(waited) + "ms）")
+    assert_eq(_int(ch.receive()), 1, "②通道里仍是原来那条（超时值没写进去）")
+
+    // ---------- ③ 取走后可以再发 ----------
+    assert_eq(ch.send_for(3, 50), true, "③腾出空位后成功")
+    assert_eq(_int(ch.receive()), 3, "③收到 3")
+
+    // ---------- ④ 负数 = 无限等 ----------
+    assert_eq(ch.send_for(9, -1), true, "④负数等价 send")
+    assert_eq(_int(ch.receive()), 9, "④收到 9")
+
+    print("test_channel_send_for passed")
+}

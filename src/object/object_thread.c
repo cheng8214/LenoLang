@@ -1153,6 +1153,81 @@ Value channel_receive(ObjChannel* channel) {
     return re_cloned;
 }
 
+// 非阻塞取一个值（TH13，2026-10-20）：1 = 取到（**值可以是 null**），0 = 空，-1 = 参数无效
+//   为什么不复用 channel_try_receive：它用 null 表示"空"，而 Channel **可以发送 null**
+//   （例如线程池用 null 当停机信号）⇒ 调用方无法区分"空"和"收到的就是 null" ✗
+//   select 需要这个区分，所以单独给一个带出参的原子接口（同一把锁内完成"判断 + 取走"）。
+int channel_try_take(ObjChannel* channel, Value* out) {
+    if (!channel || !out) return -1;
+    platform_mutex_lock(&channel->mutex);
+
+    if (channel->count == 0) {
+        platform_mutex_unlock(&channel->mutex);
+        return 0;
+    }
+
+    Value value = channel->buffer[channel->head];
+    // 与 channel_try_receive 同口径：先克隆再移除（防"移除后源对象被发送线程 GC 回收"），
+    // 克隆期间禁用同步 GC（否则 gc_scan_children 要 lock 本 mutex ⇒ 自死锁）
+    int saved_gc_enabled = gc_get_enabled();
+    gc_set_enabled(0);
+    Value re_cloned = value_clone_for_channel(value);
+    gc_set_enabled(saved_gc_enabled);
+
+    channel->buffer[channel->head] = val_null();
+    channel->head = (channel->head + 1) % channel->capacity;
+    channel->count--;
+
+    platform_cond_signal(&channel->not_full);
+    platform_mutex_unlock(&channel->mutex);
+
+    *out = re_cloned;
+    return 1;
+}
+
+// 带超时的发送（TH13）：0 = 成功，-1 = 通道已关闭，-2 = 超时（未发送）
+//   timeout_ms < 0 = 无限等（等价 channel_send）
+//   为什么要它：`send` 在缓冲满时会**无限阻塞**，一个忘记取值的消费者就能让生产者永久卡死
+//   （服务端停机、UI 线程上报进度这类场景最怕）。有了超时就能放弃并走降级路径。
+int channel_send_for(ObjChannel* channel, Value value, int timeout_ms) {
+    gc_note_channel_use();
+    Value cloned = value_clone_for_channel(value);   // 克隆在发送方堆；超时丢弃时由本线程 GC 回收 ✓
+
+    platform_mutex_lock(&channel->mutex);
+
+    if (channel->closed) {
+        platform_mutex_unlock(&channel->mutex);
+        return -1;
+    }
+
+    if (timeout_ms < 0) {
+        while (channel->count >= channel->capacity && !channel->closed) {
+            platform_cond_wait(&channel->not_full, &channel->mutex);
+        }
+    } else {
+        while (channel->count >= channel->capacity && !channel->closed) {
+            if (platform_cond_timedwait(&channel->not_full, &channel->mutex, timeout_ms) != 0) {
+                platform_mutex_unlock(&channel->mutex);
+                return -2;                        // 超时：不写入
+            }
+        }
+    }
+
+    if (channel->closed) {
+        platform_mutex_unlock(&channel->mutex);
+        return -1;
+    }
+
+    channel->buffer[channel->tail] = cloned;
+    gc_write_barrier((Object*)channel, cloned);
+    channel->tail = (channel->tail + 1) % channel->capacity;
+    channel->count++;
+
+    platform_cond_signal(&channel->not_empty);
+    platform_mutex_unlock(&channel->mutex);
+    return 0;
+}
+
 int channel_try_send(ObjChannel* channel, Value value) {
     gc_note_channel_use();          // ★ 同上
     Value cloned = value_clone_for_channel(value);

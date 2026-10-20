@@ -1,0 +1,53 @@
+// test_threads_select.leno —— TH13：多路等待 `threads.select([ch1, ch2], timeout_ms)`（回归）
+//
+// 背景（见 docs/线程并发能力修复追踪.md 的 TH13）：
+//   多个 Channel 一起等（actor / reactor、worker 池同时等任务与停机信号）此前只能用
+//   `try_receive` + sleep 手搓轮询。现在给一个模块函数：返回第一个有数据的通道
+//   `{index, value}`，超时给 null。
+//
+// 判据：
+//   ① 空通道 + 超时 ⇒ null（0ms 只查一次）
+//   ② 命中第二条 ⇒ index=1
+//   ③ 命中第一条 ⇒ index=0
+//   ④ 阻塞等：子线程 100ms 后发 ⇒ 主线程最多等 2s 能拿到
+//   ⑤ **值是 null 也能选中**（与"通道为空"区分 —— 这是 `channel_try_receive` 做不到的）
+import threads
+
+main() {
+    var a = threads.channel(1)
+    var b = threads.channel(1)
+
+    // ---------- ① 超时 ----------
+    assert_eq(threads.select([a, b], 0), null, "①空通道 + 0ms ⇒ null")
+    assert_eq(threads.select([a, b], 30), null, "①空通道 + 30ms ⇒ null")
+
+    // ---------- ② 命中第二条 ----------
+    b.send(42)
+    var r = threads.select([a, b], 0) as Dict
+    assert_eq(_int(r["index"]), 1, "②返回下标 1")
+    assert_eq(_int(r["value"]), 42, "②返回值 42")
+
+    // ---------- ③ 命中第一条 ----------
+    a.send("x")
+    var r2 = threads.select([a, b], 0) as Dict
+    assert_eq(_int(r2["index"]), 0, "③返回下标 0")
+    assert_eq(r2["value"] as string, "x", "③返回值 x")
+
+    // ---------- ④ 阻塞等 ----------
+    var t = threads.start(func() {
+        threads.sleep(100)
+        a.send(7)
+    })
+    var r3 = threads.select([a, b], 2000) as Dict
+    assert_eq(_int(r3["index"]), 0, "④等到第一条")
+    assert_eq(_int(r3["value"]), 7, "④值 7")
+    t.join()
+
+    // ---------- ⑤ null 值 ----------
+    a.send(null)
+    var r4 = threads.select([a, b], 0) as Dict
+    assert_eq(_int(r4["index"]), 0, "⑤null 值也能选中（不是'空'）")
+    assert_eq(r4["value"], null, "⑤值是 null")
+
+    print("test_threads_select passed")
+}

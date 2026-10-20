@@ -15,6 +15,8 @@ extern int channel_send(ObjChannel* channel, Value value);
 extern Value channel_receive(ObjChannel* channel);
 extern int channel_try_send(ObjChannel* channel, Value value);
 extern Value channel_try_receive(ObjChannel* channel);
+extern int channel_try_take(ObjChannel* channel, Value* out);   // TH13：非阻塞取（能区分"空"与"null 值"）
+extern int channel_send_for(ObjChannel* channel, Value value, int timeout_ms);  // TH13：带超时的发送
 
 // 外部声明：线程方法注册函数
 extern void thread_register_method(const char* name, ObjNative* method,
@@ -75,6 +77,50 @@ static Value thread_method_error(int argc, Value* args) {
     return out;
 }
 
+// threads.select(Array[Channel], timeout_ms) -> Dict|null（TH13，2026-10-20）
+//   多路等待：返回**第一个有数据的通道** `{index, value}`；超时/没有 ⇒ null
+//   timeout_ms：0（默认）= 只查一次；< 0 = 无限等；> 0 = 最多等这么多毫秒
+//   实现是**轮询**（1ms 粒度）：平台上没有"等待多个 channel"的现成原语，要做得靠
+//   给每个 channel 登记等待者 + send 时唤醒，改动面大。轮询 1ms 对绝大多数场景够用，
+//   且完全不改现有 Channel 结构（零风险）。
+//   ⚠ 多个消费者同时 select 同一组通道时，选中的值可能被抢走（那一条会取不到）⇒
+//     本函数已经把值**取走**一并返回，所以正常用法（一组消费者各拿一个）不会丢。
+static Value threads_select(int argc, Value* args) {
+    if (argc < 1 || !val_is_obj(args[0]) || val_as_obj(args[0])->type != OBJ_ARRAY) {
+        native_throw_error("threads.select() 需要一个 Channel 数组");
+        return val_null();
+    }
+    ObjArray* chs = (ObjArray*)val_as_obj(args[0]);
+    int timeout_ms = 0;
+    if (argc >= 2 && val_is_int(args[1])) timeout_ms = (int)val_as_num(args[1]);
+    if (chs->count <= 0) return val_null();
+
+    extern void gc_note_channel_use(void);
+    gc_note_channel_use();          // 本线程用过 channel ⇒ 退出时不能整堆释放
+
+    int waited = 0;
+    while (true) {
+        for (int i = 0; i < chs->count; i++) {
+            Value chv = chs->elements[i];
+            if (!val_is_obj(chv) || val_as_obj(chv)->type != OBJ_CHANNEL) continue;
+            Value got = val_null();
+            if (channel_try_take((ObjChannel*)val_as_obj(chv), &got) == 1) {
+                ObjDict* d = dict_new(4);
+                if (!d) return val_null();
+                ObjString* k1 = str_copy("index", 5);
+                ObjString* k2 = str_copy("value", 5);
+                if (k1) dict_set(d, val_obj((Object*)k1), val_int(i));
+                if (k2) dict_set(d, val_obj((Object*)k2), got);
+                return val_obj((Object*)d);
+            }
+        }
+        if (timeout_ms == 0) return val_null();                 // 只查一次
+        if (timeout_ms > 0 && waited >= timeout_ms) return val_null();
+        platform_sleep_ms(1);
+        waited += 1;
+    }
+}
+
 // threads.current_id() -> int（TH11）：当前 OS 线程 id（诊断用：日志里分清是哪个 worker）
 //   ⚠ 只在诊断/日志里用，**不要**拿它做业务判断（id 会被 OS 复用）
 static Value threads_current_id(int argc, Value* args) {
@@ -122,6 +168,21 @@ static Value channel_method_close(int argc, Value* args) {
     ObjChannel* channel = (ObjChannel*)val_as_obj(args[0]);
     channel_close(channel);
     return val_null();
+}
+
+// ch.send_for(value, timeout_ms) -> bool（TH13，2026-10-20）
+//   true = 已发送；false = 超时没发出去（通道满）或通道已关闭
+//   ⚠ 与 send 的区别只有"满了会放弃"，其余语义相同（跨线程深拷贝）
+static Value channel_method_send_for(int argc, Value* args) {
+    (void)argc;
+    ObjChannel* channel = (ObjChannel*)val_as_obj(args[0]);
+    Value value = args[1];
+    if (!val_is_int(args[2])) {
+        native_throw_error("Channel.send_for() 的第二个参数是毫秒整数");
+        return val_null();
+    }
+    int timeout_ms = (int)val_as_num(args[2]);
+    return val_bool(channel_send_for(channel, value, timeout_ms) == 0);
 }
 
 static Value channel_method_try_send(int argc, Value* args) {
@@ -483,6 +544,11 @@ void threads_init_instance_methods(void) {
     //     从 any 收紧成"接收者的元素类型"（旧注释写"语言里没有 Channel[T]" ✗ 已作废）。
     //   ⚠ `send(v)` 的**形参**仍是 `any`：要按 T 校验实参得给参数也上元素规格（另一件事，未做）✗
     native_register_instance_method_return_spec("Channel", "send", &NATIVE_T_NULL);
+
+    // send_for(value, timeout_ms) -> bool（TH13）：通道满时最多等 timeout_ms，超时给 false
+    TypeKind send_for_params[] = {TYPE_ANY, TYPE_INT};
+    channel_register_method("send_for", make_native(channel_method_send_for, 3, "send_for"), TYPE_BOOL, TYPE_UNKNOWN, NATIVE_FIXED(send_for_params));
+
     channel_register_method("receive", make_native(channel_method_receive, 1, "receive"), TYPE_ANY, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
     // ★ receive 的返回类型 = **接收者的元素类型**（TH4，2026-10-12）：
     //   `Channel[int] ch` ⇒ `ch.receive()` 就是 `int`，不再需要 `_int(...)` 或 `is` 收窄 ✓
@@ -515,6 +581,12 @@ void threads_init_module(void) {
 
     // current_id() -> int（TH11）：当前 OS 线程 id（诊断/日志）
     native_register_module_method("threads", "current_id", threads_current_id, &NATIVE_T_INT, NATIVE_FIXED_NONE(0));
+
+    // select(Array[Channel], timeout_ms=0) -> Dict|null（TH13）
+    //   {index, value}；timeout 可省略（0 = 只查一次、<0 = 无限等）
+    TypeKind select_params[] = {TYPE_ARRAY, TYPE_INT};
+    native_register_module_method("threads", "select", threads_select, &NATIVE_T_ANY,
+                                  NATIVE_VARARG(1, NATIVE_ARITY_ANY, 2, select_params, TYPE_ANY));
 
     // ---- 并行原语（TH3，2026-10-12）----
     // join_all(Array[Thread]) ⇒ int（真正 joined 的个数）
