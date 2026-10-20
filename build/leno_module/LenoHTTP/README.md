@@ -58,6 +58,7 @@ build\leno.exe build\leno_module\LenoHTTP\examples\music_api.leno 8090
 | `newApp()` | 新建应用 `{routes, statics, running}` |
 | `get/post/put/del(app, path, handler, opts=null)` | 注册路由（精确匹配）；`opts` 是声明式元数据，如 `{auth: true}` |
 | `route(app, method, path, handler, opts=null)` | 任意方法（`"*"` = 全部） |
+| `routes(app, table)` | **集中路由表**：一次注册一批，除 `method`/`path`/`handler` 外的键都是元数据；返回注册条数 **0.2.2** |
 | `auth(app, fn)` | 注册**唯一**的鉴权检查器：`fn(req) -> 用户名 / ""`（空串 = 未登录）**0.2.2** |
 | `before(app, fn)` | 全局前置管道：`fn(req)` 返回 `null` 放行、返回响应 Dict 短路 **0.2.2** |
 | `jsonStatus(code, obj)` | 带状态码的 JSON 响应（`json()` 固定 200）**0.2.2** |
@@ -160,6 +161,13 @@ http.auth(app, func(Dict req): string {
 // ② 受保护的路由标一下（等价 [Authorize]）
 http.get(app, "/api/search", search, {auth: true})
 http.post(app, "/api/login", login)              // 不标 = 公开
+
+// ②' 或者集中成一张表 —— 「哪些接口、哪些要鉴权」一眼看全
+http.routes(app, [
+    {method: "POST", path: "/api/login",  handler: login},
+    {method: "GET",  path: "/api/search", handler: search, auth: true},
+    {method: "GET",  path: "/api/stats",  handler: stats,  auth: true},
+])
 
 // ③ 全局管道：访问日志（返回 null = 放行）
 http.before(app, func(Dict req): Dict {

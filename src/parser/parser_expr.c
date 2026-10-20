@@ -568,18 +568,13 @@ Ast* parse_if_expr(Parser* p) {
         return NULL;
     }
 
-    // 括号是可选的
-    int has_paren = (p->lex.current.type == TOK_LPAREN);
-    if (has_paren) {
-        lexer_next(&p->lex); // 消费 '('
-    }
-
-    // 解析条件表达式
+    // 条件表达式：**整体交给 parse_expression**，不手工剥括号
+    //   ★ 2026-10-20 修 bug：原先看到 `(` 就手工消费、再 consume(')')，
+    //     等于假设"括号正好包住整个条件"。于是 `if (id + 1) == 4 then ...`
+    //     解析完 `(id + 1)` 就去找 `then`，撞上 `==` ⇒ 报"if 表达式需要使用 then"✗
+    //     （而 `(a) == b` 在普通表达式里完全合法 ⇒ 报错误导）
+    //     现在括号由 parse_expression 自己的分组规则处理，`(a) == b` / `(a > b)` 都对 ✓
     Ast* cond = parse_expression(p);
-
-    if (has_paren) {
-        consume(p, TOK_RPAREN, "期望 ')'");
-    }
 
     // 表达式 if 必须有 then
     if (!consume(p, TOK_THEN, "if 表达式需要使用 'then' 关键字")) {

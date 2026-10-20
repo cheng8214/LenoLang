@@ -122,5 +122,23 @@ main() {
     assert_true(r6.has("500"), "⑥中间件炸 ⇒ 500")
     assert_true(r6.has("200 OK"), "⑥同一连接的下一个请求仍正常（服务没死）")
 
-    print("test_middleware passed（公开 / 401 / 带 token / 缺检查器 500 / 短路 503 / 异常后仍活）")
+    // ---------- ⑦ 集中式路由表 http.routes ----------
+    var appTable = http.newApp()
+    http.auth(appTable, tokenOf)
+    var cnt = http.routes(appTable, [
+        {method: "get", path: "/t/open", handler: hOpen},              // method 小写也认
+        {method: "GET", path: "/t/api", handler: hApi, auth: true},
+        {method: "GET", path: "", handler: hApi},                       // 缺 path ⇒ 跳过
+        {method: "GET", handler: hOpen}                                 // 缺 path ⇒ 跳过
+    ])
+    assert_eq(cnt, 2, "⑦只注册合法项（2 条）")
+
+    var r7a = oneReq(appTable, getRaw("/t/open", ""))
+    assert_true(r7a.has("200 OK"), "⑦表里的公开项可访问")
+    var r7b = oneReq(appTable, getRaw("/t/api", ""))
+    assert_true(r7b.has("401 Unauthorized"), "⑦表里的 auth:true 生效")
+    var r7c = oneReq(appTable, getRaw("/t/api", "X-Token: good\r\n"))
+    assert_true(r7c.has("alice"), "⑦带 token 通过并拿到 user")
+
+    print("test_middleware passed（公开 / 401 / 带 token / 缺检查器 500 / 短路 503 / 异常后仍活 / 集中路由表）")
 }

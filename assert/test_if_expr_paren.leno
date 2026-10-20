@@ -1,0 +1,35 @@
+// test_if_expr_paren.leno —— if 表达式的条件里带括号（2026-10-20 修的真 bug）
+//
+// 旧行为：`if` 后面看到 `(` 就手工消费、再 consume(')')，等于假设"括号正好包住整个条件"。
+//   于是 `if (id + 1) == 4 then …` 解析完 `(id + 1)` 就去找 `then`，撞上 `==`
+//   ⇒ 报「if 表达式需要使用 'then' 关键字」—— 而 `(a) == b` 在普通表达式里完全合法，
+//   这条报错把人往"忘写 then"上引，实际是括号被提前吃掉 ✗
+// 现在：条件整体交给 parse_expression，括号由分组规则处理 ⇒ 两种写法都对 ✓
+main() {
+    int id = 3
+
+    // ① 括号包住整个条件（旧版也能过，防回归）
+    assert_eq(if (id > 1) then 10 else 20, 10, "①括号包住整个条件")
+
+    // ② 括号只包左操作数（旧版在这里报错）
+    assert_eq(if (id + 1) == 4 then 10 else 20, 10, "②( a ) == b")
+
+    // ③ 括号 + and 链
+    assert_eq(if (id > 1) and id < 10 then "in" else "out", "in", "③and 链")
+
+    // ④ 嵌套 if 表达式
+    assert_eq(if id > 1 then (if id > 2 then 2 else 1) else 0, 2, "④嵌套 if 表达式")
+
+    // ⑤ eif 链
+    int n = 5
+    var r = if n < 3 then "s" eif n < 10 then "m" else "l"
+    assert_eq(r, "m", "⑤eif 链")
+
+    // ⑥ 条件里是函数调用 + 括号比较
+    assert_eq(if (_int("3")) > 2 then 1 else 0, 1, "⑥调用包在括号里再比较")
+
+    // ⑦ 三元写法在实参位置（回归：if 表达式作实参）
+    assert_eq(_str(if (id == 3) then "y" else "n"), "y", "⑦作实参")
+
+    print("test_if_expr_paren passed")
+}

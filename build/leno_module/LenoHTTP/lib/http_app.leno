@@ -36,6 +36,49 @@ export func post(Dict app, string path, any handler, any opts = null): void { ro
 export func put(Dict app, string path, any handler, any opts = null): void { route(app, "PUT", path, handler, opts) }
 export func del(Dict app, string path, any handler, any opts = null): void { route(app, "DELETE", path, handler, opts) }
 
+// ==================== 集中式路由表（2026-10-20）====================
+//   http.routes(app, [
+//       {method: "GET",  path: "/api/search", handler: search, auth: true},
+//       {method: "POST", path: "/api/login",  handler: login},
+//   ])
+//
+// 为什么要有：一行一个 `http.get(...)` 时，路由散在 main 里、鉴权标注也散着，
+//   review 要翻全文。集中成一张表后"哪些接口、哪些要鉴权"一眼看全
+//   —— 这是不动编译器前提下，最接近 C# `[HttpGet]` + `MapGet` 集中声明的形态。
+//
+// 规则：
+//   · `method` 缺省 = GET（大小写不敏感）；`path` / `handler` 必填，缺了就跳过该项
+//   · `method` / `path` / `handler` 之外的所有键**原样作为路由元数据**（如 `auth: true`）
+//   · 返回成功注册的条数（写测试/启动日志时能核对"我以为注册了 3 条"）
+export func routes(Dict app, Array table): int {
+    var n = 0
+    for table to item {
+        if not (item is Dict) { continue }
+        Dict m = item as Dict
+
+        string method = "GET"
+        string path = ""
+        var handler = null
+        if m.has("method") { method = _str(m.get("method", "GET")).to_upper() }
+        if m.has("path") { path = m.get("path", "") as string }
+        if m.has("handler") { handler = m.get("handler", null) }
+        if path == "" or handler == null { continue }
+
+        // 除约定键以外，其余键都是元数据（auth / role / 未来扩展）
+        Dict meta = {}
+        var ks = m.keys()
+        for ks to k {
+            string key = _str(k)          // keys() 的元素是无类型 any ⇒ 显式转 string
+            if key == "method" or key == "path" or key == "handler" { continue }
+            meta.set(key, m.get(key, null))
+        }
+
+        route(app, method, path, handler, meta)
+        n = n + 1
+    }
+    return n
+}
+
 // ==================== 鉴权（声明式）====================
 //   http.auth(app, fn)                    —— 注册**唯一的**鉴权检查器：fn(req) -> 用户名 / ""（空串 = 未登录）
 //   http.get(app, path, h, {auth: true})  —— 该路由需要鉴权

@@ -600,8 +600,18 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
                                 default_expr->kind == AST_VAR ||
                                 default_expr->kind == AST_MODULE_ACCESS);
             if (!is_literal && !is_const_expr) {
-                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
-                                 "参数 '%s' 的默认值必须是字面量常量或编译期常量表达式", ast->u.func.params[i]);
+                // ★ 2026-10-20：`Dict opts = {}` 报的是"必须是字面量常量"，而 `{}` 本身就是
+                //   字面量 ⇒ 文案自相矛盾（实测写 LenoHTTP 的 opts 默认值时被它绕了一圈）。
+                //   数组/字典字面量作默认值这里确实不支持（默认参数在**调用点**填，需要常量），
+                //   所以分开说清楚：不是"不是字面量"，而是"这种字面量不支持"。
+                if (default_expr->kind == AST_DICT || default_expr->kind == AST_ARRAY) {
+                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                        "参数 '%s' 的默认值不支持 数组/字典 字面量 —— 请改用 null（函数内判空）或模块级常量",
+                        ast->u.func.params[i]);
+                } else {
+                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                        "参数 '%s' 的默认值必须是字面量常量或编译期常量表达式", ast->u.func.params[i]);
+                }
             }
             
             // 对非字面量表达式执行语义分析（设置 ref、折叠 enum 常量等）

@@ -203,10 +203,17 @@ main() {
     // ② 全局管道：访问日志（返回 null = 放行）
     http.before(app, logMw)
 
-    // ③ 路由：受保护的标 `{auth: true}`，公开的不标
-    http.post(app, "/api/login", login)
-    http.get(app, "/api/search", search, {auth: true})
-    http.get(app, "/api/stats", stats, {auth: true})
+    // ③ 集中路由表：**哪些接口、哪些要鉴权，一眼看全**
+    //     （等价 C# 的 MapGet(...).RequireAuthorization() 集中声明版）
+    var n = http.routes(app, [
+        {method: "POST", path: "/api/login",  handler: login},
+        {method: "GET",  path: "/api/search", handler: search, auth: true},
+        {method: "GET",  path: "/api/stats",  handler: stats,  auth: true}
+    ])
+    if n != 3 {
+        print("路由注册异常：只成功 " + _str(n) + " 条")
+        return
+    }
 
     print("音乐搜索 API：")
     print("  POST http://127.0.0.1:" + _str(port) + "/api/login  (user=demo&pass=demo)")

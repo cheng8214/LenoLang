@@ -217,3 +217,32 @@ parser 的 `AST_INDEX_ASSIGN` 分支，不经这里 ⇒ 才出现"两种写法�
 ### 测试脚本
 - `examples/改进测试/test_null_clib.leno`
 - `examples/改进测试/test_null_index.leno`
+
+---
+
+## 五、2026-10-20：写 LenoHTTP 时撞到的两个报错问题（都已修）
+
+### 1. `if (a) == b then …` 报「if 表达式需要使用 'then' 关键字」—— ✅ 已修（解析 bug）
+
+**现象**：`if (id + 1) == 4 then 10 else 20` 编译失败，报"if 表达式需要使用 then"；
+而 `if (id + 1 > 4) then ...` 正常。写
+`out.send(if (r as string) == expect then 1 else -3)` 时撞到，第一反应是"我忘写 then 了" ✗
+
+**根因**（`src/parser/parser_expr.c` 的 `parse_if_expr`）：看到 `if` 后面是 `(` 就**手工消费**
+它、再 `consume(')')`，等于假设"括号正好包住整个条件"。于是解析完 `(id + 1)` 就去找 `then`，
+撞上 `==` ⇒ 报「需要使用 then」。而 `(a) == b` 在普通表达式里完全合法 ⇒ 报错误导 ✗
+
+**修法**：条件整体交给 `parse_expression`（括号由分组规则处理），删掉手工消费。
+覆盖：`(a > b)` / `(a) == b` / `and` 链 / 嵌套 if 表达式 / `eif` 链 / 条件里带函数调用。
+用例 `assert\test_if_expr_paren.leno`（7 条断言）。
+
+### 2. `Dict opts = {}` 报「默认值必须是字面量常量」—— ✅ 文案已改
+
+**现象**：`{}` 明明是字面量，报错却说"必须是字面量常量或编译期常量表达式" ⇒ **自相矛盾**，
+让人以为是"我写错语法了"，实际是"数组/字典字面量不支持作默认值"。
+
+**修法**（`src/semantic/semantic_visit_func.c`）：单独识别 `AST_DICT` / `AST_ARRAY`，文案改为
+> 参数 'opts' 的默认值不支持 数组/字典 字面量 —— 请改用 `null`（函数内判空）或模块级常量
+
+> 附带影响：`http.get(app, path, handler, Dict opts = {})` 因此写成 `any opts = null`（函数内判空）。
+> 这是受该限制影响的真实写法，见 `LenoHTTP/lib/http_app.leno`。

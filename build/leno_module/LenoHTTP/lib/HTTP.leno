@@ -33,6 +33,13 @@ export func del(Dict app, string path, any handler, any opts = null): void { a.d
 export func route(Dict app, string method, string path, any handler, any opts = null): void {
     a.route(app, method, path, handler, opts)
 }
+
+// 集中式路由表（2026-10-20）：一次注册一批，除 method/path/handler 外的键都是元数据
+//   http.routes(app, [
+//       {method: "GET",  path: "/api/search", handler: search, auth: true},
+//       {method: "POST", path: "/api/login",  handler: login},
+//   ])   → 返回成功注册的条数
+export func routes(Dict app, Array table): int { return a.routes(app, table) }
 export func static(Dict app, string prefix, string dir): void { a.static(app, prefix, dir) }
 export func stop(Dict app): void { a.stop(app) }
 
