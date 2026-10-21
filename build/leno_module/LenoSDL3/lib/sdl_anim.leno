@@ -1,0 +1,175 @@
+// sdl_anim.leno -- 帧动画播放器（GIF / APNG / WebP 动画，2026-10-21）
+//
+// 为什么需要：
+//   桌面宠物、加载指示、表情切换都要"多帧循环播放"。SDL3_image 能**解码**动画，
+//   但没有播放器（它只给一串 surface + 每帧时长）。否则每个应用都要自己写一遍
+//   「累计 dt → 取模 → 循环/不循环 → 越界兜底」。
+//
+// 设计要点：
+//   ① **构造时一次性把每帧上传成纹理**，播放只换纹理指针（不每帧 CreateTexture，那很贵）
+//   ② 帧时长取自动画文件本身（GIF 每帧可不同）；0 兜底 100ms（静态图就是 0）
+//   ③ `tick()` 返回"索引是否变了"，调用方可只在变了时重绘（省 CPU）
+//   ④ `destroySelf()` 一次性释放纹理 + 原始 animation（帧 surface 由 SDL_image 随它释放）
+//
+// 用法（方法风格，不需要额外 import 渲染器类型）：
+//   var a = SDL3.loadAnim(ren.handle, "pet.gif", true)
+//   while running {
+//       if a.tick(16) { a.drawTo(ren, 0, 0, 320, 320) }
+//   }
+//   a.destroySelf()
+import "sdl_core.leno" as core
+use core.sdl3
+import "sdl_image.leno" as img
+import "sdl_renderer.leno" as rnd
+use rnd.Renderer
+
+export struct Anim {
+    Ptr[u8] raw = null             // IMG_Animation*（帧 surface 归它所有）
+    Ptr[u8] renderer = null
+    Array[Ptr[u8]] frames = []     // 纹理（与 delays 等长）
+    Array[int] delays = []
+    int idx = 0
+    int acc = 0                    // 当前帧已累计的毫秒
+    int w = 0
+    int h = 0
+    bool loop = true
+    bool playing = true
+    bool ok = false
+
+    // 推进 dtMs；true = 帧索引变了（只在该重绘时重绘）
+    func tick(int dtMs): bool {
+        if not ok or not playing or frames.len() <= 1 { return false }
+        int old = idx
+        acc = acc + dtMs
+        // 一次 tick 可能跨多帧（卡顿后 dt 很大）；上限 1000 防"1ms 帧"的死循环
+        var guard = 0
+        while acc >= delays[idx] and guard < 1000 {
+            acc = acc - delays[idx]
+            idx = idx + 1
+            if idx >= frames.len() {
+                if loop {
+                    idx = 0
+                } else {
+                    idx = frames.len() - 1
+                    playing = false
+                    break
+                }
+            }
+            guard = guard + 1
+        }
+        return idx != old
+    }
+
+    // 画当前帧（按 w×h 缩放）
+    func drawTo(Renderer ren, float x, float y, float w, float h): bool {
+        if not ok or frames.len() == 0 { return false }
+        return ren.drawTextureAt(frames[idx], x, y, w, h)
+    }
+
+    func play()  { playing = true }
+    func pause() { playing = false }
+    func reset() { idx = 0; acc = 0; playing = true }
+
+    // 跳到指定帧（点选动作/表情时用）
+    func seek(int i) {
+        if not ok or i < 0 { return }
+        if i >= frames.len() { i = frames.len() - 1 }
+        idx = i
+        acc = 0
+    }
+
+    func count(): int { return frames.len() }
+
+    // 把第 i 帧**原始帧**存成 PNG（调试/自检用：确认解码出来的内容对不对）
+    //   走的是 animation 里的 surface（不是纹理），所以能在没有渲染器的地方用
+    func saveFrame(int i, string path): bool {
+        if raw == null { return false }
+        Ptr[u8] surf = img.animFrame(raw, i)
+        if surf == null { return false }
+        return img.savePNG(surf, path)
+    }
+
+    // 释放纹理 + 原始 animation（重复调用安全）
+    func destroySelf() {
+        if renderer != null and frames.len() > 0 {
+            for frames to t { core.lib().SDL_DestroyTexture(t) }
+        }
+        frames = []
+        delays = []
+        if raw != null {
+            img.freeAnimation(raw)
+            raw = null
+        }
+        ok = false
+    }
+}
+
+// 从**一组图片文件**（PNG 序列）构造动画；每帧固定 delayMs
+//   用途：webm/gif 放不了时，先把视频抽成 PNG 序列（见 `tools/extract_webm_frames.leno`），
+//   再用它播 —— 帧时长由调用方统一给（视频是等间隔抽帧，所以固定值就对 ✓）
+//   ⚠ 与 load 一样：renderer 必须是"实际绘制它的那个"（见下方注释）
+export func loadFrames(Ptr[u8] renderer, Array[string] paths, int delayMs): Anim {
+    Anim a = new Anim()
+    a.renderer = renderer
+    a.loop = true
+    if renderer == null or paths.len() == 0 { return a }
+    int d = delayMs
+    if d <= 0 { d = 100 }
+    for paths to p {
+        Ptr[u8] tex = img.loadTexture(renderer, p)
+        if tex == null { continue }
+        a.frames.add(tex)
+        a.delays.add(d)
+    }
+    a.ok = a.frames.len() > 0
+    return a
+}
+
+// 加载并上传；失败 ⇒ ok=false（不抛异常）。静态图也能加载（1 帧），不必先判格式
+//
+// ⚠⚠ **renderer 必须是"实际绘制它的那个"** —— SDL 的纹理绑定创建它的渲染器。
+//   `win.createRenderer()` 与 `win.run()` 内部维护的渲染器是**两个不同的 SDL_Renderer** ⇒
+//   用 A 建纹理、在 B 上 `drawTextureAt` 会**静默失败**（窗口一片黑，不报错 ✗）。
+//   ⇒ 用 `win.run(...)` 时，要在 **onRender 第一次被调用时**用**传入的** `ren.handle` 来 load：
+//       var GInited = false
+//       func onRender(Renderer ren) {
+//           if not GInited { GInited = true; GA = SDL3.loadAnim(ren.handle, path, true) }
+//           GA.tick(dt); GA.drawTo(ren, ...)
+//           SDL3.requestRedraw()     // 主循环按需重绘，必须自己请求下一帧
+//       }
+//   （手动轮询模式没有这个问题：自己建 window + renderer，全程就一个渲染器 ✓）
+export func load(Ptr[u8] renderer, string path, bool loop): Anim {
+    Anim a = new Anim()
+    a.renderer = renderer
+    a.loop = loop
+    if renderer == null { return a }
+
+    a.raw = img.loadAnimation(path)
+    if a.raw == null {
+        // 失败原因交给 SDL_image（文件不存在 / 格式不支持 / 库版本旧没有该导出）
+        print("[anim] 加载失败 " + path + "：" + core.lib().SDL_GetError() + "\n")
+        return a
+    }
+
+    int n = img.animCount(a.raw)
+    if n <= 0 {
+        print("[anim] 帧数为 0（" + path + "）：animation 指针 " + _str(a.raw) + "\n")
+        img.freeAnimation(a.raw)
+        a.raw = null
+        return a
+    }
+    a.w = img.animWidth(a.raw)
+    a.h = img.animHeight(a.raw)
+
+    for n to i {
+        Ptr[u8] surf = img.animFrame(a.raw, i)
+        if surf == null { continue }
+        Ptr[u8] tex = core.lib().SDL_CreateTextureFromSurface(renderer, surf)
+        if tex != null {
+            a.frames.add(tex)
+            a.delays.add(img.animDelay(a.raw, i))
+        }
+    }
+    a.ok = a.frames.len() > 0
+    return a
+}

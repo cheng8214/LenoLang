@@ -1,0 +1,81 @@
+// test_frame_anim.leno — 帧动画播放器（2026-10-21 新增 sdl_anim）
+//
+// 跑法（仓库根目录）：
+//   build\leno.exe build\leno_module\LenoSDL3\examples\特效动画\test_frame_anim.leno
+//
+// 判据：
+//   ① 静态 PNG 也能当动画加载（count == 1），不必先判格式
+//   ② 单帧 tick 不推进（返回 false）
+//   ③ 两帧 + 10ms 时长：tick(10) 切到下一帧；循环模式下回到第 1 帧
+//   ④ 不循环模式：播到最后一帧停住（playing=false），idx 不再动
+//   ⑤ drawTo / destroySelf 不崩，destroySelf 幂等
+//   ⑥ 文件不存在 ⇒ ok=false，不抛异常
+//
+// 为什么用手工两帧而不是真 GIF：仓库里没有动画素材，而播放器逻辑（计时/循环/停帧）
+//   恰恰是最容易写错的部分 —— 用同一张 PNG 建两个纹理就能完整覆盖，不依赖素材格式。
+import files
+import "SDL3" as SDL3
+
+main() {
+    string png = "leno_gui/应用/模拟时钟/images/pin.png"
+    if not files.exists(png) {
+        print("[SKIP] 缺测试素材 " + png)
+        return
+    }
+
+    var win = SDL3.createWindow({title: "frame-anim 自测", w: 220, h: 220})
+    if not win.ok {
+        print("[SKIP] 建窗失败（无显示器 / 视频驱动不可用）")
+        return
+    }
+    // ⚠ 用 `win.createRenderer()`；别写 `SDL3.createRenderer(win)` ——
+    //   门面签名收的是 `Ptr[u8]`（窗口句柄），传 Window 对象编译器不拦，运行期拿到垃圾指针 ✗
+    var ren = win.createRenderer()
+    if not ren.ok {
+        print("[SKIP] 建渲染器失败：" + SDL3.getError())
+        return
+    }
+
+    // ⑥ 先测错误路径：文件不存在
+    var missing = SDL3.loadAnim(ren.handle, "no_such_file_xyz.gif", true)
+    assert_true(not missing.ok, "⑥ 文件不存在 ⇒ ok=false（不抛）")
+
+    // ① 静态图 = 1 帧
+    var a = SDL3.loadAnim(ren.handle, png, true)
+    assert_true(a.ok, "① 静态图能加载成动画")
+    assert_eq(a.count(), 1, "① 帧数 = 1")
+
+    // ② 单帧不推进
+    assert_true(not a.tick(1000), "② 单帧 tick 应返回 false")
+
+    // ③ 手工两帧：循环
+    Ptr[u8] tex = SDL3.loadImageTexture(ren.handle, png)
+    assert_true(tex != null, "③ 纹理加载成功")
+    var b = SDL3.newAnim()
+    b.frames = [tex, tex]
+    b.delays = [10, 10]
+    b.ok = true
+    b.loop = true
+
+    assert_true(b.tick(10), "③ 10ms 后应切帧")
+    assert_eq(b.idx, 1, "③ 切到第 2 帧")
+    assert_true(b.tick(10), "③ 再 10ms 应再切")
+    assert_eq(b.idx, 0, "③ 循环回第 1 帧")
+
+    // ④ 不循环：停在最后一帧
+    b.loop = false
+    b.seek(1)
+    b.tick(10)
+    assert_true(not b.playing, "④ 不循环 ⇒ 播完停住")
+    assert_eq(b.idx, 1, "④ 停在最后一帧")
+
+    // ⑤ 绘制 + 销毁（幂等）
+    b.tick(0)
+    assert_true(b.drawTo(ren, 0.0, 0.0, 64.0, 64.0), "⑤ drawTo 成功")
+    b.destroySelf()
+    b.destroySelf()
+    a.destroySelf()
+    assert_true(not a.ok, "⑤ destroy 后 ok=false")
+
+    print("test_frame_anim passed（单帧 / 循环 / 停帧 / 绘制 / 幂等销毁 / 缺文件）")
+}

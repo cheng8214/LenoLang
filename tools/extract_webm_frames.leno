@@ -1,0 +1,164 @@
+// extract_webm_frames.leno — 借本机 Chrome/Edge 把 webm 抽成 PNG 序列（2026-10-21）
+//
+// 为什么需要：SDL3_image **不解码 webm**（实测 `IMG_LoadAnimation` 直接报
+//   "Unsupported image format"）；浏览器自带 VP8/VP9 解码器 ⇒ 用 CDP 驱动无头浏览器
+//   seek → drawImage → toDataURL → base64 回传 → Leno 写 PNG。
+//
+// 用法（**在仓库根目录**运行；产物默认写 `.probe_anim/`，该目录已被 .gitignore 忽略）：
+//   build\leno.exe tools\extract_webm_frames.leno <webm> [输出目录] [帧数] [--clean]
+//
+//   --clean   白底反解 + 底板清理（复刻 dsh-pet 的 unblend_v3/v5）
+//             素材是"白底上抠图"导出的：半透明像素混了白，且背景整块是 a=1
+//             ⇒ 不清理的话，叠在深色桌面上边缘发白、背后一块暗矩形
+//
+// 例：
+//   build\leno.exe tools\extract_webm_frames.leno ^
+//     "D:\temp\dsh-pet-indesktop-main\assets\characters\shenshen\videos\idle\待机呼吸休闲.webm" ^
+//     .probe_anim\frames\idle 24 --clean
+import strings
+import files
+import dirs
+import jsons
+import threads
+import "Web" as web
+import "web_cdp" as cdp
+use web.(Browser, BrowserConfig, CdpClient)
+
+func argOf(Array[string] a, int i, string def): string {
+    if a.len() > i { return a[i] }
+    return def
+}
+
+func pad4(int v): string {
+    if v < 10 { return "000" + _str(v) }
+    if v < 100 { return "00" + _str(v) }
+    if v < 1000 { return "0" + _str(v) }
+    return _str(v)
+}
+
+func saveDataUrl(string dataUrl, string path): bool {
+    int comma = dataUrl.find(",")
+    if comma < 0 { return false }
+    string raw = strings.from_base64(dataUrl.byte_slice(comma + 1, dataUrl.byte_len() - 1))
+    var f = files.open(path, "wb")        // ⚠ 必须 wb：文本模式会把 PNG 的 \n 折成 \r\n
+    if f == null { return false }
+    f.write(raw)
+    f.close()
+    return true
+}
+
+main() {
+    // 参数（⚠ `_args()` 从 0 开始，不含脚本路径）
+    Array[string] raw = []
+    var a = _args()
+    for a to x { raw.add(x as string) }
+
+    // 位置参数：第 1 个 = 源 webm，第 2 个 = 输出目录；纯数字 = 帧数；`--clean` = 反解
+    string src = ""
+    string outDir = ".probe_anim/frames"
+    int n = 24
+    var clean = false
+    var pos = 0
+    for raw to s {
+        if s == "--clean" { clean = true; continue }
+        if _isNum(s) { n = _int(s); continue }
+        if pos == 0 { src = s; pos = 1; continue }
+        if pos == 1 { outDir = s; pos = 2 }
+    }
+
+    if src == "" {
+        print("用法: build\\leno.exe tools\\extract_webm_frames.leno <webm> [输出目录] [帧数] [--clean]")
+        return
+    }
+    if not files.exists(src) { print("源文件不存在: " + src); return }
+    if n < 1 { n = 1 }
+    dirs.mkdir_p(outDir)
+
+    string exe = web.findBrowser()
+    if exe == "" {
+        print("找不到 Chrome/Edge —— 装一个，或设环境变量 LENO_BROWSER 指向 exe")
+        return
+    }
+
+    // 模板 → 临时页（⚠ 模板里的 JS 花括号不能走 $"" 插值，只能读文件后替换占位符）
+    string tpl = "tools/webm_extract.html"
+    if not files.exists(tpl) { print("缺模板: " + tpl + "（本脚本要求从仓库根运行）"); return }
+    string fileUrl = "file:///" + strings.replace(dirs.abspath(src), "\\", "/")
+    string page = strings.replace(files.read(tpl), "__SRC__", fileUrl)
+    string html = dirs.join(outDir, "_extract.html")
+    var hf = files.open(html, "wb")
+    if hf == null { print("写不了 " + html); return }
+    hf.write(page)
+    hf.close()
+
+    BrowserConfig cfg = new BrowserConfig()
+    cfg.headless = true
+    cfg.windowWidth = 480
+    cfg.windowHeight = 480
+    cfg.extraArgs = "--allow-file-access-from-files"
+    Browser b = web.launchBrowser(cfg)
+    if not b.ok { print("启动浏览器失败: " + b.error); return }
+
+    CdpClient c = cdp.cdpConnect(cdp.targetWsUrl(b, b.pageTargetId), 15000)
+    if not c.ok { print("CDP 连接失败: " + c.error); web.closeBrowser(b); return }
+    cdp.cdpCall(c, "Page.enable", "")
+    cdp.cdpCall(c, "Runtime.enable", "")
+    cdp.cdpCall(c, "Page.navigate",
+        "{\"url\":" + jsons.encode("file:///" + strings.replace(dirs.abspath(html), "\\", "/")) + "}")
+    cdp.waitEvent(c, "Page.loadEventFired", 15000)
+
+    // 等元数据（最多 8s）
+    float dur = 0.0
+    int vw = 0
+    int vh = 0
+    for 0:79 to k {
+        Array[string] parts = strings.split(cdp.evaluate(c, "window.info()"), "|")
+        if parts.len() >= 3 {
+            dur = _float(parts[0])
+            vw = _int(parts[1])
+            vh = _int(parts[2])
+        }
+        if dur > 0.0 and vw > 0 { break }
+        threads.sleep(100)
+    }
+    if dur <= 0.0 or vw <= 0 {
+        print("拿不到视频信息（编码可能不被支持）")
+        cdp.cdpClose(c)
+        web.closeBrowser(b)
+        return
+    }
+    print("[extract] " + _str(dur) + "s / " + _str(vw) + "x" + _str(vh)
+        + " ⇒ 抽 " + _str(n) + " 帧" + (if clean then "（含白底反解）" else "") + " → " + outDir)
+
+    var saved = 0
+    for n to i {
+        float t = dur * _float(i) / _float(n)
+        string js = "window.grab(" + _str(t) + ", " + (if clean then "true" else "false") + ")"
+        string dataUrl = cdp.evaluate(c, js)
+        string outPath = dirs.join(outDir, "f_" + pad4(i) + ".png")
+        if dataUrl == "" {
+            print("  帧 " + pad4(i) + " 抽帧失败（seek 超时）")
+            continue
+        }
+        if saveDataUrl(dataUrl, outPath) {
+            saved = saved + 1
+            print("  帧 " + pad4(i) + "  t=" + _str(t) + "s  " + _str(dirs.stat(outPath).size) + " 字节")
+        } else {
+            print("  帧 " + pad4(i) + " 写盘失败")
+        }
+    }
+
+    cdp.cdpClose(c)
+    web.closeBrowser(b)
+    files.delete(html)
+    print("[extract] 完成：成功 " + _str(saved) + "/" + _str(n) + " 帧 → " + outDir)
+}
+
+// 是否纯数字（用来区分 "帧数" 与 "输出目录" 两个位置参数）
+func _isNum(string s): bool {
+    if s == "" { return false }
+    for s.to_bytes() to b {
+        if b < 48 or b > 57 { return false }
+    }
+    return true
+}

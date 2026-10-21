@@ -1,0 +1,117 @@
+// gen_demo_gif.leno — 用纯 Leno 生成一个**真正的 GIF 动画**（2026-10-21）
+//
+// 为什么要有：仓库里没有动画素材，ffmpeg / PIL 也没有 ⇒ 帧动画播放器
+//   （sdl_anim.leno）只能拿静态图测，看不出"动没动"。这个脚本自己产一个：
+//   160×120、12 帧、方块横移，肉眼能分辨。
+//
+// 为什么不用 PIL / ffmpeg：本仓库不引入外部依赖；而且顺带证明
+//   "Leno 能直接写二进制文件"这件事（`files.open(path, "wb")` + 逐字节）。
+//
+// GIF 结构（89a）：header → 逻辑屏幕 → 全局调色板 → NETSCAPE 循环扩展
+//   → 每帧(GCE + 图像描述符 + LZW 数据) → 尾部 0x3B
+//
+// ⚠ LZW 用最偷懒但**完全合法**的写法：CLEAR + 每 2 个像素码后再 CLEAR。
+//   ⇒ 解码器的字典永远涨不到需要升码长（3 bit 恒定），编码器不必实现字典。
+//   代价是体积约 2 倍（每像素 1.5 个码），对测试素材无所谓。
+import files
+import strings
+import dirs
+
+const W = 160
+const H = 120
+const FRAMES = 12
+const DELAY_CS = 8          // 每帧 8/100 秒 = 0.08s（≈12.5fps）
+
+func le16(Array[int] b, int v) {
+    b.add(v & 0xFF)
+    b.add((v >> 8) & 0xFF)
+}
+
+main() {
+    Array[int] g = []
+
+    // ---- 文件头 + 逻辑屏幕（4 色全局调色板）----
+    for "GIF89a".to_bytes() to x { g.add(x) }
+    le16(g, W)
+    le16(g, H)
+    g.add(0x81)                 // GCT 存在 | 颜色分辨率 0 | 表大小 2^(1+1)=4
+    g.add(0)                    // 背景色索引
+    g.add(0)                    // 像素宽高比（0 = 不指定）
+
+    // 全局调色板：0=深灰底 1=亮青方块 2=白 3=黑（备用）
+    for [24, 26, 32, 80, 220, 255, 255, 255, 255, 0, 0, 0] to c { g.add(c) }
+
+    // ---- NETSCAPE2.0 无限循环 ----
+    g.add(0x21); g.add(0xFF); g.add(0x0B)
+    for "NETSCAPE2.0".to_bytes() to x { g.add(x) }
+    g.add(0x03); g.add(0x01); le16(g, 0); g.add(0x00)
+
+    // ---- 每帧 ----
+    for FRAMES to f {
+        // 图形控制扩展：延迟 + 无透明色
+        g.add(0x21); g.add(0xF9); g.add(0x04); g.add(0x00)
+        le16(g, DELAY_CS)
+        g.add(0x00); g.add(0x00)
+
+        // 图像描述符（整帧、无局部调色板、非交错）
+        g.add(0x2C); le16(g, 0); le16(g, 0); le16(g, W); le16(g, H); g.add(0x00)
+
+        // 像素：方块从左向右移动
+        int bw = W / 4
+        int bh = H / 3
+        int bx = (f * (W - bw)) / (FRAMES - 1)
+        int by = (H - bh) / 2
+        Array[int] px = []
+        for H to y {
+            for W to x {
+                bool inBox = x >= bx and x < bx + bw and y >= by and y < by + bh
+                px.add(if inBox then 1 else 0)
+            }
+        }
+
+        // LZW（min code size = 2 ⇒ 初始码长 3；CLEAR=4, END=5）
+        Array[int] lz = []
+        int acc = 0
+        int nb = 0
+        var i = 0
+        int n = px.len()
+        while i < n {
+            acc = acc | (4 << nb); nb = nb + 3          // CLEAR
+            while nb >= 8 { lz.add(acc & 0xFF); acc = acc >> 8; nb = nb - 8 }
+            for 0:1 to k {                              // 两个像素码
+                if i >= n { break }
+                acc = acc | (px[i] << nb); nb = nb + 3
+                while nb >= 8 { lz.add(acc & 0xFF); acc = acc >> 8; nb = nb - 8 }
+                i = i + 1
+            }
+        }
+        acc = acc | (5 << nb); nb = nb + 3              // END
+        while nb > 0 { lz.add(acc & 0xFF); acc = acc >> 8; nb = nb - 8 }
+
+        g.add(0x02)                                     // LZW 最小码长
+        var p = 0
+        while p < lz.len() {
+            int m = lz.len() - p
+            if m > 255 { m = 255 }
+            g.add(m)
+            for p:p+m-1 to j { g.add(lz[j]) }
+            p = p + m
+        }
+        g.add(0x00)                                     // 数据块结束
+    }
+
+    g.add(0x3B)                                         // 尾部
+
+    // ⚠ 必须 "wb"：文本模式在 Windows 会把 \n 折成 \r\n ⇒ GIF 直接坏掉
+    // 产物统一写 `.probe_anim/`（仓库根，已被 .gitignore 的 `.probe*/` 忽略）——
+    // 别再往 build/ 或示例目录里拉屎（build/ 允许入库，示例目录是源码）
+    dirs.mkdir_p(".probe_anim")
+    string out = ".probe_anim/demo_anim.gif"
+    var fp = files.open(out, "wb")
+    if fp == null { print("[gen] 打不开 " + out); return }
+    fp.write(strings.from_bytes(g))
+    fp.close()
+
+    print("[gen] 已生成 " + out + "（" + _str(g.len()) + " 字节，"
+        + _str(FRAMES) + " 帧，" + _str(W) + "×" + _str(H) + "）")
+}

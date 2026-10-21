@@ -6,6 +6,7 @@ import "sdl_font.leno" as fnt
 import "sdl_event.leno" as evt
 import "sdl_timer.leno" as tm
 import "sdl_image.leno" as img
+import "sdl_anim.leno" as anim; use anim.Anim     // 帧动画播放器（2026-10-21）
 import "sdl_capture.leno" as cap
 import "sdl_button.leno" as btn
 import "sdl_label.leno" as lbl
@@ -378,6 +379,21 @@ export const HINTING_NONE   = fnt.HINTING_NONE
 export const WRAP_ALIGN_LEFT   = fnt.WRAP_ALIGN_LEFT
 export const WRAP_ALIGN_CENTER = fnt.WRAP_ALIGN_CENTER
 export const WRAP_ALIGN_RIGHT  = fnt.WRAP_ALIGN_RIGHT
+
+// ==================== 帧动画（GIF / APNG / WebP，2026-10-21）====================
+//   返回 Anim：`a.tick(dt)` / `a.drawTo(ren, x, y, w, h)` / `a.destroySelf()`
+//   静态图也能加载（1 帧）；无显示器/解码失败 ⇒ `a.ok == false`（不抛）
+export func loadAnim(Ptr[u8] renderer, string path, bool loop = true): Anim {
+    return anim.load(renderer, path, loop)
+}
+
+// 空动画（手工组装帧用：`var a = SDL3.newAnim()` 后自己填 frames/delays）
+export func newAnim(): Anim { return new Anim() }
+
+// PNG 序列动画（webm/gif 放不了时的通用替代：抽帧后用这个播）
+export func loadFramesAnim(Ptr[u8] renderer, Array[string] paths, int delayMs): Anim {
+    return anim.loadFrames(renderer, paths, delayMs)
+}
 
 // ==================== Image ====================
 

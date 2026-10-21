@@ -1,0 +1,114 @@
+// gif_demo.leno — 真的播放一个 GIF 动画（2026-10-21）
+//
+// 跑法（仓库根目录）：
+//   build\leno.exe build\leno_module\LenoSDL3\examples\特效动画\gif_demo.leno
+//   （素材由同目录 gen_demo_gif.leno 生成；没有就先跑它）
+//
+// 画面：160×120 的方块从左往右走（12 帧循环），底下一条进度条显示当前帧。
+// 退出：ESC 或关窗口。自测：设环境变量 `GIF_DEMO_AUTO=1` ⇒ 播约 90 帧后自动退出
+//   并导出一张实拍截图（screen_shot.png）。
+//
+// ⚠⚠ 两个坑（都是实测踩出来的，改之前务必看）：
+//   ① **纹理必须用"主循环那个渲染器"创建** —— `win.createRenderer()` 和 `run()` 内部
+//      `_runRens[i]` 是**两个不同的 SDL_Renderer**，SDL 纹理绑定创建它的那个；
+//      用 A 建纹理、在 B 上画 ⇒ `SDL_RenderTexture` 直接失败 ⇒ 窗口一片黑（不报错 ✗）。
+//      ⇒ 正确做法：在 onRender **第一次被调用时**用传入的 `r.handle` 去 load。
+//   ② **主循环是按需重绘的**（`_needRedraw`）：没事件、没控件动画时它不渲染。
+//      自绘动画必须自己 `requestRedraw()`，并且**用定时器把循环叫醒**
+//      （空闲时循环在等事件，一帧可能拖上百毫秒 ⇒ 看起来是静止的）。
+//      另外 `onEvent` 只在有事件时被调 ⇒ 别把"定期检查/退出"放那里（会永远不触发）。
+import times
+import dirs
+import files
+import "SDL3" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+
+var GA = SDL3.newAnim()
+var GLast = 0
+var GFrames = 0
+var GInited = false
+var GPath = ""
+var GShoted = false
+
+func onEvent(Event ev): bool {
+    if ev.isQuit() or ev.isWindowClose() { return false }
+    if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
+    return true
+}
+
+func shot() {
+    // 产物统一在 `.probe_anim/`（见 gen_demo_gif.leno 的说明）
+    dirs.mkdir_p(".probe_anim")
+    string png = ".probe_anim/shot_gif.png"
+    string cmd = @"powershell -NoProfile -Command ""Add-Type -AssemblyName System.Drawing; $b = New-Object System.Drawing.Bitmap 440,400; $g = [System.Drawing.Graphics]::FromImage($b); $g.CopyFromScreen(0,0,0,0,$b.Size); $b.Save('"
+        + png + @"'); $g.Dispose(); $b.Dispose()"""
+    var r = _exec(cmd, 30000)
+    print("[demo] 截屏 code=" + _str(r.code) + " → " + png)
+}
+
+func onRender(Renderer ren) {
+    // ① 首次拿到主循环的渲染器 ⇒ 用它建纹理（见文件头注释 ①）
+    if not GInited {
+        GInited = true
+        GA = SDL3.loadAnim(ren.handle, GPath, true)
+        print("[demo] 加载 " + GPath + " ⇒ ok=" + _str(GA.ok) + " 帧数=" + _str(GA.count())
+            + " 尺寸=" + _str(GA.w) + "x" + _str(GA.h))
+    }
+
+    ren.setColor(#14161CFF)
+    ren.clear()
+
+    int now = _int(times.ms())
+    if GLast == 0 { GLast = now }
+    int dt = now - GLast
+    GLast = now
+
+    GA.tick(dt)                                  // 按帧时长推进（GIF 自带 80ms/帧）
+    GA.drawTo(ren, 30.0, 24.0, 360.0, 270.0)     // 放大到 360×270
+
+    // 进度条：直观看出"在动"
+    float p = _float(GA.idx + 1) / _float(GA.count())
+    ren.setColor(#50DCFFFF)
+    ren.fillRect(30.0, 306.0, 360.0 * p, 6.0)
+    ren.setColor(#2E3038FF)
+    ren.fillRect(30.0 + 360.0 * p, 306.0, 360.0 - 360.0 * p, 6.0)
+
+    // ② 请求下一帧（见文件头注释 ②）
+    SDL3.requestRedraw()
+
+    if GFrames == 30 and _env_or("GIF_DEMO_AUTO", "") != "" and not GShoted {
+        GShoted = true
+        shot()
+    }
+    GFrames = GFrames + 1
+}
+
+main() {
+    GPath = ".probe_anim/demo_anim.gif"
+    if not files.exists(GPath) {
+        print("[demo] 缺素材 " + GPath + " —— 先跑 gen_demo_gif.leno")
+        return
+    }
+
+    var win = SDL3.createWindow({title: "GIF 动画演示（ESC 退出）", w: 420, h: 330})
+    if not win.ok {
+        print("[demo] 建窗失败（无显示器？）：" + SDL3.getError())
+        return
+    }
+
+    if _env_or("GIF_DEMO_AUTO", "") != "" { win.setPosition(0, 0) }
+
+    // 定时器：把主循环叫醒 + 自测退出（onEvent 空闲时不会被调，见文件头注释 ②）
+    win.addTimer(30, func() {
+        SDL3.requestRedraw()
+        if _env_or("GIF_DEMO_AUTO", "") != "" and GFrames > 90 { SDL3.requestExit() }
+    })
+
+    win.run(onEvent, onRender)
+    GA.destroySelf()
+    if _env_or("GIF_DEMO_AUTO", "") != "" {
+        print("[demo] 自测结束：画了 " + _str(GFrames) + " 帧")
+    }
+}

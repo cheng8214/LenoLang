@@ -7,10 +7,32 @@ import files
 import "sdl_core.leno" as core
 use core.(sdl3, ScaleMode, BlendMode)
 
+// ★ 2026-10-21：帧动画（GIF / APNG / WebP 动画）
+//   C 侧布局（SDL3_image 头文件，64 位）：
+//     typedef struct IMG_Animation { int w, h, count; int *delays; SDL_Surface **frames; }
+//   偏移：w@0  h@4  count@8  (**4 字节 padding**)  frames@16  delays@24，结构共 32 字节。
+//   ⚠ **顺序是 frames 在前、delays 在后**（实测 2026-10-21：@16 的 [0] 是 SDL_Surface*，
+//     @24 的 [0] 是延迟 0）—— 按"delays 在前"读会拿到两个错位的指针，
+//     症状是 count/w/h 全对但取帧全 null（以为是解码失败，其实偏移错了 ✗）
+//   ⚠ 这里**故意不用 cstruct 读字段**：Leno 的 cstruct 是紧凑排列，
+//     不会在 `count`(4B) 与 `delays`(8B 指针) 之间自动补 padding
+//     ⇒ 用 cstruct 会把 delays 读成 @12、frames 读成 @20，拿到垃圾指针 ✗
+//     （实测症状：count 读对了（@8 两边一致），但取帧全是 null ⇒ 动画永远 ok=false）
+//   ⇒ 统一用 `ffi.read_int/read_ptr` + 显式偏移，偏移写死在这里，只此一处 ✓
+const IMG_ANIM_OFF_W      = 0
+const IMG_ANIM_OFF_H      = 4
+const IMG_ANIM_OFF_COUNT  = 8
+const IMG_ANIM_OFF_FRAMES = 16
+const IMG_ANIM_OFF_DELAYS = 24
+
 clib sdl3_image {
     // 加载
     Ptr[u8]  IMG_Load(str8 file)
     Ptr[u8]  IMG_LoadTexture(Ptr[u8] renderer, str8 file)
+
+    // 动画（静态图也能加载：count == 1）
+    Ptr[u8]  IMG_LoadAnimation(str8 file)
+    void     IMG_FreeAnimation(Ptr[u8] anim)
 
     // 保存（直接接受文件路径）
     bool IMG_SavePNG(Ptr[u8] surface, str8 file)
@@ -97,4 +119,57 @@ export func saveWEBP(Ptr[u8] surface, string path, float quality = 80.0): bool {
 
 export func version(): int {
     return imgLib().IMG_Version()
+}
+
+// ==================== 动画：加载 / 拆帧（2026-10-21）====================
+//   GIF / APNG / WebP 动画都能读；**静态图也能读**（count == 1），所以调用方不用先判格式 ✓
+//   ⚠ 拿到的是 `IMG_Animation*`，帧 surface 归它所有 ⇒ 只能 `freeAnimation()` 释放，
+//     不要对帧表面调 `SDL_DestroySurface`（那会 double free）✗
+
+// 加载动画；失败 ⇒ null
+export func loadAnimation(string path): Ptr[u8] {
+    return imgLib().IMG_LoadAnimation(path)
+}
+
+// 释放动画（连同所有帧 surface）
+export func freeAnimation(Ptr[u8] anim) {
+    if anim != null { imgLib().IMG_FreeAnimation(anim) }
+}
+
+export func animCount(Ptr[u8] anim): int {
+    if anim == null { return 0 }
+    return ffi.read_int(anim, IMG_ANIM_OFF_COUNT)
+}
+
+export func animWidth(Ptr[u8] anim): int {
+    if anim == null { return 0 }
+    return ffi.read_int(anim, IMG_ANIM_OFF_W)
+}
+
+export func animHeight(Ptr[u8] anim): int {
+    if anim == null { return 0 }
+    return ffi.read_int(anim, IMG_ANIM_OFF_H)
+}
+
+// 第 i 帧的显示时长（毫秒）；越界或写成 0 ⇒ 100（SDL_image 对静态图给 0，
+//   播放器必须兜底，否则"一帧 0ms"会变成死循环/瞬间播完）
+export func animDelay(Ptr[u8] anim, int i): int {
+    if anim == null { return 100 }
+    int n = ffi.read_int(anim, IMG_ANIM_OFF_COUNT)
+    if i < 0 or i >= n { return 100 }
+    Ptr delays = ffi.read_ptr(anim, IMG_ANIM_OFF_DELAYS)
+    if delays == null { return 100 }
+    int d = ffi.read_int(delays, i * 4)
+    if d <= 0 { d = 100 }
+    return d
+}
+
+// 第 i 帧的 surface（null = 越界/未加载）；**不要销毁它**
+export func animFrame(Ptr[u8] anim, int i): Ptr[u8] {
+    if anim == null { return null }
+    int n = ffi.read_int(anim, IMG_ANIM_OFF_COUNT)
+    if i < 0 or i >= n { return null }
+    Ptr frames = ffi.read_ptr(anim, IMG_ANIM_OFF_FRAMES)
+    if frames == null { return null }
+    return ffi.read_ptr(frames, i * 8)      // 指针数组步长 = sizeof(void*) = 8（64 位）
 }

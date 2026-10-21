@@ -1,0 +1,153 @@
+// frames_demo.leno — 播放 **PNG 序列**（webm 抽帧后的通用播法，2026-10-21）
+//
+// 为什么有它：SDL3_image 不解码 webm（实测报 "Unsupported image format"）⇒
+//   先用 `tools/extract_webm_frames.leno` 借 Chrome 把视频抽成 PNG 序列，
+//   再用本 demo 播。桌宠的 106 段 webm 走的就是这条路。
+//
+// 跑法（仓库根目录）：
+//   build\leno.exe build\leno_module\LenoSDL3\examples\特效动画\frames_demo.leno [帧目录] [每帧毫秒]
+//   默认：build\frames\idle，833ms/帧（10 秒 / 12 帧）
+//
+// 自测：设 `FRAMES_DEMO_AUTO=1` ⇒ 播约 90 帧后退出，并把实拍截图存 shots.png
+//
+// ⚠ 两个必须遵守的框架约束（否则窗口一片黑，且不报错）：
+//   ① 纹理必须在**主循环那个渲染器**上创建 ⇒ 在 onRender 第一次调用时用传入的 ren.loadFrames
+//   ② 主循环按需重绘 ⇒ 每帧 requestRedraw + 用定时器叫醒（onEvent 空闲时不会被调）
+import times
+import dirs
+import files
+import strings
+import "SDL3" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.Scancode
+
+var GA = SDL3.newAnim()
+Array[string] GPaths = []          // ⚠ Leno 不支持 `var x: T`（那会报「不支持 'var 名字: 类型' 标注写法」）
+var GDelay = 833
+var GLast = 0
+var GFrames = 0
+var GInited = false
+var GShoted = false
+
+// 冒泡排序（12 个元素足够；文件名 f_000..f_011 按字典序就是时间序）
+func sortNames(Array[string] a): Array[string] {
+    int n = a.len()
+    if n <= 1 { return a }
+    for 0:n-2 to i {
+        for 0:n-2-i to j {
+            if a[j] > a[j + 1] {
+                var t = a[j]
+                a[j] = a[j + 1]
+                a[j + 1] = t
+            }
+        }
+    }
+    return a
+}
+
+func onEvent(Event ev): bool {
+    if ev.isQuit() or ev.isWindowClose() { return false }
+    if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
+    return true
+}
+
+func shot() {
+    // 产物统一在 `.probe_anim/`（见 gen_demo_gif.leno 的说明）
+    dirs.mkdir_p(".probe_anim")
+    string png = ".probe_anim/shot_frames.png"
+    string cmd = @"powershell -NoProfile -Command ""Add-Type -AssemblyName System.Drawing; $b = New-Object System.Drawing.Bitmap 680,420; $g = [System.Drawing.Graphics]::FromImage($b); $g.CopyFromScreen(0,0,0,0,$b.Size); $b.Save('"
+        + png + @"'); $g.Dispose(); $b.Dispose()"""
+    var r = _exec(cmd, 30000)
+    print("[frames] 截屏 code=" + _str(r.code) + " → " + png)
+}
+
+func onRender(Renderer ren) {
+    // ① 首次拿到主循环渲染器 ⇒ 用它建纹理
+    if not GInited {
+        GInited = true
+        GA = SDL3.loadFramesAnim(ren.handle, GPaths, GDelay)
+        print("[frames] 加载 " + _str(GPaths.len()) + " 张 ⇒ ok=" + _str(GA.ok)
+            + " 帧数=" + _str(GA.count()) + " 每帧 " + _str(GDelay) + "ms")
+    }
+
+    // 深色底：桌宠的真实场景是深色桌面 —— 白底没反解的素材在这上面会露白边/暗矩形
+    ren.setColor(#1E1E28FF)
+    ren.clear()
+
+    // ⚠ 没有三元运算符（`c ? a : b`）⇒ 用 if 表达式：`if c then a else b`
+    int dt = _elapsed()
+    GA.tick(dt)
+    GA.drawTo(ren, 20.0, 20.0, 640.0, 360.0)
+
+    // 进度条
+    if GA.count() > 0 {
+        float p = _float(GA.idx + 1) / _float(GA.count())
+        ren.setColor(#3A6EA5FF)
+        ren.fillRect(20.0, 392.0, 640.0 * p, 6.0)
+    }
+
+    SDL3.requestRedraw()
+
+    if GFrames == 40 and _env_or("FRAMES_DEMO_AUTO", "") != "" and not GShoted {
+        GShoted = true
+        shot()
+    }
+    GFrames = GFrames + 1
+}
+
+// 上一次渲染到现在经过的毫秒（首帧返回 0）
+func _elapsed(): int {
+    int now = _int(times.ms())
+    if GLast == 0 { GLast = now; return 0 }
+    int dt = now - GLast
+    GLast = now
+    return dt
+}
+
+main() {
+    var a = _args()
+    string dirPath = ".probe_anim/frames/idle"
+    if a.len() > 0 { dirPath = a[0] as string }
+    if a.len() > 1 { GDelay = _int(a[1]) }
+
+    if not dirs.exists(dirPath) {
+        print("[frames] 目录不存在: " + dirPath)
+        print("         先抽帧: build\\leno.exe tools\\extract_webm_frames.leno <webm> " + dirPath + " 12")
+        return
+    }
+
+    // 收集 f_*.png 并排序
+    Array[string] names = []
+    for dirs.listdir(dirPath) to n {
+        string s = n
+        if strings.starts_with(s, "f_") and strings.ends_with(s, ".png") { names.add(s) }
+    }
+    if names.len() == 0 {
+        print("[frames] 目录里没有 f_*.png: " + dirPath)
+        return
+    }
+    sortNames(names)
+    for names to n { GPaths.add(dirs.join(dirPath, n)) }
+    print("[frames] 发现 " + _str(GPaths.len()) + " 帧：" + names[0] + " … " + names[names.len() - 1])
+
+    var win = SDL3.createWindow({title: "PNG 序列播放（ESC 退出）", w: 680, h: 420})
+    if not win.ok { print("[frames] 建窗失败：" + SDL3.getError()); return }
+    // 自测：固定到左上角 + 置顶（否则截图时窗口会被 IDE/终端压到后面，截到的是别人）
+    if _env_or("FRAMES_DEMO_AUTO", "") != "" {
+        win.setPosition(0, 0)
+        win.setAlwaysOnTop(true)
+    }
+
+    // ② 定时器驱动 + 自测退出
+    win.addTimer(30, func() {
+        SDL3.requestRedraw()
+        if _env_or("FRAMES_DEMO_AUTO", "") != "" and GFrames > 90 { SDL3.requestExit() }
+    })
+
+    win.run(onEvent, onRender)
+    GA.destroySelf()
+    if _env_or("FRAMES_DEMO_AUTO", "") != "" {
+        print("[frames] 自测结束：画了 " + _str(GFrames) + " 帧")
+    }
+}

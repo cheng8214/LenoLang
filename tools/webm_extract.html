@@ -1,0 +1,119 @@
+<!doctype html>
+<!-- webm_extract.html —— 给 tools/extract_webm_frames.leno 用的抽帧页（2026-10-21）
+     脚本把 __SRC__ 换成 file:///... 的 webm 地址，用无头 Chrome 打开；
+     JS 负责 seek + drawImage + toDataURL，CDP 侧通过 evaluate 取回 base64。 -->
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; background: #000; }
+  video { display: none; }
+</style>
+<video id="v" src="__SRC__" muted preload="auto"></video>
+<canvas id="c"></canvas>
+<script>
+// 元数据："时长|宽|高"（竖线分隔，避免 JSON 往返）
+window.info = function () {
+  var v = document.getElementById('v');
+  return (v.duration || 0) + '|' + (v.videoWidth || 0) + '|' + (v.videoHeight || 0);
+};
+
+// 探测 alpha 分布："全透明|全不透明|半透明"（判断素材带不带 alpha）
+window.alphaStat = function (t) {
+  var v = document.getElementById('v');
+  var c = document.getElementById('c');
+  return new Promise(function (res) {
+    var done = false;
+    var finish = function (val) { if (!done) { done = true; res(val); } };
+    v.onseeked = function () {
+      c.width = v.videoWidth;
+      c.height = v.videoHeight;
+      var ctx = c.getContext('2d');
+      ctx.clearRect(0, 0, c.width, c.height);
+      ctx.drawImage(v, 0, 0);
+      var d = ctx.getImageData(0, 0, c.width, c.height).data;
+      var zero = 0, full = 0, mid = 0;
+      for (var i = 3; i < d.length; i += 4) {
+        if (d[i] === 0) zero++;
+        else if (d[i] === 255) full++;
+        else mid++;
+      }
+      finish(zero + '|' + full + '|' + mid);
+    };
+    try { v.currentTime = t; } catch (e) { finish(''); return; }
+    setTimeout(function () { finish(''); }, 5000);
+  });
+};
+
+// 白底反解 + 底板清理（复刻 dsh-pet 的 unblend_v3/v5）
+//   素材在白底上抠图导出：半透明像素存值 = C×(a/255) + 255×(1-a/255)
+//   ① 反解 C = (stored - 255×(1-a/255)) × 255 / a —— 否则叠深色底边缘发白
+//   ② 底板清理 a == 1 → 0（实测占 640×360 的 ≈82%，否则是暗一档的整块矩形）
+function unblendCtx(ctx, w, h) {
+  var id = ctx.getImageData(0, 0, w, h);
+  var d = id.data;
+  for (var i = 0; i < d.length; i += 4) {
+    var a = d[i + 3];
+    if (a === 0) continue;
+    if (a === 1) { d[i + 3] = 0; continue; }
+    var k = 255 * (1 - a / 255);
+    var m = 255 / a;
+    var r = (d[i] - k) * m;
+    var g = (d[i + 1] - k) * m;
+    var b = (d[i + 2] - k) * m;
+    d[i]     = r < 0 ? 0 : (r > 255 ? 255 : r);
+    d[i + 1] = g < 0 ? 0 : (g > 255 ? 255 : g);
+    d[i + 2] = b < 0 ? 0 : (b > 255 ? 255 : b);
+  }
+  ctx.putImageData(id, 0, 0);
+}
+
+// 抽某一时刻的帧；clean=true 时先做白底反解+底板清理
+//   返回 data:image/png;base64,...
+window.grab = function (t, clean) {
+  var v = document.getElementById('v');
+  var c = document.getElementById('c');
+  return new Promise(function (res) {
+    var done = false;
+    var finish = function (val) { if (!done) { done = true; res(val); } };
+    v.onseeked = function () {
+      c.width = v.videoWidth;
+      c.height = v.videoHeight;
+      var ctx = c.getContext('2d');
+      ctx.clearRect(0, 0, c.width, c.height);
+      ctx.drawImage(v, 0, 0);
+      if (clean) unblendCtx(ctx, c.width, c.height);
+      finish(c.toDataURL('image/png'));
+    };
+    try { v.currentTime = t; } catch (e) { finish(''); return; }
+    setTimeout(function () { finish(''); }, 8000);
+  });
+};
+
+// 合成到深色底（#1E1E28）导出 —— 用来看"白晕/暗矩形"在不在
+//   doClean=false ⇒ 原始素材叠深色底；true ⇒ 反解后叠深色底
+window.onDark = function (t, doClean) {
+  var v = document.getElementById('v');
+  var c = document.getElementById('c');
+  return new Promise(function (res) {
+    var done = false;
+    var finish = function (val) { if (!done) { done = true; res(val); } };
+    v.onseeked = function () {
+      var w = v.videoWidth, h = v.videoHeight;
+      c.width = w; c.height = h;
+      var tmp = document.createElement('canvas');
+      tmp.width = w; tmp.height = h;
+      var tctx = tmp.getContext('2d');
+      tctx.clearRect(0, 0, w, h);
+      tctx.drawImage(v, 0, 0);
+      if (doClean) unblendCtx(tctx, w, h);
+      var ctx = c.getContext('2d');
+      ctx.clearRect(0, 0, w, h);
+      ctx.fillStyle = '#1E1E28';
+      ctx.fillRect(0, 0, w, h);
+      ctx.drawImage(tmp, 0, 0);
+      finish(c.toDataURL('image/png'));
+    };
+    try { v.currentTime = t; } catch (e) { finish(''); return; }
+    setTimeout(function () { finish(''); }, 8000);
+  });
+};
+</script>
