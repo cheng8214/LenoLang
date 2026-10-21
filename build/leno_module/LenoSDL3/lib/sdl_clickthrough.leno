@@ -1,0 +1,73 @@
+// sdl_clickthrough.leno -- 整窗鼠标穿透（2026-10-21）
+//
+// 为什么需要：
+//   桌面宠物 / 悬浮工具要"点在它身上等于点在桌面"。窗口还得照常渲染、照常可见，
+//   只是**不接收鼠标**（点击、悬停、滚轮全部穿过去）。
+//
+// 为什么不能只用 SDL：
+//   `SDL_SetWindowHitTest` 的回调只有 NORMAL / DRAGGABLE / RESIZE_* 这几种结果，
+//   **没有"穿透"** —— 它解决的是"无边框窗口怎么拖动/缩放"，不是输入穿透 ✗
+//   ⇒ Windows 必须给窗口加扩展样式 `WS_EX_TRANSPARENT`。
+//
+// 设计：封装在这一层，**应用只写 `win.setClickThrough(true)`**，不碰 Win32。
+//   · Windows  → 真实现（GetWindowLongPtrW / SetWindowLongPtrW 改 GWL_EXSTYLE）
+//   · 其他平台 → `false`（如实告知不支持，调用方降级；**不假装成功** ✗）
+//   将来支持 X11（输入区裁剪）时只改本文件。
+import ffi
+import "sdl_core.leno" as core
+use core.sdl3                    // 调 clib 函数必须先 use 该 clib 类型（Leno 规则）
+
+// ── 只声明本文件用到的两个（与 sdl_tray.leno 的 clib 块是**两个独立类型**，互不干扰）──
+clib user32ex {
+    i64 GetWindowLongPtrW(Ptr[u8] hwnd, i32 index)
+    i64 SetWindowLongPtrW(Ptr[u8] hwnd, i32 index, i64 val)
+}
+
+const GWL_EXSTYLE       = -20
+const WS_EX_TRANSPARENT = 0x00000020
+
+user32ex? _u32ex = null
+
+func _lib32(): user32ex? {
+    if _u32ex == null { _u32ex = ffi.load("user32.dll") }
+    return _u32ex
+}
+
+// SDL 窗口 → 原生句柄（Windows: HWND；其他平台: null）
+//   取不到（dummy 视频驱动 / 非 Windows）⇒ null，调用方按"不支持"处理 ✓
+export func nativeHandle(Ptr[u8] window): Ptr[u8] {
+    if window == null or _os() != "windows" { return null }
+    var l = core.lib()
+    if l == null { return null }
+    int props = _int(l.SDL_GetWindowProperties(window))
+    if props == 0 { return null }
+    return l.SDL_GetPointerProperty(props, "SDL.window.win32.hwnd", null)
+}
+
+// 开/关整窗穿透；返回 false = 本平台不支持或拿不到句柄（**不是异常**）
+export func setClickThrough(Ptr[u8] window, bool on): bool {
+    Ptr[u8] hwnd = nativeHandle(window)
+    if hwnd == null { return false }
+    var u = _lib32()
+    if u == null { return false }
+
+    int style = _int(u.GetWindowLongPtrW(hwnd, GWL_EXSTYLE))
+    if on {
+        style = style | WS_EX_TRANSPARENT
+    } else {
+        // 清掉那一位（`~` 是 int 按位取反 ✓）
+        style = style & ~WS_EX_TRANSPARENT
+    }
+    u.SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style)
+    return true
+}
+
+// 当前是否处于穿透状态（自检 / 托盘菜单打勾用）
+export func isClickThrough(Ptr[u8] window): bool {
+    Ptr[u8] hwnd = nativeHandle(window)
+    if hwnd == null { return false }
+    var u = _lib32()
+    if u == null { return false }
+    int style = _int(u.GetWindowLongPtrW(hwnd, GWL_EXSTYLE))
+    return (style & WS_EX_TRANSPARENT) != 0
+}

@@ -1,0 +1,41 @@
+// test_click_through.leno — 整窗鼠标穿透（2026-10-21 新增）
+//
+// 跑法：
+//   build\leno.exe build\leno_module\LenoSDL3\examples\基础示例\窗口管理\test_click_through.leno
+//
+// 判据（真窗口）：
+//   ① `win.setClickThrough(true)` 返回 true，且 `win.isClickThrough()` 为 true
+//   ② `win.setClickThrough(false)` 后查询为 false（能干净恢复，不是"设了就再也关不掉"）
+//   ③ 无显示器 / dummy 驱动 ⇒ 建窗失败直接 SKIP（不判失败，也不假装通过）
+//
+// 为什么需要它（而不是 `setOpacity(0)`）：
+//   那是"**看不见**"，这是"**看得见但不挡鼠标**"——桌面宠物、悬浮挂件、屏幕取色器都靠这个。
+//   实现细节：`SDL_SetWindowHitTest` 只有 NORMAL/DRAGGABLE/RESIZE_*，没有"穿透"返回值；
+//   Windows 上必须改扩展样式 `WS_EX_TRANSPARENT` ⇒ 封装在 `sdl_clickthrough.leno`，
+//   应用层只调 `win.setClickThrough()`，不碰 Win32。
+import "SDL3" as SDL3
+
+main() {
+    var win = SDL3.createWindow({title: "click-through 自测", w: 220, h: 130, flags: 0x40000000})
+    if not win.ok {
+        print("[SKIP] 建窗失败（无显示器 / 视频驱动不可用）⇒ 跳过本用例")
+        return
+    }
+
+    bool on  = win.setClickThrough(true)
+    bool st1 = win.isClickThrough()
+    bool off = win.setClickThrough(false)
+    bool st2 = win.isClickThrough()
+
+    if _os() == "windows" {
+        assert_true(on, "① 开穿透应返回 true")
+        assert_true(st1, "① 开完 isClickThrough 应为 true")
+        assert_true(off, "② 关穿透应返回 true")
+        assert_true(not st2, "② 关完 isClickThrough 应为 false")
+        print("test_click_through passed（开/关各两条断言）")
+    } else {
+        // 非 Windows：按设计如实返回 false（不是 bug）⇒ 只钉"不崩、不假报"
+        assert_true(not on, "非 Windows 应如实返回 false")
+        print("test_click_through passed（" + _os() + " 上如实返回 false）")
+    }
+}

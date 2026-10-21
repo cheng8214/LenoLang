@@ -11,6 +11,7 @@
 //    while running { while ev.poll() { ... } ren.clear(); ...; ren.present() }
 import ffi
 import "sdl_core.leno" as core
+import "sdl_clickthrough.leno" as ct      // 整窗鼠标穿透（2026-10-21；只依赖 core，无循环引用 ✓）
 use core.SDL_KeyboardEvent     // ★ 2026-10-13：testKeyDown 注入按键要用（Leno 要求"出现它的每一处都在 use 列表里" ✓）
 use core.(sdl3, SDL_Point, Size, SDL_WindowEvent, SDL_MouseButtonEvent, SDL_MouseMotionEvent)   // 后两个供自测注入点击/移动 ✓
 
@@ -700,6 +701,13 @@ export struct Window {
     func setOpacity(float v): bool {
         return _lib.SDL_SetWindowOpacity(handle, v)
     }
+
+    // ★ 2026-10-21：整窗**鼠标穿透**（桌面宠物 / 悬浮挂件用）
+    //   true ⇒ 点击、悬停、滚轮全部穿到下层窗口，窗口本身照常渲染
+    //   返回 false = 本平台还没实现（当前只有 Windows）/ 拿不到原生句柄（如 dummy 视频驱动）
+    //   ⚠ 与 `setOpacity(0)` 不是一回事：那是**看不见**，这是**看得见但不挡鼠标**
+    func setClickThrough(bool v): bool { return ct.setClickThrough(handle, v) }
+    func isClickThrough(): bool { return ct.isClickThrough(handle) }
 
     // 鼠标锁定 & 相对模式（FPS 游戏用）
     func setMouseGrab(bool v): bool              { return _lib.SDL_SetWindowMouseGrab(handle, v) }
