@@ -44,10 +44,11 @@ func has_dotdot(string rel): bool {
     return false
 }
 
-// rel 形如 "/a/b.txt" 或 "/"（目录）
-export func serve(string root, string rel): Dict {
+// 只算元信息（**不读内容**）—— 大文件靠它决定要不要分块发（2026-10-21）
+// 返回 {found, path, ctype, size, mtime, etag, err}
+export func meta(string root, string rel): Dict {
     if has_dotdot(rel) {
-        return {found: false, data: "", ctype: "", err: "403"}
+        return {found: false, path: "", ctype: "", size: 0, mtime: 0, etag: "", err: "403"}
     }
     var sub = rel
     if strings.starts_with(sub, "/") { sub = sub.byte_slice(1, sub.byte_len() - 1) }
@@ -55,23 +56,32 @@ export func serve(string root, string rel): Dict {
     // 统一用 / 拼（dirs.join 在 Windows 上给 \，files 两种都认）
     string full = dirs.join(root, sub)
     if not files.exists(full) {
-        return {found: false, data: "", ctype: "", err: "404"}
-    }
-    var data = ""
-    try {
-        data = files.read(full)
-    } catch ex {
-        return {found: false, data: "", ctype: "", size: 0, mtime: 0, etag: "", err: "读取失败"}
+        return {found: false, path: "", ctype: "", size: 0, mtime: 0, etag: "", err: "404"}
     }
 
-    // ★ 2026-10-21：ETag（内容指纹）—— 浏览器二次访问带 `If-None-Match` ⇒ 回 304，**不重传正文**
-    //   为什么用 size+mtime：文件一改，mtime 必变 ⇒ 指纹必变；比哈希内容便宜得多（大图片/视频不能每次读一遍算哈希）
-    //   ⚠ **不发 Last-Modified**：HTTP 要的是 GMT 格式，而 `times.format` 目前按本地时区输出
-    //     ⇒ 宁可少一个头，也不发一个时区错误的时间（那会让缓存提前/延后失效）
+    // ETag = size-mtime：文件一改，mtime 必变 ⇒ 指纹必变；比每次读一遍算哈希便宜得多
+    //   ⚠ 不发 Last-Modified：HTTP 要 GMT，而 times.format 是本地时区 ⇒ 宁可不发也不发错
     var st = dirs.stat(full)
     int size = st.size
     int mtime = st.mtime
     string etag = "\"" + _str(size) + "-" + _str(mtime) + "\""
-    return {found: true, data: data, ctype: content_type(sub),
+    return {found: true, path: full, ctype: content_type(sub),
             size: size, mtime: mtime, etag: etag, err: ""}
+}
+
+// rel 形如 "/a/b.txt" 或 "/"（目录）；小文件走它（整读，能享受 gzip）
+export func serve(string root, string rel): Dict {
+    var m = meta(root, rel)
+    if not (m["found"] as bool) {
+        return {found: false, data: "", ctype: "", size: 0, mtime: 0, etag: "", err: m["err"]}
+    }
+    var data = ""
+    try {
+        data = files.read(m["path"] as string)
+    } catch ex {
+        return {found: false, data: "", ctype: "", size: 0, mtime: 0, etag: "", err: "读取失败"}
+    }
+    return {found: true, data: data, ctype: m["ctype"] as string,
+            size: m["size"] as int, mtime: m["mtime"] as int,
+            etag: m["etag"] as string, err: ""}
 }

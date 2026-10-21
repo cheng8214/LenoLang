@@ -1,0 +1,132 @@
+// test_static_range.leno —— 大文件分块发送 + Range（206）+ 越界 416（2026-10-21）
+//
+// 为什么需要：原实现把整个文件读进内存、再逐字节塞进 Array[int] 发出去
+//   ⇒ 1MB 文件的内存峰值约 2MB（字符串 + 字节数组），几个并发下载就把进程顶满；
+//   而且没有 Range ⇒ 视频拖动/断点续传都不可用。
+//
+// 判据：
+//   ① 1MB 文件（> 256KB 阈值）完整下载 ⇒ 200，Content-Length 与实收字节数一致，首尾正确
+//   ② `Range: bytes=100-199` ⇒ 206 + `Content-Range: bytes 100-199/<total>` + 恰好 100 字节
+//   ③ `Range: bytes=<total-100>-`（到结尾）⇒ 206 + 100 字节
+//   ④ 越界 `Range: bytes=99999999-` ⇒ 416 + `Content-Range: bytes */<total>`
+//   ⑤ 小文件仍走整读路径（200 + ETag，回归 ETag 改造没被破坏）
+import dirs
+import files
+import sockets
+import threads
+import "HTTP" as http
+
+const TOTAL = 1048576           // 1MB
+
+func clientSend(int port, string raw, Channel out) {
+    Socket c = sockets.connect("127.0.0.1", port)
+    if c == null { out.send(""); return }
+    c.send(raw)
+    var resp = ""
+    while true {
+        var chunk = c.recv(65536)
+        if chunk == null { break }
+        resp = resp + (chunk as string)
+    }
+    c.close()
+    out.send(resp)
+}
+
+func oneReq(Dict app, string raw): string {
+    var srv = http.listen("127.0.0.1", 0)
+    if not (srv["ok"] as bool) { return "" }
+    int port = srv["port"] as int
+    var out = threads.channel(1)
+    threads.start(clientSend, port, raw, out)
+    http.acceptOne(srv, app)
+    return out.receive() as string
+}
+
+func getRaw(string path, string extra): string {
+    return "GET " + path + " HTTP/1.1\r\nHost: t\r\nConnection: close\r\n" + extra + "\r\n"
+}
+
+func bodyOf(string resp): string {
+    int p = resp.find("\r\n\r\n")
+    if p < 0 { return "" }
+    int s = p + 4
+    if s >= resp.byte_len() { return "" }
+    return resp.byte_slice(s, resp.byte_len() - 1)
+}
+
+func headerOf(string resp, string name): string {
+    string low = resp.to_lower()
+    string key = "\r\n" + name.to_lower() + ": "
+    int p = low.find(key)
+    if p < 0 { return "" }
+    int s = p + key.byte_len()
+    var out = ""
+    for s:resp.byte_len()-1 to i {
+        var ch = resp.byte_slice(i, i)
+        if ch == "\r" or ch == "\n" { break }
+        out = out + ch
+    }
+    return out
+}
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_static_range")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // 1MB 内容：1024 字节单元倍增 10 次（避免 O(n²) 手工拼接）
+    var unit = ""
+    for 64 to i { unit = unit + "0123456789abcdef" }
+    var big = unit
+    for 10 to k { big = big + big }
+    assert_eq(big.byte_len(), TOTAL, "①构造的样本正好 1MB")
+
+    string bigFile = dirs.join(work, "big.bin")
+    files.write(bigFile, big)
+    string smallFile = dirs.join(work, "small.txt")
+    files.write(smallFile, "hello")
+
+    var app = http.newApp()
+    http.static(app, "/f", work)
+
+    // ① 完整下载
+    var r1 = oneReq(app, getRaw("/f/big.bin", ""))
+    assert_true(r1.has("200 OK"), "①完整下载 200")
+    var b1 = bodyOf(r1)
+    assert_eq(b1.byte_len(), TOTAL, "①实收字节数 = 1MB（分块发送没截断）")
+    assert_true(b1.byte_slice(0, 15) == big.byte_slice(0, 15), "①前 16 字节正确")
+    assert_true(b1.byte_slice(TOTAL - 16, TOTAL - 1) == big.byte_slice(TOTAL - 16, TOTAL - 1),
+                "①末尾 16 字节正确（说明最后一块也发出去了）")
+
+    // ② 中间片段
+    var r2 = oneReq(app, getRaw("/f/big.bin", "Range: bytes=100-199\r\n"))
+    assert_true(r2.has("206"), "②Range 命中 ⇒ 206")
+    var cr = headerOf(r2, "Content-Range")
+    assert_true(cr == "bytes 100-199/" + _str(TOTAL), "②Content-Range 正确（实际：" + cr + "）")
+    var b2 = bodyOf(r2)
+    assert_eq(b2.byte_len(), 100, "②恰好 100 字节")
+    assert_true(b2 == big.byte_slice(100, 199), "②片段内容与原文一致")
+
+    // ③ 到结尾
+    var tailStart = TOTAL - 100
+    var r3 = oneReq(app, getRaw("/f/big.bin", "Range: bytes=" + _str(tailStart) + "-\r\n"))
+    assert_true(r3.has("206"), "③末尾 Range ⇒ 206")
+    var b3 = bodyOf(r3)
+    assert_eq(b3.byte_len(), 100, "③末尾 100 字节")
+    assert_true(b3 == big.byte_slice(tailStart, TOTAL - 1), "③末尾片段内容正确")
+
+    // ④ 越界 ⇒ 416 + 总长度
+    var r4 = oneReq(app, getRaw("/f/big.bin", "Range: bytes=99999999-\r\n"))
+    assert_true(r4.has("416"), "④越界 ⇒ 416")
+    var cr4 = headerOf(r4, "Content-Range")
+    assert_true(cr4 == "bytes */" + _str(TOTAL), "④416 带总长度（实际：" + cr4 + "）")
+
+    // ⑤ 小文件回归（仍整读）
+    var r5 = oneReq(app, getRaw("/f/small.txt", ""))
+    assert_true(r5.has("200 OK"), "⑤小文件 200")
+    assert_eq(bodyOf(r5), "hello", "⑤小文件内容完整")
+    assert_true(headerOf(r5, "ETag") != "", "⑤小文件仍带 ETag")
+
+    dirs.delete(work)
+    print("test_static_range passed（1MB 完整 / 206 片段 / 206 到结尾 / 416 / 小文件回归）")
+}

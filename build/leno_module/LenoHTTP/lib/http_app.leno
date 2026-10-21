@@ -431,6 +431,40 @@ func _run_route(Dict app, Dict req, Dict r, Dict params): Dict {
     }
 }
 
+// ==================== 静态文件的 Range / 分块阈值（2026-10-21）====================
+//   256KB 以下整读（能享受 gzip）；以上分块发（内存峰值不随文件大小涨）
+var STATIC_INLINE_MAX = 262144
+
+// 解析单段 `Range: bytes=...`（返回 [start, end]；无效/越界 ⇒ []）
+//   支持 `a-b` / `a-` / `-n`；多段（逗号）不支持 ⇒ 按无效处理（调用方回 416）
+func _parse_range(string r, int size): Array[int] {
+    if not strings.starts_with(r, "bytes=") { return [] }
+    string spec = r.byte_slice(6, r.byte_len() - 1).trim()
+    int dash = spec.find("-")
+    if dash < 0 { return [] }
+    string a = spec.byte_slice(0, dash - 1).trim()
+    string b = spec.byte_slice(dash + 1, spec.byte_len() - 1).trim()
+    int start = 0
+    int end = size - 1
+    try {
+        if a == "" {
+            if b == "" { return [] }
+            int n = _int(b)
+            if n <= 0 { return [] }
+            start = size - n
+            if start < 0 { start = 0 }
+        } else {
+            start = _int(a)
+            if b != "" { end = _int(b) }
+        }
+    } catch e {
+        return []       // 畸形（`bytes=abc`）⇒ 当没有 Range（调用方回 416，不 500）
+    }
+    if start < 0 or end < start or start >= size { return [] }
+    if end >= size { end = size - 1 }
+    return [start, end]
+}
+
 // ==================== 路由分发 ====================
 // 顺序：精确路由 → **参数路由** → 静态目录 → 404/405
 //   路径命中但方法不符 ⇒ 405（有路由表的情况下，这比 404 更容易排查）
@@ -487,22 +521,56 @@ export func dispatch(Dict app, Dict req): Dict {
             if path.byte_len() >= prefix.byte_len() {
                 rel = path.byte_slice(prefix.byte_len(), path.byte_len() - 1)
             }
-            var hit = st.serve(sm["dir"] as string, rel)
-            if hit["found"] as bool {
-                // ★ 2026-10-21：静态文件带 ETag；`If-None-Match` 命中 ⇒ **304（无正文）**
-                //   收益：CSS/JS/图片二次访问省掉整个文件传输（浏览器默认就会带这个头）
-                string etag = hit["etag"] as string
+            var m = st.meta(sm["dir"] as string, rel)
+            if m["found"] as bool {
+                string etag = m["etag"] as string
+                int size = m["size"] as int
+                string ct = m["ctype"] as string
+                string fpath = m["path"] as string
                 Dict shs = {ETag: etag}
                 Dict reqh = req["headers"] as Dict
+
+                // ① 缓存：`If-None-Match` 命中 ⇒ 304（无正文）
                 if reqh.has("if-none-match") {
                     string inm = (reqh.get("if-none-match", "") as string).trim()
                     if inm == etag {
-                        return {status: 304, body: "",
-                                contentType: hit["ctype"] as string, headers: shs}
+                        return {status: 304, body: "", contentType: ct, headers: shs}
                     }
                 }
-                return {status: 200, body: hit["data"] as string,
-                        contentType: hit["ctype"] as string, headers: shs}
+
+                // ② 断点续传/拖动播放：`Range: bytes=a-b` ⇒ 206 + 只发那一段
+                if reqh.has("range") {
+                    Array[int] rg = _parse_range(reqh.get("range", "") as string, size)
+                    if rg.len() == 2 {
+                        int s0 = rg[0]
+                        int e0 = rg[1]
+                        shs.set("Content-Range",
+                                "bytes " + _str(s0) + "-" + _str(e0) + "/" + _str(size))
+                        shs.set("Accept-Ranges", "bytes")
+                        return {status: 206, file: fpath, offset: s0, length: e0 - s0 + 1,
+                                contentType: ct, headers: shs}
+                    }
+                    // 解析不了或越界 ⇒ 416（带上总长度，客户端才知道该从哪续）
+                    shs.set("Content-Range", "bytes */" + _str(size))
+                    return {status: 416, body: "", contentType: ct, headers: shs}
+                }
+
+                // ③ 大文件：交给 `_write_response` 分块读发（不整读进内存、不 gzip）
+                if size > STATIC_INLINE_MAX {
+                    shs.set("Accept-Ranges", "bytes")
+                    return {status: 200, file: fpath, offset: 0, length: size,
+                            contentType: ct, headers: shs}
+                }
+
+                // ④ 小文件：整读（能享受 gzip）
+                var data = ""
+                try {
+                    data = files.read(fpath)
+                } catch ex {
+                    return not_found()
+                }
+                shs.set("Accept-Ranges", "bytes")
+                return {status: 200, body: data, contentType: ct, headers: shs}
             }
             return not_found()
         }

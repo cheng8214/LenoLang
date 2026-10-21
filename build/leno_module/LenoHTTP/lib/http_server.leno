@@ -93,9 +93,57 @@ func _compressible(string ct): bool {
 //   ⚠ Content-Length 必须写**压缩后**的长度（写错浏览器会一直等，表现为"页面转圈"✗）
 func _write_response(Socket c, Dict res, bool keep, bool acceptGzip): bool {
     int st = res["status"] as int
-    var body = res["body"] as string
     string ct = res["contentType"] as string
     Dict hs = res["headers"] as Dict
+
+    // ★ 2026-10-21：大文件 / Range 走**分块发送**（res 带 file / offset / length）
+    //   为什么不在 dispatch 里读完整文件：1MB 以上会同时存在"文件字符串 + Array[int] 逐字节副本"
+    //   （原实现 `for body.to_bytes() to b { out.add(b) }`）⇒ 内存峰值约 2 倍文件大小，
+    //   几个并发下载就能把进程顶满 ✗
+    //   ⚠ 分块路径**不做 gzip**：流式压缩要边读边压，成本远高于收益（大文件多是图片/视频，本来不可压）
+    if res.has("file") {
+        string fpath = res["file"] as string
+        int offset = res["offset"] as int
+        int length = res["length"] as int
+
+        Array[int] hout = []
+        _put(hout, "HTTP/1.1 " + _str(st) + " " + _status_text(st) + "\r\n")
+        _put(hout, "Content-Type: " + ct + "\r\n")
+        _put(hout, "Content-Length: " + _str(length) + "\r\n")
+        _put(hout, "Connection: " + (if keep then "keep-alive" else "close") + "\r\n")
+        for hs.keys() to hk {
+            var hv = hs.get(hk, "")
+            if hv is Array {
+                for (hv as Array[string]) to hline {
+                    _put(hout, _str(hk) + ": " + hline + "\r\n")
+                }
+            } else {
+                _put(hout, _str(hk) + ": " + _str(hv) + "\r\n")
+            }
+        }
+        _put(hout, "\r\n")
+        if not c.send(strings.from_bytes(hout)) { return false }
+
+        // ⚠ 必须 **"rb"**：文本模式在 Windows 上会把 `\r\n` 折成 `\n` ⇒ 图片/压缩包会被改坏
+        var f = files.open(fpath, "rb")
+        if f == null { return false }
+        f.seek(offset)
+        var left = length
+        while left > 0 {
+            var want = 65536
+            if left < want { want = left }
+            var chunk = f.read(want)
+            if chunk == "" { break }
+            int n = chunk.byte_len()
+            if not c.send(chunk) { f.close(); return false }
+            left = left - n
+            if n < want { break }
+        }
+        f.close()
+        return true
+    }
+
+    var body = res["body"] as string
     var gz = false
     if acceptGzip and not hs.has("Content-Encoding") and body.byte_len() >= 1024 and _compressible(ct) {
         var packed = z.gzip(body)

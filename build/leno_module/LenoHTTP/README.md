@@ -1,4 +1,4 @@
-# LenoHTTP v0.2.4
+# LenoHTTP v0.2.5
 
 Leno 的 **HTTP/1.1 服务端**（纯 Leno，零原生依赖，基于内置 `sockets`）。
 路由、查询串、表单、静态文件、keep-alive、**线程池并发**、**视图文件**、**声明式鉴权 + 全局管道**。
@@ -143,6 +143,33 @@ http.get(app, "/hello", func(Dict req): Dict {
 ```
 
 `{{x}}` 默认**转义**（防 XSS），`{{{x}}}` 原样输出（只对可信内容用）。
+
+## Range 与大文件分块（0.2.5）
+
+### 断点续传 / 视频拖动（`Range`）
+
+| 请求 | 响应 |
+|---|---|
+| `Range: bytes=100-199` | `206` + `Content-Range: bytes 100-199/<total>` + 恰好 100 字节 |
+| `Range: bytes=1048500-` | `206` + 尾部片段 |
+| `Range: bytes=99999999-` | `416` + `Content-Range: bytes */<total>`（客户端据此知道该从哪续） |
+| 无 `Range` | `200` + `Accept-Ranges: bytes` |
+
+只支持**单段**（多段 `bytes=0-99,200-299` 按无效处理 ⇒ 416）。
+
+### 大文件不再整读内存
+
+| 文件大小 | 怎么发 |
+|---|---|
+| ≤ **256KB** | 整读（能享受 gzip） |
+| > 256KB | **分块读发**（64KB 一块，内存峰值恒定；不 gzip） |
+
+```leno
+http.static(app, "/video", "media")     // 1GB 的 mp4 也不会把进程顶满
+```
+
+> 分块路径**跳过 gzip**：流式压缩要边读边压，成本远高于收益（大文件多是图片/视频，本来不可压）。
+> 打开文件用 `"rb"`（**二进制模式**）——文本模式在 Windows 上会把 `\r\n` 折成 `\n`，图片会被改坏。
 
 ## 静态文件缓存：ETag / 304（0.2.4）
 
@@ -294,6 +321,9 @@ build\leno.exe build\leno_module\LenoHTTP\test\test_middleware.leno
 
 :: 静态缓存：ETag / 304 空正文 / 不匹配 200 / 内容变化换 ETag / 穿越仍拒
 build\leno.exe build\leno_module\LenoHTTP\test\test_static_cache.leno
+
+:: Range + 分块：1MB 完整下载 / 206 片段 / 206 到结尾 / 416 越界 / 小文件回归
+build\leno.exe build\leno_module\LenoHTTP\test\test_static_range.leno
 
 :: Python 独立客户端压测（开发期工具；http.client + socket，与 Leno 实现完全无关）
 python build\leno_module\LenoHTTP\test\dev_stress_python.py
