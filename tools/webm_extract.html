@@ -68,20 +68,26 @@ function unblendCtx(ctx, w, h) {
 
 // 抽某一时刻的帧；clean=true 时先做白底反解+底板清理
 //   返回 data:image/png;base64,...
-window.grab = function (t, clean) {
+// fmt: "png" | "webp"（webp 用 0.95 —— Chrome 的 canvas 没有真无损 WebP，
+//   但 640×360 大片透明的素材下体积只有 PNG 的 1/4~1/5，够用）
+// dw/dh：目标尺寸（0 = 原尺寸）。桌宠用不上 640×360 ⇒ 缩到 320×180 体积降 4 倍
+window.grab = function (t, clean, fmt, dw, dh) {
   var v = document.getElementById('v');
   var c = document.getElementById('c');
   return new Promise(function (res) {
     var done = false;
     var finish = function (val) { if (!done) { done = true; res(val); } };
     v.onseeked = function () {
-      c.width = v.videoWidth;
-      c.height = v.videoHeight;
+      var w = dw > 0 ? dw : v.videoWidth;
+      var h = dh > 0 ? dh : v.videoHeight;
+      c.width = w;
+      c.height = h;
       var ctx = c.getContext('2d');
-      ctx.clearRect(0, 0, c.width, c.height);
-      ctx.drawImage(v, 0, 0);
-      if (clean) unblendCtx(ctx, c.width, c.height);
-      finish(c.toDataURL('image/png'));
+      ctx.clearRect(0, 0, w, h);
+      ctx.drawImage(v, 0, 0, w, h);
+      if (clean) unblendCtx(ctx, w, h);
+      if (fmt === 'webp') finish(c.toDataURL('image/webp', 0.95));
+      else finish(c.toDataURL('image/png'));
     };
     try { v.currentTime = t; } catch (e) { finish(''); return; }
     setTimeout(function () { finish(''); }, 8000);

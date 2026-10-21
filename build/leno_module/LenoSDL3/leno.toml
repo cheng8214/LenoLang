@@ -20,3 +20,27 @@ mac   = "lib/SDL3_image.so"
 win   = "lib/SDL3_ttf.dll"
 linux = "lib/SDL3_ttf.so"
 mac   = "lib/SDL3_ttf.so"
+
+# ==================== 可选：WebP 支持（2026-10-21）====================
+# SDL3_image 的 WebP 是**运行时动态加载**的（见 lib/sdl_image.leno 的 _preloadWebp）：
+#   官方 win32-x64 包把它们放在 `optional/` 里，Linux 侧对应发行版的 libwebp。
+# `optional = true` ⇒ **默认不随打包分发**（不用 WebP 的应用不该多背 500KB）。
+# 要用就在应用的 resource.toml 里点名：
+#     [pack]
+#     native = ["libwebp", "libwebpdemux", "libwebpmux"]
+# 三个缺一不可（SDL3_image 的加载链是 webp → demux → mux）。
+# GIF/PNG/JPG 是 SDL3_image **内建**的，不需要这些。
+[native-libs.libwebp]
+win      = "lib/libwebp-7.dll"
+linux    = "lib/libwebp.so.7"
+optional = true
+
+[native-libs.libwebpdemux]
+win      = "lib/libwebpdemux-2.dll"
+linux    = "lib/libwebpdemux.so.2"
+optional = true
+
+[native-libs.libwebpmux]
+win      = "lib/libwebpmux-3.dll"
+linux    = "lib/libwebpmux.so.3"
+optional = true

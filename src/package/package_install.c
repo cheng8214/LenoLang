@@ -511,10 +511,27 @@ static int collector_expand_pattern(PackCollector* c, const char* abs_dir,
     return matched;
 }
 
-int package_collect_pack_libs(const char* entry_file, PackLib** out, int* out_count) {
+/* want 列表里是否有这个名字（optional 库的启用判定） */
+static int want_has_lib(const char** want, int n, const char* name) {
+    if (!want || n <= 0 || !name) return 0;
+    for (int i = 0; i < n; i++) {
+        if (want[i] && strcmp(want[i], name) == 0) return 1;
+    }
+    return 0;
+}
+
+int package_collect_pack_libs(const char* entry_file,
+                              const char** want_native, int want_count,
+                              PackLib** out, int* out_count) {
     if (!out || !out_count) return -1;
     *out = NULL;
     *out_count = 0;
+
+    /* 点名的 optional 库是否真被某个模块提供（拼错要能发现，不静默带不上） */
+    int* want_hit = NULL;
+    if (want_count > 0) {
+        want_hit = (int*)calloc((size_t)want_count, sizeof(int));
+    }
 
     const char* key = pack_platform_key(package_get_platform());
     if (!key) {
@@ -543,7 +560,20 @@ int package_collect_pack_libs(const char* entry_file, PackLib** out, int* out_co
         const char* pkg = cfg->name ? cfg->name : c.roots[r];
 
         for (int k = 0; k < cfg->native_count; k++) {
-            const char* rel = native_lib_path_for(&cfg->native_libs[k], key);
+            const NativeLib* nl = &cfg->native_libs[k];
+            int wanted = want_has_lib(want_native, want_count, nl->lib_name);
+
+            /* optional 且应用没点名 ⇒ **跳过**（默认最小体积：不用就别带） */
+            if (nl->optional && !wanted) continue;
+            if (wanted && want_hit) {
+                for (int wi = 0; wi < want_count; wi++) {
+                    if (want_native[wi] && strcmp(want_native[wi], nl->lib_name) == 0) {
+                        want_hit[wi] = 1;
+                    }
+                }
+            }
+
+            const char* rel = native_lib_path_for(nl, key);
             if (!rel || !rel[0]) continue;   /* 该平台未声明这条 */
 
             /* 拆成 目录 + 末段（末段可能含通配） */
@@ -588,6 +618,18 @@ int package_collect_pack_libs(const char* entry_file, PackLib** out, int* out_co
         }
         package_config_free(cfg);
     }
+
+    /* 点名的 optional 库没被任何模块提供 ⇒ 报错（拼错要能发现，别静默少带一个库） */
+    for (int i = 0; i < want_count; i++) {
+        if (want_hit && !want_hit[i]) {
+            fprintf(stderr,
+                    "[pack] 错误: resource.toml 的 [pack] native 点名了 '%s'，"
+                    "但没有任何模块声明这个可选原生库\n", want_native[i]);
+            rc = -1;
+        }
+    }
+    free(want_hit);
+    want_hit = NULL;
 
     if (rc != 0) {
         package_pack_libs_free(c.items, c.count);

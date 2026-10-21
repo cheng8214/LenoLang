@@ -53,14 +53,33 @@ main() {
     var a = _args()
     for a to x { raw.add(x as string) }
 
-    // 位置参数：第 1 个 = 源 webm，第 2 个 = 输出目录；纯数字 = 帧数；`--clean` = 反解
+    // 位置参数：第 1 个 = 源 webm，第 2 个 = 输出目录；纯数字 = 帧数
+    //   开关：--clean（白底反解） / --webp（输出 WebP，体积约 PNG 的 1/4）
+    //         --fps（按 fps 自动算帧数，而不是给死帧数）
+    //   开关：--clean / --webp / --fps <n> / --size <WxH>
     string src = ""
     string outDir = ".probe_anim/frames"
     int n = 24
+    float fps = 0.0
     var clean = false
+    var useWebp = false
+    var wantFps = false
+    var wantSize = false
+    int dw = 0
+    int dh = 0
     var pos = 0
     for raw to s {
+        if wantFps { fps = _float(_int(s)); wantFps = false; continue }
+        if wantSize {
+            Array[string] wh = strings.split(s, "x")
+            if wh.len() >= 2 { dw = _int(wh[0]); dh = _int(wh[1]) }
+            wantSize = false
+            continue
+        }
         if s == "--clean" { clean = true; continue }
+        if s == "--webp" { useWebp = true; continue }
+        if s == "--fps" { wantFps = true; continue }
+        if s == "--size" { wantSize = true; continue }
         if _isNum(s) { n = _int(s); continue }
         if pos == 0 { src = s; pos = 1; continue }
         if pos == 1 { outDir = s; pos = 2 }
@@ -127,15 +146,27 @@ main() {
         web.closeBrowser(b)
         return
     }
+    // `--fps`：按源帧率算帧数（10.04s × 24fps ≈ 240 帧）——**这才是流畅播放的前提**，
+    //   抽 24 帧等于 2.4fps，人眼看到的就是"一帧一帧蹦"（实测用户反馈"卡卡的"）
+    if fps > 0.0 {
+        n = _int(dur * fps)
+        if n < 1 { n = 1 }
+    }
+    string ext = if useWebp then ".webp" else ".png"
+    string fmt = if useWebp then "webp" else "png"
+
     print("[extract] " + _str(dur) + "s / " + _str(vw) + "x" + _str(vh)
-        + " ⇒ 抽 " + _str(n) + " 帧" + (if clean then "（含白底反解）" else "") + " → " + outDir)
+        + " ⇒ 抽 " + _str(n) + " 帧（" + fmt
+        + (if clean then "，含白底反解" else "") + "）→ " + outDir)
 
     var saved = 0
     for n to i {
         float t = dur * _float(i) / _float(n)
-        string js = "window.grab(" + _str(t) + ", " + (if clean then "true" else "false") + ")"
+        string js = "window.grab(" + _str(t) + ", "
+            + (if clean then "true" else "false") + ", \"" + fmt + "\", "
+            + _str(dw) + ", " + _str(dh) + ")"
         string dataUrl = cdp.evaluate(c, js)
-        string outPath = dirs.join(outDir, "f_" + pad4(i) + ".png")
+        string outPath = dirs.join(outDir, "f_" + pad4(i) + ext)
         if dataUrl == "" {
             print("  帧 " + pad4(i) + " 抽帧失败（seek 超时）")
             continue
@@ -151,6 +182,22 @@ main() {
     cdp.cdpClose(c)
     web.closeBrowser(b)
     files.delete(html)
+
+    // meta.json：让播放端**按素材真实时长**算帧间隔（别在 demo 里硬编码 833ms ✗）
+    string meta = "{\"frames\":" + _str(saved)
+        + ",\"duration\":" + _str(dur)
+        + ",\"delay_ms\":" + _str(_int(dur * 1000.0 / _float(n)))
+        + ",\"fps\":" + _str(fps)
+        + ",\"fmt\":\"" + fmt + "\""
+        + ",\"w\":" + _str(if dw > 0 then dw else vw)
+        + ",\"h\":" + _str(if dh > 0 then dh else vh)
+        + ",\"clean\":" + (if clean then "true" else "false") + "}"
+    var mf = files.open(dirs.join(outDir, "meta.json"), "wb")
+    if mf != null {
+        mf.write(meta)
+        mf.close()
+    }
+
     print("[extract] 完成：成功 " + _str(saved) + "/" + _str(n) + " 帧 → " + outDir)
 }
 

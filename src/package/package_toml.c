@@ -473,6 +473,10 @@ PackageConfig* package_config_parse(const char* file_path) {
                     cfg->native_libs[found].linux_path = str_dup(val);
                 } else if (strcmp(key, "mac") == 0) {
                     cfg->native_libs[found].mac_path = str_dup(val);
+                } else if (strcmp(key, "optional") == 0) {
+                    /* 2026-10-21：optional = true ⇒ 默认不随打包，应用点名才带 */
+                    cfg->native_libs[found].optional =
+                        (strcmp(val, "true") == 0 || strcmp(val, "1") == 0);
                 }
             }
         } else if (strcmp(tp.name, "modules") == 0 && tp.table_depth == 1) {
@@ -578,6 +582,10 @@ PackConfig* package_pack_config_parse(const char* file_path) {
             } else if (strcmp(key, "resources") == 0) {
                 toml_parse_string_array(val, cfg->resources, MAX_PACK_RESOURCES,
                                         &cfg->resource_count);
+            } else if (strcmp(key, "native") == 0) {
+                /* native = ["libwebp", ...]：启用模块声明的 optional 原生库（2026-10-21） */
+                toml_parse_string_array(val, cfg->native, MAX_PACK_RESOURCES,
+                                        &cfg->native_count);
             } else if (strcmp(key, "icon") == 0) {
                 /* 单个字符串（toml_parse_kv 已去引号）；重复出现时后者覆盖前者 */
                 free(cfg->icon);
@@ -599,6 +607,9 @@ void package_pack_config_free(PackConfig* cfg) {
 
     for (int i = 0; i < cfg->resource_count; i++) {
         free(cfg->resources[i]);
+    }
+    for (int i = 0; i < cfg->native_count; i++) {
+        free(cfg->native[i]);
     }
     free(cfg->icon);
     free(cfg->file_path);

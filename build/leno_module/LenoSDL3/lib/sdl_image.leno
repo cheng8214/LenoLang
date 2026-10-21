@@ -25,6 +25,67 @@ const IMG_ANIM_OFF_COUNT  = 8
 const IMG_ANIM_OFF_FRAMES = 16
 const IMG_ANIM_OFF_DELAYS = 24
 
+// ==================== libwebp 预加载（2026-10-21）====================
+// SDL3_image 的 WebP 支持**不是内建的**：运行时才 `LoadLibrary("libwebp-7.dll")`。
+//   官方 win32-x64 包（SDL3_image-3.4.8）把它放在 `optional/` 里，三个文件：
+//     libwebp-7.dll（**静态内含 sharpyuv**，只依赖 KERNEL32 + msvcrt）
+//     libwebpdemux-2.dll（导入表依赖 libwebp-7.dll）
+//     libwebpmux-3.dll
+//   ⇒ 把它们放到本模块 `lib/` 后，**先按顺序预加载**进进程；之后 SDL3_image 内部
+//     按基名找就能命中（Windows 对已加载模块直接返回句柄）。
+//   ⚠ 三个都缺一不可：只给 libwebp 时实测紧接着报 `Failed loading libwebpdemux-2.dll` ✗
+//   ⚠ 顺序：libwebp-7 必须最先（demux 是它的依赖）
+// 没有这些 DLL 时静默跳过：PNG/JPG/GIF 照旧（GIF 是 SDL3_image 内建的，不需要外部库）
+//   —— 这也意味着它们是**可选**依赖，不写进 leno.toml 的 [native-libs] 就不会被打包。
+clib libwebp {
+    i32 WebPGetDecoderVersion()
+    i32 WebPGetEncoderVersion()
+}
+
+clib libwebpdemux {
+    i32 WebPGetDemuxVersion()
+}
+
+clib libwebpmux {
+    i32 WebPGetMuxVersion()
+}
+
+libwebp? _webpLib = null          // 必须持有引用：丢了可能被 FreeLibrary
+libwebpdemux? _webpDemuxLib = null
+libwebpmux? _webpMuxLib = null
+var _webpTried = false
+
+func _preloadWebp() {
+    if _webpTried { return }
+    _webpTried = true
+
+    // 文件名按平台取（Windows 带 `-<abi>` 后缀，Linux 是 soname）
+    string n1 = if _os() == "windows" then "libwebp-7.dll" else "libwebp.so.7"
+    string n2 = if _os() == "windows" then "libwebpdemux-2.dll" else "libwebpdemux.so.2"
+    string n3 = if _os() == "windows" then "libwebpmux-3.dll" else "libwebpmux.so.3"
+
+    // ⚠ 用**裸名**交给 ffi.load 自己搜（会依次找「当前模块目录/bin」「当前模块目录」
+    //   「所有已加载模块目录」）——和 SDL3_image 自己被找到走的是同一套逻辑 ✓
+    //   别自己拼 `dirs.script_dir()+"/../..."`：那给的是**入口脚本**目录，不是模块目录，
+    //   实测拼出来 exists=false，预加载等于没做 ✗
+    //   顺序：libwebp 必须最先（demux/mux 依赖它）
+    try {
+        _webpLib = ffi.load(n1)
+    } catch e {
+        return      // 没装这个可选依赖 = 正常情况，静默降级（只是 WebP 不可用）
+    }
+    try {
+        _webpDemuxLib = ffi.load(n2)
+    } catch e {
+        return
+    }
+    try {
+        _webpMuxLib = ffi.load(n3)
+    } catch e {
+        return
+    }
+}
+
 clib sdl3_image {
     // 加载
     Ptr[u8]  IMG_Load(str8 file)
@@ -51,6 +112,7 @@ func imgLib(): sdl3_image {
         string path = dirs.script_dir() + "/../SDL3_image" + ext
         if not files.exists(path) { path = dirs.script_dir() + "/SDL3_image" + ext }
         if not files.exists(path) { path = "SDL3_image" + ext }
+        _preloadWebp()                  // ★ 先预加载 libwebp（SDL3_image 的 WebP 依赖）
         _img = ffi.load(path)
     }
     return _img

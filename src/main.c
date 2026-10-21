@@ -1619,8 +1619,37 @@ int lenolang_run_file(const char* path) {
         int pack_lib_count = 0;
         {
             const char* entry_abs = error_get_filename();
-            if (package_collect_pack_libs(entry_abs ? entry_abs : path,
-                                          &pack_libs, &pack_lib_count) != 0) {
+
+            // ★ 2026-10-21：先读应用 resource.toml 的 [pack] native，启用模块声明的
+            //   **optional** 原生库（如 LenoSDL3 的 libwebp）。不写 ⇒ 一个都不带（体积最小）。
+            //   必须在 collect 之前读：收集时就要按这份名单决定跳不跳。
+            PackConfig* nt_cfg = NULL;
+            const char* nt_entries[MAX_PACK_RESOURCES];
+            int nt_count = 0;
+            {
+                char nt_root[MAX_PATH_LEN] = {0};
+                char* proj = entry_abs ? package_find_project_root(entry_abs) : NULL;
+                if (proj) {
+                    snprintf(nt_root, sizeof(nt_root), "%s", proj);
+                    free(proj);
+                }
+                if (nt_root[0]) {
+                    char nt_toml[MAX_PATH_LEN + 16];
+                    snprintf(nt_toml, sizeof(nt_toml), "%sresource.toml", nt_root);
+                    nt_cfg = package_pack_config_parse(nt_toml);
+                    if (nt_cfg) {
+                        for (int i = 0; i < nt_cfg->native_count && i < MAX_PACK_RESOURCES; i++) {
+                            nt_entries[nt_count++] = nt_cfg->native[i];
+                        }
+                    }
+                }
+            }
+
+            int collect_rc = package_collect_pack_libs(entry_abs ? entry_abs : path,
+                                                       nt_entries, nt_count,
+                                                       &pack_libs, &pack_lib_count);
+            if (nt_cfg) package_pack_config_free(nt_cfg);
+            if (collect_rc != 0) {
                 fprintf(stderr, "[pack] 原生库收集失败，已中止打包\n");
 #ifdef _WIN32
                 { wchar_t wp[MAX_PATH_LEN]; MultiByteToWideChar(CP_UTF8, 0, bin_path, -1, wp, MAX_PATH_LEN); _wremove(wp); }

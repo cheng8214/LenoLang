@@ -17,6 +17,7 @@ import times
 import dirs
 import files
 import strings
+import jsons
 import "SDL3" as SDL3
 use SDL3.Event
 use SDL3.Renderer
@@ -117,11 +118,26 @@ main() {
         return
     }
 
-    // 收集 f_*.png 并排序
+    // 帧间隔优先取 meta.json 里的 delay_ms（抽帧工具写的真实时长）
+    //   ⚠ 原来硬编码 833ms 是"12 帧/10 秒"的值；抽 240 帧还用它 ⇒ 动画被拖慢 20 倍 ✗
+    string metaPath = dirs.join(dirPath, "meta.json")
+    if files.exists(metaPath) {
+        var mv = jsons.decode(files.read(metaPath))
+        if mv is Dict {
+            Dict md = mv as Dict
+            if md.has("delay_ms") { GDelay = _int(md.get("delay_ms", GDelay)) }
+        }
+        print("[frames] meta: " + files.read(metaPath))
+    }
+
+    // 收集 f_*.png / f_*.webp 并排序
     Array[string] names = []
     for dirs.listdir(dirPath) to n {
         string s = n
-        if strings.starts_with(s, "f_") and strings.ends_with(s, ".png") { names.add(s) }
+        if strings.starts_with(s, "f_")
+            and (strings.ends_with(s, ".png") or strings.ends_with(s, ".webp")) {
+            names.add(s)
+        }
     }
     if names.len() == 0 {
         print("[frames] 目录里没有 f_*.png: " + dirPath)
@@ -146,8 +162,11 @@ main() {
     })
 
     win.run(onEvent, onRender)
-    GA.destroySelf()
+    // ⚠ 先打印再 destroySelf：destroy 会把 frames 清空，count() 就是 0 了
     if _env_or("FRAMES_DEMO_AUTO", "") != "" {
-        print("[frames] 自测结束：画了 " + _str(GFrames) + " 帧")
+        // 流畅度判据：渲染帧率（GFrames / 时长）要 ≥ 素材帧率（1000/delay）
+        print("[frames] 自测结束：渲染 " + _str(GFrames) + " 帧，动画推进到 idx="
+            + _str(GA.idx) + "/" + _str(GA.count()) + "（每帧 " + _str(GDelay) + "ms）")
     }
+    GA.destroySelf()
 }

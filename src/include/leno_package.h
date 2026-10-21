@@ -52,6 +52,11 @@ typedef struct {
     char* win_path;      /* native/sqlite3.dll */
     char* linux_path;    /* native/libsqlite3.so */
     char* mac_path;      /* native/libsqlite3.dylib */
+    /* optional = true：**默认不随打包分发**，只有应用的 resource.toml 在
+     * `[pack] native = ["<别名>", ...]` 里点名时才带（2026-10-21）。
+     * 用途：模块提供"可选能力"的原生依赖（如 LenoSDL3 的 libwebp —— 不用 WebP 的应用
+     * 不该为它多背 500KB）。声明粒度是**包**，所以只能由模块自己标、应用决定启用。 */
+    int optional;
 } NativeLib;
 
 /* ============================================================================
@@ -107,6 +112,10 @@ typedef struct {
     int onefile;                          /* onefile = true → -p 默认单文件模式 */
     int resource_count;
     char* resources[MAX_PACK_RESOURCES];  /* 资源通配模式，语法见 package_install.c */
+    /* native = ["libwebp", ...]：启用**模块声明的 optional 原生库**（按别名点名）。
+     * 不写 ⇒ optional 库一律不带（默认最小体积）。2026-10-21 加。 */
+    int native_count;
+    char* native[MAX_PACK_RESOURCES];
     char* icon;                           /* icon = "app.ico" → 打包产物换成这个图标
                                            * （相对包根；绝对路径也认）。NULL = 用 VM 自带图标。 */
 
@@ -383,12 +392,20 @@ typedef struct {
  * 同目标文件名的库只保留第一个（同名视为同一个库）。
  * 声明的精确路径不存在、或通配匹配不到任何文件 ⇒ 视为打包错误，返回 -1。
  *
+ * **optional 处理（2026-10-21）**：声明为 `optional = true` 的库默认**跳过**；
+ *   只有别名出现在 `want_native` 里才收集。`want_native` 来自应用 resource.toml 的
+ *   `[pack] native = [...]`。点了名但没有任何模块提供 ⇒ 报错（拼写错误要能发现）。
+ *
  * @param entry_file  入口 .leno 的**绝对路径**（用于定位应用自身的包根）
+ * @param want_native 应用要启用的 optional 库别名数组（可为 NULL）
+ * @param want_count  want_native 的条数
  * @param out         成功时写回收集结果数组（需用 package_pack_libs_free 释放）
  * @param out_count   结果条数
  * @return 0 成功；-1 有声明落空（错误已打印到 stderr）
  */
-int package_collect_pack_libs(const char* entry_file, PackLib** out, int* out_count);
+int package_collect_pack_libs(const char* entry_file,
+                              const char** want_native, int want_count,
+                              PackLib** out, int* out_count);
 
 /** 释放 package_collect_pack_libs 返回的结果 */
 void package_pack_libs_free(PackLib* libs, int count);
