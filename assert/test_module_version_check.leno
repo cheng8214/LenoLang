@@ -1,0 +1,48 @@
+// test_module_version_check.leno — [requires] 运行时模块版本校验
+//
+// 背景：应用用了新模块 API（如 LenoSDL3 的 source_row），旧运行时只在业务调用点
+//   报"没有方法"，根因被埋。现在 import 时按包版本直接拦住：
+//     [requires]
+//     LenoHTTP = ">=9.9.9"
+//   ⇒ 报「模块包 'LenoHTTP' 版本 0.2.6 不满足项目要求 '>=9.9.9'」✓
+//
+// 用 helpers/compiler.leno 起编译器子进程（必须失败/必须成功的场景它才表达得出来 ✓）
+
+import dirs
+import files
+import strings
+import "helpers/compiler.leno" as ce
+
+func write_project(string dir, string req_version):void {
+    var toml = "[package]\n"
+                 + "name = \"vp\"\n"
+                 + "version = \"0.0.1\"\n\n"
+                 + "[requires]\n"
+                 + "LenoHTTP = \"" + req_version + "\"\n"
+    files.write(dirs.join(dir, "leno.toml"), toml)
+    files.write(dirs.join(dir, "main.leno"), "import \"HTTP\"\n\nmain() {\n}\n")
+}
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_version_check")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+    var entry = dirs.join(work, "main.leno")
+
+    // ① 要求高于当前内置版本 ⇒ 编译失败，且报错落在 import 行（第 1 行）
+    write_project(work, ">=9.9.9")
+    var out = ce.expect_error(entry, "版本过高应在 import 期失败",
+                              "模块包 'LenoHTTP' 版本 0.2.6 不满足项目要求 '>=9.9.9'", 1)
+    assert_true(strings.has(out, "发现 1 个错误"),
+                "版本不满足只报一条根因；输出=" + out)
+
+    // ② 要求能被当前版本满足 ⇒ 编译运行成功
+    write_project(work, ">=0.2.0")
+    ce.expect_ok(entry, "版本满足应通过", "")
+
+    // ③ 不声明 [requires] ⇒ 完全保持旧行为（零影响）
+    files.write(dirs.join(work, "leno.toml"), "[package]\nname = \"vp\"\nversion = \"0.0.1\"\n")
+    ce.expect_ok(entry, "未声明要求应照常通过", "")
+
+    print("[PASS] [requires] 版本校验（不满足 / 满足 / 未声明）")
+}

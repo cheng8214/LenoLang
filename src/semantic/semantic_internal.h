@@ -15,6 +15,10 @@
 // 前置声明 - 类型推断
 // ============================================================================
 TypeInfo* infer_expr_type(Semantic* s, Ast* ast);
+
+// 把表达式标成"语义错误占位"：根因（如"没有方法"）已经报过 ⇒ 下游
+//   声明/返回/实参检查看到 TYPE_POISON 就跳过，避免级联诊断 ✓
+void semantic_poison_expr(Ast* ast);
 TypeInfo* infer_method_return_type(Semantic* s, TypeInfo* obj_type, const char* method_name);
 TypeInfo* infer_field_type(Semantic* s, TypeInfo* obj_type, const char* field_name, int* out_field_index);
 

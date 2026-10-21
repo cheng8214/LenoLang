@@ -864,6 +864,7 @@ const char* type_kind_to_string(TypeKind kind) {
         case TYPE_STR16:    return "str16";
         case TYPE_GENERIC_PARAM: return "generic";
         case TYPE_MULTI_RET: return "multi-ret";
+        case TYPE_POISON:   return "any";   // 兜底显示（正常已被级联抑制挡住，不会进诊断）
         default:            return "unknown";
     }
 }
@@ -978,6 +979,8 @@ int type_is_nullable(TypeInfo* type) {
 // 检查类型是否兼容（用于赋值）
 int type_is_compatible(TypeInfo* target, TypeInfo* source) {
     if (!target || !source) return 1;  // 任意类型都可以
+    // 语义错误占位：根因已报过 ⇒ 不再衍生"声明/返回/实参类型不匹配"等级联诊断
+    if (target->kind == TYPE_POISON || source->kind == TYPE_POISON) return 1;
     if (target->kind == TYPE_ANY) return 1;  // any 可以接受任何类型
     if (target->kind == TYPE_INFER) return 1;  // 推断类型接受任何值
     // 泛型类型参数：兼容任何类型（用于泛型函数体内部和类型推断）

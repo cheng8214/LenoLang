@@ -1,0 +1,56 @@
+// test_error_cascade.leno — 一个缺失方法只报一条根因，不产生派生类型错误
+//
+// 复现 LenoMusic 现场：导入模块 → 拿到 struct → 调用不存在的方法。
+// 修复前：1 条「没有方法」之外还报「变量声明类型与初始化值类型不匹配」「返回类型不匹配」……
+// 修复后：调用结果被标成 TYPE_POISON，派生检查全部跳过 ⇒ 只报 1 条 ✓
+
+import dirs
+import files
+import strings
+import "helpers/compiler.leno" as ce
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_error_cascade")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // 被导入的模块：导出 struct + 构造函数
+    files.write(dirs.join(work, "mod.leno"), @"export struct Box {
+    int x
+    func get(): int { return self.x }
+}
+
+export func mk(): Box {
+    var b = new Box()
+    b.x = 1
+    return b
+}
+")
+
+    // 入口：调用不存在的方法，并把结果用于 int 声明 + return（两条经典级联点）
+    var entry = dirs.join(work, "main.leno")
+    files.write(entry,
+        "import \"mod.leno\" as m\n\n"
+        + "func f(): int {\n"
+        + "    var b = m.mk()\n"
+        + "    int r = b.nope(1)\n"
+        + "    return r\n"
+        + "}\n\n"
+        + "main() {\n"
+        + "    print(f())\n"
+        + "}\n")
+
+    // 第 5 行是 `int r = b.nope(1)`
+    var out = ce.expect_error(entry, "缺失方法应报错", "没有方法 'nope'", 5)
+
+    assert_true(strings.has(out, "发现 1 个错误"),
+                "只该有 1 条根因错误（实际输出=" + out + "）")
+    assert_true(not strings.has(out, "声明类型与初始化值类型不匹配"),
+                "不该级联出变量声明类型错误；输出=" + out)
+    assert_true(not strings.has(out, "返回类型不匹配"),
+                "不该级联出返回类型错误；输出=" + out)
+    assert_true(not strings.has(out, "同类另有"),
+                "不该出现同类重复计数；输出=" + out)
+
+    print("[PASS] 缺失方法只报 1 条（无声明/返回级联）")
+}

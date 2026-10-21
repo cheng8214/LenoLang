@@ -310,6 +310,10 @@ typedef enum {
     TYPE_SOCKET,                // Socket 类型
     TYPE_GENERIC_PARAM,         // 泛型类型参数（如 T、U）
     TYPE_MULTI_RET,             // 多返回值类型 [T1, T2, ...] 或 {"k": T1, ...}
+    /* 语义错误占位：根因已经报过（如"没有方法"），下游的类型检查一律跳过，
+     * 避免同一个错误衍生出声明/返回/实参等一串级联诊断。
+     * 有错误时编译不会进入 codegen ⇒ 本类型不会写进字节码 ✓ */
+    TYPE_POISON,
     TYPE_KIND_COUNT,            // TypeKind 枚举数量（用于数组边界检查）
 } TypeKind;
 

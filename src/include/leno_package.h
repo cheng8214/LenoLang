@@ -93,6 +93,16 @@ typedef struct {
         char* source;       /* git 源 URL */
     } dev_dependencies[MAX_DEPENDENCIES];
 
+    /* [requires] —— 对**运行时模块包**的版本要求（不是可安装依赖）
+     *   由 LenoLang 发行包 / 全局缓存提供（如 LenoSDL3、LenoHTTP）；
+     *   只在 import 解析到该包的模块时校验，不参与 `leno --install` ✓ */
+    int require_count;
+    struct {
+        char* name;
+        char* version_str;
+        VersionReq req;
+    } requires[MAX_DEPENDENCIES];
+
     /* [native-libs] */
     int native_count;
     NativeLib native_libs[MAX_NATIVE_LIBS];
@@ -165,6 +175,27 @@ int version_req_parse(const char* str, VersionReq* out);
 
 /** 检查版本是否满足约束 */
 int version_satisfies(SemVer* version, VersionReq* req);
+
+/* ============================================================================
+ * [requires]：运行时模块版本要求
+ * ----------------------------------------------------------------------------
+ * 与 [dependencies] 的区别：后者是可安装的 git 包；这边的包由运行时
+ * （leno_module/ 或全局缓存）提供，只做版本校验、不触发安装 ✓
+ * ============================================================================ */
+
+/** 设置当前项目的运行时模块要求（cfg 为 NULL = 清空）。拷贝条目，调用方可随后 free cfg。 */
+void package_requirements_set(PackageConfig* cfg);
+
+/** 清空当前项目的运行时模块要求 */
+void package_requirements_clear(void);
+
+/**
+ * 校验一个已解析到的模块文件所属包的版本是否满足当前项目 [requires]。
+ * 从 resolved_path 向上找最近的 leno.toml，取其 [package] name/version；
+ * 名称未被要求 ⇒ 通过；版本缺失/不满足 ⇒ 返回 0 并写 out_msg。
+ * @return 1 通过/无需校验；0 不满足（out_msg 为完整错误文案）
+ */
+int package_check_module_version(const char* resolved_path, char* out_msg, int out_len);
 
 /* ============================================================================
  * init 命令

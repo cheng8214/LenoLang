@@ -443,6 +443,14 @@ PackageConfig* package_config_parse(const char* file_path) {
                 cfg->dev_dependencies[idx].version_str = str_dup(val);
                 version_req_parse(val, &cfg->dev_dependencies[idx].req);
             }
+        } else if (strcmp(tp.name, "requires") == 0 && tp.table_depth == 1) {
+            /* [requires] → 运行时模块包版本要求（不参与安装，只做 import 期校验） */
+            if (cfg->require_count < MAX_DEPENDENCIES) {
+                int idx = cfg->require_count++;
+                cfg->requires[idx].name = str_dup(key);
+                cfg->requires[idx].version_str = str_dup(val);
+                version_req_parse(val, &cfg->requires[idx].req);
+            }
         } else if (strcmp(tp.name, "dependency-sources") == 0 && tp.table_depth == 1) {
             /* [dependency-sources] → key=包名, value=git源URL */
             /* 查找对应的依赖条目并设置 source */
@@ -523,6 +531,14 @@ void package_config_free(PackageConfig* cfg) {
         free(cfg->dev_dependencies[i].req.version_upper.prerelease);
         free(cfg->dev_dependencies[i].req.version_upper.build);
     }
+    for (int i = 0; i < cfg->require_count; i++) {
+        free(cfg->requires[i].name);
+        free(cfg->requires[i].version_str);
+        free(cfg->requires[i].req.version.prerelease);
+        free(cfg->requires[i].req.version.build);
+        free(cfg->requires[i].req.version_upper.prerelease);
+        free(cfg->requires[i].req.version_upper.build);
+    }
     for (int i = 0; i < cfg->native_count; i++) {
         free(cfg->native_libs[i].lib_name);
         free(cfg->native_libs[i].win_path);
@@ -531,6 +547,183 @@ void package_config_free(PackageConfig* cfg) {
     }
 
     free(cfg);
+}
+
+/* ================================================================
+ * [requires]：运行时模块版本要求
+ * ----------------------------------------------------------------
+ * 与 [dependencies] 不同：这些包由运行时提供（leno_module/ 或全局缓存），
+ * 本段只做 import 期的版本校验，不参与 `leno --install` ✓
+ * ================================================================ */
+#define REQ_PATH_MAX 4096
+
+#ifdef _WIN32
+#define REQ_SEP '\\'
+#else
+#define REQ_SEP '/'
+#endif
+
+static struct {
+    char* name;
+    char* version_str;
+    VersionReq req;
+} g_module_reqs[MAX_DEPENDENCIES];
+static int g_module_req_count = 0;
+
+/* 同一次编译内已校验过的 "包名@版本" ⇒ 同一包的多个 import 只报一次 */
+static char g_req_checked[MAX_DEPENDENCIES][256];
+static int g_req_checked_count = 0;
+
+void package_requirements_clear(void) {
+    for (int i = 0; i < g_module_req_count; i++) {
+        free(g_module_reqs[i].name);
+        free(g_module_reqs[i].version_str);
+        free(g_module_reqs[i].req.version.prerelease);
+        free(g_module_reqs[i].req.version.build);
+        free(g_module_reqs[i].req.version_upper.prerelease);
+        free(g_module_reqs[i].req.version_upper.build);
+    }
+    g_module_req_count = 0;
+    g_req_checked_count = 0;
+}
+
+void package_requirements_set(PackageConfig* cfg) {
+    package_requirements_clear();
+    if (!cfg) return;
+    for (int i = 0; i < cfg->require_count && g_module_req_count < MAX_DEPENDENCIES; i++) {
+        const char* n = cfg->requires[i].name;
+        if (!n) continue;
+        int idx = g_module_req_count++;
+        g_module_reqs[idx].name = str_dup(n);
+        g_module_reqs[idx].version_str = str_dup(cfg->requires[i].version_str);
+        /* 重新解析 ⇒ req 内部的 prerelease/build 归本表自己所有（与 cfg 解耦 ✓） */
+        version_req_parse(cfg->requires[i].version_str, &g_module_reqs[idx].req);
+    }
+}
+
+static int req_file_exists(const char* path) {
+    FILE* fp = pack_toml_fopen(path, "rb");
+    if (!fp) return 0;
+    fclose(fp);
+    return 1;
+}
+
+/* 把 path 就地改成父目录；返回 0 = 已经没有父目录 */
+static int req_parent_dir(char* path) {
+    size_t n = strlen(path);
+    while (n > 0 && (path[n - 1] == '/' || path[n - 1] == '\\')) path[--n] = '\0';
+    if (n == 0) return 0;
+    char* s1 = strrchr(path, '/');
+    char* s2 = strrchr(path, '\\');
+    char* sep = s1;
+    if (!sep || (s2 && s2 > sep)) sep = s2;
+    if (!sep) return 0;
+    if (sep == path) {              /* "/foo" → "/" */
+        sep[1] = '\0';
+        return 1;
+    }
+    if (sep == path + 2 && path[1] == ':') {   /* "C:\foo" → "C:\" */
+        sep[1] = '\0';
+        return 1;
+    }
+    *sep = '\0';
+    return 1;
+}
+
+/* 从模块文件向上找最近的 leno.toml（内置/缓存包的包根） */
+static int req_find_package_toml(const char* resolved_path, char* out_toml, int out_len) {
+    if (!resolved_path || !out_toml || out_len <= 0) return 0;
+    char dir[REQ_PATH_MAX];
+    snprintf(dir, sizeof(dir), "%s", resolved_path);
+    if (!req_parent_dir(dir)) return 0;     /* 先到文件所在目录 */
+
+    for (int depth = 0; depth < 5; depth++) {
+        char cand[REQ_PATH_MAX + 16];
+        snprintf(cand, sizeof(cand), "%s%cleno.toml", dir, REQ_SEP);
+        if (req_file_exists(cand)) {
+            snprintf(out_toml, (size_t)out_len, "%s", cand);
+            return 1;
+        }
+        if (!req_parent_dir(dir)) break;
+    }
+    return 0;
+}
+
+int package_check_module_version(const char* resolved_path, char* out_msg, int out_len) {
+    if (!out_msg || out_len <= 0) return 1;
+    out_msg[0] = '\0';
+    if (!resolved_path || g_module_req_count == 0) return 1;
+
+    char toml[REQ_PATH_MAX + 16];
+    if (!req_find_package_toml(resolved_path, toml, (int)sizeof(toml))) return 1;
+
+    PackageConfig* pkg = package_config_parse(toml);
+    if (!pkg) return 1;
+
+    int ri = -1;
+    for (int i = 0; i < g_module_req_count; i++) {
+        if (pkg->name && g_module_reqs[i].name &&
+            strcmp(pkg->name, g_module_reqs[i].name) == 0) {
+            ri = i;
+            break;
+        }
+    }
+    if (ri < 0) {                       /* 没有对该包的版本要求 */
+        package_config_free(pkg);
+        return 1;
+    }
+
+    /* 同一包版本只校验一次：错误已经报过就不再重复刷屏 */
+    char key[256];
+    snprintf(key, sizeof(key), "%s@%s", pkg->name, pkg->version ? pkg->version : "?");
+    for (int i = 0; i < g_req_checked_count; i++) {
+        if (strcmp(g_req_checked[i], key) == 0) {
+            package_config_free(pkg);
+            return 1;
+        }
+    }
+    if (g_req_checked_count < MAX_DEPENDENCIES) {
+        snprintf(g_req_checked[g_req_checked_count],
+                 sizeof(g_req_checked[0]), "%s", key);
+        g_req_checked_count++;
+    }
+
+    const char* req_str = g_module_reqs[ri].version_str ? g_module_reqs[ri].version_str : "*";
+    if (!pkg->version) {
+        snprintf(out_msg, (size_t)out_len,
+                 "模块包 '%s' 未声明可用的 version（缺 leno.toml 的 [package].version）"
+                 "—— 无法满足项目要求 '%s'\n"
+                 "  提示: 升级该模块包，或调整 leno.toml 的 [requires]",
+                 pkg->name, req_str);
+        package_config_free(pkg);
+        return 0;
+    }
+
+    SemVer ver;
+    if (semver_parse(pkg->version, &ver) != 0) {
+        snprintf(out_msg, (size_t)out_len,
+                 "模块包 '%s' 的版本 '%s' 无法解析 —— 无法满足项目要求 '%s'\n"
+                 "  提示: 检查该模块包 leno.toml 的 [package].version",
+                 pkg->name, pkg->version, req_str);
+        package_config_free(pkg);
+        return 0;
+    }
+
+    int ok = version_satisfies(&ver, &g_module_reqs[ri].req);
+    free(ver.prerelease);
+    free(ver.build);
+
+    if (!ok) {
+        snprintf(out_msg, (size_t)out_len,
+                 "模块包 '%s' 版本 %s 不满足项目要求 '%s'\n"
+                 "  提示: 升级 LenoLang 运行时/模块包，或调整 leno.toml 的 [requires]",
+                 pkg->name, pkg->version, req_str);
+        package_config_free(pkg);
+        return 0;
+    }
+
+    package_config_free(pkg);
+    return 1;
 }
 
 /* ================================================================
