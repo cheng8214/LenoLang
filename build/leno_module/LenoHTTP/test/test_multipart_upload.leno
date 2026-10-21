@@ -1,0 +1,99 @@
+// test_multipart_upload.leno —— 服务端解析 multipart/form-data（2026-10-21）
+//
+// 判据：
+//   ① 文本字段进 `form`（`http.formValue` 与 urlencoded 一致可用）
+//   ② 文件进 `req["files"]`：filename / contentType / 原始字节都对
+//   ③ **二进制内容**（含 \0、\r\n--伪边界、中文）逐字节一致，不被当成文本处理
+//   ④ 中文文件名不乱码
+//   ⑤ 一个请求里多个文件 + 多个文本字段能同时取到
+import strings
+import sockets
+import threads
+import "HTTP" as http
+
+func clientSend(int port, string raw, Channel out) {
+    Socket c = sockets.connect("127.0.0.1", port)
+    if c == null { out.send(""); return }
+    c.send(raw)
+    var resp = ""
+    while true {
+        var chunk = c.recv(65536)
+        if chunk == null { break }
+        resp = resp + (chunk as string)
+    }
+    c.close()
+    out.send(resp)
+}
+
+func oneReq(Dict app, string raw): string {
+    var srv = http.listen("127.0.0.1", 0)
+    if not (srv["ok"] as bool) { return "" }
+    int port = srv["port"] as int
+    var out = threads.channel(1)
+    threads.start(clientSend, port, raw, out)
+    http.acceptOne(srv, app)
+    return out.receive() as string
+}
+
+// 响应正文（\r\n\r\n 之后）
+func bodyOf(string resp): string {
+    int p = resp.find("\r\n\r\n")
+    if p < 0 { return "" }
+    int s = p + 4
+    if s >= resp.byte_len() { return "" }
+    return resp.byte_slice(s, resp.byte_len() - 1)
+}
+
+const BND = "----LenoBoundary42"
+
+// 手工拼 multipart 正文（客户端部分；不用库，保证测的是服务端解析）
+func multipartBody(): string {
+    Array[int] b = []
+    // 文本字段 name
+    for ("--" + BND + "\r\nContent-Disposition: form-data; name=\"name\"\r\n\r\nLeno用户\r\n").to_bytes() to x { b.add(x) }
+    // 二进制文件：含 \0、\r\n、伪边界（`\r\n--BND`）——解析器不能被它骗到
+    for ("--" + BND + "\r\nContent-Disposition: form-data; name=\"avatar\"; filename=\"图 片.bin\"\r\nContent-Type: image/png\r\n\r\n").to_bytes() to x { b.add(x) }
+    b.add(0); b.add(1); b.add(2); b.add(13); b.add(10); b.add(45); b.add(45); b.add(66); b.add(0); b.add(255)
+    for ("\r\n").to_bytes() to x { b.add(x) }
+    // 第二个文件（纯文本内容）
+    for ("--" + BND + "\r\nContent-Disposition: form-data; name=\"note\"; filename=\"a.txt\"\r\nContent-Type: text/plain\r\n\r\nhello\r\n").to_bytes() to x { b.add(x) }
+    // 结束
+    for ("--" + BND + "--\r\n").to_bytes() to x { b.add(x) }
+    return strings.from_bytes(b)
+}
+
+main() {
+    Dict app = http.newApp()
+    http.post(app, "/up", func(Dict req): Dict {
+        var f1 = http.file(req, "avatar")
+        var f2 = http.file(req, "note")
+        Dict out = {
+            name: http.formValue(req, "name", ""),
+            fileCount: http.files(req).len(),
+            avatarName: f1.get("filename", ""),
+            avatarType: f1.get("contentType", ""),
+            avatarBytes: (f1.get("body", "") as string).byte_len(),
+            noteText: f2.get("body", ""),
+            hasMissing: http.file(req, "nope").len()
+        }
+        return http.json(out)
+    })
+
+    var body = multipartBody()
+    var raw = "POST /up HTTP/1.1\r\nHost: t\r\nConnection: close\r\n"
+        + "Content-Type: multipart/form-data; boundary=" + BND + "\r\n"
+        + "Content-Length: " + _str(body.byte_len()) + "\r\n\r\n" + body
+    var resp = oneReq(app, raw)
+    assert_true(resp.has("200 OK"), "①请求成功（实际首行：" + resp.byte_slice(0, 15) + "）")
+
+    var json = bodyOf(resp)
+    assert_true(json.has("\"name\":\"Leno用户\""), "②文本字段解析正确（含中文）")
+    assert_true(json.has("\"fileCount\":2"), "③两个文件都收到")
+    assert_true(json.has("\"avatarName\":\"图 片.bin\""), "④中文文件名不乱码")
+    assert_true(json.has("\"avatarType\":\"image/png\""), "⑤Content-Type 带上")
+    assert_true(json.has("\"avatarBytes\":10"), "⑥二进制内容长度正确（10 字节）")
+    assert_true(json.has("\"noteText\":\"hello\""), "⑦第二个文件内容正确")
+    assert_true(json.has("\"hasMissing\":0"), "⑧不存在的字段 ⇒ 空 Dict")
+
+    print("test_multipart_upload passed（文本字段 / 2 个文件 / 中文名 / 二进制 10 字节 / 缺失字段）")
+}

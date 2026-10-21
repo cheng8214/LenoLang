@@ -1,4 +1,4 @@
-# LenoHTTP v0.2.5
+# LenoHTTP v0.2.6
 
 Leno 的 **HTTP/1.1 服务端**（纯 Leno，零原生依赖，基于内置 `sockets`）。
 路由、查询串、表单、静态文件、keep-alive、**线程池并发**、**视图文件**、**声明式鉴权 + 全局管道**。
@@ -143,6 +143,37 @@ http.get(app, "/hello", func(Dict req): Dict {
 ```
 
 `{{x}}` 默认**转义**（防 XSS），`{{{x}}}` 原样输出（只对可信内容用）。
+
+## 文件上传：multipart/form-data（0.2.6）
+
+```leno
+import files
+
+http.post(app, "/upload", func(Dict req): Dict {
+    var f = http.file(req, "avatar")            // {name, filename, contentType, body}
+    if f.len() == 0 {
+        return http.jsonStatus(400, {ok: false, error: "缺少 avatar"})
+    }
+    string name = f["filename"] as string
+    string body = f["body"] as string           // **原始字节**（图片/压缩包都行）
+    files.write("uploads/" + name, body)
+    return http.json({ok: true, file: name, size: body.byte_len()})
+})
+```
+
+| API | 说明 |
+|---|---|
+| `http.file(req, name)` | 取一个上传文件；没有 ⇒ 空 Dict（`f.len() == 0`） |
+| `http.files(req)` | 全部文件（顺序同请求） |
+| `http.formValue(req, name, def)` | **文本字段也能用**（multipart 的文本字段已并入 `form`） |
+
+实现要点：
+
+- 全程按**字节**切分（`Array[int]` 扫描 + `byte_slice`）—— body 里可能是二进制，
+  字符串的 `find` 是**字符**位置，用在图片上会算错
+- 内容里出现 `\r\n--boundary` 的**伪边界**不会被骗（测试里专门构造了这个字节序列）
+- 中文文件名按 UTF-8 原样保留
+- 上限仍是 `MAX_BODY = 8MB`（整包读进内存；再大要改成分块收，属另一个工程）
 
 ## Range 与大文件分块（0.2.5）
 
@@ -324,6 +355,9 @@ build\leno.exe build\leno_module\LenoHTTP\test\test_static_cache.leno
 
 :: Range + 分块：1MB 完整下载 / 206 片段 / 206 到结尾 / 416 越界 / 小文件回归
 build\leno.exe build\leno_module\LenoHTTP\test\test_static_range.leno
+
+:: 上传：文本字段 / 2 个文件 / 中文文件名 / 二进制逐字节 / 伪边界 / 缺失字段
+build\leno.exe build\leno_module\LenoHTTP\test\test_multipart_upload.leno
 
 :: Python 独立客户端压测（开发期工具；http.client + socket，与 Leno 实现完全无关）
 python build\leno_module\LenoHTTP\test\dev_stress_python.py

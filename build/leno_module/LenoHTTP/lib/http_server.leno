@@ -252,11 +252,18 @@ func _read_request(Socket c, string carry): Dict {
     var leftover = ""
     if raw.byte_len() > clen { leftover = raw.byte_slice(clen, raw.byte_len() - 1) }
 
-    // 表单：只在 urlencoded 时解析（multipart 见 README 的边界）
+    // 表单：urlencoded 走 parse_kv；**multipart 走 parse_multipart**（2026-10-21）
+    //   multipart 的文本字段也进 `form` ⇒ `http.formValue` 对两种格式都成立
     Dict form = {}
+    Array[Dict] upfiles = []
     if h.has("content-type") {
         string ct = h.get("content-type", "") as string
-        if p.find(ct.to_lower(), "application/x-www-form-urlencoded", 0) >= 0 {
+        string bnd = p.multipart_boundary(ct)
+        if bnd != "" {
+            var mp = p.parse_multipart(body, bnd)
+            form = mp["fields"] as Dict
+            upfiles = mp["files"] as Array[Dict]
+        } else if p.find(ct.to_lower(), "application/x-www-form-urlencoded", 0) >= 0 {
             form = p.parse_kv(body)
         }
     }
@@ -276,6 +283,7 @@ func _read_request(Socket c, string carry): Dict {
         headers: h,
         body: body,
         form: form,
+        files: upfiles,          // multipart 上传的文件（每项 {name, filename, contentType, body}）
         version: version,
         keepAlive: keep,
         remote: c.peer_addr() + ":" + _str(c.peer_port())

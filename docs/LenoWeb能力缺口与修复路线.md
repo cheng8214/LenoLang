@@ -35,7 +35,7 @@
 | 2.2 | 模板自动转义 | ✅ **本轮已做**：`http.esc()` / `http.render(tpl, vars)`（`{{x}}` 转义、`{{{x}}}` 原样） | XSS 输入渲染成 `&lt;script&gt;`；缺键给空串 |
 | 2.3 | 路径参数路由 | ✅ **已做（2026-10-20）**：`http.get(app, "/user/:id", h)` ⇒ `req["params"]["id"]`；精确路由优先、段数必须相同、方法不符仍 405 | `test_route_params.leno` 六组：单/多参数、段数不匹配 404、精确优先、405、与鉴权叠加 |
 | 2.4 | 中间件链 | ✅ **部分已做（2026-10-20）**：`http.before(app, fn)` 全局前置管道（返回 `null` 放行、返回响应短路）+ **声明式鉴权** `http.auth(app, fn)` + 路由标 `{auth: true}`。**不做** `next()` 洋葱模型（同步 handler 用不上，改响应走 `_write_response`） | `test_middleware.leno` 六组：公开路由 / 401 / 带 token 拿到 `req["user"]` / 缺检查器 500 / `before` 短路 503 / 中间件抛异常后同一连接仍正常 |
-| 2.5 | multipart/form-data | 按 boundary 切分，解析 `name` / `filename` / 体 | 上传 1 个中文名文本文件，能取到名字与内容 |
+| 2.5 | multipart/form-data | ✅ **已做（2026-10-21）**：`http_parse.parse_multipart`（全程 Array[int] 字节扫描）+ `req["files"]` + `http.file(req,name)` / `http.files(req)`；文本字段并入 `form`（formValue 通用） | `test_multipart_upload.leno` 八组：文本字段 / 2 个文件 / 中文文件名 / 二进制 10 字节逐字节 / 伪边界不误切 / 缺失字段为空 Dict |
 | 2.6 | Range + 缓存头 | ✅ **已做（2026-10-21）**：`ETag`（size-mtime）+ `If-None-Match` ⇒ 304；`Range: bytes=a-b` ⇒ 206 + `Content-Range`；越界 ⇒ 416 + `bytes */total`；**未做** `Last-Modified`（需 GMT 格式化，`times.format` 是本地时区 ⇒ 宁可不发也不发错） | `test_static_cache.leno` 五组（304 等）+ `test_static_range.leno` 五组（1MB 完整 / 206 片段 / 206 到结尾 / 416 / 小文件回归） |
 | 2.7 | 大文件不整读内存 | ✅ **已做（2026-10-21）**：> 256KB 走分块读发（64KB 一块，`files.open(path,"rb")` + `seek` + 循环 `send`），内存峰值恒定；分块路径不 gzip | 下载 1MB 文件内容与原文逐字节一致（首尾都验），`test_static_range.leno` ① |
 

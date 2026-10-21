@@ -81,6 +81,12 @@ export func query(Dict req, string name, string def = ""): string { return a.que
 export func formValue(Dict req, string name, string def = ""): string { return a.form(req, name, def) }
 export func header(Dict req, string name, string def = ""): string { return a.header(req, name, def) }
 
+// 上传的文件（multipart/form-data）：file(req,"avatar") => {name, filename, contentType, body}；
+//   没有这个字段 ⇒ 空 Dict（`f.len() == 0`）。所有文件用 files(req) 取。
+//   ⚠ body 是**原始字节**，落盘直接 `files.write(path, f["body"] as string)` ✓
+export func file(Dict req, string name): Dict { return a.file(req, name) }
+export func files(Dict req): Array[Dict] { return a.files(req) }
+
 // ==================== 视图文件（2026-10-20）====================
 //   http.views(app, "views")            —— 指定目录
 //   http.view(app, "hello", {x: 1})     —— 渲染 views/hello.html，自动套 views/layout.html

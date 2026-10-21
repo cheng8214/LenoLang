@@ -174,6 +174,21 @@ export func form(Dict req, string name, string def): string {
     return v
 }
 
+// ==================== 上传的文件（multipart，2026-10-21）====================
+// `_read_request` 把 multipart 的文本字段并进 `form`（所以 formValue 照样能用），
+// 文件单独放 `req["files"]`（每项 {name, filename, contentType, body}，body 是原始字节）
+export func file(Dict req, string name): Dict {
+    Array[Dict] fs = req["files"] as Array[Dict]
+    for fs to f {
+        if (f.get("name", "") as string) == name { return f }
+    }
+    return {}
+}
+
+export func files(Dict req): Array[Dict] {
+    return req["files"] as Array[Dict]
+}
+
 // 头部名不区分大小写（解析侧已统一小写，这里 also 兜一层）
 export func header(Dict req, string name, string def): string {
     Dict hs = req["headers"] as Dict

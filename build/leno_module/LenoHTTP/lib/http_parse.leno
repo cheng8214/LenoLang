@@ -162,3 +162,139 @@ export func header_end(string buf): int {
     if i < 0 { return -1 }
     return i + 4
 }
+
+// ==================== multipart/form-data（2026-10-21）====================
+// 为什么全部按**字节数组**操作：body 里可能是图片/压缩包（非 UTF-8）
+//   `find` / `byte_slice` 那套是字节级没错，但 `find` 每次调用都会 `to_bytes()` 整个正文
+//   （8MB 正文 × 每段 2 次调用 ⇒ 上百 MB 的临时拷贝）⇒ 这里先把整份转成 Array[int]，
+//   后续全在数组上扫。
+func _find_arr(Array[int] h, Array[int] n, int from): int {
+    int hn = h.len()
+    int nn = n.len()
+    if nn == 0 or hn < nn { return -1 }
+    int first = n[0]
+    var i = from
+    if i < 0 { i = 0 }
+    while i <= hn - nn {
+        if h[i] == first {
+            var hit = true
+            for 0:nn-1 to k {
+                if h[i + k] != n[k] { hit = false; break }
+            }
+            if hit { return i }
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+func _slice_arr(Array[int] h, int start, int end): string {
+    Array[int] out = []
+    if start < 0 { start = 0 }
+    if end >= h.len() { end = h.len() - 1 }
+    if start <= end {
+        for start:end to i { out.add(h[i]) }
+    }
+    return strings.from_bytes(out)
+}
+
+// 从 `Content-Disposition: form-data; name="x"; filename="y"` 取引号内的值（字节级）
+func _quoted(string line, string key): string {
+    Array[int] hb = line.to_bytes()
+    Array[int] kn = (key + "=\"").to_bytes()
+    int p = _find_arr(hb, kn, 0)
+    if p < 0 { return "" }
+    int s = p + kn.len()
+    var e = s
+    while e < hb.len() and hb[e] != 34 { e = e + 1 }
+    if e <= s { return "" }
+    return _slice_arr(hb, s, e - 1)
+}
+
+// 解析 multipart/form-data
+//   返回 {fields: Dict[string,string], files: Array[Dict]}
+//   files 每项：{name, filename, contentType, body}（body 是**原始字节**，落盘请直接 write）
+//   同一 name 多次出现：文本字段后者覆盖；文件全部保留（顺序同请求）
+export func parse_multipart(string body, string boundary): Dict {
+    Dict fields = {}
+    // ⚠ 变量别叫 `files`：本文件没导入 files 模块，但 `files.add(...)` 会被解析成
+    //   "模块 files 的方法 add" ⇒ 报「模块 'files' 未导入」（2026-10-21 实测踩到）
+    Array[Dict] upfiles = []
+    if boundary == "" or body == "" { return {fields: fields, files: upfiles} }
+
+    Array[int] hb = body.to_bytes()
+    Array[int] dn = ("--" + boundary).to_bytes()
+    Array[int] sepLF = []
+    sepLF.add(13); sepLF.add(10)
+    for dn to b { sepLF.add(b) }           // `\r\n--boundary`
+
+    int pos = _find_arr(hb, dn, 0)
+    while pos >= 0 {
+        int seg = pos + dn.len()
+        // 结束标记 `--boundary--`
+        if seg + 1 < hb.len() and hb[seg] == 45 and hb[seg + 1] == 45 { break }
+        // 段首 CRLF
+        if seg + 1 < hb.len() and hb[seg] == 13 and hb[seg + 1] == 10 { seg = seg + 2 }
+
+        // 头部与内容的分界
+        int hdrEnd = _find_arr(hb, [13, 10, 13, 10], seg)
+        if hdrEnd < 0 { break }
+        string head = _slice_arr(hb, seg, hdrEnd - 1)
+        int cstart = hdrEnd + 4
+
+        // 下一个分隔符：`\r\n--boundary`
+        int next = _find_arr(hb, sepLF, cstart)
+        var content = ""
+        if next < 0 {
+            // 没有结束分隔符（畸形）⇒ 取到末尾，别把内容丢了
+            content = _slice_arr(hb, cstart, hb.len() - 1)
+            pos = -1
+        } else {
+            content = _slice_arr(hb, cstart, next - 1)
+            pos = next + 2
+        }
+
+        var pname = ""
+        var pfile = ""
+        var ptype = ""
+        for split(head, "\r\n") to line {
+            string low = lower(trim(line))
+            if strings.starts_with(low, "content-disposition:") {
+                pname = _quoted(line, "name")
+                pfile = _quoted(line, "filename")
+            } else if strings.starts_with(low, "content-type:") {
+                ptype = trim(strings.byte_slice(line, 13, line.byte_len() - 1))
+            }
+        }
+        if pname != "" {
+            if pfile != "" {
+                upfiles.add({name: pname, filename: pfile, contentType: ptype, body: content})
+            } else {
+                fields.set(pname, content)
+            }
+        }
+        if pos < 0 { break }
+    }
+    return {fields: fields, files: upfiles}
+}
+
+// `Content-Type: multipart/form-data; boundary=xxx` ⇒ "xxx"（没有 ⇒ ""）
+export func multipart_boundary(string ct): string {
+    string low = lower(ct)
+    if find(low, "multipart/form-data", 0) < 0 { return "" }
+    int p = find(ct, "boundary=", 0)
+    if p < 0 { return "" }
+    int s = p + 9
+    string v = trim(strings.byte_slice(ct, s, ct.byte_len() - 1))
+    // 可能带引号：boundary="xxx"
+    if v.byte_len() >= 2 and v.byte(0) == 34 {
+        var e = 1
+        var out = ""
+        while e < v.byte_len() and v.byte(e) != 34 {
+            out = out + v.byte_slice(e, e)
+            e = e + 1
+        }
+        return out
+    }
+    return v
+}
