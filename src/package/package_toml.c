@@ -7,10 +7,19 @@
 #ifdef _WIN32
 #include <windows.h>
 /* UTF-8 路径安全打开：Windows 的 fopen 按 ANSI 代码页解释路径字节，
- * 中文目录下的 UTF-8 路径会打不开，必须转宽字符走 _wfopen */
-static FILE* pack_toml_fopen(const char* path, const char* mode) {
-    int wn = MultiByteToWideChar(CP_UTF8, 0, path, -1, NULL, 0);
-    int mn = MultiByteToWideChar(CP_UTF8, 0, mode, -1, NULL, 0);
+ * 中文目录下的 UTF-8 路径会打不开，必须转宽字符走 _wfopen。
+ *
+ * ★ 2026-10-21 修（中文目录下 leno.toml 读不到 ⇒ [requires]/依赖/打包配置全失效）：
+ *   调用方传进来的路径**编码并不统一** —— 编辑器/LSP 侧是 UTF-8，
+ *   而 `argv`（main 走 ANSI 入口）是系统 ANSI 代码页（GBK）✗
+ *   ⇒ 只按 CP_UTF8 转宽字符时，GBK 路径会被译成乱码宽字符，_wfopen 必然失败，
+ *     而 `printf` 到 GBK 控制台看着还是"正常中文" ⇒ 症状极具欺骗性
+ *     （实测：`leno_gui\应用\桌宠\leno.toml` 明明存在，package_config_parse 返回 NULL）。
+ *   现在两步：先 CP_UTF8，失败再按 CP_ACP（系统 ANSI）重试 ✓ 两种来源都能开。
+ */
+static FILE* pack_toml_wfopen(const char* path, const char* mode, UINT cp) {
+    int wn = MultiByteToWideChar(cp, 0, path, -1, NULL, 0);
+    int mn = MultiByteToWideChar(cp, 0, mode, -1, NULL, 0);
     if (wn <= 0 || mn <= 0) return NULL;
     wchar_t* wpath = (wchar_t*)malloc(wn * sizeof(wchar_t));
     wchar_t* wmode = (wchar_t*)malloc(mn * sizeof(wchar_t));
@@ -19,11 +28,21 @@ static FILE* pack_toml_fopen(const char* path, const char* mode) {
         free(wmode);
         return NULL;
     }
-    MultiByteToWideChar(CP_UTF8, 0, path, -1, wpath, wn);
-    MultiByteToWideChar(CP_UTF8, 0, mode, -1, wmode, mn);
+    MultiByteToWideChar(cp, 0, path, -1, wpath, wn);
+    MultiByteToWideChar(cp, 0, mode, -1, wmode, mn);
     FILE* fp = _wfopen(wpath, wmode);
     free(wpath);
     free(wmode);
+    return fp;
+}
+
+static FILE* pack_toml_fopen(const char* path, const char* mode) {
+    FILE* fp = pack_toml_wfopen(path, mode, CP_UTF8);
+    if (fp) return fp;
+    /* 回退：路径来自 argv（ANSI 代码页）的那些调用点 */
+    if (GetACP() != CP_UTF8) {
+        fp = pack_toml_wfopen(path, mode, GetACP());
+    }
     return fp;
 }
 #else
@@ -376,7 +395,11 @@ static void toml_parse_string_array(const char* val, char** out, int max, int* o
  * ================================================================ */
 
 PackageConfig* package_config_parse(const char* file_path) {
-    FILE* fp = fopen(file_path, "rb");
+    // ★ 2026-10-21 修：这里原来是**裸 fopen** ⇒ 中文目录下的 leno.toml 读不到
+    //   （`leno_gui/应用/桌宠/leno.toml` 明明存在，函数返回 NULL ⇒ [requires]/[dependencies]
+    //    /[modules] 全部静默失效）。resource.toml 那边早已用 pack_toml_fopen，
+    //   只有 leno.toml 这条漏了 ⇒ 统一走 UTF-8 安全的那个 ✓
+    FILE* fp = pack_toml_fopen(file_path, "rb");
     if (!fp) return NULL;
 
     PackageConfig* cfg = (PackageConfig*)calloc(1, sizeof(PackageConfig));

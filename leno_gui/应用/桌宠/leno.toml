@@ -1,0 +1,8 @@
+# 应用侧的 [requires]：import 期校验模块包版本
+#   桌宠用了 Table.source_row / win.setClickThrough 等自 LenoSDL3 0.1.1 起的 API
+[package]
+name = "DesktopPet"
+version = "0.1.0"
+
+[requires]
+LenoSDL3 = ">=0.1.1"

@@ -1,0 +1,9 @@
+# 应用侧的 [requires]：import 期校验模块包版本
+#   Log 是 cleaner_master.leno 里 `import "Log" as log` 用的（原手写 _dlog 已收编）
+[package]
+name = "CleanerMaster"
+version = "0.1.0"
+
+[requires]
+LenoSDL3 = ">=0.1.1"
+LenoLog   = ">=0.1.0"

@@ -8,6 +8,13 @@ license = "Apache-2.0"
 [modules]
 root = "lib"
 
+# 跨包依赖（import 期校验，不参与 --install）：
+#   lib/web_gzip.leno  用 `import "Compress" as z`
+#   lib/web_crawler.leno 用 `import "CSV" as csvlib`（导出 CSV 时）
+[requires]
+LenoCompress = ">=0.2.0"
+LenoCSV      = ">=0.1.0"
+
 # 原生库：只声明**随包实际分发**的文件（打包时按当前平台键复制到 exe 同目录）。
 # 声明了而文件不存在 ⇒ 打包直接报错，故本包未随附的平台不列键。
 [native-libs.curl]

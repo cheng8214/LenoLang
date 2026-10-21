@@ -9,3 +9,9 @@ license = "Apache-2.0"
 root = "lib"
 
 # 纯 Leno，无原生库；依赖 LenoZip（容器）与 LenoCompress（zip 内 deflate 条目解压）
+
+# 跨包依赖（import 期校验）：
+#   lib/xlsx_read.leno / lib/xlsx_write.leno 用 `import "Zip" as zip`
+#   （zip 内的 deflate 条目由 LenoZip 转给 LenoCompress，本包不直接 import Compress）
+[requires]
+LenoZip = ">=0.2.0"

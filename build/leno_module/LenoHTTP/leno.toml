@@ -9,3 +9,8 @@ license = "Apache-2.0"
 root = "lib"
 
 # 纯 Leno，无原生库；依赖内置 sockets / files / strings / jsons
+
+# 跨包依赖（import 期校验，不参与 --install）：
+#   lib/http_server.leno 用 `import "Compress" as z` 做 gzip 响应
+[requires]
+LenoCompress = ">=0.2.0"
