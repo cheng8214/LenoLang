@@ -1,4 +1,4 @@
-# LenoHTTP v0.2.2
+# LenoHTTP v0.2.4
 
 Leno 的 **HTTP/1.1 服务端**（纯 Leno，零原生依赖，基于内置 `sockets`）。
 路由、查询串、表单、静态文件、keep-alive、**线程池并发**、**视图文件**、**声明式鉴权 + 全局管道**。
@@ -144,6 +144,25 @@ http.get(app, "/hello", func(Dict req): Dict {
 
 `{{x}}` 默认**转义**（防 XSS），`{{{x}}}` 原样输出（只对可信内容用）。
 
+## 静态文件缓存：ETag / 304（0.2.4）
+
+静态文件响应默认带 **`ETag`**（内容指纹 = `size-mtime`）。浏览器二次请求会带
+`If-None-Match`，命中就回 **304（无正文）**——CSS/JS/图片不再重复传输。
+
+```leno
+http.static(app, "/assets", "assets")
+```
+
+| 请求 | 响应 |
+|---|---|
+| `GET /assets/a.css` | `200` + `ETag: "1234-1760000000"` + 正文 |
+| `GET` + `If-None-Match: "1234-1760000000"` | **`304`**，正文长度 0 |
+| 文件改过（size/mtime 变） | ETag 变 ⇒ 自然回 200 新内容 |
+
+> **不发 `Last-Modified`**：HTTP 要的是 GMT 格式，而 `times.format` 目前按本地时区输出
+> ⇒ 宁可少一个头，也不发一个时区错误的时间（会让缓存提前/延后失效）。
+> **`Range`（206 断点续传）还没做**，见能力缺口 2.6 的剩余项。
+
 ## 路径参数（0.2.3）
 
 ```leno
@@ -272,6 +291,9 @@ build\leno.exe build\leno_module\LenoHTTP\test\test_music_api.leno
 
 :: 鉴权 + 中间件：公开路由 / 401 / 带 token / 缺检查器 500 / before 短路 / 异常后仍活
 build\leno.exe build\leno_module\LenoHTTP\test\test_middleware.leno
+
+:: 静态缓存：ETag / 304 空正文 / 不匹配 200 / 内容变化换 ETag / 穿越仍拒
+build\leno.exe build\leno_module\LenoHTTP\test\test_static_cache.leno
 
 :: Python 独立客户端压测（开发期工具；http.client + socket，与 Leno 实现完全无关）
 python build\leno_module\LenoHTTP\test\dev_stress_python.py

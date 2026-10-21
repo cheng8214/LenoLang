@@ -489,8 +489,20 @@ export func dispatch(Dict app, Dict req): Dict {
             }
             var hit = st.serve(sm["dir"] as string, rel)
             if hit["found"] as bool {
+                // ★ 2026-10-21：静态文件带 ETag；`If-None-Match` 命中 ⇒ **304（无正文）**
+                //   收益：CSS/JS/图片二次访问省掉整个文件传输（浏览器默认就会带这个头）
+                string etag = hit["etag"] as string
+                Dict shs = {ETag: etag}
+                Dict reqh = req["headers"] as Dict
+                if reqh.has("if-none-match") {
+                    string inm = (reqh.get("if-none-match", "") as string).trim()
+                    if inm == etag {
+                        return {status: 304, body: "",
+                                contentType: hit["ctype"] as string, headers: shs}
+                    }
+                }
                 return {status: 200, body: hit["data"] as string,
-                        contentType: hit["ctype"] as string, headers: {}}
+                        contentType: hit["ctype"] as string, headers: shs}
             }
             return not_found()
         }

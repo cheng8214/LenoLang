@@ -61,7 +61,17 @@ export func serve(string root, string rel): Dict {
     try {
         data = files.read(full)
     } catch ex {
-        return {found: false, data: "", ctype: "", err: "读取失败"}
+        return {found: false, data: "", ctype: "", size: 0, mtime: 0, etag: "", err: "读取失败"}
     }
-    return {found: true, data: data, ctype: content_type(sub), err: ""}
+
+    // ★ 2026-10-21：ETag（内容指纹）—— 浏览器二次访问带 `If-None-Match` ⇒ 回 304，**不重传正文**
+    //   为什么用 size+mtime：文件一改，mtime 必变 ⇒ 指纹必变；比哈希内容便宜得多（大图片/视频不能每次读一遍算哈希）
+    //   ⚠ **不发 Last-Modified**：HTTP 要的是 GMT 格式，而 `times.format` 目前按本地时区输出
+    //     ⇒ 宁可少一个头，也不发一个时区错误的时间（那会让缓存提前/延后失效）
+    var st = dirs.stat(full)
+    int size = st.size
+    int mtime = st.mtime
+    string etag = "\"" + _str(size) + "-" + _str(mtime) + "\""
+    return {found: true, data: data, ctype: content_type(sub),
+            size: size, mtime: mtime, etag: etag, err: ""}
 }

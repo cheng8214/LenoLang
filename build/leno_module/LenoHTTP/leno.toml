@@ -1,6 +1,6 @@
 [package]
 name = "LenoHTTP"
-version = "0.2.2"
+version = "0.2.4"
 description = "Leno HTTP/1.1 server on top of sockets (routes, static files, query, forms, thread-pool concurrency)"
 authors = ""
 license = "Apache-2.0"

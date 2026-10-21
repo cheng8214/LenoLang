@@ -1,0 +1,116 @@
+// test_static_cache.leno —— 静态文件 ETag / 304（2026-10-21）
+//
+// 判据：
+//   ① 首次 GET 静态文件 ⇒ 200 + 带 ETag 头
+//   ② 带同一个 `If-None-Match` 再请求 ⇒ **304**，且正文长度为 0（不重传文件）
+//   ③ `If-None-Match` 不匹配 ⇒ 仍是 200 + 完整正文
+//   ④ 文件内容变了（size/mtime 变）⇒ ETag 必变（用两段不同内容验证）
+//   ⑤ 回归：目录穿越仍 403（ETag 改造不能把安全逻辑碰坏）
+import dirs
+import files
+import sockets
+import threads
+import "HTTP" as http
+
+func clientSend(int port, string raw, Channel out) {
+    Socket c = sockets.connect("127.0.0.1", port)
+    if c == null { out.send(""); return }
+    c.send(raw)
+    var resp = ""
+    while true {
+        var chunk = c.recv(65536)
+        if chunk == null { break }
+        resp = resp + (chunk as string)
+    }
+    c.close()
+    out.send(resp)
+}
+
+func oneReq(Dict app, string raw): string {
+    var srv = http.listen("127.0.0.1", 0)
+    if not (srv["ok"] as bool) { return "" }
+    int port = srv["port"] as int
+    var out = threads.channel(1)
+    threads.start(clientSend, port, raw, out)
+    http.acceptOne(srv, app)
+    return out.receive() as string
+}
+
+func getRaw(string path, string extra): string {
+    return "GET " + path + " HTTP/1.1\r\nHost: t\r\nConnection: close\r\n" + extra + "\r\n"
+}
+
+// 从响应头里取某个头的值（大小写不敏感；没有 ⇒ ""）
+func headerOf(string resp, string name): string {
+    string low = resp.to_lower()
+    string key = "\r\n" + name.to_lower() + ": "
+    // ⚠ `find` 返回**字符位置**；HTTP 头是 ASCII ⇒ 字符位置 == 字节位置（这里安全）
+    int p = low.find(key)
+    if p < 0 { return "" }
+    int s = p + key.byte_len()
+    int n = resp.byte_len()
+    var out = ""
+    for s:n-1 to i {
+        var ch = resp.byte_slice(i, i)
+        if ch == "\r" or ch == "\n" { break }
+        out = out + ch
+    }
+    return out
+}
+
+// 取响应正文（\r\n\r\n 之后的部分）
+func bodyOf(string resp): string {
+    int p = resp.find("\r\n\r\n")
+    if p < 0 { return "" }
+    int s = p + 4
+    if s >= resp.byte_len() { return "" }
+    return resp.byte_slice(s, resp.byte_len() - 1)
+}
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_static_cache")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    string css = dirs.join(work, "a.css")
+    files.write(css, "body{color:red}")
+    threads.sleep(30)          // 让 mtime 至少跨一个时间粒度
+
+    var app = http.newApp()
+    http.static(app, "/assets", work)
+
+    // ① 首次：200 + ETag
+    var r1 = oneReq(app, getRaw("/assets/a.css", ""))
+    assert_true(r1.has("200 OK"), "①首次 200")
+    assert_true(r1.has("ETag:"), "①带 ETag 头")
+    var etag = headerOf(r1, "ETag")
+    assert_true(etag != "", "①ETag 非空（实际：" + etag + "）")
+    assert_true(bodyOf(r1).has("color:red"), "①正文正确")
+
+    // ② If-None-Match 命中 ⇒ 304 + 空正文
+    var r2 = oneReq(app, getRaw("/assets/a.css", "If-None-Match: " + etag + "\r\n"))
+    assert_true(r2.has("304"), "②命中 ⇒ 304（实际响应首行：" + r2.byte_slice(0, 12) + "）")
+    assert_eq(bodyOf(r2), "", "②304 不带正文")
+
+    // ③ 不匹配 ⇒ 200 + 正文
+    var r3 = oneReq(app, getRaw("/assets/a.css", "If-None-Match: \"nope\"\r\n"))
+    assert_true(r3.has("200 OK"), "③ETag 不匹配仍是 200")
+    assert_true(bodyOf(r3).has("color:red"), "③正文完整")
+
+    // ④ 内容变了 ⇒ ETag 变
+    threads.sleep(30)
+    files.write(css, "body{color:blue;padding:0}")
+    var r4 = oneReq(app, getRaw("/assets/a.css", ""))
+    var etag2 = headerOf(r4, "ETag")
+    assert_true(etag2 != etag, "④内容变化 ⇒ ETag 变（旧 " + etag + " / 新 " + etag2 + "）")
+    assert_true(bodyOf(r4).has("color:blue"), "④新内容生效")
+
+    // ⑤ 目录穿越必须被拒（403 = 静态层拦下；404 = 请求路径在解析阶段已归一化掉 `..`）
+    //   ⚠ 不硬断 403：`_read_request` 会先归一化路径，`/assets/../../x` 可能变成 `/x` 直接不匹配前缀
+    var r5 = oneReq(app, getRaw("/assets/../../secret.txt", ""))
+    assert_true(r5.has("403") or r5.has("404"), "⑤穿越被拒（403/404，实际首行：" + r5.byte_slice(0, 15) + "）")
+    assert_true(not bodyOf(r5).has("secret"), "⑤没有泄露目标文件内容")
+
+    dirs.delete(work)
+    print("test_static_cache passed（ETag / 304 / 不匹配 200 / 内容变化换 ETag / 穿越仍 403）")
+}
