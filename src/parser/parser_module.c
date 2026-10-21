@@ -126,6 +126,13 @@ Ast* parse_import_stmt(Parser* p) {
             module_name = strdup(resolved);
             // 同时更新 AST 中的 module_name
             ast->u.import.module_name = module_name;
+
+            // [requires]：校验该模块所属包的版本是否满足项目要求。
+            //   在 import 期就拦住"运行时模块太旧"（否则错误会落到几层之外的业务调用点 ✗）
+            char vmsg[512];
+            if (package_check_module_version(resolved, vmsg, (int)sizeof(vmsg)) == 0) {
+                error_add_at_fmt(ERR_SEMANTIC, line, 1, "%s", vmsg);
+            }
         }
         // 注：含 ".leno" 的**裸文件名**（如 SDL3.leno）也归上面这一句管 ——
         //     兜底规则收在 package_resolve_import_spec 里（解析器/扫描器共用一份 ✓），

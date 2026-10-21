@@ -1413,6 +1413,7 @@ int lenolang_run_file(const char* path) {
     // 必须在编译/打包/运行之前设置，确保 import 能解析到包
     {
         package_search_path_clear();
+        package_requirements_clear();       /* [requires] 随项目切换一起清空（LSP 同进程多次编译） */
         const char* abs_file = error_get_filename();
         if (abs_file) {
             char* proj_root = package_find_project_root(abs_file);
@@ -1433,6 +1434,8 @@ int lenolang_run_file(const char* path) {
                 snprintf(toml_path, sizeof(toml_path), "%sleno.toml", proj_root);
                 PackageConfig* pkg_cfg = package_config_parse(toml_path);
                 if (pkg_cfg) {
+                    /* [requires]：运行时模块包版本要求 —— 必须在 import 解析前装载 ✓ */
+                    package_requirements_set(pkg_cfg);
                     for (int di = 0; di < pkg_cfg->dep_count; di++) {
                         const char* dn = pkg_cfg->dependencies[di].name;
                         if (!dn) continue;

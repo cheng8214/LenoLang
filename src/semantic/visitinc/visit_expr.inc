@@ -515,6 +515,9 @@
         }
             
         case AST_CALL: {
+            /* 同一次调用只报一条"没有方法"：本地 struct 分支报过之后，
+             *   下面的通用分支不要再报一次（随后统一打毒，抑制级联 ✓） */
+            int method_missing_reported = 0;
             Symbol* sym = NULL;
             const char* func_name = NULL;
             
@@ -697,6 +700,7 @@
                                 error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                                          "face '%s' 没有方法 '%s'",
                                          receiver_type->struct_name, method_name);
+                                semantic_poison_expr(ast);   /* 根因已报 ⇒ 抑制下游级联 */
                             }
                             type_free(receiver_type);
                             break;
@@ -708,6 +712,7 @@
                                 "不能在 any 类型上调用方法 '%s'\n"
                                 "  提示: 使用 if ... is Type { ... } 类型收窄或指定参数类型",
                                 method_name);
+                            semantic_poison_expr(ast);
                         }
                         if (type_name) {
                             int expected_arity;
@@ -851,6 +856,8 @@
                                                          "类型 '%s' 没有方法 '%s'%s",
                                                          type_str, method_name,
                                                          get_similar_in_names(mnames, mcount, method_name));
+                                        method_missing_reported = 1;
+                                        semantic_poison_expr(ast);
                                     }
                                 }
                                 // 如果 struct 定义不在当前 AST 中（跨模块导入），跳过编译时检查
@@ -883,6 +890,8 @@
                                         "类型 '%s' 没有方法 '%s'\n"
                                         "  提示: cstruct 只有字段，没有方法",
                                         type_str, method_name);
+                                    method_missing_reported = 1;
+                                    semantic_poison_expr(ast);
                                 }
                                 // 找不到 cstruct 定义（跨模块），跳过编译时检查
                             }
@@ -910,7 +919,7 @@
                                 is_dict_value_call = value_is_func || !looks_like_typo;
                             }
                             if (!method_found && !is_dict_value_call &&
-                                receiver_type->kind != TYPE_CSTRUCT) {
+                                receiver_type->kind != TYPE_CSTRUCT && !method_missing_reported) {
                                 // 方法不存在，编译时报错
                                 // ★ 2026-10-10（A 组第 7 条）：提示**分级** ✓
                                 //   原来这里**写死**了一句"如果是数组切片，请使用 arr[start:end]" ✗
@@ -926,6 +935,7 @@
                                          "类型 '%s' 没有方法 '%s'%s",
                                          type_str, method_name,
                                          semantic_no_such_method_hint(receiver_type, method_name));
+                                semantic_poison_expr(ast);
                             } else if (method_found) {
                                 // 是实例方法，检查参数
                                 int actual_arity = ast->u.call.args.count;

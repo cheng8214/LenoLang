@@ -510,6 +510,7 @@
                         error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                                  "模块 '%s' 中没有方法 '%s'",
                                  ast->u.module_call.module_name, ast->u.module_call.method_name);
+                        semantic_poison_expr(ast);   /* 根因已报 ⇒ 抑制下游级联 */
                     } else if (module_info->sym_table) {
                         // 从模块符号表推断返回类型
                         ModuleFuncSymbol* func_sym = module_symbol_table_find_func(
@@ -1528,6 +1529,7 @@
                             (strcmp(method_name, "contains") == 0 || strcmp(method_name, "includes") == 0)) {
                             error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                                      "类型 'string' 没有方法 '%s'，是否想用 'has'？（如 s.has(sub)）", method_name);
+                            semantic_poison_expr(ast);
                         } else if (obj_sym->type->kind == TYPE_STRUCT && obj_sym->type->struct_name) {
                             // ★ 增强报错：当类型是 TYPE_STRUCT 且无定义时，提示可能是未 use 导入的 clib/cstruct 类型
                             const char* tn = obj_sym->type->struct_name;
@@ -1541,11 +1543,13 @@
                                 error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                                          "类型 '%s' 没有方法 '%s'：类型 '%s' 未定义%s",
                                          type_to_string(obj_sym->type), method_name, tn, hint);
+                                semantic_poison_expr(ast);
                             } else {
                                 error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                                          "类型 '%s' 没有方法 '%s'%s",
                                          type_to_string(obj_sym->type), method_name,
                                          get_similar_struct_method_hint(s, tn, method_name));
+                                semantic_poison_expr(ast);
                             }
                         } else {
                             // ★ 2026-10-10（A 组第 7 条）：改走**共享分级提示** ✓
@@ -1555,6 +1559,7 @@
                                      "类型 '%s' 没有方法 '%s'%s",
                                      type_to_string(obj_sym->type), method_name,
                                      semantic_no_such_method_hint(obj_sym->type, method_name));
+                            semantic_poison_expr(ast);
                         }
                     }
 

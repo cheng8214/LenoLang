@@ -1,6 +1,16 @@
 #include "semantic_internal.h"
 #include "include/module_symbol_table.h"
 
+// 语义错误占位（见 semantic_internal.h）：错误已报过，别让下游再报一串派生类型错误 ✓
+void semantic_poison_expr(Ast* ast) {
+    if (!ast) return;
+    if (ast->cached_type) {
+        type_free(ast->cached_type);
+        ast->cached_type = NULL;
+    }
+    ast->cached_type = type_new(TYPE_POISON);
+}
+
 // ============================================================================
 // 递归修正类型名：`Shape`（face）/ `Color`（enum）被 parser 记成 TYPE_STRUCT + 名字，
 //   这里按"当前作用域 → 导入模块符号表"把**整棵类型树**里的名字纠正过来。

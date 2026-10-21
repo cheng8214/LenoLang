@@ -11,6 +11,7 @@
 //   ⑥ 用 Cookie 也能鉴权（不用 Authorization 头）
 import sockets
 import threads
+import dirs
 
 int PORT = 8096
 
@@ -59,7 +60,11 @@ func after(string text, string marker): string {
 }
 
 main() {
-    var h = _spawn("build\\leno.exe", "build\\leno_module\\LenoHTTP\\examples\\music_api.leno " + _str(PORT))
+    // 用当前编译器（_executable）拉起示例服务：路径按平台拼，Linux 下不能写死 build\leno.exe ✗
+    var script = dirs.join(
+        dirs.join(dirs.join("build", "leno_module"), "LenoHTTP"),
+        dirs.join("examples", "music_api.leno"))
+    var h = _spawn(_executable(), "\"" + script + "\" " + _str(PORT))
     threads.sleep(1200)
 
     // ① 无 token ⇒ 401 + JSON
