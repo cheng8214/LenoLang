@@ -66,6 +66,15 @@ export struct Anim {
         return ren.drawTextureAt(frames[idx], x, y, w, h)
     }
 
+    // 画当前帧 + 翻转（flip: Flip.NONE / Flip.HORIZONTAL / Flip.VERTICAL）
+    //   素材只有单朝向时靠它镜像（例如桌宠往右走，把朝左的走路帧水平翻过来）
+    //   flip=0 走普通批处理路径，不付 Rotated 的 flush 代价
+    func drawToFlip(Renderer ren, float x, float y, float w, float h, int flip): bool {
+        if not ok or frames.len() == 0 { return false }
+        if flip == 0 { return ren.drawTextureAt(frames[idx], x, y, w, h) }
+        return ren.drawTextureRotated(frames[idx], x, y, w, h, 0.0, 0.0, 0.0, flip)
+    }
+
     func play()  { playing = true }
     func pause() { playing = false }
     func reset() { idx = 0; acc = 0; playing = true }
