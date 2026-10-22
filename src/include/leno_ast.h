@@ -383,6 +383,12 @@ struct Ast {
         struct {
             TypeInfo** slot_types;  // 槽位类型数组
             char** slot_keys;      // 键名数组（数组解构为NULL，字典解构有值）
+            /* 每槽的默认值表达式（2026-10-22）：
+             *   `var{"x": int = 0}(x) = opts`
+             *     ⇒ 缺键（OP_INDEX 得到 null）时取这个默认值，语义等价 `opts["x"] ?? 0`。
+             *   数组 NULL = 该槽没有默认值（保持原行为：缺键就是 null）。
+             *   整组都为 NULL ⇒ 与本次改动前**逐字节等价**（不发 IS_NULL/JMP）。 */
+            Ast** slot_defaults;
             int slot_count;        // 槽位数量
             char** names;          // 变量名数组
             SymRef* refs;          // 符号引用数组（语义分析填充）

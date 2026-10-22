@@ -1,0 +1,37 @@
+// ?? 的结果类型（2026-10-22 修）
+//   判据：左边是 any / 可空时，结果要能**直接赋给具体类型**（不用 _int / as 中转）
+main() {
+    // ① 左 any（字典取值）⇒ 用 right 的类型
+    Dict[string, any] opts = {"w": 360}
+    int w = opts["w"] ?? 360
+    assert_eq(w, 360)
+
+    // ② 缺键 ⇒ 用默认值，类型仍是 int
+    int h = opts["h"] ?? 240
+    assert_eq(h, 240)
+
+    // ③ 左 any + 右 string
+    string s = opts["s"] ?? "dflt"
+    assert_eq(s, "dflt")
+
+    // ④ 左是可空具体类型：仍按"左去可空"（既有行为不变）
+    int? a = null
+    int r1 = a ?? 42
+    assert_eq(r1, 42)
+
+    int? b = 5
+    int r2 = b ?? 42
+    assert_eq(r2, 5)
+
+    string? n1 = null
+    string r3 = n1 ?? "x"
+    assert_eq(r3, "x")
+
+    // ⑤ 0 / false / "" 不被 ?? 吃掉（与 or 的关键区别）
+    int? z = 0
+    assert_eq(z ?? 99, 0)
+    bool? bf = false
+    assert_eq(bf ?? true, false)
+    string? es = ""
+    assert_eq(es ?? "def", "")
+}

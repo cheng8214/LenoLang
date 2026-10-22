@@ -1665,9 +1665,16 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     break;
                 case TOK_NULL_COALESCE: {
                     // left ?? right → 结果类型 = left 去可空化
-                    if (left && left->nullable) {
+                    //   ★ 2026-10-22 修：left 是 **any/unknown**（拿不到确定类型，如 `opts["w"]`
+                    //     这类字典取值）时，**退用 right 的类型**。
+                    //     语义依据：right 是"左为空时的默认值"，通常就代表调用方期望的类型
+                    //     ⇒ `opts["w"] ?? 360` 应推 int。原来一律用 left ⇒ 得到 any，
+                    //     于是 `int w = opts["w"] ?? 360` 编译失败，只能写 `_int(...)` 中转 ✗
+                    if (left && left->kind != TYPE_ANY && left->kind != TYPE_UNKNOWN) {
                         result = type_copy(left);
-                        result->nullable = 0;
+                        if (left->nullable) { result->nullable = 0; }
+                    } else if (right && right->kind != TYPE_ANY && right->kind != TYPE_UNKNOWN) {
+                        result = type_copy(right);
                     } else if (left) {
                         result = type_copy(left);
                     } else {

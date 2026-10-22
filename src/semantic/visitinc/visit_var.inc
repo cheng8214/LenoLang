@@ -738,6 +738,17 @@
                 }
             }
 
+            // ★ 默认值表达式也要 visit（2026-10-22）
+            //   不 visit 就不会做标识符绑定 ⇒ 里面的变量（如 `var{n = base + 1}` 的 base）
+            //   运行时读到 **null**，而且会被"未使用变量"误报 ✗
+            if (ast->u.destruct_decl.slot_defaults) {
+                for (int i = 0; i < ast->u.destruct_decl.slot_count; i++) {
+                    if (ast->u.destruct_decl.slot_defaults[i]) {
+                        visit(s, ast->u.destruct_decl.slot_defaults[i]);
+                    }
+                }
+            }
+
             // 访问初始值表达式
             if (ast->u.destruct_decl.init) {
                 visit(s, ast->u.destruct_decl.init);
@@ -809,6 +820,15 @@
                                 TypeKind slot_kind = slot_type->kind;
                                 // any 槽位：总是兼容，跳过检查
                                 if (slot_kind == TYPE_ANY || slot_kind == TYPE_INFER) continue;
+                                // ★ 2026-10-22：**有默认值的槽位豁免源类型检查**
+                                //   缺键时用默认值（它保证类型），有键时值来自 any 字典 ——
+                                //   与 `opts["k"] ?? 默认` 同一处境：运行时才是唯一判据。
+                                //   SDL3 控件的 opts 就是 `Dict[any,any]`，不豁免的话
+                                //   `var{"x": int = 0}(x) = opts` 永远编不过 ✗
+                                if (ast->u.destruct_decl.slot_defaults &&
+                                    ast->u.destruct_decl.slot_defaults[i]) {
+                                    continue;
+                                }
                                 // 具体类型槽位：需要源值类型也是具体类型
                                 if (val_is_any) {
                                     error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,

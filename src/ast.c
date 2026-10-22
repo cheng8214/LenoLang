@@ -248,7 +248,11 @@ break;
             if (ast->u.destruct_decl.refs[i].name) {
                 free(ast->u.destruct_decl.refs[i].name);
             }
+            if (ast->u.destruct_decl.slot_defaults) {
+                ast_free(ast->u.destruct_decl.slot_defaults[i]);   // 可空
+            }
         }
+        free(ast->u.destruct_decl.slot_defaults);
         free(ast->u.destruct_decl.slot_types);
         free(ast->u.destruct_decl.slot_keys);
         free(ast->u.destruct_decl.names);

@@ -903,9 +903,11 @@ Ast* parse_destruct_decl(Parser* p, TypeInfo* base_type, int is_const, int line,
     int slot_count = 0;
     TypeInfo** slot_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * slot_cap);
     char** slot_keys = NULL;
+    Ast** slot_defaults = NULL;     // 每槽默认值（2026-10-22，字典解构的 `= 默认值`）
     if (is_dict) {
         slot_keys = (char**)calloc(slot_cap, sizeof(char*));
     }
+    slot_defaults = (Ast**)calloc(slot_cap, sizeof(Ast*));
 
     // 消费 '[' 或 '{'
     lexer_next(&p->lex);
@@ -993,6 +995,7 @@ Ast* parse_destruct_decl(Parser* p, TypeInfo* base_type, int is_const, int line,
         ast->column = column;
         ast->u.destruct_decl.slot_types = slot_types;
         ast->u.destruct_decl.slot_keys = NULL;
+        ast->u.destruct_decl.slot_defaults = slot_defaults;
         ast->u.destruct_decl.slot_count = slot_count;
         ast->u.destruct_decl.names = names;
         ast->u.destruct_decl.refs = (SymRef*)calloc(slot_count, sizeof(SymRef));
@@ -1014,13 +1017,38 @@ Ast* parse_destruct_decl(Parser* p, TypeInfo* base_type, int is_const, int line,
                 slot_keys = (char**)realloc(slot_keys, sizeof(char*) * slot_cap);
                 memset(&slot_keys[slot_count], 0, sizeof(char*) * (slot_cap - slot_count));
             }
+            slot_defaults = (Ast**)realloc(slot_defaults, sizeof(Ast*) * slot_cap);
+            memset(&slot_defaults[slot_count], 0, sizeof(Ast*) * (slot_cap - slot_count));
         }
 
         if (is_dict) {
-            // 字典解构: "key": Type
+            // ---- 简写形态（2026-10-22）：`var{x = 0, w = 360} = opts` ----
+            //   键名 = 变量名；类型可省（TYPE_INFER，按默认值推断）。
+            //   等价于逐个 `x = opts["x"] ?? 0`，这是 SDL3 控件 opts 解析的真实需求
+            //   （原来要写 `"x": int = 0` 再加 `(x)` —— 键名/类型/变量名三处重复 ✗）。
+            if (p->lex.current.type == TOK_IDENT) {
+                slot_keys[slot_count] = copy_string(p->lex.current.text, p->lex.current.len);
+                lexer_next(&p->lex);                     // 消费键名
+                if (match(p, TOK_COLON)) {               // 可选显式类型：`x: int = 0`
+                    slot_types[slot_count] = parse_type_internal(p);
+                } else {
+                    slot_types[slot_count] = type_new(TYPE_INFER);
+                }
+                if (match(p, TOK_EQ)) {                  // 可选默认值
+                    Ast* def = parse_expression(p);
+                    if (!def) {
+                        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                                         "解构槽位默认值表达式解析失败");
+                    }
+                    slot_defaults[slot_count] = def;
+                }
+                slot_count++;
+                continue;                                // 通用 type 解析已跳过
+            }
+            // ---- 原形态：`"key": Type` ----
             if (p->lex.current.type != TOK_STRING) {
                 error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
-                             "字典解构期望字符串键名");
+                             "字典解构期望键名（\"key\": Type 或 x = 默认值）");
                 break;
             }
             slot_keys[slot_count] = copy_string(p->lex.current.text, p->lex.current.len);
@@ -1039,6 +1067,19 @@ Ast* parse_destruct_decl(Parser* p, TypeInfo* base_type, int is_const, int line,
             slot_type = type_new(TYPE_ANY);
         }
         slot_types[slot_count] = slot_type;
+
+        // 可选默认值：`"key": Type = 表达式`
+        //   语义：源里取不到该键（OP_INDEX 得 null）时用这个表达式，等价 `src["key"] ?? 默认`。
+        //   不写 ⇒ 保持原行为（缺键就是 null，可能触发后续类型错误）✓ 向后兼容
+        if (match(p, TOK_EQ)) {
+            Ast* def = parse_expression(p);
+            if (!def) {
+                error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                                 "解构槽位默认值表达式解析失败");
+            }
+            slot_defaults[slot_count] = def;
+        }
+
         slot_count++;
 
     } while (match(p, TOK_COMMA));
@@ -1057,38 +1098,62 @@ Ast* parse_destruct_decl(Parser* p, TypeInfo* base_type, int is_const, int line,
     }
 
     // 解析绑定目标 (name, ...)
-    if (!match(p, TOK_LPAREN)) {
-        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
-                     "解构声明期望 '(' 开始变量名列表");
-        // 清理
-        for (int i = 0; i < slot_count; i++) type_free(slot_types[i]);
-        free(slot_types);
-        if (slot_keys) { for (int i = 0; i < slot_count; i++) free(slot_keys[i]); free(slot_keys); }
-        return NULL;
-    }
-
+    //   ★ 字典简写形态可**省略**：`var{x = 0, w = 360} = opts` ⇒ 键名即变量名 ✓
     int name_cap = 4;
     int name_count = 0;
     char** names = (char**)malloc(sizeof(char*) * name_cap);
 
-    do {
-        if (name_count >= name_cap) {
-            name_cap *= 2;
-            names = (char**)realloc(names, sizeof(char*) * name_cap);
-        }
-        if (p->lex.current.type != TOK_IDENT) {
+    if (!match(p, TOK_LPAREN)) {
+        if (!is_dict) {
             error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
-                         "解构声明期望变量名");
-            break;
+                         "解构声明期望 '(' 开始变量名列表");
+            // 清理
+            for (int i = 0; i < slot_count; i++) type_free(slot_types[i]);
+            free(slot_types);
+            if (slot_keys) { for (int i = 0; i < slot_count; i++) free(slot_keys[i]); free(slot_keys); }
+            if (slot_defaults) {
+                for (int i = 0; i < slot_count; i++) { if (slot_defaults[i]) ast_free(slot_defaults[i]); }
+                free(slot_defaults);
+            }
+            free(names);
+            return NULL;
         }
-        names[name_count] = copy_string(p->lex.current.text, p->lex.current.len);
-        name_count++;
-        lexer_next(&p->lex);
-    } while (match(p, TOK_COMMA));
+        // 字典：用键名当变量名
+        for (int i = 0; i < slot_count; i++) {
+            if (name_count >= name_cap) {
+                name_cap *= 2;
+                names = (char**)realloc(names, sizeof(char*) * name_cap);
+            }
+            if (!slot_keys || !slot_keys[i]) {
+                error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                             "省略变量名列表时，形状里的每一项都必须有键名（写 \"key\": Type = 默认值）");
+                names[name_count] = NULL;
+            } else {
+                names[name_count] = copy_string(slot_keys[i], (int)strlen(slot_keys[i]));
+            }
+            name_count++;
+        }
+    } else {
+        do {
+            if (name_count >= name_cap) {
+                name_cap *= 2;
+                names = (char**)realloc(names, sizeof(char*) * name_cap);
+            }
+            if (p->lex.current.type != TOK_IDENT) {
+                error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                             "解构声明期望变量名");
+                break;
+            }
+            names[name_count] = copy_string(p->lex.current.text, p->lex.current.len);
+            name_count++;
+            lexer_next(&p->lex);
+        } while (match(p, TOK_COMMA));
 
-    if (!match(p, TOK_RPAREN)) {
-        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
-                     "解构声明期望 ')' 结束变量名列表");
+        // ⚠ 这句必须在 `(` 分支内部：省略变量名列表时没有 ')' 可消费
+        if (!match(p, TOK_RPAREN)) {
+            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                         "解构声明期望 ')' 结束变量名列表");
+        }
     }
 
     // 检查槽位数量与变量名数量一致
@@ -1105,6 +1170,10 @@ Ast* parse_destruct_decl(Parser* p, TypeInfo* base_type, int is_const, int line,
         for (int i = 0; i < slot_count; i++) type_free(slot_types[i]);
         free(slot_types);
         if (slot_keys) { for (int i = 0; i < slot_count; i++) free(slot_keys[i]); free(slot_keys); }
+        if (slot_defaults) {
+            for (int i = 0; i < slot_count; i++) { if (slot_defaults[i]) ast_free(slot_defaults[i]); }
+            free(slot_defaults);
+        }
         for (int i = 0; i < name_count; i++) free(names[i]);
         free(names);
         return NULL;
@@ -1117,6 +1186,10 @@ Ast* parse_destruct_decl(Parser* p, TypeInfo* base_type, int is_const, int line,
         for (int i = 0; i < slot_count; i++) type_free(slot_types[i]);
         free(slot_types);
         if (slot_keys) { for (int i = 0; i < slot_count; i++) free(slot_keys[i]); free(slot_keys); }
+        if (slot_defaults) {
+            for (int i = 0; i < slot_count; i++) { if (slot_defaults[i]) ast_free(slot_defaults[i]); }
+            free(slot_defaults);
+        }
         for (int i = 0; i < name_count; i++) free(names[i]);
         free(names);
         return NULL;
@@ -1129,6 +1202,7 @@ Ast* parse_destruct_decl(Parser* p, TypeInfo* base_type, int is_const, int line,
     ast->column = column;
     ast->u.destruct_decl.slot_types = slot_types;
     ast->u.destruct_decl.slot_keys = slot_keys;
+    ast->u.destruct_decl.slot_defaults = slot_defaults;
     ast->u.destruct_decl.slot_count = slot_count;
     ast->u.destruct_decl.names = names;
     ast->u.destruct_decl.refs = (SymRef*)calloc(slot_count, sizeof(SymRef));

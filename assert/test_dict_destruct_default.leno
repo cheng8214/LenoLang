@@ -1,0 +1,45 @@
+// 带默认值的字典解构（2026-10-22 新增）
+//
+// 主形态（键名即变量名、类型从默认值推断）：
+//     var{x = 0, w = 360} = opts
+//   ⇒ 等价 `x = opts["x"] ?? 0` / `w = opts["w"] ?? 360`
+//
+// 也支持显式类型 / 显式变量名：
+//     var{y: int = 7} = opts
+//     var{"a": int = 9}(pa) = opts
+main() {
+    // ① 主形态：有键取值、缺键取默认
+    Dict opts = {"w": 360, "x": 5}
+    var{x = 0, w = 360, s = "dflt", f = false} = opts
+    assert_eq(x, 5)
+    assert_eq(w, 360)
+    assert_eq(s, "dflt")
+    assert_eq(f, false)
+
+    // ② 0 / false / "" 不能被默认值吃掉（与 ?? 同语义，不同于 or）
+    //    注意简写形态**键名即变量名**，所以这里的键就叫 aa/ss/ff
+    Dict z = {"aa": 0, "ss": "", "ff": false}
+    var{aa = 7, ss = "x", ff = true} = z
+    assert_eq(aa, 0)
+    assert_eq(ss, "")
+    assert_eq(ff, false)
+
+    // ③ 显式类型
+    var{y: int = 7} = opts
+    assert_eq(y, 7)                       // 缺键 ⇒ 默认
+
+    // ④ 显式变量名（完整形态）
+    var{"a": int = 9, "b": string = "z"}(pa, pb) = opts
+    assert_eq(pa, 9)
+    assert_eq(pb, "z")
+
+    // ⑤ 旧形态完全不受影响（无默认值 ⇒ 缺键就是 null）
+    Dict[string, int] m = {"id": 1}
+    var{"id": int}(id) = m
+    assert_eq(id, 1)
+
+    // ⑥ 默认值可以引用外层变量
+    int base = 100
+    var{n = base + 1} = opts
+    assert_eq(n, 101)
+}

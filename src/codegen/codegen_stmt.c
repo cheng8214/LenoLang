@@ -2354,13 +2354,28 @@ static void gen_destruct_decl(CodeGen* gen, Ast* ast) {
             emit_loadi_to(gen, idx_reg, i, line);
         }
 
+        // 有默认值的槽位：`dst = src[key] ?? 默认`
+        //   顺序必须先取到临时再判空 —— 不能直接 OP_INDEX 到目标槽位后再判
+        //   （那样默认值会覆盖"取到但为 null"和"真取不到"两种情况以外的正常值）
+        Ast* def = (ast->u.destruct_decl.slot_defaults) ? ast->u.destruct_decl.slot_defaults[i] : NULL;
+
         // 目标不是局部槽位时，先取到临时再写回（OP_INDEX 的目标不能跨到全局）
         int is_local_slot = (r->kind == SYM_LOCAL || r->kind == SYM_PARAM);
-        if (is_local_slot && r->index != src) {
+        if (def == NULL && is_local_slot && r->index != src) {
             reg_encode_iABC(gen->chunk, OP_INDEX, r->index, src, idx_reg, line);
         } else {
             int tmp = reg_alloc(gen);
             reg_encode_iABC(gen->chunk, OP_INDEX, tmp, src, idx_reg, line);
+            if (def) {
+                // 与 TOK_NULL_COALESCE 的 codegen 同口径（codegen_expr.c）：
+                //   只认 null —— 0 / false / "" 都要保留
+                int isnull = reg_alloc(gen);
+                emit_is_null(gen, isnull, tmp, line);
+                int jmp = emit_jmp_if_false(gen, isnull, line);   // 非 null → 跳过默认值
+                reg_free(gen, isnull);
+                gen_expr_to(gen, def, tmp);
+                patch_jmp(gen, jmp);
+            }
             DESTRUCT_STORE(i, tmp);
             reg_free(gen, tmp);
         }

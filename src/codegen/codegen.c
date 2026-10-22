@@ -198,6 +198,12 @@ static void scan_slots(Ast* ast, int* max_slot) {
                     note_ref(&ast->u.destruct_decl.refs[i], max_slot);
                 }
             }
+            // 默认值表达式的槽位也要扫（否则它们用到的局部/参数不会被计入帧大小）
+            if (ast->u.destruct_decl.slot_defaults) {
+                for (int i = 0; i < ast->u.destruct_decl.slot_count; i++) {
+                    scan_slots(ast->u.destruct_decl.slot_defaults[i], max_slot);
+                }
+            }
             scan_slots(ast->u.destruct_decl.init, max_slot);
             return;
         case AST_EXPORT: scan_slots(ast->u.export.decl, max_slot); return;
@@ -481,6 +487,11 @@ static void sa_scan(StrAppendScan* s, Ast* ast) {
             if (ast->u.destruct_decl.refs) {
                 for (int i = 0; i < ast->u.destruct_decl.slot_count; i++) {
                     sa_note(s, &ast->u.destruct_decl.refs[i]);
+                }
+            }
+            if (ast->u.destruct_decl.slot_defaults) {
+                for (int i = 0; i < ast->u.destruct_decl.slot_count; i++) {
+                    sa_scan(s, ast->u.destruct_decl.slot_defaults[i]);
                 }
             }
             sa_scan(s, ast->u.destruct_decl.init);
