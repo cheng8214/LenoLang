@@ -198,6 +198,8 @@ extern const NativeTypeSpec NATIVE_T_THREAD_CB_RET0; // Thread[第 0 实参回�
 extern const NativeTypeSpec NATIVE_T_ARG0_KEY;       // 第 0 个实参的键类型（Dict[K,V] → K）
 extern const NativeTypeSpec NATIVE_T_ARG0_VALUE;     // 第 0 个实参的值类型（Dict[K,V] → V）
 extern const NativeTypeSpec NATIVE_T_ARR_ARG0_ELEM;  // Array[第 0 个实参的元素类型]
+extern const NativeTypeSpec NATIVE_T_ARG0_ELEM2;     // 第 0 个实参的二层元素类型
+extern const NativeTypeSpec NATIVE_T_ARR_ARG0_ELEM2; // Array[二层元素类型]（flatten）
 
 // 注册一个 native 结构体规格（**编译期字段表 + 运行期 ObjStructDef 同一来源**）。
 // 可在任意 *_init_module() 里反复调用（同名只登记一次）；表满（64）静默忽略。

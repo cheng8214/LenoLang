@@ -185,6 +185,66 @@ static Value arr_copy(int argc, Value* args) {
     return val_obj((Object*)copy);
 }
 
+// flatten：`Array[Array[T]]` 压成 `Array[T]`（只压一层；非数组元素原样保留）
+static Value arr_flatten(int argc, Value* args) {
+    (void)argc;
+    ObjArray* src = (ObjArray*)val_as_obj(args[0]);
+    if (!src) return val_null();
+
+    int total = 0;
+    for (int i = 0; i < src->count; i++) {
+        Value v = src->elements[i];
+        if (val_is_obj(v) && val_as_obj(v)->type == OBJ_ARRAY) {
+            ObjArray* inner = (ObjArray*)val_as_obj(v);
+            total += inner ? inner->count : 0;
+        } else {
+            total += 1;
+        }
+    }
+
+    ObjArray* out = (ObjArray*)gc_alloc(sizeof(ObjArray), OBJ_ARRAY);
+    if (!out) return val_null();
+    out->count = 0;
+    out->capacity = total > 0 ? total : 8;
+    out->type_info = NULL;
+    out->elements = (Value*)malloc(out->capacity * sizeof(Value));
+    if (!out->elements) return val_null();
+    gc_track_memory((Object*)out, 0, out->capacity * sizeof(Value));
+
+    for (int i = 0; i < src->count; i++) {
+        Value v = src->elements[i];
+        if (val_is_obj(v) && val_as_obj(v)->type == OBJ_ARRAY) {
+            ObjArray* inner = (ObjArray*)val_as_obj(v);
+            if (!inner) continue;
+            for (int k = 0; k < inner->count; k++) {
+                Value e = inner->elements[k];
+                if (out->count >= out->capacity) {
+                    int nc = out->capacity * 2;
+                    Value* ne = (Value*)realloc(out->elements, nc * sizeof(Value));
+                    if (!ne) return val_null();
+                    gc_track_memory((Object*)out, out->capacity * sizeof(Value), nc * sizeof(Value));
+                    out->elements = ne;
+                    out->capacity = nc;
+                }
+                out->elements[out->count++] = e;
+                gc_write_barrier((Object*)out, e);
+            }
+        } else {
+            if (out->count >= out->capacity) {
+                int nc = out->capacity * 2;
+                Value* ne = (Value*)realloc(out->elements, nc * sizeof(Value));
+                if (!ne) return val_null();
+                gc_track_memory((Object*)out, out->capacity * sizeof(Value), nc * sizeof(Value));
+                out->elements = ne;
+                out->capacity = nc;
+            }
+            out->elements[out->count++] = v;
+            gc_write_barrier((Object*)out, v);
+        }
+    }
+    return val_obj((Object*)out);
+}
+
 static Value arr_clear(int argc, Value* args) {
     (void)argc;
     ObjArray* arr = (ObjArray*)val_as_obj(args[0]);
@@ -562,6 +622,9 @@ void arrays_init_module(void) {
     TypeKind filter_params[] = {TYPE_ARRAY, TYPE_FUNCTION};
     native_register_module_method("arrays", "filter", arr_filter, &NATIVE_T_ARR_ARG0_ELEM, NATIVE_FIXED(filter_params));
 
+    TypeKind flatten_params[] = {TYPE_ARRAY};
+    native_register_module_method("arrays", "flatten", arr_flatten, &NATIVE_T_ARR_ARG0_ELEM2, NATIVE_FIXED(flatten_params));
+
     TypeKind reduce_params[] = {TYPE_ARRAY, TYPE_FUNCTION, TYPE_ANY};
     native_register_module_method("arrays", "reduce", arr_reduce, &NATIVE_T_ARG_REDUCE12, NATIVE_FIXED(reduce_params));
 }
@@ -618,6 +681,9 @@ void arrays_init_instance_methods(void) {
     TypeKind filter_params[] = {TYPE_FUNCTION};
     array_register_method("filter", make_native(arr_filter,       2, "filter"), TYPE_ARRAY, TYPE_UNKNOWN, NATIVE_FIXED(filter_params));
     native_register_instance_method_return_spec("Array", "filter", &NATIVE_T_ARR_ARG0_ELEM);
+
+    array_register_method("flatten", make_native(arr_flatten,     1, "flatten"), TYPE_ARRAY, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
+    native_register_instance_method_return_spec("Array", "flatten", &NATIVE_T_ARR_ARG0_ELEM2);
 
     TypeKind reduce_params[] = {TYPE_FUNCTION, TYPE_ANY};
     array_register_method("reduce", make_native(arr_reduce,       3, "reduce"), TYPE_ANY, TYPE_UNKNOWN, NATIVE_FIXED(reduce_params));

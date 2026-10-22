@@ -430,6 +430,8 @@ typedef enum {
     //     需要调用点实参个数 ⇒ 语义侧先经 native_type_spec_resolve_for_call()
     //     定型成具体子规格，再走正常解析。
     NTYPE_BY_ARITY,     // 按 argc 分支：argc < arg_index ⇒ sub，否则 ⇒ sub2
+    // 第 0 个实参的**二层**元素类型（Array[Array[T]] 的 T），flatten 用
+    NTYPE_ARG0_ELEM2,
 } NativeTypeTag;
 
 typedef struct NativeTypeSpec {

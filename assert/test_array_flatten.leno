@@ -1,0 +1,43 @@
+// 测试 Array.flatten（2026-10-22）
+//   核心判据：`Array[Array[int]].flatten()` 的类型是 **Array[int]**（不是 Array[any]）
+//   ⇒ `flat[0] + 1` 能直接编译（若元素是 any，这里会报"any 不能参与算术"）
+import arrays
+
+main() {
+    // ① 纯二维：类型精确推成 Array[int]
+    Array[Array[int]] matrix = [[1, 2], [3], [4, 5]]
+    Array[int] flat = matrix.flatten()
+    assert_eq(flat.len(), 5)
+    assert_eq(flat.join(","), "1,2,3,4,5")
+    assert_eq(flat[0] + 1, 2)          // ← 编译期证据：元素是 int，不是 any
+
+    // ② 模块形式等价
+    Array[int] f2 = arrays.flatten(matrix)
+    assert_eq(f2.len(), 5)
+
+    // ③ 元素类型跟着走（string）
+    Array[Array[string]] words = [["a", "b"], ["c"]]
+    Array[string] fw = words.flatten()
+    assert_eq(fw.join(""), "abc")
+    assert_eq(fw[0] + "!", "a!")       // 编译期证据：元素是 string
+
+    // ④ 混装：非数组元素原样保留（不静默丢数据）
+    var mixed = [[1, 2], 3, [4]]
+    var f3 = mixed.flatten()
+    assert_eq(f3.len(), 4)
+
+    // ⑤ 空数组 / 全空内层
+    var empty = []
+    assert_eq(empty.flatten().len(), 0)
+    var empties = [[], [], []]
+    assert_eq(empties.flatten().len(), 0)
+
+    // ⑥ 不修改源数组
+    assert_eq(matrix.len(), 3)
+    assert_eq(matrix[0].len(), 2)
+    assert_eq(matrix[0].join(","), "1,2")
+
+    // ⑦ 单层（元素都不是数组）⇒ 原样返回
+    var plain = [1, 2, 3]
+    assert_eq(plain.flatten().len(), 3)
+}

@@ -857,6 +857,8 @@ const NativeTypeSpec NATIVE_T_ARR_CB_RET1   = { NTYPE_ARRAY, NULL, &NATIVE_T_ARG
 const NativeTypeSpec NATIVE_T_ARG_REDUCE12  = { NTYPE_ARG_CB_RET, NULL, NULL, NULL, 1, 2 };         // 回调=1、累加器=2（reduce）
 const NativeTypeSpec NATIVE_T_THREAD_CB_RET0 = { NTYPE_THREAD, NULL, &NATIVE_T_ARG_CB_RET0, NULL, 0, -1 }; // Thread[回调返回]（start）
 const NativeTypeSpec NATIVE_T_ARR_ARG0_ELEM = { NTYPE_ARRAY, NULL, &NATIVE_T_ARG0_ELEM, NULL, 0, -1 }; // Array[第 0 个实参的元素]
+const NativeTypeSpec NATIVE_T_ARG0_ELEM2    = { NTYPE_ARG0_ELEM2, NULL, NULL, NULL, 0, -1 };       // 第 0 个实参的二层元素
+const NativeTypeSpec NATIVE_T_ARR_ARG0_ELEM2 = { NTYPE_ARRAY, NULL, &NATIVE_T_ARG0_ELEM2, NULL, 0, -1 }; // Array[二层元素]
 
 #define NATIVE_STRUCT_SPEC_MAX 64
 // 与 struct_def_table（object_struct.c）同为 THREAD_LOCAL：每个线程初始化 native 模块时
@@ -946,6 +948,16 @@ static TypeInfo* native_arg0_part_to_info(TypeInfo* arg0, NativeTypeTag tag) {
          arg0->kind == TYPE_CHANNEL) && arg0->element_type) {
         return type_copy(arg0->element_type);
     }
+    // 二层元素（flatten）：Array[Array[T]] ⇒ T
+    //   ⚠ 解析不出时返回 **NULL**（= "未指定"，能匹配任何 `Array[T]`），
+    //     不能返回 `TypeInfo{TYPE_UNKNOWN}` —— 那会变成 `Array[unknown]`，赋值时**不匹配** `Array[int]`
+    if (tag == NTYPE_ARG0_ELEM2) {
+        if (arg0 && arg0->kind == TYPE_ARRAY && arg0->element_type &&
+            arg0->element_type->kind == TYPE_ARRAY && arg0->element_type->element_type) {
+            return type_copy(arg0->element_type->element_type);
+        }
+        return NULL;
+    }
     if (tag == NTYPE_ARG0_KEY && arg0->kind == TYPE_DICT && arg0->key_type) {
         return type_copy(arg0->key_type);
     }
@@ -958,7 +970,8 @@ static TypeInfo* native_arg0_part_to_info(TypeInfo* arg0, NativeTypeTag tag) {
 // 规格里是否含"引用实参"的标签（递归）
 int native_type_spec_has_arg_ref(const NativeTypeSpec* spec) {
     if (!spec) return 0;
-    if (spec->tag == NTYPE_ARG0_ELEM || spec->tag == NTYPE_ARG0_KEY ||
+    if (spec->tag == NTYPE_ARG0_ELEM || spec->tag == NTYPE_ARG0_ELEM2 ||
+        spec->tag == NTYPE_ARG0_KEY ||
         spec->tag == NTYPE_ARG0_VALUE || spec->tag == NTYPE_ARG_CB_RET) {
         return 1;
     }
@@ -993,8 +1006,11 @@ static TypeInfo* native_type_spec_to_info_impl(const NativeTypeSpec* spec, TypeI
     //     `empty.copy()` 出来必须仍是"未指定"（能匹配 `Array[int]`），而不是显式的 `Array[any]`
     //     （后者会**拒绝**赋给 `Array[int]` —— 实测 3 个排序用例因此回归）。
     //     顶层返回 NULL ⇒ 调用方自然回落到原来的 Kind 路径（与旧行为逐字一致）。
+    // ⚠ 关系标签必须在这里**全部列出**：漏一个就会掉进下面的 `type_new(native_spec_kind())`
+    //   变成 `any`（症状：`m.flatten()` 明明查到了 spec，结果还是 `Array[any]`，
+    //   而且解析函数里的打印一行都不出 —— 2026-10-22 实测踩过）
     if (spec->tag == NTYPE_ARG0_ELEM || spec->tag == NTYPE_ARG0_KEY ||
-        spec->tag == NTYPE_ARG0_VALUE) {
+        spec->tag == NTYPE_ARG0_VALUE || spec->tag == NTYPE_ARG0_ELEM2) {
         return native_arg0_part_to_info(arg0_type, spec->tag);
     }
     // 回调返回类型：**结构解析器解析不了**（要语义侧推闭包函数体）⇒ 只认预计算值；
@@ -1788,10 +1804,14 @@ void native_register_instance_method_return_spec(const char* type_name, const ch
         }
         entry = entry->next;
     }
-    // 找不到 ⇒ 调用点写在了注册之前（或方法名拼错）⇒ 静默忽略。
-    //   ⚠ 这不是"可以接受的静默"：spec 失效会让返回类型退化成 any，而断言里那些**不做收窄的
-    //     强类型赋值**会立刻编译失败（test_arrays_module / test_dict_methods 都钉了），
-    //     所以它不会长期潜伏（同 repo 的"错误要在最早能发现它的地方响亮地报"）。
+    // 找不到 ⇒ 调用点写在了注册之前（或方法名拼错）。
+    //   2026-10-22 改为**响亮警告**：这条曾经静默吞掉过 flatten 的规格注册，
+    //   症状是"spec 明明查到了、返回类型却还是 Array[any]"，排查绕了很多弯路。
+    //   注册顺序写反现在会立刻在 stderr 看到，不用等断言失败再倒推。
+    fprintf(stderr,
+            "[native] 警告: %s.%s 的返回规格注册晚于方法注册（已忽略）"
+            " —— 请把 native_register_instance_method_return_spec 放到对应的 *_register_method 之后\n",
+            type_name, method_name);
 }
 
 const NativeTypeSpec* native_get_instance_method_return_spec(const char* type_name, const char* method_name) {
