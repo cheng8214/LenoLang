@@ -34,9 +34,10 @@ export struct Scrim impl Widget {
 
     func set(Dict opts) {
         dochk.check("sdl_scrim", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
-        _color = opts.get("color", #00000000)
-        alpha = opts.get("alpha", 120)
-        visible = opts.get("visible", false)
+        // 形态 1：有默认值 ⇒ `opts["k"] ?? 默认`（缺键走默认；0/false/空串都保留）
+        _color = opts["color"] ?? #00000000
+        alpha = opts["alpha"] ?? 120
+        visible = opts["visible"] ?? false
         _loaded = true
     }
 

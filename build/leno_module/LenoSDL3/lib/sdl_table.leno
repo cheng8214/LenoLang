@@ -373,26 +373,21 @@ export struct Table impl Widget, Themeable {
         rowReorder = opts.get("row_reorder", false)
         minColW = opts.get("min_col_width", 24.0)
         maxColW = opts.get("max_col_width", 9999.0)
-        var ncs = opts.get("numeric_cols", [])
-        if ncs is Array[int] { numericCols = ncs } else { numericCols = [] }
+        // ★ 2026-10-22：取值 + 类型守卫 + 绑定合成一句（`=> b` 绑定的是**收窄后**的值）
+        //   省掉 ncs/sdc/hs/cws/als/has/rs 七个只用来判一次的临时变量，
+        //   而且"取"和"判"绑在一起 —— 不会再出现"取了却忘了判"的漏。
+        if opts.get("numeric_cols", []) is Array[int] => b { numericCols = b } else { numericCols = [] }
         // 禁用排序的列集合（黑名单，空数组=全部可排序）；列重排时索引自动同步
-        var sdc = opts.get("sort_disabled_cols", [])
-        if sdc is Array[int] { sortDisabledCols = sdc } else { sortDisabledCols = [] }
+        if opts.get("sort_disabled_cols", []) is Array[int] => b { sortDisabledCols = b } else { sortDisabledCols = [] }
         // 若当前排序列被禁用，清除排序状态
         if is_col_sort_disabled(sortCol) { sortCol = -1; sortDesc = false }
 
-        var hs = opts.get("headers", [])
-        if hs is Array[string] { _headers = hs } else { _headers = [] }
-        var cws = opts.get("col_widths", [])
-        if cws is Array[float] { _colW = cws ; autoCols = (_colW.len() == 0) }
-        else { _colW = []; autoCols = true }
-        var als = opts.get("aligns", [])
-        if als is Array[int] { _aligns = als } else { _aligns = [] }
-        var has = opts.get("header_aligns", [])
-        if has is Array[int] { headerAligns = has } else { headerAligns = [] }
+        if opts.get("headers", []) is Array[string] => b { _headers = b } else { _headers = [] }
+        if opts.get("col_widths", []) is Array[float] => b { _colW = b ; autoCols = (_colW.len() == 0) } else { _colW = []; autoCols = true }
+        if opts.get("aligns", []) is Array[int] => b { _aligns = b } else { _aligns = [] }
+        if opts.get("header_aligns", []) is Array[int] => b { headerAligns = b } else { headerAligns = [] }
 
-        var rs = opts.get("rows", [])
-        if rs is Array[Array[string]] { _rows = rs } else { _rows = [] }
+        if opts.get("rows", []) is Array[Array[string]] => b { _rows = b } else { _rows = [] }
         _srcIdx = []
         for _rows.len() to i { _srcIdx.add(i) }
 

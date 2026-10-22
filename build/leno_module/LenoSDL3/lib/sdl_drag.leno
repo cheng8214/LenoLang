@@ -46,18 +46,22 @@ export struct DragHint {
 
     func set(Dict opts) {
         dochk.check("sdl_drag", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
-        _fontSize = opts.get("font_size", 13.0)
-        padX = opts.get("pad_x", 10.0)
-        padY = opts.get("pad_y", 5.0)
-        radius = opts.get("radius", 4.0)
-        offsetX = opts.get("offset_x", 14.0)
-        offsetY = opts.get("offset_y", 14.0)
+        // ---- 形态 1：有默认值 ⇒ `opts["k"] ?? 默认`（缺键走默认，0/false 保留）----
+        _fontSize = opts["font_size"] ?? 13.0
+        padX = opts["pad_x"] ?? 10.0
+        padY = opts["pad_y"] ?? 5.0
+        radius = opts["radius"] ?? 4.0
+        offsetX = opts["offset_x"] ?? 14.0
+        offsetY = opts["offset_y"] ?? 14.0
+
+        // ---- 形态 2：类型守卫 + 绑定 ⇒ `if ... is T => t { }`（收窄后的值直接可用）----
         if opts.get("bg_color") is Color => t { bgColor = t }
         if opts.get("border_color") is Color => t { brColor = t }
-        var bga = opts.get("bg_a")
-        if bga is int { bgColor = theme.withAlpha(bgColor, bga) }
-        var bra = opts.get("border_a")
-        if bra is int { brColor = theme.withAlpha(brColor, bra) }
+
+        // ---- 形态 3：取值 + 判类型 + 用值 ⇒ 合成一句，省掉临时变量 bga/bra ----
+        if opts.get("bg_a") is int => b { bgColor = theme.withAlpha(bgColor, b) }
+        if opts.get("border_a") is int => b { brColor = theme.withAlpha(brColor, b) }
+
         if opts.get("text_color") is Color => t { txColor = t }
     }
 
