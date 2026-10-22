@@ -664,6 +664,9 @@ static void fold_expr(Ast* ast) {
         case AST_STRING:
         case AST_BOOL:
         case AST_NULL:
+        // AST_DEFER 是 parser 中间节点（块退出前就降级成 finally），
+        // 优化器正常见不到它；列出来只为 -Wswitch 干净
+        case AST_DEFER:
             break;
 
         case AST_BINOP:
@@ -955,6 +958,8 @@ static int dce_expr(Ast* ast) {
         case AST_VAR:
         case AST_BREAK:
         case AST_CONTINUE:
+        // AST_DEFER：parser 中间节点（降级成 finally 后消失），DCE 正常见不到
+        case AST_DEFER:
             return 0;
 
         // return：递归处理返回值表达式，本身是终止语句

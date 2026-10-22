@@ -1,6 +1,44 @@
 #include "parser_internal.h"
 
 // ============================================================================
+// defer 表达式解析（2026-10-22）
+// ----------------------------------------------------------------------------
+//   defer ffi.free(p)
+//
+// 语义：**所在代码块退出时执行**（正常结束 / return / break / continue / throw 都算）。
+// 实现：本函数只产出一个 AST_DEFER 中间节点；parse_block_internal 把它**收集**起来，
+//   在块末尾按**逆序**降级成 `try { 原块 } finally { 逆序表达式 }` ——
+//   finally 的语义已被 try/finally 完整覆盖，所以 semantic / codegen **零改动**。
+//
+// 为什么是块级而不是 Go 的函数级：块级不会在循环里累积（Go 那种写法在
+//   `for ... { defer f() }` 里会把内存拖爆）。FFI 包装函数两种语义结果一致，
+//   但循环场景差很多 ⇒ 选块级。
+//
+// ⚠ 限制：defer 的表达式在**块退出时求值**（不是注册时）。所以
+//   `defer ffi.free(p)` 里的 p 如果在中间被重新赋值，释放的是**新值**。
+//   要"注册时锁定参数"就显式存一个局部副本。
+// ============================================================================
+
+Ast* parse_defer_stmt(Parser* p) {
+    int line = p->lex.current.line;
+    int col = p->lex.current.column;
+    lexer_next(&p->lex);   // 消费 defer
+
+    Ast* expr = parse_expression(p);
+    if (!expr) {
+        error_add_at_fmt(ERR_SYNTAX, line, col,
+                         "defer 后面需要一个表达式（如 defer ffi.free(p)）");
+        return NULL;
+    }
+
+    Ast* ast = ast_new(AST_DEFER, line);
+    ast->column = col;
+    ast->u.defer_.expr = expr;
+    ast->u.defer_.line = line;
+    return ast;
+}
+
+// ============================================================================
 // return 语句解析
 // ============================================================================
 

@@ -132,6 +132,8 @@ Ast* parse_break_stmt(Parser* p);
 Ast* parse_continue_stmt(Parser* p);
 Ast* parse_throw_stmt(Parser* p);
 Ast* parse_try_stmt(Parser* p);
+// defer 表达式（返回 AST_DEFER，由 parse_block_internal 收集并降级成 finally）
+Ast* parse_defer_stmt(Parser* p);
 
 // ============================================================================
 // 函数和变量声明（在 parser_func.c 中实现）

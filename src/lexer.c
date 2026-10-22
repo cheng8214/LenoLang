@@ -64,6 +64,7 @@ static void init_keyword_table(void) {
     // 关键字列表
     struct { const char* kw; LenoTokenType type; } keywords[] = {
         {"if", TOK_IF},
+        {"defer", TOK_DEFER},
         {"else", TOK_ELSE},
         {"eif", TOK_EIF},
         {"then", TOK_THEN},

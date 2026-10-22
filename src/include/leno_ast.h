@@ -45,6 +45,8 @@ AST_RETURN_MULTI,  // 多值返回: return a, b, c
     AST_INTERP_STRING, // 插值字符串: $("hello {name}")
     AST_TRY,           // try-catch-finally 语句
     AST_THROW,         // throw 语句
+    AST_DEFER,         // defer 表达式（parser 内部节点：降级成 try/finally 后即消失，
+                       //   所以 semantic / codegen 永远见不到它）
     AST_TYPE_CHECK,    // 类型检查表达式: a is int
     AST_AS_CAST,       // 安全类型转换: a as TypeName
     AST_ALIAS,         // 类型别名: alias Name = Type
@@ -262,6 +264,10 @@ struct Ast {
         struct {
             Ast* expr;         // throw 的表达式
         } throw_;
+        struct {
+            Ast* expr;         // defer 的表达式（通常是一次调用，如 ffi.free(p)）
+            int line;          // 出错提示用
+        } defer_;
         struct {
             Ast* expr;         // 被检查的表达式
             TypeInfo* type;    // 检查的类型

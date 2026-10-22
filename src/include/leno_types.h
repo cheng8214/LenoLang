@@ -216,6 +216,7 @@ typedef enum {
     TOK_VAR, TOK_CONST, TOK_TRUE, TOK_FALSE, TOK_NULL,
     TOK_AND, TOK_OR, TOK_NOT, TOK_IS, TOK_IN, TOK_NOT_IN, TOK_QUESTION, TOK_QUESTION_DOT, TOK_NULL_COALESCE, TOK_FAT_ARROW, TOK_IMPORT, TOK_EXPORT, TOK_AS, TOK_USE,
     TOK_TRY, TOK_CATCH, TOK_THROW, TOK_FINALLY,
+    TOK_DEFER,         // defer 表达式（作用域退出时执行；parser 阶段降级成 try/finally）
     TOK_STRUCT,        // struct 关键字
     TOK_ENUM,          // enum 关键字
     TOK_FACE,          // face 关键字

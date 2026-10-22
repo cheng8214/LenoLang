@@ -238,6 +238,11 @@ break;
         ast_free(ast->u.var_decl.init);
         type_free(ast->u.var_decl.type);
         break;
+    case AST_DEFER:
+        // parser 阶段就会把它降级成 try/finally，正常不会留到这里；
+        // 留着这条是为了解析失败时的错误清理路径不泄漏
+        ast_free(ast->u.defer_.expr);
+        break;
     case AST_DESTRUCT_DECL: {
         for (int i = 0; i < ast->u.destruct_decl.slot_count; i++) {
             type_free(ast->u.destruct_decl.slot_types[i]);

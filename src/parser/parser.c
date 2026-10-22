@@ -18,6 +18,12 @@ static int cur_ident_is(Parser* p, const char* word) {
 Ast* parse_statement(Parser* p) {
     Ast* stmt = NULL;
 
+    // defer（2026-10-22）：单独一层，不进下面的各分支 —— parse_block_internal
+    // 会把它收集起来、在本块结束时逆序降级成 finally ✓
+    if (p->lex.current.type == TOK_DEFER) {
+        return parse_defer_stmt(p);
+    }
+
     // ★ 2026-10-14：**跨语言关键字** ⇒ 定向报错（AI / 跨语言作者的高频笔误）
     //   这些词在 Leno 里都**不是关键字** ⇒ 解析器把它们当"类型名"或"表达式"继续往下走，
     //   最后报的是「声明语句后期望换行或 ';'」「期望表达式」这类**指不出真因**的话 ✗

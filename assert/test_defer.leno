@@ -1,0 +1,73 @@
+// defer（2026-10-22 新增）
+//
+// 语义：**所在代码块退出时执行**（正常结束 / return / break / continue / throw 都算），
+//       多个 defer **逆序**执行（后注册先执行）。
+// 实现：parser 阶段降级成 `try { 原块 } finally { 逆序表达式 }`，语义与 codegen 零新增。
+var order = []
+
+func basic() {
+    order.add("a")
+    defer order.add("c1")
+    order.add("b")
+    defer order.add("c2")
+    order.add("c")
+}
+
+func early(): int {
+    defer order.add("early-cleanup")
+    order.add("early-body")
+    return 42
+}
+
+func inLoop() {
+    for 0:2 to i {
+        order.add("L" + _str(i))
+        defer order.add("Lc" + _str(i))
+    }
+}
+
+func withBreak() {
+    for 0:9 to i {
+        defer order.add("Bc" + _str(i))
+        order.add("B" + _str(i))
+        if i == 1 { break }
+    }
+}
+
+main() {
+    // ① 逆序执行
+    basic()
+    assert_eq(order.join(","), "a,b,c,c2,c1")
+
+    // ② 提前 return 也执行
+    order = []
+    int r = early()
+    assert_eq(r, 42)
+    assert_eq(order.join(","), "early-body,early-cleanup")
+
+    // ③ 循环里每轮结束就执行（块级语义，不是函数级）
+    order = []
+    inLoop()
+    assert_eq(order.join(","), "L0,Lc0,L1,Lc1,L2,Lc2")
+
+    // ④ break 也会触发当轮的 defer
+    order = []
+    withBreak()
+    assert_eq(order.join(","), "B0,Bc0,B1,Bc1")
+
+    // ⑤ defer 的参数在**块退出时**求值（不是注册时）
+    order = []
+    lateEval()
+    assert_eq(order.join(","), "second")   // 用的是块退出时 name 的值
+
+    // ⑥ 注册时确实没有立刻执行
+    order = []
+    basic()
+    assert_eq(order.join(","), "a,b,c,c2,c1")
+}
+
+func lateEval() {
+    var name = "first"
+    defer order.add(name)
+    name = "second"
+}
