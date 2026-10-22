@@ -343,6 +343,15 @@
         if (FRAME_TRY_VALID(frame) && frame->finally_ip != NULL && !frame->in_finally) {
             frame->try_return_value = result;
             frame->has_try_return = 1;
+            // ★ 2026-10-22 修（finally 里抛异常 ⇒ 挂死/死循环）：
+            //   跳进 finally 必须标记 in_finally。否则 finally 体内抛异常时，
+            //   dispatch_exception / OP_THROW 的分支会看到
+            //   `finally_ip != NULL && !in_finally` ⇒ 判定"还要再跑一次 finally" ⇒
+            //   又跳回 finally 开头 ⇒ 无限循环（实测 `try { return 1 } finally { boom() }`
+            //   进程卡死，只有 start 打印出来）。
+            //   OP_FINALLY 走同一条路径时本来就设了 in_finally=1（09_exception.inc），
+            //   这里漏了 —— 属于两处口径不一致。
+            frame->in_finally = 1;
             frame->ip = frame->finally_ip;
             DISPATCH();
         }
@@ -448,6 +457,7 @@
         if (FRAME_TRY_VALID(frame) && frame->finally_ip != NULL && !frame->in_finally) {
             frame->try_return_value = results[0];
             frame->has_try_return = 1;
+            frame->in_finally = 1;      // ★ 同上（多返回值 return 这条路径同口径）
             frame->ip = frame->finally_ip;
             DISPATCH();
         }

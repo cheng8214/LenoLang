@@ -1,0 +1,54 @@
+// finally 里抛异常（2026-10-22 修）
+//
+// 修前的症状：**进程卡死**（不是报错，是一直跑，只能超时 kill）
+//   根因：`OP_RETURN` 跳进 finally 时没设 `in_finally`，而且异常派发里
+//        `tfin = finally_ip ? finally_ip : prev_finally_ip` 也没排除"已在 finally 里"
+//        ⇒ 异常从 finally 抛出被判定成"还要再跑一次 finally" ⇒ 跳回开头 ⇒ 死循环
+//   修：① OP_RETURN 跳 finally 前 `in_finally = 1`
+//       ② tfin 改为 `(in_finally || !finally_ip) ? prev_finally_ip : finally_ip`
+//          （dispatch_exception 与 OP_THROW 两处同口径）
+var log = []
+
+func boom() {
+    throw "finally-boom"
+}
+
+// ① return + finally 抛异常 ⇒ 应该被外层 catch 接住，程序继续
+func t(): int {
+    try {
+        log.add("body")
+        return 99
+    } finally {
+        boom()
+    }
+}
+
+// ② finally 正常 ⇒ 返回值与清理顺序都不变（确认修复没破坏正常路径）
+func t2(): int {
+    try {
+        log.add("t2-body")
+        return 7
+    } finally {
+        log.add("t2-cleanup")
+    }
+}
+
+main() {
+    // ①
+    log = []
+    var entered_after = false
+    try {
+        int r = t()
+        entered_after = true                 // 不该走到这（finally 抛了异常）
+        assert_eq(r, -1)
+    } catch e {
+        log.add("caught")
+    }
+    assert_eq(entered_after, false)
+    assert_eq(log.join(","), "body,caught")
+
+    // ②
+    log = []
+    assert_eq(t2(), 7)
+    assert_eq(log.join(","), "t2-body,t2-cleanup")
+}

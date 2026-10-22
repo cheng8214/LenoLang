@@ -419,7 +419,13 @@ static inline int dispatch_exception(int line) {
         //        错误都被同一个 catch 接住（这正是 OP_THROW 侧同期修过、这里漏掉的那一条）；
         //     ③ 缺 `in_finally` 守卫与 `catch_finally_ip` 分支 ⇒ finally 体内抛错也绕回自己。
         uint8_t* tcatch = frame->catch_ip ? frame->catch_ip : frame->prev_catch_ip;
-        uint8_t* tfin = frame->finally_ip ? frame->finally_ip : frame->prev_finally_ip;
+        // ★ 2026-10-22 修（finally 里抛异常 ⇒ 死循环）：
+        //   **已在 finally 里**时不能再拿本层 finally_ip —— 那会跳回 finally 开头，
+        //   然后再次抛、再跳回 …… 永不退出（实测 `try { return 1 } finally { boom() }` 卡死）。
+        //   此时应改用 prev_finally_ip（外层 finally），没有就继续向外层帧传播 ✓
+        uint8_t* tfin = (frame->in_finally || !frame->finally_ip)
+                            ? frame->prev_finally_ip
+                            : frame->finally_ip;
         if (tcatch || tfin) {
             // 找到了有异常处理的帧，需要展开调用栈到这个帧
             // 释放当前帧到目标帧之间的所有帧的locals（仅当使用动态分配时才需要 free）

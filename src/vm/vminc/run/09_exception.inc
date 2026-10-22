@@ -170,7 +170,11 @@
             CallFrame* tf = &vm.frames[i];
             if (tf->closure && tf->closure->function && !tf->closure->function->has_try) continue;
             uint8_t* tcatch = tf->catch_ip ? tf->catch_ip : tf->prev_catch_ip;
-            uint8_t* tfin = tf->finally_ip ? tf->finally_ip : tf->prev_finally_ip;
+            // ★ 2026-10-22 修（同 vm_exception.inc 的口径）：
+            //   已在 finally 里 ⇒ 不能再取本层 finally_ip（会跳回开头，死循环），改取外层 ✓
+            uint8_t* tfin = (tf->in_finally || !tf->finally_ip)
+                                ? tf->prev_finally_ip
+                                : tf->finally_ip;
             if (!tcatch && !tfin) continue;
 
             for (int j = vm.frame_cnt - 1; j > i; j--) {
