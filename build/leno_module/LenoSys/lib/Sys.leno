@@ -52,6 +52,29 @@ export func orDefault[T](func(): T f, T dflt): T {
     }
 }
 
+// 宽版兜底：**异常和 null 都兜** —— 工具/IO 类接口的正确打开方式
+//   用法：
+//     Array[string] names = Sys.orNull(func() { return dirs.listdir(p) }, [])
+//     string s = Sys.orNull(func() { return files.read(p) }, "")
+//
+//   与 `orDefault` 的分工（两个都在，语义不同）：
+//     · orDefault —— **只兜异常**，null 当合法返回值（业务上"查不到"有意义时用它）
+//     · orNull    —— **异常 + null 都兜**（IO/工具接口，null 一律视为失败）
+//   与 `listOr` 的关系：listOr 是它的数组特化（保留它是因为"我要的就是数组"更直观，
+//     而且它的返回类型 `Array[T]` 对调用方更明确）。
+//
+//   实测（2026-10-23）：T 为 int 时 `v == null` 也不报错（Leno 允许具体类型与 null 比较），
+//     所以这一个函数能覆盖数组 / 字符串 / 数字等全部类型，不必再为每种类型加 orXxx。
+export func orNull[T](func(): T f, T dflt): T {
+    try {
+        var v = f()
+        if v == null { return dflt }
+        return v
+    } catch e {
+        return dflt
+    }
+}
+
 // 数组版兜底：**既兜"抛异常"，也兜"返回 null"** —— 数组类接口的正确打开方式
 //   用法：
 //     Array[string] names = Sys.listOr(func() { return dirs.listdir(p) }, [])
