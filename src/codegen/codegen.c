@@ -524,6 +524,59 @@ void str_append_analyze(CodeGen* gen, Ast* func_body) {
     }
 }
 
+// ★ 2026-10-23：模块顶层语句重排（**只在 codegen 阶段做**）
+//   问题：模块顶层的执行是**按源码顺序**的，而函数注册（OP_DEFGLOBALFUNC）发生在
+//         生成 AST_FUNC_DEF 的那一刻。于是
+//             var _LOG = _mkLog()        ← 这里就 OP_CALL_GLOBAL_FUNC
+//             func _mkLog(): Dict {}     ← 这个函数还没注册
+//         运行时报「全局函数索引越界」（`--check` 完全查不出来）。
+//   修法：把 import 提到最前、函数定义其次、其余最后 ——
+//         "注册"一定先于任何顶层执行代码；var 之间、语句之间相对顺序不变。
+//
+//   ⚠ 为什么不放在 parser：试过，**炸了**。parser 改 AST 顺序会让 semantic 也按新
+//     顺序分析 ⇒ `use SDL3.(TreeView)` 依赖的 struct 定义看不见、函数体引用后面声明的
+//     模块变量退化成 any（Log.leno:12 报 any 不能比较）。codegen 是 semantic 之后，
+//     只影响"生成的先后"，不动任何类型推断 ✓
+//   ⚠ 幂等：重排两遍结果相同（三遍稳定收集），两个入口都调也安全。
+static void gen_module_reorder(Ast* ast) {
+    if (!ast || ast->kind != AST_BLOCK) return;
+    int n = (int)ast->u.block.count;
+    if (n < 2) return;
+
+    Ast** items = ast->u.block.items;
+    Ast** tmp = (Ast**)malloc(sizeof(Ast*) * n);
+    if (!tmp) return;
+
+    int k = 0;
+    // ① import / use
+    for (int i = 0; i < n; i++) {
+        Ast* s = items[i];
+        if (s->kind == AST_IMPORT || s->kind == AST_USE) tmp[k++] = s;
+    }
+    // ② 函数定义（含 export 包着的 func）
+    for (int i = 0; i < n; i++) {
+        Ast* s = items[i];
+        int is_func = (s->kind == AST_FUNC_DEF) ||
+                      (s->kind == AST_EXPORT && s->u.export.decl &&
+                       s->u.export.decl->kind == AST_FUNC_DEF);
+        if (is_func) tmp[k++] = s;
+    }
+    // ③ 其余（保持源码相对顺序）
+    for (int i = 0; i < n; i++) {
+        Ast* s = items[i];
+        int is_func = (s->kind == AST_FUNC_DEF) ||
+                      (s->kind == AST_EXPORT && s->u.export.decl &&
+                       s->u.export.decl->kind == AST_FUNC_DEF);
+        int is_imp = (s->kind == AST_IMPORT || s->kind == AST_USE);
+        if (!is_func && !is_imp) tmp[k++] = s;
+    }
+
+    if (k == n) {
+        memcpy(items, tmp, sizeof(Ast*) * n);
+    }
+    free(tmp);
+}
+
 void codegen(CodeGen* gen, Ast* ast) {
     if (!ast) return;
 
@@ -531,6 +584,10 @@ void codegen(CodeGen* gen, Ast* ast) {
     if (current_file && gen->chunk) {
         gen->chunk->filename = strdup(current_file);
     }
+
+    // ★ 必须在 scan_slots **之前**重排：槽位分配和生成必须看到同一个顺序，
+    //   否则同一变量在两边拿到不同槽位（那种错比原来的 bug 更难查）
+    gen_module_reorder(ast);
 
     // 临时寄存器必须从所有局部变量槽位之上开始（否则会覆盖变量）
     {
@@ -580,6 +637,8 @@ void codegen_module(CodeGen* gen, Ast* ast) {
     if (current_file && gen->chunk) {
         gen->chunk->filename = strdup(current_file);
     }
+
+    gen_module_reorder(ast);    // 同上（幂等；模块入口也可能单独被调用）
 
     if (ast->kind == AST_BLOCK) {
         gen_block_module(gen, ast);

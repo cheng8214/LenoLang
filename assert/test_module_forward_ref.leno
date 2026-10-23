@@ -1,0 +1,32 @@
+// 模块级变量初始化调用**后面定义**的函数（2026-10-23 修）
+//
+// 修复前：运行时报「全局函数索引越界」，`--check` 完全查不出来。
+//   根因：模块顶层按源码顺序生成，`var x = f()` 的 OP_CALL_GLOBAL_FUNC 早于
+//         `func f()` 的 OP_DEFGLOBALFUNC ⇒ 槽位里还是空的。
+//   修法：在 **codegen** 阶段重排（import → 函数定义 → 其余）。不能在 parser 层做，
+//         那会让 semantic 也按新顺序分析（use 依赖、模块变量声明顺序全乱）。
+var G = make()
+var H = make() + 1
+
+func make(): int {
+    return 41
+}
+
+// export func 也要能被提前注册
+export func exported(): int {
+    return 7
+}
+
+// 变量初始化还能调非 export 的、带参数的、以及靠前定义的
+var K = withArg(3)
+
+func withArg(int n): int {
+    return n * 10
+}
+
+main() {
+    assert_eq(G, 41)
+    assert_eq(H, 42)
+    assert_eq(exported(), 7)
+    assert_eq(K, 30)
+}
