@@ -4,6 +4,11 @@
 import "../lib/w32_reg.leno" as reg
 
 main() {
+    // 仅 Windows：本用例直接读 HKLM 注册表（advapi32.dll 在 Linux/macOS 不存在）
+    if _os() != "windows" {
+        print("[SKIP] test_defer_reg：仅 Windows（advapi32 注册表）\n")
+        return
+    }
     print("[1] 打开键\n")
     var ok = reg.openKey(reg.HKEY_LOCAL_MACHINE,
                          "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion",
