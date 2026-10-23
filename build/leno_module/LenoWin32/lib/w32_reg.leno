@@ -461,35 +461,37 @@ export func readExpandString(Ptr hKey, string valueName):ReadExpandStringResult 
 
 // 读取 DWORD 值（REG_DWORD）
 export func readDword(Ptr hKey, string valueName):ReadDwordResult {
+    // ★ 2026-10-23 改用 defer（原先两层 try/finally 嵌套）
+    //   注意：defer 是**块级**的，且按"第一个 defer 的位置"切分作用域 ⇒
+    //   defer 表达式里引用的变量必须声明在**第一个 defer 之前**。
     Ptr dataType = ffi.malloc(4)
     Ptr dataSize = ffi.malloc(4)
     Ptr dataBuffer = ffi.malloc(4)
+    Ptr wValueName = if valueName == "" then ffi.nullptr() else ffi.utf8_to_utf16(valueName)
 
-    try {
-        ffi.write_int(dataSize, 0, 4)
-        Ptr wValueName = if valueName == "" then ffi.nullptr() else ffi.utf8_to_utf16(valueName)
-        try {
-            int result = _advLib().RegQueryValueExW(hKey, wValueName, null, dataType, dataBuffer, dataSize)
-
-            if result != WinError.SUCCESS {
-                return new ReadDwordResult(value = 0, errorCode = result)
-            }
-
-            if ffi.read_int(dataType, 0) != ValueType.DWORD {
-                return new ReadDwordResult(value = 0, errorCode = _int(WinError.INVALID_HANDLE))
-            }
-
-            return new ReadDwordResult(value = ffi.read_int(dataBuffer, 0), errorCode = 0)
-        } finally {
-            if wValueName != ffi.nullptr() {
-                ffi.free(wValueName)
-            }
-        }
-    } finally {
+    defer {
         ffi.free(dataType)
         ffi.free(dataSize)
         ffi.free(dataBuffer)
     }
+    defer {
+        if wValueName != ffi.nullptr() {
+            ffi.free(wValueName)
+        }
+    }
+
+    ffi.write_int(dataSize, 0, 4)
+    int result = _advLib().RegQueryValueExW(hKey, wValueName, null, dataType, dataBuffer, dataSize)
+
+    if result != WinError.SUCCESS {
+        return new ReadDwordResult(value = 0, errorCode = result)
+    }
+
+    if ffi.read_int(dataType, 0) != ValueType.DWORD {
+        return new ReadDwordResult(value = 0, errorCode = _int(WinError.INVALID_HANDLE))
+    }
+
+    return new ReadDwordResult(value = ffi.read_int(dataBuffer, 0), errorCode = 0)
 }
 
 // 读取 QWORD 值（REG_QWORD）

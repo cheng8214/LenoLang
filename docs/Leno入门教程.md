@@ -9727,7 +9727,28 @@ defer {
 （这也是 FFI 里 `if wName != null { ffi.free(wName) }` 这种条件释放的正解——
 比包一个辅助函数更直接。）
 
-**③ 块级，所以循环里每轮都执行**（不会累积到函数结束）
+**③ defer 引用的变量必须声明在第一个 `defer` 之前**
+
+`defer` 降级成 `try { 其余 } finally { defer表达式 }`，切分点是**第一个 defer 的位置**：
+它之前的语句留在外层，之后的全进 `try`。所以 `finally` 里只看得见**外层**的变量。
+
+```leno
+Ptr a = ffi.malloc(4)
+defer ffi.free(a)          // ← 第一个 defer：切分点在这里
+Ptr c = ffi.malloc(4)      // ← c 声明在切分点之后 ⇒ 进了 try
+defer ffi.free(c)          // ✗ 报「未定义变量 c」（finally 在外层，看不到 c）
+```
+
+正确写法：**先全部分配、再统一 defer**。
+
+```leno
+Ptr a = ffi.malloc(4)
+Ptr b = ffi.malloc(4)
+Ptr c = ffi.malloc(4)
+defer { ffi.free(a); ffi.free(b); ffi.free(c) }   // ✅
+```
+
+**④ 块级，所以循环里每轮都执行**（不会累积到函数结束）
 
 ```leno
 for 0:2 to i {

@@ -1,0 +1,44 @@
+// 真实运行验证：w32_reg.readDword 改用 defer 后，行为与原 try/finally 版一致
+//   读 HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion 的 CurrentMajorVersionNumber
+//   （Windows 10+ 一定存在，值是 10）
+import "../lib/w32_reg.leno" as reg
+
+main() {
+    print("[1] 打开键\n")
+    var ok = reg.openKey(reg.HKEY_LOCAL_MACHINE,
+                         "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion",
+                         0x20019)       // KEY_READ
+    print("    errorCode=" + _str(ok.errorCode) + "\n")
+    if ok.errorCode != 0 {
+        print("[x] 打开失败，无法继续\n")
+        return
+    }
+
+    // ① 正常读 DWORD
+    print("[2] 读 CurrentMajorVersionNumber（DWORD）\n")
+    var v = reg.readDword(ok.handle, "CurrentMajorVersionNumber")
+    print("    value=" + _str(v.value) + " errorCode=" + _str(v.errorCode) + "\n")
+    if v.value != 10 {
+        print("[x] 期望 10，实际 " + _str(v.value) + "\n")
+    } else {
+        print("[ok] 值正确\n")
+    }
+
+    // ② 读不存在的值 ⇒ 应返回错误码，且**不泄漏内存**（defer 已释放）
+    print("[3] 读不存在的值（验证错误路径也走了 defer）\n")
+    var bad = reg.readDword(ok.handle, "NoSuchValueForDeferTest_xyz")
+    print("    errorCode=" + _str(bad.errorCode) + "（应为非 0）\n")
+
+    // ③ 空名字（走 wValueName = nullptr 的**条件释放**分支）
+    print("[4] 空名字（条件释放分支）\n")
+    var def = reg.readDword(ok.handle, "")
+    print("    errorCode=" + _str(def.errorCode) + "\n")
+
+    // ④ 再读一次正常的（如果前面泄漏/释放错了，这里会崩）
+    print("[5] 再读一次，确认句柄还活着\n")
+    var v2 = reg.readDword(ok.handle, "CurrentMajorVersionNumber")
+    print("    value=" + _str(v2.value) + "\n")
+
+    reg.closeKey(ok.handle)
+    print("[6] 结束\n")
+}
