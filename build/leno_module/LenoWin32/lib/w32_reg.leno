@@ -249,14 +249,15 @@ export func closeKey(Ptr hKey):int {
 }
 
 // 删除注册表键
+// ★ 2026-10-23：改用 defer（原先是 try/finally 包住整个函数体）
+//   defer = 「所在块退出时执行」，所以 return 走哪个出口都会释放 ✓
+//   收益：省一层缩进、把"业务"和"清理"分开写，不用为了 finally 把整段逻辑缩进去
 export func deleteKey(any hKey, string subKey):int {
     Ptr wSubKey = ffi.utf8_to_utf16(subKey)
-    try {
-        Ptr hKeyPtr = _getHKeyPtr(hKey)
-        return _advLib().RegDeleteKeyW(hKeyPtr, wSubKey)
-    } finally {
-        ffi.free(wSubKey)
-    }
+    defer ffi.free(wSubKey)
+
+    Ptr hKeyPtr = _getHKeyPtr(hKey)
+    return _advLib().RegDeleteKeyW(hKeyPtr, wSubKey)
 }
 
 // ==================== 枚举操作 ==========================

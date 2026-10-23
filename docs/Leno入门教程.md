@@ -9634,6 +9634,101 @@ main() {
 
 ***
 
+## defer（延迟执行）
+
+`defer` 把一句清理代码推迟到**所在代码块退出时**执行 —— 常用于释放 FFI 内存、关文件、解锁。
+
+### 基本用法
+
+```leno
+export func readValue(Ptr hKey, string name): int {
+    Ptr wName = ffi.utf8_to_utf16(name)
+    defer ffi.free(wName)              // ← 块退出时释放
+
+    Ptr buf = ffi.malloc(4)
+    defer ffi.free(buf)
+
+    // 从这里开始全是业务逻辑，零缩进、零嵌套
+    return _advLib().RegQueryValueExW(hKey, wName, null, null, buf, null)
+}
+```
+
+### 语义（5 条，都有测试钉住）
+
+| 项 | 规则 |
+|---|---|
+| **作用域** | **块级** —— 所在的 `{}` 退出就执行（不是函数级） |
+| **顺序** | 多个 `defer` **逆序**执行（后注册先执行） |
+| **触发点** | 正常结束 / `return` / `break` / `continue` / `throw` **全都会执行** |
+| **求值时机** | 表达式在**块退出时**求值（不是写 `defer` 那一行） |
+| **执行位置** | 在 `return` 的值**已经算好**之后、真正返回之前 |
+
+### 与 try/finally 对比
+
+```leno
+// 用 try/finally：为了 finally 要把整段逻辑缩进一层
+func a() {
+    Ptr p = alloc()
+    try {
+        ... 20 行业务 ...
+        return x
+    } finally {
+        ffi.free(p)
+    }
+}
+
+// 用 defer：业务代码不动，清理只在开头声明一次
+func a() {
+    Ptr p = alloc()
+    defer ffi.free(p)
+    ... 20 行业务 ...
+    return x
+}
+```
+
+两者**语义完全等价**（`defer` 在 parser 阶段就降级成 `try/finally`）。
+
+### 三个要注意的地方
+
+**① 参数在块退出时求值，不是注册时**
+
+```leno
+func f() {
+    var name = "first"
+    defer print(name)        // 打印 "second"，不是 "first"
+    name = "second"
+}
+```
+
+要"锁定当时的值"，先存一个局部副本：`var snapshot = name`。
+
+**② 只接受表达式，条件释放要包成函数**
+
+```leno
+defer ffi.free(wName)                        // ✅
+defer if wName != null { ffi.free(wName) }   // ✗ 不是表达式
+
+// 办法：包一个函数
+func freeIfNotNull(Ptr p) { if p != null { ffi.free(p) } }
+defer freeIfNotNull(wName)                    // ✅
+```
+
+**③ 块级，所以循环里每轮都执行**（不会累积到函数结束）
+
+```leno
+for 0:2 to i {
+    defer print("cleanup")     // 每轮结束打印一次，共 2 次
+    ...
+}
+```
+
+### 什么时候别用
+
+- **需要条件判断才清理**：包成函数（见上），或直接用 `try/finally`
+- **想按"函数级"累积**（Go 那种）：Leno 的 `defer` 是块级，循环里会每轮执行；要累积就把 `defer` 写在循环**外面**
+
+---
+
 ## 线程与并发
 
 Leno 通过 `threads` 模块提供线程和通道（Channel）支持，实现并发编程。
