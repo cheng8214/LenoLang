@@ -869,11 +869,23 @@ static void mv_check_expr(Semantic* s, Ast* e, char** declared, int n) {
             mv_check_expr(s, e->u.binop.l, declared, n);
             mv_check_expr(s, e->u.binop.r, declared, n);
             return;
+        case AST_UNARY:
+            mv_check_expr(s, e->u.unary.operand, declared, n);
+            return;
         case AST_CALL:
             mv_check_expr(s, e->u.call.callee, declared, n);
             for (int i = 0; i < (int)e->u.call.args.count; i++) {
                 mv_check_expr(s, e->u.call.args.items[i], declared, n);
             }
+            return;
+        case AST_INDEX:      // A[0]
+            mv_check_expr(s, e->u.index.obj, declared, n);
+            mv_check_expr(s, e->u.index.index, declared, n);
+            return;
+        case AST_SLICE:      // A[1:2]
+            mv_check_expr(s, e->u.slice.obj, declared, n);
+            mv_check_expr(s, e->u.slice.start, declared, n);
+            mv_check_expr(s, e->u.slice.end, declared, n);
             return;
         default:
             return;     // 其它节点不深入（少报不误报）
