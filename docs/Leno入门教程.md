@@ -9755,7 +9755,22 @@ defer {
 }
 ```
 
-**④ 块级，所以循环里每轮都执行**（不会累积到函数结束）
+**④ 别在 `defer` 里写 `return` / `break` / `continue`**
+
+`defer` 最终变成 `finally`，所以这些控制流会「跳出去」：
+
+```leno
+func f(): int {
+    defer { return 99 }    // ← 覆盖了下面的 return 1（实际返回 99）
+    return 1
+}
+```
+
+和 Python / Java 的 finally 一样。**`defer` 里只写清理，不要写控制流。**
+
+（`break` / `continue` 在循环里虽然不报错，但语义混乱，同样别写。）
+
+**⑤ 块级，所以循环里每轮都执行**（不会累积到函数结束）
 
 ```leno
 for 0:2 to i {

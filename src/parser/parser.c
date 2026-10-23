@@ -379,7 +379,16 @@ Ast* parse_program_internal(Parser* p) {
     while (p->lex.current.type != TOK_EOF) {
         Ast* stmt = parse_statement(p);
         if (stmt) {
-            ast_list_add(&ast->u.block, stmt);
+            // ★ 2026-10-23：模块顶层**不是代码块**，defer 没有"块退出"的时机
+            //   （降级只发生在 parse_block_internal 里）
+            //   之前会**静默忽略** —— 用户以为写了释放，实际什么都没执行 ✗
+            if (stmt->kind == AST_DEFER) {
+                error_add_at_fmt(ERR_SYNTAX, stmt->line, stmt->column,
+                                 "defer 只能写在函数体或代码块内（模块顶层没有块退出时机）");
+                ast_free(stmt);
+            } else {
+                ast_list_add(&ast->u.block, stmt);
+            }
         }
         // 错误恢复：如果解析语句失败，同步到下一个语句开始位置
         // 这样可以收集更多错误而不是遇到第一个错误就停止
