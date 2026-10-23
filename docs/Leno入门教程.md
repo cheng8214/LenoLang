@@ -9702,16 +9702,30 @@ func f() {
 
 要"锁定当时的值"，先存一个局部副本：`var snapshot = name`。
 
-**② 只接受表达式，条件释放要包成函数**
+**② 需要条件 / 多步清理时用块形式**
+
+`defer` 接受**表达式**或**代码块**：
 
 ```leno
-defer ffi.free(wName)                        // ✅
-defer if wName != null { ffi.free(wName) }   // ✗ 不是表达式
+// 表达式（最常见）
+defer ffi.free(wName)
 
-// 办法：包一个函数
-func freeIfNotNull(Ptr p) { if p != null { ffi.free(p) } }
-defer freeIfNotNull(wName)                    // ✅
+// 块：条件释放、多步清理
+defer {
+    if wName != null {
+        ffi.free(wName)
+    }
+}
+
+defer {
+    unlock()
+    closeHandle(h)
+}
 ```
+
+块内的语句**按书写顺序**执行；多个 `defer` 之间仍然**逆序**。
+（这也是 FFI 里 `if wName != null { ffi.free(wName) }` 这种条件释放的正解——
+比包一个辅助函数更直接。）
 
 **③ 块级，所以循环里每轮都执行**（不会累积到函数结束）
 

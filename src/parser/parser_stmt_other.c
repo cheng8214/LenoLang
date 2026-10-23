@@ -24,10 +24,19 @@ Ast* parse_defer_stmt(Parser* p) {
     int col = p->lex.current.column;
     lexer_next(&p->lex);   // 消费 defer
 
-    Ast* expr = parse_expression(p);
+    // 两种形态：
+    //   defer ffi.free(p)                 —— 表达式（最常见）
+    //   defer { if p != null { free(p) } } —— 块（需要条件/多步清理时）
+    // 块形式让 defer 能覆盖 FFI 的"条件释放"（readString 那种 `if wValueName != null`）。
+    Ast* expr = NULL;
+    if (p->lex.current.type == TOK_LBRACE) {
+        expr = parse_block_internal(p);     // 块内部的 defer 会各自再降级 ✓
+    } else {
+        expr = parse_expression(p);
+    }
     if (!expr) {
         error_add_at_fmt(ERR_SYNTAX, line, col,
-                         "defer 后面需要一个表达式（如 defer ffi.free(p)）");
+                         "defer 后面需要一个表达式或代码块（如 defer ffi.free(p) / defer { ... }）");
         return NULL;
     }
 

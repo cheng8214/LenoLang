@@ -81,11 +81,23 @@ Ast* parse_block_internal(Parser* p) {
         Ast* fin = ast_new(AST_BLOCK, line);
         ast_list_init(&fin->u.block);
         for (int i = defer_count - 1; i >= 0; i--) {
-            Ast* es = ast_new(AST_EXPR_STMT, defers[i]->line);
-            es->u.expr_stmt.expr = defers[i]->u.defer_.expr;   // 转移所有权
-            defers[i]->u.defer_.expr = NULL;                   // 防 double free
-            ast_list_add(&fin->u.block, es);
-            ast_free(defers[i]);                               // 只剩空壳
+            Ast* body = defers[i]->u.defer_.expr;
+            if (body && body->kind == AST_BLOCK) {
+                // 块形式 `defer { ... }`：把里面的语句**整体**搬进 finally
+                //   （保持块内顺序；作为整体参与逆序，不拆散）
+                for (int k = 0; k < (int)body->u.block.count; k++) {
+                    ast_list_add(&fin->u.block, body->u.block.items[k]);
+                }
+                body->u.block.count = 0;      // 所有权已转移
+                ast_free(body);
+            } else {
+                // 表达式形式：包成表达式语句
+                Ast* es = ast_new(AST_EXPR_STMT, defers[i]->line);
+                es->u.expr_stmt.expr = body;  // 转移所有权
+                ast_list_add(&fin->u.block, es);
+            }
+            defers[i]->u.defer_.expr = NULL;   // 防 double free
+            ast_free(defers[i]);               // 只剩空壳
         }
         free(defers);
 

@@ -1,0 +1,59 @@
+// defer 的块形式 `defer { ... }`（2026-10-23）
+//
+// 为什么需要：FFI 里大量"条件释放" ——
+//     Ptr wName = if name == "" then ffi.nullptr() else ffi.utf8_to_utf16(name)
+//     try { ... } finally { if wName != null { ffi.free(wName) } }
+//   `defer ffi.free(wName)` 表达不了那个 if，所以 defer 也接受块。
+var log = []
+
+// ① 条件释放
+func condRelease(int mode) {
+    var p = null
+    if mode == 1 { p = "ptr" }
+    defer {
+        if p != null {
+            log.add("free:" + p)
+        } else {
+            log.add("nothing")
+        }
+    }
+    log.add("body")
+}
+
+// ② 多步清理：保持块内顺序
+func multiStep() {
+    defer {
+        log.add("step1")
+        log.add("step2")
+    }
+    log.add("body")
+}
+
+// ③ 块与表达式混合：作为整体逆序
+func mixed() {
+    defer freeLike("x")
+    defer { log.add("block") }
+    log.add("body")
+}
+
+func freeLike(string s) {
+    log.add("freed:" + s)
+}
+
+main() {
+    log = []
+    condRelease(1)
+    assert_eq(log.join(","), "body,free:ptr")
+
+    log = []
+    condRelease(0)
+    assert_eq(log.join(","), "body,nothing")
+
+    log = []
+    multiStep()
+    assert_eq(log.join(","), "body,step1,step2")
+
+    log = []
+    mixed()
+    assert_eq(log.join(","), "body,block,freed:x")
+}
