@@ -272,5 +272,8 @@
             //     原因：if/while/for/case 的块体走的是 `visit_list(...)` 直接进来、
             //     **绕过**本 AST_BLOCK 分支 ✗ ⇒ 放在这里会漏掉所有循环体与分支体 ✓）
             visit_list(s, &ast->u.block);
+            // 注：模块级变量初始化顺序检查**不在这里** —— 顶层根本不进本分支
+            //     （semantic_analyze 是直接 visit_list(s, &ast->u.block)），
+            //     它挂在 semantic.c 的两个入口上，见 mv_check_top。
             break;
         }

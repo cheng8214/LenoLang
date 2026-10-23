@@ -827,6 +827,97 @@ static int ast_const_int(Ast* e, long long* out) {
     return 0;
 }
 
+// ============================================================================
+// 模块级变量初始化顺序检查（2026-10-23）
+// ----------------------------------------------------------------------------
+// 背景：模块变量会被"前向引用预扫描"注册进符号表，于是
+//         var B = A + 1        （A 在后面才声明）
+//   能通过类型检查 —— 但顶层执行**严格按源码顺序**，B 初始化时 A 还是 null，
+//   运行时报的是「加法运算: null 不能参与运算」，看着像"这个值恰好是 null"，
+//   指不到真因（顺序）。
+//
+// 做法：顶层（ast == s->root）visit 完之后再走一遍，按源码顺序维护
+//       "已声明变量"集合，拦截 init 表达式里引用了后面才声明的模块变量。
+//   ⚠ 只看顶层：函数体里引用后面的变量是**合法**的（调用时机不定），不能误伤
+//   ⚠ 只查 SYM_MODULE / SYM_GLOBAL：局部变量天然按顺序
+//   ⚠ 递归只覆盖几种确定存在的 AST 节点，遇到别的就停 —— 少报比误报安全
+// ============================================================================
+
+static int mv_in_set(char** names, int n, const char* name) {
+    for (int i = 0; i < n; i++) {
+        if (names[i] && strcmp(names[i], name) == 0) return 1;
+    }
+    return 0;
+}
+
+static void mv_check_expr(Semantic* s, Ast* e, char** declared, int n) {
+    (void)s;
+    if (!e) return;
+    switch (e->kind) {
+        case AST_VAR: {
+            SymRef* r = &e->u.var.ref;
+            if ((r->kind == SYM_MODULE || r->kind == SYM_GLOBAL) && r->name &&
+                !mv_in_set(declared, n, r->name)) {
+                error_add_at_fmt(ERR_SEMANTIC, e->line, e->column,
+                    "变量 '%s' 在声明前使用（模块级变量按源码顺序初始化，此刻它还是 null）\n"
+                    "  提示: 把它挪到这个变量之前声明；函数不受此限制（调用可以写在定义之前）",
+                    r->name);
+            }
+            return;
+        }
+        case AST_BINOP:
+            mv_check_expr(s, e->u.binop.l, declared, n);
+            mv_check_expr(s, e->u.binop.r, declared, n);
+            return;
+        case AST_CALL:
+            mv_check_expr(s, e->u.call.callee, declared, n);
+            for (int i = 0; i < (int)e->u.call.args.count; i++) {
+                mv_check_expr(s, e->u.call.args.items[i], declared, n);
+            }
+            return;
+        default:
+            return;     // 其它节点不深入（少报不误报）
+    }
+}
+
+// 供 semantic.c 的两个入口调用（它们直接 visit_list 顶层块，不走 AST_BLOCK 分支）
+void mv_check_top(Semantic* s, Ast* block) {
+    int cap = 16, n = 0;
+    char** declared = (char**)calloc(cap, sizeof(char*));
+    if (!declared) return;
+
+    for (int i = 0; i < (int)block->u.block.count; i++) {
+        Ast* stmt = block->u.block.items[i];
+
+        if (stmt->kind == AST_VAR_DECL) {
+            // 先查 init（此时它引用的模块变量必须已经在集合里）
+            if (stmt->u.var_decl.init) {
+                mv_check_expr(s, stmt->u.var_decl.init, declared, n);
+            }
+            if (n >= cap) {
+                cap *= 2;
+                declared = (char**)realloc(declared, sizeof(char*) * cap);
+                if (!declared) return;
+            }
+            declared[n++] = stmt->u.var_decl.name;
+        } else if (stmt->kind == AST_DESTRUCT_DECL) {
+            if (stmt->u.destruct_decl.init) {
+                mv_check_expr(s, stmt->u.destruct_decl.init, declared, n);
+            }
+            for (int k = 0; k < stmt->u.destruct_decl.slot_count; k++) {
+                if (n >= cap) {
+                    cap *= 2;
+                    declared = (char**)realloc(declared, sizeof(char*) * cap);
+                    if (!declared) return;
+                }
+                declared[n++] = stmt->u.destruct_decl.names[k];
+            }
+        }
+        // 其余语句（函数定义 / import / 表达式语句）不登记
+    }
+    free(declared);
+}
+
 void visit(Semantic* s, Ast* ast) {
     if (!ast) return;
 

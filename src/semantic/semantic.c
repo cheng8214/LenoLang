@@ -1,6 +1,9 @@
 #include "semantic_internal.h"
 #include "include/leno_hash.h"
 
+// 模块级变量初始化顺序检查（定义在 semantic_visit_ast.c，2026-10-23）
+void mv_check_top(Semantic* s, Ast* block);
+
 // ============================================================================
 // 函数表哈希表实现
 // ============================================================================
@@ -534,6 +537,10 @@ void semantic_analyze(Semantic* s, Ast* ast) {
     // 单遍遍历
     if (ast && ast->kind == AST_BLOCK) {
         visit_list(s, &ast->u.block);
+        // ★ 2026-10-23：顶层变量初始化顺序检查
+        //   ⚠ 顶层**不会**进 visit_block.inc 的 AST_BLOCK 分支（这里直接 visit_list），
+        //     所以必须挂在这个入口上；且要在 visit_list **之后**（ref 才绑定好）
+        mv_check_top(s, ast);
     } else {
         visit(s, ast);
     }
@@ -870,6 +877,10 @@ void semantic_analyze_module(Semantic* s, Ast* ast) {
     // 单遍遍历
     if (ast && ast->kind == AST_BLOCK) {
         visit_list(s, &ast->u.block);
+        // ★ 2026-10-23：顶层变量初始化顺序检查
+        //   ⚠ 顶层**不会**进 visit_block.inc 的 AST_BLOCK 分支（这里直接 visit_list），
+        //     所以必须挂在这个入口上；且要在 visit_list **之后**（ref 才绑定好）
+        mv_check_top(s, ast);
     } else {
         visit(s, ast);
     }
