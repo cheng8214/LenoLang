@@ -176,10 +176,13 @@ main() {
     //   · cleaner_master：--autotest（扫完 → 截屏 → 退出，不删任何文件 ✓）
     run_headless("dashboard",         gui + "\\应用\\数据看板\\dashboard.leno", true, true, "", "")
     run_headless("dashboard_sidebar", gui + "\\控件\\数据看板\\dashboard_sidebar.leno", true, true, "", "")
-    // cleaner_master：用**真实**驱动（它的截屏走 Win32，无头会挂 ✗）+ 自带 --autotest（扫完截屏退出 ✓）
-    //   它把 PNG 写到 %TEMP%\cleaner_master_autotest.png ⇒ 用 shot_arg 查这一张 ✓
-    run_headless("cleaner_master", gui + "\\应用\\电脑清理大师\\cleaner_master.leno", false, false,
-                 "--autotest", _tmpdir() + "\\cleaner_master_autotest.png")
+    // cleaner_master：**已分离成独立项目**（2026-10-23，搬到 D:\CLeno\LenoCleaner）
+    //   ⇒ 本仓库不再包含它，这条检查随之移除
+    //   原来跑法（留在注释里备查）：
+    //     run_headless("cleaner_master", gui + "\\应用\\电脑清理大师\\cleaner_master.leno", false, false,
+    //                  "--autotest", _tmpdir() + "\\cleaner_master_autotest.png")
+    //   它把 PNG 写到 %TEMP%\cleaner_master_autotest.png；现在要在那边单独跑：
+    //     D:\CLeno\Leno\build\leno.exe D:\CLeno\LenoCleaner\cleaner_master.leno --autotest
     // table_cells：Table 的 progress 单元格 + on_cell_draw（2026-10-07 新增 ✓）
     //   它自带 DSHOT 钩子（截图后退出）⇒ 无头跑一遍就能证明"进度条真的画进了单元格" ✓
     //   （纯逻辑那份在 assert\test_table_progress_cells.leno，已随主套件跑 ✓）
