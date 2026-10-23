@@ -1,0 +1,76 @@
+// test_null_array_append.leno —— OP_ARRAY_APPEND（`arr.add(x)` / `arr[n] = v` 之外的融合指令）
+//                               对 **null / 非数组接收者** 的行为
+//
+// 修复前的症状（2026-10-23 实测）：接收者是无条件强转 `(ObjArray*)val_as_obj(...)` 的
+//   ⇒ 只要不是数组就**对 NULL 解引用** ⇒ 进程**静默退出**（Windows 0xC0000005 /
+//   exit -1073741819），**一句报错都没有**，连 try/catch 都兜不住（根本没有异常可捕 ✗）。
+//
+// 触发条件非常日常：`dirs.listdir(不存在的目录)` 返回的是 **null 且不抛异常**
+//   （见 src/module/dirs/dirs.c 的三处 `return val_null()`）⇒ 紧接着 `.add()` 就崩：
+//     Array[string] q = dirs.listdir("D:/不存在的目录")   // ⇒ null
+//     q.add("x")                                        // ⇒ 崩（修复前）
+//   `as Array[T]` 收窄失败同样给 null ⇒ 同一颗雷。
+//
+// 修复后口径：与下标特化指令（ARRAY_SPECIALIZED_NULL_GUARD）**共用同一个守卫宏**
+//   ⇒ 抛**可捕获**的运行时异常，文案 "调用 add: 对象是 null 或不是数组 —— 请先判空" ✓
+//
+// ⚠ 本文件自身就是回归门：修复前跑它直接以 -1073741819 退出（run_tests 判红）。
+//   分组各打一行进度：将来某一支若又崩，最后一行输出就点名是哪一组。
+
+main() {
+    var caught = 0
+
+    // ① 语句位置：`a.add(x)`（C = need_result = 0 的那条路）
+    Array[string] a = null
+    try {
+        a.add("x")
+        print("① 不该到这")
+    } catch e {
+        caught = caught + 1
+    }
+    print("① null.add（语句位置）caught=" + _str(caught))
+
+    // ② 表达式位置：`int n = a.add(x)`（need_result = 1，写回长度那条路）
+    Array[string] b = null
+    try {
+        int n = b.add("y")
+        print("② 不该到这: " + _str(n))
+    } catch e {
+        caught = caught + 1
+    }
+    print("② null.add（表达式位置）caught=" + _str(caught))
+
+    // ③ `as` 收窄失败 ⇒ null ⇒ 同样要能兜住（不是靠静态类型，靠运行期守卫 ✓）
+    var raw = null
+    Array[string] c = raw as Array[string]
+    try {
+        c.add("z")
+        print("③ 不该到这")
+    } catch e {
+        caught = caught + 1
+    }
+    print("③ 收窄成 null 后 add caught=" + _str(caught))
+
+    // ④ 对照组：正常数组照常工作（别把正常路径一起拦掉）
+    Array[string] ok = ["m"]
+    ok.add("n")
+    int len = ok.add("o")            // 表达式位置要的是**追加后的长度**
+    assert_eq(ok.len(), 3)
+    assert_eq(len, 3)
+    assert_eq(ok[0], "m")
+    assert_eq(ok[2], "o")
+    print("④ 对照组（正常 add）ok")
+
+    // ⑤ 对照组：null 数组**可以 for 迭代**（当空表，历史口径 ✓ 不崩、不进循环）
+    var loops = 0
+    Array[string] nul = null
+    for nul to it {
+        loops = loops + 1
+    }
+    assert_eq(loops, 0)
+    print("⑤ 对照组（for null）ok")
+
+    // 三支异常都必须被兜住（少一支就说明又崩/又静默成功了）
+    assert_eq(caught, 3)
+    print("test_null_array_append passed")
+}

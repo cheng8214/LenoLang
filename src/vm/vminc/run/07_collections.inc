@@ -1,3 +1,18 @@
+    // ==================== 数组指令的接收者守卫（共用宏）====================
+    //   静态类型是数组 ≠ 运行期一定是数组：`dirs.listdir` 失败给 **null**（不抛异常）、
+    //   `as Array[T]` 收窄失败也给 null ⇒ 这些特化指令若直接强转就是**对 NULL 解引用**，
+    //   实测表现为**进程静默退出（0xC0000005），没有任何报错** ✗
+    //   口径：**先探类型，再抛可捕获的运行时异常**（try/catch 能兜住 ✓）
+    //   what = 正在做什么（"下标访问" / "调用 add"），拼进报错文案 ⇒ 指得到点上 ✓
+    //   ⚠ 只读一次 R(reg)（`R()` 是 frame->regs[] 下标，读两次白搭一次访存）
+    //     —— 热路径就在 add 上，这里是能省则省的那点 ✓
+    #define ARRAY_RECV_GUARD(reg, what)                                                    \
+        { Value grecv = R(reg);                                                            \
+          if (unlikely(!val_is_obj(grecv) || val_as_obj(grecv)->type != OBJ_ARRAY)) {       \
+              if (!vm_throw_not_array(what, GET_CURRENT_LINE())) { return -1; }             \
+              frame = &vm.frames[vm.frame_cnt - 1];                                         \
+              DISPATCH();                                                                   \
+          } }
     LABEL(OP_NEWARRAY): {
         int a = READ_A(), c = READ_C();
         ObjArray* arr = arr_new(c);
@@ -45,7 +60,15 @@
         DISPATCH();
     }
     LABEL(OP_ARRAY_APPEND): {
-        int a = READ_A(), b = READ_B();
+        int a = READ_A(), b = READ_B(), c = READ_C();
+        // ★ 2026-10-23 修（**对 null 调 .add() 直接崩进程**）：
+        //   原先这里无条件 `(ObjArray*)val_as_obj(R(b))` 强转 —— 只要接收者不是数组就
+        //   对 NULL 解引用 ⇒ **访问违例、进程直接退出（0xC0000005），连报错都没有** ✗。
+        //   最小复现（`dirs.listdir` 失败给的是 null，且**不抛异常**）：
+        //     Array[string] q = dirs.listdir("D:/不存在的目录")   // ⇒ null
+        //     q.add("x")                                        // ⇒ 崩，无任何输出
+        //   口径与下标那几条特化指令**完全一致**（同一个宏 ⇒ try/catch 都能兜住 ✓）
+        ARRAY_RECV_GUARD(b, "调用 add");
         ObjArray* arr = (ObjArray*)val_as_obj(R(b));
         if (arr->count >= arr->capacity) { if (!arr_grow(arr)) { runtime_error("数组扩容失败：内存不足或元素数达上限（若在 for 遍历中不断 add，数组会无限增长）", GET_CURRENT_LINE()); return -1; } }
         arr->elements[arr->count++] = R(a);
@@ -56,7 +79,8 @@
         gc_write_barrier((Object*)arr, R(a));
         // C = "要不要结果"标志（codegen 的 need_result）：语句位置没人要这个新长度
         // ⇒ 跳过写回（T10-②，等价于栈式的 OP_ARRAY_APPEND_NOPUSH，省一条写）。
-        if (READ_C()) R(a) = val_int(arr->count);
+        //   ⚠ C 在本分支开头与 A/B 一起读（READ_C 会推进 ip）⇒ 这里用变量 c，别再读一次 ✗
+        if (c) R(a) = val_int(arr->count);
         DISPATCH();
     }
     LABEL(OP_LEN): {
@@ -455,13 +479,9 @@
     //   （用例 examples/改进测试/test_null_index.leno 就是为验证这个而存在的）。
     //   ⇒ 4 条特化指令（INT / FLOAT / IMM / SET_INT）进来先挡一次 null/非数组。
     //   用宏收敛：4 处各写一遍判断，迟早漏一条，而漏掉的那条就是一个崩溃。
-    #define ARRAY_SPECIALIZED_NULL_GUARD(reg)                                                       \
-        if (unlikely(!val_is_obj(R(reg)) || val_as_obj(R(reg))->type != OBJ_ARRAY)) {               \
-            int gline = GET_CURRENT_LINE();                                                         \
-            if (!throw_runtime_error("下标访问: 对象是 null 或不是数组 —— 请先判空", gline)) { return -1; } \
-            frame = &vm.frames[vm.frame_cnt - 1];                                                   \
-            DISPATCH();                                                                             \
-        }
+    //   ★ 2026-10-23：实现统一收敛到文件顶部的 ARRAY_RECV_GUARD（`.add()` 那条融合指令
+    //     后来补守卫时也用同一个宏 ⇒ 两处口径逐字一致，只有文案里的 what 不同 ✓）
+    #define ARRAY_SPECIALIZED_NULL_GUARD(reg) ARRAY_RECV_GUARD(reg, "下标访问")
     LABEL(OP_INDEX_ARRAY_INT): {
         int a = READ_A(), b = READ_B(), c = READ_C();
         ARRAY_SPECIALIZED_NULL_GUARD(b);
@@ -774,4 +794,5 @@
         DISPATCH();
     }
     #undef ARRAY_SPECIALIZED_NULL_GUARD
+    #undef ARRAY_RECV_GUARD
     // OP_SLICE A B C: R[A] = R[B][R[A+1] : R[A+2]]（结束索引**包含**；null 表示省略）

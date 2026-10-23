@@ -388,7 +388,14 @@
 
         {
             char msg[256];
-            snprintf(msg, sizeof(msg), "类型 %s 上不存在方法 '%s'", obj_type_to_name(rt), name->chars);
+            // ★ 2026-10-23：接收者是 null 时**别报"类型 object"**（实测把
+            //   `dirs.listdir(不存在目录)` 的 null 拿去 `.len()`，报的是
+            //   「类型 object 上不存在方法 'len'」⇒ 完全指不到"这里是个空值"这个事实上 ✗）
+            if (val_is_null(receiver)) {
+                snprintf(msg, sizeof(msg), "对 null 调用方法 '%s'（接收者是空值）—— 请先判空", name->chars);
+            } else {
+                snprintf(msg, sizeof(msg), "类型 %s 上不存在方法 '%s'", obj_type_to_name(rt), name->chars);
+            }
             if (!throw_runtime_error(msg, line)) return -1;
             frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH();
@@ -429,7 +436,12 @@
         // （老路径走 OP_GET_METHOD 的兜底分支，报的就是这句话）。
         if (unlikely(rt != OBJ_STRUCT)) {
             char msg[256];
-            snprintf(msg, sizeof(msg), "类型 %s 上不存在方法 '%s'", obj_type_to_name(rt), name->chars);
+            // null 单独点名（与 OP_GET_METHOD 兜底同一口径，见那里的注释）
+            if (val_is_null(receiver)) {
+                snprintf(msg, sizeof(msg), "对 null 调用方法 '%s'（接收者是空值）—— 请先判空", name->chars);
+            } else {
+                snprintf(msg, sizeof(msg), "类型 %s 上不存在方法 '%s'", obj_type_to_name(rt), name->chars);
+            }
             if (!throw_runtime_error(msg, line)) return -1;
             frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH();

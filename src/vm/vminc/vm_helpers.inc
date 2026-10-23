@@ -78,4 +78,22 @@ static inline int64_t vm_container_len(Value v) {
                                   : ((_a) != 0 && (_b) < INT64_MAX / (_a)) ) )
 #endif
 
+/* ---- §8.124：数组专有指令的「接收者不是数组」报错（2026-10-23）----
+ * 背景：`OP_ARRAY_APPEND`（`arr.add(x)` / `arr += x` 的融合指令）原先对接收者**无条件**
+ *   强转 `(ObjArray*)val_as_obj(R(b))` —— 只要它不是数组就**对 NULL 解引用** ⇒
+ *   进程**静默退出**（Windows 0xC0000005），连一句报错都没有 ✗。
+ *   触发条件很日常：`dirs.listdir(不存在的目录)` 给的是 **null 且不抛异常**
+ *   （见 module/dirs/dirs.c 的三处 `return val_null()`）⇒ 紧接着 `.add()` 就崩。
+ * 口径：与下标特化指令（ARRAY_SPECIALIZED_NULL_GUARD）**逐字一致**，只是文案里的
+ *   what 不同（"调用 add" / "下标访问"）⇒ 抛**可捕获**的运行时异常，try/catch 能兜住 ✓
+ * 为什么收成一个函数而不是宏里就地 snprintf：
+ *   这些指令全在 vm_run() 这一巨函数里，就地展开 `char[] + snprintf` 六份会让
+ *   GCC 的 IRA pass 直接 internal compiler error（实测 2026-10-23，gcc 14 mingw）✗
+ * 返回：throw_runtime_error 的返回值（0 = 连异常对象都建不起来 ⇒ 调用方 return -1）*/
+static inline int vm_throw_not_array(const char* what, int line) {
+    char msg[192];
+    snprintf(msg, sizeof(msg), "%s: 对象是 null 或不是数组 —— 请先判空", what);
+    return throw_runtime_error(msg, line);
+}
+
 
