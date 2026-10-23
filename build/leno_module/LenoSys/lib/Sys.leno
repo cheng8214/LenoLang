@@ -29,10 +29,15 @@ import jsons
 
 // ==================== 通用小工具（与平台无关，2026-10-23）====================
 
-// 执行 f()，抛异常时返回默认值 —— "失败就给默认值"的通用写法
+// 执行 f()，**抛异常**时返回默认值 —— "失败就给默认值"的通用写法
 //   用法：
-//     Array[string] names = Sys.orDefault(func() { return dirs.listdir(p) }, [])
 //     int n = Sys.orDefault(func() { return _int("abc") }, -1)
+//     int k = Sys.orDefault(func() { return _int(s) }, 0)
+//
+//   ⚠ 它只兜"**抛异常**"，**不兜"返回 null"** —— 闭包正常返回 null 就算成功 ✗
+//     ⇒ 数组/字典类接口要配 `listOr`（见下）：`dirs.listdir` / `files.read` 失败时
+//       给的是 **null 且不抛异常**，走 orDefault 拿回来仍是 null（随后 `.len()`
+//       会报「对 null 调用方法 'len'」，`for` 迭代则当空表 ⇒ 静默少数据 ✗）。
 //
 //   ⚠ 为什么是 Leno 源码而不是 native：
 //     native 实现要"吞掉闭包抛的异常"（清 vm.has_exception），而那会掩盖
@@ -45,6 +50,30 @@ export func orDefault[T](func(): T f, T dflt): T {
     } catch e {
         return dflt
     }
+}
+
+// 数组版兜底：**既兜"抛异常"，也兜"返回 null"** —— 数组类接口的正确打开方式
+//   用法：
+//     Array[string] names = Sys.listOr(func() { return dirs.listdir(p) }, [])
+//     Array[string] list  = Sys.listOr(func() { return files.listdir(p) }, [])
+//
+//   ⚠ 为什么必须单独一个：`dirs.listdir` / `files.read` 这类原生接口失败给的是
+//     **null 且不抛异常**（见 src/module/dirs/dirs.c 的三处 `return val_null()`）⇒
+//     `orDefault(func() { return dirs.listdir(p) }, [])` 拿回来的**还是 null** ✗
+//     （2026-10-23 实测；此时对结果调 `.len()` 报「对 null 调用方法 'len'」，
+//       `.add()` 在旧 VM 上更是**直接崩进程**，已在 OP_ARRAY_APPEND 补守卫 ✓）。
+//   · 空数组字面量 `[]` 的运行时类型信息是 `Array`（不带元素类型），但 `is Array[string]`
+//     为真、`len()` 可用 ⇒ 作为兜底值完全够用 ✓
+//   · 与 `orDefault` 同一个"为什么不用 native"的理由（异常派发必须在字节码层 ✓）
+export func listOr[T](func(): Array[T] f, Array[T] dflt): Array[T] {
+    Array[T] v = []
+    try {
+        v = f()
+    } catch e {
+        return dflt
+    }
+    if v == null { return dflt }
+    return v
 }
 
 // ==================== 对外结构体 ====================

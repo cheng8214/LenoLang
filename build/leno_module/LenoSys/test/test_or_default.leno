@@ -1,6 +1,7 @@
-// Sys.orDefault 真实运行验证
+// Sys.orDefault / Sys.listOr 真实运行验证
 import "../lib/Sys.leno" as Sys
 import files
+import dirs
 
 main() {
     // ① 成功：不抛异常 ⇒ 返回 f() 的结果
@@ -24,4 +25,27 @@ main() {
 
     // ⑤ 异常确实被吞掉：下面还能正常跑
     print("[5] 程序继续执行 ✓\n")
+
+    // ⑥ listOr：`dirs.listdir` 失败给的是 **null 且不抛异常** ⇒ orDefault 漏、listOr 兜 ✓
+    Array[string] e = Sys.listOr(func() { return dirs.listdir("Z:\\__nope_dir__") }, [])
+    print("[6] e.len=" + _str(e.len()) + "（期望 0）\n")
+    assert_eq(e.len(), 0)
+
+    // ⑦ listOr：正常路径原样返回（别把好数据也换成兜底值）
+    Array[string] f2 = Sys.listOr(func() { return dirs.listdir(".") }, [])
+    print("[7] f2.len=" + _str(f2.len()) + "（期望 > 0）\n")
+    assert_eq(f2.len() > 0, true)
+
+    // ⑧ listOr：真·抛异常也兜（`_int("abc")` 是原生异常）
+    Array[string] g = Sys.listOr(func() { return [_str(_int("abc"))] }, ["dflt"])
+    print("[8] g=" + _str(g) + "（期望 [dflt]）\n")
+    assert_eq(g.len(), 1)
+    assert_eq(g[0], "dflt")
+
+    // ⑨ 对照：同一件事走 orDefault 就兜不住（这正是 listOr 存在的理由）
+    Array[string] h = Sys.orDefault(func() { return dirs.listdir("Z:\\__nope_dir__") }, [])
+    print("[9] orDefault + listdir 失败 => type=" + type(h) + "（期望 null：它只兜异常 ✗）\n")
+    assert_eq(type(h), "null")
+
+    print("test_or_default passed\n")
 }
