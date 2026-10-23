@@ -1,0 +1,27 @@
+// Sys.orDefault 真实运行验证
+import "../lib/Sys.leno" as Sys
+import files
+
+main() {
+    // ① 成功：不抛异常 ⇒ 返回 f() 的结果
+    int a = Sys.orDefault(func() { return _int("42") }, -1)
+    print("[1] a=" + _str(a) + "（期望 42）\n")
+
+    // ② 失败：_int("abc") 抛异常 ⇒ 返回默认值
+    int b = Sys.orDefault(func() { return _int("abc") }, -1)
+    print("[2] b=" + _str(b) + "（期望 -1）\n")
+
+    // ③ 数组默认值
+    Array[string] c = Sys.orDefault(func() { return ["x", "y"] }, [])
+    print("[3] c.len=" + _str(c.len()) + "（期望 2）\n")
+
+    Array[string] c2 = Sys.orDefault(func() { return _int("bad") }, [])
+    print("[3b] c2.len=" + _str(c2.len()) + "（期望 0，异常被吃掉）\n")
+
+    // ④ 字符串
+    string d = Sys.orDefault(func() { return files.read("Z:\\nope.txt") }, "dflt")
+    print("[4] d=" + d + "（期望空串或 dflt）\n")
+
+    // ⑤ 异常确实被吞掉：下面还能正常跑
+    print("[5] 程序继续执行 ✓\n")
+}

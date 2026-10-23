@@ -64,16 +64,14 @@ export func sysInfo(): Dict {
     var k = Win32.regOpenKey(Win32.HKEY_LOCAL_MACHINE, _WIN_CV, Win32.KEY_READ)
     if k.errorCode == 0 {
         Ptr h = k.handle
-        try {
-            product = _regField(h, "ProductName")
-            display = _regField(h, "DisplayVersion")
-            buildNo = _regField(h, "CurrentBuildNumber")
-            major = _regValueInt(h, "CurrentMajorVersionNumber")
-            minor = _regValueInt(h, "CurrentMinorVersionNumber")
-            ubr = _regValueInt(h, "UBR")
-        } finally {
-            Win32.regCloseKey(h)
-        }
+        // ★ 2026-10-23：原 try/finally 改成 defer（块退出时关句柄，省一层缩进）
+        defer Win32.regCloseKey(h)
+        product = _regField(h, "ProductName")
+        display = _regField(h, "DisplayVersion")
+        buildNo = _regField(h, "CurrentBuildNumber")
+        major = _regValueInt(h, "CurrentMajorVersionNumber")
+        minor = _regValueInt(h, "CurrentMinorVersionNumber")
+        ubr = _regValueInt(h, "UBR")
     }
 
     // osName 形如 `Windows 10 Pro 22H2`（DisplayVersion 在旧系统上不存在 ⇒ 只有前者 ✓）
@@ -96,7 +94,8 @@ export func sysInfo(): Dict {
                               "HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0", Win32.KEY_READ)
     if ck.errorCode == 0 {
         Ptr ch = ck.handle
-        try { cpuModel = _regField(ch, "ProcessorNameString") } finally { Win32.regCloseKey(ch) }
+        defer Win32.regCloseKey(ch)
+        cpuModel = _regField(ch, "ProcessorNameString")
     }
 
     // ③ 物理内存（KB）—— ✅ 取不到 ⇒ 0（不是"没有内存"✗，是"读不到"⇒ 0 与未知在本结构里同形 ✓）
@@ -397,20 +396,18 @@ func _scanRunKey(Array out, string scope, any hive, string keyPath) {
     var k = Win32.regOpenKey(hive, keyPath, Win32.KEY_READ)
     if k.errorCode != 0 { return }
     Ptr h = k.handle
-    try {
-        var vs = Win32.regEnumValues(h)
-        var vals = vs.values
-        for vals to v {
-            // ★ 枚举出来的元素是**无类型 Array** 的元素 ⇒ 必须 `as` 收窄才能读字段 ✓
-            //   （Win32.leno 头部就点过这个坑：直接 `v.name` / `jsons.get_str(v,…)` 都拿不到值 ✗）
-            RegValueInfo vi = v as RegValueInfo
-            string vn = _str(vi.name)
-            if vn == "" { continue }        // 默认值（无名）不列 ✓
-            out.add({scope: scope, id: vn, name: vn, cmd: _regField(h, vn),
-                     source: "registry", enabled: true})
-        }
-    } finally {
-        Win32.regCloseKey(h)
+    defer Win32.regCloseKey(h)      // ★ 2026-10-23：原 try/finally 改成 defer
+
+    var vs = Win32.regEnumValues(h)
+    var vals = vs.values
+    for vals to v {
+        // ★ 枚举出来的元素是**无类型 Array** 的元素 ⇒ 必须 `as` 收窄才能读字段 ✓
+        //   （Win32.leno 头部就点过这个坑：直接 `v.name` / `jsons.get_str(v,…)` 都拿不到值 ✗）
+        RegValueInfo vi = v as RegValueInfo
+        string vn = _str(vi.name)
+        if vn == "" { continue }        // 默认值（无名）不列 ✓
+        out.add({scope: scope, id: vn, name: vn, cmd: _regField(h, vn),
+                 source: "registry", enabled: true})
     }
 }
 
@@ -452,31 +449,25 @@ func _scanUninstall(Array out, any hive, string rootPath) {
     var k = Win32.regOpenKey(hive, rootPath, Win32.KEY_READ)
     if k.errorCode != 0 { return }        // 很多机器没有 WOW6432Node 那一支 ⇒ 打不开是常态 ✓
     Ptr h = k.handle
-    try {
-        var ss = Win32.regEnumSubKeys(h)
-        var subs = ss.subKeys              // 子键名是**字符串**（`subKeys.add(keyName)` ✓）
-        for subs to sk {
-            string sub = _str(sk)          // 元素为无类型 ⇒ 显式转字符串 ✓
-            if sub == "" { continue }
+    defer Win32.regCloseKey(h)         // ★ 2026-10-23：两层 try/finally 改成嵌套 defer
+    var ss = Win32.regEnumSubKeys(h)
+    var subs = ss.subKeys              // 子键名是**字符串**（`subKeys.add(keyName)` ✓）
+    for subs to sk {
+        string sub = _str(sk)          // 元素为无类型 ⇒ 显式转字符串 ✓
+        if sub == "" { continue }
 
-            var sk2 = Win32.regOpenKey(hive, rootPath + "\\" + sub, Win32.KEY_READ)
-            if sk2.errorCode != 0 { continue }
-            Ptr sh = sk2.handle
-            try {
-                string name = _regField(sh, "DisplayName")
-                if name == "" { continue }                    // 没有显示名 ⇒ 不是"已装软件" ✓
-                if _regValueInt(sh, "SystemComponent") != 0 { continue }   // 系统组件不动 ✓
-                out.add({name: name,
-                         version: _regField(sh, "DisplayVersion"),
-                         publisher: _regField(sh, "Publisher"),
-                         installPath: _regField(sh, "InstallLocation"),
-                         source: "registry"})
-            } finally {
-                Win32.regCloseKey(sh)
-            }
-        }
-    } finally {
-        Win32.regCloseKey(h)
+        var sk2 = Win32.regOpenKey(hive, rootPath + "\\" + sub, Win32.KEY_READ)
+        if sk2.errorCode != 0 { continue }
+        Ptr sh = sk2.handle
+        defer Win32.regCloseKey(sh)    // 在 for 块里 ⇒ **每轮结束就关**（不累积句柄 ✓）
+        string name = _regField(sh, "DisplayName")
+        if name == "" { continue }                    // 没有显示名 ⇒ 不是"已装软件" ✓
+        if _regValueInt(sh, "SystemComponent") != 0 { continue }   // 系统组件不动 ✓
+        out.add({name: name,
+                 version: _regField(sh, "DisplayVersion"),
+                 publisher: _regField(sh, "Publisher"),
+                 installPath: _regField(sh, "InstallLocation"),
+                 source: "registry"})
     }
 }
 
@@ -508,13 +499,10 @@ export func getAutostart(string id): string {
     var k = Win32.regOpenKey(Win32.HKEY_CURRENT_USER, _RUN_KEY, Win32.KEY_READ)
     if k.errorCode != 0 { return "" }
     Ptr h = k.handle
-    try {
-        var rs = Win32.regReadString(h, id)
-        if rs.errorCode != 0 { return "" }
-        return rs.value
-    } finally {
-        Win32.regCloseKey(h)
-    }
+    defer Win32.regCloseKey(h)
+    var rs = Win32.regReadString(h, id)
+    if rs.errorCode != 0 { return "" }
+    return rs.value
 }
 
 export func setAutostart(string id, string name, string cmd): bool {
@@ -525,18 +513,12 @@ export func setAutostart(string id, string name, string cmd): bool {
         var c = Win32.regCreateKey(Win32.HKEY_CURRENT_USER, _RUN_KEY, Win32.KEY_ALL_ACCESS)
         if c.errorCode != 0 { return false }
         Ptr h2 = c.handle
-        try {
-            return Win32.regWriteString(h2, id, cmd) == 0
-        } finally {
-            Win32.regCloseKey(h2)
-        }
+        defer Win32.regCloseKey(h2)    // 在 if 块里 ⇒ 块退出时关 ✓
+        return Win32.regWriteString(h2, id, cmd) == 0
     }
     Ptr h = k.handle
-    try {
-        return Win32.regWriteString(h, id, cmd) == 0
-    } finally {
-        Win32.regCloseKey(h)
-    }
+    defer Win32.regCloseKey(h)
+    return Win32.regWriteString(h, id, cmd) == 0
 }
 
 export func removeAutostart(string id): bool {
@@ -544,13 +526,10 @@ export func removeAutostart(string id): bool {
     var k = Win32.regOpenKey(Win32.HKEY_CURRENT_USER, _RUN_KEY, Win32.KEY_ALL_ACCESS)
     if k.errorCode != 0 { return true }          // 键都打不开 ⇒ 本来就没有自启项（目标已达成 ✓）
     Ptr h = k.handle
-    try {
-        var rs = Win32.regReadString(h, id)
-        if rs.errorCode != 0 { return true }     // 本来就没有 ⇒ 目标已达成 ✓
-        return Win32.regDeleteValue(h, id) == 0
-    } finally {
-        Win32.regCloseKey(h)
-    }
+    defer Win32.regCloseKey(h)
+    var rs = Win32.regReadString(h, id)
+    if rs.errorCode != 0 { return true }     // 本来就没有 ⇒ 目标已达成 ✓
+    return Win32.regDeleteValue(h, id) == 0
 }
 
 // ==================== 最近使用的文件 ====================
