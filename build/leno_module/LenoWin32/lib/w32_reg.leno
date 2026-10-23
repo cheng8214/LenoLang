@@ -462,25 +462,25 @@ export func readExpandString(Ptr hKey, string valueName):ReadExpandStringResult 
 // 读取 DWORD 值（REG_DWORD）
 export func readDword(Ptr hKey, string valueName):ReadDwordResult {
     // ★ 2026-10-23 改用 defer（原先两层 try/finally 嵌套）
-    //   注意：defer 是**块级**的，且按"第一个 defer 的位置"切分作用域 ⇒
-    //   defer 表达式里引用的变量必须声明在**第一个 defer 之前**。
+    //   defer 直接跟在分配后面写 —— 每个 defer 只能看到**它之前**声明的变量，
+    //   而这里正是这个顺序（分配 → defer → 下一个分配 → 下一个 defer）✓
     Ptr dataType = ffi.malloc(4)
-    Ptr dataSize = ffi.malloc(4)
-    Ptr dataBuffer = ffi.malloc(4)
-    Ptr wValueName = if valueName == "" then ffi.nullptr() else ffi.utf8_to_utf16(valueName)
+    defer ffi.free(dataType)
 
-    defer {
-        ffi.free(dataType)
-        ffi.free(dataSize)
-        ffi.free(dataBuffer)
-    }
+    Ptr dataSize = ffi.malloc(4)
+    defer ffi.free(dataSize)
+
+    Ptr dataBuffer = ffi.malloc(4)
+    defer ffi.free(dataBuffer)
+
+    ffi.write_int(dataSize, 0, 4)
+    Ptr wValueName = if valueName == "" then ffi.nullptr() else ffi.utf8_to_utf16(valueName)
     defer {
         if wValueName != ffi.nullptr() {
             ffi.free(wValueName)
         }
     }
 
-    ffi.write_int(dataSize, 0, 4)
     int result = _advLib().RegQueryValueExW(hKey, wValueName, null, dataType, dataBuffer, dataSize)
 
     if result != WinError.SUCCESS {

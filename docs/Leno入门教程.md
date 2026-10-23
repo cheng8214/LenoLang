@@ -9727,25 +9727,32 @@ defer {
 （这也是 FFI 里 `if wName != null { ffi.free(wName) }` 这种条件释放的正解——
 比包一个辅助函数更直接。）
 
-**③ defer 引用的变量必须声明在第一个 `defer` 之前**
+**③ `defer` 只能看到它之前声明的变量**
 
-`defer` 降级成 `try { 其余 } finally { defer表达式 }`，切分点是**第一个 defer 的位置**：
-它之前的语句留在外层，之后的全进 `try`。所以 `finally` 里只看得见**外层**的变量。
+和普通语句一样：引用还没声明的变量就是「未定义」。所以**先声明、后 defer**（可以紧挨着写）：
 
 ```leno
 Ptr a = ffi.malloc(4)
-defer ffi.free(a)          // ← 第一个 defer：切分点在这里
-Ptr c = ffi.malloc(4)      // ← c 声明在切分点之后 ⇒ 进了 try
-defer ffi.free(c)          // ✗ 报「未定义变量 c」（finally 在外层，看不到 c）
+defer ffi.free(a)
+
+Ptr b = ffi.malloc(4)
+defer ffi.free(b)
+
+Ptr c = ffi.malloc(4)
+defer ffi.free(c)
 ```
 
-正确写法：**先全部分配、再统一 defer**。
+三个 `defer` 会在块退出时**逆序**执行（c → b → a）。
+
+块形式的用法也一样：
 
 ```leno
-Ptr a = ffi.malloc(4)
-Ptr b = ffi.malloc(4)
-Ptr c = ffi.malloc(4)
-defer { ffi.free(a); ffi.free(b); ffi.free(c) }   // ✅
+Ptr wName = if name == "" then ffi.nullptr() else ffi.utf8_to_utf16(name)
+defer {
+    if wName != ffi.nullptr() {
+        ffi.free(wName)
+    }
+}
 ```
 
 **④ 块级，所以循环里每轮都执行**（不会累积到函数结束）

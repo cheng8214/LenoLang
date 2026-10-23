@@ -18,21 +18,20 @@ Ast* parse_block_internal(Parser* p) {
     //   为什么选块级而不是 Go 的函数级：块级不会在循环里累积（Go 那样容易把内存拖爆）。
     //   为什么用降级而不是新字节码：finally 的语义已经被 try/finally 完整覆盖，零 codegen 改动 ✓
     Ast** defers = (Ast**)malloc(sizeof(Ast*) * 4);
+    int* defer_pos = (int*)malloc(sizeof(int) * 4);   // 每个 defer 出现时块内已有的语句数
     int defer_cap = 4;
     int defer_count = 0;
-    int split_at = -1;      // 第一个 defer 出现时块内已有的语句数（见下方降级说明）
 
     while (p->lex.current.type != TOK_RBRACE && p->lex.current.type != TOK_EOF) {
         Ast* stmt = parse_statement(p);
         if (stmt && stmt->kind == AST_DEFER) {
-            // 不进语句列表，只记下来（块结束时逆序塞进 finally）
+            // 不进语句列表，只记下来（块结束时按位置逐层打包进 finally）
             if (defer_count >= defer_cap) {
                 defer_cap *= 2;
                 defers = (Ast**)realloc(defers, sizeof(Ast*) * defer_cap);
+                defer_pos = (int*)realloc(defer_pos, sizeof(int) * defer_cap);
             }
-            if (split_at < 0) {
-                split_at = (int)ast->u.block.count;
-            }
+            defer_pos[defer_count] = (int)ast->u.block.count;
             defers[defer_count++] = stmt;
         } else if (stmt) {
             ast_list_add(&ast->u.block, stmt);
@@ -51,66 +50,87 @@ Ast* parse_block_internal(Parser* p) {
     consume(p, TOK_RBRACE, "期望 '}'");
 
     if (defer_count > 0) {
-        // ⚠ 关键：`try` 的 body 与 `finally` 是**兄弟作用域** ⇒ body 里声明的局部变量
-        //   在 finally 里**不可见**。而 `defer ffi.free(p)` 的 p 恰恰常在块内声明
-        //   ⇒ 直接包整块会报「未定义变量 p」（实测）。
-        //   所以按"第一个 defer"切成两段：
-        //     var p = alloc()            ← 留在外层块（p 对 finally 可见）
-        //     defer ffi.free(p)
-        //     其余语句                    ← 进 try
-        //   ⇒ 降级后：
-        //     var p = alloc()
-        //     try { 其余语句 } finally { ffi.free(p) }
+        // ★ 2026-10-23 修：按位置**逐层嵌套**（原来的"一刀切"有 bug）
+        //   旧实现把所有语句分成"第一个 defer 之前/之后"两段、只包一层 finally，
+        //   于是第二个 defer 引用"第一个 defer 之后才声明的变量"就会报「未定义变量」
+        //   （`defer ffi.free(c)` 里的 c 若写在第一个 defer 之后 ⇒ 看不见）。
+        //
+        //   现在每个 defer 各包一层，结构如下（defer 按注册顺序 D0..Dk-1）：
+        //     {
+        //       S[0..p0)
+        //       try {                      ← D0 看得到 S[0..p0)
+        //         S[p0..p1)
+        //         try {                    ← D1 看得到 S[0..p1)
+        //           ...
+        //           try { S[pk-1..n) } finally { Dk-1 }
+        //         } finally { D1 }
+        //       } finally { D0 }
+        //     }
+        //   执行顺序：最内层（最后注册）先跑、最外层后跑 ⇒ **逆序** ✓
+        int total = (int)ast->u.block.count;
         Ast* outer = ast_new(AST_BLOCK, line);
         ast_list_init(&outer->u.block);
+        Ast* cur = outer;
+        int seg = 0;
 
-        int keep = (split_at < 0) ? (int)ast->u.block.count : split_at;
-        for (int i = 0; i < keep; i++) {
-            ast_list_add(&outer->u.block, ast->u.block.items[i]);
-        }
+        for (int i = 0; i < defer_count; i++) {
+            int end = defer_pos[i];
+            if (end > total) end = total;
+            if (end < seg) end = seg;
 
-        Ast* inner = ast_new(AST_BLOCK, line);
-        ast_list_init(&inner->u.block);
-        for (int i = keep; i < (int)ast->u.block.count; i++) {
-            ast_list_add(&inner->u.block, ast->u.block.items[i]);
-        }
-        ast->u.block.count = 0;     // 元素所有权已转移，别让 ast_free 二次释放
-        ast_free(ast);              // 只回收容器（含 items 数组）
+            // 本段语句（defer i 之前、上一段之后）落到当前层
+            for (int s = seg; s < end; s++) {
+                ast_list_add(&cur->u.block, ast->u.block.items[s]);
+            }
 
-        // finally 块 = 逆序的 defer 表达式（后注册先执行）
-        Ast* fin = ast_new(AST_BLOCK, line);
-        ast_list_init(&fin->u.block);
-        for (int i = defer_count - 1; i >= 0; i--) {
+            // 开一层 try，finally = 这个 defer
+            Ast* t = ast_new(AST_TRY, line);
+            t->u.try_.catch_var = NULL;
+            t->u.try_.catch_body = NULL;
+
+            Ast* fin = ast_new(AST_BLOCK, defers[i]->line);
+            ast_list_init(&fin->u.block);
             Ast* body = defers[i]->u.defer_.expr;
             if (body && body->kind == AST_BLOCK) {
-                // 块形式 `defer { ... }`：把里面的语句**整体**搬进 finally
-                //   （保持块内顺序；作为整体参与逆序，不拆散）
+                // 块形式 `defer { ... }`：整体搬进 finally（保持块内顺序）
                 for (int k = 0; k < (int)body->u.block.count; k++) {
                     ast_list_add(&fin->u.block, body->u.block.items[k]);
                 }
-                body->u.block.count = 0;      // 所有权已转移
+                body->u.block.count = 0;
                 ast_free(body);
-            } else {
-                // 表达式形式：包成表达式语句
+            } else if (body) {
                 Ast* es = ast_new(AST_EXPR_STMT, defers[i]->line);
-                es->u.expr_stmt.expr = body;  // 转移所有权
+                es->u.expr_stmt.expr = body;
                 ast_list_add(&fin->u.block, es);
             }
             defers[i]->u.defer_.expr = NULL;   // 防 double free
-            ast_free(defers[i]);               // 只剩空壳
-        }
-        free(defers);
+            t->u.try_.finally_body = fin;
 
-        Ast* t = ast_new(AST_TRY, line);
-        t->u.try_.try_body = inner;
-        t->u.try_.catch_var = NULL;
-        t->u.try_.catch_body = NULL;
-        t->u.try_.finally_body = fin;
-        ast_list_add(&outer->u.block, t);
+            ast_list_add(&cur->u.block, t);
+
+            // 下一层：本层 try 的 body
+            Ast* tb = ast_new(AST_BLOCK, line);
+            ast_list_init(&tb->u.block);
+            t->u.try_.try_body = tb;
+            cur = tb;
+            seg = end;
+        }
+
+        // 最后一段
+        for (int s = seg; s < total; s++) {
+            ast_list_add(&cur->u.block, ast->u.block.items[s]);
+        }
+
+        ast->u.block.count = 0;     // 元素所有权已转移，别让 ast_free 二次释放
+        ast_free(ast);              // 只回收容器（含 items 数组）
+        for (int i = 0; i < defer_count; i++) ast_free(defers[i]);
+        free(defers);
+        free(defer_pos);
         return outer;
     }
 
     free(defers);
+    free(defer_pos);
     return ast;
 }
 

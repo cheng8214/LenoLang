@@ -115,6 +115,16 @@
 
         // try 块中的 return 在此收尾（finally 已执行完）
         if (frame->has_try_return) {
+            // ★ 2026-10-23 修（嵌套 finally 只跑最内层）：
+            //   `try { try { return } finally { B } } finally { A }` 里 B 跑完
+            //   原来直接 REG_FINISH_RETURN ⇒ **A 被静默跳过**（实测 defer 链只执行最后一个，
+            //   readDword 那种两层嵌套的内存释放也一直漏一层，只是泄漏不报错看不出来）。
+            //   现在：还有外层 finally ⇒ 先跳过去，返回值继续暂存（has_try_return 不清）。
+            if (FRAME_TRY_VALID(frame) && frame->finally_ip) {
+                frame->in_finally = 1;
+                frame->ip = frame->finally_ip;
+                DISPATCH();
+            }
             frame->has_try_return = 0;
             Value saved = frame->try_return_value;
             REG_FINISH_RETURN(saved);

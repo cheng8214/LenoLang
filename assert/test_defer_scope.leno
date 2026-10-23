@@ -1,0 +1,59 @@
+// defer 的作用域（2026-10-23 修 bug）
+//
+// 修复前：defer 降级是"第一个 defer 切一刀" ⇒ 第二个 defer 引用
+//   "第一个 defer 之后才声明"的变量会报「未定义变量」。
+// 修复后：每个 defer 各包一层 try/finally ⇒ 只要变量在**该 defer 之前**声明就可见。
+var log = []
+
+// ① 关键用例：变量声明夹在两个 defer 之间
+func chain() {
+    var a = "A"
+    defer log.add("free:" + a)
+
+    var c = "C"                     // ← 声明在第一个 defer 之后
+    defer log.add("free:" + c)      // ← 引用 c（修复前这里编不过）
+
+    var d = "D"
+    defer log.add("free:" + d)
+
+    log.add("body")
+}
+
+// ② 嵌套块 + 后续 defer
+func nested() {
+    var outer = "O"
+    defer log.add("outer:" + outer)
+    if true {
+        var inner = "I"
+        defer log.add("inner:" + inner)
+        log.add("inner-body")
+    }
+    var after = "AF"
+    defer log.add("after:" + after)
+    log.add("after-body")
+}
+
+// ③ 提前 return：逆序执行仍然成立
+func early(int k): int {
+    var p1 = "P1"
+    defer log.add("free:" + p1)
+    var p2 = "P2"
+    defer log.add("free:" + p2)
+    if k > 0 { return 1 }
+    return 2
+}
+
+main() {
+    chain()
+    assert_eq(log.join(","), "body,free:D,free:C,free:A")
+
+    log = []
+    nested()
+    // if 块先退出（inner:I）⇒ 然后 after-body ⇒ 函数退出时逆序 after:AF、outer:O
+    assert_eq(log.join(","), "inner-body,inner:I,after-body,after:AF,outer:O")
+
+    log = []
+    int r = early(1)
+    assert_eq(r, 1)
+    assert_eq(log.join(","), "free:P2,free:P1")
+}
