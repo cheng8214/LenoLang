@@ -1609,6 +1609,20 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                         error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "string 类型不能参与算术运算");
                         result = type_new(TYPE_ANY);
                     }
+                    // ★ 2026-10-24：float 参与**位运算** -> 编译错误（取模除外！）
+                    //   原来这一整组（MOD/BITAND/BITOR/BITXOR/SHL/SHR/USHR）共用一条链，
+                    //   没有 float 分支 ⇒ 掉进最后的 else 当 int 处理：
+                    //     · `1 & 2.5`  编译通过，运行时才报「位与运算: 操作数必须是整数」✗
+                    //       而 `"a" & 1` / `true & 1` 编译期就能拦住 ⇒ 三个口径不一致
+                    //     · `1.5 << 1` 更糟：运行时把 float 静默截断成 1 再移位，给出 2、零提示
+                    //   ⚠ 必须排除 TOK_MOD：`7.5 % 3 = 1.5` 是**合法**的浮点取模，不能误伤。
+                    else if (ast->u.binop.op != TOK_MOD && left && right &&
+                        (left->kind == TYPE_FLOAT || right->kind == TYPE_FLOAT)) {
+                        error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                            "float 类型不能参与位运算（请先转成整数：_int(x) 或 x as int；"
+                            "取模 %% 是允许的）");
+                        result = type_new(TYPE_ANY);
+                    }
                     // 位运算和取模：如果任一操作数是 bigint，返回 bigint
                     else if (left && right &&
                         (left->kind == TYPE_BIGINT || right->kind == TYPE_BIGINT)) {

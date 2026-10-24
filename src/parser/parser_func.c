@@ -3498,6 +3498,22 @@ Ast* parse_enum_stmt(Parser* p) {
         return NULL;
     }
 
+    // ★ 2026-10-24：enum 成员**重名检查**
+    //   `enum Color { red red blue }` 原来编译通过、无任何提示，而 Color.red 得到 0、
+    //   blue 得到 2 —— 后者静默覆盖前者，值还错位了（另一 AI 的第三轮测试报告发现）。
+    //   ⚠ 显式值相同（`A = 41, B = 41`）是**别名**，合法，不在检查范围（只查名字）。
+    for (int i = 0; i < member_count; i++) {
+        for (int j = 0; j < i; j++) {
+            if (member_names[i] && member_names[j] &&
+                strcmp(member_names[i], member_names[j]) == 0) {
+                error_add_at_fmt(ERR_SEMANTIC, line, 1,
+                    "enum '%s' 存在重复成员 '%s'（成员 %d 与成员 %d 同名）",
+                    enum_name ? enum_name : "?", member_names[i], j + 1, i + 1);
+                break;
+            }
+        }
+    }
+
     // 创建 enum 定义 AST 节点
     Ast* ast = ast_new(AST_ENUM_DEF, line);
     ast->u.enum_def.name = enum_name;
