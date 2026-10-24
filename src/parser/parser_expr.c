@@ -704,6 +704,18 @@ Ast* parse_call(Parser* p, Ast* callee) {
         return callee;  // 不是函数调用，返回原表达式
     }
 
+    // ★ 2026-10-24 修（第四轮报告 B6）：**跨行的 `(` 不当作调用**
+    //   与 parse_postfix_inc_dec（`++`/`--`）**同一判据、同一理由**（JS restricted production）：
+    //   本语言不吃分号，中缀 `(` 会把**下一行行首**的 `(expr)` 吞成对上一行表达式的调用：
+    //       var a = 1
+    //       (a)++          ⇒ 被吞成 `1(a)++` ⇒ 报「变量 a 在初始化前使用」（指不到真因）
+    //   判据用 p->lex.prev 的行号 —— 它就是"左表达式最后一个 token"：
+    //     · `var a = 1` + 换行 `(a)++` ⇒ prev(1) 行 2、`(` 行 3 ⇒ 不同行 ⇒ 不当调用 ✓
+    //     · `foo(\n a,\n b)` ⇒ `(` 与 `foo` 同行 ⇒ 照旧 ✓（多行实参不受影响）
+    //   代价：真把 `(` 单独写在下一行的人会得到"两条语句" —— 那种写法可读性极差，
+    //   与 `++` 那条取舍一致（见 parse_postfix_inc_dec 的说明）。
+    if (p->lex.current.line != p->lex.prev.line) return callee;
+
     int line = p->lex.current.line;
 
     // 普通函数调用
