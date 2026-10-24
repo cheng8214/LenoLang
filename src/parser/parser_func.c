@@ -2392,6 +2392,30 @@ Ast* parse_struct_stmt(Parser* p) {
             } // end else (方法定义)
         } // end if TOK_FUNC
 
+        // ★ 2026-10-24：struct 内写 `static func` ⇒ 定向报错
+        //   原来 `static` 被 parse_type 当成一个叫 static 的 struct 类型、`func` 被当成
+        //   字段名 ⇒ 报「期望字段名 / 期望 '}' / 期望表达式」3 条级联，完全指不出真因
+        //   （另一 AI 第三轮测试报告 g03）。
+        //   Leno 里 struct 方法本来就不占实例内存、模块级函数天然全局 ⇒ 没有 static 概念。
+        if (p->lex.current.type == TOK_IDENT && p->lex.current.len == 6 &&
+            memcmp(p->lex.current.text, "static", 6) == 0) {
+            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                "Leno **没有 `static`** ✗ —— struct 方法本来就不占实例内存，"
+                "直接写 `func 名字(参数): 返回类型 { … }` 即可；常量写在模块顶层用 `const X = 1` ✓");
+            // 跳到 struct 的 '}'（**不消费**它，留给正常收尾），避免后续级联报错
+            int depth = 0;
+            while (p->lex.current.type != TOK_EOF) {
+                if (p->lex.current.type == TOK_LBRACE) {
+                    depth++;
+                } else if (p->lex.current.type == TOK_RBRACE) {
+                    if (depth == 0) break;
+                    depth--;
+                }
+                lexer_next(&p->lex);
+            }
+            break;
+        }
+
         // 解析字段类型
         TypeInfo* field_type = NULL;
 

@@ -44,6 +44,13 @@ Ast* parse_statement(Parser* p) {
         } else if (cur_ident_is(p, "elif") || cur_ident_is(p, "elseif")) {
             sub = "Leno **没有 `elif` / `elseif`** ✗ —— 用 `eif`："
                   "`if c1 { … } eif c2 { … } else { … }`（`else if` 两个词的写法也合法 ✓）";
+        } else if (cur_ident_is(p, "static")) {
+            // ★ 2026-10-24：`static func` 原来报 3 条级联语法错误（期望表达式 / 期望 '}' …），
+            //   完全没提"Leno 不支持 static"。struct 方法本来就不占实例内存、
+            //   模块级函数天然全局 ⇒ 根本没有 static 这个概念。
+            sub = "Leno **没有 `static`** ✗ —— struct 方法本来就不占实例内存、"
+                  "模块级函数天然是全局的，直接写 `func 名字(参数): 返回类型 { … }` 即可；"
+                  "常量写在模块顶层用 `const X = 1` ✓";
         }
         if (sub) {
             int bad_line = p->lex.current.line;
