@@ -1,0 +1,56 @@
+// 复合赋值作表达式：必须「执行副作用 + 返回新值」（2026-10-24，第四轮报告 B2，P0）
+//
+// 修前：`gen_expr` 里没有 AST_COMPOUND_ASSIGN 分支，落进 default 只发一条 nil
+//   ⇒ 副作用和返回值**双双丢失**，而且没有任何提示：
+//       var c = 1
+//       var d = (c += 5)      // c 仍是 1，d 是 null
+//   这比普通的"值算错"更危险 —— 用户以为赋值成功了，其实什么都没发生。
+//
+// 为什么按「支持」而不是「报错」修：普通赋值 `(a = 5)` 在表达式位置本来就能用
+//   （返回 5），复合赋值没有理由例外。
+//
+// 实现：复用语句级的 gen_compound_assign（算 + 写回槽位），
+//   再按 AST_ASSIGN 的口径把写入后的新值取到目标寄存器。
+main() {
+    // ① 报告里的最小复现：副作用和新值都要有
+    var c = 1
+    var d = (c += 5)
+    assert_eq(c, 6)
+    assert_eq(d, 6)
+
+    // ② 其余算术复合赋值：返回值 == 变量的新值
+    var a = 10
+    assert_eq((a -= 3), 7)
+    assert_eq(a, 7)
+    assert_eq((a *= 2), 14)
+    assert_eq(a, 14)
+    assert_eq((a /= 7), 2)
+    assert_eq(a, 2)
+
+    var b = 7
+    assert_eq((b %= 4), 3)
+    assert_eq(b, 3)
+
+    // ③ 位运算复合赋值
+    var f = 2
+    assert_eq((f &= 1), 0)
+    assert_eq((f |= 5), 5)
+    assert_eq((f ^= 1), 4)
+    assert_eq((f <<= 2), 16)
+    assert_eq((f >>= 3), 2)
+
+    // ④ 嵌在更大的表达式里（返回值要能直接参与运算）
+    var g = 1
+    assert_eq(3 + (g += 4), 8)
+    assert_eq(g, 5)
+
+    // ⑤ float 复合赋值作表达式
+    var q = 2.5
+    assert_eq((q += 0.5), 3.0)
+    assert_eq(q, 3.0)
+
+    // ⑥ 对照：语句位置的复合赋值一直正常，不能被这次改动影响
+    var s = 1
+    s += 9
+    assert_eq(s, 10)
+}

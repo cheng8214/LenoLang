@@ -911,6 +911,37 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
             gen_index_assign(gen, ast, dst);
             break;
 
+        // --- 复合赋值作为表达式：`var d = (c += 5)` ---
+        //   ★ 2026-10-24 修（第四轮报告 B2，P0）：原来 `gen_expr` 没有这个分支，
+        //   落进 default ⇒ **只发一条 nil**，`+=` 的副作用和返回值双双丢失：
+        //       var c = 1
+        //       var d = (c += 5)     // 修前：c 仍是 1、d 是 null（一声不吭）
+        //                            // 修后：c = 6、d = 6
+        //   为什么是 bug 而不是"设计上不支持"：普通赋值 `(a = 5)` 在表达式位置
+        //   **是能用的**（返回 5），复合赋值没有理由例外。
+        //   实现：直接复用语句级的 gen_compound_assign（它负责算 + 写回槽位），
+        //   再按 AST_ASSIGN 的口径把"写入后的新值"取到 dst。
+        case AST_COMPOUND_ASSIGN: {
+            gen_compound_assign(gen, ast);
+
+            SymRef* cref = &ast->u.compound_assign.ref;
+            if (!cref->name) {
+                emit_loadnil_to(gen, dst, ast->line);
+            } else if (cref->kind == SYM_LOCAL || cref->kind == SYM_PARAM) {
+                if (cref->index != dst) emit_mov(gen, dst, cref->index, ast->line);
+            } else if (cref->kind == SYM_GLOBAL) {
+                emit_getglobal_to(gen, dst, cref->index, ast->line);
+            } else if (cref->kind == SYM_UPVALUE) {
+                emit_getupval_to(gen, dst, cref->index, ast->line);
+            } else if (cref->kind == SYM_MODULE) {
+                // 模块变量：索引是 16 位 Bx（与 VM 的 READ_Bx 一致，见上面 AST_VAR 分支）
+                reg_encode_iABx(gen->chunk, OP_GET_MODULE_VAR, dst, cref->index, ast->line);
+            } else {
+                emit_loadnil_to(gen, dst, ast->line);
+            }
+            break;
+        }
+
         // --- 赋值作为表达式（parser 会把赋值语句包成表达式语句）---
         case AST_ASSIGN: {
             gen_assign(gen, ast);
