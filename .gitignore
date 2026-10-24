@@ -47,4 +47,7 @@ assert/run_tests.exe
 # build/ 下的临时探针与命令输出（约定：以 `_` 开头 —— _th1_pa.leno / _suite_out.txt / _t1_err.txt …）
 #   ⚠ build/ 是**允许入库**的目录（leno_module/ 等在里面）⇒ 不能用 build/ 整体忽略，
 #     只能按"下划线前缀"这条命名约定排除（2026-10-12 加：一次 `git add -A` 把 _suite2.out 扫进去了）
-build/_*
+build/_*  
+# 语法测试临时目录（其他 AI 生成的探针，不进仓库）  
+.tmp_syntax_probe/  
+tmp_syntax_probe/  

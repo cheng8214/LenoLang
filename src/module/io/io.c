@@ -257,8 +257,15 @@ static void print_dict_internal(ObjDict* dict) {
         Value value = dict_get(dict, order_key);
         if (!dict_has(dict, order_key)) continue;
 
-        // 跳过整数键（这些应该在数组部分处理）
-        if (val_is_int(order_key)) continue;
+        // 整数键：**照常打印**，不再跳过。
+        //   ★ 2026-10-24 改（顺序 + 丢键一起修）：
+        //     原来这里无条件 `if (val_is_int(order_key)) continue;`，指望下面的
+        //     「array[0..asize) 循环」补上。但 object_dict.c 的稀疏保护会把
+        //     「> asize*2 且 > 64」的 int 键挪进哈希部分 ⇒ 两个循环都不打 ⇒ 静默丢键
+        //     （实测 d[0]=0; d[65]=65 ⇒ {0: 0}）。
+        //     而 order 数组本来就是**插入序**（len() / keys() 都靠它，实测完整）
+        //     ⇒ 直接以 order 为准打印：既不丢键，顺序也回到插入序 ✓
+        //     （下面那段 array 循环已删，见注释）
         // 跳过纯数字字符串键
         if (val_is_obj(order_key) && val_as_obj(order_key)->type == OBJ_STRING) {
             ObjString* ks = (ObjString*)val_as_obj(order_key);
@@ -291,17 +298,10 @@ static void print_dict_internal(ObjDict* dict) {
         printed++;
     }
 
-    // 处理数组部分的数字键（按数字顺序）
-    for (int i = 0; i < dict->asize; i++) {
-        if (!val_is_null(dict->array[i])) {
-            if (printed > 0) {
-                printf(", ");
-            }
-            printf("%d: ", i);
-            print_value_quoted(dict->array[i]);
-            printed++;
-        }
-    }
+    // ★ 2026-10-24：**不再遍历 array[0..asize)**。
+    //   order 数组是插入序、且包含全部键（len()/keys() 都基于它，实测各写入路径都完整），
+    //   上面那段已经把数组部分的 int 键一并打了；再走 array 会**重复打印**。
+    //   ⚠ 如果以后有"只写 array 不写 order"的路径，这里会漏 —— 但那种路径本身就是 bug。
 
     printf("}");
 }

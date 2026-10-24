@@ -1,0 +1,56 @@
+// print(dict) / _str(dict) 不能丢 int 键（2026-10-23 修）
+//
+// 背景：object_dict.c 的稀疏保护会把「> asize*2 且 > 64」的 int 键挪进哈希部分，
+//   而 io.c 的 print_dict_internal 与 value.c 的 value_to_string **都无条件跳过 int 键**
+//   （注释假设"数组部分会处理"）⇒ 这些键两个循环都不打 ⇒ 打印静默少东西，
+//   但 len() / keys() / 下标读取全部正常（数据没丢，只是显示丢）。
+//
+// 修法：只跳过「确实落在数组部分」的 int 键（ik < asize 且 array[ik] 非 null），
+//   其余落到正常打印流程。
+import strings
+
+main() {
+    // ① 超过稀疏阈值（asize 小 + 键 65 > 64）
+    var d = {}
+    d[0] = 0
+    d[65] = 65
+    assert_eq(d.len(), 2)
+    assert_eq(d.keys().len(), 2)
+    string s = _str(d)
+    assert_true(strings.find(s, "65") >= 0)    // 键必须出现在输出里
+    assert_true(strings.find(s, "0") >= 0)
+
+    // ② 字符串键 + 大 int 键
+    var f = {"a": 1}
+    f[123] = 5
+    string s2 = _str(f)
+    assert_true(strings.find(s2, "123") >= 0)
+    assert_true(strings.find(s2, "a") >= 0)
+
+    // ③ 小 int 键（落在数组部分）：不能重复打印
+    var e = {}
+    e[0] = 0
+    e[2] = 2
+    assert_eq(_str(e), "{0: 0, 2: 2}")
+
+    // ④ 删除后不出现
+    var g = {}
+    g[100] = 1
+    g[200] = 2
+    g.remove(100)
+    string s4 = _str(g)
+    assert_true(strings.find(s4, "100") < 0)
+    assert_true(strings.find(s4, "200") >= 0)
+
+    // ⑤ 顺序必须是**插入序**（2026-10-24 起：以 order 为准，不再有"数组部分后置"）
+    //   修前 d[0] 会被挤到最后（{65: 65, s: 1, 200: 2, 0: 0}）
+    var h = {}
+    h[0] = 0
+    h[65] = 65
+    h["s"] = 1
+    h[200] = 2
+    assert_eq(_str(h), "{0: 0, 65: 65, s: 1, 200: 2}")
+
+    var i2 = {"a": 1, 0: 2, 100: 3}
+    assert_eq(_str(i2), "{a: 1, 0: 2, 100: 3}")
+}

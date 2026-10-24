@@ -181,8 +181,9 @@ char* value_to_string(Value v) {
                 for (int i = 0; i < dict->order_count; i++) {
                     Value key = dict->order[i];
                     if (!dict_has(dict, key)) continue;
-                    // 跳过纯数字键（整数键）
-                    if (val_is_int(key)) continue;
+                    // ★ 2026-10-24：整数键**照常输出**（与 io.c 的 print 同口径）。
+                    //   order 是插入序且包含全部键（len()/keys() 都基于它，实测完整）
+                    //   ⇒ 以它为准既不丢键、顺序也正确。下面那段 array 循环已删。
                     entry_count++;
                     ObjString* key_str = dict_key_to_string(key);
                     total_len += key_str->len + 2; // key + ": "
@@ -192,19 +193,8 @@ char* value_to_string(Value v) {
                     free(val_str);
                     if (entry_count > 1) total_len += 2; // ", "
                 }
-                // 数组部分的数字键
-                for (int i = 0; i < dict->asize; i++) {
-                    if (!val_is_null(dict->array[i])) {
-                        entry_count++;
-                        char key_buf[32];
-                        snprintf(key_buf, sizeof(key_buf), "%d", i);
-                        total_len += (int)strlen(key_buf) + 2;
-                        char* val_str = value_to_string(dict->array[i]);
-                        total_len += (int)strlen(val_str);
-                        free(val_str);
-                        if (entry_count > 1) total_len += 2;
-                    }
-                }
+                // ★ 2026-10-24：不再遍历 array[0..asize) —— order 已覆盖全部键，
+                //   再走一遍会重复计算长度（进而多分配 / 拼接时越界）。
                 result = (char*)malloc(total_len + 1);
                 result[0] = '{';
                 int pos = 1;
@@ -212,8 +202,9 @@ char* value_to_string(Value v) {
                 for (int i = 0; i < dict->order_count; i++) {
                     Value key = dict->order[i];
                     if (!dict_has(dict, key)) continue;
-                    // 跳过纯数字键（整数键）
-                    if (val_is_int(key)) continue;
+                    // ★ 2026-10-24：整数键**照常输出**（与 io.c 的 print 同口径）。
+                    //   order 是插入序且包含全部键（len()/keys() 都基于它，实测完整）
+                    //   ⇒ 以它为准既不丢键、顺序也正确。下面那段 array 循环已删。
                     if (printed > 0) {
                         result[pos++] = ',';
                         result[pos++] = ' ';
@@ -231,27 +222,8 @@ char* value_to_string(Value v) {
                     free(val_str);
                     printed++;
                 }
-                for (int i = 0; i < dict->asize; i++) {
-                    if (!val_is_null(dict->array[i])) {
-                        if (printed > 0) {
-                            result[pos++] = ',';
-                            result[pos++] = ' ';
-                        }
-                        char key_buf[32];
-                        snprintf(key_buf, sizeof(key_buf), "%d", i);
-                        int key_len = (int)strlen(key_buf);
-                        memcpy(result + pos, key_buf, key_len);
-                        pos += key_len;
-                        result[pos++] = ':';
-                        result[pos++] = ' ';
-                        char* val_str = value_to_string(dict->array[i]);
-                        int val_len = (int)strlen(val_str);
-                        memcpy(result + pos, val_str, val_len);
-                        pos += val_len;
-                        free(val_str);
-                        printed++;
-                    }
-                }
+                // ★ 2026-10-24：不再遍历 array[0..asize)（理由同上：order 已覆盖全部键，
+                //   再拼一遍会重复输出并把 pos 推过 total_len）。
                 result[pos++] = '}';
                 result[pos] = '\0';
             } else if (val_as_obj(v)->type == OBJ_STRUCT) {
