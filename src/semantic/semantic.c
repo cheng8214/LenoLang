@@ -151,6 +151,8 @@ void semantic_init(Semantic* s, Ast* root) {
     s->in_clib = 0;
     s->has_module_load_failure = 0;
     s->in_main_func = 0;
+    s->for_in_lhs = NULL;   // ★ Q3：for 头 `x in y` 的定向提示用（漏清就是读栈上垃圾）
+    s->for_in_lhs_name = NULL;
     // ★ US1：同上 —— 本函数**不是**整体 memset ⇒ 漏清就是读栈上垃圾。
     //   实测（2026-10-12）：漏了这一行时，**模块模式**下这个字段是垃圾非零 ⇒
     //   类型归一化整段被跳过 ⇒ 模块里写 `m.Pt` 直接报"未定义的类型: Pt"✗（入口脚本模式恰好是 0）

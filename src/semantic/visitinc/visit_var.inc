@@ -361,9 +361,29 @@
             //    不会误报 ✓ 方向是安全的 —— 未使用变量的诊断宁漏勿误报 ✓）
             if (sym) sym->is_read = 1;
             if (!sym) {
-                const char* hint = get_similar_name_hint(s->current, ast->u.var.name);
-                error_add_at_fmt(ERR_UNDEFINED_VAR, ast->line, ast->column,
-                                 "未定义的变量: %s%s", ast->u.var.name, hint);
+                // ★ 2026-10-24（Q3）：`for k in d` 里那个未定义的 k（用户想遍历字典/数组）
+                //   原来报「未定义的变量: k」+ 拼写建议「是否想输入 'd'？」——
+                //   两条都指不到真因（真因：本语言遍历写 `for 集合 to 变量`，集合在前；
+                //   `x in y` 是**条件循环**，x 必须是已定义的外部变量）。
+                if (s->for_in_lhs == ast) {
+                    // ★ 2026-10-24（Q3）：`for k in 集合` 里的 k **未定义** ——
+                    //   原来报「未定义的变量: k」+ 拼写建议「是否想输入 'd'？」，两条都误导。
+                    //   这里直接说清：这个形状不是遍历（for 是区间循环，`in` 是成员测试，
+                    //   端点变 bool ⇒ 空区间 ⇒ 一次都不跑），并给出正确写法。
+                    error_add_at_fmt(ERR_UNDEFINED_VAR, ast->line, ast->column,
+                        "for 头的 `%s in 集合` 不是遍历写法（`in` 是成员测试运算符，"
+                        "而 for 是区间循环 ⇒ 循环体不会执行），且 %s 未定义；"
+                        "遍历请写 `for 集合 to %s`（**集合在前**）",
+                        ast->u.var.name, ast->u.var.name, ast->u.var.name);
+                } else if (s->for_in_lhs_name && ast->u.var.name &&
+                           strcmp(s->for_in_lhs_name, ast->u.var.name) == 0) {
+                    // ★ Q3：同一条 for 的循环体里再引用这个名字 ⇒ 上面已定向报过一次，
+                    //   这里**静默**，不再刷「未定义变量 + 拼写建议」（级联噪音）。
+                } else {
+                    const char* hint = get_similar_name_hint(s->current, ast->u.var.name);
+                    error_add_at_fmt(ERR_UNDEFINED_VAR, ast->line, ast->column,
+                                     "未定义的变量: %s%s", ast->u.var.name, hint);
+                }
             } else if (sym->is_initialized == 2) {
                 // 变量正在初始化中，不允许引用自身
                 error_add_at_fmt(ERR_UNDEFINED_VAR, ast->line, ast->column,

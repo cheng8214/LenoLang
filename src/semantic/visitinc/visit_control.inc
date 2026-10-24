@@ -594,11 +594,32 @@
             // D3: for 头的 'x in arr'（Python 遍历习惯）语法上是条件循环——in 是成员测试
             // 运算符，x 需是已定义的外部变量。人类几乎总想写遍历，给出写法指引。
             Ast* for_cond = ast->u.for_.end ? ast->u.for_.end : ast->u.for_.start;
+            // ★ 2026-10-24（Q3）：把 `x in ...` 里的那个 `x` 记在 s->for_in_lhs 上
+            //   ⇒ 若 x **未定义**，visit_var 会给定向提示（真因是遍历要把集合写在前），
+            //   而不是原来的「未定义的变量: k」+ 误导性拼写建议「是否想输入 'd'？」。
+            //   保存/恢复：for 体里可能再嵌一个 `for a in b`，会覆盖本字段。
+            Ast* _saved_for_in_lhs = s->for_in_lhs;
+            const char* _saved_for_in_name = s->for_in_lhs_name;
             if (for_cond && for_cond->kind == AST_BINOP &&
                 (for_cond->u.binop.op == TOK_IN || for_cond->u.binop.op == TOK_NOT_IN) &&
                 for_cond->u.binop.l && for_cond->u.binop.l->kind == AST_VAR) {
-                warning_add_at_fmt(WARN_FOR_IN_COND, for_cond->line, for_cond->column,
-                    "for 头的 'x in arr' 是条件循环（in 为成员测试运算符，x 需是已定义的外部变量）；若想遍历集合请写 'for arr to x'（**集合在前**）");
+                s->for_in_lhs = for_cond->u.binop.l;
+                s->for_in_lhs_name = for_cond->u.binop.l->u.var.name;
+                // ★ 2026-10-24（Q3 复核）：**只在 x 已定义时警告**（未定义交给 visit_var 报错）。
+                //   顺便把文案改准 —— 实测原来的说法「这是条件循环」**是错的**：
+                //     `for key in d`（key 已定义、"a" 确实是 d 的键）⇒ 循环体 **0 次**；
+                //     `for e in [10,20]`（e=10 是元素）⇒ 同样 0 次。
+                //   原因：本语言的 for 是**区间循环**，`x in y` 被当作区间的端点，
+                //   而端点是个 bool ⇒ 空区间 ⇒ 一次都不跑。
+                //   查法同 visit_expr.inc 的 const 检查（只查符号，不改状态）。
+                SymRef _probe; memset(&_probe, 0, sizeof(_probe));
+                if (resolve_variable_with_upvalue(s, for_cond->u.binop.l->u.var.name, &_probe)) {
+                    warning_add_at_fmt(WARN_FOR_IN_COND, for_cond->line, for_cond->column,
+                        "for 头的 `%s in 集合` 不是遍历写法：`in` 是成员测试运算符，"
+                        "而 for 是**区间循环** ⇒ 循环体会**一次都不执行**；"
+                        "遍历请写 `for 集合 to %s`（**集合在前**）",
+                        for_cond->u.binop.l->u.var.name, for_cond->u.binop.l->u.var.name);
+                }
             }
 
             // ★ WARN_FOR_EMPTY_RANGE（2026-10-17 实现；枚举与类别名早就有、一直零调用点）：
@@ -750,6 +771,8 @@
                     scope_free(for_scope);
                 }
             }
+            s->for_in_lhs = _saved_for_in_lhs;  // ★ Q3：恢复（for 体里可能嵌套覆盖过）
+            s->for_in_lhs_name = _saved_for_in_name;
             sem_local_release(s, _mark_for);   // ★ 槽位回收：见 case 开头的说明
             break;
         }

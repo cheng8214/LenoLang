@@ -1,0 +1,54 @@
+// for 头 `x in 集合` 的诊断与语义（2026-10-24，第四轮报告 Q3）
+//
+// 【本语言的 for 是**区间循环**，遍历写法是 `for 集合 to 变量`（集合在前）】
+//
+// 实测（2026-10-24 复核）揭示了一个比"报错文案差"更严重的事实：
+//   `for x in 集合` 的循环体 **一次都不执行** —— 即使 x 已定义、且值确实是容器的键/元素：
+//       var key = "a"                  // "a" 确实是 d 的键
+//       for key in d { ... }           // 循环体执行 0 次
+//       var e = 10                     // 10 确实是 arr 的元素
+//       for e in arr { ... }           // 同样 0 次
+//   原因：`x in y` 被当成区间的**端点**，而端点是个 bool ⇒ 空区间 ⇒ 0 次。
+//
+// ⇒ 这个形状**没有任何合法用法**，所以原来那条「这是条件循环，x 需是已定义的外部变量」
+//   的警告是**错的**（它会让人以为只是"要先把 x 定义好"）。现在改成无条件报错：
+//       for 头的 `key in 集合` 不是遍历写法（`in` 是成员测试运算符），循环体不会执行；
+//       遍历请写 `for 集合 to key`（集合在前）
+//   并且循环体里再引用该名字时**不再**刷「未定义的变量 + 拼写建议」。
+//
+// 下面钉住的是**正确写法**（报错那条无法用断言表达）。
+
+main() {
+    // ① 遍历字典：集合在前，同时拿下键和值
+    var d = {"a": 1, "b": 2}
+    var keys = []
+    int rounds = 0
+    for d to k, v {
+        keys.add(k)
+        assert_eq(d[k], v)
+        rounds = rounds + 1
+    }
+    assert_eq(rounds, 2)
+    assert_eq(keys.len(), 2)
+
+    // ② 遍历数组：元素
+    var arr = [10, 20, 30]
+    int sum = 0
+    int n = 0
+    for arr to e {
+        sum = sum + e
+        n = n + 1
+    }
+    assert_eq(sum, 60)
+    assert_eq(n, 3)
+
+    // ③ 数字区间（for 的本义）
+    int count = 0
+    int total = 0
+    for 0:3 to i {
+        count = count + 1
+        total = total + i
+    }
+    assert_eq(count, 4)
+    assert_eq(total, 6)
+}
