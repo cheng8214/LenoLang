@@ -878,6 +878,20 @@ static void check_var_decl_boundary(Parser* p, int decl_line) {
     // 同一行出现非分隔符 token，说明缺少换行或分号
     if (p->lex.current.line == decl_line) {
         const char* found;
+        // ★ 2026-10-24：**全角标点**定向提示
+        //   `；`(U+FF1B) / `，`(U+FF0C) / `：`(U+FF1A) 这些在词法上是**标识符**，
+        //   于是原来只报「同一行出现标识符」—— 完全指不出真因（用户想不到是全角）。
+        //   UTF-8 全角区 U+FF00..U+FF3F 的前两字节固定是 EF BC。
+        if (t == TOK_IDENT && p->lex.current.len >= 3) {
+            const unsigned char* bs = (const unsigned char*)p->lex.current.text;
+            if (bs[0] == 0xEF && bs[1] == 0xBC) {
+                error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                    "出现**全角标点** `%.*s` —— Leno 只认半角 ASCII 标点："
+                    "`;` `,` `:` `(` `)` `{` `}` `[` `]`（中文输入法下很容易打成全角）",
+                    p->lex.current.len, p->lex.current.text);
+                return;
+            }
+        }
         if (t == TOK_NUM) {
             found = "数字";
         } else if (t == TOK_STRING) {
