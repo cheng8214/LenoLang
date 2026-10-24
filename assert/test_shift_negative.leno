@@ -1,0 +1,90 @@
+// 负移位量：**常量折叠 / 运行期 / 三条移位运算符**必须完全一致（2026-10-24，第六轮报告 N8 / Q8）
+//
+// 改之前（round6 实测）：
+//   print(8 << -1)         → 静默 0   ✗（编译期 double 折叠路径把负移位交给了 C 的 `<< -1`，UB）
+//   print(8 >> -1)         → 静默 0   ✗
+//   const C = 8 << -1      → C=0      ✗
+//   print(8 << (2 - 3))    → 静默 0   ✗（折叠表达式）
+//   var r = 8 << (1 - 2)   → 静默 0   ✗
+//   而 print(8 >>> -1)     → **报错** ✔（USHR 没有 double 折叠分支，落到了运行期检查）
+//   ⇒ 同一条语句，换种写法 / 换个运算符，结果从"报错"变成"静默 0"。
+//
+// 根因：`optimize.c` 的 i64 精确折叠对 rv < 0 是"不折"（return 0），但 return 之后控制流
+//   会继续落到 double 折叠路径，那里的 TOK_SHL/TOK_SHR 只判了 `>= 32`、漏了负值。
+//
+// 现在：double 折叠路径同样"负值不折" ⇒ 六种写法全部落到运行期的 SHL_BODY/SHR_BODY/USHR_BODY，
+//   统一报「移位量不能为负」。下面先用正向用例钉住**合法移位**没被改坏，再逐条钉报错。
+//
+// ⚠ Q8 顺带修的两处：
+//   · USHR_BODY 内层那段"负移位量"检查永远不可达（外层已经拦掉）⇒ 删掉，免得后人误判覆盖面；
+//   · op_name_to_human 里 `USHR` 排在 `SHR` **后面** ⇒ 子串先命中 "SHR"，
+//     `8 >>> -1` 的报错显示「[操作] 右移 (>>)」与源码对不上 ⇒ 现在显示「逻辑右移 (>>>)」。
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+
+main() {
+    // ---- 正向：合法移位照旧（折叠与运行期都对）----
+    var ok = dirs.join(_tmpdir(), "leno_shift_ok")
+    dirs.delete(ok)
+    dirs.mkdir_p(ok)
+    var okf = dirs.join(ok, "shift_ok.leno")
+    files.write(okf, @"main() {
+    // 折叠路径
+    print(""a="" + _str(1 << 4))
+    print(""b="" + _str(256 >> 4))
+    print(""c="" + _str(-1 >>> 8))
+    print(""d="" + _str((1 << 47) << 1))
+    print(""f="" + _str(123456789012345 << 3))
+    const K = 3 << 2
+    print(""i="" + _str(K))
+    // 运行期路径（变量移位量）
+    var x = 8
+    var n = 2
+    print(""g="" + _str(x << n) + ""/"" + _str(x >> n) + ""/"" + _str(x >>> n))
+}
+")
+    // 1<<47<<1 = 281474976710656（走 bigint 精确路径）；123456789012345<<3 = 987654312098760
+    ce.expect_ok(okf, "合法移位（折叠 + 变量）不得被改坏",
+        "g=32/2/2")
+
+    // ---- 负向：六种写法必须**同一条报错**（这才是 N8 的核心承诺）----
+    //   每条一个文件：运行期一报错就退出，同文件里放多条只能验证第一条。
+    var cases = [
+        "print(_str(8 << -1))",           // 字面量
+        "print(_str(8 >> -1))",           // 字面量
+        "print(_str(8 >>> -1))",          // 逻辑右移（本来就报错，回归守卫）
+        "print(_str(8 << (-1)))",         // 括号负字面量
+        "print(_str(8 << (2 - 3)))",      // 折叠表达式
+        "var r = 8 << (1 - 2)\n    print(_str(r))",   // 折叠表达式赋给变量
+    ]
+    for cases to code, i {
+        var f = dirs.join(ok, "neg_shift_" + _str(i) + ".leno")
+        files.write(f, "main() {\n    " + code + "\n}\n")
+        // ⚠ 落点行传 0：这是**运行期**错误，输出里是 `文件:2:` 而不是编译错误的 `(2,` 格式
+        ce.expect_error(f, "负移位量必须运行期报错（写法 " + _str(i) + "）",
+            "移位量不能为负", 0)
+    }
+
+    // ---- const 初始化里的负移位（模块级折叠）----
+    var cf = dirs.join(ok, "neg_shift_const.leno")
+    files.write(cf, @"const C = 8 << -1
+main() {
+    print(_str(C))
+}
+")
+    ce.expect_error(cf, "const 初始化的负移位也要报错（原来 C=0 静默）",
+        "移位量不能为负", 0)
+
+    // ---- Q8：`>>>` 的报错标签必须是「逻辑右移 (>>>)」而不是「右移 (>>)」----
+    var uf = dirs.join(ok, "neg_shift_ushr_label.leno")
+    files.write(uf, @"main() {
+    print(_str(8 >>> -1))
+}
+")
+    ce.expect_error(uf, "`>>>` 的报错标签要显示逻辑右移（原来显示成 >>）",
+        "逻辑右移 (>>>)", 0)
+
+    print("=== test_shift_negative ALL passed ===")
+}

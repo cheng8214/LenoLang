@@ -30,9 +30,21 @@
                         strncpy(expected_buf, expected_str, 63);
                         expected_buf[63] = '\0';
                         const char* actual_str = type_to_string(return_type_info);
+                        // ★ 2026-10-24（round6 复核 N3）：**函数返回函数**时最常见的原因是
+                        //   "签名没写全"—— `func(int)`（无返回类型）与 `func(int):int` 是两个
+                        //   不同类型，而报错只摆两个长得几乎一样的字符串，看不出差在哪 ✗
+                        //   ⇒ 两侧都是函数类型时补一句口径说明（不改变判据，只加提示 ✓）
+                        char fn_hint[256];
+                        fn_hint[0] = '\0';
+                        if (expected_type->kind == TYPE_FUNCTION &&
+                            return_type_info->kind == TYPE_FUNCTION) {
+                            snprintf(fn_hint, sizeof(fn_hint),
+                                "（函数类型按**完整签名**比较：`func(int)` 与 `func(int):int` 是两个不同类型 —— "
+                                "返回闭包时括号右边那截返回类型也要写全）");
+                        }
                         error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
-                                 "返回类型不匹配：期望 %s，实际 %s",
-                                 expected_buf, actual_str);
+                                 "返回类型不匹配：期望 %s，实际 %s%s",
+                                 expected_buf, actual_str, fn_hint);
                     }
                     type_free(return_type_info);
                 }

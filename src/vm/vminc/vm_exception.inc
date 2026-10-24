@@ -645,10 +645,13 @@ static inline const char* op_name_to_human(const char* op_name) {
     if (strstr(op_name, "BITNOT"))   return "按位非 (~)";
     if (strstr(op_name, "SHL_IMM"))  return "左移 (<<)";
     if (strstr(op_name, "SHL"))      return "左移 (<<)";
-    if (strstr(op_name, "SHR_IMM"))  return "右移 (>>)";
-    if (strstr(op_name, "SHR"))      return "右移 (>>)";
+    // ⚠ USHR 必须排在 SHR **前面**：`strstr("USHR (>>>)", "SHR")` 是真命中
+    //   ⇒ 顺序写反时 `8 >>> -1` 的报错会显示「[操作] 右移 (>>)」，与源码的 `>>>` 对不上
+    //   （round6 复核时实测到 ✗）。判据本身是子串匹配，顺序就是语义，别调乱。
     if (strstr(op_name, "USHR_IMM")) return "逻辑右移 (>>>)";
     if (strstr(op_name, "USHR"))     return "逻辑右移 (>>>)";
+    if (strstr(op_name, "SHR_IMM"))  return "右移 (>>)";
+    if (strstr(op_name, "SHR"))      return "右移 (>>)";
     if (strstr(op_name, "PRE_INC"))  return "前缀自增 (++)";
     if (strstr(op_name, "PRE_DEC"))  return "前缀自减 (--)";
     if (strstr(op_name, "INC_LOCAL_NOPUSH")) return "自增 (++)";

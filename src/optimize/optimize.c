@@ -477,11 +477,20 @@ static void fold_binary(Ast* ast) {
                 break;
             case TOK_SHL:
                 if (result_is_float) return;
+                // ★ 2026-10-24（round6 N8）：**负移位量不折叠** —— 上面的 i64 精确路径
+                //   （fold_binary_i64）对 rv < 0 是 `return 0`（不折），可它 return 之后
+                //   控制流会**落到这里**再折一次 ⇒ `8 << -1` 走 C 的 `<< -1`（UB，实测得 0）、
+                //   静默输出 0，而同一表达式的**变量写法**在运行期报「移位量不能为负」✗
+                //   ⇒ 同一表达式两种写法结果不同。这里跟 i64 路径同口径：负值不折，
+                //   交给运行期 SHL_BODY 统一报错 ✓（USHR 本来就没有 double 折叠分支，
+                //   所以 `8 >>> -1` 一直是报错的 —— 三条移位现在终于一致 ✓）
+                if (rv < 0.0) return;
                 if ((int)rv >= 32) return; // 移位量>=32时不折叠，交给VM的BigInt路径处理
                 result = (double)((long long)lv << (int)rv);
                 break;
             case TOK_SHR:
                 if (result_is_float) return;
+                if (rv < 0.0) return;      // 负移位量不折叠（同上，N8）
                 if ((int)rv >= 32) return; // 移位量>=32时不折叠，交给VM的BigInt路径处理
                 result = (double)((long long)lv >> (int)rv);
                 break;

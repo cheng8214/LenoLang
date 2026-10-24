@@ -482,13 +482,10 @@
                 frame = &vm.frames[vm.frame_cnt - 1];                                  \
                 DISPATCH();                                                            \
             }                                                                          \
-            /* ★ 2026-10-24：负移位量报错（同 SHL/SHR）*/                               \
-            if (val_is_int(vc) && VM_IO(vc) < 0) {                                     \
-                if (!throw_runtime_error_with_operands("移位量不能为负", "USHR (>>>)",  \
-                        vb, vc, GET_CURRENT_LINE())) return -1;                        \
-                frame = &vm.frames[vm.frame_cnt - 1];                                  \
-                DISPATCH();                                                            \
-            }                                                                          \
+            /* ⚠ 这里**不再**重复一次"负移位量"检查（round6 Q8）：本块只在             \
+               `!val_is_int(vb) || !val_is_int(vc)` 时进入，而外层的负值检查          \
+               （`val_is_int(vc) && VM_IO(vc) < 0`）在这之前就把 vc 为负整数的情况     \
+               拦掉了 ⇒ 这段永远不可达。留着只会让后来者以为"还有一条没覆盖的负值路径"。*/ \
             if (VM_IS_BIG(vb) || VM_IS_BIG(vc)) {                                      \
                 int64_t sh = VM_IO(vc);                                                \
                 R(a) = bigint_compact_to_int(bigint_ushr(promote_to_bigint(vb), (int)(sh < 0 ? 0 : sh))); \
