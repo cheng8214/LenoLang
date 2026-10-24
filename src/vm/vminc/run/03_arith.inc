@@ -220,6 +220,27 @@
             R(a) = val_int(val_as_int(bv) % dv);
             DISPATCH();
         }
+
+        // ★ 2026-10-24：**float 取模**
+        //   原来只有**编译期常量折叠**支持 float（`7.5 % 3` 直接给出 1.5），
+        //   一旦操作数是运行期变量就报「取模操作数必须是整数」⇒ 同一运算符两套行为，
+        //   字面量能算、变量崩（第四轮报告 B3，最难排查的那种不一致）。
+        //   现在统一走 fmod：
+        //     · 方向与整数一致 —— `-7 % 3 = -1`（C 式向零截断）⇒ `fmod(-7.5, 3) = -1.5` ✓
+        //       （不用 Python 的"向负无穷"，否则又变成两套口径）
+        //     · 除零仍然**明确报错**，不给 NaN（NaN 静默流传比报错糟得多）
+        if ((val_is_int(bv) || val_is_float(bv)) && (val_is_int(cv) || val_is_float(cv)) &&
+            (val_is_float(bv) || val_is_float(cv))) {
+            double dvf = val_as_num(cv);
+            if (unlikely(dvf == 0.0)) {
+                if (!throw_runtime_error_with_operands("取模除零错误：除数为 0", "MOD (%)", bv, cv, line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            R(a) = val_float(fmod(val_as_num(bv), dvf));
+            DISPATCH();
+        }
+
         if (val_is_null(bv) || val_is_null(cv)) {
             if (!throw_runtime_error_with_operands("取模: null 不能参与运算", "MOD (%)", bv, cv, line)) return -1;
             frame = &vm.frames[vm.frame_cnt - 1];

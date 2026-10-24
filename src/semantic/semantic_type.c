@@ -1673,10 +1673,34 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                 case TOK_NEQ:
                 case TOK_AND:
                 case TOK_OR:
-                case TOK_IN:
-                case TOK_NOT_IN:
                     result = type_new(TYPE_BOOL);
                     break;
+                case TOK_IN:
+                case TOK_NOT_IN: {
+                    // ★ 2026-10-24：**`in` / `not in` 的类型检查**
+                    //   原来和 == / and / or 共用一条"直接返回 bool"，什么都不查 ⇒
+                    //   下面三种写法全部静默 false，用户以为"没匹配到"，实际类型写错了：
+                    //       3 in "hello"      （拿 int 去 string 里找子串）
+                    //       2.5 in [1, 2, 3]  （float 找 int 数组，永远匹配不到）
+                    //       3 in 5            （右边根本不是容器）
+                    //   （第四轮报告 B4）
+                    if (right) {
+                        TypeKind rk = right->kind;
+                        int rk_container = (rk == TYPE_ARRAY || rk == TYPE_DICT ||
+                                            rk == TYPE_STRING || rk == TYPE_ANY || rk == TYPE_UNKNOWN);
+                        if (!rk_container) {
+                            error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                                "`in` 的右边必须是容器（Array / Dict / string），实际是 %s",
+                                type_kind_to_string(rk));
+                        }
+                        // ⚠ 2026-10-24：**不查"左边与元素/键类型"**（曾试过，回退了）。
+                        //   test_dict_int_keys:130 里有 `"5" in dict[int, ...]` —— 元素/键类型
+                        //   检查会把它当错误，但那是合法的动态用法（dict 的键在运行时按值比）。
+                        //   ⇒ 只保留"右边必须是容器"这一条（`3 in 5` 那种确实该拦）。
+                    }
+                    result = type_new(TYPE_BOOL);
+                    break;
+                }
                 case TOK_NULL_COALESCE: {
                     // left ?? right → 结果类型 = left 去可空化
                     //   ★ 2026-10-22 修：left 是 **any/unknown**（拿不到确定类型，如 `opts["w"]`

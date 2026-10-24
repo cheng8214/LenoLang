@@ -528,6 +528,28 @@
 
         case AST_UNARY: {
             visit(s, ast->u.unary.operand);
+
+            // ★ 2026-10-24：**const 变量不能被 ++/-- 修改**
+            //   const 检查在普通赋值（visit_var.inc 的 AST_ASSIGN）和复合赋值
+            //   （visit_var.inc 的 AST_COMPOUND_ASSIGN）都有，唯独自增/自减漏了
+            //   ⇒ `const C = 1; C++` 编译通过、运行时 C 变成 2 —— const 被完全绕过
+            //   （第四轮报告 B1，P0：常量语义失效最容易引出难查的 bug）。
+            //   ⚠ 只对 ++/-- 检查：`-C` / `!C` 是**读**操作，必须放行。
+            if ((ast->u.unary.op == TOK_INC || ast->u.unary.op == TOK_DEC) &&
+                ast->u.unary.operand && ast->u.unary.operand->kind == AST_VAR) {
+                SymRef* ur = &ast->u.unary.operand->u.var.ref;
+                if (ur->name) {
+                    Symbol* usym = resolve_variable_with_upvalue(s, ur->name, ur);
+                    if (usym && usym->is_const) {
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                         "不能对 const 变量 '%s' %s（常量不可修改，"
+                                         "需要可变值请声明为 var）",
+                                         ur->name,
+                                         (ast->u.unary.op == TOK_INC) ? "自增" : "自减");
+                    }
+                }
+            }
+
             // 触发类型推断并缓存到 AST 节点，供代码生成器使用
             TypeInfo* unary_type = infer_expr_type(s, ast);
             if (unary_type) {

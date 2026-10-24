@@ -877,6 +877,15 @@
                     visit(s, ast->u.switch_.cases[i].values.items[j]);
                 }
 
+                // ⚠ 2026-10-24：**这里不做 case 值 vs switch 表达式的类型检查**（曾试过，回退了）。
+                //   第四轮报告 B5 把「`switch x`（int）配 `case "two"`（string）静默走 default」
+                //   当 bug，我加过一条编译期检查 —— 结果 **3 个既有测试全挂**：
+                //     · test_enum_param：`case` 用的是 enum 成员（类型是 TYPE_ENUM 而非 int）
+                //     · test_op_switch_lookup:116-126：`switch sv`（string）配 `case 0..3`（int），
+                //       是**性能测试里故意这么写的**
+                //   ⇒ Leno 的 switch 是**动态按值比较**（不按类型匹配），类型不必一致。
+                //   「静默走 default」在动态语义下是**正确行为**，不是 bug。
+
                 // ★ 2026-10-16：**多类型 case 的窄化上下文**压栈（出体后弹 ✓）
                 //   窄化只取首类型（上面 `guard_sym->type = match_type` 就是它）⇒ case 体里
                 //   `x.f` 的下标按首类型取；候选类型间下标不一致时必须**编译期拦下** ✗

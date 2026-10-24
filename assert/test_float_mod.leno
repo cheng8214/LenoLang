@@ -1,0 +1,44 @@
+// float 取模（2026-10-24，第四轮报告 B3）
+//
+// 修前：**编译期常量折叠支持 float**（`7.5 % 3` 直接给 1.5），
+//   但一旦操作数是运行期变量就报「取模操作数必须是整数」——
+//   同一运算符两套行为，字面量能算、变量崩。
+//
+// 修后：任一操作数为 float ⇒ 走 fmod，与常量折叠口径一致。
+//   · 方向与整数一致：整数 `-7 % 3 = -1`（C 式向零截断）
+//                     ⇒ 浮点 `fmod(-7.5, 3) = -1.5` ✓
+//     （不用 Python 的"向负无穷"，否则又是一套新口径）
+//   · 除零仍明确报错，不给 NaN
+main() {
+    // ① 常量（修前就能算，钉住不回归）
+    assert_eq(7.5 % 3, 1.5)
+
+    // ② 运行期变量（修前运行时报错，这是本条的核心）
+    var h = 2.5
+    assert_eq(h % 3, 2.5)
+
+    var a = 7.5
+    var b = 3
+    assert_eq(a % b, 1.5)          // float % int
+
+    var c = 3.0
+    assert_eq(7 % c, 1.0)          // int % float
+
+    // ③ 负数方向与整数一致（C 式向零截断）
+    assert_eq(-7 % 3, -1)          // 整数基准
+    assert_eq(-7.5 % 3, -1.5)      // 浮点同方向
+
+    // ④ 整数取模完全不受影响
+    assert_eq(7 % 3, 1)
+    assert_eq(-7 % 3, -1)
+
+    // ⑤ 除零仍然报错（不是 NaN）
+    int caught = 0
+    try { var _x = 2.5 % 0.0 } catch e { caught = caught + 1 }
+    assert_eq(caught, 1)
+
+    var zero = 0.0
+    int caught2 = 0
+    try { var _y = 1.5 % zero } catch e { caught2 = caught2 + 1 }
+    assert_eq(caught2, 1)
+}

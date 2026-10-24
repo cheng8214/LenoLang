@@ -1,0 +1,41 @@
+// const 不能被 ++/-- 修改（2026-10-24，第四轮报告 B1）
+//
+// 修前：`const C = 1; C++` 编译通过、运行时 C 变成 2 —— const 被完全绕过。
+//   const 检查在普通赋值和复合赋值两条路径都有，唯独自增/自减漏了。
+//
+// ⚠ "应该编译失败"无法用断言表达（测试框架只跑成功的程序），人工验证过：
+//      const C = 1
+//      C++   /   C--   /   ++C   /   --C
+//   四处在编译期全部报：
+//      不能对 const 变量 'C' 自增（常量不可修改，需要可变值请声明为 var）
+//
+// 本文件钉住的是**不该误伤**的那一面：const 的**读**操作（一元负号、逻辑非）
+// 必须放行 —— 检查里只对 TOK_INC / TOK_DEC 生效。
+const MODULE_LEVEL = 10
+
+func readConstParam(): int {
+    return -MODULE_LEVEL      // 一元负号：读，必须合法
+}
+
+main() {
+    const C = 5
+
+    // ① const 的读操作：一元负号 / 逻辑非（Leno 用 `not` 而不是 `!`）
+    assert_eq(-C, -5)
+    assert_eq(not false, true)
+
+    // ② 模块级 const 同理
+    assert_eq(-MODULE_LEVEL, -10)
+    assert_eq(readConstParam(), -10)
+
+    // ③ const 参与普通运算（不写回）
+    assert_eq(C + 1, 6)
+    assert_eq(C * 2, 10)
+
+    // ④ 对照：var 可以自增（不能被误拦）
+    var m = 1
+    m++
+    assert_eq(m, 2)
+    m--
+    assert_eq(m, 1)
+}
