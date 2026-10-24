@@ -1687,6 +1687,14 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
             mod->initialized = 0;
             mod->export_mappings = NULL;
             mod->export_mapping_count = 0;
+            // ★ 2026-10-24：槽位→导出名反查表（运行时建）+ use 再导出三件套。
+            //   ⚠ 后三个以前在这条路径上**没初始化**（只有 module_new 里初始化过）——
+            //     靠 gc_alloc 恰好清零才没炸；这里补齐，免得哪天分配器换了就静默读野指针。
+            mod->slot_export_names = NULL;
+            mod->slot_export_cap = 0;
+            mod->use_reexport_names = NULL;
+            mod->use_reexport_kinds = NULL;
+            mod->use_reexport_count = 0;
             if (source_path) {
                 add_loaded_module_public(source_path, mod);
             }

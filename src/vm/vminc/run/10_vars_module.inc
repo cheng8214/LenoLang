@@ -156,6 +156,21 @@
         module->globals[bx] = R(a);
         if (bx >= module->global_count) module->global_count = bx + 1;
         gc_write_barrier((Object*)module, R(a));
+        // ★ 2026-10-24（round5 N1 的 P0）：这个槽位是**导出的模块变量** ⇒ 顺手同步进 exports。
+        //   背景：跨模块读 `m.x` 走 exports 字典，模块内部读写走 globals ⇒ 两份存储，
+        //   exports 那份是**初始化时的快照** ⇒ `c.bump()` 之后外部仍读到旧值 ✗
+        //   现在写 globals 的同时刷新 exports（反查表在建模块时按 export_mappings 建好 ✓）。
+        //   代价：写模块变量多一次指针判空 + （仅导出变量）一次字典写；
+        //   读路径**零改动**（跨模块读本来就查 exports，那里现在是新值）。
+        //   ⚠ 只放在 OP_SET_MODULE_VAR（**别**放进 OP_DEFINE_MODULE_FUNC）：两者尾部代码
+        //     一模一样，复制粘贴极易放错位置（我第一次就放错了 —— 函数定义处同步函数槽，
+        //     真正的变量写反而没同步，表现为"改了没生效"✗）。
+        if (module->slot_export_names && bx < module->slot_export_cap) {
+            ObjString* export_key = module->slot_export_names[bx];
+            if (export_key) {
+                dict_set(module->exports, val_obj((Object*)export_key), module->globals[bx]);
+            }
+        }
         DISPATCH();
     }
     // OP_GET_MODULE_FUNC A Bx: 同 GET_MODULE_VAR（模块函数与变量共用 globals 槽）
@@ -268,6 +283,29 @@
                                 dict_set(module->exports, val_obj((Object*)key), val_obj((Object*)def));
                             }
                         }
+                    }
+                }
+            }
+
+            // ★ 2026-10-24：建 **槽位 → 导出名** 反查表（供 OP_SET_MODULE_VAR 同步 exports）。
+            //   由 export_mappings 反建一次：长度取 global_capacity（槽号就是下标），
+            //   只有 global_index >= 0 的条目才是真正的全局槽（-2 是 struct 定义，跳过 ✓）。
+            //   ⚠ 必须在上面的"初值拷贝"和 init_chunk **之后**建：init 期间写变量时表还没建，
+            //     但那些值已经被上面的拷贝带进 exports 了 ⇒ 不会漏 ✓
+            if (module->export_mappings && module->export_mapping_count > 0 &&
+                !module->slot_export_names) {
+                int cap = module->global_capacity > 0 ? module->global_capacity : module->global_count;
+                if (cap > 0) {
+                    ObjString** names = (ObjString**)calloc((size_t)cap, sizeof(ObjString*));
+                    if (names) {
+                        for (int i = 0; i < module->export_mapping_count; i++) {
+                            int gi = module->export_mappings[i].global_index;
+                            const char* nm = module->export_mappings[i].name;
+                            if (gi < 0 || gi >= cap || !nm) continue;
+                            names[gi] = str_copy(nm, (int)strlen(nm));
+                        }
+                        module->slot_export_names = names;
+                        module->slot_export_cap = cap;
                     }
                 }
             }

@@ -192,18 +192,15 @@ func _helper() {              // 内部辅助函数
 }
 ```
 
-### 2.4 ⚠ 导出变量是**只读快照**（不要跨模块写，也别指望读到最新值）
-
-模块内部的读写走**模块自己的存储**，而 `m.变量` 跨模块读到的是**模块初始化时**拷进
-exports 字典的那份**副本** ⇒ 两者不是同一个变量。因此：
+### 2.4 导出变量：**读实时，写要走 setter**
 
 ```leno
 // counter.leno
 export var count = 0
 
 export func bump(): int { count = count + 1; return count }
-export func get(): int  { return count }        // ✅ 用 getter 读
-export func set(int v)  { count = v }           // ✅ 用 setter 写
+export func get(): int  { return count }        // 也可以只留 getter
+export func set(int v)  { count = v }           // 写必须走 setter
 ```
 
 ```leno
@@ -212,19 +209,24 @@ import "counter.leno" as c
 main() {
     c.bump()
     c.bump()
-    print(c.count)      // ❌ 0（初始化时的副本，永远是旧值）
+    print(c.count)      // ✅ 2 —— 模块内一改，这里立刻能看到（2026-10-24 起）
     print(c.get())      // ✅ 2
 
-    c.count = 100       // ❌ 编译错误：不能直接给模块变量赋值
+    c.count = 100       // ❌ 编译错误：跨模块「写」还没打通（用 setter）
     c.count += 5        // ❌ 同上
     c.set(100)          // ✅ 100
+    print(c.count)      // ✅ 100
 }
 ```
 
-- **写**：`m.变量 = 值` / `m.变量 += 值` 自 2026-10-24 起是**编译错误**（此前是
-  "零报错零效果"：赋值指令压根没生成；复合形态还会在运行期报「下标赋值: 对象不支持索引」）。
-- **读**：`m.变量` 只对**不变**的导出值可信（`export const`、配置常量）。可变量请用 getter。
-- 跨模块改**容器元素**不受影响（`c.get_items()[0] = 99` 是引用语义，改的是同一个对象 ✓）。
+- **读**（2026-10-24 起）：`m.变量` 是**实时值** —— `OP_SET_MODULE_VAR` 写模块全局槽时会
+  顺手刷新 exports，跨模块读到的就是最新值（此前读到的是初始化时的副本，`bump()` 后仍是旧值 ✗）。
+  实现见 `10_vars_module.inc` 的「槽位 → 导出名反查表」。
+- **写**：`m.变量 = 值` / `m.变量 += 值` 仍是**编译错误**（原来"零报错零效果"：
+  赋值指令压根没生成；复合形态还会在运行期报「下标赋值: 对象不支持索引」）。
+  编译期会直接告诉你在模块里加 setter。
+- 跨模块改**容器元素**从来都是引用语义（`c.items.add(1)`、`c.get_items()[0] = 99` 都改的是
+  同一个对象 ✓）。
 
 ***
 

@@ -775,6 +775,14 @@ void gc_scan_children(Object* obj) {
             for (int i = 0; i < module->global_count; i++) {
                 gc_mark_value(module->globals[i]);
             }
+            // ★ 2026-10-24：槽位→导出名反查表里的 ObjString 也要标（它们只被这张表持有）
+            if (module->slot_export_names) {
+                for (int i = 0; i < module->slot_export_cap; i++) {
+                    if (module->slot_export_names[i]) {
+                        gc_mark_object((Object*)module->slot_export_names[i]);
+                    }
+                }
+            }
             if (module->init_chunk) {
                 for (int i = 0; i < module->init_chunk->const_cnt; i++) {
                     gc_mark_value(module->init_chunk->constants[i]);
@@ -1572,6 +1580,12 @@ static void free_object_resources_ex(Object* obj, int remove_intern) {
                     free(module->export_mappings[i].name);
                 }
                 free(module->export_mappings);
+            }
+            // ★ 2026-10-24：槽位→导出名反查表（ObjString* 由 GC 自己回收，这里只释放数组）
+            if (module->slot_export_names) {
+                free(module->slot_export_names);
+                module->slot_export_names = NULL;
+                module->slot_export_cap = 0;
             }
             // 释放 use re-export 类型信息
             if (module->use_reexport_names) {

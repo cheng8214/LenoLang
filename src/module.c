@@ -32,6 +32,8 @@ ObjModule* module_new(const char* name) {
     module->initialized = 0;
     module->export_mappings = NULL;
     module->export_mapping_count = 0;
+    module->slot_export_names = NULL;   // 槽位→导出名反查表（初始化末尾建，见 10_vars_module.inc）
+    module->slot_export_cap = 0;
     module->use_reexport_names = NULL;
     module->use_reexport_kinds = NULL;
     module->use_reexport_count = 0;

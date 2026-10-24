@@ -95,11 +95,12 @@ int sem_const_root_name(Semantic* s, Ast* e, char* buf, int bufsz) {
 void semantic_report_module_var_write(const char* module_name, const char* member_name,
                                       int line, int column) {
     error_add_at_fmt(ERR_SEMANTIC, line, column,
-        "不能直接给模块 '%s' 的变量 '%s' 赋值 —— 跨模块写变量**不会生效**"
-        "（模块内部读写自己的存储，跨模块读到的只是初始化时的副本，两者不是同一个变量）。"
+        "不能直接给模块 '%s' 的变量 '%s' 赋值 —— 跨模块**写**还没打通"
+        "（读已经是实时的：模块内部一改，`%s.%s` 立刻能读到；但反向写回去没有指令支持）。"
         "改法：在模块里提供 setter —— `export func set_%s(v) { %s = v }`，"
         "然后调用 `%s.set_%s(值)` ✓",
-        module_name, member_name, member_name, member_name, module_name, member_name);
+        module_name, member_name, module_name, member_name,
+        member_name, member_name, module_name, member_name);
 }
 
 // ============================================================================

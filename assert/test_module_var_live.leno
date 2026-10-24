@@ -1,0 +1,109 @@
+// 跨模块读导出变量 ⇒ **实时值**（2026-10-24，round5 N1 的 P0 修复）
+//
+// 改之前的病根：模块内部读写走 `module->globals[]`，而跨模块读 `m.x` 走 exports **字典**，
+// 那份是模块**初始化时**拷进去的副本 ⇒
+//     m.bump()          // 模块里 shared 变成 2
+//     print(m.shared)   // 仍然 1  ✗（读到的是快照，永远不更新）
+// 症状是"改了没生效"，而且看不出是快照问题（重启就对了，第二次运行又错）。
+//
+// 现在的做法：`OP_SET_MODULE_VAR` 写完 globals 后，按"槽位 → 导出名"反查表
+// 顺手把 exports 那一项也刷新（表在模块初始化末尾按 `export_mappings` 建一次）。
+//   · 读路径**零改动**（跨模块读本来就查 exports，那里现在是新值）
+//   · 写路径只多一次指针判空（非导出变量不受影响）
+//   · 跨模块**写**仍然不支持（`m.x = v` 是编译错误 —— 要真正打通需要新指令），
+//     所以下面的正向用例都走模块导出的 setter / 会改变量的函数。
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+import strings
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_module_var_live")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    files.write(dirs.join(work, "counter.leno"), @"export var count = 0
+export var label = ""init""
+export Array[int] items = [1]
+export const LIMIT = 9
+
+export func bump(): int {
+    count = count + 1
+    return count
+}
+
+export func set_count(int v) {
+    count = v
+}
+
+export func rename(string s) {
+    label = s
+}
+
+export func add_item(int v) {
+    items.add(v)
+}
+")
+
+    // ---- ① 模块内改标量 ⇒ 跨模块读立刻看到 ----
+    var f1 = dirs.join(work, "live_scalar.leno")
+    files.write(f1, @"import ""counter.leno"" as c
+main() {
+    print(""c0="" + _str(c.count))
+    c.bump()
+    print(""c1="" + _str(c.count))
+    c.bump()
+    print(""c2="" + _str(c.count))
+    c.set_count(100)
+    print(""c3="" + _str(c.count))
+}
+")
+    var out1 = ce.expect_ok(f1, "模块内改标量，跨模块读要实时",
+        "c0=0")
+    assert_true(strings.has(out1, "c1=1"), "bump 1 次后应读到 1；实际=" + out1)
+    assert_true(strings.has(out1, "c2=2"), "bump 2 次后应读到 2；实际=" + out1)
+    assert_true(strings.has(out1, "c3=100"), "setter 之后应读到 100；实际=" + out1)
+
+    // ---- ② 字符串导出变量同样实时 ----
+    var f2 = dirs.join(work, "live_string.leno")
+    files.write(f2, @"import ""counter.leno"" as c
+main() {
+    print(""l0="" + c.label)
+    c.rename(""running"")
+    print(""l1="" + c.label)
+}
+")
+    ce.expect_ok(f2, "字符串导出变量也要实时", "l1=running")
+
+    // ---- ③ 导出**容器**（引用语义）本来就实时，回归守住 ----
+    var f3 = dirs.join(work, "live_container.leno")
+    files.write(f3, @"import ""counter.leno"" as c
+main() {
+    c.items.add(2)
+    print(""n="" + _str(c.items.len()))
+}
+")
+    ce.expect_ok(f3, "导出容器的元素改动照常可见（引用语义）", "n=2")
+
+    // ---- ④ const 导出变量照常可读（不该被同步逻辑影响）----
+    var f4 = dirs.join(work, "const_ok.leno")
+    files.write(f4, @"import ""counter.leno"" as c
+main() {
+    print(""k="" + _str(c.LIMIT))
+}
+")
+    ce.expect_ok(f4, "export const 跨模块可读", "k=9")
+
+    // ---- ⑤ 跨模块**写**仍是编译错误（本轮只打通读）----
+    var f5 = dirs.join(work, "write_still_error.leno")
+    files.write(f5, @"import ""counter.leno"" as c
+main() {
+    c.count = 5
+}
+")
+    ce.expect_error(f5, "跨模块写仍然编译报错（指引改用 setter）",
+        "跨模块**写**还没打通", 3)
+
+    print("=== test_module_var_live ALL passed ===")
+}

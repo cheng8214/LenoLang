@@ -468,6 +468,14 @@ typedef struct {
     int initialized;            // 是否已在运行时初始化
     ExportGlobalMapping* export_mappings;  // 导出名 -> 全局变量索引映射
     int export_mapping_count;   // 导出映射数量
+    // ★ 2026-10-24：**槽位 → 导出名**的反查表（下标 = 全局槽号；NULL = 该槽没导出）。
+    //   为什么要它：跨模块读 `m.x` 走 exports 字典，而模块内部读写走 globals ⇒ 两份存储，
+    //   exports 里那份是**初始化时的快照**（N1 的 P0）。现在 OP_SET_MODULE_VAR 写完
+    //   globals 后按这张表顺手同步 exports，跨模块读到的就永远是**最新值** ✓
+    //   建表时机：模块初始化末尾（由 export_mappings 反建，长度 = global_capacity）。
+    //   ⚠ 存 ObjString* 而不是 char*：写路径每次都要用它当字典键，懒得反复 str_copy ✓
+    ObjString** slot_export_names;
+    int slot_export_cap;        // slot_export_names 的长度（= 建表时的 global_capacity）
     char** use_reexport_names;  // use 导入的需要 re-export 的类型名（运行时添加到 exports）
     int* use_reexport_kinds;    // use re-export 的类型种类（TYPE_ENUM, TYPE_STRUCT 等）
     int use_reexport_count;     // use re-export 数量
