@@ -954,6 +954,22 @@ Ast* parse_switch_stmt(Parser* p) {
             // case 体必须用大括号包裹
             if (p->lex.current.type != TOK_LBRACE) {
                 error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "case 语句体必须用大括号 {} 包裹");
+                // ★ 2026-10-24：报错后要**跳到 switch 的 `}` 并消费掉**再返回。
+                //   原来直接 return NULL ⇒ 剩下的 case 体（`print("one")`）和
+                //   `default:` 会被当成表达式继续解析 ⇒ 级联报「期望表达式」，
+                //   把真错淹没（实测 case 1: print(...) 会额外多报 2 条）。
+                {
+                    int depth = 0;
+                    while (p->lex.current.type != TOK_EOF) {
+                        if (p->lex.current.type == TOK_LBRACE) {
+                            depth++;
+                        } else if (p->lex.current.type == TOK_RBRACE) {
+                            if (depth == 0) { lexer_next(&p->lex); break; }   // 消费 switch 的 '}'
+                            depth--;
+                        }
+                        lexer_next(&p->lex);
+                    }
+                }
                 free(switch_var_name);
                 free(cases);
                 return NULL;
