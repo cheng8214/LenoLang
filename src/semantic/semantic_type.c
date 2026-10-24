@@ -878,6 +878,14 @@ static int is_nullable_value_kind(TypeInfo* t) {
             t->kind == TYPE_BIGINT || t->kind == TYPE_ENUM);
 }
 
+// 位运算 / 取模这一组算子的**统一称谓**（只用于报错文案）。
+//   ★ 2026-10-24（round7 反馈）：`true & 1` 原来报「bool 类型不能参与**算术**运算」——
+//     可源码里根本没有算术，写的人会去找"哪儿做了算术"✗。按实际算子说清：
+//     `%` 是取模，其余（& | ^ << >> >>>）是位运算 ✓
+static const char* bitop_group_name(LenoTokenType op) {
+    return op == TOK_MOD ? "取模" : "位运算";
+}
+
 static void check_nullable_arith(TypeInfo* left, TypeInfo* right, int line, int column) {
     if (is_nullable_value_kind(left)) {
         warning_add_at_fmt(WARN_NULLABLE_ARITH, line, column,
@@ -1583,9 +1591,12 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                 case TOK_SHR:
                 case TOK_USHR:
                     // null 参与位运算/取模 -> 编译错误
+                    //   ★ 2026-10-24：文案按**实际算子**分组（见 bitop_group_name 的说明）
                     if (left && right &&
                         (left->kind == TYPE_NULL || right->kind == TYPE_NULL)) {
-                        error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "null 类型不能参与算术运算，请先检查变量是否为 null");
+                        error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                            "null 类型不能参与%s，请先检查变量是否为 null",
+                            bitop_group_name(ast->u.binop.op));
                         result = type_new(TYPE_ANY);
                     }
                     // nullable 值类型参与位运算/取模 -> 警告
@@ -1598,15 +1609,26 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                         }
                     }
                     // bool 参与位运算/取模 -> 编译错误
+                    //   ★ 2026-10-24：文案改成"位运算/取模"（原来一律说"算术运算"，
+                    //     可 `true & 1` 里根本没有算术）＋ 给逻辑运算的正确写法（`and`/`or`/`not`）
                     else if (left && right &&
                         (left->kind == TYPE_BOOL || right->kind == TYPE_BOOL)) {
-                        error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "bool 类型不能参与算术运算");
+                        // 取模没有"布尔版"，别再提 and/or/not（那是位运算的替代写法）
+                        if (ast->u.binop.op == TOK_MOD) {
+                            error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                                "bool 类型不能参与取模（`%%` 需要整数操作数，bool 请先 _int(b)）");
+                        } else {
+                            error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                                "bool 类型不能参与位运算（它需要整数操作数；布尔运算请用 and / or / not）");
+                        }
                         result = type_new(TYPE_ANY);
                     }
                     // string 参与位运算/取模 -> 编译错误
                     else if (left && right &&
                         (left->kind == TYPE_STRING || right->kind == TYPE_STRING)) {
-                        error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "string 类型不能参与算术运算");
+                        error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                            "string 类型不能参与%s（它需要整数操作数）",
+                            bitop_group_name(ast->u.binop.op));
                         result = type_new(TYPE_ANY);
                     }
                     // ★ 2026-10-24：float 参与**位运算** -> 编译错误（取模除外！）

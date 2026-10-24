@@ -39,11 +39,20 @@ static Value dict_method_set(int argc, Value* args) {
     return val_null();
 }
 
+// remove(key)：删除并**返回被删掉的值**（键不存在 ⇒ null）。
+//   ★ 2026-10-24（round7 Q9）：原来一律 `return val_null()` ⇒ "删成功" 与
+//     "键本来就不存在" 返回值完全相同，调用方没法区分（`d.remove("a")` 和
+//     `d.remove("zz")` 都是 null，只能另外写一次 `has()` ✗）。
+//   与 `array.remove(i)` 对齐：那个一直返回被删掉的**元素**。
+//   ⚠ 键存在但值是 null ⇒ 同样拿到 null ⇒ 要区分"存在但与删"请先 `has()`（文档里写明）。
+//   兼容性：调用方忽略返回值（语句位置）时行为完全不变 ✓；没有任何既有代码用它的返回值
+//   （全仓扫过：只有 `arr.remove(...)` 的结果被接过）。
 static Value dict_method_remove(int argc, Value* args) {
     (void)argc;
     ObjDict* dict = (ObjDict*)val_as_obj(args[0]);
+    Value old = dict_has(dict, args[1]) ? dict_get(dict, args[1]) : val_null();
     dict_delete(dict, args[1]);
-    return val_null();
+    return old;
 }
 
 static Value dict_method_keys(int argc, Value* args) {
@@ -203,8 +212,9 @@ void dicts_init_instance_methods(void) {
     //   keys() 返回 `Array[K]`、values() 返回 `Array[V]`、get(k[,default]) 返回 `V`
     //   （K/V = 接收者 `Dict[K,V]` 的键/值类型）。此前 keys/values 注册成 `TYPE_ARRAY + TYPE_UNKNOWN`
     //   ⇒ 拿到裸 `Array`、元素是 any；get 注册成 TYPE_ANY。用关系型标签声明后，调用点零收窄 ✓
-    //   ⚠ set()/remove()/clear() **不**在此列：它们实现上返回 `null`（不是"值"），标成 V 会骗人
+    //   ⚠ set()/clear() **不**在此列：它们实现上返回 `null`（不是"值"），标成 V 会骗人
     //   ⇒ 它们标的是 `null`（见下方各自的 `return_spec`）。
+    //   ⚠ remove() 2026-10-24 起**返回被删掉的值**（round7 Q9）⇒ 也不再标 null（见下方说明）。
     //   （两种关系型规格本身已上提为预制 `NATIVE_T_ARG0_KEY` / `NATIVE_T_ARG0_VALUE`，见 native.h；
     //    `Array[...]` 的包装就地组合 —— 只有本模块要这两条，没必要再预制。）
     static const NativeTypeSpec S_ARR_ARG0_K  = { NTYPE_ARRAY, NULL, &NATIVE_T_ARG0_KEY,   NULL, 0, -1 };
@@ -232,7 +242,10 @@ void dicts_init_instance_methods(void) {
 
     TypeKind remove_params[] = {TYPE_ANY};
     dict_register_method("remove", make_native(dict_method_remove, 2, "remove"), TYPE_ANY, TYPE_UNKNOWN, NATIVE_FIXED(remove_params));
-    native_register_instance_method_return_spec("Dict", "remove", &NATIVE_T_NULL);
+    // ⚠ remove **不再**标 `NATIVE_T_NULL`（2026-10-24 / round7 Q9）：它现在返回**被删掉的值**，
+    //   键不存在才是 null ⇒ 标成 null 会撒谎（`var old = d.remove(k)` 被推成 null 类型）。
+    //   也不标 ARG0_VALUE：键缺失时运行期仍是 null，标 V 等于承诺"一定非空"✓（同 `get` 的取舍：
+    //   返回 any，调用点自己 `_int()` / `_str()` 收窄）。
 
     dict_register_method("clear", make_native(dict_method_clear, 1, "clear"), TYPE_ANY, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
     native_register_instance_method_return_spec("Dict", "clear", &NATIVE_T_NULL);

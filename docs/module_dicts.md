@@ -234,23 +234,35 @@ print(dict)  // {name: Alice, age: 26, city: Beijing}
 
 ### `remove(key)`
 
-删除指定键值对。
+删除指定键值对，**返回被删掉的值**。
 
 **参数**:
 - `key` (string): 要删除的键
 
-**返回**: `null`
+**返回**: 被删除的**值**；键不存在（或值本身就是 `null`）⇒ `null`
 
-**注意**: 键不存在时静默处理，不报错
+> ★ 2026-10-24 起返回被删的值（此前一律返回 `null`）—— 与 `array.remove(i)`
+> 返回被删元素的口径对齐，也让"取出即删"一步完成 ✓
+> 静态类型是 `any`（键可能不存在 ⇒ 不能承诺 `V`），需要具体类型时用 `_int()` / `_str()` 收窄，
+> 与 `get(key)` 同一口径。
+> `d.remove("a")` 与 `d.remove("zz")` 都返回 `null` ⇒ 想区分"删掉了空值"和"键本来就没有"，
+> 先调 `has(key)`。
 
 ```leno
 var dict = {"a": 1, "b": 2, "c": 3}
-dict.remove("b")
-print(dict)  // {a: 1, c: 3}
 
-// 删除不存在的键（不报错）
-dict.remove("z")
-print(dict)  // {a: 1, c: 3}
+var old = dict.remove("b")     // old == 2（被删掉的值）
+print(dict)                    // {a: 1, c: 3}
+
+// 删除不存在的键（不报错，返回 null）
+var none = dict.remove("z")    // none == null
+print(dict)                    // {a: 1, c: 3}
+
+// 键存在但值是 null：返回 null，但确实删掉了 —— 想区分就先 has()
+var n = {"k": null}
+print(n.has("k"))              // true
+n.remove("k")
+print(n.has("k"))              // false
 ```
 
 ---
@@ -448,7 +460,7 @@ for dict.keys() to key {
 | `dict.has(key)` | 检查键是否存在 |
 | `dict.get(key[, default])` | 获取值（类型跟默认值实参走，见上） |
 | `dict.set(key, val)` | 设置键值对 |
-| `dict.remove(key)` | 删除键值对 |
+| `dict.remove(key)` | 删除键值对，**返回被删的值**（键不存在 ⇒ `null`，`any` 类型） |
 | `dict.setdefault(key, default)` | 键在 ⇒ 返回现值；键不在 ⇒ 写入 default 并返回它 |
 | `dict.keys()` | 获取所有键（`Array[K]`） |
 | `dict.values()` | 获取所有值（`Array[V]`） |
@@ -766,7 +778,8 @@ for dict.keys() to key {
 ### 5. 空值处理
 
 - `get()` 不存在的键返回 `null`
-- `remove()` 不存在的键静默处理
+- `remove()` 不存在的键静默处理（不报错），返回 `null`；键存在时返回**被删掉的值**
+  ⇒ 值与返回值都可能为 `null`，要区分"删掉了空值"和"键本来就没有"请先 `has()`
 - `has()` 可以区分"不存在"和"值为 null"
 
 ```leno

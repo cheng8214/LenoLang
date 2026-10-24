@@ -1,0 +1,81 @@
+// `dict.remove(key)` 返回**被删掉的值**（2026-10-24，round7 Q9）
+//
+// 改之前：无论"删成功"还是"键本来就不存在"，一律 `return val_null()`
+//   ⇒ `d.remove("a")` 和 `d.remove("zz")` 返回值完全相同，调用方没法区分，
+//     想判断得**先**再调一次 `has()`（多一次哈希查找，还容易漏）。
+//   而 `array.remove(i)` 一直返回被删掉的**元素** ⇒ 两个容器 API 本来就不对称。
+//
+// 现在：`d.remove(k)` 返回被删的值；键不存在 ⇒ null。
+//   ⚠ 键存在但值本身是 null ⇒ 也是 null（要区分请先 `has()`，见下方用例）
+//   ⚠ 返回值静态类型是 any（和 `d.get(k)` 同口径）：键可能不存在 ⇒ 不能承诺 V
+//   ⚠ 调用方**忽略返回值**时行为完全不变（`d.remove(k)` 当语句写照旧）✓
+//
+// 顺带钉住这个新文案：`true & 1` 现在报「bool 类型不能参与**位运算**」
+//   （原来一律说"算术运算"，而源码里根本没有算术 —— round7 反馈的小瑕疵）。
+//
+// ⚠ 本文件只用**运行期**断言；编译期报错的用例需要子进程，见
+//   assert/test_module_access_diag.leno 那类写法。
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+
+main() {
+    // ---- ① 删除成功 ⇒ 拿到被删的值 ----
+    var d = {"a": 1, "b": 2, "c": 3}
+    var removed = d.remove("b")
+    assert_eq(_int(removed), 2, "remove 应返回被删掉的值")
+    assert_eq(d.len(), 2, "删除后长度 -1")
+    assert_eq(d.has("b"), false, "删除后键不存在")
+
+    // ---- ② 键不存在 ⇒ null，且长度不变（不报错，与原来一致）----
+    var missing = d.remove("zz")
+    assert_eq(missing, null, "删不存在的键返回 null")
+    assert_eq(d.len(), 2, "删不存在的键不改变长度")
+
+    // ---- ③ 最有用的形态：取出即删（原来要 has + get + remove 三步）----
+    var old = d.remove("a")
+    assert_eq(_int(old), 1, "取出即删")
+    assert_eq(d.len(), 1)
+
+    // ---- ④ 键存在但值是 null ⇒ 仍返回 null（区分靠 has）----
+    var n = {"k": null}
+    assert_eq(n.has("k"), true, "键存在")
+    assert_eq(n.remove("k"), null, "值是 null ⇒ remove 也返回 null")
+    assert_eq(n.len(), 0, "但确实删掉了")
+    // 所以"删之前先 has"仍是唯一能区分的手段
+    assert_eq(n.has("k"), false, "删后键不存在")
+
+    // ---- ⑤ 与 array.remove 对齐（那个一直返回元素）----
+    var arr = [10, 20, 30]
+    assert_eq(arr.remove(0), 10, "array.remove 返回元素")
+    assert_eq(arr.len(), 2)
+
+    // ---- ⑥ 清空：逐个删也不报错（文档里推荐先收集键再删）----
+    var batch = {"x": 1, "y": 2}
+    var keys = batch.keys()
+    for keys to k {
+        batch.remove(k)
+    }
+    assert_eq(batch.len(), 0, "先收集键再删可以清空")
+
+    // ---- ⑦ 显式类型的字典：返回值类型是 any（可用 _int 收窄）----
+    Dict[string, int] typed = {"v": 7}
+    var tv = typed.remove("v")
+    assert_eq(_int(tv), 7)
+    assert_eq(_str(typed.remove("nope")), "null")
+
+    // ---- ⑧ `true & 1` 的报错文案要说"位运算"（编译期，子进程验证）----
+    var work = dirs.join(_tmpdir(), "leno_dict_remove_value")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+    var f = dirs.join(work, "bool_bitop.leno")
+    files.write(f, @"main() {
+    print(_str(true & 1))
+}
+")
+    ce.expect_error(f, "bool 参与位运算的文案要指明『位运算』（原来写『算术运算』）",
+        "bool 类型不能参与位运算", 2)
+
+    print("=== test_dict_remove_value ALL passed ===")
+}

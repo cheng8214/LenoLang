@@ -7560,8 +7560,8 @@ main() {
     // len: 获取长度
     print(dict.len())           // 2
 
-    // remove: 删除键值对
-    dict.remove("age")
+    // remove: 删除键值对，**返回被删掉的值**（键不存在 ⇒ null，类型 any）
+    var age = dict.remove("age")   // age == 25
     print(dict)                  // {name: "cheng"}
 
     // copy: 复制字典

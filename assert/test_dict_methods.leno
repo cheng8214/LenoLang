@@ -69,13 +69,16 @@ main()
     int gi_default = gi.get("n", 0)
     assert_eq(gi_default, 42)
 
-    // ---- 类型契约（v3.2.6）----
-    //   `set()` / `remove()` / `clear()` 返回 `null`（实现都是 `return val_null()`：只改字典、不产生值）。
+    // ---- 类型契约（v3.2.6 → 2026-10-24 修订）----
+    //   `set()` / `clear()` 返回 `null`（实现都是 `return val_null()`：只改字典、不产生值）。
     //   ⚠ 它们**不能**标成"值类型 V" —— 那会骗人（`val_obj(d.set(k,v))` 这种写法本来就不成立）；
     //     原来标 any 则等于放弃了这条信息（LSP 悬停与 `var x = d.set(...)` 的推断都会显示 any）。
+    //   ★ `remove()` **不再**返回 null（round7 Q9）：它现在返回**被删掉的值**，
+    //     与 `array.remove(i)` 对齐；键不存在才是 null。所以返回类型是 `any` 而不是 `null`
+    //     （键可能不在 ⇒ 不能承诺 V）。详见 assert/test_dict_remove_value.leno。
     Dict[string, int] cd = {"k": 1}
     assert_eq(cd.set("k2", 2), null)
-    assert_eq(cd.remove("k2"), null)
+    assert_eq(_int(cd.remove("k2")), 2)        // ← 返回被删掉的值（原来这里断言的是 null）
     assert_eq(cd.clear(), null)
     assert_eq(cd.len(), 0)
 
