@@ -28,6 +28,64 @@ int semantic_same_module_file(const char* a, const char* b) {
     return strcmp(ba, bb) == 0;
 }
 
+// ★ 2026-10-24（round8 N14）：**const 的深层保护** —— 表达式的"根对象"是不是 const？
+// ----------------------------------------------------------------------------
+// 症状：const 检查原来只覆盖"目标就是那个变量"的几种形态：
+//     `const A = [1,2]; A[0] = 1`      ✔ 拦（AST_INDEX 的 obj 是 AST_VAR）
+//     `const A = [1,2]; A.add(1)`      ✔ 拦（修改方法 + obj 是 AST_VAR）
+// 而"根是 const、路径多拐一层"的全漏：
+//     `const s = new S8(); s.v = 42`         ✗ 字段写（AST_FIELD 写路径没有 const 检查）
+//     `const s9 = new S9(); s9.arr.add(1)`   ✗ 字段上的修改方法
+//     `const s9 = new S9(); s9.arr[0] = 9`   ✗ 字段元素的写
+// const 的语义是**整体不可变**（docs：深不可变）⇒ 根不可变就够了。
+// 返回 1 = 根是 const，并把根名字写进 buf（`s` / `m.CFG`），调用方拼文案用。
+// ⚠ 只走 AST_VAR / AST_MODULE_ACCESS / AST_FIELD_ACCESS / AST_INDEX 这条链：
+//   parser 把 `a.b` 一律建成 AST_MODULE_ACCESS（可能指模块成员，也可能指 struct 字段），
+//   所以这条分支要**两种都认**（先按模块别名查，不是再按变量查）。
+int sem_const_root_name(Semantic* s, Ast* e, char* buf, int bufsz) {
+    if (!e || !buf || bufsz <= 0) return 0;
+    switch (e->kind) {
+        case AST_VAR: {
+            SymRef tmp;
+            memset(&tmp, 0, sizeof(tmp));
+            Symbol* sym = resolve_variable_with_upvalue(s, e->u.var.name, &tmp);
+            if (sym && sym->is_const) {
+                snprintf(buf, (size_t)bufsz, "%s", e->u.var.name);
+                return 1;
+            }
+            return 0;
+        }
+        case AST_FIELD_ACCESS:
+            return sem_const_root_name(s, e->u.field_access.obj, buf, bufsz);
+        case AST_INDEX:
+            return sem_const_root_name(s, e->u.index.obj, buf, bufsz);
+        case AST_MODULE_ACCESS: {
+            const char* base = e->u.module_access.module_name;
+            ImportedModuleInfo* mi = semantic_module_alias_info(s, base);
+            if (mi && mi->sym_table) {
+                ModuleVarSymbol* mv = module_symbol_table_find_var(mi->sym_table,
+                                                                   e->u.module_access.member_name);
+                if (mv && mv->is_const) {
+                    snprintf(buf, (size_t)bufsz, "%s.%s", base, e->u.module_access.member_name);
+                    return 1;
+                }
+                return 0;
+            }
+            // 不是模块别名 ⇒ 是 `变量.字段`（parser 的形态）⇒ 看基变量
+            SymRef tmp;
+            memset(&tmp, 0, sizeof(tmp));
+            Symbol* bsym = resolve_variable_with_upvalue(s, base, &tmp);
+            if (bsym && bsym->is_const) {
+                snprintf(buf, (size_t)bufsz, "%s", base);
+                return 1;
+            }
+            return 0;
+        }
+        default:
+            return 0;
+    }
+}
+
 // N1（2026-10-24）：`m.var = v` / `m.var += v` 这类**跨模块写变量** ⇒ 统一报错。
 //   为什么不实现而是在这里拦：读 `m.var` 走模块 exports 字典（模块初始化时的**快照**），
 //   而模块内部函数读写走 module->globals（OP_GET/SET_MODULE_VAR）⇒ 两份存储永远不同步。

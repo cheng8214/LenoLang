@@ -1,0 +1,107 @@
+// switch 的 case 值与表达式**类型不一致** ⇒ 编译期警告（2026-10-24，round8 N15）
+//
+// 运行期（vm.c 的 switch_lookup_index）把 case 值**按类型分组**、按表达式类型选查找段
+// ⇒ 类型对不上的 case **永远不会命中**，但改之前一声不吭：
+//     var x = "hi"
+//     switch x { case 1 { print("int case") } case "hi" { print("string case") } }
+//   → 编译通过、只输出 "string case"，`case 1` 静默成为死分支（round8 实测 ✗）
+//
+// 现在给一条警告 `[case类型不可达]`（**警告**不是错误：既有性能测试
+// test_op_switch_lookup 就故意用 string 表达式配 int case 来压查找路径）。
+// ⚠ 数值族（int / float / bigint / enum）内部**不报**：`switch fv`（float）配 `case 0`
+//   是常见写法，且 `0 == 0.0` 在运行期能命中 ✓
+//
+// 同族还有一条（round8 N9）：if 表达式的两分支**同 kind 但不同类型**
+//   （`Array[int]` vs `Array[string]`、不同 struct、不同 func 签名）原来静默取第一分支
+//   ⇒ 现在也发 `[分支类型不一致]` 警告（结果类型仍是第一分支，不影响运行行为）。
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+import strings
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_switch_case_type")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ---- ① 类型不一致的 case 要警告，且运行期行为不变（只命中类型对得上的那条）----
+    var f1 = dirs.join(work, "case_type_mismatch.leno")
+    files.write(f1, @"main() {
+    var x = ""hi""
+    switch x {
+        case 1    { print(""int case"") }
+        case ""hi"" { print(""string case"") }
+    }
+}
+")
+    var out1 = ce.expect_ok(f1, "类型不一致的 case 不影响编译/运行", "string case")
+    assert_true(strings.has(out1, "[case类型不可达]"),
+        "类型不一致的 case 要出 [case类型不可达] 警告；实际=" + out1)
+    assert_true(strings.has(out1, "永远不会命中"),
+        "警告要说清『永远不会命中』；实际=" + out1)
+
+    // ---- ② 数值族混用不报（float 表达式配 int case 是常见写法）----
+    var f2 = dirs.join(work, "case_numeric.leno")
+    files.write(f2, @"main() {
+    float fv = 1.5
+    int acc = 0
+    switch fv {
+        case 0 { acc = acc + 1 }
+        default { acc = acc + 7 }
+    }
+    print(""acc="" + _str(acc))
+}
+")
+    var out2 = ce.expect_ok(f2, "数值族（float 表达式 + int case）不得误报", "acc=7")
+    assert_true(not strings.has(out2, "[case类型不可达]"),
+        "数值族内部不应出 case 类型警告；实际=" + out2)
+
+    // ---- ③ `case is T` 类型匹配不受影响 ----
+    var f3 = dirs.join(work, "case_is.leno")
+    files.write(f3, @"main() {
+    var x = ""hi""
+    switch x {
+        case is string => s { print(""is string:"" + s) }
+        case is int => n    { print(""is int:"") }
+        default             { print(""other"") }
+    }
+}
+")
+    var out3 = ce.expect_ok(f3, "`case is T` 不受影响", "is string:hi")
+    assert_true(not strings.has(out3, "[case类型不可达]"),
+        "`case is T` 不该出 case 类型警告；实际=" + out3)
+
+    // ---- ④ N9：if 两分支**同 kind 不同具体类型**要警告，结果仍是第一分支的类型 ----
+    var f4 = dirs.join(work, "if_branch_detail.leno")
+    files.write(f4, @"main() {
+    var c = true
+    var arr1 = [1, 2]
+    var arr2 = [""a"", ""b""]
+    var pick = if c then arr1 else arr2
+    print(""len="" + _str(pick.len()) + "" elem="" + _str(pick[0] + 1))
+}
+")
+    var out4 = ce.expect_ok(f4, "同 kind 不同元素类型的分支：行为不变（取第一分支类型）",
+        "len=2 elem=2")
+    assert_true(strings.has(out4, "[分支类型不一致]"),
+        "同 kind 不同具体类型也要警告；实际=" + out4)
+    assert_true(strings.has(out4, "Array[int]") and strings.has(out4, "Array[string]"),
+        "警告要列出两边的**具体类型**（不只是 kind）；实际=" + out4)
+
+    // ---- ⑤ 两分支完全相同 ⇒ 不报（不得误伤）----
+    var f5 = dirs.join(work, "if_branch_same.leno")
+    files.write(f5, @"main() {
+    var c = true
+    var a = [1, 2]
+    var b = [3, 4]
+    var pick = if c then a else b
+    print(""len="" + _str(pick.len()))
+}
+")
+    var out5 = ce.expect_ok(f5, "两分支类型相同不报", "len=2")
+    assert_true(not strings.has(out5, "[分支类型不一致]"),
+        "两分支类型相同时不该警告；实际=" + out5)
+
+    print("=== test_switch_case_type_warn ALL passed ===")
+}

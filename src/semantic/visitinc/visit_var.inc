@@ -480,6 +480,23 @@
                         }
                     }
 
+                    // ★ N14（2026-10-24）：更深的链 —— `const s = new S9(); s.arr[0] = 9`
+                    //   obj 是"字段"而不是裸变量，上面两条（obj 是 AST_VAR / 模块成员）都覆盖不到
+                    //   ⇒ 用**根**判据兜住。⚠ 只对上面没报过的形态判，否则同一行报两条。
+                    {
+                        Ast* iobj = target->u.index.obj;
+                        if (iobj && (iobj->kind == AST_FIELD_ACCESS ||
+                                     (iobj->kind == AST_MODULE_ACCESS &&
+                                      !find_imported_module(s, iobj->u.module_access.module_name)))) {
+                            char const_root[BUFFER_SMALL];
+                            if (sem_const_root_name(s, iobj, const_root, (int)sizeof(const_root))) {
+                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                 "不能修改 const 变量 '%s' 的元素（const 是**整体不可变**）",
+                                                 const_root);
+                            }
+                        }
+                    }
+
                     // 索引表达式：访问索引节点进行语义分析
                     visit(s, target);
 
@@ -497,10 +514,19 @@
                     // ★ const 检查（B1 修复）：struct 关联常量在 visit 中会被折叠成字面量
                     //   （AST_NUM 等）——折叠后赋值目标不再是 lvalue，codegen 会静默丢弃
                     //   写入（实测 `Cfg.MAX = 20` 无报错且读回仍为旧值）⇒ 报错拦截。
-                    visit(s, target);
-                    if (target->kind == AST_NUM || target->kind == AST_STRING ||
-                        target->kind == AST_BOOL || target->kind == AST_NULL) {
-                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column, "不能对常量重新赋值");
+                    // ★ N14（2026-10-24）：根是 const 的字段写也要拦（`const s = new S8(); s.v = 42`
+                    //   此前这条路径根本没有 const 检查，改得动）。
+                    char const_root[BUFFER_SMALL];
+                    if (sem_const_root_name(s, target, const_root, (int)sizeof(const_root))) {
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                         "不能修改 const 变量 '%s' 的字段（const 是**整体不可变**："
+                                         "需要可变对象请声明为 var）", const_root);
+                    } else {
+                        visit(s, target);
+                        if (target->kind == AST_NUM || target->kind == AST_STRING ||
+                            target->kind == AST_BOOL || target->kind == AST_NULL) {
+                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column, "不能对常量重新赋值");
+                        }
                     }
                 } else if (target->kind == AST_MODULE_ACCESS) {
                     // 模块访问（可能是 struct/cstruct 字段访问）：访问节点进行语义分析
@@ -511,11 +537,21 @@
                     snprintf(orig_buf, sizeof(orig_buf), "%s.%s",
                              target->u.module_access.module_name,
                              target->u.module_access.member_name);
-                    visit(s, target);
-                    if (target->kind == AST_NUM || target->kind == AST_STRING ||
-                        target->kind == AST_BOOL || target->kind == AST_NULL) {
+                    // ★ N14（2026-10-24）：`const s = new S8(); s.v = 42` —— 根是 const 的
+                    //   字段写此前**完全没检查**（AST_FIELD 写路径没有 const 分支）。
+                    //   必须在 visit 之前判：visit 会把它改写成 AST_FIELD_ACCESS/AST_INDEX。
+                    char const_root[BUFFER_SMALL];
+                    if (sem_const_root_name(s, target, const_root, (int)sizeof(const_root))) {
                         error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
-                                         "不能对常量 '%s' 重新赋值", orig_buf);
+                                         "不能修改 const 变量 '%s' 的字段（const 是**整体不可变**："
+                                         "需要可变对象请声明为 var）", const_root);
+                    } else {
+                        visit(s, target);
+                        if (target->kind == AST_NUM || target->kind == AST_STRING ||
+                            target->kind == AST_BOOL || target->kind == AST_NULL) {
+                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                             "不能对常量 '%s' 重新赋值", orig_buf);
+                        }
                     }
                 } else if (target->kind == AST_VAR && ast->u.assign.names[i]) {
                     // 简单变量：解析符号

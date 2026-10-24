@@ -3213,6 +3213,20 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     if (!promoted) {
                         // 兜底：如果 kind 相同，直接取该类型（如两个 bool、两个 int）
                         if (then_type->kind == else_type->kind) {
+                            // ★ N9（2026-10-24，round8）：**同 kind 不代表同类型** ——
+                            //   `Array[int]` vs `Array[string]`、不同 struct、不同 func 签名
+                            //   原来一律静默取第一分支（类型安全靠"具体类型"兜住，但用户
+                            //   完全看不到两个分支根本不是一回事）⇒ 补一条警告，行为不变。
+                            //   ⚠ type_to_string 用**同一个** TLS 缓冲 ⇒ 两次调用会互相覆盖，
+                            //     所以左边那个先拷进局部缓冲 ✓
+                            if (!type_equals(then_type, else_type)) {
+                                char tbuf[BUFFER_SMALL];
+                                snprintf(tbuf, sizeof(tbuf), "%s", type_to_string(then_type));
+                                warning_add_at_fmt(WARN_IF_BRANCH_TYPE_MISMATCH, ast->line, ast->column,
+                                    "if 表达式两个分支类型不同（%s / %s）⇒ 结果按**第一个分支**的类型处理，"
+                                    "另一个分支的值可能与该类型不符；需要类型安全就让两边类型一致",
+                                    tbuf, type_to_string(else_type));
+                            }
                             result = type_copy(then_type);
                         } else {
                             // ★ 2026-10-24：分支类型不一致 ⇒ 结果退化成 any，**加警告**

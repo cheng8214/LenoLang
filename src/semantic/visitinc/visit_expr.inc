@@ -615,6 +615,27 @@
                                                      "不能对 const 变量 '%s.%s' 调用修改方法 '%s'",
                                                      mod_name, mem_name, method_name);
                                 }
+                            } else {
+                                // ★ N14（2026-10-24）：`const s9 = new S9(); s9.arr.add(1)` ——
+                                //   接收者是"某变量的**字段**"（parser 建的是 MODULE_ACCESS，
+                                //   而 mod_name 不是模块别名）⇒ 上面的模块分支进不来。
+                                //   改用"根是不是 const"判据兜住（const 整体不可变）。
+                                char const_root[BUFFER_SMALL];
+                                if (sem_const_root_name(s, obj, const_root, (int)sizeof(const_root))) {
+                                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                     "不能对 const 变量 '%s' 的成员调用修改方法 '%s'"
+                                                     "（const 是**整体不可变**）",
+                                                     const_root, method_name);
+                                }
+                            }
+                        } else if (obj && obj->kind == AST_FIELD_ACCESS) {
+                            // 同上（visit 之后的形态）
+                            char const_root[BUFFER_SMALL];
+                            if (sem_const_root_name(s, obj, const_root, (int)sizeof(const_root))) {
+                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                 "不能对 const 变量 '%s' 的成员调用修改方法 '%s'"
+                                                 "（const 是**整体不可变**）",
+                                                 const_root, method_name);
                             }
                         }
                     }

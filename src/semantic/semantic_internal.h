@@ -149,6 +149,9 @@ void semantic_report_module_var_write(const char* module_name, const char* membe
                                       int line, int column);
 // 两个模块路径是否同一个文件（N7 的重复别名判据：只用于**放过**，宁漏报不误报）
 int semantic_same_module_file(const char* a, const char* b);
+// const 的**深层**保护（N14）：表达式的根对象是 const 时返回 1，并把根名字写进 buf。
+//   `s.v = 1` / `s.arr.add(1)` / `s.arr[0] = 1` 的根都是 `s` ⇒ const 整体不可变。
+int sem_const_root_name(Semantic* s, Ast* e, char* buf, int bufsz);
 int add_upvalue(Ast* func_ast, const char* name, int index, int is_local, int is_value_capture);
 Symbol* resolve_variable_with_upvalue(Semantic* s, const char* name, SymRef* ref);
 // 上面那个的**原实现**（2026-10-10 拆出来给 WARN_UNUSED_VAR 用）：它只做解析，

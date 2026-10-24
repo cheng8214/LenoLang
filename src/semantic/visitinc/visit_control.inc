@@ -784,6 +784,45 @@
 
             visit(s, ast->u.switch_.expr);
 
+            // ★ N15（2026-10-24）：**case 常量值的类型与 switch 表达式不一致** ⇒ 警告。
+            //   运行期（vm.c 的 switch_lookup_index）把 case 值**按类型分组**，按表达式类型
+            //   选查找段 ⇒ 类型对不上的 case **永远不会命中**，而原来一声不吭（round8 实测：
+            //   `var x = "hi"; switch x { case 1 {…} case "hi" {…} }` 编过、只输出 string case）。
+            //   ⚠ 用**警告**不用错误：既有性能测试 test_op_switch_lookup 就故意用
+            //     `switch sv`（string）配 `case 0/1/2/3`（int）来压查找路径（那里 default 全接）。
+            //   ⚠ 数值族（int/float/bigint/enum）内部不报：`switch fv`（float）配 `case 0` 是
+            //     常见写法，且 `0 == 0.0` 在运行期能命中（同属数值比较）✓
+            TypeInfo* sw_expr_type = infer_expr_type(s, ast->u.switch_.expr);
+            if (sw_expr_type && sw_expr_type->kind != TYPE_ANY && sw_expr_type->kind != TYPE_INFER &&
+                sw_expr_type->kind != TYPE_UNKNOWN) {
+                for (int ci = 0; ci < ast->u.switch_.case_count; ci++) {
+                    if (ast->u.switch_.cases[ci].is_type_match) continue;   // `case is T` 不在此列
+                    for (int vi = 0; vi < (int)ast->u.switch_.cases[ci].values.count; vi++) {
+                        Ast* cv = ast->u.switch_.cases[ci].values.items[vi];
+                        TypeInfo* cv_type = infer_expr_type(s, cv);
+                        if (!cv_type) continue;
+                        TypeKind ck = cv_type->kind;
+                        int ck_num = (ck == TYPE_INT || ck == TYPE_FLOAT ||
+                                      ck == TYPE_BIGINT || ck == TYPE_ENUM);
+                        TypeKind sk = sw_expr_type->kind;
+                        int sk_num = (sk == TYPE_INT || sk == TYPE_FLOAT ||
+                                      sk == TYPE_BIGINT || sk == TYPE_ENUM);
+                        int comparable = (ck == TYPE_ANY || ck == TYPE_INFER || ck == TYPE_UNKNOWN ||
+                                          ck == TYPE_NULL || ck == sk || (ck_num && sk_num));
+                        if (!comparable) {
+                            warning_add_at_fmt(WARN_SWITCH_CASE_TYPE, cv->line, cv->column,
+                                "case 值的类型（%s）与 switch 表达式的类型（%s）不一致 —— "
+                                "switch 按『值 + 类型』匹配，这个 case **永远不会命中**；"
+                                "要按类型分支请写 `case is %s => v`，否则把 case 值改成同一类型",
+                                type_kind_to_string(ck), type_kind_to_string(sk),
+                                type_kind_to_string(ck));
+                        }
+                        type_free(cv_type);
+                    }
+                }
+            }
+            if (sw_expr_type) type_free(sw_expr_type);
+
             for (int i = 0; i < ast->u.switch_.case_count; i++) {
                 Scope* case_scope = scope_new(s->current, 0);
                 s->current = case_scope;

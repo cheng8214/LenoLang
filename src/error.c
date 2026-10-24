@@ -519,6 +519,7 @@ void warning_print_all(void) {
             case WARN_MODULE_ALIAS_SHADOWED: type_str = "模块别名被遮蔽"; break;
             case WARN_STRUCT_NAME_CLASH:     type_str = "struct跨模块撞名"; break;
             case WARN_DEFAULT_VAR_SNAPSHOT:  type_str = "默认值快照"; break;
+            case WARN_SWITCH_CASE_TYPE:      type_str = "case类型不可达"; break;
             // （原 WARN_EMPTY_CATCH / WARN_IMPOSSIBLE_CAST 已升为错误 ⇒ 类别名移入消息前缀 ✓）
             default: break;
         }

@@ -2139,6 +2139,10 @@ const char* native_instance_method_hint(const char* type_name, const char* metho
             {"indexof",  "index_of"},  // JS indexOf / C# IndexOf
             {"removeat", "remove"},    // C# / Java removeAt
             {"delete",   "remove"},    // JS Map.delete 等
+            // ★ 2026-10-24（round8 N13 建议）：`ch.recv()` 与 `receive` 的编辑距离是 3
+            //   （recv → recev → receiv → receive）⇒ 相似名机制（最多 2）命不中 ✗，
+            //   而 Go 风格/Python socket 习惯都会写成 recv ✓
+            {"recv",     "receive"},
         };
         for (size_t i = 0; i < sizeof(alias) / sizeof(alias[0]); i++) {
             size_t n = strlen(alias[i].from);

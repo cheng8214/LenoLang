@@ -1,0 +1,86 @@
+// round8 的两条小诊断（2026-10-24）
+//
+// ① N12：**顶层重复声明**静默覆盖
+//     `var d = 1` + `var d = 2` 在顶层脚本里能编译（后者静默覆盖前者），
+//     而 `main() { var d = 1; var d = 2 }` 会报「重复定义」⇒ 两处口径不一致。
+//     现在顶层也报（判点就在已有的顶层扫描里：那个循环本来就收集了所有声明名）。
+//     ⚠ 只认**顶层**；块内的重复定义由原有机制报 ✓
+//
+// ② N13 建议：`ch.recv()` 这种拼错要给纠错提示
+//     `recv` 与 `receive` 的编辑距离是 3（recv → recev → receiv → receive），
+//     而相似名机制最多容忍 2 ⇒ 原来只报「没有方法 'recv'」，零建议 ✗
+//     ⇒ 加进**跨语言同义词表**（与 push→add、size→len 同一张表）。
+//     顺带提一句：`ch.receive()` 在空 channel 上**阻塞是语义**，不是缺陷。
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_round8_misc")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ---- ① 顶层重复声明 ⇒ 报错 ----
+    var f1 = dirs.join(work, "dup_toplevel.leno")
+    files.write(f1, @"var d = 1
+var d = 2
+print(_str(d))
+")
+    ce.expect_error(f1, "N12: 顶层重复声明要报错（原来静默后者覆盖）",
+        "重复的模块级变量 'd'", 2)
+
+    // 同一个名字 const + var 混着声明同样算重复
+    var f2 = dirs.join(work, "dup_toplevel_const.leno")
+    files.write(f2, @"const K = 1
+var K = 2
+print(_str(K))
+")
+    ce.expect_error(f2, "N12: const 与 var 同名也算重复", "重复的模块级变量 'K'", 2)
+
+    // export 包裹的声明同样参与判重（ensure 包装层没挡住）
+    var f3 = dirs.join(work, "dup_toplevel_export.leno")
+    files.write(f3, @"export var G = 1
+var G = 2
+print(_str(G))
+")
+    ce.expect_error(f3, "N12: export var 与普通 var 同名也算重复",
+        "重复的模块级变量 'G'", 2)
+
+    // ---- 正向：**改名赋值**不是声明，不受影响 ----
+    var ok1 = dirs.join(work, "assign_ok.leno")
+    files.write(ok1, @"var d = 1
+d = 2
+d = d + 1
+main() {
+    print(""d="" + _str(d))
+}
+")
+    ce.expect_ok(ok1, "正向：不带 var 的重新赋值照常", "d=3")
+
+    // ---- ② `ch.recv()` 要给纠错提示 ----
+    var f4 = dirs.join(work, "chan_recv_typo.leno")
+    files.write(f4, @"import threads
+
+main() {
+    var ch = threads.channel(1)
+    print(_str(ch.recv()))
+}
+")
+    ce.expect_error(f4, "N13: `recv` 拼错要提示 `receive`",
+        "Leno 里它叫 'receive'", 5)
+
+    // ---- 正向：正确方法名 `receive` 不报（阻塞语义是设计，不在此测）----
+    var ok2 = dirs.join(work, "chan_ok.leno")
+    files.write(ok2, @"import threads
+
+main() {
+    var ch = threads.channel(1)
+    ch.send(42)
+    print(""got="" + _str(ch.try_receive()))
+}
+")
+    ce.expect_ok(ok2, "正向：Channel 的 send / try_receive 照常", "got=42")
+
+    print("=== test_round8_misc_diags ALL passed ===")
+}

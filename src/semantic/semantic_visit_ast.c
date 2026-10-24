@@ -930,6 +930,18 @@ void mv_check_top(Semantic* s, Ast* block) {
                 all_vars = (char**)realloc(all_vars, sizeof(char*) * (size_t)all_cap);
                 if (!all_vars) return;
             }
+            // ★ 2026-10-24（round8 N12）：**顶层重复声明** ⇒ 报错。
+            //   原来顶层脚本块不建作用域 ⇒ `var d = 1` + `var d = 2` 静默后者覆盖前者
+            //   （而 main(){} 块内同样的写法会报「重复定义」✗ 两处口径不一致）。
+            //   在这里判是顺手的：本次扫描本来就把顶层所有声明名收集了一遍 ✓
+            if (decl->u.var_decl.name &&
+                mv_in_set(all_vars, all_n, decl->u.var_decl.name)) {
+                error_add_at_fmt(ERR_SEMANTIC, decl->line, decl->column,
+                    "重复的模块级变量 '%s'（同一文件顶层只能声明一次；原来的行为是"
+                    "**后者静默覆盖前者**）—— 想改值请写 `%s = 新值`（不带 var/const），"
+                    "或给其中一个换名字",
+                    decl->u.var_decl.name, decl->u.var_decl.name);
+            }
             all_vars[all_n++] = decl->u.var_decl.name;
         } else if (decl->kind == AST_DESTRUCT_DECL) {
             for (int k = 0; k < decl->u.destruct_decl.slot_count; k++) {

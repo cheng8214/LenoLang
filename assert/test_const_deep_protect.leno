@@ -1,0 +1,129 @@
+// const 的**深层**保护（2026-10-24，round8 N14）
+//
+// const 的语义是**整体不可变**（教程：const 是不可变常量），但改之前只有"目标正好是
+// 那个变量"的几种形态被拦：
+//     const A = [1,2]; A[0] = 1    ✔ 拦（元素写，obj 是裸变量）
+//     const A = [1,2]; A.add(1)    ✔ 拦（修改方法，接收者是裸变量）
+// 而"根是 const、路径多拐一层"的全漏（实测都能改成功 ✗）：
+//     const s = new S8(); s.v = 42          ✗ 字段写（AST_FIELD 写路径没有 const 检查）
+//     const s9 = new S9(); s9.arr.add(1)    ✗ 字段上的修改方法
+//     const s9 = new S9(); s9.arr[0] = 9    ✗ 字段元素的写
+// ⇒ 现在统一按"**根对象**是 const 就拦"处理（判据的唯一实现：sem_const_root_name）。
+//
+// ⚠ 已知边界（故意钉住，别当回归）：**别名传出去**就拦不住 ——
+//     const A = [1,2]
+//     tryMut(A)                  // 函数里 a.add(99) 照样改得动
+//   编译期只有"变量符号"这一层信息，实参进函数后形参不是 const。
+//   要根治得给容器加**运行期只读标记**（每个 mutator 都查），属另一档改动；
+//   在那之前文档写明：const 保护的是"**你自己**别改它"，不是"别人也改不了"。
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_const_deep")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // 6 行头：后面追加的内容从第 7 行开始（行号断言按这个算）
+    var hdr = @"struct S8 {
+    int v = 0
+}
+struct S9 {
+    Array[int] arr = []
+}
+"
+
+    // ---- 负向：根是 const 的三条新路径都要拦 ----
+    var f1 = dirs.join(work, "const_field.leno")
+    files.write(f1, hdr + @"main() {
+    const s = new S8()
+    s.v = 42
+    print(_str(s.v))
+}
+")
+    ce.expect_error(f1, "N14: const 的**字段赋值**要编译期拦下",
+        "不能修改 const 变量 's' 的字段", 9)
+
+    var f2 = dirs.join(work, "const_field_method.leno")
+    files.write(f2, hdr + @"main() {
+    const s = new S9()
+    s.arr.add(1)
+    print(_str(s.arr.len()))
+}
+")
+    ce.expect_error(f2, "N14: const 的**字段上调修改方法**要拦下",
+        "不能对 const 变量 's' 的成员调用修改方法 'add'", 9)
+
+    var f3 = dirs.join(work, "const_field_elem.leno")
+    files.write(f3, hdr + @"func mk(): S9 { return new S9() }
+
+main() {
+    const s = mk()
+    s.arr[0] = 9
+    print(_str(s.arr.len()))
+}
+")
+    ce.expect_error(f3, "N14: const 的**字段元素写**要拦下",
+        "不能修改 const 变量 's' 的元素", 11)
+
+    // ---- 负向：原来就拦的两条不能被改坏（回归守卫）----
+    var f4 = dirs.join(work, "const_elem_old.leno")
+    files.write(f4, @"main() {
+    const A = [1, 2]
+    A[0] = 9
+    print(_str(A[0]))
+}
+")
+    ce.expect_error(f4, "N14 回归：const 数组的元素写仍报原来那句",
+        "不能对 const 变量 'A' 的元素重新赋值", 3)
+
+    var f5 = dirs.join(work, "const_method_old.leno")
+    files.write(f5, @"main() {
+    const A = [1, 2]
+    A.add(9)
+    print(_str(A.len()))
+}
+")
+    ce.expect_error(f5, "N14 回归：const 数组的修改方法仍报原来那句",
+        "不能对 const 变量 'A' 调用修改方法 'add'", 3)
+
+    // ---- 正向：var 版本一律放行（不得误伤）----
+    var ok1 = dirs.join(work, "var_ok.leno")
+    files.write(ok1, hdr + @"main() {
+    var s = new S8()
+    s.v = 42
+    var s9 = new S9()
+    s9.arr.add(1)
+    s9.arr[0] = 7
+    print(""v="" + _str(s.v) + "" n="" + _str(s9.arr.len()) + "" e="" + _str(s9.arr[0]))
+}
+")
+    ce.expect_ok(ok1, "正向：var 的字段写 / 字段方法 / 字段元素写照常", "v=42 n=1 e=7")
+
+    // ---- 正向：读 const 的深层成员不受影响 ----
+    var ok2 = dirs.join(work, "const_read_ok.leno")
+    files.write(ok2, hdr + @"main() {
+    const s = new S9()
+    const A = [1, 2, 3]
+    print(""n="" + _str(s.arr.len()) + "" sum="" + _str(A[0] + A[1] + A[2]) + "" len="" + _str(A.len()))
+}
+")
+    ce.expect_ok(ok2, "正向：读 const 的字段 / 元素 / 方法照常", "n=0 sum=6 len=3")
+
+    // ---- 已知边界：别名传参绕过（**当前行为**，钉住以免被误当回归）----
+    var edge = dirs.join(work, "alias_bypass.leno")
+    files.write(edge, @"func tryMut(Array[int] a) {
+    a.add(99)
+}
+main() {
+    const A = [1, 2]
+    tryMut(A)
+    print(""len="" + _str(A.len()))
+}
+")
+    ce.expect_ok(edge, "已知边界：const 传参后函数内仍可改（编译期判不了）", "len=3")
+
+    print("=== test_const_deep_protect ALL passed ===")
+}
