@@ -113,6 +113,8 @@ typedef enum {
     WARN_EMPTY_SOURCE,     // 源文件为空（或只有空白）：会"编译成功"却不做任何事
     WARN_ASSIGN_IN_COND,   // if/while 条件位置出现赋值（可能漏写 ==）
     WARN_FOR_IN_COND,      // for 头写 'x in arr'（in 是成员测试，遍历应写 'for x to arr'）
+    // ★ 2026-10-24：if 表达式的两个分支类型不同（结果退化成 any，类型检查被推迟）
+    WARN_IF_BRANCH_TYPE_MISMATCH,
     WARN_PARTIAL_DECL_INIT, // var 声明列表只有部分变量带初值（Python 多重赋值习惯）
     WARN_FIELD_NO_INIT,     // struct 标量字段未显式初始化（默认是 null 而不是 0，参与运算会报错）
     WARN_AMBIGUOUS_MODULE,  // 裸文件名 import 撞名：多个包目录都有同名 .leno 且内容不同（静默选错文件）

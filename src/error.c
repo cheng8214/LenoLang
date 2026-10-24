@@ -504,6 +504,7 @@ void warning_print_all(void) {
             case WARN_EMPTY_SOURCE:    type_str = "空源文件"; break;
             case WARN_ASSIGN_IN_COND:  type_str = "条件中的赋值"; break;
             case WARN_FOR_IN_COND:     type_str = "for头成员测试"; break;
+            case WARN_IF_BRANCH_TYPE_MISMATCH: type_str = "分支类型不一致"; break;
             case WARN_PARTIAL_DECL_INIT: type_str = "部分初值声明"; break;
             case WARN_FIELD_NO_INIT:   type_str = "字段未初始化"; break;
             case WARN_AMBIGUOUS_MODULE: type_str = "模块名歧义"; break;

@@ -3150,6 +3150,20 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                         if (then_type->kind == else_type->kind) {
                             result = type_copy(then_type);
                         } else {
+                            // ★ 2026-10-24：分支类型不一致 ⇒ 结果退化成 any，**加警告**
+                            //   原来完全静默。实测语义是"any 首次赋非 null 时锁定类型"：
+                            //       var v = if c then 1 else "str"   // any
+                            //       v = 2.5                          // 锁定 float
+                            //       v = "hello"                      // 报错（期望 float）
+                            //   ⇒ 类型安全没丢，只是**推迟到首次赋值**。对新手来说
+                            //     "为什么这里能赋任何类型"很难理解，给条提示即可。
+                            //   ⚠ 只警告不改行为：现有代码里两分支返回不同类型很常见
+                            //     （尤其一边返回 null 表示"没有值"），不能收紧成错误。
+                            warning_add_at_fmt(WARN_IF_BRANCH_TYPE_MISMATCH, ast->line, ast->column,
+                                "if 表达式两个分支类型不同（%s / %s）⇒ 结果是 any，"
+                                "类型检查推迟到首次赋值；需要类型安全就让两边类型一致",
+                                type_kind_to_string(then_type->kind),
+                                type_kind_to_string(else_type->kind));
                             result = type_new(TYPE_ANY);
                         }
                     }
