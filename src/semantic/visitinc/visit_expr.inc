@@ -2418,6 +2418,27 @@
             visit(s, ast->u.slice.obj);
             if (ast->u.slice.start) visit(s, ast->u.slice.start);
             if (ast->u.slice.end) visit(s, ast->u.slice.end);
+
+            // ★ 2026-10-25：**切片结束下标为负常量** ⇒ 结果恒为空 ⇒ 警告。
+            //   Leno 的负下标只对**起点**生效（负起点从末尾数），负终点在 VM 里直接得空结果
+            //   ⇒ `arr[:-1]`（Python 习惯 = "去掉最后一个"）静默变成 `[]` ✗（round8 实测）。
+            //   切片是**闭区间**，要"去掉最后 N 个"得写 `arr[0 : arr.len() - N - 1]`。
+            //   ⚠ 只对**常量**负下标报：`arr[0:n]` 这种运行期才知道的判不了（宁漏勿误报）。
+            if (ast->u.slice.end) {
+                Ast* e = ast->u.slice.end;
+                int is_neg_const = 0;
+                if (e->kind == AST_UNARY && e->u.unary.op == TOK_MINUS && e->u.unary.operand &&
+                    e->u.unary.operand->kind == AST_NUM && !e->u.unary.operand->u.num.is_bigint &&
+                    e->u.unary.operand->u.num.value > 0) {
+                    is_neg_const = 1;
+                }
+                if (is_neg_const) {
+                    warning_add_at_fmt(WARN_SLICE_NEG_END, ast->line, ast->column,
+                        "切片的**结束下标是负数** ⇒ 结果恒为空（Leno 的负下标只对**起点**生效："
+                        "负起点从末尾数，负终点直接得空结果）。切片是**闭区间**，"
+                        "要\"去掉最后 N 个\"请写 `arr[0 : arr.len() - N - 1]`");
+                }
+            }
             
             // 编译时检查切片对象类型
             TypeInfo* slice_obj_type = infer_expr_type(s, ast->u.slice.obj);

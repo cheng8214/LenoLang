@@ -520,6 +520,7 @@ void warning_print_all(void) {
             case WARN_STRUCT_NAME_CLASH:     type_str = "struct跨模块撞名"; break;
             case WARN_DEFAULT_VAR_SNAPSHOT:  type_str = "默认值快照"; break;
             case WARN_SWITCH_CASE_TYPE:      type_str = "case类型不可达"; break;
+            case WARN_SLICE_NEG_END:         type_str = "切片负终点"; break;
             // （原 WARN_EMPTY_CATCH / WARN_IMPOSSIBLE_CAST 已升为错误 ⇒ 类别名移入消息前缀 ✓）
             default: break;
         }

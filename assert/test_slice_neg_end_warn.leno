@@ -1,0 +1,68 @@
+// 切片**结束下标为负常量** ⇒ 编译期警告（2026-10-25，round8「切片语义」那一条）
+//
+// Leno 的负下标只对**起点**生效：`arr[-3:2]` 从末尾数 ✓；而**负终点**在 VM 里直接得空结果
+// （`max(start, end)` 逻辑之外，负 end 视为"越界 ⇒ 空"）。于是 Python 习惯写法
+//     arr[:-1]        // 想"去掉最后一个" ⇒ 实际拿到 []
+// 静默变空、不报错，是最容易咬人的一格。
+//
+// 现在给一条警告（**警告不是错误**：语义不变，只是把结果讲明白）。
+// 切片是**闭区间**，"去掉最后 N 个"的正确写法是 `arr[0 : arr.len() - N - 1]`。
+// ⚠ 只对**常量**负下标报（`arr[0:n]` 运行期才知道，判不了 —— 宁漏勿误报）。
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+import strings
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_slice_neg_end")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ---- ① 运行期行为不变（仍是空），但编译期要出警告 ----
+    var f1 = dirs.join(work, "neg_end.leno")
+    files.write(f1, @"main() {
+    var arr = [10, 20, 30]
+    print(""a="" + _str(arr[:-1]) + "" b="" + _str(arr[-2:-1]) + "" s="" + ""hey""[:-1])
+}
+")
+    var out1 = ce.expect_ok(f1, "负终点的运行期行为不变（恒为空）", "a=[] b=[] s=")
+    assert_true(strings.has(out1, "[切片负终点]"),
+        "负终点要出 [切片负终点] 警告；实际=" + out1)
+    assert_true(strings.has(out1, "闭区间"),
+        "警告要说明切片是闭区间并给出正确写法；实际=" + out1)
+
+    // ---- ② 正向：负**起点**不报（那是合法且好用的写法）----
+    var f2 = dirs.join(work, "neg_start.leno")
+    files.write(f2, @"main() {
+    var arr = [10, 20, 30, 40, 50]
+    print(""x="" + _str(arr[-3:2]))
+}
+")
+    var out2 = ce.expect_ok(f2, "负起点照常（不报警告）", "x=[30]")
+    assert_true(not strings.has(out2, "[切片负终点]"),
+        "负起点不该触发警告；实际=" + out2)
+
+    // ---- ③ 正向：常量正区间不报 ----
+    var f3 = dirs.join(work, "pos_range.leno")
+    files.write(f3, @"main() {
+    var arr = [10, 20, 30, 40, 50]
+    print(""y="" + _str(arr[1:3]) + "" z="" + ""hello""[0:2])
+}
+")
+    var out3 = ce.expect_ok(f3, "常量正区间不报警告", "y=[20, 30, 40] z=he")
+    assert_true(not strings.has(out3, "[切片负终点]"),
+        "正区间不该触发警告；实际=" + out3)
+
+    // ---- ④ 正确写法：闭区间"去掉最后 N 个" ----
+    var f4 = dirs.join(work, "correct_way.leno")
+    files.write(f4, @"main() {
+    var arr = [10, 20, 30, 40, 50]
+    // 去掉最后一个（索引 0..3）：len-2 = 3
+    print(""w="" + _str(arr[0 : arr.len() - 2]))
+}
+")
+    ce.expect_ok(f4, "闭区间下『去掉最后一个』的正确写法", "w=[10, 20, 30, 40]")
+
+    print("=== test_slice_neg_end_warn ALL passed ===")
+}
