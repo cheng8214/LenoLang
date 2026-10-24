@@ -1,0 +1,84 @@
+// 模块级变量的**初始化顺序**检查（2026-10-23 引入，2026-10-24 修一个误报）
+//
+// 规则本身：模块顶层严格按源码顺序执行 ⇒ `var B = A + 1` 里若 A 在后面才声明，
+//   B 初始化时 A 还是 null（运行期表现为「加法运算: null 不能参与运算」，指不到真因）
+//   ⇒ 编译期就报「变量 'A' 在声明前使用」。
+//   ⚠ 函数体里引用后面的变量**合法**（调用时机不定）—— 检查只看顶层。
+//
+// 2026-10-24 修的误报（round6 复核 LenoHack 时发现）：
+//   `export` 会把声明**包一层** AST_EXPORT，而顺序检查只认裸的 AST_VAR_DECL
+//   ⇒ `export const LEVEL_INFO = 1` 的名字从没进"已声明"集合，于是紧跟着的
+//   `int _logLevel = LEVEL_INFO` 被误报「在声明前使用」✗
+//   （实测 LenoHack/lib/hack_log.leno:32 因此整模块编不过，连带 3 个文件）。
+//   export 只影响**可见性**，不影响初始化顺序 ⇒ 现在先剥包装层再判。
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_modvar_order")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ---- 正向 ①：export var / export const 在前，后用它初始化别的模块变量 ----
+    //   这一条就是 LenoHack 的形状（`export const LEVEL_INFO = 1` + `int _logLevel = LEVEL_INFO`）
+    var ok1 = dirs.join(work, "export_first.leno")
+    files.write(ok1, @"export const LEVEL_INFO = 1
+export var BASE = 2
+const LOCAL_K = 3
+var LOCAL_V = 4
+
+int a = LEVEL_INFO + LOCAL_K
+int b = BASE + LOCAL_V
+
+main() {
+    print(""a="" + _str(a) + "" b="" + _str(b))
+}
+")
+    ce.expect_ok(ok1, "export const/var 在前时可被后面的模块变量引用（原来误报）",
+        "a=4 b=6")
+
+    // ---- 正向 ②：函数体里引用**后面**才声明的模块变量是合法的 ----
+    //   ⚠ 变量要写**显式类型**：`var LATER = 42` 的类型要等它自己的声明被访问才推出来，
+    //     而函数体在它之前分析 ⇒ 那时 LATER 还是 any，会撞上另一条（返回类型 any）✗
+    //     —— 这条与本文件要钉的"顺序检查"无关，别混进来。
+    var ok2 = dirs.join(work, "func_later.leno")
+    files.write(ok2, @"func get(): int {
+    return LATER
+}
+
+int LATER = 42
+
+main() {
+    print(""v="" + _str(get()))
+}
+")
+    ce.expect_ok(ok2, "函数体里引用后面声明的模块变量合法（不得误伤）", "v=42")
+
+    // ---- 负向 ①：真·前向引用（裸 var）必须继续报错 ----
+    var bad1 = dirs.join(work, "forward_plain.leno")
+    files.write(bad1, @"var B = A + 1
+var A = 1
+
+main() {
+    print(_str(B))
+}
+")
+    ce.expect_error(bad1, "真·前向引用（裸 var）仍要报错", "在声明前使用", 1)
+
+    // ---- 负向 ②：前向引用的是 **export 的**变量，同样必须报错 ----
+    //   （证明"剥包装层"没有把这条检查整个放开）
+    var bad2 = dirs.join(work, "forward_export.leno")
+    files.write(bad2, @"var B = A + 1
+export var A = 1
+
+main() {
+    print(_str(B))
+}
+")
+    ce.expect_error(bad2, "前向引用 export 变量仍要报错（剥包装层不是关检查）",
+        "在声明前使用", 1)
+
+    print("=== test_modvar_order ALL passed ===")
+}

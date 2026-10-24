@@ -850,13 +850,23 @@ static int mv_in_set(char** names, int n, const char* name) {
     return 0;
 }
 
-static void mv_check_expr(Semantic* s, Ast* e, char** declared, int n) {
+// mv_check_expr 的"是否真的属于本模块的变量"判据靠这张**全量清单**：
+//   `all_vars` = 本文件顶层**所有** var/const/解构声明的名字（含 export 包裹的）。
+//   ⚠ 为什么需要它：模块级**函数**的符号 kind 也是 SYM_MODULE（与模块变量同一种），
+//     AST_VAR 上分不出来 ⇒ 只看 kind 会把"函数当值用"全判成"变量在声明前使用" ✗
+//     实测两处（都是合法写法）：
+//        export var absFunc = localAbs     // 把函数重导出成变量
+//        export int fromFunc = helper()    // 调用后面/前面定义的函数
+//     ⇒ 只有"名字确实是本模块的模块变量、且还没走到它的声明"才报 ✓
+static void mv_check_expr(Semantic* s, Ast* e, char** declared, int n,
+                          char** all_vars, int all_n) {
     (void)s;
     if (!e) return;
     switch (e->kind) {
         case AST_VAR: {
             SymRef* r = &e->u.var.ref;
             if ((r->kind == SYM_MODULE || r->kind == SYM_GLOBAL) && r->name &&
+                mv_in_set(all_vars, all_n, r->name) &&
                 !mv_in_set(declared, n, r->name)) {
                 error_add_at_fmt(ERR_SEMANTIC, e->line, e->column,
                     "变量 '%s' 在声明前使用（模块级变量按源码顺序初始化，此刻它还是 null）\n"
@@ -866,68 +876,108 @@ static void mv_check_expr(Semantic* s, Ast* e, char** declared, int n) {
             return;
         }
         case AST_BINOP:
-            mv_check_expr(s, e->u.binop.l, declared, n);
-            mv_check_expr(s, e->u.binop.r, declared, n);
+            mv_check_expr(s, e->u.binop.l, declared, n, all_vars, all_n);
+            mv_check_expr(s, e->u.binop.r, declared, n, all_vars, all_n);
             return;
         case AST_UNARY:
-            mv_check_expr(s, e->u.unary.operand, declared, n);
+            mv_check_expr(s, e->u.unary.operand, declared, n, all_vars, all_n);
             return;
         case AST_CALL:
-            mv_check_expr(s, e->u.call.callee, declared, n);
+            mv_check_expr(s, e->u.call.callee, declared, n, all_vars, all_n);
             for (int i = 0; i < (int)e->u.call.args.count; i++) {
-                mv_check_expr(s, e->u.call.args.items[i], declared, n);
+                mv_check_expr(s, e->u.call.args.items[i], declared, n, all_vars, all_n);
             }
             return;
         case AST_INDEX:      // A[0]
-            mv_check_expr(s, e->u.index.obj, declared, n);
-            mv_check_expr(s, e->u.index.index, declared, n);
+            mv_check_expr(s, e->u.index.obj, declared, n, all_vars, all_n);
+            mv_check_expr(s, e->u.index.index, declared, n, all_vars, all_n);
             return;
         case AST_SLICE:      // A[1:2]
-            mv_check_expr(s, e->u.slice.obj, declared, n);
-            mv_check_expr(s, e->u.slice.start, declared, n);
-            mv_check_expr(s, e->u.slice.end, declared, n);
+            mv_check_expr(s, e->u.slice.obj, declared, n, all_vars, all_n);
+            mv_check_expr(s, e->u.slice.start, declared, n, all_vars, all_n);
+            mv_check_expr(s, e->u.slice.end, declared, n, all_vars, all_n);
             return;
         default:
             return;     // 其它节点不深入（少报不误报）
     }
 }
 
+// `export` 会把声明**包一层** AST_EXPORT ⇒ 判定"这是什么声明"之前先剥包装层。
+//   ★ 2026-10-24：原来直接看 stmt->kind，`export var/const` 整个被跳过 ⇒ 两个 bug：
+//     ① 这些名字从没进"已声明"集合 ⇒ `export const LEVEL_INFO = 1` 之后的
+//        `int _logLevel = LEVEL_INFO` 被误报「在声明前使用」✗（LenoHack/lib/hack_log.leno:32，
+//        连带 3 个文件编不过）；
+//     ② 它们的 init 也没被检查（真·前向引用漏报）。
+//   export 只影响**可见性**，不影响**初始化顺序** ✓
+static Ast* mv_unwrap_export(Ast* stmt) {
+    if (stmt && stmt->kind == AST_EXPORT && stmt->u.export.decl) return stmt->u.export.decl;
+    return stmt;
+}
+
 // 供 semantic.c 的两个入口调用（它们直接 visit_list 顶层块，不走 AST_BLOCK 分支）
 void mv_check_top(Semantic* s, Ast* block) {
+    int total = (int)block->u.block.count;
+    // 全量清单（见 mv_check_expr 上面那段说明）：本文件顶层所有 var/const/解构声明的名字
+    int all_cap = total * 2 + 8;
+    char** all_vars = (char**)calloc((size_t)all_cap, sizeof(char*));
+    if (!all_vars) return;
+    int all_n = 0;
+    for (int i = 0; i < total; i++) {
+        Ast* decl = mv_unwrap_export(block->u.block.items[i]);
+        if (decl->kind == AST_VAR_DECL) {
+            if (all_n >= all_cap) {
+                all_cap *= 2;
+                all_vars = (char**)realloc(all_vars, sizeof(char*) * (size_t)all_cap);
+                if (!all_vars) return;
+            }
+            all_vars[all_n++] = decl->u.var_decl.name;
+        } else if (decl->kind == AST_DESTRUCT_DECL) {
+            for (int k = 0; k < decl->u.destruct_decl.slot_count; k++) {
+                if (all_n >= all_cap) {
+                    all_cap *= 2;
+                    all_vars = (char**)realloc(all_vars, sizeof(char*) * (size_t)all_cap);
+                    if (!all_vars) return;
+                }
+                all_vars[all_n++] = decl->u.destruct_decl.names[k];
+            }
+        }
+    }
+
     int cap = 16, n = 0;
     char** declared = (char**)calloc(cap, sizeof(char*));
-    if (!declared) return;
+    if (!declared) { free(all_vars); return; }
 
-    for (int i = 0; i < (int)block->u.block.count; i++) {
-        Ast* stmt = block->u.block.items[i];
+    for (int i = 0; i < total; i++) {
+        Ast* decl = mv_unwrap_export(block->u.block.items[i]);
 
-        if (stmt->kind == AST_VAR_DECL) {
+        if (decl->kind == AST_VAR_DECL) {
             // 先查 init（此时它引用的模块变量必须已经在集合里）
-            if (stmt->u.var_decl.init) {
-                mv_check_expr(s, stmt->u.var_decl.init, declared, n);
+            if (decl->u.var_decl.init) {
+                mv_check_expr(s, decl->u.var_decl.init, declared, n, all_vars, all_n);
             }
             if (n >= cap) {
                 cap *= 2;
                 declared = (char**)realloc(declared, sizeof(char*) * cap);
-                if (!declared) return;
+                if (!declared) { free(all_vars); return; }
             }
-            declared[n++] = stmt->u.var_decl.name;
-        } else if (stmt->kind == AST_DESTRUCT_DECL) {
-            if (stmt->u.destruct_decl.init) {
-                mv_check_expr(s, stmt->u.destruct_decl.init, declared, n);
+            declared[n++] = decl->u.var_decl.name;
+        } else if (decl->kind == AST_DESTRUCT_DECL) {
+            if (decl->u.destruct_decl.init) {
+                mv_check_expr(s, decl->u.destruct_decl.init, declared, n, all_vars, all_n);
             }
-            for (int k = 0; k < stmt->u.destruct_decl.slot_count; k++) {
+            for (int k = 0; k < decl->u.destruct_decl.slot_count; k++) {
                 if (n >= cap) {
                     cap *= 2;
                     declared = (char**)realloc(declared, sizeof(char*) * cap);
-                    if (!declared) return;
+                    if (!declared) { free(all_vars); return; }
                 }
-                declared[n++] = stmt->u.destruct_decl.names[k];
+                declared[n++] = decl->u.destruct_decl.names[k];
             }
         }
         // 其余语句（函数定义 / import / 表达式语句）不登记
     }
     free(declared);
+    free(all_vars);
 }
 
 void visit(Semantic* s, Ast* ast) {
