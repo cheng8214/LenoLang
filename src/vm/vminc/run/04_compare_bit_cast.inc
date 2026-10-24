@@ -389,6 +389,17 @@
                 frame = &vm.frames[vm.frame_cnt - 1];                                  \
                 DISPATCH();                                                            \
             }                                                                          \
+            /* ★ 2026-10-24：**负移位量**明确报错（原来静默钳到 0）。                     \
+               下面 bigint 路径里是 `(int)(sh < 0 ? 0 : sh)` ⇒ `8 << -1` 算出 0、      \
+               一声不吭。负移位量本身就是笔误，应当场报错。                            \
+               影响面已扫过：模块里 86 处 `<<` 的移位量全是字面量或 32-n 这类非负表达式， \
+               没有一处会传负数 ⇒ 这个改动不会打破现有代码。 */                        \
+            if (val_is_int(cv) && VM_IO(cv) < 0) {                                     \
+                if (!throw_runtime_error_with_operands("移位量不能为负", "SHL (<<)",    \
+                        bv, cv, GET_CURRENT_LINE())) return -1;                        \
+                frame = &vm.frames[vm.frame_cnt - 1];                                  \
+                DISPATCH();                                                            \
+            }                                                                          \
             /* bigint 操作数、或移位量 >= 32（int48 结果必然越界）⇒ bigint 路径（与改动前同口径）*/ \
             {                                                                          \
                 int64_t sh = VM_IO(cv);                                                \
@@ -429,6 +440,13 @@
                 frame = &vm.frames[vm.frame_cnt - 1];                                  \
                 DISPATCH();                                                            \
             }                                                                          \
+            /* ★ 2026-10-24：负移位量报错（同 SHL，原来静默钳到 0）*/                    \
+            if (val_is_int(cv) && VM_IO(cv) < 0) {                                     \
+                if (!throw_runtime_error_with_operands("移位量不能为负", "SHR (>>)",    \
+                        bv, cv, GET_CURRENT_LINE())) return -1;                        \
+                frame = &vm.frames[vm.frame_cnt - 1];                                  \
+                DISPATCH();                                                            \
+            }                                                                          \
             {                                                                          \
                 int64_t sh = VM_IO(cv);                                                \
                 R(a) = bigint_compact_to_int(bigint_shr(promote_to_bigint(bv), (int)(sh < 0 ? 0 : sh))); \
@@ -445,12 +463,29 @@
     {                                                                                  \
         int a = READ_A(), b = READ_B();                                                \
         Value vb = R(b), vc = (CV);                                                    \
+        /* ★ 2026-10-24：负移位量报错。必须放在**外层守卫之前** ——                      \
+           下面的 `if (!val_is_int || !val_is_int)` 只拦"非整数"，                     \
+           而负数移位量两操作数**都是 int** ⇒ 进不去那个分支（实测 `8 >>> -1` 得 0、     \
+           静默）。SHL/SHR 那边因为守卫条件里带了 `shi < 0`，所以在内层加就够用。 */    \
+        if (val_is_int(vc) && VM_IO(vc) < 0) {                                         \
+            if (!throw_runtime_error_with_operands("移位量不能为负", "USHR (>>>)",      \
+                    vb, vc, GET_CURRENT_LINE())) return -1;                            \
+            frame = &vm.frames[vm.frame_cnt - 1];                                      \
+            DISPATCH();                                                                \
+        }                                                                              \
         /* Leno 的 int 是 48 位有符号：逻辑右移先截断为 48 位无符号再右移。 */          \
         /* 之前用 `(unsigned int)`（32 位）截断 ⇒ `-1 >>> 8` 得 16777215 而非 1099511627775 ✗ */ \
         if (unlikely(!val_is_int(vb) || !val_is_int(vc))) {   /* 见 BITAND_BODY */      \
             if (val_is_null(vb) || val_is_null(vc)) {                                  \
                 if (!throw_runtime_error_with_operands("逻辑右移运算: null 不能参与运算", \
                         "USHR (>>>)", vb, vc, GET_CURRENT_LINE())) return -1;          \
+                frame = &vm.frames[vm.frame_cnt - 1];                                  \
+                DISPATCH();                                                            \
+            }                                                                          \
+            /* ★ 2026-10-24：负移位量报错（同 SHL/SHR）*/                               \
+            if (val_is_int(vc) && VM_IO(vc) < 0) {                                     \
+                if (!throw_runtime_error_with_operands("移位量不能为负", "USHR (>>>)",  \
+                        vb, vc, GET_CURRENT_LINE())) return -1;                        \
                 frame = &vm.frames[vm.frame_cnt - 1];                                  \
                 DISPATCH();                                                            \
             }                                                                          \

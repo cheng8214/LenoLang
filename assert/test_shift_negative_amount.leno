@@ -1,0 +1,38 @@
+// 负移位量必须报错（2026-10-24）
+//
+// 修前：`8 << -1` / `8 >> -1` / `8 >>> -1` **全部静默给出 0** ——
+//   VM 的 bigint 分支里写着 `(int)(sh < 0 ? 0 : sh)`，负数被钳成 0，
+//   相当于把移位量当成 0 处理，算出的结果毫无意义且没有任何提示。
+//
+// 修后：三种移位都抛「移位量不能为负」（可捕获）。
+//
+// ⚠ **左值是负数**不受影响（那是合法的逻辑右移场景）：
+//      -1 >>> 8 = 1099511627775   —— 移位量是 8（正数）⇒ 正常
+//    只有"移位量本身为负"才报错。
+main() {
+    int neg = -1
+
+    // ① 三种移位：负移位量都抛异常
+    int caught = 0
+    try { var _a = 8 << neg } catch e { caught = caught + 1 }
+    try { var _b = 8 >> neg } catch e { caught = caught + 1 }
+    try { var _c = 8 >>> neg } catch e { caught = caught + 1 }
+    assert_eq(caught, 3)
+
+    // ② 负移位量来自表达式也一样拦（不是只有字面量）
+    int alsoNeg = 3 - 5
+    int caught2 = 0
+    try { var _d = 8 << alsoNeg } catch e { caught2 = caught2 + 1 }
+    assert_eq(caught2, 1)
+
+    // ③ 正常移位不受影响
+    assert_eq(8 << 2, 32)
+    assert_eq(8 >> 2, 2)
+    assert_eq(8 >>> 2, 2)
+    assert_eq(1 << 0, 1)
+
+    // ④ 左值是负数、移位量为 0/正数 —— 合法，不受影响（48 位语义）
+    assert_eq((-1) >>> 0, 281474976710655)
+    assert_eq((-1) >>> 8, 1099511627775)
+    assert_eq((-16) >> 2, -4)
+}
