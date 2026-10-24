@@ -81,8 +81,19 @@
                     error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
                                      "face '%s' 不能实例化", ast->u.struct_init.struct_name);
                 } else if (sym->type->kind != TYPE_STRUCT) {
-                    error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
-                                     "'%s' 不是 struct 类型", ast->u.struct_init.struct_name);
+                    // ★ 2026-10-24：cstruct 用 new 构造 ⇒ 直接给出正确写法
+                    //   原来只说「'Point' 不是 struct 类型」，看不出该用哪套 API
+                    //   （cstruct 是 C 布局，必须自己分配内存；另一 AI 第三轮报告 t10）。
+                    if (sym->type->kind == TYPE_CSTRUCT) {
+                        error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                            "'%s' 是 **cstruct**（C 布局），不能用 new 构造 —— "
+                            "请用 `%s.malloc()` 分配（内存由你负责释放，配合 defer 用）",
+                            ast->u.struct_init.struct_name,
+                            ast->u.struct_init.struct_name);
+                    } else {
+                        error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                                         "'%s' 不是 struct 类型", ast->u.struct_init.struct_name);
+                    }
                 } else if (sym->struct_type_param_count > 0 && ast->u.struct_init.generic_type_count == 0) {
                     // 检查是否有默认类型参数
                     int found_defaults = 0;
