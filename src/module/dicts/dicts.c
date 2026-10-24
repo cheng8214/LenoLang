@@ -50,9 +50,8 @@ static Value dict_method_set(int argc, Value* args) {
 static Value dict_method_remove(int argc, Value* args) {
     (void)argc;
     ObjDict* dict = (ObjDict*)val_as_obj(args[0]);
-    Value old = dict_has(dict, args[1]) ? dict_get(dict, args[1]) : val_null();
-    dict_delete(dict, args[1]);
-    return old;
+    // dict_take：删除 + 带出旧值，**一次查找**（原来 has+get+delete 是三次）
+    return dict_take(dict, args[1]);
 }
 
 static Value dict_method_keys(int argc, Value* args) {

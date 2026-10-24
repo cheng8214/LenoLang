@@ -493,28 +493,36 @@ void dict_try_shrink(ObjDict* dict) {
     }
 }
 
-void dict_delete(ObjDict* dict, Value key) {
-    if (!dict) return;
+// ★ 2026-10-24：删除并返回被删掉的值（键不存在 ⇒ null），**一次查找**完成。
+//   为什么加：`Dict.remove` 现在要返回值（round7 Q9），若用
+//     `dict_has` + `dict_get` + `dict_delete` 拼就是**三次查找** ✗
+//   ⇒ 把删除本身提成"顺手带出旧值"的形态，`dict_delete` 成为它的包装（唯一实现）。
+//   ⚠ 返回值的合法性口径与 dict_get 一致：数组部分的**洞**不返回值（落到哈希继续找），
+//     哈希命中的值原样返回（删除前取出，删除后那格被清空 ✓）。
+Value dict_take(ObjDict* dict, Value key) {
+    if (!dict) return val_null();
 
     // 先尝试从数组部分删除
     int array_index = key_to_array_index(key);
     if (array_index >= 0 && array_index < dict->asize) {
-        if (!val_is_null(dict->array[array_index])) {
+        Value old = dict->array[array_index];
+        if (!val_is_null(old)) {
             int pos = (dict->aorder && array_index < dict->asize) ? dict->aorder[array_index] : -1;
             dict->array[array_index] = val_null();
             if (dict->aorder && array_index < dict->asize) dict->aorder[array_index] = -1;
             dict->acount--;
             dict_order_remove_at(dict, pos);
             dict_try_shrink(dict);
-            return;
+            return old;
         }
     }
 
     // 从哈希部分删除
-    if (dict->capacity == 0) return;
+    if (dict->capacity == 0) return val_null();
 
     int index = dict_find_entry(dict, key);
     if (index >= 0) {
+        Value old = dict->entries[index].value;
         int pos = dict->entries[index].order_index;
         dict->entries[index].key = DICT_TOMBSTONE_VAL;
         dict->entries[index].value = val_null();
@@ -523,7 +531,13 @@ void dict_delete(ObjDict* dict, Value key) {
         dict->tombstone_count++;
         dict_order_remove_at(dict, pos);
         dict_try_shrink(dict);
+        return old;
     }
+    return val_null();
+}
+
+void dict_delete(ObjDict* dict, Value key) {
+    (void)dict_take(dict, key);   // 只要副作用（见 dict_take 的说明）
 }
 
 // 获取数组部分大小（用于迭代）

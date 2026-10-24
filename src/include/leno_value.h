@@ -954,6 +954,10 @@ Value dict_get(ObjDict* dict, Value key);
 Value dict_get_slot(ObjDict* dict, Value key, int* out_slot);
 int dict_has(ObjDict* dict, Value key);
 void dict_delete(ObjDict* dict, Value key);
+// ★ 2026-10-24：删除并**返回被删掉的值**（键不存在 ⇒ null），**一次查找**完成。
+//   `dict_delete` 现在是它的包装（丢掉返回值）；`Dict.remove` 走这条 ⇒ 不再
+//   "dict_has + dict_get + dict_delete" 三次查找。
+Value dict_take(ObjDict* dict, Value key);
 void dict_try_shrink(ObjDict* dict);
 // 供 VM 的字典读写内联缓存用（OP_INDEX/OP_INDEX_SET 的字典分支）：
 // 返回键在**哈希部分**的槽位号；找不到、或该键属于数组部分 ⇒ -1（不缓存）。

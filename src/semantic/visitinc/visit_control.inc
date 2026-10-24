@@ -792,36 +792,9 @@
             //     `switch sv`（string）配 `case 0/1/2/3`（int）来压查找路径（那里 default 全接）。
             //   ⚠ 数值族（int/float/bigint/enum）内部不报：`switch fv`（float）配 `case 0` 是
             //     常见写法，且 `0 == 0.0` 在运行期能命中（同属数值比较）✓
+            //   ⚠ 判据用的是 case 值**visit 之后缓存的 cached_type**（见下面 case 循环里的
+            //     "values 访问完就检查"那段）⇒ 不再为每个值多推一遍类型 ✓
             TypeInfo* sw_expr_type = infer_expr_type(s, ast->u.switch_.expr);
-            if (sw_expr_type && sw_expr_type->kind != TYPE_ANY && sw_expr_type->kind != TYPE_INFER &&
-                sw_expr_type->kind != TYPE_UNKNOWN) {
-                for (int ci = 0; ci < ast->u.switch_.case_count; ci++) {
-                    if (ast->u.switch_.cases[ci].is_type_match) continue;   // `case is T` 不在此列
-                    for (int vi = 0; vi < (int)ast->u.switch_.cases[ci].values.count; vi++) {
-                        Ast* cv = ast->u.switch_.cases[ci].values.items[vi];
-                        TypeInfo* cv_type = infer_expr_type(s, cv);
-                        if (!cv_type) continue;
-                        TypeKind ck = cv_type->kind;
-                        int ck_num = (ck == TYPE_INT || ck == TYPE_FLOAT ||
-                                      ck == TYPE_BIGINT || ck == TYPE_ENUM);
-                        TypeKind sk = sw_expr_type->kind;
-                        int sk_num = (sk == TYPE_INT || sk == TYPE_FLOAT ||
-                                      sk == TYPE_BIGINT || sk == TYPE_ENUM);
-                        int comparable = (ck == TYPE_ANY || ck == TYPE_INFER || ck == TYPE_UNKNOWN ||
-                                          ck == TYPE_NULL || ck == sk || (ck_num && sk_num));
-                        if (!comparable) {
-                            warning_add_at_fmt(WARN_SWITCH_CASE_TYPE, cv->line, cv->column,
-                                "case 值的类型（%s）与 switch 表达式的类型（%s）不一致 —— "
-                                "switch 按『值 + 类型』匹配，这个 case **永远不会命中**；"
-                                "要按类型分支请写 `case is %s => v`，否则把 case 值改成同一类型",
-                                type_kind_to_string(ck), type_kind_to_string(sk),
-                                type_kind_to_string(ck));
-                        }
-                        type_free(cv_type);
-                    }
-                }
-            }
-            if (sw_expr_type) type_free(sw_expr_type);
 
             for (int i = 0; i < ast->u.switch_.case_count; i++) {
                 Scope* case_scope = scope_new(s->current, 0);
@@ -939,14 +912,43 @@
                     visit(s, ast->u.switch_.cases[i].values.items[j]);
                 }
 
-                // ⚠ 2026-10-24：**这里不做 case 值 vs switch 表达式的类型检查**（曾试过，回退了）。
-                //   第四轮报告 B5 把「`switch x`（int）配 `case "two"`（string）静默走 default」
-                //   当 bug，我加过一条编译期检查 —— 结果 **3 个既有测试全挂**：
-                //     · test_enum_param：`case` 用的是 enum 成员（类型是 TYPE_ENUM 而非 int）
-                //     · test_op_switch_lookup:116-126：`switch sv`（string）配 `case 0..3`（int），
+                // ★ N15（2026-10-24）：case 值的类型 vs switch 表达式类型 ⇒ `[case类型不可达]` 警告。
+                //   放在**values 访问之后**：直接读 visit 缓存下来的 `cached_type`，
+                //   不必再为每个值多推一遍类型 ✓（见 case 开头那段说明）
+                //   ⚠ 历史教训（**别退回到"报错"**）：第四轮曾把这件事做成编译**错误** ⇒
+                //     · test_enum_param：`case` 用 enum 成员（TYPE_ENUM 而非 int）
+                //     · test_op_switch_lookup:116-126：`switch sv`（string）配 `case 0..3`（int）
                 //       是**性能测试里故意这么写的**
-                //   ⇒ Leno 的 switch 是**动态按值比较**（不按类型匹配），类型不必一致。
-                //   「静默走 default」在动态语义下是**正确行为**，不是 bug。
+                //     ⇒ 3 个既有测试全挂、检查被回退。现在是**警告**（数值族内部不报），
+                //     两个用例都照常通过 ✓
+                if (sw_expr_type && sw_expr_type->kind != TYPE_ANY &&
+                    sw_expr_type->kind != TYPE_INFER && sw_expr_type->kind != TYPE_UNKNOWN &&
+                    !ast->u.switch_.cases[i].is_type_match) {
+                    TypeKind sk = sw_expr_type->kind;
+                    int sk_num = (sk == TYPE_INT || sk == TYPE_FLOAT ||
+                                  sk == TYPE_BIGINT || sk == TYPE_ENUM);
+                    for (int j = 0; j < (int)ast->u.switch_.cases[i].values.count; j++) {
+                        Ast* cv = ast->u.switch_.cases[i].values.items[j];
+                        TypeInfo* cv_type = cv->cached_type;
+                        int owned = 0;
+                        if (!cv_type) { cv_type = infer_expr_type(s, cv); owned = 1; }
+                        if (!cv_type) continue;
+                        TypeKind ck = cv_type->kind;
+                        int ck_num = (ck == TYPE_INT || ck == TYPE_FLOAT ||
+                                      ck == TYPE_BIGINT || ck == TYPE_ENUM);
+                        int comparable = (ck == TYPE_ANY || ck == TYPE_INFER || ck == TYPE_UNKNOWN ||
+                                          ck == TYPE_NULL || ck == sk || (ck_num && sk_num));
+                        if (!comparable) {
+                            warning_add_at_fmt(WARN_SWITCH_CASE_TYPE, cv->line, cv->column,
+                                "case 值的类型（%s）与 switch 表达式的类型（%s）不一致 —— "
+                                "switch 按『值 + 类型』匹配，这个 case **永远不会命中**；"
+                                "要按类型分支请写 `case is %s => v`，否则把 case 值改成同一类型",
+                                type_kind_to_string(ck), type_kind_to_string(sk),
+                                type_kind_to_string(ck));
+                        }
+                        if (owned) type_free(cv_type);
+                    }
+                }
 
                 // ★ 2026-10-16：**多类型 case 的窄化上下文**压栈（出体后弹 ✓）
                 //   窄化只取首类型（上面 `guard_sym->type = match_type` 就是它）⇒ case 体里
@@ -995,5 +997,6 @@
                 }
             }
             sem_local_release(s, _mark_switch);   // ★ 槽位回收：见 case 开头的说明
+            if (sw_expr_type) type_free(sw_expr_type);   // N15 用的 switch 表达式类型
             break;
         }
