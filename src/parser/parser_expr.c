@@ -1263,42 +1263,25 @@ Ast* parse_assignment(Parser* p, Ast* left) {
 
     // 处理索引赋值: dict["key"] = value 或 arr[0] = value
     if (left->kind == AST_INDEX) {
-        // 处理复合赋值运算符: += -= *= /= %= &= |= ^= <<= >>=
-        if (op == TOK_PLUSEQ || op == TOK_MINUSEQ || op == TOK_STAREQ || op == TOK_SLASHEQ ||
-            op == TOK_MODEQ || op == TOK_BITANDEQ || op == TOK_BITOREQ || op == TOK_BITXOREQ ||
-            op == TOK_SHLEQ || op == TOK_SHREQ || op == TOK_USHREQ) {
-            // 创建二元运算: obj[index] + value
-            Ast* binop = ast_new(AST_BINOP, line);
-            // 创建新的 AST_INDEX 节点，避免与 left 共享指针导致双重释放
-            Ast* index_access = ast_new(AST_INDEX, line);
-            index_access->u.index.obj = left->u.index.obj;
-            index_access->u.index.index = left->u.index.index;
-            binop->u.binop.l = index_access;  // 使用新的索引访问节点
-            binop->u.binop.r = value;
-            switch (op) {
-                case TOK_PLUSEQ:  binop->u.binop.op = TOK_PLUS; break;
-                case TOK_MINUSEQ: binop->u.binop.op = TOK_MINUS; break;
-                case TOK_STAREQ:  binop->u.binop.op = TOK_STAR; break;
-                case TOK_SLASHEQ: binop->u.binop.op = TOK_SLASH; break;
-                case TOK_MODEQ:   binop->u.binop.op = TOK_MOD; break;
-                case TOK_BITANDEQ: binop->u.binop.op = TOK_BITAND; break;
-                case TOK_BITOREQ:  binop->u.binop.op = TOK_BITOR; break;
-                case TOK_BITXOREQ: binop->u.binop.op = TOK_BITXOR; break;
-                case TOK_SHLEQ:    binop->u.binop.op = TOK_SHL; break;
-                case TOK_SHREQ:    binop->u.binop.op = TOK_SHR; break;
-                case TOK_USHREQ:   binop->u.binop.op = TOK_USHR; break;
-                default: break;
-            }
-            value = binop;
-        }
-
-        // 创建专门的索引赋值节点
+        // ★ 2026-10-24 修（堆损坏 0xC0000374 的真凶）：
+        //   原来复合赋值这里是「新建一个 AST_INDEX 做读、但**共享** left 的 obj/index」，
+        //   而下面 assign_ast 又拿走同一对 obj/index
+        //   ⇒ **两个节点同时拥有同一对子节点** ⇒ 析构时释放两遍 ⇒ 堆损坏
+        //     （gdb 里表现为 type_free 收到 0xFEEEFEEE = 已释放填充值）。
+        //   现在不再造那个节点：运算符记进 op，由 codegen 做「读旧值 → 算 → 写回」，
+        //   下标只求值一次（比手写 arr[f()] = arr[f()] + v 更正确）。
         Ast* assign_ast = ast_new(AST_INDEX_ASSIGN, line);
+        assign_ast->column = left->column;
         assign_ast->u.index_assign.obj = left->u.index.obj;
         assign_ast->u.index_assign.index = left->u.index.index;
         assign_ast->u.index_assign.value = value;
+        assign_ast->u.index_assign.field_index = -1;
+        // 普通 '=' 时 op == TOK_EQ，codegen 只认复合 token ⇒ 自动走普通路径
+        assign_ast->u.index_assign.op = op;
 
-        // 释放原来的 AST_INDEX 节点（但不释放 obj 和 index，它们现在属于 assign_ast）
+        // 子节点所有权已转交 ⇒ 置空后再释放壳节点（普通 free，不递归）
+        left->u.index.obj = NULL;
+        left->u.index.index = NULL;
         free(left);
 
         return assign_ast;

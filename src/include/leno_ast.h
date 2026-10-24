@@ -146,7 +146,8 @@ struct Ast {
                  int callee_is_async; } call;
         struct { Ast* obj; Ast* index; } index;
         struct { Ast* obj; Ast* start; Ast* end; } slice;  // 切片：arr[start:end]
-        struct { Ast* obj; Ast* index; Ast* value; int field_index; } index_assign;
+        struct { Ast* obj; Ast* index; Ast* value; int field_index;
+                 LenoTokenType op; } index_assign;
         AstList block;
         struct {
             Ast* cond;

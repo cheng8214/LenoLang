@@ -1886,11 +1886,31 @@ Ast* parse_expression_stmt(Parser* p) {
                     return NULL;
                 }
                 
-                // 复合赋值只支持简单变量，不支持索引
+                // 目标支持索引：`arr[i] += v`
                 if (left_targets[0]->kind != AST_VAR) {
-                    error_add_at_fmt(ERR_SYNTAX, line, p->lex.current.column, "复合赋值只支持简单变量，请用 arr[i] = arr[i] + val 替代");
-                    return NULL;
+                    Ast* tgt = left_targets[0];
+                    if (tgt->kind != AST_INDEX) {
+                        error_add_at_fmt(ERR_SYNTAX, line, p->lex.current.column,
+                            "复合赋值的目标只能是变量或索引（如 a += 1 / arr[i] += 1）");
+                        return NULL;
+                    }
+                    lexer_next(&p->lex);
+                    Ast* rhs = parse_expression(p);
+                    Ast* o = tgt->u.index.obj;
+                    Ast* ix = tgt->u.index.index;
+                    tgt->kind = AST_INDEX_ASSIGN;
+                    tgt->u.index_assign.obj = o;
+                    tgt->u.index_assign.index = ix;
+                    tgt->u.index_assign.value = rhs;
+                    tgt->u.index_assign.field_index = -1;
+                    tgt->u.index_assign.op = op;
+                    free(left_targets);
+                    Ast* es2 = ast_new(AST_EXPR_STMT, line);
+                    es2->column = stmt_column;
+                    es2->u.expr_stmt.expr = tgt;
+                    return es2;
                 }
+
                 
                 lexer_next(&p->lex); // 消费复合赋值运算符
                 

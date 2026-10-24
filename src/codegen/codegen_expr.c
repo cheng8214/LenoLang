@@ -1581,9 +1581,27 @@ void gen_unary(CodeGen* gen, Ast* ast, int dst) {
 
     // ++ / -- 必须就地作用于变量的寄存器 —— 否则只改了副本，变量本身不变。
     if (op == TOK_INC || op == TOK_DEC) {
+        // 索引目标 `arr[i]++`：读 → ±1 → 写回；后缀返旧值、前缀返新值
+        if (operand_ast && operand_ast->kind == AST_INDEX) {
+            int i_obj = gen_expr(gen, operand_ast->u.index.obj);
+            int i_idx = gen_expr(gen, operand_ast->u.index.index);
+            int i_old = reg_alloc(gen);
+            reg_encode_iABC(gen->chunk, OP_INDEX, i_old, i_obj, i_idx, ast->line);
+            int i_new = reg_alloc(gen);
+            if (op == TOK_INC) emit_inc(gen, i_new, i_old, ast->line);
+            else               emit_dec(gen, i_new, i_old, ast->line);
+            reg_encode_iABC(gen->chunk, OP_INDEX_SET, i_new, i_obj, i_idx, ast->line);
+            int i_res = ast->u.unary.is_postfix ? i_old : i_new;
+            if (dst != i_res) emit_mov(gen, dst, i_res, ast->line);
+            reg_free(gen, i_new);
+            reg_free(gen, i_old);
+            reg_free(gen, i_idx);
+            reg_free(gen, i_obj);
+            return;
+        }
         if (!operand_ast || operand_ast->kind != AST_VAR) {
-            // 字段/索引等非变量目标：设计上不支持（且静默不动会让 `pa.x++` 变成空操作 ✗）
-            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column, "++ 和 -- 只能用于变量");
+            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                             "++ 和 -- 只能用于变量或索引（如 i++ / arr[i]++）");
             emit_loadnil_to(gen, dst, ast->line);
             return;
         }

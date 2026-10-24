@@ -170,7 +170,13 @@ static inline int reg_alloc(CodeGen* gen) {
 // 只接受"确实是本函数临时区内的号"（r < next_reg），否则会把变量槽位（0/1 等）
 // 混进 free 栈，后续临时寄存器分配就会覆盖变量。
 static inline void reg_free(CodeGen* gen, int r) {
-    if (r >= 0 && r < MAX_REG && r < gen->next_reg) {
+    // ★ 2026-10-24：**必须挡住 freetop 越界**。
+    //   free_regs[] 只有 MAX_REG(256) 个槽；原来只判了 r，没判 freetop ⇒
+    //   一旦压栈次数超过容量就是**堆越界写**，症状是进程以 0xC0000374
+    //   （STATUS_HEAP_CORRUPTION）静默退出、无任何输出 —— 实测只有
+    //   "被 Leno 父进程用 _exec 拉起 + 全新编译"时才暴露（堆布局不同）。
+    //   越界时丢弃即可：丢一个可复用号只会多占一个寄存器，不会生成错代码。
+    if (r >= 0 && r < MAX_REG && r < gen->next_reg && gen->freetop < MAX_REG) {
         gen->free_regs[gen->freetop++] = r;
     }
 }

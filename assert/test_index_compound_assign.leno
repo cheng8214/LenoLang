@@ -1,0 +1,99 @@
+// 下标复合赋值 / 下标自增自减（2026-10-24，第四轮报告 Q2）
+// 修前：arr[i] += 5 => 复合赋值只支持简单变量；arr[i]++ => 只能用于变量
+// 现在：AST_INDEX_ASSIGN 带 op，codegen 读-改-写，下标只求值一次
+//
+// ⚠ 修这个特性时揪出一个**既有**的堆损坏 bug（parser_expr.c）：
+//   复合赋值在**表达式位置**（`var got = (f[0] += 3)`）会新建一个 AST_INDEX 做读，
+//   但**共享** left 的 obj/index，而 assign_ast 又拿走同一对指针
+//   ⇒ 两个节点同时拥有同一对子节点 ⇒ 析构时双重释放 ⇒ 进程以 0xC0000374 静默退出
+//   （gdb 里是 type_free 收到 0xFEEEFEEE —— 已释放堆的填充值）。
+//   现在不再造那个节点，运算符记在 op 上。
+var sideCalls = 0
+
+func sideIdx(): int {
+    sideCalls = sideCalls + 1
+    return 0
+}
+
+main() {
+    // ① 11 种复合运算符
+    var a = [10, 20, 30]
+    a[0] += 5
+    assert_eq(a[0], 15)
+    a[0] -= 3
+    assert_eq(a[0], 12)
+    a[0] *= 2
+    assert_eq(a[0], 24)
+    a[0] /= 4
+    assert_eq(a[0], 6)
+    a[0] %= 4
+    assert_eq(a[0], 2)
+    a[0] <<= 3
+    assert_eq(a[0], 16)
+    a[0] >>= 2
+    assert_eq(a[0], 4)
+    a[0] &= 6
+    assert_eq(a[0], 4)
+    a[0] |= 1
+    assert_eq(a[0], 5)
+    a[0] ^= 3
+    assert_eq(a[0], 6)
+    a[0] >>>= 1
+    assert_eq(a[0], 3)
+
+    // ② 字典
+    var d = {"x": 1, "y": 10}
+    d["x"] += 41
+    assert_eq(d["x"], 42)
+    d["y"] -= 1
+    assert_eq(d["y"], 9)
+
+    // ③ 后缀 ++/--：返旧值
+    var b = [100]
+    var o1 = b[0]++
+    assert_eq(o1, 100)
+    assert_eq(b[0], 101)
+    var o2 = b[0]--
+    assert_eq(o2, 101)
+    assert_eq(b[0], 100)
+
+    // ④ 前缀 ++/--：返新值
+    var n1 = ++b[0]
+    assert_eq(n1, 101)
+    assert_eq(b[0], 101)
+    var n2 = --b[0]
+    assert_eq(n2, 100)
+    assert_eq(b[0], 100)
+
+    // ⑤ 单独成句
+    b[0]++
+    assert_eq(b[0], 101)
+
+    // ⑥ 字典 ++/--
+    var e = {"c": 5}
+    e["c"]++
+    assert_eq(e["c"], 6)
+    var eo = e["c"]++
+    assert_eq(eo, 6)
+    assert_eq(e["c"], 7)
+
+    // ⑦ 下标带副作用：只求值一次
+    sideCalls = 0
+    var c = [1]
+    c[sideIdx()] += 10
+    assert_eq(sideCalls, 1)
+    assert_eq(c[0], 11)
+
+    // ⑧ 表达式位置的复合赋值：返回新值（这条曾触发双重释放）
+    var f = [7]
+    var got = (f[0] += 3)
+    assert_eq(got, 10)
+    assert_eq(f[0], 10)
+
+    // ⑨ 嵌套下标
+    var g = [0, 0, 0]
+    g[0] = 1
+    g[g[0]] += 9
+    assert_eq(g[0], 1)
+    assert_eq(g[1], 9)
+}

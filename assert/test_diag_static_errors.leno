@@ -509,8 +509,11 @@ main() {
     r[1] += 5
 }
 ")
-    ce.expect_error(si2b, "下标复合赋值在 parser 就被拒（AST_INDEX_ASSIGN 因此不可达）",
-        "复合赋值只支持简单变量", 8)
+    // ★ 2026-10-24：下标复合赋值**已支持**（arr[i] += v 合法），所以这条不再由 parser 拒绝，
+    //   而是走到语义层 —— AST_INDEX_ASSIGN 分支上那条同款检查从"防御性保留"变成**实际生效**
+    //   （源码注释里当初就写明：放开下标复合赋值时它会兜住）。struct 仍必须用 .field。
+    ce.expect_error(si2b, "struct + 整数下标的复合赋值由语义层拦下",
+        "struct 的字段请用 'x.field'", 8)
 
     // 正向（不得误伤）：**两种合法写法都照常** —— `r.output`（首选）与 `r[""output""]`（动态形态）
     var si3 = dirs.join(work, "struct_str_index_ok.leno")

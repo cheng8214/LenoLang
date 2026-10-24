@@ -1425,6 +1425,45 @@ void gen_index_assign(CodeGen* gen, Ast* ast, int dst) {
     Ast* obj_ast = ast->u.index_assign.obj;
     Ast* idx_ast = ast->u.index_assign.index;
     Ast* val_ast = ast->u.index_assign.value;
+
+    // 复合索引赋值 `arr[i] += v`：读-改-写，下标只求值一次。
+    // 判据逐个 token 命中（index_assign 在 union 里，脱糖节点可能残留旧字节）
+    int c_arith = -1;
+    switch (ast->u.index_assign.op) {
+        case TOK_PLUSEQ:   c_arith = OP_ADD;    break;
+        case TOK_MINUSEQ:  c_arith = OP_SUB;    break;
+        case TOK_STAREQ:   c_arith = OP_MUL;    break;
+        case TOK_SLASHEQ:  c_arith = OP_DIV;    break;
+        case TOK_MODEQ:    c_arith = OP_MOD;    break;
+        case TOK_BITANDEQ: c_arith = OP_BITAND; break;
+        case TOK_BITOREQ:  c_arith = OP_BITOR;  break;
+        case TOK_BITXOREQ: c_arith = OP_BITXOR; break;
+        case TOK_SHLEQ:    c_arith = OP_SHL;    break;
+        case TOK_SHREQ:    c_arith = OP_SHR;    break;
+        case TOK_USHREQ:   c_arith = OP_USHR;   break;
+        default: break;
+    }
+    if (c_arith >= 0) {
+        int c_obj = gen_expr(gen, obj_ast);
+        int c_idx = gen_expr(gen, idx_ast);
+        int c_old = reg_alloc(gen);
+        reg_encode_iABC(gen->chunk, OP_INDEX, c_old, c_obj, c_idx, ast->line);
+        int c_val = gen_expr(gen, val_ast);
+        if (c_val < 0) {
+            c_val = reg_alloc(gen);
+            emit_loadnil_to(gen, c_val, ast->line);
+        }
+        int c_new = reg_alloc(gen);
+        reg_encode_iABC(gen->chunk, (OpCode)c_arith, c_new, c_old, c_val, ast->line);
+        reg_encode_iABC(gen->chunk, OP_INDEX_SET, c_new, c_obj, c_idx, ast->line);
+        if (dst >= 0 && dst != c_new) emit_mov(gen, dst, c_new, ast->line);
+        reg_free(gen, c_new);
+        reg_free(gen, c_val);
+        reg_free(gen, c_old);
+        reg_free(gen, c_idx);
+        reg_free(gen, c_obj);
+        return;
+    }
     // ★ 接收者 / 下标 / 值**直取变量自己的寄存器**（与读路径 AST_INDEX 同一手法）：
     //   原路径对三者各发一条 `gen_expr` ⇒ 各多一条 `OP_MOV`。而 `INDEX_SET A B C` 的
     //   A/B/C 本来就是任意寄存器 ⇒ 是可省的整条指令（实测排序基准的
