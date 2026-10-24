@@ -294,6 +294,28 @@
             // 获取被赋值对象的类型（支持嵌套字段访问如 r.position.x）
             TypeInfo* obj_type = infer_expr_type(s, ast->u.index_assign.obj);
 
+            // ★ 2026-10-24：**字典键类型**检查
+            //   原来只有值类型的检查（semantic_type_utils.c 的「字典值类型不匹配」），
+            //   键完全不管 ⇒ `Dict[string, int] d = {}; d[123] = 5` 静默通过，
+            //   数据里混进一个 int 键，后续遍历/序列化时才出怪事。
+            //   这里的判据与"值"同一套：键类型未指定(any) ⇒ 不检查；int->float 隐式放行。
+            if (obj_type && obj_type->kind == TYPE_DICT && obj_type->key_type &&
+                obj_type->key_type->kind != TYPE_ANY) {
+                TypeInfo* key_t = infer_expr_type(s, ast->u.index_assign.index);
+                if (key_t && key_t->kind != TYPE_ANY && key_t->kind != TYPE_UNKNOWN &&
+                    key_t->kind != obj_type->key_type->kind) {
+                    // int 可以隐式转 float（与值类型同一口径）
+                    int allowed = (obj_type->key_type->kind == TYPE_FLOAT && key_t->kind == TYPE_INT);
+                    if (!allowed) {
+                        error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                            "字典键类型不匹配: 期望 '%s'，实际 '%s'",
+                            type_kind_to_string(obj_type->key_type->kind),
+                            type_kind_to_string(key_t->kind));
+                    }
+                }
+                if (key_t) type_free(key_t);
+            }
+
             // face 类型限制：不能给 face 变量的底层 struct 字段赋值
             if (obj_type && obj_type->kind == TYPE_FACE && obj_type->struct_name &&
                 ast->u.index_assign.index->kind == AST_STRING) {
@@ -1900,6 +1922,29 @@
 
             // 编译时检查数组索引类型
             TypeInfo* obj_type = infer_expr_type(s, ast->u.index.obj);
+
+            // ★ 2026-10-24：**字典键类型**检查
+            //   原来只有值检查（「字典值类型不匹配」），键完全不查 ⇒
+            //   `Dict[string, int] d = {}; d[123] = 5` 静默通过，数据里混进 int 键。
+            //   挂在这里而不是 AST_INDEX_ASSIGN：普通赋值 `d[k] = v` 在 parser 里是
+            //   `AST_ASSIGN(target = AST_INDEX)`，只有复合赋值才走 AST_INDEX_ASSIGN
+            //   （那一路也补了同样的检查，两处都覆盖）。
+            //   判据与值同口径：键类型未指定(any) ⇒ 不检查；int -> float 隐式放行。
+            if (obj_type && obj_type->kind == TYPE_DICT && obj_type->key_type &&
+                obj_type->key_type->kind != TYPE_ANY) {
+                TypeInfo* key_t = infer_expr_type(s, ast->u.index.index);
+                if (key_t && key_t->kind != TYPE_ANY && key_t->kind != TYPE_UNKNOWN &&
+                    key_t->kind != obj_type->key_type->kind) {
+                    int allowed = (obj_type->key_type->kind == TYPE_FLOAT && key_t->kind == TYPE_INT);
+                    if (!allowed) {
+                        error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                            "字典键类型不匹配: 期望 '%s'，实际 '%s'",
+                            type_kind_to_string(obj_type->key_type->kind),
+                            type_kind_to_string(key_t->kind));
+                    }
+                }
+                if (key_t) type_free(key_t);
+            }
 
             // face 类型限制：obj["field"] 中 obj 是 face 类型时，只能访问 face 定义的方法
             if (obj_type && obj_type->kind == TYPE_FACE && obj_type->struct_name &&

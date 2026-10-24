@@ -21,7 +21,11 @@ main() {
     assert_true(strings.find(s, "0") >= 0)
 
     // ② 字符串键 + 大 int 键
-    var f = {"a": 1}
+    //   ⚠ 必须用**裸 Dict**：`{"a": 1}` 会被推断成 `Dict[string, int]`，
+    //     而 2026-10-24 起键类型也做编译期检查 ⇒ 那里写 `f[123] = 5` 会被正确拒绝
+    //     （见 test_dict_key_type.leno）。本用例测的是"打印"，不是"键类型"。
+    Dict f = {}
+    f["a"] = 1
     f[123] = 5
     string s2 = _str(f)
     assert_true(strings.find(s2, "123") >= 0)
