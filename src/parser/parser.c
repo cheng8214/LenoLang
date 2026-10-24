@@ -44,6 +44,11 @@ Ast* parse_statement(Parser* p) {
         } else if (cur_ident_is(p, "elif") || cur_ident_is(p, "elseif")) {
             sub = "Leno **没有 `elif` / `elseif`** ✗ —— 用 `eif`："
                   "`if c1 { … } eif c2 { … } else { … }`（`else if` 两个词的写法也合法 ✓）";
+        } else if (cur_ident_is(p, "del")) {
+            // ★ 2026-10-24：`del d["k"]` 原来报「声明语句后期望换行或 ';'，但同一行出现符号」，
+            //   完全看不出"Leno 没有 del 关键字"（第四轮报告 Q4）。
+            sub = "Leno **没有 `del`** ✗（那是 Python 的）—— 删除字典键用 `d.remove(key)`，"
+                  "删除数组元素用 `arr.remove(index)`（键名/索引不用加引号也行）";
         } else if (cur_ident_is(p, "static")) {
             // ★ 2026-10-24：`static func` 原来报 3 条级联语法错误（期望表达式 / 期望 '}' …），
             //   完全没提"Leno 不支持 static"。struct 方法本来就不占实例内存、
