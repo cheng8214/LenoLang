@@ -391,6 +391,17 @@ static void gen_if_branch_to(CodeGen* gen, Ast* branch, int want_value, int dst,
         if (want_value) emit_loadnil_to(gen, dst, line);
         return;
     }
+    // ★ 2026-10-24（round5 的 N5/Q5）：`if c then return 1 else return 2` 的 then/else
+    //   是**跳转语句**（parser 现在收这种形态）⇒ 必须按语句生成。
+    //   原先只认 AST_IF / AST_EXPR_STMT，跳转语句会掉到下面 gen_expr ——
+    //   gen_expr 对 AST_RETURN 无分支 ⇒ 静默什么都不发（返回语句凭空消失 ✗）
+    if (branch->kind == AST_RETURN || branch->kind == AST_RETURN_MULTI ||
+        branch->kind == AST_THROW || branch->kind == AST_BREAK ||
+        branch->kind == AST_CONTINUE) {
+        gen_stmt(gen, branch);
+        if (want_value) emit_loadnil_to(gen, dst, line);
+        return;
+    }
     if (!want_value) {
         // 语句位置：AST_IF（eif 链）与表达式语句都按语句生成
         if (branch->kind == AST_IF || branch->kind == AST_EXPR_STMT) {

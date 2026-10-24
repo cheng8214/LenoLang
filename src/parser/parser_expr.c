@@ -556,6 +556,31 @@ Ast* parse_dict(Parser* p) {
     return ast;
 }
 
+// `then` / `else` 后面的**分支**：通常是表达式（三元式 if），但也可以是**跳转语句**
+//   ★ 2026-10-24（round5 的 N5/Q5）：`if n <= 1 then return 1 else return n * f(n-1)` 这种
+//     写法原来直接报「期望表达式」（parse_expression 见到 return 就失败）+「if 表达式需要
+//     使用 'else'」（因为 then 分支解析失败后整条挂了）⇒ 两句话都指不到真因 ✗
+//     Leno 的 if 是"语句和表达式共用节点"：AST_IF 的 then/else 既能放表达式、也能放语句块
+//     （codegen 的 gen_if_branch_to 按节点 kind 分派）⇒ 这里把跳转语句也收进分支即可，
+//     语义/代码生成都不需要新指令（return/throw/break/continue 本身就是语句 ✓）
+static Ast* parse_if_branch(Parser* p) {
+    switch (p->lex.current.type) {
+        case TOK_RETURN:   return parse_return_stmt(p);
+        case TOK_THROW:    return parse_throw_stmt(p);
+        case TOK_BREAK:    return parse_break_stmt(p);
+        case TOK_CONTINUE: return parse_continue_stmt(p);
+        default:           return parse_expression(p);
+    }
+}
+
+// 分支是不是"语句"（而不是表达式）—— 决定 else 是否可省（`if c then return 1` 是完整语句 ✓）
+static int if_branch_is_stmt(Ast* branch) {
+    if (!branch) return 0;
+    return branch->kind == AST_RETURN || branch->kind == AST_RETURN_MULTI ||
+           branch->kind == AST_THROW || branch->kind == AST_BREAK ||
+           branch->kind == AST_CONTINUE;
+}
+
 // 解析 if 表达式: if condition then expr1 else expr2
 // 也支持 eif 链: if cond then val eif cond2 then val2 else val3
 Ast* parse_if_expr(Parser* p) {
@@ -581,13 +606,16 @@ Ast* parse_if_expr(Parser* p) {
         return NULL;
     }
 
-    // 解析 then 分支表达式（不是代码块）
-    Ast* then_expr = parse_expression(p);
+    // 解析 then 分支（表达式，或 return/throw/break/continue 语句）
+    Ast* then_expr = parse_if_branch(p);
+    int then_is_stmt = if_branch_is_stmt(then_expr);
 
     // 检查是否有 eif（else if 链）或 else
     if (p->lex.current.type == TOK_EIF) {
-        // eif 链：递归解析下一个 if 表达式作为 else 分支
-        Ast* else_branch = parse_if_expr(p);  // 递归调用
+        // eif 链：`then` 分支是语句（`if x then return 1 eif y then return 2`）时，
+        //   后续分支同样是**语句**形态 ⇒ 交给 parse_if_stmt 递归（它自己认得 TOK_EIF ✓）；
+        //   否则照旧走表达式 if 递归。
+        Ast* else_branch = then_is_stmt ? parse_if_stmt(p) : parse_if_expr(p);
 
         // 创建 AST 节点
         Ast* ast = ast_new(AST_IF, line);
@@ -601,13 +629,37 @@ Ast* parse_if_expr(Parser* p) {
         return ast;
     }
 
+    // ★ 语句分支：`if c then return 1` 本身就是完整语句 ⇒ else 可省
+    //   （表达式 if 仍然必须有 else —— 否则拿不到值 ✓）
+    if (then_is_stmt) {
+        Ast* else_branch = NULL;
+        if (match(p, TOK_ELSE)) {
+            // `else if` / `else eif`：语句链（`else` 后面的 if 是**语句** if，不是三元式）
+            if (p->lex.current.type == TOK_IF || p->lex.current.type == TOK_EIF) {
+                else_branch = parse_if_stmt(p);
+            } else {
+                else_branch = parse_if_branch(p);
+            }
+        }
+        Ast* ast = ast_new(AST_IF, line);
+        ast->u.if_.cond = cond;
+        ast->u.if_.then = then_expr;
+        ast->u.if_.else_ = else_branch;
+        ast->u.if_.guard_var = NULL;
+        ast->u.if_.guard_type = NULL;
+        type_guard_list_init(&ast->u.if_.guard_conds);
+        return ast;
+    }
+
     // 表达式 if 必须有 else
-    if (!consume(p, TOK_ELSE, "if 表达式需要使用 'else' 关键字")) {
+    if (!consume(p, TOK_ELSE, "if 表达式需要使用 'else' 关键字"
+                              "（若想条件返回，写成 `return if … then … else …`，"
+                              "或 `if … then return …`）")) {
         return NULL;
     }
 
-    // 解析 else 分支表达式
-    Ast* else_expr = parse_expression(p);
+    // 解析 else 分支（表达式，或跳转语句）
+    Ast* else_expr = parse_if_branch(p);
 
     // 创建 AST 节点 - 复用 AST_IF，但 then 和 else 是表达式而不是代码块
     Ast* ast = ast_new(AST_IF, line);

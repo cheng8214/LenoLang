@@ -1,0 +1,86 @@
+// if 的 then / else 分支可以直接写跳转语句（2026-10-24，第五轮报告 N5 / Q5）
+//
+// 背景：下面这些**最自然的写法**此前全部编译不过 ——
+//   `if n <= 1 then return 1 else return n * fact(n-1)`
+//   ⇒ 报「期望表达式」+「if 表达式需要使用 'else' 关键字」，
+//     两条都指不到真因（真因：then/else 原来说好"只能是表达式"，return 不行）✗
+//   连带后果：`else if` 链（`if a then return x else if b then return y`）整块报错，
+//   而且一行会刷出十几条级联错误（Q5），真因完全被淹没。
+//
+// 现在的口径（与 codegen 的 gen_if_branch_to 一致：分支按**节点 kind** 分派）：
+//   ① then/else 可以是表达式（三元式 if，**必须有 else**，否则拿不到值）；
+//   ② 也可以是 return / return a, b / throw / break / continue；
+//   ③ then 是**语句**时 else 可省 —— `if c then return 1` 本身就是完整语句；
+//   ④ 语句形态的 `else if` / `else eif` 走**语句** if（不是三元式），链任意长。
+//   ⑤ 语句块形态 `if c { … } else { … }` 完全不受影响（另一条解析路径）。
+
+// ① 递归 + then/else 双 return（报告里 cl07 的原始形状）
+func fact(int n): int {
+    if n <= 1 then return 1 else return n * fact(n - 1)
+}
+
+// ② then 是 return、else 可省（报告里 alt07 的"语句形态"）
+func clamp_low(int n): int {
+    if n < 0 then return 0
+    return n
+}
+
+// ③ 语句形态的 else if 链（报告里 md03_mod 的原始形状）
+func sign(int n): string {
+    if n > 0 then return "pos"
+    else if n < 0 then return "neg"
+    return "zero"
+}
+
+// ④ then 是 throw（异常分支同样受益）
+func must_pos(int n): int {
+    if n <= 0 then throw "n must be positive"
+    return n
+}
+
+main() {
+    // ①
+    assert_eq(fact(5), 120, "then/else 各一条 return（递归）")
+
+    // ②
+    assert_eq(clamp_low(-3), 0, "then 是 return、无 else（条件返回）")
+    assert_eq(clamp_low(7), 7, "then 是 return、无 else（条件不成立继续走）")
+
+    // ③
+    assert_eq(sign(2), "pos", "else if 链（第 1 支）")
+    assert_eq(sign(-2), "neg", "else if 链（第 2 支）")
+    assert_eq(sign(0), "zero", "else if 链（落到底部的 return）")
+
+    // ④
+    assert_eq(must_pos(3), 3, "then 是 throw 的正常路径")
+    var caught = "none"
+    try {
+        must_pos(-1)
+    } catch e {
+        caught = _str(e)
+    }
+    assert_true(caught.len() > 0 and caught != "none", "then 是 throw 的异常路径")
+
+    // ⑤ 循环里的条件跳转（break / continue 也走同一条分支规则）
+    var sum = 0
+    for 1:10 to i {
+        if i > 5 then break
+        if i % 2 == 0 then continue
+        sum = sum + i
+    }
+    // 奇数 1 + 3 + 5 = 9（偶数跳过，i>5 退出）
+    assert_eq(sum, 9, "循环里 then + break / then + continue")
+
+    // ⑥ 三元式 if 一根毫毛都没变（表达式形态，必须有 else）
+    var v = if 1 < 2 then 10 else 20
+    assert_eq(v, 10, "表达式 if 仍然正常（then 是表达式）")
+
+    // ⑦ `return if … then … else …` 仍然正常（报告里 alt07b 的推荐写法）
+    assert_eq(rec_pick(3), "small", "return if … then … else … 仍然正常")
+
+    print("test_if_then_stmt passed")
+}
+
+func rec_pick(int n): string {
+    return if n <= 3 then "small" else "big"
+}

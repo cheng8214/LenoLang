@@ -28,6 +28,21 @@
                 }
                 
                 if (s->imported_module_count < 64 && ast->u.import.file_path) {
+                    // ★ N7（2026-10-24）：**同一个别名 import 了两个不同模块** ⇒ 编译期报错。
+                    //   此前完全静默：`find_imported_module` 线性查**第一命中** ⇒ 第二个 import
+                    //   等于没写，`m.bump()` 报「模块 'm' 中没有方法 'bump'」，用户根本看不出
+                    //   "别名早被前一个 import 占了"（md10c 实测 ✗）
+                    //   判据：别名已存在且指向**另一个文件** ⇒ 冲突；同一文件的重复 import 合法 ✓
+                    ImportedModuleInfo* dup_info = find_imported_module(s, module_name);
+                    if (dup_info && dup_info->file_path &&
+                        !semantic_same_module_file(dup_info->file_path, ast->u.import.file_path)) {
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                            "模块别名 '%s' 已被前面的 import 占用（%s）—— 一个别名不能指向两个模块；"
+                            "请给其中一个换别名（如 `as %s2`），或删掉多余的 import",
+                            module_name, dup_info->file_path, module_name);
+                        break;   // 不登记：避免"两个 import 抢一个别名"的静默覆盖
+                    }
+
                     ImportedModuleInfo* info = &s->imported_modules[s->imported_module_count++];
                     info->alias = module_name;
                     info->file_path = strdup(ast->u.import.file_path);
@@ -1985,6 +2000,34 @@
                                     if (ast->cached_type) { type_free(ast->cached_type); }
                                     ast->cached_type = type_new(TYPE_STRUCT);
                                     ast->cached_type->struct_name = strdup(ast->u.module_access.member_name);
+                                }
+                            }
+
+                            // ★ N2（2026-10-24）：**模块里根本没有这个成员** ⇒ 编译期报错。
+                            //   此前静默放过：`print(m.not_exported_var)`（md01 里压根没这个名字）
+                            //   编译 0 错、运行期输出 null（exit=0），而"调用不存在的成员"
+                            //   `m.xxx()` 却明确报「模块中没有成员 'xxx'」⇒ 两条路口径不一致 ✗
+                            //   判据：上面查过 vars / enum 成员 / enum 类型名 / struct 类型名；
+                            //   再补函数 / 类型别名 / clib / cfunc / face 五类，全不中才算"不存在" ✓
+                            //   ⚠ 只在 sym_table 可用时判（加载失败的模块走上面的 load_failed 早退 ✓）
+                            if (member_type == TYPE_ANY) {
+                                const char* mn = ast->u.module_access.member_name;
+                                int found_member =
+                                    module_symbol_table_find_func(mod_info->sym_table, mn) != NULL ||
+                                    module_symbol_table_find_alias(mod_info->sym_table, mn) != NULL ||
+                                    module_symbol_table_find_clib(mod_info->sym_table, mn) != NULL ||
+                                    module_symbol_table_find_cfunc(mod_info->sym_table, mn) != NULL ||
+                                    module_symbol_table_find_face(mod_info->sym_table, mn) != NULL ||
+                                    // cstruct 类型名**必须**算存在：上面的 struct 分支故意跳过
+                                    //   is_cstruct（那种形态不作为 TYPE_STRUCT 使用），但它作为
+                                    //   `new a.Vec()` / `a.SDL_Rect` 的**类型名**是合法成员 ✓
+                                    //   （实测漏判：LenoSDL3 的 `core.SDL_Rect` 全被误报 ✗）
+                                    module_symbol_table_find_struct(mod_info->sym_table, mn) != NULL;
+                                if (!found_member) {
+                                    error_add_at_fmt(ERR_UNDEFINED_VAR, ast->line, ast->column,
+                                        "模块 '%s' 中没有成员 '%s'%s",
+                                        ast->u.module_access.module_name, mn,
+                                        module_symbol_table_hint(mod_info->sym_table, mn));
                                 }
                             }
                         }

@@ -142,6 +142,13 @@ void sem_local_release(Semantic* s, int mark); // 回退到 max(mark, 钉住下�
 // 前置声明 - upvalue 管理
 // ============================================================================
 ImportedModuleInfo* find_imported_module(Semantic* s, const char* alias);
+// 名字是**未被遮蔽的用户模块别名** ⇒ 返回该模块信息，否则 NULL（判据见实现处的说明）
+ImportedModuleInfo* semantic_module_alias_info(Semantic* s, const char* name);
+// `m.var = v` / `m.var += v`（N1）：跨模块写变量 ⇒ 编译期报错（唯一实现，两处赋值路径都调它）
+void semantic_report_module_var_write(const char* module_name, const char* member_name,
+                                      int line, int column);
+// 两个模块路径是否同一个文件（N7 的重复别名判据：只用于**放过**，宁漏报不误报）
+int semantic_same_module_file(const char* a, const char* b);
 int add_upvalue(Ast* func_ast, const char* name, int index, int is_local, int is_value_capture);
 Symbol* resolve_variable_with_upvalue(Semantic* s, const char* name, SymRef* ref);
 // 上面那个的**原实现**（2026-10-10 拆出来给 WARN_UNUSED_VAR 用）：它只做解析，

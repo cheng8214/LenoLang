@@ -3127,6 +3127,25 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
         }
         case AST_IF: {
             // if 表达式类型推断：根据 then 和 else 分支推断
+            //   ★ 2026-10-24：分支里写**跳转语句**时（`if c then return 1 else 2`）它不是
+            //     if 表达式而是语句 ⇒ 不参与类型推断、也不该发「两分支类型不一致」警告
+            //     （那条警告是给 `var v = if c then 1 else "x"` 用的，套到语句上纯噪音 ✗）
+            Ast* if_then = ast->u.if_.then;
+            Ast* if_else = ast->u.if_.else_;
+            int then_is_stmt = if_then && (if_then->kind == AST_RETURN ||
+                                           if_then->kind == AST_RETURN_MULTI ||
+                                           if_then->kind == AST_THROW ||
+                                           if_then->kind == AST_BREAK ||
+                                           if_then->kind == AST_CONTINUE);
+            int else_is_stmt = if_else && (if_else->kind == AST_RETURN ||
+                                           if_else->kind == AST_RETURN_MULTI ||
+                                           if_else->kind == AST_THROW ||
+                                           if_else->kind == AST_BREAK ||
+                                           if_else->kind == AST_CONTINUE);
+            if (then_is_stmt || else_is_stmt) {
+                result = type_new(TYPE_ANY);
+                break;
+            }
             TypeInfo* then_type = infer_expr_type(s, ast->u.if_.then);
             TypeInfo* else_type = infer_expr_type(s, ast->u.if_.else_);
 

@@ -1,11 +1,29 @@
-// 别名冲突测试主文件
-// 测试：使用相同的别名导入不同模块
+// 别名冲突（2026-10-24 起：**编译期报错**，不再静默取第一个）
+//
+// ❌ 下面这种写法现在是**编译错误**（保留在这里说明"被拒绝的形状"）：
+//
+//     import "module_a.leno" as mod
+//     import "module_b.leno" as mod     // ✗ 别名 'mod' 已被前面的 import 占用
+//     main() {
+//         print(mod.get_name())         // 改之前：静默拿到 module_a（第二个 import 等于没写）
+//     }
+//
+// 报错原文：
+//     模块别名 'mod' 已被前面的 import 占用（…/module_a.leno）—— 一个别名不能指向两个模块；
+//     请给其中一个换别名（如 `as mod2`），或删掉多余的 import
+//
+// 为什么改：`find_imported_module` 线性查**第一命中** ⇒ 第二个 import 被静默忽略，
+// 后续 `mod.some_b_only_method()` 报的是「模块 'mod' 中没有方法 …」，
+// 完全看不出"别名早被前一个 import 占了"（第五轮报告 N7）。
+//
+// ✅ 正确写法：一个别名只指向一个模块。
 
-import "module_a.leno" as mod
-import "module_b.leno" as mod  // 重复别名
+import "module_a.leno" as ma
+import "module_b.leno" as mb
 
 main() {
     print("=== 别名冲突测试 ===")
-    print(mod.get_name())
+    print(ma.get_name())
+    print(mb.get_name())
     print("=== 测试完成 ===")
 }

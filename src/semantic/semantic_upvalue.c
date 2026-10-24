@@ -1,5 +1,49 @@
 #include "semantic_internal.h"
 
+// 名字是不是**未被遮蔽的用户模块别名** —— 是则返回它的 ImportedModuleInfo，否则 NULL。
+//   与 visitinc/visit_module.inc 的 is_module 判据同源（别名表 + 作用域里解析得到的符号），
+//   只是多判了一步"符号种类必须是全局/模块级"：局部变量遮蔽别名时（md09 那种情况）
+//   该名字就是变量，不能再当模块用。
+ImportedModuleInfo* semantic_module_alias_info(Semantic* s, const char* name) {
+    if (!s || !name || !name[0]) return NULL;
+    ImportedModuleInfo* info = find_imported_module(s, name);
+    if (!info || info->load_failed) return NULL;
+    Symbol* sym = scope_resolve(s->current, name);
+    if (!sym) return NULL;
+    if (sym->kind != SYM_GLOBAL && sym->kind != SYM_MODULE) return NULL;
+    return info;
+}
+
+// 两个模块路径是否指向**同一个模块文件**（N7 的判据）。
+//   按文件名比较（去掉目录）：同别名重复 import 同一个文件是合法写法（md07 就是 a/b 两次），
+//   只有"同别名指向不同文件"才是冲突。⚠ 保守方向：判据只用于**放过**，宁漏报不误报 ✓
+int semantic_same_module_file(const char* a, const char* b) {
+    if (!a || !b) return 0;
+    const char* ba = a;
+    const char* pb = strpbrk(a, "/\\");
+    while (pb) { ba = pb + 1; pb = strpbrk(ba, "/\\"); }
+    const char* bb = b;
+    pb = strpbrk(b, "/\\");
+    while (pb) { bb = pb + 1; pb = strpbrk(bb, "/\\"); }
+    return strcmp(ba, bb) == 0;
+}
+
+// N1（2026-10-24）：`m.var = v` / `m.var += v` 这类**跨模块写变量** ⇒ 统一报错。
+//   为什么不实现而是在这里拦：读 `m.var` 走模块 exports 字典（模块初始化时的**快照**），
+//   而模块内部函数读写走 module->globals（OP_GET/SET_MODULE_VAR）⇒ 两份存储永远不同步。
+//   实现在编译期是**碰巧**无效的：`m.var = v` 连赋值指令都不发（静默丢弃），
+//   `m.var += v` 会走 OP_INDEX_SET 到模块对象上、运行期报「下标赋值: 对象不支持索引」✗
+//   ⇒ 与其两种坏结果，不如编译期指名病因并给出可用的写法（导出的 setter）✓
+void semantic_report_module_var_write(const char* module_name, const char* member_name,
+                                      int line, int column) {
+    error_add_at_fmt(ERR_SEMANTIC, line, column,
+        "不能直接给模块 '%s' 的变量 '%s' 赋值 —— 跨模块写变量**不会生效**"
+        "（模块内部读写自己的存储，跨模块读到的只是初始化时的副本，两者不是同一个变量）。"
+        "改法：在模块里提供 setter —— `export func set_%s(v) { %s = v }`，"
+        "然后调用 `%s.set_%s(值)` ✓",
+        module_name, member_name, member_name, member_name, module_name, member_name);
+}
+
 // ============================================================================
 // Upvalue 管理
 // ============================================================================

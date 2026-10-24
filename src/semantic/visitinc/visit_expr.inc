@@ -254,6 +254,26 @@
             // const 检查必须在 visit 之前，因为 visit 会改变 obj 的节点类型
             // （AST_MODULE_ACCESS → AST_FIELD_ACCESS / AST_INDEX）
             Ast* obj = ast->u.index_assign.obj;
+
+            // ★ N1（2026-10-24）：`m.var += v` 等复合形态 —— parser 把 `m.名字 op= v` 降级成
+            //   AST_INDEX_ASSIGN{obj: VAR(m), index: "名字"}（见 parser_expr.c 的复合赋值分支）
+            //   ⇒ 这里同样拦下（此前运行期报「下标赋值: 对象不支持索引」，完全指不到真因）。
+            //   判据：obj 是**模块别名**且 index 是该模块导出的变量名。
+            if (obj && obj->kind == AST_VAR && ast->u.index_assign.index &&
+                ast->u.index_assign.index->kind == AST_STRING &&
+                ast->u.index_assign.index->u.string.value) {
+                ImportedModuleInfo* wr_mi = semantic_module_alias_info(s, obj->u.var.name);
+                if (wr_mi && wr_mi->sym_table &&
+                    module_symbol_table_find_var(wr_mi->sym_table,
+                                                 ast->u.index_assign.index->u.string.value)) {
+                    semantic_report_module_var_write(obj->u.var.name,
+                                                     ast->u.index_assign.index->u.string.value,
+                                                     ast->line, ast->column);
+                    // 直接结束这个节点：根因已报，下游不必再围绕"模块对象下标"刷级联错误 ✓
+                    break;
+                }
+            }
+
             if (obj && obj->kind == AST_VAR) {
                 const char* obj_name = obj->u.var.name;
                 SymRef tmp_ref;
@@ -1909,13 +1929,28 @@
                                     char idx_str[16];
                                     snprintf(idx_str, sizeof(idx_str), "%d", i + 1);
                                     // 如果是 struct 未实现 face，追加提示（做成尾串 ⇒ 不必先拼整条消息 ✓）
-                                    char face_hint[256];
+                                    char face_hint[512];
                                     face_hint[0] = '\0';
                                     if (check_type->kind == TYPE_FACE && arg_type->kind == TYPE_STRUCT
                                         && check_type->struct_name && arg_type->struct_name) {
                                         snprintf(face_hint, sizeof(face_hint), " (struct '%s' 未实现 face '%s'，请添加 impl: struct %s impl %s { ... })",
                                             arg_type->struct_name, check_type->struct_name,
                                             arg_type->struct_name, check_type->struct_name);
+                                    }
+                                    // ★ 2026-10-24（round5 的 N3/Q6）：**函数类型参数**不匹配时的定向提示。
+                                    //   实测三条都让人无从下手：`func(int)` 与 `func(int):int` 永不相等；
+                                    //   `func f` 形参等价于 `func()`；而"闭包来自某个没写返回类型的工厂"
+                                    //   会让实参推成 any（看上去像"类型丢了"）。这里把两个真因说清楚 ✓
+                                    else if (check_type->kind == TYPE_FUNCTION) {
+                                        if (arg_type->kind == TYPE_ANY) {
+                                            snprintf(face_hint, sizeof(face_hint),
+                                                "（实参类型是 any —— 若它来自某个函数的返回值，那个函数没写返回签名就一律是 any，"
+                                                "请给它补 `: func(int):int` 这类完整签名）");
+                                        } else if (arg_type->kind == TYPE_FUNCTION) {
+                                            snprintf(face_hint, sizeof(face_hint),
+                                                "（函数类型按**完整签名**比较：`func(int)` 与 `func(int):int` 是两个不同类型 —— "
+                                                "箭头右边的返回类型也要写全）");
+                                        }
                                     }
                                     error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "%s%s",
                                         format_type_error_text("%s3 第 %s4 个参数类型不匹配: 期望 %s1, 实际 %s2",

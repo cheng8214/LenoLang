@@ -437,7 +437,23 @@
             // 为每个左侧目标解析符号或访问索引表达式
             for (int i = 0; i < left_count; i++) {
                 Ast* target = ast->u.assign.targets[i];
-                
+
+                // ★ N1（2026-10-24）：`m.var = v` —— 跨模块写导出变量 ⇒ 编译期拦下。
+                //   （此前零报错零效果：codegen 的 gen_assign 没有 AST_MODULE_ACCESS 分支，
+                //     赋值指令压根没生成；细节与改法见 semantic_report_module_var_write 的注释）
+                if (target->kind == AST_MODULE_ACCESS) {
+                    ImportedModuleInfo* wr_mi = semantic_module_alias_info(
+                        s, target->u.module_access.module_name);
+                    if (wr_mi && wr_mi->sym_table &&
+                        module_symbol_table_find_var(wr_mi->sym_table,
+                                                     target->u.module_access.member_name)) {
+                        semantic_report_module_var_write(target->u.module_access.module_name,
+                                                         target->u.module_access.member_name,
+                                                         ast->line, ast->column);
+                        continue;
+                    }
+                }
+
                 if (target->kind == AST_INDEX) {
                     // const 检查必须在 visit 之前，因为 visit 会改变 obj 节点类型
                     if (target->u.index.obj && target->u.index.obj->kind == AST_VAR) {
@@ -918,10 +934,22 @@
                             }
                         } else if (init_type->kind == TYPE_ANY || init_type->kind == TYPE_INFER) {
                             // 返回类型为 any 或 infer（如无返回类型注解的函数），不允许解构
+                            // ★ 2026-10-24（round5 的 N4/Q3）：文案原来只说"要求 Array"，
+                            //   完全指不到真因 —— 实测最常见的来源是**多返回值/闭包函数没写
+                            //   返回签名**（`func f() { return 1, "hi" }` ⇒ any）。这里按节点
+                            //   形态给出可操作提示（是函数调用才提，避免误导普通 any 变量）✓
+                            int init_is_call = (ast->u.destruct_decl.init &&
+                                                ast->u.destruct_decl.init->kind == AST_CALL) ||
+                                               (ast->u.destruct_decl.init &&
+                                                ast->u.destruct_decl.init->kind == AST_MODULE_CALL);
                             error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
                                 "数组解构要求初始化值为具体类型的 Array（如 Array[int]），"
-                                "实际类型为 %s，无法保证类型安全",
-                                type_kind_to_string(init_type->kind));
+                                "实际类型为 %s，无法保证类型安全%s",
+                                type_kind_to_string(init_type->kind),
+                                init_is_call
+                                  ? "（被调函数没有返回签名时返回值就是 any —— 请给它补上 "
+                                    "`: [类型,…]`，例如 `func f(): [int, string] { return 1, \"hi\" }`）"
+                                  : "");
                         } else if (init_type->kind != TYPE_NULL) {
                             error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
                                 "数组解构要求初始化值为 Array 类型，实际为 %s",

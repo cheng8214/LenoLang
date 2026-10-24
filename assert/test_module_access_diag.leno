@@ -1,0 +1,128 @@
+// 跨模块**成员访问**的四条诊断（2026-10-24，第五轮报告 N1 / N2 / N7 / Q2）
+//
+// 这四条的共同点：**改之前全都不吭声**（或者报一句指不到真因的话），
+// 让人以为"能写/能读"，直到运行期才发现值不对 —— 所以全部前移到编译期。
+//
+//   N1 `m.var = v` / `m.var += v`  跨模块写导出变量 ⇒ 编译期报错
+//      改之前：`m.var = v` 零报错零效果（codegen 的 gen_assign 根本没有模块目标分支，
+//              连赋值指令都不发）；`m.var += v` 运行期报「下标赋值: 对象不支持索引」。
+//      为什么不实现"真能写"：读 `m.var` 取的是模块 exports 字典里**初始化时的副本**，
+//      而模块内部读写走 module->globals —— 两份存储，写哪一份都只对一半。
+//      在那之前宁可编译报错，也不许静默丢弃写入（处方：在模块里写 setter）。
+//
+//   N2 `m.根本没有的名字`         ⇒ 编译期报「模块中没有成员」
+//      改之前：静默返回 null（exit=0）；而"调用不存在的成员" `m.xxx()` 早就报错了。
+//
+//   N7 同一别名 import 两个模块   ⇒ 编译期报错（原来静默取第一个）
+//
+//   正向对照：导出的 setter/getter、跨模块改**容器的元素**、模块里根本没有的类型名
+//   （cstruct 等）都必须照常通过 —— 防止把这几条做成"一刀切"。
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_module_access_diag")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // 被访问的模块：一个可变导出变量（三种访问形态）+ 一个未导出变量
+    files.write(dirs.join(work, "mv.leno"), @"export var shared = 1
+var SECRET = 42
+
+export func get_shared(): int { return shared }
+export func set_shared(int v) { shared = v }
+")
+
+    // ---- N1：跨模块写导出变量 ⇒ 编译期报错（两种形态都要拦）----
+    var n1a = dirs.join(work, "write_var.leno")
+    files.write(n1a, @"import ""mv.leno"" as m
+main() {
+    m.shared = 100
+    print(_str(m.get_shared()))
+}
+")
+    ce.expect_error(n1a, "N1: 跨模块**赋值**导出变量要编译期报错",
+        "不能直接给模块 'm' 的变量 'shared' 赋值", 3)
+
+    var n1b = dirs.join(work, "compound_write_var.leno")
+    files.write(n1b, @"import ""mv.leno"" as m
+main() {
+    m.shared += 5
+    print(_str(m.get_shared()))
+}
+")
+    ce.expect_error(n1b, "N1: 跨模块**复合赋值**导出变量要编译期报错",
+        "不能直接给模块 'm' 的变量 'shared' 赋值", 3)
+
+    // 正向：导出的 setter / getter 照常（这就是报错文案给的处方）
+    var n1ok = dirs.join(work, "setter_ok.leno")
+    files.write(n1ok, @"import ""mv.leno"" as m
+main() {
+    m.set_shared(100)
+    print(""got="" + _str(m.get_shared()))
+}
+")
+    ce.expect_ok(n1ok, "N1 正向：导出 setter/getter 照常改得动",
+        "got=100")
+
+    // ---- N2：读模块里**根本没有**的成员 ⇒ 编译期报错（原来静默 null）----
+    var n2a = dirs.join(work, "missing_member.leno")
+    files.write(n2a, @"import ""mv.leno"" as m
+main() {
+    print(_str(m.nosuchvar))
+}
+")
+    ce.expect_error(n2a, "N2: 读模块里不存在的成员要编译期报错",
+        "模块 'm' 中没有成员 'nosuchvar'", 3)
+
+    // 正向对照：**未导出但存在**的变量走的是另一条（更早的）检查，仍然只报那一句
+    var n2b = dirs.join(work, "noexport_member.leno")
+    files.write(n2b, @"import ""mv.leno"" as m
+main() {
+    print(_str(m.SECRET))
+}
+")
+    ce.expect_error(n2b, "N2 边界：未导出变量仍报「没有 export」而不是「没有成员」",
+        "没有 export", 3)
+
+    // ---- N7：同一别名 import 两个模块 ⇒ 编译期报错（原来静默取第一个）----
+    files.write(dirs.join(work, "other.leno"), @"export func ping(): int { return 7 }
+")
+    var n7a = dirs.join(work, "dup_alias.leno")
+    files.write(n7a, @"import ""mv.leno"" as m
+import ""other.leno"" as m
+main() {
+    print(_str(m.ping()))
+}
+")
+    ce.expect_error(n7a, "N7: 同一别名 import 两个模块要编译期报错",
+        "模块别名 'm' 已被前面的 import 占用", 2)
+
+    // 正向对照：同一模块被两次 import 成**不同别名**完全合法（等于共享同一份实例）
+    var n7ok = dirs.join(work, "dup_import_ok.leno")
+    files.write(n7ok, @"import ""mv.leno"" as a
+import ""mv.leno"" as b
+main() {
+    a.set_shared(5)
+    print(""a="" + _str(a.get_shared()) + "" b="" + _str(b.get_shared()))
+}
+")
+    ce.expect_ok(n7ok, "N7 正向：同一模块两个别名共享同一份状态", "a=5 b=5")
+
+    // ---- 正向：跨模块改**容器的元素**照常（引用语义，与"改变量"是两件事）----
+    files.write(dirs.join(work, "cmod.leno"), @"export var items = [1, 2, 3]
+export func get_items(): Array[int] { return items }
+")
+    var okarr = dirs.join(work, "mutate_elem_ok.leno")
+    files.write(okarr, @"import ""cmod.leno"" as c
+main() {
+    c.get_items()[0] = 99
+    print(_str(c.get_items()[0]))
+}
+")
+    ce.expect_ok(okarr, "正向：跨模块改容器元素照常（引用语义）", "99")
+
+    print("=== test_module_access_diag ALL passed ===")
+}
