@@ -481,13 +481,23 @@
                     }
 
                     // ★ N14（2026-10-24）：更深的链 —— `const s = new S9(); s.arr[0] = 9`
-                    //   obj 是"字段"而不是裸变量，上面两条（obj 是 AST_VAR / 模块成员）都覆盖不到
-                    //   ⇒ 用**根**判据兜住。⚠ 只对上面没报过的形态判，否则同一行报两条。
+                    //   以及**嵌套下标** `const n = [[1]]; n[0][0] = 9`。
+                    //   上面两条只认"obj 是裸变量"和"obj 是模块成员"，其余形态（字段 / 嵌套下标 /
+                    //   struct 字段形态的 MODULE_ACCESS）全落在这里，用**根**判据兜住。
+                    //   ⚠ 只对上面没报过的形态判（否则同一行报两条）：
+                    //     · obj 是 AST_VAR ⇒ 第一条已报
+                    //     · obj 是"模块别名.成员" ⇒ 第二条已管
+                    //     · 其余（FIELD_ACCESS / INDEX / 非模块的 MODULE_ACCESS）⇒ 这里判
                     {
                         Ast* iobj = target->u.index.obj;
-                        if (iobj && (iobj->kind == AST_FIELD_ACCESS ||
-                                     (iobj->kind == AST_MODULE_ACCESS &&
-                                      !find_imported_module(s, iobj->u.module_access.module_name)))) {
+                        int covered = 0;
+                        if (iobj && iobj->kind == AST_VAR) {
+                            covered = 1;
+                        } else if (iobj && iobj->kind == AST_MODULE_ACCESS &&
+                                   find_imported_module(s, iobj->u.module_access.module_name)) {
+                            covered = 1;
+                        }
+                        if (!covered && iobj) {
                             char const_root[BUFFER_SMALL];
                             if (sem_const_root_name(s, iobj, const_root, (int)sizeof(const_root))) {
                                 error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,

@@ -280,8 +280,13 @@
                 memset(&tmp_ref, 0, sizeof(tmp_ref));
                 Symbol* sym = resolve_variable_with_upvalue(s, obj_name, &tmp_ref);
                 if (sym && sym->is_const) {
+                    // ★ 2026-10-24：同一个降级形态有两种来源（parser 把 `x.name op= v` 一律降成
+                    //   INDEX_ASSIGN{obj: VAR(x), index: "name"}）⇒ 按接收者是不是 struct 决定
+                    //   说"字段"还是"元素"，否则 `const s.v += 1` 会被说成"元素"✗
+                    int is_field = (sym->type && sym->type->kind == TYPE_STRUCT);
                     error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
-                                     "不能对 const 变量 '%s' 的元素重新赋值", obj_name);
+                                     "不能对 const 变量 '%s' 的%s重新赋值", obj_name,
+                                     is_field ? "字段" : "元素");
                 }
             } else if (obj && obj->kind == AST_MODULE_ACCESS) {
                 const char* mod_name = obj->u.module_access.module_name;
@@ -567,6 +572,19 @@
                                          ur->name,
                                          (ast->u.unary.op == TOK_INC) ? "自增" : "自减");
                     }
+                }
+            }
+            // ★ N14 补漏（2026-10-24 自查）：`const s = new S8(); s.v++` —— 操作数是**字段**
+            //   而不是裸变量，上面那条只管 AST_VAR ⇒ 漏了（实测能编过、运行期 v 变 1 ✗）。
+            //   用"根是不是 const"判据兜住（与赋值路径同一份实现 ✓）。
+            else if ((ast->u.unary.op == TOK_INC || ast->u.unary.op == TOK_DEC) &&
+                     ast->u.unary.operand) {
+                char const_root[BUFFER_SMALL];
+                if (sem_const_root_name(s, ast->u.unary.operand, const_root, (int)sizeof(const_root))) {
+                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                     "不能对 const 变量 '%s' 的成员%s（const 是**整体不可变**）",
+                                     const_root,
+                                     (ast->u.unary.op == TOK_INC) ? "自增" : "自减");
                 }
             }
 

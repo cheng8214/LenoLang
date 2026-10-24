@@ -112,6 +112,41 @@ main() {
 ")
     ce.expect_ok(ok2, "正向：读 const 的字段 / 元素 / 方法照常", "n=0 sum=6 len=3")
 
+    // ---- 自查补漏的三条（2026-10-24 第二轮）：写完 N14 后回头扫，发现还有三种形态漏 ----
+    //   ⚠ 它们当初漏的原因都一样：检查写的是"操作数正好是 AST_VAR"，而字段形态是
+    //     MODULE_ACCESS / FIELD_ACCESS / INDEX ⇒ 现在统一走"根是不是 const"。
+
+    var f6 = dirs.join(work, "const_field_inc.leno")
+    files.write(f6, hdr + @"main() {
+    const s = new S8()
+    s.v++
+    print(_str(s.v))
+}
+")
+    ce.expect_error(f6, "补漏：const 的**字段自增**（`s.v++`）要拦下",
+        "不能对 const 变量 's' 的成员自增", 9)
+
+    var f7 = dirs.join(work, "const_field_compound.leno")
+    files.write(f7, hdr + @"main() {
+    const s = new S8()
+    s.v += 5
+    print(_str(s.v))
+}
+")
+    // `s.v += 5` 被 parser 降成 INDEX_ASSIGN ⇒ 文案要说"字段"而不是"元素"
+    ce.expect_error(f7, "补漏：const 的**字段复合赋值**要拦下（文案说字段）",
+        "不能对 const 变量 's' 的字段重新赋值", 9)
+
+    var f8 = dirs.join(work, "const_nested_index.leno")
+    files.write(f8, @"main() {
+    const nested = [[1, 2], [3]]
+    nested[0][0] = 9
+    print(_str(nested[0][0]))
+}
+")
+    ce.expect_error(f8, "补漏：const 的**嵌套下标写**（`n[0][0] = 9`）要拦下",
+        "不能修改 const 变量 'nested' 的元素", 3)
+
     // ---- 已知边界：别名传参绕过（**当前行为**，钉住以免被误当回归）----
     var edge = dirs.join(work, "alias_bypass.leno")
     files.write(edge, @"func tryMut(Array[int] a) {
