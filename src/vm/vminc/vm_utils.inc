@@ -2,6 +2,55 @@
 // VM 辅助工具函数 - 从 vm_utils.c 迁移
 // ============================================================================
 
+// ★ 2026-10-24：把值（连同它内部的容器）递归标成**只读** —— const 深保护的唯一实现。
+//   谁调用：OP_LOCK_REF（`const A = [...]` / `const s = new S()` 的声明处，跑一次）。
+//   为什么必须**递归**：`const s9 = new S9()`（S9 有 Array 字段）只标 struct 本身的话，
+//     `tryMut(s9)` 里 `s.arr.add(1)` 改的是**另一个对象**（那个数组）⇒ 漏保护 ✗（实测过）。
+//   ⚠ 幂等 + 环守卫二合一：已标过就立刻 return —— 既省重复递归，也让 `a[0] = a` 这类
+//     自引用结构不会无限下去 ✓；depth 只是额外的兜底上限。
+//   ⚠ 字典用 order 数组取活键再 dict_get：直接扫 entries 会撞上墓碑值
+//     （DICT_TOMBSTONE_VAL 是特殊 NaN 盒，拿去 val_is_obj 判会误判）。
+static void lock_value_deep(Value v, int depth) {
+    if (depth < 0 || !val_is_obj(v)) return;
+    Object* obj = val_as_obj(v);
+    if (obj->flags & OBJ_FLAG_READONLY) return;
+    switch (obj->type) {
+        case OBJ_ARRAY: {
+            obj->flags |= OBJ_FLAG_READONLY;
+            ObjArray* arr = (ObjArray*)obj;
+            for (int i = 0; i < arr->count; i++) {
+                lock_value_deep(arr->elements[i], depth - 1);
+            }
+            break;
+        }
+        case OBJ_DICT: {
+            obj->flags |= OBJ_FLAG_READONLY;
+            ObjDict* d = (ObjDict*)obj;
+            if (d->array) {
+                for (int i = 0; i < d->asize; i++) lock_value_deep(d->array[i], depth - 1);
+            }
+            if (d->order && d->order_count > 0) {
+                for (int i = 0; i < d->order_count; i++) {
+                    lock_value_deep(dict_get(d, d->order[i]), depth - 1);
+                }
+            }
+            break;
+        }
+        case OBJ_STRUCT: {
+            obj->flags |= OBJ_FLAG_READONLY;
+            ObjStruct* so = (ObjStruct*)obj;
+            if (so->def && so->field_values) {
+                for (int i = 0; i < so->def->field_count; i++) {
+                    lock_value_deep(so->field_values[i], depth - 1);
+                }
+            }
+            break;
+        }
+        default:
+            break;   // 其余对象本身不可变（字符串 / bigint / 闭包 / 模块 …）
+    }
+}
+
 // 辅助函数：从 ObjType 获取类型名称
 static inline const char* obj_type_to_name(ObjType type) {
     switch (type) {

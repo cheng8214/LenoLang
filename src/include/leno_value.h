@@ -55,6 +55,15 @@ typedef enum {
 // 该位由 gc_alloc 保证清零（新对象 obj->flags = pooled_flags 是赋值）。
 #define OBJ_FLAG_INTERNED 0x01
 #define OBJ_FLAG_IN_REMSET 0x40
+// ★ 2026-10-24：**只读对象**（`const A = [...]` / `const s = new S()` 创建的那些）。
+//   为什么要运行期标记：const 的语义是"整体不可变"，但编译期只认得"变量符号" ——
+//   容器一旦传给函数（`tryMut(A)`），函数体里的形参不是 const ⇒ 照样改得动 ✗。
+//   现在 const 声明处给对象打这个位，所有 mutator（数组 add/remove/sort…、字典 set/remove…、
+//   OP_INDEX_SET / OP_SET_FIELD）都查一次 ⇒ 别名也改不动 ✓
+//   ⚠ 位选 0x20：0x01=interned、0x40=rem-set、0x80=池化、低 4 位是池化 class 索引 ⇒ 只剩 0x20 空着
+#define OBJ_FLAG_READONLY 0x20
+
+// 对象是否被标为只读的判定见下面（Value 的 typedef 在本文件更靠后，函数不能放这里）。
 #define GEN_YOUNG 0
 #define GEN_OLD   1
 
@@ -240,6 +249,14 @@ static inline double val_as_double(Value v) {
 
 static inline Object* val_as_obj(Value v) {
     return (Object*)(uintptr_t)(v & PAYLOAD_MASK);
+}
+
+// 对象是否被标为只读（`const A = [...]` / `const s = new S()` 创建的那些；非对象 ⇒ 0）。
+//   判据唯一实现：VM 的写指令（OP_INDEX_SET 族 / OP_SET_FIELD）与 native 模块的
+//   mutator（arrays.c / dicts.c 的宏）都调它 ✓
+static inline int obj_is_readonly(Value v) {
+    if (!val_is_obj(v)) return 0;
+    return (val_as_obj(v)->flags & OBJ_FLAG_READONLY) != 0;
 }
 
 static inline Value val_num(double n) {

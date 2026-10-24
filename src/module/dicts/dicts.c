@@ -32,8 +32,19 @@ static Value dict_method_get(int argc, Value* args) {
     return argc >= 3 ? args[2] : val_null();
 }
 
+// ★ 2026-10-24：const 深保护的运行期那一半（与 arrays.c 的 ARR_REJECT_READONLY 同口径）
+//   const D = {...}; tryMut(D) 里函数体拿到的是形参 ⇒ 编译期拦不住 ⇒ 只读标记在这里兜住。
+//   ⚠ 只放 mutator：len/has/get/keys/values/items/copy 都是只读操作 ✓
+#define DICT_REJECT_READONLY()                                                         \
+    do {                                                                              \
+        if (obj_is_readonly(args[0])) {                                               \
+            native_throw_error("const 字典不可修改（const 是**整体不可变**：需要可变字典请声明为 var）"); \
+            return val_null();                                                        \
+        }                                                                             \
+    } while (0)
 static Value dict_method_set(int argc, Value* args) {
     (void)argc;
+    DICT_REJECT_READONLY();
     ObjDict* dict = (ObjDict*)val_as_obj(args[0]);
     dict_set(dict, args[1], args[2]);
     return val_null();
@@ -49,6 +60,7 @@ static Value dict_method_set(int argc, Value* args) {
 //   （全仓扫过：只有 `arr.remove(...)` 的结果被接过）。
 static Value dict_method_remove(int argc, Value* args) {
     (void)argc;
+    DICT_REJECT_READONLY();
     ObjDict* dict = (ObjDict*)val_as_obj(args[0]);
     // dict_take：删除 + 带出旧值，**一次查找**（原来 has+get+delete 是三次）
     return dict_take(dict, args[1]);
@@ -112,6 +124,7 @@ static Value dict_method_values(int argc, Value* args) {
 //   （语义与 Python `dict.setdefault` 一致 ✓；参数个数由编译期把关 ⇒ 函数体不再判长度 ✓）
 static Value dict_method_setdefault(int argc, Value* args) {
     (void)argc;
+    DICT_REJECT_READONLY();
     ObjDict* dict = (ObjDict*)val_as_obj(args[0]);
     Value key = args[1];
     if (dict_has(dict, key)) {
@@ -176,6 +189,7 @@ static Value dict_method_copy(int argc, Value* args) {
 
 static Value dict_method_clear(int argc, Value* args) {
     (void)argc;
+    DICT_REJECT_READONLY();
     ObjDict* dict = (ObjDict*)val_as_obj(args[0]);
     if (!dict) return val_null();
 

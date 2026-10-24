@@ -77,6 +77,7 @@
         [OP_CMPJMP_GE] = &&LABEL(OP_CMPJMP_GE),
         [OP_CMPJMP_EQ] = &&LABEL(OP_CMPJMP_EQ),
         [OP_STR_APPEND] = &&LABEL(OP_STR_APPEND),
+        [OP_LOCK_REF] = &&LABEL(OP_LOCK_REF),
         [OP_CMPJMP_ITER] = &&LABEL(OP_CMPJMP_ITER),
         [OP_BITAND_K] = &&LABEL(OP_BITAND_K),
         [OP_BITOR_K] = &&LABEL(OP_BITOR_K),

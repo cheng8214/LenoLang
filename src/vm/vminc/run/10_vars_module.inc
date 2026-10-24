@@ -222,6 +222,20 @@
         gc_write_barrier((Object*)module, R(a));
         DISPATCH();
     }
+    // OP_LOCK_REF A: R[A] 指向的对象标成**只读**（const 深保护的运行期那一半，2026-10-24）
+    //   背景：const 的编译期检查只认得"变量符号" ⇒ `const A = [1,2]; tryMut(A)` 里函数内的
+    //   形参不是 const，照样改得动（round8 N14 的唯一缺口）。现在 const 声明处给对象打标，
+    //   所有 mutator（数组/字典的实例方法、OP_INDEX_SET / OP_SET_FIELD）都查这一位 ⇒
+    //   别名路径也拦得住 ✓
+    //   ⚠ 只标**可变对象**（数组/字典/struct 实例）；字符串/数字/函数等本身就不可变，
+    //     不必打标（打了也无害，但少一次判型）。
+    LABEL(OP_LOCK_REF): {
+        int a = READ_A();
+        // 递归深度上限：const 标记只在声明处跑一次，代价可忽略；上限只为防病态嵌套/环。
+        // 环的常规防护是"已标过就停"（同一个对象第二次进来第一件事就 return ✓）。
+        lock_value_deep(R(a), 4);
+        DISPATCH();
+    }
     // OP_INIT_LENOMODULE A: 若 R[A] 是未初始化的 .leno 模块，执行其 init_chunk
     //   执行完毕 R[A] 仍是模块对象（供别名变量持有）
     LABEL(OP_INIT_LENOMODULE): {

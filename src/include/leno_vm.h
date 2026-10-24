@@ -455,6 +455,15 @@ typedef enum {
     //   ⚠ 末尾追加 ⇒ 既有 opcode 编号不变；但仍必须 bump 序列化版本（见 leno_serialize.h）。
     OP_STR_APPEND,      // iABC   R[A] = R[A] + R[B]（字符串自追加，可原地）
 
+    // ★ 2026-10-24：把 R[A] 指向的对象标成**只读**（const 深保护的运行期那一半）。
+    //   codegen 只在 `const` 声明、且初值是容器/struct 实例时代码后置发一条
+    //   （数组/字典字面量、`new S()`、函数返回的容器…）。
+    //   标了之后所有 mutator 都拒绝改它 —— 包括"把 const 传给函数、函数里改"这条
+    //   编译期看不见的别名路径 ✗（round8 N14 的核心）。
+    //   为什么用指令而不是内置函数：不想让用户看到一个可调用的 `_lock_ref`；
+    //   末尾追加 ⇒ 既有 opcode 编号不动，但仍按惯例 bump 序列化版本（见 leno_serialize.h）。
+    OP_LOCK_REF,        // iA     R[A] 指向的对象 = 只读
+
     OP_OPCODE_COUNT,    // 用于跳转表大小
 } OpCode;
 

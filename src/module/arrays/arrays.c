@@ -17,8 +17,21 @@ static Value arr_len(int argc, Value* args) {
     return val_int(arr->count);
 }
 
+// ★ 2026-10-24：**const 深保护的运行期那一半** —— 只读对象拒绝一切原地修改。
+//   背景：const A = [1,2]; tryMut(A) 里函数体拿到的是形参（不是 const）⇒ 编译期拦不住 ✗
+//   （round8 N14）。现在 const 声明处会给对象打 OBJ_FLAG_READONLY（OP_LOCK_REF），
+//   所有 mutator 走这一个宏检查。
+//   ⚠ 只放 mutator：len/has/copy/map/filter/flatten/sum/join/reduce/index_of 都是只读操作 ✓
+#define ARR_REJECT_READONLY()                                                          \
+    do {                                                                              \
+        if (obj_is_readonly(args[0])) {                                               \
+            native_throw_error("const 数组不可修改（const 是**整体不可变**：需要可变数组请声明为 var）"); \
+            return val_null();                                                        \
+        }                                                                             \
+    } while (0)
 static Value arr_add(int argc, Value* args) {
     (void)argc;
+    ARR_REJECT_READONLY();
     ObjArray* arr = (ObjArray*)val_as_obj(args[0]);
     if (arr->count >= arr->capacity) {
         if (!arr_grow(arr)) {
@@ -92,6 +105,7 @@ static Value arr_sum(int argc, Value* args) {
 
 static Value arr_pop(int argc, Value* args) {
     (void)argc;
+    ARR_REJECT_READONLY();
     ObjArray* arr = (ObjArray*)val_as_obj(args[0]);
     if (arr->count == 0) return val_null();
     Value result = arr->elements[--arr->count];
@@ -102,6 +116,7 @@ static Value arr_pop(int argc, Value* args) {
 
 static Value arr_insert(int argc, Value* args) {
     (void)argc;
+    ARR_REJECT_READONLY();
     ObjArray* arr = (ObjArray*)val_as_obj(args[0]);
     int index = val_is_bigint(args[1]) ?
                 (int)bigint_to_int64(val_as_bigint(args[1])) :
@@ -125,6 +140,7 @@ static Value arr_insert(int argc, Value* args) {
 
 static Value arr_remove(int argc, Value* args) {
     (void)argc;
+    ARR_REJECT_READONLY();
     ObjArray* arr = (ObjArray*)val_as_obj(args[0]);
     int index = val_is_bigint(args[1]) ?
                 (int)bigint_to_int64(val_as_bigint(args[1])) :
@@ -247,6 +263,7 @@ static Value arr_flatten(int argc, Value* args) {
 
 static Value arr_clear(int argc, Value* args) {
     (void)argc;
+    ARR_REJECT_READONLY();
     ObjArray* arr = (ObjArray*)val_as_obj(args[0]);
 
     // 计算旧内存大小用于跟踪
@@ -295,6 +312,7 @@ static Value arr_last_index_of(int argc, Value* args) {
 
 static Value arr_reverse(int argc, Value* args) {
     (void)argc;
+    ARR_REJECT_READONLY();
     ObjArray* arr = (ObjArray*)val_as_obj(args[0]);
     int left = 0;
     int right = arr->count - 1;
@@ -341,6 +359,7 @@ static int value_compare_for_sort(const void* a, const void* b) {
 
 static Value arr_sort(int argc, Value* args) {
     (void)argc;
+    ARR_REJECT_READONLY();
     ObjArray* arr = (ObjArray*)val_as_obj(args[0]);
     if (arr->count > 1) {
         qsort(arr->elements, arr->count, sizeof(Value), value_compare_for_sort);

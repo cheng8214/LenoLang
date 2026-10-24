@@ -69,6 +69,15 @@
         //     q.add("x")                                        // ⇒ 崩，无任何输出
         //   口径与下标那几条特化指令**完全一致**（同一个宏 ⇒ try/catch 都能兜住 ✓）
         ARRAY_RECV_GUARD(b, "调用 add");
+        // ★ 2026-10-24：const 深保护 —— `arr.add(x)` 被 codegen 融合成这条指令
+        //   （见 codegen_expr.c 的 gen_method_call），所以**必须在这里也查一次**，
+        //   否则 `const A = [1]; tryMut(A)` 里 add 照样能改（实测漏过一次 ✗）。
+        if (unlikely(obj_is_readonly(R(b)))) {
+            int rline = GET_CURRENT_LINE();
+            if (!throw_runtime_error("const 数组不可修改（const 是**整体不可变**：需要可变数组请声明为 var）", rline)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
         ObjArray* arr = (ObjArray*)val_as_obj(R(b));
         if (arr->count >= arr->capacity) { if (!arr_grow(arr)) { runtime_error("数组扩容失败：内存不足或元素数达上限（若在 for 遍历中不断 add，数组会无限增长）", GET_CURRENT_LINE()); return -1; } }
         arr->elements[arr->count++] = R(a);
@@ -577,6 +586,13 @@
     LABEL(OP_INDEX_SET_DICT_INT): {
         int a = READ_A(), b = READ_B(), c = READ_C();
         ObjDict* dd = (ObjDict*)val_as_obj(R(b));
+        // ★ 2026-10-24：const 深保护（同 OP_INDEX_SET）
+        if (unlikely(obj_is_readonly(R(b)))) {
+            int rline = GET_CURRENT_LINE();
+            if (!throw_runtime_error("const 容器不可修改（const 是**整体不可变**：需要可变值请声明为 var）", rline)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
         Value nv = R(a);
         int64_t ii = val_as_int(R(c));
         if ((uint64_t)ii < (uint64_t)dd->asize && !val_is_null(dd->array[ii])) {
@@ -595,6 +611,15 @@
         Value obj = R(b);
         Value idx = R(c);
         int line = GET_CURRENT_LINE();
+
+        // ★ 2026-10-24：**const 深保护** —— 只读对象一律拒绝下标写。
+        //   `const A = [1,2]; tryMut(A)` 里函数体拿到的是形参（不是 const）⇒ 编译期拦不住，
+        //   靠 OP_LOCK_REF 打的这一位兜住（round8 N14）。
+        if (unlikely(obj_is_readonly(obj))) {
+            if (!throw_runtime_error("const 容器不可修改（const 是**整体不可变**：需要可变值请声明为 var）", line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
 
         if (likely(val_is_obj(obj))) {
             ObjType ot = val_as_obj(obj)->type;
@@ -757,6 +782,13 @@
         int a = READ_A(), b = READ_B(), c = READ_C();
         ARRAY_SPECIALIZED_NULL_GUARD(b);
         ObjArray* arr = (ObjArray*)val_as_obj(R(b));
+        // ★ 2026-10-24：const 深保护（同 OP_INDEX_SET）
+        if (unlikely(obj_is_readonly(R(b)))) {
+            int rline = GET_CURRENT_LINE();
+            if (!throw_runtime_error("const 数组不可修改（const 是**整体不可变**：需要可变数组请声明为 var）", rline)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
         int i2 = (int)val_as_int(R(c));
         if (unlikely((uint64_t)i2 >= (uint64_t)arr->count)) {
             int line = GET_CURRENT_LINE();
@@ -778,6 +810,13 @@
     //     （同一个 (uint64_t) 无符号比较 ⇒ 报错文本、行号来源都相同）。
     LABEL(OP_INDEX_SET_ARRAY_IMM): {
         int a = READ_A(), b = READ_B();
+        // ★ 2026-10-24：const 深保护（同 OP_INDEX_SET）
+        if (unlikely(obj_is_readonly(R(b)))) {
+            int rline = GET_CURRENT_LINE();
+            if (!throw_runtime_error("const 数组不可修改（const 是**整体不可变**：需要可变数组请声明为 var）", rline)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
         int i2 = (int)READ_C();   // 无符号 0..255
         ARRAY_SPECIALIZED_NULL_GUARD(b);
         ObjArray* arr = (ObjArray*)val_as_obj(R(b));

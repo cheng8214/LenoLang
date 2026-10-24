@@ -109,6 +109,13 @@
             frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH();
         }
+        // ★ 2026-10-24：const 深保护 —— `const s = new S()` 的实例字段也不许写。
+        //   编译期只看得到"变量符号"；实例传进函数后（形参不是 const）就靠这一位兜住。
+        if (unlikely(obj_is_readonly(obj))) {
+            if (!throw_runtime_error("const 对象的字段不可修改（const 是**整体不可变**：需要可变对象请声明为 var）", line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
         // cstruct（C 布局）字段写：数值类型自动提升
         if (val_as_obj(obj)->type == OBJ_CSTRUCT) {
             ObjCStruct* co = (ObjCStruct*)val_as_obj(obj);

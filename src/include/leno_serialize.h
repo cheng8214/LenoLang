@@ -181,7 +181,17 @@
 //   ⇒ LENO_MODCACHE_VERSION 同步升 ✓
 //   ⚠ 4 字节的 `ADD/SUB/MUL/LT/GT/LE/GE_INT_IMM` 族**加宽不了** ✗（A/B/C 三字段全占满，
 //     且它们没有随附的填充字）⇒ 超 int8 只能退回「LOADI + 寄存器版」= 现状 ✓
-#define LENO_BIN_VERSION    0x00030217  // v3.2.23（2026-10-12，T17 ①）—— **字符串 interning**：
+#define LENO_BIN_VERSION    0x00030218  // v3.2.24（2026-10-24）—— 新增 opcode **OP_LOCK_REF**
+                                        //   （const 深保护的运行期只读标记；末尾追加 ⇒ 编号不变，
+                                        //    但新字节码含旧构建不认识的 opcode ⇒ 必须整体失效，
+                                        //    判据同 v3.2.19 / v3.2.23）
+                                        // ⚠ **bump 之后必须重跑 build_vm.bat**：`-p` 打包是
+                                        //   把 .lenb 贴到 `build\leno_vm.exe` / `leno_vm_gui.exe`
+                                        //   尾部，那两个运行时是**独立编译**的二进制 —— 不重编就会
+                                        //   在跑打包产物时报「内存反序列化失败: 5」（5 =
+                                        //   SERIALIZE_ERR_VERSION），而打包那一步还报"成功"✗
+                                        //   （实测踩过：assert/test_cli_script_args 第 ⑦ 项）
+// v3.2.23（2026-10-12，T17 ①）—— **字符串 interning**（历史条目，值已被 v3.2.24 取代）：
                                         //   字符串载荷段新增**两种编码**：
                                         //     · 新串：`u32 len`（高位 = 0）+ XOR 载荷（与旧版逐字节相同）
                                         //     · 重复：`u32 (len | 0x80000000)` + `u32 id`
@@ -355,7 +365,10 @@
 // v13：ObjFunction 增加 is_async（运行期判定"调用即建协程"用）。旧缓存里的函数对象缺这个
 //      字段 ⇒ async 函数的**间接调用**（`var f = w; f()`、当参数传、绑定方法）会退回同步执行、
 //      静默错值，所以必须**作废旧缓存**。
-#define LENO_MODCACHE_VERSION  0x00000027  // v39 - 同 LENO_BIN_VERSION v3.2.23（**字符串 interning**：
+#define LENO_MODCACHE_VERSION  0x00000028  // v40 - 同 LENO_BIN_VERSION v3.2.24（新增 opcode
+                                            //   **OP_LOCK_REF** ⇒ 模块字节码里含旧构建不认识的
+                                            //   opcode，加载后跳转会发散 ⇒ 整体失效重编译 ✓）
+                                            // v39 - 同 LENO_BIN_VERSION v3.2.23（**字符串 interning**：
                                             //   字符串载荷段编码变了 ⇒ 旧缓存里的载荷会被新构建按
                                             //   "引用"错读（`len|0x80000000` 当长度）⇒ 必须整体
                                             //   失效重编译 ✓）

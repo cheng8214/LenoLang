@@ -1281,6 +1281,28 @@ static void emit_typed_default_to(CodeGen* gen, int dst, TypeInfo* t, int line) 
     emit_loadnil_to(gen, dst, line);
 }
 
+// const 声明 ⇒ 给初值对象打**只读**标记（OP_LOCK_REF，2026-10-24）。
+//   为什么需要：编译期的 const 检查只认得"变量符号"⇒ `const A = [1,2]; tryMut(A)` 里
+//   函数内的形参不是 const，照样改得动 ✗（round8 N14）。运行期打标后所有 mutator 都查它。
+//   ⚠ 判据**从宽**：只跳过"确定是标量字面量"的几种（数字/字符串/bool/null），其余一律发 ——
+//     宁可多一条 1 字节指令，也不要漏锁（漏了就是静默可变）。
+//   ⚠ 对 null 初值也跳过：`const X = null` 没有对象。
+static void emit_lock_if_const(CodeGen* gen, Ast* ast, int reg) {
+    if (!ast->u.var_decl.is_const) return;
+    Ast* init = ast->u.var_decl.init;
+    if (!init) return;
+    switch (init->kind) {
+        case AST_NUM:
+        case AST_STRING:
+        case AST_BOOL:
+        case AST_NULL:
+            return;      // 标量/空值：没有对象可锁
+        default:
+            break;
+    }
+    reg_encode_iABx(gen->chunk, OP_LOCK_REF, reg, 0, ast->line);
+}
+
 static void gen_var_decl(CodeGen* gen, Ast* ast) {
     SymRef* ref = &ast->u.var_decl.ref;
     if (!ref->name) return;
@@ -1299,6 +1321,7 @@ static void gen_var_decl(CodeGen* gen, Ast* ast) {
         } else {
             emit_typed_default_to(gen, r, ast->u.var_decl.type, ast->line);
         }
+        emit_lock_if_const(gen, ast, r);
         emit_decl_runtime_type(gen, r, ast->u.var_decl.type, ast->line);
         emit_defglobal(gen, r, ref->index, ast->line);
         reg_free(gen, r);
@@ -1315,6 +1338,7 @@ static void gen_var_decl(CodeGen* gen, Ast* ast) {
         } else {
             emit_typed_default_to(gen, r, ast->u.var_decl.type, ast->line);
         }
+        emit_lock_if_const(gen, ast, r);
         emit_decl_runtime_type(gen, r, ast->u.var_decl.type, ast->line);
         reg_encode_iABx(gen->chunk, OP_SET_MODULE_VAR, r, ref->index, ast->line);
         reg_free(gen, r);
@@ -1342,6 +1366,7 @@ static void gen_var_decl(CodeGen* gen, Ast* ast) {
     }
     // Ptr[T] / face 的运行时类型标注（局部变量同样需要：ffi.read_at 等要靠它）
     emit_decl_runtime_type(gen, dst, ast->u.var_decl.type, ast->line);
+    emit_lock_if_const(gen, ast, dst);
 
     // 追踪带析构的 struct 局部变量：作用域结束 / return 时发 OP_DTOR_LOCAL。
     // ⚠ `var r = new Resource()` 的声明类型是 `var`（u.var_decl.type 不是 TYPE_STRUCT），
