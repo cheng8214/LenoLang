@@ -1,0 +1,64 @@
+// `==` 的容器语义：**数组与字典都按内容比较**（2026-10-25，round8 N11）
+//
+// 改之前：数组逐元素（深比较）✓，但字典落到底部的**引用比较** ✗
+//   ⇒ `{"a":1} == {"a":1}` 得 false；数组里放 dict（`[d1] == [d2]`）也退化成引用比较。
+//   同一个 `==` 两套口径，且与"数组相等是深比较"这条已知特性互相矛盾。
+// 现在：dict 逐键值比较（键**无序**、嵌套递归、深度上限 8），与数组一致。
+//   ⚠ 仍按引用：struct 实例 / 闭包 / 模块 —— 它们没有"内容相等"的定义。
+//   ⚠ `arr.has(x)` / `index_of` / `remove` 仍按**浅比较**（对象看引用）：
+//     它们找的是"那个元素"，不是"内容相同的另一个"（见下第 ⑨ 组，钉住这个区别）。
+
+main() {
+    // ① 同内容不同对象 ⇒ 相等（键顺序无关）
+    var d1 = {"a": 1, "b": 2}
+    var d2 = {"b": 2, "a": 1}
+    assert_eq(d1 == d2, true, "字典按内容比较，键序无关")
+    assert_eq(d1 != d2, false)
+
+    // ② 值不同 / 长度不同 ⇒ 不相等
+    assert_eq(d1 == {"a": 1, "b": 3}, false, "值不同")
+    assert_eq(d1 == {"a": 1}, false, "长度不同")
+
+    // ③ 空字典
+    var e1 = {}
+    var e2 = {}
+    assert_eq(e1 == e2, true, "两个空字典相等")
+
+    // ④ 数组元素是 dict ⇒ 同样按内容
+    var a1 = [d1, 3]
+    var a2 = [{"a": 1, "b": 2}, 3]
+    assert_eq(a1 == a2, true, "数组里的 dict 元素按内容比较")
+
+    // ⑤ 嵌套：dict → dict → 数组
+    var n1 = {"x": {"y": [1, 2]}}
+    var n2 = {"x": {"y": [1, 2]}}
+    var n3 = {"x": {"y": [1, 3]}}
+    assert_eq(n1 == n2, true, "嵌套结构递归比较")
+    assert_eq(n1 == n3, false, "嵌套里差一个数就不等")
+
+    // ⑥ 类型不同 ⇒ 不相等（dict vs 数组）
+    assert_eq(d1 == [1, 2], false, "dict 与数组不比")
+
+    // ⑦ 自引用：不能挂死（深度到顶即判不等，但自己与自己走快速路径 ⇒ true）
+    var cyc = {}
+    cyc["self"] = cyc
+    assert_eq(cyc == cyc, true, "自引用与自己相等（同一对象）")
+    var cyc2 = {}
+    cyc2["self"] = cyc2
+    assert_eq(cyc == cyc2, false, "两个自引用结构不判等（深度上限，保守方向）")
+
+    // ⑧ dict 的**值**是运行时拼出来的字符串（不同对象、同内容）⇒ 仍相等
+    var ka = "k" + "1"
+    var m1 = {"k1": ka}
+    var m2 = {"k1": "k1"}
+    assert_eq(m1 == m2, true, "值里的字符串按内容比较")
+
+    // ⑨ `arr.has` 与 `==` 的口径**有意不同**：has 找"那个元素"（浅比较 / 对象看引用）
+    var target1 = {"v": 9}
+    var box = [target1]
+    assert_eq(box.has({"v": 9}), false, "has 按引用找元素（不按内容）")
+    assert_eq(box.has(target1), true, "has 找到同一个对象")
+    assert_eq(box[0] == {"v": 9}, true, "但 == 是按内容")
+
+    print("=== test_container_eq ALL passed ===")
+}

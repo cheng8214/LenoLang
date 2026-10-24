@@ -1227,9 +1227,16 @@ THREAD_LOCAL VM* current_exec_vm = NULL;
 // ============================================================================
 
 // 相等比较（OP_EQ / OP_NEQ）：
-//   int/float/bigint 数值相等；string 比内容；array 逐元素；null/bool 按值；
-//   其余对象按引用；类型不同 → 不相等。
-static inline int value_eq_stdlib(Value a, Value b) {
+//   int/float/bigint 数值相等；string 比内容；**array 逐元素、dict 逐键值**；null/bool 按值；
+//   其余对象（struct / 闭包 / 模块…）按引用；类型不同 → 不相等。
+//   ★ 2026-10-25（N11）：dict 改成**按内容**比较（与数组一致）。原来落到底部的引用比较，
+//     于是 `{"a":1} == {"a":1}` 得 false、数组里的 dict 元素也退化成引用比较 ——
+//     两处口径都不一致（Python 的 dict 也是按值比较，JS 才按引用）。
+//   ⚠ 递归有**深度上限**：自引用结构（`d["self"] = d`）不会无限下去，到顶即判不等。
+static inline int value_eq_depth(Value a, Value b, int depth) {
+    // bit-exact 快速路径：同一个对象 / 同一个整数 ⇒ 必等。
+    //   ⚠ 刻意**排除 float**：`NaN == NaN` 必须保持 false（走下面那条数值比较）✓
+    if (a == b && !val_is_float(a)) return 1;
     if (val_is_int(a) && val_is_int(b)) return val_as_int(a) == val_as_int(b);
     if (val_is_float(a) || val_is_float(b)) {
         if (!(val_is_num(a) || val_is_bigint(a)) || !(val_is_num(b) || val_is_bigint(b))) return 0;
@@ -1253,14 +1260,36 @@ static inline int value_eq_stdlib(Value a, Value b) {
             ObjArray* aa = (ObjArray*)oa;
             ObjArray* ab = (ObjArray*)ob;
             if (aa->count != ab->count) return 0;
+            if (depth <= 0) return 0;
             for (int i = 0; i < aa->count; i++) {
-                if (!value_eq_stdlib(aa->elements[i], ab->elements[i])) return 0;
+                if (!value_eq_depth(aa->elements[i], ab->elements[i], depth - 1)) return 0;
+            }
+            return 1;
+        }
+        if (oa->type == OBJ_DICT) {
+            ObjDict* da = (ObjDict*)oa;
+            ObjDict* db = (ObjDict*)ob;
+            // 长度先比：免得 `{a:1}` 与 `{a:1, b:2}` 被误判相等
+            if (da->acount + da->count != db->acount + db->count) return 0;
+            if (depth <= 0) return 0;
+            // 键**无序**：按 a 的插入序取活键，逐个到 b 里查（dict_has 的键比较是内容比较 ✓）
+            if (da->order && da->order_count > 0) {
+                for (int i = 0; i < da->order_count; i++) {
+                    Value k = da->order[i];
+                    if (!dict_has(db, k)) return 0;
+                    if (!value_eq_depth(dict_get(da, k), dict_get(db, k), depth - 1)) return 0;
+                }
             }
             return 1;
         }
         return oa == ob;
     }
     return 0;
+}
+
+// 对外入口：深度上限 8（够覆盖正常嵌套；到顶后退回"判不等"= 保守方向）
+static inline int value_eq_stdlib(Value a, Value b) {
+    return value_eq_depth(a, b, 8);
 }
 
 // 三向比较（OP_LT / OP_GT / OP_LE / OP_GE）

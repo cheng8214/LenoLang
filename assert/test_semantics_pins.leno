@@ -92,13 +92,16 @@ main() {
 
     // ---------- 第六批（容器/数值/相等 ✓）实测后补的钉桩 ----------
 
-    // P10 ★ `==` 口径：**数组逐元素 ✓、字典按引用 ✗**（明文出处：src/vm/vm.c:1219 的注释 ✓）
-    //   最容易咬人的一条 ✓：两个"看起来一样"的字典**不相等** ✓
+    // P10 ★ `==` 口径：**数组与字典都比内容**（2026-10-25 起；此前字典按引用 ✗）
+    //   改之前这条钉的是 "true|false" —— 同一个 `==` 两套口径，数组里塞 dict 还会退化成
+    //   引用比较（round8 N11）。现在统一按内容：dict 逐键值（键**无序**）、嵌套同样递归，
+    //   深度上限 8（自引用结构不会无限下去）。见 src/vm/vm.c 的 value_eq_depth。
+    //   ⚠ 仍按引用：struct 实例 / 闭包 / 模块（没有"内容相等"的定义）。
     var p10 = dirs.join(work, "eq_semantics.leno")
     files.write(p10, "main() {" + n
         + "    print(_str([1, 2] == [1, 2]) + \"|\" + _str({\"a\": 1} == {\"a\": 1}) + \"\\n\")" + n
         + "}" + n)
-    ce.expect_ok(p10, "数组比内容 / 字典比引用", "true|false")
+    ce.expect_ok(p10, "数组与字典都比内容", "true|true")
 
     // P11：`arr.sum()` **返回 float**（纯 int 数组也是 ✓）—— 有意设计 ✓ 理由在 module_arrays.md:305 ✓
     var p11 = dirs.join(work, "sum_float.leno")
