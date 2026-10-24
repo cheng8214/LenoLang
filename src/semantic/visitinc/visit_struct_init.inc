@@ -1,6 +1,23 @@
         case AST_STRUCT_INIT:
             // 处理 struct 构造函数调用
             {
+                // ★ 2026-10-23 修（B2）：泛型实参里的**未定义类型**
+                //   `new Box[NotDefined]()` 原来编译通过（占位成 struct NotDefined），
+                //   直到第一次使用字段才报「字段赋值类型不匹配 / 期望 struct NotDefined」——
+                //   指向症状而非病因，而且错误被推迟到很远的地方。
+                //   变量声明路径有这项检查（visit_var.inc 的 semantic_check_undefined_subtypes），
+                //   new 表达式路径漏了 ⇒ 这里补上。
+                //   ⚠ 必须用 check_undefined_type（查顶层），不能用 ..._subtypes（只查子类型）：
+                //     `NotDefined` 本身就是顶层类型、没有子类型，后者查不到。
+                if (ast->u.struct_init.generic_type_args) {
+                    for (int gi = 0; gi < ast->u.struct_init.generic_type_count; gi++) {
+                        if (ast->u.struct_init.generic_type_args[gi]) {
+                            check_undefined_type(s, ast->u.struct_init.generic_type_args[gi],
+                                                 ast->line, ast->column);
+                        }
+                    }
+                }
+
                 // 检查是否是模块限定的 struct 名称（如 "math.Point"）
                 const char* dot_pos = strchr(ast->u.struct_init.struct_name, '.');
                 Symbol* sym = NULL;

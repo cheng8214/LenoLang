@@ -189,6 +189,9 @@ int semantic_import_use_symbol(Semantic* s, const char* module_name, const char*
 // 递归检查泛型实参/子类型中是否存在未定义类型（不查顶层）——B2 修复用。
 // 返回 1 = 报过"未定义"错（调用方应置 declared_type_undefined 跳过级联检查）
 int semantic_check_undefined_subtypes(Semantic* s, TypeInfo* type, int line, int column);
+// 检查类型本身（顶层）**及**全部子类型是否有未定义类型（2026-10-23 导出：
+//   `new Box[NotDefined]()` 的实参是顶层类型，semantic_check_undefined_subtypes 查不到它）
+void check_undefined_type(Semantic* s, TypeInfo* type, int line, int column);
 // 泛型形参替换：与 type_substitute 相同语义，但额外识别"TYPE_STRUCT 占位形参"
 // （struct_name=形参名，如字段类型 Array[T] 里的 T）。返回新类型（调用方 free 旧值）。
 TypeInfo* semantic_substitute_generic_param(TypeInfo* type, const char* param_name, TypeInfo* concrete);

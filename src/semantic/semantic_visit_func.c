@@ -4,7 +4,9 @@
 // 辅助：递归检查 TypeInfo 中是否存在未定义的类型（在 resolve_alias_in_type 之后调用）
 // 此时所有 alias 已被解析，剩余的 TYPE_STRUCT 只能是合法 struct 或未定义类型
 // ============================================================================
-static void check_undefined_type(Semantic* s, TypeInfo* type, int line, int column) {
+// 2026-10-23：去掉 static —— visit_struct_init.inc（`new Box[NotDefined]()` 路径）也要用。
+//   它是"查顶层 + 递归子类型"的完整版（semantic_check_undefined_subtypes 只查子类型）。
+void check_undefined_type(Semantic* s, TypeInfo* type, int line, int column) {
     if (!type) return;
 
     // 优先使用 TypeInfo 自身的位置信息（更精确）
