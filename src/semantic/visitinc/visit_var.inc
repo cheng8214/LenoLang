@@ -438,19 +438,35 @@
             for (int i = 0; i < left_count; i++) {
                 Ast* target = ast->u.assign.targets[i];
 
-                // ★ N1（2026-10-24）：`m.var = v` —— 跨模块写导出变量 ⇒ 编译期拦下。
-                //   （此前零报错零效果：codegen 的 gen_assign 没有 AST_MODULE_ACCESS 分支，
-                //     赋值指令压根没生成；细节与改法见 semantic_report_module_var_write 的注释）
+                // ★ N1（2026-10-25）：`m.var = v` —— 跨模块写导出变量现在**支持**了
+                //   （codegen 发 OP_INDEX_SET，VM 侧写穿到 module->globals 并同步 exports）。
+                //   这里只拦两种写法：
+                //     ① 目标是模块里的 **const** ⇒ 常量不可修改（给 setter / 改成 var）；
+                //     ② 目标**不是导出的变量**（函数 / 类型 / 未导出 / 不存在）⇒ 写不了。
+                //   类型检查在下面第二个循环（与其它赋值目标同一处，见 AST_MODULE_ACCESS 分支）。
+                //   ⚠ wr_mi 为 NULL 说明是 `实例.字段`（parser 对字段访问也建 MODULE_ACCESS）⇒
+                //     必须**放行**，交给后面的 AST_MODULE_ACCESS 分支按 struct 字段处理 ✓
                 if (target->kind == AST_MODULE_ACCESS) {
                     ImportedModuleInfo* wr_mi = semantic_module_alias_info(
                         s, target->u.module_access.module_name);
-                    if (wr_mi && wr_mi->sym_table &&
-                        module_symbol_table_find_var(wr_mi->sym_table,
-                                                     target->u.module_access.member_name)) {
-                        semantic_report_module_var_write(target->u.module_access.module_name,
-                                                         target->u.module_access.member_name,
-                                                         ast->line, ast->column);
-                        continue;
+                    if (wr_mi && wr_mi->sym_table) {
+                        ModuleVarSymbol* wv = module_symbol_table_find_var(
+                            wr_mi->sym_table, target->u.module_access.member_name);
+                        if (!wv) {
+                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                "模块 '%s' 中没有可赋值的变量 '%s' —— 跨模块只能写 `export var` 声明的变量",
+                                target->u.module_access.module_name,
+                                target->u.module_access.member_name);
+                            continue;
+                        }
+                        if (wv->is_const) {
+                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                "不能给模块 '%s' 的 const 变量 '%s' 赋值 —— 常量不可修改；"
+                                "需要可变状态请把模块里的声明改成 var，或提供 setter",
+                                target->u.module_access.module_name,
+                                target->u.module_access.member_name);
+                            continue;
+                        }
                     }
                 }
 
@@ -652,6 +668,33 @@
                         if (field_type) type_free(field_type);
                     }
                     if (obj_type) type_free(obj_type);
+                } else if (target->kind == AST_MODULE_ACCESS) {
+                    // ★ N1 写侧（2026-10-25）：`m.x = v` 的**类型检查** —— 用模块符号表里
+                    //   声明的类型（`ModuleVarSymbol.type_info` 优先，退化成扁平的 type/struct_name）。
+                    //   ⚠ 只在"确实是模块别名 + 那个变量可写"时判；`实例.字段` 那种形态
+                    //     wr_mi 为 NULL ⇒ 落到后面的 AST_FIELD_ACCESS 分支（不该由这里管）。
+                    ImportedModuleInfo* wr_mi = semantic_module_alias_info(
+                        s, target->u.module_access.module_name);
+                    if (wr_mi && wr_mi->sym_table && value_type) {
+                        ModuleVarSymbol* wv = module_symbol_table_find_var(
+                            wr_mi->sym_table, target->u.module_access.member_name);
+                        if (wv && !wv->is_const) {
+                            TypeInfo* want = wv->type_info;
+                            TypeInfo* tmp_want = NULL;
+                            if (!want && wv->type != TYPE_ANY && wv->type != TYPE_UNKNOWN) {
+                                tmp_want = type_new(wv->type);
+                                if (wv->struct_name) tmp_want->struct_name = strdup(wv->struct_name);
+                                want = tmp_want;
+                            }
+                            if (want && !type_is_compatible(want, value_type)) {
+                                error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "%s",
+                                    format_detailed_type_error_ex_text(want, value_type,
+                                        "无法将值赋给模块变量",
+                                        target->u.module_access.member_name));
+                            }
+                            if (tmp_want) type_free(tmp_want);
+                        }
+                    }
                 } else if (target->kind == AST_FIELD_ACCESS) {
                     // struct/cstruct 字段赋值的类型检查
                     TypeInfo* obj_type = infer_expr_type(s, target->u.field_access.obj);

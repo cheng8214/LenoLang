@@ -86,22 +86,11 @@ int sem_const_root_name(Semantic* s, Ast* e, char* buf, int bufsz) {
     }
 }
 
-// N1（2026-10-24）：`m.var = v` / `m.var += v` 这类**跨模块写变量** ⇒ 统一报错。
-//   为什么不实现而是在这里拦：读 `m.var` 走模块 exports 字典（模块初始化时的**快照**），
-//   而模块内部函数读写走 module->globals（OP_GET/SET_MODULE_VAR）⇒ 两份存储永远不同步。
-//   实现在编译期是**碰巧**无效的：`m.var = v` 连赋值指令都不发（静默丢弃），
-//   `m.var += v` 会走 OP_INDEX_SET 到模块对象上、运行期报「下标赋值: 对象不支持索引」✗
-//   ⇒ 与其两种坏结果，不如编译期指名病因并给出可用的写法（导出的 setter）✓
-void semantic_report_module_var_write(const char* module_name, const char* member_name,
-                                      int line, int column) {
-    error_add_at_fmt(ERR_SEMANTIC, line, column,
-        "不能直接给模块 '%s' 的变量 '%s' 赋值 —— 跨模块**写**还没打通"
-        "（读已经是实时的：模块内部一改，`%s.%s` 立刻能读到；但反向写回去没有指令支持）。"
-        "改法：在模块里提供 setter —— `export func set_%s(v) { %s = v }`，"
-        "然后调用 `%s.set_%s(值)` ✓",
-        module_name, member_name, module_name, member_name,
-        member_name, member_name, module_name, member_name);
-}
+// N1（2026-10-25）：跨模块写导出变量**已经打通**（读 10-24、写 10-25），
+//   原来这里那个 semantic_report_module_var_write（"跨模块写没打通，请写 setter"）
+//   已删除 —— 现在 `m.var = v` 会真的写进 module->globals 并同步 exports。
+//   留下的两条硬约束在调用点：const 变量不可写、非导出变量不可写
+//   （见 visit_var.inc / visit_expr.inc 的 AST_MODULE_ACCESS 分支）。
 
 // ============================================================================
 // Upvalue 管理

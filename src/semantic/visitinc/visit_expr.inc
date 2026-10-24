@@ -255,22 +255,29 @@
             // （AST_MODULE_ACCESS → AST_FIELD_ACCESS / AST_INDEX）
             Ast* obj = ast->u.index_assign.obj;
 
-            // ★ N1（2026-10-24）：`m.var += v` 等复合形态 —— parser 把 `m.名字 op= v` 降级成
-            //   AST_INDEX_ASSIGN{obj: VAR(m), index: "名字"}（见 parser_expr.c 的复合赋值分支）
-            //   ⇒ 这里同样拦下（此前运行期报「下标赋值: 对象不支持索引」，完全指不到真因）。
-            //   判据：obj 是**模块别名**且 index 是该模块导出的变量名。
+            // ★ N1（2026-10-25）：`m.var += v` 等复合形态 —— parser 把 `m.名字 op= v` 降级成
+            //   AST_INDEX_ASSIGN{obj: VAR(m), index: "名字"}（见 parser_expr.c 的复合赋值分支）。
+            //   写侧已打通（OP_INDEX_SET 的 OBJ_MODULE 分支写穿 globals + 同步 exports）⇒
+            //   这里不再拦，只保留两条硬约束：**const 不能复合赋值**、**非导出变量不能写**。
             if (obj && obj->kind == AST_VAR && ast->u.index_assign.index &&
                 ast->u.index_assign.index->kind == AST_STRING &&
                 ast->u.index_assign.index->u.string.value) {
                 ImportedModuleInfo* wr_mi = semantic_module_alias_info(s, obj->u.var.name);
-                if (wr_mi && wr_mi->sym_table &&
-                    module_symbol_table_find_var(wr_mi->sym_table,
-                                                 ast->u.index_assign.index->u.string.value)) {
-                    semantic_report_module_var_write(obj->u.var.name,
-                                                     ast->u.index_assign.index->u.string.value,
-                                                     ast->line, ast->column);
-                    // 直接结束这个节点：根因已报，下游不必再围绕"模块对象下标"刷级联错误 ✓
-                    break;
+                if (wr_mi && wr_mi->sym_table) {
+                    ModuleVarSymbol* wv = module_symbol_table_find_var(
+                        wr_mi->sym_table, ast->u.index_assign.index->u.string.value);
+                    if (!wv) {
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                            "模块 '%s' 中没有可赋值的变量 '%s' —— 跨模块只能写 `export var` 声明的变量",
+                            obj->u.var.name, ast->u.index_assign.index->u.string.value);
+                        break;   // 根因已报，下游不必再围绕"模块对象下标"刷级联错误
+                    }
+                    if (wv->is_const) {
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                            "不能给模块 '%s' 的 const 变量 '%s' 做复合赋值 —— 常量不可修改",
+                            obj->u.var.name, ast->u.index_assign.index->u.string.value);
+                        break;
+                    }
                 }
             }
 

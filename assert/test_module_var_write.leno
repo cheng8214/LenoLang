@@ -1,0 +1,118 @@
+// 跨模块写导出变量（2026-10-25，N1 写侧根治）
+//
+// 病根（2026-10-24 之前）：模块内部读写走 module->globals，跨模块读走 exports 字典 ——
+// 两份存储。当时的处置是"写"直接编译报错（不许静默丢弃），"读"在 10-24 改成实时同步。
+// 现在写也打通了：
+//     m.x = v    ⇒ codegen 发 OP_INDEX_SET(值, 模块对象, "x")
+//                  ⇒ VM 按 module->export_mappings 写穿到 module->globals[槽位] + 同步 exports
+//     m.x += v   同样（parser 降级成 INDEX_ASSIGN，读写各一次）
+// ⇒ 模块内外的读写从此是**同一份存储**：模块里改外部立刻看到，外部改模块里立刻看到。
+//
+// 仍然拦（编译期）：写 const 变量 / 写非变量成员 / 类型不匹配。
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_module_var_write")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    files.write(dirs.join(work, "state.leno"), @"export var count = 0
+export var label = ""init""
+export var items = [1]
+export const LIMIT = 99
+
+export func read_count(): int { return count }
+export func bump(): int { count = count + 1; return count }
+")
+
+    // ---- ① 外部写 ⇒ 模块内读（同一份存储，双向可见）----
+    var f1 = dirs.join(work, "write_then_read.leno")
+    files.write(f1, @"import ""state.leno"" as m
+main() {
+    m.count = 100
+    print(""in="" + _str(m.read_count()) + "" out="" + _str(m.count))
+    m.count += 5
+    print(""after_plus="" + _str(m.read_count()))
+}
+")
+    ce.expect_ok(f1, "外部写（= 与 +=）后模块内立刻读到新值",
+        "in=100 out=100")
+
+    // ---- ② 模块内写 ⇒ 外部读（10-24 的读侧，防回归）----
+    var f2 = dirs.join(work, "bump_then_read.leno")
+    files.write(f2, @"import ""state.leno"" as m
+main() {
+    m.bump()
+    m.bump()
+    print(""count="" + _str(m.count))
+}
+")
+    ce.expect_ok(f2, "模块内 bump 后外部读到新值（读侧回归）", "count=2")
+
+    // ---- ③ 字符串变量同样可写 ----
+    var f3 = dirs.join(work, "write_string.leno")
+    files.write(f3, @"import ""state.leno"" as m
+main() {
+    m.label = ""changed""
+    print(""label="" + m.label + ""/"" + _str(m.label.len()))
+}
+")
+    ce.expect_ok(f3, "字符串导出变量也走同一条写穿路径", "label=changed/7")
+
+    // ---- ④ 容器：写变量本身 vs 改元素（后者一直是引用语义）----
+    var f4 = dirs.join(work, "write_container.leno")
+    files.write(f4, @"import ""state.leno"" as m
+main() {
+    m.items.add(2)          // 改元素（引用语义，一直可用）
+    m.items[0] = 9
+    m.items = [7, 8]        // 换整个容器（走写穿）
+    print(""items="" + _str(m.items))
+}
+")
+    ce.expect_ok(f4, "容器元素与整体替换都可用", "items=[7, 8]")
+
+    // ---- ⑤ 两个导入方共享同一个模块实例 ⇒ 一处的写另一处可见 ----
+    var f5 = dirs.join(work, "two_importers.leno")
+    files.write(f5, @"import ""state.leno"" as a
+import ""state.leno"" as b
+main() {
+    a.count = 42
+    print(""b="" + _str(b.count) + "" a="" + _str(a.count))
+}
+")
+    ce.expect_ok(f5, "同一模块的两个别名共享存储（一写两见）", "b=42 a=42")
+
+    // ---- ⑥ 负向：const 不可写（值与复合两种形态）----
+    var f6 = dirs.join(work, "write_const.leno")
+    files.write(f6, @"import ""state.leno"" as m
+main() {
+    m.LIMIT = 1
+}
+")
+    ce.expect_error(f6, "写模块的 const 变量要编译期报错",
+        "const 变量 'LIMIT' 赋值", 3)
+
+    // ---- ⑦ 负向：类型不匹配（类型来自提供端声明）----
+    var f7 = dirs.join(work, "write_bad_type.leno")
+    files.write(f7, @"import ""state.leno"" as m
+main() {
+    m.count = ""oops""
+}
+")
+    ce.expect_error(f7, "写模块变量的类型不匹配要报错",
+        "无法将值赋给模块变量", 3)
+
+    // ---- ⑧ 负向：非变量成员不能写（函数）----
+    var f8 = dirs.join(work, "write_func.leno")
+    files.write(f8, @"import ""state.leno"" as m
+main() {
+    m.bump = 1
+}
+")
+    ce.expect_error(f8, "给模块的**函数**赋值要报错", "没有可赋值的变量", 3)
+
+    print("=== test_module_var_write ALL passed ===")
+}

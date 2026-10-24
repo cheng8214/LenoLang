@@ -192,15 +192,14 @@ func _helper() {              // 内部辅助函数
 }
 ```
 
-### 2.4 导出变量：**读实时，写要走 setter**
+### 2.4 导出变量：读写都是**同一份存储**（实时）
 
 ```leno
 // counter.leno
 export var count = 0
+export const LIMIT = 99
 
 export func bump(): int { count = count + 1; return count }
-export func get(): int  { return count }        // 也可以只留 getter
-export func set(int v)  { count = v }           // 写必须走 setter
 ```
 
 ```leno
@@ -209,24 +208,29 @@ import "counter.leno" as c
 main() {
     c.bump()
     c.bump()
-    print(c.count)      // ✅ 2 —— 模块内一改，这里立刻能看到（2026-10-24 起）
-    print(c.get())      // ✅ 2
+    print(c.count)      // ✅ 2   —— 模块内一改，这里立刻能看到
 
-    c.count = 100       // ❌ 编译错误：跨模块「写」还没打通（用 setter）
-    c.count += 5        // ❌ 同上
-    c.set(100)          // ✅ 100
+    c.count = 100       // ✅ 真的写进去了（写穿到模块自己的存储）
     print(c.count)      // ✅ 100
+    c.count += 5        // ✅ 复合赋值同样生效
+    print(c.bump())     // ✅ 106 —— 模块内部接着从 105 往上加
+
+    c.LIMIT = 1         // ❌ 编译错误：const 变量不可修改
+    c.bump = 1          // ❌ 编译错误：函数不是变量，不能赋值
 }
 ```
 
-- **读**（2026-10-24 起）：`m.变量` 是**实时值** —— `OP_SET_MODULE_VAR` 写模块全局槽时会
-  顺手刷新 exports，跨模块读到的就是最新值（此前读到的是初始化时的副本，`bump()` 后仍是旧值 ✗）。
-  实现见 `10_vars_module.inc` 的「槽位 → 导出名反查表」。
-- **写**：`m.变量 = 值` / `m.变量 += 值` 仍是**编译错误**（原来"零报错零效果"：
-  赋值指令压根没生成；复合形态还会在运行期报「下标赋值: 对象不支持索引」）。
-  编译期会直接告诉你在模块里加 setter。
-- 跨模块改**容器元素**从来都是引用语义（`c.items.add(1)`、`c.get_items()[0] = 99` 都改的是
-  同一个对象 ✓）。
+- **读**（2026-10-24 起）：`m.变量` 是**实时值** —— `OP_SET_MODULE_VAR` 写完模块全局槽后
+  按「槽位 → 导出名」反查表顺手刷新 exports（实现见 `10_vars_module.inc`）。
+- **写**（2026-10-25 起）：`m.变量 = 值` / `m.变量 += 值` 编译成
+  `OP_INDEX_SET(值, 模块对象, "变量名")`，VM 按 `module->export_mappings` 写穿到
+  `module->globals[槽位]` 并同步 exports ⇒ **模块内外是同一份存储**（此前 `m.x = v` 是
+  "零报错零效果"：赋值指令压根没生成）。
+  - ⚠ `m.变量++` **不支持**（`++` 只用于变量或索引）；写 `m.变量 += 1`。
+  - ⚠ 只能写 `export var`：`const` 变量、函数、类型、未导出成员都写不了（编译期拦）。
+  - ⚠ 会按提供端声明的类型做检查（`m.count = "hi"` ⇒ 编译错误）。
+- 跨模块改**容器元素**一直是引用语义（`c.items.add(1)`、`c.items[0] = 99` 改的是同一个
+  对象 ✓）；`c.items = [...]` 换整个容器走上面那条写穿路径。
 
 ***
 

@@ -144,9 +144,8 @@ void sem_local_release(Semantic* s, int mark); // 回退到 max(mark, 钉住下�
 ImportedModuleInfo* find_imported_module(Semantic* s, const char* alias);
 // 名字是**未被遮蔽的用户模块别名** ⇒ 返回该模块信息，否则 NULL（判据见实现处的说明）
 ImportedModuleInfo* semantic_module_alias_info(Semantic* s, const char* name);
-// `m.var = v` / `m.var += v`（N1）：跨模块写变量 ⇒ 编译期报错（唯一实现，两处赋值路径都调它）
-void semantic_report_module_var_write(const char* module_name, const char* member_name,
-                                      int line, int column);
+// （N1 的 semantic_report_module_var_write 已删：跨模块写导出变量 2026-10-25 打通，
+//   `m.var = v` 会写穿到 module->globals 并同步 exports；只保留 const / 非导出两条硬约束）
 // 两个模块路径是否同一个文件（N7 的重复别名判据：只用于**放过**，宁漏报不误报）
 int semantic_same_module_file(const char* a, const char* b);
 // const 的**深层**保护（N14）：表达式的根对象是 const 时返回 1，并把根名字写进 buf。

@@ -2566,6 +2566,39 @@ void gen_module_access(CodeGen* gen, Ast* ast, int dst) {
     reg_free(gen, mreg);
 }
 
+// ★ 2026-10-25：**跨模块写导出变量**（N1 写侧）—— `m.x = v` 的代码生成。
+//   形态与读对称：取别名持有的模块对象 → 常量表取成员名 → `OP_INDEX_SET R[A]=值, R[B]=模块, R[C]=名字`。
+//   VM 侧（07_collections.inc 里 OP_INDEX_SET 的 OBJ_MODULE 分支）按 module->export_mappings
+//   写穿到 `module->globals[槽位]`，并顺手同步 exports（读路径因此立刻看到新值 ✓）。
+//   ⚠ value_reg < 0 表示"值尚未求值"，由本函数自己求；并行赋值（`a, m.x = 1, 2`）时调用方
+//     传来已求好的临时寄存器，绝不能再求第二遍（否则右侧表达式副作用执行两次 ✗）。
+void gen_module_member_set(CodeGen* gen, Ast* target, Ast* value, int value_reg, int line) {
+    const char* member = target->u.module_access.member_name;
+    if (!member || !member[0]) return;
+    // DCE：`m.x = v` 的成员名同样是"按名字引用导出的变量" ⇒ 记一笔（与读路径一致）
+    dce_note_name_ref(member);
+
+    int mreg = reg_alloc(gen);
+    emit_module_object(gen, target, mreg);
+
+    int ireg = reg_alloc(gen);
+    int cidx = make_constant(gen, val_obj((Object*)str_copy(member, (int)strlen(member))));
+    emit_loadk_to(gen, ireg, cidx, line);
+
+    int vreg = value_reg;
+    int vtemp = 0;
+    if (vreg < 0) {
+        vreg = gen_expr(gen, value);
+        vtemp = 1;
+    }
+
+    reg_encode_iABC(gen->chunk, OP_INDEX_SET, vreg, mreg, ireg, line);
+
+    if (vtemp) reg_free(gen, vreg);
+    reg_free(gen, ireg);
+    reg_free(gen, mreg);
+}
+
 void gen_module_call(CodeGen* gen, Ast* ast, int dst) {
     // 两类模块调用：
     //   原生模块（io / jsons / strings ...）→ OP_MODULE_CALL（按名字查 native 方法表）

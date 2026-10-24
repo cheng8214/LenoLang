@@ -95,15 +95,20 @@ main() {
 ")
     ce.expect_ok(f4, "export const 跨模块可读", "k=9")
 
-    // ---- ⑤ 跨模块**写**仍是编译错误（本轮只打通读）----
-    var f5 = dirs.join(work, "write_still_error.leno")
+    // ---- ⑤ 跨模块**写**（2026-10-25 起也打通了，原先这里是"仍报错"的断言）----
+    //   现在写穿到 module->globals 并同步 exports ⇒ 外部写、内部读也是同一份存储
+    //   （详见 assert/test_module_var_write.leno）
+    var f5 = dirs.join(work, "write_now_ok.leno")
     files.write(f5, @"import ""counter.leno"" as c
 main() {
     c.count = 5
+    c.bump()
+    print(""out="" + _str(c.count) + "" bump="" + _str(c.bump()))
 }
 ")
-    ce.expect_error(f5, "跨模块写仍然编译报错（指引改用 setter）",
-        "跨模块**写**还没打通", 3)
+    // count 初值 0 ⇒ 外部写 5 ⇒ bump 变 6 ⇒ 外部读 6、bump 返回 7
+    ce.expect_ok(f5, "跨模块写现在生效（外部写 ⇒ 模块内 bump 从新值继续）",
+        "out=6 bump=7")
 
     print("=== test_module_var_live ALL passed ===")
 }

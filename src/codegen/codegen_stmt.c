@@ -1652,6 +1652,16 @@ void gen_assign(CodeGen* gen, Ast* ast) {
                 break;
             }
 
+            // ★ 2026-10-25（N1 写侧）：**跨模块写导出变量** —— `m.x = v`。
+            //   语义阶段已核实：m 是模块别名、x 是该模块**导出的非 const 变量**
+            //   ⇒ 发 OP_INDEX_SET（A=值, B=模块对象, C="x"），VM 里写穿到 module->globals
+            //     （见 07_collections.inc 的 OBJ_MODULE 分支）。
+            //   此前这里**没有这个分支** ⇒ 赋值指令一条都不发，表现为"零报错零效果"。
+            case AST_MODULE_ACCESS: {
+                gen_module_member_set(gen, target, value, pre_reg, ast->line);
+                break;
+            }
+
             // 索引赋值：arr[i] = val / dict["k"] = val
             case AST_INDEX:
             case AST_INDEX_ASSIGN: {

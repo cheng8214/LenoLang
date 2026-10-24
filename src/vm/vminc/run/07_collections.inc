@@ -623,6 +623,36 @@
 
         if (likely(val_is_obj(obj))) {
             ObjType ot = val_as_obj(obj)->type;
+            // ★ 2026-10-25：**跨模块写导出变量**（N1 写侧的根治）—— `m.x = v` 写穿到模块 globals。
+            //   背景：模块内部读写走 module->globals，跨模块读走 exports 字典（10-24 已改成实时同步），
+            //   但"从外面写回去"一直没有通路（原来这条指令压根没生成，赋值被静默丢弃）。
+            //   现在按 export_mappings（导出名 → 槽位）把值写进 globals 并同步 exports ✓
+            //   ⚠ 只认**导出的变量**：查不到映射就报错（函数 / 类型 / 未导出成员都写不了）。
+            //   ⚠ const 由语义阶段在编译期拦；这里兜"名字是运行期才拼出来"这类极端情况。
+            if (ot == OBJ_MODULE) {
+                ObjModule* mod = (ObjModule*)val_as_obj(obj);
+                if (val_is_string(idx) && mod->globals && mod->export_mappings) {
+                    ObjString* key = (ObjString*)val_as_obj(idx);
+                    for (int ei = 0; ei < mod->export_mapping_count; ei++) {
+                        ExportGlobalMapping* mp = &mod->export_mappings[ei];
+                        if (!mp->name) continue;
+                        if ((int)strlen(mp->name) != key->len) continue;
+                        if (memcmp(mp->name, key->chars, (size_t)key->len) != 0) continue;
+                        int slot = mp->global_index;
+                        if (slot >= 0 && slot < mod->global_capacity) {
+                            mod->globals[slot] = R(a);
+                            gc_write_barrier((Object*)mod, R(a));
+                            if (mod->exports) dict_set(mod->exports, idx, R(a));
+                            DISPATCH();
+                        }
+                    }
+                }
+                if (!throw_runtime_error(
+                        "不能给模块的成员赋值：它不是该模块导出的变量"
+                        "（只有 `export var` 能跨模块写；函数/类型/未导出成员都不可写）", line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
             if (ot == OBJ_ARRAY) {
                 ObjArray* arr = (ObjArray*)val_as_obj(obj);
                 int i2 = val_is_num(idx) ? (int)value_to_double(idx) : -1;
