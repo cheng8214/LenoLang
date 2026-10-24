@@ -524,6 +524,41 @@ void str_append_analyze(CodeGen* gen, Ast* func_body) {
     }
 }
 
+// 顶层是否还有**可执行**语句（不是定义类）。
+//   用于「无 main + 无顶层语句」的提示：那种文件跑起来零输出，容易让人以为没跑。
+//   定义类（import / use / func / struct / enum / face / cstruct / clib / cfunc / alias）
+//   都不产生运行效果 ⇒ 不算。
+static int has_top_level_exec(Ast* block) {
+    if (!block || block->kind != AST_BLOCK) return 0;
+    for (int i = 0; i < (int)block->u.block.count; i++) {
+        Ast* s = block->u.block.items[i];
+        switch (s->kind) {
+            case AST_IMPORT:
+            case AST_USE:
+            case AST_FUNC_DEF:
+            case AST_STRUCT_DEF:
+            case AST_ENUM_DEF:
+            case AST_FACE_DEF:
+            case AST_CSTRUCT_DEF:
+            case AST_CLIB_DEF:
+            case AST_CFUNC_DECL:
+            case AST_ALIAS:
+                break;          // 定义类：不算可执行
+            case AST_EXPORT:
+                // export 包着的如果是定义，也不可执行；包着变量/语句就算
+                if (s->u.export.decl) {
+                    AstKind k = s->u.export.decl->kind;
+                    if (k == AST_FUNC_DEF || k == AST_STRUCT_DEF || k == AST_ENUM_DEF ||
+                        k == AST_FACE_DEF || k == AST_ALIAS) break;
+                }
+                return 1;
+            default:
+                return 1;       // 变量声明 / 表达式语句 / 控制流 … 都算可执行
+        }
+    }
+    return 0;
+}
+
 // ★ 2026-10-23：模块顶层语句重排（**只在 codegen 阶段做**）
 //   问题：模块顶层的执行是**按源码顺序**的，而函数注册（OP_DEFGLOBALFUNC）发生在
 //         生成 AST_FUNC_DEF 的那一刻。于是
@@ -615,7 +650,17 @@ void codegen(CodeGen* gen, Ast* ast) {
         emit_return(gen, r, 1, ast->line);
         reg_free(gen, r);
     } else {
-        // 无 main：发 RETURN NIL
+        // 无 main
+        // ★ 2026-10-24：主文件既没有 main()、也没有任何顶层可执行语句时，运行后
+        //   **零输出、exit=0**，用户会以为程序没跑（另一 AI 的语法测试报告提的体验问题）。
+        //   这里给一条提示。
+        //   ⚠ 模块文件不提示 —— 模块本来就没有 main（`sem->is_module`）。
+        //   ⚠ 有顶层语句也不提示 —— 那些语句会被执行（比如只做初始化的脚本）。
+        if (gen->sem && !gen->sem->is_module && !has_top_level_exec(ast)) {
+            fprintf(stderr,
+                "[提示] 这个文件既没有 main()，也没有顶层可执行语句 —— 运行后不会有任何效果\n"
+                "       入口请写 `main() { ... }`（不需要 func 关键字）\n");
+        }
         int r = reg_alloc(gen);
         emit_loadnil_to(gen, r, ast->line);
         emit_return(gen, r, 1, ast->line);
