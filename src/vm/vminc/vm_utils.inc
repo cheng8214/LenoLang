@@ -1,4 +1,65 @@
 // ============================================================================
+// 崩溃兜底：把"当前执行点"写进 buf（2026-10-25）
+// ----------------------------------------------------------------------------
+// 谁调用：error.c 的崩溃处理（Windows 的 SetUnhandledExceptionFilter / POSIX 的 signal）。
+//   **野指针**在 C 层就是访问违例 —— 原来只报"未处理的系统异常，异常码 0xC0000005"，
+//   用户不知道是**哪一行 Leno 代码**引出来的 ✗ ⇒ VM 初始化时注册本函数，
+//   崩溃那一刻把 函数名 / 文件:行 / 当前指令 补进报错 ✓
+// ⚠ 崩溃上下文里**不能** malloc / stdio / snprintf（会在崩溃里二次死掉）
+//   ⇒ 这里只做定长手写拼接 ✓
+// ⚠ 所有指针都判空后**逐层**取：崩溃时 vm 可能半初始化（比如崩在 vm_init 里）。
+extern const char* opcode_name(int op);   // debug.c（sources_core 里，编译器/VM 都有 ✓）
+
+static void crash_put(char** p, char* end, const char* s) {
+    while (s && *s && *p < end) *(*p)++ = *s++;
+}
+static void crash_put_int(char** p, char* end, int v) {
+    char tmp[12];
+    int n = 0;
+    if (v < 0) { crash_put(p, end, "-"); v = -v; }
+    if (v == 0) tmp[n++] = '0';
+    while (v > 0 && n < 11) { tmp[n++] = (char)('0' + v % 10); v /= 10; }
+    while (n-- > 0) { if (*p < end) *(*p)++ = tmp[n]; }
+}
+
+void vm_crash_location(char* buf, int bufsz, int* out_len) {
+    if (out_len) *out_len = 0;
+    if (!buf || bufsz < 8) return;
+    char* p = buf;
+    char* end = buf + bufsz - 1;
+    if (vm.frame_cnt <= 0 || vm.frames == NULL) { *buf = '\0'; return; }
+    CallFrame* f = &vm.frames[vm.frame_cnt - 1];
+    if (f == NULL || f->chunk == NULL) { *buf = '\0'; return; }
+    const char* fname = "?";
+    if (f->closure && f->closure->function && f->closure->function->name) {
+        fname = f->closure->function->name;   // ObjFunction.name 是 const char*（不是 ObjString）
+    }
+    const char* file = f->chunk->filename ? f->chunk->filename : "?";
+    int line = -1;
+    int op = -1;
+    if (f->chunk->code && f->chunk->lines && f->ip) {
+        int off = (int)(f->ip - f->chunk->code) - 4;   // ip 已跳过当前指令（见 GET_CURRENT_LINE）
+        if (off >= 0 && off < f->chunk->len) {
+            line = f->chunk->lines[off];
+            op = f->chunk->code[off];
+        }
+    }
+    crash_put(&p, end, "  @ 函数 ");
+    crash_put(&p, end, fname);
+    crash_put(&p, end, " / ");
+    crash_put(&p, end, file);
+    if (line > 0) { crash_put(&p, end, ":"); crash_put_int(&p, end, line); }
+    if (op >= 0 && op < OP_OPCODE_COUNT) {
+        crash_put(&p, end, "（当前指令 ");
+        crash_put(&p, end, opcode_name(op));
+        crash_put(&p, end, "）");
+    }
+    crash_put(&p, end, "\n");
+    *p = '\0';
+    if (out_len) *out_len = (int)(p - buf);
+}
+
+// ============================================================================
 // VM 辅助工具函数 - 从 vm_utils.c 迁移
 // ============================================================================
 

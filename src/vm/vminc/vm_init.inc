@@ -147,6 +147,12 @@ void vm_init_with_scope(Scope* global_scope) {
     files_init_instance_methods();
     cstructs_init_methods();
     threads_init_instance_methods();
+
+    // 崩溃兜底（2026-10-25）：把"当前执行点"提供者交给 error.c 的崩溃处理。
+    //   之后**野指针**（cstruct/ffi 用错、free 后继续用）那种访问违例，
+    //   报错里会带 `@ 函数 foo / file.leno:123（当前指令 OP_XXX）`，
+    //   而不是只有一句"未处理的系统异常 0xC0000005" ✓
+    leno_set_crash_location_provider(vm_crash_location);
 }
 
 // ============================================================================

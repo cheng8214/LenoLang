@@ -1096,6 +1096,18 @@ typedef struct VM {
 extern VM vm;
 extern int vm_initialized;
 
+// ============================================================================
+// 崩溃兜底：把"当前执行点"写进 buf（2026-10-25）
+// ----------------------------------------------------------------------------
+// 谁调用：error.c 的崩溃处理（Windows 的 SetUnhandledExceptionFilter / POSIX 的 signal）。
+//   **野指针**（cstruct/ffi 用错、free 后继续用）在 C 层就是访问违例 ⇒ 原来只报
+//   "未处理的系统异常，异常码 0xC0000005"，用户不知道是**哪一行 Leno 代码**引出来的 ✗
+//   ⇒ VM 初始化时注册本函数，崩溃那一刻由它把 函数名 / 文件:行 / 上一条指令 补进报错 ✓
+// ⚠ 崩溃上下文里**不能** malloc / stdio / snprintf ⇒ 实现只做定长手写拼接。
+void vm_crash_location(char* buf, int bufsz, int* out_len);
+// error.c 侧：注册/清空"崩溃定位提供者"（没有 VM 的场合 —— 比如纯编译器 —— 保持 NULL ✓）
+void leno_set_crash_location_provider(void (*fn)(char* buf, int bufsz, int* out_len));
+
 // 当前执行线程使用的 VM 指针（子线程使用独立的 VM）
 extern THREAD_LOCAL VM* current_exec_vm;
 

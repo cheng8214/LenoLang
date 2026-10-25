@@ -640,6 +640,7 @@ static wchar_t g_leno_log_dir_w[MAX_PATH_LEN] = L"";    //   （崩溃上下文*
 #endif
 
 static void leno_install_crash_handlers(void);    // ④ 的实现在本节之后 ✓
+static void leno_crash_write(const char* kind, unsigned long code);   // 同上（自检钩子要用 ✓）
 
 const char* leno_error_log_path(void) {
     return g_leno_log_path[0] ? g_leno_log_path : NULL;
@@ -834,6 +835,26 @@ void leno_error_init(void) {
     }
 #endif
 
+    // ★★ 2026-10-25 修（用户反馈："出现了野指针居然 leno 崩溃而不是报错"）★★
+    //   崩溃兜底**必须在这里就装** —— 原来它装在本函数末尾，而末尾之前有两条 `return`：
+    //     ① 输出有人接（终端 / 管道 / 重定向文件）⇒ return ✗
+    //     ② 非 GUI 子系统（`leno.exe` / `leno_vm.exe` 都是控制台子系统）⇒ return ✗
+    //   两条加起来 = **终端里跑永远没有崩溃处理器** ⇒ 野指针（访问违例）只留下一个
+    //   exit code 0xC0000005，一个字都不报（实测：cstruct use-after-free / `Ptr` 写非法地址）✗✗
+    //   ⇒ 现在紧接"接回父控制台"之后安装（此时 stderr 可用 ✓），下面那些"要不要接管日志"
+    //     的判据只影响**往哪儿写**，不该影响"装不装" ✓
+    leno_install_crash_handlers();
+
+    // 自检钩子（保留）：`LENO_CRASH_SELFTEST=1` ⇒ 启动时**故意**走一遍崩溃报告路径。
+    //   为什么留：这条链路平时没法验证（总不能天天人为崩一次），而它恰恰最容易"悄悄失效"
+    //   —— 实测就踩到过"处理器压根没装（被前面的 return 跳过）⇒ 崩溃一个字都不报" ✓
+    {
+        const char* st = getenv("LENO_CRASH_SELFTEST");
+        if (st && st[0]) {
+            leno_crash_write("自检（LENO_CRASH_SELFTEST）", 0xC0000005UL);
+        }
+    }
+
     // 输出有人接（管道 / 文件 / 控制台 / 甚至是"说不清但句柄有效" ✓）⇒ 绝不插手 ✓
     // ★ `LENO_LOG=<路径>` 是**显式要求**日志 ⇒ 跳过这条判据强制接管 ✓（但**仍**只对 GUI 子系统 ✓）
     {
@@ -879,8 +900,7 @@ void leno_error_init(void) {
 #endif
     g_leno_log_pending = 1;
 
-    // 崩溃兜底**现在**就装 ✓ —— 它自己会在崩溃那一刻把日志建出来（见 ④ ✓）
-    leno_install_crash_handlers();
+    // （崩溃兜底已在函数开头安装 —— 见上面那段说明 ✓；它自己会在崩溃那一刻把日志建出来 ✓）
 
     // 显式指定路径 ⇒ 立刻接管（用户要的就是"从头到尾都在" ✓）；否则**什么都不做** ✓
     {
@@ -982,15 +1002,27 @@ void leno_log_ensure_open(void) {
 // ⚠ 这种上下文里只有**异步信号安全**的调用能用 ✗ ⇒ 不能 fprintf / snprintf / malloc ✗
 //   ⇒ 这里手写十六进制拼接 ✓ 只用 write(2) ✓（否则会在崩溃时二次死掉 ✓）
 // ============================================================================
+// ★ 2026-10-25：崩溃定位提供者（VM 初始化时注册 `vm_crash_location`）。
+//   为什么加：**野指针**（cstruct/ffi 用错、free 后继续用）在 C 层就是访问违例，
+//   原来只报一句"未处理的系统异常，异常码 0xC0000005" —— 用户不知道是**哪一行 Leno
+//   代码**引出来的（反馈原话："出现了野指针居然 leno 崩溃而不是报错"）✗
+//   现在崩溃行带上 `@ 函数 foo / file.leno:123（当前指令 OP_XXX）` + 野指针排查提示 ✓
+//   ⚠ 没有 VM 的场合（纯编译器路径）保持 NULL ⇒ 只少那一段，不影响原有行为 ✓
+static void (*g_crash_loc_fn)(char* buf, int bufsz, int* out_len) = NULL;
+
+void leno_set_crash_location_provider(void (*fn)(char* buf, int bufsz, int* out_len)) {
+    g_crash_loc_fn = fn;
+}
+
 static void leno_crash_write(const char* kind, unsigned long code) {
-    char buf[160];
+    char buf[768];
     int n = 0;
     const char* p = "\n[崩溃] ";
-    while (*p && n < 140) buf[n++] = *p++;
+    while (*p && n < 700) buf[n++] = *p++;
     p = kind;
-    while (*p && n < 140) buf[n++] = *p++;
+    while (*p && n < 700) buf[n++] = *p++;
     p = "，异常码 0x";
-    while (*p && n < 140) buf[n++] = *p++;
+    while (*p && n < 700) buf[n++] = *p++;
     {
         static const char hexd[] = "0123456789ABCDEF";
         int shift;
@@ -999,7 +1031,32 @@ static void leno_crash_write(const char* kind, unsigned long code) {
             buf[n++] = hexd[d];
         }
     }
+    // 访问违例 = 野指针/空指针（0xC0000005）；顺带把那类崩溃的常见来源点出来，
+    // 免得用户只看到"程序崩了"却不知道去查哪儿 ✓
+    if (code == 0xC0000005UL) {
+        p = "（访问违例 = 野指针 / 空指针）";
+        while (*p && n < 700) buf[n++] = *p++;
+    }
     buf[n++] = '\n';
+    // 当前执行点（VM 提供；没有 VM 或崩溃在 VM 初始化之前 ⇒ 这一段为空 ✓）
+    if (g_crash_loc_fn != NULL) {
+        int loc_len = 0;
+        char loc[320];
+        loc[0] = '\0';
+        g_crash_loc_fn(loc, (int)sizeof(loc), &loc_len);
+        if (loc_len > 0) {
+            int i = 0;
+            while (i < loc_len && n < 720) buf[n++] = loc[i++];
+            if (n == 0 || buf[n - 1] != '\n') buf[n++] = '\n';
+        }
+        if (loc_len > 0) {
+            p = "  提示：这类崩溃**不受控**（不进 try/catch），常见来源 ——\n"
+                "    ① cstruct / ffi 的 Ptr 在 free() 之后继续用\n"
+                "    ② from_ptr(p).to_ptr() 这种指针往返（cstruct 不保证原样往返）\n"
+                "    ③ write_at / read_at 越过 malloc 的长度\n";
+            while (*p && n < 720) buf[n++] = *p++;
+        }
+    }
     buf[n++] = '\0';
 #ifdef _WIN32
     {
@@ -1075,10 +1132,36 @@ static void leno_crash_write(const char* kind, unsigned long code) {
 }
 
 #ifdef _WIN32
+// ★ 2026-10-25：**向量化异常处理器**（VEH）—— 在 SEH 之前被调用，**调试器下也会命中** ✓
+//   为什么必须再加一层：`SetUnhandledExceptionFilter` 在有调试器/JIT 调试环境时**根本不触发**
+//   （Windows 直接把异常交给调试器）⇒ 实测"野指针崩溃一行提示都没有"✗。
+//   VEH 里只做两件事：① 打一次崩溃报告（`g_crash_reported` 去重）②
+//   **返回 EXCEPTION_CONTINUE_SEARCH** —— 绝不吞掉异常，系统/调试器照原样收尾 ✓
+static LONG g_crash_reported = 0;
+
+static LONG WINAPI leno_vectored_handler(EXCEPTION_POINTERS* info) {
+    unsigned long code = 0;
+    if (info && info->ExceptionRecord) code = (unsigned long)info->ExceptionRecord->ExceptionCode;
+    // 只认"致命"的那几类（别把 C++ 异常/断点之类拦下水搅浑 ✓）
+    if (code == 0xC0000005UL ||   // 访问违例（野指针 / 空指针）
+        code == 0xC000001DUL ||   // 非法指令
+        code == 0xC0000094UL ||   // 整数除零
+        code == 0xC00000FDUL) {   // 栈溢出
+        if (g_crash_reported == 0) {
+            g_crash_reported = 1;
+            leno_crash_write("未处理的系统异常", code);
+        }
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
 static LONG WINAPI leno_unhandled_filter(EXCEPTION_POINTERS* info) {
     unsigned long code = 0;
     if (info && info->ExceptionRecord) code = (unsigned long)info->ExceptionRecord->ExceptionCode;
-    leno_crash_write("未处理的系统异常", code);
+    if (g_crash_reported == 0) {          // VEH 已经报过就不重复刷屏 ✓
+        g_crash_reported = 1;
+        leno_crash_write("未处理的系统异常", code);
+    }
     return EXCEPTION_EXECUTE_HANDLER;   // 交给系统收尾（**不拦** ✓ 别冒充"已处理" ✗）
 }
 #else
@@ -1092,6 +1175,8 @@ static void leno_signal_handler(int sig) {
 
 static void leno_install_crash_handlers(void) {
 #ifdef _WIN32
+    // ① VEH 先装（调试器下也命中，见上面的说明）；② 再装 SEH 兜底（无调试器时走这条）
+    AddVectoredExceptionHandler(1, leno_vectored_handler);
     SetUnhandledExceptionFilter(leno_unhandled_filter);
 #else
     signal(SIGSEGV, leno_signal_handler);

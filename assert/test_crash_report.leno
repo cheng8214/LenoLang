@@ -1,0 +1,67 @@
+// 崩溃兜底：**野指针**也要报出 Leno 位置，而不是无声死亡（2026-10-25）
+//
+// 背景（用户反馈原话）："出现了野指针居然 leno 崩溃而不是报错"。
+// 查下来不是"没写处理器"，而是**处理器被两条 return 跳过了**：
+//   `leno_error_init` 在"输出有人接（终端/管道/重定向）"和"非 GUI 子系统"两处提前 return，
+//   而安装崩溃兜底的代码在这两处之后 ⇒ 终端里跑 leno.exe 时**根本没装** ✗
+//   ⇒ 访问违例只留下 exit code 0xC0000005，一个字都不报。
+//
+// 修法：安装挪到"接回父控制台"之后（两处 return 之前）；再加一层
+//   `AddVectoredExceptionHandler`（SEH 在有调试器时不触发）；崩溃行补上
+//   `@ 函数 xx / file.leno:行（当前指令 OP_XXX）` + 野指针排查提示。
+//
+// 本用例只钉"会报、且报得能定位"，不钉具体措辞。
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+import strings
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_crash_report")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // cstruct use-after-free：malloc → free → 再写字段（必访问违例）
+    var f1 = dirs.join(work, "uaf.leno")
+    files.write(f1, @"cstruct Tiny {
+    i32 x
+}
+
+func boom() {
+    var t = Tiny.malloc()
+    t.x = 7
+    t.free()
+    t.x = 9
+}
+
+main() {
+    boom()
+    print(""不该走到这里"")
+}
+")
+    // ⚠ 用 expect_error 而不是 cmd_for：崩溃 = 非 0 退出码，且它会**带回输出**（cmd_for 只给命令行）
+    var out1 = ce.expect_error(f1, "野指针崩溃要报出位置（不是无声死亡）", "[崩溃]", 0)
+    assert_true(strings.has(out1, "访问违例"),
+        "要说明是访问违例（野指针/空指针）；实际=" + out1)
+    assert_true(strings.has(out1, "@ 函数 boom"),
+        "要报出**函数名**（原来只有异常码，指不到位置）；实际=" + out1)
+    assert_true(strings.has(out1, "uaf.leno:9"),
+        "要报出**文件:行**（use-after-free 那一行）；实际=" + out1)
+    assert_true(strings.has(out1, "提示"),
+        "要给野指针的排查提示；实际=" + out1)
+    assert_true(not strings.has(out1, "不该走到这里"),
+        "崩溃后不得继续执行；实际=" + out1)
+
+    // 对照：正常程序**不得**有任何崩溃噪声
+    var f2 = dirs.join(work, "ok.leno")
+    files.write(f2, @"main() {
+    print(""fine"")
+}
+")
+    var out2 = ce.expect_ok(f2, "正常程序照旧", "fine")
+    assert_true(not strings.has(out2, "[崩溃]"),
+        "正常程序不得出现崩溃噪声；实际=" + out2)
+
+    print("=== test_crash_report ALL passed ===")
+}
