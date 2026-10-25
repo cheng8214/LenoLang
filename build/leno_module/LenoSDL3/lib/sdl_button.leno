@@ -9,7 +9,6 @@ import "sdl_core.leno" as core; use core.(SystemCursor, sdl3)
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
 import "sdl_image.leno" as img
-import "sdl_icons.leno" as icon      // 矢量图标（2026-10-25：icon_name ⇒ 不备 PNG 也能有图标 ✓）
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 use theme.Color
 
@@ -18,7 +17,7 @@ use theme.Color
 //   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
 func _opts_keys(): Array[string] {
     return [
-"align", "background", "bg_color", "bg_image", "border", "border_color", "cursor", "enabled", "font_path", "font_size", "font_style", "h", "hover_color", "icon_color", "icon_name", "image_alpha", "image_gap", "image_mode", "image_path", "image_path_disabled", "image_path_hover", "image_path_pressed", "image_pos", "image_size", "image_tint", "padding", "pressed_color", "radius", "shadow", "text", "text_color", "tip", "type", "visible", "w", "x", "y"
+"align", "background", "bg_color", "bg_image", "border", "border_color", "cursor", "enabled", "font_path", "font_size", "font_style", "h", "hover_color", "image_alpha", "image_gap", "image_mode", "image_path", "image_path_disabled", "image_path_hover", "image_path_pressed", "image_pos", "image_size", "image_tint", "padding", "pressed_color", "radius", "shadow", "text", "text_color", "tip", "type", "visible", "w", "x", "y"
 ]
 }
 export struct Button impl Widget, Themeable {
@@ -40,7 +39,7 @@ export struct Button impl Widget, Themeable {
     const ALIGN_RIGHT  = 2
 
     // ★ 2026-10-25：默认值从 "Button" 改成 "" —— 不传 text 的按钮，本意基本都是
-    //   **纯图标按钮**（icon_name / image_path）；旧的占位文字会把图标挤小、还多画一行
+    //   **纯图标按钮**（只给 image_path）；旧的占位文字会把图标挤小、还多画一行
     //   "Button" 字样（`iconOnly = text == ""` 这条判定也因此一直没生效 ✗，实测踩到 ✓）
     string text = ""
     float x = 0.0, y = 0.0, w = 100.0, h = 40.0
@@ -86,10 +85,8 @@ export struct Button impl Widget, Themeable {
     pri float  imgGap = 6.0     // 图标与文字间距
     pri int    imgAlpha = 255   // 图标透明度 0~255
     pri Color    imgTint = -1   // 图标着色（-1 = 不着色，其余为 #RRGGBBAA 着色）
-    // ★ 矢量图标（2026-10-25）：icon_name 走 sdl_icons 那套线性图标 —— **不用备 PNG** ✓
-    //   与 image_path 同时给时 **icon_name 优先**（矢量图随颜色走，浅色/深色主题都看得见 ✓）
-    pri string   iconName = ""
-    pri Color    iconColor = -1   // -1 = 跟 text_color 走（默认 ✓）
+    // （2026-10-25 晚：`icon_name` 矢量图标已从公共库移除 —— 图标属应用资产，
+    //   控件只负责画 `image_path` 给的纹理；`config_keys()` 里也不再列这两个键）
     pri Ptr[u8]? imgTex   // 图片纹理（懒加载，dispose 释放）
     pri string imgLoadPath = "" // 已尝试加载的路径（避免加载失败每帧重试）
 
@@ -241,11 +238,6 @@ export struct Button impl Widget, Themeable {
         var tint = opts.get("image_tint")
         if tint is int { imgTint = tint }
 
-        // 矢量图标（icon_name）：与 image_path 二选一，icon_name 优先 ✓
-        iconName = opts.get("icon_name", "")
-        var icol = opts.get("icon_color")
-        if icol is int { iconColor = icol }
-
         // 内容模式 / 状态图片 / 背景图
         imgMode        = opts.get("image_mode", IMG_ASPECT_FIT)
         imgPathHover   = opts.get("image_path_hover", "")
@@ -340,9 +332,6 @@ export struct Button impl Widget, Themeable {
         }
     }
     func set_image_size(float s) { imgSize = s }
-    // 换矢量图标 / 改它的颜色（空串 = 关掉，回到 image_path 那套 ✓）
-    func set_icon_name(string n) { iconName = n }
-    func set_icon_color(Color c)  { iconColor = c }
     func set_image_gap(float g)  { imgGap = g }
     func set_image_alpha(int a)  { imgAlpha = a }
     func set_image_tint(Color color) { imgTint = color }
@@ -564,9 +553,8 @@ export struct Button impl Widget, Themeable {
         //  - 无文字（纯图标按钮）：图标撑满按钮主体
         //  - 左右布局：图标纵向占满（留 padding）
         //  - 上下布局：图标须给文字预留 (h - 2pad - gap - textH) 高度
-        // ★ 2026-10-25：`icon_name`（矢量图标）与 `image_path`（纹理）走**同一套布局** ——
-        //   下面只认 `hasIcon`，两种来源在绘制处（_draw_glyph）才分叉 ✓
-        bool hasIcon = itex != null or iconName != ""
+        // 图标只有 `image_path`（纹理）一种来源（矢量图标已从公共库移除）
+        bool hasIcon = itex != null
         bool iconOnly = (text == "")
         float isize = imgSize
         if isize <= 0.0 and itex != null {
@@ -716,19 +704,12 @@ export struct Button impl Widget, Themeable {
         r.popClipRect(); _btnClip.free()
     }
 
-    // 画图标：有纹理就贴纹理（alpha/tint 已在外面设好 ✓），否则画矢量图标 ✓
-    //   2026-10-25：`icon_name` 与 `image_path` **共用同一套布局计算**，只在最后这一步分叉
-    //   ⇒ 两种来源的图标位置/尺寸完全一致，不会"换来源就偏一点" ✓
+    // 画图标纹理（alpha/tint 已在外面设好 ✓）。
+    //   矢量图标（`icon_name`）已从公共库移除 —— 控件只负责画调用方给的纹理；
+    //   要为按钮做矢量图标，由应用自己在按钮上方叠一层 `drawXxxIcon(r, ...)`。
     pri func _draw_glyph(Renderer r, Ptr[u8] itex, float ix, float iy, float isize, float dw, float dh, bool dim) {
-        if itex != null {
-            r.drawTextureAt(itex, ix + (isize - dw) / 2.0, iy + (isize - dh) / 2.0, dw, dh)
-            return
-        }
-        if iconName == "" { return }
-        Color c = iconColor
-        if c < 0 { c = txtColor }        // -1 = 跟文字色（默认 ✓）
-        if dim { c = theme.withAlpha(c, 110) }   // 禁用态自动变淡（对应纹理的变灰 ✓）
-        icon.drawIcon(r, iconName, ix, iy, isize, c)
+        if itex == null { return }
+        r.drawTextureAt(itex, ix + (isize - dw) / 2.0, iy + (isize - dh) / 2.0, dw, dh)
     }
 
 // 释放字体与图片资源
