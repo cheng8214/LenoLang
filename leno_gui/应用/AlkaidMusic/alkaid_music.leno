@@ -21,8 +21,11 @@
 //   set ALKAID_SHOT=%TEMP%\alkaid.png   # 第 N 步存一张 PNG 后退出（核对界面就靠它 ✓）
 //   set ALKAID_AT=14                    # 第几步截（一步 = 100ms）
 //   set ALKAID_SIZE=1000x680            # 指定窗口尺寸（验布局自适应 ✓）
+//   set ALKAID_NAV=1                    # 启动就切到某个导航页（验"点导航真的换页" ✓）
 import "SDL3" as SDL3
 import "./music_data.leno" as data
+import "web_net" as net
+import "./lib/kuwo_core.leno" as kuwo   // 酷我音乐（搜索/直链；从 D:\CLeno\LenoMusic 取来 ✓）
 import strings
 import dirs
 use SDL3.(Event, Renderer, Window, TitleBar, Button, Label, Edit, Card, ImageView,
@@ -41,11 +44,11 @@ const int PAD = 24           // 内容区左右内边距
 //   needBottom = 文字块(textH) + 12（不给 content_h 时就这么点）
 //   实测 h=262 + content_h:44 时图片只剩 157（206 见方被压扁 ⇒ 一片白）✗
 //   现在：h = 220 ⇒ 图片可用 173 ≥ 200×0.85 = 170 ⇒ 不压缩、也不留大空白 ✓
-const int CARD_W = 200       // 卡片自然宽（4 张 + 3 个间距 = 848，贴合内容宽 ✓）
-const int CARD_H = 220
+const int CARD_W = 152       // 卡片自然宽（5 张 + 4 个间距 = 824，贴合内容宽 840 ✓）
+const int CARD_H = 200       // ⚠ 实测下限：图片要 129（152×0.85），文字块+内边距还要 ~71 ⇒ 196 时图片区被压成 0（整片白块）✗，200 才放得下
 const int CARD_GAP = 16
 const float CARD_ASPECT = 0.85   // 图片区 高/宽
-const int PER_ROW = 4        // 每行卡片数（参考图一屏 4 张 ✓）
+const int PER_ROW = 5        // 每行卡片数（2026-10-25：4 → 5，图片按用户反馈改小 ✓）
 
 // ==================== 调色板（浅粉，照参考图 ✓）====================
 var C_BG_TOP   = #FFFDFDFF    // 内容区渐变上端（近白）
@@ -64,6 +67,11 @@ var C_TRANS     = #00000000   // 透明
 // 图片绝对路径（单文件打包后资源解包到 res_dir ⇒ 必须用它 ✓）
 func img(string name): string {
     return dirs.join(dirs.res_dir(), "images/" + name)
+}
+
+// 图标路径（2026-10-25：图标从 LenoMusic 的图库里取，放在 images/icons/ 下 ✓）
+func ico(string name): string {
+    return dirs.join(dirs.res_dir(), "images/icons/" + name)
 }
 
 // 造一个标签（可选加粗）—— 全文件只有这一处建标签，样式不会各处漂移 ✓
@@ -109,6 +117,8 @@ export struct Player {
     // ----- 搜索 -----
     Edit search
     string query = ""
+    Array[Song] netSongs = []      // 酷我搜索结果（非空就替代演示数据 ✓）
+    string netMsg = ""             // 搜索状态：正在搜 / N 首 / 失败原因
 
     // ----- 底栏播放器 -----
     ImageView coverView
@@ -122,6 +132,7 @@ export struct Player {
     Label totTime
     Slider vol
     bool playing = false
+    bool loopOne = false       // 循环模式：false = 列表循环 / true = 单曲循环
     float pos = 4.0            // 已播秒（演示：从 4 秒开始 ✓）
     float dur = 253.0          // 04:13
 
@@ -136,12 +147,12 @@ export struct Player {
         SDL3.ttfInit()
         SDL3.setTheme(SDL3.lightTheme())      // 本文件颜色基本显式给了，主题只管兜底 ✓
 
-        win = SDL3.createWindow({title: "AlkaidMusic — LenoSDL3", w: WIN_W, h: WIN_H, flags: 0x20})
+        win = SDL3.createWindow({title: "Music — LenoSDL3", w: WIN_W, h: WIN_H, flags: 0x20})
         if not win.ok { SDL3.ttfQuit(); return }
         win.setMinSize(980, 660)
 
         // ---- 自绘标题栏（win.add 后系统边框自动去掉 ✓）----
-        tb = SDL3.createTitleBar({title: "AlkaidMusic", h: TB_H, font_size: 12,
+        tb = SDL3.createTitleBar({title: "LenoMusic", h: TB_H, font_size: 12,
                                   bg_color: C_SIDE, text_color: C_TXT_DIM,
                                   icon_color: C_TXT_MID, hover_color: C_ACC_SOFT,
                                   show_separator: false})
@@ -184,12 +195,12 @@ export struct Player {
         // ---- 品牌行：主色圆 + 名字（参考图左上的圆形头像位 ✓）----
         HBox brand = SDL3.createHBox({x: 0, y: 0, w: SIDE_W - 24, h: 34,
                                       pad_x: 0, pad_y: 0, spacing: 9})
-        Button logo = SDL3.createButton({text: "乐", font_size: 12.5, w: 30, h: 30, radius: 15,
+        Button logo = SDL3.createButton({image_path: ico("music.png"), image_size: 16,
+                                         w: 30, h: 30, radius: 15,
                                          bg_color: C_ACCENT, hover_color: C_ACCENT,
-                                         text_color: #FFFFFFFF, padding: 0.0,
-                                         border: false, shadow: false})
+                                         padding: 0.0, border: false, shadow: false})
         brand.add(logo, {grow: 0, shrink: 0, basis: 30, align: 1})
-        brand.add(lbl("AlkaidMusic", 15, C_TXT, true), {grow: 1, shrink: 1, align: 1})
+        brand.add(lbl("LenoMusic", 15, C_TXT, true), {grow: 1, shrink: 1, align: 1})
         side.add(brand, {grow: 0, shrink: 0, basis: 46, align: 3})
 
         // ---- 主导航（图标 + 文字，选中 = 浅粉胶囊 + 主色字 ✓）----
@@ -264,6 +275,9 @@ export struct Player {
     }
 
     pri func set_nav(int idx) {
+        // ★ 2026-10-25：点了导航要真的**换页**（原来只改高亮 ⇒ 用户反馈"点了没切换"）
+        //   内容区按新页面重建（标题 / 说明 / 卡片都跟着换），并回到顶部。
+        bool changed = idx != curNav
         curNav = idx
         for 0 : navBtns.len() - 1 to i { style_nav(navBtns[i], i == idx) }
         for 0 : plBtns.len() - 1 to i {
@@ -277,6 +291,10 @@ export struct Player {
                 b.set_bg_color(C_TRANS)
                 b.set_hover_color(#FFFFFFC8)
             }
+        }
+        if changed {
+            rebuild_content()
+            sv.set_scroll(0.0, 0.0)      // 换页回顶部（否则停在上一个页面的位置 ✓）
         }
         SDL3.markFrameRedraw()
     }
@@ -306,6 +324,7 @@ export struct Player {
                                   placeholder: "搜索歌曲、歌手、歌单", bg_color: C_FIELD,
                                   border_color: C_LINE, text_color: C_TXT})
         search.on_change(func() { on_search() })
+        search.on_enter(func() { on_kuwo_search() })   // 回车 = 搜酷我（联网 ✓）
         topBar.add(search, {grow: 0, shrink: 0, basis: 300, align: 1})
 
         // ---- 滚动内容 ----
@@ -322,14 +341,127 @@ export struct Player {
 
     // 内容区：页面标题 + 三个分区（搜索时按关键词过滤 ✓）
     pri func build_content() {
-        content.add(lbl("首页", 25, C_TXT, true), {grow: 0, shrink: 0, basis: 36, align: 3})
+        // ★ 2026-10-25：标题跟着**当前导航**走（原来写死"首页" ⇒ 点左侧「我喜欢」等
+        //   只有高亮在动、页面内容一动不动，看起来就是"点了没切换" ✗）
+        content.add(lbl(page_name(curNav), 25, C_TXT, true), {grow: 0, shrink: 0, basis: 36, align: 3})
         string sub = "共 " + _str(data.totalTracks()) + " 首 · 来自 " + _str(data.folderCount()) + " 个文件夹"
+        if curNav != 0 { sub = "「" + page_name(curNav) + "」· 演示数据 · 共 " + _str(data.totalTracks()) + " 首" }
         if query != "" { sub = "搜索「" + query + "」" }
+        if netMsg != "" { sub = netMsg }
         content.add(lbl(sub, 11, C_TXT_DIM, false), {grow: 0, shrink: 0, basis: 18, align: 3})
         content.add(SDL3.createLabel({text: ""}), {grow: 0, shrink: 0, basis: 8, align: 3})
 
+        // 有酷我搜索结果 ⇒ 整页就是结果列表（不再掺演示数据 ✓）
+        if netSongs.len() > 0 {
+            var hit = new Shelf()
+            hit.title = "酷我音乐 · 搜索"
+            hit.sub = netMsg
+            hit.items = page_songs(0)
+            add_shelf(hit, false)
+            return
+        }
+
+        // 首页 = 原来的三个分区；搜索/其它页 = 单区（只放这一页的歌）
+        if curNav == 0 and query == "" {
+            var sh = data.shelves()
+            for 0 : sh.len() - 1 to i { add_shelf(sh[i], i == 0) }
+            return
+        }
+        var songs = page_songs(curNav)
+        if songs.len() == 0 {
+            content.add(lbl("这里还没有歌曲", 11.5, C_TXT_DIM, false),
+                        {grow: 0, shrink: 0, basis: 30, align: 3})
+            return
+        }
+        var one = new Shelf()
+        one.title = if query != "" then "搜索结果" else page_name(curNav)
+        one.sub = "共 " + _str(songs.len()) + " 首"
+        one.items = songs
+        add_shelf(one, false)
+    }
+
+    // 当前导航页的名字（前 4 个是主导航，之后是歌单 ✓）
+    pri func page_name(int idx): string {
+        var m = data.navMain()
+        if idx >= 0 and idx < m.len() { return m[idx].name }
+        var p = data.navPlaylists()
+        int k = idx - m.len()
+        if k >= 0 and k < p.len() { return p[k].name }
+        return "首页"
+    }
+
+    // 全部歌曲：**有酷我搜索结果就用它**，否则用演示数据（各分区拍平 ✓）
+    pri func all_songs(): Array[Song] {
+        if netSongs.len() > 0 { return netSongs }
+        Array[Song] out = []
         var sh = data.shelves()
-        for 0 : sh.len() - 1 to i { add_shelf(sh[i], i == 0) }
+        for 0 : sh.len() - 1 to i {
+            for 0 : sh[i].items.len() - 1 to j { out.add(sh[i].items[j]) }
+        }
+        return out
+    }
+
+    // ==================== 酷我音乐搜索（2026-10-25 接入）====================
+    //   接口与解析都在 ./lib/kuwo_core.leno（从 D:\CLeno\LenoMusic 取来，单文件可复用 ✓）
+    //   ⚠ 同步阻塞调用（几秒）：演示应用图省事；要做成不卡界面得学 LenoMusic 的
+    //     "搜索中轮询"那套（进程内线程 + 定时器取结果）。
+    //   ⚠ 任何失败都**不抛到界面之外**：把原因写进 netMsg、继续显示原数据 ✓
+    pri func on_kuwo_search() {
+        string kw = strings.trim(search.get_text())
+        if kw == "" { return }
+        netMsg = "正在搜索「" + kw + "」…"
+        SDL3.markFrameRedraw()   // 先只改状态：这一帧别重建（重建两次会让卡片纹理拿不到 hwnd ✗）
+
+        Array[Song] got = []
+        string err = ""
+        try {
+            var client = net.createClient()
+            var list = kuwo.search(client, kw, 40)
+            int n = 0
+            for list to s {
+                if not s.valid() { continue }
+                Song sg = new Song()
+                sg.title = s.name
+                sg.artist = s.artist
+                sg.dur = kuwo.formatduration(s.duration)
+                int k = 1 + (n % 16)                      // 本地占位封面（酷我搜索结果不带图 ✓）
+                if k < 10 { sg.cover = "cover0" + _str(k) } else { sg.cover = "cover" + _str(k) }
+                sg.tag = if s.ext.to_lower() == "flac" then "无损" else ""
+                got.add(sg)
+                n = n + 1
+            }
+        } catch e {
+            err = _str(e)
+        }
+
+        if got.len() > 0 {
+            netSongs = got
+            netMsg = "酷我「" + kw + "」· " + _str(got.len()) + " 首（点卡片播放的是演示进度）"
+        } else if err != "" {
+            netMsg = "酷我搜索失败（" + err + "），下面仍是演示数据"
+        } else {
+            netMsg = "酷我里没有「" + kw + "」的结果，下面仍是演示数据"
+        }
+        query = ""
+        curNav = 0
+        for 0 : navBtns.len() - 1 to i { style_nav(navBtns[i], i == 0) }
+        for 0 : plBtns.len() - 1 to i {
+            plBtns[i].set_text_color(C_TXT_MID)
+            plBtns[i].set_bg_color(C_TRANS)
+        }
+        rebuild_content()
+        SDL3.markFrameRedraw()
+    }
+
+    // 某个导航页要显示的 8 首（按 idx 取不同切片：换页真的换歌，不是只换标题 ✓）
+    pri func page_songs(int idx): Array[Song] {
+        var all = all_songs()
+        if all.len() == 0 { return [] }
+        Array[Song] out = []
+        int off = if idx <= 0 then 0 else idx * 3
+        int want = if all.len() < 8 then all.len() else 8
+        for 0 : want - 1 to k { out.add(all[(off + k) % all.len()]) }
+        return out
     }
 
     // 一个分区：标题行（+ 右侧胶囊按钮）+ 内容（横卡 / 卡片墙）
@@ -431,10 +563,10 @@ export struct Player {
         tv.add(lbl(sg.artist, 10.5, C_TXT_DIM, false), {grow: 0, shrink: 0, basis: 18, align: 3})
         row.add(tv, {grow: 1, shrink: 1, align: 1})
 
-        Button pb = SDL3.createButton({text: "›", font_size: 17.0, w: 28, h: 28, radius: 14,
-                                       bg_color: C_ACCENT, hover_color: #F08CB0FF,
-                                       text_color: #FFFFFFFF, padding: 0.0,
-                                       border: false, shadow: false})
+        Button pb = SDL3.createButton({image_path: ico("play.png"), image_size: 24,
+                                       w: 28, h: 28, radius: 14,
+                                       bg_color: C_TRANS, hover_color: #FFFFFFC8,
+                                       padding: 0.0, border: false, shadow: false})
         pb.on_click(func() { play_song(sg) })
         row.add(pb, {grow: 0, shrink: 0, basis: 28, align: 1})
         return row
@@ -475,17 +607,27 @@ export struct Player {
         HBox ctrl = SDL3.createHBox({x: 0, y: 0, w: 460, h: 36, pad_x: 0, pad_y: 0, spacing: 10})
         ctrl.add(SDL3.createLabel({text: ""}), {grow: 1, shrink: 1, align: 1})
         ctrl.add(txt_btn("随", "随机播放", 26, C_TXT_DIM), {grow: 0, shrink: 0, basis: 26, align: 1})
-        ctrl.add(txt_btn("«", "上一首", 30, C_TXT_MID), {grow: 0, shrink: 0, basis: 30, align: 1})
+        ctrl.add(img_btn("prev.png", "上一首", 30, 14.0), {grow: 0, shrink: 0, basis: 30, align: 1})
 
-        playBtn = SDL3.createButton({text: "›", font_size: 20.0, w: 38, h: 38, radius: 19,
-                                     bg_color: C_ACCENT, hover_color: #F08CB0FF,
-                                     text_color: #FFFFFFFF, padding: 0.0,
-                                     border: false, shadow: false, tip: "播放 / 暂停"})
+        // 播放/暂停：图标跟着状态换（play.png ⇄ pause.png）—— 2026-10-25 起用真图标 ✓
+        playBtn = SDL3.createButton({image_path: ico("play.png"), image_size: 32,
+                                     w: 38, h: 38, radius: 19,
+                                     bg_color: C_TRANS, hover_color: #FFFFFFC8,
+                                     padding: 0.0, border: false, shadow: false,
+                                     tip: "播放 / 暂停"})
         playBtn.on_click(func() { toggle_play() })
         ctrl.add(playBtn, {grow: 0, shrink: 0, basis: 38, align: 1})
 
-        ctrl.add(txt_btn("»", "下一首", 30, C_TXT_MID), {grow: 0, shrink: 0, basis: 30, align: 1})
-        ctrl.add(txt_btn("循", "循环模式", 26, C_TXT_DIM), {grow: 0, shrink: 0, basis: 26, align: 1})
+        ctrl.add(img_btn("next.png", "下一首", 30, 14.0), {grow: 0, shrink: 0, basis: 30, align: 1})
+
+        // 循环：单曲 ⇄ 列表（图标 loop_one / loop_all ✓）
+        Button loopBtn = img_btn("loop_all.png", "循环模式", 26, 13.0)
+        loopBtn.on_click(func() {
+            loopOne = not loopOne
+            loopBtn.set_image(if loopOne then ico("loop_one.png") else ico("loop_all.png"))
+            SDL3.markFrameRedraw()
+        })
+        ctrl.add(loopBtn, {grow: 0, shrink: 0, basis: 26, align: 1})
         ctrl.add(SDL3.createLabel({text: ""}), {grow: 1, shrink: 1, align: 1})
         mid.add(ctrl, {grow: 0, shrink: 0, basis: 38, align: 3})
 
@@ -513,7 +655,7 @@ export struct Player {
                                  thumb_color: C_ACCENT, show_value: false})
         vol.on_change(func(float v) { on_volume(v) })
         right.add(vol, {grow: 0, shrink: 0, basis: 84, align: 1})
-        right.add(txt_btn("列", "播放列表", 26, C_TXT_MID), {grow: 0, shrink: 0, basis: 26, align: 1})
+        right.add(img_btn("list.png", "播放列表", 26, 14.0), {grow: 0, shrink: 0, basis: 26, align: 1})
         right.add(txt_btn("…", "更多", 26, C_TXT_MID), {grow: 0, shrink: 0, basis: 26, align: 1})
         bar.add(right, {grow: 0, shrink: 0, basis: 300, align: 1})
     }
@@ -522,6 +664,14 @@ export struct Player {
     //   ★ 2026-10-25 晚：矢量图标已从公共库删除，这里**暂时用文字占位**（`«`/`»`/`随`/`音`…）。
     //     以后换成 PNG 图标时，把 `text`/`text_color` 换回 `image_path`/`image_size` 即可
     //     （参数名和尺寸口径保持不动，调用点一行都不用改）。
+    // 图标小圆钮（2026-10-25：图标来自 LenoMusic 图库 ✓ 无底色、悬停有底）
+    pri func img_btn(string iconName, string tipText, int sz, float isz): Button {
+        return SDL3.createButton({image_path: ico(iconName), image_size: isz,
+                                  w: _float(sz), h: _float(sz), radius: _float(sz) / 2.0,
+                                  bg_color: C_TRANS, hover_color: #FFFFFFD0,
+                                  padding: 0.0, border: false, shadow: false, tip: tipText})
+    }
+
     pri func txt_btn(string label, string tipText, int sz, Color c): Button {
         Button b = SDL3.createButton({text: label, font_size: _float(sz) * 0.44 + 3.0,
                                       w: _float(sz), h: _float(sz),
@@ -536,7 +686,7 @@ export struct Player {
     pri func toggle_play() {
         playing = not playing
         // 文字占位版：播放 = `›`、暂停 = `❚❚`（换成 PNG 图标后改回 set_image_* 即可）
-        if playing { playBtn.set_text("||") } else { playBtn.set_text("›") }
+        playBtn.set_image(if playing then ico("pause.png") else ico("play.png"))
         SDL3.markFrameRedraw()
     }
 
@@ -560,7 +710,7 @@ export struct Player {
         coverView.set_image(img(sg.cover))
         pos = 0.0
         playing = true
-        playBtn.set_text("||")
+        playBtn.set_image(ico("pause.png"))
         sync_play_ui()
         SDL3.markFrameRedraw()
     }
@@ -626,6 +776,15 @@ export struct Player {
 
     // ==================== 无头自检 ====================
     pri func self_test() {
+        // 启动就切到某个导航页（下标：0 首页 / 1 我喜欢 / 2 最近播放 / 3 本地音乐 / 4+ 歌单）
+        var nv = _env("ALKAID_NAV")
+        if nv != null { set_nav(_int(_str(nv))) }
+        // 启动就搜一次酷我（联网自检：ALKAID_SEARCH=周杰伦）
+        var kwEnv = _env("ALKAID_SEARCH")
+        if kwEnv != null {
+            search.set_text(_str(kwEnv))
+            on_kuwo_search()
+        }
         var sh = _env("ALKAID_SHOT")
         if sh != null { shotPath = _str(sh) }
         var at = _env("ALKAID_AT")

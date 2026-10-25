@@ -5,3 +5,5 @@ version = "0.1.0"
 
 [requires]
 LenoSDL3 = ">=0.1.1"
+# LenoWeb：酷我搜索用它的 web_net（HTTP 客户端）
+LenoWeb  = ">=1.0.0"
