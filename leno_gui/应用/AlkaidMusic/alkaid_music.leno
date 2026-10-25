@@ -125,6 +125,8 @@ export struct Player {
     Edit search
     string query = ""
     Array[Song] netSongs = []      // 酷我搜索结果（非空就替代演示数据 ✓）
+    Table tbSearch                     // 搜索结果表（排序后显示行≠数据行 ⇒ 一律过 source_row ✓）
+    Array[Array[string]] netRows = []  // 表格行：歌名/歌手/专辑/时长/格式/大小/来源
     string netMsg = ""             // 搜索状态：正在搜 / N 首 / 失败原因
 
     // ----- 底栏播放器 -----
@@ -362,24 +364,29 @@ export struct Player {
         //   为什么不铺卡片：搜索要的是信息密度（歌名/歌手/时长/音质），封面要额外
         //   每首一次详情页 + 一次图片下载 ⇒ 一次搜索多花十秒，得不偿失 ✗
         if netSongs.len() > 0 {
-            int rowH = 42
-            int tbH = 34 + netSongs.len() * rowH
-            Table tb = SDL3.createTable({x: 0, y: 0, w: 840, h: tbH,
-                                         item_h: rowH, header_h: 34, font_size: 13,
-                                         headers: ["歌名", "歌手", "时长", "音质"],
-                                         col_widths: [380.0, 250.0, 90.0, 100.0],
+            int rowH = 30
+            int tbH = 32 + netSongs.len() * rowH
+            // 列与 LenoMusic 的搜索页同一套口径（歌名/歌手/专辑/时长/格式/大小/来源），
+            //   列宽合计 826 ≤ 内容宽 840 ⇒ 最右列不会被裁掉 ✓（LenoMusic 记过这个账）
+            tbSearch = SDL3.createTable({x: 0, y: 0, w: 840, h: tbH,
+                                         item_h: rowH, header_h: 32, font_size: 13,
+                                         headers: ["歌名", "歌手", "专辑", "时长", "格式", "大小", "来源"],
+                                         col_widths: [280.0, 140.0, 140.0, 56.0, 56.0, 94.0, 60.0],
+                                         aligns: [0, 0, 0, 1, 1, 2, 1],
+                                         header_aligns: [0, 0, 0, 1, 1, 2, 1],
+                                         // 行图标：`image_col` 把该列画成 [图标 + 文字]，
+                                         //   配 `image_path` 给**默认图标**⇒ 不用逐行 set_row_image ✓
+                                         image_col: 0, image_size: 16, image_gap: 6,
+                                         image_path: ico("music.png"),
                                          sortable: true, zebra: true, resizable: true,
                                          bg_color: C_TRANS, header_color: #FFFFFFC0,
                                          sel_color: C_ACC_SOFT, sep_color: C_LINE,
                                          empty_text: "没有结果"})
-            Array[Array[string]] rows = []
-            for 0 : netSongs.len() - 1 to i {
-                Song s = netSongs[i]
-                rows.add([s.title, s.artist, s.dur, s.tag])
-            }
-            tb.set_rows(rows)
-            tb.on_select(func(int row) { play_net_row(row) })
-            content.add(tb, {grow: 0, shrink: 0, basis: _float(tbH), align: 3})
+            tbSearch.set_rows(netRows)
+            // 单击选中即播；双击同效（表内排序后**显示行 ≠ 数据行** ⇒ 一律过 source_row ✓）
+            tbSearch.on_select(func(int row) { play_net_row(row) })
+            tbSearch.on_dbl_click(func(int row, int col) { play_net_row(row) })
+            content.add(tbSearch, {grow: 0, shrink: 0, basis: _float(tbH), align: 3})
             return
         }
 
@@ -435,6 +442,7 @@ export struct Player {
         SDL3.markFrameRedraw()   // 先只改状态：这一帧别重建（重建两次会让卡片纹理拿不到 hwnd ✗）
 
         Array[Song] got = []
+        Array[Array[string]] rows = []
         string err = ""
         try {
             var client = net.createClient()
@@ -446,6 +454,10 @@ export struct Player {
                 sg.title = s.name
                 sg.artist = s.artist
                 sg.dur = kuwo.formatduration(s.duration)
+                // 表格行：字段全部来自 SongInfo（与 LenoMusic 搜索页同款列 ✓）
+                string fmt = if s.ext == "" then "-" else s.ext.to_upper()
+                string sz = if s.sizeText == "" then "-" else s.sizeText
+                rows.add([s.name, s.artist, s.album, kuwo.formatduration(s.duration), fmt, sz, "酷我"])
                 int k = 1 + (n % 16)                      // 内置封面（拿不到真封面时用）
                 if k < 10 { sg.cover = "cover0" + _str(k) } else { sg.cover = "cover" + _str(k) }
                 sg.tag = if s.ext.to_lower() == "flac" then "无损" else ""
@@ -459,6 +471,7 @@ export struct Player {
 
         if got.len() > 0 {
             netSongs = got
+            netRows = rows
             netMsg = "酷我「" + kw + "」· " + _str(got.len()) + " 首（点行播放，演示进度）"
         } else if err != "" {
             netMsg = "酷我搜索失败（" + err + "），下面仍是演示数据"
@@ -476,10 +489,14 @@ export struct Player {
         SDL3.markFrameRedraw()
     }
 
-    // 表格里点一行 ⇒ 播放那首（行号 == netSongs 下标，与 set_rows 同序 ✓）
+    // 表格里点一行 ⇒ 播放那首
+    //   ⚠ 表格**排序后**显示行 ≠ 数据行（点表头就重排）⇒ 必须过 `source_row` 映射，
+    //     直接把显示行当 netSongs 下标会"点 A 放 B"（LenoMusic 2026-10-20 踩过同一坑 ✓）
     pri func play_net_row(int row) {
-        if row < 0 or row >= netSongs.len() { return }
-        play_song(netSongs[row])
+        if row < 0 { return }
+        int i = if tbSearch == null then row else tbSearch.source_row(row)
+        if i < 0 or i >= netSongs.len() { return }
+        play_song(netSongs[i])
     }
 
     // 某个导航页要显示的 8 首（按 idx 取不同切片：换页真的换歌，不是只换标题 ✓）
