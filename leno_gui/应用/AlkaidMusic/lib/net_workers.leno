@@ -1,0 +1,78 @@
+// net_workers.leno — 后台线程入口（搜索 / 首页分区 / 封面分片）
+// ----------------------------------------------------------------------------
+// 为什么单独一个文件：这些函数要在**工作线程**里跑，规矩和 UI 完全不同：
+//   · 入口必须是**模块级函数**（不能是 self 的方法）——闭包会捕获 self，跨线程克隆会炸
+//   · 参数只用纯值 + Channel；结果一律 `ch.send(...)`
+//   · 绝不碰 Renderer / 控件 / 全局 UI 状态
+// UI 侧在 `on_tick` 里用 `try_receive()` 非阻塞排空（**不要** threads.select，那是阻塞接收）。
+//
+// 协议（都是 Array[Array[string]]）：
+//   搜索：   ["OK",""] / ["ERR",原因]  + 数据行 [歌名,歌手,专辑,时长秒,格式,体积,id]
+//   首页：   ["REC",""] …数据行… ["NEW",""] …数据行…   （失败 ["ERR",原因]）
+//   封面：   ["REC"] 之外的普通消息是 [id, 本地路径]
+import "web_net" as net
+import "kuwo_core.leno" as kuwo
+import "kuwo_cover.leno" as cover
+import strings
+import dirs
+
+// 一行数据（统一在这里拼，避免三处各写一遍 ✓）
+func row(kuwo.SongInfo s): Array[string] {
+    return [s.name, s.artist, s.album, _str(s.duration), s.ext, s.sizeText, s.id]
+}
+
+// 搜索线程
+export func search(string kw, int limit, Channel ch) {
+    Array[Array[string]] out = []
+    try {
+        var c = net.createClient()
+        var list = kuwo.search(c, kw, limit)
+        c.close()
+        out.add(["OK", ""])
+        for list to s {
+            if s.valid() { out.add(row(s)) }
+        }
+    } catch e {
+        out = []
+        out.add(["ERR", _str(e)])
+    }
+    ch.send(out)
+}
+
+// 首页两个分区（为你推荐 / 最近添加）：只搜两次，封面交给 cover_shard 并行拉
+//   ★ 2026-10-26：两个分区的数量**分开传** —— 为你推荐要 24 首（4 列 × 6 行），最近添加 9 首
+export func sections(string kwRec, string kwNew, int nRec, int nNew, Channel ch) {
+    Array[Array[string]] out = []
+    try {
+        var c = net.createClient()
+        out.add(["REC", ""])
+        var a = kuwo.search(c, kwRec, nRec)
+        for a to s {
+            if s.valid() { out.add(row(s)) }
+        }
+        out.add(["NEW", ""])
+        var b = kuwo.search(c, kwNew, nNew)
+        for b to s {
+            if s.valid() { out.add(row(s)) }
+        }
+        c.close()
+    } catch e {
+        out = []
+        out.add(["ERR", _str(e)])
+    }
+    ch.send(out)
+}
+
+// 封面分片：拿一小批 id，取到一张就回一条 [id, 路径]
+//   分片是照 LenoMusic 的 dl_entry_shard(jobs, …, shard, nshards) 思路：
+//   每张封面要一个详情页（~150 KB），串行 12 张要十几秒，分 3 片约 1/3 ✓
+export func cover_shard(Array[string] ids, string cacheDir, Channel ch) {
+    for ids to id {
+        if id == "" { continue }
+        string p = cover.cover_of(id, cacheDir)
+        if p != "" {
+            Array[string] one = [id, p]
+            ch.send(one)
+        }
+    }
+}

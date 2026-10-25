@@ -1,0 +1,135 @@
+// downloads.leno — 下载与本地曲库（不碰界面，可在任何线程里调用）
+// ----------------------------------------------------------------------------
+// 口径照 LenoMusic：取直链 → 落盘，文件名 `<歌手> - <歌名>.<ext>`；
+//   「本地音乐」页直接扫这个目录，**不再有任何演示数据** ✓
+//
+// 用法：
+//   import "./lib/downloads.leno" as dl
+//   bool ok = dl.save("661608480", "晴天", "周杰伦", root)      // 返回是否成功落盘
+//   Array[Song] songs = dl.scan(root)                          // 扫已下载的
+import "web_net" as net
+import "kuwo_core.leno" as kuwo
+import "../music_data.leno" as data
+import dirs
+import files
+import strings
+use data.Song
+
+// 下载目录：<缓存根>\下载
+export func dir_of(string root): string { return dirs.join(root, "下载") }
+
+// 文件名里不能出现的字符一律换下划线（Windows：/ \ : * ? " < > | 及换行）
+export func safe_name(string s): string {
+    string out = s
+    var bad = ["/", "\\", ":", "*", "?", "\"", "<", ">", "|", "\n", "\r", "\t"]
+    for bad to b { out = out.replace(b, "_") }
+    return out
+}
+
+// 下载一首：id → `dir/<歌手> - <歌名>.mp3`；已存在直接算成功（不重复下）
+//   ⚠ 同步、几百 KB/s：一首 4–5 MB 约 1–3 秒，调用方自行决定要不要放线程
+export func save(string id, string title, string artist, string dir): bool {
+    if id == "" { return false }
+    string d = dir_of(dir)
+    dirs.mkdir_p(d)
+    string f = dirs.join(d, safe_name(artist + " - " + title) + ".mp3")
+    if files.exists(f) { return true }
+    bool ok = false
+    try {
+        var c = net.createClient()
+        // mp3 优先（实测可播）；再退 mp3128 / 官方兜底（flac 会几十 MB，不做默认）
+        string u = kuwo.officialurl(id, "mp3")
+        if u == "" { u = kuwo.officialurl(id, "mp3128") }
+        if u == "" { u = kuwo.getdirecturl(c, id) }
+        if u != "" { ok = net.download(u, f) > 0 }
+        c.close()
+    } catch e {
+        print("[dl] 下载失败：" + _str(e))
+        ok = false
+    }
+    if not ok and files.exists(f) {
+        try { files.delete(f) } catch e { print("[dl] 清理半截文件失败：" + _str(e)) }
+    }
+    return ok and files.exists(f)
+}
+
+// ==================== 下载队列（纯数据，行协议 Array[string]）====================
+//   一行 = [id, 歌名, 歌手, 状态, 说明]
+//   状态： "0" 排队 / "1" 完成 / "2" 失败
+//   为什么用行而不是 struct 数组：字段要**原地更新**（state 从 0→1），字符串行最好改 ✓
+export func job_new(string id, string title, string artist): Array[string] {
+    return [id, title, artist, "0", ""]
+}
+
+// 加入队列（同 id 且在排队/已完成 ⇒ 不重复加）；返回加了几个
+export func enqueue(Array[Array[string]] q, string id, string title, string artist): int {
+    if id == "" { return 0 }
+    for q to j {
+        if j.len() >= 2 and j[0] == id { return 0 }
+    }
+    q.add(job_new(id, title, artist))
+    return 1
+}
+
+// 下一个待下载的下标（-1 = 没有）
+export func next_index(Array[Array[string]] q): int {
+    for 0 : q.len() - 1 to i {
+        Array[string] j = q[i]
+        if j.len() >= 4 and j[3] == "0" { return i }
+    }
+    return -1
+}
+
+// 待下载数量（侧栏角标用）
+export func pending(Array[Array[string]] q): int {
+    int n = 0
+    for q to j {
+        if j.len() >= 4 and j[3] == "0" { n = n + 1 }
+    }
+    return n
+}
+
+// 状态文案（下载列用）
+export func state_text(Array[string] j): string {
+    if j.len() < 4 { return "" }
+    if j[3] == "0" { return "排队中" }
+    if j[3] == "1" { return "已完成" }
+    return if j.len() >= 5 and j[4] != "" then "失败：" + j[4] else "失败"
+}
+
+// 扫已下载目录 → Song 列表（按文件名拆 `歌手 - 歌名`，没有就整名当歌名）
+export func scan(string root): Array[Song] {
+    Array[Song] out = []
+    string d = dir_of(root)
+    if not dirs.exists(d) { return out }
+    var names = dirs.listdir(d)
+    for names to n {
+        string ext = dirs.extname(n).to_lower()
+        if ext != ".mp3" and ext != ".flac" and ext != ".wav" and ext != ".ogg" { continue }
+        string base = dirs.basename(n)
+        Song sg = new Song()
+        // ⚠ 不能用 `byte_slice` 切文件名：中文是多字节，按字节切会把字切断（实测显示成 `刘若@@` ✗）
+        //   ⇒ 一律走 `split`（按码点/子串处理，不涉及偏移 ✓）
+        string t = base
+        var dot = strings.split(base, ".")
+        if dot.len() >= 2 {
+            t = dot[0]
+            for 1 : dot.len() - 2 to k { t = t + "." + dot[k] }
+        }
+        var parts = strings.split(t, " - ")
+        if parts.len() >= 2 {
+            sg.artist = parts[0]
+            string tt = ""
+            for 1 : parts.len() - 1 to k {
+                tt = if tt == "" then parts[k] else tt + " - " + parts[k]
+            }
+            sg.title = tt
+        } else {
+            sg.title = t
+            sg.artist = "本地文件"
+        }
+        sg.path = dirs.join(d, n)
+        out.add(sg)
+    }
+    return out
+}
