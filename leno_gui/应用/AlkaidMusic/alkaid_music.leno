@@ -12,8 +12,10 @@
 //
 // 本次为界面补的**库能力**（都在 build/leno_module/LenoSDL3/lib/ 里，通用 ✓）：
 //   · sdl_renderer.leno：`fillGradientRect` / `fillGradientRoundedRect`（线性渐变，此前只有三角形渐变）
-//   · sdl_icons.leno：33 个线性矢量图标 + `drawIcon/drawIconAt/iconNames/isIcon`（此前图标只能靠 PNG）
-//   · sdl_button.leno：`icon_name` / `icon_color`（矢量图标直接上按钮，不用备图 ✓）
+//
+// ★ 2026-10-25 晚：`sdl_icons`（矢量图标）已从公共库删除 —— 图标属应用资产，框架不背。
+//   本界面**暂时改用文字占位**（`»`/`«`/`+`/`♥`/「乐」这类），等换成 PNG 或应用自带图标
+//   再把这里的 `txt_btn(...)` 换回 `image_path`。
 //
 // 无头自检（照 影视海报墙 / 文件管理器 的惯例 ✓）：
 //   set ALKAID_SHOT=%TEMP%\alkaid.png   # 第 N 步存一张 PNG 后退出（核对界面就靠它 ✓）
@@ -182,9 +184,9 @@ export struct Player {
         // ---- 品牌行：主色圆 + 名字（参考图左上的圆形头像位 ✓）----
         HBox brand = SDL3.createHBox({x: 0, y: 0, w: SIDE_W - 24, h: 34,
                                       pad_x: 0, pad_y: 0, spacing: 9})
-        Button logo = SDL3.createButton({icon_name: "music", w: 30, h: 30, radius: 15,
+        Button logo = SDL3.createButton({text: "乐", font_size: 12.5, w: 30, h: 30, radius: 15,
                                          bg_color: C_ACCENT, hover_color: C_ACCENT,
-                                         icon_color: #FFFFFFFF, image_size: 17,
+                                         text_color: #FFFFFFFF, padding: 0.0,
                                          border: false, shadow: false})
         brand.add(logo, {grow: 0, shrink: 0, basis: 30, align: 1})
         brand.add(lbl("AlkaidMusic", 15, C_TXT, true), {grow: 1, shrink: 1, align: 1})
@@ -198,9 +200,9 @@ export struct Player {
         HBox plHead = SDL3.createHBox({x: 0, y: 0, w: SIDE_W - 24, h: 28,
                                        pad_x: 0, pad_y: 0, spacing: 4})
         plHead.add(lbl("创建的歌单", 11, C_TXT_DIM, false), {grow: 1, shrink: 1, align: 1})
-        Button addBtn = SDL3.createButton({icon_name: "plus", w: 22, h: 22, radius: 11,
+        Button addBtn = SDL3.createButton({text: "+", font_size: 15.0, w: 22, h: 22, radius: 11,
                                            bg_color: C_TRANS, hover_color: #FFFFFFC8,
-                                           icon_color: C_TXT_DIM, image_size: 13,
+                                           text_color: C_TXT_DIM, padding: 0.0,
                                            border: false, shadow: false, tip: "新建歌单"})
         plHead.add(addBtn, {grow: 0, shrink: 0, basis: 22, align: 1})
         side.add(plHead, {grow: 0, shrink: 0, basis: 34, align: 3})
@@ -211,19 +213,18 @@ export struct Player {
 
         // ---- 底部：弹性空隙 + 「更多」----
         side.add(SDL3.createLabel({text: ""}), {grow: 1, shrink: 1, align: 3})
-        Button more = SDL3.createButton({text: "更多", icon_name: "more_h", font_size: 12.5,
+        Button more = SDL3.createButton({text: "更多", font_size: 12.5,
                                          align: "left", padding: 12.0, radius: 9,
                                          h: 32, bg_color: C_TRANS, hover_color: #FFFFFFC8,
-                                         text_color: C_TXT_MID, icon_color: C_TXT_MID,
-                                         image_size: 14, border: false, shadow: false})
+                                         text_color: C_TXT_MID, border: false, shadow: false})
         side.add(more, {grow: 0, shrink: 0, basis: 32, align: 3})
     }
 
     // 建一个主导航项（idx 传进来 ⇒ 闭包按值记住它 ✓）
     pri func new_nav(NavItem it, int idx) {
-        Button b = SDL3.createButton({text: it.name, icon_name: it.icon, font_size: 13,
+        Button b = SDL3.createButton({text: it.name, font_size: 13,
                                       align: "left", padding: 12.0, radius: 9, h: 34,
-                                      image_size: 16, border: false, shadow: false})
+                                      border: false, shadow: false})
         style_nav(b, idx == curNav)
         b.on_click(func() { set_nav(idx) })
         navBtns.add(b)
@@ -234,13 +235,12 @@ export struct Player {
     pri func new_pl(NavItem it, int idx) {
         HBox row = SDL3.createHBox({x: 0, y: 0, w: SIDE_W - 24, h: 30,
                                     pad_x: 0, pad_y: 0, spacing: 2})
-        Button b = SDL3.createButton({text: it.name, icon_name: it.icon, font_size: 12,
+        Button b = SDL3.createButton({text: it.name, font_size: 12,
                                       align: "left", padding: 12.0, radius: 8, h: 30,
-                                      image_size: 14, border: false, shadow: false})
+                                      border: false, shadow: false})
         b.set_bg_color(C_TRANS)
         b.set_hover_color(#FFFFFFC8)
         b.set_text_color(C_TXT_MID)
-        b.set_icon_color(C_TXT_DIM)
         b.on_click(func() { set_nav(idx) })
         plBtns.add(b)
         row.add(b, {grow: 1, shrink: 1, align: 1})
@@ -256,12 +256,10 @@ export struct Player {
             b.set_bg_color(C_ACC_SOFT)
             b.set_hover_color(C_ACC_SOFT)
             b.set_text_color(C_ACCENT)
-            b.set_icon_color(C_ACCENT)
         } else {
             b.set_bg_color(C_TRANS)
             b.set_hover_color(#FFFFFFC8)
             b.set_text_color(C_TXT_MID)
-            b.set_icon_color(#C0A5AE)
         }
     }
 
@@ -272,12 +270,10 @@ export struct Player {
             Button b = plBtns[i]
             if (i + navBtns.len()) == idx {
                 b.set_text_color(C_ACCENT)
-                b.set_icon_color(C_ACCENT)
                 b.set_bg_color(C_ACC_SOFT)
                 b.set_hover_color(C_ACC_SOFT)
             } else {
                 b.set_text_color(C_TXT_MID)
-                b.set_icon_color(C_TXT_DIM)
                 b.set_bg_color(C_TRANS)
                 b.set_hover_color(#FFFFFFC8)
             }
@@ -294,14 +290,14 @@ export struct Player {
         topBar = SDL3.createHBox({x: 0, y: 0, w: 900, h: TOP_H, pad_x: PAD, pad_y: 0, spacing: 10})
         mainCol.add(topBar, {grow: 0, shrink: 0, basis: TOP_H, align: 3})
 
-        Button back = SDL3.createButton({icon_name: "chevron_left", w: 30, h: 30, radius: 15,
+        Button back = SDL3.createButton({text: "‹", font_size: 15.0, w: 30, h: 30, radius: 15,
                                          bg_color: #FFFFFFAA, hover_color: #FFFFFFFF,
-                                         icon_color: C_TXT_MID, image_size: 14,
+                                         text_color: C_TXT_MID, padding: 0.0,
                                          border: false, shadow: false, tip: "后退"})
         topBar.add(back, {grow: 0, shrink: 0, basis: 30, align: 1})
-        Button fwd = SDL3.createButton({icon_name: "chevron_right", w: 30, h: 30, radius: 15,
+        Button fwd = SDL3.createButton({text: "›", font_size: 15.0, w: 30, h: 30, radius: 15,
                                         bg_color: #FFFFFFAA, hover_color: #FFFFFFFF,
-                                        icon_color: C_TXT_MID, image_size: 14,
+                                        text_color: C_TXT_MID, padding: 0.0,
                                         border: false, shadow: false, tip: "前进"})
         topBar.add(fwd, {grow: 0, shrink: 0, basis: 30, align: 1})
         topBar.add(SDL3.createLabel({text: ""}), {grow: 1, shrink: 1, align: 1})
@@ -344,18 +340,15 @@ export struct Player {
         head.add(SDL3.createLabel({text: ""}), {grow: 1, shrink: 1, align: 1})
         if not compact {
             // 参考图右上那两颗胶囊：「换一批」「查看全部」✓
-            Button swap = SDL3.createButton({text: "换一批", icon_name: "repeat", font_size: 11,
+            Button swap = SDL3.createButton({text: "换一批", font_size: 11,
                                              w: 82, h: 26, radius: 13, padding: 9.0,
                                              bg_color: #FFFFFFB0, hover_color: #FFFFFFFF,
-                                             text_color: C_TXT_MID, icon_color: C_TXT_MID,
-                                             image_size: 11, border: false, shadow: false})
+                                             text_color: C_TXT_MID, border: false, shadow: false})
             head.add(swap, {grow: 0, shrink: 0, basis: 82, align: 1})
-            Button all = SDL3.createButton({text: "查看全部", icon_name: "chevron_right",
-                                            image_pos: "right", font_size: 11,
+            Button all = SDL3.createButton({text: "查看全部 ›", font_size: 11,
                                             w: 92, h: 26, radius: 13, padding: 9.0,
                                             bg_color: #FFFFFFB0, hover_color: #FFFFFFFF,
-                                            text_color: C_TXT_MID, icon_color: C_TXT_MID,
-                                            image_size: 11, border: false, shadow: false})
+                                            text_color: C_TXT_MID, border: false, shadow: false})
             head.add(all, {grow: 0, shrink: 0, basis: 92, align: 1})
         }
         content.add(head, {grow: 0, shrink: 0, basis: 36, align: 3})
@@ -438,9 +431,9 @@ export struct Player {
         tv.add(lbl(sg.artist, 10.5, C_TXT_DIM, false), {grow: 0, shrink: 0, basis: 18, align: 3})
         row.add(tv, {grow: 1, shrink: 1, align: 1})
 
-        Button pb = SDL3.createButton({icon_name: "play", w: 28, h: 28, radius: 14,
+        Button pb = SDL3.createButton({text: "›", font_size: 17.0, w: 28, h: 28, radius: 14,
                                        bg_color: C_ACCENT, hover_color: #F08CB0FF,
-                                       icon_color: #FFFFFFFF, image_size: 12,
+                                       text_color: #FFFFFFFF, padding: 0.0,
                                        border: false, shadow: false})
         pb.on_click(func() { play_song(sg) })
         row.add(pb, {grow: 0, shrink: 0, basis: 28, align: 1})
@@ -466,9 +459,11 @@ export struct Player {
         info.add(nowArtist, {grow: 0, shrink: 0, basis: 18, align: 3})
         left.add(info, {grow: 1, shrink: 1, align: 1})
 
-        likeBtn = SDL3.createButton({icon_name: "heart", w: 28, h: 28, radius: 14,
+        // ⚠ 用 `☆/★` 而不是 `♥`：实测本界面用的字体里没有 U+2665（渲染成豆腐块 ▯），
+        //   而 `☆/★`（U+2606/2605）在 CJK 字体里都有 ⇒ 换成"星标"语义，颜色仍表状态 ✓
+        likeBtn = SDL3.createButton({text: "☆", font_size: 15.0, w: 28, h: 28, radius: 14,
                                      bg_color: C_TRANS, hover_color: #FFFFFFC8,
-                                     icon_color: C_TXT_MID, image_size: 16,
+                                     text_color: C_TXT_MID, padding: 0.0,
                                      border: false, shadow: false, tip: "我喜欢"})
         likeBtn.on_click(func() { toggle_like() })
         left.add(likeBtn, {grow: 0, shrink: 0, basis: 28, align: 1})
@@ -479,18 +474,18 @@ export struct Player {
 
         HBox ctrl = SDL3.createHBox({x: 0, y: 0, w: 460, h: 36, pad_x: 0, pad_y: 0, spacing: 10})
         ctrl.add(SDL3.createLabel({text: ""}), {grow: 1, shrink: 1, align: 1})
-        ctrl.add(icon_btn("shuffle", "随机播放", 26, C_TXT_DIM), {grow: 0, shrink: 0, basis: 26, align: 1})
-        ctrl.add(icon_btn("prev", "上一首", 30, C_TXT_MID), {grow: 0, shrink: 0, basis: 30, align: 1})
+        ctrl.add(txt_btn("随", "随机播放", 26, C_TXT_DIM), {grow: 0, shrink: 0, basis: 26, align: 1})
+        ctrl.add(txt_btn("«", "上一首", 30, C_TXT_MID), {grow: 0, shrink: 0, basis: 30, align: 1})
 
-        playBtn = SDL3.createButton({icon_name: "play", w: 38, h: 38, radius: 19,
+        playBtn = SDL3.createButton({text: "›", font_size: 20.0, w: 38, h: 38, radius: 19,
                                      bg_color: C_ACCENT, hover_color: #F08CB0FF,
-                                     icon_color: #FFFFFFFF, image_size: 15,
+                                     text_color: #FFFFFFFF, padding: 0.0,
                                      border: false, shadow: false, tip: "播放 / 暂停"})
         playBtn.on_click(func() { toggle_play() })
         ctrl.add(playBtn, {grow: 0, shrink: 0, basis: 38, align: 1})
 
-        ctrl.add(icon_btn("next", "下一首", 30, C_TXT_MID), {grow: 0, shrink: 0, basis: 30, align: 1})
-        ctrl.add(icon_btn("repeat", "循环模式", 26, C_TXT_DIM), {grow: 0, shrink: 0, basis: 26, align: 1})
+        ctrl.add(txt_btn("»", "下一首", 30, C_TXT_MID), {grow: 0, shrink: 0, basis: 30, align: 1})
+        ctrl.add(txt_btn("循", "循环模式", 26, C_TXT_DIM), {grow: 0, shrink: 0, basis: 26, align: 1})
         ctrl.add(SDL3.createLabel({text: ""}), {grow: 1, shrink: 1, align: 1})
         mid.add(ctrl, {grow: 0, shrink: 0, basis: 38, align: 3})
 
@@ -512,23 +507,27 @@ export struct Player {
         //   宽度与左侧一样给 300 ⇒ 中间那块正好落在窗口正中（参考图的播放键是居中的 ✓）
         HBox right = SDL3.createHBox({x: 0, y: 0, w: 300, h: 30, pad_x: 0, pad_y: 0, spacing: 6})
         right.add(SDL3.createLabel({text: ""}), {grow: 1, shrink: 1, align: 1})   // 内容靠右 ✓
-        right.add(icon_btn("volume", "音量", 26, C_TXT_MID), {grow: 0, shrink: 0, basis: 26, align: 1})
+        right.add(txt_btn("音", "音量", 26, C_TXT_MID), {grow: 0, shrink: 0, basis: 26, align: 1})
         vol = SDL3.createSlider({w: 84, h: 18, value: 68.0, min: 0.0, max: 100.0,
                                  fill_color: C_ACCENT, track_color: #EFD8E1FF,
                                  thumb_color: C_ACCENT, show_value: false})
         vol.on_change(func(float v) { on_volume(v) })
         right.add(vol, {grow: 0, shrink: 0, basis: 84, align: 1})
-        right.add(icon_btn("queue", "播放列表", 26, C_TXT_MID), {grow: 0, shrink: 0, basis: 26, align: 1})
-        right.add(icon_btn("more_h", "更多", 26, C_TXT_MID), {grow: 0, shrink: 0, basis: 26, align: 1})
+        right.add(txt_btn("列", "播放列表", 26, C_TXT_MID), {grow: 0, shrink: 0, basis: 26, align: 1})
+        right.add(txt_btn("…", "更多", 26, C_TXT_MID), {grow: 0, shrink: 0, basis: 26, align: 1})
         bar.add(right, {grow: 0, shrink: 0, basis: 300, align: 1})
     }
 
-    // 纯图标圆钮（无底色，悬停有底 ✓）—— 底栏/顶栏那一片小圆钮共用这一处
-    pri func icon_btn(string name, string tipText, int sz, Color c): Button {
-        Button b = SDL3.createButton({icon_name: name, w: _float(sz), h: _float(sz),
+    // 小圆钮（无底色，悬停有底 ✓）—— 底栏/顶栏那一片共用这一处。
+    //   ★ 2026-10-25 晚：矢量图标已从公共库删除，这里**暂时用文字占位**（`«`/`»`/`随`/`音`…）。
+    //     以后换成 PNG 图标时，把 `text`/`text_color` 换回 `image_path`/`image_size` 即可
+    //     （参数名和尺寸口径保持不动，调用点一行都不用改）。
+    pri func txt_btn(string label, string tipText, int sz, Color c): Button {
+        Button b = SDL3.createButton({text: label, font_size: _float(sz) * 0.44 + 3.0,
+                                      w: _float(sz), h: _float(sz),
                                       radius: _float(sz) / 2.0,
                                       bg_color: C_TRANS, hover_color: #FFFFFFD0,
-                                      icon_color: c, image_size: _float(sz) - 12.0,
+                                      text_color: c, padding: 0.0,
                                       border: false, shadow: false, tip: tipText})
         return b
     }
@@ -536,18 +535,20 @@ export struct Player {
     // ==================== 交互 ====================
     pri func toggle_play() {
         playing = not playing
-        if playing { playBtn.set_icon_name("pause") } else { playBtn.set_icon_name("play") }
+        // 文字占位版：播放 = `›`、暂停 = `❚❚`（换成 PNG 图标后改回 set_image_* 即可）
+        if playing { playBtn.set_text("||") } else { playBtn.set_text("›") }
         SDL3.markFrameRedraw()
     }
 
     pri func toggle_like() {
         liked = not liked
+        // `☆`（未喜欢）↔ `★`（已喜欢）+ 主色 —— 与原来 heart/heart_fill 的对比同义
         if liked {
-            likeBtn.set_icon_name("heart_fill")
-            likeBtn.set_icon_color(C_ACCENT)
+            likeBtn.set_text("★")
+            likeBtn.set_text_color(C_ACCENT)
         } else {
-            likeBtn.set_icon_name("heart")
-            likeBtn.set_icon_color(C_TXT_MID)
+            likeBtn.set_text("☆")
+            likeBtn.set_text_color(C_TXT_MID)
         }
         SDL3.markFrameRedraw()
     }
@@ -559,7 +560,7 @@ export struct Player {
         coverView.set_image(img(sg.cover))
         pos = 0.0
         playing = true
-        playBtn.set_icon_name("pause")
+        playBtn.set_text("||")
         sync_play_ui()
         SDL3.markFrameRedraw()
     }

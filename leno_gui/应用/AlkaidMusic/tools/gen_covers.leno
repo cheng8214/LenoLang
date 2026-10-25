@@ -106,7 +106,12 @@ func cover(Renderer r, int idx) {
     r.fillRect(0.0, 314.0, 320.0, 6.0)
 
     // ③ 右下角小唱片标记（每张都有的"厂牌位"✓）
-    SDL3.drawIconAt(r, "disc", 288.0, 288.0, 20.0, with_a(#FFFFFF, 190))
+    //   ★ 2026-10-25 晚：`SDL3.drawIconAt("disc")` 随 sdl_icons 一起删了 ⇒ 直接画"白圆 + 深芯"
+    //     两个圆，视觉上仍是一张小唱片（纯图元，无依赖 ✓）
+    r.setColor(with_a(#FFFFFF, 190))
+    r.fillCircle(288.0, 288.0, 8.0)
+    r.setColor(with_a(#2A2230, 200))
+    r.fillCircle(288.0, 288.0, 2.6)
 }
 
 // ==================== 入口 ====================

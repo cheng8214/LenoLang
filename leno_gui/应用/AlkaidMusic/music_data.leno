@@ -23,7 +23,6 @@ export struct Shelf {
 
 export struct NavItem {
     string name = ""
-    string icon = ""      // sdl_icons 的矢量图标名
     int count = 0
 }
 
@@ -38,30 +37,29 @@ func mk(string t, string a, string d, string c, string tag): Song {
     return s
 }
 
-func nav(string name, string icon, int count): NavItem {
+func nav(string name, int count): NavItem {
     NavItem n = new NavItem()
     n.name = name
-    n.icon = icon
     n.count = count
     return n
 }
 
 // ==================== 侧栏：主导航（参考图左侧上半段 ✓）====================
 export func navMain(): Array[NavItem] {
-    return [nav("首页", "home", 674),
-            nav("我喜欢", "heart", 128),
-            nav("最近播放", "clock", 64),
-            nav("本地音乐", "folder", 674)]
+    return [nav("首页", 674),
+            nav("我喜欢", 128),
+            nav("最近播放", 64),
+            nav("本地音乐", 674)]
 }
 
 // 侧栏：歌单（参考图 "华语 | 粤语 | 英语 | …" ✓）
 export func navPlaylists(): Array[NavItem] {
-    return [nav("华语经典", "list", 128),
-            nav("粤语金曲", "list", 86),
-            nav("英语流行", "list", 64),
-            nav("日语次元", "list", 42),
-            nav("纯音乐", "list", 31),
-            nav("深夜电台", "list", 18)]
+    return [nav("华语经典", 128),
+            nav("粤语金曲", 86),
+            nav("英语流行", 64),
+            nav("日语次元", 42),
+            nav("纯音乐", 31),
+            nav("深夜电台", 18)]
 }
 
 // ==================== 内容区：三个分区 ====================
