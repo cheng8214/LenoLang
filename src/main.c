@@ -229,6 +229,11 @@ static void printVersion(void) {
 static void printHelp(const char* program) {
     printf("LenoLang Compiler %s\n\n", LENO_VERSION);
     printf("用法: %s [选项] <文件>\n\n", program);
+    // ★ 2026-10-25：这条踩过 —— `leno app.leno -p -o dist` 里的 `-p`/`-o` 会被当成
+    //   **脚本参数**原样传给脚本（这是 `_args()` 的既定语义），命令于是"看起来打了包、
+    //   其实只是跑了一遍脚本"。第一次用的人几乎必踩 ⇒ 在最上面直接说清 ✓
+    printf("⚠ 选项必须写在**文件路径之前**：路径之后的参数会原样传给脚本（见 `_args()`）。\n"
+           "   例：%s -p -o=dist app.leno\n\n", program);
     printf("选项:\n");
     printf("  -h, --help        显示帮助信息\n");
     printf("  -v, --version     显示版本信息\n");
@@ -2365,6 +2370,18 @@ static int main_logic(int argc, char** argv) {
                 fprintf(stderr, "错误: -o/--pack-dir 需要指定输出目录\n");
                 return 1;
             }
+            continue;
+        } else if (strncmp(argv[i], "--pack-dir=", 11) == 0 || strncmp(argv[i], "-o=", 3) == 0) {
+            // ★ 2026-10-25：支持 `=` 形态（`-o=dist` / `--pack-dir=dist`）。
+            //   原来只认空格分隔 ⇒ `-o=dist` 被当成**未知选项**（或落到脚本参数里），
+            //   而报错又不明显：实测 `leno -p a.leno -o=dist` 照样打包到默认的 `dist\`，
+            //   命令还报"打包成功"✗ ⇒ 用户以为换了目录，其实没有。
+            const char* v = (argv[i][2] == '=') ? argv[i] + 3 : argv[i] + 11;
+            if (!v[0]) {
+                fprintf(stderr, "错误: %s 后面要跟输出目录（如 `-o=dist`）\n", argv[i]);
+                return 1;
+            }
+            packOutDir = (char*)v;
             continue;
         } else if (strcmp(argv[i], "--onefile") == 0) {
             // 单文件打包：把 [native-libs] 的库与 [pack] resources 内嵌进 exe，

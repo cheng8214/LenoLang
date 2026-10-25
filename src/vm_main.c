@@ -697,6 +697,62 @@ static int check_embedded_lenb(const char* exe_path, unsigned char** out_data, s
 }
 
 // 从内存中的 lenb 数据运行（直接内存反序列化，不写临时文件）
+// ============================================================================
+// .lenb 加载失败的统一报错（2026-10-25）
+// ----------------------------------------------------------------------------
+// 原来三处都只打 `[错误] 反序列化失败: %d`：既不说**哪个文件**、也不说这个数字是什么。
+// 实测踩坑：`SERIALIZE_ERR_FILE`（= 1）的真实含义是 **fopen 失败**（路径不存在），
+//   却被读成"格式坏了"，于是有人去查序列化实现 —— 白找 ✗
+// ⇒ 现在：错误码 → 中文名 + 文件路径 + 针对该码的处方（版本不符 / 打不开 / 不是字节码）。
+// ============================================================================
+static const char* serialize_err_name(SerializeResult r) {
+    switch (r) {
+        case SERIALIZE_ERR_FILE:    return "打不开文件（路径不存在 / 无权限）";
+        case SERIALIZE_ERR_WRITE:   return "写文件失败";
+        case SERIALIZE_ERR_READ:    return "读文件失败";
+        case SERIALIZE_ERR_MAGIC:   return "文件头不是 Leno 字节码（魔数不符）";
+        case SERIALIZE_ERR_VERSION: return "字节码版本与运行时不一致";
+        case SERIALIZE_ERR_FORMAT:  return "字节码结构损坏（字段越界/截断）";
+        case SERIALIZE_ERR_MEMORY:  return "内存不足";
+        case SERIALIZE_ERR_TYPE:    return "类型信息不合法";
+        default:                    return "未知错误";
+    }
+}
+
+// from_memory=1：字节码是**内嵌**在 exe 尾部的（`-p` 打包产物），没有文件名可报
+static void report_lenb_failure(const char* path, SerializeResult r, int from_memory) {
+    if (from_memory) {
+        fprintf(stderr, "[错误] 内嵌字节码读取失败：%s（错误码 %d）\n",
+                serialize_err_name(r), (int)r);
+    } else {
+        fprintf(stderr, "[错误] 无法加载 .lenb：%s（错误码 %d）\n  文件: %s\n",
+                serialize_err_name(r), (int)r, path ? path : "(null)");
+    }
+    switch (r) {
+        case SERIALIZE_ERR_FILE:
+            fprintf(stderr,
+                "  [提示] 先确认路径存在。另外：`.lenb` 只是编译产物，`leno <file.lenb>`"
+                " 不是常规用法 ——\n"
+                "         要发布请用 `leno -p <脚本> [--onefile]` 打包成独立 exe"
+                "（运行时只认打包时**嵌入**的字节码）。\n");
+            break;
+        case SERIALIZE_ERR_VERSION:
+            fprintf(stderr,
+                "  [提示] 编译器与运行时**必须同源重建**：先 `build.bat`（编译器）"
+                "再 `build_vm.bat`（VM 运行时），\n"
+                "         然后用 `-p` 重新打包 —— 旧 exe / 旧 .lenb 都得重新生成。\n");
+            break;
+        case SERIALIZE_ERR_MAGIC:
+        case SERIALIZE_ERR_FORMAT:
+            fprintf(stderr,
+                "  [提示] 这个文件不是（或不是完整的）Leno 字节码：用 `leno -c <脚本>` 重新生成，\n"
+                "         或直接 `leno -p` 打包（打包会先做可读性握手，版本不符当场失败）。\n");
+            break;
+        default:
+            break;
+    }
+}
+
 static int run_lenb_from_memory(unsigned char* data, size_t size) {
     if (size < 20) {
         fprintf(stderr, "[错误] lenb 数据过小\n");
@@ -709,7 +765,7 @@ static int run_lenb_from_memory(unsigned char* data, size_t size) {
 
     SerializeResult result = chunk_deserialize_from_memory(data, size, &chunk, &scope);
     if (result != SERIALIZE_OK) {
-        fprintf(stderr, "[错误] 内存反序列化失败: %d\n", result);
+        report_lenb_failure(NULL, result, 1);
         chunk_free(&chunk);
         return 1;
     }
@@ -747,7 +803,7 @@ int lenolang_run_lenb(const char* filename) {
 
     SerializeResult result = chunk_deserialize(filename, &chunk, &scope);
     if (result != SERIALIZE_OK) {
-        fprintf(stderr, "[错误] 反序列化失败: %d\n", result);
+        report_lenb_failure(filename, result, 0);
         chunk_free(&chunk);
         return 1;
     }
@@ -790,7 +846,7 @@ static int check_lenb_only(const char* filename) {
 
     SerializeResult result = chunk_deserialize(filename, &chunk, &scope);
     if (result != SERIALIZE_OK) {
-        fprintf(stderr, "[错误] 反序列化失败: %d\n", result);
+        report_lenb_failure(filename, result, 0);
         chunk_free(&chunk);
         return 2;
     }

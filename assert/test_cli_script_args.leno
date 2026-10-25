@@ -127,6 +127,18 @@ main() {
     assert_eq(pr2.code, 0, "⑦打包 paths 应成功；输出=" + _str(pr2.output))
     assert_true(files.exists(packedArgs), "⑦打包产物应存在：" + packedArgs)
 
+    // ---- ⑧ `-o=<目录>` 形态（2026-10-25 修）----
+    //   原来只认空格分隔（`-o 目录`）；写 `-o=目录` 会被当成**未知选项/脚本参数**忽略，
+    //   而打包照样成功、照样落到默认的 `<源码目录>\dist` ⇒ 用户以为换了目录，其实没有 ✗
+    var distEq = dirs.join(work, "dist_eq")
+    var prEq = _exec(exe + " -p -o=\"" + distEq + "\" \"" + echo + "\"", 120000)
+    assert_ne(prEq, null, "⑧打包（-o=）：_exec 返回 null")
+    assert_eq(prEq.code, 0, "⑧打包（-o=）应成功；输出=" + _str(prEq.output))
+    var packedEq = dirs.join(distEq, "echoargs")
+    if _os() == "windows" { packedEq = packedEq + ".exe" }
+    assert_true(files.exists(packedEq),
+        "★⑧ `-o=<目录>` 必须生效（修前会被忽略、落到默认 dist）；期望产物=" + packedEq)
+
     var r7 = _exec(packedArgs + " a b -c")
     assert_ne(r7, null, "⑦_exec 返回 null")
     var o7 = _str(r7.output)
