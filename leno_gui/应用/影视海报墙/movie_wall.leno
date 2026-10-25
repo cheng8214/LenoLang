@@ -578,7 +578,17 @@ struct Wall {
                                       bar_color: C_BG, tab_color: C_BG,
                                       active_color: C_BG, accent_color: C_ACCENT,
                                       text_color: C_TXT_DIM, active_text_color: C_TXT,
-                                      border_color: C_TRANS})
+                                      border_color: C_TRANS,
+                                      // ★ 2026-10-25：**关掉页签自身的裁剪**（少一层嵌套 clip）。
+                                      //   本界面的两页各自只有一个填满页面的子控件（ScrollView / Table），
+                                      //   它们**自己就裁剪**到视口 ⇒ 页签这层永远是多余的：
+                                      //   嵌套 push 会多一次 flush + 一次交集计算，滚动/悬停帧密集时
+                                      //   就是"边缘一帧有一帧无"的闪烁来源之一（见
+                                      //   docs/LenoSDL3_裁剪过多导致闪烁排查记录.md 的规则：
+                                      //   "能裁的才裁 —— 子控件按构造不会溢出的就别裁"）。
+                                      //   ⚠ 只在"页面子控件自己会裁剪"时这么写；如果页里放的是裸控件，
+                                      //     必须保留默认的 clip:true（否则内容会画出页签区域）。
+                                      clip: false})
         body.add(tabs, {grow: 1, shrink: 1, align: 3})
         tabs.on_change(func(int p) { on_view_change(p) })
 

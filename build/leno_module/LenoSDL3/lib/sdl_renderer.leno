@@ -130,9 +130,22 @@ const BX_TEX    = 4   // 批处理文字纹理
     pri int bxBlend = 0
     pri Ptr[u8] bxClipPtr 
     pri bool bxClip = false, bxClipOwned = false  // _bxClipOwned：_bxClipPtr 是否由我们 alloc（需 free）
-    // 裁剪栈：每个入口存储 {ptr: Ptr[u8], owned: bool}
+    // 裁剪栈：每个入口存储 {ptr: Ptr[u8], owned: bool, changed: bool}
     pri Array[Ptr[u8]] clipStack
     pri Array[bool]    clipStackOwned
+    // ★ 2026-10-25：这一层是否**真的改过** SDL 的裁剪状态。
+    //   为什么需要：`pushClipRect` 算完交集后，若交集与当前裁剪**完全相同**（子控件正好填满
+    //   父容器 —— 极常见），那层裁剪没有任何视觉效果 ⇒ 不 flush、不 malloc、不调
+    //   SDL_SetRenderClipRect；`popClipRect` 也就什么都不用恢复 ✓
+    pri Array[bool]    clipStackChanged
+    // ★ 2026-10-25：交集矩形的**复用池**（按下标 = 栈深度）。
+    //   原来嵌套 push 每次 `SDL_Rect.malloc()`、pop 再 free ⇒ 每帧每层一次分配
+    //   （20 张卡 × 3 层就是 60 次 malloc/free）。池化后稳态**零分配** ✓
+    //   ⚠ 存的是 **malloc 出来的 SDL_Rect 本身**，不是 `Ptr[u8]`：cstruct 的
+    //     `from_ptr(p).to_ptr()` 不保证原样往返（实测把它塞进 SDL_SetRenderClipRect
+    //     会拿到野指针 ⇒ 0xC0000005 访问违例 ✗），而 `malloc() + 直接写字段 + to_ptr()`
+    //     正是既有代码一直在用的写法 ✓
+    pri Array[SDL_Rect] clipPool
     pri Ptr[u8] bxTarget
     // 注意默认值是 1.0（不是 0.0）：与 initDefault 里的赋值一致。
     // 若默认成 0.0，未走 initDefault 的渲染器会让 _rrUsable() 的
@@ -171,7 +184,7 @@ const BX_TEX    = 4   // 批处理文字纹理
             bxR = 255; bxG = 255; bxB = 255; bxA = 255; bxIsFloat = false
             bxFr = 1.0; bxFg = 1.0; bxFb = 1.0; bxFa = 1.0
             bxBlend = core.BlendMode.BLEND; bxClip = false; bxClipPtr = null; bxClipOwned = false; bxTarget = null
-            clipStack = []; clipStackOwned = []
+            clipStack = []; clipStackOwned = []; clipStackChanged = []; clipPool = []
             bxSx = 1.0; bxSy = 1.0; bxCScale = 1.0; bxCur = BX_EMPTY
             pixTex = null; pixTexW = 0; pixTexH = 0
             lnTex = null; rrScale = 0.0
@@ -193,11 +206,16 @@ const BX_TEX    = 4   // 批处理文字纹理
     func destroy() {
         if ok {
             flushBatches()
-            // 释放裁剪栈里残留的 rect
+            // 释放裁剪栈里残留的 rect（池化后不再有 owned 的栈项，保险起见仍按标记释放）
             for clipStack.len() to i {
                 if clipStackOwned[i] and clipStack[i] != null { ffi.free(clipStack[i]) }
             }
-            clipStack.clear(); clipStackOwned.clear()
+            clipStack.clear(); clipStackOwned.clear(); clipStackChanged.clear()
+            // 交集矩形池：归渲染器所有 ⇒ 一次性释放
+            for clipPool.len() to i {
+                clipPool[i].free()
+            }
+            clipPool.clear()
             // 释放当前裁剪 rect（如果由我们拥有）
             if bxClipOwned and bxClipPtr != null { ffi.free(bxClipPtr); bxClipOwned = false }
             bxClip = false; bxClipPtr = null
@@ -564,16 +582,27 @@ const BX_TEX    = 4   // 批处理文字纹理
     }
 
     // 设置裁剪矩形（只在此区域内绘制）
+    //   ⚠ 与 push/pop 混用时**不接管所有权**：调用方仍自己 free（原来这里没重置
+    //     `bxClipOwned` ⇒ 上一轮 push 留下的 true 会被带进来，pop 时 free 掉**调用方**
+    //     的矩形 ⇒ 野指针 / 双重释放 ⇒ 裁剪区乱跳（看着就是"闪"）✗
     func setClipRect(Ptr[u8] rect): bool {
-        flushBatches(); bxClip = rect != null; bxClipPtr = rect
+        flushBatches(); bxClip = rect != null; bxClipPtr = rect; bxClipOwned = false
         return _lib.SDL_SetRenderClipRect(handle, rect)
     }
 
     // 清除裁剪区域（恢复全屏绘制）
     func clearClip(): bool {
-        if not bxClip { return true }
-        flushBatches(); bxClip = false; bxClipPtr = null
+        if not bxClip and bxClipPtr == null { return true }
+        flushBatches(); bxClip = false; bxClipPtr = null; bxClipOwned = false
         return _lib.SDL_SetRenderClipRect(handle, null)
+    }
+
+    // 取第 depth 层的交集矩形（池化；首次用到才分配，之后一直复用）
+    pri func clipSlot(int depth): SDL_Rect {
+        while clipPool.len() <= depth {
+            clipPool.add(SDL_Rect.malloc())
+        }
+        return clipPool[depth]
     }
 
     // ---- 裁剪栈（push/pop）：解决嵌套组件裁剪相互覆盖的问题 ----
@@ -582,20 +611,18 @@ const BX_TEX    = 4   // 批处理文字纹理
     //
     // 关键设计：pushClipRect 会计算新 rect 与当前 clip 的**交集**，
     // 确保子组件永远不会绘制到父容器裁剪区之外（如 ScrollView 内的按钮）。
+    //
+    // ★ 2026-10-25 两条优化（行为逐像素不变，省的是 flush / malloc）：
+    //   ① **无变化不落笔**：交集与当前裁剪完全相同时（子控件正好填满父容器 —— 极常见），
+    //      这层裁剪没有任何视觉效果 ⇒ 不 flush、不 malloc、不调 SDL；pop 也直接返回。
+    //   ② **交集矩形池化**：按栈深度复用一块 SDL_Rect（`clipPool`），稳态零分配
+    //      （原来每帧每层一次 malloc + free）。
     func pushClipRect(Ptr[u8] rect): bool {
-        flushBatches()
-        // 保存当前裁剪状态到栈（连同所有权标记）
-        clipStack.add(bxClipPtr)
-        clipStackOwned.add(bxClipOwned)
-        // 所有权转移给栈：我们不再拥有旧的 _bxClipPtr
-
-        if rect == null {
-            bxClip = false; bxClipPtr = null; bxClipOwned = false
-            return _lib.SDL_SetRenderClipRect(handle, null)
-        }
-
-        // 计算交集：如果已有裁剪，新裁剪 = rect ∩ 当前裁剪
-        if bxClip and bxClipPtr != null {
+        // ---- 先纯计算目标裁剪（不 flush、不分配）----
+        int tx = 0, ty = 0, tw = 0, th = 0
+        bool haveInter = false
+        bool haveCur = bxClip and bxClipPtr != null
+        if rect != null and haveCur {
             SDL_Rect cur = SDL_Rect.from_ptr(bxClipPtr)
             SDL_Rect nr  = SDL_Rect.from_ptr(rect)
             int ix  = if nr.x > cur.x then nr.x else cur.x
@@ -604,9 +631,36 @@ const BX_TEX    = 4   // 批处理文字纹理
             int iy2 = nr.y + nr.h; if iy2 > cur.y + cur.h { iy2 = cur.y + cur.h }
             int iw = ix2 - ix; if iw < 0 { iw = 0 }
             int ih = iy2 - iy; if ih < 0 { ih = 0 }
-            SDL_Rect inter = SDL_Rect.malloc()
-            inter.x = ix; inter.y = iy; inter.w = iw; inter.h = ih
-            bxClip = true; bxClipPtr = inter.to_ptr(); bxClipOwned = true
+            tx = ix; ty = iy; tw = iw; th = ih
+            haveInter = true
+            // ① 交集与当前裁剪一模一样 ⇒ 这层没有任何收紧效果
+            if tx == cur.x and ty == cur.y and tw == cur.w and th == cur.h {
+                clipStack.add(bxClipPtr); clipStackOwned.add(bxClipOwned)
+                clipStackChanged.add(false)
+                return true
+            }
+        } else if rect == null and not haveCur {
+            clipStack.add(bxClipPtr); clipStackOwned.add(bxClipOwned)
+            clipStackChanged.add(false)
+            return true
+        }
+
+        // 保存上一级裁剪（含所有权标记）
+        clipStack.add(bxClipPtr)
+        clipStackOwned.add(bxClipOwned)
+        clipStackChanged.add(true)
+        flushBatches()
+
+        if rect == null {
+            bxClip = false; bxClipPtr = null; bxClipOwned = false
+            return _lib.SDL_SetRenderClipRect(handle, null)
+        }
+
+        if haveInter {
+            // ② 池化：只改内容，不分配
+            SDL_Rect inter = clipSlot(clipStack.len() - 1)
+            inter.x = tx; inter.y = ty; inter.w = tw; inter.h = th
+            bxClip = true; bxClipPtr = inter.to_ptr(); bxClipOwned = false
             return _lib.SDL_SetRenderClipRect(handle, inter.to_ptr())
         }
 
@@ -616,22 +670,25 @@ const BX_TEX    = 4   // 批处理文字纹理
     }
 
     func popClipRect(): bool {
-        flushBatches()
-        // 释放当前裁剪 rect（仅当我们拥有它）
-        if bxClipOwned and bxClipPtr != null {
-            ffi.free(bxClipPtr)
-        }
         if clipStack.len() == 0 {
+            if not bxClip and bxClipPtr == null { return true }
+            flushBatches()
             bxClip = false; bxClipPtr = null; bxClipOwned = false
             return _lib.SDL_SetRenderClipRect(handle, null)
         }
-        // 弹出并恢复上一级裁剪
         int last = clipStack.len() - 1
-        bxClipPtr = clipStack[last]
-        bxClipOwned = clipStackOwned[last]
-        clipStack.remove(last); clipStackOwned.remove(last)
-        bxClip = bxClipPtr != null
-        return _lib.SDL_SetRenderClipRect(handle, bxClipPtr)
+        bool changed = clipStackChanged[last]
+        Ptr[u8] prev = clipStack[last]
+        bool prevOwned = clipStackOwned[last]
+        clipStack.remove(last); clipStackOwned.remove(last); clipStackChanged.remove(last)
+        // ① 这层没动过 SDL 状态 ⇒ 只恢复记账（不 flush、不调 SDL）
+        if changed {
+            flushBatches()
+            bxClipPtr = prev; bxClipOwned = prevOwned; bxClip = (prev != null)
+            return _lib.SDL_SetRenderClipRect(handle, prev)
+        }
+        bxClipPtr = prev; bxClipOwned = prevOwned; bxClip = (prev != null)
+        return true
     }
 
     // 设置逻辑分辨率（坐标映射到 w×h，自动缩放）

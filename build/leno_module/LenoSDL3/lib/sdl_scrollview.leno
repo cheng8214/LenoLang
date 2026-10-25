@@ -81,6 +81,9 @@ export struct ScrollView impl Widget, Themeable {
     // 事件派发的「视口裁剪」状态（渲染有 `pushClipRect`，派发也必须有一份对应的闸门 ⇒ 见 process ✓）
     pri bool innerDown = false   // 视口内按下且还没松手 ⇒ 期间一律照转（拖出视口也不会卡住 pressed ✓）
     pri bool mouseIn = false     // 上一拍指针在不在视口内（刚离开时补一次 motion ⇒ 子控件清 hover ✓）
+    // 视口裁剪矩形：**分配一次复用**（2026-10-25：原来每帧 malloc 且没 free ✗）
+    pri SDL_Rect clipR
+    pri bool clipInit = false
 
 
     func set(Dict opts) {
@@ -553,14 +556,23 @@ export struct ScrollView impl Widget, Themeable {
         r.setColor(bgColor)
         r.fillRoundedRect(x, y, w, h, radius)
         // 裁剪到视口（扣除滚动条槽，避免内容画到槽下）
-        float gw = if showV() then barW else 0.0
-        float gh = if showH() then barW else 0.0
-        SDL_Rect cr = SDL_Rect.malloc()
-        cr.x = _int(x); cr.y = _int(y)
-        cr.w = _int(w - gw) + 1; cr.h = _int(h - gh) + 1   // +1 覆盖浮点截断的亚像素
-        r.pushClipRect(cr.to_ptr())
-        _content?.render(r)
-        r.popClipRect()
+        //   ★ 2026-10-25：两条"裁剪成本"优化（视觉逐像素不变 ✓）
+        //     ① 内容**不满一屏**（无滚动条）⇒ 构造上不可能溢出 ⇒ 不裁剪、不 flush
+        //        （短内容页面每帧省 2 次 batch 提交 + 2 次 SetRenderClipRect）
+        //     ② 裁剪矩形**分配一次复用**（原来每帧 SDL_Rect.malloc + 无对应 free ✗ 还漏了）
+        if not showV() and not showH() {
+            var c0 = _content
+            c0?.render(r)
+        } else {
+            float gw = if showV() then barW else 0.0
+            float gh = if showH() then barW else 0.0
+            if not clipInit { clipR = SDL_Rect.malloc(); clipInit = true }
+            clipR.x = _int(x); clipR.y = _int(y)
+            clipR.w = _int(w - gw) + 1; clipR.h = _int(h - gh) + 1   // +1 覆盖浮点截断的亚像素
+            r.pushClipRect(clipR.to_ptr())
+            _content?.render(r)
+            r.popClipRect()
+        }
         // 滚动条（最上层）
         drawScrollbars(r)
         // 边框
@@ -572,6 +584,7 @@ export struct ScrollView impl Widget, Themeable {
 
     func dispose() {
         _content?.dispose()
+        if clipInit { clipR.free(); clipInit = false }
     }
 }
 

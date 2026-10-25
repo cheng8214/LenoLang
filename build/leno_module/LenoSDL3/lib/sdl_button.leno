@@ -88,6 +88,11 @@ export struct Button impl Widget, Themeable {
     // （2026-10-25 晚：`icon_name` 矢量图标已从公共库移除 —— 图标属应用资产，
     //   控件只负责画 `image_path` 给的纹理；`config_keys()` 里也不再列这两个键）
     pri Ptr[u8]? imgTex   // 图片纹理（懒加载，dispose 释放）
+    // 内容裁剪矩形（**分配一次、每帧只改字段**；dispose 释放）
+    //   ★ 2026-10-25：原来是 `render` 里 `core.SDL_Rect.malloc()` + 结束时 free ⇒
+    //     每帧每个按钮一次 malloc/free（密集页面几十个按钮 = 几十次分配/帧，属"裁剪成本"大头）。
+    pri ren.SDL_Rect clipRect
+    pri bool clipRectInit = false
     pri string imgLoadPath = "" // 已尝试加载的路径（避免加载失败每帧重试）
 
     // ==================== 状态图片（对齐 iOS UIButton.setImage(_:forState:)） ====================
@@ -526,10 +531,10 @@ export struct Button impl Widget, Themeable {
 
         // ============ 图标 + 文字布局 ============
         // 内容裁剪到按钮矩形内，防止图标/文字溢出按钮（对齐 sdl_edit / sdl_panel 做法）
-        var _btnClip = core.SDL_Rect.malloc()
-        _btnClip.x = _int(x); _btnClip.y = _int(y)
-        _btnClip.w = _int(w) + 1; _btnClip.h = _int(h) + 1   // +1 覆盖浮点截断的亚像素
-        r.pushClipRect(_btnClip.to_ptr())
+        if not clipRectInit { clipRect = core.SDL_Rect.malloc(); clipRectInit = true }
+        clipRect.x = _int(x); clipRect.y = _int(y)
+        clipRect.w = _int(w) + 1; clipRect.h = _int(h) + 1   // +1 覆盖浮点截断的亚像素
+        r.pushClipRect(clipRect.to_ptr())
 
         float pad = 6.0 + padding   // 图标布局的留白；`padding` 默认 0 ⇒ 仍是 6.0 ✓
         // 提前测量文字，供图标尺寸自适应（防止图标挤占文字 / 内容溢出按钮）
@@ -700,8 +705,8 @@ export struct Button impl Widget, Themeable {
             _draw_glyph(r, itex, ix, iy, isize, dw, dh, imgAutoDim)
         }
 
-        // 恢复裁剪区
-        r.popClipRect(); _btnClip.free()
+        // 恢复裁剪区（矩形归本控件所有，复用 ⇒ 这里不 free ✓）
+        r.popClipRect()
     }
 
     // 画图标纹理（alpha/tint 已在外面设好 ✓）。
@@ -716,6 +721,7 @@ export struct Button impl Widget, Themeable {
 func dispose() {
 if font != null and font.ok { fnt.releaseFont(font) }; font = null
 release_all_images()
+if clipRectInit { clipRect.free(); clipRectInit = false }
 }
 
 // ==================== 运行时主题切换 ====================

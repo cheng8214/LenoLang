@@ -404,6 +404,47 @@ y=0 → y=80 → y=128 → y=157 → ... → 200（钳到 maxScrollY）
 
 ---
 
+## 9.5 ★ 2026-10-25：把"嵌套裁剪"的每帧成本压到接近零（已做 ✓）
+
+**触发**：用户反馈 `leno_gui/应用/影视海报墙` 在**海报墙这种多层裁剪的模式下会闪烁**，
+并指出"一般是多层裁剪导致的"。
+
+**先测，再改**（无头逐帧比对，方法见 §6）：
+
+| 模式 | 改前连续帧 | 结论 |
+| --- | --- | --- |
+| 海报墙（默认） | MD5 `B1546EB2B1D5` × 3 个不同时刻**全同** | 静态帧不闪 |
+| 列表（`WALL_VIEW=1`） | `66D27B5982CF` 全同 | 同上 |
+| 卡内操作（`WALL_ACTIONS=1`） | `6744AAD6F5E4` 全同 | 同上 |
+| 详情（`WALL_DETAIL=3`） | 12/13/14 步不同、**≥16 步收敛**到 `69B9C4A95816` | 那是**入场动画**（RingProgress），不是闪 |
+
+⇒ 残留闪烁不在"帧内容"，而在**每帧的裁剪次数/分配**（§2.1/§2.2）：层数不多（Tab 页 + ScrollView
+= 2 层），但每层 push/pop 各一次 flush、嵌套再各一次 `SDL_Rect.malloc`，滚动/悬停重绘密集时
+就是"边缘一帧有一帧无 + 帧节奏不匀"。与 §7 的判断一致。
+
+**本轮改动（视觉**逐像素不变**，省的是 flush / malloc / 无效裁剪）**
+
+| 位置 | 改动 |
+| --- | --- |
+| `sdl_renderer.leno` `pushClipRect` | ① **无变化不落笔**：交集与当前裁剪完全相同（子控件正好填满父容器）⇒ 不 flush、不 malloc、不调 SDL，只在栈里记 `changed=false`；`popClipRect` 对这类层也不动 SDL ② 交集矩形**池化**（`clipPool` 按栈深度复用）⇒ 稳态零分配 |
+| `sdl_renderer.leno` `setClipRect`/`clearClip` | 修正**所有权**：原来不重置 `bxClipOwned`，上一轮 push 留下的 `true` 会被带进来 ⇒ pop 时 free 掉**调用方**的矩形（野指针 / 双重释放 ⇒ 裁剪区乱跳 = 闪） |
+| `sdl_scrollview.leno` | ① 内容**不满一屏**（无滚动条）⇒ 构造上不可能溢出 ⇒ 不裁剪、不 flush ② 裁剪矩形**分配一次复用**（原来每帧 malloc 且**没有 free** ✗） |
+| `sdl_button.leno` | 裁剪矩形**分配一次复用**（原来 `render` 里每帧 `SDL_Rect.malloc` + 结尾 `free`） |
+| `影视海报墙/movie_wall.leno` | TabControl 加 `clip: false` —— 两页各自只有一个填满页面的子控件（ScrollView / Table），它们**自己就裁剪**，页签这层纯属多余（少一层嵌套 ⇒ 少 2 次 flush + 1 次交集） |
+
+**验收（这是判"没改坏"的硬指标）**：四个模式的截图与改前**MD5 逐一相同** ——
+`B1546EB2B1D5` / `66D27B5982CF` / `6744AAD6F5E4` / `69B9C4A95816`；
+`assert/test_sdl_capture.leno`、`test_popup_capture.leno`、`test_table_progress_cells.leno`
+全过；语言断言 507/507、模块测试 29/29、`--check` examples 812 + module 346 + leno_gui 101 全过。
+
+**⚠ 排查时踩的坑（必记）**：`SDL_Rect` 是 **cstruct**，`SDL_Rect.from_ptr(p).to_ptr()`
+**不保证原样往返** —— 我最初把池化矩形写成 `from_ptr(池指针)` 再写字段，结果
+`SDL_SetRenderClipRect` 拿到野指针 ⇒ **0xC0000005 访问违例**（`WALL_ACTIONS=1` 一跑就崩）。
+正确写法是从头到尾用同一份：`SDL_Rect r = SDL_Rect.malloc()`（或 `Array[SDL_Rect]` 里存它），
+**直接写 `r.x/r.w`，再 `r.to_ptr()`** —— 这也是既有代码一直在用的形态 ✓
+
+---
+
 ## 9. 相关文件
 
 - 复刻示例（本次的"案发现场"）：`leno_gui/控件/数据看板/dashboard_sidebar.leno`
