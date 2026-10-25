@@ -1,0 +1,66 @@
+// kuwo_cover.leno — 酷我封面（单独模块，别塞进界面文件）
+// ----------------------------------------------------------------------------
+// 数据来源：歌曲详情页 `http://www.kuwo.cn/play_detail/<id>`
+//   页面里嵌着 `pic120:"https:\u002F\u002Fimg2.kuwo.cn\u002Fstar\u002Falbumcover\u002F120\u002F..jpg"`
+//   把路径里的 `/120/` 换成 `/500/` 就是 500px 大图（实测 5.9 KB → 55 KB ✓）
+//
+// 用法：
+//   import "./lib/kuwo_cover.leno" as cover
+//   string jpg = cover.cover_of(songId, dirs.join(_tmpdir(), "leno_music_audio"))
+//   if jpg != "" { imageView.set_image(jpg) }
+//
+// 约定：**一首歌一次请求**，文件按 `<id>.jpg` 落盘，命中缓存直接返回（零请求 ✓）
+//   失败返回 ""（调用方保持占位图即可，别抛异常）
+import "web_net" as net
+import strings
+import dirs
+import files
+
+// 详情页对 UA / Referer 敏感：用桌面 Chrome 的 UA 才给完整 HTML
+const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
+
+// 从详情页 HTML 里抠 pic120 的 URL（`\u002F` 是 JSON 转义过的 `/`）
+func pic_url(string html): string {
+    int p = strings.byte_find(html, "pic120:\"", 0)
+    if p < 0 { return "" }
+    int s = p + 8
+    int e = strings.byte_find(html, "\"", s)
+    if e < 0 { return "" }
+    return strings.byte_slice(html, s, e - 1).replace("\\u002F", "/")
+}
+
+// 缓存有效性下限：真实封面 ≥ 几 KB；1 字节那种是**下载失败落下的空文件**
+//   ⚠ 实测踩过：`files.exists()` 为真就当成"已缓存"返回 ⇒ 1 字节的坏文件永远修不好，
+//     界面一直显示占位图 ✗
+const int MIN_JPG = 1024
+
+func usable(string f): bool {
+    if not files.exists(f) { return false }
+    try {
+        return files.read(f).len() >= MIN_JPG
+    } catch e {
+        return false
+    }
+}
+
+// 取封面并落到 `cacheDir/<id>.jpg`；返回本地路径（失败/无封面返回 ""）
+export func cover_of(string id, string cacheDir): string {
+    if id == "" or cacheDir == "" { return "" }
+    string f = dirs.join(cacheDir, id + ".jpg")
+    if usable(f) { return f }
+    if files.exists(f) {                 // 坏文件（多半 1 字节）⇒ 删掉重下
+        try { files.delete(f) } catch e { print("[cover] 删坏缓存失败：" + _str(e)) }
+    }
+    try {
+        dirs.mkdir_p(cacheDir)
+        var c = net.createClient()
+        c.addHeaders(["User-Agent: " + UA, "Referer: http://www.kuwo.cn/"])
+        var r = c.get("http://www.kuwo.cn/play_detail/" + id)
+        string u = if r.ok() then pic_url(r.body) else ""
+        if u != "" { net.download(u.replace("/120/", "/500/"), f) }
+        c.close()
+    } catch e {
+        return ""
+    }
+    return if usable(f) then f else ""
+}

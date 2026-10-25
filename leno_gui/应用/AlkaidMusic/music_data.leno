@@ -11,8 +11,12 @@ export struct Song {
     string title = ""
     string artist = ""
     string dur = ""
-    string cover = ""     // images/ 下的文件名
+    string cover = ""     // images/ 下的文件名，或酷我封面缓存**绝对路径**
     string tag = ""       // 角标：新 / HQ / 无损（空 = 无）
+    // ★ 2026-10-25：酷我歌曲 id（""= 演示数据，没有音源）。
+    //   有了它，卡片不必依赖"搜索结果的下标"也能真播放 / 拉封面（推荐、最近添加、
+    //   继续收听里的歌都来自酷我 ⇒ 各分区表现一致 ✓）
+    string sid = ""
 }
 
 export struct Shelf {
