@@ -430,8 +430,23 @@ export func getinfo_double(Ptr[u8] handle, int option): float {
 // ==================== perform 封装 ====================
 
 // 执行 HTTP 请求
+//   ★ 2026-10-25：**空句柄绝不能往下走** —— 原来 `ffi.call_int(lib(), ...)` 直接解引用：
+//     只要 lib() 返回 null（库没加载成功）或 handle 为 null（easy_init 失败），
+//     就是一次 0xC0000005 访问违例 ⇒ 整个进程**无声死掉**（cstruct/ffi 那类崩溃，
+//     连 try/catch 都抓不住 ✗）。现在先判空并返回 CURLE_FAILED_INIT(-1)，
+//     让上层按"网络失败"处理（可重试、可提示），而不是把进程带走 ✓
 export func perform(Ptr[u8] handle): int {
-    return ffi.call_int(lib(), "curl_easy_perform", handle)
+    curl l = lib()
+    if l == null { return Code.FAILED_INIT }
+    if handle == null { return Code.FAILED_INIT }
+    if _env("CURL_DBG") != null {
+        print("[curl] lib_null=" + _str(l == null) + " handle=" + _str(ffi.ptr_to_int(handle)))
+        // 诊断：若这一行就崩 ⇒ 是 clib 本身成了野指针（库对象被回收）；不崩但下面崩 ⇒ handle 坏
+        print("[curl] version=" + _str(l.curl_version()))
+    }
+    // ⚠ 不要把 `ffi.call_int(...)` 直接写在 `return` 里：分两步返回，结果更稳。
+    int rc = ffi.call_int(l, "curl_easy_perform", handle)
+    return rc
 }
 
 // ==================== Multi（并发）封装 ====================

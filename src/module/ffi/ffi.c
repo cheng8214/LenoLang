@@ -97,6 +97,24 @@ typedef struct {
     Value func_val;
     FFISignature* sig;
     int active;
+    /* ★ 2026-10-25：**回调对象本身要当 GC 根**（否则 trampoline 被提前释放 ⇒ 野指针崩溃）
+     *
+     * 背景（实测崩溃）：`ffi.callback(...)` 返回的是**裸 `Ptr`**（NATIVE_T_PTR）——
+     *   裸指针不是 GC 能追踪的引用，而 trampoline 是 `ObjFFICallback` 的资源
+     *   ⇒ 一旦 Leno 侧只剩 Ptr、对象不可达，GC 就 `ffi_callback_free_resources` 把
+     *   trampoline 的**可执行内存释放掉**；C 库随后回调这个地址 ⇒ 0xC0000005。
+     *   实测现场：`LenoWeb` 的 `HttpClient` 在 init 里存了 writeCb/headerCb 两个 Ptr，
+     *   第一次 `client.get()` 就在 `curl_easy_perform` 里崩（curl 调写回调那一刻）；
+     *   而从 `main` 里先跑一次就不崩 —— 纯粹是 GC 时机差异 ⇒ 典型的"偶发野指针"。
+     *
+     * 修法：槽位里保存 `obj`（回调对象），把它的地址注册成**额外根**
+     *   （`gc_push_root`，每个槽位只注册一次、地址永久有效）⇒ 只要槽位还 active，
+     *   对象就不会被回收。释放用新增的 `ffi.free_callback(trampoline)`（长期存活的应用
+     *   应当显式释放；槽位上限 256，泄漏是有界的）。
+     */
+    Value obj;         /* ObjFFICallback（GC 根，见上） */
+    void* trampoline;  /* 对应的可执行 trampoline（free_callback 用它反查槽位） */
+    int rooted;        /* obj 的地址是否已注册进 GC 额外根（每槽只注册一次） */
 } FFICallbackEntry;
 
 static FFICallbackEntry g_callback_registry[MAX_FFI_CALLBACKS];
@@ -121,6 +139,8 @@ static int callback_registry_reserve(void) {
             g_callback_registry[i].active = 1;
             g_callback_registry[i].sig = NULL;
             g_callback_registry[i].func_val = val_null();
+            g_callback_registry[i].obj = val_null();
+            g_callback_registry[i].trampoline = NULL;
             id = i;
             break;
         }
@@ -137,6 +157,10 @@ static void callback_registry_release(int cb_id) {
     g_callback_registry[cb_id].active = 0;
     g_callback_registry[cb_id].sig = NULL;
     g_callback_registry[cb_id].func_val = val_null();
+    // ★ 2026-10-25：只把对象引用置空（根地址仍保留，见 FFICallbackEntry 的说明）
+    //   ⇒ 槽位一旦释放，对象重新变成可回收，trampoline 也就能安全释放了 ✓
+    g_callback_registry[cb_id].obj = val_null();
+    g_callback_registry[cb_id].trampoline = NULL;
     if (g_callback_mutex_ready) platform_mutex_unlock(&g_callback_mutex);
 }
 
@@ -3402,7 +3426,42 @@ Value ffi_callback_create_with_sig(Value func_val, int ret_type, int param_count
     cb->trampoline = trampoline;
     cb->func_val = func_val;
 
+    /* ★ 2026-10-25：把回调对象登记为 **GC 根**（返回值是裸 Ptr，GC 追不到它）——
+     *   不这么做，trampoline 会被提前释放，C 库一回调就 0xC0000005（详见 FFICallbackEntry）。
+     *   根地址是静态数组元素 ⇒ 永久有效；每个槽位只 push 一次，释放时只清 `obj`。 */
+    {
+        FFICallbackEntry* entry = &g_callback_registry[cb_id];
+        entry->trampoline = trampoline;
+        entry->obj = val_obj((Object*)cb);
+        if (!entry->rooted) {
+            gc_push_root(&entry->obj);
+            entry->rooted = 1;
+        }
+    }
+
     return val_obj((Object*)cb);
+}
+
+/* ffi.free_callback(p)：释放一个回调槽位（让它占的 trampoline 能被 GC 回收）。
+ *
+ * ★ 2026-10-25：`ffi.callback` 的对象现在是 **GC 根**（否则 trampoline 会被提前释放，
+ *   见 FFICallbackEntry 的说明）⇒ 不显式释放就一直活到进程结束。槽位有上限（256），
+ *   所以"每个请求都建回调"的用法（如 LenoWeb 的 HttpClient）必须在关掉句柄后调本函数。
+ * ⚠ 只有**确定 C 侧不会再回调**时才能释放，否则 C 拿着已释放的 trampoline 一样会崩。 */
+static Value ffi_free_callback_func(int argc, Value* args) {
+    (void)argc;
+    if (!val_is_obj(args[0])) return val_bool(0);
+    Object* obj = val_as_obj(args[0]);
+    if (obj->type != OBJ_FFI_POINTER) return val_bool(0);
+    void* tramp = ((ObjFFIPointer*)obj)->ptr;
+    if (!tramp) return val_bool(0);
+    for (int i = 0; i < MAX_FFI_CALLBACKS; i++) {
+        if (g_callback_registry[i].active && g_callback_registry[i].trampoline == tramp) {
+            callback_registry_release(i);
+            return val_bool(1);
+        }
+    }
+    return val_bool(0);
 }
 
 /* ==================== FFI Clib 公开接口 ==================== */
@@ -3578,6 +3637,10 @@ void ffi_init_module(void) {
     // ffi.callback(func, CfuncName) - 第二个参数必须是 cfunc 类型
     TypeKind callback_params[] = {TYPE_ANY, TYPE_CFUNC};
     native_register_module_method("ffi", "callback", ffi_callback_compat_func, &NATIVE_T_PTR, NATIVE_FIXED(callback_params));
+
+    /* 释放一个回调槽位（2026-10-25：回调对象成为 GC 根后，需要显式释放才能回收） */
+    TypeKind free_cb_params[] = {TYPE_PTR};
+    native_register_module_method("ffi", "free_callback", ffi_free_callback_func, &NATIVE_T_BOOL, NATIVE_FIXED(free_cb_params));
 
     /* ===== 跨线程回调泵送 ===== */
     native_register_module_method("ffi", "pump_callbacks", ffi_pump_callbacks_func, &NATIVE_T_NULL, NATIVE_FIXED_NONE(0));
