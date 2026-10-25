@@ -1,0 +1,118 @@
+// music_data.leno — AlkaidMusic 的演示数据（歌曲 / 歌单 / 导航）
+//
+// 为什么单独一份：界面代码只管"怎么画"，数据只管"画什么" ⇒ 换成真数据（扫库/API）
+//   只要替换本文件的几个函数，界面一行都不用动 ✓
+//
+// ⚠ 封面只存**文件名**（如 "cover05.png"），真实路径由界面用 dirs 拼 ——
+//   这样打包（resource.toml 把 images/** 解包到 res_dir）后依然找得到 ✓
+
+// ==================== 结构 ====================
+export struct Song {
+    string title = ""
+    string artist = ""
+    string dur = ""
+    string cover = ""     // images/ 下的文件名
+    string tag = ""       // 角标：新 / HQ / 无损（空 = 无）
+}
+
+export struct Shelf {
+    string title = ""
+    string sub = ""
+    Array[Song] items = []
+}
+
+export struct NavItem {
+    string name = ""
+    string icon = ""      // sdl_icons 的矢量图标名
+    int count = 0
+}
+
+// ==================== 构造辅助 ====================
+func mk(string t, string a, string d, string c, string tag): Song {
+    Song s = new Song()
+    s.title = t
+    s.artist = a
+    s.dur = d
+    s.cover = c
+    s.tag = tag
+    return s
+}
+
+func nav(string name, string icon, int count): NavItem {
+    NavItem n = new NavItem()
+    n.name = name
+    n.icon = icon
+    n.count = count
+    return n
+}
+
+// ==================== 侧栏：主导航（参考图左侧上半段 ✓）====================
+export func navMain(): Array[NavItem] {
+    return [nav("首页", "home", 674),
+            nav("我喜欢", "heart", 128),
+            nav("最近播放", "clock", 64),
+            nav("本地音乐", "folder", 674)]
+}
+
+// 侧栏：歌单（参考图 "华语 | 粤语 | 英语 | …" ✓）
+export func navPlaylists(): Array[NavItem] {
+    return [nav("华语经典", "list", 128),
+            nav("粤语金曲", "list", 86),
+            nav("英语流行", "list", 64),
+            nav("日语次元", "list", 42),
+            nav("纯音乐", "list", 31),
+            nav("深夜电台", "list", 18)]
+}
+
+// ==================== 内容区：三个分区 ====================
+export func shelves(): Array[Shelf] {
+    Array[Shelf] out = []
+
+    // ① 继续收听（参考图 3 张横卡 ✓）
+    Shelf s1 = new Shelf()
+    s1.title = "继续收听"
+    s1.sub = "接着上次的位置"
+    s1.items = [mk("心动信号", "林晚舟", "04:13", "cover05.png", "HQ"),
+                mk("晚风信箱", "苏辞", "03:48", "cover14.png", ""),
+                mk("云层之上", "陈屿", "05:02", "cover16.png", "无损")]
+    out.add(s1)
+
+    // ② 为你推荐（参考图一屏 8 张 ✓）
+    Shelf s2 = new Shelf()
+    s2.title = "为你推荐"
+    s2.sub = "根据最近 30 天的收听生成"
+    s2.items = [mk("心动信号", "林晚舟", "04:13", "cover05.png", "HQ"),
+                mk("霓虹旅客", "海盐苏打", "03:12", "cover01.png", "新"),
+                mk("午夜霓虹", "陈屿", "04:44", "cover02.png", ""),
+                mk("纸飞机", "苏辞", "03:35", "cover04.png", ""),
+                mk("雨后街角", "林晚舟", "04:02", "cover05.png", "新"),
+                mk("第七个夏天", "白榆", "03:57", "cover06.png", ""),
+                mk("晚风信箱", "苏辞", "03:48", "cover14.png", "HQ"),
+                mk("慢速列车", "海盐苏打", "04:29", "cover08.png", "")]
+    out.add(s2)
+
+    // ③ 最近添加
+    Shelf s3 = new Shelf()
+    s3.title = "最近添加"
+    s3.sub = "近 30 天新增 674 首 · 累计收录 674 首"
+    s3.items = [mk("云层之上", "陈屿", "05:02", "cover16.png", "无损"),
+                mk("星尘旅人", "白榆", "03:26", "cover09.png", "新"),
+                mk("玻璃海", "海盐苏打", "04:18", "cover10.png", ""),
+                mk("回声房", "林晚舟", "03:52", "cover12.png", ""),
+                mk("旧磁带", "苏辞", "04:36", "cover13.png", ""),
+                mk("灯下楼台", "白榆", "03:21", "cover14.png", "新")]
+    out.add(s3)
+
+    return out
+}
+
+// ==================== 正在播放（底栏）====================
+export func nowPlaying(): Song {
+    return mk("心动信号", "林晚舟", "04:13", "cover05.png", "HQ")
+}
+
+// 总曲目数（首页副标题用 ✓）
+export func totalTracks(): int { return 674 }
+
+// 歌单总数
+export func folderCount(): int { return 1 }

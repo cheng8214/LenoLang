@@ -1,0 +1,35 @@
+// tools/preview_icons.leno — 矢量图标预览表（离屏画出 sdl_icons 的**全部**图标，肉眼核对 ✓）
+//
+// 用法：build\leno.exe "leno_gui\应用\AlkaidMusic\tools\preview_icons.leno"
+// 产物：%TEMP%\leno_icons_sheet.png（不落在应用目录里 ✓）
+//
+// 为什么留着：图标再多加几个时，先跑这个看形状对不对，比在界面里猜快得多 ✓
+import "SDL3" as SDL3
+import dirs
+use SDL3.(Renderer, WindowFlag, Color)
+
+main() {
+    var names = SDL3.iconNames()
+    int perRow = 8
+    int cell = 64
+    int rows = (names.len() + perRow - 1) / perRow
+    int W = perRow * cell
+    int H = rows * cell
+
+    var win = SDL3.createWindow({title: "icon-preview", w: W, h: H, flags: WindowFlag.HIDDEN})
+    if not win.ok { print("窗口失败：" + SDL3.getError()); return }
+    var r = SDL3.createRenderer(win.getHandle())
+
+    r.clearColor(#FFFFFFFF)
+    for 0 : names.len() - 1 to i {
+        int cx = (i % perRow) * cell
+        int cy = (i / perRow) * cell
+        SDL3.drawIcon(r, names[i], _float(cx) + 16.0, _float(cy) + 16.0, 32.0, #222222FF)
+    }
+
+    var s = r.readPixelsAt(0, 0, W, H)
+    string tmp = _str(_env("TEMP"))
+    if tmp == "" { tmp = dirs.res_dir() }
+    string out = dirs.join(tmp, "leno_icons_sheet.png")
+    print("保存 " + out + " ok=" + _str(SDL3.saveImagePNG(s, out)) + "（共 " + _str(names.len()) + " 个）")
+}

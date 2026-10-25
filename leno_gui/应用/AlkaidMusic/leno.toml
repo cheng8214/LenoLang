@@ -1,0 +1,7 @@
+# 应用侧的 [requires]：import 期校验模块包版本，比"调用点报没有方法"早得多
+[package]
+name = "AlkaidMusic"
+version = "0.1.0"
+
+[requires]
+LenoSDL3 = ">=0.1.1"

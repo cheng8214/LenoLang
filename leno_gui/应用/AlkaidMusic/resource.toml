@@ -1,0 +1,6 @@
+# 打包资源：images/** 递归打进单文件 exe
+#   ⚠ 代码里一律用 dirs.res_dir() 拼路径（单文件打包后资源解包到缓存目录，
+#     script_dir() 取不到 ✓ 见 SDL3.leno 的 createWindow 注解）
+[pack]
+onefile   = true
+resources = ["images/**"]
