@@ -71,6 +71,8 @@
                 for (int i = 0; i < nargs; i++) vm_stack_push(&vm, R(a + 1 + i));
                 Value result = native->function(nargs, vm.stack + base);
                 vm.sp = base;
+                // ★ native 可能回调 Leno（ffi 回调 / map 回调 …）⇒ 期间 vm.frames 可能 realloc，frame 悬空
+                frame = &vm.frames[vm.frame_cnt - 1];
                 if (unlikely(vm.has_exception)) {
                     // ★ 统一走 throw_pending_exception（vm_exception.inc）：原生只给了裸消息就
                     //   按调用点造统一文案；**已经是异常对象**的（协程/回调带回来的）原样保留
@@ -150,6 +152,8 @@
                 }
                 Value result = native->function(pass_nargs, vm.stack + base);
                 vm.sp = base;
+                // ★ native 可能回调 Leno（ffi 回调 / map 回调 …）⇒ 期间 vm.frames 可能 realloc，frame 悬空
+                frame = &vm.frames[vm.frame_cnt - 1];
                 if (unlikely(vm.has_exception)) {
                     // ★ 统一走 throw_pending_exception（vm_exception.inc）：原生只给了裸消息就
                     //   按调用点造统一文案；**已经是异常对象**的（协程/回调带回来的）原样保留
@@ -234,6 +238,8 @@
         for (int i = 0; i < nargs; i++) vm_stack_push(&vm, R(a + 1 + i));
         Value result = native->function(nargs, vm.stack + base);
         vm.sp = base;
+        // ★ native 可能回调 Leno ⇒ 期间 vm.frames 可能 realloc，frame 悬空（同上）
+        frame = &vm.frames[vm.frame_cnt - 1];
 
         if (unlikely(vm.has_exception)) {
             // ★ 统一走 throw_pending_exception（vm_exception.inc），与上面两处同口径

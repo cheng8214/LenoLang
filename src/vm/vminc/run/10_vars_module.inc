@@ -95,6 +95,14 @@
         Value result = meta->function(nargs, vm.stack + base);
         vm.sp = base;
 
+        // ★ 2026-10-25：**native 可以回调 Leno**（ffi 回调、array.map 的闭包、asyncs…）——
+        //   重入期间 vm.frames 可能扩容（`realloc`）⇒ 上面那个 `frame` 指针**悬空**，
+        //   而下一行 `R(a) = result` 正是通过它写本地量 ⇒ 写进已释放内存 ⇒ 0xC0000005。
+        //   实测现场：LenoWeb 的 HttpClient 用 ffi 写回调，curl 连续回调 ~23 次后帧表
+        //   从 cap=8 扩到 16，随后在这里崩（报在调用点，看着像 curl 崩的 ✗）。
+        //   这一行是**必须**的：异常路径早就有同样的刷新，成功路径一直没有。
+        frame = &vm.frames[vm.frame_cnt - 1];
+
         if (unlikely(vm.has_exception)) {
             // ★ 统一走 throw_pending_exception（vm_exception.inc）：原生只给裸消息就按调用点
             //   造统一文案；**已经是异常对象**的（如协程经 asyncs.run() 抛回）原样保留

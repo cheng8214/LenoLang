@@ -217,6 +217,8 @@
                     for (int i = 0; i < nargs; i++) vm_stack_push(&vm, R(a + 1 + i));
                     Value result = method->function(nargs + 1, vm.stack + base);
                     vm.sp = base;
+                    // ★ native 方法也可能回调 Leno（ffi 回调）⇒ 期间 vm.frames 可能 realloc
+                    frame = &vm.frames[vm.frame_cnt - 1];
                     if (unlikely(vm.has_exception)) {
                         // ★ 统一走 throw_pending_exception（vm_exception.inc）：已是异常对象
                         //   的原样保留（这里的 receiver 方法可能反弹回 VM）
