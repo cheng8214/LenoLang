@@ -227,8 +227,11 @@ export struct HttpClient {
     //   而模块级 `get()` 每次请求都会 createClient()（2 个回调）⇒ 不释放的话
     //   跑到第 128 次请求就会因回调耗尽而失败（原先 close() 只清 handle，属隐性泄漏）。
     func close() {
-        if writeCb != null { ffi.free(writeCb); writeCb = null }
-        if headerCb != null { ffi.free(headerCb); headerCb = null }
+        // ★ 2026-10-25：回调是 ffi.callback 造的 trampoline，**不是** ffi.malloc 的指针 ⇒
+        //   原来这里调 ffi.free 是错的（对象/槽位根本没释放，只是白调一次）；
+        //   正确接口是 ffi.free_callback：释放槽位后 GC 才能回收 trampoline ✓
+        if writeCb != null { ffi.free_callback(writeCb); writeCb = null }
+        if headerCb != null { ffi.free_callback(headerCb); headerCb = null }
         // slist 是**我们自己**用 curl_slist_append 造的（libcurl 不接管所有权）⇒ 必须显式释放，
         //   否则每个客户端漏一份头表（配合 _applyHeaders 的"换表即释放"，整体不漏 ✓）
         if _slist != null { core.slistFreeAll(_slist); _slist = null }

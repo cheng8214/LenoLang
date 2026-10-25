@@ -22,13 +22,14 @@
 //   set ALKAID_AT=14                    # 第几步截（一步 = 100ms）
 //   set ALKAID_SIZE=1000x680            # 指定窗口尺寸（验布局自适应 ✓）
 //   set ALKAID_NAV=1                    # 启动就切到某个导航页（验"点导航真的换页" ✓）
+//   set ALKAID_SEARCH=周杰伦            # 启动就搜酷我（联网；封面按拍补，缓存到临时目录 ✓）
 import "SDL3" as SDL3
 import "./music_data.leno" as data
 import "web_net" as net
 import "./lib/kuwo_core.leno" as kuwo   // 酷我音乐（搜索/直链；从 D:\CLeno\LenoMusic 取来 ✓）
 import strings
 import dirs
-use SDL3.(Event, Renderer, Window, TitleBar, Button, Label, Edit, Card, ImageView,
+use SDL3.(Event, Renderer, Window, TitleBar, Button, Label, Edit, Card, ImageView, Table,
           HBox, VBox, ScrollView, ProgressBar, Slider, Color)
 use data.(Song, Shelf, NavItem)
 
@@ -72,6 +73,12 @@ func img(string name): string {
 // 图标路径（2026-10-25：图标从 LenoMusic 的图库里取，放在 images/icons/ 下 ✓）
 func ico(string name): string {
     return dirs.join(dirs.res_dir(), "images/icons/" + name)
+}
+
+// 封面路径：绝对路径（酷我缓存）直接用，否则当 images/ 下的内置文件名
+func coverPath(string c): string {
+    if strings.has(c, "/") or strings.has(c, "\\") { return c }
+    return img(c)
 }
 
 // 造一个标签（可选加粗）—— 全文件只有这一处建标签，样式不会各处漂移 ✓
@@ -351,13 +358,28 @@ export struct Player {
         content.add(lbl(sub, 11, C_TXT_DIM, false), {grow: 0, shrink: 0, basis: 18, align: 3})
         content.add(SDL3.createLabel({text: ""}), {grow: 0, shrink: 0, basis: 8, align: 3})
 
-        // 有酷我搜索结果 ⇒ 整页就是结果列表（不再掺演示数据 ✓）
+        // 有酷我搜索结果 ⇒ **表格**列出（2026-10-25 按用户要求：搜索不加载封面）
+        //   为什么不铺卡片：搜索要的是信息密度（歌名/歌手/时长/音质），封面要额外
+        //   每首一次详情页 + 一次图片下载 ⇒ 一次搜索多花十秒，得不偿失 ✗
         if netSongs.len() > 0 {
-            var hit = new Shelf()
-            hit.title = "酷我音乐 · 搜索"
-            hit.sub = netMsg
-            hit.items = page_songs(0)
-            add_shelf(hit, false)
+            int rowH = 42
+            int tbH = 34 + netSongs.len() * rowH
+            Table tb = SDL3.createTable({x: 0, y: 0, w: 840, h: tbH,
+                                         item_h: rowH, header_h: 34, font_size: 13,
+                                         headers: ["歌名", "歌手", "时长", "音质"],
+                                         col_widths: [380.0, 250.0, 90.0, 100.0],
+                                         sortable: true, zebra: true, resizable: true,
+                                         bg_color: C_TRANS, header_color: #FFFFFFC0,
+                                         sel_color: C_ACC_SOFT, sep_color: C_LINE,
+                                         empty_text: "没有结果"})
+            Array[Array[string]] rows = []
+            for 0 : netSongs.len() - 1 to i {
+                Song s = netSongs[i]
+                rows.add([s.title, s.artist, s.dur, s.tag])
+            }
+            tb.set_rows(rows)
+            tb.on_select(func(int row) { play_net_row(row) })
+            content.add(tb, {grow: 0, shrink: 0, basis: _float(tbH), align: 3})
             return
         }
 
@@ -424,19 +446,20 @@ export struct Player {
                 sg.title = s.name
                 sg.artist = s.artist
                 sg.dur = kuwo.formatduration(s.duration)
-                int k = 1 + (n % 16)                      // 本地占位封面（酷我搜索结果不带图 ✓）
+                int k = 1 + (n % 16)                      // 内置封面（拿不到真封面时用）
                 if k < 10 { sg.cover = "cover0" + _str(k) } else { sg.cover = "cover" + _str(k) }
                 sg.tag = if s.ext.to_lower() == "flac" then "无损" else ""
                 got.add(sg)
                 n = n + 1
             }
+            client.close()
         } catch e {
             err = _str(e)
         }
 
         if got.len() > 0 {
             netSongs = got
-            netMsg = "酷我「" + kw + "」· " + _str(got.len()) + " 首（点卡片播放的是演示进度）"
+            netMsg = "酷我「" + kw + "」· " + _str(got.len()) + " 首（点行播放，演示进度）"
         } else if err != "" {
             netMsg = "酷我搜索失败（" + err + "），下面仍是演示数据"
         } else {
@@ -451,6 +474,12 @@ export struct Player {
         }
         rebuild_content()
         SDL3.markFrameRedraw()
+    }
+
+    // 表格里点一行 ⇒ 播放那首（行号 == netSongs 下标，与 set_rows 同序 ✓）
+    pri func play_net_row(int row) {
+        if row < 0 or row >= netSongs.len() { return }
+        play_song(netSongs[row])
     }
 
     // 某个导航页要显示的 8 首（按 idx 取不同切片：换页真的换歌，不是只换标题 ✓）
@@ -535,7 +564,7 @@ export struct Player {
     // 竖版卡片：方图 + 歌名 + 歌手（参考图那一列列的小卡 ✓ 无卡片底色，只有图 + 字）
     pri func song_card(Song sg): Card {
         Card c = SDL3.createCard({x: 0, y: 0, w: CARD_W, h: CARD_H,
-                                  image_path: img(sg.cover), image_aspect: CARD_ASPECT,
+                                  image_path: coverPath(sg.cover), image_aspect: CARD_ASPECT,
                                   image_radius: 14, radius: 16,
                                   bg_color: C_TRANS,
                                   title: sg.title, subtitle: sg.artist,
@@ -555,7 +584,7 @@ export struct Player {
     pri func wide_card(Song sg): HBox {
         HBox row = SDL3.createHBox({x: 0, y: 0, w: 260, h: 74, pad_x: 8, pad_y: 8,
                                     spacing: 10, bg_color: #FFFFFFBB, bg_radius: 14})
-        ImageView iv = SDL3.createImageView({w: 58, h: 58, radius: 10, image_path: img(sg.cover)})
+        ImageView iv = SDL3.createImageView({w: 58, h: 58, radius: 10, image_path: coverPath(sg.cover)})
         row.add(iv, {grow: 0, shrink: 0, basis: 58, align: 1})
 
         VBox tv = SDL3.createVBox({x: 0, y: 0, w: 120, h: 58, pad_x: 0, pad_y: 2, spacing: 2})
