@@ -43,6 +43,9 @@ func _opts_keys(): Array[string] {
 export struct GridLayout impl Widget {
     float x = 0.0, y = 0.0, w = 400.0, h = 300.0
     pri int cols = 2               // 列数
+    // ★ 2026-10-25：`min_col_width > 0` ⇒ 列数**按宽度自适应**（见 relayout）；
+    //   0 = 老行为（固定 cols，应用自己 set_cols ✓）
+    pri float minColW = 0.0
     float padX = 8.0, padY = 8.0
     float spacing = 8.0         // 通用间距
     pri float colSpacing = -1.0    // 列间距（-1 = 用 spacing）
@@ -64,6 +67,7 @@ export struct GridLayout impl Widget {
         w      = opts.get("w", 400)
         h      = opts.get("h", 300)
         cols  = opts.get("cols", 2)
+        minColW = opts.get("min_col_width", 0.0)   // >0 ⇒ 列数随宽度自适应 ✓
         if cols < 1 { cols = 1 }
         // ★ 2026-10-13（选项命名统一）：`padX` / `padY` → **`pad_x` / `pad_y`** ✓
         //   本仓其它控件（alert / badge / drag / card…）早就用 `pad_x` / `pad_y` ⇒ 这里曾是唯一例外 ✗
@@ -112,6 +116,8 @@ export struct GridLayout impl Widget {
     //   而 `cols` 是 pri 字段、外面设不了 ⇒ 此前只能整个 GridLayout 重建（旧卡片得重新 add ✗）。
     //   下一帧 `relayout()` 即生效（列宽、行高、measure_h 都是每帧按 `cols` 重算的 ✓）
     func set_cols(int c) { if c >= 1 { cols = c } }
+    // 当前实际列数（`min_col_width` 自适应后想知道结果就调它 ✓）
+    func get_cols(): int { return cols }
     func get_cols(): int { return cols }
     func set_enabled(bool e) { enabled = e }
     func set_visible(bool v) { visible = v }
@@ -122,8 +128,20 @@ export struct GridLayout impl Widget {
     }
 
     // ==================== 尺寸测量 ====================
+    // 按 `min_col_width` 更新列数（relayout 与 measure_* 都要先走这一步，
+    //   否则"先量高度、后摆位置"两条路径会拿到不同的 cols ✗）
+    pri func sync_auto_cols() {
+        if minColW <= 0.0 { return }
+        float cs0 = if colSpacing >= 0.0 then colSpacing else spacing
+        float availW = w - 2.0 * padX
+        int want = _int((availW + cs0) / (minColW + cs0))
+        if want < 1 { want = 1 }
+        if want != cols { cols = want }
+    }
+
     // measure_h：行数 * 每行最大高度 + padding + 行间距
     func measure_h(): float {
+        sync_auto_cols()
         if not _loaded or _c.len() == 0 { return 2.0 * padY }
         int nrows = (_c.len() + cols - 1) / cols
         float rs = if rowSpacing >= 0.0 then rowSpacing else spacing
@@ -165,6 +183,12 @@ export struct GridLayout impl Widget {
         if not _loaded { return }
         int n = _c.len()
         if n == 0 { return }
+        // ★ 2026-10-25：**自适应列数**（`min_col_width`）——
+        //   以前列数只能由应用自己算好再 `set_cols()`（海报墙的 sync_cols、AlkaidMusic 的手工分行
+        //   都是这么写的 ⇒ 每个界面各算一遍、窗口缩放还得各自监听 resize ✗）。
+        //   现在：给了 `min_col_width` 就按**自身当前宽度**算列数，父布局 resize 会下发
+        //   `set_size`，下一次 relayout 自动重排 ✓（应用侧只需 add + 可选 align）
+        sync_auto_cols()
         int nrows = (n + cols - 1) / cols
         float cs = if colSpacing >= 0.0 then colSpacing else spacing
         float rs = if rowSpacing >= 0.0 then rowSpacing else spacing

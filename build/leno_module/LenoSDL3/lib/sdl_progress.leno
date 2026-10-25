@@ -14,7 +14,7 @@ import "sdl_opts.leno" as dochk    // 选项对账：不认识的键会报一行
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
-import "sdl_core.leno" as core; use core.SystemCursor
+import "sdl_core.leno" as core; use core.(SystemCursor, SDL_Rect)   // SDL_Rect：填充按已播宽度裁切 ✓
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 use theme.Color
@@ -272,6 +272,9 @@ export func barTextColor(Theme th): Color { return th.txt }
 
 // 把进度条画进**任意矩形**（轨道 + 填充；几何与 render() 完全一致 ⇒ 两处同源 ✓）
 //   ratio 先夹到 0..1：调用方的比例来自解析/计算，夹一下省得画反 ✗
+// 填充裁切用的矩形（模块级缓存：每帧复用，不重复 malloc ✓）
+var _barClip = null as SDL_Rect?
+
 export func drawBar(Renderer r, float x, float y, float w, float h, float ratio, Color track, Color fill) {
     if w <= 0.0 or h <= 0.0 { return }
     float rt = ratio
@@ -280,9 +283,22 @@ export func drawBar(Renderer r, float x, float y, float w, float h, float ratio,
     r.setColor(track)
     r.fillRoundedRect(x, y, w, h, h / 2.0)
     float fillW = rt * w
-    if fillW > 1.0 {
+    // ★ 2026-10-25：填充 = **整条胶囊被裁切到 [x, x+fillW]**。
+    //   之前试过两种都不对：
+    //     · 半径恒 h/2 ⇒ 填充很窄时被啃成圆点（像独立滑块）；
+    //     · 窄填充画直角 ⇒ 轨道椭圆、填充长方块（"过会才变椭圆"✗）；
+    //     · 半径随宽度收缩 ⇒ 极窄时变成一条**竖线**，和胶囊左端接不上 ✗
+    //   ⇒ 正确做法是**裁切**：画完整的胶囊，再按已播宽度切掉右侧 ⇒ 任意比例下左端都是胶囊圆头 ✓
+    if fillW >= 0.5 {
+        if _barClip == null { _barClip = SDL_Rect.malloc() }
+        _barClip.x = _int(x)
+        _barClip.y = _int(y) - 1
+        _barClip.w = _int(fillW) + 1          // +1 覆盖浮点截断，避免亚像素缝
+        _barClip.h = _int(h) + 2
         r.setColor(fill)
-        r.fillRoundedRect(x, y, fillW, h, h / 2.0)
+        r.pushClipRect(_barClip.to_ptr())
+        r.fillRoundedRect(x, y, w, h, h / 2.0)
+        r.popClipRect()
     }
 }
 

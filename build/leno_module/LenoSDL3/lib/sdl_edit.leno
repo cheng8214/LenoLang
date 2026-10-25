@@ -24,7 +24,7 @@ var WORD_PUNCT_CP = ".,!?:;()[]\"'：。，！？（）【】；".to_codepoints(
 //   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
 func _opts_keys(): Array[string] {
     return [
-"bg_color", "border", "border_color", "draw_bg", "enabled", "focus_color", "font_path", "font_size", "font_style", "h", "multiline", "password", "placeholder", "radius", "readonly", "text", "text_color", "tip", "visible", "w", "wordWrap", "x", "y"
+"bg_color", "border", "border_color", "draw_bg", "enabled", "focus_color", "font_path", "font_size", "font_style", "h", "multiline", "pad_x", "password", "placeholder", "radius", "readonly", "text", "text_color", "tip", "visible", "w", "wordWrap", "x", "y"
 ]
 }
 export struct Edit impl Widget, Themeable {
@@ -67,6 +67,9 @@ bool _drawBorder = true          // 是否绘制边框（嵌入 ComboBox 时设�
     pri int blinkTime = 0               // 光标闪烁 tick
     pri Timer? blinkTimer              // 光标闪烁定时器（500ms 间隔驱动空闲闪烁）
     pri bool showCursor = true
+    // ★ 2026-10-25：文本内边距改成**可配**（原来写死 8.0 ⇒ 圆角输入框里光标贴着左边框，
+    //   用户反馈"光标太近"✗）。opts: `pad_x`，运行时 `set_pad_x(v)`。
+    pri float padX = 8.0
     pri bool password = false               // 密码模式
     pri bool readOnly = false               // 只读
     bool _loaded = false
@@ -207,7 +210,7 @@ bool _drawBorder = true          // 是否绘制边框（嵌入 ComboBox 时设�
     }
 
     pri func adjust_scroll_sl() {
-        float pad = 8.0
+        float pad = padX
         float visW = w - pad * 2.0
         if visW <= 0 { return }
         float curX = text_width_to(cursorPos)
@@ -220,7 +223,7 @@ bool _drawBorder = true          // 是否绘制边框（嵌入 ComboBox 时设�
     }
 
     pri func adjust_scroll_ml() {
-        float pad = 8.0
+        float pad = padX
         // 先用不含滚动条的宽度构建显示行表，再算滚动条，避免每帧重排
         float provVisW = w - pad * 2.0
         if provVisW <= 0 { provVisW = 1.0 }
@@ -277,6 +280,7 @@ bool _drawBorder = true          // 是否绘制边框（嵌入 ComboBox 时设�
 _drawBorder = opts.get("border", true)
         drawBg = opts.get("draw_bg", true)
         _fontSize   = opts.get("font_size", 15)
+        padX        = opts.get("pad_x", 8.0)     // 文本内边距（圆角输入框建议 14~16 ✓）
         fontPath   = opts.get("font_path", "")
         fontStyle  = opts.get("font_style", 0)
 
@@ -346,6 +350,9 @@ _drawBorder = opts.get("border", true)
     }
 
     // ==================== 设置方法 ====================
+    // 文本内边距（运行时也能改；影响光标 x、横向滚动与点击定位 ✓）
+    func set_pad_x(float v) { padX = v; core.markFrameRedraw() }
+
     func set_text(string t) {
         text = t; cursorPos = text.len(); cursorLine = 0; cursorCol = 0
         scrollX = 0.0   // ★ 强制归零：避免短文本替换长文本时 scroll 残留导致显示不完整
@@ -619,7 +626,7 @@ _drawBorder = opts.get("border", true)
     pri func edit_hit(float mx, float my): bool {
         if not contains(mx, my) { return false }
         if multiline {
-            float pad = 8.0
+            float pad = padX
             float sbW = sb_width(); float sbH = sb_height()
             float visW = w - pad * 2.0 - sbW
             float visH = h - pad * 2.0 - sbH
@@ -643,7 +650,7 @@ _drawBorder = opts.get("border", true)
             imeX = -1; imeY = -1; imeW = -1; imeH = -1; imeCursor = -1
             return
         }
-        float pad = 8.0
+        float pad = padX
         float cx
         int rx = 0, ry = 0, rw = 0, rh = 0
         if multiline {
@@ -678,7 +685,7 @@ _drawBorder = opts.get("border", true)
     pri func pos_from_x(float mx): int {
         if _font == null or not _font.ok { return 0 }
         if text.len() == 0 { return 0 }
-        float relX = mx - x - 8.0 + scrollX
+        float relX = mx - x - padX + scrollX
         if relX <= 0 { return 0 }
         var lo = 0
         var hi = text.len()
@@ -691,7 +698,7 @@ _drawBorder = opts.get("border", true)
 
     // 多行：从 mx,my 算 (line, col)
     pri func pos_from_xy(float mx, float my) {
-        float pad = 8.0; float sbW = sb_width()
+        float pad = padX; float sbW = sb_width()
         float visW = w - pad * 2.0 - sbW
         if wordWrap { visW = w - pad * 2.0 }   // 换行模式布局宽度与渲染一致（不含滚动条）
         float relX = mx - x - pad + scrollX
@@ -870,7 +877,7 @@ _drawBorder = opts.get("border", true)
 
         // ---- 滚动条交互（多行模式）----
         if multiline {
-            float pad = 8.0, sbW = sb_width(), sbH = sb_height(), visW = w - pad * 2.0 - sbW, visH = h - pad * 2.0 - sbH
+            float pad = padX, sbW = sb_width(), sbH = sb_height(), visW = w - pad * 2.0 - sbW, visH = h - pad * 2.0 - sbH
             float contentH = content_height()
 
             // hover 检测
@@ -1003,7 +1010,7 @@ _drawBorder = opts.get("border", true)
         if mouseDown and ev.isMouseMotion() and focused and not draggingVScroll and not draggingHScroll {
             // ★ 鼠标拖出编辑框时，钳制到边界继续扩展选区（避免选中一半）
             float mx = emx
-            float pad = 8.0
+            float pad = padX
             if mx < x + pad { mx = x + pad }
             if mx > x + w - pad { mx = x + w - pad }
             if multiline {
@@ -1565,7 +1572,7 @@ _drawBorder = opts.get("border", true)
     // ---- 单行渲染 ----
     pri func render_sl(Renderer r) {
         _font.setSSAA(r.getSSAA())   // 让 measureString 与 SSAA 绘制宽度一致，光标/选区对齐且不变形
-        float pad = 8.0
+        float pad = padX
         // 裁剪
         var clip = core.SDL_Rect.malloc()
         clip.x = _int(x + pad); clip.y = _int(y)
@@ -1626,7 +1633,7 @@ _drawBorder = opts.get("border", true)
         _font.setSSAA(r.getSSAA())   // 让 measureString 与 SSAA 绘制宽度一致，光标/选区对齐且不变形
         rebuild_lines()
         sync_line_col()                // 进入渲染时统一同步行列
-        float pad = 8.0
+        float pad = padX
         // 先用不含滚动条的宽度构建显示行表（仅脏时重建），再算滚动条
         float provVisW = w - pad * 2.0
         if provVisW <= 0 { provVisW = 1.0 }

@@ -51,3 +51,6 @@ build/_*
 # 语法测试临时目录（其他 AI 生成的探针，不进仓库）  
 .tmp_syntax_probe/  
 tmp_syntax_probe/  
+
+# 应用运行期缓存（试听音频 / 封面，用户能直接在资源管理器里看到并清理）
+leno_gui/*/*/缓存/

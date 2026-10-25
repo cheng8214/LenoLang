@@ -152,7 +152,6 @@ struct Wall {
     string curCat = ""            // 当前分类（"" = 全部，见 run() 里赋 data.CAT_ALL ✓）
     string query = ""             // 搜索关键词（空 = 不筛 ✓）
     int sortMode = 0              // 0 默认 / 1 评分优先 / 2 年份优先
-    int cols = 5                  // 当前网格列数（sync_cols 每帧校正 ✓）
 
     // ----- 无头自检状态（见 self_test ✓）-----
     //   ★ 时间基准 = **定时器**（`STEP_MS` 一拍 = 一步），**不是帧号**：
@@ -215,7 +214,6 @@ struct Wall {
             func(Event ev): bool { return on_event(ev) },
             func(Renderer r) {
                 r.clearColor(C_BG)        // 画在控件之下（网格区没铺满时露出的就是它 ✓）
-                sync_cols()               // 每帧一次比较：窗口缩放 ⇒ 网格列数跟着变 ✓
                 sync_detail_layout()      // 详情页开着时：简介折行宽度跟着窗口宽 ✓
             }
         )
@@ -363,7 +361,7 @@ struct Wall {
         if backAt > 0 and steps == backAt { close_detail() }
         // 走到步数上限就退（冒烟 ✓；`WALL_FRAMES` 的语义已改为**步数** ✓）
         if maxSteps > 0 and steps >= maxSteps {
-            print("[墙] 步数=" + _str(steps) + " 命中=" + _str(collect().len()) + " 列=" + _str(cols))
+            print("[墙] 步数=" + _str(steps) + " 命中=" + _str(collect().len()) + " 列=" + _str(grid.get_cols()))
             _exit(0)
         }
     }
@@ -376,7 +374,7 @@ struct Wall {
         if s != null {
             bool ok = SDL3.saveImagePNG(s, shotPath)
             print("[墙] 截图 " + shotPath + " ok=" + _str(ok) +
-                  "  分类=" + curCat + " 命中=" + _str(collect().len()) + " 列=" + _str(cols) +
+                  "  分类=" + curCat + " 命中=" + _str(collect().len()) + " 列=" + _str(grid.get_cols()) +
                   "  页签=" + _str(tabs.get_active()) + "  详情=" + _str(dOpen))
         } else {
             print("[墙] 读像素失败：" + SDL3.getError())
@@ -400,23 +398,12 @@ struct Wall {
             if dOpen { close_detail(); return true }
             return false
         }
-        if ev.isWindowResized() { sync_cols(); sync_detail_layout() }
+        if ev.isWindowResized() { sync_detail_layout() }
         return true
     }
 
-    // 网格列数 = 用 ScrollView 的**实际宽度**反推（卡片宽 = 列宽，尽量贴近 CARD_W ✓）
-    pri func sync_cols() {
-        float svw = sv.get_w()
-        if svw < 120.0 { return }                      // 首帧前尺寸还没排 ⇒ 不猜 ✓
-        float innerW = svw - BAR_W - 2.0 * _float(GRID_PAD)
-        int want = _int((innerW + _float(GRID_GAP)) / (_float(CARD_W) + _float(GRID_GAP)))
-        if want < 2 { want = 2 }
-        if want != cols {
-            cols = want
-            grid.set_cols(want)
-            SDL3.markFrameRedraw()
-        }
-    }
+    // （`sync_cols` 已删：列数现在由 GridLayout 的 `min_col_width` 自己算，
+    //   见 createGridLayout 处；不再需要监听 resize 手动 set_cols ✓）
 
     // ==================== 顶栏 ====================
     pri func build_header(VBox root) {
@@ -599,7 +586,10 @@ struct Wall {
                                     step: 64, smooth: true, bg_color: C_BG,
                                     border: false, bar_color: C_BAR})
         tabs.addToPageLayout(0, sv, {grow: 1, shrink: 1, align: 3})
-        grid = SDL3.createGridLayout({x: 0, y: 0, w: 900, h: 460, cols: cols,
+        // ★ 2026-10-25：列数交给**网格自己**按宽度算（`min_col_width`），
+        //   不再由应用监听 resize + `set_cols`（原来的 sync_cols 已删 ✓）
+        grid = SDL3.createGridLayout({x: 0, y: 0, w: 900, h: 460,
+                                      min_col_width: _float(CARD_W),
                                       spacing: GRID_GAP, pad_x: GRID_PAD, pad_y: GRID_PAD})
         sv.set_content(grid)     // ★ 内容控件用 createXxx（不要 win.addXxx ⇒ 会双重绘制/处理 ✗）
 
