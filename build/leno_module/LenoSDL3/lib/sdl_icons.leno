@@ -1,0 +1,568 @@
+// sdl_icons.leno — 矢量图标集（在任意 Renderer 上直接画，**不需要 PNG**）
+//
+// 为什么需要它（2026-10-25 新增）：
+//   此前控件/应用的图标只有两条路 —— ① `image_path` 指一张 PNG（要提前备图、换色还得重出图）；
+//   ② 标题栏自己那 12 个"内置矢量名"（只服务 TitleBar，别处用不上）。
+//   音乐播放器这类界面光侧栏 + 播放条就要 20 多个线性图标 ⇒ 本文件补一套**通用线性图标**：
+//   24×24 名义网格设计、颜色/尺寸随便给、吃渲染器批处理 ✓
+//
+// 用法：
+//    import "SDL3" as SDL3
+//    SDL3.drawIcon(r, "play", x, y, 18.0, #FFFFFFFF)          // 直接画
+//    SDL3.createButton({icon_name: "home", text: "首页"})      // 按钮上用（见 sdl_button.sdl_icons 接线 ✓）
+//
+// 约定：
+//   · (x, y) = 图标**左上角**；size = 边长（24 网格等比缩放，建议 12~28）
+//   · 线宽随 size 缩放（≈ size*0.085），最小 1.2px ⇒ 小图标也看得见 ✓
+//   · 全走 drawLine / fillRect / fillRoundedRect / fillCircle / fillTriangle ⇒ 与既有图元同一套批处理 ✓
+//   · 未知名字 ⇒ 返回 false（不抛，不画）✓
+import "sdl_renderer.leno" as ren; use ren.Renderer
+import "sdl_core.leno" as core
+import "sdl_theme.leno" as theme
+use theme.Color
+
+// ==================== 常量 ====================
+const float ICON_TAU = 6.283185307179586
+const float ICON_PI  = 3.141592653589793
+
+// ==================== 数学小工具 ====================
+// 泰勒级数（与 影视海报墙/tools/gen_assets.leno 同一套：不为画图引数学模块 ✓）
+func _icos(float a): float {
+    float x = a
+    while x > ICON_PI { x = x - ICON_TAU }
+    while x < 0.0 - ICON_PI { x = x + ICON_TAU }
+    float a2 = x * x
+    return 1.0 - a2 / 2.0 + a2 * a2 / 24.0 - a2 * a2 * a2 / 720.0 + a2 * a2 * a2 * a2 / 40320.0
+}
+func _isin(float a): float {
+    float x = a
+    while x > ICON_PI { x = x - ICON_TAU }
+    while x < 0.0 - ICON_PI { x = x + ICON_TAU }
+    float a2 = x * x
+    return x - x * a2 / 6.0 + x * a2 * a2 / 120.0 - x * a2 * a2 * a2 / 5040.0 + x * a2 * a2 * a2 * a2 / 362880.0
+}
+func _isqrt(float v): float {
+    if v <= 0.0 { return 0.0 }
+    float x = v
+    for 0 : 10 to i { x = (x + v / x) / 2.0 }
+    return x
+}
+
+// ==================== 绘制基元（像素坐标）====================
+// 粗线：n = round(w) 条平行 1px 线（SDL3 的 RenderLine 没有线宽 ⇒ 只能叠 ✓）
+func _seg(Renderer r, float x1, float y1, float x2, float y2, float w, Color c) {
+    float dx = x2 - x1
+    float dy = y2 - y1
+    float ln2 = dx * dx + dy * dy
+    r.setColor(c)
+    if ln2 < 0.0001 {
+        r.fillCircle(x1, y1, w * 0.5)
+        return
+    }
+    float ln = _isqrt(ln2)
+    float nx = (0.0 - dy) / ln
+    float ny = dx / ln
+    float o = w * 0.5
+    int n = _int(w + 0.5)
+    if n < 1 { n = 1 }
+    if n == 1 {
+        r.drawLine(x1, y1, x2, y2)
+        return
+    }
+    for 0 : n - 1 to i {
+        float t = 0.0 - o
+        if n > 1 { t = 0.0 - o + 2.0 * o * _float(i) / _float(n - 1) }
+        r.drawLine(x1 + nx * t, y1 + ny * t, x2 + nx * t, y2 + ny * t)
+    }
+}
+
+// 圆弧折线（角度用弧度；segs 段 ⇒ segs 条短线）
+func _arc(Renderer r, float cx, float cy, float rad, float a0, float a1, int segs, float w, Color c) {
+    if segs < 1 { return }
+    float step = (a1 - a0) / _float(segs)
+    for 0 : segs - 1 to i {
+        float t0 = a0 + step * _float(i)
+        float t1 = t0 + step
+        _seg(r, cx + rad * _icos(t0), cy + rad * _isin(t0),
+                 cx + rad * _icos(t1), cy + rad * _isin(t1), w, c)
+    }
+}
+
+// 圆环（整圈）
+func _ringIcon(Renderer r, float cx, float cy, float rad, float w, Color c) {
+    _arc(r, cx, cy, rad, 0.0, ICON_TAU - 0.001, 28, w, c)
+}
+
+// 扫描线填充三角形（三点任意朝向；行数 = 高度）
+//   为什么需要它：`drawTriangle` 只能画等边三角（size+angle），播放键那种瘦长三角画不出来 ✗
+func _fillTri(Renderer r, float x1, float y1, float x2, float y2, float x3, float y3, Color c) {
+    float ax = x1; float ay = y1
+    float bx = x2; float by = y2
+    float cx = x3; float cy = y3
+    // 按 y 升序排三点（冒泡 3 次比较 ⇒ 稳定且无数组 ✓）
+    if ay > by { float t1 = ay; ay = by; by = t1; float t2 = ax; ax = bx; bx = t2 }
+    if by > cy { float t3 = by; by = cy; cy = t3; float t4 = bx; bx = cx; cx = t4 }
+    if ay > by { float t5 = ay; ay = by; by = t5; float t6 = ax; ax = bx; bx = t6 }
+    float hgt = cy - ay
+    r.setColor(c)
+    if hgt < 0.5 {
+        // 退化成一条线 ⇒ 直接按线画（否则 0 行什么都没有 ✓）
+        _seg(r, ax, ay, cx, cy, 1.4, c)
+        return
+    }
+    int rows = _int(hgt) + 1
+    for 0 : rows to i {
+        float yy = ay + _float(i)
+        if yy > cy { yy = cy }
+        float mn = 1000000.0
+        float mx = 0.0 - 1000000.0
+        // 边 A-B
+        if (ay <= yy and yy <= by) or (by <= yy and yy <= ay) {
+            if by != ay {
+                float t = (yy - ay) / (by - ay)
+                float xx = ax + (bx - ax) * t
+                if xx < mn { mn = xx }
+                if xx > mx { mx = xx }
+            }
+        }
+        // 边 B-C
+        if (by <= yy and yy <= cy) or (cy <= yy and yy <= by) {
+            if cy != by {
+                float t2 = (yy - by) / (cy - by)
+                float xx2 = bx + (cx - bx) * t2
+                if xx2 < mn { mn = xx2 }
+                if xx2 > mx { mx = xx2 }
+            }
+        }
+        // 边 C-A
+        if (cy <= yy and yy <= ay) or (ay <= yy and yy <= cy) {
+            if ay != cy {
+                float t3 = (yy - cy) / (ay - cy)
+                float xx3 = cx + (ax - cx) * t3
+                if xx3 < mn { mn = xx3 }
+                if xx3 > mx { mx = xx3 }
+            }
+        }
+        if mx > mn { r.fillRect(mn, yy, mx - mn, 1.0) }
+    }
+}
+
+// 24 网格里的线宽（随 size 缩放；最小 1.2px ⇒ 小图标仍是"看得见的细线"✓）
+func _lw(float s): float {
+    float v = s * 0.085
+    if v < 1.2 { v = 1.2 }
+    return v
+}
+
+// 反向箭头（折线箭头头部：从 (tx,ty) 沿方向 dx/dy 画两笔）
+func _arrow(Renderer r, float tx, float ty, float dx, float dy, float len, float w, Color c) {
+    float ln = _isqrt(dx * dx + dy * dy)
+    if ln < 0.0001 { return }
+    float ux = dx / ln
+    float uy = dy / ln
+    // 箭头两翼 = 反方向 ± 45°
+    float ax = 0.0 - ux
+    float ay = 0.0 - uy
+    float c45 = 0.70710678
+    float s45 = 0.70710678
+    float e1x = ax * c45 - ay * s45
+    float e1y = ax * s45 + ay * c45
+    float e2x = ax * c45 + ay * s45
+    float e2y = 0.0 - ax * s45 + ay * c45
+    _seg(r, tx, ty, tx + e1x * len, ty + e1y * len, w, c)
+    _seg(r, tx, ty, tx + e2x * len, ty + e2y * len, w, c)
+}
+
+// ==================== 图标实现（24×24 名义网格）====================
+// 每个函数收 (x, y) 左上角 + s 边长（像素）；内部 u = s/24 换算 ✓
+
+func _ic_home(Renderer r, float x, float y, float s, Color c) {
+    float u = s / 24.0
+    float w = _lw(s)
+    _seg(r, x + 3.2 * u, y + 11.0 * u, x + 12.0 * u, y + 3.2 * u, w, c)
+    _seg(r, x + 12.0 * u, y + 3.2 * u, x + 20.8 * u, y + 11.0 * u, w, c)
+    _seg(r, x + 5.4 * u, y + 10.2 * u, x + 5.4 * u, y + 20.4 * u, w, c)
+    _seg(r, x + 18.6 * u, y + 10.2 * u, x + 18.6 * u, y + 20.4 * u, w, c)
+    _seg(r, x + 5.4 * u, y + 20.4 * u, x + 10.0 * u, y + 20.4 * u, w, c)
+    _seg(r, x + 14.0 * u, y + 20.4 * u, x + 18.6 * u, y + 20.4 * u, w, c)
+    _seg(r, x + 10.0 * u, y + 20.4 * u, x + 10.0 * u, y + 15.0 * u, w, c)
+    _seg(r, x + 14.0 * u, y + 20.4 * u, x + 14.0 * u, y + 15.0 * u, w, c)
+    _seg(r, x + 10.0 * u, y + 15.0 * u, x + 14.0 * u, y + 15.0 * u, w, c)
+}
+
+func _ic_heart(Renderer r, float x, float y, float s, Color c) {
+    float u = s / 24.0
+    float w = _lw(s)
+    float cx = x + 12.0 * u
+    float cy = y + 11.4 * u
+    int segs = 22
+    float px = 0.0
+    float py = 0.0
+    for 0 : segs to i {
+        float t = ICON_TAU * _float(i) / _float(segs)
+        float st = _isin(t)
+        float xx = cx + 0.46 * u * 16.0 * st * st * st
+        float yy = cy - 0.30 * u * (13.0 * _icos(t) - 5.0 * _icos(2.0 * t) - 2.0 * _icos(3.0 * t) - _icos(4.0 * t))
+        if i > 0 { _seg(r, px, py, xx, yy, w, c) }
+        px = xx
+        py = yy
+    }
+}
+
+func _ic_heart_fill(Renderer r, float x, float y, float s, Color c) {
+    float u = s / 24.0
+    r.setColor(c)
+    r.fillCircle(x + 8.6 * u, y + 9.6 * u, 4.9 * u)
+    r.fillCircle(x + 15.4 * u, y + 9.6 * u, 4.9 * u)
+    _fillTri(r, x + 3.9 * u, y + 10.2 * u, x + 20.1 * u, y + 10.2 * u, x + 12.0 * u, y + 20.6 * u, c)
+}
+
+func _ic_clock(Renderer r, float x, float y, float s, Color c) {
+    float u = s / 24.0
+    float w = _lw(s)
+    _ringIcon(r, x + 12.0 * u, y + 12.0 * u, 8.6 * u, w, c)
+    _seg(r, x + 12.0 * u, y + 12.0 * u, x + 12.0 * u, y + 6.6 * u, w, c)
+    _seg(r, x + 12.0 * u, y + 12.0 * u, x + 16.4 * u, y + 13.6 * u, w, c)
+}
+
+func _ic_folder(Renderer r, float x, float y, float s, Color c) {
+    float u = s / 24.0
+    float w = _lw(s)
+    // 上沿（带"文件夹耳朵"）+ 左右下三边
+    _seg(r, x + 3.0 * u, y + 7.4 * u, x + 9.4 * u, y + 7.4 * u, w, c)
+    _seg(r, x + 9.4 * u, y + 7.4 * u, x + 10.8 * u, y + 9.2 * u, w, c)
+    _seg(r, x + 10.8 * u, y + 9.2 * u, x + 21.0 * u, y + 9.2 * u, w, c)
+    _seg(r, x + 21.0 * u, y + 9.2 * u, x + 21.0 * u, y + 19.4 * u, w, c)
+    _seg(r, x + 21.0 * u, y + 19.4 * u, x + 3.0 * u, y + 19.4 * u, w, c)
+    _seg(r, x + 3.0 * u, y + 19.4 * u, x + 3.0 * u, y + 7.4 * u, w, c)
+    // 中间一道折痕（像打开的文件夹 ✓）
+    _seg(r, x + 3.0 * u, y + 12.4 * u, x + 21.0 * u, y + 12.4 * u, w * 0.85, c)
+}
+
+func _ic_list(Renderer r, float x, float y, float s, Color c) {
+    float u = s / 24.0
+    float w = _lw(s)
+    for 0 : 2 to i {
+        float yy = y + (7.5 + _float(i) * 4.5) * u
+        r.setColor(c)
+        r.fillCircle(x + 4.6 * u, yy, 1.35 * u)
+        _seg(r, x + 8.6 * u, yy, x + 20.0 * u, yy, w, c)
+    }
+}
+
+func _ic_plus(Renderer r, float x, float y, float s, Color c) {
+    float u = s / 24.0
+    float w = _lw(s)
+    _seg(r, x + 12.0 * u, y + 5.0 * u, x + 12.0 * u, y + 19.0 * u, w, c)
+    _seg(r, x + 5.0 * u, y + 12.0 * u, x + 19.0 * u, y + 12.0 * u, w, c)
+}
+
+func _ic_search(Renderer r, float x, float y, float s, Color c) {
+    float u = s / 24.0
+    float w = _lw(s)
+    _ringIcon(r, x + 10.6 * u, y + 10.6 * u, 6.6 * u, w, c)
+    _seg(r, x + 15.6 * u, y + 15.6 * u, x + 20.2 * u, y + 20.2 * u, w * 1.15, c)
+}
+
+func _ic_chevron_left(Renderer r, float x, float y, float s, Color c) {
+    float u = s / 24.0
+    float w = _lw(s)
+    _seg(r, x + 15.2 * u, y + 4.6 * u, x + 8.2 * u, y + 12.0 * u, w, c)
+    _seg(r, x + 8.2 * u, y + 12.0 * u, x + 15.2 * u, y + 19.4 * u, w, c)
+}
+
+func _ic_chevron_right(Renderer r, float x, float y, float s, Color c) {
+    float u = s / 24.0
+    float w = _lw(s)
+    _seg(r, x + 8.8 * u, y + 4.6 * u, x + 15.8 * u, y + 12.0 * u, w, c)
+    _seg(r, x + 15.8 * u, y + 12.0 * u, x + 8.8 * u, y + 19.4 * u, w, c)
+}
+
+func _ic_chevron_down(Renderer r, float x, float y, float s, Color c) {
+    float u = s / 24.0
+    float w = _lw(s)
+    _seg(r, x + 5.0 * u, y + 9.0 * u, x + 12.0 * u, y + 16.0 * u, w, c)
+    _seg(r, x + 12.0 * u, y + 16.0 * u, x + 19.0 * u, y + 9.0 * u, w, c)
+}
+
+func _ic_chevron_up(Renderer r, float x, float y, float s, Color c) {
+    float u = s / 24.0
+    float w = _lw(s)
+    _seg(r, x + 5.0 * u, y + 15.0 * u, x + 12.0 * u, y + 8.0 * u, w, c)
+    _seg(r, x + 12.0 * u, y + 8.0 * u, x + 19.0 * u, y + 15.0 * u, w, c)
+}
+
+func _ic_play(Renderer r, float x, float y, float s, Color c) {
+    float u = s / 24.0
+    _fillTri(r, x + 8.0 * u, y + 4.6 * u, x + 8.0 * u, y + 19.4 * u, x + 19.4 * u, y + 12.0 * u, c)
+}
+
+func _ic_pause(Renderer r, float x, float y, float s, Color c) {
+    float u = s / 24.0
+    r.setColor(c)
+    r.fillRoundedRect(x + 7.2 * u, y + 4.8 * u, 3.4 * u, 14.4 * u, 1.1 * u)
+    r.fillRoundedRect(x + 13.4 * u, y + 4.8 * u, 3.4 * u, 14.4 * u, 1.1 * u)
+}
+
+func _ic_prev(Renderer r, float x, float y, float s, Color c) {
+    float u = s / 24.0
+    r.setColor(c)
+    r.fillRoundedRect(x + 5.0 * u, y + 4.8 * u, 2.4 * u, 14.4 * u, 1.0 * u)
+    _fillTri(r, x + 19.4 * u, y + 4.8 * u, x + 19.4 * u, y + 19.2 * u, x + 8.4 * u, y + 12.0 * u, c)
+}
+
+func _ic_next(Renderer r, float x, float y, float s, Color c) {
+    float u = s / 24.0
+    r.setColor(c)
+    r.fillRoundedRect(x + 16.6 * u, y + 4.8 * u, 2.4 * u, 14.4 * u, 1.0 * u)
+    _fillTri(r, x + 4.6 * u, y + 4.8 * u, x + 4.6 * u, y + 19.2 * u, x + 15.6 * u, y + 12.0 * u, c)
+}
+
+func _ic_repeat(Renderer r, float x, float y, float s, Color c) {
+    float u = s / 24.0
+    float w = _lw(s)
+    // 上方回环 + 右箭头
+    _seg(r, x + 7.4 * u, y + 7.0 * u, x + 18.2 * u, y + 7.0 * u, w, c)
+    _arrow(r, x + 18.6 * u, y + 7.0 * u, 1.0, 0.0, 3.4 * u, w, c)
+    // 下方回环 + 左箭头
+    _seg(r, x + 16.6 * u, y + 17.0 * u, x + 5.8 * u, y + 17.0 * u, w, c)
+    _arrow(r, x + 5.4 * u, y + 17.0 * u, 0.0 - 1.0, 0.0, 3.4 * u, w, c)
+    // 两端竖直连接
+    _seg(r, x + 18.6 * u, y + 7.0 * u, x + 18.6 * u, y + 12.0 * u, w, c)
+    _seg(r, x + 5.4 * u, y + 12.0 * u, x + 5.4 * u, y + 17.0 * u, w, c)
+}
+
+func _ic_shuffle(Renderer r, float x, float y, float s, Color c) {
+    float u = s / 24.0
+    float w = _lw(s)
+    _seg(r, x + 3.6 * u, y + 7.2 * u, x + 8.6 * u, y + 7.2 * u, w, c)
+    _seg(r, x + 8.6 * u, y + 7.2 * u, x + 16.4 * u, y + 16.8 * u, w, c)
+    _seg(r, x + 16.4 * u, y + 16.8 * u, x + 19.0 * u, y + 16.8 * u, w, c)
+    _arrow(r, x + 20.4 * u, y + 16.8 * u, 1.0, 0.0, 3.0 * u, w, c)
+    _seg(r, x + 3.6 * u, y + 16.8 * u, x + 8.6 * u, y + 16.8 * u, w, c)
+    _seg(r, x + 8.6 * u, y + 16.8 * u, x + 16.4 * u, y + 7.2 * u, w, c)
+    _seg(r, x + 16.4 * u, y + 7.2 * u, x + 19.0 * u, y + 7.2 * u, w, c)
+    _arrow(r, x + 20.4 * u, y + 7.2 * u, 1.0, 0.0, 3.0 * u, w, c)
+}
+
+func _ic_volume(Renderer r, float x, float y, float s, Color c) {
+    float u = s / 24.0
+    float w = _lw(s)
+    // 喇叭：竖条 + 三角
+    _seg(r, x + 4.4 * u, y + 9.4 * u, x + 4.4 * u, y + 14.6 * u, w, c)
+    _fillTri(r, x + 5.2 * u, y + 9.4 * u, x + 5.2 * u, y + 14.6 * u, x + 11.4 * u, y + 18.6 * u, c)
+    _fillTri(r, x + 5.2 * u, y + 9.4 * u, x + 11.4 * u, y + 18.6 * u, x + 11.4 * u, y + 5.4 * u, c)
+    // 两道声波
+    _arc(r, x + 11.4 * u, y + 12.0 * u, 4.4 * u, 0.0 - 1.05, 1.05, 8, w, c)
+    _arc(r, x + 11.4 * u, y + 12.0 * u, 7.6 * u, 0.0 - 1.05, 1.05, 10, w, c)
+}
+
+func _ic_volume_mute(Renderer r, float x, float y, float s, Color c) {
+    float u = s / 24.0
+    float w = _lw(s)
+    _seg(r, x + 4.4 * u, y + 9.4 * u, x + 4.4 * u, y + 14.6 * u, w, c)
+    _fillTri(r, x + 5.2 * u, y + 9.4 * u, x + 5.2 * u, y + 14.6 * u, x + 11.4 * u, y + 18.6 * u, c)
+    _fillTri(r, x + 5.2 * u, y + 9.4 * u, x + 11.4 * u, y + 18.6 * u, x + 11.4 * u, y + 5.4 * u, c)
+    _seg(r, x + 15.0 * u, y + 9.4 * u, x + 20.4 * u, y + 14.6 * u, w, c)
+    _seg(r, x + 20.4 * u, y + 9.4 * u, x + 15.0 * u, y + 14.6 * u, w, c)
+}
+
+func _ic_queue(Renderer r, float x, float y, float s, Color c) {
+    float u = s / 24.0
+    float w = _lw(s)
+    _seg(r, x + 3.6 * u, y + 6.5 * u, x + 16.4 * u, y + 6.5 * u, w, c)
+    _seg(r, x + 3.6 * u, y + 12.0 * u, x + 16.4 * u, y + 12.0 * u, w, c)
+    _seg(r, x + 3.6 * u, y + 17.5 * u, x + 11.6 * u, y + 17.5 * u, w, c)
+    _fillTri(r, x + 17.4 * u, y + 14.2 * u, x + 17.4 * u, y + 21.4 * u, x + 22.0 * u, y + 17.8 * u, c)
+}
+
+func _ic_lyrics(Renderer r, float x, float y, float s, Color c) {
+    float u = s / 24.0
+    float w = _lw(s)
+    // 音符：符头 + 符干 + 旗
+    r.setColor(c)
+    r.fillCircle(x + 7.6 * u, y + 17.2 * u, 3.0 * u)
+    _seg(r, x + 10.2 * u, y + 17.0 * u, x + 10.2 * u, y + 5.6 * u, w, c)
+    _seg(r, x + 10.2 * u, y + 5.6 * u, x + 17.4 * u, y + 8.2 * u, w, c)
+    _seg(r, x + 17.4 * u, y + 8.2 * u, x + 17.4 * u, y + 12.0 * u, w, c)
+}
+
+func _ic_music(Renderer r, float x, float y, float s, Color c) {
+    float u = s / 24.0
+    float w = _lw(s)
+    r.setColor(c)
+    r.fillCircle(x + 6.4 * u, y + 17.4 * u, 2.8 * u)
+    r.fillCircle(x + 16.4 * u, y + 15.4 * u, 2.8 * u)
+    _seg(r, x + 8.8 * u, y + 17.2 * u, x + 8.8 * u, y + 6.4 * u, w, c)
+    _seg(r, x + 18.8 * u, y + 15.2 * u, x + 18.8 * u, y + 4.4 * u, w, c)
+    _seg(r, x + 8.8 * u, y + 6.4 * u, x + 18.8 * u, y + 4.4 * u, w * 1.6, c)
+}
+
+func _ic_disc(Renderer r, float x, float y, float s, Color c) {
+    float u = s / 24.0
+    float w = _lw(s)
+    _ringIcon(r, x + 12.0 * u, y + 12.0 * u, 8.6 * u, w, c)
+    r.setColor(c)
+    r.fillCircle(x + 12.0 * u, y + 12.0 * u, 2.2 * u)
+}
+
+func _ic_star(Renderer r, float x, float y, float s, Color c) {
+    float u = s / 24.0
+    float w = _lw(s)
+    float cx = x + 12.0 * u
+    float cy = y + 12.0 * u
+    float px = 0.0
+    float py = 0.0
+    for 0 : 10 to i {
+        float ang = 0.0 - ICON_PI / 2.0 + ICON_PI * _float(i) / 5.0
+        float rad = 9.0 * u
+        if i % 2 == 1 { rad = 4.0 * u }
+        float xx = cx + rad * _icos(ang)
+        float yy = cy + rad * _isin(ang)
+        if i > 0 { _seg(r, px, py, xx, yy, w, c) }
+        px = xx
+        py = yy
+    }
+    _seg(r, px, py, cx, cy - 9.0 * u, w, c)
+}
+
+func _ic_download(Renderer r, float x, float y, float s, Color c) {
+    float u = s / 24.0
+    float w = _lw(s)
+    _seg(r, x + 12.0 * u, y + 4.0 * u, x + 12.0 * u, y + 15.0 * u, w, c)
+    _seg(r, x + 6.6 * u, y + 10.2 * u, x + 12.0 * u, y + 15.6 * u, w, c)
+    _seg(r, x + 17.4 * u, y + 10.2 * u, x + 12.0 * u, y + 15.6 * u, w, c)
+    _seg(r, x + 5.0 * u, y + 20.0 * u, x + 19.0 * u, y + 20.0 * u, w, c)
+}
+
+func _ic_more_h(Renderer r, float x, float y, float s, Color c) {
+    float u = s / 24.0
+    r.setColor(c)
+    for 0 : 2 to i {
+        r.fillCircle(x + (6.5 + _float(i) * 5.5) * u, y + 12.0 * u, 1.7 * u)
+    }
+}
+
+func _ic_more_v(Renderer r, float x, float y, float s, Color c) {
+    float u = s / 24.0
+    r.setColor(c)
+    for 0 : 2 to i {
+        r.fillCircle(x + 12.0 * u, y + (6.5 + _float(i) * 5.5) * u, 1.7 * u)
+    }
+}
+
+func _ic_close(Renderer r, float x, float y, float s, Color c) {
+    float u = s / 24.0
+    float w = _lw(s)
+    _seg(r, x + 6.2 * u, y + 6.2 * u, x + 17.8 * u, y + 17.8 * u, w, c)
+    _seg(r, x + 17.8 * u, y + 6.2 * u, x + 6.2 * u, y + 17.8 * u, w, c)
+}
+
+func _ic_check(Renderer r, float x, float y, float s, Color c) {
+    float u = s / 24.0
+    float w = _lw(s)
+    _seg(r, x + 5.0 * u, y + 12.6 * u, x + 9.8 * u, y + 17.4 * u, w, c)
+    _seg(r, x + 9.8 * u, y + 17.4 * u, x + 19.2 * u, y + 6.6 * u, w, c)
+}
+
+// 音频波形（5 根竖条，用于"正在播放"标记 ✓）
+func _ic_wave(Renderer r, float x, float y, float s, Color c) {
+    float u = s / 24.0
+    float w = s * 0.11
+    if w < 1.4 { w = 1.4 }
+    Array[float] hs = [0.35, 0.7, 1.0, 0.62, 0.42]
+    for 0 : hs.len() - 1 to i {
+        float hh = 16.0 * u * hs[i]
+        float cx = x + (4.4 + _float(i) * 3.8) * u
+        r.setColor(c)
+        r.fillRoundedRect(cx - w * 0.5, y + 12.0 * u - hh * 0.5, w, hh, w * 0.5)
+    }
+}
+
+// 均衡器/播放中（4 根竖条，与 wave 区分开：贴底 ✓）
+func _ic_equalizer(Renderer r, float x, float y, float s, Color c) {
+    float u = s / 24.0
+    float w = s * 0.11
+    if w < 1.4 { w = 1.4 }
+    Array[float] hs = [0.45, 0.85, 0.6, 0.95]
+    for 0 : hs.len() - 1 to i {
+        float hh = 15.0 * u * hs[i]
+        float cx = x + (5.2 + _float(i) * 4.4) * u
+        r.setColor(c)
+        r.fillRoundedRect(cx - w * 0.5, y + 19.0 * u - hh, w, hh, w * 0.5)
+    }
+}
+
+// 圆形唱片套（大圆 + 内部弧线，给"专辑封面占位"用 ✓）
+func _ic_album(Renderer r, float x, float y, float s, Color c) {
+    float u = s / 24.0
+    float w = _lw(s)
+    _ringIcon(r, x + 12.0 * u, y + 12.0 * u, 9.0 * u, w, c)
+    _arc(r, x + 12.0 * u, y + 12.0 * u, 5.6 * u, 0.6, 2.6, 10, w * 0.9, c)
+    _arc(r, x + 12.0 * u, y + 12.0 * u, 5.6 * u, 3.5, 5.5, 10, w * 0.9, c)
+}
+
+// ==================== 名字表（供"这个名字是不是图标"判定 + 文档/自检 ✓）====================
+export func iconNames(): Array[string] {
+    return ["home", "heart", "heart_fill", "clock", "folder", "list", "plus", "search",
+            "chevron_left", "chevron_right", "chevron_down", "chevron_up",
+            "play", "pause", "prev", "next", "repeat", "shuffle",
+            "volume", "volume_mute", "queue", "lyrics", "music", "disc", "album",
+            "star", "download", "more_h", "more_v", "close", "check", "wave", "equalizer"]
+}
+
+export func isIcon(string name): bool {
+    var names = iconNames()
+    for 0 : names.len() - 1 to i {
+        if names[i] == name { return true }
+    }
+    return false
+}
+
+// ==================== 入口 ====================
+// 画一个矢量图标：(x, y) 左上角，size 边长，c 颜色。未知名字 ⇒ false（不画）✓
+export func drawIcon(Renderer r, string name, float x, float y, float size, Color c): bool {
+    if size <= 0.0 { return false }
+    switch name {
+        case "home"         { _ic_home(r, x, y, size, c) }
+        case "heart"        { _ic_heart(r, x, y, size, c) }
+        case "heart_fill"   { _ic_heart_fill(r, x, y, size, c) }
+        case "clock"        { _ic_clock(r, x, y, size, c) }
+        case "folder"       { _ic_folder(r, x, y, size, c) }
+        case "list"         { _ic_list(r, x, y, size, c) }
+        case "plus"         { _ic_plus(r, x, y, size, c) }
+        case "search"       { _ic_search(r, x, y, size, c) }
+        case "chevron_left" { _ic_chevron_left(r, x, y, size, c) }
+        case "chevron_right"{ _ic_chevron_right(r, x, y, size, c) }
+        case "chevron_down" { _ic_chevron_down(r, x, y, size, c) }
+        case "chevron_up"   { _ic_chevron_up(r, x, y, size, c) }
+        case "play"         { _ic_play(r, x, y, size, c) }
+        case "pause"        { _ic_pause(r, x, y, size, c) }
+        case "prev"         { _ic_prev(r, x, y, size, c) }
+        case "next"         { _ic_next(r, x, y, size, c) }
+        case "repeat"       { _ic_repeat(r, x, y, size, c) }
+        case "shuffle"      { _ic_shuffle(r, x, y, size, c) }
+        case "volume"       { _ic_volume(r, x, y, size, c) }
+        case "volume_mute"  { _ic_volume_mute(r, x, y, size, c) }
+        case "queue"        { _ic_queue(r, x, y, size, c) }
+        case "lyrics"       { _ic_lyrics(r, x, y, size, c) }
+        case "music"        { _ic_music(r, x, y, size, c) }
+        case "disc"         { _ic_disc(r, x, y, size, c) }
+        case "album"        { _ic_album(r, x, y, size, c) }
+        case "star"         { _ic_star(r, x, y, size, c) }
+        case "download"     { _ic_download(r, x, y, size, c) }
+        case "more_h"       { _ic_more_h(r, x, y, size, c) }
+        case "more_v"       { _ic_more_v(r, x, y, size, c) }
+        case "close"        { _ic_close(r, x, y, size, c) }
+        case "check"        { _ic_check(r, x, y, size, c) }
+        case "wave"         { _ic_wave(r, x, y, size, c) }
+        case "equalizer"    { _ic_equalizer(r, x, y, size, c) }
+        default             { return false }
+    }
+    return true
+}
+
+// 居中画（绝大多数场合拿到的是中心点：耳机、圆形按钮、徽标 ✓）
+export func drawIconAt(Renderer r, string name, float cx, float cy, float size, Color c): bool {
+    return drawIcon(r, name, cx - size * 0.5, cy - size * 0.5, size, c)
+}

@@ -56,6 +56,7 @@ import "sdl_canvas.leno" as cnv
 use cnv.Canvas
 import "sdl_popmenu.leno" as pmenu; use pmenu.PopMenu    // 自绘弹出菜单（图标传图片路径，同 MenuBar ✓）
 export func createPopMenu(Dict opts): PopMenu { return pmenu.createPopMenu(opts) }
+import "sdl_icons.leno" as ico      // 矢量图标（2026-10-25 ✓ 见下方 drawIcon 导出）
 
 
 // ==================== 重新导出类型 ====================
@@ -145,6 +146,17 @@ export func createTitleBar(Dict opts): TitleBar       { return tbar.createTitleB
 export func parseTitleBarActions(Array[Dict] src): Array[TitleBarAction] { return tbar.parseTitleBarActions(src) }
 export func is_builtin_icon(string n): bool { return tbar.is_builtin_icon(n) }
 export func createCanvas(Dict opts): Canvas            { return cnv.createCanvas(opts) }
+
+// ==================== 矢量图标（2026-10-25 新增 ✓）====================
+// 为什么加：控件的图标此前只能 `image_path` 指 PNG（要备图、换色重出图）；标题栏那 12 个
+//   "内置名"又只服务 TitleBar ⇒ 侧栏/播放条那种"一屏 20 个图标"的界面很难受 ✗
+// 现在：`SDL3.drawIcon(r, "play", x, y, 18, #FFFFFF)` 直接画；`Button({icon_name: "home"})` 直接用
+//   · 全部线性风格，24 网格设计，颜色/尺寸随便给，吃渲染器批处理 ✓
+//   · 名字表：`SDL3.iconNames()`（home / search / play / pause / prev / next / volume / heart …）
+export func drawIcon(Renderer r, string name, float x, float y, float size, Color c): bool { return ico.drawIcon(r, name, x, y, size, c) }
+export func drawIconAt(Renderer r, string name, float cx, float cy, float size, Color c): bool { return ico.drawIconAt(r, name, cx, cy, size, c) }
+export func iconNames(): Array[string] { return ico.iconNames() }
+export func isIcon(string name): bool   { return ico.isIcon(name) }
 export func isTrayEntryChecked(Ptr[u8] e): bool   { return tray.isEntryChecked(e) }
 export func isTrayEntryEnabled(Ptr[u8] e): bool   { return tray.isEntryEnabled(e) }
 export func setTrayEntryEnabled(Ptr[u8] e, bool v) { tray.setEntryEnabled(e, v) }

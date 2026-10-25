@@ -1549,6 +1549,130 @@ const BX_TEX    = 4   // 批处理文字纹理
         return true
     }
 
+    // ==================== 线性渐变矩形（2026-10-25 新增 ✓）====================
+    // 为什么需要它：`clearColor`/`fillRect` 都只能单色 ⇒ 参考图那种「浅粉→白」的大面积
+    //   背景此前只能靠几百条 1px 条去糊（**每换一次色就 flush 一次** ✗，一帧几百次提交）。
+    //   这里改用 SDL_RenderGeometry 的**顶点色插值**：一次提交画完，插值精确、无台阶 ✓
+    //   （取 6 顶点而非 4 顶点 + 索引：沿用 emitMask9 的既有写法，不引索引缓冲 ✓）
+    // 参数：dir = 0 竖向（c1 在上、c2 在下）；dir = 1 横向（c1 在左、c2 在右）
+    //   两个三角形沿对角切分，但**每条边两端同色** ⇒ 对角线上不会出现色差接缝 ✓
+    //   alpha 照 `setColor` 的口径乘 `alphaScale` ⇒ 容器淡出时渐变也跟着淡 ✓
+    func fillGradientRect(float x, float y, float w, float h, Color c1, Color c2, int dir = 0): bool {
+        if w <= 0.0 or h <= 0.0 { return false }
+        flushBatches()
+        var[float, float, float, float](r1, g1, b1, a1) = _rgbaF(c1)
+        var[float, float, float, float](r2, g2, b2, a2) = _rgbaF(c2)
+        var verts = SDL_Vertex.malloc_array(6)
+        float x2 = x + w
+        float y2 = y + h
+        // 顶点① 左上、② 右上、③ 右下、④ 左上、⑤ 右下、⑥ 左下（两个三角 = 6 顶点 ✓）
+        verts[0].x = x;  verts[0].y = y;  verts[0].u = 0.0; verts[0].v = 0.0
+        verts[1].x = x2; verts[1].y = y;  verts[1].u = 0.0; verts[1].v = 0.0
+        verts[2].x = x2; verts[2].y = y2; verts[2].u = 0.0; verts[2].v = 0.0
+        verts[3].x = x;  verts[3].y = y;  verts[3].u = 0.0; verts[3].v = 0.0
+        verts[4].x = x2; verts[4].y = y2; verts[4].u = 0.0; verts[4].v = 0.0
+        verts[5].x = x;  verts[5].y = y2; verts[5].u = 0.0; verts[5].v = 0.0
+        if dir == 1 {
+            // 横向：左列 c1、右列 c2
+            _setVertColor(verts, 0, r1, g1, b1, a1); _setVertColor(verts, 3, r1, g1, b1, a1)
+            _setVertColor(verts, 5, r1, g1, b1, a1)
+            _setVertColor(verts, 1, r2, g2, b2, a2); _setVertColor(verts, 2, r2, g2, b2, a2)
+            _setVertColor(verts, 4, r2, g2, b2, a2)
+        } else {
+            // 竖向：上排 c1、下排 c2
+            _setVertColor(verts, 0, r1, g1, b1, a1); _setVertColor(verts, 1, r1, g1, b1, a1)
+            _setVertColor(verts, 3, r1, g1, b1, a1)
+            _setVertColor(verts, 2, r2, g2, b2, a2); _setVertColor(verts, 4, r2, g2, b2, a2)
+            _setVertColor(verts, 5, r2, g2, b2, a2)
+        }
+        var ok = _lib.SDL_RenderGeometry(handle, null, verts.to_ptr(), 6, null, 0)
+        verts.free()
+        return ok
+    }
+
+    // 圆角 + 线性渐变（2026-10-25 新增 ✓）—— 大圆角按钮/播放条/胶囊
+    //   实现：**逐行** 1px 高条带（圆角区按圆方程左右内缩 ⇒ 边缘仍是干净圆弧 ✓）
+    //   ⚠ 比 `fillGradientRect` 贵（h 次提交）⇒ 只用于小面积控件（≤200px 高）；
+    //     大面积背景请用 `fillGradientRect`（一次提交 ✓）
+    func fillGradientRoundedRect(float x, float y, float w, float h, float r, Color c1, Color c2, int dir = 0): bool {
+        if w <= 0.0 or h <= 0.0 { return false }
+        float rad = r
+        if rad > w * 0.5 { rad = w * 0.5 }
+        if rad > h * 0.5 { rad = h * 0.5 }
+        if rad <= 0.5 { return fillGradientRect(x, y, w, h, c1, c2, dir) }
+        // 行高：矮控件逐像素（够平滑）；高控件 2px（省一半提交，肉眼无差 ✓）
+        float step = 1.0
+        if h > 200.0 { step = 2.0 }
+        float yy = y
+        while yy < y + h {
+            float hh = step
+            if yy + hh > y + h { hh = y + h - yy }
+            // 该行到圆角圆心的纵向距离 ⇒ 左右内缩量
+            float inset = 0.0
+            float mid = yy + hh * 0.5
+            if mid < y + rad {
+                float d = (y + rad) - mid
+                float q = rad * rad - d * d
+                if q < 0.0 { q = 0.0 }
+                inset = rad - maths.sqrt(q)
+            } else if mid > y + h - rad {
+                float d2 = mid - (y + h - rad)
+                float q2 = rad * rad - d2 * d2
+                if q2 < 0.0 { q2 = 0.0 }
+                inset = rad - maths.sqrt(q2)
+            }
+            if inset < 0.0 { inset = 0.0 }
+            float rx = x + inset
+            float rw = w - 2.0 * inset
+            if rw > 0.5 {
+                float t0 = (yy - y) / h
+                float t1 = (yy + hh - y) / h
+                if t1 > 1.0 { t1 = 1.0 }
+                if dir == 1 {
+                    // 横向：同一条带左右两端各取一次色（内缩后端点跟着移 ✓）
+                    float lt = (rx - x) / w
+                    float rt = (rx + rw - x) / w
+                    fillGradientRect(rx, yy, rw, hh, _mixC(c1, c2, lt), _mixC(c1, c2, rt), 1)
+                } else {
+                    fillGradientRect(rx, yy, rw, hh, _mixC(c1, c2, t0), _mixC(c1, c2, t1), 0)
+                }
+            }
+            yy = yy + step
+        }
+        return true
+    }
+
+    // 颜色 → 0..1 浮点分量（alpha 乘 alphaScale，与 setColor 同口径 ✓）
+    pri func _rgbaF(Color c): [float, float, float, float] {
+        int aa = (c >> 24) & 0xFF
+        int rr = (c >> 16) & 0xFF
+        int gg = (c >> 8) & 0xFF
+        int bb = c & 0xFF
+        if alphaScale < 1.0 { aa = _int(_float(aa) * alphaScale) }
+        return _float(rr) / 255.0, _float(gg) / 255.0, _float(bb) / 255.0, _float(aa) / 255.0
+    }
+
+    // 给第 i 个顶点写颜色（SDL_Vertex 的 r/g/b/a 是扁平字段 ✓，与 emitMask9 同一写入方式）
+    pri func _setVertColor(Ptr[SDL_Vertex] verts, int i, float r, float g, float b, float a) {
+        verts[i].r = r
+        verts[i].g = g
+        verts[i].b = b
+        verts[i].a = a
+    }
+
+    // 两色线性插值（t 已 clamp）
+    pri func _mixC(Color a, Color b, float t): Color {
+        if t < 0.0 { t = 0.0 }
+        if t > 1.0 { t = 1.0 }
+        int ar = (a >> 16) & 0xFF; int ag = (a >> 8) & 0xFF; int ab = a & 0xFF; int aa2 = (a >> 24) & 0xFF
+        int br = (b >> 16) & 0xFF; int bg = (b >> 8) & 0xFF; int bb2 = b & 0xFF; int ba = (b >> 24) & 0xFF
+        int rr = _int(_float(ar) + (_float(br) - _float(ar)) * t)
+        int gg = _int(_float(ag) + (_float(bg) - _float(ag)) * t)
+        int bl = _int(_float(ab) + (_float(bb2) - _float(ab)) * t)
+        int al = _int(_float(aa2) + (_float(ba) - _float(aa2)) * t)
+        return (al << 24) | (rr << 16) | (gg << 8) | bl
+    }
+
     // 填充圆角矩形（**抗锯齿** ✓；条件不满足时回退几何实现 ✓）
     func fillRoundedRect(float x, float y, float w, float h, float r): bool {
         if r > 0.0 and w >= 2.0 and h >= 2.0 and rrUsable(r) {

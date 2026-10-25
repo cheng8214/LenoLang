@@ -16,7 +16,7 @@ import maths
 //   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
 func _opts_keys(): Array[string] {
     return [
-"cursor", "enabled", "fill_color", "font_path", "font_size", "font_style", "h", "max", "min", "step", "text_color", "thumb_color", "tip", "track_color", "value", "vertical", "visible", "w", "x", "y"
+"cursor", "enabled", "fill_color", "font_path", "font_size", "font_style", "h", "max", "min", "show_value", "step", "text_color", "thumb_color", "tip", "track_color", "value", "vertical", "visible", "w", "x", "y"
 ]
 }
 export struct Slider impl Widget, Themeable {
@@ -32,6 +32,7 @@ export struct Slider impl Widget, Themeable {
     pri int cursor = SystemCursor.POINTER
     bool hover = false; pri bool wasHover = false; bool _dragging = false; bool enabled = true; bool visible = true; bool _loaded = false
     string _tip = ""           // 悬停提示文本（空 = 不提示）
+    pri bool  showValue = true     // 是否画右侧/下侧的数值文本（show_value ✓）
     pri float fontH = 0.0          // 字体行高缓存（字体不变时为常量，避免每帧 measureString）
     pri func(float):void onChange
 
@@ -76,6 +77,9 @@ export struct Slider impl Widget, Themeable {
         if opts.get("track_color") is Color => t { trkColor = t }
         if opts.get("fill_color") is Color => t { fillColor = t }
         if opts.get("thumb_color") is Color => t { thumbColor = t }
+        // ★ 2026-10-25：数值文本开关（默认 true = 历史行为不变 ✓）——
+        //   音量条那种"只要一根细条"的场合，右侧多出来的 "68.0" 很碍眼 ✗
+        showValue = opts.get("show_value", true)
         if opts.get("text_color") is Color => t { txtColor = t }
 
         cursor = opts.get("cursor", SystemCursor.POINTER)
@@ -263,8 +267,8 @@ export struct Slider impl Widget, Themeable {
         r.setColor(kC)
         r.fillCircle(cx, cy, rad)
 
-        // 数值文字
-        if _font != null and _font.ok {
+        // 数值文字（show_value:false ⇒ 一根干净的细条 ✓）
+        if showValue and _font != null and _font.ok {
             string label = value as string
             float th = fontH
             float ty; float tx
