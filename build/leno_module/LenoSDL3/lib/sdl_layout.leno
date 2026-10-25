@@ -36,6 +36,7 @@ import "sdl_edit.leno" as edt; use edt.Edit
 import "sdl_table.leno" as tbl; use tbl.Table
 import "sdl_treeview.leno" as tvlib; use tvlib.TreeView
 import "sdl_theme.leno" as thm; use thm.Theme   // ★ 2026-10-13：主题递归出口的钩子签名要用 Theme ✓
+import "sdl_core.leno" as core; use core.SDL_Rect   // clip：容器裁剪子控件用（2026-10-26 ✓）
 // ⚠ 本文件 switch 里"点名"的类型必须显式 import（单类型 case 是**静态**调用 ✓）
 //   2026-10-13：`ListBox` 的 import 已删 —— 它跟着句柄路径一起挪进 `_extraPassWindow` 钩子了，
 //   本文件不再点名它 ✓（`Table`/`TreeView` 仍要点名：`_passWindowResize` 那处 switch 认识它们 ✓）
@@ -90,6 +91,10 @@ export struct HBox impl Widget {
     float padX = 8.0, padY = 8.0, spacing = 6.0
     float padTop = -1.0, padBottom = -1.0, padLeft = -1.0, padRight = -1.0  // 分立内边距（<0 时回退 padX/padY）
     int justify = JUSTIFY_START  // 主轴分布（JUSTIFY_START/CENTER/END/SPACE_BETWEEN/SPACE_AROUND/SPACE_EVENLY）
+    // ★ 2026-10-26：`clip: true` ⇒ 子控件超出容器矩形时被裁掉（不再压到邻居上 ✓）
+    //   之前只有 Label 自己能裁（还要传 max_w），容器层没有开关 ⇒ 长内容一律溢出 ✗
+    pri bool clipKids = false
+    pri SDL_Rect? _clipR = null
     Array[Widget] _c = []
     Array[Dict]    _opt = []
     Array[float]  _natW = []   // 子项自然尺寸（add 时捕获，不被 set_size 改写，作为 flex basis 基准）
@@ -115,6 +120,7 @@ export struct HBox impl Widget {
         padY = opts.get("pad_y", 8)
         spacing = opts.get("spacing", 6)
         justify = opts.get("justify", JUSTIFY_START)
+        clipKids = opts.get("clip", false)   // 子控件超出容器就裁掉 ✓
         padTop = opts.get("padTop", -1.0)
         padBottom = opts.get("padBottom", -1.0)
         padLeft = opts.get("padLeft", -1.0)
@@ -281,7 +287,16 @@ export struct HBox impl Widget {
             r.fillRoundedRect(x, y, w, h, bgRadius)
         }
         relayout()
-        for _c to c { c.render(r) }
+        if clipKids {
+            if _clipR == null { _clipR = SDL_Rect.malloc() }
+            _clipR.x = _int(x); _clipR.y = _int(y)
+            _clipR.w = _int(w) + 1; _clipR.h = _int(h) + 1
+            r.pushClipRect(_clipR.to_ptr())
+            for _c to c { c.render(r) }
+            r.popClipRect()
+        } else {
+            for _c to c { c.render(r) }
+        }
     }
     func dispose() { for _c to c { c.dispose() } }
 }
@@ -302,6 +317,10 @@ export struct VBox impl Widget {
     float padX = 8.0; float padY = 8.0; float spacing = 6.0
     float padTop = -1.0, padBottom = -1.0, padLeft = -1.0, padRight = -1.0  // 分立内边距（<0 时回退 padX/padY）
     int justify = JUSTIFY_START  // 主轴分布（JUSTIFY_START/CENTER/END/SPACE_BETWEEN/SPACE_AROUND/SPACE_EVENLY）
+    // ★ 2026-10-26：`clip: true` ⇒ 子控件超出容器矩形时被裁掉（不再压到邻居上 ✓）
+    //   之前只有 Label 自己能裁（还要传 max_w），容器层没有开关 ⇒ 长内容一律溢出 ✗
+    pri bool clipKids = false
+    pri SDL_Rect? _clipR = null
     Array[Widget] _c = []
     Array[Dict]    _opt = []
     Array[float]  _natW = []   // 子项自然尺寸（add 时捕获，不被 set_size 改写，作为 flex basis 基准）
@@ -327,6 +346,7 @@ export struct VBox impl Widget {
         padY = opts.get("pad_y", 8)
         spacing = opts.get("spacing", 6)
         justify = opts.get("justify", JUSTIFY_START)
+        clipKids = opts.get("clip", false)   // 子控件超出容器就裁掉 ✓
         padTop = opts.get("padTop", -1.0)
         padBottom = opts.get("padBottom", -1.0)
         padLeft = opts.get("padLeft", -1.0)
@@ -501,7 +521,16 @@ export struct VBox impl Widget {
             r.fillRoundedRect(x, y, w, h, bgRadius)
         }
         relayout()
-        for _c to c { c.render(r) }
+        if clipKids {
+            if _clipR == null { _clipR = SDL_Rect.malloc() }
+            _clipR.x = _int(x); _clipR.y = _int(y)
+            _clipR.w = _int(w) + 1; _clipR.h = _int(h) + 1
+            r.pushClipRect(_clipR.to_ptr())
+            for _c to c { c.render(r) }
+            r.popClipRect()
+        } else {
+            for _c to c { c.render(r) }
+        }
     }
     func dispose() { for _c to c { c.dispose() } }
 }
@@ -668,7 +697,7 @@ func _add_keys(): Array[string] {
 //   ⚠ 白名单是三者**并集**（HBox/VBox 那套 + AnchorBox 那套 ✓）⇒ 可选宽不选窄（宁少报、不误报 ✓）
 func _set_keys(): Array[string] {
     return ["x", "y", "w", "h", "pad_x", "pad_y", "padTop", "padBottom", "padLeft", "padRight",
-            "spacing", "justify", "bg_color", "bg_radius"]
+            "spacing", "justify", "bg_color", "bg_radius", "clip"]
 }
 
 // ★ 2026-10-10：名字已**改回 `_passWindowHandle`** ✓ —— 它曾为绕开"顶层函数名与某类型方法同名"

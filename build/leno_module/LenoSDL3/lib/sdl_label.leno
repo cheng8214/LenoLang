@@ -245,7 +245,14 @@ export struct Label impl Widget, Themeable {
     //   `max_w` 的语义是"上限"，盒子才是硬边界 ⇒ 取两者较小值。
     //   `_w <= 0`（还没被布局分配宽度）时退回 max_w，保持旧行为 ✓
     pri func truncLimit(): float {
-        if max_w <= 0.0 { return 0.0 }
+        // ★ 2026-10-26：**盒子就是硬边界** —— 没给 `max_w` 时也要按布局分配的 `_w` 裁。
+        //   之前 `max_w <= 0` 直接返回 0（不裁）⇒ 长标题整段画出去、压到隔壁卡片上
+        //   （实测：音乐应用的横卡标题"仿佛即将分开却又不散"糊在右边那张卡上 ✗）。
+        //   `max_w` 的语义是"额外上限"，不是"是否裁剪的开关" ✓
+        //   · `wrap` 折行时由行宽控制，不参与截断（否则会把折行内容吃掉 ✗）
+        //   · `_w <= 0`（布局还没分配宽度）仍不裁，保持旧行为 ✓
+        if wrap { return 0.0 }
+        if max_w <= 0.0 { return if _w > 0.0 then _w else 0.0 }
         if _w > 0.0 and _w < max_w { return _w }
         return max_w
     }
@@ -373,9 +380,12 @@ export struct Label impl Widget, Themeable {
         }
 
         // ── 滚动模式 ──
-        if truncate == TRUNCATE_SCROLL and max_w > 0.0 {
+        // ★ 2026-10-26：改用 `truncLimit()` 而不是 `max_w` —— 盒宽现在是硬边界，
+        //   没传 `max_w` 的长文本同样应该能滚动（原来只认 max_w ⇒ 不传就静默不滚 ✓）
+        if truncate == TRUNCATE_SCROLL and truncLimit() > 0.0 {
+            float lim = truncLimit()
             float msw = textWidth()
-            if msw <= max_w {
+            if msw <= lim {
                 // 不需要滚动，正常绘制
                 float drawX = x
                 if textAlign == ALIGN_CENTER { drawX = x - msw / 2.0 }
@@ -383,16 +393,26 @@ export struct Label impl Widget, Themeable {
                 r.drawText(_font, text, drawX, textDrawY(), txtColor)
                 return
             }
-            // 更新滚动偏移
-            int now = core.getTicks()
-            if scrollLastTick == 0 { scrollLastTick = now }
-            int dt = now - scrollLastTick
-            if dt > 0 {
-                scrollOffset = scrollOffset + _float(dt) * 0.03 * _float(scrollDir)
-                scrollLastTick = now
+            // 更新滚动偏移 —— **只在悬停时滚**：
+            //   静止时字幕来回跑既吵又白耗重绘（每帧 markFrameRedraw）⇒ 移开即复位到开头 ✓
+            if not hover {
+                if scrollOffset != 0.0 {
+                    scrollOffset = 0.0
+                    scrollDir = 1
+                    scrollLastTick = 0
+                    core.markFrameRedraw()
+                }
+            } else {
+                int now = core.getTicks()
+                if scrollLastTick == 0 { scrollLastTick = now }
+                int dt = now - scrollLastTick
+                if dt > 0 {
+                    scrollOffset = scrollOffset + _float(dt) * 0.03 * _float(scrollDir)
+                    scrollLastTick = now
+                }
             }
             // 滚动范围：从 0 到 -(textWidth - max_w + 20)
-            float scrollRange = msw - max_w + 20.0
+            float scrollRange = msw - lim + 20.0
             if scrollDir == 1 {
                 if scrollOffset >= scrollRange {
                     scrollOffset = scrollRange
@@ -408,12 +428,12 @@ export struct Label impl Widget, Themeable {
             float scrollDrawY = textDrawY()
             SDL_Rect clip = SDL_Rect.malloc()
             clip.x = _int(x); clip.y = _int(y)
-            clip.w = _int(max_w); clip.h = _int(_h + 2)
+            clip.w = _int(lim); clip.h = _int(_h + 2)
             r.pushClipRect(clip)
             r.drawText(_font, text, x - scrollOffset, scrollDrawY, txtColor)
             r.popClipRect()
             clip.free()
-            core.markFrameRedraw()
+            if hover { core.markFrameRedraw() }   // 只在悬停滚动时请求重绘（否则静止别再拉帧 ✓）
             return
         }
 

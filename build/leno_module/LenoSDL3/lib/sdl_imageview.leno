@@ -15,7 +15,7 @@ use theme.Color
 //   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
 func _opts_keys(): Array[string] {
     return [
-"alpha", "bg_color", "border", "border_alpha", "border_color", "cursor", "enabled", "h", "image_mode", "image_path", "image_tint", "radius", "tip", "visible", "w", "x", "y"
+"alpha", "bg_color", "border", "border_alpha", "border_color", "cursor", "enabled", "h", "image_mode", "image_path", "image_tint", "overlay_hover_only", "overlay_path", "overlay_scale", "radius", "tip", "visible", "w", "x", "y"
 ]
 }
 export struct ImageView impl Widget, Themeable {
@@ -42,6 +42,13 @@ export struct ImageView impl Widget, Themeable {
     string _tip = ""               // 悬停提示文本
     pri Ptr[u8]? tex                   // 图片纹理（懒加载）
     pri string loadedPath = ""         // 已加载的路径（避免重复加载）
+    // ★ 2026-10-26：**悬停叠加图**（如封面上的播放钮）—— 卡片不必再单独占一列放按钮，
+    //   一屏能多放几首；默认悬停才出现（`overlay_hover_only: false` 可常显 ✓）
+    pri string overlayPath = ""
+    pri Ptr[u8]? overlayTex = null
+    pri string overlayLoaded = ""
+    pri bool overlayHoverOnly = true
+    pri float overlayScale = 0.5      // 叠加图边长 = min(w,h) × 该比例
     float _natW = 0.0, _natH = 0.0  // 图片原始尺寸
 
 
@@ -54,6 +61,10 @@ export struct ImageView impl Widget, Themeable {
         _w     = opts.get("w", 100)
         _h     = opts.get("h", 100)
         imagePath = opts.get("image_path", "")
+        // 悬停叠加图（封面上的播放钮）：默认悬停才出现 ✓
+        overlayPath = opts.get("overlay_path", "")
+        overlayHoverOnly = opts.get("overlay_hover_only", true)
+        overlayScale = opts.get("overlay_scale", 0.5)
         _mode  = opts.get("image_mode", MODE_ASPECT_FIT)   // MODE_ASPECT_FIT/STRETCH/ASPECT_FILL
         radius = opts.get("radius", 0.0)
         showBorder = opts.get("border", false)
@@ -75,6 +86,13 @@ export struct ImageView impl Widget, Themeable {
         if tex != null { core.lib().SDL_DestroyTexture(tex); tex = null }
         imagePath = path; loadedPath = ""; tex = null
     }
+    // 换/清叠加图（"" = 不显示）
+    func set_overlay(string path) {
+        if overlayTex != null { core.lib().SDL_DestroyTexture(overlayTex); overlayTex = null }
+        overlayPath = path
+        overlayLoaded = ""
+    }
+
     func set_mode(int mode) { _mode = mode }
     func set_radius(float r) { radius = r }
     func set_border(bool b) { showBorder = b }
@@ -180,6 +198,24 @@ export struct ImageView impl Widget, Themeable {
             r.drawTextureAt(tex, dx, dy, dw, dh)
         }
 
+        // ★ 悬停叠加图（封面上的播放钮）：画在图片之上、边框之下
+        if overlayPath != "" and (not overlayHoverOnly or hover) {
+            if overlayTex == null or overlayLoaded != overlayPath {
+                overlayTex = img.loadTexture(r.handle, overlayPath)
+                overlayLoaded = overlayPath
+            }
+            if overlayTex != null {
+                float s = _w
+                if _h < s { s = _h }
+                s = s * overlayScale
+                float ox = x + (_w - s) / 2.0
+                float oy = y + (_h - s) / 2.0
+                r.setTextureAlpha(overlayTex, 235)
+                r.setTextureColor(overlayTex, #FFFFFFFF)
+                r.drawTextureAt(overlayTex, ox, oy, s, s)
+            }
+        }
+
         // 边框
         if showBorder {
             Color bc = bdrColor
@@ -194,6 +230,7 @@ export struct ImageView impl Widget, Themeable {
 
     func dispose() {
         if tex != null { core.lib().SDL_DestroyTexture(tex); tex = null }
+        if overlayTex != null { core.lib().SDL_DestroyTexture(overlayTex); overlayTex = null }
     }
     // ==================== 运行时主题切换 ====================
     //   ★ 2026-10-13 补：以前没有 `applyTheme` ⇒ 切主题后边框仍旧色 ✗
