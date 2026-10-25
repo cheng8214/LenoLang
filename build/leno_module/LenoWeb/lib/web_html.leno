@@ -196,6 +196,19 @@ export struct SelectorPart {
     }
 }
 
+// ==================== 解析用常量（2026-10-25 性能）====================
+// 引号字符复用同一份字符串：`_parseAttrs` 每遇到一个带引号的属性值就 byte_find 一次，
+// 若每次 `strings.char(q)` 现造会把"字符串分配"搬进热路径 ⇒ 预先造好两个。
+string _QUOTE_DQ = "\""
+string _QUOTE_SQ = "'"
+
+// 文本节点没有属性、没有子节点 ⇒ 共享同一份空容器，省掉每个文本节点两次分配
+// （文本节点通常占节点总数一半以上）。
+//   ⚠ 只能给 `#text` 节点用：元素节点的 attrs 是各自新建的字典（外部代码可能会往里写）。
+//     这两个容器没有任何写入点（全文件扫过），保持"只读共享"契约 ✓
+Dict[string, string] _EMPTY_ATTRS = {}
+Array[HtmlNode] _EMPTY_CHILDREN = []
+
 // ==================== 解析上下文 ====================
 
 // 解析器上下文：每次 parse 调用创建独立实例，保证多线程并发解析安全。
@@ -229,18 +242,29 @@ func _isSpace(int b): bool {
 // ==================== 解析器 ====================
 
 func _parseTagName(_ParseCtx ctx): string {
-    // ★ 2026-10-03 收编：字节先收数组，末尾一趟 from_bytes ✓（tag 名很短，收益有限但口径统一）
-    Array[int] tag_bytes = []
-    while ctx.pos < ctx.html.byte_len(){
-        int b = ctx.html.byte(ctx.pos)
+    // ★ 2026-10-25 性能：**先扫出边界、再一趟 byte_slice**，取代"逐字节 add 进 Array[int]"。
+    //   标签名很短，但这是在**每个开始标签 + 每个闭合标签**上都跑一次的路径
+    //   （24k 标签 × 每字节 2 次原生调用）。
+    //   顺带把大小写处理也收了：扫描时记下"有没有大写"，**没有就不调 to_lower**
+    //   （它每次都新建一个字符串；HTML 里标签名几乎全小写 ⇒ 基本一次都不建）。
+    int len = ctx.html.byte_len()
+    int start = ctx.pos
+    int p = start
+    int has_upper = 0
+    while p < len {
+        int b = ctx.html.byte(p)
         if _isAlphaNum(b) or b == 45 or b == 95 {
-            tag_bytes.add(b)
-            ctx.pos = ctx.pos + 1
+            if b >= 65 and b <= 90 { has_upper = 1 }
+            p = p + 1
         } else {
             break
         }
     }
-    return strings.from_bytes(tag_bytes)
+    if p <= start { return "" }
+    string name = strings.byte_slice(ctx.html, start, p - 1)   // 闭区间 ⇒ p-1
+    ctx.pos = p
+    if has_upper { name = strings.to_lower(name) }
+    return name
 }
 
 func _skipWs(_ParseCtx ctx) {
@@ -273,31 +297,34 @@ func _parseAttrs(_ParseCtx ctx): Dict[string, string] {
             ctx.pos = ctx.pos + 1
             continue
         }
-        string name = ""
-        // ★ 2026-10-03 收编：属性名先收字节，循环后物化 ✓（`name` 的声明保留在上方）
-        Array[int] name_bytes = []
-        while ctx.pos < len {
-            int ch = ctx.html.byte(ctx.pos)
+
+        // ★ 2026-10-25 性能：属性名"先扫边界、再一趟 byte_slice"（原来是逐字节 add 进
+        //   Array[int] 再 from_bytes）。大小写也并入扫描：**没有大写就不调 to_lower**
+        //   （to_lower 每次都新建字符串；HTML 属性名几乎全小写 ⇒ 基本不建）。
+        int name_start = ctx.pos
+        int np = name_start
+        int name_upper = 0
+        while np < len {
+            int ch = ctx.html.byte(np)
             if _isSpace(ch) or ch == 61 or ch == 62 or ch == 47 or ch == 60 or ch == 38 {
                 break
             }
-            name_bytes.add(ch)
-            ctx.pos = ctx.pos + 1
+            if ch >= 65 and ch <= 90 { name_upper = 1 }
+            np = np + 1
         }
-        name = strings.from_bytes(name_bytes)
-        if name == "" {
+        if np <= name_start {
             ctx.pos = ctx.pos + 1
             continue
         }
-        // 属性名转小写
-        name = name.to_lower()
+        string name = strings.byte_slice(ctx.html, name_start, np - 1)   // 闭区间 ⇒ np-1
+        ctx.pos = np
+        if name_upper {
+            name = strings.to_lower(name)
+        }
         while ctx.pos < len and _isSpace(ctx.html.byte(ctx.pos)) {
             ctx.pos = ctx.pos + 1
         }
         string val = ""
-        // ★ 2026-10-03 收编：属性值（本函数 2 处 `+= strings.char`，带引号/不带引号两条路）
-        //   ⇒ 先收字节，两路走完在下面统一物化一次 ✓（属性值可能较长 ✓）
-        Array[int] val_bytes = []
         if ctx.pos < len and ctx.html.byte(ctx.pos) == 61 {
             ctx.pos = ctx.pos + 1
             while ctx.pos < len and _isSpace(ctx.html.byte(ctx.pos)) {
@@ -308,28 +335,36 @@ func _parseAttrs(_ParseCtx ctx): Dict[string, string] {
                 q = ctx.html.byte(ctx.pos)
             }
             if q == 34 or q == 39 {
+                // 带引号：一次 byte_find 定位闭合引号 + 一次切片（值可能是长 data URI）
                 ctx.pos = ctx.pos + 1
-                while ctx.pos < len {
-                    int ch = ctx.html.byte(ctx.pos)
-                    if ch == q {
-                        ctx.pos = ctx.pos + 1
-                        break
+                int vstart = ctx.pos
+                int close = strings.byte_find(ctx.html, if q == 34 then _QUOTE_DQ else _QUOTE_SQ, vstart)
+                if close < 0 {
+                    // 没闭合（容错）：与原来一致 —— 吃到文末
+                    val = strings.byte_slice(ctx.html, vstart, len - 1)
+                    ctx.pos = len
+                } else {
+                    if close > vstart {
+                        val = strings.byte_slice(ctx.html, vstart, close - 1)
                     }
-                    val_bytes.add(ch)
-                    ctx.pos = ctx.pos + 1
+                    ctx.pos = close + 1
                 }
             } else {
-                // 无引号属性值
-                while ctx.pos < len {
-                    int ch = ctx.html.byte(ctx.pos)
+                // 无引号属性值：扫边界 + 切片（这种值都很短）
+                int vstart = ctx.pos
+                int vp = vstart
+                while vp < len {
+                    int ch = ctx.html.byte(vp)
                     if _isSpace(ch) or ch == 62 or ch == 47 {
                         break
                     }
-                    val_bytes.add(ch)
-                    ctx.pos = ctx.pos + 1
+                    vp = vp + 1
                 }
+                if vp > vstart {
+                    val = strings.byte_slice(ctx.html, vstart, vp - 1)
+                }
+                ctx.pos = vp
             }
-            val = strings.from_bytes(val_bytes)
         } else {
             // 布尔属性：checked, disabled, selected 等
             // HTML 中布尔属性存在即表示 true，值设为属性名本身
@@ -341,25 +376,29 @@ func _parseAttrs(_ParseCtx ctx): Dict[string, string] {
 }
 
 func _parseText(_ParseCtx ctx): string {
-    // ★ 2026-10-03 收编：文本节点可达**较长**（正文）⇒ 字节先收数组，末尾一趟 from_bytes ✓
-    Array[int] text_bytes = []
+    // ★ 2026-10-25 性能：一次 `byte_find("<")` 定位 + 一次 `byte_slice` 切片，
+    //   取代"逐字节 byte() + Array[int].add + from_bytes"（文本节点是数量最多的节点）。
+    //   HTML 的分隔符都是 ASCII ⇒ 切点必落在字符边界上，byte_slice 的字节语义安全。
+    //   ⚠ byte_slice 是**闭区间** ⇒ 结束位置传 end-1。
     int len = ctx.html.byte_len()
-    while ctx.pos < len {
-        int b = ctx.html.byte(ctx.pos)
-        if b == 60 {
-            break
-        }
-        text_bytes.add(b)
-        ctx.pos = ctx.pos + 1
-    }
-    return strings.from_bytes(text_bytes)
+    if ctx.pos >= len { return "" }
+    int p = strings.byte_find(ctx.html, "<", ctx.pos)
+    int stop = if p < 0 then len else p
+    if stop <= ctx.pos { return "" }
+    string text = strings.byte_slice(ctx.html, ctx.pos, stop - 1)
+    ctx.pos = stop
+    return text
 }
 
 // 判断是否为 void 标签（不需要闭合标签）
 func _isVoidTag(string tagName): bool {
-    // 用 in 简化多标签判断（void 元素：无内容、自闭合）
-    return tagName in ["br", "hr", "img", "input", "meta", "link",
-                       "area", "base", "col", "embed", "source", "track", "wbr"]
+    // void 元素（无内容、自闭合）。
+    // ★ 2026-10-25 性能：原来写 `tagName in [13 个字符串]` —— 那个 `[...]` 是**每次调用
+    //   都新建一个数组字面量**（每个开始标签一次）。改成短路比较链：零分配、按常见度排序。
+    return tagName == "br" or tagName == "img" or tagName == "input" or tagName == "meta" or
+           tagName == "link" or tagName == "hr" or tagName == "source" or tagName == "area" or
+           tagName == "base" or tagName == "col" or tagName == "embed" or tagName == "track" or
+           tagName == "wbr"
 }
 
 // ==================== HTML 实体解码 ====================
@@ -470,6 +509,11 @@ func _codepointToUtf8(int cp): string {
 }
 
 func _decodeEntities(string text): string {
+    // ★ 2026-10-25 性能（快路径）：整段里**没有 '&'** ⇒ 原样返回。
+    //   绝大多数文本节点不含实体，而下面的逐字节循环会为每个字节做
+    //   `text.byte(i)` + `Array[int].add`，末尾再 `from_bytes` —— 纯搬运。
+    //   等价性：原实现对"无 &"的文本就是逐字节复制 ⇒ 输出 == 输入 ✓
+    if strings.byte_find(text, "&", 0) < 0 { return text }
     // ★ 2026-10-03 收编：实体解码的产出可达**整篇文本** ⇒ 改成字节数组累积，末尾一趟 from_bytes ✓
     //   本函数同时有"追加字符串"的分支（解码出的实体 / `_codepointToUtf8`）⇒ 用 `to_bytes()`
     //   把那两处也并入同一字节数组 ✓（`from_bytes(a+b) == from_bytes(a) + from_bytes(b)`）
@@ -602,7 +646,7 @@ func _parseElement(_ParseCtx ctx): HtmlNode? {
             cdata_bytes.add(ctx.html.byte(ctx.pos))
             ctx.pos = ctx.pos + 1
         }
-        return _makeNode("#text", {}, [], strings.from_bytes(cdata_bytes))
+        return _makeNode("#text", _EMPTY_ATTRS, _EMPTY_CHILDREN, strings.from_bytes(cdata_bytes))
     }
 
     // DOCTYPE / 其他声明 <!...>
@@ -628,7 +672,6 @@ func _parseElement(_ParseCtx ctx): HtmlNode? {
     if tagName == "" {
         return null
     }
-    tagName = strings.to_lower(tagName)
 
     Dict[string, string] attrs = _parseAttrs(ctx)
 
@@ -660,7 +703,6 @@ func _parseElement(_ParseCtx ctx): HtmlNode? {
                 int savePos = ctx.pos
                 ctx.pos = ctx.pos + 2
                 string closeTag = _parseTagName(ctx)
-                closeTag = strings.to_lower(closeTag)
                 if closeTag == tagName {
                     _parseAttrs(ctx)
                     if ctx.pos < len and ctx.html.byte(ctx.pos) == 62 {
@@ -713,7 +755,7 @@ func _parseElement(_ParseCtx ctx): HtmlNode? {
                 string cdata = strings.from_bytes(cdata_bytes)
                 if cdata != "" {
                     textContent = textContent + cdata
-                    children.add(_makeNode("#text", {}, [], cdata))
+                    children.add(_makeNode("#text", _EMPTY_ATTRS, _EMPTY_CHILDREN, cdata))
                 }
                 continue
             }
@@ -736,7 +778,7 @@ func _parseElement(_ParseCtx ctx): HtmlNode? {
             if text != "" {
                 text = _decodeEntities(text)
                 textContent = textContent + text
-                children.add(_makeNode("#text", {}, [], text))
+                children.add(_makeNode("#text", _EMPTY_ATTRS, _EMPTY_CHILDREN, text))
             }
         }
     }
@@ -792,7 +834,7 @@ export func parse(string html): HtmlNode {
                     }
                     string cdata = strings.from_bytes(cdata_bytes)
                     if cdata != "" {
-                        root.children.add(_makeNode("#text", {}, [], cdata))
+                        root.children.add(_makeNode("#text", _EMPTY_ATTRS, _EMPTY_CHILDREN, cdata))
                     }
                     continue
                 }
@@ -824,7 +866,7 @@ export func parse(string html): HtmlNode {
             string text = _parseText(ctx)
             if text != "" {
                 text = _decodeEntities(text)
-                root.children.add(_makeNode("#text", {}, [], text))
+                root.children.add(_makeNode("#text", _EMPTY_ATTRS, _EMPTY_CHILDREN, text))
             }
         }
     }

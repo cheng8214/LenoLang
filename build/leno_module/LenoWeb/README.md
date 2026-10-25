@@ -78,6 +78,32 @@ web.codepage("gb18030")              // → 54936
 var rows = web.select(web.parse(html), "table tr:nth-child(2n+1) td:not(.hidden)")
 ```
 
+### 解析性能（2026-10-25 优化）
+
+实测语料：246 KB / 20 003 个节点（`examples/03_HTML解析/test_parse_perf.leno` 的 2000 段重复页面）：
+
+| 指标 | 优化前 | 优化后 |
+| --- | --- | --- |
+| `parse` | 131 ms | **66 ms** |
+| 另一基准（3 轮取最好，同一份 HTML） | 206 ms | **94 ms** |
+| `select("div.item")` 2000 命中 | 22 ms | 5 ms |
+
+做了四件事（都在 `lib/web_html.leno`，**语义零变化**）：
+
+| 改动 | 原因 |
+| --- | --- |
+| `_parseText` 改 `byte_find("<") + byte_slice` | 原来是"逐字节 `byte(i)` + `Array[int].add` + `from_bytes`"，文本节点又是数量最多的节点 |
+| `_decodeEntities` 加**快路径**：没有 `&` 直接返回原串 | 绝大多数文本没有实体，原实现照样整段搬一遍字节数组 |
+| `_parseTagName` / `_parseAttrs` 改"扫边界 + 一次切片"，大小写并入扫描 | 原来每条标签/属性都累一个 `Array[int]` 再 `from_bytes`；`to_lower` 每次新建字符串，现在**没有大写就不调** |
+| `#text` 节点共享一份空 attrs / 空 children；`_isVoidTag` 去掉每次新建的数组字面量 | 每个节点的两次分配 + 每个开始标签一个 13 元素数组字面量 |
+
+等价性验证方式：把优化前的文件留一份副本，对 18 组边界用例 + 上面那份大语料，分别 dump
+"`tag` / 属性（键排序）/ `text` / 子节点顺序"的规范化文本再逐行比对，并比 `allText`、
+`select` 命中数 —— 结果**完全一致**（20 003 节点、`allText` 112 000 字符）。
+
+> 再往下要动编译器：`strings.byte_find_any(s, " \t\r\n=>/<&\"'", from)`（属性名/值一次定位）
+> 与 `strings.html_unescape(s)`（C 端单遍实体解码）。当前收益主要卡在"每节点分配"。`
+
 ### 选择器 + 取值一步到位（2026-10-20）
 
 爬虫里 90% 的写法是"选一批节点，再逐个取文本 / 取属性"，以前要三行：
