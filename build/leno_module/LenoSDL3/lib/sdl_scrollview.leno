@@ -78,6 +78,9 @@ export struct ScrollView impl Widget, Themeable {
     // 上一次"已同步过"的自身尺寸：窗口缩放时滚动位置没变，但**内容尺寸必须按新视图尺寸重算** ✗
     //   （只比滚动位置的去重会让内容停在旧宽度 ⇒ 画面"还原后没变"，用户实测 ✓）
     pri float syncedW = -1.0, syncedH = -1.0
+    // 事件派发的「视口裁剪」状态（渲染有 `pushClipRect`，派发也必须有一份对应的闸门 ⇒ 见 process ✓）
+    pri bool innerDown = false   // 视口内按下且还没松手 ⇒ 期间一律照转（拖出视口也不会卡住 pressed ✓）
+    pri bool mouseIn = false     // 上一拍指针在不在视口内（刚离开时补一次 motion ⇒ 子控件清 hover ✓）
 
 
     func set(Dict opts) {
@@ -352,6 +355,13 @@ export struct ScrollView impl Widget, Themeable {
         return mx >= x and mx <= x + w and my >= y and my <= y + h
     }
 
+    // 点是否在**可见内容区**内（视口扣除滚动条槽 ⇒ 与 render 的裁剪矩形逐位一致 ✓）
+    pri func inView(float mx, float my): bool {
+        float gw = if showV() then barW else 0.0
+        float gh = if showH() then barW else 0.0
+        return mx >= x and mx <= x + w - gw and my >= y and my <= y + h - gh
+    }
+
     // 点是否在滚动条槽内（竖直右槽 / 水平底槽）
     pri func onGutter(float mx, float my): bool {
         if showV() {
@@ -416,6 +426,9 @@ export struct ScrollView impl Widget, Themeable {
 
     func process(Event ev) {
         if not _loaded or not enabled or not visible { return }
+        // 失焦兜底：拖拽中途 Alt+Tab / 切走窗口会**丢掉 up 事件** ⇒ 捕获状态必须归零，
+        //   否则 `innerDown` 永远为真、闸门永久敞开（= 这篇修复白做 ✗）
+        if ev.isWindowFocusLost() { innerDown = false; mouseIn = false }
         sync()
         // 滚动条交互优先于内容
         if ev.isMouseButtonDown() and ev.mouseButton() == 1 {
@@ -469,6 +482,34 @@ export struct ScrollView impl Widget, Themeable {
                 }
             }
         }
+        // ★★ 内容事件**必须按视口裁剪**（2026-10-25 修）：渲染有 `pushClipRect`，派发却一直是无条件
+        //   转发 ⇒ 滚动后内容被 `set_pos(y - _int(scrollY))` 整体上移，**移出视口的那些行只是画不出来、
+        //   命中判定照旧按绝对坐标** ⇒ 鼠标在标题栏/顶栏上划，底下那张"幽灵卡片"照样 hover / 被点开 ✗
+        //   （海报墙实测：下滚后点标题栏居然进了详情页 ✓）
+        //   规则与桌面的"鼠标捕获"一致：
+        //     ① 指针在视口内 ⇒ 照转；
+        //     ② 视口内**按下后**一直在转（拖到视口外也不断）⇒ 子控件能收到 up，不会卡在 pressed ✗；
+        //     ③ 刚离开视口那一下**补转一次 motion** ⇒ 视口内原有的 hover 能收到"指针不在了"自行清掉 ✓
+        //        （否则 hover 高亮会一直粘在最后划过的那张卡上 ✗）
+        //   ⚠ 键盘/文本事件**不闸**：Edit 在滚动区里输入时光标可能不在自己身上（如滚轮把视口挪走）✓
+        var[float, float](_mx, _my) = ev.mousePos()
+        if ev.isMouseWheel() { _mx = ev.wheelMouseX(); _my = ev.wheelMouseY() }
+        bool isMouse = ev.isMouseMotion() or ev.isMouseButtonDown() or ev.isMouseButtonUp() or ev.isMouseWheel()
+        if not isMouse {
+            _content?.process(ev)
+            return
+        }
+        bool inside = inView(_mx, _my)
+        bool captured = innerDown
+        if ev.isMouseButtonUp() { innerDown = false }
+        if ev.isMouseButtonDown() and inside { innerDown = true }
+        if not inside and not captured {
+            bool wasIn = mouseIn
+            mouseIn = false
+            if ev.isMouseMotion() and wasIn { _content?.process(ev) }   // 离开视口：补一次 ⇒ 清 hover ✓
+            return
+        }
+        mouseIn = inside
         _content?.process(ev)
     }
 

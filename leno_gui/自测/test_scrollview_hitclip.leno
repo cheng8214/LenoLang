@@ -1,0 +1,99 @@
+// test_scrollview_hitclip.leno — ScrollView 的**事件派发也要裁剪**（2026-10-25 修）
+//   症状（海报墙实测）：下滚之后鼠标挪到标题栏/顶栏上划、点击，底下那张已经滚出视口的
+//   "幽灵卡片"照样 hover / 被点开 ✗ —— 渲染有 pushClipRect，派发却一直无条件转发给内容。
+//   布局刻意照海报墙：顶栏 100px + 下面 200px 的滚动区 ⇒ 滚出去的按钮会落到**顶栏**那块地。
+//   断言（自带阳性对照，避免"测了个空"）：
+//     ⓪ 滚动**前**点按钮 A ⇒ 必须触发（证明注入链路 + A 的矩形都对 ✓）
+//     ① 滚动 120 后 A 移出视口（绝对 y < 视口顶）⇒ 点它所在位置**必须不触发** ✓（旧行为：1 ✗）
+//     ② 视口**内**的按钮 B 照旧可点（修不能修出"整片失灵" ✗）
+//   时间基准：定时器（本框架事件驱动重绘，帧号不定时 ✓）；点击前先 testMoveAt（hover 门 ✓）
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer, Window, ScrollView, VBox, Button, Label)
+
+int steps = 0
+int hitsA = 0            // 按钮 A（会滚出视口）
+int hitsB = 0            // 按钮 B（留在视口内）
+ScrollView sv
+Button a
+Button b
+float gx = 0.0, gy = 0.0 // ① 要点的"幽灵位置"（A 滚出后的中心）
+
+func run() {
+    SDL3.ttfInit()
+    SDL3.setTheme(SDL3.darkTheme())
+    Window w = SDL3.createWindow({title: "probe_scrollclip", w: 400, h: 300})
+    if not w.ok { SDL3.ttfQuit(); return }
+
+    VBox rootV = SDL3.createVBox({x: 0, y: 0, w: 400, h: 300, pad_x: 0, pad_y: 0, spacing: 0,
+                                  bg_color: #141821FF})
+    w.setRootAt(rootV, 0, 0)
+    rootV.add(SDL3.createLabel({text: "  顶栏占位（滚出去的东西不许在这里响应）"}),
+              {grow: 0, shrink: 0, basis: 100, align: 3})
+
+    sv = SDL3.createScrollView({x: 0, y: 0, w: 400, h: 200, content_w: 400.0, content_h: 400.0,
+                                bg_color: #0E1116FF, border: false})
+    rootV.add(sv, {grow: 1, shrink: 1, align: 3})
+
+    VBox col = SDL3.createVBox({x: 0, y: 0, w: 400, h: 400, pad_x: 0, pad_y: 0, spacing: 0})
+    sv.set_content(col)
+
+    a = SDL3.createButton({text: "A（滚出视口）", h: 40})
+    col.add(a, {grow: 0, shrink: 0, basis: 40, align: 3})
+    col.add(SDL3.createLabel({text: "  占位（把 B 推下去 ✓）"}), {grow: 0, shrink: 0, basis: 200, align: 3})
+    b = SDL3.createButton({text: "B（留在视口内）", h: 40})
+    col.add(b, {grow: 0, shrink: 0, basis: 40, align: 3})
+    col.add(SDL3.createLabel({text: ""}), {grow: 1, shrink: 1, align: 3})
+
+    a.on_click(func() { hitsA = hitsA + 1 })
+    b.on_click(func() { hitsB = hitsB + 1 })
+
+    w.addTimer(100, func() {
+        steps = steps + 1
+        if steps == 2 {
+            print("[probe] 视口=" + _str(sv.x) + "," + _str(sv.y) + " " +
+                  _str(sv.get_w()) + "x" + _str(sv.get_h()) + "  可滚=" + _str(sv.get_max_scroll_y()) +
+                  "  A@" + _str(a.get_x()) + "," + _str(a.get_y()) +
+                  "  B@" + _str(b.get_x()) + "," + _str(b.get_y()))
+            float ax = a.get_x() + a.get_w() / 2.0
+            float ay = a.get_y() + a.get_h() / 2.0
+            SDL3.testMoveAt(w.getID(), ax, ay)
+            bool ok0 = SDL3.testClickAt(w.getID(), ax, ay)
+            print("[probe] ⓪ 点 A（滚动前、视口内）(" + _str(ax) + ", " + _str(ay) + ") ok=" + _str(ok0))
+        }
+        if steps == 4 {
+            print("[probe] ⓪ 结果：hitsA=" + _str(hitsA) + "（应为 1 ✓ 否则注入链路本身有问题）")
+            hitsA = 0                       // 清账：接下来只看"幽灵位置"会不会被点
+            sv.set_scroll(0.0, 120.0)
+            print("[probe] 已滚到 scroll=" + _str(sv.get_scroll_y()) + " ⇒ A 现在在 y=" + _str(a.get_y()))
+        }
+        if steps == 6 {
+            gx = a.get_x() + a.get_w() / 2.0
+            gy = a.get_y() + a.get_h() / 2.0
+            print("[probe] ① 幽灵位置 = A 中心 (" + _str(gx) + ", " + _str(gy) + ")；视口顶 y=" +
+                  _str(sv.y) + " ⇒ 落在顶栏里=" + _str(gy < sv.y and gy >= 0.0))
+            SDL3.testMoveAt(w.getID(), gx, gy)
+            bool ok1 = SDL3.testClickAt(w.getID(), gx, gy)
+            print("[probe] ① 注入点击 ok=" + _str(ok1) + "（投递成功 ≠ 控件收到 ✓）")
+        }
+        if steps == 8 {
+            print("[probe] ① 结果：hitsA=" + _str(hitsA) + "（应为 0 ✓ 旧行为是 1 ✗）")
+            float bx = b.get_x() + b.get_w() / 2.0
+            float by = b.get_y() + b.get_h() / 2.0
+            SDL3.testMoveAt(w.getID(), bx, by)
+            bool ok2 = SDL3.testClickAt(w.getID(), bx, by)
+            print("[probe] ② 点视口内 B(" + _str(bx) + ", " + _str(by) + ") ok=" + _str(ok2))
+        }
+        if steps == 10 {
+            print("[probe] ② 结果：hitsB=" + _str(hitsB) + "（应为 1 ✓）")
+            print("[probe] 判定：" +
+                  (if hitsA == 0 and hitsB == 1 then "PASS ✓ 派发已按视口裁剪"
+                   else "FAIL ✗ ghost=" + _str(hitsA) + " live=" + _str(hitsB)))
+            _exit(0)
+        }
+    })
+
+    w.run(func(Event ev): bool { return true }, func(Renderer r) { r.clearColor(#0E1116FF) })
+    SDL3.ttfQuit()
+}
+
+main() { run() }
