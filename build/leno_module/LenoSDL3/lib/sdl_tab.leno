@@ -15,7 +15,7 @@ import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_opts.leno" as dochk    // 选项对账：不认识的键会报一行警告（见 sdl_opts.leno ✓）
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_font.leno" as fnt; use fnt.Font
-import "sdl_core.leno" as core; use core.SystemCursor; use core.SDL_Rect
+import "sdl_core.leno" as core; use core.(SystemCursor, SDL_Rect, sdl3)
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_edit.leno" as edt; use edt.Edit
 import "sdl_layout.leno" as lay; use lay.HBox; use lay.VBox; use lay.AnchorBox
@@ -24,6 +24,7 @@ import "sdl_panel.leno" as pnl; use pnl.Panel
 import "sdl_table.leno" as tbl; use tbl.Table
 import "sdl_menu.leno" as menu     // 切页时收掉残留的右击菜单（见 closePopups 的注释 ✓）
 import "sdl_treeview.leno" as tvlib; use tvlib.TreeView
+import "sdl_image.leno" as img     // 标签图标纹理（tab_icons ✓ 2026-10-26）
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 use theme.Color
 
@@ -32,7 +33,7 @@ use theme.Color
 //   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
 func _opts_keys(): Array[string] {
     return [
-"accent_color", "active", "active_color", "active_text_color", "bar_color", "bg_color", "border", "border_color", "clip", "cursor", "enabled", "font_path", "font_size", "font_style", "h", "show_header", "tab_color", "tab_h", "tabs", "text_color", "visible", "w", "x", "y"
+"accent_color", "active", "active_color", "active_text_color", "bar_color", "bg_color", "border", "border_color", "clip", "cursor", "enabled", "font_path", "font_size", "font_style", "h", "show_header", "tab_color", "tab_h", "tab_icon_size", "tab_icons", "tabs", "text_color", "visible", "w", "x", "y"
 ]
 }
 export struct TabControl impl Widget, Themeable {
@@ -42,6 +43,12 @@ export struct TabControl impl Widget, Themeable {
     bool _drawBorder = true    // 是否画内容区边框（默认 true = 老行为 ✓）
     pri bool clipContent = true   // 是否把页面内容裁剪到内容区（`clip:false` 关闭；默认 true = 老行为 ✓）
     Array[string] _tabs = []     // 各页标题
+    // ★ 2026-10-26：标签图标（与 `_tabs` 并行的图片路径，"" = 该页无图标）
+    //   纹理按需加载并缓存；`tab_icon_size` 默认 16（48 源图的 1/3，整数倍不丢线 ✓）
+    Array[string] _tabIcons = []
+    pri float tabIconSize = 16.0
+    pri Array[Ptr[u8]?] _iconTex = []
+    pri Array[string] _iconLoaded = []
     pri Array[Array[Widget]] pages = []  // 每页的子控件集合（仅当前页被处理/绘制）
     Array[VBox] _pageLayouts = []    // 每页的布局容器
     Array[bool] _hasLayout = []       // 每页是否设置了布局容器
@@ -114,6 +121,17 @@ export struct TabControl impl Widget, Themeable {
         _drawBorder = opts.get("border", true)
         // 关掉内容区裁剪：页面内容（如整页 ScrollView）自己有裁剪时这层是冗余的 ✓
         clipContent = opts.get("clip", true)
+
+        // 标签图标（与 `tabs` 并行的图片路径；"" = 该页无图标）
+        //   ★ 2026-10-26：原来只能传文字 ⇒ 设置页那种「常规/下载/外观」想带图标只能自己拼
+        var ti = opts.get("tab_icons", [])
+        if ti is Array[string] {
+            _tabIcons = ti as Array[string]
+            tabIconSize = opts.get("tab_icon_size", 16.0)
+            _iconTex = []
+            _iconLoaded = []
+            for _tabIcons.len() to k { _iconTex.add(null); _iconLoaded.add("") }
+        }
 
         var ts = opts.get("tabs", [])
         Array[string] newTabs = []
@@ -341,6 +359,25 @@ export struct TabControl impl Widget, Themeable {
         return mx >= x and mx <= x + w and my >= y and my <= y + h
     }
 
+    // 该页有没有图标（越界 / 空串 ⇒ 没有 ✓）
+    pri func has_icon(int i): bool {
+        return i >= 0 and i < _tabIcons.len() and _tabIcons[i] != ""
+    }
+
+    // 图标的纹理（按需加载 + 缓存；渲染器变了会重新加载 ✓）
+    pri func tab_icon_tex(Renderer r, int i): Ptr[u8]? {
+        if not has_icon(i) { return null }
+        while _iconTex.len() <= i {
+            _iconTex.add(null)
+            _iconLoaded.add("")
+        }
+        if _iconTex[i] == null or _iconLoaded[i] != _tabIcons[i] {
+            _iconTex[i] = img.loadTexture(r.handle, _tabIcons[i])
+            _iconLoaded[i] = _tabIcons[i]
+        }
+        return _iconTex[i]
+    }
+
     // 计算各标签矩形：[rx, ry, rw, rh]
     // ★ 使用缓存的标签宽度，避免每次调用都 measureString
     pri func tabRects(): Array[Array[float]] {
@@ -352,7 +389,10 @@ export struct TabControl impl Widget, Themeable {
             tabW = []
             for n to i {
                 float tw = 60.0
-                var[float, float](_tw, _th) = _font.measureString(_tabs[i]); tw = _tw + 28.0
+                var[float, float](_tw, _th) = _font.measureString(_tabs[i])
+                // 有图标 ⇒ 标签宽多出「图标 16 + 间距 6」（见 draw 里同一套口径 ✓）
+                float iw = if has_icon(i) then tabIconSize + 6.0 else 0.0
+                tw = _tw + 28.0 + iw
                 if tw < 48.0 { tw = 48.0 }
                 tabW.add(tw)
             }
@@ -472,9 +512,24 @@ export struct TabControl impl Widget, Themeable {
             // （否则文字会画到 `rr[1] + (0 - th)/2` = 标签栏上方；`tab_h:0` 那种"假隐藏"就是这么漏的）
             if showHeader and _font != null and _font.ok and _tabs[i] != "" {
                 var[float, float](tw, th) = _font.measureString(_tabs[i])
-                float tx = rr[0] + (rr[2] - tw) / 2.0
+                // ★ 有图标时「图标 + 间距 + 文字」作为**整体**居中（2026-10-26 ✓）
+                bool hasI = has_icon(i)
+                float iw = if hasI then tabIconSize else 0.0
+                float gap = if hasI then 6.0 else 0.0
+                float totalW = iw + gap + tw
+                float bx = rr[0] + (rr[2] - totalW) / 2.0
                 float ty = rr[1] + (rr[3] - th) / 2.0
-                r.drawText(_font, _tabs[i], r.snapX(tx), r.snapY(ty), tC)
+                if hasI {
+                    var tex = tab_icon_tex(r, i)
+                    if tex != null {
+                        float iy = rr[1] + (rr[3] - tabIconSize) / 2.0
+                        // 落整像素：半像素偏移会让细线条被采样掉（和卡片图标同一个坑 ✓）
+                        r.drawTextureAt(tex, _float(_int(bx + 0.5)), _float(_int(iy + 0.5)),
+                                        tabIconSize, tabIconSize)
+                    }
+                    bx = bx + iw + gap
+                }
+                r.drawText(_font, _tabs[i], r.snapX(bx), r.snapY(ty), tC)
             }
 
             // 激活标签下划线（隐藏表头时同样不画 ✓）
@@ -534,6 +589,13 @@ export struct TabControl impl Widget, Themeable {
             for pg to c { c.dispose() }
         }
         if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
+        // 标签图标的纹理也要释放（否则每次销毁 Tab 都漏一张 ✓）
+        for _iconTex.len() to k {
+            var tx = _iconTex[k]
+            if tx != null { core.lib().SDL_DestroyTexture(tx) }
+        }
+        _iconTex = []
+        _iconLoaded = []
     }
 
     //   ★ 2026-10-13 补：原来只刷了**标签栏自己** ⇒ 页里的控件切主题后仍是旧色 ✗
