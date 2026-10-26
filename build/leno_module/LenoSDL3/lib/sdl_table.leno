@@ -32,7 +32,7 @@ use theme.Color
 //   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
 func _opts_keys(): Array[string] {
     return [
-"aligns", "bg_color", "cell_select", "cell_types", "check_col", "check_color", "col_reorder", "col_widths", "cursor", "editable", "editable_cols", "empty_color", "empty_text", "enabled", "font_path", "font_size", "font_style", "frozen_cols", "h", "header_aligns", "header_color", "header_h", "headers", "image_cache_max", "image_col", "image_gap", "image_mode", "image_pad", "image_path", "image_size", "max_col_width", "min_col_width", "multi_select", "numeric_cols", "resizable", "item_h", "row_images", "row_reorder", "rows", "sel_color", "sep_color", "sort_disabled_cols", "sortable", "tip", "visible", "w", "x", "y", "zebra"
+"aligns", "bg_color", "border", "border_color", "cell_select", "cell_types", "check_col", "check_color", "col_reorder", "col_widths", "cursor", "editable", "editable_cols", "empty_color", "empty_text", "enabled", "font_path", "font_size", "font_style", "frozen_cols", "h", "header_aligns", "header_color", "header_h", "headers", "image_cache_max", "image_col", "image_gap", "image_mode", "image_pad", "image_path", "image_size", "max_col_width", "min_col_width", "multi_select", "numeric_cols", "resizable", "item_h", "row_images", "row_reorder", "rows", "sel_color", "sep_color", "sort_disabled_cols", "sortable", "tip", "visible", "w", "x", "y", "zebra"
 ]
 }
 export struct Table impl Widget, Themeable {
@@ -77,6 +77,10 @@ export struct Table impl Widget, Themeable {
     pri Color hovColor = #464E5CFF
     pri Color zebColor = #2C2E36FF
     pri Color txtColor = #EBEBF5FF, sepColor = #464A54FF, sbColor = #787D8CFF
+    // ★ 2026-10-26：**外框开关**（原来无条件用 sepColor 画一整圈 drawRect ⇒ 想"无边框"没法关 ✗）
+    //   `border: false` 去掉外框；`border_color` 单独指定颜色（0 = 跟随 sepColor）
+    pri bool _drawBorder = true
+    pri Color bdrColor = 0
     int _cursor = SystemCursor.POINTER
     bool enabled = true, visible = true, _loaded = false
     string _tip = ""
@@ -405,6 +409,8 @@ export struct Table impl Widget, Themeable {
         if opts.get("header_color") is Color => t { hdrColor = t }
         if opts.get("sel_color") is Color => t { selColor = t }
         if opts.get("sep_color") is Color => t { sepColor = t }
+        _drawBorder = opts.get("border", true)                       // 外框开关（默认开 ✓）
+        if opts.get("border_color") is Color => t { bdrColor = t }
 
         // 行图标配置：image_col 指定哪列显示 [图标+文字]，图标路径由 row_images 独立存储
         imageCol = opts.get("image_col", -1)
@@ -1580,7 +1586,10 @@ export struct Table impl Widget, Themeable {
                 core.markFrameRedraw()
                 core.requestCursor(SystemCursor.EW_RESIZE)
             } eif my < y + headerH {
-                int rc = header_resize_col(mx)
+                // ★ 2026-10-26：`resizable: false` 时**连悬停光标都不提示** ——
+                //   之前只挡住了"按下拖动"，悬停表头边界依旧变成 ↔（用户看到那条竖线/箭头，
+                //   以为列还能拖 ✗）⇒ 这里显式受 `_resizable` 控制 ✓
+                int rc = if _resizable then header_resize_col(mx) else -1
                 if rc >= 0 { core.requestCursor(SystemCursor.EW_RESIZE) }
                 eif hv and _cursor >= 0 { core.requestCursor(_cursor) }
             } eif hv and _cursor >= 0 {
@@ -2064,11 +2073,15 @@ export struct Table impl Widget, Themeable {
                 }
                 draw_cell_text(r, t, cx, cw, y, headerH, headerAligns[c], htc, 0.0)
             }
-            r.setColor(theme.withAlpha(sepColor, 130))
-            r.drawLine(cx + cw, y, cx + cw, y + headerH)
+            if _drawBorder {                    // border:false ⇒ 表头竖线也去掉 ✓
+                r.setColor(theme.withAlpha(sepColor, 130))
+                r.drawLine(cx + cw, y, cx + cw, y + headerH)
+            }
         }
-        r.setColor(theme.withAlpha(sepColor, 220))
-        r.drawLine(x, y + headerH, x + w, y + headerH)
+        if _drawBorder {
+            r.setColor(theme.withAlpha(sepColor, 220))
+            r.drawLine(x, y + headerH, x + w, y + headerH)
+        }
 
         // 数据区：bodyClip 单层裁剪。裁剪深度在 Tab 内容区内仍为 2 层（Tab + body），
         // 且 push/pop 次数与旧"仅全表单层裁剪"版本相同——不引入额外 flush，避免 D3D 闪烁。
@@ -2098,14 +2111,18 @@ export struct Table impl Widget, Themeable {
             float ry = bodyTop - scrollY + ri * rowH
             if ry + rowH < bodyTop or ry > bodyTop + bodyH { continue }
             Color rc = bgC
+            bool solid = false
             if cellSelect {
                 // 单元格模式：行背景只画 zebra，hover/选中在 Pass 1.5 中按单元格画
                 if _zebra and (ri % 2 == 1) { rc = zebColor }
             } else {
-                if is_sel(ri) { rc = selColor }
-                eif ri == hoverRow { rc = hovColor }
+                if is_sel(ri) { rc = selColor; solid = true }
+                eif ri == hoverRow { rc = hovColor; solid = true }
                 eif _zebra and (ri % 2 == 1) { rc = zebColor }
             }
+            // ★ 2026-10-26（用户要求）：**选中行 / hover 行必须不透明** ——
+            //   颜色里带的 alpha（主题给的半透明色）会让背景插画透上来，看着像"没选中"✗
+            if solid { rc = theme.withAlpha(rc, 255) }
             r.setColor(rc)
             r.fillRect(x, ry, bodyW, rowH + 1.0)   // ★ 用 bodyW 防止渗透到竖向滚动条区域（替代原 bodyClip 裁剪）
         }
@@ -2119,8 +2136,8 @@ export struct Table impl Widget, Themeable {
                 bool isHov = (hoverRow == ri and hoverCol >= 0)
                 if isSel or isHov {
                     // 选中单元格优先于 hover
-                    Color hc2 = hovColor
-                    if isSel { hc2 = selColor }
+                    Color hc2 = theme.withAlpha(hovColor, 255)      // 单元格高亮同样不透明 ✓
+                    if isSel { hc2 = theme.withAlpha(selColor, 255) }
                     // 只画 hover/选中单元格高亮（不画整行背景）
                     int hcol = if isSel then selCol else hoverCol
                     if hcol >= 0 and hcol < ncols {
@@ -2204,14 +2221,16 @@ export struct Table impl Widget, Themeable {
         // ★ Pass 3：列分隔线——统一在所有行内容绘制后一次性绘制，减少 setColor 切换
         //   旧方案每格末尾 setColor(sep,70)+drawLine 会打断 fillRect/drawText 批处理，
         //   改为在 pass 3 统一设一次颜色，所有分隔线连续 drawLine（batch 内不中断）。
-        r.setColor(theme.withAlpha(sepColor, 70))
-        for 0 : ncols - 1 to c {
-            float cx = col_x(c), cw = _colW[c]
-            if cx + cw < x or cx > x + w { continue }
-            for startRow : endRow - 1 to ri {
-                float ry = bodyTop - scrollY + ri * rowH
-                if ry + rowH < bodyTop or ry > bodyTop + bodyH { continue }
-                r.drawLine(cx + cw, ry, cx + cw, ry + rowH)
+        if _drawBorder {                    // border:false ⇒ 数据区列分隔线也去掉 ✓
+            r.setColor(theme.withAlpha(sepColor, 70))
+            for 0 : ncols - 1 to c {
+                float cx = col_x(c), cw = _colW[c]
+                if cx + cw < x or cx > x + w { continue }
+                for startRow : endRow - 1 to ri {
+                    float ry = bodyTop - scrollY + ri * rowH
+                    if ry + rowH < bodyTop or ry > bodyTop + bodyH { continue }
+                    r.drawLine(cx + cw, ry, cx + cw, ry + rowH)
+                }
             }
         }
 
@@ -2260,8 +2279,10 @@ export struct Table impl Widget, Themeable {
             }
         }
 
-        r.setColor(theme.withAlpha(sepColor, 220))
-        r.drawRect(x, y, w, h)
+        if _drawBorder {
+            r.setColor(if bdrColor != 0 then bdrColor else theme.withAlpha(sepColor, 220))
+            r.drawRect(x, y, w, h)
+        }
 
         if sb[0] > 0.0 { draw_vscroll(r, sb) }
         if sb[1] > 0.0 { draw_hscroll(r, sb) }
