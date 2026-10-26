@@ -41,7 +41,7 @@ import Sys                       // 自检探针用：读本进程内存（ALKAI
 import "Music" as audio        // miniaudio：真播放（LenoMusic 模块 ✓）
 use audio.Sound
 use SDL3.(Event, Renderer, Window, TitleBar, Button, Label, Edit, Card, ImageView, Table,
-          HBox, VBox, ScrollView, ProgressBar, Slider, Color, Theme)
+          HBox, VBox, ScrollView, ProgressBar, Slider, Color, Theme, ComboBox)
 use data.(Song, Shelf, NavItem)
 
 // ==================== 尺寸 ====================
@@ -223,7 +223,11 @@ export struct Player {
     int curNav = 0
 
     // ----- 搜索 -----
-    Edit search
+    // 搜索框：**可编辑下拉**（边输边给建议，见 sug_* 那一组 ✓）
+    ComboBox search
+    Channel sugCh                 // 建议搜索的回信
+    int sugAt = -1                // 防抖：等输入停下来再发请求（on_tick 拍数）
+    string sugKw = ""             // 上一次发出去的关键词（同一个词不重复发）
     string query = ""
     Array[Song] netSongs = []      // 酷我搜索结果（非空就替代演示数据 ✓）
     // 最近播放（"继续收听"按这个顺序显示：最新播的排最前 ✓）
@@ -338,6 +342,7 @@ export struct Player {
         coverCh = threads.channel(8)          // 封面回信通道
         dlCh = threads.channel(64)            // 下载进度回传（分片下载每 1MB 一条 ✓）
         playCh = threads.channel(8)           // 播放前取音源（一次一首 ✓）
+        sugCh = threads.channel(4)            // 搜索建议（一个词一条 ✓）
         homeCh = threads.channel(4)           // 首页分区（为你推荐/最近添加）回信通道
         SDL3.setTheme(appTheme())             // 粉主题：Table / Edit / 滚动条都跟着变粉 ✓
 
@@ -629,26 +634,47 @@ export struct Player {
         topBar = SDL3.createHBox({x: 0, y: 0, w: 900, h: TOP_H, pad_x: PAD, pad_y: 0, spacing: 10})
         mainCol.add(topBar, {grow: 0, shrink: 0, basis: TOP_H, align: 3})
 
-        backBtn = SDL3.createButton({text: "‹", font_size: 15.0, w: 30, h: 30, radius: 15,
+        // 前进/后退：用图标（48 源图按 1/3 显示为 16，整数倍不糊 ✓）
+        backBtn = SDL3.createButton({image_path: ico("houtui.png"), image_size: 16,
+                                     w: 30, h: 30, radius: 15,
                                      bg_color: #FFFFFFAA, hover_color: #FFFFFFFF,
-                                     text_color: C_TXT_MID, padding: 0.0,
-                                     border: false, shadow: false, tip: "后退"})
+                                     padding: 0.0, border: false, shadow: false, tip: "后退"})
         backBtn.on_click(func() { nav_back() })
         topBar.add(backBtn, {grow: 0, shrink: 0, basis: 30, align: 1})
-        fwdBtn = SDL3.createButton({text: "›", font_size: 15.0, w: 30, h: 30, radius: 15,
+        fwdBtn = SDL3.createButton({image_path: ico("qianjin.png"), image_size: 16,
+                                    w: 30, h: 30, radius: 15,
                                     bg_color: #FFFFFFAA, hover_color: #FFFFFFFF,
-                                    text_color: C_TXT_MID, padding: 0.0,
-                                    border: false, shadow: false, tip: "前进"})
+                                    padding: 0.0, border: false, shadow: false, tip: "前进"})
         fwdBtn.on_click(func() { nav_fwd() })
         topBar.add(fwdBtn, {grow: 0, shrink: 0, basis: 30, align: 1})
         topBar.add(SDL3.createLabel({text: ""}), {grow: 1, shrink: 1, align: 1})
 
-        search = SDL3.createEdit({w: 300, h: 36, font_size: 13, radius: 18,
-                                  pad_x: 16.0,          // 圆角胶囊：光标别贴着左边框（反馈"光标太近"✓）
-                                  placeholder: "搜索歌曲、歌手、歌单", bg_color: C_FIELD,
-                                  border_color: C_LINE, text_color: C_TXT})
-        search.on_change(func() { on_search() })
-        search.on_enter(func() { on_kuwo_search() })   // 回车 = 搜酷我（联网 ✓）
+        // 可编辑下拉：外观与原来的胶囊输入框一致（radius 18 / pad_x 16），
+        //   下拉里放**搜索建议**（输入停下 400ms 后后台搜 8 条，取歌名去重 ✓）
+        // 当作搜索框用 ⇒ **不要下拉箭头、不要外框**（视觉上就是一个胶囊输入框 ✓）；
+        //   下拉里的 hover/选中色要给足对比，否则白底上"划过去没反应"（用户实测 ✗）
+        search = SDL3.createComboBox({w: 300, h: 36, font_size: 13, radius: 18, pad_x: 16.0,
+                                      editable: true, items: [],
+                                      placeholder: "搜索歌曲、歌手、歌单",
+                                      popup_h: 232, item_h: 28,
+                                      show_arrow: false, border: false,
+                                      icon: ico("sousuo.png"), icon_size: 16.0, icon_gap: 6.0,
+                                      bg_color: C_FIELD, border_color: C_LINE, text_color: C_TXT,
+                                      hover_color: #F3D3E2FF, sel_color: #F7C3D8FF})
+        // 文本变化 ⇒ 本地过滤 + 排一次建议请求（防抖）
+        search.on_text_change(func() {
+            on_search()
+            string kw = strings.trim(search.get_text())
+            if kw.len() == 0 {
+                search.set_suggestions([])     // 空词 ⇒ 收起列表 ✓
+                sugAt = -1
+            } else {
+                sugAt = steps + 2              // 约 400ms 后再发请求（每拍 200ms）
+            }
+        })
+        // 选中某条建议 ⇒ 直接用它搜酷我（文本已由控件填好 ✓）
+        search.on_change(func(int idx) { on_kuwo_search() })
+        search.on_enter(func(string t) { on_kuwo_search() })   // 回车 = 搜酷我（联网 ✓）
         topBar.add(search, {grow: 0, shrink: 0, basis: 300, align: 1})
 
         // ---- 设置（齿轮，2026-10-26 需求）----
@@ -1891,6 +1917,26 @@ export struct Player {
         return false
     }
 
+    // 搜索建议回信 ⇒ 取歌名去重填进下拉（最多 8 条，同名的只留一条 ✓）
+    pri func apply_suggestions(Array[Array[string]] rows) {
+        Array[string] out = []
+        for rows to r {
+            // ⚠ 回信第一行是状态标记 ["OK",""]（2 项）—— 数据行是 7 项，
+            //   不挡掉的话列表里会冒出一条 "OK" ✗
+            if r.len() < 7 { continue }
+            string t = r[0]
+            if t == "" { continue }
+            bool dup = false
+            for out to o { if o == t { dup = true } }
+            if not dup { out.add(t) }
+            if out.len() >= 8 { break }
+        }
+        // 用户可能已经在输入别的词了 ⇒ 下拉内容不符就丢掉，别闪一下又变 ✗
+        if sugKw != strings.trim(search.get_text()) { return }
+        search.set_suggestions(out)
+        SDL3.markFrameRedraw()
+    }
+
     // 点 ♥：加/取消喜欢（在线用 sid、本地用 file:路径 ⇒ 两种情况都能收藏 ✓）
     pri func toggle_song_like(Song sg) {
         string key = like_key(sg)
@@ -2358,6 +2404,23 @@ export struct Player {
             if ww > 0 and ww != lastBuildW {
                 rebuild_content()
                 SDL3.markFrameRedraw()
+            }
+        }
+        // ⓪0b 搜索建议：输入停下约 400ms 才发一次请求（同一个词不重复发 ✓）
+        if sugAt > 0 and steps >= sugAt {
+            sugAt = -1
+            string kw = strings.trim(search.get_text())
+            if kw != "" and kw != sugKw {
+                sugKw = kw
+                threads.start(workers.search, kw, 8, sugCh)
+            }
+        }
+        if sugCh != null {
+            var smsg = sugCh.try_receive()
+            while smsg != null {
+                var srows = smsg as Array[Array[string]]
+                if srows != null { apply_suggestions(srows) }
+                smsg = sugCh.try_receive()
             }
         }
         // ⓪a 右键注入（ALKAID_RCLICK=N）：在结果表第一行上右击，验证"重建时 dispose 子控件"
