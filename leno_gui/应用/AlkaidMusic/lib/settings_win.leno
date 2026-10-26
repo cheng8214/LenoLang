@@ -72,8 +72,19 @@ export func show(string defaultCache, Array[string] tabIcons, func(Settings):voi
 
     Label cacheInfo = SDL3.dialogLabel("当前占用：" + strings.fmt_size(cfg.dir_size(shown)), 11)
     tabs.addToPage(0, cacheInfo, 0, 132)
-    tabs.addToPage(0, SDL3.dialogLabel("默认缓存目录：" + defaultCache, 11), 0, 166)
-    tabs.addToPage(0, SDL3.dialogLabel("配置文件：" + cfg.store_path(), 11), 0, 188)
+
+    // ---- 最近播放保留条数（★ 2026-10-27：超出按时间顶替，丢最旧）----
+    tabs.addToPage(0, SDL3.createLabel({text: "最近播放保留条数（超出按时间顶替）", font_size: 13}), 0, 166)
+    SpinBox spinRecent = SDL3.createSpinBox({w: 96, h: 30,
+                                             min: cfg.RECENT_MIN, max: cfg.RECENT_MAX,
+                                             step: 10, value: cur.recent,
+                                             int_mode: true, font_size: 13})
+    spinRecent.set_tip(_str(cfg.RECENT_MIN) + "–" + _str(cfg.RECENT_MAX)
+                       + "：满了之后每播一首就挤掉最旧的一条")
+    tabs.addToPage(0, spinRecent, cw - 116, 160)
+
+    tabs.addToPage(0, SDL3.dialogLabel("默认缓存目录：" + defaultCache, 11), 0, 208)
+    tabs.addToPage(0, SDL3.dialogLabel("配置文件：" + cfg.store_path(), 11), 0, 230)
 
     // ==================== 页 1：下载 ====================
     tabs.addToPage(1, SDL3.createLabel({text: "下载优先格式（对新加入的下载任务生效）", font_size: 13}), 0, 20)
@@ -216,6 +227,7 @@ export func show(string defaultCache, Array[string] tabIcons, func(Settings):voi
         s.cachedir = cd
         s.fmt = cfg.clamp_fmt(fmtBox[0])
         s.aq = cfg.clamp_aq(aqBox[0])
+        s.recent = cfg.clamp_recent(_int(spinRecent.get_value()))
         s.bg = trim_text(bgEdit.get_text())
         s.veil = cfg.clamp_veil(_int(veilS.get_value()))
         if cfg.save(s) {

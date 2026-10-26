@@ -19,6 +19,18 @@ export const int WORKERS_MIN = 1
 export const int WORKERS_MAX = 16
 export const int WORKERS_DEF = 4
 
+// 「最近播放」保留条数：超出按时间顶替（丢最旧）
+//   10 = 少于这个数就没意义；500 = 再多翻不动，JSON 也要 60KB+
+export const int RECENT_MIN = 10
+export const int RECENT_MAX = 500
+export const int RECENT_DEF = 60
+
+export func clamp_recent(int n): int {
+    if n < RECENT_MIN { return RECENT_MIN }
+    if n > RECENT_MAX { return RECENT_MAX }
+    return n
+}
+
 export const string FMT_LOSSLESS = "lossless"
 export const string FMT_MP3 = "mp3"
 
@@ -57,6 +69,7 @@ export struct Settings {
     string bg = ""           // 背景图绝对路径；"" = 用应用自带 images/bk.jpg
     int veil = 158           // 全窗遮罩不透明度 0..255（= VEIL_DEF）
     string aq = "high"       // 试听音质：standard / high / lossless（= AQ_HIGH）
+    int recent = 60          // 「最近播放」保留条数（= RECENT_DEF，超出按时间顶替）
 }
 
 // 配置目录（平台判断只此一处）
@@ -109,6 +122,7 @@ export func load(): Settings {
         if m.has("bg") { s.bg = jsons.get_str(m, "bg", "") }
         if m.has("veil") { s.veil = clamp_veil(jsons.get_int(m, "veil", s.veil)) }
         if m.has("aq") { s.aq = clamp_aq(jsons.get_str(m, "aq", s.aq)) }
+        if m.has("recent") { s.recent = clamp_recent(jsons.get_int(m, "recent", s.recent)) }
     }
     return s
 }
@@ -127,7 +141,8 @@ export func save(Settings s): bool {
              cachedir: s.cachedir,
              fmt: clamp_fmt(s.fmt),
              bg: s.bg, veil: clamp_veil(s.veil),
-             aq: clamp_aq(s.aq)})
+             aq: clamp_aq(s.aq),
+             recent: clamp_recent(s.recent)})
         return true
     } catch e {
         print("[settings] 写入失败：" + _str(e))

@@ -41,7 +41,7 @@ import Sys                       // 自检探针用：读本进程内存（ALKAI
 import "Music" as audio        // miniaudio：真播放（LenoMusic 模块 ✓）
 use audio.Sound
 use SDL3.(Event, Renderer, Window, TitleBar, Button, Label, Edit, Card, ImageView, Table,
-          HBox, VBox, ScrollView, ProgressBar, Slider, Color, Theme, ComboBox)
+          HBox, VBox, ScrollView, ProgressBar, Slider, Color, Theme, ComboBox, VirtualGrid)
 use data.(Song, Shelf, NavItem)
 
 // ==================== 尺寸 ====================
@@ -61,6 +61,10 @@ const int CARD_H = 200       // ⚠ 实测下限：图片要 129（152×0.85）�
 const int CARD_GAP = 16
 const float CARD_ASPECT = 0.85   // 图片区 高/宽
 const int PER_ROW = 5        // 每行卡片数（2026-10-25：4 → 5，图片按曾出现改小 ✓）
+// 「最近播放」保留多少条的**出厂默认**（可在设置里改，见 g_recentMax ✓）
+//   60 = 12 行 × 5 列：翻一两屏够用；JSON 约 8KB，启动读取无感
+// 首页「继续收听」只放一行 6 张，其余进「最近播放」页看 ✓
+const int RECENT_HOME = 6
 
 // ==================== 调色板（浅粉 + 背景插画透出 ✓）====================
 // 改成"背景图 + 浅色遮罩"后，各容器的底色一律换成**半透明白** ——
@@ -172,6 +176,8 @@ var g_cacheOverride = ""
 var g_preferFmt = "lossless"
 // 试听音质（在线播放的档位；standard / high / lossless）
 var g_audioQ = "high"
+// 「最近播放」保留条数（设置项；超出按时间顶替，丢最旧 ✓）
+var g_recentMax = 60
 var g_workers = 4
 // 外观：背景图（"" = 内置 bk.jpg）与蒙版不透明度 ✓
 var g_bgPath = ""
@@ -212,6 +218,9 @@ export struct Player {
     // 上一页的页面容器（只有表格页建 VBox）——换页要 dispose 它，见 drop_last_page()
     VBox lastPage
     bool hasLastPage = false
+    // 虚拟网格页也有自己的容器（它不在 lastPage 里，单独记一份 ✓）
+    VirtualGrid lastGrid
+    bool hasLastGrid = false
     HBox topBar
     ScrollView sv
     VBox content
@@ -531,6 +540,7 @@ export struct Player {
         //   内容区按新页面重建（标题 / 说明 / 卡片都跟着换），并回到顶部。
         bool changed = idx != curNav
         curNav = idx
+        // 切到大列表页 ⇒ 从第一批重新开始（否则上次翻到 300 条会一直背着 ✓）
         searchBtn.set_bg_color(C_TRANS)
         searchBtn.set_hover_color(#FFFFFFC8)
         if hasLastSearch { searchBtn.set_text_color(C_TXT_MID) }
@@ -707,6 +717,10 @@ export struct Player {
     pri func show_scroll() {
         drop_last_page()
         mainCol.clear()
+        // ⚠ `mainCol.clear()` 只把控件移出布局，**Window 的渲染列表里还留着**
+        //   ⇒ 换页后旧控件会继续画在原来的坐标上（卡片页/网格页互相叠在一起 ✗）
+        //   所以复用控件进出页面时必须自己管 visible ✓
+        sv.set_visible(true)
         mainCol.add(topBar, {grow: 0, shrink: 0, basis: TOP_H, align: 3})
         mainCol.add(sv, {grow: 1, shrink: 1, align: 3})
     }
@@ -716,6 +730,7 @@ export struct Player {
     pri func show_table_page(string title, string sub, Table t) {
         drop_last_page()
         mainCol.clear()
+        sv.set_visible(false)          // 表格页不用 ScrollView（见 show_scroll 的注释 ✓）
         mainCol.add(topBar, {grow: 0, shrink: 0, basis: TOP_H, align: 3})
         VBox page = SDL3.createVBox({x: 0, y: 0, w: 900, h: 500,
                                      pad_x: PAD, pad_y: 6, spacing: 8})
@@ -737,11 +752,25 @@ export struct Player {
             lastPage.dispose()
             hasLastPage = false
         }
+        if hasLastGrid {
+            lastGrid.dispose()
+            hasLastGrid = false
+        }
         SDL3.closeContextMenus(null)   // 兜底：任何控件正在弹出的菜单都收起
     }
 
     // 内容区：页面标题 + 三个分区（搜索时按关键词过滤 ✓）
     pri func build_content() {
+        // ★ 大列表（我喜欢 / 最近播放）走**虚拟网格页**：卡片是真控件（每张 7 个），
+        //   上百张之后每帧布局/绘制就会拖垮界面（1000 张实测一帧几百毫秒 ✗）
+        //   vg 只构建可见的十几张，滚动时回收复用 ⇒ 几千条也稳 ✓
+        if curNav == 1 or curNav == 2 {
+            var bigSongs = page_songs(curNav)
+            if bigSongs.len() > 0 {
+                show_grid_page(page_name(curNav), "共 " + _str(bigSongs.len()) + " 首", bigSongs)
+                return
+            }
+        }
         // 默认回到"卡片页"形态（顶栏 + ScrollView）；表格分支稍后会换成 show_table ✓
         show_scroll()
         // 标题跟着**当前导航**走（原来写死"首页" ⇒ 点左侧「我喜欢」等
@@ -769,7 +798,9 @@ export struct Player {
         } else {
             // 「我喜欢」：按实际收藏数说话（原来固定写"还没有喜欢的歌"，有内容也对不上 ✗）
             int ln = liked_songs().len()
-            sub = if ln > 0 then "共 " + _str(ln) + " 首" else "还没有喜欢的歌 · 点卡片上的 ♡"
+            // ⚠ 别用 `♡`（U+2661）：本界面用的中文字体没有这个字形 ⇒ 渲染成豆腐块 ▯
+            //   （同类坑之前踩过：♥/☆ 都不全，图标请用 images/icons 里的 PNG ✓）
+            sub = if ln > 0 then "共 " + _str(ln) + " 首" else "还没有喜欢的歌 · 点卡片上的爱心图标"
         }
         if query != "" { sub = "搜索「" + query + "」" }
         // 歌曲页的副标题固定是歌手名，别被"酷我「周杰伦」· 12 首"顶掉 ✓
@@ -1145,7 +1176,13 @@ export struct Player {
                 var r0 = new Shelf()
                 r0.title = "继续收听"
                 r0.sub = "最近播放 · " + _str(recentSongs.len()) + " 首"
-                r0.items = recentSongs
+                // 首页只放一行（6 张）—— 全部铺进去会创建一堆看不见的卡片控件 ✓
+                Array[Song] homeRecent = []
+                for 0 : recentSongs.len() - 1 to ri {
+                    if homeRecent.len() >= RECENT_HOME { break }
+                    homeRecent.add(recentSongs[ri])
+                }
+                r0.items = homeRecent
                 add_shelf(r0, true, 0)
                 shown = shown + 1
             }
@@ -1498,10 +1535,48 @@ export struct Player {
 
     // 某个导航页要显示的歌曲 —— **只用真实数据**，没有就返回空（界面显示空状态）✓
     pri func page_songs(int idx): Array[Song] {
-        if idx == 1 { return liked_songs() }                // 我喜欢 = 卡片上点过 ♥ 的
+        // 这两个页面走**虚拟网格**（只建可见卡片，几千条也不卡 ✓）⇒ 这里返回全量
+        if idx == 1 { return liked_songs() }                // 我喜欢
         if idx == 2 { return recentSongs }                  // 最近播放
         if idx == 3 { return dl.scan(cacheRoot()) }         // 本地音乐 = 已下载
         return []                                           // 歌单：还没有实现来源
+    }
+
+    // 大列表页：标题 + 副标题 + **虚拟网格**（只建可见卡片 ⇒ 上千条也不卡 ✓）
+    //   与 show_table_page 同构，只是中间换成卡片墙；
+    //   卡片怎么画仍归应用（`wide_card`），网格只管"哪些可见、摆哪、回收" ✓
+    pri func show_grid_page(string title, string sub, Array[Song] songs) {
+        drop_last_page()
+        mainCol.clear()
+        sv.set_visible(false)          // 网格页不用 ScrollView（见 show_scroll 的注释 ✓）
+        mainCol.add(topBar, {grow: 0, shrink: 0, basis: TOP_H, align: 3})
+        // 标题/副标题也直接挂 mainCol（横向留 PAD）—— 交给同一个 VBox 累计 y，
+        //   免得外面再套一层 page 时 vg 的坐标算不到（实测会画到标题上 ✗）
+        HBox hrow = SDL3.createHBox({x: 0, y: 0, w: 900, h: 36,
+                                     pad_x: PAD, pad_y: 0, spacing: 8})
+        hrow.add(lbl(title, 25, C_TXT, true), {grow: 0, shrink: 0, align: 1})
+        hrow.add(SDL3.createLabel({text: ""}), {grow: 1, shrink: 1, align: 1})
+        mainCol.add(hrow, {grow: 0, shrink: 0, basis: 36, align: 3})
+        HBox srow = SDL3.createHBox({x: 0, y: 0, w: 900, h: 18,
+                                     pad_x: PAD, pad_y: 0, spacing: 8})
+        srow.add(lbl(sub, 11, C_TXT_DIM, false), {grow: 0, shrink: 0, align: 1})
+        srow.add(SDL3.createLabel({text: ""}), {grow: 1, shrink: 1, align: 1})
+        mainCol.add(srow, {grow: 0, shrink: 0, basis: 18, align: 3})
+        // -12：给右侧滚动条让位（vg 自己画条，不占布局宽 ✓）
+        int gridW = content_w() - 12
+        VirtualGrid vg = SDL3.createVirtualGrid({x: 0, y: 0, w: _float(gridW), h: 400.0,
+                                                item_w: 236.0, item_h: 80.0,
+                                                gap_x: 16.0, gap_y: 12.0,
+                                                pad_x: PAD, pad_y: 6,
+                                                count: songs.len()})
+        vg.set_builder(func(int i): any {
+            if i < 0 or i >= songs.len() { return SDL3.createLabel({text: ""}) }
+            return wide_card(songs[i], 236)
+        })
+        mainCol.add(vg, {grow: 1, shrink: 1, align: 3})
+        lastGrid = vg                 // 记下来，下次换页要 dispose ✓
+        hasLastGrid = true
+        SDL3.markFrameRedraw()
     }
 
     // 加载占位：转圈 + 文案（整行居中，上面留一点白，别顶着标题 ✓）
@@ -1660,6 +1735,7 @@ export struct Player {
         g_preferFmt = cfgset.clamp_fmt(s.fmt)
         g_workers = cfgset.clamp_workers(s.workers)
         g_audioQ = cfgset.clamp_aq(s.aq)
+        g_recentMax = cfgset.clamp_recent(s.recent)
         // 背景图 / 蒙版变了 ⇒ 丢掉旧纹理，下一帧按新设置重画 ✓
         bool bgChanged = (g_bgPath != s.bg) or (g_veil != cfgset.clamp_veil(s.veil))
         g_bgPath = s.bg
@@ -2277,8 +2353,10 @@ export struct Player {
         Array[Song] out = [sg]
         for 0 : recentSongs.len() - 1 to i {
             Song r = recentSongs[i]
+            // 同歌（歌名 + 歌手）不重复占位 —— 重播只是把它提到最前 ✓
             if r.title == sg.title and r.artist == sg.artist { continue }
-            if out.len() >= 12 { break }
+            // 超过设置里的条数 ⇒ 按**时间**顶替（丢弃最旧的那条，FIFO ✓）
+            if out.len() >= g_recentMax { break }
             out.add(r)
         }
         recentSongs = out
