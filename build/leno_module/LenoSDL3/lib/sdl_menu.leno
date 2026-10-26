@@ -841,6 +841,9 @@ export struct MenuBar impl Widget, Themeable {
         if _font != null and _font.ok { fnt.releaseFont(_font) }
         _font = null
         free_img_cache()
+        // ★ 先**真关**再摘除：原来只 `_clearActiveMenu` + 摘注册，若此刻正开着，
+        //   `open` 仍非 -1，万一还留在登记表里就会被下一帧照画（表现为"切页后菜单滞留"✗）
+        close()
         _clearActiveMenu(self)
         _unregisterContextMenu(self)   // 从上下文菜单登记表摘除自身，避免窗口销毁后悬空引用累积
     }

@@ -32,7 +32,7 @@ use theme.Color
 //   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
 func _opts_keys(): Array[string] {
     return [
-"aligns", "bg_color", "border", "border_color", "cell_select", "cell_types", "check_col", "check_color", "col_reorder", "col_widths", "cursor", "editable", "editable_cols", "empty_color", "empty_text", "enabled", "font_path", "font_size", "font_style", "frozen_cols", "h", "header_aligns", "header_color", "header_h", "headers", "image_cache_max", "image_col", "image_gap", "image_mode", "image_pad", "image_path", "image_size", "max_col_width", "min_col_width", "multi_select", "numeric_cols", "resizable", "item_h", "row_images", "row_reorder", "rows", "sel_color", "sep_color", "sort_disabled_cols", "solid_sel", "hover_color", "sortable", "tip", "visible", "w", "x", "y", "zebra"
+"aligns", "bg_color", "border", "border_color", "cell_select", "cell_types", "check_col", "check_color", "col_ratios", "col_reorder", "col_widths", "cursor", "editable", "editable_cols", "empty_color", "empty_text", "enabled", "font_path", "font_size", "font_style", "frozen_cols", "h", "header_aligns", "header_color", "header_h", "headers", "image_cache_max", "image_col", "image_gap", "image_mode", "image_pad", "image_path", "image_size", "max_col_width", "min_col_width", "multi_select", "numeric_cols", "resizable", "item_h", "row_images", "row_reorder", "rows", "sel_color", "sep_color", "sort_disabled_cols", "solid_sel", "hover_color", "sortable", "tip", "visible", "w", "x", "y", "zebra"
 ]
 }
 export struct Table impl Widget, Themeable {
@@ -44,6 +44,10 @@ export struct Table impl Widget, Themeable {
     Array[Array[string]] _rows = []
     pri int ncols = 1
     pri bool autoCols = true            // 列宽是否按宽度等分（用户未指定 col_widths）
+    // ★ 2026-10-27：**比例列宽**。`col_widths` 是像素死值 ⇒ 窗口一缩放就跟不上，
+    //   调用方必须自己监听 resize 再整表重建（漏一处就歪 ✗）。给比例后由控件按**当前宽度**
+    //   实时折算，窗口怎么变都自动跟随，图标列宽也由控件自己从总宽里扣 ✓
+    pri Array[float] colRatios = []
     pri float headerH = 28.0, rowH = 24.0
     pri float scrollX = 0.0, scrollY = 0.0
     pri int selRow = -1, selCol = -1, hoverRow = -1, hoverCol = -1; bool _multi = false; pri Array[int] selRows = []
@@ -391,6 +395,8 @@ export struct Table impl Widget, Themeable {
 
         if opts.get("headers", []) is Array[string] => b { _headers = b } else { _headers = [] }
         if opts.get("col_widths", []) is Array[float] => b { _colW = b ; autoCols = (_colW.len() == 0) } else { _colW = []; autoCols = true }
+        // 比例列宽（优先于 col_widths；合计建议 1.0，控件会按当前宽度折算并夹到 min/max ✓）
+        if opts.get("col_ratios", []) is Array[float] => rr { colRatios = rr } else { colRatios = [] }
         if opts.get("aligns", []) is Array[int] => b { _aligns = b } else { _aligns = [] }
         if opts.get("header_aligns", []) is Array[int] => b { headerAligns = b } else { headerAligns = [] }
 
@@ -484,7 +490,21 @@ export struct Table impl Widget, Themeable {
         invalidate_fitted()
         int n = ncols
         if n <= 0 { n = 1 }
-        if autoCols or _colW.len() != n {
+        if colRatios.len() == n and n > 0 {
+            // 比例列宽：按**当前宽度**折算 ⇒ 窗口缩放自动跟随（应用不必重建表格 ✓）
+            //   图标列占的宽度先从总宽里扣掉，否则列宽合计会超出、底部冒出横向滚动条 ✗
+            float iconW = 0.0
+            if has_image_col() and _imgSize > 0.0 { iconW = _imgSize + imgGap }
+            float avail = w - iconW
+            if avail < 40.0 { avail = 40.0 }
+            _colW = []
+            for n to i {
+                float cw = avail * colRatios[i]
+                if cw < minColW { cw = minColW }
+                if cw > maxColW { cw = maxColW }
+                _colW.add(cw)
+            }
+        } else if autoCols or _colW.len() != n {
             _colW = []
             float cw = w / n
             if cw < 30.0 { cw = 30.0 }
@@ -508,7 +528,8 @@ export struct Table impl Widget, Themeable {
     func set_pos(float px, float py) { x = px; y = py; invalidate_sb(); clamp_scroll() }
     func set_size(float sw, float sh) {
         w = sw; h = sh
-        if autoCols { recompute_cols() } else { invalidate_sb() }
+        // 比例列宽 / 等分列宽都要随宽度重算；写死像素的 col_widths 才不用动 ✓
+        if autoCols or colRatios.len() > 0 { recompute_cols() } else { invalidate_sb() }
         clamp_scroll()
     }
 

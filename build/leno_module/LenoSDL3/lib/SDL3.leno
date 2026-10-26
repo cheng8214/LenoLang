@@ -120,6 +120,11 @@ export func createTable(Dict opts): Table      { return tbl.createTable(opts) }
 //    若用 createMenuBar + win.add()，只注册到 _widgets，导致：标题栏正常显示、点击事件能响应，
 //    但下拉菜单永远不会弹出（因为 renderPopup 只遍历 _menus 列表）。
 //    此工厂函数保留供内部控件（TreeView/Table/Edit）创建私有右键菜单使用，不暴露给用户。
+// 收起控件内嵌的右击菜单（表格/树/输入框都有）。
+//   为什么需要暴露：这些弹层由 `renderContextMenus` **统一第二遍画**，判据只有 `isOpen()`，
+//   **不看宿主还在不在** ⇒ 宿主被换页/隐藏后菜单会继续留在屏幕上、还点不动 ✗
+//   传 null = 关掉所有窗口的（应用换页时最省事 ✓）
+export func closeContextMenus(Ptr[u8] hwnd) { menu.closeContextMenus(hwnd) }
 export func createScrollView(Dict opts): ScrollView { return scv.createScrollView(opts) }
 export func createTreeView(Dict opts): TreeView { return tv.createTreeView(opts) }
 export func createBarChart(Dict opts): BarChart { return cht.createBarChart(opts) }
