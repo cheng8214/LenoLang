@@ -265,10 +265,17 @@ export struct VirtualGrid impl Widget {
             return
         }
         // 其余事件转给**当前可见**的项（避免滚动事件被重复消费 ✓）
-        for cellItem.len() to k {
-            if cellItem[k] < 0 { continue }
-            var cw = cells[k]
-            if cw is Widget => ww { ww.process(ev) }
+        //   ⚠ 子控件的回调里可能 `rebuild_content()` ⇒ `set_count` 会把槽位表清空，
+        //     而循环还在用旧长度 ⇒ 直接数组越界（实测：点卡片播放必崩 ✗）
+        //   ⇒ 每轮都重新取长度，越界就停 ✓
+        int kk = 0
+        while kk < cellItem.len() {
+            if cellItem[kk] >= 0 {
+                var cw = cells[kk]
+                if cw is Widget => ww { ww.process(ev) }
+            }
+            kk = kk + 1
+            if kk > 10000 { break }          // 兜底：防止回调里疯狂加项导致死循环
         }
     }
 
@@ -281,16 +288,19 @@ export struct VirtualGrid impl Widget {
         _clipR.x = _int(x); _clipR.y = _int(y)
         _clipR.w = _int(w) + 1; _clipR.h = _int(h) + 1
         r.pushClipRect(_clipR.to_ptr())
-        for cellItem.len() to k {
-            int it = cellItem[k]
-            if it < 0 { continue }
-            Array[float] pos = item_pos(it)
-            var cw = cells[k]
-            if cw is Widget => ww {
-                ww.set_pos(pos[0], pos[1])
-                ww.set_size(itemW, itemH)
-                ww.render(r)
+        int kk = 0
+        while kk < cellItem.len() {
+            int it = cellItem[kk]
+            if it >= 0 {
+                Array[float] pos = item_pos(it)
+                var cw = cells[kk]
+                if cw is Widget => ww {
+                    ww.set_pos(pos[0], pos[1])
+                    ww.set_size(itemW, itemH)
+                    ww.render(r)
+                }
             }
+            kk = kk + 1
         }
         r.popClipRect()
         draw_scrollbar(r)
