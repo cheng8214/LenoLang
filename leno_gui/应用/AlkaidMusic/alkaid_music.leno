@@ -59,13 +59,19 @@ const int CARD_GAP = 16
 const float CARD_ASPECT = 0.85   // 图片区 高/宽
 const int PER_ROW = 5        // 每行卡片数（2026-10-25：4 → 5，图片按用户反馈改小 ✓）
 
-// ==================== 调色板（浅粉，照参考图 ✓）====================
-var C_BG_TOP   = #FFFDFDFF    // 内容区渐变上端（近白）
-var C_BG_BOT   = #FBE8F0FF    // 渐变下端（浅粉）
-var C_SIDE      = #FCEFF3FF   // 侧栏底
+// ==================== 调色板（浅粉 + 背景插画透出 ✓）====================
+// ★ 2026-10-26：改成"背景图 + 浅色遮罩"后，各容器的底色一律换成**半透明白** ——
+//   叠起来是"内容区最透、侧栏/播放条略实、卡片最实"的层次，插画从缝里透出来 ✓
+var C_VEIL      = #FFFFFF9E   // 全窗遮罩（62% 白）：55% 时插画亮部的次级文字会糊 ✗
+var C_BG_TOP    = #FFFDFDFF   // 没有背景图时的兜底渐变（上）
+var C_BG_BOT    = #FBE8F0FF   // 兜底渐变（下）
+var C_SIDE      = #FFFFFF38   // 侧栏底（遮罩之上再叠 22% 白）
+var C_BAR       = #FFFFFF4D   // 底部播放条底（30% 白）
+var C_CARD      = #FFFFFF73   // 卡片/横卡底（45% 白，要能看出"块"的边界 ✓）
 var C_TXT       = #35262BFF   // 主文字（暖黑）
-var C_TXT_MID   = #6B5A60FF   // 次级文字
-var C_TXT_DIM   = #A08992FF   // 弱文字
+// ★ 有背景图之后，次级/弱文字都**加深**了：原来的 #6B5A60 / #A08992 压在插画亮部上就糊了 ✗
+var C_TXT_MID   = #55454BFF   // 次级文字
+var C_TXT_DIM   = #77646DFF   // 弱文字
 var C_ACCENT    = #E76F9BFF   // 主粉
 var C_ACC_SOFT  = #FADBE6FF   // 主粉浅底（选中态）
 var C_FIELD     = #FFFFFFD9   // 输入框/胶囊底
@@ -178,6 +184,9 @@ export struct Player {
     Window win
     TitleBar tb
     float tbH = 0.0
+    // 背景插画纹理（懒加载；只在 paint_bg 里用，退出时销毁 ✓）
+    Ptr[u8]? bgTex
+    bool bgTried = false
     VBox root
     HBox body
     VBox side
@@ -304,14 +313,41 @@ export struct Player {
         win.run(func(Event ev): bool { return on_event(ev) },
                 func(Renderer r) { paint_bg(r) })
         shutdown_audio()          // 兜底（requestExit / SDL_QUIT 路径；重复调用无害 ✓）
+        if bgTex != null { SDL3.destroyTexture(bgTex); bgTex = null }   // 背景纹理自己收 ✓
         SDL3.ttfQuit()
     }
 
-    // 背景渐变：**画在控件之下**（窗内回调在控件之前跑 ✓）—— 一次 RenderGeometry 提交 ✓
+    // 背景：**画在控件之下**（窗内回调在控件之前跑 ✓）
+    //   ① 背景插画 bk.jpg：ASPECT_FILL 取源图一块 ⇒ 不变形；取景**偏右**（人物在右侧，别裁脸 ✓）
+    //   ② 压一层 65% 白遮罩 ⇒ 深色插画上仍用深色文字也看得清（"毛玻璃"观感 ✓）
+    //   ③ 没有 bk.jpg 就退回原来的粉色渐变（删了图也不会黑屏 ✓）
     pri func paint_bg(Renderer r) {
         var[float, float](ow, oh) = r.getOutputSize()
         r.clearColor(C_BG_BOT)
-        r.fillGradientRect(0.0, 0.0, _float(ow), _float(oh) - tbH, C_BG_TOP, C_BG_BOT, 0)
+        if bgTex == null and not bgTried {
+            bgTried = true
+            bgTex = SDL3.loadImageTexture(r.handle, img("bk.jpg"))
+        }
+        if bgTex != null {
+            var[float, float](tw, th) = r.getTextureSize(bgTex)
+            if tw > 1.0 and th > 1.0 {
+                float sc = ow / tw
+                if oh / th > sc { sc = oh / th }
+                float sw = ow / sc
+                float sh = oh / sc
+                float sx = (tw - sw) * 0.60          // 0.5 = 正中；偏右一些保住人物脸部 ✓
+                float sy = (th - sh) * 0.5
+                if sx < 0.0 { sx = 0.0 }
+                if sy < 0.0 { sy = 0.0 }
+                if sx + sw > tw { sx = tw - sw }
+                if sy + sh > th { sy = th - sh }
+                r.drawTextureFromTo(bgTex, sx, sy, sw, sh, 0.0, 0.0, ow, oh)
+                r.setColor(C_VEIL)
+                r.fillRect(0.0, 0.0, ow, oh)
+                return
+            }
+        }
+        r.fillGradientRect(0.0, 0.0, ow, oh, C_BG_TOP, C_BG_BOT, 0)
     }
 
     // ==================== 侧栏 ====================
@@ -1156,7 +1192,7 @@ export struct Player {
     //     文字区因此变宽、卡片可以更窄 ⇒ 一屏能多放几首 ✓
     pri func wide_card(Song sg, int cw): HBox {
         HBox row = SDL3.createHBox({x: 0, y: 0, w: _float(cw), h: 74, pad_x: 8, pad_y: 8,
-                                    spacing: 10, bg_color: #FFFFFFBB, bg_radius: 14})
+                                    spacing: 10, bg_color: C_CARD, bg_radius: 14})
         ImageView iv = SDL3.createImageView({w: 58, h: 58, radius: 10,
                                              image_path: coverPath(sg.cover),
                                              overlay_path: ico("play.png"),
@@ -1185,7 +1221,7 @@ export struct Player {
     // ==================== 底部播放条 ====================
     pri func build_bar() {
         bar = SDL3.createHBox({x: 0, y: 0, w: WIN_W, h: BAR_H, pad_x: 18, pad_y: 10,
-                               spacing: 14, bg_color: #FFFFFFE8})
+                               spacing: 14, bg_color: C_BAR})
         root.add(bar, {grow: 0, shrink: 0, basis: BAR_H, align: 3})
 
         // ---- 左：封面 + 歌名/歌手 + 喜欢 ----
