@@ -209,6 +209,9 @@ export struct Player {
     HBox body
     VBox side
     VBox mainCol
+    // 上一页的页面容器（只有表格页建 VBox）——换页要 dispose 它，见 drop_last_page()
+    VBox lastPage
+    bool hasLastPage = false
     HBox topBar
     ScrollView sv
     VBox content
@@ -229,7 +232,9 @@ export struct Player {
     Array[string] likedSids = []
     Table tbSearch                     // 搜索结果表（排序后显示行≠数据行 ⇒ 一律过 source_row ✓）
     bool hasTable = false              // 当前是否真的建过结果表（struct 值类型不能拿 null 判断 ✗）
-    int curCols = 0                    // 上一次排版用的列数（resize 时比较，变了才重建 ✓）
+    // 窗口缩放处理：resize 事件只置标记，on_tick 里比宽度、真变了才重建
+    int lastBuildW = 0                 // 上次重建时的窗口宽（见 rebuild_content ✓）
+    bool resizePending = false
     // ----- 「搜索结果」入口 + 上次搜索的快照（切页后还能点回来 ✓）-----
     Button searchBtn
     // ----- 下载列表（侧栏第二个入口；队列数据在 lib/downloads.leno 的协议里）-----
@@ -674,6 +679,7 @@ export struct Player {
     //   表格以前塞在 ScrollView 的 content 里、高度按行数写死
     //     ⇒ 只有 2 行时就是一条小横条
     pri func show_scroll() {
+        drop_last_page()
         mainCol.clear()
         mainCol.add(topBar, {grow: 0, shrink: 0, basis: TOP_H, align: 3})
         mainCol.add(sv, {grow: 1, shrink: 1, align: 3})
@@ -682,6 +688,7 @@ export struct Player {
     // 表格页：顶栏 + 「标题/副标题」+ 表格（表格吃满剩余高度，内部自己滚 ✓）
     //   ⚠ 不能只放表格：那样页面标题会被顶掉（截图里表头直接贴着顶栏 ✗）
     pri func show_table_page(string title, string sub, Table t) {
+        drop_last_page()
         mainCol.clear()
         mainCol.add(topBar, {grow: 0, shrink: 0, basis: TOP_H, align: 3})
         VBox page = SDL3.createVBox({x: 0, y: 0, w: 900, h: 500,
@@ -690,7 +697,21 @@ export struct Player {
         page.add(lbl(sub, 11, C_TXT_DIM, false), {grow: 0, shrink: 0, basis: 18, align: 3})
         page.add(t, {grow: 1, shrink: 1, align: 3})
         mainCol.add(page, {grow: 1, shrink: 1, align: 3})
+        lastPage = page
+        hasLastPage = true
         SDL3.markFrameRedraw()
+    }
+
+    // 换页时**必须收掉上一页的页面容器**：
+    //   `mainCol.clear()` 只清布局数组、不 dispose 子控件 ⇒ 里面的 Table 连同它内嵌的右击菜单
+    //   都还活着（菜单由 `renderContextMenus` 统一画，判据只有 isOpen）⇒ 切页后菜单滞留在屏上 ✗
+    //   顺带这也是封面纹理泄漏的来源之一（每页一个表格 + 上百张行图标）
+    pri func drop_last_page() {
+        if hasLastPage {
+            lastPage.dispose()
+            hasLastPage = false
+        }
+        SDL3.closeContextMenus(null)   // 兜底：任何控件正在弹出的菜单都收起
     }
 
     // 内容区：页面标题 + 三个分区（搜索时按关键词过滤 ✓）
@@ -753,13 +774,14 @@ export struct Player {
             // 列宽**按内容区宽度按比例分**，
             //   不再写死 826 —— 写死的话窗口一宽，右侧就多出一条空列，整张表看着偏左 ✗
             //   比例：歌名 33% / 歌手 16% / 专辑 16% / 时长 9% / 格式 7% / 大小 12% / 来源 7%
+            // 用**比例列宽**（`col_ratios`）：控件按当前宽度实时折算 ⇒ 窗口缩放自动跟随，
+            //   不用再监听 resize 重建；图标列（16+6）由控件自己从总宽里扣掉 ✓
             float tw2 = _float(content_w())
             tbSearch = SDL3.createTable({x: 0, y: 0, w: tw2, h: 420.0,   // 高度由布局撑满 ✓
                                          item_h: rowH, header_h: 32, font_size: 13,
                                          headers: ["歌名", "歌手", "专辑", "时长", "格式", "大小", "来源"],
-                                         // 合计 0.99（浮点累加略超会触发横向滚动条，底边多一条白线 ✗）
-                                         col_widths: [tw2 * 0.33, tw2 * 0.16, tw2 * 0.16,
-                                                      tw2 * 0.09, tw2 * 0.07, tw2 * 0.12, tw2 * 0.06],
+                                         // 合计 0.99（留 1% 余量，避免浮点累加恰好顶满 ✓）
+                                         col_ratios: [0.33, 0.16, 0.16, 0.09, 0.07, 0.12, 0.06],
                                          aligns: [0, 0, 0, 1, 1, 2, 1],
                                          // **表头文字居中**（表体仍按列语义对齐 ✓）
                                          // 表头与数据列**同对齐** ——
@@ -773,7 +795,9 @@ export struct Player {
                                          //   其余（正文/悬停/滚动条）走 appTheme() 的粉主题 ✓
                                          sortable: true, zebra: false, resizable: false,
                                          bg_color: C_TRANS, header_color: C_TRANS,   // 表头不铺底色（半透明背景上那块浅灰太突兀 ✓）
-                                         sel_color: C_ACC_SOFT, sep_color: C_TRANS, border: false,   // 去外框/分隔线 ✓
+                                         // 选中/悬停与详情页那张表统一：**半透明粉**（实色盖住整行会把背景插画压死）
+                                         sel_color: #FADBE64D, hover_color: #FADBE633, solid_sel: false,
+                                         sep_color: C_TRANS, border: false,          // 去外框/分隔线 ✓
                                          empty_text: "没有结果"})
                                          tbSearch.set_rows(netRows)
                                          // ★ 只有**双击**才播放：单击 = 选中、右键 = 菜单（之前挂 on_select 会让右击也开播 ✗）
@@ -903,7 +927,7 @@ export struct Player {
             Table rt = SDL3.createTable({x: 0, y: 0, w: rw, h: rh,
                                          item_h: 30, header_h: 32, font_size: 12.5,
                                          headers: ["歌名", "歌手", "时长", "来源"],
-                                         col_widths: [rw * 0.45, rw * 0.24, rw * 0.14, rw * 0.16],   // 合计 0.99
+                                         col_ratios: [0.45, 0.24, 0.14, 0.16],   // 合计 0.99（比例，随宽度自适应 ✓）
                                          aligns: [0, 0, 1, 1], header_aligns: [0, 0, 1, 1],   // 表头跟数据列同对齐 ✓
                                          sortable: false, zebra: false, resizable: false,
                                          bg_color: C_TRANS, header_color: C_TRANS,   // 表头不铺底色（半透明背景上那块浅灰太突兀 ✓）
@@ -980,16 +1004,17 @@ export struct Player {
             Table t = SDL3.createTable({x: 0, y: 0, w: dw, h: 420.0,   // 高度由布局撑满 ✓
                                         item_h: 30, header_h: 32, font_size: 13,
                                         headers: ["歌名", "歌手", "格式", "大小", "进度", "状态"],
-                                        // 合计 0.99（避免浮点累加超宽 ⇒ 横向滚动条 + 底部白线 ✗）
-                                        col_widths: [dw * 0.35, dw * 0.18, dw * 0.10,
-                                                     dw * 0.12, dw * 0.12, dw * 0.12],
+                                        // 合计 0.99（比例列宽，随宽度自适应 ✓）
+                                        col_ratios: [0.35, 0.18, 0.10, 0.12, 0.12, 0.12],
                                         aligns: [0, 0, 1, 2, 1, 1],
                                         header_aligns: [0, 0, 1, 2, 1, 1],   // 与数据列同对齐 ✓
                                         // 第 5 列（下标 4）= 进度条单元格：值写 "0"~"100" ✓
                                         cell_types: ["", "", "", "", "progress", ""],
                                         sortable: false, zebra: false, resizable: false,
                                         bg_color: C_TRANS, header_color: C_TRANS,   // 表头不铺底色（半透明背景上那块浅灰太突兀 ✓）
-                                        sel_color: C_ACC_SOFT, sep_color: C_TRANS, border: false,   // 去外框/分隔线 ✓
+                                        // 选中/悬停与详情页那张表统一：半透明粉 ✓
+                                        sel_color: #FADBE64D, hover_color: #FADBE633, solid_sel: false,
+                                        sep_color: C_TRANS, border: false,          // 去外框/分隔线 ✓
                                         empty_text: "还没有下载任务"})
             t.set_rows(rows)
             // 已完成的行双击 ⇒ 播本地文件（不联网 ✓）
@@ -1013,6 +1038,7 @@ export struct Player {
                 return
             }
             int lh = 40
+            // 封面缩略图（30+10）由控件自己从总宽里扣 ⇒ 这里直接用整宽 ✓
             float lw = _float(content_w())
             Array[Array[string]] lrows = []
             Array[string] larts = []
@@ -1023,15 +1049,17 @@ export struct Player {
             Table lt = SDL3.createTable({x: 0, y: 0, w: lw, h: 420.0,   // 高度由布局撑满 ✓
                                          item_h: lh, header_h: 32, font_size: 13,
                                          headers: ["歌名", "歌手", "来源"],
-                                         // 合计 0.99（不是 1.0）：浮点累加会略超宽度 ⇒ Table 冒出横向滚动条，底边一条白线 ✗
-                                         col_widths: [lw * 0.57, lw * 0.28, lw * 0.14],
+                                         // 合计 0.99（比例列宽，随宽度自适应 ✓）
+                                         col_ratios: [0.57, 0.28, 0.14],
                                          aligns: [0, 0, 1], header_aligns: [0, 0, 1],   // 与数据列同对齐 ✓
                                          image_col: 0, image_size: 30, image_gap: 10,
                                          row_images: larts,
                                          image_path: ico("music.png"),   // 没有同名封面的行用默认图标 ✓
                                          sortable: false, zebra: false, resizable: false,
                                          bg_color: C_TRANS, header_color: C_TRANS,   // 表头不铺底色（半透明背景上那块浅灰太突兀 ✓）
-                                         sel_color: C_ACC_SOFT, sep_color: C_TRANS, border: false,   // 去外框/分隔线 ✓
+                                         // 选中/悬停与详情页那张表统一：半透明粉 ✓
+                                         sel_color: #FADBE64D, hover_color: #FADBE633, solid_sel: false,
+                                         sep_color: C_TRANS, border: false,          // 去外框/分隔线 ✓
                                          empty_text: "还没有下载"})
             lt.set_rows(lrows)
             lt.on_dbl_click(func(int row, int col) { play_local_row(row) })
@@ -1547,7 +1575,6 @@ export struct Player {
             int avail = content_w() - 12      // 同上：留出滚动条宽度，右侧圆角不被压 ✓
             int gap = 14
             int cols = cols_for_width()
-            curCols = cols
             int cw = (avail - (cols - 1) * gap - 2) / cols     // 同上：留 2px 给圆角 ✓
             int k = 0
             while k < items.len() {
@@ -2303,6 +2330,8 @@ export struct Player {
     //   ⚠ 顺序不能反：先 dispose（逐个释放纹理/字体引用），再 clear（清空布局数组）；
     //     反过来 dispose 就遍历不到子控件了。
     pri func rebuild_content() {
+        // 记下这次是按多宽的窗口排的版 —— resize 后拿它比较，尺寸不同才重建 ✓
+        lastBuildW = _int(win.getSize().w)
         content.dispose()
         content.clear()
         build_content()
@@ -2321,6 +2350,16 @@ export struct Player {
     }
 
     pri func on_tick() {
+        // ⓪0 窗口缩放：宽度真变了才重建（表格宽/列宽都是按宽度算死的，必须重建才归位 ✓）
+        //   放在每拍最前面：拖动时最多每 200ms 重建一次，不会卡；松手后最后一拍一定对齐 ✓
+        if resizePending {
+            int ww = _int(win.getSize().w)
+            resizePending = false                  // 无论是否重建都复位，避免标记悬着 ✓
+            if ww > 0 and ww != lastBuildW {
+                rebuild_content()
+                SDL3.markFrameRedraw()
+            }
+        }
         // ⓪a 右键注入（ALKAID_RCLICK=N）：在结果表第一行上右击，验证"重建时 dispose 子控件"
         //   没有把 Table 自己的弹层菜单搞成悬空（菜单宿主被 dispose ⇒ 点一下会崩 ✓）
         if rclickAt > 0 and steps == rclickAt {
@@ -2540,11 +2579,13 @@ export struct Player {
 
     // ==================== 事件 ====================
     pri func on_event(Event ev): bool {
-        // 窗口缩放 ⇒ 列数变了才重建（照海报墙原来的 sync_cols 口径：只比列数，不每帧重建 ✓）
+        // 窗口缩放 ⇒ 标记一下，交给 on_tick 在尺寸稳定后重建（拖动时每拍最多一次 ✓）
+        //   ⚠ 原来这里只处理**卡片页**（`hasTable == false` 且列数变了）：
+        //     表格/歌曲页的宽和列宽都是**按当时窗口宽算死的**，resize 后没人重算 ⇒
+        //     表不跟随、右边空一条；只有重建才会归位（最小化再恢复也不重建 ⇒ 一直歪 ✗）
+        //   ⇒ 任何页面都标记，由 on_tick 比对宽度后重建 ✓
         if ev.isWindowResized() {
-            if hasTable == false and cols_for_width() != curCols {
-                rebuild_content()
-            }
+            resizePending = true
         }
         if ev.isQuit() or ev.isWindowClose() {
             shutdown_audio()
