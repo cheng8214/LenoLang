@@ -1,7 +1,7 @@
 // sdl_table.leno — 表格控件（多列多行，可选表头/排序/选择/双向滚动）
 // 通过 win.addTable({...}) 创建；数据用 set_rows / add_row 设置。
 //
-// ★ 2026-10-07：单元格内容**不再只有文本** —— 两种新能力（都在原有的可见行循环里做 ✓）：
+// 单元格内容**不再只有文本** —— 两种新能力（都在原有的可见行循环里做 ✓）：
 //   · `cell_types: ["", "", "", "progress"]` 或 `set_col_cell_type(c, "progress")`
 //     ⇒ 该列画**进度条**（值取自该列文本，规则见 sdl_progress.parseProgress ✓）
 //     原先只能把进度写成 "37%" 文字 ✗ ⇒ 表格里再嵌一个 ProgressBar 控件是不成的（那要虚拟化+生命周期 ✗）
@@ -21,7 +21,7 @@ use core.sdl3        // 2026-10-13：图标缓存回收要调 SDL_DestroyTexture
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_edit.leno" as edt; use edt.Edit
 import "sdl_tooltip.leno" as tip
-import "sdl_progress.leno" as prgb    // ★ 2026-10-07：进度单元格复用它的观感 + 取值规则（同源 ✓）
+import "sdl_progress.leno" as prgb    // 进度单元格复用它的观感 + 取值规则（同源 ✓）
 import "sdl_menu.leno" as menu; use menu.MenuBar
 import "sdl_image.leno" as img
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
@@ -49,7 +49,7 @@ export struct Table impl Widget, Themeable {
     pri int selRow = -1, selCol = -1, hoverRow = -1, hoverCol = -1; bool _multi = false; pri Array[int] selRows = []
     pri Array[bool] selSet = []           // 选中行标志数组（与 _rows 平行），让 _is_sel O(1) 避免 render 中线性扫描 _selRows
     bool _sortable = false; pri int sortCol = -1; pri bool sortDesc = false, _zebra = true
-    // ★ 2026-10-20：显示行 → **调用方数据行**的映射（与 `_rows` 同序、随排序/拖拽一起搬 ✓）
+    // 显示行 → **调用方数据行**的映射（与 `_rows` 同序、随排序/拖拽一起搬 ✓）
     //   为什么需要：`sort_by` 只重排本控件内部的 `_rows`，而调用方的歌曲数组不会跟着动
     //   ⇒ 双击/右键/勾选回调拿到的是**显示行号**，按它取 songs[row] 就会"点 A 放 B"✗✗
     //   ⇒ 用 `source_row(display)` 换回原始下标（应用层所有"按行号取数据"的地方都走它 ✓）
@@ -77,10 +77,10 @@ export struct Table impl Widget, Themeable {
     pri Color hovColor = #464E5CFF
     pri Color zebColor = #2C2E36FF
     pri Color txtColor = #EBEBF5FF, sepColor = #464A54FF, sbColor = #787D8CFF
-    // ★ 2026-10-26：**外框开关**（原来无条件用 sepColor 画一整圈 drawRect ⇒ 想"无边框"没法关 ✗）
+    // **外框开关**（原来无条件用 sepColor 画一整圈 drawRect ⇒ 想"无边框"没法关 ✗）
     //   `border: false` 去掉外框；`border_color` 单独指定颜色（0 = 跟随 sepColor）
     pri bool _drawBorder = true
-    // ★ 2026-10-26：选中/hover 行默认**强制不透明**（背景插画不会透上来）；
+    // 选中/hover 行默认**强制不透明**（背景插画不会透上来）；
     //   `solid_sel: false` 时改按颜色自带 alpha 画 —— 半透明高亮压在插画上更柔和 ✓
     pri bool solidSel = true
     pri Color bdrColor = 0
@@ -123,7 +123,7 @@ export struct Table impl Widget, Themeable {
     pri Array[Ptr[u8]] imgCacheTex = []      // 纹理缓存指针
     pri string imgLastPath = ""               // MRU 快路径：上次命中的图标路径
     pri Ptr[u8] imgLastTex = null             // MRU 快路径：上次命中的纹理指针
-    // ★ 2026-10-13：图标纹理缓存**上限 + 环形覆盖**（原来只增不减 ✗）——
+    // 图标纹理缓存**上限 + 环形覆盖**（原来只增不减 ✗）——
     //   表格每行一个**不同**图标时（如"每行一张海报"）显存会一路涨 ✓
     //   0 = 不限制（老行为）；覆盖最旧一格时会 `SDL_DestroyTexture` 回收 ✓（照 `sdl_font` 的 `texCap` 样板 ✓）
     pri int imgCacheMax = 64
@@ -380,7 +380,7 @@ export struct Table impl Widget, Themeable {
         rowReorder = opts.get("row_reorder", false)
         minColW = opts.get("min_col_width", 24.0)
         maxColW = opts.get("max_col_width", 9999.0)
-        // ★ 2026-10-22：取值 + 类型守卫 + 绑定合成一句（`=> b` 绑定的是**收窄后**的值）
+        // 取值 + 类型守卫 + 绑定合成一句（`=> b` 绑定的是**收窄后**的值）
         //   省掉 ncs/sdc/hs/cws/als/has/rs 七个只用来判一次的临时变量，
         //   而且"取"和"判"绑在一起 —— 不会再出现"取了却忘了判"的漏。
         if opts.get("numeric_cols", []) is Array[int] => b { numericCols = b } else { numericCols = [] }
@@ -411,7 +411,7 @@ export struct Table impl Widget, Themeable {
         if opts.get("bg_color") is Color => t { bgColor = t }
         if opts.get("header_color") is Color => t { hdrColor = t }
         if opts.get("sel_color") is Color => t { selColor = t }
-        // ★ 2026-10-26：hover 行原来只能用主题色（`th.bgHover`）⇒ 应用想调淡一点都做不到 ✗
+        // hover 行原来只能用主题色（`th.bgHover`）⇒ 应用想调淡一点都做不到 ✗
         if opts.get("hover_color") is Color => t { hovColor = t }
         if opts.get("sep_color") is Color => t { sepColor = t }
         _drawBorder = opts.get("border", true)                       // 外框开关（默认开 ✓）
@@ -518,7 +518,7 @@ export struct Table impl Widget, Themeable {
         // 新一批数据 ⇒ 映射先恢复成 0..n-1（随后 `sort_by` 重放排序时会一起重排 ✓）
         _srcIdx = []
         for _rows.len() to i { _srcIdx.add(i) }
-        // ★ 2026-10-13：换**整批数据** ⇒ 旧的单元格级颜色与行色**作废清掉**（口径同排序：要么别张冠李戴 ✓）
+        // 换**整批数据** ⇒ 旧的单元格级颜色与行色**作废清掉**（口径同排序：要么别张冠李戴 ✓）
         //   原来 `_cellFgColors/_cellBgColors`（键 "row,col"）在 set_rows 后**仍然生效** ✗ ⇒
         //   新数据的第 2/3 行会继承上一批的染色（实测：换成 N0..N4 后旧的绿/红原样还在 ✓）
         //   ⇒ 应用想在换数据后重新染色，就照 `cleaner_master` 那样在 set_rows **之后**再 set ✓
@@ -547,7 +547,7 @@ export struct Table impl Widget, Themeable {
         while rowColors.len() < nRows { rowColors.add(0) }
         checkedCount = -1
         update_check_header()
-        // ★ 2026-10-13：换数据后**重放**当前排序 —— 表头的排序箭头由 `sortCol/sortDesc` 决定，
+        // 换数据后**重放**当前排序 —— 表头的排序箭头由 `sortCol/sortDesc` 决定，
         //   而本函数**不清**它们（也不该悄悄清掉用户的意图 ✓）⇒ 那就必须让数据照它排好：
         //   否则箭头在**说谎**（实测：点「评分▼」后再搜索/换筛选，9.3 掉到第 3 行、首行是 7.7 ✗）
         //   ⚠ 与 `set()` 的取舍不同：那是"换配置"语义 ⇒ 重置排序 ✓；这里是"换数据" ⇒ 保持排序 ✓
@@ -564,7 +564,7 @@ export struct Table impl Widget, Themeable {
         selSet.add(false)
         if row.len() > ncols and _headers.len() == 0 { ncols = row.len(); recompute_cols() }
         clamp_scroll()
-        // ★ 2026-10-13：**追加行**同样会破坏"已排好的顺序" ⇒ 撤销排序状态（与 `clear()` 同款口径 ✓）
+        // **追加行**同样会破坏"已排好的顺序" ⇒ 撤销排序状态（与 `clear()` 同款口径 ✓）
         //   否则表头"▼"还在、新行却插在末尾 ⇒ 又是一次"箭头说谎" ✗（批量换数据请用 `set_rows` ✓）
         sortCol = -1; sortDesc = false
         update_check_header()
@@ -615,7 +615,7 @@ export struct Table impl Widget, Themeable {
         clamp_scroll()
         update_check_header()
     }
-    // ★ 2026-10-13：`clear()` 连**排序状态**一起清（表头箭头就是它画的）——
+    // `clear()` 连**排序状态**一起清（表头箭头就是它画的）——
     //   清空数据却留着"▼"的话，之后逐行 `add_row` 塞进来的新数据**必然是插入序** ⇒ 箭头立刻说谎 ✗
     //   （口径：批量换数据用 `set_rows`（会重放排序 ✓）；`clear()`/`add_row()` 视为"改了行集合"⇒
     //     排序状态作废 ✓ —— 要么别谎报、要么别乱序，两条路都得有一条 ✓）
@@ -627,7 +627,7 @@ export struct Table impl Widget, Themeable {
         if idx >= 0 and idx < _rows.len() { return _rows[idx] }
         return []
     }
-    // ★ 2026-10-20：显示行号 → 调用方数据行号（排序/拖拽之后也正确 ✓）
+    // 显示行号 → 调用方数据行号（排序/拖拽之后也正确 ✓）
     //   应用层凡是要"按表格行号取自己数组"的地方都必须过这一层 ✓
     func source_row(int display): int {
         if display >= 0 and display < _srcIdx.len() { return _srcIdx[display] }
@@ -1285,7 +1285,7 @@ export struct Table impl Widget, Themeable {
             return
         }
 
-        // ★ 2026-10-13：**这里不再自己写键盘分支** ✗ —— 本控件**早就有**一套键盘导航
+        // **这里不再自己写键盘分支** ✗ —— 本控件**早就有**一套键盘导航
         //   （见下面"键盘导航：表格聚焦时…"，方向键/Enter/PageUp/PageDown/Home/End/Ctrl+A ✓）。
         //   我最初又插了一份 ⇒ 同一颗键被处理两次 ⇒ 选中/回调双触发 ✗（与 ListBox/ComboBox 同一个坑 ✓）
         //   正确做法是**给既有那一套补上焦点守卫**（本次已补 ✓），而不是再写一份 ✓。
@@ -1592,8 +1592,8 @@ export struct Table impl Widget, Themeable {
                 core.markFrameRedraw()
                 core.requestCursor(SystemCursor.EW_RESIZE)
             } eif my < y + headerH {
-                // ★ 2026-10-26：`resizable: false` 时**连悬停光标都不提示** ——
-                //   之前只挡住了"按下拖动"，悬停表头边界依旧变成 ↔（用户看到那条竖线/箭头，
+                // `resizable: false` 时**连悬停光标都不提示** ——
+                //   之前只挡住了"按下拖动"，悬停表头边界依旧变成 ↔（表现那条竖线/箭头，
                 //   以为列还能拖 ✗）⇒ 这里显式受 `_resizable` 控制 ✓
                 int rc = if _resizable then header_resize_col(mx) else -1
                 if rc >= 0 { core.requestCursor(SystemCursor.EW_RESIZE) }
@@ -1956,7 +1956,7 @@ export struct Table impl Widget, Themeable {
             }
         }
         Ptr[u8] t = img.loadTexture(r.handle, path)
-        // ★ 2026-10-13：满了就**覆盖最旧一格**并回收它的纹理（否则缓存只增不减 ⇒ 显存泄漏 ✗）
+        // 满了就**覆盖最旧一格**并回收它的纹理（否则缓存只增不减 ⇒ 显存泄漏 ✗）
         if imgCacheMax > 0 and imgCachePaths.len() >= imgCacheMax {
             Ptr[u8] old = imgCacheTex[imgCacheHead]
             if old != null and old != t { core.lib().SDL_DestroyTexture(old) }
@@ -2126,7 +2126,7 @@ export struct Table impl Widget, Themeable {
                 eif ri == hoverRow { rc = hovColor; solid = true }
                 eif _zebra and (ri % 2 == 1) { rc = zebColor }
             }
-            // ★ 2026-10-26（用户要求）：**选中行 / hover 行必须不透明** ——
+            // **选中行 / hover 行必须不透明** ——
             //   颜色里带的 alpha（主题给的半透明色）会让背景插画透上来，看着像"没选中"✗
             // `solid_sel: false` ⇒ 保留颜色自带的 alpha（半透明选中行，压在背景插画上不突兀 ✓）
             if solid and solidSel { rc = theme.withAlpha(rc, 255) }

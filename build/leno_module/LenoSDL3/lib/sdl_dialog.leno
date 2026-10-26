@@ -41,7 +41,7 @@ export func restoreFocus(int parentWid) {
 }
 
 // 非模态对话框：**同样不进任务栏**（2026-10-08 改 ✓）
-//   ⚠ 先前这里写"正常窗口标志（出现在任务栏）" ✗ —— 用户实测：非模态弹窗（含音乐下载器那个
+//   ⚠ 先前这里写"正常窗口标志（出现在任务栏）" ✗ —— 实测：非模态弹窗（含音乐下载器那个
 //     下载窗口 ✓）在任务栏多出一条，看着像另一个程序 ✗ ⇒ 与模态那条统一：带 UTILITY ✓
 export func createModelessDialog(Dict style): Window {
     var existingFlags = style.get("flags", 0)
@@ -67,7 +67,7 @@ export func createModelessDialog(Dict style): Window {
 //   - align=2(右)：VBox 把 Label 放在右侧，文字从右边开始 → 右对齐 ✓
 //   如果 Label 也设 _align=1，会导致"双重居中"，文字偏移到错误位置！
 //
-// ★ 2026-09-30：不再传 `w`/`h`（原来那句"宽度策略"其实是误解 ✗）
+// 不再传 `w`/`h`（原来那句"宽度策略"其实是误解 ✗）
 //   Label 的 `w`/`h` **根本不被 set() 读取** —— 布局尺寸归**父容器**管（`add(label, {basis: N})`）✗
 //   传了只会让**每条标签**刷一行 `[ui] Label：'w' 不生效 …` 告警 ✗（实测：一开弹窗就满屏 ✓）
 //   而尺寸语义**完全不变**（本来就已被忽略 ⇒ 写 w:300 / w:1 时它就已经不起作用了 ✗）⇒ 直接去掉 ✓
@@ -117,7 +117,7 @@ export func dialogButtonRow(Array[Button] buttons, float spacing = 8.0): HBox {
 }
 
 // 创建弹性间隔（grow:1 把后续内容推到底部）
-// ★ 2026-09-30：不再传 `w:1/h:1` —— Label 的 `w`/`h` 压根不被 set() 读取 ✗
+// 不再传 `w:1/h:1` —— Label 的 `w`/`h` 压根不被 set() 读取 ✗
 //   （弹性由调用方的 `add(..., {grow:1, shrink:1})` 决定 ✓）⇒ 传了只会刷两条 [ui] 告警 ✗
 export func dialogSpacer(): Label {
     return lbl.createLabel({x:0, y:0, text:""})
@@ -139,19 +139,36 @@ export const DIALOG_TB_H = 30
 //   · 弹窗**不该能拖边缩放**（2026-10-09 修 ✓）⇒ 传 `resizable:false`（理由见函数内注释 ✓）
 //   ⚠ **返回的 TitleBar 要由调用方接 `on_close`**（不接 = 点 ✕ 毫无反应 ✗），
 //     并且内容根要用 `dlg.setRootAt(root, 0, tb.get_h())` 让出高度 ✓
+//   `style`（可选）：标题栏配色（bg_color / text_color / hover_color / close_hover_color /
+//     icon_color / sep_color）—— 原来标题栏是**写死的深灰**，弹在粉色界面上像另一套皮肤 ✗
+//     
 export func dialogTitleBar(Window dlg, string title): TitleBar {
-    // ★ 2026-10-08：弹窗没自己设图标时**沿用主窗口的**（用户实测："主窗口设了图标，弹窗光秃秃" ✗）
+    return dialogTitleBarEx(dlg, title, null)
+}
+
+// 同上，但可以覆盖标题栏配色（`style` 为 null / 不是 Dict ⇒ 用控件默认 ✓）
+export func dialogTitleBarEx(Window dlg, string title, any style): TitleBar {
+    // 弹窗没自己设图标时**沿用主窗口的**（"主窗口设了图标，弹窗光秃秃"）
     //   主窗口那个图标由标题栏模块记着（第一个设 title_icon 的 = 主窗口 ✓ 见 sdl_titlebar ✓）
     //   传空串 == 没传（opts.get 的默认值就是 ""）⇒ 拿不到图标时行为与以前**完全一致** ✓
     // ★ `resizable:false`（2026-10-09 修）：TitleBar 挂载时会 `SDL_SetWindowResizable(true)`
     //   —— 那是给**主窗口**的（去掉原生边框后 Windows 会连 WS_THICKFRAME 一起去掉 ⇒ 不补这一下
-    //   主窗口就没法拖边缩放了 ✓）；可弹窗也挂了标题栏 ⇒ 一并被"解放" ⇒ 用户实测
+    //   主窗口就没法拖边缩放了 ✓）；可弹窗也挂了标题栏 ⇒ 一并被"解放" ⇒ 实测
     //   "msg 弹窗居然能改变大小" ✗（标题栏那套**手动边缘缩放**也会跟着生效，连光标都变 ✗）
     //   ⇒ 弹窗这里显式声明"不可缩放" ✓；显式选项见 sdl_titlebar 的 `resizable` ✓
-    TitleBar tb = createTitleBar({title: title, h: _float(DIALOG_TB_H), font_size: 13,
-        title_icon: tbar.appTitleIcon(),
-        resizable: false,
-        show_minimize: false, show_maximize: false})
+    Dict o = {title: title, h: _float(DIALOG_TB_H), font_size: 13,
+              title_icon: tbar.appTitleIcon(),
+              resizable: false,
+              show_minimize: false, show_maximize: false}
+    // 调用方给了颜色就覆盖（没给就保持控件默认 ✓）
+    if style is Dict[string, any] => st {
+        Array[string] colorKeys = ["bg_color", "text_color", "hover_color",
+                                   "close_hover_color", "icon_color", "sep_color"]
+        for colorKeys to k {
+            if st.has(k) { o[k] = st[k] }
+        }
+    }
+    TitleBar tb = createTitleBar(o)
     dlg.add(tb)
     return tb
 }

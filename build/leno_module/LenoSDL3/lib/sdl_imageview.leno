@@ -42,14 +42,14 @@ export struct ImageView impl Widget, Themeable {
     string _tip = ""               // 悬停提示文本
     pri Ptr[u8]? tex                   // 图片纹理（懒加载）
     pri string loadedPath = ""         // 已加载的路径（避免重复加载）
-    // ★ 2026-10-26：**悬停叠加图**（如封面上的播放钮）—— 卡片不必再单独占一列放按钮，
+    // **悬停叠加图**（如封面上的播放钮）—— 卡片不必再单独占一列放按钮，
     //   一屏能多放几首；默认悬停才出现（`overlay_hover_only: false` 可常显 ✓）
     pri string overlayPath = ""
     pri Ptr[u8]? overlayTex = null
     pri string overlayLoaded = ""
     pri bool overlayHoverOnly = true
     pri float overlayScale = 0.5      // 叠加图边长 = min(w,h) × 该比例
-    // ★ 2026-10-26：`overlay_size` > 0 时用**固定像素**（优先于比例）——
+    // `overlay_size` > 0 时用**固定像素**（优先于比例）——
     //   想要 48 源图按 24 显示（正好 0.5 倍）只能靠它；比例算出来 18.6 这种非整数尺寸会糊 ✗
     pri float overlaySize = 0.0
     float _natW = 0.0, _natH = 0.0  // 图片原始尺寸
@@ -210,9 +210,9 @@ export struct ImageView impl Widget, Themeable {
                     dx = x + (_w - dw) / 2.0; dy = y + (_h - dh) / 2.0
                 }
             }
-            // ★ 2026-10-26：`radius > 0` 时**图片本身也要圆角** ——
+            // `radius > 0` 时**图片本身也要圆角** ——
             //   原来只有 `fillRoundedRect` 的背景/边框有圆角，图片是直角矩形 ⇒
-            //   方形封面把四个角盖住了（用户实测："封面是正方形，不是圆角矩形"✗）
+            //   方形封面把四个角盖住了（"封面是正方形，不是圆角矩形"）
             if radius > 0.0 and dw >= 4.0 and dh >= 4.0 {
                 int nw = _int(dw + 0.5)
                 int nh = _int(dh + 0.5)
@@ -240,7 +240,7 @@ export struct ImageView impl Widget, Themeable {
                 // 固定像素优先（见 overlay_size 注释）；否则按比例
                 if overlaySize > 0.0 { s = overlaySize } else { s = s * overlayScale }
                 // ★ 尺寸和位置都**落整像素**：非整数尺寸 + 半像素偏移会让图标糊成一团
-                //   （用户反馈"播放按钮不清晰"就是 58×0.32=18.56 这种尺寸 ✗）
+                //   
                 s = _float(_int(s + 0.5))
                 float ox = _float(_int(x + (_w - s) / 2.0 + 0.5))
                 float oy = _float(_int(y + (_h - s) / 2.0 + 0.5))

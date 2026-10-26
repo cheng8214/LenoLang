@@ -38,7 +38,7 @@
 //   title_align     标题对齐: "left"（默认）或 "center"
 //   title_pad       标题水平内边距（默认 12）
 //   resizable       是否允许拖边缘缩放（默认 true = 历史行为 ✓）
-//                   ⚠ **弹窗必须传 false** —— 见 sdl_dialog.dialogTitleBar（用户实测：msg 弹窗能改大小 ✗）
+//                   ⚠ **弹窗必须传 false** —— 见 sdl_dialog.dialogTitleBar（msg 弹窗能改大小）
 //
 // 中间控件（VS Code 风格标题栏）：
 //   通过 set_center_widget(Widget) 在标题栏中间插入自定义控件（如路径栏、搜索框等）。
@@ -206,7 +206,7 @@ export struct TitleBar impl Widget, Themeable {
     pri int    btnHover = BTN_NONE   // 悬停按钮（BTN_NONE/MIN/MAX/CLOSE）
     pri bool   maximized = false
     bool   _dragging = false
-    // ★ 2026-09-30：拖拽"阈值"标记 —— 只有指针移动超过阈值才真的搬窗口
+    // 拖拽"阈值"标记 —— 只有指针移动超过阈值才真的搬窗口
     //   手点标题栏总带一两像素抖动；以前"按下即进拖拽"⇒ 一次"点击"被当成"拖窗口"
     //   （实测症状：点过标题栏后，点别的按钮第一次没反应、点 ✕ 要点两次 ✓）
     pri bool   _dragMoved = false
@@ -223,7 +223,7 @@ export struct TitleBar impl Widget, Themeable {
     // ★ 是否允许缩放（2026-10-09 加 ✓，默认 true = 历史行为不变）
     //   ⚠ 为什么需要这个开关：挂载时会 `SDL_SetWindowResizable(true)`（主窗口去掉原生边框后
     //   靠它恢复缩放能力 ✓），可那一下会把**本来不可缩放的窗口**也"解放"掉 ⇒ 弹窗（msgBox）
-    //   一并继承 ⇒ 用户实测"msg 弹窗居然能拖边改大小" ✗ ⇒ 弹窗走 `resizable:false` ✓
+    //   一并继承 ⇒ 实测"msg 弹窗居然能拖边改大小" ✗ ⇒ 弹窗走 `resizable:false` ✓
     //   （同样的开关也管住下面那套**手动边缘缩放**：不可缩放的窗口连光标都不该变 ✓）
     pri bool   allowResize = true
     pri bool   closeRequested = false  // 关闭按钮被按下（示例查询后重置）
@@ -282,7 +282,7 @@ export struct TitleBar impl Widget, Themeable {
         imgTitle = opts.get("title_icon", opts.get("title_image", ""))
         // ★ 记住"应用图标"（2026-10-08 ✓）：**第一个**设了 title_icon 的标题栏（= 主窗口 ✓）
         //   ⇒ 之后建的**弹窗**标题栏若没自己指定，就沿用它 ✓（见 sdl_dialog.dialogTitleBar ✓）
-        //   为什么要记：用户实测"主窗口设了图标，各对话框没设 ⇒ 弹窗光秃秃的" ✗
+        //   为什么要记：实测"主窗口设了图标，各对话框没设 ⇒ 弹窗光秃秃的" ✗
         if imgTitle != "" and _appIcon == "" { _appIcon = imgTitle }
         titleIconSize = opts.get("title_icon_size", 0.0)
         titleIconGap = opts.get("title_icon_gap", 6.0)
@@ -1372,11 +1372,12 @@ if ev.isWindowRestored() { maximized = false; btnHover = BTN_NONE; motionSkipCou
 
 // ==================== 运行时主题切换 ====================
 func applyTheme(Theme t) {
-bgColor = t.bg
+bgColor = t.bgHeader          // 标题栏语义就用 bgHeader（原来是 t.bg = 页面主背景，混用了 ✗）
 txColor = t.txt
 hovColor = t.bgHover
 sepColor = t.sep
 iconColor = theme.darken(t.txt, 64)
+closeHovColor = t.accent      // 关闭钮悬停用主色（红/粉都一样，比灰更明确 ✓）
 }
 }
 
@@ -1389,7 +1390,12 @@ string _appIcon = ""
 export func appTitleIcon(): string { return _appIcon }
 
 export func createTitleBar(Dict opts): TitleBar {
-    TitleBar tb = new TitleBar(); tb.set(opts); return tb
+    TitleBar tb = new TitleBar()
+    // **先套主题**再让 opts 覆盖 —— 原来只 `set(opts)`，主题一次都没应用过，
+    //   所以标题栏永远停在字段默认值（#262830 深灰）⇒ 弹在粉色界面上像另一套皮肤 ✗
+    tb.applyTheme(theme.getTheme())
+    tb.set(opts)
+    return tb
 }
 
 

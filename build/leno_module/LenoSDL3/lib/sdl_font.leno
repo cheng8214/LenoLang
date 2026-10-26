@@ -548,8 +548,8 @@ export func linux_font_find(): string {
 // 加载字体（自动尝试平台默认中文字体回退）
 export func createFontAuto(float ptsize): Font {
     if _os() == "windows" {
-        // ★ 2026-10-26：回退链**别直接落到宋体** —— 宋体是衬线体，和雅黑判若两字，
-        //   一旦雅黑打不开，整个界面字体风格突变（用户截图反馈"字体怎么变了"✗）
+        // 回退链**别直接落到宋体** —— 宋体是衬线体，和雅黑判若两字，
+        //   一旦雅黑打不开，整个界面字体风格突变
         //   顺序：微软雅黑 → 雅黑 Light → 等线 → 黑体 →（最后才）宋体
         string dir = win_font_dir()
         Array[string] names = ["msyh.ttc", "msyhl.ttc", "Deng.ttf", "simhei.ttf", "simsun.ttc"]

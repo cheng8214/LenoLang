@@ -43,7 +43,7 @@ export struct TabControl impl Widget, Themeable {
     bool _drawBorder = true    // 是否画内容区边框（默认 true = 老行为 ✓）
     pri bool clipContent = true   // 是否把页面内容裁剪到内容区（`clip:false` 关闭；默认 true = 老行为 ✓）
     Array[string] _tabs = []     // 各页标题
-    // ★ 2026-10-26：标签图标（与 `_tabs` 并行的图片路径，"" = 该页无图标）
+    // 标签图标（与 `_tabs` 并行的图片路径，"" = 该页无图标）
     //   纹理按需加载并缓存；`tab_icon_size` 默认 16（48 源图的 1/3，整数倍不丢线 ✓）
     Array[string] _tabIcons = []
     pri float tabIconSize = 16.0
@@ -123,7 +123,7 @@ export struct TabControl impl Widget, Themeable {
         clipContent = opts.get("clip", true)
 
         // 标签图标（与 `tabs` 并行的图片路径；"" = 该页无图标）
-        //   ★ 2026-10-26：原来只能传文字 ⇒ 设置页那种「常规/下载/外观」想带图标只能自己拼
+        //   原来只能传文字 ⇒ 设置页那种「常规/下载/外观」想带图标只能自己拼
         var ti = opts.get("tab_icons", [])
         if ti is Array[string] {
             _tabIcons = ti as Array[string]
@@ -417,7 +417,7 @@ export struct TabControl impl Widget, Themeable {
         if not _loaded or not enabled or not visible { return }
         applyOffsets(_active)
 
-        // ★ 2026-10-13：键盘（第六批）—— 只在**自己聚焦**时响应 ✓（键事件广播 ⇒ 必须自己过滤 ✓）
+        // 键盘（第六批）—— 只在**自己聚焦**时响应 ✓（键事件广播 ⇒ 必须自己过滤 ✓）
         //   ←/→ 切页签：走 `set_active` ⇒ 与鼠标点页签**同一个入口** ✓（页内容偏移、on_change 都在里面 ✓）
         if focused and ev.isKeyDown() {
             int _sc = ev.scancode()
@@ -473,7 +473,7 @@ export struct TabControl impl Widget, Themeable {
     //   ★ 2026-10-09 补右击菜单（另一个同源 bug ✓）：table/edit/listbox/treeview 的右击菜单不是
     //     由宿主绘制的，而是 `menu.renderContextMenus` **第二遍按窗口统一画**、只认 `isOpen()` ✗
     //     ⇒ 切页后菜单**照旧显示**；又因隐藏页收不到事件（process 只转当前页 ✓）⇒ **点不动也关不掉** ✗✗
-    //     （用户实测："table 里右击菜单后，切换 tab，菜单还在停留，虽然无法点击，但是能看到菜单" ✓）
+    //     （"table 里右击菜单后，切换 tab，菜单还在停留，虽然无法点击，但是能看到菜单"）
     pri func closePopups() {
         menu.closeContextMenus(self.hwnd)   // hwnd 为 null（未绑定窗口）时按"本窗口兜底"处理 ✓
         for pages.len() to p {

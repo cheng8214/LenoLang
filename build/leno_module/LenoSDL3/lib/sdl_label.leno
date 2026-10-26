@@ -35,7 +35,7 @@ export struct Label impl Widget, Themeable {
     bool visible = true
     bool enabled = true
     pri bool hover = false, wasHover = false
-    // ★ 2026-10-26（用户要求）：标签也能"像链接一样" —— 悬停变色、手型光标、可点击
+    // 标签也能"像链接一样" —— 悬停变色、手型光标、可点击
     //   卡片上的歌名/歌手要能点进详情页，而原来 Label 只做悬停提示、不接收点击 ✗
     pri Color hovColor = 0            // 悬停时的文字色（0 = 不变色）
     pri int _cursor = -1              // 悬停光标（-1 = 不改；SystemCursor.POINTER = 手型）
@@ -44,7 +44,7 @@ export struct Label impl Widget, Themeable {
     // ── 截断/滚动支持 ──
     float max_w = 0.0            // 最大显示宽度（>0 时启用截断或滚动）
     pri int truncate = TRUNCATE_NONE    // 截断模式（TRUNCATE_NONE/ELLIPSIS/SCROLL）
-    // ★ 2026-10-26：`TRUNCATE_SCROLL` 原来**只在悬停时**滚（静止就复位）——
+    // `TRUNCATE_SCROLL` 原来**只在悬停时**滚（静止就复位）——
     //   底栏那种"只有一行标题、用户不会去悬停"的位置，希望它一直跑马灯 ⇒ `scroll_always: true` ✓
     pri bool scrollAlways = false
     pri string fullText = ""        // 完整文本（截断模式下 tooltip 用）
@@ -258,12 +258,12 @@ export struct Label impl Widget, Themeable {
     }
 
     // ── 实际生效的截断上限：min(max_w, 盒子宽度) ──
-    // ★ 2026-10-07：原来只看 `max_w`，于是**盒子比 max_w 窄时会把整段文字画出去、
+    // 原来只看 `max_w`，于是**盒子比 max_w 窄时会把整段文字画出去、
     //   直接压到相邻控件上**（实测：150px 的盒子里放 600 上限的长路径，糊在右边的参照文本上 ✗）。
     //   `max_w` 的语义是"上限"，盒子才是硬边界 ⇒ 取两者较小值。
     //   `_w <= 0`（还没被布局分配宽度）时退回 max_w，保持旧行为 ✓
     pri func truncLimit(): float {
-        // ★ 2026-10-26：**盒子就是硬边界** —— 没给 `max_w` 时也要按布局分配的 `_w` 裁。
+        // **盒子就是硬边界** —— 没给 `max_w` 时也要按布局分配的 `_w` 裁。
         //   之前 `max_w <= 0` 直接返回 0（不裁）⇒ 长标题整段画出去、压到隔壁卡片上
         //   （实测：音乐应用的横卡标题"仿佛即将分开却又不散"糊在右边那张卡上 ✗）。
         //   `max_w` 的语义是"额外上限"，不是"是否裁剪的开关" ✓
@@ -413,7 +413,7 @@ export struct Label impl Widget, Themeable {
         }
 
         // ── 滚动模式 ──
-        // ★ 2026-10-26：改用 `truncLimit()` 而不是 `max_w` —— 盒宽现在是硬边界，
+        // 改用 `truncLimit()` 而不是 `max_w` —— 盒宽现在是硬边界，
         //   没传 `max_w` 的长文本同样应该能滚动（原来只认 max_w ⇒ 不传就静默不滚 ✓）
         if truncate == TRUNCATE_SCROLL and truncLimit() > 0.0 {
             float lim = truncLimit()
