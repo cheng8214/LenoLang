@@ -2,6 +2,7 @@
 import ffi
 import dirs
 import files
+import strings
 import "sdl_core.leno" as core
 use core.(sdl3, SDL_Point, SDL_GlyphMetrics, StringSize, GlyphInfo)
 
@@ -477,28 +478,115 @@ export func acquireFont(string path, float ptsize): Font {
     Font f = createFont(path, ptsize); f.refCount = f.refCount + 1; return f
 }
 
+// Windows 字体目录：**别写死 `C:/Windows`** ——
+//   系统可能装在 D 盘，目录也可能被改过（`windir` 才是权威来源 ✓）
+//   拿不到环境变量时按惯例回落 C:/Windows/Fonts
+func win_font_dir(): string {
+    var w = _env("WINDIR")
+    if w == null { return "C:/Windows/Fonts" }
+    string d = _str(w).replace("\\", "/").trim()
+    if d == "" { return "C:/Windows/Fonts" }
+    if d.ends_with("/") { return d + "Fonts" }
+    return d + "/Fonts"
+}
+
+// 文件名里是否含 key（`strings` 没有 contains ⇒ 用 split 切一下，切出 2 段以上就是包含 ✓）
+func font_name_has(string low, string key): bool {
+    var parts = strings.split(low, key)
+    return parts.len() > 1
+}
+
+// 在 dir 下**递归**找文件名含 key 的字体（最多 5 层；先看本层文件，再钻子目录 ✓）
+func font_scan(string dir, string key, int depth): string {
+    if dir == "" or depth > 5 { return "" }
+    Array[string] names = []
+    try { names = dirs.listdir(dir) } catch e { return "" }
+    for names to nm {
+        string low = nm.to_lower()
+        bool isFont = low.ends_with(".ttf") or low.ends_with(".ttc") or low.ends_with(".otf")
+        if isFont and font_name_has(low, key) { return dirs.join(dir, nm) }
+    }
+    for names to nm {
+        string p = dirs.join(dir, nm)
+        if dirs.is_dir(p) {
+            string r = font_scan(p, key, depth + 1)
+            if r != "" { return r }
+        }
+    }
+    return ""
+}
+
+// Linux 找一个可用的中文字体；找不到返回 ""
+export func linux_font_find(): string {
+    // 关键字按优先级排：Noto CJK → 思源黑体 → 文泉驿 → Droid → 文鼎 → DejaVu ✓
+    Array[string] keys = ["notosanscjk-regular", "notosanscjk", "notosanssc",
+                          "sourcehansanssc", "wqy-zenhei", "wqy-microhei",
+                          "droidsansfallback", "uming", "dejavusans"]
+    Array[string] roots = ["/usr/share/fonts", "/usr/local/share/fonts",
+                           "/usr/X11R6/lib/X11/fonts"]
+    for roots to d {
+        for keys to k {
+            string hit = font_scan(d, k, 0)
+            if hit != "" { return hit }
+        }
+    }
+    // 用户目录（~/.local/share/fonts、~/.fonts）
+    var h = _env("HOME")
+    if h != null and _str(h) != "" {
+        string home = _str(h)
+        Array[string] uroots = [home + "/.local/share/fonts", home + "/.fonts"]
+        for uroots to d {
+            for keys to k {
+                string hit = font_scan(d, k, 0)
+                if hit != "" { return hit }
+            }
+        }
+    }
+    return ""
+}
+
 // 加载字体（自动尝试平台默认中文字体回退）
 export func createFontAuto(float ptsize): Font {
     if _os() == "windows" {
-        // Windows: 微软雅黑 → 宋体
-        Font cached = _findCachedFont("C:/Windows/Fonts/msyh.ttc", ptsize)
+        // ★ 2026-10-26：回退链**别直接落到宋体** —— 宋体是衬线体，和雅黑判若两字，
+        //   一旦雅黑打不开，整个界面字体风格突变（用户截图反馈"字体怎么变了"✗）
+        //   顺序：微软雅黑 → 雅黑 Light → 等线 → 黑体 →（最后才）宋体
+        string dir = win_font_dir()
+        Array[string] names = ["msyh.ttc", "msyhl.ttc", "Deng.ttf", "simhei.ttf", "simsun.ttc"]
+        for names to nm {
+            string p = dir + "/" + nm
+            Font cached = _findCachedFont(p, ptsize)
+            if cached.ok { return cached }
+            Font f = createFont(p, ptsize)
+            if f.ok {
+                if nm != names[0] { print("[font] 默认字体回退：" + p) }   // 便于诊断 ✓
+                return f
+            }
+        }
+        print("[font] 候选字体全失败（雅黑/等线/黑体/宋体）—— 界面会用 SDL_ttf 内置字体")
+        return createFont(dir + "/msyh.ttc", ptsize)
+    }
+    // Linux: 各发行版字体路径都不一样（Arch 在 /usr/share/fonts/noto/、Fedora 在
+    //   google-noto-cjk/…）⇒ **按关键字在常见根目录里递归找**，不写死单一路径 ✓
+    string found = linux_font_find()
+    if found != "" {
+        Font cached = _findCachedFont(found, ptsize)
         if cached.ok { return cached }
-        Font font = createFont("C:/Windows/Fonts/msyh.ttc", ptsize)
-        if not font.ok { font = createFont("C:/Windows/Fonts/simsun.ttc", ptsize) }
-        return font
+        Font f = createFont(found, ptsize)
+        if f.ok { return f }
     }
-    // Linux: Noto Sans CJK → 文泉驿 → DejaVu
-    string linuxFont = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
-    Font cached = _findCachedFont(linuxFont, ptsize)
-    if cached.ok { return cached }
-    Font font = createFont(linuxFont, ptsize)
-    if not font.ok {
-        font = createFont("/usr/share/fonts/truetype/arphic/uming.ttc", ptsize)
+    // 兜底：老路径（扫描受限时仍有机会）
+    Array[string] fallback = ["/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+                              "/usr/share/fonts/truetype/arphic/uming.ttc",
+                              "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"]
+    for fallback to p {
+        Font cached2 = _findCachedFont(p, ptsize)
+        if cached2.ok { return cached2 }
+        Font f2 = createFont(p, ptsize)
+        if f2.ok { return f2 }
     }
-    if not font.ok {
-        font = createFont("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", ptsize)
-    }
-    return font
+    print("[font] Linux 没扫到可用中文字体（已试 noto / 文泉驿 / 思源 / DejaVu）")
+    return createFont(fallback[fallback.len() - 1], ptsize)
 }
 // 获取一个 Font 并登记引用（引用计数 +1）。配对 releaseFont 释放（见 acquireFont 注释）。
 export func acquireFontAuto(float ptsize): Font {

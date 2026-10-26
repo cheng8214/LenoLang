@@ -15,7 +15,7 @@ use theme.Color
 //   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
 func _opts_keys(): Array[string] {
     return [
-"alpha", "bg_color", "border", "border_alpha", "border_color", "cursor", "enabled", "h", "image_mode", "image_path", "image_tint", "overlay_hover_only", "overlay_path", "overlay_scale", "radius", "tip", "visible", "w", "x", "y"
+"alpha", "bg_color", "border", "border_alpha", "border_color", "cursor", "enabled", "h", "image_mode", "image_path", "image_tint", "overlay_hover_only", "overlay_path", "overlay_scale", "overlay_size", "radius", "tip", "visible", "w", "x", "y"
 ]
 }
 export struct ImageView impl Widget, Themeable {
@@ -49,6 +49,9 @@ export struct ImageView impl Widget, Themeable {
     pri string overlayLoaded = ""
     pri bool overlayHoverOnly = true
     pri float overlayScale = 0.5      // 叠加图边长 = min(w,h) × 该比例
+    // ★ 2026-10-26：`overlay_size` > 0 时用**固定像素**（优先于比例）——
+    //   想要 48 源图按 24 显示（正好 0.5 倍）只能靠它；比例算出来 18.6 这种非整数尺寸会糊 ✗
+    pri float overlaySize = 0.0
     float _natW = 0.0, _natH = 0.0  // 图片原始尺寸
 
 
@@ -65,6 +68,7 @@ export struct ImageView impl Widget, Themeable {
         overlayPath = opts.get("overlay_path", "")
         overlayHoverOnly = opts.get("overlay_hover_only", true)
         overlayScale = opts.get("overlay_scale", 0.5)
+        overlaySize = opts.get("overlay_size", 0.0)
         _mode  = opts.get("image_mode", MODE_ASPECT_FIT)   // MODE_ASPECT_FIT/STRETCH/ASPECT_FILL
         radius = opts.get("radius", 0.0)
         showBorder = opts.get("border", false)
@@ -233,9 +237,13 @@ export struct ImageView impl Widget, Themeable {
             if overlayTex != null {
                 float s = _w
                 if _h < s { s = _h }
-                s = s * overlayScale
-                float ox = x + (_w - s) / 2.0
-                float oy = y + (_h - s) / 2.0
+                // 固定像素优先（见 overlay_size 注释）；否则按比例
+                if overlaySize > 0.0 { s = overlaySize } else { s = s * overlayScale }
+                // ★ 尺寸和位置都**落整像素**：非整数尺寸 + 半像素偏移会让图标糊成一团
+                //   （用户反馈"播放按钮不清晰"就是 58×0.32=18.56 这种尺寸 ✗）
+                s = _float(_int(s + 0.5))
+                float ox = _float(_int(x + (_w - s) / 2.0 + 0.5))
+                float oy = _float(_int(y + (_h - s) / 2.0 + 0.5))
                 r.setTextureAlpha(overlayTex, 235)
                 r.setTextureColor(overlayTex, #FFFFFFFF)
                 r.drawTextureAt(overlayTex, ox, oy, s, s)

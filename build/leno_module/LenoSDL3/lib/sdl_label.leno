@@ -44,6 +44,9 @@ export struct Label impl Widget, Themeable {
     // ── 截断/滚动支持 ──
     float max_w = 0.0            // 最大显示宽度（>0 时启用截断或滚动）
     pri int truncate = TRUNCATE_NONE    // 截断模式（TRUNCATE_NONE/ELLIPSIS/SCROLL）
+    // ★ 2026-10-26：`TRUNCATE_SCROLL` 原来**只在悬停时**滚（静止就复位）——
+    //   底栏那种"只有一行标题、用户不会去悬停"的位置，希望它一直跑马灯 ⇒ `scroll_always: true` ✓
+    pri bool scrollAlways = false
     pri string fullText = ""        // 完整文本（截断模式下 tooltip 用）
     pri float scrollOffset = 0.0    // 滚动偏移（像素）
     pri int scrollDir = 1           // 滚动方向: 1=右→左, -1=左→右
@@ -79,7 +82,7 @@ export struct Label impl Widget, Themeable {
         return ["x", "y", "w", "h", "text", "font_size", "font_path", "font_style",
                 "text_color", "align", "wrap", "wrap_w", "max_w", "truncate",
                 "tip", "visible", "enabled",
-                "hover_color", "cursor"]   // 可点击文字（2026-10-26 ✓）
+                "hover_color", "cursor", "scroll_always"]   // 可点击文字 / 跑马灯（2026-10-26 ✓）
     }
 
     func set(Dict opts) {
@@ -120,6 +123,7 @@ export struct Label impl Widget, Themeable {
         // 截断/滚动支持
         max_w = opts.get("max_w", 0.0)
         truncate = opts.get("truncate", TRUNCATE_NONE)
+        scrollAlways = opts.get("scroll_always", false)
         fullText = text
         scrollOffset = 0.0
         scrollDir = 1
@@ -422,9 +426,9 @@ export struct Label impl Widget, Themeable {
                 r.drawText(_font, text, drawX, textDrawY(), tcol)
                 return
             }
-            // 更新滚动偏移 —— **只在悬停时滚**：
-            //   静止时字幕来回跑既吵又白耗重绘（每帧 markFrameRedraw）⇒ 移开即复位到开头 ✓
-            if not hover {
+            // 更新滚动偏移：默认**只在悬停时滚**（静止时字幕来回跑既吵又白耗重绘）；
+            //   `scroll_always: true` 则不等悬停，一直跑马灯 ✓
+            if not hover and not scrollAlways {
                 if scrollOffset != 0.0 {
                     scrollOffset = 0.0
                     scrollDir = 1
@@ -439,6 +443,10 @@ export struct Label impl Widget, Themeable {
                     scrollOffset = scrollOffset + _float(dt) * 0.03 * _float(scrollDir)
                     scrollLastTick = now
                 }
+                // ⚠ 必须 `markFrameRedraw`（= requestRedraw），**不是** `markFrameMotion` ——
+                //   后者只标记"鼠标动过"，不请求重绘 ⇒ 只有别的定时器（如 on_tick 200ms）
+                //   把界面刷一下时滚动才前进一格，看起来就是一卡一卡 ✗
+                core.markFrameRedraw()
             }
             // 滚动范围：从 0 到 -(textWidth - max_w + 20)
             float scrollRange = msw - lim + 20.0
