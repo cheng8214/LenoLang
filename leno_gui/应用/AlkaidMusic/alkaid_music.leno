@@ -50,7 +50,7 @@ const int WIN_H = 800
 const int TB_H = 32          // 自绘标题栏
 const int SIDE_W = 184       // 侧栏宽
 const int TOP_H = 58         // 顶栏
-const int BAR_H = 66         // 底部播放条（★ 2026-10-26：82 太高，参考图约 60~66）
+const int BAR_H = 66         // 底部播放条（82 太高，参考图约 60~66）
 const int PAD = 24           // 内容区左右内边距
 // ⚠ 卡片高度按 Card 的**不变式**算：图片区最终高 = h − needBottom
 //   needBottom = 文字块(textH) + 12（不给 content_h 时就这么点）
@@ -60,10 +60,10 @@ const int CARD_W = 152       // 卡片自然宽（5 张 + 4 个间距 = 824，�
 const int CARD_H = 200       // ⚠ 实测下限：图片要 129（152×0.85），文字块+内边距还要 ~71 ⇒ 196 时图片区被压成 0（整片白块）✗，200 才放得下
 const int CARD_GAP = 16
 const float CARD_ASPECT = 0.85   // 图片区 高/宽
-const int PER_ROW = 5        // 每行卡片数（2026-10-25：4 → 5，图片按用户反馈改小 ✓）
+const int PER_ROW = 5        // 每行卡片数（2026-10-25：4 → 5，图片按曾出现改小 ✓）
 
 // ==================== 调色板（浅粉 + 背景插画透出 ✓）====================
-// ★ 2026-10-26：改成"背景图 + 浅色遮罩"后，各容器的底色一律换成**半透明白** ——
+// 改成"背景图 + 浅色遮罩"后，各容器的底色一律换成**半透明白** ——
 //   叠起来是"内容区最透、侧栏/播放条略实、卡片最实"的层次，插画从缝里透出来 ✓
 var C_VEIL      = #FFFFFF9E   // 全窗遮罩（62% 白）：55% 时插画亮部的次级文字会糊 ✗
 var C_BG_TOP    = #FFFDFDFF   // 没有背景图时的兜底渐变（上）
@@ -138,7 +138,9 @@ func appTheme(): Theme {
     t.bgHover  = #F8E2EAFF
     t.bgSel    = C_ACC_SOFT
     t.bgZebra  = #FDF4F8FF
-    t.bgHeader = C_SIDE
+    // 标题栏专用色（弹窗顶部那条）：原来借的是 C_SIDE（半透明白），压在插画上糊成一片 ⇒
+    //   给一个**实色粉**，和小界面的粉同色系
+    t.bgHeader = #F6CFE0FF
     t.txt      = C_TXT
     t.txtInput = C_TXT
     t.txtDim   = C_TXT_DIM
@@ -158,7 +160,7 @@ func appTheme(): Theme {
 
 // （2026-10-26：皮肤选择已去掉 —— 外观只留「背景图 + 蒙版不透明度」，见 settings.leno ✓）
 
-// 缓存目录（★ 2026-10-26：子目录名**一律英文**，避免中文路径在各种工具/命令行里出问题）
+// 缓存目录（子目录名**一律英文**，避免中文路径在各种工具/命令行里出问题）
 //   <应用目录>/cache/           根
 //   <应用目录>/cache/preview/   试听音频
 //   <应用目录>/cache/covers/    封面缓存
@@ -168,6 +170,8 @@ func appTheme(): Theme {
 var g_cacheOverride = ""
 // 下载优先格式 / 并行线程数（同上，来自 settings.json）
 var g_preferFmt = "lossless"
+// 试听音质（在线播放的档位；standard / high / lossless）
+var g_audioQ = "high"
 var g_workers = 4
 // 外观：背景图（"" = 内置 bk.jpg）与蒙版不透明度 ✓
 var g_bgPath = ""
@@ -236,7 +240,7 @@ export struct Player {
     // 避免"再扫一次顺序变了、点 A 放 B"（2026-10-26 实测踩到 ✗）
     Array[Song] localCache = []
 
-    // ----- 前进 / 后退（★ 2026-10-26：卡片文字点进详情页后就有历史了）-----
+    // ----- 前进 / 后退（卡片文字点进详情页后就有历史了）-----
     //   只记录"用户点进去的页面"（首页 / 歌手页 / 歌曲页）；侧栏导航不记录 ⇒ 后退栈干净 ✓
     Button backBtn
     Button fwdBtn
@@ -245,12 +249,12 @@ export struct Player {
     int histPos = -1
     string artistArg = ""                 // 当前歌手页的歌手名
     string songArg = ""                   // 当前歌曲页的 sid
-    // ★ 2026-10-26：歌曲页为了补"相关歌曲"会后台搜一次同歌手 ——
+    // 歌曲页为了补"相关歌曲"会后台搜一次同歌手 ——
     //   那次回信**不能**把页面切到结果表（否则点歌名进去又被弹回搜索页 ✗）
     bool relatedSearch = false
     // 下载工作线程回传（["P",已下,总] / ["D",字节,总] / ["E",原因,""]）；分片下载才能有进度 ✓
     Channel dlCh
-    // 播放前取音源的回信（★ 2026-10-26：取直链+下载试听放线程，别再卡 UI ✓）
+    // 播放前取音源的回信（取直链+下载试听放线程，别再卡 UI ✓）
     Channel playCh
     Song pendingSong               // 正在准备的那首
     bool playPending = false
@@ -305,8 +309,8 @@ export struct Player {
     float lastVol = 68.0          // 静音前的音量，取消静音时恢复
     bool playing = false
     bool loopOne = false       // 循环模式：false = 列表循环 / true = 单曲循环
-    // ★ 2026-10-25：起步必须是 **0**（原来写死 4.0 ⇒ 一打开就显示 00:04、
-    //   进度条左边先挂一小块，和"还没开始播"对不上 —— 用户反馈"起步不一致"✗）
+    // 起步必须是 **0**（原来写死 4.0 ⇒ 一打开就显示 00:04、
+    //   进度条左边先挂一小块，和"还没开始播"对不上 —— 曾出现"起步不一致"✗）
     float pos = 0.0
     float dur = 0.0            // 真实时长由播放时 getDuration() 给出；未播时 0 ⇒ 显示 00:00
 
@@ -432,7 +436,7 @@ export struct Player {
         var mains = data.navMain()
         for 0 : mains.len() - 1 to i { new_nav(mains[i], i) }
 
-        // ---- 「搜索结果」：紧跟在主导航下面（2026-10-25 用户要求）
+        // ---- 「搜索结果」：紧跟在主导航下面
         //   切页会退出搜索态、清空当前结果，但**上次搜索留快照** ⇒ 点这里能回到那张表 ✓
         //   没搜过时它是灰的（点了无动作），搜过之后变主色并带上首数
         searchBtn = SDL3.createButton({text: "搜索结果", font_size: 13,
@@ -513,7 +517,7 @@ export struct Player {
     }
 
     pri func set_nav(int idx) {
-        // ★ 2026-10-25：点了导航要真的**换页**（原来只改高亮 ⇒ 用户反馈"点了没切换"）
+        // 点了导航要真的**换页**（原来只改高亮 ⇒ 曾出现"点了没切换"）
         //   内容区按新页面重建（标题 / 说明 / 卡片都跟着换），并回到顶部。
         bool changed = idx != curNav
         curNav = idx
@@ -537,7 +541,7 @@ export struct Player {
         }
         if changed {
             // ★ 切页必须**退出搜索态**：`build_content` 里"有 netSongs 就渲染结果表并 return"，
-            //   不清空的话标题换了、内容还是那张表（用户截图：标题"最近播放"、下面是酷我结果 ✗）
+            //   不清空的话标题换了、内容还是那张表（标题"最近播放"、下面是酷我结果）
             netSongs = []
             netRows = []
             netIds = []
@@ -547,7 +551,7 @@ export struct Player {
             hasTable = false
             // ★ 输入框里的关键词也是"搜索态"：`on_change` 会把它写进 query，
             //   而 build_content 在 query != "" 时走搜索分支 ⇒ 框里留着字，点哪个导航
-            //   都显示"没有找到匹配的歌曲"（用户反馈：框里有内容就切不动 ✗）
+            //   都显示"没有找到匹配的歌曲"（框里有内容就切不动）
             //   ⇒ 切页时**连输入框一起清空**（浏览器点新链接也是这个行为 ✓）
             query = ""
             search.set_text("")
@@ -642,7 +646,7 @@ export struct Player {
         search.on_enter(func() { on_kuwo_search() })   // 回车 = 搜酷我（联网 ✓）
         topBar.add(search, {grow: 0, shrink: 0, basis: 300, align: 1})
 
-        // ---- 设置（齿轮，2026-10-26 用户要求）----
+        // ---- 设置（齿轮，2026-10-26 需求）----
         topBar.add(SDL3.createLabel({text: ""}), {grow: 0, shrink: 0, basis: 6, align: 1})
         Button gear = SDL3.createButton({image_path: ico("setting.png"), image_size: 24,
                                          w: 30, h: 30, radius: 15,
@@ -667,8 +671,8 @@ export struct Player {
     // ==================== 内容区两种形态 ====================
     //   · 卡片页：顶栏 + ScrollView（内容自己往下排）
     //   · 表格页：顶栏 + Table **直接占满剩余高度**（grow:1，表格内部滚动）
-    //   ★ 2026-10-26：表格以前塞在 ScrollView 的 content 里、高度按行数写死
-    //     ⇒ 只有 2 行时就是一条小横条（用户反馈"table 为啥这么小"✗）
+    //   表格以前塞在 ScrollView 的 content 里、高度按行数写死
+    //     ⇒ 只有 2 行时就是一条小横条
     pri func show_scroll() {
         mainCol.clear()
         mainCol.add(topBar, {grow: 0, shrink: 0, basis: TOP_H, align: 3})
@@ -693,10 +697,10 @@ export struct Player {
     pri func build_content() {
         // 默认回到"卡片页"形态（顶栏 + ScrollView）；表格分支稍后会换成 show_table ✓
         show_scroll()
-        // ★ 2026-10-25：标题跟着**当前导航**走（原来写死"首页" ⇒ 点左侧「我喜欢」等
+        // 标题跟着**当前导航**走（原来写死"首页" ⇒ 点左侧「我喜欢」等
         //   只有高亮在动、页面内容一动不动，看起来就是"点了没切换" ✗）
         content.add(lbl(page_name(curNav), 25, C_TXT, true), {grow: 0, shrink: 0, basis: 36, align: 3})
-        // ★ 2026-10-26（用户要求）：**不再有演示数据** —— 副标题只说真实情况，
+        // **不再有演示数据** —— 副标题只说真实情况，
         //   没有内容就留空（页面正文会给"这里还没有歌曲"）✓
         string sub = ""
         if curNav == 0 {
@@ -728,25 +732,25 @@ export struct Player {
 
         // 搜索中且没有旧结果 ⇒ 整页显示"正在搜索…"
         //   ⚠ 首页的 `homeLoading` **不能**在这里拦截：那样整页都被占位替换，
-        //     「继续收听」会跟着消失（用户实测："点换一批，继续收听也不见了"✗）
+        //     「继续收听」会跟着消失（"点换一批，继续收听也不见了"）
         //     ⇒ 它只在首页的"为你推荐"那一段里显示占位（见下面首页分支 ✓）
         if netSongs.len() == 0 and searching {
             loading_row("正在搜索…")
             return
         }
 
-        // 有酷我搜索结果 ⇒ **表格**列出（2026-10-25 按用户要求：搜索不加载封面）
+        // 有酷我搜索结果 ⇒ **表格**列出
         //   为什么不铺卡片：搜索要的是信息密度（歌名/歌手/时长/音质），封面要额外
         //   每首一次详情页 + 一次图片下载 ⇒ 一次搜索多花十秒，得不偿失 ✗
         //   ⚠ 但**歌曲页 / 下载页**不能用这张表：它们自己的分支在后面，
         //     而这里只看 `netSongs.len()` —— 歌曲页为了补"相关歌曲"会把 netSongs 填满，
-        //     于是先命中这张表、把歌曲页顶掉（用户实测：点歌名后跳到"搜索结果"✗）
+        //     于是先命中这张表、把歌曲页顶掉（点歌名后跳到"搜索结果"）
         if netSongs.len() > 0 and curNav != -4 and curNav != -2 {
             int rowH = 30
             // 列与 LenoMusic 的搜索页同一套口径（歌名/歌手/专辑/时长/格式/大小/来源），
             //   列宽合计 826 ≤ 内容宽 840 ⇒ 最右列不会被裁掉 ✓（LenoMusic 记过这个账）
             hasTable = true
-            // ★ 2026-10-26（用户要求"table 居中"）：列宽**按内容区宽度按比例分**，
+            // 列宽**按内容区宽度按比例分**，
             //   不再写死 826 —— 写死的话窗口一宽，右侧就多出一条空列，整张表看着偏左 ✗
             //   比例：歌名 33% / 歌手 16% / 专辑 16% / 时长 9% / 格式 7% / 大小 12% / 来源 7%
             float tw2 = _float(content_w())
@@ -757,8 +761,8 @@ export struct Player {
                                          col_widths: [tw2 * 0.33, tw2 * 0.16, tw2 * 0.16,
                                                       tw2 * 0.09, tw2 * 0.07, tw2 * 0.12, tw2 * 0.06],
                                          aligns: [0, 0, 0, 1, 1, 2, 1],
-                                         // ★ 2026-10-26（用户要求）：**表头文字居中**（表体仍按列语义对齐 ✓）
-                                         // ★ 2026-10-26（用户要求）：表头与数据列**同对齐** ——
+                                         // **表头文字居中**（表体仍按列语义对齐 ✓）
+                                         // 表头与数据列**同对齐** ——
                                          //   原来表头一律居中、下面内容左对齐，看着是两套排版 ✗
                                          header_aligns: [0, 0, 0, 1, 1, 2, 1],
                                          // 行图标：`image_col` 把该列画成 [图标 + 文字]，
@@ -860,7 +864,7 @@ export struct Player {
                                            type: "primary", font_size: 13})
             pb.on_click(func() { play_song(sg) })
             btnRow.add(pb, {grow: 0, shrink: 0, basis: 104, align: 1})
-            // ★ 2026-10-26（用户要求）：播放旁边加「下载全部」——当前这首 + 相关歌曲整批入队
+            // 播放旁边加「下载全部」——当前这首 + 相关歌曲整批入队
             Button dall = SDL3.createButton({text: "下载全部", w: 112, h: 34, radius: 17,
                                              type: "dark", font_size: 13})
             dall.set_tip("把当前这首和相关歌曲全部加入下载队列")
@@ -912,7 +916,7 @@ export struct Player {
             rt.on_dbl_click(func(int row, int col) {
                 if row >= 0 and row < rel.len() { play_song(rel[row]) }
             })
-            // ---- 右击菜单（★ 2026-10-26 用户要求：播放 / 下载 / 下载全部 / 搜索歌曲 / 搜索歌手）----
+            // ---- 右击菜单----
             rt.on_context_will_open(func(int row) {
                 rt.clearContextItems()
                 rt.addContextItem({label: "播放", id: "play"})
@@ -997,7 +1001,7 @@ export struct Player {
             return
         }
 
-        // ==================== 本地音乐：**列表**（用户要求 2026-10-26）====================
+        // ==================== 本地音乐：**列表**====================
         //   为什么不再用卡片：本地曲库是"我的文件"，用户要看名字/歌手/来源，
         //   卡片一屏只放得下几首；列表 + 每行封面缩略图更合适 ✓
         if curNav == 3 {
@@ -1031,7 +1035,7 @@ export struct Player {
                                          empty_text: "还没有下载"})
             lt.set_rows(lrows)
             lt.on_dbl_click(func(int row, int col) { play_local_row(row) })
-            // ---- 右击菜单（★ 2026-10-26 用户要求：播放 / 打开目录 / 选中 / 删除 / 全部删除）----
+            // ---- 右击菜单----
             lt.on_context_will_open(func(int row) {
                 lt.clearContextItems()
                 lt.addContextItem({label: "播放", id: "play"})
@@ -1080,7 +1084,7 @@ export struct Player {
         }
 
         // 首页：**只有真实数据**（继续收听 / 为你推荐 / 最近添加），没有就留空 ✓
-        //   ★ 2026-10-26（用户要求）：演示数据全部撤掉
+        //   演示数据全部撤掉
         if curNav == 0 and query == "" {
             int shown = 0
             if recentSongs.len() > 0 {
@@ -1093,7 +1097,7 @@ export struct Player {
             }
             // 推荐区：加载中只在这一段显示占位（「继续收听」「最近添加」照常显示 ✓）
             //   ⚠ 别把这个判断提到整页那层 —— 那样换一批时整页变"正在加载"，
-            //     继续收听跟着消失（用户实测 ✗）
+            //     继续收听跟着消失
             if homeLoading {
                 loading_row("正在加载推荐…")
                 shown = shown + 1
@@ -1158,7 +1162,7 @@ export struct Player {
 
     // ==================== 酷我音乐搜索（工作线程 + 通道回信）====================
     //   照 LenoMusic：网络在**工作线程**里跑，UI 只在这一拍 `try_receive()` 排空 ⇒ 搜索时界面不冻 ✓
-    //   （原来在 UI 线程同步 `client.get()`：一次几秒，用户看到的就是"卡死" ✗）
+    //   （原来在 UI 线程同步 `client.get()`：一次几秒，表现的就是"卡死" ✗）
     pri func on_kuwo_search() {
         string kw = strings.trim(search.get_text())
         if kw == "" { return }
@@ -1275,7 +1279,7 @@ export struct Player {
     // 本地音乐列表里双击一行 ⇒ 播那个文件
     //   ⚠ 必须用**建表时那次**的扫描结果（`localCache`），不能重新 `dl.scan`：
     //     `dirs.listdir` 的顺序不保证稳定，第二次扫出来顺序一变，
-    //     行号就指到别的歌上（用户实测：点「夜曲」放出来是「后来」✗）
+    //     行号就指到别的歌上（点「夜曲」放出来是「后来」）
     pri func play_local_row(int row) {
         if row < 0 or row >= localCache.len() { return }
         play_song(localCache[row])
@@ -1343,20 +1347,22 @@ export struct Player {
             return
         }
         string id = sg.sid
-        string f = dirs.join(audioCacheDir(), id + ".mp3")
+        // 缓存名跟着**试听音质**走：无损落 .flac，其余 .mp3（换档位不会误用旧缓存 ✓）
+        string extAq = if g_audioQ == "lossless" then ".flac" else ".mp3"
+        string f = dirs.join(audioCacheDir(), id + extAq)
         // 已缓存 ⇒ 直接开声（createSound 是毫秒级，不会卡 ✓）
         if files.exists(f) {
             play_ready(sg, f)
             return
         }
-        // ★ 2026-10-26（用户反馈"点播放会卡一下"）：取直链 + 下载试听要 1–3 秒，
+        // 取直链 + 下载试听要 1–3 秒，
         //   原来整段跑在 UI 线程里 ⇒ 窗口直接冻住 ✗
         //   现在交给工作线程（`workers.prepare`），回信到了再开声 ✓
         pendingSong = sg
         playPending = true
         nowArtist.set_text(sg.artist + " · 正在取音源…")
         SDL3.markFrameRedraw()
-        threads.start(workers.prepare, id, audioCacheDir(), playCh)
+        threads.start(workers.prepare, id, audioCacheDir(), g_audioQ, playCh)
     }
 
     // 音源就绪 ⇒ 真正开声（解码失败退 flac；封面仍异步拉 ✓）
@@ -1399,7 +1405,7 @@ export struct Player {
     //   ★★ 关键：换歌时**只 `stop()` 旧声，绝不在建新的之前 `uninit()`** ——
     //      Music 模块的 `Sound.uninit()` 在**最后一个实例**销毁时会 `ma_engine_uninit()` 关掉引擎，
     //      引擎一关，下一次 `createSound` 要重开音频设备；重开一旦失败，模块把 `_engineFailed`
-    //      永久置真 ⇒ **之后每首歌都"打不开音频"**（用户实测：第一首能播，之后全废 ✗）
+    //      永久置真 ⇒ **之后每首歌都"打不开音频"**（第一首能播，之后全废）
     //      ⇒ 顺序必须是「先建新的、再 uninit 旧的」，让引擎引用计数在切换过程中始终 ≥ 1 ✓
     pri func start_play_file(Song sg, string f): bool {
         if sndOk { snd.stop() }                  // 只停，不销毁（引擎保活 ✓）
@@ -1445,7 +1451,7 @@ export struct Player {
     }
 
     // 加载占位：转圈 + 文案（整行居中，上面留一点白，别顶着标题 ✓）
-    //   ★ 2026-10-26：加载期间不能让内容区空着（用户会以为"没数据 / 界面坏了"）
+    //   加载期间不能让内容区空着（用户会以为"没数据 / 界面坏了"）
     pri func loading_row(string text) {
         content.add(SDL3.createLabel({text: ""}), {grow: 0, shrink: 0, basis: 24, align: 3})
         HBox row = SDL3.createHBox({x: 0, y: 0, w: _float(content_w()), h: 40,
@@ -1462,8 +1468,8 @@ export struct Player {
     //     （布局还没跑）⇒ 按它算出来的列宽永远偏小，看起来"改了没变化" ✗
     pri func content_w(): int {
         var ws = win.getSize()
-        // ★ 2026-10-26：**不再多扣 12**（原来给滚动条预留）——
-        //   表格/列宽本身就是按这个值算的，多扣一次会让右侧白出一条（用户反馈"应该和窗口一样大"✗）
+        // **不再多扣 12**（原来给滚动条预留）——
+        //   表格/列宽本身就是按这个值算的，多扣一次会让右侧白出一条
         //   滚动条由 Table 自己画在右边缘内侧，不需要外面再留
         int w = ws.w - SIDE_W - PAD * 2
         if w < 320 { w = 320 }
@@ -1484,7 +1490,7 @@ export struct Player {
 
     // 一个分区：标题行（+ 右侧胶囊按钮）+ 内容（横卡 / 卡片墙）
     // kind：0 = 不给「换一批」（继续收听 / 单区页）/ 1 = 为你推荐 / 2 = 最近添加
-    //   ★ 2026-10-26（用户反馈）：原来两个区共用 `refresh_recommend()` ⇒
+    //   原来两个区共用 `refresh_recommend()` ⇒
     //     点「最近添加」的换一批会连「为你推荐」一起刷 ✗ ⇒ 按区分别刷新 ✓
     pri func add_shelf(Shelf s, bool compact, int kind) {
         HBox head = SDL3.createHBox({x: 0, y: 0, w: 800, h: 34, pad_x: 0, pad_y: 0, spacing: 10})
@@ -1500,7 +1506,7 @@ export struct Player {
                                              tip: if kind == 1 then "换一组推荐" else "换一批新歌"})
             swap.on_click(func() { refresh_section(kind) })
             head.add(swap, {grow: 0, shrink: 0, basis: 82, align: 1})
-            // ★ 2026-10-26：「查看全部」删掉了 —— 为你推荐只有 24 首，卡片一屏就能翻完，
+            // 「查看全部」删掉了 —— 为你推荐只有 24 首，卡片一屏就能翻完，
             //   点进去看同一批歌是假动作（等以后有分页/更多内容再加 ✓）
         }
         content.add(head, {grow: 0, shrink: 0, basis: 36, align: 3})
@@ -1515,7 +1521,7 @@ export struct Player {
         if compact {
             // 继续收听：**一行铺满**（卡宽同样按可用宽度均分，不再写死 250 ✓）
             //   ⚠ 必须减掉滚动条宽度（12）：`content_w()` 为了表格铺满已经不减了，
-            //     卡片若铺到最右，就会被滚动条压住 ⇒ 右侧圆角看着变成直角（用户指出 ✓）
+            //     卡片若铺到最右，就会被滚动条压住 ⇒ 右侧圆角看着变成直角
             int avail0 = content_w() - 12
             int gap0 = 14
             // ★ 卡宽按**列数**算，不按"这行有几首"算：
@@ -1535,8 +1541,8 @@ export struct Player {
             }
             content.add(row, {grow: 0, shrink: 0, basis: 84, align: 3})
         } else {
-            // ★ 2026-10-25：横卡（58px 缩略图，与「继续收听」同款），但**列数按可用宽度算**：
-            //   之前写死"每行 3 张、宽 260" ⇒ 宽窗口右侧空一大片、窄窗口又挤（用户反馈 ✓）
+            // 横卡（58px 缩略图，与「继续收听」同款），但**列数按可用宽度算**：
+            //   之前写死"每行 3 张、宽 260" ⇒ 宽窗口右侧空一大片、窄窗口又挤
             //   现在：cols = (可用宽 + 间距) / (最小卡宽 + 间距)，卡宽再把剩余宽度均分 ⇒ 整行铺满
             int avail = content_w() - 12      // 同上：留出滚动条宽度，右侧圆角不被压 ✓
             int gap = 14
@@ -1600,6 +1606,7 @@ export struct Player {
         g_cacheOverride = s.cachedir
         g_preferFmt = cfgset.clamp_fmt(s.fmt)
         g_workers = cfgset.clamp_workers(s.workers)
+        g_audioQ = cfgset.clamp_aq(s.aq)
         // 背景图 / 蒙版变了 ⇒ 丢掉旧纹理，下一帧按新设置重画 ✓
         bool bgChanged = (g_bgPath != s.bg) or (g_veil != cfgset.clamp_veil(s.veil))
         g_bgPath = s.bg
@@ -1660,7 +1667,7 @@ export struct Player {
             rebuild_content()
             sv.set_scroll(0.0, 0.0)
             // 相关歌曲：**按歌名搜**（同曲的其他版本/翻唱/同专辑），不是按歌手 ✗
-            //   ★ 2026-10-26（用户指正）：之前传的是 `one.artist` ⇒ 搜出来全是同一歌手的歌，
+            //   之前传的是 `one.artist` ⇒ 搜出来全是同一歌手的歌，
             //     看着像"点歌曲却进了歌手搜索"；改成歌名 + 30 条 ✓
             Song one = find_song(arg)
             string kwRel = one.title
@@ -1710,7 +1717,7 @@ export struct Player {
     }
 
     // 相关歌曲（歌曲页底部表格）
-    //   ★ 2026-10-26（用户指正）：应以**这首歌的搜索结果**为主（同曲其他版本/翻唱/同专辑），
+    //   应以**这首歌的搜索结果**为主（同曲其他版本/翻唱/同专辑），
     //     不再只挑"同歌手"——否则看起来就像点歌曲却只看到歌手列表 ✗
     //   · 优先：netSongs（歌曲页那次按**歌名**搜到的 30 条），排除自己
     //   · 兜底：还没搜回来时，用本地已有的同歌手歌凑数（避免空白）
@@ -1730,7 +1737,7 @@ export struct Player {
                 if same_artist(s, cur.artist) and s.sid != cur.sid and not has_sid(out, s.sid) { out.add(s) }
             }
         }
-        // 上限 30 首（用户要求"点进去显示 30 首"）：歌曲页表格内部会滚动 ✓
+        // 上限 30 首：歌曲页表格内部会滚动 ✓
         if out.len() > 30 {
             Array[Song] top = []
             for 0 : 29 to i { top.add(out[i]) }
@@ -1768,7 +1775,7 @@ export struct Player {
     }
 
     // ==================== 持久化（缓存\library.json：喜欢 + 最近播放）====================
-    //   ★ 2026-10-26（用户反馈"点击喜欢没存数据"）：原来只在内存里，重启就没了 ✗
+    //   原来只在内存里，重启就没了 ✗
     pri func save_library() {
         Dict[string, any] d = {}
         d["version"] = 1
@@ -1804,7 +1811,7 @@ export struct Player {
 
     // ==================== 喜欢 / 添加（卡片上的两个小按钮）====================
     // 收藏的**键**：在线歌用 sid，本地歌没有 sid ⇒ 用 `file:<绝对路径>`
-    //   ★ 2026-10-26（用户反馈"爱心收藏没有和本地同步"）：本地曲库的歌 sid 是空的，
+    //   本地曲库的歌 sid 是空的，
     //     原来直接拒绝收藏 ⇒ 本地歌点心没反应、'我喜欢'页也永远看不到它们 ✗
     pri func like_key(Song sg): string {
         if sg.sid != "" { return sg.sid }
@@ -1892,11 +1899,11 @@ export struct Player {
 
     pri func wide_card(Song sg, int cw): HBox {
         // clip: true ⇒ 兜底：万一哪个子控件还是画宽了，也**不会冲出卡片**（被卡片矩形裁掉 ✓）
-        //   h 74→80、间距 10→6：右侧三颗按钮放大到 28px 后要塞得下（用户反馈"图标太小看不清"）
+        //   h 74→80、间距 10→6：右侧三颗按钮放大到 28px 后要塞得下
         HBox row = SDL3.createHBox({x: 0, y: 0, w: _float(cw), h: 80, pad_x: 8, pad_y: 8,
                                     spacing: 6, bg_color: C_CARD, bg_radius: 14, clip: true})
         // 叠加钮：**24px 固定**（48 源图的一半，整数倍不糊）；
-        //   正在播这首时显示 pause.png，点它 = 暂停/继续（用户要求 ✓）
+        //   正在播这首时显示 pause.png，点它 = 暂停/继续
         bool isCur = is_now_playing(sg)
         ImageView iv = SDL3.createImageView({w: 58, h: 58, radius: 10,
                                              image_path: coverPath(sg.cover),
@@ -1914,17 +1921,17 @@ export struct Player {
         })
         row.add(iv, {grow: 0, shrink: 0, basis: 58, align: 1})
 
-        // ★ 2026-10-26：文字必须**限宽截断**，否则长歌名会冲出卡片、盖到隔壁卡上 ✗
+        // 文字必须**限宽截断**，否则长歌名会冲出卡片、盖到隔壁卡上 ✗
         //   max_w = 卡宽 − (左右内边距 8×2 + 封面 58 + 间距 10) = cw − 84
         //   再减去右侧三颗按钮（28×3 + 间距 6×2 = 96）
         int tw = cw - 84 - 96
         if tw < 50 { tw = 50 }
         VBox tv = SDL3.createVBox({x: 0, y: 0, w: _float(tw), h: 58, pad_x: 0, pad_y: 2, spacing: 2})
-        // ★ 2026-10-26（用户截图：长歌名冲出卡片）：标题/歌手都**显式限宽 + 省略号**。
+        // 标题/歌手都**显式限宽 + 省略号**。
         //   只依赖"盒宽自动裁剪"不够稳：Label 的 `_w` 在布局前是自然宽（180），
         //   渲染那一拍若还没被 set_size，就会按 180 算上限 ⇒ 照样溢出 ✗
         //   ⇒ 直接把 `max_w` 传成算好的文字区宽度（truncLimit 取 min(max_w, 盒宽) ✓）
-        // ★ 2026-10-26（用户要求）：歌名/歌手**像链接**——悬停手型 + 变色，点击进详情页
+        // 歌名/歌手**像链接**——悬停手型 + 变色，点击进详情页
         //   （进了详情页才有历史 → 顶栏的前进/后退才真正可用 ✓）
         Label tl = SDL3.createLabel({text: sg.title, font_size: 12.5, text_color: C_TXT,
                                      max_w: _float(tw), truncate: 1, tip: sg.title,
@@ -1935,12 +1942,12 @@ export struct Player {
         Label al = SDL3.createLabel({text: sg.artist, font_size: 10.5, text_color: C_TXT_DIM,
                                      max_w: _float(tw), truncate: 1, tip: "查看歌手：" + sg.artist,
                                      hover_color: C_ACCENT, cursor: SDL3.SystemCursor.POINTER})
-        al.on_click(func() { open_song(sg) })      // 歌手名也进歌曲页（用户要求 ✓）
+        al.on_click(func() { open_song(sg) })      // 歌手名也进歌曲页
         tv.add(al, {grow: 0, shrink: 0, basis: 18, align: 3})
         row.add(tv, {grow: 1, shrink: 1, align: 1})
 
         // ---- 右侧三颗（图标都在 images/icons）：♥ 喜欢 / ＋ 添加 / ⬇ 下载 ----
-        //   ★ 2026-10-26：`＋` 目前**只显示不做事**（用户要求）——歌单系统还没数据层，
+        //   `＋` 目前**只显示不做事**——歌单系统还没数据层，
         //     先别给假动作；tip 写清楚，避免点了没反应还以为是 bug ✓
         bool likedNow = is_liked(like_key(sg))      // 在线/本地走同一个键 ✓
         Button lb = SDL3.createButton({image_path: ico(if likedNow then "sc1.png" else "sc.png"),
@@ -1971,7 +1978,7 @@ export struct Player {
 
     // ==================== 底部播放条 ====================
     pri func build_bar() {
-        // ★ 2026-10-26（按用户给的参考图）：外层改 VBox
+        // 外层改 VBox
         //   ① 顶部一条**横贯整宽**的细进度条（可点击 seek）
         //   ② 下面三栏：左=封面/歌名(♥ ☰)、中=上一首/播放/下一首、右=时间 + 工具
         VBox barBox = SDL3.createVBox({x: 0, y: 0, w: WIN_W, h: BAR_H, pad_x: 0, pad_y: 0,
@@ -1994,7 +2001,7 @@ export struct Player {
         coverView = SDL3.createImageView({w: 46, h: 46, radius: 8, bg_color: #F3E4EBFF})
         left.add(coverView, {grow: 0, shrink: 0, basis: 46, align: 1})
 
-        // ★ 2026-10-26（用户截图：长歌名顶到 ☰ 上）：
+        // 
         //   ① 歌名/歌手**显式限宽 + 省略号**（原来没 truncate，只靠 shrink 会画到按钮上 ✗）
         //   ② ♥ / ≡ 从"文字行里"挪到**整行右端** —— 标题区只放文字，按钮永远贴右侧，
         //      两者之间天然有空隙，不会再挤在一起 ✓
@@ -2122,7 +2129,7 @@ export struct Player {
     }
 
     // 底栏 ♥：走和卡片**同一条**收藏逻辑（likedSids + 落盘），
-    //   否则底栏和卡片是两套状态、互相看不见（用户实测：卡片红心、底栏还是灰 ✗）
+    //   否则底栏和卡片是两套状态、互相看不见（卡片红心、底栏还是灰）
     pri func toggle_like() {
         if like_key(nowSong) == "" {
             nowArtist.set_text("还没有在播的歌")
@@ -2286,7 +2293,7 @@ export struct Player {
     }
 
     // 重建内容区
-    //   ★ 2026-10-26 修内存泄漏（用户报"每次点首页内存都涨"）：
+    //   修内存泄漏（现象：每点一次首页，内存就涨）：
     //     `clear()` **只清布局数组**，不会 dispose 子控件 —— 而这里每次重建都是**新建**一批
     //     Card / ImageView / Table，每个都带一张封面纹理（酷我 500px 封面解码后 ≈1MB，
     //     一屏 17 张）⇒ 旧控件的 SDL_Texture 永远没人释放 ✗
@@ -2299,7 +2306,7 @@ export struct Player {
         content.dispose()
         content.clear()
         build_content()
-        // ★ 2026-10-26：**内容区高度要按实际内容撑开** —— 原来固定 900，
+        // **内容区高度要按实际内容撑开** —— 原来固定 900，
         //   歌曲页 30 行表格（≈940）超出部分直接被裁，滚轮也滚不下去（看着像"只有 14 首"✗）
         //   `fit_w` 只管宽，高必须自己给；ScrollView 按 content 高度算滚动范围 ✓
         float ch = content.measure_h()
@@ -2356,7 +2363,7 @@ export struct Player {
             homeAsked = true
             homeLoading = true
             if curNav == 0 and netSongs.len() == 0 { rebuild_content() }   // 立刻显示"正在加载"✓
-            // 为你推荐 24 首（4 列 × 6 行 ✓ 用户要求），最近添加 9 首
+            // 为你推荐 24 首（4 列 × 6 行 ✓ 需求），最近添加 9 首
             threads.start(workers.sections, "热歌", "新歌", 24, 9, homeCh)
         }
         if homeCh != null and homeCh.len() > 0 {

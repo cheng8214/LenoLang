@@ -19,40 +19,65 @@ import files
 
 // ==================== 播放前准备音源（★ 2026-10-26）====================
 // 为什么放线程：`play_sid` 原来在 UI 线程里「取直链 + 下载试听」，一首 1–3 秒，
-//   点播放整个窗口就卡住（用户反馈"点播放会卡一下，不是多线程吗" ✗）
-// 回信：["OK", 本地路径] / ["ERR", 原因]
-export func prepare(string id, string cacheDir, Channel ch) {
+//   点播放整个窗口就卡住
+// 回信：["OK", 本地路径, id] / ["ERR", 原因, id]
+//   quality：standard（128k）/ high（320k）/ lossless（flac）—— 来自设置里的「试听音质」✓
+export func prepare(string id, string cacheDir, string quality, Channel ch) {
     if id == "" {
-        ch.send(["ERR", "没有音源 id"])
+        ch.send(["ERR", "没有音源 id", ""])
         return
     }
-    string f = dirs.join(cacheDir, id + ".mp3")
+    // 目标扩展名由音质决定（无损落 .flac，其余 .mp3）⇒ 缓存文件名也带这个后缀
+    bool lossless = quality == "lossless"
+    string ext = if lossless then ".flac" else ".mp3"
+    string f = dirs.join(cacheDir, id + ext)
     // 已缓存 ⇒ 立刻回信（UI 那边只是 createSound，很快 ✓）
     // ⚠ 回信第 3 项带 **id**：用户连点两首时，UI 靠它丢弃过期回信（别把 A 的路径贴给 B ✓）
     if files.exists(f) {
         ch.send(["OK", f, id])
         return
     }
+    // 另一种格式的旧缓存在 ⇒ 直接复用（切片换音质时不必重新下载 ✓）
+    string alt = dirs.join(cacheDir, id + (if lossless then ".mp3" else ".flac"))
+    if files.exists(alt) {
+        ch.send(["OK", alt, id])
+        return
+    }
     try { dirs.mkdir_p(cacheDir) } catch e { print("[play] 建缓存目录失败：" + _str(e)) }
+
+    // 候选档位顺序：无损先 flac；标准先 128k；高品先 320k —— 后面都留兜底 ✓
+    Array[string] cands = ["mp3", "mp3128", "flac"]
+    if lossless { cands = ["flac", "mp3", "mp3128"] }
+    else if quality == "standard" { cands = ["mp3128", "mp3", "flac"] }
+
     string u = ""
+    string gotExt = ext
     try {
         var c = net.createClient()
-        // mp3 优先（mp3128 那档偶尔不是真音频，只作兜底 ✓）
-        u = kuwo.officialurl(id, "mp3")
-        if u == "" { u = kuwo.officialurl(id, "mp3128") }
-        if u == "" { u = kuwo.getdirecturl(c, id) }
+        for cands to fm {
+            u = kuwo.officialurl(id, fm)
+            if u != "" {
+                gotExt = if fm == "flac" then ".flac" else ".mp3"
+                break
+            }
+        }
+        if u == "" {
+            u = kuwo.getdirecturl(c, id)
+            gotExt = ".mp3"
+        }
         c.close()
     } catch e {
-        ch.send(["ERR", "取直链失败：" + _str(e)])
+        ch.send(["ERR", "取直链失败：" + _str(e), id])
         return
     }
     if u == "" {
-        ch.send(["ERR", "取不到音源"])
+        ch.send(["ERR", "取不到音源", id])
         return
     }
+    string target = dirs.join(cacheDir, id + gotExt)
     bool ok = false
-    try { ok = net.download(u, f) > 0 } catch e { ok = false }
-    if ok and files.exists(f) { ch.send(["OK", f, id]) }
+    try { ok = net.download(u, target) > 0 } catch e { ok = false }
+    if ok and files.exists(target) { ch.send(["OK", target, id]) }
     else { ch.send(["ERR", "下载试听失败", id]) }
 }
 
@@ -100,7 +125,7 @@ export func section(string kind, string kw, int n, Channel ch) {
 }
 
 // 首页两个分区（为你推荐 / 最近添加）：只搜两次，封面交给 cover_shard 并行拉
-//   ★ 2026-10-26：两个分区的数量**分开传** —— 为你推荐要 24 首（4 列 × 6 行），最近添加 9 首
+//   两个分区的数量**分开传** —— 为你推荐要 24 首（4 列 × 6 行），最近添加 9 首
 export func sections(string kwRec, string kwNew, int nRec, int nNew, Channel ch) {
     Array[Array[string]] out = []
     try {

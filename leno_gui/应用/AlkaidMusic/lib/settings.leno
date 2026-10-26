@@ -22,6 +22,27 @@ export const int WORKERS_DEF = 4
 export const string FMT_LOSSLESS = "lossless"
 export const string FMT_MP3 = "mp3"
 
+// 试听音质（在线播放时取的档位；★ 2026-10-26 需求）
+//   standard = 128kbps mp3（省流量，最快出声）
+//   high     = 320kbps mp3（默认，兼顾音质与体积）
+//   lossless = 无损 flac（体积大，首次加载慢）
+export const string AQ_STANDARD = "standard"
+export const string AQ_HIGH = "high"
+export const string AQ_LOSSLESS = "lossless"
+
+export func clamp_aq(string q): string {
+    if q == AQ_STANDARD or q == AQ_LOSSLESS { return q }
+    return AQ_HIGH
+}
+
+// 音质 → 人话（设置界面与底栏提示共用 ✓）
+export func aq_text(string q): string {
+    string v = clamp_aq(q)
+    if v == AQ_STANDARD { return "标准 128k" }
+    if v == AQ_LOSSLESS { return "无损" }
+    return "高品 320k"
+}
+
 // 蒙版不透明度范围（0 = 完全透明，能看到原图；255 = 全白，只剩文字）
 //   默认 158 = 62% 白，与界面原来的 C_VEIL(#FFFFFF9E) 同值 ✓
 export const int VEIL_MIN = 0
@@ -31,10 +52,11 @@ export const int VEIL_DEF = 158
 export struct Settings {
     int workers = 4          // 默认 4（与 WORKERS_DEF 同值，字面量：结构默认只能写字面量）
     string cachedir = ""     // "" = 跟随 <应用目录>\缓存
-    string fmt = "lossless"  // 默认无损优先（用户要求：无损其次才是 mp3）
-    // ★ 2026-10-26（用户要求）：外观只留两项 —— 背景图 + 蒙版不透明度
+    string fmt = "lossless"  // 默认无损优先（无损其次才是 mp3）
+    // 外观只留两项 —— 背景图 + 蒙版不透明度
     string bg = ""           // 背景图绝对路径；"" = 用应用自带 images/bk.jpg
     int veil = 158           // 全窗遮罩不透明度 0..255（= VEIL_DEF）
+    string aq = "high"       // 试听音质：standard / high / lossless（= AQ_HIGH）
 }
 
 // 配置目录（平台判断只此一处）
@@ -86,6 +108,7 @@ export func load(): Settings {
         if m.has("fmt") { s.fmt = clamp_fmt(jsons.get_str(m, "fmt", s.fmt)) }
         if m.has("bg") { s.bg = jsons.get_str(m, "bg", "") }
         if m.has("veil") { s.veil = clamp_veil(jsons.get_int(m, "veil", s.veil)) }
+        if m.has("aq") { s.aq = clamp_aq(jsons.get_str(m, "aq", s.aq)) }
     }
     return s
 }
@@ -103,7 +126,8 @@ export func save(Settings s): bool {
              workers: clamp_workers(s.workers),
              cachedir: s.cachedir,
              fmt: clamp_fmt(s.fmt),
-             bg: s.bg, veil: clamp_veil(s.veil)})
+             bg: s.bg, veil: clamp_veil(s.veil),
+             aq: clamp_aq(s.aq)})
         return true
     } catch e {
         print("[settings] 写入失败：" + _str(e))

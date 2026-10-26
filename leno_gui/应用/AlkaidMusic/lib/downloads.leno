@@ -15,7 +15,7 @@ import dirs
 import files
 import strings
 import jsons
-import "Sys" as Sys        // ★ 2026-10-26：打开目录 / 选中文件 / 删到回收站 —— 模块里本来就有，
+import "Sys" as Sys        // 打开目录 / 选中文件 / 删到回收站 —— 模块里本来就有，
                            //   不要再自己拼 `cmd /c start` 那套（跨平台分支白写一遍 ✗）
 use data.Song
 
@@ -71,7 +71,7 @@ export func delete_all(string root): int {
     return jsons.get_int(r, "moved", 0)
 }
 
-// 下载目录：<缓存根>\downloads（★ 2026-10-26：目录名统一英文 ✓）
+// 下载目录：<缓存根>\downloads（目录名统一英文 ✓）
 export func dir_of(string root): string { return dirs.join(root, "downloads") }
 
 // 文件名里不能出现的字符一律换下划线（Windows：/ \ : * ? " < > | 及换行）
@@ -89,7 +89,7 @@ export func art_of(string dir, string title, string artist): string {
 }
 
 // 下载一首：id → `dir/<歌手> - <歌名>.mp3`；已存在直接算成功（不重复下）
-//   ★ 2026-10-26：顺便把封面也落到**同名 .jpg**（本地音乐列表要用它显示缩略图 ✓）
+//   顺便把封面也落到**同名 .jpg**（本地音乐列表要用它显示缩略图 ✓）
 //   ⚠ 同步、几百 KB/s：一首 4–5 MB 约 1–3 秒，调用方自行决定要不要放线程
 export func save(string id, string title, string artist, string dir): bool {
     if id == "" { return false }
@@ -151,9 +151,9 @@ export func save_shard(string id, string title, string artist, string root, stri
     }
     string d = dir_of(root)
     dirs.mkdir_p(d)
-    // ★ 2026-10-26：扩展名必须按**实际取到的直链格式**定，不能按"偏好"写死 ✗
+    // 扩展名必须按**实际取到的直链格式**定，不能按"偏好"写死 ✗
     //   之前 prefer=lossless 就固定写 .flac，即使 flac 取不到、退到 mp3 也照样叫 .flac
-    //   ⇒ 列表显示 MP3、磁盘上是 flac（或反过来）的错乱（用户实测 ✓）
+    //   ⇒ 列表显示 MP3、磁盘上是 flac（或反过来）的错乱
     string base = dirs.join(d, safe_name(artist + " - " + title))
     string art = art_of(root, title, artist)
     if not files.exists(art) { cover.cover_to(id, art) }     // 封面失败不影响下载 ✓
@@ -250,7 +250,7 @@ export func save_shard(string id, string title, string artist, string root, stri
         return false
     }
     // D 消息带**实际格式**，且"总字节 = 已下字节" —— 服务端 Content-Range 的总长偶尔偏大，
-    //   按它算进度会停在 76% 之类的数字上（用户实测 ✗）；已完成就该是 100% ✓
+    //   按它算进度会停在 76% 之类的数字上；已完成就该是 100% ✓
     ch.send(["D", _str(off), _str(off), gotFmt])
     return true
 }

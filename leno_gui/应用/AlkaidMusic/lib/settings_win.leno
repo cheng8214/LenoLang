@@ -4,7 +4,7 @@
 //   createDialogWindow → dialogTitleBar → setRootAt(root, 0, tb.get_h()) → runModal
 //   ⚠ runModal 在主循环已跑时**立即返回** ⇒ 收尾动作必须写在按钮回调里（别写成 if 判断 ✗）
 //
-// ★ 2026-10-26（用户要求）：改成 **TabControl 分页**，并加「外观」页可换肤
+// 改成 **TabControl 分页**，并加「外观」页可换肤
 //   · 常规：并行线程数 / 缓存目录
 //   · 下载：优先格式（互斥 RadioButton）
 //   · 外观：皮肤（粉 / 浅色 / 深色）
@@ -24,6 +24,8 @@ export func show(string defaultCache, Array[string] tabIcons, func(Settings):voi
     int dh = 450
     int tbH = SDL3.DIALOG_TB_H
     var dlg = SDL3.createDialogWindow({title: "设置", w: dw, h: tbH + dh})
+    // 标题栏配色**跟随主题**（bgHeader / txt / accent，见 sdl_titlebar.applyTheme ✓），
+    //   应用侧不再硬编码颜色 —— 想换皮肤只改 appTheme()
     TitleBar tb = SDL3.dialogTitleBar(dlg, "设置")
     var root = SDL3.createVBox({x: 0, y: 0, w: dw, h: dh, pad_x: 18, pad_y: 12, spacing: 8})
     dlg.setRootAt(root, 0, tb.get_h())
@@ -34,16 +36,18 @@ export func show(string defaultCache, Array[string] tabIcons, func(Settings):voi
 
     // 闭包里改局部变量可能按值捕获 ⇒ 用单元素数组（引用语义 ✓）
     Array[string] fmtBox = [cfg.clamp_fmt(cur.fmt)]
+    // 试听音质（同样是单元素数组，闭包按引用改 ✓）
+    Array[string] aqBox = [cfg.clamp_aq(cur.aq)]
 
     // ==================== Tab 容器 ====================
-    // ★ 2026-10-26（用户截图：内容区一块死白）：Tab 的 `bg_color` 默认取 `theme.bg`（纯白），
+    // Tab 的 `bg_color` 默认取 `theme.bg`（纯白），
     //   而对话框底色是粉的 ⇒ 白块特别突兀 ✗ ⇒ 这里给**透明**，让对话框自己的底色透上来 ✓
     TabControl tabs = SDL3.createTabControl({x: 0, y: 0, w: _float(cw), h: 320,
                                              tabs: ["常规", "下载", "外观"], active: 0,
                                              tab_icons: tabIcons, tab_icon_size: 16.0,
                                              bg_color: #00000000, border: false})
     // ★ 固定 300 高：**不能再 grow** —— 和下面的 spacer 同时 grow:1 会平分剩余空间，
-    //   Tab 只剩一半高 ⇒ 页内容被裁、看起来重叠（用户截图 ✓）
+    //   Tab 只剩一半高 ⇒ 页内容被裁、看起来重叠
     root.add(tabs, {grow: 0, shrink: 0, basis: 320, align: 3})
 
     // ==================== 页 0：常规 ====================
@@ -84,7 +88,26 @@ export func show(string defaultCache, Array[string] tabIcons, func(Settings):voi
     tabs.addToPage(1, rbLoss, 0, 60)
     tabs.addToPage(1, rbMp3, 240, 60)
 
-    // ==================== 页 2：外观（★ 2026-10-26：只留「背景图 + 蒙版不透明度」）====================
+    // ---- 试听音质----
+    tabs.addToPage(1, SDL3.createLabel({text: "试听音质（在线播放时取哪一档）", font_size: 13}), 0, 112)
+    RadioButton rbStd = SDL3.createRadioButton({text: "标准 128k（省流量）", group: "aq",
+                                                checked: aqBox[0] == cfg.AQ_STANDARD,
+                                                box: 18, gap: 8, font_size: 12.5})
+    RadioButton rbHigh = SDL3.createRadioButton({text: "高品 320k（推荐）", group: "aq",
+                                                 checked: aqBox[0] == cfg.AQ_HIGH,
+                                                 box: 18, gap: 8, font_size: 12.5})
+    RadioButton rbLossless = SDL3.createRadioButton({text: "无损 flac", group: "aq",
+                                                     checked: aqBox[0] == cfg.AQ_LOSSLESS,
+                                                     box: 18, gap: 8, font_size: 12.5})
+    rbStd.set_tip("128kbps mp3：最快出声，适合流量紧张")
+    rbHigh.set_tip("320kbps mp3：默认，音质与体积平衡")
+    rbLossless.set_tip("无损 flac：音质最好，首次加载慢、体积大（一首几十 MB）")
+    tabs.addToPage(1, rbStd, 0, 150)
+    tabs.addToPage(1, rbHigh, 200, 150)
+    tabs.addToPage(1, rbLossless, 380, 150)
+    tabs.addToPage(1, SDL3.dialogLabel("提示：换档位只影响之后播放的歌；已缓存的会复用，不会重复下载。", 11), 0, 196)
+
+    // ==================== 页 2：外观（只留「背景图 + 蒙版不透明度」）====================
     tabs.addToPage(2, SDL3.createLabel({text: "背景图片（留空 = 用应用自带的 images/bk.jpg）", font_size: 13}), 0, 18)
     Edit bgEdit = SDL3.createEdit({text: cur.bg, w: 372, h: 28, font_size: 12,
                                    tip: "支持 png / jpg；留空则用内置背景"})
@@ -98,7 +121,7 @@ export func show(string defaultCache, Array[string] tabIcons, func(Settings):voi
     tabs.addToPage(2, SDL3.createLabel({text: "蒙版透明度（0 = 原图，255 = 全白；越高文字越好读）", font_size: 13}), 0, 96)
     // show_value: false —— Slider 自带的数值文本会和我们右侧的百分比 Label 重叠（截图里那个 191.0 ✗）
     // 轨道颜色必须**比对话框底色深一点**：默认 trkColor = theme.bgAlt（浅粉）= 对话框底色，
-    //   未填充那半段看不见，看着就像"轨道和背景重叠"（用户截图 ✓）
+    //   未填充那半段看不见，看着就像"轨道和背景重叠"
     Slider veilS = SDL3.createSlider({w: 360, h: 20, min: cfg.VEIL_MIN, max: cfg.VEIL_MAX,
                                       value: cur.veil, step: 1, show_value: false,
                                       track_color: #E3CEDAFF, fill_color: #F7A8C4FF})
@@ -123,6 +146,16 @@ export func show(string defaultCache, Array[string] tabIcons, func(Settings):voi
     })
     rbMp3.on_change(func(bool on) {
         if on { fmtBox[0] = cfg.FMT_MP3; note.set_text("优先格式：MP3 优先（点「保存」才写盘）"); SDL3.markFrameRedraw() }
+    })
+    // 试听音质
+    rbStd.on_change(func(bool on) {
+        if on { aqBox[0] = cfg.AQ_STANDARD; note.set_text("试听音质：标准 128k（点「保存」才生效）"); SDL3.markFrameRedraw() }
+    })
+    rbHigh.on_change(func(bool on) {
+        if on { aqBox[0] = cfg.AQ_HIGH; note.set_text("试听音质：高品 320k（点「保存」才生效）"); SDL3.markFrameRedraw() }
+    })
+    rbLossless.on_change(func(bool on) {
+        if on { aqBox[0] = cfg.AQ_LOSSLESS; note.set_text("试听音质：无损 flac（点「保存」才生效）"); SDL3.markFrameRedraw() }
     })
 
     pickBtn.on_click(func() {
@@ -182,6 +215,7 @@ export func show(string defaultCache, Array[string] tabIcons, func(Settings):voi
         if cd == defaultCache { cd = "" }          // 等于默认 ⇒ 存 ""
         s.cachedir = cd
         s.fmt = cfg.clamp_fmt(fmtBox[0])
+        s.aq = cfg.clamp_aq(aqBox[0])
         s.bg = trim_text(bgEdit.get_text())
         s.veil = cfg.clamp_veil(_int(veilS.get_value()))
         if cfg.save(s) {
