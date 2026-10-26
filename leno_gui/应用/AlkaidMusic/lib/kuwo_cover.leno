@@ -2,7 +2,13 @@
 // ----------------------------------------------------------------------------
 // 数据来源：歌曲详情页 `http://www.kuwo.cn/play_detail/<id>`
 //   页面里嵌着 `pic120:"https:\u002F\u002Fimg2.kuwo.cn\u002Fstar\u002Falbumcover\u002F120\u002F..jpg"`
-//   把路径里的 `/120/` 换成 `/500/` 就是 500px 大图（实测 5.9 KB → 55 KB ✓）
+//   把路径里的 `/120/` 换成 `/500/` 就能拿到 500px 大图（实测 5.9 KB → 55 KB）
+//
+// ★ 2026-10-26：**不再换大图**（原来一律 `/500/`）——
+//   本界面里封面最大只显示 **58×58**（卡片缩略图 58、底栏 56），
+//   500px 图解码后是 500×500×4 ≈ **1MB/张**，一屏 18 张就是 18MB 常驻、切页时瞬时翻倍 ✗
+//   120px 图解码只有 120×120×4 ≈ 57KB（**省 94%**），58×2（高 DPI）也才 116 ≤ 120 ✓
+//   真要放大图（详情页/全屏播放）再单独加一个 `cover_of_big()`，别让列表页背这个成本 ✓
 //
 // 用法：
 //   import "./lib/kuwo_cover.leno" as cover
@@ -43,12 +49,40 @@ func usable(string f): bool {
     }
 }
 
-// 取封面并落到 `cacheDir/<id>.jpg`；返回本地路径（失败/无封面返回 ""）
+// 缓存文件名 = `<id>_<尺寸>.jpg`
+//   ★ 为什么要带尺寸后缀：换过尺寸后**不能**命中旧缓存，否则代码改了、界面还用着
+//     以前那张 500px 大图（内存一点没省，还查不出原因 ✓）。旧的 `<id>.jpg` 留在盘上无害
+export func cache_name(string id, string size): string { return id + "_" + size + ".jpg" }
+
+// 取封面并落到 `cacheDir/<id>_120.jpg`；返回本地路径（失败/无封面返回 ""）
 export func cover_of(string id, string cacheDir): string {
     if id == "" or cacheDir == "" { return "" }
-    string f = dirs.join(cacheDir, id + ".jpg")
+    string f = dirs.join(cacheDir, cache_name(id, "120"))
     if usable(f) { return f }
     if files.exists(f) {                 // 坏文件（多半 1 字节）⇒ 删掉重下
+        try { files.delete(f) } catch e { print("[cover] 删坏缓存失败：" + _str(e)) }
+    }
+    try {
+        dirs.mkdir_p(cacheDir)
+        var c = net.createClient()
+        c.addHeaders(["User-Agent: " + UA, "Referer: http://www.kuwo.cn/"])
+        var r = c.get("http://www.kuwo.cn/play_detail/" + id)
+        string u = if r.ok() then pic_url(r.body) else ""
+        if u != "" { net.download(u, f) }    // 用 pic120 的原始 URL（不再换 /500/ ✓）
+        c.close()
+    } catch e {
+        return ""
+    }
+    return if usable(f) then f else ""
+}
+
+// 500px 大图（**当前界面没用到**；留给以后的详情页/全屏播放）
+//   缓存名带 _500 ⇒ 与列表页的 120 图互不干扰 ✓
+export func cover_of_big(string id, string cacheDir): string {
+    if id == "" or cacheDir == "" { return "" }
+    string f = dirs.join(cacheDir, cache_name(id, "500"))
+    if usable(f) { return f }
+    if files.exists(f) {
         try { files.delete(f) } catch e { print("[cover] 删坏缓存失败：" + _str(e)) }
     }
     try {

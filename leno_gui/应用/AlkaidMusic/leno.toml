@@ -7,3 +7,5 @@ version = "0.1.0"
 LenoSDL3 = ">=0.1.1"
 # LenoWeb：酷我搜索用它的 web_net（HTTP 客户端）
 LenoWeb  = ">=1.0.0"
+# LenoSys：只给自检探针用（ALKAID_STRESS 打印进程内存，见 alkaid_music.leno）
+LenoSys  = ">=0.1.0"

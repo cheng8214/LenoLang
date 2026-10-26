@@ -34,6 +34,7 @@ import strings
 import dirs
 import files
 import threads
+import Sys                       // 自检探针用：读本进程内存（ALKAID_STRESS ✓）
 import "Music" as audio        // miniaudio：真播放（LenoMusic 模块 ✓）
 use audio.Sound
 use SDL3.(Event, Renderer, Window, TitleBar, Button, Label, Edit, Card, ImageView, Table,
@@ -258,6 +259,12 @@ export struct Player {
     string shotPath = ""
     int shotAt = 14
     int steps = 0
+    // ----- 切页内存探针（ALKAID_STRESS=N ⇒ 每拍交替切页一次，跑完报进程内存增量 ✓）-----
+    int stressLeft = 0
+    int stressMem0 = 0
+    int stressReport = 0      // >0 ⇒ 停手后再等这么多拍才报（让 GC 有机会回收 ⇒ 区分"真泄漏"和"GC 水位"✓）
+    bool stressWarm = false   // 首页渲染几帧后才记基线（首帧纹理加载不算进增量 ✓）
+    int rclickAt = 0          // >0 ⇒ 第 N 拍在结果表上注入一次右键（验证 dispose 没让菜单悬空 ✓）
 
     // ==================== 入口 ====================
     func run() {
@@ -871,7 +878,8 @@ export struct Player {
     pri func play_sid(Song sg) {
         // 封面已缓存过 ⇒ 直接挂上（让卡片立刻有真图，不用等线程回信 ✓）
         if sg.sid != "" {
-            string cf = dirs.join(coverCacheDir(), sg.sid + ".jpg")
+            // 文件名走 cover.cache_name（带尺寸后缀）—— 别在这里另拼一份，否则改了尺寸对不上 ✓
+            string cf = dirs.join(coverCacheDir(), cover.cache_name(sg.sid, "120"))
             if files.exists(cf) {
                 sg.cover = cf
                 for 0 : netSongs.len() - 1 to ni {
@@ -1418,8 +1426,18 @@ export struct Player {
         rebuild_content()
     }
 
-    // 重建内容区（clear 只清布局、不 dispose 子控件 ⇒ 纹理不重建 ✓）
+    // 重建内容区
+    //   ★ 2026-10-26 修内存泄漏（用户报"每次点首页内存都涨"）：
+    //     `clear()` **只清布局数组**，不会 dispose 子控件 —— 而这里每次重建都是**新建**一批
+    //     Card / ImageView / Table，每个都带一张封面纹理（酷我 500px 封面解码后 ≈1MB，
+    //     一屏 17 张）⇒ 旧控件的 SDL_Texture 永远没人释放 ✗
+    //     （GC 只回收 Leno 对象，**不会**调 dispose；海报墙那边是"卡片建一次、只换 add 名单"，
+    //       所以它用 clear() 是对的 —— 两种用法不能混 ✓）
+    //     实测：交替切页 24 次，进程内存 68MB → 398MB（≈13.7MB/次）
+    //   ⚠ 顺序不能反：先 dispose（逐个释放纹理/字体引用），再 clear（清空布局数组）；
+    //     反过来 dispose 就遍历不到子控件了。
     pri func rebuild_content() {
+        content.dispose()
         content.clear()
         build_content()
         SDL3.markFrameRedraw()
@@ -1431,6 +1449,34 @@ export struct Player {
     }
 
     pri func on_tick() {
+        // ⓪a 右键注入（ALKAID_RCLICK=N）：在结果表第一行上右击，验证"重建时 dispose 子控件"
+        //   没有把 Table 自己的弹层菜单搞成悬空（菜单宿主被 dispose ⇒ 点一下会崩 ✓）
+        if rclickAt > 0 and steps == rclickAt {
+            rclickAt = 0
+            SDL3.testRightClickAt(win.getID(), 320.0, 200.0)
+            print("[rc] 已注入右键 @ (320,200)")
+        }
+        // ⓪ 切页内存探针（ALKAID_STRESS）：交替 首页(0) / 最近播放(2) ⇒ 每次 set_nav 都真的 rebuild
+        if stressLeft > 0 {
+            if not stressWarm {
+                // 先让首页按固定数据渲染几帧（首帧要建纹理，那部分不算增量 ✓）
+                if steps >= 6 {
+                    stressWarm = true
+                    stressMem0 = Sys.processMemoryKb(Sys.currentPid())
+                }
+            } else {
+                stressLeft = stressLeft - 1
+                set_nav(if stressLeft % 2 == 0 then 0 else 2)
+                if stressLeft == 0 { stressReport = 10 }   // 停手后再等 10 拍才报（留给 GC ✓）
+            }
+        } else if stressReport > 0 {
+            stressReport = stressReport - 1
+            if stressReport == 0 {
+                int nowKb = Sys.processMemoryKb(Sys.currentPid())
+                print("[leak] 交替切页完成（静置 2s 后）：" + _str(stressMem0) + "KB -> " +
+                      _str(nowKb) + "KB  共 +" + _str(nowKb - stressMem0) + "KB")
+            }
+        }
         // ① 排空搜索线程的回信（`try_receive()` 非阻塞 —— 不要用 threads.select ✗）
         if searchCh != null {
             var m = searchCh.try_receive()
@@ -1607,8 +1653,43 @@ export struct Player {
         //   这几条正是最容易"看代码没问题、跑起来不响应"的地方 ✓
         var act = _env("ALKAID_ACT")
         if act != null and _int(_str(act)) > 0 { demo_actions() }
+        // ALKAID_STRESS=N ⇒ 每拍"首页 ⇄ 最近播放"交替切一次（走真实 set_nav ⇒ 真 rebuild），
+        //   跑完打印进程内存增量。用它是为了把"点一下涨多少"变成数字，而不是靠肉眼看任务管理器 ✓
+        var rc = _env("ALKAID_RCLICK")
+        if rc != null { rclickAt = _int(_str(rc)) }
+        var st = _env("ALKAID_STRESS")
+        if st != null {
+            stressLeft = _int(_str(st))
+            if stressLeft > 0 {
+                // 默认用固定离线数据（可比 ✓）；`ALKAID_SEED=0` ⇒ 用真实网络数据（量封面成本用）
+                var sd = _env("ALKAID_SEED")
+                bool seedIt = true
+                if sd != null and _str(sd) == "0" { seedIt = false }
+                if seedIt { stress_seed(); rebuild_content() }
+            }
+        }
         if shotPath != "" {
             win.setOverlay(func(Renderer r) { shot_overlay(r) })
+        }
+    }
+
+    // 探针用的固定数据：18 首 + 本地封面、**不联网** ⇒ 每次重建的工作量恒定，能精确量净增量 ✓
+    //   （真数据会随网络回信不断变化，内存曲线没法比）
+    pri func stress_seed() {
+        homeAsked = true
+        homeLoading = false
+        recentSongs = []
+        newSongs = []
+        recSongs = []
+        for 0 : 17 to i {
+            var sg = new Song()
+            sg.title = "测试歌曲 " + _str(i + 1)
+            sg.artist = "测试歌手"
+            int n = (i % 16) + 1
+            string num = _str(n)
+            if n < 10 { num = "0" + num }
+            sg.cover = "cover" + num + ".png"
+            recSongs.add(sg)
         }
     }
 
@@ -1624,7 +1705,8 @@ export struct Player {
         var s = r.readPixelsAt(0, 0, sz.w, sz.h)
         if s != null {
             bool ok = SDL3.saveImagePNG(s, shotPath)
-            print("[music] 截图 " + shotPath + " ok=" + _str(ok) + " 语音=" + _str(playing))
+            print("[music] 截图 " + shotPath + " ok=" + _str(ok) + " 语音=" + _str(playing) +
+                  " 内存=" + _str(Sys.processMemoryKb(Sys.currentPid())) + "KB")
         } else {
             print("[music] 读像素失败：" + SDL3.getError())
         }

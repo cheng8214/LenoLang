@@ -150,6 +150,13 @@ export struct HBox impl Widget {
     func remove(Widget c) {
         for _c.len() to i { if _c[i] == c { _c.remove(i); _opt.remove(i); _natW.remove(i); _natH.remove(i); return } }
     }
+    // ⚠ `clear()` 只清**布局数组**，**不** dispose 子控件 —— 这是给"控件建一次、只换上场名单"
+    //   的用法留的（例：影视海报墙的卡片，筛选时只是重新 add ✓）。
+    //   如果子控件是**每次新建**的（内容区/列表整体重建），光 clear 会持续漏原生资源：
+    //   纹理与字体引用都在各控件的 `dispose()` 里释放，GC **不会**替你调 ✗
+    //   ⇒ 那种场合必须 `dispose()` 再 `clear()`（顺序不能反：先 dispose 才遍历得到子控件 ✓）
+    //   实测（2026-10-26，AlkaidMusic 交替切页）：只 clear 时 24 次 +95MB（≈4MB/次，线性）；
+    //   加上 dispose 后 24 次 +8.9MB、44 次 +9.5MB（**不随次数增长** = 有界开销）
     func clear() { _c = []; _opt = []; _natW = []; _natH = [] }
     // 绑定窗口句柄：记录自身，并把已添加的子控件一并下发
     func _bind_window(Ptr[u8] hwnd) {
@@ -375,6 +382,13 @@ export struct VBox impl Widget {
     func remove(Widget c) {
         for _c.len() to i { if _c[i] == c { _c.remove(i); _opt.remove(i); _natW.remove(i); _natH.remove(i); return } }
     }
+    // ⚠ `clear()` 只清**布局数组**，**不** dispose 子控件 —— 这是给"控件建一次、只换上场名单"
+    //   的用法留的（例：影视海报墙的卡片，筛选时只是重新 add ✓）。
+    //   如果子控件是**每次新建**的（内容区/列表整体重建），光 clear 会持续漏原生资源：
+    //   纹理与字体引用都在各控件的 `dispose()` 里释放，GC **不会**替你调 ✗
+    //   ⇒ 那种场合必须 `dispose()` 再 `clear()`（顺序不能反：先 dispose 才遍历得到子控件 ✓）
+    //   实测（2026-10-26，AlkaidMusic 交替切页）：只 clear 时 24 次 +95MB（≈4MB/次，线性）；
+    //   加上 dispose 后 24 次 +8.9MB、44 次 +9.5MB（**不随次数增长** = 有界开销）
     func clear() { _c = []; _opt = []; _natW = []; _natH = [] }
     // 绑定窗口句柄：记录自身，并把已添加的子控件一并下发
     func _bind_window(Ptr[u8] hwnd) {
@@ -574,6 +588,13 @@ export struct AnchorBox impl Widget {
     func remove(Widget c) {
         for _c.len() to i { if _c[i] == c { _c.remove(i); _opt.remove(i); _natW.remove(i); _natH.remove(i); return } }
     }
+    // ⚠ `clear()` 只清**布局数组**，**不** dispose 子控件 —— 这是给"控件建一次、只换上场名单"
+    //   的用法留的（例：影视海报墙的卡片，筛选时只是重新 add ✓）。
+    //   如果子控件是**每次新建**的（内容区/列表整体重建），光 clear 会持续漏原生资源：
+    //   纹理与字体引用都在各控件的 `dispose()` 里释放，GC **不会**替你调 ✗
+    //   ⇒ 那种场合必须 `dispose()` 再 `clear()`（顺序不能反：先 dispose 才遍历得到子控件 ✓）
+    //   实测（2026-10-26，AlkaidMusic 交替切页）：只 clear 时 24 次 +95MB（≈4MB/次，线性）；
+    //   加上 dispose 后 24 次 +8.9MB、44 次 +9.5MB（**不随次数增长** = 有界开销）
     func clear() { _c = []; _opt = []; _natW = []; _natH = [] }
     // 绑定窗口句柄：记录自身，并把已添加的子控件一并下发
     func _bind_window(Ptr[u8] hwnd) {
