@@ -32,7 +32,7 @@ use theme.Color
 //   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
 func _opts_keys(): Array[string] {
     return [
-"aligns", "bg_color", "border", "border_color", "cell_select", "cell_types", "check_col", "check_color", "col_reorder", "col_widths", "cursor", "editable", "editable_cols", "empty_color", "empty_text", "enabled", "font_path", "font_size", "font_style", "frozen_cols", "h", "header_aligns", "header_color", "header_h", "headers", "image_cache_max", "image_col", "image_gap", "image_mode", "image_pad", "image_path", "image_size", "max_col_width", "min_col_width", "multi_select", "numeric_cols", "resizable", "item_h", "row_images", "row_reorder", "rows", "sel_color", "sep_color", "sort_disabled_cols", "sortable", "tip", "visible", "w", "x", "y", "zebra"
+"aligns", "bg_color", "border", "border_color", "cell_select", "cell_types", "check_col", "check_color", "col_reorder", "col_widths", "cursor", "editable", "editable_cols", "empty_color", "empty_text", "enabled", "font_path", "font_size", "font_style", "frozen_cols", "h", "header_aligns", "header_color", "header_h", "headers", "image_cache_max", "image_col", "image_gap", "image_mode", "image_pad", "image_path", "image_size", "max_col_width", "min_col_width", "multi_select", "numeric_cols", "resizable", "item_h", "row_images", "row_reorder", "rows", "sel_color", "sep_color", "sort_disabled_cols", "solid_sel", "hover_color", "sortable", "tip", "visible", "w", "x", "y", "zebra"
 ]
 }
 export struct Table impl Widget, Themeable {
@@ -80,6 +80,9 @@ export struct Table impl Widget, Themeable {
     // ★ 2026-10-26：**外框开关**（原来无条件用 sepColor 画一整圈 drawRect ⇒ 想"无边框"没法关 ✗）
     //   `border: false` 去掉外框；`border_color` 单独指定颜色（0 = 跟随 sepColor）
     pri bool _drawBorder = true
+    // ★ 2026-10-26：选中/hover 行默认**强制不透明**（背景插画不会透上来）；
+    //   `solid_sel: false` 时改按颜色自带 alpha 画 —— 半透明高亮压在插画上更柔和 ✓
+    pri bool solidSel = true
     pri Color bdrColor = 0
     int _cursor = SystemCursor.POINTER
     bool enabled = true, visible = true, _loaded = false
@@ -408,8 +411,11 @@ export struct Table impl Widget, Themeable {
         if opts.get("bg_color") is Color => t { bgColor = t }
         if opts.get("header_color") is Color => t { hdrColor = t }
         if opts.get("sel_color") is Color => t { selColor = t }
+        // ★ 2026-10-26：hover 行原来只能用主题色（`th.bgHover`）⇒ 应用想调淡一点都做不到 ✗
+        if opts.get("hover_color") is Color => t { hovColor = t }
         if opts.get("sep_color") is Color => t { sepColor = t }
         _drawBorder = opts.get("border", true)                       // 外框开关（默认开 ✓）
+        solidSel = opts.get("solid_sel", true)                       // 选中行是否强制不透明
         if opts.get("border_color") is Color => t { bdrColor = t }
 
         // 行图标配置：image_col 指定哪列显示 [图标+文字]，图标路径由 row_images 独立存储
@@ -2122,7 +2128,8 @@ export struct Table impl Widget, Themeable {
             }
             // ★ 2026-10-26（用户要求）：**选中行 / hover 行必须不透明** ——
             //   颜色里带的 alpha（主题给的半透明色）会让背景插画透上来，看着像"没选中"✗
-            if solid { rc = theme.withAlpha(rc, 255) }
+            // `solid_sel: false` ⇒ 保留颜色自带的 alpha（半透明选中行，压在背景插画上不突兀 ✓）
+            if solid and solidSel { rc = theme.withAlpha(rc, 255) }
             r.setColor(rc)
             r.fillRect(x, ry, bodyW, rowH + 1.0)   // ★ 用 bodyW 防止渗透到竖向滚动条区域（替代原 bodyClip 裁剪）
         }
@@ -2136,8 +2143,9 @@ export struct Table impl Widget, Themeable {
                 bool isHov = (hoverRow == ri and hoverCol >= 0)
                 if isSel or isHov {
                     // 选中单元格优先于 hover
-                    Color hc2 = theme.withAlpha(hovColor, 255)      // 单元格高亮同样不透明 ✓
-                    if isSel { hc2 = theme.withAlpha(selColor, 255) }
+                    // 同上：solid_sel 关掉就按颜色自带 alpha 画（半透明高亮 ✓）
+                    Color hc2 = if solidSel then theme.withAlpha(hovColor, 255) else hovColor
+                    if isSel { hc2 = if solidSel then theme.withAlpha(selColor, 255) else selColor }
                     // 只画 hover/选中单元格高亮（不画整行背景）
                     int hcol = if isSel then selCol else hoverCol
                     if hcol >= 0 and hcol < ncols {
