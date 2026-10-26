@@ -89,14 +89,17 @@ func fsize(string path): int {
     }
 }
 
-export func save_shard(string id, string title, string artist, string root, Channel ch): bool {
+export func save_shard(string id, string title, string artist, string root, string prefer, Channel ch): bool {
     if id == "" {
         ch.send(["E", "没有音源 id", ""])
         return false
     }
     string d = dir_of(root)
     dirs.mkdir_p(d)
-    string f = dirs.join(d, safe_name(artist + " - " + title) + ".mp3")
+    // 格式看设置：无损优先 ⇒ 落 .flac；否则 .mp3（两条都保留兜底，只是顺序不同 ✓）
+    bool losslessFirst = prefer == "lossless"
+    string ext = if losslessFirst then ".flac" else ".mp3"
+    string f = dirs.join(d, safe_name(artist + " - " + title) + ext)
     string art = art_of(root, title, artist)
     if not files.exists(art) { cover.cover_to(id, art) }     // 封面失败不影响下载 ✓
     if files.exists(f) {                                     // 已有 ⇒ 直接完成
@@ -106,7 +109,14 @@ export func save_shard(string id, string title, string artist, string root, Chan
     string u = ""
     try {
         var c0 = net.createClient()
-        u = kuwo.officialurl(id, "mp3")
+        // 优先格式按设置走，另一条兜底（无损体积大，播放端 miniaudio 两种都支持 ✓）
+        if losslessFirst {
+            u = kuwo.officialurl(id, "flac")
+            if u == "" { u = kuwo.officialurl(id, "mp3") }
+        } else {
+            u = kuwo.officialurl(id, "mp3")
+            if u == "" { u = kuwo.officialurl(id, "flac") }
+        }
         if u == "" { u = kuwo.officialurl(id, "mp3128") }
         if u == "" { u = kuwo.getdirecturl(c0, id) }
         c0.close()

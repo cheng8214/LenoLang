@@ -1,0 +1,156 @@
+// settings.leno — 应用设置（**纯逻辑：读写 + 钳位，不 import SDL3 ⇒ 可单测**）
+// ----------------------------------------------------------------------------
+// 口径照 LenoMusic 的 `dl_settings.leno`：
+//   · 配置**不放应用目录**（打包后可能是只读 / 每次运行换个临时目录）
+//       Windows：%APPDATA%\AlkaidMusic\settings.json
+//       其它   ：$XDG_CONFIG_HOME/AlkaidMusic/settings.json（退回 ~/.config）
+//   · 落盘前一律钳位 ⇒ 文件里永远不会出现非法值
+//   · 键缺失 ⇒ 用结构里的出厂默认（老配置文件照常能读 ✓）
+//
+// 字段：
+//   workers  并行下载线程数（1..16，默认 4）—— 现在用于"封面分片数 / 多首并行"
+//   cachedir 缓存根目录（"" = 跟随应用目录下的 `缓存`）
+//   fmt      下载优先格式： "lossless" = 无损优先（flac→mp3） / "mp3" = mp3 优先
+import dirs
+import jsons
+import files
+
+export const int WORKERS_MIN = 1
+export const int WORKERS_MAX = 16
+export const int WORKERS_DEF = 4
+
+export const string FMT_LOSSLESS = "lossless"
+export const string FMT_MP3 = "mp3"
+
+// 蒙版不透明度范围（0 = 完全透明，能看到原图；255 = 全白，只剩文字）
+//   默认 158 = 62% 白，与界面原来的 C_VEIL(#FFFFFF9E) 同值 ✓
+export const int VEIL_MIN = 0
+export const int VEIL_MAX = 255
+export const int VEIL_DEF = 158
+
+export struct Settings {
+    int workers = 4          // 默认 4（与 WORKERS_DEF 同值，字面量：结构默认只能写字面量）
+    string cachedir = ""     // "" = 跟随 <应用目录>\缓存
+    string fmt = "lossless"  // 默认无损优先（用户要求：无损其次才是 mp3）
+    // ★ 2026-10-26（用户要求）：外观只留两项 —— 背景图 + 蒙版不透明度
+    string bg = ""           // 背景图绝对路径；"" = 用应用自带 images/bk.jpg
+    int veil = 158           // 全窗遮罩不透明度 0..255（= VEIL_DEF）
+}
+
+// 配置目录（平台判断只此一处）
+func app_dir(): string {
+    if _os() == "windows" {
+        return dirs.join(_env_or("APPDATA", _tmpdir()), "AlkaidMusic")
+    }
+    string base = _env_or("XDG_CONFIG_HOME", "")
+    if base == "" {
+        string home = _env_or("HOME", "")
+        if home == "" { base = _tmpdir() } else { base = dirs.join(home, ".config") }
+    }
+    return dirs.join(base, "AlkaidMusic")
+}
+
+export func store_path(): string { return dirs.join(app_dir(), "settings.json") }
+
+export func clamp_workers(int n): int {
+    if n < WORKERS_MIN { return WORKERS_MIN }
+    if n > WORKERS_MAX { return WORKERS_MAX }
+    return n
+}
+
+export func clamp_veil(int n): int {
+    if n < VEIL_MIN { return VEIL_MIN }
+    if n > VEIL_MAX { return VEIL_MAX }
+    return n
+}
+
+export func clamp_fmt(string f): string {
+    if f == FMT_MP3 { return FMT_MP3 }
+    return FMT_LOSSLESS
+}
+
+// 读配置：文件不存在 / 坏了 / 值超范围 ⇒ 一律回落默认（配置坏了不该让应用起不来 ✓）
+export func load(): Settings {
+    Settings s = new Settings()
+    string p = store_path()
+    if not files.exists(p) { return s }
+    var d = null
+    try {
+        d = jsons.read_file(p)
+    } catch e {
+        return s
+    }
+    if d is Dict[string, any] => m {
+        if m.has("workers") { s.workers = clamp_workers(jsons.get_int(m, "workers", s.workers)) }
+        if m.has("cachedir") { s.cachedir = jsons.get_str(m, "cachedir", "") }
+        if m.has("fmt") { s.fmt = clamp_fmt(jsons.get_str(m, "fmt", s.fmt)) }
+        if m.has("bg") { s.bg = jsons.get_str(m, "bg", "") }
+        if m.has("veil") { s.veil = clamp_veil(jsons.get_int(m, "veil", s.veil)) }
+    }
+    return s
+}
+
+// 写配置（先钳位再落盘）
+export func save(Settings s): bool {
+    try {
+        dirs.mkdir_p(app_dir())
+    } catch e {
+        return false
+    }
+    try {
+        jsons.write_file(store_path(),
+            {version: 1,
+             workers: clamp_workers(s.workers),
+             cachedir: s.cachedir,
+             fmt: clamp_fmt(s.fmt),
+             bg: s.bg, veil: clamp_veil(s.veil)})
+        return true
+    } catch e {
+        print("[settings] 写入失败：" + _str(e))
+        return false
+    }
+}
+
+// 蒙版值 → "62%"（设置窗口与占位文案共用同一口径 ✓）
+export func veil_text(int v): string {
+    int n = clamp_veil(v)
+    return _str(n * 100 / 255) + "%"
+}
+
+// 在文件管理器里打开目录（照 LenoMusic 的 `openfolder`：三平台各一条命令）
+export func open_folder(string path): bool {
+    if path == "" { return false }
+    string cmd = ""
+    if _os() == "windows" {
+        cmd = "cmd /c start \"\" \"" + path + "\""
+    } else if _os() == "macos" {
+        cmd = "open \"" + path + "\""
+    } else {
+        cmd = "xdg-open \"" + path + "\""
+    }
+    bool ok = true
+    try {
+        _exec(cmd)
+    } catch e {
+        ok = false
+    }
+    return ok
+}
+
+// 目录里直接文件的总字节数（不递归）——设置窗口显示"占用"
+export func dir_size(string d): int {
+    int total = 0
+    if not dirs.exists(d) { return 0 }
+    Array[string] ls = dirs.listdir(d)
+    for ls to nm {
+        string p = dirs.join(d, _str(nm))
+        if dirs.is_dir(p) { continue }
+        try {
+            var st = dirs.stat(p)
+            if st.exists { total = total + _int(st.size) }
+        } catch e {
+            total = total + 0
+        }
+    }
+    return total
+}

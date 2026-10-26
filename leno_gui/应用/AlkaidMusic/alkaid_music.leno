@@ -31,6 +31,8 @@ import "./lib/kuwo_cover.leno" as cover // 酷我封面（详情页 pic120 → 5
 import "./lib/net_workers.leno" as workers  // 后台线程入口（搜索/首页分区/封面分片）
 import "./lib/downloads.leno" as dl         // 下载 + 本地曲库扫描
 import "./lib/store.leno" as store          // 本地持久化（喜欢 / 最近播放 → 缓存\library.json）
+import "./lib/settings.leno" as cfgset       // 应用设置（线程数 / 缓存目录 / 优先格式）
+import "./lib/settings_win.leno" as cfgwin   // 设置对话框（独立窗口）
 import strings
 import dirs
 import files
@@ -154,6 +156,8 @@ func appTheme(): Theme {
     return t
 }
 
+// （2026-10-26：皮肤选择已去掉 —— 外观只留「背景图 + 蒙版不透明度」，见 settings.leno ✓）
+
 // 缓存目录（照 LenoMusic 的规矩：按用途分**中文子目录**，用户能在文件管理器里单独清理）
 //   LenoMusic：`<输出目录>/试听缓存/`（dl_flow.leno:105-109、dl_engine.leno:920-922）
 //   这里没有"输出目录"这个概念（是播放器不是下载器）⇒ 根放 %TEMP%\AlkaidMusic，
@@ -161,7 +165,17 @@ func appTheme(): Theme {
 // 缓存根：**应用目录下的 `缓存\`**（能在资源管理器里直接看到/清理）
 //   LenoMusic 也是写到用户可见的输出目录（`<outdir>/试听缓存/`），而不是藏进 %TEMP% ✓
 //   打包成单文件时 script_dir 可能是只读的/临时解包目录 ⇒ 那时退回 %TEMP%\AlkaidMusic
+// 设置里的缓存目录（空 = 跟随应用目录下的 `缓存`）—— run() 读配置后填这里
+var g_cacheOverride = ""
+// 下载优先格式 / 并行线程数（同上，来自 settings.json）
+var g_preferFmt = "lossless"
+var g_workers = 4
+// 外观：背景图（"" = 内置 bk.jpg）与蒙版不透明度 ✓
+var g_bgPath = ""
+var g_veil = 158
+
 func cacheRoot(): string {
+    if g_cacheOverride != "" { return g_cacheOverride }
     var s = dirs.script_dir()
     if s != null and s != "" {
         try {
@@ -310,7 +324,9 @@ export struct Player {
         body = SDL3.createHBox({x: 0, y: 0, w: WIN_W, h: 500, pad_x: 0, pad_y: 0, spacing: 0})
         root.add(body, {grow: 1, shrink: 1, align: 3})
 
-        // 先把喜欢/最近播放读回来（必须在建界面之前，否则首页第一帧是空的 ✓）
+        // 先读设置（缓存目录 / 优先格式 / 线程数）—— cacheRoot() 依赖它，必须在建界面之前 ✓
+        apply_settings(cfgset.load())
+        // 再把喜欢/最近播放读回来（必须在建界面之前，否则首页第一帧是空的 ✓）
         load_library()
         build_side()
         build_main()
@@ -335,7 +351,9 @@ export struct Player {
         r.clearColor(C_BG_BOT)
         if bgTex == null and not bgTried {
             bgTried = true
-            bgTex = SDL3.loadImageTexture(r.handle, img("bk.jpg"))
+            // 设置里选了背景图就用它，否则用内置 bk.jpg（两个都失败 ⇒ 退回粉色渐变 ✓）
+            string path = if g_bgPath != "" then g_bgPath else img("bk.jpg")
+            bgTex = SDL3.loadImageTexture(r.handle, path)
         }
         if bgTex != null {
             var[float, float](tw, th) = r.getTextureSize(bgTex)
@@ -351,7 +369,9 @@ export struct Player {
                 if sx + sw > tw { sx = tw - sw }
                 if sy + sh > th { sy = th - sh }
                 r.drawTextureFromTo(bgTex, sx, sy, sw, sh, 0.0, 0.0, ow, oh)
-                r.setColor(C_VEIL)
+                // 遮罩透明度来自设置（0 = 原图，255 = 全白）；用 withAlpha 明确构造 Color，
+                //   ⚠ 别写 `#FFFFFF00 + veil` —— 字面量+int 的类型推断会让 alpha 丢失（实测遮罩变没了 ✗）
+                r.setColor(SDL3.withAlpha(#FFFFFFFF, g_veil))
                 r.fillRect(0.0, 0.0, ow, oh)
                 return
             }
@@ -592,6 +612,16 @@ export struct Player {
         search.on_change(func() { on_search() })
         search.on_enter(func() { on_kuwo_search() })   // 回车 = 搜酷我（联网 ✓）
         topBar.add(search, {grow: 0, shrink: 0, basis: 300, align: 1})
+
+        // ---- 设置（齿轮，2026-10-26 用户要求）----
+        topBar.add(SDL3.createLabel({text: ""}), {grow: 0, shrink: 0, basis: 6, align: 1})
+        Button gear = SDL3.createButton({image_path: ico("setting.png"), image_size: 24,
+                                         w: 30, h: 30, radius: 15,
+                                         bg_color: C_TRANS, hover_color: #FFFFFFC8,
+                                         padding: 0.0, border: false, shadow: false,
+                                         tip: "设置"})
+        gear.on_click(func() { open_settings() })
+        topBar.add(gear, {grow: 0, shrink: 0, basis: 34, align: 1})
 
         // ---- 滚动内容 ----
         sv = SDL3.createScrollView({x: 0, y: 0, w: 900, h: 500, fit_w: true, step: 64,
@@ -1286,6 +1316,35 @@ export struct Player {
     // 横卡：圆角浅底 + 封面（**悬停时封面上浮出播放钮**）+ 歌名/歌手
     //   ★ 2026-10-26（按用户建议）：播放钮不再单独占一列 —— 悬停才出现在封面中央，
     //     文字区因此变宽、卡片可以更窄 ⇒ 一屏能多放几首 ✓
+    // ==================== 设置（线程数 / 缓存目录 / 优先格式）====================
+    //   数据在 lib/settings.leno（%APPDATA%\AlkaidMusic\settings.json），
+    //   界面在 lib/settings_win.leno（独立对话框窗口），这里只做"落到全局 + 重扫"✓
+    pri func apply_settings(cfgset.Settings s) {
+        g_cacheOverride = s.cachedir
+        g_preferFmt = cfgset.clamp_fmt(s.fmt)
+        g_workers = cfgset.clamp_workers(s.workers)
+        // 背景图 / 蒙版变了 ⇒ 丢掉旧纹理，下一帧按新设置重画 ✓
+        bool bgChanged = (g_bgPath != s.bg) or (g_veil != cfgset.clamp_veil(s.veil))
+        g_bgPath = s.bg
+        g_veil = cfgset.clamp_veil(s.veil)
+        if bgChanged {
+            bgTried = false
+            if bgTex != null { SDL3.destroyTexture(bgTex); bgTex = null }
+            SDL3.markFrameRedraw()
+        }
+    }
+
+    pri func open_settings() {
+        string def = dirs.join(dirs.script_dir(), "缓存")
+        // 页签图标：常规=齿轮、下载=download、外观=pifu（皮肤 ✓ 48×48 源图按 1/3 显示为 16）
+        Array[string] icons = [ico("setting.png"), ico("download.png"), ico("pifu.png")]
+        cfgwin.show(def, icons, func(cfgset.Settings s) {
+            apply_settings(s)
+            rebuild_content()          // 缓存目录可能变了 ⇒ 本地音乐/下载列表要重扫 ✓
+            SDL3.markFrameRedraw()
+        })
+    }
+
     // ==================== 持久化（缓存\library.json：喜欢 + 最近播放）====================
     //   ★ 2026-10-26（用户反馈"点击喜欢没存数据"）：原来只在内存里，重启就没了 ✗
     pri func save_library() {
@@ -1622,7 +1681,8 @@ export struct Player {
         }
         if ids.len() > 0 {
             // 分片数按数量走：每片约 6 张（24 首推荐 ⇒ 5~6 片并行，别串行拉 24 次 ✓）
-            int shards = (ids.len() + 5) / 6
+            // 线程数来自设置（上限仍压到 6：一次开太多线程拉详情页反而更慢 ✓）
+            int shards = g_workers
             if shards < 3 { shards = 3 }
             if shards > 6 { shards = 6 }
             if ids.len() < shards { shards = ids.len() }
@@ -1868,7 +1928,7 @@ export struct Player {
                 j[6] = "0"
                 dlJobs[di] = j
                 if curNav == -2 { rebuild_content() }
-                threads.start(dl.save_shard, j[0], j[1], j[2], cacheRoot(), dlCh)
+                threads.start(dl.save_shard, j[0], j[1], j[2], cacheRoot(), g_preferFmt, dlCh)
                 SDL3.markFrameRedraw()
             }
         }
