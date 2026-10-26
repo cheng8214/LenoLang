@@ -26,6 +26,7 @@ import "sdl_layout.leno" as lay
 import "sdl_menu.leno" as menu
 import "sdl_tooltip.leno" as tip
 import "sdl_scrollview.leno" as scv
+import "sdl_virtualgrid.leno" as vgd
 import "sdl_treeview.leno" as tv
 import "sdl_widget.leno" as wgt
 import "sdl_chart.leno" as cht
@@ -87,6 +88,7 @@ use spb.SpinBox
 use tbl.Table
 use menu.MenuBar
 use scv.ScrollView
+use vgd.VirtualGrid
 use tv.(TreeView, TreeViewNode)
 use lay.(HBox, VBox, AnchorBox)
 use wgt.Widget
@@ -126,6 +128,8 @@ export func createTable(Dict opts): Table      { return tbl.createTable(opts) }
 //   传 null = 关掉所有窗口的（应用换页时最省事 ✓）
 export func closeContextMenus(Ptr[u8] hwnd) { menu.closeContextMenus(hwnd) }
 export func createScrollView(Dict opts): ScrollView { return scv.createScrollView(opts) }
+// 虚拟网格：只构建可见项（长列表 / 卡片墙用它，成千上万条也不卡 ✓）
+export func createVirtualGrid(Dict opts): VirtualGrid { return vgd.createVirtualGrid(opts) }
 export func createTreeView(Dict opts): TreeView { return tv.createTreeView(opts) }
 export func createBarChart(Dict opts): BarChart { return cht.createBarChart(opts) }
 export func createLineChart(Dict opts): LineChart { return cht.createLineChart(opts) }

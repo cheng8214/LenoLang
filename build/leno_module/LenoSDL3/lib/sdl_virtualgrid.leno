@@ -1,0 +1,319 @@
+// sdl_virtualgrid.leno — 虚拟网格（长列表只构建**可见项**，上万条也不卡）
+// ----------------------------------------------------------------------------
+// 为什么需要它：
+//   卡片墙 = 每项 6~7 个控件（Card + ImageView + 2 Label + 3 Button）。
+//   1000 项就是 7000 个控件 —— 每帧都要布局、绘制、分发事件，实测直接卡成幻灯片
+//   （内存 180MB → 498MB，一帧几百毫秒 ✗）。
+//   应用侧只能自己"分批渲染 + 滚到底再加 60"，既写不完也永远慢半拍。
+//
+// 分层（这才是正确的切法）：
+//   · 本控件只管「哪些项可见、摆在哪、怎么回收复用」
+//   · **长什么样由调用方的 build 回调决定**（框架不认识"歌曲/专辑/商品"）
+//
+// 用法：
+//   VirtualGrid g = SDL3.createVirtualGrid({
+//       w: 900, h: 600, item_w: 236, item_h: 96, gap_x: 16, gap_y: 16,
+//       count: songs.len(),
+//       build: func(int i) -> Widget { return make_card(songs[i]) },
+//   })
+//   g.set_count(n)        // 数据条数变了（切页 / 收藏变化）
+//   g.set_builder(cb)     // 数据源整体换了（闭包捕获的数组变了）
+//   g.set_scroll_y(0.0)   // 回到顶部
+import "sdl_event.leno" as evt; use evt.Event
+import "sdl_renderer.leno" as ren; use ren.Renderer
+import "sdl_core.leno" as core
+import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_opts.leno" as dochk
+import "sdl_theme.leno" as theme; use theme.Color
+
+func _vg_opts_keys(): Array[string] {
+    return ["x", "y", "w", "h", "item_w", "item_h", "gap_x", "gap_y",
+            "pad_x", "pad_y", "cols", "count", "scroll_color", "visible"]
+}
+
+export struct VirtualGrid impl Widget {
+    pri float x = 0, y = 0, w = 300, h = 200
+    pri float itemW = 200, itemH = 90
+    pri float gapX = 16, gapY = 16
+    pri float padX = 0, padY = 0
+    pri int cols = 0                       // 0 = 按宽度自动算
+    pri int count = 0
+    pri bool visible = true
+    pri Color sbColor = #B7A3ADAA         // 滚动条（不需要就把 alpha 传 0）
+
+    // 构建器：返回该项的控件（每次只对**可见项**调用 ✓）
+    //   返回 `any`（内部 `is Widget` 守卫）—— 这样调用方写 func(int):Widget 即可，
+    //   不用关心接口类型的可空写法 ✓
+    pri func(int):any builder = null
+
+    pri float scrollY = 0.0
+
+    // ---- 槽位表（真正的"复用"在这里）----
+    //   cells[slot]     = 已建好的控件（null 表示空槽）
+    //   cellItem[slot]  = 该槽当前绑定第几项（-1 = 空槽）
+    //   itemSlot[item]  = 该项占着哪个槽（-1 = 还没建）
+    pri Array[any] cells = []
+    pri Array[int] cellItem = []
+    pri Array[int] itemSlot = []
+
+    pri bool _loaded = false
+    pri bool draggingSb = false
+    pri float dragOff = 0.0
+
+    // ==================== 初始化 ====================
+    func set(Dict opts) {
+        dochk.check("sdl_virtualgrid", opts, _vg_opts_keys())
+        x = opts.get("x", 0)
+        y = opts.get("y", 0)
+        w = opts.get("w", 300)
+        h = opts.get("h", 200)
+        itemW = opts.get("item_w", 200)
+        itemH = opts.get("item_h", 90)
+        gapX = opts.get("gap_x", 16)
+        gapY = opts.get("gap_y", 16)
+        padX = opts.get("pad_x", 0)
+        padY = opts.get("pad_y", 0)
+        cols = opts.get("cols", 0)
+        visible = opts.get("visible", true)
+        if opts.get("scroll_color") is Color => t { sbColor = t }
+        if itemW < 1.0 { itemW = 1.0 }
+        if itemH < 1.0 { itemH = 1.0 }
+        int n = opts.get("count", 0)
+        set_count(n)
+        _loaded = true
+    }
+
+    // ==================== 对外接口 ====================
+    func set_count(int n) {
+        if n < 0 { n = 0 }
+        count = n
+        itemSlot = []
+        for n to _ { itemSlot.add(-1) }
+        release_all()                     // 数据条数变了 ⇒ 旧控件全部作废 ✓
+        clamp_scroll()
+        core.markFrameRedraw()
+    }
+
+    func get_count(): int { return count }
+
+    func set_builder(func(int):any cb) {
+        builder = cb
+        release_all()                     // 数据源换了，旧控件绑的是旧数据 ✓
+        core.markFrameRedraw()
+    }
+
+    func set_scroll_y(float v) {
+        scrollY = v
+        clamp_scroll()
+        core.markFrameRedraw()
+    }
+    func get_scroll_y(): float { return scrollY }
+
+    func set_visible(bool v) { visible = v }
+    func is_visible(): bool { return visible }
+
+    // ==================== 布局计算 ====================
+    pri func cols_now(): int {
+        int c = cols
+        if c <= 0 {
+            float gw = w - padX * 2.0
+            if gw < itemW { return 1 }
+            c = _int((gw + gapX) / (itemW + gapX))
+        }
+        if c < 1 { c = 1 }
+        return c
+    }
+
+    pri func rows_now(): int {
+        int c = cols_now()
+        if count <= 0 { return 0 }
+        return (count + c - 1) / c          // 向上取整
+    }
+
+    pri func total_h(): float {
+        int r = rows_now()
+        if r <= 0 { return 0.0 }
+        return padY * 2.0 + _float(r) * itemH + _float(r - 1) * gapY
+    }
+
+    pri func max_scroll(): float {
+        float m = total_h() - h
+        return if m > 0.0 then m else 0.0
+    }
+
+    pri func clamp_scroll() {
+        float m = max_scroll()
+        if scrollY < 0.0 { scrollY = 0.0 }
+        if scrollY > m { scrollY = m }
+    }
+
+    // 可见行区间（上下各留 1 行缓冲，滚动时不会露白 ✓）
+    pri func row_range(): Array[int] {
+        int c = cols_now()
+        int r = rows_now()
+        if r <= 0 or c <= 0 { return [0, -1] }
+        float step = itemH + gapY
+        int first = _int((scrollY - padY) / step) - 1
+        int last = _int((scrollY + h - padY) / step) + 1
+        if first < 0 { first = 0 }
+        if last > r - 1 { last = r - 1 }
+        return [first, last]
+    }
+
+    pri func item_pos(int item): Array[float] {
+        int c = cols_now()
+        if c < 1 { c = 1 }
+        int row = item / c
+        int col = item - row * c
+        float ix = x + padX + _float(col) * (itemW + gapX)
+        float iy = y + padY + _float(row) * (itemH + gapY) - scrollY
+        return [ix, iy]
+    }
+
+    // ==================== 槽位管理 ====================
+    pri func release_all() {
+        for cells.len() to k {
+            var cw = cells[k]
+            if cw is Widget => ww { ww.dispose() }
+            cells[k] = null
+        }
+        cells = []
+        cellItem = []
+    }
+
+    pri func free_slot(): int {
+        for cells.len() to k {
+            if cellItem[k] < 0 { return k }
+        }
+        cells.add(null)
+        cellItem.add(-1)
+        return cells.len() - 1
+    }
+
+    // 按当前可见范围同步槽位：离屏的回收、新进视野的构建（只动跨行的那些 ✓）
+    pri func sync_cells() {
+        if builder == null { return }
+        Array[int] rg = row_range()
+        int first = rg[0]
+        int last = rg[1]
+        if last < first {
+            // 没有任何可见项 ⇒ 全部回收
+            for cellItem.len() to k {
+                if cellItem[k] >= 0 {
+                    var cw = cells[k]
+                    if cw is Widget => ww { ww.dispose() }
+                    itemSlot[cellItem[k]] = -1
+                    cells[k] = null
+                    cellItem[k] = -1
+                }
+            }
+            return
+        }
+        int c = cols_now()
+        int lo = first * c
+        int hi = last * c + c - 1
+        if hi > count - 1 { hi = count - 1 }
+
+        // ① 回收：不在 [lo, hi] 的槽
+        for cellItem.len() to k {
+            int it = cellItem[k]
+            if it < 0 { continue }
+            if it < lo or it > hi {
+                var cw = cells[k]
+                if cw is Widget => ww { ww.dispose() }
+                itemSlot[it] = -1
+                cells[k] = null
+                cellItem[k] = -1
+            }
+        }
+        // ② 构建：视野里还没有控件的项
+        for lo : hi to it {
+            if itemSlot[it] >= 0 { continue }
+            var nw = builder(it)
+            if nw is Widget => ww2 {
+                int slot = free_slot()
+                cells[slot] = ww2
+                cellItem[slot] = it
+                itemSlot[it] = slot
+            }
+        }
+    }
+
+    // ==================== 控件接口 ====================
+    func get_w(): float { return w }
+    func get_h(): float { return h }
+    func get_x(): float { return x }
+    func get_y(): float { return y }
+    func set_pos(float px, float py) { x = px; y = py }
+    func set_size(float sw, float sh) {
+        w = sw; h = sh
+        clamp_scroll()
+    }
+
+    func process(Event ev) {
+        if not _loaded or not visible { return }
+        var[float, float](mx, my) = ev.mousePos()
+        if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
+
+        // 滚轮：只在自己身上生效
+        if ev.isMouseWheel() and mx >= x and mx <= x + w and my >= y and my <= y + h {
+            scrollY = scrollY - ev.wheelY() * 60.0
+            clamp_scroll()
+            core.markFrameRedraw()
+            return
+        }
+        // 其余事件转给**当前可见**的项（避免滚动事件被重复消费 ✓）
+        for cellItem.len() to k {
+            if cellItem[k] < 0 { continue }
+            var cw = cells[k]
+            if cw is Widget => ww { ww.process(ev) }
+        }
+    }
+
+    func render(Renderer r) {
+        if not _loaded or not visible { return }
+        sync_cells()
+        if cells.len() == 0 {
+            draw_scrollbar(r)
+            return
+        }
+        for cellItem.len() to k {
+            int it = cellItem[k]
+            if it < 0 { continue }
+            Array[float] pos = item_pos(it)
+            var cw = cells[k]
+            if cw is Widget => ww {
+                ww.set_pos(pos[0], pos[1])
+                ww.set_size(itemW, itemH)
+                ww.render(r)
+            }
+        }
+        draw_scrollbar(r)
+    }
+
+    // 滚动条：总高超过视口才画，宽 6，贴右边缘内侧
+    pri func draw_scrollbar(Renderer r) {
+        if theme.colorA(sbColor) <= 0 { return }
+        float m = max_scroll()
+        if m <= 0.0 { return }
+        float th = h * h / total_h()
+        if th < 24.0 { th = 24.0 }
+        float ty = y + (h - th) * (scrollY / m)
+        float sx = x + w - 3.0
+        r.setColor(sbColor)
+        r.fillRoundedRect(sx, ty, 4.0, th, 2.0)
+    }
+
+    func dispose() {
+        release_all()
+        itemSlot = []
+        builder = null
+    }
+}
+
+// ==================== 工厂 ====================
+export func createVirtualGrid(Dict opts): VirtualGrid {
+    VirtualGrid g = new VirtualGrid()
+    g.set(opts)
+    return g
+}
