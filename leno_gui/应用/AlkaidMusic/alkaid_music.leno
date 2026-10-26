@@ -50,7 +50,7 @@ const int WIN_H = 800
 const int TB_H = 32          // 自绘标题栏
 const int SIDE_W = 184       // 侧栏宽
 const int TOP_H = 58         // 顶栏
-const int BAR_H = 82         // 底部播放条
+const int BAR_H = 66         // 底部播放条（★ 2026-10-26：82 太高，参考图约 60~66）
 const int PAD = 24           // 内容区左右内边距
 // ⚠ 卡片高度按 Card 的**不变式**算：图片区最终高 = h − needBottom
 //   needBottom = 文字块(textH) + 12（不给 content_h 时就这么点）
@@ -288,6 +288,9 @@ export struct Player {
     Button playBtn
     Button likeBtn
     bool liked = false
+    // 当前在播的**整首歌**（底栏 ♥ 要按它的 like_key 判断收藏状态；
+    //   只靠 nowSid 的话，本地文件（sid 为空）没法判断 ✓）
+    Song nowSong
     ProgressBar seek
     Label curTime
     Label totTime
@@ -707,7 +710,9 @@ export struct Player {
         } else if curNav > 3 {
             sub = "歌单还是空的"
         } else {
-            sub = "还没有喜欢的歌"
+            // 「我喜欢」：按实际收藏数说话（原来固定写"还没有喜欢的歌"，有内容也对不上 ✗）
+            int ln = liked_songs().len()
+            sub = if ln > 0 then "共 " + _str(ln) + " 首" else "还没有喜欢的歌 · 点卡片上的 ♡"
         }
         if query != "" { sub = "搜索「" + query + "」" }
         // 歌曲页的副标题固定是歌手名，别被"酷我「周杰伦」· 12 首"顶掉 ✓
@@ -1186,14 +1191,6 @@ export struct Player {
     //     行号就指到别的歌上（用户实测：点「夜曲」放出来是「后来」✗）
     pri func play_local_row(int row) {
         if row < 0 or row >= localCache.len() { return }
-        if _env("ALKAID_DBG") != null {
-            int k = 0
-            for localCache to s {
-                print("[dbg] cache[" + _str(k) + "] " + s.title + " | " + s.path)
-                k = k + 1
-            }
-            print("[dbg] 点中 row=" + _str(row) + " ⇒ " + localCache[row].title + " | " + localCache[row].path)
-        }
         play_song(localCache[row])
     }
 
@@ -1718,30 +1715,51 @@ export struct Player {
     }
 
     // ==================== 喜欢 / 添加（卡片上的两个小按钮）====================
-    pri func is_liked(string sid): bool {
-        if sid == "" { return false }
+    // 收藏的**键**：在线歌用 sid，本地歌没有 sid ⇒ 用 `file:<绝对路径>`
+    //   ★ 2026-10-26（用户反馈"爱心收藏没有和本地同步"）：本地曲库的歌 sid 是空的，
+    //     原来直接拒绝收藏 ⇒ 本地歌点心没反应、'我喜欢'页也永远看不到它们 ✗
+    pri func like_key(Song sg): string {
+        if sg.sid != "" { return sg.sid }
+        if sg.path != "" { return "file:" + sg.path }
+        return ""
+    }
+
+    pri func is_liked(string key): bool {
+        if key == "" { return false }
         for likedSids to s {
-            if s == sid { return true }
+            if s == key { return true }
         }
         return false
     }
 
-    // 「我喜欢」页的数据：从各数据源里挑出 sid 在 likedSids 里的（按 sid 去重 ✓）
+    // 「我喜欢」页的数据：在线（sid）与本地（path）都能进（按 like_key 去重 ✓）
     pri func liked_songs(): Array[Song] {
         Array[Song] out = []
         for recentSongs to s {
-            if is_liked(s.sid) { out.add(s) }
+            if is_liked(like_key(s)) { out.add(s) }
+        }
+        // 本地曲库也扫一遍 —— 否则本地收藏的歌永远不出现 ✓
+        for dl.scan(cacheRoot()) to s {
+            if is_liked(like_key(s)) and not has_key(out, like_key(s)) { out.add(s) }
         }
         for recSongs to s {
-            if is_liked(s.sid) and not has_sid(out, s.sid) { out.add(s) }
+            if is_liked(like_key(s)) and not has_key(out, like_key(s)) { out.add(s) }
         }
         for newSongs to s {
-            if is_liked(s.sid) and not has_sid(out, s.sid) { out.add(s) }
+            if is_liked(like_key(s)) and not has_key(out, like_key(s)) { out.add(s) }
         }
         for netSongs to s {
-            if is_liked(s.sid) and not has_sid(out, s.sid) { out.add(s) }
+            if is_liked(like_key(s)) and not has_key(out, like_key(s)) { out.add(s) }
         }
         return out
+    }
+
+    // 按 like_key 去重（本地歌 sid 为空，不能用 has_sid ✓）
+    pri func has_key(Array[Song] arr, string key): bool {
+        for arr to a {
+            if like_key(a) == key { return true }
+        }
+        return false
     }
 
     pri func has_sid(Array[Song] arr, string sid): bool {
@@ -1751,23 +1769,25 @@ export struct Player {
         return false
     }
 
-    // 点 ♥：加/取消喜欢（图标与「我喜欢」页一起更新 ✓）
+    // 点 ♥：加/取消喜欢（在线用 sid、本地用 file:路径 ⇒ 两种情况都能收藏 ✓）
     pri func toggle_song_like(Song sg) {
-        if sg.sid == "" {
-            nowArtist.set_text("这首歌没有音源 id，先搜一首再喜欢")
+        string key = like_key(sg)
+        if key == "" {
+            nowArtist.set_text("这首歌既没有音源 id 也没有本地文件，收不了")
             SDL3.markFrameRedraw()
             return
         }
         Array[string] out = []
         bool was = false
         for likedSids to s {
-            if s == sg.sid { was = true; continue }
+            if s == key { was = true; continue }
             out.add(s)
         }
-        if not was { out.add(sg.sid) }
+        if not was { out.add(key) }
         likedSids = out
         save_library()                   // ★ 立刻落盘（重启后「我喜欢」还在 ✓）
         nowArtist.set_text(if was then "已取消喜欢：" + sg.title else "已喜欢：" + sg.title)
+        sync_like_icon()                 // 底栏 ♥ 跟着变（它和卡片共用一份数据 ✓）
         rebuild_content()
         SDL3.markFrameRedraw()
     }
@@ -1823,7 +1843,7 @@ export struct Player {
         // ---- 右侧三颗（图标都在 images/icons）：♥ 喜欢 / ＋ 添加 / ⬇ 下载 ----
         //   ★ 2026-10-26：`＋` 目前**只显示不做事**（用户要求）——歌单系统还没数据层，
         //     先别给假动作；tip 写清楚，避免点了没反应还以为是 bug ✓
-        bool likedNow = is_liked(sg.sid)
+        bool likedNow = is_liked(like_key(sg))      // 在线/本地走同一个键 ✓
         Button lb = SDL3.createButton({image_path: ico(if likedNow then "sc1.png" else "sc.png"),
                                        image_size: 24, w: 28, h: 28, radius: 14,
                                        bg_color: C_TRANS, hover_color: #FFFFFFC8,
@@ -1852,97 +1872,97 @@ export struct Player {
 
     // ==================== 底部播放条 ====================
     pri func build_bar() {
-        bar = SDL3.createHBox({x: 0, y: 0, w: WIN_W, h: BAR_H, pad_x: 18, pad_y: 10,
-                               spacing: 14, bg_color: C_BAR})
-        root.add(bar, {grow: 0, shrink: 0, basis: BAR_H, align: 3})
+        // ★ 2026-10-26（按用户给的参考图）：外层改 VBox
+        //   ① 顶部一条**横贯整宽**的细进度条（可点击 seek）
+        //   ② 下面三栏：左=封面/歌名(♥ ☰)、中=上一首/播放/下一首、右=时间 + 工具
+        VBox barBox = SDL3.createVBox({x: 0, y: 0, w: WIN_W, h: BAR_H, pad_x: 0, pad_y: 0,
+                                       spacing: 0, bg_color: C_BAR})
+        root.add(barBox, {grow: 0, shrink: 0, basis: BAR_H, align: 3})
 
-        // ---- 左：封面 + 歌名/歌手 + 喜欢 ----
-        // ★ 2026-10-26：**没有演示数据** —— 未播放时就是空的（占位图标 + "未在播放"）
-        HBox left = SDL3.createHBox({x: 0, y: 0, w: 300, h: 60, pad_x: 0, pad_y: 0, spacing: 12})
-        coverView = SDL3.createImageView({w: 56, h: 56, radius: 12, bg_color: #F3E4EBFF})
-        left.add(coverView, {grow: 0, shrink: 0, basis: 56, align: 1})
+        seek = SDL3.createProgressBar({value: 0.0, min: 0.0, max: 100.0, h: 4,
+                                       show_text: false, clickable: true,
+                                       fill_color: C_ACCENT, track_color: #E9C6D4FF})
+        seek.on_change(func(float v) { on_seek(v) })
+        barBox.add(seek, {grow: 0, shrink: 0, basis: 4, align: 3})
 
-        VBox info = SDL3.createVBox({x: 0, y: 0, w: 160, h: 56, pad_x: 0, pad_y: 3, spacing: 3})
-        nowTitle = lbl("未在播放", 13, C_TXT, true)
-        info.add(nowTitle, {grow: 0, shrink: 0, basis: 22, align: 3})
+        bar = SDL3.createHBox({x: 0, y: 0, w: WIN_W, h: BAR_H - 4, pad_x: 18, pad_y: 5,
+                               spacing: 12, bg_color: C_TRANS})
+        barBox.add(bar, {grow: 1, shrink: 1, align: 3})
+
+        // ---- 左：封面 + 「歌名 ♥ ☰」+ 第二行 ----
+        HBox left = SDL3.createHBox({x: 0, y: 0, w: 330, h: 50, pad_x: 0, pad_y: 0, spacing: 12})
+        // 底色走 `fillRoundedRect`（radius>0）⇒ 圆角；图片现在也会自己裁圆角（见 sdl_imageview ✓）
+        coverView = SDL3.createImageView({w: 46, h: 46, radius: 8, bg_color: #F3E4EBFF})
+        left.add(coverView, {grow: 0, shrink: 0, basis: 46, align: 1})
+
+        VBox info = SDL3.createVBox({x: 0, y: 0, w: 250, h: 50, pad_x: 0, pad_y: 2, spacing: 1})
+        HBox trow = SDL3.createHBox({x: 0, y: 0, w: 250, h: 24, pad_x: 0, pad_y: 0, spacing: 2})
+        nowTitle = lbl("未在播放", 13.5, C_TXT, true)
+        trow.add(nowTitle, {grow: 0, shrink: 1, align: 1})
+        // ♥ 用 ☆/★（本界面字体没有 U+2665，会渲染成豆腐块 ✓）
+        // 用卡片同款心形图标（sc.png 未喜欢 / sc1.png 已喜欢），比字符 ☆ 更贴参考图 ✓
+        likeBtn = img_btn("sc.png", "我喜欢", 24, 15.0)   // 初值随后由 sync_play_ui → sync_like_icon 校正 ✓
+        likeBtn.on_click(func() { toggle_like() })
+        trow.add(likeBtn, {grow: 0, shrink: 0, basis: 24, align: 1})
+        // ☰ = 打开当前这首歌的页面（歌词/相关歌曲都在那儿 ✓ 不说话的空按钮不要）
+        Button lyBtn = txt_btn("≡", "歌曲页（歌词 / 相关）", 24, C_TXT_MID)
+        lyBtn.on_click(func() {
+            if nowSid != "" { open_song(find_song(nowSid)) }
+            else { nowArtist.set_text("还没有在播的歌"); SDL3.markFrameRedraw() }
+        })
+        trow.add(lyBtn, {grow: 0, shrink: 0, basis: 24, align: 1})
+        info.add(trow, {grow: 0, shrink: 0, basis: 28, align: 3})
         nowArtist = lbl("搜一首歌开始听", 10.5, C_TXT_DIM, false)
         info.add(nowArtist, {grow: 0, shrink: 0, basis: 18, align: 3})
         left.add(info, {grow: 1, shrink: 1, align: 1})
+        bar.add(left, {grow: 0, shrink: 0, basis: 330, align: 1})
 
-        // ⚠ 用 `☆/★` 而不是 `♥`：实测本界面用的字体里没有 U+2665（渲染成豆腐块 ▯），
-        //   而 `☆/★`（U+2606/2605）在 CJK 字体里都有 ⇒ 换成"星标"语义，颜色仍表状态 ✓
-        likeBtn = SDL3.createButton({text: "☆", font_size: 15.0, w: 28, h: 28, radius: 14,
-                                     bg_color: C_TRANS, hover_color: #FFFFFFC8,
-                                     text_color: C_TXT_MID, padding: 0.0,
-                                     border: false, shadow: false, tip: "我喜欢"})
-        likeBtn.on_click(func() { toggle_like() })
-        left.add(likeBtn, {grow: 0, shrink: 0, basis: 28, align: 1})
-        bar.add(left, {grow: 0, shrink: 0, basis: 300, align: 1})
-
-        // ---- 中：控制行 + 进度行 ----
-        VBox mid = SDL3.createVBox({x: 0, y: 0, w: 460, h: 60, pad_x: 0, pad_y: 0, spacing: 2})
-
-        HBox ctrl = SDL3.createHBox({x: 0, y: 0, w: 460, h: 36, pad_x: 0, pad_y: 0, spacing: 10})
-        ctrl.add(SDL3.createLabel({text: ""}), {grow: 1, shrink: 1, align: 1})
-        ctrl.add(txt_btn("随", "随机播放", 26, C_TXT_DIM), {grow: 0, shrink: 0, basis: 26, align: 1})
-        ctrl.add(img_btn("prev.png", "上一首", 30, 14.0), {grow: 0, shrink: 0, basis: 30, align: 1})
-
-        // 播放/暂停：图标跟着状态换（play.png ⇄ pause.png）—— 2026-10-25 起用真图标 ✓
-        playBtn = SDL3.createButton({image_path: ico("play.png"), image_size: 32,
-                                     w: 38, h: 38, radius: 19,
-                                     bg_color: C_TRANS, hover_color: #FFFFFFC8,
+        // ---- 中：只有三个按钮（上一首 / 播放暂停 / 下一首）----
+        HBox ctrl = SDL3.createHBox({x: 0, y: 0, w: 260, h: 54, pad_x: 0, pad_y: 0,
+                                     spacing: 20, justify: 1})
+        ctrl.add(img_btn("prev.png", "上一首", 32, 16.0), {grow: 0, shrink: 0, basis: 32, align: 1})
+        playBtn = SDL3.createButton({image_path: ico("play.png"), image_size: 30,
+                                     w: 44, h: 44, radius: 22,
+                                     bg_color: #FFFFFFD8, hover_color: #FFFFFFFF,
                                      padding: 0.0, border: false, shadow: false,
                                      tip: "播放 / 暂停"})
         playBtn.on_click(func() { toggle_play() })
-        ctrl.add(playBtn, {grow: 0, shrink: 0, basis: 38, align: 1})
+        ctrl.add(playBtn, {grow: 0, shrink: 0, basis: 44, align: 1})
+        ctrl.add(img_btn("next.png", "下一首", 32, 16.0), {grow: 0, shrink: 0, basis: 32, align: 1})
+        bar.add(ctrl, {grow: 1, shrink: 1, align: 1})
 
-        ctrl.add(img_btn("next.png", "下一首", 30, 14.0), {grow: 0, shrink: 0, basis: 30, align: 1})
+        // ---- 右：时间 + 循环 + 音量 + 列表 ----
+        HBox right = SDL3.createHBox({x: 0, y: 0, w: 330, h: 54, pad_x: 0, pad_y: 0,
+                                      spacing: 6, justify: 2})   // 靠右排
+        curTime = lbl(fmtTime(pos), 10, C_TXT_DIM, false)
+        right.add(curTime, {grow: 0, shrink: 0, basis: 34, align: 1})
+        right.add(lbl("/", 10, C_TXT_DIM, false), {grow: 0, shrink: 0, basis: 8, align: 1})
+        totTime = lbl(fmtTime(dur), 10, C_TXT_DIM, false)
+        right.add(totTime, {grow: 0, shrink: 0, basis: 34, align: 1})
+        right.add(SDL3.createLabel({text: ""}), {grow: 0, shrink: 0, basis: 4, align: 1})
 
-        // 循环：单曲 ⇄ 列表（图标 loop_one / loop_all ✓）
-        Button loopBtn = img_btn("loop_all.png", "循环模式", 26, 13.0)
+        // 循环：单曲 ⇄ 列表
+        Button loopBtn = img_btn("loop_all.png", "循环模式", 26, 14.0)
         loopBtn.on_click(func() {
             loopOne = not loopOne
             loopBtn.set_image(if loopOne then ico("loop_one.png") else ico("loop_all.png"))
             SDL3.markFrameRedraw()
         })
-        ctrl.add(loopBtn, {grow: 0, shrink: 0, basis: 26, align: 1})
-        ctrl.add(SDL3.createLabel({text: ""}), {grow: 1, shrink: 1, align: 1})
-        mid.add(ctrl, {grow: 0, shrink: 0, basis: 38, align: 3})
-
-        HBox seekRow = SDL3.createHBox({x: 0, y: 0, w: 460, h: 18, pad_x: 0, pad_y: 0, spacing: 8})
-        curTime = lbl(fmtTime(pos), 10, C_TXT_DIM, false)
-        seekRow.add(curTime, {grow: 0, shrink: 0, basis: 34, align: 1})
-        // ★ 2026-10-25：起点必须是 **0**（原来写 `value: 2.0` ⇒ 一开就带 2% 填充，
-        //   而左边时间写着 00:00 ⇒ "起步不一致"✗）
-        seek = SDL3.createProgressBar({value: 0.0, min: 0.0, max: 100.0, h: 4,
-                                       show_text: false, clickable: true,
-                                       fill_color: C_ACCENT, track_color: #EFD8E1FF})
-        seek.on_change(func(float v) { on_seek(v) })
-        seekRow.add(seek, {grow: 1, shrink: 1, align: 1})
-        totTime = lbl(fmtTime(dur), 10, C_TXT_DIM, false)
-        seekRow.add(totTime, {grow: 0, shrink: 0, basis: 34, align: 1})
-        mid.add(seekRow, {grow: 0, shrink: 0, basis: 18, align: 3})
-        sync_play_ui()          // 建完立刻按当前状态刷一次（时间/填充/宽度都对齐 ✓）
-
-        bar.add(mid, {grow: 1, shrink: 1, align: 1})
-
-        // ---- 右：音量 + 播放列表 + 更多 ----
-        //   宽度与左侧一样给 300 ⇒ 中间那块正好落在窗口正中（参考图的播放键是居中的 ✓）
-        HBox right = SDL3.createHBox({x: 0, y: 0, w: 300, h: 30, pad_x: 0, pad_y: 0, spacing: 6})
-        right.add(SDL3.createLabel({text: ""}), {grow: 1, shrink: 1, align: 1})   // 内容靠右 ✓
-        // 音量图标（用户提供的 yl.png 开 / yl1.png 关）—— 点一下切静音，图标跟着换 ✓
+        right.add(loopBtn, {grow: 0, shrink: 0, basis: 26, align: 1})
+        // 音量图标（yl.png 开 / yl1.png 静音）—— 点一下切静音 ✓
         volBtn = img_btn(if muted then "yl1.png" else "yl.png",
                          if muted then "取消静音" else "静音", 26, 16.0)
         volBtn.on_click(func() { toggle_mute() })
         right.add(volBtn, {grow: 0, shrink: 0, basis: 26, align: 1})
-        vol = SDL3.createSlider({w: 84, h: 18, value: 68.0, min: 0.0, max: 100.0,
+        vol = SDL3.createSlider({w: 76, h: 18, value: 68.0, min: 0.0, max: 100.0,
                                  fill_color: C_ACCENT, track_color: #EFD8E1FF,
                                  thumb_color: C_ACCENT, show_value: false})
         vol.on_change(func(float v) { on_volume(v) })
-        right.add(vol, {grow: 0, shrink: 0, basis: 84, align: 1})
+        right.add(vol, {grow: 0, shrink: 0, basis: 76, align: 1})
         right.add(img_btn("list.png", "播放列表", 26, 14.0), {grow: 0, shrink: 0, basis: 26, align: 1})
-        right.add(txt_btn("…", "更多", 26, C_TXT_MID), {grow: 0, shrink: 0, basis: 26, align: 1})
-        bar.add(right, {grow: 0, shrink: 0, basis: 300, align: 1})
+        bar.add(right, {grow: 0, shrink: 0, basis: 330, align: 1})
+
+        sync_play_ui()          // 建完立刻按当前状态刷一次（时间/填充/宽度都对齐 ✓）
     }
 
     // 小圆钮（无底色，悬停有底 ✓）—— 底栏/顶栏那一片共用这一处。
@@ -1978,16 +1998,24 @@ export struct Player {
         SDL3.markFrameRedraw()
     }
 
+    // 底栏 ♥ 的图标 = **当前在播那首歌**的收藏状态（不是独立开关 ✓）
+    pri func sync_like_icon() {
+        if likeBtn.get_w() <= 0.0 { return }
+        bool on = is_liked(like_key(nowSong))
+        liked = on
+        likeBtn.set_image(ico(if on then "sc1.png" else "sc.png"))
+    }
+
+    // 底栏 ♥：走和卡片**同一条**收藏逻辑（likedSids + 落盘），
+    //   否则底栏和卡片是两套状态、互相看不见（用户实测：卡片红心、底栏还是灰 ✗）
     pri func toggle_like() {
-        liked = not liked
-        // `☆`（未喜欢）↔ `★`（已喜欢）+ 主色 —— 与原来 heart/heart_fill 的对比同义
-        if liked {
-            likeBtn.set_text("★")
-            likeBtn.set_text_color(C_ACCENT)
-        } else {
-            likeBtn.set_text("☆")
-            likeBtn.set_text_color(C_TXT_MID)
+        if like_key(nowSong) == "" {
+            nowArtist.set_text("还没有在播的歌")
+            SDL3.markFrameRedraw()
+            return
         }
+        toggle_song_like(nowSong)
+        sync_like_icon()
         SDL3.markFrameRedraw()
     }
 
@@ -2064,6 +2092,7 @@ export struct Player {
 
     // 卡片点播放：**有 sid 就走真播放**（推荐 / 最近添加 / 继续收听 里的酷我歌 ✓）
     pri func play_song(Song sg) {
+        nowSong = sg                    // 底栏 ♥ 按它判断收藏状态 ✓
         // 本地文件（下载列表 / 本地音乐）⇒ 直接播磁盘上的，不走网络 ✓
         if sg.path != "" {
             push_recent(sg)
@@ -2345,6 +2374,7 @@ export struct Player {
         seek.set_value(r)
         seekSyncing = false
         curTime.set_text(fmtTime(pos))
+        sync_like_icon()        // 换歌时 ♥ 跟着变（收藏过就红心 ✓）
     }
 
     // ==================== 退出收尾 ====================
@@ -2387,11 +2417,9 @@ export struct Player {
         // 启动就切到某个导航页（下标：0 首页 / 1 我喜欢 / 2 最近播放 / 3 本地音乐 / 4+ 歌单）
         var nv = _env("ALKAID_NAV")
         if nv != null { set_nav(_int(_str(nv))) }
-        if _env("ALKAID_DBG") != null {
-            set_nav(3)
-            print("[dbg] 本地曲库 " + _str(localCache.len()) + " 首")
-            play_local_row(0)
-        }
+        // ⚠ 这里**不要再加会阻塞的自检钩子**（如"启动就 play_song"）：
+        //   play_song → play_sid 会同步取直链 + 解码，跑在 UI 线程上 ⇒ 窗口直接卡死 ✗
+        //   （2026-10-26 实测；要验播放就手动点，或写独立探针脚本）
         // 启动就搜一次酷我（联网自检：ALKAID_SEARCH=周杰伦）
         var kwEnv = _env("ALKAID_SEARCH")
         if kwEnv != null {
