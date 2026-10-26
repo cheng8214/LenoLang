@@ -495,7 +495,10 @@ export struct Button impl Widget, Themeable {
             int er = theme.colorR(bgColor) / 2
             int eg = theme.colorG(bgColor) / 2
             int eb = theme.colorB(bgColor) / 2
-            bgC = theme.packColor(er, eg, eb)
+            // ★ 2026-10-27：**保留原 alpha** —— `packColor(r,g,b)` 默认 a=255，
+            //   而这里的按钮多是半透明白（#FFFFFFAA）⇒ 禁用后 RGB 减半 + 变成不透明
+            //   = 一块**实心深灰**压在界面上，圆角处还露出一圈（看着像"方框套圆"✗）
+            bgC = theme.packColor(er, eg, eb, theme.colorA(bgColor))
         }
 
         // 背景/阴影/边框（showBackground=false 时全部跳过，只显示图标）
@@ -587,8 +590,9 @@ export struct Button impl Widget, Themeable {
         }
         if isize < 0.0 { isize = 0.0 }
 
-        // 纯图标按钮：悬浮/按下时在图标区域画半透明高亮矩形（比图标稍大）
-        if iconOnly and (hover or pressed) {
+        // 纯图标按钮：悬浮/按下时在图标区域画半透明高亮（比图标稍大）
+        //   ⚠ 禁用时**不画**：禁用的按钮不该有 hover 反馈（原来会画一层灰块，看着像"选中了"✗）
+        if iconOnly and enabled and (hover or pressed) {
             float hx = x + (w - isize) / 2.0 - 3.0
             float hy = y + (h - isize) / 2.0 - 3.0
             float hw = isize + 6.0
@@ -598,7 +602,11 @@ export struct Button impl Widget, Themeable {
             } else {
                 r.setColor(#FFFFFF23)  // 悬浮：亮色半透明
             }
-            r.fillRoundedRect(hx, hy, hw, hh, 4.0)
+            // ★ 2026-10-27：高亮的圆角要**跟着按钮的形状** —— 原来写死 `4.0`，
+            //   在圆形按钮（radius ≥ h/2，如 30×30 圆钮）里就变成"圆里套一个灰方块" ✗
+            float hR = 4.0
+            if radius >= h / 2.0 { hR = hw / 2.0 }
+            r.fillRoundedRect(hx, hy, hw, hh, hR)
         }
 
         // 实际绘制尺寸（按内容模式保持/拉伸比例，避免非正方形图变形）+ alpha/tint 调制

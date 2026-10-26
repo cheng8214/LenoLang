@@ -17,7 +17,7 @@ import "sdl_edit.leno" as edt; use edt.Edit
 //   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
 func _opts_keys(): Array[string] {
     return [
-"bg_color", "border_color", "cursor", "editable", "enabled", "font_path", "font_size", "font_style", "h", "hover_color", "image_gap", "image_size", "item_h", "item_images", "items", "placeholder", "popup_h", "scroll_color", "sel_color", "selected", "text_color", "tip", "visible", "w", "x", "y"
+"bg_color", "border", "border_color", "cursor", "editable", "enabled", "font_path", "font_size", "font_style", "h", "hover_color", "icon", "icon_gap", "icon_size", "image_gap", "image_size", "item_h", "item_images", "items", "placeholder", "pad_x", "popup_h", "show_arrow", "radius", "scroll_color", "sel_color", "selected", "text_color", "tip", "visible", "w", "x", "y"
 ]
 }
 export struct ComboBox impl Widget, Themeable {
@@ -47,6 +47,23 @@ export struct ComboBox impl Widget, Themeable {
     pri Ptr[u8]? winHnd            // 所属窗口句柄：下拉层按窗口隔离绘制；面板/Tab 嵌套未拿到句柄则为 null
     // ===== 可编辑模式 =====
     pri bool editable = false       // 是否可编辑（内嵌 Edit 控件）
+    // ★ 2026-10-27：外框圆角与内边距可配（原来写死 6 / 4）——
+    //   当"搜索框"用它时，要和旁边 18px 圆角的 Edit 长得一样，否则一个胶囊一个方角 ✗
+    pri float boxRadius = 6.0
+    pri float padX = 4.0
+    // 当作"搜索框/自动补全"用时不需要下拉箭头和外框（视觉上应该是一个普通输入框 ✓）
+    pri bool showArrow = true
+    pri bool showBorder = true
+    // 前置图标（搜索框那种「🔍 + 输入框」的形态）：icon 为图片路径，"" = 不显示 ✓
+    pri string iconPath = ""
+    pri float iconSize = 16.0
+    pri float iconGap = 6.0
+    // 哪些颜色是调用方**显式指定**的（切主题时不能把它们冲掉 ✓）
+    pri bool bgSet = false
+    pri bool bdrSet = false
+    pri bool selSet = false
+    pri bool hovSet = false
+    pri bool txtSet = false
     pri Edit? edit                 // 内嵌编辑框（懒创建）
 
     // ==================== 每项图标支持（对齐 Table._rowImages / TreeView image） ====================
@@ -113,12 +130,12 @@ export struct ComboBox impl Widget, Themeable {
         sel = opts.get("selected", -1)
         if sel >= items.len() { sel = -1 }
 
-        // 颜色：opts 未传则保持默认值
-        if opts.get("bg_color") is Color => t { bgColor = t }
-        if opts.get("border_color") is Color => t { bdrColor = t }
-        if opts.get("sel_color") is Color => t { selColor = t }
-        if opts.get("hover_color") is Color => t { hovColor = t }
-        if opts.get("text_color") is Color => t { txtColor = t }
+        // 颜色：opts 未传则保持默认值；传了就记下来 —— 切主题时**不覆盖显式值** ✓
+        if opts.get("bg_color") is Color => t { bgColor = t; bgSet = true }
+        if opts.get("border_color") is Color => t { bdrColor = t; bdrSet = true }
+        if opts.get("sel_color") is Color => t { selColor = t; selSet = true }
+        if opts.get("hover_color") is Color => t { hovColor = t; hovSet = true }
+        if opts.get("text_color") is Color => t { txtColor = t; txtSet = true }
         if opts.get("scroll_color") is Color => t { sbColor = t }
 
         // 每项图标
@@ -133,8 +150,15 @@ export struct ComboBox impl Widget, Themeable {
         _tip = opts.get("tip", "")
         open = false; scroll = 0.0; hover = -1   // 重置：收起弹层、滚动归零、悬停行清除
         editable = opts.get("editable", false)
+        boxRadius = opts.get("radius", 6.0)
+        padX = opts.get("pad_x", 4.0)
+        showArrow = opts.get("show_arrow", true)
+        showBorder = opts.get("border", true)
+        iconPath = opts.get("icon", "")
+        iconSize = opts.get("icon_size", 16.0)
+        iconGap = opts.get("icon_gap", 6.0)
         if editable and edit == null {
-            edit = edt.createEdit({x:x+4, y:y+1, w:w-24, h:h-2, font_size:_fontSize, border:false, draw_bg:false, radius:0, placeholder:placeholder, text_color:txtColor})
+            edit = edt.createEdit({x:x+padX, y:y+1, w:w-padX-20.0, h:h-2, font_size:_fontSize, border:false, draw_bg:false, radius:0, pad_x:padX, placeholder:placeholder, text_color:txtColor})
             edit.on_enter(func() { if onEnter != null { onEnter(edit.get_text()) } })
             // ★ 同步初始选中项文本到 Edit（selected 在 set 前面已解析）
             if sel >= 0 and sel < items.len() { edit.set_text(items[sel]) }
@@ -218,6 +242,29 @@ export struct ComboBox impl Widget, Themeable {
     func focus() { if focusable and not focused { focused = true; core.markFrameRedraw() } }
     func blur() { if focused { focused = false; core.markFrameRedraw() } }
     func is_focused(): bool { return focused }
+
+    // ==================== 可输入模式（autocomplete 用）====================
+    // ★ 2026-10-27：`editable: true` 时输入的文字原来**取不出来** ⇒ 没法做"边输边给建议" ✗
+    //   · get_text：取输入框里的原文（非可编辑 ⇒ 回落选中项文本 ✓）
+    //   · set_text：程序化填入（不会触发 on_change，避免自我循环 ✓）
+    //   · on_text_change：输入变化回调（转发内嵌 Edit 的 on_change ✓）
+    func get_text(): string {
+        if editable and edit != null { return edit.get_text() }
+        return get_selected_text()
+    }
+    func set_text(string t) {
+        if editable and edit != null { edit.set_text(t) }
+    }
+    func on_text_change(func():void cb) {
+        if editable and edit != null { edit.on_change(cb) }
+    }
+    // 换建议后重新展开：`set_items` 会 `open = false`（避免旧列表残留），
+    //   建议列表需要"更新完再弹开" ⇒ 调它 ✓
+    func set_suggestions(Array[string] its) {
+        set_items(its)
+        if its.len() > 0 { open_list() } else { close() }
+        core.markFrameRedraw()
+    }
     // ★ 打开下拉抽成**一个入口** ⇒ 键盘与鼠标点击共用 ✓
     //   （原来这段逻辑**内联在点击路径里** ✗ —— 那份"滚到选中项"的代码要是抄第二遍，迟早漂 ✓）
     func open_list() {
@@ -229,7 +276,32 @@ export struct ComboBox impl Widget, Themeable {
             clamp_scroll()
         }
     }
+    // 内嵌 Edit 的左边距 / 宽度（有前置图标时右移并变窄）——
+    //   绘制与命中测试**共用这两个函数**，避免两处各算一份而漂移 ✓
+    pri func edit_left(): float {
+        return x + padX + (if iconPath != "" then iconSize + iconGap else 0.0)
+    }
+    pri func edit_width(): float {
+        float iconExtra = if iconPath != "" then iconSize + iconGap else 0.0
+        float rightPad = if showArrow then 20.0 else padX
+        float ew = w - padX - iconExtra - rightPad
+        if ew < 40.0 { ew = 40.0 }
+        return ew
+    }
+
     func toggle_list() { if open { close() } else { open_list() } }
+
+    // 选中第 idx 项（鼠标点击与程序化调用共用）——
+    //   ⚠ 必须把文本同步进内嵌 Edit：原来只改 `sel` 字段，输入框里还是旧词，
+    //     调用方拿 `get_text()` 去搜会搜到旧关键词 ✗
+    func pick_item(int idx) {
+        if idx < 0 or idx >= items.len() { return }
+        sel = idx
+        open = false
+        if editable and edit != null { edit.set_text(items[sel]) }
+        if onChange != null { onChange(sel) }
+        core.markFrameRedraw()
+    }
     func activate() { toggle_list(); core.markFrameRedraw() }   // Enter/Space ≡ "点一下下拉框" ✓
     pri func nudge_sel(int sc) {
         if items.len() == 0 { return }
@@ -332,15 +404,32 @@ export struct ComboBox impl Widget, Themeable {
 
         // ★ 可编辑模式：Edit 聚焦时，键盘/文本事件路由给 Edit
         if editable and edit != null and edit.is_focused() {
-            edit.set_pos(x + 4, y + 1); edit.set_size(w - 24, h - 2)
+            edit.set_pos(edit_left(), y + 1); edit.set_size(edit_width(), h - 2)
             edit.process(ev)
-            // 点击箭头区域：展开/收起下拉
-            if ev.isMouseButtonDown() and contains(mx, my) and mx >= x + w - 20.0 {
+            // ★ 2026-10-27：这条分支原来直接 `return` ⇒ **输入框聚焦时下拉的 hover 永远不更新** ✗
+            //   （打字时输入框一直聚焦，鼠标划过列表没反应，必须先点一下让输入框失焦才行）
+            //   ⇒ 在这里补上 hover 计算，与下面的普通分支同一套逻辑 ✓
+            if open and ev.isMouseMotion() {
+                int prevHov = hover
+                hover = index_at(mx, my)
+                if hover != prevHov { core.markFrameRedraw() } else { core.markFrameMotion() }
+            }
+            // 点在下拉项上 ⇒ 直接选中（不然这条分支会把它当"点到外面"而 blur 掉 ✗）
+            if open and ev.isMouseButtonDown() {
+                int hitIdx = index_at(mx, my)
+                if hitIdx >= 0 {
+                    pick_item(hitIdx)
+                    return
+                }
+            }
+            // 点击箭头区域：展开/收起下拉（没箭头时整块都是输入区 ✓）
+            if showArrow and ev.isMouseButtonDown() and contains(mx, my) and mx >= x + w - 20.0 {
                 // ★ 2026-10-13：改走 `open_list()` / `close()` —— 与键盘**同一个入口** ✓（不抄第二份 ⇒ 不会漂 ✓）
                 if not open { open_list() } else { close() }
                 edit.blur()
             } eif ev.isMouseButtonDown() and not edit.contains(mx, my) {
-                edit.blur()
+                // 点在列表项上就交给列表处理（不能在这里 blur 掉，否则点击选中会失效）
+                if not (open and index_at(mx, my) >= 0) { edit.blur() }
             }
             return
         }
@@ -405,7 +494,7 @@ export struct ComboBox impl Widget, Themeable {
                 if contains(mx, my) {
                     // ★ 可编辑模式：点击文本区域聚焦 Edit（不展开弹层）
                     if editable and edit != null and mx < x + w - 20.0 {
-                        edit.set_pos(x + 4, y + 1); edit.set_size(w - 24, h - 2)
+                        edit.set_pos(x + padX, y + 1); edit.set_size(w - padX - 20.0, h - 2)
                         edit.focus(); return
                     }
                     open = true
@@ -419,9 +508,7 @@ export struct ComboBox impl Widget, Themeable {
             } else {
                 int idx = index_at(mx, my)
                 if idx >= 0 {
-                    sel = idx
-                    open = false
-                    if onChange != null { onChange(sel) }
+                    pick_item(idx)
                 } else if not contains(mx, my) {
                     open = false   // 点击弹出区域外关闭
                 } else {
@@ -440,28 +527,41 @@ export struct ComboBox impl Widget, Themeable {
         Color bgC = bgColor
         if not enabled { bgC = theme.darken(bgColor, 60) }
         r.setColor(bgC)
-        r.fillRoundedRect(x, y, w, h, 6.0)
+        r.fillRoundedRect(x, y, w, h, boxRadius)
 
         // 当前文字 + 图标
         float textX = x + 8.0
         // ★ 可编辑模式：渲染 Edit 代替静态文字
         if editable and edit != null {
-            edit.set_pos(x + 4, y + 1); edit.set_size(w - 24, h - 2)
+            edit.set_pos(edit_left(), y + 1); edit.set_size(edit_width(), h - 2)
+            // 前置图标（搜索框那种「🔍 + 输入框」）—— 落整像素，细线不被采样掉 ✓
+            if iconPath != "" {
+                Ptr[u8] itex = get_tex(r, iconPath)
+                if itex != null {
+                    r.setTextureAlpha(itex, 255); r.setTextureColor(itex, #FFFFFFFF)
+                    float iy = y + (h - iconSize) / 2.0
+                    r.drawTextureAt(itex, _float(_int(x + padX + 0.5)), _float(_int(iy + 0.5)),
+                                    iconSize, iconSize)
+                }
+            }
             edit.render(r)
-            // 下拉箭头
-            //   ★ 颜色取**文字色**（2026-10-09 修）：原来用 `brighten(bdrColor, 60)`，浅色主题下
-            //     border=#C8CDD4 提亮 60 会**饱和成纯白** ⇒ 与浅底几乎同色、根本看不见 ✗
-            //     文字色按定义就"与底有对比"（深色主题下自动变成浅箭头 ✓）⇒ 必可见 ✓
-            //     （与 SpinBox 的 `btnColor = txtHeader` 同一口径 ✓）
-            float aw = 10.0, ax = x + w - aw - 8.0, ay = y + h / 2.0
-            Color arrowC = txtColor
-            if not enabled { arrowC = theme.darken(txtColor, 60) }   // 禁用与文字同步变暗 ✓
-            arrowC = theme.withAlpha(arrowC, 200)                    // 比文字略柔，不抢眼 ✓
-            r.setColor(arrowC)
-            r.drawTriangleC(ax + aw / 2.0, ay, aw / 2.0, 180.0, arrowC)
-            // 边框
-            r.setColor(bdrColor)
-            r.drawRoundedRect(x, y, w, h, 6.0)
+            if showArrow {
+                // 下拉箭头
+                //   ★ 颜色取**文字色**（2026-10-09 修）：原来用 `brighten(bdrColor, 60)`，浅色主题下
+                //     border=#C8CDD4 提亮 60 会**饱和成纯白** ⇒ 与浅底几乎同色、根本看不见 ✗
+                //     文字色按定义就"与底有对比"（深色主题下自动变成浅箭头 ✓）⇒ 必可见 ✓
+                //     （与 SpinBox 的 `btnColor = txtHeader` 同一口径 ✓）
+                float aw = 10.0, ax = x + w - aw - 8.0, ay = y + h / 2.0
+                Color arrowC = txtColor
+                if not enabled { arrowC = theme.darken(txtColor, 60) }   // 禁用与文字同步变暗 ✓
+                arrowC = theme.withAlpha(arrowC, 200)                    // 比文字略柔，不抢眼 ✓
+                r.setColor(arrowC)
+                r.drawTriangleC(ax + aw / 2.0, ay, aw / 2.0, 180.0, arrowC)
+            }
+            if showBorder {
+                r.setColor(bdrColor)
+                r.drawRoundedRect(x, y, w, h, boxRadius)
+            }
             return
         }
         if _font.ok {
@@ -598,11 +698,12 @@ export struct ComboBox impl Widget, Themeable {
 
 // ==================== 运行时主题切换 ====================
 func applyTheme(Theme t) {
-    bgColor = t.bg
-    bdrColor = t.border
-    selColor = t.bgSel
-    hovColor = t.bgHover
-    txtColor = t.txt
+    // 显式指定过的颜色**保持不动** —— 否则切主题时应用精心配的胶囊/下拉色会被冲成主题色 ✗
+    if not bgSet { bgColor = t.bg }
+    if not bdrSet { bdrColor = t.border }
+    if not selSet { selColor = t.bgSel }
+    if not hovSet { hovColor = t.bgHover }
+    if not txtSet { txtColor = t.txt }
     sbColor = t.sb
     // 同步内嵌 Edit 的颜色
     edit?.applyTheme(t)
@@ -638,7 +739,12 @@ func _unregisterComboBox(ComboBox c) {
 
 // 工厂
 export func createComboBox(Dict opts): ComboBox {
-    ComboBox cb = new ComboBox(); cb.set(opts)
+    ComboBox cb = new ComboBox()
+    // ★ 2026-10-27：**先套主题再 set(opts)** —— 原来只 set，主题一次都没应用过，
+    //   控件一直停在字段默认色（深色底/深灰边），浅色界面上很突兀 ✗
+    //   顺序保证"主题打底、显式参数覆盖" ✓
+    cb.applyTheme(theme.getTheme())
+    cb.set(opts)
     registerComboBox(cb)   // 登记到全局注册表，确保经 panel/tab/布局添加时下拉层也能画到最上层
     return cb
 }
