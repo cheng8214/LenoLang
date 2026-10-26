@@ -15,6 +15,46 @@ import "kuwo_core.leno" as kuwo
 import "kuwo_cover.leno" as cover
 import strings
 import dirs
+import files
+
+// ==================== 播放前准备音源（★ 2026-10-26）====================
+// 为什么放线程：`play_sid` 原来在 UI 线程里「取直链 + 下载试听」，一首 1–3 秒，
+//   点播放整个窗口就卡住（用户反馈"点播放会卡一下，不是多线程吗" ✗）
+// 回信：["OK", 本地路径] / ["ERR", 原因]
+export func prepare(string id, string cacheDir, Channel ch) {
+    if id == "" {
+        ch.send(["ERR", "没有音源 id"])
+        return
+    }
+    string f = dirs.join(cacheDir, id + ".mp3")
+    // 已缓存 ⇒ 立刻回信（UI 那边只是 createSound，很快 ✓）
+    // ⚠ 回信第 3 项带 **id**：用户连点两首时，UI 靠它丢弃过期回信（别把 A 的路径贴给 B ✓）
+    if files.exists(f) {
+        ch.send(["OK", f, id])
+        return
+    }
+    try { dirs.mkdir_p(cacheDir) } catch e { print("[play] 建缓存目录失败：" + _str(e)) }
+    string u = ""
+    try {
+        var c = net.createClient()
+        // mp3 优先（mp3128 那档偶尔不是真音频，只作兜底 ✓）
+        u = kuwo.officialurl(id, "mp3")
+        if u == "" { u = kuwo.officialurl(id, "mp3128") }
+        if u == "" { u = kuwo.getdirecturl(c, id) }
+        c.close()
+    } catch e {
+        ch.send(["ERR", "取直链失败：" + _str(e)])
+        return
+    }
+    if u == "" {
+        ch.send(["ERR", "取不到音源"])
+        return
+    }
+    bool ok = false
+    try { ok = net.download(u, f) > 0 } catch e { ok = false }
+    if ok and files.exists(f) { ch.send(["OK", f, id]) }
+    else { ch.send(["ERR", "下载试听失败", id]) }
+}
 
 // 一行数据（统一在这里拼，避免三处各写一遍 ✓）
 func row(kuwo.SongInfo s): Array[string] {
@@ -32,6 +72,26 @@ export func search(string kw, int limit, Channel ch) {
         for list to s {
             if s.valid() { out.add(row(s)) }
         }
+    } catch e {
+        out = []
+        out.add(["ERR", _str(e)])
+    }
+    ch.send(out)
+}
+
+// 只刷**一个**分区：kind = "REC"（为你推荐）/ "NEW"（最近添加）
+//   协议与 `sections` 一致：[[kind,""], 数据行…] ⇒ apply_sections 能直接吃 ✓
+//   为什么不复用 `search`：它发的是 ["OK"]，没有分区标记 ⇒ apply_sections 解析不到 ✗
+export func section(string kind, string kw, int n, Channel ch) {
+    Array[Array[string]] out = []
+    try {
+        var c = net.createClient()
+        out.add([kind, ""])
+        var a = kuwo.search(c, kw, n)
+        for a to s {
+            if s.valid() { out.add(row(s)) }
+        }
+        c.close()
     } catch e {
         out = []
         out.add(["ERR", _str(e)])

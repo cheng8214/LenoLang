@@ -250,6 +250,10 @@ export struct Player {
     bool relatedSearch = false
     // 下载工作线程回传（["P",已下,总] / ["D",字节,总] / ["E",原因,""]）；分片下载才能有进度 ✓
     Channel dlCh
+    // 播放前取音源的回信（★ 2026-10-26：取直链+下载试听放线程，别再卡 UI ✓）
+    Channel playCh
+    Song pendingSong               // 正在准备的那首
+    bool playPending = false
     int dlCur = -1                        // 正在下载的队列行号（-1 = 空闲）
     bool hasLastSearch = false
     Array[Song] lastSongs = []
@@ -272,7 +276,8 @@ export struct Player {
     bool homeAsked = false
     bool homeLoaded = false
     bool homeLoading = false       // 首页推荐正在拉（内容区显示"正在加载"✓）
-    int recBatch = 0               // 「换一批」轮换到第几组关键词
+    int recBatch = 0               // 「换一批」轮换到第几组关键词（为你推荐）
+    int newBatch = 0               // 同上（最近添加）
     bool coverDirty = false        // 有卡片封面到了（攒到下一拍再重建，避免每张都重建 ✓）
     // ----- 真播放（miniaudio）-----
     Sound snd
@@ -323,6 +328,7 @@ export struct Player {
         searchCh = threads.channel(4)         // 搜索回信通道（一次一条 ✓）
         coverCh = threads.channel(8)          // 封面回信通道
         dlCh = threads.channel(64)            // 下载进度回传（分片下载每 1MB 一条 ✓）
+        playCh = threads.channel(8)           // 播放前取音源（一次一首 ✓）
         homeCh = threads.channel(4)           // 首页分区（为你推荐/最近添加）回信通道
         SDL3.setTheme(appTheme())             // 粉主题：Table / Edit / 滚动条都跟着变粉 ✓
 
@@ -720,10 +726,12 @@ export struct Player {
         content.add(lbl(sub, 11, C_TXT_DIM, false), {grow: 0, shrink: 0, basis: 18, align: 3})
         content.add(SDL3.createLabel({text: ""}), {grow: 0, shrink: 0, basis: 8, align: 3})
 
-        // ★ 2026-10-26（用户要求）：**加载期间显示"正在加载"**，而不是空白/误导性的空状态。
-        //   两种在途状态：① 搜索（searching）② 首页推荐首次拉取（homeLoading）
-        if netSongs.len() == 0 and (searching or (curNav == 0 and homeLoading)) {
-            loading_row(if searching then "正在搜索…" else "正在加载推荐…")
+        // 搜索中且没有旧结果 ⇒ 整页显示"正在搜索…"
+        //   ⚠ 首页的 `homeLoading` **不能**在这里拦截：那样整页都被占位替换，
+        //     「继续收听」会跟着消失（用户实测："点换一批，继续收听也不见了"✗）
+        //     ⇒ 它只在首页的"为你推荐"那一段里显示占位（见下面首页分支 ✓）
+        if netSongs.len() == 0 and searching {
+            loading_row("正在搜索…")
             return
         }
 
@@ -767,18 +775,41 @@ export struct Player {
                                          // ★ 只有**双击**才播放：单击 = 选中、右键 = 菜单（之前挂 on_select 会让右击也开播 ✗）
                                          //   行号一律过 `source_row`（表头排序后显示行 ≠ 数据行 ✓）
                                          tbSearch.on_dbl_click(func(int row, int col) { play_net_row(row) })
+                                         // 右击菜单（与歌曲页相关歌曲表同一套口径 ✓）
                                          tbSearch.on_context_will_open(func(int row) {
-                                         tbSearch.clearContextItems()
-                                         tbSearch.addContextItem({label: "播放", id: "play"})
-                                         tbSearch.addContextItem({label: "下载", id: "dl"})
-                                        tbSearch.addContextItem({label: "复制歌名", id: "copy"})
+                                             tbSearch.clearContextItems()
+                                             tbSearch.addContextItem({label: "播放", id: "play"})
+                                             tbSearch.addContextItem({label: "下载", id: "dl"})
+                                             tbSearch.addContextItem({label: "下载全部", id: "dlall"})
+                                             tbSearch.addContextItem({label: "搜索这首歌", id: "sw"})
+                                             tbSearch.addContextItem({label: "搜索这位歌手", id: "sa"})
+                                             tbSearch.addContextItem({label: "复制歌名", id: "copy"})
                                          })
                                          tbSearch.on_context_select(func(int row, string id) {
-                                         int i = tbSearch.source_row(row)
-                                         if i < 0 or i >= netSongs.len() { return }
-                                         if id == "play" { play_net_song(i) }
-                                         if id == "dl" { enqueue_download(i) }
-                                        if id == "copy" { SDL3.setClipboardText(netSongs[i].title + " - " + netSongs[i].artist) }
+                                             if id == "dlall" {
+                                                 int n = 0
+                                                 string qf = if g_preferFmt == "lossless" then "FLAC" else "MP3"
+                                                 for netSongs to s {
+                                                     if s.sid != "" { n = n + dl.enqueue(dlJobs, s.sid, s.title, s.artist, qf) }
+                                                 }
+                                                 refresh_dl_btn()
+                                                 nowArtist.set_text(if n > 0 then "已加入下载队列 " + _str(n) + " 首" else "这些歌都已经在下载列表里了")
+                                                 SDL3.markFrameRedraw()
+                                                 return
+                                             }
+                                             int i = tbSearch.source_row(row)
+                                             if i < 0 or i >= netSongs.len() { return }
+                                             if id == "play" { play_net_song(i) }
+                                             else if id == "dl" { enqueue_download(i) }
+                                             else if id == "sw" {
+                                                 search.set_text(netSongs[i].title)
+                                                 on_kuwo_search()
+                                             } else if id == "sa" {
+                                                 search.set_text(netSongs[i].artist)
+                                                 on_kuwo_search()
+                                             } else if id == "copy" {
+                                                 SDL3.setClipboardText(netSongs[i].title + " - " + netSongs[i].artist)
+                                             }
                                          })
             // 表格占满剩余高度（内部滚动 ✓），标题用 netMsg 里的搜索状态
             show_table_page("搜索结果", netMsg, tbSearch)
@@ -795,11 +826,17 @@ export struct Player {
             }
             HBox head = SDL3.createHBox({x: 0, y: 0, w: _float(content_w()), h: 200,
                                          pad_x: 0, pad_y: 0, spacing: 20})
+            // 大封面上的钮也用固定像素（48 = 源图原尺寸，1:1 最清晰 ✓）
+            bool bigCur = is_now_playing(sg)
             ImageView big = SDL3.createImageView({w: 180, h: 180, radius: 16,
                                                   image_path: coverPath(sg.cover),
-                                                  overlay_path: ico("play.png"),
-                                                  overlay_scale: 0.32, tip: "播放"})
-            big.on_click(func() { play_song(sg) })
+                                                  overlay_path: ico(if bigCur then "pause.png" else "play.png"),
+                                                  overlay_size: 48.0,
+                                                  tip: if bigCur then "暂停" else "播放"})
+            big.on_click(func() {
+                if is_now_playing(sg) { toggle_play(); rebuild_content() }
+                else { play_song(sg); rebuild_content() }
+            })
             head.add(big, {grow: 0, shrink: 0, basis: 180, align: 1})
 
             VBox info = SDL3.createVBox({x: 0, y: 0, w: 400, h: 180, pad_x: 0, pad_y: 6, spacing: 6})
@@ -874,6 +911,50 @@ export struct Player {
             rt.set_rows(rrows)
             rt.on_dbl_click(func(int row, int col) {
                 if row >= 0 and row < rel.len() { play_song(rel[row]) }
+            })
+            // ---- 右击菜单（★ 2026-10-26 用户要求：播放 / 下载 / 下载全部 / 搜索歌曲 / 搜索歌手）----
+            rt.on_context_will_open(func(int row) {
+                rt.clearContextItems()
+                rt.addContextItem({label: "播放", id: "play"})
+                rt.addContextItem({label: "下载", id: "dl"})
+                rt.addContextItem({label: "下载全部", id: "dlall"})
+                rt.addContextItem({label: "搜索这首歌", id: "sw"})
+                rt.addContextItem({label: "搜索这位歌手", id: "sa"})
+                rt.addContextItem({label: "复制歌名", id: "copy"})
+            })
+            rt.on_context_select(func(int row, string id) {
+                string qfmt = if g_preferFmt == "lossless" then "FLAC" else "MP3"
+                if id == "dlall" {
+                    int n = 0
+                    for rel to s {
+                        if s.sid != "" { n = n + dl.enqueue(dlJobs, s.sid, s.title, s.artist, qfmt) }
+                    }
+                    refresh_dl_btn()
+                    nowArtist.set_text(if n > 0 then "已加入下载队列 " + _str(n) + " 首" else "这些歌都已经在下载列表里了")
+                    SDL3.markFrameRedraw()
+                    return
+                }
+                if row < 0 or row >= rel.len() { return }
+                Song one = rel[row]
+                if id == "play" {
+                    play_song(one)
+                } else if id == "dl" {
+                    int n = dl.enqueue(dlJobs, one.sid, one.title, one.artist, qfmt)
+                    refresh_dl_btn()
+                    nowArtist.set_text(if n > 0 then "已加入下载队列：" + one.title else "已在下载列表里：" + one.title)
+                    SDL3.markFrameRedraw()
+                } else if id == "sw" {
+                    // 用这首歌的名字重新搜（进搜索结果表 ✓）
+                    search.set_text(one.title)
+                    on_kuwo_search()
+                } else if id == "sa" {
+                    search.set_text(one.artist)
+                    on_kuwo_search()
+                } else if id == "copy" {
+                    SDL3.setClipboardText(one.title)
+                    nowArtist.set_text("已复制歌名：" + one.title)
+                    SDL3.markFrameRedraw()
+                }
             })
             content.add(rt, {grow: 0, shrink: 0, basis: rh, align: 3})
             return
@@ -1007,15 +1088,21 @@ export struct Player {
                 r0.title = "继续收听"
                 r0.sub = "最近播放 · " + _str(recentSongs.len()) + " 首"
                 r0.items = recentSongs
-                add_shelf(r0, true)
+                add_shelf(r0, true, 0)
                 shown = shown + 1
             }
-            if recSongs.len() > 0 {
+            // 推荐区：加载中只在这一段显示占位（「继续收听」「最近添加」照常显示 ✓）
+            //   ⚠ 别把这个判断提到整页那层 —— 那样换一批时整页变"正在加载"，
+            //     继续收听跟着消失（用户实测 ✗）
+            if homeLoading {
+                loading_row("正在加载推荐…")
+                shown = shown + 1
+            } else if recSongs.len() > 0 {
                 var r1 = new Shelf()
                 r1.title = "为你推荐"
                 r1.sub = "根据最近的收听生成 · 酷我"
                 r1.items = recSongs
-                add_shelf(r1, false)
+                add_shelf(r1, false, 1)
                 shown = shown + 1
             }
             if newSongs.len() > 0 {
@@ -1023,7 +1110,7 @@ export struct Player {
                 r2.title = "最近添加"
                 r2.sub = "酷我新歌 · " + _str(newSongs.len()) + " 首"
                 r2.items = newSongs
-                add_shelf(r2, false)
+                add_shelf(r2, false, 2)
                 shown = shown + 1
             }
             if shown == 0 {
@@ -1042,7 +1129,7 @@ export struct Player {
         one.title = if query != "" then "搜索结果" else page_name(curNav)
         one.sub = "共 " + _str(songs.len()) + " 首"
         one.items = songs
-        add_shelf(one, false)
+        add_shelf(one, false, 0)
     }
 
     // 当前导航页的名字（前 4 个是主导航，之后是歌单 ✓）
@@ -1257,32 +1344,24 @@ export struct Player {
         }
         string id = sg.sid
         string f = dirs.join(audioCacheDir(), id + ".mp3")
-        if not files.exists(f) {
-            nowArtist.set_text(sg.artist + " · 正在取音源…（首次约 1–2 秒）")
-            SDL3.markFrameRedraw()
-            bool gotOne = false
-            try {
-                dirs.mkdir_p(audioCacheDir())
-                var c = net.createClient()
-                // ⚠ 先要 **mp3**（实测可播）。之前为了省流量先取 mp3128，结果某些歌
-                //   下载下来 createSound 打不开（"文件坏了"）⇒ 那档不一定给真音频 ✗
-                //   体积：mp3 4.6 MB / mp3128 3.3 MB / flac 65 MB
-                string u = kuwo.officialurl(id, "mp3")
-                if u == "" { u = kuwo.officialurl(id, "mp3128") }
-                if u == "" { u = kuwo.getdirecturl(c, id) }
-                if u != "" { gotOne = net.download(u, f) > 0 }
-                c.close()
-            } catch e {
-                gotOne = false
-            }
-            if not gotOne or not files.exists(f) {
-                nowArtist.set_text(sg.artist + " · 取音源失败（换一首试试）")
-                playing = false
-                playBtn.set_image(ico("play.png"))
-                SDL3.markFrameRedraw()
-                return
-            }
+        // 已缓存 ⇒ 直接开声（createSound 是毫秒级，不会卡 ✓）
+        if files.exists(f) {
+            play_ready(sg, f)
+            return
         }
+        // ★ 2026-10-26（用户反馈"点播放会卡一下"）：取直链 + 下载试听要 1–3 秒，
+        //   原来整段跑在 UI 线程里 ⇒ 窗口直接冻住 ✗
+        //   现在交给工作线程（`workers.prepare`），回信到了再开声 ✓
+        pendingSong = sg
+        playPending = true
+        nowArtist.set_text(sg.artist + " · 正在取音源…")
+        SDL3.markFrameRedraw()
+        threads.start(workers.prepare, id, audioCacheDir(), playCh)
+    }
+
+    // 音源就绪 ⇒ 真正开声（解码失败退 flac；封面仍异步拉 ✓）
+    pri func play_ready(Song sg, string f) {
+        string id = sg.sid
         bool ok = start_play_file(sg, f)
         if not ok {
             // mp3 打不开（少数歌给的是别的封装 / 截断了）⇒ 退回 **flac** 再试一次
@@ -1404,19 +1483,22 @@ export struct Player {
     }
 
     // 一个分区：标题行（+ 右侧胶囊按钮）+ 内容（横卡 / 卡片墙）
-    pri func add_shelf(Shelf s, bool compact) {
+    // kind：0 = 不给「换一批」（继续收听 / 单区页）/ 1 = 为你推荐 / 2 = 最近添加
+    //   ★ 2026-10-26（用户反馈）：原来两个区共用 `refresh_recommend()` ⇒
+    //     点「最近添加」的换一批会连「为你推荐」一起刷 ✗ ⇒ 按区分别刷新 ✓
+    pri func add_shelf(Shelf s, bool compact, int kind) {
         HBox head = SDL3.createHBox({x: 0, y: 0, w: 800, h: 34, pad_x: 0, pad_y: 0, spacing: 10})
         head.add(lbl(s.title, 16.5, C_TXT, true), {grow: 0, shrink: 0, align: 1})
         head.add(lbl(s.sub, 10.5, C_TXT_DIM, false), {grow: 0, shrink: 0, align: 1})
         head.add(SDL3.createLabel({text: ""}), {grow: 1, shrink: 1, align: 1})
-        if not compact {
-            // 「换一批」：真刷新一次推荐（换关键词）✓
+        if not compact and kind > 0 {
+            // 「换一批」：**只刷新本区**（推荐刷推荐、新歌刷新歌 ✓）
             Button swap = SDL3.createButton({text: "换一批", font_size: 11,
                                              w: 82, h: 26, radius: 13, padding: 9.0,
                                              bg_color: #FFFFFFB0, hover_color: #FFFFFFFF,
                                              text_color: C_TXT_MID, border: false, shadow: false,
-                                             tip: "换一组推荐"})
-            swap.on_click(func() { refresh_recommend() })
+                                             tip: if kind == 1 then "换一组推荐" else "换一批新歌"})
+            swap.on_click(func() { refresh_section(kind) })
             head.add(swap, {grow: 0, shrink: 0, basis: 82, align: 1})
             // ★ 2026-10-26：「查看全部」删掉了 —— 为你推荐只有 24 首，卡片一屏就能翻完，
             //   点进去看同一批歌是假动作（等以后有分页/更多内容再加 ✓）
@@ -1657,14 +1739,20 @@ export struct Player {
         return out
     }
 
-    // 「换一批」：换一组关键词重拉推荐（4 组轮换，避免每次都是同一批 ✓）
-    pri func refresh_recommend() {
-        Array[string] kws = ["热歌", "新歌榜", "流行", "经典"]
-        recBatch = (recBatch + 1) % kws.len()
-        homeLoading = true
-        homeLoaded = false
+    // 「换一批」：**只刷新被点的那一个区**
+    //   kind 1 = 为你推荐（关键词 4 组轮换）/ 2 = 最近添加
+    pri func refresh_section(int kind) {
+        if kind == 1 {
+            Array[string] kws = ["热歌", "新歌榜", "流行", "经典"]
+            recBatch = (recBatch + 1) % kws.len()
+            homeLoading = true                                   // 只让推荐段显示占位 ✓
+            threads.start(workers.section, "REC", kws[recBatch], 24, homeCh)
+        } else if kind == 2 {
+            Array[string] kws2 = ["新歌", "新歌榜", "最新", "首发"]
+            newBatch = (newBatch + 1) % kws2.len()
+            threads.start(workers.section, "NEW", kws2[newBatch], 9, homeCh)
+        }
         if curNav == 0 { rebuild_content() }
-        threads.start(workers.sections, kws[recBatch], "新歌", 24, 9, homeCh)
         SDL3.markFrameRedraw()
     }
 
@@ -1807,12 +1895,23 @@ export struct Player {
         //   h 74→80、间距 10→6：右侧三颗按钮放大到 28px 后要塞得下（用户反馈"图标太小看不清"）
         HBox row = SDL3.createHBox({x: 0, y: 0, w: _float(cw), h: 80, pad_x: 8, pad_y: 8,
                                     spacing: 6, bg_color: C_CARD, bg_radius: 14, clip: true})
+        // 叠加钮：**24px 固定**（48 源图的一半，整数倍不糊）；
+        //   正在播这首时显示 pause.png，点它 = 暂停/继续（用户要求 ✓）
+        bool isCur = is_now_playing(sg)
         ImageView iv = SDL3.createImageView({w: 58, h: 58, radius: 10,
                                              image_path: coverPath(sg.cover),
-                                             overlay_path: ico("play.png"),
-                                             overlay_scale: 0.46,
-                                             tip: "播放"})
-        iv.on_click(func() { play_song(sg) })     // 点封面即播（按钮已叠在封面上 ✓）
+                                             overlay_path: ico(if isCur then "pause.png" else "play.png"),
+                                             overlay_size: 24.0,
+                                             tip: if isCur then "暂停" else "播放"})
+        iv.on_click(func() {
+            if is_now_playing(sg) {
+                toggle_play()
+                rebuild_content()      // 图标跟着换成 play/pause ✓
+            } else {
+                play_song(sg)
+                rebuild_content()
+            }
+        })
         row.add(iv, {grow: 0, shrink: 0, basis: 58, align: 1})
 
         // ★ 2026-10-26：文字必须**限宽截断**，否则长歌名会冲出卡片、盖到隔壁卡上 ✗
@@ -1895,26 +1994,36 @@ export struct Player {
         coverView = SDL3.createImageView({w: 46, h: 46, radius: 8, bg_color: #F3E4EBFF})
         left.add(coverView, {grow: 0, shrink: 0, basis: 46, align: 1})
 
-        VBox info = SDL3.createVBox({x: 0, y: 0, w: 250, h: 50, pad_x: 0, pad_y: 2, spacing: 1})
-        HBox trow = SDL3.createHBox({x: 0, y: 0, w: 250, h: 24, pad_x: 0, pad_y: 0, spacing: 2})
-        nowTitle = lbl("未在播放", 13.5, C_TXT, true)
-        trow.add(nowTitle, {grow: 0, shrink: 1, align: 1})
-        // ♥ 用 ☆/★（本界面字体没有 U+2665，会渲染成豆腐块 ✓）
-        // 用卡片同款心形图标（sc.png 未喜欢 / sc1.png 已喜欢），比字符 ☆ 更贴参考图 ✓
+        // ★ 2026-10-26（用户截图：长歌名顶到 ☰ 上）：
+        //   ① 歌名/歌手**显式限宽 + 省略号**（原来没 truncate，只靠 shrink 会画到按钮上 ✗）
+        //   ② ♥ / ≡ 从"文字行里"挪到**整行右端** —— 标题区只放文字，按钮永远贴右侧，
+        //      两者之间天然有空隙，不会再挤在一起 ✓
+        //   文字区宽 = 330 − 封面 46 − 间距 12×3 − 按钮 24×2 = 200（**必须算准**，
+        //   算大了整个 left 会溢出、封面和标题被挤出可视区 ✗）
+        VBox info = SDL3.createVBox({x: 0, y: 0, w: 200, h: 50, pad_x: 0, pad_y: 2, spacing: 1})
+        // 超出就**跑马灯**（truncate: 2 = TRUNCATE_SCROLL；scroll_always 不等悬停 ✓）
+        nowTitle = SDL3.createLabel({text: "未在播放", font_size: 13.5, text_color: C_TXT,
+                                     max_w: 200.0, truncate: 2, scroll_always: true})
+        nowTitle.set_font_style(SDL3.STYLE_BOLD)
+        info.add(nowTitle, {grow: 0, shrink: 0, basis: 28, align: 3})
+        // 歌手名同理：长名字省略，别冲出去
+        nowArtist = SDL3.createLabel({text: "搜一首歌开始听", font_size: 10.5,
+                                      text_color: C_TXT_DIM, max_w: 200.0, truncate: 2,
+                                      scroll_always: true})
+        info.add(nowArtist, {grow: 0, shrink: 0, basis: 18, align: 3})
+        left.add(info, {grow: 1, shrink: 1, align: 1})
+
+        // ♥ 用卡片同款心形图标（sc.png 未喜欢 / sc1.png 已喜欢）
         likeBtn = img_btn("sc.png", "我喜欢", 24, 15.0)   // 初值随后由 sync_play_ui → sync_like_icon 校正 ✓
         likeBtn.on_click(func() { toggle_like() })
-        trow.add(likeBtn, {grow: 0, shrink: 0, basis: 24, align: 1})
+        left.add(likeBtn, {grow: 0, shrink: 0, basis: 24, align: 1})
         // ☰ = 打开当前这首歌的页面（歌词/相关歌曲都在那儿 ✓ 不说话的空按钮不要）
         Button lyBtn = txt_btn("≡", "歌曲页（歌词 / 相关）", 24, C_TXT_MID)
         lyBtn.on_click(func() {
             if nowSid != "" { open_song(find_song(nowSid)) }
             else { nowArtist.set_text("还没有在播的歌"); SDL3.markFrameRedraw() }
         })
-        trow.add(lyBtn, {grow: 0, shrink: 0, basis: 24, align: 1})
-        info.add(trow, {grow: 0, shrink: 0, basis: 28, align: 3})
-        nowArtist = lbl("搜一首歌开始听", 10.5, C_TXT_DIM, false)
-        info.add(nowArtist, {grow: 0, shrink: 0, basis: 18, align: 3})
-        left.add(info, {grow: 1, shrink: 1, align: 1})
+        left.add(lyBtn, {grow: 0, shrink: 0, basis: 24, align: 1})
         bar.add(left, {grow: 0, shrink: 0, basis: 330, align: 1})
 
         // ---- 中：只有三个按钮（上一首 / 播放暂停 / 下一首）----
@@ -1996,6 +2105,12 @@ export struct Player {
         playing = not playing
         playBtn.set_image(if playing then ico("pause.png") else ico("play.png"))
         SDL3.markFrameRedraw()
+    }
+
+    // 这首是不是"当前正在播放"的（卡片上的 play/pause 叠加钮要靠它判断 ✓）
+    pri func is_now_playing(Song sg): bool {
+        if sg.sid == "" or nowSid == "" { return false }
+        return sg.sid == nowSid and playing
     }
 
     // 底栏 ♥ 的图标 = **当前在播那首歌**的收藏状态（不是独立开关 ✓）
@@ -2327,6 +2442,31 @@ export struct Player {
                     SDL3.markFrameRedraw()
                 }
                 pm = dlCh.try_receive()
+            }
+        }
+        // ①d2 播放前的音源回信（取直链/下载试听都在工作线程，回来才开声 ✓）
+        if playCh != null {
+            var pmsg = playCh.try_receive()
+            while pmsg != null {
+                var pa = pmsg as Array[string]
+                if pa != null and pa.len() >= 2 {
+                    // 第 3 项是音源 id ⇒ 丢弃过期回信（连点两首时不会把 A 的路径贴给 B ✓）
+                    string rid = if pa.len() >= 3 then pa[2] else ""
+                    bool fresh = rid == "" or rid == pendingSong.sid
+                    if pa[0] == "OK" {
+                        if playPending and fresh {
+                            playPending = false
+                            play_ready(pendingSong, pa[1])      // 同一拍里开声（几个毫秒 ✓）
+                        }
+                    } else {
+                        playPending = false
+                        nowArtist.set_text(pa[1])
+                        playing = false
+                        playBtn.set_image(ico("play.png"))
+                    }
+                    SDL3.markFrameRedraw()
+                }
+                pmsg = playCh.try_receive()
             }
         }
         // ①e 空闲且队列里有排队的 ⇒ 起一个**下载线程**（分片下载才有进度；主线程不阻塞 ✓）
