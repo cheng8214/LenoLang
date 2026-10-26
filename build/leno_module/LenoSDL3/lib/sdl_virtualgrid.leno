@@ -59,6 +59,8 @@ export struct VirtualGrid impl Widget {
     pri bool _loaded = false
     pri bool draggingSb = false
     pri float dragOff = 0.0
+    // 渲染时把自己裁到矩形内（滚出视口的项不许画出来 ✓）
+    pri core.SDL_Rect? _clipR = null
 
     // ==================== 初始化 ====================
     func set(Dict opts) {
@@ -273,10 +275,12 @@ export struct VirtualGrid impl Widget {
     func render(Renderer r) {
         if not _loaded or not visible { return }
         sync_cells()
-        if cells.len() == 0 {
-            draw_scrollbar(r)
-            return
-        }
+        // ★ 必须裁剪到自己这块矩形：滚出视口的项会被画到外面
+        //   （不裁的话卡片会盖住上面的标题、下面的播放条 —— 用户实测"滚动后穿模"✗）
+        if _clipR == null { _clipR = core.SDL_Rect.malloc() }
+        _clipR.x = _int(x); _clipR.y = _int(y)
+        _clipR.w = _int(w) + 1; _clipR.h = _int(h) + 1
+        r.pushClipRect(_clipR.to_ptr())
         for cellItem.len() to k {
             int it = cellItem[k]
             if it < 0 { continue }
@@ -288,6 +292,7 @@ export struct VirtualGrid impl Widget {
                 ww.render(r)
             }
         }
+        r.popClipRect()
         draw_scrollbar(r)
     }
 
