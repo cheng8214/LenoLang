@@ -158,14 +158,13 @@ func appTheme(): Theme {
 
 // （2026-10-26：皮肤选择已去掉 —— 外观只留「背景图 + 蒙版不透明度」，见 settings.leno ✓）
 
-// 缓存目录（照 LenoMusic 的规矩：按用途分**中文子目录**，用户能在文件管理器里单独清理）
-//   LenoMusic：`<输出目录>/试听缓存/`（dl_flow.leno:105-109、dl_engine.leno:920-922）
-//   这里没有"输出目录"这个概念（是播放器不是下载器）⇒ 根放 %TEMP%\AlkaidMusic，
-//   音频进 `试听缓存\`，封面按同一口径进 `封面缓存\` ✓
-// 缓存根：**应用目录下的 `缓存\`**（能在资源管理器里直接看到/清理）
-//   LenoMusic 也是写到用户可见的输出目录（`<outdir>/试听缓存/`），而不是藏进 %TEMP% ✓
+// 缓存目录（★ 2026-10-26：子目录名**一律英文**，避免中文路径在各种工具/命令行里出问题）
+//   <应用目录>/cache/           根
+//   <应用目录>/cache/preview/   试听音频
+//   <应用目录>/cache/covers/    封面缓存
+//   <应用目录>/cache/downloads/ 下载（见 downloads.leno 的 dir_of ✓）
 //   打包成单文件时 script_dir 可能是只读的/临时解包目录 ⇒ 那时退回 %TEMP%\AlkaidMusic
-// 设置里的缓存目录（空 = 跟随应用目录下的 `缓存`）—— run() 读配置后填这里
+// 设置里的缓存目录（空 = 跟随应用目录下的 `cache`）—— run() 读配置后填这里
 var g_cacheOverride = ""
 // 下载优先格式 / 并行线程数（同上，来自 settings.json）
 var g_preferFmt = "lossless"
@@ -179,7 +178,7 @@ func cacheRoot(): string {
     var s = dirs.script_dir()
     if s != null and s != "" {
         try {
-            var d = dirs.join(s, "缓存")
+            var d = dirs.join(s, "cache")
             dirs.mkdir_p(d)
             return d
         } catch e {
@@ -188,8 +187,8 @@ func cacheRoot(): string {
     }
     return dirs.join(_tmpdir(), "AlkaidMusic")
 }
-func audioCacheDir(): string { return dirs.join(cacheRoot(), "试听缓存") }
-func coverCacheDir(): string { return dirs.join(cacheRoot(), "封面缓存") }
+func audioCacheDir(): string { return dirs.join(cacheRoot(), "preview") }
+func coverCacheDir(): string { return dirs.join(cacheRoot(), "covers") }
 
 // 封面逻辑在 lib/kuwo_cover.leno（单独模块，别塞进界面文件 ✓）
 
@@ -233,6 +232,22 @@ export struct Player {
     Button dlBtn
     Array[Array[string]] dlJobs = []      // 行：[id, 歌名, 歌手, 状态, 说明]
     bool dlBusy = false                   // 是否正在下载（一次只下一个 ✓）
+    // 本地音乐列表**建表时**的扫描结果 —— 点击/右击都按它取行，
+    // 避免"再扫一次顺序变了、点 A 放 B"（2026-10-26 实测踩到 ✗）
+    Array[Song] localCache = []
+
+    // ----- 前进 / 后退（★ 2026-10-26：卡片文字点进详情页后就有历史了）-----
+    //   只记录"用户点进去的页面"（首页 / 歌手页 / 歌曲页）；侧栏导航不记录 ⇒ 后退栈干净 ✓
+    Button backBtn
+    Button fwdBtn
+    Array[int] histNav = []               // 页面类型：0 首页 / -3 歌手页 / -4 歌曲页
+    Array[string] histArg = []            // 歌手名 / 歌曲 sid
+    int histPos = -1
+    string artistArg = ""                 // 当前歌手页的歌手名
+    string songArg = ""                   // 当前歌曲页的 sid
+    // ★ 2026-10-26：歌曲页为了补"相关歌曲"会后台搜一次同歌手 ——
+    //   那次回信**不能**把页面切到结果表（否则点歌名进去又被弹回搜索页 ✗）
+    bool relatedSearch = false
     // 下载工作线程回传（["P",已下,总] / ["D",字节,总] / ["E",原因,""]）；分片下载才能有进度 ✓
     Channel dlCh
     int dlCur = -1                        // 正在下载的队列行号（-1 = 空闲）
@@ -257,6 +272,7 @@ export struct Player {
     bool homeAsked = false
     bool homeLoaded = false
     bool homeLoading = false       // 首页推荐正在拉（内容区显示"正在加载"✓）
+    int recBatch = 0               // 「换一批」轮换到第几组关键词
     bool coverDirty = false        // 有卡片封面到了（攒到下一拍再重建，避免每张都重建 ✓）
     // ----- 真播放（miniaudio）-----
     Sound snd
@@ -276,6 +292,9 @@ export struct Player {
     Label curTime
     Label totTime
     Slider vol
+    Button volBtn                 // 音量图标（yl.png 开 / yl1.png 静音）
+    bool muted = false
+    float lastVol = 68.0          // 静音前的音量，取消静音时恢复
     bool playing = false
     bool loopOne = false       // 循环模式：false = 列表循环 / true = 单曲循环
     // ★ 2026-10-25：起步必须是 **0**（原来写死 4.0 ⇒ 一打开就显示 00:04、
@@ -331,6 +350,10 @@ export struct Player {
         build_side()
         build_main()
         build_bar()
+
+        // 历史栈的起点 = 首页（之后点歌名/歌手才有"后退"可回 ✓）
+        nav_push(0, "")
+        nav_update_btns()
 
         start_timer()
         self_test()
@@ -438,13 +461,8 @@ export struct Player {
         var pls = data.navPlaylists()
         for 0 : pls.len() - 1 to i { new_pl(pls[i], i + navBtns.len()) }
 
-        // ---- 底部：弹性空隙 + 「更多」----
+        // ---- 底部：弹性空隙（「更多」按钮已去掉，没接任何功能 ✓ 2026-10-26）----
         side.add(SDL3.createLabel({text: ""}), {grow: 1, shrink: 1, align: 3})
-        Button more = SDL3.createButton({text: "更多", font_size: 12.5,
-                                         align: "left", padding: 12.0, radius: 9,
-                                         h: 32, bg_color: C_TRANS, hover_color: #FFFFFFC8,
-                                         text_color: C_TXT_MID, border: false, shadow: false})
-        side.add(more, {grow: 0, shrink: 0, basis: 32, align: 3})
     }
 
     // 建一个主导航项（idx 传进来 ⇒ 闭包按值记住它 ✓）
@@ -593,16 +611,18 @@ export struct Player {
         topBar = SDL3.createHBox({x: 0, y: 0, w: 900, h: TOP_H, pad_x: PAD, pad_y: 0, spacing: 10})
         mainCol.add(topBar, {grow: 0, shrink: 0, basis: TOP_H, align: 3})
 
-        Button back = SDL3.createButton({text: "‹", font_size: 15.0, w: 30, h: 30, radius: 15,
-                                         bg_color: #FFFFFFAA, hover_color: #FFFFFFFF,
-                                         text_color: C_TXT_MID, padding: 0.0,
-                                         border: false, shadow: false, tip: "后退"})
-        topBar.add(back, {grow: 0, shrink: 0, basis: 30, align: 1})
-        Button fwd = SDL3.createButton({text: "›", font_size: 15.0, w: 30, h: 30, radius: 15,
-                                        bg_color: #FFFFFFAA, hover_color: #FFFFFFFF,
-                                        text_color: C_TXT_MID, padding: 0.0,
-                                        border: false, shadow: false, tip: "前进"})
-        topBar.add(fwd, {grow: 0, shrink: 0, basis: 30, align: 1})
+        backBtn = SDL3.createButton({text: "‹", font_size: 15.0, w: 30, h: 30, radius: 15,
+                                     bg_color: #FFFFFFAA, hover_color: #FFFFFFFF,
+                                     text_color: C_TXT_MID, padding: 0.0,
+                                     border: false, shadow: false, tip: "后退"})
+        backBtn.on_click(func() { nav_back() })
+        topBar.add(backBtn, {grow: 0, shrink: 0, basis: 30, align: 1})
+        fwdBtn = SDL3.createButton({text: "›", font_size: 15.0, w: 30, h: 30, radius: 15,
+                                    bg_color: #FFFFFFAA, hover_color: #FFFFFFFF,
+                                    text_color: C_TXT_MID, padding: 0.0,
+                                    border: false, shadow: false, tip: "前进"})
+        fwdBtn.on_click(func() { nav_fwd() })
+        topBar.add(fwdBtn, {grow: 0, shrink: 0, basis: 30, align: 1})
         topBar.add(SDL3.createLabel({text: ""}), {grow: 1, shrink: 1, align: 1})
 
         search = SDL3.createEdit({w: 300, h: 36, font_size: 13, radius: 18,
@@ -678,14 +698,20 @@ export struct Player {
             sub = if recentSongs.len() > 0 then "最近播放 · " + _str(recentSongs.len()) + " 首" else "还没有播放记录"
         } else if curNav == 3 {
             int dn = dl.scan(cacheRoot()).len()
-            sub = if dn > 0 then "已下载 · " + _str(dn) + " 首（缓存\\下载）" else "还没有下载 · 搜索后右击歌曲「下载」"
+            sub = if dn > 0 then "已下载 · " + _str(dn) + " 首（cache\\downloads）" else "还没有下载 · 搜索后右击歌曲「下载」"
+        } else if curNav == -3 {
+            sub = "歌手：" + artistArg
+        } else if curNav == -4 {
+            Song one = find_song(songArg)
+            sub = if one.artist != "" then one.artist else "歌曲详情"
         } else if curNav > 3 {
             sub = "歌单还是空的"
         } else {
             sub = "还没有喜欢的歌"
         }
         if query != "" { sub = "搜索「" + query + "」" }
-        if netMsg != "" { sub = netMsg }
+        // 歌曲页的副标题固定是歌手名，别被"酷我「周杰伦」· 12 首"顶掉 ✓
+        if netMsg != "" and curNav != -4 { sub = netMsg }
         content.add(lbl(sub, 11, C_TXT_DIM, false), {grow: 0, shrink: 0, basis: 18, align: 3})
         content.add(SDL3.createLabel({text: ""}), {grow: 0, shrink: 0, basis: 8, align: 3})
 
@@ -699,7 +725,10 @@ export struct Player {
         // 有酷我搜索结果 ⇒ **表格**列出（2026-10-25 按用户要求：搜索不加载封面）
         //   为什么不铺卡片：搜索要的是信息密度（歌名/歌手/时长/音质），封面要额外
         //   每首一次详情页 + 一次图片下载 ⇒ 一次搜索多花十秒，得不偿失 ✗
-        if netSongs.len() > 0 {
+        //   ⚠ 但**歌曲页 / 下载页**不能用这张表：它们自己的分支在后面，
+        //     而这里只看 `netSongs.len()` —— 歌曲页为了补"相关歌曲"会把 netSongs 填满，
+        //     于是先命中这张表、把歌曲页顶掉（用户实测：点歌名后跳到"搜索结果"✗）
+        if netSongs.len() > 0 and curNav != -4 and curNav != -2 {
             int rowH = 30
             // 列与 LenoMusic 的搜索页同一套口径（歌名/歌手/专辑/时长/格式/大小/来源），
             //   列宽合计 826 ≤ 内容宽 840 ⇒ 最右列不会被裁掉 ✓（LenoMusic 记过这个账）
@@ -711,8 +740,9 @@ export struct Player {
             tbSearch = SDL3.createTable({x: 0, y: 0, w: tw2, h: 420.0,   // 高度由布局撑满 ✓
                                          item_h: rowH, header_h: 32, font_size: 13,
                                          headers: ["歌名", "歌手", "专辑", "时长", "格式", "大小", "来源"],
+                                         // 合计 0.99（浮点累加略超会触发横向滚动条，底边多一条白线 ✗）
                                          col_widths: [tw2 * 0.33, tw2 * 0.16, tw2 * 0.16,
-                                                      tw2 * 0.09, tw2 * 0.07, tw2 * 0.12, tw2 * 0.07],
+                                                      tw2 * 0.09, tw2 * 0.07, tw2 * 0.12, tw2 * 0.06],
                                          aligns: [0, 0, 0, 1, 1, 2, 1],
                                          // ★ 2026-10-26（用户要求）：**表头文字居中**（表体仍按列语义对齐 ✓）
                                          // ★ 2026-10-26（用户要求）：表头与数据列**同对齐** ——
@@ -725,7 +755,7 @@ export struct Player {
                                          // 配色：透明底 + 关斑马纹 ⇒ 让窗口粉渐变透上来（不再是一块白板 ✓）
                                          //   其余（正文/悬停/滚动条）走 appTheme() 的粉主题 ✓
                                          sortable: true, zebra: false, resizable: false,
-                                         bg_color: C_TRANS, header_color: #FFFFFFB8,
+                                         bg_color: C_TRANS, header_color: C_TRANS,   // 表头不铺底色（半透明背景上那块浅灰太突兀 ✓）
                                          sel_color: C_ACC_SOFT, sep_color: C_TRANS, border: false,   // 去外框/分隔线 ✓
                                          empty_text: "没有结果"})
                                          tbSearch.set_rows(netRows)
@@ -750,6 +780,100 @@ export struct Player {
             return
         }
 
+        // ==================== 歌曲页（curNav = -4，点卡片歌名进来）====================
+        if curNav == -4 {
+            Song sg = find_song(songArg)
+            if sg.title == "" {
+                content.add(lbl("这首歌找不到了（换个页面再试）", 11.5, C_TXT_DIM, false),
+                            {grow: 0, shrink: 0, basis: 30, align: 3})
+                return
+            }
+            HBox head = SDL3.createHBox({x: 0, y: 0, w: _float(content_w()), h: 200,
+                                         pad_x: 0, pad_y: 0, spacing: 20})
+            ImageView big = SDL3.createImageView({w: 180, h: 180, radius: 16,
+                                                  image_path: coverPath(sg.cover),
+                                                  overlay_path: ico("play.png"),
+                                                  overlay_scale: 0.32, tip: "播放"})
+            big.on_click(func() { play_song(sg) })
+            head.add(big, {grow: 0, shrink: 0, basis: 180, align: 1})
+
+            VBox info = SDL3.createVBox({x: 0, y: 0, w: 400, h: 180, pad_x: 0, pad_y: 6, spacing: 6})
+            Label st = SDL3.createLabel({text: sg.title, font_size: 22, text_color: C_TXT})
+            st.set_font_style(SDL3.STYLE_BOLD)
+            info.add(st, {grow: 0, shrink: 0, basis: 34, align: 3})
+            // 歌手：点它 = 搜这个歌手（表格在下面出结果，等于"更多该歌手的歌"✓）
+            Label sa = SDL3.createLabel({text: sg.artist, font_size: 13, text_color: C_TXT_MID,
+                                         hover_color: C_ACCENT, cursor: SDL3.SystemCursor.POINTER,
+                                         tip: "查看这个歌手的更多歌"})
+            sa.on_click(func() { open_artist(sg.artist) })
+            info.add(sa, {grow: 0, shrink: 0, basis: 24, align: 0})
+            info.add(lbl("时长 " + sg.dur, 11.5, C_TXT_DIM, false), {grow: 0, shrink: 0, basis: 20, align: 0})
+
+            // 相关歌曲要**先算出来**：下面「下载全部」的回调要用它（闭包按引用捕获数组 ✓）
+            var rel = related_songs(sg)
+
+            // ⚠ align 必须是 0/1（左/中），写 3 会被 VBox **横向拉满** ⇒ 截图中那条整行的蓝条 ✗
+            HBox btnRow = SDL3.createHBox({x: 0, y: 0, w: 300, h: 36, pad_x: 0, pad_y: 0, spacing: 10})
+            Button pb = SDL3.createButton({text: "播放", w: 104, h: 34, radius: 17,
+                                           type: "primary", font_size: 13})
+            pb.on_click(func() { play_song(sg) })
+            btnRow.add(pb, {grow: 0, shrink: 0, basis: 104, align: 1})
+            // ★ 2026-10-26（用户要求）：播放旁边加「下载全部」——当前这首 + 相关歌曲整批入队
+            Button dall = SDL3.createButton({text: "下载全部", w: 112, h: 34, radius: 17,
+                                             type: "dark", font_size: 13})
+            dall.set_tip("把当前这首和相关歌曲全部加入下载队列")
+            dall.on_click(func() {
+                int n = 0
+                string qfmt = if g_preferFmt == "lossless" then "FLAC" else "MP3"
+                if sg.sid != "" { n = n + dl.enqueue(dlJobs, sg.sid, sg.title, sg.artist, qfmt) }
+                for rel to s {
+                    if s.sid != "" { n = n + dl.enqueue(dlJobs, s.sid, s.title, s.artist, qfmt) }
+                }
+                refresh_dl_btn()
+                nowArtist.set_text(if n > 0 then "已加入下载队列 " + _str(n) + " 首" else "这些歌都已经在下载列表里了")
+                SDL3.markFrameRedraw()
+            })
+            btnRow.add(dall, {grow: 0, shrink: 0, basis: 112, align: 1})
+            btnRow.add(SDL3.createLabel({text: ""}), {grow: 1, shrink: 1, align: 1})
+            info.add(btnRow, {grow: 0, shrink: 0, basis: 42, align: 0})
+            head.add(info, {grow: 1, shrink: 1, align: 1})
+            content.add(head, {grow: 0, shrink: 0, basis: 200, align: 3})
+
+            // ---- 相关歌曲（按歌名搜到的结果；搜索在 nav_apply 里发起 ✓）----
+            content.add(lbl("相关歌曲", 13.5, C_TXT, true), {grow: 0, shrink: 0, basis: 26, align: 3})
+            if rel.len() == 0 {
+                content.add(lbl("列表里还没有同歌手的其它歌 —— 用上面的搜索框搜「" + sg.artist + "」", 11, C_TXT_DIM, false),
+                            {grow: 0, shrink: 0, basis: 30, align: 3})
+                return
+            }
+            // ⚠ 歌曲页在 ScrollView 里 ⇒ 宽度要减掉竖滚动条，否则比视口宽 12px，
+            //   会触发**横向滚动条**（截图里表格底部那条粗白线 ✗）
+            float rw = _float(content_w() - 12)
+            Array[Array[string]] rrows = []
+            for rel to s { rrows.add([s.title, s.artist, s.dur, if s.sid != "" then "在线" else "本地"]) }
+            // 高度留 8px 余量：正好卡满时 Table 会判定"需要竖向滚动条"，
+            //   竖条一占位又会连锁触发横向滚动条（截图里周围那圈白线 ✗）
+            float rh = _float(32 + rel.len() * 30 + 8)
+            Table rt = SDL3.createTable({x: 0, y: 0, w: rw, h: rh,
+                                         item_h: 30, header_h: 32, font_size: 12.5,
+                                         headers: ["歌名", "歌手", "时长", "来源"],
+                                         col_widths: [rw * 0.45, rw * 0.24, rw * 0.14, rw * 0.16],   // 合计 0.99
+                                         aligns: [0, 0, 1, 1], header_aligns: [0, 0, 1, 1],   // 表头跟数据列同对齐 ✓
+                                         sortable: false, zebra: false, resizable: false,
+                                         bg_color: C_TRANS, header_color: C_TRANS,   // 表头不铺底色（半透明背景上那块浅灰太突兀 ✓）
+                                         // 选中 / 悬停都**半透明**：压在背景插画上淡淡的才不刺眼
+                                         //   （白色那行是 hover，不是选中 ⇒ hover_color 一起给 ✓）
+                                         sel_color: #FADBE64D, hover_color: #FADBE633, solid_sel: false,
+                                         sep_color: C_TRANS, border: false,
+                                         empty_text: "暂无相关歌曲"})
+            rt.set_rows(rrows)
+            rt.on_dbl_click(func(int row, int col) {
+                if row >= 0 and row < rel.len() { play_song(rel[row]) }
+            })
+            content.add(rt, {grow: 0, shrink: 0, basis: rh, align: 3})
+            return
+        }
+
         // ==================== 下载列表（curNav = -2）====================
         if curNav == -2 {
             if dlJobs.len() == 0 {
@@ -766,14 +890,15 @@ export struct Player {
             Table t = SDL3.createTable({x: 0, y: 0, w: dw, h: 420.0,   // 高度由布局撑满 ✓
                                         item_h: 30, header_h: 32, font_size: 13,
                                         headers: ["歌名", "歌手", "格式", "大小", "进度", "状态"],
-                                        col_widths: [dw * 0.36, dw * 0.18, dw * 0.10,
+                                        // 合计 0.99（避免浮点累加超宽 ⇒ 横向滚动条 + 底部白线 ✗）
+                                        col_widths: [dw * 0.35, dw * 0.18, dw * 0.10,
                                                      dw * 0.12, dw * 0.12, dw * 0.12],
                                         aligns: [0, 0, 1, 2, 1, 1],
                                         header_aligns: [0, 0, 1, 2, 1, 1],   // 与数据列同对齐 ✓
                                         // 第 5 列（下标 4）= 进度条单元格：值写 "0"~"100" ✓
                                         cell_types: ["", "", "", "", "progress", ""],
                                         sortable: false, zebra: false, resizable: false,
-                                        bg_color: C_TRANS, header_color: #FFFFFFB8,
+                                        bg_color: C_TRANS, header_color: C_TRANS,   // 表头不铺底色（半透明背景上那块浅灰太突兀 ✓）
                                         sel_color: C_ACC_SOFT, sep_color: C_TRANS, border: false,   // 去外框/分隔线 ✓
                                         empty_text: "还没有下载任务"})
             t.set_rows(rows)
@@ -791,6 +916,7 @@ export struct Player {
         //   卡片一屏只放得下几首；列表 + 每行封面缩略图更合适 ✓
         if curNav == 3 {
             var lsongs = dl.scan(cacheRoot())
+            localCache = lsongs          // ★ 记住这次顺序：点击/右击都按它取行 ✓
             if lsongs.len() == 0 {
                 content.add(lbl("还没有下载 · 搜索结果里右击「下载」", 11.5, C_TXT_DIM, false),
                             {grow: 0, shrink: 0, basis: 30, align: 3})
@@ -807,18 +933,63 @@ export struct Player {
             Table lt = SDL3.createTable({x: 0, y: 0, w: lw, h: 420.0,   // 高度由布局撑满 ✓
                                          item_h: lh, header_h: 32, font_size: 13,
                                          headers: ["歌名", "歌手", "来源"],
-                                         col_widths: [lw * 0.58, lw * 0.28, lw * 0.14],
+                                         // 合计 0.99（不是 1.0）：浮点累加会略超宽度 ⇒ Table 冒出横向滚动条，底边一条白线 ✗
+                                         col_widths: [lw * 0.57, lw * 0.28, lw * 0.14],
                                          aligns: [0, 0, 1], header_aligns: [0, 0, 1],   // 与数据列同对齐 ✓
                                          image_col: 0, image_size: 30, image_gap: 10,
                                          row_images: larts,
                                          image_path: ico("music.png"),   // 没有同名封面的行用默认图标 ✓
                                          sortable: false, zebra: false, resizable: false,
-                                         bg_color: C_TRANS, header_color: #FFFFFFB8,
+                                         bg_color: C_TRANS, header_color: C_TRANS,   // 表头不铺底色（半透明背景上那块浅灰太突兀 ✓）
                                          sel_color: C_ACC_SOFT, sep_color: C_TRANS, border: false,   // 去外框/分隔线 ✓
                                          empty_text: "还没有下载"})
             lt.set_rows(lrows)
             lt.on_dbl_click(func(int row, int col) { play_local_row(row) })
-            show_table_page("本地音乐", "已下载 · " + _str(lsongs.len()) + " 首（缓存\\下载）", lt)
+            // ---- 右击菜单（★ 2026-10-26 用户要求：播放 / 打开目录 / 选中 / 删除 / 全部删除）----
+            lt.on_context_will_open(func(int row) {
+                lt.clearContextItems()
+                lt.addContextItem({label: "播放", id: "play"})
+                lt.addContextItem({label: "打开所在目录", id: "dir"})
+                lt.addContextItem({label: "在资源管理器中选中", id: "reveal"})
+                lt.addContextItem({label: "删除本地文件", id: "del"})
+                lt.addContextItem({label: "全部删除…", id: "delall"})
+            })
+            lt.on_context_select(func(int row, string id) {
+                string dirNow = dl.dir_of(cacheRoot())
+                if id == "dir" {
+                    if not dl.open_dir(dirNow) { nowArtist.set_text("打开目录失败：" + dirNow); SDL3.markFrameRedraw() }
+                    return
+                }
+                if id == "delall" {
+                    SDL3.msgBox("全部删除",
+                        ["会删掉「cache\\downloads」里的音频与封面（当前 " + _str(localCache.len()) + " 首）",
+                         "文件会进回收站，可以从那里恢复。"],
+                        "全部删除", "取消", true, func() {
+                            int n = dl.delete_all(cacheRoot())
+                            nowArtist.set_text("已删除 " + _str(n) + " 个文件")
+                            rebuild_content()
+                        })
+                    return
+                }
+                // ⚠ 用本地缓存（与表格同一份顺序），不要重新 scan ✓
+                if row < 0 or row >= localCache.len() { return }
+                Song one = localCache[row]
+                if id == "play" {
+                    play_song(one)
+                } else if id == "reveal" {
+                    if not dl.reveal(one.path) { nowArtist.set_text("定位失败：" + one.path); SDL3.markFrameRedraw() }
+                } else if id == "del" {
+                    string nm = one.title
+                    if dl.delete_one(one) {
+                        nowArtist.set_text("已删除：" + nm)
+                        rebuild_content()
+                    } else {
+                        nowArtist.set_text("删除失败（文件可能已被占用）：" + nm)
+                        SDL3.markFrameRedraw()
+                    }
+                }
+            })
+            show_table_page("本地音乐", "已下载 · " + _str(lsongs.len()) + " 首（cache\\downloads）", lt)
             return
         }
 
@@ -873,6 +1044,8 @@ export struct Player {
     pri func page_name(int idx): string {
         if idx == -1 { return "搜索结果" }
         if idx == -2 { return "下载列表" }      // 见 open_downloads ✓
+        if idx == -3 { return "歌手" }          // 点卡片上的歌手名进来（见 open_artist ✓）
+        if idx == -4 { return "歌曲" }          // 点卡片上的歌名进来（见 open_song ✓）
         var m = data.navMain()
         if idx >= 0 and idx < m.len() { return m[idx].name }
         var p = data.navPlaylists()
@@ -909,6 +1082,9 @@ export struct Player {
     // 收工作线程的结果（tick 里调；非阻塞 ✓）
     pri func apply_search_result(Array[Array[string]] msg) {
         searching = false
+        // 这次回信是不是"歌曲页补相关歌曲"发起的（先在开头取走并复位，任何分支都不会残留 ✓）
+        bool wasRelated = relatedSearch
+        relatedSearch = false
         if msg.len() == 0 { netMsg = "搜索失败（工作线程没有回信）"; SDL3.markFrameRedraw(); return }
         string kind = if msg[0].len() > 0 then msg[0][0] else "ERR"
         string err = if msg[0].len() > 1 then msg[0][1] else ""
@@ -921,10 +1097,18 @@ export struct Player {
             Song sg = new Song()
             sg.title = r[0]
             sg.artist = r[1]
+            // ★ 2026-10-26 修：`sg.sid` 原来**没赋值**（只进了 netIds 数组）⇒ 搜索结果里的歌
+            //   sid 全是 ""，相关歌曲按 sid 去重时会当成同一首、只剩 1 条（看着像"只有 14 首"✗）
+            sg.sid = r[6]
             sg.dur = kuwo.formatduration(_int(r[3]))
             // 内置封面（酷我搜索不带图）—— ⚠ 必须带 .png，`img()` 只拼目录不补扩展名 ✗
             int n = 1 + (got.len() % 16)
             if n < 10 { sg.cover = "cover0" + _str(n) + ".png" } else { sg.cover = "cover" + _str(n) + ".png" }
+            // 封面缓存里已经有这张 ⇒ 直接挂真图（搜索页/歌曲页都不必再等线程 ✓）
+            if r[6] != "" {
+                string cf = dirs.join(coverCacheDir(), r[6] + ".jpg")
+                if files.exists(cf) { sg.cover = cf }
+            }
             sg.tag = if r[4].to_lower() == "flac" then "无损" else ""
             got.add(sg)
             ids.add(r[6])
@@ -936,6 +1120,12 @@ export struct Player {
             netSongs = got
             netRows = trows
             netIds = ids
+            // ★ 歌曲页的"补相关歌曲"搜索：只更新数据，**保持当前页**（不改标题/不高亮搜索入口）
+            if wasRelated {
+                rebuild_content()
+                SDL3.markFrameRedraw()
+                return
+            }
             netMsg = "酷我「" + lastKw + "」· " + _str(got.len()) + " 首（双击行播放）"
             // 留快照：切页后点左侧「搜索结果」能回到这张表 ✓
             lastSongs = got
@@ -990,10 +1180,21 @@ export struct Player {
     }
 
     // 本地音乐列表里双击一行 ⇒ 播那个文件（顺序与 dl.scan 一致 ✓）
+    // 本地音乐列表里双击一行 ⇒ 播那个文件
+    //   ⚠ 必须用**建表时那次**的扫描结果（`localCache`），不能重新 `dl.scan`：
+    //     `dirs.listdir` 的顺序不保证稳定，第二次扫出来顺序一变，
+    //     行号就指到别的歌上（用户实测：点「夜曲」放出来是「后来」✗）
     pri func play_local_row(int row) {
-        var lsongs = dl.scan(cacheRoot())
-        if row < 0 or row >= lsongs.len() { return }
-        play_song(lsongs[row])
+        if row < 0 or row >= localCache.len() { return }
+        if _env("ALKAID_DBG") != null {
+            int k = 0
+            for localCache to s {
+                print("[dbg] cache[" + _str(k) + "] " + s.title + " | " + s.path)
+                k = k + 1
+            }
+            print("[dbg] 点中 row=" + _str(row) + " ⇒ " + localCache[row].title + " | " + localCache[row].path)
+        }
+        play_song(localCache[row])
     }
 
     // 加入下载队列（右击菜单「下载」）
@@ -1005,7 +1206,8 @@ export struct Player {
             SDL3.markFrameRedraw()
             return
         }
-        int n = dl.enqueue(dlJobs, netIds[i], sg.title, sg.artist)
+        int n = dl.enqueue(dlJobs, netIds[i], sg.title, sg.artist,
+                           if g_preferFmt == "lossless" then "FLAC" else "MP3")
         if n > 0 {
             nowArtist.set_text("已加入下载队列：" + sg.title)
         } else {
@@ -1211,17 +1413,16 @@ export struct Player {
         head.add(lbl(s.sub, 10.5, C_TXT_DIM, false), {grow: 0, shrink: 0, align: 1})
         head.add(SDL3.createLabel({text: ""}), {grow: 1, shrink: 1, align: 1})
         if not compact {
-            // 参考图右上那两颗胶囊：「换一批」「查看全部」✓
+            // 「换一批」：真刷新一次推荐（换关键词）✓
             Button swap = SDL3.createButton({text: "换一批", font_size: 11,
                                              w: 82, h: 26, radius: 13, padding: 9.0,
                                              bg_color: #FFFFFFB0, hover_color: #FFFFFFFF,
-                                             text_color: C_TXT_MID, border: false, shadow: false})
+                                             text_color: C_TXT_MID, border: false, shadow: false,
+                                             tip: "换一组推荐"})
+            swap.on_click(func() { refresh_recommend() })
             head.add(swap, {grow: 0, shrink: 0, basis: 82, align: 1})
-            Button all = SDL3.createButton({text: "查看全部 ›", font_size: 11,
-                                            w: 92, h: 26, radius: 13, padding: 9.0,
-                                            bg_color: #FFFFFFB0, hover_color: #FFFFFFFF,
-                                            text_color: C_TXT_MID, border: false, shadow: false})
-            head.add(all, {grow: 0, shrink: 0, basis: 92, align: 1})
+            // ★ 2026-10-26：「查看全部」删掉了 —— 为你推荐只有 24 首，卡片一屏就能翻完，
+            //   点进去看同一批歌是假动作（等以后有分页/更多内容再加 ✓）
         }
         content.add(head, {grow: 0, shrink: 0, basis: 36, align: 3})
 
@@ -1313,9 +1514,6 @@ export struct Player {
         return c
     }
 
-    // 横卡：圆角浅底 + 封面（**悬停时封面上浮出播放钮**）+ 歌名/歌手
-    //   ★ 2026-10-26（按用户建议）：播放钮不再单独占一列 —— 悬停才出现在封面中央，
-    //     文字区因此变宽、卡片可以更窄 ⇒ 一屏能多放几首 ✓
     // ==================== 设置（线程数 / 缓存目录 / 优先格式）====================
     //   数据在 lib/settings.leno（%APPDATA%\AlkaidMusic\settings.json），
     //   界面在 lib/settings_win.leno（独立对话框窗口），这里只做"落到全局 + 重扫"✓
@@ -1334,8 +1532,147 @@ export struct Player {
         }
     }
 
+    // ==================== 导航历史（前进 / 后退）====================
+    //   只记"点进去的页面"：0 首页 / -3 歌手页 / -4 歌曲页；侧栏导航不记 ⇒ 栈干净 ✓
+    pri func nav_push(int nav, string arg) {
+        Array[int] nv = []
+        Array[string] ag = []
+        for 0 : histPos to i {
+            nv.add(histNav[i])
+            ag.add(histArg[i])
+        }
+        nv.add(nav)
+        ag.add(arg)
+        histNav = nv
+        histArg = ag
+        histPos = nv.len() - 1
+    }
+
+    pri func nav_update_btns() {
+        backBtn.set_enabled(histPos > 0)
+        fwdBtn.set_enabled(histPos >= 0 and histPos < histNav.len() - 1)
+        SDL3.markFrameRedraw()
+    }
+
+    pri func nav_back() {
+        if histPos <= 0 { return }
+        histPos = histPos - 1
+        nav_apply(histNav[histPos], histArg[histPos])
+    }
+
+    pri func nav_fwd() {
+        if histPos < 0 or histPos >= histNav.len() - 1 { return }
+        histPos = histPos + 1
+        nav_apply(histNav[histPos], histArg[histPos])
+    }
+
+    pri func nav_apply(int nav, string arg) {
+        if nav == -3 {
+            artistArg = arg
+            curNav = -3
+            netMsg = "歌手：" + arg + " · 正在搜索…"
+            searching = true
+            rebuild_content()
+            sv.set_scroll(0.0, 0.0)
+            threads.start(workers.search, arg, 30, searchCh)
+        } else if nav == -4 {
+            songArg = arg
+            curNav = -4
+            rebuild_content()
+            sv.set_scroll(0.0, 0.0)
+            // 相关歌曲：**按歌名搜**（同曲的其他版本/翻唱/同专辑），不是按歌手 ✗
+            //   ★ 2026-10-26（用户指正）：之前传的是 `one.artist` ⇒ 搜出来全是同一歌手的歌，
+            //     看着像"点歌曲却进了歌手搜索"；改成歌名 + 30 条 ✓
+            Song one = find_song(arg)
+            string kwRel = one.title
+            if kwRel != "" {
+                relatedSearch = true          // 回信后只刷相关歌曲表，**不切页** ✓
+                threads.start(workers.search, kwRel, 30, searchCh)
+            }
+        } else {
+            songArg = ""
+            set_nav(if nav < 0 then 0 else nav)
+        }
+        nav_update_btns()
+    }
+
+    // 点卡片上的**歌名** ⇒ 歌曲页；点**歌手** ⇒ 歌手页（两者都进历史 ✓）
+    pri func open_song(Song sg) {
+        if sg.sid == "" and sg.path == "" { return }
+        nav_push(-4, if sg.sid != "" then sg.sid else sg.path)
+        nav_apply(-4, if sg.sid != "" then sg.sid else sg.path)
+    }
+
+    pri func open_artist(string name) {
+        if name == "" { return }
+        nav_push(-3, name)
+        nav_apply(-3, name)
+    }
+
+    // 是不是同一个歌手：相等或**包含**（合唱写法「A/B」「A、B」都算 ✓）
+    pri func same_artist(Song s, string name): bool {
+        if name == "" or s.artist == "" { return false }
+        if s.artist == name { return true }
+        // `strings` 没有 contains ⇒ 用 split 切一下，切出 2 段以上就是包含 ✓
+        var parts = strings.split(s.artist, name)
+        return parts.len() > 1
+    }
+
+    // 按 sid / 本地路径找回 Song（歌曲页要用）
+    //   ⚠ 查找顺序很重要：**先找"带真封面"的那几个列表**（最近播放 / 推荐 / 新歌），
+    //     最后才查 netSongs —— 搜索结果是占位封面，先命中它就会把真封面覆盖成紫色占位图 ✗
+    pri func find_song(string key): Song {
+        for recentSongs to s { if s.sid == key or s.path == key { return s } }
+        for recSongs to s { if s.sid == key or s.path == key { return s } }
+        for newSongs to s { if s.sid == key or s.path == key { return s } }
+        for netSongs to s { if s.sid == key or s.path == key { return s } }
+        Song empty = new Song()
+        return empty
+    }
+
+    // 相关歌曲（歌曲页底部表格）
+    //   ★ 2026-10-26（用户指正）：应以**这首歌的搜索结果**为主（同曲其他版本/翻唱/同专辑），
+    //     不再只挑"同歌手"——否则看起来就像点歌曲却只看到歌手列表 ✗
+    //   · 优先：netSongs（歌曲页那次按**歌名**搜到的 30 条），排除自己
+    //   · 兜底：还没搜回来时，用本地已有的同歌手歌凑数（避免空白）
+    pri func related_songs(Song cur): Array[Song] {
+        Array[Song] out = []
+        for netSongs to s {
+            if s.sid != cur.sid and not has_sid(out, s.sid) { out.add(s) }
+        }
+        if out.len() == 0 {
+            for recSongs to s {
+                if same_artist(s, cur.artist) and s.sid != cur.sid and not has_sid(out, s.sid) { out.add(s) }
+            }
+            for newSongs to s {
+                if same_artist(s, cur.artist) and s.sid != cur.sid and not has_sid(out, s.sid) { out.add(s) }
+            }
+            for recentSongs to s {
+                if same_artist(s, cur.artist) and s.sid != cur.sid and not has_sid(out, s.sid) { out.add(s) }
+            }
+        }
+        // 上限 30 首（用户要求"点进去显示 30 首"）：歌曲页表格内部会滚动 ✓
+        if out.len() > 30 {
+            Array[Song] top = []
+            for 0 : 29 to i { top.add(out[i]) }
+            return top
+        }
+        return out
+    }
+
+    // 「换一批」：换一组关键词重拉推荐（4 组轮换，避免每次都是同一批 ✓）
+    pri func refresh_recommend() {
+        Array[string] kws = ["热歌", "新歌榜", "流行", "经典"]
+        recBatch = (recBatch + 1) % kws.len()
+        homeLoading = true
+        homeLoaded = false
+        if curNav == 0 { rebuild_content() }
+        threads.start(workers.sections, kws[recBatch], "新歌", 24, 9, homeCh)
+        SDL3.markFrameRedraw()
+    }
+
     pri func open_settings() {
-        string def = dirs.join(dirs.script_dir(), "缓存")
+        string def = dirs.join(dirs.script_dir(), "cache")
         // 页签图标：常规=齿轮、下载=download、外观=pifu（皮肤 ✓ 48×48 源图按 1/3 显示为 16）
         Array[string] icons = [ico("setting.png"), ico("download.png"), ico("pifu.png")]
         cfgwin.show(def, icons, func(cfgset.Settings s) {
@@ -1438,7 +1775,8 @@ export struct Player {
     // 点 +：加进下载队列（目前没有歌单系统，先落到"下载"，等于收藏到本地 ✓）
     pri func queue_song(Song sg) {
         if sg.sid == "" { return }
-        int n = dl.enqueue(dlJobs, sg.sid, sg.title, sg.artist)
+        int n = dl.enqueue(dlJobs, sg.sid, sg.title, sg.artist,
+                           if g_preferFmt == "lossless" then "FLAC" else "MP3")
         nowArtist.set_text(if n > 0 then "已加入下载队列：" + sg.title else "已在下载列表里：" + sg.title)
         refresh_dl_btn()
         SDL3.markFrameRedraw()
@@ -1467,13 +1805,19 @@ export struct Player {
         //   只依赖"盒宽自动裁剪"不够稳：Label 的 `_w` 在布局前是自然宽（180），
         //   渲染那一拍若还没被 set_size，就会按 180 算上限 ⇒ 照样溢出 ✗
         //   ⇒ 直接把 `max_w` 传成算好的文字区宽度（truncLimit 取 min(max_w, 盒宽) ✓）
+        // ★ 2026-10-26（用户要求）：歌名/歌手**像链接**——悬停手型 + 变色，点击进详情页
+        //   （进了详情页才有历史 → 顶栏的前进/后退才真正可用 ✓）
         Label tl = SDL3.createLabel({text: sg.title, font_size: 12.5, text_color: C_TXT,
-                                     max_w: _float(tw), truncate: 1, tip: sg.title})
+                                     max_w: _float(tw), truncate: 1, tip: sg.title,
+                                     hover_color: C_ACCENT, cursor: SDL3.SystemCursor.POINTER})
         tl.set_font_style(SDL3.STYLE_BOLD)
+        tl.on_click(func() { open_song(sg) })
         tv.add(tl, {grow: 0, shrink: 0, basis: 22, align: 3})
-        tv.add(SDL3.createLabel({text: sg.artist, font_size: 10.5, text_color: C_TXT_DIM,
-                                 max_w: _float(tw), truncate: 1, tip: sg.artist}),
-               {grow: 0, shrink: 0, basis: 18, align: 3})
+        Label al = SDL3.createLabel({text: sg.artist, font_size: 10.5, text_color: C_TXT_DIM,
+                                     max_w: _float(tw), truncate: 1, tip: "查看歌手：" + sg.artist,
+                                     hover_color: C_ACCENT, cursor: SDL3.SystemCursor.POINTER})
+        al.on_click(func() { open_song(sg) })      // 歌手名也进歌曲页（用户要求 ✓）
+        tv.add(al, {grow: 0, shrink: 0, basis: 18, align: 3})
         row.add(tv, {grow: 1, shrink: 1, align: 1})
 
         // ---- 右侧三颗（图标都在 images/icons）：♥ 喜欢 / ＋ 添加 / ⬇ 下载 ----
@@ -1586,7 +1930,11 @@ export struct Player {
         //   宽度与左侧一样给 300 ⇒ 中间那块正好落在窗口正中（参考图的播放键是居中的 ✓）
         HBox right = SDL3.createHBox({x: 0, y: 0, w: 300, h: 30, pad_x: 0, pad_y: 0, spacing: 6})
         right.add(SDL3.createLabel({text: ""}), {grow: 1, shrink: 1, align: 1})   // 内容靠右 ✓
-        right.add(txt_btn("音", "音量", 26, C_TXT_MID), {grow: 0, shrink: 0, basis: 26, align: 1})
+        // 音量图标（用户提供的 yl.png 开 / yl1.png 关）—— 点一下切静音，图标跟着换 ✓
+        volBtn = img_btn(if muted then "yl1.png" else "yl.png",
+                         if muted then "取消静音" else "静音", 26, 16.0)
+        volBtn.on_click(func() { toggle_mute() })
+        right.add(volBtn, {grow: 0, shrink: 0, basis: 26, align: 1})
         vol = SDL3.createSlider({w: 84, h: 18, value: 68.0, min: 0.0, max: 100.0,
                                  fill_color: C_ACCENT, track_color: #EFD8E1FF,
                                  thumb_color: C_ACCENT, show_value: false})
@@ -1756,8 +2104,35 @@ export struct Player {
         SDL3.markFrameRedraw()
     }
 
+    // 音量图标跟着状态走（yl.png = 有声 / yl1.png = 静音）
+    pri func sync_vol_icon() {
+        // Button 是值类型（不能和 null 比）⇒ 用宽度判断"建过没"（没建时 w=0 ✓）
+        if volBtn.get_w() <= 0.0 { return }
+        volBtn.set_image(ico(if muted then "yl1.png" else "yl.png"))
+    }
+
+    // 点图标切换静音（记住静音前的音量 ✓）
+    pri func toggle_mute() {
+        muted = not muted
+        if muted {
+            lastVol = vol.get_value()
+            if lastVol <= 1.0 { lastVol = 68.0 }
+            vol.set_value(0.0)
+            if sndOk { snd.setVolume(0.0) }
+        } else {
+            vol.set_value(lastVol)
+            if sndOk { snd.setVolume(lastVol / 100.0) }
+        }
+        sync_vol_icon()
+        SDL3.markFrameRedraw()
+    }
+
     pri func on_volume(float v) {
         if sndOk { snd.setVolume(v / 100.0) }
+        // 拖到 0 视为静音；拖回来就恢复图标（不用再点按钮 ✓）
+        muted = v <= 1.0
+        if not muted { lastVol = v }
+        sync_vol_icon()
         SDL3.markFrameRedraw()
     }
 
@@ -1780,6 +2155,12 @@ export struct Player {
         content.dispose()
         content.clear()
         build_content()
+        // ★ 2026-10-26：**内容区高度要按实际内容撑开** —— 原来固定 900，
+        //   歌曲页 30 行表格（≈940）超出部分直接被裁，滚轮也滚不下去（看着像"只有 14 首"✗）
+        //   `fit_w` 只管宽，高必须自己给；ScrollView 按 content 高度算滚动范围 ✓
+        float ch = content.measure_h()
+        if ch < 200.0 { ch = 200.0 }
+        content.set_size(_float(content_w() + PAD * 2), ch)
         SDL3.markFrameRedraw()
     }
 
@@ -1897,7 +2278,9 @@ export struct Player {
                         j[3] = "1"
                         j[4] = ""
                         j[6] = pa[1]
-                        if pa.len() >= 3 and _int(pa[2]) > 0 { j[7] = pa[2] }
+                        j[7] = pa[1]      // 完成 = 100%（服务端 Content-Range 总长会有偏差，别用它算 ✓）
+                        // 第 4 项是**实际落盘的格式**（flac 取不到会退 mp3）⇒ 覆盖入队时的预判 ✓
+                        if pa.len() >= 4 and pa[3] != "" { j[5] = pa[3].to_upper() }
                         dlJobs[dlCur] = j
                         dlBusy = false
                         dlCur = -1
@@ -2004,6 +2387,11 @@ export struct Player {
         // 启动就切到某个导航页（下标：0 首页 / 1 我喜欢 / 2 最近播放 / 3 本地音乐 / 4+ 歌单）
         var nv = _env("ALKAID_NAV")
         if nv != null { set_nav(_int(_str(nv))) }
+        if _env("ALKAID_DBG") != null {
+            set_nav(3)
+            print("[dbg] 本地曲库 " + _str(localCache.len()) + " 首")
+            play_local_row(0)
+        }
         // 启动就搜一次酷我（联网自检：ALKAID_SEARCH=周杰伦）
         var kwEnv = _env("ALKAID_SEARCH")
         if kwEnv != null {

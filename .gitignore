@@ -53,4 +53,4 @@ build/_*
 tmp_syntax_probe/  
 
 # 应用运行期缓存（试听音频 / 封面，用户能直接在资源管理器里看到并清理）
-leno_gui/*/*/缓存/
+leno_gui/*/*/cache

@@ -14,10 +14,65 @@ import "../music_data.leno" as data
 import dirs
 import files
 import strings
+import jsons
+import "Sys" as Sys        // ★ 2026-10-26：打开目录 / 选中文件 / 删到回收站 —— 模块里本来就有，
+                           //   不要再自己拼 `cmd /c start` 那套（跨平台分支白写一遍 ✗）
 use data.Song
 
-// 下载目录：<缓存根>\下载
-export func dir_of(string root): string { return dirs.join(root, "下载") }
+// ==================== 文件管理器相关（全部走 LenoSys，跨平台由它处理 ✓）====================
+// 打开目录：Sys.openWith 在 Windows 上是 ShellExecute ⇒ 目录会用资源管理器打开 ✓
+export func open_dir(string d): bool {
+    if d == "" { return false }
+    bool ok = true
+    try { ok = Sys.openWith(d) } catch e { ok = false }
+    return ok
+}
+
+// 在资源管理器里**选中**这个文件（Windows 走 explorer /select ✓）
+export func reveal(string path): bool {
+    if path == "" or not files.exists(path) { return false }
+    bool ok = true
+    try { ok = Sys.revealInFolder(path) } catch e { ok = false }
+    return ok
+}
+
+// 删掉一首本地歌（音频 + 同名封面）—— **进回收站**，误删还能捞回来 ✓
+//   返回删成功的个数
+export func delete_one(Song sg): bool {
+    if sg.path == "" or not files.exists(sg.path) { return false }
+    Array[string] targets = [sg.path]
+    // 同名 .jpg 一起删（没有就算了 ✓）
+    var dot = strings.split(sg.path, ".")
+    if dot.len() >= 2 {
+        string art = dot[0]
+        for 1 : dot.len() - 2 to k { art = art + "." + dot[k] }
+        art = art + ".jpg"
+        if files.exists(art) { targets.add(art) }
+    }
+    var r = Sys.deleteToTrash(targets)
+    return jsons.get_int(r, "moved", 0) > 0
+}
+
+// 清空下载目录里的音频/封面（子目录不动）；返回提交删除的个数
+export func delete_all(string root): int {
+    string d = dir_of(root)
+    if not dirs.exists(d) { return 0 }
+    Array[string] targets = []
+    var names = dirs.listdir(d)
+    for names to nm {
+        string p = dirs.join(d, _str(nm))
+        if dirs.is_dir(p) { continue }
+        string ext = dirs.extname(p).to_lower()
+        if ext != ".mp3" and ext != ".flac" and ext != ".wav" and ext != ".ogg" and ext != ".jpg" { continue }
+        targets.add(p)
+    }
+    if targets.len() == 0 { return 0 }
+    var r = Sys.deleteToTrash(targets)
+    return jsons.get_int(r, "moved", 0)
+}
+
+// 下载目录：<缓存根>\downloads（★ 2026-10-26：目录名统一英文 ✓）
+export func dir_of(string root): string { return dirs.join(root, "downloads") }
 
 // 文件名里不能出现的字符一律换下划线（Windows：/ \ : * ? " < > | 及换行）
 export func safe_name(string s): string {
@@ -96,29 +151,52 @@ export func save_shard(string id, string title, string artist, string root, stri
     }
     string d = dir_of(root)
     dirs.mkdir_p(d)
-    // 格式看设置：无损优先 ⇒ 落 .flac；否则 .mp3（两条都保留兜底，只是顺序不同 ✓）
-    bool losslessFirst = prefer == "lossless"
-    string ext = if losslessFirst then ".flac" else ".mp3"
-    string f = dirs.join(d, safe_name(artist + " - " + title) + ext)
+    // ★ 2026-10-26：扩展名必须按**实际取到的直链格式**定，不能按"偏好"写死 ✗
+    //   之前 prefer=lossless 就固定写 .flac，即使 flac 取不到、退到 mp3 也照样叫 .flac
+    //   ⇒ 列表显示 MP3、磁盘上是 flac（或反过来）的错乱（用户实测 ✓）
+    string base = dirs.join(d, safe_name(artist + " - " + title))
     string art = art_of(root, title, artist)
     if not files.exists(art) { cover.cover_to(id, art) }     // 封面失败不影响下载 ✓
-    if files.exists(f) {                                     // 已有 ⇒ 直接完成
-        ch.send(["D", _str(fsize(f)), "0"])
+    // 已有（两种扩展名都认）⇒ 直接完成，并把**实际格式**告诉界面 ✓
+    if files.exists(base + ".flac") {
+        int n = fsize(base + ".flac")
+        ch.send(["D", _str(n), _str(n), "flac"])
         return true
     }
+    if files.exists(base + ".mp3") {
+        int n = fsize(base + ".mp3")
+        ch.send(["D", _str(n), _str(n), "mp3"])
+        return true
+    }
+    bool losslessFirst = prefer == "lossless"
     string u = ""
+    string gotFmt = ""                                       // 实际拿到的格式
     try {
         var c0 = net.createClient()
         // 优先格式按设置走，另一条兜底（无损体积大，播放端 miniaudio 两种都支持 ✓）
         if losslessFirst {
             u = kuwo.officialurl(id, "flac")
-            if u == "" { u = kuwo.officialurl(id, "mp3") }
+            if u != "" { gotFmt = "flac" }
+            else {
+                u = kuwo.officialurl(id, "mp3")
+                if u != "" { gotFmt = "mp3" }
+            }
         } else {
             u = kuwo.officialurl(id, "mp3")
-            if u == "" { u = kuwo.officialurl(id, "flac") }
+            if u != "" { gotFmt = "mp3" }
+            else {
+                u = kuwo.officialurl(id, "flac")
+                if u != "" { gotFmt = "flac" }
+            }
         }
-        if u == "" { u = kuwo.officialurl(id, "mp3128") }
-        if u == "" { u = kuwo.getdirecturl(c0, id) }
+        if u == "" {
+            u = kuwo.officialurl(id, "mp3128")
+            if u != "" { gotFmt = "mp3" }
+        }
+        if u == "" {
+            u = kuwo.getdirecturl(c0, id)
+            if u != "" { gotFmt = "mp3" }
+        }
         c0.close()
     } catch e {
         ch.send(["E", "取直链失败：" + _str(e), ""])
@@ -128,6 +206,8 @@ export func save_shard(string id, string title, string artist, string root, stri
         ch.send(["E", "取不到直链", ""])
         return false
     }
+    if gotFmt == "" { gotFmt = if losslessFirst then "flac" else "mp3" }
+    string f = base + "." + gotFmt
     string acc = ""
     int off = 0
     int total = 0
@@ -169,7 +249,9 @@ export func save_shard(string id, string title, string artist, string root, stri
         ch.send(["E", "写盘失败：" + _str(e), ""])
         return false
     }
-    ch.send(["D", _str(off), _str(total)])
+    // D 消息带**实际格式**，且"总字节 = 已下字节" —— 服务端 Content-Range 的总长偶尔偏大，
+    //   按它算进度会停在 76% 之类的数字上（用户实测 ✗）；已完成就该是 100% ✓
+    ch.send(["D", _str(off), _str(off), gotFmt])
     return true
 }
 
@@ -185,16 +267,19 @@ export func fmt_size(int b): string {
 //   一行 = [id, 歌名, 歌手, 状态, 说明, 格式, 已下字节, 总字节]
 //   状态： "0" 排队 / "1" 完成 / "2" 失败
 //   为什么用行而不是 struct 数组：字段要**原地更新**（状态 0→1、进度 0→N），字符串行最好改 ✓
-export func job_new(string id, string title, string artist): Array[string] {
-    return [id, title, artist, "0", "", "MP3", "0", "0"]
+// fmt = 入队时的**优先格式**（"FLAC" / "MP3"）—— 列表先按它显示，
+//   下载完成后由 D 消息回传**实际格式**覆盖（flac 取不到会退 mp3 ✓）
+export func job_new(string id, string title, string artist, string fmt): Array[string] {
+    return [id, title, artist, "0", "", fmt, "0", "0"]
 }
 
 // 进度百分比文本（给 Table 的 progress 单元格：写 "37" 或 "100" ✓）
 export func percent_of(Array[string] j): string {
     if j.len() < 8 { return "0" }
+    if j[3] == "1" { return "100" }          // 已完成一律 100%（不受服务端总长误差影响 ✓）
     int got = _int(j[6])
     int tot = _int(j[7])
-    if tot <= 0 { return if j[3] == "1" then "100" else "0" }
+    if tot <= 0 { return "0" }
     int p = got * 100 / tot
     if p > 100 { p = 100 }
     return _str(p)
@@ -207,12 +292,12 @@ export func size_of(Array[string] j): string {
 }
 
 // 加入队列（同 id 且在排队/已完成 ⇒ 不重复加）；返回加了几个
-export func enqueue(Array[Array[string]] q, string id, string title, string artist): int {
+export func enqueue(Array[Array[string]] q, string id, string title, string artist, string fmt): int {
     if id == "" { return 0 }
     for q to j {
         if j.len() >= 2 and j[0] == id { return 0 }
     }
-    q.add(job_new(id, title, artist))
+    q.add(job_new(id, title, artist, fmt))
     return 1
 }
 
