@@ -215,7 +215,10 @@ export struct Player {
     // ----- 下载列表（侧栏第二个入口；队列数据在 lib/downloads.leno 的协议里）-----
     Button dlBtn
     Array[Array[string]] dlJobs = []      // 行：[id, 歌名, 歌手, 状态, 说明]
-    bool dlBusy = false                   // 本拍是否正在下载（一次只下一个 ✓）
+    bool dlBusy = false                   // 是否正在下载（一次只下一个 ✓）
+    // 下载工作线程回传（["P",已下,总] / ["D",字节,总] / ["E",原因,""]）；分片下载才能有进度 ✓
+    Channel dlCh
+    int dlCur = -1                        // 正在下载的队列行号（-1 = 空闲）
     bool hasLastSearch = false
     Array[Song] lastSongs = []
     Array[Array[string]] lastRows = []
@@ -280,6 +283,7 @@ export struct Player {
         SDL3.ttfInit()
         searchCh = threads.channel(4)         // 搜索回信通道（一次一条 ✓）
         coverCh = threads.channel(8)          // 封面回信通道
+        dlCh = threads.channel(64)            // 下载进度回传（分片下载每 1MB 一条 ✓）
         homeCh = threads.channel(4)           // 首页分区（为你推荐/最近添加）回信通道
         SDL3.setTheme(appTheme())             // 粉主题：Table / Edit / 滚动条都跟着变粉 ✓
 
@@ -596,8 +600,35 @@ export struct Player {
         build_content()
     }
 
+    // ==================== 内容区两种形态 ====================
+    //   · 卡片页：顶栏 + ScrollView（内容自己往下排）
+    //   · 表格页：顶栏 + Table **直接占满剩余高度**（grow:1，表格内部滚动）
+    //   ★ 2026-10-26：表格以前塞在 ScrollView 的 content 里、高度按行数写死
+    //     ⇒ 只有 2 行时就是一条小横条（用户反馈"table 为啥这么小"✗）
+    pri func show_scroll() {
+        mainCol.clear()
+        mainCol.add(topBar, {grow: 0, shrink: 0, basis: TOP_H, align: 3})
+        mainCol.add(sv, {grow: 1, shrink: 1, align: 3})
+    }
+
+    // 表格页：顶栏 + 「标题/副标题」+ 表格（表格吃满剩余高度，内部自己滚 ✓）
+    //   ⚠ 不能只放表格：那样页面标题会被顶掉（截图里表头直接贴着顶栏 ✗）
+    pri func show_table_page(string title, string sub, Table t) {
+        mainCol.clear()
+        mainCol.add(topBar, {grow: 0, shrink: 0, basis: TOP_H, align: 3})
+        VBox page = SDL3.createVBox({x: 0, y: 0, w: 900, h: 500,
+                                     pad_x: PAD, pad_y: 6, spacing: 8})
+        page.add(lbl(title, 25, C_TXT, true), {grow: 0, shrink: 0, basis: 36, align: 3})
+        page.add(lbl(sub, 11, C_TXT_DIM, false), {grow: 0, shrink: 0, basis: 18, align: 3})
+        page.add(t, {grow: 1, shrink: 1, align: 3})
+        mainCol.add(page, {grow: 1, shrink: 1, align: 3})
+        SDL3.markFrameRedraw()
+    }
+
     // 内容区：页面标题 + 三个分区（搜索时按关键词过滤 ✓）
     pri func build_content() {
+        // 默认回到"卡片页"形态（顶栏 + ScrollView）；表格分支稍后会换成 show_table ✓
+        show_scroll()
         // ★ 2026-10-25：标题跟着**当前导航**走（原来写死"首页" ⇒ 点左侧「我喜欢」等
         //   只有高亮在动、页面内容一动不动，看起来就是"点了没切换" ✗）
         content.add(lbl(page_name(curNav), 25, C_TXT, true), {grow: 0, shrink: 0, basis: 36, align: 3})
@@ -635,7 +666,6 @@ export struct Player {
         //   每首一次详情页 + 一次图片下载 ⇒ 一次搜索多花十秒，得不偿失 ✗
         if netSongs.len() > 0 {
             int rowH = 30
-            int tbH = 32 + netSongs.len() * rowH
             // 列与 LenoMusic 的搜索页同一套口径（歌名/歌手/专辑/时长/格式/大小/来源），
             //   列宽合计 826 ≤ 内容宽 840 ⇒ 最右列不会被裁掉 ✓（LenoMusic 记过这个账）
             hasTable = true
@@ -643,23 +673,25 @@ export struct Player {
             //   不再写死 826 —— 写死的话窗口一宽，右侧就多出一条空列，整张表看着偏左 ✗
             //   比例：歌名 33% / 歌手 16% / 专辑 16% / 时长 9% / 格式 7% / 大小 12% / 来源 7%
             float tw2 = _float(content_w())
-            tbSearch = SDL3.createTable({x: 0, y: 0, w: tw2, h: tbH,
+            tbSearch = SDL3.createTable({x: 0, y: 0, w: tw2, h: 420.0,   // 高度由布局撑满 ✓
                                          item_h: rowH, header_h: 32, font_size: 13,
                                          headers: ["歌名", "歌手", "专辑", "时长", "格式", "大小", "来源"],
                                          col_widths: [tw2 * 0.33, tw2 * 0.16, tw2 * 0.16,
                                                       tw2 * 0.09, tw2 * 0.07, tw2 * 0.12, tw2 * 0.07],
                                          aligns: [0, 0, 0, 1, 1, 2, 1],
                                          // ★ 2026-10-26（用户要求）：**表头文字居中**（表体仍按列语义对齐 ✓）
-                                         header_aligns: [1, 1, 1, 1, 1, 1, 1],
+                                         // ★ 2026-10-26（用户要求）：表头与数据列**同对齐** ——
+                                         //   原来表头一律居中、下面内容左对齐，看着是两套排版 ✗
+                                         header_aligns: [0, 0, 0, 1, 1, 2, 1],
                                          // 行图标：`image_col` 把该列画成 [图标 + 文字]，
                                          //   配 `image_path` 给**默认图标**⇒ 不用逐行 set_row_image ✓
                                          image_col: 0, image_size: 16, image_gap: 6,
                                          image_path: ico("music.png"),
                                          // 配色：透明底 + 关斑马纹 ⇒ 让窗口粉渐变透上来（不再是一块白板 ✓）
                                          //   其余（正文/悬停/滚动条）走 appTheme() 的粉主题 ✓
-                                         sortable: true, zebra: false, resizable: true,
+                                         sortable: true, zebra: false, resizable: false,
                                          bg_color: C_TRANS, header_color: #FFFFFFB8,
-                                         sel_color: C_ACC_SOFT, sep_color: C_LINE,
+                                         sel_color: C_ACC_SOFT, sep_color: C_TRANS, border: false,   // 去外框/分隔线 ✓
                                          empty_text: "没有结果"})
                                          tbSearch.set_rows(netRows)
                                          // ★ 只有**双击**才播放：单击 = 选中、右键 = 菜单（之前挂 on_select 会让右击也开播 ✗）
@@ -678,7 +710,8 @@ export struct Player {
                                          if id == "dl" { enqueue_download(i) }
                                         if id == "copy" { SDL3.setClipboardText(netSongs[i].title + " - " + netSongs[i].artist) }
                                          })
-            content.add(tbSearch, {grow: 0, shrink: 0, basis: _float(tbH), align: 3})
+            // 表格占满剩余高度（内部滚动 ✓），标题用 netMsg 里的搜索状态
+            show_table_page("搜索结果", netMsg, tbSearch)
             return
         }
 
@@ -692,22 +725,65 @@ export struct Player {
             float dw = _float(content_w())
             Array[Array[string]] rows = []
             for dlJobs to j {
-                rows.add([j[1], j[2], dl.state_text(j)])
+                // 列：歌名 / 歌手 / 格式 / 大小 / 进度 / 状态（2026-10-26 按 LenoMusic 口径补齐 ✓）
+                rows.add([j[1], j[2], j[5], dl.size_of(j), dl.percent_of(j), dl.state_text(j)])
             }
-            int dh = 32 + dlJobs.len() * 30
-            Table t = SDL3.createTable({x: 0, y: 0, w: dw, h: dh,
+            Table t = SDL3.createTable({x: 0, y: 0, w: dw, h: 420.0,   // 高度由布局撑满 ✓
                                         item_h: 30, header_h: 32, font_size: 13,
-                                        headers: ["歌名", "歌手", "状态"],
-                                        col_widths: [dw * 0.55, dw * 0.27, dw * 0.18],
-                                        aligns: [0, 0, 1], header_aligns: [1, 1, 1],
-                                        sortable: false, zebra: false, resizable: true,
+                                        headers: ["歌名", "歌手", "格式", "大小", "进度", "状态"],
+                                        col_widths: [dw * 0.36, dw * 0.18, dw * 0.10,
+                                                     dw * 0.12, dw * 0.12, dw * 0.12],
+                                        aligns: [0, 0, 1, 2, 1, 1],
+                                        header_aligns: [0, 0, 1, 2, 1, 1],   // 与数据列同对齐 ✓
+                                        // 第 5 列（下标 4）= 进度条单元格：值写 "0"~"100" ✓
+                                        cell_types: ["", "", "", "", "progress", ""],
+                                        sortable: false, zebra: false, resizable: false,
                                         bg_color: C_TRANS, header_color: #FFFFFFB8,
-                                        sel_color: C_ACC_SOFT, sep_color: C_LINE,
+                                        sel_color: C_ACC_SOFT, sep_color: C_TRANS, border: false,   // 去外框/分隔线 ✓
                                         empty_text: "还没有下载任务"})
             t.set_rows(rows)
             // 已完成的行双击 ⇒ 播本地文件（不联网 ✓）
             t.on_dbl_click(func(int row, int col) { play_dl_row(row) })
-            content.add(t, {grow: 0, shrink: 0, basis: _float(dh), align: 3})
+            show_table_page("下载列表",
+                            (if dl.pending(dlJobs) > 0 then "排队 " + _str(dl.pending(dlJobs)) + " 个 · "
+                             else "") + "共 " + _str(dlJobs.len()) + " 个任务",
+                            t)
+            return
+        }
+
+        // ==================== 本地音乐：**列表**（用户要求 2026-10-26）====================
+        //   为什么不再用卡片：本地曲库是"我的文件"，用户要看名字/歌手/来源，
+        //   卡片一屏只放得下几首；列表 + 每行封面缩略图更合适 ✓
+        if curNav == 3 {
+            var lsongs = dl.scan(cacheRoot())
+            if lsongs.len() == 0 {
+                content.add(lbl("还没有下载 · 搜索结果里右击「下载」", 11.5, C_TXT_DIM, false),
+                            {grow: 0, shrink: 0, basis: 30, align: 3})
+                return
+            }
+            int lh = 40
+            float lw = _float(content_w())
+            Array[Array[string]] lrows = []
+            Array[string] larts = []
+            for lsongs to s {
+                lrows.add([s.title, s.artist, "本地"])
+                larts.add(s.cover)               // 同名 .jpg（下载时落下的）⇒ 行缩略图 ✓
+            }
+            Table lt = SDL3.createTable({x: 0, y: 0, w: lw, h: 420.0,   // 高度由布局撑满 ✓
+                                         item_h: lh, header_h: 32, font_size: 13,
+                                         headers: ["歌名", "歌手", "来源"],
+                                         col_widths: [lw * 0.58, lw * 0.28, lw * 0.14],
+                                         aligns: [0, 0, 1], header_aligns: [0, 0, 1],   // 与数据列同对齐 ✓
+                                         image_col: 0, image_size: 30, image_gap: 10,
+                                         row_images: larts,
+                                         image_path: ico("music.png"),   // 没有同名封面的行用默认图标 ✓
+                                         sortable: false, zebra: false, resizable: false,
+                                         bg_color: C_TRANS, header_color: #FFFFFFB8,
+                                         sel_color: C_ACC_SOFT, sep_color: C_TRANS, border: false,   // 去外框/分隔线 ✓
+                                         empty_text: "还没有下载"})
+            lt.set_rows(lrows)
+            lt.on_dbl_click(func(int row, int col) { play_local_row(row) })
+            show_table_page("本地音乐", "已下载 · " + _str(lsongs.len()) + " 首（缓存\\下载）", lt)
             return
         }
 
@@ -876,6 +952,13 @@ export struct Player {
         sg.artist = j[2]
         sg.path = f
         play_song(sg)
+    }
+
+    // 本地音乐列表里双击一行 ⇒ 播那个文件（顺序与 dl.scan 一致 ✓）
+    pri func play_local_row(int row) {
+        var lsongs = dl.scan(cacheRoot())
+        if row < 0 or row >= lsongs.len() { return }
+        play_song(lsongs[row])
     }
 
     // 加入下载队列（右击菜单「下载」）
@@ -1065,7 +1148,10 @@ export struct Player {
     //     （布局还没跑）⇒ 按它算出来的列宽永远偏小，看起来"改了没变化" ✗
     pri func content_w(): int {
         var ws = win.getSize()
-        int w = ws.w - SIDE_W - PAD * 2 - 12
+        // ★ 2026-10-26：**不再多扣 12**（原来给滚动条预留）——
+        //   表格/列宽本身就是按这个值算的，多扣一次会让右侧白出一条（用户反馈"应该和窗口一样大"✗）
+        //   滚动条由 Table 自己画在右边缘内侧，不需要外面再留
+        int w = ws.w - SIDE_W - PAD * 2
         if w < 320 { w = 320 }
         return w
     }
@@ -1191,8 +1277,9 @@ export struct Player {
     //   ★ 2026-10-26（按用户建议）：播放钮不再单独占一列 —— 悬停才出现在封面中央，
     //     文字区因此变宽、卡片可以更窄 ⇒ 一屏能多放几首 ✓
     pri func wide_card(Song sg, int cw): HBox {
+        // clip: true ⇒ 兜底：万一哪个子控件还是画宽了，也**不会冲出卡片**（被卡片矩形裁掉 ✓）
         HBox row = SDL3.createHBox({x: 0, y: 0, w: _float(cw), h: 74, pad_x: 8, pad_y: 8,
-                                    spacing: 10, bg_color: C_CARD, bg_radius: 14})
+                                    spacing: 10, bg_color: C_CARD, bg_radius: 14, clip: true})
         ImageView iv = SDL3.createImageView({w: 58, h: 58, radius: 10,
                                              image_path: coverPath(sg.cover),
                                              overlay_path: ico("play.png"),
@@ -1206,12 +1293,16 @@ export struct Player {
         int tw = cw - 84
         if tw < 60 { tw = 60 }
         VBox tv = SDL3.createVBox({x: 0, y: 0, w: _float(tw), h: 58, pad_x: 0, pad_y: 2, spacing: 2})
-        // 标题：超长时**悬停自动滚动**（`Label` 的 TRUNCATE_SCROLL；盒子宽已是默认裁剪边界 ✓）
+        // ★ 2026-10-26（用户截图：长歌名冲出卡片）：标题/歌手都**显式限宽 + 省略号**。
+        //   只依赖"盒宽自动裁剪"不够稳：Label 的 `_w` 在布局前是自然宽（180），
+        //   渲染那一拍若还没被 set_size，就会按 180 算上限 ⇒ 照样溢出 ✗
+        //   ⇒ 直接把 `max_w` 传成算好的文字区宽度（truncLimit 取 min(max_w, 盒宽) ✓）
         Label tl = SDL3.createLabel({text: sg.title, font_size: 12.5, text_color: C_TXT,
-                                     truncate: 2, tip: sg.title})
+                                     max_w: _float(tw), truncate: 1, tip: sg.title})
         tl.set_font_style(SDL3.STYLE_BOLD)
         tv.add(tl, {grow: 0, shrink: 0, basis: 22, align: 3})
-        tv.add(SDL3.createLabel({text: sg.artist, font_size: 10.5, text_color: C_TXT_DIM, tip: sg.artist}),
+        tv.add(SDL3.createLabel({text: sg.artist, font_size: 10.5, text_color: C_TXT_DIM,
+                                 max_w: _float(tw), truncate: 1, tip: sg.artist}),
                {grow: 0, shrink: 0, basis: 18, align: 3})
         row.add(tv, {grow: 1, shrink: 1, align: 1})
 
@@ -1426,6 +1517,20 @@ export struct Player {
 
     // 卡片点播放：**有 sid 就走真播放**（推荐 / 最近添加 / 继续收听 里的酷我歌 ✓）
     pri func play_song(Song sg) {
+        // 本地文件（下载列表 / 本地音乐）⇒ 直接播磁盘上的，不走网络 ✓
+        if sg.path != "" {
+            push_recent(sg)
+            nowTitle.set_text(sg.title)
+            nowArtist.set_text(sg.artist)
+            coverView.set_image(coverPath(sg.cover))
+            pos = 0.0
+            durKnown = false
+            shownSec = -1
+            sync_play_ui()
+            nowSid = ""
+            start_play_file(sg, sg.path)
+            return
+        }
         if sg.sid != "" {
             play_sid(sg)
             return
@@ -1576,19 +1681,55 @@ export struct Player {
             rebuild_content()
             coverDirty = false
         }
-        // ①d 下载队列：**一拍只下一个**（下载是同步的，会顿 1–3 秒 ⇒ 不能一次全下）
+        // ①d 排空下载进度（分片下载每 1MB 回一条；非阻塞 ✓）
+        if dlCh != null {
+            var pm = dlCh.try_receive()
+            while pm != null {
+                var pa = pm as Array[string]
+                if pa != null and pa.len() >= 2 and dlCur >= 0 and dlCur < dlJobs.len() {
+                    Array[string] j = dlJobs[dlCur]
+                    string kind = pa[0]
+                    if kind == "P" {
+                        j[6] = pa[1]
+                        if pa.len() >= 3 { j[7] = pa[2] }
+                        dlJobs[dlCur] = j
+                        if curNav == -2 { rebuild_content() }      // 进度条跟着走 ✓
+                    } else if kind == "D" {
+                        j[3] = "1"
+                        j[4] = ""
+                        j[6] = pa[1]
+                        if pa.len() >= 3 and _int(pa[2]) > 0 { j[7] = pa[2] }
+                        dlJobs[dlCur] = j
+                        dlBusy = false
+                        dlCur = -1
+                        refresh_dl_btn()
+                        if curNav == -2 { rebuild_content() }
+                    } else if kind == "E" {
+                        j[3] = "2"
+                        j[4] = pa[1]
+                        dlJobs[dlCur] = j
+                        dlBusy = false
+                        dlCur = -1
+                        refresh_dl_btn()
+                        if curNav == -2 { rebuild_content() }
+                    }
+                    SDL3.markFrameRedraw()
+                }
+                pm = dlCh.try_receive()
+            }
+        }
+        // ①e 空闲且队列里有排队的 ⇒ 起一个**下载线程**（分片下载才有进度；主线程不阻塞 ✓）
         if not dlBusy {
             int di = dl.next_index(dlJobs)
             if di >= 0 {
                 dlBusy = true
+                dlCur = di
                 Array[string] j = dlJobs[di]
-                bool ok = dl.save(j[0], j[1], j[2], cacheRoot())
-                j[3] = if ok then "1" else "2"
-                j[4] = if ok then "" else "取不到音源"
+                j[3] = "5"                                   // 5 = 下载中（不是排队）
+                j[6] = "0"
                 dlJobs[di] = j
-                dlBusy = false
-                refresh_dl_btn()
                 if curNav == -2 { rebuild_content() }
+                threads.start(dl.save_shard, j[0], j[1], j[2], cacheRoot(), dlCh)
                 SDL3.markFrameRedraw()
             }
         }

@@ -76,6 +76,28 @@ export func cover_of(string id, string cacheDir): string {
     return if usable(f) then f else ""
 }
 
+// 取封面并**存到指定位**（给"下载到本地"用：封面要跟着 mp3 一起落到下载目录，
+//   文件名与 mp3 同名 ⇒ 「本地音乐」列表能按文件名找到它 ✓）
+//   已有可用文件直接返回 true（不重复请求）
+export func cover_to(string id, string destFile): bool {
+    if id == "" or destFile == "" { return false }
+    if usable(destFile) { return true }
+    if files.exists(destFile) {
+        try { files.delete(destFile) } catch e { print("[cover] 删坏文件失败：" + _str(e)) }
+    }
+    try {
+        var c = net.createClient()
+        c.addHeaders(["User-Agent: " + UA, "Referer: http://www.kuwo.cn/"])
+        var r = c.get("http://www.kuwo.cn/play_detail/" + id)
+        string u = if r.ok() then pic_url(r.body) else ""
+        if u != "" { net.download(u, destFile) }
+        c.close()
+    } catch e {
+        return false
+    }
+    return usable(destFile)
+}
+
 // 500px 大图（**当前界面没用到**；留给以后的详情页/全屏播放）
 //   缓存名带 _500 ⇒ 与列表页的 120 图互不干扰 ✓
 export func cover_of_big(string id, string cacheDir): string {

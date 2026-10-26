@@ -9,6 +9,7 @@
 //   Array[Song] songs = dl.scan(root)                          // 扫已下载的
 import "web_net" as net
 import "kuwo_core.leno" as kuwo
+import "kuwo_cover.leno" as cover          // 下载时顺带把封面落成同名 .jpg ✓
 import "../music_data.leno" as data
 import dirs
 import files
@@ -26,13 +27,22 @@ export func safe_name(string s): string {
     return out
 }
 
+// 封面文件名：与 mp3 **同名**、只换扩展名 ⇒ 扫目录时按文件名就能配对 ✓
+export func art_of(string dir, string title, string artist): string {
+    string d = dir_of(dir)
+    return dirs.join(d, safe_name(artist + " - " + title) + ".jpg")
+}
+
 // 下载一首：id → `dir/<歌手> - <歌名>.mp3`；已存在直接算成功（不重复下）
+//   ★ 2026-10-26：顺便把封面也落到**同名 .jpg**（本地音乐列表要用它显示缩略图 ✓）
 //   ⚠ 同步、几百 KB/s：一首 4–5 MB 约 1–3 秒，调用方自行决定要不要放线程
 export func save(string id, string title, string artist, string dir): bool {
     if id == "" { return false }
     string d = dir_of(dir)
     dirs.mkdir_p(d)
     string f = dirs.join(d, safe_name(artist + " - " + title) + ".mp3")
+    string art = art_of(dir, title, artist)
+    if not files.exists(art) { cover.cover_to(id, art) }      // 封面失败不影响音频下载 ✓
     if files.exists(f) { return true }
     bool ok = false
     try {
@@ -53,12 +63,137 @@ export func save(string id, string title, string artist, string dir): bool {
     return ok and files.exists(f)
 }
 
+// ==================== 分片下载（带进度，给工作线程用）====================
+//   照 LenoMusic 的做法（dl_engine.leno:595）：web_net 的 downloadResume 内部 NOPROGRESS=1
+//   拿不到任何字节进度 ⇒ 自己发 `Range: bytes=a-b`，每片 1 MB 报一次进度 ✓
+//   回信（Channel，Array[string]）：
+//     ["P", 已下字节, 总字节]   进行中
+//     ["D", 最终字节, 总字节]   完成
+//     ["E", 原因, ""]           失败
+const int SHARD = 1048576
+
+// 从 "bytes 0-1048575/4575235" 里取总字节（没有就 0）
+func total_of(string cr): int {
+    var p = strings.split(cr, "/")
+    if p.len() < 2 { return 0 }
+    return _int(strings.trim(p[1]))
+}
+
+// 文件字节数（打不开 ⇒ 0）
+func fsize(string path): int {
+    if not files.exists(path) { return 0 }
+    try {
+        return files.read(path).byte_len()
+    } catch e {
+        return 0
+    }
+}
+
+export func save_shard(string id, string title, string artist, string root, Channel ch): bool {
+    if id == "" {
+        ch.send(["E", "没有音源 id", ""])
+        return false
+    }
+    string d = dir_of(root)
+    dirs.mkdir_p(d)
+    string f = dirs.join(d, safe_name(artist + " - " + title) + ".mp3")
+    string art = art_of(root, title, artist)
+    if not files.exists(art) { cover.cover_to(id, art) }     // 封面失败不影响下载 ✓
+    if files.exists(f) {                                     // 已有 ⇒ 直接完成
+        ch.send(["D", _str(fsize(f)), "0"])
+        return true
+    }
+    string u = ""
+    try {
+        var c0 = net.createClient()
+        u = kuwo.officialurl(id, "mp3")
+        if u == "" { u = kuwo.officialurl(id, "mp3128") }
+        if u == "" { u = kuwo.getdirecturl(c0, id) }
+        c0.close()
+    } catch e {
+        ch.send(["E", "取直链失败：" + _str(e), ""])
+        return false
+    }
+    if u == "" {
+        ch.send(["E", "取不到直链", ""])
+        return false
+    }
+    string acc = ""
+    int off = 0
+    int total = 0
+    int guard = 0
+    while guard < 64 {
+        guard = guard + 1
+        string chunk = ""
+        int crTotal = 0
+        try {
+            var c = net.createClient()
+            c.addHeaders(["Range: bytes=" + _str(off) + "-" + _str(off + SHARD - 1)])
+            var r = c.get(u)
+            if not r.ok() {
+                c.close()
+                break
+            }
+            crTotal = total_of(r.getHeader("Content-Range"))
+            chunk = r.rawBody()
+            c.close()
+        } catch e {
+            break
+        }
+        int n = chunk.byte_len()
+        if n <= 0 { break }
+        acc = acc + chunk
+        off = off + n
+        if total <= 0 and crTotal > 0 { total = crTotal }
+        ch.send(["P", _str(off), _str(total)])
+        if total > 0 and off >= total { break }
+        if n < SHARD { break }                 // 服务端没按 Range 给 ⇒ 已经拿全了
+    }
+    if off <= 0 {
+        ch.send(["E", "下载失败（0 字节）", ""])
+        return false
+    }
+    try {
+        files.write(f, acc)
+    } catch e {
+        ch.send(["E", "写盘失败：" + _str(e), ""])
+        return false
+    }
+    ch.send(["D", _str(off), _str(total)])
+    return true
+}
+
+// 字节数 → "4.4 MB"（下载列表的"大小"列 ✓）
+export func fmt_size(int b): string {
+    if b <= 0 { return "—" }
+    if b >= 1048576 { return _str(b / 1048576) + "." + _str((b / 104858) % 10) + " MB" }
+    if b >= 1024 { return _str(b / 1024) + " KB" }
+    return _str(b) + " B"
+}
+
 // ==================== 下载队列（纯数据，行协议 Array[string]）====================
-//   一行 = [id, 歌名, 歌手, 状态, 说明]
+//   一行 = [id, 歌名, 歌手, 状态, 说明, 格式, 已下字节, 总字节]
 //   状态： "0" 排队 / "1" 完成 / "2" 失败
-//   为什么用行而不是 struct 数组：字段要**原地更新**（state 从 0→1），字符串行最好改 ✓
+//   为什么用行而不是 struct 数组：字段要**原地更新**（状态 0→1、进度 0→N），字符串行最好改 ✓
 export func job_new(string id, string title, string artist): Array[string] {
-    return [id, title, artist, "0", ""]
+    return [id, title, artist, "0", "", "MP3", "0", "0"]
+}
+
+// 进度百分比文本（给 Table 的 progress 单元格：写 "37" 或 "100" ✓）
+export func percent_of(Array[string] j): string {
+    if j.len() < 8 { return "0" }
+    int got = _int(j[6])
+    int tot = _int(j[7])
+    if tot <= 0 { return if j[3] == "1" then "100" else "0" }
+    int p = got * 100 / tot
+    if p > 100 { p = 100 }
+    return _str(p)
+}
+
+// 大小文本：完成了就显示实际字节，否则 "—"
+export func size_of(Array[string] j): string {
+    if j.len() < 8 { return "—" }
+    return fmt_size(_int(j[6]))
 }
 
 // 加入队列（同 id 且在排队/已完成 ⇒ 不重复加）；返回加了几个
@@ -93,6 +228,7 @@ export func pending(Array[Array[string]] q): int {
 export func state_text(Array[string] j): string {
     if j.len() < 4 { return "" }
     if j[3] == "0" { return "排队中" }
+    if j[3] == "5" { return "下载中" }
     if j[3] == "1" { return "已完成" }
     return if j.len() >= 5 and j[4] != "" then "失败：" + j[4] else "失败"
 }
@@ -129,6 +265,9 @@ export func scan(string root): Array[Song] {
             sg.artist = "本地文件"
         }
         sg.path = dirs.join(d, n)
+        // 同名封面（下载时落下的 `<歌手> - <歌名>.jpg`）⇒ 列表里显示真图 ✓
+        string art = dirs.join(d, t + ".jpg")
+        if files.exists(art) { sg.cover = art }
         out.add(sg)
     }
     return out
