@@ -30,6 +30,7 @@ import "./lib/kuwo_core.leno" as kuwo   // 酷我音乐（搜索/直链；从 D:
 import "./lib/kuwo_cover.leno" as cover // 酷我封面（详情页 pic120 → 500px 大图，单独模块 ✓）
 import "./lib/net_workers.leno" as workers  // 后台线程入口（搜索/首页分区/封面分片）
 import "./lib/downloads.leno" as dl         // 下载 + 本地曲库扫描
+import "./lib/store.leno" as store          // 本地持久化（喜欢 / 最近播放 → 缓存\library.json）
 import strings
 import dirs
 import files
@@ -207,6 +208,8 @@ export struct Player {
     Array[Song] netSongs = []      // 酷我搜索结果（非空就替代演示数据 ✓）
     // 最近播放（"继续收听"按这个顺序显示：最新播的排最前 ✓）
     Array[Song] recentSongs = []
+    // 喜欢的歌（存酷我 id；卡片上的 ♥ 与「我喜欢」页都看它 ✓）
+    Array[string] likedSids = []
     Table tbSearch                     // 搜索结果表（排序后显示行≠数据行 ⇒ 一律过 source_row ✓）
     bool hasTable = false              // 当前是否真的建过结果表（struct 值类型不能拿 null 判断 ✗）
     int curCols = 0                    // 上一次排版用的列数（resize 时比较，变了才重建 ✓）
@@ -307,6 +310,8 @@ export struct Player {
         body = SDL3.createHBox({x: 0, y: 0, w: WIN_W, h: 500, pad_x: 0, pad_y: 0, spacing: 0})
         root.add(body, {grow: 1, shrink: 1, align: 3})
 
+        // 先把喜欢/最近播放读回来（必须在建界面之前，否则首页第一帧是空的 ✓）
+        load_library()
         build_side()
         build_main()
         build_bar()
@@ -1125,9 +1130,10 @@ export struct Player {
 
     // 某个导航页要显示的歌曲 —— **只用真实数据**，没有就返回空（界面显示空状态）✓
     pri func page_songs(int idx): Array[Song] {
+        if idx == 1 { return liked_songs() }                // 我喜欢 = 卡片上点过 ♥ 的
         if idx == 2 { return recentSongs }                  // 最近播放
         if idx == 3 { return dl.scan(cacheRoot()) }         // 本地音乐 = 已下载
-        return []                                           // 我喜欢 / 歌单：还没有实现来源
+        return []                                           // 歌单：还没有实现来源
     }
 
     // 加载占位：转圈 + 文案（整行居中，上面留一点白，别顶着标题 ✓）
@@ -1161,7 +1167,8 @@ export struct Player {
     //     所以保留这个小函数供 resize 比较用 —— 等换到 GridLayout 就一起删 ✓
     pri func cols_for_width(): int {
         int avail = content_w()
-        int c = (avail + 14) / (195 + 14)        // 卡更窄了（播放钮不再占一列）⇒ 一屏能多放一首
+        // 最小卡宽 260：右侧要放三颗按钮（♥/＋/⬇），再窄歌名就只剩 4~5 个字 ✗
+        int c = (avail + 14) / (260 + 14)
         if c < 2 { c = 2 }
         if c > 8 { c = 8 }
         return c
@@ -1197,7 +1204,9 @@ export struct Player {
 
         if compact {
             // 继续收听：**一行铺满**（卡宽同样按可用宽度均分，不再写死 250 ✓）
-            int avail0 = content_w()
+            //   ⚠ 必须减掉滚动条宽度（12）：`content_w()` 为了表格铺满已经不减了，
+            //     卡片若铺到最右，就会被滚动条压住 ⇒ 右侧圆角看着变成直角（用户指出 ✓）
+            int avail0 = content_w() - 12
             int gap0 = 14
             // ★ 卡宽按**列数**算，不按"这行有几首"算：
             //   之前 n0 = items.len() ⇒ 只有 1 首时那张卡被拉成整行宽（截图里"继续收听"✗）
@@ -1205,24 +1214,25 @@ export struct Player {
             int cols0 = cols_for_width()
             if cols0 > 4 { cols0 = 4 }
             if cols0 < 3 { cols0 = 3 }
-            int cw0 = (avail0 - (cols0 - 1) * gap0) / cols0
+            // 末尾留 2px：卡片总宽比行宽略小，圆角外沿才不会被 clip 的矩形边界切平 ✓
+            int cw0 = (avail0 - (cols0 - 1) * gap0 - 2) / cols0
             int n0 = items.len()
             if n0 > cols0 { n0 = cols0 }
-            HBox row = SDL3.createHBox({x: 0, y: 0, w: _float(avail0), h: 78, clip: true,
+            HBox row = SDL3.createHBox({x: 0, y: 0, w: _float(avail0), h: 84, clip: true,
                                         pad_x: 0, pad_y: 0, spacing: _float(gap0)})
             for 0 : n0 - 1 to i {
                 row.add(wide_card(items[i], cw0), {grow: 0, shrink: 0, basis: _float(cw0), align: 1})
             }
-            content.add(row, {grow: 0, shrink: 0, basis: 78, align: 3})
+            content.add(row, {grow: 0, shrink: 0, basis: 84, align: 3})
         } else {
             // ★ 2026-10-25：横卡（58px 缩略图，与「继续收听」同款），但**列数按可用宽度算**：
             //   之前写死"每行 3 张、宽 260" ⇒ 宽窗口右侧空一大片、窄窗口又挤（用户反馈 ✓）
             //   现在：cols = (可用宽 + 间距) / (最小卡宽 + 间距)，卡宽再把剩余宽度均分 ⇒ 整行铺满
-            int avail = content_w()
+            int avail = content_w() - 12      // 同上：留出滚动条宽度，右侧圆角不被压 ✓
             int gap = 14
             int cols = cols_for_width()
             curCols = cols
-            int cw = (avail - (cols - 1) * gap) / cols
+            int cw = (avail - (cols - 1) * gap - 2) / cols     // 同上：留 2px 给圆角 ✓
             int k = 0
             while k < items.len() {
                 HBox row = SDL3.createHBox({x: 0, y: 0, w: _float(avail), h: 116, clip: true,
@@ -1236,7 +1246,7 @@ export struct Player {
                         row.add(SDL3.createLabel({text: ""}), {grow: 1, shrink: 1, align: 1})
                     }
                 }
-                content.add(row, {grow: 0, shrink: 0, basis: 74, align: 3})
+                content.add(row, {grow: 0, shrink: 0, basis: 80, align: 3})
                 k = k + cols
             }
         }
@@ -1276,10 +1286,110 @@ export struct Player {
     // 横卡：圆角浅底 + 封面（**悬停时封面上浮出播放钮**）+ 歌名/歌手
     //   ★ 2026-10-26（按用户建议）：播放钮不再单独占一列 —— 悬停才出现在封面中央，
     //     文字区因此变宽、卡片可以更窄 ⇒ 一屏能多放几首 ✓
+    // ==================== 持久化（缓存\library.json：喜欢 + 最近播放）====================
+    //   ★ 2026-10-26（用户反馈"点击喜欢没存数据"）：原来只在内存里，重启就没了 ✗
+    pri func save_library() {
+        Dict[string, any] d = {}
+        d["version"] = 1
+        d["likes"] = likedSids
+        Array[Array[string]] rs = []
+        for recentSongs to s {
+            rs.add([s.sid, s.title, s.artist, s.dur, s.cover])
+        }
+        d["recent"] = rs
+        store.save(cacheRoot(), d)
+    }
+
+    pri func load_library() {
+        var d = store.load(cacheRoot())
+        likedSids = store.str_list(d, "likes")
+        var rv = d.get("recent", null)
+        var rows = rv as Array[Array[string]]
+        if rows != null {
+            Array[Song] out = []
+            for rows to r {
+                if r.len() < 5 { continue }
+                Song sg = new Song()
+                sg.sid = r[0]
+                sg.title = r[1]
+                sg.artist = r[2]
+                sg.dur = r[3]
+                sg.cover = r[4]
+                out.add(sg)
+            }
+            recentSongs = out
+        }
+    }
+
+    // ==================== 喜欢 / 添加（卡片上的两个小按钮）====================
+    pri func is_liked(string sid): bool {
+        if sid == "" { return false }
+        for likedSids to s {
+            if s == sid { return true }
+        }
+        return false
+    }
+
+    // 「我喜欢」页的数据：从各数据源里挑出 sid 在 likedSids 里的（按 sid 去重 ✓）
+    pri func liked_songs(): Array[Song] {
+        Array[Song] out = []
+        for recentSongs to s {
+            if is_liked(s.sid) { out.add(s) }
+        }
+        for recSongs to s {
+            if is_liked(s.sid) and not has_sid(out, s.sid) { out.add(s) }
+        }
+        for newSongs to s {
+            if is_liked(s.sid) and not has_sid(out, s.sid) { out.add(s) }
+        }
+        for netSongs to s {
+            if is_liked(s.sid) and not has_sid(out, s.sid) { out.add(s) }
+        }
+        return out
+    }
+
+    pri func has_sid(Array[Song] arr, string sid): bool {
+        for arr to a {
+            if a.sid == sid { return true }
+        }
+        return false
+    }
+
+    // 点 ♥：加/取消喜欢（图标与「我喜欢」页一起更新 ✓）
+    pri func toggle_song_like(Song sg) {
+        if sg.sid == "" {
+            nowArtist.set_text("这首歌没有音源 id，先搜一首再喜欢")
+            SDL3.markFrameRedraw()
+            return
+        }
+        Array[string] out = []
+        bool was = false
+        for likedSids to s {
+            if s == sg.sid { was = true; continue }
+            out.add(s)
+        }
+        if not was { out.add(sg.sid) }
+        likedSids = out
+        save_library()                   // ★ 立刻落盘（重启后「我喜欢」还在 ✓）
+        nowArtist.set_text(if was then "已取消喜欢：" + sg.title else "已喜欢：" + sg.title)
+        rebuild_content()
+        SDL3.markFrameRedraw()
+    }
+
+    // 点 +：加进下载队列（目前没有歌单系统，先落到"下载"，等于收藏到本地 ✓）
+    pri func queue_song(Song sg) {
+        if sg.sid == "" { return }
+        int n = dl.enqueue(dlJobs, sg.sid, sg.title, sg.artist)
+        nowArtist.set_text(if n > 0 then "已加入下载队列：" + sg.title else "已在下载列表里：" + sg.title)
+        refresh_dl_btn()
+        SDL3.markFrameRedraw()
+    }
+
     pri func wide_card(Song sg, int cw): HBox {
         // clip: true ⇒ 兜底：万一哪个子控件还是画宽了，也**不会冲出卡片**（被卡片矩形裁掉 ✓）
-        HBox row = SDL3.createHBox({x: 0, y: 0, w: _float(cw), h: 74, pad_x: 8, pad_y: 8,
-                                    spacing: 10, bg_color: C_CARD, bg_radius: 14, clip: true})
+        //   h 74→80、间距 10→6：右侧三颗按钮放大到 28px 后要塞得下（用户反馈"图标太小看不清"）
+        HBox row = SDL3.createHBox({x: 0, y: 0, w: _float(cw), h: 80, pad_x: 8, pad_y: 8,
+                                    spacing: 6, bg_color: C_CARD, bg_radius: 14, clip: true})
         ImageView iv = SDL3.createImageView({w: 58, h: 58, radius: 10,
                                              image_path: coverPath(sg.cover),
                                              overlay_path: ico("play.png"),
@@ -1290,8 +1400,9 @@ export struct Player {
 
         // ★ 2026-10-26：文字必须**限宽截断**，否则长歌名会冲出卡片、盖到隔壁卡上 ✗
         //   max_w = 卡宽 − (左右内边距 8×2 + 封面 58 + 间距 10) = cw − 84
-        int tw = cw - 84
-        if tw < 60 { tw = 60 }
+        //   再减去右侧三颗按钮（28×3 + 间距 6×2 = 96）
+        int tw = cw - 84 - 96
+        if tw < 50 { tw = 50 }
         VBox tv = SDL3.createVBox({x: 0, y: 0, w: _float(tw), h: 58, pad_x: 0, pad_y: 2, spacing: 2})
         // ★ 2026-10-26（用户截图：长歌名冲出卡片）：标题/歌手都**显式限宽 + 省略号**。
         //   只依赖"盒宽自动裁剪"不够稳：Label 的 `_w` 在布局前是自然宽（180），
@@ -1305,6 +1416,33 @@ export struct Player {
                                  max_w: _float(tw), truncate: 1, tip: sg.artist}),
                {grow: 0, shrink: 0, basis: 18, align: 3})
         row.add(tv, {grow: 1, shrink: 1, align: 1})
+
+        // ---- 右侧三颗（图标都在 images/icons）：♥ 喜欢 / ＋ 添加 / ⬇ 下载 ----
+        //   ★ 2026-10-26：`＋` 目前**只显示不做事**（用户要求）——歌单系统还没数据层，
+        //     先别给假动作；tip 写清楚，避免点了没反应还以为是 bug ✓
+        bool likedNow = is_liked(sg.sid)
+        Button lb = SDL3.createButton({image_path: ico(if likedNow then "sc1.png" else "sc.png"),
+                                       image_size: 24, w: 28, h: 28, radius: 14,
+                                       bg_color: C_TRANS, hover_color: #FFFFFFC8,
+                                       padding: 0.0, border: false, shadow: false,
+                                       tip: if likedNow then "取消喜欢" else "喜欢"})
+        lb.on_click(func() { toggle_song_like(sg) })
+        row.add(lb, {grow: 0, shrink: 0, basis: 28, align: 1})
+
+        Button ab = SDL3.createButton({image_path: ico("add.png"), image_size: 24,
+                                       w: 28, h: 28, radius: 14,
+                                       bg_color: C_TRANS, hover_color: #FFFFFFC8,
+                                       padding: 0.0, border: false, shadow: false,
+                                       tip: "添加到歌单（暂未开放）"})
+        row.add(ab, {grow: 0, shrink: 0, basis: 28, align: 1})
+
+        Button db = SDL3.createButton({image_path: ico("download.png"), image_size: 24,
+                                       w: 28, h: 28, radius: 14,
+                                       bg_color: C_TRANS, hover_color: #FFFFFFC8,
+                                       padding: 0.0, border: false, shadow: false,
+                                       tip: "下载到本地"})
+        db.on_click(func() { queue_song(sg) })
+        row.add(db, {grow: 0, shrink: 0, basis: 28, align: 1})
 
         return row
     }
@@ -1513,6 +1651,7 @@ export struct Player {
             out.add(r)
         }
         recentSongs = out
+        save_library()               // 最近播放也落盘（重启后「继续收听」还在 ✓）
     }
 
     // 卡片点播放：**有 sid 就走真播放**（推荐 / 最近添加 / 继续收听 里的酷我歌 ✓）
