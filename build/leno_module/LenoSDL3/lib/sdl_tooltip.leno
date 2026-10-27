@@ -24,6 +24,13 @@ bool _fontDirty = true
 float _fontSize  = 12.0
 bool _tipReported = false   // 本帧 mouse motion 事件中是否有控件上报了 tip
 int _tipWindowId = -1       // 当前上报 tip 的窗口 ID（确保 tip 只画在该窗口上）
+// 当前气泡的**归属者**（"" = 无主，由 hover 仲裁机制管；非空 = 有主，只有主人能清）
+//   为什么要归属者（2026-10-27）：全局只有一个气泡，`tipClear()` 谁调都能清。
+//   进度条/图表这类**在 on_hover 回调里额外弹气泡**的控件不属于 motion 上报体系，
+//   鼠标只要在别处动一下，`tipEndMotion` 就把它的气泡清了（AlkaidMusic 里实测：
+//   底栏进度条的 on_hover 每帧无条件 tipClear，把表格的行提示一起清掉 ⇒ 表格 tip 永远不弹 ✗）
+//   ⇒ 有主的气泡不参与"本帧没人上报就清"的仲裁，只有 `tipClearEx(主人)` 能清 ✓
+string _tipOwner = ""
 
 // 配色从 theme.getTheme() 动态读取（tipBg/tipBrd/tipTxt）
 
@@ -42,18 +49,27 @@ export func tipBeginMotion() { _tipReported = false }
 export func tipSetWindow(int wid) { _tipWindowId = wid }
 
 // 每次鼠标运动事件处理后由 Window 调用：若无任何控件上报 tip 则清除。
+//   ⚠ **有主的气泡不清**（见 _tipOwner）：它只由主人 `tipClearEx()` 结束 ✓
 export func tipEndMotion() {
-    if not _tipReported { tipClear() }
+    if not _tipReported and _tipOwner == "" { tipClear() }
 }
 
 // 控件在 hover 时调用（每次 mouse motion 上报）。text 为空表示此控件无 tip。
 // 每次上报都重置延迟计时——鼠标移动中不显示，仅当停留 _tipDelay 毫秒后才弹出。
+//   owner 版见 tipReportEx；本函数等价于"无主"上报（受 hover 仲裁管辖 ✓）
 export func tipReport(string text, float ax, float ay) {
+    tipReportEx("", text, ax, ay)
+}
+
+// 带**归属者**的上报：气泡归 owner 所有 ⇒ 别处 `tipClear()` 之外没人能清它，
+//   连"本帧没人上报"的自动仲裁也管不到它 ⇒ 适合 on_hover 这类手动弹气泡的场景 ✓
+export func tipReportEx(string owner, string text, float ax, float ay) {
     if text == null or text == "" { return }
     _tipReported = true
     if text != _tipText {
         _tipText = text
     }
+    _tipOwner = owner
     _tipStart = core.getTicks()
     _tipAX = ax; _tipAY = ay
 }
@@ -70,11 +86,24 @@ export func tipKeep(float ax, float ay) {
 }
 
 // 立即隐藏并清空提示文本（tipEndMotion 内部调用，也可由非 motion 场景调用）。
+//   ⚠ 这是**无条件**清——会连带清掉别人的气泡。自己的气泡请用 `tipClearEx(owner)` ✓
 export func tipClear() {
     _tipText = ""
     _tipVisible = false
     _tipWindowId = -1
+    _tipOwner = ""
 }
+
+// 只清"自己的"气泡：当前气泡的 owner 不是它 ⇒ 什么都不做 ✓
+//   `tipClearEx("")` 视为误用（空 owner 代表无主），直接忽略，避免又变成无条件清 ✗
+export func tipClearEx(string owner) {
+    if owner == "" { return }
+    if _tipOwner != owner { return }
+    tipClear()
+}
+
+// 当前气泡的归属者（"" = 无主）—— 排障/自测用 ✓
+export func tipOwner(): string { return _tipOwner }
 
 // 每帧由 Window 调用：根据悬停时长决定是否可见。
 export func tipTick() {
@@ -90,6 +119,11 @@ export func tipTick() {
 
 // tooltip 是否正在等待延迟显示（Window 用来判断是否需要持续重绘）
 export func tipWaiting(): bool { return _tipText != "" and not _tipVisible }
+
+// 诊断用（自测/排障）：当前是否已显示、当前文本是什么
+//   为什么要暴露：应用侧只看到"没弹出来"，分不清是"没上报"还是"上报了但被清掉/没画" ✓
+export func tipVisible(): bool { return _tipVisible }
+export func tipCurrent(): string { return _tipText }
 
 // 返回 tooltip 距离显示还需多少毫秒。
 // 返回  0：延迟已到期，应立即触发一次重绘以显示 tooltip。

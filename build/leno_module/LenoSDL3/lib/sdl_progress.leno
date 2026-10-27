@@ -25,7 +25,7 @@ import "sdl_tooltip.leno" as tip
 //   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
 func _opts_keys(): Array[string] {
     return [
-"anim_speed", "clickable", "cursor", "enabled", "fill_color", "font_path", "font_size", "font_style", "h", "max", "min", "show_text", "text_color", "tip", "track_color", "value", "visible", "w", "x", "y"
+"anim_speed", "clickable", "cursor", "enabled", "fill_color", "font_path", "font_size", "font_style", "h", "hit_pad_y", "max", "min", "show_text", "text_color", "tip", "track_color", "value", "visible", "w", "x", "y"
 ]
 }
 export struct ProgressBar impl Widget, Themeable {
@@ -38,10 +38,15 @@ export struct ProgressBar impl Widget, Themeable {
     pri Color txtColor = #EBEBF5FF                // 文字色
     pri int cursor = SystemCursor.POINTER
     bool hover = false; pri bool wasHover = false; bool _dragging = false; bool enabled = true; bool visible = true; bool _loaded = false
+    pri float hitPadY = 0.0        // 命中区上下外扩（视觉高度不变；细进度条靠它才点得中 ✓）
     string _tip = ""
     pri float animVal = 0.0, animTarget = 0.0, animLast = 0.0, animSpeed = 12.0; pri bool animating = false
     pri float fontH = 0.0          // 字体行高缓存（字体不变时为常量，避免每帧 measureString）
     pri func(float):void onChange
+    // 悬停位置回调（2026-10-27 补）：`onHover(值, 鼠标x, 鼠标y)`，**离开时值传 -1**
+    //   为什么需要：进度条只有静态 `tip` 文案，做"鼠标指到哪儿显示对应时间"这种提示做不到 ✗
+    //   （音乐播放器/视频播放器的标配交互）⇒ 把光标处的值给应用，应用自己格式化后调 SDL3.tipReport ✓
+    pri func(float, float, float):void onHover
 
     pri func ratio(): float {
         float span = maxV - minV
@@ -94,6 +99,9 @@ export struct ProgressBar impl Widget, Themeable {
         animVal = value; animTarget = value; animating = false; animLast = 0.0
         animSpeed = opts.get("anim_speed", 12.0)
         _tip = opts.get("tip", "")
+        // 命中区上下外扩（0 = 原行为）：细进度条（4~6px）靠它才点得中、悬停得住 ✓
+        hitPadY = opts.get("hit_pad_y", 0.0)
+        if hitPadY < 0.0 { hitPadY = 0.0 }
         ensure_font()
         _loaded = true
     }
@@ -123,9 +131,14 @@ export struct ProgressBar impl Widget, Themeable {
     func set_size(float sw, float sh) { w = sw; h = sh }
 
     func on_change(func(float):void cb) { onChange = cb }
+    // 悬停位置回调（值 = 光标处的进度值，离开时为 -1；x/y = 鼠标位置，供提示气泡定位 ✓）
+    func on_hover(func(float, float, float):void cb) { onHover = cb }
 
+    // 命中区（2026-10-27）：`hit_pad_y` 把**上下各外扩**一段，视觉高度不变
+    //   为什么需要：媒体进度条通常只有 4~6px 高，鼠标几乎点不中/悬停不住 ✗
+    //   ⇒ 视觉细、命中粗，这是播放器类控件的标准做法 ✓
     func contains(float mx, float my): bool {
-        return mx >= x and mx <= x + w and my >= y and my <= y + h
+        return mx >= x and mx <= x + w and my >= y - hitPadY and my <= y + h + hitPadY
     }
 
     pri func value_from_x(float mx): float {
@@ -144,7 +157,12 @@ export struct ProgressBar impl Widget, Themeable {
             // 只读模式：仅处理悬停提示，不改变 hover 状态（避免与可交互模式的 hover 冲突）
             if ev.isMouseMotion() {
                 var[float, float](mx, my) = ev.mousePos()
-                if contains(mx, my) and _tip != "" { tip.tipReport(_tip, mx, my) }
+                if contains(mx, my) {
+                    if _tip != "" { tip.tipReport(_tip, mx, my) }
+                    if onHover != null { onHover(value_from_x(mx), mx, my) }
+                } else if onHover != null {
+                    onHover(-1.0, mx, my)          // 离开 ⇒ 让应用把气泡收掉 ✓
+                }
                 core.markFrameMotion()
             }
             hover = false; return
@@ -169,6 +187,11 @@ export struct ProgressBar impl Widget, Themeable {
                 core.markFrameRedraw()    // hover 变化也需重绘（颜色高亮）
             } else {
                 core.markFrameMotion()
+            }
+            // 悬停位置回调（**拖动期间不报** —— 那时"拖到哪儿"由 set_value 反馈，再弹气泡反而乱 ✓）
+            if onHover != null and not _dragging {
+                if hover { onHover(value_from_x(mx), mx, my) }
+                else { onHover(-1.0, mx, my) }        // 离开 ⇒ 应用收气泡 ✓
             }
             if cursor >= 0 {
                 if hover { core.requestCursor(cursor) }

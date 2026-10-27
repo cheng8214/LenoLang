@@ -177,6 +177,18 @@ export func releaseTrayClick()               { tray.releaseTrayClick() }
 export func pollTrayClick(): Array           { return tray.pollTrayClick() }   // [x, y, 键(1左/2右)] ✓
 export func clickTrayIcon(int kind = 2): bool { return tray.clickTrayIcon(kind) }   // 自测用：模拟点图标 ✓
 export func setTipDelay(int ms)                     { tip.setTipDelay(ms) }
+// 手动指定提示气泡（2026-10-27 补）：给"进度条悬停显示时间"这类**内容随光标变化**的提示用
+//   on_hover 拿到光标处的值 ⇒ 格式化后调 tipReport(text, x, y)；鼠标离开时 tipClear() ✓
+export func tipReport(string text, float ax, float ay) { tip.tipReport(text, ax, ay) }
+export func tipClear()                              { tip.tipClear() }
+// 带**归属者**的版本（推荐）：气泡归 owner，别处清不掉，只受 `tipClearEx(owner)` 管 ✓
+//   on_hover 这类"手动弹气泡"的回调必须用它 —— 用无条件 tipClear 会把别人的提示一起清掉 ✗
+export func tipReportEx(string owner, string text, float ax, float ay) { tip.tipReportEx(owner, text, ax, ay) }
+export func tipClearEx(string owner)                { tip.tipClearEx(owner) }
+export func tipOwner(): string                       { return tip.tipOwner() }
+// 诊断：提示气泡当前是否已显示 / 当前文本（排障"没弹出来"用 ✓）
+export func tipVisible(): bool                      { return tip.tipVisible() }
+export func tipText(): string                       { return tip.tipCurrent() }
 export func createHBox(Dict opts): HBox          { return lay.createHBox(opts) }
 export func createVBox(Dict opts): VBox          { return lay.createVBox(opts) }
 export func createAnchorBox(Dict opts): AnchorBox { return lay.createAnchorBox(opts) }

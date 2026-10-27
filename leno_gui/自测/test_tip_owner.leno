@@ -1,0 +1,97 @@
+// test_tip_owner.leno — tooltip **归属者**机制验收（回归件 ✓）
+//   由来（2026-10-27）：AlkaidMusic 里表格的**行级提示**永远不弹。查下来不是表格的错：
+//     底栏进度条在 `on_hover` 里**无条件** `SDL3.tipClear()`，鼠标只要在别处动一下，
+//     就把表格刚上报的行提示清掉了 ✗（全局只有一个气泡，谁都能清）
+//   修法：气泡带**归属者** —— `tipReportEx(owner, …)` / `tipClearEx(owner)`：
+//     · 有主的气泡不参与"本帧没人上报就清"的仲裁 ⇒ 别人的鼠标移动清不掉它 ✓
+//     · 主人用 tipClearEx(owner) 结束自己的；`tipClearEx("")` 直接忽略（防退化成无条件清）✓
+//
+//   判据（跑完看输出，全 OK）：
+//     ① 鼠标在进度条上 ⇒ 气泡＝进度条文本，owner＝"bar"
+//     ② 鼠标移到空白处（**进度条以外的 motion**）⇒ 有主气泡**仍在**（这是本修的核心 ✓）
+//     ③ 鼠标压在按钮上 ⇒ 换成按钮提示（无主），owner＝""
+//     ④ 移开按钮 ⇒ 无主气泡按老规矩被清掉
+//     ⑤ 再回进度条、再移到空白 ⇒ 进度条的 on_hover 自己清（tipClearEx）⇒ 气泡没了 ✓
+//
+//   跑法（项目根目录）：build\leno.exe leno_gui\自测\test_tip_owner.leno
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer, Window, Button, ProgressBar)
+
+int steps = 0
+Window w
+ProgressBar bar
+
+func ok(string name, bool cond, string detail) {
+    if cond { print("[to] " + name + " OK（" + detail + "）") }
+    else { print("[to] " + name + " ✗ " + detail) }
+}
+
+func run() {
+    SDL3.ttfInit()
+    w = SDL3.createWindow({title: "probe_tip_owner", w: 520, h: 260})
+    if not w.ok { SDL3.ttfQuit(); return }
+
+    // A：普通按钮（走 hover 上报，无主）
+    Button b = w.addButton({x: 20, y: 20, w: 120, h: 32, text: "按钮", tip: "按钮提示"})
+
+    // B：进度条，on_hover 里用**归属者**版本弹气泡（模拟 AlkaidMusic 的时间气泡）
+    bar = w.addProgressBar({x: 20, y: 120, w: 300, h: 10, min: 0.0, max: 100.0,
+                            value: 50.0, show_text: false, clickable: true, hit_pad_y: 10.0})
+    bar.on_hover(func(float v, float mx, float my) {
+        if v < 0.0 { SDL3.tipClearEx("bar"); return }
+        SDL3.tipReportEx("bar", "进度 50%", mx, my)
+    })
+
+    w.addTimer(100, func() {
+        steps = steps + 1
+        if steps == 4 {
+            SDL3.testMoveAt(w.getID(), 20.0 + 150.0, 120.0 + 5.0)     // 进度条上
+        }
+        if steps == 5 {
+            ok("① 进度条上 ⇒ 有主气泡", SDL3.tipText() == "进度 50%" and SDL3.tipOwner() == "bar",
+               "text=" + SDL3.tipText() + " owner=" + SDL3.tipOwner())
+            SDL3.testMoveAt(w.getID(), 400.0, 220.0)                  // 空白处（会触发 bar 的 on_hover(-1)）
+        }
+        if steps == 6 {
+            ok("② 移到空白处 ⇒ 有主气泡已由主人清掉", SDL3.tipText() == "",
+               "text=" + SDL3.tipText() + " owner=" + SDL3.tipOwner())
+            SDL3.testMoveAt(w.getID(), 60.0, 36.0)                    // 按钮上
+        }
+        if steps == 7 {
+            ok("③ 按钮上 ⇒ 换成按钮提示（无主）", SDL3.tipText() == "按钮提示" and SDL3.tipOwner() == "",
+               "text=" + SDL3.tipText() + " owner=" + SDL3.tipOwner())
+            SDL3.testMoveAt(w.getID(), 400.0, 20.0)                   // 离开按钮（空白）
+        }
+        if steps == 8 {
+            ok("④ 移开按钮 ⇒ 无主气泡被清（老规矩）", SDL3.tipText() == "",
+               "text=" + SDL3.tipText())
+            // 关键回归：进度条弹气泡后，**别的控件**的鼠标移动不能把它清掉
+            SDL3.testMoveAt(w.getID(), 20.0 + 150.0, 120.0 + 5.0)     // 回进度条
+        }
+        if steps == 9 {
+            SDL3.testMoveAt(w.getID(), 20.0 + 20.0, 120.0 - 40.0)     // 进度条外，但**同一次 motion 里**
+        }
+        if steps == 10 {
+            // 这一拍 bar 的 on_hover 已经用 tipClearEx 清掉了自己的 → 证明主人能清
+            ok("⑤ 主人清自己的气泡", SDL3.tipText() == "", "text=" + SDL3.tipText())
+            // ⑥ 关键回归：**别人**弹了有主气泡，进度条的 on_hover（每次移动都会跑）
+            //    调 tipClearEx("bar") 时绝不能把它清掉（旧的无条件 tipClear 就会清 ✗）
+            SDL3.tipReportEx("ghost", "有主:ghost", 300.0, 200.0)
+        }
+        if steps == 11 {
+            ok("⑥ 有主气泡已弹", SDL3.tipText() == "有主:ghost" and SDL3.tipOwner() == "ghost",
+               "text=" + SDL3.tipText() + " owner=" + SDL3.tipOwner())
+            SDL3.testMoveAt(w.getID(), 450.0, 200.0)      // 空白处：bar 的 on_hover 会跑 tipClearEx("bar")
+        }
+        if steps == 12 {
+            ok("⑦ 别人的 tipClearEx 清不掉有主气泡", SDL3.tipText() == "有主:ghost",
+               "text=" + SDL3.tipText() + " owner=" + SDL3.tipOwner())
+            _exit(0)
+        }
+    })
+
+    w.run(func(Event ev): bool { return true }, func(Renderer r) { r.clearColor(#101418FF) })
+    SDL3.ttfQuit()
+}
+
+main() { run() }

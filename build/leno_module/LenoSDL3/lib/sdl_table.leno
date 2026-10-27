@@ -1017,6 +1017,13 @@ export struct Table impl Widget, Themeable {
         if row >= 0 and row < rowImages.len() { return rowImages[row] }
         return ""
     }
+    // 当前悬停行（-1 = 没悬停在任何行上）；排障/自测用 ✓
+    func get_hover_row(): int { return hoverRow }
+    // 某行的行级提示（""=没有）—— 排障用 ✓
+    func get_row_tip(int row): string {
+        if row >= 0 and row < rowTips.len() { return rowTips[row] }
+        return ""
+    }
     func set_row_tip(int row, string tip) {
         if row >= 0 and row < rowTips.len() { rowTips[row] = tip }
         eif row >= 0 {

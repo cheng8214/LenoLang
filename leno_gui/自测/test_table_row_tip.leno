@@ -1,0 +1,69 @@
+// test_table_row_tip.leno — Table **行级悬停提示**（set_row_tip，多行）验收（回归件 ✓）
+//   由来：AlkaidMusic「本地音乐」列表要显示"文件大小 / 格式 / 修改时间 / 路径"，
+//     但表里只有歌名·歌手·来源三列 ⇒ 用 Table 的行级 tip（多行用 \n）。
+//   判据：鼠标停在第一行上 ⇒ 延迟到期后气泡出现，且**多行都画出来**（不是只显示第一行）。
+//
+//   跑法（项目根目录）：
+//     set PROBE_OUT=%TEMP%\rt      # 存 rt1.png
+//     build\leno.exe leno_gui\自测\test_table_row_tip.leno
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer, Window, Table)
+
+const float TB_X = 20.0
+const float TB_Y = 20.0
+const float ROW_H = 30.0
+const float HDR_H = 28.0
+
+int steps = 0
+string outP = ""
+Window w
+Table tb
+
+func run() {
+    SDL3.ttfInit()
+    w = SDL3.createWindow({title: "probe_row_tip", w: 720, h: 320})
+    if not w.ok { SDL3.ttfQuit(); return }
+
+    var op = _env("PROBE_OUT")
+    if op != null { outP = _str(op) }
+
+    tb = w.addTable({x: TB_X, y: TB_Y, w: 660.0, h: 240.0,
+                     headers: ["歌名", "歌手", "来源"], col_ratios: [0.57, 0.28, 0.15],
+                     item_h: ROW_H, header_h: HDR_H, font_size: 13})
+    Array[Array[string]] rows = []
+    for 1 : 4 to i { rows.add(["歌名 " + _str(i), "歌手 " + _str(i), "本地"]) }
+    tb.set_rows(rows)
+    // 每行一个多行 tip（模拟"格式 / 大小 / 修改时间 / 路径"）
+    for 0 : rows.len() - 1 to i {
+        tb.set_row_tip(i, "歌名 " + _str(i + 1) + "\n歌手：歌手 " + _str(i + 1)
+                          + "\n格式：FLAC · 大小：8.42 MB（8833126 字节）"
+                          + "\n修改：2026-10-27 14:03\n路径：C:\\music\\歌手 " + _str(i + 1) + " - 歌名.flac")
+    }
+
+    w.addTimer(100, func() {
+        steps = steps + 1
+        if steps == 4 {
+            // 悬停第一行（行区从 y = TB_Y + HDR_H 开始）
+            SDL3.testMoveAt(w.getID(), TB_X + 160.0, TB_Y + HDR_H + ROW_H / 2.0)
+            print("[rt] 已把鼠标移到第 1 行")
+        }
+        if steps == 18 {                       // 1.4s 之后（气泡延迟默认 500ms）
+            if outP != "" {
+                print("[rt] 截图目标 " + outP + "1.png（应看到 5 行气泡）")
+            }
+            _exit(0)
+        }
+    })
+
+    w.setOverlay(func(Renderer r) {
+        if steps != 16 or outP == "" { return }
+        var sz = w.getSize()
+        var px = r.readPixelsAt(0, 0, sz.w, sz.h)
+        if px != null { print("[rt] 截图 ok=" + _str(SDL3.saveImagePNG(px, outP + "1.png"))) }
+    })
+
+    w.run(func(Event ev): bool { return true }, func(Renderer r) { r.clearColor(#101418FF) })
+    SDL3.ttfQuit()
+}
+
+main() { run() }
