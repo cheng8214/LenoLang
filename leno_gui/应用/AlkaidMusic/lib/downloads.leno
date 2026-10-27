@@ -10,6 +10,8 @@
 import "web_net" as net
 import "kuwo_core.leno" as kuwo
 import "kuwo_cover.leno" as cover          // 下载时顺带把封面落成同名 .jpg ✓
+import "kuwo_lyric.leno" as kuwo_lyric     // 歌词（逐字优先，退回标准 LRC ✓）
+import "Music" as audio                    // 标签读写走 LenoMusic 的 writeTag（音频域的通用能力 ✓）
 import "../music_data.leno" as data
 import dirs
 import files
@@ -144,7 +146,8 @@ func fsize(string path): int {
     }
 }
 
-export func save_shard(string id, string title, string artist, string root, string prefer, Channel ch): bool {
+// tags 位标志：1 = 存同名 .lrc，2 = 把封面/歌词内嵌进音频文件（见 LenoMusic/lib/music_tag.leno ✓）
+export func save_shard(string id, string title, string artist, string root, string prefer, int tags, Channel ch): bool {
     if id == "" {
         ch.send(["E", "没有音源 id", ""])
         return false
@@ -248,6 +251,26 @@ export func save_shard(string id, string title, string artist, string root, stri
     } catch e {
         ch.send(["E", "写盘失败：" + _str(e), ""])
         return false
+    }
+    // ---- 收尾：歌词 / 内嵌标签（都**不影响下载结果**：失败只在控制台记一行 ✓）----
+    if (tags & 1) != 0 {
+        try {
+            string lrc = kuwo_lyric.lrcpath(f)
+            int n = kuwo_lyric.savelyric(id, lrc)
+            if n <= 0 { print("[dl] 这首没有歌词可取：" + title) }
+        } catch e {
+            print("[dl] 存歌词失败：" + _str(e))
+        }
+    }
+    if (tags & 2) != 0 {
+        try {
+            string lyrTxt = ""
+            try { lyrTxt = kuwo_lyric.fetchlyric(id) } catch e2 { print("[dl] 取歌词失败：" + _str(e2)) }
+            string err = audio.writeTag(f, title, artist, art, lyrTxt)
+            if err != "" { print("[dl] 内嵌跳过：" + err) }
+        } catch e {
+            print("[dl] 内嵌失败：" + _str(e))
+        }
     }
     // D 消息带**实际格式**，且"总字节 = 已下字节" —— 服务端 Content-Range 的总长偶尔偏大，
     //   按它算进度会停在 76% 之类的数字上；已完成就该是 100% ✓

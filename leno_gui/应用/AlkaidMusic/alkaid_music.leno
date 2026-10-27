@@ -189,6 +189,9 @@ var g_cacheOverride = ""
 var g_preferFmt = "lossless"
 // 试听音质（在线播放的档位；standard / high / lossless）
 var g_audioQ = "high"
+// 下载附加（设置项）：同时存 .lrc / 把封面与歌词内嵌进音频文件 ✓
+var g_dlLyric = true
+var g_embedTag = false
 // 「最近播放」保留条数（设置项；超出按时间顶替，丢最旧 ✓）
 var g_recentMax = 60
 var g_workers = 4
@@ -354,6 +357,10 @@ export struct Player {
     Canvas lyrCanvas
     Font lyrF15                  // 非当前行
     Font lyrF20                  // 当前行（粗体）
+    // 歌词页左侧「封面下方」的两行字：歌名 15 粗、歌手 12 灰
+    //   ⚠ 单独取字体是为了**量宽度做居中**（Label 的 align 把 x 当中心点，在 VBox 里会偏左 ✗）
+    Font lyrFTitle
+    Font lyrFArtist
     bool lyrFontsOk = false
     float lyrViewH = 420.0        // 歌词视口高（按窗口高度算）
     // ---- 歌词绘制的缓存（照 LenoMusic 的纪律：**字体测量只在换句/换歌词时做，不是每帧** ✓）----
@@ -362,7 +369,8 @@ export struct Player {
     Array[float] lyrCX = []       // 当前行每个字的相对 x
     Array[float] lyrCW = []       // 当前行每个字的宽
     int lyrCacheLine = -2         // 缓存属于哪一行（-2 = 无）
-    float lyrFade = 1.0           // 当前行淡入（换句时归 0，定时器每步 +0.18 ✓）
+    float lyrFade = 1.0           // 当前行淡入（换句时归 0，定时器每步 +0.25 ✓）
+    float lyrCurW = 0.0           // 当前行整行宽度（20px 字体，换行时量一次 ✓）
     float lyrTextH = 20.0         // 15px 字高（一次量好，渲染时不再 measure ✓）
     float lyrTextH20 = 27.0       // 20px 字高
     float lyrOff = 0.0            // 当前滚动偏移（像素，缓动跟随 lyrTarget）
@@ -845,10 +853,15 @@ export struct Player {
     // 歌词字体：15（普通行）/ 20 粗体（当前行）—— 只取一次，切页复用 ✓
     pri func ensure_lyr_fonts() {
         if lyrFontsOk { return }
-        lyrF15 = SDL3.acquireFontAuto(15.0)
-        lyrF20 = SDL3.acquireFontAuto(20.0)
+        // ⚠ 当前行与非当前行**字号只差 1px**：原来 15 vs 20，换句瞬间字突然变大，
+        //   每切一句就"跳"一下（用户说的"一顿一顿"就是这个 ✗）
+        //   现在靠**加粗 + 强调色 + 扫光**区分当前行，尺寸几乎不变 ⇒ 切换平滑 ✓
+        lyrF15 = SDL3.acquireFontAuto(16.5)
+        lyrF20 = SDL3.acquireFontAuto(17.5)
         if lyrF20.ok { lyrF20.setStyle(SDL3.STYLE_BOLD) }
-        lyrFontsOk = lyrF15.ok and lyrF20.ok
+        lyrFTitle = SDL3.acquireFontAuto(15.0)
+        lyrFArtist = SDL3.acquireFontAuto(12.5)      // 与下方 lbl(..., 12.5, ...) 同号，量宽才准 ✓
+        lyrFontsOk = lyrF15.ok and lyrF20.ok and lyrFTitle.ok and lyrFArtist.ok
         // 行高各量一次（渲染里每帧再量就是浪费 ✓）
         if lyrF15.ok {
             var[float, float](_w15, h15) = lyrF15.measureString("Ag")
@@ -877,13 +890,17 @@ export struct Player {
                 lyrCW.add(w1)
                 acc = acc + w1
             }
+            // ★ 居中要用**整行真实宽度**（逐字宽累加不含字距）——
+            //   两者不一致时，换行瞬间这一行会横向"跳"一下（看着就是一顿 ✗）
+            var[float, float](fw2, fh2) = lyrF20.measureString(txt)
+            lyrCurW = fw2
+            lyrTextH20 = fh2
             lyrCacheLine = lyrIdx
         }
-        float fullW = 0.0
-        for lyrCW to w2 { fullW = fullW + w2 }
-        float x0 = cx - fullW / 2.0
+        float x0 = cx - lyrCurW / 2.0
         float y = ly + (LYR_LINE_H - lyrTextH20) / 2.0
-        Color dim = fade_color(C_TXT, 110)
+        // 当前行"没唱"的部分也比其它行亮（alpha 200）⇒ 整行始终醒目，扫光在其上由灰白转橙更清楚 ✓
+        Color dim = fade_color(C_TXT, _int(120.0 + 80.0 * lyrFade))
         int k = 0
         for cps to cp {
             string one = strings.from_codepoint(cp)
@@ -982,14 +999,39 @@ export struct Player {
         lyrViewH = lvh
         HBox row = SDL3.createHBox({x: 0, y: 0, w: _float(content_w()), h: lvh,
                                     pad_x: 0, pad_y: 10, spacing: PAD})
-        // 左：大圆封面（播放时慢转；radius = 边长一半 ⇒ 正圆）
+        // 左：大圆封面 + **图片下方**歌名 / 歌手（整体顶对齐 ⇒ 图片上移 ✓）
         int cs = 240
+        VBox left = SDL3.createVBox({x: 0, y: 0, w: _float(cs), h: lvh,
+                                     pad_x: 0, pad_y: 0, spacing: 10})
         ImageView big = SDL3.createImageView({w: _float(cs), h: _float(cs), radius: _float(cs) / 2.0,
                                              image_path: coverPath(nowSong.cover),
                                              bg_color: #F3E4EBFF, tip: "点击返回"})
         big.on_click(func() { open_lyrics(false) })      // 再点一下收回去 ✓
         big.set_spin(if playing then 10.0 else 0.0)      // 比底栏更慢，歌词页安静一点 ✓
-        row.add(big, {grow: 0, shrink: 0, basis: _float(cs), align: 1})
+        left.add(big, {grow: 0, shrink: 0, basis: _float(cs), align: 3})
+        // 歌名（粗体）/ 歌手（小灰）—— 居中的做法：外层 HBox `justify: 1` + 子项宽度 = 量出来的文本宽
+        //   ⚠ 不能直接给 Label 传 align:1：Label 的 align 把 x 当**中心点**，在 VBox 里 x 是左边界 ⇒ 会偏左 ✗
+        ensure_lyr_fonts()
+        string tname = nowTitle.get_text()
+        if tname == "" { tname = "—" }
+        // 歌名（图片正下方，粗体、居中）
+        var[float, float](nw, nh) = lyrFTitle.measureString(tname)
+        HBox trow = SDL3.createHBox({x: 0, y: 0, w: _float(cs), h: 26,
+                                     pad_x: 0, pad_y: 0, spacing: 0, justify: 1})
+        trow.add(lbl(tname, 15, C_TXT, true),
+                 {grow: 0, shrink: 0, basis: if nw < _float(cs) then nw + 2.0 else _float(cs), align: 3})
+        left.add(trow, {grow: 0, shrink: 0, basis: 26, align: 3})
+        if nowArtist.get_text() != "" {
+            var[float, float](aw, ah) = lyrFArtist.measureString(nowArtist.get_text())
+
+            HBox arow = SDL3.createHBox({x: 0, y: 0, w: _float(cs), h: 20,
+                                         pad_x: 0, pad_y: 0, spacing: 0, justify: 1})
+            // 歌手用 MID 而不是 DIM：浅色背景插画上 DIM 几乎看不见（实测截图发虚 ✗）
+            arow.add(lbl(nowArtist.get_text(), 12.5, C_TXT_MID, false),
+                     {grow: 0, shrink: 0, basis: if aw < _float(cs) then aw + 2.0 else _float(cs), align: 3})
+            left.add(arow, {grow: 0, shrink: 0, basis: 20, align: 3})
+        }
+        row.add(left, {grow: 0, shrink: 0, basis: _float(cs), align: 0})
 
         // 右：歌词 —— **Canvas 自绘**（照洛雪音乐的观感 ✓）
         //   居中 / 当前行 20px 粗体橙 / 其它行 15px 按距离渐隐 / 当前行按时间逐字扫光 / 滚动缓动
@@ -2184,6 +2226,8 @@ export struct Player {
         g_workers = cfgset.clamp_workers(s.workers)
         g_audioQ = cfgset.clamp_aq(s.aq)
         g_recentMax = cfgset.clamp_recent(s.recent)
+        g_dlLyric = s.dl_lyric      // 下载时同时存 .lrc
+        g_embedTag = s.embed_tag    // 把封面/歌词内嵌进音频文件
         // 背景图 / 蒙版变了 ⇒ 丢掉旧纹理，下一帧按新设置重画 ✓
         bool bgChanged = (g_bgPath != s.bg) or (g_veil != cfgset.clamp_veil(s.veil))
         g_bgPath = s.bg
@@ -3298,7 +3342,11 @@ export struct Player {
                 j[6] = "0"
                 dlJobs[di] = j
                 if curNav == -2 { rebuild_content() }
-                threads.start(dl.save_shard, j[0], j[1], j[2], cacheRoot(), g_preferFmt, dlCh)
+                // 位标志：1 = 同时存 .lrc，2 = 内嵌封面/歌词（设置里两个开关 ✓）
+                int dlTags = 0
+                if g_dlLyric { dlTags = dlTags | 1 }
+                if g_embedTag { dlTags = dlTags | 2 }
+                threads.start(dl.save_shard, j[0], j[1], j[2], cacheRoot(), g_preferFmt, dlTags, dlCh)
                 SDL3.markFrameRedraw()
             }
         }

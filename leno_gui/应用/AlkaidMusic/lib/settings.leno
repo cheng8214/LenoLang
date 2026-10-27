@@ -70,6 +70,9 @@ export struct Settings {
     int veil = 158           // 全窗遮罩不透明度 0..255（= VEIL_DEF）
     string aq = "high"       // 试听音质：standard / high / lossless（= AQ_HIGH）
     int recent = 60          // 「最近播放」保留条数（= RECENT_DEF，超出按时间顶替）
+    // ---- 下载附加项（2026-10-28）----
+    bool dl_lyric = true     // 下载歌曲时同时存一份同名 .lrc（默认开：几乎没人不要歌词 ✓）
+    bool embed_tag = false   // 把封面/歌词**内嵌**进音频文件（改文件本体，默认关，手动开 ✓）
 }
 
 // 配置目录（平台判断只此一处）
@@ -123,6 +126,8 @@ export func load(): Settings {
         if m.has("veil") { s.veil = clamp_veil(jsons.get_int(m, "veil", s.veil)) }
         if m.has("aq") { s.aq = clamp_aq(jsons.get_str(m, "aq", s.aq)) }
         if m.has("recent") { s.recent = clamp_recent(jsons.get_int(m, "recent", s.recent)) }
+        if m.has("dl_lyric") { s.dl_lyric = jsons.get_bool(m, "dl_lyric", s.dl_lyric) }
+        if m.has("embed_tag") { s.embed_tag = jsons.get_bool(m, "embed_tag", s.embed_tag) }
     }
     return s
 }
@@ -142,7 +147,9 @@ export func save(Settings s): bool {
              fmt: clamp_fmt(s.fmt),
              bg: s.bg, veil: clamp_veil(s.veil),
              aq: clamp_aq(s.aq),
-             recent: clamp_recent(s.recent)})
+             recent: clamp_recent(s.recent),
+             dl_lyric: s.dl_lyric,
+             embed_tag: s.embed_tag})
         return true
     } catch e {
         print("[settings] 写入失败：" + _str(e))

@@ -14,7 +14,7 @@ import "sdl_filedialog" as fdlg
 import "./settings.leno" as cfg
 import strings
 use SDL3.(Event, Renderer, Window, TitleBar, Label, Button, SpinBox, Edit, HBox, VBox, Slider,
-          Scancode, RadioButton, TabControl)
+          Scancode, RadioButton, TabControl, CheckBox)
 use cfg.Settings
 
 // 打开设置窗口。onSaved 在"保存成功且已写盘"后回调（调用方据此重读配置 ✓）
@@ -38,6 +38,9 @@ export func show(string defaultCache, Array[string] tabIcons, func(Settings):voi
     Array[string] fmtBox = [cfg.clamp_fmt(cur.fmt)]
     // 试听音质（同样是单元素数组，闭包按引用改 ✓）
     Array[string] aqBox = [cfg.clamp_aq(cur.aq)]
+    // 下载附加项（两个开关）
+    Array[bool] dlLyric = [cur.dl_lyric]
+    Array[bool] embTag = [cur.embed_tag]
 
     // ==================== Tab 容器 ====================
     // Tab 的 `bg_color` 默认取 `theme.bg`（纯白），
@@ -117,6 +120,18 @@ export func show(string defaultCache, Array[string] tabIcons, func(Settings):voi
     tabs.addToPage(1, rbHigh, 200, 150)
     tabs.addToPage(1, rbLossless, 380, 150)
     tabs.addToPage(1, SDL3.dialogLabel("提示：换档位只影响之后播放的歌；已缓存的会复用，不会重复下载。", 11), 0, 196)
+
+    // ---- 下载附加：歌词 / 内嵌标签（2026-10-28）----
+    tabs.addToPage(1, SDL3.createLabel({text: "下载附加（对之后加入的下载任务生效）", font_size: 13}), 0, 214)
+    CheckBox ckLyric = SDL3.createCheckBox({text: "同时下载歌词（在音频旁存同名 .lrc）",
+                                            checked: cur.dl_lyric, box: 16, gap: 8, font_size: 12.5})
+    ckLyric.set_tip("逐字歌词优先；取不到就存普通 LRC。播放时同目录 .lrc 会被自动读取")
+    tabs.addToPage(1, ckLyric, 0, 244)
+    CheckBox ckEmbed = SDL3.createCheckBox({text: "把封面与歌词内嵌进音频文件",
+                                            checked: cur.embed_tag, box: 16, gap: 8, font_size: 12.5})
+    ckEmbed.set_tip("MP3 写 ID3v2（APIC 封面 + USLT 歌词）、FLAC 写 VORBIS_COMMENT + PICTURE；其它格式会跳过")
+    tabs.addToPage(1, ckEmbed, 0, 274)
+    tabs.addToPage(1, SDL3.dialogLabel("内嵌会改写音频文件本体（先写临时文件，成功才替换；不支持 m4a/ogg）", 11), 0, 304)
 
     // ==================== 页 2：外观（只留「背景图 + 蒙版不透明度」）====================
     tabs.addToPage(2, SDL3.createLabel({text: "背景图片（留空 = 用应用自带的 images/bk.jpg）", font_size: 13}), 0, 18)
@@ -214,6 +229,20 @@ export func show(string defaultCache, Array[string] tabIcons, func(Settings):voi
         SDL3.markFrameRedraw()
     })
 
+    // 两个开关只改内存里的标记，「保存」时才写盘（与其它项一致 ✓）
+    ckLyric.on_change(func(bool on) {
+        dlLyric[0] = on
+        note.set_text(if on then "下载时会同时存 .lrc（点「保存」才生效）"
+                               else "不再附带歌词文件（点「保存」才生效）")
+        SDL3.markFrameRedraw()
+    })
+    ckEmbed.on_change(func(bool on) {
+        embTag[0] = on
+        note.set_text(if on then "下载后会改写音频文件写入封面/歌词（点「保存」才生效）"
+                               else "不再改写音频文件（点「保存」才生效）")
+        SDL3.markFrameRedraw()
+    })
+
     cancelBtn.on_click(func() {
         closing = true
         dlg.requestClose()
@@ -230,6 +259,8 @@ export func show(string defaultCache, Array[string] tabIcons, func(Settings):voi
         s.recent = cfg.clamp_recent(_int(spinRecent.get_value()))
         s.bg = trim_text(bgEdit.get_text())
         s.veil = cfg.clamp_veil(_int(veilS.get_value()))
+        s.dl_lyric = dlLyric[0]
+        s.embed_tag = embTag[0]
         if cfg.save(s) {
             closing = true
             onSaved(s)
