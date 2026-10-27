@@ -35,6 +35,7 @@ import "./lib/settings.leno" as cfgset       // 应用设置（线程数 / 缓�
 import "./lib/settings_win.leno" as cfgwin   // 设置对话框（独立窗口）
 import strings
 import dirs
+import times
 import files
 import threads
 import Sys                       // 自检探针用：读本进程内存（ALKAID_STRESS ✓）
@@ -362,6 +363,8 @@ export struct Player {
     int stressReport = 0      // >0 ⇒ 停手后再等这么多拍才报（让 GC 有机会回收 ⇒ 区分"真泄漏"和"GC 水位"✓）
     bool stressWarm = false   // 首页渲染几帧后才记基线（首帧纹理加载不算进增量 ✓）
     int rclickAt = 0          // >0 ⇒ 第 N 拍在结果表上注入一次右键（验证 dispose 没让菜单悬空 ✓）
+    int hoverAt = 0           // >0 ⇒ 第 N 拍把鼠标移到表格某行上（验证行级 hover 提示 ✓）
+
 
     // ==================== 入口 ====================
     func run() {
@@ -1170,6 +1173,24 @@ export struct Player {
                                          sep_color: C_TRANS, border: false,          // 去外框/分隔线 ✓
                                          empty_text: "还没有下载"})
             lt.set_rows(lrows)
+            // ---- 悬停整行提示：格式 / 大小 / 修改时间 / 完整路径 ----
+            //   列表只有「歌名/歌手/来源」三列，文件本身的信息（多大、什么格式、放哪）看不到 ⇒
+            //   用 Table 的**行级 tip**（set_row_tip，多行用 \n，气泡按行渲染 ✓）
+            for 0 : lsongs.len() - 1 to i {
+                Song s = lsongs[i]
+                string ext = dirs.extname(s.path).to_lower()       // ".mp3"
+                string fmt = if ext.len() > 1 then strings.to_upper(ext.slice(1, ext.len())) else "未知"
+                var inf = dirs.stat(s.path)                        // DirInfo{exists,size,is_file,is_dir,mtime}
+                string tip = s.title + "\n"
+                          + "歌手：" + s.artist + "\n"
+                          + "格式：" + fmt + " · 大小：" + dl.fmt_size(inf.size)
+                          + "（" + _str(inf.size) + " 字节）\n"
+                if inf.mtime > 0 {
+                    tip = tip + "修改：" + times.format(inf.mtime, "%Y-%m-%d %H:%M") + "\n"
+                }
+                tip = tip + "路径：" + s.path
+                lt.set_row_tip(i, tip)
+            }
             lt.on_dbl_click(func(int row, int col) { play_local_row(row) })
             // ---- 右击菜单----
             lt.set_context_builder(func(int row): Array[Dict] {
@@ -2297,9 +2318,21 @@ export struct Player {
         root.add(barBox, {grow: 0, shrink: 0, basis: BAR_H, align: 3})
 
         seek = SDL3.createProgressBar({value: 0.0, min: 0.0, max: 100.0, h: 4,
-                                       show_text: false, clickable: true,
-                                       fill_color: C_ACCENT, track_color: #E9C6D4FF})
+                                      show_text: false, clickable: true,
+                                      // 视觉只有 4px，但**命中区**上下各外扩 10px ⇒ 才点得中、悬停得住 ✓
+                                      hit_pad_y: 10.0,
+                                      fill_color: C_ACCENT, track_color: #E9C6D4FF})
         seek.on_change(func(float v) { on_seek(v) })
+        // 悬停提示：显示**光标位置**对应的时间（值 < 0 = 鼠标离开 ⇒ 收掉气泡 ✓）
+        //   进度条本体只有静态 tip 文案，这里靠框架的 on_hover 拿到光标处的值 ✓
+        seek.on_hover(func(float v, float mx, float my) {
+            // 用**带归属者**的 tip（"seek"）：气泡归进度条所有 ⇒ 别处的鼠标移动清不掉它，
+            //   它也只用 tipClearEx("seek") 清自己
+            //   ⚠ 原来用的是无条件 `SDL3.tipClear()`：鼠标每次移动都会把表格的**行级提示**
+            //     （大小/格式/路径）一起清掉 ⇒ 表格 tip 永远弹不出来 ✗✗（2026-10-27 实测）
+            if v < 0.0 or dur <= 0.0 { SDL3.tipClearEx("seek"); return }
+            SDL3.tipReportEx("seek", fmtTime(dur * v / 100.0), mx, my)
+        })
         barBox.add(seek, {grow: 0, shrink: 0, basis: 4, align: 3})
 
         bar = SDL3.createHBox({x: 0, y: 0, w: WIN_W, h: BAR_H - 4, pad_x: 18, pad_y: 5,
@@ -2562,8 +2595,15 @@ export struct Player {
         float r = v / 100.0
         if r < 0.0 { r = 0.0 }
         if r > 1.0 { r = 1.0 }
-        pos = dur * r
-        // ⚠ 暂不做真 seek（miniaudio 的 seek+resume 是最重的一步，排查卡顿时先不启用）
+        float target = dur * r
+        pos = target
+        // ★ 真 seek（2026-10-27）：之前这里只改 `pos` 不做跳转，下一拍 sync_play_ui 又按实际播放位置
+        //   把进度条拉回去 ⇒ 用户看到的就是「点了没反应/跳不过去」✗
+        //   `Sound.seek(秒)` 走 miniaudio 的 ma_sound_seek_to_second（一次调用，代价可接受）
+        if sndOk and dur > 0.0 {
+            if not snd.seek(target) { nowArtist.set_text("这个格式不支持跳转") }
+        }
+        shownSec = _int(pos)
         curTime.set_text(fmtTime(pos))
         SDL3.markFrameRedraw()
     }
@@ -2669,6 +2709,13 @@ export struct Player {
             rclickAt = 0
             SDL3.testRightClickAt(win.getID(), 320.0, 200.0)
             print("[rc] 已注入右键 @ (320,200)")
+        }
+        // ⓪b 悬停注入（ALKAID_HOVERAT=N）：鼠标停在表格第 1 行上，验证**行级 tip**（大小/格式/路径）
+        //   提示气泡有延迟（默认 500ms）⇒ 截图要在这之后再拍 ✓
+        if hoverAt > 0 and steps == hoverAt {
+            hoverAt = 0
+            SDL3.testMoveAt(win.getID(), 320.0, 200.0)
+            print("[hover] 已注入鼠标移动 @ (320,200)")
         }
         // ⓪ 切页内存探针（ALKAID_STRESS）：交替 首页(0) / 最近播放(2) ⇒ 每次 set_nav 都真的 rebuild
         if stressLeft > 0 {
@@ -2845,11 +2892,10 @@ export struct Player {
                 pos = pos + 0.2
             }
             if pos >= dur { pos = 0.0 }
-            if _int(pos) != shownSec {          // 只在秒数变化时刷界面
-                shownSec = _int(pos)
-                sync_play_ui()
-                SDL3.markFrameRedraw()
-            }
+            // ★ 每拍（100ms）都刷进度条 —— 原来"只在整秒变化时刷"，一秒跳一格看着**一顿一顿** ✗
+            //   文字仍在 sync_play_ui 里按秒门控（没必要 10 次/秒重设同一个字符串 ✓）
+            sync_play_ui()
+            SDL3.markFrameRedraw()
         }
         steps = steps + 1
     }
@@ -2861,7 +2907,12 @@ export struct Player {
         seekSyncing = true                  // 程序化刷新：别回灌成 seek ✓
         seek.set_value(r)
         seekSyncing = false
-        curTime.set_text(fmtTime(pos))
+        // 文字**按秒**门控：每拍都 set_text 同一个字符串是白费（标签会重新测量/重建纹理 ✓）
+        int sec = _int(pos)
+        if sec != shownSec {
+            shownSec = sec
+            curTime.set_text(fmtTime(pos))
+        }
         sync_like_icon()        // 换歌时 ♥ 跟着变（收藏过就红心 ✓）
     }
 
@@ -2939,6 +2990,8 @@ export struct Player {
         //   跑完打印进程内存增量。用它是为了把"点一下涨多少"变成数字，而不是靠肉眼看任务管理器 ✓
         var rc = _env("ALKAID_RCLICK")
         if rc != null { rclickAt = _int(_str(rc)) }
+        var hv = _env("ALKAID_HOVERAT")
+        if hv != null { hoverAt = _int(_str(hv)) }
         var st = _env("ALKAID_STRESS")
         if st != null {
             stressLeft = _int(_str(st))
