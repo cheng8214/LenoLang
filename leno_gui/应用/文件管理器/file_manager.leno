@@ -180,9 +180,13 @@ Array[int]    _dragSelRows = []    // 鼠标按下时捕获的多选行（拖拽
         return SDL3.createButton({x:0, y:0, w:84, h:26, text:"", image_path:imgPath(icon), background:false})
     }
 
-    // 右键菜单项 Dict
-    func ctxItem(string label, string id, string icon): Dict {
-        return {label: label, id: id, image: imgPath(icon)}
+    // 右键菜单项 Dict（`en` = 是否可用；菜单项支持 `enabled` ⇒ 不用再事后 setContextItemEnabled ✓）
+    func ctxItem(string label, string id, string icon, bool en = true): Dict {
+        return {label: label, id: id, image: imgPath(icon), enabled: en}
+    }
+    // 分隔线（声明式菜单里直接用，不再调 addContextSeparator ✓）
+    func ctxSep(): Dict {
+        return {separator: true}
     }
 
     // ===================== 工具方法 =====================
@@ -818,40 +822,37 @@ case "exit"      { wantQuit = true }
         }
     }
 
-    func onContextWillOpen(int row) {
-        table.clearContextItems()
+    // 右击菜单：**声明式**（框架先清空再填 ⇒ 不用手写 clearContextItems / addContextItem ✓）
+    //   row < 0 = 右击空白处 ⇒ 新建/粘贴/刷新；row >= 0 = 行菜单
+    //   "粘贴"可用性直接写在项里（enabled），不再事后 setContextItemEnabled ✓
+    func ctxItems(int row): Array[Dict] {
+        bool canPaste = clipPaths.len() > 0 and clipOp != ""
         if row < 0 {
-            table.addContextItem(ctxItem("新建文件夹", "newfolder", "new.png"))
-            table.addContextItem(ctxItem("新建文件", "newfile", "filetypes/file_1.png"))
-            table.addContextSeparator()
-            table.addContextItem(ctxItem("粘贴", "paste", "zhantie.png"))
-            table.addContextSeparator()
-            table.addContextItem(ctxItem("刷新", "refresh", "update.png"))
-            if clipPaths.len() == 0 or clipOp == "" {
-                table.setContextItemEnabled("paste", false)
-            }
-            return
+            return [ctxItem("新建文件夹", "newfolder", "new.png"),
+                    ctxItem("新建文件", "newfile", "filetypes/file_1.png"),
+                    ctxSep(),
+                    ctxItem("粘贴", "paste", "zhantie.png", canPaste),
+                    ctxSep(),
+                    ctxItem("刷新", "refresh", "update.png")]
         }
         var r = table.get_row(row)
         bool isDir = (r.len() >= 5 and r[4] == "1")
-        table.addContextItem(ctxItem("打开", "open", "open.png"))
-        table.addContextSeparator()
-        table.addContextItem(ctxItem("复制", "copyfile", "copy.png"))
-        table.addContextItem(ctxItem("剪切", "cutfile", "jianqie.png"))
-        table.addContextItem(ctxItem("粘贴", "paste", "zhantie.png"))
-        table.addContextSeparator()
-        table.addContextItem(ctxItem("重命名", "rename", "rename.png"))
-        table.addContextItem(ctxItem("删除", "del", "delete.png"))
-        table.addContextSeparator()
+        Array[Dict] items = [ctxItem("打开", "open", "open.png"),
+                             ctxSep(),
+                             ctxItem("复制", "copyfile", "copy.png"),
+                             ctxItem("剪切", "cutfile", "jianqie.png"),
+                             ctxItem("粘贴", "paste", "zhantie.png", canPaste),
+                             ctxSep(),
+                             ctxItem("重命名", "rename", "rename.png"),
+                             ctxItem("删除", "del", "delete.png"),
+                             ctxSep()]
         if isDir {
-            table.addContextItem(ctxItem("在此文件夹内新建文件夹", "newfolder", "new.png"))
-            table.addContextItem(ctxItem("添加到书签", "addbookmark", "shuqian.png"))
+            items.add(ctxItem("在此文件夹内新建文件夹", "newfolder", "new.png"))
+            items.add(ctxItem("添加到书签", "addbookmark", "shuqian.png"))
         } else {
-            table.addContextItem(ctxItem("属性", "props", "normal.png"))
+            items.add(ctxItem("属性", "props", "normal.png"))
         }
-        if clipPaths.len() == 0 or clipOp == "" {
-            table.setContextItemEnabled("paste", false)
-        }
+        return items
     }
 
     func onContextSelect(int row, string id) {
@@ -1103,7 +1104,7 @@ pathCombo.on_enter(func(string text) {
         })
         content.set_second(table)
         table.on_select(func(int row) { onTableSelect(row) })
-        table.on_context_will_open(func(int row) { onContextWillOpen(row) })
+        table.set_context_builder(func(int row): Array[Dict] { return ctxItems(row) })
         table.on_context_select(func(int row, string id) { onContextSelect(row, id) })
         table.on_edit_commit(func(int row, int col, string text) { onEditCommit(row, col, text) })
         table.set_editable(false)
