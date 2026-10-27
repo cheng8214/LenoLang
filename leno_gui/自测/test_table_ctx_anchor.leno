@@ -1,0 +1,73 @@
+// test_table_ctx_anchor.leno — Table 右击菜单**锚点**验收（回归件 ✓）
+//   由来：用户反馈「右键菜单不是应该在行上才出现的呀」——要分清两件事：
+//     ① 语义：右击**空白处**不该弹"针对某一行"的菜单（应用侧改，见 AlkaidMusic on_context_will_open）
+//     ② 位置：菜单要弹在**鼠标点**上（框架侧 Table → MenuBar.openContext 的锚点）
+//   本探针只验 ②：在表格第 2 行某点注入右键，然后用叠加层在**同一点**画一个红方块，
+//   截图里红方块应当正好压在菜单左上角附近（误差几像素 = 描边/内边距）。
+//
+//   跑法（项目根目录）：
+//     set PROBE_OUT=%TEMP%\ctx      # 存 ctx1.png
+//     build\leno.exe leno_gui\自测\test_table_ctx_anchor.leno
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer, Window, Table)
+
+const float CLICK_X = 300.0
+const float CLICK_Y = 100.0
+
+int steps = 0
+string outP = ""
+Window w
+Table tb
+
+func run() {
+    SDL3.ttfInit()
+    w = SDL3.createWindow({title: "probe_ctx_anchor", w: 760, h: 420})
+    if not w.ok { SDL3.ttfQuit(); return }
+
+    var op = _env("PROBE_OUT")
+    if op != null { outP = _str(op) }
+
+    tb = w.addTable({x: 20, y: 20, w: 700, h: 220,
+                     headers: ["名称", "大小"], col_ratios: [0.7, 0.3],
+                     item_h: 28, header_h: 28, font_size: 13})
+    Array[Array[string]] rows = []
+    for 1 : 6 to i { rows.add(["第 " + _str(i) + " 行", "1 MB"]) }
+    tb.set_rows(rows)
+    tb.on_context_will_open(func(int row) {
+        tb.clearContextItems()
+        if row < 0 {
+            tb.addContextItem({label: "空白处动作", id: "none"})
+            return
+        }
+        tb.addContextItem({label: "行动作 A", id: "a"})
+        tb.addContextItem({label: "行动作 B", id: "b"})
+        tb.addContextItem({label: "行动作 C", id: "c"})
+    })
+
+    // 叠加层：点完之后在点击位置画红方块，方便肉眼比对"菜单锚点 = 鼠标点"
+    w.setOverlay(func(Renderer r) {
+        if steps < 8 { return }
+        r.setColor(#FF2020FF)
+        r.fillRect(CLICK_X - 3.0, CLICK_Y - 3.0, 8.0, 8.0)
+        if steps == 10 and outP != "" {
+            var sz = w.getSize()
+            var px = r.readPixelsAt(0, 0, sz.w, sz.h)
+            if px != null { print("[ctx] 截图 " + outP + "1.png ok=" + _str(SDL3.saveImagePNG(px, outP + "1.png"))) }
+            print("[ctx] 注入点 = (" + _str(CLICK_X) + "," + _str(CLICK_Y) + ")；红方块 = 该点；菜单左上角应贴着红方块")
+            _exit(0)
+        }
+    })
+
+    w.addTimer(100, func() {
+        steps = steps + 1
+        if steps == 6 {
+            SDL3.testRightClickAt(w.getID(), CLICK_X, CLICK_Y)
+            print("[ctx] 已注入右键 @ (" + _str(CLICK_X) + "," + _str(CLICK_Y) + ")")
+        }
+    })
+
+    w.run(func(Event ev): bool { return true }, func(Renderer r) { r.clearColor(#101418FF) })
+    SDL3.ttfQuit()
+}
+
+main() { run() }

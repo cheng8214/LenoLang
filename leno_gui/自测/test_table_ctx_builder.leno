@@ -1,0 +1,103 @@
+// test_table_ctx_builder.leno — Table 声明式右击菜单 + 菜单样式透传验收（回归件 ✓）
+//   背景（2026-10-27）：`clearContextItems() + 逐条 addContextItem()` 这套样板很容易**漏 clear**，
+//     漏了就会把上一行/上一页的项串进这次菜单（AlkaidMusic 里真踩过：本地音乐冒出下载列表的项）。
+//     另外 Table 内部自建 MenuBar，图标大小/行高/字号应用根本调不了。
+//   修法：
+//     · `set_context_items(items)` / `set_context_builder(func(row): Array[Dict])` —— 框架**先清空再填**
+//     · 透传 `ctx_image_size` / `ctx_item_h` / `ctx_font_size` 给内部 MenuBar
+//
+//   判据（跑完看输出，全 OK）：
+//     ① 右击第 3 行 ⇒ ctx_item_count() = 3（行菜单）
+//     ② 右击表格下方空白 ⇒ ctx_item_count() = 1（只剩页面级项，**没有**累积前面的 3 条）
+//     ③ on_context_will_open 在 builder 之后仍会触发（可追加临时项）
+//     ④ 两张截图：菜单图标/行高按 ctx_* 透传变大
+//
+//   跑法（项目根目录）：
+//     set PROBE_OUT=%TEMP%\cb      # 存 cb1.png（行菜单）/ cb2.png（空白处菜单）
+//     build\leno.exe leno_gui\自测\test_table_ctx_builder.leno
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer, Window, Table)
+
+const float TB_X = 20.0
+const float TB_Y = 20.0
+const float TB_W = 700.0
+const float TB_H = 280.0
+const string ICO = "leno_gui/应用/AlkaidMusic/images/icons/"
+
+int steps = 0
+string outP = ""
+Window w
+Table tb
+int willOpenRow = -9
+string wantShot = ""
+
+func run() {
+    SDL3.ttfInit()
+    w = SDL3.createWindow({title: "probe_ctx_builder", w: 760, h: 400})
+    if not w.ok { SDL3.ttfQuit(); return }
+
+    var op = _env("PROBE_OUT")
+    if op != null { outP = _str(op) }
+
+    // 菜单样式透传：图标 22、行高 34（默认是 16 / font+12）
+    tb = w.addTable({x: TB_X, y: TB_Y, w: TB_W, h: TB_H,
+                     headers: ["名称", "大小"], col_ratios: [0.7, 0.3],
+                     item_h: 28, header_h: 28, font_size: 13,
+                     ctx_image_size: 22.0, ctx_item_h: 34.0})
+    Array[Array[string]] rows = []
+    for 1 : 6 to i { rows.add(["第 " + _str(i) + " 行", "1 MB"]) }
+    tb.set_rows(rows)
+
+    // 声明式菜单：按行给不同项（row < 0 = 空白处）
+    tb.set_context_builder(func(int row): Array[Dict] {
+        if row < 0 {
+            return [{label: "空白处动作", id: "blank", image: ICO + "menu_delete_all.png"}]
+        }
+        return [{label: "播放", id: "play", image: ICO + "menu_play.png"},
+                {label: "打开所在目录", id: "dir", image: ICO + "menu_open_dir.png"},
+                {label: "删除", id: "del", image: ICO + "menu_delete.png"}]
+    })
+    // builder 之后仍应触发（这里只记录，不追加，验证顺序）
+    tb.on_context_will_open(func(int row) { willOpenRow = row })
+
+    w.setOverlay(func(Renderer r) {
+        if wantShot == "" { return }
+        string p = wantShot
+        wantShot = ""
+        var sz = w.getSize()
+        var px = r.readPixelsAt(0, 0, sz.w, sz.h)
+        if px != null { print("[cb] 截图 " + p + " ok=" + _str(SDL3.saveImagePNG(px, p))) }
+    })
+
+    w.addTimer(100, func() {
+        steps = steps + 1
+        if steps == 5 {
+            // ① 右击第 3 行（行区：y = 20+28 起，每行 28）
+            SDL3.testRightClickAt(w.getID(), 300.0, TB_Y + 28.0 + 2.0 * 28.0 + 14.0)
+        }
+        if steps == 6 {
+            int n = tb.ctx_item_count()
+            if n == 3 { print("[cb] ① 行菜单 3 项 OK（row=" + _str(willOpenRow) + "）") }
+            else { print("[cb] ① 行菜单 ✗ 期望 3 项，实际 " + _str(n)) }
+            if outP != "" { wantShot = outP + "1.png" }
+        }
+        if steps == 8 {
+            // ② 右击表格下方空白（行区结束于 20+28+6*28 = 216）
+            SDL3.testRightClickAt(w.getID(), 300.0, 250.0)
+        }
+        if steps == 9 {
+            int n2 = tb.ctx_item_count()
+            if n2 == 1 { print("[cb] ② 空白处菜单 1 项 OK（没有累积前面的行项 ✓）") }
+            else { print("[cb] ② 空白处菜单 ✗ 期望 1 项，实际 " + _str(n2)) }
+            if willOpenRow == -1 { print("[cb] ③ on_context_will_open 在 builder 之后触发 OK（row=-1）") }
+            else { print("[cb] ③ on_context_will_open ✗ 期望 row=-1，实际 row=" + _str(willOpenRow)) }
+            if outP != "" { wantShot = outP + "2.png" }
+        }
+        if steps == 11 { _exit(0) }
+    })
+
+    w.run(func(Event ev): bool { return true }, func(Renderer r) { r.clearColor(#101418FF) })
+    SDL3.ttfQuit()
+}
+
+main() { run() }

@@ -32,7 +32,7 @@ use theme.Color
 //   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
 func _opts_keys(): Array[string] {
     return [
-"aligns", "bg_color", "border", "border_color", "cell_select", "cell_types", "check_col", "check_color", "col_ratios", "col_reorder", "col_widths", "cursor", "editable", "editable_cols", "empty_color", "empty_text", "enabled", "font_path", "font_size", "font_style", "frozen_cols", "h", "header_aligns", "header_color", "header_h", "headers", "image_cache_max", "image_col", "image_gap", "image_mode", "image_pad", "image_path", "image_size", "max_col_width", "min_col_width", "multi_select", "numeric_cols", "resizable", "item_h", "row_images", "row_num_color", "row_num_w", "row_numbers", "row_reorder", "rows", "sel_color", "sep_color", "sort_disabled_cols", "solid_sel", "hover_color", "sortable", "tip", "visible", "w", "x", "y", "zebra"
+"aligns", "bg_color", "border", "border_color", "cell_select", "cell_types", "check_col", "check_color", "col_ratios", "col_reorder", "col_widths", "ctx_font_size", "ctx_image_size", "ctx_item_h", "cursor", "editable", "editable_cols", "empty_color", "empty_text", "enabled", "font_path", "font_size", "font_style", "frozen_cols", "h", "header_aligns", "header_color", "header_h", "headers", "image_cache_max", "image_col", "image_gap", "image_mode", "image_pad", "image_path", "image_size", "max_col_width", "min_col_width", "multi_select", "numeric_cols", "resizable", "item_h", "row_images", "row_num_color", "row_num_w", "row_numbers", "row_reorder", "rows", "sel_color", "sep_color", "sort_disabled_cols", "solid_sel", "hover_color", "sortable", "tip", "visible", "w", "x", "y", "zebra"
 ]
 }
 export struct Table impl Widget, Themeable {
@@ -119,6 +119,16 @@ export struct Table impl Widget, Themeable {
     pri int ctxMenuH = -1
     Ptr[u8]? _hwnd           // 所属窗口句柄（供内嵌右击菜单按窗口隔离绘制）
     pri bool ctxMenuEnabled = true
+    // 声明式菜单（见 set_context_items / set_context_builder）：
+    //   ctxHasStatic ⇒ 用 ctxStatic；ctxBuilder 非空 ⇒ 按行动态生成（优先于静态列表）
+    pri bool ctxHasStatic = false
+    pri Array[Dict] ctxStatic = []
+    pri func(int): Array[Dict] ctxBuilder
+    // 菜单样式透传（0 = 用 MenuBar 默认值）。Table 内部自建 MenuBar，
+    //   不给透传的话应用根本没法调菜单图标大小/行高/字号，只能来改框架 ✗
+    pri float ctxImgSize = 0.0
+    pri float ctxItemH = 0.0
+    pri float ctxFontSize = 0.0
     // 行图标支持：指定某列显示 [图标+文字]，图标路径由 _rowImages 独立存储（对齐 Treeview 模式）
     pri int          imageCol = -1           // 图标列索引（0-based，-1=无图标列）
     pri Array[string] rowImages = []         // 每行图标路径（与 _rows 平行，空串=用默认图标）
@@ -491,6 +501,10 @@ export struct Table impl Widget, Themeable {
         _edit = edt.createEdit({x:0, y:0, w:w, h:rowH, font_size:_fontSize, border:false, draw_bg:true, radius:2})
         editing = false
         editRow = -1; editCol = -1
+        // 菜单样式透传（0 = 保持 MenuBar 默认）：先读进字段，创建/复用时都统一应用 ✓
+        ctxImgSize = opts.get("ctx_image_size", 0.0)
+        ctxItemH = opts.get("ctx_item_h", 0.0)
+        ctxFontSize = opts.get("ctx_font_size", 0.0)
         // 内嵌右击上下文菜单（首次 set 时创建，避免重复注册到全局菜单注册表）
         if ctxMenu == null {
             ctxMenu = menu.createMenuBar({})
@@ -499,6 +513,9 @@ export struct Table impl Widget, Themeable {
             ctxMenu.on_select(func(string m, string id) { ctx_select(id) })
             menu.registerContextMenu(ctxMenu)
         }
+        if ctxImgSize > 0.0 { ctxMenu.set_image_size(ctxImgSize) }
+        if ctxItemH > 0.0 { ctxMenu.set_item_h(ctxItemH) }
+        if ctxFontSize > 0.0 { ctxMenu.set_font_size(ctxFontSize) }
         _loaded = true
     }
 
@@ -1168,6 +1185,30 @@ export struct Table impl Widget, Themeable {
     func clearContextItems() {
         if ctxMenu != null and ctxMenuH >= 0 { ctxMenu.clearContextItems(ctxMenuH) }
     }
+
+    // ---- 声明式上下文菜单（2026-10-27 补）----
+    //   `clearContextItems() + 逐条 addContextItem()` 这套样板**很容易漏 clear**：
+    //   漏了就会把上一行/上一页的项串进这次菜单（实测踩过：本地音乐里冒出下载列表的项 ✗）
+    //   ⇒ 提供两种声明式写法，框架**先清空再填**，漏写 clear 这类错从此不可能 ✓
+    //
+    //   · `set_context_items(items)`：菜单项固定，不随行变化
+    //   · `set_context_builder(cb)`：按命中行动态生成（row < 0 = 空白处，交给应用决定给什么）
+    //   两种都与 on_context_will_open 兼容：本回调仍会在填完之后触发，可继续追加"临时项" ✓
+    func set_context_items(Array[Dict] items) {
+        ctxStatic = items
+        ctxHasStatic = true
+        ctxBuilder = null
+    }
+    func set_context_builder(func(int): Array[Dict] cb) {
+        ctxBuilder = cb
+        ctxHasStatic = false
+        ctxStatic = []
+    }
+    // 当前菜单项条数（自测/诊断用：验证"换行/空白处后没累积旧项" ✓）
+    func ctx_item_count(): int {
+        if ctxMenu == null or ctxMenuH < 0 { return 0 }
+        return ctxMenu.contextItemCount(ctxMenuH)
+    }
     // 注册行内编辑提交回调（行,列,新文本）；如用于右键“重命名”后落盘
     func on_edit_commit(func(int, int, string):void cb) { onEditCommit = cb }
     // 程序触发进入某行某列的行内编辑（如右键"重命名"、F2 快捷键）
@@ -1231,7 +1272,19 @@ export struct Table impl Widget, Themeable {
                 if onSelect != null { onSelect(ctxRow) }
             }
         }
+        // 声明式菜单：框架**先清空再填**（应用不用再记着 clearContextItems，漏写不会串项 ✓）
+        if ctxBuilder != null or ctxHasStatic {
+            ctxMenu.clearContextItems(ctxMenuH)
+            Array[Dict] items = ctxStatic
+            if ctxBuilder != null { items = ctxBuilder(ctxRow) }
+            if items != null {
+                for items.len() to k {
+                    if items[k] != null { ctxMenu.addContextItem(ctxMenuH, items[k]) }
+                }
+            }
+        }
         // 弹出前把命中行交给应用层，由它按行类型重建菜单项（文件/文件夹/空白处不同）
+        //   声明式菜单填完后本回调仍会触发 ⇒ 还能补"临时项"（此时别再自己 clear ✓）
         if onCtxWillOpen != null { onCtxWillOpen(ctxRow) }
         // 重建后仍无任何有效项则不弹菜单（避免出现空白横线）
         if ctxMenu.contextItemCount(ctxMenuH) == 0 { return }
