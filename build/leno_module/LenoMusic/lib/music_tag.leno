@@ -1,0 +1,595 @@
+// music_tag.leno — 音频文件标签：**读 + 写**封面/歌词/标题/歌手（2026-10-28）
+// ----------------------------------------------------------------------------
+// 支持格式：
+//   · MP3 → ID3v2.3（TIT2 / TPE1 / APIC / USLT）
+//   · FLAC → Vorbis Comment（TITLE / ARTIST / LYRICS）+ PICTURE（type=3 封面）
+//   其它（m4a/aac/ogg/wav…）→ 不支持：读回空、写返回原因，**不动文件** ✓
+//
+// 写法的两条路径（关键设计）：
+//   ① **原地改**（快，只写头部）：FLAC 有 PADDING 块时，把新的 VC/PICTURE 塞进 padding，
+//      文件总长不变、音频一个字节都不搬 ⇒ 55MB 文件也是毫秒级 ✓
+//   ② **全量重写**（兜底）：padding 不够 / 没有 padding ⇒ 写 `xxx.tmp` 再替换原文件
+//      （先写临时文件、成功才替换，中途失败原文件还在 ✓）
+//
+// 几条硬约束（都是踩过的）：
+//   · 内存：音频几十 MB，**不整文件读进内存**；只有 tag 很小才拼串，音频按 1MB 分块拷
+//   · 字节序三处不同：ID3v2 的 **tag 总长 synchsafe**（每字节 7 位）、ID3 帧长**大端**、
+//     FLAC 的 Vorbis Comment 长度**小端**
+//   · 二进制必须用 `byte_slice / byte_len`（不是 `slice`，那是按码点，遇到多字节会切错 ✗）
+//   · 原地写必须用 **`rb+`**：`r+` 是文本模式，会把 0x0A 转成 0x0D 0x0A，直接把文件写坏 ✗
+//     （2026-10-28 实测：r+ 写过的地方后面全错位）
+import files
+import dirs
+import strings
+
+const int CHUNK = 1048576       // 1MB 分块
+const string OWNER = "LenoMusic"
+// FLAC padding：新写的文件留 16KB，够以后改几十次歌词都不必重写音频；
+//   原地改时至少要剩 2KB，否则这次用完下次又得全量重写 ✗
+const int PAD_ADD = 16384
+const int MINPAD = 2048
+
+// ==================== 读取结果 ====================
+export struct TagInfo {
+    string title = ""
+    string artist = ""
+    string album = ""
+    string lyric = ""
+    int picBytes = 0            // 内嵌封面字节数（0 = 没有）
+    bool ok = false             // 文件认得出、标签读到了（哪怕是空标签）
+}
+
+// ==================== 字节工具 ====================
+func byte_of(string s, int i): int {
+    if i < 0 or i >= s.byte_len() { return 0 }
+    var b = s.byte(i)
+    if b is int { return b }
+    return 0
+}
+
+func from_bytes(Array[int] a): string { return strings.from_bytes(a) }
+
+// 大端 4 字节
+func be32(int v): string {
+    return from_bytes([(v >> 24) & 255, (v >> 16) & 255, (v >> 8) & 255, v & 255])
+}
+
+// 大端 3 字节
+func be24(int v): string {
+    return from_bytes([(v >> 16) & 255, (v >> 8) & 255, v & 255])
+}
+
+// 小端 4 字节（FLAC 的 Vorbis Comment 用）
+func le32(int v): string {
+    return from_bytes([v & 255, (v >> 8) & 255, (v >> 16) & 255, (v >> 24) & 255])
+}
+
+// synchsafe 4 字节（ID3v2 tag 总长；每字节只用低 7 位）
+func synchsafe(int v): string {
+    return from_bytes([(v >> 21) & 127, (v >> 14) & 127, (v >> 7) & 127, v & 127])
+}
+
+func read_be32(string s, int i): int {
+    return (byte_of(s, i) << 24) | (byte_of(s, i + 1) << 16) | (byte_of(s, i + 2) << 8) | byte_of(s, i + 3)
+}
+
+func read_le32(string s, int i): int {
+    return byte_of(s, i) | (byte_of(s, i + 1) << 8) | (byte_of(s, i + 2) << 16) | (byte_of(s, i + 3) << 24)
+}
+
+func read_synchsafe(string s, int i): int {
+    return (byte_of(s, i) << 21) | (byte_of(s, i + 1) << 14) | (byte_of(s, i + 2) << 7) | byte_of(s, i + 3)
+}
+
+func file_len(string p): int {
+    try {
+        File f = files.open(p, "rb")
+        int n = f.len()
+        f.close()
+        return n
+    } catch e {
+        return -1
+    }
+}
+
+// 分块把 src 的 [startPos, endPos) 拷到 dst —— 内存只需 1MB ✓（参数名不能叫 `to`，保留字 ✗）
+func copy_range(File src, int startPos, int endPos, File dst): bool {
+    if endPos <= startPos { return true }
+    if src.seek(startPos, "set") != 0 { return false }
+    int left = endPos - startPos
+    while left > 0 {
+        int n = if left > CHUNK then CHUNK else left
+        string buf = src.read(n)
+        int got = buf.byte_len()
+        if got <= 0 { return false }
+        dst.write(buf)
+        left = left - got
+    }
+    return true
+}
+
+func copy_all(File src, File dst): bool {
+    return copy_range(src, 0, src.len(), dst)
+}
+
+// ID3 文本帧内容 → string：编码 0x03/0x00 = UTF-8 系（0 是 ISO-8859-1，中文歌基本不用）
+//   1/2 = UTF-16，这里不转（返回空，避免给出乱码 ✗）
+func decode_id3_text(string body): string {
+    if body.byte_len() <= 1 { return "" }
+    int enc = byte_of(body, 0)
+    if enc == 1 or enc == 2 { return "" }
+    string s = body.byte_slice(1, body.byte_len() - 1)
+    // 去掉结尾的 0
+    int n = s.byte_len()
+    while n > 0 and byte_of(s, n - 1) == 0 { n = n - 1 }
+    if n <= 0 { return "" }
+    return s.byte_slice(0, n - 1)
+}
+
+// ==================== ID3v2.3（MP3）====================
+func id3_frame(string id, string body): string {
+    return id + be32(body.byte_len()) + from_bytes([0, 0]) + body
+}
+
+func id3_text(string s): string { return from_bytes([3]) + s }      // 编码 0x03 = UTF-8
+
+func id3_apic(string coverPath): string {
+    if coverPath == "" or not files.exists(coverPath) { return "" }
+    string mime = "image/png"
+    string ext = dirs.extname(coverPath).to_lower()
+    if ext == ".jpg" or ext == ".jpeg" { mime = "image/jpeg" }
+    string img = ""
+    try { img = files.read(coverPath) } catch e { print("[tag] 读封面失败：" + _str(e)) }
+    if img.byte_len() <= 0 { return "" }
+    // 编码 0x03 + MIME(ASCII,0) + 图片类型 0x03(封面正面) + 描述("",0) + 数据
+    string body = from_bytes([3]) + mime + from_bytes([0]) + from_bytes([3]) + from_bytes([0]) + img
+    return id3_frame("APIC", body)
+}
+
+func id3_uslt(string lyricText): string {
+    if lyricText == "" { return "" }
+    string body = from_bytes([3]) + "und" + from_bytes([0]) + lyricText
+    return id3_frame("USLT", body)
+}
+
+func id3_tag(string title, string artist, string coverPath, string lyricText): string {
+    string body = ""
+    if title != "" { body = body + id3_frame("TIT2", id3_text(title)) }
+    if artist != "" { body = body + id3_frame("TPE1", id3_text(artist)) }
+    string apic = id3_apic(coverPath)
+    if apic != "" { body = body + apic }
+    string uslt = id3_uslt(lyricText)
+    if uslt != "" { body = body + uslt }
+    return "ID3" + from_bytes([3, 0, 0]) + synchsafe(body.byte_len()) + body
+}
+
+// 原文件里旧 ID3v2 的字节数（没有 ⇒ 0）：新 tag 拼在**音频数据**前，旧 tag 直接丢掉 ✓
+func id3_old_size(File f): int {
+    f.seek(0, "set")
+    string h = f.read(10)
+    if h.byte_len() < 10 { return 0 }
+    if h.byte_slice(0, 2) != "ID3" { return 0 }
+    int sz = read_synchsafe(h, 6)
+    int flags = byte_of(h, 5)
+    int total = 10 + sz
+    if (flags & 16) != 0 { total = total + 10 }      // 带 footer
+    return total
+}
+
+func embed_mp3(string path, string title, string artist, string coverPath, string lyricText): string {
+    string tmp = path + ".tmp"
+    try {
+        File r = files.open(path, "rb")
+        int skip = id3_old_size(r)
+        int total = r.len()
+        string tag = id3_tag(title, artist, coverPath, lyricText)
+        File w = files.open(tmp, "wb")
+        w.write(tag)
+        bool ok = copy_range(r, skip, total, w)
+        r.close()
+        w.close()
+        if not ok { return "拷贝音频失败" }
+    } catch e {
+        return "处理失败：" + _str(e)
+    }
+    return replace_file(tmp, path)
+}
+
+// 读 MP3 的 ID3v2.3 标签
+func read_mp3(string path): TagInfo {
+    TagInfo t = new TagInfo()
+    try {
+        File f = files.open(path, "rb")
+        string h = f.read(10)
+        if h.byte_len() < 10 or h.byte_slice(0, 2) != "ID3" {
+            f.close()
+            t.ok = true                      // 是 MP3，只是没有 ID3v2
+            return t
+        }
+        int size = read_synchsafe(h, 6)
+        if size <= 0 or size > 16777216 {
+            f.close()
+            t.ok = true
+            return t
+        }
+        string body = f.read(size)
+        f.close()
+        int pos = 0
+        int guard = 0
+        while guard < 512 {
+            guard = guard + 1
+            if pos + 10 > body.byte_len() { break }
+            string id = body.byte_slice(pos, pos + 3)
+            if byte_of(body, pos) == 0 { break }             // padding 开始
+            int fsize = read_be32(body, pos + 4)
+            if fsize <= 0 or pos + 10 + fsize > body.byte_len() { break }
+            string content = body.byte_slice(pos + 10, pos + 10 + fsize - 1)
+            if id == "TIT2" { t.title = decode_id3_text(content) }
+            eif id == "TPE1" { t.artist = decode_id3_text(content) }
+            eif id == "TALB" { t.album = decode_id3_text(content) }
+            eif id == "USLT" {
+                // 编码(1) + 语言(3) + 描述(0 结尾) + 歌词
+                if content.byte_len() > 4 {
+                    int i = 4
+                    while i < content.byte_len() and byte_of(content, i) != 0 { i = i + 1 }
+                    i = i + 1
+                    if i < content.byte_len() { t.lyric = content.byte_slice(i, content.byte_len() - 1) }
+                }
+            }
+            eif id == "APIC" {
+                // 编码(1) + MIME(0 结尾) + 类型(1) + 描述(0 结尾) + 数据
+                int i = 1
+                while i < content.byte_len() and byte_of(content, i) != 0 { i = i + 1 }
+                i = i + 1                                     // 跳过 MIME 的 0
+                i = i + 1                                     // 跳过图片类型
+                while i < content.byte_len() and byte_of(content, i) != 0 { i = i + 1 }
+                i = i + 1                                     // 跳过描述的 0
+                if i < content.byte_len() { t.picBytes = content.byte_len() - i }
+            }
+            pos = pos + 10 + fsize
+        }
+        t.ok = true
+    } catch e {
+        print("[tag] 读 MP3 标签失败：" + _str(e))
+    }
+    return t
+}
+
+// ==================== FLAC ====================
+func vc_entry(string k, string v): string {
+    string s = k + "=" + v
+    return le32(s.byte_len()) + s
+}
+
+func flac_vorbis(string title, string artist, string lyricText): string {
+    string items = ""
+    int cnt = 0
+    if title != "" { items = items + vc_entry("TITLE", title); cnt = cnt + 1 }
+    if artist != "" { items = items + vc_entry("ARTIST", artist); cnt = cnt + 1 }
+    if lyricText != "" { items = items + vc_entry("LYRICS", lyricText); cnt = cnt + 1 }
+    return le32(OWNER.byte_len()) + OWNER + le32(cnt) + items
+}
+
+func flac_picture(string coverPath): string {
+    if coverPath == "" or not files.exists(coverPath) { return "" }
+    string mime = "image/png"
+    string ext = dirs.extname(coverPath).to_lower()
+    if ext == ".jpg" or ext == ".jpeg" { mime = "image/jpeg" }
+    string img = ""
+    try { img = files.read(coverPath) } catch e { print("[tag] 读封面失败：" + _str(e)) }
+    if img.byte_len() <= 0 { return "" }
+    // type(4)=3 + mime + 空描述 + 宽/高/色深/色数(0 = 未提供) + 数据长度 + 数据
+    return be32(3) + be32(mime.byte_len()) + mime + be32(0) +
+           be32(0) + be32(0) + be32(0) + be32(0) + be32(img.byte_len()) + img
+}
+
+func flac_block(bool last, int typ, string body): string {
+    int h = typ & 127
+    if last { h = h | 128 }
+    return from_bytes([h]) + be24(body.byte_len()) + body
+}
+
+// 读块头 → [type, length, last]；不够 4 字节 ⇒ 空
+func flac_read_head(File f): Array[int] {
+    string h = f.read(4)
+    if h.byte_len() < 4 { return [] }
+    int b0 = byte_of(h, 0)
+    int typ = b0 & 127
+    int last = if (b0 & 128) != 0 then 1 else 0
+    int ln = (byte_of(h, 1) << 16) | (byte_of(h, 2) << 8) | byte_of(h, 3)
+    return [typ, ln, last]
+}
+
+// 块表：返回 [keepType[], keepOff[], keepLen[], vcLen, picLen, padLen, audioStart]
+//   keep = 除 VORBIS_COMMENT(4) / PICTURE(6) / PADDING(1) 之外的块（STREAMINFO 等，原样保留）
+struct FlacMap {
+    Array[int] keepType = []
+    Array[int] keepOff = []
+    Array[int] keepLen = []
+    int vcLen = 0               // 旧 VC 块**总长**（含 4 字节头）
+    int picLen = 0              // 旧 PICTURE 块总长
+    int padLen = 0              // 所有 PADDING 块的数据长度之和
+    int audioStart = 0
+    bool ok = false
+}
+
+func flac_map(File r): FlacMap {
+    FlacMap m = new FlacMap()
+    int pos = 4
+    int guard = 0
+    while guard < 256 {
+        guard = guard + 1
+        if r.seek(pos, "set") != 0 { break }
+        var hd = flac_read_head(r)
+        if hd.len() < 3 { break }
+        int typ = hd[0]
+        int ln = hd[1]
+        int last = hd[2]
+        int dataOff = pos + 4
+        if typ == 4 {
+            m.vcLen = m.vcLen + 4 + ln
+        } eif typ == 6 {
+            m.picLen = m.picLen + 4 + ln
+        } eif typ == 1 {
+            m.padLen = m.padLen + ln
+        } else {
+            m.keepType.add(typ)
+            m.keepOff.add(dataOff)
+            m.keepLen.add(ln)
+        }
+        pos = dataOff + ln
+        if last != 0 {
+            m.audioStart = pos
+            m.ok = true
+            break
+        }
+    }
+    return m
+}
+
+func embed_flac(string path, string title, string artist, string coverPath, string lyricText): string {
+    string tmp = path + ".tmp"
+    bool hasPic = false
+    try {
+        File r = files.open(path, "rb")
+        string magic = r.read(4)
+        if magic != "fLaC" {
+            r.close()
+            return "不是 FLAC 文件"
+        }
+        FlacMap m = flac_map(r)
+        if not m.ok or m.audioStart <= 0 {
+            r.close()
+            return "FLAC 头解析失败"
+        }
+        string vc = flac_vorbis(title, artist, lyricText)
+        string pic = flac_picture(coverPath)
+        hasPic = pic != ""
+        int newInner = 4 + vc.byte_len() + (if hasPic then 4 + pic.byte_len() else 0)
+        int oldInner = m.vcLen + m.picLen
+        int delta = newInner - oldInner
+        int oldMetaLen = m.audioStart - 4
+
+        // ★ 路径①：padding 够 ⇒ **原地只改头部**（音频一个字节都不搬）
+        //   要求剩下至少 MINPAD 的 padding：否则这次用光了，下次改歌词又得全量重写 ✗
+        if m.padLen - delta >= MINPAD {
+            int newPad = m.padLen - delta
+            // 组装整段 metadata（keep 块原样 + 新 VC + 新 PICTURE + 剩余 padding）
+            string area = ""
+            int i = 0
+            while i < m.keepType.len() {
+                r.seek(m.keepOff[i], "set")
+                area = area + flac_block(false, m.keepType[i], r.read(m.keepLen[i]))
+                i = i + 1
+            }
+            area = area + flac_block(false, 4, vc)
+            if hasPic { area = area + flac_block(false, 6, pic) }
+            if newPad > 0 { area = area + flac_block(true, 1, _zeros(newPad)) }
+            // last 位：最后一块要标（上面 padding 是最后一块；没 padding 时 PICTURE/VC 是最后一块）
+            if newPad <= 0 {
+                if hasPic {
+                    // 把 PICTURE 块（area 末尾 4+pic 字节）的首字节置 last
+                    area = _mark_last(area, area.byte_len() - (4 + pic.byte_len()))
+                } else {
+                    area = _mark_last(area, area.byte_len() - (4 + vc.byte_len()))
+                }
+            }
+            if area.byte_len() == oldMetaLen {
+                r.close()
+                // ⚠ 必须 "rb+"（二进制读写）："r+" 会把 0x0A 转成 CRLF，直接把文件写坏 ✗
+                File w = files.open(path, "rb+")
+                w.seek(4, "set")
+                w.write(area)
+                w.close()
+                return ""
+            }
+            // 长度对不上（理论不会）⇒ 继续走全量重写
+        }
+
+        // ★ 路径②：全量重写（没有 padding / 放不下）
+        int total = r.len()
+        File w2 = files.open(tmp, "wb")
+        w2.write("fLaC")
+        int k = 0
+        while k < m.keepType.len() {
+            r.seek(m.keepOff[k], "set")
+            w2.write(flac_block(false, m.keepType[k], r.read(m.keepLen[k])))
+            k = k + 1
+        }
+        w2.write(flac_block(false, 4, vc))
+        if hasPic { w2.write(flac_block(false, 6, pic)) }
+        // ★ 全量重写时**顺手留 16KB padding**：这样以后改歌词/换封面就能走"原地改头部"
+        //   （酷我下载的 flac 通常没有 padding ⇒ 首次必须全量重写，但只需这一次 ✓）
+        w2.write(flac_block(true, 1, _zeros(PAD_ADD)))
+        bool ok = copy_range(r, m.audioStart, total, w2)
+        r.close()
+        w2.close()
+        if not ok { return "拷贝音频失败" }
+    } catch e {
+        return "处理失败：" + _str(e)
+    }
+    return replace_file(tmp, path)
+}
+
+func _zeros(int n): string {
+    if n <= 0 { return "" }
+    string block = ""
+    int made = 0
+    while made < n {
+        int seg = if n - made > 1024 then 1024 else n - made
+        Array[int] z = []
+        for 0 : seg - 1 to i { z.add(0) }
+        block = block + from_bytes(z)
+        made = made + seg
+    }
+    return block
+}
+
+// 把 area 里 offset 处的块头首字节置 last（保留其 type 位）
+func _mark_last(string area, int offset): string {
+    if offset < 0 or offset >= area.byte_len() { return area }
+    int b = byte_of(area, offset) | 128
+    return area.byte_slice(0, offset - 1) + from_bytes([b]) + area.byte_slice(offset + 1, area.byte_len() - 1)
+}
+
+// 没有封面时，最后一块是 VC ⇒ 把 last 位置 1（否则播放器认为后面还有块）
+func fix_flac_last(string path) {
+    try {
+        File f = files.open(path, "rb+")
+        int pos = 4
+        int guard = 0
+        while guard < 256 {
+            guard = guard + 1
+            if f.seek(pos, "set") != 0 { break }
+            string h = f.read(4)
+            if h.byte_len() < 4 { break }
+            int b0 = byte_of(h, 0)
+            int ln = (byte_of(h, 1) << 16) | (byte_of(h, 2) << 8) | byte_of(h, 3)
+            int next = pos + 4 + ln
+            bool looksBlock = false
+            if f.seek(next, "set") == 0 {
+                string probe = f.read(4)
+                if probe.byte_len() == 4 {
+                    if (byte_of(probe, 0) & 127) <= 6 { looksBlock = true }
+                }
+            }
+            if not looksBlock {
+                f.seek(pos, "set")
+                f.write(from_bytes([b0 | 128]) + h.byte_slice(1, 3))
+                break
+            }
+            pos = next
+        }
+        f.close()
+    } catch e {
+        print("[tag] 修正 FLAC last 标志失败：" + _str(e))
+    }
+}
+
+// 读 FLAC 的 Vorbis Comment + PICTURE
+func read_flac(string path): TagInfo {
+    TagInfo t = new TagInfo()
+    try {
+        File f = files.open(path, "rb")
+        if f.read(4) != "fLaC" {
+            f.close()
+            return t
+        }
+        int pos = 4
+        int guard = 0
+        while guard < 256 {
+            guard = guard + 1
+            if f.seek(pos, "set") != 0 { break }
+            var hd = flac_read_head(f)
+            if hd.len() < 3 { break }
+            int typ = hd[0]
+            int ln = hd[1]
+            int last = hd[2]
+            if typ == 4 and ln > 0 and ln < 2097152 {
+                string body = f.read(ln)
+                int p = 0
+                int vlen = read_le32(body, p)
+                p = p + 4 + vlen
+                int cnt = read_le32(body, p)
+                p = p + 4
+                int c = 0
+                while c < cnt and p + 4 <= body.byte_len() {
+                    int elen = read_le32(body, p)
+                    p = p + 4
+                    if elen <= 0 or p + elen > body.byte_len() { break }
+                    string kv = body.byte_slice(p, p + elen - 1)
+                    int eq = strings.find(kv, "=")
+                    if eq > 0 {
+                        string key = kv.byte_slice(0, eq - 1).to_upper()
+                        string val = kv.byte_slice(eq + 1, kv.byte_len() - 1)
+                        if key == "TITLE" { t.title = val }
+                        eif key == "ARTIST" { t.artist = val }
+                        eif key == "ALBUM" { t.album = val }
+                        eif key == "LYRICS" or key == "UNSYNCEDLYRICS" { t.lyric = val }
+                    }
+                    p = p + elen
+                    c = c + 1
+                }
+            } eif typ == 6 and ln > 0 and ln < 16777216 {
+                // type(4) + mimeLen(4) + mime + descLen(4) + desc + w/h/depth/colors(16) + dataLen(4) + data
+                string body = f.read(ln)
+                int p = 4
+                int mlen = read_be32(body, p)
+                p = p + 4 + mlen
+                int dlen = read_be32(body, p)
+                p = p + 4 + dlen + 16
+                int blen = read_be32(body, p)
+                if blen > 0 and p + 4 + blen <= body.byte_len() { t.picBytes = blen }
+            }
+            pos = pos + 4 + ln
+            if last != 0 {
+                t.ok = true
+                break
+            }
+        }
+        f.close()
+    } catch e {
+        print("[tag] 读 FLAC 标签失败：" + _str(e))
+    }
+    return t
+}
+
+// ==================== 替换原文件 ====================
+func replace_file(string tmp, string path): string {
+    int want = file_len(tmp)
+    if want <= 0 { return "临时文件为空" }
+    try {
+        File src = files.open(tmp, "rb")
+        files.delete(path)
+        File dst = files.open(path, "wb")
+        bool ok = copy_all(src, dst)
+        src.close()
+        dst.close()
+        if not ok { return "拷回原文件失败" }
+        // 校验：拷回的长度必须和临时文件一致，否则别删临时文件（还能人工救）
+        if file_len(path) != want { return "拷回长度不一致（临时文件保留：" + tmp + "）" }
+        files.delete(tmp)
+        return ""
+    } catch e {
+        return "替换原文件失败：" + _str(e)
+    }
+}
+
+// ==================== 对外入口 ====================
+// 写标签：返回 "" = 成功；否则是给用户看的原因
+export func write_tag(string path, string title, string artist, string coverPath, string lyricText): string {
+    if path == "" or not files.exists(path) { return "文件不存在" }
+    string ext = dirs.extname(path).to_lower()
+    if ext == ".mp3" { return embed_mp3(path, title, artist, coverPath, lyricText) }
+    if ext == ".flac" { return embed_flac(path, title, artist, coverPath, lyricText) }
+    return "暂不支持 " + ext + " 内嵌（先只做 MP3 / FLAC）"
+}
+
+// 读标签：认不出的格式返回 ok = false（上层据此决定"跳过/提示" ✓）
+export func read_tag(string path): TagInfo {
+    if path == "" or not files.exists(path) { return new TagInfo() }
+    string ext = dirs.extname(path).to_lower()
+    if ext == ".mp3" { return read_mp3(path) }
+    if ext == ".flac" { return read_flac(path) }
+    return new TagInfo()
+}

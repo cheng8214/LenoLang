@@ -1,0 +1,76 @@
+// test_music_tag.leno — LenoMusic 的音频标签读写（readTag / writeTag）
+//   ⚠ 只用标签接口，**不 createSound**：无窗口进程里初始化音频引擎会阻塞（踩过 ✗）
+//   数据用下载目录里的真实 flac（没有就跳过，不算失败）
+import "Music" as audio
+import "SDL3" as SDL3
+import files
+use audio.TagInfo
+
+const string DL = "leno_gui\\应用\\AlkaidMusic\\cache\\downloads\\"
+const string COVER = "leno_gui\\应用\\AlkaidMusic\\images\\cover03.png"
+
+int fails = 0
+
+func ok(string name, bool cond, string detail) {
+    if cond {
+        print("[mt] " + name + " OK" + (if detail != "" then "（" + detail + "）" else ""))
+    } else {
+        fails = fails + 1
+        print("[mt] " + name + " ✗ " + detail)
+    }
+}
+
+func flen(string p): int {
+    try {
+        File f = files.open(p, "rb")
+        int n = f.len()
+        f.close()
+        return n
+    } catch e {
+        return -1
+    }
+}
+
+main() {
+    string song = DL + "草帽酱&DJ阿泽 - 青衣 (DJ阿泽版).flac"
+    if not files.exists(song) {
+        print("[mt] 跳过：没有样本文件 " + song)
+        _exit(0)
+    }
+
+    // ① 读：应该能读出标题/歌手（酷我下载的 flac 自带 Vorbis Comment）
+    TagInfo t0 = audio.readTag(song)
+    ok("① 读标签", t0.ok and t0.title != "", "标题=\"" + t0.title + "\" 歌手=\"" + t0.artist
+       + "\" 封面=" + _str(t0.picBytes) + "B 歌词=" + _str(t0.lyric.byte_len()) + "B")
+
+    // ② 写：内嵌封面 + 歌词（首次可能要全量重写）
+    int t = SDL3.getTicks()
+    string err = audio.writeTag(song, "青衣 (DJ阿泽版)", "草帽酱&DJ阿泽", COVER,
+                                "[00:00.00]青衣 - 草帽酱\n[00:03.00]第二句\n")
+    int ms1 = SDL3.getTicks() - t
+    ok("② 写标签", err == "", "返回=\"" + err + "\" 耗时=" + _str(ms1) + "ms")
+
+    // ③ 再读：封面上去了、歌词读回来了
+    TagInfo t1 = audio.readTag(song)
+    ok("③ 写后能读回封面与歌词", t1.picBytes > 1000 and t1.lyric.byte_len() > 10,
+       "封面=" + _str(t1.picBytes) + "B 歌词=" + _str(t1.lyric.byte_len()) + "B")
+
+    // ④ 再写一次：此时文件已带 16KB padding ⇒ 应走"原地只改头部"
+    //   判据两点：① 耗时是毫秒级（45MB 全量重写要 600ms+）② **文件长度不变**（原地改不动音频）
+    int len1 = flen(song)
+    int t2 = SDL3.getTicks()
+    string err2 = audio.writeTag(song, "青衣 (DJ阿泽版)", "草帽酱&DJ阿泽", COVER,
+                                 "[00:00.00]青衣 - 草帽酱\n[00:03.00]改过的第二句\n[00:09.00]第三句\n")
+    int ms2 = SDL3.getTicks() - t2
+    int len2 = flen(song)
+    ok("④ 二次写入走原地路径（毫秒级 + 文件长度不变）",
+       err2 == "" and ms2 < 100 and len1 == len2,
+       "耗时 " + _str(ms2) + "ms，大小 " + _str(len1) + " → " + _str(len2))
+
+    // ⑤ 不支持格式：返回原因、不动文件
+    TagInfo t3 = audio.readTag("leno_gui\\应用\\AlkaidMusic\\images\\cover03.png")
+    ok("⑤ 非音频文件 readTag 返回 ok=false", not t3.ok, "ok=" + _str(t3.ok))
+
+    print("[mt] ===== 失败 " + _str(fails) + " 项")
+    _exit(if fails == 0 then 0 else 1)
+}

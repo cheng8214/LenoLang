@@ -9,6 +9,7 @@ import "music_decoder.leno" as decoder
 import "music_generator.leno" as gen
 import "music_filter.leno" as flt
 import "music_sfx.leno" as sfx
+import "music_tag.leno" as tagger
 
 // ==================== Re-export types ====================
 use core.miniaudio
@@ -17,6 +18,7 @@ use decoder.Decoder
 use gen.(Waveform, Noise)
 use flt.(LPF, HPF)
 use sfx.Sfx
+use tagger.TagInfo
 
 // ==================== Re-export constants ====================
 export var FORMAT_F32 = core.FORMAT_F32
@@ -50,6 +52,17 @@ export func createSfx(string p, int n, float v): Sfx { return sfx.createSfx(p, n
 // ==================== Decoder ====================
 export func createDecoder(string p): Decoder { return decoder.createDecoder(p) }
 export func getInfo(string p) { decoder.getInfo(p) }
+
+// ==================== Tags（音频文件标签：读 / 写封面·歌词·标题·歌手）====================
+// 为什么放在本模块：它只跟"音频容器格式"打交道（MP3 的 ID3v2、FLAC 的 VorbisComment/PICTURE），
+//   和播放/解码同属音乐域；应用侧不必各自再写一份（详见 music_tag.leno 顶部说明）
+//   · 支持 MP3(ID3v2.3) / FLAC(VorbisComment+PICTURE)；其它格式：read 返回 ok=false、write 返回原因
+//   · FLAC 有 padding 时**原地只改头部**（55MB 文件 0ms）；没有则整文件重写并顺手留 16KB padding
+export func readTag(string p): TagInfo { return tagger.read_tag(p) }
+// 写标签：返回 "" = 成功，否则是给用户看的原因
+export func writeTag(string p, string title, string artist, string coverPath, string lyricText): string {
+    return tagger.write_tag(p, title, artist, coverPath, lyricText)
+}
 
 // ==================== Generator ====================
 export func createWaveform(int f, int c, int s, int t, float a, float fr): Waveform {
