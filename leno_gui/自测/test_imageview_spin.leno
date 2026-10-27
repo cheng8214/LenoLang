@@ -1,0 +1,90 @@
+// test_imageview_spin.leno — ImageView **旋转 / 自转**验收（回归件 ✓）
+//   需求：「让头像变成圆的然后旋转起来」（音乐播放器的唱片头像）。
+//   框架侧（2026-10-27）：`radius` 设成 w/2 就是正圆；新增
+//     `rotation`（初始角度）/ `spin`（每秒度数，>0 自转）/ set_spin(0) 停，
+//     自转按 ~25fps 推进角度并请求重绘（不是每帧 60fps 全窗重绘）。
+//   判据（跑完看输出，全 OK）：
+//     ① rotation: 90 时初始角度就是 90
+//     ② spin: 120 跑 ~0.6s ⇒ 角度明显变大（<360）
+//     ③ set_spin(0) 之后角度**不再变**（暂停就该停 ✓）
+//
+//   跑法（项目根目录）：
+//     set PROBE_OUT=%TEMP%\sp      # 可选：存 sp1.png / sp2.png（肉眼看圆不圆、转没转）
+//     build\leno.exe leno_gui\自测\test_imageview_spin.leno
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer, Window, ImageView)
+
+const string IMG = "leno_gui/应用/AlkaidMusic/images/cover05.png"
+const float SZ = 120.0
+
+int steps = 0
+int renderN = 0          // 渲染次数（量帧率：平滑与否看这个）
+int renderAt5 = 0
+string outP = ""
+Window w
+ImageView iv
+float rotA = -1.0
+float rotB = -1.0
+float rotC = -1.0
+string wantShot = ""
+
+func run() {
+    SDL3.ttfInit()
+    w = SDL3.createWindow({title: "probe_spin", w: 260, h: 220})
+    if not w.ok { SDL3.ttfQuit(); return }
+
+    var op = _env("PROBE_OUT")
+    if op != null { outP = _str(op) }
+
+    // 正圆（radius = 边长一半）；先**不转**，① 验初始角度，② 再 set_spin 让它转起来
+    iv = w.addImageView({x: 70, y: 40, w: SZ, h: SZ, radius: SZ / 2.0,
+                         image_path: IMG, rotation: 90.0, spin: 0.0})
+
+    w.setOverlay(func(Renderer r) {
+        if wantShot == "" { return }
+        string p = wantShot
+        wantShot = ""
+        var sz = w.getSize()
+        var px = r.readPixelsAt(0, 0, sz.w, sz.h)
+        if px != null { print("[sp] 截图 ok=" + _str(SDL3.saveImagePNG(px, p))) }
+    })
+
+    w.addTimer(100, func() {
+        steps = steps + 1
+        // 模拟应用：**每拍**都调一次 set_spin（AlkaidMusic 的 sync_play_ui 就是这么做的）
+        //   框架必须做到"同值重复设置 = 无操作"，否则每次重置基准 ⇒ 头像永远不转 ✗
+        if steps == 3 { iv.set_spin(120.0) }
+        if steps >= 4 and steps <= 9 { iv.set_spin(120.0) }
+        if steps == 3 {
+            float r0 = iv.get_rotation()
+            if r0 >= 89.0 and r0 <= 91.0 { print("[sp] ① rotation:90 初始角度 ⇒ " + _str(r0) + " OK") }
+            else { print("[sp] ① rotation:90 ✗ 实际 " + _str(r0)) }
+            if outP != "" { wantShot = outP + "1.png" }
+        }
+        if steps == 9 {
+            rotA = iv.get_rotation()
+            if outP != "" { wantShot = outP + "2.png" }
+        }
+        if steps == 10 {
+            rotB = iv.get_rotation()
+            if rotB > rotA and rotB < 360.0 { print("[sp] ② spin:120 在转 ⇒ " + _str(rotA) + " -> " + _str(rotB) + " OK") }
+            else { print("[sp] ② spin:120 ✗ 角度没变：" + _str(rotA) + " -> " + _str(rotB)) }
+            iv.set_spin(0.0)          // 暂停：应立刻停住 ✓
+        }
+        if steps == 6 { renderAt5 = renderN }      // 转起来之后开始数帧
+        if steps == 15 {
+            rotC = iv.get_rotation()
+            if rotC == rotB { print("[sp] ③ set_spin(0) 后角度不变 ⇒ " + _str(rotC) + " OK") }
+            else { print("[sp] ③ set_spin(0) ✗ 还在转：" + _str(rotB) + " -> " + _str(rotC)) }
+            // ④ 平滑度：自转期间应接近窗口 maxFPS（默认 60）；掉到个位数就会"一顿一顿"✗
+            print("[sp] ④ 自转期间帧数 ≈ " + _str(renderN - renderAt5) + " / 0.9s"
+                  + "（≈" + _str((renderN - renderAt5) * 10 / 9) + " fps）")
+            _exit(0)
+        }
+    })
+
+    w.run(func(Event ev): bool { return true }, func(Renderer r) { renderN = renderN + 1; r.clearColor(#101418FF) })
+    SDL3.ttfQuit()
+}
+
+main() { run() }

@@ -16,7 +16,7 @@ use theme.Color
 //   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
 func _opts_keys(): Array[string] {
     return [
-"alpha", "bg_color", "border", "border_alpha", "border_color", "cursor", "enabled", "h", "image_mode", "image_path", "image_tint", "overlay_hover_only", "overlay_path", "overlay_scale", "overlay_size", "radius", "tip", "visible", "w", "x", "y"
+"alpha", "bg_color", "border", "border_alpha", "border_color", "cursor", "enabled", "h", "image_mode", "image_path", "image_tint", "overlay_hover_only", "overlay_path", "overlay_scale", "overlay_size", "radius", "rotation", "spin", "tip", "visible", "w", "x", "y"
 ]
 }
 export struct ImageView impl Widget, Themeable {
@@ -49,6 +49,18 @@ export struct ImageView impl Widget, Themeable {
     pri Ptr[u8]? overlayTex = null
     pri string overlayLoaded = ""
     pri bool overlayHoverOnly = true
+    // ---- 旋转（2026-10-27 补）----
+    //   `rotation` = 初始角度（度，顺时针）；`spin` = 每秒转多少度（>0 自转，0 停）
+    //   用途：音乐播放器的圆形唱片头像（radius = w/2 + spin ⇒ 圆盘在转 ✓）
+    //   ⚠ 自转必须**持续重绘**：这里按 ~25fps 推进角度并 markFrameRedraw，
+    //     不是每帧都推（60fps 全窗重绘对静态界面太浪费 ✓）
+    pri float rotDeg = 0.0
+    pri float spinDeg = 0.0
+    // 角度按**时间**算，不做"每帧累加"：
+    //   `rotDeg = 基准角 + 速度 × (now − 基准时刻)` ⇒ 帧率抖动不会累积成"一顿一顿" ✓
+    //   （2026-10-27 用户实测：每帧累加 + 40ms 门限 ⇒ 看着一跳一跳的 ✗）
+    pri float rotBase = 0.0
+    pri float rotStartMs = -1.0
     pri float overlayScale = 0.5      // 叠加图边长 = min(w,h) × 该比例
     // `overlay_size` > 0 时用**固定像素**（优先于比例）——
     //   想要 48 源图按 24 显示（正好 0.5 倍）只能靠它；比例算出来 18.6 这种非整数尺寸会糊 ✗
@@ -78,6 +90,11 @@ export struct ImageView impl Widget, Themeable {
         enabled = opts.get("enabled", true)
         visible = opts.get("visible", true)
         _tip = opts.get("tip", "")
+        // 旋转：`rotation` 初始角度（度）、`spin` 每秒度数（>0 自转）
+        rotDeg = opts.get("rotation", 0.0)
+        spinDeg = opts.get("spin", 0.0)
+        rotBase = rotDeg
+        rotStartMs = -1.0
         if opts.get("bg_color") is Color => t { bgColor = t }
         if opts.get("border_color") is Color => t { bdrColor = t }
         brdA = opts.get("border_alpha", 200)
@@ -108,6 +125,23 @@ export struct ImageView impl Widget, Themeable {
         if overlayTex != null { tcx.release(overlayTex); overlayTex = null }
         overlayPath = path
         overlayLoaded = ""
+    }
+
+    // 旋转：设角度（度，顺时针）/ 自转速度（度每秒；0 = 停）
+    //   两者都**重置时间基准**（从当前角度接着转，不会跳变 ✓）
+    func set_rotation(float deg) {
+        rotDeg = deg
+        rotBase = deg
+        rotStartMs = -1.0
+    }
+    func get_rotation(): float { return rotDeg }
+    // ⚠ 只在**速度真的变了**时才重置基准 —— 应用常每拍调用一次 set_spin(播放中/暂停)，
+    //   若无条件重置，角度会一直被打回基准（头像不转 ✗）
+    func set_spin(float degPerSec) {
+        if degPerSec == spinDeg { return }
+        spinDeg = degPerSec
+        rotBase = rotDeg
+        rotStartMs = -1.0
     }
 
     func set_mode(int mode) { _mode = mode }
@@ -175,10 +209,32 @@ export struct ImageView impl Widget, Themeable {
         }
     }
 
+    // 贴图：有旋转角就绕**目标矩形中心**转（否则走原来的快路径，批处理不被打断 ✓）
+    pri func blit(Renderer r, Ptr[u8] t, float dx, float dy, float dw, float dh) {
+        if rotDeg != 0.0 {
+            r.drawTextureRotated(t, dx, dy, dw, dh, rotDeg, dw / 2.0, dh / 2.0, 0)
+        } else {
+            r.drawTextureAt(t, dx, dy, dw, dh)
+        }
+    }
+
     // ==================== 渲染 ====================
     func render(Renderer r) {
         if not _loaded or not visible { return }
         ensure_tex(r)
+        // 自转：角度 = 基准 + 速度 × 经过时间（**按时间算，不累加** ⇒ 帧率抖动不会变成"一顿一顿" ✓）
+        //   每帧请求下一帧，窗口按自己的 maxFPS（默认 60）节流 ⇒ 转起来是连续的 ✓
+        if spinDeg != 0.0 {
+            float now = _float(core.getTicks())
+            if rotStartMs < 0.0 { rotStartMs = now }
+            float a = rotBase + spinDeg * (now - rotStartMs) / 1000.0
+            // 取模到 [0,360)：浮点没有 %，用整数除法算整圈数
+            float turns = _float(_int(a / 360.0))
+            a = a - turns * 360.0
+            if a < 0.0 { a = a + 360.0 }
+            rotDeg = a
+            core.requestRedraw()          // 下一帧继续（窗口有帧率节流，不会打满 ✓）
+        }
 
         // 背景填充（可选）
         if bgColor != 0 {
@@ -225,10 +281,11 @@ export struct ImageView impl Widget, Themeable {
                     rrTex = r.composeRoundedTexture(null, tex, null, nw, nh, radius)
                     rrW = dw; rrH = dh; rrR = radius
                 }
-                if rrTex != null { r.drawTextureAt(rrTex, dx, dy, dw, dh) }
-                else { r.drawTextureAt(tex, dx, dy, dw, dh) }        // 环境不支持 ⇒ 回落方角 ✓
+                // 圆角合成纹理再旋转：圆形蒙版转起来看不出来，里面的封面在转 ⇒ 唱片效果 ✓
+                if rrTex != null { blit(r, rrTex, dx, dy, dw, dh) }
+                else { blit(r, tex, dx, dy, dw, dh) }                // 环境不支持 ⇒ 回落方角 ✓
             } else {
-                r.drawTextureAt(tex, dx, dy, dw, dh)
+                blit(r, tex, dx, dy, dw, dh)
             }
         }
 
