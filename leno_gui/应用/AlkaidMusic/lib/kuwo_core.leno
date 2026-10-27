@@ -465,3 +465,4 @@ export func bang(HttpClient client, string bid, int limit): Array[SongInfo] {
     if not resp.ok() { return [] }
     return parsebang(resp.body)
 }
+

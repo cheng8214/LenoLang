@@ -33,6 +33,7 @@ import "./lib/downloads.leno" as dl         // 下载 + 本地曲库扫描
 import "./lib/store.leno" as store          // 本地持久化（喜欢 / 最近播放 → 缓存\library.json）
 import "./lib/settings.leno" as cfgset       // 应用设置（线程数 / 缓存目录 / 优先格式）
 import "./lib/settings_win.leno" as cfgwin   // 设置对话框（独立窗口）
+import "./lib/lyric.leno" as lyr             // 歌词解析 + 逐字定位（**移植自 LenoMusic** ✓）
 import strings
 import dirs
 import times
@@ -42,8 +43,10 @@ import Sys                       // 自检探针用：读本进程内存（ALKAI
 import "Music" as audio        // miniaudio：真播放（LenoMusic 模块 ✓）
 use audio.Sound
 use SDL3.(Event, Renderer, Window, TitleBar, Button, Label, Edit, Card, ImageView, Table,
-          HBox, VBox, ScrollView, ProgressBar, Slider, Color, Theme, ComboBox, VirtualGrid)
+          HBox, VBox, ScrollView, ProgressBar, Slider, Color, Theme, ComboBox, VirtualGrid,
+          Canvas, Font)
 use data.(Song, Shelf, NavItem)
+use lyr.Lrc
 
 // ==================== 尺寸 ====================
 const int WIN_W = 1200
@@ -335,6 +338,35 @@ export struct Player {
     Button playBtn
     Button likeBtn
     bool liked = false
+
+    // ----- 歌词页（curNav = -6：点底栏头像 / 歌词按钮进来）-----
+    Channel lyrCh                 // 歌词线程回信（Array[string]，每行 "秒|文本"）
+    string lyrSid = ""            // 已取到的歌词属于哪首（换歌才重新取 ✓）
+    // 解析好的歌词（LenoMusic 的 Lrc：文本 + 时间 + **逐字时间** wt_line/wt_sec/wt_end ✓）
+    Lrc lrcData
+    bool lyrLoading = false
+    bool lyrFakeOn = false        // 探针造了假歌词 ⇒ 忽略后台回信（否则真歌词会把它覆盖 ✗）
+    int lyrIdx = -1               // 当前高亮行（-1 = 还没定）
+    // ---- 歌词：**Canvas 自绘**（照洛雪音乐的观感：居中 / 当前行放大加粗变橙 / 远处行渐隐 /
+    //      当前行按时间"扫光"逐字上色 / 滚动是缓动跟随，不是一格一格跳 ✓）----
+    //   为什么不用一排 Label：Label 只能整行一个颜色、一行一个字号，做不了
+    //   "同一行里已唱的字亮、没唱的暗"（卡拉 OK 效果），也做不了行间缩放渐变 ✗
+    Canvas lyrCanvas
+    Font lyrF15                  // 非当前行
+    Font lyrF20                  // 当前行（粗体）
+    bool lyrFontsOk = false
+    float lyrViewH = 420.0        // 歌词视口高（按窗口高度算）
+    // ---- 歌词绘制的缓存（照 LenoMusic 的纪律：**字体测量只在换句/换歌词时做，不是每帧** ✓）----
+    //   measureString 是最贵的一步（要过字体缓存），每帧对一行做 20+ 次会把界面拖卡 ✗
+    Array[float] lyrLineW = []    // 每行文本宽度（整行一次 measure，换歌词时算好）
+    Array[float] lyrCX = []       // 当前行每个字的相对 x
+    Array[float] lyrCW = []       // 当前行每个字的宽
+    int lyrCacheLine = -2         // 缓存属于哪一行（-2 = 无）
+    float lyrFade = 1.0           // 当前行淡入（换句时归 0，定时器每步 +0.18 ✓）
+    float lyrTextH = 20.0         // 15px 字高（一次量好，渲染时不再 measure ✓）
+    float lyrTextH20 = 27.0       // 20px 字高
+    float lyrOff = 0.0            // 当前滚动偏移（像素，缓动跟随 lyrTarget）
+    float lyrTarget = 0.0         // 目标偏移：让当前行居中
     // 当前在播的**整首歌**（底栏 ♥ 要按它的 like_key 判断收藏状态；
     //   只靠 nowSid 的话，本地文件（sid 为空）没法判断 ✓）
     Song nowSong
@@ -364,6 +396,7 @@ export struct Player {
     bool stressWarm = false   // 首页渲染几帧后才记基线（首帧纹理加载不算进增量 ✓）
     int rclickAt = 0          // >0 ⇒ 第 N 拍在结果表上注入一次右键（验证 dispose 没让菜单悬空 ✓）
     int hoverAt = 0           // >0 ⇒ 第 N 拍把鼠标移到表格某行上（验证行级 hover 提示 ✓）
+    int lyricAt = 0           // >0 ⇒ 第 N 拍切到歌词页（只切页，不碰播放 ✓）
 
 
     // ==================== 入口 ====================
@@ -375,6 +408,7 @@ export struct Player {
         playCh = threads.channel(8)           // 播放前取音源（一次一首 ✓）
         sugCh = threads.channel(4)            // 搜索建议（一个词一条 ✓）
         homeCh = threads.channel(4)           // 首页分区（为你推荐/最近添加）回信通道
+        lyrCh = threads.channel(4)            // 歌词回信（一首一条 ✓）
         SDL3.setTheme(appTheme())             // 粉主题：Table / Edit / 滚动条都跟着变粉 ✓
 
         win = SDL3.createWindow({title: "Music — LenoSDL3", w: WIN_W, h: WIN_H, flags: 0x20})
@@ -769,6 +803,313 @@ export struct Player {
         SDL3.markFrameRedraw()
     }
 
+    // ==================== 歌词页 ====================
+    //   点底栏**头像**或**歌词按钮**进来：左=大圆封面（播放时慢转），右=歌词，当前行高亮 ✓
+    //   截图参考：唱片在左、歌词在右、当前行橙色加粗
+    const float LYR_LINE_H = 42.0      // 每行歌词高（当前行 20px 粗体，行距要跟着松 ✓）
+    const float LYR_PAD = 24.0         // 歌词区上内边距（让首行也能滚到正中 ✓）
+
+    pri func fade_color(Color c, int a): Color {
+        if a > 255 { a = 255 }
+        if a < 0 { a = 0 }
+        return (a << 24) | (c & 0x00FFFFFF)
+    }
+
+    // 两色线性插值（含 alpha）—— 逐字扫光靠它做"字内渐变"，不是整字硬切 ✓
+    pri func lerp_color(Color c1, Color c2, float t): Color {
+        if t <= 0.0 { return c1 }
+        if t >= 1.0 { return c2 }
+        int r1 = (c1 >> 16) & 255
+        int g1 = (c1 >> 8) & 255
+        int b1 = c1 & 255
+        int a1 = (c1 >> 24) & 255
+        int r2 = (c2 >> 16) & 255
+        int g2 = (c2 >> 8) & 255
+        int b2 = c2 & 255
+        int a2 = (c2 >> 24) & 255
+        int r = r1 + _int(_float(r2 - r1) * t + 0.5)
+        int g = g1 + _int(_float(g2 - g1) * t + 0.5)
+        int b = b1 + _int(_float(b2 - b1) * t + 0.5)
+        int a = a1 + _int(_float(a2 - a1) * t + 0.5)
+        if r < 0 { r = 0 }
+        if r > 255 { r = 255 }
+        if g < 0 { g = 0 }
+        if g > 255 { g = 255 }
+        if b < 0 { b = 0 }
+        if b > 255 { b = 255 }
+        if a < 0 { a = 0 }
+        if a > 255 { a = 255 }
+        return (a << 24) | (r << 16) | (g << 8) | b
+    }
+
+    // 歌词字体：15（普通行）/ 20 粗体（当前行）—— 只取一次，切页复用 ✓
+    pri func ensure_lyr_fonts() {
+        if lyrFontsOk { return }
+        lyrF15 = SDL3.acquireFontAuto(15.0)
+        lyrF20 = SDL3.acquireFontAuto(20.0)
+        if lyrF20.ok { lyrF20.setStyle(SDL3.STYLE_BOLD) }
+        lyrFontsOk = lyrF15.ok and lyrF20.ok
+        // 行高各量一次（渲染里每帧再量就是浪费 ✓）
+        if lyrF15.ok {
+            var[float, float](_w15, h15) = lyrF15.measureString("Ag")
+            lyrTextH = h15
+        }
+        if lyrF20.ok {
+            var[float, float](_w20, h20) = lyrF20.measureString("Ag")
+            lyrTextH20 = h20
+        }
+    }
+
+    // 当前行：**逐字扫光**（sung = 唱到第几个字，浮点）
+    //   第 k 个字满足 k+1 <= sung ⇒ 已唱完 ⇒ 强调色；否则暗色 ✓
+    //   进度来源：有逐字时间用 word_sung（真同步），没有就线性近似（见 sung_of ✓）
+    pri func draw_lyric_sweep(Renderer r, string txt, float cx, float ly, float sung) {
+        // 逐字位置/宽度**缓存**：只有换行或文字变了才重新 measure（每帧量 20 次会卡 ✗）
+        var cps = strings.to_codepoints(txt)
+        if lyrCacheLine != lyrIdx or lyrCW.len() != cps.len() {
+            lyrCX = []
+            lyrCW = []
+            float acc = 0.0
+            for cps to cp {
+                string one = strings.from_codepoint(cp)
+                var[float, float](w1, h1) = lyrF20.measureString(one)
+                lyrCX.add(acc)
+                lyrCW.add(w1)
+                acc = acc + w1
+            }
+            lyrCacheLine = lyrIdx
+        }
+        float fullW = 0.0
+        for lyrCW to w2 { fullW = fullW + w2 }
+        float x0 = cx - fullW / 2.0
+        float y = ly + (LYR_LINE_H - lyrTextH20) / 2.0
+        Color dim = fade_color(C_TXT, 110)
+        int k = 0
+        for cps to cp {
+            string one = strings.from_codepoint(cp)
+            if one == "" or k >= lyrCW.len() { continue }
+            // ★ 按**字内进度**在"暗 → 亮"插值（整字硬切会看成"一格格跳" ✓）
+            float f = sung - _float(k)
+            if f < 0.0 { f = 0.0 }
+            if f > 1.0 { f = 1.0 }
+            // 亮色带"新句淡入"（lyrFade 0→1）⇒ 换行不生硬 ✓
+            Color hi = fade_color(C_ACCENT, _int(90.0 + 165.0 * lyrFade))
+            Color c = lerp_color(dim, hi, f)
+            r.drawText(lyrF20, one, r.snapX(x0 + lyrCX[k]), r.snapY(y), c)
+            k = k + 1
+        }
+    }
+
+    // 歌词推进（**33ms 定时器驱动**，见 start_timer）：读位置 → 换行 → 缓动滚动 → 请求一帧
+    //   为什么不用"渲染回调里再请求下一帧"：那条链路的间隔取决于上一帧画了多久（忽长忽短）✗
+    pri func lyr_tick() {
+        if curNav != -6 { return }
+        if playing {
+            if sndOk {
+                float p2 = snd.getPosition()
+                if p2 >= 0.0 { pos = p2 }
+            }
+        }
+        int ni = lyric_index()
+        if ni != lyrIdx {
+            lyrIdx = ni
+            lyrFade = 0.0                       // 新句淡入（落雪也是这么处理的 ✓）
+            float iy = LYR_PAD + _float(if ni < 0 then 0 else ni) * LYR_LINE_H + LYR_LINE_H / 2.0
+            lyrTarget = iy - lyrViewH / 2.0
+            if lyrTarget < 0.0 { lyrTarget = 0.0 }
+        }
+        // 滚动缓动：33ms 一步走 22% ⇒ 约 150ms 到位（比"每帧 22%"柔和 ✓）
+        float dv = lyrTarget - lyrOff
+        bool moving = false
+        if dv > 0.5 or dv < -0.5 {
+            lyrOff = lyrOff + dv * 0.22
+            moving = true
+        } else if dv != 0.0 {
+            lyrOff = lyrTarget
+            moving = true
+        }
+        if lyrFade < 1.0 {
+            lyrFade = lyrFade + 0.18
+            if lyrFade > 1.0 { lyrFade = 1.0 }
+            moving = true
+        }
+        // **只在"界面真的在动"时**才请求一帧（暂停且滚动到位 ⇒ 不烧 CPU ✓）
+        if playing or moving { SDL3.markFrameRedraw() }
+    }
+
+    // 歌词视图（Canvas 回调）：**只负责画**（推进全在 lyr_tick 里，帧间隔才均匀 ✓）
+    pri func draw_lyrics(Renderer r, float ox, float oy, float cw, float ch) {
+        float cx = ox + cw / 2.0
+        if lrcData.texts.len() == 0 {
+            string msg = if lyrLoading then "歌词加载中…"
+                         else if nowSid == "" then "还没有在播的歌"
+                         else "（这首歌没有歌词，或还没加载）"
+            var[float, float](mw, mh) = lyrF15.measureString(msg)
+            r.drawText(lyrF15, msg, r.snapX(cx - mw / 2.0), r.snapY(oy + ch / 2.0 - mh / 2.0), C_TXT_DIM)
+            return
+        }
+        // 当前行只在"有时间轴"的歌词里才有意义（纯文本歌词 lrcData.untimed ⇒ 不高亮 ✓）
+        float sung = if lyrIdx >= 0 and not lrcData.untimed then sung_of(lyrIdx) else 0.0
+        for 0 : lrcData.texts.len() - 1 to i {
+            float ly = oy + LYR_PAD + _float(i) * LYR_LINE_H - lyrOff
+            if ly + LYR_LINE_H < oy or ly > oy + ch { continue }
+            string line = lrcData.texts[i]
+            if i == lyrIdx and not lrcData.untimed {
+                draw_lyric_sweep(r, line, cx, ly, sung)
+            } else {
+                int d = i - lyrIdx
+                if d < 0 { d = -d }
+                int a = 235 - d * 40
+                if a < 45 { a = 45 }
+                // 宽度用**预先量好的**（set_lyric_text 里一次算完）⇒ 渲染里不再 measure ✓
+                float tw = if i < lyrLineW.len() then lyrLineW[i] else 0.0
+                float tx = cx - tw / 2.0
+                if tx < ox + 4.0 { tx = ox + 4.0 }
+                r.drawText(lyrF15, line, r.snapX(tx), r.snapY(ly + (LYR_LINE_H - lyrTextH) / 2.0),
+                           fade_color(C_TXT, a))
+            }
+        }
+    }
+    pri func show_lyric_page() {
+        show_scroll()
+        content.add(lbl("歌词", 25, C_TXT, true), {grow: 0, shrink: 0, basis: 36, align: 3})
+        string sub = if nowSid != "" then nowTitle.get_text() + " · " + nowArtist.get_text() else "还没有在播的歌"
+        content.add(lbl(sub, 11, C_TXT_DIM, false), {grow: 0, shrink: 0, basis: 18, align: 3})
+
+        // 歌词视口高：窗口高 −（顶栏 58 + 标题区 ~56 + 底栏 ~90 + 边距）—— 尽量吃满剩余高度 ✓
+        float lvh = _float(win.getSize().h) - 240.0
+        if lvh < 240.0 { lvh = 240.0 }
+        lyrViewH = lvh
+        HBox row = SDL3.createHBox({x: 0, y: 0, w: _float(content_w()), h: lvh,
+                                    pad_x: 0, pad_y: 10, spacing: PAD})
+        // 左：大圆封面（播放时慢转；radius = 边长一半 ⇒ 正圆）
+        int cs = 240
+        ImageView big = SDL3.createImageView({w: _float(cs), h: _float(cs), radius: _float(cs) / 2.0,
+                                             image_path: coverPath(nowSong.cover),
+                                             bg_color: #F3E4EBFF, tip: "点击返回"})
+        big.on_click(func() { open_lyrics(false) })      // 再点一下收回去 ✓
+        big.set_spin(if playing then 10.0 else 0.0)      // 比底栏更慢，歌词页安静一点 ✓
+        row.add(big, {grow: 0, shrink: 0, basis: _float(cs), align: 1})
+
+        // 右：歌词 —— **Canvas 自绘**（照洛雪音乐的观感 ✓）
+        //   居中 / 当前行 20px 粗体橙 / 其它行 15px 按距离渐隐 / 当前行按时间逐字扫光 / 滚动缓动
+        float lw0 = _float(content_w() - cs - PAD * 2)
+        if lw0 < 200.0 { lw0 = 200.0 }
+        lyrCanvas = SDL3.createCanvas({x: 0, y: 0, w: lw0, h: lvh, pad: 0,
+                                       bg_color: C_TRANS, border: false, clip: true})
+        ensure_lyr_fonts()
+        lyrCanvas.on_draw(func(Renderer r, float ox, float oy, float cw, float ch) {
+            draw_lyrics(r, ox, oy, cw, ch)
+        })
+        row.add(lyrCanvas, {grow: 1, shrink: 1, align: 0})
+        content.add(row, {grow: 0, shrink: 0, basis: lvh, align: 3})
+
+        lyrIdx = -1                     // 重排后重新上色 + 定位 ✓
+        SDL3.markFrameRedraw()
+    }
+
+    // 打开/关闭歌词页（true = 进去；false = 回首页）
+    pri func open_lyrics(bool enter) {
+        if enter {
+            // 没在播也允许进：页面里会写"还没有在播的歌"，比点了没反应好 ✓
+            nav_push(-6, "")
+            nav_apply(-6, "")
+        } else {
+            nav_push(0, "")
+            nav_apply(0, "")
+        }
+    }
+
+    // 无头验证专用：把底栏"假装"指向一首歌（**不打开音频**，只改文字/封面/进度）
+    //   只在 ALKAID_LYRIC 探针、且当前没在播时调用 ✓
+    pri func fake_now_song() {
+        Song s = new Song()
+        s.sid = "228908"
+        s.title = "晴天"
+        s.artist = "周杰伦"
+        s.cover = "cover05.png"
+        nowSong = s
+        nowSid = s.sid
+        nowTitle.set_text(s.title)
+        nowArtist.set_text(s.artist)
+        coverView.set_image(coverPath(s.cover))
+        dur = 269.0
+        durKnown = true
+        pos = 0.0
+        totTime.set_text(fmtTime(dur))
+        sync_like_icon()
+        SDL3.markFrameRedraw()
+    }
+
+    // 取歌词（后台线程；同一首不重复取 ✓）
+    pri func request_lyric() {
+        string sid = nowSid
+        if sid == "" { return }
+        if sid == lyrSid { return }
+        lyrSid = sid
+        lyrLoading = true
+        lrcData = new Lrc()                 // 换歌先清空，避免上一首的歌词留在屏幕上 ✗
+        threads.start(workers.lyric, sid, lyrCh)
+    }
+
+    // 线程回信：**一整份歌词文本** → LenoMusic 的解析器（含逐字标签 <起点,时长> ✓）
+    pri func set_lyric_text(string raw) {
+        lyrLoading = false
+        lrcData = lyr.lrc_from_text(raw)
+        lyrCacheLine = -2
+        lyrCX = []
+        lyrCW = []
+        // 每行宽度**一次性**量好（几十行只量一次，不在渲染里反复量 ✓）
+        lyrLineW = []
+        ensure_lyr_fonts()
+        for lrcData.texts to t {
+            var[float, float](w, h) = lyrF15.measureString(t)
+            lyrLineW.add(w)
+        }
+    }
+
+    // 播放进度 ⇒ 当前行号（-1 = 还没到第一句）
+    pri func lyric_index(): int {
+        return lyr.lrc_index_at(lrcData.secs, pos)
+    }
+
+    // 当前句"唱到第几个字"（浮点）：有逐字时间就按字走（字间停顿不推进 ✓），
+    //   没有（普通 LRC）就退回"句内时间 × 字数"的线性近似 —— 与 LenoMusic 的口径一致 ✓
+    pri func sung_of(int li): float {
+        if li < 0 or li >= lrcData.texts.len() { return 0.0 }
+        int cnt = lrcData.texts[li].len()
+        if cnt <= 0 { return 0.0 }
+        Array[float] ws = []
+        Array[float] we = []
+        for 0 : lrcData.wt_line.len() - 1 to k {
+            if lrcData.wt_line[k] == li {
+                ws.add(lrcData.wt_sec[k])
+                we.add(lrcData.wt_end[k])
+            }
+        }
+        if ws.len() > 0 { return lyr.word_sung(ws, we, pos, cnt) }
+        float t0 = lrcData.secs[li]
+        float t1 = if li + 1 < lrcData.secs.len() then lrcData.secs[li + 1] else t0 + 4.0
+        if t1 <= t0 { return _float(cnt) }
+        float p = (pos - t0) / (t1 - t0)
+        if p < 0.0 { p = 0.0 }
+        if p > 1.0 { p = 1.0 }
+        return p * _float(cnt)
+    }
+
+    // 换行时更新"当前行索引 + 滚动目标"（绘制在 Canvas 回调里，真正的滚动是逐帧缓动 ✓）
+    //   只在**行号变化**时动：同一行内由扫光表现进度，不必每拍改滚动目标 ✓
+    pri func sync_lyric_hl() {
+        if curNav != -6 or lrcData.texts.len() == 0 { return }
+        int idx = lyric_index()
+        if idx == lyrIdx { return }
+        lyrIdx = idx
+        float iy = LYR_PAD + _float(if idx < 0 then 0 else idx) * LYR_LINE_H + LYR_LINE_H / 2.0
+        lyrTarget = iy - lyrViewH / 2.0
+        if lyrTarget < 0.0 { lyrTarget = 0.0 }
+        SDL3.markFrameRedraw()
+    }
+
     // 换页时**必须收掉上一页的页面容器**：
     //   `mainCol.clear()` 只清布局数组、不 dispose 子控件 ⇒ 里面的 Table 连同它内嵌的右击菜单
     //   都还活着（菜单由 `renderContextMenus` 统一画，判据只有 isOpen）⇒ 切页后菜单滞留在屏上 ✗
@@ -803,6 +1144,12 @@ export struct Player {
                                bigSongs, curNav == 1)
                 return
             }
+        }
+        // 歌词页（curNav = -6）：**自己带标题**，所以在"默认标题"之前就分流 ✓
+        //   （放在后面的话会多出一行 page_name() 的标题 + "共 N 首" 副标题 ✗）
+        if curNav == -6 {
+            show_lyric_page()
+            return
         }
         // 默认回到"卡片页"形态（顶栏 + ScrollView）；表格分支稍后会换成 show_table ✓
         show_scroll()
@@ -856,7 +1203,7 @@ export struct Player {
         //   ⚠ 但**歌曲页 / 下载页**不能用这张表：它们自己的分支在后面，
         //     而这里只看 `netSongs.len()` —— 歌曲页为了补"相关歌曲"会把 netSongs 填满，
         //     于是先命中这张表、把歌曲页顶掉（点歌名后跳到"搜索结果"）
-        if netSongs.len() > 0 and curNav != -4 and curNav != -2 {
+        if netSongs.len() > 0 and curNav != -4 and curNav != -2 and curNav != -6 {
             int rowH = 30
             // 列与 LenoMusic 的搜索页同一套口径（歌名/歌手/专辑/时长/格式/大小/来源），
             //   列宽合计 826 ≤ 内容宽 840 ⇒ 最右列不会被裁掉 ✓（LenoMusic 记过这个账）
@@ -1891,6 +2238,12 @@ export struct Player {
             rebuild_content()
             sv.set_scroll(0.0, 0.0)
             threads.start(workers.search, arg, 30, searchCh)
+        } else if nav == -6 {
+            // 歌词页：进页面就取歌词（同一首不重复取，见 request_lyric ✓）
+            curNav = -6
+            rebuild_content()
+            sv.set_scroll(0.0, 0.0)
+            request_lyric()
         } else if nav == -4 {
             songArg = arg
             curNav = -4
@@ -2342,7 +2695,12 @@ export struct Player {
         // ---- 左：封面 + 「歌名 ♥ ☰」+ 第二行 ----
         HBox left = SDL3.createHBox({x: 0, y: 0, w: 330, h: 50, pad_x: 0, pad_y: 0, spacing: 12})
         // 底色走 `fillRoundedRect`（radius>0）⇒ 圆角；图片现在也会自己裁圆角（见 sdl_imageview ✓）
-        coverView = SDL3.createImageView({w: 46, h: 46, radius: 8, bg_color: #F3E4EBFF})
+        // 圆形"唱片"头像：radius = 边长一半 ⇒ 正圆；播放时自转（见 sync_play_ui 的 set_spin ✓）
+        //   ⚠ 旋转要靠**圆角合成纹理**转，直接把方图转起来四个角会露出来 ✗
+        coverView = SDL3.createImageView({w: 46, h: 46, radius: 23, bg_color: #F3E4EBFF,
+                                         tip: "歌词页"})
+        // 点头像 = 进歌词页（再点一次（页面里的大封面）退出 ✓）
+        coverView.on_click(func() { open_lyrics(true) })
         left.add(coverView, {grow: 0, shrink: 0, basis: 46, align: 1})
 
         // 
@@ -2369,11 +2727,12 @@ export struct Player {
         likeBtn.on_click(func() { toggle_like() })
         left.add(likeBtn, {grow: 0, shrink: 0, basis: 24, align: 1})
         // ☰ = 打开当前这首歌的页面（歌词/相关歌曲都在那儿 ✓ 不说话的空按钮不要）
-        Button lyBtn = txt_btn("≡", "歌曲页（歌词 / 相关）", 24, C_TXT_MID)
-        lyBtn.on_click(func() {
-            if nowSid != "" { open_song(find_song(nowSid)) }
-            else { nowArtist.set_text("还没有在播的歌"); SDL3.markFrameRedraw() }
-        })
+        // 歌词/歌曲页按钮：原来是用文字 "≡" 画出来的，现在换成图标 lyrics.png
+        //   尺寸跟旁边的 ♥ 对齐（都是 24）—— 小了看着不协调
+        //   ⚠ 这张源图只有 16×16，放到 24 会有轻微发虚；想要锐利给一张 48×48 的替换即可 ✓
+        Button lyBtn = img_btn("lyrics.png", "歌曲页（歌词 / 相关）", 24, 24.0)
+        // 歌词按钮 = 进歌词页（跟点头像同一个入口 ✓）
+        lyBtn.on_click(func() { open_lyrics(true) })
         left.add(lyBtn, {grow: 0, shrink: 0, basis: 24, align: 1})
         bar.add(left, {grow: 0, shrink: 0, basis: 330, align: 1})
 
@@ -2673,6 +3032,9 @@ export struct Player {
     // 每拍（200ms）推进播放进度
     pri func start_timer() {
         win.addTimer(200, func() { on_tick() })
+        // 歌词刷新**独立定时器**（33ms ≈ 30fps）：帧间隔由定时器保证均匀，
+        //   不依赖"渲染回调里再请求下一帧"那条链路（那条会忽快忽慢 ⇒ 一顿一顿 ✓ 用户提议）
+        win.addTimer(33, func() { lyr_tick() })
     }
 
     pri func on_tick() {
@@ -2712,11 +3074,54 @@ export struct Player {
         }
         // ⓪b 悬停注入（ALKAID_HOVERAT=N）：鼠标停在表格第 1 行上，验证**行级 tip**（大小/格式/路径）
         //   提示气泡有延迟（默认 500ms）⇒ 截图要在这之后再拍 ✓
+        // ⓪d 歌词页探针（ALKAID_LYRIC=N）：第 N 拍进歌词页（只切页，不碰播放 ✓）
+        if lyricAt > 0 and steps == lyricAt {
+            lyricAt = 0
+            // 无头验证用：没在播时假一首歌（**只改界面文字/封面，不碰音频** ✓），
+            //   否则歌词页只会显示"还没有在播的歌"，看不到歌词排版
+            if nowSid == "" { fake_now_song() }
+            // 直接把进度摆到 70 秒（**不动音频**）：一进页面就能看到"滚到中部 + 中部那行高亮"，
+            //   无头验证自动滚动有没有生效 ✓
+            open_lyrics(true)
+            // ALKAID_LYFAKE=1：造一份**带逐字标签**的 LRC 文本走真实解析链路
+            //   ⇒ 不依赖网络也能验"居中 / 当前行放大 / 逐字扫光 / 缓动滚动" ✓
+            //   ⚠ 必须放在 open_lyrics 之后：进页面会 request_lyric()，它会把 lrcData 清空 ✗
+            var lf = _env("ALKAID_LYFAKE")
+            if lf != null and _int(_str(lf)) > 0 {
+                string fake = ""
+                for 0 : 39 to i {
+                    int sec = i * 5
+                    string mm = _str(sec / 60)
+                    if mm.len() < 2 { mm = "0" + mm }
+                    int ss = sec - (sec / 60) * 60
+                    string tail = if ss < 10 then "0" + _str(ss) else _str(ss)
+                    // 逐字标签：每个字 0.4 秒，从本句起点开始（酷我 lrcx 的形状 ✓）
+                    string body = ""
+                    string txt = "第 " + _str(i + 1) + " 行歌词 假数据 用来验逐字扫光"
+                    var cps = strings.to_codepoints(txt)
+                    int k = 0
+                    for cps to cp {
+                        string one = strings.from_codepoint(cp)
+                        body = body + "<" + _str(sec * 1000 + k * 400) + ",400>" + one
+                        k = k + 1
+                    }
+                    fake = fake + "[" + mm + ":" + tail + ".00]" + body + "\n"
+                }
+                set_lyric_text(fake)
+                lyrSid = nowSid
+                lyrFakeOn = true                  // 忽略后台回信，别把假歌词覆盖掉 ✓
+                pos = 102.2                       // 落在第 6 个字的中间 ⇒ 能看到"字内渐变" ✓
+                rebuild_content()
+                print("[lyric] 已造假歌词（40 行 / 逐字）pos=" + _str(pos))
+            }
+            print("[lyric] 已切到歌词页 sid=" + nowSid)
+        }
         if hoverAt > 0 and steps == hoverAt {
             hoverAt = 0
             SDL3.testMoveAt(win.getID(), 320.0, 200.0)
             print("[hover] 已注入鼠标移动 @ (320,200)")
         }
+
         // ⓪ 切页内存探针（ALKAID_STRESS）：交替 首页(0) / 最近播放(2) ⇒ 每次 set_nav 都真的 rebuild
         if stressLeft > 0 {
             if not stressWarm {
@@ -2800,6 +3205,24 @@ export struct Player {
         // ①b' 封面**不再触发整页重建**（原来 `coverDirty` ⇒ 每 4 拍 rebuild 一次，卡片墙一直闪 ✗）：
         //   收到一张就按 sid 就地 set_image（见上面那个循环）；当前不是卡片页时数据也已写回，
         //   下次进那页自然拿到真封面 ✓
+        // ①c 歌词回信（后台线程）：整份歌词文本 ⇒ LenoMusic 的解析器（含逐字标签 ✓）
+        if lyrCh != null {
+            var lmsg = lyrCh.try_receive()
+            while lmsg != null {
+                var rawLines = lmsg as Array[string]
+                if rawLines != null and not lyrFakeOn {
+                    if rawLines.len() > 0 {
+                        set_lyric_text(rawLines[0])
+                    } else {
+                        lyrLoading = false
+                        lrcData = new Lrc()
+                    }
+                    lyrIdx = -1
+                    if curNav == -6 { rebuild_content() }
+                }
+                lmsg = lyrCh.try_receive()
+            }
+        }
         // ①d 排空下载进度（分片下载每 1MB 回一条；非阻塞 ✓）
         if dlCh != null {
             var pm = dlCh.try_receive()
@@ -2897,6 +3320,8 @@ export struct Player {
             sync_play_ui()
             SDL3.markFrameRedraw()
         }
+        // 歌词高亮跟着进度走（只改颜色 + 滚动，不重建 ✓）
+        sync_lyric_hl()
         steps = steps + 1
     }
 
@@ -2914,6 +3339,10 @@ export struct Player {
             curTime.set_text(fmtTime(pos))
         }
         sync_like_icon()        // 换歌时 ♥ 跟着变（收藏过就红心 ✓）
+        // 播放时头像自转（唱片效果），暂停就停 —— 24°/s ≈ 一圈 15 秒，不晃眼 ✓
+        if coverView.get_w() > 0.0 { coverView.set_spin(if playing then 24.0 else 0.0) }
+        // 换歌了且正停在歌词页 ⇒ 重新取歌词（request_lyric 内部按 sid 去重 ✓）
+        if curNav == -6 and nowSid != "" and nowSid != lyrSid { request_lyric() }
     }
 
     // ==================== 退出收尾 ====================
@@ -2992,6 +3421,8 @@ export struct Player {
         if rc != null { rclickAt = _int(_str(rc)) }
         var hv = _env("ALKAID_HOVERAT")
         if hv != null { hoverAt = _int(_str(hv)) }
+        var ly = _env("ALKAID_LYRIC")
+        if ly != null { lyricAt = _int(_str(ly)) }
         var st = _env("ALKAID_STRESS")
         if st != null {
             stressLeft = _int(_str(st))
@@ -3040,7 +3471,9 @@ export struct Player {
         var s = r.readPixelsAt(0, 0, sz.w, sz.h)
         if s != null {
             bool ok = SDL3.saveImagePNG(s, shotPath)
+            // ★ 顺带打帧数：动画（头像自转/进度条）是否真的在跑，用"帧号 ÷ 时长"看 ✓
             print("[music] 截图 " + shotPath + " ok=" + _str(ok) + " 语音=" + _str(playing) +
+                  " 帧=" + _str(SDL3.frameId()) +
                   " 内存=" + _str(Sys.processMemoryKb(Sys.currentPid())) + "KB")
         } else {
             print("[music] 读像素失败：" + SDL3.getError())

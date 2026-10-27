@@ -12,6 +12,7 @@
 //   封面：   ["REC"] 之外的普通消息是 [id, 本地路径]
 import "web_net" as net
 import "kuwo_core.leno" as kuwo
+import "kuwo_lyric.leno" as klyr      // 官方 newlyric 接口（逐字 lrcx=1 优先 ✓，移植自 LenoMusic）
 import "kuwo_cover.leno" as cover
 import strings
 import dirs
@@ -160,4 +161,27 @@ export func cover_shard(Array[string] ids, string cacheDir, Channel ch) {
             ch.send(one)
         }
     }
+}
+
+// ==================== 歌词（★ 2026-10-27，v2）====================
+// 回信：Array[string]（每行 "秒|文本"）—— 失败也回数组，但首行是 ["ERR", 原因] 便于上层区分 ✓
+
+// ==================== 歌词（★ 2026-10-27 重做：移植 LenoMusic 的官方 newlyric 接口）====================
+// 回信：Array[string]，**只有一条** = 整份歌词文本（"秒|文本" 那套作废 ✗）
+//   · 先试逐字版（lrcx=1，带 <起点,时长> 标签）⇒ 有就用 ✓
+//   · 逐字解不出来 ⇒ 退回标准 LRC ✓（LenoMusic 的既有规矩：绝不把歌词搞没）
+//   · 两次都失败 ⇒ 回空数组（UI 显示"没有歌词"）
+export func lyric(string sid, Channel ch) {
+    Array[string] out = []
+    try {
+        string txt = klyr.fetchlyric_lrcx(sid)
+        bool word = txt != ""
+        if txt == "" { txt = klyr.fetchlyric(sid) }
+        if txt != "" { out.add(txt) }
+        print("[lyric-worker] sid=" + sid + " 逐字=" + _str(word) + " 字节=" + _str(txt.byte_len()))
+    } catch e {
+        out = []
+        print("[lyric-worker] 异常：" + _str(e))
+    }
+    ch.send(out)
 }
