@@ -61,10 +61,12 @@ const int CARD_H = 200       // ⚠ 实测下限：图片要 129（152×0.85）�
 const int CARD_GAP = 16
 const float CARD_ASPECT = 0.85   // 图片区 高/宽
 const int PER_ROW = 5        // 每行卡片数（2026-10-25：4 → 5，图片按曾出现改小 ✓）
-// 「最近播放」保留多少条的**出厂默认**（可在设置里改，见 g_recentMax ✓）
-//   60 = 12 行 × 5 列：翻一两屏够用；JSON 约 8KB，启动读取无感
-// 首页「继续收听」只放一行 6 张，其余进「最近播放」页看 ✓
-const int RECENT_HOME = 6
+// 卡片墙的**基准卡宽**与列间距 —— 列数是**算出来的**，不写死列数：
+//   cols = round(可用宽 ÷ (基准宽 + 间距))  ⇒ 1200 宽窗口 4 列（卡 ~228）、1000 宽 3 列、
+//   1600 宽 6 列、1920 宽 8 列；窗口一变列数自己跟着变 ✓
+//   卡里的内边距/封面/按钮也一律按卡宽**按比例**推（见 card_pad/card_thumb/card_btn）
+const int CARD_BASE_W = 220
+const int CELL_GAP = 14
 
 // ==================== 调色板（浅粉 + 背景插画透出 ✓）====================
 // 改成"背景图 + 浅色遮罩"后，各容器的底色一律换成**半透明白** ——
@@ -767,7 +769,9 @@ export struct Player {
         if curNav == 1 or curNav == 2 {
             var bigSongs = page_songs(curNav)
             if bigSongs.len() > 0 {
-                show_grid_page(page_name(curNav), "共 " + _str(bigSongs.len()) + " 首", bigSongs)
+                // 只有「我喜欢」页给删除钮（删 = 取消收藏）；「最近播放」删了没意义 ✓
+                show_grid_page(page_name(curNav), "共 " + _str(bigSongs.len()) + " 首",
+                               bigSongs, curNav == 1)
                 return
             }
         }
@@ -1176,10 +1180,11 @@ export struct Player {
                 var r0 = new Shelf()
                 r0.title = "继续收听"
                 r0.sub = "最近播放 · " + _str(recentSongs.len()) + " 首"
-                // 首页只放一行（6 张）—— 全部铺进去会创建一堆看不见的卡片控件 ✓
+                // 首页只放**一行**（= 当前列数）—— 全部铺进去会创建一堆看不见的卡片控件 ✓
+                int homeMax = cols_for_width()
                 Array[Song] homeRecent = []
                 for 0 : recentSongs.len() - 1 to ri {
-                    if homeRecent.len() >= RECENT_HOME { break }
+                    if homeRecent.len() >= homeMax { break }
                     homeRecent.add(recentSongs[ri])
                 }
                 r0.items = homeRecent
@@ -1545,7 +1550,8 @@ export struct Player {
     // 大列表页：标题 + 副标题 + **虚拟网格**（只建可见卡片 ⇒ 上千条也不卡 ✓）
     //   与 show_table_page 同构，只是中间换成卡片墙；
     //   卡片怎么画仍归应用（`wide_card`），网格只管"哪些可见、摆哪、回收" ✓
-    pri func show_grid_page(string title, string sub, Array[Song] songs) {
+    // showDel：卡片上要不要多一颗「删除」按钮（只有「我喜欢」页给 —— 那里删 = 取消收藏 ✓）
+    pri func show_grid_page(string title, string sub, Array[Song] songs, bool showDel) {
         drop_last_page()
         mainCol.clear()
         sv.set_visible(false)          // 网格页不用 ScrollView（见 show_scroll 的注释 ✓）
@@ -1562,16 +1568,21 @@ export struct Player {
         srow.add(lbl(sub, 11, C_TXT_DIM, false), {grow: 0, shrink: 0, align: 1})
         srow.add(SDL3.createLabel({text: ""}), {grow: 1, shrink: 1, align: 1})
         mainCol.add(srow, {grow: 0, shrink: 0, basis: 18, align: 3})
-        // -12：给右侧滚动条让位（vg 自己画条，不占布局宽 ✓）
-        int gridW = content_w() - 12
+        // ★ 卡宽/卡高/列数跟卡片墙**用同一套**（card_cw / card_h，可用宽同样是 shelf_avail）：
+        //   原来写死 item_w 236 ⇒ 1200 宽只排得下 3 列，而首页是 4 列（用户截图里的不一致 ✗）
+        //   vg 的卡区 = w − pad_x×2，所以 w 要把左右 PAD 加回去，卡片才和首页**同宽同起点** ✓
+        int gavail = shelf_avail()
+        int gridW = gavail + PAD * 2
+        int gcw = card_cw(gavail)
+        int gch = card_h(gcw)
         VirtualGrid vg = SDL3.createVirtualGrid({x: 0, y: 0, w: _float(gridW), h: 400.0,
-                                                item_w: 236.0, item_h: 80.0,
-                                                gap_x: 16.0, gap_y: 12.0,
+                                                item_w: _float(gcw), item_h: _float(gch),
+                                                gap_x: _float(CELL_GAP), gap_y: 8.0,
                                                 pad_x: PAD, pad_y: 6,
                                                 count: songs.len()})
         vg.set_builder(func(int i): any {
             if i < 0 or i >= songs.len() { return SDL3.createLabel({text: ""}) }
-            return wide_card(songs[i], 236)
+            return wide_card(songs[i], gcw, showDel)
         })
         mainCol.add(vg, {grow: 1, shrink: 1, align: 3})
         lastGrid = vg                 // 记下来，下次换页要 dispose ✓
@@ -1605,17 +1616,40 @@ export struct Player {
         return w
     }
 
-    // 当前宽度能放几列（最小卡宽 240、间距 14、最多 6）
-    //   ⚠ 框架侧已给 GridLayout 加了 `min_col_width`（自动算列数）；这里还用手工分行，
-    //     所以保留这个小函数供 resize 比较用 —— 等换到 GridLayout 就一起删 ✓
-    pri func cols_for_width(): int {
-        int avail = content_w()
-        // 最小卡宽 260：右侧要放三颗按钮（♥/＋/⬇），再窄歌名就只剩 4~5 个字 ✗
-        int c = (avail + 14) / (260 + 14)
+    // ---- 列数 / 卡宽：**都从"可用宽度"算**，卡片墙、继续收听、虚拟网格共用这一套 ✓ ----
+    //   CARD_BASE_W 只是"最舒服的一张卡有多宽"，列数 = round(可用宽 ÷ (基准 + 间距))
+    //   ⇒ 1200 宽 4 列、1920 宽 7 列、1000 宽 3 列：窗口一变列数自己跟着变（不是写死列数 ✓）
+    pri func cols_of(int avail): int {
+        int unit = CARD_BASE_W + CELL_GAP
+        int c = (avail + CELL_GAP + unit / 2) / unit     // 四舍五入（+unit/2）
         if c < 2 { c = 2 }
         if c > 8 { c = 8 }
         return c
     }
+    // 单卡宽：把剩余宽度均分（末尾留 2px —— 圆角外沿才不会被 clip 的矩形边界切平 ✓）
+    pri func card_cw(int avail): int {
+        int c = cols_of(avail)
+        return (avail - (c - 1) * CELL_GAP - 2) / c
+    }
+    // 可放卡片的宽度：-12 给右侧滚动条让位（ScrollView 与虚拟网格都是这么算 ✓）
+    //   ⚠ 卡片墙、继续收听、虚拟网格**必须都走这个函数** —— 少减 12 或再减一次 PAD，
+    //     就会出现"首页 4 列、最近播放 3 列"的不一致（用户截图里那种 ✗）
+    pri func shelf_avail(): int { return content_w() - 12 }
+    // 当前列数（首页取歌数 / 「继续收听」放几张要用 ✓）
+    pri func cols_for_width(): int { return cols_of(shelf_avail()) }
+
+    // ---- 卡内尺寸：全部由**卡宽**按比例推（不写死像素，换列数也自动协调 ✓）----
+    pri func card_pad(int cw): int { return cw * 3 / 100 }        // 内边距 3%
+    pri func card_thumb(int cw): int { return cw * 20 / 100 }     // 封面 20%
+    pri func card_gap(int cw): int { return cw * 2 / 100 }        // 子控件间距 2%
+    // 图标按钮：11% 卡宽，但**不小于 24**（可点击尺寸下限，也是 48px 源图的整数分之一，不糊）
+    pri func card_btn(int cw): int {
+        int b = cw * 11 / 100
+        if b < 24 { b = 24 }
+        return b
+    }
+    // 卡片高度 = 内边距×2 + 歌名行 20 + 歌手行 16 + 图标行（字号/行高固定，只有卡宽在变）
+    pri func card_h(int cw): int { return card_pad(cw) * 2 + 20 + 16 + card_btn(cw) }
 
     // 一个分区：标题行（+ 右侧胶囊按钮）+ 内容（横卡 / 卡片墙）
     // kind：0 = 不给「换一批」（继续收听 / 单区页）/ 1 = 为你推荐 / 2 = 最近添加
@@ -1648,49 +1682,41 @@ export struct Player {
         }
 
         if compact {
-            // 继续收听：**一行铺满**（卡宽同样按可用宽度均分，不再写死 250 ✓）
-            //   ⚠ 必须减掉滚动条宽度（12）：`content_w()` 为了表格铺满已经不减了，
-            //     卡片若铺到最右，就会被滚动条压住 ⇒ 右侧圆角看着变成直角
-            int avail0 = content_w() - 12
-            int gap0 = 14
-            // ★ 卡宽按**列数**算，不按"这行有几首"算：
-            //   之前 n0 = items.len() ⇒ 只有 1 首时那张卡被拉成整行宽（截图里"继续收听"✗）
-            //   现在列数下限 3（满宽最多 4）⇒ 1 首就只占 1/3 宽，右边留白 ✓
-            int cols0 = cols_for_width()
-            if cols0 > 4 { cols0 = 4 }
-            if cols0 < 3 { cols0 = 3 }
-            // 末尾留 2px：卡片总宽比行宽略小，圆角外沿才不会被 clip 的矩形边界切平 ✓
-            int cw0 = (avail0 - (cols0 - 1) * gap0 - 2) / cols0
+            // 继续收听：**一行铺满**，卡宽/列数与卡片墙**同一套公式**（不足一行就右边留白 ✓）
+            //   卡宽按**列数**算，不按"这行有几首"算：只有 1 首时也不会被拉成整行宽 ✓
+            int avail0 = shelf_avail()
+            int cols0 = cols_of(avail0)
+            int cw0 = card_cw(avail0)
+            int ch0 = card_h(cw0)
             int n0 = items.len()
             if n0 > cols0 { n0 = cols0 }
-            HBox row = SDL3.createHBox({x: 0, y: 0, w: _float(avail0), h: 84, clip: true,
-                                        pad_x: 0, pad_y: 0, spacing: _float(gap0)})
+            HBox row = SDL3.createHBox({x: 0, y: 0, w: _float(avail0), h: _float(ch0), clip: true,
+                                        pad_x: 0, pad_y: 0, spacing: _float(CELL_GAP)})
             for 0 : n0 - 1 to i {
-                row.add(wide_card(items[i], cw0), {grow: 0, shrink: 0, basis: _float(cw0), align: 1})
+                row.add(wide_card(items[i], cw0, false), {grow: 0, shrink: 0, basis: _float(cw0), align: 1})
             }
-            content.add(row, {grow: 0, shrink: 0, basis: 84, align: 3})
+            content.add(row, {grow: 0, shrink: 0, basis: _float(ch0), align: 3})
         } else {
-            // 横卡（58px 缩略图，与「继续收听」同款），但**列数按可用宽度算**：
-            //   之前写死"每行 3 张、宽 260" ⇒ 宽窗口右侧空一大片、窄窗口又挤
-            //   现在：cols = (可用宽 + 间距) / (最小卡宽 + 间距)，卡宽再把剩余宽度均分 ⇒ 整行铺满
-            int avail = content_w() - 12      // 同上：留出滚动条宽度，右侧圆角不被压 ✓
-            int gap = 14
-            int cols = cols_for_width()
-            int cw = (avail - (cols - 1) * gap - 2) / cols     // 同上：留 2px 给圆角 ✓
+            // 横卡（封面 + 歌名/歌手 + 一排图标），列数/卡宽同样来自 `cols_of/card_cw`：
+            //   卡宽把剩余宽度均分 ⇒ 整行铺满；行高由卡宽推（card_h），不写死 80/116
+            int avail = shelf_avail()
+            int cols = cols_of(avail)
+            int cw = card_cw(avail)
+            int ch = card_h(cw)
             int k = 0
             while k < items.len() {
-                HBox row = SDL3.createHBox({x: 0, y: 0, w: _float(avail), h: 116, clip: true,
-                                            pad_x: 0, pad_y: 0, spacing: _float(gap)})
+                HBox row = SDL3.createHBox({x: 0, y: 0, w: _float(avail), h: _float(ch), clip: true,
+                                            pad_x: 0, pad_y: 0, spacing: _float(CELL_GAP)})
                 for 0 : cols - 1 to j {
                     int idx = k + j
                     if idx < items.len() {
-                        // 横卡：58×58 缩略图 + 标题/歌手 + 播放钮（与「继续收听」同构 ✓）
-                        row.add(wide_card(items[idx], cw), {grow: 0, shrink: 0, basis: _float(cw), align: 1})
+                        // 横卡：封面 + 歌名/歌手 + 图标行（与「继续收听」同构 ✓）
+                        row.add(wide_card(items[idx], cw, false), {grow: 0, shrink: 0, basis: _float(cw), align: 1})
                     } else {
                         row.add(SDL3.createLabel({text: ""}), {grow: 1, shrink: 1, align: 1})
                     }
                 }
-                content.add(row, {grow: 0, shrink: 0, basis: 80, align: 3})
+                content.add(row, {grow: 0, shrink: 0, basis: _float(ch), align: 3})
                 k = k + cols
             }
         }
@@ -1878,15 +1904,17 @@ export struct Player {
     // 「换一批」：**只刷新被点的那一个区**
     //   kind 1 = 为你推荐（关键词 4 组轮换）/ 2 = 最近添加
     pri func refresh_section(int kind) {
+        // 取多少首也**跟着列数走**:推荐 6 行、新歌 2 行（写死 24/9 时换列数就会留半行 ✗）
+        int colsNow = cols_for_width()
         if kind == 1 {
             Array[string] kws = ["热歌", "新歌榜", "流行", "经典"]
             recBatch = (recBatch + 1) % kws.len()
             homeLoading = true                                   // 只让推荐段显示占位 ✓
-            threads.start(workers.section, "REC", kws[recBatch], 24, homeCh)
+            threads.start(workers.section, "REC", kws[recBatch], colsNow * 6, homeCh)
         } else if kind == 2 {
             Array[string] kws2 = ["新歌", "新歌榜", "最新", "首发"]
             newBatch = (newBatch + 1) % kws2.len()
-            threads.start(workers.section, "NEW", kws2[newBatch], 9, homeCh)
+            threads.start(workers.section, "NEW", kws2[newBatch], colsNow * 2, homeCh)
         }
         if curNav == 0 { rebuild_content() }
         SDL3.markFrameRedraw()
@@ -2036,6 +2064,26 @@ export struct Player {
         SDL3.markFrameRedraw()
     }
 
+    // 「我喜欢」卡片上的删除钮：**只删不加**（不复用 toggle —— 那页的卡本来就都是喜欢的，
+    //   万一状态已经变了，toggle 反而会把它加回去 ✗）
+    pri func unlike_song(Song sg) {
+        string key = like_key(sg)
+        if key == "" { return }
+        Array[string] out = []
+        bool was = false
+        for likedSids to s {
+            if s == key { was = true; continue }
+            out.add(s)
+        }
+        if not was { return }             // 已经不在收藏里 ⇒ 什么都不用做
+        likedSids = out
+        save_library()                    // ★ 立刻落盘，重启后不会又冒出来 ✓
+        nowArtist.set_text("已从「我喜欢」删除：" + sg.title)
+        sync_like_icon()                  // 底栏 ♥ 跟着变（若删的就是在播这首 ✓）
+        rebuild_content()                 // 网格按新列表重建：少一张、副标题数字也减 ✓
+        SDL3.markFrameRedraw()
+    }
+
     // 点 +：加进下载队列（目前没有歌单系统，先落到"下载"，等于收藏到本地 ✓）
     pri func queue_song(Song sg) {
         if sg.sid == "" { return }
@@ -2046,15 +2094,24 @@ export struct Player {
         SDL3.markFrameRedraw()
     }
 
-    pri func wide_card(Song sg, int cw): HBox {
+    // 横卡：封面 | 歌名 / 歌手 / ♥＋⬇
+    //   2026-10-27 用户要求：三颗按钮**放到歌手下面**（原来贴右侧，4 列时挤到 20px 看不清 ✗）
+    //   竖排三行后按钮单独占一行 ⇒ 图标回到 24px（48 源图的一半），歌名也拿回整列宽 ✓
+    //   尺寸一律由卡宽按比例推（card_pad/thumb/btn/gap/h）⇒ 换列数不用改这里 ✓
+    // showDel：多一颗「删除」钮（只有「我喜欢」页传 true ✓）
+    pri func wide_card(Song sg, int cw, bool showDel): HBox {
+        int pad = card_pad(cw)
+        int thumb = card_thumb(cw)
+        int btn = card_btn(cw)
+        int gap = card_gap(cw)
+        int ch = card_h(cw)
         // clip: true ⇒ 兜底：万一哪个子控件还是画宽了，也**不会冲出卡片**（被卡片矩形裁掉 ✓）
-        //   h 74→80、间距 10→6：右侧三颗按钮放大到 28px 后要塞得下
-        HBox row = SDL3.createHBox({x: 0, y: 0, w: _float(cw), h: 80, pad_x: 8, pad_y: 8,
-                                    spacing: 6, bg_color: C_CARD, bg_radius: 14, clip: true})
-        // 叠加钮：**24px 固定**（48 源图的一半，整数倍不糊）；
+        HBox row = SDL3.createHBox({x: 0, y: 0, w: _float(cw), h: _float(ch), pad_x: pad, pad_y: pad,
+                                    spacing: gap, bg_color: C_CARD, bg_radius: 14, clip: true})
+        // 叠加钮：24px（48 源图的一半，整数倍不糊）；
         //   正在播这首时显示 pause.png，点它 = 暂停/继续
         bool isCur = is_now_playing(sg)
-        ImageView iv = SDL3.createImageView({w: 58, h: 58, radius: 10,
+        ImageView iv = SDL3.createImageView({w: thumb, h: thumb, radius: 10,
                                              image_path: coverPath(sg.cover),
                                              overlay_path: ico(if isCur then "pause.png" else "play.png"),
                                              overlay_size: 24.0,
@@ -2068,14 +2125,14 @@ export struct Player {
                 rebuild_content()
             }
         })
-        row.add(iv, {grow: 0, shrink: 0, basis: 58, align: 1})
+        row.add(iv, {grow: 0, shrink: 0, basis: thumb, align: 1})
 
-        // 文字必须**限宽截断**，否则长歌名会冲出卡片、盖到隔壁卡上 ✗
-        //   max_w = 卡宽 − (左右内边距 8×2 + 封面 58 + 间距 10) = cw − 84
-        //   再减去右侧三颗按钮（28×3 + 间距 6×2 = 96）
-        int tw = cw - 84 - 96
-        if tw < 50 { tw = 50 }
-        VBox tv = SDL3.createVBox({x: 0, y: 0, w: _float(tw), h: 58, pad_x: 0, pad_y: 2, spacing: 2})
+        // 文字列：现在是**三行**（歌名 20 + 歌手 16 + 图标 btn），宽度 = 卡宽 − 内边距×2 − 封面 − 间距
+        //   文字必须**限宽截断**，否则长歌名会冲出卡片、盖到隔壁卡上 ✗
+        int tw = cw - pad * 2 - thumb - gap
+        if tw < 60 { tw = 60 }
+        VBox tv = SDL3.createVBox({x: 0, y: 0, w: _float(tw), h: _float(ch - pad * 2),
+                                   pad_x: 0, pad_y: 0, spacing: 0})
         // 标题/歌手都**显式限宽 + 省略号**。
         //   只依赖"盒宽自动裁剪"不够稳：Label 的 `_w` 在布局前是自然宽（180），
         //   渲染那一拍若还没被 set_size，就会按 180 算上限 ⇒ 照样溢出 ✗
@@ -2087,40 +2144,56 @@ export struct Player {
                                      hover_color: C_ACCENT, cursor: SDL3.SystemCursor.POINTER})
         tl.set_font_style(SDL3.STYLE_BOLD)
         tl.on_click(func() { open_song(sg) })
-        tv.add(tl, {grow: 0, shrink: 0, basis: 22, align: 3})
+        tv.add(tl, {grow: 0, shrink: 0, basis: 20, align: 3})
         Label al = SDL3.createLabel({text: sg.artist, font_size: 10.5, text_color: C_TXT_DIM,
                                      max_w: _float(tw), truncate: 1, tip: "查看歌手：" + sg.artist,
                                      hover_color: C_ACCENT, cursor: SDL3.SystemCursor.POINTER})
         al.on_click(func() { open_song(sg) })      // 歌手名也进歌曲页
-        tv.add(al, {grow: 0, shrink: 0, basis: 18, align: 3})
-        row.add(tv, {grow: 1, shrink: 1, align: 1})
+        tv.add(al, {grow: 0, shrink: 0, basis: 16, align: 3})
 
-        // ---- 右侧三颗（图标都在 images/icons）：♥ 喜欢 / ＋ 添加 / ⬇ 下载 ----
+        // ---- 第三行：三颗按钮（图标都在 images/icons）：♥ 喜欢 / ＋ 添加 / ⬇ 下载 ----
         //   `＋` 目前**只显示不做事**——歌单系统还没数据层，
         //     先别给假动作；tip 写清楚，避免点了没反应还以为是 bug ✓
+        HBox acts = SDL3.createHBox({x: 0, y: 0, w: _float(tw), h: _float(btn),
+                                     pad_x: 0, pad_y: 0, spacing: gap})
         bool likedNow = is_liked(like_key(sg))      // 在线/本地走同一个键 ✓
         Button lb = SDL3.createButton({image_path: ico(if likedNow then "sc1.png" else "sc.png"),
-                                       image_size: 24, w: 28, h: 28, radius: 14,
+                                       image_size: 24, w: btn, h: btn, radius: btn / 2,
                                        bg_color: C_TRANS, hover_color: #FFFFFFC8,
                                        padding: 0.0, border: false, shadow: false,
                                        tip: if likedNow then "取消喜欢" else "喜欢"})
         lb.on_click(func() { toggle_song_like(sg) })
-        row.add(lb, {grow: 0, shrink: 0, basis: 28, align: 1})
+        acts.add(lb, {grow: 0, shrink: 0, basis: btn, align: 1})
 
         Button ab = SDL3.createButton({image_path: ico("add.png"), image_size: 24,
-                                       w: 28, h: 28, radius: 14,
+                                       w: btn, h: btn, radius: btn / 2,
                                        bg_color: C_TRANS, hover_color: #FFFFFFC8,
                                        padding: 0.0, border: false, shadow: false,
                                        tip: "添加到歌单（暂未开放）"})
-        row.add(ab, {grow: 0, shrink: 0, basis: 28, align: 1})
+        acts.add(ab, {grow: 0, shrink: 0, basis: btn, align: 1})
 
         Button db = SDL3.createButton({image_path: ico("download.png"), image_size: 24,
-                                       w: 28, h: 28, radius: 14,
+                                       w: btn, h: btn, radius: btn / 2,
                                        bg_color: C_TRANS, hover_color: #FFFFFFC8,
                                        padding: 0.0, border: false, shadow: false,
                                        tip: "下载到本地"})
         db.on_click(func() { queue_song(sg) })
-        row.add(db, {grow: 0, shrink: 0, basis: 28, align: 1})
+        acts.add(db, {grow: 0, shrink: 0, basis: btn, align: 1})
+
+        // ---- 第四颗：删除（只在「我喜欢」页出现 —— 删 = 取消收藏 ✓）----
+        //   图标 del_m.png（24×24 原生，1:1 不糊）；行宽够放 4 颗（4×btn + 3×gap ≤ 文字列宽 ✓）
+        if showDel {
+            Button xb = SDL3.createButton({image_path: ico("del_m.png"), image_size: 24,
+                                           w: btn, h: btn, radius: btn / 2,
+                                           bg_color: C_TRANS, hover_color: #FFFFFFC8,
+                                           padding: 0.0, border: false, shadow: false,
+                                           tip: "从「我喜欢」删除"})
+            xb.on_click(func() { unlike_song(sg) })
+            acts.add(xb, {grow: 0, shrink: 0, basis: btn, align: 1})
+        }
+
+        tv.add(acts, {grow: 0, shrink: 0, basis: btn, align: 3})
+        row.add(tv, {grow: 1, shrink: 1, align: 1})
 
         return row
     }
@@ -2543,8 +2616,9 @@ export struct Player {
             homeAsked = true
             homeLoading = true
             if curNav == 0 and netSongs.len() == 0 { rebuild_content() }   // 立刻显示"正在加载"✓
-            // 为你推荐 24 首（4 列 × 6 行 ✓ 需求），最近添加 9 首
-            threads.start(workers.sections, "热歌", "新歌", 24, 9, homeCh)
+            // 为你推荐 6 行、最近添加 2 行（数量 = 列数 × 行数，列数随窗口宽变 ✓ 不留半行）
+            int cols0 = cols_for_width()
+            threads.start(workers.sections, "热歌", "新歌", cols0 * 6, cols0 * 2, homeCh)
         }
         if homeCh != null and homeCh.len() > 0 {
             var h = homeCh.try_receive()

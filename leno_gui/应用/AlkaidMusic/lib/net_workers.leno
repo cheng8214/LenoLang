@@ -125,7 +125,7 @@ export func section(string kind, string kw, int n, Channel ch) {
 }
 
 // 首页两个分区（为你推荐 / 最近添加）：只搜两次，封面交给 cover_shard 并行拉
-//   两个分区的数量**分开传** —— 为你推荐要 24 首（4 列 × 6 行），最近添加 9 首
+//   两个分区的数量**分开传，由调用方按列数算**（为你推荐 = 列数×6 行，最近添加 = 列数×2 行）
 export func sections(string kwRec, string kwNew, int nRec, int nNew, Channel ch) {
     Array[Array[string]] out = []
     try {
