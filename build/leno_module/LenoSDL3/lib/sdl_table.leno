@@ -32,7 +32,7 @@ use theme.Color
 //   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
 func _opts_keys(): Array[string] {
     return [
-"aligns", "bg_color", "border", "border_color", "cell_select", "cell_types", "check_col", "check_color", "col_ratios", "col_reorder", "col_widths", "cursor", "editable", "editable_cols", "empty_color", "empty_text", "enabled", "font_path", "font_size", "font_style", "frozen_cols", "h", "header_aligns", "header_color", "header_h", "headers", "image_cache_max", "image_col", "image_gap", "image_mode", "image_pad", "image_path", "image_size", "max_col_width", "min_col_width", "multi_select", "numeric_cols", "resizable", "item_h", "row_images", "row_reorder", "rows", "sel_color", "sep_color", "sort_disabled_cols", "solid_sel", "hover_color", "sortable", "tip", "visible", "w", "x", "y", "zebra"
+"aligns", "bg_color", "border", "border_color", "cell_select", "cell_types", "check_col", "check_color", "col_ratios", "col_reorder", "col_widths", "cursor", "editable", "editable_cols", "empty_color", "empty_text", "enabled", "font_path", "font_size", "font_style", "frozen_cols", "h", "header_aligns", "header_color", "header_h", "headers", "image_cache_max", "image_col", "image_gap", "image_mode", "image_pad", "image_path", "image_size", "max_col_width", "min_col_width", "multi_select", "numeric_cols", "resizable", "item_h", "row_images", "row_num_color", "row_num_w", "row_numbers", "row_reorder", "rows", "sel_color", "sep_color", "sort_disabled_cols", "solid_sel", "hover_color", "sortable", "tip", "visible", "w", "x", "y", "zebra"
 ]
 }
 export struct Table impl Widget, Themeable {
@@ -94,6 +94,15 @@ export struct Table impl Widget, Themeable {
     pri Ptr[u8]? clipBase            // 表格整体裁剪区指针（供单元格内裁剪后恢复）
     pri Array[float] colWPrefix = []    // 列宽前缀和缓存：_colWPrefix[i] = sum(_colW[0..i-1])，让 _col_x O(1)
     pri bool colWPrefixValid = false
+    // ---- 行号列（2026-10-27 补）----
+    //   需求原话："给 table 前面增加数量 1,2,3,4" —— 也就是**表格最左边一列序号**。
+    //   实现口径：不是"多一个数据列"，而是表格左侧一条**行号槽**（gutter）：
+    //     · 不参与排序/选择/编辑/列宽拖拽，永远显示**当前显示顺序**的 1..n ✓
+    //     · 所有列的绘制与命中都整体右移 rowNumW（col_x / col_at 一处改，全跟着走 ✓）
+    //     · 列宽按 `w − 行号槽` 重新分配 ⇒ 打开它不会把最后一列挤出可视区 ✓
+    bool rowNumOn = false
+    float rowNumW = 44.0
+    Color rowNumColor = 0            // 0 = 用主题的次级文字色
     pri float cachedTotalW = -1.0       // _total_w() 缓存，避免 process/render 中多次遍历 _colW
     pri bool totalWValid = false
     // ★ _compute_sb() 结果缓存：process 单帧最多调用 6 次，缓存后只计算 1 次
@@ -212,6 +221,8 @@ export struct Table impl Widget, Themeable {
             }
         }
     }
+    // 行号槽宽度（没开行号列 = 0）—— 所有列的绘制/命中都以它为左偏移 ✓
+    pri func gx(): float { return if rowNumOn then rowNumW else 0.0 }
     pri func total_w(): float {
         if totalWValid { return cachedTotalW }
         float s = 0.0
@@ -225,7 +236,7 @@ export struct Table impl Widget, Themeable {
         float fw = frozen_w()
         float vw = 0.0, hh = 0.0
         float bodyH0 = h - headerH - 8.0
-        float bodyW0 = w - 8.0 - fw
+        float bodyW0 = w - 8.0 - fw - gx()      // 行号槽也要从可用宽里扣掉 ✓
         float ch = _rows.len() * rowH
         float tw = total_w() - fw
         if ch > bodyH0 { vw = 8.0 }
@@ -247,7 +258,7 @@ export struct Table impl Widget, Themeable {
     }
     pri func max_scroll_x(): float {
         var sb = compute_sb()
-        float bodyW = w - sb[0] - frozen_w()
+        float bodyW = w - sb[0] - frozen_w() - gx()
         if bodyW < 0 { bodyW = 0 }
         float m = total_w() - frozen_w() - bodyW
         if m < 0 { m = 0 }
@@ -289,12 +300,12 @@ export struct Table impl Widget, Themeable {
     }
     pri func col_x(int ci): float {
         ensure_col_prefix()
-        if ci < 0 { return x - scrollX }
+        if ci < 0 { return x + gx() - scrollX }
         if ci >= colWPrefix.len() { ci = colWPrefix.len() - 1 }
-        if ci < 0 { return x - scrollX }
+        if ci < 0 { return x + gx() - scrollX }
         // 冻结列不受水平滚动影响
-        if ci < frozenCols { return x + colWPrefix[ci] }
-        return x - scrollX + colWPrefix[ci]
+        if ci < frozenCols { return x + gx() + colWPrefix[ci] }
+        return x + gx() - scrollX + colWPrefix[ci]
     }
     pri func row_at(float my): int {
         if my < y + headerH { return -1 }
@@ -306,14 +317,15 @@ export struct Table impl Widget, Themeable {
     pri func col_at(float mx): int {
         ensure_col_prefix()
         if ncols <= 0 { return -1 }
+        if mx < x + gx() { return -1 }              // 落在行号槽里 ⇒ 不算任何列 ✓
         // 先检查冻结列（不受 _scrollX 影响）
         if frozenCols > 0 {
             for frozenCols to c {
-                if mx >= x + colWPrefix[c] and mx < x + colWPrefix[c + 1] { return c }
+                if mx >= x + gx() + colWPrefix[c] and mx < x + gx() + colWPrefix[c + 1] { return c }
             }
         }
         // 非冻结列：基于 _scrollX 做二分查找
-        float offset = mx - (x - scrollX)
+        float offset = mx - (x + gx() - scrollX)
         if offset < 0 { return -1 }
         int lo = frozenCols, hi = ncols - 1
         if lo > hi { return -1 }
@@ -399,6 +411,13 @@ export struct Table impl Widget, Themeable {
         if opts.get("col_ratios", []) is Array[float] => rr { colRatios = rr } else { colRatios = [] }
         if opts.get("aligns", []) is Array[int] => b { _aligns = b } else { _aligns = [] }
         if opts.get("header_aligns", []) is Array[int] => b { headerAligns = b } else { headerAligns = [] }
+        // 行号列（序号 1..n）—— **必须在 recompute_cols 之前读**：列宽要按"扣掉行号槽"算 ✓
+        rowNumOn = opts.get("row_numbers", false)
+        float rnw = opts.get("row_num_w", 44.0)
+        if rnw < 24.0 { rnw = 24.0 }
+        rowNumW = rnw
+        rowNumColor = 0
+        if opts.get("row_num_color") is Color => rnc { rowNumColor = rnc }
 
         if opts.get("rows", []) is Array[Array[string]] => b { _rows = b } else { _rows = [] }
         _srcIdx = []
@@ -495,7 +514,7 @@ export struct Table impl Widget, Themeable {
             //   图标列占的宽度先从总宽里扣掉，否则列宽合计会超出、底部冒出横向滚动条 ✗
             float iconW = 0.0
             if has_image_col() and _imgSize > 0.0 { iconW = _imgSize + imgGap }
-            float avail = w - iconW
+            float avail = w - iconW - gx()      // 行号槽先扣掉，列宽才不会把最后一列挤出可视区 ✓
             if avail < 40.0 { avail = 40.0 }
             _colW = []
             for n to i {
@@ -1996,6 +2015,15 @@ export struct Table impl Widget, Themeable {
 
     // 图标纹理缓存上限（0 = 不限制）；比"同时可见的行数"大一些最稳（否则每帧反复重载 ✗）
     func set_image_cache_max(int n) { if n >= 0 { imgCacheMax = n } }
+
+    // 运行时开关行号列（改完必须重算列宽 —— 行号槽是从可用宽里扣出来的 ✓）
+    func set_row_numbers(bool on) {
+        if rowNumOn == on { return }
+        rowNumOn = on
+        recompute_cols()
+        clamp_scroll()
+        core.markFrameRedraw()
+    }
     // 当前缓存条数（调试/自测用 ✓）
     func img_cache_count(): int { return imgCachePaths.len() }
 
@@ -2185,6 +2213,17 @@ export struct Table impl Widget, Themeable {
             if ri >= _rows.len() { continue }
             float ry = bodyTop - scrollY + ri * rowH
             if ry + rowH < bodyTop or ry > bodyTop + bodyH { continue }
+            // 行号（序号）：按**当前显示顺序**从 1 数起 —— 排序后跟着走的自然是新顺序 ✓
+            if rowNumOn {
+                string nt = _str(ri + 1)
+                var[float, float](_ntw, _nth) = _font.measureString(nt)
+                float ntx = x + rowNumW - 8.0 - _ntw          // 右对齐，离列分隔再留 8px
+                if ntx < x + 4.0 { ntx = x + 4.0 }
+                float nty = ry + (rowH - textH) / 2.0
+                Color nc = rowNumColor
+                if nc == 0 { nc = theme.withAlpha(hdrTxtColor, 200) }
+                r.drawText(_font, nt, r.snapX(ntx), r.snapY(nty), nc)
+            }
             var row = _rows[ri]
             string imgPath = row_image(ri)
             // 行级颜色：取本行文字色（0=用默认色）

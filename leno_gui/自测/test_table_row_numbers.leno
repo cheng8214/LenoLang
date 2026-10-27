@@ -1,0 +1,128 @@
+// test_table_row_numbers.leno — Table **行号列**（序号 1,2,3,4）验收（回归件 ✓）
+//   需求原话："给 table 前面增加数量 1,2,3,4"。
+//   口径（框架侧，2026-10-27）：不是新增数据列，而是表格左侧一条**行号槽**（gutter）：
+//     · 画的是**当前显示顺序**的 1..n（表头排序后自动重排）
+//     · 所有列的绘制与命中整体右移 rowNumW；列宽按 `w − 行号槽` 重新分配
+//     · 槽内点击**不算命中任何列**（onCell 不触发，只选中行）
+//
+//   判据（跑完看输出，全部应是"OK"）：
+//     ① 槽内点击 (x+8) ⇒ onCell **不该**触发（col = -1）
+//     ② 槽右侧 (x+rowNumW+30) ⇒ onCell(row=0, col=0)
+//     ③ 对照组（关掉行号）：x+8 处点击 ⇒ onCell(row=0, col=0)
+//     ④ 两张截图：行号 1..6；按第 0 列降序排序后仍从 1 连续
+//
+//   跑法（项目根目录）：
+//     set PROBE_OUT=%TEMP%\rn     # 可选：存 rn1.png（正常）/ rn2.png（排序后）
+//     build\leno.exe leno_gui\自测\test_table_row_numbers.leno
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer, Window, Table)
+
+const float TB_X = 20.0
+const float TB_Y = 20.0
+const float TB_W = 660.0
+const float TB_H = 260.0
+const float RN_W = 44.0
+const float HDR_H = 28.0
+const float ROW_H = 28.0
+
+int steps = 0
+string outP = ""
+Window w
+Table tb
+Table tb2
+int hitRow = -9
+int hitCol = -9
+int hitRow2 = -9
+int hitCol2 = -9
+string wantShot = ""        // 非空 ⇒ 下一帧存这个文件
+
+func make_rows(): Array[Array[string]] {
+    Array[Array[string]] rows = []
+    for 1 : 6 to i {
+        rows.add(["歌名 " + _str(i), "歌手 " + _str(i), "专辑 " + _str(i)])
+    }
+    return rows
+}
+
+func judge(string name, int gotRow, int gotCol, int wantRow, int wantCol) {
+    string got = "row=" + _str(gotRow) + " col=" + _str(gotCol)
+    string want = "row=" + _str(wantRow) + " col=" + _str(wantCol)
+    if gotRow == wantRow and gotCol == wantCol { print("[rn] " + name + " OK（" + got + "）") }
+    else { print("[rn] " + name + " ✗ 期望 " + want + "，实际 " + got) }
+}
+
+func run() {
+    SDL3.ttfInit()
+    w = SDL3.createWindow({title: "probe_row_numbers", w: 720, h: 380})
+    if not w.ok { SDL3.ttfQuit(); return }
+
+    var op = _env("PROBE_OUT")
+    if op != null { outP = _str(op) }
+
+    // 带行号列
+    tb = w.addTable({x: TB_X, y: TB_Y, w: TB_W, h: TB_H,
+                     headers: ["歌名", "歌手", "专辑"],
+                     col_ratios: [0.5, 0.25, 0.25],
+                     item_h: ROW_H, header_h: HDR_H, font_size: 13,
+                     row_numbers: true, row_num_w: RN_W,
+                     sortable: true})
+    tb.set_rows(make_rows())
+    tb.on_cell(func(int r, int c) { hitRow = r; hitCol = c })
+
+    // 对照组：不开行号列（放下面，避免互相干扰）
+    tb2 = w.addTable({x: TB_X, y: TB_Y + TB_H + 10.0, w: TB_W, h: 90.0,
+                      headers: ["歌名", "歌手", "专辑"],
+                      col_ratios: [0.5, 0.25, 0.25],
+                      item_h: ROW_H, header_h: HDR_H, font_size: 13})
+    tb2.set_rows(make_rows())
+    tb2.on_cell(func(int r, int c) { hitRow2 = r; hitCol2 = c })
+
+    w.setOverlay(func(Renderer r) {
+        if wantShot == "" { return }
+        string p = wantShot
+        wantShot = ""
+        var sz = w.getSize()
+        var px = r.readPixelsAt(0, 0, sz.w, sz.h)
+        if px != null { print("[rn] 截图 " + p + " ok=" + _str(SDL3.saveImagePNG(px, p))) }
+    })
+
+    // 每拍只做一件事（100ms 一拍）：截图 → 点击 → 下一拍再判读，
+    //   ⚠ 不能写成 overlay 里的 `steps == N`：一帧一判 ⇒ 同一拍内会点成百上千次 ✗
+    w.addTimer(100, func() {
+        steps = steps + 1
+        if steps == 4 {
+            if outP != "" { wantShot = outP + "1.png" }
+        }
+        if steps == 6 {          // ① 槽内点击（x+8）：不该命中列
+            hitRow = -9; hitCol = -9
+            SDL3.testClickAt(w.getID(), TB_X + 8.0, TB_Y + HDR_H + ROW_H / 2.0)
+        }
+        if steps == 7 {
+            if hitRow == -9 and hitCol == -9 { print("[rn] ① 行号槽内点击 ⇒ 未命中列 OK（onCell 没触发）") }
+            else { print("[rn] ① 行号槽内点击 ✗ 不该命中列，实际 row=" + _str(hitRow) + " col=" + _str(hitCol)) }
+            hitRow = -9; hitCol = -9
+            SDL3.testClickAt(w.getID(), TB_X + RN_W + 30.0, TB_Y + HDR_H + ROW_H / 2.0)
+        }
+        if steps == 8 {          // ② 槽右侧第一列中部
+            judge("② 第一列内点击", hitRow, hitCol, 0, 0)
+            hitRow2 = -9; hitCol2 = -9
+            SDL3.testClickAt(w.getID(), TB_X + 8.0, TB_Y + TB_H + 10.0 + HDR_H + ROW_H / 2.0)
+        }
+        if steps == 9 {          // ③ 对照组
+            judge("③ 无行号时 x+8 点击", hitRow2, hitCol2, 0, 0)
+            tb.sort_by(0, true)   // ④ 排序：行号应跟着显示顺序重排
+        }
+        if steps == 12 {
+            if outP != "" { wantShot = outP + "2.png" }
+        }
+        if steps == 14 {
+            print("[rn] ④ 已按第 0 列降序排序，截图核对：行号仍从 1 连续 ✓")
+            _exit(0)
+        }
+    })
+
+    w.run(func(Event ev): bool { return true }, func(Renderer r) { r.clearColor(#101418FF) })
+    SDL3.ttfQuit()
+}
+
+main() { run() }
