@@ -4,6 +4,7 @@ import ffi
 import maths
 import "sdl_core.leno" as core
 import "sdl_font.leno" as font
+import "sdl_texcache.leno" as tcx   // 图片纹理共享缓存（销毁渲染器时要一起清 ✓）
 use core.(sdl3, SDL_FRect, SDL_Color, SDL_FColor, SDL_FPoint, SDL_Point, SDL_Rect, SDL_Vertex, Color, FColor, Size, FSize, ScaleMode)
 use font.(Font, TextTexture)
 
@@ -232,6 +233,9 @@ const BX_TEX    = 4   // 批处理文字纹理
             // 渲染器销毁前：先使字体库中由本渲染器创建的纹理缓存失效。
             // 否则销毁后这些纹理悬空，SDL 复用同一指针再建渲染器时会命中失效纹理 → 字体不显示。
             font.invalidateRendererTextures(handle)
+            // 图片纹理共享缓存同理：本渲染器名下的纹理得先真销毁再从缓存里清掉，
+            //   否则渲染器一死这些句柄就悬空，SDL 复用同一指针建新渲染器后会贴到废纹理 ✗
+            tcx.invalidateRenderer(handle)
             _lib.SDL_DestroyRenderer(handle); handle = null; ok = false
         }
     }

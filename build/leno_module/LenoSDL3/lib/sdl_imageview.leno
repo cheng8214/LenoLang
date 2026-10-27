@@ -6,6 +6,7 @@ import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.(SystemCursor, sdl3)
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_image.leno" as img
+import "sdl_texcache.leno" as tcx   // 纹理共享缓存：重建页面不再重新解码、不再闪 ✓
 import "sdl_tooltip.leno" as tip
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 use theme.Color
@@ -96,14 +97,15 @@ export struct ImageView impl Widget, Themeable {
         rrW = 0.0; rrH = 0.0; rrR = 0.0
     }
 
+    // 换图：只**归还**旧纹（纹理归 sdl_texcache 管，留着给别的控件/下次重建复用 ✓）
     func set_image(string path) {
-        if tex != null { core.lib().SDL_DestroyTexture(tex); tex = null }
+        if tex != null { tcx.release(tex); tex = null }
         drop_rr()
         imagePath = path; loadedPath = ""; tex = null
     }
     // 换/清叠加图（"" = 不显示）
     func set_overlay(string path) {
-        if overlayTex != null { core.lib().SDL_DestroyTexture(overlayTex); overlayTex = null }
+        if overlayTex != null { tcx.release(overlayTex); overlayTex = null }
         overlayPath = path
         overlayLoaded = ""
     }
@@ -136,9 +138,11 @@ export struct ImageView impl Widget, Themeable {
     }
 
     // 懒加载图片纹理（需有效渲染器）
+    //   ★ 2026-10-27：改走 **共享缓存**（sdl_texcache）—— 同一路径只解码一次，
+    //     整页重建后能立刻贴到已缓存的纹理 ⇒ 不再出现"重建那一帧是空白"的闪 ✓
     pri func ensure_tex(Renderer r) {
         if imagePath != "" and tex == null and loadedPath != imagePath {
-            tex = img.loadTexture(r.handle, imagePath)
+            tex = tcx.acquire(r.handle, imagePath)
             loadedPath = imagePath
             if tex != null {
                 var[float, float](_nw, _nh) = r.getTextureSize(tex)
@@ -231,7 +235,8 @@ export struct ImageView impl Widget, Themeable {
         // ★ 悬停叠加图（封面上的播放钮）：画在图片之上、边框之下
         if overlayPath != "" and (not overlayHoverOnly or hover) {
             if overlayTex == null or overlayLoaded != overlayPath {
-                overlayTex = img.loadTexture(r.handle, overlayPath)
+                if overlayTex != null { tcx.release(overlayTex); overlayTex = null }
+                overlayTex = tcx.acquire(r.handle, overlayPath)
                 overlayLoaded = overlayPath
             }
             if overlayTex != null {
@@ -262,9 +267,10 @@ export struct ImageView impl Widget, Themeable {
         }
     }
 
+    // 销毁控件：**只归还引用**（纹理留在共享缓存里，下次重建立刻可用 ✓）
     func dispose() {
-        if tex != null { core.lib().SDL_DestroyTexture(tex); tex = null }
-        if overlayTex != null { core.lib().SDL_DestroyTexture(overlayTex); overlayTex = null }
+        if tex != null { tcx.release(tex); tex = null }
+        if overlayTex != null { tcx.release(overlayTex); overlayTex = null }
         drop_rr()
     }
     // ==================== 运行时主题切换 ====================

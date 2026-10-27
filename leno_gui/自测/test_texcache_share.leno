@@ -1,0 +1,76 @@
+// test_texcache_share.leno — ImageView 纹理**共享缓存**验收（回归件 ✓）
+//   由来：AlkaidMusic 反馈「点 ♥ 时『换一批』闪一下」。查下来根因之一是
+//     ImageView 每个实例都自己 loadTexture / dispose 时销毁纹理 ⇒
+//     应用一整页重建就要把所有封面重新解码，重建后第一帧还没贴图 ⇒ 肉眼就是闪。
+//   修法（框架侧，2026-10-27）：新增 sdl_texcache（按 [渲染器, 路径] 共享 + 引用计数 + LRU 上限），
+//     ImageView 改成"借纹理"，dispose 只 release，纹理留缓存复用 ⇒ 重建不闪。
+//
+//   判据（本探针）：
+//     · 4 个 ImageView、2 种路径 ⇒ imageCacheCount() 应为 **2**（不是 4）
+//     · 全部 dispose 后再看 ⇒ 仍是 2（纹理留在缓存里等复用 ✓）
+//     · 再"重建"3 个同路径的 ⇒ 仍是 2（没有重新解码、没有多占 ✓）
+//
+//   跑法（项目根目录）：
+//     set PROBE_OUT=%TEMP%\tc      # 可选：存一张 tc1.png
+//     build\leno.exe leno_gui\自测\test_texcache_share.leno
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer, Window, ImageView)
+
+const string IMG_A = "leno_gui/应用/AlkaidMusic/images/cover05.png"
+const string IMG_B = "leno_gui/应用/AlkaidMusic/images/cover14.png"
+
+int steps = 0
+string outP = ""
+Window w
+Array[ImageView] views = []
+
+func add_one(string path, float x) {
+    ImageView v = w.addImageView({x: x, y: 40, w: 96, h: 96, image_path: path, radius: 8})
+    views.add(v)
+}
+
+func run() {
+    SDL3.ttfInit()
+    w = SDL3.createWindow({title: "probe_texcache", w: 620, h: 220})
+    if not w.ok { SDL3.ttfQuit(); return }
+
+    var op = _env("PROBE_OUT")
+    if op != null { outP = _str(op) }
+
+    // 4 个实例、2 种路径
+    add_one(IMG_A, 20)
+    add_one(IMG_A, 130)
+    add_one(IMG_A, 240)
+    add_one(IMG_B, 350)
+
+    w.setOverlay(func(Renderer r) {
+        if steps == 6 {
+            print("[tc] 4 实例/2 路径 ⇒ count=" + _str(SDL3.imageCacheCount()) + "（应=2）")
+        }
+        if steps == 10 {
+            // 全部销毁（模拟"换页/换一批"）—— 缓存里的纹理应保留
+            for views to v { v.dispose() }
+            views = []
+            print("[tc] 全部 dispose 后 ⇒ count=" + _str(SDL3.imageCacheCount()) + "（应=2，纹理留着复用）")
+        }
+        if steps == 14 {
+            // 模拟重建：同路径再建 3 个 —— 不该新增条目、也不该重新解码
+            add_one(IMG_A, 20)
+            add_one(IMG_A, 130)
+            add_one(IMG_A, 240)
+            print("[tc] 重建 3 个同路径 ⇒ count=" + _str(SDL3.imageCacheCount()) + "（应=2，共享命中）")
+            if outP != "" {
+                var sz = w.getSize()
+                var px = r.readPixelsAt(0, 0, sz.w, sz.h)
+                if px != null { print("[tc] 截图 ok=" + _str(SDL3.saveImagePNG(px, outP + "1.png"))) }
+            }
+            _exit(0)
+        }
+    })
+
+    w.addTimer(100, func() { steps = steps + 1 })
+    w.run(func(Event ev): bool { return true }, func(Renderer r) { r.clearColor(#101418FF) })
+    SDL3.ttfQuit()
+}
+
+main() { run() }

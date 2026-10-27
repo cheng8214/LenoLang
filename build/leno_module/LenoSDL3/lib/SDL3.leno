@@ -33,6 +33,7 @@ import "sdl_chart.leno" as cht
 import "sdl_tray.leno" as tray
 import "sdl_theme.leno" as thm
 import "sdl_imageview.leno" as iv
+import "sdl_texcache.leno" as tcx   // 图片纹理共享缓存（诊断/上限配置用 ✓）
 import "sdl_separator.leno" as sep
 import "sdl_badge.leno" as bdg; use bdg.Badge     // 胶囊徽标（不可点状态标签 ✓）
 import "sdl_calendar.leno" as cal; use cal.Calendar   // 签到日历（月历网格 + 每天状态色 + 可选点选/切月）
@@ -136,6 +137,11 @@ export func createLineChart(Dict opts): LineChart { return cht.createLineChart(o
 export func createPieChart(Dict opts): PieChart { return cht.createPieChart(opts) }
 export func createTray(Dict opts): Tray        { return tray.createTray(opts) }
 export func createImageView(Dict opts): ImageView  { return iv.createImageView(opts) }
+// 图片纹理共享缓存（2026-10-27 补）：同一路径的 ImageView 共用一个纹理，
+//   整页重建后不必重新解码 ⇒ 不再"重建即闪" ✓
+export func imageCacheCount(): int          { return tcx.count() }
+export func setImageCacheMax(int n)          { tcx.setCap(n) }
+export func imageCacheRefOf(Ptr[u8] t): int  { return tcx.refOf(t) }
 export func createSeparator(Dict opts): Separator  { return sep.createSeparator(opts) }
 export func createBadge(Dict opts): Badge         { return bdg.createBadge(opts) }
 export func createAlert(Dict opts): Alert         { return alt.createAlert(opts) }

@@ -1,0 +1,133 @@
+// sdl_texcache.leno — 图片纹理**共享缓存**（2026-10-27 补，框架级）
+//
+// 为什么要有它：
+//   `ImageView` 以前是"每个实例自己 loadTexture、set_image/dispose 时直接销毁"⇒
+//   应用只要整页重建（换页 / 换一批 / 刷新数据），所有图片都要**重新解码**，
+//   重建后第一帧纹理还没就绪 ⇒ 肉眼就是"闪一下"（AlkaidMusic 反馈：
+//   点 ♥ 时「换一批」胶囊闪一下，根因之一就是重建把封面全丢掉了 ✓）
+//
+//   现在改成按 [渲染器, 路径] **共享一份纹理 + 引用计数**：
+//     · 同一路径的多个控件共用一个纹理（几十张卡都用 play.png 时只解码一次，显存也省 ✓）
+//     · 控件只"借"，销毁时只 release —— 纹理留在缓存里 ⇒ 重建后立刻能贴图，不再闪 ✓
+//     · 引用计数为 0 的纹理留作复用；**超过上限才按 LRU 回收，且只回收没人借的** ✓
+//     · 渲染器销毁前必须调 `invalidateRenderer()`（否则纹理悬空，SDL 复用指针后会贴废纹理 ✗
+//       与 `sdl_font.invalidateRendererTextures` 是同一个道理 ✓）
+//
+//   ⚠ 这里**只做纹理句柄的共享**，不做"路径→文件"层面的缓存；解码仍走 sdl_image。
+//   ⚠ 纹理属于某个渲染器（多窗口 = 多渲染器）⇒ 键必须带上渲染器句柄，不能只按路径 ✗
+import "sdl_core.leno" as core
+use core.sdl3                      // SDL_DestroyTexture
+import "sdl_image.leno" as img
+
+// 缓存条数上限（0 = 不限制）。一张 500×500 的封面约 1MB 显存，96 条 ≈ 100MB 顶天；
+// 实际以缩略图为主，远小于这个数 ✓
+int _cap = 96
+Array[Ptr[u8]] _rnd = []      // 纹理属于哪个渲染器（键的一部分）
+Array[string] _path = []      // 图片路径（键的一部分）
+Array[Ptr[u8]] _tex = []      // 纹理句柄
+Array[int] _ref = []          // 引用计数：>0 = 还有控件在用，绝不回收
+Array[int] _used = []         // 最近使用序号（LRU 比较用）
+int _clock = 0
+
+// 缓存上限（0 = 不限制）
+export func setCap(int n) {
+    if n >= 0 { _cap = n }
+}
+
+// 当前缓存条数（自测/诊断用）
+export func count(): int { return _path.len() }
+
+func find(string p, Ptr[u8] r): int {
+    for _path.len() to i {
+        if _path[i] == p and _rnd[i] == r { return i }
+    }
+    return -1
+}
+
+func findTex(Ptr[u8] t): int {
+    if t == null { return -1 }
+    for _tex.len() to i {
+        if _tex[i] == t { return i }
+    }
+    return -1
+}
+
+// 某张纹理当前的引用计数（自测用；-1 = 不在缓存里）
+export func refOf(Ptr[u8] t): int {
+    int i = findTex(t)
+    if i < 0 { return -1 }
+    return _ref[i]
+}
+
+// 满了就按 LRU 淘汰**一条没人借的**；全都在用 ⇒ 宁可超上限，也不能销毁在用的纹 ✗
+func evict_one() {
+    if _cap <= 0 or _path.len() < _cap { return }
+    int victim = -1
+    for _ref.len() to k {
+        if _ref[k] > 0 { continue }
+        if victim < 0 or _used[k] < _used[victim] { victim = k }
+    }
+    if victim < 0 { return }
+    core.lib().SDL_DestroyTexture(_tex[victim])
+    _rnd.remove(victim)
+    _path.remove(victim)
+    _tex.remove(victim)
+    _ref.remove(victim)
+    _used.remove(victim)
+}
+
+// 借一张纹理：命中就 ref+1 直接给；没命中就解码后放进缓存（ref=1）✓
+//   返回 null = 路径空 / 解码失败（调用方按"没图"处理，不要当异常 ✓）
+export func acquire(Ptr[u8] r, string p): Ptr[u8] {
+    if p == "" { return null }
+    int i = find(p, r)
+    if i >= 0 {
+        _ref[i] = _ref[i] + 1
+        _clock = _clock + 1
+        _used[i] = _clock
+        return _tex[i]
+    }
+    Ptr[u8] t = img.loadTexture(r, p)
+    if t == null { return null }
+    evict_one()
+    _rnd.add(r)
+    _path.add(p)
+    _tex.add(t)
+    _ref.add(1)
+    _clock = _clock + 1
+    _used.add(_clock)
+    return t
+}
+
+// 还一张纹理（控件销毁 / 换图时调）：只减引用，**不销毁** ⇒ 下次还能立刻复用 ✓
+export func release(Ptr[u8] t) {
+    int i = findTex(t)
+    if i < 0 { return }
+    _ref[i] = _ref[i] - 1
+    if _ref[i] < 0 { _ref[i] = 0 }
+}
+
+// 渲染器销毁**之前**调用：把这个渲染器名下的纹理全部真销毁并清出缓存 ✓
+export func invalidateRenderer(Ptr[u8] r) {
+    Array[Ptr[u8]] keepT = []
+    Array[string] keepP = []
+    Array[Ptr[u8]] keepR = []
+    Array[int] keepRef = []
+    Array[int] keepUse = []
+    for _path.len() to i {
+        if _rnd[i] == r {
+            core.lib().SDL_DestroyTexture(_tex[i])
+        } else {
+            keepT.add(_tex[i])
+            keepP.add(_path[i])
+            keepR.add(_rnd[i])
+            keepRef.add(_ref[i])
+            keepUse.add(_used[i])
+        }
+    }
+    _tex = keepT
+    _path = keepP
+    _rnd = keepR
+    _ref = keepRef
+    _used = keepUse
+}
