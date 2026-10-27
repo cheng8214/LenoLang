@@ -283,6 +283,9 @@ export struct Player {
     int histPos = -1
     string artistArg = ""                 // 当前歌手页的歌手名
     string songArg = ""                   // 当前歌曲页的 sid
+    // 当前页的参数（nav_apply 每次进来记一次）—— 进歌词页时要把"来源页"压进历史栈，
+    //   否则从「本地音乐/搜索结果」进歌词后关闭会回到首页（而不是来源页 ✗）
+    string curArg = ""
     // 歌曲页为了补"相关歌曲"会后台搜一次同歌手 ——
     //   那次回信**不能**把页面切到结果表（否则点歌名进去又被弹回搜索页 ✗）
     bool relatedSearch = false
@@ -1050,15 +1053,30 @@ export struct Player {
         SDL3.markFrameRedraw()
     }
 
-    // 打开/关闭歌词页（true = 进去；false = 回首页）
+    // 打开/关闭歌词页 —— **开关式**：已经在歌词页时，再点就关掉并退回"进歌词前那一页" ✓
+    //   ⚠ 旧实现每次点都 `nav_push(-6)`，关闭又 `nav_push(0)` ⇒ 连点 10 次要退 10 次才回到原页 ✗
+    //   ⚠ 关闭必须走 `nav_back()`（出栈），不能再 push 一页首页（否则栈越来越深 ✗）
     pri func open_lyrics(bool enter) {
+        if curNav == -6 {
+            // 已经在歌词页 ⇒ 不论 enter 传什么，都当"关闭"
+            if histPos > 0 {
+                nav_back()                  // 回到进歌词前那一页
+            } else {
+                set_nav(0)                  // 极端情况（栈里没有上一页）⇒ 直回首页
+            }
+            SDL3.markFrameRedraw()
+            return
+        }
         if enter {
-            // 没在播也允许进：页面里会写"还没有在播的歌"，比点了没反应好 ✓
+            // ① 先把**来源页**压进栈（栈顶不是当前页时）：
+            //    切页走的是 set_nav（只改 curNav、不入栈），所以从「本地音乐」进歌词后，
+            //    栈里没有它 ⇒ nav_back 会一路退到首页（不是用户期望的"歌词前那一页" ✗）
+            if histPos < 0 or histPos >= histNav.len() or histNav[histPos] != curNav {
+                nav_push(curNav, curArg)
+            }
+            // ② 再进歌词页（没在播也允许：页面里会写"还没有在播的歌"，比点了没反应好 ✓）
             nav_push(-6, "")
             nav_apply(-6, "")
-        } else {
-            nav_push(0, "")
-            nav_apply(0, "")
         }
     }
 
@@ -2274,6 +2292,7 @@ export struct Player {
     }
 
     pri func nav_apply(int nav, string arg) {
+        curArg = arg                    // 记住当前页的参数（进歌词页时要把"来源页"压进栈 ✓）
         if nav == -3 {
             artistArg = arg
             curNav = -3
