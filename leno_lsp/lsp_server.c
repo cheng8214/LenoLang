@@ -21,6 +21,12 @@ int debugMode = 0;
 int g_argc = 0;
 char** g_argv = NULL;
 
+// 「是否打包版运行」的标记：**每个入口自己定义一份**（main.c / vm_main.c / 这里）。
+//   LSP 的 main() 在本文件（构建时排除了 src/main.c）⇒ 少这一份就会在链接期报
+//   `undefined reference to g_packaged_mode`（dirs.c 的 script_dir() 要用它）。
+//   LSP 进程永远不是"自己就是应用 exe"的打包版 ⇒ 恒 0（语义与 main.c 一致 ✓）
+int g_packaged_mode = 0;
+
 static volatile int running = 1;
 
 // 信号处理
