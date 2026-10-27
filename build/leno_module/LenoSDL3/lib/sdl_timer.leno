@@ -22,10 +22,24 @@ export func unregisterTimer(Timer t) {
 }
 
 // 窗口主循环每帧调用：驱动所有注册的定时器，任意一个触发回调则自动 requestRedraw
+//   ⚠⚠ 2026-10-27 修（用户实测：AlkaidMusic 运行中报
+//     "sdl_timer.leno:28 数组索引越界: 索引 2, 长度 2" ✗）：
+//     回调里完全可能 **unregisterTimer**（例如跑马灯 Label 被 dispose、一次性定时器用完就注销）
+//     或 **registerTimer**（回调里新建控件）⇒ 边遍历边改 `_timers`，
+//     刚开始 len=3、中途变成 2，走到 i=2 就**越界崩掉** ✗
+//   正解：先**拷贝一份快照**再遍历；每项 tick 前确认它还在注册表里（快照里的已被移除就跳过）
 export func tickAllTimers() {
     bool anyFired = false
-    for _timers.len() to i {
-        if _timers[i].tick() { anyFired = true }
+    Array[Timer] snap = []                     // 快照：遍历期间 _timers 怎么增删都不影响下标 ✓
+    for _timers.len() to i { snap.add(_timers[i]) }
+    for snap.len() to i {
+        Timer t = snap[i]
+        // 回调里被移除的定时器（以及后来才注册的）都不该在本拍执行
+        bool alive = false
+        for _timers.len() to j {
+            if _timers[j] == t { alive = true; break }
+        }
+        if alive and t.tick() { anyFired = true }
     }
     if anyFired { core.requestRedraw() }
 }
