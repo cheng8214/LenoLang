@@ -1,0 +1,219 @@
+// cards.leno — 卡片布局尺寸 + 竖版卡片 / 横卡（首页、继续收听、搜索结果、我喜欢共用）
+// ----------------------------------------------------------------------------
+// 为什么抽出来：这几百行只跟"卡多大、间距多少、里面放哪几颗按钮"有关，
+// 和页面切换/播放控制无关。抽走后主文件只剩"往哪个容器里 add 什么"。
+//
+// ⚠ 尺寸全部**由卡宽按比例推**（不写死像素）⇒ 换列数、换窗口宽度都自动协调 ✓
+// ⚠ 这里的颜色与主文件 C_* 是同一套（主文件仍保留自己的常量，改动要同步）
+//    —— 没有统一到 theme 模块，是因为主文件 400+ 处直接写 C_TXT，迁移成本大于收益
+import "SDL3" as SDL3
+import "./ui_kit.leno" as ui
+import "../music_data.leno" as data
+use SDL3.(Button, Card, HBox, ImageView, Label, VBox, Color)
+use data.Song
+
+// ==================== 与主文件同步的常量 ====================
+export const int SIDE_W = 184          // 侧栏宽
+export const int MARGIN = 24           // 内容区左右内边距
+export const int CARD_W = 152          // 竖版卡片自然宽
+export const int CARD_H = 200          // 竖版卡片自然高（再矮图片区会被压成 0 ✗）
+export const float CARD_ASPECT = 0.85  // 竖版卡片图片区 高/宽
+export const int CARD_BASE_W = 220     // 横卡"最舒服"的宽（只用来推列数）
+export const int CELL_GAP = 14         // 卡片之间的横向间距
+
+// 颜色（与主文件一致）
+const Color C_TXT = #35262BFF
+const Color C_TXT_DIM = #77646DFF
+const Color C_ACCENT = #E76F9BFF
+const Color C_CARD = #FFFFFF73
+const Color C_TRANS = #00000000
+
+// ==================== 尺寸计算 ====================
+// 用法：主文件持有一个 CardSize 字段，重建页面之前 `cs.winW = win.getSize().w`
+export struct CardSize {
+    int winW = 1200
+
+    // 内容区宽（侧栏 + 左右内边距之外）
+    //   ⚠ **不再多扣 12**：表格/列宽都是按这个值算的，多扣一次右侧会白出一条
+    //     （滚动条由控件自己画在右边缘内侧）
+    func content_w(): int {
+        int w = winW - SIDE_W - MARGIN * 2
+        if w < 320 { w = 320 }
+        return w
+    }
+
+    // 列数：round(可用宽 ÷ (基准 + 间距))，夹在 2..8
+    //   ⇒ 1200 宽 4 列、1920 宽 7 列、1000 宽 3 列（窗口一变列数自己跟着变 ✓）
+    func cols_of(int avail): int {
+        int unit = CARD_BASE_W + CELL_GAP
+        int c = (avail + CELL_GAP + unit / 2) / unit
+        if c < 2 { c = 2 }
+        if c > 8 { c = 8 }
+        return c
+    }
+
+    // 单卡宽：剩余宽度均分（末尾留 2px，圆角外沿才不会被 clip 矩形切平）
+    func card_cw(int avail): int {
+        int c = cols_of(avail)
+        return (avail - (c - 1) * CELL_GAP - 2) / c
+    }
+
+    // 可放卡片的宽度：-12 给右侧滚动条让位
+    //   ⚠ 卡片墙 / 继续收听 / 虚拟网格**必须都走这个函数**，否则会出现
+    //     "首页 4 列、最近播放 3 列"的不一致 ✗
+    func shelf_avail(): int { return content_w() - 12 }
+    func cols(): int { return cols_of(shelf_avail()) }
+
+    // ---- 卡内尺寸：全部由卡宽按比例推 ----
+    func pad_of(int cw): int { return cw * 3 / 100 }        // 内边距 3%
+    func thumb_of(int cw): int { return cw * 20 / 100 }     // 封面 20%
+    func gap_of(int cw): int { return cw * 2 / 100 }        // 子控件间距 2%
+
+    // 图标按钮：11% 卡宽，但不小于 24（可点击下限，也是 48px 源图的整数分之一，不糊）
+    func btn_of(int cw): int {
+        int b = cw * 11 / 100
+        if b < 24 { b = 24 }
+        return b
+    }
+
+    // 卡高 = 内边距×2 + 歌名 20 + 歌手 16 + 图标行
+    func h_of(int cw): int { return pad_of(cw) * 2 + 20 + 16 + btn_of(cw) }
+}
+
+// ==================== 卡片回调 ====================
+// 卡片里要触发的东西都由调用方注入（模块不认识 Player）
+export struct CardHooks {
+    func(Song):void onPlay = null        // 点封面：播放 / 暂停
+    func(Song):void onOpen = null        // 点歌名 / 歌手：进详情页
+    func(Song):void onLike = null        // ♥
+    func(Song):void onQueue = null       // 下载
+    func(Song):void onDelete = null      // 从「我喜欢」删除
+    func(Song):bool isPlaying = null     // 当前是否在播（决定 play/pause 图标）
+    func(Song):bool isLiked = null       // 是否已收藏（决定 ♥ 图标）
+    // 登记 ♥ 按钮与封面：收藏/封面回信时就地 set_image，避免整页重建（否则「换一批」会闪 ✗）
+    func(Song, Button, ImageView):void onTrack = null
+}
+
+// ==================== 竖版卡片：方图 + 歌名 + 歌手（无卡片底色）====================
+export func song_card(Song sg, CardHooks h): Card {
+    Card c = SDL3.createCard({x: 0, y: 0, w: CARD_W, h: CARD_H,
+                              image_path: ui.coverPath(sg.cover), image_aspect: CARD_ASPECT,
+                              image_radius: 14, radius: 16,
+                              bg_color: C_TRANS,
+                              title: sg.title, subtitle: sg.artist,
+                              title_size: 13.5, subtitle_size: 11,
+                              title_bold: true,
+                              text_color: C_TXT, subtitle_color: C_TXT_DIM,
+                              content_pad: 8, gap: 6,
+                              hover_lift: 2.0, border: false})
+    if sg.tag != "" {
+        c.add_badge({text: sg.tag, pos: 1, size: 10, bg: C_ACCENT, color: #FFFFFFFF})
+    }
+    if h.onPlay != null {
+        Song s = sg
+        c.on_click(func() { h.onPlay(s) })
+    }
+    return c
+}
+
+// ==================== 横卡：封面 + 歌名/歌手 + 一排图标 ====================
+//   showDel = 第四颗"删除"按钮（只在「我喜欢」页出现，删 = 取消收藏 ✓）
+export func wide_card(Song sg, int cw, bool showDel, CardSize cs, CardHooks h): HBox {
+    int pad = cs.pad_of(cw)
+    int thumb = cs.thumb_of(cw)
+    int btn = cs.btn_of(cw)
+    int gap = cs.gap_of(cw)
+    int ch = cs.h_of(cw)
+    bool isCur = if h.isPlaying != null then h.isPlaying(sg) else false
+    bool likedNow = if h.isLiked != null then h.isLiked(sg) else false
+
+    // clip: true 兜底：万一哪个子控件画宽了，也**不会冲出卡片**
+    HBox row = SDL3.createHBox({x: 0, y: 0, w: _float(cw), h: _float(ch), pad_x: pad, pad_y: pad,
+                                spacing: gap, bg_color: C_CARD, bg_radius: 14, clip: true})
+    // 封面 + 叠加播放/暂停钮（24px = 48 源图一半，整数倍不糊）
+    ImageView iv = SDL3.createImageView({w: thumb, h: thumb, radius: 10,
+                                         image_path: ui.coverPath(sg.cover),
+                                         overlay_path: ui.ico(if isCur then "pause.png" else "play.png"),
+                                         overlay_size: 24.0,
+                                         tip: if isCur then "暂停" else "播放"})
+    if h.onPlay != null {
+        Song s1 = sg
+        iv.on_click(func() { h.onPlay(s1) })
+    }
+    row.add(iv, {grow: 0, shrink: 0, basis: thumb, align: 1})
+
+    // 文字列（歌名 20 + 歌手 16 + 图标行）：宽度 = 卡宽 − 内边距×2 − 封面 − 间距
+    int tw = cw - pad * 2 - thumb - gap
+    if tw < 60 { tw = 60 }
+    VBox tv = SDL3.createVBox({x: 0, y: 0, w: _float(tw), h: _float(ch - pad * 2),
+                               pad_x: 0, pad_y: 0, spacing: 0})
+    // 标题/歌手都**显式限宽 + 省略号**：只靠盒宽裁剪不够稳（Label 的 _w 在布局前是自然宽，
+    //   渲染那一拍若还没 set_size 仍会溢出 ✗）
+    Label tl = SDL3.createLabel({text: sg.title, font_size: 12.5, text_color: C_TXT,
+                                 max_w: _float(tw), truncate: 1, tip: sg.title,
+                                 hover_color: C_ACCENT, cursor: SDL3.SystemCursor.POINTER})
+    tl.set_font_style(SDL3.STYLE_BOLD)
+    if h.onOpen != null {
+        Song s2 = sg
+        tl.on_click(func() { h.onOpen(s2) })
+    }
+    tv.add(tl, {grow: 0, shrink: 0, basis: 20, align: 3})
+    Label al = SDL3.createLabel({text: sg.artist, font_size: 10.5, text_color: C_TXT_DIM,
+                                 max_w: _float(tw), truncate: 1, tip: "查看歌手：" + sg.artist,
+                                 hover_color: C_ACCENT, cursor: SDL3.SystemCursor.POINTER})
+    if h.onOpen != null {
+        Song s3 = sg
+        al.on_click(func() { h.onOpen(s3) })      // 歌手名也进歌曲页
+    }
+    tv.add(al, {grow: 0, shrink: 0, basis: 16, align: 3})
+
+    // 图标行：♥ 喜欢 / ＋ 添加（暂未开放，只显示）/ ⬇ 下载（+ 可选删除）
+    HBox acts = SDL3.createHBox({x: 0, y: 0, w: _float(tw), h: _float(btn),
+                                 pad_x: 0, pad_y: 0, spacing: gap})
+    Button lb = SDL3.createButton({image_path: ui.ico(if likedNow then "sc1.png" else "sc.png"),
+                                   image_size: 24, w: btn, h: btn, radius: btn / 2,
+                                   bg_color: C_TRANS, hover_color: #FFFFFFC8,
+                                   padding: 0.0, border: false, shadow: false,
+                                   tip: if likedNow then "取消喜欢" else "喜欢"})
+    if h.onLike != null {
+        Song s4 = sg
+        lb.on_click(func() { h.onLike(s4) })
+    }
+    acts.add(lb, {grow: 0, shrink: 0, basis: btn, align: 1})
+
+    Button ab = SDL3.createButton({image_path: ui.ico("add.png"), image_size: 24,
+                                   w: btn, h: btn, radius: btn / 2,
+                                   bg_color: C_TRANS, hover_color: #FFFFFFC8,
+                                   padding: 0.0, border: false, shadow: false,
+                                   tip: "添加到歌单（暂未开放）"})
+    acts.add(ab, {grow: 0, shrink: 0, basis: btn, align: 1})
+
+    Button db = SDL3.createButton({image_path: ui.ico("download.png"), image_size: 24,
+                                   w: btn, h: btn, radius: btn / 2,
+                                   bg_color: C_TRANS, hover_color: #FFFFFFC8,
+                                   padding: 0.0, border: false, shadow: false,
+                                   tip: "下载到本地"})
+    if h.onQueue != null {
+        Song s5 = sg
+        db.on_click(func() { h.onQueue(s5) })
+    }
+    acts.add(db, {grow: 0, shrink: 0, basis: btn, align: 1})
+
+    if showDel and h.onDelete != null {
+        Button xb = SDL3.createButton({image_path: ui.ico("del_m.png"), image_size: 24,
+                                       w: btn, h: btn, radius: btn / 2,
+                                       bg_color: C_TRANS, hover_color: #FFFFFFC8,
+                                       padding: 0.0, border: false, shadow: false,
+                                       tip: "从「我喜欢」删除"})
+        Song s6 = sg
+        xb.on_click(func() { h.onDelete(s6) })
+        acts.add(xb, {grow: 0, shrink: 0, basis: btn, align: 1})
+    }
+
+    tv.add(acts, {grow: 0, shrink: 0, basis: btn, align: 3})
+    row.add(tv, {grow: 1, shrink: 1, align: 1})
+
+    // 登记（由调用方决定记不记）
+    if h.onTrack != null { h.onTrack(sg, lb, iv) }
+    return row
+}

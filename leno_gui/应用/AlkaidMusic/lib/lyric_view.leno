@@ -1,0 +1,227 @@
+// lyric_view.leno — 歌词视图（Canvas 自绘：居中 / 当前行强调 / 逐字扫光 / 缓动滚动）
+// ----------------------------------------------------------------------------
+// 为什么单独一个结构体：这套东西有 20 多个状态（字体、每行宽度缓存、当前行逐字坐标、
+// 滚动目标与当前值、淡入进度…），全摊在 Player 里把主文件撑到 3500 行、且和"页面/交互"搅在一起。
+// 抽出来后主文件只负责：建页面（封面 + 歌名 + 这块画布）、按拍喂 `tick(pos, playing)`。
+//
+// 三条从踩坑里来的纪律：
+//   · **字体测量只在换歌词/换行时做**（每帧量 20 多次会把界面拖卡 ✗）
+//   · 逐字扫光按**字内进度**在"暗→亮"插值（整字硬切会看成"一格格跳" ✗）
+//   · 推进由 33ms 定时器驱动（`tick`），渲染回调只画 ⇒ 帧间隔均匀 ✓
+import "SDL3" as SDL3
+import "./lyric.leno" as lyr
+import "./ui_kit.leno" as ui
+import strings
+use SDL3.(Canvas, Font, Renderer, Color)
+use lyr.Lrc
+
+const float LH = 42.0          // 每行歌词高（当前行略大，行距松一点）
+const float PAD_LYR = 24.0     // 歌词区上内边距（让首行也能滚到正中）
+
+export struct LyricView {
+    Canvas canvas
+    Font f15
+    Font f20
+    Font fTitle
+    Font fArtist
+    bool fontsOk = false
+    // 解析好的歌词（Lrc 里带逐字时间 wt_line/wt_sec/wt_end ✓）
+    Lrc data
+    bool loading = false
+    bool fakeOn = false        // 探针造的假歌词 ⇒ 忽略后台回信（否则真歌词会覆盖它 ✗）
+    string sid = ""            // 已取到的歌词属于哪首（换歌才重新取 ✓）
+    int idx = -1               // 当前行（-1 = 还没到第一句）
+    float off = 0.0            // 当前滚动偏移（像素）
+    float target = 0.0         // 目标偏移（当前行居中）
+    float viewH = 420.0        // 视口高（页面按窗口高算好传进来）
+    float fade = 1.0           // 当前行淡入（换句归 0，每步 +0.18）
+    float curW = 0.0           // 当前行整行宽度（20px 字体，换行时量一次）
+    float textH = 20.0         // 15px 行高（建字体时量一次）
+    float textH20 = 27.0
+    Array[float] lineW = []    // 每行宽度（换歌词时一次量完）
+    Array[float] cxs = []      // 当前行每个字的相对 x
+    Array[float] cws = []      // 当前行每个字的宽
+    int cacheLine = -2         // cxs/cws 属于哪一行（-2 = 无缓存）
+
+    // 换歌/清空
+    func clear() {
+        data = new Lrc()
+        loading = false
+        idx = -1
+        off = 0.0
+        target = 0.0
+        fade = 1.0
+        curW = 0.0
+        lineW = []
+        cxs = []
+        cws = []
+        cacheLine = -2
+    }
+
+    func has_lines(): bool { return data.texts.len() > 0 }
+    func reset_idx() { idx = -1 }
+
+    // 字体：歌词两档 + 歌名/歌手（后者给页面量宽用）
+    func ensure_fonts() {
+        if fontsOk { return }
+        // ⚠ 当前行与非当前行**字号只差 1px**：相差太大会让换句瞬间"跳"一下 ✗
+        //   改靠加粗 + 强调色 + 逐字扫光区分当前行 ⇒ 切换平滑 ✓
+        f15 = SDL3.acquireFontAuto(16.5)
+        f20 = SDL3.acquireFontAuto(17.5)
+        if f20.ok { f20.setStyle(SDL3.STYLE_BOLD) }
+        fTitle = SDL3.acquireFontAuto(15.0)
+        fArtist = SDL3.acquireFontAuto(12.5)
+        fontsOk = f15.ok and f20.ok and fTitle.ok and fArtist.ok
+        if f15.ok {
+            var[float, float](_w15, h15) = f15.measureString("Ag")
+            textH = h15
+        }
+        if f20.ok {
+            var[float, float](_w20, h20) = f20.measureString("Ag")
+            textH20 = h20
+        }
+    }
+
+    // 设置歌词文本（整份 LRC，含逐字标签也行）—— 解析 + 预量每行宽度
+    func set_text(string raw) {
+        loading = false
+        data = lyr.lrc_from_text(raw)
+        cacheLine = -2
+        cxs = []
+        cws = []
+        lineW = []
+        ensure_fonts()
+        for data.texts to t {
+            var[float, float](w, h) = f15.measureString(t)
+            lineW.add(w)
+        }
+    }
+
+    // 建画布（回调由调用方挂：那里是 Player 的闭包，能看到本结构体字段的最新值 ✓）
+    func build(float w, float h): Canvas {
+        ensure_fonts()
+        canvas = SDL3.createCanvas({x: 0, y: 0, w: w, h: h, pad: 0,
+                                    bg_color: #00000000, border: false, clip: true})
+        return canvas
+    }
+
+    // 播放位置 ⇒ 当前行（-1 = 还没到第一句）
+    func index_at(float pos): int { return lyr.lrc_index_at(data.secs, pos) }
+
+    // 当前句"唱到第几个字"（浮点）：有逐字时间按字走（字间停顿不推进 ✓），否则按句内时间线性
+    func sung_of(int li, float pos): float {
+        if li < 0 or li >= data.texts.len() { return 0.0 }
+        int cnt = data.texts[li].len()
+        if cnt <= 0 { return 0.0 }
+        Array[float] ws = []
+        Array[float] we = []
+        for 0 : data.wt_line.len() - 1 to k {
+            if data.wt_line[k] == li {
+                ws.add(data.wt_sec[k])
+                we.add(data.wt_end[k])
+            }
+        }
+        if ws.len() > 0 { return lyr.word_sung(ws, we, pos, cnt) }
+        float t0 = data.secs[li]
+        float t1 = if li + 1 < data.secs.len() then data.secs[li + 1] else t0 + 4.0
+        if t1 <= t0 { return _float(cnt) }
+        float p = (pos - t0) / (t1 - t0)
+        if p < 0.0 { p = 0.0 }
+        if p > 1.0 { p = 1.0 }
+        return p * _float(cnt)
+    }
+
+    // 每 33ms 一步：换行 → 重算滚动目标 → 缓动 → 淡入 → 需要时请求一帧
+    func tick(float pos, bool playing) {
+        int ni = index_at(pos)
+        if ni != idx {
+            idx = ni
+            fade = 0.0                       // 新句淡入（落雪同样处理 ✓）
+            float iy = PAD_LYR + _float(if ni < 0 then 0 else ni) * LH + LH / 2.0
+            target = iy - viewH / 2.0
+            if target < 0.0 { target = 0.0 }
+        }
+        float dv = target - off
+        bool moving = false
+        if dv > 0.5 or dv < -0.5 {
+            off = off + dv * 0.22            // 约 150ms 到位，比"每帧 22%"柔和 ✓
+            moving = true
+        } else if dv != 0.0 {
+            off = target
+            moving = true
+        }
+        if fade < 1.0 {
+            fade = fade + 0.18
+            if fade > 1.0 { fade = 1.0 }
+            moving = true
+        }
+        // 只在"界面真的在动"时请求一帧（暂停且滚动到位 ⇒ 不烧 CPU ✓）
+        if playing or moving { SDL3.markFrameRedraw() }
+    }
+
+    // 同上但带真实播放位置（逐字扫光要用最新 pos，不能在 draw 里读全局 ✗）
+    func draw(Renderer r, float ox, float oy, float w, float ch, string noSongMsg, float pos) {
+        float cx = ox + w / 2.0
+        if data.texts.len() == 0 {
+            string msg = if loading then "歌词加载中…" else noSongMsg
+            var[float, float](mw, mh) = f15.measureString(msg)
+            r.drawText(f15, msg, r.snapX(cx - mw / 2.0), r.snapY(oy + ch / 2.0 - mh / 2.0), #77646DFF)
+            return
+        }
+        float sung = if idx >= 0 and not data.untimed then sung_of(idx, pos) else 0.0
+        for 0 : data.texts.len() - 1 to i {
+            float ly = oy + PAD_LYR + _float(i) * LH - off
+            if ly + LH < oy or ly > oy + ch { continue }
+            string line = data.texts[i]
+            if i == idx and not data.untimed {
+                draw_sweep(r, line, cx, ly, sung)
+            } else {
+                int d = i - idx
+                if d < 0 { d = -d }
+                int a = 235 - d * 40
+                if a < 45 { a = 45 }
+                float tw = if i < lineW.len() then lineW[i] else 0.0
+                float tx = cx - tw / 2.0
+                if tx < ox + 4.0 { tx = ox + 4.0 }
+                r.drawText(f15, line, r.snapX(tx), r.snapY(ly + (LH - textH) / 2.0),
+                           ui.fade_color(#35262BFF, a))
+            }
+        }
+    }
+
+    // 当前行：逐字扫光（已唱的字强调色、未唱暗色；正在唱的那个按字内进度插值 ✓）
+    func draw_sweep(Renderer r, string txt, float cx, float ly, float sung) {
+        var cps = strings.to_codepoints(txt)
+        if cacheLine != idx or cws.len() != cps.len() {
+            cxs = []
+            cws = []
+            float acc = 0.0
+            for cps to cp {
+                string one = strings.from_codepoint(cp)
+                var[float, float](w1, h1) = f20.measureString(one)
+                cxs.add(acc)
+                cws.add(w1)
+                acc = acc + w1
+            }
+            // 居中要用**整行真实宽度**（逐字宽累加不含字距；两者不一致换行时会横向跳 ✗）
+            var[float, float](fw2, fh2) = f20.measureString(txt)
+            curW = fw2
+            textH20 = fh2
+            cacheLine = idx
+        }
+        float x0 = cx - curW / 2.0
+        float y = ly + (LH - textH20) / 2.0
+        Color dim = ui.fade_color(#35262BFF, _int(120.0 + 80.0 * fade))
+        int k = 0
+        for cps to cp {
+            string one = strings.from_codepoint(cp)
+            if one == "" or k >= cws.len() { continue }
+            float f = sung - _float(k)
+            if f < 0.0 { f = 0.0 }
+            if f > 1.0 { f = 1.0 }
+            Color hi = ui.fade_color(#E76F9BFF, _int(90.0 + 165.0 * fade))
+            r.drawText(f20, one, r.snapX(x0 + cxs[k]), r.snapY(y), ui.lerp_color(dim, hi, f))
+            k = k + 1
+        }
+    }
+}

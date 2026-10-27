@@ -1,0 +1,79 @@
+// library.leno — 「我的收藏 / 最近播放」的**持久化与集合运算**（纯数据，不懂界面）
+// ----------------------------------------------------------------------------
+// 为什么抽出来：主文件里的 save_library/load_library/is_liked 只是"读写一个 json + 查数组"，
+// 和界面无关；放在主文件里每次都要在 3000 行里翻。抽出来后：
+//   · 主文件只负责"什么时候存/取"（换歌、收藏、退出）
+//   · 这里负责"存成什么形状"（键名、字段顺序、容错）
+// 收藏键的口径见 ui_kit.like_key：在线用 sid、本地用 file:<路径> ✓
+import "./store.leno" as store
+import "../music_data.leno" as data
+use data.Song
+
+// 一次读出来的两样东西（最近播放按时间从新到旧）
+export struct LibraryData {
+    Array[string] likes = []
+    Array[Song] recent = []
+}
+
+// 存：likes 是 like_key 列表；recent 只存界面要用的 5 个字段（够重建 Song ✓）
+export func save(string cacheRoot, Array[string] likes, Array[Song] recent) {
+    Dict[string, any] d = {}
+    d["version"] = 1
+    d["likes"] = likes
+    Array[Array[string]] rs = []
+    for recent to s {
+        rs.add([s.sid, s.title, s.artist, s.dur, s.cover])
+    }
+    d["recent"] = rs
+    store.save(cacheRoot, d)
+}
+
+// 读：文件不存在/坏了 ⇒ 空数据（配置坏了不该让应用起不来 ✓）
+export func load(string cacheRoot): LibraryData {
+    LibraryData out = new LibraryData()
+    var d = store.load(cacheRoot)
+    out.likes = store.str_list(d, "likes")
+    var rv = d.get("recent", null)
+    var rows = rv as Array[Array[string]]
+    if rows != null {
+        for rows to r {
+            if r.len() < 5 { continue }
+            Song sg = new Song()
+            sg.sid = r[0]
+            sg.title = r[1]
+            sg.artist = r[2]
+            sg.dur = r[3]
+            sg.cover = r[4]
+            out.recent.add(sg)
+        }
+    }
+    return out
+}
+
+export func is_liked(Array[string] likes, string key): bool {
+    if key == "" { return false }
+    for likes to s {
+        if s == key { return true }
+    }
+    return false
+}
+
+// 收藏/取消收藏（返回新数组：Leno 的数组按引用传，但显式返回更清楚 ✓）
+export func toggle(Array[string] likes, string key): Array[string] {
+    if key == "" { return likes }
+    Array[string] out = []
+    bool had = false
+    for likes to s {
+        if s == key { had = true } else { out.add(s) }
+    }
+    if not had { out.add(key) }
+    return out
+}
+
+export func remove(Array[string] likes, string key): Array[string] {
+    Array[string] out = []
+    for likes to s {
+        if s != key { out.add(s) }
+    }
+    return out
+}
