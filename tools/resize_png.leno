@@ -1,0 +1,362 @@
+// resize_png.leno — PNG 批量缩放（**界面图先在构建期压到显示尺寸** ✓）
+//
+// 为什么要有它：
+//   控件是按显示像素画的。源图比显示尺寸大 ⇒ 每次重建/每帧都要缩放（非整数比还会发虚 ✗），
+//   显存也白占。正确做法是**源图就按 1:1 或整数分之一**准备好：
+//     菜单图标显示 16px ⇒ 源图给 16×16（或 32×32 的整数 1/2）；
+//     给 36×32 这种怪尺寸就只能 0.44 倍缩放 ⇒ 一定糊 ✗
+//
+// 用法：
+//   build\leno.exe tools\resize_png.leno <输入.png|目录> <尺寸> [输出目录] [选项]
+//   尺寸：16      ⇒ 长边等比缩到 16（短边按比例，四舍五入）
+//         16x16   ⇒ 强制 16×16（会拉伸，按需用）
+//   选项：
+//     --inplace    覆盖源文件（先写临时文件、再按字节替换 ⇒ 不会写坏原图 ✓）
+//     --recursive  目录模式下递归子目录
+//     --nearest    最近邻（像素画/硬边图标用；默认缩小走 box、放大走 bilinear ✓）
+//   输出：
+//     不给输出目录 ⇒ 同目录，文件名加后缀 `_<W>x<H>`（**绝不覆盖源文件** ✓）
+//     给了输出目录 ⇒ 写进该目录、保持原名（目录不同不会撞名 ✓）
+//
+// 例：
+//   build\leno.exe tools\resize_png.leno leno_gui\应用\AlkaidMusic\images\icons 16 --inplace
+//   build\leno.exe tools\resize_png.leno a.png 32x32 out
+//
+// 实现要点（踩过的坑都写在这儿）：
+//   · 解码/编码全走 SDL3 门面：`pngFileToPixels`（统一转 **ARGB8888**，内存字节序 B,G,R,A ✓）
+//     + `createSurfaceFromRaw` + `saveImagePNG`；不自己实现 PNG 编解码 ✓
+//   · 缩放按 **alpha 预乘**做加权平均：直接平均非预乘 RGBA 会让透明边缘发黑 ✗
+//   · 读像素用 `ffi.read_byte` / `ffi.write_byte`（pitch 可能 > w*4，**必须按 pitch 走** ✗）
+import ffi
+import files
+import dirs
+import strings
+import "SDL3" as SDL3
+
+// ==================== 像素工具 ====================
+func clamp255(float v): int {
+    int n = _int(v + 0.5)
+    if n < 0 { return 0 }
+    if n > 255 { return 255 }
+    return n
+}
+
+// 两个区间的重叠长度（box 滤波的权重 ✓）
+func overlap(float a0, float a1, float b0, float b1): float {
+    float lo = if a0 > b0 then a0 else b0
+    float hi = if a1 < b1 then a1 else b1
+    float d = hi - lo
+    if d < 0.0 { return 0.0 }
+    return d
+}
+
+func put_px(Ptr[u8] dst, int off, float r, float g, float b, int a) {
+    ffi.write_byte(dst, off, clamp255(b))       // ARGB8888 在内存里是 B,G,R,A ✓
+    ffi.write_byte(dst, off + 1, clamp255(g))
+    ffi.write_byte(dst, off + 2, clamp255(r))
+    ffi.write_byte(dst, off + 3, a)
+}
+
+// 最近邻（px 精确、最快；图标要硬边时用 ✓）
+func resizeNearest(int sw, int sh, Ptr[u8] src, int spitch, int dw, int dh, Ptr[u8] dst) {
+    int dpitch = dw * 4
+    for 0 : dh - 1 to y {
+        int sy = _int(_float(y) * _float(sh) / _float(dh))
+        if sy > sh - 1 { sy = sh - 1 }
+        for 0 : dw - 1 to x {
+            int sx = _int(_float(x) * _float(sw) / _float(dw))
+            if sx > sw - 1 { sx = sw - 1 }
+            int so = sy * spitch + sx * 4
+            int do = y * dpitch + x * 4
+            ffi.write_byte(dst, do, ffi.read_byte(src, so))
+            ffi.write_byte(dst, do + 1, ffi.read_byte(src, so + 1))
+            ffi.write_byte(dst, do + 2, ffi.read_byte(src, so + 2))
+            ffi.write_byte(dst, do + 3, ffi.read_byte(src, so + 3))
+        }
+    }
+}
+
+// 缩小：box 滤波（目标像素覆盖的源像素按面积加权平均 —— 32→16 就是 2×2 平均 ✓）
+func resizeBox(int sw, int sh, Ptr[u8] src, int spitch, int dw, int dh, Ptr[u8] dst) {
+    int dpitch = dw * 4
+    float sx = _float(sw) / _float(dw)
+    float sy = _float(sh) / _float(dh)
+    for 0 : dh - 1 to y {
+        float y0 = _float(y) * sy
+        float y1 = y0 + sy
+        int iy0 = _int(y0)
+        int iy1 = _int(y1)
+        if iy1 > sh - 1 { iy1 = sh - 1 }
+        for 0 : dw - 1 to x {
+            float x0 = _float(x) * sx
+            float x1 = x0 + sx
+            int ix0 = _int(x0)
+            int ix1 = _int(x1)
+            if ix1 > sw - 1 { ix1 = sw - 1 }
+            float sr = 0.0; float sg = 0.0; float sb = 0.0
+            float sa = 0.0; float ws = 0.0
+            for iy0 : iy1 to ty {
+                float wy = overlap(y0, y1, _float(ty), _float(ty + 1))
+                if wy <= 0.0 { continue }
+                for ix0 : ix1 to tx {
+                    float wx = overlap(x0, x1, _float(tx), _float(tx + 1))
+                    if wx <= 0.0 { continue }
+                    float w = wx * wy
+                    int so = ty * spitch + tx * 4
+                    // alpha 预乘：颜色 × a 累加、a 单独累加 ⇒ 不会被"透明黑"拉暗 ✓
+                    float a = _float(ffi.read_byte(src, so + 3)) / 255.0
+                    sb = sb + _float(ffi.read_byte(src, so)) * a * w
+                    sg = sg + _float(ffi.read_byte(src, so + 1)) * a * w
+                    sr = sr + _float(ffi.read_byte(src, so + 2)) * a * w
+                    sa = sa + a * w
+                    ws = ws + w
+                }
+            }
+            int do = y * dpitch + x * 4
+            if ws <= 0.0 or sa <= 0.0 { put_px(dst, do, 0.0, 0.0, 0.0, 0); continue }
+            // 反预乘回去：颜色 = Σ(c·a·w) / Σ(a·w) ✓
+            put_px(dst, do, sr / sa, sg / sa, sb / sa, clamp255(sa / ws * 255.0))
+        }
+    }
+}
+
+// 放大：双线性（按像素中心对齐；同样预乘 alpha ✓）
+func resizeBilinear(int sw, int sh, Ptr[u8] src, int spitch, int dw, int dh, Ptr[u8] dst) {
+    int dpitch = dw * 4
+    float sx = _float(sw) / _float(dw)
+    float sy = _float(sh) / _float(dh)
+    for 0 : dh - 1 to y {
+        float fy = (_float(y) + 0.5) * sy - 0.5
+        int y0 = _int(fy)
+        float ty = fy - _float(y0)
+        if y0 < 0 { y0 = 0; ty = 0.0 }
+        int y1 = y0 + 1
+        if y1 > sh - 1 { y1 = sh - 1 }
+        for 0 : dw - 1 to x {
+            float fx = (_float(x) + 0.5) * sx - 0.5
+            int x0 = _int(fx)
+            float tx = fx - _float(x0)
+            if x0 < 0 { x0 = 0; tx = 0.0 }
+            int x1 = x0 + 1
+            if x1 > sw - 1 { x1 = sw - 1 }
+            float sr = 0.0; float sg = 0.0; float sb = 0.0
+            float sa = 0.0; float ws = 0.0
+            for 0 : 1 to k {
+                int yy = if k == 0 then y0 else y1
+                float wy = if k == 0 then (1.0 - ty) else ty
+                for 0 : 1 to m {
+                    int xx = if m == 0 then x0 else x1
+                    float wx = if m == 0 then (1.0 - tx) else tx
+                    float w = wx * wy
+                    if w <= 0.0 { continue }
+                    int so = yy * spitch + xx * 4
+                    float a = _float(ffi.read_byte(src, so + 3)) / 255.0
+                    sb = sb + _float(ffi.read_byte(src, so)) * a * w
+                    sg = sg + _float(ffi.read_byte(src, so + 1)) * a * w
+                    sr = sr + _float(ffi.read_byte(src, so + 2)) * a * w
+                    sa = sa + a * w
+                    ws = ws + w
+                }
+            }
+            int do = y * dpitch + x * 4
+            if ws <= 0.0 or sa <= 0.0 { put_px(dst, do, 0.0, 0.0, 0.0, 0); continue }
+            put_px(dst, do, sr / sa, sg / sa, sb / sa, clamp255(sa / ws * 255.0))
+        }
+    }
+}
+
+// ==================== 单文件处理 ====================
+// 返回 true = 成功（含"已经是目标尺寸，跳过"）
+func resize_one(string src, int wantW, int wantH, string outDir, bool inplace, bool nearest): bool {
+    var d = SDL3.pngFileToPixels(src)
+    if d.len() == 0 {
+        print("  ✗ 解码失败：" + src + "\n")
+        return false
+    }
+    // Dict 取值用 **`get(k, 默认值)`** —— 返回类型由默认值实参推断（见 docs/module_dicts.md）：
+    //   `get("w", 0)` → int、`get("h", 0.0)` → float、`get("s", "")` → string
+    //   ⇒ 不用 _int()/_str() 收窄 ✓（只有 `d["k"]` 和**不带默认值**的 get 才是 any ✗）
+    int sw = d.get("w", 0)
+    int sh = d.get("h", 0)
+    int pitch = d.get("pitch", 0)
+    int fmt = d.get("fmt", 0)
+    // 指针没有"默认值字面量"可推 ⇒ 这一项只能 as 收窄
+    Ptr[u8] px = d.get("pixels", null) as Ptr[u8]
+    if px == null {
+        print("  ✗ 取像素失败：" + src + "\n")
+        return false
+    }
+
+    // 目标尺寸：wantW <= 0 表示"长边等比"
+    int dw = wantW
+    int dh = wantH
+    if dw <= 0 {
+        float k = _float(wantH) / _float(if sw > sh then sw else sh)
+        dw = _int(_float(sw) * k + 0.5)
+        dh = _int(_float(sh) * k + 0.5)
+        if dw < 1 { dw = 1 }
+        if dh < 1 { dh = 1 }
+    }
+
+    string base = dirs.basename(src)
+    string dst = ""
+    if inplace {
+        dst = src
+    } else if outDir != "" {
+        dst = dirs.join(outDir, base)
+    } else {
+        string stem = base
+        string suffix = "_" + _str(dw) + "x" + _str(dh) + ".png"
+        if base.len() > 4 and base.slice(base.len() - 4, base.len()) == ".png" {
+            stem = base.slice(0, (base.len() - 4) - 1)
+        }
+        dst = dirs.join(dirs.dirname(src), stem + suffix)
+    }
+
+    if sw == dw and sh == dh and not inplace {
+        print("  - " + base + " 已是 " + _str(dw) + "x" + _str(dh) + "，跳过\n")
+        ffi.free(px)
+        return true
+    }
+
+    Ptr[u8] out = ffi.malloc(dw * dh * 4)
+    if out == null {
+        print("  ✗ 内存不足（" + _str(dw * dh * 4) + " 字节）：" + base + "\n")
+        ffi.free(px)
+        return false
+    }
+    if nearest { resizeNearest(sw, sh, px, pitch, dw, dh, out) }
+    else if dw <= sw and dh <= sh { resizeBox(sw, sh, px, pitch, dw, dh, out) }
+    else { resizeBilinear(sw, sh, px, pitch, dw, dh, out) }
+
+    // 编码：临时 surface 只借用这块像素内存（CreateSurfaceFrom 不接管所有权 ✓）
+    bool ok = false
+    Ptr[u8] surf = SDL3.createSurfaceFromRaw(dw, dh, fmt, out, dw * 4)
+    if surf != null {
+        if inplace {
+            // 先写临时文件再按字节替换：中途失败也不会把原图写坏 ✓
+            string tmp = dst + ".rz.tmp"
+            ok = SDL3.saveImagePNG(surf, tmp)
+            if ok {
+                try {
+                    var f = files.open(tmp, "rb")
+                    string data = f.read()
+                    f.close()
+                    files.write(dst, data)
+                } catch e {
+                    print("  ✗ 替换失败：" + _str(e) + "\n")
+                    ok = false
+                }
+                try { files.delete(tmp) } catch e2 { print("  ! 临时文件没删掉（可手动删）：" + tmp + "\n") }
+            }
+        } else {
+            ok = SDL3.saveImagePNG(surf, dst)
+        }
+        SDL3.destroySurface(surf)
+    }
+
+    ffi.free(out)
+    ffi.free(px)
+
+    if ok {
+        print("  ✓ " + base + "  " + _str(sw) + "x" + _str(sh)
+              + " -> " + _str(dw) + "x" + _str(dh) + "   " + dst + "\n")
+    } else {
+        print("  ✗ 写盘失败：" + dst + "\n")
+    }
+    return ok
+}
+
+// 目录批量（非递归/递归）
+func collect(string dir, bool recursive): Array[string] {
+    Array[string] out = []
+    var names = dirs.listdir(dir)
+    if names == null { return out }
+    for names to n {
+        string full = dirs.join(dir, n)
+        if dirs.is_dir(full) {
+            if recursive {
+                for collect(full, true) to f { out.add(f) }
+            }
+            continue
+        }
+        // 扩展名大小写都认（strings 没有 lower ⇒ 用 eq_ignore_case ✓）
+        if n.len() > 4 and strings.eq_ignore_case(n.slice(n.len() - 4, n.len()), ".png") { out.add(full) }
+    }
+    return out
+}
+
+// 解析 "16" / "16x16" ⇒ [w, h]；"16" 返回 [-1, 16] 表示"长边 16 等比"
+func parse_size(string s): Array[int] {
+    var parts = strings.split(s, "x")
+    if parts.len() != 2 { parts = strings.split(s, "X") }   // 大写 X 也认
+    if parts.len() == 2 {
+        int w = _int(parts[0])
+        int h = _int(parts[1])
+        if w > 0 and h > 0 { return [w, h] }
+        return []
+    }
+    int n = _int(s)
+    if n > 0 { return [-1, n] }
+    return []
+}
+
+main() {
+    var args = _args()
+    if args.len() < 2 {
+        print("用法: leno tools\\resize_png.leno <输入.png|目录> <尺寸> [输出目录] [--inplace] [--recursive] [--nearest]\n")
+        print("  尺寸：16 = 长边等比缩到 16；16x16 = 强制\n")
+        print("  例：build\\leno.exe tools\\resize_png.leno images\\icons 16 --inplace\n")
+        _exit(1)
+    }
+
+    string input = _str(args[0])
+    var sz = parse_size(_str(args[1]))
+    if sz.len() != 2 {
+        print("[rz] 尺寸写法不对：" + _str(args[1]) + "（要 16 或 16x16）\n")
+        _exit(1)
+    }
+    int wantW = sz[0]
+    int wantH = sz[1]
+
+    string outDir = ""
+    bool inplace = false
+    bool recursive = false
+    bool nearest = false
+    for 2 : args.len() - 1 to i {
+        string a = _str(args[i])
+        if a == "--inplace" { inplace = true }
+        else if a == "--recursive" { recursive = true }
+        else if a == "--nearest" { nearest = true }
+        else if a.slice(0, 1) != "-" { outDir = a }
+    }
+
+    if not dirs.exists(input) {
+        print("[rz] 找不到输入：" + input + "\n")
+        _exit(1)
+    }
+    if outDir != "" and not dirs.exists(outDir) {
+        dirs.mkdir_p(outDir)
+    }
+
+    Array[string] filesTodo = []
+    if dirs.is_dir(input) {
+        filesTodo = collect(input, recursive)
+    } else {
+        filesTodo.add(input)
+    }
+    if filesTodo.len() == 0 {
+        print("[rz] 没找到 PNG：" + input + "\n")
+        _exit(0)
+    }
+
+    print("[rz] 目标 " + (if wantW <= 0 then "长边 " + _str(wantH) else _str(wantW) + "x" + _str(wantH))
+          + (if inplace then "（覆盖源文件）" else "") + " · 共 " + _str(filesTodo.len()) + " 个文件\n")
+
+    int okN = 0
+    for filesTodo to f {
+        if resize_one(f, wantW, wantH, outDir, inplace, nearest) { okN = okN + 1 }
+    }
+    print("[rz] 完成 " + _str(okN) + "/" + _str(filesTodo.len()) + " 个\n")
+    if okN < filesTodo.len() { _exit(1) }
+}
