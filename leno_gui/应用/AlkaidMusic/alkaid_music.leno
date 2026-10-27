@@ -302,7 +302,17 @@ export struct Player {
     bool homeLoading = false       // 首页推荐正在拉（内容区显示"正在加载"✓）
     int recBatch = 0               // 「换一批」轮换到第几组关键词（为你推荐）
     int newBatch = 0               // 同上（最近添加）
-    bool coverDirty = false        // 有卡片封面到了（攒到下一拍再重建，避免每张都重建 ✓）
+    // ----- 卡片控件登记表：收藏 / 封面回信一律**就地改图标**，不整页重建 -----
+    //   为什么：rebuild_content() 把整页控件（含「换一批」胶囊、所有卡片）销毁重建
+    //   ⇒ 点一次 ♥ 就"闪一下"（2026-10-27 反馈 ✗）
+    //   只在**卡片页**（ScrollView 里长驻的卡片）登记；网格页卡片会被 vg 回收复用，
+    //   拿旧引用去改会改错卡 ⇒ 网格页改成 pageRebuildOnLike，仍走重建 ✓
+    bool trackCards = false
+    bool pageRebuildOnLike = false
+    Array[Button] cardLikeBtns = []
+    Array[string] cardLikeKeys = []
+    Array[ImageView] cardCovers = []
+    Array[string] cardCoverKeys = []
     // ----- 真播放（miniaudio）-----
     Sound snd
     bool sndOk = false
@@ -717,6 +727,8 @@ export struct Player {
     //   表格以前塞在 ScrollView 的 content 里、高度按行数写死
     //     ⇒ 只有 2 行时就是一条小横条
     pri func show_scroll() {
+        trackCards = true                  // 卡片页：卡片长驻，可登记引用做就地更新 ✓
+        pageRebuildOnLike = false
         drop_last_page()
         mainCol.clear()
         // ⚠ `mainCol.clear()` 只把控件移出布局，**Window 的渲染列表里还留着**
@@ -730,6 +742,8 @@ export struct Player {
     // 表格页：顶栏 + 「标题/副标题」+ 表格（表格吃满剩余高度，内部自己滚 ✓）
     //   ⚠ 不能只放表格：那样页面标题会被顶掉（截图里表头直接贴着顶栏 ✗）
     pri func show_table_page(string title, string sub, Table t) {
+        trackCards = false                 // 表格页：没有卡片，表里也没有 ♥ 列 ✓
+        pageRebuildOnLike = false
         drop_last_page()
         mainCol.clear()
         sv.set_visible(false)          // 表格页不用 ScrollView（见 show_scroll 的注释 ✓）
@@ -763,6 +777,11 @@ export struct Player {
 
     // 内容区：页面标题 + 三个分区（搜索时按关键词过滤 ✓）
     pri func build_content() {
+        // 旧页面的控件马上要被移出布局/销毁 ⇒ 登记表先清空（否则留着已销毁控件的引用 ✗）
+        cardLikeBtns = []
+        cardLikeKeys = []
+        cardCovers = []
+        cardCoverKeys = []
         // ★ 大列表（我喜欢 / 最近播放）走**虚拟网格页**：卡片是真控件（每张 7 个），
         //   上百张之后每帧布局/绘制就会拖垮界面（1000 张实测一帧几百毫秒 ✗）
         //   vg 只构建可见的十几张，滚动时回收复用 ⇒ 几千条也稳 ✓
@@ -841,6 +860,7 @@ export struct Player {
             tbSearch = SDL3.createTable({x: 0, y: 0, w: tw2, h: 420.0,   // 高度由布局撑满 ✓
                                          item_h: rowH, header_h: 32, font_size: 13,
                                          headers: ["歌名", "歌手", "专辑", "时长", "格式", "大小", "来源"],
+                                         row_numbers: true,                  // 最左边序号 1..n（按显示顺序 ✓）
                                          // 合计 0.99（留 1% 余量，避免浮点累加恰好顶满 ✓）
                                          col_ratios: [0.33, 0.16, 0.16, 0.09, 0.07, 0.12, 0.06],
                                          aligns: [0, 0, 0, 1, 1, 2, 1],
@@ -907,6 +927,9 @@ export struct Player {
 
         // ==================== 歌曲页（curNav = -4，点卡片歌名进来）====================
         if curNav == -4 {
+            // 这一页只有大封面 + 播放/下载按钮 + 下面那张相关歌曲表，**没有 ♥**
+            //   ⇒ 底栏 ♥ 变化时别重建它（否则相关歌曲表会被整个再造一遍 ✗）
+            trackCards = false
             Song sg = find_song(songArg)
             if sg.title == "" {
                 content.add(lbl("这首歌找不到了（换个页面再试）", 11.5, C_TXT_DIM, false),
@@ -988,6 +1011,7 @@ export struct Player {
             Table rt = SDL3.createTable({x: 0, y: 0, w: rw, h: rh,
                                          item_h: 30, header_h: 32, font_size: 12.5,
                                          headers: ["歌名", "歌手", "时长", "来源"],
+                                         row_numbers: true,                      // 最左边序号 1..n ✓
                                          col_ratios: [0.45, 0.24, 0.14, 0.16],   // 合计 0.99（比例，随宽度自适应 ✓）
                                          aligns: [0, 0, 1, 1], header_aligns: [0, 0, 1, 1],   // 表头跟数据列同对齐 ✓
                                          sortable: false, zebra: false, resizable: false,
@@ -1065,6 +1089,7 @@ export struct Player {
             Table t = SDL3.createTable({x: 0, y: 0, w: dw, h: 420.0,   // 高度由布局撑满 ✓
                                         item_h: 30, header_h: 32, font_size: 13,
                                         headers: ["歌名", "歌手", "格式", "大小", "进度", "状态"],
+                                        row_numbers: true,                          // 最左边序号 1..n ✓
                                         // 合计 0.99（比例列宽，随宽度自适应 ✓）
                                         col_ratios: [0.35, 0.18, 0.10, 0.12, 0.12, 0.12],
                                         aligns: [0, 0, 1, 2, 1, 1],
@@ -1110,6 +1135,7 @@ export struct Player {
             Table lt = SDL3.createTable({x: 0, y: 0, w: lw, h: 420.0,   // 高度由布局撑满 ✓
                                          item_h: lh, header_h: 32, font_size: 13,
                                          headers: ["歌名", "歌手", "来源"],
+                                         row_numbers: true,                              // 最左边序号 1..n ✓
                                          // 合计 0.99（比例列宽，随宽度自适应 ✓）
                                          col_ratios: [0.57, 0.28, 0.14],
                                          aligns: [0, 0, 1], header_aligns: [0, 0, 1],   // 与数据列同对齐 ✓
@@ -1552,6 +1578,8 @@ export struct Player {
     //   卡片怎么画仍归应用（`wide_card`），网格只管"哪些可见、摆哪、回收" ✓
     // showDel：卡片上要不要多一颗「删除」按钮（只有「我喜欢」页给 —— 那里删 = 取消收藏 ✓）
     pri func show_grid_page(string title, string sub, Array[Song] songs, bool showDel) {
+        trackCards = false                 // 网格页：卡片会被 vg 回收复用 ⇒ 不登记引用
+        pageRebuildOnLike = true           // 收藏变化会改列表成员（少一张/顺序）⇒ 只能重建 ✓
         drop_last_page()
         mainCol.clear()
         sv.set_visible(false)          // 网格页不用 ScrollView（见 show_scroll 的注释 ✓）
@@ -2060,8 +2088,37 @@ export struct Player {
         save_library()                   // ★ 立刻落盘（重启后「我喜欢」还在 ✓）
         nowArtist.set_text(if was then "已取消喜欢：" + sg.title else "已喜欢：" + sg.title)
         sync_like_icon()                 // 底栏 ♥ 跟着变（它和卡片共用一份数据 ✓）
-        rebuild_content()
+        refresh_after_like(sg)
+    }
+
+    // 收藏状态变了之后怎么刷新 —— **能不重建就不重建**（整页重建会让「换一批」胶囊闪一下 ✗）
+    //   · 卡片页：登记表里同 key 的 ♥ 就地换图标（同一首可能在"继续收听/为你推荐"各出现一次 ✓）
+    //   · 网格页（我喜欢/最近播放）：列表成员会变 ⇒ 只能重建
+    //   · 表格页 / 歌曲页：没有 ♥ 可刷 ⇒ 只重绘底栏，页面一个字都不动 ✓
+    pri func refresh_after_like(Song sg) {
+        if trackCards {
+            string key = like_key(sg)
+            bool on = is_liked(key)
+            for cardLikeKeys.len() to i {
+                if cardLikeKeys[i] == key {
+                    cardLikeBtns[i].set_image(ico(if on then "sc1.png" else "sc.png"))
+                    cardLikeBtns[i].set_tip(if on then "取消喜欢" else "喜欢")
+                }
+            }
+        } else if pageRebuildOnLike {
+            rebuild_content()
+        }
         SDL3.markFrameRedraw()
+    }
+
+    // 封面回信 ⇒ 就地换图（原来靠 coverDirty 整页重建：每来一张封面就闪一次 ✗）
+    pri func sync_card_covers(string sid, string path) {
+        if sid == "" or path == "" { return }
+        bool hit = false
+        for cardCoverKeys.len() to i {
+            if cardCoverKeys[i] == sid { cardCovers[i].set_image(path); hit = true }
+        }
+        if hit { SDL3.markFrameRedraw() }
     }
 
     // 「我喜欢」卡片上的删除钮：**只删不加**（不复用 toggle —— 那页的卡本来就都是喜欢的，
@@ -2080,8 +2137,7 @@ export struct Player {
         save_library()                    // ★ 立刻落盘，重启后不会又冒出来 ✓
         nowArtist.set_text("已从「我喜欢」删除：" + sg.title)
         sync_like_icon()                  // 底栏 ♥ 跟着变（若删的就是在播这首 ✓）
-        rebuild_content()                 // 网格按新列表重建：少一张、副标题数字也减 ✓
-        SDL3.markFrameRedraw()
+        refresh_after_like(sg)            // 网格页会按新列表重建：少一张、副标题数字也减 ✓
     }
 
     // 点 +：加进下载队列（目前没有歌单系统，先落到"下载"，等于收藏到本地 ✓）
@@ -2164,6 +2220,13 @@ export struct Player {
                                        tip: if likedNow then "取消喜欢" else "喜欢"})
         lb.on_click(func() { toggle_song_like(sg) })
         acts.add(lb, {grow: 0, shrink: 0, basis: btn, align: 1})
+        // 登记 ♥ 与封面：收藏/封面回信时就地 set_image，不整页重建（否则「换一批」会闪 ✗）
+        if trackCards {
+            cardLikeBtns.add(lb)
+            cardLikeKeys.add(like_key(sg))
+            cardCovers.add(iv)
+            cardCoverKeys.add(sg.sid)
+        }
 
         Button ab = SDL3.createButton({image_path: ico("add.png"), image_size: 24,
                                        w: btn, h: btn, radius: btn / 2,
@@ -2653,19 +2716,17 @@ export struct Player {
                         for 0 : newSongs.len() - 1 to ri {
                             if newSongs[ri].sid == cid { newSongs[ri].cover = cpath; touched = true }
                         }
-                        if touched { coverDirty = true }
+                        // 数据写回后**就地换图**（不再整页重建 ⇒ 卡片墙不会每来一张封面闪一下 ✓）
+                        if touched { sync_card_covers(cid, cpath) }
                         if hitCur { SDL3.markFrameRedraw() }
                     }
                 }
                 c = coverCh.try_receive()
             }
         }
-        // ①b' 封面攒够就重建一次（**放在循环外**：最后一张到达时可能正好不是重建拍，
-        //      写在循环里就会永远等不到 ⇒ 卡片一直是占位图 ✗）
-        if coverDirty and (steps % 4) == 0 {
-            rebuild_content()
-            coverDirty = false
-        }
+        // ①b' 封面**不再触发整页重建**（原来 `coverDirty` ⇒ 每 4 拍 rebuild 一次，卡片墙一直闪 ✗）：
+        //   收到一张就按 sid 就地 set_image（见上面那个循环）；当前不是卡片页时数据也已写回，
+        //   下次进那页自然拿到真封面 ✓
         // ①d 排空下载进度（分片下载每 1MB 回一条；非阻塞 ✓）
         if dlCh != null {
             var pm = dlCh.try_receive()
