@@ -98,6 +98,13 @@ func ico(string name): string {
     return dirs.join(dirs.res_dir(), "images/icons/" + name)
 }
 
+// 右击菜单项（照 文件管理器的 ctxItem：菜单项带图标 ✓）
+//   为什么统一走这里：Table/MenuBar 认的是 {label, id, image}，散着写容易漏掉 image
+//   或拼错路径；图标一律用 ico()（单文件打包后也能找到 ✓）
+func mi(string label, string id, string icon): Dict {
+    return {label: label, id: id, image: ico(icon)}
+}
+
 // 封面路径：绝对路径（酷我缓存）直接用，否则当 images/ 下的内置文件名
 func coverPath(string c): string {
     if strings.has(c, "/") or strings.has(c, "\\") { return c }
@@ -861,6 +868,8 @@ export struct Player {
                                          item_h: rowH, header_h: 32, font_size: 13,
                                          headers: ["歌名", "歌手", "专辑", "时长", "格式", "大小", "来源"],
                                          row_numbers: true,                  // 最左边序号 1..n（按显示顺序 ✓）
+                                        // 右击菜单样式透传（Table 内部自建 MenuBar）：图标 24 = 48 源图的一半 ✓
+                                        ctx_image_size: 16.0, ctx_item_h: 28.0,
                                          // 合计 0.99（留 1% 余量，避免浮点累加恰好顶满 ✓）
                                          col_ratios: [0.33, 0.16, 0.16, 0.09, 0.07, 0.12, 0.06],
                                          aligns: [0, 0, 0, 1, 1, 2, 1],
@@ -885,14 +894,20 @@ export struct Player {
                                          //   行号一律过 `source_row`（表头排序后显示行 ≠ 数据行 ✓）
                                          tbSearch.on_dbl_click(func(int row, int col) { play_net_row(row) })
                                          // 右击菜单（与歌曲页相关歌曲表同一套口径 ✓）
-                                         tbSearch.on_context_will_open(func(int row) {
-                                             tbSearch.clearContextItems()
-                                             tbSearch.addContextItem({label: "播放", id: "play"})
-                                             tbSearch.addContextItem({label: "下载", id: "dl"})
-                                             tbSearch.addContextItem({label: "下载全部", id: "dlall"})
-                                             tbSearch.addContextItem({label: "搜索这首歌", id: "sw"})
-                                             tbSearch.addContextItem({label: "搜索这位歌手", id: "sa"})
-                                             tbSearch.addContextItem({label: "复制歌名", id: "copy"})
+                                         //   用**声明式** builder：框架先清空再填 ⇒ 不用手写 clearContextItems，
+                                         //   也就不会出现"上一行/上一页的项串进来"✗
+                                         tbSearch.set_context_builder(func(int row): Array[Dict] {
+                                             // row < 0 = 右击**空白处**（表格下半截没行的地方）⇒ 只给整页级动作 ✓
+                                             //   照 文件管理器 的口径：空白处不给"针对某一行"的项，否则点了也不知道作用于哪行 ✗
+                                             if row < 0 {
+                                                 return [mi("下载全部结果", "dlall", "download.png")]
+                                             }
+                                             return [mi("播放", "play", "menu_play.png"),
+                                                     mi("下载", "dl", "download.png"),
+                                                     mi("下载全部", "dlall", "add.png"),
+                                                     mi("搜索这首歌", "sw", "search.png"),
+                                                     mi("搜索这位歌手", "sa", "sousuo.png"),
+                                                     mi("复制歌名", "copy", "list.png")]
                                          })
                                          tbSearch.on_context_select(func(int row, string id) {
                                              if id == "dlall" {
@@ -1012,6 +1027,7 @@ export struct Player {
                                          item_h: 30, header_h: 32, font_size: 12.5,
                                          headers: ["歌名", "歌手", "时长", "来源"],
                                          row_numbers: true,                      // 最左边序号 1..n ✓
+                                         ctx_image_size: 16.0, ctx_item_h: 28.0,   // 右击菜单图标/行高透传 ✓
                                          col_ratios: [0.45, 0.24, 0.14, 0.16],   // 合计 0.99（比例，随宽度自适应 ✓）
                                          aligns: [0, 0, 1, 1], header_aligns: [0, 0, 1, 1],   // 表头跟数据列同对齐 ✓
                                          sortable: false, zebra: false, resizable: false,
@@ -1026,14 +1042,18 @@ export struct Player {
                 if row >= 0 and row < rel.len() { play_song(rel[row]) }
             })
             // ---- 右击菜单----
-            rt.on_context_will_open(func(int row) {
-                rt.clearContextItems()
-                rt.addContextItem({label: "播放", id: "play"})
-                rt.addContextItem({label: "下载", id: "dl"})
-                rt.addContextItem({label: "下载全部", id: "dlall"})
-                rt.addContextItem({label: "搜索这首歌", id: "sw"})
-                rt.addContextItem({label: "搜索这位歌手", id: "sa"})
-                rt.addContextItem({label: "复制歌名", id: "copy"})
+            rt.set_context_builder(func(int row): Array[Dict] {
+                // row < 0 = 右击在**空白处** ⇒ 只给整页级动作（照 文件管理器 的口径 ✓）
+                //   行级动作（播放/下载/搜索这首…）是"针对某一行"的，空白处弹出来就是假动作 ✗
+                if row < 0 {
+                    return [mi("下载全部相关歌曲", "dlall", "download.png")]
+                }
+                return [mi("播放", "play", "menu_play.png"),
+                        mi("下载", "dl", "download.png"),
+                        mi("下载全部", "dlall", "add.png"),
+                        mi("搜索这首歌", "sw", "search.png"),
+                        mi("搜索这位歌手", "sa", "sousuo.png"),
+                        mi("复制歌名", "copy", "list.png")]
             })
             rt.on_context_select(func(int row, string id) {
                 string qfmt = if g_preferFmt == "lossless" then "FLAC" else "MP3"
@@ -1136,6 +1156,7 @@ export struct Player {
                                          item_h: lh, header_h: 32, font_size: 13,
                                          headers: ["歌名", "歌手", "来源"],
                                          row_numbers: true,                              // 最左边序号 1..n ✓
+                                         ctx_image_size: 16.0, ctx_item_h: 28.0,          // 右击菜单图标/行高透传 ✓
                                          // 合计 0.99（比例列宽，随宽度自适应 ✓）
                                          col_ratios: [0.57, 0.28, 0.14],
                                          aligns: [0, 0, 1], header_aligns: [0, 0, 1],   // 与数据列同对齐 ✓
@@ -1151,13 +1172,18 @@ export struct Player {
             lt.set_rows(lrows)
             lt.on_dbl_click(func(int row, int col) { play_local_row(row) })
             // ---- 右击菜单----
-            lt.on_context_will_open(func(int row) {
-                lt.clearContextItems()
-                lt.addContextItem({label: "播放", id: "play"})
-                lt.addContextItem({label: "打开所在目录", id: "dir"})
-                lt.addContextItem({label: "在资源管理器中选中", id: "reveal"})
-                lt.addContextItem({label: "删除本地文件", id: "del"})
-                lt.addContextItem({label: "全部删除…", id: "delall"})
+            lt.set_context_builder(func(int row): Array[Dict] {
+                // row < 0 = 右击**空白处**（行下面那片区域）⇒ 只给整页级动作，别弹"播放/删除这一行"的假动作
+                //   口径照 文件管理器 onContextWillOpen：空白处给新建/刷新那种页面动作 ✓
+                if row < 0 {
+                    return [mi("打开音乐目录", "dir", "menu_open_dir.png"),
+                            mi("全部删除…", "delall", "menu_delete_all.png")]
+                }
+                return [mi("播放", "play", "menu_play.png"),
+                        mi("打开所在目录", "dir", "menu_open_dir.png"),
+                        mi("在资源管理器中选中", "reveal", "menu_reveal.png"),
+                        mi("删除本地文件", "del", "menu_delete.png"),
+                        mi("全部删除…", "delall", "menu_delete_all.png")]
             })
             lt.on_context_select(func(int row, string id) {
                 string dirNow = dl.dir_of(cacheRoot())
