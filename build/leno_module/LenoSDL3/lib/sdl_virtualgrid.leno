@@ -28,7 +28,8 @@ import "sdl_theme.leno" as theme; use theme.Color
 
 func _vg_opts_keys(): Array[string] {
     return ["x", "y", "w", "h", "item_w", "item_h", "gap_x", "gap_y",
-            "pad_x", "pad_y", "cols", "count", "scroll_color", "visible", "bar_w"]
+            "pad_x", "pad_y", "cols", "count", "scroll_color", "visible", "bar_w",
+            "bar_auto_hide", "bar_hover_color"]
 }
 
 export struct VirtualGrid impl Widget {
@@ -40,11 +41,17 @@ export struct VirtualGrid impl Widget {
     pri int count = 0
     pri bool visible = true
     pri Color sbColor = #B7A3ADAA         // 滚动条（不需要就把 alpha 传 0）
-    // 滚动条宽度（2026-10-28：原来写死 4px ⇒ 用户"看不见、也拖不动" ✗）
+    // 滚动条宽度（原来写死 4px，太细 ⇒ 看不见、也抓不住 ✗）
     //   默认 10，跟 ScrollView 的 12 一个量级；要更细可以 `bar_w: 6` ✓
     pri float barW = 10.0
     pri bool dragging = false             // 正在拖滚动条
     pri float barGrab = 0.0               // 按下点相对手柄顶部的偏移（拖动滚动条用）
+    // ---- 观感选项 ----
+    //   · bar_hover_color：鼠标移到控件上时滚动条**变深**（默认按 sbColor 自动加深 28）
+    //   · bar_auto_hide：鼠标不在时**只留一根 3px 提示条**，移上来才展开成完整滚动条 ✓
+    pri bool barHover = false             // 鼠标是否停在本控件上
+    pri bool barAutoHide = true
+    pri Color barHoverColor = #00000000   // 0 = 未指定 ⇒ 用 sbColor 自动加深
 
     // 构建器：返回该项的控件（每次只对**可见项**调用 ✓）
     //   返回 `any`（内部 `is Widget` 守卫）—— 这样调用方写 func(int):Widget 即可，
@@ -85,6 +92,8 @@ export struct VirtualGrid impl Widget {
         if opts.get("scroll_color") is Color => t { sbColor = t }
         barW = opts.get("bar_w", 10.0)
         if barW < 2.0 { barW = 2.0 }
+        barAutoHide = opts.get("bar_auto_hide", true)
+        if opts.get("bar_hover_color") is Color => hc { barHoverColor = hc }
         if itemW < 1.0 { itemW = 1.0 }
         if itemH < 1.0 { itemH = 1.0 }
         int n = opts.get("count", 0)
@@ -266,7 +275,14 @@ export struct VirtualGrid impl Widget {
 
         // 失焦兜底：拖拽中途 Alt+Tab / 切走窗口会**丢掉 up 事件** ⇒ 必须归零，
         //   否则 dragging 永远为真、之后鼠标一动就跟着"拖"（照 ScrollView 的纪律 ✓）
-        if ev.isWindowFocusLost() { dragging = false }
+        if ev.isWindowFocusLost() { dragging = false; barHover = false }
+
+        // 自动隐藏 / 悬停变深：鼠标进出本控件时**只请求一次重绘**（不是每帧 ✓）
+        bool inNow = mx >= x and mx <= x + w and my >= y and my <= y + h
+        if inNow != barHover {
+            barHover = inNow
+            core.markFrameRedraw()
+        }
 
         // 滚动条交互**优先于内容**（否则按下会被卡片吃掉 ⇒ 拖不动 ✗）
         if ev.isMouseButtonDown() and ev.mouseButton() == 1 {
@@ -311,7 +327,7 @@ export struct VirtualGrid impl Widget {
         if not _loaded or not visible { return }
         sync_cells()
         // ★ 必须裁剪到自己这块矩形：滚出视口的项会被画到外面
-        //   （不裁的话卡片会盖住上面的标题、下面的播放条 —— 用户实测"滚动后穿模"✗）
+        //   （不裁的话卡片会盖住上面的标题、下面的播放条 —— 实测"滚动后穿模" ✗）
         if _clipR == null { _clipR = core.SDL_Rect.malloc() }
         _clipR.x = _int(x); _clipR.y = _int(y)
         _clipR.w = _int(w) + 1; _clipR.h = _int(h) + 1
@@ -379,17 +395,36 @@ export struct VirtualGrid impl Widget {
     }
 
     // 滚动条：总高超过视口才画（宽度 barW，贴右边缘内侧）
+    //   两种观感（默认都开）：
+    //   · 鼠标不在 ⇒ **自动隐藏**成 3px 提示条（让人知道"这里有滚动条"，但不抢视线 ✓）
+    //   · 鼠标移上来 ⇒ 展开成完整轨道 + 手柄，并且**颜色变深**（bar_hover_color / 自动加深）
     pri func draw_scrollbar(Renderer r) {
         if theme.colorA(sbColor) <= 0 { return }
         var t = thumb()
         if t[2] <= 0.0 { return }
-        // ① 轨道（1/4 透明度的同色）：让人一眼看出"这里有一条滚动条" ✓
+
+        // ① 自动隐藏态：只留一根细提示条
+        if barAutoHide and not barHover and not dragging {
+            float hw = 3.0
+            int ha = theme.colorA(sbColor) / 2
+            r.setColor((ha << 24) | (sbColor & 0x00FFFFFF))
+            r.fillRoundedRect(x + w - hw - 2.0, y + 2.0, hw, h - 4.0, hw / 2.0)
+            return
+        }
+
+        // ② 展开态：颜色分「平时 / 悬停」两档
+        Color bar = sbColor
+        if barHover or dragging {
+            bar = if theme.colorA(barHoverColor) > 0 then barHoverColor
+                  else theme.darken(sbColor, 45)
+        }
+        // 轨道（1/4 透明度）：让人一眼看出"这里有一条滚动条" ✓
         //   只画手柄时，浅色背景上很容易被当成装饰线看不见 ✗
-        int ta = theme.colorA(sbColor) / 4
-        r.setColor((ta << 24) | (sbColor & 0x00FFFFFF))
+        int ta = theme.colorA(bar) / 4
+        r.setColor((ta << 24) | (bar & 0x00FFFFFF))
         r.fillRoundedRect(t[0], y + 2.0, t[2], h - 4.0, t[2] / 2.0)
-        // ② 手柄（满透明度）
-        r.setColor(sbColor)
+        // 手柄（满透明度）
+        r.setColor(bar)
         r.fillRoundedRect(t[0], t[1], t[2], t[3], t[2] / 2.0)
     }
 

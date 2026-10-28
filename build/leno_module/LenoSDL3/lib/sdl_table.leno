@@ -32,7 +32,7 @@ use theme.Color
 //   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
 func _opts_keys(): Array[string] {
     return [
-"aligns", "bg_color", "border", "border_color", "cell_select", "cell_types", "check_col", "check_color", "col_ratios", "col_reorder", "col_widths", "ctx_font_size", "ctx_image_size", "ctx_item_h", "cursor", "editable", "editable_cols", "empty_color", "empty_text", "enabled", "font_path", "font_size", "font_style", "frozen_cols", "h", "header_aligns", "header_color", "header_h", "headers", "image_cache_max", "image_col", "image_gap", "image_mode", "image_pad", "image_path", "image_size", "max_col_width", "min_col_width", "multi_select", "numeric_cols", "resizable", "item_h", "row_images", "row_num_color", "row_num_w", "row_numbers", "row_reorder", "rows", "sel_color", "sep_color", "sort_disabled_cols", "solid_sel", "hover_color", "sortable", "tip", "visible", "w", "x", "y", "zebra"
+"aligns", "bar_auto_hide", "bar_hover_color", "bg_color", "border", "border_color", "cell_select", "cell_types", "check_col", "check_color", "col_ratios", "col_reorder", "col_widths", "ctx_font_size", "ctx_image_size", "ctx_item_h", "cursor", "editable", "editable_cols", "empty_color", "empty_text", "enabled", "font_path", "font_size", "font_style", "frozen_cols", "h", "header_aligns", "header_color", "header_h", "headers", "image_cache_max", "image_col", "image_gap", "image_mode", "image_pad", "image_path", "image_size", "max_col_width", "min_col_width", "multi_select", "numeric_cols", "resizable", "item_h", "row_images", "row_num_color", "row_num_w", "row_numbers", "row_reorder", "rows", "sel_color", "sep_color", "sort_disabled_cols", "solid_sel", "hover_color", "sortable", "tip", "visible", "w", "x", "y", "zebra"
 ]
 }
 export struct Table impl Widget, Themeable {
@@ -81,6 +81,12 @@ export struct Table impl Widget, Themeable {
     pri Color hovColor = #464E5CFF
     pri Color zebColor = #2C2E36FF
     pri Color txtColor = #EBEBF5FF, sepColor = #464A54FF, sbColor = #787D8CFF
+    // ---- 滚动条观感（与 ScrollView / VirtualGrid 同名同义）----
+    //   bar_auto_hide：鼠标不在表内时只留 3px 提示条，移进来才展开 ✓
+    //   bar_hover_color：悬停/拖动时的深色（0 = 按 sbColor 自动加深 28）
+    pri bool barAutoHide = true
+    pri bool barHover = false
+    pri Color barHoverColor = #00000000
     // **外框开关**（原来无条件用 sepColor 画一整圈 drawRect ⇒ 想"无边框"没法关 ✗）
     //   `border: false` 去掉外框；`border_color` 单独指定颜色（0 = 跟随 sepColor）
     pri bool _drawBorder = true
@@ -369,6 +375,8 @@ export struct Table impl Widget, Themeable {
 
     func set(Dict opts) {
         dochk.check("sdl_table", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
+        barAutoHide = opts.get("bar_auto_hide", true)
+        if opts.get("bar_hover_color") is Color => hc { barHoverColor = hc }
         // 主题默认配色（opts 覆盖优先级更高）
         Theme th = theme.getTheme()
         bgColor = th.bg
@@ -1373,6 +1381,13 @@ export struct Table impl Widget, Themeable {
         }
         var[float, float](mx, my) = ev.mousePos()
         if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
+
+        // 滚动条自动隐藏：鼠标进出表格时**只请求一次重绘**（不是每帧 ✓）
+        bool inNow = mx >= x and mx <= x + w and my >= y and my <= y + h
+        if inNow != barHover {
+            barHover = inNow
+            core.markFrameRedraw()
+        }
 
         // 内嵌右击上下文菜单已展开：所有事件先交菜单处理（选择/关闭由菜单自身负责）
         if ctxMenuEnabled and ctxMenu != null and ctxMenu.isOpen() {
@@ -2418,8 +2433,24 @@ export struct Table impl Widget, Themeable {
         if editing and _edit != null { _edit.render(r) }
     }
 
+    // 滚动条配色：悬停/拖动 ⇒ 展开并变深；否则（默认）折叠成 3px 提示条
+    pri func bar_colors(): Array[Color] {
+        bool hot = barHover or draggingV or draggingH
+        Color track = sbColor
+        if hot {
+            track = if theme.colorA(barHoverColor) > 0 then barHoverColor
+                    else theme.darken(sbColor, 45)
+        }
+        Array[Color] out = [track, theme.brighten(track, 60)]
+        return out
+    }
+    pri func bar_folded(): bool {
+        return barAutoHide and not (barHover or draggingV or draggingH)
+    }
+
     pri func draw_vscroll(Renderer r, Array[float] sb) {
-        float vw = 8.0
+        float fold = bar_folded()
+        float vw = if fold then 3.0 else 8.0
         float sx = x + w - vw - 2.0
         float bodyH = h - headerH - sb[1]
         float maxY = max_scroll_y(); if maxY <= 0 { maxY = 1 }
@@ -2427,13 +2458,21 @@ export struct Table impl Widget, Themeable {
         float contentH = _rows.len() * rowH; if contentH <= 0 { contentH = 1 }
         float thumbH = maths.max(18.0, maths.min(bodyH * bodyH / contentH, bodyH))
         float thy = y + headerH + 2.0 + (scrollY / maxY) * (track - thumbH)
-        r.setColor(theme.withAlpha(sbColor, 180))
+        var cs = bar_colors()
+        if fold {
+            // 折叠：只留细条（不画手柄）
+            r.setColor(theme.withAlpha(cs[0], 90))
+            r.fillRoundedRect(sx, y + headerH + 2.0, vw, bodyH - 4.0, vw / 2.0)
+            return
+        }
+        r.setColor(theme.withAlpha(cs[0], 230))
         r.fillRoundedRect(sx, y + headerH + 2.0, vw, bodyH - 4.0, vw / 2.0)
-        r.setColor(theme.brighten(sbColor, 60))
+        r.setColor(cs[1])
         r.fillRoundedRect(sx, thy, vw, thumbH, vw / 2.0)
     }
     pri func draw_hscroll(Renderer r, Array[float] sb) {
-        float hh = 8.0
+        float fold = bar_folded()
+        float hh = if fold then 3.0 else 8.0
         float sy = y + h - hh - 2.0
         float maxX = max_scroll_x(); if maxX <= 0 { maxX = 1 }
         float bodyW = w - sb[0]
@@ -2441,9 +2480,15 @@ export struct Table impl Widget, Themeable {
         float tw = total_w(); if tw <= 0 { tw = 1 }
         float thumbW = maths.max(18.0, maths.min(bodyW * bodyW / tw, bodyW))
         float thx = x + 2.0 + (scrollX / maxX) * (track - thumbW)
-        r.setColor(theme.withAlpha(sbColor, 180))
+        var cs = bar_colors()
+        if fold {
+            r.setColor(theme.withAlpha(cs[0], 90))
+            r.fillRoundedRect(x + 2.0, sy, bodyW - 4.0, hh, hh / 2.0)
+            return
+        }
+        r.setColor(theme.withAlpha(cs[0], 230))
         r.fillRoundedRect(x + 2.0, sy, bodyW - 4.0, hh, hh / 2.0)
-        r.setColor(theme.brighten(sbColor, 60))
+        r.setColor(cs[1])
         r.fillRoundedRect(thx, sy, thumbW, hh, hh / 2.0)
     }
 

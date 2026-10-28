@@ -29,7 +29,9 @@ use theme.Color
 //   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
 func _opts_keys(): Array[string] {
     return [
-"bar_color", "bg_color", "border", "border_alpha", "border_color", "content_h", "content_w", "enabled", "fit_h", "fit_w", "h", "radius", "smooth", "step", "visible", "w", "x", "y"
+"bar_color", "bg_color", "border", "border_alpha", "border_color", "content_h", "content_w",
+            "enabled", "fit_h", "fit_w", "h", "radius", "smooth", "step", "visible", "w", "x", "y",
+            "bar_auto_hide", "bar_hover_color"
 ]
 }
 // ★ 2026-10-13：补 `Themeable` —— 本控件以前**只有 `impl Widget`** ✗，
@@ -54,6 +56,11 @@ export struct ScrollView impl Widget, Themeable {
     pri Color bgColor = #262830FF
     pri Color bdrColor = #505A64FF
     pri Color sbColor = #787D8CFF           // 滚动条颜色
+    // ---- 观感（与 VirtualGrid 同一套选项，名字一致）----
+    //   bar_auto_hide：鼠标不在视口内时只留一根 3px 提示条，移进来才展开 ✓
+    //   bar_hover_color：悬停/拖动时的深色（0 = 按 sbColor 自动加深 28）
+    pri bool barAutoHide = true
+    pri Color barHoverColor = #00000000
     pri float radius = 8.0
     pri int brdA = 200
     bool _drawBorder = true
@@ -110,7 +117,9 @@ export struct ScrollView impl Widget, Themeable {
         fitH = opts.get("fit_h", false)
         if fitW { _contentW = w - barW }       // 立即可用（不必等首帧 _sync ✓）
         step = opts.get("step", 48.0)          // 每格滚轮步长（默认 48 ≈ 平台惯例 ✓）
-        smooth = opts.get("smooth", false)    // 平滑滚动（默认关 = 老行为 ✓）
+        smooth = opts.get("smooth", false)    // 平滑滚动（默认关 = 老行为 ✓)
+        barAutoHide = opts.get("bar_auto_hide", true)
+        if opts.get("bar_hover_color") is Color => hc { barHoverColor = hc }
         scrollX = 0.0; scrollY = 0.0
         enabled = opts.get("enabled", true)
         visible = opts.get("visible", true)
@@ -508,32 +517,59 @@ export struct ScrollView impl Widget, Themeable {
         if ev.isMouseButtonDown() and inside { innerDown = true }
         if not inside and not captured {
             bool wasIn = mouseIn
-            mouseIn = false
+            if wasIn {
+                mouseIn = false
+                core.markFrameRedraw()          // 折叠滚动条：离开时也要刷一次 ✓
+            }
             if ev.isMouseMotion() and wasIn { _content?.process(ev) }   // 离开视口：补一次 ⇒ 清 hover ✓
             return
         }
-        mouseIn = inside
+        // 拖动中即使指针移出视口也算"还在操作"⇒ 滚动条保持展开（否则拖到一半缩回去 ✗）
+        bool nowIn = inside or innerDown
+        if nowIn != mouseIn {
+            mouseIn = nowIn
+            core.markFrameRedraw()
+        }
         _content?.process(ev)
     }
 
+    // 滚动条：悬停/拖动 ⇒ 展开成「轨道 + 手柄」并变深；否则（默认）折叠成一根 3px 提示条
     pri func drawScrollbars(Renderer r) {
+        bool hot = mouseIn or dragV != 0 or dragH != 0
+        bool fold = barAutoHide and not hot
+        Color track = sbColor
+        if hot {
+            track = if theme.colorA(barHoverColor) > 0 then barHoverColor
+                    else theme.darken(sbColor, 45)
+        }
+        int faintA = theme.colorA(track) / 2
+        Color faint = (faintA << 24) | (track & 0x00FFFFFF)
+        float gw = if fold then 3.0 else barW
+        float gh = if fold then 3.0 else barW
         if showV() {
-            float gw = barW
-            float tx = x + w - gw
-            float gh = if showH() then barW else 0.0
-            r.setColor(sbColor)
-            r.fillRoundedRect(tx, y, gw, h - gh, gw / 2.0)
-            r.setColor(theme.brighten(sbColor, 40))
-            r.fillRoundedRect(tx + 2.0, vThumbY, gw - 4.0, vThumbH, (gw - 4.0) / 2.0)
+            float innerH = h - (if showH() then gh else 0.0)
+            if fold {
+                // 折叠：只留细条（**不画手柄**）——让人知道"这里能滚"，又不抢视线 ✓
+                r.setColor(faint)
+                r.fillRoundedRect(x + w - gw - 2.0, y + 2.0, gw, innerH - 4.0, gw / 2.0)
+            } else {
+                r.setColor(track)
+                r.fillRoundedRect(x + w - gw, y, gw, innerH, gw / 2.0)
+                r.setColor(theme.brighten(track, 40))
+                r.fillRoundedRect(x + w - gw + 2.0, vThumbY, gw - 4.0, vThumbH, (gw - 4.0) / 2.0)
+            }
         }
         if showH() {
-            float gh = barW
-            float ty = y + h - gh
-            float gw = if showV() then barW else 0.0
-            r.setColor(sbColor)
-            r.fillRoundedRect(x, ty, w - gw, gh, gh / 2.0)
-            r.setColor(theme.brighten(sbColor, 40))
-            r.fillRoundedRect(hThumbX, ty + 2.0, hThumbW, gh - 4.0, (gh - 4.0) / 2.0)
+            float innerW = w - (if showV() then gw else 0.0)
+            if fold {
+                r.setColor(faint)
+                r.fillRoundedRect(x + 2.0, y + h - gh - 2.0, innerW - 4.0, gh, gh / 2.0)
+            } else {
+                r.setColor(track)
+                r.fillRoundedRect(x, y + h - gh, innerW, gh, gh / 2.0)
+                r.setColor(theme.brighten(track, 40))
+                r.fillRoundedRect(hThumbX, y + h - gh + 2.0, hThumbW, gh - 4.0, (gh - 4.0) / 2.0)
+            }
         }
     }
 

@@ -18,7 +18,7 @@ use theme.Color
 //   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
 func _opts_keys(): Array[string] {
     return [
-"bg_color", "border_color", "cursor", "enabled", "font_path", "font_size", "font_style", "h", "hover_color", "image_gap", "image_pad", "image_path", "image_size", "item_h", "items", "mode", "scroll_color", "sel_color", "selected", "text_color", "tip", "visible", "w", "x", "y"
+"bg_color", "border_color", "cursor", "enabled", "font_path", "font_size", "font_style", "h", "hover_color", "image_gap", "image_pad", "image_path", "image_size", "item_h", "items", "mode", "scroll_color", "bar_auto_hide", "bar_hover_color", "sel_color", "selected", "text_color", "tip", "visible", "w", "x", "y"
 ]
 }
 export struct ListBox impl Widget, Themeable {
@@ -41,6 +41,11 @@ export struct ListBox impl Widget, Themeable {
     pri Color hovColor = #464E5CFF      // 悬停行底色
     pri Color txtColor = #EBEBF5FF     // 文字色
     pri Color sbColor = #787D8CFF      // 滚动条色
+    // 滚动条观感（与 Table / ScrollView / VirtualGrid 同名同义）
+    //   ⚠ 本控件常做**弹层内的小列表**（鼠标基本总在里面）⇒ 默认不折叠，可显式开 ✓
+    pri bool barAutoHide = false
+    pri bool barHover = false
+    pri Color barHoverColor = #00000000
     pri int cursor = SystemCursor.POINTER
     bool enabled = true, visible = true, _loaded = false
     string _tip = ""
@@ -190,6 +195,8 @@ export struct ListBox impl Widget, Themeable {
         if opts.get("hover_color") is Color => t { hovColor = t }
         if opts.get("text_color") is Color => t { txtColor = t }
         if opts.get("scroll_color") is Color => t { sbColor = t }
+        barAutoHide = opts.get("bar_auto_hide", true)
+        if opts.get("bar_hover_color") is Color => hc { barHoverColor = hc }
 
         cursor  = opts.get("cursor", SystemCursor.POINTER)
         enabled  = opts.get("enabled", true)
@@ -441,6 +448,12 @@ export struct ListBox impl Widget, Themeable {
         // 弹层捕获：光标落在“他人的下拉弹层”范围内时，本控件忽略该事件（避免穿透到下层）
         var[float, float](mx, my) = ev.mousePos()
         if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
+        // 滚动条自动隐藏：鼠标进出列表时只请求一次重绘（不是每帧 ✓）
+        bool inNow = contains(mx, my)
+        if inNow != barHover {
+            barHover = inNow
+            core.markFrameRedraw()
+        }
         // ★ 右击菜单已展开：事件**先**交菜单（选择/关闭由菜单自身负责 ✓）
         //   ⚠⚠ 必须排在下面那句"弹层捕获"**之前** ✗✗ —— 菜单打开时它自己也算一个弹层 ✓
         //     先判捕获就会把菜单自己的事件全吃掉 ⇒ 菜单看着能弹、却点不动 ✗（照 Table 的顺序 ✓）
@@ -644,18 +657,30 @@ export struct ListBox impl Widget, Themeable {
         r.setColor(bdrColor)
         r.drawRoundedRect(x, y, w, h, 6.0)
 
-        // 滚动条（内容超出时）
+        // 滚动条（内容超出时）：悬停/拖动 ⇒ 展开并变深；否则折叠成 3px 提示条
         float maxs = max_scroll()
         if maxs > 0.0 {
-            float sw = 8.0
+            bool hot = barHover or draggingScroll
+            bool fold = barAutoHide and not hot
+            Color track = sbColor
+            if hot {
+                track = if theme.colorA(barHoverColor) > 0 then barHoverColor
+                        else theme.darken(sbColor, 45)
+            }
+            float sw = if fold then 3.0 else 8.0
             float sx = x + w - sw - 2.0
-            r.setColor(theme.withAlpha(sbColor, 180))
-            r.fillRoundedRect(sx, y + 2.0, sw, h - 4.0, sw / 2.0)
-            float ratio = scroll / maxs
-            float thH = maths.max(20.0, maths.min(h * h / total_h(), h - 4.0))
-            float thy = y + 2.0 + ratio * (h - 4.0 - thH)
-            r.setColor(theme.brighten(sbColor, 60))
-            r.fillRoundedRect(sx, thy, sw, thH, sw / 2.0)
+            if fold {
+                r.setColor(theme.withAlpha(track, 90))
+                r.fillRoundedRect(sx, y + 2.0, sw, h - 4.0, sw / 2.0)
+            } else {
+                r.setColor(theme.withAlpha(track, 230))
+                r.fillRoundedRect(sx, y + 2.0, sw, h - 4.0, sw / 2.0)
+                float ratio = scroll / maxs
+                float thH = maths.max(20.0, maths.min(h * h / total_h(), h - 4.0))
+                float thy = y + 2.0 + ratio * (h - 4.0 - thH)
+                r.setColor(theme.brighten(track, 60))
+                r.fillRoundedRect(sx, thy, sw, thH, sw / 2.0)
+            }
         }
     }
 

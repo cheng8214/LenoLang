@@ -17,7 +17,7 @@ import "sdl_edit.leno" as edt; use edt.Edit
 //   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
 func _opts_keys(): Array[string] {
     return [
-"bg_color", "border", "border_color", "cursor", "editable", "enabled", "font_path", "font_size", "font_style", "h", "hover_color", "icon", "icon_gap", "icon_size", "image_gap", "image_size", "item_h", "item_images", "items", "placeholder", "pad_x", "popup_h", "show_arrow", "radius", "scroll_color", "sel_color", "selected", "text_color", "tip", "visible", "w", "x", "y"
+"bg_color", "border", "border_color", "cursor", "editable", "enabled", "font_path", "font_size", "font_style", "h", "hover_color", "icon", "icon_gap", "icon_size", "image_gap", "image_size", "item_h", "item_images", "items", "placeholder", "pad_x", "popup_h", "show_arrow", "radius", "scroll_color", "bar_auto_hide", "bar_hover_color", "sel_color", "selected", "text_color", "tip", "visible", "w", "x", "y"
 ]
 }
 export struct ComboBox impl Widget, Themeable {
@@ -41,6 +41,10 @@ export struct ComboBox impl Widget, Themeable {
     bool enabled = true, visible = true, _loaded = false
     string _tip = ""
     pri bool draggingScroll = false
+    // 滚动条观感（与其它控件同名同义）；弹层小列表默认不折叠，可显式开 ✓
+    pri bool barAutoHide = false
+    pri bool barHover = false
+    pri Color barHoverColor = #00000000
     pri float sbDragOffset = 0.0
     pri func(int):void onChange
     pri func(string):void onEnter     // 可编辑模式：回车回调
@@ -137,6 +141,8 @@ export struct ComboBox impl Widget, Themeable {
         if opts.get("hover_color") is Color => t { hovColor = t; hovSet = true }
         if opts.get("text_color") is Color => t { txtColor = t; txtSet = true }
         if opts.get("scroll_color") is Color => t { sbColor = t }
+        barAutoHide = opts.get("bar_auto_hide", false)
+        if opts.get("bar_hover_color") is Color => hc { barHoverColor = hc }
 
         // 每项图标
         var iis = opts.get("item_images")
@@ -401,6 +407,13 @@ export struct ComboBox impl Widget, Themeable {
 
         var[float, float](mx, my) = ev.mousePos()
         if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
+
+        // 滚动条自动隐藏：鼠标进出控件时只请求一次重绘（不是每帧 ✓）
+        bool inNow = mx >= x and mx <= x + w and my >= y and my <= y + h
+        if inNow != barHover {
+            barHover = inNow
+            core.markFrameRedraw()
+        }
 
         // ★ 可编辑模式：Edit 聚焦时，键盘/文本事件路由给 Edit
         if editable and edit != null and edit.is_focused() {
@@ -675,17 +688,30 @@ export struct ComboBox impl Widget, Themeable {
         r.setColor(bdrColor)
         r.drawRoundedRect(px, py, pw, ph, 6.0)
 
-        // 弹出滚动条
+        // 弹出滚动条：悬停/拖动 ⇒ 展开并变深；否则（bar_auto_hide）折叠成 3px 提示条
         float maxs = max_scroll()
         if maxs > 0.0 {
-            float sw = 8.0, sx = px + pw - sw - 2.0
-            r.setColor(theme.withAlpha(sbColor, 180))
-            r.fillRoundedRect(sx, py + 2.0, sw, ph - 4.0, sw / 2.0)
-            float ratio = scroll / maxs
-            float thH = maths.max(20.0, maths.min(ph * ph / (items.len() * itemH), ph - 4.0))
-            float thy = py + 2.0 + ratio * (ph - 4.0 - thH)
-            r.setColor(theme.brighten(sbColor, 60))
-            r.fillRoundedRect(sx, thy, sw, thH, sw / 2.0)
+            bool hot = barHover or draggingScroll
+            bool fold = barAutoHide and not hot
+            Color track = sbColor
+            if hot {
+                track = if theme.colorA(barHoverColor) > 0 then barHoverColor
+                        else theme.darken(sbColor, 45)
+            }
+            float sw = if fold then 3.0 else 8.0
+            float sx = px + pw - sw - 2.0
+            if fold {
+                r.setColor(theme.withAlpha(track, 90))
+                r.fillRoundedRect(sx, py + 2.0, sw, ph - 4.0, sw / 2.0)
+            } else {
+                r.setColor(theme.withAlpha(track, 230))
+                r.fillRoundedRect(sx, py + 2.0, sw, ph - 4.0, sw / 2.0)
+                float ratio = scroll / maxs
+                float thH = maths.max(20.0, maths.min(ph * ph / (items.len() * itemH), ph - 4.0))
+                float thy = py + 2.0 + ratio * (ph - 4.0 - thH)
+                r.setColor(theme.brighten(track, 60))
+                r.fillRoundedRect(sx, thy, sw, thH, sw / 2.0)
+            }
         }
     }
 
