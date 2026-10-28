@@ -217,9 +217,10 @@ export struct Table impl Widget, Themeable {
     //   · 控件**由调用方持有**（框架只 set_pos / set_size / render），不会每帧 new
     //   · 想要交互（按钮可点）再开 `set_cell_interactive(true)`：鼠标事件按坐标派发给该格控件
     //   · 值语义提醒：Add 到容器的控件仍是同一个对象，状态（hover/选中）能保留 ✓
-    pri func(int, int, float, float): Widget? cellBuilder
+    //   `hovered` 由框架传入（**不要**在闭包里读表格的 hoverRow：闭包捕获的是副本 ✗）
+    pri func(int, int, float, float, bool): Widget? cellBuilder
     pri bool cellInteractive = false
-
+ 
     // === 行级颜色 ===
     pri Array[Color] rowColors = []        // 每行文字色 RGB 打包：0xRRGGBB，0=用默认色
     Dict[string, Color] _cellFgColors = {}  // 单元格前景色：键"row,col"，值 0xRRGGBB，0=无
@@ -409,7 +410,7 @@ export struct Table impl Widget, Themeable {
         rowPadX = opts.get("row_pad_x", 0.0)
         if rowRadius < 0.0 { rowRadius = 0.0 }
         if rowPadX < 0.0 { rowPadX = 0.0 }
-        barAutoHide = opts.get("bar_auto_hide", true)
+         barAutoHide = opts.get("bar_auto_hide", true)
         if opts.get("bar_hover_color") is Color => hc { barHoverColor = hc }
         // 主题默认配色（opts 覆盖优先级更高）
         Theme th = theme.getTheme()
@@ -1025,7 +1026,7 @@ export struct Table impl Widget, Themeable {
 
     // 自定义单元格：给一个"返回控件"的回调 ⇒ 单元格内可任意布局 ✓
     //   cb(row, col, w, h) -> 控件；返回 null = 该格走内建文本/进度绘制
-    func set_cell_builder(func(int, int, float, float): Widget? cb) {
+    func set_cell_builder(func(int, int, float, float, bool): Widget? cb) {
         cellBuilder = cb
         fittedValid = false          // 内容变了，文本拟合缓存作废
     }
@@ -1035,7 +1036,7 @@ export struct Table impl Widget, Themeable {
     // 当前鼠标停在哪一行（-1 = 没有）—— 单元格控件据此做"hover 才显示操作按钮" ✓
     func get_hover_row(): int { return hoverRow }
     func is_row_hover(int r): bool { return r >= 0 and r == hoverRow }
-
+ 
     // ==================== 行图标设置方法 ====================
     func set_image_col(int c) { imageCol = c; invalidate_fitted() }
 
@@ -1445,7 +1446,7 @@ export struct Table impl Widget, Themeable {
                 int ic = col_at(mx)
                 int ir = row_at(my)
                 if ic >= 0 and ic < ncols and ir >= 0 {
-                    Widget? cw2 = cellBuilder(ir, ic, _colW[ic], rowH)
+                    Widget? cw2 = cellBuilder(ir, ic, _colW[ic], rowH, ir == hoverRow)
                     if cw2 != null { cw2.process(ev) }
                 }
             }
@@ -2436,14 +2437,16 @@ export struct Table impl Widget, Themeable {
             if ry + rowH < bodyTop or ry > bodyTop + bodyH { continue }
             // 行号（序号）：按**当前显示顺序**从 1 数起 —— 排序后跟着走的自然是新顺序 ✓
             if rowNumOn {
-                string nt = _str(ri + 1)
-                var[float, float](_ntw, _nth) = _font.measureString(nt)
-                float ntx = x + rowNumW - 8.0 - _ntw          // 右对齐，离列分隔再留 8px
-                if ntx < x + 4.0 { ntx = x + 4.0 }
-                float nty = ry + (rowH - textH) / 2.0
-                Color nc = rowNumColor
-                if nc == 0 { nc = theme.withAlpha(hdrTxtColor, 200) }
-                r.drawText(_font, nt, r.snapX(ntx), r.snapY(nty), nc)
+                {
+                    string nt = _str(ri + 1)
+                    var[float, float](_ntw, _nth) = _font.measureString(nt)
+                    float ntx = x + rowNumW - 8.0 - _ntw          // 右对齐，离列分隔再留 8px
+                    if ntx < x + 4.0 { ntx = x + 4.0 }
+                    float nty = ry + (rowH - textH) / 2.0
+                    Color nc = rowNumColor
+                    if nc == 0 { nc = theme.withAlpha(hdrTxtColor, 200) }
+                    r.drawText(_font, nt, r.snapX(ntx), r.snapY(nty), nc)
+                }
             }
             var row = _rows[ri]
             string imgPath = row_image(ri)
@@ -2469,7 +2472,7 @@ export struct Table impl Widget, Themeable {
                 if cellBuilder != null {
                     // ⚠ 必须显式声明 `Widget?`：用 `var` 会推断成非可空 ⇒ 返回 null 时判断失效，
                     //   后面的内建文本被误跳过（实测第 2 列整列不画 ✗）
-                    Widget? ucw = cellBuilder(ri, c, cw, rowH)
+                    Widget? ucw = cellBuilder(ri, c, cw, rowH, ri == hoverRow)
                     if ucw != null {
                         ucw.set_pos(cx, ry)
                         ucw.set_size(cw, rowH)

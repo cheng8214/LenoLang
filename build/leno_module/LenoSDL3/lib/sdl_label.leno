@@ -39,6 +39,8 @@ export struct Label impl Widget, Themeable {
     //   卡片上的歌名/歌手要能点进详情页，而原来 Label 只做悬停提示、不接收点击 ✗
     pri Color hovColor = 0            // 悬停时的文字色（0 = 不变色）
     pri int _cursor = -1              // 悬停光标（-1 = 不改；SystemCursor.POINTER = 手型）
+    // 悬停时文字**右移几像素**（模仿网页链接的微位移反馈）；0 = 不动，老界面不变 ✓
+    pri float hoverShift = 0.0
     pri func():void onClick = null    // 点击回调（null ⇒ 本标签不响应点击 ✓）
     string _tip = ""             // 悬停提示文本（空 = 不提示）
     // ── 截断/滚动支持 ──
@@ -82,7 +84,7 @@ export struct Label impl Widget, Themeable {
         return ["x", "y", "w", "h", "text", "font_size", "font_path", "font_style",
                 "text_color", "align", "wrap", "wrap_w", "max_w", "truncate",
                 "tip", "visible", "enabled",
-                "hover_color", "cursor", "scroll_always"]   // 可点击文字 / 跑马灯（2026-10-26 ✓）
+                "hover_color", "cursor", "scroll_always", "hover_shift"]   // 可点击文字 / 跑马灯 ✓
     }
 
     func set(Dict opts) {
@@ -109,6 +111,7 @@ export struct Label impl Widget, Themeable {
         // 可点击文字的悬停色与光标（2026-10-26 ✓）
         if opts.get("hover_color") is Color => t { hovColor = t }
         _cursor = opts.get("cursor", -1)
+        hoverShift = opts.get("hover_shift", 0.0)
 
         // 对齐
         textAlign = opts.get("align", ALIGN_LEFT)
@@ -398,17 +401,18 @@ export struct Label impl Widget, Themeable {
         if truncate == TRUNCATE_ELLIPSIS and truncLimit() > 0.0 {
             float lim = truncLimit()
             float msw = textWidth()
+            float hs = if hover and hoverShift > 0.0 then hoverShift else 0.0
             if msw <= lim {
                 // 不需要截断，正常绘制
-                float drawX = x
-                if textAlign == ALIGN_CENTER { drawX = x - msw / 2.0 }
-                if textAlign == ALIGN_RIGHT { drawX = x - msw }
+                float drawX = x + hs
+                if textAlign == ALIGN_CENTER { drawX = x - msw / 2.0 + hs }
+                if textAlign == ALIGN_RIGHT { drawX = x - msw + hs }
                 r.drawText(_font, text, drawX, textDrawY(), tcol)
                 return
             }
             // 截断绘制
             string truncText = truncatedText()
-            r.drawText(_font, truncText, x, textDrawY(), tcol)
+            r.drawText(_font, truncText, x + hs, textDrawY(), tcol)
             return
         }
 
