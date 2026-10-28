@@ -932,6 +932,8 @@ static TypeKind native_spec_kind(const NativeTypeSpec* spec) {
         case NTYPE_CHANNEL:     return TYPE_CHANNEL;
         case NTYPE_THREAD:      return TYPE_THREAD;
         case NTYPE_FUTURE:      return TYPE_FUTURE;
+        // `T?` 包装：Kind 取内层（可空性是 TypeInfo.nullable 上的标记，不是另一个 Kind）
+        case NTYPE_NULLABLE:    return native_spec_kind(spec->sub);
         default:                return TYPE_ANY;
     }
 }
@@ -1017,6 +1019,22 @@ static TypeInfo* native_type_spec_to_info_impl(const NativeTypeSpec* spec, TypeI
     //   没有预计算（老入口 / 推不出）⇒ NULL ⇒ 顶层回落 Kind 槽（宁漏勿误报 ✓）
     if (spec->tag == NTYPE_ARG_CB_RET) {
         return cb_ret ? type_copy(cb_ret) : NULL;
+    }
+
+    // `T?` 包装（2026-10-28）：先解析内层，再打可空标记。
+    //   为什么不给 NativeTypeSpec 加 int 字段：全仓 40+ 处规格是位置式初始化，
+    //   加字段会全部触发 -Wmissing-field-initializers（详见 leno_types.h 的 NTYPE_NULLABLE 说明）。
+    //   `var r = _exec(...)` 的可空性就靠这里带上 ⇒ `r != null` 不再误报
+    //   「struct 与 null 比较」（见 docs/待修_编译与语义问题.md §1）。
+    //   ⚠ 只影响**编译期推断**：规格不进字节码 ⇒ 不必升 LENO_BIN_VERSION ✓
+    //   ⚠ 必须在 type_new 之前处理：type_new 可能给出**驻留**实例（不可 free / 不可改）
+    if (spec->tag == NTYPE_NULLABLE) {
+        TypeInfo* inner = native_type_spec_to_info_impl(spec->sub, arg0_type, cb_ret);
+        if (!inner) return NULL;
+        // 驻留实例（如共享的 Array[int]）**不能就地改** ⇒ 拷一份再打标记
+        if (inner->interned) inner = type_copy(inner);
+        inner->nullable = 1;
+        return inner;
     }
 
     TypeInfo* t = type_new(native_spec_kind(spec));
@@ -1136,6 +1154,13 @@ void native_type_spec_to_string(const NativeTypeSpec* spec, char* out, int out_s
             NSPEC_APPEND(")");
             break;
         }
+        // `T?` 包装：渲染成 Leno 源码的样子（LSP hover / 诊断里必须与实际类型同形，
+        //   否则"规格写着 ExecResult?、提示里显示 ExecResult"会让人以为推断又丢了 ✗）
+        case NTYPE_NULLABLE:
+            native_type_spec_to_string(spec->sub, p, remain);
+            p = out + strlen(out); remain = out_size - (int)strlen(out);
+            NSPEC_APPEND("?");
+            break;
         default: NSPEC_APPEND("any"); break;
     }
     #undef NSPEC_APPEND

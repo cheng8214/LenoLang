@@ -1,0 +1,119 @@
+// test_var_nullable_infer.leno —— `var` 接收**可空返回值**时必须保留可空性
+//
+// 来源：docs/待修_编译与语义问题.md §1（2026-10-28）。当时的现象是
+//   `var ucw = cellBuilder(...)`（cellBuilder 声明返回 `Widget?`）之后
+//   `if ucw != null { ... continue }` 恒真 ⇒ 回调返回 null 的那一列整列不绘制。
+//   排查结论（2026-10-28，本文件即证据）：
+//     · 脚本函数 / face 方法 / **函数类型字段**（`func(...): Widget?`）三条返回路径
+//       的可空性**一直是对的** ⇒ 上面那个形态现在判空正确（见下面的运行时断言）；
+//     · 真正丢可空性的是 **native 规格**那条：规格原先只能表达"非可空 T" ⇒
+//       `var r = _exec(...)`（_exec 失败时确实返回 null）推成非可空 `ExecResult`，
+//       紧跟的 `if r != null` 报「struct 与 null 比较」误报（sdl_capture.leno 为此
+//       手写成 `ExecResult? r = ...` 绕开）。
+//       ⇒ 已用 `NTYPE_NULLABLE` 规格包装修好（native.c），本文件钉住不再误报。
+//
+// 本文件钉三件事：
+//   ① 用户函数返回 `T?`，`var` 接住后判空正确（含 struct 与 face 两种）；
+//   ② 跨模块 face + `pri func(...): W?` 字段 + 方法体内 `var` + `continue`
+//      （= sdl_table.leno 的真实形态）判空正确；
+//   ③ `var r = _exec(...)` 之后 `if r != null` **不**再报「struct 与 null 比较」。
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+
+// ==================== ① 用户函数返回可空 ====================
+struct Node {
+    int v = 0
+}
+
+func maybeNode(int k): Node? {
+    if k > 0 {
+        Node n = new Node()
+        n.v = k
+        return n
+    }
+    return null
+}
+
+face Shape {
+    func area(): int
+}
+
+struct Square impl Shape {
+    int side = 2
+    func area(): int { return side * side }
+}
+
+func maybeShape(int k): Shape? {
+    if k > 0 { return new Square() }
+    return null
+}
+
+// ==================== ② 函数类型字段（sdl_table 形态） ====================
+struct Grid {
+    pri func(int, int, float, float): Shape? cellBuilder
+    int built = 0        // 命中控件（非 null）
+    int fallback = 0     // 回退到内建绘制（null）
+
+    func set_builder(func(int, int, float, float): Shape? cb) { cellBuilder = cb }
+
+    func paint(int rows, int cols) {
+        for 0 : rows - 1 to ri {
+            for 0 : cols - 1 to c {
+                if cellBuilder != null {
+                    var ucw = cellBuilder(ri, c, 30.0, 20.0)   // ← 文档里的写法（不再需要 Widget? 注解）
+                    if ucw != null {
+                        built = built + 1
+                        continue
+                    }
+                }
+                fallback = fallback + 1
+            }
+        }
+    }
+}
+
+main() {
+    // ---- ① struct 可空 ----
+    var a = maybeNode(7)
+    assert_ne(a, null, "① var 接 Node? 非空时判空应成立")
+    assert_eq(a.v, 7)
+    var b = maybeNode(0)
+    assert_eq(b, null, "① var 接 Node? 返回 null 时判空必须成立（丢可空就会误判非空）")
+
+    // ---- ① face 可空 ----
+    var s = maybeShape(1)
+    assert_ne(s, null, "① var 接 Shape? 非空时判空应成立")
+    assert_eq(s.area(), 4)
+    var s2 = maybeShape(0)
+    assert_eq(s2, null, "① var 接 Shape? 返回 null 时判空必须成立")
+
+    // ---- ② 表格式回调：col 0 给控件、col 1 返回 null ----
+    var g = new Grid()
+    g.set_builder(func(int row, int col, float w, float h): Shape? {
+        if col == 0 and row >= 0 and row < 2 { return new Square() }
+        return null
+    })
+    g.paint(2, 2)      // 2 行 × 2 列 = 4 格
+    assert_eq(g.built, 2, "② col 0 的两行应走控件绘制")
+    assert_eq(g.fallback, 2, "② 返回 null 的 col 1 必须回退到内建绘制（丢可空 ⇒ 这里会是 0）")
+
+    // ---- ③ native 规格可空：`var` 接 `_exec` 不该再触发「struct 与 null 比较」----
+    var work = dirs.join(_tmpdir(), "leno_var_nullable_infer")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+    var p = dirs.join(work, "exec_nullable.leno")
+    files.write(p, @"main() {
+    var r = _exec(""cmd /c echo hi"", 5000)
+    if r != null {
+        print(""CODE="" + _str(r.code))
+    }
+}
+")
+    var out = ce.expect_ok(p, "③ _exec 的返回是可空的 ExecResult?", "CODE=0")
+    ce.expect_no_warning(out, "③ var 接 _exec（声明 ExecResult?）不该误报 null 比较",
+        "struct 值类型默认被立即分配")
+
+    print("test_var_nullable_infer passed")
+}

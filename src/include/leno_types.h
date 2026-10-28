@@ -444,6 +444,21 @@ typedef enum {
     NTYPE_BY_ARITY,     // 按 argc 分支：argc < arg_index ⇒ sub，否则 ⇒ sub2
     // 第 0 个实参的**二层**元素类型（Array[Array[T]] 的 T），flatten 用
     NTYPE_ARG0_ELEM2,
+    // ---- "可空"包装（2026-10-28）----
+    //   含义：**内层规格（sub）描述的类型是可空的**（Leno 侧写 `T?`）。
+    //   为什么需要：规格是 native 返回/字段类型的**唯一来源**，此前只能表达"非可空 T" ⇒
+    //     调用点拿到的静态类型永远是 T。于是 `var r = _exec(...)`（_exec 在首参不是
+    //     string / 分配失败时确实返回 null）推出来的是**非可空** `struct ExecResult`，
+    //     紧跟的 `if r != null` 会触发「struct 与 null 比较」误报；正确写法得手写
+    //     `ExecResult? r = _exec(...)` —— 这与 `var` 的语义（"跟随返回值类型"）矛盾，
+    //     实际踩到的地方只好留注释绕开（sdl_capture.leno / screenshot_hotkey.leno，
+    //     见 docs/待修_编译与语义问题.md §1）。
+    //   为什么用 tag 而不是给 NativeTypeSpec 加 int 字段：全仓 40+ 处规格都是**位置式**
+    //     初始化，加字段会让它们全部触发 -Wmissing-field-initializers（实测 40 条噪音），
+    //     而"没写就是非可空"正是我们要的默认值 ⇒ 用包装 tag 表达，既有规格逐字不变 ✓
+    //   ⚠ 结构解析器要**先剥壳**再解析 sub（见 native_type_spec_to_info_impl）；
+    //     `native_spec_kind` 取内层的 kind；LSP/诊断渲染成 `内层?`。
+    NTYPE_NULLABLE,
 } NativeTypeTag;
 
 typedef struct NativeTypeSpec {

@@ -46,6 +46,13 @@ extern int g_packaged_mode;   // 打包版（入口如实上报，见 main.c/vm_
 static const NativeTypeSpec S_EXEC_STR = { NTYPE_STRING, NULL, NULL, NULL, 0, -1 };
 static const NativeTypeSpec S_EXEC_INT = { NTYPE_INT,    NULL, NULL, NULL, 0, -1 };
 static const NativeTypeSpec S_EXECRESULT_SPEC = { NTYPE_STRUCT, "ExecResult", NULL, NULL, 0, -1 };
+// ⚠ `_exec` 的返回是 **`ExecResult?`**：native_exec 在"首参不是 string / malloc 失败 /
+//   native_struct_new 失败"时直接 `return val_null()` ⇒ 规格必须表达可空。
+//   此前只能表达非可空 ⇒ `var r = _exec(...)` 推成非可空 `ExecResult`，紧跟的
+//   `if r != null` 报「struct 与 null 比较」误报 —— sdl_capture.leno / 
+//   screenshot_hotkey.leno 里为此专门写成 `ExecResult? r = _exec(...)` 并留注释绕开
+//   （见 docs/待修_编译与语义问题.md §1）。包一层 NTYPE_NULLABLE 即可，无需改结构体。
+static const NativeTypeSpec S_EXECRESULT_NSPEC = { NTYPE_NULLABLE, NULL, &S_EXECRESULT_SPEC, NULL, 0, -1 };
 
 // ⚠ 为什么保留 `output` 又加 `out`/`err`（而不是把 output 改成"仅 stdout"）：
 //   全仓 800+ 处调用点读的是 `output`，其中相当一部分**正靠它拿 stderr**（编译器的诊断全走 stderr）
@@ -1634,7 +1641,7 @@ void sys_init_globals(void) {
     // `_exec` 的真实返回是 `ExecResult{ string output, string out, string err, int code }`（v3.2.8）——
     //   内置通道的规格版声明（必须在 vm_register_native **之后**：那是"查找并更新"）
     native_register_struct_spec(&EXECRESULT_STRUCT_SPEC);
-    native_register_meta_spec("_exec", &S_EXECRESULT_SPEC);
+    native_register_meta_spec("_exec", &S_EXECRESULT_NSPEC);   // ExecResult?（可能返回 null）
 
     // 注册全局 _username 函数（用户名，0 个参数）
     vm_register_native("_username", native_username, TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));

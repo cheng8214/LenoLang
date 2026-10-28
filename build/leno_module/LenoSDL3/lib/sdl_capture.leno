@@ -77,9 +77,10 @@ func _captureViaTool(): Dict {
     for tools to t {
         // ⚠ 路径要加引号（临时目录可能含空格 ✓）；`_exec` 在 Linux 走 popen ⇒ 自带 /bin/sh ✓
         string cmd = strings.replace(t, "{f}", "\"" + tmp + "\"")
-        // ⚠ `_exec` 可能返回 null ⇒ 用**可空类型** `ExecResult?` 声明
-        //   （直接 `var r = _exec(...)` 再判 `r != null` 会触发
-        //    「struct 与 null 比较」告警：结构体值类型默认不为 null ✓）
+        // `_exec` 可能返回 null ⇒ 显式声明成**可空类型** `ExecResult?`
+        //   （2026-10-28 起 `var r = _exec(...)` 也会正确推出 `ExecResult?` —— 规格侧用
+        //    NTYPE_NULLABLE 表达可空了，不再误报「struct 与 null 比较」；这里保留显式
+        //    标注只是为了让"可能为 null"在调用点一眼可见 ✓）
         ExecResult? r = _exec(cmd, 20000)
         bool ran = (r != null and r.code == 0)
         if ran and files.exists(tmp) {
