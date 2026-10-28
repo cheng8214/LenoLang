@@ -1763,7 +1763,8 @@ export struct Player {
                                                 item_w: _float(gcw), item_h: _float(gch),
                                                 gap_x: _float(CELL_GAP), gap_y: 8.0,
                                                 pad_x: PAD, pad_y: 6,
-                                                count: songs.len()})
+                                                count: songs.len(),
+                                                bar_w: 10.0, scroll_color: #C08FA6D0})
         vg.set_builder(func(int i): any {
             if i < 0 or i >= songs.len() { return SDL3.createLabel({text: ""}) }
             return cards.wide_card(songs[i], gcw, showDel, cardSize, hooks)
