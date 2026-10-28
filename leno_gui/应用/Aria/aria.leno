@@ -288,7 +288,7 @@ export struct Player {
     // ----- 歌词页（curNav = -6：点底栏头像 / 歌词按钮进来）-----
     Channel lyrCh                 // 歌词线程回信（Array[string]，每行 "秒|文本"）
     // 歌词页左侧的大圆封面：**必须留句柄** —— 封面是异步回来的，
-    //   底栏那张会就地 set_image，这里不跟着更新就会一直空着 ✗（2026-10-28 用户反馈）
+    //   底栏那张会就地 set_image，这里不跟着更新就会一直空着 ✗
     ImageView lyricBigCover
     // 歌词视图（字体 / 解析结果 / 逐字缓存 / 滚动状态）全在 lib/lyric_view.leno 的 LyricView 里 ✓
     LyricView lyric
@@ -646,7 +646,7 @@ export struct Player {
         // 可编辑下拉：外观与原来的胶囊输入框一致（radius 18 / pad_x 16），
         //   下拉里放**搜索建议**（输入停下 400ms 后后台搜 8 条，取歌名去重 ✓）
         // 当作搜索框用 ⇒ **不要下拉箭头、不要外框**（视觉上就是一个胶囊输入框 ✓）；
-        //   下拉里的 hover/选中色要给足对比，否则白底上"划过去没反应"（用户实测 ✗）
+        //   下拉里的 hover/选中色要给足对比，否则白底上"划过去没反应"（实测 ✗）
         search = SDL3.createComboBox({w: 300, h: 36, font_size: 13, radius: 18, pad_x: 16.0,
                                       editable: true, items: [],
                                       placeholder: "搜索歌曲、歌手、歌单",
@@ -1753,7 +1753,7 @@ export struct Player {
         srow.add(SDL3.createLabel({text: ""}), {grow: 1, shrink: 1, align: 1})
         mainCol.add(srow, {grow: 0, shrink: 0, basis: 18, align: 3})
         // ★ 卡宽/卡高/列数跟卡片墙**用同一套**（card_cw / card_h，可用宽同样是 shelf_avail）：
-        //   原来写死 item_w 236 ⇒ 1200 宽只排得下 3 列，而首页是 4 列（用户截图里的不一致 ✗）
+        //   原来写死 item_w 236 ⇒ 1200 宽只排得下 3 列，而首页是 4 列（实测不一致 ✗）
         //   vg 的卡区 = w − pad_x×2，所以 w 要把左右 PAD 加回去，卡片才和首页**同宽同起点** ✓
         int gavail = cardSize.shelf_avail()
         int gridW = gavail + PAD * 2
@@ -1764,7 +1764,8 @@ export struct Player {
                                                 gap_x: _float(CELL_GAP), gap_y: 8.0,
                                                 pad_x: PAD, pad_y: 6,
                                                 count: songs.len(),
-                                                bar_w: 10.0, scroll_color: #C08FA6D0})
+                                                bar_w: 10.0, scroll_color: #C08FA6D0,
+                                                bar_auto_hide: true, bar_hover_color: #A96E86F0})
         vg.set_builder(func(int i): any {
             if i < 0 or i >= songs.len() { return SDL3.createLabel({text: ""}) }
             return cards.wide_card(songs[i], gcw, showDel, cardSize, hooks)
@@ -2190,7 +2191,7 @@ export struct Player {
     }
 
     // 横卡：封面 | 歌名 / 歌手 / ♥＋⬇
-    //   2026-10-27 用户要求：三颗按钮**放到歌手下面**（原来贴右侧，4 列时挤到 20px 看不清 ✗）
+    //   三颗按钮**放到歌手下面**（原来贴右侧，4 列时挤到 20px 看不清 ✗）
     //   竖排三行后按钮单独占一行 ⇒ 图标回到 24px（48 源图的一半），歌名也拿回整列宽 ✓
     //   尺寸一律由卡宽按比例推（card_pad/thumb/btn/gap/h）⇒ 换列数不用改这里 ✓
     // showDel：多一颗「删除」钮（只有「我喜欢」页传 true ✓）
@@ -2591,7 +2592,7 @@ export struct Player {
     pri func start_timer() {
         win.addTimer(200, func() { on_tick() })
         // 歌词刷新**独立定时器**（33ms ≈ 30fps）：帧间隔由定时器保证均匀，
-        //   不依赖"渲染回调里再请求下一帧"那条链路（那条会忽快忽慢 ⇒ 一顿一顿 ✓ 用户提议）
+        //   不依赖"渲染回调里再请求下一帧"那条链路（那条会忽快忽慢 ⇒ 一顿一顿 ✗）
         win.addTimer(33, func() { lyr_ui_tick() })
     }
 
@@ -2731,7 +2732,7 @@ export struct Player {
                         bool hitCur = nowSid != "" and cid == nowSid
                         if hitCur {
                             coverView.set_image(cpath)
-                            // ★ 三个地方都要跟着换（2026-10-28 用户反馈"歌词页专辑图不更新"）：
+                            // ★ 三个地方都要跟着换（否则歌词页大封面会一直空着）：
                             //   ① 底栏头像 ② nowSong.cover（数据写回 ⇒ 之后重建页面也拿到真封面）
                             //   ③ 歌词页大圆封面（正在歌词页时**就地** set_image，不重建页面 ✓）
                             nowSong.cover = cpath
