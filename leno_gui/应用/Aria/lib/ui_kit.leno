@@ -24,7 +24,10 @@ export func ico(string name): string {
 }
 
 // 封面路径：绝对路径（酷我缓存）直接用，否则当 images/ 下的内置文件名
+//   ⚠ 空串必须落到**占位图标**：原来直接 `img("")` 会拼出 `images/`（一个目录），
+//     纹理加载必然失败 ⇒ 卡片那块就是纯空白（连音符占位都没有 ✗）
 export func coverPath(string c): string {
+    if c == "" { return ico("music.png") }
     if strings.has(c, "/") or strings.has(c, "\\") { return c }
     return img(c)
 }

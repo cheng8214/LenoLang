@@ -50,7 +50,7 @@ import "Music" as audio        // miniaudio：真播放（LenoMusic 模块 ✓�
 use audio.Sound
 use SDL3.(Event, Renderer, Window, TitleBar, Button, Label, Edit, Card, ImageView, Table,
           HBox, VBox, AnchorBox, ScrollView, ProgressBar, Slider, Color, Theme, ComboBox,
-          VirtualGrid, Canvas, Font, Widget, TabControl)
+          VirtualGrid, Canvas, Font, Widget, TabControl, Panel)
 use data.(Song, Shelf, NavItem)
 use lyr.Lrc
 use lv.LyricView
@@ -331,7 +331,22 @@ export struct Player {
     LyricView lyric
     // 当前在播的**整首歌**（底栏 ♥ 要按它的 like_key 判断收藏状态；
     //   只靠 nowSid 的话，本地文件（sid 为空）没法判断 ✓）
-    Song nowSong
+        // ---- 播放列表（右侧浮层，参考主流播放器那种）----
+    //   `queue` 是当前队列；`qIdx` 是正在播的那一项在队列里的下标（-1 = 不在队列里）
+    //   列表页点行播放时用 `play_from(list, i)` 一次性把整张表塞进队列 ✓
+    Array[Song] queue = []
+    int qIdx = -1
+    // 当前播放行的「跳动音柱」：一个 Canvas 复用给所有表格（同一时刻只有一行在播 ✓）
+    //   相位放在数组里——闭包按**元素**读写才拿得到最新值（直接读 float 字段会捕获成副本 ✗）
+    Canvas beatCv
+    Array[float] beatPhase = [0.0]
+    bool qOpen = false
+    Panel qRoot                // 浮层卡片外壳（Panel 才有 set_visible ✓）
+    VBox qPanel                // 浮层里的内容（标题 / 副标题 / 滚动区）
+    VBox qList                 // 浮层里的行容器（每次打开重建）
+    Label qSub                 // 「3 首 · 11 分钟」
+
+Song nowSong
     ProgressBar seek
     Label curTime
     Label totTime
@@ -363,6 +378,9 @@ export struct Player {
     // 第二段点击：ARIA_CLICK2=x,y + ARIA_CLICK2_AT=N —— 用来验"点进去 → 再点返回"这种两步操作 ✓
     int click2At = 0
     string click2Raw = ""
+    // 第三段点击（验"播一首 → 开面板 → 点面板里的行"这种三步操作 ✓）
+    int click3At = 0
+    string click3Raw = ""
     int lyricAt = 0           // >0 ⇒ 第 N 拍切到歌词页（只切页，不碰播放 ✓）
 
 
@@ -419,6 +437,48 @@ export struct Player {
                                   show_separator: false})
         win.add(tb)
         tbH = tb.get_h()
+
+        // ---- 播放列表面板（右侧浮层，默认隐藏）----
+        //   为什么用 `win.add` 而不是塞进 body：它要**盖在**内容区上面（z 更高），
+        //   而且不该占布局空间 ✓；坐标是窗口绝对坐标（右下角贴底栏上方）
+        qRoot = SDL3.createPanel({x: WIN_W - 284, y: WIN_H - 560, w: 268, h: 470,
+                                  bg_color: #FFFFFFF7, radius: 16,
+                                  border: true, border_color: #E8D5DEFF, clip: true})
+        qPanel = SDL3.createVBox({x: 0, y: 0, w: 268, h: 470, pad_x: 12, pad_y: 10, spacing: 6})
+        HBox qh = SDL3.createHBox({x: 0, y: 0, w: 244, h: 30, pad_x: 0, pad_y: 0, spacing: 8})
+        qh.add(ui.lbl("播放列表", 14, C_TXT, true), {grow: 0, shrink: 0, align: 1})
+        qh.add(SDL3.createLabel({text: ""}), {grow: 1, shrink: 1, align: 1})
+        Button qClear = SDL3.createButton({image_path: ui.ico("menu_delete_all.png"), image_size: 16,
+                                           w: 26, h: 26, radius: 8,
+                                           bg_color: C_TRANS, hover_color: #FFFFFFC8,
+                                           padding: 0.0, border: false, shadow: false, tip: "清空列表"})
+        qClear.on_click(func() { queue_clear() })
+        qh.add(qClear, {grow: 0, shrink: 0, basis: 26, align: 1})
+        Button qClose = SDL3.createButton({text: "×", font_size: 16, w: 26, h: 26, radius: 8,
+                                          bg_color: C_TRANS, hover_color: #FFFFFFC8,
+                                          text_color: C_TXT_DIM, padding: 0.0,
+                                          border: false, shadow: false, tip: "关闭"})
+        qClose.on_click(func() { toggle_queue() })
+        qh.add(qClose, {grow: 0, shrink: 0, basis: 26, align: 1})
+        qPanel.add(qh, {grow: 0, shrink: 0, basis: 30, align: 3})
+        qSub = ui.lbl("0 首", 10.5, C_TXT_DIM, false)
+        qPanel.add(qSub, {grow: 0, shrink: 0, basis: 18, align: 3})
+        // 滚动条：宽度 6 + 半透明（默认 12 的实心条在小面板里又粗又抢眼 ✗）
+        ScrollView qsv = SDL3.createScrollView({x: 0, y: 0, w: 244, h: 396, smooth: true,
+                                                bg_color: C_TRANS, border: false,
+                                                bar_w: 6.0,
+                                                bar_color: #C9A9B880,
+                                                bar_hover_color: #B98FA0B0})
+        qList = SDL3.createVBox({x: 0, y: 0, w: 244, h: 396, pad_x: 0, pad_y: 0, spacing: 2})
+        qsv.set_content(qList)
+        qPanel.add(qsv, {grow: 1, shrink: 1, align: 3})
+        qRoot.setLayout(qPanel)
+        win.add(qRoot)
+        qOpen = false
+        qRoot.set_visible(false)
+
+        // 当前播放行的跳动音柱（**一个实例**给所有表格复用：同一时刻只有一行在播 ✓）
+        beatCv = make_beat()
 
         // ---- 根：上=主体（撑满）/ 下=播放条（定高）----
         root = SDL3.createVBox({x: 0, y: 0, w: WIN_W, h: _float(WIN_H) - tbH,
@@ -507,14 +567,35 @@ export struct Player {
         side.add(brand, {grow: 0, shrink: 0, basis: 46, align: 3})
 
         // ---- 主导航（图标 + 文字，选中 = 浅粉胶囊 + 主色字 ✓）----
+        //   分成三段建：①首页 ②「我的音乐」组 +（下载 / 搜索结果）③「发现」组
+        //   为什么要拆：参考图里"下载管理"属于「我的音乐」组，而它现在是单独建的按钮，
+        //   如果全在主循环后追加，就会跑到「发现」组下面 ✗
+        //   ⚠ 段边界写死 0..3 / 4..，与 data.navMain() 的顺序绑定（i 就是页面号）✓
         var mains = data.navMain()
-        for 0 : mains.len() - 1 to i { new_nav(mains[i], i) }
+        for 0 : 3 to i {
+            if mains[i].group != "" {
+                side.add(group_head(mains[i].group), {grow: 0, shrink: 0, basis: 30, align: 3})
+            }
+            new_nav(mains[i], i)
+        }
 
-        // ---- 「搜索结果」：紧跟在主导航下面
-        //   切页会退出搜索态、清空当前结果，但**上次搜索留快照** ⇒ 点这里能回到那张表 ✓
-        //   没搜过时它是灰的（点了无动作），搜过之后变主色并带上首数
+        // ---- 「下载」：搜索结果 / 继续收听里右击「下载」的东西都进这里 ----
+        dlBtn = SDL3.createButton({text: "下载管理", font_size: 14,
+                                   align: "left", padding: 14.0, radius: 10, h: 40,
+                                   image_path: ui.ico("download.png"), image_size: 17,
+                                   image_gap: 9, image_pos: "left", image_tint: C_TXT_DIM,
+                                   border: false, shadow: false, tip: "下载队列与历史"})
+        dlBtn.set_bg_color(C_TRANS)
+        dlBtn.set_hover_color(#FFFFFFC8)
+        dlBtn.set_text_color(C_TXT_DIM)
+        dlBtn.on_click(func() { open_downloads() })
+        side.add(dlBtn, {grow: 0, shrink: 0, basis: 40, align: 3})
+
+        // ---- 「搜索结果」：回到上次搜索的那张表（没搜过时是灰的 ✓）----
         searchBtn = SDL3.createButton({text: "搜索结果", font_size: 14,
-                                       align: "left", padding: 12.0, radius: 9, h: 34,
+                                       align: "left", padding: 14.0, radius: 10, h: 40,
+                                       image_path: ui.ico("search.png"), image_size: 17,
+                                       image_gap: 9, image_pos: "left", image_tint: C_TXT_DIM,
                                        border: false, shadow: false,
                                        tip: "回到上次搜索的结果"})
         searchBtn.set_bg_color(C_TRANS)
@@ -523,15 +604,13 @@ export struct Player {
         searchBtn.on_click(func() { open_last_search() })
         side.add(searchBtn, {grow: 0, shrink: 0, basis: 40, align: 3})
 
-        // ---- 「下载」：搜索结果 / 继续收听里右击「下载」的东西都进这里（2026-10-26）----
-        dlBtn = SDL3.createButton({text: "下载", font_size: 14,
-                                   align: "left", padding: 12.0, radius: 9, h: 34,
-                                   border: false, shadow: false, tip: "下载队列与历史"})
-        dlBtn.set_bg_color(C_TRANS)
-        dlBtn.set_hover_color(#FFFFFFC8)
-        dlBtn.set_text_color(C_TXT_DIM)
-        dlBtn.on_click(func() { open_downloads() })
-        side.add(dlBtn, {grow: 0, shrink: 0, basis: 40, align: 3})
+        // 第二段：排行榜 / 发现
+        for 4 : mains.len() - 1 to i {
+            if mains[i].group != "" {
+                side.add(group_head(mains[i].group), {grow: 0, shrink: 0, basis: 30, align: 3})
+            }
+            new_nav(mains[i], i)
+        }
 
         // ---- 歌单分组头「创建的歌单 +」----
         HBox plHead = SDL3.createHBox({x: 0, y: 0, w: SIDE_W - 24, h: 28,
@@ -552,12 +631,24 @@ export struct Player {
         side.add(SDL3.createLabel({text: ""}), {grow: 1, shrink: 1, align: 3})
     }
 
+    // 侧栏分组小标题（灰色小字 + 左边距，与参考图一致 ✓）
+    pri func group_head(string t): HBox {
+        HBox h = SDL3.createHBox({x: 0, y: 0, w: SIDE_W - 24, h: 30,
+                                  pad_x: 14, pad_y: 0, spacing: 0})
+        h.add(ui.lbl(t, 11, C_TXT_DIM, false), {grow: 0, shrink: 0, align: 1})
+        return h
+    }
+
     // 建一个主导航项（idx 传进来 ⇒ 闭包按值记住它 ✓）
     pri func new_nav(NavItem it, int idx) {
         // 与 CoCo Music 的侧栏对齐：14px / 高 40 / 圆角 10 / 左内边距 14 ——
         //   原来 13px+34 行高偏紧，读起来"挤" ✓
+        // 图标（参考图那种：图标在左、文字在后，灰色线框感）
+        string ip = if it.icon != "" then ui.ico(it.icon) else ""
         Button b = SDL3.createButton({text: it.name, font_size: 14,
                                       align: "left", padding: 14.0, radius: 10, h: 40,
+                                      image_path: ip, image_size: 17, image_gap: 9,
+                                      image_pos: "left", image_tint: C_TXT_DIM,   // 统一灰色（彩色图标凑在一起太花 ✗）
                                       border: false, shadow: false})
         style_nav(b, idx == curNav)
         b.on_click(func() { set_nav(idx) })
@@ -1628,7 +1719,10 @@ export struct Player {
                     // hovered 由框架传进来（闭包里读 lt.hoverRow 拿到的是副本 ✗）
                     // 两个分支是不同 struct ⇒ 必须落到共同接口 Widget? ✓
                     Widget? nw = null
-                    if hovered { nw = numI[row] } else { nw = numL[row] }
+                    // 正在播的这一行 ⇒ 跳动音柱（优先于 hover 的播放钮 ✓）
+                    if row < localCache.len() and is_now_playing(localCache[row]) { nw = beatCv }
+                    else if hovered { nw = numI[row] }
+                    else { nw = numL[row] }
                     return nw
                 }
                 if col == 1 { return rowV[row] }
@@ -3150,7 +3244,27 @@ export struct Player {
             rankCoverSids.add(lead)
         }
         cb.on_click(func() { open_rank(ci) })
-        body.add(cb, {grow: 0, shrink: 0, basis: 100, align: 1})
+        // 封面中央叠播放标记：**半透明黑圆 + 白色三角**
+        //   ⚠ 只用 play2.png 的白色三角**看不清**：浅色封面（新歌榜那种淡绿、粤语榜的白）
+        //     上白三角直接消失 ✗；垫一层黑底后任何封面都清楚 ✓
+        AnchorBox cwrap = SDL3.createAnchorBox({x: 0, y: 0, w: 100, h: 100})
+        cwrap.add(cb, {left: 0, top: 0, w: 100, h: 100})
+        Canvas pbg = SDL3.createCanvas({x: 0, y: 0, w: 44, h: 44, pad: 0,
+                                        bg_color: C_TRANS, border: false})
+        pbg.on_draw(func(Renderer rr, float ox, float oy, float cw2, float ch2) {
+            float d = 44.0
+            if d > cw2 { d = cw2 }
+            if d > ch2 { d = ch2 }
+            float bx0 = ox + (cw2 - d) / 2.0
+            float by0 = oy + (ch2 - d) / 2.0
+            rr.setColor(#00000055)
+            rr.fillRoundedRect(bx0, by0, d, d, d / 2.0)
+        })
+        cwrap.add(pbg, {left: 28, top: 28, w: 44, h: 44})
+        cwrap.add(SDL3.createImageView({w: 26, h: 26, image_path: ui.ico("play2.png"),
+                                        bg_color: C_TRANS, tip: "看完整榜单"}),
+                  {left: 37, top: 37, w: 26, h: 26})
+        body.add(cwrap, {grow: 0, shrink: 0, basis: 100, align: 1})
         VBox songs = SDL3.createVBox({x: 0, y: 0, w: 300, h: 100, pad_x: 0, pad_y: 0, spacing: 4})
         for 3 : c.len() - 1 to k {
             // 歌格是 `sid \u001F 歌名 — 歌手`（见 workers.bangcards）：
@@ -3377,6 +3491,7 @@ export struct Player {
         right.add(SDL3.createLabel({text: ""}), {grow: 0, shrink: 0, basis: 4, align: 1})
 
         // 循环：单曲 ⇄ 列表
+
         Button loopBtn = img_btn("loop_all.png", "循环模式", 26, 14.0)
         loopBtn.on_click(func() {
             loopOne = not loopOne
@@ -3394,7 +3509,10 @@ export struct Player {
                                  thumb_color: C_ACCENT, show_value: false})
         vol.on_change(func(float v) { on_volume(v) })
         right.add(vol, {grow: 0, shrink: 0, basis: 76, align: 1})
-        right.add(img_btn("list.png", "播放列表", 26, 14.0), {grow: 0, shrink: 0, basis: 26, align: 1})
+        // 播放列表（右下角那个 ≡ 图标）：展开/收起右侧浮层 ✓
+        Button queueBtn = img_btn("list.png", "播放列表", 26, 14.0)
+        queueBtn.on_click(func() { toggle_queue() })
+        right.add(queueBtn, {grow: 0, shrink: 0, basis: 26, align: 1})
         bar.add(right, {grow: 0, shrink: 0, basis: 330, align: 1})
 
         sync_play_ui()          // 建完立刻按当前状态刷一次（时间/填充/宽度都对齐 ✓）
@@ -3435,8 +3553,12 @@ export struct Player {
 
     // 这首是不是"当前正在播放"的（卡片上的 play/pause 叠加钮要靠它判断 ✓）
     pri func is_now_playing(Song sg): bool {
-        if sg.sid == "" or nowSid == "" { return false }
-        return sg.sid == nowSid and playing
+        if not playing { return false }
+        // 在线歌：比 sid
+        if sg.sid != "" and nowSid != "" { return sg.sid == nowSid }
+        // 本地文件：sid 是空的 ⇒ 必须按**路径**比，否则本地列表永远认不出“正在播放”✗
+        if sg.path != "" and nowSong.path != "" { return sg.path == nowSong.path }
+        return false
     }
 
     // 底栏 ♥ 的图标 = **当前在播那首歌**的收藏状态（不是独立开关 ✓）
@@ -3534,8 +3656,157 @@ export struct Player {
     }
 
     // 卡片点播放：**有 sid 就走真播放**（推荐 / 最近添加 / 继续收听 里的酷我歌 ✓）
+    // ==================== 播放列表（队列）====================
+    // 从某个列表的第 idx 首开始播：整张表进队列（之后面板里能看到全部 ✓）
+    pri func play_from(Array[Song] list, int idx) {
+        if idx < 0 or idx >= list.len() { return }
+        queue = list
+        qIdx = idx
+        play_song(list[idx])
+        if qOpen { build_queue_rows() }
+    }
+
+    // 按**队列下标**播放（浮层行点击专用）
+    //   闭包只传 int，队列在方法里从 self 读 ⇒ 不会捕获到旧副本 ✓
+    pri func play_from_index(int idx) {
+        if idx < 0 or idx >= queue.len() { return }
+        qIdx = idx
+        play_song(queue[idx])
+        if qOpen { build_queue_rows() }
+    }
+
+    // 当前播放行的「跳动音柱」：淡紫圆底 + 3 根柱，柱高随 beatPhase 上下交替
+    //   与"序号变播放钮"（淡紫圆 + 三角）同尺寸同配色 ⇒ 两种状态切换不跳 ✓
+    //   ⚠ 不用 sin：省一个 import，用三角波代替（视觉一样，1 行算完 ✓）
+    pri func make_beat(): Canvas {
+        Canvas cv = SDL3.createCanvas({x: 0, y: 0, w: 26, h: 26, pad: 0,
+                                       bg_color: C_TRANS, border: false})
+        cv.on_draw(func(Renderer rr, float ox, float oy, float cw2, float ch2) {
+            float d = 26.0
+            if d > cw2 { d = cw2 }
+            if d > ch2 { d = ch2 }
+            float bx0 = ox + (cw2 - d) / 2.0
+            float by0 = oy + (ch2 - d) / 2.0
+            rr.setColor(#DCCBF2FF)
+            rr.fillRoundedRect(bx0, by0, d, d, d / 2.0)
+            rr.setColor(C_ACCENT)
+            float bw = d * 0.14
+            float gap = d * 0.09
+            float ph = beatPhase[0]
+            for 0 : 2 to k {
+                // 三根柱错开 1/3 周期 ⇒ 一高一低交替，像音频跳动 ✓
+                float s = ph + _float(k) * 0.63
+                s = s - _int(s)
+                if s > 0.5 { s = 1.0 - s }
+                float hgt = d * (0.24 + 0.40 * s)
+                float cx3 = bx0 + d / 2.0 + (_float(k) - 1.0) * (bw + gap) - bw / 2.0
+                rr.fillRoundedRect(cx3, by0 + d * 0.5 - hgt / 2.0, bw, hgt, bw / 2.0)
+            }
+        })
+        return cv
+    }
+
+    // 加到播放列表（不打断当前播放；已在列表里就只提示 ✓）
+    pri func add_to_queue(Song sg) {
+        string k = ui.like_key(sg)
+        for queue to q {
+            if ui.like_key(q) == k {
+                nowArtist.set_text("已在播放列表里：" + sg.title)
+                SDL3.markFrameRedraw()
+                return
+            }
+        }
+        queue.add(sg)
+        if qIdx < 0 { qIdx = queue.len() - 1 }
+        nowArtist.set_text("已加入播放列表：" + sg.title)
+        if qOpen { build_queue_rows() }
+        SDL3.markFrameRedraw()
+    }
+
+    pri func queue_clear() {
+        queue = []
+        qIdx = -1
+        build_queue_rows()
+        SDL3.markFrameRedraw()
+    }
+
+    pri func toggle_queue() {
+        qOpen = not qOpen
+        if qOpen { build_queue_rows() }
+        qRoot.set_visible(qOpen)
+        // 防穿透：展开时把浮层登记成"模态"——落在它矩形内的事件只给它 ✓
+        if qOpen {
+            win.set_modal(qRoot, qRoot.get_x(), qRoot.get_y(), qRoot.get_w(), qRoot.get_h())
+        } else {
+            win.clear_modal()
+        }
+        SDL3.markFrameRedraw()
+    }
+
+    // "03:45" → 225 秒（算总时长用；解析不了就 0）
+    pri func dur_secs(string d): int {
+        int p = strings.byte_find(d, ":", 0)
+        if p < 0 { return 0 }
+        int m = _int(strings.byte_slice(d, 0, p - 1))
+        int s = _int(strings.byte_slice(d, p + 1, d.len() - 1))
+        return m * 60 + s
+    }
+
+    // 重建浮层里的行（打开面板 / 换歌 / 队列变化时调）
+    pri func build_queue_rows() {
+        qList.clear()
+        if queue.len() == 0 {
+            qList.add(ui.lbl("播放列表是空的 · 点任意歌曲开始", 11.5, C_TXT_DIM, false),
+                      {grow: 0, shrink: 0, basis: 34, align: 3})
+            qSub.set_text("0 首")
+            return
+        }
+        int total = 0
+        for queue to q { total = total + dur_secs(q.dur) }
+        qSub.set_text(_str(queue.len()) + " 首 · " + _str(total / 60) + " 分钟")
+        for 0 : queue.len() - 1 to i {
+            Song q = queue[i]
+            bool cur = (i == qIdx)
+            // 整行用 **Card**：既能装「封面 + 歌名/歌手两行 + 时长」，又能接整块点击
+            //   · Card 是 ScrollView 内容的一级子控件 ⇒ 命中可靠（同首页卡片）
+            //   · `content_click_through`：内容区（封面/Label）不吞点击，冒泡到卡片 ✓
+            Card row = SDL3.createCard({x: 0, y: 0, w: 244, h: 50, bare: true, radius: 10,
+                                        content_pad: 6, hover_lift: 0.0,
+                                        bg_color: (if cur then #E6DCF7FF else C_TRANS),
+                                        hover_color: #F3EDFBFF,
+                                        content_click_through: true})
+            HBox innerRow = SDL3.createHBox({x: 0, y: 0, w: 232, h: 38,
+                                             pad_x: 0, pad_y: 0, spacing: 9})
+            innerRow.add(SDL3.createImageView({w: 36, h: 36, radius: 6,
+                                               image_path: ui.coverPath(q.cover),
+                                               bg_color: #EFE3EDFF, tip: q.title}),
+                         {grow: 0, shrink: 0, basis: 36, align: 1})
+            VBox nm = SDL3.createVBox({x: 0, y: 0, w: 140, h: 36, pad_x: 0, pad_y: 1, spacing: 1})
+            nm.add(ui.lblFit(q.title, 12, (if cur then C_ACCENT else C_TXT), false),
+                   {grow: 0, shrink: 0, basis: 18, align: 3})
+            nm.add(ui.lblFit(q.artist, 10.5, C_TXT_DIM, false), {grow: 0, shrink: 0, basis: 15, align: 3})
+            innerRow.add(nm, {grow: 1, shrink: 1, align: 1})
+            innerRow.add(ui.lbl(q.dur, 10.5, C_TXT_DIM, false), {grow: 0, shrink: 0, basis: 38, align: 2})
+            row.set_content(innerRow)
+            int qi = i
+            // ⚠ 闭包里**只捕获 int**（`qi`），队列在 play_from_index 里从 self 读 ——
+            //   直接把 `queue` 写进闭包会捕获到创建时的副本（那时可能是空数组）
+            //   ⇒ 点了像"没反应"（play_from 拿空列表直接 return ✗）
+            row.on_click(func() { play_from_index(qi) })
+            qList.add(row, {grow: 0, shrink: 0, basis: 50, align: 3})
+        }
+    }
+
     pri func play_song(Song sg) {
         nowSong = sg                    // 底栏 ♥ 按它判断收藏状态 ✓
+        // 队列位置：在列表里就高亮那一项；队列还空就把它当第一首 ✓
+        int qFound = -1
+        for 0 : queue.len() - 1 to qk {
+            if ui.like_key(queue[qk]) == ui.like_key(sg) { qFound = qk }
+        }
+        if qFound >= 0 { qIdx = qFound }
+        else if queue.len() == 0 { queue = [sg]; qIdx = 0 }
+        if qOpen { build_queue_rows() }
         // 本地文件（下载列表 / 本地音乐）⇒ 直接播磁盘上的，不走网络 ✓
         if sg.path != "" {
             push_recent(sg)
@@ -3640,6 +3911,8 @@ export struct Player {
         hooks.onOpen = func(Song sg) { open_song(sg) }
         hooks.onLike = func(Song sg) { toggle_song_like(sg) }
         hooks.onQueue = func(Song sg) { queue_song(sg) }
+        // 「+」= 加入播放列表（不打断当前播放 ✓）
+        hooks.onAddList = func(Song sg) { add_to_queue(sg) }
         hooks.onDelete = func(Song sg) { unlike_song(sg) }
         hooks.isPlaying = func(Song sg): bool { return is_now_playing(sg) }
         hooks.isLiked = func(Song sg): bool { return is_liked(ui.like_key(sg)) }
@@ -3760,6 +4033,16 @@ export struct Player {
                     SDL3.testClickAt(win.getID(), _float(xy[0]), _float(xy[1]))
                     print("[click] 已注入点击 @ (" + xy[0] + "," + xy[1] + ")")
                 }
+            }
+        }
+
+        // ARIA_CLICK3=x,y + ARIA_CLICK3_AT=N：第三段点击
+        if click3At > 0 and steps == click3At {
+            click3At = 0
+            var xy3 = strings.split(click3Raw, ",")
+            if xy3.len() >= 2 {
+                SDL3.testClickAt(win.getID(), _float(xy3[0]), _float(xy3[1]))
+                print("[click3] 已注入点击 @ (" + xy3[0] + "," + xy3[1] + ")")
             }
         }
 
@@ -4023,6 +4306,13 @@ export struct Player {
             SDL3.markFrameRedraw()
         }
         // 歌词高亮跟着进度走（只改颜色 + 滚动，不重建 ✓）
+
+        // 播放中：推进「跳动音柱」的相位（暂停就停住，柱子定住不动 ✓）
+        if playing {
+            beatPhase[0] = beatPhase[0] + 0.045
+            if beatPhase[0] > 1000.0 { beatPhase[0] = 0.0 }
+        }
+
         steps = steps + 1
         // 截图完成后再让出几拍（present 落地）⇒ 从 tick 里干净退出 ✓
         if shotExitAt > 0 and steps >= shotExitAt { _exit(0) }
@@ -4132,6 +4422,10 @@ export struct Player {
         if c2 != null { click2Raw = _str(c2) }
         var c2a = _env("ARIA_CLICK2_AT")
         if c2a != null { click2At = _int(_str(c2a)) }
+        var c3 = _env("ARIA_CLICK3")
+        if c3 != null { click3Raw = _str(c3) }
+        var c3a = _env("ARIA_CLICK3_AT")
+        if c3a != null { click3At = _int(_str(c3a)) }
         var st = _env("ARIA_STRESS")
         if st != null {
             stressLeft = _int(_str(st))

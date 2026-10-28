@@ -21,11 +21,46 @@ import "web_net" as net
 import strings
 import dirs
 import files
+import jsons
+use net.(Response, HttpClient)
 
 // 详情页对 UA / Referer 敏感：用桌面 Chrome 的 UA 才给完整 HTML
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
 
 // 从详情页 HTML 里抠 pic120 的 URL（`\u002F` 是 JSON 转义过的 `/`）
+// 按 sid 取封面 URL：**新版 wapi 接口优先**（免登录，直接给完整 URL），失败再回退老页面解析
+//   ⚠ 老办法（抓 play_detail 页面的 pic120）对不少歌拿不到（新歌 / 无详情页）
+//     ⇒ 界面那几张卡永远空白（"封面加载不出来"的根因 ✓）
+//   实测：`wapi.kuwo.cn/api/www/music/musicInfo?mid=466354` → data.pic 是完整 500px URL ✓
+func pic_of(HttpClient c, string id): string {
+    try {
+        c.replaceHeaders(["User-Agent: " + UA,
+                          "Cookie: kw_token=hideme",
+                          "csrf: hideme",
+                          "Referer: https://www.kuwo.cn/"])
+        var r = c.get("http://wapi.kuwo.cn/api/www/music/musicInfo?mid=" + id + "&httpsStatus=1")
+        if r.ok() {
+            var root = jsons.decode(r.body) as Dict[string, any]
+            if root != null {
+                var d = root["data"] as Dict[string, any]
+                if d != null {
+                    string u = _str(d["pic"])
+                    if u == "" { u = _str(d["albumpic"]) }
+                    // 想要小图：把 /500/ 换回 /120/（列表只显示 58~100px，120 足够 ✓）
+                    if u != "" { return u.replace("/500/", "/120/") }
+                }
+            }
+        }
+    } catch e { print("[cover] wapi 取图失败（回退老接口）：" + _str(e)) }
+    // 回退：老页面解析
+    try {
+        c.replaceHeaders(["User-Agent: " + UA, "Referer: http://www.kuwo.cn/"])
+        var r2 = c.get("http://www.kuwo.cn/play_detail/" + id)
+        if r2.ok() { return pic_url(r2.body) }
+    } catch e { return "" }
+    return ""
+}
+
 func pic_url(string html): string {
     int p = strings.byte_find(html, "pic120:\"", 0)
     if p < 0 { return "" }
@@ -38,7 +73,7 @@ func pic_url(string html): string {
 // 缓存有效性下限：真实封面 ≥ 几 KB；1 字节那种是**下载失败落下的空文件**
 //   ⚠ 实测踩过：`files.exists()` 为真就当成"已缓存"返回 ⇒ 1 字节的坏文件永远修不好，
 //     界面一直显示占位图 ✗
-const int MIN_JPG = 1024
+const int MIN_JPG = 2048      // 1×1 假图 / 极小的半截图都在 1KB 上下 ⇒ 门槛提到 2KB ✓
 
 func usable(string f): bool {
     if not files.exists(f) { return false }
@@ -65,15 +100,18 @@ export func cover_of(string id, string cacheDir): string {
     try {
         dirs.mkdir_p(cacheDir)
         var c = net.createClient()
-        c.addHeaders(["User-Agent: " + UA, "Referer: http://www.kuwo.cn/"])
-        var r = c.get("http://www.kuwo.cn/play_detail/" + id)
-        string u = if r.ok() then pic_url(r.body) else ""
+        string u = pic_of(c, id)
         if u != "" { net.download(u, f) }    // 用 pic120 的原始 URL（不再换 /500/ ✓）
         c.close()
     } catch e {
         return ""
     }
-    return if usable(f) then f else ""
+    // 下完仍不可用（半截 / 假图）⇒ **删掉**，下次重下；留着会一直显示破图 ✗
+    if not usable(f) {
+        try { files.delete(f) } catch e { print("[cover] 删无效缓存失败：" + _str(e)) }
+        return ""
+    }
+    return f
 }
 
 // 取封面并**存到指定位**（给"下载到本地"用：封面要跟着 mp3 一起落到下载目录，
@@ -87,9 +125,7 @@ export func cover_to(string id, string destFile): bool {
     }
     try {
         var c = net.createClient()
-        c.addHeaders(["User-Agent: " + UA, "Referer: http://www.kuwo.cn/"])
-        var r = c.get("http://www.kuwo.cn/play_detail/" + id)
-        string u = if r.ok() then pic_url(r.body) else ""
+        string u = pic_of(c, id)
         if u != "" { net.download(u, destFile) }
         c.close()
     } catch e {
@@ -118,5 +154,10 @@ export func cover_of_big(string id, string cacheDir): string {
     } catch e {
         return ""
     }
-    return if usable(f) then f else ""
+    // 下完仍不可用（半截 / 假图）⇒ **删掉**，下次重下；留着会一直显示破图 ✗
+    if not usable(f) {
+        try { files.delete(f) } catch e { print("[cover] 删无效缓存失败：" + _str(e)) }
+        return ""
+    }
+    return f
 }

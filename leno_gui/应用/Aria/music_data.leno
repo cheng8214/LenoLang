@@ -30,6 +30,8 @@ export struct Shelf {
 export struct NavItem {
     string name = ""
     int count = 0
+    string icon = ""          // 图标文件名（images/icons 下；"" = 不画图标）
+    string group = ""         // 分组标题（同一组只在**第一项**上写，侧栏据此插小标题）
 }
 
 // ==================== 构造辅助 ====================
@@ -50,14 +52,26 @@ func nav(string name, int count): NavItem {
     return n
 }
 
-// ==================== 侧栏：主导航（参考图左侧上半段 ✓）====================
+// 带图标 + 分组的主导航项（参考图那种「小标题 + 图标 + 文字」✓）
+func navi(string name, int count, string icon, string group): NavItem {
+    NavItem n = new NavItem()
+    n.name = name
+    n.count = count
+    n.icon = icon
+    n.group = group
+    return n
+}
+
+// ==================== 侧栏：主导航 ====================
+//   分三组（与参考图一致）：第一组无标题 / 「我的音乐」/「发现」
+//   ⚠ 顺序与 curNav 索引**绑定**（i 就是页面号）⇒ 只插标题、不重排 ✓
 export func navMain(): Array[NavItem] {
-    return [nav("首页", 674),
-            nav("我喜欢", 128),
-            nav("最近播放", 64),
-            nav("本地音乐", 674),
-            nav("排行榜", 0),
-            nav("发现", 0)]        // 发现好音乐：推荐歌单卡片墙 + Tab
+    return [navi("首页", 674, "music.png", ""),
+            navi("我喜欢", 128, "sc.png", "我的音乐"),
+            navi("最近播放", 64, "loop_all.png", ""),
+            navi("本地音乐", 674, "music.png", ""),
+            navi("排行榜", 0, "list.png", "发现"),
+            navi("发现", 0, "menu_open_dir.png", "")]
 }
 
 // 侧栏：**用户自己的歌单**（空 = 侧栏不显示这一组）

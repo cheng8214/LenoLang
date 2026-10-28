@@ -87,6 +87,7 @@ export struct CardHooks {
     func(Song):void onOpen = null        // 点歌名 / 歌手：进详情页
     func(Song):void onLike = null        // ♥
     func(Song):void onQueue = null       // 下载
+    func(Song):void onAddList = null     // 「+」加入播放列表
     func(Song):void onDelete = null      // 从「我喜欢」删除
     func(Song):bool isPlaying = null     // 当前是否在播（决定 play/pause 图标）
     func(Song):bool isLiked = null       // 是否已收藏（决定 ♥ 图标）
@@ -185,7 +186,11 @@ export func wide_card(Song sg, int cw, bool showDel, CardSize cs, CardHooks h): 
                                    w: btn, h: btn, radius: btn / 2,
                                    bg_color: C_TRANS, hover_color: #FFFFFFC8,
                                    padding: 0.0, border: false, shadow: false,
-                                   tip: "添加到歌单（暂未开放）"})
+                                   tip: "添加到播放列表"})
+    if h.onAddList != null {
+        Song s4b = sg
+        ab.on_click(func() { h.onAddList(s4b) })
+    }
     acts.add(ab, {grow: 0, shrink: 0, basis: btn, align: 1})
 
     Button db = SDL3.createButton({image_path: ui.ico("download.png"), image_size: 24,

@@ -251,8 +251,15 @@ export func sections(string kwRec, string kwNew, int nRec, int nNew, Channel ch)
 //   分片是照 LenoMusic 的 dl_entry_shard(jobs, …, shard, nshards) 思路：
 //   每张封面要一个详情页（~150 KB），串行 12 张要十几秒，分 3 片约 1/3 ✓
 export func cover_shard(Array[string] ids, string cacheDir, Channel ch) {
+    // ⚠ 去重：同一 sid 出现在多个列表里时，两个线程会**同时写同一个文件** ⇒ 内容交错、
+    //   解出来只剩左上角一块（"封面加载不出来"的元凶之一 ✗）
+    Array[string] seen = []
     for ids to id {
         if id == "" { continue }
+        bool dup = false
+        for seen to sn { if sn == id { dup = true } }
+        if dup { continue }
+        seen.add(id)
         string p = cover.cover_of(id, cacheDir)
         if p != "" {
             Array[string] one = [id, p]
