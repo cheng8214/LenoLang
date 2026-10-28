@@ -1,6 +1,6 @@
 // test_table_ctx_builder.leno — Table 声明式右击菜单 + 菜单样式透传验收（回归件 ✓）
 //   背景（2026-10-27）：`clearContextItems() + 逐条 addContextItem()` 这套样板很容易**漏 clear**，
-//     漏了就会把上一行/上一页的项串进这次菜单（AlkaidMusic 里真踩过：本地音乐冒出下载列表的项）。
+//     漏了就会把上一行/上一页的项串进这次菜单（Aria 里真踩过：本地音乐冒出下载列表的项）。
 //     另外 Table 内部自建 MenuBar，图标大小/行高/字号应用根本调不了。
 //   修法：
 //     · `set_context_items(items)` / `set_context_builder(func(row): Array[Dict])` —— 框架**先清空再填**
@@ -22,7 +22,7 @@ const float TB_X = 20.0
 const float TB_Y = 20.0
 const float TB_W = 700.0
 const float TB_H = 280.0
-const string ICO = "leno_gui/应用/AlkaidMusic/images/icons/"
+const string ICO = "leno_gui/应用/Aria/images/icons/"
 
 int steps = 0
 string outP = ""

@@ -1,5 +1,5 @@
 // test_progress_hover.leno — ProgressBar **悬停位置回调 / 点击跳转**验收（回归件 ✓）
-//   由来：AlkaidMusic 反馈「鼠标移上去应提示当前进度条位置的时间」「点击不能跳转」。
+//   由来：Aria 反馈「鼠标移上去应提示当前进度条位置的时间」「点击不能跳转」。
 //   · 点击不跳转：应用侧 on_seek 之前只改 pos、没真 seek（已修）；框架侧 process 里点击→on_change 是通的，
 //     本探针把它钉住 ✓
 //   · 悬停时间：进度条原来只有静态 tip 文案 ⇒ 新增 `on_hover(值, x, y)`（离开传 -1）+

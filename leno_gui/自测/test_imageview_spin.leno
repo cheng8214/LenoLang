@@ -14,7 +14,7 @@
 import "SDL3" as SDL3
 use SDL3.(Event, Renderer, Window, ImageView)
 
-const string IMG = "leno_gui/应用/AlkaidMusic/images/cover05.png"
+const string IMG = "leno_gui/应用/Aria/images/cover05.png"
 const float SZ = 120.0
 
 int steps = 0
@@ -51,7 +51,7 @@ func run() {
 
     w.addTimer(100, func() {
         steps = steps + 1
-        // 模拟应用：**每拍**都调一次 set_spin（AlkaidMusic 的 sync_play_ui 就是这么做的）
+        // 模拟应用：**每拍**都调一次 set_spin（Aria 的 sync_play_ui 就是这么做的）
         //   框架必须做到"同值重复设置 = 无操作"，否则每次重置基准 ⇒ 头像永远不转 ✗
         if steps == 3 { iv.set_spin(120.0) }
         if steps >= 4 and steps <= 9 { iv.set_spin(120.0) }

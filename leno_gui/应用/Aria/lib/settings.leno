@@ -2,8 +2,8 @@
 // ----------------------------------------------------------------------------
 // 口径照 LenoMusic 的 `dl_settings.leno`：
 //   · 配置**不放应用目录**（打包后可能是只读 / 每次运行换个临时目录）
-//       Windows：%APPDATA%\AlkaidMusic\settings.json
-//       其它   ：$XDG_CONFIG_HOME/AlkaidMusic/settings.json（退回 ~/.config）
+//       Windows：%APPDATA%\Aria\settings.json
+//       其它   ：$XDG_CONFIG_HOME/Aria/settings.json（退回 ~/.config）
 //   · 落盘前一律钳位 ⇒ 文件里永远不会出现非法值
 //   · 键缺失 ⇒ 用结构里的出厂默认（老配置文件照常能读 ✓）
 //
@@ -78,14 +78,14 @@ export struct Settings {
 // 配置目录（平台判断只此一处）
 func app_dir(): string {
     if _os() == "windows" {
-        return dirs.join(_env_or("APPDATA", _tmpdir()), "AlkaidMusic")
+        return dirs.join(_env_or("APPDATA", _tmpdir()), "Aria")
     }
     string base = _env_or("XDG_CONFIG_HOME", "")
     if base == "" {
         string home = _env_or("HOME", "")
         if home == "" { base = _tmpdir() } else { base = dirs.join(home, ".config") }
     }
-    return dirs.join(base, "AlkaidMusic")
+    return dirs.join(base, "Aria")
 }
 
 export func store_path(): string { return dirs.join(app_dir(), "settings.json") }
@@ -107,10 +107,37 @@ export func clamp_fmt(string f): string {
     return FMT_LOSSLESS
 }
 
+// 改名迁移（2026-10-28：AlkaidMusic → Aria）：新位置没有 settings.json 时，
+//   把旧目录里的那份复制过来 —— 否则用户原来的缓存目录/音质/蒙版全被打回默认 ✗
+func old_store_path(): string {
+    if _os() == "windows" {
+        return dirs.join(dirs.join(_env_or("APPDATA", _tmpdir()), "AlkaidMusic"), "settings.json")
+    }
+    string base = _env_or("XDG_CONFIG_HOME", "")
+    if base == "" {
+        string home = _env_or("HOME", "")
+        if home == "" { base = _tmpdir() } else { base = dirs.join(home, ".config") }
+    }
+    return dirs.join(dirs.join(base, "AlkaidMusic"), "settings.json")
+}
+
 // 读配置：文件不存在 / 坏了 / 值超范围 ⇒ 一律回落默认（配置坏了不该让应用起不来 ✓）
 export func load(): Settings {
     Settings s = new Settings()
     string p = store_path()
+    if not files.exists(p) {
+        string old = old_store_path()
+        if files.exists(old) {
+            try {
+                string txt = files.read(old)
+                dirs.mkdir_p(app_dir())
+                files.write(p, txt)
+                print("[settings] 已从旧配置迁移：" + old)
+            } catch e {
+                print("[settings] 迁移旧配置失败：" + _str(e))
+            }
+        }
+    }
     if not files.exists(p) { return s }
     var d = null
     try {

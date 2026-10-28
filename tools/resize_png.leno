@@ -19,7 +19,7 @@
 //     给了输出目录 ⇒ 写进该目录、保持原名（目录不同不会撞名 ✓）
 //
 // 例：
-//   build\leno.exe tools\resize_png.leno leno_gui\应用\AlkaidMusic\images\icons 16 --inplace
+//   build\leno.exe tools\resize_png.leno leno_gui\应用\Aria\images\icons 16 --inplace
 //   build\leno.exe tools\resize_png.leno a.png 32x32 out
 //
 // 实现要点（踩过的坑都写在这儿）：

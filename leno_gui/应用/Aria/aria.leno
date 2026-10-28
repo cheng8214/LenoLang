@@ -1,4 +1,4 @@
-// alkaid_music.leno — AlkaidMusic（浅粉音乐库：侧栏导航 + 顶部搜索 + 卡片墙 + 底部播放条）
+// aria.leno — Aria（浅粉音乐库：侧栏导航 + 顶部搜索 + 卡片墙 + 底部播放条）
 //
 // 界面构成（照参考图搭 ✓）：
 //   ① 自绘标题栏 TitleBar（浅粉底、去系统边框 ✓）
@@ -7,7 +7,7 @@
 //   ④ 内容 ScrollView —— 页面标题 + 「继续收听」横卡 + 「为你推荐」卡片墙 + 「最近添加」
 //   ⑤ 底部播放条 —— 封面 + 歌名/歌手 + 播放控制 + 进度条 + 音量
 //
-// 运行：build\leno.exe leno_gui\应用\AlkaidMusic\alkaid_music.leno
+// 运行：build\leno.exe leno_gui\应用\Aria\aria.leno
 // 资源：images\coverNN.png（`tools\gen_covers.leno` 程序化生成；换真封面同名覆盖即可 ✓）
 //
 // 本次为界面补的**库能力**（都在 build/leno_module/LenoSDL3/lib/ 里，通用 ✓）：
@@ -18,11 +18,11 @@
 //   再把这里的 `txt_btn(...)` 换回 `image_path`。
 //
 // 无头自检（照 影视海报墙 / 文件管理器 的惯例 ✓）：
-//   set ALKAID_SHOT=%TEMP%\alkaid.png   # 第 N 步存一张 PNG 后退出（核对界面就靠它 ✓）
-//   set ALKAID_AT=14                    # 第几步截（一步 = 100ms）
-//   set ALKAID_SIZE=1000x680            # 指定窗口尺寸（验布局自适应 ✓）
-//   set ALKAID_NAV=1                    # 启动就切到某个导航页（验"点导航真的换页" ✓）
-//   set ALKAID_SEARCH=周杰伦            # 启动就搜酷我（联网；封面按拍补，缓存到临时目录 ✓）
+//   set ARIA_SHOT=%TEMP%\aria.png   # 第 N 步存一张 PNG 后退出（核对界面就靠它 ✓）
+//   set ARIA_AT=14                    # 第几步截（一步 = 100ms）
+//   set ARIA_SIZE=1000x680            # 指定窗口尺寸（验布局自适应 ✓）
+//   set ARIA_NAV=1                    # 启动就切到某个导航页（验"点导航真的换页" ✓）
+//   set ARIA_SEARCH=周杰伦            # 启动就搜酷我（联网；封面按拍补，缓存到临时目录 ✓）
 import "SDL3" as SDL3
 import "./music_data.leno" as data
 import "web_net" as net
@@ -44,7 +44,7 @@ import dirs
 import times
 import files
 import threads
-import Sys                       // 自检探针用：读本进程内存（ALKAID_STRESS ✓）
+import Sys                       // 自检探针用：读本进程内存（ARIA_STRESS ✓）
 import "Music" as audio        // miniaudio：真播放（LenoMusic 模块 ✓）
 use audio.Sound
 use SDL3.(Event, Renderer, Window, TitleBar, Button, Label, Edit, Card, ImageView, Table,
@@ -108,7 +108,7 @@ var C_TRANS     = #00000000   // 透明
 //   **只从主题取**，本文件的 C_* 常量它们看不见 ⇒ 粉底窗口里摆出一块灰白表格 ✗
 func appTheme(): Theme {
     Theme t = SDL3.lightTheme()
-    t.name     = "alkaid-pink"
+    t.name     = "aria-pink"
     t.bg       = C_BG_TOP
     t.bgAlt    = #FBEDF3FF
     t.bgInput  = #FFFFFFF2
@@ -311,7 +311,7 @@ export struct Player {
     string shotPath = ""
     int shotAt = 14
     int steps = 0
-    // ----- 切页内存探针（ALKAID_STRESS=N ⇒ 每拍交替切页一次，跑完报进程内存增量 ✓）-----
+    // ----- 切页内存探针（ARIA_STRESS=N ⇒ 每拍交替切页一次，跑完报进程内存增量 ✓）-----
     int stressLeft = 0
     int stressMem0 = 0
     int stressReport = 0      // >0 ⇒ 停手后再等这么多拍才报（让 GC 有机会回收 ⇒ 区分"真泄漏"和"GC 水位"✓）
@@ -333,12 +333,12 @@ export struct Player {
         lyrCh = threads.channel(4)            // 歌词回信（一首一条 ✓）
         SDL3.setTheme(appTheme())             // 粉主题：Table / Edit / 滚动条都跟着变粉 ✓
 
-        win = SDL3.createWindow({title: "Music — LenoSDL3", w: WIN_W, h: WIN_H, flags: 0x20})
+        win = SDL3.createWindow({title: "Aria — LenoSDL3", w: WIN_W, h: WIN_H, flags: 0x20})
         if not win.ok { SDL3.ttfQuit(); return }
         win.setMinSize(980, 660)
 
         // ---- 自绘标题栏（win.add 后系统边框自动去掉 ✓）----
-        tb = SDL3.createTitleBar({title: "LenoMusic", h: TB_H, font_size: 12,
+        tb = SDL3.createTitleBar({title: "Aria", h: TB_H, font_size: 12,
                                   bg_color: C_SIDE, text_color: C_TXT_DIM,
                                   icon_color: C_TXT_MID, hover_color: C_ACC_SOFT,
                                   show_separator: false})
@@ -428,7 +428,7 @@ export struct Player {
                                          bg_color: C_ACCENT, hover_color: C_ACCENT,
                                          padding: 0.0, border: false, shadow: false})
         brand.add(logo, {grow: 0, shrink: 0, basis: 30, align: 1})
-        brand.add(ui.lbl("LenoMusic", 15, C_TXT, true), {grow: 1, shrink: 1, align: 1})
+        brand.add(ui.lbl("Aria", 15, C_TXT, true), {grow: 1, shrink: 1, align: 1})
         side.add(brand, {grow: 0, shrink: 0, basis: 46, align: 3})
 
         // ---- 主导航（图标 + 文字，选中 = 浅粉胶囊 + 主色字 ✓）----
@@ -824,7 +824,7 @@ export struct Player {
     }
 
     // 无头验证专用：把底栏"假装"指向一首歌（**不打开音频**，只改文字/封面/进度）
-    //   只在 ALKAID_LYRIC 探针、且当前没在播时调用 ✓
+    //   只在 ARIA_LYRIC 探针、且当前没在播时调用 ✓
     pri func fake_now_song() {
         Song s = new Song()
         s.sid = "228908"
@@ -1862,7 +1862,7 @@ export struct Player {
     // 竖版卡片：方图 + 歌名 + 歌手（参考图那一列列的小卡 ✓ 无卡片底色，只有图 + 字）
 
     // ==================== 设置（线程数 / 缓存目录 / 优先格式）====================
-    //   数据在 lib/settings.leno（%APPDATA%\AlkaidMusic\settings.json），
+    //   数据在 lib/settings.leno（%APPDATA%\Aria\settings.json），
     //   界面在 lib/settings_win.leno（独立对话框窗口），这里只做"落到全局 + 重扫"✓
     pri func apply_settings(cfgset.Settings s) {
         ui.set_cache_override(s.cachedir)   // 缓存目录归 ui_kit 管（cacheRoot 读它）
@@ -2611,16 +2611,16 @@ export struct Player {
                 smsg = sugCh.try_receive()
             }
         }
-        // ⓪a 右键注入（ALKAID_RCLICK=N）：在结果表第一行上右击，验证"重建时 dispose 子控件"
+        // ⓪a 右键注入（ARIA_RCLICK=N）：在结果表第一行上右击，验证"重建时 dispose 子控件"
         //   没有把 Table 自己的弹层菜单搞成悬空（菜单宿主被 dispose ⇒ 点一下会崩 ✓）
         if rclickAt > 0 and steps == rclickAt {
             rclickAt = 0
             SDL3.testRightClickAt(win.getID(), 320.0, 200.0)
             print("[rc] 已注入右键 @ (320,200)")
         }
-        // ⓪b 悬停注入（ALKAID_HOVERAT=N）：鼠标停在表格第 1 行上，验证**行级 tip**（大小/格式/路径）
+        // ⓪b 悬停注入（ARIA_HOVERAT=N）：鼠标停在表格第 1 行上，验证**行级 tip**（大小/格式/路径）
         //   提示气泡有延迟（默认 500ms）⇒ 截图要在这之后再拍 ✓
-        // ⓪d 歌词页探针（ALKAID_LYRIC=N）：第 N 拍进歌词页（只切页，不碰播放 ✓）
+        // ⓪d 歌词页探针（ARIA_LYRIC=N）：第 N 拍进歌词页（只切页，不碰播放 ✓）
         if lyricAt > 0 and steps == lyricAt {
             lyricAt = 0
             // 无头验证用：没在播时假一首歌（**只改界面文字/封面，不碰音频** ✓），
@@ -2629,10 +2629,10 @@ export struct Player {
             // 直接把进度摆到 70 秒（**不动音频**）：一进页面就能看到"滚到中部 + 中部那行高亮"，
             //   无头验证自动滚动有没有生效 ✓
             open_lyrics(true)
-            // ALKAID_LYFAKE=1：造一份**带逐字标签**的 LRC 文本走真实解析链路
+            // ARIA_LYFAKE=1：造一份**带逐字标签**的 LRC 文本走真实解析链路
             //   ⇒ 不依赖网络也能验"居中 / 当前行放大 / 逐字扫光 / 缓动滚动" ✓
             //   ⚠ 必须放在 open_lyrics 之后：进页面会 request_lyric()，它会把 lrcData 清空 ✗
-            var lf = _env("ALKAID_LYFAKE")
+            var lf = _env("ARIA_LYFAKE")
             if lf != null and _int(_str(lf)) > 0 {
                 // 40 行 × 5 秒、每字 0.4 秒：形状与酷我 lrcx 一致（生成函数在 lib/probes.leno ✓）
                 lyric.set_text(probe.fake_lyric(40, 5, 400))
@@ -2650,7 +2650,7 @@ export struct Player {
             print("[hover] 已注入鼠标移动 @ (320,200)")
         }
 
-        // ⓪ 切页内存探针（ALKAID_STRESS）：交替 首页(0) / 最近播放(2) ⇒ 每次 set_nav 都真的 rebuild
+        // ⓪ 切页内存探针（ARIA_STRESS）：交替 首页(0) / 最近播放(2) ⇒ 每次 set_nav 都真的 rebuild
         if stressLeft > 0 {
             if not stressWarm {
                 // 先让首页按固定数据渲染几帧（首帧要建纹理，那部分不算增量 ✓）
@@ -2915,50 +2915,50 @@ export struct Player {
     // ==================== 无头自检 ====================
     pri func self_test() {
         // 启动就切到某个导航页（下标：0 首页 / 1 我喜欢 / 2 最近播放 / 3 本地音乐 / 4+ 歌单）
-        var nv = _env("ALKAID_NAV")
+        var nv = _env("ARIA_NAV")
         if nv != null { set_nav(_int(_str(nv))) }
         // ⚠ 这里**不要再加会阻塞的自检钩子**（如"启动就 play_song"）：
         //   play_song → play_sid 会同步取直链 + 解码，跑在 UI 线程上 ⇒ 窗口直接卡死 ✗
         //   （2026-10-26 实测；要验播放就手动点，或写独立探针脚本）
-        // 启动就搜一次酷我（联网自检：ALKAID_SEARCH=周杰伦）
-        var kwEnv = _env("ALKAID_SEARCH")
+        // 启动就搜一次酷我（联网自检：ARIA_SEARCH=周杰伦）
+        var kwEnv = _env("ARIA_SEARCH")
         if kwEnv != null {
             search.set_text(_str(kwEnv))
             on_kuwo_search()
         }
-        var sh = _env("ALKAID_SHOT")
+        var sh = _env("ARIA_SHOT")
         if sh != null { shotPath = _str(sh) }
-        var at = _env("ALKAID_AT")
+        var at = _env("ARIA_AT")
         if at != null { shotAt = _int(_str(at)) }
-        var sz = _env("ALKAID_SIZE")
+        var sz = _env("ARIA_SIZE")
         if sz != null {
             var parts = strings.split(_str(sz), "x")
             if parts.len() == 2 { win.setSize(_int(parts[0]), _int(parts[1])) }
         }
-        var q = _env("ALKAID_Q")
+        var q = _env("ARIA_Q")
         if q != null {
             search.set_text(_str(q))
             query = _str(q)
             rebuild_content()
         }
-        // ALKAID_ACT=1 ⇒ 走一遍交互链路（点歌 ⇒ 底栏换歌 + 播放态 + 喜欢）
+        // ARIA_ACT=1 ⇒ 走一遍交互链路（点歌 ⇒ 底栏换歌 + 播放态 + 喜欢）
         //   这几条正是最容易"看代码没问题、跑起来不响应"的地方 ✓
-        var act = _env("ALKAID_ACT")
+        var act = _env("ARIA_ACT")
         if act != null and _int(_str(act)) > 0 { demo_actions() }
-        // ALKAID_STRESS=N ⇒ 每拍"首页 ⇄ 最近播放"交替切一次（走真实 set_nav ⇒ 真 rebuild），
+        // ARIA_STRESS=N ⇒ 每拍"首页 ⇄ 最近播放"交替切一次（走真实 set_nav ⇒ 真 rebuild），
         //   跑完打印进程内存增量。用它是为了把"点一下涨多少"变成数字，而不是靠肉眼看任务管理器 ✓
-        var rc = _env("ALKAID_RCLICK")
+        var rc = _env("ARIA_RCLICK")
         if rc != null { rclickAt = _int(_str(rc)) }
-        var hv = _env("ALKAID_HOVERAT")
+        var hv = _env("ARIA_HOVERAT")
         if hv != null { hoverAt = _int(_str(hv)) }
-        var ly = _env("ALKAID_LYRIC")
+        var ly = _env("ARIA_LYRIC")
         if ly != null { lyricAt = _int(_str(ly)) }
-        var st = _env("ALKAID_STRESS")
+        var st = _env("ARIA_STRESS")
         if st != null {
             stressLeft = _int(_str(st))
             if stressLeft > 0 {
-                // 默认用固定离线数据（可比 ✓）；`ALKAID_SEED=0` ⇒ 用真实网络数据（量封面成本用）
-                var sd = _env("ALKAID_SEED")
+                // 默认用固定离线数据（可比 ✓）；`ARIA_SEED=0` ⇒ 用真实网络数据（量封面成本用）
+                var sd = _env("ARIA_SEED")
                 bool seedIt = true
                 if sd != null and _str(sd) == "0" { seedIt = false }
                 if seedIt { stress_seed(); rebuild_content() }

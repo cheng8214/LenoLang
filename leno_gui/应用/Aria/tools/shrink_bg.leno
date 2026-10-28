@@ -1,6 +1,6 @@
 // tools/shrink_bg.leno — 把背景图压成 JPG（窗口背景用，不需要无损、也不需要原始分辨率）
 //
-// 用法：build\leno.exe "leno_gui\应用\AlkaidMusic\tools\shrink_bg.leno"
+// 用法：build\leno.exe "leno_gui\应用\Aria\tools\shrink_bg.leno"
 //   进：images\bk.png   出：images\bk.jpg（同名换扩展）
 //
 // 为什么需要它：`bk.png` 是 1092×613 的插画，无损 PNG 有 5.7MB。

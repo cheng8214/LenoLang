@@ -71,7 +71,7 @@ export func fmtTime(float sec): string {
 //   <应用目录>/cache/preview/   试听音频
 //   <应用目录>/cache/covers/    封面缓存
 //   <应用目录>/cache/downloads/ 下载（见 downloads.leno 的 dir_of ✓）
-//   打包成单文件时 script_dir 可能只读/是临时解包目录 ⇒ 退回 %TEMP%\AlkaidMusic
+//   打包成单文件时 script_dir 可能只读/是临时解包目录 ⇒ 退回 %TEMP%\Aria
 var _cacheOverride = ""        // 设置里的缓存目录（空 = 跟随应用目录下的 cache）
 
 export func set_cache_override(string p) { _cacheOverride = p }
@@ -88,7 +88,7 @@ export func cacheRoot(): string {
             print("[cache] 应用目录不可写，改用临时目录：" + _str(e))
         }
     }
-    return dirs.join(_tmpdir(), "AlkaidMusic")
+    return dirs.join(_tmpdir(), "Aria")
 }
 
 export func audioCacheDir(): string { return dirs.join(cacheRoot(), "preview") }

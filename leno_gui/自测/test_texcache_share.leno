@@ -1,5 +1,5 @@
 // test_texcache_share.leno — ImageView 纹理**共享缓存**验收（回归件 ✓）
-//   由来：AlkaidMusic 反馈「点 ♥ 时『换一批』闪一下」。查下来根因之一是
+//   由来：Aria 反馈「点 ♥ 时『换一批』闪一下」。查下来根因之一是
 //     ImageView 每个实例都自己 loadTexture / dispose 时销毁纹理 ⇒
 //     应用一整页重建就要把所有封面重新解码，重建后第一帧还没贴图 ⇒ 肉眼就是闪。
 //   修法（框架侧，2026-10-27）：新增 sdl_texcache（按 [渲染器, 路径] 共享 + 引用计数 + LRU 上限），
@@ -16,8 +16,8 @@
 import "SDL3" as SDL3
 use SDL3.(Event, Renderer, Window, ImageView)
 
-const string IMG_A = "leno_gui/应用/AlkaidMusic/images/cover05.png"
-const string IMG_B = "leno_gui/应用/AlkaidMusic/images/cover14.png"
+const string IMG_A = "leno_gui/应用/Aria/images/cover05.png"
+const string IMG_B = "leno_gui/应用/Aria/images/cover14.png"
 
 int steps = 0
 string outP = ""

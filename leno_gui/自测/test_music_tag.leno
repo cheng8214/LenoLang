@@ -6,8 +6,8 @@ import "SDL3" as SDL3
 import files
 use audio.TagInfo
 
-const string DL = "leno_gui\\应用\\AlkaidMusic\\cache\\downloads\\"
-const string COVER = "leno_gui\\应用\\AlkaidMusic\\images\\cover03.png"
+const string DL = "leno_gui\\应用\\Aria\\cache\\downloads\\"
+const string COVER = "leno_gui\\应用\\Aria\\images\\cover03.png"
 
 int fails = 0
 
@@ -68,7 +68,7 @@ main() {
        "耗时 " + _str(ms2) + "ms，大小 " + _str(len1) + " → " + _str(len2))
 
     // ⑤ 不支持格式：返回原因、不动文件
-    TagInfo t3 = audio.readTag("leno_gui\\应用\\AlkaidMusic\\images\\cover03.png")
+    TagInfo t3 = audio.readTag("leno_gui\\应用\\Aria\\images\\cover03.png")
     ok("⑤ 非音频文件 readTag 返回 ok=false", not t3.ok, "ok=" + _str(t3.ok))
 
     print("[mt] ===== 失败 " + _str(fails) + " 项")

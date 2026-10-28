@@ -1,11 +1,11 @@
 # 应用侧的 [requires]：import 期校验模块包版本，比"调用点报没有方法"早得多
 [package]
-name = "AlkaidMusic"
+name = "Aria"
 version = "0.1.0"
 
 [requires]
 LenoSDL3 = ">=0.1.1"
 # LenoWeb：酷我搜索用它的 web_net（HTTP 客户端）
 LenoWeb  = ">=1.0.0"
-# LenoSys：只给自检探针用（ALKAID_STRESS 打印进程内存，见 alkaid_music.leno）
+# LenoSys：只给自检探针用（ARIA_STRESS 打印进程内存，见 aria.leno）
 LenoSys  = ">=0.1.0"

@@ -1,10 +1,10 @@
-// tools/gen_covers.leno — 程序化生成「AlkaidMusic」的专辑封面（离线、无窗口 ✓）
+// tools/gen_covers.leno — 程序化生成「Aria」的专辑封面（离线、无窗口 ✓）
 //
 // 产物：..\images\cover01.png … cover16.png（320×320 方图）
 //   参考图里是真照片；这里用**抽象几何封面**（渐变 + 圆/条带/网格 + 唱片）代替 ——
 //   换成真封面只要覆盖同名文件，应用代码一行都不用改 ✓
 //
-// 用法：build\leno.exe "leno_gui\应用\AlkaidMusic\tools\gen_covers.leno"
+// 用法：build\leno.exe "leno_gui\应用\Aria\tools\gen_covers.leno"
 //   ⚠ 每张图各自 clear → 画 → 立刻 readPixels → 存盘（同 gen_assets 的实测结论 ✓）
 //   ⚠ 渐变用的是新加的 `Renderer.fillGradientRect`（一次 RenderGeometry 提交 ✓）
 import "SDL3" as SDL3

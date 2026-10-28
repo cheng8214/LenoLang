@@ -1,5 +1,5 @@
 // test_tip_owner.leno — tooltip **归属者**机制验收（回归件 ✓）
-//   由来（2026-10-27）：AlkaidMusic 里表格的**行级提示**永远不弹。查下来不是表格的错：
+//   由来（2026-10-27）：Aria 里表格的**行级提示**永远不弹。查下来不是表格的错：
 //     底栏进度条在 `on_hover` 里**无条件** `SDL3.tipClear()`，鼠标只要在别处动一下，
 //     就把表格刚上报的行提示清掉了 ✗（全局只有一个气泡，谁都能清）
 //   修法：气泡带**归属者** —— `tipReportEx(owner, …)` / `tipClearEx(owner)`：
@@ -34,7 +34,7 @@ func run() {
     // A：普通按钮（走 hover 上报，无主）
     Button b = w.addButton({x: 20, y: 20, w: 120, h: 32, text: "按钮", tip: "按钮提示"})
 
-    // B：进度条，on_hover 里用**归属者**版本弹气泡（模拟 AlkaidMusic 的时间气泡）
+    // B：进度条，on_hover 里用**归属者**版本弹气泡（模拟 Aria 的时间气泡）
     bar = w.addProgressBar({x: 20, y: 120, w: 300, h: 10, min: 0.0, max: 100.0,
                             value: 50.0, show_text: false, clickable: true, hit_pad_y: 10.0})
     bar.on_hover(func(float v, float mx, float my) {
