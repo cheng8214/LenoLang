@@ -31,7 +31,7 @@ func _opts_keys(): Array[string] {
     return [
 "bar_color", "bg_color", "border", "border_alpha", "border_color", "content_h", "content_w",
             "enabled", "fit_h", "fit_w", "h", "radius", "smooth", "step", "visible", "w", "x", "y",
-            "bar_auto_hide", "bar_hover_color"
+            "bar_auto_hide", "bar_hover_color", "bar_w"
 ]
 }
 // ★ 2026-10-13：补 `Themeable` —— 本控件以前**只有 `impl Widget`** ✗，
@@ -119,6 +119,9 @@ export struct ScrollView impl Widget, Themeable {
         step = opts.get("step", 48.0)          // 每格滚轮步长（默认 48 ≈ 平台惯例 ✓）
         smooth = opts.get("smooth", false)    // 平滑滚动（默认关 = 老行为 ✓)
         barAutoHide = opts.get("bar_auto_hide", true)
+        // 滚动条宽度（默认 12）：浮层/小面板里 12 太粗，可调到 6~8 ✓
+        barW = opts.get("bar_w", 12.0)
+        if barW < 3.0 { barW = 3.0 }
         if opts.get("bar_hover_color") is Color => hc { barHoverColor = hc }
         scrollX = 0.0; scrollY = 0.0
         enabled = opts.get("enabled", true)

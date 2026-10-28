@@ -792,6 +792,13 @@ export struct Window {
 
     // 通用控件注册：任何 impl Widget 的控件（含第三方自定义控件）都能被 run() 自动管理
     // z 值默认 0.0；如需自定义层级用 addZ(w, z) 或 setWidgetZ(w, z)
+    // 模态浮层持有者（见 process 里的 modalHit ✓）
+    pri Widget? _modalW
+    pri float _modX = 0.0
+    pri float _modY = 0.0
+    pri float _modW = 0.0
+    pri float _modH = 0.0
+
     func add(Widget w): Widget {
         widgets.add(w)
         widgetZ.add(0.0)
@@ -818,6 +825,13 @@ export struct Window {
     }
 
     // 带层级的控件注册：z 值大的控件画在 z 值小的控件之上
+    // 模态浮层：设了它以后，落在该矩形内的鼠标事件**只**派发给它（弹层防穿透 ✓）
+    //   矩形要显式给：接口类型（Widget）上不能调 get_x/get_y（框架只支持 `?.process` 这种动态派发 ✓）
+    func set_modal(Widget w, float x, float y, float ww, float hh) {
+        _modalW = w; _modX = x; _modY = y; _modW = ww; _modH = hh
+    }
+    func clear_modal() { _modalW = null; _modW = 0.0; _modH = 0.0 }
+
     func addZ(Widget w, float z): Widget {
         widgets.add(w)
         widgetZ.add(z)
@@ -1737,9 +1751,28 @@ export struct Window {
                         //   或因创建顺序/容器类型遗漏而未收到句柄的）都能拿到 _hwnd。
                         //   _bind_window 是幂等操作（重复设置同一句柄无副作用），开销可忽略。
                         if rootWid is Widget { _refreshWindowHandle(rootWid, _runHnds[j], _runW[j], _runH[j]) }
-                        rootWid?.process(ev)
-                        var ws = _runWidgets[j]
-                        for ws to w { w.process(ev) }
+                        // ★ 模态浮层（2026-10-29）：设了 `set_modal(w)` 且鼠标落在它矩形内 ⇒
+                        //   **只**把事件给它，跳过根布局与其它覆盖层 ✓
+                        //   为什么需要：窗口原本把同一事件广播给所有控件，浮层展开时点它上面的按钮，
+                        //   底下的 Table/Button 也会同时收到（穿透 ✗）；`inPopupCapture` 那套是
+                        //   "控件各自忽略"，会把**浮层自己内部**的控件也一起挡掉 ✗ ⇒ 只能在派发处拦。
+                        bool modalHit = false
+                        if _modalW != null and (ev.isMouseMotion() or ev.isMouseButtonDown()
+                                                or ev.isMouseButtonUp() or ev.isMouseWheel()) {
+                            var[float, float](mmx, mmy) = ev.mousePos()
+                            if ev.isMouseWheel() { mmx = ev.wheelMouseX(); mmy = ev.wheelMouseY() }
+                            // 矩形用 float 判（接口上调不了 get_x）；派发走 `?.process` 动态派发 ✓
+                            if mmx >= _modX and mmx <= _modX + _modW
+                                and mmy >= _modY and mmy <= _modY + _modH {
+                                modalHit = true
+                                _modalW?.process(ev)
+                            }
+                        }
+                        if not modalHit {
+                            rootWid?.process(ev)
+                            var ws = _runWidgets[j]
+                            for ws to w { w.process(ev) }
+                        }
                         // ★ 2026-10-13：**失焦即收起"浮层"**（右键上下文菜单 + 顶部菜单下拉）——
                         //   这些浮层不是由宿主控件画的，而是按 `isOpen()` **第二遍统一画** ✗（不看宿主在不在 ✓）
                         //   ⇒ 不收拾的话，Alt+Tab 切走后菜单会**留在屏幕上**，而且点不动也关不掉 ✗✗
