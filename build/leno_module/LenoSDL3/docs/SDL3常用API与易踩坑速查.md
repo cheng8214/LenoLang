@@ -1942,3 +1942,38 @@ calendar 的颜色是 `{状态}_{bg,fg}` **矩阵**（plain / filled / alert / t
 ⚠ 迁移铁律同第一轮：只动**字典键位置**，字段/局部变量一律不动 ✓；
 `height` 这种**常用词**必须**限定作用域**（只改 `createTitleBar(...)` 调用内部 ✓）——
 否则会误伤 HTML 字符串里的 `height:` 和普通 dict ✓（本轮实测有这个假阳性 ✓）。
+
+---
+
+## 文字溢出容器 / Label 不截断（2026-10-28 实测）
+
+**症状**：`Label` 明明设了 `truncate: 1`，长文本还是画到卡片外面（压到隔壁卡片/表格相邻列上）。
+
+**根因是两件事叠加**：
+
+1. `Label` 的截断边界取 `truncLimit()`：`max_w > 0` 用 `max_w`，否则用**自己的 `_w`**（布局分配的宽）。
+2. 布局（`VBox`/`HBox`）**只有在 `align: 3` 或 `grow > 0` 时**才让子项撑满交叉轴；
+   写 `align: 0/1/2` 时子项宽 = 它自己的自然宽 ⇒ 长文本把 `_w` 撑得很大，
+   `truncLimit()` 拿到一个超宽边界 ⇒ **等于没截断** ✗
+
+**正确写法**（两个条件必须同时满足）：
+
+```leno
+Label t = SDL3.createLabel({text: longText, font_size: 14, truncate: 1})
+box.add(t, {grow: 0, shrink: 0, basis: 22, align: 3})    // ← align: 3 撑满交叉轴
+```
+
+**检查清单**：文字溢出时先看 ① 控件有没有 `truncate: 1`；② 布局里是不是写了 `align: 3`。
+`max_w` 只是"额外上限"，**不是**裁剪开关 —— 不传也会按 `_w` 裁（前提是 `_w` 有界）。
+
+**附带的两个小能力**（同一次加的）：
+- `hover_shift: 3.0` —— 鼠标悬停时文字**右移**几像素（网页链接那种反馈）
+- `cursor: SDL3.SystemCursor.POINTER` —— 悬停变手型（配合 `on_click` 用）
+
+三者合起来就是"像链接一样的文字"：
+
+```leno
+Label l = SDL3.createLabel({text: "看完整榜单", font_size: 12, truncate: 1,
+                            cursor: SDL3.SystemCursor.POINTER, hover_shift: 3.0})
+l.on_click(func() { open() })
+```
