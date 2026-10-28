@@ -33,7 +33,7 @@ use theme.Color
 //   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
 func _opts_keys(): Array[string] {
     return [
-"accent_color", "active", "active_color", "active_text_color", "bar_color", "bg_color", "border", "border_color", "clip", "cursor", "enabled", "font_path", "font_size", "font_style", "h", "show_header", "tab_color", "tab_h", "tab_icon_size", "tab_icons", "tabs", "text_color", "visible", "w", "x", "y"
+"accent_color", "active", "active_color", "active_text_color", "bar_color", "bg_color", "border", "border_color", "clip", "cursor", "enabled", "font_path", "font_size", "font_style", "h", "show_header", "tab_color", "tab_h", "tab_icon_size", "tab_icons", "tab_radius", "tabs", "text_color", "underline", "visible", "w", "x", "y"
 ]
 }
 export struct TabControl impl Widget, Themeable {
@@ -76,6 +76,10 @@ export struct TabControl impl Widget, Themeable {
     pri Color bgColor = #262830FF       // 内容区背景
     pri Color barColor = #232332FF      // 标签栏背景
     pri Color tabColor = #2C2E36FF      // 非激活标签
+    // 标签底圆角：0 = 方角（老行为）；等于 tab_h/2 就是"胶囊" ✓
+    pri float tabRadius = 8.0
+    // 激活标签下方的下划线：默认画（老观感）；用胶囊底时应当关掉（有底色再加线很脏 ✓）
+    pri bool showUnderline = true
     pri Color actColor = #3C96EBFF     // 激活标签
     pri Color txtColor = #78808CFF     // 文字色（非激活）
     pri Color actTxtColor = #EBEBF5FF  // 激活文字色
@@ -177,6 +181,9 @@ export struct TabControl impl Widget, Themeable {
         //   （海报墙实测："列表"那排看着像外挂进来的一块 ✗）⇒ 一并暴露成 opts ✓
         if opts.get("bar_color") is Color => t { barColor = t }
         if opts.get("tab_color") is Color => t { tabColor = t }
+        tabRadius = opts.get("tab_radius", 8.0)
+        if tabRadius < 0.0 { tabRadius = 0.0 }
+        showUnderline = opts.get("underline", true)
         if opts.get("text_color") is Color => t { txtColor = t }
         if opts.get("active_text_color") is Color => t { actTxtColor = t }
 
@@ -494,8 +501,12 @@ export struct TabControl impl Widget, Themeable {
         ensure_font()
 
         // 标签栏背景（`show_header:false` ⇒ 高度 0 ⇒ 等于不画 ✓）
-        r.setColor(barColor)
-        r.fillRect(x, y, w, hdrH())
+        //   ⚠ `bar_color` 的 **alpha = 0 就不铺底**：浅色主题下默认的 bgInput 是白色，
+        //     整条盖在插画上非常突兀（一组三个标签会顶着一条白带 ✗）
+        if theme.colorA(barColor) > 0 {
+            r.setColor(barColor)
+            r.fillRect(x, y, w, hdrH())
+        }
 
         // 各标签
         var rs = tabRects()
@@ -505,8 +516,12 @@ export struct TabControl impl Widget, Themeable {
             Color tC = txtColor
             if i == _active { bC = actColor; tC = actTxtColor }
             else if i == hover { bC = theme.brighten(tabColor, 15) }
-            r.setColor(bC)
-            r.fillRect(rr[0], rr[1], rr[2], rr[3])
+            // 标签底：alpha=0 不画；`tab_radius` > 0 画圆角（默认 8，`tab_h/2` 就是胶囊 ✓）
+            if theme.colorA(bC) > 0 {
+                r.setColor(bC)
+                if tabRadius > 0.0 { r.fillRoundedRect(rr[0], rr[1], rr[2], rr[3], tabRadius) }
+                else { r.fillRect(rr[0], rr[1], rr[2], rr[3]) }
+            }
 
             // 标签文字（居中裁剪）—— `show_header:false` 时**必须跳过** ✗
             // （否则文字会画到 `rr[1] + (0 - th)/2` = 标签栏上方；`tab_h:0` 那种"假隐藏"就是这么漏的）
@@ -532,15 +547,17 @@ export struct TabControl impl Widget, Themeable {
                 r.drawText(_font, _tabs[i], r.snapX(bx), r.snapY(ty), tC)
             }
 
-            // 激活标签下划线（隐藏表头时同样不画 ✓）
-            if showHeader and i == _active {
+            // 激活标签下划线（隐藏表头时同样不画 ✓）—— 圆角端点，配胶囊底不突兀
+            if showHeader and showUnderline and i == _active {
                 r.setColor(accColor)
-                r.fillRect(rr[0], rr[1] + rr[3] - 3.0, rr[2], 3.0)
+                r.fillRoundedRect(rr[0], rr[1] + rr[3] - 3.0, rr[2], 3.0, 1.5)
             }
         }
 
         // 标签栏底边（隐藏表头时这条线会横在内容区顶上 ⇒ 跳过 ✓）
-        if showHeader {
+        //   ⚠ `border_color` 的 alpha = 0 时**也跳过**：用胶囊/下划线式标签时，
+        //     这条横贯全宽的线是多余装饰（浅色插画上会成一根突兀的白线 ✗）
+        if showHeader and theme.colorA(brdColor) > 0 {
             r.setColor(brdColor)
             r.drawLine(x, y + tabH, x + w, y + tabH)
         }
