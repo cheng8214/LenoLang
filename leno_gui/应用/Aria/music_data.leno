@@ -55,7 +55,8 @@ export func navMain(): Array[NavItem] {
     return [nav("首页", 674),
             nav("我喜欢", 128),
             nav("最近播放", 64),
-            nav("本地音乐", 674)]
+            nav("本地音乐", 674),
+            nav("排行榜", 0)]
 }
 
 // 侧栏：歌单（参考图 "华语 | 粤语 | 英语 | …" ✓）

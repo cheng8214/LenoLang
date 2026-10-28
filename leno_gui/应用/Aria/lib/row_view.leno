@@ -23,6 +23,8 @@ export struct RowHooks {
     func(Song, Button):void onTrack = null
     func(Song):void onLike = null       // 点 ♥
     func(Song):void onReveal = null     // 右侧第二个按钮（本地文件 = 在资源管理器选中）
+    // 是否显示行首封面（榜单详情这种"纯列表"场景可以关掉，省掉占位音符图 ✓）
+    bool showCover = true
     string revealIcon = "menu_open_dir.png"
     string revealTip = "在资源管理器中选中"
 }
@@ -31,14 +33,18 @@ export struct RowHooks {
 //   `h` 建议 56~58（40 封面 + 上下留白），Table 的 item_h 要与之相同 ✓
 export func song_row(Song s, float h, RowHooks hk): HBox {
     HBox box = SDL3.createHBox({x: 0, y: 0, w: 520, h: h, pad_x: 10, pad_y: 8, spacing: 12})
-    string cv = if s.cover != "" then ui.coverPath(s.cover) else ui.ico("music.png")
-    box.add(SDL3.createImageView({w: 40, h: 40, radius: 8, image_path: cv,
-                                  bg_color: 0, tip: s.title}),
-            {grow: 0, shrink: 0, basis: 40, align: 1})
-    // 两行文字：**必须左对齐**（align: 0）；用居中会让歌名飘到格子中间 ✗
+    if hk.showCover {
+        string cv = if s.cover != "" then ui.coverPath(s.cover) else ui.ico("music.png")
+        box.add(SDL3.createImageView({w: 40, h: 40, radius: 8, image_path: cv,
+                                      bg_color: 0, tip: s.title}),
+                {grow: 0, shrink: 0, basis: 40, align: 1})
+    }
+    // 两行文字：歌名（14 粗）+ 歌手（12 灰）
+    //   用 lblFit（超宽省略号）+ align: 3（撑满交叉轴 ⇒ Label 宽度有界，省略号才会生效）
+    //   ⚠ 别改回 align: 0/1：那样子项宽 = 自然宽，长歌名会把 Label 撑爆、截断失效 ✗
     VBox names = SDL3.createVBox({x: 0, y: 0, w: 300, h: 42, pad_x: 0, pad_y: 0, spacing: 1})
-    names.add(ui.lbl(s.title, 14, 0xFF35262B, true), {grow: 0, shrink: 0, basis: 21, align: 0})
-    names.add(ui.lbl(s.artist, 12, 0xFF77646D, false), {grow: 0, shrink: 0, basis: 17, align: 0})
+    names.add(ui.lblFit(s.title, 14, 0xFF35262B, true), {grow: 0, shrink: 0, basis: 21, align: 3})
+    names.add(ui.lblFit(s.artist, 12, 0xFF77646D, false), {grow: 0, shrink: 0, basis: 17, align: 3})
     box.add(names, {grow: 1, shrink: 1, align: 1})
 
     bool likedNow = if hk.isLiked != null then hk.isLiked(s) else false

@@ -43,6 +43,23 @@ export func lbl(string t, float sz, Color c, bool bold): Label {
     return l
 }
 
+// 「像链接一样」的文字：超宽截断 + 悬停变手型 + 文字微微右移（网页链接那种反馈）
+//   注意：只是**外观**；要真的能点，调用处再 `set_on_click` / `on_click` ✓
+export func lblLink(string t, float sz, Color c, bool bold): Label {
+    Label l = SDL3.createLabel({text: t, font_size: sz, text_color: c, truncate: 1,
+                                 cursor: SDL3.SystemCursor.POINTER, hover_shift: 3.0})
+    if bold { l.set_font_style(SDL3.STYLE_BOLD) }
+    return l
+}
+
+// 同 lbl，但**超宽自动省略号**（按布局分配到的宽度裁，不必自己算 max_w）
+//   行控件 / 卡片里的歌名歌手都用它 —— 否则长名字会直接画到隔壁卡片上 ✗
+export func lblFit(string t, float sz, Color c, bool bold): Label {
+    Label l = SDL3.createLabel({text: t, font_size: sz, text_color: c, truncate: 1})
+    if bold { l.set_font_style(SDL3.STYLE_BOLD) }
+    return l
+}
+
 // ==================== 时间 ====================
 // "mm:ss" → 秒（底栏初始时长用：还没真播放时先按歌曲自己的时长显示 ✓）
 export func parseDur(string t): float {

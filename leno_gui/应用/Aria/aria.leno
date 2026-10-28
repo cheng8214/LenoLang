@@ -293,6 +293,21 @@ export struct Player {
 
     // ----- 歌词页（curNav = -6：点底栏头像 / 歌词按钮进来）-----
     Channel lyrCh                 // 歌词线程回信（Array[string]，每行 "秒|文本"）
+    // ---- 排行榜（curNav = 4）----
+    Channel bangCh                // 榜单回信（与搜索同构：首条 [bid,""]，之后每首一行）
+    int bangIdx = 0               // 当前榜单下标（对应 kuwo.bangmenu()）
+    bool bangLoading = false
+    Array[Song] bangSongs = []
+    Array[Array[string]] bangRows = []
+    // 卡片墙：每行 [bid, 榜名, 歌1, 歌2, 歌3]（每首已拼成 "歌名 — 歌手"）
+    Channel bangCardsCh
+    Array[Array[string]] bangCards = []
+    bool bangCardsLoading = false
+    bool bangDetail = false       // true = 正在看某个榜的完整列表（否则是卡片墙）
+    // 卡片墙上的大封面：榜的第一首封面（异步拉，回信就地 set_image ✓）
+    Array[Button] rankCovers = []
+    Array[string] rankCoverSids = []
+    ComboBox rankBox              // 选榜下拉（在 run 里建一次，页面里 add ⇒ 展开状态不会丢 ✓）
     // 歌词页左侧的大圆封面：**必须留句柄** —— 封面是异步回来的，
     //   底栏那张会就地 set_image，这里不跟着更新就会一直空着 ✗
     ImageView lyricBigCover
@@ -319,6 +334,7 @@ export struct Player {
     const int STEP_MS = 100
     string shotPath = ""
     int shotAt = 14
+    int shotExitAt = 0        // 截图后第几拍退出（不在渲染回调里 _exit ✓）
     int steps = 0
     // ----- 切页内存探针（ARIA_STRESS=N ⇒ 每拍交替切页一次，跑完报进程内存增量 ✓）-----
     int stressLeft = 0
@@ -328,6 +344,9 @@ export struct Player {
     int rclickAt = 0          // >0 ⇒ 第 N 拍在结果表上注入一次右键（验证 dispose 没让菜单悬空 ✓）
     int hoverAt = 0           // >0 ⇒ 第 N 拍把鼠标移到表格某行上（验证行级 hover 提示 ✓）
     int coverTestAt = 0       // >0 ⇒ 第 N 拍删掉封面缓存并重新请求（验证"回信时就地换歌词页大封面" ✓）
+    // 第二段点击：ARIA_CLICK2=x,y + ARIA_CLICK2_AT=N —— 用来验"点进去 → 再点返回"这种两步操作 ✓
+    int click2At = 0
+    string click2Raw = ""
     int lyricAt = 0           // >0 ⇒ 第 N 拍切到歌词页（只切页，不碰播放 ✓）
 
 
@@ -341,6 +360,8 @@ export struct Player {
         sugCh = threads.channel(4)            // 搜索建议（一个词一条 ✓）
         homeCh = threads.channel(4)           // 首页分区（为你推荐/最近添加）回信通道
         lyrCh = threads.channel(4)            // 歌词回信（一首一条 ✓）
+        bangCh = threads.channel(4)           // 排行榜回信（单个榜）
+        bangCardsCh = threads.channel(4)      // 卡片墙回信（多榜前 3 首）
         SDL3.setTheme(appTheme())             // 粉主题：Table / Edit / 滚动条都跟着变粉 ✓
 
         // 字体可切换（必须在建任何控件**之前**设定，字体会在控件创建时加载）：
@@ -360,6 +381,18 @@ export struct Player {
         win = SDL3.createWindow({title: "Aria — LenoSDL3", w: WIN_W, h: WIN_H, flags: 0x20})
         if not win.ok { SDL3.ttfQuit(); return }
         win.setMinSize(980, 660)
+
+        // 排行榜下拉：榜单菜单固定 31 个（kuwo.bangmenu()），启动时建一次
+        //   页面里只 add ⇒ 展开/滚动状态不会因为重建而丢 ✓
+        Array[Array[string]] bmenus = kuwo.bangmenu()
+        Array[string] bnames = []
+        for bmenus to bm { bnames.add(bm[1]) }
+        rankBox = SDL3.createComboBox({w: 220, h: 34, font_size: 13, radius: 17, pad_x: 14.0,
+                                       items: bnames, popup_h: 280, item_h: 28,
+                                       bg_color: C_FIELD, border_color: C_LINE, text_color: C_TXT,
+                                       hover_color: #F3D3E2FF, sel_color: #F7C3D8FF})
+        rankBox.set_selected(0)
+        rankBox.on_change(func(int idx) { load_bang(idx) })
 
         // ---- 自绘标题栏（win.add 后系统边框自动去掉 ✓）----
         tb = SDL3.createTitleBar({title: "Aria", h: TB_H, font_size: 12,
@@ -546,6 +579,8 @@ export struct Player {
         //   内容区按新页面重建（标题 / 说明 / 卡片都跟着换），并回到顶部。
         bool changed = idx != curNav
         curNav = idx
+        // 排行榜：侧栏走的是 set_nav（不经过 nav_apply）⇒ 在这里触发首屏拉取 ✓
+        if idx == 4 { enter_rank() }
         // 切到大列表页 ⇒ 从第一批重新开始（否则上次翻到 300 条会一直背着 ✓）
         searchBtn.set_bg_color(C_TRANS)
         searchBtn.set_hover_color(#FFFFFFC8)
@@ -919,6 +954,8 @@ export struct Player {
         cardCoverKeys = []
         rowLikeBtns = []
         rowLikeKeys = []
+        rankCovers = []
+        rankCoverSids = []
         // ★ 大列表（我喜欢 / 最近播放）走**虚拟网格页**：卡片是真控件（每张 7 个），
         //   上百张之后每帧布局/绘制就会拖垮界面（1000 张实测一帧几百毫秒 ✗）
         //   vg 只构建可见的十几张，滚动时回收复用 ⇒ 几千条也稳 ✓
@@ -959,7 +996,9 @@ export struct Player {
         } else if curNav == -4 {
             Song one = find_song(songArg)
             sub = if one.artist != "" then one.artist else "歌曲详情"
-        } else if curNav > 3 {
+        } else if curNav == 4 {
+            sub = "听见此刻的热门 · 点卡片看完整榜单"
+        } else if curNav > 4 {
             sub = "歌单还是空的"
         } else {
             // 「我喜欢」：按实际收藏数说话（原来固定写"还没有喜欢的歌"，有内容也对不上 ✗）
@@ -1003,6 +1042,39 @@ export struct Player {
             for netSongs to it {
                 srowV.add(rv.song_row(it, _float(rowH), shk))
             }
+            // 序号列：数字 ↔ 播放图（点了播这一行）
+            Array[HBox] numL = []
+            Array[Canvas] numI = []
+            for 0 : netSongs.len() - 1 to i {
+                int ri0 = i
+                HBox nb = SDL3.createHBox({x: 0, y: 0, w: 60, h: _float(rowH),
+                                           pad_x: 0, pad_y: 0, spacing: 0, justify: 1})
+                nb.add(ui.lbl(if i + 1 < 10 then "0" + _str(i + 1) else _str(i + 1), 12.5, C_TXT_DIM, false),
+                       {grow: 0, shrink: 0, basis: 20, align: 1})
+                numL.add(nb)
+                Canvas pv = SDL3.createCanvas({x: 0, y: 0, w: 26, h: 26, pad: 0,
+                                               bg_color: C_TRANS, border: false})
+                pv.on_draw(func(Renderer rr, float ox, float oy, float cw2, float ch2) {
+                    float d = 26.0
+                    if d > cw2 { d = cw2 }
+                    if d > ch2 { d = ch2 }
+                    float bx0 = ox + (cw2 - d) / 2.0
+                    float by0 = oy + (ch2 - d) / 2.0
+                    rr.setColor(#DCCBF2FF)
+                    rr.fillRoundedRect(bx0, by0, d, d, d / 2.0)
+                    rr.setColor(C_ACCENT)
+                    float s3 = d * 0.30
+                    float px0 = bx0 + d / 2.0 - s3 * 0.38
+                    float py0 = by0 + d / 2.0 - s3 * 0.72
+                    rr.drawLine(px0, py0, px0, py0 + s3 * 1.44)
+                    rr.drawLine(px0, py0, px0 + s3 * 1.24, py0 + s3 * 0.72)
+                    rr.drawLine(px0, py0 + s3 * 1.44, px0 + s3 * 1.24, py0 + s3 * 0.72)
+                })
+                pv.on_click(func(float cx2, float cy2, int btn2) {
+                    if btn2 == 1 { play_net_row(ri0) }
+                })
+                numI.add(pv)
+            }
             // 列与 LenoMusic 的搜索页同一套口径（歌名/歌手/专辑/时长/格式/大小/来源），
             //   列宽合计 826 ≤ 内容宽 840 ⇒ 最右列不会被裁掉 ✓（LenoMusic 记过这个账）
             hasTable = true
@@ -1014,17 +1086,17 @@ export struct Player {
             float tw2 = _float(cardSize.content_w())
             tbSearch = SDL3.createTable({x: 0, y: 0, w: tw2, h: 420.0,   // 高度由布局撑满 ✓
                                          item_h: rowH, header_h: 32, font_size: 13,
-                                         headers: ["歌曲", "专辑", "时长", "大小"],
-                                         row_numbers: true,                  // 最左边序号 1..n（按显示顺序 ✓）
+                                         headers: ["", "歌曲", "专辑", "时长", "大小"],
+                                         row_numbers: false,             // 序号改成普通列（数字 / 播放图切换 ✓）
                                         // 右击菜单样式透传（Table 内部自建 MenuBar）：图标 24 = 48 源图的一半 ✓
                                         ctx_image_size: 16.0, ctx_item_h: 28.0,
                                          // 合计 0.99（留 1% 余量，避免浮点累加恰好顶满 ✓）
-                                         col_ratios: [0.58, 0.22, 0.10, 0.09],
-                                         aligns: [0, 0, 1, 1],
+                                         col_ratios: [0.06, 0.52, 0.22, 0.10, 0.09],
+                                         aligns: [1, 0, 0, 1, 1],
                                          // **表头文字居中**（表体仍按列语义对齐 ✓）
                                          // 表头与数据列**同对齐** ——
                                          //   原来表头一律居中、下面内容左对齐，看着是两套排版 ✗
-                                         header_aligns: [0, 0, 1, 1],
+                                         header_aligns: [1, 0, 0, 1, 1],
                                          // 行图标：`image_col` 把该列画成 [图标 + 文字]，
                                          //   配 `image_path` 给**默认图标**⇒ 不用逐行 set_row_image ✓
                                          // 封面由**行控件**自己画（见下面的 set_cell_builder）✓
@@ -1034,17 +1106,23 @@ export struct Player {
                                          bg_color: C_TRANS, header_color: C_TRANS,   // 表头不铺底色（半透明背景上那块浅灰太突兀 ✓）
                                          // 行块：圆角 + 左右内缩（列表卡片观感）；悬停用浅色实底 ✓
                                          row_radius: 12, row_pad_x: 10,
-                                         sel_color: #FADBE666, hover_color: #FFFFFFC0, solid_sel: false,
+                                         sel_color: #E6DCF7CC, hover_color: #EDE7FBD9, solid_sel: false,
                                          sep_color: C_TRANS, border: false,          // 去外框/分隔线 ✓
                                          empty_text: "没有结果"})
                                          tbSearch.set_rows(netRows)
                                          // 第 0 列交给行控件；`cell_interactive` 让 ♥/⬇ 能点 ✓
-                                         tbSearch.set_cell_builder(func(int row, int col, float cw, float ch): Widget? {
-                                             if col == 0 and row >= 0 and row < srowV.len() { return srowV[row] }
+                                         tbSearch.set_cell_builder(func(int row, int col, float cw, float ch, bool hovered): Widget? {
+                                             if row < 0 or row >= srowV.len() { return null }
+                                             if col == 0 {
+                                                 Widget? nw = null
+                                                 if hovered { nw = numI[row] } else { nw = numL[row] }
+                                                 return nw
+                                             }
+                                             if col == 1 { return srowV[row] }
                                              return null
                                          })
                                          tbSearch.set_cell_interactive(true)
-                                         // ★ 只有**双击**才播放：单击 = 选中、右键 = 菜单（之前挂 on_select 会让右击也开播 ✗）
+                                          // ★ 只有**双击**才播放：单击 = 选中、右键 = 菜单（之前挂 on_select 会让右击也开播 ✗）
                                          //   行号一律过 `source_row`（表头排序后显示行 ≠ 数据行 ✓）
                                          tbSearch.on_dbl_click(func(int row, int col) { play_net_row(row) })
                                          // 右击菜单（与歌曲页相关歌曲表同一套口径 ✓）
@@ -1181,8 +1259,39 @@ export struct Player {
             rhk.revealIcon = "download.png"
             rhk.revealTip = "下载到本地"
             rhk.onReveal = func(Song sg2) { queue_song(sg2) }
+            // 序号列：数字 ↔ 播放钮（同一套 ✓）
+            Array[HBox] numL = []
+            Array[Canvas] numI = []
+            for 0 : rel.len() - 1 to i {
+                int ri0 = i
+                HBox nb = SDL3.createHBox({x: 0, y: 0, w: 60, h: 58.0, pad_x: 0, pad_y: 0, spacing: 0, justify: 1})
+                nb.add(ui.lbl(if i + 1 < 10 then "0" + _str(i + 1) else _str(i + 1), 12.5, C_TXT_DIM, false),
+                       {grow: 0, shrink: 0, basis: 20, align: 1})
+                numL.add(nb)
+                Canvas pv = SDL3.createCanvas({x: 0, y: 0, w: 26, h: 26, pad: 0, bg_color: C_TRANS, border: false})
+                pv.on_draw(func(Renderer rr, float ox, float oy, float cw2, float ch2) {
+                    float d = 26.0
+                    if d > cw2 { d = cw2 }
+                    if d > ch2 { d = ch2 }
+                    float bx0 = ox + (cw2 - d) / 2.0
+                    float by0 = oy + (ch2 - d) / 2.0
+                    rr.setColor(#DCCBF2FF)
+                    rr.fillRoundedRect(bx0, by0, d, d, d / 2.0)
+                    rr.setColor(C_ACCENT)
+                    float s3 = d * 0.30
+                    float px0 = bx0 + d / 2.0 - s3 * 0.38
+                    float py0 = by0 + d / 2.0 - s3 * 0.72
+                    rr.drawLine(px0, py0, px0, py0 + s3 * 1.44)
+                    rr.drawLine(px0, py0, px0 + s3 * 1.24, py0 + s3 * 0.72)
+                    rr.drawLine(px0, py0 + s3 * 1.44, px0 + s3 * 1.24, py0 + s3 * 0.72)
+                })
+                pv.on_click(func(float cx2, float cy2, int btn2) {
+                    if btn2 == 1 { play_song(rel[ri0]) }
+                })
+                numI.add(pv)
+            }
             for rel to s {
-                rrows.add(["", s.dur, if s.sid != "" then "在线" else "本地"])
+                rrows.add(["", "", s.dur, if s.sid != "" then "在线" else "本地"])
                 rrowV.add(rv.song_row(s, 58.0, rhk))
             }
             // 高度留 8px 余量：正好卡满时 Table 会判定"需要竖向滚动条"，
@@ -1190,27 +1299,33 @@ export struct Player {
             float rh = _float(32 + rel.len() * 58 + 8)
             Table rt = SDL3.createTable({x: 0, y: 0, w: rw, h: rh,
                                          item_h: 58, header_h: 32, font_size: 13,
-                                         headers: ["歌曲", "时长", "来源"],
-                                         row_numbers: true,                      // 最左边序号 1..n ✓
+                                         headers: ["", "歌曲", "时长", "来源"],
+                                         row_numbers: false,                     // 序号改成普通列（数字/播放钮切换 ✓）
                                          ctx_image_size: 16.0, ctx_item_h: 28.0,   // 右击菜单图标/行高透传 ✓
-                                         col_ratios: [0.66, 0.17, 0.16],   // 合计 0.99（比例，随宽度自适应 ✓）
-                                         aligns: [0, 1, 1], header_aligns: [0, 1, 1],   // 表头跟数据列同对齐 ✓
+                                         col_ratios: [0.06, 0.60, 0.17, 0.16],   // 合计 0.99（比例，随宽度自适应 ✓）
+                                         aligns: [1, 0, 1, 1], header_aligns: [1, 0, 1, 1],   // 表头跟数据列同对齐 ✓
                                          sortable: false, zebra: false, resizable: false,
                                          text_color: C_TXT,
                                          bg_color: C_TRANS, header_color: C_TRANS,   // 表头不铺底色（半透明背景上那块浅灰太突兀 ✓）
                                          // 选中 / 悬停都**半透明**：压在背景插画上淡淡的才不刺眼
                                          //   （白色那行是 hover，不是选中 ⇒ hover_color 一起给 ✓）
                                          row_radius: 12, row_pad_x: 8,
-                                         sel_color: #FADBE666, hover_color: #FFFFFFC0, solid_sel: false,
+                                         sel_color: #E6DCF7CC, hover_color: #EDE7FBD9, solid_sel: false,
                                          sep_color: C_TRANS, border: false,
                                          empty_text: "暂无相关歌曲"})
             rt.set_rows(rrows)
-            rt.set_cell_builder(func(int row, int col, float cw, float ch): Widget? {
-                if col == 0 and row >= 0 and row < rrowV.len() { return rrowV[row] }
+            rt.set_cell_builder(func(int row, int col, float cw, float ch, bool hovered): Widget? {
+                if row < 0 or row >= rrowV.len() { return null }
+                if col == 0 {
+                    Widget? nw = null
+                    if hovered { nw = numI[row] } else { nw = numL[row] }
+                    return nw
+                }
+                if col == 1 { return rrowV[row] }
                 return null
             })
             rt.set_cell_interactive(true)
-            rt.on_dbl_click(func(int row, int col) {
+             rt.on_dbl_click(func(int row, int col) {
                 if row >= 0 and row < rel.len() { play_song(rel[row]) }
             })
             // ---- 右击菜单----
@@ -1287,9 +1402,40 @@ export struct Player {
                     SDL3.markFrameRedraw()
                 }
             }
+            // 序号列：数字 ↔ 播放钮（与本地音乐页同一套 ✓）
+            Array[HBox] numL = []
+            Array[Canvas] numI = []
+            for 0 : dlJobs.len() - 1 to i {
+                int ri0 = i
+                HBox nb = SDL3.createHBox({x: 0, y: 0, w: 60, h: 58.0, pad_x: 0, pad_y: 0, spacing: 0, justify: 1})
+                nb.add(ui.lbl(if i + 1 < 10 then "0" + _str(i + 1) else _str(i + 1), 12.5, C_TXT_DIM, false),
+                       {grow: 0, shrink: 0, basis: 20, align: 1})
+                numL.add(nb)
+                Canvas pv = SDL3.createCanvas({x: 0, y: 0, w: 26, h: 26, pad: 0, bg_color: C_TRANS, border: false})
+                pv.on_draw(func(Renderer rr, float ox, float oy, float cw2, float ch2) {
+                    float d = 26.0
+                    if d > cw2 { d = cw2 }
+                    if d > ch2 { d = ch2 }
+                    float bx0 = ox + (cw2 - d) / 2.0
+                    float by0 = oy + (ch2 - d) / 2.0
+                    rr.setColor(#DCCBF2FF)
+                    rr.fillRoundedRect(bx0, by0, d, d, d / 2.0)
+                    rr.setColor(C_ACCENT)
+                    float s3 = d * 0.30
+                    float px0 = bx0 + d / 2.0 - s3 * 0.38
+                    float py0 = by0 + d / 2.0 - s3 * 0.72
+                    rr.drawLine(px0, py0, px0, py0 + s3 * 1.44)
+                    rr.drawLine(px0, py0, px0 + s3 * 1.24, py0 + s3 * 0.72)
+                    rr.drawLine(px0, py0 + s3 * 1.44, px0 + s3 * 1.24, py0 + s3 * 0.72)
+                })
+                pv.on_click(func(float cx2, float cy2, int btn2) {
+                    if btn2 == 1 { play_dl_row(ri0) }
+                })
+                numI.add(pv)
+            }
             for dlJobs to j {
-                // 列：歌曲（行控件）/ 格式 / 大小 / 进度 / 状态
-                rows.add(["", j[5], dl.size_of(j), dl.percent_of(j), dl.state_text(j)])
+                // 列：序号（控件）/ 歌曲（行控件）/ 格式 / 大小 / 进度 / 状态
+                rows.add(["", "", j[5], dl.size_of(j), dl.percent_of(j), dl.state_text(j)])
                 Song dsg = new Song()
                 dsg.title = j[1]
                 dsg.artist = j[2]
@@ -1297,28 +1443,33 @@ export struct Player {
             }
             Table t = SDL3.createTable({x: 0, y: 0, w: dw, h: 420.0,   // 高度由布局撑满 ✓
                                         item_h: 58, header_h: 32, font_size: 13,
-                                        headers: ["歌曲", "格式", "大小", "进度", "状态"],
-                                        row_numbers: true,                          // 最左边序号 1..n ✓
-                                        // 合计 0.99（比例列宽，随宽度自适应 ✓）
-                                        col_ratios: [0.52, 0.10, 0.14, 0.12, 0.11],
-                                        aligns: [0, 1, 2, 1, 1],
-                                        header_aligns: [0, 1, 2, 1, 1],   // 与数据列同对齐 ✓
-                                        // 第 3 列（下标 3）= 进度条单元格：值写 "0"~"100" ✓
-                                        cell_types: ["", "", "", "progress", ""],
+                                        headers: ["", "歌曲", "格式", "大小", "进度", "状态"],
+                                        row_numbers: false,                         // 序号改成普通列（数字/播放钮切换 ✓）
+                                        col_ratios: [0.06, 0.46, 0.10, 0.14, 0.12, 0.10],
+                                        aligns: [1, 0, 1, 2, 1, 1],
+                                        header_aligns: [1, 0, 1, 2, 1, 1],   // 与数据列同对齐 ✓
+                                        // 第 4 列（下标 4）= 进度条单元格：值写 "0"~"100" ✓
+                                        cell_types: ["", "", "", "", "progress", ""],
                                         sortable: false, zebra: false, resizable: false,
                                         text_color: C_TXT,
                                         bg_color: C_TRANS, header_color: C_TRANS,   // 表头不铺底色（半透明背景上那块浅灰太突兀 ✓）
                                         row_radius: 12, row_pad_x: 10,
-                                        sel_color: #FADBE666, hover_color: #FFFFFFC0, solid_sel: false,
+                                        sel_color: #E6DCF7CC, hover_color: #EDE7FBD9, solid_sel: false,
                                         sep_color: C_TRANS, border: false,          // 去外框/分隔线 ✓
                                         empty_text: "还没有下载任务"})
             t.set_rows(rows)
-            t.set_cell_builder(func(int row, int col, float cw, float ch): Widget? {
-                if col == 0 and row >= 0 and row < rowV.len() { return rowV[row] }
+            t.set_cell_builder(func(int row, int col, float cw, float ch, bool hovered): Widget? {
+                if row < 0 or row >= rowV.len() { return null }
+                if col == 0 {
+                    Widget? nw = null
+                    if hovered { nw = numI[row] } else { nw = numL[row] }
+                    return nw
+                }
+                if col == 1 { return rowV[row] }
                 return null
             })
             t.set_cell_interactive(true)
-            // 已完成的行双击 ⇒ 播本地文件（不联网 ✓）
+             // 已完成的行双击 ⇒ 播本地文件（不联网 ✓）
             t.on_dbl_click(func(int row, int col) { play_dl_row(row) })
             show_table_page("下载列表",
                             (if dl.pending(dlJobs) > 0 then "排队 " + _str(dl.pending(dlJobs)) + " 个 · "
@@ -1355,30 +1506,79 @@ export struct Player {
                     SDL3.markFrameRedraw()
                 }
             }
+            // 序号列（第 0 列）用**两个控件切换**：平时是数字，鼠标停在这行就换成播放图
+            //   （Table 不内建"序号变按钮"，它就是普通一列 + cell_builder ✓）
+            Array[HBox] numL = []
+            Array[Canvas] numI = []
+            for 0 : lsongs.len() - 1 to i {
+                Song si = lsongs[i]
+                // ⚠ 数字必须包一层居中容器：`cell_builder` 返回的控件直接用列 `aligns` 对齐不生效，
+                //   裸 Label 会贴在列左边 ⇒ 看着像"在 hover 块外面"✗
+                HBox nb = SDL3.createHBox({x: 0, y: 0, w: 60, h: _float(lh),
+                                           pad_x: 0, pad_y: 0, spacing: 0, justify: 1})
+                nb.add(ui.lbl(if i + 1 < 10 then "0" + _str(i + 1) else _str(i + 1), 12.5, C_TXT_DIM, false),
+                       {grow: 0, shrink: 0, basis: 20, align: 1})
+                numL.add(nb)
+                // 播放钮用 Canvas 自绘（淡紫圆 + 主色三角）：图标文件是"黑圆白三角"，
+                //   压在浅色界面上太重；自绘还能跟着主题色走 ✓
+                Canvas pv = SDL3.createCanvas({x: 0, y: 0, w: 26, h: 26, pad: 0,
+                                               bg_color: C_TRANS, border: false})
+                pv.on_draw(func(Renderer rr, float ox, float oy, float cw2, float ch2) {
+                    // ⚠ 必须用回调给的 cw2/ch2 居中画：ox/oy 是**内容区**左上角（已扣内边距），
+                    //   按固定 26 从 ox 起画会超出内容区被裁掉 ⇒ 只剩 1/4 弧 ✗
+                    float d = 26.0
+                    if d > cw2 { d = cw2 }
+                    if d > ch2 { d = ch2 }
+                    float bx0 = ox + (cw2 - d) / 2.0
+                    float by0 = oy + (ch2 - d) / 2.0
+                    rr.setColor(#DCCBF2FF)                       // 淡紫圆底（比行 hover 底略深）
+                    rr.fillRoundedRect(bx0, by0, d, d, d / 2.0)
+                    rr.setColor(C_ACCENT)
+                    float s3 = d * 0.30
+                    float px0 = bx0 + d / 2.0 - s3 * 0.38
+                    float py0 = by0 + d / 2.0 - s3 * 0.72
+                    rr.drawLine(px0, py0, px0, py0 + s3 * 1.44)
+                    rr.drawLine(px0, py0, px0 + s3 * 1.24, py0 + s3 * 0.72)
+                    rr.drawLine(px0, py0 + s3 * 1.44, px0 + s3 * 1.24, py0 + s3 * 0.72)
+                })
+                pv.on_click(func(float cx2, float cy2, int btn2) {
+                    if btn2 == 1 { play_song(si) }
+                })
+                numI.add(pv)
+            }
             for lsongs to it {
                 rowV.add(rv.song_row(it, _float(lh), hk))
-                // 第 0 列交给行控件，后面是时长 / 来源（时长来自 dl.scan 读的容器头 ✓）
-                lrows.add(["", it.dur, "本地"])
+                // 第 0 列（序号）交给控件，第 1 列交给行控件，后面是时长 / 来源
+                lrows.add(["", "", it.dur, "本地"])
             }
             Table lt = SDL3.createTable({x: 0, y: 0, w: lw, h: 420.0,   // 高度由布局撑满 ✓
                                          item_h: lh, header_h: 32, font_size: 13,
-                                         headers: ["歌曲", "时长", "来源"],
-                                         row_numbers: true,                              // 最左边序号 1..n ✓
+                                         headers: ["", "歌曲", "时长", "来源"],
+                                         row_numbers: false,                             // 序号改成普通列（见上面的 numL/numI）
                                          ctx_image_size: 16.0, ctx_item_h: 28.0,          // 右击菜单图标/行高透传 ✓
-                                         col_ratios: [0.72, 0.12, 0.15],
-                                         aligns: [0, 1, 1], header_aligns: [0, 1, 1],
+                                         col_ratios: [0.07, 0.66, 0.12, 0.14],
+                                         aligns: [1, 0, 1, 1], header_aligns: [1, 0, 1, 1],
                                          sortable: false, zebra: false, resizable: false,
                                          text_color: C_TXT,
                                          bg_color: C_TRANS, header_color: C_TRANS,   // 表头不铺底色（半透明背景上那块浅灰太突兀 ✓）
                                          // 行块：圆角 + 左右内缩（列表卡片观感）；悬停用浅色实底 ✓
                                          row_radius: 12, row_pad_x: 10,
-                                         sel_color: #FADBE666, hover_color: #FFFFFFC0, solid_sel: false,
+                                         // 悬停底色用**淡紫**（压在插画上比纯白自然 ✓）
+                                         sel_color: #E6DCF7CC, hover_color: #EDE7FBD9, solid_sel: false,
                                          sep_color: C_TRANS, border: false,          // 去外框/分隔线 ✓
                                          empty_text: "还没有下载"})
             lt.set_rows(lrows)
-            // 单元格交给行控件；`cell_interactive` 让 ♥/⬇ 能点（双击播放、右键菜单照旧 ✓）
-            lt.set_cell_builder(func(int row, int col, float cw, float ch): Widget? {
-                if col == 0 and row >= 0 and row < rowV.len() { return rowV[row] }
+            // 单元格交给控件；`cell_interactive` 让序号图/♥/⬇ 能点（双击播放、右键菜单照旧 ✓）
+            lt.set_cell_builder(func(int row, int col, float cw, float ch, bool hovered): Widget? {
+                if row < 0 or row >= rowV.len() { return null }
+                if col == 0 {
+                    // hovered 由框架传进来（闭包里读 lt.hoverRow 拿到的是副本 ✗）
+                    // 两个分支是不同 struct ⇒ 必须落到共同接口 Widget? ✓
+                    Widget? nw = null
+                    if hovered { nw = numI[row] } else { nw = numL[row] }
+                    return nw
+                }
+                if col == 1 { return rowV[row] }
                 return null
             })
             lt.set_cell_interactive(true)
@@ -1451,6 +1651,154 @@ export struct Player {
                 }
             })
             show_table_page("本地音乐", "已下载 · " + _str(lsongs.len()) + " 首（cache\\downloads）", lt)
+            return
+        }
+
+        // ==================== 排行榜（curNav = 4）====================
+        //   两种形态：
+        //     ① 卡片墙：6 个常用榜，各显示前 3 首（一次线程拉完）
+        //     ② 点卡片进某榜 → 完整列表（复用"序号列 + 行控件"的表格）
+        if curNav == 4 {
+            // ★ 本页**不走 sv**（同 show_table_page）：sv 的内容高是"自然高"，
+            //   放在里面的表格即使 grow:1 也只能撑到自然高 ⇒ 全屏后表格还是 420 高、
+            //   下面空一大片 ✗。改用独立 page 容器，表格才能真正吃满剩余高度 ✓
+            trackCards = false
+            pageRebuildOnLike = false
+            drop_last_page()
+            mainCol.clear()
+            sv.set_visible(false)
+            mainCol.add(topBar, {grow: 0, shrink: 0, basis: TOP_H, align: 3})
+            VBox page = SDL3.createVBox({x: 0, y: 0, w: 900, h: 500, pad_x: PAD, pad_y: 6, spacing: 8})
+            page.add(ui.lbl("排行榜", 25, C_TXT, true), {grow: 0, shrink: 0, basis: 36, align: 3})
+
+            if bangDetail {
+                // ---- ② 某榜单的完整列表 ----
+                //   返回**不在这里放按钮**：顶栏已经有 ← →（`nav_back` 里拦了这一层，
+                //   见 nav_back 开头 ⇒ 先退回卡片墙 ✓），再放一个就是重复 ✗
+                Array[Array[string]] menus0 = kuwo.bangmenu()
+                string bname = if bangIdx >= 0 and bangIdx < menus0.len() then menus0[bangIdx][1] else "榜单"
+                page.add(ui.lbl(bname, 20, C_TXT, true), {grow: 0, shrink: 0, basis: 28, align: 3})
+                page.add(ui.lbl(if bangLoading then "正在加载…"
+                                else "共 " + _str(bangSongs.len()) + " 首 · 双击行播放",
+                                11, C_TXT_DIM, false), {grow: 0, shrink: 0, basis: 18, align: 3})
+                if bangRows.len() == 0 {
+                    mainCol.add(page, {grow: 1, shrink: 1, align: 3})
+                    lastPage = page
+                    hasLastPage = true
+                    SDL3.markFrameRedraw()
+                    return
+                }
+
+                int rowH = 58
+                // 同样要减竖滚动条的 12px（理由见卡片墙那段的注释 ✓）
+                float tw3 = _float(cardSize.content_w() - 12)
+                Array[Array[string]] rows = bangRows
+                Array[HBox] rowV = []
+                Array[HBox] numL = []
+                Array[Canvas] numI = []
+                RowHooks hk = new RowHooks()
+                hk.isLiked = func(Song sg2): bool { return is_liked(ui.like_key(sg2)) }
+                hk.onLike = func(Song sg2) { toggle_song_like(sg2) }
+                hk.onTrack = func(Song sg2, Button b) { track_row_like(sg2, b) }
+                hk.revealIcon = "download.png"
+                hk.revealTip = "下载到本地"
+                hk.onReveal = func(Song sg2) { queue_song(sg2) }
+                hk.showCover = false          // 榜单详情是纯列表：不要占位音符图 ✓
+                for 0 : bangSongs.len() - 1 to i {
+                    Song si = bangSongs[i]
+                    HBox nb = SDL3.createHBox({x: 0, y: 0, w: 60, h: _float(rowH),
+                                               pad_x: 0, pad_y: 0, spacing: 0, justify: 1})
+                    nb.add(ui.lbl(if i + 1 < 10 then "0" + _str(i + 1) else _str(i + 1), 12.5, C_TXT_DIM, false),
+                           {grow: 0, shrink: 0, basis: 20, align: 1})
+                    numL.add(nb)
+                    Canvas pv = SDL3.createCanvas({x: 0, y: 0, w: 26, h: 26, pad: 0,
+                                                   bg_color: C_TRANS, border: false})
+                    int ri0 = i
+                    pv.on_draw(func(Renderer rr, float ox, float oy, float cw2, float ch2) {
+                        float d = 26.0
+                        if d > cw2 { d = cw2 }
+                        if d > ch2 { d = ch2 }
+                        float bx0 = ox + (cw2 - d) / 2.0
+                        float by0 = oy + (ch2 - d) / 2.0
+                        rr.setColor(#DCCBF2FF)
+                        rr.fillRoundedRect(bx0, by0, d, d, d / 2.0)
+                        rr.setColor(C_ACCENT)
+                        float s3 = d * 0.30
+                        float px0 = bx0 + d / 2.0 - s3 * 0.38
+                        float py0 = by0 + d / 2.0 - s3 * 0.72
+                        rr.drawLine(px0, py0, px0, py0 + s3 * 1.44)
+                        rr.drawLine(px0, py0, px0 + s3 * 1.24, py0 + s3 * 0.72)
+                        rr.drawLine(px0, py0 + s3 * 1.44, px0 + s3 * 1.24, py0 + s3 * 0.72)
+                    })
+                    pv.on_click(func(float cx2, float cy2, int btn2) {
+                        if btn2 == 1 and ri0 < bangSongs.len() { play_song(bangSongs[ri0]) }
+                    })
+                    numI.add(pv)
+                    rowV.add(rv.song_row(si, _float(rowH), hk))
+                }
+                Table bt = SDL3.createTable({x: 0, y: 0, w: tw3, h: 420.0,
+                                             item_h: rowH, header_h: 32, font_size: 13,
+                                             headers: ["", "歌曲", "专辑", "时长"],
+                                             row_numbers: false,
+                                             // 合计降到 0.96：顶满时 Table 会判"需要横向滚动条"并画出来 ✓
+                                             col_ratios: [0.07, 0.59, 0.21, 0.09],
+                                             aligns: [1, 0, 0, 1], header_aligns: [1, 0, 0, 1],
+                                             sortable: false, zebra: false, resizable: false,
+                                             text_color: C_TXT,
+                                             bg_color: C_TRANS, header_color: C_TRANS,
+                                             row_radius: 12, row_pad_x: 10,
+                                             sel_color: #E6DCF7CC, hover_color: #EDE7FBD9, solid_sel: false,
+                                             sep_color: C_TRANS, border: false,
+                                             empty_text: "这个榜单还没有歌"})
+                bt.set_rows(rows)
+                bt.set_cell_builder(func(int row, int col, float cw, float ch, bool hovered): Widget? {
+                    if row < 0 or row >= rowV.len() { return null }
+                    if col == 0 {
+                        Widget? nw = null
+                        if hovered { nw = numI[row] } else { nw = numL[row] }
+                        return nw
+                    }
+                    if col == 1 { return rowV[row] }
+                    return null
+                })
+                bt.set_cell_interactive(true)
+                bt.on_dbl_click(func(int row, int col) {
+                    if row >= 0 and row < bangSongs.len() { play_song(bangSongs[row]) }
+                })
+                page.add(bt, {grow: 1, shrink: 1, align: 3})
+                mainCol.add(page, {grow: 1, shrink: 1, align: 3})
+                lastPage = page
+                hasLastPage = true
+                SDL3.markFrameRedraw()
+                return
+            }
+
+            // ---- ① 卡片墙 ----
+            page.add(ui.lbl("听见此刻的热门 · 点卡片看完整榜单", 11, C_TXT_DIM, false),
+                     {grow: 0, shrink: 0, basis: 20, align: 3})
+            if bangCardsLoading and bangCards.len() == 0 {
+                page.add(ui.lbl("正在加载榜单…", 12, C_TXT_DIM, false), {grow: 0, shrink: 0, basis: 26, align: 3})
+            } else if bangCards.len() > 0 {
+                int ci = 0
+                while ci < bangCards.len() {
+                    // 卡片行宽度按内容区算（page 的 pad 已扣过，不再减 sv 竖条）
+                    HBox line = SDL3.createHBox({x: 0, y: 0, w: _float(cardSize.content_w() - PAD * 2), h: 162,
+                                                 pad_x: 0, pad_y: 0, spacing: 16})
+                    line.add(rank_card(bangCards[ci], ci), {grow: 1, shrink: 1, align: 3})
+                    if ci + 1 < bangCards.len() {
+                        line.add(rank_card(bangCards[ci + 1], ci + 1), {grow: 1, shrink: 1, align: 3})
+                    } else {
+                        HBox padBox = SDL3.createHBox({x: 0, y: 0, w: 100, h: 162, pad_x: 0, pad_y: 0, spacing: 0})
+                        line.add(padBox, {grow: 1, shrink: 1, align: 3})
+                    }
+                    page.add(line, {grow: 0, shrink: 0, basis: 162, align: 3})
+                    ci = ci + 2
+                }
+            }
+            mainCol.add(page, {grow: 1, shrink: 1, align: 3})
+            lastPage = page
+            hasLastPage = true
+            SDL3.markFrameRedraw()
             return
         }
 
@@ -1586,8 +1934,8 @@ export struct Player {
             sg.tag = if r[4].to_lower() == "flac" then "无损" else ""
             got.add(sg)
             ids.add(r[6])
-            // 第 0 列由**行控件**渲染（封面 + 歌名/歌手 + ♥/⬇）⇒ 这里只留占位空串 ✓
-            trows.add(["", r[2], kuwo.formatduration(_int(r[3])),
+            // 第 0 列 = 序号（控件切换）／第 1 列 = 行控件（封面+歌名/歌手+♥/⬇）⇒ 都留空串占位 ✓
+            trows.add(["", "", r[2], kuwo.formatduration(_int(r[3])),
                        (if r[5] == "" then "-" else r[5])])
         }
         if kind == "OK" and got.len() > 0 {
@@ -2013,12 +2361,21 @@ export struct Player {
     }
 
     pri func nav_update_btns() {
-        backBtn.set_enabled(histPos > 0)
+        // ← 除了"历史栈还能退"，**排行榜详情页也能退**（退到卡片墙，见 nav_back 开头）
+        //   不加这一条的话：从侧栏直接进排行榜（set_nav 不入栈）⇒ histPos=0 ⇒ 按钮灰着点不动 ✗
+        backBtn.set_enabled(histPos > 0 or (curNav == 4 and bangDetail))
         fwdBtn.set_enabled(histPos >= 0 and histPos < histNav.len() - 1)
         SDL3.markFrameRedraw()
     }
 
     pri func nav_back() {
+        // 排行榜详情页：顶栏的 ← 先退回**卡片墙**（它只是页内的一层，不该占历史栈 ✓）
+        if curNav == 4 and bangDetail {
+            bangDetail = false
+            rebuild_content()
+            nav_update_btns()          // 回到卡片墙后 ← 该变灰（没东西可退了 ✓）
+            return
+        }
         if histPos <= 0 { return }
         histPos = histPos - 1
         nav_apply(histNav[histPos], histArg[histPos])
@@ -2064,6 +2421,8 @@ export struct Player {
             songArg = ""
             set_nav(if nav < 0 then 0 else nav)
         }
+        // 排行榜：第一次进页面就拉当前榜（之后靠下拉 / 刷新按钮 ✓）
+        if nav == 4 { enter_rank() }
         nav_update_btns()
     }
 
@@ -2241,6 +2600,140 @@ export struct Player {
     //   · 卡片页：登记表里同 key 的 ♥ 就地换图标（同一首可能在"继续收听/为你推荐"各出现一次 ✓）
     //   · 网格页（我喜欢/最近播放）：列表成员会变 ⇒ 只能重建
     //   · 表格页 / 歌曲页：没有 ♥ 可刷 ⇒ 只重绘底栏，页面一个字都不动 ✓
+    // ==================== 排行榜 ====================
+    // 卡片墙要拉哪几个榜：固定 6 个（每榜只要前 3 首 ⇒ 6 个请求，可接受）
+    pri func rank_bids(): Array[string] { return ["16", "93", "17", "104", "22", "182"] }
+    pri func rank_names(): Array[string] { return ["热歌榜", "飙升榜", "新歌榜", "华语榜", "欧美榜", "粤语榜"] }
+
+    // 进排行榜页：先亮卡片墙（没数据就起线程拉）
+    pri func enter_rank() {
+        bangDetail = false
+        if bangCards.len() == 0 and not bangCardsLoading {
+            bangCardsLoading = true
+            threads.start(workers.bangcards, rank_bids(), rank_names(), 4, bangCardsCh)
+        }
+    }
+
+    // 卡片回信：每行 [bid, 榜名, 歌1, 歌2, …]
+    pri func apply_bang_cards(Array[Array[string]] rows) {
+         bangCardsLoading = false
+        if rows.len() == 0 { bangCards = []; return }
+        if rows[0].len() > 0 and rows[0][0] == "ERR" {
+            string why = if rows[0].len() > 1 then rows[0][1] else "?"
+            nowArtist.set_text("榜单加载失败：" + why)
+            SDL3.markFrameRedraw()
+            return
+        }
+        bangCards = rows
+        // 顺手把这 6 张榜封面拉下来（走现成的分片 worker，回信就地贴图 ✓）
+        Array[string] ids = []
+        for rows to r { if r.len() > 2 and r[2] != "" { ids.add(r[2]) } }
+        if ids.len() > 0 { threads.start(workers.cover_shard, ids, ui.coverCacheDir(), coverCh) }
+        if curNav == 4 { rebuild_content() } else { SDL3.markFrameRedraw() }
+    }
+
+    // 点卡片 ⇒ 进这个榜的完整列表（卡片里的 bid → bangmenu 里的下标）
+    pri func open_rank(int cardIdx) {
+        if cardIdx < 0 or cardIdx >= bangCards.len() { return }
+        string bid = bangCards[cardIdx][0]
+        Array[Array[string]] menus = kuwo.bangmenu()
+        int hit = 0
+        for 0 : menus.len() - 1 to i { if menus[i][0] == bid { hit = i } }
+        bangDetail = true
+        load_bang(hit)
+        sv.set_scroll(0.0, 0.0)          // 进详情从第一首开始看 ✓
+        nav_update_btns()                // 进详情后 ← 要变可点（能退回卡片墙 ✓）
+    }
+
+    // 榜单封面路径：有缓存就用真图，否则占位（回信到了再 set_image ✓）
+    pri func rank_cover_path(string sid): string {
+        if sid == "" { return ui.ico("music.png") }
+        string p = dirs.join(ui.coverCacheDir(), cover.cache_name(sid, "120"))
+        if files.exists(p) { return p }
+        return ui.ico("music.png")
+    }
+
+    // 一张榜卡片：标题行（榜名 + 右上角更新文案） + 大封面 + 前 3 首
+    pri func rank_card(Array[string] c, int idx): VBox {
+        VBox card = SDL3.createVBox({x: 0, y: 0, w: 460, h: 160, pad_x: 16, pad_y: 12, spacing: 8,
+                                     bg_color: #FFFFFFE6, bg_radius: 16})
+        // ① 标题行：榜名靠左、更新文案靠右（与参考图一致 ✓）
+        HBox head = SDL3.createHBox({x: 0, y: 0, w: 428, h: 24, pad_x: 0, pad_y: 0, spacing: 0})
+        head.add(ui.lbl(if c.len() > 1 then c[1] else "榜单", 15, C_TXT, true),
+                 {grow: 1, shrink: 1, align: 1})
+        head.add(ui.lbl("刚刚更新", 10.5, C_TXT_DIM, false), {grow: 0, shrink: 0, basis: 64, align: 2})
+        card.add(head, {grow: 0, shrink: 0, basis: 24, align: 3})
+
+        // ② 大封面 + 3 首（封面本身可点 = 进完整榜单）
+        // body 与封面同高（88）：两者都按 88 居中 ⇒ 文字块中心 = 封面中心 ✓
+        HBox body = SDL3.createHBox({x: 0, y: 0, w: 428, h: 100, pad_x: 0, pad_y: 0, spacing: 16})
+        string lead = if c.len() > 2 then c[2] else ""
+        Button cb = SDL3.createButton({image_path: rank_cover_path(lead), image_size: 100,
+                                       w: 100, h: 100, radius: 14,
+                                       bg_color: #EFE3EDFF, hover_color: #F7E9F2FF,
+                                       padding: 0.0, border: false, shadow: false, tip: "看完整榜单"})
+        int ci = idx
+        if lead != "" {
+            rankCovers.add(cb)
+            rankCoverSids.add(lead)
+        }
+        cb.on_click(func() { open_rank(ci) })
+        body.add(cb, {grow: 0, shrink: 0, basis: 100, align: 1})
+        VBox songs = SDL3.createVBox({x: 0, y: 0, w: 300, h: 100, pad_x: 0, pad_y: 0, spacing: 4})
+        for 3 : c.len() - 1 to k {
+            // lblLink：超宽省略号 + 悬停变手型 + 文字右移（像网页链接）；点它进榜单
+            //   align: 3 = 撑满交叉轴 ⇒ Label._w 才有界，省略号才会生效 ✓
+            Label sl = ui.lblLink(_str(k - 2) + "   " + c[k], 12, C_TXT_MID, false)
+            sl.on_click(func() { open_rank(ci) })
+            songs.add(sl, {grow: 0, shrink: 0, basis: 22, align: 3})
+        }
+        body.add(songs, {grow: 1, shrink: 1, align: 1})
+        card.add(body, {grow: 1, shrink: 1, align: 3})
+        return card
+    }
+
+    // 切榜 / 刷新：起线程去拉（UI 线程只改状态 + 请求重绘 ✓）
+    pri func load_bang(int idx) {
+        Array[Array[string]] menus = kuwo.bangmenu()
+        if idx < 0 or idx >= menus.len() { return }
+        bangIdx = idx
+        bangLoading = true
+        bangSongs = []
+        bangRows = []
+        threads.start(workers.bang, menus[idx][0], 100, bangCh)
+        if curNav == 4 { rebuild_content() } else { SDL3.markFrameRedraw() }
+    }
+
+    // 回信：首条是 [bid,""]，之后每首一行（与搜索同构 ✓）
+    pri func apply_bang(Array[Array[string]] rows) {
+        bangLoading = false
+        if rows.len() == 0 { if curNav == 4 { rebuild_content() }; return }
+        string kind = rows[0][0]
+        if kind == "ERR" {
+            string why = if rows[0].len() > 1 then rows[0][1] else "?"
+            nowArtist.set_text("排行榜加载失败：" + why)
+            SDL3.markFrameRedraw()
+            return
+        }
+        Array[Song] songs = []
+        Array[Array[string]] trs = []
+        for 1 : rows.len() - 1 to i {
+            var r = rows[i]
+            if r.len() < 7 { continue }
+            Song sg = new Song()
+            sg.title = r[0]
+            sg.artist = r[1]
+            sg.sid = r[6]
+            sg.dur = kuwo.formatduration(_int(r[3]))
+            songs.add(sg)
+            // 列：序号（控件）/ 歌曲（行控件）/ 专辑 / 时长
+            trs.add(["", "", r[2], kuwo.formatduration(_int(r[3]))])
+        }
+        bangSongs = songs
+        bangRows = trs
+        if curNav == 4 { rebuild_content() } else { SDL3.markFrameRedraw() }
+    }
+
     pri func refresh_after_like(Song sg) {
         string key = ui.like_key(sg)
         bool on = is_liked(key)
@@ -2794,6 +3287,17 @@ export struct Player {
             }
         }
 
+        // ARIA_CLICK2=x,y + ARIA_CLICK2_AT=N：第 N 拍再点一次
+        //   用来验"点卡片进详情 → 再点顶栏 ← 回来"这种**两步**操作 ✓
+        if click2At > 0 and steps == click2At {
+            click2At = 0
+            var xy2 = strings.split(click2Raw, ",")
+            if xy2.len() >= 2 {
+                SDL3.testClickAt(win.getID(), _float(xy2[0]), _float(xy2[1]))
+                print("[click2] 已注入点击 @ (" + xy2[0] + "," + xy2[1] + ")")
+            }
+        }
+
         // ⓪ 切页内存探针（ARIA_STRESS）：交替 首页(0) / 最近播放(2) ⇒ 每次 set_nav 都真的 rebuild
         if stressLeft > 0 {
             if not stressWarm {
@@ -2813,6 +3317,24 @@ export struct Player {
                 int nowKb = Sys.processMemoryKb(Sys.currentPid())
                 print("[leak] 交替切页完成（静置 2s 后）：" + _str(stressMem0) + "KB -> " +
                       _str(nowKb) + "KB  共 +" + _str(nowKb - stressMem0) + "KB")
+            }
+        }
+        // ① 排空排行榜**卡片墙**线程的回信
+        if bangCardsCh != null {
+            var mbc = bangCardsCh.try_receive()
+            while mbc != null {
+                var crows = mbc as Array[Array[string]]
+                if crows != null { apply_bang_cards(crows) }
+                mbc = bangCardsCh.try_receive()
+            }
+        }
+        // ① 排空排行榜线程的回信
+        if bangCh != null {
+            var mb = bangCh.try_receive()
+            while mb != null {
+                var brows = mb as Array[Array[string]]
+                if brows != null { apply_bang(brows) }
+                mb = bangCh.try_receive()
             }
         }
         // ① 排空搜索线程的回信（`try_receive()` 非阻塞 —— 不要用 threads.select ✗）
@@ -2858,6 +3380,10 @@ export struct Player {
                             //   ③ 歌词页大圆封面（正在歌词页时**就地** set_image，不重建页面 ✓）
                             nowSong.cover = cpath
                             if curNav == -6 { lyricBigCover.set_image(cpath) }
+                        }
+                        // 榜卡片上的大封面：命中就贴（不是当前播放那首也要贴 ✓）
+                        for rankCoverSids.len() to rk {
+                            if rankCoverSids[rk] == cid { rankCovers[rk].set_image(cpath) }
                         }
                         // ★ 写回歌曲数据：卡片用的是 `sg.cover`（继续收听 / 为你推荐 / 最近添加）
                         bool touched = false
@@ -3004,6 +3530,8 @@ export struct Player {
         }
         // 歌词高亮跟着进度走（只改颜色 + 滚动，不重建 ✓）
         steps = steps + 1
+        // 截图完成后再让出几拍（present 落地）⇒ 从 tick 里干净退出 ✓
+        if shotExitAt > 0 and steps >= shotExitAt { _exit(0) }
     }
 
     pri func sync_play_ui() {
@@ -3106,6 +3634,10 @@ export struct Player {
         if ly != null { lyricAt = _int(_str(ly)) }
         var cvt = _env("ARIA_COVERTEST")
         if cvt != null { coverTestAt = _int(_str(cvt)) }
+        var c2 = _env("ARIA_CLICK2")
+        if c2 != null { click2Raw = _str(c2) }
+        var c2a = _env("ARIA_CLICK2_AT")
+        if c2a != null { click2At = _int(_str(c2a)) }
         var st = _env("ARIA_STRESS")
         if st != null {
             stressLeft = _int(_str(st))
@@ -3137,7 +3669,9 @@ export struct Player {
         toggle_like()
     }
 
-    // 叠加层：步数够了就存一张 PNG 并退出（在控件/弹层之后、present 之前 ✓）
+    // 叠加层：步数够了就存一张 PNG（在控件/弹层之后、present 之前 ✓）
+    //   ⚠ **不能在这里 `_exit()`**：此刻还在渲染回调里、GPU 命令没提交，
+    //   直接退出会让进程卡住或返回异常码 ⇒ 只记一个"几拍后退出"，交回 tick 处理 ✓
     pri func shot_overlay(Renderer r) {
         if shotPath == "" or steps < shotAt { return }
         var sz = win.getSize()
@@ -3151,7 +3685,8 @@ export struct Player {
         } else {
             print("[music] 读像素失败：" + SDL3.getError())
         }
-        _exit(0)
+        shotPath = ""                 // 只截一次
+        shotExitAt = steps + 6        // 再走几拍（让 present 落地）才退出 ✓
     }
 }
 

@@ -88,8 +88,7 @@ func row(kuwo.SongInfo s): Array[string] {
 }
 
 // 搜索线程
-export func search(string kw, int limit, Channel ch) {
-    Array[Array[string]] out = []
+export func search(string kw, int limit, Channel ch) {    Array[Array[string]] out = []
     try {
         var c = net.createClient()
         var list = kuwo.search(c, kw, limit)
@@ -101,6 +100,56 @@ export func search(string kw, int limit, Channel ch) {
     } catch e {
         out = []
         out.add(["ERR", _str(e)])
+    }
+    ch.send(out)
+}
+
+// 排行榜：按榜单 id 取前 n 首（走酷我老接口 ksong.s，免登录免签名 ✓）
+//   回信格式与搜索一致：第一条 [bid, ""]，之后每首一行 row(s)
+export func bang(string bid, int limit, Channel ch) {
+    Array[Array[string]] out = []
+    try {
+        var c = net.createClient()
+        out.add([bid, ""])
+        var a = kuwo.bang(c, bid, limit)
+        for a to s {
+            if s.valid() { out.add(row(s)) }
+        }
+        c.close()
+    } catch e {
+        out = []
+        out.add(["ERR", _str(e)])
+    }
+    ch.send(out)
+}
+
+// 排行榜**卡片墙**：一次拉多个榜的前 per 首（每榜一个请求，串行 6 个约 2~3 秒）
+//   回信每行：`[bid, "榜名", "首曲封面 id", "歌1", "歌2", ...]`
+//   封面 id 用来给卡片左上的大图（拉不到时上层用占位图 ✓）
+export func bangcards(Array[string] bids, Array[string] names, int per, Channel ch) {
+    Array[Array[string]] out = []
+    try {
+        var c = net.createClient()
+        for 0 : bids.len() - 1 to i {
+            var a = kuwo.bang(c, bids[i], per)
+            string lead = ""
+            Array[string] line = [bids[i], names[i]]
+            for a to s {
+                if not s.valid() { continue }
+                if lead == "" { lead = s.id }
+                line.add(s.name + " — " + s.artist)
+            }
+            // 第三格插封面 id（放在榜名之后，歌曲之前）
+            if line.len() >= 2 { line[1] = names[i] }
+            Array[string] full = [line[0], line[1], lead]
+            for 2 : line.len() - 1 to k { full.add(line[k]) }
+            out.add(full)
+        }
+        c.close()
+    } catch e {
+        out = []
+        Array[string] err = ["ERR", _str(e)]
+        out.add(err)
     }
     ch.send(out)
 }
