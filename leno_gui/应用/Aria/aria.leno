@@ -1257,33 +1257,10 @@ Song nowSong
             Array[Canvas] numI = []
             for 0 : netSongs.len() - 1 to i {
                 int ri0 = i
-                HBox nb = SDL3.createHBox({x: 0, y: 0, w: 60, h: _float(rowH),
-                                           pad_x: 0, pad_y: 0, spacing: 0, justify: 1})
-                nb.add(ui.lbl(if i + 1 < 10 then "0" + _str(i + 1) else _str(i + 1), 12.5, C_TXT_DIM, false),
-                       {grow: 0, shrink: 0, basis: 20, align: 1})
-                numL.add(nb)
-                Canvas pv = SDL3.createCanvas({x: 0, y: 0, w: 26, h: 26, pad: 0,
-                                               bg_color: C_TRANS, border: false})
-                pv.on_draw(func(Renderer rr, float ox, float oy, float cw2, float ch2) {
-                    float d = 26.0
-                    if d > cw2 { d = cw2 }
-                    if d > ch2 { d = ch2 }
-                    float bx0 = ox + (cw2 - d) / 2.0
-                    float by0 = oy + (ch2 - d) / 2.0
-                    rr.setColor(#DCCBF2FF)
-                    rr.fillRoundedRect(bx0, by0, d, d, d / 2.0)
-                    rr.setColor(C_ACCENT)
-                    float s3 = d * 0.30
-                    float px0 = bx0 + d / 2.0 - s3 * 0.38
-                    float py0 = by0 + d / 2.0 - s3 * 0.72
-                    rr.drawLine(px0, py0, px0, py0 + s3 * 1.44)
-                    rr.drawLine(px0, py0, px0 + s3 * 1.24, py0 + s3 * 0.72)
-                    rr.drawLine(px0, py0 + s3 * 1.44, px0 + s3 * 1.24, py0 + s3 * 0.72)
-                })
-                pv.on_click(func(float cx2, float cy2, int btn2) {
-                    if btn2 == 1 { play_net_row(ri0) }
-                })
-                numI.add(pv)
+                // 序号列：数字 ↔ 播放钮（工厂在 `page_widgets`，五张表共用一套 ✓）
+                Array[Widget] nc = pw.number_cell(i, rowH, func() { play_net_row(ri0) })
+                numL.add(nc[0] as HBox)
+                numI.add(nc[1] as Canvas)
             }
             // 列与 LenoMusic 的搜索页同一套口径（歌名/歌手/专辑/时长/格式/大小/来源），
             //   列宽合计 826 ≤ 内容宽 840 ⇒ 最右列不会被裁掉 ✓（LenoMusic 记过这个账）

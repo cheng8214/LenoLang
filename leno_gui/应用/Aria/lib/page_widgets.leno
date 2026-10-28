@@ -8,12 +8,14 @@ import strings
 import "SDL3" as SDL3
 import "../music_data.leno" as data
 use data.Song
-use SDL3.(HBox, Spinner, Label, Color)
+use SDL3.(HBox, Spinner, Label, Color, Canvas, Renderer, Widget)
 
 // 颜色：与 aria.leno 的 C_TXT / C_TXT_DIM / C_ACCENT 同值
 //   （本轮各模块自带一份，等全部页面搬完再统一收到 theme 模块，避免中途几百处引用一起改 ✗）
 const Color TXT_MID = #6B5B63FF
+const Color TXT_DIM = #77646DFF
 const Color ACCENT = #E76F9BFF
+const Color TRANS = #00000000
 
 // 播放量：3689446 → "368.9万"（与参考图 "230.9万" 同一口径 ✓）
 export func fmt_wan(string v): string {
@@ -54,6 +56,45 @@ export func loading_row(string text, float w): HBox {
     row.add(SDL3.createLabel({text: text, font_size: 12.5, text_color: TXT_MID}),
             {grow: 0, shrink: 0, align: 1})
     return row
+}
+
+// 序号列里那枚**圆形播放钮**（淡紫圆 + 主色三角）
+//   搜索 / 本地 / 下载 / 榜单 / 歌单 五张表都用同一套 ⇒ 只在这里画一次 ✓
+export func play_dot(func():void onClick): Canvas {
+    Canvas cv = SDL3.createCanvas({x: 0, y: 0, w: 26, h: 26, pad: 0,
+                                   bg_color: TRANS, border: false})
+    cv.on_draw(func(Renderer rr, float ox, float oy, float cw2, float ch2) {
+        float d = 26.0
+        if d > cw2 { d = cw2 }
+        if d > ch2 { d = ch2 }
+        float bx0 = ox + (cw2 - d) / 2.0
+        float by0 = oy + (ch2 - d) / 2.0
+        rr.setColor(#DCCBF2FF)
+        rr.fillRoundedRect(bx0, by0, d, d, d / 2.0)
+        rr.setColor(ACCENT)
+        float s3 = d * 0.30
+        float px0 = bx0 + d / 2.0 - s3 * 0.38
+        float py0 = by0 + d / 2.0 - s3 * 0.72
+        rr.drawLine(px0, py0, px0, py0 + s3 * 1.44)
+        rr.drawLine(px0, py0, px0 + s3 * 1.24, py0 + s3 * 0.72)
+        rr.drawLine(px0, py0 + s3 * 1.44, px0 + s3 * 1.24, py0 + s3 * 0.72)
+    })
+    cv.on_click(func(float cx2, float cy2, int btn2) { if btn2 == 1 { onClick() } })
+    return cv
+}
+
+// 序号列：数字（默认）/ 播放钮（悬停时）
+//   返回 [数字行, 播放钮]，调用方按 hovered 二选一 ✓
+export func number_cell(int idx, int rowH, func():void onPlay): Array[Widget] {
+    string txt = if idx + 1 < 10 then "0" + _str(idx + 1) else _str(idx + 1)
+    HBox nb = SDL3.createHBox({x: 0, y: 0, w: 60, h: _float(rowH),
+                               pad_x: 0, pad_y: 0, spacing: 0, justify: 1})
+    nb.add(SDL3.createLabel({text: txt, font_size: 12.5, text_color: TXT_DIM}),
+           {grow: 0, shrink: 0, basis: 20, align: 1})
+    Array[Widget] out = []
+    out.add(nb)
+    out.add(play_dot(onPlay))
+    return out
 }
 
 // 搜索过滤（关键词空 = 全通过 ✓）
