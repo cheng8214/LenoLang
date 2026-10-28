@@ -22,7 +22,7 @@ export func unregisterTimer(Timer t) {
 }
 
 // 窗口主循环每帧调用：驱动所有注册的定时器，任意一个触发回调则自动 requestRedraw
-//   ⚠⚠ 2026-10-27 修（用户实测：AlkaidMusic 运行中报
+//   ⚠⚠ 2026-10-27 修（用户实测：Aria 运行中报
 //     "sdl_timer.leno:28 数组索引越界: 索引 2, 长度 2" ✗）：
 //     回调里完全可能 **unregisterTimer**（例如跑马灯 Label 被 dispose、一次性定时器用完就注销）
 //     或 **registerTimer**（回调里新建控件）⇒ 边遍历边改 `_timers`，

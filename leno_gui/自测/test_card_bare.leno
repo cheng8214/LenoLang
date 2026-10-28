@@ -1,0 +1,65 @@
+// test_card_bare.leno — Card 的「纯容器」模式（2026-10-28 新增）
+//   验证：bare 时不排图/不排字、内容区 = 内边距内全部、子控件能铺满、
+//        整卡点击/悬停/角标照常生效（= 主流框架里 Card 的语义 ✓）
+import "SDL3" as SDL3
+use SDL3.(Button, Card, Event, HBox, ImageView, Label, Renderer, VBox, Window, Color)
+
+int fails = 0
+int steps = 0
+bool clicked = false
+
+func ok(string name, bool cond, string detail) {
+    if cond {
+        print("[cb] " + name + " OK" + (if detail != "" then "（" + detail + "）" else ""))
+    } else {
+        fails = fails + 1
+        print("[cb] " + name + " ✗ " + detail)
+    }
+}
+
+main() {
+    Window w = SDL3.createWindow({title: "card bare", w: 760, h: 420, flags: 0x20})
+
+    // 卡内自由内容：图 + 两行字 + 按钮（这套组合用旧 Card 是塞不进去的 ✗）
+    VBox inner = SDL3.createVBox({x: 0, y: 0, w: 300, h: 200, pad_x: 10, pad_y: 10, spacing: 8})
+    ImageView iv = SDL3.createImageView({w: 60, h: 60, radius: 12,
+                                         image_path: "leno_gui\\应用\\Aria\\images\\cover03.png"})
+    inner.add(iv, {grow: 0, shrink: 0, basis: 60, align: 1})
+    Label t1 = SDL3.createLabel({text: "裸卡标题", font_size: 14, text_color: #35262BFF})
+    t1.set_font_style(SDL3.STYLE_BOLD)
+    inner.add(t1, {grow: 0, shrink: 0, basis: 20, align: 1})
+    Label t2 = SDL3.createLabel({text: "副标题可以随便放", font_size: 11, text_color: #77646DFF})
+    inner.add(t2, {grow: 0, shrink: 0, basis: 18, align: 1})
+    Button b = SDL3.createButton({text: "卡内按钮", w: 90, h: 26, font_size: 11})
+    inner.add(b, {grow: 0, shrink: 0, basis: 26, align: 1})
+    inner.set_size(300, 200)
+
+    // ⚠ bare 模式下内容区占满整卡 ⇒ 想让"点卡"生效必须开 content_click_through（否则点都落在内容控件上 ✓）
+    Card c = SDL3.createCard({x: 40, y: 40, w: 320, h: 220, bare: true,
+                              content_pad: 10, radius: 16, bg_color: #FFFFFFCC,
+                              content_click_through: true,
+                              hover_lift: 2.0, border: true})
+    c.set_content(inner)
+    c.add_badge({text: "裸卡", pos: 0, size: 10, bg: #E76F9BFF, color: #FFFFFFFF})
+    c.on_click(func() { clicked = true })
+
+    w.add(c)
+    w.addTimer(200, func() {
+        steps = steps + 1
+        if steps == 2 {
+            // ① bare 的内容区应铺满卡内边距内（320-2*10 → 400-2*10? 用 content_pad 10）
+            var cr = c.content_rect()
+            ok("① 内容区 = 卡内（320-2×10）", _int(cr[2]) == 300, "w=" + _str(cr[2]))
+            ok("② 内容区高 = 220-2×10", _int(cr[3]) == 200, "h=" + _str(cr[3]))
+            ok("③ is_bare", c.is_bare(), "")
+            SDL3.testClickAt(w.getID(), 200.0, 150.0)
+        }
+        if steps == 4 {
+            ok("④ 整卡点击仍生效", clicked, "")
+            print("[cb] ===== 失败 " + _str(fails) + " 项")
+            _exit(if fails == 0 then 0 else 1)
+        }
+    })
+
+    w.run(func(Event ev): bool { return true }, func(Renderer r) { r.clearColor(#F3E4EBFF) })
+}

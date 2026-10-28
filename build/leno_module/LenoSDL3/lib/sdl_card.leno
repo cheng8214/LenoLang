@@ -65,7 +65,7 @@ struct BadgeSpec {
 //   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
 func _opts_keys(): Array[string] {
     return [
-"auto_h", "badge", "badge_bg", "badge_color", "badge_icon", "badge_pos", "badge_size", "badges", "bg_color", "border", "border_color", "border_selected_color", "content_bg", "content_click_through", "content_clip", "content_h", "content_pad", "cursor", "enabled", "gap", "h", "hover_color", "hover_lift", "image_aspect", "image_bg", "image_h", "image_mode", "image_path", "image_radius", "image_tint", "pad", "pressed_color", "radius", "selected", "sel_color", "subtitle", "subtitle_color", "subtitle_size", "text_align", "text_color", "tip", "title", "title_bold", "title_size", "visible", "w", "x", "y"
+"auto_h", "badge", "bare", "badge_bg", "badge_color", "badge_icon", "badge_pos", "badge_size", "badges", "bg_color", "border", "border_color", "border_selected_color", "content_bg", "content_click_through", "content_clip", "content_h", "content_pad", "cursor", "enabled", "gap", "h", "hover_color", "hover_lift", "image_aspect", "image_bg", "image_h", "image_mode", "image_path", "image_radius", "image_tint", "pad", "pressed_color", "radius", "selected", "sel_color", "subtitle", "subtitle_color", "subtitle_size", "text_align", "text_color", "tip", "title", "title_bold", "title_size", "visible", "w", "x", "y"
 ]
 }
 export struct Card impl Widget, Themeable {
@@ -199,6 +199,12 @@ export struct Card impl Widget, Themeable {
     pri Color badgeColor = 0
     pri float radius = 10.0
     pri bool showBorder = false
+    // 纯容器模式（2026-10-28）：不排图、不排标题/副标题，**整个内边距内区域就是内容区** ✓
+    //   为什么要它：主流框架（Flutter Material `Card` / Compose `Card` / Ant Design `Card`）
+    //   里的卡都是"表面 + 内容随便放"，而本控件原来把"图 + 标题 + 副标题"写死在布局里
+    //   ⇒ 稍复杂的设计（图上叠按钮、三行文字、标题在图上）就只能绕开控件手搭 ✗
+    //   `bare: true` 时本控件只提供：圆角背景 / hover 抬起 / 点击 / 右键菜单 / 角标 / 裁剪 ✓
+    pri bool bare = false
     pri int cursor = SystemCursor.POINTER
     pri float hoverLift = 0.0         // 悬停时**视觉**上移像素（不改 x/y ✓）
     pri func():void onClick
@@ -235,6 +241,8 @@ export struct Card impl Widget, Themeable {
         _w = opts.get("w", 180)
         _h = opts.get("h", 310)
         autoH = opts.get("auto_h", false)
+        // 纯容器模式：只有圆角背景/hover/点击/菜单/角标，内部完全交给 set_content（见字段注释 ✓）
+        bare = opts.get("bare", false)
         title = opts.get("title", "")
         subtitle = opts.get("subtitle", "")
         badge = opts.get("badge", "")
@@ -405,6 +413,9 @@ export struct Card impl Widget, Themeable {
     func set_hover_color(Color c) { hovColor = c; core.markFrameRedraw() }
     func set_selected_color(Color c) { selectedColor = c; core.markFrameRedraw() }
     func set_border(bool b) { showBorder = b; core.markFrameRedraw() }
+    // 纯容器模式开关（运行时切换）：内部布局不再有图/字，全给 set_content ✓
+    func set_bare(bool b) { if b != bare { bare = b; metricsDirty = true }; core.markFrameRedraw() }
+    func is_bare(): bool { return bare }
     func set_tip(string t) { tipText = t }
     func set_auto_h(bool v) { autoH = v }
     func set_badge_pos(int p) { badgePos = p; if badges.len() > 0 { badges[0].pos = p } }
@@ -519,6 +530,12 @@ export struct Card impl Widget, Themeable {
     }
     // 自然高（auto_h / 容器测量用 ✓）：图片 + 文字块 + 内容区 + 内边距
     func measure_h(): float {
+        // 纯容器：自然高 = 内边距×2 + 内容高（没给 content_h 就用 0，由调用方定卡高 ✓）
+        if bare {
+            float total = contentPad * 2.0
+            if contentH > 0.0 { total = total + contentH }
+            return total
+        }
         ensure_font()
         measure_metrics()
         // 与 layout() 的 textH **同一公式**（这里曾写成三分支链，只有标题没副标题时会算成 0 ✗）
@@ -621,6 +638,21 @@ export struct Card impl Widget, Themeable {
 
     // ==================== 布局（不变式 ①）====================
     pri func layout() {
+        // 纯容器模式：不排图 / 不排字，内边距内全部给内容区（见 bare 字段的说明 ✓）
+        if bare {
+            _ix = x + pad
+            _iy = y + pad
+            _iw = 0.0
+            _ih = 0.0
+            _ty = y + pad
+            _cx = x + contentPad
+            _cy = y + contentPad
+            _cw = _w - 2.0 * contentPad
+            _ch = if contentH > 0.0 then contentH else _h - 2.0 * contentPad
+            if _ch < 0.0 { _ch = 0.0 }
+            if _cw < 0.0 { _cw = 0.0 }
+            return
+        }
         measure_metrics()
         float textH = 0.0
         if title != "" { textH = textH + titleLineH + 2.0 }
@@ -863,7 +895,7 @@ export struct Card impl Widget, Themeable {
         //      宽度只在**需要居中/右对齐**时才量（默认左对齐一路零测量 ✓ —— 见不变式 ② 的 G5）
         float maxTW = _w - 16.0
         float ty = _ty + fud
-        if title != "" {
+        if title != "" and not bare {
             string ts = fit(title, maxTW, true)
             float tx = x + 8.0
             if txtAlign != ALIGN_LEFT {
@@ -874,7 +906,7 @@ export struct Card impl Widget, Themeable {
             r.drawText(fTitle, ts, tx, ty, titleColor)
             ty = ty + titleLineH + 2.0
         }
-        if subtitle != "" {
+        if subtitle != "" and not bare {
             string ss = fit(subtitle, maxTW, false)     // 超宽才加省略号；不超宽原样返回（走缓存 ✓）
             float sx = x + 8.0
             if txtAlign != ALIGN_LEFT {

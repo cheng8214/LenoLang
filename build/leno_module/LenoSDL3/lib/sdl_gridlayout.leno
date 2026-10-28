@@ -184,7 +184,7 @@ export struct GridLayout impl Widget {
         int n = _c.len()
         if n == 0 { return }
         // ★ 2026-10-25：**自适应列数**（`min_col_width`）——
-        //   以前列数只能由应用自己算好再 `set_cols()`（海报墙的 sync_cols、AlkaidMusic 的手工分行
+        //   以前列数只能由应用自己算好再 `set_cols()`（海报墙的 sync_cols、Aria 的手工分行
         //   都是这么写的 ⇒ 每个界面各算一遍、窗口缩放还得各自监听 resize ✗）。
         //   现在：给了 `min_col_width` 就按**自身当前宽度**算列数，父布局 resize 会下发
         //   `set_size`，下一次 relayout 自动重排 ✓（应用侧只需 add + 可选 align）
