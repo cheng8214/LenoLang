@@ -132,6 +132,9 @@ export struct Font {
 
     func load(string path, float ptsize): bool {
         if not ttfInit() { return false }
+        // ⚠ SDL_ttf 3.x 移除了 `TTF_OpenFontIndex`（本机 DLL 里没有该符号）：
+        //   要选 ttc 里的某个字面得走 `TTF_OpenFontWithProperties` + `FACE_INDEX_NUMBER`，
+        //   ⇒ 现在只能按**文件**换字体（雅黑 / 雅黑 Light / 等线 / 自带 ttf）✓
         handle = ttfLib().TTF_OpenFont(path, ptsize)
         ok = handle != null
         if ok {
@@ -471,6 +474,31 @@ export func createFont(string path, float ptsize): Font {
     if font.ok { _fontPool.add(font) }
     return font
 }
+
+// （没有 createFontIndex：SDL_ttf 3.x 不支持按 face index 打开，见 Font.load 的注释）
+
+// ---- 全局 UI 字体覆盖（空 = 按平台自动挑）----
+//   `setUiFont(path)`：让 createFontAuto 优先用这个**字体文件**
+//   （雅黑 / 雅黑 Light / 等线 / 自带 ttf 都行）；只影响本进程 ✓
+var _uiFontPath = ""
+
+export func setUiFont(string path) {
+    _uiFontPath = path
+}
+
+export func uiFontPath(): string { return _uiFontPath }
+
+// 平台默认中文字体文件（Windows 是 msyh.ttc，Linux 扫描结果）；找不到返回 ""
+export func defaultCjkFont(): string {
+    if _os() == "windows" { return win_font_dir() + "/msyh.ttc" }
+    return linux_font_find()
+}
+
+// 同上的 **Light 字重**（Windows: msyhl.ttc）：笔画更细，大字号标题与侧栏更秀气 ✓
+export func defaultCjkFontLight(): string {
+    if _os() == "windows" { return win_font_dir() + "/msyhl.ttc" }
+    return ""
+}
 // 获取一个 Font 并登记引用（引用计数 +1）。配对 releaseFont 释放；
 // 多个控件可共享同一 path+ptsize 的 Font，任一控件 dispose/换字号时只 release 自身引用，
 // 归零才真正关闭并从池摘除，避免旧「直接 _font.close() 误关共享对象」导致其它控件悬空、池残留失效条目。
@@ -547,6 +575,11 @@ export func linux_font_find(): string {
 
 // 加载字体（自动尝试平台默认中文字体回退）
 export func createFontAuto(float ptsize): Font {
+    // 应用指定的 UI 字体优先（见 setUiFont）；打不开就继续走平台回退链 ✓
+    if _uiFontPath != "" {
+        Font f0 = createFont(_uiFontPath, ptsize)
+        if f0.ok { return f0 }
+    }
     if _os() == "windows" {
         // 回退链**别直接落到宋体** —— 宋体是衬线体，和雅黑判若两字，
         //   一旦雅黑打不开，整个界面字体风格突变

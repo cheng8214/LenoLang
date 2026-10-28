@@ -368,6 +368,12 @@ export func createFontAuto(float s): Font    { return fnt.createFontAuto(s) }
 export func acquireFont(string p, float s): Font    { return fnt.acquireFont(p, s) }
 export func acquireFontAuto(float s): Font         { return fnt.acquireFontAuto(s) }
 export func releaseFont(Font f)                     { fnt.releaseFont(f) }
+// 按 face index 加载 ttc 里的第 n 个字面（0 = 第一个）
+// 全局 UI 字体覆盖：应用可换成雅黑 Light / 等线 / 自带 ttf ✓
+export func setUiFont(string p) { fnt.setUiFont(p) }
+export func uiFontPath(): string { return fnt.uiFontPath() }
+export func defaultCjkFont(): string { return fnt.defaultCjkFont() }
+export func defaultCjkFontLight(): string { return fnt.defaultCjkFontLight() }
 
 export func createTextTexture(Ptr[u8] ren, Font f, string t, int r, int g, int b): TextTexture {
     return fnt.createTextTexture(ren, f, t, r, g, b)
