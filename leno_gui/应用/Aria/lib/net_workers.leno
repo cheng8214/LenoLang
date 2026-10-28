@@ -12,6 +12,9 @@
 //   封面：   ["REC"] 之外的普通消息是 [id, 本地路径]
 import "web_net" as net
 import "kuwo_core.leno" as kuwo
+import "kuwo_playlist.leno" as plq      // 歌单（推荐列表 / 详情）
+import dirs
+import files
 import "kuwo_lyric.leno" as klyr      // 官方 newlyric 接口（逐字 lrcx=1 优先 ✓，移植自 LenoMusic）
 import "kuwo_cover.leno" as cover
 import strings
@@ -123,6 +126,50 @@ export func bang(string bid, int limit, Channel ch) {
     ch.send(out)
 }
 
+// 推荐歌单（发现页「精选」卡片墙）：拉列表 + 每张封面下到 cacheDir
+//   回信每行：[id, 名称, 本地封面路径(空=没下到), 播放量, 曲目数, 作者]
+export func playlists(int n, string cacheDir, Channel ch) {
+    Array[Array[string]] out = []
+    try {
+        var c = net.createClient()
+        plq.prepare(c)
+        var lists = plq.recommend(c, n)
+        for lists to p {
+            string local = ""
+            if p.img != "" {
+                local = dirs.join(cacheDir, "pl_" + p.id + ".jpg")
+                if not files.exists(local) {
+                    try { net.download(p.img, local) } catch e { local = "" }
+                }
+            }
+            out.add([p.id, p.name, local, _str(p.plays), _str(p.total), p.author])
+        }
+        c.close()
+    } catch e {
+        out = []
+        out.add(["ERR", _str(e)])
+    }
+    ch.send(out)
+}
+
+// 歌单里的歌（点卡片进详情）：回信每行 [sid, 歌名, 歌手, 专辑, 时长秒]
+export func playlistsongs(string pid, int n, Channel ch) {
+    Array[Array[string]] out = []
+    try {
+        var c = net.createClient()
+        plq.prepare(c)
+        var songs = plq.songs(c, pid, n)
+        for songs to s {
+            out.add([s.id, s.name, s.artist, s.album, _str(s.duration)])
+        }
+        c.close()
+    } catch e {
+        out = []
+        out.add(["ERR", _str(e)])
+    }
+    ch.send(out)
+}
+
 // 排行榜**卡片墙**：一次拉多个榜的前 per 首（每榜一个请求，串行 6 个约 2~3 秒）
 //   回信每行：`[bid, "榜名", "首曲封面 id", "歌1", "歌2", ...]`
 //   封面 id 用来给卡片左上的大图（拉不到时上层用占位图 ✓）
@@ -137,7 +184,9 @@ export func bangcards(Array[string] bids, Array[string] names, int per, Channel 
             for a to s {
                 if not s.valid() { continue }
                 if lead == "" { lead = s.id }
-                line.add(s.name + " — " + s.artist)
+                // 每首编码成 `sid \u001F 显示文本`：上层要能**点歌名直接播放**，
+                //   没有 sid 就只能进榜单、播不了这一首 ✓
+                line.add(s.id + "\u001F" + s.name + " — " + s.artist)
             }
             // 第三格插封面 id（放在榜名之后，歌曲之前）
             if line.len() >= 2 { line[1] = names[i] }

@@ -1,0 +1,162 @@
+// kuwo_playlist.leno — 酷我「歌单」：推荐列表 + 歌单详情
+//
+// 接口（实测 2026-10-28 全部可用，**免登录**）：
+//   · 推荐：http://wapi.kuwo.cn/api/pc/classify/playlist/getRcmPlayList?pn=1&rn=12&order=hot&httpsStatus=1
+//       data.data[] → id / name / img / listencnt（播放量）/ total（曲目数）/ uname（作者）
+//   · 详情：http://wapi.kuwo.cn/api/www/playlist/playListInfo?pid={id}&pn=1&rn=100&httpsStatus=1
+//       data → name / img / listencnt / total / desc / tag
+//       data.musicList[] → rid / name / artist / album / duration / pic
+//
+// ⚠ 必须带 `Cookie: kw_token=xxx` 与 `csrf: xxx`（**同一个随便的值**），否则 403 / 空 body。
+//   用 www.kuwo.cn 那个域会返回 7 字节错误，认准 **wapi.kuwo.cn** ✓
+//
+// 用法与 kuwo_core 一致：调用方传 HttpClient，失败一律返回空（不抛异常）。
+import jsons
+import "web_net" as net
+import "./kuwo_core.leno" as kuwo
+use net.(HttpClient, Response)
+use kuwo.SongInfo
+
+const TOKEN = "test123"
+
+// 歌单接口要的三个头（缺任一 ⇒ 空响应）
+export func headers(): Array[string] {
+    return ["Cookie: kw_token=" + TOKEN,
+            "csrf: " + TOKEN,
+            "Referer: https://www.kuwo.cn/"]
+}
+
+// 给客户端挂上 UA + 三个头（幂等，可重复调用 ✓）
+export func prepare(HttpClient c) {
+    c.setUserAgent(kuwo.useragent())
+    c.addHeaders(headers())
+}
+
+// ==================== 数据结构 ====================
+
+// 歌单元信息（卡片用）
+export struct PLInfo {
+    string id = ""
+    string name = ""
+    string img = ""          // 封面 URL（500.jpg）
+    string author = ""
+    int plays = 0            // listencnt
+    int total = 0            // 曲目数
+    string desc = ""
+
+    func valid(): bool { return id != "" }
+}
+
+// ==================== URL ====================
+
+export func rcmurl(int pn, int rn): string {
+    return "http://wapi.kuwo.cn/api/pc/classify/playlist/getRcmPlayList?pn=" + _str(pn)
+         + "&rn=" + _str(rn) + "&order=hot&httpsStatus=1"
+}
+
+export func infourl(string pid, int pn, int rn): string {
+    return "http://wapi.kuwo.cn/api/www/playlist/playListInfo?pid=" + pid
+         + "&pn=" + _str(pn) + "&rn=" + _str(rn) + "&httpsStatus=1"
+}
+
+// ==================== 解析 ====================
+
+// 单张歌单卡片：字段可能是数字也可能是字符串（id / total 是数字）⇒ 统一走 `_str` ✓
+export func parsepl(Dict[string, any] d): PLInfo {
+    PLInfo p = new PLInfo()
+    p.id = _str(d["id"])
+    p.name = _str(d["name"])
+    p.img = _str(d["img"])
+    p.author = _str(d["uname"])
+    p.plays = _int(_str(d["listencnt"]))
+    p.total = _int(_str(d["total"]))
+    p.desc = _str(d["desc"])
+    return p
+}
+
+// 推荐歌单列表（`{"code":200,"data":{"data":[...]}}`）
+export func parsercm(string body): Array[PLInfo] {
+    Array[PLInfo] out = []
+    var root = jsons.decode(body) as Dict[string, any]
+    if root == null { return out }
+    var box = root["data"] as Dict[string, any]
+    if box == null { return out }
+    var arr = box["data"]
+    if not (arr is Array) { return out }
+    for arr to it {
+        var d = it as Dict[string, any]
+        if d == null { continue }
+        // 一条坏数据只丢一条（与 parsesongs 同一套纪律 ✓）
+        try {
+            PLInfo p = parsepl(d)
+            if p.valid() { out.add(p) }
+        } catch e {
+            continue
+        }
+    }
+    return out
+}
+
+// 歌单里的歌曲（`data.musicList[]`）→ 复用 kuwo.SongInfo（上层直接喂 play_song ✓）
+export func parsesongs(string body): Array[SongInfo] {
+    Array[SongInfo] out = []
+    var root = jsons.decode(body) as Dict[string, any]
+    if root == null { return out }
+    var box = root["data"] as Dict[string, any]
+    if box == null { return out }
+    var arr = box["musicList"]
+    if not (arr is Array) { return out }
+    for arr to it {
+        var d = it as Dict[string, any]
+        if d == null { continue }
+        try {
+            SongInfo s = new SongInfo()
+            s.id = _str(d["rid"])
+            s.name = _str(d["name"])
+            s.artist = _str(d["artist"])
+            s.album = _str(d["album"])
+            s.duration = _int(_str(d["duration"]))
+            // 封面不留字段：上层按 sid 走 `kuwo_cover` 那条缓存链（与搜索/榜单一致 ✓）
+            if s.valid() { out.add(s) }
+        } catch e {
+            continue
+        }
+    }
+    return out
+}
+
+// 歌单元信息（详情页顶部用；也回 total/desc）
+export func parseinfo(string body): PLInfo {
+    PLInfo p = new PLInfo()
+    var root = jsons.decode(body) as Dict[string, any]
+    if root == null { return p }
+    var box = root["data"] as Dict[string, any]
+    if box == null { return p }
+    try { p = parsepl(box) } catch e { return p }
+    return p
+}
+
+// ==================== 请求 ====================
+
+// 推荐歌单（首页「精选」卡片墙）
+export func recommend(HttpClient c, int limit): Array[PLInfo] {
+    if limit < 1 { limit = 12 }
+    Response resp = c.get(rcmurl(1, limit))
+    if not resp.ok() { return [] }
+    return parsercm(resp.body)
+}
+
+// 歌单详情 → 歌曲（最多 limit 首）
+export func songs(HttpClient c, string pid, int limit): Array[SongInfo] {
+    if limit < 1 { limit = 100 }
+    Response resp = c.get(infourl(pid, 1, limit))
+    if not resp.ok() { return [] }
+    return parsesongs(resp.body)
+}
+
+// 歌单详情 → 元信息
+export func info(HttpClient c, string pid): PLInfo {
+    Response resp = c.get(infourl(pid, 1, 1))
+    if not resp.ok() { return new PLInfo() }
+    return parseinfo(resp.body)
+}
