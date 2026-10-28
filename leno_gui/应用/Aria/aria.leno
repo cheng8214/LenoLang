@@ -287,6 +287,9 @@ export struct Player {
 
     // ----- 歌词页（curNav = -6：点底栏头像 / 歌词按钮进来）-----
     Channel lyrCh                 // 歌词线程回信（Array[string]，每行 "秒|文本"）
+    // 歌词页左侧的大圆封面：**必须留句柄** —— 封面是异步回来的，
+    //   底栏那张会就地 set_image，这里不跟着更新就会一直空着 ✗（2026-10-28 用户反馈）
+    ImageView lyricBigCover
     // 歌词视图（字体 / 解析结果 / 逐字缓存 / 滚动状态）全在 lib/lyric_view.leno 的 LyricView 里 ✓
     LyricView lyric
     // 当前在播的**整首歌**（底栏 ♥ 要按它的 like_key 判断收藏状态；
@@ -318,6 +321,7 @@ export struct Player {
     bool stressWarm = false   // 首页渲染几帧后才记基线（首帧纹理加载不算进增量 ✓）
     int rclickAt = 0          // >0 ⇒ 第 N 拍在结果表上注入一次右键（验证 dispose 没让菜单悬空 ✓）
     int hoverAt = 0           // >0 ⇒ 第 N 拍把鼠标移到表格某行上（验证行级 hover 提示 ✓）
+    int coverTestAt = 0       // >0 ⇒ 第 N 拍删掉封面缓存并重新请求（验证"回信时就地换歌词页大封面" ✓）
     int lyricAt = 0           // >0 ⇒ 第 N 拍切到歌词页（只切页，不碰播放 ✓）
 
 
@@ -749,12 +753,19 @@ export struct Player {
         int cs = 240
         VBox left = SDL3.createVBox({x: 0, y: 0, w: _float(cs), h: lvh,
                                      pad_x: 0, pad_y: 0, spacing: 10})
-        ImageView big = SDL3.createImageView({w: _float(cs), h: _float(cs), radius: _float(cs) / 2.0,
-                                             image_path: ui.coverPath(nowSong.cover),
+        // 封面优先用**已在本地缓存**的那张（纯本地判断，不联网 —— cover_of() 是会下网的 ✗）：
+        //   点播一首刚搜到的歌时 nowSong.cover 往往还是空的，此时缓存里若已有就直接用 ✓
+        string cp0 = ui.coverPath(nowSong.cover)
+        if nowSong.sid != "" {
+            string lc = dirs.join(ui.coverCacheDir(), cover.cache_name(nowSong.sid, "120"))
+            if files.exists(lc) { cp0 = lc }
+        }
+        lyricBigCover = SDL3.createImageView({w: _float(cs), h: _float(cs), radius: _float(cs) / 2.0,
+                                             image_path: cp0,
                                              bg_color: #F3E4EBFF, tip: "点击返回"})
-        big.on_click(func() { open_lyrics(false) })      // 再点一下收回去 ✓
-        big.set_spin(if playing then 10.0 else 0.0)      // 比底栏更慢，歌词页安静一点 ✓
-        left.add(big, {grow: 0, shrink: 0, basis: _float(cs), align: 3})
+        lyricBigCover.on_click(func() { open_lyrics(false) })   // 再点一下收回去 ✓
+        lyricBigCover.set_spin(if playing then 10.0 else 0.0)   // 比底栏更慢，歌词页安静一点 ✓
+        left.add(lyricBigCover, {grow: 0, shrink: 0, basis: _float(cs), align: 3})
         // 歌名（粗体）/ 歌手（小灰）—— 居中的做法：外层 HBox `justify: 1` + 子项宽度 = 量出来的文本宽
         //   ⚠ 不能直接给 Label 传 align:1：Label 的 align 把 x 当**中心点**，在 VBox 里 x 是左边界 ⇒ 会偏左 ✗
         lyric.ensure_fonts()
@@ -2644,6 +2655,16 @@ export struct Player {
             }
             print("[lyric] 已切到歌词页 sid=" + nowSid)
         }
+        // ⓪e 封面联动探针（ARIA_COVERTEST=N）：第 N 拍删掉当前歌的封面缓存并重新请求
+        //   ⇒ 复现"进歌词页时封面还没回来"，再验证回信时**歌词页大封面就地更新** ✓
+        if coverTestAt > 0 and steps == coverTestAt {
+            coverTestAt = 0
+            string f = dirs.join(ui.coverCacheDir(), cover.cache_name(nowSid, "120"))
+            try { files.delete(f) } catch e { print("[covertest] 删缓存失败：" + _str(e)) }
+            if curNav != -6 { open_lyrics(true) }
+            threads.start(workers.cover_shard, [nowSid], ui.coverCacheDir(), coverCh)
+            print("[covertest] 已删封面缓存并请求 sid=" + nowSid + "（进歌词页时应该是空的）")
+        }
         if hoverAt > 0 and steps == hoverAt {
             hoverAt = 0
             SDL3.testMoveAt(win.getID(), 320.0, 200.0)
@@ -2707,7 +2728,14 @@ export struct Player {
                     string cpath = arr[1]
                     if cpath != "" {
                         bool hitCur = nowSid != "" and cid == nowSid
-                        if hitCur { coverView.set_image(cpath) }
+                        if hitCur {
+                            coverView.set_image(cpath)
+                            // ★ 三个地方都要跟着换（2026-10-28 用户反馈"歌词页专辑图不更新"）：
+                            //   ① 底栏头像 ② nowSong.cover（数据写回 ⇒ 之后重建页面也拿到真封面）
+                            //   ③ 歌词页大圆封面（正在歌词页时**就地** set_image，不重建页面 ✓）
+                            nowSong.cover = cpath
+                            if curNav == -6 { lyricBigCover.set_image(cpath) }
+                        }
                         // ★ 写回歌曲数据：卡片用的是 `sg.cover`（继续收听 / 为你推荐 / 最近添加）
                         bool touched = false
                         for 0 : netSongs.len() - 1 to ni {
@@ -2953,6 +2981,8 @@ export struct Player {
         if hv != null { hoverAt = _int(_str(hv)) }
         var ly = _env("ARIA_LYRIC")
         if ly != null { lyricAt = _int(_str(ly)) }
+        var cvt = _env("ARIA_COVERTEST")
+        if cvt != null { coverTestAt = _int(_str(cvt)) }
         var st = _env("ARIA_STRESS")
         if st != null {
             stressLeft = _int(_str(st))
