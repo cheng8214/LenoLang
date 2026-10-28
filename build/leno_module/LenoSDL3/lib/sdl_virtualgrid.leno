@@ -28,7 +28,7 @@ import "sdl_theme.leno" as theme; use theme.Color
 
 func _vg_opts_keys(): Array[string] {
     return ["x", "y", "w", "h", "item_w", "item_h", "gap_x", "gap_y",
-            "pad_x", "pad_y", "cols", "count", "scroll_color", "visible"]
+            "pad_x", "pad_y", "cols", "count", "scroll_color", "visible", "bar_w"]
 }
 
 export struct VirtualGrid impl Widget {
@@ -40,6 +40,11 @@ export struct VirtualGrid impl Widget {
     pri int count = 0
     pri bool visible = true
     pri Color sbColor = #B7A3ADAA         // 滚动条（不需要就把 alpha 传 0）
+    // 滚动条宽度（2026-10-28：原来写死 4px ⇒ 用户"看不见、也拖不动" ✗）
+    //   默认 10，跟 ScrollView 的 12 一个量级；要更细可以 `bar_w: 6` ✓
+    pri float barW = 10.0
+    pri bool dragging = false             // 正在拖滚动条
+    pri float barGrab = 0.0               // 按下点相对手柄顶部的偏移（拖动滚动条用）
 
     // 构建器：返回该项的控件（每次只对**可见项**调用 ✓）
     //   返回 `any`（内部 `is Widget` 守卫）—— 这样调用方写 func(int):Widget 即可，
@@ -78,6 +83,8 @@ export struct VirtualGrid impl Widget {
         cols = opts.get("cols", 0)
         visible = opts.get("visible", true)
         if opts.get("scroll_color") is Color => t { sbColor = t }
+        barW = opts.get("bar_w", 10.0)
+        if barW < 2.0 { barW = 2.0 }
         if itemW < 1.0 { itemW = 1.0 }
         if itemH < 1.0 { itemH = 1.0 }
         int n = opts.get("count", 0)
@@ -257,6 +264,27 @@ export struct VirtualGrid impl Widget {
         var[float, float](mx, my) = ev.mousePos()
         if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
 
+        // 失焦兜底：拖拽中途 Alt+Tab / 切走窗口会**丢掉 up 事件** ⇒ 必须归零，
+        //   否则 dragging 永远为真、之后鼠标一动就跟着"拖"（照 ScrollView 的纪律 ✓）
+        if ev.isWindowFocusLost() { dragging = false }
+
+        // 滚动条交互**优先于内容**（否则按下会被卡片吃掉 ⇒ 拖不动 ✗）
+        if ev.isMouseButtonDown() and ev.mouseButton() == 1 {
+            if on_bar(mx, my) {
+                bar_down(mx, my)
+                core.markFrameRedraw()
+                return
+            }
+        }
+        if ev.isMouseButtonUp() and ev.mouseButton() == 1 {
+            if dragging { dragging = false; return }
+        }
+        if ev.isMouseMotion() and dragging {
+            bar_drag(mx, my)
+            core.markFrameRedraw()
+            return
+        }
+
         // 滚轮：只在自己身上生效
         if ev.isMouseWheel() and mx >= x and mx <= x + w and my >= y and my <= y + h {
             scrollY = scrollY - ev.wheelY() * 60.0
@@ -306,17 +334,63 @@ export struct VirtualGrid impl Widget {
         draw_scrollbar(r)
     }
 
-    // 滚动条：总高超过视口才画，宽 6，贴右边缘内侧
+    // ==================== 滚动条（可见 + 可拖）====================
+    //   手柄几何 [x, y, w, h]；总高不超过视口（m <= 0）时返回全 0 = 不画也不响应 ✓
+    pri func thumb(): Array[float] {
+        Array[float] r = [0.0, 0.0, 0.0, 0.0]
+        float m = max_scroll()
+        if m <= 0.0 { return r }
+        float th = h * h / total_h()
+        if th < 28.0 { th = 28.0 }             // 太短抓不住 ⇒ 下限 28
+        if th > h { th = h }
+        float ty = y + (h - th) * (scrollY / m)
+        r[0] = x + w - barW - 2.0
+        r[1] = ty
+        r[2] = barW
+        r[3] = th
+        return r
+    }
+
+    // 命中区：手柄左右各外扩 4px + 视口高度内（细条也好抓 ✓）
+    pri func on_bar(float mx, float my): bool {
+        var t = thumb()
+        if t[2] <= 0.0 { return false }
+        return mx >= t[0] - 4.0 and mx <= t[0] + t[2] + 4.0 and my >= y and my <= y + h
+    }
+
+    // 按下：落在手柄上 ⇒ 接着拖；落在轨道上 ⇒ 手柄中心跳过来再拖 ✓
+    pri func bar_down(float mx, float my) {
+        var t = thumb()
+        if my >= t[1] and my <= t[1] + t[3] {
+            barGrab = my - t[1]
+        } else {
+            barGrab = t[3] / 2.0
+        }
+        dragging = true
+        bar_drag(mx, my)
+    }
+
+    pri func bar_drag(float mx, float my) {
+        var t = thumb()
+        float m = max_scroll()
+        float span = h - t[3]
+        if span > 1.0 { scrollY = (my - barGrab - y) / span * m }
+        clamp_scroll()
+    }
+
+    // 滚动条：总高超过视口才画（宽度 barW，贴右边缘内侧）
     pri func draw_scrollbar(Renderer r) {
         if theme.colorA(sbColor) <= 0 { return }
-        float m = max_scroll()
-        if m <= 0.0 { return }
-        float th = h * h / total_h()
-        if th < 24.0 { th = 24.0 }
-        float ty = y + (h - th) * (scrollY / m)
-        float sx = x + w - 3.0
+        var t = thumb()
+        if t[2] <= 0.0 { return }
+        // ① 轨道（1/4 透明度的同色）：让人一眼看出"这里有一条滚动条" ✓
+        //   只画手柄时，浅色背景上很容易被当成装饰线看不见 ✗
+        int ta = theme.colorA(sbColor) / 4
+        r.setColor((ta << 24) | (sbColor & 0x00FFFFFF))
+        r.fillRoundedRect(t[0], y + 2.0, t[2], h - 4.0, t[2] / 2.0)
+        // ② 手柄（满透明度）
         r.setColor(sbColor)
-        r.fillRoundedRect(sx, ty, 4.0, th, 2.0)
+        r.fillRoundedRect(t[0], t[1], t[2], t[3], t[2] / 2.0)
     }
 
     func dispose() {
