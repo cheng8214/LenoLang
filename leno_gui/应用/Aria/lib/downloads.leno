@@ -11,7 +11,8 @@ import "web_net" as net
 import "kuwo_core.leno" as kuwo
 import "kuwo_cover.leno" as cover          // 下载时顺带把封面落成同名 .jpg ✓
 import "kuwo_lyric.leno" as kuwo_lyric     // 歌词（逐字优先，退回标准 LRC ✓）
-import "Music" as audio                    // 标签读写走 LenoMusic 的 writeTag（音频域的通用能力 ✓）
+import "Music" as audio                    // 标签读写走 LenoMusic 的 writeTag；时长读它的 decoder ✓
+import "./ui_kit.leno" as ui                // fmtTime（秒 → mm:ss）
 import "../music_data.leno" as data
 import dirs
 import files
@@ -352,11 +353,24 @@ export func state_text(Array[string] j): string {
 }
 
 // 扫已下载目录 → Song 列表（按文件名拆 `歌手 - 歌名`，没有就整名当歌名）
+// 扫描结果缓存：签名 = 目录 + 文件数 + 最新 mtime
+//   为什么要缓存：读时长要开解码器（每首 1~3ms），几十首每次切页都扫会明显卡 ✗
+var _scanSig = ""
+var _scanCache = []            // Array[Song]
+
 export func scan(string root): Array[Song] {
     Array[Song] out = []
     string d = dir_of(root)
     if not dirs.exists(d) { return out }
     var names = dirs.listdir(d)
+    // 缓存签名：文件数 + 最新修改时间 ⇒ 下载完 / 删文件才失效 ✓
+    int newest = 0
+    for names to nm0 {
+        var st0 = dirs.stat(dirs.join(d, nm0))
+        if st0.mtime > newest { newest = st0.mtime }
+    }
+    string sig = d + "|" + _str(names.len()) + "|" + _str(newest)
+    if sig == _scanSig { return _scanCache }
     for names to n {
         string ext = dirs.extname(n).to_lower()
         if ext != ".mp3" and ext != ".flac" and ext != ".wav" and ext != ".ogg" { continue }
@@ -386,7 +400,19 @@ export func scan(string root): Array[Song] {
         // 同名封面（下载时落下的 `<歌手> - <歌名>.jpg`）⇒ 列表里显示真图 ✓
         string art = dirs.join(d, t + ".jpg")
         if files.exists(art) { sg.cover = art }
+        // 时长：读容器头即可（不解码音频）——扫描结果有缓存，不会每次切页都读 ✓
+        try {
+            var dec = audio.createDecoder(sg.path)
+            if dec.isOpen() {
+                sg.dur = ui.fmtTime(dec.getDuration())
+                dec.close()
+            }
+        } catch e {
+            print("[scan] 读时长失败：" + _str(e))
+        }
         out.add(sg)
     }
+    _scanSig = sig
+    _scanCache = out
     return out
 }

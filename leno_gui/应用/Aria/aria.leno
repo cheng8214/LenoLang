@@ -35,6 +35,7 @@ import "./lib/settings.leno" as cfgset       // 应用设置（线程数 / 缓�
 import "./lib/settings_win.leno" as cfgwin   // 设置对话框（独立窗口）
 import "./lib/probes.leno" as probe             // 无头验证用的假数据（假歌词 / 压力歌单）
 import "./lib/library.leno" as lib            // 收藏 / 最近播放的持久化（纯数据）
+import "./lib/row_view.leno" as rv          // 列表行的长相（封面 + 两行字 + 操作）
 import "./lib/cards.leno" as cards          // 卡片尺寸 + 竖版卡片 / 横卡
 import "./lib/lyric_view.leno" as lv
 import "./lib/ui_kit.leno" as ui            // 无状态小工具：路径 / 标签 / 时间 / 颜色 / 曲库 key
@@ -49,11 +50,12 @@ import "Music" as audio        // miniaudio：真播放（LenoMusic 模块 ✓�
 use audio.Sound
 use SDL3.(Event, Renderer, Window, TitleBar, Button, Label, Edit, Card, ImageView, Table,
           HBox, VBox, ScrollView, ProgressBar, Slider, Color, Theme, ComboBox, VirtualGrid,
-          Canvas, Font)
+          Canvas, Font, Widget)
 use data.(Song, Shelf, NavItem)
 use lyr.Lrc
 use lv.LyricView
 use cards.(CardSize, CardHooks)
+use rv.RowHooks
 use lib.LibraryData
 
 // ==================== 尺寸 ====================
@@ -267,6 +269,10 @@ export struct Player {
     Array[string] cardLikeKeys = []
     Array[ImageView] cardCovers = []
     Array[string] cardCoverKeys = []
+    // 列表行里的 ♥（本地音乐/搜索/下载/相关歌曲）：收藏状态变了要就地换图，
+    //   不能指望整页重建（表格页 pageRebuildOnLike = false ⇒ 图标会一直停在旧状态 ✗）
+    Array[Button] rowLikeBtns = []
+    Array[string] rowLikeKeys = []
     // ----- 真播放（miniaudio）-----
     Sound snd
     bool sndOk = false
@@ -336,6 +342,20 @@ export struct Player {
         homeCh = threads.channel(4)           // 首页分区（为你推荐/最近添加）回信通道
         lyrCh = threads.channel(4)            // 歌词回信（一首一条 ✓）
         SDL3.setTheme(appTheme())             // 粉主题：Table / Edit / 滚动条都跟着变粉 ✓
+
+        // 字体可切换（必须在建任何控件**之前**设定，字体会在控件创建时加载）：
+        //   ARIA_FONT=light  ⇒ 雅黑 Light（msyhl.ttc）：笔画更细、大标题更秀气
+        //   ARIA_FONT=<路径> ⇒ 任意 ttf/ttc（自带字体也能这么挂）
+        var fenv = _env("ARIA_FONT")
+        if fenv != null {
+            string fv = _str(fenv)
+            if fv == "light" {
+                string lp = SDL3.defaultCjkFontLight()
+                if lp != "" { SDL3.setUiFont(lp) }
+            } else if fv != "" {
+                SDL3.setUiFont(fv)
+            }
+        }
 
         win = SDL3.createWindow({title: "Aria — LenoSDL3", w: WIN_W, h: WIN_H, flags: 0x20})
         if not win.ok { SDL3.ttfQuit(); return }
@@ -442,7 +462,7 @@ export struct Player {
         // ---- 「搜索结果」：紧跟在主导航下面
         //   切页会退出搜索态、清空当前结果，但**上次搜索留快照** ⇒ 点这里能回到那张表 ✓
         //   没搜过时它是灰的（点了无动作），搜过之后变主色并带上首数
-        searchBtn = SDL3.createButton({text: "搜索结果", font_size: 13,
+        searchBtn = SDL3.createButton({text: "搜索结果", font_size: 14,
                                        align: "left", padding: 12.0, radius: 9, h: 34,
                                        border: false, shadow: false,
                                        tip: "回到上次搜索的结果"})
@@ -450,17 +470,17 @@ export struct Player {
         searchBtn.set_hover_color(#FFFFFFC8)
         searchBtn.set_text_color(C_TXT_DIM)
         searchBtn.on_click(func() { open_last_search() })
-        side.add(searchBtn, {grow: 0, shrink: 0, basis: 34, align: 3})
+        side.add(searchBtn, {grow: 0, shrink: 0, basis: 40, align: 3})
 
         // ---- 「下载」：搜索结果 / 继续收听里右击「下载」的东西都进这里（2026-10-26）----
-        dlBtn = SDL3.createButton({text: "下载", font_size: 13,
+        dlBtn = SDL3.createButton({text: "下载", font_size: 14,
                                    align: "left", padding: 12.0, radius: 9, h: 34,
                                    border: false, shadow: false, tip: "下载队列与历史"})
         dlBtn.set_bg_color(C_TRANS)
         dlBtn.set_hover_color(#FFFFFFC8)
         dlBtn.set_text_color(C_TXT_DIM)
         dlBtn.on_click(func() { open_downloads() })
-        side.add(dlBtn, {grow: 0, shrink: 0, basis: 34, align: 3})
+        side.add(dlBtn, {grow: 0, shrink: 0, basis: 40, align: 3})
 
         // ---- 歌单分组头「创建的歌单 +」----
         HBox plHead = SDL3.createHBox({x: 0, y: 0, w: SIDE_W - 24, h: 28,
@@ -483,26 +503,28 @@ export struct Player {
 
     // 建一个主导航项（idx 传进来 ⇒ 闭包按值记住它 ✓）
     pri func new_nav(NavItem it, int idx) {
-        Button b = SDL3.createButton({text: it.name, font_size: 13,
-                                      align: "left", padding: 12.0, radius: 9, h: 34,
+        // 与 CoCo Music 的侧栏对齐：14px / 高 40 / 圆角 10 / 左内边距 14 ——
+        //   原来 13px+34 行高偏紧，读起来"挤" ✓
+        Button b = SDL3.createButton({text: it.name, font_size: 14,
+                                      align: "left", padding: 14.0, radius: 10, h: 40,
                                       border: false, shadow: false})
         style_nav(b, idx == curNav)
         b.on_click(func() { set_nav(idx) })
         navBtns.add(b)
-        side.add(b, {grow: 0, shrink: 0, basis: 34, align: 3})
+        side.add(b, {grow: 0, shrink: 0, basis: 40, align: 3})
     }
 
     // 建一个歌单项（**只有名字**，不再显示右侧曲目数 —— 那些数字是编的，2026-10-26 去掉 ✓）
     pri func new_pl(NavItem it, int idx) {
-        Button b = SDL3.createButton({text: it.name, font_size: 12,
-                                      align: "left", padding: 12.0, radius: 8, h: 30,
+        Button b = SDL3.createButton({text: it.name, font_size: 13,
+                                      align: "left", padding: 14.0, radius: 9, h: 34,
                                       border: false, shadow: false})
         b.set_bg_color(C_TRANS)
         b.set_hover_color(#FFFFFFC8)
         b.set_text_color(C_TXT_MID)
         b.on_click(func() { set_nav(idx) })
         plBtns.add(b)
-        side.add(b, {grow: 0, shrink: 0, basis: 30, align: 3})
+        side.add(b, {grow: 0, shrink: 0, basis: 34, align: 3})
     }
 
     // 导航项样式：选中 = 浅粉底 + 主色字/图标；未选中 = 透明 + 暖灰（悬停有底 ✓）
@@ -895,6 +917,8 @@ export struct Player {
         cardLikeKeys = []
         cardCovers = []
         cardCoverKeys = []
+        rowLikeBtns = []
+        rowLikeKeys = []
         // ★ 大列表（我喜欢 / 最近播放）走**虚拟网格页**：卡片是真控件（每张 7 个），
         //   上百张之后每帧布局/绘制就会拖垮界面（1000 张实测一帧几百毫秒 ✗）
         //   vg 只构建可见的十几张，滚动时回收复用 ⇒ 几千条也稳 ✓
@@ -966,7 +990,19 @@ export struct Player {
         //     而这里只看 `netSongs.len()` —— 歌曲页为了补"相关歌曲"会把 netSongs 填满，
         //     于是先命中这张表、把歌曲页顶掉（点歌名后跳到"搜索结果"）
         if netSongs.len() > 0 and curNav != -4 and curNav != -2 and curNav != -6 {
-            int rowH = 30
+            int rowH = 58
+            // 每行一个行控件（封面 + 歌名/歌手 + ♥/⬇）—— 第 0 列交给它渲染 ✓
+            Array[HBox] srowV = []
+            RowHooks shk = new RowHooks()
+            shk.isLiked = func(Song sg2): bool { return is_liked(ui.like_key(sg2)) }
+            shk.onLike = func(Song sg2) { toggle_song_like(sg2) }
+            shk.onTrack = func(Song sg2, Button b) { track_row_like(sg2, b) }     // ♥ 登记：取消喜欢时就地换图标 ✓
+            shk.revealIcon = "download.png"
+            shk.revealTip = "下载到本地"
+            shk.onReveal = func(Song sg2) { queue_song(sg2) }
+            for netSongs to it {
+                srowV.add(rv.song_row(it, _float(rowH), shk))
+            }
             // 列与 LenoMusic 的搜索页同一套口径（歌名/歌手/专辑/时长/格式/大小/来源），
             //   列宽合计 826 ≤ 内容宽 840 ⇒ 最右列不会被裁掉 ✓（LenoMusic 记过这个账）
             hasTable = true
@@ -978,30 +1014,36 @@ export struct Player {
             float tw2 = _float(cardSize.content_w())
             tbSearch = SDL3.createTable({x: 0, y: 0, w: tw2, h: 420.0,   // 高度由布局撑满 ✓
                                          item_h: rowH, header_h: 32, font_size: 13,
-                                         headers: ["歌名", "歌手", "专辑", "时长", "格式", "大小", "来源"],
+                                         headers: ["歌曲", "专辑", "时长", "大小"],
                                          row_numbers: true,                  // 最左边序号 1..n（按显示顺序 ✓）
                                         // 右击菜单样式透传（Table 内部自建 MenuBar）：图标 24 = 48 源图的一半 ✓
                                         ctx_image_size: 16.0, ctx_item_h: 28.0,
                                          // 合计 0.99（留 1% 余量，避免浮点累加恰好顶满 ✓）
-                                         col_ratios: [0.33, 0.16, 0.16, 0.09, 0.07, 0.12, 0.06],
-                                         aligns: [0, 0, 0, 1, 1, 2, 1],
+                                         col_ratios: [0.58, 0.22, 0.10, 0.09],
+                                         aligns: [0, 0, 1, 1],
                                          // **表头文字居中**（表体仍按列语义对齐 ✓）
                                          // 表头与数据列**同对齐** ——
                                          //   原来表头一律居中、下面内容左对齐，看着是两套排版 ✗
-                                         header_aligns: [0, 0, 0, 1, 1, 2, 1],
+                                         header_aligns: [0, 0, 1, 1],
                                          // 行图标：`image_col` 把该列画成 [图标 + 文字]，
                                          //   配 `image_path` 给**默认图标**⇒ 不用逐行 set_row_image ✓
-                                         image_col: 0, image_size: 16, image_gap: 6,
-                                         image_path: ui.ico("music.png"),
+                                         // 封面由**行控件**自己画（见下面的 set_cell_builder）✓
                                          // 配色：透明底 + 关斑马纹 ⇒ 让窗口粉渐变透上来（不再是一块白板 ✓）
                                          //   其余（正文/悬停/滚动条）走 appTheme() 的粉主题 ✓
-                                         sortable: true, zebra: false, resizable: false,
+                                         sortable: false, zebra: false, resizable: false,   // 排序会打乱"显示行 vs 数据行"，行控件按数据行建，先关 ✓
                                          bg_color: C_TRANS, header_color: C_TRANS,   // 表头不铺底色（半透明背景上那块浅灰太突兀 ✓）
-                                         // 选中/悬停与详情页那张表统一：**半透明粉**（实色盖住整行会把背景插画压死）
-                                         sel_color: #FADBE64D, hover_color: #FADBE633, solid_sel: false,
+                                         // 行块：圆角 + 左右内缩（列表卡片观感）；悬停用浅色实底 ✓
+                                         row_radius: 12, row_pad_x: 10,
+                                         sel_color: #FADBE666, hover_color: #FFFFFFC0, solid_sel: false,
                                          sep_color: C_TRANS, border: false,          // 去外框/分隔线 ✓
                                          empty_text: "没有结果"})
                                          tbSearch.set_rows(netRows)
+                                         // 第 0 列交给行控件；`cell_interactive` 让 ♥/⬇ 能点 ✓
+                                         tbSearch.set_cell_builder(func(int row, int col, float cw, float ch): Widget? {
+                                             if col == 0 and row >= 0 and row < srowV.len() { return srowV[row] }
+                                             return null
+                                         })
+                                         tbSearch.set_cell_interactive(true)
                                          // ★ 只有**双击**才播放：单击 = 选中、右键 = 菜单（之前挂 on_select 会让右击也开播 ✗）
                                          //   行号一律过 `source_row`（表头排序后显示行 ≠ 数据行 ✓）
                                          tbSearch.on_dbl_click(func(int row, int col) { play_net_row(row) })
@@ -1131,25 +1173,43 @@ export struct Player {
             //   会触发**横向滚动条**（截图里表格底部那条粗白线 ✗）
             float rw = _float(cardSize.content_w() - 12)
             Array[Array[string]] rrows = []
-            for rel to s { rrows.add([s.title, s.artist, s.dur, if s.sid != "" then "在线" else "本地"]) }
+            Array[HBox] rrowV = []
+            RowHooks rhk = new RowHooks()
+            rhk.isLiked = func(Song sg2): bool { return is_liked(ui.like_key(sg2)) }
+            rhk.onLike = func(Song sg2) { toggle_song_like(sg2) }
+            rhk.onTrack = func(Song sg2, Button b) { track_row_like(sg2, b) }     // ♥ 登记：取消喜欢时就地换图标 ✓
+            rhk.revealIcon = "download.png"
+            rhk.revealTip = "下载到本地"
+            rhk.onReveal = func(Song sg2) { queue_song(sg2) }
+            for rel to s {
+                rrows.add(["", s.dur, if s.sid != "" then "在线" else "本地"])
+                rrowV.add(rv.song_row(s, 58.0, rhk))
+            }
             // 高度留 8px 余量：正好卡满时 Table 会判定"需要竖向滚动条"，
             //   竖条一占位又会连锁触发横向滚动条（截图里周围那圈白线 ✗）
-            float rh = _float(32 + rel.len() * 30 + 8)
+            float rh = _float(32 + rel.len() * 58 + 8)
             Table rt = SDL3.createTable({x: 0, y: 0, w: rw, h: rh,
-                                         item_h: 30, header_h: 32, font_size: 12.5,
-                                         headers: ["歌名", "歌手", "时长", "来源"],
+                                         item_h: 58, header_h: 32, font_size: 13,
+                                         headers: ["歌曲", "时长", "来源"],
                                          row_numbers: true,                      // 最左边序号 1..n ✓
                                          ctx_image_size: 16.0, ctx_item_h: 28.0,   // 右击菜单图标/行高透传 ✓
-                                         col_ratios: [0.45, 0.24, 0.14, 0.16],   // 合计 0.99（比例，随宽度自适应 ✓）
-                                         aligns: [0, 0, 1, 1], header_aligns: [0, 0, 1, 1],   // 表头跟数据列同对齐 ✓
+                                         col_ratios: [0.66, 0.17, 0.16],   // 合计 0.99（比例，随宽度自适应 ✓）
+                                         aligns: [0, 1, 1], header_aligns: [0, 1, 1],   // 表头跟数据列同对齐 ✓
                                          sortable: false, zebra: false, resizable: false,
+                                         text_color: C_TXT,
                                          bg_color: C_TRANS, header_color: C_TRANS,   // 表头不铺底色（半透明背景上那块浅灰太突兀 ✓）
                                          // 选中 / 悬停都**半透明**：压在背景插画上淡淡的才不刺眼
                                          //   （白色那行是 hover，不是选中 ⇒ hover_color 一起给 ✓）
-                                         sel_color: #FADBE64D, hover_color: #FADBE633, solid_sel: false,
+                                         row_radius: 12, row_pad_x: 8,
+                                         sel_color: #FADBE666, hover_color: #FFFFFFC0, solid_sel: false,
                                          sep_color: C_TRANS, border: false,
                                          empty_text: "暂无相关歌曲"})
             rt.set_rows(rrows)
+            rt.set_cell_builder(func(int row, int col, float cw, float ch): Widget? {
+                if col == 0 and row >= 0 and row < rrowV.len() { return rrowV[row] }
+                return null
+            })
+            rt.set_cell_interactive(true)
             rt.on_dbl_click(func(int row, int col) {
                 if row >= 0 and row < rel.len() { play_song(rel[row]) }
             })
@@ -1214,27 +1274,50 @@ export struct Player {
             }
             float dw = _float(cardSize.content_w())
             Array[Array[string]] rows = []
+            Array[HBox] rowV = []
+            RowHooks hk = new RowHooks()
+            hk.isLiked = func(Song sg2): bool { return is_liked(ui.like_key(sg2)) }
+            hk.onLike = func(Song sg2) { toggle_song_like(sg2) }
+            hk.onTrack = func(Song sg2, Button b) { track_row_like(sg2, b) }     // ♥ 登记：取消喜欢时就地换图标 ✓
+            hk.revealIcon = "menu_open_dir.png"
+            hk.revealTip = "打开下载目录"
+            hk.onReveal = func(Song sg2) {
+                if not dl.open_dir(ui.cacheRoot()) {
+                    nowArtist.set_text("打开目录失败：" + ui.cacheRoot())
+                    SDL3.markFrameRedraw()
+                }
+            }
             for dlJobs to j {
-                // 列：歌名 / 歌手 / 格式 / 大小 / 进度 / 状态（2026-10-26 按 LenoMusic 口径补齐 ✓）
-                rows.add([j[1], j[2], j[5], dl.size_of(j), dl.percent_of(j), dl.state_text(j)])
+                // 列：歌曲（行控件）/ 格式 / 大小 / 进度 / 状态
+                rows.add(["", j[5], dl.size_of(j), dl.percent_of(j), dl.state_text(j)])
+                Song dsg = new Song()
+                dsg.title = j[1]
+                dsg.artist = j[2]
+                rowV.add(rv.song_row(dsg, 58.0, hk))
             }
             Table t = SDL3.createTable({x: 0, y: 0, w: dw, h: 420.0,   // 高度由布局撑满 ✓
-                                        item_h: 30, header_h: 32, font_size: 13,
-                                        headers: ["歌名", "歌手", "格式", "大小", "进度", "状态"],
+                                        item_h: 58, header_h: 32, font_size: 13,
+                                        headers: ["歌曲", "格式", "大小", "进度", "状态"],
                                         row_numbers: true,                          // 最左边序号 1..n ✓
                                         // 合计 0.99（比例列宽，随宽度自适应 ✓）
-                                        col_ratios: [0.35, 0.18, 0.10, 0.12, 0.12, 0.12],
-                                        aligns: [0, 0, 1, 2, 1, 1],
-                                        header_aligns: [0, 0, 1, 2, 1, 1],   // 与数据列同对齐 ✓
-                                        // 第 5 列（下标 4）= 进度条单元格：值写 "0"~"100" ✓
-                                        cell_types: ["", "", "", "", "progress", ""],
+                                        col_ratios: [0.52, 0.10, 0.14, 0.12, 0.11],
+                                        aligns: [0, 1, 2, 1, 1],
+                                        header_aligns: [0, 1, 2, 1, 1],   // 与数据列同对齐 ✓
+                                        // 第 3 列（下标 3）= 进度条单元格：值写 "0"~"100" ✓
+                                        cell_types: ["", "", "", "progress", ""],
                                         sortable: false, zebra: false, resizable: false,
+                                        text_color: C_TXT,
                                         bg_color: C_TRANS, header_color: C_TRANS,   // 表头不铺底色（半透明背景上那块浅灰太突兀 ✓）
-                                        // 选中/悬停与详情页那张表统一：半透明粉 ✓
-                                        sel_color: #FADBE64D, hover_color: #FADBE633, solid_sel: false,
+                                        row_radius: 12, row_pad_x: 10,
+                                        sel_color: #FADBE666, hover_color: #FFFFFFC0, solid_sel: false,
                                         sep_color: C_TRANS, border: false,          // 去外框/分隔线 ✓
                                         empty_text: "还没有下载任务"})
             t.set_rows(rows)
+            t.set_cell_builder(func(int row, int col, float cw, float ch): Widget? {
+                if col == 0 and row >= 0 and row < rowV.len() { return rowV[row] }
+                return null
+            })
+            t.set_cell_interactive(true)
             // 已完成的行双击 ⇒ 播本地文件（不联网 ✓）
             t.on_dbl_click(func(int row, int col) { play_dl_row(row) })
             show_table_page("下载列表",
@@ -1255,33 +1338,50 @@ export struct Player {
                             {grow: 0, shrink: 0, basis: 30, align: 3})
                 return
             }
-            int lh = 40
-            // 封面缩略图（30+10）由控件自己从总宽里扣 ⇒ 这里直接用整宽 ✓
+            int lh = 58                    // 行高：40 的封面 + 上下留白（对齐主流列表的密度 ✓）
             float lw = _float(cardSize.content_w())
+            // 每行一个**行控件**：封面 + 歌名/歌手两行 + ♥/⬇
+            //   Table 只负责摆位置、滚动、右键菜单、行 hover 底色；行内长什么样由这里决定 ✓
+            Array[HBox] rowV = []
             Array[Array[string]] lrows = []
-            Array[string] larts = []
-            for lsongs to s {
-                lrows.add([s.title, s.artist, "本地"])
-                larts.add(s.cover)               // 同名 .jpg（下载时落下的）⇒ 行缩略图 ✓
+            // 行的动作注入（模块不认识 Player，全部从这里接上 ✓）
+            RowHooks hk = new RowHooks()
+            hk.isLiked = func(Song sg2): bool { return is_liked(ui.like_key(sg2)) }
+            hk.onLike = func(Song sg2) { toggle_song_like(sg2) }
+            hk.onTrack = func(Song sg2, Button b) { track_row_like(sg2, b) }     // ♥ 登记：取消喜欢时就地换图标 ✓
+            hk.onReveal = func(Song sg2) {
+                if not dl.reveal(sg2.path) {
+                    nowArtist.set_text("定位失败：" + sg2.path)
+                    SDL3.markFrameRedraw()
+                }
+            }
+            for lsongs to it {
+                rowV.add(rv.song_row(it, _float(lh), hk))
+                // 第 0 列交给行控件，后面是时长 / 来源（时长来自 dl.scan 读的容器头 ✓）
+                lrows.add(["", it.dur, "本地"])
             }
             Table lt = SDL3.createTable({x: 0, y: 0, w: lw, h: 420.0,   // 高度由布局撑满 ✓
                                          item_h: lh, header_h: 32, font_size: 13,
-                                         headers: ["歌名", "歌手", "来源"],
+                                         headers: ["歌曲", "时长", "来源"],
                                          row_numbers: true,                              // 最左边序号 1..n ✓
                                          ctx_image_size: 16.0, ctx_item_h: 28.0,          // 右击菜单图标/行高透传 ✓
-                                         // 合计 0.99（比例列宽，随宽度自适应 ✓）
-                                         col_ratios: [0.57, 0.28, 0.14],
-                                         aligns: [0, 0, 1], header_aligns: [0, 0, 1],   // 与数据列同对齐 ✓
-                                         image_col: 0, image_size: 30, image_gap: 10,
-                                         row_images: larts,
-                                         image_path: ui.ico("music.png"),   // 没有同名封面的行用默认图标 ✓
+                                         col_ratios: [0.72, 0.12, 0.15],
+                                         aligns: [0, 1, 1], header_aligns: [0, 1, 1],
                                          sortable: false, zebra: false, resizable: false,
+                                         text_color: C_TXT,
                                          bg_color: C_TRANS, header_color: C_TRANS,   // 表头不铺底色（半透明背景上那块浅灰太突兀 ✓）
-                                         // 选中/悬停与详情页那张表统一：半透明粉 ✓
-                                         sel_color: #FADBE64D, hover_color: #FADBE633, solid_sel: false,
+                                         // 行块：圆角 + 左右内缩（列表卡片观感）；悬停用浅色实底 ✓
+                                         row_radius: 12, row_pad_x: 10,
+                                         sel_color: #FADBE666, hover_color: #FFFFFFC0, solid_sel: false,
                                          sep_color: C_TRANS, border: false,          // 去外框/分隔线 ✓
                                          empty_text: "还没有下载"})
             lt.set_rows(lrows)
+            // 单元格交给行控件；`cell_interactive` 让 ♥/⬇ 能点（双击播放、右键菜单照旧 ✓）
+            lt.set_cell_builder(func(int row, int col, float cw, float ch): Widget? {
+                if col == 0 and row >= 0 and row < rowV.len() { return rowV[row] }
+                return null
+            })
+            lt.set_cell_interactive(true)
             // ---- 悬停整行提示：格式 / 大小 / 修改时间 / 完整路径 ----
             //   列表只有「歌名/歌手/来源」三列，文件本身的信息（多大、什么格式、放哪）看不到 ⇒
             //   用 Table 的**行级 tip**（set_row_tip，多行用 \n，气泡按行渲染 ✓）
@@ -1486,9 +1586,9 @@ export struct Player {
             sg.tag = if r[4].to_lower() == "flac" then "无损" else ""
             got.add(sg)
             ids.add(r[6])
-            trows.add([r[0], r[1], r[2], kuwo.formatduration(_int(r[3])),
-                       (if r[4] == "" then "-" else r[4].to_upper()),
-                       (if r[5] == "" then "-" else r[5]), "酷我"])
+            // 第 0 列由**行控件**渲染（封面 + 歌名/歌手 + ♥/⬇）⇒ 这里只留占位空串 ✓
+            trows.add(["", r[2], kuwo.formatduration(_int(r[3])),
+                       (if r[5] == "" then "-" else r[5])])
         }
         if kind == "OK" and got.len() > 0 {
             netSongs = got
@@ -2142,19 +2242,31 @@ export struct Player {
     //   · 网格页（我喜欢/最近播放）：列表成员会变 ⇒ 只能重建
     //   · 表格页 / 歌曲页：没有 ♥ 可刷 ⇒ 只重绘底栏，页面一个字都不动 ✓
     pri func refresh_after_like(Song sg) {
-        if trackCards {
-            string key = ui.like_key(sg)
-            bool on = is_liked(key)
-            for cardLikeKeys.len() to i {
-                if cardLikeKeys[i] == key {
-                    cardLikeBtns[i].set_image(ui.ico(if on then "sc1.png" else "sc.png"))
-                    cardLikeBtns[i].set_tip(if on then "取消喜欢" else "喜欢")
-                }
+        string key = ui.like_key(sg)
+        bool on = is_liked(key)
+        // ① 卡片墙 / 虚拟网格上的 ♥（就地换图，不整页重建 ⇒ 不闪 ✓）
+        for cardLikeKeys.len() to i {
+            if cardLikeKeys[i] == key {
+                cardLikeBtns[i].set_image(ui.ico(if on then "sc1.png" else "sc.png"))
+                cardLikeBtns[i].set_tip(if on then "取消喜欢" else "喜欢")
             }
-        } else if pageRebuildOnLike {
-            rebuild_content()
         }
+        // ② **列表行**里的 ♥（本地音乐/搜索/下载/相关歌曲）
+        //    表格页 pageRebuildOnLike = false ⇒ 原来这里什么都不做，点了 ♥ 图标还是红的 ✗
+        for rowLikeKeys.len() to i {
+            if rowLikeKeys[i] == key {
+                rowLikeBtns[i].set_image(ui.ico(if on then "sc1.png" else "sc.png"))
+                rowLikeBtns[i].set_tip(if on then "取消喜欢" else "喜欢")
+            }
+        }
+        if not trackCards and pageRebuildOnLike { rebuild_content() }
         SDL3.markFrameRedraw()
+    }
+
+    // 行控件建好后登记 ♥（由 row_view 的 onTrack 回调进来 ✓）
+    pri func track_row_like(Song sg, Button b) {
+        rowLikeBtns.add(b)
+        rowLikeKeys.add(ui.like_key(sg))
     }
 
     // 封面回信 ⇒ 就地换图（原来靠 coverDirty 整页重建：每来一张封面就闪一次 ✗）
@@ -2671,6 +2783,15 @@ export struct Player {
             hoverAt = 0
             SDL3.testMoveAt(win.getID(), 320.0, 200.0)
             print("[hover] 已注入鼠标移动 @ (320,200)")
+            // ARIA_CLICK=x,y：顺手注入一次点击（验证"点 ♥ 之后图标就地切换"这类联动 ✓）
+            var ck = _env("ARIA_CLICK")
+            if ck != null {
+                var xy = strings.split(_str(ck), ",")
+                if xy.len() >= 2 {
+                    SDL3.testClickAt(win.getID(), _float(xy[0]), _float(xy[1]))
+                    print("[click] 已注入点击 @ (" + xy[0] + "," + xy[1] + ")")
+                }
+            }
         }
 
         // ⓪ 切页内存探针（ARIA_STRESS）：交替 首页(0) / 最近播放(2) ⇒ 每次 set_nav 都真的 rebuild

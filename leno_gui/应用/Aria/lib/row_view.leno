@@ -1,0 +1,73 @@
+// row_view.leno — **列表行控件**（歌曲行的长相：封面 + 歌名/歌手 + 右侧操作）
+//
+// 为什么单独一个模块：
+//   Table 现在已经支持"单元格里放控件"（`set_cell_builder`），行内长什么样就归应用管了。
+//   四张表（搜索结果 / 本地音乐 / 下载 / 相关歌曲）用的是**同一套行布局**，
+//   放在这里改一处即可；Table 只负责摆位置、滚动、行 hover 底色、右键菜单 ✓
+//
+// 用法：
+//   RowHooks hk = new RowHooks()
+//   hk.onLike = func(Song s) { ... }
+//   rowViews.add(rv.song_row(sg, 58.0, hk))
+//   table.set_cell_builder(func(int row, int col, float w, float h): Widget? { ... })
+import "SDL3" as SDL3
+use SDL3.(Button, HBox, ImageView, Label, VBox, Widget)
+import "./ui_kit.leno" as ui
+import "../music_data.leno" as data
+use data.Song
+
+// 行里那些"会触发应用动作"的按钮，全部由调用方注入（本模块不认识 Player ✓）
+export struct RowHooks {
+    func(Song):bool isLiked = null      // 当前是否已收藏（决定 ♥ 空心/实心）
+    // 建好 ♥ 之后登记一下：收藏状态变化时就地 set_image（不必整页重建 ⇒ 不闪 ✓）
+    func(Song, Button):void onTrack = null
+    func(Song):void onLike = null       // 点 ♥
+    func(Song):void onReveal = null     // 右侧第二个按钮（本地文件 = 在资源管理器选中）
+    string revealIcon = "menu_open_dir.png"
+    string revealTip = "在资源管理器中选中"
+}
+
+// 造一行：封面 40 + 歌名（14 粗）/ 歌手（12 灰）+ 右侧 ♥ / 操作
+//   `h` 建议 56~58（40 封面 + 上下留白），Table 的 item_h 要与之相同 ✓
+export func song_row(Song s, float h, RowHooks hk): HBox {
+    HBox box = SDL3.createHBox({x: 0, y: 0, w: 520, h: h, pad_x: 10, pad_y: 8, spacing: 12})
+    string cv = if s.cover != "" then ui.coverPath(s.cover) else ui.ico("music.png")
+    box.add(SDL3.createImageView({w: 40, h: 40, radius: 8, image_path: cv,
+                                  bg_color: 0, tip: s.title}),
+            {grow: 0, shrink: 0, basis: 40, align: 1})
+    // 两行文字：**必须左对齐**（align: 0）；用居中会让歌名飘到格子中间 ✗
+    VBox names = SDL3.createVBox({x: 0, y: 0, w: 300, h: 42, pad_x: 0, pad_y: 0, spacing: 1})
+    names.add(ui.lbl(s.title, 14, 0xFF35262B, true), {grow: 0, shrink: 0, basis: 21, align: 0})
+    names.add(ui.lbl(s.artist, 12, 0xFF77646D, false), {grow: 0, shrink: 0, basis: 17, align: 0})
+    box.add(names, {grow: 1, shrink: 1, align: 1})
+
+    bool likedNow = if hk.isLiked != null then hk.isLiked(s) else false
+    Button lk = SDL3.createButton({image_path: ui.ico(if likedNow then "sc1.png" else "sc.png"),
+                                   image_size: 20, w: 30, h: 30, radius: 15,
+                                   bg_color: 0, hover_color: 0xCCFFFFFF,
+                                   padding: 0.0, border: false, shadow: false,
+                                   tip: if likedNow then "取消喜欢" else "喜欢"})
+    if hk.onLike != null {
+        Song s1 = s
+        lk.on_click(func() { hk.onLike(s1) })
+    }
+    if hk.onTrack != null {
+        Song s0 = s
+        hk.onTrack(s0, lk)
+    }
+    box.add(lk, {grow: 0, shrink: 0, basis: 30, align: 1})
+
+    if hk.revealIcon != "" {
+        Button rb = SDL3.createButton({image_path: ui.ico(hk.revealIcon), image_size: 18,
+                                       w: 30, h: 30, radius: 15,
+                                       bg_color: 0, hover_color: 0xCCFFFFFF,
+                                       padding: 0.0, border: false, shadow: false,
+                                       tip: hk.revealTip})
+        if hk.onReveal != null {
+            Song s2 = s
+            rb.on_click(func() { hk.onReveal(s2) })
+        }
+        box.add(rb, {grow: 0, shrink: 0, basis: 30, align: 1})
+    }
+    return box
+}
