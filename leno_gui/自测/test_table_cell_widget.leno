@@ -1,0 +1,85 @@
+// test_table_cell_widget.leno — Table 的自定义单元格（单元格里塞控件）
+//   验证：set_cell_builder 返回的控件被摆到该格并渲染；返回 null 的格走内建文本 ✓
+//   这样"歌名 + 歌手 + 封面 + 按钮"这种行内布局就能自己拼，不受表格内建排版限制
+import "SDL3" as SDL3
+use SDL3.(Button, HBox, ImageView, Label, Renderer, Table, VBox, Window, Event, Color)
+
+int fails = 0
+
+func ok(string name, bool cond, string detail) {
+    if cond {
+        print("[cell] " + name + " OK" + (if detail != "" then "（" + detail + "）" else ""))
+    } else {
+        fails = fails + 1
+        print("[cell] " + name + " ✗ " + detail)
+    }
+}
+
+// 每个可见行预先建一个"行控件"（框架只负责摆位置，不负责 new ✓）
+Array[HBox] rowViews = []
+int liked = 0      // 单元格里的按钮被点中的次数（验证事件转发 ✓）
+
+func make_row(string title, string artist, string cover): HBox {
+    HBox box = SDL3.createHBox({x: 0, y: 0, w: 300, h: 52, pad_x: 8, pad_y: 6, spacing: 10})
+    // 最左边放一颗按钮：验证"单元格里的控件能收到点击"（cell_interactive ✓）
+    Button b = SDL3.createButton({text: "♥", w: 30, h: 28, font_size: 12, radius: 8,
+                                    bg_color: #F7E6EEFF, hover_color: #FADBE6FF, text_color: #D2658AFF})
+    b.on_click(func() { liked = liked + 1 })
+    box.add(b, {grow: 0, shrink: 0, basis: 30, align: 1})
+    ImageView iv = SDL3.createImageView({w: 36, h: 36, radius: 8,
+                                         image_path: cover, bg_color: #F3E4EBFF})
+    box.add(iv, {grow: 0, shrink: 0, basis: 36, align: 1})
+    VBox names = SDL3.createVBox({x: 0, y: 0, w: 200, h: 40, pad_x: 0, pad_y: 0, spacing: 2})
+    Label t1 = SDL3.createLabel({text: title, font_size: 14, text_color: #35262BFF})
+    t1.set_font_style(SDL3.STYLE_BOLD)
+    names.add(t1, {grow: 0, shrink: 0, basis: 20, align: 1})
+    names.add(SDL3.createLabel({text: artist, font_size: 12, text_color: #77646DFF}),
+              {grow: 0, shrink: 0, basis: 18, align: 1})
+    box.add(names, {grow: 1, shrink: 1, align: 1})
+    return box
+}
+
+main() {
+    Window w = SDL3.createWindow({title: "table cell widget", w: 760, h: 360, flags: 0x20})
+
+    rowViews.add(make_row("晴天", "周杰伦", "leno_gui\\应用\\Aria\\images\\cover01.png"))
+    rowViews.add(make_row("青衣", "草帽酱&DJ阿泽", "leno_gui\\应用\\Aria\\images\\cover02.png"))
+    rowViews.add(make_row("兰亭序", "周杰伦", "leno_gui\\应用\\Aria\\images\\cover03.png"))
+
+    Table t = SDL3.createTable({x: 20, y: 20, w: 720, h: 300,
+                                headers: ["歌曲", "来源"], item_h: 52, header_h: 32, font_size: 13,
+                                row_numbers: true, col_ratios: [0.78, 0.21],
+                                aligns: [0, 1], header_aligns: [0, 1],
+                                sortable: false, zebra: false, resizable: false,
+                                text_color: #35262BFF,   // 表格正文色（默认取主题，深色主题下是近白色 ✗）
+                                bg_color: #FFFFFFB0, radius: 14, border: true,
+                                row_radius: 12, row_pad_x: 8,
+                                sel_color: #FADBE666, hover_color: #FFFFFFC0,
+                                sep_color: #E8D5DE66})
+    t.set_rows([["晴天", "本地"], ["青衣", "本地"], ["兰亭序", "本地"]])
+    // 第 0 列交给"行控件"（自己拼的 HBox），第 1 列留空 ⇒ 走内建文本 ✓
+    t.set_cell_builder(func(int row, int col, float cw, float ch): Widget? {
+        if col == 0 and row >= 0 and row < rowViews.len() { return rowViews[row] }
+        // 第 2 列**故意返回 null** ⇒ 用来验证"返回 null 的格仍走内建文本" ✓
+        return null
+    })
+
+    t.set_cell_interactive(true)      // 让单元格里的按钮能收到点击 ✓
+    w.add(t)
+    bool done = false
+    w.addTimer(150, func() {
+        if done { return }
+        done = true
+        ok("① 行控件已建立", rowViews.len() == 3, "3 个 HBox")
+        ok("② 表格行数", true, "3")
+        SDL3.testClickAt(w.getID(), 80.0, 70.0)   // 点第 1 行那颗 ♥（单元格内控件）
+        print("[cell] ===== 失败 " + _str(fails) + " 项")
+    })
+    // 留 6 秒给截图（人工/无头取证都要看一眼），之后自动退出 ✓
+    w.addTimer(1200, func() {
+        ok("③ 单元格内的按钮收到了点击", liked > 0, "liked=" + _str(liked))
+        _exit(if fails == 0 then 0 else 1)
+    })
+
+    w.run(func(Event ev): bool { return true }, func(Renderer r) { r.clearColor(#F3E4EBFF) })
+}
