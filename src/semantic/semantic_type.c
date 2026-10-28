@@ -186,6 +186,131 @@ TypeInfo* infer_return_type_from_body(Semantic* s, Ast* body) {
 }
 
 // ============================================================================
+// 「成员方法当一等函数值」的类型（2026-10-28，docs/待修_编译与语义问题.md §3）
+// ----------------------------------------------------------------------------
+// 用途：`hk.onTrack = track_row_like`（方法体内裸名）与 `h.track_row_like`（显式路径）的
+//   **静态类型** —— 返回 TYPE_FUNCTION，**参数表不含 self**：运行期 VM 取到的
+//   bound closure 已经把接收者绑好了（见 vm/vminc/run/07_collections.inc 的 struct 分支），
+//   调用点只传业务实参 ✓（与 face 约束那条 `T.compare` 的既有口径一致，见 infer_expr_type
+//   的 TYPE_GENERIC_PARAM 分支）。
+// 来源：func_table 的 "Struct::method" 键（与 infer_method_return_type 同一条通道）⇒
+//   "声明即所得"，天然支持跨模块方法（导入时已按同一键注册占位符）。
+// 返回：新分配的 TYPE_FUNCTION（调用方 type_free）；找不到方法 ⇒ NULL（调用方保持原兜底）。
+// ============================================================================
+// 「这个 struct 有没有这个方法」的**唯一判据**（编译期，跨模块也成立）
+//   ① func_table 的 "Struct::method" 键 —— 本文件的方法与**导入模块的占位符**都按同一键注册
+//      （见 visit_type_def.inc / semantic_register_struct_from_module）✓
+//   ② struct 定义 AST 的 methods[] —— 兜住"方法还没注册进 func_table"的早期阶段 ✓
+// 为什么单拎出来：`h.track_row_like` 这类**取方法值**的检查在两条路上都要判
+//   （访问器 visit_field_access.inc 与推断 semantic_type.c），此前只查 ② ⇒ **跨模块**时
+//   struct 的 type_decl_ast 不是本编译单元的 AST_STRUCT_DEF ⇒ 判不出方法 ⇒ 误报"没有字段"✗
+int semantic_struct_has_method(Semantic* s, const char* struct_name, const char* method_name) {
+    if (!s || !struct_name || !method_name || !method_name[0]) return 0;
+    char key[256];
+    snprintf(key, sizeof(key), "%s::%s", struct_name, method_name);
+    Ast* def = func_table_find(&s->func_table, key);
+    if (def && def->kind == AST_FUNC_DEF) return 1;
+    Symbol* tsym = scope_resolve(s->current, struct_name);
+    if (tsym) {
+        Ast* sd = (Ast*)tsym->type_decl_ast;
+        if (sd && sd->kind == AST_STRUCT_DEF) {
+            for (int mi = 0; mi < sd->u.struct_def.method_count; mi++) {
+                Ast* m = sd->u.struct_def.methods[mi];
+                if (m && m->kind == AST_FUNC_DEF && m->u.func.name &&
+                    strcmp(m->u.func.name, method_name) == 0) {
+                    return 1;
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+// 报错增强用：`name` 是否是**本编译单元**里某个 struct 的方法名 ⇒ 返回那个 struct 名，否则 NULL。
+//   场景：顶层（非方法体）裸写方法名 —— 没有接收者，无法绑定 self ⇒ 仍是错误，但
+//   「未定义的变量: track_row_like」看不出"它其实是方法"（用户为定位这条花了 20 分钟）。
+//   有了它就能直接说清两条出路（见 visit_var.inc 的调用点）。
+//   ⚠ 只看当前编译单元的顶层 struct 定义：跨模块 struct 的方法在这里看不到，但那种写法
+//     一定是 `obj.名字`（走别的诊断）✓ —— 宁漏勿误报。
+const char* semantic_method_owner(Semantic* s, const char* name) {
+    if (!s || !s->root || !name || !name[0]) return NULL;
+    Ast* root = s->root;
+    if (root->kind != AST_BLOCK) return NULL;
+    for (int i = 0; i < root->u.block.count; i++) {
+        Ast* st = root->u.block.items[i];
+        if (!st || st->kind != AST_STRUCT_DEF) continue;
+        for (int mi = 0; mi < st->u.struct_def.method_count; mi++) {
+            Ast* m = st->u.struct_def.methods[mi];
+            if (m && m->kind == AST_FUNC_DEF && m->u.func.name &&
+                strcmp(m->u.func.name, name) == 0) {
+                return st->u.struct_def.name;
+            }
+        }
+    }
+    return NULL;
+}
+
+static TypeInfo* infer_method_value_type(Semantic* s, const char* struct_name, const char* method_name) {
+    if (!s || !struct_name || !method_name || !method_name[0]) return NULL;
+    char key[256];
+    snprintf(key, sizeof(key), "%s::%s", struct_name, method_name);
+    Ast* def = func_table_find(&s->func_table, key);
+    if (!def || def->kind != AST_FUNC_DEF) return NULL;
+
+    // self 占形参第 0 位（脚本方法一律如此，见 transform_method_body 的 self 约定）；
+    // 判据与别处一致：看形参名，而不是"无脑减 1"（模块级函数也可能被注册进来 ✓）
+    int self_off = 0;
+    if (def->u.func.pcnt > 0 && def->u.func.params && def->u.func.params[0] &&
+        strcmp(def->u.func.params[0], "self") == 0) {
+        self_off = 1;
+    } else if (def->u.func.pcnt > 0 && def->u.func.param_types && def->u.func.param_types[0] &&
+               def->u.func.param_types[0]->kind == TYPE_STRUCT &&
+               def->u.func.param_types[0]->struct_name &&
+               strcmp(def->u.func.param_types[0]->struct_name, struct_name) == 0) {
+        // ★ 跨模块**占位符**（导入时按 "Struct::method" 注册的那份）形参名不叫 "self"
+        //   —— 符号表只存类型、不存形参名 ⇒ 上面那条判据失效，会把 self 当成业务实参，
+        //   得到 `func(struct Player, struct Song):void` 这种"多一个参数"的签名 ✗（实测 p5）。
+        //   ⇒ 再认一条：第 0 个形参类型**就是这个 struct 自己** ⇒ 它就是 self ✓
+        self_off = 1;
+    }
+    int n = def->u.func.pcnt - self_off;
+    if (n < 0) n = 0;
+
+    // 逐参复制：缺注解的形参按 any 处理（宁松不误报 ✓）
+    TypeInfo** params = NULL;
+    if (n > 0) {
+        params = (TypeInfo**)malloc(sizeof(TypeInfo*) * n);
+        if (!params) return NULL;
+        for (int i = 0; i < n; i++) {
+            TypeInfo* pt = (def->u.func.param_types && def->u.func.param_types[i + self_off])
+                               ? def->u.func.param_types[i + self_off] : NULL;
+            params[i] = pt ? type_copy(pt) : type_new(TYPE_ANY);
+        }
+    }
+
+    TypeInfo* ret = NULL;
+    if (def->u.func.return_type && def->u.func.return_type->kind != TYPE_INFER) {
+        ret = type_copy(def->u.func.return_type);
+    } else if (def->u.func.body) {
+        ret = infer_return_type_from_body(s, def->u.func.body);   // 无注解 ⇒ 推函数体
+    }
+    // 推不出 ⇒ **void**（TYPE_NULL），不是 any：无 `:返回值` 注解的方法在本语言里就是 void
+    //   （教程的写法是 `func f(x) { … }`），而字段/形参写 `func(Song):void` 时 void 也落成
+    //   TYPE_NULL。标成 any 会与 `func(Song):void` **签名不等** ⇒ 明明对得上却报类型不匹配 ✗
+    //   （实测 p1：`func(struct Song):any` vs 期望 `func(struct Song):void`）
+    if (!ret) ret = type_new(TYPE_NULL);
+    if (def->u.func.is_async) ret = type_future_generic(ret);     // async 方法取到的是 Future ✓
+
+    // ⚠ type_function 的所有权口径**不对称**：返回类型是**直接接管**（不拷贝）、
+    //   参数表却会深拷贝 ⇒ 只释放参数表，`ret` 绝不能 free（否则 fn->return_type 悬空，
+    //   实测表现为类型被打印成 `func(struct Song):func(struct Song):func()` 这种套娃 ✗）
+    TypeInfo* fn = type_function(ret, params, n);
+    for (int i = 0; i < n; i++) type_free(params[i]);
+    free(params);
+    return fn;
+}
+
+// ============================================================================
 // 回调返回类型推断（**唯一实现**：map / reduce 的实例形态与模块形态共用）
 // ============================================================================
 // 为什么需要这个助手（v3.2.8）：`map` / `reduce` 的返回类型都取决于**回调的返回类型**，
@@ -2646,19 +2771,10 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                                     break;
                                 }
                             }
-                            if (!known) {
-                                Ast* sd2 = (Ast*)def_sym->type_decl_ast;
-                                if (sd2 && sd2->kind == AST_STRUCT_DEF) {
-                                    for (int mi = 0; mi < sd2->u.struct_def.method_count; mi++) {
-                                        Ast* m = sd2->u.struct_def.methods[mi];
-                                        if (m && m->kind == AST_FUNC_DEF && m->u.func.name &&
-                                            strcmp(m->u.func.name, key) == 0) {
-                                            known = 1;
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
+                            // 同名方法也算存在（方法调用另有语法 ✓；这里只兜"名字写错" ✓）
+                            //   走**统一判据**（含跨模块占位符）—— 2026-10-28：此前只查本编译单元的
+                            //   AST_STRUCT_DEF ⇒ 跨模块 struct 取方法值时误报"没有字段"✗
+                            if (!known) known = semantic_struct_has_method(s, recv->struct_name, key);
                             if (!known) {
                                 // 同样先去重再报 ✓（与上面 AST_FIELD_ACCESS 那条同一理由 ✓）——
                                 //   走**谓词去重版**入口，不必自己开缓冲 ✓
@@ -2968,6 +3084,23 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                         ast->cached_type = type_copy(obj_type);
                         type_free(obj_type);
                         return type_copy(ast->cached_type);
+                    }
+
+                    // ★ 成员方法当**函数值**取（2026-10-28，docs/待修_编译与语义问题.md §3）：
+                    //   `h.track_row_like` / 方法体内裸名（前处理已改写成 `self["方法名"]`）
+                    //   在字段表里查不到 ⇒ 再看是不是本 struct 的方法。
+                    //   类型 = **不含 self** 的函数签名（bound method 已绑接收者 ✓）；
+                    //   codegen 侧因 field_index 解析不出 ⇒ 走通用 OP_INDEX，
+                    //   运行期 VM 对 struct + 字符串下标本来就会返回 bound closure ✓
+                    if (obj_type->kind == TYPE_STRUCT && obj_type->struct_name &&
+                        ast->u.index.index && ast->u.index.index->kind == AST_STRING) {
+                        TypeInfo* mv = infer_method_value_type(s, obj_type->struct_name,
+                                                              ast->u.index.index->u.string.value);
+                        if (mv) {
+                            ast->cached_type = mv;
+                            type_free(obj_type);
+                            return type_copy(ast->cached_type);
+                        }
                     }
 
                     type_free(obj_type);
@@ -3468,18 +3601,9 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     }
                     if (!known) {
                         // 同名方法也算存在（方法调用另有语法 ✓；这里只兜"名字写错" ✓）
-                        //   走 struct 定义 AST 的 methods[]（与 pri 检查同款写法 ✓ 准确 ✓）
-                        Ast* sd = (Ast*)def_sym->type_decl_ast;
-                        if (sd && sd->kind == AST_STRUCT_DEF) {
-                            for (int mi = 0; mi < sd->u.struct_def.method_count; mi++) {
-                                Ast* m = sd->u.struct_def.methods[mi];
-                                if (m && m->kind == AST_FUNC_DEF && m->u.func.name &&
-                                    strcmp(m->u.func.name, fname) == 0) {
-                                    known = 1;
-                                    break;
-                                }
-                            }
-                        }
+                        //   走**统一判据**（含跨模块占位符，2026-10-28）—— 此前只查本编译单元
+                        //   的 AST_STRUCT_DEF ⇒ 跨模块 struct 取方法值时误报"没有字段"✗
+                        known = semantic_struct_has_method(s, obj_type->struct_name, fname);
                     }
                     if (!known) {
                         // ★ 先去重再报 ✓：显式 `self.b.xxx` 形态会被**访问器那条**先报一遍
@@ -3569,6 +3693,13 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                             }
                         }
                     }
+                }
+                // ★ 成员方法当函数值（2026-10-28，§3）：既不是字段、也不是上面的回退命中
+                //   ⇒ 再看是不是本 struct 的方法（`h.track_row_like` 这条显式写法走这里）。
+                //   类型 = 不含 self 的函数签名；`field_index` 保持 -1 ⇒ codegen 发通用 OP_INDEX
+                //   ⇒ 运行期拿到已绑定接收者的 bound closure ✓
+                if (!result && obj_type->kind == TYPE_STRUCT && obj_type->struct_name) {
+                    result = infer_method_value_type(s, obj_type->struct_name, field_name);
                 }
             }
 

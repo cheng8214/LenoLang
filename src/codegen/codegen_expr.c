@@ -731,6 +731,15 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
                 }
             } else {
                 const char* fname = ast->u.field_access.field_name;
+                // DCE：与上面 AST_INDEX 通用路径那条**同一理由**（`obj["方法名"]`）——
+                //   接收者是 struct 时，这个"字段名"还可能是**方法名**（`h.track_row_like`
+                //   取方法值，2026-10-28 §3）⇒ 记一次方法名通配引用；不记则活方法被当死代码
+                //   剪掉，取到的是 null（静默错值 ✗）。
+                if (fname && fname[0] &&
+                    !(ot && (ot->kind == TYPE_ARRAY || ot->kind == TYPE_DICT ||
+                             ot->kind == TYPE_STRING))) {
+                    dce_note_method_ref(NULL, fname);
+                }
                 int ireg = reg_alloc(gen);
                 int c = make_constant(gen, val_obj((Object*)str_copy(
                                           fname ? fname : "", fname ? (int)strlen(fname) : 0)));

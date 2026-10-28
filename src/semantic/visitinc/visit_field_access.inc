@@ -172,7 +172,24 @@
                             }
                         }
 
+                        // ★ 成员方法当**函数值**取（2026-10-28，docs/待修_编译与语义问题.md §3）：
+                        //   名字不在字段表里、但**是本 struct 的方法** ⇒ 放行（不是笔误）。
+                        //   `field_index` 保持 -1 ⇒ codegen 的 AST_FIELD_ACCESS 走**通用 OP_INDEX**
+                        //   （obj + "名字" 常量），运行期 VM 对 struct + 字符串下标会按方法名兜底，
+                        //   返回**已绑定 self** 的 bound closure ⇒ `h.track_row_like` 是一等函数值 ✓。
+                        //   判据与 infer 侧那条（semantic_type.c 的"既非字段也非方法才报"）**同一来源**：
+                        //   struct 定义的 type_decl_ast 里的方法表 ✓
+                        int name_is_method = 0;
                         if (!field_found) {
+                            // 判据走**统一入口**（func_table 的 "Struct::method" + struct 定义
+                            //   的方法表）—— 跨模块也成立：导入模块时方法占位符按同一键注册 ✓
+                            //   ⚠ 不能只看 type_decl_ast：struct_sym 常常是**接收者变量**的符号
+                            //     （`h.x` 里的 `h`），它的 type_decl_ast 是 NULL ⇒ 方法表不在那儿；
+                            //     跨模块 struct 的 AST_STRUCT_DEF 也不在本编译单元 ⇒ 判不出来 ✗
+                            name_is_method = semantic_struct_has_method(s, obj_type->struct_name, field_name);
+                        }
+
+                        if (!field_found && !name_is_method) {
                             // ★ 文案必须与**类型推断那条检查**（semantic_type.c 的 AST_FIELD_ACCESS /
                             //   AST_INDEX）**一字不差** ✓ —— 两处覆盖的是**不同路径**（访问器这条看不见
                             //   "裸字段名"✗，推断那条才看得见 ✓），但同一处错会**同时命中两边** ✗

@@ -1,0 +1,113 @@
+// test_method_value.leno —— 成员方法当**一等函数值**用（docs/待修_编译与语义问题.md §3 的回归用例）
+//
+// 修前：`hk.onTrack = track_row_like` 报「未定义的变量: track_row_like」（看不出它其实是方法），
+//   只能写成 `hk.onTrack = func(Song s2, Button b) { track_row_like(s2, b) }` 这层壳。
+// 修后：方法体内裸名直接可用 —— 编译器改写成 `self["方法名"]`，运行期 OP_INDEX 在 struct 上
+//   按方法名兜底并返回**已绑定 self** 的 bound closure（vm/vminc/run/07_collections.inc）；
+//   外部写 `obj.方法名` 同样可用；顶层裸名（无处绑 self）仍报错，但文案说清了两条出路。
+//
+// 本文件钉：
+//   ① 裸名取方法值 → 赋给 `func(...):void` 字段 → 通过字段调用（§3 的原始场景）
+//   ② 带返回值 / 带默认参数的方法值
+//   ③ 显式 `obj.方法名`（同模块 + 跨模块）
+//   ④ 方法值当实参 / 存进 `Array[func(...)]` / 由方法返回
+//   ⑤ 字段与方法同名时**字段优先**（取值位置的既有取向，别被本次改动带偏）
+//   ⑥ 顶层裸写方法名 ⇒ 编译期明确报错（"它是成员方法"）
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+import "method_value_mod.leno" as mvm; use mvm.(ModSong, ModPlayer)
+
+struct Song {
+    string title = ""
+}
+
+struct Player {
+    func(Song):void onPlay
+    func(Song, int):string label
+
+    func play(Song s) { print("play " + s.title + "\n") }
+    func tag(Song s, int n) { return s.title + "#" + _str(n) }
+    func greet(Song s, string prefix = "hi ") { print(prefix + s.title + "\n") }
+
+    func setup() {
+        onPlay = play                    // ① 裸名（自动 self["play"]）
+        label = tag                      // ② 有返回值的方法
+        var g = greet                    // ② 带默认参数的方法值
+        var s = new Song()
+        s.title = "setup"
+        g(s, "yo ")
+    }
+
+    func viaLocal(): string {            // ④ 方法值在局部量里再调用
+        var f = label
+        var s = new Song()
+        s.title = "local"
+        return f(s, 1)
+    }
+}
+
+// ⑤ 字段与方法同名：取值位置必须取**字段**
+struct Shadowed {
+    string name = "field"
+    func name_other(): string { return "method" }
+    func probe(): string { return name }     // 裸名 name 是字段，不是方法
+}
+
+// ④ 方法值当实参
+func apply(func(Song, int):string f, Song s): string {
+    return f(s, 3)
+}
+
+main() {
+    var p = new Player()
+    p.setup()
+
+    var s = new Song()
+    s.title = "m"
+    p.onPlay(s)                                     // ① 通过函数类型字段调用绑定方法
+    assert_eq(p.label(s, 2), "m#2", "② 方法值作为普通调用（p.label(...) 仍是方法调用）")
+    assert_eq(p.viaLocal(), "local#1", "④ 方法值存局部量后调用")
+
+    p.onPlay = p.play                               // ③ 显式取方法值（同模块）
+    s.title = "explicit"
+    p.onPlay(s)
+
+    assert_eq(apply(p.tag, s), "explicit#3", "④ 方法值当实参传")
+    Array[func(Song, int):string] arr = [p.tag]
+    assert_eq(arr[0](s, 9), "explicit#9", "④ 方法值存进 Array[func(...)]")
+
+    // ③ 跨模块：模块内部裸名（ModPlayer.setup）+ 调用方显式取方法值
+    var mp = new ModPlayer()
+    var ms = new ModSong()
+    ms.title = "cross"
+    mp.setup()
+    mp.onPlay(ms)
+    mp.onPlay = mp.play
+    ms.title = "cross2"
+    mp.onPlay(ms)
+
+    // ⑤ 字段优先
+    var sh = new Shadowed()
+    assert_eq(sh.probe(), "field", "⑤ 字段与方法同名时，取值位置取字段")
+
+    // ⑥ 顶层裸写方法名 ⇒ 编译期报错，且文案点明"它是成员方法"
+    var work = dirs.join(_tmpdir(), "leno_method_value")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+    var bad = dirs.join(work, "bare_method.leno")
+    files.write(bad, @"struct Hk {
+    func track_row_like(int n) { }
+}
+
+main() {
+    var cb = track_row_like
+    cb(1)
+}
+")
+    ce.expect_error(bad, "⑥ 顶层裸写方法名要报错并说明它是成员方法",
+        "成员方法", 6)
+
+    print("test_method_value passed")
+}

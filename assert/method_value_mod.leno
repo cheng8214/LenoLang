@@ -1,0 +1,11 @@
+// method_value_mod.leno —— test_method_value.leno 的跨模块 fixture
+//   ⚠ 文件名不以 test_ 开头 ⇒ run_tests.leno 不会把它当用例跑（见 helpers/compiler.leno 的说明）
+export struct ModSong {
+    string title = ""
+}
+
+export struct ModPlayer {
+    func(ModSong):void onPlay
+    func play(ModSong s) { print("mod play " + s.title + "\n") }
+    func setup() { onPlay = play }          // 模块内部裸名取方法值（自动绑 self）
+}

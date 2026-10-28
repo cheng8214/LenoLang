@@ -380,9 +380,23 @@
                     // ★ Q3：同一条 for 的循环体里再引用这个名字 ⇒ 上面已定向报过一次，
                     //   这里**静默**，不再刷「未定义变量 + 拼写建议」（级联噪音）。
                 } else {
-                    const char* hint = get_similar_name_hint(s->current, ast->u.var.name);
-                    error_add_at_fmt(ERR_UNDEFINED_VAR, ast->line, ast->column,
-                                     "未定义的变量: %s%s", ast->u.var.name, hint);
+                    // ★ 2026-10-28（docs/待修_编译与语义问题.md §3）：裸写的名字其实是**本文件某个
+                    //   struct 的方法** ⇒ 明说"它是方法 + 两条出路"，不再报"未定义的变量"了事
+                    //   （那句话让人以为名字拼错了 —— 实测定位花了 20 分钟 ✗）。
+                    //   · 方法体内直接写方法名：编译器自动改写成 `self["名字"]`（绑好接收者 ✓）
+                    //   · 方法体外必须给接收者：`对象.名字`
+                    const char* owner = semantic_method_owner(s, ast->u.var.name);
+                    if (owner) {
+                        error_add_at_fmt(ERR_UNDEFINED_VAR, ast->line, ast->column,
+                            "未定义的变量: %s —— 它是 struct '%s' 的**成员方法**，不能脱离接收者当值用。"
+                            "在方法体内直接写方法名即可（编译器自动绑定 self）；"
+                            "方法体外请写 `对象.%s`",
+                            ast->u.var.name, owner, ast->u.var.name);
+                    } else {
+                        const char* hint = get_similar_name_hint(s->current, ast->u.var.name);
+                        error_add_at_fmt(ERR_UNDEFINED_VAR, ast->line, ast->column,
+                                         "未定义的变量: %s%s", ast->u.var.name, hint);
+                    }
                 }
             } else if (sym->is_initialized == 2) {
                 // 变量正在初始化中，不允许引用自身

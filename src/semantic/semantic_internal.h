@@ -21,6 +21,13 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast);
 void semantic_poison_expr(Ast* ast);
 TypeInfo* infer_method_return_type(Semantic* s, TypeInfo* obj_type, const char* method_name);
 TypeInfo* infer_field_type(Semantic* s, TypeInfo* obj_type, const char* field_name, int* out_field_index);
+// 「struct 有没有这个方法」的唯一判据（2026-10-28）：func_table 的 "Struct::method"（含跨模块
+//   占位符）+ struct 定义 AST 的 methods[]。给"成员方法当函数值取"那类检查用
+//   （`h.track_row_like` 在访问器与推断两条路上都要判，见 docs/待修_编译与语义问题.md §3）
+int semantic_struct_has_method(Semantic* s, const char* struct_name, const char* method_name);
+// 报错增强用：`name` 是本编译单元里哪个 struct 的方法名（没有 ⇒ NULL）。
+//   给"裸写成员方法名当值"的未定义变量诊断补一条能看懂的出路说明（§3）
+const char* semantic_method_owner(Semantic* s, const char* name);
 
 // ★ 多类型 case（`case is A, B { … }`）里访问字段 ⇒ 编译期拦下（实现见 semantic_type.c ✓）
 //   为什么：窄化只按**第一个类型** ⇒ 字段下标按它取；下标在各类型间不一致时，运行期会

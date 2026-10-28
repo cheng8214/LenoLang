@@ -168,6 +168,43 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
             }
             // 如果已经转换为字段访问，跳过常量检查
             if (ast->kind == AST_FIELD_ACCESS) break;
+            // ★ 成员方法当**函数值**取（2026-10-28，docs/待修_编译与语义问题.md §3）：
+            //   方法体内裸写本 struct 的**方法名**（不是调用，见 AST_CALL 分支；也不是字段，
+            //   上面那段已处理并 break）⇒ 改写成 `self["方法名"]`（AST_INDEX + 字符串下标）。
+            //   为什么这样能拿到一等函数值：运行期 VM 的 OP_INDEX 对 **struct + 字符串下标**
+            //   会按方法名兜底查找，并返回**已绑定 self** 的 bound closure
+            //   （见 vm/vminc/run/07_collections.inc 的 struct 分支）⇒ `hk.onTrack = track_row_like`
+            //   直接可用，不必再写 `func(Song s2, Button b) { track_row_like(s2, b) }` 这层壳。
+            //   为什么必须在这里做：裸名既不在字段表、也不在常量表 ⇒ 此前落到
+            //   「未定义的变量: track_row_like」（名字看着"不存在"，完全看不出它其实是本 struct
+            //   的方法 —— 用户为定位这条花了 20 分钟 ✗）。
+            //   ⚠ 顺序：**字段优先**（上面命中即 break）。裸**调用**是"方法优先"（见 AST_CALL 分支），
+            //     两者取向不同是刻意的：`x = cb` 这种取值位置，字段 cb 才是作者想要的那个值 ✓。
+            //   ⚠ 只认 method_names（本 struct 的方法），不查全局函数表 —— 全局函数按裸名本来就能解析 ✓
+            if (struct_name && method_names && method_count > 0) {
+                for (int i = 0; i < method_count; i++) {
+                    if (!method_names[i] || strcmp(ast->u.var.name, method_names[i]) != 0) continue;
+                    int line = ast->line;
+                    char* saved_method_name = strdup(method_names[i]);
+                    // 先释放 AST_VAR 的字段，再改 kind（u 是 union：改完就再也读不到 u.var ✓）
+                    free(ast->u.var.name);
+                    if (ast->u.var.ref.name) free(ast->u.var.ref.name);
+                    ast->kind = AST_INDEX;
+                    Ast* self_node = ast_new(AST_VAR, line);
+                    self_node->u.var.name = strdup("self");
+                    self_node->u.var.ref.name = strdup("self");
+                    self_node->u.var.ref.kind = SYM_PARAM;   // self 是第 0 个形参
+                    self_node->u.var.ref.index = 0;
+                    ast->u.index.obj = self_node;
+                    Ast* name_str = ast_new(AST_STRING, line);
+                    name_str->u.string.value = saved_method_name;
+                    name_str->u.string.len = (int)strlen(saved_method_name);
+                    ast->u.index.index = name_str;
+                    break;
+                }
+            }
+            // 已改写成方法值 ⇒ 不再当关联常量处理
+            if (ast->kind == AST_INDEX) break;
             // 检查是否是关联常量名
             if (const_names && const_count > 0 && struct_name) {
                 for (int i = 0; i < const_count; i++) {
