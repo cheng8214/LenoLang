@@ -1,0 +1,319 @@
+// pages/discover.leno — 发现页（推荐歌单卡片墙 + Tab）与歌单详情页
+//
+// 拆分自 `aria.leno` 的 `curNav == 5` / `curNav == 6` 两段。
+// 和 `pages/home.leno` 同一套思路：`Player` 的方法不能跨文件拆 ⇒ 页面构建变纯函数，
+// 需要的状态/回调由调用方打包进 `DiscoverCtx` / `PlaylistCtx` 传进来 ✓
+import "SDL3" as SDL3
+import "../ui_kit.leno" as ui
+import "../cards.leno" as cardlib    // ⚠ 别名别叫 `cards`：DiscoverCtx 里有个同名字段，会把模块遮蔽 ✗
+import "../page_widgets.leno" as pw
+import "../row_view.leno" as rv
+import "../../music_data.leno" as data
+use SDL3.(VBox, HBox, Label, Button, ImageView, AnchorBox, ScrollView, Table,
+          TabControl, Canvas, Renderer, Color, Widget)
+use data.Song
+use cardlib.(CardSize, CardHooks)
+use rv.RowHooks
+
+// 颜色（与 aria.leno 同值；全部页面搬完再统一收到 theme 模块）
+const Color TXT = #35262BFF
+const Color TXT_DIM = #77646DFF
+const Color TXT_MID = #6B5B63FF
+const Color ACCENT = #E76F9BFF
+const Color LINE = #E8D5DEFF
+const Color TRANS = #00000000
+
+// ==================== 发现页 ====================
+export struct DiscoverCtx {
+    CardSize cardSize
+    CardHooks hooks
+    float pad = 18.0
+    int tab = 0                               // 0=精选 / 1=新歌速递 / 2=热门歌手
+    Array[Array[string]] cards = []           // [id, 名称, 本地封面, 播放量, 曲目数, 作者]
+    bool loading = false                      // 推荐歌单加载中
+    Array[Song] newSongs = []
+    bool newLoading = false                   // 新歌加载中（首页那条线程）
+    func(string, string, string):void onOpenPlaylist = null   // (歌单id, 名称, 封面)
+    func(int):void onTab = null
+    func(string):void onNotice = null          // 底栏提示
+}
+
+// 整页：标题行（+ 导入按钮）+ Tab（精选 / 新歌速递 / 热门歌手）
+export func build_page(DiscoverCtx c): VBox {
+    VBox page = SDL3.createVBox({x: 0, y: 0, w: 900, h: 500,
+                                 pad_x: c.pad, pad_y: 6, spacing: 8})
+    // 标题行：左「发现好音乐」+ 右「导入歌单」
+    HBox hd = SDL3.createHBox({x: 0, y: 0, w: 900, h: 36, pad_x: 0, pad_y: 0, spacing: 10})
+    hd.add(ui.lbl("发现好音乐", 25, TXT, true), {grow: 0, shrink: 0, align: 1})
+    hd.add(SDL3.createLabel({text: ""}), {grow: 1, shrink: 1, align: 1})
+    Button imp = SDL3.createButton({text: "导入歌单", font_size: 12, w: 92, h: 30, radius: 15,
+                                    bg_color: #FFFFFFB4, hover_color: #FFFFFFFF,
+                                    border_color: LINE, text_color: TXT, padding: 12.0,
+                                    tip: "从本地文件夹 / 其它平台导入"})
+    imp.on_click(func() {
+        if c.onNotice != null { c.onNotice("导入歌单：下一步支持（本地文件夹 / 其它平台链接）") }
+    })
+    hd.add(imp, {grow: 0, shrink: 0, basis: 92, align: 1})
+    page.add(hd, {grow: 0, shrink: 0, basis: 36, align: 3})
+    page.add(ui.lbl("精选歌单 · 每天更新", 11, TXT_DIM, false),
+             {grow: 0, shrink: 0, basis: 18, align: 3})
+
+    // 标签栏**不铺底**（bar_color 透明）+ 胶囊圆角（tab_radius = tab_h/2）
+    TabControl tabs = SDL3.createTabControl({x: 0, y: 0, w: 900, h: 420,
+                                            tabs: ["精选", "新歌速递", "热门歌手"],
+                                            tab_h: 34, font_size: 13.5,
+                                            bar_color: TRANS, tab_color: TRANS,
+                                            active_color: #F7D3E0FF, active_text_color: ACCENT,
+                                            text_color: TXT_MID, accent_color: ACCENT,
+                                            tab_radius: 17.0, underline: false,
+                                            bg_color: TRANS, border: false,
+                                            border_color: TRANS,
+                                            active: c.tab})
+    // 记住当前页：否则页面一重建就跳回「精选」✗
+    tabs.on_change(func(int ti) { if c.onTab != null { c.onTab(ti) } })
+
+    float cwAll = _float(c.cardSize.content_w() - _int(c.pad) * 2)
+
+    // ① 精选：推荐歌单（6 列，超出可滚）
+    VBox pg0 = SDL3.createVBox({x: 0, y: 0, w: cwAll, h: 420, pad_x: 0, pad_y: 6, spacing: 12})
+    if c.cards.len() == 0 {
+        if c.loading {
+            pg0.add(pw.loading_row("正在加载推荐歌单…", cwAll), {grow: 0, shrink: 0, basis: 40, align: 3})
+        } else {
+            pg0.add(ui.lbl("还没有推荐 · 检查网络后重进本页", 12, TXT_DIM, false),
+                    {grow: 0, shrink: 0, basis: 30, align: 3})
+        }
+    } else {
+        int cols = 6
+        float gapc = 14.0
+        float cwp = (cwAll - gapc * _float(cols - 1)) / _float(cols)
+        float rowHp = cwp + 48.0            // 卡片高 = 封面宽 + 48（与 pl_card 内部那笔账一致 ✓）
+        int i = 0
+        while i < c.cards.len() {
+            HBox rowp = SDL3.createHBox({x: 0, y: 0, w: cwAll, h: rowHp,
+                                         pad_x: 0, pad_y: 0, spacing: gapc})
+            for 0 : cols - 1 to ci2 {
+                int idx = i + ci2
+                if idx >= c.cards.len() {
+                    rowp.add(SDL3.createHBox({x: 0, y: 0, w: cwp, h: rowHp,
+                                              pad_x: 0, pad_y: 0, spacing: 0}),
+                             {grow: 0, shrink: 0, basis: cwp, align: 3})
+                } else {
+                    rowp.add(pl_card(c.cards[idx], cwp, c.onOpenPlaylist),
+                             {grow: 0, shrink: 0, basis: cwp, align: 3})
+                }
+            }
+            pg0.add(rowp, {grow: 0, shrink: 0, basis: rowHp, align: 3})
+            i = i + cols
+        }
+    }
+    tabs.setPageLayout(0, scroll_wrap(pg0, cwAll))
+
+    // ② 新歌速递：复用首页已拉的 newSongs
+    VBox pg1 = SDL3.createVBox({x: 0, y: 0, w: cwAll, h: 420, pad_x: 0, pad_y: 6, spacing: 12})
+    if c.newSongs.len() == 0 {
+        if c.newLoading {
+            pg1.add(pw.loading_row("正在加载新歌…", cwAll), {grow: 0, shrink: 0, basis: 40, align: 3})
+        } else {
+            pg1.add(ui.lbl("暂无新歌", 12, TXT_DIM, false), {grow: 0, shrink: 0, basis: 30, align: 3})
+        }
+    } else {
+        // ⚠ 卡宽/卡高用 `cardSize` 那套（与首页/虚拟网格一致）：
+        //   `wide_card` 是按"封面在上、标题/艺人在下、图标一行"设计的，
+        //   随手压到 155 宽会把它挤成竖长条 ✗
+        int cols1 = c.cardSize.cols()
+        float cwn = _float(c.cardSize.card_cw(c.cardSize.shelf_avail()))
+        float hn = _float(c.cardSize.h_of(_int(cwn)))
+        int j = 0
+        while j < c.newSongs.len() and j < cols1 * 3 {
+            HBox rown = SDL3.createHBox({x: 0, y: 0, w: cwAll, h: hn,
+                                         pad_x: 0, pad_y: 0, spacing: 14.0})
+            for 0 : cols1 - 1 to cj {
+                int idx2 = j + cj
+                if idx2 < c.newSongs.len() {
+                    rown.add(cardlib.wide_card(c.newSongs[idx2], _int(cwn), false, c.cardSize, c.hooks),
+                             {grow: 0, shrink: 0, basis: cwn, align: 3})
+                }
+            }
+            pg1.add(rown, {grow: 0, shrink: 0, basis: hn, align: 3})
+            j = j + cols1
+        }
+    }
+    tabs.setPageLayout(1, scroll_wrap(pg1, cwAll))
+
+    // ③ 热门歌手：待接歌手接口
+    VBox pg2 = SDL3.createVBox({x: 0, y: 0, w: cwAll, h: 420, pad_x: 0, pad_y: 6, spacing: 8})
+    pg2.add(ui.lbl("热门歌手 · 即将上线", 12, TXT_DIM, false), {grow: 0, shrink: 0, basis: 30, align: 3})
+    tabs.setPageLayout(2, pg2)
+
+    page.add(tabs, {grow: 1, shrink: 1, align: 3})
+    return page
+}
+
+// Tab 页内容**不会自己滚** ⇒ 每页外面套一层固定高的 ScrollView
+func scroll_wrap(VBox inner, float w): VBox {
+    VBox wrap = SDL3.createVBox({x: 0, y: 0, w: w, h: 380, pad_x: 0, pad_y: 0, spacing: 0})
+    ScrollView sv = SDL3.createScrollView({x: 0, y: 0, w: w, h: 380, smooth: true,
+                                           bg_color: TRANS, border: false,
+                                           bar_color: #E9CBD6FF})
+    sv.set_content(inner)
+    wrap.add(sv, {grow: 1, shrink: 1, align: 3})
+    return wrap
+}
+
+// 一张歌单卡片：封面（圆角）+ 左上播放量徽标 + 标题 + 曲目数
+//   `c` = [id, 名称, 本地封面, 播放量, 曲目数, 作者]
+export func pl_card(Array[string] c, float cw, func(string, string, string):void onOpen): VBox {
+    string nm = if c.len() > 1 then c[1] else ""
+    string cp = if c.len() > 2 then c[2] else ""
+    string plays = if c.len() > 3 then c[3] else "0"
+    string tot = if c.len() > 4 then c[4] else "0"
+    // 高度必须按封面宽算：封面 cw + 间距 6 + 标题 20 + 间距 6 + 副标题 16
+    VBox card = SDL3.createVBox({x: 0, y: 0, w: cw, h: cw + 48.0,
+                                 pad_x: 0, pad_y: 0, spacing: 6})
+    string cv = if cp != "" then cp else ui.ico("music.png")
+    AnchorBox cov = SDL3.createAnchorBox({x: 0, y: 0, w: cw, h: cw})
+    string pid0 = if c.len() > 0 then c[0] else ""
+    // 封面用 Button：点它进歌单详情（ImageView 没有点击回调 ✓）
+    Button covBtn = SDL3.createButton({image_path: cv, image_size: cw, w: cw, h: cw, radius: 12,
+                                       bg_color: #EFE3EDFF, hover_color: #F7E9F2FF,
+                                       padding: 0.0, border: false, shadow: false, tip: nm})
+    covBtn.on_click(func() { if onOpen != null { onOpen(pid0, nm, cp) } })
+    cov.add(covBtn, {left: 0, top: 0, w: cw, h: cw})
+    // 左上角播放量徽标：半透明黑胶囊 + 白字
+    HBox badge = SDL3.createHBox({x: 0, y: 0, w: 60, h: 18, pad_x: 8, pad_y: 0, spacing: 0,
+                                  bg_color: #1E183C66, bg_radius: 9, justify: 1})
+    badge.add(ui.lbl(pw.fmt_wan(plays), 9.5, #FFFFFFFF, false), {grow: 0, shrink: 0, align: 1})
+    cov.add(badge, {left: 8, top: 8, w: 60, h: 18})
+    card.add(cov, {grow: 0, shrink: 0, basis: cw, align: 3})
+    card.add(ui.lblFit(nm, 12.5, TXT, false), {grow: 0, shrink: 0, basis: 20, align: 3})
+    card.add(ui.lblFit(_str(_int(tot)) + " 首", 10.5, TXT_DIM, false),
+             {grow: 0, shrink: 0, basis: 16, align: 3})
+    return card
+}
+
+// ==================== 歌单详情 ====================
+export struct PlaylistCtx {
+    CardSize cardSize
+    float pad = 18.0
+    string title = ""
+    string cover = ""
+    bool loading = false
+    Array[Song] songs = []
+    Array[Array[string]] rows = []       // [序号占位, 行控件占位, 专辑, 时长]
+    func(Song):void onPlay = null
+    func():void onPlayAll = null
+    func(Song):bool isLiked = null
+    func(Song):void onLike = null
+    func(Song, Button):void onTrack = null
+    func(Song):void onReveal = null
+}
+
+export func build_playlist_page(PlaylistCtx c): VBox {
+    VBox page = SDL3.createVBox({x: 0, y: 0, w: 900, h: 500,
+                                 pad_x: c.pad, pad_y: 6, spacing: 8})
+    // 头部：左封面 96 + 右（歌单名 / 曲目数 / 播放全部）
+    HBox ph = SDL3.createHBox({x: 0, y: 0, w: 900, h: 104, pad_x: 0, pad_y: 0, spacing: 16})
+    string pcv = if c.cover != "" then c.cover else ui.ico("music.png")
+    ph.add(SDL3.createImageView({w: 96, h: 96, radius: 12, image_path: pcv,
+                                 bg_color: #EFE3EDFF, tip: c.title}),
+           {grow: 0, shrink: 0, basis: 96, align: 1})
+    VBox pinfo = SDL3.createVBox({x: 0, y: 0, w: 600, h: 100, pad_x: 0, pad_y: 6, spacing: 8})
+    pinfo.add(ui.lblFit(c.title, 22, TXT, true), {grow: 0, shrink: 0, basis: 32, align: 3})
+    pinfo.add(ui.lbl(_str(c.songs.len()) + " 首" + (if c.loading then " · 正在加载…" else ""),
+                     11.5, TXT_DIM, false), {grow: 0, shrink: 0, basis: 18, align: 3})
+    HBox pbtn = SDL3.createHBox({x: 0, y: 0, w: 400, h: 34, pad_x: 0, pad_y: 0, spacing: 10})
+    Button pAll = SDL3.createButton({text: "播放全部", font_size: 12.5, w: 100, h: 32, radius: 16,
+                                     bg_color: ACCENT, hover_color: #F0709EFF,
+                                     text_color: #FFFFFFFF, border: false, shadow: false})
+    pAll.on_click(func() { if c.onPlayAll != null { c.onPlayAll() } })
+    pbtn.add(pAll, {grow: 0, shrink: 0, basis: 100, align: 1})
+    pinfo.add(pbtn, {grow: 0, shrink: 0, basis: 34, align: 3})
+    ph.add(pinfo, {grow: 1, shrink: 1, align: 1})
+    page.add(ph, {grow: 0, shrink: 0, basis: 104, align: 3})
+
+    float cwAll = _float(c.cardSize.content_w() - _int(c.pad) * 2)
+    if c.loading and c.rows.len() == 0 {
+        page.add(pw.loading_row("正在加载歌单…", cwAll), {grow: 0, shrink: 0, basis: 40, align: 3})
+        page.add(SDL3.createLabel({text: ""}), {grow: 1, shrink: 1, align: 3})
+        return page
+    }
+
+    int rowH = 58
+    float tw = _float(c.cardSize.content_w() - 12)
+    Array[HBox] rowV = []
+    Array[HBox] numL = []
+    Array[Canvas] numI = []
+    RowHooks hk = new RowHooks()
+    hk.isLiked = func(Song sg2): bool { return if c.isLiked != null then c.isLiked(sg2) else false }
+    hk.onLike = func(Song sg2) { if c.onLike != null { c.onLike(sg2) } }
+    hk.onTrack = func(Song sg2, Button b) { if c.onTrack != null { c.onTrack(sg2, b) } }
+    hk.revealIcon = "download.png"
+    hk.revealTip = "下载到本地"
+    hk.onReveal = func(Song sg2) { if c.onReveal != null { c.onReveal(sg2) } }
+    hk.showCover = false           // 歌单接口没给每首封面 ⇒ 不要占位音符图 ✓
+
+    for 0 : c.songs.len() - 1 to i {
+        Song si = c.songs[i]
+        HBox nb = SDL3.createHBox({x: 0, y: 0, w: 60, h: _float(rowH),
+                                   pad_x: 0, pad_y: 0, spacing: 0, justify: 1})
+        nb.add(ui.lbl(if i + 1 < 10 then "0" + _str(i + 1) else _str(i + 1), 12.5, TXT_DIM, false),
+               {grow: 0, shrink: 0, basis: 20, align: 1})
+        numL.add(nb)
+        Canvas pv = SDL3.createCanvas({x: 0, y: 0, w: 26, h: 26, pad: 0,
+                                       bg_color: TRANS, border: false})
+        int ri = i
+        pv.on_draw(func(Renderer rr, float ox, float oy, float cw2, float ch2) {
+            float d = 26.0
+            if d > cw2 { d = cw2 }
+            if d > ch2 { d = ch2 }
+            float bx0 = ox + (cw2 - d) / 2.0
+            float by0 = oy + (ch2 - d) / 2.0
+            rr.setColor(#DCCBF2FF)
+            rr.fillRoundedRect(bx0, by0, d, d, d / 2.0)
+            rr.setColor(ACCENT)
+            float s3 = d * 0.30
+            float px0 = bx0 + d / 2.0 - s3 * 0.38
+            float py0 = by0 + d / 2.0 - s3 * 0.72
+            rr.drawLine(px0, py0, px0, py0 + s3 * 1.44)
+            rr.drawLine(px0, py0, px0 + s3 * 1.24, py0 + s3 * 0.72)
+            rr.drawLine(px0, py0 + s3 * 1.44, px0 + s3 * 1.24, py0 + s3 * 0.72)
+        })
+        pv.on_click(func(float cx2, float cy2, int btn2) {
+            if btn2 == 1 and c.onPlay != null and ri < c.songs.len() { c.onPlay(c.songs[ri]) }
+        })
+        numI.add(pv)
+        rowV.add(rv.song_row(si, _float(rowH), hk))
+    }
+
+    Table bt = SDL3.createTable({x: 0, y: 0, w: tw, h: 420.0,
+                                 item_h: rowH, header_h: 32, font_size: 13,
+                                 headers: ["", "歌曲", "专辑", "时长"],
+                                 row_numbers: false,
+                                 col_ratios: [0.07, 0.59, 0.21, 0.09],
+                                 aligns: [1, 0, 0, 1], header_aligns: [1, 0, 0, 1],
+                                 sortable: false, zebra: false, resizable: false,
+                                 text_color: TXT,
+                                 bg_color: TRANS, header_color: TRANS,
+                                 row_radius: 12, row_pad_x: 10,
+                                 sel_color: #E6DCF7CC, hover_color: #EDE7FBD9, solid_sel: false,
+                                 sep_color: TRANS, border: false,
+                                 empty_text: "这个歌单还没有歌"})
+    bt.set_rows(c.rows)
+    bt.set_cell_builder(func(int row, int col, float cw, float ch, bool hovered): Widget? {
+        if row < 0 or row >= rowV.len() { return null }
+        if col == 0 {
+            Widget? nw = null
+            if hovered { nw = numI[row] } else { nw = numL[row] }
+            return nw
+        }
+        if col == 1 { return rowV[row] }
+        return null
+    })
+    bt.set_cell_interactive(true)
+    bt.on_dbl_click(func(int row, int col) {
+        if c.onPlay != null and row >= 0 and row < c.songs.len() { c.onPlay(c.songs[row]) }
+    })
+    page.add(bt, {grow: 1, shrink: 1, align: 3})
+    return page
+}

@@ -1,0 +1,69 @@
+// page_widgets.leno — 页面级小工具（纯函数，不碰 Player 状态）
+//
+// 拆分 `aria.leno` 的第一步：先把"与界面状态无关"的格式化/常量挪出来，
+// 后面每个页面模块（pages/*.leno）都能直接用，不必各自复制一份。
+//
+// 规矩：这里的函数**只依赖参数与标准库**，不许引用 Player 的字段或方法 ✓
+import strings
+import "SDL3" as SDL3
+import "../music_data.leno" as data
+use data.Song
+use SDL3.(HBox, Spinner, Label, Color)
+
+// 颜色：与 aria.leno 的 C_TXT / C_TXT_DIM / C_ACCENT 同值
+//   （本轮各模块自带一份，等全部页面搬完再统一收到 theme 模块，避免中途几百处引用一起改 ✗）
+const Color TXT_MID = #6B5B63FF
+const Color ACCENT = #E76F9BFF
+
+// 播放量：3689446 → "368.9万"（与参考图 "230.9万" 同一口径 ✓）
+export func fmt_wan(string v): string {
+    int n = _int(v)
+    if n >= 10000 { return _str(n / 10000) + "." + _str((n % 10000) / 1000) + "万" }
+    return _str(n)
+}
+
+// "03:45" → 225 秒（算总时长用；解析不了就 0）
+export func dur_secs(string d): int {
+    int p = strings.byte_find(d, ":", 0)
+    if p < 0 { return 0 }
+    int m = _int(strings.byte_slice(d, 0, p - 1))
+    int s = _int(strings.byte_slice(d, p + 1, d.len() - 1))
+    return m * 60 + s
+}
+
+// 卡片墙拉哪些榜：挑 12 个常用榜（`kuwo.bangmenu()` 里一共 31 个，全拉要 31 个请求）
+//   每榜只要前 4 首 ⇒ 12 个请求串行约 5 秒；再多就把首屏拖慢了
+export func rank_bids(): Array[string] {
+    return ["16", "93", "17", "104", "182", "22",
+            "183", "184", "242", "278", "26", "64"]
+}
+
+export func rank_names(): Array[string] {
+    return ["热歌榜", "飙升榜", "新歌榜", "华语榜", "粤语榜", "欧美榜",
+            "日语榜", "韩语榜", "电音榜", "古风榜", "经典怀旧", "影视金曲"]
+}
+
+// 「正在加载…」行：Spinner + 文案（与首页 `loading_row` 同一套观感 ✓）
+//   `w` 传内容区宽度（原来直接从 cardSize 取，抽走后由调用方给）
+export func loading_row(string text, float w): HBox {
+    HBox row = SDL3.createHBox({x: 0, y: 0, w: w, h: 40,
+                                pad_x: 0, pad_y: 0, spacing: 12, justify: 1})
+    row.add(SDL3.createSpinner({size: 22, thickness: 2.5, color: ACCENT,
+                                track_color: #F6DCE5FF, running: true}),
+            {grow: 0, shrink: 0, basis: 22, align: 1})
+    row.add(SDL3.createLabel({text: text, font_size: 12.5, text_color: TXT_MID}),
+            {grow: 0, shrink: 0, align: 1})
+    return row
+}
+
+// 搜索过滤（关键词空 = 全通过 ✓）
+export func match_items(Array[Song] src, string filter): Array[Song] {
+    if filter == "" { return src }
+    Array[Song] out = []
+    for 0 : src.len() - 1 to i {
+        if strings.has(src[i].title, filter) or strings.has(src[i].artist, filter) {
+            out.add(src[i])
+        }
+    }
+    return out
+}

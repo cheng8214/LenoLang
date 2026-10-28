@@ -1,0 +1,150 @@
+// pages/home.leno — 首页：继续收听 / 为你推荐 / 最近添加
+//
+// 拆分自 `aria.leno` 的 `add_shelf()` + `build_content()` 里 `curNav == 0` 那一段。
+//
+// 为什么要 `HomeCtx`：`Player` 的方法不能跨文件拆（Leno 不支持 `impl` 扩展），
+// 所以页面构建变成独立函数，需要的状态/回调都由调用方打包传进来 ✓
+//   · 数据：三份歌曲列表 + loading 标志
+//   · 尺寸：`CardSize`（卡宽/列数都从它算）
+//   · 回调：`onRefresh(kind)` —— 卡片里的 ♥/播放等回调走 `CardHooks`，本来就是函数值 ✓
+import "SDL3" as SDL3
+import "../ui_kit.leno" as ui
+import "../cards.leno" as cards
+import "../page_widgets.leno" as pw
+import "../../music_data.leno" as data
+use SDL3.(VBox, HBox, Label, Button, Color)
+use data.(Song, Shelf)
+use cards.(CardSize, CardHooks)
+
+// 颜色（与 aria.leno 的 C_TXT / C_TXT_DIM / C_TXT_MID 同值；等全部页面搬完再收到 theme 模块）
+const Color TXT = #35262BFF
+const Color TXT_DIM = #77646DFF
+const Color TXT_MID = #6B5B63FF
+
+export struct HomeCtx {
+    CardSize cardSize
+    CardHooks hooks
+    int cellGap = 16
+    string filter = ""              // 搜索过滤词（"" = 不过滤）
+    Array[Song] recent = []
+    Array[Song] rec = []
+    Array[Song] nw = []
+    bool loading = false
+    int maxRecent = 8               // 「继续收听」最多放几张卡（= 当前列数）
+    func(int):void onRefresh = null // 「换一批」→ Player.refresh_section(kind)
+}
+
+// 往 target 里铺整个首页（不新建大容器，直接加到调用方的 VBox 上 ✓）
+export func build(VBox target, HomeCtx c) {
+    int colW = _int(_float(c.cardSize.content_w()))
+    int shown = 0
+
+    if c.recent.len() > 0 {
+        var r0 = new Shelf()
+        r0.title = "继续收听"
+        r0.sub = "最近播放 · " + _str(c.recent.len()) + " 首"
+        Array[Song] one = []
+        for 0 : c.recent.len() - 1 to i {
+            if one.len() >= c.maxRecent { break }
+            one.add(c.recent[i])
+        }
+        r0.items = one
+        shelf(target, r0, true, 0, c)
+        shown = shown + 1
+    }
+
+    // 推荐区：加载中只在这一段显示占位（其它分区照常 ✓）
+    if c.loading {
+        target.add(pw.loading_row("正在加载推荐…", _float(colW)),
+                   {grow: 0, shrink: 0, basis: 40, align: 3})
+        shown = shown + 1
+    } else if c.rec.len() > 0 {
+        var r1 = new Shelf()
+        r1.title = "为你推荐"
+        r1.sub = "根据最近的收听生成 · 酷我"
+        r1.items = c.rec
+        shelf(target, r1, false, 1, c)
+        shown = shown + 1
+    }
+
+    if c.nw.len() > 0 {
+        var r2 = new Shelf()
+        r2.title = "最近添加"
+        r2.sub = "酷我新歌 · 每天更新"
+        r2.items = c.nw
+        shelf(target, r2, false, 2, c)
+        shown = shown + 1
+    }
+
+    if shown == 0 {
+        target.add(ui.lbl("这里还没有内容 · 上面搜一首歌开始听", 12, TXT_DIM, false),
+                   {grow: 0, shrink: 0, basis: 30, align: 3})
+    }
+}
+
+// 一个分区：标题行（+ 右侧「换一批」）+ 内容（一行横卡 / 卡片墙）
+//   kind：0 = 不给「换一批」/ 1 = 为你推荐 / 2 = 最近添加
+//   `export`：其它页面（搜索结果 / 我喜欢 / 最近播放）也用同一个分区布局 ✓
+export func shelf(VBox target, Shelf s, bool compact, int kind, HomeCtx c) {
+    HBox head = SDL3.createHBox({x: 0, y: 0, w: 800, h: 34, pad_x: 0, pad_y: 0, spacing: 10})
+    head.add(ui.lbl(s.title, 16.5, TXT, true), {grow: 0, shrink: 0, align: 1})
+    head.add(ui.lbl(s.sub, 10.5, TXT_DIM, false), {grow: 0, shrink: 0, align: 1})
+    head.add(SDL3.createLabel({text: ""}), {grow: 1, shrink: 1, align: 1})
+    if not compact and kind > 0 and c.onRefresh != null {
+        Button swap = SDL3.createButton({text: "换一批", font_size: 11,
+                                         w: 82, h: 26, radius: 13, padding: 9.0,
+                                         bg_color: #FFFFFFB0, hover_color: #FFFFFFFF,
+                                         text_color: TXT_MID, border: false, shadow: false,
+                                         tip: if kind == 1 then "换一组推荐" else "换一批新歌"})
+        int kk = kind
+        swap.on_click(func() { c.onRefresh(kk) })
+        head.add(swap, {grow: 0, shrink: 0, basis: 82, align: 1})
+    }
+    target.add(head, {grow: 0, shrink: 0, basis: 36, align: 3})
+
+    Array[Song] items = pw.match_items(s.items, c.filter)
+    if items.len() == 0 {
+        target.add(ui.lbl("没有找到匹配的歌曲", 11.5, TXT_DIM, false),
+                   {grow: 0, shrink: 0, basis: 30, align: 3})
+        return
+    }
+
+    if compact {
+        // 继续收听：**一行铺满**，卡宽/列数与卡片墙同一套公式（不足一行就右边留白 ✓）
+        int avail0 = c.cardSize.shelf_avail()
+        int cols0 = c.cardSize.cols_of(avail0)
+        int cw0 = c.cardSize.card_cw(avail0)
+        int ch0 = c.cardSize.h_of(cw0)
+        int n0 = items.len()
+        if n0 > cols0 { n0 = cols0 }
+        HBox row = SDL3.createHBox({x: 0, y: 0, w: _float(avail0), h: _float(ch0), clip: true,
+                                    pad_x: 0, pad_y: 0, spacing: _float(c.cellGap)})
+        for 0 : n0 - 1 to i {
+            row.add(cards.wide_card(items[i], cw0, false, c.cardSize, c.hooks),
+                    {grow: 0, shrink: 0, basis: _float(cw0), align: 1})
+        }
+        target.add(row, {grow: 0, shrink: 0, basis: _float(ch0), align: 3})
+    } else {
+        // 横卡墙：列数/卡宽都来自 cols_of/card_cw ⇒ 整行铺满，行高由卡宽推
+        int avail = c.cardSize.shelf_avail()
+        int cols = c.cardSize.cols_of(avail)
+        int cw = c.cardSize.card_cw(avail)
+        int ch = c.cardSize.h_of(cw)
+        int k = 0
+        while k < items.len() {
+            HBox row = SDL3.createHBox({x: 0, y: 0, w: _float(avail), h: _float(ch), clip: true,
+                                        pad_x: 0, pad_y: 0, spacing: _float(c.cellGap)})
+            for 0 : cols - 1 to j {
+                int idx = k + j
+                if idx < items.len() {
+                    row.add(cards.wide_card(items[idx], cw, false, c.cardSize, c.hooks),
+                            {grow: 0, shrink: 0, basis: _float(cw), align: 1})
+                } else {
+                    row.add(SDL3.createLabel({text: ""}), {grow: 1, shrink: 1, align: 1})
+                }
+            }
+            target.add(row, {grow: 0, shrink: 0, basis: _float(ch), align: 3})
+            k = k + cols
+        }
+    }
+}
