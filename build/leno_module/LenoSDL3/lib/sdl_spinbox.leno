@@ -37,6 +37,9 @@ export struct SpinBox impl Widget, Themeable {
     pri Color btnColor = #DCE1EBFF     // 箭头符号色
 
     pri bool hoverUp = false, hoverDown = false, wasUp = false, wasDown = false
+    // ★ 2026-10-29 反哺：上面两个是"悬停在上下小箭头上"，缺一个"整体是否悬停"
+    //   ⇒ 单独加一个，别和它们混用（混了就分不清"悬停箭头"还是"悬停控件"）
+    pri bool hover = false
     pri bool wasFocused = false
     pri int cursor = SystemCursor.POINTER
     bool enabled = true, visible = true, _loaded = false
@@ -159,6 +162,8 @@ export struct SpinBox impl Widget, Themeable {
     // ==================== 布局接口 ====================
     func get_w(): float { return w }
     func get_h(): float { return h }
+    // ★ 2026-10-29 反哺：⚠ 语义 = 「鼠标在**整个控件**上」，不是"悬停在上下箭头"（那个是 hoverUp/hoverDown）✓
+    func is_hover(): bool { return hover }
     func get_x(): float { return x }
     func get_y(): float { return y }
     func set_pos(float px, float py) {
@@ -200,10 +205,14 @@ export struct SpinBox impl Widget, Themeable {
     // ==================== 交互 ====================
     func process(Event ev) {
         if not _loaded or not visible or not enabled {
-            hoverUp = false; hoverDown = false
+            hoverUp = false; hoverDown = false; hover = false
             return
         }
         var[float, float](mx, my) = ev.mousePos()
+        // ★ 2026-10-29 反哺：整体 hover（与 hoverUp/hoverDown 区分开 ✓）
+        if ev.isMouseMotion() or ev.isMouseButtonDown() or ev.isMouseButtonUp() {
+            hover = mx >= x and mx <= x + w and my >= y and my <= y + h
+        }
         if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
         // 弹层捕获：事件落在他人弹层范围内时，跳过自身交互（滚轮/箭头），
         // 但仍转发给内嵌 Edit——Edit 可能拥有该弹层（如右键菜单），需要接收事件。

@@ -50,6 +50,7 @@ export struct Badge impl Widget {
     //   ⇒ 可空字段 + 每次使用前判空（与 Label 的 `Font? _font`、ComboBox 的 `_edit` 同一套路 ✓）
     Label? _lbl = null
     bool _loaded = false, visible = true
+    pri bool hover = false         // ★ 2026-10-29 反哺：见 process / is_hover
 
 
     func set(Dict opts) {
@@ -110,6 +111,7 @@ export struct Badge impl Widget {
     func get_y(): float { return y }
     func get_w(): float { return _w }
     func get_h(): float { return _h }
+    func is_hover(): bool { return hover }
     func get_text(): string {
         if _lbl == null { return "" }
         return _lbl.get_text()
@@ -122,7 +124,14 @@ export struct Badge impl Widget {
     }
 
     // 不可点 ⇒ 完全不处理事件（也不因此请求重绘 ✓）
-    func process(Event ev) {}
+    // ★ 2026-10-29 反哺：补 hover 追踪 + is_hover（原来 process 是空的）
+    func process(Event ev) {
+        if not _loaded or not visible { return }
+        if ev.isMouseMotion() or ev.isMouseButtonDown() or ev.isMouseButtonUp() {
+            var[float, float](hmx, hmy) = ev.mousePos()
+            hover = hmx >= x and hmx <= x + _w and hmy >= y and hmy <= y + _h
+        }
+    }
 
     // ==================== 渲染 ====================
     func render(Renderer r) {

@@ -147,6 +147,9 @@ export struct MenuBar impl Widget, Themeable {
     pri int hoverItem = -1   // 当前展开菜单中悬停项索引，-1 无
     pri int openSub = -1     // 当前展开菜单中“已展开子菜单”的项索引，-1 无
     pri int hoverSub = -1    // 子菜单中悬停项索引，-1 无
+    // ★ 2026-10-29 反哺：上面三个是"某个标题/项被悬停"，缺一个"整条菜单栏被悬停"
+    //   ⇒ 单独加，别和它们混用（混了就分不清层次 ✓）
+    pri bool hover = false
 
     // 右击上下文菜单（复用同一套弹层/几何逻辑；与 _menus/_titles 平行存储）
     pri Array[bool]         ctxFlag = []    // 标记某条目是否为“上下文菜单”（无标题栏）
@@ -195,6 +198,9 @@ export struct MenuBar impl Widget, Themeable {
 
     // ==================== 布局接口 ====================
     func get_w(): float { return w }
+    // ★ 2026-10-29 反哺：⚠ 语义 = 「鼠标在**整条菜单栏**上」，
+    //   某个标题/项被悬停用 hoverTop / hoverItem / hoverSub ✓
+    func is_hover(): bool { return hover }
     func get_h(): float { return h }
     func get_x(): float { return x }
     func get_y(): float { return y }
@@ -582,10 +588,12 @@ export struct MenuBar impl Widget, Themeable {
     // ==================== 交互 ====================
     func process(Event ev) {
         if not _loaded { return }
-        if not visible { return }
-        if not enabled { close(); return }
+        if not visible { hover = false; return }
+        if not enabled { hover = false; close(); return }
 
         var[float, float](mx, my) = ev.mousePos()
+        // ★ 2026-10-29 反哺：整体 hover（菜单条自身被悬停；展开后的事件处理逻辑不受影响 ✓）
+        hover = mx >= x and mx <= x + w and my >= y and my <= y + h
 
         if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { close(); return }
 

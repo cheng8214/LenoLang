@@ -132,6 +132,9 @@ export struct Splitter impl Widget, Themeable {
     // ==================== 尺寸接口 ====================
     func get_w(): float { return w }
     func get_h(): float { return h }
+    // ★ 2026-10-29 反哺：⚠ 语义 = 「**悬停在分割条上**」（拖拽高亮用的就是它），
+    //   不是"鼠标在控件矩形内" ✓
+    func is_hover(): bool { return hover }
     func get_x(): float { return x }
     func get_y(): float { return y }
     func set_pos(float px, float py) { x = px; y = py }
@@ -217,6 +220,8 @@ export struct Splitter impl Widget, Themeable {
     // ==================== 交互 ====================
     func process(Event ev) {
         if not _loaded or not enabled or not visible { return }
+        // ⚠ 别在这里改 `hover`：它在本控件里的语义是「**悬停在分割条上**」（拖拽高亮靠它），
+        //   不是"鼠标在控件矩形内" ⇒ 直接暴露给 is_hover() 即可 ✓
         relayout()
 
         var[float, float](mx, my) = ev.mousePos()

@@ -123,6 +123,7 @@ export struct Calendar impl Widget {
     pri Label? arrowR = null
     pri Array[Label] lgTxt = []               // 图例文字（个数由 set_legend 决定 ✓）
     bool _loaded = false
+    pri bool hover = false         // ★ 2026-10-29 反哺：整个控件是否被悬停（见 process / is_hover）
     bool visible = true
 
     // ---- 回调（不注册就纯显示 ✓）----
@@ -386,6 +387,8 @@ export struct Calendar impl Widget {
         return _h
     }
     func set_pos(float px, float py) { x = px; y = py }
+    // ★ 2026-10-29 反哺：⚠ 语义 = 「鼠标在**整个控件**上」（日历内部还有"悬停日期格"，那个另算）✓
+    func is_hover(): bool { return hover }
     func set_size(float sw, float sh) {
         if sw > 0.0 { _w = sw; _natW = false }
         if sh > 0.0 { _h = sh; _natH = false }
@@ -395,6 +398,9 @@ export struct Calendar impl Widget {
     func process(Event ev) {
         if not _loaded or not visible { return }
         var[float, float](mx, my) = ev.mousePos()
+        // ★ 2026-10-29 反哺：整体 hover（放在各 early-return **之前**算，
+        //   否则"鼠标在控件内但没按左键"这类分支会漏掉 ✓）
+        hover = mx >= x and mx <= x + _w and my >= y and my <= y + _h
         if core.inPopupCapture(mx, my) { return }        // 弹层展开时不穿透 ✓（与 Canvas 同一守卫 ✓）
         if mx < x or mx > x + _w or my < y or my > y + _h { return }
         if ev.isMouseMotion() { core.markFrameMotion(); return }

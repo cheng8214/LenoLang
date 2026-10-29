@@ -30,6 +30,7 @@ export struct Separator impl Widget, Themeable {
     pri int alpha = DEFAULT_ALPHA
     pri float margin = 0.0       // 内缩边距（两端留白）
     bool _loaded = false, visible = true
+    pri bool hover = false         // ★ 2026-10-29 反哺：见 process / is_hover
 
 
     func set(Dict opts) {
@@ -69,13 +70,21 @@ export struct Separator impl Widget, Themeable {
     func get_y(): float { return y }
     func get_w(): float { return _w }
     func get_h(): float { return _h }
+    func is_hover(): bool { return hover }
     func set_pos(float px, float py) { x = px; y = py }
     func set_size(float sw, float sh) {
         if dir == Separator.HORIZONTAL { _w = sw; _h = _float(thickness) }
         else { _w = _float(thickness); _h = sh }
     }
 
-    func process(Event ev) {}
+    // ★ 2026-10-29 反哺：补 hover 追踪 + is_hover（原来 process 是空的，连"鼠标在不在上面"都不知道）
+    func process(Event ev) {
+        if not _loaded or not visible { return }
+        if ev.isMouseMotion() or ev.isMouseButtonDown() or ev.isMouseButtonUp() {
+            var[float, float](hmx, hmy) = ev.mousePos()
+            hover = hmx >= x and hmx <= x + _w and hmy >= y and hmy <= y + _h
+        }
+    }
 
     // ==================== 渲染 ====================
     func render(Renderer r) {

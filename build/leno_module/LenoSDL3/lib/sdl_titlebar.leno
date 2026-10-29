@@ -151,6 +151,7 @@ export struct TitleBar impl Widget, Themeable {
     // ★ 2026-10-29 反哺：TitleBar 原来没有 visible ⇒ 想隐藏自绘标题栏（全屏/无边框）
     //   只能把控件删掉重建 ✗ 补成与其它控件一致 ✓
     bool visible = true
+    pri bool hover = false         // ★ 2026-10-29 反哺：见 process / is_hover
 
     // ==================== 配置 ====================
     pri string title = ""
@@ -349,6 +350,7 @@ export struct TitleBar impl Widget, Themeable {
     func get_x(): float { return x }
     func get_y(): float { return y }
     func set_visible(bool v) { visible = v }     // 没补 enabled：窗口标题栏"禁用"没有语义
+    func is_hover(): bool { return hover }
     func set_pos(float px, float py) { x = px; y = py }
     func set_size(float sw, float sh) { w = sw; if sh > 0 { h = sh } }
 
@@ -493,6 +495,11 @@ export struct TitleBar impl Widget, Themeable {
 
     func process(Event ev) {
         if not _loaded or not visible { return }
+        // ★ 2026-10-29 反哺：补 hover 状态（标题栏做整条高亮/离开检测要用 ✓）
+        if ev.isMouseMotion() or ev.isMouseButtonDown() or ev.isMouseButtonUp() {
+            var[float, float](hmx, hmy) = ev.mousePos()
+            hover = hmx >= x and hmx <= x + w and hmy >= y and hmy <= y + h
+        }
         if winHandle == null { return }
 
         // ★★ 自愈（2026-09-30）：拖拽 / 边缘缩放会**吞掉后续所有事件**（下面那两处 `return` ✓），
