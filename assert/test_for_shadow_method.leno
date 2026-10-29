@@ -7,9 +7,15 @@
 // 修复：循环变量（含索引变量）进入"遮蔽集合"，只作用于循环体；
 //   start/end/step 仍在循环变量作用域外 ✓
 
+struct P {
+    int a = 11
+    int b = 22
+}
+
 struct Box {
     Array[Array[string]] songs = [["a"], ["b"]]
     int n = 3
+    int v = 99                                  // 与下面 field_shadow 的循环变量同名
 
     func row(int i): Array[string] {
         return songs[i]
@@ -28,6 +34,71 @@ struct Box {
         for 0:2 to row { sum = sum + row }
         return sum
     }
+
+    // 循环变量与**字段**同名：必须取元素 7，而不是字段 99
+    func field_shadow(): int {
+        Array[int] arr = [7]
+        for arr to v { return v }
+        return -1
+    }
+
+    func idx(int i): int { return i }
+
+    // 索引变量与**方法**同名：idx 必须是 0/1 下标，而不是方法函数值
+    func index_shadow(): int {
+        Array[int] arr = [10, 20]
+        int s = 0
+        for arr to item, idx { s = s + idx }
+        return s
+    }
+
+    // 嵌套函数（闭包）形参与方法同名
+    func nested_param(): int {
+        var g = func(int row): int { return row }
+        return g(5)
+    }
+
+    // catch 变量与方法同名
+    func caught(): int {
+        int r = 0
+        try {
+            throw "boom"
+        } catch row {
+            r = _str(row).len()
+        }
+        return r
+    }
+
+    // if ... is ... => 绑定名与方法同名
+    func if_bind(): int {
+        var x = 6
+        if x is int => row { return row }
+        return -1
+    }
+
+    // switch case ... => 绑定名与方法同名
+    func switch_bind(): int {
+        var x = 8
+        switch x {
+            case is int => row { return row }
+            default { return -1 }
+        }
+    }
+
+    // switch case 解构名与方法同名
+    func switch_destruct(): int {
+        var x = new P()
+        switch x {
+            case is P(row, q) { return row + q }
+            default { return -1 }
+        }
+    }
+
+    // 解构声明名与方法同名
+    func destruct_decl(): int {
+        var[int](row) = [7]
+        return row
+    }
 }
 
 main() {
@@ -39,6 +110,14 @@ main() {
     assert_eq(got[1][0], "b", "第 1 行应是 b")
 
     assert_eq(b.count(), 3, "0+1+2 应为 3（循环变量必须按 int 处理，而不是方法函数值）")
+    assert_eq(b.field_shadow(), 7, "循环变量 v 必须遮蔽同名字段（应取元素 7，不是字段 99）")
+    assert_eq(b.index_shadow(), 1, "索引变量 idx 必须按下标处理（0+1=1，不是方法值）")
+    assert_eq(b.nested_param(), 5, "闭包形参 row 必须遮蔽同名方法")
+    assert_eq(b.caught(), 4, "catch 变量 row 必须遮蔽同名方法（_str(\"boom\").len() = 4）")
+    assert_eq(b.if_bind(), 6, "if ... => row 的绑定名必须遮蔽同名方法")
+    assert_eq(b.switch_bind(), 8, "switch case ... => row 的绑定名必须遮蔽同名方法")
+    assert_eq(b.switch_destruct(), 33, "case 解构名 row 必须遮蔽同名方法（11+22=33）")
+    assert_eq(b.destruct_decl(), 7, "解构声明名 row 必须遮蔽同名方法")
 
     print("test_for_shadow_method passed")
 }

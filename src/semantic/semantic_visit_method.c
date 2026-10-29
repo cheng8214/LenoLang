@@ -13,6 +13,27 @@ static int is_shadowed(const char* name, char** shadowed, int shadowed_count) {
     return 0;
 }
 
+// 遮蔽集合上限（与下面各处的栈数组一致）
+#define SHADOW_MAX 128
+
+// 往遮蔽集合里追加一个名字（去重；满了就忽略）
+static void shadow_add(char** out, int* count, const char* name) {
+    if (!name || !out || !count || *count >= SHADOW_MAX) return;
+    for (int i = 0; i < *count; i++) {
+        if (out[i] && strcmp(out[i], name) == 0) return;
+    }
+    out[(*count)++] = (char*)name;
+}
+
+// 复制一份遮蔽集合并返回元素个数（后续可继续 shadow_add）
+static int shadow_copy(char** out, char** src, int src_count) {
+    int count = 0;
+    for (int i = 0; i < src_count; i++) {
+        if (src[i]) shadow_add(out, &count, src[i]);
+    }
+    return count;
+}
+
 // 名字是否是本 struct 的字段（返回下标；-1 = 不是字段）
 static int field_index_of(const char* name, char** field_names, int field_count) {
     if (!name || !field_names || field_count <= 0) return -1;
@@ -535,7 +556,13 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
             break;
         case AST_IF: {
             transform_method_body_ex(ast->u.if_.cond, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
-            transform_method_body_ex(ast->u.if_.then, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
+            // `if expr is Type => var`：绑定名只在 then 分支内生效，也是局部量 ⇒ 必须遮蔽 ✓
+            {
+                char* then_shadows[SHADOW_MAX];
+                int then_shadow_count = shadow_copy(then_shadows, shadowed_names, shadowed_count);
+                shadow_add(then_shadows, &then_shadow_count, ast->u.if_.guard_bind_var);
+                transform_method_body_ex(ast->u.if_.then, field_names, field_count, method_names, method_count, struct_name, then_shadows, then_shadow_count, param_names, param_count, const_names, const_count);
+            }
             transform_method_body_ex(ast->u.if_.else_, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
             break;
         }
@@ -552,37 +579,32 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
             //   `row` 会被当成"本 struct 的方法名"改写成 `self["row"]` ⇒ 类型变成
             //   `func(int):Array[string]`，报「add 的参数类型不匹配」✗（LenoMusic 实测）。
             //   变量只在**循环体**内生效 ⇒ start/end/step 仍用原集合 ✓
-            char* for_shadows[130];
-            int for_shadow_count = 0;
-            for (int i = 0; i < shadowed_count && for_shadow_count < 128; i++) {
-                if (shadowed_names[i]) for_shadows[for_shadow_count++] = shadowed_names[i];
+            {
+                char* for_shadows[SHADOW_MAX];
+                int for_shadow_count = shadow_copy(for_shadows, shadowed_names, shadowed_count);
+                shadow_add(for_shadows, &for_shadow_count, ast->u.for_.var_name);
+                shadow_add(for_shadows, &for_shadow_count, ast->u.for_.index_var_name);
+                transform_method_body_ex(ast->u.for_.body, field_names, field_count, method_names, method_count, struct_name, for_shadows, for_shadow_count, param_names, param_count, const_names, const_count);
             }
-            if (ast->u.for_.var_name && for_shadow_count < 128) {
-                for_shadows[for_shadow_count++] = ast->u.for_.var_name;
-            }
-            if (ast->u.for_.index_var_name && for_shadow_count < 128) {
-                for_shadows[for_shadow_count++] = ast->u.for_.index_var_name;
-            }
-            transform_method_body_ex(ast->u.for_.body, field_names, field_count, method_names, method_count, struct_name, for_shadows, for_shadow_count, param_names, param_count, const_names, const_count);
             break;
         }
         case AST_BLOCK: {
-            // 收集块内所有 var_decl 的变量名，与传入的遮蔽集合合并
-            char* merged_shadows[128];
-            int merged_shadow_count = 0;
-            // 先加入传入的遮蔽名（参数名等）
-            for (int i = 0; i < shadowed_count && merged_shadow_count < 128; i++) {
-                if (shadowed_names[i]) {
-                    merged_shadows[merged_shadow_count++] = shadowed_names[i];
-                }
-            }
-            // 再加入块内 var_decl 的变量名
+            // 收集块内所有**局部声明**的名字，与传入的遮蔽集合合并：
+            //   var_decl / 解构声明 / 嵌套函数名 都是局部量，都会遮蔽同名字段或方法 ✓
+            char* merged_shadows[SHADOW_MAX];
+            int merged_shadow_count = shadow_copy(merged_shadows, shadowed_names, shadowed_count);
             for (int i = 0; i < ast->u.block.count; i++) {
                 Ast* item = ast->u.block.items[i];
-                if (item && item->kind == AST_VAR_DECL && item->u.var_decl.name) {
-                    if (merged_shadow_count < 128) {
-                        merged_shadows[merged_shadow_count++] = item->u.var_decl.name;
+                if (!item) continue;
+                if (item->kind == AST_VAR_DECL) {
+                    shadow_add(merged_shadows, &merged_shadow_count, item->u.var_decl.name);
+                } else if (item->kind == AST_DESTRUCT_DECL) {
+                    for (int d = 0; d < item->u.destruct_decl.slot_count; d++) {
+                        shadow_add(merged_shadows, &merged_shadow_count,
+                                   item->u.destruct_decl.names ? item->u.destruct_decl.names[d] : NULL);
                     }
+                } else if (item->kind == AST_FUNC_DEF) {
+                    shadow_add(merged_shadows, &merged_shadow_count, item->u.func.name);
                 }
             }
             // 用合并后的遮蔽集合处理块内语句
@@ -601,9 +623,9 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
                 //   横向/纵向算法因此不一致（sdl_edit.leno:945/947 就是这么错的 ✓）。
                 if (ast->u.block.items[i]->kind == AST_VAR_DECL) {
                     const char* own = ast->u.block.items[i]->u.var_decl.name;
-                    char* init_shadows[128];
+                    char* init_shadows[SHADOW_MAX];
                     int init_shadow_count = 0;
-                    for (int k = 0; k < merged_shadow_count && init_shadow_count < 128; k++) {
+                    for (int k = 0; k < merged_shadow_count && init_shadow_count < SHADOW_MAX; k++) {
                         if (own && merged_shadows[k] && strcmp(merged_shadows[k], own) == 0) continue;
                         init_shadows[init_shadow_count++] = merged_shadows[k];
                     }
@@ -804,14 +826,31 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
                 for (int j = 0; j < ast->u.switch_.cases[i].values.count; j++) {
                     transform_method_body_ex(ast->u.switch_.cases[i].values.items[j], field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
                 }
-                transform_method_body_ex(ast->u.switch_.cases[i].body, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
+                // `case is Type => var` 的绑定名、`case is Point(x, y)` 的解构名：
+                //   都只在**该 case 体**内生效 ⇒ 并进遮蔽集合 ✓
+                char* case_shadows[SHADOW_MAX];
+                int case_shadow_count = shadow_copy(case_shadows, shadowed_names, shadowed_count);
+                shadow_add(case_shadows, &case_shadow_count, ast->u.switch_.cases[i].guard_bind_var);
+                if (ast->u.switch_.cases[i].destructure_vars) {
+                    for (int d = 0; d < ast->u.switch_.cases[i].destructure_count; d++) {
+                        shadow_add(case_shadows, &case_shadow_count,
+                                   ast->u.switch_.cases[i].destructure_vars[d]);
+                    }
+                }
+                transform_method_body_ex(ast->u.switch_.cases[i].body, field_names, field_count, method_names, method_count, struct_name, case_shadows, case_shadow_count, param_names, param_count, const_names, const_count);
             }
             transform_method_body_ex(ast->u.switch_.default_body, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
             break;
         }
         case AST_TRY: {
             transform_method_body_ex(ast->u.try_.try_body, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
-            transform_method_body_ex(ast->u.try_.catch_body, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
+            // catch 变量也是局部量：只在 catch 体内生效 ✓
+            {
+                char* catch_shadows[SHADOW_MAX];
+                int catch_shadow_count = shadow_copy(catch_shadows, shadowed_names, shadowed_count);
+                shadow_add(catch_shadows, &catch_shadow_count, ast->u.try_.catch_var);
+                transform_method_body_ex(ast->u.try_.catch_body, field_names, field_count, method_names, method_count, struct_name, catch_shadows, catch_shadow_count, param_names, param_count, const_names, const_count);
+            }
             transform_method_body_ex(ast->u.try_.finally_body, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
             break;
         }
@@ -881,10 +920,18 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
             } // end shadowed check
             break;
         }
-        case AST_FUNC_DEF:
-            // 处理嵌套函数：转换函数体内的字段访问和方法调用
-            transform_method_body_ex(ast->u.func.body, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
+        case AST_FUNC_DEF: {
+            // 嵌套函数 / 闭包：它自己的形参也是局部量，必须遮蔽（否则形参与方法/字段同名时
+            //   会被改写成 self["方法名"] / self.字段 ✗）；外层局部量仍在作用域内 ✓
+            char* func_shadows[SHADOW_MAX];
+            int func_shadow_count = shadow_copy(func_shadows, shadowed_names, shadowed_count);
+            for (int i = 0; i < ast->u.func.pcnt; i++) {
+                shadow_add(func_shadows, &func_shadow_count,
+                           ast->u.func.params ? ast->u.func.params[i] : NULL);
+            }
+            transform_method_body_ex(ast->u.func.body, field_names, field_count, method_names, method_count, struct_name, func_shadows, func_shadow_count, param_names, param_count, const_names, const_count);
             break;
+        }
         case AST_AWAIT:
             // 处理 await 表达式中的字段访问
             transform_method_body_ex(ast->u.await.expr, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
