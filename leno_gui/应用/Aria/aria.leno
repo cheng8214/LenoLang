@@ -358,6 +358,7 @@ export struct Player {
     Array[Card] qRows = []
     Array[Label] qRowDur = []
     Array[Button] qRowX = []
+    Array[Panel] qRowMark = []        // 封面上的「播放」标记（hover 时显示 ✓）
     Array[bool] qRowHot = []
     bool qOpen = false
     Panel qRoot                // 浮层卡片外壳（Panel 才有 set_visible ✓）
@@ -3255,6 +3256,7 @@ Song nowSong
         qRows = []
         qRowDur = []
         qRowX = []
+        qRowMark = []
         qRowHot = []
         if queue.len() == 0 {
             qList.add(ui.lbl("播放列表是空的 · 点任意歌曲开始", 11.5, C_TXT_DIM, false),
@@ -3273,10 +3275,12 @@ Song nowSong
             Card row = page_ov.queue_row(queue[i], i == qIdx, qi, 244.0,
                                          func(int k) { play_from_index(k) },
                                          func(int k) { queue_remove(k) },
-                                         func(Label dl, Button xb) {
-                                             // 登记：on_tick 里按 is_hover() 切「时长 ↔ ×」✓
+                                         func(Label dl, Button xb, Panel mk) {
+                                             // 登记：on_tick 里按 is_hover() 切
+                                             //   「时长 ↔ ×」+ 封面上的播放标记 ✓
                                              qRowDur.add(dl)
                                              qRowX.add(xb)
+                                             qRowMark.add(mk)
                                          })
             qRows.add(row)
             qRowHot.add(false)
@@ -3802,13 +3806,16 @@ Song nowSong
             if beatPhase[0] > 1000.0 { beatPhase[0] = 0.0 }
         }
 
-        // 播放列表浮层：鼠标移到哪一行，就把那行的「时长」换成「×」（移除）✓
+        // 播放列表浮层：鼠标移到哪一行，
+        //   ① 行尾「时长」换成「×」（移除）
+        //   ② 封面上盖上「播放」标记 ✓
         for 0 : qRows.len() - 1 to i {
             bool hot = qRows[i].is_hover()
             if hot != qRowHot[i] {
                 qRowHot[i] = hot
                 qRowDur[i].set_visible(not hot)
                 qRowX[i].set_visible(hot)
+                qRowMark[i].set_visible(hot)
                 SDL3.markFrameRedraw()
             }
         }

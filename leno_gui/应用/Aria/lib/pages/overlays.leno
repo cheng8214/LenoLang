@@ -6,7 +6,7 @@ import "SDL3" as SDL3
 import "../ui_kit.leno" as ui
 import "../page_widgets.leno" as pw
 import "../../music_data.leno" as data
-use SDL3.(VBox, HBox, Label, Button, Card, ImageView, AnchorBox, Canvas, Renderer, Color)
+use SDL3.(VBox, HBox, Label, Button, Card, ImageView, AnchorBox, Canvas, Panel, Renderer, Color)
 use data.Song
 
 const Color TXT = #35262BFF
@@ -49,7 +49,7 @@ export func make_beat(Array[float] phase): Canvas {
 //   `onPlay(idx)` / `onRemove(idx)` 由调用方注入（闭包只传 int ⇒ 不会捕获队列副本 ✓）
 export func queue_row(Song q, bool cur, int idx, float w,
                       func(int):void onPlay, func(int):void onRemove,
-                      func(Label, Button):void onTrack): Card {
+                      func(Label, Button, Panel):void onTrack): Card {
     Card row = SDL3.createCard({x: 0, y: 0, w: w, h: 50, bare: true, radius: 10,
                                 content_pad: 6, hover_lift: 0.0,
                                 bg_color: (if cur then #E6DCF7FF else TRANS),
@@ -57,10 +57,25 @@ export func queue_row(Song q, bool cur, int idx, float w,
                                 content_click_through: true})
     HBox inner = SDL3.createHBox({x: 0, y: 0, w: w - 12.0, h: 38,
                                   pad_x: 0, pad_y: 0, spacing: 9})
-    inner.add(SDL3.createImageView({w: 36, h: 36, radius: 6,
-                                    image_path: ui.coverPath(q.cover),
-                                    bg_color: #EFE3EDFF, tip: q.title}),
-              {grow: 0, shrink: 0, basis: 36, align: 1})
+    // 封面 + hover 时盖上的**播放标记**（半透明黑圆 + 白三角）
+    //   ⚠ 光用白三角在浅色封面上会消失 ⇒ 垫黑圆（同排行榜卡片那套 ✓）
+    AnchorBox cov = SDL3.createAnchorBox({x: 0, y: 0, w: 36, h: 36})
+    cov.add(SDL3.createImageView({w: 36, h: 36, radius: 6,
+                                  image_path: ui.coverPath(q.cover),
+                                  bg_color: #EFE3EDFF, tip: q.title}),
+            {left: 0, top: 0, w: 36, h: 36})
+    // 标记容器用 **Panel**：它自带圆底（省掉一个 Canvas）+ 支持 set_visible
+    //   （AnchorBox 没有 set_visible ✗）
+    Panel mark = SDL3.createPanel({x: 0, y: 0, w: 22, h: 22,
+                                   bg_color: #00000066, radius: 11})
+    AnchorBox markIn = SDL3.createAnchorBox({x: 0, y: 0, w: 22, h: 22})
+    markIn.add(SDL3.createImageView({w: 12, h: 12, image_path: ui.ico("play2.png"),
+                                     bg_color: TRANS}),
+               {left: 6, top: 5, w: 12, h: 12})
+    mark.setLayout(markIn)
+    mark.set_visible(false)          // 默认藏起来；行 hover 时由 on_tick 打开 ✓
+    cov.add(mark, {left: 7, top: 7, w: 22, h: 22})
+    inner.add(cov, {grow: 0, shrink: 0, basis: 36, align: 1})
     VBox nm = SDL3.createVBox({x: 0, y: 0, w: 140, h: 36, pad_x: 0, pad_y: 1, spacing: 1})
     nm.add(ui.lblFit(q.title, 12, (if cur then ACCENT else TXT), false),
            {grow: 0, shrink: 0, basis: 18, align: 3})
@@ -83,6 +98,6 @@ export func queue_row(Song q, bool cur, int idx, float w,
 
     row.set_content(inner)
     row.on_click(func() { if onPlay != null { onPlay(idx) } })
-    if onTrack != null { onTrack(durLbl, xBtn) }
+    if onTrack != null { onTrack(durLbl, xBtn, mark) }
     return row
 }

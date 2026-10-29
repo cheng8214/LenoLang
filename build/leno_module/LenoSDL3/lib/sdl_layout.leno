@@ -576,6 +576,12 @@ export struct AnchorBox impl Widget {
     Array[float]  _natW = []   // 子项自然尺寸（add 时捕获，不被 set_size 改写）
     Array[float]  _natH = []
     bool _loaded = false
+    // ★ 2026-10-29 反哺：AnchorBox 原来**没有** visible/enabled/hover 这组通用状态，
+    //   于是应用里想"叠层显隐"只能拿 Panel/Card 去包（AnchorBox.set_visible 直接编译不过 ✗）。
+    //   叠层显隐是刚需（封面上的播放标记、角标、遮罩）⇒ 补成和其它控件一致 ✓
+    bool visible = true
+    bool enabled = true
+    pri bool hover = false
     pri Ptr[u8] hwnd              // 绑定的窗口句柄，下发给需要的子控件
 
     func set(Dict opts) {
@@ -586,6 +592,8 @@ export struct AnchorBox impl Widget {
         h = opts.get("h", 200)
         padX = opts.get("pad_x", 0)
         padY = opts.get("pad_y", 0)
+        visible = opts.get("visible", true)
+        enabled = opts.get("enabled", true)
         _loaded = true
     }
 
@@ -709,13 +717,25 @@ export struct AnchorBox impl Widget {
         }
     }
 
+    // 通用控件状态（2026-10-29 反哺：与 Button/Card/Panel 保持同一套叫法 ✓）
+    func set_visible(bool v) { visible = v }
+    func set_enabled(bool v) { enabled = v }
+    func get_x(): float { return x }
+    func get_y(): float { return y }
+    func is_hover(): bool { return hover }
+
     func process(Event ev) {
-        if not _loaded { return }
+        if not _loaded or not visible or not enabled { return }
+        // hover 状态：叠层（封面播放标记之类）常靠它决定显隐 ⇒ 自己也算一份 ✓
+        if ev.isMouseMotion() or ev.isMouseButtonDown() {
+            var[float, float](mx, my) = ev.mousePos()
+            hover = mx >= x and mx <= x + w and my >= y and my <= y + h
+        }
         relayout()
         for _c to c { c.process(ev) }
     }
     func render(Renderer r) {
-        if not _loaded { return }
+        if not _loaded or not visible { return }
         relayout()
         for _c to c { c.render(r) }
     }
@@ -739,7 +759,8 @@ func _add_keys(): Array[string] {
 //   ⚠ 白名单是三者**并集**（HBox/VBox 那套 + AnchorBox 那套 ✓）⇒ 可选宽不选窄（宁少报、不误报 ✓）
 func _set_keys(): Array[string] {
     return ["x", "y", "w", "h", "pad_x", "pad_y", "padTop", "padBottom", "padLeft", "padRight",
-            "spacing", "justify", "bg_color", "bg_radius", "clip"]
+            "spacing", "justify", "bg_color", "bg_radius", "clip",
+            "visible", "enabled"]     // ★ 2026-10-29：AnchorBox 现在认这两个（见 struct 里的字段注释）
 }
 
 // ★ 2026-10-10：名字已**改回 `_passWindowHandle`** ✓ —— 它曾为绕开"顶层函数名与某类型方法同名"
