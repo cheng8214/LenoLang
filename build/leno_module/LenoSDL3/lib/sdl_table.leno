@@ -603,6 +603,9 @@ export struct Table impl Widget, Themeable {
 
     // ==================== 布局接口 ====================
     func get_w(): float { return w }
+    // ★ 2026-10-29 反哺：⚠ 语义 = 「**有行被悬停**」（同行类控件的 Tab/ListBox/TreeView 一致），
+    //   不是"鼠标在表格矩形内" —— 后者请用 contains / is_row_hover ✓
+    func is_hover(): bool { return hoverRow >= 0 }
     func get_h(): float { return h }
     func get_x(): float { return x }
     func get_y(): float { return y }

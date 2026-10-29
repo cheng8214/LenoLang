@@ -356,6 +356,13 @@ export struct ScrollView impl Widget, Themeable {
     // ---- Widget 接口 ----
     func get_w(): float { return w }
     func get_h(): float { return h }
+    // ★ 2026-10-29 反哺：ScrollView 原来只有 get_w/get_h
+    //   ⇒ 上层想算"这个滚动区在屏幕上的矩形"（浮层防穿透、拖拽命中）时拿不到坐标 ✗ 补齐 ✓
+    func get_x(): float { return x }
+    func get_y(): float { return y }
+    // ★ 2026-10-29 反哺：内部 `mouseIn` 本来就是"指针在不在视口内"（滚动条显隐靠它），
+    //   但没暴露 ⇒ 上层想按"鼠标在滚动区上"做效果只能自己算 ✗ 补齐 ✓
+    func is_hover(): bool { return mouseIn }
     func set_pos(float px, float py) { x = px; y = py }
     func set_size(float sw, float sh) {
         w = sw; h = sh

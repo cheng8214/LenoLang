@@ -40,6 +40,7 @@ export struct VirtualGrid impl Widget {
     pri int cols = 0                       // 0 = 按宽度自动算
     pri int count = 0
     pri bool visible = true
+    bool enabled = true            // ★ 2026-10-29 反哺：见 set_enabled 的注释
     pri Color sbColor = #B7A3ADAA         // 滚动条（不需要就把 alpha 传 0）
     // 滚动条宽度（原来写死 4px，太细 ⇒ 看不见、也抓不住 ✗）
     //   默认 10，跟 ScrollView 的 12 一个量级；要更细可以 `bar_w: 6` ✓
@@ -129,6 +130,9 @@ export struct VirtualGrid impl Widget {
 
     func set_visible(bool v) { visible = v }
     func is_visible(): bool { return visible }
+    // ★ 2026-10-29 反哺：原来只有 visible、没有 enabled ⇒ 加载中想"显示占位但禁止点"
+    //   做不到（只能藏起来，卡片会闪 ✗）。补成与其它控件一致 ✓
+    func set_enabled(bool v) { enabled = v }
 
     // ==================== 布局计算 ====================
     pri func cols_now(): int {
@@ -262,6 +266,8 @@ export struct VirtualGrid impl Widget {
     func get_h(): float { return h }
     func get_x(): float { return x }
     func get_y(): float { return y }
+    // ★ 2026-10-29 反哺：内部 `barHover` 就是"鼠标停在本控件上" ⇒ 语义正好，直接暴露 ✓
+    func is_hover(): bool { return barHover }
     func set_pos(float px, float py) { x = px; y = py }
     func set_size(float sw, float sh) {
         w = sw; h = sh
@@ -269,7 +275,7 @@ export struct VirtualGrid impl Widget {
     }
 
     func process(Event ev) {
-        if not _loaded or not visible { return }
+        if not _loaded or not visible or not enabled { return }
         var[float, float](mx, my) = ev.mousePos()
         if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
 

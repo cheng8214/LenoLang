@@ -85,6 +85,8 @@ export struct Spinner impl Widget, Themeable {
     func get_x(): float { return x }
     func get_y(): float { return y }
     func get_w(): float { return size }
+    // ★ 2026-10-29 反哺：内部已有 hover 字段，但没暴露 ⇒ 补齐 ✓
+    func is_hover(): bool { return _hover }
     func get_h(): float { return size }
     func set_pos(float px, float py) { x = px; y = py }
     func set_size(float sw, float sh) { size = if sw < sh then sw else sh }

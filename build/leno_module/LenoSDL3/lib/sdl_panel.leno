@@ -33,6 +33,9 @@ export struct Panel impl Widget, Themeable {
     bool _drawBorder = true
     bool _clip = true         // 是否裁剪子控件到面板范围
     bool _loaded = false, enabled = true, visible = true
+    // ★ 2026-10-29 反哺：容器类原来没有 hover 状态 ⇒ 上层想知道"鼠标是否在面板上"
+    //   （点外面关闭浮层、hover 高亮整块）只能自己算坐标 ✗ 补成与 Button/Card 同名 ✓
+    pri bool hover = false
     pri Ptr[u8] hwnd              // 绑定的窗口句柄，下发给需要它的子控件（如 Edit 的 IME）
 
 
@@ -102,10 +105,16 @@ export struct Panel impl Widget, Themeable {
     func contains(float mx, float my): bool {
         return mx >= x and mx <= x + w and my >= y and my <= y + h
     }
+    func is_hover(): bool { return hover }
 
     // 转发事件给所有子控件（子控件各自处理命中）
     func process(Event ev) {
         if not _loaded or not enabled or not visible { return }
+        // hover 状态：上层靠它判断"点在面板外就该关闭"（浮层点空白处收起之类 ✓）
+        if ev.isMouseMotion() or ev.isMouseButtonDown() or ev.isMouseButtonUp() {
+            var[float, float](hmx, hmy) = ev.mousePos()
+            hover = contains(hmx, hmy)
+        }
         // 先同步布局子控件位置（事件处理前，确保 hit-test 正确）
         syncLayoutChild()
         var lc = _layoutChild

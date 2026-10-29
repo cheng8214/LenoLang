@@ -99,6 +99,8 @@ export struct BarChart impl Widget {
     bool showGrid = true
     pri bool hover = false
     float _mx = -1.0; float _my = -1.0
+    bool visible = true            // ★ 2026-10-29 反哺：见 set_visible / render 判断
+    bool enabled = true
     bool _loaded = false
     Font? _font
     float _fontSize = 0.0
@@ -152,12 +154,20 @@ export struct BarChart impl Widget {
     }
 
     func get_w(): float { return w }
+    // ★ 2026-10-29 反哺：内部已有 hover 字段（用于高亮邻近数据点），但没暴露 ⇒ 补齐 ✓
+    func is_hover(): bool { return hover }
     func get_h(): float { return h }
+    // ★ 2026-10-29 反哺：图表原来只有 get_w/get_h，没有坐标与显隐
+    //   ⇒ 想"切数据时临时藏一组"或"算图表矩形"都做不到 ✗ 补齐 ✓
+    func get_x(): float { return x }
+    func get_y(): float { return y }
+    func set_visible(bool v) { visible = v }
+    func set_enabled(bool v) { enabled = v }
     func set_pos(float px, float py) { x = px; y = py }
     func set_size(float sw, float sh) { w = sw; h = sh }
 
     func process(Event ev) {
-        if not _loaded { return }
+        if not _loaded or not visible { return }
         if ev.isMouseMotion() {
             var[float, float](_emx, _emy) = ev.mousePos(); _mx = _emx; _my = _emy
             bool wasHover = hover
@@ -167,7 +177,7 @@ export struct BarChart impl Widget {
     }
 
     func render(Renderer r) {
-        if not _loaded { return }
+        if not _loaded or not visible { return }
         step_anim()
         if animating { core.requestRedraw() }
         if _font == null or not _font.ok or _fontSize != fsize {
@@ -376,6 +386,8 @@ export struct LineChart impl Widget {
     bool showGrid = true
     bool showPoints = true
     pri bool hover = false; float _mx = -1.0; float _my = -1.0
+    bool visible = true            // ★ 2026-10-29 反哺：见 set_visible / render 判断
+    bool enabled = true
     bool _loaded = false
     Font? _font
     float _fontSize = 0.0
@@ -437,12 +449,20 @@ export struct LineChart impl Widget {
     }
 
     func get_w(): float { return w }
+    // ★ 2026-10-29 反哺：内部已有 hover 字段（用于高亮邻近数据点），但没暴露 ⇒ 补齐 ✓
+    func is_hover(): bool { return hover }
     func get_h(): float { return h }
+    // ★ 2026-10-29 反哺：图表原来只有 get_w/get_h，没有坐标与显隐
+    //   ⇒ 想"切数据时临时藏一组"或"算图表矩形"都做不到 ✗ 补齐 ✓
+    func get_x(): float { return x }
+    func get_y(): float { return y }
+    func set_visible(bool v) { visible = v }
+    func set_enabled(bool v) { enabled = v }
     func set_pos(float px, float py) { x = px; y = py }
     func set_size(float sw, float sh) { w = sw; h = sh }
 
     func process(Event ev) {
-        if not _loaded { return }
+        if not _loaded or not visible { return }
         if ev.isMouseMotion() {
             var[float, float](_emx, _emy) = ev.mousePos(); _mx = _emx; _my = _emy
             bool wasHover = hover
@@ -452,7 +472,7 @@ export struct LineChart impl Widget {
     }
 
     func render(Renderer r) {
-        if not _loaded { return }
+        if not _loaded or not visible { return }
         step_anim()
         if animating { core.requestRedraw() }
         if _font == null or not _font.ok or _fontSize != fsize {
@@ -657,6 +677,8 @@ export struct PieChart impl Widget {
     Array[string] labels = []
     Array[float] values = []
     int fsize = 12
+    bool visible = true            // ★ 2026-10-29 反哺：与 Bar/Line 一致
+    bool enabled = true
     bool _loaded = false
     Font? _font
     float _fontSize = 0.0
@@ -691,11 +713,19 @@ export struct PieChart impl Widget {
 
     func get_w(): float { return w }
     func get_h(): float { return h }
+    // ★ 2026-10-29 反哺：与 BarChart/LineChart 保持一致（坐标 + 显隐）✓
+    func get_x(): float { return x }
+    func get_y(): float { return y }
+    func set_visible(bool v) { visible = v }
+    func set_enabled(bool v) { enabled = v }
     func set_pos(float px, float py) { x = px; y = py }
     func set_size(float sw, float sh) { w = sw; h = sh }
+    // ⚠ PieChart 目前**没有** hover 追踪（process 是空实现、struct 里也没 hover 字段）
+    //   ⇒ 暂时不提供 is_hover()（给了也是恒 false，等于撒谎）。
+    //   要补的话得连带实现 process 里的矩形/扇区命中，留给需要时再做。
     func process(Event ev) {}
     func render(Renderer r) {
-        if not _loaded { return }
+        if not _loaded or not visible { return }
         step_anim()
         if animating { core.requestRedraw() }
         if _font == null or not _font.ok or _fontSize != fsize {

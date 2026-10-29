@@ -73,6 +73,7 @@ bool _drawBorder = true          // 是否绘制边框（嵌入 ComboBox 时设�
     pri bool password = false               // 密码模式
     pri bool readOnly = false               // 只读
     bool _loaded = false
+    pri bool hover = false           // ★ 2026-10-29 反哺：见 process 里的 hover 追踪
     bool enabled = true
     bool visible = true
     string _tip = ""             // 悬停提示文本（空 = 不提示）
@@ -362,6 +363,11 @@ _drawBorder = opts.get("border", true)
     func set_size(float sw, float sh)   { w = sw; h = sh; invalidate_sb(); adjust_scroll() }
     func get_w(): float                 { return w }
     func get_h(): float                 { return h }
+    // ★ 2026-10-29 反哺：Edit 原来只有 get_w/get_h，没有 get_x/get_y
+    //   ⇒ 想把「输入框」和别的东西对齐（标签、浮层、内联重命名）时拿不到坐标 ✗ 补齐 ✓
+    func get_x(): float                 { return x }
+    func get_y(): float                 { return y }
+    func is_hover(): bool               { return hover }
     func set_bg_color(Color color)         { bgColor = color }
     func set_text_color(Color color)       { txtColor = color }
     func set_border_color(Color color)     { bdrColor = color }
@@ -814,6 +820,11 @@ _drawBorder = opts.get("border", true)
         if not _loaded { return }
         if not visible { return }
         if not enabled { return }
+        // ★ 2026-10-29 反哺：补 hover 状态（输入框做"悬停边框高亮 / 显示清除按钮"要用 ✓）
+        if ev.isMouseMotion() or ev.isMouseButtonDown() or ev.isMouseButtonUp() {
+            var[float, float](hmx, hmy) = ev.mousePos()
+            hover = hmx >= x and hmx <= x + w and hmy >= y and hmy <= y + h
+        }
 
         // 内嵌右击上下文菜单已展开：所有事件先交菜单处理（选择/关闭由菜单自身负责）
         if ctxMenuEnabled and ctxMenu != null and ctxMenu.isOpen() {

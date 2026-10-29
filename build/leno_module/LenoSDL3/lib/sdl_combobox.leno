@@ -104,6 +104,8 @@ export struct ComboBox impl Widget, Themeable {
 
     // ==================== 布局接口 ====================
     func get_w(): float          { return w }
+    // ★ 2026-10-29 反哺：⚠ 语义 = 「**有选项被悬停**」（hover 索引 >= 0），不是鼠标在矩形内 ✓
+    func is_hover(): bool        { return hover >= 0 }
     func get_h(): float          { return h }
     func set_pos(float px, float py) { x = px; y = py }
     func set_size(float sw, float sh) { w = sw; h = sh }

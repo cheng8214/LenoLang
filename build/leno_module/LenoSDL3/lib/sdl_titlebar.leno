@@ -148,6 +148,9 @@ export struct TitleBar impl Widget, Themeable {
 
     // ==================== 布局 ====================
     float x = 0.0, y = 0.0, w = 1000.0, h = 32.0
+    // ★ 2026-10-29 反哺：TitleBar 原来没有 visible ⇒ 想隐藏自绘标题栏（全屏/无边框）
+    //   只能把控件删掉重建 ✗ 补成与其它控件一致 ✓
+    bool visible = true
 
     // ==================== 配置 ====================
     pri string title = ""
@@ -341,6 +344,11 @@ export struct TitleBar impl Widget, Themeable {
 
     func get_w(): float { return w }
     func get_h(): float { return h }
+    // ★ 2026-10-29 反哺：TitleBar 原来没有 get_x/get_y/set_visible
+    //   ⇒ 想"隐藏自绘标题栏"（全屏、无边框模式）只能删控件重建 ✗ 补齐 ✓
+    func get_x(): float { return x }
+    func get_y(): float { return y }
+    func set_visible(bool v) { visible = v }     // 没补 enabled：窗口标题栏"禁用"没有语义
     func set_pos(float px, float py) { x = px; y = py }
     func set_size(float sw, float sh) { w = sw; if sh > 0 { h = sh } }
 
@@ -484,7 +492,7 @@ export struct TitleBar impl Widget, Themeable {
     // ==================== 事件处理 ====================
 
     func process(Event ev) {
-        if not _loaded { return }
+        if not _loaded or not visible { return }
         if winHandle == null { return }
 
         // ★★ 自愈（2026-09-30）：拖拽 / 边缘缩放会**吞掉后续所有事件**（下面那两处 `return` ✓），
@@ -842,7 +850,7 @@ if ev.isWindowRestored() { maximized = false; btnHover = BTN_NONE; motionSkipCou
     // ==================== 渲染 ====================
 
     func render(Renderer r) {
-        if not _loaded { return }
+        if not _loaded or not visible { return }
         ensure_font()
         ensure_images(r)
 

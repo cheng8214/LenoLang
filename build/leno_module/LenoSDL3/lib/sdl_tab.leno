@@ -197,6 +197,9 @@ export struct TabControl impl Widget, Themeable {
 
     // ==================== 布局接口（可被嵌套进其它布局） ====================
     func get_w(): float { return w }
+    // ★ 2026-10-29 反哺：⚠ 这里的语义是「**有标签被悬停**」（hover 索引 >= 0），
+    //   不是"鼠标在控件矩形内" —— 两个问题别混用一个方法 ✓
+    func is_hover(): bool { return hover >= 0 }
     func get_h(): float { return h }
     func set_pos(float px, float py) { x = px; y = py }
     func set_size(float sw, float sh) { w = sw; h = sh }

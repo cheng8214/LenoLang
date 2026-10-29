@@ -330,6 +330,8 @@ export struct Label impl Widget, Themeable {
     func get_y(): float      { return y }
     func get_w(): float      { return _w }
     func get_h(): float      { return _h }
+    // ★ 2026-10-29 反哺：内部已有 hover 字段，但没暴露 ⇒ 补成与 Button/Card 同名 ✓
+    func is_hover(): bool    { return hover }
     func set_pos(float px, float py) { x = px; y = py }
     func set_size(float sw, float sh) { _w = sw; _h = sh }
 

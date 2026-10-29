@@ -105,6 +105,8 @@ export struct Slider impl Widget, Themeable {
     func get_y(): float          { return y }
     func get_w(): float          { return w }
     func get_h(): float          { return h }
+    // ★ 2026-10-29 反哺：内部已有 hover 字段（用于绘制），但没暴露 ⇒ 补齐 ✓
+    func is_hover(): bool        { return hover }
     func set_pos(float px, float py) { x = px; y = py }
     func set_size(float sw, float sh) { w = sw; h = sh }
 

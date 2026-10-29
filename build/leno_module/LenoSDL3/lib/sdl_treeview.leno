@@ -275,6 +275,8 @@ export struct TreeView impl Widget, Themeable {
 
     // ==================== 布局接口 ====================
     func get_w(): float { return w }
+    // ★ 2026-10-29 反哺：⚠ 语义 = 「**有节点被悬停**」（hover 索引 >= 0），不是鼠标在矩形内 ✓
+    func is_hover(): bool { return hover >= 0 }
     func get_h(): float { return h }
     func get_x(): float { return x }
     func get_y(): float { return y }

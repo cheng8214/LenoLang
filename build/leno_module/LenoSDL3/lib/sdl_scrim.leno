@@ -29,6 +29,10 @@ export struct Scrim impl Widget {
     Color _color = #00000000     // 遮罩颜色（默认黑色）
     pri int alpha = 120               // 透明度（0=全透明, 255=全不透明）
     bool visible = false            // 默认隐藏（仅在模态对话框打开时显示）
+    // ★ 2026-10-29 反哺：原来只有 visible，没有 enabled ⇒ "临时放行点击的遮罩"没法表达，
+    //   只能 hide() 再 show()（闪烁 ✗）。补成与其它控件一致 ✓
+    bool enabled = true
+    pri bool hover = false         // ★ 2026-10-29 反哺：见 is_hover()
     bool _loaded = true
 
 
@@ -46,10 +50,15 @@ export struct Scrim impl Widget {
     func hide() { visible = false }
     func set_alpha(int a) { alpha = a }
     func set_color(Color color) { _color = color }
+    // ★ 2026-10-29 反哺：补成与 Button/Card/Panel 同一套叫法（show/hide 保留，两者等价 ✓）
+    func set_visible(bool v) { visible = v }
+    func set_enabled(bool v) { enabled = v }
 
     // ==================== Widget 接口 ====================
     func get_w(): float { return _w }
     func get_h(): float { return _h }
+    func get_x(): float { return x }
+    func get_y(): float { return y }
     func set_pos(float px, float py) { x = px; y = py }
     func set_size(float sw, float sh) { _w = sw; _h = sh }
     // ★ Widget 接口：窗口 resize 时**跟着铺满**（2026-10-13 修 ✓）
@@ -59,10 +68,21 @@ export struct Scrim impl Widget {
     //   拉大到 880×580 后，(640,200)/(300,460)/(820,540) 仍是**纯白** ✗（被遮住的点 ≈ 878787 ✓）
     func on_window_resize(int ww, int hh) { set_size(_float(ww), _float(hh)) }
 
+    func contains(float mx, float my): bool {
+        return mx >= x and mx <= x + _w and my >= y and my <= y + _h
+    }
+    // ★ 2026-10-29 反哺：遮罩通常铺满全屏 ⇒ 结果基本恒 true，但按矩形算语义才准确
+    //   （有人把 Scrim 只铺一半做侧边遮罩时就能用上 ✓）
+    func is_hover(): bool { return hover }
+
     // 拦截所有鼠标事件（吞掉，不传递给背景控件）
     // 仅在 visible 时拦截；隐藏时放行
     func process(Event ev) {
-        if not visible { return }
+        if not visible or not enabled { return }
+        if ev.isMouseMotion() or ev.isMouseButtonDown() or ev.isMouseButtonUp() {
+            var[float, float](mx, my) = ev.mousePos()
+            hover = contains(mx, my)
+        }
         // 吞掉所有鼠标事件（点击、移动、滚轮等）
         // 不做任何处理 = 事件被消费，背景控件不会收到
     }
