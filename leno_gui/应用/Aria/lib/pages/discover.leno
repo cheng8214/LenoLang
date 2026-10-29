@@ -84,28 +84,31 @@ export func build_page(DiscoverCtx c): VBox {
                     {grow: 0, shrink: 0, basis: 30, align: 3})
         }
     } else {
+        // ★ 虚拟滚动：只铺**空行槽**（每行 1 个控件），真实卡片由 `sync_visible()` 按
+        //   当前滚动位置填/收 —— 否则每加载一页就多 18 张卡，内存线性涨 ✗
         int cols = 6
         float gapc = 14.0
         float cwp = (cwAll - gapc * _float(cols - 1)) / _float(cols)
         float rowHp = cwp + 48.0            // 卡片高 = 封面宽 + 48（与 pl_card 内部那笔账一致 ✓）
-        int i = 0
-        while i < c.cards.len() {
-            HBox rowp = SDL3.createHBox({x: 0, y: 0, w: cwAll, h: rowHp,
-                                         pad_x: 0, pad_y: 0, spacing: gapc})
-            for 0 : cols - 1 to ci2 {
-                int idx = i + ci2
-                if idx >= c.cards.len() {
-                    rowp.add(SDL3.createHBox({x: 0, y: 0, w: cwp, h: rowHp,
-                                              pad_x: 0, pad_y: 0, spacing: 0}),
-                             {grow: 0, shrink: 0, basis: cwp, align: 3})
-                } else {
-                    rowp.add(pl_card(c.cards[idx], cwp, c.onOpenPlaylist),
-                             {grow: 0, shrink: 0, basis: cwp, align: 3})
-                }
-            }
-            pg0.add(rowp, {grow: 0, shrink: 0, basis: rowHp, align: 3})
-            i = i + cols
+        int totalRows = (c.cards.len() + cols - 1) / cols
+        // 存模块级快照（sync_visible 用）
+        vCards = c.cards
+        vCols = cols
+        vCwp = cwp
+        vCwAll = cwAll
+        vRowH = rowHp
+        vOnOpen = c.onOpenPlaylist
+        vRows = []
+        vRowState = []
+        for 0 : totalRows - 1 to r {
+            VBox slot = SDL3.createVBox({x: 0, y: 0, w: cwAll, h: rowHp,
+                                         pad_x: 0, pad_y: 0, spacing: 0})
+            pg0.add(slot, {grow: 0, shrink: 0, basis: rowHp, align: 3})
+            vRows.add(slot)
+            vRowState.add(-1)
         }
+        // 首屏那几行立刻填上（不等 tick，避免第一帧空白 ✓）
+        sync_visible(0.0)
     }
     tabs.setPageLayout(0, scroll_wrap(pg0, cwAll, true))     // true = 登记滚动区（加载更多用）
 
@@ -171,6 +174,62 @@ export func scroll_y(): float {
 export func restore_scroll(float y) {
     if dscSvp.len() == 0 or y <= 0.0 { return }
     dscSvp[0].set_scroll(0.0, y)
+    sync_visible(y)        // 立刻把这一带的行填上（否则要等下一拍 tick，会闪一下空白 ✓）
+}
+
+// ==================== 精选页「虚拟滚动」====================
+// 为什么：滚动区不虚拟化时，每加载一页就多 18 张卡（每张十几个子控件），
+//   内存随页数线性涨，只能靠"最多 5 页"硬封顶 ✗
+// 做法：内容区先按总行数铺**空行槽**（每行 1 个控件，很轻），
+//   滚动时只把**可见区附近**的行填成真卡片，离开的行 `reset()` 掉（子控件 dispose ✓）
+//   ⚠ 模块级变量必须**显式写类型**：`var x = []` 会推断成 Array[any]，
+//     之后在元素上调方法（如 `.reset()`）直接编译不过 ✗
+Array[VBox] vRows = []                 // 每行一个槽
+Array[int] vRowState = []              // -1 = 空占位，1 = 已填
+Array[Array[string]] vCards = []       // 卡片数据快照（加载更多会变长）
+float vRowH = 200.0
+int vCols = 6
+float vCwp = 150.0
+float vCwAll = 800.0
+func(string, string, string):void vOnOpen = null
+
+// 重建一行：填真卡片
+func fill_row(int r) {
+    VBox slot = vRows[r]
+    HBox rowp = SDL3.createHBox({x: 0, y: 0, w: vCwAll, h: vRowH,
+                                 pad_x: 0, pad_y: 0, spacing: 14.0})
+    for 0 : vCols - 1 to ci {
+        int idx = r * vCols + ci
+        if idx >= vCards.len() {
+            rowp.add(SDL3.createHBox({x: 0, y: 0, w: vCwp, h: vRowH,
+                                      pad_x: 0, pad_y: 0, spacing: 0}),
+                     {grow: 0, shrink: 0, basis: vCwp, align: 3})
+        } else {
+            rowp.add(pl_card(vCards[idx], vCwp, vOnOpen), {grow: 0, shrink: 0, basis: vCwp, align: 3})
+        }
+    }
+    slot.add(rowp, {grow: 1, shrink: 1, align: 3})
+    vRowState[r] = 1
+}
+
+// 按当前滚动位置同步可见行（Player 在 tick 里轮询；没变化时几乎零开销 ✓）
+export func sync_visible(float scrollY) {
+    int n = vRows.len()
+    if n == 0 { return }
+    // 视口 380 + 上下各留 1 行余量（滚动时不至于看到空白 ✓）
+    int first = _int((scrollY - 160.0) / vRowH)
+    int last = _int((scrollY + 380.0 + 160.0) / vRowH)
+    if first < 0 { first = 0 }
+    if last >= n { last = n - 1 }
+    for 0 : n - 1 to r {
+        bool need = r >= first and r <= last
+        if need and vRowState[r] < 0 {
+            fill_row(r)
+        } else if not need and vRowState[r] >= 0 {
+            vRows[r].reset()               // reset = dispose + clear（纹理/字体都释放 ✓）
+            vRowState[r] = -1
+        }
+    }
 }
 
 // Tab 页内容**不会自己滚** ⇒ 每页外面套一层固定高的 ScrollView
