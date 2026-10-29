@@ -19,6 +19,10 @@ export struct Song {
     string sid = ""
     // ★ 2026-10-26：本地文件**绝对路径**（"本地音乐"页用；非空 ⇒ 直接播这个文件，不走网络）
     string path = ""
+    // ★ 2026-10-29：音质标签用（来自酷我 MINFO 的最高音质档）
+    //   `ext` 如 flac / mp3；`sizeBytes` 用来算码率（接口没给 ext 时兜底推算 ✓）
+    string ext = ""
+    int sizeBytes = 0
 }
 
 export struct Shelf {

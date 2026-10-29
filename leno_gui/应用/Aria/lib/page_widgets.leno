@@ -97,6 +97,43 @@ export func number_cell(int idx, int rowH, func():void onPlay): Array[Widget] {
     return out
 }
 
+// 音质档位：返回 "无损" / "HQ" / "标准" / ""（空 = 不显示）
+//   ① 优先用接口给的 `ext`（flac / ape / wav = 无损；mp3 再按码率分）
+//   ② 没有 ext 就用「字节数 ÷ 时长」算码率兜底
+//   `dur` 是 "4:29" 这种文本，先换成秒
+export func quality_of(Song sg): string {
+    string e = sg.ext
+    if e == "flac" or e == "ape" or e == "wav" or e == "FLAC" or e == "APE" or e == "WAV" {
+        return "无损"
+    }
+    // 码率（kbps）= 字节 × 8 ÷ 秒 ÷ 1000
+    int sec = dur_secs(sg.dur)
+    if sg.sizeBytes <= 0 or sec <= 0 { return "" }
+    int kbps = _int(_float(sg.sizeBytes) * 8.0 / _float(sec) / 1000.0)
+    if kbps >= 900 { return "无损" }        // 有些接口 ext 是 mp3，其实是 FLAC 包了一层
+    if kbps >= 320 { return "HQ" }
+    if kbps >= 192 { return "标准" }
+    return ""
+}
+
+// 音质小标签（矩形底 + 文字）：无损 = 主色，HQ = 浅粉，标准 = 灰
+//   ⚠ 调用方必须先用 `quality_of(sg) != ""` 判一下（这里返回非空 HBox，不返回 null ✓）
+export func quality_tag(Song sg, float h): HBox {
+    string q = quality_of(sg)
+    if q == "" { q = "标准" }        // 兜底（正常不会被调到）
+    // 宽度：2 个汉字 ≈ 20px，2 个字母 ≈ 16px；再加左右各 5 的内边距
+    float tw = if q == "无损" then 20.0 else 16.0
+    float w = tw + 10.0
+    Color bgc = ACCENT                       // 无损：主色
+    if q == "HQ" { bgc = #F09CB8FF }
+    else if q == "标准" { bgc = #B8A9B0FF }
+    HBox box = SDL3.createHBox({x: 0, y: 0, w: w, h: h, pad_x: 5, pad_y: 0,
+                                spacing: 0, bg_color: bgc, bg_radius: h / 2.0, justify: 1})
+    box.add(SDL3.createLabel({text: q, font_size: 9.5, text_color: #FFFFFFFF}),
+            {grow: 0, shrink: 0, align: 1})
+    return box
+}
+
 // 搜索过滤（关键词空 = 全通过 ✓）
 export func match_items(Array[Song] src, string filter): Array[Song] {
     if filter == "" { return src }

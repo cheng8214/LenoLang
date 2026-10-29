@@ -291,6 +291,9 @@ export struct PlaylistCtx {
     func(Song):void onLike = null
     func(Song, Button):void onTrack = null
     func(Song):void onReveal = null
+    // 正在播放行的「跳动音柱」+ 判断（由 Player 注入；Canvas 是 struct 不能为 null ⇒ 用数组承载 ✓）
+    Array[Canvas] beat = []
+    func(Song):bool isNow = null
 }
 
 export func build_playlist_page(PlaylistCtx c): VBox {
@@ -388,7 +391,11 @@ export func build_playlist_page(PlaylistCtx c): VBox {
         if row < 0 or row >= rowV.len() { return null }
         if col == 0 {
             Widget? nw = null
-            if hovered { nw = numI[row] } else { nw = numL[row] }
+            // 正在播的这一行 ⇒ 跳动音柱（`beat` / `isNow` 由 Player 注入 ✓）
+            if c.beat.len() > 0 and c.isNow != null and row < c.songs.len() and c.isNow(c.songs[row]) {
+                nw = c.beat[0]
+            } else if hovered { nw = numI[row] }
+            else { nw = numL[row] }
             return nw
         }
         if col == 1 { return rowV[row] }

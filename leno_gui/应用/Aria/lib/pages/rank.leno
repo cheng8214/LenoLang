@@ -41,6 +41,9 @@ export struct RankCtx {
     func(Song, Button):void onTrack = null
     func(Song):void onReveal = null
     func(Button, string):void onTrackCover = null           // 登记封面按钮（异步贴图用）
+    // 正在播放行的「跳动音柱」+ 判断（Player 注入；Canvas 不能为 null ⇒ 用数组承载 ✓）
+    Array[Canvas] beat = []
+    func(Song):bool isNow = null
 }
 
 // 整页：标题「排行榜」 + （卡片墙 | 完整榜单）
@@ -163,7 +166,11 @@ func detail_page(VBox page, RankCtx c): VBox {
         if row < 0 or row >= rowV.len() { return null }
         if col == 0 {
             Widget? nw = null
-            if hovered { nw = numI[row] } else { nw = numL[row] }
+            // 正在播的这一行 ⇒ 跳动音柱（`beat` / `isNow` 由 Player 注入 ✓）
+            if c.beat.len() > 0 and c.isNow != null and row < c.songs.len() and c.isNow(c.songs[row]) {
+                nw = c.beat[0]
+            } else if hovered { nw = numI[row] }
+            else { nw = numL[row] }
             return nw
         }
         if col == 1 { return rowV[row] }

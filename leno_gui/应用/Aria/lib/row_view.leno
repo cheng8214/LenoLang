@@ -13,6 +13,7 @@
 import "SDL3" as SDL3
 use SDL3.(Button, HBox, ImageView, Label, VBox, Widget)
 import "./ui_kit.leno" as ui
+import "./page_widgets.leno" as pw     // 音质档位 / 小标签（无损 / HQ / 标准 ✓）
 import "../music_data.leno" as data
 use data.Song
 
@@ -42,8 +43,19 @@ export func song_row(Song s, float h, RowHooks hk): HBox {
     // 两行文字：歌名（14 粗）+ 歌手（12 灰）
     //   用 lblFit（超宽省略号）+ align: 3（撑满交叉轴 ⇒ Label 宽度有界，省略号才会生效）
     //   ⚠ 别改回 align: 0/1：那样子项宽 = 自然宽，长歌名会把 Label 撑爆、截断失效 ✗
-    VBox names = SDL3.createVBox({x: 0, y: 0, w: 300, h: 42, pad_x: 0, pad_y: 0, spacing: 1})
-    names.add(ui.lblFit(s.title, 14, 0xFF35262B, true), {grow: 0, shrink: 0, basis: 21, align: 3})
+    //   `w` 只是初始占位：外层 `grow/align` 会撑满实际列宽
+    //   ⚠ 别写 300（大于真实列宽）—— 里面的 HBox 会按 300 排，音质标签被推到列中间 ✗
+    VBox names = SDL3.createVBox({x: 0, y: 0, w: 120, h: 42, pad_x: 0, pad_y: 0, spacing: 1})
+    // 歌名行：歌名（可省略）+ 音质小标签（无损 / HQ / 标准）
+    //   标签只在"接口给了格式或体积"时出现，不影响原来那种纯本地文件的列表 ✓
+    HBox trow = SDL3.createHBox({x: 0, y: 0, w: 120, h: 21, pad_x: 0, pad_y: 0, spacing: 6})
+    // ⚠ 歌名**不能 grow**：grow 会吃掉整行剩余宽，音质标签被挤到列最右（看着像浮在中间 ✗）
+    //   用 shrink: 1 让它超长时缩、省略号仍然生效 ✓
+    trow.add(ui.lblFit(s.title, 14, 0xFF35262B, true), {grow: 0, shrink: 1, align: 3})
+    if pw.quality_of(s) != "" {
+        trow.add(pw.quality_tag(s, 15.0), {grow: 0, shrink: 0, align: 1})
+    }
+    names.add(trow, {grow: 0, shrink: 0, basis: 21, align: 3})
     names.add(ui.lblFit(s.artist, 12, 0xFF77646D, false), {grow: 0, shrink: 0, basis: 17, align: 3})
     box.add(names, {grow: 1, shrink: 1, align: 1})
 

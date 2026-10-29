@@ -1332,12 +1332,15 @@ Song nowSong
                                              if row < 0 or row >= srowV.len() { return null }
                                              if col == 0 {
                                                  Widget? nw = null
-                                                 if hovered { nw = numI[row] } else { nw = numL[row] }
+                                                 // 正在播的这一行 ⇒ 跳动音柱（优先于 hover 的播放钮 ✓）
+                                                 if row < netSongs.len() and is_now_playing(netSongs[row]) { nw = beatCv }
+                                                 else if hovered { nw = numI[row] }
+                                                 else { nw = numL[row] }
                                                  return nw
                                              }
                                              if col == 1 { return srowV[row] }
                                              return null
-                                         })
+                                             })
                                          tbSearch.set_cell_interactive(true)
                                           // ★ 只有**双击**才播放：单击 = 选中、右键 = 菜单（之前挂 on_select 会让右击也开播 ✗）
                                          //   行号一律过 `source_row`（表头排序后显示行 ≠ 数据行 ✓）
@@ -1519,7 +1522,10 @@ Song nowSong
                 if row < 0 or row >= rrowV.len() { return null }
                 if col == 0 {
                     Widget? nw = null
-                    if hovered { nw = numI[row] } else { nw = numL[row] }
+                    // 正在播的这一行 ⇒ 跳动音柱（同搜索结果 / 本地音乐 ✓）
+                    if row < rel.len() and is_now_playing(rel[row]) { nw = beatCv }
+                    else if hovered { nw = numI[row] }
+                    else { nw = numL[row] }
                     return nw
                 }
                 if col == 1 { return rrowV[row] }
@@ -1961,6 +1967,12 @@ Song nowSong
                 if files.exists(cf) { sg.cover = cf }
             }
             sg.tag = if r[4].to_lower() == "flac" then "无损" else ""
+            // 音质标签的数据源：`ext` 优先（flac/ape/wav 直接判无损）；
+            //   体积用来兜底算码率（接口只给 "52.83 MB" 这种文本 ⇒ 自己换字节 ✓）
+            sg.ext = r[4].to_lower()
+            if r[5] != "" {
+                sg.sizeBytes = _int(_float(r[5].replace(" MB", "")) * 1048576.0)
+            }
             got.add(sg)
             ids.add(r[6])
             // 第 0 列 = 序号（控件切换）／第 1 列 = 行控件（封面+歌名/歌手+♥/⬇）⇒ 都留空串占位 ✓
@@ -2297,6 +2309,9 @@ Song nowSong
             rankCovers.add(b)
             rankCoverSids.add(sid)
         }
+        // 正在播的行显示跳动音柱（与本地音乐 / 搜索同一套 ✓）
+        c.beat = [beatCv]
+        c.isNow = func(Song sg): bool { return is_now_playing(sg) }
         return c
     }
 
@@ -2336,6 +2351,9 @@ Song nowSong
         c.onLike = func(Song sg) { toggle_song_like(sg) }
         c.onTrack = func(Song sg, Button b) { track_row_like(sg, b) }
         c.onReveal = func(Song sg) { queue_song(sg) }
+        // 正在播的行显示跳动音柱（与本地音乐 / 搜索同一套 ✓）
+        c.beat = [beatCv]
+        c.isNow = func(Song sg): bool { return is_now_playing(sg) }
         return c
     }
 
