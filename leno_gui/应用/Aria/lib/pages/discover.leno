@@ -107,7 +107,7 @@ export func build_page(DiscoverCtx c): VBox {
             i = i + cols
         }
     }
-    tabs.setPageLayout(0, scroll_wrap(pg0, cwAll))
+    tabs.setPageLayout(0, scroll_wrap(pg0, cwAll, true))     // true = 登记滚动区（加载更多用）
 
     // ② 新歌速递：复用首页已拉的 newSongs
     VBox pg1 = SDL3.createVBox({x: 0, y: 0, w: cwAll, h: 420, pad_x: 0, pad_y: 6, spacing: 12})
@@ -139,7 +139,7 @@ export func build_page(DiscoverCtx c): VBox {
             j = j + cols1
         }
     }
-    tabs.setPageLayout(1, scroll_wrap(pg1, cwAll))
+    tabs.setPageLayout(1, scroll_wrap(pg1, cwAll, false))
 
     // ③ 热门歌手：待接歌手接口
     VBox pg2 = SDL3.createVBox({x: 0, y: 0, w: cwAll, h: 420, pad_x: 0, pad_y: 6, spacing: 8})
@@ -150,14 +150,39 @@ export func build_page(DiscoverCtx c): VBox {
     return page
 }
 
+// 「精选」页的滚动区（模块级）：Player 靠它判断"滚到底没"⇒ 触发加载更多 ✓
+//   ⚠ ScrollView 是 struct，跨模块传引用传不出去 ⇒ 在本模块存一份，外面调 near_bottom()
+//   ⚠ 用数组承载：`var x: 类型` 这种标注写法不支持，而数组既能存引用又能判空 ✓
+Array[ScrollView] dscSvp = []
+
+// 精选页是否已接近底部（Player 在 tick 里轮询；`margin` 建议 120~200）
+export func near_bottom(float margin): bool {
+    if dscSvp.len() == 0 { return false }
+    return dscSvp[0].near_bottom(margin)
+}
+
+// 当前滚动位置 / 重建后恢复它
+//   ⚠ 加载更多会 `rebuild_content()` ⇒ ScrollView 是新建的、滚动归零
+//     不恢复的话"滚到底加载"会跳回顶部，体验很差 ✗
+export func scroll_y(): float {
+    if dscSvp.len() == 0 { return 0.0 }
+    return dscSvp[0].get_scroll_y()
+}
+export func restore_scroll(float y) {
+    if dscSvp.len() == 0 or y <= 0.0 { return }
+    dscSvp[0].set_scroll(0.0, y)
+}
+
 // Tab 页内容**不会自己滚** ⇒ 每页外面套一层固定高的 ScrollView
-func scroll_wrap(VBox inner, float w): VBox {
+//   `isMain`：精选页要额外登记滚动区（供"加载更多"判断 ✓）
+func scroll_wrap(VBox inner, float w, bool isMain): VBox {
     VBox wrap = SDL3.createVBox({x: 0, y: 0, w: w, h: 380, pad_x: 0, pad_y: 0, spacing: 0})
     ScrollView sv = SDL3.createScrollView({x: 0, y: 0, w: w, h: 380, smooth: true,
                                            bg_color: TRANS, border: false,
                                            bar_color: #E9CBD6FF})
     sv.set_content(inner)
     wrap.add(sv, {grow: 1, shrink: 1, align: 3})
+    if isMain { dscSvp = [sv] }     // 登记精选页的滚动区（加载更多靠它判断）
     return wrap
 }
 

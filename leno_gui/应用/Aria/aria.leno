@@ -318,6 +318,8 @@ export struct Player {
     bool plAsked = false
     bool plLoading = false
     Array[Array[string]] plCards = []
+    int plPage = 0                // 已加载到第几页（滚到底 → +1 继续拉 ✓）
+    float plScrollY = 0.0         // 加载更多前的滚动位置（重建后要恢复，否则跳回顶部 ✗）
     // 发现页当前 Tab（0=精选 / 1=新歌速递 / 2=热门歌手）
     //   ⚠ 必须存字段：点卡片 ♥ / 播放会 rebuild_content()，Tab 会重建回第 0 页 ✗
     int discTab = 0
@@ -747,6 +749,8 @@ Song nowSong
         if hasLastSearch { searchBtn.set_text_color(C_TXT_MID) }
         dlBtn.set_bg_color(C_TRANS)              // 离开下载页 ⇒ 它的高亮也要撤 ✓
         dlBtn.set_hover_color(#FFFFFFC8)
+        dlBtn.set_text_color(C_TXT_MID)          // ⚠ 文字色也得撤：原来只撤了底色 ⇒
+                                                 //   点了下载管理再点别的，「下载管理」几个字仍是粉色 ✗
         for 0 : navBtns.len() - 1 to i { style_nav(navBtns[i], i == idx) }
         for 0 : plBtns.len() - 1 to i {
             Button b = plBtns[i]
@@ -2635,22 +2639,45 @@ Song nowSong
         if plCards.len() == 0 and not plLoading {
             plLoading = true
             plAsked = true
-            threads.start(workers.playlists, 18, ui.coverCacheDir(), plCh)
+            plPage = 1
+            threads.start(workers.playlists, plPage, 18, ui.coverCacheDir(), plCh)
         }
+    }
+
+    // 滚到底 ⇒ 拉下一页（防重入靠 plLoading；页码自增 ✓）
+    pri func load_more_playlists() {
+        if plLoading { return }
+        plScrollY = page_disc.scroll_y()          // 记住位置，重建后恢复
+        plLoading = true
+        plPage = plPage + 1
+        threads.start(workers.playlists, plPage, 18, ui.coverCacheDir(), plCh)
     }
 
     // 回信：每行 [id, 名称, 本地封面, 播放量, 曲目数, 作者]
     pri func apply_playlists(Array[Array[string]] rows) {
         plLoading = false
-        if rows.len() == 0 { plCards = []; if curNav == 5 { rebuild_content() }; return }
+        if rows.len() == 0 {
+            // 第 1 页就空 ⇒ 真没有；后续页空 ⇒ **没有更多了**（页码退回，别清空已有卡片 ✗）
+            if plPage <= 1 { plCards = [] } else { plPage = plPage - 1 }
+            if curNav == 5 { rebuild_content() }
+            return
+        }
         if rows[0].len() > 0 and rows[0][0] == "ERR" {
             string why = if rows[0].len() > 1 then rows[0][1] else "?"
             nowArtist.set_text("推荐歌单加载失败：" + why)
             SDL3.markFrameRedraw()
             return
         }
-        plCards = rows
-        if curNav == 5 { rebuild_content() } else { SDL3.markFrameRedraw() }
+        // 第 1 页：整表替换；第 2 页起：**追加**（加载更多 ✓）
+        if plPage <= 1 { plCards = rows }
+        else { for rows to r { plCards.add(r) } }
+        if curNav == 5 {
+            rebuild_content()
+            page_disc.restore_scroll(plScrollY)   // 恢复滚动位置（否则跳回顶部 ✗）
+            plScrollY = 0.0
+        } else {
+            SDL3.markFrameRedraw()
+        }
     }
 
     // 点歌单卡片 ⇒ 进歌单详情（curNav = 6）
@@ -3203,9 +3230,13 @@ Song nowSong
             volRoot.set_pos(bx, by)
             volRoot.set_visible(true)
             win.set_modal(volRoot, volRoot.get_x(), volRoot.get_y(), volRoot.get_w(), volRoot.get_h())
+            // 点外面 ⇒ 自动收起（同播放列表 ✓）
+            win.set_click_outside(volRoot.get_x(), volRoot.get_y(), volRoot.get_w(), volRoot.get_h(),
+                                  func() { toggle_vol() })
         } else {
             volRoot.set_visible(false)
             win.clear_modal()
+            win.clear_click_outside()
         }
         SDL3.markFrameRedraw()
     }
@@ -3227,6 +3258,7 @@ Song nowSong
             volRoot.set_visible(false)
         }
         win.clear_modal()
+        win.clear_click_outside()      // 收起时一并撤掉"点外面"回调（否则下次点击会误触发 ✓）
         SDL3.markFrameRedraw()
     }
 
@@ -3238,6 +3270,11 @@ Song nowSong
             // 按**当前**尺寸定位：建面板时用的是常量，窗口放大后那个坐标就飘在中间了 ✗
             //   取根布局的实时宽高（root 会随窗口拉伸），y 再加标题栏高度才是窗口底部 ✓
             qRoot.set_pos(root.get_w() - 284.0, tbH + root.get_h() - 560.0)
+            // 点外面 ⇒ 自动收起（框架在派发处拦：这一下不会再喂给底下的控件 ✓）
+            win.set_click_outside(qRoot.get_x(), qRoot.get_y(), qRoot.get_w(), qRoot.get_h(),
+                                  func() { toggle_queue() })
+        } else {
+            win.clear_click_outside()
         }
         qRoot.set_visible(qOpen)
         // 防穿透：展开时把浮层登记成"模态"——落在它矩形内的事件只给它 ✓
@@ -3804,6 +3841,13 @@ Song nowSong
         if playing {
             beatPhase[0] = beatPhase[0] + 0.045
             if beatPhase[0] > 1000.0 { beatPhase[0] = 0.0 }
+        }
+
+        // 发现页「精选」：滚到接近底部 ⇒ 自动加载下一页（无限滚动 ✓）
+        //   防重入：plLoading 为真时不重复起线程；tab 必须是精选（0）
+        if curNav == 5 and discTab == 0 and not plLoading and plCards.len() > 0
+            and page_disc.near_bottom(200.0) {
+            load_more_playlists()
         }
 
         // 播放列表浮层：鼠标移到哪一行，

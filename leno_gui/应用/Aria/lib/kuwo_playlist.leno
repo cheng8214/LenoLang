@@ -139,9 +139,11 @@ export func parseinfo(string body): PLInfo {
 // ==================== 请求 ====================
 
 // 推荐歌单（首页「精选」卡片墙）
-export func recommend(HttpClient c, int limit): Array[PLInfo] {
+//   `page` 从 1 开始：滚到底要"加载更多"时传 2、3…（接口本身支持 pn 翻页 ✓）
+export func recommend(HttpClient c, int page, int limit): Array[PLInfo] {
     if limit < 1 { limit = 12 }
-    Response resp = c.get(rcmurl(1, limit))
+    if page < 1 { page = 1 }
+    Response resp = c.get(rcmurl(page, limit))
     if not resp.ok() { return [] }
     return parsercm(resp.body)
 }

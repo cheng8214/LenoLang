@@ -128,12 +128,13 @@ export func bang(string bid, int limit, Channel ch) {
 
 // 推荐歌单（发现页「精选」卡片墙）：拉列表 + 每张封面下到 cacheDir
 //   回信每行：[id, 名称, 本地封面路径(空=没下到), 播放量, 曲目数, 作者]
-export func playlists(int n, string cacheDir, Channel ch) {
+//   `page` 从 1 开始 —— 滚到底"加载更多"时传 2、3…（接口支持 pn 翻页 ✓）
+export func playlists(int page, int n, string cacheDir, Channel ch) {
     Array[Array[string]] out = []
     try {
         var c = net.createClient()
         plq.prepare(c)
-        var lists = plq.recommend(c, n)
+        var lists = plq.recommend(c, page, n)
         for lists to p {
             string local = ""
             if p.img != "" {
