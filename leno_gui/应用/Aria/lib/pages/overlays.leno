@@ -1,0 +1,88 @@
+// pages/overlays.leno — 播放列表浮层 / 音量浮窗里的**控件构建**（不含 Player 状态）
+//
+// 拆分自 `aria.leno` 的 `make_beat()` 与 `build_queue_rows()` 里的行构建（第七步）。
+// 外壳（Panel/Card 的创建与挂载）仍留在 Player：它和 `run()` 的时序、`win.set_modal` 绑在一起。
+import "SDL3" as SDL3
+import "../ui_kit.leno" as ui
+import "../page_widgets.leno" as pw
+import "../../music_data.leno" as data
+use SDL3.(VBox, HBox, Label, Button, Card, ImageView, AnchorBox, Canvas, Renderer, Color)
+use data.Song
+
+const Color TXT = #35262BFF
+const Color TXT_DIM = #77646DFF
+const Color ACCENT = #E76F9BFF
+const Color TRANS = #00000000
+
+// 当前播放行的「跳动音柱」：淡紫圆 + 3 根柱，柱高上下交替
+//   `phase[0]` 由 tick 推进（放数组里：闭包读写元素才拿得到最新值，直接读 float 字段会捕获副本 ✗）
+export func make_beat(Array[float] phase): Canvas {
+    Canvas cv = SDL3.createCanvas({x: 0, y: 0, w: 26, h: 26, pad: 0,
+                                   bg_color: TRANS, border: false})
+    cv.on_draw(func(Renderer rr, float ox, float oy, float cw2, float ch2) {
+        float d = 26.0
+        if d > cw2 { d = cw2 }
+        if d > ch2 { d = ch2 }
+        float bx0 = ox + (cw2 - d) / 2.0
+        float by0 = oy + (ch2 - d) / 2.0
+        rr.setColor(#DCCBF2FF)
+        rr.fillRoundedRect(bx0, by0, d, d, d / 2.0)
+        rr.setColor(ACCENT)
+        float bw = d * 0.14
+        float gap = d * 0.09
+        float ph = phase[0]
+        for 0 : 2 to k {
+            // 三根柱错开 1/3 周期 ⇒ 一高一低交替，像音频跳动 ✓（三角波代替 sin，省一个 import）
+            float s = ph + _float(k) * 0.63
+            s = s - _int(s)
+            if s > 0.5 { s = 1.0 - s }
+            float hgt = d * (0.24 + 0.40 * s)
+            float cx3 = bx0 + d / 2.0 + (_float(k) - 1.0) * (bw + gap) - bw / 2.0
+            rr.fillRoundedRect(cx3, by0 + d * 0.5 - hgt / 2.0, bw, hgt, bw / 2.0)
+        }
+    })
+    return cv
+}
+
+// 播放列表浮层里的一行：封面 + 歌名/歌手 + （时长 ↔ ×）
+//   `cur` = 正在播这一首（淡紫底 + 主色歌名）
+//   `onPlay(idx)` / `onRemove(idx)` 由调用方注入（闭包只传 int ⇒ 不会捕获队列副本 ✓）
+export func queue_row(Song q, bool cur, int idx, float w,
+                      func(int):void onPlay, func(int):void onRemove,
+                      func(Label, Button):void onTrack): Card {
+    Card row = SDL3.createCard({x: 0, y: 0, w: w, h: 50, bare: true, radius: 10,
+                                content_pad: 6, hover_lift: 0.0,
+                                bg_color: (if cur then #E6DCF7FF else TRANS),
+                                hover_color: #F3EDFBFF,
+                                content_click_through: true})
+    HBox inner = SDL3.createHBox({x: 0, y: 0, w: w - 12.0, h: 38,
+                                  pad_x: 0, pad_y: 0, spacing: 9})
+    inner.add(SDL3.createImageView({w: 36, h: 36, radius: 6,
+                                    image_path: ui.coverPath(q.cover),
+                                    bg_color: #EFE3EDFF, tip: q.title}),
+              {grow: 0, shrink: 0, basis: 36, align: 1})
+    VBox nm = SDL3.createVBox({x: 0, y: 0, w: 140, h: 36, pad_x: 0, pad_y: 1, spacing: 1})
+    nm.add(ui.lblFit(q.title, 12, (if cur then ACCENT else TXT), false),
+           {grow: 0, shrink: 0, basis: 18, align: 3})
+    nm.add(ui.lblFit(q.artist, 10.5, TXT_DIM, false), {grow: 0, shrink: 0, basis: 15, align: 3})
+    inner.add(nm, {grow: 1, shrink: 1, align: 1})
+
+    // 行尾：时长 / × 叠在同一格（AnchorBox 绝对定位 ⇒ 不额外占宽 ✓）
+    Label durLbl = ui.lbl(q.dur, 10.5, TXT_DIM, false)
+    Button xBtn = SDL3.createButton({image_path: ui.ico("del_m.png"), image_size: 14,
+                                     w: 38, h: 34, radius: 8,
+                                     bg_color: TRANS, hover_color: #F7C3D8FF,
+                                     padding: 0.0, border: false, shadow: false,
+                                     tip: "从列表移除"})
+    xBtn.set_visible(false)
+    xBtn.on_click(func() { if onRemove != null { onRemove(idx) } })
+    AnchorBox tail = SDL3.createAnchorBox({x: 0, y: 0, w: 38, h: 38})
+    tail.add(durLbl, {left: 0, top: 0, w: 38, h: 38})
+    tail.add(xBtn, {left: 0, top: 0, w: 38, h: 38})
+    inner.add(tail, {grow: 0, shrink: 0, basis: 38, align: 2})
+
+    row.set_content(inner)
+    row.on_click(func() { if onPlay != null { onPlay(idx) } })
+    if onTrack != null { onTrack(durLbl, xBtn) }
+    return row
+}

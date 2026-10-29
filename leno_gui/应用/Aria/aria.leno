@@ -42,6 +42,7 @@ import "./lib/page_widgets.leno" as pw      // 页面级纯函数（格式化 / 
 import "./lib/pages/home.leno" as page_home  // 首页（拆分第二步：页面构建搬到独立模块 ✓）
 import "./lib/pages/discover.leno" as page_disc  // 发现页 + 歌单详情（拆分第三步 ✓）
 import "./lib/pages/rank.leno" as page_rank      // 排行榜（拆分第四步 ✓）
+import "./lib/pages/overlays.leno" as page_ov    // 播放列表浮层 / 音量浮窗的控件（拆分第七步 ✓）
 use page_home.HomeCtx
 use page_disc.(DiscoverCtx, PlaylistCtx)
 use page_rank.RankCtx
@@ -496,7 +497,7 @@ Song nowSong
         qRoot.set_visible(false)
 
         // 当前播放行的跳动音柱（**一个实例**给所有表格复用：同一时刻只有一行在播 ✓）
-        beatCv = make_beat()
+        beatCv = page_ov.make_beat(beatPhase)
 
         // ---- 音量浮窗：**竖条**（参考图：白圆角条 + 顶部数字 + 竖直滑块）----
         //   贴在底栏音量图标正上方，宽度只有按钮那么宽（不挡内容 ✓）
@@ -1458,31 +1459,9 @@ Song nowSong
             Array[Canvas] numI = []
             for 0 : rel.len() - 1 to i {
                 int ri0 = i
-                HBox nb = SDL3.createHBox({x: 0, y: 0, w: 60, h: 58.0, pad_x: 0, pad_y: 0, spacing: 0, justify: 1})
-                nb.add(ui.lbl(if i + 1 < 10 then "0" + _str(i + 1) else _str(i + 1), 12.5, C_TXT_DIM, false),
-                       {grow: 0, shrink: 0, basis: 20, align: 1})
-                numL.add(nb)
-                Canvas pv = SDL3.createCanvas({x: 0, y: 0, w: 26, h: 26, pad: 0, bg_color: C_TRANS, border: false})
-                pv.on_draw(func(Renderer rr, float ox, float oy, float cw2, float ch2) {
-                    float d = 26.0
-                    if d > cw2 { d = cw2 }
-                    if d > ch2 { d = ch2 }
-                    float bx0 = ox + (cw2 - d) / 2.0
-                    float by0 = oy + (ch2 - d) / 2.0
-                    rr.setColor(#DCCBF2FF)
-                    rr.fillRoundedRect(bx0, by0, d, d, d / 2.0)
-                    rr.setColor(C_ACCENT)
-                    float s3 = d * 0.30
-                    float px0 = bx0 + d / 2.0 - s3 * 0.38
-                    float py0 = by0 + d / 2.0 - s3 * 0.72
-                    rr.drawLine(px0, py0, px0, py0 + s3 * 1.44)
-                    rr.drawLine(px0, py0, px0 + s3 * 1.24, py0 + s3 * 0.72)
-                    rr.drawLine(px0, py0 + s3 * 1.44, px0 + s3 * 1.24, py0 + s3 * 0.72)
-                })
-                pv.on_click(func(float cx2, float cy2, int btn2) {
-                    if btn2 == 1 { play_song(rel[ri0]) }
-                })
-                numI.add(pv)
+                Array[Widget] nc = pw.number_cell(i, 58, func() { play_song(rel[ri0]) })
+                numL.add(nc[0] as HBox)
+                numI.add(nc[1] as Canvas)
             }
             for rel to s {
                 rrows.add(["", "", s.dur, if s.sid != "" then "在线" else "本地"])
@@ -1606,31 +1585,9 @@ Song nowSong
             Array[Canvas] numI = []
             for 0 : dlJobs.len() - 1 to i {
                 int ri0 = i
-                HBox nb = SDL3.createHBox({x: 0, y: 0, w: 60, h: 58.0, pad_x: 0, pad_y: 0, spacing: 0, justify: 1})
-                nb.add(ui.lbl(if i + 1 < 10 then "0" + _str(i + 1) else _str(i + 1), 12.5, C_TXT_DIM, false),
-                       {grow: 0, shrink: 0, basis: 20, align: 1})
-                numL.add(nb)
-                Canvas pv = SDL3.createCanvas({x: 0, y: 0, w: 26, h: 26, pad: 0, bg_color: C_TRANS, border: false})
-                pv.on_draw(func(Renderer rr, float ox, float oy, float cw2, float ch2) {
-                    float d = 26.0
-                    if d > cw2 { d = cw2 }
-                    if d > ch2 { d = ch2 }
-                    float bx0 = ox + (cw2 - d) / 2.0
-                    float by0 = oy + (ch2 - d) / 2.0
-                    rr.setColor(#DCCBF2FF)
-                    rr.fillRoundedRect(bx0, by0, d, d, d / 2.0)
-                    rr.setColor(C_ACCENT)
-                    float s3 = d * 0.30
-                    float px0 = bx0 + d / 2.0 - s3 * 0.38
-                    float py0 = by0 + d / 2.0 - s3 * 0.72
-                    rr.drawLine(px0, py0, px0, py0 + s3 * 1.44)
-                    rr.drawLine(px0, py0, px0 + s3 * 1.24, py0 + s3 * 0.72)
-                    rr.drawLine(px0, py0 + s3 * 1.44, px0 + s3 * 1.24, py0 + s3 * 0.72)
-                })
-                pv.on_click(func(float cx2, float cy2, int btn2) {
-                    if btn2 == 1 { play_dl_row(ri0) }
-                })
-                numI.add(pv)
+                Array[Widget] nc = pw.number_cell(i, 58, func() { play_dl_row(ri0) })
+                numL.add(nc[0] as HBox)
+                numI.add(nc[1] as Canvas)
             }
             for dlJobs to j {
                 // 列：序号（控件）/ 歌曲（行控件）/ 格式 / 大小 / 进度 / 状态
@@ -1711,39 +1668,11 @@ Song nowSong
             Array[Canvas] numI = []
             for 0 : lsongs.len() - 1 to i {
                 Song si = lsongs[i]
-                // ⚠ 数字必须包一层居中容器：`cell_builder` 返回的控件直接用列 `aligns` 对齐不生效，
-                //   裸 Label 会贴在列左边 ⇒ 看着像"在 hover 块外面"✗
-                HBox nb = SDL3.createHBox({x: 0, y: 0, w: 60, h: _float(lh),
-                                           pad_x: 0, pad_y: 0, spacing: 0, justify: 1})
-                nb.add(ui.lbl(if i + 1 < 10 then "0" + _str(i + 1) else _str(i + 1), 12.5, C_TXT_DIM, false),
-                       {grow: 0, shrink: 0, basis: 20, align: 1})
-                numL.add(nb)
-                // 播放钮用 Canvas 自绘（淡紫圆 + 主色三角）：图标文件是"黑圆白三角"，
-                //   压在浅色界面上太重；自绘还能跟着主题色走 ✓
-                Canvas pv = SDL3.createCanvas({x: 0, y: 0, w: 26, h: 26, pad: 0,
-                                               bg_color: C_TRANS, border: false})
-                pv.on_draw(func(Renderer rr, float ox, float oy, float cw2, float ch2) {
-                    // ⚠ 必须用回调给的 cw2/ch2 居中画：ox/oy 是**内容区**左上角（已扣内边距），
-                    //   按固定 26 从 ox 起画会超出内容区被裁掉 ⇒ 只剩 1/4 弧 ✗
-                    float d = 26.0
-                    if d > cw2 { d = cw2 }
-                    if d > ch2 { d = ch2 }
-                    float bx0 = ox + (cw2 - d) / 2.0
-                    float by0 = oy + (ch2 - d) / 2.0
-                    rr.setColor(#DCCBF2FF)                       // 淡紫圆底（比行 hover 底略深）
-                    rr.fillRoundedRect(bx0, by0, d, d, d / 2.0)
-                    rr.setColor(C_ACCENT)
-                    float s3 = d * 0.30
-                    float px0 = bx0 + d / 2.0 - s3 * 0.38
-                    float py0 = by0 + d / 2.0 - s3 * 0.72
-                    rr.drawLine(px0, py0, px0, py0 + s3 * 1.44)
-                    rr.drawLine(px0, py0, px0 + s3 * 1.24, py0 + s3 * 0.72)
-                    rr.drawLine(px0, py0 + s3 * 1.44, px0 + s3 * 1.24, py0 + s3 * 0.72)
-                })
-                pv.on_click(func(float cx2, float cy2, int btn2) {
-                    if btn2 == 1 { play_song(si) }
-                })
-                numI.add(pv)
+                // 序号列：数字 ↔ 播放钮（工厂在 `page_widgets` ✓）
+                //   ⚠ 数字必须包一层居中容器：`cell_builder` 返回的控件直接用列 `aligns` 不生效 ✗
+                Array[Widget] nc = pw.number_cell(i, lh, func() { play_song(si) })
+                numL.add(nc[0] as HBox)
+                numI.add(nc[1] as Canvas)
             }
             for lsongs to it {
                 rowV.add(rv.song_row(it, _float(lh), hk))
@@ -3227,36 +3156,7 @@ Song nowSong
         if qOpen { build_queue_rows() }
     }
 
-    // 当前播放行的「跳动音柱」：淡紫圆底 + 3 根柱，柱高随 beatPhase 上下交替
-    //   与"序号变播放钮"（淡紫圆 + 三角）同尺寸同配色 ⇒ 两种状态切换不跳 ✓
-    //   ⚠ 不用 sin：省一个 import，用三角波代替（视觉一样，1 行算完 ✓）
-    pri func make_beat(): Canvas {
-        Canvas cv = SDL3.createCanvas({x: 0, y: 0, w: 26, h: 26, pad: 0,
-                                       bg_color: C_TRANS, border: false})
-        cv.on_draw(func(Renderer rr, float ox, float oy, float cw2, float ch2) {
-            float d = 26.0
-            if d > cw2 { d = cw2 }
-            if d > ch2 { d = ch2 }
-            float bx0 = ox + (cw2 - d) / 2.0
-            float by0 = oy + (ch2 - d) / 2.0
-            rr.setColor(#DCCBF2FF)
-            rr.fillRoundedRect(bx0, by0, d, d, d / 2.0)
-            rr.setColor(C_ACCENT)
-            float bw = d * 0.14
-            float gap = d * 0.09
-            float ph = beatPhase[0]
-            for 0 : 2 to k {
-                // 三根柱错开 1/3 周期 ⇒ 一高一低交替，像音频跳动 ✓
-                float s = ph + _float(k) * 0.63
-                s = s - _int(s)
-                if s > 0.5 { s = 1.0 - s }
-                float hgt = d * (0.24 + 0.40 * s)
-                float cx3 = bx0 + d / 2.0 + (_float(k) - 1.0) * (bw + gap) - bw / 2.0
-                rr.fillRoundedRect(cx3, by0 + d * 0.5 - hgt / 2.0, bw, hgt, bw / 2.0)
-            }
-        })
-        return cv
-    }
+    // 「跳动音柱」已搬到 `lib/pages/overlays.leno` 的 `make_beat(phase)`（拆分第七步 ✓）
 
     // 加到播放列表（不打断当前播放；已在列表里就只提示 ✓）
     pri func add_to_queue(Song sg) {
@@ -3358,52 +3258,20 @@ Song nowSong
         for queue to q { total = total + pw.dur_secs(q.dur) }
         qSub.set_text(_str(queue.len()) + " 首 · " + _str(total / 60) + " 分钟")
         for 0 : queue.len() - 1 to i {
-            Song q = queue[i]
-            bool cur = (i == qIdx)
-            // 整行用 **Card**：既能装「封面 + 歌名/歌手两行 + 时长」，又能接整块点击
-            //   · Card 是 ScrollView 内容的一级子控件 ⇒ 命中可靠（同首页卡片）
-            //   · `content_click_through`：内容区（封面/Label）不吞点击，冒泡到卡片 ✓
-            Card row = SDL3.createCard({x: 0, y: 0, w: 244, h: 50, bare: true, radius: 10,
-                                        content_pad: 6, hover_lift: 0.0,
-                                        bg_color: (if cur then #E6DCF7FF else C_TRANS),
-                                        hover_color: #F3EDFBFF,
-                                        content_click_through: true})
-            HBox innerRow = SDL3.createHBox({x: 0, y: 0, w: 232, h: 38,
-                                             pad_x: 0, pad_y: 0, spacing: 9})
-            innerRow.add(SDL3.createImageView({w: 36, h: 36, radius: 6,
-                                               image_path: ui.coverPath(q.cover),
-                                               bg_color: #EFE3EDFF, tip: q.title}),
-                         {grow: 0, shrink: 0, basis: 36, align: 1})
-            VBox nm = SDL3.createVBox({x: 0, y: 0, w: 140, h: 36, pad_x: 0, pad_y: 1, spacing: 1})
-            nm.add(ui.lblFit(q.title, 12, (if cur then C_ACCENT else C_TXT), false),
-                   {grow: 0, shrink: 0, basis: 18, align: 3})
-            nm.add(ui.lblFit(q.artist, 10.5, C_TXT_DIM, false), {grow: 0, shrink: 0, basis: 15, align: 3})
-            innerRow.add(nm, {grow: 1, shrink: 1, align: 1})
-            // 行尾：**时长 / ×** 叠在同一格里（AnchorBox 绝对定位）——
-            //   hover 时把时长换成删除钮，不占额外宽度 ✓
-            Label durLbl = ui.lbl(q.dur, 10.5, C_TXT_DIM, false)
-            Button xBtn = SDL3.createButton({image_path: ui.ico("del_m.png"), image_size: 14,
-                                             w: 38, h: 34, radius: 8,
-                                             bg_color: C_TRANS, hover_color: #F7C3D8FF,
-                                             padding: 0.0, border: false, shadow: false,
-                                             tip: "从列表移除"})
-            xBtn.set_visible(false)
             int qi = i
-            xBtn.on_click(func() { queue_remove(qi) })
-            AnchorBox tail = SDL3.createAnchorBox({x: 0, y: 0, w: 38, h: 38})
-            tail.add(durLbl, {left: 0, top: 0, w: 38, h: 38})
-            tail.add(xBtn, {left: 0, top: 0, w: 38, h: 38})
-            innerRow.add(tail, {grow: 0, shrink: 0, basis: 38, align: 2})
-            row.set_content(innerRow)
-            // 登记：on_tick 里按 is_hover() 切「时长 ↔ ×」✓
+            // 行控件在 `lib/pages/overlays.leno`（拆分第七步 ✓）
+            //   闭包里**只传 int**：队列在 play_from_index / queue_remove 里从 self 读，
+            //   把 `queue` 写进闭包会捕获创建时的副本 ⇒ 点了像"没反应" ✗
+            Card row = page_ov.queue_row(queue[i], i == qIdx, qi, 244.0,
+                                         func(int k) { play_from_index(k) },
+                                         func(int k) { queue_remove(k) },
+                                         func(Label dl, Button xb) {
+                                             // 登记：on_tick 里按 is_hover() 切「时长 ↔ ×」✓
+                                             qRowDur.add(dl)
+                                             qRowX.add(xb)
+                                         })
             qRows.add(row)
-            qRowDur.add(durLbl)
-            qRowX.add(xBtn)
             qRowHot.add(false)
-            // ⚠ 闭包里**只捕获 int**（`qi`），队列在 play_from_index 里从 self 读 ——
-            //   直接把 `queue` 写进闭包会捕获到创建时的副本（那时可能是空数组）
-            //   ⇒ 点了像"没反应"（play_from 拿空列表直接 return ✗）
-            row.on_click(func() { play_from_index(qi) })
             qList.add(row, {grow: 0, shrink: 0, basis: 50, align: 3})
         }
     }
