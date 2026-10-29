@@ -43,9 +43,11 @@ export func save(PlaySession s, string settingsPath): bool {
     lines.add("cur=" + _str(s.cur))
     lines.add("pos=" + _str(s.pos))
     for s.queue to q {
+        // 最后一项 = 音源标记（"ff" / 空）：不存的话重启后高音质源的队列歌
+        //   `url` 空、`src` 也空 ⇒ 会被当酷我歌解析、必失败 ✗
         lines.add("s\t" + clean(q.title) + "\t" + clean(q.artist) + "\t" + clean(q.dur)
                   + "\t" + clean(q.cover) + "\t" + clean(q.tag) + "\t" + clean(q.sid)
-                  + "\t" + clean(q.path))
+                  + "\t" + clean(q.path) + "\t" + clean(q.src))
     }
     try {
         fs.write(store_path(settingsPath), st.join(lines, "\n"))
@@ -81,6 +83,7 @@ export func load(string settingsPath): PlaySession {
                 sg.tag = f[5]
                 sg.sid = f[6]
                 sg.path = f[7]
+                if f.len() >= 9 { sg.src = f[8] }    // 老格式没第 9 段 ⇒ 保持空（当酷我歌 ✓）
                 s.queue.add(sg)
             }
         } else if st.starts_with(ln, "cur=") {

@@ -25,12 +25,22 @@ export func fmt_wan(string v): string {
 }
 
 // "03:45" → 225 秒（算总时长用；解析不了就 0）
+//   ⚠ 必须容错：`formatduration(0)` 会给出 **"-"** 这种串（备用音源的搜索结果
+//     常常没带时长），而 `_int("-")` 在运行期直接抛错、整个页面崩掉 ✗
+//   ⇒ p<1（冒号在开头 / 没有冒号）一律当 0；整段用 try 兜底 ✓
 export func dur_secs(string d): int {
-    int p = strings.byte_find(d, ":", 0)
-    if p < 0 { return 0 }
-    int m = _int(strings.byte_slice(d, 0, p - 1))
-    int s = _int(strings.byte_slice(d, p + 1, d.len() - 1))
-    return m * 60 + s
+    if d == "" { return 0 }
+    try {
+        int p = strings.byte_find(d, ":", 0)
+        if p < 1 { return 0 }
+        string ms = strings.byte_slice(d, 0, p - 1)
+        string ss = strings.byte_slice(d, p + 1, d.len() - 1)
+        // 非纯数字（"-" / "  " 之类）直接放弃，别让 _int 抛错 ✓
+        if ms == "" or ms == "-" or ss == "" or ss == "-" { return 0 }
+        return _int(ms) * 60 + _int(ss)
+    } catch e {
+        return 0
+    }
 }
 
 // 卡片墙拉哪些榜：挑 12 个常用榜（`kuwo.bangmenu()` 里一共 31 个，全拉要 31 个请求）
@@ -102,17 +112,23 @@ export func number_cell(int idx, int rowH, func():void onPlay): Array[Widget] {
 //   ② 没有 ext 就用「字节数 ÷ 时长」算码率兜底
 //   `dur` 是 "4:29" 这种文本，先换成秒
 export func quality_of(Song sg): string {
+    // ★ 有体积就**按码率分档**（唯一可靠的口径）：
+    //   ffapi 的 `level` 标签是错的（实测 exhigh 也标"无损(SQ)"），
+    //   但体积不会骗人 —— 60MB 的 flac 和 115MB 的母带必须区分开 ✓
+    int sec = dur_secs(sg.dur)
+    if sg.sizeBytes > 0 and sec > 0 {
+        int kbps = _int(_float(sg.sizeBytes) * 8.0 / _float(sec) / 1000.0)
+        if kbps >= 2000 { return "超清母带" }   // jymaster 那档（115MB / 6:00 ≈ 2560k）
+        if kbps >= 900 { return "无损" }
+        if kbps >= 320 { return "HQ" }
+        if kbps >= 192 { return "标准" }
+        return ""
+    }
+    // 没体积时退回只看格式（能判"无损"，但分不出母带）
     string e = sg.ext
     if e == "flac" or e == "ape" or e == "wav" or e == "FLAC" or e == "APE" or e == "WAV" {
         return "无损"
     }
-    // 码率（kbps）= 字节 × 8 ÷ 秒 ÷ 1000
-    int sec = dur_secs(sg.dur)
-    if sg.sizeBytes <= 0 or sec <= 0 { return "" }
-    int kbps = _int(_float(sg.sizeBytes) * 8.0 / _float(sec) / 1000.0)
-    if kbps >= 900 { return "无损" }        // 有些接口 ext 是 mp3，其实是 FLAC 包了一层
-    if kbps >= 320 { return "HQ" }
-    if kbps >= 192 { return "标准" }
     return ""
 }
 
@@ -121,11 +137,14 @@ export func quality_of(Song sg): string {
 export func quality_tag(Song sg, float h): HBox {
     string q = quality_of(sg)
     if q == "" { q = "标准" }        // 兜底（正常不会被调到）
-    // 宽度：2 个汉字 ≈ 20px，2 个字母 ≈ 16px；再加左右各 5 的内边距
-    float tw = if q == "无损" then 20.0 else 16.0
+    // 宽度：汉字按 10px/字、字母按 8px/字估；再加左右各 5 的内边距
+    float tw = 16.0
+    if q == "超清母带" { tw = 40.0 }
+    else if q == "无损" { tw = 20.0 }
     float w = tw + 10.0
     Color bgc = ACCENT                       // 无损：主色
-    if q == "HQ" { bgc = #F09CB8FF }
+    if q == "超清母带" { bgc = #C94C7AFF }    // 更深一档，与「无损」区分开 ✓
+    else if q == "HQ" { bgc = #F09CB8FF }
     else if q == "标准" { bgc = #B8A9B0FF }
     HBox box = SDL3.createHBox({x: 0, y: 0, w: w, h: h, pad_x: 5, pad_y: 0,
                                 spacing: 0, bg_color: bgc, bg_radius: h / 2.0, justify: 1})

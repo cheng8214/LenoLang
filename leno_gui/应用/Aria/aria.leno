@@ -33,6 +33,9 @@ import "./lib/downloads.leno" as dl         // 下载 + 本地曲库扫描
 import "./lib/store.leno" as store          // 本地持久化（喜欢 / 最近播放 → 缓存\library.json）
 import "./lib/settings.leno" as cfgset       // 应用设置（线程数 / 缓存目录 / 优先格式）
 import "./lib/session.leno" as session       // 会话持久化（播放队列 / 当前曲目 / 进度 ✓）
+// ⚠ 别名别叫 `ff`：`play_ready` 里有个局部变量 `string ff`（兜底 flac 路径）
+//   会把模块遮蔽 ⇒ `ff.LEVEL_*` 报"在该对象上找不到方法"，且看不出是遮蔽 ✗
+import "./lib/ffapi_core.leno" as ffpg      // 高音质音源（试听档位由设置决定 ✓）
 use session.PlaySession
 import "./lib/settings_win.leno" as cfgwin   // 设置对话框（独立窗口）
 import "./lib/probes.leno" as probe             // 无头验证用的假数据（假歌词 / 压力歌单）
@@ -261,6 +264,27 @@ export struct Player {
     Array[string] netIds = []      // 与 netSongs 对应的酷我 id（取音源用）
     // ----- 搜索线程（LenoMusic 口径：工作线程跑网络，UI 用 try_receive 排空）-----
     Channel searchCh
+    Channel ffCh                     // 高音质音源搜索（逐条渐进回信 ✓）
+    Channel urlCh                    // 高音质音源直链下载回信 ✓
+    Channel ffHighCh                 // 高音质音源按需解析直链（试听 / 下载共用 ✓）
+    Channel ffFillCh                 // 搜索后回填"最高音质体积"（逐条渐进 ✓）
+    bool ffHighIsPlay = false        // true = 解析是为了**试听**；false = 为了下载（取最高规格）
+    // 当前音源：kuwo / ff（搜索框旁的小按钮切换）
+    //   ⚠ 字段默认值只能是**常量**（`_env_or(...)` 这种调用不行 ✗）
+    //     要改初值就在 run() 里赋（见 `ARIA_SRC` 那段）
+    string g_source = "kuwo"
+    Button srcBtn                    // 音源切换按钮（文字跟着 g_source 变 ✓）
+    int ffGot = 0                    // 本轮已收到的条数（拼 netMsg 用）
+    bool ffDirty = false             // 收到新行 ⇒ 本拍末尾重建一次（不是每条都重建 ✗）
+    string urlWantPath = ""          // 本次下载目标文件（回信时对比用）
+    // ★ 要下载的**那一首**：不能拿 `nowSong` 顶替 ——
+    //   点下载时 `nowSong` 还是"正在播的那首" ⇒ 提示会显示成别的歌 ✗（实测：点后来、提示稻香）
+    //   ⚠ 用数组承载：`Song` 是 struct，字段默认值只能是常量（`new Song()` 编译不过 ✗）
+    Array[Song] urlTarget = []
+    bool urlIsPlay = true            // true = 下完就播；false = 下到「下载」目录（不播 ✓）
+    int dlPgShown = -5               // 上次画出的下载百分比（节流用；-5 保证第一片就刷新 ✓）
+    bool ffRetried = false           // 直链失效后是否已自动重试过一次（防无限重试 ✓）
+    string ffRetrySid = ""           // 上次重试针对哪首（换歌才重置 ffRetried ✓）
     bool searching = false
     string lastKw = ""
     Channel coverCh                // 封面线程回信（[id, 路径]）
@@ -417,6 +441,12 @@ Song nowSong
     func run() {
         SDL3.ttfInit()
         searchCh = threads.channel(4)         // 搜索回信通道（一次一条 ✓）
+        ffCh = threads.channel(4)             // ffapi 兜底搜索回信 ✓
+        // ⚠ 容量必须够大：分片下载每 1MB 发一条进度，容量 4 会**发一条堵一条** ✗
+        //   （酷我那套 `dlCh` 用的就是 64 ✓）
+        urlCh = threads.channel(64)           // 高音质直链下载回信（进度 + 完成）✓
+        ffHighCh = threads.channel(4)         // 最高规格解析回信 ✓
+        ffFillCh = threads.channel(8)         // 体积回填（逐条，容量大点免得堵 ✓）
         coverCh = threads.channel(8)          // 封面回信通道
         dlCh = threads.channel(64)            // 下载进度回传（分片下载每 1MB 一条 ✓）
         playCh = threads.channel(8)           // 播放前取音源（一次一首 ✓）
@@ -563,6 +593,9 @@ Song nowSong
 
         // 先读设置（缓存目录 / 优先格式 / 线程数）—— ui.cacheRoot() 依赖它，必须在建界面之前 ✓
         apply_settings(cfgset.load())
+    // 诊断/探针：`ARIA_SRC=ff` 启动即选高音质源（正常启动保持 kuwo ✓）
+    var srcEnv = _env("ARIA_SRC")
+    if srcEnv != null and _str(srcEnv) != "" { g_source = _str(srcEnv) }
         // 卡片回调注入（lib/cards.leno 不认识 Player，播放/收藏/下载都由这里接上 ✓）
         init_card_hooks()
         // 再把喜欢/最近播放读回来（必须在建界面之前，否则首页第一帧是空的 ✓）
@@ -912,8 +945,26 @@ Song nowSong
         })
         // 选中某条建议 ⇒ 直接用它搜酷我（文本已由控件填好 ✓）
         search.on_change(func(int idx) { on_kuwo_search() })
-        search.on_enter(func(string t) { on_kuwo_search() })   // 回车 = 搜酷我（联网 ✓）
+        // 回车 = 搜酷我（联网 ✓）；下拉由 `on_kuwo_search()` 开头统一收起 ✓
+        search.on_enter(func(string t) { on_kuwo_search() })
         topBar.add(search, {grow: 0, shrink: 0, basis: 300, align: 1})
+
+        // 音源切换（拆分后的设计：两个音源**各搜各的**，结果不混在一个列表里 ✓）
+        //   酷我 = 原来的搜索；高音质 = ffapi（试听按设置音质、下载固定取最高规格）
+        //   ⚠ 回调用字段 `srcBtn` 而不是局部变量：闭包捕获的是创建时的副本，
+        //     直接 `srcBtn.set_text` 改不到界面上的那个 ✗
+        srcBtn = SDL3.createButton({text: "酷我", font_size: 11, w: 56, h: 26, radius: 13,
+                                    padding: 8.0, bg_color: #FFFFFFB0, hover_color: #FFFFFFFF,
+                                    text_color: C_TXT_MID, border: false, shadow: false,
+                                    tip: "切换音源：酷我 / 高音质"})
+        srcBtn.on_click(func() {
+            g_source = if g_source == "kuwo" then "ff" else "kuwo"
+            srcBtn.set_text(if g_source == "kuwo" then "酷我" else "高音质")
+            nowArtist.set_text(if g_source == "kuwo" then "音源：酷我"
+                               else "音源：高音质（试听按设置音质，下载取最高规格）")
+            SDL3.markFrameRedraw()
+        })
+        topBar.add(srcBtn, {grow: 0, shrink: 0, basis: 56, align: 1})
 
         // ---- 设置（齿轮，2026-10-26 需求）----
         topBar.add(SDL3.createLabel({text: ""}), {grow: 0, shrink: 0, basis: 6, align: 1})
@@ -988,7 +1039,18 @@ Song nowSong
         VBox page = SDL3.createVBox({x: 0, y: 0, w: 900, h: 500,
                                      pad_x: PAD, pad_y: 6, spacing: 8})
         page.add(ui.lbl(title, 25, C_TXT, true), {grow: 0, shrink: 0, basis: 36, align: 3})
-        page.add(ui.lbl(sub, 11, C_TXT_DIM, false), {grow: 0, shrink: 0, basis: 18, align: 3})
+        // 副标题：搜索中 ⇒ 前面挂一个转圈（和酷我加载时同一套观感 ✓）
+        if searching {
+            HBox subRow = SDL3.createHBox({x: 0, y: 0, w: 400, h: 18,
+                                           pad_x: 0, pad_y: 0, spacing: 6})
+            subRow.add(SDL3.createSpinner({size: 13, thickness: 1.8, color: C_ACCENT,
+                                           track_color: #F6DCE5FF, running: true}),
+                       {grow: 0, shrink: 0, basis: 13, align: 1})
+            subRow.add(ui.lbl(sub, 11, C_TXT_DIM, false), {grow: 0, shrink: 1, align: 1})
+            page.add(subRow, {grow: 0, shrink: 0, basis: 18, align: 3})
+        } else {
+            page.add(ui.lbl(sub, 11, C_TXT_DIM, false), {grow: 0, shrink: 0, basis: 18, align: 3})
+        }
         page.add(t, {grow: 1, shrink: 1, align: 3})
         mainCol.add(page, {grow: 1, shrink: 1, align: 3})
         lastPage = page
@@ -1135,6 +1197,31 @@ Song nowSong
 
     // 取歌词（后台线程；同一首不重复取 ✓）
     pri func request_lyric() {
+        // ★ 高音质音源：歌词在**搜索时**就随解析结果落盘了（`ff_<id>.lrc`）
+        //   ffapi 的 music 响应自带 lrc，不用再请求 ✓
+        //   ⚠⚠ 这个分支**必须无条件 return**，绝不能落到下面的酷我歌词接口：
+        //      `nowSid` 是**网易云 id**，喂给酷我接口它会返回一首**完全不相干**的歌的歌词
+        //      ⇒ 实测症状：「青衣」播出来全是周杰伦的歌词 ✗
+        //      文件不存在就显示"暂无歌词"，这才是正确行为。
+        if nowSong.url != "" {
+            if nowSid == "" { return }
+            string keyFf = "ff:" + nowSid
+            if lyric.sid == keyFf { return }
+            lyric.sid = keyFf
+            lyric.clear()
+            string lpFf = dirs.join(ui.coverCacheDir(), "ff_" + nowSid + ".lrc")
+            if files.exists(lpFf) {
+                try {
+                    lyric.set_text(files.read(lpFf))
+                } catch e {
+                    print("[lyric] 读高音质歌词失败：" + _str(e))
+                }
+            } else {
+                print("[lyric] 没有本地歌词：ff_" + nowSid + ".lrc（不回落到酷我接口 ✓）")
+            }
+            lyric.loading = false
+            return
+        }
         // ---- 本地文件：读**同目录同名 .lrc**（在线歌那条路要 sid，本地没有 ⇒ 原来直接 return ✗）----
         if nowSong.path != "" {
             string key = nowSong.path
@@ -1153,7 +1240,15 @@ Song nowSong
             return
         }
         string sid = nowSid
-        if sid == "" { return }
+        if sid == "" {
+            // ★ 没在播（或本地文件/空状态）⇒ **必须清掉旧歌词**
+            //   原来这里直接 return ⇒ 屏幕上一直留着上一首（甚至更早一首）的词，
+            //   看起来就像"每首都是周杰伦" ✗
+            lyric.sid = ""
+            lyric.clear()
+            lyric.loading = false
+            return
+        }
         if sid == lyric.sid { return }
         lyric.sid = sid
         lyric.clear()                       // 换歌先清空，避免上一首的歌词留在屏幕上 ✗
@@ -1389,8 +1484,11 @@ Song nowSong
                                          })
             // 搜索进行中 ⇒ 用统一的 Spinner 加载页；回来后再换成表格 ✓
             //   （表格占满剩余高度、内部滚动，标题用 netMsg 里的搜索状态）
+            // ★ 高音质源要**全部解析完再一次性出结果**：
+            //   期间只显示加载页（Spinner + 进度文字），不要一条条往外蹦 ✓
+            //   进度看 `netMsg`（"正在解析… 已找到 N 首"）
             if searching {
-                show_loading_page("搜索结果", netMsg, "正在搜索…")
+                show_loading_page("搜索结果", netMsg, "正在解析音质…")
             } else {
                 show_table_page("搜索结果", netMsg, tbSearch)
             }
@@ -1925,18 +2023,114 @@ Song nowSong
     //   照 LenoMusic：网络在**工作线程**里跑，UI 只在这一拍 `try_receive()` 排空 ⇒ 搜索时界面不冻 ✓
     //   （原来在 UI 线程同步 `client.get()`：一次几秒，表现的就是"卡死" ✗）
     pri func on_kuwo_search() {
+        // 任何入口发起搜索都先收起候选下拉（回车 / 点「搜索」/ 右键菜单「搜索这首歌」/
+        //   搜索建议点击…）—— 放在这个函数开头 = 一处覆盖所有路径 ✓
+        search.close()
         string kw = strings.trim(search.get_text())
         if kw == "" { return }
         if searching { return }                 // 一次只跑一个，重复回车不排队 ✓
         searching = true
         lastKw = kw
+        // ★ 两个音源**各搜各的**，结果不混在一个列表里（原来那套"兜底混合"已删 ✓）
+        if g_source == "ff" {
+            // 高清音源：清空现有结果，逐条渐进追加
+            netSongs = []
+            netRows = []
+            netIds = []
+            hasTable = false
+            ffGot = 0
+            // ★ 先排空上一轮的回信：否则上次搜索的残余行会混进新列表
+            //   ⇒ 歌名是这次、歌手/歌词是上次（看着像"接口错乱" ✗）
+            if ffCh != null {
+                var junk = ffCh.try_receive()
+                while junk != null { junk = ffCh.try_receive() }
+            }
+            netMsg = "高音质搜索「" + kw + "」· 正在搜索…"
+            rebuild_content()
+            SDL3.markFrameRedraw()
+            // 搜**网易云**（一次请求回整页，秒出 ✓）；直链留到点播/下载时再解析
+            // ffapi 搜索 + 逐条解析，默认 10 首
+            //   ★ 列表里问的是**最高档**（jymaster → lossless）：
+            //     用户想看到"这首歌最好能到多大"，而不是试听档 ✗
+            //     试听时再按设置重新解析一次（见 play_url_song）✓
+            threads.start(workers.ffsearch, kw, 10,
+                          [ffpg.LEVEL_JYMASTER, ffpg.LEVEL_LOSSLESS],
+                          ui.coverCacheDir(), ffCh)
+            return
+        }
         netMsg = "正在搜索「" + kw + "」…"
         rebuild_content()                       // 立刻出现「正在搜索…」（无旧结果时 ✓）
         SDL3.markFrameRedraw()
         threads.start(workers.search, kw, 40, searchCh)
     }
 
+    // 试听音质 → ffapi 的档位顺序（跟着设置里的音质走 ✓）
+    //   ⚠ 末尾都补一档"能出声就行"的兜底：某些歌的 exhigh/standard 没版权，
+    //     但无损/母带反而有 ⇒ 不兜底就直接"该曲目没有可用的音质版本" ✗
+    pri func ff_levels(): Array[string] {
+        if g_audioQ == "lossless" {
+            return [ffpg.LEVEL_LOSSLESS, ffpg.LEVEL_HIRES, ffpg.LEVEL_JYMASTER]
+        }
+        if g_audioQ == "high" {
+            return [ffpg.LEVEL_EXHIGH, ffpg.LEVEL_LOSSLESS, ffpg.LEVEL_JYMASTER]
+        }
+        return [ffpg.LEVEL_STANDARD, ffpg.LEVEL_EXHIGH, ffpg.LEVEL_LOSSLESS]
+    }
+
     // 收工作线程的结果（tick 里调；非阻塞 ✓）
+    // 高音质音源：收到**一条**就追加一行
+    //   ⚠ 这个列表整个都是它自己的 ⇒ **不去重、不跟酷我比体积**（原来那套"兜底混合"已删 ✓）
+    //   重建放到 tick 末尾统一做（`ffDirty`），否则 24 条会触发 24 次整页重建 ✗
+    pri func apply_ff_row(Array[string] r) {
+        // 行格式：[歌名, 歌手, 专辑, 秒, ext, 体积文本, id, 档位, 直链, 歌词, 本地封面]
+        if r.len() < 9 { return }
+        // 体积串 → 字节
+        //   ⚠ 不能只按 MB 算：小于 1MB 的是 **"593KB"**，`_float("593KB")` 会直接抛错 ✗
+        int fsz = 0
+        try {
+            string st2 = r[5].replace(" ", "")
+            if strings.has(st2, "GB") {
+                fsz = _int(_float(st2.replace("GB", "")) * 1073741824.0)
+            } else if strings.has(st2, "MB") {
+                fsz = _int(_float(st2.replace("MB", "")) * 1048576.0)
+            } else if strings.has(st2, "KB") {
+                fsz = _int(_float(st2.replace("KB", "")) * 1024.0)
+            }
+        } catch e {
+            fsz = 0
+        }
+        Song sg = new Song()
+        sg.title = r[0]
+        sg.artist = r[1]
+        sg.dur = kuwo.formatduration(_int(r[3]))
+        sg.ext = r[4]                       // flac / mp3（音质标签靠它 ✓）
+        sg.sizeBytes = fsz
+        sg.sid = r[6]
+        sg.url = r[8]                       // ★ 直链：试听直接下它 ✓
+        sg.src = "ff"                       // ★ 标记来源（url 不持久化，靠它分流 ✓）
+        // 封面（worker 已下到本地缓存）
+        if r.len() > 10 and r[10] != "" { sg.cover = r[10] }
+        // 歌词：ffapi 的 music 响应**自带** lrc ⇒ 落一份到缓存，
+        //   播放时 `request_lyric()` 按同一路径规则读它 ✓
+        if r.len() > 9 and r[9] != "" {
+            try {
+                dirs.mkdir_p(ui.coverCacheDir())     // 目录不在时 write 会抛错（先建 ✓）
+                string lp = dirs.join(ui.coverCacheDir(), "ff_" + sg.sid + ".lrc")
+                files.write(lp, r[9])
+            } catch e {
+                print("[lyric] 写本地歌词失败：" + _str(e))
+            }
+        }
+        netSongs.add(sg)
+        netRows.add(["", "", "", sg.dur, r[5]])
+        ffGot = ffGot + 1
+        ffDirty = true
+        // 副标题当进度条用：能看到它一条条往上走（不然"等一会儿才出现"分不清
+        //   是在加载还是卡住了 ✓）
+        netMsg = "高音质「" + lastKw + "」· 正在解析… 已找到 "
+               + _str(ffGot) + " 首（最多 10 首）"
+    }
+
     pri func apply_search_result(Array[Array[string]] msg) {
         searching = false
         // 这次回信是不是"歌曲页补相关歌曲"发起的（先在开头取走并复位，任何分支都不会残留 ✓）
@@ -1970,8 +2164,21 @@ Song nowSong
             // 音质标签的数据源：`ext` 优先（flac/ape/wav 直接判无损）；
             //   体积用来兜底算码率（接口只给 "52.83 MB" 这种文本 ⇒ 自己换字节 ✓）
             sg.ext = r[4].to_lower()
+            // 体积串 → 字节（**三种后缀都要认**：小文件是 "365.84 KB"、大的是 "52.83 MB"）
+            //   ⚠ 原来只按 " MB" 换 ⇒ 遇到 KB 那条 `_float("365.84 KB")` 直接抛错、整页崩 ✗
             if r[5] != "" {
-                sg.sizeBytes = _int(_float(r[5].replace(" MB", "")) * 1048576.0)
+                try {
+                    string s5 = r[5].replace(" ", "")
+                    if strings.has(s5, "GB") {
+                        sg.sizeBytes = _int(_float(s5.replace("GB", "")) * 1073741824.0)
+                    } else if strings.has(s5, "MB") {
+                        sg.sizeBytes = _int(_float(s5.replace("MB", "")) * 1048576.0)
+                    } else if strings.has(s5, "KB") {
+                        sg.sizeBytes = _int(_float(s5.replace("KB", "")) * 1024.0)
+                    }
+                } catch e {
+                    sg.sizeBytes = 0
+                }
             }
             got.add(sg)
             ids.add(r[6])
@@ -1989,6 +2196,8 @@ Song nowSong
                 SDL3.markFrameRedraw()
                 return
             }
+            // （旧的两音源混合兜底已彻底删除：现在音源由搜索框旁的按钮决定，
+            //   各搜各的、结果不混 —— 见 on_kuwo_search 的 g_source 分支 ✓）
             netMsg = "酷我「" + lastKw + "」· " + _str(got.len()) + " 首（双击行播放）"
             // 留快照：切页后点左侧「搜索结果」能回到这张表 ✓
             lastSongs = got
@@ -2081,11 +2290,81 @@ Song nowSong
     pri func play_net_song(int i) {
         if i < 0 or i >= netSongs.len() { return }
         Song sg = netSongs[i]
+        // ★ 备用音源（ffapi）必须**先**分流：它的 sid 是网易云 id，
+        //   丢进 `play_sid` 就是拿网易云 id 去问酷我要地址 ⇒ 必然"无法播放" ✗
+        if sg.src == "ff" or sg.url != "" {
+            play_url_song(sg)
+            return
+        }
         if i < netIds.len() { sg.sid = netIds[i] }
         play_sid(sg)
     }
 
     // 按 `Song.sid` 播放 —— 搜索结果 / 为你推荐 / 最近添加 / 继续收听 **统一走这里** ✓
+    // 备用音源：直链 → 缓存 → 播（结构照 `play_sid`，只是取源方式不同 ✓）
+    pri func play_url_song(Song sg) {
+        urlTarget = [sg]                           // 记住"这次要播的是这首"（tick 回调用 ✓）
+        // ⚠ 只有**换了歌**才重置重试标记：
+        //   无条件重置会让"重试 → 失败 → 重试"变成死循环（实测打了 4 次还在转 ✗）
+        if ffRetrySid != sg.sid {
+            ffRetried = false
+            ffRetrySid = sg.sid
+        }
+        // ★★ 必须更新 `nowSong`：`play_song` / `play_sid` 都会设它，这里原来**漏了** ⇒
+        //    · `request_lyric()` 用 `nowSong.url` 判断走哪条歌词路 ⇒ 一直用**上一首**的判断
+        //      （症状：换歌了歌词不换，甚至一直是更早某首的 ⇒ "每首都是周杰伦" ✗）
+        //    · urlCh 回调里 `play_ready(nowSong, ...)` 也拿的旧歌
+        nowSong = sg
+        push_recent(sg)
+        nowTitle.set_text(sg.title)
+        nowArtist.set_text(sg.artist + " · 备用音源")
+        coverView.set_image(ui.coverPath(sg.cover))
+        pos = 0.0
+        durKnown = false
+        shownSec = -1
+        playing = false
+        playBtn.set_image(ui.ico("play.png"))
+        sync_play_ui()
+        nowSid = sg.sid                            // 高音质源的 id（歌词按 `ff_<id>.lrc` 找 ✓）
+        request_lyric()                            // ★ 换歌就要换歌词（原来没调 ⇒ 一直留着上一首的 ✗）
+        string ext = if sg.ext != "" then sg.ext else "flac"
+        string f = dirs.join(ui.audioCacheDir(), "ff_" + sg.sid + "." + ext)
+        if files.exists(f) {
+            play_ready(sg, f)                      // 缓存命中 ⇒ 直接开声 ✓
+            return
+        }
+        urlWantPath = f
+        urlIsPlay = true                           // 下完就播 ✓
+        // ★ 列表里的直链是**最高档**（搜索时问的 jymaster）⇒ 试听必须按设置重新解析，
+        //   否则"试听按设置"就是假的（直接放母带，流量爆炸 ✗）
+        //   代价：点播多等 1~2 秒（一次请求）
+        nowArtist.set_text(sg.artist + " · 正在解析音源…")
+        SDL3.markFrameRedraw()
+        ffHighIsPlay = true
+        threads.start(workers.ffplay, sg.sid, sg.title, sg.artist, "",
+                      pw.dur_secs(sg.dur), ff_levels(), ffHighCh)
+    }
+
+    // 已经拿到直链 ⇒ 下载再播（**不再解析**）
+    //   ⚠ 必须和 `play_url_song` 分开：那边一进来就起 ffplay 线程，
+    //     回调里再调它就变成「解析→回调→再解析→…」死循环 ✗
+    pri func play_ff_start(Song sg) {
+        string ext = if sg.ext != "" then sg.ext else "flac"
+        // ★ 目录必须存在：`files.write` 遇到不存在的目录会抛错 ⇒
+        //   上层把它当成"直链失效"去重试（实测下载 100% 成功却一直报失效 ✗）
+        try { dirs.mkdir_p(ui.audioCacheDir()) } catch e0 { print("[ff] 建缓存目录失败：" + _str(e0)) }
+        string f = dirs.join(ui.audioCacheDir(), "ff_" + sg.sid + "." + ext)
+        if files.exists(f) {
+            play_ready(sg, f)
+            return
+        }
+        urlWantPath = f
+        urlIsPlay = true
+        nowArtist.set_text(sg.artist + " · 正在下载…")
+        SDL3.markFrameRedraw()
+        threads.start(workers.fetch_url, sg.url, f, urlCh)
+    }
+
     pri func play_sid(Song sg) {
         // 封面已缓存过 ⇒ 直接挂上（让卡片立刻有真图，不用等线程回信 ✓）
         if sg.sid != "" {
@@ -2948,6 +3227,29 @@ Song nowSong
 
     // 点 +：加进下载队列（目前没有歌单系统，先落到"下载"，等于收藏到本地 ✓）
     pri func queue_song(Song sg) {
+        // ★ 高音质音源：不走酷我队列（sid 是网易云 id，酷我必然取不到地址 ✗）
+        //   而且**下载固定取最高规格**（jymaster → hires → lossless）：
+        //   搜索结果里的 url 是**试听档**（跟设置走），拿它下载就亏了 ✗
+        if sg.src == "ff" or sg.url != "" {
+            urlTarget = [sg]                         // 记住"要下载的是这首"（提示文案用它 ✓）
+            dlPgShown = -5                           // 重置进度节流（否则第二次下载从 100 起算、不再刷新 ✗）
+            // ★ 入下载队列（否则用户点了下载、列表里什么都没有 ✗）
+            //   状态用 "5"（下载中）：`next_index` 只认 "0" ⇒ 酷我线程不会抢这条 ✓
+            //   ⚠ 不能用自定义的 "9"：`dl.state_text()` 只认 0/5/1，其它值一律显示"失败" ✗
+            dl.enqueue(dlJobs, sg.sid, sg.title, sg.artist, "FLAC")
+            for 0 : dlJobs.len() - 1 to kq {
+                if dlJobs[kq].len() > 3 and dlJobs[kq][0] == sg.sid { dlJobs[kq][3] = "5" }
+            }
+            refresh_dl_btn()
+            nowArtist.set_text("正在解析最高音质：" + sg.title)
+            SDL3.markFrameRedraw()
+            ffHighIsPlay = false                   // 这次解析是为了**下载**（取最高规格）✓
+            threads.start(workers.ffplay, sg.sid, sg.title, sg.artist, "",
+                          pw.dur_secs(sg.dur),
+                          [ffpg.LEVEL_JYMASTER, ffpg.LEVEL_HIRES, ffpg.LEVEL_LOSSLESS],
+                          ffHighCh)
+            return
+        }
         if sg.sid == "" { return }
         int n = dl.enqueue(dlJobs, sg.sid, sg.title, sg.artist,
                            if g_preferFmt == "lossless" then "FLAC" else "MP3")
@@ -3416,6 +3718,14 @@ Song nowSong
             request_lyric()          // 本地文件也取歌词（读同目录 .lrc；原来这里没有 ⇒ 歌词页一直空 ✗）
             return
         }
+        // ★ 高音质源（ffapi）：必须放在 `sid` 分支**之前** ——
+        //   它的 sid 是网易云 id，走酷我那套必挂 ✗
+        //   判 `src` 而不是只看 `url`：重启后 `url` 是空的（不持久化），
+        //   但 `src = "ff"` 还在 ⇒ 仍然知道该重新解析（实测：「继续收听」里点 ff 歌会走错路）
+        if sg.src == "ff" or sg.url != "" {
+            play_url_song(sg)
+            return
+        }
         if sg.sid != "" {
             play_sid(sg)
             return
@@ -3717,6 +4027,173 @@ Song nowSong
                 var rows = m as Array[Array[string]]
                 if rows != null { apply_search_result(rows) }
                 m = searchCh.try_receive()
+            }
+        }
+        // ①a 高音质音源：网易云搜索**一次回整页**（快 ✓）
+        if ffCh != null {
+            var m2 = ffCh.try_receive()
+            while m2 != null {
+                var frows = m2 as Array[Array[string]]
+                if frows != null and frows.len() > 0 and frows[0].len() > 0 {
+                    if frows[0][0] == "EMPTY" {
+                        // 明确"没结果"（原来空数组什么都不做 ⇒ 永久停在"正在搜索" ✗）
+                        searching = false
+                        netMsg = "高音质「" + lastKw + "」· 没有找到"
+                        rebuild_content()
+                        SDL3.markFrameRedraw()
+                    } else if frows[0][0] == "ERR" {
+                        searching = false
+                        netMsg = "高音质搜索失败：" + (if frows[0].len() > 1 then frows[0][1] else "?")
+                        SDL3.markFrameRedraw()
+                    } else {
+                        // 解析结果里已经带齐 直链/体积/歌词/封面 ⇒ **不用再回填一轮** ✓
+                        for frows to r { apply_ff_row(r) }
+                        searching = false
+                        netMsg = "高音质「" + lastKw + "」· " + _str(ffGot) + " 首（双击试听）"
+                        // ★ 让「搜索结果」入口和 ← → 历史都能用：
+                        //   原来只有酷我那一路设了这些 ⇒ 高音质搜完：
+                        //   侧栏点不进去、← 也永远灰 ✗
+                        lastSongs = netSongs
+                        lastRows = netRows
+                        lastIds = netIds
+                        lastKwSaved = lastKw
+                        hasLastSearch = true
+                        curNav = -1
+                        searchBtn.set_text("搜索结果 (" + _str(ffGot) + ")")
+                        searchBtn.set_text_color(C_ACCENT)
+                        nav_update_btns()
+                        ffDirty = true
+                    }
+                }
+                m2 = ffCh.try_receive()
+            }
+        }
+        // ①a2 高清音源收到新行 ⇒ 本拍末尾统一重建一次（24 条只重建 1 次 ✓）
+        if ffDirty {
+            ffDirty = false
+            rebuild_content()
+            SDL3.markFrameRedraw()
+        }
+        // ①a3 下载用「最高规格」解析回来了 ⇒ 再去下那个直链
+        if ffHighCh != null {
+            var m4 = ffHighCh.try_receive()
+            while m4 != null {
+                var hrows = m4 as Array[Array[string]]
+                if hrows != null and hrows.len() > 0 and hrows[0].len() > 0 {
+                    if hrows[0][0] == "ERR" {
+                        nowArtist.set_text((if ffHighIsPlay then "试听失败：" else "下载失败：")
+                                           + (if hrows[0].len() > 1 then hrows[0][1] else "?"))
+                        SDL3.markFrameRedraw()
+                    } else if ffHighIsPlay {
+                        // 试听：拿到直链后**直接下载播放**（调 play_ff_start，不能再调 play_url_song ✗）
+                        //   ⚠ 用 `urlTarget`（用户点的那首），不能用 `nowSong`（那还是上一首）
+                        // ★ 竞态保护：点了一首、还在解析时又点了另一首 ⇒
+                        //   前一首的解析结果回来得晚，会把**当前**这首歌顶掉 ✗
+                        //   用 id 比对：回来的不是"现在要播的那首"就直接丢弃 ✓
+                        if urlTarget.len() > 0 and hrows[0].len() > 6
+                            and hrows[0][6] == urlTarget[0].sid {
+                            Song sg2 = urlTarget[0]
+                            sg2.url = hrows[0][8]
+                            if hrows[0][4] != "" { sg2.ext = hrows[0][4] }
+                            // 顺手把歌词存一份（搜索时那次可能没落盘/被跳过）✓
+                            if hrows[0].len() > 9 and hrows[0][9] != "" {
+                                try {
+                                    dirs.mkdir_p(ui.coverCacheDir())
+                                    files.write(dirs.join(ui.coverCacheDir(),
+                                                          "ff_" + sg2.sid + ".lrc"), hrows[0][9])
+                                } catch e {
+                                    print("[lyric] 点播时存歌词失败：" + _str(e))
+                                }
+                            }
+                            play_ff_start(sg2)
+                        }
+                    } else {
+                        string ext = hrows[0][4]
+                        if ext == "" { ext = "flac" }
+                        // 目录不存在的话 `files.write` 会抛错 ⇒ 被当成"直链失效"（同 play_ff_start ✓）
+                        try { dirs.mkdir_p(dl.dir_of(ui.cacheRoot())) } catch e3 { print("[dl] 建目录失败：" + _str(e3)) }
+                        string f2 = dirs.join(dl.dir_of(ui.cacheRoot()),
+                                              dl.safe_name(hrows[0][0] + " - " + hrows[0][1]) + "." + ext)
+                        urlWantPath = f2
+                        urlIsPlay = false              // 只下载，不动当前播放 ✓
+                        nowArtist.set_text("正在下载（" + hrows[0][7] + "）：" + hrows[0][0])
+                        SDL3.markFrameRedraw()
+                        threads.start(workers.fetch_url, hrows[0][8], f2, urlCh)
+                    }
+                }
+                m4 = ffHighCh.try_receive()
+            }
+        }
+        // ①b 高音质直链下载回信 ⇒ 下完就开声（失败提示"直链已失效"✓）
+        if urlCh != null {
+            var m3 = urlCh.try_receive()
+            while m3 != null {
+                var urows = m3 as Array[Array[string]]
+                if urows != null and urows.len() > 0 and urows[0].len() > 0 {
+                    // ★ 分片进度 [P, 已下, 总]：写进下载队列那一行，列表才有进度条 ✓
+                    //   （`fetch_url` 每 1MB 发一条；只有下载模式才需要更新列表）
+                    if urows[0][0] == "P" {
+                        if not urlIsPlay and urlTarget.len() > 0 and urows[0].len() >= 3 {
+                            string tid = urlTarget[0].sid
+                            for 0 : dlJobs.len() - 1 to kp {
+                                if dlJobs[kp].len() > 7 and dlJobs[kp][0] == tid {
+                                    dlJobs[kp][6] = urows[0][1]
+                                    dlJobs[kp][7] = urows[0][2]
+                                }
+                            }
+                            // ⚠ 节流：进度涨 ≥5% 才重建（每 1MB 重建一次的话 125MB 要重画 125 遍 ✗）
+                            int got5 = _int(urows[0][1])
+                            int tot5 = _int(urows[0][2])
+                            if tot5 > 0 {
+                                int pct5 = got5 * 100 / tot5
+                                if pct5 >= dlPgShown + 5 or pct5 >= 100 {
+                                    dlPgShown = pct5
+                                    if curNav == -2 { rebuild_content() }
+                                }
+                            }
+                        }
+                        m3 = urlCh.try_receive()
+                        continue
+                    }
+                    if urows[0][0] == "OK" {
+                        if urlIsPlay {
+                            play_ready(nowSong, urows[0][1])       // 播放：下完就开声 ✓
+                        } else {
+                            // 下载完成：把队列那一行标成"已完成"（列表里能看到 ✓）
+                            if urlTarget.len() > 0 {
+                                Song tgt = urlTarget[0]
+                                for 0 : dlJobs.len() - 1 to kd {
+                                    if dlJobs[kd].len() > 3 and dlJobs[kd][0] == tgt.sid {
+                                        dlJobs[kd][3] = "1"          // 已完成（百分比自动 100 ✓）
+                                        // 填字节数，让「大小」列有值（否则一直是 "—" ✗）
+                                        if dlJobs[kd].len() > 7 and tgt.sizeBytes > 0 {
+                                            dlJobs[kd][6] = _str(tgt.sizeBytes)
+                                            dlJobs[kd][7] = _str(tgt.sizeBytes)
+                                        }
+                                    }
+                                }
+                                refresh_dl_btn()
+                                nowArtist.set_text("已下载：" + tgt.title)
+                            } else {
+                                nowArtist.set_text("已下载")
+                            }
+                            SDL3.markFrameRedraw()
+                        }
+                    } else {
+                        // ★ 直链有**时效**（几分钟）⇒ 失败先自动**重新解析一次**，往往就好了
+                        //   `ffRetried` 防止一直失败时无限重试 ✓
+                        if urlIsPlay and not ffRetried and urlTarget.len() > 0 {
+                            ffRetried = true
+                            print("[ff] 直链失效，自动重新解析：" + urlTarget[0].title)
+                            play_url_song(urlTarget[0])
+                        } else {
+                            nowArtist.set_text(if urlIsPlay then "试听失败：直链已失效，请重新搜索"
+                                                            else "下载失败：直链已失效，请重新搜索")
+                            SDL3.markFrameRedraw()
+                        }
+                    }
+                }
+                m3 = urlCh.try_receive()
             }
         }
         // ①a2 首页分区：启动几拍后拉一次（线程，避免首帧卡住），回信到了替换演示数据

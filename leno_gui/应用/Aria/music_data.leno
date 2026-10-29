@@ -23,6 +23,14 @@ export struct Song {
     //   `ext` 如 flac / mp3；`sizeBytes` 用来算码率（接口没给 ext 时兜底推算 ✓）
     string ext = ""
     int sizeBytes = 0
+    // ★ 2026-10-29：备用音源（ffapi）的**音频直链**
+    //   非空 ⇒ 播放时直接下它（`sid` 那套是酷我的，别混用 ✓）
+    //   ⚠ 直链有时效（几分钟），下载失败要重新解析一次
+    string url = ""
+    // ★ 2026-10-29：音源标记 —— `"ff"` = 高音质源（网易云 id），空 = 酷我
+    //   为什么要它：`url` 不持久化（直链会过期），重启后 `url` 是空的 ⇒
+    //   光看 url 分不出这首歌该走哪条播放路，会被当成酷我歌去解析 ⇒ 必失败 ✗
+    string src = ""
 }
 
 export struct Shelf {

@@ -4,7 +4,7 @@
 //   · netease_core  → 直连网易云公开接口：搜索、专辑封面、歌词、**标准音质**直链（无登录态）
 //   · ffapi_core    → 走解析站：同一份搜索数据 + **standard / exhigh / lossless / hires …** 多档
 //                     （它替我们做了登录态/音质协商那一层）
-//   两者返回的搜索结果是**同一个类型**（netease_core.SongInfo，见 parsedatalist 的复用）⇒ 上层无感 ✓
+//   两者返回的搜索结果是**同一个类型**（netease_core.NeSong，见 parsedatalist 的复用）⇒ 上层无感 ✓
 //
 // 接口（POST https://www.ffapi.cn/tool/163_music/api/api.php，form-urlencoded）：
 //   · {action:"search", name:<关键词>, limit:<n>, timestamp, signature} → {code:200, data:[…]}
@@ -22,13 +22,11 @@
 // 约定：本文件不 print、不含 main() ⇒ CLI 与 GUI 共用。
 import "Crypto" as crypto
 import "web_net" as net
-import "netease_core.leno" as ne
 import jsons
 import strings
 import times
 
 use net.(Response, HttpClient)
-use ne.SongInfo
 
 const SECRET = "kxz_163music_secret_key_2024"
 const API = "https://www.ffapi.cn/tool/163_music/api/api.php"
@@ -96,16 +94,56 @@ export func newClient(): HttpClient {
     return c
 }
 
-// ==================== ① 搜索（返回网易云同款 SongInfo ✓）====================
-export func search(HttpClient client, string keyword, int limit): Array[SongInfo] {
-    if keyword == "" { return [] }
+// ==================== ① 搜索（返回网易云同款 NeSong ✓）====================
+// 搜索 → 行：[id, 歌名, 歌手, 专辑, 秒]
+//   ★ 自己解析（不再复用 netease_core 的 SongInfo）——
+//     那个类型和 `kuwo_core.SongInfo` 同名，同时进类型表会**运行期冲突** ✗
+export func search(HttpClient client, string keyword, int limit): Array[Array[string]] {
+    Array[Array[string]] out = []
+    if keyword == "" { return out }
     Response resp = client.post(API, secured_search(keyword, limit))
-    if not resp.ok() { return [] }
+    if not resp.ok() { return out }
     var root = jsons.decode(resp.body) as Dict[string, any]
-    if root == null { return [] }
-    if asint(root["code"]) != 200 { return [] }
-    // data[] 与网易云搜索的 songs[] **同形状** ⇒ 直接复用那边的解析 ✓
-    return ne.parsedatalist(root["data"])
+    if root == null { return out }
+    if asint(root["code"]) != 200 { return out }
+    var data = root["data"]
+    if not (data is Array) { return out }
+    for data to it {
+        var d = it as Dict[string, any]
+        if d == null { continue }
+        string sid = _str(asint(d["id"]))
+        if sid == "0" or sid == "" { continue }
+        // 歌手：新 schema `ar[]`，老 schema `artists[]`
+        string artist = ""
+        var ars = d["ar"]
+        if not (ars is Array) { ars = d["artists"] }
+        if ars is Array {
+            for ars to a {
+                var ad = a as Dict[string, any]
+                if ad == null { continue }
+                if artist != "" { artist = artist + "/" }
+                artist = artist + asstr(ad["name"])
+            }
+        }
+        string album = ""
+        var al = d["al"]
+        if not (al is Dict[string, any]) { al = d["album"] }
+        if al is Dict[string, any] { album = asstr(al["name"]) }
+        // ★ 时长：ffapi 给的是 **"04:45" 字符串**（实测 2026-10-29，不是毫秒也不是秒）
+        //   原来按 `asint` 解析 ⇒ 0 ⇒ 列表显示 `-:-`、音质标签也判不出来 ✗
+        string durs = asstr(d["duration"])
+        int sec2 = 0
+        int cp = strings.byte_find(durs, ":", 0)
+        if cp > 0 {
+            int mm = _int(strings.byte_slice(durs, 0, cp - 1))
+            int ss = _int(strings.byte_slice(durs, cp + 1, durs.len() - 1))
+            sec2 = mm * 60 + ss
+        }
+        // 封面：搜索响应**直接给了 URL** ✓（不用等 music 响应，省一步）
+        string pic = asstr(d["picUrl"])
+        out.add([sid, asstr(d["name"]), artist, album, _str(sec2), pic])
+    }
+    return out
 }
 
 // ==================== ② 解析（拿真实音频直链）====================
@@ -160,6 +198,14 @@ export func music(HttpClient client, string id, string level): Parsed {
     var root = jsons.decode(resp.body) as Dict[string, any]
     if root == null { return p }
     if asint(root["code"]) != 200 { return p }
+    // ★ 2026-10-29 修（**严重**）：站方会因为版权/降级**返回另一首歌**，
+    //   原来不校验 ⇒ 拿回来的直链是别的歌，下载下来"歌名对、内容错" ✗
+    //   ⇒ 用响应里的 id 和请求的 id 对不上就直接当失败（`url` 留空 ⇒ 上层试下一档/报错）
+    int gotId = asint(root["id"])
+    if gotId > 0 and _str(gotId) != id {
+        print("[ffapi] id 不匹配：请求 " + id + " 实际拿到 " + _str(gotId) + "（已丢弃）")
+        return p
+    }
     p.name = asstr(root["name"])
     // 站方用 "&" 拼多歌手（"周杰伦&温岚&吴宗宪"）⇒ 统一成 " / "，与 kuwo/网易云两侧展示一致 ✓
     p.artist = asstr(root["ar_name"]).replace("&", " / ")

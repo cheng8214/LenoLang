@@ -216,21 +216,21 @@ export func save_shard(string id, string title, string artist, string root, stri
     int off = 0
     int total = 0
     int guard = 0
+    // ★★ 整个下载**只建一个客户端**（原来每片 `createClient()` ⇒
+    //   60MB 就建 60 个，框架有实例数上限 ⇒ 抛「createClient 失败 / 回调次数已上限」，
+    //   还会把名额占满、拖累别的功能 ✗）
+    var c1 = net.createClient()
     while guard < 64 {
         guard = guard + 1
         string chunk = ""
         int crTotal = 0
         try {
-            var c = net.createClient()
-            c.addHeaders(["Range: bytes=" + _str(off) + "-" + _str(off + SHARD - 1)])
-            var r = c.get(u)
-            if not r.ok() {
-                c.close()
-                break
-            }
+            // `replaceHeaders` 是覆盖（`addHeaders` 调多次会叠成两个 Range ✗）
+            c1.replaceHeaders(["Range: bytes=" + _str(off) + "-" + _str(off + SHARD - 1)])
+            var r = c1.get(u)
+            if not r.ok() { break }
             crTotal = total_of(r.getHeader("Content-Range"))
             chunk = r.rawBody()
-            c.close()
         } catch e {
             break
         }
@@ -243,6 +243,7 @@ export func save_shard(string id, string title, string artist, string root, stri
         if total > 0 and off >= total { break }
         if n < SHARD { break }                 // 服务端没按 Range 给 ⇒ 已经拿全了
     }
+    try { c1.close() } catch e1 { print("[dl] 关客户端失败：" + _str(e1)) }   // 用完才关（break 也会走到这里 ✓）
     if off <= 0 {
         ch.send(["E", "下载失败（0 字节）", ""])
         return false
@@ -335,10 +336,13 @@ export func next_index(Array[Array[string]] q): int {
 }
 
 // 待下载数量（侧栏角标用）
+// 「还在下」的任务数（侧栏角标用）
+//   ⚠ "0"=排队 / "5"=下载中 **都算**：ff 源直链下载用的是 "5"，
+//     只认 "0" 的话侧栏永远显示「下载」而不是「下载 (1)」✗
 export func pending(Array[Array[string]] q): int {
     int n = 0
     for q to j {
-        if j.len() >= 4 and j[3] == "0" { n = n + 1 }
+        if j.len() >= 4 and (j[3] == "0" or j[3] == "5") { n = n + 1 }
     }
     return n
 }

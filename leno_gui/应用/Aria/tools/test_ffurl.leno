@@ -1,0 +1,46 @@
+// tools/test_ffurl.leno — 用**我们自己的 HttpClient** 去打 ffapi 直链，
+//   看它到底返回什么（状态码 / 头 / 正文长度）。
+//   对照：curl 打同一个地址是 HTTP 200/206 完全正常 ⇒ 问题在客户端这一侧
+//
+// 用法：build\leno.exe "leno_gui\应用\Aria\tools\test_ffurl.leno"
+import "web_net" as net
+import "../lib/ffapi_core.leno" as ff
+
+use net.(HttpClient, Response)
+
+main() {
+    print("=== 1. 向 ffapi 要直链 ===")
+    var c0 = ff.newClient()
+    var p = ff.music_best(c0, "2014560846", [ff.LEVEL_EXHIGH, ff.LEVEL_LOSSLESS])
+    c0.close()
+    if not p.valid() {
+        print("拿不到直链，退出")
+        return
+    }
+    print("name=" + p.name + " level=" + p.level + " size=" + p.size)
+    print("url 长度=" + _str(p.url.len()))
+    print("url=" + p.url)
+
+    print("\n=== 2. 我们自己的 client 发 Range 请求 ===")
+    var c = net.createClient()
+    c.replaceHeaders(["Range: bytes=0-1023"])
+    var r = c.get(p.url)
+    print("ok()=" + _str(r.ok()))
+    string b = r.body
+    print("body.len=" + _str(b.len()))
+    print("rawBody.len=" + _str(r.rawBody().len()))
+    string cr = r.getHeader("Content-Range")
+    print("Content-Range=[" + cr + "]")
+    print("Content-Type=[" + r.getHeader("Content-Type") + "]")
+    // 正文前 200 字（如果是错误页/JSON，一眼看出来）
+    if b.len() > 0 and b.len() < 400 {
+        print("正文（短，可能是错误页）：" + b)
+    }
+    c.close()
+
+    print("\n=== 3. 不带 Range 再试一次 ===")
+    var c2 = net.createClient()
+    var r2 = c2.get(p.url)
+    print("ok()=" + _str(r2.ok()) + " body.len=" + _str(r2.body.len()))
+    c2.close()
+}

@@ -17,6 +17,7 @@ import dirs
 import files
 import "kuwo_lyric.leno" as klyr      // 官方 newlyric 接口（逐字 lrcx=1 优先 ✓，移植自 LenoMusic）
 import "kuwo_cover.leno" as cover
+import "ffapi_core.leno" as ff        // 飞飞解析站（高音质试听 / 下载 ✓）
 import strings
 import dirs
 import files
@@ -124,6 +125,220 @@ export func bang(string bid, int limit, Channel ch) {
         out.add(["ERR", _str(e)])
     }
     ch.send(out)
+}
+
+// 高音质音源搜索（独立音源，**不和酷我混在一个列表** ✓）
+//   `levels`：试听要取的档位顺序，由调用方按**设置里的音质**传进来
+//     · standard  → [standard, exhigh]
+//     · high      → [exhigh, lossless]
+//     · lossless  → [lossless, hires, jymaster]
+//   渐进回信：**每解析完一条就 send 一行**，UI 边收边显示（不用等 10 条全好 ✓）
+//   全部结束：send [["DONE"]]
+//   ⚠ 站方对没版权的档返回空 url ⇒ `music_best` 会依次试下一个 ✓
+//   行格式：[歌名, 歌手, 专辑, 秒, ext, 体积文本, id, 档位, 直链, 歌词, 本地封面路径]
+//   ★ 一次 `music` 请求就带回 **直链 + 体积 + 歌词 + 封面** —— 不用再回填一轮 ✓
+//   慢（每条一次请求，10 条约 10 秒），但渐进回信、边收边显示 ✓
+export func ffsearch(string kw, int n, Array[string] levels, string coverDir, Channel ch) {
+    // ★★ **攒完再一次性发**：原来每条 `ch.send` ⇒ aria 收到第一条就把
+    //   `searching` 设 false 并重建表格 ⇒ 界面上一行行往外蹦 ✗
+    //   用户要的是"全部解析完、一次性出结果" ✓
+    Array[Array[string]] out = []
+    try {
+        var c = ff.newClient()
+        var hits = ff.search(c, kw, n)
+        Array[string] order = levels
+        if order.len() == 0 { order = [ff.LEVEL_EXHIGH, ff.LEVEL_LOSSLESS] }
+        int done = 0
+        for hits to h {
+            if done >= 10 { break }              // 默认最多 10 首 ✓
+            done = done + 1
+            // h = [id, 名, 歌手, 专辑, 秒, picUrl]
+            var p = ff.music_best(c, h[0], order)
+            if not p.valid() { continue }
+            // 封面：**搜索响应就给了 picUrl** ⇒ 先按它下；没有再用 music 响应里的 ✓
+            string cov = ""
+            string picUrl = h[5]
+            if picUrl == "" { picUrl = p.pic }
+            if picUrl != "" {
+                string cp = dirs.join(coverDir, "ff_" + h[0] + ".jpg")
+                if files.exists(cp) {
+                    cov = cp
+                } else {
+                    try {
+                        dirs.mkdir_p(coverDir)
+                        net.download(picUrl, cp)
+                        cov = cp
+                    } catch e {
+                        cov = ""
+                    }
+                }
+            }
+            out.add([h[1], h[2], h[3], h[4], p.ext(), p.size, h[0], p.level, p.url,
+                     p.lyric, cov])
+        }
+        c.close()
+    } catch e {
+        out = [["ERR", _str(e)]]
+    }
+    // 空结果也要明确回一条（否则界面永远停在"正在解析" ✗）
+    if out.len() == 0 { out = [["EMPTY"]] }
+    ch.send(out)
+}
+
+// 网易云搜索（**快**：一次请求回整页，不用逐条解析 ✓）
+//   回信每行：[歌名, 歌手, 专辑, 秒, 扩展名, 体积文本, id, 档位, 直链(空)]
+//   `直链` 这里恒为空 —— 试听/下载时才用 ffapi 按需解析（网易云直连不能下载 ✗）
+//   大小/格式来自搜索响应的最高档（hr > sq > h > m > l），不用额外请求 ✓
+
+// 搜索**之后**回填真实最高档体积（网易云搜索只给 320k 的大小 ✗）
+//   逐条解析 `jymaster → lossless`，**每好一条就回一条**：[id, ext, 体积文本]
+//   慢（每首 1~2 次请求），但渐进回填，列表能一条条变 ✓
+//   拿不到的（没版权/免费曲）不发 ⇒ 保持原样
+//   回信：[id, ext, 体积文本, 本地封面路径(空=没拿到)] —— 每好一条回一条
+//   封面顺手在这里下：`Parsed.pic` 是网易云封面 URL，下到 coverDir 后回本地路径 ✓
+//   （列表里先显示占位图，封面到了再贴上，不用等整页 ✓）
+export func ffsizes(Array[string] ids, string coverDir, Channel ch) {
+    if ids.len() == 0 { ch.send([["DONE"]]); return }
+    try {
+        var c = ff.newClient()
+        for ids to id {
+            var p = ff.music_best(c, id, [ff.LEVEL_JYMASTER, ff.LEVEL_LOSSLESS])
+            if not p.valid() { continue }
+            // 封面：已经有缓存就复用，没有就下（失败不影响其它字段 ✓）
+            string cov = ""
+            if p.pic != "" {
+                string cp = dirs.join(coverDir, "ne_" + id + ".jpg")
+                if files.exists(cp) {
+                    cov = cp
+                } else {
+                    try {
+                        dirs.mkdir_p(coverDir)
+                        net.download(p.pic, cp)
+                        cov = cp
+                    } catch e {
+                        cov = ""
+                    }
+                }
+            }
+            if p.size != "" or cov != "" {
+                ch.send([[id, p.ext(), p.size, cov]])
+            }
+        }
+        c.close()
+    } catch e {
+        ch.send([["ERR", _str(e)]])
+    }
+    ch.send([["DONE"]])
+}
+
+// 按指定的音质档解析直链（**试听 / 下载共用**，只是 levels 不同）
+//   试听：按设置音质（standard / high / lossless）
+//   下载：固定最高（jymaster → hires → lossless）
+//   回信：[[歌名, 歌手, 专辑, 秒, 扩展名, 体积文本, id, 档位, 直链]] 或 [["ERR", …]]
+export func ffplay(string id, string name, string artist, string album, int dur,
+                   Array[string] levels, Channel ch) {
+    Array[Array[string]] out = []
+    try {
+        var c = ff.newClient()
+        var p = ff.music_best(c, id, levels)
+        c.close()
+        if p.valid() {
+            out.add([name, artist, album, _str(dur), p.ext(), p.size, id, p.level, p.url])
+        } else {
+            out.add(["ERR", "该曲目没有可用的音质版本"])
+        }
+    } catch e {
+        out.add(["ERR", _str(e)])
+    }
+    ch.send(out)
+}
+
+// 备用音源的直链 → 下到指定文件（`path` 由调用方拼好，扩展名跟着解析结果走 ✓）
+//   回信：[["OK", 路径]] 或 [["ERR", 原因]]
+//   ⚠ 直链有时效：失败时调用方应**重新解析一次**再试，别直接报错
+//   ★ 分片下载（每 1MB 发一条进度）：`net.download` 是一次性整文件拿，
+//     中间毫无反馈 ⇒ 界面只能从 0 直接跳到 100% ✗
+//   回信：["P", 已下字节, 总字节]（多次）→ 最后 ["OK", 路径] 或 ["ERR", 原因]
+//   ⚠ 服务端不认 Range 时（返回整包）第一片就下完 ⇒ 自动 break ✓
+const int FF_SHARD = 1048576
+
+func ff_total_of(string cr): int {
+    var p = strings.split(cr, "/")
+    if p.len() < 2 { return 0 }
+    return _int(strings.trim(p[1]))
+}
+
+export func fetch_url(string url, string path, Channel ch) {
+    if url == "" {
+        print("[net] fetch_url 收到空直链（调用方没把 sg.url 传进来）")
+        ch.send([["ERR", "直链为空"]])
+        return
+    }
+    string acc = ""
+    int off = 0
+    int total = 0
+    int guard = 0
+    // ★★ 整个下载**只建一个客户端**：
+    //   原来每片都 `createClient()` + `close()` ⇒ 100MB 要建 100 次，
+    //   框架对客户端实例数有上限 ⇒ 抛「回调次数已上限 / createClient 失败」，
+    //   而且会把名额占满，害得**别的功能**（榜单加载）也创建失败 ✗（实测症状）
+    var c = net.createClient()
+    while guard < 2000 {                       // 防死循环（2GB 顶天 ✓）
+        guard = guard + 1
+        string chunk = ""
+        int crTotal = 0
+        try {
+            // 每片重设头：`replaceHeaders` 是**覆盖**（`addHeaders` 会叠加成两个 ✗）
+            c.replaceHeaders(["Range: bytes=" + _str(off) + "-" + _str(off + FF_SHARD - 1)])
+            var r = c.get(url)
+            if not r.ok() {
+                print("[net] 第 " + _str(guard) + " 片请求失败（ok=false，off=" + _str(off) + "）")
+                break
+            }
+            crTotal = ff_total_of(r.getHeader("Content-Range"))
+            chunk = r.rawBody()
+        } catch e {
+            print("[net] 第 " + _str(guard) + " 片抛异常：" + _str(e))
+            break
+        }
+        int n = chunk.byte_len()
+        if n <= 0 {
+            print("[net] 第 " + _str(guard) + " 片拿到 0 字节（off=" + _str(off)
+                  + " 响应 ok / Content-Range 已取）⇒ 停止")
+            break
+        }
+        acc = acc + chunk
+        off = off + n
+        if total <= 0 and crTotal > 0 { total = crTotal }
+        print("[net] 第 " + _str(guard) + " 片：" + _str(n) + " 字节，累计 "
+              + _str(off) + " / 总 " + _str(total))
+        ch.send([["P", _str(off), _str(total)]])
+        if total > 0 and off >= total { break }
+        if n < FF_SHARD { break }              // 没按 Range 给 ⇒ 已拿全
+    }
+    try { c.close() } catch e1 { print("[net] 关客户端失败：" + _str(e1)) }   // 用完才关（break 也会走到这里 ✓）
+    if off <= 0 {
+        // ★ 分片一片都没成 ⇒ **退回整文件下载**（能拿到就行，进度没了但别让功能死）
+        //   常见原因：服务端不认 Range、`replaceHeaders` 把 UA 覆盖掉被拒、直链过期 ✓
+        print("[net] 分片下载失败，改用整文件下载：" + path)
+        try {
+            net.download(url, path)
+            ch.send([["OK", path]])
+        } catch e2 {
+            ch.send([["ERR", "下载失败：" + _str(e2)]])
+        }
+        return
+    }
+    try {
+        files.write(path, acc)
+    } catch e {
+        // ★ 这里失败过（目录不存在之类）⇒ 报 ERR 被上层当成"直链失效"，很误导
+        print("[net] 写盘失败：" + _str(e) + "   路径=" + path + "   字节=" + _str(acc.byte_len()))
+        ch.send([["ERR", "写盘失败：" + _str(e)]])
+        return
+    }
+    print("[net] 下载完成并写盘：" + path + "（" + _str(acc.byte_len()) + " 字节）")
+    ch.send([["OK", path]])
 }
 
 // 推荐歌单（发现页「精选」卡片墙）：拉列表 + 每张封面下到 cacheDir
