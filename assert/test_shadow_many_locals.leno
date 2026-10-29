@@ -1,0 +1,39 @@
+// test_shadow_many_locals.leno — 遮蔽集合不再有 128 个的硬上限
+//
+// 背景：方法体 AST 变换原先用固定 `char* arr[128]` 收集局部量名。
+//   一个方法里局部声明超过 128 个时，后面的名字（比如与 struct 方法同名的局部量）
+//   不会进入遮蔽集合 ⇒ 被改写成 `self["方法名"]` ⇒ 类型错误。
+//
+// 本用例生成 130 个局部 + 1 个与 `row` 方法同名的局部，验证超过旧上限仍正确 ✓
+
+import dirs
+import files
+import "helpers/compiler.leno" as ce
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_shadow_many")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+    var p = dirs.join(work, "many.leno")
+
+    var src = "struct Big {\n"
+              + "    func row(int i): int { return i }\n"
+              + "    func f(): int {\n"
+    // 130 个普通局部：把旧实现（上限 128）的槽位撑满
+    for 0:129 to i {
+        src = src + "        int a" + _str(i) + " = 0\n"
+    }
+    // 第 131 个局部与方法同名：修复后必须按 int 处理
+    src = src + "        int row = 7\n"
+                + "        return row\n"
+                + "    }\n"
+                + "}\n\n"
+                + "main() {\n"
+                + "    var b = new Big()\n"
+                + "    print(\"OK=\" + _str(b.f()))\n"
+                + "}\n"
+    files.write(p, src)
+
+    ce.expect_ok(p, "131 个局部时同名遮蔽仍生效", "OK=7")
+    print("test_shadow_many_locals passed")
+}
