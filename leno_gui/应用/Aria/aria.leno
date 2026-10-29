@@ -942,7 +942,7 @@ Song nowSong
                                      pad_x: PAD, pad_y: 6, spacing: 8})
         page.add(ui.lbl(title, 25, C_TXT, true), {grow: 0, shrink: 0, basis: 36, align: 3})
         page.add(ui.lbl(sub, 11, C_TXT_DIM, false), {grow: 0, shrink: 0, basis: 18, align: 3})
-        page.add(loading_row_of(text), {grow: 0, shrink: 0, basis: 40, align: 3})
+        page.add(pw.loading_row(text, _float(cardSize.content_w())), {grow: 0, shrink: 0, basis: 40, align: 3})
         page.add(SDL3.createLabel({text: ""}), {grow: 1, shrink: 1, align: 3})
         mainCol.add(page, {grow: 1, shrink: 1, align: 3})
         lastPage = page
@@ -1551,7 +1551,8 @@ Song nowSong
             })
             // 相关歌曲还在路上 ⇒ 同一套 Spinner 加载行（不再是一行灰字 ✓）
             if relatedSearch {
-                content.add(loading_row_of("正在加载相关歌曲…"), {grow: 0, shrink: 0, basis: 40, align: 3})
+                content.add(pw.loading_row("正在加载相关歌曲…", _float(cardSize.content_w())),
+                            {grow: 0, shrink: 0, basis: 40, align: 3})
             } else {
                 content.add(rt, {grow: 0, shrink: 0, basis: rh, align: 3})
             }
@@ -2237,17 +2238,7 @@ Song nowSong
         content.add(row, {grow: 0, shrink: 0, basis: 40, align: 3})
     }
 
-    // 加载行（**可放进任意容器**的版本）：Spinner + 文案
-    //   与首页的 `loading_row(text)` 同一套观感，区别只是后者直接塞进全局 `content` ✓
-    pri func loading_row_of(string text): HBox {
-        HBox row = SDL3.createHBox({x: 0, y: 0, w: _float(cardSize.content_w()), h: 40,
-                                    pad_x: 0, pad_y: 0, spacing: 12, justify: 1})
-        row.add(SDL3.createSpinner({size: 22, thickness: 2.5, color: C_ACCENT,
-                                    track_color: #F6DCE5FF, running: true}),
-                {grow: 0, shrink: 0, basis: 22, align: 1})
-        row.add(ui.lbl(text, 12.5, C_TXT_MID, false), {grow: 0, shrink: 0, align: 1})
-        return row
-    }
+    // 加载行已统一到 `page_widgets.loading_row(text, w)`（宽度由调用方传）✓
 
     // 一个分区：标题行（+ 右侧胶囊按钮）+ 内容（横卡 / 卡片墙）
     // kind：0 = 不给「换一批」（继续收听 / 单区页）/ 1 = 为你推荐 / 2 = 最近添加
