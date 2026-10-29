@@ -1,0 +1,215 @@
+// ffapi_core.leno — 飞飞API「网易云无损解析」对接（搜索 / 解析直链 / 歌词）
+//
+// 定位：**取音频文件**的那一路。与 netease_core.leno 分工明确：
+//   · netease_core  → 直连网易云公开接口：搜索、专辑封面、歌词、**标准音质**直链（无登录态）
+//   · ffapi_core    → 走解析站：同一份搜索数据 + **standard / exhigh / lossless / hires …** 多档
+//                     （它替我们做了登录态/音质协商那一层）
+//   两者返回的搜索结果是**同一个类型**（netease_core.SongInfo，见 parsedatalist 的复用）⇒ 上层无感 ✓
+//
+// 接口（POST https://www.ffapi.cn/tool/163_music/api/api.php，form-urlencoded）：
+//   · {action:"search", name:<关键词>, limit:<n>, timestamp, signature} → {code:200, data:[…]}
+//   · {action:"music",  url:<歌曲id>, level:<音质>, type:"json", timestamp, signature}
+//       → {code:200, name, pic, ar_name, al_name, level, size, url, lyric, tlyric}
+//
+// ★ 签名（2026-10-29 实测扒出来的，不是猜的）：
+//      signature = md5(timestamp + "kxz_163music_secret_key_2024")
+//      timestamp = 10 位 Unix 秒（`times.now()`）
+//   怎么来的：它的 `api-security.js` 是 obfuscator.io 混淆的，但签名只依赖一个 md5 调用 ——
+//   把混淆脚本放进 node 的 vm 沙箱、包一层 md5 打出**入参**，就得到 "<时间戳><密钥>" 整串 ⇒
+//   密钥 = 去掉前 10 位。所以这里不需要逆向控制流，也不需要 node（md5 用 LenoCrypto ✓）。
+//   ⚠ 密钥是站方的，会换；换了就照上面那条路再跑一次（入参前缀恒为 10 位）。
+//
+// 约定：本文件不 print、不含 main() ⇒ CLI 与 GUI 共用。
+import "Crypto" as crypto
+import "web_net" as net
+import "netease_core.leno" as ne
+import jsons
+import strings
+import times
+
+use net.(Response, HttpClient)
+use ne.SongInfo
+
+const SECRET = "kxz_163music_secret_key_2024"
+const API = "https://www.ffapi.cn/tool/163_music/api/api.php"
+const REFERER = "https://www.ffapi.cn/tool/163_music/"
+const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
+
+// 音质档位（站方的 value 取值，见它的 qualitySelector.js ✓）
+export const LEVEL_STANDARD = "standard"
+export const LEVEL_EXHIGH   = "exhigh"
+export const LEVEL_LOSSLESS = "lossless"
+export const LEVEL_HIRES    = "hires"
+export const LEVEL_JYEFFECT = "jyeffect"
+export const LEVEL_JYMASTER = "jymaster"
+export const LEVEL_SKY      = "sky"
+export const LEVEL_DOLBY    = "dolby"
+
+// ==================== 签名 ====================
+// 10 位 Unix 秒
+export func stamp(): string { return _str(_int(times.now())) }
+
+// md5(timestamp + SECRET)
+export func signature(string ts): string { return crypto.md5(ts + SECRET) }
+
+// buildQuery 会给个前导 "?"，POST body 不能带 ⇒ 去掉
+//   ⚠ 两个 action 的参数字典**分开构造**：合并成一个 Dict 再塞键会撞上
+//     "字典值类型不匹配"（字面量推断成 Dict[string,string]，而取出来的值是 any ✗）
+func trimq(string q): string {
+    if q.starts_with("?") { return q.slice(1, q.len() - 1) }
+    return q
+}
+
+export func secured_search(string kw, int limit): string {
+    string ts = stamp()
+    var params = {
+        "action": "search",
+        "name": kw,
+        "limit": _str(limit),
+        "timestamp": ts,
+        "signature": signature(ts)
+    }
+    return trimq(net.buildQuery(params))
+}
+
+export func secured_music(string id, string level): string {
+    string ts = stamp()
+    var params = {
+        "action": "music",
+        "url": id,
+        "level": level,
+        "type": "json",
+        "timestamp": ts,
+        "signature": signature(ts)
+    }
+    return trimq(net.buildQuery(params))
+}
+
+// ==================== 客户端 ====================
+export func newClient(): HttpClient {
+    var c = net.createClient()
+    c.addHeaders(["User-Agent: " + UA,
+                  "Referer: " + REFERER,
+                  "Origin: https://www.ffapi.cn",
+                  "Content-Type: application/x-www-form-urlencoded",
+                  "Accept: application/json, text/plain, */*"])
+    return c
+}
+
+// ==================== ① 搜索（返回网易云同款 SongInfo ✓）====================
+export func search(HttpClient client, string keyword, int limit): Array[SongInfo] {
+    if keyword == "" { return [] }
+    Response resp = client.post(API, secured_search(keyword, limit))
+    if not resp.ok() { return [] }
+    var root = jsons.decode(resp.body) as Dict[string, any]
+    if root == null { return [] }
+    if asint(root["code"]) != 200 { return [] }
+    // data[] 与网易云搜索的 songs[] **同形状** ⇒ 直接复用那边的解析 ✓
+    return ne.parsedatalist(root["data"])
+}
+
+// ==================== ② 解析（拿真实音频直链）====================
+export struct Parsed {
+    string id = ""        // 回填：调用方传进来的歌曲 id/链接
+    string name = ""
+    string artist = ""    // ar_name
+    string album = ""     // al_name
+    string pic = ""       // 封面
+    string level = ""     // 实际拿到的音质档
+    string size = ""      // 体积（站方给的展示串）
+    string url = ""       // ★ 音频直链（可直接喂播放器 / 下载器）
+    string lyric = ""
+    string tlyric = ""    // 翻译歌词（可能为空）
+
+    func valid(): bool { return url != "" }
+
+    // 直链的真实扩展名（flac / mp3 / …）
+    // ★ 判断音质的**唯一可信口径**：站方返回的 `level` 标签是错的 ——
+    //   实测（2026-10-29，同一首《屋顶》）：standard ⇒ 4.87MB mp3、
+    //   exhigh ⇒ 12.2MB **mp3 却标"无损(SQ)"**、lossless ⇒ 61.6MB flac、
+    //   hires ⇒ 61.6MB flac、jymaster ⇒ 115MB flac
+    //   ⇒ 只认扩展名 + 体积，别信 label ✓
+    func ext(): string {
+        if url == "" { return "" }
+        int q = url.find("?")
+        string path = if q >= 0 then url.slice(0, q - 1) else url
+        var parts = path.split(".")          // 没有 rfind ⇒ 按点切开取最后一段
+        if parts.len() < 2 { return "" }
+        return parts[parts.len() - 1].to_lower()
+    }
+
+    func lossless(): bool { return ext() == "flac" }
+}
+
+func asstr(any v): string {
+    if v is string { return v as string }
+    return ""
+}
+func asint(any v): int {
+    if v is int { return v as int }
+    return 0
+}
+
+// 解析一首：id 传网易云的歌曲 id 即可（站方也接受分享链接）
+export func music(HttpClient client, string id, string level): Parsed {
+    Parsed p = new Parsed()
+    p.id = id
+    if id == "" { return p }
+    Response resp = client.post(API, secured_music(id, level))
+    if not resp.ok() { return p }
+    var root = jsons.decode(resp.body) as Dict[string, any]
+    if root == null { return p }
+    if asint(root["code"]) != 200 { return p }
+    p.name = asstr(root["name"])
+    // 站方用 "&" 拼多歌手（"周杰伦&温岚&吴宗宪"）⇒ 统一成 " / "，与 kuwo/网易云两侧展示一致 ✓
+    p.artist = asstr(root["ar_name"]).replace("&", " / ")
+    p.album = asstr(root["al_name"])
+    p.pic = asstr(root["pic"])
+    p.level = asstr(root["level"])
+    p.size = asstr(root["size"])
+    p.url = asstr(root["url"])
+    p.lyric = asstr(root["lyric"])
+    p.tlyric = asstr(root["tlyric"])
+    return p
+}
+
+// 无损优先的档位顺序（要 flac 就用这个）
+export func levelsHQ(): Array[string] {
+    return [LEVEL_LOSSLESS, LEVEL_HIRES, LEVEL_EXHIGH, LEVEL_STANDARD]
+}
+
+// 依次尝试多个音质档，返回**第一个成功**的（站方对没版权的档会返回空 url ✓）
+//   `levels` 为空 ⇒ 默认 standard → exhigh → lossless（"能播就行"，省流量也省时间）
+//   要无损请传 `levelsHQ()` ✓
+export func music_best(HttpClient client, string id, Array[string] levels): Parsed {
+    Array[string] order = levels
+    if order.len() == 0 { order = [LEVEL_STANDARD, LEVEL_EXHIGH, LEVEL_LOSSLESS] }
+    for order to lv {
+        Parsed p = music(client, id, lv)
+        if p.valid() { return p }
+    }
+    return new Parsed()
+}
+
+// ==================== ③ 落盘文件名 ====================
+// "歌名 - 歌手.ext"（多歌手用逗号，非法字符换成下划线）
+//   ⚠ Windows 不允许文件名以 "." / 空格 结尾 —— 实测歌手叫「尘ah.」时会拼出
+//     "…尘ah..flac"（多一个点再带扩展名）。所以要把尾部这些字符剪掉 ✓
+export func safe_filename(string title, string artist, string ext): string {
+    string t = (title + " - " + artist).replace(" / ", ",")
+    Array[string] bad = ["\\", "/", ":", "*", "?", "\"", "<", ">", "|"]
+    for bad to b { t = t.replace(b, "_") }
+    t = t.trim()
+    while t.len() > 1 and (t.ends_with(".") or t.ends_with(" ")) {
+        t = t.slice(0, t.len() - 2)
+    }
+    if t == "" { t = "track" }
+    return t + "." + ext
+}
+
+// ==================== ④ 下载 ====================
+// 直链会过期（CDN 有时效），拿到就尽快下 ⇒ 解析完立刻 downloader ✓
+export func download_parsed(HttpClient client, Parsed p, string savePath): int {
+    if not p.valid() { return -1 }
+    return net.download(p.url, savePath)
+}

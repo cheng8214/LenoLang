@@ -1,0 +1,264 @@
+// netease_core.leno — 网易云音乐核心（搜索 / 详情 / 直链 / 歌词）
+//
+// 定位：与 kuwo_core.leno **并列的备用音源**。接口形状刻意对齐 kuwo 那套
+//   （`SongInfo` + `search(client, kw, limit)` + 一首歌一次详情），
+//   ⇒ 上层 net_workers / 界面切源时只换模块名，不用改调用方式 ✓
+//
+// 数据来源：网易云 **web 端公开接口**（和浏览器走同一条链路，不需要任何密钥/登录）：
+//   ① 搜索  GET  https://music.163.com/api/search/get/web?type=1&s=<kw>&limit=<n>&offset=0
+//   ② 详情  GET  https://music.163.com/api/song/detail/?id=<id>&ids=[<id>]      （封面 picUrl 在这）
+//   ③ 直链  GET  https://music.163.com/song/media/outer/url?id=<id>.mp3         （302 → CDN）
+//   ④ 歌词  GET  https://music.163.com/api/song/lyric?id=<id>&lv=1&kv=1&tv=-1
+//
+// ⚠ 为什么不照抄 ffapi 那种「解析站」（2026-10-29 实测结论）：
+//   它是 **转发 + 自签名** 的壳：POST `api.php`，参数要带 `timestamp` + `signature`，
+//   签名 = md5(时间戳 + 密钥)，密钥藏在 obfuscator.io 混淆的 `api-security.js` 里。
+//   ① 它**有签名校验**（裸 POST 直接 403「请求未授权：缺少必要参数」，实测）；
+//   ② 逆向混淆脚本 + 跟着它换密钥的成本，远高于直连源；
+//   ③ 站一挂备用源就没了。
+//   直连的代价只有一个：**只有标准音质**（无损要登录态，本项目不做 ✓）。
+//
+// 约定：本文件不 print、不含 main() ⇒ CLI 与 GUI 都能用。
+import jsons
+import strings
+import files
+import dirs
+import "web_net" as net
+
+use net.(Response, HttpClient)
+
+const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
+const REFERER = "https://music.163.com/"
+const API_SEARCH = "https://music.163.com/api/search/get/web"
+const API_DETAIL = "https://music.163.com/api/song/detail/"
+const API_LYRIC  = "https://music.163.com/api/song/lyric"
+const OUTER_URL  = "https://music.163.com/song/media/outer/url"
+
+// ==================== SongInfo ====================
+// 字段与 kuwo_core.SongInfo 对齐（id/name/artist/album/duration/url），另加网易特有的 fee/picUrl ✓
+export struct SongInfo {
+    string id = ""
+    string name = ""
+    string artist = ""
+    string album = ""
+    int duration = 0        // 秒（网易给的是毫秒，解析时就换算 ✓）
+    int fee = 0             // 网易口径：0 免费 / 1 会员 / 8 低音质免费
+    string picUrl = ""       // 封面（详情接口带回；搜索接口只给 picId，构造不出稳定 URL）
+    string url = ""          // 直链（惰性填充）
+
+    func valid(): bool { return id != "" }
+
+    // 能不能直接播（外链接口对会员曲只会 302 到 404 页 ⇒ 界面上标出来 ✓）
+    func playable(): bool { return fee == 0 or fee == 8 }
+
+    // 形如 "晴天 - 周杰伦 [4:29]"
+    func display(): string {
+        return name + " - " + artist + "  [" + formatduration(duration) + "]"
+    }
+
+    // 落盘文件名：歌名 - 歌手.mp3（非法字符换下划线）
+    func filename(): string {
+        string t = name + " - " + artist
+        Array[string] bad = ["\\", "/", ":", "*", "?", "\"", "<", ">", "|"]
+        for bad to b { t = t.replace(b, "_") }
+        return t + ".mp3"
+    }
+}
+
+// ==================== 小工具 ====================
+export func useragent(): string { return UA }
+
+// 网易云的接口对 UA / Referer 敏感：不带 UA 会拿到空 result，不带 Referer 部分接口 403 ✓
+export func headers(): Array[string] {
+    return ["User-Agent: " + UA, "Referer: " + REFERER, "Accept: application/json, text/plain, */*"]
+}
+
+export func formatduration(int secs): string {
+    if secs <= 0 { return "-:-" }
+    int m = secs / 60
+    int s = secs % 60
+    string ss = _str(s)
+    if s < 10 { ss = "0" + ss }
+    return _str(m) + ":" + ss
+}
+
+// JSON 取值：宁可返回默认值，也不让一条脏数据把整次搜索打崩（kuwo 那边踩过 ✓）
+func asStr(any v): string {
+    if v is string { return v as string }
+    return ""
+}
+func asInt(any v): int {
+    if v is int { return v as int }
+    if v is float { return _int(v as float) }
+    return 0
+}
+
+// [{"name":"周杰伦"},{"name":"费玉清"}] → "周杰伦 / 费玉清"
+func artistsText(any arr): string {
+    if not (arr is Array) { return "" }
+    string out = ""
+    for arr to it {
+        var d = it as Dict[string, any]
+        if d == null { continue }
+        string nm = asStr(d["name"])
+        if nm == "" { continue }
+        if out != "" { out = out + " / " }
+        out = out + nm
+    }
+    return out
+}
+
+// 建一个带好头的客户端（调用方负责 close ✓）
+export func newClient(): HttpClient {
+    var c = net.createClient()
+    c.addHeaders(headers())
+    return c
+}
+
+// ==================== ① 搜索 ====================
+export func searchurl(string keyword, int limit): string {
+    // type=1 单曲；total=true 会多算一次总数（无害）；csrf_token 留空即可
+    var params = {
+        "csrf_token": "",
+        "s": keyword,
+        "type": "1",
+        "offset": "0",
+        "total": "true",
+        "limit": _str(limit)
+    }
+    return API_SEARCH + net.buildQuery(params)
+}
+
+// 把**一组网易云格式的歌曲对象**解析成 SongInfo
+//   ★ 单独抽出来是为了复用：ffapi 那个解析站的 `data[]` 也是同一形状
+//     （见 ffapi_core.leno）⇒ 两个源解析出来的类型完全一致，上层无感 ✓
+export func parsedatalist(any songs): Array[SongInfo] {
+    Array[SongInfo] out = []
+    if not (songs is Array) { return out }
+    for songs to item {
+        var d = item as Dict[string, any]
+        if d == null { continue }
+        try {
+            SongInfo s = new SongInfo()
+            s.id = _str(asInt(d["id"]))
+            if s.id == "" or s.id == "0" { continue }
+            s.name = asStr(d["name"])
+            s.artist = artistsText(d["artists"])
+            var al = d["album"] as Dict[string, any]
+            if al != null { s.album = asStr(al["name"]) }
+            s.duration = asInt(d["duration"]) / 1000          // 毫秒 → 秒
+            s.fee = asInt(d["fee"])
+            out.add(s)
+        } catch e {
+            // 单条坏数据只丢这一条（不要让一条畸形 JSON 把整次搜索变成"什么都搜不到"✓）
+            continue
+        }
+    }
+    return out
+}
+
+// 解析搜索响应：{ result: { songs: [ ... ], songCount: N }, code: 200 }
+export func parsesongs(string body): Array[SongInfo] {
+    var root = jsons.decode(body) as Dict[string, any]
+    if root == null { return [] }
+    var result = root["result"]
+    if not (result is Dict) { return [] }
+    return parsedatalist((result as Dict[string, any])["songs"])
+}
+
+export func search(HttpClient client, string keyword, int limit): Array[SongInfo] {
+    Response resp = client.get(searchurl(keyword, limit))
+    if not resp.ok() { return [] }
+    return parsesongs(resp.body)
+}
+
+// ==================== ② 详情（封面 / 精确时长）====================
+export func detailurl(string id): string {
+    // ids 必须形如 [123]；URL 里用 %5B %5D 免得个别客户端把它当非法字符
+    return API_DETAIL + "?id=" + id + "&ids=%5B" + id + "%5D"
+}
+
+export func parsedetail(string body): SongInfo {
+    SongInfo s = new SongInfo()
+    var root = jsons.decode(body) as Dict[string, any]
+    if root == null { return s }
+    var songs = root["songs"]
+    if not (songs is Array) { return s }
+    for songs to item {
+        var d = item as Dict[string, any]
+        if d == null { continue }
+        s.id = _str(asInt(d["id"]))
+        s.name = asStr(d["name"])
+        // ⚠ 这个接口有**两套字段名**（实测 2026-10-29）：
+        //   老格式 artists / album / duration ← 当前网页端返回的就是这套；
+        //   新格式 ar / al / dt ← 部分版本/网关会返回。
+        //   只认一套的话，另一套会静默解析成空（第一次跑就踩到：album=空、dur=0、picUrl=空 ✗）
+        s.artist = artistsText(d["ar"])
+        if s.artist == "" { s.artist = artistsText(d["artists"]) }
+        var al = d["al"] as Dict[string, any]
+        if al == null { al = d["album"] as Dict[string, any] }
+        if al != null {
+            s.album = asStr(al["name"])
+            s.picUrl = asStr(al["picUrl"])
+        }
+        int ms = asInt(d["dt"])
+        if ms == 0 { ms = asInt(d["duration"]) }
+        s.duration = ms / 1000
+        s.fee = asInt(d["fee"])
+        break
+    }
+    return s
+}
+
+export func detail(HttpClient client, string id): SongInfo {
+    Response resp = client.get(detailurl(id))
+    if not resp.ok() { return new SongInfo() }
+    return parsedetail(resp.body)
+}
+
+// ==================== ③ 直链（302 → CDN）====================
+export func outerurl(string id): string {
+    return OUTER_URL + "?id=" + id + ".mp3"
+}
+
+// 取播放直链：**跟随 302** 后拿最终地址；会员曲会跳到 404 页 ⇒ 返回 ""
+//   ⚠ 别拿 `outerurl()` 直接喂播放器：那是个 302，SDL 的音频流不跟重定向 ✗
+export func direct_url(HttpClient client, string id): string {
+    Response resp = client.get(outerurl(id))
+    string u = resp.effectiveUrl
+    if u == "" { u = resp.getHeader("location") }
+    if u == "" { return "" }
+    string low = u.to_lower()
+    // CDN 真实地址一定带 .mp3（有的还带 ?vuutv=... 签名）
+    if strings.has(low, ".mp3") { return u }
+    return ""
+}
+
+// ==================== ④ 歌词 ====================
+export func lyricurl(string id): string {
+    return API_LYRIC + "?id=" + id + "&lv=1&kv=1&tv=-1"
+}
+
+export func parselyric(string body): string {
+    var root = jsons.decode(body) as Dict[string, any]
+    if root == null { return "" }
+    var lrc = root["lrc"] as Dict[string, any]
+    if lrc == null { return "" }
+    return asStr(lrc["lyric"])
+}
+
+export func lyric(HttpClient client, string id): string {
+    Response resp = client.get(lyricurl(id))
+    if not resp.ok() { return "" }
+    return parselyric(resp.body)
+}
+
+// ==================== ⑤ 下载 ====================
+// 走 LenoWeb 的 downloadResume（自带续传 + 低速超时），与 kuwo 侧同一套 ✓
+export func download(HttpClient client, SongInfo s, string savePath): int {
+    if not s.valid() { return -1 }
+    string u = s.url
+    if u == "" { u = direct_url(client, s.id) }
+    if u == "" { return -1 }
+    return net.download(u, savePath)
+}

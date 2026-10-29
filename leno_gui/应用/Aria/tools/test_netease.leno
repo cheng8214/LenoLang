@@ -1,0 +1,64 @@
+// tools/test_netease.leno — 网易云备用音源端到端自测（搜索 → 详情 → 直链 → 歌词）
+//
+// 用法：build\leno.exe "leno_gui\应用\Aria\tools\test_netease.leno"
+//   可选关键词：build\leno.exe ... ... 之后跟参数（脚本里 _args() 取）
+//
+// 验的是四条链路各自"真的有数据"，而不是只看有没有报错 ✓
+import "../lib/netease_core.leno" as ne
+
+main() {
+    var a = _args()
+    string kw = "周杰伦"
+    if a.len() > 0 { kw = a[0] }
+
+    var c = ne.newClient()
+    print("=== ① 搜索：" + kw)
+    var list = ne.search(c, kw, 3)
+    print("    命中 " + _str(list.len()) + " 首")
+    for list to s {
+        print("    " + s.display() + "  id=" + s.id +
+              "  fee=" + _str(s.fee) + (if s.playable() then " 可播" else " 会员"))
+    }
+    if list.len() == 0 { c.close(); print("搜索为空 ⇒ 后面的没法测了"); return }
+
+    // 直链要拿**可播曲**验（会员曲本来就没有外链 ⇒ 空是正确结果，验不出问题）
+    var probe = list[0]
+    for list to s { if s.playable() { probe = s; break } }
+
+    print("=== ② 详情（封面/时长）")
+    var d = ne.detail(c, probe.id)
+    print("    name=" + d.name + "  album=" + d.album + "  dur=" + _str(d.duration) + "s")
+    print("    picUrl=" + d.picUrl)
+
+    print("=== ③ 直链（要能跟到 .mp3）")
+    string u = ne.direct_url(c, probe.id)
+    if u == "" { print("    没取到直链（会员曲或接口变了）") }
+    else { print("    直链前 90 字：" + u.slice(0, 89)) }
+
+    print("=== ④ 歌词")
+    string ly = ne.lyric(c, probe.id)
+    int lines = ly.split("\n").len()
+    print("    歌词 " + _str(ly.len()) + " 字节 / " + _str(lines) + " 行")
+    if lines > 2 {
+        var arr = ly.split("\n")
+        print("    第 2 行：" + arr[1])
+    }
+
+    // ⑤ 真下载（"备用源"得能出音频才算数 ✓）
+    print("=== ⑤ 下载 30 秒试听（只验能不能落盘，不验证音质）")
+    if u != "" {
+        string tmp = _str(_env("TEMP"))
+        if tmp == "" { tmp = "." }
+        string f = tmp + "\\ne_probe.mp3"
+        var c2 = ne.newClient()
+        probe.url = u
+        int n = ne.download(c2, probe, f)
+        c2.close()
+        print("    落盘 " + f + "  " + _str(n) + " 字节")
+    } else {
+        print("    没有直链，跳过")
+    }
+
+    c.close()
+    print("=== 完成")
+}
