@@ -42,8 +42,8 @@ main() {
 ")
     // ⚠ 用 expect_error 而不是 cmd_for：崩溃 = 非 0 退出码，且它会**带回输出**（cmd_for 只给命令行）
     var out1 = ce.expect_error(f1, "野指针崩溃要报出位置（不是无声死亡）", "[崩溃]", 0)
-    assert_true(strings.has(out1, "访问违例"),
-        "要说明是访问违例（野指针/空指针）；实际=" + out1)
+    assert_true(strings.has(out1, "访问违例") or strings.has(out1, "收到信号"),
+        "要说明是访问违例（Windows 文案）/ 收到信号（Unix 文案）；实际=" + out1)
     assert_true(strings.has(out1, "@ 函数 boom"),
         "要报出**函数名**（原来只有异常码，指不到位置）；实际=" + out1)
     assert_true(strings.has(out1, "uaf.leno:9"),

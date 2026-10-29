@@ -104,13 +104,16 @@ main() {
     dirs.delete(work)
     dirs.mkdir_p(work)
     var p = dirs.join(work, "exec_nullable.leno")
-    files.write(p, @"main() {
-    var r = _exec(""cmd /c echo hi"", 5000)
-    if r != null {
-        print(""CODE="" + _str(r.code))
-    }
-}
-")
+    // 平台相关：Windows 走 cmd /c，Linux/macOS 直接交给 sh（写死 cmd 会退出 127 ✗）
+    var inner_cmd = "echo hi"
+    if _os() == "windows" { inner_cmd = "cmd /c echo hi" }
+    files.write(p,
+        "main() {\n"
+        + "    var r = _exec(\"" + inner_cmd + "\", 5000)\n"
+        + "    if r != null {\n"
+        + "        print(\"CODE=\" + _str(r.code))\n"
+        + "    }\n"
+        + "}\n")
     var out = ce.expect_ok(p, "③ _exec 的返回是可空的 ExecResult?", "CODE=0")
     ce.expect_no_warning(out, "③ var 接 _exec（声明 ExecResult?）不该误报 null 比较",
         "struct 值类型默认被立即分配")
