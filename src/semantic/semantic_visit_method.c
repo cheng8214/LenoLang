@@ -548,7 +548,22 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
             transform_method_body_ex(ast->u.for_.start, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
             transform_method_body_ex(ast->u.for_.end, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
             transform_method_body_ex(ast->u.for_.step, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
-            transform_method_body_ex(ast->u.for_.body, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
+            // ★ 循环变量也是**局部量**：必须加入遮蔽集合，否则 `for 集合 to row` 体里的
+            //   `row` 会被当成"本 struct 的方法名"改写成 `self["row"]` ⇒ 类型变成
+            //   `func(int):Array[string]`，报「add 的参数类型不匹配」✗（LenoMusic 实测）。
+            //   变量只在**循环体**内生效 ⇒ start/end/step 仍用原集合 ✓
+            char* for_shadows[130];
+            int for_shadow_count = 0;
+            for (int i = 0; i < shadowed_count && for_shadow_count < 128; i++) {
+                if (shadowed_names[i]) for_shadows[for_shadow_count++] = shadowed_names[i];
+            }
+            if (ast->u.for_.var_name && for_shadow_count < 128) {
+                for_shadows[for_shadow_count++] = ast->u.for_.var_name;
+            }
+            if (ast->u.for_.index_var_name && for_shadow_count < 128) {
+                for_shadows[for_shadow_count++] = ast->u.for_.index_var_name;
+            }
+            transform_method_body_ex(ast->u.for_.body, field_names, field_count, method_names, method_count, struct_name, for_shadows, for_shadow_count, param_names, param_count, const_names, const_count);
             break;
         }
         case AST_BLOCK: {

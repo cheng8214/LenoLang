@@ -1,0 +1,44 @@
+// test_for_shadow_method.leno — for 的循环变量必须遮蔽同名 struct 方法
+//
+// 现场（LenoMusic）：方法体里写 `for songs to row { rows.add(row) }`，
+//   而本 struct 恰好有个方法 `row(int)` ⇒ AST 方法体变换把循环体里的 `row`
+//   改写成 `self["row"]`（方法函数值）⇒ 报「add 参数类型不匹配」✗
+//
+// 修复：循环变量（含索引变量）进入"遮蔽集合"，只作用于循环体；
+//   start/end/step 仍在循环变量作用域外 ✓
+
+struct Box {
+    Array[Array[string]] songs = [["a"], ["b"]]
+    int n = 3
+
+    func row(int i): Array[string] {
+        return songs[i]
+    }
+
+    // 集合遍历：循环变量与上面的方法同名
+    func all(): Array[Array[string]] {
+        Array[Array[string]] rows = []
+        for songs to row { rows.add(row) }
+        return rows
+    }
+
+    // 数值循环：循环变量也与方法同名
+    func count(): int {
+        int sum = 0
+        for 0:2 to row { sum = sum + row }
+        return sum
+    }
+}
+
+main() {
+    var b = new Box()
+
+    var got = b.all()
+    assert_eq(got.len(), 2, "遍历结果应有 2 行")
+    assert_eq(got[0][0], "a", "第 0 行应是 a")
+    assert_eq(got[1][0], "b", "第 1 行应是 b")
+
+    assert_eq(b.count(), 3, "0+1+2 应为 3（循环变量必须按 int 处理，而不是方法函数值）")
+
+    print("test_for_shadow_method passed")
+}
