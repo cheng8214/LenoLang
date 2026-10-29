@@ -3215,11 +3215,28 @@ Song nowSong
         volPct.set_text(_str(_int(g_vol)))
     }
 
+    // 收起两个浮层（窗口尺寸变化时调；再点按钮会按新尺寸重新弹出 ✓）
+    pri func close_overlays() {
+        if qOpen {
+            qOpen = false
+            qRoot.set_visible(false)
+        }
+        if volOpen {
+            volOpen = false
+            volRoot.set_visible(false)
+        }
+        win.clear_modal()
+        SDL3.markFrameRedraw()
+    }
+
     pri func toggle_queue() {
         qOpen = not qOpen
         if qOpen {
             if volOpen { toggle_vol() }              // 先关音量浮窗（互斥 ✓）
             build_queue_rows()
+            // 按**当前**尺寸定位：建面板时用的是常量，窗口放大后那个坐标就飘在中间了 ✗
+            //   取根布局的实时宽高（root 会随窗口拉伸），y 再加标题栏高度才是窗口底部 ✓
+            qRoot.set_pos(root.get_w() - 284.0, tbH + root.get_h() - 560.0)
         }
         qRoot.set_visible(qOpen)
         // 防穿透：展开时把浮层登记成"模态"——落在它矩形内的事件只给它 ✓
@@ -3844,6 +3861,10 @@ Song nowSong
         //   ⇒ 任何页面都标记，由 on_tick 比对宽度后重建 ✓
         if ev.isWindowResized() {
             resizePending = true
+            // 浮层（播放列表 / 音量）是按**弹出那一刻**的窗口尺寸定位的 ⇒
+            //   窗口一变就收起（再点按钮时按新尺寸重新弹出 ✓）
+            //   不收的话它们会钉在旧坐标上（放大窗口后飘在中间 ✗）
+            close_overlays()
         }
         if ev.isQuit() or ev.isWindowClose() {
             shutdown_audio()
