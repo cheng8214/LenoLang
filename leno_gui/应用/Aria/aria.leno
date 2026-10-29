@@ -1081,10 +1081,18 @@ Song nowSong
     const int SPEC_BARS = 24
     const float SPEC_H = 72.0          // 频谱画布高（封面下方富余空间里的一块 ✓）
 
+    // 当前到底有没有一首歌在播
+    //   ⚠ 不能只看 `nowSid`：**本地文件**播放时 sid 是故意留空的（sid = 酷我 id，本地文件没有）
+    //     ⇒ 只看 sid 会把"本地文件在播"误判成"没在播"，歌词页副标题和右侧提示都写"还没有在播的歌" ✗
+    //     （2026-10-30 实测：本地音乐里放「落了白」时封面/歌名/歌手都对，只有这两处提示是错的）
+    pri func has_now(): bool {
+        return nowSid != "" or nowSong.title != "" or nowSong.path != ""
+    }
+
     pri func show_lyric_page() {
         show_scroll()
         content.add(ui.lbl("歌词", 25, C_TXT, true), {grow: 0, shrink: 0, basis: 36, align: 3})
-        string sub = if nowSid != "" then nowTitle.get_text() + " · " + nowArtist.get_text() else "还没有在播的歌"
+        string sub = if has_now() then nowTitle.get_text() + " · " + nowArtist.get_text() else "还没有在播的歌"
         content.add(ui.lbl(sub, 11, C_TXT_DIM, false), {grow: 0, shrink: 0, basis: 18, align: 3})
 
         // 歌词视口高：窗口高 −（顶栏 58 + 标题区 ~56 + 底栏 ~90 + 边距）—— 尽量吃满剩余高度 ✓
@@ -1193,7 +1201,7 @@ Song nowSong
         // 画布交给 LyricView 建；**回调挂在 Player 这边**（闭包能读到 pos / nowSid 的最新值 ✓）
         lyric.canvas = lyric.build(lw0, lvh)
         lyric.canvas.on_draw(func(Renderer r, float ox, float oy, float cw, float ch) {
-            string noMsg = if nowSid == "" then "还没有在播的歌" else "（这首歌没有歌词，或还没加载）"
+            string noMsg = if has_now() then "（这首歌没有歌词，或还没加载）" else "还没有在播的歌"
             lyric.draw(r, ox, oy, cw, ch, noMsg, pos)
         })
         row.add(lyric.canvas, {grow: 1, shrink: 1, align: 0})
@@ -1253,6 +1261,34 @@ Song nowSong
 
     // 本地音频 → 同目录同名 .lrc 的路径（不存在则返回 ""）
     //   下载时勾了「同时存 .lrc」才有；扩展名就这几种，直接替换 ✓
+    // 取路径里的"文件名"（含扩展名）：\ 和 / 两种分隔符都认（dirs.join 在 Windows 上用 \ ✓）
+    pri func base_name(string p): string {
+        string last = p
+        var a = strings.split(p, "\\")
+        if a.len() > 0 { last = a[a.len() - 1] }
+        var b = strings.split(last, "/")
+        if b.len() > 0 { last = b[b.len() - 1] }
+        return last
+    }
+
+    // 本地播放这首歌时，歌词文件在哪
+    //   ① `ff_<id>.<ext>` = 本应用解析/下载的音源：**歌词不在音频旁边**，
+    //     而是在 covers/ff_<id>.lrc（搜索时随解析结果落盘，见 apply_ff_row ✓）
+    //      ⚠ 原来只找"同目录同名 .lrc" ⇒ preview/ff_123.lrc 根本不存在
+    //        ⇒ 从「本地音乐」点播时歌词永远空白（2026-10-30 实测 ✗）
+    //   ② 普通本地文件：同目录同名 .lrc
+    pri func lyric_file_for(string filePath): string {
+        if filePath == "" { return "" }
+        string nm = base_name(filePath)
+        if strings.starts_with(nm, "ff_") {
+            int dot = strings.find(nm, ".")
+            string stem = if dot > 0 then strings.slice(nm, 0, dot - 1) else nm
+            string ff = dirs.join(ui.coverCacheDir(), stem + ".lrc")
+            if files.exists(ff) { return ff }
+        }
+        return lrc_path_of(filePath)
+    }
+
     pri func lrc_path_of(string filePath): string {
         // ⚠ 形参别叫 `audio`：会和 `import "Music" as audio` 撞名（报"模块 audio 中没有方法 replace"）
         if filePath == "" { return "" }
@@ -1291,13 +1327,27 @@ Song nowSong
             lyric.loading = false
             return
         }
-        // ---- 本地文件：读**同目录同名 .lrc**（在线歌那条路要 sid，本地没有 ⇒ 原来直接 return ✗）----
+        // ---- 普通酷我源（nowSid = 酷我 rid，nowSong.url 为空）：走接口取歌词 ----
+        //   ⚠ 必须排在下面"本地文件"分支**之前**：酷我会先把试听音频落到
+        //     preview/<rid>.mp3，并把 Song.path 指过去 ⇒ 若先进 path 分支，就会去找
+        //     preview/<rid>.lrc（根本不存在，歌词只存在 covers/ff_*.lrc 或下载目录）
+        //     ⇒ 歌词永远空白，而且**再也回不到这个接口** ✗
+        //     （2026-10-30 实测：播「落了白」时歌词页整页空，就是被 path 分支截走的）
+        if nowSid != "" {
+            if nowSid == lyric.sid { return }
+            lyric.sid = nowSid
+            lyric.clear()                       // 换歌先清空，避免上一首的歌词留在屏幕上 ✗
+            lyric.loading = true
+            threads.start(workers.lyric, nowSid, lyrCh)
+            return
+        }
+        // ---- 本地文件（没有 sid，也不是本应用音源）：读同目录同名 .lrc ----
         if nowSong.path != "" {
             string key = nowSong.path
             if lyric.sid == key { return }           // 已经加载过这一首
             lyric.sid = key                           // 拿路径当"哪一首"的标识
             lyric.clear()
-            string lp = lrc_path_of(key)
+            string lp = lyric_file_for(key)
             if lp != "" {
                 try {
                     lyric.set_text(files.read(lp))
@@ -1308,21 +1358,11 @@ Song nowSong
             lyric.loading = false
             return
         }
-        string sid = nowSid
-        if sid == "" {
-            // ★ 没在播（或本地文件/空状态）⇒ **必须清掉旧歌词**
-            //   原来这里直接 return ⇒ 屏幕上一直留着上一首（甚至更早一首）的词，
-            //   看起来就像"每首都是周杰伦" ✗
-            lyric.sid = ""
-            lyric.clear()
-            lyric.loading = false
-            return
-        }
-        if sid == lyric.sid { return }
-        lyric.sid = sid
-        lyric.clear()                       // 换歌先清空，避免上一首的歌词留在屏幕上 ✗
-        lyric.loading = true
-        threads.start(workers.lyric, sid, lyrCh)
+        // ---- 都没在播（空状态）⇒ **必须清掉旧歌词** ----
+        //   原来这里直接 return ⇒ 屏幕上一直留着上一首（甚至更早一首）的词 ✗
+        lyric.sid = ""
+        lyric.clear()
+        lyric.loading = false
     }
 
     // 歌词推进（33ms 定时器）：读位置 → 交给 LyricView 走一步（换行 / 缓动滚动 / 淡入）✓
@@ -3983,7 +4023,7 @@ Song nowSong
             lyricAt = 0
             // 无头验证用：没在播时假一首歌（**只改界面文字/封面，不碰音频** ✓），
             //   否则歌词页只会显示"还没有在播的歌"，看不到歌词排版
-            if nowSid == "" { fake_now_song() }
+            if not has_now() { fake_now_song() }
             // 直接把进度摆到 70 秒（**不动音频**）：一进页面就能看到"滚到中部 + 中部那行高亮"，
             //   无头验证自动滚动有没有生效 ✓
             open_lyrics(true)
@@ -4517,7 +4557,10 @@ Song nowSong
         // 播放时头像自转（唱片效果），暂停就停 —— 24°/s ≈ 一圈 15 秒，不晃眼 ✓
         if coverView.get_w() > 0.0 { coverView.set_spin(if playing then 24.0 else 0.0) }
         // 换歌了且正停在歌词页 ⇒ 重新取歌词（request_lyric 内部按 sid 去重 ✓）
-        if curNav == -6 and nowSid != "" and nowSid != lyric.sid { request_lyric() }
+        // 歌词还没加载这一首 ⇒ 补一次（两种 key：普通源 = rid，高音质源 = "ff:" + rid ✓）
+        if curNav == -6 and nowSid != "" and nowSid != lyric.sid and "ff:" + nowSid != lyric.sid {
+            request_lyric()
+        }
     }
 
     // ==================== 退出收尾 ====================
