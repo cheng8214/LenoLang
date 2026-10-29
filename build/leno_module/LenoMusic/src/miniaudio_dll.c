@@ -431,3 +431,241 @@ DLLEXPORT int ma_dll_hpf_reinit(HPFHandle* h, int fmt, int ch, int sr, int order
     ma_hpf_config cfg = ma_hpf_config_init(to_fmt(fmt), ch, sr, cutoff, order);
     return ma_hpf_reinit(&cfg, h->hpf) == MA_SUCCESS ? 0 : -1;
 }
+
+/* ==================== Spectrum (FFT 频谱) ==================== */
+/*
+ * 为什么要另开一个解码器（旁路解码），而不是从 ma_sound 里取 PCM：
+ *   1) 本 DLL 的 Sound 走 MA_SOUND_FLAG_STREAM，PCM 是在引擎的音频线程里被
+ *      解码并直接送去混音的，外面拿不到（miniaudio 没有 "tap / 监视" 钩子）。
+ *   2) 想挂钩就得把 Sound 改成 ma_sound_init_from_data_source + 自写 data
+ *      source 包装器，会动到全部播放路径（现网所有应用都靠它），风险不划算。
+ *   3) 频谱只是视觉反馈：分析窗口取【播放位置前 fftSize 帧】就够，几十毫秒的
+ *      相位差肉眼看不出。所以这里自带一个 ma_decoder，按播放位置追着解码，
+ *      漂移超过 1/4 秒才 seek 一次（MP3 seek 要扫帧，别每帧都 seek）。
+ * 成本：稳定播放时每次 update 只解码 ~一帧音频（16~33ms 的样本），可忽略。
+ * 本文件里没有 ma_fft（这份 miniaudio.h 是裁剪过的 0.11，不含 FFT），
+ *   所以下面自写一个 radix-2 迭代 FFT（输入长度恒为 2 的幂）。
+ */
+typedef struct {
+    ma_decoder decoder;
+    ma_uint32  sampleRate;
+    ma_uint32  channels;
+    ma_uint64  cursor;      /* 已解码到的绝对帧号（用于跟 pos 对齐） */
+    int        fftSize;
+    float*     ring;        /* fftSize 个单声道样本（环形，最近的一个窗口） */
+    int        ringPos;     /* 下一个写入位置 = 当前最旧样本位置 */
+    float*     re;
+    float*     im;
+    float*     win;         /* Hann 窗 */
+    float*     pcm;         /* 解码暂存：4096 帧 × channels */
+} SpectrumHandle;
+
+#define MA_SPECTRUM_CHUNK 4096
+
+/* 原地基-2 FFT（re/im 长度必须是 2 的幂） */
+static void spectrum_fft(float* re, float* im, int n) {
+    for (int i = 1, j = 0; i < n; i++) {
+        int bit = n >> 1;
+        for (; j & bit; bit >>= 1) j ^= bit;
+        j ^= bit;
+        if (i < j) {
+            float t = re[i]; re[i] = re[j]; re[j] = t;
+            t = im[i]; im[i] = im[j]; im[j] = t;
+        }
+    }
+    for (int len = 2; len <= n; len <<= 1) {
+        double ang = -6.283185307179586 / (double)len;
+        float wr = (float)cos(ang), wi = (float)sin(ang);
+        int half = len >> 1;
+        for (int i = 0; i < n; i += len) {
+            float cr = 1.0f, ci = 0.0f;
+            for (int k = 0; k < half; k++) {
+                int a = i + k, b = a + half;
+                float vr = re[b] * cr - im[b] * ci;
+                float vi = re[b] * ci + im[b] * cr;
+                re[b] = re[a] - vr; im[b] = im[a] - vi;
+                re[a] += vr;        im[a] += vi;
+                float ncr = cr * wr - ci * wi;
+                ci = cr * wi + ci * wr;
+                cr = ncr;
+            }
+        }
+    }
+}
+
+DLLEXPORT SpectrumHandle* ma_dll_spectrum_create(const char* path, int fft_size) {
+    if (!path || !path[0]) return NULL;
+    if (fft_size < 256) fft_size = 256;
+    if (fft_size > 16384) fft_size = 16384;
+    int n = 1;
+    while (n < fft_size) n <<= 1;         /* 归一到 2 的幂 */
+    fft_size = n;
+
+    SpectrumHandle* h = (SpectrumHandle*)calloc(1, sizeof(SpectrumHandle));
+    if (!h) return NULL;
+
+    ma_decoder_config cfg = ma_decoder_config_init(ma_format_f32, 0, 0);
+#ifdef _WIN32
+    ma_result r;
+    wchar_t* wpath = utf8_to_wchar(path);
+    if (wpath) {
+        r = ma_decoder_init_file_w(wpath, &cfg, &h->decoder);
+        free(wpath);
+    } else {
+        r = ma_decoder_init_file(path, &cfg, &h->decoder);
+    }
+#else
+    ma_result r = ma_decoder_init_file(path, &cfg, &h->decoder);
+#endif
+    if (r != MA_SUCCESS) { free(h); return NULL; }
+
+    h->sampleRate = h->decoder.outputSampleRate ? h->decoder.outputSampleRate : 48000;
+    h->channels   = h->decoder.outputChannels ? h->decoder.outputChannels : 1;
+    h->fftSize    = fft_size;
+    h->cursor     = 0;
+    h->ringPos    = 0;
+
+    h->ring = (float*)calloc((size_t)fft_size, sizeof(float));
+    h->re   = (float*)calloc((size_t)fft_size, sizeof(float));
+    h->im   = (float*)calloc((size_t)fft_size, sizeof(float));
+    h->win  = (float*)calloc((size_t)fft_size, sizeof(float));
+    h->pcm  = (float*)calloc((size_t)MA_SPECTRUM_CHUNK * h->channels, sizeof(float));
+    if (!h->ring || !h->re || !h->im || !h->win || !h->pcm) {
+        if (h->ring) free(h->ring);
+        if (h->re)   free(h->re);
+        if (h->im)   free(h->im);
+        if (h->win)  free(h->win);
+        if (h->pcm)  free(h->pcm);
+        ma_decoder_uninit(&h->decoder);
+        free(h);
+        return NULL;
+    }
+    for (int i = 0; i < fft_size; i++) {
+        h->win[i] = (float)(0.5 - 0.5 * cos(6.283185307179586 * (double)i / (double)(fft_size - 1)));
+    }
+    return h;
+}
+
+DLLEXPORT void ma_dll_spectrum_destroy(SpectrumHandle* h) {
+    if (!h) return;
+    ma_decoder_uninit(&h->decoder);
+    free(h->ring); free(h->re); free(h->im); free(h->win); free(h->pcm);
+    free(h);
+}
+
+DLLEXPORT int ma_dll_spectrum_get_sample_rate(SpectrumHandle* h) { return h ? (int)h->sampleRate : 0; }
+DLLEXPORT int ma_dll_spectrum_get_channels(SpectrumHandle* h) { return h ? (int)h->channels : 0; }
+DLLEXPORT int ma_dll_spectrum_get_fft_size(SpectrumHandle* h) { return h ? h->fftSize : 0; }
+
+/* 返回实际写入的频段数；out 每个元素是 0..1 的柱高 */
+DLLEXPORT int ma_dll_spectrum_update(SpectrumHandle* h, double pos_sec, int bands, float* out, int out_cap) {
+    if (!h || !out || bands <= 0 || out_cap <= 0) return 0;
+    if (bands > out_cap) bands = out_cap;
+
+    const ma_uint64 N  = (ma_uint64)h->fftSize;
+    const ma_uint64 sr = (ma_uint64)h->sampleRate;
+    if (pos_sec < 0.0) pos_sec = 0.0;
+    ma_uint64 target = (ma_uint64)(pos_sec * (double)sr);
+    /* 开头 N 帧以内"往前取不满一个窗口" ⇒ 用文件开头那一窗代替（图不会一开始就空着） */
+    if (target < N) target = N;
+
+    ma_uint64 tol = sr / 4;
+    if (tol < N) tol = N;
+
+    if (h->cursor > target || (target - h->cursor) > tol) {
+        ma_uint64 start = target - N;
+        if (ma_decoder_seek_to_pcm_frame(&h->decoder, start) == MA_SUCCESS) {
+            h->cursor = start;
+        } else {
+            h->cursor = start;
+        }
+        /* seek 后旧样本已不属于这个位置 ⇒ 窗口清零重新攒 */
+        memset(h->ring, 0, sizeof(float) * (size_t)N);
+        h->ringPos = 0;
+    }
+
+    while (h->cursor < target) {
+        ma_uint64 want = target - h->cursor;
+        if (want > MA_SPECTRUM_CHUNK) want = MA_SPECTRUM_CHUNK;
+        ma_uint64 got = 0;
+        ma_decoder_read_pcm_frames(&h->decoder, h->pcm, want, &got);
+        if (got == 0) break;                     /* 到文件尾 / 数据还没下完 */
+        ma_uint32 ch = h->channels;
+        for (ma_uint64 i = 0; i < got; i++) {
+            float s = 0.0f;
+            const float* f = h->pcm + i * ch;
+            for (ma_uint32 c = 0; c < ch; c++) s += f[c];
+            h->ring[h->ringPos] = s / (float)ch;  /* 混成单声道 */
+            if (++h->ringPos >= (int)N) h->ringPos = 0;
+        }
+        h->cursor += got;
+        if (got < want) break;
+    }
+
+    /* 把环形缓冲按时间顺序展开 + 加窗 */
+    int start = h->ringPos;                      /* 最旧样本 */
+    for (int i = 0; i < (int)N; i++) {
+        int idx = start + i;
+        if (idx >= (int)N) idx -= (int)N;
+        h->re[i] = h->ring[idx] * h->win[i];
+        h->im[i] = 0.0f;
+    }
+    spectrum_fft(h->re, h->im, (int)N);
+
+    /* 对数频段聚合：40Hz ~ min(16kHz, nyq) */
+    double nyq = (double)sr * 0.5;
+    double f0 = 40.0;
+    double f1 = nyq < 16000.0 ? nyq : 16000.0;
+    if (f1 < f0 * 2.0) f1 = f0 * 2.0;
+    double ratio = f1 / f0;
+    int half = (int)N / 2;
+
+    /* 第一遍：每段取平均幅度（先不做 dB）。bands 上限 128 ⇒ 栈上数组足够 */
+    double seg[128];
+    int nb = bands > 128 ? 128 : bands;
+    for (int b = 0; b < nb; b++) {
+        double lo = f0 * pow(ratio, (double)b / (double)nb);
+        double hi = f0 * pow(ratio, (double)(b + 1) / (double)nb);
+        int k0 = (int)(lo * (double)N / (double)sr);
+        int k1 = (int)(hi * (double)N / (double)sr);
+        if (k0 < 1) k0 = 1;
+        if (k1 <= k0) k1 = k0 + 1;
+        if (k1 > half) k1 = half;
+        double sum = 0.0;
+        int cnt = 0;
+        for (int k = k0; k < k1; k++) {
+            double re = (double)h->re[k], im = (double)h->im[k];
+            sum += sqrt(re * re + im * im) * 2.0 / (double)N;   /* 单边幅度谱 */
+            cnt++;
+        }
+        seg[b] = cnt ? (sum / (double)cnt) : 0.0;
+    }
+
+    /* 第二遍：邻域平滑 → 倾斜补偿 → dB 归一化 */
+    for (int b = 0; b < nb; b++) {
+        /* 3 点平滑（0.2/0.6/0.2）：单根尖刺看着像"坏了一格"，平滑后才是曲线 ✓
+           ⚠ 别用 0.25/0.5/0.25：抹得太狠 ⇒ 整排变成一条单调斜坡，没有起伏 ✗ */
+        double mag = seg[b] * 3.0;
+        if (b > 0)        mag += seg[b - 1];
+        if (b + 1 < nb)   mag += seg[b + 1];
+        mag /= 5.0;
+        /* 频率倾斜（tilt）：音乐能量天然压在低频，原样画出来就是"左边一堵墙、右边一排小点" ✗
+           ⇒ 以 500Hz 为轴每倍频程 +3dB（夹在 ±10dB）：低频压一点、高频抬一点。
+           ⚠ 别补太多（试过 4dB/±14 + gamma 0.72）：各段被拉成**一样高** ⇒ 像一排等长方块，没有起伏 ✗ */
+        double lo   = f0 * pow(ratio, (double)b / (double)nb);
+        double hi   = f0 * pow(ratio, (double)(b + 1) / (double)nb);
+        double fc   = sqrt(lo * hi);                          /* 该频段的中心频率 */
+        double tilt = 3.0 * (log(fc / 500.0) / 0.6931471805599453);
+        if (tilt > 10.0) tilt = 10.0;
+        if (tilt < -10.0) tilt = -10.0;
+        mag *= pow(10.0, tilt / 20.0);
+        double db = 20.0 * log10(mag + 1e-9);
+        double v  = (db + 66.0) / 66.0;      /* -66dB → 0，0dB → 1（比 -72 灵敏，柱子更有生气 ✓） */
+        if (v < 0.0) v = 0.0;
+        if (v > 1.0) v = 1.0;
+        /* 轻度提亮（gamma 0.85）：不改的话中低幅度的柱整体偏瘫 ✗；再压狠了就全顶格 ✗ */
+        v = pow(v, 0.85);
+        out[b] = (float)v;
+    }
+    return nb;
+}

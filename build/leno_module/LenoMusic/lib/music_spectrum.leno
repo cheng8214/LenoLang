@@ -1,0 +1,124 @@
+// music_spectrum.leno -- 频谱（FFT）分析：给"跳动柱状图 / 频谱可视化"用
+//
+// 为什么单独一个类而不是加在 Sound 上：
+//   本模块的 Sound 走 MA_SOUND_FLAG_STREAM，PCM 在引擎音频线程里被解码后直接送混音，
+//   外面拿不到（miniaudio 没有 tap 钩子）。所以 Spectrum 自己开一个解码器，按传入的
+//   播放位置"追着"解码最近一窗样本做 FFT —— 视觉用途，几十毫秒相位差无感。
+//   C 侧实现见 src/miniaudio_dll.c 的 Spectrum 段（含自写 radix-2 FFT）。
+//
+// 用法（每帧调用一次）：
+//   var sp = createSpectrum("a.mp3", 32)
+//   // 渲染循环里：
+//   sp.update(sound.getPosition())
+//   for sp.getBands() ... 或 sp.getBand(i)   // 0.0 ~ 1.0 的柱高
+//   sp.uninit()
+
+import "music_core.leno" as core
+use core.miniaudio
+import ffi
+
+export struct Spectrum {
+    Ptr h; bool ok = 0
+    int bands = 32
+    Ptr[u8] _out = null
+    Array[float] _cur = []
+    Array[float] _peak = []
+
+    // 平滑系数：上升快、回落慢 ⇒ 观感像"跳动"，而不是电子雪花
+    //   （0.75/0.20 是实测手感：再慢就"糊"、再快就抖 ✓）
+    float attack = 0.75
+    float decay  = 0.20
+    // 峰值回落量（每帧）：柱顶那颗小点的下落速度，0.02 ≈ 1.2/秒
+    float peakFall = 0.02
+
+    // p: 音频文件路径；nBands: 柱数；fftSize: 分析窗（2 的幂，2048@48k ≈ 43ms）
+    func load(string p, int nBands = 32, int fftSize = 2048): bool {
+        var l = core.lib()
+        if l == null { return false }
+        if ok { uninit() }
+        h = l.ma_dll_spectrum_create(p, fftSize) as Ptr
+        if h == null { return false }
+
+        bands = if nBands < 1 then 1 else if nBands > 128 then 128 else nBands
+        _out = ffi.malloc(bands * 4)
+        _cur = []
+        _peak = []
+        for bands to i {
+            ffi.write_float(_out, i * 4, 0.0)
+            _cur.add(0.0)
+            _peak.add(0.0)
+        }
+        ok = true
+        return true
+    }
+
+    // pos: 当前播放位置（秒），一般传 Sound.getPosition()
+    func update(float pos) {
+        if not ok { return }
+        var n = core.lib().ma_dll_spectrum_update(h, pos, bands, _out, bands)
+        if n <= 0 { return }
+        for bands to i {
+            float v = ffi.read_float(_out, i * 4)
+            float prev = _cur[i]
+            float k = if v > prev then attack else decay
+            float cur = prev + (v - prev) * k
+            _cur[i] = cur
+            // 峰值保持：追平当前值，否则按 peakFall 缓慢下落 ⇒ 柱顶小点的"落下来"的手感 ✓
+            float pk = _peak[i] - peakFall
+            if cur > pk { pk = cur }
+            if pk < 0.0 { pk = 0.0 }
+            _peak[i] = pk
+        }
+    }
+
+    // 0.0 ~ 1.0；越界返回 0（画图时不必自己判边界）
+    func getBand(int i): float {
+        if i < 0 or i >= bands { return 0.0 }
+        return _cur[i]
+    }
+
+    // 该频段最近出现过的最高值（缓降）—— 画"柱顶小点"用
+    func getPeak(int i): float {
+        if i < 0 or i >= bands { return 0.0 }
+        return _peak[i]
+    }
+
+    func getBands(): Array[float] { return _cur }
+
+    // 整体能量（0~1）：做"封面呼吸/律动"这类效果时比单柱好用
+    func getLevel(): float {
+        if bands <= 0 { return 0.0 }
+        float s = 0.0
+        for bands to i { s = s + _cur[i] }
+        return s / _float(bands)
+    }
+
+    func getFftSize(): int {
+        if not ok { return 0 }
+        return core.lib().ma_dll_spectrum_get_fft_size(h)
+    }
+
+    func getSampleRate(): int {
+        if not ok { return 0 }
+        return core.lib().ma_dll_spectrum_get_sample_rate(h)
+    }
+
+    func isInit(): bool { return ok }
+
+    func uninit() {
+        if ok {
+            core.lib().ma_dll_spectrum_destroy(h)
+            h = null
+            ok = false
+        }
+        if _out != null { ffi.free(_out); _out = null }
+        _cur = []
+        _peak = []
+    }
+}
+
+export func createSpectrum(string p, int nBands = 32, int fftSize = 2048): Spectrum {
+    var s = new Spectrum()
+    s.load(p, nBands, fftSize)
+    return s
+}

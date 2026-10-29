@@ -123,16 +123,17 @@ func _optDefaultLocation(Dict opts): string {
 // 构造 SDL_DialogFileFilter 数组（每项 = {name ptr, pattern ptr}，16 字节）
 // 无过滤器时返回 null
 func _buildFilters(Dict opts): Ptr[u8] {
-    var fs = opts.get("filters", null)
-    if fs == null { _filterMem = []; return null }
-    if fs is Array {
-    int n = fs.len()
+    // ⚠ 变量名不能叫 `fs`：会和"模块 fs"撞名 ⇒ 语义层报「模块 'fs' 未导入」并把类型降成 any ✗
+    var lst = opts.get("filters", null)
+    if lst == null { _filterMem = []; return null }
+    if lst is Array {
+    int n = lst.len()
     if n == 0 { _filterMem = []; return null }
         Ptr[u8] arr = ffi.malloc(n * 16)
         _filterMem = [arr]
         int i = 0
         while i < n {
-            Dict f = fs[i] as Dict
+            Dict f = lst[i] as Dict
             string nm = f.get("name", "")
             string pt = _normPattern(f.get("pattern", ""))
             // name 缓冲：按 UTF-8 真实字节数 +1 终止符；显式写 0 确保 null 结尾
@@ -157,8 +158,8 @@ func _buildFilters(Dict opts): Ptr[u8] {
 }
 
 func _nfiltersOf(Dict opts): int {
-    var fs = opts.get("filters", null)
-    if fs is Array { return fs.len() }
+    var lst = opts.get("filters", null)      // 同上：别用 `fs` 这个名字（撞模块名 ✗）
+    if lst is Array { return lst.len() }
     return 0
 }
 

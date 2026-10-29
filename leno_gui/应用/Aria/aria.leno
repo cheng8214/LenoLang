@@ -61,7 +61,7 @@ import files
 import threads
 import Sys                       // 自检探针用：读本进程内存（ARIA_STRESS ✓）
 import "Music" as audio        // miniaudio：真播放（LenoMusic 模块 ✓）
-use audio.Sound
+use audio.(Sound, Spectrum)    // Spectrum：歌词页频谱可视化（模块侧旁路解码 + FFT）
 use SDL3.(Event, Renderer, Window, TitleBar, Button, Label, Edit, Card, ImageView, Table,
           HBox, VBox, AnchorBox, ScrollView, ProgressBar, Slider, Color, Theme, ComboBox,
           VirtualGrid, Canvas, Font, Widget, TabControl, Panel)
@@ -316,6 +316,20 @@ export struct Player {
     // ----- 真播放（miniaudio）-----
     Sound snd
     bool sndOk = false
+    // ----- 频谱（歌词页封面下方那排跳动的柱子）-----
+    //   数据来源：LenoMusic 的 Spectrum —— 它按**文件路径**另开一个解码器旁路解码 + FFT
+    //   ⇒ 换歌必须重建（start_play_file 里做），不能跨文件复用 ✓
+    Spectrum spec
+    bool specOk = false
+    //   柱高快照：Canvas 的 on_draw 闭包**按元素**读数组才拿得到最新值，直接读 float 字段会捕获副本 ✗
+    //   （同 beatPhase 的做法）
+    Array[float] specBars = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                             0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                             0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    //   峰值快照（柱顶那条缓降的小白条）：同样按元素读才拿得到最新值 ✓
+    Array[float] specPeaks = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                              0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                              0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     bool durKnown = false          // 时长只取一次
     int shownSec = -1              // 只在秒数变化时重绘
     bool seekSyncing = false       // 程序化刷新进度条时不许回灌 on_seek
@@ -1063,6 +1077,9 @@ Song nowSong
     //   截图参考：唱片在左、歌词在右、当前行橙色加粗
     const float LYR_LINE_H = 42.0      // 每行歌词高（当前行 20px 粗体，行距要跟着松 ✓）
     const float LYR_PAD = 24.0         // 歌词区上内边距（让首行也能滚到正中 ✓）
+    // 频谱柱数：**必须与 createSpectrum(f, nBands) 传的一致**（每根柱对应一个对数频段）
+    const int SPEC_BARS = 24
+    const float SPEC_H = 72.0          // 频谱画布高（封面下方富余空间里的一块 ✓）
 
     pri func show_lyric_page() {
         show_scroll()
@@ -1115,6 +1132,58 @@ Song nowSong
                      {grow: 0, shrink: 0, basis: if aw < _float(cs) then aw + 2.0 else _float(cs), align: 3})
             left.add(arow, {grow: 0, shrink: 0, basis: 20, align: 3})
         }
+
+        // 频谱：封面/歌名/歌手下方的跳动柱 —— 数据由 lyr_ui_tick 从 LenoMusic 的 Spectrum 取（真 FFT）
+        //   每根柱 = 一条淡色轨道 + 实心柱体（静音时也有 3px 底座，看得出"这里有一条频谱"✓）
+        //   为什么不用正弦波假装：模块已经有真频谱了，跟着真实低频/人声跳才不假 ✓
+        Canvas specCv = SDL3.createCanvas({x: 0, y: 0, w: _float(cs), h: SPEC_H, pad: 0,
+                                           bg_color: #00000000, border: false})
+        specCv.on_draw(func(Renderer sr, float sox, float soy, float scw, float sch) {
+            float gap = 2.0
+            float bw = (scw - gap * _float(SPEC_BARS - 1)) / _float(SPEC_BARS)
+            if bw < 2.0 { bw = 2.0 }
+            // 居中：总宽 = 柱宽*柱数 + 间隙*(柱数-1)，窗口变宽时整排跟着居中（不会偏到左边 ✓）
+            float total = bw * _float(SPEC_BARS) + gap * _float(SPEC_BARS - 1)
+            float x0 = sox + (scw - total) / 2.0
+            float top = soy + 4.0                        // 轨道顶端（上方留 4px 呼吸）
+            float inner = sch - 8.0                      // 可动范围
+            float baseY = top + inner                    // 柱底：所有柱对齐同一条线 ✓
+            float rad = bw * 0.5                         // 圆头（胶囊）
+            for SPEC_BARS to i {
+                float x2 = x0 + _float(i) * (bw + gap)
+                // ① 轨道：极淡粉底条 —— 给出"最高能到哪"的参照，静音时像一排整齐的小刻度 ✓
+                sr.setColor(#E4709B33)
+                sr.fillRoundedRect(x2, top, bw, inner, rad)
+                float v = if specOk then specBars[i] else 0.0
+                if v < 0.0 { v = 0.0 }
+                if v > 1.0 { v = 1.0 }
+                float h2 = inner * (0.04 + 0.96 * v)
+                if h2 < 3.0 { h2 = 3.0 }
+                float ty = baseY - h2
+                // ② 柱体：竖向渐变（柱顶浅粉 → 柱底主色）
+                //   用 fillGradientRect（一次 RenderGeometry 提交）而不是逐行圆角渐变 —— 24 根柱 × 30fps 下便宜得多 ✓
+                sr.fillGradientRect(x2, ty, bw, h2, #F79CBEFF, #DE5D8BFF, 0)
+                // ③ 柱顶圆头帽：盖掉渐变矩形的方角，柱子顶部看着是圆的 ✓
+                if h2 > 6.0 {
+                    sr.setColor(#F79CBEFF)
+                    sr.fillRoundedRect(x2, ty, bw, 4.0, rad)
+                }
+                // ④ 峰值小条（保持后缓缓滑落）：节奏感靠它 —— 柱顶冲上去、白条先停住再自己掉下来 ✓
+                //   光画白条、柱体落下后会"悬在空中"像噪点 ✗ ⇒ 补一条极淡的竖线接到柱顶，读作"峰值标记"✓
+                float pk = if specOk then specPeaks[i] else 0.0
+                if pk > v + 0.05 {
+                    float py = baseY - inner * (0.04 + 0.96 * pk) - 3.0
+                    if py < top { py = top }
+                    if py > ty + 6.0 {
+                        sr.setColor(#FFFFFF30)
+                        sr.fillRect(x2 + bw * 0.5 - 0.5, ty + 3.0, 1.0, py - ty - 3.0)
+                    }
+                    sr.setColor(#FFFFFFCC)
+                    sr.fillRoundedRect(x2, py, bw, 2.0, 1.0)
+                }
+            }
+        })
+        left.add(specCv, {grow: 0, shrink: 0, basis: SPEC_H, align: 3})
         row.add(left, {grow: 0, shrink: 0, basis: _float(cs), align: 0})
 
         // 右：歌词 —— **Canvas 自绘**（照洛雪音乐的观感 ✓）
@@ -1262,6 +1331,16 @@ Song nowSong
         if playing and sndOk {
             float p2 = snd.getPosition()
             if p2 >= 0.0 { pos = p2 }
+        }
+        // 频谱：跟着播放位置推进（暂停时不动 ⇒ 柱子停住，观感正确 ✓）
+        //   柱高先落到 specBars（数组元素），Canvas 闭包才读得到最新值 ✓
+        if specOk and playing {
+            spec.update(pos)
+            for SPEC_BARS to i {
+                specBars[i] = spec.getBand(i)
+                specPeaks[i] = spec.getPeak(i)
+            }
+            SDL3.markFrameRedraw()      // 没歌词时 lyric.tick 不重绘 ⇒ 这里保底推进一帧 ✓
         }
         lyric.tick(pos, playing)
     }
@@ -2476,6 +2555,12 @@ Song nowSong
         snd = ns
         sndOk = true
         if hadOld { old.uninit() }               // 新声已就位 ⇒ 再销毁旧的（引擎不断档 ✓）
+        // 频谱：按**同一文件**另开一路解码器做 FFT（LenoMusic 的 Spectrum，不碰播放线程）
+        //   换歌必须重建（Spectrum 绑死在路径上）；旧的要 uninit，否则每换一首都漏一个打开的 decoder ✗
+        if specOk { spec.uninit(); specOk = false }
+        spec = audio.createSpectrum(f, SPEC_BARS, 2048)
+        specOk = spec.isInit()
+        for SPEC_BARS to i { specBars[i] = 0.0 }
         playing = true
         durKnown = true
         dur = d

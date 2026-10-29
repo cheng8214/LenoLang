@@ -10,6 +10,7 @@ import "music_generator.leno" as gen
 import "music_filter.leno" as flt
 import "music_sfx.leno" as sfx
 import "music_tag.leno" as tagger
+import "music_spectrum.leno" as spec
 
 // ==================== Re-export types ====================
 use core.miniaudio
@@ -19,6 +20,7 @@ use gen.(Waveform, Noise)
 use flt.(LPF, HPF)
 use sfx.Sfx
 use tagger.TagInfo
+use spec.Spectrum
 
 // ==================== Re-export constants ====================
 export var FORMAT_F32 = core.FORMAT_F32
@@ -48,6 +50,12 @@ export func quickPlay(string p, int sec): bool { return player.quickPlay(p, sec)
 // ==================== SFX (音效池) ====================
 // 预建多实例轮转，避免连续触发同一音效被吞。详见 music_sfx.leno
 export func createSfx(string p, int n, float v): Sfx { return sfx.createSfx(p, n, v) }
+
+// ==================== Spectrum（频谱可视化：每帧 update(getPosition())，取 0~1 柱高）====================
+// 详见 music_spectrum.leno 顶部说明（旁路解码 + 自写 FFT，不打扰播放线程）
+export func createSpectrum(string p, int nBands = 32, int fftSize = 2048): Spectrum {
+    return spec.createSpectrum(p, nBands, fftSize)
+}
 
 // ==================== Decoder ====================
 export func createDecoder(string p): Decoder { return decoder.createDecoder(p) }

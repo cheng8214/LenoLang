@@ -61,6 +61,13 @@ clib miniaudio {
     void ma_dll_hpf_destroy(Ptr h)
     i32 ma_dll_hpf_process(Ptr h, Ptr o, Ptr i, i32 n)
     i32 ma_dll_hpf_reinit(Ptr h, i32 f, i32 c, i32 sr, i32 o, f32 cf)
+    // Spectrum（FFT 频谱分析，旁路解码；详见 music_spectrum.leno）
+    Ptr ma_dll_spectrum_create(str8 path, i32 fft_size)
+    void ma_dll_spectrum_destroy(Ptr h)
+    i32 ma_dll_spectrum_update(Ptr h, f64 pos_sec, i32 bands, Ptr out, i32 out_cap)
+    i32 ma_dll_spectrum_get_sample_rate(Ptr h)
+    i32 ma_dll_spectrum_get_channels(Ptr h)
+    i32 ma_dll_spectrum_get_fft_size(Ptr h)
     // Version
     i32 ma_dll_get_version()
     i32 ma_dll_has_vorbis()
