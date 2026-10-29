@@ -363,6 +363,16 @@ export struct ScrollView impl Widget, Themeable {
     // ★ 2026-10-29 反哺：内部 `mouseIn` 本来就是"指针在不在视口内"（滚动条显隐靠它），
     //   但没暴露 ⇒ 上层想按"鼠标在滚动区上"做效果只能自己算 ✗ 补齐 ✓
     func is_hover(): bool { return mouseIn }
+    // ★ 2026-10-29 反哺：滚动位置与内容高原来是 pri 字段，外面读不到
+    //   ⇒ "快到底时自动加载更多"这类需求没法做（除非自己重新记一份状态 ✗）补齐 ✓
+    func get_scroll_y(): float { return scrollY }
+    func get_content_h(): float { return _contentH }
+    // 是否已接近底部（距底 < margin 就算）
+    //   ⚠ 内容高未知（`content_h` 没给、自动测出来之前是 -1）时返回 false，别误触发加载 ✓
+    func near_bottom(float margin): bool {
+        if _contentH <= 0.0 or _contentH <= h { return false }
+        return scrollY + h + margin >= _contentH
+    }
     func set_pos(float px, float py) { x = px; y = py }
     func set_size(float sw, float sh) {
         w = sw; h = sh

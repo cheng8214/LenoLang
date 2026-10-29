@@ -798,6 +798,13 @@ export struct Window {
     pri float _modY = 0.0
     pri float _modW = 0.0
     pri float _modH = 0.0
+    // 点外部回调（见 set_click_outside）
+    pri func():void _outCb = null
+    pri bool _outArmed = false
+    pri float _outX = 0.0
+    pri float _outY = 0.0
+    pri float _outW = 0.0
+    pri float _outH = 0.0
 
     func add(Widget w): Widget {
         widgets.add(w)
@@ -831,6 +838,18 @@ export struct Window {
         _modalW = w; _modX = x; _modY = y; _modW = ww; _modH = hh
     }
     func clear_modal() { _modalW = null; _modW = 0.0; _modH = 0.0 }
+
+    // 点外部回调（2026-10-29 反哺）：设了它以后，**左键按下且落在矩形外** ⇒ 调一次 cb，
+    //   并且**这一下不再派发给任何控件**（否则"点列表按钮收起浮层"会变成收起后按钮又把它打开 ✗）。
+    //   典型用途：浮层/下拉面板"点外面自动收起"。
+    //   矩形与 set_modal 同理，必须显式传（接口上调不了 get_x/get_y ✓）。
+    //   ⚠ 只在**左键按下**那一刻判一次；`cb` 里只该做"收起/关闭"，别做 toggle（会把自己关回去）
+    func set_click_outside(float x, float y, float ww, float hh, func():void cb) {
+        _outX = x; _outY = y; _outW = ww; _outH = hh
+        _outCb = cb
+        _outArmed = true
+    }
+    func clear_click_outside() { _outCb = null; _outArmed = false; _outW = 0.0; _outH = 0.0 }
 
     func addZ(Widget w, float z): Widget {
         widgets.add(w)
@@ -1768,7 +1787,21 @@ export struct Window {
                                 _modalW?.process(ev)
                             }
                         }
-                        if not modalHit {
+                        // ★ 点外部（2026-10-29）：左键按下且落在矩形外 ⇒ 回调一次，并**吞掉这一下**
+                        //   为什么吞：否则"点列表按钮收起浮层"会变成「先收起、按钮再 toggle 打开」
+                        //   ⇒ 看起来点了没反应（关了又开 ✗）
+                        bool swallowed = false
+                        if _outArmed and ev.isMouseButtonDown() and ev.mouseButton() == 1 {
+                            var[float, float](ox, oy) = ev.mousePos()
+                            if ox < _outX or ox > _outX + _outW
+                                or oy < _outY or oy > _outY + _outH {
+                                swallowed = true
+                                _outArmed = false          // 先撤标记，避免回调里重入
+                                var ocb = _outCb
+                                if ocb != null { ocb() }
+                            }
+                        }
+                        if not modalHit and not swallowed {
                             rootWid?.process(ev)
                             var ws = _runWidgets[j]
                             for ws to w { w.process(ev) }
