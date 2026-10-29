@@ -32,6 +32,8 @@ import "./lib/net_workers.leno" as workers  // 后台线程入口（搜索/首�
 import "./lib/downloads.leno" as dl         // 下载 + 本地曲库扫描
 import "./lib/store.leno" as store          // 本地持久化（喜欢 / 最近播放 → 缓存\library.json）
 import "./lib/settings.leno" as cfgset       // 应用设置（线程数 / 缓存目录 / 优先格式）
+import "./lib/session.leno" as session       // 会话持久化（播放队列 / 当前曲目 / 进度 ✓）
+use session.PlaySession
 import "./lib/settings_win.leno" as cfgwin   // 设置对话框（独立窗口）
 import "./lib/probes.leno" as probe             // 无头验证用的假数据（假歌词 / 压力歌单）
 import "./lib/library.leno" as lib            // 收藏 / 最近播放的持久化（纯数据）
@@ -72,6 +74,11 @@ const int WIN_W = 1200
 const int WIN_H = 800
 const int TB_H = 32          // 自绘标题栏
 const int SIDE_W = 184       // 侧栏宽
+// 发现页「加载更多」最多拉几页（每页 18 张）
+//   ★ 已改成虚拟滚动（只保留可见区附近的卡片）⇒ 页数不再受内存限制，
+//     给个很大的上值只为防止接口无限返回同内容（真正兜底靠 near_bottom 判空页 ✓）
+const int PL_MAX_PAGE = 200
+
 const int TOP_H = 58         // 顶栏
 const int BAR_H = 66         // 底部播放条（82 太高，参考图约 60~66）
 const int PAD = 24           // 内容区左右内边距
@@ -502,6 +509,20 @@ Song nowSong
         // 当前播放行的跳动音柱（**一个实例**给所有表格复用：同一时刻只有一行在播 ✓）
         beatCv = page_ov.make_beat(beatPhase)
 
+        // ---- 恢复上次的播放队列（★ 不自动播：只把队列和「当前曲目」摆回来 ✓）----
+        //   进度也恢复（底栏时长从断点开始显示），点播放键就接着播
+        var sess0 = session.load(cfgset.store_path())
+        if sess0.queue.len() > 0 {
+            queue = sess0.queue
+            qIdx = sess0.cur
+            if qIdx >= 0 and qIdx < queue.len() {
+                nowSong = queue[qIdx]
+                nowSid = nowSong.sid
+                pos = sess0.pos
+                sync_play_ui()
+            }
+        }
+
         // ---- 音量浮窗：**竖条**（参考图：白圆角条 + 顶部数字 + 竖直滑块）----
         //   贴在底栏音量图标正上方，宽度只有按钮那么宽（不挡内容 ✓）
         volRoot = SDL3.createCard({x: WIN_W - 128, y: WIN_H - 300, w: 52, h: 188,
@@ -518,7 +539,7 @@ Song nowSong
         vcol.add(vtop, {left: 0, top: 0, w: 40, h: 22})
         // 竖直滑块：细杆 + 紫色填充 + 底部圆点（配色照参考图）
         volSld = SDL3.createSlider({x: 0, y: 0, w: 12, h: 146, vertical: true,
-                                    value: 68.0, min: 0.0, max: 100.0,
+                                    value: g_vol, min: 0.0, max: 100.0,   // 用恢复后的音量 ✓
                                     show_value: false,
                                     fill_color: #6E4E9EFF, track_color: #E6DEF3FF,
                                     thumb_color: #6E4E9EFF})
@@ -559,6 +580,8 @@ Song nowSong
 
         win.run(func(Event ev): bool { return on_event(ev) },
                 func(Renderer r) { paint_bg(r) })
+        save_user_state()         // ★ 退出前落盘：音量 / 队列 / 当前曲目 / 进度
+                                  //   （放在这里 = 所有退出路径都会走到 ✓：✕ 按钮 / SDL_QUIT / requestExit）
         shutdown_audio()          // 兜底（requestExit / SDL_QUIT 路径；重复调用无害 ✓）
         if bgTex != null { SDL3.destroyTexture(bgTex); bgTex = null }   // 背景纹理自己收 ✓
         SDL3.ttfQuit()
@@ -2352,6 +2375,22 @@ Song nowSong
     // ==================== 设置（线程数 / 缓存目录 / 优先格式）====================
     //   数据在 lib/settings.leno（%APPDATA%\Aria\settings.json），
     //   界面在 lib/settings_win.leno（独立对话框窗口），这里只做"落到全局 + 重扫"✓
+    // 退出前落盘：音量 / 静音 / 播放队列 / 当前曲目 / 播放进度
+    //   ⚠ 必须先 `load()` 再改字段再 `save()`：settings.json 里还有背景图、缓存目录、
+    //     线程数等，直接 new 一份去覆盖会把它们全清空 ✗
+    pri func save_user_state() {
+        cfgset.Settings st = cfgset.load()
+        st.vol = cfgset.clamp_vol(_int(g_vol))
+        st.muted = muted
+        cfgset.save(st)
+
+        var sess = new PlaySession()
+        sess.queue = queue
+        sess.cur = qIdx
+        sess.pos = pos
+        session.save(sess, cfgset.store_path())
+    }
+
     pri func apply_settings(cfgset.Settings s) {
         ui.set_cache_override(s.cachedir)   // 缓存目录归 ui_kit 管（cacheRoot 读它）
         g_preferFmt = cfgset.clamp_fmt(s.fmt)
@@ -2360,6 +2399,12 @@ Song nowSong
         g_recentMax = cfgset.clamp_recent(s.recent)
         g_dlLyric = s.dl_lyric      // 下载时同时存 .lrc
         g_embedTag = s.embed_tag    // 把封面/歌词内嵌进音频文件
+        // ★ 音量 / 静音从配置恢复（原来每次启动都回到 68 ✗）
+        //   注意：这里只填「值」，滑块控件可能还没建（启动时先 apply_settings、后建 UI）✓
+        g_vol = _float(cfgset.clamp_vol(s.vol))
+        muted = s.muted
+        lastVol = if g_vol > 1.0 then g_vol else 68.0
+        if sndOk { snd.setVolume(if muted then 0.0 else g_vol / 100.0) }
         // 背景图 / 蒙版变了 ⇒ 丢掉旧纹理，下一帧按新设置重画 ✓
         bool bgChanged = (g_bgPath != s.bg) or (g_veil != cfgset.clamp_veil(s.veil))
         g_bgPath = s.bg
@@ -2645,8 +2690,11 @@ Song nowSong
     }
 
     // 滚到底 ⇒ 拉下一页（防重入靠 plLoading；页码自增 ✓）
+    //   ⚠ 页数必须封顶：滚动区**不做虚拟化**，每页 18 张卡的控件全都留在内容树里
+    //     ⇒ 页数越多内存越线性涨（纹理有 LRU 兜底，控件没有 ✗）
     pri func load_more_playlists() {
         if plLoading { return }
+        if plPage >= PL_MAX_PAGE { return }        // 到顶了，不再拉 ✓
         plScrollY = page_disc.scroll_y()          // 记住位置，重建后恢复
         plLoading = true
         plPage = plPage + 1
@@ -3843,11 +3891,14 @@ Song nowSong
             if beatPhase[0] > 1000.0 { beatPhase[0] = 0.0 }
         }
 
-        // 发现页「精选」：滚到接近底部 ⇒ 自动加载下一页（无限滚动 ✓）
-        //   防重入：plLoading 为真时不重复起线程；tab 必须是精选（0）
-        if curNav == 5 and discTab == 0 and not plLoading and plCards.len() > 0
-            and page_disc.near_bottom(200.0) {
-            load_more_playlists()
+        // 发现页「精选」：① 虚拟滚动（只保留可见区附近的卡片）
+        //                 ② 滚到接近底部 ⇒ 自动加载下一页（无限滚 ✓）
+        if curNav == 5 and discTab == 0 and plCards.len() > 0 {
+            float sy = page_disc.scroll_y()
+            page_disc.sync_visible(sy)               // 换页/滚动的行填收（没变化时是空转 ✓）
+            if not plLoading and page_disc.near_bottom(200.0) {
+                load_more_playlists()
+            }
         }
 
         // 播放列表浮层：鼠标移到哪一行，

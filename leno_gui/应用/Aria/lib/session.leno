@@ -1,0 +1,99 @@
+// session.leno — 会话持久化：播放队列 + 当前曲目 + 播放进度
+//
+// 为什么不用 JSON：队列里是**歌名/歌手/路径**这些自由文本，JSON 要处理引号、反斜杠、
+//   控制字符的转义（写错一个就整份读不回来 ✗）。这里用最朴素的**行格式**：
+//
+//     cur=3
+//     pos=42.8
+//     s\t歌名\t歌手\t3:45\t封面\t标签\tsid\t路径
+//     s\t...
+//
+//   字段里的 tab / 换行一律压成空格（歌名里几乎不会出现，防一手 ✓）
+// ⚠ 内部模块（files/dirs/strings）不能隐式别名，必须显式 ✓
+import "files" as fs
+import "dirs" as dr
+import "strings" as st
+import "../music_data.leno" as data
+use data.Song
+
+// ⚠ 结构名**不能叫 `Session`**：LenoWeb 的 `web_net.leno` 里已经有一个同名结构，
+//   而四张类型表全局只按**名字**索引 ⇒ 编译期不报、**运行时**才炸
+//   （"跨模块同名 struct，无法证明等价，请改名"）✗ 加前缀避开 ✓
+export struct PlaySession {
+    Array[Song] queue = []
+    int cur = -1              // 当前曲目在队列里的下标（-1 = 没有）
+    float pos = 0.0           // 播放进度（秒）
+}
+
+// 传入 **settings.json 的完整路径** 即可：同目录下的 session.txt
+//   （省掉"求父目录"这一步：没有现成的 dirname，自己切字符串容易在 Windows 盘符上出错 ✓）
+export func store_path(string settingsPath): string {
+    if settingsPath == "" { return "session.txt" }
+    return settingsPath.replace("settings.json", "session.txt")
+}
+
+// 把可能破坏行格式的字符压掉
+func clean(string v): string {
+    if v == "" { return "" }
+    return v.replace("\t", " ").replace("\n", " ").replace("\r", " ")
+}
+
+export func save(PlaySession s, string settingsPath): bool {
+    Array[string] lines = []
+    lines.add("cur=" + _str(s.cur))
+    lines.add("pos=" + _str(s.pos))
+    for s.queue to q {
+        lines.add("s\t" + clean(q.title) + "\t" + clean(q.artist) + "\t" + clean(q.dur)
+                  + "\t" + clean(q.cover) + "\t" + clean(q.tag) + "\t" + clean(q.sid)
+                  + "\t" + clean(q.path))
+    }
+    try {
+        fs.write(store_path(settingsPath), st.join(lines, "\n"))
+        return true
+    } catch e {
+        print("[session] 写入失败：" + _str(e))
+        return false
+    }
+}
+
+export func load(string settingsPath): PlaySession {
+    PlaySession s = new PlaySession()
+    string p = store_path(settingsPath)
+    if not fs.exists(p) { return s }
+    string txt = ""
+    try {
+        txt = fs.read(p)
+    } catch e {
+        print("[session] 读取失败：" + _str(e))
+        return s
+    }
+    var lines = st.split(txt, "\n")
+    for lines to ln {
+        if st.starts_with(ln, "s\t") {
+            var f = st.split(ln, "\t")
+            // 8 段：s / 歌名 / 歌手 / 时长 / 封面 / 标签 / sid / 路径
+            if f.len() >= 8 {
+                Song sg = new Song()
+                sg.title = f[1]
+                sg.artist = f[2]
+                sg.dur = f[3]
+                sg.cover = f[4]
+                sg.tag = f[5]
+                sg.sid = f[6]
+                sg.path = f[7]
+                s.queue.add(sg)
+            }
+        } else if st.starts_with(ln, "cur=") {
+            var f2 = st.split(ln, "=")
+            if f2.len() >= 2 { s.cur = _int(f2[1]) }
+        } else if st.starts_with(ln, "pos=") {
+            var f3 = st.split(ln, "=")
+            if f3.len() >= 2 { s.pos = _float(f3[1]) }
+        }
+    }
+    // 越界兜底（手工改过 / 队列被裁短）
+    if s.cur >= s.queue.len() { s.cur = -1 }
+    if s.cur < -1 { s.cur = -1 }
+    if s.pos < 0.0 { s.pos = 0.0 }
+    return s
+}

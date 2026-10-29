@@ -73,6 +73,9 @@ export struct Settings {
     // ---- 下载附加项（2026-10-28）----
     bool dl_lyric = true     // 下载歌曲时同时存一份同名 .lrc（默认开：几乎没人不要歌词 ✓）
     bool embed_tag = false   // 把封面/歌词**内嵌**进音频文件（改文件本体，默认关，手动开 ✓）
+    // ★ 2026-10-29 持久化：音量 / 静音（原来每次启动都回到 68，滑了半天白调 ✗）
+    int vol = 68             // 音量 0..100
+    bool muted = false       // 是否静音（记住"静音"这个状态，但**不记住**静音前的音量）
 }
 
 // 配置目录（平台判断只此一处）
@@ -155,8 +158,17 @@ export func load(): Settings {
         if m.has("recent") { s.recent = clamp_recent(jsons.get_int(m, "recent", s.recent)) }
         if m.has("dl_lyric") { s.dl_lyric = jsons.get_bool(m, "dl_lyric", s.dl_lyric) }
         if m.has("embed_tag") { s.embed_tag = jsons.get_bool(m, "embed_tag", s.embed_tag) }
+        if m.has("vol") { s.vol = clamp_vol(jsons.get_int(m, "vol", s.vol)) }
+        if m.has("muted") { s.muted = jsons.get_bool(m, "muted", s.muted) }
     }
     return s
+}
+
+// 音量钳位（0..100；存到文件里的值可能是手改过的 ✓）
+export func clamp_vol(int n): int {
+    if n < 0 { return 0 }
+    if n > 100 { return 100 }
+    return n
 }
 
 // 写配置（先钳位再落盘）
@@ -176,7 +188,9 @@ export func save(Settings s): bool {
              aq: clamp_aq(s.aq),
              recent: clamp_recent(s.recent),
              dl_lyric: s.dl_lyric,
-             embed_tag: s.embed_tag})
+             embed_tag: s.embed_tag,
+             vol: clamp_vol(s.vol),
+             muted: s.muted})
         return true
     } catch e {
         print("[settings] 写入失败：" + _str(e))
