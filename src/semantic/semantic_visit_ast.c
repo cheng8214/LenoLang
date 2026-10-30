@@ -992,7 +992,34 @@ void mv_check_top(Semantic* s, Ast* block) {
     free(all_vars);
 }
 
+// ----------------------------------------------------------------------------
+// 递归深度守护（2026-10-30）
+//   超长表达式（`a + b + …` 几千项）会让 AST 深度线性增长；visit 是纯递归，
+//   实测 ~4800 项时默认 8MB 栈被耗尽 ⇒ SIGSEGV（不是错误诊断）。
+//   超过上限：报一条明确诊断并停止下探；调用方仍会正常收尾/退出，不会崩溃。
+//   2000 层远高于真实代码（现有全部用例远低于它），同时低于实测崩溃阈值。
+// ----------------------------------------------------------------------------
+#define SEM_MAX_AST_DEPTH 2000
+
+static void visit_node(Semantic* s, Ast* ast);
+
 void visit(Semantic* s, Ast* ast) {
+    if (!ast) return;
+    if (s->ast_depth >= SEM_MAX_AST_DEPTH) {
+        // 只在刚越过上限时报一次（外层每层都会走到这里，不抑制会刷屏）
+        if (s->ast_depth == SEM_MAX_AST_DEPTH) {
+            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                             "表达式/语句嵌套过深（超过 %d 层）：请把超长表达式拆成多个中间变量",
+                             SEM_MAX_AST_DEPTH);
+        }
+        return;
+    }
+    s->ast_depth++;
+    visit_node(s, ast);
+    s->ast_depth--;
+}
+
+static void visit_node(Semantic* s, Ast* ast) {
     if (!ast) return;
 
     switch (ast->kind) {

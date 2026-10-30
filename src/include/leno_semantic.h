@@ -167,6 +167,10 @@ typedef struct {
     //   （由来与取舍见上面 SemUnionNarrow 的说明块 ✓）
     SemUnionNarrow union_narrow[SEM_UNION_NARROW_MAX];
     int union_narrow_count;
+    // ★ 2026-10-30：`visit()` 的递归深度。超长表达式（如 5000 项的 `a+b+...`）
+    //   让 AST 深度随项数线性增长，递归会耗尽调用栈 ⇒ 进程 SIGSEGV（实测 4800 项起）。
+    //   超过上限就报一条明确诊断并停止下探，而不是崩溃。见 semantic_visit_ast.c。
+    int ast_depth;
 } Semantic;
 
 // 函数表 API
