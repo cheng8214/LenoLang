@@ -35,12 +35,20 @@ static char current_filename[BUFFER_SMALL] = "";
 static int current_column = -1;
 
 void error_set_filename(const char* filename) {
-    if (filename) {
-        strncpy(current_filename, filename, sizeof(current_filename) - 1);
-        current_filename[sizeof(current_filename) - 1] = '\0';
-    } else {
+    if (!filename) {
         current_filename[0] = '\0';
+        return;
     }
+    // ⚠ 不能直接 strncpy(current_filename, filename, ...)：filename 经常就是
+    //   error_get_filename() 返回的 current_filename 本身（例如 runtime_error
+    //   重新设置当前文件）⇒ 源/目标完全相同是**未定义行为**（ASAN 实测报
+    //   strncpy-param-overlap）⇒ 先拷到局部再写回，任意重叠都安全。
+    char copy[sizeof(current_filename)];
+    size_t n = strlen(filename);
+    if (n >= sizeof(copy)) n = sizeof(copy) - 1;
+    memcpy(copy, filename, n);
+    copy[n] = '\0';
+    memcpy(current_filename, copy, n + 1);
 }
 
 void error_set_column(int column) {

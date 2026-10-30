@@ -68,8 +68,12 @@ void chunk_write(Chunk* chunk, uint8_t byte, int line) {
         }
         
         // 复制旧数据
-        memcpy(new_code, chunk->code, chunk->len * sizeof(uint8_t));
-        memcpy(new_lines, chunk->lines, chunk->len * sizeof(int));
+        // ⚠ len==0 时 code/lines 可能还是 NULL：`memcpy(dst, NULL, 0)` 在 C 标准里是
+        //   **未定义行为**（UBSAN 实测会报 "null pointer passed as argument 2"）⇒ 加守卫
+        if (chunk->len > 0) {
+            if (chunk->code) memcpy(new_code, chunk->code, chunk->len * sizeof(uint8_t));
+            if (chunk->lines) memcpy(new_lines, chunk->lines, chunk->len * sizeof(int));
+        }
         
         // 释放旧内存
         free(chunk->code);
