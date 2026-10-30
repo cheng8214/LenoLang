@@ -24,6 +24,11 @@ export struct RowHooks {
     func(Song, Button):void onTrack = null
     func(Song):void onLike = null       // 点 ♥
     func(Song):void onReveal = null     // 右侧第二个按钮（本地文件 = 在资源管理器选中）
+    // 尾部**再追加一颗**按钮（空 = 不显示）。典型用途：本地音乐 / 下载列表的「删除」
+    //   ★ 2026-10-30 补：原来行里只有 ♥ + reveal 两颗，想多一个动作就得整页换一套行控件 ✗
+    string extraIcon = ""
+    string extraTip = ""
+    func(Song):void onExtra = null
     // 是否显示行首封面（榜单详情这种"纯列表"场景可以关掉，省掉占位音符图 ✓）
     bool showCover = true
     string revealIcon = "menu_open_dir.png"
@@ -86,6 +91,19 @@ export func song_row(Song s, float h, RowHooks hk): HBox {
             rb.on_click(func() { hk.onReveal(s2) })
         }
         box.add(rb, {grow: 0, shrink: 0, basis: 30, align: 1})
+    }
+    // 第三颗（可选）：删除等额外动作（见 RowHooks.extraIcon 的注释 ✓）
+    if hk.extraIcon != "" {
+        Button eb = SDL3.createButton({image_path: ui.ico(hk.extraIcon), image_size: 18,
+                                       w: 30, h: 30, radius: 15,
+                                       bg_color: 0, hover_color: 0xCCFFFFFF,
+                                       padding: 0.0, border: false, shadow: false,
+                                       tip: hk.extraTip})
+        if hk.onExtra != null {
+            Song s3 = s
+            eb.on_click(func() { hk.onExtra(s3) })
+        }
+        box.add(eb, {grow: 0, shrink: 0, basis: 30, align: 1})
     }
     return box
 }

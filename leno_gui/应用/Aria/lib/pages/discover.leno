@@ -38,6 +38,20 @@ export struct DiscoverCtx {
     func(string):void onNotice = null          // 底栏提示
 }
 
+// 卡片墙底部那条「加载中…」行（常驻，只切显隐）
+//   ⚠ 用数组承载：`var x: 类型` 这种标注写法不支持，且要能判空（第一页还没卡片时不建 ✓）
+Array[HBox] vLoadRow = []
+
+// 切「加载中…」行的显隐 —— Player 在 tick 里按 `plLoading` 调，状态没变就空转 ✓
+//   为什么要 tick 控制而不是重建：加载更多时 rebuild_content() 会让滚动区重建、位置要手动恢复，
+//   滚到底的瞬间容易"跳一下"；常驻一行 + set_visible 是零跳动的 ✓（2026-10-30）
+export func set_loading_visible(bool v) {
+    if vLoadRow.len() == 0 { return }
+    if vLoadRow[0].is_visible() == v { return }
+    vLoadRow[0].set_visible(v)
+    SDL3.markFrameRedraw()          // 显/隐各要一帧（Spinner 自己会继续请求重绘 ✓）
+}
+
 // 整页：标题行（+ 导入按钮）+ Tab（精选 / 新歌速递 / 热门歌手）
 export func build_page(DiscoverCtx c): VBox {
     VBox page = SDL3.createVBox({x: 0, y: 0, w: 900, h: 500,
@@ -76,6 +90,7 @@ export func build_page(DiscoverCtx c): VBox {
 
     // ① 精选：推荐歌单（6 列，超出可滚）
     VBox pg0 = SDL3.createVBox({x: 0, y: 0, w: cwAll, h: 420, pad_x: 0, pad_y: 6, spacing: 12})
+    vLoadRow = []                      // 重建 ⇒ 旧的底部"加载中"行已销毁，先断引用 ✓
     if c.cards.len() == 0 {
         if c.loading {
             pg0.add(pw.loading_row("正在加载推荐歌单…", cwAll), {grow: 0, shrink: 0, basis: 40, align: 3})
@@ -109,6 +124,13 @@ export func build_page(DiscoverCtx c): VBox {
         }
         // 首屏那几行立刻填上（不等 tick，避免第一帧空白 ✓）
         sync_visible(0.0)
+        // 底部「加载中…」行：**常驻**在卡片墙最后一行之下（不参与虚拟滚动），
+        //   显隐由 Player 在 tick 里按 `plLoading` 切（见 set_loading_visible）
+        //   ⚠ 别"只在 loading 时才 add"：那必须整页 rebuild ⇒ 滚动位置会跳 ✗
+        HBox ldr = pw.loading_row("加载中…", cwAll)
+        ldr.set_visible(c.loading)
+        vLoadRow = [ldr]
+        pg0.add(ldr, {grow: 0, shrink: 0, basis: 44, align: 3})
     }
     tabs.setPageLayout(0, scroll_wrap(pg0, cwAll, true))     // true = 登记滚动区（加载更多用）
 

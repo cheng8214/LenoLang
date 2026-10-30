@@ -53,7 +53,11 @@ export func delete_one(Song sg): bool {
         if files.exists(art) { targets.add(art) }
     }
     var r = Sys.deleteToTrash(targets)
-    return jsons.get_int(r, "moved", 0) > 0
+    // ⚠ 返回结构是 {ok, count, aborted, errors}（见 LenoSys/lib/Sys.leno 的 deleteToTrash）
+    //   这里原来读的是老口径的 "moved" ⇒ **恒为 0** ⇒ 文件明明进了回收站却返回 false，
+    //   调用方（行内删除钮 / 右键菜单）就不刷新 ⇒ 表现为"点了删除，列表里那行还在"（2026-10-30 实测 ✗）
+    if not jsons.get_bool(r, "ok", false) { return false }
+    return jsons.get_int(r, "count", 0) > 0
 }
 
 // 清空下载目录里的音频/封面（子目录不动）；返回提交删除的个数
@@ -71,7 +75,8 @@ export func delete_all(string root): int {
     }
     if targets.len() == 0 { return 0 }
     var r = Sys.deleteToTrash(targets)
-    return jsons.get_int(r, "moved", 0)
+    if not jsons.get_bool(r, "ok", false) { return 0 }     // 同上：键是 ok/count，不是 moved ✓
+    return jsons.get_int(r, "count", 0)
 }
 
 // 下载目录：<缓存根>\downloads（目录名统一英文 ✓）

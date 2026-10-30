@@ -61,7 +61,7 @@ export func build(VBox target, HomeCtx c) {
     } else if c.rec.len() > 0 {
         var r1 = new Shelf()
         r1.title = "为你推荐"
-        r1.sub = "根据最近的收听生成 · 酷我"
+        r1.sub = "根据最近的收听生成 · 小酷"
         r1.items = c.rec
         shelf(target, r1, false, 1, c)
         shown = shown + 1
@@ -70,7 +70,7 @@ export func build(VBox target, HomeCtx c) {
     if c.nw.len() > 0 {
         var r2 = new Shelf()
         r2.title = "最近添加"
-        r2.sub = "酷我新歌 · 每天更新"
+        r2.sub = "小酷新歌 · 每天更新"
         r2.items = c.nw
         shelf(target, r2, false, 2, c)
         shown = shown + 1

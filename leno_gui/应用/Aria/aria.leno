@@ -330,6 +330,8 @@ export struct Player {
     Array[float] specPeaks = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
                               0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
                               0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    // 歌词页左侧那排操作按钮里的 ♥ —— 要留句柄：收藏状态变了得**就地**换图标（整页重建会闪 ✗）
+    Button lyrLikeBtn
     bool durKnown = false          // 时长只取一次
     int shownSec = -1              // 只在秒数变化时重绘
     bool seekSyncing = false       // 程序化刷新进度条时不许回灌 on_seek
@@ -862,7 +864,7 @@ Song nowSong
         netSongs = lastSongs
         netRows = lastRows
         netIds = lastIds
-        netMsg = "酷我「" + lastKwSaved + "」· " + _str(lastSongs.len()) + " 首（双击行播放）"
+        netMsg = "小酷「" + lastKwSaved + "」· " + _str(lastSongs.len()) + " 首（双击行播放）"
         curNav = -1
         for 0 : navBtns.len() - 1 to i { style_nav(navBtns[i], false) }
         for 0 : plBtns.len() - 1 to i {
@@ -940,7 +942,7 @@ Song nowSong
         //   下拉里的 hover/选中色要给足对比，否则白底上"划过去没反应"（实测 ✗）
         search = SDL3.createComboBox({w: 300, h: 36, font_size: 13, radius: 18, pad_x: 16.0,
                                       editable: true, items: [],
-                                      placeholder: "搜索歌曲、歌手、歌单",
+                                      placeholder: "搜索歌曲、歌手",
                                       popup_h: 232, item_h: 28,
                                       show_arrow: false, border: false,
                                       icon: ui.ico("sousuo.png"), icon_size: 16.0, icon_gap: 6.0,
@@ -967,14 +969,15 @@ Song nowSong
         //   酷我 = 原来的搜索；高音质 = ffapi（试听按设置音质、下载固定取最高规格）
         //   ⚠ 回调用字段 `srcBtn` 而不是局部变量：闭包捕获的是创建时的副本，
         //     直接 `srcBtn.set_text` 改不到界面上的那个 ✗
-        srcBtn = SDL3.createButton({text: "酷我", font_size: 11, w: 56, h: 26, radius: 13,
+        //   ⚠ 界面上对外一律叫「小酷」（2026-10-30 用户定的产品名）；代码里的 `kuwo` / g_source 值不动 ✓
+        srcBtn = SDL3.createButton({text: "小酷", font_size: 11, w: 56, h: 26, radius: 13,
                                     padding: 8.0, bg_color: #FFFFFFB0, hover_color: #FFFFFFFF,
                                     text_color: C_TXT_MID, border: false, shadow: false,
-                                    tip: "切换音源：酷我 / 高音质"})
+                                    tip: "切换音源：小酷 / 高音质"})
         srcBtn.on_click(func() {
             g_source = if g_source == "kuwo" then "ff" else "kuwo"
-            srcBtn.set_text(if g_source == "kuwo" then "酷我" else "高音质")
-            nowArtist.set_text(if g_source == "kuwo" then "音源：酷我"
+            srcBtn.set_text(if g_source == "kuwo" then "小酷" else "高音质")
+            nowArtist.set_text(if g_source == "kuwo" then "音源：小酷"
                                else "音源：高音质（试听按设置音质，下载取最高规格）")
             SDL3.markFrameRedraw()
         })
@@ -1192,6 +1195,21 @@ Song nowSong
             }
         })
         left.add(specCv, {grow: 0, shrink: 0, basis: SPEC_H, align: 3})
+
+        // 操作行：♥ 收藏 / ⬇ 下载 / ☰ 播放列表 —— 全部复用底栏那套逻辑（状态一致，不做第二份 ✓）
+        //   放频谱下面：封面那一列本来就有富余高度，视线不用在页面上下跑 ✓
+        HBox ops = SDL3.createHBox({x: 0, y: 0, w: _float(cs), h: 36,
+                                    pad_x: 0, pad_y: 0, spacing: 16, justify: 1})
+        lyrLikeBtn = lyr_op_btn(if liked then "sc1.png" else "sc.png", "喜欢", 36)
+        lyrLikeBtn.on_click(func() { toggle_like() })
+        ops.add(lyrLikeBtn, {grow: 0, shrink: 0, basis: 36, align: 1})
+        Button dlOp = lyr_op_btn("download.png", "下载到本地", 36)
+        dlOp.on_click(func() { lyric_download() })
+        ops.add(dlOp, {grow: 0, shrink: 0, basis: 36, align: 1})
+        Button qOp = lyr_op_btn("list.png", "播放列表", 36)
+        qOp.on_click(func() { toggle_queue() })
+        ops.add(qOp, {grow: 0, shrink: 0, basis: 36, align: 1})
+        left.add(ops, {grow: 0, shrink: 0, basis: 36, align: 3})
         row.add(left, {grow: 0, shrink: 0, basis: _float(cs), align: 0})
 
         // 右：歌词 —— **Canvas 自绘**（照洛雪音乐的观感 ✓）
@@ -1914,6 +1932,10 @@ Song nowSong
                     SDL3.markFrameRedraw()
                 }
             }
+            // 行尾再加一颗「删除」：删本地文件（进回收站），与右键菜单「删除本地文件」同一条逻辑 ✓
+            hk.extraIcon = "del_1.png"
+            hk.extraTip = "删除本地文件"
+            hk.onExtra = func(Song sg2) { delete_local_one(sg2) }
             // 序号列（第 0 列）用**两个控件切换**：平时是数字，鼠标停在这行就换成播放图
             //   （Table 不内建"序号变按钮"，它就是普通一列 + cell_builder ✓）
             Array[HBox] numL = []
@@ -2023,14 +2045,7 @@ Song nowSong
                 } else if id == "reveal" {
                     if not dl.reveal(one.path) { nowArtist.set_text("定位失败：" + one.path); SDL3.markFrameRedraw() }
                 } else if id == "del" {
-                    string nm = one.title
-                    if dl.delete_one(one) {
-                        nowArtist.set_text("已删除：" + nm)
-                        rebuild_content()
-                    } else {
-                        nowArtist.set_text("删除失败（文件可能已被占用）：" + nm)
-                        SDL3.markFrameRedraw()
-                    }
+                    delete_local_one(one)          // 与行尾那颗「删除」钮同一条逻辑 ✓
                 }
             })
             show_table_page("本地音乐", "已下载 · " + _str(lsongs.len()) + " 首（cache\\downloads）", lt)
@@ -2317,7 +2332,7 @@ Song nowSong
             }
             // （旧的两音源混合兜底已彻底删除：现在音源由搜索框旁的按钮决定，
             //   各搜各的、结果不混 —— 见 on_kuwo_search 的 g_source 分支 ✓）
-            netMsg = "酷我「" + lastKw + "」· " + _str(got.len()) + " 首（双击行播放）"
+            netMsg = "小酷「" + lastKw + "」· " + _str(got.len()) + " 首（双击行播放）"
             // 留快照：切页后点左侧「搜索结果」能回到这张表 ✓
             lastSongs = got
             lastRows = trows
@@ -2337,10 +2352,10 @@ Song nowSong
             }
             rebuild_content()                    // 内容区按 netSongs 重建 ⇒ 变成结果表 ✓
         } else if kind == "ERR" and err != "" {
-            netMsg = "酷我搜索失败（" + err + "），下面仍是演示数据"
+            netMsg = "小酷搜索失败（" + err + "），下面仍是演示数据"
             rebuild_content()
         } else {
-            netMsg = "酷我里没有「" + lastKw + "」的结果，下面仍是演示数据"
+            netMsg = "小酷里没有「" + lastKw + "」的结果，下面仍是演示数据"
             rebuild_content()
         }
         SDL3.markFrameRedraw()
@@ -2378,6 +2393,19 @@ Song nowSong
     pri func play_local_row(int row) {
         if row < 0 or row >= localCache.len() { return }
         play_song(localCache[row])
+    }
+
+    // 删掉一首本地文件（进回收站）—— 行尾「删除」钮与右键菜单「删除本地文件」共用 ✓
+    //   ⚠ 删除后必须 rebuild：表格行是按 `localCache` 下标绑定的，少一首不重建会错位 ✗
+    pri func delete_local_one(Song sg) {
+        string nm = sg.title
+        if dl.delete_one(sg) {
+            nowArtist.set_text("已删除：" + nm)
+            rebuild_content()
+        } else {
+            nowArtist.set_text("删除失败（文件可能已被占用）：" + nm)
+            SDL3.markFrameRedraw()
+        }
     }
 
     // 加入下载队列（右击菜单「下载」）
@@ -3119,6 +3147,7 @@ Song nowSong
         if plPage >= PL_MAX_PAGE { return }        // 到顶了，不再拉 ✓
         plScrollY = page_disc.scroll_y()          // 记住位置，重建后恢复
         plLoading = true
+        page_disc.set_loading_visible(true)       // 立刻出现，不等下一拍 tick（点到就能看到反馈 ✓）
         plPage = plPage + 1
         threads.start(workers.playlists, plPage, 18, ui.coverCacheDir(), plCh)
     }
@@ -3523,6 +3552,31 @@ Song nowSong
                                   padding: 0.0, border: false, shadow: false, tip: tipText})
     }
 
+    // 歌词页操作行的小圆钮：**白底半透明**（底栏那套是透明底，压在浅色插画上图标会发虚 ✗）
+    pri func lyr_op_btn(string iconName, string tipText, int sz): Button {
+        return SDL3.createButton({image_path: ui.ico(iconName), image_size: _float(sz) * 0.5,
+                                  w: _float(sz), h: _float(sz), radius: _float(sz) / 2.0,
+                                  bg_color: #FFFFFFA6, hover_color: #FFFFFFFF,
+                                  padding: 0.0, border: false, shadow: false, tip: tipText})
+    }
+
+    // 歌词页的「下载」：走和卡片/表格行**同一个**队列（酷我 / 高音质各自分流 ✓）
+    //   ⚠ 本地文件（sid 与 url 都空）下载没有意义 ⇒ 只给一句提示，
+    //     别往队列里塞一条永远失败的活（`queue_song` 内部对无 sid 是静默 return ✗）
+    pri func lyric_download() {
+        if not has_now() {
+            nowArtist.set_text("还没有在播的歌")
+            SDL3.markFrameRedraw()
+            return
+        }
+        if nowSong.sid == "" and nowSong.url == "" {
+            nowArtist.set_text("这首歌是本地文件，不用再下载")
+            SDL3.markFrameRedraw()
+            return
+        }
+        queue_song(nowSong)
+    }
+
     pri func txt_btn(string label, string tipText, int sz, Color c): Button {
         Button b = SDL3.createButton({text: label, font_size: _float(sz) * 0.44 + 3.0,
                                       w: _float(sz), h: _float(sz),
@@ -3556,10 +3610,14 @@ Song nowSong
 
     // 底栏 ♥ 的图标 = **当前在播那首歌**的收藏状态（不是独立开关 ✓）
     pri func sync_like_icon() {
-        if likeBtn.get_w() <= 0.0 { return }
+        // ⚠ 别在这里早退（原来 `likeBtn.get_w() <= 0` 直接 return）——
+        //   歌词页那颗 ♥ 也要跟着变，早退就只更新一半 ✗
         bool on = is_liked(ui.like_key(nowSong))
         liked = on
-        likeBtn.set_image(ui.ico(if on then "sc1.png" else "sc.png"))
+        string ic = ui.ico(if on then "sc1.png" else "sc.png")
+        // 用 w > 0 判断"这枚按钮建过没"：struct 值类型默认不是 null（判 null 会告警 ✓）
+        if likeBtn.get_w() > 0.0 { likeBtn.set_image(ic) }
+        if lyrLikeBtn.get_w() > 0.0 { lyrLikeBtn.set_image(ic) }
     }
 
     // 底栏 ♥：走和卡片**同一条**收藏逻辑（likedSids + 落盘），
@@ -4516,6 +4574,8 @@ Song nowSong
         if curNav == 5 and discTab == 0 and plCards.len() > 0 {
             float sy = page_disc.scroll_y()
             page_disc.sync_visible(sy)               // 换页/滚动的行填收（没变化时是空转 ✓）
+            // 底部「加载中…」行跟着 plLoading 显隐（常驻一行 ⇒ 不用重建整页、滚动不跳 ✓）
+            page_disc.set_loading_visible(plLoading)
             if not plLoading and page_disc.near_bottom(200.0) {
                 load_more_playlists()
             }
