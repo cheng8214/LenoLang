@@ -23,6 +23,16 @@ export struct Song {
     //   `ext` 如 flac / mp3；`sizeBytes` 用来算码率（接口没给 ext 时兜底推算 ✓）
     string ext = ""
     int sizeBytes = 0
+    // ★ 2026-10-30：本地文件的**真实采样率**（LenoMusic 的 `Decoder` 读出来）
+    //   为什么要加：音质档位原来只靠「体积 ÷ 时长」估，小体积的 flac 被算成 200 多 kbps
+    //   ⇒ 显示成 "HQ"（用户实测 ✗）。无损格式该看采样率（≥88.2kHz 才算 Hi-Res），
+    //   有损格式才看文件码率 ✓
+    //   ⚠ **不要**用 `Decoder.getFormat()` 当位深：它给的是**解码输出**格式，
+    //     dr_flac 固定输出 f32 ⇒ 所有 flac 都会变成"32 位音源"、一律被判成母带 ✗
+    //     （2026-10-30 实测：两个 44.1k/48k 的 flac 全被标成"超清母带"）
+    //     真要源文件位深得自己解析 STREAMINFO / wav 的 fmt 块，收益不值当 ✓
+    int sampleRate = 0
+    int channels = 0
     // ★ 2026-10-29：备用音源（ffapi）的**音频直链**
     //   非空 ⇒ 播放时直接下它（`sid` 那套是酷我的，别混用 ✓）
     //   ⚠ 直链有时效（几分钟），下载失败要重新解析一次

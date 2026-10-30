@@ -576,7 +576,13 @@ export struct Table impl Widget, Themeable {
             //   图标列占的宽度先从总宽里扣掉，否则列宽合计会超出、底部冒出横向滚动条 ✗
             float iconW = 0.0
             if has_image_col() and _imgSize > 0.0 { iconW = _imgSize + imgGap }
-            float avail = w - iconW - gx()      // 行号槽先扣掉，列宽才不会把最后一列挤出可视区 ✓
+            // 行号槽先扣掉，列宽才不会把最后一列挤出可视区 ✓
+            // ★ 2026-10-30 反哺：avail 的扣减必须与 `compute_sb` 里的 `bodyW0` **同口径**
+            //   （右边留 8px / 冻结列 / 行号槽）。
+            //   原来少了这 8px ⇒ 应用只要把 `col_ratios` 写成合计 **1.00**（最自然的写法！）
+            //   列宽总和就比可视宽多 8px ⇒ 底部常驻一条横向滚动条，而且**窗口放大也消不掉**
+            //   （差值固定 ✗，Aria 本地音乐页实测：只有它合计写成 1.00，其它表 0.98~0.99 没事）
+            float avail = w - 8.0 - frozen_w() - iconW - gx()
             if avail < 40.0 { avail = 40.0 }
             _colW = []
             for n to i {
@@ -738,11 +744,19 @@ export struct Table impl Widget, Themeable {
         if display >= 0 and display < _srcIdx.len() { return _srcIdx[display] }
         return display
     }
+    // 改某一格的值 —— **就地更新**专用（进度条 / 状态这类高频变化别整页重建）
+    //   ★ 2026-10-30 反哺：值真变了就 `core.markFrameRedraw()`。原来只改数组不请求重绘，
+    //     调用方一旦漏了 markFrameRedraw，界面上就是"数据变了、画面不动"（看着像卡死 ✗）；
+    //     而改用"重建整页"来刷新又会丢 hover / 滚动位置（Aria 下载页实测：进度一跳，
+    //     鼠标悬停的那行就没了 ✗）⇒ 这条路径必须能在**不重建**的前提下刷新 ✓
+    //   值没变 ⇒ 直接返回（1MB 一片的进度里常有重复值，省掉一次重绘请求 ✓）
     func set_cell(int r, int c, string v) {
         if r >= 0 and r < _rows.len() {
             while _rows[r].len() <= c { _rows[r].add("") }
+            if _rows[r][c] == v { return }
             _rows[r][c] = v
             invalidate_fitted()
+            core.markFrameRedraw()
         }
     }
     // 获取单元格文本（供 tooltip 截断检测用）

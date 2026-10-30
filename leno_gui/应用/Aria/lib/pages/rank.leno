@@ -41,6 +41,7 @@ export struct RankCtx {
     func(Song, Button):void onTrack = null
     func(Song):void onReveal = null
     func(Button, string):void onTrackCover = null           // 登记封面按钮（异步贴图用）
+    func():void onDownloadAll = null                        // 榜单页「全部下载」（2026-10-30 ✓）
     // 正在播放行的「跳动音柱」+ 判断（Player 注入；Canvas 不能为 null ⇒ 用数组承载 ✓）
     Array[Canvas] beat = []
     func(Song):bool isNow = null
@@ -97,12 +98,27 @@ func detail_page(VBox page, RankCtx c): VBox {
         page.add(SDL3.createLabel({text: ""}), {grow: 1, shrink: 1, align: 3})
         return page
     }
-    page.add(ui.lbl("共 " + _str(c.songs.len()) + " 首 · 双击行播放", 11, TXT_DIM, false),
-             {grow: 0, shrink: 0, basis: 18, align: 3})
+    // 副标题行：左边"共 N 首"，右边「全部下载」（2026-10-30：原来只能右击空白处，
+    //   用户根本找不到 ⇒ 提成一枚显式按钮，位置与搜索结果页的下载入口对齐 ✓）
+    HBox infoRow = SDL3.createHBox({x: 0, y: 0, w: _float(c.contentW), h: 26,
+                                    pad_x: 0, pad_y: 0, spacing: 10})
+    infoRow.add(ui.lbl("共 " + _str(c.songs.len()) + " 首 · 双击行播放", 11, TXT_DIM, false),
+                {grow: 1, shrink: 1, align: 1})
+    func():void dlAll = c.onDownloadAll     // 先取到局部：闭包里读 `c.onXxx` 可能拿到副本 ✗
+    if dlAll != null {
+        Button dall = SDL3.createButton({text: "全部下载", w: 90, h: 24, radius: 12,
+                                         type: "dark", font_size: 12})
+        dall.set_tip("把整榜歌曲加入下载队列")
+        dall.on_click(func() { dlAll() })
+        infoRow.add(dall, {grow: 0, shrink: 0, basis: 90, align: 1})
+    }
+    page.add(infoRow, {grow: 0, shrink: 0, basis: 26, align: 3})
 
     int rowH = 58
-    // 减掉竖滚动条的 12px，否则表格比视口宽会触发横向滚动条
-    float tw = _float(c.contentW - 12)
+    // ★ 2026-10-30 修：表宽 = 内容区宽 − **页面左右内边距**（page 自己 pad_x = c.pad）
+    //   原来只减 12（竖滚动条），比容器还宽 36px ⇒ 底部常驻一条横向滚动条，
+    //   而且窗口放大也不消失（差值是固定值 ✗，与本地音乐页同一个坑 ✓）
+    float tw = _float(c.contentW - _int(c.pad) * 2)
     Array[HBox] rowV = []
     Array[HBox] numL = []
     Array[Canvas] numI = []
@@ -150,10 +166,11 @@ func detail_page(VBox page, RankCtx c): VBox {
 
     Table bt = SDL3.createTable({x: 0, y: 0, w: tw, h: 420.0,
                                  item_h: rowH, header_h: 32, font_size: 13,
-                                 headers: ["", "歌曲", "专辑", "时长"],
+                                 headers: ["", "歌曲", "专辑", "格式", "时长"],
                                  row_numbers: false,
-                                 col_ratios: [0.07, 0.59, 0.21, 0.09],
-                                 aligns: [1, 0, 0, 1], header_aligns: [1, 0, 0, 1],
+                                 // 加「格式」列（2026-10-30）：接口本来就给了 ext，只是没显示
+                                 col_ratios: [0.06, 0.50, 0.20, 0.12, 0.10],
+                                 aligns: [1, 0, 0, 1, 1], header_aligns: [1, 0, 0, 1, 1],
                                  sortable: false, zebra: false, resizable: false,
                                  text_color: TXT,
                                  bg_color: TRANS, header_color: TRANS,

@@ -107,27 +107,46 @@ export func number_cell(int idx, int rowH, func():void onPlay): Array[Widget] {
     return out
 }
 
-// 音质档位：返回 "无损" / "HQ" / "标准" / ""（空 = 不显示）
-//   ① 优先用接口给的 `ext`（flac / ape / wav = 无损；mp3 再按码率分）
-//   ② 没有 ext 就用「字节数 ÷ 时长」算码率兜底
-//   `dur` 是 "4:29" 这种文本，先换成秒
+// 音质档位：返回 "超清母带" / "无损" / "HQ" / "标准" / ""（空 = 不显示）
+//
+// ★★ 2026-10-30 重写：**先按格式分流，不能一律看体积**
+//   旧实现「有体积就按码率分档」把 flac 坑了：无损压缩的体积本来就可大可小
+//   （3 分钟的 flac 只有 20MB ⇒ 算出 890kbps ⇒ 掉进 HQ 档 ✗，用户实测）
+//   正确口径（两种格式的判据根本不同）：
+//     ① 无损格式（flac/ape/wav/alac…）：看 **位深 / 采样率** —— 本地文件由 LenoMusic 的
+//        `Decoder` 读出真实参数（`Song.bitsPerSample/sampleRate`），24bit 或 ≥88.2kHz 才算母带；
+//        没有解码器（网络歌）时只能用体积估"是不是母带"，但**是无损格式就绝不降级成 HQ** ✓
+//     ② 有损格式（mp3/aac/m4a/ogg）：位深/采样率没有意义（解码后是固定 PCM）
+//        ⇒ 只有这里才该用「体积 ÷ 时长」算文件码率 ✓
 export func quality_of(Song sg): string {
-    // ★ 有体积就**按码率分档**（唯一可靠的口径）：
-    //   ffapi 的 `level` 标签是错的（实测 exhigh 也标"无损(SQ)"），
-    //   但体积不会骗人 —— 60MB 的 flac 和 115MB 的母带必须区分开 ✓
+    string e = sg.ext.to_lower()
+    if e.len() > 0 and e.slice(0, 0) == "." { e = e.slice(1, e.len()) }   // ".flac" → "flac"
+    bool lossless = e == "flac" or e == "ape" or e == "wav" or e == "alac"
+                 or e == "aiff" or e == "aif" or e == "wv" or e == "tta"
+                 or e == "dsf" or e == "dff"
+
+    if lossless {
+        // ① 本地文件：采样率是硬证据（LenoMusic 的 Decoder 读的源文件采样率，
+        //    ≥88.2kHz 基本就是 Hi-Res 母带源；44.1/48k 是普通无损 ✓）
+        //   ⚠ 位深拿不到（解码输出固定 f32，见 music_data 注释）⇒ 不参与判档
+        if sg.sampleRate >= 88200 { return "超清母带" }
+        // ② 体积：接口歌没有解码器，只能靠「体积 ÷ 时长」估母带档；
+        //    估不出也**仍是无损**（无损格式绝不降级成 HQ ✗）
+        int sec0 = dur_secs(sg.dur)
+        if sg.sizeBytes > 0 and sec0 > 0 {
+            int kbps0 = _int(_float(sg.sizeBytes) * 8.0 / _float(sec0) / 1000.0)
+            if kbps0 >= 2000 { return "超清母带" }   // jymaster 那档（115MB / 6:00 ≈ 2560k）
+        }
+        return "无损"
+    }
+
+    // 有损：只有这里看文件码率（无损格式走上面，不参与分档 ✓）
     int sec = dur_secs(sg.dur)
     if sg.sizeBytes > 0 and sec > 0 {
         int kbps = _int(_float(sg.sizeBytes) * 8.0 / _float(sec) / 1000.0)
-        if kbps >= 2000 { return "超清母带" }   // jymaster 那档（115MB / 6:00 ≈ 2560k）
-        if kbps >= 900 { return "无损" }
         if kbps >= 320 { return "HQ" }
         if kbps >= 192 { return "标准" }
         return ""
-    }
-    // 没体积时退回只看格式（能判"无损"，但分不出母带）
-    string e = sg.ext
-    if e == "flac" or e == "ape" or e == "wav" or e == "FLAC" or e == "APE" or e == "WAV" {
-        return "无损"
     }
     return ""
 }
