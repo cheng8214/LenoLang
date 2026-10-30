@@ -100,6 +100,11 @@ export struct HBox impl Widget {
     Array[float]  _natW = []   // 子项自然尺寸（add 时捕获，不被 set_size 改写，作为 flex basis 基准）
     Array[float]  _natH = []
     bool _loaded = false
+    // ★ 2026-10-30 反哺：布局容器原来**没有** visible（同 AnchorBox 2026-10-29 那次补齐 ✓）
+    //   典型场景：列表底部的"加载中…"行要**常驻**、按状态切换显隐 —— 没有 set_visible 就只能
+    //   整页重建（滚动位置会跳）或用 Panel 再包一层（白白多一层）✗
+    //   ⚠ 隐藏只是"不画"，**仍占布局位**（Widget 接口没有 is_visible，父容器没法跳过它 ✓）
+    bool visible = true
     pri Ptr[u8] hwnd              // 绑定的窗口句柄，下发给需要的子控件
 
     // ★ 背景色（2026-10-09 新增 ✓）：此前**只有 Panel 有底色**，给布局容器传 `bg_color`
@@ -125,6 +130,7 @@ export struct HBox impl Widget {
         padBottom = opts.get("padBottom", -1.0)
         padLeft = opts.get("padLeft", -1.0)
         padRight = opts.get("padRight", -1.0)
+        visible = opts.get("visible", true)     // ★ 2026-10-30：与 Panel/AnchorBox 同一套 ✓
         // 背景（照 Panel 的写法用 `is Color =>` 收窄 ⇒ 类型不对就忽略，不会炸 ✓）
         if opts.get("bg_color") is Color => t {
             bgColor = t
@@ -294,7 +300,7 @@ export struct HBox impl Widget {
         for _c to c { c.process(ev) }
     }
     func render(Renderer r) {
-        if not _loaded { return }
+        if not _loaded or not visible { return }
         // 背景先画，子控件再盖上来（顺序与 Panel 一致 ✓）
         if _hasBg {
             r.setColor(bgColor)
@@ -312,6 +318,10 @@ export struct HBox impl Widget {
             for _c to c { c.render(r) }
         }
     }
+    // 通用控件状态（2026-10-30 反哺：与 Panel/Card/AnchorBox 保持同一套叫法 ✓）
+    func set_visible(bool v) { visible = v }
+    func is_visible(): bool { return visible }
+
     func dispose() { for _c to c { c.dispose() } }
 }
 
@@ -340,6 +350,7 @@ export struct VBox impl Widget {
     Array[float]  _natW = []   // 子项自然尺寸（add 时捕获，不被 set_size 改写，作为 flex basis 基准）
     Array[float]  _natH = []
     bool _loaded = false
+    bool visible = true        // ★ 2026-10-30 反哺：同 HBox.set_visible（隐藏只是不画，仍占布局位 ✓）
     pri Ptr[u8] hwnd       // 绑定的窗口句柄，下发给需要的子控件
 
     // ★ 背景色（2026-10-09 新增 ✓）：与 HBox 同款 —— 此前只有 Panel 有底色，
@@ -365,6 +376,7 @@ export struct VBox impl Widget {
         padBottom = opts.get("padBottom", -1.0)
         padLeft = opts.get("padLeft", -1.0)
         padRight = opts.get("padRight", -1.0)
+        visible = opts.get("visible", true)     // ★ 2026-10-30：与 Panel/AnchorBox 同一套 ✓
         if opts.get("bg_color") is Color => t {
             bgColor = t
             _hasBg = true
@@ -542,7 +554,7 @@ export struct VBox impl Widget {
         for _c to c { c.process(ev) }
     }
     func render(Renderer r) {
-        if not _loaded { return }
+        if not _loaded or not visible { return }
         // 背景先画，子控件再盖上来（与 Panel/HBox 一致 ✓）
         if _hasBg {
             r.setColor(bgColor)
@@ -560,6 +572,10 @@ export struct VBox impl Widget {
             for _c to c { c.render(r) }
         }
     }
+    // 通用控件状态（2026-10-30 反哺：与 Panel/Card/AnchorBox 保持同一套叫法 ✓）
+    func set_visible(bool v) { visible = v }
+    func is_visible(): bool { return visible }
+
     func dispose() { for _c to c { c.dispose() } }
 }
 

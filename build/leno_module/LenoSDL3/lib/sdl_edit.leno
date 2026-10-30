@@ -24,7 +24,7 @@ var WORD_PUNCT_CP = ".,!?:;()[]\"'：。，！？（）【】；".to_codepoints(
 //   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
 func _opts_keys(): Array[string] {
     return [
-"bg_color", "border", "border_color", "draw_bg", "enabled", "focus_color", "font_path", "font_size", "font_style", "h", "multiline", "pad_x", "password", "placeholder", "radius", "readonly", "text", "text_color", "tip", "visible", "w", "wordWrap", "x", "y"
+"bg_color", "border", "border_color", "draw_bg", "enabled", "focus_color", "font_path", "font_size", "font_style", "h", "multiline", "pad_x", "password", "placeholder", "placeholder_color", "radius", "readonly", "text", "text_color", "tip", "visible", "w", "wordWrap", "x", "y"
 ]
 }
 export struct Edit impl Widget, Themeable {
@@ -58,6 +58,9 @@ bool _drawBorder = true          // 是否绘制边框（嵌入 ComboBox 时设�
     pri float lineHeight = 20.0          // 行高缓存
 
     pri string placeholder = ""          // 占位文字
+    // 占位文字颜色（0 = 自动：向背景混合 55%，见 draw 里的说明）
+    //   2026-10-30 加：原来写死 `darken(txtColor, 80)`，浅色主题下会变成接近纯黑
+    pri Color phColor = 0
     pri bool focused = false
     // IME 候选框位置缓存：仅在坐标/光标变化时调用 SDL，避免每帧无谓刷新
     pri int imeX = -1, imeY = -1, imeW = -1, imeH = -1, imeCursor = -1
@@ -292,6 +295,7 @@ _drawBorder = opts.get("border", true)
         if opts.get("border_color") is Color => t { bdrColor = t }
 
         placeholder = opts.get("placeholder", "")
+        if opts.get("placeholder_color") is Color => pc { phColor = pc }
         _tip = opts.get("tip", "")
 
         // 模式
@@ -381,6 +385,17 @@ _drawBorder = opts.get("border", true)
         if not ml { text = get_text() }   // 切单行前 flush lines → text
         multiline = ml; dirty = true; invalidate_sb()
     }
+    // 占位文字色
+    //   ★ 2026-10-30：原来两处都写 `darken(txtColor, 80)`（把文字**变暗**）—— 深色主题下勉强算
+    //     "往后退"，但**浅色主题**（白底深字）会变成接近纯黑 ⇒ 占位看上去跟已输入的正文一样重，
+    //     用户会以为框里已经有内容（实测：搜索框的"搜索歌曲、歌手、歌单"像加粗标题 ✗）
+    //     ⇒ 改成向**背景**混合（与 mixbg 的注释一致：明暗两种主题下都是"往后退" ✓）
+    //     显式传了 placeholder_color 就用它（调用方想更浅/带色都能自己定）
+    pri func _phTextColor(): Color {
+        if phColor != 0 { return phColor }
+        return theme.mixbg(txtColor, bgColor, 55)
+    }
+
     func set_placeholder(string p) { placeholder = p }
     func set_tip(string t) { _tip = t }
     func set_enabled(bool e) { enabled = e }
@@ -1620,8 +1635,7 @@ _drawBorder = opts.get("border", true)
         if text == "" and not focused and placeholder != "" {
             var[float, float](_pw, _ph) = _font.measureString(placeholder)
             float py = y + (h - _ph) / 2.0
-            r.drawText(_font, placeholder, r.snapX(x + pad), r.snapY(py),
-                       theme.darken(txtColor, 80))
+            r.drawText(_font, placeholder, r.snapX(x + pad), r.snapY(py), _phTextColor())
         } else if text != "" {
             r.drawText(_font, display, r.snapX(x + pad - scrollX), r.snapY(ty), txtColor)
         }
@@ -1703,7 +1717,7 @@ _drawBorder = opts.get("border", true)
                 var wraps = wrap_line(seg, visW)
                 for wraps.len() to wi {
                     float ly = y + pad + dy * lineHeight - scrollY
-                    r.drawText(_font, wraps[wi], r.snapX(x + pad), r.snapY(ly), theme.darken(txtColor, 80))
+                    r.drawText(_font, wraps[wi], r.snapX(x + pad), r.snapY(ly), _phTextColor())
                     dy += 1
                 }
             }

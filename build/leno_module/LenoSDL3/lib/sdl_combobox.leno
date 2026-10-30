@@ -17,7 +17,7 @@ import "sdl_edit.leno" as edt; use edt.Edit
 //   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
 func _opts_keys(): Array[string] {
     return [
-"bg_color", "border", "border_color", "cursor", "editable", "enabled", "font_path", "font_size", "font_style", "h", "hover_color", "icon", "icon_gap", "icon_size", "image_gap", "image_size", "item_h", "item_images", "items", "placeholder", "pad_x", "popup_h", "show_arrow", "radius", "scroll_color", "bar_auto_hide", "bar_hover_color", "sel_color", "selected", "text_color", "tip", "visible", "w", "x", "y"
+"bg_color", "border", "border_color", "cursor", "editable", "enabled", "font_path", "font_size", "font_style", "h", "hover_color", "icon", "icon_gap", "icon_size", "image_gap", "image_size", "item_h", "item_images", "items", "placeholder", "placeholder_color", "pad_x", "popup_h", "show_arrow", "radius", "scroll_color", "bar_auto_hide", "bar_hover_color", "sel_color", "selected", "text_color", "tip", "visible", "w", "x", "y"
 ]
 }
 export struct ComboBox impl Widget, Themeable {
@@ -31,6 +31,8 @@ export struct ComboBox impl Widget, Themeable {
     pri float popupMax = 200.0    // 弹出列表最大高度
     float _fontSize = 15.0; pri string fontPath = ""; pri int fontStyle = 0; Font? _font
     pri string placeholder = "请选择"
+    // 占位文字色（0 = 自动：向背景混合 55% —— 同 Edit 的说明，2026-10-30）
+    pri Color phColor = 0
     pri Color bgColor = #262830FF
     pri Color bdrColor = #5A5F6EFF
     pri Color selColor = #343A46FF
@@ -130,6 +132,7 @@ export struct ComboBox impl Widget, Themeable {
         fontPath = opts.get("font_path", "")
         fontStyle = opts.get("font_style", 0)
         placeholder = opts.get("placeholder", "请选择")
+        if opts.get("placeholder_color") is Color => pc { phColor = pc }
 
         var its = opts.get("items", [])
         if its is Array[string] { items = its } else { items = [] }
@@ -166,7 +169,11 @@ export struct ComboBox impl Widget, Themeable {
         iconSize = opts.get("icon_size", 16.0)
         iconGap = opts.get("icon_gap", 6.0)
         if editable and edit == null {
-            edit = edt.createEdit({x:x+padX, y:y+1, w:w-padX-20.0, h:h-2, font_size:_fontSize, border:false, draw_bg:false, radius:0, pad_x:padX, placeholder:placeholder, text_color:txtColor})
+            // bg_color 必须一起传：Edit 的占位色是"文字色向背景混合"，它自己的默认背景是深色
+            //   ⇒ 浅色主题下会算反、占位又变黑（2026-10-30 ✓）
+            edit = edt.createEdit({x:x+padX, y:y+1, w:w-padX-20.0, h:h-2, font_size:_fontSize, border:false,
+                                   draw_bg:false, radius:0, pad_x:padX, placeholder:placeholder,
+                                   text_color:txtColor, bg_color:bgColor, placeholder_color:phColor})
             edit.on_enter(func() { if onEnter != null { onEnter(edit.get_text()) } })
             // ★ 同步初始选中项文本到 Edit（selected 在 set 前面已解析）
             if sel >= 0 and sel < items.len() { edit.set_text(items[sel]) }
@@ -598,10 +605,13 @@ export struct ComboBox impl Widget, Themeable {
                 }
             }
             string t = ""
-            if sel >= 0 and sel < items.len() { t = items[sel] } else { t = placeholder }
+            bool isPh = true                                     // 画的是"占位提示"而不是选中项？
+            if sel >= 0 and sel < items.len() { t = items[sel]; isPh = false } else { t = placeholder }
             float th = fontH
             Color tcC = txtColor
-            if not enabled { tcC = theme.darken(txtColor, 60) }
+            // ★ 2026-10-30：占位提示要往背景退（原来用正文色 ⇒ 浅色主题下就是纯黑，像已经有内容 ✗）
+            if isPh { tcC = if phColor != 0 then phColor else theme.mixbg(txtColor, bgColor, 55) }
+            if not enabled { tcC = theme.darken(tcC, 60) }
             float ty = r.snapY(y + (h - th) / 2.0)
             r.drawText(_font, t, r.snapX(textX), ty, tcC)
         }
