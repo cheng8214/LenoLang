@@ -956,6 +956,9 @@ Ast* parse_new(Parser* p) {
 // 解析索引表达式 arr[index] 或切片 arr[start:end]
 // 同时支持泛型函数调用：funcName[int](args) 或 funcName[Box](args)
 Ast* parse_index(Parser* p, Ast* obj) {
+    // ★ 2026-10-30：前缀表达式解析失败时 obj 可能是 NULL（Pratt 循环仍会带着 NULL
+    //   调中缀解析器）⇒ 直接返回，避免空指针解引用（UBSAN 实测）。
+    if (!obj) return NULL;
     int line = p->lex.current.line;
     lexer_next(&p->lex); // 消费 '['
 

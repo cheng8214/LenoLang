@@ -1,0 +1,75 @@
+var log = ""
+
+// 外层 try 包住整个循环：break 只该跑**内层** finally；外层在 try 正常结束时跑一次
+func break_only_inner(): int {
+    int n = 0
+    try {
+        for 0:2 to i {
+            try {
+                n = n + 1
+                break
+            } finally {
+                log = log + "inner"
+            }
+        }
+        n = n + 10
+    } finally {
+        log = log + "outer"
+    }
+    return n
+}
+
+// break 出现在 catch 体、且外层还有一个 try-finally
+func break_in_catch_nested(): int {
+    int n = 0
+    try {
+        for 0:2 to i {
+            try {
+                throw "e"
+            } catch e {
+                n = n + 1
+                break
+            } finally {
+                log = log + "i"
+            }
+        }
+        n = n + 10
+    } finally {
+        log = log + "o"
+    }
+    return n
+}
+
+// continue 跨两层（内层 try 在循环内，外层 try 包住循环）
+func continue_two_layers(): int {
+    int n = 0
+    try {
+        for 0:2 to i {
+            try {
+                if i == 1 { continue }
+                n = n + 1
+            } finally {
+                log = log + "a"
+            }
+        }
+        n = n + 10
+    } finally {
+        log = log + "b"
+    }
+    return n
+}
+
+main() {
+    assert_eq(break_only_inner(), 11, "break 后 n+=10，外层 try 正常结束")
+    assert_eq(log, "innerouter", "break 只跑内层 finally，外层在正常结束时跑一次")
+
+    log = ""
+    assert_eq(break_in_catch_nested(), 11, "catch 里 break 后 n+=10")
+    assert_eq(log, "io", "catch 里 break 跑内层 finally")
+
+    log = ""
+    assert_eq(continue_two_layers(), 12, "i=0/2 各加 1，再加 10")
+    assert_eq(log, "aaab", "三轮内层 finally，外层正常结束一次")
+
+    print("test_finally_enclosing passed")
+}

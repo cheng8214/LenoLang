@@ -25,7 +25,9 @@ typedef enum {
     VER_COMPAT,    /*  ~1.2.3 → >=1.2.3 <1.3.0 */
     VER_RANGE,     /* >=1.0 <2.0 */
     VER_GTE,       /* >=1.2.3  */
-    VER_ANY        /* *  */
+    VER_ANY,       /* *  */
+    VER_INVALID    /* 无法解析的约束（如 `^1.2` / 拼写错误）——
+                      必须显式报错，绝不能退化成 0.0.0 参与比较 ✗ */
 } VersionConstraint;
 
 /* 语义化版本 */
@@ -42,6 +44,8 @@ typedef struct {
     VersionConstraint type;
     SemVer version;        /* 用于 EXACT, COMPAT, GTE */
     SemVer version_upper;  /* 用于 RANGE 的上界 */
+    int version_upper_inclusive;  /* RANGE 的上界是否含端点（`<=x` 为 1，`<x` 为 0）——
+                                     原来不区分 ⇒ `<=1.2.0` 被当成 `<1.2.0` 静默算错 ✗ */
 } VersionReq;
 
 /* ============================================================================

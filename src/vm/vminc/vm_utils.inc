@@ -27,6 +27,9 @@ void vm_crash_location(char* buf, int bufsz, int* out_len) {
     if (!buf || bufsz < 8) return;
     char* p = buf;
     char* end = buf + bufsz - 1;
+    // ★ 2026-10-30：`vm` 在本文件里展开成 `(*current_exec_vm)`；编译器主线程在
+    //   还没建 VM 时 current_exec_vm == NULL（解析错误路径也会走到这里）⇒ 先判空。
+    if (current_exec_vm == NULL) { *buf = '\0'; return; }
     if (vm.frame_cnt <= 0 || vm.frames == NULL) { *buf = '\0'; return; }
     CallFrame* f = &vm.frames[vm.frame_cnt - 1];
     if (f == NULL || f->chunk == NULL) { *buf = '\0'; return; }

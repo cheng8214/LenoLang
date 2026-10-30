@@ -10,15 +10,28 @@
 // ============================================================================
 
 typedef struct {
-    int break_jumps[MAX_BREAK_JUMPS];     // break 跳转位置数组
+    // ★ 2026-10-30：由固定 [256] 改成**按需增长**。固定数组在"一个循环里超过 256 条
+    //   break/continue"时会越界写（ASAN 实测 heap-buffer-overflow），而这类代码完全
+    //   能由生成器/宏展开写出来。容量上限不再是语言限制。
+    int* break_jumps;        // break 跳转位置数组（需要回填）
     int break_count;
-    int continue_jumps[MAX_CONTINUE_JUMPS];  // continue 跳转位置数组（需要回填）
+    int break_cap;
+    int* continue_jumps;     // continue 跳转位置数组（需要回填）
     int continue_count;
+    int continue_cap;
     int continue_target;      // continue 跳转目标位置（用于简单循环）
+    // ★ 2026-10-30：switch 也压入一层循环上下文（只为 `break` 跳出 switch），
+    //   但 `continue` 不该以它为目标 —— 必须继续向外找**真正的循环**，
+    //   否则 continue_jumps 挂在这层 switch 上、永远不会被回填（字节码偏移保持 0
+    //   ⇒ 运行期等同"什么都不跳"，continue 静默退化成 fall through ✗）。见 gen_stmt。
+    int is_switch;
     // ★ 建该循环时 CodeGen.finally_depth 的值：`break`/`continue` 在 finally 体内时，
     //   `finally_depth - ctx.finally_depth` = **要跨出几层 finally** ⇒ 需要补几条
     //   "离开 finally"的清理（OP_END_TRY A=2）。见 gen_stmt 的 AST_BREAK/AST_CONTINUE。
     int finally_depth;
+    // ★ 建该循环时的循环嵌套深度（= 外层循环数）：判断某个活动 try-finally 是否在
+    //   本循环内部（`break` 要跨过它）—— 见 CodeGen.try_fin_head 与 AST_BREAK。
+    int loop_depth;
 } LoopContext;
 
 // 循环上下文链表节点（堆分配，无嵌套深度限制，不占栈空间）
@@ -26,6 +39,19 @@ typedef struct LoopContextNode {
     LoopContext ctx;
     struct LoopContextNode* prev;
 } LoopContextNode;
+
+// ============================================================================
+// try-finally 活动区域（用于 break/continue 跨出时先跑 finally）
+// ----------------------------------------------------------------------------
+// 只在生成 try 体 / catch 体期间入栈（生成 finally 体时已出栈：finally 体内的
+// break/continue 由 finally_depth 那一套清理，见 emit_leave_finally）。
+// loop_depth = 进入该 try 时的外层循环数 ⇒ 与 LoopContext.loop_depth 比较可判断
+// "这个 try 是否在目标循环内部（break 必须跨过它）"。
+// ============================================================================
+typedef struct TryFinNode {
+    int loop_depth;
+    struct TryFinNode* prev;
+} TryFinNode;
 
 // ============================================================================
 // 析构追踪条目（用于在作用域结束/return 时调用析构函数）
@@ -54,6 +80,9 @@ typedef struct {
     int scope_depth;
     LoopContextNode* loop_head;    // 链表头（当前最内层循环），使用链式堆分配避免栈溢出
     int loop_count;                 // 循环嵌套深度
+    // 当前正在生成的 try/catch 体所属的 try-with-finally 链（见 TryFinNode）
+    TryFinNode* try_fin_head;
+    int try_fin_depth;              // 活动 try-with-finally 层数（不含 finally 体本身）
     // 当前正在生成的位置在**第几层 finally 体**里（0 = 不在 finally 里）。
     //   gen_try 生成 finally 体前后 ++/--；`break`/`continue` 据此补"离开 finally"清理。
     int finally_depth;

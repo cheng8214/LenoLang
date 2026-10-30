@@ -506,10 +506,12 @@ static int entry_deps_write(const char* deps_path) {
     uint64_t* hashes = NULL;
     int count = 0;
     int failed = 0;
-    if (total > 0) {
-        paths = (char**)malloc(sizeof(char*) * (size_t)total);
-        sizes = (uint64_t*)malloc(sizeof(uint64_t) * (size_t)total);
-        hashes = (uint64_t*)malloc(sizeof(uint64_t) * (size_t)total);
+    /* 容量 = 模块数 + 1（最后一项留给项目 leno.toml；模块数为 0 时也要能写它 ✓） */
+    {
+        size_t cap = (size_t)total + 1;
+        paths = (char**)malloc(sizeof(char*) * cap);
+        sizes = (uint64_t*)malloc(sizeof(uint64_t) * cap);
+        hashes = (uint64_t*)malloc(sizeof(uint64_t) * cap);
         if (!paths || !sizes || !hashes) {
             free(paths); free(sizes); free(hashes);
             return -1;
@@ -535,6 +537,34 @@ static int entry_deps_write(const char* deps_path) {
         sizes[count] = size;
         hashes[count] = hash;
         count++;
+    }
+
+    // ★ 2026-10-30：项目的 leno.toml 同样是编译输入（[requires] / [dependencies] /
+    //   [modules] root / native-libs 等都在里面）⇒ 必须进清单。
+    //   ✗ 此前清单只记被 import 的模块源码 ⇒ 入口缓存键（entry source hash）不变，
+    //     改了 [requires] 之后**入口缓存照样命中**，import 期版本校验被整段跳过：
+    //     实测冷编译正确报「版本 0.2.6 不满足项目要求 '>=9.9.9'」，把要求改成
+    //     违规值再跑却**通过**（缓存复用了旧字节码）✗
+    char toml_path[MAX_PATH_LEN];
+    int has_toml = 0;
+    uint64_t tsize = 0, thash = 0;
+    if (!failed) {
+        const char* entry = error_get_filename();
+        char* proj_root = entry ? package_find_project_root(entry) : NULL;
+        if (proj_root) {
+            snprintf(toml_path, sizeof(toml_path), "%sleno.toml", proj_root);
+            if (module_source_snapshot_now(toml_path, &tsize, &thash) == 0) {
+                has_toml = 1;
+            }
+            free(proj_root);
+        }
+        if (has_toml && count < total + 1) {
+            /* toml_path 是栈上缓冲区：直到下面 fprintf 都有效，不需要深拷贝 */
+            paths[count] = toml_path;
+            sizes[count] = tsize;
+            hashes[count] = thash;
+            count++;
+        }
     }
 
     int rc = 0;

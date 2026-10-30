@@ -425,6 +425,17 @@ static void patch_common(CodeGen* gen, int pos, int offset) {
         int bx = offset + 32768;
         gen->chunk->code[pos + 4] = (uint8_t)((bx >> 8) & 0xFF);
         gen->chunk->code[pos + 5] = (uint8_t)(bx & 0xFF);
+    } else if (op == (uint8_t)OP_FIN_GOTO) {
+        // 原始 16 位（**无** +32768 偏置），相对指令起点：offset 由 patch_common 传入时
+        // 已按"相对下一条指令"算过 ⇒ 加上本指令长度还原成相对起点的原始值。
+        int raw = offset + instr_bytes_at(gen->chunk, pos);
+        if (raw < 0 || raw > 65535) {
+            report_jump_overflow(gen, pos, raw, 65535);
+            if (raw < 0) raw = 0;
+            if (raw > 65535) raw = 65535;
+        }
+        gen->chunk->code[pos + 2] = (uint8_t)((raw >> 8) & 0xFF);
+        gen->chunk->code[pos + 3] = (uint8_t)(raw & 0xFF);
     } else {
         // iAsBx：16 位带偏置
         if (offset < -32768 || offset > 32767) {
@@ -475,6 +486,17 @@ void emit_loop(CodeGen* gen, int target, int line) {
 //   连发多条 = 跨多层 finally（每层一条）。理由见 codegen_stmt.c 里 AST_BREAK 的注释。
 void emit_leave_finally(CodeGen* gen, int line) {
     reg_encode_iABC(gen->chunk, OP_END_TRY, 2, 0, 0, line);
+}
+
+// break/continue 穿过 try-finally：记录续跳目标与层数，先跑 finally，再续跳。
+//   layers = 要执行的 finally 层数（A 字段，≤255）；Bx 是**原始** 16 位偏移
+//   （相对本指令起点，不做 +32768 偏置 —— 与 OP_TRY/OP_FINALLY 的 Bx 约定一致）。
+//   目标位置在这里还不知道（循环出口/回边尚未生成）⇒ 返回 pos 由调用方 patch。
+int emit_fin_goto(CodeGen* gen, int layers, int line) {
+    int pos = gen->chunk->len;
+    if (layers > 255) layers = 255;   // 嵌套深度 ≥256 层 finally 现实中到不了
+    reg_encode_iABx(gen->chunk, OP_FIN_GOTO, layers, 0, line);
+    return pos;
 }
 
 // --- 自增自减 ---

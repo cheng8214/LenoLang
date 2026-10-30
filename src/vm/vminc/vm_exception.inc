@@ -418,15 +418,21 @@ static inline int dispatch_exception(int line) {
         //        （见 codegen_stmt.c 的注释）⇒ `catch_ip` 永远挂着 ⇒ 本帧后续**每一个**运行期
         //        错误都被同一个 catch 接住（这正是 OP_THROW 侧同期修过、这里漏掉的那一条）；
         //     ③ 缺 `in_finally` 守卫与 `catch_finally_ip` 分支 ⇒ finally 体内抛错也绕回自己。
-        uint8_t* tcatch = frame->catch_ip ? frame->catch_ip : frame->prev_catch_ip;
-        // ★ 2026-10-22 修（finally 里抛异常 ⇒ 死循环）：
-        //   **已在 finally 里**时不能再拿本层 finally_ip —— 那会跳回 finally 开头，
-        //   然后再次抛、再跳回 …… 永不退出（实测 `try { return 1 } finally { boom() }` 卡死）。
-        //   此时应改用 prev_finally_ip（外层 finally），没有就继续向外层帧传播 ✓
-        uint8_t* tfin = (frame->in_finally || !frame->finally_ip)
-                            ? frame->prev_finally_ip
-                            : frame->finally_ip;
-        if (tcatch || tfin) {
+        // ★ 2026-10-30：与 OP_THROW 的派发**同口径**（try 处理栈）——
+        //   ① has_catch 决定 catch 优先还是 finally 优先；
+        //   ② 在 finally 体内抛错 ⇒ 先出栈到非 finally 上下文（否则会跳回自己死循环）；
+        //   ③ 接住后注销所用 handler（无 catch 变量的 `} catch {` 不发 OP_CATCH）。
+        if (frame->in_finally) {
+            while (frame->try_top > 0 && frame->in_finally) vm_try_pop(frame);
+            if (frame->in_finally) frame->in_finally = 0;
+        }
+        if (frame->closure && frame->closure->function && !frame->closure->function->has_try) {
+            continue;
+        }
+        int has_handler = (frame->has_catch && frame->catch_ip) || frame->finally_ip != NULL;
+        if (!has_handler) continue;
+
+        {
             // 找到了有异常处理的帧，需要展开调用栈到这个帧
             // 释放当前帧到目标帧之间的所有帧的locals（仅当使用动态分配时才需要 free）
             for (int j = vm.frame_cnt - 1; j > i; j--) {
@@ -443,27 +449,21 @@ static inline int dispatch_exception(int line) {
             vm.sp = frame->stack_base;
 
             // 处理异常（分支顺序与 OP_THROW 逐条对齐）
-            if (frame->catch_finally_ip && !frame->in_finally) {
-                // catch 体内再次抛错：先执行**本层** finally，再向外传播
-                vm.pending_exception = 1;
-                frame->ip = frame->catch_finally_ip;
-                frame->catch_finally_ip = NULL;
-                vm.has_exception = 0;
-            } else if (frame->finally_ip && !frame->in_finally && !frame->catch_ip) {
-                // 有 finally、无 catch：先跑 finally（标记异常待续传播）
+            if (!frame->has_catch && frame->finally_ip) {
+                // finally-only：先跑本层 finally（标记异常待续传播）
                 vm.pending_exception = 1;
                 frame->ip = frame->finally_ip;
                 vm.has_exception = 0;
-            } else if (tcatch) {
+            } else if (frame->has_catch && frame->catch_ip) {
                 // 跳转到 catch 块（寄存器式：异常值走 vm.exception，OP_CATCH 负责取值）
-                frame->ip = tcatch;
+                frame->ip = frame->catch_ip;
                 vm.has_exception = 0;
-                // ★ 接住后注销所用 handler：否则它会把本帧后续的运行期错误反复接走（见上面 ②）
-                if (frame->catch_ip) frame->catch_ip = NULL;
-                else frame->prev_catch_ip = NULL;
-            } else {
+                // 接住后注销所用 handler：否则它会把本帧后续的运行期错误反复接走（见上面 ②）
+                frame->catch_ip = NULL;
+                frame->has_catch = 0;
+            } else if (frame->finally_ip) {
                 vm.pending_exception = 1;
-                frame->ip = tfin;
+                frame->ip = frame->finally_ip;
                 vm.has_exception = 0;
             }
             return 1;

@@ -1,0 +1,45 @@
+import asyncs
+
+var log = ""
+
+async func work(int mode): int {
+    try {
+        await asyncs.sleep(2)
+        if mode == 1 { throw "x" }
+        return 1
+    } catch e {
+        log = log + "C"
+        return 2
+    } finally {
+        log = log + "F"
+    }
+}
+
+async func work_break(int mode): int {
+    try {
+        await asyncs.sleep(2)
+        throw "y"
+    } finally {
+        log = log + "G"
+    }
+    return 0
+}
+
+main() {
+    work(0)
+    work(1)
+    asyncs.run()
+    assert_eq(log, "FCF", "协程里 return / catch 都要跑 finally（F 来自 work(0)，C+F 来自 work(1)）")
+
+    log = ""
+    work_break(0)
+    try {
+        asyncs.run()
+        assert_true(false, "协程异常应由 run() 抛回")
+    } catch e {
+        log = log + "R"
+    }
+    assert_eq(log, "GR", "finally 先跑，再由 run() 把异常抛回调用方")
+
+    print("test_async_finally passed")
+}

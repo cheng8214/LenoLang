@@ -41,6 +41,16 @@ static int ast_has_try(Ast* ast) {
         case AST_IF: return ast_has_try(ast->u.if_.then) || ast_has_try(ast->u.if_.else_);
         case AST_WHILE: return ast_has_try(ast->u.while_.body);
         case AST_FOR: return ast_has_try(ast->u.for_.body);
+        case AST_SWITCH: {
+            // ★ 2026-10-30：switch 的 case/default 体也是函数体的一部分。漏掉这一支
+            //   ⇒ 函数若**只在 switch 里**写 try/defer，has_try 仍为 0 ⇒ VM 的
+            //   FRAME_TRY_VALID 为假 ⇒ `break` 的 OP_FIN_GOTO、`return` 的 finally
+            //   全被跳过（defer 不执行、静默错值；实测 break 出 switch 丢 defer）。
+            for (int i = 0; i < ast->u.switch_.case_count; i++) {
+                if (ast_has_try(ast->u.switch_.cases[i].body)) return 1;
+            }
+            return ast_has_try(ast->u.switch_.default_body);
+        }
         default: return 0;
     }
 }
@@ -74,6 +84,14 @@ static int ast_return_count(Ast* ast, int* found, int* must) {
         case AST_FOR:
             ast_return_count(ast->u.for_.body, found, must);
             return 0;
+        case AST_SWITCH: {
+            // 与 ast_has_try 同理：只在 switch 里 return 的函数也要被统计到
+            for (int i = 0; i < ast->u.switch_.case_count; i++) {
+                ast_return_count(ast->u.switch_.cases[i].body, found, must);
+            }
+            ast_return_count(ast->u.switch_.default_body, found, must);
+            return 0;
+        }
         default: return 0;
     }
 }

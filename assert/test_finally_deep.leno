@@ -1,0 +1,105 @@
+// test_finally_deep.leno — ≥3 层嵌套 try/finally 抛异常时，外层 catch 必须能接住
+//
+// 修前（单槽 prev_catch_ip/prev_finally_ip）：只能记 2 层，第 3 层把外层保存值覆盖 ⇒
+//   异常直接冲出函数，外层 catch 收不到。实测两个 defer + 用户 try 正好 3 层：
+//   `try { defer ...; defer ...; throw } catch e { ... }` 的 catch 从不执行 ✗
+// 修后：每帧 try 处理栈（OP_TRY 压栈 / END_TRY 出栈）⇒ 任意深度都能逐层还原。
+//   逆序执行：最内层 finally → … → 最外层 finally → 外层 catch。
+
+var log = ""
+
+// 手工三层：finally 逆序 3 → 2 → 1，再到 catch
+func manual_three(): int {
+    try {
+        try {
+            try {
+                throw "y"
+            } finally {
+                log = log + "3"
+            }
+        } finally {
+            log = log + "2"
+        }
+    } catch e {
+        log = log + "C"
+        return 1
+    }
+    return 0
+}
+
+// 两个 defer + 用户 try（真实写法；两个 defer 会被 parser 套成两层 try/finally）
+func two_defer(): int {
+    try {
+        defer log = log + "1"
+        defer log = log + "2"
+        throw "x"
+    } catch e {
+        log = log + "C"
+        return 2
+    }
+    return 0
+}
+
+// 三层 + 每层都有 catch（catch 优先级：异常应该落到**最内层**的 catch，finally 之后）
+func nested_catches(): int {
+    int r = 0
+    try {
+        try {
+            try {
+                throw "z"
+            } catch e3 {
+                log = log + "c3"
+                throw "z2"
+            } finally {
+                log = log + "f3"
+            }
+        } catch e2 {
+            log = log + "c2"
+            throw "z3"
+        } finally {
+            log = log + "f2"
+        }
+    } catch e1 {
+        log = log + "c1"
+        r = 3
+    }
+    return r
+}
+
+// 深层嵌套 + 正常完成（不抛异常）：finally 顺序与返回值不受影响
+func deep_normal(): int {
+    try {
+        try {
+            try {
+                log = log + "n"
+            } finally {
+                log = log + "3"
+            }
+        } finally {
+            log = log + "2"
+        }
+        return 5
+    } finally {
+        log = log + "1"
+    }
+}
+
+main() {
+    log = ""
+    assert_eq(manual_three(), 1, "三层嵌套的 throw 被外层 catch 接住")
+    assert_eq(log, "32C", "两层 finally 逆序执行后再进 catch（外层只有 catch）")
+
+    log = ""
+    assert_eq(two_defer(), 2, "两个 defer + throw 被 catch 接住")
+    assert_eq(log, "21C", "两个 defer 逆序执行")
+
+    log = ""
+    assert_eq(nested_catches(), 3, "三层 catch 依次向上")
+    assert_eq(log, "c3f3c2f2c1", "内层 catch → 本层 finally → 外层 catch → …")
+
+    log = ""
+    assert_eq(deep_normal(), 5, "深层嵌套正常完成的返回值")
+    assert_eq(log, "n321", "正常完成时 finally 逆序（内→外）")
+
+    print("test_finally_deep passed")
+}

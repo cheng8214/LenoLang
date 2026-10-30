@@ -1675,12 +1675,14 @@ int vm_run_coroutine_with_vm(ObjCoroutine* co, VM* vm_ptr) {
         frame->local_count = local_count;
         frame->catch_ip = NULL;
         frame->finally_ip = NULL;
-        frame->catch_finally_ip = NULL;
-        frame->prev_catch_ip = NULL;
-        frame->prev_finally_ip = NULL;
+        frame->has_catch = 0;
         frame->in_finally = 0;
+        frame->try_top = 0;
         frame->try_return_value = val_null();
         frame->has_try_return = 0;
+        frame->finally_goto_target = NULL;
+        frame->finally_goto_owner = NULL;
+        frame->finally_goto_layers = 0;
         frame->has_captures = 0;   // 由 OP_CLOSURE 在真建了指向本帧窗口的 upvalue 时置 1
         
         // 保存创建此协程 frame 之前的 frame_cnt（其他协程/主程序的）= 协程首帧索引

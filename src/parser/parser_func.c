@@ -1941,12 +1941,20 @@ Ast* parse_expression_stmt(Parser* p) {
             lexer_next(&p->lex); // 消费 '='
             
             // 收集右侧表达式
-            Ast** right_exprs = (Ast**)malloc(sizeof(Ast*) * left_count);
+            // ★ 2026-10-30：容量按左侧个数开局，但右侧可以更多（属于语义错误，
+            //   要由 visit_var 报"个数不一致"）⇒ 超出时必须扩容而不是越界写。
+            //   ASAN 实测：`a, b = 1, 2, 3` 会在第 3 个右值处 heap-buffer-overflow。
+            int right_cap = left_count > 0 ? left_count : 1;
+            Ast** right_exprs = (Ast**)malloc(sizeof(Ast*) * right_cap);
             int right_count = 0;
             
             // 解析第一个右侧表达式
             Ast* first_expr = parse_expression(p);
             if (first_expr) {
+                if (right_count >= right_cap) {
+                    right_cap *= 2;
+                    right_exprs = (Ast**)realloc(right_exprs, sizeof(Ast*) * right_cap);
+                }
                 right_exprs[right_count++] = first_expr;
             }
             
@@ -1955,8 +1963,9 @@ Ast* parse_expression_stmt(Parser* p) {
                 lexer_next(&p->lex); // 消费 ','
                 Ast* next_expr = parse_expression(p);
                 if (next_expr) {
-                    if (right_count >= left_count) {
-                        // 右侧表达式太多，稍后报错
+                    if (right_count >= right_cap) {
+                        right_cap *= 2;
+                        right_exprs = (Ast**)realloc(right_exprs, sizeof(Ast*) * right_cap);
                     }
                     right_exprs[right_count++] = next_expr;
                 }
@@ -2281,6 +2290,7 @@ Ast* parse_struct_stmt(Parser* p) {
                     error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "struct 关联常量必须有初始值");
                     free(cname);
                     type_free(const_type);
+                    const_type = NULL;   // ★ 下方统一的 type_free 不能再释放一次（UAF 实测）
                     break;
                 }
 
@@ -2290,6 +2300,7 @@ Ast* parse_struct_stmt(Parser* p) {
                     error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "struct 关联常量值解析失败");
                     free(cname);
                     type_free(const_type);
+                    const_type = NULL;   // ★ 同上，避免 break 之后二次释放
                     break;
                 }
 
@@ -3520,7 +3531,14 @@ Ast* parse_enum_stmt(Parser* p) {
         member_count++;
 
         // 下一个自动分配的值为当前值 + 1
-        next_auto_value = member_value + 1;
+        //   ★ 2026-10-30：成员值用 int64_t，显式写 9223372036854775807（或更大，已被
+        //   strtoll 饱和到 INT64_MAX）再跟一个自动递增成员时，`+1` 是有符号溢出（UB，
+        //   UBSAN 实测）。与"大整数饱和到 INT64_MAX"的既有口径保持一致：饱和，不回绕。
+        if (member_value >= INT64_MAX) {
+            next_auto_value = INT64_MAX;
+        } else {
+            next_auto_value = member_value + 1;
+        }
 
         // 可选的分隔符：分号或逗号。
         // 扫描器（scan_enum.inc）一直支持逗号分隔，解析器此前只吃 ';'，

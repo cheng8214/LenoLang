@@ -1,0 +1,88 @@
+var log = ""
+
+// break 时 finally 里 return ⇒ return 覆盖 break（函数返回 5，循环不再继续）
+func fin_return_overrides(): int {
+    for 0:3 to i {
+        try {
+            break
+        } finally {
+            log = log + "R"
+            return 5
+        }
+    }
+    return 9
+}
+
+// break 时 finally 里 throw ⇒ 异常覆盖 break，外层 catch 接住
+func fin_throw_overrides(): int {
+    int r = 0
+    try {
+        for 0:3 to i {
+            try {
+                break
+            } finally {
+                throw "boom"
+            }
+        }
+    } catch e {
+        r = 7
+    }
+    return r
+}
+
+// finally 体内的嵌套 try/finally 正常结束：不得提前消费外层 break 的续跳
+func nested_try_in_finally(): int {
+    int n = 0
+    for 0:3 to i {
+        try {
+            n = n + 1
+            break
+        } finally {
+            try {
+                log = log + "x"
+            } finally {
+                log = log + "y"
+            }
+            n = n + 10
+        }
+        n = n + 100
+    }
+    return n
+}
+
+// 嵌套两层 try-finally 都被 break 跨过：两层 finally 都要跑，然后跳出循环
+func two_finally_layers(): int {
+    int n = 0
+    for 0:2 to i {
+        try {
+            try {
+                n = n + 1
+                break
+            } finally {
+                n = n + 10
+            }
+        } finally {
+            n = n + 100
+        }
+        n = n + 1000
+    }
+    return n
+}
+
+main() {
+    assert_eq(fin_return_overrides(), 5, "finally 里的 return 覆盖 break")
+    assert_eq(log, "R", "finally 已执行")
+
+    log = ""
+    assert_eq(fin_throw_overrides(), 7, "finally 里的 throw 被外层 catch 接住")
+    assert_eq(log, "", "throw 覆盖 break，log 不应有嵌套痕迹")
+
+    log = ""
+    assert_eq(nested_try_in_finally(), 11, "嵌套 try 正常结束后仍按外层 break 续跳")
+    assert_eq(log, "xy", "finally 体内的嵌套 try/finally 正常执行")
+
+    log = ""
+    assert_eq(two_finally_layers(), 111, "两层 finally 都跑（1+10+100），不再执行循环后半段")
+
+    print("test_finally_override passed")
+}

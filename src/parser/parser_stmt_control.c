@@ -767,6 +767,8 @@ Ast* parse_switch_stmt(Parser* p) {
     
     // 解析 switch 表达式
     Ast* expr = parse_expression(p);
+    // ★ 2026-10-30：表达式解析失败会返回 NULL（已报「期望表达式」）⇒ 不能继续解引用。
+    if (!expr) return NULL;
     
     // 提取 switch 表达式的变量名（用于 case is Type 的类型收窄）
     char* switch_var_name = NULL;

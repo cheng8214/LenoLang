@@ -1264,14 +1264,16 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                         }
                         // 归一后两边都是 int（枚举变量 + 枚举成员）：保留 element_type(int) ✓
                         //   注：这一支必须显式给，字面量这里没有 `kind 相同就取该类型` 的兜底 ✗
+                        //   ★ 2026-10-30：这里 free 掉 elem_type 后必须**结束判断链**（下面的
+                        //     int+float 分支还会读 elem_type->kind）—— 原来它是独立 if，
+                        //     会继续往下读到已释放内存（ASAN 实测 heap-use-after-free）。
                         if (element_type->kind == TYPE_INT && elem_type->kind == TYPE_INT) {
                             type_free(elem_type);
                             promoted = 1;
                         }
-                        
                         // int + float -> float
-                        if ((element_type->kind == TYPE_INT && elem_type->kind == TYPE_FLOAT) ||
-                            (element_type->kind == TYPE_FLOAT && elem_type->kind == TYPE_INT)) {
+                        else if ((element_type->kind == TYPE_INT && elem_type->kind == TYPE_FLOAT) ||
+                                 (element_type->kind == TYPE_FLOAT && elem_type->kind == TYPE_INT)) {
                             TypeInfo* new_type = type_new(TYPE_FLOAT);
                             type_free(element_type);
                             type_free(elem_type);
@@ -3022,7 +3024,7 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                         ok != TYPE_STRUCT && ok != TYPE_CSTRUCT && ok != TYPE_FACE &&
                         ok != TYPE_ENUM && ok != TYPE_CLIB && ok != TYPE_PTR_GENERIC &&
                         ok != TYPE_ANY && ok != TYPE_INFER && ok != TYPE_UNKNOWN &&
-                        ok != TYPE_GENERIC_PARAM && ok != TYPE_MULTI_RET) {
+                        ok != TYPE_GENERIC_PARAM && ok != TYPE_MULTI_RET && ok != TYPE_POISON) {
                         const char* field_name = ast->u.index.index->u.string.value;
                         error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                             "类型 '%s' 不支持属性访问 '.%s'（只有 struct、dict、array 等类型才能访问属性）",
@@ -3624,7 +3626,7 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     ok != TYPE_STRUCT && ok != TYPE_CSTRUCT && ok != TYPE_FACE &&
                     ok != TYPE_ENUM && ok != TYPE_CLIB && ok != TYPE_PTR_GENERIC &&
                     ok != TYPE_ANY && ok != TYPE_INFER && ok != TYPE_UNKNOWN &&
-                    ok != TYPE_GENERIC_PARAM && ok != TYPE_MULTI_RET) {
+                    ok != TYPE_GENERIC_PARAM && ok != TYPE_MULTI_RET && ok != TYPE_POISON) {
                     const char* field_name = ast->u.field_access.field_name;
                     error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                         "类型 '%s' 不支持属性访问 '.%s'（只有 struct、dict、array 等类型才能访问属性）",

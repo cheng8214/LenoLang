@@ -418,7 +418,10 @@
         {                                                                              \
             int64_t x = val_as_int(bv);                                                \
             if (likely(x <= (INT48_MAX >> shi) && x >= (INT48_MIN >> shi))) {          \
-                R(a) = val_int(x << shi);                                              \
+                /* ★ 2026-10-30：C 里**左移负数**是 UB（UBSAN 实测 `-5 << 2`）。       \
+                   条件已保证结果落在 int48 内 ⇒ 用乘以 2^shi 表达同一语义，             \
+                   负数也**有定义**（不会溢出 int64：乘积严格在 [INT48_MIN,INT48_MAX]）。*/ \
+                R(a) = val_int(x * ((int64_t)1 << shi));                               \
             } else {                                                                   \
                 R(a) = bigint_compact_to_int(bigint_shl(promote_to_bigint(bv), (int)shi)); \
             }                                                                          \

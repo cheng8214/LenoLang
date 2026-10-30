@@ -10,6 +10,8 @@ void codegen_init(CodeGen* gen, Chunk* chunk, Semantic* sem) {
     gen->scope_depth = 0;
     gen->loop_head = NULL;
     gen->loop_count = 0;
+    gen->try_fin_head = NULL;
+    gen->try_fin_depth = 0;
     gen->finally_depth = 0;
     gen->current_func = NULL;
     // 寄存器分配器初始化

@@ -7,83 +7,119 @@
         int a = READ_A();
         int bx = READ_Bx();
         uint8_t* try_start = frame->ip - 4;
-        frame->prev_catch_ip = frame->catch_ip;
-        frame->prev_finally_ip = frame->finally_ip;
+        // ★ 2026-10-30：外层处理状态**压栈**（不再是单槽 prev_*）⇒ 任意嵌套深度都能还原
+        if (!vm_try_push(frame)) {
+            if (!throw_runtime_error("try/defer 嵌套过深（超过 24 层）", GET_CURRENT_LINE())) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
         if (a == 1) {
-            frame->catch_ip = NULL;
+            // 无 catch、只有 finally：**保留外层 catch**（不覆盖），本层标记 has_catch=0
+            frame->has_catch = 0;
             frame->finally_ip = try_start + bx;
         } else {
             frame->catch_ip = try_start + bx;
+            frame->has_catch = 1;
             frame->finally_ip = NULL;
         }
+        // 新 try 区域是**独立**的上下文：即便它写在某个 finally 体内，本层自己的
+        // catch/finally 也必须先被派发到（出栈时再还原外层的 in_finally）✓
+        frame->in_finally = 0;
         DISPATCH();
     }
-    // OP_CATCH A Bx: R[A] = 当前异常；清除 catch 状态（寄存器式不再走栈传异常）
-    //   Bx != 0：本层 finally 块相对本指令的偏移 —— 在这里就**预备**好 finally_ip，
-    //   使 catch 体内再次 throw 时先执行本层 finally、再向外传播
-    //   （`try { throw "first" } catch e { throw "second" } finally { ... }`）。
+    // OP_CATCH A Bx: R[A] = 当前异常（Bx 保留兼容，运行期已不需要：catch 体内的
+    //   "再次 throw 先跑本层 finally"由 has_catch=0 + finally_ip 自然处理）
     LABEL(OP_CATCH): {
         int a = READ_A();
-        int bx = READ_Bx();
         R(a) = vm.exception;
         vm.exception = val_null();
         vm.has_exception = 0;
         frame->catch_ip = NULL;
-        // 预备本层 finally：catch 体内再次 throw 时要先跑它（见 catch_finally_ip 说明）
-        frame->catch_finally_ip = bx ? ((frame->ip - 4) + bx) : NULL;
+        frame->has_catch = 0;
         DISPATCH();
     }
     // OP_FINALLY Bx: Bx = finally 块相对本指令起始的字节偏移
     LABEL(OP_FINALLY): {
+        int a = READ_A();
         int bx = READ_Bx();
         uint8_t* fin_start = frame->ip - 4;
+        uint8_t* target = fin_start + bx;
+        if (a == 1) {
+            // ★ 2026-10-30：**预备登记**（`try{...}catch{...}finally{...}` 的 try 体入口）。
+            //   A=0 的 OP_TRY 只登记 catch（finally_ip = NULL）⇒ try 体内的 return / break /
+            //   continue 根本看不见本层 finally（被静默跳过）✗ 实测。
+            //   这里只补一条 finally_ip；本层处理状态已由 OP_TRY 压栈，不动异常/返回值状态。
+            frame->finally_ip = target;
+            DISPATCH();
+        }
         if (!vm.pending_exception) {
             vm.exception = val_null();
         }
-        frame->finally_ip = fin_start + bx;
+        frame->finally_ip = target;
         frame->in_finally = 1;
         DISPATCH();
     }
     LABEL(OP_END_TRY): {
         int a = READ_A();
+        // 记下"刚刚结束的是哪一层 finally"（出栈前捕获）：break/continue 续跳要靠它区分
+        // 嵌套 try 在 finally 体内正常结束时的 A=4。
+        uint8_t* ending_fin = frame->finally_ip;
+
         // A=2：**离开 finally 块**（finally 体内的 break/continue 跳出，codegen 补发）——
-        //   只做"注销本层 try 注册 + 丢弃在飞异常"，**不做任何跳转**：
-        //   控制流由紧随其后的 OP_JMP 决定 ✓（JS/Python 同语义：break/continue 覆盖在飞异常；
-        //   不注销的话后面同一帧里的异常会跳回这个已经跑完的 finally 块 ✗）
+        //   出栈还原外层 + 丢弃在飞异常，**不做任何跳转**（控制流交给随后的 OP_JMP）
         if (a == 2) {
-            frame->catch_ip = frame->prev_catch_ip;
-            frame->prev_catch_ip = NULL;
-            frame->catch_finally_ip = NULL;
-            frame->finally_ip = frame->prev_finally_ip;
-            frame->prev_finally_ip = NULL;
-            frame->in_finally = 0;
+            vm_try_pop(frame);
+            frame->finally_goto_target = NULL;
+            frame->finally_goto_owner = NULL;
+            frame->finally_goto_layers = 0;
             vm.pending_exception = 0;
             vm.has_exception = 0;
             vm.exception = val_null();
             vm.exception_line = 0;
             DISPATCH();
         }
-        // A=1：**catch 块入口**那次 END_TRY。
-        //   catch 体期间必须保持 catch_ip = NULL 且 prev_catch_ip = 外层 catch：
-        //     · catch 体内 throw ⇒ catch_finally_ip 分支先跑本层 finally，
-        //       再由 finally 末尾的 END_TRY 用 prev_catch_ip 继续向外传播 ✓
-        //     · catch 体内普通 throw（本层无 finally）⇒ 走 prev_catch_ip 兜底 ✓
-        //   （A=0：正常收尾，把 prev_* 还原回 catch_ip/finally_ip 并清空 prev_*）
-        if (!a) {
-            frame->catch_ip = frame->prev_catch_ip;
-            frame->prev_catch_ip = NULL;
-            frame->catch_finally_ip = NULL;
+        // A=3：**catch 块入口**、且本层另有 finally
+        //   catch 已消费 ⇒ has_catch=0；本层 finally 保留（catch 体内的 return / throw
+        //   仍要先跑它）。catch 体结束自然落入 finally，由 finally 末尾的 END_TRY A=4 出栈。
+        if (a == 3) {
+            frame->catch_ip = NULL;
+            frame->has_catch = 0;
+            frame->in_finally = 0;
+            vm.has_exception = 0;
+            vm.exception = val_null();
+            vm.exception_line = 0;
+            DISPATCH();
         }
-        frame->finally_ip = frame->prev_finally_ip;
-        frame->prev_finally_ip = NULL;
-        frame->in_finally = 0;
+        // A=4：**finally 体结束** ⇒ 出栈还原外层
+        // A=1：**catch 入口（无 finally）** ⇒ 整个 try 结束，出栈还原外层
+        // A=0：try 体正常结束 —— 有 finally 时**不出栈**（还要跑 finally，仅露出外层 catch）；
+        //        只有 catch 时整个 try 结束，出栈。
+        if (a == 4 || a == 1) {
+            vm_try_pop(frame);
+        } else if (!frame->finally_ip) {
+            vm_try_pop(frame);
+        } else {
+            vm_try_peek_outer_catch(frame);
+        }
 
         // 需要在 finally 之后继续传播的异常
         if (vm.pending_exception) {
+            // 异常覆盖 break/continue 的续跳（JS/Python 同语义）
+            frame->finally_goto_target = NULL;
+            frame->finally_goto_owner = NULL;
+            frame->finally_goto_layers = 0;
             vm.pending_exception = 0;
-            if (frame->catch_ip) {
+            // 外层若**有 catch** ⇒ catch 优先（异常在它 try 体内）；
+            // 否则先跑外层的 finally（finally-only 的 finally 比更外层的 catch 更近）
+            if (!frame->has_catch && frame->finally_ip) {
+                vm.pending_exception = 1;
+                frame->ip = frame->finally_ip;
+                vm.has_exception = 0;
+                DISPATCH();
+            } else if (frame->has_catch && frame->catch_ip) {
                 frame->ip = frame->catch_ip;
                 frame->catch_ip = NULL;
+                frame->has_catch = 0;
                 vm.has_exception = 0;
                 DISPATCH();
             } else if (frame->finally_ip) {
@@ -115,12 +151,12 @@
 
         // try 块中的 return 在此收尾（finally 已执行完）
         if (frame->has_try_return) {
-            // ★ 2026-10-23 修（嵌套 finally 只跑最内层）：
-            //   `try { try { return } finally { B } } finally { A }` 里 B 跑完
-            //   原来直接 REG_FINISH_RETURN ⇒ **A 被静默跳过**（实测 defer 链只执行最后一个，
-            //   readDword 那种两层嵌套的内存释放也一直漏一层，只是泄漏不报错看不出来）。
-            //   现在：还有外层 finally ⇒ 先跳过去，返回值继续暂存（has_try_return 不清）。
-            if (FRAME_TRY_VALID(frame) && frame->finally_ip) {
+            // return 覆盖 break/continue 的续跳
+            frame->finally_goto_target = NULL;
+            frame->finally_goto_owner = NULL;
+            frame->finally_goto_layers = 0;
+            // 还有外层 finally ⇒ 先跳过去，返回值继续暂存（has_try_return 不清）。
+            if (FRAME_TRY_VALID(frame) && frame->finally_ip && !frame->in_finally) {
                 frame->in_finally = 1;
                 frame->ip = frame->finally_ip;
                 DISPATCH();
@@ -129,6 +165,47 @@
             Value saved = frame->try_return_value;
             REG_FINISH_RETURN(saved);
             DISPATCH();
+        }
+
+        // ★ 2026-10-30：break/continue 穿过 finally 的续跳（OP_FIN_GOTO 布置，A=4 收尾）。
+        //   ending_fin == owner 才算"轮到我等的这一层" —— 嵌套 try 在 finally 体内正常
+        //   结束时也会走 A=4，不能让它把外层 break 的续跳提前消费掉 ✗
+        if (a == 4 && frame->finally_goto_target &&
+            ending_fin == frame->finally_goto_owner) {
+            if (frame->finally_goto_layers > 1 && !frame->in_finally && frame->finally_ip) {
+                frame->finally_goto_layers--;
+                frame->finally_goto_owner = frame->finally_ip;
+                frame->in_finally = 1;
+                frame->ip = frame->finally_ip;
+                DISPATCH();
+            }
+            uint8_t* gt = frame->finally_goto_target;
+            frame->finally_goto_target = NULL;
+            frame->finally_goto_owner = NULL;
+            frame->finally_goto_layers = 0;
+            frame->ip = gt;
+            DISPATCH();
+        }
+        DISPATCH();
+    }
+    // OP_FIN_GOTO A Bx: break/continue 穿过 try-finally
+    //   A = 还要执行几层 finally；Bx = 续跳目标（原始 16 位偏移，相对本指令起点）。
+    //   记录 (target, layers) 后跳进当前最内层 finally；每层 finally 末尾的 END_TRY A=4
+    //   递减层数，减到 0 时续跳 target（见上面 A=4 分支）。
+    LABEL(OP_FIN_GOTO): {
+        int layers = READ_A();
+        int bx = READ_Bx();
+        frame->finally_goto_target = (frame->ip - 4) + bx;
+        frame->finally_goto_layers = layers;
+        frame->finally_goto_owner = NULL;
+        if (FRAME_TRY_VALID(frame) && frame->finally_ip && !frame->in_finally && layers > 0) {
+            frame->finally_goto_owner = frame->finally_ip;
+            frame->in_finally = 1;
+            frame->ip = frame->finally_ip;
+        } else {
+            frame->ip = frame->finally_goto_target;
+            frame->finally_goto_target = NULL;
+            frame->finally_goto_layers = 0;
         }
         DISPATCH();
     }
@@ -157,15 +234,17 @@
             free(m);
         }
         if (vm.pending_exception) vm.pending_exception = 0;
+        // 抛异常覆盖 break/continue 的续跳（JS/Python 同语义）
+        frame->finally_goto_target = NULL;
+        frame->finally_goto_owner = NULL;
+        frame->finally_goto_layers = 0;
         vm.exception = exception;
         vm.has_exception = 1;
         vm.exception_line = line;
 
-        // 在 finally 中 throw：清掉本帧 finally 防止死循环
-        if (FRAME_TRY_VALID(frame) && frame->in_finally && frame->finally_ip) {
-            frame->finally_ip = NULL;
-        }
-
+        // finally 里抛异常：该 finally 放弃执行。**逐帧**在派发循环里出栈到非 finally
+        //   上下文（见下面 for 循环开头）—— 不能只处理当前帧：异常从被调函数（如
+        //   finally 里调用的 boom()）抛出时，正在执行 finally 的是**外层帧** tf。
         int handled = 0;
         // ★ 协程边界：协程帧与调用方帧共用同一个 vm.frames，扫到 0 就会拿**调用方**的
         //   try-catch 来接管协程里的异常（实测主线里的 catch 会在协程执行期间打印），
@@ -179,13 +258,30 @@
         for (int i = vm.frame_cnt - 1; i >= throw_floor; i--) {
             CallFrame* tf = &vm.frames[i];
             if (tf->closure && tf->closure->function && !tf->closure->function->has_try) continue;
-            uint8_t* tcatch = tf->catch_ip ? tf->catch_ip : tf->prev_catch_ip;
-            // ★ 2026-10-22 修（同 vm_exception.inc 的口径）：
-            //   已在 finally 里 ⇒ 不能再取本层 finally_ip（会跳回开头，死循环），改取外层 ✓
-            uint8_t* tfin = (tf->in_finally || !tf->finally_ip)
-                                ? tf->prev_finally_ip
-                                : tf->finally_ip;
-            if (!tcatch && !tfin) continue;
+            // finally 体内抛出的异常：该 finally 放弃执行 ⇒ 先出栈到非 finally 上下文
+            if (tf->in_finally) {
+                while (tf->try_top > 0 && tf->in_finally) vm_try_pop(tf);
+                if (tf->in_finally) tf->in_finally = 0;
+            }
+            // ★ 2026-10-30：处理栈语义 —— 当前层要么有自己的 catch（has_catch），
+            //   要么有 finally；有 catch 时 catch 优先（异常就发生在它的 try 体内），
+            //   否则先跑 finally（finally-only 的 finally 比更外层 catch 更近）。
+            if (!tf->has_catch && tf->finally_ip) {
+                vm.pending_exception = 1;
+                tf->ip = tf->finally_ip;
+                vm.has_exception = 0;
+            } else if (tf->has_catch && tf->catch_ip) {
+                tf->ip = tf->catch_ip;
+                tf->catch_ip = NULL;
+                tf->has_catch = 0;
+                vm.has_exception = 0;
+            } else if (tf->finally_ip) {
+                vm.pending_exception = 1;
+                tf->ip = tf->finally_ip;
+                vm.has_exception = 0;
+            } else {
+                continue;   // 本帧当前层没有处理器 ⇒ 继续向外层帧找
+            }
 
             for (int j = vm.frame_cnt - 1; j > i; j--) {
                 CallFrame* uw = &vm.frames[j];
@@ -196,27 +292,6 @@
             }
             vm.frame_cnt = i + 1;
             vm.sp = tf->stack_base;
-
-            if (tf->catch_finally_ip && !tf->in_finally) {
-                // catch 体内再次 throw：先执行**本层** finally，再向外传播
-                vm.pending_exception = 1;
-                tf->ip = tf->catch_finally_ip;
-                tf->catch_finally_ip = NULL;
-                vm.has_exception = 0;
-            } else if (tf->finally_ip && !tf->in_finally && !tf->catch_ip) {
-                vm.pending_exception = 1;
-                tf->ip = tf->finally_ip;
-                vm.has_exception = 0;
-            } else if (tcatch) {
-                tf->ip = tcatch;
-                vm.has_exception = 0;
-                if (tf->catch_ip) tf->catch_ip = NULL;
-                else tf->prev_catch_ip = NULL;
-            } else {
-                vm.pending_exception = 1;
-                tf->ip = tfin;
-                vm.has_exception = 0;
-            }
             handled = 1;
             break;
         }

@@ -486,6 +486,10 @@ static void fold_binary(Ast* ast) {
                 //   所以 `8 >>> -1` 一直是报错的 —— 三条移位现在终于一致 ✓）
                 if (rv < 0.0) return;
                 if ((int)rv >= 32) return; // 移位量>=32时不折叠，交给VM的BigInt路径处理
+                // ★ 2026-10-30：C 里**左移负数**是 UB（UBSAN 实测 `-5 << 2`）。
+                //   负数左移在 Leno 运行期按大整数补码语义有确定结果 ⇒ 不折叠，
+                //   交给 VM 计算（与上面"负移位量不折叠"同口径）。
+                if (lv < 0.0) return;
                 result = (double)((long long)lv << (int)rv);
                 break;
             case TOK_SHR:

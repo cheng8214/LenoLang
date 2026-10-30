@@ -172,6 +172,7 @@ void semantic_init(Semantic* s, Ast* root) {
     //   （实测：漏了这行 ⇒ union_narrow_count 是垃圾 7688 ⇒ 检查函数一进去就乱翻数组 ✗）
     s->union_narrow_count = 0;
     memset(s->union_narrow, 0, sizeof(s->union_narrow));
+    s->ast_depth = 0;   // ★ 递归深度守护（同上面的教训：必须显式清零）
 
     // 初始化 imported_modules 数组
     memset(s->imported_modules, 0, sizeof(s->imported_modules));

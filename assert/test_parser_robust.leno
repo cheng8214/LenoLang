@@ -1,0 +1,73 @@
+// test_parser_robust.leno — 解析失败的输入必须报错退出，不能越界写/空指针解引用
+//
+// 现场（2026-10-30，ASAN/UBSAN 变异测试）：
+//   · `a, b = 1, 2, 3`（左侧 2 个、右侧 3 个）在收集右值时按左侧个数分配数组，
+//     第 3 个右值直接越界写（heap-buffer-overflow）；
+//   · `switch` 后表达式解析失败返回 NULL，parse_switch_stmt 仍解引用 expr->kind；
+//   · 前缀表达式失败后 Pratt 循环仍带 NULL 调 parse_index ⇒ obj->kind 空指针解引用；
+//   · 未终止字符串的 token.text 为 NULL，copy_string 仍 memcpy(dst, NULL, 0)（UB）。
+// 这些输入本来就该编译失败；本用例保证失败路径不崩、诊断也不丢。
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_parser_robust")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ① 并行赋值右侧多于左侧（旧实现 heap-buffer-overflow）
+    var p1 = dirs.join(work, "multi_assign.leno")
+    files.write(p1, @"main() {
+    var a = 0
+    var b = 0
+    a, b = 1, 2, 3
+}
+")
+    ce.expect_error(p1, "并行赋值右侧过多", "并行赋值数量不匹配", 4)
+
+    // ② switch 缺少表达式（旧实现空指针解引用）
+    var p2 = dirs.join(work, "switch_no_expr.leno")
+    files.write(p2, @"main() {
+    switch
+}
+")
+    ce.expect_error(p2, "switch 缺表达式", "期望表达式", 3)
+
+    // ③ switch 后直接跟 '{'（表达式解析失败后再报大括号）
+    var p3 = dirs.join(work, "switch_brace.leno")
+    files.write(p3, @"main() {
+    switch {
+    }
+}
+")
+    ce.expect_error(p3, "switch 缺表达式 + 大括号", "switch 语句体必须用大括号", 0)
+
+    // ④ 未终止字符串（旧实现 memcpy(NULL, 0)）
+    var p4 = dirs.join(work, "unterminated.leno")
+    files.write(p4, @"main() {
+    var s = ""abc
+}
+")
+    ce.expect_error(p4, "未终止字符串", "未终止的字符串", 0)
+
+    // ⑤ struct 关联常量缺 '='：错误分支先 type_free，break 之后又统一 type_free
+    //    ⇒ 二次释放（ASAN 实测 heap-use-after-free）
+    var p5 = dirs.join(work, "const_no_eq.leno")
+    files.write(p5, @"export struct S {
+    const bool X
+}
+")
+    ce.expect_error(p5, "关联常量缺等号", "struct 关联常量必须有初始值", 0)
+
+    // ⑥ struct 关联常量值不是表达式：同上，值解析失败的清理路径也会二次释放
+    var p6 = dirs.join(work, "const_bad_value.leno")
+    files.write(p6, @"export struct S {
+    const bool X =] false
+}
+")
+    ce.expect_error(p6, "关联常量值非法", "struct 关联常量值解析失败", 0)
+
+    print("test_parser_robust passed")
+}
