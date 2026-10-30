@@ -1,0 +1,24 @@
+// test_enum_auto_saturate.leno — enum 自动递增在 INT64_MAX 处饱和，不回绕
+//
+// 现场（2026-10-30，UBSAN）：成员值存 int64_t，显式写 9223372036854775807
+//   （或更大，已按既有口径饱和到 INT64_MAX）后再跟一个自动递增成员时，
+//   解析器的 `next_auto_value = member_value + 1` 是有符号溢出（UB）。
+//   与"大整数饱和到 INT64_MAX"保持一致：饱和。
+
+enum E {
+    MAXV = 9223372036854775807
+    NEXT
+}
+
+enum F {
+    HUGE = 99999999999999999999
+    AFTER
+}
+
+main() {
+    assert_eq(E.MAXV, 9223372036854775807)
+    assert_eq(E.NEXT, 9223372036854775807)
+    assert_eq(F.HUGE, 9223372036854775807)
+    assert_eq(F.AFTER, 9223372036854775807)
+    print("test_enum_auto_saturate passed")
+}

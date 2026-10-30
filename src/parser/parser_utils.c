@@ -111,7 +111,9 @@ char* process_escape_sequences(const char* text, int len, int* out_len, int line
 char* copy_string(const char* text, int len) {
     char* str = (char*)malloc(len + 1);
     if (str) {
-        memcpy(str, text, len);
+        // ★ 2026-10-30：未终止的字符串 token 可能 text == NULL 且 len == 0；
+        //   memcpy(dst, NULL, 0) 在 C 里仍是 UB（UBSAN 实测）。
+        if (text && len > 0) memcpy(str, text, len);
         str[len] = '\0';
     }
     return str;

@@ -1,0 +1,32 @@
+// test_shift_negative_value.leno — 负数左移的**结果**（不是负移位量）
+//
+// 现场（2026-10-30，UBSAN）：C 的 `long long <<` 对**负数左值**是 UB。
+//   · optimize.c 的常量折叠对 `-5 << 2` 直接 `(long long)lv << rv`；
+//   · VM 的 SHL_BODY 对 int48 负数也是 `x << shi`。
+//   两处都改为"常量不折叠 / 运行期用乘法"，语义保持一致（-5 << 2 = -20）。
+// 与 test_shift_negative.leno（负**移位量**必须报错）不同，本用例钉的是左值为负时的取值。
+
+main() {
+    // 常量折叠路径
+    assert_eq(-5 << 2, -20)
+    assert_eq(-1 << 3, -8)
+    assert_eq(-5 << 0, -5)
+
+    // 变量路径（VM SHL_BODY）
+    int x = -5
+    assert_eq(x << 2, -20)
+    assert_eq(x << 0, -5)
+
+    // 左移越界仍走 bigint 路径，负数同样正确
+    int big = -1
+    assert_eq(big << 47, -140737488355328)
+
+    // 右移负数保持算术右移
+    assert_eq(-8 >> 2, -2)
+    assert_eq(-1 >> 1, -1)
+
+    // 常量写法与变量写法必须一致
+    assert_eq(-5 << 2, x << 2)
+
+    print("test_shift_negative_value passed")
+}

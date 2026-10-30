@@ -1,0 +1,29 @@
+// test_enum_array_mix_uaf.leno — 「枚举变量 + 枚举成员」数组字面量不能再二次释放类型
+//
+// 现场（2026-10-30，ASAN 变异测试）：
+//   `Array[int] a = [枚举变量, 枚举成员]` 触发 infer_expr_type 的元素类型提升表：
+//   枚举先归一成 int，两侧都是 int 的分支 `type_free(elem_type)` 之后**没有结束判断链**，
+//   紧接着的 `if (int+float)` 又读 `elem_type->kind` ⇒ heap-use-after-free。
+//   修复：把「两侧都是 int」接成 else-if 链的第一支。
+//
+// 本用例钉住：这种混写既不能崩溃，也要按 int 正确取值。
+
+enum ScaleMode {
+    NEAREST = 1
+    LINEAR = 2
+}
+
+main() {
+    ScaleMode m = ScaleMode.LINEAR
+    Array[int] a = [m, ScaleMode.NEAREST]
+    assert_eq(a.len(), 2)
+    assert_eq(a[0], 2)
+    assert_eq(a[1], 1)
+
+    // 反向顺序（成员在前、变量在后）走同一张提升表
+    Array[int] b = [ScaleMode.NEAREST, m]
+    assert_eq(b[0], 1)
+    assert_eq(b[1], 2)
+
+    print("test_enum_array_mix_uaf passed")
+}
