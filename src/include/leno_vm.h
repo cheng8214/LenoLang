@@ -666,6 +666,22 @@ void chunk_write(Chunk* chunk, uint8_t byte, int line);
 // 1,000,000 帧 × CallFrame 640B ≈ 640MB，正常程序递归远到不了这个深度。
 #define VM_MAX_FRAMES 1000000
 
+// ============================================================================
+// try 处理栈（每帧一份）
+// ----------------------------------------------------------------------------
+// 每次 OP_TRY 把**外层**处理状态压栈，END_TRY 出栈还原。
+// 单槽 prev_* 只能记 2 层，第 3 层起外层 catch/finally 会被覆盖丢失（2026-10-30 实测）。
+// 24 层对真实代码绰绰有余（同块里 24 个 defer 才会撞上限）；撞上时运行期报错。
+// ============================================================================
+#define MAX_TRY_NEST 24
+
+typedef struct {
+    uint8_t* catch_ip;
+    uint8_t* finally_ip;
+    int has_catch;
+    int in_finally;
+} SavedTryLevel;
+
 typedef struct CallFrame {
     Chunk* chunk;
     uint8_t* ip;
@@ -685,15 +701,16 @@ typedef struct CallFrame {
     //   可安全别名的空间 —— 数组明明有 64 格却没被用满）。
     int locals_capacity;
     // 异常处理
-    uint8_t* catch_ip;   // catch 块的指令指针
-    uint8_t* finally_ip; // finally 块的指令指针
-    uint8_t* prev_catch_ip;   // 保存之前的 catch_ip（用于嵌套 try-catch）
-    uint8_t* prev_finally_ip; // 保存之前的 finally_ip（用于嵌套 try-catch）
-    // ★ catch 体所属 try 的 finally 块入口（OP_CATCH 预备，最后由 OP_END_TRY 清除）：
-    //   `try{...}catch e{ throw ... }finally{...}` 里 catch 体内再次 throw 时，
-    //   必须先执行**本层** finally 再向外传播（finally_ip 此刻已被 END_TRY 还原成外层）
-    uint8_t* catch_finally_ip;
+    // ★ 2026-10-30：单槽 `prev_catch_ip/prev_finally_ip` 换成**每帧 try 处理栈**。
+    //   单槽只能记 2 层：第 3 层嵌套开始，保存值被覆盖 ⇒ 外层 catch/finally 丢失
+    //   （实测：三层 try/finally 抛异常，最外层 catch 收不到；两个 defer + 用户 try
+    //    正好 3 层）。栈按 LIFO 压/弹，任意嵌套深度都能正确还原。
+    uint8_t* catch_ip;   // 当前层 catch 块的指令指针
+    uint8_t* finally_ip; // 当前层 finally 块的指令指针
+    int has_catch;       // 当前层是否**带 catch 块**（决定异常先走 catch 还是 finally）
     int in_finally;      // 标记是否在 finally 块中（防止无限循环）
+    SavedTryLevel try_saved[MAX_TRY_NEST];  // 外层处理状态（OP_TRY 压栈 / END_TRY 出栈）
+    int try_top;                            // 栈深度（0 = 不在任何 try 内）
     // ★ 2026-10-30：`break`/`continue` 跨出 try-finally 时的"续跳"状态。
     //   这两个原本被静默丢弃：break 直接 JMP 到循环出口，finally 整段没跑 ✗。
     //   OP_FIN_GOTO 先记录 (target, layers)，再跳进最内层 finally；每跑完一层
@@ -736,6 +753,46 @@ typedef struct CallFrame {
 #define FRAME_TRY_VALID(frame) \
     ((frame)->closure == NULL || (frame)->closure->function == NULL || \
      (frame)->closure->function->has_try)
+
+// --- try 处理栈操作（LIFO）-------------------------------------------------
+// 返回 0 = 栈满（调用方应报运行期错误；正常代码到不了 MAX_TRY_NEST 层嵌套）
+static inline int vm_try_push(CallFrame* f) {
+    if (f->try_top >= MAX_TRY_NEST) return 0;
+    SavedTryLevel* lv = &f->try_saved[f->try_top++];
+    lv->catch_ip = f->catch_ip;
+    lv->finally_ip = f->finally_ip;
+    lv->has_catch = f->has_catch;
+    lv->in_finally = f->in_finally;
+    return 1;
+}
+
+static inline void vm_try_pop(CallFrame* f) {
+    if (f->try_top <= 0) {
+        f->catch_ip = NULL;
+        f->finally_ip = NULL;
+        f->has_catch = 0;
+        f->in_finally = 0;
+        return;
+    }
+    SavedTryLevel* lv = &f->try_saved[--f->try_top];
+    f->catch_ip = lv->catch_ip;
+    f->finally_ip = lv->finally_ip;
+    f->has_catch = lv->has_catch;
+    f->in_finally = lv->in_finally;
+}
+
+// 只把「外层 catch」露出来（不出栈）：try 体正常结束、进入本层 finally 时，
+// finally 体内抛出的异常应直接找外层处理器，而不是再被本层 catch 抓住。
+static inline void vm_try_peek_outer_catch(CallFrame* f) {
+    if (f->try_top > 0) {
+        SavedTryLevel* lv = &f->try_saved[f->try_top - 1];
+        f->catch_ip = lv->catch_ip;
+        f->has_catch = lv->has_catch;
+    } else {
+        f->catch_ip = NULL;
+        f->has_catch = 0;
+    }
+}
 
 // ============================================================================
 // 模块帧 - 模块执行时的上下文

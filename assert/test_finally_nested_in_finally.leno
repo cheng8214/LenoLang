@@ -1,0 +1,74 @@
+var log = ""
+
+// finally 体内再写 try/catch：本层的 catch 必须能接住（不能被外层 in_finally 跳过）
+func try_in_finally(): int {
+    int r = 0
+    try {
+        log = log + "a"
+    } finally {
+        try {
+            throw "x"
+        } catch e {
+            log = log + "b"
+            r = 1
+        }
+        log = log + "c"
+    }
+    return r
+}
+
+// finally 体内再写 try/finally：嵌套 finally 正常跑，外层 finally 继续
+func fin_in_finally(): int {
+    int n = 0
+    try {
+        log = log + "A"
+    } finally {
+        try {
+            n = n + 1
+        } finally {
+            log = log + "B"
+        }
+        n = n + 10
+        log = log + "C"
+    }
+    return n
+}
+
+// finally 体内嵌套 try/finally 且内层抛：外层 finally 被放弃，异常传到外层 catch
+func throw_in_nested_fin(): int {
+    int r = 0
+    try {
+        log = log + "1"
+    } finally {
+        try {
+            log = log + "2"
+        } finally {
+            throw "nested"
+        }
+        log = log + "3"
+    }
+    return r
+}
+
+main() {
+    log = ""
+    assert_eq(try_in_finally(), 1, "finally 体内的 try/catch 能接住自己的异常")
+    assert_eq(log, "abc", "嵌套 catch 接住后 finally 继续")
+
+    log = ""
+    assert_eq(fin_in_finally(), 11, "finally 体内嵌套 try/finally 正常完成")
+    assert_eq(log, "ABC", "嵌套 finally 与外层 finally 都执行")
+
+    log = ""
+    var got = 0
+    try {
+        got = throw_in_nested_fin()
+    } catch e {
+        log = log + "E"
+        got = 9
+    }
+    assert_eq(got, 9, "内层 finally 抛出的异常被更外层 catch 接住")
+    assert_eq(log, "12E", "内层 finally 放弃后续语句（3 不执行）")
+
+    print("test_finally_nested_in_finally passed")
+}

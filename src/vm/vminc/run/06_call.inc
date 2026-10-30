@@ -347,6 +347,11 @@
             frame->finally_goto_target = NULL;
             frame->finally_goto_owner = NULL;
             frame->finally_goto_layers = 0;
+            // ★ 2026-10-30：当前 finally 层结束 ⇒ 出栈；若还嵌在外层 finally 里继续出栈，
+            //   直到回到 try/catch 上下文，再按下面的"外层还有 finally ⇒ 先跑它"继续收尾。
+            while (FRAME_TRY_VALID(frame) && frame->try_top > 0 && frame->in_finally) {
+                vm_try_pop(frame);
+            }
         }
 
         // 有 finally 且尚未执行：先执行 finally，返回值暂存

@@ -152,10 +152,9 @@ static inline int call(ObjClosure* closure, int arg_count, int line) {
     if (func->has_try) {
         frame->catch_ip = NULL;
         frame->finally_ip = NULL;
-        frame->catch_finally_ip = NULL;
-        frame->prev_catch_ip = NULL;
-        frame->prev_finally_ip = NULL;
+        frame->has_catch = 0;
         frame->in_finally = 0;
+        frame->try_top = 0;
         frame->try_return_value = val_null();
         frame->has_try_return = 0;
         frame->finally_goto_target = NULL;
@@ -241,10 +240,9 @@ static inline int call_no_type_check(ObjClosure* closure, int arg_count, int lin
     if (func->has_try) {
         frame->catch_ip = NULL;
         frame->finally_ip = NULL;
-        frame->catch_finally_ip = NULL;
-        frame->prev_catch_ip = NULL;
-        frame->prev_finally_ip = NULL;
+        frame->has_catch = 0;
         frame->in_finally = 0;
+        frame->try_top = 0;
         frame->try_return_value = val_null();
         frame->has_try_return = 0;
         frame->finally_goto_target = NULL;
@@ -465,10 +463,9 @@ static inline int call_reg_impl(ObjClosure* closure, int has_self, Value self,
     if (func->has_try) {
         frame->catch_ip = NULL;
         frame->finally_ip = NULL;
-        frame->catch_finally_ip = NULL;
-        frame->prev_catch_ip = NULL;
-        frame->prev_finally_ip = NULL;
+        frame->has_catch = 0;
         frame->in_finally = 0;
+        frame->try_top = 0;
         frame->try_return_value = val_null();
         frame->has_try_return = 0;
         frame->finally_goto_target = NULL;

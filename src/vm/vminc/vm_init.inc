@@ -222,10 +222,9 @@ void vm_load(Chunk* c) {
     frame->locals_capacity = locals_capacity;
     frame->catch_ip = NULL;
     frame->finally_ip = NULL;
-    frame->catch_finally_ip = NULL;
-    frame->prev_catch_ip = NULL;
-    frame->prev_finally_ip = NULL;
+    frame->has_catch = 0;
     frame->in_finally = 0;
+    frame->try_top = 0;
     frame->try_return_value = val_null();
     frame->has_try_return = 0;
     frame->finally_goto_target = NULL;
@@ -279,10 +278,9 @@ int vm_run_chunk(Chunk* chunk) {
     frame->slot_count = 0;
     frame->catch_ip = NULL;
     frame->finally_ip = NULL;
-    frame->catch_finally_ip = NULL;
-    frame->prev_catch_ip = NULL;
-    frame->prev_finally_ip = NULL;
+    frame->has_catch = 0;
     frame->in_finally = 0;
+    frame->try_top = 0;
     frame->try_return_value = val_null();
     frame->has_try_return = 0;
     frame->finally_goto_target = NULL;

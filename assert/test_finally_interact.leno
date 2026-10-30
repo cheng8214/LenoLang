@@ -1,0 +1,80 @@
+var log = ""
+
+// catch 里再抛：finally 只跑一次，外层 catch 拿到 "second"
+func catch_rethrow(): int {
+    try {
+        try {
+            throw "first"
+        } catch e {
+            throw "second"
+        } finally {
+            log = log + "F"
+        }
+    } catch o {
+        log = log + "G"
+        return 1
+    }
+}
+
+// finally 里抛：传播到外层 catch
+func throw_in_finally(): int {
+    try {
+        try {
+            log = log + "a"
+        } finally {
+            throw "boom"
+        }
+    } catch e {
+        return 2
+    }
+}
+
+// 无 catch 的 try/finally + 循环里的 continue
+func finonly_continue(): int {
+    int n = 0
+    for 0:2 to i {
+        try {
+            if i == 1 { continue }
+            n = n + 1
+        } finally {
+            log = log + "c"
+        }
+    }
+    return n
+}
+
+// switch 的 case 体里 break 外层循环
+func switch_break_loop(): int {
+    int n = 0
+    for 0:3 to i {
+        try {
+            switch i {
+                case 1 { n = n + 1; break }
+                default { n = n + 10 }
+            }
+            n = n + 100
+        } finally {
+            log = log + "K"
+        }
+    }
+    return n
+}
+
+main() {
+    assert_eq(catch_rethrow(), 1, "外层 catch 接到 rethrow")
+    assert_eq(log, "FG", "内层 finally 先跑，再到外层 catch")
+
+    log = ""
+    assert_eq(throw_in_finally(), 2, "finally 抛异常被外层 catch 接住")
+    assert_eq(log, "a", "finally 抛出前 try 体已执行")
+
+    log = ""
+    assert_eq(finonly_continue(), 2, "continue 轮的 n 不加（i=0/2 各加 1）")
+    assert_eq(log, "ccc", "无 catch 的 try/finally 在 continue 时也要跑")
+
+    log = ""
+    assert_eq(switch_break_loop(), 431, "四轮：i=1 的 switch break 不退出循环（每轮 +100）")
+    assert_eq(log, "KKKK", "四轮 finally 各一次")
+
+    print("test_finally_interact passed")
+}
