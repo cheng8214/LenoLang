@@ -1,0 +1,114 @@
+// test_switch_continue.leno — switch 里的 `continue` 必须继续**外层循环**
+//
+// 现场（2026-10-30）：gen_switch 也往 loop 上下文链上压了一层节点（只为支持 `break`
+//   跳出 switch）。但 AST_CONTINUE 原来一律把跳转登记在 **gen->loop_head**（这层
+//   switch）上，而 gen_switch 收尾只回填 break_jumps、从不回填 continue_jumps ⇒
+//   那些 JMP 的偏移一直是 0 ⇒ 运行期等同"不跳"，`continue` 静默退化成 fall through，
+//   循环体后半段照常执行（不报错、结果只是悄悄错）。语义分析认为"在循环内"所以合法。
+//
+// 修法：continue 沿 loop 链向外跳过所有 switch 节点，找到真正的循环再登记跳转；
+//   gen_loop_exit_jump 的 finally 深度也随目标循环（而不是 switch）计算。
+
+func test_for_range(): int {
+    int sum = 0
+    for 0:5 to i {
+        switch i {
+            case 1 { continue }
+            case 2 { sum = sum + 100 }
+            default { sum = sum + i }
+        }
+        sum = sum + 1
+    }
+    // i0:+0+1=1；i1 continue；i2:+100+1=102；i3:+3+1=106；i4:+4+1=111；i5:+5+1=117
+    return sum
+}
+
+func test_for_iter(): int {
+    int sum = 0
+    for [10, 20, 30, 40] to v, idx {
+        switch idx {
+            case 1 { continue }
+            default { sum = sum + v }
+        }
+        sum = sum + 1
+    }
+    // idx0:+10+1=11；idx1 continue；idx2:+30+1=42；idx3:+40+1=83
+    return sum
+}
+
+func test_while(): int {
+    int i = 0
+    int sum = 0
+    while i < 4 {
+        switch i {
+            case 0 { sum = sum + 5 }
+            case 2 { i = i + 1; continue }
+            default { sum = sum + i }
+        }
+        sum = sum + 1
+        i = i + 1
+    }
+    // i0:+5+1=6；i1:+1+1=8；i2:i=3 后 continue；i3:+3+1=12
+    return sum
+}
+
+func test_break_only_switch(): int {
+    int sum = 0
+    for 0:3 to i {
+        switch i {
+            case 0 {
+                sum = sum + 1
+                break
+            }
+            default { sum = sum + 10 }
+        }
+        sum = sum + 100
+    }
+    // i0:+1 break 出 switch +100=101；i1:+10+100=211；i2:+10+100=321；i3:+10+100=431
+    return sum
+}
+
+func test_nested_switch(): int {
+    int sum = 0
+    for 0:3 to i {
+        switch 0 {
+            case 0 {
+                switch i {
+                    case 1 { continue }
+                    default { sum = sum + i }
+                }
+            }
+        }
+        sum = sum + 1
+    }
+    // i0:+0+1=1；i1 continue；i2:+2+1=4；i3:+3+1=8
+    return sum
+}
+
+func test_switch_in_try(): int {
+    int sum = 0
+    for 0:3 to i {
+        try {
+            switch i {
+                case 1 { continue }
+                default { sum = sum + i }
+            }
+        } finally {
+            sum = sum + 10
+        }
+        sum = sum + 1
+    }
+    // i0:+0 后 finally+10=10，+1=11；i1 continue 仍走 finally =>21；
+    // i2:+2+10=33，+1=34；i3:+3+10=47，+1=48
+    return sum
+}
+
+main() {
+    assert_eq(test_for_range(), 117)
+    assert_eq(test_for_iter(), 83)
+    assert_eq(test_while(), 12)
+    assert_eq(test_break_only_switch(), 431)
+    assert_eq(test_nested_switch(), 8)
+    assert_eq(test_switch_in_try(), 48)
+    print("test_switch_continue passed")
+}

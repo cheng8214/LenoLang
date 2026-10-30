@@ -1,0 +1,630 @@
+// test_many_break_continue.leno — 单个循环内 break/continue 超过旧上限（256）
+//
+// 现场（2026-10-30）：LoopContext 的 break_jumps / continue_jumps 原是固定 [256]，
+//   同一循环里超过 256 条 break/continue 时越界写（ASAN 实测 heap-buffer-overflow）。
+//   改为按需 realloc 增长后，数量不再受 256 限制 —— 本用例用 300 条验证。
+
+func test_many_break(): int {
+    int n = 0
+    for 0:0 to i {
+        switch i {
+            case 0 { break }
+            case 1 { break }
+            case 2 { break }
+            case 3 { break }
+            case 4 { break }
+            case 5 { break }
+            case 6 { break }
+            case 7 { break }
+            case 8 { break }
+            case 9 { break }
+            case 10 { break }
+            case 11 { break }
+            case 12 { break }
+            case 13 { break }
+            case 14 { break }
+            case 15 { break }
+            case 16 { break }
+            case 17 { break }
+            case 18 { break }
+            case 19 { break }
+            case 20 { break }
+            case 21 { break }
+            case 22 { break }
+            case 23 { break }
+            case 24 { break }
+            case 25 { break }
+            case 26 { break }
+            case 27 { break }
+            case 28 { break }
+            case 29 { break }
+            case 30 { break }
+            case 31 { break }
+            case 32 { break }
+            case 33 { break }
+            case 34 { break }
+            case 35 { break }
+            case 36 { break }
+            case 37 { break }
+            case 38 { break }
+            case 39 { break }
+            case 40 { break }
+            case 41 { break }
+            case 42 { break }
+            case 43 { break }
+            case 44 { break }
+            case 45 { break }
+            case 46 { break }
+            case 47 { break }
+            case 48 { break }
+            case 49 { break }
+            case 50 { break }
+            case 51 { break }
+            case 52 { break }
+            case 53 { break }
+            case 54 { break }
+            case 55 { break }
+            case 56 { break }
+            case 57 { break }
+            case 58 { break }
+            case 59 { break }
+            case 60 { break }
+            case 61 { break }
+            case 62 { break }
+            case 63 { break }
+            case 64 { break }
+            case 65 { break }
+            case 66 { break }
+            case 67 { break }
+            case 68 { break }
+            case 69 { break }
+            case 70 { break }
+            case 71 { break }
+            case 72 { break }
+            case 73 { break }
+            case 74 { break }
+            case 75 { break }
+            case 76 { break }
+            case 77 { break }
+            case 78 { break }
+            case 79 { break }
+            case 80 { break }
+            case 81 { break }
+            case 82 { break }
+            case 83 { break }
+            case 84 { break }
+            case 85 { break }
+            case 86 { break }
+            case 87 { break }
+            case 88 { break }
+            case 89 { break }
+            case 90 { break }
+            case 91 { break }
+            case 92 { break }
+            case 93 { break }
+            case 94 { break }
+            case 95 { break }
+            case 96 { break }
+            case 97 { break }
+            case 98 { break }
+            case 99 { break }
+            case 100 { break }
+            case 101 { break }
+            case 102 { break }
+            case 103 { break }
+            case 104 { break }
+            case 105 { break }
+            case 106 { break }
+            case 107 { break }
+            case 108 { break }
+            case 109 { break }
+            case 110 { break }
+            case 111 { break }
+            case 112 { break }
+            case 113 { break }
+            case 114 { break }
+            case 115 { break }
+            case 116 { break }
+            case 117 { break }
+            case 118 { break }
+            case 119 { break }
+            case 120 { break }
+            case 121 { break }
+            case 122 { break }
+            case 123 { break }
+            case 124 { break }
+            case 125 { break }
+            case 126 { break }
+            case 127 { break }
+            case 128 { break }
+            case 129 { break }
+            case 130 { break }
+            case 131 { break }
+            case 132 { break }
+            case 133 { break }
+            case 134 { break }
+            case 135 { break }
+            case 136 { break }
+            case 137 { break }
+            case 138 { break }
+            case 139 { break }
+            case 140 { break }
+            case 141 { break }
+            case 142 { break }
+            case 143 { break }
+            case 144 { break }
+            case 145 { break }
+            case 146 { break }
+            case 147 { break }
+            case 148 { break }
+            case 149 { break }
+            case 150 { break }
+            case 151 { break }
+            case 152 { break }
+            case 153 { break }
+            case 154 { break }
+            case 155 { break }
+            case 156 { break }
+            case 157 { break }
+            case 158 { break }
+            case 159 { break }
+            case 160 { break }
+            case 161 { break }
+            case 162 { break }
+            case 163 { break }
+            case 164 { break }
+            case 165 { break }
+            case 166 { break }
+            case 167 { break }
+            case 168 { break }
+            case 169 { break }
+            case 170 { break }
+            case 171 { break }
+            case 172 { break }
+            case 173 { break }
+            case 174 { break }
+            case 175 { break }
+            case 176 { break }
+            case 177 { break }
+            case 178 { break }
+            case 179 { break }
+            case 180 { break }
+            case 181 { break }
+            case 182 { break }
+            case 183 { break }
+            case 184 { break }
+            case 185 { break }
+            case 186 { break }
+            case 187 { break }
+            case 188 { break }
+            case 189 { break }
+            case 190 { break }
+            case 191 { break }
+            case 192 { break }
+            case 193 { break }
+            case 194 { break }
+            case 195 { break }
+            case 196 { break }
+            case 197 { break }
+            case 198 { break }
+            case 199 { break }
+            case 200 { break }
+            case 201 { break }
+            case 202 { break }
+            case 203 { break }
+            case 204 { break }
+            case 205 { break }
+            case 206 { break }
+            case 207 { break }
+            case 208 { break }
+            case 209 { break }
+            case 210 { break }
+            case 211 { break }
+            case 212 { break }
+            case 213 { break }
+            case 214 { break }
+            case 215 { break }
+            case 216 { break }
+            case 217 { break }
+            case 218 { break }
+            case 219 { break }
+            case 220 { break }
+            case 221 { break }
+            case 222 { break }
+            case 223 { break }
+            case 224 { break }
+            case 225 { break }
+            case 226 { break }
+            case 227 { break }
+            case 228 { break }
+            case 229 { break }
+            case 230 { break }
+            case 231 { break }
+            case 232 { break }
+            case 233 { break }
+            case 234 { break }
+            case 235 { break }
+            case 236 { break }
+            case 237 { break }
+            case 238 { break }
+            case 239 { break }
+            case 240 { break }
+            case 241 { break }
+            case 242 { break }
+            case 243 { break }
+            case 244 { break }
+            case 245 { break }
+            case 246 { break }
+            case 247 { break }
+            case 248 { break }
+            case 249 { break }
+            case 250 { break }
+            case 251 { break }
+            case 252 { break }
+            case 253 { break }
+            case 254 { break }
+            case 255 { break }
+            case 256 { break }
+            case 257 { break }
+            case 258 { break }
+            case 259 { break }
+            case 260 { break }
+            case 261 { break }
+            case 262 { break }
+            case 263 { break }
+            case 264 { break }
+            case 265 { break }
+            case 266 { break }
+            case 267 { break }
+            case 268 { break }
+            case 269 { break }
+            case 270 { break }
+            case 271 { break }
+            case 272 { break }
+            case 273 { break }
+            case 274 { break }
+            case 275 { break }
+            case 276 { break }
+            case 277 { break }
+            case 278 { break }
+            case 279 { break }
+            case 280 { break }
+            case 281 { break }
+            case 282 { break }
+            case 283 { break }
+            case 284 { break }
+            case 285 { break }
+            case 286 { break }
+            case 287 { break }
+            case 288 { break }
+            case 289 { break }
+            case 290 { break }
+            case 291 { break }
+            case 292 { break }
+            case 293 { break }
+            case 294 { break }
+            case 295 { break }
+            case 296 { break }
+            case 297 { break }
+            case 298 { break }
+            case 299 { break }
+            default { }
+        }
+        n = n + 1
+    }
+    return n
+}
+
+func test_many_continue(): int {
+    int n = 0
+    for 0:0 to i {
+        if i == 0 { continue }
+        if i == 1 { continue }
+        if i == 2 { continue }
+        if i == 3 { continue }
+        if i == 4 { continue }
+        if i == 5 { continue }
+        if i == 6 { continue }
+        if i == 7 { continue }
+        if i == 8 { continue }
+        if i == 9 { continue }
+        if i == 10 { continue }
+        if i == 11 { continue }
+        if i == 12 { continue }
+        if i == 13 { continue }
+        if i == 14 { continue }
+        if i == 15 { continue }
+        if i == 16 { continue }
+        if i == 17 { continue }
+        if i == 18 { continue }
+        if i == 19 { continue }
+        if i == 20 { continue }
+        if i == 21 { continue }
+        if i == 22 { continue }
+        if i == 23 { continue }
+        if i == 24 { continue }
+        if i == 25 { continue }
+        if i == 26 { continue }
+        if i == 27 { continue }
+        if i == 28 { continue }
+        if i == 29 { continue }
+        if i == 30 { continue }
+        if i == 31 { continue }
+        if i == 32 { continue }
+        if i == 33 { continue }
+        if i == 34 { continue }
+        if i == 35 { continue }
+        if i == 36 { continue }
+        if i == 37 { continue }
+        if i == 38 { continue }
+        if i == 39 { continue }
+        if i == 40 { continue }
+        if i == 41 { continue }
+        if i == 42 { continue }
+        if i == 43 { continue }
+        if i == 44 { continue }
+        if i == 45 { continue }
+        if i == 46 { continue }
+        if i == 47 { continue }
+        if i == 48 { continue }
+        if i == 49 { continue }
+        if i == 50 { continue }
+        if i == 51 { continue }
+        if i == 52 { continue }
+        if i == 53 { continue }
+        if i == 54 { continue }
+        if i == 55 { continue }
+        if i == 56 { continue }
+        if i == 57 { continue }
+        if i == 58 { continue }
+        if i == 59 { continue }
+        if i == 60 { continue }
+        if i == 61 { continue }
+        if i == 62 { continue }
+        if i == 63 { continue }
+        if i == 64 { continue }
+        if i == 65 { continue }
+        if i == 66 { continue }
+        if i == 67 { continue }
+        if i == 68 { continue }
+        if i == 69 { continue }
+        if i == 70 { continue }
+        if i == 71 { continue }
+        if i == 72 { continue }
+        if i == 73 { continue }
+        if i == 74 { continue }
+        if i == 75 { continue }
+        if i == 76 { continue }
+        if i == 77 { continue }
+        if i == 78 { continue }
+        if i == 79 { continue }
+        if i == 80 { continue }
+        if i == 81 { continue }
+        if i == 82 { continue }
+        if i == 83 { continue }
+        if i == 84 { continue }
+        if i == 85 { continue }
+        if i == 86 { continue }
+        if i == 87 { continue }
+        if i == 88 { continue }
+        if i == 89 { continue }
+        if i == 90 { continue }
+        if i == 91 { continue }
+        if i == 92 { continue }
+        if i == 93 { continue }
+        if i == 94 { continue }
+        if i == 95 { continue }
+        if i == 96 { continue }
+        if i == 97 { continue }
+        if i == 98 { continue }
+        if i == 99 { continue }
+        if i == 100 { continue }
+        if i == 101 { continue }
+        if i == 102 { continue }
+        if i == 103 { continue }
+        if i == 104 { continue }
+        if i == 105 { continue }
+        if i == 106 { continue }
+        if i == 107 { continue }
+        if i == 108 { continue }
+        if i == 109 { continue }
+        if i == 110 { continue }
+        if i == 111 { continue }
+        if i == 112 { continue }
+        if i == 113 { continue }
+        if i == 114 { continue }
+        if i == 115 { continue }
+        if i == 116 { continue }
+        if i == 117 { continue }
+        if i == 118 { continue }
+        if i == 119 { continue }
+        if i == 120 { continue }
+        if i == 121 { continue }
+        if i == 122 { continue }
+        if i == 123 { continue }
+        if i == 124 { continue }
+        if i == 125 { continue }
+        if i == 126 { continue }
+        if i == 127 { continue }
+        if i == 128 { continue }
+        if i == 129 { continue }
+        if i == 130 { continue }
+        if i == 131 { continue }
+        if i == 132 { continue }
+        if i == 133 { continue }
+        if i == 134 { continue }
+        if i == 135 { continue }
+        if i == 136 { continue }
+        if i == 137 { continue }
+        if i == 138 { continue }
+        if i == 139 { continue }
+        if i == 140 { continue }
+        if i == 141 { continue }
+        if i == 142 { continue }
+        if i == 143 { continue }
+        if i == 144 { continue }
+        if i == 145 { continue }
+        if i == 146 { continue }
+        if i == 147 { continue }
+        if i == 148 { continue }
+        if i == 149 { continue }
+        if i == 150 { continue }
+        if i == 151 { continue }
+        if i == 152 { continue }
+        if i == 153 { continue }
+        if i == 154 { continue }
+        if i == 155 { continue }
+        if i == 156 { continue }
+        if i == 157 { continue }
+        if i == 158 { continue }
+        if i == 159 { continue }
+        if i == 160 { continue }
+        if i == 161 { continue }
+        if i == 162 { continue }
+        if i == 163 { continue }
+        if i == 164 { continue }
+        if i == 165 { continue }
+        if i == 166 { continue }
+        if i == 167 { continue }
+        if i == 168 { continue }
+        if i == 169 { continue }
+        if i == 170 { continue }
+        if i == 171 { continue }
+        if i == 172 { continue }
+        if i == 173 { continue }
+        if i == 174 { continue }
+        if i == 175 { continue }
+        if i == 176 { continue }
+        if i == 177 { continue }
+        if i == 178 { continue }
+        if i == 179 { continue }
+        if i == 180 { continue }
+        if i == 181 { continue }
+        if i == 182 { continue }
+        if i == 183 { continue }
+        if i == 184 { continue }
+        if i == 185 { continue }
+        if i == 186 { continue }
+        if i == 187 { continue }
+        if i == 188 { continue }
+        if i == 189 { continue }
+        if i == 190 { continue }
+        if i == 191 { continue }
+        if i == 192 { continue }
+        if i == 193 { continue }
+        if i == 194 { continue }
+        if i == 195 { continue }
+        if i == 196 { continue }
+        if i == 197 { continue }
+        if i == 198 { continue }
+        if i == 199 { continue }
+        if i == 200 { continue }
+        if i == 201 { continue }
+        if i == 202 { continue }
+        if i == 203 { continue }
+        if i == 204 { continue }
+        if i == 205 { continue }
+        if i == 206 { continue }
+        if i == 207 { continue }
+        if i == 208 { continue }
+        if i == 209 { continue }
+        if i == 210 { continue }
+        if i == 211 { continue }
+        if i == 212 { continue }
+        if i == 213 { continue }
+        if i == 214 { continue }
+        if i == 215 { continue }
+        if i == 216 { continue }
+        if i == 217 { continue }
+        if i == 218 { continue }
+        if i == 219 { continue }
+        if i == 220 { continue }
+        if i == 221 { continue }
+        if i == 222 { continue }
+        if i == 223 { continue }
+        if i == 224 { continue }
+        if i == 225 { continue }
+        if i == 226 { continue }
+        if i == 227 { continue }
+        if i == 228 { continue }
+        if i == 229 { continue }
+        if i == 230 { continue }
+        if i == 231 { continue }
+        if i == 232 { continue }
+        if i == 233 { continue }
+        if i == 234 { continue }
+        if i == 235 { continue }
+        if i == 236 { continue }
+        if i == 237 { continue }
+        if i == 238 { continue }
+        if i == 239 { continue }
+        if i == 240 { continue }
+        if i == 241 { continue }
+        if i == 242 { continue }
+        if i == 243 { continue }
+        if i == 244 { continue }
+        if i == 245 { continue }
+        if i == 246 { continue }
+        if i == 247 { continue }
+        if i == 248 { continue }
+        if i == 249 { continue }
+        if i == 250 { continue }
+        if i == 251 { continue }
+        if i == 252 { continue }
+        if i == 253 { continue }
+        if i == 254 { continue }
+        if i == 255 { continue }
+        if i == 256 { continue }
+        if i == 257 { continue }
+        if i == 258 { continue }
+        if i == 259 { continue }
+        if i == 260 { continue }
+        if i == 261 { continue }
+        if i == 262 { continue }
+        if i == 263 { continue }
+        if i == 264 { continue }
+        if i == 265 { continue }
+        if i == 266 { continue }
+        if i == 267 { continue }
+        if i == 268 { continue }
+        if i == 269 { continue }
+        if i == 270 { continue }
+        if i == 271 { continue }
+        if i == 272 { continue }
+        if i == 273 { continue }
+        if i == 274 { continue }
+        if i == 275 { continue }
+        if i == 276 { continue }
+        if i == 277 { continue }
+        if i == 278 { continue }
+        if i == 279 { continue }
+        if i == 280 { continue }
+        if i == 281 { continue }
+        if i == 282 { continue }
+        if i == 283 { continue }
+        if i == 284 { continue }
+        if i == 285 { continue }
+        if i == 286 { continue }
+        if i == 287 { continue }
+        if i == 288 { continue }
+        if i == 289 { continue }
+        if i == 290 { continue }
+        if i == 291 { continue }
+        if i == 292 { continue }
+        if i == 293 { continue }
+        if i == 294 { continue }
+        if i == 295 { continue }
+        if i == 296 { continue }
+        if i == 297 { continue }
+        if i == 298 { continue }
+        if i == 299 { continue }
+        n = n + 1
+    }
+    return n
+}
+
+main() {
+    assert_eq(test_many_break(), 1)
+    assert_eq(test_many_continue(), 0)
+    print("test_many_break_continue passed")
+}

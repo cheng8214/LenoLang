@@ -185,6 +185,40 @@ Value ast_default_to_value(Ast* expr) {
 }
 
 // ============================================================================
+// 循环上下文的跳转表：按需增长 + 统一初始化/释放
+// ----------------------------------------------------------------------------
+// 固定 [256] 的数组在"同一循环里 >256 条 break/continue"时会越界写
+// （ASAN 实测 heap-buffer-overflow，2026-10-30）。改为 realloc 增长，
+// 语言层面不再有"最多 256 条"的限制。
+// ============================================================================
+static void loop_ctx_init(LoopContext* c) {
+    c->break_jumps = NULL;
+    c->break_count = 0;
+    c->break_cap = 0;
+    c->continue_jumps = NULL;
+    c->continue_count = 0;
+    c->continue_cap = 0;
+}
+
+static void loop_ctx_add_jump(int** arr, int* count, int* cap, int pos) {
+    if (*count >= *cap) {
+        int next = (*cap == 0) ? 8 : (*cap * 2);
+        int* grown = (int*)realloc(*arr, sizeof(int) * next);
+        if (!grown) return;   // 内存不足：跳过登记（与原有 malloc 失败口径一致）
+        *arr = grown;
+        *cap = next;
+    }
+    (*arr)[(*count)++] = pos;
+}
+
+static void loop_ctx_dispose(LoopContext* c) {
+    free(c->break_jumps);
+    free(c->continue_jumps);
+    c->break_jumps = NULL;
+    c->continue_jumps = NULL;
+}
+
+// ============================================================================
 // break / continue 的统一跳转
 // ----------------------------------------------------------------------------
 // 两类"先跑清理再跳"的情形：
@@ -196,10 +230,10 @@ Value ast_default_to_value(Ast* expr) {
 //        `for { try { … break } finally { sum += 10 } }` 的 finally 不执行、结果静默错）✗
 // 返回允许被 patch 的跳转位置（>=0）；无循环上下文返回 -1。
 // ============================================================================
-static int gen_loop_exit_jump(CodeGen* gen, Ast* ast) {
-    if (!gen->loop_head) return -1;
+static int gen_loop_exit_jump(CodeGen* gen, Ast* ast, LoopContextNode* target) {
+    if (!target) return -1;
 
-    int crossed = gen->finally_depth - gen->loop_head->ctx.finally_depth;
+    int crossed = gen->finally_depth - target->ctx.finally_depth;
     if (crossed < 0) crossed = 0;   // 防御：理论上不会为负
     if (crossed > 0) {
         for (int i = 0; i < crossed; i++) emit_leave_finally(gen, ast->line);
@@ -207,7 +241,7 @@ static int gen_loop_exit_jump(CodeGen* gen, Ast* ast) {
     }
 
     // try 是否在目标循环内部：进入该 try 时的外层循环数 > 建循环时的外层循环数
-    int target_depth = gen->loop_head->ctx.loop_depth;
+    int target_depth = target->ctx.loop_depth;
     int layers = 0;
     for (TryFinNode* n = gen->try_fin_head; n && n->loop_depth > target_depth; n = n->prev) {
         layers++;
@@ -233,21 +267,28 @@ void gen_stmt(CodeGen* gen, Ast* ast) {
         case AST_RETURN:      gen_return(gen, ast); break;
         case AST_RETURN_MULTI: gen_return_multi(gen, ast); break;
         case AST_BREAK: {
-            // break: 跳转到循环尾
+            // break: 跳转到循环尾（switch 的 break 目标是 switch 出口）
             if (gen->loop_head) {
-                int jmp = gen_loop_exit_jump(gen, ast);
+                int jmp = gen_loop_exit_jump(gen, ast, gen->loop_head);
                 if (jmp >= 0) {
-                    gen->loop_head->ctx.break_jumps[gen->loop_head->ctx.break_count++] = jmp;
+                    loop_ctx_add_jump(&gen->loop_head->ctx.break_jumps,
+                                      &gen->loop_head->ctx.break_count,
+                                      &gen->loop_head->ctx.break_cap, jmp);
                 }
             }
             break;
         }
         case AST_CONTINUE: {
-            // continue: 跳回循环头
-            if (gen->loop_head) {
-                int jmp = gen_loop_exit_jump(gen, ast);
+            // continue: 跳回**真正的循环**头。switch 压在链上只为 break，
+            //   继续跳过它 ⇒ 否则跳转登记到 switch 的 continue_jumps（无人回填）✗
+            LoopContextNode* tgt = gen->loop_head;
+            while (tgt && tgt->ctx.is_switch) tgt = tgt->prev;
+            if (tgt) {
+                int jmp = gen_loop_exit_jump(gen, ast, tgt);
                 if (jmp >= 0) {
-                    gen->loop_head->ctx.continue_jumps[gen->loop_head->ctx.continue_count++] = jmp;
+                    loop_ctx_add_jump(&tgt->ctx.continue_jumps,
+                                      &tgt->ctx.continue_count,
+                                      &tgt->ctx.continue_cap, jmp);
                 }
             }
             break;
@@ -615,11 +656,11 @@ static void gen_while(CodeGen* gen, Ast* ast) {
     // 压入循环上下文
     LoopContextNode* node = (LoopContextNode*)malloc(sizeof(LoopContextNode));
     node->prev = gen->loop_head;
-    node->ctx.break_count = 0;
-    node->ctx.continue_count = 0;
+    loop_ctx_init(&node->ctx);
     node->ctx.finally_depth = gen->finally_depth;   // 建循环时的 finally 深度（见 AST_BREAK/CONTINUE）
     node->ctx.loop_depth = gen->loop_count;         // 建循环时的外层循环数（见 AST_BREAK 的 try-finally）
     node->ctx.continue_target = 0;      // 本形态不用（continue 统一在下面回填）
+    node->ctx.is_switch = 0;
     gen->loop_head = node;
     gen->loop_count++;
 
@@ -700,6 +741,7 @@ static void gen_while(CodeGen* gen, Ast* ast) {
 
     // 弹出循环上下文
     gen->loop_head = node->prev;
+    loop_ctx_dispose(&node->ctx);
     free(node);
     gen->loop_count--;
 }
@@ -804,11 +846,11 @@ static void gen_for(CodeGen* gen, Ast* ast) {
 
     LoopContextNode* node = (LoopContextNode*)malloc(sizeof(LoopContextNode));
     node->prev = gen->loop_head;
-    node->ctx.break_count = 0;
-    node->ctx.continue_count = 0;
+    loop_ctx_init(&node->ctx);
     node->ctx.finally_depth = gen->finally_depth;   // 建循环时的 finally 深度（见 AST_BREAK/CONTINUE）
     node->ctx.loop_depth = gen->loop_count;         // 建循环时的外层循环数（见 AST_BREAK 的 try-finally）
     node->ctx.continue_target = 0;
+    node->ctx.is_switch = 0;
     gen->loop_head = node;
     gen->loop_count++;
 
@@ -855,6 +897,7 @@ static void gen_for(CodeGen* gen, Ast* ast) {
     }
 
     gen->loop_head = node->prev;
+    loop_ctx_dispose(&node->ctx);
     free(node);
     gen->loop_count--;
 }
@@ -881,11 +924,11 @@ static void gen_for_iter(CodeGen* gen, Ast* ast) {
 
     LoopContextNode* node = (LoopContextNode*)malloc(sizeof(LoopContextNode));
     node->prev = gen->loop_head;
-    node->ctx.break_count = 0;
-    node->ctx.continue_count = 0;
+    loop_ctx_init(&node->ctx);
     node->ctx.finally_depth = gen->finally_depth;   // 建循环时的 finally 深度（见 AST_BREAK/CONTINUE）
     node->ctx.loop_depth = gen->loop_count;         // 建循环时的外层循环数（见 AST_BREAK 的 try-finally）
     node->ctx.continue_target = 0;
+    node->ctx.is_switch = 0;
     gen->loop_head = node;
     gen->loop_count++;
 
@@ -947,6 +990,7 @@ static void gen_for_iter(CodeGen* gen, Ast* ast) {
     }
 
     gen->loop_head = node->prev;
+    loop_ctx_dispose(&node->ctx);
     free(node);
     gen->loop_count--;
 }
@@ -970,11 +1014,11 @@ static void gen_switch(CodeGen* gen, Ast* ast) {
     // break 支持
     LoopContextNode* node = (LoopContextNode*)malloc(sizeof(LoopContextNode));
     node->prev = gen->loop_head;
-    node->ctx.break_count = 0;
-    node->ctx.continue_count = 0;
+    loop_ctx_init(&node->ctx);
     node->ctx.finally_depth = gen->finally_depth;   // 建循环时的 finally 深度（见 AST_BREAK/CONTINUE）
     node->ctx.loop_depth = gen->loop_count;         // 建循环时的外层循环数（见 AST_BREAK 的 try-finally）
     node->ctx.continue_target = 0;
+    node->ctx.is_switch = 1;   // 只为 break 跳出 switch；continue 要继续向外找真正的循环
     gen->loop_head = node;
     gen->loop_count++;
 
@@ -1119,6 +1163,7 @@ static void gen_switch(CodeGen* gen, Ast* ast) {
     for (int i = 0; i < node->ctx.break_count; i++) patch_jmp(gen, node->ctx.break_jumps[i]);
 
     gen->loop_head = node->prev;
+    loop_ctx_dispose(&node->ctx);
     free(node);
     gen->loop_count--;
 

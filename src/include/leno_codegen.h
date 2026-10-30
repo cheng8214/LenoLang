@@ -10,11 +10,21 @@
 // ============================================================================
 
 typedef struct {
-    int break_jumps[MAX_BREAK_JUMPS];     // break 跳转位置数组
+    // ★ 2026-10-30：由固定 [256] 改成**按需增长**。固定数组在"一个循环里超过 256 条
+    //   break/continue"时会越界写（ASAN 实测 heap-buffer-overflow），而这类代码完全
+    //   能由生成器/宏展开写出来。容量上限不再是语言限制。
+    int* break_jumps;        // break 跳转位置数组（需要回填）
     int break_count;
-    int continue_jumps[MAX_CONTINUE_JUMPS];  // continue 跳转位置数组（需要回填）
+    int break_cap;
+    int* continue_jumps;     // continue 跳转位置数组（需要回填）
     int continue_count;
+    int continue_cap;
     int continue_target;      // continue 跳转目标位置（用于简单循环）
+    // ★ 2026-10-30：switch 也压入一层循环上下文（只为 `break` 跳出 switch），
+    //   但 `continue` 不该以它为目标 —— 必须继续向外找**真正的循环**，
+    //   否则 continue_jumps 挂在这层 switch 上、永远不会被回填（字节码偏移保持 0
+    //   ⇒ 运行期等同"什么都不跳"，continue 静默退化成 fall through ✗）。见 gen_stmt。
+    int is_switch;
     // ★ 建该循环时 CodeGen.finally_depth 的值：`break`/`continue` 在 finally 体内时，
     //   `finally_depth - ctx.finally_depth` = **要跨出几层 finally** ⇒ 需要补几条
     //   "离开 finally"的清理（OP_END_TRY A=2）。见 gen_stmt 的 AST_BREAK/AST_CONTINUE。
