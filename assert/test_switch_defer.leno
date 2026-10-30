@@ -1,0 +1,67 @@
+// test_switch_defer.leno — switch 里的 defer/try 必须被计入函数 has_try
+//
+// 现场（2026-10-30）：ast_has_try 的遍历漏了 AST_SWITCH ⇒ 函数若**只在 switch 的
+//   case 体里**写 try/defer，ObjFunction.has_try 仍是 0 ⇒ VM 的 FRAME_TRY_VALID 为假：
+//     · `break` 的 OP_FIN_GOTO 直接跳到出口，finally/defer 整段被跳过（静默错值）；
+//     · `return` 的专精路径也跳过 FRAME_TRY_VALID 检查。
+//   同一个漏项也让 ast_return_count 漏统计"只在 switch 里 return"的函数。
+
+var g_log = 0
+
+func defer_break_switch(): int {
+    int log = 0
+    for 0:0 to i {
+        switch i {
+            case 0 {
+                defer { log = log + 100 }
+                log = log + 5
+                break
+            }
+        }
+        log = log + 10
+    }
+    return log
+}
+
+func defer_return_switch(): int {
+    g_log = 0
+    switch 1 {
+        case 1 {
+            defer { g_log = g_log + 100 }
+            return 7
+        }
+        default { return 0 }
+    }
+}
+
+func try_return_switch(): int {
+    g_log = 0
+    switch 1 {
+        case 1 {
+            try {
+                return 9
+            } finally {
+                g_log = g_log + 1
+            }
+        }
+        default { return 0 }
+    }
+}
+
+func only_return_in_switch(int x): int {
+    switch x {
+        case 0 { return 4 }
+        default { return 5 }
+    }
+}
+
+main() {
+    assert_eq(defer_break_switch(), 115)       // 5 + defer 100 + 10
+    assert_eq(defer_return_switch(), 7)
+    assert_eq(g_log, 100)                      // 返回值前 defer 必须已执行
+    assert_eq(try_return_switch(), 9)
+    assert_eq(g_log, 1)                        // finally 必须执行
+    assert_eq(only_return_in_switch(0), 4)
+    assert_eq(only_return_in_switch(1), 5)
+    print("test_switch_defer passed")
+}
