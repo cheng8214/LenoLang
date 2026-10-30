@@ -1264,6 +1264,12 @@
                         if (obj_sym->type) {
                             obj_type_name = native_get_type_name(obj_sym->type->kind);
                         }
+                        // ★ 2026-10-30：本调用是否已经报过根因（或接收者是毒值）。
+                        //   ✗ 此前 any 接收者会**连报两条**：这里「不能在 any 类型上调用方法」
+                        //     + 下方回退链里「类型 'any' 没有方法」；而毒值（TYPE_POISON，
+                        //     上游缺失方法的级联结果）更会报出一条本不该出现的消息 ✗
+                        //   ⇒ 报过一次就抑制后续"没有方法"分支；毒值则完全静默 ✓
+                        int call_diag_reported = 0;
 
                         // 根据对象类型名称和方法名查找方法
                         if (obj_type_name) {
@@ -1273,12 +1279,26 @@
                             expected_arity = -1;
                             return_type = TYPE_ANY;
                         } else {
-                            // any 类型不能调用方法，提示用户使用类型收窄或指定参数类型
-                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
-                                "不能在 any 类型上调用方法 '%s'\n"
-                                "  提示: 使用 if x is Type { x.%s() } 类型收窄\n"
-                                "  或者将参数声明为具体类型",
-                                method_name, method_name);
+                            if (obj_sym->type && obj_sym->type->kind == TYPE_POISON) {
+                                /* 接收者是"已被报过根因"的毒值 ⇒ 静默，不再刷屏；
+                                 * 调用结果继续是毒值 ⇒ 下游（声明/返回/再次调用）全部静默 ✓ */
+                                call_diag_reported = 1;
+                                semantic_poison_expr(ast);
+                            } else if (obj_sym->type && obj_sym->type->struct_name) {
+                                /* face / struct / cstruct 等**具名类型**：交给下方按类型报
+                                 * 「类型 'face Speaker' 没有方法 'x'」（带相似名提示），
+                                 * 这里不报误导性的"any" ✓ */
+                            } else {
+                                // any 类型不能调用方法，提示用户使用类型收窄或指定参数类型
+                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                    "不能在 any 类型上调用方法 '%s'\n"
+                                    "  提示: 使用 if x is Type { x.%s() } 类型收窄\n"
+                                    "  或者将参数声明为具体类型",
+                                    method_name, method_name);
+                                call_diag_reported = 1;   /* 本调用只报这一条 ✓ */
+                                /* 根因已报 ⇒ 结果打毒，抑制"声明/返回/链式调用"级联 ✓ */
+                                semantic_poison_expr(ast);
+                            }
                             expected_arity = -1;
                             return_type = TYPE_ANY;
                         }
@@ -1530,6 +1550,8 @@
                                 if (arg_type) type_free(arg_type);
                             }
                         }
+                    } else if (call_diag_reported) {
+                        // 上方已报过根因（any 接收者 / 毒值级联）⇒ 不再重复报"没有方法"
                     } else if (is_func_type_field_call) {
                         // 函数类型字段调用（如 t.cb() 其中 cb 是 func():void 字段），合法调用，不报错
                     } else if (!obj_sym->type || obj_sym->type->kind == TYPE_ANY) {

@@ -1,0 +1,45 @@
+// test_in_range_bounds.leno — `x in a:b` 的**端点表达式**必须被正常解析
+//
+// 现场（2026-10-30）：语义分析整个仓库都**没有 AST_RANGE 这个 case**（落到 default 静默跳过）
+//   ⇒ 端点里的变量/字段从未被解析 ⇒ codegen 按 ref 默认值（全局槽 0）取值 ⇒ 判断结果
+//   永远是错的，且没有任何编译期提示 ✗（`x in 0:n` 的 n 就是受害者）
+//   方法体变换也缺这个 case ⇒ 端点里的裸字段名不会被改写成 self.字段 ✗
+//
+// 这里同时覆盖：形参端点 / 局部变量端点 / 字段端点（起点与终点两个方向）
+
+struct S {
+    int upper = 9
+    int lower = 2
+
+    // 终点是**字段** upper=9
+    func in_field(int x): bool { return x in 0:upper }
+
+    // 终点是**局部变量**
+    func in_local(int x): bool { int hi = 9; return x in 0:hi }
+
+    // 终点是**形参**
+    func in_param(int x, int hi): bool { return x in 0:hi }
+
+    // 起点是**字段** lower=2
+    func from_field(int x): bool { return x in lower:20 }
+}
+
+main() {
+    var s = new S()
+
+    assert_true(s.in_field(9), "字段端点: 9 应落在 0:9（含端点）")
+    assert_true(not s.in_field(10), "字段端点: 10 不应落在 0:9")
+
+    assert_true(s.in_local(9), "局部端点: 9 应落在 0:9")
+    assert_true(not s.in_local(10), "局部端点: 10 不应落在 0:9")
+
+    assert_true(s.in_param(9, 9), "形参端点: 9 应落在 0:9")
+    assert_true(not s.in_param(10, 9), "形参端点: 10 不应落在 0:9")
+    assert_true(s.in_param(11, 10) == false, "形参端点: 11 不应落在 0:10")
+
+    assert_true(not s.from_field(1), "字段起点: 1 不应落在 2:20")
+    assert_true(s.from_field(2), "字段起点: 2 应落在 2:20")
+    assert_true(not s.from_field(21), "字段起点: 21 不应落在 2:20")
+
+    print("test_in_range_bounds passed")
+}

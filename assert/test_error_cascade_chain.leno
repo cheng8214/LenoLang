@@ -1,0 +1,54 @@
+// test_error_cascade_chain.leno — 缺失方法的结果继续被调用时，不得再刷屏
+//
+// 现场（2026-10-30）：`var r = b.nope()` 报 1 条根因后，r 的类型是 any（而不是毒值）⇒
+//   后续 `r.alsoNope(1)`、`s.nope2()`、以及 `return s.nope2()`（any → int）继续报错 ✗
+//   修法：方法调用报过根因后**把结果打毒**（TYPE_POISON）；毒值接收者的方法调用完全静默，
+//   且调用结果仍是毒值 ⇒ 声明/返回/链式调用全部被抑制 ✓
+
+import dirs
+import files
+import strings
+import "helpers/compiler.leno" as ce
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_error_cascade_chain")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    files.write(dirs.join(work, "mod.leno"), @"export struct Box {
+    int x = 0
+    func get(): int { return self.x }
+}
+
+export func mk(): Box {
+    var b = new Box()
+    b.x = 1
+    return b
+}
+")
+
+    var entry = dirs.join(work, "main.leno")
+    files.write(entry,
+        "import \"mod.leno\" as m\n\n"
+        + "func f(): int {\n"
+        + "    var b = m.mk()\n"
+        + "    var r = b.nope()\n"              // 第 5 行：唯一的根因
+        + "    var s = r.alsoNope(1)\n"         // 毒值接收者 ⇒ 不该再报
+        + "    return s.nope2()\n"              // 毒值接收者 + 返回类型 ⇒ 都不该再报
+        + "}\n\n"
+        + "main() {\n"
+        + "    print(f())\n"
+        + "}\n")
+
+    var out = ce.expect_error(entry, "缺失方法的链式调用只报一条根因", "没有方法 'nope'", 5)
+    assert_true(strings.has(out, "发现 1 个错误"),
+                "只该有 1 条根因错误（实际输出=" + out + "）")
+    assert_true(not strings.has(out, "alsoNope"),
+                "毒值接收者的方法调用不该再报；输出=" + out)
+    assert_true(not strings.has(out, "nope2"),
+                "毒值接收者的链式调用不该再报；输出=" + out)
+    assert_true(not strings.has(out, "返回类型不匹配"),
+                "毒值不该级联出返回类型错误；输出=" + out)
+
+    print("[PASS] 缺失方法的毒值链式调用不再刷屏")
+}

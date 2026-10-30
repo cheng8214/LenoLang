@@ -1,0 +1,51 @@
+// test_block_scope_order.leno — 方法体里"局部变量声明点"之后才遮蔽同名成员
+//
+// 现场（2026-10-30）：方法体变换原先把**整块**的局部声明预收集后一次性传给所有语句
+//   ⇒ 声明之前出现的同名裸标识符也被当成"已被遮蔽" ⇒ 不再改写成 self.字段 /
+//   self["方法"] ⇒ 报「未定义的变量: x」「未定义的函数: row」✗
+//
+// 语义分析的判定口径（visit_block.inc）：局部变量按**语句顺序**注册 ⇒ 声明之前
+//   同名的裸标识符指向字段/方法 ✓（嵌套函数名则相反：第一轮预注册 ⇒ 块内提升 ✓）
+
+struct S {
+    int x = 5
+    int v = 3
+
+    func row(int i): int { return i }
+
+    // 声明之前读同名字段：必须取字段 x=5，而不是后面那个局部 x
+    func before_decl(): int {
+        int a = x
+        int x = 10
+        return a
+    }
+
+    // 声明之前调同名方法：必须调用方法 row(1)=1，而不是后面那个局部 row
+    func before_decl_method(): int {
+        int a = row(1)
+        int row = 99
+        return a
+    }
+
+    // 声明之前给同名字段赋值：必须改 self.v（3 → 4）
+    func before_decl_assign(): int {
+        v = v + 1
+        int v = 100
+        return self.v
+    }
+
+    // 声明之后：局部量照常遮蔽（应返回 7，而不是字段 5）
+    func after_decl(): int {
+        int x = 7
+        return x
+    }
+}
+
+main() {
+    var s = new S()
+    assert_eq(s.before_decl(), 5, "声明前读同名字段应取字段值 5")
+    assert_eq(s.before_decl_method(), 1, "声明前调同名方法应走方法 row(1)=1")
+    assert_eq(s.before_decl_assign(), 4, "声明前给同名字段赋值应改字段（3+1=4）")
+    assert_eq(s.after_decl(), 7, "声明之后局部量应遮蔽字段（取 7）")
+    print("test_block_scope_order passed")
+}

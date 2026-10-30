@@ -1,0 +1,101 @@
+// test_module_version_specs.leno — [requires] 版本约束的语义 + 缓存失效
+//
+// 覆盖 2026-10-30 发现的几个问题：
+//   ① 两段版本（">=0.3"）原来 sscanf 解析失败且返回值被忽略 ⇒ 约束退化成 0.0.0
+//      ⇒ 0.2.6 被**静默放行**（要求 0.3 却没报错）✗
+//   ② 不支持的前缀（`^` / `<=` / `>` 单独出现）同样退化成 0.0.0，看起来"生效"实则恒错 ✗
+//      ⇒ 现在显式报「无法解析版本要求」
+//   ③ `~0.2.0` 的兼容上界原来写成 major==0 时抬 patch（0.2.1）⇒ 0.2.6 被判不满足 ✗
+//   ④ 区间上界 `<=` 被当成 `<` ⇒ `>=0.2.6, <=0.2.6` 误判失败 ✗
+//   ⑤ 入口缓存键只含入口源码 ⇒ 改 leno.toml 后仍命中旧字节码，import 期版本校验
+//      被整段跳过（冷编译报错、改成违规值反而通过）✗
+//
+// 被测包：LenoHTTP（当前 0.2.6）。用编译器子进程表达"必须失败/必须成功"。
+
+import dirs
+import files
+import strings
+import "helpers/compiler.leno" as ce
+
+var WORK = ""
+var ENTRY = ""
+
+func write_req(string req):void {
+    var toml = "[package]\n"
+                 + "name = \"vp\"\n"
+                 + "version = \"0.0.1\"\n\n"
+                 + "[requires]\n"
+                 + "LenoHTTP = \"" + req + "\"\n"
+    files.write(dirs.join(WORK, "leno.toml"), toml)
+}
+
+// 每个"解析语义"用例都从**冷缓存**开始，避免命中上一次的入口缓存
+func cold():void {
+    dirs.delete(dirs.join(WORK, ".lenocache"))
+}
+
+func expect_pass(string req, string tag):void {
+    cold()
+    write_req(req)
+    ce.expect_ok(ENTRY, tag + "（" + req + "）", "")
+}
+
+func expect_fail(string req, string tag):void {
+    cold()
+    write_req(req)
+    ce.expect_error(ENTRY, tag + "（" + req + "）", "版本 0.2.6 不满足项目要求", 1)
+}
+
+main() {
+    WORK = dirs.join(_tmpdir(), "leno_version_specs")
+    dirs.delete(WORK)
+    dirs.mkdir_p(WORK)
+    files.write(dirs.join(WORK, "main.leno"), "import \"HTTP\"\n\nmain() {\n}\n")
+    ENTRY = dirs.join(WORK, "main.leno")
+
+    // ---- 满足 ----
+    expect_pass(">=0.2.0", "精确下限满足")
+    expect_pass(">=0.2", "两段版本下限满足")
+    expect_pass("~0.2.0", "兼容区间 ~0.2.0 应含 0.2.6")
+    expect_pass("0.2.6", "精确版本满足")
+    expect_pass(">=0.2.6, <0.2.7", "区间（不含上界）满足")
+    expect_pass(">=0.2.6, <=0.2.6", "区间（含上界）应满足")
+    expect_pass("*", "任意版本")
+
+    // ---- 不满足（必须报根因，而不是静默通过）----
+    expect_fail(">=0.3", "两段版本下限不满足")
+    expect_fail(">=0.3.0", "三段版本下限不满足")
+    expect_fail("~0.1.0", "兼容区间 ~0.1.0 不含 0.2.6")
+    expect_fail("0.2.5", "精确版本不匹配")
+    expect_fail(">=0.1.0, <0.2.0", "区间上界不含 0.2.6")
+    expect_fail(">=0.2.6, <0.2.5", "空区间（颠倒上下界）")
+
+    // ---- 无法解析的约束：必须明确报错 ----
+    cold()
+    write_req("^0.2.0")
+    var bad1 = ce.expect_error(ENTRY, "不支持的 ^ 前缀", "无法解析版本要求", 1)
+    assert_true(not strings.has(bad1, "不满足项目要求"),
+                "解析失败时不该给出'不满足'这种误导结论；输出=" + bad1)
+
+    cold()
+    write_req("banana")
+    ce.expect_error(ENTRY, "乱写的版本要求", "无法解析版本要求", 1)
+
+    cold()
+    write_req(">=0.2, <0.2.1")
+    ce.expect_error(ENTRY, "区间也能用两段版本", "不满足项目要求", 1)
+
+    // ---- 入口缓存必须随 leno.toml 失效（⑤）----
+    cold()
+    write_req(">=0.2.0")
+    ce.expect_ok(ENTRY, "缓存用例: 先按满足版本编译（建立缓存）", "")
+
+    // 入口源码一个字都没改，只改 leno.toml：必须重新校验并失败
+    write_req(">=9.9.9")
+    ce.expect_error(ENTRY, "改 leno.toml 后入口缓存应失效", "不满足项目要求", 1)
+
+    write_req(">=0.2.0")
+    ce.expect_ok(ENTRY, "改回满足版本应重新通过", "")
+
+    print("test_module_version_specs passed")
+}

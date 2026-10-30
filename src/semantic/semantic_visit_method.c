@@ -625,8 +625,14 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
             break;
         }
         case AST_BLOCK: {
-            // 收集块内所有**局部声明**的名字，与传入的遮蔽集合合并：
-            //   var_decl / 解构声明 / 嵌套函数名 都是局部量，都会遮蔽同名字段或方法 ✓
+            // 块内局部量的遮蔽**作用域**（2026-10-30 修）：
+            //   · 嵌套函数名在块内**提升** —— 语义分析第一轮就预注册了它们（visit_block.inc）⇒
+            //     块内任何位置裸写这个名字都解析到局部函数 ⇒ 从块首起就遮蔽 ✓
+            //   · 局部变量 / 解构名从**声明点**起才生效 —— 语义分析按语句顺序 visit，
+            //     声明之前出现的同名裸标识符指向字段/方法 ✓
+            //   ✗ 此前把整块声明**预收集**后一次性传给所有语句 ⇒ `int a = x` + 后面
+            //     `int x = 10` 里的 `x` 被当成"已被遮蔽"而不再改写 ⇒ 报「未定义的变量: x」
+            //     / 同形调用报「未定义的函数」（实测 2026-10-30）✗
             int block_extra = 0;
             for (int i = 0; i < ast->u.block.count; i++) {
                 Ast* item = ast->u.block.items[i];
@@ -639,61 +645,60 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
                     block_extra++;
                 }
             }
-            ShadowSet ms;
-            char** block_names = shadowed_names;
-            int block_count = shadowed_count;
-            if (shadow_set_init(&ms, shadowed_names, shadowed_count, block_extra, NULL)) {
+            ShadowSet run;
+            int run_ok = shadow_set_init(&run, shadowed_names, shadowed_count, block_extra, NULL);
+            char** cur_names = run_ok ? run.names : shadowed_names;
+            int cur_count = run_ok ? run.count : shadowed_count;
+            if (run_ok) {
+                // 提升：嵌套函数名从块首起就遮蔽
                 for (int i = 0; i < ast->u.block.count; i++) {
                     Ast* item = ast->u.block.items[i];
-                    if (!item) continue;
-                    if (item->kind == AST_VAR_DECL) {
-                        shadow_set_add(&ms, item->u.var_decl.name);
-                    } else if (item->kind == AST_DESTRUCT_DECL) {
-                        for (int d = 0; d < item->u.destruct_decl.slot_count; d++) {
-                            shadow_set_add(&ms,
-                                item->u.destruct_decl.names ? item->u.destruct_decl.names[d] : NULL);
-                        }
-                    } else if (item->kind == AST_FUNC_DEF) {
-                        shadow_set_add(&ms, item->u.func.name);
-                    }
+                    if (item && item->kind == AST_FUNC_DEF) shadow_set_add(&run, item->u.func.name);
                 }
-                block_names = ms.names;
-                block_count = ms.count;
+                cur_count = run.count;
             }
-            // 用合并后的遮蔽集合处理块内语句
             for (int i = 0; i < ast->u.block.count; i++) {
-                // 对 var_decl 的 init 部分：**只排除它自己的名字**（防止 `var x = x` 里右侧的 x
-                // 被当成"就是这个局部量"从而不再改写字段 ✓ 这是原本的设计意图 ✓），
-                // 但**同一块里其它局部量必须照常传** ✓。
-                // ✗ 原来这里整份传的是 `shadowed_names`（= **没并块内局部**的那份 ✗）
-                //   ⇒ 实测踩到（2026-10-10，由新加的 WARN_UNUSED_VAR 揪出来 ✓）：
-                //     ```
-                //     var maxLineW = max_line_width() + 8.0
-                //     float maxSX = maxLineW - visW        // ← 声明初始化里读同名局部
-                //     ```
-                //   第二句里的 `maxLineW` 被改写成 `self.maxLineW` ✗ ⇒ 读的是**字段**（缓存值）
-                //   而不是刚算出来的局部量（+8 那份）✗ ⇒ 局部量成了死代码 ✓ 两条滚动条的
-                //   横向/纵向算法因此不一致（sdl_edit.leno:945/947 就是这么错的 ✓）。
-                if (ast->u.block.items[i]->kind == AST_VAR_DECL) {
-                    const char* own = ast->u.block.items[i]->u.var_decl.name;
+                Ast* item = ast->u.block.items[i];
+                if (!item) continue;
+                if (item->kind == AST_VAR_DECL) {
+                    // init 部分：**只排除它自己的名字**（`var x = x` 里右侧的 x 仍指字段 ✓），
+                    // 此时该变量尚未声明 ⇒ 其它已声明的局部量照常遮蔽 ✓
+                    const char* own = item->u.var_decl.name;
                     ShadowSet is;
-                    if (shadow_set_init(&is, block_names, block_count, 0, own)) {
-                        transform_method_body_ex(ast->u.block.items[i]->u.var_decl.init,
+                    if (run_ok && shadow_set_init(&is, run.names, run.count, 0, own)) {
+                        transform_method_body_ex(item->u.var_decl.init,
                             field_names, field_count, method_names, method_count, struct_name,
-                            is.names, is.count, param_names, param_count, const_names, const_count);  // init 中仍可访问字段
+                            is.names, is.count, param_names, param_count, const_names, const_count);
                         shadow_set_free(&is);
                     } else {
-                        transform_method_body_ex(ast->u.block.items[i]->u.var_decl.init,
+                        transform_method_body_ex(item->u.var_decl.init,
                             field_names, field_count, method_names, method_count, struct_name,
-                            block_names, block_count, param_names, param_count, const_names, const_count);
+                            cur_names, cur_count, param_names, param_count, const_names, const_count);
+                    }
+                    // 声明点之后进入遮蔽集合
+                    if (run_ok) {
+                        shadow_set_add(&run, own);
+                        cur_count = run.count;
+                    }
+                } else if (item->kind == AST_DESTRUCT_DECL) {
+                    // 解构名同样在 init 求值**之后**才生效
+                    transform_method_body_ex(item->u.destruct_decl.init,
+                        field_names, field_count, method_names, method_count, struct_name,
+                        cur_names, cur_count, param_names, param_count, const_names, const_count);
+                    if (run_ok) {
+                        for (int d = 0; d < item->u.destruct_decl.slot_count; d++) {
+                            shadow_set_add(&run,
+                                item->u.destruct_decl.names ? item->u.destruct_decl.names[d] : NULL);
+                        }
+                        cur_count = run.count;
                     }
                 } else {
-                    transform_method_body_ex(ast->u.block.items[i],
+                    transform_method_body_ex(item,
                         field_names, field_count, method_names, method_count, struct_name,
-                        block_names, block_count, param_names, param_count, const_names, const_count);
+                        cur_names, cur_count, param_names, param_count, const_names, const_count);
                 }
             }
-            if (ms.names) shadow_set_free(&ms);
+            if (run.names) shadow_set_free(&run);
             break;
         }
         case AST_RETURN:
@@ -1028,6 +1033,12 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
             if (ast->u.slice.end) {
                 transform_method_body_ex(ast->u.slice.end, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
             }
+            break;
+        case AST_RANGE:
+            // `x in a:b` 的范围端点也是普通表达式：裸字段名必须同样改写成 self.字段 ✓
+            //   （此前落到 default 被静默跳过 ⇒ 端点里的字段读成未解析的变量，运行期静默取错值 ✗）
+            transform_method_body_ex(ast->u.range.start, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
+            transform_method_body_ex(ast->u.range.end, field_names, field_count, method_names, method_count, struct_name, shadowed_names, shadowed_count, param_names, param_count, const_names, const_count);
             break;
         case AST_SAFE_ACCESS:
             // 安全访问：expr?.field / expr?.method(args)

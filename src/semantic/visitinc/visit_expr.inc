@@ -1,3 +1,12 @@
+        // 范围表达式 `x in a:b`：两端都是普通表达式 ⇒ 必须递归分析
+        //   ✗ 此前**整个仓库的语义分析都没有这个 case**（落到 default 静默跳过）⇒
+        //     端点里的变量/字段从未被解析，codegen 按 ref 默认值取槽位 0 ⇒ 运行期静默算错
+        //     （实测 `x in 0:n` / `x in 0:字段` 判断结果永远是错的，且无任何编译期提示）✗
+        case AST_RANGE:
+            if (ast->u.range.start) visit(s, ast->u.range.start);
+            if (ast->u.range.end) visit(s, ast->u.range.end);
+            break;
+
         case AST_BINOP: {
             // ★ 2026-10-10（A 组 ①(a)）：**`not x in arr` 的优先级陷阱** ✓
             //   ⇒ `(not x) in arr` ✗（`not x` 是 bool ⇒ 几乎恒 false ✗）。
@@ -818,10 +827,13 @@
                         
                         if (!type_name) {
                             // any 类型不能调用方法
-                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
-                                "不能在 any 类型上调用方法 '%s'\n"
-                                "  提示: 使用 if ... is Type { ... } 类型收窄或指定参数类型",
-                                method_name);
+                            //   毒值（TYPE_POISON）表示上游根因（如"没有方法"）已报过 ⇒ 静默 ✓
+                            if (receiver_type->kind != TYPE_POISON) {
+                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                    "不能在 any 类型上调用方法 '%s'\n"
+                                    "  提示: 使用 if ... is Type { ... } 类型收窄或指定参数类型",
+                                    method_name);
+                            }
                             semantic_poison_expr(ast);
                         }
                         if (type_name) {
@@ -2179,7 +2191,7 @@
                     ok != TYPE_STRUCT && ok != TYPE_CSTRUCT && ok != TYPE_FACE &&
                     ok != TYPE_ENUM && ok != TYPE_CLIB && ok != TYPE_PTR_GENERIC &&
                     ok != TYPE_ANY && ok != TYPE_INFER && ok != TYPE_UNKNOWN &&
-                    ok != TYPE_GENERIC_PARAM && ok != TYPE_MULTI_RET) {
+                    ok != TYPE_GENERIC_PARAM && ok != TYPE_MULTI_RET && ok != TYPE_POISON) {
                     const char* field_name = ast->u.index.index->u.string.value;
                     error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                         "类型 '%s' 不支持属性访问 '.%s'（只有 struct、dict、array 等类型才能访问属性）",

@@ -85,13 +85,31 @@ int semver_parse(const char* str, SemVer* out) {
     while (isspace((unsigned char)*str)) str++;
     if (*str == 'v' || *str == 'V') str++;  /* 跳过可选 v 前缀 */
 
-    if (sscanf(str, "%d.%d.%d", &out->major, &out->minor, &out->patch) < 3) {
-        return -1;
-    }
-
-    /* 跳过数字和点号部分，定位到 prerelease/build */
+    /* 1~3 段数字（`1` / `1.2` 按 1.0.0 / 1.2.0 补齐）—— 用户写 `>=0.3` 很常见，
+     * 原来的 sscanf("%d.%d.%d") 对两段版本**直接失败**，而失败结果被调用方忽略 ⇒
+     * 整个约束退化成 0.0.0（静默放行/静默拒绝）✗ 实测 2026-10-30。 */
+    int comps[3] = { 0, 0, 0 };
+    int ncomp = 0;
     const char* p = str;
-    while (*p && (isdigit((unsigned char)*p) || *p == '.')) p++;
+    if (!isdigit((unsigned char)*p)) return -1;
+    while (ncomp < 3) {
+        if (!isdigit((unsigned char)*p)) return -1;
+        long v = 0;
+        while (isdigit((unsigned char)*p)) {
+            v = v * 10 + (*p - '0');
+            if (v > 1000000000L) return -1;   /* 防御溢出 */
+            p++;
+        }
+        comps[ncomp++] = (int)v;
+        if (*p != '.') break;
+        p++;                                  /* 跳过 '.'，继续下一段（下一段必须仍是数字） */
+    }
+    /* 段后只允许：结束 / prerelease / build / 空白 */
+    if (*p && *p != '-' && *p != '+' && !isspace((unsigned char)*p)) return -1;
+
+    out->major = comps[0];
+    out->minor = comps[1];
+    out->patch = comps[2];
 
     if (*p == '-') {
         const char* start = p + 1;
@@ -126,64 +144,82 @@ int version_req_parse(const char* str, VersionReq* out) {
     if (!str || !out) return -1;
     memset(out, 0, sizeof(VersionReq));
 
-    /* 跳过前导空白 */
-    while (isspace((unsigned char)*str)) str++;
+    /* 两端空白都要去掉（否则 `">=1.0.0 "` 这种会落进 EXACT 分支） */
+    char buf[128];
+    snprintf(buf, sizeof(buf), "%s", str);
+    char* s = str_trim(buf);
 
-    if (strcmp(str, "*") == 0 || strlen(str) == 0) {
+    if (strcmp(s, "*") == 0 || s[0] == '\0') {
         out->type = VER_ANY;
         return 0;
     }
 
     /* ~1.2.3 → COMPAT */
-    if (str[0] == '~') {
+    if (s[0] == '~') {
         out->type = VER_COMPAT;
-        return semver_parse(str + 1, &out->version);
+        if (semver_parse(s + 1, &out->version) != 0) goto invalid;
+        return 0;
     }
 
     /* >=1.0, <2.0 → RANGE */
-    const char* comma = strstr(str, ",");
+    const char* comma = strstr(s, ",");
     if (comma) {
         out->type = VER_RANGE;
-        /* 解析第一个部分 */
         char first[64];
-        size_t len = comma - str;
+        size_t len = (size_t)(comma - s);
         if (len >= sizeof(first)) len = sizeof(first) - 1;
-        memcpy(first, str, len);
+        memcpy(first, s, len);
         first[len] = '\0';
-        char* s = str_trim(first);
+        char* s1 = str_trim(first);
 
-        if (strncmp(s, ">=", 2) == 0) {
-            semver_parse(s + 2, &out->version);
-        } else if (s[0] == '>') {
-            semver_parse(s + 1, &out->version);
+        if (strncmp(s1, ">=", 2) == 0) {
+            if (semver_parse(s1 + 2, &out->version) != 0) goto invalid;
+        } else if (s1[0] == '>') {
+            /* 严格下界 `>x` 当前不支持：不区分包含性会把它静默当成 >=x ✗ ⇒ 明确报错 */
+            goto invalid;
         } else {
-            semver_parse(s, &out->version);
+            if (semver_parse(s1, &out->version) != 0) goto invalid;
         }
 
-        /* 解析第二个部分 */
+        char second[64];
         const char* s2 = comma + 1;
         while (isspace((unsigned char)*s2)) s2++;
-        if (strncmp(s2, "<=", 2) == 0) {
-            semver_parse(s2 + 2, &out->version_upper);
-        } else if (strncmp(s2, "<", 1) == 0) {
-            semver_parse(s2 + 1, &out->version_upper);
+        snprintf(second, sizeof(second), "%s", s2);
+        char* s2t = str_trim(second);
+        if (strncmp(s2t, "<=", 2) == 0) {
+            out->version_upper_inclusive = 1;
+            if (semver_parse(s2t + 2, &out->version_upper) != 0) goto invalid;
+        } else if (s2t[0] == '<') {
+            if (semver_parse(s2t + 1, &out->version_upper) != 0) goto invalid;
         } else {
-            semver_parse(s2, &out->version_upper);
+            /* 范围必须有显式上界比较符，否则 `>=1.0.0, 2.0.0` 这种语义不明 */
+            goto invalid;
         }
         return 0;
     }
 
     /* >=1.2.3 */
-    if (strncmp(str, ">=", 2) == 0) {
+    if (strncmp(s, ">=", 2) == 0) {
         out->type = VER_GTE;
-        return semver_parse(str + 2, &out->version);
+        if (semver_parse(s + 2, &out->version) != 0) goto invalid;
+        return 0;
     }
 
     /* =1.2.3 或纯粹 1.2.3 → EXACT */
-    const char* ver_str = str;
+    const char* ver_str = s;
     if (ver_str[0] == '=') ver_str++;
+    /* 其余前缀（`^` / `>` / `<=` 等）**当前不支持** —— 必须明确报错，
+     * 不能静默退化成 0.0.0（那会让约束看似生效、实则恒放行/恒拒绝）✗ */
+    if (ver_str[0] != '\0' && !isdigit((unsigned char)ver_str[0])) goto invalid;
     out->type = VER_EXACT;
-    return semver_parse(ver_str, &out->version);
+    if (semver_parse(ver_str, &out->version) != 0) goto invalid;
+    return 0;
+
+invalid:
+    /* 解析失败：标记成 VER_INVALID ⇒ 真正需要它时（[requires] 校验）会给出
+     * "无法解析版本要求" 的明确报错，而不是悄悄用 0.0.0 去比较 */
+    out->type = VER_INVALID;
+    return -1;
 }
 
 /* ================================================================
@@ -211,21 +247,27 @@ int version_satisfies(SemVer* version, VersionReq* req) {
             return semver_cmp(version, &req->version) >= 0;
 
         case VER_COMPAT: {
-            /* ~1.2.3 → >=1.2.3 <1.3.0 */
+            /* ~1.2.3 → >=1.2.3 <1.3.0（**总是抬升 minor**）✓
+             *   ✗ 原来写成 "major==0 时抬 patch" —— 于是 `~0.2.0` 的上界成了 0.2.1，
+             *     0.2.6 直接被判不满足（兼容区间算反了）✗ 实测 2026-10-30。 */
             if (semver_cmp(version, &req->version) < 0) return 0;
             SemVer upper = req->version;
-            if (upper.major > 0) {
-                upper.minor++;
-                upper.patch = 0;
-            } else {
-                upper.patch++;
-            }
+            upper.minor++;
+            upper.patch = 0;
             return semver_cmp(version, &upper) < 0;
         }
 
-        case VER_RANGE:
-            return semver_cmp(version, &req->version) >= 0 &&
-                   semver_cmp(version, &req->version_upper) < 0;
+        case VER_RANGE: {
+            int lo_ok = semver_cmp(version, &req->version) >= 0;
+            int hi_cmp = semver_cmp(version, &req->version_upper);
+            /* `<=` 含端点、`<` 不含 —— 此前一律按 `<` 比较 ⇒ `<=x` 静默错 ✗ */
+            int hi_ok = req->version_upper_inclusive ? (hi_cmp <= 0) : (hi_cmp < 0);
+            return lo_ok && hi_ok;
+        }
+
+        case VER_INVALID:
+            /* 约束本身写坏：调用方应先报"无法解析版本要求"，这里只保证不静默放行 */
+            return 0;
     }
     return 0;
 }
@@ -733,6 +775,18 @@ int package_check_module_version(const char* resolved_path, char* out_msg, int o
     }
 
     int ok = version_satisfies(&ver, &g_module_reqs[ri].req);
+    if (g_module_reqs[ri].req.type == VER_INVALID) {
+        /* 约束本身写错了：明确报出来，而不是拿 0.0.0 去比较（那会静默放行/静默拒绝） */
+        snprintf(out_msg, (size_t)out_len,
+                 "无法解析版本要求 '%s'（leno.toml 的 [requires] %s）\n"
+                 "  支持: \"1.2.3\" / \"~1.2.3\" / \">=1.2.3\" / \">=1.2.3, <2.0.0\" / \"*\""
+                 "（版本可只写 1 段或 2 段，如 \"~1.2\" / \">=0.3\"）",
+                 req_str, pkg->name);
+        free(ver.prerelease);
+        free(ver.build);
+        package_config_free(pkg);
+        return 0;
+    }
     free(ver.prerelease);
     free(ver.build);
 

@@ -3022,7 +3022,7 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                         ok != TYPE_STRUCT && ok != TYPE_CSTRUCT && ok != TYPE_FACE &&
                         ok != TYPE_ENUM && ok != TYPE_CLIB && ok != TYPE_PTR_GENERIC &&
                         ok != TYPE_ANY && ok != TYPE_INFER && ok != TYPE_UNKNOWN &&
-                        ok != TYPE_GENERIC_PARAM && ok != TYPE_MULTI_RET) {
+                        ok != TYPE_GENERIC_PARAM && ok != TYPE_MULTI_RET && ok != TYPE_POISON) {
                         const char* field_name = ast->u.index.index->u.string.value;
                         error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                             "类型 '%s' 不支持属性访问 '.%s'（只有 struct、dict、array 等类型才能访问属性）",
@@ -3624,7 +3624,7 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     ok != TYPE_STRUCT && ok != TYPE_CSTRUCT && ok != TYPE_FACE &&
                     ok != TYPE_ENUM && ok != TYPE_CLIB && ok != TYPE_PTR_GENERIC &&
                     ok != TYPE_ANY && ok != TYPE_INFER && ok != TYPE_UNKNOWN &&
-                    ok != TYPE_GENERIC_PARAM && ok != TYPE_MULTI_RET) {
+                    ok != TYPE_GENERIC_PARAM && ok != TYPE_MULTI_RET && ok != TYPE_POISON) {
                     const char* field_name = ast->u.field_access.field_name;
                     error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                         "类型 '%s' 不支持属性访问 '.%s'（只有 struct、dict、array 等类型才能访问属性）",
