@@ -64,6 +64,7 @@ use scv.ScrollView
 import "sdl_treeview.leno" as tvlib
 use tvlib.TreeView
 import "sdl_tooltip.leno" as tip
+import "sdl_toast.leno" as tst       // 轻提示（2026-10-30）：与 tip 同构的全局浮层，挂在本文件的固定层上 ✓
 import "sdl_widget.leno" as wgt
 use wgt.Widget
 import "sdl_chart.leno" as cht
@@ -1626,6 +1627,10 @@ export struct Window {
                 //   在弱 CPU 上仅 hover 表格就能占 30%+ CPU。
                 int tipRemain = tip.tipRemainingMs()
                 if tipRemain >= 0 and tipRemain < timeoutMs { timeoutMs = tipRemain }
+                // ★ Toast 同理（2026-10-30）：淡入淡出期 ~16ms 醒一次，停留期一觉睡到淡出开始，
+                //   到期自动淡出 ⇒ 不用像应用侧那样挂 33ms 定时器常驻 30fps 空转 ✗
+                int toRemain = tst.toastNextEventMs()
+                if toRemain >= 0 and toRemain < timeoutMs { timeoutMs = toRemain }
                 if timeoutMs < 1 { timeoutMs = 1 }
             }
             int _t0 = core.getTicks()
@@ -1924,6 +1929,9 @@ export struct Window {
             if _hadEvent { _needRedraw = true }
             if core.consumeRedrawRequest() { _needRedraw = true }
             if tip.tipRemainingMs() == 0 { _needRedraw = true }
+            // ★ Toast 动画期（淡入/淡出）必须连续出帧，否则会"卡两下再出现" ✗
+            //   停留期不在这里——交给上面的 poll 超时按时刻唤醒 ✓
+            if tst.toastAnimating() { _needRedraw = true }
             if _needRedraw {
                 int now = core.getTicks()
                 // ★ 输入类事件（滚轮/点击/键盘/resize）**不等节流**，立刻出一帧：
@@ -2061,6 +2069,12 @@ export struct Window {
                     // 在此兜底绘制到最上层，避免被同级控件遮挡）
                     menu.renderContextMenus(_runRens[i], _runHnds[i], _runW[i], _runH[i])
                     core.clearDispatchWindow()      // 本窗口的弹层都登记完了 ⇒ 撤上下文 ✓
+                    // Toast 浮层（2026-10-30）：在控件与弹层之后、Tooltip 之前。
+                    //   为什么在 tooltip 之下：tooltip 指向鼠标、是更"临时"的一层，应该压住 toast ✓
+                    //   不拦截输入（本函数不实现 process），所以不吃点击 ✓
+                    //   tick 是全局状态更新，每帧只需一次（在首个窗口时调用，同 tipTick ✓）
+                    if i == 0 { tst.toastTick(_runWids[i]) }
+                    tst.toastRender(_runRens[i], _runW[i], _runH[i], _runWids[i])
                     // Tooltip 浮层：在所有控件与弹层之后绘制，浮在最上层；不拦截输入
                     // tipTick 是全局状态更新，每帧只需调一次（在首个窗口时调用）
                     if i == 0 { tip.tipTick() }

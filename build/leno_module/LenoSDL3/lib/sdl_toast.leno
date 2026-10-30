@@ -1,0 +1,265 @@
+// sdl_toast.leno — 轻提示（应用内 toast）
+//
+// 定位（2026-10-30 新增）：一次操作的回声 —— 弹出来、停 2.4 秒、自己淡出，不打断、不占布局。
+//
+// ── 为什么做成**浮层**而不是 Widget 控件 ──────────────────────────────
+//   ① Widget 的契约是"可布局 + 可交互"（见 sdl_widget.leno 的 7 个方法），
+//      toast 两样都不要：不该被 HBox/VBox 分到空间、不该吃点击（必须点穿）。
+//      做成控件就得在布局/事件分发里开特例，等于给控件树引入第二种语义 ✗
+//   ② 控件坐标得自己跟窗口 resize 联动（Scrim 被迫补了 on_window_resize ✓）；
+//      浮层每帧按当前窗口逻辑尺寸现算，天生不受影响 ✓
+//   ③ `Window.setOverlay` 只有**一个槽位**：Aria 原来把 toast 塞在 setOverlay 里，
+//      而 `ARIA_SHOT` 截图模式又会 setOverlay(shot_overlay) ⇒ 后来者顶掉前者，
+//      截图模式下 toast 直接消失 ✗（这是真实踩到的，不是假想 ✓）
+//   ⇒ 与 Tooltip 同构：**全局单例 + Window.run 固定层挂载**。
+//      渲染顺序：控件 → 菜单弹层 → **Toast** → Tooltip → setOverlay → present
+//      （toast 在 tooltip 之下：tooltip 指向鼠标，是更"临时"的一层 ✓）
+//
+// ── 与 Alert 的分工（不重叠，别再写第三个）──────────────────────────
+//   Alert = 内容（占布局、要读者读、停留到应用 set_visible(false)）
+//   Toast = 回声（不占布局、不吃事件、自动计时消失）
+//   判据：要不要跟着容器重排 / 要不要停留到用户处理 → 要 ⇒ Alert
+//
+// ── 用法 ────────────────────────────────────────────────────────────
+//   SDL3.toast("已加入下载队列 3 首")                    // info，2.4s，底部居中
+//   SDL3.toastKind("保存失败", SDL3.TOAST_ERROR)          // 四档语义色
+//   SDL3.toastFull("正在解析…", SDL3.TOAST_INFO, 1200, SDL3.TOAST_TOP)
+//   SDL3.setToastMargin(96)  SDL3.setToastDuration(2000)  SDL3.setToastMaxWidth(520)
+//   诊断（自检/排障）: SDL3.toastVisible() / SDL3.toastCurrent()
+//
+// ── 已知边界 ────────────────────────────────────────────────────────
+//   toast 只画在**发起它的那个窗口**里（记 _wid）。主窗口弹的 toast 会被模态 Dialog
+//   （**另一个 SDL 窗口**，层序由 OS 管）盖住 —— 框架改不了，要"跨窗口最上层"请用
+//   LenoSys 系统通知，那不是 toast 的职责 ✓
+import "sdl_core.leno" as core
+import "sdl_font.leno" as fnt; use fnt.Font
+import "sdl_renderer.leno" as ren; use ren.Renderer
+import "sdl_theme.leno" as theme; use theme.Theme
+
+// ==================== 四档语义（与 Alert 的 kind 对齐）====================
+//   ⚠ 只对齐**语义**，不 import sdl_alert —— 那会把 Label/Font 整条依赖链拖进浮层，
+//     而这里只需要一个颜色（见下方 _kindColor）✗
+export const TOAST_INFO    = 0
+export const TOAST_SUCCESS = 1
+export const TOAST_WARN    = 2
+export const TOAST_ERROR   = 3
+
+// ==================== 位置 ====================
+export const TOAST_BOTTOM       = 0     // 底部居中（默认）
+export const TOAST_TOP          = 1     // 顶部居中
+export const TOAST_BOTTOM_RIGHT = 2     // 右下角
+
+// ==================== 全局状态 ====================
+//   ⚠ 单例，与本文件外的任何控件无关；同时只显示**一条**，新的覆盖旧的并重置计时。
+//     不做堆叠队列：堆叠要给每条独立计时 + 位移，与"轻"的定位相悖 ✗
+string _text = ""
+int _kind = TOAST_INFO
+int _pos  = TOAST_BOTTOM
+int _startMs   = 0            // 出现时刻（绝对毫秒，不用累加 dt：掉帧不会走偏 ✓）
+int _durMs     = 2400         // 总显示时长（含淡入淡出）
+int _fadeInMs  = 160
+int _fadeOutMs = 450          // 与 Aria 原实现观感一致
+float _margin  = 32.0         // 距底/顶/边的距离（底部有底栏的应用请调大，见 setToastMargin）
+float _maxW    = 560.0        // 单行最大宽度，超出裁剪为 "..."
+float _fontSize = 13.0
+float _pillH   = 36.0
+int _wid = -1                 // 归属窗口；-1 = 跟随**首个**窗口（toastTick 时确定）
+Font? _font
+bool _fontDirty = true
+
+// 裁剪结果缓存：文本/宽度没变就不重复二分测量（measureString 自身也有 256 槽缓存 ✓）
+string _fitSrc = ""
+float _fitMaxW = -1.0
+string _fitOut = ""
+
+// ==================== 对外 API ====================
+export func toast(string text) {
+    show(text, TOAST_INFO, _durMs, _pos)
+}
+
+export func toastKind(string text, int kind) {
+    show(text, kind, _durMs, _pos)
+}
+
+// 全参数版：ms <= 0 用默认 2400；pos 用 TOAST_BOTTOM / TOAST_TOP / TOAST_BOTTOM_RIGHT
+export func toastFull(string text, int kind = TOAST_INFO, int ms = 2400, int pos = TOAST_BOTTOM) {
+    show(text, kind, ms, pos)
+}
+
+export func toastClear() {
+    _text = ""
+    core.markFrameRedraw()
+}
+
+export func setToastDuration(int ms)  { if ms > 0 { _durMs = ms } }
+export func setToastMargin(float px)  { if px >= 0.0 { _margin = px } }
+export func setToastMaxWidth(float px) { if px > 0.0 { _maxW = px } }
+export func setToastPosition(int pos) { _pos = pos }
+export func setToastFontSize(float px) {
+    if px > 0.0 and px != _fontSize { _fontSize = px; _fontDirty = true }
+}
+
+// 诊断（自检/排障）：分得清"没弹出来"和"弹了但被清/没画" ✓
+export func toastVisible(): bool { return _text != "" and _elapsed() < _durMs }
+export func toastCurrent(): string { return _text }
+
+// 模块卸载/进程收尾：归还字体（可选；不发也能被 ttfQuit 兜住）
+export func disposeToast() {
+    if _font != null and _font.ok { fnt.releaseFont(_font) }
+    _font = null
+    _fontDirty = true
+}
+
+// ==================== Window 挂载（框架内部用）====================
+
+// 每帧由 Window 在**首个窗口**上调用一次（与 tipTick 同位置）：
+//   ① 记录默认归属窗口  ② 到期清文本
+export func toastTick(int wid) {
+    if _wid < 0 { _wid = wid }
+    if _text != "" and _elapsed() >= _durMs { _text = "" }
+}
+
+// 距"下一次需要重绘"还有多少毫秒。Window 用它决定 poll 超时：
+//   返回 -1：无事可做（不可见/已过期），不要额外唤醒 ✓
+//   返回 16：正在淡入/淡出，按 ~60fps 推进 ✓
+//   返回 >16：停留期，一觉睡到淡出开始那一刻再醒（省 CPU，同 tooltip 的做法 ✓）
+export func toastNextEventMs(): int {
+    if _text == "" { return -1 }
+    int e = _elapsed()
+    if e < 0 { return 16 }
+    if e >= _durMs { return -1 }
+    if e < _fadeInMs { return 16 }
+    int outStart = _durMs - _fadeOutMs
+    if e < outStart {
+        int remain = outStart - e
+        return if remain > 16 then remain else 16
+    }
+    return 16
+}
+
+// 是否处于淡入/淡出动画中（Window 用它请求连续重绘）
+export func toastAnimating(): bool {
+    if _text == "" { return false }
+    int e = _elapsed()
+    if e < 0 or e >= _durMs { return false }
+    if e < _fadeInMs { return true }
+    return e >= _durMs - _fadeOutMs
+}
+
+// 每帧由 Window 在 Tooltip 之前调用（所有控件与弹层之后 ⇒ 盖在它们上面）
+export func toastRender(Renderer r, float vw, float vh, int wid) {
+    if _text == "" { return }
+    if _wid >= 0 and wid != _wid { return }      // 只画在归属窗口上
+    int e = _elapsed()
+    if e < 0 or e >= _durMs { return }
+    if vw <= 1.0 or vh <= 1.0 { return }         // 窗口还没尺寸（首帧早期）
+
+    _ensureFont(r)
+    if not _font.ok { return }
+
+    float padX = 16.0
+    // 宽度：不超过窗口（左右各留 _margin **和**胶囊内边距），再套用户上限。
+    //   ⚠ 漏掉 padX 这一项时，窄窗口下 tw 正好卡到 vw-2*margin，胶囊再各加 16 就溢出 ✗
+    float limit = vw - _margin * 2.0 - padX * 2.0
+    if limit < 40.0 { limit = 40.0 }
+    float maxW = if _maxW < limit then _maxW else limit
+    string txt = _fit(_font, _text, maxW)
+
+    var[float, float](tw, th) = _font.measureString(txt)
+    float bw = tw + padX * 2.0
+    float bh = _pillH
+    float bx = (vw - bw) / 2.0
+    float by = vh - _margin - bh
+    if _pos == TOAST_TOP {
+        by = _margin
+    } else if _pos == TOAST_BOTTOM_RIGHT {
+        bx = vw - _margin - bw
+        by = vh - _margin - bh
+    }
+    if bx < 4.0 { bx = 4.0 }
+    if by < 4.0 { by = 4.0 }
+
+    int al = _alpha(e)
+    Theme tm = theme.getTheme()
+
+    // 胶囊底：用**主题**的 toastBg/toastTxt ⇒ 浅色主题自动是白底深字，不必为每套主题写死 ✓
+    r.setColor(theme.withAlpha(tm.toastBg, al))
+    r.fillRoundedRect(bx, by, bw, bh, bh / 2.0)
+    // 边框按 kind 上色（info 蓝 / success 绿 / warn 黄 / error 红）：
+    //   只用**边框**区分，不动背景 —— 背景一旦按 kind 变，浅色主题下几种都很扎眼 ✗
+    r.setColor(theme.withAlpha(_kindColor(tm, _kind), al))
+    r.drawRoundedRect(bx, by, bw, bh, bh / 2.0)
+    // 文字垂直居中：measureString 给的是**行高**（含上下留白），拿它算才准 ✓
+    float ty = by + (bh - th) / 2.0
+    r.drawText(_font, txt, r.snapX(bx + padX), r.snapY(ty), theme.withAlpha(tm.toastTxt, al))
+}
+
+// ==================== 内部 ====================
+func show(string text, int kind, int ms, int pos) {
+    if text == null or text == "" { return }
+    _text = text
+    _kind = kind
+    _pos = pos
+    _durMs = if ms > 0 then ms else 2400
+    _startMs = core.getTicks()
+    _fitSrc = ""                    // 换文本 ⇒ 裁剪缓存作废
+    core.markFrameRedraw()          // 立刻出一帧，别等下一个定时器
+}
+
+func _elapsed(): int { return core.getTicks() - _startMs }
+
+func _alpha(int e): int {
+    float a = 1.0
+    if _fadeInMs > 0 and e < _fadeInMs {
+        a = _float(e) / _float(_fadeInMs)
+    }
+    if _fadeOutMs > 0 and e >= _durMs - _fadeOutMs {
+        int rem = _durMs - e
+        if rem < 0 { rem = 0 }
+        a = _float(rem) / _float(_fadeOutMs)
+    }
+    if a < 0.0 { a = 0.0 }
+    if a > 1.0 { a = 1.0 }
+    return _int(246.0 * a)          // 上到 246 而不是 255：留一点通透感（同 Aria 原实现 ✓）
+}
+
+func _kindColor(Theme tm, int k): int {
+    if k == TOAST_SUCCESS { return tm.btnSuccess }
+    if k == TOAST_WARN    { return tm.btnWarning }
+    if k == TOAST_ERROR   { return tm.btnDanger }
+    // info（默认档）用主题的 toastBrd：它是最常出现的一档，不该每次都冒一个强调色边框 ✓
+    //   ⇒ 应用想"无边框"就把 toastBrd 设成与 toastBg 同色（Aria 就是这么还原旧观感的 ✓）
+    return tm.toastBrd
+}
+
+func _ensureFont(Renderer r) {
+    if _fontDirty or _font == null or not _font.ok {
+        if _font != null and _font.ok { fnt.releaseFont(_font) }
+        _font = fnt.acquireFontAuto(_fontSize)
+        _fontDirty = false
+    }
+    if _font != null and _font.ok { _font.setSSAA(r.getSSAA()) }
+}
+
+// 单行裁剪：超宽时二分找最大可显示前缀 + "..."。
+//   为什么不用固定字符数：CJK 与 ASCII 宽度差一倍，按字数切会一半溢出、一半留白 ✗
+//   slice 是**字符**下标（闭区间），s.len() 也是字符数 ⇒ 中文不会切出半个字节 ✓
+//   每次换文本才走一次，log2(n) 次 measureString（且有缓存），可忽略 ✓
+func _fit(Font f, string s, float maxW): string {
+    if s == _fitSrc and maxW == _fitMaxW { return _fitOut }
+    string out = s
+    var[float, float](w0, h0) = f.measureString(s)
+    if w0 > maxW and s.len() > 0 {
+        string ell = "..."
+        int lo = 0
+        int hi = s.len()
+        while lo < hi {
+            int mid = (lo + hi + 1) / 2
+            var[float, float](mw, mh) = f.measureString(s.slice(0, mid - 1) + ell)
+            if mw <= maxW { lo = mid } else { hi = mid - 1 }
+        }
+        out = if lo <= 0 then ell else s.slice(0, lo - 1) + ell
+    }
+    _fitSrc = s; _fitMaxW = maxW; _fitOut = out
+    return out
+}

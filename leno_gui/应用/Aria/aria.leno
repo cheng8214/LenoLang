@@ -152,6 +152,11 @@ func appTheme(): Theme {
     t.tipBg    = #35262BFF
     t.tipTxt   = #FFF7FAFF
     t.tipBrd   = #C9A9B5FF
+    // 轻提示（2026-10-30 框架化）：保持旧版「深酒红胶囊 + 白字、无边框」观感
+    //   toastBrd 与 toastBg 同色 ⇒ 边框不可见（旧版本来就没有边框 ✓）
+    t.toastBg  = #2E2126FF
+    t.toastTxt = #FFFFFFFF
+    t.toastBrd = #2E2126FF
     t.fontSize = 13.0
     return t
 }
@@ -226,8 +231,10 @@ export struct Player {
     Button searchBtn
     // ----- 下载列表（侧栏第二个入口；队列数据在 lib/downloads.leno 的协议里）-----
     Button dlBtn
-    Array[Array[string]] dlJobs = []      // 行：[id, 歌名, 歌手, 状态, 说明]
+    Array[Array[string]] dlJobs = []      // 行：[id, 歌名, 歌手, 状态, 说明, 格式, 已下, 总]（会落盘 ✓）
     bool dlBusy = false                   // 是否正在下载（一次只下一个 ✓）
+    // 给正在跑的下载 worker 发控制命令（目前只有"暂停"；worker 每片之间 try_receive 一次 ✓）
+    Channel dlCtl = null
     // 本地音乐列表**建表时**的扫描结果 —— 点击/右击都按它取行，
     // 避免"再扫一次顺序变了、点 A 放 B"（2026-10-26 实测踩到 ✗）
     Array[Song] localCache = []
@@ -332,6 +339,17 @@ export struct Player {
                               0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     // 歌词页左侧那排操作按钮里的 ♥ —— 要留句柄：收藏状态变了得**就地**换图标（整页重建会闪 ✗）
     Button lyrLikeBtn
+    // 表格页副标题右侧那颗「刷新」钮的动作（null = 这页不显示）
+    //   用字段而不是给 show_table_page 加函数型默认参数：默认参数只写过字面量，
+    //   "函数类型 + 默认 null" 容易踩类型推断，字段最直观 ✓
+    func():void pageRefresh = null
+    // 表格页副标题右侧的**文字按钮**（下载页的「全部暂停 / 全部开始」用它 ✓）
+    string pageActionText = ""
+    func():void pageAction = null
+    // 歌词空态时浮在中间的「搜索歌词」钮（自动取不到歌词 ⇒ 用户手动兜底 ✓）
+    Button lyrFindBtn
+    Channel lyrFindCh              // 它跑在后台线程（要联网搜），回信走这里
+    bool lyrFinding = false
     bool durKnown = false          // 时长只取一次
     int shownSec = -1              // 只在秒数变化时重绘
     bool seekSyncing = false       // 程序化刷新进度条时不许回灌 on_seek
@@ -415,6 +433,17 @@ export struct Player {
     VBox qList                 // 浮层里的行容器（每次打开重建）
     Label qSub                 // 「3 首 · 11 分钟」
 
+    // ----- 轻提示（应用内 toast）-----
+    //   为什么不用底栏歌手位：那里只放歌手名（2026-10-30 用户要求 ✓）
+    //   为什么不用系统通知：一次操作一条气泡太吵、还要用户切窗口去看
+    //   ⇒ 窗口底部中央一个小胶囊，淡入 → 停留 2.4s → 最后 0.45s 渐隐消失 ✓
+    //   ★ 2026-10-30 反哺框架：绘制/计时/淡出/字体全部交给 `SDL3.toast()`（sdl_toast.leno），
+    //     这里不再持有 toastTxt/toastLeft/toastFont。原来那套有两个硬伤：
+    //       ① 走 `win.setOverlay`，而该槽位只有一个 —— `ARIA_SHOT` 截图钩子也 setOverlay，
+    //          后设的顶掉前者 ⇒ 截图模式 toast 直接不显示 ✗
+    //       ② 33ms 定时器每帧 markFrameRedraw ⇒ 空闲也按 30fps 空转（弱机上白烧 CPU）
+    //     现在由 Window 的固定浮层托管：只有淡入/淡出才唤醒，停留期挂起 ✓
+
 Song nowSong
     ProgressBar seek
     Label curTime
@@ -469,6 +498,10 @@ Song nowSong
         sugCh = threads.channel(4)            // 搜索建议（一个词一条 ✓）
         homeCh = threads.channel(4)           // 首页分区（为你推荐/最近添加）回信通道
         lyrCh = threads.channel(4)            // 歌词回信（一首一条 ✓）
+        lyrFindCh = threads.channel(4)        // 「搜索歌词」回信（点一次一条 ✓）
+        dlCtl = threads.channel(4)            // 下载控制（给 worker 发"暂停"）✓
+        // 下载队列**落盘历史**：重启后原样恢复（"下载中"已在 load_jobs 里降级成"已暂停"✓）
+        dlJobs = dl.load_jobs(ui.cacheRoot())
         bangCh = threads.channel(4)           // 排行榜回信（单个榜）
         bangCardsCh = threads.channel(4)      // 卡片墙回信（多榜前 3 首）
         plCh = threads.channel(4)             // 发现页：推荐歌单回信
@@ -512,6 +545,9 @@ Song nowSong
                                   show_separator: false})
         win.add(tb)
         tbH = tb.get_h()
+        // 关闭前问一句（还有下载没完成时）—— TitleBar 没接 on_close 才自己关，
+        //   接了就把"关不关"完全交给我们 ✓（见 sdl_titlebar 的 btn == 3 分支）
+        tb.on_close(func() { on_close_app() })
 
         // ---- 播放列表面板（右侧浮层，默认隐藏）----
         //   为什么用 `win.add` 而不是塞进 body：它要**盖在**内容区上面（z 更高），
@@ -551,6 +587,11 @@ Song nowSong
         win.add(qRoot)
         qOpen = false
         qRoot.set_visible(false)
+
+        // ---- 轻提示（toast）：已上移框架托管（2026-10-30，见 sdl_toast.leno）----
+        //   margin = 胶囊底边距窗口底部：旧实现顶边在 vh-66-92、胶囊高 38 ⇒ 底边距底 120，
+        //   这里取同值，视觉与旧版逐像素一致 ✓（底栏 66 + 上方留 92 - 胶囊高 38）
+        SDL3.setToastMargin(120.0)
 
         // 当前播放行的跳动音柱（**一个实例**给所有表格复用：同一时刻只有一行在播 ✓）
         beatCv = page_ov.make_beat(beatPhase)
@@ -626,6 +667,9 @@ Song nowSong
 
         start_timer()
         self_test()
+        // 调试开关：ARIA_TOAST=任意值 ⇒ 启动即弹一条轻提示（验证样式/位置用 ✓）
+        var tv = _env("ARIA_TOAST")
+        if tv != null and _str(tv) != "" { toast("轻提示：这段文字会在 2.4 秒后自动淡出") }
 
         win.run(func(Event ev): bool { return on_event(ev) },
                 func(Renderer r) { paint_bg(r) })
@@ -909,6 +953,8 @@ Song nowSong
         int p = dl.pending(dlJobs)
         if p > 0 { dlBtn.set_text("下载 (" + _str(p) + ")") } else { dlBtn.set_text("下载") }
         dlBtn.set_text_color(if p > 0 then C_ACCENT else C_TXT_MID)
+        // 队列一变就落盘（所有"加入下载队列"的入口都会走到这里 ✓）
+        save_dl()
         SDL3.markFrameRedraw()
     }
 
@@ -976,9 +1022,8 @@ Song nowSong
                                     tip: "切换音源：小酷 / 高音质"})
         srcBtn.on_click(func() {
             g_source = if g_source == "kuwo" then "ff" else "kuwo"
+            // ⚠ 不往底栏写提示：按钮文字本身已经变了（那里只放歌手名，2026-10-30 用户明确要求 ✓）
             srcBtn.set_text(if g_source == "kuwo" then "小酷" else "高音质")
-            nowArtist.set_text(if g_source == "kuwo" then "音源：小酷"
-                               else "音源：高音质（试听按设置音质，下载取最高规格）")
             SDL3.markFrameRedraw()
         })
         topBar.add(srcBtn, {grow: 0, shrink: 0, basis: 56, align: 1})
@@ -1056,18 +1101,35 @@ Song nowSong
         VBox page = SDL3.createVBox({x: 0, y: 0, w: 900, h: 500,
                                      pad_x: PAD, pad_y: 6, spacing: 8})
         page.add(ui.lbl(title, 25, C_TXT, true), {grow: 0, shrink: 0, basis: 36, align: 3})
-        // 副标题：搜索中 ⇒ 前面挂一个转圈（和酷我加载时同一套观感 ✓）
+        // 副标题行：搜索中前面挂一个转圈（和酷我加载时同一套观感 ✓）；
+        //   右端可选一颗「刷新」钮（`pageRefresh` 非 null 的页才有，见本地音乐 ✓）
+        HBox subRow = SDL3.createHBox({x: 0, y: 0, w: 900, h: 32,
+                                       pad_x: 0, pad_y: 0, spacing: 6})
         if searching {
-            HBox subRow = SDL3.createHBox({x: 0, y: 0, w: 400, h: 18,
-                                           pad_x: 0, pad_y: 0, spacing: 6})
             subRow.add(SDL3.createSpinner({size: 13, thickness: 1.8, color: C_ACCENT,
                                            track_color: #F6DCE5FF, running: true}),
                        {grow: 0, shrink: 0, basis: 13, align: 1})
-            subRow.add(ui.lbl(sub, 11, C_TXT_DIM, false), {grow: 0, shrink: 1, align: 1})
-            page.add(subRow, {grow: 0, shrink: 0, basis: 18, align: 3})
-        } else {
-            page.add(ui.lbl(sub, 11, C_TXT_DIM, false), {grow: 0, shrink: 0, basis: 18, align: 3})
         }
+        subRow.add(ui.lbl(sub, 11, C_TXT_DIM, false), {grow: 1, shrink: 1, align: 1})
+        if pageAction != null and pageActionText != "" {
+            Button ab = SDL3.createButton({text: pageActionText, font_size: 11.5, w: 80, h: 28, radius: 14,
+                                           bg_color: #FFFFFFD0, hover_color: #FFFFFFFF,
+                                           text_color: C_TXT, border_color: C_LINE, padding: 8.0})
+            ab.on_click(func() { if pageAction != null { pageAction() } })
+            subRow.add(ab, {grow: 0, shrink: 0, basis: 80, align: 1})
+        }
+        if pageRefresh != null {
+            // 32 直径 + **白底半透明**：24 那版是透明底，压在浅色插画上又小又淡，
+            //   根本看不出是个按钮（2026-10-30 用户反馈"太小了" ✗）
+            Button rfb = SDL3.createButton({image_path: ui.ico("refresh.png"), image_size: 20,
+                                            w: 32, h: 32, radius: 16,
+                                            bg_color: #FFFFFF9E, hover_color: #FFFFFFFF,
+                                            padding: 0.0, border: false, shadow: false,
+                                            tip: "刷新列表"})
+            rfb.on_click(func() { if pageRefresh != null { pageRefresh() } })
+            subRow.add(rfb, {grow: 0, shrink: 0, basis: 32, align: 1})
+        }
+        page.add(subRow, {grow: 0, shrink: 0, basis: 32, align: 3})
         page.add(t, {grow: 1, shrink: 1, align: 3})
         mainCol.add(page, {grow: 1, shrink: 1, align: 3})
         lastPage = page
@@ -1222,7 +1284,18 @@ Song nowSong
             string noMsg = if has_now() then "（这首歌没有歌词，或还没加载）" else "还没有在播的歌"
             lyric.draw(r, ox, oy, cw, ch, noMsg, pos)
         })
-        row.add(lyric.canvas, {grow: 1, shrink: 1, align: 0})
+        // 歌词区 + 空态时浮在提示下方的「搜索歌词」钮
+        //   Canvas 只能画、放不了控件 ⇒ 用 AnchorBox 叠一层（按钮显隐在 lyr_ui_tick 里按状态切 ✓）
+        AnchorBox lyrWrap = SDL3.createAnchorBox({x: 0, y: 0, w: lw0, h: lvh})
+        lyrWrap.add(lyric.canvas, {left: 0.0, top: 0.0, w: lw0, h: lvh})
+        lyrFindBtn = SDL3.createButton({text: "搜索歌词", font_size: 12.5, w: 108, h: 32, radius: 16,
+                                        bg_color: #FFFFFFD6, hover_color: #FFFFFFFF,
+                                        text_color: C_TXT, border_color: C_LINE, padding: 8.0,
+                                        tip: "按歌名 / 歌手再找一次（小酷 → 网易云）"})
+        lyrFindBtn.on_click(func() { find_lyric() })
+        lyrFindBtn.set_visible(false)
+        lyrWrap.add(lyrFindBtn, {left: (lw0 - 108.0) / 2.0, top: lvh / 2.0 + 40.0, w: 108.0, h: 32.0})
+        row.add(lyrWrap, {grow: 1, shrink: 1, align: 0})
         content.add(row, {grow: 0, shrink: 0, basis: lvh, align: 3})
 
         lyric.reset_idx()               // 重排后重新定位/上色 ✓
@@ -1400,7 +1473,25 @@ Song nowSong
             }
             SDL3.markFrameRedraw()      // 没歌词时 lyric.tick 不重绘 ⇒ 这里保底推进一帧 ✓
         }
+        // 「搜索歌词」钮：只在"没歌词 + 不在加载 + 不在搜"时露出来（压在提示语下方 ✓）
+        if lyrFindBtn.get_w() > 0.0 {
+            lyrFindBtn.set_visible(not lyric.has_lines() and not lyric.loading and not lyrFinding)
+        }
         lyric.tick(pos, playing)
+    }
+
+    // 手动找歌词：后台线程按"歌名 + 歌手"再搜一次（小酷 → 网易云），结果在 on_tick 里收 ✓
+    //   为什么不让 request_lyric 自己重试：那条路只会拿**当前 sid** 再问一次酷我，
+    //   本地文件（没 sid）或那首歌酷我确实没有时永远救不回来 ✗
+    pri func find_lyric() {
+        if lyrFinding or lyrFindCh == null { return }
+        string t = if nowSong.title != "" then nowSong.title else nowTitle.get_text()
+        string a = if nowSong.artist != "" then nowSong.artist else nowArtist.get_text()
+        if t == "" or t == "未在播放" { return }
+        lyrFinding = true
+        if lyrFindBtn.get_w() > 0.0 { lyrFindBtn.set_visible(false) }
+        threads.start(workers.lyric_find, t, a, nowSid, lyrFindCh)
+        SDL3.markFrameRedraw()
     }
 
     pri func drop_last_page() {
@@ -1417,6 +1508,10 @@ Song nowSong
 
     // 内容区：页面标题 + 三个分区（搜索时按关键词过滤 ✓）
     pri func build_content() {
+        // 表格页副标题右侧的两颗可选钮：每页重建先清空 ⇒ 只有显式设置的那页才有 ✓
+        pageRefresh = null
+        pageActionText = ""
+        pageAction = null
         // 旧页面的控件马上要被移出布局/销毁 ⇒ 登记表先清空（否则留着已销毁控件的引用 ✗）
         cardLikeBtns = []
         cardLikeKeys = []
@@ -1601,7 +1696,7 @@ Song nowSong
                                                      if s.sid != "" { n = n + dl.enqueue(dlJobs, s.sid, s.title, s.artist, qf) }
                                                  }
                                                  refresh_dl_btn()
-                                                 nowArtist.set_text(if n > 0 then "已加入下载队列 " + _str(n) + " 首" else "这些歌都已经在下载列表里了")
+                                                 toast(if n > 0 then "已加入下载队列 " + _str(n) + " 首" else "这些歌都已经在下载列表里了")
                                                  SDL3.markFrameRedraw()
                                                  return
                                              }
@@ -1691,7 +1786,7 @@ Song nowSong
                     if s.sid != "" { n = n + dl.enqueue(dlJobs, s.sid, s.title, s.artist, qfmt) }
                 }
                 refresh_dl_btn()
-                nowArtist.set_text(if n > 0 then "已加入下载队列 " + _str(n) + " 首" else "这些歌都已经在下载列表里了")
+                toast(if n > 0 then "已加入下载队列 " + _str(n) + " 首" else "这些歌都已经在下载列表里了")
                 SDL3.markFrameRedraw()
             })
             btnRow.add(dall, {grow: 0, shrink: 0, basis: 112, align: 1})
@@ -1792,7 +1887,7 @@ Song nowSong
                         if s.sid != "" { n = n + dl.enqueue(dlJobs, s.sid, s.title, s.artist, qfmt) }
                     }
                     refresh_dl_btn()
-                    nowArtist.set_text(if n > 0 then "已加入下载队列 " + _str(n) + " 首" else "这些歌都已经在下载列表里了")
+                    toast(if n > 0 then "已加入下载队列 " + _str(n) + " 首" else "这些歌都已经在下载列表里了")
                     SDL3.markFrameRedraw()
                     return
                 }
@@ -1803,7 +1898,7 @@ Song nowSong
                 } else if id == "dl" {
                     int n = dl.enqueue(dlJobs, one.sid, one.title, one.artist, qfmt)
                     refresh_dl_btn()
-                    nowArtist.set_text(if n > 0 then "已加入下载队列：" + one.title else "已在下载列表里：" + one.title)
+                    toast(if n > 0 then "已加入下载队列：" + one.title else "已在下载列表里：" + one.title)
                     SDL3.markFrameRedraw()
                 } else if id == "sw" {
                     // 用这首歌的名字重新搜（进搜索结果表 ✓）
@@ -1814,7 +1909,7 @@ Song nowSong
                     on_kuwo_search()
                 } else if id == "copy" {
                     SDL3.setClipboardText(one.title)
-                    nowArtist.set_text("已复制歌名：" + one.title)
+                    toast("已复制歌名：" + one.title)
                     SDL3.markFrameRedraw()
                 }
             })
@@ -1846,10 +1941,14 @@ Song nowSong
             hk.revealTip = "打开下载目录"
             hk.onReveal = func(Song sg2) {
                 if not dl.open_dir(ui.cacheRoot()) {
-                    nowArtist.set_text("打开目录失败：" + ui.cacheRoot())
+                    toast("打开目录失败：" + ui.cacheRoot())
                     SDL3.markFrameRedraw()
                 }
             }
+            // 行尾再挂一颗「暂停 / 继续」：按该任务当前状态切换（正在下的会真的停手 ✓）
+            hk.extraIcon = "pause.png"
+            hk.extraTip = "暂停 / 继续这一条"
+            hk.onExtra = func(Song sg2) { toggle_one_dl(sg2.sid) }
             // 序号列：数字 ↔ 播放钮（与本地音乐页同一套 ✓）
             Array[HBox] numL = []
             Array[Canvas] numI = []
@@ -1865,6 +1964,7 @@ Song nowSong
                 Song dsg = new Song()
                 dsg.title = j[1]
                 dsg.artist = j[2]
+                dsg.sid = j[0]                    // ★ 行尾那颗"暂停/继续"靠它回查队列 ✓
                 rowV.add(rv.song_row(dsg, 58.0, hk))
             }
             Table t = SDL3.createTable({x: 0, y: 0, w: dw, h: 420.0,   // 高度由布局撑满 ✓
@@ -1897,6 +1997,9 @@ Song nowSong
             t.set_cell_interactive(true)
              // 已完成的行双击 ⇒ 播本地文件（不联网 ✓）
             t.on_dbl_click(func(int row, int col) { play_dl_row(row) })
+            // 副标题右侧的「全部暂停 / 全部开始」（按当前有没有在跑的任务切换文案 ✓）
+            pageActionText = if dl.has_active(dlJobs) then "全部暂停" else "全部开始"
+            pageAction = func() { toggle_all_dl() }
             show_table_page("下载列表",
                             (if dl.pending(dlJobs) > 0 then "排队 " + _str(dl.pending(dlJobs)) + " 个 · "
                              else "") + "共 " + _str(dlJobs.len()) + " 个任务",
@@ -1928,7 +2031,7 @@ Song nowSong
             hk.onTrack = func(Song sg2, Button b) { track_row_like(sg2, b) }     // ♥ 登记：取消喜欢时就地换图标 ✓
             hk.onReveal = func(Song sg2) {
                 if not dl.reveal(sg2.path) {
-                    nowArtist.set_text("定位失败：" + sg2.path)
+                    toast("定位失败：" + sg2.path)
                     SDL3.markFrameRedraw()
                 }
             }
@@ -2023,7 +2126,7 @@ Song nowSong
             lt.on_context_select(func(int row, string id) {
                 string dirNow = dl.dir_of(ui.cacheRoot())
                 if id == "dir" {
-                    if not dl.open_dir(dirNow) { nowArtist.set_text("打开目录失败：" + dirNow); SDL3.markFrameRedraw() }
+                    if not dl.open_dir(dirNow) { toast("打开目录失败：" + dirNow) }
                     return
                 }
                 if id == "delall" {
@@ -2032,7 +2135,7 @@ Song nowSong
                          "文件会进回收站，可以从那里恢复。"],
                         "全部删除", "取消", true, func() {
                             int n = dl.delete_all(ui.cacheRoot())
-                            nowArtist.set_text("已删除 " + _str(n) + " 个文件")
+                            toast("已删除 " + _str(n) + " 个文件")
                             rebuild_content()
                         })
                     return
@@ -2043,11 +2146,14 @@ Song nowSong
                 if id == "play" {
                     play_song(one)
                 } else if id == "reveal" {
-                    if not dl.reveal(one.path) { nowArtist.set_text("定位失败：" + one.path); SDL3.markFrameRedraw() }
+                    if not dl.reveal(one.path) { toast("定位失败：" + one.path) }
                 } else if id == "del" {
                     delete_local_one(one)          // 与行尾那颗「删除」钮同一条逻辑 ✓
                 }
             })
+            // 副标题右侧「刷新」：清掉 scan 缓存重建整页 —— 新拷进来的歌没显示、或删了文件后
+            //   列表没跟上，点一下就好（不用重启 ✓）
+            pageRefresh = func() { refresh_local() }
             show_table_page("本地音乐", "已下载 · " + _str(lsongs.len()) + " 首（cache\\downloads）", lt)
             return
         }
@@ -2395,17 +2501,92 @@ Song nowSong
         play_song(localCache[row])
     }
 
+    // ==================== 下载队列：落盘 / 暂停 / 继续（★ 2026-10-30）====================
+    // 队列落盘（进队 / 暂停 / 完成 / 失败后都存一次 ⇒ 重启能恢复**历史** ✓）
+    pri func save_dl() { dl.save_jobs(ui.cacheRoot(), dlJobs) }
+
+    // 点标题栏 ✕ ⇒ 还有下载没完成就先问一句；进度已存在 `.part`，关掉不丢 ✓
+    pri func on_close_app() {
+        int n = dl.pending(dlJobs)
+        if n <= 0 {
+            save_dl()
+            win.requestClose()
+            return
+        }
+        SDL3.msgBox("还有下载没完成",
+            ["当前有 " + _str(n) + " 个任务在下 / 排队",
+             "直接关闭会停下（已下部分已保存，下次打开点「全部开始」可续传）"],
+            "仍然关闭", "继续下载", true,
+            func() {
+                save_dl()          // "下载中"落盘；下次 load_jobs 会把它降级成"已暂停" ✓
+                win.requestClose()
+            })
+    }
+
+    // 全部暂停 / 全部开始（下载页副标题右侧那颗钮，文案随状态变 ✓）
+    pri func toggle_all_dl() {
+        if dl.has_active(dlJobs) {
+            // 正在下的那条先让 worker 停手（它会把手上已下的部分留在 .part ✓）
+            if dlBusy { dlCtl.send("pause") }
+            int n = dl.pause_all(dlJobs)
+            toast("已全部暂停（" + _str(n) + " 个任务，下次打开可继续）")
+        } else {
+            int n = dl.resume_all(dlJobs)
+            toast("已全部开始（" + _str(n) + " 个任务）")
+        }
+        save_dl()
+        rebuild_content()
+    }
+
+    // 单条暂停 / 继续（下载页行尾那颗钮）
+    pri func toggle_one_dl(string id) {
+        if id == "" { return }
+        // 点的是"正在下的那条" ⇒ 先让 worker 停手，否则状态和实际会打架
+        if dlBusy and dlCur >= 0 and dlCur < dlJobs.len() and dlJobs[dlCur][0] == id {
+            dlCtl.send("pause")
+        }
+        dl.toggle_pause(dlJobs, id)
+        save_dl()
+        rebuild_content()
+    }
+
+    // 「本地音乐」页副标题右边那颗刷新钮：清 scan 缓存 + 重建整页
+    //   ⚠ 不往底栏写提示 —— 底栏歌手位只放歌名/歌手（2026-10-30 用户明确要求 ✓）
+    pri func refresh_local() {
+        dl.invalidate_scan()
+        rebuild_content()
+    }
+
     // 删掉一首本地文件（进回收站）—— 行尾「删除」钮与右键菜单「删除本地文件」共用 ✓
     //   ⚠ 删除后必须 rebuild：表格行是按 `localCache` 下标绑定的，少一首不重建会错位 ✗
     pri func delete_local_one(Song sg) {
-        string nm = sg.title
-        if dl.delete_one(sg) {
-            nowArtist.set_text("已删除：" + nm)
+        int st = dl.delete_one_result(sg)
+        if st == dl.DEL_GONE {
+            // 文件早就不在了（典型：用户在资源管理器里删过，界面还留着旧行）⇒
+            //   ① 弹窗说清原因（原来只会说"删除失败（可能被占用）"，容易让人以为是权限问题 ✗）
+            //   ② 关掉提示后清 scan 缓存 + 重建 ⇒ 这一行消失（不刷新的话它**永远删不掉** ✗）
+            // ⚠ 顺序必须是**先弹窗、后重建**：反过来时，msgBox 是在"当前正在派发点击事件的控件
+            //   已经被 dispose"之后才建窗口，实测对话框根本不出现（列表倒是刷新了 ✗）
+            SDL3.msgBox("文件不存在",
+                ["「" + sg.title + "」的音频文件已经不在本地了", "点「知道了」后刷新列表，这一行会被移除"],
+                "知道了", "", false, func() {})
+            // 关窗 / ESC 也可能没点按钮 ⇒ 这里补一次刷新（msgBox 是阻塞到关闭才返回的 ✓）
+            dl.invalidate_scan()
             rebuild_content()
-        } else {
-            nowArtist.set_text("删除失败（文件可能已被占用）：" + nm)
-            SDL3.markFrameRedraw()
+            return
         }
+        if st == dl.DEL_OK {
+            rebuild_content()
+            toast("已删除：" + sg.title)
+            return
+        }
+        // 真删不掉（被别的程序占用 / 无权限）：也**弹窗**说清楚
+        //   ⚠ 别只往底栏写 —— 歌手位是放歌名/歌手的，一句"删除失败"糊在那儿
+        //     既看不见（用户不盯着底栏）又把歌手名顶掉了（2026-10-30 用户反馈 ✗）
+        SDL3.msgBox("删除失败",
+            ["「" + sg.title + "」删不掉，文件可能正被其它程序占用",
+             "关掉占用它的程序（或正在播放它的播放器）后重试"],
+            "知道了", "", true, func() {})
     }
 
     // 加入下载队列（右击菜单「下载」）
@@ -2413,17 +2594,12 @@ Song nowSong
         if i < 0 or i >= netSongs.len() { return }
         Song sg = netSongs[i]
         if i >= netIds.len() or netIds[i] == "" {
-            nowArtist.set_text("演示数据没有音源，下载不了")
-            SDL3.markFrameRedraw()
+            toast("演示数据没有音源，下载不了")
             return
         }
         int n = dl.enqueue(dlJobs, netIds[i], sg.title, sg.artist,
                            if g_preferFmt == "lossless" then "FLAC" else "MP3")
-        if n > 0 {
-            nowArtist.set_text("已加入下载队列：" + sg.title)
-        } else {
-            nowArtist.set_text("已在下载列表里：" + sg.title)
-        }
+        toast(if n > 0 then "已加入下载队列：" + sg.title else "已在下载列表里：" + sg.title)
         refresh_dl_btn()
         if curNav == -2 { rebuild_content() }
         SDL3.markFrameRedraw()
@@ -2464,7 +2640,7 @@ Song nowSong
         nowSong = sg
         push_recent(sg)
         nowTitle.set_text(sg.title)
-        nowArtist.set_text(sg.artist + " · 备用音源")
+        nowArtist.set_text(sg.artist)
         coverView.set_image(ui.coverPath(sg.cover))
         pos = 0.0
         durKnown = false
@@ -2485,7 +2661,7 @@ Song nowSong
         // ★ 列表里的直链是**最高档**（搜索时问的 jymaster）⇒ 试听必须按设置重新解析，
         //   否则"试听按设置"就是假的（直接放母带，流量爆炸 ✗）
         //   代价：点播多等 1~2 秒（一次请求）
-        nowArtist.set_text(sg.artist + " · 正在解析音源…")
+        toast("正在解析音源…")
         SDL3.markFrameRedraw()
         ffHighIsPlay = true
         threads.start(workers.ffplay, sg.sid, sg.title, sg.artist, "",
@@ -2507,7 +2683,7 @@ Song nowSong
         }
         urlWantPath = f
         urlIsPlay = true
-        nowArtist.set_text(sg.artist + " · 正在下载…")
+        toast("正在下载试听…")
         SDL3.markFrameRedraw()
         threads.start(workers.fetch_url, sg.url, f, urlCh)
     }
@@ -2533,7 +2709,7 @@ Song nowSong
         shownSec = -1
         sync_play_ui()
         if sg.sid == "" {
-            nowArtist.set_text(sg.artist + " · 演示数据没有音源（搜一首再点）")
+            toast("演示数据没有音源（搜一首再点）")
             playing = false
             playBtn.set_image(ui.ico("play.png"))
             SDL3.markFrameRedraw()
@@ -2553,7 +2729,7 @@ Song nowSong
         //   现在交给工作线程（`workers.prepare`），回信到了再开声 ✓
         pendingSong = sg
         playPending = true
-        nowArtist.set_text(sg.artist + " · 正在取音源…")
+        toast("正在取音源…")
         SDL3.markFrameRedraw()
         threads.start(workers.prepare, id, ui.audioCacheDir(), g_audioQ, playCh)
     }
@@ -2565,7 +2741,7 @@ Song nowSong
         if not ok {
             // mp3 打不开（少数歌给的是别的封装 / 截断了）⇒ 退回 **flac** 再试一次
             //   flac miniaudio 一定支持；代价是体积大（可能几十 MB），只在兜底时走 ✓
-            nowArtist.set_text(sg.artist + " · mp3 打不开，改用无损再试…")
+            toast("mp3 打不开，改用无损再试…")
             SDL3.markFrameRedraw()
             string ff = dirs.join(ui.audioCacheDir(), id + ".flac")
             bool got2 = files.exists(ff)
@@ -2582,7 +2758,7 @@ Song nowSong
             }
             ok = if got2 then start_play_file(sg, ff) else false
             if not ok {
-                nowArtist.set_text(sg.artist + " · 这首取不到可播放的音源")
+                toast("这首取不到可播放的音源")
                 playing = false
                 playBtn.set_image(ui.ico("play.png"))
                 SDL3.markFrameRedraw()
@@ -2760,10 +2936,8 @@ Song nowSong
         c.newLoading = homeLoading
         c.onOpenPlaylist = func(string id, string nm, string cp) { open_playlist(id, nm, cp) }
         c.onTab = func(int ti) { discTab = ti }
-        c.onNotice = func(string t) {
-            nowArtist.set_text(t)
-            SDL3.markFrameRedraw()
-        }
+        // 页面的"通知"统一走应用内 toast：底栏歌手位只放歌手名（2026-10-30 用户要求 ✓）
+        c.onNotice = func(string t) { toast(t) }
         return c
     }
 
@@ -3113,14 +3287,12 @@ Song nowSong
     pri func toggle_song_like(Song sg) {
         string key = ui.like_key(sg)
         if key == "" {
-            nowArtist.set_text("这首歌既没有音源 id 也没有本地文件，收不了")
-            SDL3.markFrameRedraw()
+            toast("这首歌既没有音源 id 也没有本地文件，收不了")
             return
         }
-        bool was = lib.is_liked(likedSids, key)
         likedSids = lib.toggle(likedSids, key)      // 有则删、无则加（集合运算归 lib/library.leno ✓）
         save_library()                   // ★ 立刻落盘（重启后「我喜欢」还在 ✓）
-        nowArtist.set_text(if was then "已取消喜欢：" + sg.title else "已喜欢：" + sg.title)
+        // ♥ 图标本身就是反馈 ⇒ 不再往底栏写"已喜欢/已取消"（那里只放歌手名 ✓）
         sync_like_icon()                 // 底栏 ♥ 跟着变（它和卡片共用一份数据 ✓）
         refresh_after_like(sg)
     }
@@ -3163,7 +3335,7 @@ Song nowSong
         }
         if rows[0].len() > 0 and rows[0][0] == "ERR" {
             string why = if rows[0].len() > 1 then rows[0][1] else "?"
-            nowArtist.set_text("推荐歌单加载失败：" + why)
+            toast("推荐歌单加载失败：" + why)
             SDL3.markFrameRedraw()
             return
         }
@@ -3201,7 +3373,7 @@ Song nowSong
         if rows.len() == 0 { if curNav == 6 { rebuild_content() }; return }
         if rows[0].len() > 0 and rows[0][0] == "ERR" {
             string why = if rows[0].len() > 1 then rows[0][1] else "?"
-            nowArtist.set_text("歌单加载失败：" + why)
+            toast("歌单加载失败：" + why)
             SDL3.markFrameRedraw()
             return
         }
@@ -3243,7 +3415,7 @@ Song nowSong
         if rows.len() == 0 { bangCards = []; return }
         if rows[0].len() > 0 and rows[0][0] == "ERR" {
             string why = if rows[0].len() > 1 then rows[0][1] else "?"
-            nowArtist.set_text("榜单加载失败：" + why)
+            toast("榜单加载失败：" + why)
             SDL3.markFrameRedraw()
             return
         }
@@ -3305,7 +3477,7 @@ Song nowSong
         string kind = rows[0][0]
         if kind == "ERR" {
             string why = if rows[0].len() > 1 then rows[0][1] else "?"
-            nowArtist.set_text("排行榜加载失败：" + why)
+            toast("排行榜加载失败：" + why)
             SDL3.markFrameRedraw()
             return
         }
@@ -3374,7 +3546,7 @@ Song nowSong
         if not lib.is_liked(likedSids, key) { return }   // 已经不在收藏里 ⇒ 什么都不用做
         likedSids = lib.remove(likedSids, key)
         save_library()                    // ★ 立刻落盘，重启后不会又冒出来 ✓
-        nowArtist.set_text("已从「我喜欢」删除：" + sg.title)
+        toast("已从「我喜欢」删除：" + sg.title)
         sync_like_icon()                  // 底栏 ♥ 跟着变（若删的就是在播这首 ✓）
         refresh_after_like(sg)            // 网格页会按新列表重建：少一张、副标题数字也减 ✓
     }
@@ -3395,7 +3567,7 @@ Song nowSong
                 if dlJobs[kq].len() > 3 and dlJobs[kq][0] == sg.sid { dlJobs[kq][3] = "5" }
             }
             refresh_dl_btn()
-            nowArtist.set_text("正在解析最高音质：" + sg.title)
+            toast(sg.title + "：正在解析最高音质…")
             SDL3.markFrameRedraw()
             ffHighIsPlay = false                   // 这次解析是为了**下载**（取最高规格）✓
             threads.start(workers.ffplay, sg.sid, sg.title, sg.artist, "",
@@ -3407,7 +3579,7 @@ Song nowSong
         if sg.sid == "" { return }
         int n = dl.enqueue(dlJobs, sg.sid, sg.title, sg.artist,
                            if g_preferFmt == "lossless" then "FLAC" else "MP3")
-        nowArtist.set_text(if n > 0 then "已加入下载队列：" + sg.title else "已在下载列表里：" + sg.title)
+        toast(if n > 0 then "已加入下载队列：" + sg.title else "已在下载列表里：" + sg.title)
         refresh_dl_btn()
         SDL3.markFrameRedraw()
     }
@@ -3565,13 +3737,11 @@ Song nowSong
     //     别往队列里塞一条永远失败的活（`queue_song` 内部对无 sid 是静默 return ✗）
     pri func lyric_download() {
         if not has_now() {
-            nowArtist.set_text("还没有在播的歌")
-            SDL3.markFrameRedraw()
+            toast("还没有在播的歌")
             return
         }
         if nowSong.sid == "" and nowSong.url == "" {
-            nowArtist.set_text("这首歌是本地文件，不用再下载")
-            SDL3.markFrameRedraw()
+            toast("这首歌是本地文件，不用再下载")
             return
         }
         queue_song(nowSong)
@@ -3624,8 +3794,7 @@ Song nowSong
     //   否则底栏和卡片是两套状态、互相看不见（卡片红心、底栏还是灰）
     pri func toggle_like() {
         if ui.like_key(nowSong) == "" {
-            nowArtist.set_text("还没有在播的歌")
-            SDL3.markFrameRedraw()
+            toast("还没有在播的歌")
             return
         }
         toggle_song_like(nowSong)
@@ -3733,14 +3902,13 @@ Song nowSong
         string k = ui.like_key(sg)
         for queue to q {
             if ui.like_key(q) == k {
-                nowArtist.set_text("已在播放列表里：" + sg.title)
-                SDL3.markFrameRedraw()
+                toast("已在播放列表里：" + sg.title)
                 return
             }
         }
         queue.add(sg)
         if qIdx < 0 { qIdx = queue.len() - 1 }
-        nowArtist.set_text("已加入播放列表：" + sg.title)
+        toast("已加入播放列表：" + sg.title)
         if qOpen { build_queue_rows() }
         SDL3.markFrameRedraw()
     }
@@ -3915,7 +4083,7 @@ Song nowSong
         }
         push_recent(sg)
         nowTitle.set_text(sg.title)
-        nowArtist.set_text(sg.artist + " · HRES")
+        nowArtist.set_text(sg.artist)
         coverView.set_image(ui.coverPath(sg.cover))
         pos = 0.0
         playing = true
@@ -3935,7 +4103,7 @@ Song nowSong
         //   把进度条拉回去 ⇒ 用户看到的就是「点了没反应/跳不过去」✗
         //   `Sound.seek(秒)` 走 miniaudio 的 ma_sound_seek_to_second（一次调用，代价可接受）
         if sndOk and dur > 0.0 {
-            if not snd.seek(target) { nowArtist.set_text("这个格式不支持跳转") }
+            if not snd.seek(target) { toast("这个格式不支持跳转") }
         }
         shownSec = _int(pos)
         curTime.set_text(ui.fmtTime(pos))
@@ -4031,12 +4199,22 @@ Song nowSong
         SDL3.markFrameRedraw()
     }
 
+    // ==================== 轻提示（toast）====================
+    // 所有"操作反馈"都走这里 —— 底栏歌手位只放歌手名（2026-10-30 用户要求 ✓）
+    //   ★ 2026-10-30 反哺：绘制/计时/淡出已由框架 `SDL3.toast()` 接管（sdl_toast.leno），
+    //     这里只留一个**转发**（60+ 个调用点不必改）。原来的 toast_tick + 33ms 定时器
+    //     一并删掉 —— 框架用"下一关键帧"驱动，停留期不空转 ✓
+    pri func toast(string t) {
+        SDL3.toast(t)
+    }
+
     // 每拍（200ms）推进播放进度
     pri func start_timer() {
         win.addTimer(200, func() { on_tick() })
         // 歌词刷新**独立定时器**（33ms ≈ 30fps）：帧间隔由定时器保证均匀，
         //   不依赖"渲染回调里再请求下一帧"那条链路（那条会忽快忽慢 ⇒ 一顿一顿 ✗）
         win.addTimer(33, func() { lyr_ui_tick() })
+        // （轻提示的 33ms 定时器已移除：框架 sdl_toast 自己按淡入/淡出时刻唤醒 ✓）
     }
 
     pri func on_tick() {
@@ -4264,9 +4442,8 @@ Song nowSong
                 var hrows = m4 as Array[Array[string]]
                 if hrows != null and hrows.len() > 0 and hrows[0].len() > 0 {
                     if hrows[0][0] == "ERR" {
-                        nowArtist.set_text((if ffHighIsPlay then "试听失败：" else "下载失败：")
-                                           + (if hrows[0].len() > 1 then hrows[0][1] else "?"))
-                        SDL3.markFrameRedraw()
+                        toast((if ffHighIsPlay then "试听失败：" else "下载失败：")
+                              + (if hrows[0].len() > 1 then hrows[0][1] else "?"))
                     } else if ffHighIsPlay {
                         // 试听：拿到直链后**直接下载播放**（调 play_ff_start，不能再调 play_url_song ✗）
                         //   ⚠ 用 `urlTarget`（用户点的那首），不能用 `nowSong`（那还是上一首）
@@ -4299,7 +4476,10 @@ Song nowSong
                                               dl.safe_name(hrows[0][0] + " - " + hrows[0][1]) + "." + ext)
                         urlWantPath = f2
                         urlIsPlay = false              // 只下载，不动当前播放 ✓
-                        nowArtist.set_text("正在下载（" + hrows[0][7] + "）：" + hrows[0][0])
+                        // ★ 2026-10-30：下载类提示**不再占用底栏的歌手位**（那里只放歌名/歌手）
+                        //   改走系统通知：LenoSys 的 `Sys.notify`（Windows 托盘气泡 / Linux notify-send）
+                        //   ⚠ 它返回 false 只代表"没投递出去"（无通知服务），不影响下载 ⇒ 忽略返回值 ✓
+                        Sys.notify("开始下载", hrows[0][0] + "（" + hrows[0][7] + "）")
                         SDL3.markFrameRedraw()
                         threads.start(workers.fetch_url, hrows[0][8], f2, urlCh)
                     }
@@ -4356,9 +4536,9 @@ Song nowSong
                                     }
                                 }
                                 refresh_dl_btn()
-                                nowArtist.set_text("已下载：" + tgt.title)
+                                Sys.notify("下载完成", tgt.title + " - " + tgt.artist)
                             } else {
-                                nowArtist.set_text("已下载")
+                                Sys.notify("下载完成", "已保存到下载目录")
                             }
                             SDL3.markFrameRedraw()
                         }
@@ -4370,9 +4550,8 @@ Song nowSong
                             print("[ff] 直链失效，自动重新解析：" + urlTarget[0].title)
                             play_url_song(urlTarget[0])
                         } else {
-                            nowArtist.set_text(if urlIsPlay then "试听失败：直链已失效，请重新搜索"
-                                                            else "下载失败：直链已失效，请重新搜索")
-                            SDL3.markFrameRedraw()
+                            toast(if urlIsPlay then "试听失败：直链已失效，请重新搜索"
+                                                 else "下载失败：直链已失效，请重新搜索")
                         }
                     }
                 }
@@ -4460,6 +4639,31 @@ Song nowSong
                 lmsg = lyrCh.try_receive()
             }
         }
+        // ①c-2 「搜索歌词」回信（点一次一条；OK 时带来源 + 歌词全文 ✓）
+        if lyrFindCh != null {
+            var fm = lyrFindCh.try_receive()
+            while fm != null {
+                var fa = fm as Array[string]
+                if fa != null and fa.len() >= 2 {
+                    lyrFinding = false
+                    if fa[0] == "OK" and fa.len() >= 3 {
+                        lyric.set_text(fa[2])
+                        lyric.reset_idx()
+                        // ★ 把 `lyric.sid` 设成"这首歌的标识" ⇒ 自动流程认为已经取过，
+                        //   不会再请求一次把刚找到的歌词覆盖掉（三种来源各有各的 key ✓）
+                        lyric.sid = if nowSong.url != "" then "ff:" + nowSid
+                                    else if nowSid != "" then nowSid
+                                    else nowSong.path
+                        toast("歌词已找到（来源：" + fa[1] + "）")
+                        if curNav == -6 { rebuild_content() }
+                    } else {
+                        toast("没找到歌词：" + fa[1])
+                    }
+                    SDL3.markFrameRedraw()
+                }
+                fm = lyrFindCh.try_receive()
+            }
+        }
         // ①d 排空下载进度（分片下载每 1MB 回一条；非阻塞 ✓）
         if dlCh != null {
             var pm = dlCh.try_receive()
@@ -4484,6 +4688,21 @@ Song nowSong
                         dlBusy = false
                         dlCur = -1
                         refresh_dl_btn()
+                        save_dl()                                 // 完成状态落盘 ⇒ 重启后还看得见 ✓
+                        Sys.notify("下载完成", j[1])          // 不占底栏歌手位（见"开始下载"那处注释 ✓）
+                        if curNav == -2 { rebuild_content() }
+                    } else if kind == "Z" {
+                        // worker 已停手（暂停）：已下部分留在 `.part`，下次从那里续传 ✓
+                        //   ⚠ 只在状态还是"下载中"时改成暂停：用户可能已经点了"全部开始"，
+                        //     那条晚到的 Z 不能把刚恢复的排队状态又按回去 ✗
+                        if j[3] == "5" { j[3] = "3" }
+                        j[6] = pa[1]
+                        if pa.len() >= 3 and pa[2] != "0" { j[7] = pa[2] }
+                        dlJobs[dlCur] = j
+                        dlBusy = false
+                        dlCur = -1
+                        refresh_dl_btn()
+                        save_dl()
                         if curNav == -2 { rebuild_content() }
                     } else if kind == "E" {
                         j[3] = "2"
@@ -4492,6 +4711,8 @@ Song nowSong
                         dlBusy = false
                         dlCur = -1
                         refresh_dl_btn()
+                        save_dl()
+                        Sys.notify("下载失败", j[1] + "：" + pa[1])
                         if curNav == -2 { rebuild_content() }
                     }
                     SDL3.markFrameRedraw()
@@ -4515,7 +4736,7 @@ Song nowSong
                         }
                     } else {
                         playPending = false
-                        nowArtist.set_text(pa[1])
+                        toast(pa[1])                  // 失败原因走 toast（歌手位只放歌手名 ✓）
                         playing = false
                         playBtn.set_image(ui.ico("play.png"))
                     }
@@ -4539,7 +4760,7 @@ Song nowSong
                 int dlTags = 0
                 if g_dlLyric { dlTags = dlTags | 1 }
                 if g_embedTag { dlTags = dlTags | 2 }
-                threads.start(dl.save_shard, j[0], j[1], j[2], ui.cacheRoot(), g_preferFmt, dlTags, dlCh)
+                threads.start(dl.save_shard, j[0], j[1], j[2], ui.cacheRoot(), g_preferFmt, dlTags, dlCh, dlCtl)
                 SDL3.markFrameRedraw()
             }
         }

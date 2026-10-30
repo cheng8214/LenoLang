@@ -121,6 +121,13 @@ export struct Theme {
     Color tipTxt = #E8EAF2FF
     Color tipBrd = #6E7384FF
 
+    // === Toast（轻提示，2026-10-30 引入）===
+    //   为什么不复用 tip*：tooltip 要"跟着光标、半透明、尽量不抢眼"，
+    //   toast 要"一次性看清、对比更强"（深色胶囊盖在浅色界面上）⇒ 两者的取值诉求相反 ✗
+    Color toastBg = #1E2026FF
+    Color toastTxt = #F4F6FBFF
+    Color toastBrd = #5A5F6EFF
+
     // === 字体 ===
     float fontSize = 15.0
 }
@@ -184,6 +191,10 @@ export func lightTheme(): Theme {
     t.tipBg = #FAFAFFFF
     t.tipTxt = #1E1E28FF
     t.tipBrd = #B4B9C3FF
+    // Toast：浅色界面上的"深色胶囊"（白底胶囊在浅底窗口里几乎看不出边界 ✗）
+    t.toastBg = #2A2D36FF
+    t.toastTxt = #F7F8FBFF
+    t.toastBrd = #6A7080FF
     return t
 }
 
@@ -224,5 +235,9 @@ export func midnightTheme(): Theme {
     t.tipBg = #161C2CFF
     t.tipTxt = #C8D7F0FF
     t.tipBrd = #465578FF
+    // Toast：与午夜蓝同系，但比背景亮一档才浮得起来 ✓
+    t.toastBg = #10141FFF
+    t.toastTxt = #C8D7F0FF
+    t.toastBrd = #465578FF
     return t
 }

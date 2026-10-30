@@ -25,6 +25,7 @@ import "sdl_table.leno" as tbl
 import "sdl_layout.leno" as lay
 import "sdl_menu.leno" as menu
 import "sdl_tooltip.leno" as tip
+import "sdl_toast.leno" as tst       // 轻提示（应用内 toast，2026-10-30）✓
 import "sdl_scrollview.leno" as scv
 import "sdl_virtualgrid.leno" as vgd
 import "sdl_treeview.leno" as tv
@@ -189,6 +190,31 @@ export func tipOwner(): string                       { return tip.tipOwner() }
 // 诊断：提示气泡当前是否已显示 / 当前文本（排障"没弹出来"用 ✓）
 export func tipVisible(): bool                      { return tip.tipVisible() }
 export func tipText(): string                       { return tip.tipCurrent() }
+
+// ==================== 轻提示 Toast（应用内，2026-10-30）====================
+//   定位：一次操作的**回声** —— 不占布局、不吃事件、自动淡出。
+//   要"占位/停留到用户处理"的提示条请用 addAlert（两者分工见 sdl_toast.leno 头部 ✓）
+//   SDL3.toast("已复制")  SDL3.toastKind("保存失败", SDL3.TOAST_ERROR)
+//   SDL3.toastFull("正在解析…", SDL3.TOAST_INFO, 1200, SDL3.TOAST_TOP)
+export const TOAST_INFO    = tst.TOAST_INFO
+export const TOAST_SUCCESS = tst.TOAST_SUCCESS
+export const TOAST_WARN    = tst.TOAST_WARN
+export const TOAST_ERROR   = tst.TOAST_ERROR
+export const TOAST_BOTTOM       = tst.TOAST_BOTTOM
+export const TOAST_TOP          = tst.TOAST_TOP
+export const TOAST_BOTTOM_RIGHT = tst.TOAST_BOTTOM_RIGHT
+export func toast(string text)                       { tst.toast(text) }
+export func toastKind(string text, int kind)          { tst.toastKind(text, kind) }
+export func toastFull(string text, int kind = 0, int ms = 2400, int pos = 0) { tst.toastFull(text, kind, ms, pos) }
+export func toastClear()                              { tst.toastClear() }
+export func setToastDuration(int ms)                  { tst.setToastDuration(ms) }
+export func setToastMargin(float px)                  { tst.setToastMargin(px) }
+export func setToastMaxWidth(float px)                { tst.setToastMaxWidth(px) }
+export func setToastPosition(int pos)                 { tst.setToastPosition(pos) }
+export func setToastFontSize(float px)                { tst.setToastFontSize(px) }
+// 诊断（自检/排障）：分得清"没弹出来"与"弹了但被清/没画" ✓
+export func toastVisible(): bool                      { return tst.toastVisible() }
+export func toastCurrent(): string                    { return tst.toastCurrent() }
 // 全局帧号（每帧 +1）：量实际帧率 / 判断动画是否在跑（≈ 帧数 ÷ 时间）✓
 export func frameId(): int                          { return core.frameId() }
 export func createHBox(Dict opts): HBox          { return lay.createHBox(opts) }
