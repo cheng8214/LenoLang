@@ -384,8 +384,12 @@ Symbol* resolve_variable_with_upvalue_raw(Semantic* s, const char* name, SymRef*
         ref->kind = target_sym->kind;
         ref->index = target_sym->index;
     }
+    // ★ 2026-10-30：`name` 可能**就是 ref->name 本身**（调用点常见写法是
+    //   `resolve_variable_with_upvalue(s, ref.name, &ref)`，如闭包里的 `x++`）⇒
+    //   必须**先复制后释放**；否则 strdup 读的是刚 free 的 12 字节（ASAN 实测 UAF）。
+    char* new_name = strdup(name);
     free(ref->name);
-    ref->name = strdup(name);
+    ref->name = new_name;
     free(ref->struct_name);
     ref->type_kind = target_sym->type ? target_sym->type->kind : TYPE_ANY;
     ref->element_type_kind = (target_sym->type && target_sym->type->element_type) ? target_sym->type->element_type->kind : TYPE_ANY;
