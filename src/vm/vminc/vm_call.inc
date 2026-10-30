@@ -158,6 +158,9 @@ static inline int call(ObjClosure* closure, int arg_count, int line) {
         frame->in_finally = 0;
         frame->try_return_value = val_null();
         frame->has_try_return = 0;
+        frame->finally_goto_target = NULL;
+        frame->finally_goto_owner = NULL;
+        frame->finally_goto_layers = 0;
     }
     frame->module = func->module;
     frame->has_captures = 0;   // 由 OP_CLOSURE 在**真建了指向本帧窗口的 upvalue** 时置 1（见 02_loads.inc）
@@ -244,6 +247,9 @@ static inline int call_no_type_check(ObjClosure* closure, int arg_count, int lin
         frame->in_finally = 0;
         frame->try_return_value = val_null();
         frame->has_try_return = 0;
+        frame->finally_goto_target = NULL;
+        frame->finally_goto_owner = NULL;
+        frame->finally_goto_layers = 0;
     }
     frame->module = func->module;
     frame->has_captures = 0;   // 由 OP_CLOSURE 在**真建了指向本帧窗口的 upvalue** 时置 1（见 02_loads.inc）
@@ -465,6 +471,9 @@ static inline int call_reg_impl(ObjClosure* closure, int has_self, Value self,
         frame->in_finally = 0;
         frame->try_return_value = val_null();
         frame->has_try_return = 0;
+        frame->finally_goto_target = NULL;
+        frame->finally_goto_owner = NULL;
+        frame->finally_goto_layers = 0;
     }
     frame->module = func->module;
     frame->has_captures = 0;   // 由 OP_CLOSURE 在**真建了指向本帧窗口的 upvalue** 时置 1（见 02_loads.inc）

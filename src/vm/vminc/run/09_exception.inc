@@ -35,12 +35,30 @@
     }
     // OP_FINALLY Bx: Bx = finally 块相对本指令起始的字节偏移
     LABEL(OP_FINALLY): {
+        int a = READ_A();
         int bx = READ_Bx();
         uint8_t* fin_start = frame->ip - 4;
+        uint8_t* target = fin_start + bx;
+        if (a == 1) {
+            // ★ 2026-10-30：**预备登记**（`try{...}catch{...}finally{...}` 的 try 体入口）。
+            //   A=0 的 OP_TRY 只登记 catch（finally_ip = NULL）⇒ try 体内的 return / break /
+            //   continue 根本看不见本层 finally（被静默跳过）✗ 实测。
+            //   这里只补一条 finally_ip（prev 链已由 OP_TRY 保存好）；不动异常/返回值状态。
+            frame->finally_ip = target;
+            DISPATCH();
+        }
         if (!vm.pending_exception) {
             vm.exception = val_null();
         }
-        frame->finally_ip = fin_start + bx;
+        // ★ 2026-10-30：正常路径进入 finally 时，当前 finally_ip 还是**外层**（try 体末尾的
+        //   END_TRY 已把它还原了）⇒ 必须先保存到 prev，否则外层 finally 在本次 finally 跑完后
+        //   就"丢了"（实测：`try { try{}finally{B} return } finally{A}` 的 A 不执行）✗
+        //   而"已经登记为内层"的四种进入方式（异常/return/break/continue 跳进来）里
+        //   finally_ip 恰好等于 target ⇒ 不再重复保存（否则 prev 被自己覆盖 ⇒ 死循环/丢外层）。
+        if (frame->finally_ip != target) {
+            frame->prev_finally_ip = frame->finally_ip;
+            frame->finally_ip = target;
+        }
         frame->in_finally = 1;
         DISPATCH();
     }
@@ -57,7 +75,25 @@
             frame->finally_ip = frame->prev_finally_ip;
             frame->prev_finally_ip = NULL;
             frame->in_finally = 0;
+            // finally 体内的 break/continue 覆盖在飞的续跳（JS/Python 同语义）
+            frame->finally_goto_target = NULL;
+            frame->finally_goto_owner = NULL;
+            frame->finally_goto_layers = 0;
             vm.pending_exception = 0;
+            vm.has_exception = 0;
+            vm.exception = val_null();
+            vm.exception_line = 0;
+            DISPATCH();
+        }
+        // A=3：**catch 块入口**、且本层另有 finally（codegen 在 try 体入口补了
+        //   `OP_FINALLY A=1` 预备登记）。
+        //   与 A=1 的区别：这里**保留** finally_ip / prev_finally_ip —— catch 体内的
+        //   return 与再抛异常都必须先跑本层 finally（实测修前 return 在 catch 里会整个跳过
+        //   finally ✗）。catch 体结束自然落入 finally，由 finally 末尾的 END_TRY 统一还原外层。
+        if (a == 3) {
+            frame->catch_ip = NULL;
+            frame->in_finally = 0;
+            // 与 A=1 一样做异常状态收尾（catch 变量已由 OP_CATCH 取出）
             vm.has_exception = 0;
             vm.exception = val_null();
             vm.exception_line = 0;
@@ -69,17 +105,25 @@
         //       再由 finally 末尾的 END_TRY 用 prev_catch_ip 继续向外传播 ✓
         //     · catch 体内普通 throw（本层无 finally）⇒ 走 prev_catch_ip 兜底 ✓
         //   （A=0：正常收尾，把 prev_* 还原回 catch_ip/finally_ip 并清空 prev_*）
-        if (!a) {
+        // A=4：**finally 体结束**（与 A=0 同一套还原逻辑，另外处理 break/continue 续跳）。
+        // A=0：try 体正常结束（后面跟 JMP FINALLY）；A=1：catch 入口（无 finally）。
+        if (!a || a == 4) {
             frame->catch_ip = frame->prev_catch_ip;
             frame->prev_catch_ip = NULL;
             frame->catch_finally_ip = NULL;
         }
+        // 记下"刚刚跑完的是哪一层 finally"：续跳要靠它区分嵌套 try 的 END_TRY A=4
+        uint8_t* ending_fin = frame->finally_ip;
         frame->finally_ip = frame->prev_finally_ip;
         frame->prev_finally_ip = NULL;
         frame->in_finally = 0;
 
         // 需要在 finally 之后继续传播的异常
         if (vm.pending_exception) {
+            // 异常覆盖 break/continue 的续跳（JS/Python 同语义）
+            frame->finally_goto_target = NULL;
+            frame->finally_goto_owner = NULL;
+            frame->finally_goto_layers = 0;
             vm.pending_exception = 0;
             if (frame->catch_ip) {
                 frame->ip = frame->catch_ip;
@@ -115,6 +159,10 @@
 
         // try 块中的 return 在此收尾（finally 已执行完）
         if (frame->has_try_return) {
+            // return 覆盖 break/continue 的续跳
+            frame->finally_goto_target = NULL;
+            frame->finally_goto_owner = NULL;
+            frame->finally_goto_layers = 0;
             // ★ 2026-10-23 修（嵌套 finally 只跑最内层）：
             //   `try { try { return } finally { B } } finally { A }` 里 B 跑完
             //   原来直接 REG_FINISH_RETURN ⇒ **A 被静默跳过**（实测 defer 链只执行最后一个，
@@ -129,6 +177,49 @@
             Value saved = frame->try_return_value;
             REG_FINISH_RETURN(saved);
             DISPATCH();
+        }
+
+        // ★ 2026-10-30：break/continue 穿过 finally 的续跳（OP_FIN_GOTO 布置，A=4 收尾）。
+        //   ending_fin == owner 才算"轮到我等的这一层" —— 嵌套 try 在 finally 体内正常
+        //   结束时也会走 A=4，不能让它把外层 break 的续跳提前消费掉 ✗
+        if (a == 4 && frame->finally_goto_target &&
+            ending_fin == frame->finally_goto_owner) {
+            if (frame->finally_goto_layers > 1) {
+                frame->finally_goto_layers--;
+                if (FRAME_TRY_VALID(frame) && frame->finally_ip) {
+                    frame->finally_goto_owner = frame->finally_ip;
+                    frame->in_finally = 1;
+                    frame->ip = frame->finally_ip;
+                    DISPATCH();
+                }
+            }
+            uint8_t* gt = frame->finally_goto_target;
+            frame->finally_goto_target = NULL;
+            frame->finally_goto_owner = NULL;
+            frame->finally_goto_layers = 0;
+            frame->ip = gt;
+            DISPATCH();
+        }
+        DISPATCH();
+    }
+    // OP_FIN_GOTO A Bx: break/continue 穿过 try-finally
+    //   A = 还要执行几层 finally；Bx = 续跳目标（原始 16 位偏移，相对本指令起点）。
+    //   记录 (target, layers) 后跳进当前最内层 finally；每层 finally 末尾的 END_TRY A=4
+    //   递减层数，减到 0 时续跳 target（见上面 A=4 分支）。
+    LABEL(OP_FIN_GOTO): {
+        int layers = READ_A();
+        int bx = READ_Bx();
+        frame->finally_goto_target = (frame->ip - 4) + bx;
+        frame->finally_goto_layers = layers;
+        frame->finally_goto_owner = NULL;
+        if (FRAME_TRY_VALID(frame) && frame->finally_ip && !frame->in_finally && layers > 0) {
+            frame->finally_goto_owner = frame->finally_ip;
+            frame->in_finally = 1;
+            frame->ip = frame->finally_ip;
+        } else {
+            frame->ip = frame->finally_goto_target;
+            frame->finally_goto_target = NULL;
+            frame->finally_goto_layers = 0;
         }
         DISPATCH();
     }
@@ -157,6 +248,10 @@
             free(m);
         }
         if (vm.pending_exception) vm.pending_exception = 0;
+        // 抛异常覆盖 break/continue 的续跳（JS/Python 同语义）
+        frame->finally_goto_target = NULL;
+        frame->finally_goto_owner = NULL;
+        frame->finally_goto_layers = 0;
         vm.exception = exception;
         vm.has_exception = 1;
         vm.exception_line = line;

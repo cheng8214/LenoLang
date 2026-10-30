@@ -343,6 +343,10 @@
         if (frame->in_finally) {
             vm.pending_exception = 0;
             vm.exception = val_null();
+            // return 覆盖 break/continue 的续跳（JS/Python 同语义）
+            frame->finally_goto_target = NULL;
+            frame->finally_goto_owner = NULL;
+            frame->finally_goto_layers = 0;
         }
 
         // 有 finally 且尚未执行：先执行 finally，返回值暂存

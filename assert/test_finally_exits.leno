@@ -1,0 +1,128 @@
+// test_finally_exits.leno — try/finally 必须覆盖**所有**离开方式（2026-10-30 修）
+//
+// 修前实测的静默缺陷（全部是"能编译、结果/副作用错"）：
+//   ① catch 里 return ⇒ finally 整段跳过
+//   ② try 里有 catch+finally 时，try 里 return ⇒ finally 跳过
+//   ③ try/catch 里 break / continue ⇒ finally 跳过（defer 在循环里 continue 时同理）
+//   ④ 内层 try 正常结束后再 return ⇒ 只跑内层 finally，外层 finally 丢失
+// 这里用全局 log 累积执行痕迹（不依赖打印顺序），每一组都同时校验返回值与痕迹。
+
+var log = ""
+
+func ret_in_catch(): int {
+    try {
+        throw "e"
+    } catch e {
+        return 1
+    } finally {
+        log = log + "A"
+    }
+    return -1
+}
+
+func ret_in_try_with_catch(): int {
+    try {
+        return 2
+    } catch e {
+        return -2
+    } finally {
+        log = log + "B"
+    }
+}
+
+func break_in_try(): int {
+    int n = 0
+    for 0:3 to i {
+        try {
+            n = n + 1
+            if i == 1 { break }
+        } catch e {
+            n = n - 100
+        } finally {
+            log = log + "C"
+        }
+    }
+    return n
+}
+
+func continue_in_try(): int {
+    int n = 0
+    for 0:3 to i {
+        try {
+            if i == 1 { continue }
+            n = n + 1
+        } finally {
+            log = log + "D"
+        }
+    }
+    return n
+}
+
+func nested_outer_lost(): int {
+    try {
+        try {
+            log = log + "e"
+        } finally {
+            log = log + "E"
+        }
+        return 4
+    } finally {
+        log = log + "F"
+    }
+}
+
+func defer_with_continue(): int {
+    int n = 0
+    for 0:2 to i {
+        defer log = log + "G"
+        if i == 1 { continue }
+        n = n + 1
+    }
+    return n
+}
+
+func break_in_catch(): int {
+    int n = 0
+    for 0:3 to i {
+        try {
+            throw "x"
+        } catch e {
+            n = n + 1
+            break
+        } finally {
+            log = log + "H"
+        }
+    }
+    return n
+}
+
+main() {
+    assert_eq(ret_in_catch(), 1, "catch 里 return 的值")
+    assert_eq(log, "A", "catch 里 return 仍要执行 finally")
+
+    log = ""
+    assert_eq(ret_in_try_with_catch(), 2, "try 里 return 的值")
+    assert_eq(log, "B", "有 catch 时 try 里 return 仍要执行 finally")
+
+    log = ""
+    assert_eq(break_in_try(), 2, "i=0/1 各加 1 后 break（i=2、3 不再执行）")
+    assert_eq(log, "CC", "break 那轮的 finally 也要跑（i=0、i=1 各一次）")
+
+    log = ""
+    assert_eq(continue_in_try(), 3, "i=0/2/3 各加 1（i=1 continue）")
+    assert_eq(log, "DDDD", "continue 也要跑 finally（四轮各一次）")
+
+    log = ""
+    assert_eq(nested_outer_lost(), 4, "内层正常结束后 return")
+    assert_eq(log, "eEF", "外层 finally 不能被内层正常结束丢掉")
+
+    log = ""
+    assert_eq(defer_with_continue(), 2, "defer + continue 的计数（i=0、2 各加 1）")
+    assert_eq(log, "GGG", "defer 在 continue 离开时也要执行（三轮各一次）")
+
+    log = ""
+    assert_eq(break_in_catch(), 1, "catch 里 break 之前加了 1")
+    assert_eq(log, "H", "catch 里 break 也要跑 finally")
+
+    print("test_finally_exits passed")
+}

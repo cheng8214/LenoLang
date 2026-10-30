@@ -93,6 +93,7 @@ static const char* opCodeNames[] = {
     "OP_CMPJMP_EQ",        // T31：== 比较+跳转融合（!= 复用同一条，翻转 C 的极性位）
     "OP_STR_APPEND",       // T33：字符串自追加（可原地）
     "OP_LOCK_REF",         // const 深保护：R[A] 指向的对象标成只读
+    "OP_FIN_GOTO",         // break/continue 穿过 try-finally 的续跳（2026-10-30）
     "OP_OPCODE_COUNT",
     };
 

@@ -218,6 +218,8 @@ void emit_loop(CodeGen* gen, int target, int line);
 // END_TRY A=2：离开 finally 块（注销 try 注册 + 丢弃在飞异常，不跳转）——
 //   finally 体内的 break/continue 用它收尾，见 codegen_stmt.c 的 AST_BREAK 说明
 void emit_leave_finally(CodeGen* gen, int line);
+// OP_FIN_GOTO：break/continue 穿过 try-finally 时先跑 layers 层 finally 再续跳（目标由 patch 回填）
+int emit_fin_goto(CodeGen* gen, int layers, int line);
 
 // 自增自减
 void emit_inc(CodeGen* gen, int dst, int b, int line);

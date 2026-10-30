@@ -185,6 +185,38 @@ Value ast_default_to_value(Ast* expr) {
 }
 
 // ============================================================================
+// break / continue 的统一跳转
+// ----------------------------------------------------------------------------
+// 两类"先跑清理再跳"的情形：
+//   ① 当前位置在**finally 体里**（gen->finally_depth 高于建循环时）⇒ 补 N 条
+//      END_TRY A=2 注销 finally（既有路径，保持字节码不变）。
+//   ② 当前位置在**try/catch 体里**、且该 try 在目标循环内部 ⇒ 用 OP_FIN_GOTO：
+//      先跑 finally，再续跳到循环出口/回边。
+//      ✗ 修前这里只有普通 JMP ⇒ try 体内的 break/continue**整段跳过 finally**（实测：
+//        `for { try { … break } finally { sum += 10 } }` 的 finally 不执行、结果静默错）✗
+// 返回允许被 patch 的跳转位置（>=0）；无循环上下文返回 -1。
+// ============================================================================
+static int gen_loop_exit_jump(CodeGen* gen, Ast* ast) {
+    if (!gen->loop_head) return -1;
+
+    int crossed = gen->finally_depth - gen->loop_head->ctx.finally_depth;
+    if (crossed < 0) crossed = 0;   // 防御：理论上不会为负
+    if (crossed > 0) {
+        for (int i = 0; i < crossed; i++) emit_leave_finally(gen, ast->line);
+        return emit_jmp(gen, ast->line);
+    }
+
+    // try 是否在目标循环内部：进入该 try 时的外层循环数 > 建循环时的外层循环数
+    int target_depth = gen->loop_head->ctx.loop_depth;
+    int layers = 0;
+    for (TryFinNode* n = gen->try_fin_head; n && n->loop_depth > target_depth; n = n->prev) {
+        layers++;
+    }
+    if (layers > 0) return emit_fin_goto(gen, layers, ast->line);
+    return emit_jmp(gen, ast->line);
+}
+
+// ============================================================================
 // 语句分发
 // ============================================================================
 
@@ -203,27 +235,20 @@ void gen_stmt(CodeGen* gen, Ast* ast) {
         case AST_BREAK: {
             // break: 跳转到循环尾
             if (gen->loop_head) {
-                // ★ 从 finally 体内跳出时先补 N 条"离开 finally"清理（N = 跨出的 finally 层数）：
-                //   注销 try 注册 + 丢弃在飞异常。JS/Python 同语义（break 覆盖在飞异常）；
-                //   不补的话 pending 会**泄漏到别处**，在不相干的 END_TRY 处被重新抛出，
-                //   甚至跳回已经跑完的 finally 块（handler 没注销）✗
-                int crossed = gen->finally_depth - gen->loop_head->ctx.finally_depth;
-                if (crossed < 0) crossed = 0;   // 防御：理论上不会为负
-                for (int i = 0; i < crossed; i++) emit_leave_finally(gen, ast->line);
-                int jmp = emit_jmp(gen, ast->line);
-                gen->loop_head->ctx.break_jumps[gen->loop_head->ctx.break_count++] = jmp;
+                int jmp = gen_loop_exit_jump(gen, ast);
+                if (jmp >= 0) {
+                    gen->loop_head->ctx.break_jumps[gen->loop_head->ctx.break_count++] = jmp;
+                }
             }
             break;
         }
         case AST_CONTINUE: {
             // continue: 跳回循环头
             if (gen->loop_head) {
-                // ★ 同 break：跨出 finally 层数 = finally_depth - 建循环时的深度
-                int crossed = gen->finally_depth - gen->loop_head->ctx.finally_depth;
-                if (crossed < 0) crossed = 0;
-                for (int i = 0; i < crossed; i++) emit_leave_finally(gen, ast->line);
-                int jmp = emit_jmp(gen, ast->line);
-                gen->loop_head->ctx.continue_jumps[gen->loop_head->ctx.continue_count++] = jmp;
+                int jmp = gen_loop_exit_jump(gen, ast);
+                if (jmp >= 0) {
+                    gen->loop_head->ctx.continue_jumps[gen->loop_head->ctx.continue_count++] = jmp;
+                }
             }
             break;
         }
@@ -593,6 +618,7 @@ static void gen_while(CodeGen* gen, Ast* ast) {
     node->ctx.break_count = 0;
     node->ctx.continue_count = 0;
     node->ctx.finally_depth = gen->finally_depth;   // 建循环时的 finally 深度（见 AST_BREAK/CONTINUE）
+    node->ctx.loop_depth = gen->loop_count;         // 建循环时的外层循环数（见 AST_BREAK 的 try-finally）
     node->ctx.continue_target = 0;      // 本形态不用（continue 统一在下面回填）
     gen->loop_head = node;
     gen->loop_count++;
@@ -781,6 +807,7 @@ static void gen_for(CodeGen* gen, Ast* ast) {
     node->ctx.break_count = 0;
     node->ctx.continue_count = 0;
     node->ctx.finally_depth = gen->finally_depth;   // 建循环时的 finally 深度（见 AST_BREAK/CONTINUE）
+    node->ctx.loop_depth = gen->loop_count;         // 建循环时的外层循环数（见 AST_BREAK 的 try-finally）
     node->ctx.continue_target = 0;
     gen->loop_head = node;
     gen->loop_count++;
@@ -857,6 +884,7 @@ static void gen_for_iter(CodeGen* gen, Ast* ast) {
     node->ctx.break_count = 0;
     node->ctx.continue_count = 0;
     node->ctx.finally_depth = gen->finally_depth;   // 建循环时的 finally 深度（见 AST_BREAK/CONTINUE）
+    node->ctx.loop_depth = gen->loop_count;         // 建循环时的外层循环数（见 AST_BREAK 的 try-finally）
     node->ctx.continue_target = 0;
     gen->loop_head = node;
     gen->loop_count++;
@@ -945,6 +973,7 @@ static void gen_switch(CodeGen* gen, Ast* ast) {
     node->ctx.break_count = 0;
     node->ctx.continue_count = 0;
     node->ctx.finally_depth = gen->finally_depth;   // 建循环时的 finally 深度（见 AST_BREAK/CONTINUE）
+    node->ctx.loop_depth = gen->loop_count;         // 建循环时的外层循环数（见 AST_BREAK 的 try-finally）
     node->ctx.continue_target = 0;
     gen->loop_head = node;
     gen->loop_count++;
@@ -1976,6 +2005,27 @@ static void gen_try(CodeGen* gen, Ast* ast) {
     int try_a = (has_finally && ast->u.try_.catch_body == NULL) ? 1 : 0;
     reg_encode_iABx(gen->chunk, OP_TRY, try_a, 0, ast->line);
     int catch_patch_pos = gen->chunk->len - 2;  // Bx 字段位置
+    int prep_fin_pos = -1;                       // ← OP_FINALLY A=1 的位置（catch+finally 形态）
+    int prep_bx_pos = -1;
+
+    // ★ 2026-10-30：catch+finally 形态下，OP_TRY A=0 只登记 catch（finally_ip=NULL）⇒
+    //   try 体内与 catch 体内的 return 看不见本层 finally（静默跳过）✗
+    //   ⇒ 在 try 体入口补一条 `OP_FINALLY A=1`（只登记 finally_ip，不动异常状态）；
+    //     Bx 到 FINALLY 块的距离在这里还不知道，留占位，生成 finally 前回填。
+    if (has_finally && ast->u.try_.catch_body != NULL) {
+        prep_fin_pos = gen->chunk->len;
+        reg_encode_iABx(gen->chunk, OP_FINALLY, 1, 0, ast->line);
+        prep_bx_pos = gen->chunk->len - 2;
+    }
+
+    // try 体 / catch 体期间把本层 finally 记入"活动区域"：break/continue 跨出时按它计层数
+    TryFinNode tf_node;
+    if (has_finally) {
+        tf_node.loop_depth = gen->loop_count;
+        tf_node.prev = gen->try_fin_head;
+        gen->try_fin_head = &tf_node;
+        gen->try_fin_depth++;
+    }
 
     // try body
     gen_stmt(gen, ast->u.try_.try_body);
@@ -2007,21 +2057,30 @@ static void gen_try(CodeGen* gen, Ast* ast) {
         reg_encode_iABx(gen->chunk, OP_CATCH, cref->index, 0, ast->line);
         catch_fin_patch = gen->chunk->len - 2;   // Bx 字段位置
     }
-    // A=1 表示"catch 块入口"这次 END_TRY：保留 catch_finally_ip（catch 体期间有效）
-    // ★ 只在**真有 catch 体**时发这条：无 catch 体（try/finally）时它是死代码，而且会把
-    //   `catch_pos` 顶到 finally 块**之前** —— A=1 的 OP_TRY 把 catch_pos 当 finally 块用，
-    //   跳进去就会先撞上这条 END_TRY（pending 分支直接往外抛）⇒ **finally 体被跳过** ✗
-    //   （实测：`try { throw } finally { print(...) }` 的 print 不执行、异常却上抛了）
+    // A=3 表示"catch 块入口，且本层另有 finally"：保留 finally_ip/prev 链（见 09_exception.inc）
     if (ast->u.try_.catch_body != NULL) {
-        reg_encode_iABC(gen->chunk, OP_END_TRY, 1, 0, 0, ast->line);
+        reg_encode_iABC(gen->chunk, OP_END_TRY, has_finally ? 3 : 1, 0, 0, ast->line);
     }
 
     if (ast->u.try_.catch_body) {
         gen_stmt(gen, ast->u.try_.catch_body);
     }
 
+    // try/catch 体已生成完 ⇒ 出栈（finally 体本身不算活动区域：那里的 break/continue
+    // 由 finally_depth 那套"离开 finally"清理处理）
+    if (has_finally) {
+        gen->try_fin_head = tf_node.prev;
+        gen->try_fin_depth--;
+    }
+
     // --- finally 块（catch 结束自然落入这里）---
     int fin_pos = gen->chunk->len;
+    // 回填 try 体入口那条 `OP_FINALLY A=1` 预备登记：目标 = 本层 FINALLY 指令
+    if (prep_bx_pos >= 0) {
+        int rel = fin_pos - prep_fin_pos;
+        gen->chunk->code[prep_bx_pos] = (uint8_t)((rel >> 8) & 0xFF);
+        gen->chunk->code[prep_bx_pos + 1] = (uint8_t)(rel & 0xFF);
+    }
     patch_jmp_to(gen, jmp_finally, fin_pos);
     // 回填 CATCH 的 Bx：catch 体内再次 throw 时，仍要先执行本层 finally 再向外传播
     //   （`try { throw "first" } catch e { throw "second" } finally { ... }`）
@@ -2037,8 +2096,8 @@ static void gen_try(CodeGen* gen, Ast* ast) {
         gen->finally_depth++;
         gen_stmt(gen, ast->u.try_.finally_body);
         gen->finally_depth--;
-        // 清除 finally 注册
-        reg_encode_iABC(gen->chunk, OP_END_TRY, 0, 0, 0, ast->line);
+        // 清除 finally 注册（A=4 = "finally 体结束"：除还原外还负责 break/continue 续跳）
+        reg_encode_iABC(gen->chunk, OP_END_TRY, 4, 0, 0, ast->line);
     }
 }
 

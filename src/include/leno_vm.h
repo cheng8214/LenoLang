@@ -464,6 +464,14 @@ typedef enum {
     //   末尾追加 ⇒ 既有 opcode 编号不动，但仍按惯例 bump 序列化版本（见 leno_serialize.h）。
     OP_LOCK_REF,        // iA     R[A] 指向的对象 = 只读
 
+    // ★ 2026-10-30：`break`/`continue` 跨出 try-finally 的续跳（末尾追加 ⇒ 既有编号不变，
+    //   但仍按惯例 bump 序列化版本，见 leno_serialize.h）。
+    //   iABx：A = 还要执行几层 finally；Bx = 续跳目标（**原始** 16 位偏移，相对本指令起点，
+    //   不做 +32768 偏置，与 OP_TRY/OP_FINALLY 的 Bx 约定一致）。
+    //   语义：记录 (target, layers) ⇒ 若本层有 finally 则跳进去，每层 finally 结束时递减，
+    //   减到 0 续跳到 target（见 09_exception.inc / codegen_stmt.c 的 AST_BREAK 说明）。
+    OP_FIN_GOTO,
+
     OP_OPCODE_COUNT,    // 用于跳转表大小
 } OpCode;
 
@@ -686,6 +694,15 @@ typedef struct CallFrame {
     //   必须先执行**本层** finally 再向外传播（finally_ip 此刻已被 END_TRY 还原成外层）
     uint8_t* catch_finally_ip;
     int in_finally;      // 标记是否在 finally 块中（防止无限循环）
+    // ★ 2026-10-30：`break`/`continue` 跨出 try-finally 时的"续跳"状态。
+    //   这两个原本被静默丢弃：break 直接 JMP 到循环出口，finally 整段没跑 ✗。
+    //   OP_FIN_GOTO 先记录 (target, layers)，再跳进最内层 finally；每跑完一层
+    //   （END_TRY A=4）层数递减，减到 0 就跳到 target。
+    //   `owner` = 当前正在为它执行 finally 的那一层入口：嵌套 try 在 finally 体内正常
+    //   结束时也会走 END_TRY A=4，必须靠它区分"这是不是我在等的那个 finally"。
+    uint8_t* finally_goto_target;   // 续跳目标（NULL = 无）
+    uint8_t* finally_goto_owner;    // 该续跳对应的 finally 入口
+    int finally_goto_layers;        // 还要执行几层 finally（0 = 无）
     Value try_return_value;  // 保存 try 块中的 return 值
     int has_try_return;      // 标记是否有 try return 值需要处理
     // 模块信息

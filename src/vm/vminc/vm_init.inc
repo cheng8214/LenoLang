@@ -228,6 +228,9 @@ void vm_load(Chunk* c) {
     frame->in_finally = 0;
     frame->try_return_value = val_null();
     frame->has_try_return = 0;
+    frame->finally_goto_target = NULL;
+    frame->finally_goto_owner = NULL;
+    frame->finally_goto_layers = 0;
     frame->module = NULL;  // 主帧没有模块
     // ★ 主帧是"宿主帧"：显式置 ret_frame = -1。**原来这里没初始化** —— 帧槽里的
     //   ret_frame 是脏值/0，只是过去 OP_RETURN 无条件写 last_return_value 才没暴露。
@@ -282,6 +285,9 @@ int vm_run_chunk(Chunk* chunk) {
     frame->in_finally = 0;
     frame->try_return_value = val_null();
     frame->has_try_return = 0;
+    frame->finally_goto_target = NULL;
+    frame->finally_goto_owner = NULL;
+    frame->finally_goto_layers = 0;
     // 使用当前模块帧的模块信息
     frame->module = vm.current_module_frame ? vm.current_module_frame->module : NULL;
     // 临时帧默认没有捕获 upvalue
