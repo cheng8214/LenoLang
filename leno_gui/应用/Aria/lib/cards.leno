@@ -107,8 +107,12 @@ export func song_card(Song sg, CardHooks h): Card {
                               text_color: C_TXT, subtitle_color: C_TXT_DIM,
                               content_pad: 8, gap: 6,
                               hover_lift: 2.0, border: false})
-    if sg.tag != "" {
-        c.add_badge({text: sg.tag, pos: 1, size: 10, bg: C_ACCENT, color: #FFFFFFFF})
+    // 角标只有一个位：**来源优先** —— 小易源的歌标「小易」，其余才标音质（无损）
+    //   （音质信息在搜索结果/本地列表里都有，卡片上先把"哪来的"说清楚 ✓）
+    string badge = sg.tag
+    if sg.src == "ff" { badge = "小易" }
+    if badge != "" {
+        c.add_badge({text: badge, pos: 1, size: 10, bg: C_ACCENT, color: #FFFFFFFF})
     }
     if h.onPlay != null {
         Song s = sg
@@ -150,15 +154,33 @@ export func wide_card(Song sg, int cw, bool showDel, CardSize cs, CardHooks h): 
                                pad_x: 0, pad_y: 0, spacing: 0})
     // 标题/歌手都**显式限宽 + 省略号**：只靠盒宽裁剪不够稳（Label 的 _w 在布局前是自然宽，
     //   渲染那一拍若还没 set_size 仍会溢出 ✗）
+    // 歌名行：[歌名]（占满）+ 来源标签（只在"小易"源的歌上出现）
+    //   ★ 2026-10-31 用户要求：小易试听过的歌落到「继续收听」后，卡片上要能看出它来自小易 ✓
+    //   `src` 已经随 library.json 持久化（第 6 项）⇒ 重启后照样显示 ✓
+    bool isFf = sg.src == "ff"
+    int tagW = if isFf then 30 else 0
+    HBox nameRow = SDL3.createHBox({x: 0, y: 0, w: _float(tw), h: 20,
+                                    pad_x: 0, pad_y: 0, spacing: 4})
     Label tl = SDL3.createLabel({text: sg.title, font_size: 12.5, text_color: C_TXT,
-                                 max_w: _float(tw), truncate: 1, tip: sg.title,
+                                 max_w: _float(tw - tagW), truncate: 1, tip: sg.title,
                                  hover_color: C_ACCENT, cursor: SDL3.SystemCursor.POINTER})
     tl.set_font_style(SDL3.STYLE_BOLD)
     if h.onOpen != null {
         Song s2 = sg
         tl.on_click(func() { h.onOpen(s2) })
     }
-    tv.add(tl, {grow: 0, shrink: 0, basis: 20, align: 3})
+    nameRow.add(tl, {grow: 1, shrink: 1, align: 1})
+    if isFf {
+        // 小胶囊：浅粉底 + 主色字（与列表里的音质标签同一套观感，不抢歌名）
+        // ⚠ HBox 没有 `tip` 选项（只有 Button / Label 这些有）⇒ 加了会打印"不认识的选项" ✗
+        HBox tagBox = SDL3.createHBox({x: 0, y: 0, w: 30, h: 14,
+                                       pad_x: 4, pad_y: 0, spacing: 0,
+                                       bg_color: #E76F9B33, bg_radius: 7, justify: 1})
+        tagBox.add(SDL3.createLabel({text: "小易", font_size: 9, text_color: C_ACCENT}),
+                   {grow: 0, shrink: 0, align: 1})
+        nameRow.add(tagBox, {grow: 0, shrink: 0, basis: 30, align: 1})
+    }
+    tv.add(nameRow, {grow: 0, shrink: 0, basis: 20, align: 3})
     Label al = SDL3.createLabel({text: sg.artist, font_size: 10.5, text_color: C_TXT_DIM,
                                  max_w: _float(tw), truncate: 1, tip: "查看歌手：" + sg.artist,
                                  hover_color: C_ACCENT, cursor: SDL3.SystemCursor.POINTER})

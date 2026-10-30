@@ -22,9 +22,12 @@ export func save(string cacheRoot, Array[string] likes, Array[Song] recent) {
     d["likes"] = likes
     Array[Array[string]] rs = []
     for recent to s {
-        // 第 6 项 = 音源标记（`"ff"` / 空）：不存它的话，重启后 ff 源的歌
+        // 第 6 项 = 音源标记（`"ff"` = 小易 / `"kuwo"` = 小酷）：不存它的话，重启后 ff 源的歌
         //   `url` 是空的、`src` 也没了 ⇒ 会被当成酷我歌去解析、必失败 ✗
-        rs.add([s.sid, s.title, s.artist, s.dur, s.cover, s.src])
+        //   ⚠ 一定**别写空串**：`Dict[string,any]` 装箱后空串会被 `jsons.encode` 编成数字 `0`
+        //     （实测：`["…","童话镇","梁玖希","4:17","…jpg",0]`）⇒ 读回来 `src` 成了 "0"，
+        //     "是不是小易的"这个判断就永远失效 ✗ ⇒ 显式写 "kuwo" ✓
+        rs.add([s.sid, s.title, s.artist, s.dur, s.cover, if s.src == "ff" then "ff" else "kuwo"])
     }
     d["recent"] = rs
     store.save(cacheRoot, d)
@@ -46,7 +49,9 @@ export func load(string cacheRoot): LibraryData {
             sg.artist = r[2]
             sg.dur = r[3]
             sg.cover = r[4]
-            if r.len() > 5 { sg.src = r[5] }     // 老格式没有第 6 项 ⇒ 保持空（当酷我歌 ✓）
+            // 老格式没有第 6 项 ⇒ 保持空（当酷我歌 ✓）；
+            // 只认 "ff"，其它（"kuwo" / 空 / 历史遗留的 "0"）一律归成空串 ✓
+            if r.len() > 5 and r[5] == "ff" { sg.src = "ff" }
             out.recent.add(sg)
         }
     }

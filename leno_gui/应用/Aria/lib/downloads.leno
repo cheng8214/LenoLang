@@ -202,7 +202,10 @@ export func save_shard(string id, string title, string artist, string root, stri
     //   ⇒ 列表显示 MP3、磁盘上是 flac（或反过来）的错乱
     string base = dirs.join(d, safe_name(artist + " - " + title))
     string art = art_of(root, title, artist)
-    if not files.exists(art) { cover.cover_to(id, art) }     // 封面失败不影响下载 ✓
+    // ★ 2026-10-30：封面也**受设置控制**（tags & 4 = 存封面，tags & 2 = 内嵌需要封面当素材）。
+    //   原来是无条件取 ⇒ 用户关掉"下载封面"照样会落一张 .jpg，设置形同虚设 ✗
+    bool wantArt = (tags & 4) != 0 or (tags & 2) != 0
+    if wantArt and not files.exists(art) { cover.cover_to(id, art) }     // 封面失败不影响下载 ✓
     // 已有（两种扩展名都认）⇒ 直接完成，并把**实际格式**告诉界面 ✓
     if files.exists(base + ".flac") {
         int n = fsize(base + ".flac")
@@ -330,6 +333,51 @@ export func save_shard(string id, string title, string artist, string root, stri
     return true
 }
 
+// ==================== 小易（ff）下载的「附件收尾」（2026-10-30）====================
+//   为什么需要单独一个函数：酷我那条在 `save_shard` 内部就把歌词/封面/内嵌一起做了，
+//   而小易走 `fetch_url`（只拿音频本体）⇒ 存 .lrc / 存封面 / 内嵌**全部漏掉**，
+//   设置里那三个开关对"小易下载"形同虚设 ✗（用户实测反馈）
+//
+//   `tags` 位（与酷我同口径）：1 = 同名 .lrc、2 = 内嵌封面+歌词、4 = 同名封面 .jpg
+//   `lrcText` / `picUrl` 是解析站 `music` 响应**直接给**的歌词原文与封面地址
+//   ⚠ 一律"尽力而为"：任何一步失败只 print，绝不影响"音频已经下好了"这个结果 ✓
+//   ⚠ 会联网（下封面）与写文件（内嵌），**必须在工作线程里调**，别放 on_tick ✗
+export func finish_ff(string file, string title, string artist, int tags,
+                      string lrcText, string picUrl) {
+    if file == "" or not files.exists(file) { return }
+    // 去扩展名拿 base —— ⚠ 不能用字节下标切（中文路径会切坏），走 split（同 scan 的口径 ✓）
+    string nm = dirs.basename(file)
+    var parts = strings.split(nm, ".")
+    string stem = parts[0]
+    if parts.len() >= 2 {
+        for 1 : parts.len() - 2 to k { stem = stem + "." + parts[k] }
+    }
+    string dir = file.replace(nm, "")
+    string base = dir + stem
+    // ① 歌词：解析站给的原文直接落同名 .lrc
+    if (tags & 1) != 0 and lrcText != "" {
+        try { files.write(base + ".lrc", lrcText) }
+        catch e1 { print("[ffdl] 写歌词失败：" + _str(e1)) }
+    }
+    // ② 封面：内嵌也要用它当素材，所以 (tags&2) 也算
+    string art = base + ".jpg"
+    bool wantArt = (tags & 4) != 0 or (tags & 2) != 0
+    if wantArt and picUrl != "" and not files.exists(art) {
+        try { net.download(picUrl, art) }
+        catch e2 { print("[ffdl] 存封面失败：" + _str(e2)) }
+    }
+    // ③ 内嵌：写进音频本体（MP3 的 ID3v2 / FLAC 的 VORBIS_COMMENT+PICTURE）
+    if (tags & 2) != 0 {
+        try {
+            string lt = if (tags & 1) != 0 then lrcText else ""
+            string err = audio.writeTag(file, title, artist, art, lt)
+            if err != "" { print("[ffdl] 内嵌跳过：" + err) }
+        } catch e3 {
+            print("[ffdl] 内嵌失败：" + _str(e3))
+        }
+    }
+}
+
 // 字节数 → "4.4 MB"（下载列表的"大小"列 ✓）
 export func fmt_size(int b): string {
     if b <= 0 { return "—" }
@@ -339,13 +387,24 @@ export func fmt_size(int b): string {
 }
 
 // ==================== 下载队列（纯数据，行协议 Array[string]）====================
-//   一行 = [id, 歌名, 歌手, 状态, 说明, 格式, 已下字节, 总字节]
-//   状态： "0" 排队 / "1" 完成 / "2" 失败
+//   一行 = [id, 歌名, 歌手, 状态, 说明, 格式, 已下字节, 总字节, 音源]
+//   状态： "0" 排队 / "1" 完成 / "2" 失败 / "3" 已暂停 / "5" 下载中
 //   为什么用行而不是 struct 数组：字段要**原地更新**（状态 0→1、进度 0→N），字符串行最好改 ✓
 // fmt = 入队时的**优先格式**（"FLAC" / "MP3"）—— 列表先按它显示，
 //   下载完成后由 D 消息回传**实际格式**覆盖（flac 取不到会退 mp3 ✓）
-export func job_new(string id, string title, string artist, string fmt): Array[string] {
-    return [id, title, artist, "0", "", fmt, "0", "0"]
+//
+// ★ 2026-10-30 加第 9 项 `src`（"ff" = 小易 / "" = 酷我）：
+//   两条音源的**下载器完全不同** —— 小易的 id 是网易云 id，丢给酷我下载器
+//   会取不到直链、只拿到错误页、还被存成 `.mp3`（用户实测："点继续瞬间下好，
+//   一看变成 mp3 了" ✗）⇒ 队列必须记下来源，`next_index` 才不会张冠李戴 ✓
+export func job_new(string id, string title, string artist, string fmt, string src = ""): Array[string] {
+    return [id, title, artist, "0", "", fmt, "0", "0", src]
+}
+
+// 该任务的音源（"ff" = 小易 / "" = 酷我）；老数据没有第 9 项 ⇒ 当酷我 ✓
+export func src_of(Array[string] j): string {
+    if j.len() > 8 { return j[8] }
+    return ""
 }
 
 // 进度百分比文本（给 Table 的 progress 单元格：写 "37" 或 "100" ✓）
@@ -360,19 +419,33 @@ export func percent_of(Array[string] j): string {
     return _str(p)
 }
 
-// 大小文本：完成了就显示实际字节，否则 "—"
+// 大小文本：**已下 / 总大小**（2026-10-30 用户要求：要能一眼看出下了多少 ✓）
+//   · 已完成 ⇒ 只报总量（再写 "110 MB / 110 MB" 是废话）
+//   · 总长未知（排队中 / 服务端没给 Content-Range）⇒ 只显示已下那一半
 export func size_of(Array[string] j): string {
     if j.len() < 8 { return "—" }
-    return fmt_size(_int(j[6]))
+    int got = _int(j[6])
+    int tot = _int(j[7])
+    if tot <= 0 { return if got > 0 then fmt_size(got) else "—" }
+    if j[3] == "1" { return fmt_size(tot) }
+    if got > tot { got = tot }
+    if got <= 0 { return fmt_size(tot) }
+    // 单位相同时只写一次：`14.3 MB / 28.6 MB` → `14.3 / 28.6 MB`（省近一半宽度 ✓）
+    string a = fmt_size(got)
+    string b = fmt_size(tot)
+    var pa = strings.split(a, " ")
+    var pb = strings.split(b, " ")
+    if pa.len() == 2 and pb.len() == 2 and pa[1] == pb[1] { return pa[0] + " / " + b }
+    return a + " / " + b
 }
 
 // 加入队列（同 id 且在排队/已完成 ⇒ 不重复加）；返回加了几个
-export func enqueue(Array[Array[string]] q, string id, string title, string artist, string fmt): int {
+export func enqueue(Array[Array[string]] q, string id, string title, string artist, string fmt, string src = ""): int {
     if id == "" { return 0 }
     for q to j {
         if j.len() >= 2 and j[0] == id { return 0 }
     }
-    q.add(job_new(id, title, artist, fmt))
+    q.add(job_new(id, title, artist, fmt, src))
     return 1
 }
 
@@ -380,7 +453,12 @@ export func enqueue(Array[Array[string]] q, string id, string title, string arti
 export func next_index(Array[Array[string]] q): int {
     for 0 : q.len() - 1 to i {
         Array[string] j = q[i]
-        if j.len() >= 4 and j[3] == "0" { return i }
+        if j.len() >= 4 and j[3] == "0" {
+            // ★ 小易（ff）任务**绝不交给酷我下载器** —— 它只由自己的流程
+            //   （`ffplay` 解析直链 → `fetch_url`）驱动。混进来就会用网易云 id
+            //   去求酷我直链 ⇒ 拿到错误页 ⇒ 瞬间"完成"且存成 .mp3 ✗
+            if src_of(j) == "" { return i }
+        }
     }
     return -1
 }
@@ -476,7 +554,7 @@ export func save_jobs(string root, Array[Array[string]] q) {
         for q to j {
             if j.len() >= 8 {
                 rows.add({id: j[0], title: j[1], artist: j[2], state: j[3],
-                          note: j[4], fmt: j[5], got: j[6], total: j[7]})
+                          note: j[4], fmt: j[5], got: j[6], total: j[7], src: src_of(j)})
             }
         }
         jsons.write_file(store_path(root), {version: 1, jobs: rows})
@@ -519,7 +597,8 @@ export func load_jobs(string root): Array[Array[string]] {
                                  jsons.get_str(r, "note", ""),
                                  jsons.get_str(r, "fmt", "MP3"),
                                  jsons.get_str(r, "got", "0"),
-                                 jsons.get_str(r, "total", "0")])
+                                 jsons.get_str(r, "total", "0"),
+                                 jsons.get_str(r, "src", "")])
                     }
                 }
             } else {
@@ -551,17 +630,23 @@ export func scan(string root): Array[Song] {
     string d = dir_of(root)
     if not dirs.exists(d) { return out }
     var names = dirs.listdir(d)
-    // 缓存签名：文件数 + 最新修改时间 ⇒ 下载完 / 删文件才失效 ✓
+    // ★ 2026-10-30 修：签名必须**包含文件名本身**。
+    //   原来只有「文件数 + 最新 mtime」：下载时叫 `X.part`、完成后改名 `X.flac`
+    //   ⇒ 文件数一模一样、mtime 也常在同一秒内 ⇒ 签名"看起来没变" ⇒ 一直返回下载前的旧列表
+    //   （用户实测：下完了「本地音乐」里没有，点刷新也不出来 ✗）
     int newest = 0
     for names to nm0 {
         var st0 = dirs.stat(dirs.join(d, nm0))
         if st0.mtime > newest { newest = st0.mtime }
     }
     string sig = d + "|" + _str(names.len()) + "|" + _str(newest)
+    for names to nm2 { sig = sig + "|" + nm2 }
     if sig == _scanSig { return _scanCache }
     for names to n {
         string ext = dirs.extname(n).to_lower()
-        if ext != ".mp3" and ext != ".flac" and ext != ".wav" and ext != ".ogg" { continue }
+        // 白名单要覆盖"下载可能落下的所有格式"：小易（ffapi）除了 flac/mp3 还可能给 **m4a**，
+        //   ape / wma / opus 也都是常见容器 ⇒ 漏一个就等于"文件在、列表里没有" ✗
+        if ext != ".mp3" and ext != ".flac" and ext != ".wav" and ext != ".ogg" and ext != ".m4a" and ext != ".aac" and ext != ".ape" and ext != ".wma" and ext != ".opus" { continue }
         string base = dirs.basename(n)
         Song sg = new Song()
         // ⚠ 不能用 `byte_slice` 切文件名：中文是多字节，按字节切会把字切断（实测显示成 `刘若@@` ✗）

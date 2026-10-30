@@ -234,7 +234,9 @@ export func ffsizes(Array[string] ids, string coverDir, Channel ch) {
 // 按指定的音质档解析直链（**试听 / 下载共用**，只是 levels 不同）
 //   试听：按设置音质（standard / high / lossless）
 //   下载：固定最高（jymaster → hires → lossless）
-//   回信：[[歌名, 歌手, 专辑, 秒, 扩展名, 体积文本, id, 档位, 直链]] 或 [["ERR", …]]
+//   回信：[[歌名, 歌手, 专辑, 秒, 扩展名, 体积文本, id, 档位, 直链, 歌词, 封面URL]] 或 [["ERR", …]]
+//   ★ 2026-10-30：末尾补 **歌词 / 封面**（解析站的 music 响应本来就带着）——
+//     下载完成后的"存 .lrc / 存封面 / 内嵌"全靠这两项，不然设置里那几个开关对小易形同虚设 ✗
 export func ffplay(string id, string name, string artist, string album, int dur,
                    Array[string] levels, Channel ch) {
     Array[Array[string]] out = []
@@ -243,7 +245,8 @@ export func ffplay(string id, string name, string artist, string album, int dur,
         var p = ff.music_best(c, id, levels)
         c.close()
         if p.valid() {
-            out.add([name, artist, album, _str(dur), p.ext(), p.size, id, p.level, p.url])
+            out.add([name, artist, album, _str(dur), p.ext(), p.size, id, p.level, p.url,
+                     p.lyric, p.pic])
         } else {
             out.add(["ERR", "该曲目没有可用的音质版本"])
         }
@@ -258,7 +261,9 @@ export func ffplay(string id, string name, string artist, string album, int dur,
 //   ⚠ 直链有时效：失败时调用方应**重新解析一次**再试，别直接报错
 //   ★ 分片下载（每 1MB 发一条进度）：`net.download` 是一次性整文件拿，
 //     中间毫无反馈 ⇒ 界面只能从 0 直接跳到 100% ✗
-//   回信：["P", 已下字节, 总字节]（多次）→ 最后 ["OK", 路径] 或 ["ERR", 原因]
+//   回信：["P", 已下字节, 总字节, 路径]（多次）→ 最后 ["OK", 路径] 或 ["ERR", 原因]
+//   ★ 2026-10-30：进度回信补上**路径** —— 界面层用它反查是哪一条任务（`urlTarget`
+//     是单槽，连着下多首时会被后一首覆盖 ⇒ 进度/完成状态会打到错的行上 ✗）
 //   ⚠ 服务端不认 Range 时（返回整包）第一片就下完 ⇒ 自动 break ✓
 const int FF_SHARD = 1048576
 
@@ -268,10 +273,13 @@ func ff_total_of(string cr): int {
     return _int(strings.trim(p[1]))
 }
 
-export func fetch_url(string url, string path, Channel ch) {
+// ★ 2026-10-30：加 `ctl`（可空）—— 界面点「暂停」时发一条命令过来，
+//   每片开始前收一次 ⇒ 真的停手（原来没有这个通道，"暂停"只是改了个状态字，
+//   线程照样下到底，用户点了继续又从头排一遍，才会出现"瞬间下好 + 变成 mp3" ✗）
+export func fetch_url(string url, string path, Channel ch, Channel? ctl = null) {
     if url == "" {
         print("[net] fetch_url 收到空直链（调用方没把 sg.url 传进来）")
-        ch.send([["ERR", "直链为空"]])
+        ch.send([["ERR", "直链为空", path]])
         return
     }
     string acc = ""
@@ -285,6 +293,15 @@ export func fetch_url(string url, string path, Channel ch) {
     var c = net.createClient()
     while guard < 2000 {                       // 防死循环（2GB 顶天 ✓）
         guard = guard + 1
+        // ① 暂停检查（每片前一次）：收到命令就关客户端、回 "Z" 收工 ✓
+        if ctl != null {
+            var cmd = ctl.try_receive()
+            if cmd != null {
+                try { c.close() } catch e0 { print("[net] 暂停时关客户端失败：" + _str(e0)) }
+                ch.send([["Z", _str(off), _str(total), path]])
+                return
+            }
+        }
         string chunk = ""
         int crTotal = 0
         try {
@@ -310,9 +327,9 @@ export func fetch_url(string url, string path, Channel ch) {
         acc = acc + chunk
         off = off + n
         if total <= 0 and crTotal > 0 { total = crTotal }
-        print("[net] 第 " + _str(guard) + " 片：" + _str(n) + " 字节，累计 "
-              + _str(off) + " / 总 " + _str(total))
-        ch.send([["P", _str(off), _str(total)]])
+        // ⚠ 不要在这里 print 每片进度：一首无损近百片 ⇒ 控制台被刷屏（2026-10-30 移除 ✓）
+        //   进度本来就走 `ch.send` 回给界面（下载列表里那根进度条），日志没有额外价值
+        ch.send([["P", _str(off), _str(total), path]])
         if total > 0 and off >= total { break }
         if n < FF_SHARD { break }              // 没按 Range 给 ⇒ 已拿全
     }
@@ -325,7 +342,7 @@ export func fetch_url(string url, string path, Channel ch) {
             net.download(url, path)
             ch.send([["OK", path]])
         } catch e2 {
-            ch.send([["ERR", "下载失败：" + _str(e2)]])
+            ch.send([["ERR", "下载失败：" + _str(e2), path]])
         }
         return
     }
@@ -334,10 +351,10 @@ export func fetch_url(string url, string path, Channel ch) {
     } catch e {
         // ★ 这里失败过（目录不存在之类）⇒ 报 ERR 被上层当成"直链失效"，很误导
         print("[net] 写盘失败：" + _str(e) + "   路径=" + path + "   字节=" + _str(acc.byte_len()))
-        ch.send([["ERR", "写盘失败：" + _str(e)]])
+        ch.send([["ERR", "写盘失败：" + _str(e), path]])
         return
     }
-    print("[net] 下载完成并写盘：" + path + "（" + _str(acc.byte_len()) + " 字节）")
+    // 成功这条也不打日志：界面已经有"下载完成"的系统通知 + 列表状态（2026-10-30 移除 ✓）
     ch.send([["OK", path]])
 }
 
@@ -504,5 +521,80 @@ export func lyric(string sid, Channel ch) {
         out = []
         print("[lyric-worker] 异常：" + _str(e))
     }
+    ch.send(out)
+}
+
+// ==================== 手动「搜索歌词」（★ 2026-10-30）====================
+// 什么时候用：自动取歌词失败（本地文件没 sid / 接口没返回 / 缓存里没有）⇒ 歌词页那颗按钮兜底。
+//   两个来源依次试：**小酷（酷我）→ 网易云（飞飞解析站）**，谁先有就用谁。
+// 回信（**只有一条**）：["OK", 来源, 歌词文本] / ["ERR", 原因]
+//   来源值 = "小酷" / "网易云"（UI 拿它做提示，用户知道歌词是从哪捞的 ✓）
+export func lyric_find(string title, string artist, string kuwoSid, Channel ch) {
+    Array[string] out = []
+    string t = title.trim()
+    if t == "" {
+        out.add("ERR")
+        out.add("不知道歌名，搜不了歌词")
+        ch.send(out)
+        return
+    }
+    string a = artist.trim()
+    string kw = if a == "" then t else (t + " " + a)
+
+    // ---------- ① 小酷：有 rid 直接取；没有就按"歌名 歌手"搜一首最像的 ----------
+    try {
+        string ksid = kuwoSid
+        if ksid == "" {
+            var kc = net.createClient()
+            var hits = kuwo.search(kc, kw, 5)
+            kc.close()
+            // 歌名完全相同的优先（搜索结果里常混进翻唱/伴奏）；都没有就取第一条（按相关度排 ✓）
+            for hits to h {
+                if h.valid() and h.name == t { ksid = h.id; break }
+            }
+            if ksid == "" and hits.len() > 0 and hits[0].valid() { ksid = hits[0].id }
+        }
+        if ksid != "" {
+            string txt = klyr.fetchlyric_lrcx(ksid)          // 逐字优先
+            if txt == "" { txt = klyr.fetchlyric(ksid) }     // 退回标准 LRC
+            if txt != "" {
+                out.add("OK")
+                out.add("小酷")
+                out.add(txt)
+                ch.send(out)
+                return
+            }
+        }
+    } catch e {
+        print("[lyric-find] 小酷失败：" + _str(e))
+    }
+
+    // ---------- ② 网易云（飞飞解析站）：搜一首 → 解析响应里自带 lyric ----------
+    try {
+        var fc = ff.newClient()
+        var rows = ff.search(fc, kw, 5)          // 每行 [id, 歌名, 歌手, 专辑, 秒]
+        string nid = ""
+        for rows to r {
+            if r.len() >= 2 and r[1] == t { nid = r[0]; break }
+        }
+        if nid == "" and rows.len() > 0 and rows[0].len() >= 1 { nid = rows[0][0] }
+        if nid != "" {
+            var p = ff.music(fc, nid, ff.LEVEL_STANDARD)
+            if p.lyric != "" {
+                fc.close()
+                out.add("OK")
+                out.add("网易云")
+                out.add(p.lyric)
+                ch.send(out)
+                return
+            }
+        }
+        fc.close()
+    } catch e2 {
+        print("[lyric-find] 网易云失败：" + _str(e2))
+    }
+
+    out.add("ERR")
+    out.add("小酷和网易云都没有找到歌词")
     ch.send(out)
 }

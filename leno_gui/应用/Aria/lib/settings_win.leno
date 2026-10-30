@@ -19,9 +19,16 @@ use cfg.Settings
 
 // 打开设置窗口。onSaved 在"保存成功且已写盘"后回调（调用方据此重读配置 ✓）
 // tabIcons：三项页签图标（与「常规/下载/外观」对应；"" = 该页不显示图标）
-export func show(string defaultCache, Array[string] tabIcons, func(Settings):void onSaved) {
+// ★ 2026-10-31 加两个可选回调（"拖动就能看到窗口变化"）：
+//   onVeil(v)   拖动蒙版滑块时**每一帧**回调 ⇒ 主窗口实时跟着变（预览，不写盘）
+//   onVeilEnd() 取消 / 点 × 关闭时回调 ⇒ 主窗口恢复成磁盘里已保存的值
+//   （保存走 onSaved，那边本来就会 apply_settings，不需要额外处理 ✓）
+export func show(string defaultCache, Array[string] tabIcons, func(Settings):void onSaved,
+                 func(int):void onVeil = null, func():void onVeilEnd = null) {
     int dw = 620
-    int dh = 450
+    // ★ 2026-10-30：450 → 500 —— 「下载」页多了一行封面开关，
+    //   原来 Tab 高 320（内容区仅 320-34=286）连 304 那行提示都被裁掉了 ✗
+    int dh = 500
     int tbH = SDL3.DIALOG_TB_H
     var dlg = SDL3.createDialogWindow({title: "设置", w: dw, h: tbH + dh})
     // 标题栏配色**跟随主题**（bgHeader / txt / accent，见 sdl_titlebar.applyTheme ✓），
@@ -38,20 +45,22 @@ export func show(string defaultCache, Array[string] tabIcons, func(Settings):voi
     Array[string] fmtBox = [cfg.clamp_fmt(cur.fmt)]
     // 试听音质（同样是单元素数组，闭包按引用改 ✓）
     Array[string] aqBox = [cfg.clamp_aq(cur.aq)]
-    // 下载附加项（两个开关）
+    // 下载附加项（三个开关：歌词 / 封面 / 内嵌）
     Array[bool] dlLyric = [cur.dl_lyric]
+    Array[bool] dlCover = [cur.dl_cover]
     Array[bool] embTag = [cur.embed_tag]
 
     // ==================== Tab 容器 ====================
     // Tab 的 `bg_color` 默认取 `theme.bg`（纯白），
     //   而对话框底色是粉的 ⇒ 白块特别突兀 ✗ ⇒ 这里给**透明**，让对话框自己的底色透上来 ✓
-    TabControl tabs = SDL3.createTabControl({x: 0, y: 0, w: _float(cw), h: 320,
+    TabControl tabs = SDL3.createTabControl({x: 0, y: 0, w: _float(cw), h: 380,
                                              tabs: ["常规", "下载", "外观"], active: 0,
                                              tab_icons: tabIcons, tab_icon_size: 16.0,
                                              bg_color: #00000000, border: false})
-    // ★ 固定 300 高：**不能再 grow** —— 和下面的 spacer 同时 grow:1 会平分剩余空间，
+    // ★ 固定高度：**不能再 grow** —— 和下面的 spacer 同时 grow:1 会平分剩余空间，
     //   Tab 只剩一半高 ⇒ 页内容被裁、看起来重叠
-    root.add(tabs, {grow: 0, shrink: 0, basis: 320, align: 3})
+    //   380 = tab_h(34) + 内容区 346：「下载」页最下面那行提示在 y=320，得留出富余 ✓
+    root.add(tabs, {grow: 0, shrink: 0, basis: 380, align: 3})
 
     // ==================== 页 0：常规 ====================
     tabs.addToPage(0, SDL3.createLabel({text: "并行下载线程数（封面分片 / 多首并行）", font_size: 13}), 0, 20)
@@ -121,17 +130,21 @@ export func show(string defaultCache, Array[string] tabIcons, func(Settings):voi
     tabs.addToPage(1, rbLossless, 380, 150)
     tabs.addToPage(1, SDL3.dialogLabel("提示：换档位只影响之后播放的歌；已缓存的会复用，不会重复下载。", 11), 0, 196)
 
-    // ---- 下载附加：歌词 / 内嵌标签（2026-10-28）----
+    // ---- 下载附加：歌词 / 封面 / 内嵌（2026-10-28，封面开关 2026-10-30 补）----
     tabs.addToPage(1, SDL3.createLabel({text: "下载附加（对之后加入的下载任务生效）", font_size: 13}), 0, 214)
     CheckBox ckLyric = SDL3.createCheckBox({text: "同时下载歌词（在音频旁存同名 .lrc）",
                                             checked: cur.dl_lyric, box: 16, gap: 8, font_size: 12.5})
     ckLyric.set_tip("逐字歌词优先；取不到就存普通 LRC。播放时同目录 .lrc 会被自动读取")
-    tabs.addToPage(1, ckLyric, 0, 244)
+    tabs.addToPage(1, ckLyric, 0, 240)
+    CheckBox ckCover = SDL3.createCheckBox({text: "同时下载封面（在音频旁存同名 .jpg）",
+                                            checked: cur.dl_cover, box: 16, gap: 8, font_size: 12.5})
+    ckCover.set_tip("小酷一直是这么做的；关掉后只在「内嵌」需要时才临时取图。列表缩略图会改用内置占位图")
+    tabs.addToPage(1, ckCover, 0, 266)
     CheckBox ckEmbed = SDL3.createCheckBox({text: "把封面与歌词内嵌进音频文件",
                                             checked: cur.embed_tag, box: 16, gap: 8, font_size: 12.5})
     ckEmbed.set_tip("MP3 写 ID3v2（APIC 封面 + USLT 歌词）、FLAC 写 VORBIS_COMMENT + PICTURE；其它格式会跳过")
-    tabs.addToPage(1, ckEmbed, 0, 274)
-    tabs.addToPage(1, SDL3.dialogLabel("内嵌会改写音频文件本体（先写临时文件，成功才替换；不支持 m4a/ogg）", 11), 0, 304)
+    tabs.addToPage(1, ckEmbed, 0, 292)
+    tabs.addToPage(1, SDL3.dialogLabel("内嵌会改写音频文件本体（先写临时文件，成功才替换；不支持 m4a/ogg）", 11), 0, 320)
 
     // ==================== 页 2：外观（只留「背景图 + 蒙版不透明度」）====================
     tabs.addToPage(2, SDL3.createLabel({text: "背景图片（留空 = 用应用自带的 images/bk.jpg）", font_size: 13}), 0, 18)
@@ -151,7 +164,7 @@ export func show(string defaultCache, Array[string] tabIcons, func(Settings):voi
     Slider veilS = SDL3.createSlider({w: 360, h: 20, min: cfg.VEIL_MIN, max: cfg.VEIL_MAX,
                                       value: cur.veil, step: 1, show_value: false,
                                       track_color: #E3CEDAFF, fill_color: #F7A8C4FF})
-    veilS.set_tip("调整后点「保存」生效；越高界面越亮、背景越淡")
+    veilS.set_tip("拖动即时预览；点「保存」才写进配置。越高界面越亮、背景越淡")
     Label veilTxt = SDL3.dialogLabel(cfg.veil_text(cur.veil), 11)
     tabs.addToPage(2, veilS, 0, 126)
     tabs.addToPage(2, veilTxt, 384, 130)
@@ -182,6 +195,18 @@ export func show(string defaultCache, Array[string] tabIcons, func(Settings):voi
     })
     rbLossless.on_change(func(bool on) {
         if on { aqBox[0] = cfg.AQ_LOSSLESS; note.set_text("试听音质：无损 flac（点「保存」才生效）"); SDL3.markFrameRedraw() }
+    })
+
+    // ★ 2026-10-31 用户要求「拖动可以看到窗口变化」：
+    //   主窗口那层蒙版是**每帧**按 `g_veil` 画的矩形（见 aria.paint_bg 的 fillRect）
+    //   ⇒ 拖动时改值 + 重画就立刻见效，不需要重建背景纹理 ✓
+    //   注意这只影响**预览**：真正的落盘仍在「保存」里（取消会恢复，见 cancelBtn ✓）
+    veilS.on_change(func(float v) {
+        int nv = cfg.clamp_veil(_int(v))
+        veilTxt.set_text(cfg.veil_text(nv))
+        if onVeil != null { onVeil(nv) }
+        note.set_text("拖动即时预览；点「保存」才写进配置")
+        SDL3.markFrameRedraw()
     })
 
     pickBtn.on_click(func() {
@@ -223,17 +248,21 @@ export func show(string defaultCache, Array[string] tabIcons, func(Settings):voi
         note.set_text("已恢复内置背景 bk.jpg（点「保存」才生效）")
         SDL3.markFrameRedraw()
     })
-    veilS.on_change(func(float v) {
-        veilTxt.set_text(cfg.veil_text(_int(v)))
-        note.set_text("蒙版透明度：" + cfg.veil_text(_int(v)) + "（点「保存」才生效）")
-        SDL3.markFrameRedraw()
-    })
+    // ⚠ 这里**不能再注册** `veilS.on_change`：`Slider.on_change` 是单赋值（`onChange = cb`），
+    //   后注册的会把上面那个带 `onVeil`（实时预览）的回调**整个顶掉**
+    //   ⇒ 表现就是"拖动没反应，只有点保存才变" ✗（2026-10-31 实测踩到）
 
     // 两个开关只改内存里的标记，「保存」时才写盘（与其它项一致 ✓）
     ckLyric.on_change(func(bool on) {
         dlLyric[0] = on
         note.set_text(if on then "下载时会同时存 .lrc（点「保存」才生效）"
                                else "不再附带歌词文件（点「保存」才生效）")
+        SDL3.markFrameRedraw()
+    })
+    ckCover.on_change(func(bool on) {
+        dlCover[0] = on
+        note.set_text(if on then "下载时会同时存封面 .jpg（点「保存」才生效）"
+                               else "不再附带封面图（点「保存」才生效）")
         SDL3.markFrameRedraw()
     })
     ckEmbed.on_change(func(bool on) {
@@ -245,6 +274,8 @@ export func show(string defaultCache, Array[string] tabIcons, func(Settings):voi
 
     cancelBtn.on_click(func() {
         closing = true
+        // 取消 ⇒ 把蒙版恢复成磁盘里已保存的值（预览只是"试穿"，不写盘 ✓）
+        if onVeilEnd != null { onVeilEnd() }
         dlg.requestClose()
     })
     okBtn.on_click(func() {
@@ -260,6 +291,7 @@ export func show(string defaultCache, Array[string] tabIcons, func(Settings):voi
         s.bg = trim_text(bgEdit.get_text())
         s.veil = cfg.clamp_veil(_int(veilS.get_value()))
         s.dl_lyric = dlLyric[0]
+        s.dl_cover = dlCover[0]
         s.embed_tag = embTag[0]
         if cfg.save(s) {
             closing = true
@@ -272,6 +304,8 @@ export func show(string defaultCache, Array[string] tabIcons, func(Settings):voi
     })
     tb.on_close(func() {
         closing = true
+        // 点 × 等同于取消 ⇒ 蒙版也要恢复 ✓
+        if onVeilEnd != null { onVeilEnd() }
         dlg.requestClose()
     })
 

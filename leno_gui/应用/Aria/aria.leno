@@ -169,8 +169,9 @@ func appTheme(): Theme {
 var g_preferFmt = "lossless"
 // 试听音质（在线播放的档位；standard / high / lossless）
 var g_audioQ = "high"
-// 下载附加（设置项）：同时存 .lrc / 把封面与歌词内嵌进音频文件 ✓
+// 下载附加（设置项）：同时存 .lrc / 存封面 .jpg / 把封面与歌词内嵌进音频文件 ✓
 var g_dlLyric = true
+var g_dlCover = true      // ★ 2026-10-30：封面也做成开关（原来小酷是**无条件**下封面，关不掉 ✗）
 var g_embedTag = false
 // 「最近播放」保留条数（设置项；超出按时间顶替，丢最旧 ✓）
 var g_recentMax = 60
@@ -241,6 +242,22 @@ export struct Player {
     //   ⚠ 三个 Tab 各一张表 ⇒ 成对登记「表 + 该表的 jobIdx 映射」，patch 时按映射找行 ✓
     Array[Table] dlTables = []
     Array[Array[int]] dlMaps = []
+    // 小易下载的"附件素材"（歌词原文 / 封面 URL）—— 与 `urlTarget` 同寿命，
+    //   `fetch_url` 完成后交给 `dl.finish_ff` 落盘（.lrc / .jpg / 内嵌）✓
+    string urlFfLrc = ""
+    string urlFfPic = ""
+    // 小易下载的「目标文件路径 → 任务 id」登记（2026-10-30）：
+    //   `fetch_url` 的回信只带路径，而 `urlTarget` / `urlWantPath` 是**单槽** ——
+    //   连着下好几首时会被后一首覆盖 ⇒ 完成回信匹配不到那一行 ⇒
+    //   状态永远停在"下载中"（用户实测 ✗）。改成按**路径**反查，与"当前是谁"无关 ✓
+    Array[string] dlPathKeys = []
+    Array[string] dlPathIds = []
+    // 当前**正在下载的那条小易任务**的 id（"" = 没有）。
+    //   为什么需要它：小易下载不占 `dlBusy` / `dlCur`（那两个是酷我下载器的指针），
+    //   于是"暂停"那条判断 `if dlBusy and dlJobs[dlCur][0] == id` 对小易**永远不成立**
+    //   ⇒ pause 命令从来没发出去过 ⇒ 线程照下到底；这时点"继续"又起一条 ⇒
+    //   两个线程往同一个文件写 ⇒ 文件坏、播不了（用户实测 ✗）
+    string dlFfId = ""
     // 本次会话的下载计数 —— 系统通知**只在队列彻底结束时**弹一条（2026-10-30 用户要求 ✓）
     int dlDoneSession = 0
     int dlFailSession = 0
@@ -267,6 +284,11 @@ export struct Player {
     bool relatedSearch = false
     // 下载工作线程回传（["P",已下,总] / ["D",字节,总] / ["E",原因,""]）；分片下载才能有进度 ✓
     Channel dlCh
+    // 试听下载用的"空控制通道"（2026-10-30）：
+    //   `fetch_url` 的第 4 个参数是控制通道，**线程入口不补默认参数** ⇒ 必须显式给。
+    //   试听不该被"暂停下载"误伤，所以不给 `dlCtl`，也不传 null（可空实参在 VM 里不保证稳），
+    //   而是给一个**永远不会有消息**的独立通道 ✓
+    Channel ffPlayCtl
     // 播放前取音源的回信（取直链+下载试听放线程，别再卡 UI ✓）
     Channel playCh
     Song pendingSong               // 正在准备的那首
@@ -519,6 +541,7 @@ Song nowSong
         lyrCh = threads.channel(4)            // 歌词回信（一首一条 ✓）
         lyrFindCh = threads.channel(4)        // 「搜索歌词」回信（点一次一条 ✓）
         dlCtl = threads.channel(4)            // 下载控制（给 worker 发"暂停"）✓
+        ffPlayCtl = threads.channel(1)        // 试听下载的空控制通道（永不发消息，见字段注释 ✓）
         // 下载队列**落盘历史**：重启后原样恢复（"下载中"已在 load_jobs 里降级成"已暂停"✓）
         dlJobs = dl.load_jobs(ui.cacheRoot())
         // 读回之后才允许 save_dl 写盘（见 save_dl 注释 ✓）；
@@ -1041,15 +1064,16 @@ Song nowSong
         //   酷我 = 原来的搜索；高音质 = ffapi（试听按设置音质、下载固定取最高规格）
         //   ⚠ 回调用字段 `srcBtn` 而不是局部变量：闭包捕获的是创建时的副本，
         //     直接 `srcBtn.set_text` 改不到界面上的那个 ✗
-        //   ⚠ 界面上对外一律叫「小酷」（2026-10-30 用户定的产品名）；代码里的 `kuwo` / g_source 值不动 ✓
+        //   ⚠ 界面上对外一律叫「小酷 / 小易」（2026-10-30 用户定的产品名）；
+        //     代码里的 `kuwo` / `ff` / `g_source` 取值**不动**（那是内部标识，改了会牵一发动全身 ✓）
         srcBtn = SDL3.createButton({text: "小酷", font_size: 11, w: 56, h: 26, radius: 13,
                                     padding: 8.0, bg_color: #FFFFFFB0, hover_color: #FFFFFFFF,
                                     text_color: C_TXT_MID, border: false, shadow: false,
-                                    tip: "切换音源：小酷 / 高音质"})
+                                    tip: "切换音源：小酷 / 小易"})
         srcBtn.on_click(func() {
             g_source = if g_source == "kuwo" then "ff" else "kuwo"
             // ⚠ 不往底栏写提示：按钮文字本身已经变了（那里只放歌手名，2026-10-30 用户明确要求 ✓）
-            srcBtn.set_text(if g_source == "kuwo" then "小酷" else "高音质")
+            srcBtn.set_text(if g_source == "kuwo" then "小酷" else "小易")
             SDL3.markFrameRedraw()
         })
         topBar.add(srcBtn, {grow: 0, shrink: 0, basis: 56, align: 1})
@@ -1200,6 +1224,59 @@ Song nowSong
         SDL3.markFrameRedraw()
     }
 
+    // 造一套"下载行"的动作用钩子（♥ / 打开目录 / 行尾那颗按钮）
+    //   `extraIcon` 决定行尾是什么：pause.png = 暂停、play.png = 继续、"" = 不显示
+    pri func dl_hooks(string extraIcon, string extraTip): RowHooks {
+        RowHooks hk = new RowHooks()
+        hk.isLiked = func(Song sg2): bool { return is_liked(ui.like_key(sg2)) }
+        hk.onLike = func(Song sg2) { toggle_song_like(sg2) }
+        hk.onTrack = func(Song sg2, Button b) { track_row_like(sg2, b) }     // ♥ 登记：取消喜欢时就地换图标 ✓
+        hk.revealIcon = "menu_open_dir.png"
+        hk.revealTip = "打开下载目录"
+        hk.onReveal = func(Song sg2) {
+            if not dl.open_dir(ui.cacheRoot()) {
+                toast("打开目录失败：" + ui.cacheRoot())
+                SDL3.markFrameRedraw()
+            }
+        }
+        hk.extraIcon = extraIcon
+        hk.extraTip = extraTip
+        hk.onExtra = func(Song sg2) { toggle_one_dl(sg2.sid) }
+        return hk
+    }
+
+    // 登记一条"路径 → 任务 id"（小易下载起线程前调 ✓）
+    pri func dl_track_path(string path, string id) {
+        if path == "" or id == "" { return }
+        dlPathKeys.add(path)
+        dlPathIds.add(id)
+    }
+
+    // 任务结束（成功/失败）后把登记删掉，别让映射表无限增长 ✓
+    pri func dl_untrack_path(string path) {
+        for 0 : dlPathKeys.len() - 1 to i {
+            if dlPathKeys[i] == path {
+                dlPathKeys.remove(i)
+                dlPathIds.remove(i)
+                return
+            }
+        }
+    }
+
+    // 按回信里的路径找回队列行号（-1 = 不是我们的任务，比如试听那条 ✓）
+    pri func dl_job_of_path(string path): int {
+        if path == "" { return -1 }
+        for 0 : dlPathKeys.len() - 1 to i {
+            if dlPathKeys[i] == path {
+                string id = dlPathIds[i]
+                for 0 : dlJobs.len() - 1 to k {
+                    if dlJobs[k].len() > 3 and dlJobs[k][0] == id { return k }
+                }
+            }
+        }
+        return -1
+    }
+
     // 造一张下载表（一个 Tab 页）：`idxs` = 要显示的任务下标（指向 dlJobs）
     //   ⚠ 双击/播放用**下标映射**回到 dlJobs，不能把显示行当队列行（见 play_job ✓）
     pri func dl_tab_page(Array[int] idxs, float w, bool doneTab): VBox {
@@ -1213,22 +1290,15 @@ Song nowSong
         }
         Array[Array[string]] rows = []
         Array[HBox] rowV = []
-        RowHooks hk = new RowHooks()
-        hk.isLiked = func(Song sg2): bool { return is_liked(ui.like_key(sg2)) }
-        hk.onLike = func(Song sg2) { toggle_song_like(sg2) }
-        hk.onTrack = func(Song sg2, Button b) { track_row_like(sg2, b) }     // ♥ 登记：取消喜欢时就地换图标 ✓
-        hk.revealIcon = "menu_open_dir.png"
-        hk.revealTip = "打开下载目录"
-        hk.onReveal = func(Song sg2) {
-            if not dl.open_dir(ui.cacheRoot()) {
-                toast("打开目录失败：" + ui.cacheRoot())
-                SDL3.markFrameRedraw()
-            }
-        }
-        // 行尾「暂停 / 继续」：按该任务当前状态切换（正在下的会真的停手 ✓）
-        hk.extraIcon = "pause.png"
-        hk.extraTip = "暂停 / 继续这一条"
-        hk.onExtra = func(Song sg2) { toggle_one_dl(sg2.sid) }
+        // ★ 2026-10-30：行尾那颗按钮**要按状态换图标** ——
+        //   原来三套都写死 `pause.png`，点了暂停界面还是一颗暂停图标
+        //   （用户实测："点了虽然暂停了，但按钮没变化" ✗）⇒ 这里建三套，逐行挑 ✓
+        // 行尾图标用**线性版**（`pause_line.png` / `start.png`，2026-10-30 用户提供）：
+        //   18px 的小按钮上，实心黑圆（旧的 `pause.png` / `play.png`）比 ♥、文件夹那些
+        //   线性图标重一档；底栏那颗大播放钮继续用实心版 ✓
+        RowHooks hkPause = dl_hooks("pause_line.png", "暂停这一条")
+        RowHooks hkPlay  = dl_hooks("start.png", "继续这一条")
+        RowHooks hkDone  = dl_hooks("", "")          // 已完成：不给"暂停/继续"按钮
 
         Array[HBox] numL = []
         Array[Canvas] numI = []
@@ -1246,13 +1316,19 @@ Song nowSong
             dsg.title = j[1]
             dsg.artist = j[2]
             dsg.sid = j[0]                    // ★ 行尾那颗"暂停/继续"靠它回查队列 ✓
+            string st = if j.len() > 3 then j[3] else ""
+            RowHooks hk = hkPause
+            if st == "1" { hk = hkDone }
+            else if st == "3" or st == "2" { hk = hkPlay }
             rowV.add(rv.song_row(dsg, 58.0, hk))
         }
         Table t = SDL3.createTable({x: 0, y: 0, w: w, h: 380.0,
                                     item_h: 58, header_h: 32, font_size: 13,
                                     headers: ["", "歌曲", "格式", "大小", "进度", "状态"],
                                     row_numbers: false,                         // 序号改成普通列（数字/播放钮切换 ✓）
-                                    col_ratios: [0.06, 0.46, 0.10, 0.14, 0.12, 0.10],
+                                    // 合计 0.98（必须留余量：合计 1.00 会常驻横向滚动条 ✓）
+                                    //   大小列加宽（"14.3 / 28.6 MB" 比单个值长），歌曲列相应收窄
+                                    col_ratios: [0.06, 0.40, 0.09, 0.18, 0.12, 0.13],
                                     aligns: [1, 0, 1, 2, 1, 1],
                                     header_aligns: [1, 0, 1, 2, 1, 1],   // 与数据列同对齐 ✓
                                     cell_types: ["", "", "", "", "progress", ""],
@@ -2449,7 +2525,7 @@ Song nowSong
                 var junk = ffCh.try_receive()
                 while junk != null { junk = ffCh.try_receive() }
             }
-            netMsg = "高音质搜索「" + kw + "」· 正在搜索…"
+            netMsg = "小易搜索「" + kw + "」· 正在搜索…"
             rebuild_content()
             SDL3.markFrameRedraw()
             // 搜**网易云**（一次请求回整页，秒出 ✓）；直链留到点播/下载时再解析
@@ -2479,6 +2555,16 @@ Song nowSong
             return [ffpg.LEVEL_EXHIGH, ffpg.LEVEL_LOSSLESS, ffpg.LEVEL_JYMASTER]
         }
         return [ffpg.LEVEL_STANDARD, ffpg.LEVEL_EXHIGH, ffpg.LEVEL_LOSSLESS]
+    }
+
+    // 下载固定取**最高规格**（jymaster → hires → lossless）—— 与"试听档"是两回事：
+    //   `ff_levels()` 跟设置里的音质走（默认 high ⇒ 先试 exhigh = **320k mp3**），
+    //   拿它下载等于用试听质量存档 ✗
+    //   ★ 2026-10-30：抽成一个函数，`queue_song` 与「继续下载」共用同一份 ——
+    //     之前 `restart_ff_job` 里手写成了 `ff_levels()`，结果"暂停后继续"下的是 mp3、
+    //     而且比无损快得多（用户实测："下载 mp3，很奇怪更快" ✓ 就是这个）
+    pri func ff_download_levels(): Array[string] {
+        return [ffpg.LEVEL_JYMASTER, ffpg.LEVEL_HIRES, ffpg.LEVEL_LOSSLESS]
     }
 
     // 收工作线程的结果（tick 里调；非阻塞 ✓）
@@ -2531,7 +2617,7 @@ Song nowSong
         ffDirty = true
         // 副标题当进度条用：能看到它一条条往上走（不然"等一会儿才出现"分不清
         //   是在加载还是卡住了 ✓）
-        netMsg = "高音质「" + lastKw + "」· 正在解析… 已找到 "
+        netMsg = "小易「" + lastKw + "」· 正在解析… 已找到 "
                + _str(ffGot) + " 首（最多 10 首）"
     }
 
@@ -2732,16 +2818,62 @@ Song nowSong
         dlFailSession = 0
     }
 
+    // ==================== 小易（ff）任务的「继续下载」（2026-10-30）====================
+    //   为什么不能像酷我那样把状态改回 "0" 了事：
+    //     队列里的 "0" 是给**酷我下载器**（`dl.save_shard`）看的；小易的 id 是网易云 id，
+    //     酷我拿它求直链只会拿到错误页 ⇒ 瞬间"完成"、文件还是个 .mp3 ✗（用户实测）
+    //   ⇒ 小易任务必须重新走自己的链路：`ffplay` 解析直链 → `fetch_url` 下载 ✓
+    //   一次只起一条：`urlTarget` 是单槽，并发会互相覆盖（见 fetch_url 的路径登记 ✓）
+    pri func restart_ff_job(int jobIdx) {
+        if jobIdx < 0 or jobIdx >= dlJobs.len() { return }
+        // ⚠ 已经有一条小易在跑 ⇒ 不并发（两个线程写同一个文件必坏 ✗）
+        if dlFfId != "" { return }
+        Array[string] j = dlJobs[jobIdx]
+        if dl.src_of(j) != "ff" { return }
+        // 旧数据（加 `src` 字段之前入队的）没有音源标记 ⇒ 认不出来，只能提示重下
+        Song sg = new Song()
+        sg.sid = j[0]
+        sg.title = j[1]
+        sg.artist = j[2]
+        sg.src = "ff"
+        j[3] = "5"                       // 下载中：绝不留下 "0"（那会被酷我下载器抢走 ✗）
+        dlJobs[jobIdx] = j
+        dlFfId = sg.sid                  // ★ 记下"这条在跑"⇒ 暂停命令才发得出去 ✓
+        urlTarget = [sg]
+        dlPgShown = -5                   // 进度节流复位（否则第二次从 100 起算、不再刷新 ✓）
+        ffHighIsPlay = false             // 这次解析是为了下载（取最高规格）✓
+        save_dl()
+        Sys.notify("继续下载", sg.title)
+        threads.start(workers.ffplay, sg.sid, sg.title, sg.artist, "",
+                      pw.dur_secs(""), ff_download_levels(), ffHighCh)
+        if curNav == -2 { rebuild_content() } else { SDL3.markFrameRedraw() }
+    }
+
+    // 起一条"排队中"的小易任务（串行：结束一条再起下一条 ✓）
+    pri func resume_ff_jobs() {
+        for 0 : dlJobs.len() - 1 to i {
+            Array[string] j = dlJobs[i]
+            if j.len() < 4 { continue }
+            if dl.src_of(j) != "ff" { continue }
+            if j[3] != "0" { continue }
+            restart_ff_job(i)
+            return
+        }
+    }
+
     // 全部暂停 / 全部开始（下载页副标题右侧那颗钮，文案随状态变 ✓）
     pri func toggle_all_dl() {
         if dl.has_active(dlJobs) {
             // 正在下的那条先让 worker 停手（它会把手上已下的部分留在 .part ✓）
             if dlBusy { dlCtl.send("pause") }
+            if dlFfId != "" { dlCtl.send("pause") }   // ★ 小易那条同样要停（无 dlBusy ✓）
             int n = dl.pause_all(dlJobs)
             toast("已全部暂停（" + _str(n) + " 个任务，下次打开可继续）")
         } else {
             int n = dl.resume_all(dlJobs)
             toast("已全部开始（" + _str(n) + " 个任务）")
+            // ★ 小易任务不能交给酷我下载器 ⇒ 自己起线程（见 restart_ff_job ✓）
+            resume_ff_jobs()
         }
         save_dl()
         rebuild_content()
@@ -2793,7 +2925,17 @@ Song nowSong
         if dlBusy and dlCur >= 0 and dlCur < dlJobs.len() and dlJobs[dlCur][0] == id {
             dlCtl.send("pause")
         }
-        dl.toggle_pause(dlJobs, id)
+        // ★ 小易那条不占 `dlBusy` / `dlCur`（那是酷我下载器的指针）⇒ 必须单独认人，
+        //   否则 pause 命令**根本发不出去**，线程照样下到底 ✗（用户实测的根因）
+        if dlFfId != "" and dlFfId == id { dlCtl.send("pause") }
+        string ns = dl.toggle_pause(dlJobs, id)
+        // ★ 小易任务被改成"排队"(0) 后必须自己起线程：`next_index` 会跳过 ff 任务，
+        //   不在这里接手就永远卡在排队 ✗
+        if ns == "0" {
+            for 0 : dlJobs.len() - 1 to i {
+                if dlJobs[i].len() > 0 and dlJobs[i][0] == id { restart_ff_job(i); break }
+            }
+        }
         save_dl()
         rebuild_content()
     }
@@ -2962,7 +3104,9 @@ Song nowSong
         urlIsPlay = true
         toast("正在下载试听…")
         SDL3.markFrameRedraw()
-        threads.start(workers.fetch_url, sg.url, f, urlCh)
+        // ⚠ 线程入口由 VM 直接调用，**默认参数不会补齐** ⇒ 4 个参数必须全给。
+        //   试听用专属空通道（`ffPlayCtl`）：既满足参数个数，也不会被"暂停下载"误伤 ✓
+        threads.start(workers.fetch_url, sg.url, f, urlCh, ffPlayCtl)
     }
 
     pri func play_sid(Song sg) {
@@ -3326,6 +3470,7 @@ Song nowSong
         g_audioQ = cfgset.clamp_aq(s.aq)
         g_recentMax = cfgset.clamp_recent(s.recent)
         g_dlLyric = s.dl_lyric      // 下载时同时存 .lrc
+        g_dlCover = s.dl_cover      // 下载时同时存封面 .jpg
         g_embedTag = s.embed_tag    // 把封面/歌词内嵌进音频文件
         // ★ 音量 / 静音从配置恢复（原来每次启动都回到 68 ✗）
         //   注意：这里只填「值」，滑块控件可能还没建（启动时先 apply_settings、后建 UI）✓
@@ -3516,6 +3661,19 @@ Song nowSong
         SDL3.markFrameRedraw()
     }
 
+    // 设置窗「蒙版透明度」拖动时的**实时预览**（2026-10-31 用户要求"拖动就能看到窗口变化"）
+    //   蒙版是 `paint_bg` 里每帧按 `g_veil` 画的矩形 ⇒ 改值 + 重画立即见效，不必动背景纹理 ✓
+    pri func preview_veil(int v) {
+        g_veil = cfgset.clamp_veil(v)
+        SDL3.markFrameRedraw()
+    }
+
+    // 取消 / 关掉设置窗 ⇒ 蒙版回到磁盘里已保存的值（预览只是"试穿"，不写盘 ✓）
+    pri func restore_veil() {
+        g_veil = cfgset.clamp_veil(cfgset.load().veil)
+        SDL3.markFrameRedraw()
+    }
+
     pri func open_settings() {
         string def = dirs.join(dirs.script_dir(), "cache")
         // 页签图标：常规=齿轮、下载=download、外观=pifu（皮肤 ✓ 48×48 源图按 1/3 显示为 16）
@@ -3524,7 +3682,8 @@ Song nowSong
             apply_settings(s)
             rebuild_content()          // 缓存目录可能变了 ⇒ 本地音乐/下载列表要重扫 ✓
             SDL3.markFrameRedraw()
-        })
+        }, func(int v) { preview_veil(v) },     // 拖动蒙版滑块 ⇒ 主窗口实时变 ✓
+           func() { restore_veil() })           // 取消 / 关窗 ⇒ 恢复已保存的值 ✓
     }
 
     // ==================== 持久化（缓存\library.json：喜欢 + 最近播放）====================
@@ -3891,18 +4050,20 @@ Song nowSong
             // ★ 入下载队列（否则用户点了下载、列表里什么都没有 ✗）
             //   状态用 "5"（下载中）：`next_index` 只认 "0" ⇒ 酷我线程不会抢这条 ✓
             //   ⚠ 不能用自定义的 "9"：`dl.state_text()` 只认 0/5/1，其它值一律显示"失败" ✗
-            dl.enqueue(dlJobs, sg.sid, sg.title, sg.artist, "FLAC")
+            //   ★ 第 6 个参数 = 音源标记 "ff"：队列要靠它区分下载器
+            //     （否则"暂停后再继续"会被当成酷我任务重排，用网易云 id 求酷我直链
+            //      ⇒ 下到错误页、瞬间完成、还存成 .mp3 ✗ 用户实测）
+            dl.enqueue(dlJobs, sg.sid, sg.title, sg.artist, "FLAC", "ff")
             for 0 : dlJobs.len() - 1 to kq {
                 if dlJobs[kq].len() > 3 and dlJobs[kq][0] == sg.sid { dlJobs[kq][3] = "5" }
             }
             refresh_dl_btn()
             toast(sg.title + "：正在解析最高音质…")
             SDL3.markFrameRedraw()
+            dlFfId = sg.sid                        // ★ 记下"这条在跑"（暂停要用，见 dlFfId 注释 ✓）
             ffHighIsPlay = false                   // 这次解析是为了**下载**（取最高规格）✓
             threads.start(workers.ffplay, sg.sid, sg.title, sg.artist, "",
-                          pw.dur_secs(sg.dur),
-                          [ffpg.LEVEL_JYMASTER, ffpg.LEVEL_HIRES, ffpg.LEVEL_LOSSLESS],
-                          ffHighCh)
+                          pw.dur_secs(sg.dur), ff_download_levels(), ffHighCh)
             return
         }
         if sg.sid == "" { return }
@@ -4735,18 +4896,18 @@ Song nowSong
                     if frows[0][0] == "EMPTY" {
                         // 明确"没结果"（原来空数组什么都不做 ⇒ 永久停在"正在搜索" ✗）
                         searching = false
-                        netMsg = "高音质「" + lastKw + "」· 没有找到"
+                        netMsg = "小易「" + lastKw + "」· 没有找到"
                         rebuild_content()
                         SDL3.markFrameRedraw()
                     } else if frows[0][0] == "ERR" {
                         searching = false
-                        netMsg = "高音质搜索失败：" + (if frows[0].len() > 1 then frows[0][1] else "?")
+                        netMsg = "小易搜索失败：" + (if frows[0].len() > 1 then frows[0][1] else "?")
                         SDL3.markFrameRedraw()
                     } else {
                         // 解析结果里已经带齐 直链/体积/歌词/封面 ⇒ **不用再回填一轮** ✓
                         for frows to r { apply_ff_row(r) }
                         searching = false
-                        netMsg = "高音质「" + lastKw + "」· " + _str(ffGot) + " 首（双击试听）"
+                        netMsg = "小易「" + lastKw + "」· " + _str(ffGot) + " 首（双击试听）"
                         // ★ 让「搜索结果」入口和 ← → 历史都能用：
                         //   原来只有酷我那一路设了这些 ⇒ 高音质搜完：
                         //   侧栏点不进去、← 也永远灰 ✗
@@ -4809,8 +4970,12 @@ Song nowSong
                         if ext == "" { ext = "flac" }
                         // 目录不存在的话 `files.write` 会抛错 ⇒ 被当成"直链失效"（同 play_ff_start ✓）
                         try { dirs.mkdir_p(dl.dir_of(ui.cacheRoot())) } catch e3 { print("[dl] 建目录失败：" + _str(e3)) }
+                        // ★ 2026-10-30 修：文件名必须是「歌手 - 歌名」——
+                        //   `downloads.scan` 就是按 `split(name, " - ")` 的第一段当歌手的；
+                        //   这里原写成「歌名 - 歌手」⇒ 本地音乐里歌手/歌名整反 ✗
+                        //   （酷我那条下载用的就是「歌手 - 歌名」，两条路必须同口径 ✓）
                         string f2 = dirs.join(dl.dir_of(ui.cacheRoot()),
-                                              dl.safe_name(hrows[0][0] + " - " + hrows[0][1]) + "." + ext)
+                                              dl.safe_name(hrows[0][1] + " - " + hrows[0][0]) + "." + ext)
                         urlWantPath = f2
                         urlIsPlay = false              // 只下载，不动当前播放 ✓
                         // ★ 2026-10-30：下载类提示**不再占用底栏的歌手位**（那里只放歌名/歌手）
@@ -4818,7 +4983,14 @@ Song nowSong
                         //   ⚠ 它返回 false 只代表"没投递出去"（无通知服务），不影响下载 ⇒ 忽略返回值 ✓
                         Sys.notify("开始下载", hrows[0][0] + "（" + hrows[0][7] + "）")
                         SDL3.markFrameRedraw()
-                        threads.start(workers.fetch_url, hrows[0][8], f2, urlCh)
+                        // ★ 附件素材（歌词原文 / 封面 URL）：下载完由 `dl.finish_ff` 落盘
+                        //   解析站的 music 响应本来就带这两样（`ffplay` 2026-10-30 起回传 ✓）
+                        urlFfLrc = if hrows[0].len() > 9 then hrows[0][9] else ""
+                        urlFfPic = if hrows[0].len() > 10 then hrows[0][10] else ""
+                        // 登记「路径 → 任务 id」：回信只带路径，靠它找回队列行（见 dl_job_of_path ✓）
+                        if urlTarget.len() > 0 { dl_track_path(f2, urlTarget[0].sid) }
+                        // 第 4 个参数是**控制通道** ⇒ 点"暂停"时真的能停手 ✓
+                        threads.start(workers.fetch_url, hrows[0][8], f2, urlCh, dlCtl)
                     }
                 }
                 m4 = ffHighCh.try_receive()
@@ -4833,24 +5005,46 @@ Song nowSong
                     // ★ 分片进度 [P, 已下, 总]：写进下载队列那一行，列表才有进度条 ✓
                     //   （`fetch_url` 每 1MB 发一条；只有下载模式才需要更新列表）
                     if urows[0][0] == "P" {
-                        if not urlIsPlay and urlTarget.len() > 0 and urows[0].len() >= 3 {
-                            string tid = urlTarget[0].sid
-                            for 0 : dlJobs.len() - 1 to kp {
-                                if dlJobs[kp].len() > 7 and dlJobs[kp][0] == tid {
-                                    dlJobs[kp][6] = urows[0][1]
-                                    dlJobs[kp][7] = urows[0][2]
+                        // 回信第 4 项是**目标路径**（worker 2026-10-30 起带上）⇒ 用它反查队列行，
+                        //   不再依赖单槽的 `urlTarget`（连下多首时会指错行 ✗）
+                        if not urlIsPlay and urows[0].len() >= 4 {
+                            int jidx = dl_job_of_path(urows[0][3])
+                            if jidx >= 0 {
+                                dlJobs[jidx][6] = urows[0][1]
+                                dlJobs[jidx][7] = urows[0][2]
+                                // ★ 进度**只刷单元格**，绝不整页重建 ——
+                                //   原来每涨 5% 就 rebuild 整页 ⇒ 画面闪烁、hover 丢失
+                                //   （用户实测："下一首时刷新居然闪烁；酷我下很多首都不闪" ✓）
+                                int got5 = _int(urows[0][1])
+                                int tot5 = _int(urows[0][2])
+                                if tot5 > 0 {
+                                    int pct5 = got5 * 100 / tot5
+                                    if pct5 >= dlPgShown + 5 or pct5 >= 100 {
+                                        dlPgShown = pct5
+                                        dl_patch_row(jidx)
+                                    }
                                 }
                             }
-                            // ⚠ 节流：进度涨 ≥5% 才重建（每 1MB 重建一次的话 125MB 要重画 125 遍 ✗）
-                            int got5 = _int(urows[0][1])
-                            int tot5 = _int(urows[0][2])
-                            if tot5 > 0 {
-                                int pct5 = got5 * 100 / tot5
-                                if pct5 >= dlPgShown + 5 or pct5 >= 100 {
-                                    dlPgShown = pct5
-                                    if curNav == -2 { rebuild_content() }
-                                }
-                            }
+                        }
+                        m3 = urlCh.try_receive()
+                        continue
+                    }
+                    if urows[0][0] == "Z" {
+                        // ★ 小易下载**被暂停**（worker 收到 ctl 命令、关了客户端）⇒ 把行标成"已暂停"
+                        //   回信：["Z", 已下, 总, 路径]（2026-10-30 ✓）
+                        dlFfId = ""              // 线程确实停手了 ⇒ 清"在跑"标记 ✓
+                        string zp = if urows[0].len() > 3 then urows[0][3] else ""
+                        int zidx = dl_job_of_path(zp)
+                        if zidx >= 0 {
+                            Array[string] jz = dlJobs[zidx]
+                            if jz[3] == "5" { jz[3] = "3" }
+                            if urows[0].len() > 1 { jz[6] = urows[0][1] }
+                            if urows[0].len() > 2 and urows[0][2] != "0" { jz[7] = urows[0][2] }
+                            dlJobs[zidx] = jz
+                            dl_untrack_path(zp)
+                            save_dl()
+                            if curNav == -2 { rebuild_content() }
+                            SDL3.markFrameRedraw()
                         }
                         m3 = urlCh.try_receive()
                         continue
@@ -4865,21 +5059,45 @@ Song nowSong
                                 play_ready(urlTarget[0], urows[0][1])
                             }
                         } else {
-                            // 下载完成：把队列那一行标成"已完成"（列表里能看到 ✓）
-                            if urlTarget.len() > 0 {
-                                Song tgt = urlTarget[0]
-                                for 0 : dlJobs.len() - 1 to kd {
-                                    if dlJobs[kd].len() > 3 and dlJobs[kd][0] == tgt.sid {
-                                        dlJobs[kd][3] = "1"          // 已完成（百分比自动 100 ✓）
-                                        // 填字节数，让「大小」列有值（否则一直是 "—" ✗）
-                                        if dlJobs[kd].len() > 7 and tgt.sizeBytes > 0 {
-                                            dlJobs[kd][6] = _str(tgt.sizeBytes)
-                                            dlJobs[kd][7] = _str(tgt.sizeBytes)
-                                        }
-                                    }
+                            // 下载完成：按**路径**找回队列那一行（★ 原来靠 `urlTarget[0].sid`，
+                            //   连下多首时它已指向别的歌 ⇒ 匹配不到 ⇒ 状态永远停在"下载中" ✗）
+                            string donePath = if urows[0].len() > 1 then urows[0][1] else ""
+                            int didx = dl_job_of_path(donePath)
+                            if didx >= 0 {
+                                Array[string] jd = dlJobs[didx]
+                                jd[3] = "1"                      // 已完成（百分比自动 100 ✓）
+                                // 字节数用**磁盘上的真实大小**：服务端给的 Content-Range 总量有偏差，
+                                //   拿它当最终大小会在「大小」列上少几百字节 ✓
+                                var finf = dirs.stat(urows[0][1])
+                                int fsz = if finf.size > 0 then finf.size else _int(jd[6])
+                                if jd.len() > 7 {
+                                    jd[6] = _str(fsz)
+                                    jd[7] = _str(fsz)
                                 }
+                                dlJobs[didx] = jd
+                                dl_untrack_path(donePath)
+                                // ★ 小易下载的「附件收尾」（歌词 / 封面 / 内嵌）：
+                                //   酷我那条在 `save_shard` 里顺手做了，小易走 `fetch_url` 只有音频本体
+                                //   ⇒ 设置里三个开关对它一律无效，用户实测反馈 ✗
+                                //   ⚠ 必须放**线程**：下封面要联网几秒，在 on_tick 里同步跑会卡界面
+                                int ffTags = 0
+                                if g_dlLyric { ffTags = ffTags | 1 }
+                                if g_embedTag { ffTags = ffTags | 2 }
+                                if g_dlCover { ffTags = ffTags | 4 }
+                                threads.start(dl.finish_ff, donePath, jd[1], jd[2], ffTags, urlFfLrc, urlFfPic)
+                                urlFfLrc = ""
+                                urlFfPic = ""
                                 refresh_dl_btn()
+                                // ★ 落盘目录变了 ⇒ 清掉 scan 缓存，
+                                //   否则「本地音乐」还拿着下载前的旧列表（用户实测：下完了看不到 ✗）
+                                dl.invalidate_scan()
+                                // 状态变了会跨 Tab 归类（进行中 → 已完成）⇒ 必须整页重建一次
+                                //   （进度那种高频刷新才走 dl_patch_row ✓）
+                                if curNav == -2 { rebuild_content() }
                             }
+                            // 串行推进：这一条结束了，看看还有没有排队的小易任务 ✓
+                            dlFfId = ""          // 本线程结束（不清的话下一条会被"防并发"挡住 ✓）
+                            resume_ff_jobs()
                             // ★ 2026-10-30：不再"下完一首弹一条" ⇒ 只在整批结束时汇总一条 ✓
                             dlDoneSession = dlDoneSession + 1
                             notify_dl_settled()
@@ -4895,7 +5113,29 @@ Song nowSong
                         } else {
                             toast(if urlIsPlay then "试听失败：直链已失效，请重新搜索"
                                                  else "下载失败：直链已失效，请重新搜索")
-                            if urlIsPlay { end_audio_busy() }   // 最终失败 ⇒ 别让播放键卡在准备中 ✓
+                            if urlIsPlay {
+                                end_audio_busy()   // 最终失败 ⇒ 别让播放键卡在准备中 ✓
+                            } else {
+                                // ★ 下载失败也要把那一行标成"失败" ——
+                                //   原来只弹一句 toast，队列里那条**永远停在"下载中"**（用户实测 ✗）
+                                //   失败回信第 3 项是路径（worker 2026-10-30 起带上 ✓）
+                                string ep = if urows[0].len() > 2 then urows[0][2] else ""
+                                int eidx = dl_job_of_path(ep)
+                                if eidx >= 0 {
+                                    Array[string] je = dlJobs[eidx]
+                                    je[3] = "2"
+                                    je[4] = if urows[0].len() > 1 then urows[0][1] else "下载失败"
+                                    dlJobs[eidx] = je
+                                    dl_untrack_path(ep)
+                                    refresh_dl_btn()
+                                    save_dl()
+                                    dlFailSession = dlFailSession + 1
+                                    notify_dl_settled()
+                                    if curNav == -2 { rebuild_content() }
+                                }
+                                dlFfId = ""
+                                resume_ff_jobs()   // 失败也继续推进后面排队的小易任务 ✓
+                            }
                         }
                     }
                 }
@@ -5036,6 +5276,7 @@ Song nowSong
                         dlCur = -1
                         refresh_dl_btn()
                         save_dl()                                 // 完成状态落盘 ⇒ 重启后还看得见 ✓
+                        dl.invalidate_scan()                      // 新文件到位 ⇒ 本地音乐列表要能立刻看到 ✓
                         // ★ 2026-10-30：整批结束才弹通知（见 notify_dl_settled ✓）
                         dlDoneSession = dlDoneSession + 1
                         notify_dl_settled()
@@ -5107,10 +5348,11 @@ Song nowSong
                 j[6] = "0"
                 dlJobs[di] = j
                 if curNav == -2 { rebuild_content() }
-                // 位标志：1 = 同时存 .lrc，2 = 内嵌封面/歌词（设置里两个开关 ✓）
+                // 位标志：1 = 同时存 .lrc，2 = 内嵌封面/歌词，4 = 同时存封面 .jpg（设置里三个开关 ✓）
                 int dlTags = 0
                 if g_dlLyric { dlTags = dlTags | 1 }
                 if g_embedTag { dlTags = dlTags | 2 }
+                if g_dlCover { dlTags = dlTags | 4 }
                 threads.start(dl.save_shard, j[0], j[1], j[2], ui.cacheRoot(), g_preferFmt, dlTags, dlCh, dlCtl)
                 SDL3.markFrameRedraw()
             }
