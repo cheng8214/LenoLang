@@ -83,6 +83,21 @@
 
 #define MAX_FFI_CALLBACKS 256
 
+/* ===== 尾部哨兵的读写（对齐安全） =====
+ * 分配大小可以是任意字节数 ⇒ `(char*)ptr + size` 未必 8 字节对齐，
+ * 直接 `*(uint64_t*)` 写/读是 UB（UBSAN 实测 `store to misaligned address`；
+ * 在严格对齐的架构上会直接报错）。用 memcpy 表达"未对齐的 8 字节读写"。 */
+static inline void ffi_sentinel_write(void* base, size_t size) {
+    uint64_t v = 0xDEADBEEFDEADBEEFULL;
+    memcpy((char*)base + size, &v, sizeof(v));
+}
+
+static inline uint64_t ffi_sentinel_read(void* base, size_t size) {
+    uint64_t v;
+    memcpy(&v, (char*)base + size, sizeof(v));
+    return v;
+}
+
 /* ===== 函数地址缓存（避免每次调用都 GetProcAddress/dlsym） ===== */
 #define FFI_FUNC_CACHE_SIZE 32
 #define FFI_FUNC_NAME_MAX 63
@@ -1085,7 +1100,7 @@ static Value ffi_malloc_func(int argc, Value* args) {
     }
     memset(ptr, 0, size);
     // 尾部哨兵: 0xDEADBEEFDEADBEEF，被覆盖说明溢出
-    *(uint64_t*)((char*)ptr + size) = 0xDEADBEEFDEADBEEFULL;
+    ffi_sentinel_write(ptr, size);
 
     ObjFFIPointer* ffi_ptr = (ObjFFIPointer*)gc_alloc(sizeof(ObjFFIPointer), OBJ_FFI_POINTER);
     if (!ffi_ptr) {
@@ -1116,7 +1131,7 @@ static Value ffi_calloc_func(int argc, Value* args) {
         return val_null();
     }
     memset(ptr, 0, total);
-    *(uint64_t*)((char*)ptr + total) = 0xDEADBEEFDEADBEEFULL;
+    ffi_sentinel_write(ptr, total);
 
     ObjFFIPointer* ffi_ptr = (ObjFFIPointer*)gc_alloc(sizeof(ObjFFIPointer), OBJ_FFI_POINTER);
     if (!ffi_ptr) {
@@ -1155,7 +1170,7 @@ static Value ffi_realloc_func(int argc, Value* args) {
     ffi_ptr->ptr = new_ptr;
     ffi_ptr->size = new_size;
     // 重置哨兵
-    *(uint64_t*)((char*)new_ptr + new_size) = 0xDEADBEEFDEADBEEFULL;
+    ffi_sentinel_write(new_ptr, new_size);
 
     return val_obj((Object*)ffi_ptr);
 }
@@ -1173,7 +1188,7 @@ static Value ffi_free_func(int argc, Value* args) {
         if (ptr->owned && ptr->ptr) {
             // 检查尾部哨兵，检测堆溢出
             if (ptr->size > 0) {
-                uint64_t sentinel = *(uint64_t*)((char*)ptr->ptr + ptr->size);
+                uint64_t sentinel = ffi_sentinel_read(ptr->ptr, ptr->size);
                 if (sentinel != 0xDEADBEEFDEADBEEFULL) {
                     native_throw_error("堆缓冲区溢出！尾部哨兵被破坏。请用 ffi.assert_size() 检查缓冲区大小");
                     ptr->freed = 1;  // 标记已释放，避免重复检测
@@ -2368,7 +2383,7 @@ static Value ffi_utf8_to_utf16_func(int argc, Value* args) {
         return val_null();
     }
     memcpy(buf, wstr, byte_size);
-    *(uint64_t*)((char*)buf + byte_size) = 0xDEADBEEFDEADBEEFULL;
+    ffi_sentinel_write(buf, byte_size);
     free(wstr);
     
     // 使用 GC 分配 ObjFFIPointer
@@ -2451,7 +2466,7 @@ static Value ffi_new_func(int argc, Value* args) {
         return val_null();
     }
     memset(ptr, 0, size);
-    *(uint64_t*)((char*)ptr + size) = 0xDEADBEEFDEADBEEFULL;
+    ffi_sentinel_write(ptr, size);
 
     /* 如果提供了初始值，写入 */
     if (argc >= 2 && !val_is_null(args[1])) {
