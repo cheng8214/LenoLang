@@ -24,9 +24,13 @@ export func save(string cacheRoot, Array[string] likes, Array[Song] recent) {
     for recent to s {
         // 第 6 项 = 音源标记（`"ff"` = 小易 / `"kuwo"` = 小酷）：不存它的话，重启后 ff 源的歌
         //   `url` 是空的、`src` 也没了 ⇒ 会被当成酷我歌去解析、必失败 ✗
-        //   ⚠ 一定**别写空串**：`Dict[string,any]` 装箱后空串会被 `jsons.encode` 编成数字 `0`
-        //     （实测：`["…","童话镇","梁玖希","4:17","…jpg",0]`）⇒ 读回来 `src` 成了 "0"，
-        //     "是不是小易的"这个判断就永远失效 ✗ ⇒ 显式写 "kuwo" ✓
+        //   ⚠ 显式写 `"kuwo"` 而不是空串：
+        //     ① 实测某次落盘出现过**数字 `0`**（`[...,"…jpg",0]`，来源未查明 ——
+        //        单独用探针验过 `Array[Array[string]]` 经 `Dict[string,any]` 编码，
+        //        空串能正常输出 `""`，所以不是"空串被编成 0"那么简单，暂存疑）；
+        //     ② 更要紧的是**读取端的坑**：`as Array[Array[string]]` 遇到行里混着数字会
+        //        直接返回 `null` ⇒ 整个 recent 列表被静默丢弃（一条不剩，也不报错 ✗）。
+        //   写死成两个固定字符串，两边都不会踩到 ✓
         rs.add([s.sid, s.title, s.artist, s.dur, s.cover, if s.src == "ff" then "ff" else "kuwo"])
     }
     d["recent"] = rs
