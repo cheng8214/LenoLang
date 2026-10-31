@@ -3483,6 +3483,25 @@ Value ffi_callback_create_with_sig(Value func_val, int ret_type, int param_count
     return val_obj((Object*)cb);
 }
 
+/* ffi.callbackCount()：当前**存活**的回调数（2026-10-31 加，用于排查泄漏）。
+ *
+ * 为什么需要它：回调泄漏的症状是"跑到上限才报错"，中间完全无声；
+ *   LenoMusic 那次（`free_callback` 自身失效）就是靠猜和试才定位的。
+ *   有了这个接口，跑一段业务流程前后各取一次，差值就是泄漏量 ✓
+ *
+ * 直接遍历数 active，不依赖 g_callback_count 的增减维护（那个只在分配时 ++，
+ *   归还路径多、容易漏，遍历 1024 项的开销可忽略） */
+static Value ffi_callback_count_func(int argc, Value* args) {
+    (void)argc; (void)args;
+    int n = 0;
+    if (g_callback_mutex_ready) platform_mutex_lock(&g_callback_mutex);
+    for (int i = 0; i < MAX_FFI_CALLBACKS; i++) {
+        if (g_callback_registry[i].active) n++;
+    }
+    if (g_callback_mutex_ready) platform_mutex_unlock(&g_callback_mutex);
+    return val_int(n);
+}
+
 /* ffi.free_callback(p)：释放一个回调槽位（让它占的 trampoline 能被 GC 回收）。
  *
  * ★ 2026-10-25：`ffi.callback` 的对象现在是 **GC 根**（否则 trampoline 会被提前释放，
@@ -3697,6 +3716,9 @@ void ffi_init_module(void) {
     /* 释放一个回调槽位（2026-10-25：回调对象成为 GC 根后，需要显式释放才能回收） */
     TypeKind free_cb_params[] = {TYPE_PTR};
     native_register_module_method("ffi", "free_callback", ffi_free_callback_func, &NATIVE_T_BOOL, NATIVE_FIXED(free_cb_params));
+
+    /* 当前存活的回调数（2026-10-31）：排查泄漏用 —— 跑一段业务流程前后各取一次，差值是泄漏量 */
+    native_register_module_method("ffi", "callbackCount", ffi_callback_count_func, &NATIVE_T_INT, NATIVE_FIXED_NONE(0));
 
     /* ===== 跨线程回调泵送 ===== */
     native_register_module_method("ffi", "pump_callbacks", ffi_pump_callbacks_func, &NATIVE_T_NULL, NATIVE_FIXED_NONE(0));
