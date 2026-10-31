@@ -48,4 +48,5 @@ src\module\regexs\regexs.c
 src\platform\platform_thread.c
 src\platform\platform_path.c
 src\serialize\serialize.c
+src\bytecode_verify.c
 src\dce.c

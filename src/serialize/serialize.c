@@ -1,4 +1,5 @@
 #include "include/leno_serialize.h"
+#include "include/bytecode_verify.h"
 #include "include/lenolang.h"
 #include "include/module_loader.h"
 #include "include/platform.h"
@@ -442,6 +443,21 @@ static int ctx_read_varint(DeserializeCtx* ctx, uint32_t* out) {
         }
     }
     return 0;
+}
+
+// ----------------------------------------------------------------------------
+// 文件内声明的"个数"必须先过这一关，再拿去 malloc
+// ----------------------------------------------------------------------------
+// `.lenb` 里的 count 是 u32、完全可被改坏。每个条目在文件里至少占 min_bytes 字节，
+// 所以 count > 剩余字节数 / min_bytes 一定是损坏文件。不加这一关就会出现
+// ASAN 实测的"请求 ~17GB / out-of-memory"（普通构建则可能 malloc 失败后越界写）。
+static uint64_t ctx_remaining(const DeserializeCtx* ctx) {
+    return ctx->pos < ctx->size ? (uint64_t)(ctx->size - ctx->pos) : 0;
+}
+
+static int ctx_count_fits(const DeserializeCtx* ctx, uint32_t count, uint32_t min_bytes) {
+    if (min_bytes == 0) min_bytes = 1;
+    return (uint64_t)count <= ctx_remaining(ctx) / (uint64_t)min_bytes;
 }
 
 static int ctx_read_double(DeserializeCtx* ctx, double* out) {
@@ -1210,6 +1226,10 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
 
         ObjFunction* func = (ObjFunction*)gc_alloc(sizeof(ObjFunction), OBJ_FUNCTION);
         func->arity = (int)arity;
+        // upvalue 个数是 ObjClosure.upvalues[MAX_UPVALUES] 的循环上限 ⇒ 超过就会越界写
+        if ((int)upvalue_count < 0 || (int)upvalue_count > MAX_UPVALUES) { free(name); return 0; }
+        // 寄存器高水位；编译端上限是 256（8 位寄存器号）。损坏的值会让建帧按 8*local_count 巨量 malloc
+        if ((int)local_count < 0 || (int)local_count > 256) { free(name); return 0; }
         func->name = name;
         func->upvalue_count = (int)upvalue_count;
         func->local_count = (int)local_count;
@@ -1222,6 +1242,7 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
 
         // 返回值类型数组
         if (ret_type_count > 0) {
+            if (!ctx_count_fits(ctx, ret_type_count, 1)) { free(name); return 0; }
             func->return_types = (TypeKind*)malloc(sizeof(TypeKind) * ret_type_count);
             if (!func->return_types) { free(name); return 0; }
             for (uint32_t i = 0; i < ret_type_count; i++) {
@@ -1242,6 +1263,7 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
         }
 
         if (param_count > 0) {
+            if (!ctx_count_fits(ctx, param_count, 1)) { free(name); return 0; }
             func->param_types = (TypeKind*)malloc(sizeof(TypeKind) * param_count);
             for (uint32_t i = 0; i < param_count; i++) {
                 uint8_t tk;
@@ -1265,6 +1287,8 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
         func->type_param_count = (int)tp_count;
         func->type_param_names = NULL;
         if (tp_count > 0) {
+            // 每个条目是一个字符串：u32 长度 + 载荷 ⇒ 至少 4 字节
+            if (!ctx_count_fits(ctx, tp_count, 4)) { free(name); return 0; }
             func->type_param_names = (char**)malloc(sizeof(char*) * tp_count);
             for (uint32_t i = 0; i < tp_count; i++) {
                 uint32_t tp_name_len;
@@ -1293,6 +1317,7 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
             return 0;
         }
         if (pgn_count > 0) {
+            if (!ctx_count_fits(ctx, pgn_count, 1)) { free(name); return 0; }
             func->param_generic_names = (char**)calloc(pgn_count, sizeof(char*));
             if (!func->param_generic_names) {
                 free(name);
@@ -1331,6 +1356,8 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
         func->chunk = (Chunk*)malloc(sizeof(Chunk));
         chunk_init(func->chunk);
         if (!deserialize_chunk_data(ctx, func->chunk)) return 0;
+        // 函数 chunk 的寄存器容量在 func->local_count（chunk->local_count 恒为 0）
+        if (!bytecode_verify_chunk(func->chunk, func->local_count, NULL)) return 0;
 
         *out_val = val_obj((Object*)func);
         return 1;
@@ -1341,6 +1368,7 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
         if (!ctx_read_u32(ctx, &limb_count) || !ctx_read_u8(ctx, &is_negative)) return 0;
         uint32_t* limbs = NULL;
         if (limb_count > 0) {
+            if (!ctx_count_fits(ctx, limb_count, 4)) return 0;   // 每个 limb 4 字节
             limbs = (uint32_t*)malloc(sizeof(uint32_t) * limb_count);
             for (uint32_t i = 0; i < limb_count; i++) {
                 uint8_t buf[4];
@@ -1369,6 +1397,7 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
     case CONST_TAG_ARRAY: {
         uint32_t count;
         if (!ctx_read_u32(ctx, &count)) return 0;
+        if (!ctx_count_fits(ctx, count, 1)) return 0;     // 每个元素至少 1 字节（tag）
         ObjArray* arr = arr_new((int)count > 0 ? (int)count : 8);
         arr->count = (int)count;
         for (uint32_t i = 0; i < count; i++) {
@@ -1380,6 +1409,8 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
     case CONST_TAG_DICT: {
         uint32_t entry_count;
         if (!ctx_read_u32(ctx, &entry_count)) return 0;
+        // 每个条目是两个常量（键 + 值）⇒ 至少 2 字节
+        if (!ctx_count_fits(ctx, entry_count, 2)) return 0;
         ObjDict* dict = dict_new((int)entry_count > 0 ? (int)entry_count * 2 : 8);
         for (uint32_t i = 0; i < entry_count; i++) {
             Value key_val, val;
@@ -1396,6 +1427,8 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
         if (!name) return 0;
         uint32_t member_count;
         if (!ctx_read_u32(ctx, &member_count)) { free(name); return 0; }
+        // 每个成员 = 字符串（≥4 字节，u32 长度）+ 8 字节值
+        if (member_count > 0 && !ctx_count_fits(ctx, member_count, 12)) { free(name); return 0; }
         ObjEnumDef* enum_def = enum_def_new(name, (int)member_count);
         free(name);
         for (uint32_t i = 0; i < member_count; i++) {
@@ -1420,6 +1453,8 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
         if (!name) return 0;
         uint32_t field_count;
         if (!ctx_read_u32(ctx, &field_count)) { free(name); return 0; }
+        // 每个字段 = 字符串（≥4）+ 至少 4 个标志字节
+        if (field_count > 0 && !ctx_count_fits(ctx, field_count, 8)) { free(name); return 0; }
 
         ObjStructDef* sdef = struct_def_new(name, (int)field_count, 0);
         free(name);
@@ -1465,6 +1500,8 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
         uint32_t method_count;
         if (!ctx_read_u32(ctx, &method_count)) return 0;
         if (method_count > 0) {
+            // 每个方法 = 名称字符串（≥4 字节）+ 一个常量
+            if (!ctx_count_fits(ctx, method_count, 5)) return 0;
             sdef->methods = (StructMethodInfo*)calloc(method_count, sizeof(StructMethodInfo));
             sdef->method_count = (int)method_count;
         }
@@ -1499,6 +1536,7 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
         if (!ctx_read_u32(ctx, &impl_count)) return 0;
         sdef->impl_count = (int)impl_count;
         if (impl_count > 0) {
+            if (!ctx_count_fits(ctx, impl_count, 4)) return 0;
             sdef->impl_names = (char**)malloc(sizeof(char*) * impl_count);
             for (uint32_t i = 0; i < impl_count; i++) {
                 uint32_t iname_len;
@@ -1512,6 +1550,8 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
         if (!ctx_read_u32(ctx, &const_count)) return 0;
         sdef->const_count = (int)const_count;
         if (const_count > 0) {
+            // 每个条目 = 名字字符串（≥4 字节）+ 一个常量
+            if (!ctx_count_fits(ctx, const_count, 5)) return 0;
             sdef->const_names = (char**)malloc(sizeof(char*) * const_count);
             sdef->const_values = (Value*)calloc(const_count, sizeof(Value));
             for (uint32_t i = 0; i < const_count; i++) {
@@ -1537,6 +1577,8 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
         uint8_t is_packed, explicit_align;
         if (!ctx_read_u8(ctx, &is_packed) ||
             !ctx_read_u8(ctx, &explicit_align)) { free(name); return 0; }
+        // 每个字段 = 名称字符串（≥4）+ 12 个以上固定字节
+        if (field_count > 0 && !ctx_count_fits(ctx, field_count, 9)) { free(name); return 0; }
 
         ObjCStructDef* cdef = cstruct_def_new(name, (int)field_count,
                                                (int)total_size, (int)alignment);
@@ -1583,6 +1625,8 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
         if (!name) return 0;
         uint32_t method_count;
         if (!ctx_read_u32(ctx, &method_count)) { free(name); return 0; }
+        // 每个方法 = 名称字符串（≥4）+ param_count u32 + 返回类型 u8
+        if (method_count > 0 && !ctx_count_fits(ctx, method_count, 9)) { free(name); return 0; }
 
         ObjFaceDef* face = face_def_new(name, (int)method_count);
         free(name);
@@ -1606,6 +1650,7 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
             }
             face->methods[i].param_types = NULL;
             if (param_count > 0) {
+                if (!ctx_count_fits(ctx, param_count, 1)) { free(mname); return 0; }
                 face->methods[i].param_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * param_count);
                 for (uint32_t j = 0; j < param_count; j++) {
                     uint8_t ptk;
@@ -1709,6 +1754,7 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
         mod->global_capacity = (int)global_count > 0 ? (int)global_count : 0;
         mod->globals = NULL;
         if (global_count > 0) {
+            if (!ctx_count_fits(ctx, global_count, 1)) return 0;
             mod->globals = (Value*)malloc(sizeof(Value) * global_count);
             for (uint32_t i = 0; i < global_count; i++) {
                 if (!deserialize_constant(ctx, &mod->globals[i])) return 0;
@@ -1717,6 +1763,7 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
 
         uint32_t export_count;
         if (!ctx_read_u32(ctx, &export_count)) return 0;
+        if (export_count > 0 && !ctx_count_fits(ctx, export_count, 2)) return 0;
         for (uint32_t i = 0; i < export_count; i++) {
             Value key_val, val;
             if (!deserialize_constant(ctx, &key_val)) return 0;
@@ -1730,6 +1777,7 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
             mod->native_import_count = (int)ni_count;
             mod->native_imports = NULL;
             if (ni_count > 0) {
+                if (!ctx_count_fits(ctx, ni_count, 4)) return 0;
                 mod->native_imports = (char**)malloc(ni_count * sizeof(char*));
                 for (uint32_t i = 0; i < ni_count; i++) {
                     uint32_t name_len;
@@ -1752,6 +1800,11 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
                     free(chunk);
                     return 0;
                 }
+                if (!bytecode_verify_chunk(chunk, chunk->local_count, NULL)) {
+                    chunk_free(chunk);
+                    free(chunk);
+                    return 0;
+                }
                 mod->init_chunk = chunk;
             }
         }
@@ -1763,6 +1816,8 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
             mod->export_mapping_count = (int)em_count;
             mod->export_mappings = NULL;
             if (em_count > 0) {
+                // 每个条目 = 名称字符串（≥4）+ global_index u32
+                if (!ctx_count_fits(ctx, em_count, 8)) return 0;
                 mod->export_mappings = (ExportGlobalMapping*)malloc(em_count * sizeof(ExportGlobalMapping));
                 for (uint32_t i = 0; i < em_count; i++) {
                     uint32_t name_len;
@@ -1783,6 +1838,8 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
             mod->use_reexport_names = NULL;
             mod->use_reexport_kinds = NULL;
             if (ur_count > 0) {
+                // 每个条目 = 名称字符串（≥4）+ kind i32 ⇒ 至少 8 字节
+                if (!ctx_count_fits(ctx, ur_count, 8)) return 0;
                 mod->use_reexport_names = (char**)malloc(ur_count * sizeof(char*));
                 mod->use_reexport_kinds = (int*)malloc(ur_count * sizeof(int));
                 for (uint32_t i = 0; i < ur_count; i++) {
@@ -1844,6 +1901,7 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
         closure->type_param_count = (int)tp_count;
         closure->type_param_args = NULL;
         if (tp_count > 0) {
+            if (!ctx_count_fits(ctx, tp_count, 4)) return 0;
             closure->type_param_args = (char**)malloc(sizeof(char*) * tp_count);
             for (uint32_t i = 0; i < tp_count; i++) {
                 uint32_t tp_len;
@@ -2235,6 +2293,12 @@ SerializeResult chunk_deserialize(const char* path, Chunk* out_chunk, Scope** ou
         free(data);
         return SERIALIZE_ERR_FORMAT;
     }
+    if (!bytecode_verify_chunk(out_chunk, out_chunk->local_count, NULL)) {
+        scope_free(scope);
+        chunk_free(out_chunk);
+        free(data);
+        return SERIALIZE_ERR_FORMAT;
+    }
 
     *out_scope = scope;
     // 字符串去重表（T17 ①）：只在**成功路径**释放。
@@ -2330,6 +2394,11 @@ SerializeResult chunk_deserialize_from_memory(uint8_t* data, size_t size,
 
     chunk_init(out_chunk);
     if (!deserialize_chunk_data(&ctx, out_chunk)) {
+        scope_free(scope);
+        chunk_free(out_chunk);
+        return SERIALIZE_ERR_FORMAT;
+    }
+    if (!bytecode_verify_chunk(out_chunk, out_chunk->local_count, NULL)) {
         scope_free(scope);
         chunk_free(out_chunk);
         return SERIALIZE_ERR_FORMAT;

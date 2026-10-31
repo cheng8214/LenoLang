@@ -337,47 +337,89 @@ Value cstruct_get_field_value(ObjCStruct* obj, int field_index) {
     uint8_t* field_addr = obj->data + field->offset;
 
     switch (field->type) {
-        case TYPE_I8:
-            return val_num((double)(*(int8_t*)field_addr));
-        case TYPE_U8:
-            return val_num((double)(*(uint8_t*)field_addr));
-        case TYPE_I16:
-            return val_num((double)(*(int16_t*)field_addr));
-        case TYPE_U16:
-            return val_num((double)(*(uint16_t*)field_addr));
-        case TYPE_I32:
-            return val_num((double)(*(int32_t*)field_addr));
-        case TYPE_U32:
-            return val_num((double)(*(uint32_t*)field_addr));
-        case TYPE_I64:
-            return val_int_safe(*(int64_t*)field_addr);
-        case TYPE_U64:
-            return val_int_safe((int64_t)(*(uint64_t*)field_addr));
-        case TYPE_F32:
-            return val_num((double)(*(float*)field_addr));
-        case TYPE_F64:
-            return val_num((*(double*)field_addr));
-        case TYPE_BOOL:
-            return val_bool(*(uint8_t*)field_addr);
-        case TYPE_C_INT:
-            return val_num((double)(*(int*)field_addr));
-        case TYPE_C_UINT:
-            return val_num((double)(*(unsigned int*)field_addr));
-        case TYPE_C_LONG:
-            return val_num((double)(*(long*)field_addr));
-        case TYPE_C_ULONG:
-            return val_num((double)(*(unsigned long*)field_addr));
-        case TYPE_C_LONGLONG:
-            return val_int_safe(*(long long*)field_addr);
-        case TYPE_C_ULONGLONG:
-            return val_int_safe((int64_t)(*(unsigned long long*)field_addr));
-        case TYPE_C_SIZE:
-            return val_int_safe((int64_t)(*(size_t*)field_addr));
-        case TYPE_C_SSIZE:
-            return val_int_safe((int64_t)(*(ssize_t*)field_addr));
+        // ⚠ packed cstruct 的字段地址**不保证自然对齐**（结构体本身就是紧凑排布）。
+        //   直接 `*(int32_t*)field_addr` 是未定义行为：UBSAN 报 "store/load to
+        //   misaligned address"，ARM 等严格对齐平台会 SIGBUS。统一用 memcpy 做
+        //   类型化读写（编译器会折成单条 load/store，不引入额外开销）。
+        case TYPE_I8: {
+            int8_t v; memcpy(&v, field_addr, sizeof(v));
+            return val_num((double)v);
+        }
+        case TYPE_U8: {
+            uint8_t v; memcpy(&v, field_addr, sizeof(v));
+            return val_num((double)v);
+        }
+        case TYPE_I16: {
+            int16_t v; memcpy(&v, field_addr, sizeof(v));
+            return val_num((double)v);
+        }
+        case TYPE_U16: {
+            uint16_t v; memcpy(&v, field_addr, sizeof(v));
+            return val_num((double)v);
+        }
+        case TYPE_I32: {
+            int32_t v; memcpy(&v, field_addr, sizeof(v));
+            return val_num((double)v);
+        }
+        case TYPE_U32: {
+            uint32_t v; memcpy(&v, field_addr, sizeof(v));
+            return val_num((double)v);
+        }
+        case TYPE_I64: {
+            int64_t v; memcpy(&v, field_addr, sizeof(v));
+            return val_int_safe(v);
+        }
+        case TYPE_U64: {
+            uint64_t v; memcpy(&v, field_addr, sizeof(v));
+            return val_int_safe((int64_t)v);
+        }
+        case TYPE_F32: {
+            float v; memcpy(&v, field_addr, sizeof(v));
+            return val_num((double)v);
+        }
+        case TYPE_F64: {
+            double v; memcpy(&v, field_addr, sizeof(v));
+            return val_num(v);
+        }
+        case TYPE_BOOL: {
+            uint8_t v; memcpy(&v, field_addr, sizeof(v));
+            return val_bool(v != 0);
+        }
+        case TYPE_C_INT: {
+            int v; memcpy(&v, field_addr, sizeof(v));
+            return val_num((double)v);
+        }
+        case TYPE_C_UINT: {
+            unsigned int v; memcpy(&v, field_addr, sizeof(v));
+            return val_num((double)v);
+        }
+        case TYPE_C_LONG: {
+            long v; memcpy(&v, field_addr, sizeof(v));
+            return val_num((double)v);
+        }
+        case TYPE_C_ULONG: {
+            unsigned long v; memcpy(&v, field_addr, sizeof(v));
+            return val_num((double)v);
+        }
+        case TYPE_C_LONGLONG: {
+            long long v; memcpy(&v, field_addr, sizeof(v));
+            return val_int_safe((int64_t)v);
+        }
+        case TYPE_C_ULONGLONG: {
+            unsigned long long v; memcpy(&v, field_addr, sizeof(v));
+            return val_int_safe((int64_t)v);
+        }
+        case TYPE_C_SIZE: {
+            size_t v; memcpy(&v, field_addr, sizeof(v));
+            return val_int_safe((int64_t)v);
+        }
+        case TYPE_C_SSIZE: {
+            ssize_t v; memcpy(&v, field_addr, sizeof(v));
+            return val_int_safe((int64_t)v);
+        }
         case TYPE_PTR:
         case TYPE_PTR_GENERIC: {
-            void* ptr = *(void**)field_addr;
+            void* ptr; memcpy(&ptr, field_addr, sizeof(ptr));
             if (ptr) {
                 ObjFFIPointer* ffi_ptr = (ObjFFIPointer*)gc_alloc(sizeof(ObjFFIPointer), OBJ_FFI_POINTER);
                 ffi_ptr->ptr = ptr;
@@ -397,15 +439,20 @@ Value cstruct_get_field_value(ObjCStruct* obj, int field_index) {
             }
             
             wchar_t* wstr = (wchar_t*)field_addr;
-            // 确保以 null 结尾
+            // 确保以 null 结尾（逐元素 memcpy：packed 下 wchar_t* 也可能未对齐）
             int max_len = field->array_dim;
             int len = 0;
-            while (len < max_len && wstr[len] != L'\0') len++;
+            while (len < max_len) {
+                wchar_t ch;
+                memcpy(&ch, field_addr + (size_t)len * sizeof(wchar_t), sizeof(ch));
+                if (ch == L'\0') break;
+                len++;
+            }
             
             // 创建临时 wchar_t 数组（确保 null 结尾）
             wchar_t* temp = (wchar_t*)malloc((len + 1) * sizeof(wchar_t));
             if (!temp) return val_null();
-            memcpy(temp, wstr, len * sizeof(wchar_t));
+            memcpy(temp, wstr, (size_t)len * sizeof(wchar_t));
             temp[len] = L'\0';
             
             char* utf8 = utf16_to_utf8(temp);
@@ -433,69 +480,91 @@ void cstruct_set_field_value(ObjCStruct* obj, int field_index, Value value) {
     uint8_t* field_addr = obj->data + field->offset;
 
     switch (field->type) {
-        case TYPE_I8:
-            *(int8_t*)field_addr = (int8_t)val_as_num(value);
+        // 同 cstruct_get_field_value：packed 字段地址可能未对齐，统一走 memcpy
+        case TYPE_I8: {
+            int8_t v = (int8_t)val_as_num(value); memcpy(field_addr, &v, sizeof(v));
             break;
-        case TYPE_U8:
-            *(uint8_t*)field_addr = (uint8_t)val_as_num(value);
+        }
+        case TYPE_U8: {
+            uint8_t v = (uint8_t)val_as_num(value); memcpy(field_addr, &v, sizeof(v));
             break;
-        case TYPE_I16:
-            *(int16_t*)field_addr = (int16_t)val_as_num(value);
+        }
+        case TYPE_I16: {
+            int16_t v = (int16_t)val_as_num(value); memcpy(field_addr, &v, sizeof(v));
             break;
-        case TYPE_U16:
-            *(uint16_t*)field_addr = (uint16_t)val_as_num(value);
+        }
+        case TYPE_U16: {
+            uint16_t v = (uint16_t)val_as_num(value); memcpy(field_addr, &v, sizeof(v));
             break;
-        case TYPE_I32:
-            *(int32_t*)field_addr = (int32_t)val_as_num(value);
+        }
+        case TYPE_I32: {
+            int32_t v = (int32_t)val_as_num(value); memcpy(field_addr, &v, sizeof(v));
             break;
-        case TYPE_U32:
-            *(uint32_t*)field_addr = (uint32_t)val_as_num(value);
+        }
+        case TYPE_U32: {
+            uint32_t v = (uint32_t)val_as_num(value); memcpy(field_addr, &v, sizeof(v));
             break;
-        case TYPE_I64:
-            *(int64_t*)field_addr = (int64_t)val_as_num(value);
+        }
+        case TYPE_I64: {
+            int64_t v = (int64_t)val_as_num(value); memcpy(field_addr, &v, sizeof(v));
             break;
-        case TYPE_U64:
-            *(uint64_t*)field_addr = (uint64_t)val_as_num(value);
+        }
+        case TYPE_U64: {
+            uint64_t v = (uint64_t)val_as_num(value); memcpy(field_addr, &v, sizeof(v));
             break;
-        case TYPE_F32:
-            *(float*)field_addr = (float)val_as_num(value);
+        }
+        case TYPE_F32: {
+            float v = (float)val_as_num(value); memcpy(field_addr, &v, sizeof(v));
             break;
-        case TYPE_F64:
-            *(double*)field_addr = (double)val_as_num(value);
+        }
+        case TYPE_F64: {
+            double v = (double)val_as_num(value); memcpy(field_addr, &v, sizeof(v));
             break;
-        case TYPE_BOOL:
-            *(uint8_t*)field_addr = val_as_num(value) != 0 ? 1 : 0;
+        }
+        case TYPE_BOOL: {
+            uint8_t v = val_as_num(value) != 0 ? 1 : 0; memcpy(field_addr, &v, sizeof(v));
             break;
-        case TYPE_C_INT:
-            *(int*)field_addr = (int)val_as_num(value);
+        }
+        case TYPE_C_INT: {
+            int v = (int)val_as_num(value); memcpy(field_addr, &v, sizeof(v));
             break;
-        case TYPE_C_UINT:
-            *(unsigned int*)field_addr = (unsigned int)val_as_num(value);
+        }
+        case TYPE_C_UINT: {
+            unsigned int v = (unsigned int)val_as_num(value); memcpy(field_addr, &v, sizeof(v));
             break;
-        case TYPE_C_LONG:
-            *(long*)field_addr = (long)val_as_num(value);
+        }
+        case TYPE_C_LONG: {
+            long v = (long)val_as_num(value); memcpy(field_addr, &v, sizeof(v));
             break;
-        case TYPE_C_ULONG:
-            *(unsigned long*)field_addr = (unsigned long)val_as_num(value);
+        }
+        case TYPE_C_ULONG: {
+            unsigned long v = (unsigned long)val_as_num(value); memcpy(field_addr, &v, sizeof(v));
             break;
-        case TYPE_C_LONGLONG:
-            *(long long*)field_addr = (long long)val_as_num(value);
+        }
+        case TYPE_C_LONGLONG: {
+            long long v = (long long)val_as_num(value); memcpy(field_addr, &v, sizeof(v));
             break;
-        case TYPE_C_ULONGLONG:
-            *(unsigned long long*)field_addr = (unsigned long long)val_as_num(value);
+        }
+        case TYPE_C_ULONGLONG: {
+            unsigned long long v = (unsigned long long)val_as_num(value); memcpy(field_addr, &v, sizeof(v));
             break;
-        case TYPE_C_SIZE:
-            *(size_t*)field_addr = (size_t)val_as_num(value);
+        }
+        case TYPE_C_SIZE: {
+            size_t v = (size_t)val_as_num(value); memcpy(field_addr, &v, sizeof(v));
             break;
-        case TYPE_C_SSIZE:
-            *(ssize_t*)field_addr = (ssize_t)val_as_num(value);
+        }
+        case TYPE_C_SSIZE: {
+            ssize_t v = (ssize_t)val_as_num(value); memcpy(field_addr, &v, sizeof(v));
             break;
+        }
         case TYPE_PTR:
         case TYPE_PTR_GENERIC:
             if (val_is_obj(value) && val_as_obj(value)->type == OBJ_FFI_POINTER) {
-                *(void**)field_addr = ((ObjFFIPointer*)val_as_obj(value))->ptr;
+                void* p = ((ObjFFIPointer*)val_as_obj(value))->ptr;
+                memcpy(field_addr, &p, sizeof(p));
             } else if (val_is_obj(value) && val_as_obj(value)->type == OBJ_FFI_CALLBACK) {
-                *(void**)field_addr = ((ObjFFICallback*)val_as_obj(value))->trampoline;
+                void* p = ((ObjFFICallback*)val_as_obj(value))->trampoline;
+                memcpy(field_addr, &p, sizeof(p));
             }
             break;
         case TYPE_STR16: {
@@ -518,7 +587,8 @@ void cstruct_set_field_value(ObjCStruct* obj, int field_index, Value value) {
                     wlen = max_len - 1; // 留一个位置给 null 终止符
                 }
                 memcpy(dest, wstr, wlen * sizeof(wchar_t));
-                dest[wlen] = L'\0';
+                wchar_t nul = L'\0';
+                memcpy(field_addr + wlen * sizeof(wchar_t), &nul, sizeof(nul));
                 free(wstr);
             }
             break;
