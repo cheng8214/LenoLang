@@ -4044,7 +4044,11 @@ Song nowSong
         sg.sid = sid
         if sep >= 0 {
             sg.title = strings.byte_slice(disp, 0, sep - 1)
-            sg.artist = strings.byte_slice(disp, sep + 3, disp.len() - 1)
+            // ★ 2026-10-31 修：`sep` 是 `byte_find` 给的**字节**位置，右端点必须用
+            //   `byte_len()`；原来写 `disp.len()`（**字符数**）⇒ "晴天 — 周杰伦" 的字符数 7
+            //   远小于字节数 18 ⇒ 歌手名被截掉大半（只在显示上，播放靠 sid 所以没人发现 ✗）
+            //   口径说明见 docs/语言与框架问题 L4：len()=字符、byte_len()=字节 ✓
+            sg.artist = strings.byte_slice(disp, sep + 3, disp.byte_len() - 1)
         } else {
             sg.title = disp
         }

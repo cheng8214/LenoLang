@@ -65,11 +65,15 @@ export func lblFit(string t, float sz, Color c, bool bold): Label {
 
 // ==================== 时间 ====================
 // "mm:ss" → 秒（底栏初始时长用：还没真播放时先按歌曲自己的时长显示 ✓）
+//   ⚠ **口径必须成套**（2026-10-31 实测确认）：`byte_find` 给的是**字节**位置，
+//     配套的就该是 `byte_slice` + `byte_len`；混用 `len()`（字符数）当右端点在纯 ASCII
+//     的 "mm:ss" 上碰巧对，一旦带中文就静默切歪 ✗
+//     —— `len()` = 字符数，`byte_len()` = 字节数，别记反（见 docs/语言与框架问题 L4 ✓）
 export func parseDur(string t): float {
     int p = strings.byte_find(t, ":", 0)
     if p < 0 { return 0.0 }
     int m = _int(strings.byte_slice(t, 0, p - 1))
-    int s = _int(strings.byte_slice(t, p + 1, t.len() - 1))
+    int s = _int(strings.byte_slice(t, p + 1, t.byte_len() - 1))
     return _float(m * 60 + s)
 }
 

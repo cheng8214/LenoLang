@@ -135,8 +135,11 @@ export func search(HttpClient client, string keyword, int limit): Array[Array[st
         int sec2 = 0
         int cp = strings.byte_find(durs, ":", 0)
         if cp > 0 {
+            // 口径成套：byte_find（字节位置）配 byte_slice + **byte_len**
+            //   （原来右端点写 `durs.len()` = 字符数；"04:45" 是纯 ASCII 碰巧相等，
+            //     但混着写迟早出事 —— 见 docs/语言与框架问题 L4 ✓）
             int mm = _int(strings.byte_slice(durs, 0, cp - 1))
-            int ss = _int(strings.byte_slice(durs, cp + 1, durs.len() - 1))
+            int ss = _int(strings.byte_slice(durs, cp + 1, durs.byte_len() - 1))
             sec2 = mm * 60 + ss
         }
         // 封面：搜索响应**直接给了 URL** ✓（不用等 music 响应，省一步）
