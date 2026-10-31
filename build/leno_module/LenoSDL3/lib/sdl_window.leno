@@ -478,7 +478,16 @@ export struct Window {
 
     // 设置叠加层渲染回调（在所有控件和弹层渲染之后、present 之前调用）
     // 用途：拖拽浮动框、自定义全局浮层等需要绘制在所有控件之上的场景
-    func setOverlay(RenderCallback cb) { _overlay = cb }
+    // ★ 2026-10-31 反哺：**单槽语义** —— 整个窗口只有一个 overlay 槽。
+    //   实测踩过：应用自己挂了一个 toast 浮层，自检的截图钩子又挂一个
+    //   ⇒ 后挂的把前者顶掉（截图模式下 toast 直接不显示，且完全静默 ✗）
+    //   ⇒ 重复调用时打一行日志；真要多个浮层请**合成一个**回调内部再分发 ✓
+    func setOverlay(RenderCallback cb) {
+        if _overlay != null and cb != null {
+            print("[warn] Window.setOverlay 被重复调用：前一个渲染回调已丢弃（窗口只有一个 overlay 槽）\n")
+        }
+        _overlay = cb
+    }
 
     // ★ 「关闭到托盘」：拦截本次窗口关闭请求 ⇒ 主循环**不**销毁窗口（不再自动退出）。
     //   只对**本次** WINDOW_CLOSE_REQUESTED 有效，且必须在 onEvent 里收到 ev.isWindowClose()

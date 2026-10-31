@@ -110,7 +110,17 @@ export struct Slider impl Widget, Themeable {
     func set_pos(float px, float py) { x = px; y = py }
     func set_size(float sw, float sh) { w = sw; h = sh }
 
-    func on_change(func(float):void cb) { onChange = cb }
+    // ★ 2026-10-31 反哺：**单槽语义** —— 重复注册会**静默顶掉**前一个回调。
+    //   实测踩过：设置窗的「蒙版透明度」滑块注册了两处 `on_change`（新写的带实时预览、
+    //   旧的那份还留在 40 行之后），后注册的把前一个整个替换掉 ⇒ 表现是"拖了没反应"，
+    //   而且编译、运行都不报任何错，只能靠肉眼比对两处代码 ✗
+    //   ⇒ 至少打一行日志让人看见（保留"后覆盖前"的既有语义，不改变行为 ✓）
+    func on_change(func(float):void cb) {
+        if onChange != null and cb != null {
+            print("[warn] Slider.on_change 被重复注册：前一个回调已丢弃（同一控件只有一个槽位）\n")
+        }
+        onChange = cb
+    }
 
     // ==================== 焦点（供窗口的"焦点链"调用 ✓ 2026-10-13 第三批）====================
     //   键盘语义：←/↓ 减、→/↑ 加（垂直滑块同样能用 ✓）、Home / End 到两端 ✓

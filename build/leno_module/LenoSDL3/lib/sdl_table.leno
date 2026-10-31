@@ -1039,11 +1039,20 @@ export struct Table impl Widget, Themeable {
     func on_cell(func(int, int):void cb) { onCell = cb }
     // ★ 单元格自绘（2026-10-07）：每格常规内容画完**之后**调一次（矩形已含滚动偏移/冻结列 ✓）
     //   应用可任意叠加（色块 / 徽标 / 迷你折线…）；表格**不接管**格内点击（命中仍是 on_cell ✓）
-    func on_cell_draw(func(Renderer, int, int, float, float, float, float):void cb) { onCellDraw = cb }
+    func on_cell_draw(func(Renderer, int, int, float, float, float, float):void cb) {
+        // ★ 2026-10-31：单槽 ⇒ 重复设置会静默顶掉前一个（与 Slider.on_change 同病 ✓）
+        if onCellDraw != null and cb != null {
+            print("[warn] Table.on_cell_draw 被重复注册：前一个回调已丢弃（只有一个槽位）\n")
+        }
+        onCellDraw = cb
+    }
 
     // 自定义单元格：给一个"返回控件"的回调 ⇒ 单元格内可任意布局 ✓
     //   cb(row, col, w, h) -> 控件；返回 null = 该格走内建文本/进度绘制
     func set_cell_builder(func(int, int, float, float, bool): Widget? cb) {
+        if cellBuilder != null and cb != null {
+            print("[warn] Table.set_cell_builder 被重复注册：前一个回调已丢弃（只有一个槽位）\n")
+        }
         cellBuilder = cb
         fittedValid = false          // 内容变了，文本拟合缓存作废
     }
