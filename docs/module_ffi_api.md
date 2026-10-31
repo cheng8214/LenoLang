@@ -13,6 +13,8 @@
   - [free](#freex)
 - [函数调用](#函数调用)
 - [回调函数](#回调函数)
+  - [callback](#callbackfunc-ret_type-arg_types)
+  - [free_callback](#free_callbackcb)
 - [类型守卫](#类型守卫)
 - [内存管理](#内存管理)
   - [alloc](#alloctype_name-value)
@@ -583,17 +585,56 @@ ffi.write_int(arr, 16, 2)
 ffi.call_void(libc, "qsort", arr, 5, 4, cb)
 
 // 释放回调和资源
+ffi.free_callback(cb)      // ← 回调必须用 free_callback，不能用 ffi.free！
 ffi.free(arr)
-ffi.free(cb)
 ffi.free(libc)
 ```
 
-**注意事项**:
-- 回调对象用 `ffi.free()` 释放，与指针和库对象使用同一个函数
-- 释放回调后，对应的 C 函数指针不再有效
-- 最多支持 256 个同时存在的回调
+**注意事项**（⚠ 2026-10-31 修正，此前这份文档写的 `ffi.free(cb)` 是错的）:
+
+- **回调对象必须用 `ffi.free_callback()` 释放** —— 它是 `ffi.callback` 造出来的
+  **trampoline（可执行内存）**，不是 `ffi.malloc` 的指针；`ffi.free()` 对它**完全无效**
+  （既不报错也不释放，槽位一直占着）
+- 释放回调后，对应的 C 函数指针不再有效 —— **只有确定 C 侧不会再回调时才能释放**，
+  否则 C 拿着已释放的 trampoline 一样会崩
+- 最多 **1024** 个**同时存在**的回调（2026-10-31 从 256 提到 1024）。
+  这个数只统计「仍然活着」的，不是「累计创建过多少次」
 - `ffi.is_ptr(cb)` 对回调对象返回 `true`
 - 回调函数中 `Ptr` 类型参数需通过 `ffi.read_*` 读取数据
+
+---
+
+### `free_callback(cb)`
+
+释放一个回调槽位，让 trampoline 能被 GC 回收。
+
+**参数**: `cb` — `ffi.callback()` 的返回值
+**返回**: `bool` — 找到并释放返回 `true`；找不到（已释放过 / 不是回调）返回 `false`
+
+```leno
+var cb = ffi.callback(func(Ptr d, int n, Ptr u): int { return 0 }, WriteCb)
+ffi.free_callback(cb)      // ⇒ true
+ffi.free_callback(cb)      // ⇒ false（已经释放过了）
+```
+
+**为什么必须显式释放**：`ffi.callback` 返回的对象会被注册成 **GC 根**
+（否则 trampoline 可能被提前回收 ⇒ C 回调野指针），所以它**不会**因为 Leno 侧
+没有引用就自动回收 —— 必须手动 `free_callback`。
+
+**典型泄漏场景**（真实踩过）：
+
+```leno
+// ✗ 每次请求建一个客户端、每个客户端 2 个回调，但 close() 里调错 API
+func request(url) {
+    var c = net.createClient()      // 内部 2 个 ffi.callback
+    var r = c.get(url)
+    c.close()                       // 若 close 里用 ffi.free 而不是 free_callback ⇒ 白关
+}
+// ⇒ 跑 512 次之后，进程任何地方再建回调都会报「回调数量已达上限」
+```
+
+**排查方法**：报错信息会告诉你当前上限与两条提示；若反复创建回调，
+先在 `close()` / `_freeJob()` 这类收尾点确认调的是 `free_callback`。
 
 **平台支持**:
 
@@ -1021,7 +1062,7 @@ var cb = ffi.callback(my_func, "int", ["int"])
 print(ffi.is_ptr(cb))  // true
 
 ffi.free(ptr)
-ffi.free(cb)
+ffi.free_callback(cb)      // ⚠ 回调用 free_callback：ffi.free 对 trampoline 无效
 ```
 
 **用途**: 在需要区分指针和其他类型的场景中使用，例如编写接受多种参数类型的通用函数：
@@ -1962,6 +2003,17 @@ main() {
   另修两个同源缺陷：**f32 返回值恒为 0**（前端读 `result.f`，后端却写 `result.d`）、
   **"全浮点参数 + 整数返回"**从浮点寄存器取返回值（真值在整数返回寄存器）。
   回归：`assert/test_ffi_abi.leno`（38 例 ABI 边界 + 压力，跨平台）✓
+
+- **v4.1** (2026-10-31):
+  - **修复 `ffi.free_callback` 完全无效**（严重）：函数里判的是 `OBJ_FFI_POINTER`，
+    而 `ffi.callback` 返回的是 `ObjFFICallback` ⇒ 类型对不上直接返回 `false`，
+    **槽位从来没被真正释放过**。症状：反复建回调的程序跑到上限数时报
+    「回调数量已达上限」，而代码里明明写了释放。
+    实测：`createClient()`/`close()` 循环，修前第 128 轮必失败（256÷2），修后 200 轮全过。
+    连带修正本文档长期教错的 `ffi.free(cb)` → `ffi.free_callback(cb)`。
+  - **回调上限 256 → 1024**（仍为固定数组：槽位里存 GC 根，地址必须稳定，不能 realloc）。
+  - **报错信息指向病因**：不再是干巴巴一句「回调数量已达上限」，补上
+    「只统计仍然活着的」「`ffi.free` 对 trampoline 无效」两条提示。
 
 - **v4.0** (2026-08-19):
   - **符号地址缓存**：`ObjFFILibrary` 新增函数地址缓存表（32 槽），`ffi.call_*`/`clib`/`ffi.dlsym` 首次调用后缓存函数地址，后续调用跳过 `GetProcAddress`/`dlsym`。
