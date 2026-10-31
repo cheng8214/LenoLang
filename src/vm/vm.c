@@ -1587,6 +1587,23 @@ int vm_call_value(Value callee, int arg_count, int line) {
 
     int r = vm_run_with_vm(vm_ptr);
 
+    /* ★ 2026-10-31：把操作数栈**收缩回调用前的位置并清零**。
+     *
+     * 契约：进入时栈是 `[..., callee, arg1..argN]`（`saved_sp` 指向末尾），
+     *   返回后应是 `[..., result]` ⇒ 目标 sp = `saved_sp - arg_count`。
+     *
+     * 不清零会怎样（实测）：FFI 回调每次派发都走本函数；闭包体里
+     *   `write(ffi.read_string_n(data, 0, 1MB))` 这类"造个大临时串立刻用掉"的写法，
+     *   把 1MB 串的指针留在 `stack[]` 里 ⇒ 保守式 GC 扫 `stack[0..sp)` 时判为存活
+     *   ⇒ 每片泄漏 1MB，20 片稳定 +20MB，`_gc()`（Major）也压不下去 ✗
+     *
+     * 为什么普通函数里同样的代码不泄漏（实测 20 次仅 27MB 峰值）：
+     *   只有**宿主发起**的调用（FFI 回调 / map 回调）才走这里，常规语句走解释器主循环，
+     *   那条路的收缩已经带了清零（`vm_stack_drop`）✓
+     *
+     * `vm_stack_drop` 只收缩不扩张 ⇒ sp 已更小时原样返回，不会把脏值扩回来 ✓ */
+    vm_stack_drop(vm_ptr, saved_sp - arg_count);
+
     vm_ptr->host_floor = saved_host_floor;
     vm_ptr->stop_frame_cnt = saved_stop_frame_cnt;
     return (r == 0) ? 1 : 0;
