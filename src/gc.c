@@ -289,9 +289,25 @@ void gc_pop_root(void) {
     }
 }
 
-// 释放本线程的 GC 辅助结构（extra_roots 等）。线程退出时调用：
+// 释放本线程的 GC 辅助结构（mark_stack / remembered_set / extra_roots）。线程退出时调用：
 //   若堆已被 detach（gc_detach_heap 已释放过），这里 free(NULL) 是空操作 ✓
+// ★ 2026-11-01：把 mark_stack / remembered_set 也收进来。
+//   它们是 THREAD_LOCAL 的**容器**（不持有堆对象的生命周期），与 extra_roots 同类；
+//   之前只有 detach 那条路径释放，而"用过 channel 的线程"根本走不到 detach
+//   （gc_heap_detach_allowed() == 0，见 object_thread.c 收尾）⇒ 每条这样的线程都漏：
+//     · mark_stack：随 major GC 长到与活对象同量级（几十 KB ~ 几百 KB）
+//     · remembered_set：老年代写屏障条目
+//   Aria 的下载线程 = 每首歌新起一个 + 每片 ch.send 一次进度 ⇒ 100% 命中这条路，
+//   表现为"只有下载歌曲时内存一直涨"，而 detach 路径上一切正常 ✓
 void gc_release_thread_aux(void) {
+    free(mark_stack);
+    mark_stack = NULL;
+    mark_stack_count = 0;
+    mark_stack_capacity = 0;
+    free(gc.remembered_set);
+    gc.remembered_set = NULL;
+    gc.remembered_count = 0;
+    gc.remembered_capacity = 0;
     free(gc.extra_roots);
     gc.extra_roots = NULL;
     gc.extra_root_count = 0;
@@ -444,19 +460,8 @@ void* gc_detach_heap(void) {
     pool_total = 0;
     for (int i = 0; i < GC_POOL_CLASSES; i++) { pool_free_list[i] = NULL; }
     // ★ 顺带把子线程的 GC 辅助结构也释放掉（它们同样是 THREAD_LOCAL，退出后没人回收）
-    //   mark_stack 会随 major GC 长到与活对象同量级 ⇒ 不释放的话每条线程还要漏几百 KB ✗
-    free(mark_stack);
-    mark_stack = NULL;
-    mark_stack_count = 0;
-    mark_stack_capacity = 0;
-    free(gc.remembered_set);
-    gc.remembered_set = NULL;
-    gc.remembered_count = 0;
-    gc.remembered_capacity = 0;
-    free(gc.extra_roots);
-    gc.extra_roots = NULL;
-    gc.extra_root_count = 0;
-    gc.extra_root_capacity = 0;
+    //   走 gc_release_thread_aux：与"没 detach 的线程"共用同一份实现，口径不会漂 ✓
+    gc_release_thread_aux();
     intern_table_free();        // 子线程自己的字符串表（表项本身；字符串随上面整堆释放 ✓）
     return d;
 }
