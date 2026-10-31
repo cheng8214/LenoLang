@@ -1,0 +1,43 @@
+// test_ffi_sentinel_align.leno — FFI 分配器的尾部哨兵不得做未对齐 8 字节访问
+//
+// 现场（2026-10-31，UBSAN 扫 examples/测试/C结构FFI 时发现）：
+//   ffi.malloc/calloc/realloc/alloc 在 `ptr + size` 处直接
+//   `*(uint64_t*)... = 0xDEADBEEF...`；size 可以是任意字节数（1/3/7/…），
+//   该地址未必 8 字节对齐 ⇒ UBSAN "store to misaligned address"（严格对齐架构会报错）。
+//   free 时的哨兵读取同理。已改为 memcpy 读写。
+// 本用例用**非 8 倍数**的尺寸把四条分配路径都走一遍。
+
+import ffi
+
+main() {
+    var p1 = ffi.malloc(1)
+    ffi.free(p1)
+
+    var p2 = ffi.malloc(3)
+    ffi.free(p2)
+
+    var p3 = ffi.malloc(7)
+    ffi.free(p3)
+
+    var p4 = ffi.malloc(9)
+    ffi.free(p4)
+
+    var c1 = ffi.calloc(3, 1)
+    ffi.free(c1)
+
+    var c2 = ffi.calloc(1, 3)
+    ffi.free(c2)
+
+    var a1 = ffi.alloc("int")
+    ffi.free(a1)
+
+    var a2 = ffi.alloc("long")
+    ffi.free(a2)
+
+    // realloc 到非 8 倍数大小（同时重置哨兵）
+    var r = ffi.malloc(3)
+    r = ffi.realloc(r, 5)
+    ffi.free(r)
+
+    print("test_ffi_sentinel_align passed")
+}

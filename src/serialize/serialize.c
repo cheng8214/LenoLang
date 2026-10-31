@@ -1898,9 +1898,15 @@ static int deserialize_chunk_data(DeserializeCtx* ctx, Chunk* chunk) {
     chunk->local_count = (int)local_count;
 
     if (const_count > 0) {
+        // ★ 2026-10-31：const_count 来自文件、可能被改坏。每个常量至少占 1 字节
+        //   ⇒ 大于"剩余字节数"的一定是损坏文件。不先拦就会按 4B 计数 × 2 分配
+        //   几十 GB（ASAN 实测 out-of-memory），普通构建则可能 malloc 失败后越界写。
+        uint64_t remain = (ctx->pos < ctx->size) ? (uint64_t)(ctx->size - ctx->pos) : 0;
+        if ((uint64_t)const_count > remain) return 0;
         chunk->const_capacity = (int)const_count * 2;
         if (chunk->const_capacity < 8) chunk->const_capacity = 8;
         chunk->constants = (Value*)malloc(sizeof(Value) * chunk->const_capacity);
+        if (!chunk->constants) return 0;
         chunk->const_cnt = 0;
         for (uint32_t i = 0; i < const_count; i++) {
             if (!deserialize_constant(ctx, &chunk->constants[i])) return 0;
@@ -1911,10 +1917,14 @@ static int deserialize_chunk_data(DeserializeCtx* ctx, Chunk* chunk) {
     uint32_t code_len;
     if (!ctx_read_u32(ctx, &code_len)) return 0;
     chunk->len = 0;
+    // ★ 2026-10-31：先校验长度再分配（原来先 malloc、后校验 ⇒ 损坏的 code_len
+    //   会直接请求巨大内存）。
+    uint64_t remain_code = (ctx->pos < ctx->size) ? (uint64_t)(ctx->size - ctx->pos) : 0;
+    if (code_len > 0 && (uint64_t)code_len > remain_code) return 0;
     chunk->code_capacity = (int)code_len > 0 ? (int)code_len * 2 : 8;
     chunk->code = (uint8_t*)malloc(chunk->code_capacity);
+    if (!chunk->code) return 0;
     if (code_len > 0) {
-        if (ctx->pos + code_len > ctx->size) return 0;
         memcpy(chunk->code, ctx->data + ctx->pos, code_len);
         ctx->pos += code_len;
         chunk->len = (int)code_len;
@@ -1924,6 +1934,7 @@ static int deserialize_chunk_data(DeserializeCtx* ctx, Chunk* chunk) {
     if (!ctx_read_u8(ctx, &has_lines)) return 0;
     if (has_lines && chunk->len > 0) {
         chunk->lines = (int*)malloc(sizeof(int) * chunk->code_capacity);
+        if (!chunk->lines) return 0;
         // RLE 展开（与 serialize_chunk 的编码对称）：读"段长 + 行号"直到铺满 code_len。
         // 段长为 0 或越界 = 文件损坏 ⇒ 直接判错（不截断、不补零，否则行号表会静默错位）。
         int filled = 0;

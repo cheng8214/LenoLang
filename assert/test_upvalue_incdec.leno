@@ -1,0 +1,42 @@
+// test_upvalue_incdec.leno — 闭包内对**被捕获变量**做 ++/-- 不能二次释放名字
+//
+// 现场（2026-10-30，ASAN 扫 examples/minilang 时发现）：
+//   `resolve_variable_with_upvalue_raw` 收尾处先 `free(ref->name)` 再
+//   `strdup(name)`，而闭包里 `x++` 的调用点正是 `(ref.name, &ref)` ——
+//   name 与 ref->name 是同一块内存 ⇒ 先 free 后 strdup = heap-use-after-free。
+//   修复：先复制、后释放。
+
+main() {
+    var x = 0
+    func post_inc() { x++ }
+    func pre_inc() { ++x }
+    func dec() { x-- }
+
+    post_inc()
+    assert_eq(x, 1)
+    pre_inc()
+    assert_eq(x, 2)
+    dec()
+    assert_eq(x, 1)
+
+    // 复合赋值 / 普通赋值走各自路径，一并钉住
+    var y = 1
+    func add() { y += 2 }
+    func setv() { y = 10 }
+    add()
+    assert_eq(y, 3)
+    setv()
+    assert_eq(y, 10)
+
+    // 两层闭包：内层改外层函数的局部量
+    var z = 0
+    func outer() {
+        func inner() { z++ }
+        inner()
+        inner()
+    }
+    outer()
+    assert_eq(z, 2)
+
+    print("test_upvalue_incdec passed")
+}
