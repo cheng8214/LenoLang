@@ -614,8 +614,8 @@
             
         case AST_CALL: {
             // 注解（2026-10-31）：@optkeys 声明的选项键在这里校验
-            //   （只查字面量 Dict、只警告不中断；跨模块调用一期不覆盖 ✓）
-            annos_check_call(ast);
+            //   （只查字面量 Dict、只警告不中断；跨模块走 module.member 分支 ✓）
+            annos_check_call(s, ast);
             /* 同一次调用只报一条"没有方法"：本地 struct 分支报过之后，
              *   下面的通用分支不要再报一次（随后统一打毒，抑制级联 ✓） */
             int method_missing_reported = 0;
@@ -1949,6 +1949,12 @@
                         ast->u.call.generic_type_count = func_def->u.func.type_param_count;
                     }
                     
+                    // 注解 @optkeys（2026-10-31）：**同模块 / 跨模块**的选项键检查
+                    //   放在这里：`func_def` 已经解析到被调函数（跨模块也一样，否则下面报不出
+                    //   "参数数量不足"）⇒ 直接读它 AST 上的注解，不依赖符号表、不怕 AST 被改写 ✓
+                    //   只查字面量 Dict、只警告不中断；非字面量一律放行（宁漏勿误报 ✓）
+                    annos_check_call_def(ast, func_def);
+
                     int expected_cnt = func_def->u.func.pcnt;
                     int actual_cnt = ast->u.call.args.count;
                     int default_cnt = func_def->u.func.default_count;

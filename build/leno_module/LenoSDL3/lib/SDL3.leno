@@ -105,12 +105,32 @@ use gbx.GroupBox
 use grd.GridLayout
 use crd.Card
 use spl.Splitter
+// ★ 2026-10-31：`@optkeys` 加在**门面这一层**（应用调的 `SDL3.createXxx` 就是这里）——
+//   键表逐字取自各实现文件的 `_opts_keys()`（运行时 dochk 对账用的是同一份 ✓）。
+//   ⚠ **只给已有 `_opts_keys()` 的控件加**：没有那份白名单的（如 Label）加了就等于瞎猜，
+//     一旦猜少一个键，正常代码就编不过 ✗ —— 这类控件留空（= 不检查）更安全 ✓
+@optkeys(["border_color", "box", "checked", "checked_color", "cursor", "enabled", "font_path",
+          "font_size", "font_style", "gap", "text", "text_color", "tip", "unchecked_color",
+          "visible", "x", "y"])
 export func createCheckBox(Dict opts): CheckBox     { return chk.createCheckBox(opts) }
+@optkeys(["align", "background", "bg_color", "bg_image", "border", "border_color", "cursor",
+          "enabled", "font_path", "font_size", "font_style", "h", "hover_color", "image_alpha",
+          "image_gap", "image_mode", "image_path", "image_path_disabled", "image_path_hover",
+          "image_path_pressed", "image_pos", "image_size", "image_tint", "padding",
+          "pressed_color", "radius", "shadow", "text", "text_color", "tip", "type", "visible",
+          "w", "x", "y"])
 export func createButton(Dict opts): Button          { return btn.createButton(opts) }
 export func createLabel(Dict opts): Label            { return lbl.createLabel(opts) }
+@optkeys(["bg_color", "border", "border_color", "draw_bg", "enabled", "focus_color", "font_path",
+          "font_size", "font_style", "h", "multiline", "pad_x", "password", "placeholder",
+          "placeholder_color", "radius", "readonly", "text", "text_color", "tip", "visible",
+          "w", "wordWrap", "x", "y"])
 export func createEdit(Dict opts): Edit              { return edt.createEdit(opts) }
 export func createRadioButton(Dict opts): RadioButton { return rb.createRadioButton(opts) }
 export func createToggle(Dict opts): Toggle          { return tgl.createToggle(opts) }
+@optkeys(["cursor", "enabled", "fill_color", "font_path", "font_size", "font_style", "h", "max",
+          "min", "show_value", "step", "text_color", "thumb_color", "tip", "track_color", "value",
+          "vertical", "visible", "w", "x", "y"])
 export func createSlider(Dict opts): Slider          { return sld.createSlider(opts) }
 export func createProgressBar(Dict opts): ProgressBar { return prg.createProgressBar(opts) }
 export func createListBox(Dict opts): ListBox     { return lb.createListBox(opts) }
@@ -118,6 +138,17 @@ export func createComboBox(Dict opts): ComboBox  { return cbb.createComboBox(opt
 export func createPanel(Dict opts): Panel        { return pnl.createPanel(opts) }
 export func createTabControl(Dict opts): TabControl { return tab.createTabControl(opts) }
 export func createSpinBox(Dict opts): SpinBox { return spb.createSpinBox(opts) }
+@optkeys(["aligns", "bar_auto_hide", "bar_hover_color", "bg_color", "border", "border_color",
+          "cell_select", "cell_types", "check_col", "check_color", "col_ratios", "col_reorder",
+          "col_widths", "ctx_font_size", "ctx_image_size", "ctx_item_h", "cursor", "editable",
+          "editable_cols", "empty_color", "empty_text", "enabled", "font_path", "font_size",
+          "font_style", "frozen_cols", "h", "header_aligns", "header_color", "header_h",
+          "headers", "hover_color", "image_cache_max", "image_col", "image_gap", "image_mode",
+          "image_pad", "image_path", "image_size", "item_h", "max_col_width", "min_col_width",
+          "multi_select", "numeric_cols", "radius", "resizable", "row_images", "row_num_color",
+          "row_num_w", "row_numbers", "row_pad_x", "row_radius", "row_reorder", "rows", "sel_color",
+          "sep_color", "solid_sel", "sort_disabled_cols", "sortable", "text_color", "tip",
+          "visible", "w", "x", "y", "zebra"])
 export func createTable(Dict opts): Table      { return tbl.createTable(opts) }
 //    不导出 createMenuBar！MenuBar 有下拉弹层（renderPopup），必须通过 win.addMenuBar() 创建，
 //    才能同时注册到 _widgets（render/process）和 _menus（renderPopup 绘制下拉层）。
@@ -144,6 +175,8 @@ export func imageCacheCount(): int          { return tcx.count() }
 export func setImageCacheMax(int n)          { tcx.setCap(n) }
 export func imageCacheRefOf(Ptr[u8] t): int  { return tcx.refOf(t) }
 export func createSeparator(Dict opts): Separator  { return sep.createSeparator(opts) }
+@optkeys(["align", "bg_color", "border", "border_color", "font_size", "h", "pad_x", "pad_y",
+          "radius", "text", "text_color", "visible", "w", "x", "y"])
 export func createBadge(Dict opts): Badge         { return bdg.createBadge(opts) }
 export func createAlert(Dict opts): Alert         { return alt.createAlert(opts) }
 export func createSteps(Dict opts): Steps         { return stp.createSteps(opts) }
@@ -217,8 +250,17 @@ export func toastVisible(): bool                      { return tst.toastVisible(
 export func toastCurrent(): string                    { return tst.toastCurrent() }
 // 全局帧号（每帧 +1）：量实际帧率 / 判断动画是否在跑（≈ 帧数 ÷ 时间）✓
 export func frameId(): int                          { return core.frameId() }
+// ★ 2026-10-31：`@optkeys` 必须加在**门面这层**（应用调的是 `SDL3.createHBox`）——
+//   加到 sdl_layout 那份上只覆盖"模块内部调用"，应用侧拿到的符号表条目在这里 ✗
+//   键表与 sdl_layout 的 `_set_keys()` 一致（运行时那份对账也用它 ✓）
+@optkeys(["x", "y", "w", "h", "pad_x", "pad_y", "padTop", "padBottom", "padLeft", "padRight",
+          "spacing", "justify", "bg_color", "bg_radius", "clip", "visible", "enabled"])
 export func createHBox(Dict opts): HBox          { return lay.createHBox(opts) }
+@optkeys(["x", "y", "w", "h", "pad_x", "pad_y", "padTop", "padBottom", "padLeft", "padRight",
+          "spacing", "justify", "bg_color", "bg_radius", "clip", "visible", "enabled"])
 export func createVBox(Dict opts): VBox          { return lay.createVBox(opts) }
+@optkeys(["x", "y", "w", "h", "pad_x", "pad_y", "padTop", "padBottom", "padLeft", "padRight",
+          "spacing", "justify", "bg_color", "bg_radius", "clip", "visible", "enabled"])
 export func createAnchorBox(Dict opts): AnchorBox { return lay.createAnchorBox(opts) }
 import "sdl_dialog.leno" as dlg
 export func createDialogWindow(Dict style): Window { return dlg.createDialogWindow(style) }

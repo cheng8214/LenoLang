@@ -2422,6 +2422,12 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
         }
         
         case AST_MODULE_CALL: {
+            // 注解 @optkeys（2026-10-31）：**跨模块**选项键检查
+            //   为什么在这里：`var x = SDL3.createHBox({...})` 的右值是**表达式**，
+            //   走 infer_expr_type 而不走 visit 的 AST_MODULE_CALL 分支（实测 visit 那条收不到）
+            //   只查字面量 Dict、只警告不中断 ✓
+            // 注解 @optkeys 的检查**不在这里** —— 实测控件的构造调用走的是
+            //   `visit_expr.inc` 的参数个数检查处（那里 `func_def` 已解析到被调函数，跨模块也拿得到）
             const char* actual_module = native_resolve_module_alias(ast->u.module_call.module_name);
 
             // 检查是否是原生模块

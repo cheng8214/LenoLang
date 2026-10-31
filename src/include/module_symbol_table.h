@@ -32,6 +32,12 @@ typedef struct {
     int line;                   // 函数定义所在行号（1-based，0 表示未知）
     int is_async;               // 是否 `async func`（C2：扫描器要认 async，消费者侧据它
                                 // 判"调用返回 Future"/发 OP_ASYNC_CALL；随 .lenosymc 往返）
+    // ---- 注解 @optkeys（2026-10-31，.lenosymc v39）----
+    // 逗号分隔的选项键表；NULL = 该函数没声明注解；"*" = 声明为通配（不检查）。
+    // 为什么要进符号表：跨模块调用（`SDL3.createHBox({...})`）时调用方**拿不到被调函数的
+    //   AST** ⇒ 只有符号表这条路能把"这个构造函数接受哪些键"带过去 ✓
+    //   （模块内调用走 AST 上的 `annos`，不查这里 ✓）
+    char* optkeys;
 } ModuleFuncSymbol;
 
 // 模块 struct 字段
@@ -257,6 +263,11 @@ ModuleStructSymbol* module_symbol_table_find_struct(ModuleSymbolTable* table, co
 
 // 添加函数符号
 void module_symbol_table_add_func(ModuleSymbolTable* table, const char* name, TypeKind return_type, const char* return_struct_name, int type_param_count, TypeInfo* return_type_info, const char* param_text, int param_count, int default_count, char** param_default_texts, int is_async);
+
+// 设置函数的 @optkeys 注解（keys_csv 逗号分隔，"*" = 通配，NULL = 清除）
+//   与 set_struct_impls 同一路数：add_func 的形参已经很长，没必要再挤一个进去 ✓
+void module_symbol_table_set_func_optkeys(ModuleSymbolTable* table, const char* func_name,
+                                          const char* keys_csv);
 
 // 添加 struct 符号
 void module_symbol_table_add_struct(ModuleSymbolTable* table, const char* name, int field_count, ModuleStructField* fields, int method_count, ModuleStructMethod* methods, int is_cstruct, int type_param_count, char** type_param_names);

@@ -6,7 +6,11 @@
 // ⚠ 版本号登记表：docs/单一事实来源与重复实现收敛.md 第七节
 //   （只覆盖符号表缓存；2026-09-16 撞过车：与上游都用 v23 但格式不同）
 #define LENOSYMC_MAGIC   0x4D59534C  // "LSYM" little-endian
-#define LENOSYMC_VERSION 0x00000026  // v38: struct **方法符号新增 `param_text`**（参数列表文本：
+#define LENOSYMC_VERSION 0x00000027  // v39: 函数符号新增 **`optkeys`**（注解 @optkeys 的键表，
+                                     //      逗号分隔）—— 函数段在 `is_async` 之后多一段字符串。
+                                     //      升版本是为了**内容失效**：旧缓存里没这份键表，
+                                     //      不重扫的话跨模块的选项键检查永远拿不到数据 ✓
+// v38: struct **方法符号新增 `param_text`**（参数列表文本：
                                      //      `Widget c, Dict opts` / `Array[Button] buttons`）——
                                      //      格式变了：方法段在**末尾**（`is_private` 之后）多一段
                                      //      "参数列表文本串"；旧缓存按 v37 读到末尾会缺这段
@@ -320,6 +324,8 @@ sym_cache_write_string(f, table->funcs[i].param_struct_names[k]);
 // 跨模块调用退回同步执行（返回值不是 Future）
 uint8_t fa = (uint8_t)table->funcs[i].is_async;
 fwrite(&fa, 1, 1, f);
+// v39: @optkeys 注解（逗号分隔；NULL = 没声明）—— 跨模块的选项键检查靠它
+sym_cache_write_string(f, table->funcs[i].optkeys);
 }
 
     // structs
@@ -772,6 +778,8 @@ static int sym_cache_deserialize(const char* cache_path, ModuleSymbolTable* tabl
     // v14: async 标记（C2）
     uint8_t fa2; if (fread(&fa2, 1, 1, f) != 1) goto fail;
     table->funcs[i].is_async = fa2;
+    // v39: @optkeys 注解
+    table->funcs[i].optkeys = sym_cache_read_string(f);
     table->func_count++;
         }
 

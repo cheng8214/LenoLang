@@ -26,6 +26,9 @@ void module_symbol_table_add_func(ModuleSymbolTable* table, const char* name, Ty
     func->param_default_texts = NULL;
     func->line = 0;  // 默认值，由 scan_func.inc 设置
     func->is_async = is_async;   // ★ 必须显式赋值（同下面的注释：扩容槽位是垃圾值）
+    // v39：@optkeys 注解（由 AST 填充器随后 set 上来）
+    //   ⚠ 同上面几条：realloc 扩容后新槽位是**垃圾值**，不置空会读到野指针 ✗
+    func->optkeys = NULL;
     // ⑱ 转正：参数类型（由 scan_func.inc 在 add 之后填；这里**必须**显式置空 ——
     // table->funcs 是 realloc 扩容的，新槽位里是垃圾值，不初始化会读到野指针）
     func->param_types = NULL;
@@ -534,6 +537,17 @@ void module_symbol_table_add_cfunc(ModuleSymbolTable* table, const char* name,
 // cfunc 符号数量
 int module_symbol_table_cfunc_count(ModuleSymbolTable* table) {
     return table ? table->cfunc_count : 0;
+}
+
+// 设置函数的 @optkeys（2026-10-31）：逗号分隔，"*" = 通配，NULL = 清除
+//   仿 set_struct_impls 的做法 —— add_func 的形参已经很长，不必再挤一个进去 ✓
+void module_symbol_table_set_func_optkeys(ModuleSymbolTable* table, const char* func_name,
+                                          const char* keys_csv) {
+    if (!table || !func_name) return;
+    ModuleFuncSymbol* f = module_symbol_table_find_func(table, func_name);
+    if (!f) return;
+    free(f->optkeys);
+    f->optkeys = keys_csv ? strdup(keys_csv) : NULL;
 }
 
 // ---- E1：use 符号名拼错时的相似名提示 ----

@@ -551,6 +551,36 @@ static void ast_fill_one_func(ModuleSymbolTable* table, Ast* fn) {
         if (rti) type_free(rti);   // add_func 内部 type_copy（见 sym_table_add.inc:17）✓
         sym = module_symbol_table_find_func(table, fn->u.func.name);
         if (!sym) return;
+        // ---- 注解 @optkeys（2026-10-31）：拼成逗号串写进符号表 ----
+        //   为什么在这里做：跨模块调用（`SDL3.createHBox({...})`）时**调用方拿不到这份 AST**
+        //   ⇒ 只有符号表能把"这个构造函数接受哪些键"带过去 ✓（模块内调用走 AST 的 annos，不查这儿）
+        //   语义与 semantic_annotations.c 一致：同名取并集；`@optkeys("*")` ⇒ 存 "*"（不检查）
+        if (fn->anno_count > 0 && fn->annos) {
+            char keys[2048];
+            keys[0] = '\0';
+            int has_anno = 0, wildcard = 0;
+            for (int i = 0; i < fn->anno_count && !wildcard; i++) {
+                AstAnno* a = &fn->annos[i];
+                if (!a->name || strcmp(a->name, "optkeys") != 0) continue;
+                has_anno = 1;
+                // 通配：整条放弃检查
+                if (a->arg_kind == 1 && a->arg_str && strcmp(a->arg_str, "*") == 0) { wildcard = 1; break; }
+                if (a->arg_kind != 5) continue;     // 非数组参数（写错了）⇒ 忽略，语义层会另报
+                for (int k = 0; k < a->arg_list_len; k++) {
+                    const char* key = a->arg_list[k];
+                    if (!key || !key[0]) continue;
+                    size_t used = strlen(keys);
+                    if (used + strlen(key) + 2 >= sizeof(keys)) break;   // 超长截断：宁少报不误报 ✓
+                    if (used) strcat(keys, ",");
+                    strcat(keys, key);
+                }
+            }
+            if (wildcard) {
+                module_symbol_table_set_func_optkeys(table, fn->u.func.name, "*");
+            } else if (has_anno && keys[0]) {
+                module_symbol_table_set_func_optkeys(table, fn->u.func.name, keys);
+            }
+        }
         // add_func 把 type_param_names / param_types 等**显式置空**（扩容槽位是垃圾值）
         // ⇒ 泛型形参名必须由这里补填，否则泛型函数的形参名整批丢失 ✗
         if (fn->u.func.type_param_count > 0 && fn->u.func.type_params) {

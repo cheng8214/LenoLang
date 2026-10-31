@@ -13,6 +13,7 @@
 
 #include "../include/lenolang.h"
 #include "../include/leno_ast.h"
+#include "semantic_internal.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -137,11 +138,43 @@ static const char* anno_dict_key(Ast* k) {
     return NULL;
 }
 
-void annos_check_call(Ast* ast) {
-    if (!ast || ast->kind != AST_CALL || g_optkeys_count == 0) return;
+// 前向声明：跨模块检查与同模块共用同一段逻辑（定义在文件后半 ✓）
+static void anno_check_dict_args(Ast** items, int count, const char* csv,
+                                 const char* fn_show, const char* where);
+
+void annos_check_call(Semantic* s, Ast* ast) {
+    if (!ast || ast->kind != AST_CALL) return;
 
     Ast* callee = ast->u.call.callee;
-    if (!callee || callee->kind != AST_VAR || !callee->u.var.name) return;
+    if (!callee) return;
+
+    // ① 跨模块：`SDL3.createHBox({...})` —— callee 是 `module.member`
+    //   数据来自模块符号表（AST 填充器把 @optkeys 写进去，.lenosymc v39 起随缓存往返 ✓）
+    //   ⚠ **必须在这个阶段查**：一旦被改写成 AST_MODULE_CALL，实参已经不是原始字面量了
+    //     （实测 `u.module_call.args.items[0]->kind` 读到 7 = AST_VAR，不是 AST_DICT ✗）
+    if (callee->kind == AST_MODULE_ACCESS && s != NULL) {
+        const char* mname = callee->u.module_access.module_name;
+        const char* fname = callee->u.module_access.member_name;
+        if (mname && fname) {
+            ImportedModuleInfo* mi = find_imported_module(s, mname);
+            if (mi && mi->sym_table) {
+                ModuleFuncSymbol* fs = module_symbol_table_find_func(mi->sym_table, fname);
+                if (fs && fs->optkeys) {
+                    char where[256];
+                    snprintf(where, sizeof(where), "%s 里该函数的 @optkeys",
+                             mi->file_path ? mi->file_path : "被导入模块");
+                    anno_check_dict_args(ast->u.call.args.items,
+                                         (int)ast->u.call.args.count,
+                                         fs->optkeys, fname, where);
+                }
+            }
+        }
+        return;
+    }
+
+    // ② 同模块：callee 是普通函数名
+    if (g_optkeys_count == 0) return;
+    if (callee->kind != AST_VAR || !callee->u.var.name) return;
 
     AnnoOptKeys* e = NULL;
     for (int i = 0; i < g_optkeys_count; i++) {
@@ -179,4 +212,129 @@ void annos_check_call(Ast* ast) {
         }
         return;      // 一个调用只查"第一个 Dict 字面量"（见设计文档 2.3 ✓）
     }
+}
+
+// ==================== 跨模块（2026-10-31）====================
+//   数据来源：模块符号表里函数的 `optkeys`（逗号分隔，.lenosymc v39 起随缓存往返 ✓）
+//   为什么这里用"逗号串"而不是 AnnoOptKeys 表：跨模块时调用方**拿不到被调函数的 AST**，
+//     只能从符号表拿到一个字符串 —— 就地解析比再建一张表省事 ✓
+
+static int anno_csv_has(const char* csv, const char* k) {
+    if (!csv || !k) return 0;
+    size_t kl = strlen(k);
+    const char* p = csv;
+    while (*p) {
+        const char* e = strchr(p, ',');
+        size_t len = e ? (size_t)(e - p) : strlen(p);
+        if (len == kl && strncmp(p, k, kl) == 0) return 1;
+        if (!e) break;
+        p = e + 1;
+    }
+    return 0;
+}
+
+// 在逗号串里找与 k 最相近的键（≤2）；找到写进 out 并返回 1
+static int anno_csv_nearest(const char* csv, const char* k, char* out, size_t outsz) {
+    int bestd = 3;
+    const char* p = csv;
+    out[0] = '\0';
+    while (*p) {
+        const char* e = strchr(p, ',');
+        size_t len = e ? (size_t)(e - p) : strlen(p);
+        if (len > 0 && len < 48) {
+            char tmp[48];
+            memcpy(tmp, p, len);
+            tmp[len] = '\0';
+            int d = anno_lev(k, tmp);
+            if (d < bestd) {
+                bestd = d;
+                snprintf(out, outsz, "%s", tmp);
+            }
+        }
+        if (!e) break;
+        p = e + 1;
+    }
+    return bestd < 3;
+}
+
+// 对一组实参按逗号串键表检查（同模块 / 跨模块共用）
+static void anno_check_dict_args(Ast** items, int count, const char* csv,
+                                 const char* fn_show, const char* where) {
+    if (!csv || !csv[0] || strcmp(csv, "*") == 0) return;
+    const char* file = error_get_filename();
+    for (int i = 0; i < count; i++) {
+        Ast* arg = items[i];
+        if (!arg || arg->kind != AST_DICT) continue;      // 只查字面量 ✓
+        for (int j = 0; j < arg->u.dict.count; j++) {
+            const char* key = anno_dict_key(arg->u.dict.entries[j].key);
+            if (!key || !key[0]) continue;
+            if (anno_csv_has(csv, key)) continue;
+            char hint[48];
+            int has = anno_csv_nearest(csv, key, hint, sizeof(hint));
+            if (has) {
+                fprintf(stderr,
+                        "%s:%d: [警告] %s 的 opts 不认识键 '%s'\n"
+                        "        提示: 你是不是想要 '%s'？\n"
+                        "        提示: 接受的键见 %s\n",
+                        file ? file : "?", arg->line, fn_show, key, hint, where);
+            } else {
+                fprintf(stderr,
+                        "%s:%d: [警告] %s 的 opts 不认识键 '%s'\n"
+                        "        提示: 接受的键见 %s\n",
+                        file ? file : "?", arg->line, fn_show, key, where);
+            }
+            fflush(stderr);
+        }
+        return;      // 只查第一个 Dict 字面量 ✓
+    }
+}
+
+// 跨模块调用：`SDL3.createHBox({...})`
+//   keys_csv / mod_path 由调用方从模块符号表取（见 visit_module.inc 的 AST_MODULE_CALL ✓）
+void annos_check_module(Ast* ast, const char* keys_csv, const char* mod_path) {
+    if (!ast || ast->kind != AST_MODULE_CALL) return;
+    char where[256];
+    snprintf(where, sizeof(where), "%s 里该函数的 @optkeys", mod_path ? mod_path : "被导入模块");
+    anno_check_dict_args(ast->u.module_call.args.items,
+                         (int)ast->u.module_call.args.count,
+                         keys_csv,
+                         ast->u.module_call.method_name,
+                         where);
+}
+
+// 从"被调函数的 AST"上直接取 @optkeys 再检查 —— **同模块 / 跨模块通用** ✓
+//   为什么这条最好用：调用点（visit_expr.inc 的参数个数检查处）本来就把 `func_def` 解出来了
+//   （跨模块也一样，否则报不出"参数数量不足"）⇒ 直接读 `func_def->annos`，不依赖符号表、
+//   也不受"AST 在哪个阶段被改写"的影响（前面试过 AST_CALL / AST_MODULE_CALL / infer_expr_type
+//   三处都不稳定：控件构造调用实测只走到参数检查这一处 ✗）
+void annos_check_call_def(Ast* call_ast, Ast* func_def) {
+    if (!call_ast || call_ast->kind != AST_CALL) return;
+    if (!func_def || func_def->anno_count <= 0 || !func_def->annos) return;
+
+    char keys[2048];
+    keys[0] = '\0';
+    int wildcard = 0, has_anno = 0;
+    for (int i = 0; i < func_def->anno_count && !wildcard; i++) {
+        AstAnno* a = &func_def->annos[i];
+        if (!a->name || strcmp(a->name, "optkeys") != 0) continue;
+        has_anno = 1;
+        if (a->arg_kind == 1 && a->arg_str && strcmp(a->arg_str, "*") == 0) { wildcard = 1; break; }
+        if (a->arg_kind != 5) continue;
+        for (int k = 0; k < a->arg_list_len; k++) {
+            const char* key = a->arg_list[k];
+            if (!key || !key[0]) continue;
+            size_t used = strlen(keys);
+            if (used + strlen(key) + 2 >= sizeof(keys)) break;   // 超长截断：宁少报不误报 ✓
+            if (used) strcat(keys, ",");
+            strcat(keys, key);
+        }
+    }
+    if (!has_anno || wildcard || !keys[0]) return;
+
+    const char* fname = func_def->u.func.name ? func_def->u.func.name : "?";
+    char where[160];
+    snprintf(where, sizeof(where), "%s 的 @optkeys", fname);
+    anno_check_dict_args(call_ast->u.call.args.items,
+                         (int)call_ast->u.call.args.count,
+                         keys, fname, where);
 }

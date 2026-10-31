@@ -275,6 +275,12 @@
                 if (module_info->load_failed) break;
             }
 
+            // 注解 @optkeys（2026-10-31）：跨模块的选项键检查
+            //   数据来自模块符号表里的 `optkeys`（.lenosymc v39 起随缓存往返 ✓）
+            // 注解 @optkeys：检查放在 `semantic_type.c` 的 AST_MODULE_CALL 分支里做 ——
+            //   表达式位置（`var x = SDL3.createHBox({...})`）走 infer_expr_type，
+            //   根本到不了这里（实测：本分支一次都没被控件的构造调用命中 ✗）
+
             // 检查模块是否已导入：原生模块必须显式导入，用户模块也必须导入
             if (is_native_module && !is_imported_module) {
                 error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
@@ -531,6 +537,14 @@
                         ModuleFuncSymbol* func_sym = module_symbol_table_find_func(
                             module_info->sym_table, ast->u.module_call.method_name);
                         if (func_sym) {
+                            // 注解 @optkeys（2026-10-31）：**跨模块**选项键检查
+                            //   放在这里的原因：本处已经拿到了 `func_sym`（模块符号表条目），
+                            //   而 `optkeys` 就是随它往返的（.lenosymc v39）。
+                            //   之前试过 `case AST_MODULE_CALL` 开头 —— 那条路径实测收不到
+                            //   控件构造调用（`var x = SDL3.createHBox({...})` 走的是这里）✗
+                            if (func_sym->optkeys) {
+                                annos_check_module(ast, func_sym->optkeys, module_info->file_path);
+                            }
                             // 检查参数数量（支持默认参数）
                             int actual_cnt = ast->u.module_call.args.count;
                             int expected_cnt = func_sym->param_count;

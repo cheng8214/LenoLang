@@ -28,6 +28,17 @@
 | G3 | 运行时零开销（`dochk.check` 可整套删掉） |
 | G4 | 编译器与框架解耦：注解机制通用，`@optkeys` 只是第一个使用者 |
 
+> **实现状态（2026-10-31）**：G1~G4 已落地。同模块与**跨模块**检查均已验证：
+>
+> ```
+> _tmp.leno:7: [警告] createHBox 的 opts 不认识键 'tip'
+>         提示: 你是不是想要 'clip'？
+>         提示: 接受的键见 …\LenoSDL3\lib\SDL3.leno 里该函数的 @optkeys
+> ```
+>
+> 全量套件 533 passed / 0 failed、**0 条误报**；Aria（5000+ 行、大量控件调用）同样零误报。
+> 第 13 节记录了实现过程中踩到的三个坑（注解该加在哪一层、检查落点、缓存）。
+
 ### 非目标（一期不做）
 
 - 注解参数引用 `const` 常量（只允许字面量）
@@ -388,6 +399,9 @@ export func createHBox(Dict opts): HBox {
 | 风险 | 影响 | 对策 |
 |---|---|---|
 | 声明漏键导致误报 | 正常代码编不过 | 第 9 节对账用例 + P1 先只警告 |
+| **只在实现层加注解** | 应用侧完全查不到（见 13.1） | 门面层必须同样加 |
+| 检查放错语义阶段 | 一次都命中不了（见 13.2） | 挂在"参数个数检查"旁 |
+| 符号表缓存丢键表 | 缓存命中时跨模块失效（见 13.3） | `.lenosymc` 升版本 + 写缓存前先填充 |
 | 注解参数要表达式 | 一期不支持，用户觉得受限 | 报错文案明确写"注解参数必须是字面量"，后续再放开 |
 | 挂错位置（挂到类型上） | 一个类型多构造时键表冲突 | 文档写明"挂函数"，并在 parser 里对挂在不支持的声明上报错 |
 | 多个 Dict 参数 | 只查第一个可能漏 | 一期文档写明；后续可加 `@optkeys(arg = "opts", ...)` |
@@ -395,7 +409,60 @@ export func createHBox(Dict opts): HBox {
 
 ---
 
-## 12. 验收清单
+## 12. 实现踩坑记录（2026-10-31，都实测过）
+
+### 13.1 注解必须加在**门面层**，不是实现层
+
+LenoSDL3 是"门面 + 实现"两层：
+
+```leno
+// SDL3.leno（门面，应用 import 的是这个）
+export func createHBox(Dict opts): HBox { return lay.createHBox(opts) }
+
+// sdl_layout.leno（实现）
+export func createHBox(Dict opts): HBox { HBox b = new HBox(); b.set(opts); return b }
+```
+
+把 `@optkeys` 加到**实现层**时，应用里的 `SDL3.createHBox({...})` 一个都不报——因为符号表里
+它看到的是**门面那个函数**（无注解），门面转发给实现时传的是 `opts` 变量（非字面量 ⇒ 按规则放行）。
+
+⇒ **门面与实现两处都要加**（实现层那份覆盖"模块内部互相调用"）。
+
+### 13.2 检查落点：挂在"参数个数检查"旁边
+
+先后试过三个位置，都收不到控件构造调用：
+
+| 位置 | 结果 |
+|---|---|
+| `visit_expr.inc` 的 `case AST_CALL` 开头 | 调用是 `AST_MODULE_CALL`，不进这个分支 ✗ |
+| `infer_expr_type` 的 `case AST_MODULE_CALL` | 该分支只处理 native 模块，用户模块的构造调用不来 ✗ |
+| `visit_module.inc` 的 `case AST_MODULE_CALL` 开头 | 实测只收到模块**内部**的转发调用（`mod=lay fn=createHBox`）✗ |
+
+**可行的位置**：`visit_expr.inc` 里 `func_def` 已解析出来、正要报"参数数量不足"的那一处——
+那里跨模块也能拿到被调函数的 AST（否则报不出参数个数）⇒ 直接读 `func_def->annos`，
+连符号表都不需要 ✓
+
+### 13.3 符号表缓存会丢键表
+
+`ModuleFuncSymbol.optkeys` 是 v39 新增字段。注意两点：
+
+- `add_func` 里**必须显式置空** `func->optkeys`（`table->funcs` 是 realloc 扩容的，
+  新槽位是垃圾值，不置空会读野指针 ✗ —— 与 `param_types` 那几条注释同一个坑）
+- 写缓存的顺序是「读源码 → **AST 填充** → 写缓存」（`sym_table_entry.inc:351/376`）⇒
+  optkeys 能进缓存 ✓；升版本号（v38 → v39）让旧缓存失效重扫 ✓
+
+实测：连续两次 `--check`（第二次命中缓存）都能正常报出，说明缓存往返是通的。
+
+### 13.4 目前**只给有 `_opts_keys()` 的控件**加了注解
+
+`_opts_keys()` 是运行期 `dochk.check` 用的白名单，与注解同源。没有它的控件（如 `Label`）
+**故意不加**——猜一个键表出来，一旦猜少一个，正常代码就编不过 ✗。这类控件留空 = 不检查。
+
+已加：`createHBox` / `createVBox` / `createAnchorBox`（门面 + 实现两处）、`createButton` /
+`createCheckBox` / `createSlider` / `createEdit` / `createTable` / `createBadge`（门面）。
+其余控件可按同一模式增量补（键表直接抄 `_opts_keys()`）。
+
+## 13. 验收清单
 
 - [ ] `@optkeys(["w"])` + `createHBox({w: 1, tip: "x"})` ⇒ 编译期报 `tip`，带"见 xxx:行"
 - [ ] `@optkeys("*")` ⇒ 不报

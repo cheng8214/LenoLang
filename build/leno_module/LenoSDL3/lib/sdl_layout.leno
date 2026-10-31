@@ -863,12 +863,22 @@ export func passWindowResize(Widget c, Ptr[u8] hwnd, int ww, int hh) {
 }
 
 // ==================== 工厂 ====================
+// ★ 2026-10-31：加 `@optkeys` —— 编译器据此在**编译期**检查调用点传的键
+//   （原来只有运行时 `dochk.check`：没有文件行号、打包后 print 进 Console 看不见 ✗）
+//   键表 = 本文件 `_set_keys()`（HBox/VBox/AnchorBox 三者**并集**，与运行时那份同源 ✓）
+//   ⚠ 两份必须同步：改了 `_set_keys()` 就要改这里（assert/test_anno_optkeys 有一致性用例 ✓）
+@optkeys(["x", "y", "w", "h", "pad_x", "pad_y", "padTop", "padBottom", "padLeft", "padRight",
+          "spacing", "justify", "bg_color", "bg_radius", "clip", "visible", "enabled"])
 export func createHBox(Dict opts): HBox {
     HBox b = new HBox(); b.set(opts); return b
 }
+@optkeys(["x", "y", "w", "h", "pad_x", "pad_y", "padTop", "padBottom", "padLeft", "padRight",
+          "spacing", "justify", "bg_color", "bg_radius", "clip", "visible", "enabled"])
 export func createVBox(Dict opts): VBox {
     VBox b = new VBox(); b.set(opts); return b
 }
+@optkeys(["x", "y", "w", "h", "pad_x", "pad_y", "padTop", "padBottom", "padLeft", "padRight",
+          "spacing", "justify", "bg_color", "bg_radius", "clip", "visible", "enabled"])
 export func createAnchorBox(Dict opts): AnchorBox {
     AnchorBox b = new AnchorBox(); b.set(opts); return b
 }
