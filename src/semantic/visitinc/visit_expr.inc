@@ -613,6 +613,9 @@
         }
             
         case AST_CALL: {
+            // 注解（2026-10-31）：@optkeys 声明的选项键在这里校验
+            //   （只查字面量 Dict、只警告不中断；跨模块调用一期不覆盖 ✓）
+            annos_check_call(ast);
             /* 同一次调用只报一条"没有方法"：本地 struct 分支报过之后，
              *   下面的通用分支不要再报一次（随后统一打毒，抑制级联 ✓） */
             int method_missing_reported = 0;

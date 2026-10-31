@@ -1,5 +1,11 @@
 #include "semantic_internal.h"
 
+// 注解（2026-10-31）：收集 @optkeys + 在调用点检查未知键，实现在 semantic_annotations.c
+//   ⚠ 一期只管**同模块**的直接调用、只查**字面量 Dict**、只警告不中断 ✓
+extern void annos_reset_all(void);
+extern void annos_collect_func(Ast* ast);
+extern void annos_check_call(Ast* ast);
+
 // ============================================================================
 // 泛型类型推断辅助
 // ============================================================================

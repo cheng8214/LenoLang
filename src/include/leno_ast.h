@@ -126,11 +126,31 @@ void type_guard_list_init(TypeGuardList* list);
 void type_guard_list_add(TypeGuardList* list, TypeGuardCond cond);
 void type_guard_list_free(TypeGuardList* list);
 
+// ==================== 注解（2026-10-31）====================
+//   `@optkeys([...])` 这类**编译期元数据**，挂在声明节点上（func / struct / var / const）。
+//   设计见 docs/注解系统与optkeys设计草案.md ✓
+//   ⚠ 一期只接受**字面量参数**（字符串 / 数字 / 布尔 / 字符串数组）——
+//     一旦允许表达式就要引入"注解求值"，失败语义与顺序全得设计，收益不值当 ✓
+typedef struct AstAnno {
+    char*     name;         // "optkeys" / "deprecated" …
+    int       line;         // 注解所在行（诊断用：指向声明处，比运行期日志有用 ✓）
+    int       arg_kind;     // 0=无参 / 1=string / 2=int / 3=float / 4=bool / 5=string 数组
+    char*     arg_str;
+    long long arg_int;
+    double    arg_float;
+    int       arg_bool;
+    char**    arg_list;     // arg_kind == 5 时的字符串数组
+    int       arg_list_len;
+} AstAnno;
+
 struct Ast {
     AstKind kind;
     int line;
     int column;             // 列号（1-based，用于错误报告，-1 表示未知）
     TypeInfo* cached_type;  // 类型推断缓存，避免重复推断同一表达式
+    // 注解链（2026-10-31）：放在 union 之外 ⇒ func / struct / var 都能挂，不必各加一份
+    AstAnno* annos;
+    int anno_count;
     union {
         struct { double value; int is_bigint; char* bigint_str; int is_float; } num;
         struct { char* value; int len; } string;

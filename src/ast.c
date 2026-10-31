@@ -84,6 +84,24 @@ static void free_ast_list(AstList* list) {
 void ast_free(Ast* ast) {
     if (!ast) return;
 
+    // 注解（2026-10-31）：挂在声明上、与具体 kind 无关 ⇒ 统一在这里释放，
+    //   不必往下面那个大 switch 的每个分支里各加一份 ✓
+    if (ast->annos) {
+        for (int i = 0; i < ast->anno_count; i++) {
+            free(ast->annos[i].name);
+            free(ast->annos[i].arg_str);
+            if (ast->annos[i].arg_list) {
+                for (int k = 0; k < ast->annos[i].arg_list_len; k++) {
+                    free(ast->annos[i].arg_list[k]);
+                }
+                free(ast->annos[i].arg_list);
+            }
+        }
+        free(ast->annos);
+        ast->annos = NULL;
+        ast->anno_count = 0;
+    }
+
     switch (ast->kind) {
         case AST_VAR:
             free(ast->u.var.name);

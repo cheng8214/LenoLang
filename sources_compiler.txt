@@ -16,6 +16,7 @@ src\semantic\semantic_visit_method.c
 src\semantic\semantic_visit_ast.c
 src\semantic\semantic_visit_func.c
 src\semantic\semantic_type_utils.c
+src\semantic\semantic_annotations.c
 src\optimize\optimize.c
 src\codegen\codegen.c
 src\codegen\codegen_emit.c

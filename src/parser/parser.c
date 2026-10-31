@@ -15,8 +15,195 @@ static int cur_ident_is(Parser* p, const char* word) {
            strncmp(p->lex.current.text, word, n) == 0;
 }
 
+// ==================== 注解（2026-10-31）====================
+//   语法：`@名字` / `@名字(字面量)` / `@名字([字符串, ...])`
+//   设计见 docs/注解系统与optkeys设计草案.md ✓
+//   ⚠ 一期只收**字面量参数**：允许表达式就要引入"注解求值"（失败语义/顺序/循环依赖），
+//     收益不值当 —— 报错文案明确写"注解参数必须是字面量" ✓
+
+// 复制 token 文本（`Lexer` 的 text 指向源串，不保证 null 结尾 ⇒ 按 len 拷）
+static char* anno_dup_text(Token tok) {
+    char* s = (char*)malloc((size_t)tok.len + 1);
+    if (!s) return NULL;
+    memcpy(s, tok.text, (size_t)tok.len);
+    s[tok.len] = '\0';
+    return s;
+}
+
+// 只释放"内部字符串"，**不**释放结构体本身 —— 给栈上的单个 AstAnno 用
+//   ⚠ 早期版本在失败路径里对 `&a`（栈变量）调了 anno_free_list ⇒ free 栈指针（UB ✗），
+//     gcc 的 -Wfree-nonheap-object 当场抓到（2026-10-31）
+static void anno_free_body(AstAnno* a) {
+    if (!a) return;
+    free(a->name);        a->name = NULL;
+    free(a->arg_str);     a->arg_str = NULL;
+    if (a->arg_list) {
+        for (int k = 0; k < a->arg_list_len; k++) free(a->arg_list[k]);
+        free(a->arg_list);
+        a->arg_list = NULL;
+        a->arg_list_len = 0;
+    }
+}
+
+static void anno_free_list(AstAnno* annos, int n) {
+    if (!annos) return;
+    for (int i = 0; i < n; i++) anno_free_body(&annos[i]);
+    free(annos);
+}
+
+// 注解能挂的"真正声明"（穿透 export 包装 ⇒ `@x export func …` 也合法 ✓）
+static Ast* anno_target_of(Ast* a) {
+    while (a && a->kind == AST_EXPORT) a = a->u.export.decl;
+    return a;
+}
+
+static int anno_attachable(Ast* target) {
+    if (!target) return 0;
+    switch (target->kind) {
+        case AST_FUNC_DEF:
+        case AST_STRUCT_DEF:
+        case AST_VAR_DECL:      // const 也走这个 kind（is_const 字段区分）
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+// 已知注解表（2026-10-31）：拼错直接报，等于没写的东西最难发现 ✓
+//   后续加 @deprecated / @arity 时在这里登记，并在别处补消费逻辑 ✓
+static int anno_is_known(const char* name) {
+    return name && strcmp(name, "optkeys") == 0;
+}
+
+// 解析一个 `@名字[(参数)]`，追加到 annos 数组末尾；失败返回 0
+static int parse_one_anno(Parser* p, AstAnno** annos, int* n, int* cap) {
+    int line = p->lex.current.line;
+    lexer_next(&p->lex);                       // 吃掉 '@'
+
+    if (p->lex.current.type != TOK_IDENT) {
+        error_add_at_fmt(ERR_SYNTAX, line, 0, "'@' 后面必须跟注解名（如 `@optkeys([...])`）");
+        return 0;
+    }
+    AstAnno a;
+    memset(&a, 0, sizeof(a));
+    a.line = line;
+    a.name = anno_dup_text(p->lex.current);
+    lexer_next(&p->lex);                       // 吃掉名字
+
+    // 未知注解 ⇒ 报错（带"你是不是想要"）
+    if (!anno_is_known(a.name)) {
+        const char* hint = (a.name && strlen(a.name) <= 8) ? "optkeys" : NULL;
+        if (hint) {
+            error_add_at_fmt(ERR_SYNTAX, line, 0,
+                "不认识的注解 '@%s'\n  提示: 你是不是想要 '@%s'？", a.name, hint);
+        } else {
+            error_add_at_fmt(ERR_SYNTAX, line, 0,
+                "不认识的注解 '@%s'（当前只支持 @optkeys）", a.name);
+        }
+        anno_free_body(&a);
+        return 0;
+    }
+
+    // 可选参数
+    if (p->lex.current.type == TOK_LPAREN) {
+        lexer_next(&p->lex);
+        if (p->lex.current.type == TOK_STRING) {
+            a.arg_kind = 1;
+            a.arg_str = anno_dup_text(p->lex.current);
+            lexer_next(&p->lex);
+        } else if (p->lex.current.type == TOK_LBRACKET) {
+            // 字符串数组
+            a.arg_kind = 5;
+            lexer_next(&p->lex);
+            int listCap = 0;
+            while (p->lex.current.type != TOK_RBRACKET && p->lex.current.type != TOK_EOF) {
+                if (p->lex.current.type != TOK_STRING) {
+                    error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                        "注解的数组参数只能是字符串字面量（如 `@optkeys([\"w\", \"h\"])`）");
+                    anno_free_body(&a);
+                    return 0;
+                }
+                if (a.arg_list_len >= listCap) {
+                    listCap = listCap ? listCap * 2 : 8;
+                    a.arg_list = (char**)realloc(a.arg_list, sizeof(char*) * (size_t)listCap);
+                }
+                a.arg_list[a.arg_list_len++] = anno_dup_text(p->lex.current);
+                lexer_next(&p->lex);
+                if (p->lex.current.type == TOK_COMMA) lexer_next(&p->lex);
+            }
+            if (p->lex.current.type != TOK_RBRACKET) {
+                error_add_at_fmt(ERR_SYNTAX, line, 0, "注解的数组参数没有用 ']' 收尾");
+                anno_free_body(&a);
+                return 0;
+            }
+            lexer_next(&p->lex);
+        } else if (p->lex.current.type == TOK_NUM) {
+            // 词法层只有 TOK_NUM（不区分整数/小数）⇒ 按文本里有没有 '.' 分流
+            char* tmp = anno_dup_text(p->lex.current);
+            if (tmp && strchr(tmp, '.')) {
+                a.arg_kind = 3;
+                a.arg_float = atof(tmp);
+            } else {
+                a.arg_kind = 2;
+                a.arg_int = tmp ? atoll(tmp) : 0;
+            }
+            free(tmp);
+            lexer_next(&p->lex);
+        } else if (p->lex.current.type == TOK_TRUE || p->lex.current.type == TOK_FALSE) {
+            a.arg_kind = 4;
+            a.arg_bool = (p->lex.current.type == TOK_TRUE) ? 1 : 0;
+            lexer_next(&p->lex);
+        } else {
+            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                "注解参数必须是字面量（字符串 / 数字 / true / false / 字符串数组）");
+            anno_free_body(&a);
+            return 0;
+        }
+        if (p->lex.current.type != TOK_RPAREN) {
+            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                "注解参数后面期望 ')'");
+            anno_free_body(&a);
+            return 0;
+        }
+        lexer_next(&p->lex);                   // 吃掉 ')'
+    }
+
+    // 追加
+    if (*n >= *cap) {
+        *cap = *cap ? *cap * 2 : 4;
+        *annos = (AstAnno*)realloc(*annos, sizeof(AstAnno) * (size_t)(*cap));
+    }
+    (*annos)[(*n)++] = a;
+    return 1;
+}
+
 Ast* parse_statement(Parser* p) {
     Ast* stmt = NULL;
+
+    // 注解（2026-10-31）：先把 `@xxx` 链收完，再递归解析真正的声明，最后挂上去。
+    //   递归调用自身 ⇒ `@a @b export func …` 天然可用（export 那条也走本函数 ✓）
+    if (p->lex.current.type == TOK_AT) {
+        AstAnno* annos = NULL;
+        int anno_n = 0, anno_cap = 0;
+        while (p->lex.current.type == TOK_AT) {
+            if (!parse_one_anno(p, &annos, &anno_n, &anno_cap)) {
+                anno_free_list(annos, anno_n);
+                return NULL;
+            }
+        }
+        Ast* inner = parse_statement(p);
+        if (!inner) { anno_free_list(annos, anno_n); return NULL; }
+        Ast* target = anno_target_of(inner);
+        if (!anno_attachable(target)) {
+            error_add_at_fmt(ERR_SYNTAX, annos[0].line, 0,
+                "注解只能用在模块级声明（func / struct / var / const）之前");
+            anno_free_list(annos, anno_n);
+            return inner;          // 声明本身已经解析出来了 ⇒ 丢掉注解但不中断编译（少刷级联错 ✓）
+        }
+        target->annos = annos;
+        target->anno_count = anno_n;
+        return inner;
+    }
 
     // defer（2026-10-22）：单独一层，不进下面的各分支 —— parse_block_internal
     // 会把它收集起来、在本块结束时逆序降级成 finally ✓

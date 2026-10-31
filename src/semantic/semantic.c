@@ -4,6 +4,10 @@
 // 模块级变量初始化顺序检查（定义在 semantic_visit_ast.c，2026-10-23）
 void mv_check_top(Semantic* s, Ast* block);
 
+// 注解表清空（定义在 semantic_annotations.c，2026-10-31）
+//   ⚠ 表是**进程级**的静态数组 ⇒ 这次分析不清，上一个文件的 @optkeys 会串到下一个 ✗
+extern void annos_reset_all(void);
+
 // ============================================================================
 // 函数表哈希表实现
 // ============================================================================
@@ -179,6 +183,7 @@ void semantic_init(Semantic* s, Ast* root) {
 }
 
 void semantic_analyze(Semantic* s, Ast* ast) {
+    annos_reset_all();          // 注解（@optkeys）表每个分析单元清一次 ✓
     // 创建全局作用域
     s->current = scope_new(NULL, 0);
     s->root_scope = s->current;
@@ -579,6 +584,7 @@ void semantic_cleanup(Semantic* s) {
 
 // 模块语义分析 - 将模块级别的符号标记为 SYM_MODULE
 void semantic_analyze_module(Semantic* s, Ast* ast) {
+    annos_reset_all();          // 同 semantic_analyze：模块级分析也要清注解表 ✓
     // 标记为模块模式
     s->is_module = 1;
 

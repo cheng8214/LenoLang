@@ -1,0 +1,46 @@
+// 注解 @optkeys 回归测试（2026-10-31）
+// 覆盖：合法键 / 多个 @optkeys 取并集 / 通配 "*" / 无注解放行 / 非字面量实参放行
+//
+// ⚠ "未知键只警告不中断" 这条**没法**在本用例里断言（要捕获 stderr），
+//    由 docs/注解系统与optkeys设计草案.md 第 12 节的验收清单手工核对 ✓
+//    真正保证"不误报"的是全量套件本身：任何误报都会让对应用例编不过 ✓
+
+@optkeys(["w", "h", "pad_x"])
+func box(Dict opts): int {
+    return 1
+}
+
+@optkeys(["a"])
+@optkeys(["b"])          // 第二个同名注解 ⇒ 并集：a / b 都该认
+func two(Dict opts): int {
+    return 2
+}
+
+@optkeys("*")            // 通配：接受任意键
+func anyBox(Dict opts): int {
+    return 3
+}
+
+func noAnno(Dict opts): int {
+    return 4
+}
+
+main()
+{
+    // ① 合法键
+    assert_eq(box({w: 1, h: 2, pad_x: 3}), 1)
+
+    // ② 多个 @optkeys 取并集
+    assert_eq(two({a: 1}), 2)
+    assert_eq(two({b: 2}), 2)
+
+    // ③ 通配 "*" ⇒ 不检查
+    assert_eq(anyBox({whatever: 1}), 3)
+
+    // ④ 没注解 ⇒ 不检查
+    assert_eq(noAnno({whatever: 1}), 4)
+
+    // ⑤ 非字面量实参 ⇒ 放行（静态不可知，宁漏勿误报）
+    var o = {w: 9}
+    assert_eq(box(o), 1)
+}

@@ -823,12 +823,14 @@ void lexer_next(Lexer* lex) {
             }
             break;
         case '@':
+            // 两种用途（2026-10-31 起）：
+            //   ① `@"..."`  = 原始字符串（原有语义 ✓）
+            //   ② `@名字`   = 注解前缀（新）—— 语义全在 parser/semantic，词法层只出一个 TOK_AT ✓
             if (peek_next(lex) == '"') {
                 lex->current = read_raw_string(lex);
             } else {
-                error_add_at_fmt(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1, "意外的字符 '@'，原始字符串需要使用 @\"...\"");
+                lex->current = make_token(lex, TOK_AT);
                 advance(lex);
-                lex->current = make_token(lex, TOK_ERROR);
             }
             break;
 case '=':
