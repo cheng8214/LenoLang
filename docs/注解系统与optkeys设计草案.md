@@ -483,11 +483,23 @@ export func createHBox(Dict opts): HBox { HBox b = new HBox(); b.set(opts); retu
 - **没有白名单的**（`Label` / `Alert` / `VirtualGrid`）：扫描实现里的 `opts.get("…")` / `opts.has("…")`
   反推键表，再补通用几何键（`w`/`h`）。这类最容易漏，**必须靠全量应用验证**兜底。
 
-### 13.6 覆盖现状
+### 13.6 覆盖现状：**全部 48 个** `createXxx` 都有注解，运行时检查清零
 
-已加注解 **43 个** `createXxx`（含 `HBox/VBox/AnchorBox` 门面 + 实现两处）。
-未加的内部控件：`createPopMenu` / `createTray` / `createDragHint` / `createTitleBar` / `createWindow`
-（应用不直接调用，仍走各自保留的运行时检查）。
+最后一轮（提交 `4f4c218`）补了 5 个内部控件：`createWindow` / `createTitleBar` / `createTray` /
+`createDragHint` / `createPopMenu`。
+
+> ⚠ 这里踩了个顺序坑：`popmenu/tray/drag/titlebar` 的运行时检查在批量删除那轮（`8f6d523`）
+> **已经被一并删掉**了，但注解是后补的 ⇒ 中间有一段时间**这 4 个控件完全没检查**。
+> 教训：**删之前先确认每个控件的注解都在**，否则"删得比补得快"就是功能退化。
+
+现在全仓只剩 **3 处** `dochk.check`，都是 `HBox/VBox/AnchorBox` 的 `add(c, opts)`：
+
+```leno
+dochk.check("add()", opts, _add_keys())     // ← 注解不覆盖这条路径，必须保留
+```
+
+`add()` 的参数是**往容器里塞子项时的布局约束**（`grow`/`basis`/`align`…），不是构造函数参数，
+和 `@optkeys` 不是一回事。`sdl_opts.leno` 本体也保留（`add` 与 `warn_once` 还在用）。
 其余控件可按同一模式增量补（键表直接抄 `_opts_keys()`）。
 
 ## 13. 验收清单
