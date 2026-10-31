@@ -65,6 +65,10 @@ use tbar.(TitleBar, TitleBarAction)   // 标题栏 + 它的**动作按钮**类�
 import "sdl_canvas.leno" as cnv
 use cnv.Canvas
 import "sdl_popmenu.leno" as pmenu; use pmenu.PopMenu    // 自绘弹出菜单（图标传图片路径，同 MenuBar ✓）
+// ★ 2026-10-31：键表按实现扫出来的（`font_size` 是唯一从 opts 读的），另补通用几何/外观键 ——
+//   ⚠ 宁可多不能少：猜多只是"合法但不检查"，猜少会让正常代码编不过 ✗
+@optkeys(["font_size", "x", "y", "w", "h", "visible", "bg_color", "border_color", "radius",
+          "item_h", "min_w"])
 export func createPopMenu(Dict opts): PopMenu { return pmenu.createPopMenu(opts) }
 
 
@@ -222,6 +226,8 @@ export func createBarChart(Dict opts): BarChart { return cht.createBarChart(opts
 export func createLineChart(Dict opts): LineChart { return cht.createLineChart(opts) }
 @optkeys(["font_size", "h", "show_grid", "show_points", "show_values", "title", "w", "x", "y"])
 export func createPieChart(Dict opts): PieChart { return cht.createPieChart(opts) }
+// ★ 2026-10-31：托盘只有两个键（图标路径 + 悬停提示）
+@optkeys(["icon", "tooltip"])
 export func createTray(Dict opts): Tray        { return tray.createTray(opts) }
 @optkeys(["alpha", "bg_color", "border", "border_alpha", "border_color", "cursor", "enabled", "h",
           "image_mode", "image_path", "image_tint", "overlay_hover_only", "overlay_path",
@@ -281,7 +287,17 @@ export func createCard(Dict opts): Card             { return crd.createCard(opts
 @optkeys(["sep_color", "sep_width", "first", "h", "hit_pad", "hover_color", "min_first",
           "min_second", "orientation", "ratio", "second", "w", "x", "y"])
 export func createSplitter(Dict opts): Splitter    { return spl.createSplitter(opts) }
+// ★ 2026-10-31：这三处原来只靠运行时 dochk.check，注解补齐后运行时那套已删（见 8f6d523）
+//   ⚠ 键表是扫实现里的 `opts.get("…")` 反推的 —— 若日后给这些控件加新选项，这里要同步
+@optkeys(["bg_color", "border_color", "bg_a", "border_a", "text_color", "font_size", "pad_x",
+          "pad_y", "radius", "offset_x", "offset_y", "x", "y", "w", "h", "visible"])
 export func createDragHint(Dict opts): DragHint     { return drag.createDragHint(opts) }
+@optkeys(["h", "title", "font_size", "font_path", "btn_width", "btn_spacing", "title_pad",
+          "title_align", "btn_align", "show_minimize", "show_maximize", "show_close",
+          "show_separator", "resizable", "bg_color", "text_color", "hover_color",
+          "close_hover_color", "icon_color", "sep_color", "icon_minimize", "icon_maximize",
+          "icon_restore", "icon_close", "title_icon", "title_image", "title_icon_size",
+          "title_icon_gap", "icon_size", "actions", "x", "y", "w"])
 export func createTitleBar(Dict opts): TitleBar       { return tbar.createTitleBar(opts) }
 // 标题栏「动作按钮」的两个纯函数也透出去（调用方/示例/测试都靠同一份判定 ✓，2026-10-07 ✓）
 export func parseTitleBarActions(Array[Dict] src): Array[TitleBarAction] { return tbar.parseTitleBarActions(src) }
@@ -493,6 +509,8 @@ export func hasClipboardText(): bool { return core.hasClipboardText() }
 //   要让窗口/任务栏显示图标，必须显式调一次 SDL_SetWindowIcon。这里就地做了 ✓
 //   用法：createWindow({title:"…", w:…, h:…, icon: dirs.join(dirs.res_dir(), "images/app.png")})
 //   （路径要用 res_dir()：单文件打包后资源解包到缓存目录，script_dir() 取不到 ✓）
+// ★ 2026-10-31：键表即原 `wnd.Window.init()` 里那句内联白名单（实现读完这 7 个键就不再看了）
+@optkeys(["title", "w", "h", "flags", "resizable", "aa", "icon"])
 export func createWindow(Dict opts): Window    {
     var win = wnd.createWindow(opts)
     string iconPath = opts.get("icon", "")
