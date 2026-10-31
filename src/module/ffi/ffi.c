@@ -81,7 +81,23 @@
 #include <unistd.h>
 #endif
 
-#define MAX_FFI_CALLBACKS 256
+/* ★ 2026-10-31：256 → 1024。为什么是**固定数组**而不是动态增长：
+ *
+ *   槽位里存着 GC 根（见 FFICallbackEntry 的说明），注册的是**数组元素的地址**
+ *   （`gc_push_root(&entry->obj)`）⇒ 一旦 realloc 让数组搬家，此前注册的根全变野指针，
+ *   GC 会往已释放的内存写标记（内存破坏级错误，且只在 GC 触发后才炸）。
+ *
+ *   真要动态得改成"指针数组 + 每项单独 malloc"（地址永久稳定），
+ *   为省 30KB 静态内存引入扩容/状态机/并发三处复杂度，不值。
+ *
+ *   成本核算：每项 ≈40 字节 ⇒ 1024 项 = 40KB 静态区；
+ *   trampoline 是**按需分配**的（`create_callback_trampoline` 时才 alloc 256B），
+ *   与上限无关 ⇒ 提高上限不增加启动开销。
+ *
+ *   为什么提高：GUI 应用可能给每个动画元素/定时器挂一个回调，
+ *   256 对"同时存活"偏紧；但也不能无限提（65536 会让真泄漏跑一整天才发现，
+ *   且数组涨到 2.6MB）——1024 是平衡点。 */
+#define MAX_FFI_CALLBACKS 1024
 
 /* ===== 尾部哨兵的读写（对齐安全） =====
  * 分配大小可以是任意字节数 ⇒ `(char*)ptr + size` 未必 8 字节对齐，
@@ -3398,7 +3414,17 @@ Value ffi_callback_create_with_sig(Value func_val, int ret_type, int param_count
      * 见 g_callback_mutex 处的说明。 */
     int cb_id = callback_registry_reserve();
     if (cb_id < 0) {
-        native_throw_error("回调数量已达上限");
+        /* ★ 2026-10-31：报错要**指向病因**。原来只有一句「回调数量已达上限」，
+         *   会让人以为是"上限不够"，实际多半是**漏调 free_callback**（甚至调错 API）。
+         *   实测教训：`ffi.free_callback` 自身类型判断写错、成了空操作，
+         *   从报错完全看不出来，白查了两轮。 */
+        char cb_msg[512];
+        snprintf(cb_msg, sizeof(cb_msg),
+                 "ffi.callback: 同时存活的回调已达上限 %d 个\n"
+                 "  提示: 这个数只统计「仍然活着」的回调 —— 反复创建时请确认每次都调了 ffi.free_callback\n"
+                 "  提示: ffi.callback 返回的是 trampoline，ffi.free 对它无效（必须用 ffi.free_callback）",
+                 MAX_FFI_CALLBACKS);
+        native_throw_error(cb_msg);
         return val_null();
     }
 
