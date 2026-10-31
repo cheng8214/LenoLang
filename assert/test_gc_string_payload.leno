@@ -1,0 +1,43 @@
+// 字符串正文必须计入 GC 账面（young_allocated），否则"只分配大字符串"永远撞不到阈值
+//
+// 现场（2026-11-01，Aria / LenoMusic 下载歌曲）：
+//   dl_one 每片 `client.get()` 产生一个 ~1MB 响应串，但 gc_alloc 只按**对象头**
+//   （sizeof(ObjString)）累加 young_allocated ⇒ 下载一整首歌只记了几百字节
+//   ⇒ Minor GC 一次都不跑 ⇒ 8MB×6 首实测 working_set 5MB → 109MB 单调上涨。
+//
+// 判据：连续造 ~24MB 互不相同的大字符串（全部立即变垃圾）后，minor_count 必须上涨。
+// 修前：minor_count 恒为 0；修后：≥ 1（默认阈值 8MB）。
+func minor_count(): int {
+    var g = _gc_stats()
+    if g is Dict[string, any] => d {
+        var v = d["minor_count"]
+        if v is int { return v }
+    }
+    return -1
+}
+
+main() {
+    int before = minor_count()
+    assert_true(before >= 0, "gc 统计不可用")
+
+    // 16 → 1MB（纯字符串拼接，不走任何模块）
+    string big = "0123456789abcdef"
+    for 16 to i {
+        big = big + big
+    }
+    assert_eq(big.byte_len(), 1048576)
+
+    // 24 个互不相同的 ~1MB 串（前缀不同 ⇒ 不会被内化表去重），随即丢弃
+    int sink = 0
+    for 24 to i {
+        string t = _str(i) + big
+        sink = sink + t.byte_len()
+    }
+    assert_true(sink > 0)
+
+    int after = minor_count()
+    assert_true(after > before,
+        "大字符串没有计入 GC 账面：分配 24MB 后 minor_count 仍为 " + _str(after))
+
+    print("test_gc_string_payload passed (minor " + _str(before) + " -> " + _str(after) + ")")
+}

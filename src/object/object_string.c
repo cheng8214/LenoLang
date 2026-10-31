@@ -97,6 +97,11 @@ ObjString* str_alloc(int len) {
         return NULL;
     }
 
+    // ★ 把**字符缓冲**也记进 GC 账面：gc_alloc 只按对象头（sizeof(ObjString)）累加
+    //   young_allocated，1MB 的正文一个字节都不算 ⇒ 纯大数据（下载分片、大 JSON）
+    //   无论分配多少都撞不到阈值，GC 永不触发 ⇒ 内存只涨不降（实测 8MB×6 首 5MB→109MB）。
+    //   与 Array/Dict 的 payload 记账同口径（见 object_array.c / object_dict.c）。
+    gc_track_memory((Object*)str, sizeof(ObjString), sizeof(ObjString) + (size_t)len + 1);
     str->len = len;
     str->capacity = len + 1;   // 精确大小 ⇒ 不可原地追加（见 ObjString.capacity 说明）
     str->char_len = 0;  // 调用者需在填充内容后设置
@@ -117,6 +122,7 @@ ObjString* str_new_nointern(const char* chars, int len) {
         return NULL;
     }
     
+    gc_track_memory((Object*)str, sizeof(ObjString), sizeof(ObjString) + (size_t)len + 1);
     memcpy(str->chars, chars, len);
     str->chars[len] = '\0';
     str->len = len;
@@ -153,6 +159,8 @@ ObjString* str_new(const char* chars, int len) {
         return NULL;
     }
     
+    // 正文也记账（同 str_alloc 的说明）：否则大字符串撑不起 GC 阈值
+    gc_track_memory((Object*)str, sizeof(ObjString), sizeof(ObjString) + (size_t)len + 1);
     memcpy(str->chars, chars, len);
     str->chars[len] = '\0';
     str->len = len;
@@ -238,6 +246,8 @@ ObjString* str_alloc_cap(int len, int capacity) {
         native_throw_error("内存分配失败");
         return NULL;
     }
+    // 按**实际容量**记账（预扩容的那部分也是真实占用的内存，必须算进阈值）
+    gc_track_memory((Object*)str, sizeof(ObjString), sizeof(ObjString) + (size_t)capacity);
     str->len = len;
     str->capacity = capacity;
     str->char_len = 0;   // 调用者填充内容后设置
@@ -314,6 +324,8 @@ ObjString* str_append_inplace(ObjString* a, Value b) {
             return a;
         }
         a->chars = nb;
+        // 扩容同样要进 GC 账面：否则 `s = s + x` 累加出来的大串同样撞不到阈值
+        gc_track_memory((Object*)a, (size_t)a->capacity, (size_t)newcap);
         a->capacity = newcap;
     }
     if (b_is_self) bdata = a->chars;   // realloc 之后再取（前半段内容未变）
