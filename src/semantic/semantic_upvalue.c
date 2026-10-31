@@ -49,11 +49,10 @@ int sem_const_root_name(Semantic* s, Ast* e, char* buf, int bufsz) {
             SymRef tmp;
             memset(&tmp, 0, sizeof(tmp));
             Symbol* sym = resolve_variable_with_upvalue(s, e->u.var.name, &tmp);
-            if (sym && sym->is_const) {
-                snprintf(buf, (size_t)bufsz, "%s", e->u.var.name);
-                return 1;
-            }
-            return 0;
+            int is_const = (sym && sym->is_const);
+            if (is_const) snprintf(buf, (size_t)bufsz, "%s", e->u.var.name);
+            symref_dispose(&tmp);
+            return is_const;
         }
         case AST_FIELD_ACCESS:
             return sem_const_root_name(s, e->u.field_access.obj, buf, bufsz);
@@ -75,11 +74,10 @@ int sem_const_root_name(Semantic* s, Ast* e, char* buf, int bufsz) {
             SymRef tmp;
             memset(&tmp, 0, sizeof(tmp));
             Symbol* bsym = resolve_variable_with_upvalue(s, base, &tmp);
-            if (bsym && bsym->is_const) {
-                snprintf(buf, (size_t)bufsz, "%s", base);
-                return 1;
-            }
-            return 0;
+            int is_const = (bsym && bsym->is_const);
+            if (is_const) snprintf(buf, (size_t)bufsz, "%s", base);
+            symref_dispose(&tmp);
+            return is_const;
         }
         default:
             return 0;
@@ -191,7 +189,21 @@ Symbol* resolve_variable_with_upvalue(Semantic* s, const char* name, SymRef* ref
     return sym;
 }
 
+// 临时 SymRef 的配套释放（resolve_* 会往里 strdup name / struct_name）。
+// 存储进 AST 节点的 ref 由 ast_free 释放，**不要**对它们调用本函数。
+void symref_dispose(SymRef* ref) {
+    if (!ref) return;
+    free(ref->name);
+    free(ref->struct_name);
+    ref->name = NULL;
+    ref->struct_name = NULL;
+}
+
 Symbol* resolve_variable_with_upvalue_raw(Semantic* s, const char* name, SymRef* ref) {
+    // ⚠ 这里**不能**预先清空 ref：调用点可能在 ref->name 里放了 `__self_field__` 标记
+    //   （AST_COMPOUND_ASSIGN 的 self 字段改写，见 semantic_visit_method.c）。若在这里
+    //   清掉，解析失败后语义层就看不到标记 ⇒ 误报「未定义的变量」。
+    //   改为"真正解析成功时覆盖"：下面各成功返回点先复制、再释放旧值。
     if (!s->current) {
         return scope_resolve(s->current, name);
     }
@@ -199,11 +211,12 @@ Symbol* resolve_variable_with_upvalue_raw(Semantic* s, const char* name, SymRef*
     // 先在当前作用域查找
     Symbol* local_sym = scope_resolve_local(s->current, name);
     if (local_sym) {
+        { char* nn = strdup(local_sym->name); free(ref->name); ref->name = nn; }
         ref->kind = local_sym->kind;
         ref->index = local_sym->index;
-        ref->name = strdup(local_sym->name);
         ref->type_kind = local_sym->type ? local_sym->type->kind : TYPE_ANY;
         ref->element_type_kind = (local_sym->type && local_sym->type->element_type) ? local_sym->type->element_type->kind : TYPE_ANY;
+        free(ref->struct_name);
         ref->struct_name = (local_sym->type && local_sym->type->struct_name) ? strdup(local_sym->type->struct_name) : NULL;
         return local_sym;
     }
@@ -228,21 +241,23 @@ Symbol* resolve_variable_with_upvalue_raw(Semantic* s, const char* name, SymRef*
             // 如果找到的是全局变量、全局函数、native函数、模块变量或类型定义，直接返回，不作为 upvalue 处理
             if (sym->kind == SYM_GLOBAL || sym->kind == SYM_GLOBAL_FUNC || sym->kind == SYM_NATIVE || sym->kind == SYM_MODULE ||
                 sym->kind == SYM_TYPE || sym->kind == SYM_STRUCT || sym->kind == SYM_CSTRUCT || sym->kind == SYM_ENUM) {
+                { char* nn = strdup(sym->name); free(ref->name); ref->name = nn; }
                 ref->kind = sym->kind;
                 ref->index = sym->index;
-                ref->name = strdup(sym->name);
                 ref->type_kind = sym->type ? sym->type->kind : TYPE_ANY;
                 ref->element_type_kind = (sym->type && sym->type->element_type) ? sym->type->element_type->kind : TYPE_ANY;
+                free(ref->struct_name);
                 ref->struct_name = (sym->type && sym->type->struct_name) ? strdup(sym->type->struct_name) : NULL;
                 return sym;
             }
             // 如果变量定义在当前函数的函数作用域中，不是 upvalue
             if (scope == current_func_scope) {
+                { char* nn = strdup(target_sym->name); free(ref->name); ref->name = nn; }
                 ref->kind = target_sym->kind;
                 ref->index = target_sym->index;
-                ref->name = strdup(target_sym->name);
                 ref->type_kind = target_sym->type ? target_sym->type->kind : TYPE_ANY;
                 ref->element_type_kind = (target_sym->type && target_sym->type->element_type) ? target_sym->type->element_type->kind : TYPE_ANY;
+                free(ref->struct_name);
                 ref->struct_name = (target_sym->type && target_sym->type->struct_name) ? strdup(target_sym->type->struct_name) : NULL;
                 return target_sym;
             }
@@ -253,11 +268,12 @@ Symbol* resolve_variable_with_upvalue_raw(Semantic* s, const char* name, SymRef*
                 int crossed_func = 0;
                 while (check_scope) {
                     if (check_scope == current_func_scope) {
+                        { char* nn = strdup(target_sym->name); free(ref->name); ref->name = nn; }
                         ref->kind = target_sym->kind;
                         ref->index = target_sym->index;
-                        ref->name = strdup(target_sym->name);
                         ref->type_kind = target_sym->type ? target_sym->type->kind : TYPE_ANY;
                         ref->element_type_kind = (target_sym->type && target_sym->type->element_type) ? target_sym->type->element_type->kind : TYPE_ANY;
+                        free(ref->struct_name);
                         ref->struct_name = (target_sym->type && target_sym->type->struct_name) ? strdup(target_sym->type->struct_name) : NULL;
                         return target_sym;
                     }
@@ -300,11 +316,12 @@ Symbol* resolve_variable_with_upvalue_raw(Semantic* s, const char* name, SymRef*
         // 最后尝试全局查找
         Symbol* global_sym = scope_resolve(s->current, name);
         if (global_sym) {
+            { char* nn = strdup(global_sym->name); free(ref->name); ref->name = nn; }
             ref->kind = global_sym->kind;
             ref->index = global_sym->index;
-            ref->name = strdup(global_sym->name);
             ref->type_kind = global_sym->type ? global_sym->type->kind : TYPE_ANY;
             ref->element_type_kind = (global_sym->type && global_sym->type->element_type) ? global_sym->type->element_type->kind : TYPE_ANY;
+            free(ref->struct_name);
             ref->struct_name = (global_sym->type && global_sym->type->struct_name) ? strdup(global_sym->type->struct_name) : NULL;
             return global_sym;
         }

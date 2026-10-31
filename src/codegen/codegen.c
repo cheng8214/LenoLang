@@ -40,6 +40,14 @@ void codegen_cleanup(CodeGen* gen) {
     }
     gen->dtor_count = 0;
     gen->dtor_capacity = 0;
+    // import 别名登记表（strdup 出来的一对名字）—— 此前从没释放过
+    for (int i = 0; i < gen->mod_alias_count; i++) {
+        free(gen->mod_aliases[i]);
+        free(gen->mod_real_names[i]);
+        gen->mod_aliases[i] = NULL;
+        gen->mod_real_names[i] = NULL;
+    }
+    gen->mod_alias_count = 0;
 }
 
 void codegen_add_dtor_entry(CodeGen* gen, int local_slot) {

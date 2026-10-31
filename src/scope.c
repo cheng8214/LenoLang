@@ -146,6 +146,56 @@ void scope_free(Scope* scope) {
             if (sym->enum_values) {
                 free(sym->enum_values);
             }
+            // 释放 struct / cstruct 字段元数据（都是本符号独占的副本）
+            if (sym->struct_type_name) free(sym->struct_type_name);
+            if (sym->struct_field_names) {
+                for (int j = 0; j < sym->struct_field_count; j++) {
+                    free(sym->struct_field_names[j]);
+                }
+                free(sym->struct_field_names);
+            }
+            if (sym->struct_field_types) {
+                for (int j = 0; j < sym->struct_field_count; j++) {
+                    if (sym->struct_field_types[j]) type_free(sym->struct_field_types[j]);
+                }
+                free(sym->struct_field_types);
+            }
+            if (sym->struct_field_null_default) free(sym->struct_field_null_default);
+            if (sym->struct_type_params) {
+                for (int j = 0; j < sym->struct_type_param_count; j++) {
+                    free(sym->struct_type_params[j]);
+                }
+                free(sym->struct_type_params);
+            }
+            if (sym->cstruct_field_offsets) free(sym->cstruct_field_offsets);
+            // 释放 clib 函数签名（名称/返回类型/参数类型全部是独立副本）
+            if (sym->clib_func_names) {
+                for (int j = 0; j < sym->clib_func_count; j++) {
+                    free(sym->clib_func_names[j]);
+                }
+                free(sym->clib_func_names);
+            }
+            if (sym->clib_func_return_types) {
+                for (int j = 0; j < sym->clib_func_count; j++) {
+                    if (sym->clib_func_return_types[j]) type_free(sym->clib_func_return_types[j]);
+                }
+                free(sym->clib_func_return_types);
+            }
+            if (sym->clib_func_param_types) {
+                for (int j = 0; j < sym->clib_func_count; j++) {
+                    TypeInfo** row = sym->clib_func_param_types[j];
+                    if (!row) continue;
+                    for (int k = 0; k < sym->clib_func_param_counts[j]; k++) {
+                        if (row[k]) type_free(row[k]);
+                    }
+                    free(row);
+                }
+                free(sym->clib_func_param_types);
+            }
+            if (sym->clib_func_param_counts) free(sym->clib_func_param_counts);
+            // 函数别名信息
+            if (sym->alias_module_name) free(sym->alias_module_name);
+            if (sym->alias_func_name) free(sym->alias_func_name);
             free(sym);
         }
     }
@@ -153,6 +203,38 @@ void scope_free(Scope* scope) {
     // 释放符号表数组
     free(scope->syms);
     free(scope);
+}
+
+// 释放符号上"类型定义元数据"的副本（struct 字段 / 泛型参数 / cstruct 布局）。
+// 用途：同一符号被预扫描注册后，主阶段会用新的数组再次填充 ⇒ 覆盖前必须先释放旧的，
+// 否则每预注册一次就漏一份（LeakSanitizer 实测：semantic 预注册 + visit_type_def 覆盖）。
+void symbol_release_type_meta(Symbol* sym) {
+    if (!sym) return;
+    free(sym->struct_type_name);
+    sym->struct_type_name = NULL;
+    if (sym->struct_field_names) {
+        for (int i = 0; i < sym->struct_field_count; i++) free(sym->struct_field_names[i]);
+        free(sym->struct_field_names);
+        sym->struct_field_names = NULL;
+    }
+    if (sym->struct_field_types) {
+        for (int i = 0; i < sym->struct_field_count; i++) {
+            if (sym->struct_field_types[i]) type_free(sym->struct_field_types[i]);
+        }
+        free(sym->struct_field_types);
+        sym->struct_field_types = NULL;
+    }
+    free(sym->struct_field_null_default);
+    sym->struct_field_null_default = NULL;
+    if (sym->struct_type_params) {
+        for (int i = 0; i < sym->struct_type_param_count; i++) free(sym->struct_type_params[i]);
+        free(sym->struct_type_params);
+        sym->struct_type_params = NULL;
+    }
+    sym->struct_type_param_count = 0;
+    free(sym->cstruct_field_offsets);
+    sym->cstruct_field_offsets = NULL;
+    sym->struct_field_count = 0;
 }
 
 // 释放"语义阶段临时造的虚拟符号"（专属释放器，见 leno_vm.h 的说明）。

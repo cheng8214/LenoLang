@@ -1750,6 +1750,11 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
 
         uint32_t global_count;
         if (!ctx_read_u32(ctx, &global_count)) return 0;
+        // 命中已加载模块（编译期留下的占位模块）时，这些字段可能已有一份 ⇒ 先释放旧值
+        if (mod->globals) {
+            free(mod->globals);
+            mod->globals = NULL;
+        }
         mod->global_count = (int)global_count;
         mod->global_capacity = (int)global_count > 0 ? (int)global_count : 0;
         mod->globals = NULL;
@@ -1774,6 +1779,11 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
         {
             uint32_t ni_count;
             if (!ctx_read_u32(ctx, &ni_count)) return 0;
+            if (mod->native_imports) {
+                for (int i = 0; i < mod->native_import_count; i++) free(mod->native_imports[i]);
+                free(mod->native_imports);
+                mod->native_imports = NULL;
+            }
             mod->native_import_count = (int)ni_count;
             mod->native_imports = NULL;
             if (ni_count > 0) {
@@ -1805,6 +1815,11 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
                     free(chunk);
                     return 0;
                 }
+                // 命中已加载模块时可能已有编译期留下的 init_chunk ⇒ 先释放旧值
+                if (mod->init_chunk) {
+                    chunk_free(mod->init_chunk);
+                    free(mod->init_chunk);
+                }
                 mod->init_chunk = chunk;
             }
         }
@@ -1813,6 +1828,11 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
         {
             uint32_t em_count;
             if (!ctx_read_u32(ctx, &em_count)) return 0;
+            if (mod->export_mappings) {
+                for (int i = 0; i < mod->export_mapping_count; i++) free(mod->export_mappings[i].name);
+                free(mod->export_mappings);
+                mod->export_mappings = NULL;
+            }
             mod->export_mapping_count = (int)em_count;
             mod->export_mappings = NULL;
             if (em_count > 0) {
@@ -1834,6 +1854,13 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
         {
             uint32_t ur_count;
             if (!ctx_read_u32(ctx, &ur_count)) return 0;
+            if (mod->use_reexport_names) {
+                for (int i = 0; i < mod->use_reexport_count; i++) free(mod->use_reexport_names[i]);
+                free(mod->use_reexport_names);
+                mod->use_reexport_names = NULL;
+            }
+            free(mod->use_reexport_kinds);
+            mod->use_reexport_kinds = NULL;
             mod->use_reexport_count = (int)ur_count;
             mod->use_reexport_names = NULL;
             mod->use_reexport_kinds = NULL;
@@ -2358,9 +2385,14 @@ SerializeResult chunk_serialize_to_memory(Chunk* chunk, Scope* global_scope,
         return SERIALIZE_ERR_FORMAT;
     }
 
-    // 转移 WriteBuffer 所有权给调用方，不 wb_free
+    // 转移 WriteBuffer 的**数据**给调用方；但内部去重表（in_payload/in_slots/in_used）
+    // 仍归 wb 所有 —— 只把 data 置空再 wb_free，否则每次序列化都会漏掉这三块内存。
     *out_data = wb.data;
     *out_size = wb.size;
+    wb.data = NULL;
+    wb.size = 0;
+    wb.capacity = 0;
+    wb_free(&wb);
     return SERIALIZE_OK;
 }
 

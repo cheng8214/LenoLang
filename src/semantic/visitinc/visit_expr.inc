@@ -179,6 +179,7 @@
                                 guard_sym->index = ref.index;
                             }
                         }
+                        symref_dispose(&ref);
                     }
 
                     visit(s, ast->u.binop.r);
@@ -304,6 +305,7 @@
                                      "不能对 const 变量 '%s' 的%s重新赋值", obj_name,
                                      is_field ? "字段" : "元素");
                 }
+                symref_dispose(&tmp_ref);
             } else if (obj && obj->kind == AST_MODULE_ACCESS) {
                 const char* mod_name = obj->u.module_access.module_name;
                 const char* mem_name = obj->u.module_access.member_name;
@@ -559,6 +561,7 @@
                         type_utils_check_dict_index_assignment(sym, assign_type, ast->line, ast->column);
                         if (assign_type) type_free(assign_type);
                     }
+                    symref_dispose(&ref);
                 }
                 // 注意：允许通过 d["key"] = value 添加新键或更新已有键
             }
@@ -641,6 +644,7 @@
                                                  "不能对 const 变量 '%s' 调用修改方法 '%s'",
                                                  obj->u.var.name, method_name);
                             }
+                            symref_dispose(&tmp_ref);
                         } else if (obj && obj->kind == AST_MODULE_ACCESS) {
                             const char* mod_name = obj->u.module_access.module_name;
                             const char* mem_name = obj->u.module_access.member_name;
@@ -1860,7 +1864,10 @@
                         
                         // 从实参中推断类型参数
                         for (int i = 0; i < func_def->u.func.type_param_count; i++) {
-                            inferred_names[i] = func_def->u.func.type_params[i];
+                            // ⚠ 必须 strdup：这个数组最终会挂到 AST_CALL 上并由 ast_free 释放，
+                                //   直接借用 func_def->u.func.type_params[i] 会与 FUNC_DEF 的释放重复 ✗
+                            inferred_names[i] = func_def->u.func.type_params[i]
+                                                    ? strdup(func_def->u.func.type_params[i]) : NULL;
                             inferred_types[i] = NULL;
                         }
                         
@@ -1943,7 +1950,20 @@
                             semantic_record_pending_generic_call(s, func_name, ast);
                         }
 
-                        // 存储特化信息
+                        // 存储特化信息（parser 可能已给过一份显式实参 ⇒ 先释放旧副本）
+                        if (ast->u.call.generic_type_args) {
+                            for (int i = 0; i < ast->u.call.generic_type_count; i++) {
+                                if (ast->u.call.generic_type_args[i])
+                                    type_free(ast->u.call.generic_type_args[i]);
+                            }
+                            free(ast->u.call.generic_type_args);
+                        }
+                        if (ast->u.call.generic_type_names) {
+                            for (int i = 0; i < ast->u.call.generic_type_count; i++) {
+                                free(ast->u.call.generic_type_names[i]);
+                            }
+                            free(ast->u.call.generic_type_names);
+                        }
                         ast->u.call.generic_type_names = inferred_names;
                         ast->u.call.generic_type_args = inferred_types;
                         ast->u.call.generic_type_count = func_def->u.func.type_param_count;
@@ -1984,6 +2004,8 @@
                                 for (int p = 0; p < func_def->u.func.type_param_count; p++) {
                                     TypeInfo* sub = type_substitute(check_type, func_def->u.func.type_params[p], inferred_types[p]);
                                     if (sub != check_type) {
+                                        // 上一轮替换出的临时副本先释放，避免逐层替换泄漏
+                                        if (check_type != expected_type) type_free(check_type);
                                         check_type = sub;  // 使用替换后的类型
                                     }
                                 }
@@ -2139,9 +2161,11 @@
                                     free(obj_node->u.module_access.module_name);
                                     free(obj_node->u.module_access.member_name);
                                     if (obj_node->u.module_access.ref.name) free(obj_node->u.module_access.ref.name);
+                                    if (obj_node->u.module_access.ref.struct_name) free(obj_node->u.module_access.ref.struct_name);
                                 } else if (obj_node->kind == AST_VAR) {
                                     free(obj_node->u.var.name);
                                     if (obj_node->u.var.ref.name) free(obj_node->u.var.ref.name);
+                                    if (obj_node->u.var.ref.struct_name) free(obj_node->u.var.ref.struct_name);
                                 }
                                 if (obj_node->cached_type) { type_free(obj_node->cached_type); }
                                 free(obj_node);
@@ -2432,7 +2456,12 @@
             }
 
             if (obj_type) type_free(obj_type);
-            infer_expr_type(s, ast);
+            // 这里只为副作用（把推断结果缓存进 ast->cached_type 供 codegen 用），
+            // 返回值是调用方拥有的副本 ⇒ 必须释放，否则每个索引表达式漏一个 TypeInfo。
+            {
+                TypeInfo* inferred = infer_expr_type(s, ast);
+                if (inferred) type_free(inferred);
+            }
             break;
             
         case AST_SLICE:

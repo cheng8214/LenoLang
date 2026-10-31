@@ -94,6 +94,8 @@
                                 sym->type = cstruct_type;
                                 stmt->u.cstruct_def.ref.kind = sym->kind;
                                 stmt->u.cstruct_def.ref.index = sym->index;
+                                // parser 已分配过 ref.name ⇒ 覆盖前先释放
+                                free(stmt->u.cstruct_def.ref.name);
                                 stmt->u.cstruct_def.ref.name = strdup(sym->name);
                                 stmt->u.cstruct_def.ref.type_kind = TYPE_CSTRUCT;
                             }
@@ -116,6 +118,8 @@
                                 sym->type = clib_type;
                                 stmt->u.clib_def.ref.kind = sym->kind;
                                 stmt->u.clib_def.ref.index = sym->index;
+                                // parser 已分配过 ref.name ⇒ 覆盖前先释放
+                                free(stmt->u.clib_def.ref.name);
                                 stmt->u.clib_def.ref.name = strdup(sym->name);
                                 stmt->u.clib_def.ref.type_kind = TYPE_CLIB;
                             }
@@ -138,6 +142,8 @@
                                 sym->type = cfunc_type;
                                 stmt->u.cfunc_decl.ref.kind = sym->kind;
                                 stmt->u.cfunc_decl.ref.index = sym->index;
+                                // parser 已分配过 ref.name ⇒ 覆盖前先释放
+                                free(stmt->u.cfunc_decl.ref.name);
                                 stmt->u.cfunc_decl.ref.name = strdup(sym->name);
                                 stmt->u.cfunc_decl.ref.type_kind = TYPE_CFUNC;
                             }

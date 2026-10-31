@@ -132,8 +132,13 @@
                     // 保存符号引用信息
                     ast->u.cstruct_def.ref.kind = sym->kind;
                     ast->u.cstruct_def.ref.index = sym->index;
+                    // parser 已分配过 ref.name ⇒ 覆盖前先释放
+                    free(ast->u.cstruct_def.ref.name);
                     ast->u.cstruct_def.ref.name = strdup(sym->name);
                     ast->u.cstruct_def.ref.type_kind = sym->type ? sym->type->kind : TYPE_CSTRUCT;
+
+                    // 预扫描可能已填过旧的字段/布局副本 ⇒ 覆盖前先释放
+                    symbol_release_type_meta(sym);
 
                     // 存储 cstruct 字段信息
                     sym->struct_field_count = ast->u.cstruct_def.field_count;
@@ -320,6 +325,8 @@
                     sym->type = clib_type;
                     ast->u.clib_def.ref.kind = sym->kind;
                     ast->u.clib_def.ref.index = sym->index;
+                    // parser / 预扫描可能已分配过 ref.name ⇒ 覆盖前先释放
+                    free(ast->u.clib_def.ref.name);
                     ast->u.clib_def.ref.name = strdup(sym->name);
                     ast->u.clib_def.ref.type_kind = TYPE_CLIB;
 

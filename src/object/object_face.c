@@ -63,16 +63,10 @@ void face_def_register(ObjFaceDef* def) {
                                    face_def_same_shape(face_def_table[i], def))) {
                 return;
             }
-            // 覆盖旧定义：将旧定义的资源指针置 NULL，防止 gc_free_all 时 double-free
-            // （与 struct_def_register / cstruct_def_register / enum_def_register 统一策略；
-            //  旧定义对象仍由 GC 管理，gc_free_all 会调用 free_object_resources）
+            // 覆盖旧定义：**不要**把旧定义的字段置 NULL —— 旧定义对象仍由 GC 管理，
+            // gc_free_all/sweep 会负责释放这些字段；置 NULL 只会让那次释放被跳过 ⇒ 泄漏。
             ObjFaceDef* old_def = face_def_table[i];
-            old_def->name = NULL;
-            old_def->methods = NULL;
-            old_def->method_count = 0;
-            old_def->type_param_names = NULL;
-            old_def->type_param_constraints = NULL;
-            old_def->type_param_count = 0;
+            if (old_def == def) return;   // 同一对象重复注册：空操作
 
             face_def_table[i] = def;
             return;

@@ -636,7 +636,13 @@ static TypeInfo* parse_function_type(Parser* p) {
         }
     }
     
-    return type_function(return_type, param_types, param_count);
+    TypeInfo* fn_type = type_function(return_type, param_types, param_count);
+    // type_function 内部会 type_copy 每个形参类型 ⇒ 这里临时数组与元素必须自己释放
+    for (int i = 0; i < param_count; i++) {
+        if (param_types[i]) type_free(param_types[i]);
+    }
+    free(param_types);
+    return fn_type;
 }
 
 // 内部类型解析 - 支持泛型和可空类型 Type?
@@ -1883,6 +1889,8 @@ Ast* parse_expression_stmt(Parser* p) {
                 // 复合赋值只支持单个变量
                 if (left_count != 1) {
                     error_add_at_fmt(ERR_SYNTAX, line, p->lex.current.column, "复合赋值只支持单个变量");
+                    // 错误返回：已解析的目标列表必须释放，否则整组目标 AST 泄漏
+                    free_assign_targets(left_targets, left_count);
                     return NULL;
                 }
                 
@@ -1892,6 +1900,7 @@ Ast* parse_expression_stmt(Parser* p) {
                     if (tgt->kind != AST_INDEX) {
                         error_add_at_fmt(ERR_SYNTAX, line, p->lex.current.column,
                             "复合赋值的目标只能是变量或索引（如 a += 1 / arr[i] += 1）");
+                        free_assign_targets(left_targets, left_count);
                         return NULL;
                     }
                     lexer_next(&p->lex);
@@ -3421,6 +3430,7 @@ int parser_eval_const_expr_text(const char* text, char** names, int64_t* values,
         }
         ast_free(expr);
     }
+    parser_free(&p);
 
     g_enum_member_names = saved_names;
     g_enum_member_values = saved_values;

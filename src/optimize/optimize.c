@@ -1047,10 +1047,16 @@ return 1;
             // 消除条件判断和 else 分支，保留 then 分支
             if (is_always_true(ast->u.if_.cond)) {
                 Ast* then_branch = ast->u.if_.then;
+                // 条件与 else 分支在本轮被丢弃：必须显式释放（下面的 memcpy 会覆盖整个 union，
+                //   之后没人再持有它们 ⇒ 此前每个 `if true { }` 都漏一个条件 AST）
+                Ast* drop_cond = ast->u.if_.cond;
+                Ast* drop_else = ast->u.if_.else_;
                 // 先将指针置空，防止 ast_free 释放子节点
                 ast->u.if_.then = NULL;
                 ast->u.if_.cond = NULL;
                 ast->u.if_.else_ = NULL;
+                if (drop_else) ast_free(drop_else);
+                if (drop_cond) ast_free(drop_cond);
                 int is_term = is_terminator(then_branch);
                 // 释放缓存的类型信息
                 if (ast->cached_type) { type_free(ast->cached_type); ast->cached_type = NULL; }
@@ -1065,9 +1071,14 @@ return 1;
             // 消除条件判断和 then 分支，保留 else 分支
             if (is_always_false(ast->u.if_.cond)) {
                 Ast* else_branch = ast->u.if_.else_;
+                // 同优化1：then 分支与条件被丢弃 ⇒ 显式释放（否则 `if false { }` 漏整棵 then 子树）
+                Ast* drop_then = ast->u.if_.then;
+                Ast* drop_cond = ast->u.if_.cond;
                 ast->u.if_.then = NULL;
                 ast->u.if_.cond = NULL;
                 ast->u.if_.else_ = NULL;
+                if (drop_then) ast_free(drop_then);
+                if (drop_cond) ast_free(drop_cond);
                 if (else_branch) {
                     // 有 else 分支：用 else 替换整个 if
                     int is_term = is_terminator(else_branch);

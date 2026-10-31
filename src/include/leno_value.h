@@ -798,6 +798,10 @@ typedef struct ObjChannel {
     PlatformMutex mutex;
     PlatformCondVar not_empty;
     PlatformCondVar not_full;
+    // Channel 是 malloc + 引用计数的**非 GC 对象** ⇒ GC 永远收不到它。
+    // 没人 unref 时整块泄漏，故登记到全局链，由 channel_free_all() 在进程收尾时统一释放。
+    struct ObjChannel* all_next;   // 全局登记链的下一个
+    int released;                  // channel_unref 已释放 buffer/同步原语 ⇔ 1
 } ObjChannel;
 
 // 定时器
@@ -885,6 +889,9 @@ void gc_minor_collect(void);
 void gc_major_collect(void);
 Object* gc_alloc(size_t size, ObjType type);
 void gc_free_all(void);
+// 进程收尾时释放所有仍存活的 Channel（非 GC 对象，见 ObjChannel.all_next 的说明）。
+// ⚠ 只能在**所有工作线程已结束**的退出点调用（main 包装器在 main_logic 返回后调）。
+void channel_free_all(void);
 // ★ 2026-10-19：子线程堆的“摘下 → 主线程释放”（见 ObjThread.dead_heap 注释 ✓）
 //   `gc_detach_heap` 只能在**子线程自己**里调（它操作的是当前线程的 THREAD_LOCAL 堆 ✓）
 void* gc_detach_heap(void);
@@ -929,6 +936,8 @@ void gc_try_collect_deferred(void);
 void gc_force_collect(void);
 void gc_push_root(Value* ptr);
 void gc_pop_root(void);
+// 线程退出时释放本线程的 GC 辅助结构（extra_roots）。已 detach 过则空操作。
+void gc_release_thread_aux(void);
 
 // ============================================================================
 // 对象操作 API

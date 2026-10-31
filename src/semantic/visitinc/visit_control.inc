@@ -213,6 +213,8 @@
                         ast->u.if_.guard_var_ref.index = original_sym->index;
                         ast->u.if_.guard_var_ref.name = strdup(original_sym->name);
                     }
+                    // ref 只是临时载体：内容已复制进 AST ⇒ 释放堆字符串
+                    symref_dispose(&ref);
                 }
 
                 Scope* then_scope = scope_new(s->current, 0);
@@ -345,6 +347,7 @@
                                 }
                             }
                         }
+                        symref_dispose(&ref);
                     }
                 } else if (ast->u.if_.guard_var != NULL) {
                     // 兼容旧版本单条件类型守卫
@@ -398,6 +401,7 @@
                             }
                         }
                     }
+                    symref_dispose(&ref);
                 }
                 
                 // ★ T27：`if a != null` 空窄化 —— then 分支内 `a` 不再被判为「确定为 null」
@@ -498,6 +502,7 @@
                                 else_guard_sym->index = ref.index;
                             }
                         }
+                        symref_dispose(&ref);
                     }
                 } else if (ast->u.if_.guard_var != NULL) {
                     // 兼容旧版本单条件类型守卫
@@ -526,6 +531,7 @@
                             else_guard_sym->index = ref.index;
                         }
                     }
+                    symref_dispose(&ref);
                 }
 
                 // ★ T27：`if a == null { } else { }` 的 else 分支内 `a` 非空 ⇒ 同样豁免
@@ -620,6 +626,7 @@
                         "遍历请写 `for 集合 to %s`（**集合在前**）",
                         for_cond->u.binop.l->u.var.name, for_cond->u.binop.l->u.var.name);
                 }
+                symref_dispose(&_probe);
             }
 
             // ★ WARN_FOR_EMPTY_RANGE（2026-10-17 实现；枚举与类别名早就有、一直零调用点）：
@@ -722,6 +729,7 @@
                             } else {
                                 sym->type = type_new(TYPE_ANY);
                             }
+                            if (iterable_type) type_free(iterable_type);
                         } else {
                             // 数值循环，变量是 int 类型
                             sym->type = type_new(TYPE_INT);
@@ -825,6 +833,7 @@
                             ast->u.switch_.cases[i].guard_var_ref.index = sym->index;
                             ast->u.switch_.cases[i].guard_var_ref.name = strdup(sym->name);
                         }
+                        symref_dispose(&ref);
                     }
                 }
 
@@ -854,6 +863,7 @@
                             guard_sym->index = narrow_ref.index;  // 复用原始变量槽位
                         }
                     }
+                    symref_dispose(&narrow_ref);
                 }
 
                 // case is Type => var 绑定：在 case 作用域内定义新局部变量

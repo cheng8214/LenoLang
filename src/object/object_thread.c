@@ -785,6 +785,15 @@ static void* thread_entry_point(void* arg) {
         child_vm.active_thread_capacity = 0;
     }
 
+    // ★ 本线程的 intern 表与 GC extra_roots 也是 THREAD_LOCAL 独占资源：
+    //   线程退出后没有任何人会再释放它们（intern_table_free 只释放条目桶，
+    //   不碰 GC 堆里的字符串 ⇒ 与 detach 后的堆可安全共存）。
+    {
+        extern void intern_table_free(void);
+        intern_table_free();
+    }
+    gc_release_thread_aux();
+
     return NULL;
 }
 
@@ -1016,6 +1025,31 @@ ThreadState thread_get_state(ObjThread* thread) {
 // Channel 对象 API
 // ============================================================================
 
+// ----------------------------------------------------------------------------
+// Channel 全局登记链（见 ObjChannel.all_next 的说明）
+//   Channel 用 malloc 分配、不在任何 GC 堆链表里 ⇒ GC 的 gc_free_all 永远看不到它们。
+//   引用计数只有 channel_ref（跨线程克隆）在用，**没有任何地方 unref** ⇒ 整块内存
+//   （结构 + buffer）在进程结束前一直挂着（LeakSanitizer 实测 6 个用例、约 2.6KB）。
+//   这里用无锁原子交换压入全局链，程序收尾时 channel_free_all() 整链释放。
+//   ⚠ 只在"所有工作线程已 join"的进程退出点调用（main.c 的两个包装器）。
+// ----------------------------------------------------------------------------
+static ObjChannel* g_channel_all_head = NULL;
+
+void channel_free_all(void) {
+    ObjChannel* ch = __atomic_exchange_n(&g_channel_all_head, NULL, __ATOMIC_ACQ_REL);
+    while (ch) {
+        ObjChannel* next = ch->all_next;
+        if (!ch->released) {
+            if (ch->buffer) free(ch->buffer);
+            platform_mutex_destroy(&ch->mutex);
+            platform_cond_destroy(&ch->not_empty);
+            platform_cond_destroy(&ch->not_full);
+        }
+        free(ch);
+        ch = next;
+    }
+}
+
 ObjChannel* channel_new(int capacity) {
     ObjChannel* channel = (ObjChannel*)malloc(sizeof(ObjChannel));
     if (!channel) return NULL;
@@ -1047,6 +1081,9 @@ ObjChannel* channel_new(int capacity) {
     platform_cond_init(&channel->not_empty);
     platform_cond_init(&channel->not_full);
 
+    // 登记到全局链（无锁压栈）；released 已被 memset 置 0
+    channel->all_next = __atomic_exchange_n(&g_channel_all_head, channel, __ATOMIC_ACQ_REL);
+
     return channel;
 }
 
@@ -1070,7 +1107,11 @@ void channel_unref(ObjChannel* channel) {
         platform_mutex_destroy(&channel->mutex);
         platform_cond_destroy(&channel->not_empty);
         platform_cond_destroy(&channel->not_full);
-        free(channel);
+        // 结构本身不在这里 free：它还在全局登记链上（g_channel_all_head），
+        // 若在这里释放，channel_free_all 会二次释放同一块内存。
+        // 打上 released 标记后，由进程收尾的 channel_free_all() 只释放结构体。
+        channel->buffer = NULL;
+        channel->released = 1;
         return;
     }
     platform_mutex_unlock(&channel->mutex);

@@ -695,6 +695,15 @@ ObjModule* load_module_file(const char* file_path, const char* current_file, con
         // 更新已加载列表
         update_loaded_module(full_path, placeholder_module);
         // 清空原 module 的内容（避免 GC 重复释放已转移的资源）
+        // ⚠ 已深拷贝进 placeholder 的 globals / export_mappings 必须在这里释放：
+        //   置 NULL 只是让 GC 的 free_object_resources 跳过 ⇒ 每次导入模块漏一份。
+        free(module->globals);
+        if (module->export_mappings) {
+            for (int ei = 0; ei < module->export_mapping_count; ei++) {
+                free(module->export_mappings[ei].name);
+            }
+            free(module->export_mappings);
+        }
         module->exports = dict_new(16);
         module->globals = NULL;
         module->global_count = 0;

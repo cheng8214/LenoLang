@@ -168,6 +168,27 @@ void transform_method_body(Ast* ast, char** field_names, int field_count, char**
     cur_amb_meth_pcnts = saved_amb_meth_pcnts;
 }
 
+// 释放 AST_ASSIGN 专属的三组元数据（names / refs / targets）。
+//   ⚠ 只在**即将把节点 kind 改成 AST_INDEX_ASSIGN** 时调用：union 一被覆盖，
+//     这三块就没人认识、也没人会释放了（实测：每个 `字段 = 值` 漏 names+refs+targets 三块，
+//     以及 targets 里已改写成 self.字段 的 AST 子树）。
+static void release_assign_meta(Ast* ast) {
+    int n = ast->u.assign.name_count;
+    for (int i = 0; i < n; i++) {
+        if (ast->u.assign.names) free(ast->u.assign.names[i]);
+        if (ast->u.assign.refs) {
+            free(ast->u.assign.refs[i].name);
+            free(ast->u.assign.refs[i].struct_name);
+        }
+        if (ast->u.assign.targets && ast->u.assign.targets[i]) {
+            ast_free(ast->u.assign.targets[i]);
+        }
+    }
+    free(ast->u.assign.names);
+    free(ast->u.assign.refs);
+    free(ast->u.assign.targets);
+}
+
 // shadowed_names/shadowed_count: 当前**生效的**遮蔽集合（= 形参 + 所在块内声明过的局部变量 ✓）
 // param_names/param_count: 形参那一份（全程不变）—— 只给诊断用（见 is_param_name 的理由 ✓）
 static void transform_method_body_ex(Ast* ast, char** field_names, int field_count,
@@ -365,6 +386,7 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
                             Ast* nested_idx = tgt->u.index.index;
                             tgt->u.index.obj = NULL;      // 子节点交给新节点，避免二次释放
                             tgt->u.index.index = NULL;
+                            release_assign_meta(ast);     // 改 kind 前释放 u.assign 的三组元数据
                             ast->kind = AST_INDEX_ASSIGN;
                             ast->u.index_assign.obj = nested_obj;
                             ast->u.index_assign.index = nested_idx;   // 末级成员名字符串 ✓
@@ -376,7 +398,9 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
                         // 保存原始 value 引用
                         Ast* original_value = ast->u.assign.value;
 
-                        // 替换当前 AST 节点为 INDEX_ASSIGN
+                        // 替换当前 AST 节点为 INDEX_ASSIGN（先释放 u.assign 的三组元数据，
+                        //   并把已改写成 self.字段 的目标子树一起释放 —— 它们不再被任何节点引用）
+                        release_assign_meta(ast);
                         ast->kind = AST_INDEX_ASSIGN;
 
                         // 创建 self 变量节点

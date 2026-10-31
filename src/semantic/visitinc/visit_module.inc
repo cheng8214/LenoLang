@@ -382,6 +382,7 @@
                                         error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                                                          "不能对 const 变量 '%s' 调用修改方法 '%s'", first_arg->u.var.name, m_name);
                                     }
+                                    symref_dispose(&tmp_ref);
                                 } else if (first_arg && first_arg->kind == AST_MODULE_ACCESS) {
                                     const char* mod_name = first_arg->u.module_access.module_name;
                                     const char* mem_name = first_arg->u.module_access.member_name;
@@ -676,6 +677,7 @@
                              "想调它的方法请先造实例：var x = new %s()，然后 x.%s(...)",
                              ast->u.module_call.module_name, ast->u.module_call.module_name,
                              ast->u.module_call.method_name);
+                    symref_dispose(&ref);
                     break;
                 }
                 if (obj_sym) {
@@ -760,8 +762,9 @@
                             ast->cached_type = type_new(TYPE_CLIB);
                             ast->cached_type->struct_name = strdup(obj_type->struct_name);
                             // 同时保存 lib 变量的 ref 信息
+                            // ⚠ 直接接管 ref 的堆字符串（name/struct_name），不要再 strdup：
+                            //   旧写法把 ref.name 覆盖成副本后 break，原指针就永久泄漏 ✗
                             ast->u.module_call.lib_ref = ref;
-                            if (ref.name) ast->u.module_call.lib_ref.name = strdup(ref.name);
                             // 计算并缓存 clib 函数的 Leno 返回类型（供 infer_expr_type 使用）
                             // clib_sym 可能有函数信息（同模块定义），也可能没有（跨模块导入）
                             int clib_ret_set = 0;
@@ -1201,9 +1204,9 @@
                         }
 
                         // 保存原始对象名（用于创建 self 参数）
+                        // ⚠ module_name 的所有权保留在 AST 里，统一在下面的转换点释放一次
+                        //   （这里若先 free，转换点再 free 就是 double-free ✗）
                         char* original_obj_name = strdup(ast->u.module_call.module_name);
-                        // 将 AST_MODULE_CALL 转换为 AST_CALL，callee 为 INDEX(self, "method")
-                        free(ast->u.module_call.module_name);
 
                         // 创建 self 变量节点
                         Ast* self_var = ast_new(AST_VAR, ast->line);
@@ -1258,6 +1261,13 @@
                             ast_list_add(&new_args, ast->u.module_call.args.items[i]);
                         }
                         free(ast->u.module_call.args.items);
+                        // 旧 union 的 module/method/lib 名字都已复制到新节点 ⇒ 释放后再改 kind
+                        free(ast->u.module_call.module_name);
+                        free(ast->u.module_call.method_name);
+                        free(ast->u.module_call.lib_ref.name);
+                        free(ast->u.module_call.lib_ref.struct_name);
+                        // ref 只是临时载体：内容已 strdup 进 self_var / self_arg ⇒ 必须释放
+                        symref_dispose(&ref);
 
                         // 转换 AST 类型
                         ast->kind = AST_CALL;
@@ -1268,6 +1278,9 @@
 
                     // 释放临时对象
                     if (obj_type) type_free(obj_type);
+                    // infer_expr_type 会把推断结果也缓存进 temp_var->cached_type
+                    // （返回值是另一个副本）；临时节点下一行就 free ⇒ 缓存那份必须先释放
+                    if (temp_var->cached_type) type_free(temp_var->cached_type);
                     free(temp_var->u.var.name);
                     if (temp_var->u.var.ref.name) free(temp_var->u.var.ref.name);
                     free(temp_var);
@@ -1630,6 +1643,7 @@
                         obj_var->u.var.ref.name = strdup(obj_sym->name);
                         obj_var->u.var.ref.type_kind = obj_sym->type ? obj_sym->type->kind : TYPE_ANY;
                     }
+                    symref_dispose(&ref);   // 最后一次使用（内容已复制进 obj_var）
 
                     Ast* method_str = ast_new(AST_STRING, ast->line);
                     method_str->u.string.value = strdup(ast->u.module_call.method_name);
@@ -1639,11 +1653,21 @@
                     prop_access->u.index.obj = obj_var;
                     prop_access->u.index.index = method_str;
 
-                    // 转换为普通函数调用
+                    // 转换为普通函数调用（先把旧 union 里的堆内存全部取出来释放，
+                    // 否则 module_name/method_name 这两份 parser 的字符串会永久泄漏）
+                    AstList args = ast->u.module_call.args;
+                    char* old_mod_name = ast->u.module_call.module_name;
+                    char* old_method_name = ast->u.module_call.method_name;
+                    char* old_lib_name = ast->u.module_call.lib_ref.name;
+                    char* old_lib_struct = ast->u.module_call.lib_ref.struct_name;
+                    free(old_mod_name);
+                    free(old_method_name);
+                    free(old_lib_name);
+                    free(old_lib_struct);
+
                     ast->kind = AST_CALL;
                     ast->u.call.callee = prop_access;
                     // 参数列表已经解析好了，直接使用
-                    AstList args = ast->u.module_call.args;
                     ast->u.call.args = args;
                 }
             } else {
@@ -1733,6 +1757,8 @@
                 if (var_sym && var_sym->type) {
                     var_ast->cached_type = type_copy(var_sym->type);
                 }
+                // ref 只是临时载体：内容已复制进 var_ast，堆字符串必须释放
+                symref_dispose(&ref);
                 
                 // 检查变量是否是 struct、cstruct 或 face 类型
                 int is_struct_type = 0;
@@ -1772,11 +1798,14 @@
                         char* mod_name = ast->u.module_access.module_name;
                         char* mem_name = ast->u.module_access.member_name;
                         char* ref_name = ast->u.module_access.ref.name;
+                        char* ref_struct = ast->u.module_access.ref.struct_name;
                         ast->u.module_access.module_name = NULL;
                         ast->u.module_access.member_name = NULL;
                         ast->u.module_access.ref.name = NULL;
+                        ast->u.module_access.ref.struct_name = NULL;
                         free(mod_name); free(mem_name);
                         if (ref_name) free(ref_name);
+                        if (ref_struct) free(ref_struct);
                         if (ast->cached_type) { type_free(ast->cached_type); ast->cached_type = NULL; }
                         ast->kind = AST_NUM;
                         // 不能用 double 承载成员值：超过 2^53 的整数（位标志 `1 << 60` 之类）
@@ -1841,11 +1870,14 @@
                                 char* mod_name = ast->u.module_access.module_name;
                                 char* mem_name = ast->u.module_access.member_name;
                                 char* ref_name = ast->u.module_access.ref.name;
+                                char* ref_struct = ast->u.module_access.ref.struct_name;
                                 ast->u.module_access.module_name = NULL;
                                 ast->u.module_access.member_name = NULL;
                                 ast->u.module_access.ref.name = NULL;
+                                ast->u.module_access.ref.struct_name = NULL;
                                 free(mod_name); free(mem_name);
                                 if (ref_name) free(ref_name);
+                                if (ref_struct) free(ref_struct);
                                 if (ast->cached_type) { type_free(ast->cached_type); ast->cached_type = NULL; }
 
                                 // 根据 Value 类型转换为相应的 AST 常量节点
@@ -1906,15 +1938,19 @@
                     char* field_name = strdup(ast->u.module_access.member_name);
                     char* module_name = ast->u.module_access.module_name;
                     char* member_name = ast->u.module_access.member_name;
+                    char* ref_name = ast->u.module_access.ref.name;
+                    char* ref_struct = ast->u.module_access.ref.struct_name;
+
+                    // 先释放旧 union 的堆内存，再改写 kind（改完就再也读不到 module_access ✓）
+                    free(member_name);
+                    free(module_name);
+                    free(ref_name);
+                    free(ref_struct);
 
                     ast->kind = AST_FIELD_ACCESS;
                     ast->u.field_access.obj = var_ast;
                     ast->u.field_access.field_name = field_name;
                     ast->u.field_access.field_index = -1;
-
-                    // 释放旧的内存
-                    free(member_name);
-                    free(module_name);
 
                     // 继续访问转换后的节点
                     visit(s, ast);
@@ -1923,15 +1959,17 @@
                     char* field_name = strdup(ast->u.module_access.member_name);
                     char* module_name = ast->u.module_access.module_name;
                     char* member_name = ast->u.module_access.member_name;
+                    char* ref_name = ast->u.module_access.ref.name;
+                    char* ref_struct = ast->u.module_access.ref.struct_name;
+                    free(member_name);
+                    free(module_name);
+                    free(ref_name);
+                    free(ref_struct);
 
                     ast->kind = AST_FIELD_ACCESS;
                     ast->u.field_access.obj = var_ast;
                     ast->u.field_access.field_name = field_name;
                     ast->u.field_access.field_index = -1;
-
-                    // 释放旧的内存
-                    free(member_name);
-                    free(module_name);
 
                     // 继续访问转换后的节点
                     visit(s, ast);
@@ -1940,6 +1978,16 @@
                     Ast* index_ast = ast_new(AST_STRING, ast->line);
                     index_ast->u.string.value = strdup(ast->u.module_access.member_name);
                     index_ast->u.string.len = (int)strlen(ast->u.module_access.member_name);
+
+                    // 先释放旧 union 的堆内存（ref 与 index 字段不重叠，但改 kind 后就读不到了）
+                    char* module_name = ast->u.module_access.module_name;
+                    char* member_name = ast->u.module_access.member_name;
+                    char* ref_name = ast->u.module_access.ref.name;
+                    char* ref_struct = ast->u.module_access.ref.struct_name;
+                    free(member_name);
+                    free(module_name);
+                    free(ref_name);
+                    free(ref_struct);
 
                     ast->kind = AST_INDEX;
                     ast->u.index.obj = var_ast;
@@ -2091,14 +2139,17 @@
                         SymRef tref;
                         memset(&tref, 0, sizeof(tref));
                         Symbol* dsym = resolve_variable_with_upvalue_raw(s, def->u.var.name, &tref);
-                        if (!dsym || dsym->is_const) continue;
-                        if (tref.kind != SYM_GLOBAL && tref.kind != SYM_MODULE) continue;
-                        warning_add_at_fmt(WARN_DEFAULT_VAR_SNAPSHOT, d->line, d->column,
-                            "函数 '%s' 的参数 '%s' 默认值引用了**可变的模块变量 '%s'**："
-                            "跨模块调用按**定义时**取值、同模块调用按**调用时**取值 ⇒ 变量被改写后"
-                            "两边可能不同。建议改成 `const`，或不写默认值、在函数体里处理",
-                            d->u.func.name ? d->u.func.name : "?",
-                            d->u.func.params ? d->u.func.params[pi] : "?", def->u.var.name);
+                        int skip = (!dsym || dsym->is_const ||
+                                    (tref.kind != SYM_GLOBAL && tref.kind != SYM_MODULE));
+                        if (!skip) {
+                            warning_add_at_fmt(WARN_DEFAULT_VAR_SNAPSHOT, d->line, d->column,
+                                "函数 '%s' 的参数 '%s' 默认值引用了**可变的模块变量 '%s'**："
+                                "跨模块调用按**定义时**取值、同模块调用按**调用时**取值 ⇒ 变量被改写后"
+                                "两边可能不同。建议改成 `const`，或不写默认值、在函数体里处理",
+                                d->u.func.name ? d->u.func.name : "?",
+                                d->u.func.params ? d->u.func.params[pi] : "?", def->u.var.name);
+                        }
+                        symref_dispose(&tref);
                     }
                 }
             }

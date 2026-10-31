@@ -623,6 +623,40 @@ void parser_init(Parser* p, const char* src) {
     p->alias_capacity = 0;
 }
 
+// 释放 Parser 自己在解析过程中累积的辅助表（struct 名称 / 类型别名）。
+// ⚠ 只释放 Parser 独占的堆内存；AST（p->root）由调用方 ast_free。
+void parser_free(Parser* p) {
+    if (!p) return;
+    for (int i = 0; i < p->struct_count; i++) {
+        free(p->struct_names[i]);
+    }
+    free(p->struct_names);
+    p->struct_names = NULL;
+    p->struct_count = 0;
+    p->struct_capacity = 0;
+
+    for (int i = 0; i < p->alias_count; i++) {
+        free(p->alias_names[i]);
+        if (p->alias_types[i]) type_free(p->alias_types[i]);
+        if (p->alias_type_params[i]) {
+            for (int j = 0; j < p->alias_type_param_counts[i]; j++) {
+                free(p->alias_type_params[i][j]);
+            }
+            free(p->alias_type_params[i]);
+        }
+    }
+    free(p->alias_names);
+    free(p->alias_types);
+    free(p->alias_type_params);
+    free(p->alias_type_param_counts);
+    p->alias_names = NULL;
+    p->alias_types = NULL;
+    p->alias_type_params = NULL;
+    p->alias_type_param_counts = NULL;
+    p->alias_count = 0;
+    p->alias_capacity = 0;
+}
+
 // 添加 struct 名称到集合
 static void add_struct_name(Parser* p, const char* name) {
     // 检查是否已存在

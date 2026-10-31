@@ -281,6 +281,7 @@
                 module_frame_enter(mod_frame);
                 int result = vm_run_chunk(module->init_chunk);
                 module_frame_exit();
+                free(mod_frame);   // frame 壳已退出，必须释放（此前每模块漏一份）
                 vm_stack_drop(&vm, saved_sp);
                 // 递归执行后 vm.frames 可能已 realloc，frame 必须重新取
                 frame = &vm.frames[vm.frame_cnt - 1];

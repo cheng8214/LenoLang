@@ -171,6 +171,14 @@ typedef struct {
     //   让 AST 深度随项数线性增长，递归会耗尽调用栈 ⇒ 进程 SIGSEGV（实测 4800 项起）。
     //   超过上限就报一条明确诊断并停止下探，而不是崩溃。见 semantic_visit_ast.c。
     int ast_depth;
+
+    // ---- 语义阶段自建的"方法占位 AST"（跨模块 struct 的方法）----
+    //   这些 AST_FUNC_DEF **不在任何 AST 树里**（是 semantic_type_utils 临时造的），
+    //   但会被放进 func_table 供调用点查签名 ⇒ 必须在 cleanup 时由语义层自己释放，
+    //   否则每导入一个模块就漏一整批（LeakSanitizer 实测）。
+    Ast** owned_placeholders;
+    int owned_placeholder_count;
+    int owned_placeholder_capacity;
 } Semantic;
 
 // 函数表 API

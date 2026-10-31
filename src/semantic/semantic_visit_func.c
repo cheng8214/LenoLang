@@ -653,7 +653,11 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
                 
                 // 检查类型兼容性（null 默认值也要检查，只有 nullable/指针类型才能接受 null）
                 if (default_kind != TYPE_ANY) {
-                    if (!type_is_compatible(param_type, type_new(default_kind))) {
+                    // type_new 的结果是临时探针：判完必须释放（此前直接内联在实参里 ⇒ 每处泄漏）
+                    TypeInfo* default_type = type_new(default_kind);
+                    int compatible = default_type ? type_is_compatible(param_type, default_type) : 0;
+                    if (default_type) type_free(default_type);
+                    if (!compatible) {
                         error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
                                  "参数 '%s' 的默认值类型 '%s' 与参数类型 '%s' 不匹配",
                                  ast->u.func.params[i],

@@ -713,8 +713,11 @@ int lenolang_run(const char* source) {
         error_print_all();
         warning_print_all();
         ast_free(parser.root);
+        parser_free(&parser);
         return -1;
     }
+    // Parser 的辅助表（struct 名 / 类型别名）已用不到了 ⇒ 立即释放
+    parser_free(&parser);
 
     // 2. 语义分析（单遍）
     Semantic sem;
@@ -800,6 +803,14 @@ int lenolang_run(const char* source) {
             // 立刻释放编译器资源（核心！清零「内存税」）
             codegen_cleanup(&gen);
             ast_free(parser.root);
+            // ★ 编译器的 root_scope 已经完成它的使命（序列化产出了独立的 run_scope）。
+            //   semantic_cleanup 只把指针置 NULL、不释放（正常直跑路径由 VM 接管），
+            //   而这里 VM 接管的是**反序列化出来的** run_scope ⇒ 必须在这里显式释放，
+            //   否则每次运行都会漏掉整棵符号表（LeakSanitizer 实测 14KB+）。
+            if (sem.root_scope) {
+                scope_free(sem.root_scope);
+                sem.root_scope = NULL;
+            }
             semantic_cleanup(&sem);
             chunk_free(&chunk);
 
@@ -960,9 +971,11 @@ int lenolang_compile(const char* source, const char* output_path) {
         error_print_all();
         warning_print_all();
         ast_free(parser.root);
+        parser_free(&parser);
         gc_free_all();
         return -1;
     }
+    parser_free(&parser);
     clock_t t_parse1 = clock();
     fprintf(stderr, "[TIME] parse: %.1f ms\n", (double)(t_parse1 - t_parse0) / CLOCKS_PER_SEC * 1000.0);
 
@@ -1019,6 +1032,7 @@ int lenolang_compile(const char* source, const char* output_path) {
         printf("编译检查通过: %s（未产出 .lenb）\n", shown);
         codegen_cleanup(&gen);
         ast_free(parser.root);
+        if (sem.root_scope) { scope_free(sem.root_scope); sem.root_scope = NULL; }
         semantic_cleanup(&sem);
         chunk_free(&chunk);
         gc_free_all();
@@ -1034,6 +1048,7 @@ int lenolang_compile(const char* source, const char* output_path) {
         fprintf(stderr, "写入二进制文件失败: %s (错误码: %d)\n", output_path, result);
         codegen_cleanup(&gen);
         ast_free(parser.root);
+        if (sem.root_scope) { scope_free(sem.root_scope); sem.root_scope = NULL; }
         semantic_cleanup(&sem);
         chunk_free(&chunk);
         gc_free_all();
@@ -1049,6 +1064,7 @@ int lenolang_compile(const char* source, const char* output_path) {
 
     codegen_cleanup(&gen);
     ast_free(parser.root);
+    if (sem.root_scope) { scope_free(sem.root_scope); sem.root_scope = NULL; }
     semantic_cleanup(&sem);
     chunk_free(&chunk);
     gc_free_all();
@@ -2663,7 +2679,14 @@ int wmain(int argc, wchar_t* wargv[]) {
     argv[argc] = NULL;
     
     int result = main_logic(argc, argv);
-    
+
+    // 进程内记忆化缓存（模块符号表 / 导出名清单）在一次性进程里也要显式清掉，
+    // 否则最后一个编译留下的整张表会一直被持有到 exit（LeakSanitizer 会报泄漏）。
+    module_symbol_table_reset_memo();
+    module_ast_exports_cache_clear();
+    // Channel 是 malloc + 引用计数的非 GC 对象 ⇒ GC 收不到，必须在这里整链收尾
+    channel_free_all();
+
     // 释放内存
     for (int i = 0; i < argc; i++) {
         free(argv[i]);
@@ -2675,6 +2698,11 @@ int wmain(int argc, wchar_t* wargv[]) {
 #else
 // Linux/macOS: 使用标准 main
 int main(int argc, char* argv[]) {
-    return main_logic(argc, argv);
+    int result = main_logic(argc, argv);
+    module_symbol_table_reset_memo();
+    module_ast_exports_cache_clear();
+    // Channel 是 malloc + 引用计数的非 GC 对象 ⇒ GC 收不到，必须在这里整链收尾
+    channel_free_all();
+    return result;
 }
 #endif

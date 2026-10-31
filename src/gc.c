@@ -289,6 +289,15 @@ void gc_pop_root(void) {
     }
 }
 
+// 释放本线程的 GC 辅助结构（extra_roots 等）。线程退出时调用：
+//   若堆已被 detach（gc_detach_heap 已释放过），这里 free(NULL) 是空操作 ✓
+void gc_release_thread_aux(void) {
+    free(gc.extra_roots);
+    gc.extra_roots = NULL;
+    gc.extra_root_count = 0;
+    gc.extra_root_capacity = 0;
+}
+
 // ============================================================================
 // 小对象 size-class 池
 //
@@ -1653,6 +1662,12 @@ static void free_object_resources_ex(Object* obj, int remove_intern) {
                 }
                 free(def->methods);
             }
+            if (def->impl_names) {
+                for (int i = 0; i < def->impl_count; i++) {
+                    free(def->impl_names[i]);
+                }
+                free(def->impl_names);
+            }
             if (def->type_param_names) {
                 for (int i = 0; i < def->type_param_count; i++) {
                     free(def->type_param_names[i]);
@@ -1683,6 +1698,14 @@ static void free_object_resources_ex(Object* obj, int remove_intern) {
             if (def->methods) {
                 for (int i = 0; i < def->method_count; i++) {
                     free(def->methods[i].name);
+                    if (def->methods[i].return_type) type_free(def->methods[i].return_type);
+                    if (def->methods[i].param_types) {
+                        for (int j = 0; j < def->methods[i].param_count; j++) {
+                            if (def->methods[i].param_types[j])
+                                type_free(def->methods[i].param_types[j]);
+                        }
+                        free(def->methods[i].param_types);
+                    }
                 }
                 free(def->methods);
             }

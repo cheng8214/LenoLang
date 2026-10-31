@@ -164,6 +164,10 @@ Symbol* resolve_variable_with_upvalue(Semantic* s, const char* name, SymRef* ref
 // 而公开名 `resolve_variable_with_upvalue` 现在还会顺手把「该变量被读过」置位 ✓
 // （见 semantic_upvalue.c 里的说明：函数式变量被调用时走的就是这条路 ✓ 漏了会误报 ✗）。
 Symbol* resolve_variable_with_upvalue_raw(Semantic* s, const char* name, SymRef* ref);
+// 释放 resolve_* 填进 SymRef 的堆字符串（name / struct_name）。
+//   ⚠ 临时 SymRef（栈上、用完即弃）**必须**调它，否则每次解析都会漏两个 strdup；
+//     存储进 AST 节点的 ref 由 ast_free 负责，不要在这里释放。
+void symref_dispose(SymRef* ref);
 
 // T11：「该变量的值**确定为 null**」⇒ 编译错误（教程：null 不能参与算术运算）。
 //   判据是 Symbol.is_null_value —— 声明即 null 且此后没被写过（见 visit_var.inc 的置位/清位点，

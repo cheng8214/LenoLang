@@ -271,13 +271,10 @@ void cstruct_def_register(ObjCStructDef* def) {
                                    cstruct_def_same_shape(cstruct_def_table[i], def))) {
                 return;
             }
-            // 覆盖旧定义：将旧定义的资源指针置 NULL，防止 gc_free_all 时 double-free
+            // 覆盖旧定义：**不要**把旧定义的字段置 NULL —— 旧定义对象仍由 GC 管理，
+            // gc_free_all/sweep 会负责释放这些字段；置 NULL 只会让那次释放被跳过 ⇒ 泄漏。
             ObjCStructDef* old_def = cstruct_def_table[i];
-            old_def->name = NULL;
-            old_def->fields = NULL;
-            old_def->field_count = 0;
-            old_def->field_hash_table = NULL;
-            old_def->field_hash_capacity = 0;
+            if (old_def == def) return;   // 同一对象重复注册：空操作
 
             cstruct_def_table[i] = def;
             return;

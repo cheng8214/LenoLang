@@ -362,8 +362,8 @@ static void apply_null_narrowing(Semantic* s, Ast* cond, int narrow_on_ne) {
         SymRef ref;
         memset(&ref, 0, sizeof(ref));
         Symbol* original_sym = resolve_variable_with_upvalue(s, var_side->u.var.name, &ref);
-        if (!original_sym || !original_sym->is_null_value) { if (ref.name) free(ref.name); continue; }
-        if (!ref.name) continue;
+        if (!original_sym || !original_sym->is_null_value) { symref_dispose(&ref); continue; }
+        if (!ref.name) { symref_dispose(&ref); continue; }
 
         SymKind kind = (ref.kind == SYM_UPVALUE) ? SYM_UPVALUE
                      : (ref.kind == SYM_GLOBAL)  ? SYM_GLOBAL : SYM_LOCAL;
@@ -376,7 +376,7 @@ static void apply_null_narrowing(Semantic* s, Ast* cond, int narrow_on_ne) {
             shadow->is_null_value = 0;
             shadow->is_initialized = 1;
         }
-        free(ref.name);
+        symref_dispose(&ref);
     }
 }
 

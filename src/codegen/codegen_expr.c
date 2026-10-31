@@ -613,6 +613,8 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
                     dce_note_method_ref(NULL, iidx->u.string.value);
                     reg_encode_iABC(gen->chunk, OP_GET_FIELD_FAST, dst, obj_reg, fi, ast->line);
                     if (obj_is_temp) reg_free(gen, obj_reg);
+                    if (ot) type_free(ot);
+                    if (it) type_free(it);
                     break;
                 }
             }
@@ -661,12 +663,16 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
                 }
                 if (idx_is_temp) reg_free(gen, idx_reg);
                 if (obj_is_temp) reg_free(gen, obj_reg);
+                if (ot) type_free(ot);
+                if (it) type_free(it);
                 break;
             }
             if (dict_spec) {
                 reg_encode_iABC(gen->chunk, OP_INDEX_DICT_INT, dst, obj_reg, idx_reg, ast->line);
                 if (idx_is_temp) reg_free(gen, idx_reg);
                 if (obj_is_temp) reg_free(gen, obj_reg);
+                if (ot) type_free(ot);
+                if (it) type_free(it);
                 break;
             }
             // DCE：通用 `obj["名字"]` 在 struct 实例上运行期会**按方法名兜底分发**
@@ -683,6 +689,8 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
             reg_encode_iABC(gen->chunk, OP_INDEX, dst, obj_reg, idx_reg, ast->line);
             if (idx_is_temp) reg_free(gen, idx_reg);
             if (obj_is_temp) reg_free(gen, obj_reg);
+            if (ot) type_free(ot);
+            if (it) type_free(it);
             break;
         }
 
@@ -748,6 +756,7 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
                 reg_free(gen, ireg);
             }
             if (obj_is_temp) reg_free(gen, obj_reg);
+            if (ot) type_free(ot);
             break;
         }
 
@@ -1229,7 +1238,9 @@ int try_emit_acc_fields(CodeGen* gen, Ast* ast, int dst) {
             return 0;
         }
         TypeInfo* ft = infer_expr_type(gen->sem, f);
-        if (!ft || ft->kind != TYPE_FLOAT) return 0;
+        int is_float = (ft && ft->kind == TYPE_FLOAT);
+        if (ft) type_free(ft);
+        if (!is_float) return 0;
         idx[i] = (uint8_t)fi;
     }
 
@@ -2106,6 +2117,8 @@ void gen_call(CodeGen* gen, Ast* ast, int dst) {
                         reg_encode_iABC(gen->chunk, OP_CAST_INT, base + 1 + i, base + 1 + i, 0, ast->line);
                     }
                 }
+                // infer_expr_type 返回调用方拥有的副本（唯一来源口径，见 semantic_type_utils.c）
+                if (widen_at) type_free(widen_at);
             }
             ObjString* nameStr = str_copy(ref->name, (int)strlen(ref->name));
             int name_const = make_constant(gen, val_obj((Object*)nameStr));
@@ -2778,6 +2791,7 @@ void gen_module_call(CodeGen* gen, Ast* ast, int dst) {
                 reg_encode_iABC(gen->chunk, OP_CAST_INT, base + 1 + i, base + 1 + i, 0, ast->line);
             }
         }
+        if (widen_at) type_free(widen_at);
     }
 
     // ★ 用**真实模块名**（别名可能被 as 改过，而 native 方法表按注册名查找）
@@ -2977,6 +2991,7 @@ void gen_safe_access(CodeGen* gen, Ast* ast, int dst) {
             reg_encode_iABC(gen->chunk, OP_INDEX, dst, obj_reg, ireg, line);
             reg_free(gen, ireg);
         }
+        if (ot) type_free(ot);
     } else {
         int nargs = ast->u.safe_access.args.count;
         const char* mname = ast->u.safe_access.name ? ast->u.safe_access.name : "";

@@ -941,6 +941,9 @@ void symbol_add_dict_key(Symbol* sym, const char* key);
 // 只给 visit_struct_init.inc 的"模块限定 new a.X()"分支用：那里 calloc 了一份 Symbol 并复制了
 // 字段/泛型信息，用完必须整份释放。作用域里的符号请勿用这个函数（由 scope_free 统一管）。
 void symbol_free_virtual(Symbol* sym);
+// 释放符号上的类型定义元数据副本（struct 字段/泛型参数/cstruct 布局）。
+// 同一符号被预扫描注册后主阶段会重新填充 ⇒ 覆盖前调用本函数释放旧副本。
+void symbol_release_type_meta(Symbol* sym);
 int symbol_has_dict_key(Symbol* sym, const char* key);
 
 // ============================================================================

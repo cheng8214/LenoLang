@@ -177,6 +177,9 @@ void semantic_init(Semantic* s, Ast* root) {
     s->union_narrow_count = 0;
     memset(s->union_narrow, 0, sizeof(s->union_narrow));
     s->ast_depth = 0;   // ★ 递归深度守护（同上面的教训：必须显式清零）
+    s->owned_placeholders = NULL;
+    s->owned_placeholder_count = 0;
+    s->owned_placeholder_capacity = 0;
 
     // 初始化 imported_modules 数组
     memset(s->imported_modules, 0, sizeof(s->imported_modules));
@@ -426,6 +429,8 @@ void semantic_analyze(Semantic* s, Ast* ast) {
                 sym->type = clib_type;
                 clib_decl->u.clib_def.ref.kind = sym->kind;
                 clib_decl->u.clib_def.ref.index = sym->index;
+                // parser 已分配过 ref.name ⇒ 覆盖前先释放
+                free(clib_decl->u.clib_def.ref.name);
                 clib_decl->u.clib_def.ref.name = strdup(sym->name);
                 clib_decl->u.clib_def.ref.type_kind = TYPE_CLIB;
             }
@@ -564,6 +569,17 @@ void semantic_cleanup(Semantic* s) {
     // 这里只清理函数表和其他资源
     func_table_free(&s->func_table);
     semantic_free_generic_requirements(s);   // 泛型需求表（B 方案，2026-10-02）
+
+    // 语义阶段自建的占位 AST（不在 AST 树里）⇒ 由这里释放
+    if (s->owned_placeholders) {
+        for (int i = 0; i < s->owned_placeholder_count; i++) {
+            if (s->owned_placeholders[i]) ast_free(s->owned_placeholders[i]);
+        }
+        free(s->owned_placeholders);
+        s->owned_placeholders = NULL;
+        s->owned_placeholder_count = 0;
+        s->owned_placeholder_capacity = 0;
+    }
     
     for (int i = 0; i < s->imported_module_count; i++) {
         free(s->imported_modules[i].alias);
@@ -591,9 +607,9 @@ void semantic_analyze_module(Semantic* s, Ast* ast) {
     // 创建模块作用域
     s->current = scope_new(NULL, 0);
     s->root_scope = s->current;
-    
-    // 初始化函数表
-    func_table_init(&s->func_table);
+
+    // ⚠ 函数表已由 semantic_init 初始化；这里**不能**再 init 一次
+    //   （func_table_init 只是把 entries 指针置空 ⇒ 前一份表数组直接泄漏）
 
     // 注册所有模块的 native 函数元信息
     native_register_all_module_metas();

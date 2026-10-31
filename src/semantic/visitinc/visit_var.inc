@@ -69,6 +69,9 @@
                 }
                 ast->u.var_decl.ref.kind = sym->kind;
                 ast->u.var_decl.ref.index = sym->index;
+                // 预扫描（semantic.c 的全局变量预注册）可能已经填过 ref.name；
+                // 直接覆盖会漏掉那一份 strdup ⇒ 先释放再写。
+                free(ast->u.var_decl.ref.name);
                 ast->u.var_decl.ref.name = strdup(sym->name);
             } else {
                 // 重复定义错误 - 报告准确的行号
@@ -204,6 +207,9 @@
                     }
                 }
 
+                // 预扫描给这个符号塞过占位类型（ANY / 声明的副本）⇒ 下面会用推断结果重设，
+                // 先释放旧的，避免每次声明都漏一个 TypeInfo。
+                if (sym && sym->type) { type_free(sym->type); sym->type = NULL; }
                 TypeInfo* init_type = infer_expr_type(s, ast->u.var_decl.init);
                 if (init_type) {
                     if (ast->u.var_decl.type && ast->u.var_decl.type->kind != TYPE_INFER && !infer_as_param) {
@@ -310,6 +316,8 @@
             } else {
                 // 变量没有初始化，使用声明的类型或 ANY
                 if (sym) sym->is_initialized = 1;
+                // 同有初始化分支：先释放预扫描的占位类型
+                if (sym && sym->type) { type_free(sym->type); sym->type = NULL; }
                 if (ast->u.var_decl.type && ast->u.var_decl.type->kind != TYPE_INFER) {
                     // 递归解析变量声明类型中的 alias / struct→face（与有初始化的路径保持一致）
                     // 修复：无初始化值时也需修正 func(Widget,...) 等复合类型参数中的 struct→face
@@ -495,6 +503,7 @@
                             error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                                              "不能对 const 变量 '%s' 的元素重新赋值", obj_name);
                         }
+                        symref_dispose(&tmp_ref);
                     }
                     // 检查模块变量是否为 const（如 m.arr[0] = 99）
                     if (target->u.index.obj && target->u.index.obj->kind == AST_MODULE_ACCESS) {

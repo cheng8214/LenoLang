@@ -134,6 +134,19 @@ void ast_free(Ast* ast) {
         case AST_CALL:
             ast_free(ast->u.call.callee);
             free_ast_list(&ast->u.call.args);
+            // 泛型调用的实参/名字（`foo[int](...)`）
+            if (ast->u.call.generic_type_args) {
+                for (int i = 0; i < ast->u.call.generic_type_count; i++) {
+                    if (ast->u.call.generic_type_args[i]) type_free(ast->u.call.generic_type_args[i]);
+                }
+                free(ast->u.call.generic_type_args);
+            }
+            if (ast->u.call.generic_type_names) {
+                for (int i = 0; i < ast->u.call.generic_type_count; i++) {
+                    free(ast->u.call.generic_type_names[i]);
+                }
+                free(ast->u.call.generic_type_names);
+            }
             break;
         case AST_INDEX:
             ast_free(ast->u.index.obj);
@@ -153,9 +166,13 @@ void ast_free(Ast* ast) {
             ast_free(ast->u.if_.else_);
             free(ast->u.if_.guard_var);
             free(ast->u.if_.guard_var_ref.name);
+            free(ast->u.if_.guard_var_ref.struct_name);
             if (ast->u.if_.guard_type) {
                 type_free(ast->u.if_.guard_type);
             }
+            // guard_bind_var 是 parser 里 malloc 出来的变量名（`if x is T => y` 的 y）
+            //   ⇒ 必须释放（guard_bind_expr 是 cond 的子节点，随 cond 一起释放，不在此处重复释放）
+            free(ast->u.if_.guard_bind_var);
             type_guard_list_free(&ast->u.if_.guard_conds);
             break;
         case AST_WHILE:
@@ -186,6 +203,8 @@ void ast_free(Ast* ast) {
                 }
                 free(ast->u.switch_.cases[i].guard_var);
                 free(ast->u.switch_.cases[i].guard_bind_var);
+                free(ast->u.switch_.cases[i].guard_var_ref.name);
+                free(ast->u.switch_.cases[i].guard_var_ref.struct_name);
             }
             free(ast->u.switch_.cases);
             ast_free(ast->u.switch_.default_body);
@@ -193,8 +212,10 @@ void ast_free(Ast* ast) {
         case AST_FUNC_DEF:
             free(ast->u.func.name);
             free(ast->u.func.ref.name);
+            free(ast->u.func.ref.struct_name);
             for (int i = 0; i < ast->u.func.pcnt; i++) {
-                free(ast->u.func.params[i]);
+                if (ast->u.func.params && ast->u.func.params[i])
+                    free(ast->u.func.params[i]);
                 if (ast->u.func.param_types && ast->u.func.param_types[i])
                     type_free(ast->u.func.param_types[i]);
                 if (ast->u.func.param_defaults && ast->u.func.param_defaults[i])
@@ -215,6 +236,25 @@ void ast_free(Ast* ast) {
             free(ast->u.func.upvalue_indices);
             free(ast->u.func.upvalue_is_local);
             free(ast->u.func.upvalue_is_value_capture);
+            // 泛型形参的三组平行数组（parser 分配，此前漏释放）
+            if (ast->u.func.type_params) {
+                for (int i = 0; i < ast->u.func.type_param_count; i++) {
+                    free(ast->u.func.type_params[i]);
+                }
+                free(ast->u.func.type_params);
+            }
+            if (ast->u.func.type_param_constraints) {
+                for (int i = 0; i < ast->u.func.type_param_count; i++) {
+                    free(ast->u.func.type_param_constraints[i]);
+                }
+                free(ast->u.func.type_param_constraints);
+            }
+            if (ast->u.func.type_param_defaults) {
+                for (int i = 0; i < ast->u.func.type_param_count; i++) {
+                    free(ast->u.func.type_param_defaults[i]);
+                }
+                free(ast->u.func.type_param_defaults);
+            }
             break;
 case AST_RETURN:
 ast_free(ast->u.ret);
@@ -229,16 +269,20 @@ break;
             for (int i = 0; i < ast->u.assign.name_count; i++) {
                 free(ast->u.assign.names[i]);
                 free(ast->u.assign.refs[i].name);
+                free(ast->u.assign.refs[i].struct_name);
             }
             free(ast->u.assign.names);
             free(ast->u.assign.refs);
             // 释放 targets 数组中的 AST 节点
+            // ★ targets 全部由 parser 为本次赋值**新建**（parser_expr.c 的单赋值、
+            //   parser_func.c 的并行赋值），没有任何外部共享 ⇒ 必须走 ast_free 递归释放。
+            //   此前只 `free(target)`：AST_VAR 目标的 u.var.name / ref.name、以及
+            //   `arr[i] = v` 这类 INDEX 目标的 obj/index 子树全部泄漏（LeakSanitizer
+            //   实测每个简单赋值漏掉一个标识符字符串）。
             if (ast->u.assign.targets) {
                 for (int i = 0; i < ast->u.assign.name_count; i++) {
                     if (ast->u.assign.targets[i]) {
-                        // 注意：targets 中的节点不应该递归释放子节点
-                        // 因为它们可能是共享的
-                        free(ast->u.assign.targets[i]);
+                        ast_free(ast->u.assign.targets[i]);
                     }
                 }
                 free(ast->u.assign.targets);
@@ -248,11 +292,13 @@ break;
         case AST_COMPOUND_ASSIGN:
             free(ast->u.compound_assign.name);
             free(ast->u.compound_assign.ref.name);
+            free(ast->u.compound_assign.ref.struct_name);
             ast_free(ast->u.compound_assign.value);
             break;
     case AST_VAR_DECL:
         free(ast->u.var_decl.name);
         free(ast->u.var_decl.ref.name);
+        free(ast->u.var_decl.ref.struct_name);
         ast_free(ast->u.var_decl.init);
         type_free(ast->u.var_decl.type);
         break;
@@ -271,6 +317,7 @@ break;
             if (ast->u.destruct_decl.refs[i].name) {
                 free(ast->u.destruct_decl.refs[i].name);
             }
+            free(ast->u.destruct_decl.refs[i].struct_name);
             if (ast->u.destruct_decl.slot_defaults) {
                 ast_free(ast->u.destruct_decl.slot_defaults[i]);   // 可空
             }
@@ -301,12 +348,30 @@ break;
         case AST_MODULE_CALL:
             free(ast->u.module_call.module_name);
             free(ast->u.module_call.method_name);
+            free(ast->u.module_call.lib_ref.name);
+            free(ast->u.module_call.lib_ref.struct_name);
             free_ast_list(&ast->u.module_call.args);
+            if (ast->u.module_call.generic_type_args) {
+                for (int i = 0; i < ast->u.module_call.generic_type_count; i++) {
+                    if (ast->u.module_call.generic_type_args[i])
+                        type_free(ast->u.module_call.generic_type_args[i]);
+                }
+                free(ast->u.module_call.generic_type_args);
+            }
+            if (ast->u.module_call.generic_type_names) {
+                for (int i = 0; i < ast->u.module_call.generic_type_count; i++) {
+                    free(ast->u.module_call.generic_type_names[i]);
+                }
+                free(ast->u.module_call.generic_type_names);
+            }
+            if (ast->u.module_call.clib_return_type)
+                type_free(ast->u.module_call.clib_return_type);
             break;
         case AST_MODULE_ACCESS:
             free(ast->u.module_access.module_name);
             free(ast->u.module_access.member_name);
             free(ast->u.module_access.ref.name);
+            free(ast->u.module_access.ref.struct_name);
             break;
         case AST_INTERP_STRING:
             // parts 数组大小为 count，exprs 数组大小为 count - 1
@@ -323,6 +388,7 @@ break;
             ast_free(ast->u.try_.try_body);
             free(ast->u.try_.catch_var);
             free(ast->u.try_.catch_var_ref.name);
+            free(ast->u.try_.catch_var_ref.struct_name);
             ast_free(ast->u.try_.catch_body);
             ast_free(ast->u.try_.finally_body);
             break;
@@ -362,6 +428,33 @@ break;
                 free(ast->u.struct_def.impl_names[i]);
             }
             free(ast->u.struct_def.impl_names);
+            // impl 声明的泛型实参（parser_func.c 为每个 impl 单独分配的 TypeInfo 数组）
+            if (ast->u.struct_def.impl_type_args) {
+                for (int i = 0; i < ast->u.struct_def.impl_count; i++) {
+                    if (!ast->u.struct_def.impl_type_args[i]) continue;
+                    int argc = ast->u.struct_def.impl_type_arg_counts
+                                   ? ast->u.struct_def.impl_type_arg_counts[i] : 0;
+                    for (int j = 0; j < argc; j++) {
+                        type_free(ast->u.struct_def.impl_type_args[i][j]);
+                    }
+                    free(ast->u.struct_def.impl_type_args[i]);
+                }
+                free(ast->u.struct_def.impl_type_args);
+            }
+            free(ast->u.struct_def.impl_type_arg_counts);
+            // 泛型类型参数名 / 约束 / 默认值
+            if (ast->u.struct_def.type_params) {
+                for (int i = 0; i < ast->u.struct_def.type_param_count; i++) {
+                    free(ast->u.struct_def.type_params[i]);
+                    if (ast->u.struct_def.type_param_constraints)
+                        free(ast->u.struct_def.type_param_constraints[i]);
+                    if (ast->u.struct_def.type_param_defaults)
+                        free(ast->u.struct_def.type_param_defaults[i]);
+                }
+            }
+            free(ast->u.struct_def.type_params);
+            free(ast->u.struct_def.type_param_constraints);
+            free(ast->u.struct_def.type_param_defaults);
             // 释放关联常量
             for (int i = 0; i < ast->u.struct_def.const_count; i++) {
                 free(ast->u.struct_def.const_names[i]);
@@ -385,12 +478,35 @@ break;
             free(ast->u.face_def.method_return_types);
             free(ast->u.face_def.method_param_types);
             free(ast->u.face_def.method_param_counts);
+            if (ast->u.face_def.type_params) {
+                for (int i = 0; i < ast->u.face_def.type_param_count; i++) {
+                    free(ast->u.face_def.type_params[i]);
+                    if (ast->u.face_def.type_param_constraints)
+                        free(ast->u.face_def.type_param_constraints[i]);
+                }
+            }
+            free(ast->u.face_def.type_params);
+            free(ast->u.face_def.type_param_constraints);
+            break;
+        case AST_CSTRUCT_DEF:
+            free(ast->u.cstruct_def.name);
+            for (int i = 0; i < ast->u.cstruct_def.field_count; i++) {
+                free(ast->u.cstruct_def.field_names[i]);
+                type_free(ast->u.cstruct_def.field_types[i]);
+            }
+            free(ast->u.cstruct_def.field_names);
+            free(ast->u.cstruct_def.field_types);
+            free(ast->u.cstruct_def.field_offsets);
+            free(ast->u.cstruct_def.field_array_dims);
+            free(ast->u.cstruct_def.ref.name);
+            free(ast->u.cstruct_def.ref.struct_name);
             break;
         case AST_ALIAS:
             free(ast->u.alias.name);
             type_free(ast->u.alias.type);
             if (ast->u.alias.expr) ast_free(ast->u.alias.expr);
             free(ast->u.alias.ref.name);
+            free(ast->u.alias.ref.struct_name);
             break;
 
         case AST_ENUM_DEF:
@@ -401,6 +517,7 @@ break;
             free(ast->u.enum_def.member_names);
             free(ast->u.enum_def.member_values);
             free(ast->u.enum_def.ref.name);
+            free(ast->u.enum_def.ref.struct_name);
             break;
         case AST_STRUCT_INIT:
             free(ast->u.struct_init.struct_name);
@@ -410,6 +527,14 @@ break;
             }
             free(ast->u.struct_init.field_names);
             free(ast->u.struct_init.field_values);
+            // `new Box[int](...)` 的泛型实参（parser 分配，此前未释放）
+            if (ast->u.struct_init.generic_type_args) {
+                for (int i = 0; i < ast->u.struct_init.generic_type_count; i++) {
+                    if (ast->u.struct_init.generic_type_args[i])
+                        type_free(ast->u.struct_init.generic_type_args[i]);
+                }
+                free(ast->u.struct_init.generic_type_args);
+            }
             break;
         case AST_FIELD_ACCESS:
             ast_free(ast->u.field_access.obj);
@@ -430,8 +555,19 @@ break;
             free(ast->u.safe_access.args.items);
             if (ast->u.safe_access.ref.name) free(ast->u.safe_access.ref.name);
             if (ast->u.safe_access.ref.struct_name) free(ast->u.safe_access.ref.struct_name);
-            if (ast->u.safe_access.generic_type_args) free(ast->u.safe_access.generic_type_args);
-            if (ast->u.safe_access.generic_type_names) free(ast->u.safe_access.generic_type_names);
+            if (ast->u.safe_access.generic_type_args) {
+                for (int i = 0; i < ast->u.safe_access.generic_type_count; i++) {
+                    if (ast->u.safe_access.generic_type_args[i])
+                        type_free(ast->u.safe_access.generic_type_args[i]);
+                }
+                free(ast->u.safe_access.generic_type_args);
+            }
+            if (ast->u.safe_access.generic_type_names) {
+                for (int i = 0; i < ast->u.safe_access.generic_type_count; i++) {
+                    free(ast->u.safe_access.generic_type_names[i]);
+                }
+                free(ast->u.safe_access.generic_type_names);
+            }
             break;
         case AST_CLIB_DEF:
             free(ast->u.clib_def.name);
@@ -448,6 +584,7 @@ break;
             free(ast->u.clib_def.func_param_types);
             free(ast->u.clib_def.func_param_counts);
             free(ast->u.clib_def.ref.name);
+            free(ast->u.clib_def.ref.struct_name);
             break;
         case AST_CFUNC_DECL:
             free(ast->u.cfunc_decl.name);
@@ -459,6 +596,7 @@ break;
             free(ast->u.cfunc_decl.param_names);
             if (ast->u.cfunc_decl.return_type) type_free(ast->u.cfunc_decl.return_type);
             free(ast->u.cfunc_decl.ref.name);
+            free(ast->u.cfunc_decl.ref.struct_name);
             break;
         // AST_BREAK, AST_CONTINUE, AST_BOOL, AST_NULL 不需要特殊处理（没有动态分配的成员）
         default:

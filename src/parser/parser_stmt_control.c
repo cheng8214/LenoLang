@@ -456,6 +456,9 @@ Ast* parse_if_stmt(Parser* p) {
                     if (guard_var) { free(guard_var); guard_var = NULL; }
                     if (guard_type) { type_free(guard_type); guard_type = NULL; }
                     has_guard_conds = 0;
+                    // 回退会丢弃已建好的守卫条件 AST（AST_TYPE_CHECK + 其 expr 子树）
+                    //   ⇒ 必须显式释放，否则每个 `if a is T and <非守卫>` 都漏一棵条件树
+                    if (cond) { ast_free(cond); cond = NULL; }
                     p->lex = saved_lex;
             error_set_column(saved_lex.current.column);  // 恢复列号
                     cond = parse_expression(p);
@@ -506,6 +509,12 @@ Ast* parse_if_stmt(Parser* p) {
     // parse_if_expr 解析。codegen 的 gen_if 已按 then/else 节点 kind 区分
     // 语句块与表达式，因此表达式形式的 AST_IF 在语句位置同样可编译。
     if (p->lex.current.type == TOK_THEN) {
+        // cond 是上面按表达式解析出来的，但 then/else 形式要整段回退重解析 ⇒ 必须释放，
+        // 否则每个 `if x then a else b` 都会漏一个条件 AST 节点。
+        // guard_bind_var 同理：这一路径不会建 AST，没人接手它的所有权。
+        ast_free(cond);
+        if (guard_bind_var) { free(guard_bind_var); guard_bind_var = NULL; }
+        guard_bind_expr = NULL;
         p->lex = if_start_lex;
         error_set_column(if_start_lex.current.column);
         return parse_if_expr(p);

@@ -213,6 +213,9 @@
                 if (sym) {
                     sym->type = struct_type;
 
+                    // 预扫描阶段可能已给该符号填过一份字段元数据 ⇒ 覆盖前先释放旧副本
+                    symbol_release_type_meta(sym);
+
                     // 存储 struct 字段信息
                     sym->struct_field_count = ast->u.struct_def.field_count;
                     sym->struct_field_names = (char**)malloc(sizeof(char*) * ast->u.struct_def.field_count);
@@ -771,6 +774,7 @@
                         type_free(sym->type);
                         sym->type = face_type;
                         sym->type_decl_ast = ast;
+                        symbol_release_type_meta(sym);   // 预扫描可能已填过旧副本
                         sym->struct_field_count = ast->u.face_def.method_count;
                         sym->struct_field_names = (char**)malloc(sizeof(char*) * ast->u.face_def.method_count);
                         sym->struct_field_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * ast->u.face_def.method_count);

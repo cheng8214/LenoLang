@@ -26,6 +26,10 @@
 void semantic_attach_struct_fields(Symbol* sym, const ModuleStructSymbol* ssym) {
     if (!sym || !ssym) return;
 
+    // 该符号可能是先前 import 已建过的一份 ⇒ 覆盖前释放旧的类型与字段元数据
+    if (sym->type) type_free(sym->type);
+    symbol_release_type_meta(sym);
+
     TypeKind tk = ssym->is_cstruct ? TYPE_CSTRUCT : TYPE_STRUCT;
     sym->type = type_new(tk);
     sym->type->struct_name = strdup(ssym->name ? ssym->name : "");
@@ -264,6 +268,18 @@ void semantic_register_struct_from_module(Semantic* s, const ModuleStructSymbol*
         //   否则会退化成同步 CALL；虽然有运行期兜底，静态发出更明确）。
         placeholder->u.func.is_async = ssym->methods[mi].is_async;
         func_table_add(&s->func_table, full_method_name, placeholder);
+        // 记录所有权：这个占位 AST 不在任何 AST 树里，只有语义层能释放它
+        if (s->owned_placeholder_count >= s->owned_placeholder_capacity) {
+            int new_cap = s->owned_placeholder_capacity == 0 ? 8 : s->owned_placeholder_capacity * 2;
+            Ast** grown = (Ast**)realloc(s->owned_placeholders, sizeof(Ast*) * new_cap);
+            if (grown) {
+                s->owned_placeholders = grown;
+                s->owned_placeholder_capacity = new_cap;
+            }
+        }
+        if (s->owned_placeholder_count < s->owned_placeholder_capacity) {
+            s->owned_placeholders[s->owned_placeholder_count++] = placeholder;
+        }
     }
 }
 
@@ -2021,7 +2037,7 @@ void semantic_flush_pending_req_checks(Semantic* s) {
 
 // 清理需求表（语义分析收尾时调用）
 void semantic_free_generic_requirements(Semantic* s) {
-    if (!s || !s->reqs) return;
+    if (!s) return;
     for (int i = 0; i < s->req_count; i++) {
         free(s->reqs[i].func_name);
         free(s->reqs[i].owner_struct);

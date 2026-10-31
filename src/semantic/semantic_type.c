@@ -2851,6 +2851,12 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
             if (ast->cached_type && ast->cached_type->kind != TYPE_ANY) {
                 return type_copy(ast->cached_type);
             }
+            // ★ 走到这里 ⇒ 旧缓存（只可能是 ANY）之后必被下面的赋值覆盖 ⇒ 先释放。
+            //   否则 AST_INDEX 每次重复推断（语义遍历 + codegen 各一次）都会漏掉上一轮的 ANY。
+            if (ast->cached_type) {
+                type_free(ast->cached_type);
+                ast->cached_type = NULL;
+            }
             // 检查是否有索引类型守卫收窄（如 if arr[0] is int）
             // 支持任意深度连续索引：a[0]["key"] → "a[0][key]"，config["items"][0]["url"] → "config[items][0][url]"
             // 递归收集所有索引键，构造完整守卫符号名
@@ -3202,11 +3208,13 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                         }
                     }
                     type_free(obj_type);
+                    if (ast->cached_type) type_free(ast->cached_type);
                     ast->cached_type = type_new(TYPE_ANY);
                     return type_copy(ast->cached_type);
                 }
                 type_free(obj_type);
             }
+            if (ast->cached_type) type_free(ast->cached_type);
             ast->cached_type = type_new(TYPE_ANY);
             return type_copy(ast->cached_type);
         }
@@ -3241,6 +3249,7 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
             } else {
                 result = infer_expr_type(s, ast->u.compound_assign.value);
             }
+            symref_dispose(&ref);
             break;
         }
         case AST_ASSIGN: {
@@ -3762,6 +3771,11 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
             }
             
             result = type_function(return_type, param_types, ast->u.func.pcnt);
+            // type_function 深拷贝参数表 ⇒ 自己这份（含每个元素）必须释放
+            if (param_types) {
+                for (int i = 0; i < ast->u.func.pcnt; i++) type_free(param_types[i]);
+                free(param_types);
+            }
             break;
         }
         case AST_CLIB_DEF:

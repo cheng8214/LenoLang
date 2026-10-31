@@ -711,8 +711,15 @@ static inline void get_current_context(
 //     #1 foo  @ test.leno:8
 static inline int append_stack_trace(char* buf, int pos, size_t buf_size) {
     if (vm.frame_cnt <= 0) return pos;
+    // ★ 边界收敛：pos 是上游 snprintf 的"应写长度"，消息超长时会 >= buf_size。
+    //   原写法 `buf_size - pos` 按无符号下溢成天文数字 ⇒ 随后的 snprintf 写到栈缓冲区之外
+    //   （实测 test_cross_module_method_args 等 5 个用例被 ASAN 报 stack-buffer-overflow）。
+    //   已满就钳到 buf_size - 1（该位置必为 '\0'）并直接返回。
+    if (pos < 0) pos = 0;
+    if ((size_t)pos >= buf_size) return (int)buf_size - 1;
 
-    pos += snprintf(buf + pos, buf_size - pos, "  [调用栈]\n");
+    pos += (int)snprintf(buf + pos, buf_size - (size_t)pos, "  [调用栈]\n");
+    if ((size_t)pos >= buf_size) return (int)buf_size - 1;
 
     for (int i = vm.frame_cnt - 1; i >= 0; i--) {
         CallFrame* f = &vm.frames[i];
@@ -742,13 +749,15 @@ static inline int append_stack_trace(char* buf, int pos, size_t buf_size) {
             }
         }
 
-        pos += snprintf(buf + pos, buf_size - pos,
+        pos += (int)snprintf(buf + pos, buf_size - (size_t)pos,
             "    #%d %s @ %s:%d\n",
             vm.frame_cnt - 1 - i, fn, file, line);
+        // 同入口：snprintf 返回"应写长度" ⇒ 可能超出剩余容量，下一轮必须先收敛
+        if ((size_t)pos >= buf_size) return (int)buf_size - 1;
 
         // 限制最多 16 层，避免极深递归时输出过长
         if (vm.frame_cnt - 1 - i >= 15) {
-            pos += snprintf(buf + pos, buf_size - pos,
+            pos += (int)snprintf(buf + pos, buf_size - (size_t)pos,
                 "    ... (省略 %d 帧)\n", vm.frame_cnt - 1 - i - 15 + 1);
             break;
         }

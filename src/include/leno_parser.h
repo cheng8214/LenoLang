@@ -28,6 +28,7 @@ typedef struct {
 } Parser;
 
 void parser_init(Parser* p, const char* src);
+void parser_free(Parser* p);
 int parser_parse(Parser* p);
 
 // 把一段**独立表达式文本**按语言真语法求值（实现见 parser_func.c）。

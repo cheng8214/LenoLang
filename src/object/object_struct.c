@@ -250,20 +250,14 @@ uint32_t struct_def_generation(void) {
     return struct_def_gen;
 }
 
-// 覆盖注册表中第 i 个条目：把旧定义的资源指针置 NULL，防止 gc_free_all 时 double-free
-// （旧定义对象仍由 GC 管理，gc_free_all 会调用 free_object_resources）
+// 覆盖注册表中第 i 个条目。
+// ⚠ 这里**不能**把旧定义的 name/fields/methods/... 置 NULL：旧定义对象仍由 GC 管理，
+//   gc_free_all / sweep 会调用 free_object_resources 释放这些字段本身。置 NULL 只是
+//   让那次释放被跳过 ⇒ 每覆盖一次就漏一整份数组（LeakSanitizer 实测）。
+//   也不需要提前 free：旧定义已不在表里，交给 GC 在安全时机回收即可。
 static void struct_def_replace(int i, ObjStructDef* def) {
-    ObjStructDef* old_def = struct_def_table[i];
-    old_def->name = NULL;
-    old_def->fields = NULL;
-    old_def->field_count = 0;
-    old_def->methods = NULL;
-    old_def->method_count = 0;
-    old_def->impl_names = NULL;
-    old_def->impl_count = 0;
-    old_def->const_names = NULL;
-    old_def->const_values = NULL;
-    old_def->const_count = 0;
+    // 同一个对象重复注册：空操作（调用方只保证"同名"，不保证"同指针"）
+    if (struct_def_table[i] == def) return;
 
     // 索引无需维护：调用方保证 def 与旧条目**同名**（只有同名分支才会走到覆盖），
     // 槽位号与名字都不变 ⇒ 桶里那条记录仍然指向这个同名的槽位。
@@ -628,11 +622,10 @@ void enum_def_register(ObjEnumDef* def) {
                                    enum_def_same_shape(enum_def_table[i], def))) {
                 return;
             }
-            // 覆盖旧定义：将旧定义的资源指针置 NULL，防止 gc_free_all 时 double-free
+            // 覆盖旧定义：**不要**把旧定义的成员置 NULL —— 旧定义对象仍由 GC 管理，
+            // gc_free_all/sweep 会负责释放这些成员；置 NULL 只会让那次释放被跳过 ⇒ 泄漏。
             ObjEnumDef* old_def = enum_def_table[i];
-            old_def->name = NULL;
-            old_def->members = NULL;
-            old_def->member_count = 0;
+            if (old_def == def) return;   // 同一对象重复注册：空操作
 
             enum_def_table[i] = def;
             return;

@@ -131,6 +131,7 @@ int module_ast_collect_exports(const char* src, AstExportList* out) {
     parser_init(&parser, src);
     if (parser_parse(&parser) < 0) {
         ast_free(parser.root);
+        parser_free(&parser);
         return -1;      // 语法错误：两边都读不出，不参与比较
     }
 
@@ -147,6 +148,7 @@ int module_ast_collect_exports(const char* src, AstExportList* out) {
     }
 
     ast_free(parser.root);   // 名字已 strdup 出来 ⇒ 先收集后释放才安全 ✓
+    parser_free(&parser);
     return 0;
 }
 
@@ -590,7 +592,13 @@ static void ast_fill_one_func(ModuleSymbolTable* table, Ast* fn) {
                 for (int i = 0; i < tpc; i++) {
                     tpn[i] = fn->u.func.type_params[i] ? strdup(fn->u.func.type_params[i]) : NULL;
                 }
+                // 多轮填充：旧的形参名数组必须先释放
+                if (sym->type_param_names) {
+                    for (int i = 0; i < sym->type_param_count; i++) free(sym->type_param_names[i]);
+                    free(sym->type_param_names);
+                }
                 sym->type_param_names = tpn;
+                sym->type_param_count = tpc;
             }
         }
     }
@@ -611,6 +619,9 @@ static void ast_fill_one_func(ModuleSymbolTable* table, Ast* fn) {
                 type_free(rt);
             } else {
                 sym->return_type = rt->kind;
+                // 多轮填充：旧副本先释放，避免每次重填漏一份
+                if (sym->return_type_info) type_free(sym->return_type_info);
+                free(sym->return_struct_name);
                 sym->return_type_info = rt;
                 sym->return_struct_name = rt->struct_name ? strdup(rt->struct_name) : NULL;
             }
@@ -659,7 +670,13 @@ static void ast_fill_one_func(ModuleSymbolTable* table, Ast* fn) {
                 free(pts);
                 free(psn);
             } else {
-                // 旧数组不释放（同返回组：符号表进程内长存活、量小，先避 use-after-free ✓）
+                // 旧数组不释放会随多轮填充重复泄漏 ⇒ 先整组释放旧副本
+                int old_pc = sym->param_count;
+                if (sym->param_struct_names) {
+                    for (int i = 0; i < old_pc; i++) free(sym->param_struct_names[i]);
+                    free(sym->param_struct_names);
+                }
+                free(sym->param_types);
                 sym->param_count = pc;
                 sym->param_types = pts;
                 sym->param_struct_names = psn;
@@ -725,7 +742,9 @@ static void ast_fill_one_alias(ModuleSymbolTable* table, Ast* al) {
         type_free(t);
         return;
     }
-    sym->type_info = t;   // 旧值不释放：符号表是进程内长存活缓存、每模块一份，量极小（TODO：并入 GC）
+    // 已有条目：整份替换 type_info（多轮填充会重复覆盖 ⇒ 旧副本必须先释放）
+    if (sym->type_info) type_free(sym->type_info);
+    sym->type_info = t;
 }
 
 // ---- var 类接管 ----
@@ -997,8 +1016,11 @@ static void ast_fill_one_var(ModuleSymbolTable* table, Ast* vd) {
         return;
     }
     sym->type = resolved->kind;
+    // 多轮填充：旧的名/类型副本先释放
+    free(sym->struct_name);
+    if (sym->type_info) type_free(sym->type_info);
     sym->struct_name = resolved->struct_name ? strdup(resolved->struct_name) : NULL;
-    sym->type_info = resolved;   // 所有权转移（旧值不释放：量小、先避 use-after-free ✓）
+    sym->type_info = resolved;   // 所有权转移
     sym->is_const = vd->u.var_decl.is_const;
 }
 
@@ -1213,8 +1235,23 @@ static void ast_fill_one_clib(ModuleSymbolTable* table, Ast* cd) {
         }
     }
     if (sym) {
+        // 多轮填充：旧 funcs 数组（含深拷贝的字符串）必须先释放
+        if (sym->funcs) {
+            for (int i = 0; i < sym->func_count; i++) {
+                free(sym->funcs[i].name);
+                free(sym->funcs[i].return_struct_name);
+                free(sym->funcs[i].param_types);
+                free(sym->funcs[i].param_element_types);
+                if (sym->funcs[i].param_struct_names) {
+                    for (int k = 0; k < sym->funcs[i].param_count; k++)
+                        free(sym->funcs[i].param_struct_names[k]);
+                    free(sym->funcs[i].param_struct_names);
+                }
+            }
+            free(sym->funcs);
+        }
         sym->func_count = fc;
-        sym->funcs = fs;      // 旧数组不释放（同前：量小、先避 use-after-free ✓）
+        sym->funcs = fs;
         return;
     }
     // ★ 建表：add_clib 内部深拷贝（且要求 func_count > 0）⇒ 随后释放我们造的临时数组 ✓
@@ -1565,6 +1602,10 @@ static void ast_fill_one_struct_meta(ModuleSymbolTable* table, Ast* sd) {
                     tpn[i] = sd->u.struct_def.type_params[i]
                                  ? strdup(sd->u.struct_def.type_params[i]) : NULL;
                 }
+                if (sym->type_param_names) {
+                    for (int i = 0; i < sym->type_param_count; i++) free(sym->type_param_names[i]);
+                    free(sym->type_param_names);
+                }
                 sym->type_param_count = tpc;
                 sym->type_param_names = tpn;
             }
@@ -1576,6 +1617,10 @@ static void ast_fill_one_struct_meta(ModuleSymbolTable* table, Ast* sd) {
                 for (int i = 0; i < ic; i++) {
                     inn[i] = sd->u.struct_def.impl_names[i]
                                  ? strdup(sd->u.struct_def.impl_names[i]) : NULL;
+                }
+                if (sym->impl_names) {
+                    for (int i = 0; i < sym->impl_count; i++) free(sym->impl_names[i]);
+                    free(sym->impl_names);
                 }
                 sym->impl_count = ic;
                 sym->impl_names = inn;
@@ -1780,10 +1825,16 @@ static void ast_fill_one_struct_meta(ModuleSymbolTable* table, Ast* sd) {
             free(fields[i].name);
             free(fields[i].struct_name);
             free(fields[i].element_struct_name);
+            if (fields[i].type_info) type_free(fields[i].type_info);
         }
         for (int i = 0; i < mc; i++) {
             free(methods[i].name);
             free(methods[i].return_struct_name);
+            if (methods[i].return_type_info) type_free(methods[i].return_type_info);
+            if (methods[i].param_generic_names) {
+                for (int k = 0; k < methods[i].param_count; k++) free(methods[i].param_generic_names[k]);
+                free(methods[i].param_generic_names);
+            }
             if (methods[i].param_struct_names) {
                 for (int k = 0; k < methods[i].param_count; k++) free(methods[i].param_struct_names[k]);
                 free(methods[i].param_struct_names);
@@ -1930,7 +1981,9 @@ static void ast_fill_one_cstruct(ModuleSymbolTable* table, Ast* cd) {
         free(fields[i].name);
         free(fields[i].struct_name);
         free(fields[i].element_struct_name);
-        // type_info 不释放：所有权已随 add_struct 转移（与 scan_cstruct.inc 同约定 ✓）
+        // add_struct 内部**深拷贝** type_info（sym_table_add.inc:89）⇒ 本地副本必须释放
+        //   （此前注释写成"所有权转移"⇒ 每个 cstruct 字段漏一份 TypeInfo，实测 3 个用例命中）
+        if (fields[i].type_info) type_free(fields[i].type_info);
     }
     free(fields);
 }
@@ -1965,7 +2018,12 @@ static void ast_fill_one_enum(ModuleSymbolTable* table, Ast* ed) {
         free(mv);
         return;
     }
-    // 旧数组不释放（同前：符号表进程内长存活、量小，先避 use-after-free ✓）
+    // 多轮填充：旧成员数组先释放
+    if (sym->member_names) {
+        for (int i = 0; i < sym->member_count; i++) free(sym->member_names[i]);
+        free(sym->member_names);
+    }
+    free(sym->member_values);
     sym->member_count = mc;
     sym->member_names = mn;
     sym->member_values = mv;
@@ -2018,7 +2076,18 @@ static void ast_fill_one_cfunc(ModuleSymbolTable* table, Ast* cf) {
     }
 
     if (sym) {
-        // 覆盖：旧数组不释放（同前：符号表进程内长存活、量小，先避 use-after-free ✓）
+        // 覆盖：旧数组必须先释放（多轮填充会重复覆盖同一符号）
+        if (sym->param_struct_names) {
+            for (int i = 0; i < sym->param_count; i++) free(sym->param_struct_names[i]);
+            free(sym->param_struct_names);
+        }
+        if (sym->param_names) {
+            for (int i = 0; i < sym->param_count; i++) free(sym->param_names[i]);
+            free(sym->param_names);
+        }
+        free(sym->param_types);
+        free(sym->param_element_types);
+        free(sym->return_struct_name);
         if (have_params) {
             sym->param_count = pc;
             sym->param_types = pts;
@@ -2061,6 +2130,7 @@ static void ast_symbol_fill_provider(ModuleSymbolTable* table, const char* src) 
     parser_init(&p, src);
     if (parser_parse(&p) < 0) {
         ast_free(p.root);
+        parser_free(&p);
         ast_file_ctx_leave(&ctx);
         return;         // 语法错 ⇒ 不覆盖（编译本来就会在 parse 阶段报错 ✓）
     }
@@ -2113,6 +2183,7 @@ static void ast_symbol_fill_provider(ModuleSymbolTable* table, const char* src) 
     g_ast_import_count = saved_import_count;
     ast_file_ctx_leave(&ctx);
     ast_free(p.root);
+    parser_free(&p);
 }
 
 // （2026-10-02 S10 收尾）此处原有"填充阶段"概念与 `ast_fill_phase()` 查询接口，**已删**：

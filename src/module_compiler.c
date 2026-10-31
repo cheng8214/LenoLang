@@ -28,8 +28,11 @@ ObjModule* compile_module_new(const char* source, const char* module_name,
         error_print_all();
         errors.count = saved_count;
         ast_free(parser.root);
+        parser_free(&parser);
         return NULL;
     }
+    // Parser 的辅助表（struct 名 / 类型别名）已用不到了 ⇒ 立即释放
+    parser_free(&parser);
 
     // 1.5 编译期 target 条件剪枝（**必须在语义分析之前** ✓）
     //     模块也要剪：模块体里同样可以有 `if target.os == …` 的条件分支，
@@ -65,6 +68,7 @@ ObjModule* compile_module_new(const char* source, const char* module_name,
     // 只关注本模块语义分析新增的错误，不受前序模块错误影响
     if (errors.count > errors_before_semantic) {
         ast_free(parser.root);
+        if (sem.root_scope) { scope_free(sem.root_scope); sem.root_scope = NULL; }
         semantic_cleanup(&sem);
         return NULL;
     }
@@ -73,6 +77,7 @@ ObjModule* compile_module_new(const char* source, const char* module_name,
     ObjModule* module = module_new(module_name);
     if (!module) {
         ast_free(parser.root);
+        if (sem.root_scope) { scope_free(sem.root_scope); sem.root_scope = NULL; }
         semantic_cleanup(&sem);
         return NULL;
     }
@@ -262,6 +267,7 @@ ObjModule* compile_module_new(const char* source, const char* module_name,
     if (errors.count > errors_before_codegen) {
         codegen_cleanup(&gen);
         ast_free(parser.root);
+        if (sem.root_scope) { scope_free(sem.root_scope); sem.root_scope = NULL; }
         semantic_cleanup(&sem);
         chunk_free(&chunk);
         return NULL;
@@ -448,6 +454,9 @@ ObjModule* compile_module_new(const char* source, const char* module_name,
     // 10. 释放 AST 和语义分析资源（init_chunk 已转移到模块对象，不再释放）
     codegen_cleanup(&gen);
     ast_free(parser.root);
+    // 模块编译的 root_scope 不会被 VM 接管（运行期用的是反序列化/独立的 scope）
+    // ⇒ 这里必须显式释放，否则每个模块都漏一整棵符号表
+    if (sem.root_scope) { scope_free(sem.root_scope); sem.root_scope = NULL; }
     semantic_cleanup(&sem);
     return module;
 }
