@@ -598,3 +598,30 @@ export func lyric_find(string title, string artist, string kuwoSid, Channel ch) 
     out.add("小酷和网易云都没有找到歌词")
     ch.send(out)
 }
+
+// ==================== 按 id 反查歌曲信息（2026-10-31）====================
+// 干什么：老版本收藏只存了 id（library.json 里 `likes` 是纯 id 列表），歌名/歌手全丢了。
+//   这里按 id 去查一次，能把**网易云 id**（小易那套）的歌名/歌手/封面补回来。
+//
+// 回信：Array[string] = [id, 歌名, 歌手, 封面URL, "ff"]；查不到就只回 [id]（长度 1）
+//   ⇒ 上层按长度区分，不用额外通道传错误 ✓
+//
+// ⚠ 酷我 id 补不了：`www.kuwo.cn/api/www/music/musicInfo` 现在一律回
+//   `{"success":false,"message":"The request is illegal!"}`（带 kw_token/csrf 也一样，实测 2026-10-31），
+//   而取直链的 antiserver 只给 url、不给元数据 ⇒ 只能让它在界面上显示「未知歌曲 <id>」占位。
+export func id_info(string id, Channel ch) {
+    Array[string] out = [id]
+    if id != "" {
+        try {
+            var c = ff.newClient()
+            var p = ff.music(c, id, ff.LEVEL_STANDARD)
+            c.close()
+            if p.valid() and p.name != "" {
+                out = [id, p.name, p.artist, p.pic, "ff"]
+            }
+        } catch e {
+            print("[idinfo] 反查失败 " + id + "：" + _str(e))
+        }
+    }
+    ch.send(out)
+}

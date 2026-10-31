@@ -5,21 +5,97 @@
 //   · 主文件只负责"什么时候存/取"（换歌、收藏、退出）
 //   · 这里负责"存成什么形状"（键名、字段顺序、容错）
 // 收藏键的口径见 ui_kit.like_key：在线用 sid、本地用 file:<路径> ✓
+//
+// ★ 2026-10-31 修（用户反馈"排行榜里点了喜欢，「我喜欢」页没有"）：
+//   老实现里 `likes` **只存 like_key 字符串**，界面上的「我喜欢」页靠"拿 key 去几个现有
+//   数组里反查"重建列表（recentSongs / recSongs / newSongs / netSongs / 本地曲库）。
+//   于是两处必然丢：
+//     ① 在**排行榜 / 歌单**里收藏的歌 —— 那两个数组（bangSongs / plSongs）压根没参与反查；
+//     ② 切走榜单 / 重新搜索后，原数组被覆盖 ⇒ 连"已经收藏好的"也一起消失。
+//   根因是**存的东西不完整**：只有 id，没有歌名/歌手/封面 ⇒ 无从重建。
+//   ⇒ 现在 `liked` 存**整首歌的快照**（按字段名存 Dict，不用位置数组，以后加字段不会错位）；
+//     老文件里的 `likes`（纯 key 列表）仍然读得进来，标记 `likedLegacy` 让上层做回填 ✓
 import "./store.leno" as store
 import "../music_data.leno" as data
 use data.Song
 
-// 一次读出来的两样东西（最近播放按时间从新到旧）
+// 一次读出来的东西（最近播放按时间从新到旧）
 export struct LibraryData {
-    Array[string] likes = []
+    Array[Song] liked = []       // ★ 收藏的**歌曲快照**（不再只有 key）
     Array[Song] recent = []
+    bool likedLegacy = false     // true = liked 来自老格式（只有 key，title 是空的）⇒ 上层可回填
 }
 
-// 存：likes 是 like_key 列表；recent 只存界面要用的 5 个字段（够重建 Song ✓）
-export func save(string cacheRoot, Array[string] likes, Array[Song] recent) {
+// 与 ui_kit.like_key 同口径（这里不 import ui_kit：library 是纯数据层，别反向依赖界面工具）
+func key_of(Song sg): string {
+    if sg.sid != "" { return sg.sid }
+    if sg.path != "" { return "file:" + sg.path }
+    return ""
+}
+
+// ---------- Song ⇄ Dict（收藏快照用）----------
+func song_dict(Song s): Dict[string, any] {
     Dict[string, any] d = {}
-    d["version"] = 1
-    d["likes"] = likes
+    d["sid"] = s.sid
+    d["title"] = s.title
+    d["artist"] = s.artist
+    d["dur"] = s.dur
+    d["cover"] = s.cover
+    d["tag"] = s.tag
+    d["path"] = s.path
+    d["url"] = s.url
+    d["ext"] = s.ext
+    d["src"] = s.src
+    d["sizeBytes"] = _str(s.sizeBytes)
+    d["sampleRate"] = _str(s.sampleRate)
+    d["channels"] = _str(s.channels)
+    return d
+}
+
+// 取字符串字段（缺 / null ⇒ 空串，绝不抛）
+func gs(Dict[string, any] d, string k): string {
+    var v = d.get(k, null)
+    if v == null { return "" }
+    return _str(v)
+}
+
+func song_from_dict(any raw): Song {
+    Song sg = new Song()
+    var d = raw as Dict[string, any]
+    if d == null { return sg }
+    sg.sid = gs(d, "sid")
+    sg.title = gs(d, "title")
+    sg.artist = gs(d, "artist")
+    sg.dur = gs(d, "dur")
+    sg.cover = gs(d, "cover")
+    sg.tag = gs(d, "tag")
+    sg.path = gs(d, "path")
+    sg.url = gs(d, "url")
+    sg.ext = gs(d, "ext")
+    sg.src = gs(d, "src")
+    sg.sizeBytes = _int(gs(d, "sizeBytes"))
+    sg.sampleRate = _int(gs(d, "sampleRate"))
+    sg.channels = _int(gs(d, "channels"))
+    return sg
+}
+
+// 存：liked / recent 都是**整首歌**（recent 仍用老的位置数组格式，没坏就别动 ✓）
+export func save(string cacheRoot, Array[Song] liked, Array[Song] recent) {
+    Dict[string, any] d = {}
+    d["version"] = 2
+
+    // ① 新格式：liked = 完整快照
+    Array[any] lk = []
+    for liked to s { lk.add(song_dict(s)) }
+    d["liked"] = lk
+    // ② 老格式字段照写（纯 key 列表）—— 降级到旧版本时还能认出"收过哪些" ✓
+    Array[string] keys = []
+    for liked to s {
+        string k = key_of(s)
+        if k != "" { keys.add(k) }
+    }
+    d["likes"] = keys
+
     Array[Array[string]] rs = []
     for recent to s {
         // 第 6 项 = 音源标记（`"ff"` = 小易 / `"kuwo"` = 小酷）：不存它的话，重启后 ff 源的歌
@@ -41,7 +117,33 @@ export func save(string cacheRoot, Array[string] likes, Array[Song] recent) {
 export func load(string cacheRoot): LibraryData {
     LibraryData out = new LibraryData()
     var d = store.load(cacheRoot)
-    out.likes = store.str_list(d, "likes")
+
+    // ---------- 收藏：优先新格式（快照）----------
+    var la = d.get("liked", null) as Array[any]
+    if la != null {
+        for la to it {
+            Song sg = song_from_dict(it)
+            if key_of(sg) != "" { out.liked.add(sg) }
+        }
+    }
+    // ---------- 收藏：退化到老格式（只有 key）----------
+    if out.liked.len() == 0 {
+        var keys = store.str_list(d, "likes")
+        if keys.len() > 0 {
+            out.likedLegacy = true
+            for keys to k {
+                Song sg = new Song()
+                if k.starts_with("file:") {
+                    sg.path = k.slice(5, k.len() - 1)
+                } else {
+                    sg.sid = k
+                }
+                if key_of(sg) != "" { out.liked.add(sg) }
+            }
+        }
+    }
+
+    // ---------- 最近播放（沿用位置数组 + 宽松解析）----------
     var rv = d.get("recent", null)
     // ★ 2026-10-31 修（对应 docs/语言与框架问题 L1）：**宽松解析**
     //   原来写 `rv as Array[Array[string]]` —— 这是"整组严格匹配"，只要有一行混进了
@@ -93,6 +195,34 @@ export func remove(Array[string] likes, string key): Array[string] {
     Array[string] out = []
     for likes to s {
         if s != key { out.add(s) }
+    }
+    return out
+}
+
+// 追加 key（不重复）
+export func add_key(Array[string] keys, string key): Array[string] {
+    if key == "" { return keys }
+    for keys to s { if s == key { return keys } }
+    Array[string] out = []
+    for keys to s { out.add(s) }
+    out.add(key)
+    return out
+}
+
+// ---------- 快照数组的增删（按 like_key 判同一首）----------
+export func add_song(Array[Song] arr, Song sg): Array[Song] {
+    string k = key_of(sg)
+    if k == "" { return arr }
+    Array[Song] out = []
+    for arr to s { if key_of(s) != k { out.add(s) } }
+    out.add(sg)          // 已存在时**替换成最新的这份**（封面/直链可能是后补的 ✓）
+    return out
+}
+
+export func remove_song(Array[Song] arr, string key): Array[Song] {
+    Array[Song] out = []
+    for arr to s {
+        if key_of(s) != key { out.add(s) }
     }
     return out
 }

@@ -221,8 +221,17 @@ export struct Player {
     Array[Song] netSongs = []      // 酷我搜索结果（非空就替代演示数据 ✓）
     // 最近播放（"继续收听"按这个顺序显示：最新播的排最前 ✓）
     Array[Song] recentSongs = []
-    // 喜欢的歌（存酷我 id；卡片上的 ♥ 与「我喜欢」页都看它 ✓）
+    // 喜欢的歌：
+    //   · likedSids = like_key 集合，只用来快速判断"这首收没收藏"（♥ 图标状态 ✓）
+    //   · likedList = **歌曲快照**，「我喜欢」页直接读它
+    // ★ 2026-10-31 修：原来只有 likedSids，页面靠"拿 key 去 recent/推荐/搜索几个数组里反查"
+    //   重建 ⇒ 在**排行榜/歌单**收藏的找不到，切走榜单后已收藏的也会消失（用户反馈 ✓）
     Array[string] likedSids = []
+    Array[Song] likedList = []
+    // 老收藏（只有 id、没有歌名）的补全：后台一次查一条，查不到的记进 lookupTried 别反复查
+    Channel idInfoCh
+    bool idInfoBusy = false
+    Array[string] lookupTried = []
     Table tbSearch                     // 搜索结果表（排序后显示行≠数据行 ⇒ 一律过 source_row ✓）
     bool hasTable = false              // 当前是否真的建过结果表（struct 值类型不能拿 null 判断 ✗）
     // 窗口缩放处理：resize 事件只置标记，on_tick 里比宽度、真变了才重建
@@ -548,6 +557,7 @@ Song nowSong
         homeCh = threads.channel(4)           // 首页分区（为你推荐/最近添加）回信通道
         lyrCh = threads.channel(4)            // 歌词回信（一首一条 ✓）
         lyrFindCh = threads.channel(4)        // 「搜索歌词」回信（点一次一条 ✓）
+        idInfoCh = threads.channel(4)         // 老收藏按 id 反查歌名（一次一条 ✓）
         dlCtl = threads.channel(4)            // 下载控制（给 worker 发"暂停"）✓
         ffPlayCtl = threads.channel(1)        // 试听下载的空控制通道（永不发消息，见字段注释 ✓）
         // 下载队列**落盘历史**：重启后原样恢复（"下载中"已在 load_jobs 里降级成"已暂停"✓）
@@ -934,6 +944,9 @@ Song nowSong
         // 排行榜 / 发现：侧栏走的是 set_nav（不经过 nav_apply）⇒ 在这里触发首屏拉取 ✓
         if idx == 4 { enter_rank() }
         if idx == 5 { enter_discover() }
+        // 进「我喜欢」时再试一次补全：老数据只有 id、没有歌名，首次启动回填时
+        // 排行榜/歌单/搜索那几个数组可能还没加载 ⇒ 到这里通常已经加载过了 ✓
+        if idx == 1 { backfill_liked() }
         // 切到大列表页 ⇒ 从第一批重新开始（否则上次翻到 300 条会一直背着 ✓）
         searchBtn.set_bg_color(C_TRANS)
         searchBtn.set_hover_color(#FFFFFFC8)
@@ -3725,13 +3738,89 @@ Song nowSong
     //   原来只在内存里，重启就没了 ✗
     // 落盘 / 读回都在 lib/library.leno（存成什么形状归它管 ✓）
     pri func save_library() {
-        lib.save(ui.cacheRoot(), likedSids, recentSongs)
+        lib.save(ui.cacheRoot(), likedList, recentSongs)
     }
 
     pri func load_library() {
         LibraryData ld = lib.load(ui.cacheRoot())
-        likedSids = ld.likes
+        likedList = ld.liked
         recentSongs = ld.recent
+        sync_liked_keys()                 // likedSids 由快照派生（增删只维护 likedList 一处 ✓）
+        if ld.likedLegacy { backfill_liked() }
+    }
+
+    // 由 likedList 重建 key 集合（♥ 图标查询用）
+    pri func sync_liked_keys() {
+        Array[string] out = []
+        for likedList to s {
+            string k = ui.like_key(s)
+            if k != "" { out.add(k) }
+        }
+        likedSids = out
+    }
+
+    // 老数据（library.json 里只有 key）升级：拿 key 去各个列表里把歌找回来
+    //   找不到的（比如那轮搜索早被覆盖）就先留空标题 —— 至少不会"整条消失" ✓
+    pri func backfill_liked() {
+        bool changed = false
+        for 0 : likedList.len() - 1 to i {
+            if likedList[i].title != "" { continue }
+            Song hit = find_song_by_key(ui.like_key(likedList[i]))
+            if hit.title != "" {
+                likedList[i] = hit
+                changed = true
+            }
+        }
+        if changed { save_library() }
+    }
+
+    // ---------- 老收藏补全（只有 id、没有歌名）----------
+    //   什么时候会缺：library.json 是老格式（`likes` 纯 id 列表），升级后读出来的 Song
+    //   只有 sid、title 为空。后台按 id 反查一次就能补回来（仅网易云 id 查得到 ✓）
+    pri func kick_id_lookup() {
+        if idInfoBusy or idInfoCh == null { return }
+        for likedList to s {
+            if s.title != "" or s.sid == "" { continue }        // 有名字 / 本地文件 ⇒ 不用查
+            bool tried = false
+            for lookupTried to t { if t == s.sid { tried = true } }
+            if tried { continue }
+            lookupTried.add(s.sid)          // 先记下再发（失败也不再反复请求 ✓）
+            idInfoBusy = true
+            threads.start(workers.id_info, s.sid, idInfoCh)
+            return
+        }
+    }
+
+    // 回信：长度 ≥ 5 ⇒ 查到了（[id, 歌名, 歌手, 封面, "ff"]）
+    pri func apply_id_info(Array[string] a) {
+        idInfoBusy = false
+        if a.len() < 5 { return }
+        string sid = a[0]
+        for 0 : likedList.len() - 1 to i {
+            if likedList[i].sid != sid { continue }
+            likedList[i].title = a[1]
+            likedList[i].artist = a[2]
+            if a[3] != "" { likedList[i].cover = a[3] }
+            likedList[i].src = "ff"         // 能按这个 id 解析出歌 ⇒ 走小易那条播放路 ✓
+            save_library()
+            if curNav == 1 { rebuild_content() }
+            SDL3.markFrameRedraw()
+            return
+        }
+    }
+
+    // 按 like_key 在所有已知列表里找同一首（含**排行榜 / 歌单** —— 老实现漏的正是这两个 ✗）
+    pri func find_song_by_key(string k): Song {
+        if k == "" { return new Song() }
+        for recentSongs to s { if ui.like_key(s) == k { return s } }
+        for recSongs to s { if ui.like_key(s) == k { return s } }
+        for newSongs to s { if ui.like_key(s) == k { return s } }
+        for netSongs to s { if ui.like_key(s) == k { return s } }
+        for bangSongs to s { if ui.like_key(s) == k { return s } }
+        for plSongs to s { if ui.like_key(s) == k { return s } }
+        for localCache to s { if ui.like_key(s) == k { return s } }
+        for dl.scan(ui.cacheRoot()) to s { if ui.like_key(s) == k { return s } }
+        return new Song()
     }
 
     // ==================== 喜欢 / 添加（卡片上的两个小按钮）====================
@@ -3739,24 +3828,37 @@ Song nowSong
         return lib.is_liked(likedSids, key)
     }
 
-    // 「我喜欢」页的数据：在线（sid）与本地（path）都能进（按 like_key 去重 ✓）
+    // 「我喜欢」页的数据 = **收藏快照本身**
+    //   ★ 2026-10-31 修：不再"拿 key 去现有数组里反查" ——
+    //     ① 在**排行榜 / 歌单**收藏的歌，bangSongs / plSongs 压根没参与反查 ⇒ 一进这页就空；
+    //     ② 切走榜单 / 重新搜索后原数组被覆盖 ⇒ 连已经收好的也跟着消失 ✗
+    //   现在收藏时就存了整首歌（lib/library.leno 的 `liked`），这页直接读它 ✓
     pri func liked_songs(): Array[Song] {
+        // 渲染前补个**可辨识的占位**：老数据只有 id、标题还空着（回填时那首歌的列表没加载）
+        //   ⇒ 否则「我喜欢」页会出现一张**空白卡**，用户以为又坏了 ✗
+        //   注意只改返回的副本，磁盘里仍然留空 ⇒ 下次启动还能继续尝试补全 ✓
+        bool anyBlank = false
+        for likedList to s { if s.title == "" { anyBlank = true } }
+        if not anyBlank { return likedList }
         Array[Song] out = []
-        for recentSongs to s {
-            if is_liked(ui.like_key(s)) { out.add(s) }
-        }
-        // 本地曲库也扫一遍 —— 否则本地收藏的歌永远不出现 ✓
-        for dl.scan(ui.cacheRoot()) to s {
-            if is_liked(ui.like_key(s)) and not ui.has_key(out, ui.like_key(s)) { out.add(s) }
-        }
-        for recSongs to s {
-            if is_liked(ui.like_key(s)) and not ui.has_key(out, ui.like_key(s)) { out.add(s) }
-        }
-        for newSongs to s {
-            if is_liked(ui.like_key(s)) and not ui.has_key(out, ui.like_key(s)) { out.add(s) }
-        }
-        for netSongs to s {
-            if is_liked(ui.like_key(s)) and not ui.has_key(out, ui.like_key(s)) { out.add(s) }
+        for likedList to s {
+            if s.title != "" { out.add(s); continue }
+            Song c = new Song()
+            c.sid = s.sid
+            c.path = s.path
+            c.cover = s.cover
+            c.src = s.src
+            c.dur = s.dur
+            c.ext = s.ext
+            if s.path != "" {
+                c.title = "本地文件"
+                // 只截尾部（路径可能很长；不要用 split("\\") —— 反斜杠转义在字符串里很绕 ✓）
+                c.artist = if s.path.len() > 26 then "…" + s.path.slice(s.path.len() - 26, s.path.len() - 1) else s.path
+            } else {
+                c.title = "未知歌曲 " + s.sid
+                c.artist = "信息待补全"
+            }
+            out.add(c)
         }
         return out
     }
@@ -3788,7 +3890,15 @@ Song nowSong
             toast("这首歌既没有音源 id 也没有本地文件，收不了")
             return
         }
-        likedSids = lib.toggle(likedSids, key)      // 有则删、无则加（集合运算归 lib/library.leno ✓）
+        // 有则删、无则加；**两个容器一起维护**：
+        //   likedSids 管 ♥ 状态，likedList 管「我喜欢」页的内容（存整首歌 ✓）
+        if is_liked(key) {
+            likedSids = lib.remove(likedSids, key)
+            likedList = lib.remove_song(likedList, key)
+        } else {
+            likedSids = lib.add_key(likedSids, key)
+            likedList = lib.add_song(likedList, sg)     // ★ 快照：排行榜/歌单/搜索哪来的都行 ✓
+        }
         save_library()                   // ★ 立刻落盘（重启后「我喜欢」还在 ✓）
         // ♥ 图标本身就是反馈 ⇒ 不再往底栏写"已喜欢/已取消"（那里只放歌手名 ✓）
         sync_like_icon()                 // 底栏 ♥ 跟着变（它和卡片共用一份数据 ✓）
@@ -4068,6 +4178,7 @@ Song nowSong
         if key == "" { return }
         if not lib.is_liked(likedSids, key) { return }   // 已经不在收藏里 ⇒ 什么都不用做
         likedSids = lib.remove(likedSids, key)
+        likedList = lib.remove_song(likedList, key)       // 快照也要删，否则「我喜欢」页还留着 ✓
         save_library()                    // ★ 立刻落盘，重启后不会又冒出来 ✓
         toast("已从「我喜欢」删除：" + sg.title)
         sync_like_icon()                  // 底栏 ♥ 跟着变（若删的就是在播这首 ✓）
@@ -4933,6 +5044,17 @@ Song nowSong
                 mb = bangCh.try_receive()
             }
         }
+        // ⓪b 老收藏补全（只有 id、没歌名的那批）：收一条回信 + 没在途就再发一条
+        //    后台串行、一次一条 ⇒ 不抢 UI 线程，几十条也不会卡 ✓
+        if idInfoCh != null {
+            var im = idInfoCh.try_receive()
+            while im != null {
+                var one = im as Array[string]
+                if one != null { apply_id_info(one) }
+                im = idInfoCh.try_receive()
+            }
+        }
+        kick_id_lookup()
         // ① 排空搜索线程的回信（`try_receive()` 非阻塞 —— 不要用 threads.select ✗）
         if searchCh != null {
             var m = searchCh.try_receive()
@@ -5551,6 +5673,15 @@ Song nowSong
 
     // ==================== 无头自检 ====================
     pri func self_test() {
+        // ARIA_CACHE=<目录> ⇒ 换一个缓存根（**自测隔离**：别动用户的收藏/下载/封面 ✓）
+        //   必须排在所有钩子最前面：收藏、最近播放都在启动时从 cacheRoot 读
+        var crEnv = _env("ARIA_CACHE")
+        if crEnv != null and _str(crEnv) != "" {
+            ui.set_cache_override(_str(crEnv))
+            load_library()
+            rebuild_content()
+            print("[probe] 缓存根已切到 " + _str(crEnv) + "（收藏 " + _str(likedList.len()) + " 首）")
+        }
         // 启动就切到某个导航页（下标：0 首页 / 1 我喜欢 / 2 最近播放 / 3 本地音乐 / 4+ 歌单）
         var nv = _env("ARIA_NAV")
         if nv != null { set_nav(_int(_str(nv))) }
@@ -5582,6 +5713,30 @@ Song nowSong
         //   这几条正是最容易"看代码没问题、跑起来不响应"的地方 ✓
         var act = _env("ARIA_ACT")
         if act != null and _int(_str(act)) > 0 { demo_actions() }
+        // ARIA_LIKEPROBE=1 ⇒ 回归钩子（2026-10-31 用户反馈："排行榜里点了喜欢，
+        //   「我喜欢」页没有"）：造一首**只存在于榜单数组**里的歌 → 点 ♥ → 切到「我喜欢」
+        //   旧实现是"拿 key 去 recent/推荐/搜索里反查"，bangSongs 不参与 ⇒ 这页必空 ✗
+        var lk = _env("ARIA_LIKEPROBE")
+        if lk != null and _int(_str(lk)) > 0 {
+            //   ⚠ 局部名别叫 probe：第 41 行 `import "./lib/probes.leno" as probe` 已占用，
+            //     重名会报"模块 'probe' 中没有成员 'sid'"（指向真正的病因很绕 ✓）
+            Song tk = new Song()
+            tk.sid = "999000111"
+            tk.title = "榜单探针曲"
+            tk.artist = "探针歌手"
+            tk.dur = "03:33"
+            tk.ext = "flac"
+            tk.src = "ff"
+            bangSongs.add(tk)                 // 假装它来自排行榜（不进 recent/推荐/搜索 ✓）
+            // 幂等：先清场再收藏 —— 否则反复跑这个探针会在"收/取消"之间来回跳，
+            //   数量一会儿 +1 一会儿 -1，看不出是修好了还是没修好 ✗
+            if is_liked(ui.like_key(tk)) { toggle_song_like(tk) }
+            toggle_song_like(tk)              // 点一下 ♥
+            curNav = 1                        // 切到「我喜欢」
+            rebuild_content()
+            print("[probe] 已收藏「" + tk.title + "」 ⇒ 我喜欢页应有 " +
+                  _str(liked_songs().len()) + " 首；key 集合=" + _str(likedSids.len()))
+        }
         // ARIA_STRESS=N ⇒ 每拍"首页 ⇄ 最近播放"交替切一次（走真实 set_nav ⇒ 真 rebuild），
         //   跑完打印进程内存增量。用它是为了把"点一下涨多少"变成数字，而不是靠肉眼看任务管理器 ✓
         var rc = _env("ARIA_RCLICK")
