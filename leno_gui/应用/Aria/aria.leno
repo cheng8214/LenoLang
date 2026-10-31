@@ -485,6 +485,14 @@ export struct Player {
 //   播放键不能再 `resume()` 把它叫回来（`stop` 之后 resume 会从头放上一首 ✗）
 bool audioBusy = false
 
+// `snd` 里**当前是否真的加载着音频**（2026-10-31）。
+//   启动恢复会话时只有 `nowSong` + `pos`，音频一次都没加载过 ⇒ 这时 `snd.resume()`
+//   是空操作（点播放没声音、进度也不动）✗ ⇒ `toggle_play` 靠它判断该"重新加载"
+//   （暂停/继续不经过 `cut_current_playback`，所以这个标志保持 true，resume 照常有效 ✓）
+bool sndHasFile = false
+// 恢复态点播放时要接回的断点（秒）；只在那种场景非 0，用掉即清零 ✓
+float resumePos = 0.0
+
 Song nowSong
     ProgressBar seek
     Label curTime
@@ -652,10 +660,28 @@ Song nowSong
             queue = sess0.queue
             qIdx = sess0.cur
             if qIdx >= 0 and qIdx < queue.len() {
-                nowSong = queue[qIdx]
-                nowSid = nowSong.sid
-                pos = sess0.pos
-                sync_play_ui()
+                Song qs = queue[qIdx]
+                // ★ 2026-10-31：本地文件可能已经被删 / 改名了。
+                //   这时还把歌名摆到底栏，就成了**只能看不能播**的幽灵曲目 ——
+                //   点播放毫无反应（`createSound` 打不开、静默失败），用户只会觉得"播放坏了" ✗
+                //   ⇒ 文件不在就**不摆当前曲目**（队列本身保留，用户去列表里点它仍会报错提示 ✓）
+                if qs.path != "" and not files.exists(qs.path) {
+                    print("[session] 上次那首的本地文件不在了，跳过恢复：" + qs.path)
+                    qIdx = -1
+                } else {
+                    nowSong = qs
+                    nowSid = qs.sid
+                    pos = sess0.pos
+                    // 时长也一起恢复 —— 只恢复 pos 会让底栏显示 `03:20 / 00:00`
+                    //   （有进度没总时长，看着像"未在播放却在走时间" ✗）
+                    //   真播时 `start_play_file` 会用解码器读到的值覆盖，所以这里不必太准 ✓
+                    if sess0.dur > 0.0 {
+                        dur = sess0.dur
+                        durKnown = true
+                        totTime.set_text(ui.fmtTime(dur))
+                    }
+                    sync_play_ui()
+                }
             }
         }
 
@@ -3194,6 +3220,7 @@ Song nowSong
     //   ⚠ 只 `stop()` 不 `uninit()`：uninit 会关掉引擎（见 start_play_file 的长注释 ✓）
     pri func cut_current_playback() {
         if sndOk { snd.stop() }
+        sndHasFile = false       // 旧声已停 ⇒ 再 resume 会放出上一首，标记成"没加载"更安全 ✓
         audioBusy = true
         playing = false
         pos = 0.0
@@ -3253,9 +3280,16 @@ Song nowSong
         specOk = spec.isInit()
         for SPEC_BARS to i { specBars[i] = 0.0 }
         playing = true
+        sndHasFile = true                        // snd 里现在**真的**有音频了（见 toggle_play ✓）
         durKnown = true
         dur = d
         totTime.set_text(ui.fmtTime(dur))
+        // 启动恢复态点"播放" ⇒ 接回上次的断点（`resumePos` 只在那种情况下非 0 ✓）
+        if resumePos > 0.0 {
+            float want = resumePos
+            resumePos = 0.0
+            if want < d - 1.0 and snd.seek(want) { pos = want }
+        }
         // 开声成功 ⇒ 把"正在取音源…"那行换回歌手名（之前一直挂着提示 ✗）
         nowArtist.set_text(sg.artist)
         playBtn.set_image(ui.ico("pause.png"))
@@ -3460,6 +3494,7 @@ Song nowSong
         sess.queue = queue
         sess.cur = qIdx
         sess.pos = pos
+        sess.dur = dur          // 一起存：重启后底栏才能显示 "03:20 / 04:29" 而不是 "/ 00:00" ✓
         session.save(sess, cfgset.store_path())
     }
 
@@ -4252,6 +4287,17 @@ Song nowSong
         // 换歌后音源还没就绪：此时 snd 已被 stop（旧声已闭嘴），
         //   若放行 resume 会把**上一首**从头放出来 ✗ ⇒ 只提示，不改状态 ✓
         if audioBusy { toast("音源正在准备…"); return }
+        // ★ 2026-10-31：**启动恢复态**（有 nowSong，但 snd 里从没加载过音频）
+        //   这时 `snd.resume()` 是空操作 —— 点了播放没声音、进度也不动，
+        //   界面上还看不出是"没加载"还是"加载失败"（用户反馈"点了也没显示" ✗）
+        //   ⇒ 真的去加载这首，并把断点接回来（见 start_play_file 里的 resumePos ✓）
+        if not sndHasFile {
+            if nowSong.title != "" {
+                resumePos = pos
+                play_song(nowSong)
+            }
+            return
+        }
         // 有真音频对象 ⇒ 交给 miniaudio（stop 保留位置 → pause/resume 就是它 ✓）
         if sndOk {
             if playing { snd.pause() } else { snd.resume() }
@@ -4559,7 +4605,16 @@ Song nowSong
             shownSec = -1
             sync_play_ui()
             nowSid = ""
-            start_play_file(sg, sg.path)
+            // ★ 2026-10-31：返回值**必须管**。打不开时（文件被删 / 损坏）原来完全静默 ——
+            //   界面照样显示"在播"、实际没声，用户只会觉得"点了没反应" ✗
+            if not start_play_file(sg, sg.path) {
+                if not files.exists(sg.path) {
+                    toast("文件不在了：" + dirs.basename(sg.path))
+                } else {
+                    toast("这首打不开（文件可能损坏）")
+                }
+                end_audio_busy()
+            }
             request_lyric()          // 本地文件也取歌词（读同目录 .lrc；原来这里没有 ⇒ 歌词页一直空 ✗）
             return
         }
@@ -5411,7 +5466,15 @@ Song nowSong
 
         steps = steps + 1
         // 截图完成后再让出几拍（present 落地）⇒ 从 tick 里干净退出 ✓
-        if shotExitAt > 0 and steps >= shotExitAt { _exit(0) }
+        if shotExitAt > 0 and steps >= shotExitAt {
+            // ★ 2026-10-31：**必须先掐掉音频**再 _exit ——
+            //   原来直接 `_exit(0)`，miniaudio 的音频回调线程还在跑、进程内存却被回收
+            //   ⇒ 退出码 -805306369（0xC0000409 fast-fail）。
+            //   表现是"自检跑播放相关就卡死/异常退出"（正常关窗走 win.run 返回那条路，
+            //   本来就有 shutdown_audio ✓，只有自检这条漏了）
+            shutdown_audio()
+            _exit(0)
+        }
     }
 
     pri func sync_play_ui() {
@@ -5444,11 +5507,19 @@ Song nowSong
     //   ⚠ 照 LenoMusic（musicdl_gui:1198）：`win.run` 要等**所有窗口销毁**才返回
     //     ⇒ 关窗那一刻就要收一次（可重复调用 ✓）
     pri func shutdown_audio() {
+        // ★ 2026-10-31：频谱也要收 —— 它自己开着一路 decoder（独立线程），
+        //   不 uninit 就退进程同样会踩已释放内存
+        if specOk {
+            spec.uninit()
+            specOk = false
+        }
         if sndOk {
             snd.stop()
-            snd.uninit()
+            snd.uninit()      // 最后一个实例 ⇒ 内部 ma_engine_uninit（会 join 音频线程 ✓）
             sndOk = false
         }
+        sndHasFile = false
+        playing = false
     }
 
     // ==================== 事件 ====================

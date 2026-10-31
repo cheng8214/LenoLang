@@ -51,11 +51,20 @@ export func save(string root, Dict[string, any] d): bool {
 }
 
 // ---------- 便捷读取（键不存在/类型不对 ⇒ 空，不让界面崩）----------
+//   ★ 2026-10-31 修（对应 docs/语言与框架问题 L1）：原来是 `v as Array[string]`，
+//     而 `as` 对数组是**整组严格匹配** —— 数组里只要有一个元素不是 string
+//     （比如手工改过、或历史上某次写成了数字），整个数组就返回 null ⇒ 整块数据消失，
+//     且**一句日志都没有** ✗
+//     ⇒ 先 `as Array[any]`（任何元素都装得下，必成功），再逐元素 `_str()` ✓
 export func str_list(Dict[string, any] d, string key): Array[string] {
+    Array[string] out = []
     var v = d.get(key, null)
-    var a = v as Array[string]
-    if a != null { return a }
-    return []
+    var a = v as Array[any]
+    if a == null { return out }
+    for a to it {
+        if it != null { out.add(_str(it)) }
+    }
+    return out
 }
 
 // 用 values 设置键并返回同一个 Dict（链式写返回值，省一次局部变量 ✓）

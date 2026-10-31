@@ -43,19 +43,26 @@ export func load(string cacheRoot): LibraryData {
     var d = store.load(cacheRoot)
     out.likes = store.str_list(d, "likes")
     var rv = d.get("recent", null)
-    var rows = rv as Array[Array[string]]
-    if rows != null {
-        for rows to r {
-            if r.len() < 5 { continue }
+    // ★ 2026-10-31 修（对应 docs/语言与框架问题 L1）：**宽松解析**
+    //   原来写 `rv as Array[Array[string]]` —— 这是"整组严格匹配"，只要有一行混进了
+    //   数字（实测出现过第 6 项为 `0`），整个 recent 就返回 `null`：
+    //   「继续收听」全空、一句日志都没有，用户只会以为数据自己没了 ✗
+    //   改成：先 `as Array[any]`（任何元素都放得下，一定成功），再逐元素 `_str()` 转，
+    //   转换永不失败 ⇒ 一条脏数据只影响它自己那一格 ✓
+    var arr = rv as Array[any]
+    if arr != null {
+        for arr to it {
+            var row = it as Array[any]
+            if row == null or row.len() < 5 { continue }
             Song sg = new Song()
-            sg.sid = r[0]
-            sg.title = r[1]
-            sg.artist = r[2]
-            sg.dur = r[3]
-            sg.cover = r[4]
+            sg.sid = _str(row[0])
+            sg.title = _str(row[1])
+            sg.artist = _str(row[2])
+            sg.dur = _str(row[3])
+            sg.cover = _str(row[4])
             // 老格式没有第 6 项 ⇒ 保持空（当酷我歌 ✓）；
             // 只认 "ff"，其它（"kuwo" / 空 / 历史遗留的 "0"）一律归成空串 ✓
-            if r.len() > 5 and r[5] == "ff" { sg.src = "ff" }
+            if row.len() > 5 and _str(row[5]) == "ff" { sg.src = "ff" }
             out.recent.add(sg)
         }
     }
