@@ -38,6 +38,13 @@ import "sdl_texcache.leno" as tcx   // 图片纹理共享缓存（诊断/上限�
 import "sdl_separator.leno" as sep
 import "sdl_badge.leno" as bdg; use bdg.Badge     // 胶囊徽标（不可点状态标签 ✓）
 import "sdl_calendar.leno" as cal; use cal.Calendar   // 签到日历（月历网格 + 每天状态色 + 可选点选/切月）
+@optkeys(["alert_color", "alert_text_color", "arrow_color", "arrow_left", "arrow_right",
+          "cell_max", "cell_min", "cell_radius", "cell_radius_ratio", "filled_color",
+          "filled_text_color", "font_size_day", "font_size_head", "font_size_legend",
+          "font_size_week", "gap", "h", "header_h", "header_text_color", "legend_gap", "legend_h",
+          "legend_swatch", "marks", "month", "month_fmt", "pad", "plain_color", "plain_text_color",
+          "rows", "show_header", "today", "today_color", "today_border_color", "today_text_color",
+          "visible", "w", "week_h", "week_start", "week_text_color", "x", "y", "year"])
 export func createCalendar(Dict opts): Calendar   { return cal.createCalendar(opts) }
 export func weekdayName(int y, int m, int d, Array[string] names): string { return cal.weekdayName(y, m, d, names) }   // 星期名（名字表由调用方给 ⇒ 控件不预设语言 ✓）
 import "sdl_alert.leno" as alt; use alt.Alert     // 提示条 info/warn/danger/success ✓
@@ -126,17 +133,44 @@ export func createLabel(Dict opts): Label            { return lbl.createLabel(op
           "placeholder_color", "radius", "readonly", "text", "text_color", "tip", "visible",
           "w", "wordWrap", "x", "y"])
 export func createEdit(Dict opts): Edit              { return edt.createEdit(opts) }
+@optkeys(["border_color", "box", "checked", "checked_color", "cursor", "enabled", "font_path",
+          "font_size", "font_style", "gap", "group", "text", "text_color", "tip",
+          "unchecked_color", "visible", "x", "y"])
 export func createRadioButton(Dict opts): RadioButton { return rb.createRadioButton(opts) }
+@optkeys(["anim", "anim_speed", "cursor", "enabled", "font_path", "font_size", "font_style", "h",
+          "off_color", "on", "on_color", "text", "text_color", "tip", "visible", "w", "x", "y"])
 export func createToggle(Dict opts): Toggle          { return tgl.createToggle(opts) }
 @optkeys(["cursor", "enabled", "fill_color", "font_path", "font_size", "font_style", "h", "max",
           "min", "show_value", "step", "text_color", "thumb_color", "tip", "track_color", "value",
           "vertical", "visible", "w", "x", "y"])
 export func createSlider(Dict opts): Slider          { return sld.createSlider(opts) }
+@optkeys(["anim_speed", "clickable", "cursor", "enabled", "fill_color", "font_path", "font_size",
+          "font_style", "h", "hit_pad_y", "max", "min", "show_text", "text_color", "tip",
+          "track_color", "value", "visible", "w", "x", "y"])
 export func createProgressBar(Dict opts): ProgressBar { return prg.createProgressBar(opts) }
+@optkeys(["bg_color", "border_color", "cursor", "enabled", "font_path", "font_size", "font_style",
+          "h", "hover_color", "image_gap", "image_pad", "image_path", "image_size", "item_h",
+          "items", "mode", "scroll_color", "bar_auto_hide", "bar_hover_color", "sel_color",
+          "selected", "text_color", "tip", "visible", "w", "x", "y"])
 export func createListBox(Dict opts): ListBox     { return lb.createListBox(opts) }
+@optkeys(["bg_color", "border", "border_color", "cursor", "editable", "enabled", "font_path",
+          "font_size", "font_style", "h", "hover_color", "icon", "icon_gap", "icon_size",
+          "image_gap", "image_size", "item_h", "item_images", "items", "placeholder",
+          "placeholder_color", "pad_x", "popup_h", "show_arrow", "radius", "scroll_color",
+          "bar_auto_hide", "bar_hover_color", "sel_color", "selected", "text_color", "tip",
+          "visible", "w", "x", "y"])
 export func createComboBox(Dict opts): ComboBox  { return cbb.createComboBox(opts) }
+@optkeys(["bg_color", "border", "border_alpha", "border_color", "clip", "enabled", "h", "radius",
+          "visible", "w", "x", "y"])
 export func createPanel(Dict opts): Panel        { return pnl.createPanel(opts) }
+@optkeys(["accent_color", "active", "active_color", "active_text_color", "bar_color", "bg_color",
+          "border", "border_color", "clip", "cursor", "enabled", "font_path", "font_size",
+          "font_style", "h", "show_header", "tab_color", "tab_h", "tab_icon_size", "tab_icons",
+          "tab_radius", "tabs", "text_color", "underline", "visible", "w", "x", "y"])
 export func createTabControl(Dict opts): TabControl { return tab.createTabControl(opts) }
+@optkeys(["arrow_color", "arrow_w", "bg_color", "border_color", "cursor", "decimals", "enabled",
+          "focus_color", "font_size", "h", "int_mode", "max", "min", "placeholder", "step", "tip",
+          "value", "visible", "w", "x", "y"])
 export func createSpinBox(Dict opts): SpinBox { return spb.createSpinBox(opts) }
 @optkeys(["aligns", "bar_auto_hide", "bar_hover_color", "bg_color", "border", "border_color",
           "cell_select", "cell_types", "check_col", "check_color", "col_ratios", "col_reorder",
@@ -160,39 +194,81 @@ export func createTable(Dict opts): Table      { return tbl.createTable(opts) }
 //   **不看宿主还在不在** ⇒ 宿主被换页/隐藏后菜单会继续留在屏幕上、还点不动 ✗
 //   传 null = 关掉所有窗口的（应用换页时最省事 ✓）
 export func closeContextMenus(Ptr[u8] hwnd) { menu.closeContextMenus(hwnd) }
+@optkeys(["bar_color", "bg_color", "border", "border_alpha", "border_color", "content_h",
+          "content_w", "enabled", "fit_h", "fit_w", "h", "radius", "smooth", "step", "visible",
+          "w", "x", "y", "bar_auto_hide", "bar_hover_color", "bar_w"])
 export func createScrollView(Dict opts): ScrollView { return scv.createScrollView(opts) }
 // 虚拟网格：只构建可见项（长列表 / 卡片墙用它，成千上万条也不卡 ✓）
 export func createVirtualGrid(Dict opts): VirtualGrid { return vgd.createVirtualGrid(opts) }
+@optkeys(["arrow_color", "bg_color", "border_color", "check_color", "checkable", "checked",
+          "children", "context_menu", "cursor", "data", "enabled", "expanded", "font_path",
+          "font_size", "font_style", "h", "has_children", "hover_color", "image",
+          "image_expanded", "image_mode", "image_gap", "image_size", "indent", "items",
+          "line_color", "mode", "pad_x", "placeholder", "item_h", "scroll_color", "sel_color",
+          "show_check", "show_lines", "text", "text_color", "tip", "visible", "w", "x", "y"])
 export func createTreeView(Dict opts): TreeView { return tv.createTreeView(opts) }
 export func createBarChart(Dict opts): BarChart { return cht.createBarChart(opts) }
 export func createLineChart(Dict opts): LineChart { return cht.createLineChart(opts) }
 export func createPieChart(Dict opts): PieChart { return cht.createPieChart(opts) }
 export func createTray(Dict opts): Tray        { return tray.createTray(opts) }
+@optkeys(["alpha", "bg_color", "border", "border_alpha", "border_color", "cursor", "enabled", "h",
+          "image_mode", "image_path", "image_tint", "overlay_hover_only", "overlay_path",
+          "overlay_scale", "overlay_size", "radius", "rotation", "spin", "tip", "visible", "w",
+          "x", "y"])
 export func createImageView(Dict opts): ImageView  { return iv.createImageView(opts) }
 // 图片纹理共享缓存（2026-10-27 补）：同一路径的 ImageView 共用一个纹理，
 //   整页重建后不必重新解码 ⇒ 不再"重建即闪" ✓
 export func imageCacheCount(): int          { return tcx.count() }
 export func setImageCacheMax(int n)          { tcx.setCap(n) }
 export func imageCacheRefOf(Ptr[u8] t): int  { return tcx.refOf(t) }
+@optkeys(["alpha", "color", "dir", "h", "margin", "thickness", "visible", "w", "x", "y"])
 export func createSeparator(Dict opts): Separator  { return sep.createSeparator(opts) }
 @optkeys(["align", "bg_color", "border", "border_color", "font_size", "h", "pad_x", "pad_y",
           "radius", "text", "text_color", "visible", "w", "x", "y"])
 export func createBadge(Dict opts): Badge         { return bdg.createBadge(opts) }
 export func createAlert(Dict opts): Alert         { return alt.createAlert(opts) }
+@optkeys(["circle", "desc_color", "desc_size", "dir", "done_color", "font_size", "gap", "item_h",
+          "line_color", "line_w", "pending_color", "pending_border_color", "pending_text_color",
+          "text_side", "title_color", "visible", "w", "x", "y"])
 export func createSteps(Dict opts): Steps         { return stp.createSteps(opts) }
+@optkeys(["alpha", "color", "visible"])
 export func createScrim(Dict opts): Scrim           { return scr.createScrim(opts) }
+@optkeys(["color", "enabled", "font_path", "font_size", "font_style", "hover_color", "text",
+          "tip", "underline", "underline_hover", "url", "visible", "visited", "x", "y"])
 export func createLinkButton(Dict opts): LinkButton { return lnk.createLinkButton(opts) }
+@optkeys(["color", "full_track", "running", "size", "speed", "thickness", "tip", "track_alpha",
+          "track_color", "visible", "x", "y"])
 export func createSpinner(Dict opts): Spinner       { return spn.createSpinner(opts) }
+@optkeys(["anim_speed", "bg_color", "cursor", "enabled", "fill_color", "font_path", "font_size",
+          "mode", "on_click", "segment_colors", "segments", "show_text", "size", "sub_font_size",
+          "sub_text_fn", "sweep_speed", "text_color", "text_fn", "thickness", "tip", "track_color",
+          "value", "visible", "x", "y"])
 export func createRingProgress(Dict opts): RingProgress { return ring.createRingProgress(opts) }
+@optkeys(["bg_color", "border_alpha", "border_color", "clip", "enabled", "font_path", "font_size",
+          "font_style", "h", "radius", "title", "title_color", "title_pad", "visible", "w", "x", "y"])
 export func createGroupBox(Dict opts): GroupBox    { return gbx.createGroupBox(opts) }
+@optkeys(["align", "col_spacing", "col_weights", "cols", "enabled", "h", "pad_x", "pad_y",
+          "row_spacing", "spacing", "visible", "w", "x", "y"])
 export func createGridLayout(Dict opts): GridLayout { return grd.createGridLayout(opts) }
+@optkeys(["auto_h", "badge", "bare", "badge_bg", "badge_color", "badge_icon", "badge_pos",
+          "badge_size", "badges", "bg_color", "border", "border_color", "border_selected_color",
+          "content_bg", "content_click_through", "content_clip", "content_h", "content_pad",
+          "cursor", "enabled", "gap", "h", "hover_color", "hover_lift", "image_aspect", "image_bg",
+          "image_h", "image_mode", "image_path", "image_radius", "image_tint", "pad",
+          "pressed_color", "radius", "selected", "sel_color", "subtitle", "subtitle_color",
+          "subtitle_size", "text_align", "text_color", "tip", "title", "title_bold", "title_size",
+          "visible", "w", "x", "y"])
 export func createCard(Dict opts): Card             { return crd.createCard(opts) }
+@optkeys(["sep_color", "sep_width", "first", "h", "hit_pad", "hover_color", "min_first",
+          "min_second", "orientation", "ratio", "second", "w", "x", "y"])
 export func createSplitter(Dict opts): Splitter    { return spl.createSplitter(opts) }
 export func createDragHint(Dict opts): DragHint     { return drag.createDragHint(opts) }
 export func createTitleBar(Dict opts): TitleBar       { return tbar.createTitleBar(opts) }
 // 标题栏「动作按钮」的两个纯函数也透出去（调用方/示例/测试都靠同一份判定 ✓，2026-10-07 ✓）
 export func parseTitleBarActions(Array[Dict] src): Array[TitleBarAction] { return tbar.parseTitleBarActions(src) }
 export func is_builtin_icon(string n): bool { return tbar.is_builtin_icon(n) }
+@optkeys(["bg_color", "border", "border_color", "border_w", "clip", "cursor", "enabled",
+          "focus_border", "focus_color", "focusable", "h", "pad", "visible", "w", "x", "y"])
 export func createCanvas(Dict opts): Canvas            { return cnv.createCanvas(opts) }
 
 export func isTrayEntryChecked(Ptr[u8] e): bool   { return tray.isEntryChecked(e) }
