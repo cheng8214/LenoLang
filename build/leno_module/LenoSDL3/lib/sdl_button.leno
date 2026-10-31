@@ -13,13 +13,6 @@ import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 use theme.Color
 
 
-// 本控件认的键 —— 由本文件全部 `.get("…")` **自动抽取**（是超集 ⇒ 可少报、不误报 ✓）
-//   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
-func _opts_keys(): Array[string] {
-    return [
-"align", "background", "bg_color", "bg_image", "border", "border_color", "cursor", "enabled", "font_path", "font_size", "font_style", "h", "hover_color", "image_alpha", "image_gap", "image_mode", "image_path", "image_path_disabled", "image_path_hover", "image_path_pressed", "image_pos", "image_size", "image_tint", "padding", "pressed_color", "radius", "shadow", "text", "text_color", "tip", "type", "visible", "w", "x", "y"
-]
-}
 export struct Button impl Widget, Themeable {
     // ==================== 关联常量 ====================
     const IMG_LEFT   = 0   // 图标在文字左侧
@@ -157,7 +150,6 @@ export struct Button impl Widget, Themeable {
     // ==================== set 初始化 ====================
 
     func set(Dict opts) {
-        dochk.check("sdl_button", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
         // 主题默认配色（opts 覆盖优先级更高）
         Theme th = theme.getTheme()
         bgColor = th.btnPrimary

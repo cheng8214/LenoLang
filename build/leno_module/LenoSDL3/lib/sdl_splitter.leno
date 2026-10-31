@@ -33,13 +33,6 @@ import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 use theme.Color
 
 
-// 本控件认的键 —— 由本文件全部 `.get("…")` **自动抽取**（是超集 ⇒ 可少报、不误报 ✓）
-//   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
-func _opts_keys(): Array[string] {
-    return [
-"sep_color", "sep_width", "first", "h", "hit_pad", "hover_color", "min_first", "min_second", "orientation", "ratio", "second", "w", "x", "y"
-]
-}
 export struct Splitter impl Widget, Themeable {
     // ==================== 关联常量 ====================
     const HORIZONTAL = 0   // 左右分割（分割条竖向，左右拖拽）
@@ -71,7 +64,6 @@ export struct Splitter impl Widget, Themeable {
 
 
     func set(Dict opts) {
-        dochk.check("sdl_splitter", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
         Theme th = theme.getTheme()
         divColor = th.border
         hovColor = th.accent

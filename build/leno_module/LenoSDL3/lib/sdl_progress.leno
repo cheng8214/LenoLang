@@ -21,13 +21,6 @@ use theme.Color
 import "sdl_tooltip.leno" as tip
 
 
-// 本控件认的键 —— 由本文件全部 `.get("…")` **自动抽取**（是超集 ⇒ 可少报、不误报 ✓）
-//   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
-func _opts_keys(): Array[string] {
-    return [
-"anim_speed", "clickable", "cursor", "enabled", "fill_color", "font_path", "font_size", "font_style", "h", "hit_pad_y", "max", "min", "show_text", "text_color", "tip", "track_color", "value", "visible", "w", "x", "y"
-]
-}
 export struct ProgressBar impl Widget, Themeable {
     float x = 0.0, y = 0.0, w = 200.0, h = 20.0
     float minV = 0.0, maxV = 100.0, value = 0.0
@@ -67,7 +60,6 @@ export struct ProgressBar impl Widget, Themeable {
     // ==================== set 初始化 ====================
 
     func set(Dict opts) {
-        dochk.check("sdl_progress", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
         Theme th = theme.getTheme()
         // ★ 走导出的取色函数（**同一处映射**）⇒ Table 的进度单元格与这里不会各调各的 ✓
         trkColor = barTrackColor(th)

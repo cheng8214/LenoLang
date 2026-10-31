@@ -116,7 +116,6 @@ export struct HBox impl Widget {
     bool _hasBg = false
 
     func set(Dict opts) {
-        dochk.check("HBox.set()", opts, _set_keys())
         x = opts.get("x", 0)
         y = opts.get("y", 0)
         w = opts.get("w", 300)
@@ -362,7 +361,6 @@ export struct VBox impl Widget {
     bool _hasBg = false
 
     func set(Dict opts) {
-        dochk.check("VBox.set()", opts, _set_keys())
         x = opts.get("x", 0)
         y = opts.get("y", 0)
         w = opts.get("w", 200)
@@ -601,7 +599,6 @@ export struct AnchorBox impl Widget {
     pri Ptr[u8] hwnd              // 绑定的窗口句柄，下发给需要的子控件
 
     func set(Dict opts) {
-        dochk.check("AnchorBox.set()", opts, _set_keys())
         x = opts.get("x", 0)
         y = opts.get("y", 0)
         w = opts.get("w", 300)
@@ -783,16 +780,6 @@ func _add_keys(): Array[string] {
             "pad_x", "pad_y", "padTop", "padBottom", "padLeft", "padRight", "spacing"]
 }
 
-// `set(opts)` 认的键 —— 与本文件**三处 `set()`** 里的 `.get("…")` 对齐 ✓
-//   ★ 2026-10-13 补：`set()` 这条路原来**完全没对账** ✗（`add()` 那条早就有了 ✓）
-//     ⇒ 建容器（`createHBox/VBox/AnchorBox`）时传错键一律**静默** ✓ —— 正是对账最该拦的那种 ✗
-//   ⚠ 与 `_add_keys()` 是**两条路**：`set()` 是"建容器"、`add()` 是"往容器里加子项" ✓
-//   ⚠ 白名单是三者**并集**（HBox/VBox 那套 + AnchorBox 那套 ✓）⇒ 可选宽不选窄（宁少报、不误报 ✓）
-func _set_keys(): Array[string] {
-    return ["x", "y", "w", "h", "pad_x", "pad_y", "padTop", "padBottom", "padLeft", "padRight",
-            "spacing", "justify", "bg_color", "bg_radius", "clip",
-            "visible", "enabled"]     // ★ 2026-10-29：AnchorBox 现在认这两个（见 struct 里的字段注释）
-}
 
 // ★ 2026-10-10：名字已**改回 `_passWindowHandle`** ✓ —— 它曾为绕开"顶层函数名与某类型方法同名"
 //   而改叫 `_lay_dispatch_handle` ✗，但那条病因后来**被证伪** ✓（最小复现：自由函数 + 同名方法、

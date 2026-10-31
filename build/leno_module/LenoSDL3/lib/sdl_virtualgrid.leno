@@ -77,7 +77,6 @@ export struct VirtualGrid impl Widget {
 
     // ==================== 初始化 ====================
     func set(Dict opts) {
-        dochk.check("sdl_virtualgrid", opts, _vg_opts_keys())
         x = opts.get("x", 0)
         y = opts.get("y", 0)
         w = opts.get("w", 300)

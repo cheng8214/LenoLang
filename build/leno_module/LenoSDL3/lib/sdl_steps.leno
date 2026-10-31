@@ -22,13 +22,6 @@ import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_core.leno" as core
 
 
-// 本控件认的键 —— 由本文件全部 `.get("…")` **自动抽取**（是超集 ⇒ 可少报、不误报 ✓）
-//   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
-func _opts_keys(): Array[string] {
-    return [
-"circle", "desc_color", "desc_size", "dir", "done_color", "font_size", "gap", "item_h", "line_color", "line_w", "pending_color", "pending_border_color", "pending_text_color", "text_side", "title_color", "visible", "w", "x", "y"
-]
-}
 export struct Steps impl Widget {
     const DIR_V = 0
     const DIR_H = 1
@@ -72,7 +65,6 @@ export struct Steps impl Widget {
 
 
     func set(Dict opts) {
-        dochk.check("sdl_steps", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
         x = opts.get("x", 0.0)
         y = opts.get("y", 0.0)
         _w = opts.get("w", 320.0)

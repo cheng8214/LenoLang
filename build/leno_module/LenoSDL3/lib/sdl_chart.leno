@@ -82,13 +82,6 @@ func _drawTip(Renderer r, Font f, float mx, float my, string text) {
 
 // ===================== 柱状图 =====================
 
-// 本控件认的键 —— 由本文件全部 `.get("…")` **自动抽取**（是超集 ⇒ 可少报、不误报 ✓）
-//   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
-func _opts_keys(): Array[string] {
-    return [
-"font_size", "h", "show_grid", "show_points", "show_values", "title", "w", "x", "y"
-]
-}
 export struct BarChart impl Widget {
     float x = 0.0; float y = 0.0; float w = 300.0; float h = 200.0
     string title = ""
@@ -125,7 +118,6 @@ export struct BarChart impl Widget {
 
 
     func set(Dict opts) {
-        dochk.check("sdl_chart", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
         Theme th = theme.getTheme()
         titleColor = th.txt
         gridColor = th.sep
@@ -412,7 +404,6 @@ export struct LineChart impl Widget {
     pri Color hlColor = #FFFFFFFF
 
     func set(Dict opts) {
-        dochk.check("sdl_chart", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
         Theme th = theme.getTheme()
         titleColor = th.txt
         gridColor = th.sep
@@ -691,7 +682,6 @@ export struct PieChart impl Widget {
     pri Color legColor = #DCE1EBFF
 
     func set(Dict opts) {
-        dochk.check("sdl_chart", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
         Theme th = theme.getTheme()
         titleColor = th.txt
         legColor = th.txt

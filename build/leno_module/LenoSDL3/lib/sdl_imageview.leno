@@ -12,13 +12,6 @@ import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 use theme.Color
 
 
-// 本控件认的键 —— 由本文件全部 `.get("…")` **自动抽取**（是超集 ⇒ 可少报、不误报 ✓）
-//   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
-func _opts_keys(): Array[string] {
-    return [
-"alpha", "bg_color", "border", "border_alpha", "border_color", "cursor", "enabled", "h", "image_mode", "image_path", "image_tint", "overlay_hover_only", "overlay_path", "overlay_scale", "overlay_size", "radius", "rotation", "spin", "tip", "visible", "w", "x", "y"
-]
-}
 export struct ImageView impl Widget, Themeable {
     // ==================== 关联常量 ====================
     const MODE_ASPECT_FIT  = 0   // 保持比例，完整显示（可能留边）
@@ -69,7 +62,6 @@ export struct ImageView impl Widget, Themeable {
 
 
     func set(Dict opts) {
-        dochk.check("sdl_imageview", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
         Theme th = theme.getTheme()
         bdrColor = th.border
         x      = opts.get("x", 0)

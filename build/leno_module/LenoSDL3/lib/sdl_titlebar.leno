@@ -62,13 +62,6 @@ import "sdl_menu.leno" as mnu; use mnu.MenuBar
 import "sdl_tooltip.leno" as tooltip    // 悬停提示复用框架那一套（与 Button/CheckBox 同一手感 ✓）
 
 
-// 本控件认的键 —— 由本文件全部 `.get("…")` **自动抽取**（是超集 ⇒ 可少报、不误报 ✓）
-//   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
-func _opts_keys(): Array[string] {
-    return [
-"actions", "bg_color", "btn_align", "btn_spacing", "btn_width", "close", "close_hover_color", "font_path", "font_size", "h", "hover_color", "icon_close", "icon_color", "icon_maximize", "icon_minimize", "icon_restore", "icon_size", "maximize", "minimize", "resizable", "sep_color", "show_close", "show_maximize", "show_minimize", "show_separator", "text_color", "title", "title_align", "title_icon", "title_icon_gap", "title_icon_size", "title_pad"
-]
-}
 
 // ==================== 动作按钮（自定义，2026-10-07）====================
 // 原标题栏只有"最小化/最大化/关闭"三个固定位；`actions` 让调用方**往按钮组里加自己的图标按钮** ✓
@@ -248,7 +241,6 @@ export struct TitleBar impl Widget, Themeable {
     // ==================== set 初始化 ====================
 
     func set(Dict opts) {
-        dochk.check("sdl_titlebar", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
         h = opts.get("h", 32.0)
         title = opts.get("title", "")
         _fontSize = opts.get("font_size", 15.0)

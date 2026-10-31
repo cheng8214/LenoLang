@@ -29,13 +29,6 @@ import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 use theme.Color
 
 
-// 本控件认的键 —— 由本文件全部 `.get("…")` **自动抽取**（是超集 ⇒ 可少报、不误报 ✓）
-//   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
-func _opts_keys(): Array[string] {
-    return [
-"accent_color", "active", "active_color", "active_text_color", "bar_color", "bg_color", "border", "border_color", "clip", "cursor", "enabled", "font_path", "font_size", "font_style", "h", "show_header", "tab_color", "tab_h", "tab_icon_size", "tab_icons", "tab_radius", "tabs", "text_color", "underline", "visible", "w", "x", "y"
-]
-}
 export struct TabControl impl Widget, Themeable {
     float x = 0.0, y = 0.0, w = 400.0, h = 300.0
     pri float tabH = 32.0         // 标签栏高度
@@ -101,7 +94,6 @@ export struct TabControl impl Widget, Themeable {
 
 
     func set(Dict opts) {
-        dochk.check("sdl_tab", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
         Theme th = theme.getTheme()
         bgColor = th.bg
         barColor = th.bgInput

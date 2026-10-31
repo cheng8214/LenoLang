@@ -32,13 +32,6 @@ import "sdl_image.leno" as img
 
 // 节点结构：children 递归构成树；_parent/_depth 为拍平遍历与连接线提供便利
 
-// 本控件认的键 —— 由本文件全部 `.get("…")` **自动抽取**（是超集 ⇒ 可少报、不误报 ✓）
-//   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
-func _opts_keys(): Array[string] {
-    return [
-"arrow_color", "bg_color", "border_color", "check_color", "checkable", "checked", "children", "context_menu", "cursor", "data", "enabled", "expanded", "font_path", "font_size", "font_style", "h", "has_children", "hover_color", "image", "image_expanded", "image_mode", "image_gap", "image_size", "indent", "items", "line_color", "mode", "pad_x", "placeholder", "item_h", "scroll_color", "sel_color", "show_check", "show_lines", "text", "text_color", "tip", "visible", "w", "x", "y"
-]
-}
 export struct TreeViewNode {
     int id = -1
     string text = ""
@@ -352,7 +345,6 @@ export struct TreeView impl Widget, Themeable {
     // ==================== set 初始化 ====================
 
     func set(Dict opts) {
-        dochk.check("sdl_treeview", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
         Theme th = theme.getTheme()
         bgColor = th.bg
         bdrColor = th.border

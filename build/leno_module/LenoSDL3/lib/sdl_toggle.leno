@@ -11,13 +11,6 @@ import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 use theme.Color
 
 
-// 本控件认的键 —— 由本文件全部 `.get("…")` **自动抽取**（是超集 ⇒ 可少报、不误报 ✓）
-//   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
-func _opts_keys(): Array[string] {
-    return [
-"anim", "anim_speed", "cursor", "enabled", "font_path", "font_size", "font_style", "h", "off_color", "on", "on_color", "text", "text_color", "tip", "visible", "w", "x", "y"
-]
-}
 export struct Toggle impl Widget, Themeable {
     string text = ""
     float x = 0.0, y = 0.0
@@ -53,7 +46,6 @@ export struct Toggle impl Widget, Themeable {
 
 
     func set(Dict opts) {
-        dochk.check("sdl_toggle", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
         Theme th = theme.getTheme()
         onColor = th.accent
         offColor = th.bgAlt

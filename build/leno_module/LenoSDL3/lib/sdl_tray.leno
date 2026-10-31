@@ -287,14 +287,8 @@ export struct Tray {
 
 // ============ 工厂 ============
 
-// ★ 2026-10-13：补**选项对账** ✓ —— 本文件原来没有 `dochk.check` ✗ ⇒ 传错键静默丢弃 ✓
-//   白名单按本文件全部 `.get("…")` 抽取 ⇒ 超集（可少报、不误报 ✓）
-func _opts_keys(): Array[string] {
-    return ["icon", "tooltip"]
-}
 
 export func createTray(Dict opts): Tray {
-    dochk.check("sdl_tray", opts, _opts_keys())
     _ensureCb()
 
     Ptr[u8] icon = null

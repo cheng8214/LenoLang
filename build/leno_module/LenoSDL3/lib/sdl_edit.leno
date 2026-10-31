@@ -20,13 +20,6 @@ import strings   // 2026-10-02：选词改用 `codepoint_at`（直取码点，�
 var WORD_PUNCT_CP = ".,!?:;()[]\"'：。，！？（）【】；".to_codepoints()
 
 
-// 本控件认的键 —— 由本文件全部 `.get("…")` **自动抽取**（是超集 ⇒ 可少报、不误报 ✓）
-//   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
-func _opts_keys(): Array[string] {
-    return [
-"bg_color", "border", "border_color", "draw_bg", "enabled", "focus_color", "font_path", "font_size", "font_style", "h", "multiline", "pad_x", "password", "placeholder", "placeholder_color", "radius", "readonly", "text", "text_color", "tip", "visible", "w", "wordWrap", "x", "y"
-]
-}
 export struct Edit impl Widget, Themeable {
     // 显式初值：空串（不是 null）—— 消 [字段未初始化] 警告，且与「未输入的编辑框」
     // 语义一致（读取 text 得到 "" 而不是 null）
@@ -268,7 +261,6 @@ bool _drawBorder = true          // 是否绘制边框（嵌入 ComboBox 时设�
     // ==================== set 初始化 ====================
 
     func set(Dict opts) {
-        dochk.check("sdl_edit", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
         // 主题默认配色（opts 覆盖优先级更高）
         Theme th = theme.getTheme()
         bgColor = th.bgInput

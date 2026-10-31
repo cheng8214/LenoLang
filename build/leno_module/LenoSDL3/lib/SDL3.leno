@@ -127,6 +127,12 @@ export func createCheckBox(Dict opts): CheckBox     { return chk.createCheckBox(
           "pressed_color", "radius", "shadow", "text", "text_color", "tip", "type", "visible",
           "w", "x", "y"])
 export func createButton(Dict opts): Button          { return btn.createButton(opts) }
+// ★ 2026-10-31：Label 原来**没有** `_opts_keys()`（运行时那条对账它一直缺席），
+//   键表是按 `sdl_label.leno` 里所有 `opts.get("…")` 扫出来的 + 通用几何键（w/h）✓
+//   ⚠ 以后给 Label 加新选项，这里要同步补，否则编译期会误报
+@optkeys(["text", "x", "y", "w", "h", "font_size", "font_path", "font_style", "text_color",
+          "hover_color", "cursor", "hover_shift", "align", "tip", "max_w", "truncate",
+          "scroll_always", "wrap", "wrap_w", "visible", "enabled"])
 export func createLabel(Dict opts): Label            { return lbl.createLabel(opts) }
 @optkeys(["bg_color", "border", "border_color", "draw_bg", "enabled", "focus_color", "font_path",
           "font_size", "font_style", "h", "multiline", "pad_x", "password", "placeholder",
@@ -199,6 +205,8 @@ export func closeContextMenus(Ptr[u8] hwnd) { menu.closeContextMenus(hwnd) }
           "w", "x", "y", "bar_auto_hide", "bar_hover_color", "bar_w"])
 export func createScrollView(Dict opts): ScrollView { return scv.createScrollView(opts) }
 // 虚拟网格：只构建可见项（长列表 / 卡片墙用它，成千上万条也不卡 ✓）
+@optkeys(["x", "y", "w", "h", "item_w", "item_h", "gap_x", "gap_y", "pad_x", "pad_y", "cols",
+          "visible", "scroll_color", "bar_w", "bar_auto_hide", "bar_hover_color", "count"])
 export func createVirtualGrid(Dict opts): VirtualGrid { return vgd.createVirtualGrid(opts) }
 @optkeys(["arrow_color", "bg_color", "border_color", "check_color", "checkable", "checked",
           "children", "context_menu", "cursor", "data", "enabled", "expanded", "font_path",
@@ -207,8 +215,12 @@ export func createVirtualGrid(Dict opts): VirtualGrid { return vgd.createVirtual
           "line_color", "mode", "pad_x", "placeholder", "item_h", "scroll_color", "sel_color",
           "show_check", "show_lines", "text", "text_color", "tip", "visible", "w", "x", "y"])
 export func createTreeView(Dict opts): TreeView { return tv.createTreeView(opts) }
+// 图表三个共用同一份选项（`sdl_chart.leno` 的 `_opts_keys()` ✓）
+@optkeys(["font_size", "h", "show_grid", "show_points", "show_values", "title", "w", "x", "y"])
 export func createBarChart(Dict opts): BarChart { return cht.createBarChart(opts) }
+@optkeys(["font_size", "h", "show_grid", "show_points", "show_values", "title", "w", "x", "y"])
 export func createLineChart(Dict opts): LineChart { return cht.createLineChart(opts) }
+@optkeys(["font_size", "h", "show_grid", "show_points", "show_values", "title", "w", "x", "y"])
 export func createPieChart(Dict opts): PieChart { return cht.createPieChart(opts) }
 export func createTray(Dict opts): Tray        { return tray.createTray(opts) }
 @optkeys(["alpha", "bg_color", "border", "border_alpha", "border_color", "cursor", "enabled", "h",
@@ -226,6 +238,9 @@ export func createSeparator(Dict opts): Separator  { return sep.createSeparator(
 @optkeys(["align", "bg_color", "border", "border_color", "font_size", "h", "pad_x", "pad_y",
           "radius", "text", "text_color", "visible", "w", "x", "y"])
 export func createBadge(Dict opts): Badge         { return bdg.createBadge(opts) }
+@optkeys(["kind", "x", "y", "w", "h", "pad_x", "pad_y", "radius", "accent", "accent_w",
+          "bg_color", "border_color", "accent_color", "text_color", "font_size", "icon",
+          "wrap_w", "wrap", "text", "visible"])
 export func createAlert(Dict opts): Alert         { return alt.createAlert(opts) }
 @optkeys(["circle", "desc_color", "desc_size", "dir", "done_color", "font_size", "gap", "item_h",
           "line_color", "line_w", "pending_color", "pending_border_color", "pending_text_color",
@@ -247,8 +262,12 @@ export func createRingProgress(Dict opts): RingProgress { return ring.createRing
 @optkeys(["bg_color", "border_alpha", "border_color", "clip", "enabled", "font_path", "font_size",
           "font_style", "h", "radius", "title", "title_color", "title_pad", "visible", "w", "x", "y"])
 export func createGroupBox(Dict opts): GroupBox    { return gbx.createGroupBox(opts) }
-@optkeys(["align", "col_spacing", "col_weights", "cols", "enabled", "h", "pad_x", "pad_y",
-          "row_spacing", "spacing", "visible", "w", "x", "y"])
+// ★ 2026-10-31：补 `min_col_width` —— `sdl_gridlayout.leno` 的 `set()` **读**了这个键，
+//   但它的 `_opts_keys()` 白名单里**没有**（框架自身的漂移）⇒ 运行时那套检查一直误报它，
+//   编译期注解要是照抄白名单也会误报（影视海报墙实测踩到 ✓）
+//   ⇒ 键表取「实现读到的 ∪ 白名单里的」两边并集，宁可多不能少
+@optkeys(["align", "col_spacing", "col_weights", "cols", "enabled", "h", "min_col_width", "pad_x",
+          "pad_y", "row_spacing", "spacing", "visible", "w", "x", "y"])
 export func createGridLayout(Dict opts): GridLayout { return grd.createGridLayout(opts) }
 @optkeys(["auto_h", "badge", "bare", "badge_bg", "badge_color", "badge_icon", "badge_pos",
           "badge_size", "badges", "bg_color", "border", "border_color", "border_selected_color",

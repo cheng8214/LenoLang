@@ -15,13 +15,6 @@ use theme.Color
 Array[RadioButton] _radioRegistry = []
 
 
-// 本控件认的键 —— 由本文件全部 `.get("…")` **自动抽取**（是超集 ⇒ 可少报、不误报 ✓）
-//   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
-func _opts_keys(): Array[string] {
-    return [
-"border_color", "box", "checked", "checked_color", "cursor", "enabled", "font_path", "font_size", "font_style", "gap", "group", "text", "text_color", "tip", "unchecked_color", "visible", "x", "y"
-]
-}
 export struct RadioButton impl Widget, Themeable {
     string text = ""
     string group = "default"
@@ -56,7 +49,6 @@ export struct RadioButton impl Widget, Themeable {
 
 
     func set(Dict opts) {
-        dochk.check("sdl_radio", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
         Theme th = theme.getTheme()
         uncheckedColor = th.bgAlt
         checkedColor = th.accent

@@ -79,15 +79,8 @@ export struct Alert impl Widget {
     pri func wrap_w(): float { return _w - 2.0 * padX - accent_off() - icon_off() }
 
     // Alert 认的键（与本文件 set() 里的 opts.get 一一对应 ✓）
-    pri func alert_keys(): Array[string] {
-        return ["kind", "x", "y", "w", "h", "pad_x", "pad_y", "radius",
-                "accent", "accent_w", "bg_color", "border_color", "accent_color",
-                "text_color", "font_size", "icon", "wrap_w", "wrap", "text", "visible"]
-    }
-
     func set(Dict opts) {
         // ★ 选项对账（2026-09-29）：不认识的键此前**静默丢弃** ✗ ⇒ 现在报一行警告 ✓
-        dochk.check("Alert", opts, alert_keys())
         applyKind(opts.get("kind", Alert.KIND_WARN))
         x = opts.get("x", 0.0)
         y = opts.get("y", 0.0)

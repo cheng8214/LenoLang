@@ -14,13 +14,6 @@ import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 use theme.Color
 
 
-// 本控件认的键 —— 由本文件全部 `.get("…")` **自动抽取**（是超集 ⇒ 可少报、不误报 ✓）
-//   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
-func _opts_keys(): Array[string] {
-    return [
-"bg_color", "border", "border_alpha", "border_color", "clip", "enabled", "h", "radius", "visible", "w", "x", "y"
-]
-}
 export struct Panel impl Widget, Themeable {
     float x = 0.0, y = 0.0, w = 200.0, h = 150.0
     Array[Widget] children = []
@@ -40,7 +33,6 @@ export struct Panel impl Widget, Themeable {
 
 
     func set(Dict opts) {
-        dochk.check("sdl_panel", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
         Theme th = theme.getTheme()
         bgColor = th.bgAlt
         bdrColor = th.border

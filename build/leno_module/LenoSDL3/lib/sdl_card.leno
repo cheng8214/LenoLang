@@ -61,13 +61,6 @@ struct BadgeSpec {
     float fSize = 0.0           // 上面那个字体对应的字号
 }
 
-// 本控件认的键 —— 由本文件全部 `.get("…")` **自动抽取**（是超集 ⇒ 可少报、不误报 ✓）
-//   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
-func _opts_keys(): Array[string] {
-    return [
-"auto_h", "badge", "bare", "badge_bg", "badge_color", "badge_icon", "badge_pos", "badge_size", "badges", "bg_color", "border", "border_color", "border_selected_color", "content_bg", "content_click_through", "content_clip", "content_h", "content_pad", "cursor", "enabled", "gap", "h", "hover_color", "hover_lift", "image_aspect", "image_bg", "image_h", "image_mode", "image_path", "image_radius", "image_tint", "pad", "pressed_color", "radius", "selected", "sel_color", "subtitle", "subtitle_color", "subtitle_size", "text_align", "text_color", "tip", "title", "title_bold", "title_size", "visible", "w", "x", "y"
-]
-}
 export struct Card impl Widget, Themeable {
     // ==================== 关联常量 ====================
     const MODE_ASPECT_FIT  = 0   // 保持比例，完整显示（可能留边）
@@ -225,7 +218,6 @@ export struct Card impl Widget, Themeable {
 
 
     func set(Dict opts) {
-        dochk.check("sdl_card", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
         Theme th = theme.getTheme()
         bgColor = th.bgAlt
         hovColor = theme.brighten(th.bgAlt, 14)

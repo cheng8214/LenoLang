@@ -40,13 +40,6 @@ import "sdl_theme.leno" as theme; use theme.Color   // Color 类型在 sdl_theme
 import "sdl_core.leno" as core
 
 
-// 本控件认的键 —— 由本文件全部 `.get("…")` **自动抽取**（是超集 ⇒ 可少报、不误报 ✓）
-//   ⚠ 以后增删选项请重跑抽取（或人工核对），否则可能对合法用法误报 ✓
-func _opts_keys(): Array[string] {
-    return [
-"alert_color", "alert_text_color", "arrow_color", "arrow_left", "arrow_right", "cell_max", "cell_min", "cell_radius", "cell_radius_ratio", "filled_color", "filled_text_color", "font_size_day", "font_size_head", "font_size_legend", "font_size_week", "gap", "h", "header_h", "header_text_color", "legend_gap", "legend_h", "legend_swatch", "marks", "month", "month_fmt", "pad", "plain_color", "plain_text_color", "rows", "show_header", "today", "today_color", "today_border_color", "today_text_color", "visible", "w", "week_h", "week_start", "week_text_color", "x", "y", "year"
-]
-}
 export struct Calendar impl Widget {
     // 常用三态的名字（值就是 colors 表的索引 ✓，可自定义更多态 ✓）
     const ST_PLAIN  = 0
@@ -133,7 +126,6 @@ export struct Calendar impl Widget {
     // ==================== 构造 ====================
 
     func set(Dict opts) {
-        dochk.check("sdl_calendar", opts, _opts_keys())   // ★ 选项对账（2026-09-29 铺开 ✓）
         x = opts.get("x", 0.0)
         y = opts.get("y", 0.0)
         float wOpt = opts.get("w", 0.0)
