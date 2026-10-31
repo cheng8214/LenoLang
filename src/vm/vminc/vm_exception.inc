@@ -446,7 +446,7 @@ static inline int dispatch_exception(int line) {
             vm.frame_cnt = i + 1;
 
             // 恢复栈指针到目标帧的stack_base
-            vm.sp = frame->stack_base;
+            vm_stack_drop(&vm, frame->stack_base);
 
             // 处理异常（分支顺序与 OP_THROW 逐条对齐）
             if (!frame->has_catch && frame->finally_ip) {

@@ -1220,40 +1220,30 @@ static inline void vm_stack_push(VM* vm, Value v) {
     vm->stack[vm->sp++] = v;
 }
 
-// 栈操作：压入值（不检查溢出，用于性能关键路径）
-// 警告：只在确定栈有空间时使用，否则会导致未定义行为
-static inline void vm_stack_push_fast(VM* vm, Value v) {
-    vm->stack[vm->sp++] = v;
-}
-
-// 栈操作：弹出值（带 VM* 参数）
-static inline Value vm_stack_pop(VM* vm) {
-    if (__builtin_expect(vm->sp <= 0, 0)) {
-        fprintf(stderr, "\n[VM 栈下溢] sp=%d, frame_cnt=%d\n", vm->sp, vm->frame_cnt);
-        return val_null();
+// 把栈顶**收缩**到 new_sp，并清零被弹出的槽位（2026-10-31）
+//
+// 为什么必须清零：GC 是**保守式**的 —— `stack[0..sp)` 里任何"看起来像对象指针"的
+//   8 字节都被当成存活引用。原来批量回退（`vm.sp = base` / `vm.sp -= nargs`）只挪指针
+//   不清值，残留的实参/临时值就把已死的大对象**永久判活**。
+//   实测症状：分片下载每片造一个 1MB 临时串（`ffi.read_string_n`），
+//     20 片下来 working_set 稳定 +20MB，每片都 `_gc()`（Major）也一点不降 ✗
+//   native 调用的传参正是这条路径：push 参数 → native 取 → `vm.sp = base` 收尾。
+//
+// 只收缩不扩张：new_sp > vm->sp 时保持原样（避免误用把脏值留在新扩出的区间里）。
+static inline void vm_stack_drop(VM* vm, int new_sp) {
+    if (new_sp < 0) new_sp = 0;
+    if (new_sp >= vm->sp) return;
+    for (int i = new_sp; i < vm->sp; i++) {
+        vm->stack[i] = val_null();
     }
-    return vm->stack[--vm->sp];
+    vm->sp = new_sp;
 }
 
-// 栈操作：弹出值（不检查下溢，用于性能关键路径）
-// 警告：只在确定栈有值时使用，否则会导致未定义行为
-static inline Value vm_stack_pop_fast(VM* vm) {
-    return vm->stack[--vm->sp];
-}
-
-// 栈操作：查看栈顶值（带 VM* 参数）
-static inline Value vm_stack_peek(VM* vm, int distance) {
-    if (__builtin_expect(vm->sp - 1 - distance < 0, 0)) {
-        return val_null();
-    }
-    return vm->stack[vm->sp - 1 - distance];
-}
-
-// 栈操作：查看栈顶值（不检查边界，用于性能关键路径）
-// 警告：只在确定栈有足够值时使用，否则会导致未定义行为
-static inline Value vm_stack_peek_fast(VM* vm, int distance) {
-    return vm->stack[vm->sp - 1 - distance];
-}
+// ★ 2026-10-31：删掉 `vm_stack_push_fast` / `vm_stack_pop` / `vm_stack_pop_fast` /
+//   `vm_stack_peek` / `vm_stack_peek_fast` —— 它们全是**栈式 VM 时代的遗留**：
+//   现在的解释器是**寄存器式**，操作数是 `frame->locals[]` + 编译期分配的寄存器下标，
+//   不走"压栈/弹栈"这条路（实测这五个函数**零调用点**）。
+//   上面那个 `vm_stack_push` 仍有 23 处在用（native 调用、模块初始化等少量场合），保留 ✓
 
 // Native 函数注册
 // min_arity/max_arity: 当 arity == NATIVE_ARITY_VARARG（可变参数，值是 **-200**）时，指定最小/最大

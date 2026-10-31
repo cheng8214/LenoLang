@@ -70,7 +70,7 @@
                 int base = vm.sp;
                 for (int i = 0; i < nargs; i++) vm_stack_push(&vm, R(a + 1 + i));
                 Value result = native->function(nargs, vm.stack + base);
-                vm.sp = base;
+                vm_stack_drop(&vm, base);
                 // ★ native 可能回调 Leno（ffi 回调 / map 回调 …）⇒ 期间 vm.frames 可能 realloc，frame 悬空
                 frame = &vm.frames[vm.frame_cnt - 1];
                 if (unlikely(vm.has_exception)) {
@@ -151,7 +151,7 @@
                     pass_nargs = nargs + 1;
                 }
                 Value result = native->function(pass_nargs, vm.stack + base);
-                vm.sp = base;
+                vm_stack_drop(&vm, base);
                 // ★ native 可能回调 Leno（ffi 回调 / map 回调 …）⇒ 期间 vm.frames 可能 realloc，frame 悬空
                 frame = &vm.frames[vm.frame_cnt - 1];
                 if (unlikely(vm.has_exception)) {
@@ -237,7 +237,7 @@
         int base = vm.sp;
         for (int i = 0; i < nargs; i++) vm_stack_push(&vm, R(a + 1 + i));
         Value result = native->function(nargs, vm.stack + base);
-        vm.sp = base;
+        vm_stack_drop(&vm, base);
         // ★ native 可能回调 Leno ⇒ 期间 vm.frames 可能 realloc，frame 悬空（同上）
         frame = &vm.frames[vm.frame_cnt - 1];
 
@@ -391,7 +391,7 @@
 
         // 宿主/回调停止条件（vm_call_value 路径）
         if (vm.stop_frame_cnt > 0 && vm.frame_cnt <= vm.stop_frame_cnt) {
-            vm.sp = stack_base;
+            vm_stack_drop(&vm, stack_base);
             vm_stack_push(&vm, result);
             vm.last_return_value = result;
             vm.last_return_count = 1;
@@ -430,7 +430,7 @@
             vm.last_return_count = 1;
             vm.last_return_values[0] = result;
             if (vm.frame_cnt > 0) {
-                vm.sp = stack_base;
+                vm_stack_drop(&vm, stack_base);
                 vm_stack_push(&vm, result);
             }
         }
@@ -442,7 +442,7 @@
         }
 
         frame = &vm.frames[vm.frame_cnt - 1];
-        vm.sp = frame->stack_base;
+        vm_stack_drop(&vm, frame->stack_base);
         DISPATCH();
     }
 
@@ -493,7 +493,7 @@
         vm.frame_cnt--;
 
         if (vm.stop_frame_cnt > 0 && vm.frame_cnt <= vm.stop_frame_cnt) {
-            vm.sp = stack_base;
+            vm_stack_drop(&vm, stack_base);
             for (int i = 0; i < count; i++) vm_stack_push(&vm, results[i]);
             vm.last_return_value = results[0];
             vm.last_return_count = count;
@@ -525,7 +525,7 @@
             vm.last_return_count = count;
             for (int i = 0; i < count && i < VM_MAX_RETURNS; i++) vm.last_return_values[i] = results[i];
             if (vm.frame_cnt > 0) {
-                vm.sp = stack_base;
+                vm_stack_drop(&vm, stack_base);
                 for (int i = 0; i < count; i++) vm_stack_push(&vm, results[i]);
             }
         }
@@ -537,7 +537,7 @@
         }
 
         frame = &vm.frames[vm.frame_cnt - 1];
-        vm.sp = frame->stack_base;
+        vm_stack_drop(&vm, frame->stack_base);
         DISPATCH();
     }
 

@@ -244,7 +244,7 @@
         } \
         vm.frame_cnt--; \
         if (vm.stop_frame_cnt > 0 && vm.frame_cnt <= vm.stop_frame_cnt) { \
-            vm.sp = _stack_base; \
+            vm_stack_drop(&vm, _stack_base); \
             vm_stack_push(&vm, _res); \
             vm.last_return_value = _res; \
             vm.last_return_count = 1; \
@@ -271,14 +271,14 @@
             vm.last_return_count = 1; \
             vm.last_return_values[0] = _res; \
             if (vm.frame_cnt > 0) { \
-                vm.sp = _stack_base; \
+                vm_stack_drop(&vm, _stack_base); \
                 vm_stack_push(&vm, _res); \
             } \
         } \
         if (_locals != NULL && _dyn) free(_locals); \
         if (vm.frame_cnt == 0) goto vm_exit; \
         frame = &vm.frames[vm.frame_cnt - 1]; \
-        vm.sp = frame->stack_base; \
+        vm_stack_drop(&vm, frame->stack_base); \
     } while (0)
 
     // =========================================================================

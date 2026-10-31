@@ -134,7 +134,7 @@ static inline int call(ObjClosure* closure, int arg_count, int line) {
     }
     
     // 弹出 callee 和参数，同时为返回值预留一个槽位
-    vm.sp -= arg_count;
+    vm_stack_drop(&vm, vm.sp - (arg_count));
     int new_stack_base = vm.sp - 1;
 
     vm.frame_cnt++;
@@ -224,7 +224,7 @@ static inline int call_no_type_check(ObjClosure* closure, int arg_count, int lin
     }
 
     // 弹出 callee 和参数，为返回值预留槽位
-    vm.sp -= arg_count;
+    vm_stack_drop(&vm, vm.sp - (arg_count));
     int new_stack_base = vm.sp - 1;
 
     vm.frame_cnt++;
@@ -523,7 +523,7 @@ static inline int call_value(Value callee, int arg_count, int line) {
                     throw_pending_exception(line);
                     return 0;
                 }
-                vm.sp -= arg_count + 1;
+                vm_stack_drop(&vm, vm.sp - (arg_count + 1));
                 vm_stack_push(&vm, result);
                 return 1;
             }
@@ -576,7 +576,7 @@ static inline int call_value(Value callee, int arg_count, int line) {
                     return 0;
                 }
 
-                vm.sp -= arg_count + 1;
+                vm_stack_drop(&vm, vm.sp - (arg_count + 1));
                 vm_stack_push(&vm, result);
                 return 1;
             }
@@ -612,7 +612,7 @@ static inline int call_value(Value callee, int arg_count, int line) {
                 }
                 
                 // 清理栈并压入实例
-                vm.sp -= arg_count + 1;
+                vm_stack_drop(&vm, vm.sp - (arg_count + 1));
                 vm_stack_push(&vm, val_obj((Object*)obj));
                 return 1;
             }

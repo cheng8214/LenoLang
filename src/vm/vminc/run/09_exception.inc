@@ -291,7 +291,7 @@
                 }
             }
             vm.frame_cnt = i + 1;
-            vm.sp = tf->stack_base;
+            vm_stack_drop(&vm, tf->stack_base);
             handled = 1;
             break;
         }

@@ -93,7 +93,7 @@
         int base = vm.sp;
         for (int i = 0; i < nargs; i++) vm_stack_push(&vm, R(a + 1 + i));
         Value result = meta->function(nargs, vm.stack + base);
-        vm.sp = base;
+        vm_stack_drop(&vm, base);
 
         // ★ 2026-10-25：**native 可以回调 Leno**（ffi 回调、array.map 的闭包、asyncs…）——
         //   重入期间 vm.frames 可能扩容（`realloc`）⇒ 上面那个 `frame` 指针**悬空**，
@@ -281,7 +281,7 @@
                 module_frame_enter(mod_frame);
                 int result = vm_run_chunk(module->init_chunk);
                 module_frame_exit();
-                vm.sp = saved_sp;
+                vm_stack_drop(&vm, saved_sp);
                 // 递归执行后 vm.frames 可能已 realloc，frame 必须重新取
                 frame = &vm.frames[vm.frame_cnt - 1];
                 if (result < 0) return -1;

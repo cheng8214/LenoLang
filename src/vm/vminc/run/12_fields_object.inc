@@ -216,7 +216,7 @@
                     vm_stack_push(&vm, receiver);
                     for (int i = 0; i < nargs; i++) vm_stack_push(&vm, R(a + 1 + i));
                     Value result = method->function(nargs + 1, vm.stack + base);
-                    vm.sp = base;
+                    vm_stack_drop(&vm, base);
                     // ★ native 方法也可能回调 Leno（ffi 回调）⇒ 期间 vm.frames 可能 realloc
                     frame = &vm.frames[vm.frame_cnt - 1];
                     if (unlikely(vm.has_exception)) {
