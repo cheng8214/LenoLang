@@ -838,6 +838,13 @@ typedef struct {
 
 #define GC_YOUNG_THRESHOLD   (1024 * 1024 * 8)   // 8MB
 #define GC_OLD_THRESHOLD     (1024 * 1024 * 32)  // 32MB
+// ★ 2026-11-01：阈值上限。阈值原本"只升不降"（= max(存活×2, 下限)），一次读进几百 MB
+//   的负载会把它顶到 GB 级，之后即使那些对象全变垃圾，也要再堆同样多才触发回收 ⇒
+//   用户看到"下载完内存挂着不降"（实测 keep 释放后 314MB 常驻、400 次分配都没回收）。
+//   加上限后：最多攒 YOUNG_MAX(64MB) / OLD_MAX(256MB) 垃圾就一定回收 ✓
+//   小对象负载（存活远小于下限）阈值恒为下限，行为与改动前完全一致 ✓
+#define GC_YOUNG_THRESHOLD_MAX (1024 * 1024 * 64)   // 64MB
+#define GC_OLD_THRESHOLD_MAX   (1024 * 1024 * 256)  // 256MB
 #define GC_OLD_FLUSH_THRESHOLD (1024 * 1024 * 2)  // 2MB：Minor GC 时老年代超此阈值顺带清扫
 #define GC_PROMOTE_AGE       2
 #define GC_REMEMBERED_INIT   256

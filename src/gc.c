@@ -503,7 +503,9 @@ void gc_free_detached(void* p) {
 // 这样一帧内创建几百个对象时不会产生多次 GC 暂停。
 Object* gc_alloc(size_t size, ObjType type) {
     // 年轻代分配超阈值时设置延迟 GC 标志（不在此处同步执行）
-    if (gc.enabled && gc.young_allocated + size > gc.young_threshold && !gc.running) {
+    if (gc.enabled && !gc.running &&
+        (gc.young_allocated + size > gc.young_threshold ||
+         gc.old_allocated > gc.old_threshold)) {
         gc.deferred_gc = 1;
         // 镜像到 VM（回边检查用它，避免每轮一次 THREAD_LOCAL 读）
         if (gc.vm) gc.vm->gc_deferred_request = 1;
@@ -651,6 +653,16 @@ void gc_track_memory(Object* obj, size_t old_size, size_t new_size) {
             gc.young_allocated += diff;
         }
         if (obj) obj->size += diff;
+        // ★ 2026-11-01：**挂起本轮的 GC 请求**。
+        //   之前只有 gc_alloc 里按 `size`（对象头大小）判阈值 ⇒ 字符串的字符缓冲、
+        //   数组的元素缓冲区这类"真实大头"涨到几百 MB 也触发不了一次回收
+        //   （实测：`files.read` 4×40MB 后 young_bytes 仍 714KB、GC 计数 0、RSS 175MB）。
+        //   这里与 gc_alloc 用同一套判据：只置标志，真正的回收仍发生在解释器安全点 ✓
+        if (gc.enabled && !gc.running &&
+            (gc.young_allocated > gc.young_threshold || gc.old_allocated > gc.old_threshold)) {
+            gc.deferred_gc = 1;
+            if (gc.vm) gc.vm->gc_deferred_request = 1;
+        }
     } else if (old_size > new_size) {
         size_t diff = old_size - new_size;
         if (obj && obj->generation == GEN_OLD) {
@@ -2031,6 +2043,17 @@ void gc_try_collect_deferred(void) {
     gc.deferred_gc = 0;
     if (gc.vm) gc.vm->gc_deferred_request = 0;
 
+    // ★ 2026-11-01：**老年代要能独立触发回收**。
+    //   原逻辑只有「年轻代超阈值」才进得去：一旦大对象被晋升到老年代
+    //   （读一个 100MB 文件、再拼一份就是两个大串，一次 Minor 就晋升），
+    //   young 里只剩小对象 ⇒ 永远不超阈值 ⇒ 老年代那几百 MB 垃圾再没有被回收的入口。
+    //   实测现象就是用户报的"下载完 100MB 内存涨到 200MB、再下一首又涨 100MB，只涨不降"✗
+    if (gc.old_allocated > gc.old_threshold ||
+        gc.old_allocated + gc.young_allocated > gc.old_threshold) {
+        gc_major_collect();
+        return;
+    }
+
     // 使用与原 gc_alloc 相同的判断逻辑：先 Minor，不够再 Major
     if (gc.young_allocated > gc.young_threshold) {
         gc_minor_collect();
@@ -2094,13 +2117,17 @@ void gc_minor_collect(void) {
 
     // 动态调整年轻代阈值（被 LENO_GC_YOUNG_THRESHOLD 钉住时跳过：
     // 否则覆盖值会在第一次回收后立刻被抬回默认值，钩子失效）
+    // ★ 2026-11-01：改成**可升可降 + 硬上限**（原来是 `if (阈值 < 存活*2) 阈值 = 存活*2`，
+    //   只升不降）。为什么必须改：一次"读进 300MB 字符串"的负载会把阈值顶到 600MB，
+    //   之后即使那 300MB 全变成垃圾，也得再堆 300MB 才够触发下一次回收 ⇒ 用户看到的就是
+    //   "下载完内存一直挂着不降"（实测：keep=[] 释放后 314MB 常驻，400 次分配后
+    //   minor_count 仍为 1、deferred=false）。上限取 64MB ⇒ 最多攒 64MB 垃圾就回收，
+    //   大负载下内存可控，而小对象负载（存活远小于 8MB）阈值恒为下限、行为不变 ✓
     if (!gc.young_threshold_pinned) {
-        if (gc.young_threshold < gc.young_allocated * 2) {
-            gc.young_threshold = gc.young_allocated * 2;
-        }
-        if (gc.young_threshold < GC_YOUNG_THRESHOLD) {
-            gc.young_threshold = GC_YOUNG_THRESHOLD;
-        }
+        size_t want = gc.young_allocated * 2;
+        if (want < GC_YOUNG_THRESHOLD) want = GC_YOUNG_THRESHOLD;
+        if (want > GC_YOUNG_THRESHOLD_MAX) want = GC_YOUNG_THRESHOLD_MAX;
+        gc.young_threshold = want;
     }
 
     if (gc.trace) {
@@ -2142,24 +2169,22 @@ void gc_major_collect(void) {
 
     gc.running = 0;
 
-    // 动态调整老年代阈值（上限 512MB）
+    // 动态调整老年代阈值（可升可降，上限 256MB —— 与年轻代同一个理由，见 gc_minor_collect）
     size_t total = gc.young_allocated + gc.old_allocated;
     size_t new_threshold = total * 2;
     if (new_threshold < GC_OLD_THRESHOLD) {
         new_threshold = GC_OLD_THRESHOLD;
-    } else if (new_threshold > 1024 * 1024 * 512) {
-        new_threshold = 1024 * 1024 * 512;
+    } else if (new_threshold > GC_OLD_THRESHOLD_MAX) {
+        new_threshold = GC_OLD_THRESHOLD_MAX;
     }
     gc.old_threshold = new_threshold;
 
     // 动态调整年轻代阈值（被 LENO_GC_YOUNG_THRESHOLD 钉住时跳过，见 gc_minor_collect）
     if (!gc.young_threshold_pinned) {
-        if (gc.young_threshold < gc.young_allocated * 2) {
-            gc.young_threshold = gc.young_allocated * 2;
-        }
-        if (gc.young_threshold < GC_YOUNG_THRESHOLD) {
-            gc.young_threshold = GC_YOUNG_THRESHOLD;
-        }
+        size_t want = gc.young_allocated * 2;
+        if (want < GC_YOUNG_THRESHOLD) want = GC_YOUNG_THRESHOLD;
+        if (want > GC_YOUNG_THRESHOLD_MAX) want = GC_YOUNG_THRESHOLD_MAX;
+        gc.young_threshold = want;
     }
 
     if (gc.trace) {
