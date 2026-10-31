@@ -52,6 +52,27 @@ struct _RespAcc {
     func headers(): string { return strings.join(headerChunks, "") }
 }
 
+// 写盘通道（2026-10-31）：让 curl 的写回调**直接把字节写进文件**，正文不进内存。
+//   ⚠ 为什么包一层 `_Sink` 而不是直接用 `File?` 字段：写回调是 `init()` 里创建的闭包，
+//     它按值捕获字段当时的值 —— 直接捕获 `File?` 会永久是 null ✗；
+//     捕获一个"容器对象"再读它的 `.f`，就能随赋值生效 ✓（与 `_acc` 同一手法）
+struct _Sink {
+    File? f = null
+    int written = 0      // 本片已写入的字节数（fetchToFile 靠它回报进度 ✓）
+}
+
+// 从 `Content-Range: bytes 0-1048575/5678901` 里取总长（5678901）；拿不到返回 0
+//   ⚠ 口径成套：`byte_find` 给字节位置 ⇒ 切片也走 `byte_slice` + `byte_len`
+//     （`len()` 是字符数，见 docs/语言与框架问题 L4 ✓）
+func _parseTotalFromRange(string cr): int {
+    if cr == "" { return 0 }
+    int slash = strings.byte_find(cr, "/", 0)
+    if slash < 0 { return 0 }
+    string tail = strings.byte_slice(cr, slash + 1, cr.byte_len() - 1).trim()
+    if tail == "" or tail == "*" { return 0 }
+    try { return _int(tail) } catch e { return 0 }
+}
+
 // 写回调的实际动作（只做"读字节 + 存块"，不碰任何全局状态）
 func _accAppendBody(_RespAcc acc, Ptr data, int total): int {
     if total <= 0 { return 0 }
@@ -191,6 +212,14 @@ export struct HttpClient {
     pri Ptr[u8] writeCb        // 写回调
     pri Ptr[u8] headerCb       // header 回调
     pri _RespAcc _acc          // 本客户端专属的响应累加器（闭包捕获 ⇒ 无全局态）
+    // 落盘通道（2026-10-31）：非 null 时写回调把字节直接写进文件，正文不进内存
+    //   大文件分片下载（Aria 的 fetch_url）原来每片要在内存里造 3 份 1MB
+    //   （64 个小块 + join 出的 _raw + 转码出的 body）⇒ 105 片下来几百 MB ✗
+    // ⚠ 必须是可空字段（struct 字段默认值只能是常量）⇒ 在 init() 里 new，
+    //   且在**创建写回调之前**赋好，闭包才能捕获到那个非空对象 ✓
+    pri _Sink? _sink = null
+    // 最近一次 fetchToFile 的总文件大小（从 Content-Range 解析；0 = 未知）
+    pri int _lastTotal = 0
 
     // 初始化客户端
     func init(): bool {
@@ -204,8 +233,22 @@ export struct HttpClient {
         }
         // 每个客户端一套回调 + 累加器：闭包捕获 _acc ⇒ 不再依赖模块级全局（多线程安全）
         _acc = new _RespAcc()
+        _sink = new _Sink()
+        _Sink mySink = _sink          // 非空局部引用 ⇒ 闭包捕获它（字段改了也不影响这个引用 ✓）
         writeCb = ffi.callback(func(Ptr data, int size, int nmemb, Ptr ud): int {
-            return _accAppendBody(_acc, data, size * nmemb)
+            int total = size * nmemb
+            // 走"落盘通道"时不进内存（大文件下载专用，见 fetchToFile ✓）
+            var sinkFile = mySink.f
+            if sinkFile != null {
+                try {
+                    sinkFile.write(ffi.read_string_n(data, 0, total))
+                    mySink.written = mySink.written + total
+                } catch eW {
+                    return 0          // 返回 0 = 让 curl 中止并报写入错误（比静默丢数据好 ✓）
+                }
+                return total
+            }
+            return _accAppendBody(_acc, data, total)
         }, WriteCb)
         headerCb = ffi.callback(func(Ptr data, int size, int nmemb, Ptr ud): int {
             return _accAppendHeader(_acc, data, size * nmemb)
@@ -227,6 +270,9 @@ export struct HttpClient {
     //   而模块级 `get()` 每次请求都会 createClient()（2 个回调）⇒ 不释放的话
     //   跑到第 128 次请求就会因回调耗尽而失败（原先 close() 只清 handle，属隐性泄漏）。
     func close() {
+        // 落盘通道必须断开：否则下次请求的字节会继续往这个（已关闭的）文件写 ✓
+        var sk = _sink
+        if sk != null { sk.f = null }
         // ★ 2026-10-25：回调是 ffi.callback 造的 trampoline，**不是** ffi.malloc 的指针 ⇒
         //   原来这里调 ffi.free 是错的（对象/槽位根本没释放，只是白调一次）；
         //   正确接口是 ffi.free_callback：释放槽位后 GC 才能回收 trampoline ✓
@@ -541,6 +587,36 @@ export struct HttpClient {
     }
 
     // GET 请求
+    // 分片下载一片**直接落盘**（2026-10-31）：正文不进内存，内存与片大小同级。
+    //   path 以追加模式打开 ⇒ 调用方按顺序给 offset 即可拼成完整文件。
+    //   为什么需要它：普通 get() 每片要在内存里造 3 份 1MB
+    //   （curl 的 64 个小块 + join 出的 _raw + 转码出的 body），
+    //   一首 110MB 无损 = 105 片 ⇒ 几百 MB 垃圾堆在堆里，GC 跟不上就爆 ✗
+    //   ⚠ 返回 false 时调用方应停止（可能是网络失败，也可能是写盘失败）
+    // 返回本片写入的字节数；-1 = 失败（网络/写盘）。
+    //   文件总大小用 `fullSize()` 取（从 Content-Range 解析）——
+    //   sink 模式下 `_acc` 不累积 ⇒ `Response.totalSize` 恒为 0，不能拿它算进度 ✓
+    func fetchToFile(string url, string path, int offset, int length): int {
+        if not ok { return -1 }
+        var sk = _sink
+        if sk == null { return -1 }
+        // 打不开就让它抛（调用方的 try/catch 会报"打开输出文件失败"并带路径 ✓）
+        File f = files.open(path, "ab")
+        // 两个 defer 是 LIFO：先 f.close()，再清 sk.f ✓
+        defer sk.f = null
+        defer f.close()
+        sk.f = f
+        sk.written = 0
+        replaceHeaders(["Range: bytes=" + _str(offset) + "-" + _str(offset + length - 1)])
+        var r = get(url)
+        if not r.ok() { return -1 }
+        _lastTotal = _parseTotalFromRange(r.getHeader("Content-Range"))
+        return sk.written
+    }
+
+    // 最近一次 fetchToFile 得到的**文件总大小**（0 = 服务端没给 Content-Range）
+    func fullSize(): int { return _lastTotal }
+
     func get(string url): Response {
         return doRequest("GET", url, "")
     }
