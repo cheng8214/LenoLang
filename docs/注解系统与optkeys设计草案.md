@@ -453,13 +453,41 @@ export func createHBox(Dict opts): HBox { HBox b = new HBox(); b.set(opts); retu
 
 实测：连续两次 `--check`（第二次命中缓存）都能正常报出，说明缓存往返是通的。
 
-### 13.4 目前**只给有 `_opts_keys()` 的控件**加了注解
+### 13.4 ✅ 运行时白名单已整套删除（2026-10-31 收尾）
 
-`_opts_keys()` 是运行期 `dochk.check` 用的白名单，与注解同源。没有它的控件（如 `Label`）
-**故意不加**——猜一个键表出来，一旦猜少一个，正常代码就编不过 ✗。这类控件留空 = 不检查。
+补齐注解后，`_opts_keys()` 那套已删（提交 `8f6d523`，41 个文件、-326 行）：
 
-已加：`createHBox` / `createVBox` / `createAnchorBox`（门面 + 实现两处）、`createButton` /
-`createCheckBox` / `createSlider` / `createEdit` / `createTable` / `createBadge`（门面）。
+| 删掉 | 保留 |
+|---|---|
+| 41 处 `dochk.check(..., _opts_keys()/_set_keys()/label_keys()/alert_keys())` | `add(c, opts)` 的 `dochk.check(..., _add_keys())` |
+| 39 个白名单函数定义 | `popmenu` / `tray` / `window` 三处（内部控件，未加注解） |
+| | `sdl_opts.leno` 本体（`add` 与 `warn_once` 还在用） |
+
+**为什么要删**——不只是"重复"，而是**已经实际漂移过**：
+
+> `sdl_gridlayout.leno` 的 `set()` 读了 `min_col_width`，但它的 `_opts_keys()` 白名单里**没有**
+> ⇒ 影视海报墙传 `min_col_width` 一直被运行时误报"不认识的选项"（全量扫 `--check` 才发现）。
+
+这正是"两份数据"的必然后果。删完只剩注解一份，改选项时只改一个地方。
+
+**踩坑**：`label_keys` / `alert_keys` 原本是 `pri func XXX()` 形式，批量删除时正则只匹配 `func` 那段，
+留下孤立的 `pri` —— 它把后面的 `func set(Dict opts)` 变成了私有方法，`createLabel` 在 struct 外面
+调 `lbl.set(opts)` 直接编译失败（`'Label.set' 是 pri 私有方法`）。修法：删掉那行孤立的 `pri`。
+
+**验证**：533 passed / 0 failed；47 个 GUI 主程序 `--check` 零误报；Aria 实跑界面正常、运行时零 `[ui]` 告警。
+
+### 13.5 补注解时的两种来源
+
+- **有 `_opts_keys()` 的**（36 个）：逐字抄白名单 —— 但注意上面 gridlayout 那种漂移，
+  遇到"这个键不认识"的误报时，先查实现里是不是真的读了它；
+- **没有白名单的**（`Label` / `Alert` / `VirtualGrid`）：扫描实现里的 `opts.get("…")` / `opts.has("…")`
+  反推键表，再补通用几何键（`w`/`h`）。这类最容易漏，**必须靠全量应用验证**兜底。
+
+### 13.6 覆盖现状
+
+已加注解 **43 个** `createXxx`（含 `HBox/VBox/AnchorBox` 门面 + 实现两处）。
+未加的内部控件：`createPopMenu` / `createTray` / `createDragHint` / `createTitleBar` / `createWindow`
+（应用不直接调用，仍走各自保留的运行时检查）。
 其余控件可按同一模式增量补（键表直接抄 `_opts_keys()`）。
 
 ## 13. 验收清单
