@@ -6,8 +6,11 @@ import "SDL3" as SDL3
 import files
 use audio.TagInfo
 
-const string DL = "leno_gui\\应用\\Aria\\cache\\downloads\\"
-const string COVER = "leno_gui\\应用\\Aria\\images\\cover03.png"
+// 音频样本目录（可选）：本机装了 Aria 才有真 flac
+//   ★ 2026-10-31：Aria 已迁出主仓库（现 d:\CLeno\Aria）⇒ 这里不再写仓库内相对路径。
+//     找不到样本时下面的 `files.exists` 会打印"跳过"并 _exit(0)，不会让自测变红 ✓
+const string DL = "d:\\CLeno\\Aria\\cache\\downloads\\"
+const string COVER = "leno_gui\\自测\\assets\cover03.png"
 
 int fails = 0
 
@@ -68,7 +71,7 @@ main() {
        "耗时 " + _str(ms2) + "ms，大小 " + _str(len1) + " → " + _str(len2))
 
     // ⑤ 不支持格式：返回原因、不动文件
-    TagInfo t3 = audio.readTag("leno_gui\\应用\\Aria\\images\\cover03.png")
+    TagInfo t3 = audio.readTag("leno_gui\\自测\\assets\cover03.png")
     ok("⑤ 非音频文件 readTag 返回 ok=false", not t3.ok, "ok=" + _str(t3.ok))
 
     print("[mt] ===== 失败 " + _str(fails) + " 项")

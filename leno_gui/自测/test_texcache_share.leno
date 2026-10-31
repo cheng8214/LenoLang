@@ -16,8 +16,8 @@
 import "SDL3" as SDL3
 use SDL3.(Event, Renderer, Window, ImageView)
 
-const string IMG_A = "leno_gui/应用/Aria/images/cover05.png"
-const string IMG_B = "leno_gui/应用/Aria/images/cover14.png"
+const string IMG_A = "leno_gui/自测/assets/cover05.png"
+const string IMG_B = "leno_gui/自测/assets/cover14.png"
 
 int steps = 0
 string outP = ""

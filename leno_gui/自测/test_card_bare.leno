@@ -23,7 +23,7 @@ main() {
     // 卡内自由内容：图 + 两行字 + 按钮（这套组合用旧 Card 是塞不进去的 ✗）
     VBox inner = SDL3.createVBox({x: 0, y: 0, w: 300, h: 200, pad_x: 10, pad_y: 10, spacing: 8})
     ImageView iv = SDL3.createImageView({w: 60, h: 60, radius: 12,
-                                         image_path: "leno_gui\\应用\\Aria\\images\\cover03.png"})
+                                         image_path: "leno_gui\\自测\\assets\cover03.png"})
     inner.add(iv, {grow: 0, shrink: 0, basis: 60, align: 1})
     Label t1 = SDL3.createLabel({text: "裸卡标题", font_size: 14, text_color: #35262BFF})
     t1.set_font_style(SDL3.STYLE_BOLD)

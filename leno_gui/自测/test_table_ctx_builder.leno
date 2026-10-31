@@ -22,7 +22,7 @@ const float TB_X = 20.0
 const float TB_Y = 20.0
 const float TB_W = 700.0
 const float TB_H = 280.0
-const string ICO = "leno_gui/应用/Aria/images/icons/"
+const string ICO = "leno_gui/自测/assets/icons/"
 
 int steps = 0
 string outP = ""

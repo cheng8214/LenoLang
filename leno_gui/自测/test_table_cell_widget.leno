@@ -42,9 +42,9 @@ func make_row(string title, string artist, string cover): HBox {
 main() {
     Window w = SDL3.createWindow({title: "table cell widget", w: 760, h: 360, flags: 0x20})
 
-    rowViews.add(make_row("晴天", "周杰伦", "leno_gui\\应用\\Aria\\images\\cover01.png"))
-    rowViews.add(make_row("青衣", "草帽酱&DJ阿泽", "leno_gui\\应用\\Aria\\images\\cover02.png"))
-    rowViews.add(make_row("兰亭序", "周杰伦", "leno_gui\\应用\\Aria\\images\\cover03.png"))
+    rowViews.add(make_row("晴天", "周杰伦", "leno_gui\\自测\\assets\cover01.png"))
+    rowViews.add(make_row("青衣", "草帽酱&DJ阿泽", "leno_gui\\自测\\assets\cover02.png"))
+    rowViews.add(make_row("兰亭序", "周杰伦", "leno_gui\\自测\\assets\cover03.png"))
 
     Table t = SDL3.createTable({x: 20, y: 20, w: 720, h: 300,
                                 headers: ["歌曲", "来源"], item_h: 52, header_h: 32, font_size: 13,
