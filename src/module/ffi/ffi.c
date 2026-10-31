@@ -3467,8 +3467,23 @@ static Value ffi_free_callback_func(int argc, Value* args) {
     (void)argc;
     if (!val_is_obj(args[0])) return val_bool(0);
     Object* obj = val_as_obj(args[0]);
-    if (obj->type != OBJ_FFI_POINTER) return val_bool(0);
-    void* tramp = ((ObjFFIPointer*)obj)->ptr;
+    /* ★ 2026-10-31 修：**类型判断写错了，槽位从来没被释放过** ✗
+     *
+     * `ffi.callback(...)` 返回的是 **ObjFFICallback**（见 ffi_callback_compat_func 末尾的
+     * `return val_obj((Object*)cb)`），而这里原来只认 `OBJ_FFI_POINTER`
+     * ⇒ 类型对不上、直接 `return false` ⇒ 本函数成了**空操作**。
+     *
+     * 实测症状：`createClient()` / `close()` 循环 200 轮，第 **128** 轮必报
+     * 「回调数量已达上限」（256 个槽位 ÷ 每个 HttpClient 占 2 个回调），
+     * 而 `close()` 里明明调了 `ffi.free_callback`。
+     *
+     * 两种类型都接受：裸 Ptr 形态（历史用法）与回调用对象形态 ✓ */
+    void* tramp = NULL;
+    if (obj->type == OBJ_FFI_POINTER) {
+        tramp = ((ObjFFIPointer*)obj)->ptr;
+    } else if (obj->type == OBJ_FFI_CALLBACK) {
+        tramp = ((ObjFFICallback*)obj)->trampoline;
+    }
     if (!tramp) return val_bool(0);
     for (int i = 0; i < MAX_FFI_CALLBACKS; i++) {
         if (g_callback_registry[i].active && g_callback_registry[i].trampoline == tramp) {

@@ -1174,8 +1174,12 @@ func _finishJob(_MultiJob j, int curlResult): BatchResult {
 func _freeJob(_MultiJob j) {
     if j.handle != null { core.easyCleanup(j.handle) }
     // ⚠ 回调必须释放：ffi.callback 同时存活上限 256 个，一批 100 条就是 200 个
-    if j.writeCb != null { ffi.free(j.writeCb) }
-    if j.headerCb != null { ffi.free(j.headerCb) }
+    //   ★ 2026-10-31 修：这里原来调的是 `ffi.free` —— 对 **ffi.callback 造出来的 trampoline
+    //     是无效的**（它不是 ffi.malloc 的指针），槽位根本没回收 ⇒ `fetchAll` 每跑一批
+    //     就漏 N×2 个槽位，几批之后整个进程（含其它线程）都报"回调数量已达上限" ✗
+    //     正确接口是 `ffi.free_callback`（与 close() 那边一致 ✓）
+    if j.writeCb != null { ffi.free_callback(j.writeCb) }
+    if j.headerCb != null { ffi.free_callback(j.headerCb) }
 }
 
 // 并发批抓。结果按**输入顺序**返回；每条的 resp.error 非空即该条失败（其余条不受影响）。
