@@ -344,6 +344,20 @@ static int verify_one(const Chunk* c, int pos, int cap,
             REG_CHK(a); REG_CHK(b); REG_CHK(cc);
             break;
 
+        // --- maths.* 内联（2026-11-01）---
+        //   iABC：A = 目标寄存器；B = 实参起始寄存器（连续 nargs 个）；C = MATHF_* 子操作码。
+        //   ⚠ C **不是寄存器号**，所以不能并到上面那组 REG_CHK(a/b/cc) 里 —— 那样会把
+        //     子操作码当寄存器序号校验（cc 恒 < cap 反而"总能过"，等于没校验）。
+        case OP_MATH_FAST: {
+            if ((unsigned)cc >= (unsigned)MATHF_COUNT) FAIL_AT();
+            int nargs = (cc == MATHF_CLAMP || cc == MATHF_LERP || cc == MATHF_CLAMPI) ? 3
+                      : (cc == MATHF_MIN || cc == MATHF_MAX || cc == MATHF_MINI
+                         || cc == MATHF_MAXI || cc == MATHF_MOD) ? 2 : 1;
+            REG_CHK(a);
+            SPAN_CHK(b, nargs);
+            break;
+        }
+
         // --- 跳转 ---
         case OP_JMP:
             break;                                        // 目标在 pass 2 校验

@@ -472,8 +472,45 @@ typedef enum {
     //   减到 0 续跳到 target（见 09_exception.inc / codegen_stmt.c 的 AST_BREAK 说明）。
     OP_FIN_GOTO,
 
+    // ★ 2026-11-01：`maths.*` 纯数值函数的**编译期内联**（末尾追加 ⇒ 既有编号不变，
+    //   按惯例 bump 序列化版本，见 leno_serialize.h）。
+    //   iABC：A = 目标寄存器；B = 实参起始寄存器（连续存放）；C = MATHF_* 子操作码。
+    //   为什么需要：`maths.clamp(...)` 走的是"取模块对象 → 常量装方法名 → OP_INDEX 查表 →
+    //   native 调用"四步，实测比手写内联贵 2~4 ns（tools/bench_maths_native.leno）。
+    //   下面这批函数**无副作用、不分配、不抛异常** ⇒ 编译期直接发一条指令是安全的，
+    //   运行期开销降到一次分派 ✓（表达式一律只求值一次，不存在重复求值的坑）。
+    OP_MATH_FAST,
+
     OP_OPCODE_COUNT,    // 用于跳转表大小
 } OpCode;
+
+// ============================================================================
+// OP_MATH_FAST 的子操作码（存在指令的 C 字段）
+// ----------------------------------------------------------------------------
+// 语义与 maths 模块里的同名函数**严格一致**（返回类型也一样）：
+//   · 结果是 float 的：abs / clamp / min / max / lerp / smoothstep / saturate / fract
+//   · 结果是 int 的：roundi / clampi / mini / maxi / mod
+// 实参个数：abs/smoothstep/saturate/roundi/fract 是 1 个；clamp/lerp/min/max/clampi/
+//   mini/maxi/mod 是 2 或 3 个，全部从 R[B] 起连续取。
+// ⚠ 这里只收"纯数值、平凡参数、无默认值"的函数；`ease_*`（分支多、收益小）与
+//   `remap/inverse_lerp`（5 参）暂时留在 native 路径上。
+// ============================================================================
+typedef enum {
+    MATHF_ABS = 0,      // 1 参 → float
+    MATHF_CLAMP,        // 3 参 → float
+    MATHF_MIN,          // 2 参 → float
+    MATHF_MAX,          // 2 参 → float
+    MATHF_LERP,         // 3 参 → float
+    MATHF_SMOOTHSTEP,   // 1 参 → float
+    MATHF_SATURATE,     // 1 参 → float
+    MATHF_FRACT,        // 1 参 → float
+    MATHF_ROUNDI,       // 1 参 → int
+    MATHF_CLAMPI,       // 3 参 → int
+    MATHF_MINI,         // 2 参 → int
+    MATHF_MAXI,         // 2 参 → int
+    MATHF_MOD,          // 2 参 → int（正取模）
+    MATHF_COUNT
+} MathFastOp;
 
 // ============================================================================
 // 寄存器式 4 字节指令编码/解码宏

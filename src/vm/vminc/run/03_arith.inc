@@ -584,4 +584,86 @@
         DISPATCH();
     }
 
+    // ★ 2026-11-01：`maths.*` 纯数值函数的**编译期内联**（见 leno_vm.h 的 OP_MATH_FAST）。
+    //   语义与 maths 模块里的同名函数逐条对齐（连返回类型都一致：roundi/clampi/mini/maxi/mod 给 int，
+    //   其余给 float），只是省掉了「取模块对象 → 装方法名 → OP_INDEX 查表 → native 调用」四步。
+    //   实测（tools/bench_maths_native.leno）：native clamp 比内联手写贵 2.1ns，本条指令约 1~2ns。
+    //   ⚠ 参数只求值一次（编译期已把实参放进 R[B..]），不存在"条件表达式重复求值"的坑 ✓
+    LABEL(OP_MATH_FAST): {
+        int a = READ_A(), b = READ_B(), c = READ_C();
+
+        // 取数口径与 maths 的 get_number 一致：int 直接取，其余按 double
+        #define MATHF_D(reg) (val_is_int(R(reg)) ? (double)val_as_int(R(reg)) : val_as_num_ex(R(reg)))
+        #define MATHF_I(reg) (val_is_int(R(reg)) ? val_as_int(R(reg)) : (int64_t)llround(val_as_num_ex(R(reg))))
+        double x = MATHF_D(b);
+        // 2/3 参的才读 y、z（1 参的省掉两次取值）
+        int nargs = (c == MATHF_CLAMP || c == MATHF_LERP || c == MATHF_CLAMPI) ? 3
+                  : (c == MATHF_MIN || c == MATHF_MAX || c == MATHF_MINI || c == MATHF_MAXI
+                     || c == MATHF_MOD) ? 2 : 1;
+        double y = (nargs >= 2) ? MATHF_D(b + 1) : 0.0;
+        double z = (nargs >= 3) ? MATHF_D(b + 2) : 0.0;
+        switch (c) {
+            case MATHF_ABS:
+                R(a) = val_float(fabs(x));
+                break;
+            case MATHF_CLAMP:
+                R(a) = val_float(x < y ? y : (x > z ? z : x));
+                break;
+            case MATHF_MIN:
+                R(a) = val_float(x < y ? x : y);
+                break;
+            case MATHF_MAX:
+                R(a) = val_float(x > y ? x : y);
+                break;
+            case MATHF_LERP:
+                R(a) = val_float(x + (y - x) * z);
+                break;
+            case MATHF_SMOOTHSTEP: {
+                // 与 maths.smoothstep 同口径：先夹 0..1 再算 3t²-2t³（死区直接返回）
+                if (x <= 0.0) R(a) = val_float(0.0);
+                else if (x >= 1.0) R(a) = val_float(1.0);
+                else R(a) = val_float(x * x * (3.0 - 2.0 * x));
+            } break;
+            case MATHF_SATURATE:
+                R(a) = val_float(x < 0.0 ? 0.0 : (x > 1.0 ? 1.0 : x));
+                break;
+            case MATHF_FRACT:
+                R(a) = val_float(x - floor(x));
+                break;
+            case MATHF_ROUNDI:
+                R(a) = val_int((int64_t)llround(x));
+                break;
+            case MATHF_CLAMPI: {
+                int64_t v = MATHF_I(b), lo = MATHF_I(b + 1), hi = MATHF_I(b + 2);
+                if (hi < lo) hi = lo;      // 边界写反 ⇒ 收成 lo（与 maths.clampi 同一口径）
+                R(a) = val_int(v < lo ? lo : (v > hi ? hi : v));
+            } break;
+            case MATHF_MINI: {
+                int64_t u = MATHF_I(b), v = MATHF_I(b + 1);
+                R(a) = val_int(u < v ? u : v);
+            } break;
+            case MATHF_MAXI: {
+                int64_t u = MATHF_I(b), v = MATHF_I(b + 1);
+                R(a) = val_int(u > v ? u : v);
+            } break;
+            case MATHF_MOD: {
+                int64_t u = MATHF_I(b), v = MATHF_I(b + 1);
+                if (unlikely(v == 0)) {
+                    if (!throw_runtime_error("mod() 除数不能为 0", GET_CURRENT_LINE())) return -1;
+                    frame = &vm.frames[vm.frame_cnt - 1];
+                    DISPATCH();
+                }
+                int64_t r = u % v;
+                if (r != 0 && ((r < 0) != (v < 0))) r += v;    // 正取模：结余符号跟除数走
+                R(a) = val_int(r);
+            } break;
+            default:
+                R(a) = val_null();
+                break;
+        }
+        #undef MATHF_D
+        #undef MATHF_I
+        DISPATCH();
+    }
+
     // --- 比较运算（完整语义见 vm.c 的 value_eq_stdlib / value_compare_stdlib）---

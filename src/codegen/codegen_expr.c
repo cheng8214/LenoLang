@@ -12,6 +12,9 @@ extern void gen_default_value(CodeGen* gen, Ast* default_expr);
 // 语义侧：按别名查导入模块信息（跨模块调用的默认参数补齐要用，见 gen_module_call）
 extern ImportedModuleInfo* find_imported_module(Semantic* s, const char* alias);
 
+// maths.* 纯数值函数的编译期内联（定义在本文件 gen_module_call_prep 之前）
+static int try_gen_maths_fast(CodeGen* gen, Ast* ast, int dst);
+
 // ============================================================================
 // 从"默认参数文本"求值到 R[dst]
 // ----------------------------------------------------------------------------
@@ -866,7 +869,10 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
 
         // --- 模块方法调用 ---
         case AST_MODULE_CALL:
-            gen_module_call(gen, ast, dst);
+            // ★ 2026-11-01：maths.* 的纯数值函数在编译期展开成一条 OP_MATH_FAST
+            //   （省掉「取模块对象 → 装方法名 → OP_INDEX 查表 → native 调用」；
+            //     不适用时返回 0，原路走 gen_module_call，行为不变 ✓）
+            if (!try_gen_maths_fast(gen, ast, dst)) gen_module_call(gen, ast, dst);
             break;
 
         // --- if 表达式（三元 / 表达式位置的 if）---
@@ -2516,6 +2522,60 @@ int module_call_is_async(CodeGen* gen, Ast* mcall) {
     if (!mi || !mi->sym_table) return 0;
     ModuleFuncSymbol* mfs = module_symbol_table_find_func(mi->sym_table, methname);
     return (mfs && mfs->is_async) ? 1 : 0;
+}
+
+// ============================================================================
+// maths.* 纯数值函数的编译期内联（2026-11-01）
+// ----------------------------------------------------------------------------
+// 为什么：`maths.clamp(a, b, c)` 常规路径要四步 —— 取模块对象到寄存器、把方法名装成常量、
+//   OP_INDEX 查表取出方法、再走 native 调用协议。实测单次比手写内联贵 2~4ns
+//   （tools/bench_maths_native.leno），而这类函数**无副作用、不分配、不抛异常**（mod 除零除外），
+//   编译期直接发一条 OP_MATH_FAST 即可，实参也只求值一次 ✓
+// 认什么：① 模块别名就是 maths ② 它是**原生模块**（file_path == NULL，见
+//   semantic/visitinc/visit_module.inc 的原生模块登记）③ 方法名在下面的表里
+//   ④ 实参个数**正好**匹配（这批函数都没有默认参数/可变参数，不匹配就说明写法不同，
+//   交给常规路径去报错或补默认值）。
+// 不认什么：`import maths as m` 这类改名（module_name 就不是 maths 了）、
+//   ease_* / remap / inverse_lerp / approx_eq（参数多、分支多，内联收益不明显）。
+// ============================================================================
+static int math_fast_op_of(const char* name, int* out_nargs) {
+    if (!name) return -1;
+    if (strcmp(name, "abs") == 0)        { *out_nargs = 1; return MATHF_ABS; }
+    if (strcmp(name, "clamp") == 0)      { *out_nargs = 3; return MATHF_CLAMP; }
+    if (strcmp(name, "min") == 0)        { *out_nargs = 2; return MATHF_MIN; }
+    if (strcmp(name, "max") == 0)        { *out_nargs = 2; return MATHF_MAX; }
+    if (strcmp(name, "lerp") == 0)       { *out_nargs = 3; return MATHF_LERP; }
+    if (strcmp(name, "smoothstep") == 0) { *out_nargs = 1; return MATHF_SMOOTHSTEP; }
+    if (strcmp(name, "saturate") == 0)   { *out_nargs = 1; return MATHF_SATURATE; }
+    if (strcmp(name, "fract") == 0)      { *out_nargs = 1; return MATHF_FRACT; }
+    if (strcmp(name, "roundi") == 0)     { *out_nargs = 1; return MATHF_ROUNDI; }
+    if (strcmp(name, "clampi") == 0)     { *out_nargs = 3; return MATHF_CLAMPI; }
+    if (strcmp(name, "mini") == 0)       { *out_nargs = 2; return MATHF_MINI; }
+    if (strcmp(name, "maxi") == 0)       { *out_nargs = 2; return MATHF_MAXI; }
+    if (strcmp(name, "mod") == 0)        { *out_nargs = 2; return MATHF_MOD; }
+    return -1;
+}
+
+static int try_gen_maths_fast(CodeGen* gen, Ast* ast, int dst) {
+    if (!gen || !ast || ast->kind != AST_MODULE_CALL) return 0;
+    const char* mod = ast->u.module_call.module_name;
+    const char* mth = ast->u.module_call.method_name;
+    if (!mod || !mth || strcmp(mod, "maths") != 0) return 0;
+    ImportedModuleInfo* mi = find_imported_module(gen->sem, mod);
+    if (!mi || mi->file_path != NULL) return 0;      // 只认原生模块
+    int nargs = 0;
+    int op = math_fast_op_of(mth, &nargs);
+    if (op < 0) return 0;
+    if (ast->u.module_call.args.count != nargs) return 0;   // 个数不符 ⇒ 交给常规路径（含报错）
+
+    int line = ast->line;
+    int base = reg_alloc_block(gen, nargs);
+    for (int i = 0; i < nargs; i++) {
+        gen_expr_to(gen, ast->u.module_call.args.items[i], base + i);
+    }
+    reg_encode_iABC(gen->chunk, OP_MATH_FAST, dst, base, op, line);
+    reg_free_block(gen, base);
+    return 1;
 }
 
 int gen_module_call_prep(CodeGen* gen, Ast* mcall, int nresults, int* out_expected) {

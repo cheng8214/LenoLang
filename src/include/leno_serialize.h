@@ -181,7 +181,10 @@
 //   ⇒ LENO_MODCACHE_VERSION 同步升 ✓
 //   ⚠ 4 字节的 `ADD/SUB/MUL/LT/GT/LE/GE_INT_IMM` 族**加宽不了** ✗（A/B/C 三字段全占满，
 //     且它们没有随附的填充字）⇒ 超 int8 只能退回「LOADI + 寄存器版」= 现状 ✓
-#define LENO_BIN_VERSION    0x00030219  // v3.2.25（2026-10-30）—— 新增 opcode **OP_FIN_GOTO**
+#define LENO_BIN_VERSION    0x0003021A  // v3.2.26（2026-11-01）—— 新增 opcode **OP_MATH_FAST**
+                                        //   （maths.* 纯数值函数的编译期内联；末尾追加 ⇒ 既有编号不变，
+                                        //    但旧构建不认识这个 opcode ⇒ 必须整体失效；模块缓存同步升 ✓）
+                                        //   上一版 v3.2.25（0x00030219，2026-10-30）新增 OP_FIN_GOTO
                                         //   （break/continue 穿过 try-finally 的续跳；末尾追加 ⇒ 编号不变，
                                         //    但新字节码含旧构建不认识的 opcode ⇒ 必须整体失效；
                                         //    同时 END_TRY 新增 A=3/A=4 两种收尾语义）
@@ -365,8 +368,8 @@
 // v13：ObjFunction 增加 is_async（运行期判定"调用即建协程"用）。旧缓存里的函数对象缺这个
 //      字段 ⇒ async 函数的**间接调用**（`var f = w; f()`、当参数传、绑定方法）会退回同步执行、
 //      静默错值，所以必须**作废旧缓存**。
-#define LENO_MODCACHE_VERSION  0x00000029  // v41 - 同 LENO_BIN_VERSION v3.2.25（新增 opcode
-                                            //   **OP_FIN_GOTO** ⇒ 模块字节码里含旧构建不认识的
+#define LENO_MODCACHE_VERSION  0x0000002A  // v42 - 同 LENO_BIN_VERSION v3.2.26（新增 opcode
+                                            //   **OP_MATH_FAST** ⇒ 模块字节码里含旧构建不认识的
                                             //   opcode，加载后跳转会发散 ⇒ 整体失效重编译 ✓）
                                             // v40 - 同 LENO_BIN_VERSION v3.2.24（新增 opcode
                                             //   **OP_LOCK_REF** ⇒ 模块字节码里含旧构建不认识的
