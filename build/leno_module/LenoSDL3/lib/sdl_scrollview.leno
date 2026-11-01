@@ -77,6 +77,13 @@ export struct ScrollView impl Widget, Themeable {
     // 上一次"已同步过"的自身尺寸：窗口缩放时滚动位置没变，但**内容尺寸必须按新视图尺寸重算** ✗
     //   （只比滚动位置的去重会让内容停在旧宽度 ⇒ 画面"还原后没变"，用户实测 ✓）
     pri float syncedW = -1.0, syncedH = -1.0
+    // ★ 2026-11-01 反哺：视口尺寸「布局版本号」—— 每次 `set_size` 把 w/h **真的**改了就 +1 ✓
+    //   为什么需要：虚拟滚动 / 自适应列数这类"内容按视口大小决定铺多少"的用法，只能靠轮询拿
+    //   视口尺寸；而"高度变了没有"没法安全地拿 `get_h()` 自己比（重建后新对象、首帧还是构造时的
+    //   初始高 ⇒ 比出来"没变"，于是下面几行一直是空行槽 ✗）。有了版本号：
+    //       `if sv.get_layout_epoch() != seen { seen = ...; 重排 }`
+    //   一行判断即可，不必自己缓存/猜视口高（Aria 精选页"窗口放大后半屏空白"就是这么修的 ✓）
+    pri int layoutEpoch = 0
     // 事件派发的「视口裁剪」状态（渲染有 `pushClipRect`，派发也必须有一份对应的闸门 ⇒ 见 process ✓）
     pri bool innerDown = false   // 视口内按下且还没松手 ⇒ 期间一律照转（拖出视口也不会卡住 pressed ✓）
     pri bool mouseIn = false     // 上一拍指针在不在视口内（刚离开时补一次 motion ⇒ 子控件清 hover ✓）
@@ -374,11 +381,17 @@ export struct ScrollView impl Widget, Themeable {
     }
     func set_pos(float px, float py) { x = px; y = py }
     func set_size(float sw, float sh) {
+        // 布局每帧都会重复调用（值没变），只有**真变化**才推进版本号 ✓
+        //   ⚠ 必须在这里判、不能延到 `_sync`：`_sync` 自己去重时会提前 return，且它拿不到
+        //     "布局前"的旧尺寸 ⇒ 版本号会漏拍（虚拟列表就还是看不到"视口变高了"✗）
+        if sw != w or sh != h { layoutEpoch = layoutEpoch + 1 }
         w = sw; h = sh
         // 视图尺寸变了 ⇒ `fit_w` 的内容宽立刻跟着变（不必等下一帧 `_sync` ✓）
         if fitW { _contentW = w - barW }
         clampScroll()
     }
+    // 视口布局版本号（见字段注释）：虚拟滚动/自适应布局在轮询里比对它即可知道"该重排了" ✓
+    func get_layout_epoch(): int { return layoutEpoch }
     func set_enabled(bool e) { enabled = e }
     func set_visible(bool v) { visible = v }
     func is_visible(): bool { return visible }
