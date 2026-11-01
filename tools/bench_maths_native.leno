@@ -1,0 +1,265 @@
+// bench_maths_native.leno — maths 库调用 vs 手写 Leno 的性能对比
+// ----------------------------------------------------------------------------
+// 背景：SDL3 控件里有不少"手写夹取"（`if f > 1.0 { f = 1.0 }` 这类**内联**代码），
+//   而 maths 里其实有 clamp/abs/min/max/lerp。要不要统一改成库调用，
+//   取决于"一次原生调用"比"内联几行"贵多少 —— 这个脚本量的就是这个。
+// 三个角色：
+//   · 原生 = maths.xxx(...)
+//   · 内联 = 直接写在循环体里的 if/算式（框架现状就是这种）
+//   · 函数 = 自定义 Leno 函数封装同样逻辑（想"封个函数复用"时的代价）
+// 口径（对照 smoothstep 那份基准，但更严格）：
+//   · 输入值**固定**在循环外算好 —— 变量是"取值 + 累加"的固定开销，
+//     各档一致 ⇒ 差值只剩核心表达式（原来把 _float(i)/_float(N) 放循环里，
+//     除法本身就把 20~30ns 的噪声灌进来，测不准 ✗）
+//   · 每档 300 万次 × 3 轮，**取最小值**（最小值最抗抖动）
+//   · ①空转作基线，各档减掉它 ⇒ 只剩"表达式本身"
+// 跑法：build\leno.exe tools\bench_maths_native.leno
+import maths
+import times
+
+const int N = 3000000
+const int ROUNDS = 3
+
+// 手写函数版（对比"自定义 Leno 函数"这条路）
+func fn_clamp(float v, float lo, float hi): float {
+    if v < lo { return lo }
+    if v > hi { return hi }
+    return v
+}
+func fn_abs(float x): float { return if x < 0.0 then -x else x }
+func fn_max2(float a, float b): float { return if a > b then a else b }
+func fn_lerp3(float a, float b, float t): float { return a + (b - a) * t }
+func fn_smoothstep(float t): float {
+    float u = t
+    if u < 0.0 { u = 0.0 }
+    if u > 1.0 { u = 1.0 }
+    return u * u * (3.0 - 2.0 * u)
+}
+func _absf(float x): float { return if x < 0.0 then -x else x }
+
+// 跑一档：N 次，返回毫秒
+func bench_base(): float {
+    float v = 0.37
+    float acc = 0.0
+    float t0 = times.ms()
+    for 0 : N - 1 to i {
+        acc = acc + v
+    }
+    float dt = times.ms() - t0
+    if acc < 0.0 { print("unreachable") }
+    return dt
+}
+func bench_clamp_native(): float {
+    float v = 0.37
+    float acc = 0.0
+    float t0 = times.ms()
+    for 0 : N - 1 to i {
+        acc = acc + maths.clamp(v, 0.0, 1.0)
+    }
+    float dt = times.ms() - t0
+    if acc < 0.0 { print("unreachable") }
+    return dt
+}
+func bench_clamp_inline(): float {
+    float v = 0.37
+    float acc = 0.0
+    float t0 = times.ms()
+    for 0 : N - 1 to i {
+        float x = v
+        if x < 0.0 { x = 0.0 }
+        if x > 1.0 { x = 1.0 }
+        acc = acc + x
+    }
+    float dt = times.ms() - t0
+    if acc < 0.0 { print("unreachable") }
+    return dt
+}
+func bench_clamp_fn(): float {
+    float v = 0.37
+    float acc = 0.0
+    float t0 = times.ms()
+    for 0 : N - 1 to i {
+        acc = acc + fn_clamp(v, 0.0, 1.0)
+    }
+    float dt = times.ms() - t0
+    if acc < 0.0 { print("unreachable") }
+    return dt
+}
+func bench_abs_native(): float {
+    float v = -0.37
+    float acc = 0.0
+    float t0 = times.ms()
+    for 0 : N - 1 to i {
+        acc = acc + maths.abs(v)
+    }
+    float dt = times.ms() - t0
+    if acc < 0.0 { print("unreachable") }
+    return dt
+}
+func bench_abs_inline(): float {
+    float v = -0.37
+    float acc = 0.0
+    float t0 = times.ms()
+    for 0 : N - 1 to i {
+        acc = acc + (if v < 0.0 then -v else v)
+    }
+    float dt = times.ms() - t0
+    if acc < 0.0 { print("unreachable") }
+    return dt
+}
+func bench_abs_fn(): float {
+    float v = -0.37
+    float acc = 0.0
+    float t0 = times.ms()
+    for 0 : N - 1 to i {
+        acc = acc + fn_abs(v)
+    }
+    float dt = times.ms() - t0
+    if acc < 0.0 { print("unreachable") }
+    return dt
+}
+func bench_max_native(): float {
+    float v = 0.37
+    float b = 1.25
+    float acc = 0.0
+    float t0 = times.ms()
+    for 0 : N - 1 to i {
+        acc = acc + maths.max(v, b)
+    }
+    float dt = times.ms() - t0
+    if acc < 0.0 { print("unreachable") }
+    return dt
+}
+func bench_max_inline(): float {
+    float v = 0.37
+    float b = 1.25
+    float acc = 0.0
+    float t0 = times.ms()
+    for 0 : N - 1 to i {
+        acc = acc + (if v > b then v else b)
+    }
+    float dt = times.ms() - t0
+    if acc < 0.0 { print("unreachable") }
+    return dt
+}
+func bench_max_fn(): float {
+    float v = 0.37
+    float b = 1.25
+    float acc = 0.0
+    float t0 = times.ms()
+    for 0 : N - 1 to i {
+        acc = acc + fn_max2(v, b)
+    }
+    float dt = times.ms() - t0
+    if acc < 0.0 { print("unreachable") }
+    return dt
+}
+func bench_lerp_native(): float {
+    float a = 0.37
+    float b = 1.25
+    float t = 0.42
+    float acc = 0.0
+    float t0 = times.ms()
+    for 0 : N - 1 to i {
+        acc = acc + maths.lerp(a, b, t)
+    }
+    float dt = times.ms() - t0
+    if acc < 0.0 { print("unreachable") }
+    return dt
+}
+func bench_lerp_inline(): float {
+    float a = 0.37
+    float b = 1.25
+    float t = 0.42
+    float acc = 0.0
+    float t0 = times.ms()
+    for 0 : N - 1 to i {
+        acc = acc + (a + (b - a) * t)
+    }
+    float dt = times.ms() - t0
+    if acc < 0.0 { print("unreachable") }
+    return dt
+}
+func bench_lerp_fn(): float {
+    float a = 0.37
+    float b = 1.25
+    float t = 0.42
+    float acc = 0.0
+    float t0 = times.ms()
+    for 0 : N - 1 to i {
+        acc = acc + fn_lerp3(a, b, t)
+    }
+    float dt = times.ms() - t0
+    if acc < 0.0 { print("unreachable") }
+    return dt
+}
+
+// ---- smoothstep（顺带把上一份基准用干净口径重新量一次）----
+func bench_ss_native(): float {
+    float t = 0.42
+    float acc = 0.0
+    float t0 = times.ms()
+    for 0 : N - 1 to i {
+        acc = acc + maths.smoothstep(t)
+    }
+    float dt = times.ms() - t0
+    if acc < 0.0 { print("unreachable") }
+    return dt
+}
+func bench_ss_inline(): float {
+    float t = 0.42
+    float acc = 0.0
+    float t0 = times.ms()
+    for 0 : N - 1 to i {
+        float u = t
+        if u < 0.0 { u = 0.0 }
+        if u > 1.0 { u = 1.0 }
+        acc = acc + (u * u * (3.0 - 2.0 * u))
+    }
+    float dt = times.ms() - t0
+    if acc < 0.0 { print("unreachable") }
+    return dt
+}
+func bench_ss_fn(): float {
+    float t = 0.42
+    float acc = 0.0
+    float t0 = times.ms()
+    for 0 : N - 1 to i {
+        acc = acc + fn_smoothstep(t)
+    }
+    float dt = times.ms() - t0
+    if acc < 0.0 { print("unreachable") }
+    return dt
+}
+
+// 多轮取最小值（最抗抖动）
+func best(func():float f): float {
+    float m = -1.0
+    for 0 : ROUNDS - 1 to k {
+        float x = f()
+        if m < 0.0 or x < m { m = x }
+    }
+    return m
+}
+
+func per_call(float base, float x): float {
+    return (x - base) / _float(N) * 1000000.0
+}
+
+func line(string name, float base, float nat, float inl, float fnc) {
+    print(name + "  原生 " + _str(per_call(base, nat)) + " ns ／ 内联 " +
+          _str(per_call(base, inl)) + " ns ／ 函数 " + _str(per_call(base, fnc)) +
+          " ns   ⇒ 原生-内联 = " + _str(per_call(base, nat) - per_call(base, inl)) + " ns")
+}
+
+main() {
+    print("N = " + _str(N) + " × " + _str(ROUNDS) + " 轮，取最小值")
+    best(bench_base)                     // 预热
+    float base = best(bench_base)
+    print("① 空转 = " + _str(base) + " ms（取值+累加的固定开销）")
+    line("② clamp", base, best(bench_clamp_native), best(bench_clamp_inline), best(bench_clamp_fn))
+    line("③ abs  ", base, best(bench_abs_native), best(bench_abs_inline), best(bench_abs_fn))
+    line("④ max  ", base, best(bench_max_native), best(bench_max_inline), best(bench_max_fn))
+    line("⑤ lerp ", base, best(bench_lerp_native), best(bench_lerp_inline), best(bench_lerp_fn))
+    line("⑥ smst ", base, best(bench_ss_native), best(bench_ss_inline), best(bench_ss_fn))
+}
