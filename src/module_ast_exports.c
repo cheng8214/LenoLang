@@ -1109,7 +1109,9 @@ static void ast_transmit_type_deps(ModuleSymbolTable* table, ModuleSymbolTable* 
     }
     ModuleAliasSymbol* as = module_symbol_table_find_alias(dep, nm);
     if (as) {
-        module_symbol_table_add_alias(table, nm, as->type_info ? type_copy(as->type_info) : NULL);
+        // add_alias 内部会 type_copy（见 ast_fill_one_alias 的注释）⇒ 这里传借用指针，
+        //   再套一层 type_copy 的话那份临时副本没人释放（实测每个 alias 漏一份 TypeInfo）
+        module_symbol_table_add_alias(table, nm, as->type_info);
         if (as->type_info) ast_transmit_type_deps(table, dep, as->type_info, depth + 1);
         return;
     }
@@ -1185,7 +1187,8 @@ static void ast_fill_one_use(ModuleSymbolTable* table, Ast* us) {
     ModuleAliasSymbol* as = module_symbol_table_find_alias(dep, sname);
     if (as) {
         if (!module_symbol_table_find_alias(table, sname)) {
-            module_symbol_table_add_alias(table, sname, as->type_info ? type_copy(as->type_info) : NULL);
+            // 同 ast_fill_one_use_name：add_alias 内部复制 ⇒ 传借用指针（外层 type_copy 会泄漏）
+            module_symbol_table_add_alias(table, sname, as->type_info);
         }
         if (as->type_info) ast_transmit_type_deps(table, dep, as->type_info, 0);
     }
