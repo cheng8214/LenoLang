@@ -458,6 +458,38 @@ static Token read_color(Lexer* lex) {
     return tok;
 }
 
+// ============================================================================
+// 大整数 token 的字符串登记池
+// ----------------------------------------------------------------------------
+// 为什么需要：`bigint_str` 是**每个 token 单独 malloc** 的，而 Token 会随
+//   `Lexer saved = p->lex` 整体复制成回退快照，也可能在回退时被直接丢弃
+//   ⇒ **没有一个安全的“消费点”能就地 free**（在 lexer_next 顶部释放旧 current，
+//     会让某个快照持有的指针悬空 → UAF）。
+// 折中：分配时登记到池里，Parser 结束（lexer_free）时统一释放。
+// 池用**稳定指针**（lexer_init 里分配，所有快照共享）——不能是值语义数组：
+//   旧快照回滚后若拿着过期的容量/指针，下次登记会写坏内存。
+static void bigint_pool_register(Lexer* lex, char* s) {
+    if (!lex->bigint_pool || !s) return;
+    LenoBigintPool* p = lex->bigint_pool;
+    if (p->count >= p->capacity) {
+        int nc = p->capacity ? p->capacity * 2 : 8;
+        char** ni = (char**)realloc(p->items, sizeof(char*) * (size_t)nc);
+        if (!ni) return;   // 登记失败 ⇒ 退回旧行为（可控泄漏，不影响词法正确性）
+        p->items = ni;
+        p->capacity = nc;
+    }
+    p->items[p->count++] = s;
+}
+
+void lexer_free(Lexer* lex) {
+    if (!lex || !lex->bigint_pool) return;
+    LenoBigintPool* p = lex->bigint_pool;
+    for (int i = 0; i < p->count; i++) free(p->items[i]);
+    free(p->items);
+    free(p);
+    lex->bigint_pool = NULL;
+}
+
 static Token read_number(Lexer* lex) {
     Token tok = make_token(lex, TOK_NUM);
     const char* start = lex->src + lex->pos;
@@ -589,6 +621,7 @@ static Token read_number(Lexer* lex) {
             if (tok.bigint_str) {
                 memcpy(tok.bigint_str, start, tok.len);
                 tok.bigint_str[tok.len] = '\0';
+                bigint_pool_register(lex, tok.bigint_str);
             }
             tok.num_val = 0;
             tok.is_float = 0;
@@ -602,6 +635,7 @@ static Token read_number(Lexer* lex) {
                 if (tok.bigint_str) {
                     memcpy(tok.bigint_str, start, tok.len);
                     tok.bigint_str[tok.len] = '\0';
+                    bigint_pool_register(lex, tok.bigint_str);
                 }
                 tok.num_val = 0;
                 tok.is_float = 0;
@@ -624,6 +658,7 @@ static Token read_number(Lexer* lex) {
             if (tok.bigint_str) {
                 memcpy(tok.bigint_str, start, tok.len);
                 tok.bigint_str[tok.len] = '\0';
+                bigint_pool_register(lex, tok.bigint_str);
             }
             tok.num_val = 0;
             tok.is_float = 0;
@@ -661,6 +696,9 @@ void lexer_init(Lexer* lex, const char* source) {
     lex->in_expr = 0;
     lex->brace_depth = 0;
     lex->in_interp_raw = 0;
+    // 必须在**任何回退快照**之前建好：快照按值复制结构体，若池是“用到才建”，
+    // 旧快照回滚后会把 pool 指针恢复成 NULL ⇒ 已登记的字符串失去引用（泄漏）✗
+    lex->bigint_pool = (LenoBigintPool*)calloc(1, sizeof(LenoBigintPool));
     if ((unsigned char)source[0] == 0xEF &&
         (unsigned char)source[1] == 0xBB &&
         (unsigned char)source[2] == 0xBF) {

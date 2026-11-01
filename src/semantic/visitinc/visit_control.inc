@@ -760,6 +760,8 @@
                                 // 数组/字符串遍历：第二个变量是索引（int）
                                 idx_sym->type = type_new(TYPE_INT);
                             }
+                            // infer_expr_type 返回的是**调用方拥有的副本** ⇒ 用完必须释放
+                            if (iterable_type) type_free(iterable_type);
                         } else {
                             // 数值循环：第二个变量是索引（int）
                             idx_sym->type = type_new(TYPE_INT);
