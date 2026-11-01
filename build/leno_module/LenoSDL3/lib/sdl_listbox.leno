@@ -71,16 +71,13 @@ export struct ListBox impl Widget, Themeable {
     }
 
     pri func max_scroll(): float {
-        float total = items.len() * itemH
-        float m = total - h
-        if m < 0.0 { m = 0.0 }
-        return m
+        // 内容不足一屏时上界是 0（负的上界会让 clamp 反向）⇒ maths.max 一步到位
+        return maths.max(0.0, items.len() * itemH - h)
     }
 
     pri func clamp_scroll() {
-        float m = max_scroll()
-        if scroll < 0.0 { scroll = 0.0 }
-        if scroll > m { scroll = m }
+        // ★ 2026-11-01：两行手写夹取 ⇒ maths.clamp（同样的写法在 6 个滚动控件里各抄过一遍）
+        scroll = maths.clamp(scroll, 0.0, max_scroll())
     }
 
     // ==================== 布局接口 ====================

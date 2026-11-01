@@ -12,6 +12,7 @@
 //       TabControl 每帧以「内容区原点 + 相对偏移」重排子控件，因此移动/缩放 Tab 时内部整体跟随，
 //       与布局容器（HBox/VBox/AnchorBox）的每帧 _relayout 同一机制。内容区裁剪到 (x, y+tab_h, w, h-tab_h)。
 import "sdl_renderer.leno" as ren; use ren.Renderer
+import maths          // 像素取整统一走 maths.roundi（2026-11-01）
 import "sdl_opts.leno" as dochk    // 选项对账：不认识的键会报一行警告（见 sdl_opts.leno ✓）
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_font.leno" as fnt; use fnt.Font
@@ -534,7 +535,7 @@ export struct TabControl impl Widget, Themeable {
                     if tex != null {
                         float iy = rr[1] + (rr[3] - tabIconSize) / 2.0
                         // 落整像素：半像素偏移会让细线条被采样掉（和卡片图标同一个坑 ✓）
-                        r.drawTextureAt(tex, _float(_int(bx + 0.5)), _float(_int(iy + 0.5)),
+                        r.drawTextureAt(tex, _float(maths.roundi(bx)), _float(maths.roundi(iy)),
                                         tabIconSize, tabIconSize)
                     }
                     bx = bx + iw + gap

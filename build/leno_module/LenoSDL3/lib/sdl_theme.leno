@@ -16,6 +16,7 @@
 // 优先级：opts 显式覆盖 > 主题默认 > 结构体硬编码
 // 注意：applyTheme 会用新主题覆盖所有主题派生颜色（包括 set() 时通过 opts 设置的）
 import "sdl_widget.leno" as wgt; use wgt.Widget
+import maths          // 颜色通道夹取（0..255）统一走 maths.clampi，别再手写 if（2026-11-01）
 
 // ==================== 颜色类型别名 ====================
 // Color 是 int 的语义别名，内部存储 0xAARRGGBB
@@ -36,30 +37,31 @@ export func colorA(Color c): int { return (c >> 24) & 0xFF }
 
 // 将 R/G/B/A 分量打包为 0xAARRGGBB 整数（a 默认 255 不透明）
 export func packColor(int r, int g, int b, int a = 255): Color {
-    if r > 255 { r = 255 }; if g > 255 { g = 255 }; if b > 255 { b = 255 }; if a > 255 { a = 255 }
-    if r < 0 { r = 0 }; if g < 0 { g = 0 }; if b < 0 { b = 0 }; if a < 0 { a = 0 }
+    // ★ 2026-11-01：原来 8 个手写 if（先夹上界再夹下界）⇒ maths.clampi 一步到底
+    r = maths.clampi(r, 0, 255); g = maths.clampi(g, 0, 255)
+    b = maths.clampi(b, 0, 255); a = maths.clampi(a, 0, 255)
     return (a << 24) | (r << 16) | (g << 8) | b
 }
 
 // 替换打包色的 Alpha 通道（保留原 RGB，设置新 alpha）
 export func withAlpha(Color c, int a): Color {
-    if a > 255 { a = 255 }; if a < 0 { a = 0 }
+    a = maths.clampi(a, 0, 255)
     return (a << 24) | (c & 0x00FFFFFF)
 }
 
 // 提亮打包色：各通道加 delta，Alpha 不变
 export func brighten(Color c, int delta): Color {
-    int r = colorR(c) + delta; if r > 255 { r = 255 }
-    int g = colorG(c) + delta; if g > 255 { g = 255 }
-    int b = colorB(c) + delta; if b > 255 { b = 255 }
+    int r = maths.clampi(colorR(c) + delta, 0, 255)
+    int g = maths.clampi(colorG(c) + delta, 0, 255)
+    int b = maths.clampi(colorB(c) + delta, 0, 255)
     return (c & 0xFF000000) | (r << 16) | (g << 8) | b
 }
 
 // 变暗打包色：各通道减 delta，Alpha 不变
 export func darken(Color c, int delta): Color {
-    int r = colorR(c) - delta; if r < 0 { r = 0 }
-    int g = colorG(c) - delta; if g < 0 { g = 0 }
-    int b = colorB(c) - delta; if b < 0 { b = 0 }
+    int r = maths.clampi(colorR(c) - delta, 0, 255)
+    int g = maths.clampi(colorG(c) - delta, 0, 255)
+    int b = maths.clampi(colorB(c) - delta, 0, 255)
     return (c & 0xFF000000) | (r << 16) | (g << 8) | b
 }
 

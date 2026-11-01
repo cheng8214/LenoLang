@@ -365,7 +365,7 @@ export struct RingProgress impl Widget, Themeable {
         if showText and _font != null and _font.ok {
             string label = ""
             if textFn != null { label = _str(textFn()) } else {
-                if _mode == "value" { int pct = _int(dispVal * 100.0 + 0.5); label = $"{pct}%" }
+                if _mode == "value" { int pct = maths.roundi(dispVal * 100.0); label = $"{pct}%" }
             }
             string sub = ""
             if subTextFn != null { sub = _str(subTextFn()) }

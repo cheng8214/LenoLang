@@ -25,6 +25,7 @@ import "sdl_core.leno" as core
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_opts.leno" as dochk
 import "sdl_theme.leno" as theme; use theme.Color
+import maths          // 滚动夹取 / 行列号夹取（2026-11-01 起统一走 maths.clamp(i)）
 
 func _vg_opts_keys(): Array[string] {
     return ["x", "y", "w", "h", "item_w", "item_h", "gap_x", "gap_y",
@@ -158,14 +159,12 @@ export struct VirtualGrid impl Widget {
     }
 
     pri func max_scroll(): float {
-        float m = total_h() - h
-        return if m > 0.0 then m else 0.0
+        return maths.max(0.0, total_h() - h)
     }
 
     pri func clamp_scroll() {
-        float m = max_scroll()
-        if scrollY < 0.0 { scrollY = 0.0 }
-        if scrollY > m { scrollY = m }
+        // ★ 2026-11-01：手写两行夹取 ⇒ maths.clamp（滚动控件统一口径）
+        scrollY = maths.clamp(scrollY, 0.0, max_scroll())
     }
 
     // 可见行区间（上下各留 1 行缓冲，滚动时不会露白 ✓）
@@ -176,8 +175,9 @@ export struct VirtualGrid impl Widget {
         float step = itemH + gapY
         int first = _int((scrollY - padY) / step) - 1
         int last = _int((scrollY + h - padY) / step) + 1
-        if first < 0 { first = 0 }
-        if last > r - 1 { last = r - 1 }
+        // ★ 2026-11-01：行列号夹取走 maths.clampi（int 版，比 if 更贴语义）
+        first = maths.clampi(first, 0, r - 1)
+        last = maths.clampi(last, 0, r - 1)
         return [first, last]
     }
 

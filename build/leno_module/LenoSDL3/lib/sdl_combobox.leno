@@ -554,7 +554,7 @@ export struct ComboBox impl Widget, Themeable {
                 if itex != null {
                     r.setTextureAlpha(itex, 255); r.setTextureColor(itex, #FFFFFFFF)
                     float iy = y + (h - iconSize) / 2.0
-                    r.drawTextureAt(itex, _float(_int(x + padX + 0.5)), _float(_int(iy + 0.5)),
+                    r.drawTextureAt(itex, _float(maths.roundi(x + padX)), _float(maths.roundi(iy)),
                                     iconSize, iconSize)
                 }
             }

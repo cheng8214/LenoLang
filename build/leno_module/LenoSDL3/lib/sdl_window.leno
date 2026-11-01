@@ -10,6 +10,7 @@
 //    var ev = SDL3.createEvent()
 //    while running { while ev.poll() { ... } ren.clear(); ...; ren.present() }
 import ffi
+import maths          // 控件透明度夹取 / 定时等待夹取（2026-11-01：maths.saturate / clampi）
 import "sdl_core.leno" as core
 import "sdl_clickthrough.leno" as ct      // 整窗鼠标穿透（2026-10-21；只依赖 core，无循环引用 ✓）
 use core.SDL_KeyboardEvent     // ★ 2026-10-13：testKeyDown 注入按键要用（Leno 要求"出现它的每一处都在 use 列表里" ✓）
@@ -930,8 +931,7 @@ export struct Window {
     func set_widget_opacity(Widget w, float a) {
         int idx = _indexOfWidget(w)
         if idx < 0 { return }                        // 不是本窗口的控件：静默忽略（不崩 ✓）
-        if a < 0.0 { a = 0.0 }
-        if a > 1.0 { a = 1.0 }
+        a = maths.saturate(a)                                    // 夹到 0..1（2026-11-01）
         while widgetOpac.len() <= idx { widgetOpac.add(1.0) }   // 稀疏补齐 ✓
         widgetOpac[idx] = a
         core.requestRedraw()
@@ -1647,8 +1647,7 @@ export struct Window {
                 int nextTM = timer.nextTimerMs()
                 if nextTM >= 0 {
                     int wait = nextTM - core.getTicks()
-                    if wait < 1 { wait = 1 }
-                    if wait > 100 { wait = 100 }
+                    wait = maths.clampi(wait, 1, 100)      // 2026-11-01：int 夹取走 clampi
                     timeoutMs = wait
                 }
                 // ★ Tooltip 等待：将 poll 超时设为 tooltip 剩余等待时间，

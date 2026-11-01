@@ -31,6 +31,7 @@
 //        每帧每卡一次 = 每帧 22 次 Clear ⇒ 真机实测**卡片闪烁** ✓，见上面的排查记录 §7.1 ✓
 //        换图/变尺寸/换半径/换着色才重建 ⇒ 稳态每帧只是贴一张普通纹理 ✓）
 import "sdl_renderer.leno" as ren; use ren.Renderer
+import maths          // 像素取整统一走 maths.roundi（2026-11-01）
 import "sdl_opts.leno" as dochk    // 选项对账：不认识的键会报一行警告（见 sdl_opts.leno ✓）
 import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
@@ -802,8 +803,8 @@ export struct Card impl Widget, Themeable {
                     // 裁切源矩形（走"覆盖填满"时才有；其余为空 ⇒ 整幅 ✓）——它也是缓存键的一部分 ✓
                     float sx = 0.0, sy = 0.0, sw = 0.0, sh = 0.0
                     if srcPtr != null { sx = srectF.x; sy = srectF.y; sw = srectF.w; sh = srectF.h }
-                    int nw = _int(drectF.w + 0.5)
-                    int nh = _int(drectF.h + 0.5)
+                    int nw = maths.roundi(drectF.w)
+                    int nh = maths.roundi(drectF.h)
                     bool hit = rrTex != null and rrKeySrc == tex and rrKeyTint == tint
                             and rkW == drectF.w and rkH == drectF.h and rkR == imgRadius
                             and rkSX == sx and rkSY == sy and rkSW == sw and rkSH == sh
@@ -811,7 +812,7 @@ export struct Card impl Widget, Themeable {
                         // 尺寸变了 ⇒ 旧缓存尺寸不符：先释放（`compose` 不销毁别人的纹理 ✗ ⇒ 这里自己来 ✓）
                         if rrTex != null {
                             var[float, float](ow, oh) = r.getTextureSize(rrTex)
-                            if _int(ow + 0.5) != nw or _int(oh + 0.5) != nh { drop_rr() }
+                            if maths.roundi(ow) != nw or maths.roundi(oh) != nh { drop_rr() }
                         }
                         Ptr[u8] nt = r.composeRoundedTexture(rrTex, tex, srcPtr, nw, nh, imgRadius)
                         if nt == null { rrOff = true; drop_rr() }      // 环境不支持 ⇒ 本卡永久回落方角 ✓

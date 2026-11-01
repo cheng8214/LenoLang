@@ -136,10 +136,9 @@ export struct ProgressBar impl Widget, Themeable {
     }
 
     pri func value_from_x(float mx): float {
-        float t = (mx - x) / w
-        if t < 0.0 { t = 0.0 }
-        if t > 1.0 { t = 1.0 }
-        return maths.max(minV, maths.min(minV + t * (maxV - minV), maxV))
+        // ★ 2026-11-01：手写"夹到 0..1" ⇒ maths.saturate；嵌套 max/min ⇒ maths.clamp
+        float t = maths.saturate((mx - x) / w)
+        return maths.clamp(minV + t * (maxV - minV), minV, maxV)
     }
 
     // ==================== 交互 ====================
@@ -366,8 +365,7 @@ export func parseProgress(string s): float {
     if not hasDigit { return 0.0 }
     if neg { v = 0.0 - v }
     if percent { v = v / 100.0 } eif v > 1.0 { v = v / 100.0 }
-    if v < 0.0 { v = 0.0 }
-    if v > 1.0 { v = 1.0 }
+    v = maths.saturate(v)          // 夹到 0..1（2026-11-01：原来两行手写）
     return v
 }
 

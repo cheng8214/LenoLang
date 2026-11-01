@@ -8,6 +8,7 @@ import "sdl_widget.leno"  as wgt; use wgt.Widget
 import "sdl_font.leno"    as fnt; use fnt.Font
 import "sdl_core.leno"     as core; use core.SystemCursor; use core.SDL_Rect
 import "sdl_theme.leno"    as theme; use theme.(Theme, Color)
+import maths          // min/max/clamp（原来自己抄了三个，2026-11-01 删掉 ✓）
 
 // ===================== 模块级辅助 =====================
 // 系列配色（与看板风格一致）— 打包 int 颜色 0xAARRGGBB
@@ -16,9 +17,8 @@ Array[Color] _CHART_PALETTE = [
     #FF6E82FF, #78D2EBFF, #EBD26EFF, #AAB4C8FF
 ]
 
-func _cmin(float a, float b): float { if a < b { return a }; return b }
-func _cmax(float a, float b): float { if a > b { return a }; return b }
-func _clampf(float v, float lo, float hi): float { if v < lo { return lo }; if v > hi { return hi }; return v }
+// ★ 2026-11-01：删掉自建的 _cmin/_cmax/_clampf（maths 里就是这三条，白抄一遍）
+//   ⇒ 统一用 maths.min / maths.max / maths.clamp（单次调用只贵 1~4ns，见 docs/module_maths.md ✓）
 
 // 计算「漂亮」的上界（1/2/5 ×10^n）
 func _niceMax(float v): float {
@@ -185,7 +185,7 @@ export struct BarChart impl Widget {
         int ticks = 4
 
         float vmax = 0.0
-        for n to i { vmax = _cmax(vmax, vals[i]) }
+        for n to i { vmax = maths.max(vmax, vals[i]) }
         float ymax = _niceMax(vmax)
         if ymax <= 0.0 { ymax = 1.0 }
 
@@ -489,7 +489,7 @@ export struct LineChart impl Widget {
         if title != "" { r.setColor(titleColor); r.drawText(f, title, x + 10.0, y + 6.0, titleColor) }
 
         float ymax = 0.0
-        for series.len() to s { for series[s].len() to i { ymax = _cmax(ymax, series[s][i]) } }
+        for series.len() to s { for series[s].len() to i { ymax = maths.max(ymax, series[s][i]) } }
         ymax = _niceMax(ymax); if ymax <= 0.0 { ymax = 1.0 }
 
         int ticks = 4
@@ -560,7 +560,7 @@ export struct LineChart impl Widget {
                 }
                 r.setColor(catColor)
                 float lx = plotX + stepX * i - xlW / 2.0
-                lx = _clampf(lx, plotX, plotX + plotW - xlW)
+                lx = maths.clamp(lx, plotX, plotX + plotW - xlW)
                 r.drawText(f, xl, lx, plotY + plotH + 6.0, catColor)
             }
         }
@@ -731,7 +731,7 @@ export struct PieChart impl Widget {
         for n to i { total = total + _animValues[i] }
         if total <= 0.0 { return }
 
-        float pieSize = _cmin(w * 0.55, h - 30.0)
+        float pieSize = maths.min(w * 0.55, h - 30.0)
         if pieSize < 10.0 { pieSize = 10.0 }
         float rad = pieSize / 2.0
         float cx = x + 8.0 + rad

@@ -221,8 +221,7 @@ func _alpha(int e): int {
         if rem < 0 { rem = 0 }
         a = maths.smoothstep(_float(rem) / _float(_fadeOutMs))
     }
-    if a < 0.0 { a = 0.0 }
-    if a > 1.0 { a = 1.0 }
+    a = maths.saturate(a)           // 夹到 0..1（2026-11-01：原来两行手写）
     return _int(246.0 * a)          // 上到 246 而不是 255：留一点通透感（同 Aria 原实现 ✓）
 }
 

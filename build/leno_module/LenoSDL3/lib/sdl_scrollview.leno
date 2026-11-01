@@ -14,6 +14,7 @@
 //       content_w/h 不传时，自动取内容控件的自然尺寸（即内容多大就滚多远）。
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_opts.leno" as dochk    // 选项对账：不认识的键会报一行警告（见 sdl_opts.leno ✓）
+import maths          // clamp / max / abs（2026-11-01 起不再手写，私有 fabs 已删 ✓）
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_core.leno" as core; use core.SDL_Rect
@@ -79,6 +80,14 @@ export struct ScrollView impl Widget, Themeable {
     // 事件派发的「视口裁剪」状态（渲染有 `pushClipRect`，派发也必须有一份对应的闸门 ⇒ 见 process ✓）
     pri bool innerDown = false   // 视口内按下且还没松手 ⇒ 期间一律照转（拖出视口也不会卡住 pressed ✓）
     pri bool mouseIn = false     // 上一拍指针在不在视口内（刚离开时补一次 motion ⇒ 子控件清 hover ✓）
+    // ★ 2026-11-01 修：指针在**滚动条槽**内也算「悬停本控件」✓
+    //   bug（Aria「发现/精选」实测抓到）：滚动条是否展开原先只看 `mouseIn`，而 `mouseIn` 由
+    //   `inView()` 决定，`inView()` 又**扣掉了右侧那条 barW 宽的槽**（槽是给滚动条用的）⇒
+    //   鼠标一挪进槽里 `inside` 就变 false ⇒ 滚动条当场折叠回 3px 细线 ⇒ 想拖它得先精确摸到
+    //   那根线（并且按下去才展开）✗ 体感"滚动条躲鼠标"。
+    //   语义：`mouseIn` = 指针在**内容区**（决定内容 hover 下钻，保持不变 ✓）；
+    //         `barHover` = 指针在内容区**或**滚动条槽（只决定滚动条展开/变深 ✓）。
+    pri bool barHover = false
     // 视口裁剪矩形：**分配一次复用**（2026-10-25：原来每帧 malloc 且没 free ✗）
     pri SDL_Rect clipR
     pri bool clipInit = false
@@ -165,31 +174,31 @@ export struct ScrollView impl Widget, Themeable {
     func set_bg_color(Color color) { bgColor = color }
 
     // ---- 滚动范围与约束 ----
-    pri func vmax(): float { return if _contentH - h < 0.0 then 0.0 else _contentH - h }
-    pri func hmax(): float { return if _contentW - w < 0.0 then 0.0 else _contentW - w }
+    // ★ 2026-11-01：`if x < 0 then 0` 这类写法统一换成 maths.max / maths.clamp，
+    //   私有 fabs 也删了（maths.abs 就是它，单次只贵 0.6ns ✓）
+    pri func vmax(): float { return maths.max(0.0, _contentH - h) }
+    pri func hmax(): float { return maths.max(0.0, _contentW - w) }
     pri func showV(): bool { return vmax() > 0.0 }
     pri func showH(): bool { return hmax() > 0.0 }
-    pri func fabs(float v): float { return if v < 0.0 then -v else v }
     pri func clampScroll() {
         // ⚠ 内容尺寸**还没测量**时（`_autoH/_autoW` 要等第一帧 `_syncContent` 才量，此前
         //   `_contentH/_contentW == -1`）不要按它钳位：否则"构造完立刻 set_scroll"会被钳成 0，
         //   等测量出来也回不去了 ✗（实测踩过：首帧后上限其实有 167，但 y 已经变 0 ✓）
         if _contentH >= 0.0 {
-            float my = vmax()
-            if scrollY > my { scrollY = my }
+            scrollY = maths.clamp(scrollY, 0.0, vmax())
+        } else if scrollY < 0.0 {
+            scrollY = 0.0
         }
         if _contentW >= 0.0 {
-            float mx = hmax()
-            if scrollX > mx { scrollX = mx }
+            scrollX = maths.clamp(scrollX, 0.0, hmax())
+        } else if scrollX < 0.0 {
+            scrollX = 0.0
         }
-        if scrollX < 0.0 { scrollX = 0.0 }
-        if scrollY < 0.0 { scrollY = 0.0 }
     }
     // 平滑目标也要夹在可滚范围内（否则会一路滑到无效位置又弹回来 ✗）
     pri func clampTarget() {
-        float mx = hmax(), my = vmax()
-        if targetX < 0.0 { targetX = 0.0 } if targetX > mx { targetX = mx }
-        if targetY < 0.0 { targetY = 0.0 } if targetY > my { targetY = my }
+        targetX = maths.clamp(targetX, 0.0, hmax())
+        targetY = maths.clamp(targetY, 0.0, vmax())
     }
 
     // 程序化滚动：立即到位（并取消进行中的平滑动画，否则会被旧目标拽回去 ✗ = "来回跳"）
@@ -230,7 +239,7 @@ export struct ScrollView impl Widget, Themeable {
             //   ⇒ 体感"滚了半天只走一点点"✗。超过 2.5 格就整段立即生效 ✓
             float lagX = targetX - scrollX
             float lagY = targetY - scrollY
-            if fabs(lagX) > 2.5 * step or fabs(lagY) > 2.5 * step {
+            if maths.abs(lagX) > 2.5 * step or maths.abs(lagY) > 2.5 * step {
                 scrollX = targetX; scrollY = targetY
                 clampScroll()
             }
@@ -300,7 +309,7 @@ export struct ScrollView impl Widget, Themeable {
         if smoothAnim and firstThisFrame {
             float dx = targetX - scrollX
             float dy = targetY - scrollY
-            if fabs(dx) <= 0.5 and fabs(dy) <= 0.5 {
+            if maths.abs(dx) <= 0.5 and maths.abs(dy) <= 0.5 {
                 scrollX = targetX; scrollY = targetY      // 收尾对齐（否则永远差 0.x px ✓）
                 smoothAnim = false
             } else {
@@ -450,15 +459,27 @@ export struct ScrollView impl Widget, Themeable {
         if not _loaded or not enabled or not visible { return }
         // 失焦兜底：拖拽中途 Alt+Tab / 切走窗口会**丢掉 up 事件** ⇒ 捕获状态必须归零，
         //   否则 `innerDown` 永远为真、闸门永久敞开（= 这篇修复白做 ✗）
-        if ev.isWindowFocusLost() { innerDown = false; mouseIn = false }
+        if ev.isWindowFocusLost() { innerDown = false; mouseIn = false; barHover = false }
         sync()
         // 滚动条交互优先于内容
         if ev.isMouseButtonDown() and ev.mouseButton() == 1 {
             var[float, float](_dx, _dy) = ev.mousePos()
-            if onGutter(_dx, _dy) { scrollbarDown(_dx, _dy); return }
+            if onGutter(_dx, _dy) {
+                barHover = true                 // 按在槽里 ⇒ 本次操作期间滚动条保持展开 ✓
+                scrollbarDown(_dx, _dy)
+                return
+            }
         }
         if ev.isMouseButtonUp() and ev.mouseButton() == 1 {
-            if dragV != 0 or dragH != 0 { dragV = 0; dragH = 0; return }
+            if dragV != 0 or dragH != 0 {
+                dragV = 0; dragH = 0
+                // 松手后指针通常还停在槽里（拖完就在原地）⇒ 悬停标记按实际位置重算，
+                //   否则"松手就折叠、动一下才展开"（同一类体感问题 ✓）
+                var[float, float](_ux, _uy) = ev.mousePos()
+                barHover = onGutter(_ux, _uy)
+                core.markFrameRedraw()
+                return
+            }
         }
         if ev.isMouseMotion() and (dragV != 0 or dragH != 0) {
             var[float, float](_dx2, _dy2) = ev.mousePos(); scrollbarDrag(_dx2, _dy2); core.markFrameRedraw(); return
@@ -467,7 +488,7 @@ export struct ScrollView impl Widget, Themeable {
         if ev.isMouseWheel() {
             float wx = ev.wheelMouseX(), wy = ev.wheelMouseY()
             if wx >= x and wx <= x + w and wy >= y and wy <= y + h {
-                if showH() and fabs(ev.wheelX()) > fabs(ev.wheelY()) {
+                if showH() and maths.abs(ev.wheelX()) > maths.abs(ev.wheelY()) {
                     scroll_by(-ev.wheelX() * step, 0.0)
                 } else if showV() {
                     // 滚轮语义：wheelY > 0 = 向上/远离用户 ⇒ 内容往下看 ⇒ 偏移减小 ✓
@@ -531,6 +552,13 @@ export struct ScrollView impl Widget, Themeable {
                 mouseIn = false
                 core.markFrameRedraw()          // 折叠滚动条：离开时也要刷一次 ✓
             }
+            // ★ 指针虽然不在内容区（`inView` 把滚动条槽扣掉了），但可能正停在槽上 ⇒
+            //   滚动条必须**保持展开**，否则"移进去展开、挪到滚动条上立刻缩成线"，拖之前先得摸线 ✗
+            bool gIn = onGutter(_mx, _my)
+            if gIn != barHover {
+                barHover = gIn
+                core.markFrameRedraw()
+            }
             if ev.isMouseMotion() and wasIn { _content?.process(ev) }   // 离开视口：补一次 ⇒ 清 hover ✓
             return
         }
@@ -540,12 +568,18 @@ export struct ScrollView impl Widget, Themeable {
             mouseIn = nowIn
             core.markFrameRedraw()
         }
+        // 指针在内容区内 ⇒ 构造上不可能同时落在槽上（`inView` 与 `onGutter` 互斥）⇒ 清槽悬停 ✓
+        if barHover {
+            barHover = false
+            core.markFrameRedraw()
+        }
         _content?.process(ev)
     }
 
     // 滚动条：悬停/拖动 ⇒ 展开成「轨道 + 手柄」并变深；否则（默认）折叠成一根 3px 提示条
     pri func drawScrollbars(Renderer r) {
-        bool hot = mouseIn or dragV != 0 or dragH != 0
+        // `barHover`：指针停在滚动条槽上（见字段注释）⇒ 与"在内容区里"同样算悬停 ✓
+        bool hot = mouseIn or barHover or dragV != 0 or dragH != 0
         bool fold = barAutoHide and not hot
         Color track = sbColor
         if hot {

@@ -29,6 +29,7 @@
 // 注意：放进布局的控件用 SDL3.createXxx 创建（不注册进窗口，避免被窗口与布局双重绘制），
 //       只把布局容器注册进窗口。容器会把窗口句柄自动下发给需要它的子控件（如 Edit 的 IME）。
 import "sdl_widget.leno" as wgt; use wgt.Widget
+import maths          // 内边界负值归零（2026-11-01：maths.max 取代手写 if）
 import "sdl_opts.leno" as dochk    // 选项对账（见 sdl_opts.leno 头部的来龙去脉 ✓）
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_renderer.leno" as ren; use ren.Renderer
@@ -218,10 +219,8 @@ export struct HBox impl Widget {
         float pr = if padRight >= 0.0 then padRight else padX
         float pt = if padTop >= 0.0 then padTop else padY
         float pb = if padBottom >= 0.0 then padBottom else padY
-        float innerW = w - pl - pr
-        float innerH = h - pt - pb
-        if innerW < 0 { innerW = 0 }
-        if innerH < 0 { innerH = 0 }
+        float innerW = maths.max(0.0, w - pl - pr)   // 内边界可能为负（padding 比自身还大）⇒ 归零（2026-11-01）
+        float innerH = maths.max(0.0, h - pt - pb)
         float totalSpacing = spacing * (n - 1)
         float totalBasis = 0.0
         float sumGrow = 0.0
@@ -463,10 +462,8 @@ export struct VBox impl Widget {
         float pr = if padRight >= 0.0 then padRight else padX
         float pt = if padTop >= 0.0 then padTop else padY
         float pb = if padBottom >= 0.0 then padBottom else padY
-        float innerW = w - pl - pr
-        float innerH = h - pt - pb
-        if innerW < 0 { innerW = 0 }
-        if innerH < 0 { innerH = 0 }
+        float innerW = maths.max(0.0, w - pl - pr)   // 内边界可能为负（padding 比自身还大）⇒ 归零（2026-11-01）
+        float innerH = maths.max(0.0, h - pt - pb)
 
         // 先扫描，统计各 flex 总和（用于 free / justify 计算）
         float totalSpacing = spacing * (n - 1)
@@ -691,10 +688,8 @@ export struct AnchorBox impl Widget {
         if not _loaded { return }
         float bx = x + padX
         float by = y + padY
-        float bw = w - 2.0 * padX
-        float bh = h - 2.0 * padY
-        if bw < 0 { bw = 0 }
-        if bh < 0 { bh = 0 }
+        float bw = maths.max(0.0, w - 2.0 * padX)     // 同上：负宽高没有意义，直接归零（2026-11-01）
+        float bh = maths.max(0.0, h - 2.0 * padY)
 
         for _c.len() to i {
             Widget c = _c[i]

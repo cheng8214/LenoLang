@@ -1,6 +1,7 @@
 // sdl_imageview.leno — 图片展示控件
 // 通过 win.addImageView({...}) 创建，支持多种缩放模式、圆角、边框、点击交互
 import "sdl_renderer.leno" as ren; use ren.Renderer
+import maths          // 像素取整统一走 maths.roundi（2026-11-01）
 import "sdl_opts.leno" as dochk    // 选项对账：不认识的键会报一行警告（见 sdl_opts.leno ✓）
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.(SystemCursor, sdl3)
@@ -266,8 +267,8 @@ export struct ImageView impl Widget, Themeable {
             //   原来只有 `fillRoundedRect` 的背景/边框有圆角，图片是直角矩形 ⇒
             //   方形封面把四个角盖住了（"封面是正方形，不是圆角矩形"）
             if radius > 0.0 and dw >= 4.0 and dh >= 4.0 {
-                int nw = _int(dw + 0.5)
-                int nh = _int(dh + 0.5)
+                int nw = maths.roundi(dw)
+                int nh = maths.roundi(dh)
                 if rrTex == null or rrW != dw or rrH != dh or rrR != radius {
                     drop_rr()
                     rrTex = r.composeRoundedTexture(null, tex, null, nw, nh, radius)
@@ -295,7 +296,7 @@ export struct ImageView impl Widget, Themeable {
                 if overlaySize > 0.0 { s = overlaySize } else { s = s * overlayScale }
                 // ★ 尺寸和位置都**落整像素**：非整数尺寸 + 半像素偏移会让图标糊成一团
                 //   
-                s = _float(_int(s + 0.5))
+                s = _float(maths.roundi(s))
                 float ox = _float(_int(x + (_w - s) / 2.0 + 0.5))
                 float oy = _float(_int(y + (_h - s) / 2.0 + 0.5))
                 r.setTextureAlpha(overlayTex, 235)

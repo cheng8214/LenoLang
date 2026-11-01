@@ -20,6 +20,7 @@
 //   // 或构造时传入：createSplitter({..., first:navPanel, second:table})
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_opts.leno" as dochk    // 选项对账：不认识的键会报一行警告（见 sdl_opts.leno ✓）
+import maths          // clamp / min（分割比例夹取，2026-11-01）
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.SystemCursor
 import "sdl_widget.leno" as wgt; use wgt.Widget
@@ -141,22 +142,13 @@ export struct Splitter impl Widget, Themeable {
 
     // ==================== 比例管理 ====================
     pri func clamp_ratio() {
-        if orientation == HORIZONTAL {
-            if w <= 0.0 { return }   // 占位尺寸（w:0），等布局系统下发实际尺寸后再 clamp
-            // 水平分割：ratio 受 minFirst/w 和 minSecond/w 约束
-            float lo = minFirst / w
-            float hi = 1.0 - minSecond / w
-            if lo > hi { lo = hi }   // 空间太小，取中点
-            if ratio < lo { ratio = lo }
-            if ratio > hi { ratio = hi }
-        } else {
-            if h <= 0.0 { return }
-            float lo = minFirst / h
-            float hi = 1.0 - minSecond / h
-            if lo > hi { lo = hi }
-            if ratio < lo { ratio = lo }
-            if ratio > hi { ratio = hi }
-        }
+        // ★ 2026-11-01：横竖两个分支原来是同一段 clamp 抄了两遍 ⇒ 用 maths.min/clamp 收成一份
+        float span = if orientation == HORIZONTAL then w else h
+        if span <= 0.0 { return }    // 占位尺寸（w:0），等布局系统下发实际尺寸后再 clamp
+        float lo = minFirst / span
+        float hi = 1.0 - minSecond / span
+        lo = maths.min(lo, hi)   // 空间太小 ⇒ 上下界合一（与原来的 `if lo > hi { lo = hi }` 等价 ✓）
+        ratio = maths.clamp(ratio, lo, hi)
     }
 
     func set_ratio(float r) { ratio = r; clamp_ratio() }

@@ -22,6 +22,7 @@
 //   // A B C
 //   // D _ _
 import "sdl_renderer.leno" as ren; use ren.Renderer
+import maths          // 内边界负值归零（2026-11-01：maths.max 取代手写 if）
 import "sdl_opts.leno" as dochk    // 选项对账：不认识的键会报一行警告（见 sdl_opts.leno ✓）
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_widget.leno" as wgt; use wgt.Widget
@@ -189,10 +190,10 @@ export struct GridLayout impl Widget {
         int nrows = (n + cols - 1) / cols
         float cs = if colSpacing >= 0.0 then colSpacing else spacing
         float rs = if rowSpacing >= 0.0 then rowSpacing else spacing
-        float innerW = w - 2.0 * padX - cs * (cols - 1)
-        float innerH = h - 2.0 * padY - rs * (nrows - 1)
-        if innerW < 0.0 { innerW = 0.0 }
-        if innerH < 0.0 { innerH = 0.0 }
+        float innerW = maths.max(0.0, w - 2.0 * padX - cs * (cols - 1))   // 2026-11-01：手写归零 ⇒ maths.max
+        // ⚠ 行高按"每行最高子项"算（见下面的 rowH），这里的内高目前**没人读** —— 保留成
+        //   `_innerH` 占位（原来那两行 `if innerH < 0` 让它看起来"被用过"，其实是死变量 ✓）
+        float _innerH = maths.max(0.0, h - 2.0 * padY - rs * (nrows - 1))
 
         // 计算每列宽度
         Array[float] colW = []

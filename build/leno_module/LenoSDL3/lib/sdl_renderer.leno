@@ -327,7 +327,7 @@ const BX_TEX    = 4   // 批处理文字纹理
     func snapX(float v): float {
         if ssaa and ssaaScale > 0.0 {
             float p = v * ssaaScale
-            float rp = _int(p + 0.5)
+            float rp = maths.roundi(p)
             if p < 0.0 { rp = _int(p - 0.5) }
             return rp / ssaaScale
         }
@@ -336,7 +336,7 @@ const BX_TEX    = 4   // 批处理文字纹理
     func snapY(float v): float {
         if ssaa and ssaaScale > 0.0 {
             float p = v * ssaaScale
-            float rp = _int(p + 0.5)
+            float rp = maths.roundi(p)
             if p < 0.0 { rp = _int(p - 0.5) }
             return rp / ssaaScale
         }
@@ -814,8 +814,8 @@ const BX_TEX    = 4   // 批处理文字纹理
         }
         // 1x 模式（无 SSAA）：逻辑像素 == 物理像素。把文字吸附到整数像素，
         // 避免纹理在亚像素位置被双线性重采样而发虚（SSAA 模式由调用方 snapX/snapY 已处理）。
-        x = _int(x + 0.5)
-        y = _int(y + 0.5)
+        x = maths.roundi(x)
+        y = maths.roundi(y)
         TextTexture tex = f._getCachedTex(handle, text, r, g, b)
         if tex.ok {
             pushTexBatch(tex.texture, x, y, tex.width, tex.height, alphaMod)
@@ -1287,7 +1287,7 @@ const BX_TEX    = 4   // 批处理文字纹理
                 if d < 0.0 { d = -d }
                 float cov = 1.0 - d
                 if cov < 0.0 { cov = 0.0 }
-                b.setPixel(xx, yy, 255, 255, 255, _int(cov * 255.0 + 0.5))
+                b.setPixel(xx, yy, 255, 255, 255, maths.roundi(cov * 255.0))
             }
         }
         Ptr[u8] tex = createTexture(core.PIXELFORMAT_RGBA8888, 0, W, H)
@@ -1450,7 +1450,7 @@ const BX_TEX    = 4   // 批处理文字纹理
                         if ci > 1.0 { ci = 1.0 }
                         cov = cov * ci
                     }
-                    a = _int(cov * 255.0 + 0.5)
+                    a = maths.roundi(cov * 255.0)
                 }
                 int col = (255 << 24) | (255 << 16) | (255 << 8) | a
                 int mx = N - 1 - px
@@ -1740,7 +1740,7 @@ const BX_TEX    = 4   // 批处理文字纹理
             float xr = r
             if xr > w * 0.5 { xr = w * 0.5 }
             if xr > h * 0.5 { xr = h * 0.5 }
-            int M = _int(xr * bxSx + 0.5)
+            int M = maths.roundi(xr * bxSx)
             if M < 1 { M = 1 }
             int Mq = rrLadder(M)          // 蒙版档位（缓存键 ✓）；目标几何仍用精确 M ✓
             Ptr[u8] tex = rrGet(Mq, 0)
@@ -1766,8 +1766,8 @@ const BX_TEX    = 4   // 批处理文字纹理
             if xr > w * 0.5 { xr = w * 0.5 }
             if xr > h * 0.5 { xr = h * 0.5 }
             float S = bxSx
-            int lw = _int(S + 0.5); if lw < 1 { lw = 1 }      // 线的物理宽 = 1 逻辑像素 ✓
-            int M = _int(xr * S + 0.5)                        // 环的半径（物理像素 ✓）
+            int lw = maths.roundi(S); if lw < 1 { lw = 1 }      // 线的物理宽 = 1 逻辑像素 ✓
+            int M = maths.roundi(xr * S)                        // 环的半径（物理像素 ✓）
             if M < 2 { M = 2 }
             int Ms = M + 1                                     // **目标**角块边长（环蒙版含 1px 内边距 ✓）
             int Mq = rrLadder(M)                              // 蒙版档位（缓存键 ✓）
@@ -1897,7 +1897,7 @@ const BX_TEX    = 4   // 批处理文字纹理
     //   · 返回 null ⇒ 环境不支持（软件渲染器建不了蒙版/离屏纹理 ✓）⇒ 调用方回落方角 ✓
     func composeRoundedTexture(Ptr[u8] out, Ptr[u8] tex, Ptr[u8] srcrect, int w, int h, float radius): Ptr[u8] {
         if tex == null or w < 4 or h < 4 or radius < 1.0 { return null }
-        int M = _int(radius * bxSx + 0.5)
+        int M = maths.roundi(radius * bxSx)
         if M < 1 { M = 1 }
         int Mq = rrLadder(M)
         Ptr[u8] mask = rrGet(Mq, 0)
@@ -1905,7 +1905,7 @@ const BX_TEX    = 4   // 批处理文字纹理
         Ptr[u8] tgt = out
         if tgt != null {
             var[float, float](ow, oh) = getTextureSize(tgt)
-            if _int(ow + 0.5) != w or _int(oh + 0.5) != h { return null }   // 尺寸不符 ⇒ 让调用方决定 ✓
+            if maths.roundi(ow) != w or maths.roundi(oh) != h { return null }   // 尺寸不符 ⇒ 让调用方决定 ✓
         }
         if tgt == null {
             tgt = _lib.SDL_CreateTexture(handle, core.PIXELFORMAT_RGBA8888, 2, w, h)   // 2 = TARGET ✓
@@ -1972,13 +1972,13 @@ const BX_TEX    = 4   // 批处理文字纹理
         // 退化路径：没半径 / 已在离屏 target 里 / 开了 SSAA ⇒ 老老实实画方角 ✓
         if radius < 1.0 or bxTarget != null or ssaa { return drawTextureRect(tex, srcrect, dstrect) }
         SDL_FRect rd = SDL_FRect.from_ptr(dstrect)
-        int tw = _int(rd.w + 0.5)
-        int th = _int(rd.h + 0.5)
+        int tw = maths.roundi(rd.w)
+        int th = maths.roundi(rd.h)
         if tw < 4 or th < 4 { return drawTextureRect(tex, srcrect, dstrect) }
         // ⚠ **顺序要紧**：`rrGet` 在"渲染缩放变了"时会 `rrClear()`，而 `rrClear()` **会销毁共享离屏
         //   `rrTgt`** ✗ ⇒ 必须先取蒙版、再 `rrTgtReady()`（它负责在 null/尺寸不符时重建 ✓）
         //   否则会把**已被销毁的指针**递进 compose ✗（原实现就是这个顺序，别调换 ✗）
-        int M0 = _int(radius * bxSx + 0.5)
+        int M0 = maths.roundi(radius * bxSx)
         if M0 < 1 { M0 = 1 }
         if rrGet(rrLadder(M0), 0) == null or not rrTgtReady(tw, th) {
             // ⚠ 只提示**一次**：软件渲染器（如 `SDL_VIDEODRIVER=dummy`）建不了蒙版/离屏纹理，
