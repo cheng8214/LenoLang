@@ -2549,6 +2549,7 @@ static int math_fast_op_of(const char* name, int* out_nargs) {
     if (strcmp(name, "saturate") == 0)   { *out_nargs = 1; return MATHF_SATURATE; }
     if (strcmp(name, "fract") == 0)      { *out_nargs = 1; return MATHF_FRACT; }
     if (strcmp(name, "roundi") == 0)     { *out_nargs = 1; return MATHF_ROUNDI; }
+    if (strcmp(name, "absi") == 0)       { *out_nargs = 1; return MATHF_ABSI; }
     if (strcmp(name, "clampi") == 0)     { *out_nargs = 3; return MATHF_CLAMPI; }
     if (strcmp(name, "mini") == 0)       { *out_nargs = 2; return MATHF_MINI; }
     if (strcmp(name, "maxi") == 0)       { *out_nargs = 2; return MATHF_MAXI; }

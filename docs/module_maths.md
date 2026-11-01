@@ -91,6 +91,7 @@ float e = 0.3.smoothstep()    // 等价于 maths.smoothstep(0.3) = 0.216
 | 函数 | 说明 |
 |------|------|
 | `maths.roundi(x)` | 四舍五入到 int（`round` 的 int 版，替代 `_int(x + 0.5)`） |
+| `maths.absi(x)` | int 版绝对值（`abs` 返回 float，`abs(pct-50)/5` 这类 int 语义必须要它） |
 | `maths.mini(a, b, ...)` / `maths.maxi(...)` | int 版 min/max（可变参数） |
 | `maths.clampi(v, lo, hi)` | int 版 clamp；`hi < lo` 时收成 `lo`（不抛异常） |
 | `maths.mod(a, b)` | **正取模**：结余符号跟除数走，`mod(-1, 7) == 6` |

@@ -638,6 +638,10 @@
                 if (hi < lo) hi = lo;      // 边界写反 ⇒ 收成 lo（与 maths.clampi 同一口径）
                 R(a) = val_int(v < lo ? lo : (v > hi ? hi : v));
             } break;
+            case MATHF_ABSI: {
+                int64_t v = MATHF_I(b);
+                R(a) = val_int(v < 0 ? -v : v);
+            } break;
             case MATHF_MINI: {
                 int64_t u = MATHF_I(b), v = MATHF_I(b + 1);
                 R(a) = val_int(u < v ? u : v);

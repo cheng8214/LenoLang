@@ -338,6 +338,15 @@ static Value math_roundi(int argc, Value* args) {
     return val_int(math_to_i64(args[0]));
 }
 
+// int 版绝对值（2026-11-01 补）：`maths.abs` 返回 float，而 QR 的 `abs(pct-50)/5`、
+//   金额的"分转元"这类都是 int 语义 —— 用 float 版整条表达式会变成 float，
+//   赋回 int 还要再套 `_int(...)`，比手写 `if x < 0 then -x else x` 还长 ✗
+static Value math_absi(int argc, Value* args) {
+    (void)argc;
+    int64_t v = math_to_i64(args[0]);
+    return val_int(v < 0 ? -v : v);
+}
+
 static Value math_mini(int argc, Value* args) {
     int64_t m = math_to_i64(args[0]);
     for (int i = 1; i < argc; i++) {
@@ -703,6 +712,9 @@ void maths_init_module(void) {
 
     native_register_module_method("maths", "mini", math_mini, &NATIVE_T_INT, NATIVE_VARARG(1, NATIVE_ARITY_ANY, 0, NULL, TYPE_FLOAT));
     native_register_module_method("maths", "maxi", math_maxi, &NATIVE_T_INT, NATIVE_VARARG(1, NATIVE_ARITY_ANY, 0, NULL, TYPE_FLOAT));
+
+    TypeKind absi_params[] = {TYPE_FLOAT};
+    native_register_module_method("maths", "absi", math_absi, &NATIVE_T_INT, NATIVE_FIXED(absi_params));
 
     TypeKind clampi_params[] = {TYPE_FLOAT, TYPE_FLOAT, TYPE_FLOAT};
     native_register_module_method("maths", "clampi", math_clampi, &NATIVE_T_INT, NATIVE_FIXED(clampi_params));

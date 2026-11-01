@@ -542,6 +542,7 @@ typedef enum {
     MATHF_MINI,         // 2 参 → int
     MATHF_MAXI,         // 2 参 → int
     MATHF_MOD,          // 2 参 → int（正取模）
+    MATHF_ABSI,         // 1 参 → int（int 版绝对值，2026-11-01 补）
     MATHF_COUNT
 } MathFastOp;
 
