@@ -1884,6 +1884,8 @@
                                 if (param_type && arg_type) {
                                     infer_generic_bindings(param_type, arg_type, inferred_names, inferred_types, func_def->u.func.type_param_count);
                                 }
+                                // 绑定内部是 type_copy 进 inferred_types ⇒ 本副本用完即释放
+                                if (arg_type) type_free(arg_type);
                             }
                         }
                         

@@ -205,6 +205,22 @@ void ast_free(Ast* ast) {
                 free(ast->u.switch_.cases[i].guard_bind_var);
                 free(ast->u.switch_.cases[i].guard_var_ref.name);
                 free(ast->u.switch_.cases[i].guard_var_ref.struct_name);
+                // `case is Point(x, y)` 的解构变量名（parser 的 var_names 数组 + 每个名字）
+                if (ast->u.switch_.cases[i].destructure_vars) {
+                    for (int vi = 0; vi < ast->u.switch_.cases[i].destructure_count; vi++) {
+                        free(ast->u.switch_.cases[i].destructure_vars[vi]);
+                    }
+                    free(ast->u.switch_.cases[i].destructure_vars);
+                }
+                // 解构的语义产物（visit_control 里按 destructure_count 数组分配）：
+                //   索引数组 + 字段名数组（每个字段名 strdup）
+                free(ast->u.switch_.cases[i].destructure_indices);
+                if (ast->u.switch_.cases[i].destructure_field_names) {
+                    for (int vi = 0; vi < ast->u.switch_.cases[i].destructure_count; vi++) {
+                        free(ast->u.switch_.cases[i].destructure_field_names[vi]);
+                    }
+                    free(ast->u.switch_.cases[i].destructure_field_names);
+                }
             }
             free(ast->u.switch_.cases);
             ast_free(ast->u.switch_.default_body);
@@ -507,6 +523,13 @@ break;
             if (ast->u.alias.expr) ast_free(ast->u.alias.expr);
             free(ast->u.alias.ref.name);
             free(ast->u.alias.ref.struct_name);
+            // 泛型别名的类型参数名（`alias MyBox[T, U] = ...` 的 T/U，parser 逐项 strdup）
+            if (ast->u.alias.type_params) {
+                for (int i = 0; i < ast->u.alias.type_param_count; i++) {
+                    free(ast->u.alias.type_params[i]);
+                }
+                free(ast->u.alias.type_params);
+            }
             break;
 
         case AST_ENUM_DEF:

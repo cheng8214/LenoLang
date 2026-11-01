@@ -655,6 +655,9 @@ void parser_free(Parser* p) {
     p->alias_type_param_counts = NULL;
     p->alias_count = 0;
     p->alias_capacity = 0;
+
+    // Lexer 的大整数字符串登记池（lexer_init 分配；Token 会被回退快照复制 ⇒ 只能在这里统一释放）
+    lexer_free(&p->lex);
 }
 
 // 添加 struct 名称到集合
