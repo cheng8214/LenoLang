@@ -10,6 +10,7 @@
 // 返回：{ok, err, sheets: [{name, rows: Array[Array[string]]}]}
 //   · 行/列按 `r` 属性定位（稀疏行、空单元格都能对齐）
 //   · 所有值统一成 string（数字不转 float：Excel 里的 1 与 1.0 语义不同，交给调用方判断）
+import maths
 import strings
 import files
 import "Zip" as zip
@@ -52,7 +53,7 @@ func _parseSheet(string xml, Array[string] shared): Array[Array[string]] {
         string rAttr = x.attr(rb, "r")
         var rIdx = rows.len()
         if rAttr != "" { rIdx = _int(rAttr) - 1 }
-        if rIdx < 0 { rIdx = 0 }
+        rIdx = maths.maxi(rIdx, 0)
         while rows.len() <= rIdx {
             Array[string] blankRow = []
             rows.add(blankRow)

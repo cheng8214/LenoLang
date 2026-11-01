@@ -12,6 +12,7 @@
 //   ★ 2026-10-15：本文件需要的那几个"直连 Win32 API"（内存/提权/进程路径/Shell 打开/通知）
 //     按约定**加在 LenoWin32**（新文件 w32_sys.leno + 门面转发 ✓）—— 本模块**刻意不 import ffi**
 //     （不碰手写 ABI 结构 ⇒ 没有"结构体布局错了静默崩"的风险 ✓，与 Linux 侧同一条理由 ✓）
+import maths
 import Win32
 import dirs
 import files
@@ -120,7 +121,7 @@ export func sysInfo(): Dict {
 
     // ⑥ 运行时长（秒；⚠ 含睡眠时间 ⇒ 与 Linux 的 /proc/uptime 口径略有差别 ✓；取不到 ⇒ 0）
     int up = Win32.uptimeSec()
-    if up < 0 { up = 0 }
+    up = maths.maxi(up, 0)
 
     return {osName: osName, kernel: kernel, host: host, user: user, cpuModel: cpuModel,
             cpuCount: cpus, memTotalKb: memTotal, memAvailKb: memAvail, uptimeSec: up}

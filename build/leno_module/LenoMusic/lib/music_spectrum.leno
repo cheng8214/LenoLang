@@ -13,6 +13,7 @@
 //   for sp.getBands() ... 或 sp.getBand(i)   // 0.0 ~ 1.0 的柱高
 //   sp.uninit()
 
+import maths
 import "music_core.leno" as core
 use core.miniaudio
 import ffi
@@ -39,7 +40,7 @@ export struct Spectrum {
         h = l.ma_dll_spectrum_create(p, fftSize) as Ptr
         if h == null { return false }
 
-        bands = if nBands < 1 then 1 else if nBands > 128 then 128 else nBands
+        bands = maths.clampi(nBands, 1, 128)      // 2026-11-01：三段手写夹取 ⇒ clampi
         _out = ffi.malloc(bands * 4)
         _cur = []
         _peak = []

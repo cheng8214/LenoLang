@@ -65,10 +65,9 @@ export func percentile(Array[float] xs, float p): float {
     Array[float] a = _sorted(xs)
     float rank = p / 100.0 * _float(n - 1)
     int lo = maths.floor(rank) as int
-    int hi = lo + 1
-    if hi > n - 1 { hi = n - 1 }
+    int hi = maths.mini(lo + 1, n - 1)          // 上界收敛（2026-11-01：手写 if 改 maths.mini）
     float frac = rank - _float(lo)
-    return a[lo] + (a[hi] - a[lo]) * frac
+    return maths.lerp(a[lo], a[hi], frac)       // 线性插值走 maths.lerp（同上）
 }
 
 // 样本标准差（除以 n-1）
@@ -161,8 +160,8 @@ export func money(string s): Dict {
 
 export func formatCents(int cents): string {
     var c = cents
-    var neg = false
-    if c < 0 { neg = true; c = -c }
+    var neg = c < 0
+    c = maths.absi(c)                            // int 版绝对值（2026-11-01：原来手写 if）
     int ip = c / 100
     int fp = c % 100
     var fs = _str(fp)

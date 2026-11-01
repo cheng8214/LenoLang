@@ -5,6 +5,7 @@
 //   · 头部每行 "Name: Value"，名字统一转小写（查询时不必关心大小写）
 //   · 查询串 & 表单用 application/x-www-form-urlencoded 解析（%XX 与 '+'）
 // 明确不做：分块传输（chunked 请求体）、multipart、HTTP/2、头部折行（obs-fold）。
+import maths
 import strings
 
 func lower(string s): string {
@@ -174,7 +175,7 @@ func _find_arr(Array[int] h, Array[int] n, int from): int {
     if nn == 0 or hn < nn { return -1 }
     int first = n[0]
     var i = from
-    if i < 0 { i = 0 }
+    i = maths.maxi(i, 0)
     while i <= hn - nn {
         if h[i] == first {
             var hit = true
@@ -190,7 +191,7 @@ func _find_arr(Array[int] h, Array[int] n, int from): int {
 
 func _slice_arr(Array[int] h, int start, int end): string {
     Array[int] out = []
-    if start < 0 { start = 0 }
+    start = maths.maxi(start, 0)
     if end >= h.len() { end = h.len() - 1 }
     if start <= end {
         for start:end to i { out.add(h[i]) }

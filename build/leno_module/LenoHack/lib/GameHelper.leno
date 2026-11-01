@@ -12,6 +12,7 @@
 //   })
 //   bot.run()  // 进入热键循环
 
+import maths
 import "w32_memory.leno" as mem
 import "w32_input.leno" as inp
 import "hack_log.leno" as log
@@ -410,8 +411,7 @@ export struct GameBot {
         while running {
             float current = readFloat(address)
             // 简单比较：差值小于 0.01 视为相等
-            float diff = current - value
-            if diff < 0.0 { diff = -diff }
+            float diff = maths.abs(current - value)   // 2026-11-01：手写 abs ⇒ maths.abs
             if diff > 0.01 {
                 writeFloat(address, value)
             }

@@ -15,6 +15,7 @@
 // 已对 sockets 做的修复（本模块的副产品）：
 //   `sock.send()` 原来是单次 send + 忽略返回值 ⇒ 大响应被**静默截断**
 //   （实测 1MB 文件客户端只收到前几十 KB）。现在改成循环发完（EINTR/EWOULDBLOCK 重试）
+import maths
 import sockets
 import strings
 import files
@@ -431,7 +432,7 @@ export func serve_workers(Dict app, string host, int port, int workers, any entr
     if not (server["ok"] as bool) { return server }
     Socket srv = server["sock"] as Socket
 
-    if workers < 1 { workers = 1 }
+    workers = maths.maxi(workers, 1)
     if queue < 1 { queue = workers * 4 }
 
     var conns = threads.channel(queue)

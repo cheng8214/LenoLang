@@ -22,6 +22,7 @@
 //   （见 docs/多线程struct与模块全局变量问题记录.md），缓存的库句柄会成为竞态源。
 //   转码一次/响应，`ffi.load` 命中的是已加载模块（OS 计数 +1，微秒级），代价可忽略。
 
+import maths
 import ffi
 import strings
 
@@ -113,8 +114,8 @@ func _findCI(string s, int from, int until, string needle): int {
     int n = needle.byte_len()
     if n <= 0 { return -1 }
     int total = s.byte_len()
-    if until > total { until = total }
-    if from < 0 { from = 0 }
+    until = maths.mini(until, total)
+    from = maths.maxi(from, 0)
     if from + n > until { return -1 }
     int fast = strings.byte_find(s, needle.to_lower(), from)
     if fast >= 0 and fast + n <= until { return fast }
@@ -307,7 +308,7 @@ export func isValidUtf8(string s): bool {
         }
     }
     int cap = 8192
-    if n < cap { cap = n }
+    cap = maths.mini(n, cap)
     return _validUtf8Scan(s, cap)
 }
 
@@ -608,6 +609,6 @@ func _iconvIsValid(string s, iconv_charset ic): bool {
     if ok { return true }
     int n = s.byte_len()
     int cap = 8192
-    if n < cap { cap = n }
+    cap = maths.mini(n, cap)
     return _validUtf8Scan(s, cap)
 }

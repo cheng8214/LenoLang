@@ -24,6 +24,7 @@
 //   现在有两条硬保证：① 只杀自己 spawn 的那个；② Leno 进程退出（**含崩溃 / 被强杀**）时，
 //   内核会连它一起收掉（Job Object 的 KILL_ON_JOB_CLOSE，见 `_spawn` 文档）。
 
+import maths
 import strings
 import files
 import dirs
@@ -894,7 +895,7 @@ func _drain(CdpClient c, int budgetMs): int {
     while true {
         int remain = budgetMs - (_int(times.ms()) - t0)
         if remain <= 0 { break }
-        if remain > 200 { remain = 200 }
+        remain = maths.mini(remain, 200)
         webws.setTimeout(c.ws, remain)
         string raw = webws.recvText(c.ws)
         if raw == "" { break }
@@ -954,7 +955,7 @@ export func waitNetworkIdle(CdpClient c, int idleMs, int timeoutMs): bool {
                     lastActivity = _int(times.ms())
                 } else if m == "Network.loadingFinished" or m == "Network.loadingFailed" {
                     inflight = inflight - 1
-                    if inflight < 0 { inflight = 0 }
+                    inflight = maths.maxi(inflight, 0)
                     lastActivity = _int(times.ms())
                 } else {
                     keep.add(c.events[i])
@@ -1215,7 +1216,7 @@ export func renderMany(Browser b, Array[string] urls, RenderOptions opt, int tab
     Array[RenderResult] out = []
     if urls.len() == 0 { return out }
     int n = tabs
-    if n < 1 { n = 1 }
+    n = maths.maxi(n, 1)
     if n > urls.len() { n = urls.len() }
 
     Array[string] targets = []

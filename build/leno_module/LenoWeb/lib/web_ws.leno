@@ -16,6 +16,7 @@
 //   · 读超时（`set_timeout`）⇒ 浏览器挂住不会把调用方钉死
 // 不做：扩展协商（permessage-deflate 等）—— CDP 用不上
 
+import maths
 import strings
 import sockets
 import times
@@ -210,7 +211,7 @@ func _readExact(WsClient c, int n): string {
     while c.pending.byte_len() < n {
         if _int(times.ms()) - lastProgress > idleLimit { return "" }
         int want = n - c.pending.byte_len()
-        if want > WS_RECV_CHUNK { want = WS_RECV_CHUNK }
+        want = maths.mini(want, WS_RECV_CHUNK)
         string got = c.sock.recv(want)
         if got == null {
             // 本轮没有数据（页面忙 / 分段到达）—— **不是致命错误**，只要还没停滞就接着等

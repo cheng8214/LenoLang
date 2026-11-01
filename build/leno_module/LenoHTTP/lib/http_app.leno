@@ -8,6 +8,7 @@
 //
 // 为什么 handler 是"函数值"：Leno 的函数可以存进变量/数组/字典并直接调用（已实测），
 //   所以路由表不需要额外的闭包容器。
+import maths
 import strings
 import jsons
 import dirs
@@ -467,7 +468,7 @@ func _parse_range(string r, int size): Array[int] {
             int n = _int(b)
             if n <= 0 { return [] }
             start = size - n
-            if start < 0 { start = 0 }
+            start = maths.maxi(start, 0)
         } else {
             start = _int(a)
             if b != "" { end = _int(b) }
@@ -476,7 +477,7 @@ func _parse_range(string r, int size): Array[int] {
         return []       // 畸形（`bytes=abc`）⇒ 当没有 Range（调用方回 416，不 500）
     }
     if start < 0 or end < start or start >= size { return [] }
-    if end >= size { end = size - 1 }
+    end = maths.mini(end, size - 1)
     return [start, end]
 }
 

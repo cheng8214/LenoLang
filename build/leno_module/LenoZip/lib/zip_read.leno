@@ -9,6 +9,7 @@
 //   · ok=true 表示**容器**解析成功；单个条目失败会体现在该条目的 err 上，并把整包 ok 置 false
 //   · crcOk=false 说明解出来的数据与头里的 CRC 不符（损坏 / 写错了）
 //   · method: 0=stored, 8=deflate；其它方法不支持（如 bzip2/lzma）
+import maths
 import strings
 import files
 import "Compress" as z
@@ -30,7 +31,7 @@ func _find_eocd(Array[int] bs): int {
     int n = bs.len()
     if n < 22 { return -1 }
     var lo = n - 22 - 65535
-    if lo < 0 { lo = 0 }
+    lo = maths.maxi(lo, 0)
     var i = n - 22
     while i >= lo {
         if bs[i] == 0x50 and bs[i + 1] == 0x4B and bs[i + 2] == 0x05 and bs[i + 3] == 0x06 {

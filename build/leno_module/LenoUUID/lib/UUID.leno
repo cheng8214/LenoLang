@@ -11,6 +11,7 @@
 // ⚠ v7 的时间精度是**秒**（`times.now()` 是秒级墙钟，本语言没有毫秒墙钟）⇒
 //   同一秒内生成多个 v7 时，前 48 位相同、靠后面的随机位区分 —— 仍可排序，
 //   但"同秒内严格递增"不保证。需要严格单调请在调用方自己加计数器。
+import maths
 import rands
 import times
 import strings
@@ -49,7 +50,7 @@ export func v7(): string {
 
 // 短 ID（默认 12 位十六进制）。⚠ 只适合"碰撞概率可接受"的场景
 export func short(int n = 12): string {
-    if n <= 0 { n = 1 }
+    n = maths.maxi(n, 1)
     return rands.str(n, HEX)
 }
 

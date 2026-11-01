@@ -1,5 +1,6 @@
 // web_net.leno — LenoWeb HTTP 客户端（libcurl 高级封装）
 // 提供 Response/HttpClient 及 GET/POST/PUT/DELETE 等请求能力
+import maths
 import ffi
 import jsons
 import files
@@ -1265,7 +1266,7 @@ export func fetchAll(Array[string] urls, int concurrency = 8, string userAgent =
     int n = urls.len()
     Array[BatchResult] out = []
     if n == 0 { return out }
-    if concurrency < 1 { concurrency = 1 }
+    concurrency = maths.maxi(concurrency, 1)
     Ptr[u8] multi = core.multiInit()
     if multi == null {
         for n to i {
