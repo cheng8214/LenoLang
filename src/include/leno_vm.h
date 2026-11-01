@@ -481,6 +481,39 @@ typedef enum {
     //   运行期开销降到一次分派 ✓（表达式一律只求值一次，不存在重复求值的坑）。
     OP_MATH_FAST,
 
+    // ========================================================================
+    // ★★ 新增 opcode 的**必做清单**（2026-11-01，加 OP_MATH_FAST 时踩过全流程）
+    // ------------------------------------------------------------------------
+    // 少做任何一步都会出问题，其中第 ⑤ 步的**症状最坑**：进程静默 `exit(-1)`、
+    // 一行输出都没有（校验器在运行前就把 chunk 判死，而且不打印原因）。
+    //
+    //   ① 在这里**末尾追加**（不要插到中间 / 不要改既有编号）：
+    //        · 追加后 `OP_OPCODE_COUNT` 自然 +1，序列化版本必须 bump（见第 ⑥ 步）
+    //   ② VM 跳转表：`src/vm/vminc/run/01_prologue.inc` 的 jump_table
+    //        加 `[OP_你的指令] = &&LABEL(OP_你的指令),`
+    //      漏了会编译报 `label defined but not used`（computed-goto 版本）；
+    //      switch 分发版本由 `LABEL(op)` 宏展开成 `case op:`，不用额外写。
+    //   ③ VM 实现：在 `src/vm/vminc/run/` 下的对应 .inc 里写
+    //      `LABEL(OP_你的指令): { … DISPATCH(); }`
+    //        ⚠ 读取顺序：DISPATCH 已 ADVANCE 过 opcode 字节，`READ_A/READ_B/READ_C`
+    //          直接读后 3 字节；指令固定 4 字节（除非像 OP_CMPJMP_* 那样自带偏移字，
+    //          此时必须同步 `codegen_emit.c` 的 `instr_bytes_at`，否则跳距全错 ✗）
+    //   ④ 反汇编名表：`src/debug.c` 的 `opCodeNames[]` 加名字（有长度断言钉住，
+    //      少一项会在编译期报错，这一步不会静默漏）
+    //   ⑤ **字节码校验器**：`src/bytecode_verify.c` 的 `switch (op)` 加 case
+    //        · 漏了 ⇒ 校验失败 ⇒ 进程静默 `exit(-1)`、无输出（最难查的那次就是它）
+    //        · 注意 C 字段若**不是寄存器号**（比如本例的子操作码），不能并进
+    //          `REG_CHK(a); REG_CHK(b); REG_CHK(cc);` 那一组，要单独写边界检查
+    //   ⑥ 版本号：`src/include/leno_serialize.h` 同时 bump
+    //        `LENO_BIN_VERSION` 与 `LENO_MODCACHE_VERSION`（旧字节码含新 opcode ⇒
+    //        旧构建加载后跳转会发散，必须整体失效）
+    //   ⑦ **重跑 `build_vm.bat`**：`leno_vm_gui.exe` / `leno_vm.exe` 是独立二进制，
+    //        build.bat 只产 leno.exe。宿主与编译器版本不一致时，打包类断言
+    //        （`test_cli_script_args` / `test_no_console_capture`）会因为"旧宿主
+    //        读不了新 .lenb"而失败 ✗
+    //   ⑧ 回归：`assert\run_tests.leno` 全绿（535+）+ 一个真实模块的 `--check`
+    // ========================================================================
+
     OP_OPCODE_COUNT,    // 用于跳转表大小
 } OpCode;
 
