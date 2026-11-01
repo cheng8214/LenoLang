@@ -408,9 +408,13 @@
                             Ast* arg = ast->u.module_call.args.items[j];
                             TypeInfo* arg_type = infer_expr_type(s, arg);
                             if (arg_type && arg_type->kind == TYPE_ARRAY && arg_type->element_type) {
-                                array_elem_type = arg_type->element_type;
+                                // element_type 是 arg_type 的**子节点** ⇒ 必须复制一份独立持有，
+                                //   否则为了留住它就得把整棵 arg_type 一起漏掉（每次调用漏一整棵 TypeInfo）
+                                array_elem_type = type_copy(arg_type->element_type);
+                                type_free(arg_type);
                                 break;
                             }
+                            if (arg_type) type_free(arg_type);
                         }
                     }
                     
@@ -498,6 +502,8 @@
                     
                     if (arg_type) type_free(arg_type);
                 } // 关闭 for 循环
+                    // 上面第一轮循环只借用过它的 element_type，现在独立副本由这里释放
+                    if (array_elem_type) type_free(array_elem_type);
                 } // 关闭 else 块（方法存在时的处理）
                 
                 // 如果返回类型是 TYPE_ANY，方法可能不存在，但不做错误报告
@@ -872,6 +878,10 @@
                     if (is_clib_call) {
                         // 释放临时对象
                         if (obj_type) type_free(obj_type);
+                        // infer_expr_type 还会把推断结果缓存进 temp_var->cached_type
+                        //   （返回值只是另一个副本）⇒ 临时节点丢弃前必须把缓存那份一起释放
+                        //   （实测：每个 clib 跨模块调用漏一份 TypeInfo，test_clib_cross_basic 5 份）
+                        if (temp_var->cached_type) type_free(temp_var->cached_type);
                         free(temp_var->u.var.name);
                         if (temp_var->u.var.ref.name) free(temp_var->u.var.ref.name);
                         free(temp_var);
@@ -1704,6 +1714,13 @@
                 TypeInfo* mc_type = infer_expr_type(s, ast);
                 if (mc_type) {
                     if (mc_type->kind != TYPE_ANY) {
+                        // ⚠ infer_expr_type **自己也会把结果写进 ast->cached_type**（见它的
+                        //   MODULE_CALL 分支的多处赋值）⇒ 这里覆盖前必须先释放旧副本，
+                        //   否则每个模块调用漏一份 TypeInfo（test_clib_cross_* 实测）。
+                        if (ast->cached_type) {
+                            type_free(ast->cached_type);
+                            ast->cached_type = NULL;
+                        }
                         ast->cached_type = type_copy(mc_type);
                     }
                     type_free(mc_type);
