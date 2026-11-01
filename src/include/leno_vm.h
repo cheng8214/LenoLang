@@ -1093,6 +1093,18 @@ typedef struct VM {
     Value* stack;
     int sp;
     int stack_capacity;
+    // ==================== FFI/native 参数区（2026-11-01）====================
+    // 为什么不复用 `vm.stack`：native 拿到的参数指针（`vm.stack + base`）在 native 执行
+    //   **全程**必须有效，但 native 可以回调 Leno（ffi 回调 / array.map 闭包 / async…），
+    //   回调里再调 native 就会 `vm_stack_push` ⇒ 触发 `realloc(vm.stack)` ⇒
+    //   **外层 native 手里那个指针当场悬空**（UAF；症状不是崩溃，而是随机读到脏 Value，
+    //   表现为莫名其妙的“类型不对”）。
+    //   `vm.stack` 还承担宿主调用/协程参数与 locals 回退（`vm_utils.inc` 的 stack_base），
+    //   改它的语义风险大，所以单独开一块**固定容量、永不 realloc** 的参数区 ⇒ 指针天然稳定 ✓
+    //   容量 512 个 Value（4KB）：native 嵌套深度 × 每层参数数远小于它；
+    //   真超了由 `vm_ffi_begin` 返回 -1、调用方报运行期错误（比静默 UAF 好得多）。
+    Value* ffi_args;
+    int ffi_args_sp;
     CallFrame* frames;
     int frame_cnt;
     int frame_capacity;
@@ -1221,6 +1233,31 @@ static inline void vm_stack_push(VM* vm, Value v) {
         vm->stack_capacity = new_capacity;
     }
     vm->stack[vm->sp++] = v;
+}
+
+// ==================== FFI 参数区（2026-11-01）====================
+// 详见 VM 结构里 `ffi_args` 字段的注释。要点：**永不 realloc**，所以给 native 的指针稳定。
+#define VM_FFI_ARGS_CAP 512
+
+// 分配 n 个参数槽，返回起始下标；容量不足返回 -1（调用方按运行期错误处理，不静默截断）
+//   ⚠ 必须配合 vm_ffi_end 复位：游标是栈式的（支持 native → Leno 回调 → native 的嵌套），
+//     不复位会让游标一路涨到上限 ⇒ 之后所有 native 调用都失败 ✗
+static inline int vm_ffi_begin(VM* vm, int n) {
+    if (n < 0) n = 0;
+    int base = vm->ffi_args_sp;
+    if (base + n > VM_FFI_ARGS_CAP) return -1;
+    vm->ffi_args_sp = base + n;
+    return base;
+}
+
+// 归还 [base, sp) 并清零 —— 清零是为了**不拖住 GC**：native 已经返回，这些引用不该再算根
+static inline void vm_ffi_end(VM* vm, int base) {
+    if (base < 0) return;
+    if (base > vm->ffi_args_sp) base = vm->ffi_args_sp;
+    for (int i = base; i < vm->ffi_args_sp; i++) {
+        vm->ffi_args[i] = val_null();
+    }
+    vm->ffi_args_sp = base;
 }
 
 // 把栈顶**收缩**到 new_sp，并清零被弹出的槽位（2026-10-31）

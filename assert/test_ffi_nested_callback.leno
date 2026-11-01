@@ -1,0 +1,60 @@
+// FFI 参数区隔离：native → Leno 闭包 → native 的嵌套回调（2026-11-01）
+//
+// 验的是什么：`array.map` 是 **native**，它回调 Leno 闭包，闭包里又调 `maths.sin`
+//   （**又一个 native**）。旧实现把 native 参数放在 `vm.stack` 上：
+//     外层 map 把 `vm.stack + base` 交给 C，
+//     内层 sin 再 `vm_stack_push` ⇒ 一旦触发 `realloc(vm.stack)`，
+//     外层手里那个指针**当场悬空** ⇒ 之后读 args 就是 UAF
+//     （症状不是崩溃，而是随机读到脏 Value，表现为莫名其妙的“类型不对”）。
+//   现在参数走独立且**永不 realloc** 的 `vm.ffi_args`（容量 512）⇒ 嵌套任意深都安全 ✓
+//
+// 另外顺带验 GC：回调里会分配对象（Array、返回值），若参数区没进根集，
+//   参数指向的对象可能被回收 ⇒ 这里靠“结果与手算一致”间接证明没被回收错。
+import arrays
+import maths
+
+main() {
+    Array[int] src = []
+    for 0:999 to i { src.add(i) }
+
+    // ① 单层：map 回调里调两个 native，结果与手算对照
+    Array[float] out = src.map(func(int x, any i) {
+        return maths.sin(_float(x)) + maths.sqrt(_float(x)) * 2.0
+    })
+    assert_eq(out.len(), 1000)
+
+    float ref = 0.0
+    float got = 0.0
+    for 0:999 to i {
+        ref += maths.sin(_float(i)) + maths.sqrt(_float(i)) * 2.0
+    }
+    for out to v { got += v }
+    float diff = got - ref
+    if diff < 0.0 { diff = -diff }
+    assert_eq(diff < 0.01, true)
+
+    // ② 两层嵌套：map 里再 map（native → 闭包 → native → 闭包 → native）
+    Array[float] nested = src.map(func(int x, any i) {
+        Array[int] one = [x]
+        Array[float] inner = one.map(func(int y, any j) { return maths.sqrt(_float(y)) })
+        return inner[0] + maths.cos(_float(x))
+    })
+    assert_eq(nested.len(), 1000)
+    assert_eq(nested[0], maths.sqrt(0.0) + maths.cos(0.0))
+
+    // ③ 参数区用满就还：连做 300 轮，游标必须回到 0，
+    //    否则会一路涨到 512 上限、之后所有 native 调用都失败 ✗
+    float acc = 0.0
+    for 0:299 to k {
+        Array[int] one = [k]
+        Array[float] r = one.map(func(int y, any j) { return maths.log(_float(y) + 1.0) })
+        acc += r[0]
+    }
+    float accRef = 0.0
+    for 0:299 to k { accRef += maths.log(_float(k) + 1.0) }
+    float d2 = acc - accRef
+    if d2 < 0.0 { d2 = -d2 }
+    assert_eq(d2 < 0.01, true)
+
+    print("  FFI 嵌套回调：参数区隔离与游标复位正常")
+}

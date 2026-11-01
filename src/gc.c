@@ -1132,6 +1132,18 @@ static void mark_roots(void) {
     for (int i = 0; i < sp; i++) {
         gc_mark_value(gc.vm->stack[i]);
     }
+    // 1.05 FFI 参数区（2026-11-01）：native 执行期间参数里的对象必须**可达** ——
+    //   否则 native 内部分配触发 GC 时，参数指向的对象会被当成垃圾回收掉 ✗
+    //   平时 `ffi_args_sp` 为 0（只有 native 调用期间 > 0）⇒ 这层开销可忽略。
+    //   并进 slot 0 的统计，不额外占调试槽位 ✓
+    if (gc.vm->ffi_args) {
+        int asp = gc.vm->ffi_args_sp;
+        if (asp < 0) asp = 0;
+        if (asp > VM_FFI_ARGS_CAP) asp = VM_FFI_ARGS_CAP;
+        for (int i = 0; i < asp; i++) {
+            gc_mark_value(gc.vm->ffi_args[i]);
+        }
+    }
     DBG_ROOT_TAKE(0);
     
     // 1.5 对所有活跃帧的栈帧区域做保守扫描

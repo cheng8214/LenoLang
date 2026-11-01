@@ -354,6 +354,12 @@ static void* thread_entry_point(void* arg) {
     child_vm.stack_capacity = 256;
     child_vm.stack = (Value*)malloc(child_vm.stack_capacity * sizeof(Value));
     memset(child_vm.stack, 0, child_vm.stack_capacity * sizeof(Value));
+    // FFI 参数区（2026-11-01）：每个 VM 一份，固定容量、永不 realloc
+    child_vm.ffi_args_sp = 0;
+    child_vm.ffi_args = (Value*)malloc(VM_FFI_ARGS_CAP * sizeof(Value));
+    if (child_vm.ffi_args) {
+        memset(child_vm.ffi_args, 0, VM_FFI_ARGS_CAP * sizeof(Value));
+    }
 
     child_vm.frame_cnt = 0;
     child_vm.frame_capacity = 16;
@@ -539,6 +545,7 @@ static void* thread_entry_point(void* arg) {
         if (thread_initial_args) free(thread_initial_args);
         if (child_vm.frames) free(child_vm.frames);
         if (child_vm.stack) free(child_vm.stack);
+        if (child_vm.ffi_args) free(child_vm.ffi_args);   // FFI 参数区（2026-11-01）
         if (child_vm.globals) free(child_vm.globals);
         if (child_vm.global_funcs) free(child_vm.global_funcs);
         return NULL;
@@ -581,6 +588,7 @@ static void* thread_entry_point(void* arg) {
 
         if (child_vm.frames) free(child_vm.frames);
         if (child_vm.stack) free(child_vm.stack);
+        if (child_vm.ffi_args) free(child_vm.ffi_args);   // FFI 参数区（2026-11-01）
         if (child_vm.globals) free(child_vm.globals);
         if (child_vm.global_funcs) free(child_vm.global_funcs);
 
@@ -720,6 +728,7 @@ static void* thread_entry_point(void* arg) {
     }
     if (child_vm.frames) free(child_vm.frames);
     if (child_vm.stack) free(child_vm.stack);
+    if (child_vm.ffi_args) free(child_vm.ffi_args);   // FFI 参数区（2026-11-01）
     if (child_vm.globals) free(child_vm.globals);
     if (child_vm.global_funcs) free(child_vm.global_funcs);
 

@@ -515,7 +515,19 @@ static inline int call_value(Value callee, int arg_count, int line) {
                 // 参数在 callee 之前
                 // 栈布局: [...][arg1][arg2][callee]
                 // 参数从 vm.sp - arg_count - 1 开始
-                Value result = native->function(arg_count, vm.stack + vm.sp - arg_count - 1);
+                // ★ 2026-11-01：**拷到 ffi_args 再交给 native** —— 原来直接把 `vm.stack + ...`
+                //   传出去，native 回调 Leno 期间一旦 push 到 vm.stack 触发 realloc，
+                //   这个指针就悬空（UAF）。栈上的布局与下面 drop/push 的回收逻辑**完全不动** ✓
+                int abase = vm_ffi_begin(&vm, arg_count);
+                if (abase < 0) {
+                    runtime_error("FFI 参数区溢出（native 嵌套过深）", line);
+                    return 0;
+                }
+                for (int i = 0; i < arg_count; i++) {
+                    vm.ffi_args[abase + i] = vm.stack[vm.sp - arg_count - 1 + i];
+                }
+                Value result = native->function(arg_count, vm.ffi_args + abase);
+                vm_ffi_end(&vm, abase);
                 // 检查 native 函数是否抛出异常（通过 native_throw_error）
                 if (vm.has_exception) {
                     // ★ 统一走 throw_pending_exception（vm_exception.inc）：原生只给裸消息就按
@@ -565,8 +577,18 @@ static inline int call_value(Value callee, int arg_count, int line) {
                 vm.stack[vm.sp - arg_count] = bound->receiver;
                 vm.sp++;
                 
-                // 调用原生函数
-                Value result = native->function(arg_count + 1, vm.stack + vm.sp - arg_count - 1);
+                // 调用原生函数（★ 2026-11-01：参数拷进 ffi_args —— 同上面 OBJ_NATIVE 分支，
+                //   避免 native 回调期间 vm.stack realloc 让指针悬空；栈上布局不动 ✓）
+                int abase = vm_ffi_begin(&vm, arg_count + 1);
+                if (abase < 0) {
+                    runtime_error("FFI 参数区溢出（native 嵌套过深）", line);
+                    return 0;
+                }
+                for (int i = 0; i <= arg_count; i++) {
+                    vm.ffi_args[abase + i] = vm.stack[vm.sp - arg_count - 1 + i];
+                }
+                Value result = native->function(arg_count + 1, vm.ffi_args + abase);
+                vm_ffi_end(&vm, abase);
 
                 // 检查 native 函数是否抛出异常（通过 native_throw_error）
                 if (vm.has_exception) {

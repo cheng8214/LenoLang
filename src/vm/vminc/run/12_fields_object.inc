@@ -212,11 +212,16 @@
                            frame->ip[1] == (uint8_t)a && frame->ip[3] == 2)) {
                     int nargs = (int)frame->ip[2] - 1;
                     frame->ip += 4;              // 吃掉 OP_CALL
-                    int base = vm.sp;
-                    vm_stack_push(&vm, receiver);
-                    for (int i = 0; i < nargs; i++) vm_stack_push(&vm, R(a + 1 + i));
-                    Value result = method->function(nargs + 1, vm.stack + base);
-                    vm_stack_drop(&vm, base);
+                    // ★ 2026-11-01：参数区改用独立的 ffi_args（永不 realloc ⇒ 回调期间指针不悬空 ✓）
+                    int abase = vm_ffi_begin(&vm, nargs + 1);
+                    if (unlikely(abase < 0)) {
+                        runtime_error("FFI 参数区溢出（native 嵌套过深）", line);
+                        return -1;
+                    }
+                    vm.ffi_args[abase] = receiver;
+                    for (int i = 0; i < nargs; i++) vm.ffi_args[abase + 1 + i] = R(a + 1 + i);
+                    Value result = method->function(nargs + 1, vm.ffi_args + abase);
+                    vm_ffi_end(&vm, abase);
                     // ★ native 方法也可能回调 Leno（ffi 回调）⇒ 期间 vm.frames 可能 realloc
                     frame = &vm.frames[vm.frame_cnt - 1];
                     if (unlikely(vm.has_exception)) {

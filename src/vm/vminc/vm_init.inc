@@ -15,6 +15,12 @@ void vm_init_with_scope(Scope* global_scope) {
     vm.sp = 0;
     vm.stack_capacity = 0;
     vm.stack = NULL;
+    // FFI 参数区：固定容量、永不 realloc（见 leno_vm.h 里的说明）
+    vm.ffi_args_sp = 0;
+    vm.ffi_args = (Value*)malloc(VM_FFI_ARGS_CAP * sizeof(Value));
+    if (vm.ffi_args) {
+        memset(vm.ffi_args, 0, VM_FFI_ARGS_CAP * sizeof(Value));
+    }
     vm.frame_cnt = 0;
     vm.frame_capacity = 0;
     vm.frames = NULL;

@@ -67,10 +67,17 @@
             // --- 原生函数：同步调用，结果直接写 R[A] ---
             if (ct == OBJ_NATIVE) {
                 ObjNative* native = (ObjNative*)val_as_obj(callee);
-                int base = vm.sp;
-                for (int i = 0; i < nargs; i++) vm_stack_push(&vm, R(a + 1 + i));
-                Value result = native->function(nargs, vm.stack + base);
-                vm_stack_drop(&vm, base);
+                // ★ 2026-11-01：参数区改用**独立的 ffi_args**（固定容量、永不 realloc）。
+                //   原来用 `vm.stack + base`：native 里回调 Leno、回调里再调 native 会 push 到
+                //   vm.stack ⇒ realloc ⇒ 这里传出去的指针当场悬空（UAF）✗
+                int abase = vm_ffi_begin(&vm, nargs);
+                if (unlikely(abase < 0)) {
+                    runtime_error("FFI 参数区溢出（native 嵌套过深）", line);
+                    return -1;
+                }
+                for (int i = 0; i < nargs; i++) vm.ffi_args[abase + i] = R(a + 1 + i);
+                Value result = native->function(nargs, vm.ffi_args + abase);
+                vm_ffi_end(&vm, abase);
                 // ★ native 可能回调 Leno（ffi 回调 / map 回调 …）⇒ 期间 vm.frames 可能 realloc，frame 悬空
                 frame = &vm.frames[vm.frame_cnt - 1];
                 if (unlikely(vm.has_exception)) {
@@ -140,18 +147,21 @@
                     frame = &vm.frames[vm.frame_cnt - 1];
                     DISPATCH();
                 }
-                int base = vm.sp;
-                int pass_nargs;
-                if (self_in_args) {
-                    for (int i = 0; i < nargs; i++) vm_stack_push(&vm, R(a + 1 + i));
-                    pass_nargs = nargs;
-                } else {
-                    vm_stack_push(&vm, bound->receiver);
-                    for (int i = 0; i < nargs; i++) vm_stack_push(&vm, R(a + 1 + i));
-                    pass_nargs = nargs + 1;
+                // ★ 2026-11-01：参数区改用独立的 ffi_args（同上面 native 分支的说明）
+                int pass_nargs = self_in_args ? nargs : (nargs + 1);
+                int abase = vm_ffi_begin(&vm, pass_nargs);
+                if (unlikely(abase < 0)) {
+                    if (!throw_runtime_error("FFI 参数区溢出（native 嵌套过深）", line)) return -1;
+                    frame = &vm.frames[vm.frame_cnt - 1];
+                    DISPATCH();
                 }
-                Value result = native->function(pass_nargs, vm.stack + base);
-                vm_stack_drop(&vm, base);
+                {
+                    int k = abase;
+                    if (!self_in_args) vm.ffi_args[k++] = bound->receiver;
+                    for (int i = 0; i < nargs; i++) vm.ffi_args[k++] = R(a + 1 + i);
+                }
+                Value result = native->function(pass_nargs, vm.ffi_args + abase);
+                vm_ffi_end(&vm, abase);
                 // ★ native 可能回调 Leno（ffi 回调 / map 回调 …）⇒ 期间 vm.frames 可能 realloc，frame 悬空
                 frame = &vm.frames[vm.frame_cnt - 1];
                 if (unlikely(vm.has_exception)) {
@@ -234,10 +244,15 @@
             cache->fn = native;
         }
 
-        int base = vm.sp;
-        for (int i = 0; i < nargs; i++) vm_stack_push(&vm, R(a + 1 + i));
-        Value result = native->function(nargs, vm.stack + base);
-        vm_stack_drop(&vm, base);
+        // ★ 2026-11-01：参数区改用独立的 ffi_args（永不 realloc ⇒ native 回调期间指针稳定 ✓）
+        int abase = vm_ffi_begin(&vm, nargs);
+        if (unlikely(abase < 0)) {
+            runtime_error("FFI 参数区溢出（native 嵌套过深）", line);
+            return -1;
+        }
+        for (int i = 0; i < nargs; i++) vm.ffi_args[abase + i] = R(a + 1 + i);
+        Value result = native->function(nargs, vm.ffi_args + abase);
+        vm_ffi_end(&vm, abase);
         // ★ native 可能回调 Leno ⇒ 期间 vm.frames 可能 realloc，frame 悬空（同上）
         frame = &vm.frames[vm.frame_cnt - 1];
 

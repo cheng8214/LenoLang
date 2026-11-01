@@ -90,10 +90,16 @@
             cache->meta = (void*)meta;
         }
 
-        int base = vm.sp;
-        for (int i = 0; i < nargs; i++) vm_stack_push(&vm, R(a + 1 + i));
-        Value result = meta->function(nargs, vm.stack + base);
-        vm_stack_drop(&vm, base);
+        // ★ 2026-11-01：参数区改用独立的 ffi_args（永不 realloc ⇒ 回调期间指针不悬空 ✓）
+        //   原来用 `vm.stack + base`：native 回调里再调 native 会 push ⇒ realloc ⇒ UAF ✗
+        int abase = vm_ffi_begin(&vm, nargs);
+        if (unlikely(abase < 0)) {
+            runtime_error("FFI 参数区溢出（native 嵌套过深）", line);
+            return -1;
+        }
+        for (int i = 0; i < nargs; i++) vm.ffi_args[abase + i] = R(a + 1 + i);
+        Value result = meta->function(nargs, vm.ffi_args + abase);
+        vm_ffi_end(&vm, abase);
 
         // ★ 2026-10-25：**native 可以回调 Leno**（ffi 回调、array.map 的闭包、asyncs…）——
         //   重入期间 vm.frames 可能扩容（`realloc`）⇒ 上面那个 `frame` 指针**悬空**，
