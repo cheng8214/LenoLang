@@ -1975,7 +1975,7 @@
                     //   放在这里：`func_def` 已经解析到被调函数（跨模块也一样，否则下面报不出
                     //   "参数数量不足"）⇒ 直接读它 AST 上的注解，不依赖符号表、不怕 AST 被改写 ✓
                     //   只查字面量 Dict、只警告不中断；非字面量一律放行（宁漏勿误报 ✓）
-                    annos_check_call_def(ast, func_def);
+                    annos_check_call_def(ast, func_def, s);
 
                     int expected_cnt = func_def->u.func.pcnt;
                     int actual_cnt = ast->u.call.args.count;

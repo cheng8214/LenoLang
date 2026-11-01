@@ -1,0 +1,58 @@
+// 注解 @optkeys 的**值类型检查**（2026-11-01，设计见 docs/注解系统与optkeys设计草案.md 第 14 节）
+//
+// ⚠ 本用例断不了"该报的警告有没有报"（要么捕获 stderr，要么等编译器提供诊断 API）——
+//   它保证的是**不误报**：合法类型必须编得过、能跑；写错类型只警告、不中断编译。
+//   真正确认"抓到了"靠文档 14.7 的验收清单手工核对一次 ✓
+
+@optkeys(["w:float", "h:float", "visible:bool", "tip:string", "headers:Array", "align", "label"])
+func box(Dict opts): int {
+    return 1
+}
+
+// num = 注解专用记号：int / float 都收（控件的 x/y/w/h 这类尺寸键用它最贴切）
+@optkeys(["w:num", "item_h:num", "count:int"])
+func sized(Dict opts): int {
+    return 3
+}
+
+@optkeys(["bogus:bolean"])          // 类型词拼错 ⇒ 退化成"不查"，不该报错
+func weird(Dict opts): int {
+    return 2
+}
+
+main()
+{
+    // ① int 给 float 键：隐式提升，合法
+    assert_eq(box({w: 30, h: 40}), 1)
+    assert_eq(box({w: 30.5, h: 40.5}), 1)
+
+    // ② 类型完全匹配
+    assert_eq(box({visible: true, tip: "hi", headers: ["a", "b"]}), 1)
+    assert_eq(box({visible: false, tip: ""}), 1)
+
+    // ③ 没写类型的键：传什么都放行
+    assert_eq(box({align: 1, label: "x"}), 1)
+    assert_eq(box({align: "left", label: 42}), 1)
+
+    // ④ 写错类型：只警告不中断（能编过、能跑）
+    assert_eq(box({visible: "false", w: "30"}), 1)
+
+    // ⑤ 变量参与时类型可推断（`flag` 是 string ⇒ 应警告；grow 是 int 给 float 键 ⇒ 不警告）
+    var flag = "yes"
+    var grow = 2
+    assert_eq(box({visible: flag, w: grow}), 1)
+
+    // ⑥ 非字面量实参：整体放行（静态不可知）
+    var o = {visible: "yes", w: "30"}
+    assert_eq(box(o), 1)
+
+    // ⑦ 拼错的类型词：不报错、不检查
+    assert_eq(weird({bogus: "anything"}), 2)
+
+    // ⑧ num：int 与 float 都收；int 键仍只收 int（`count: 2.5` 应报警告）
+    assert_eq(sized({w: 30, item_h: 24.5, count: 2}), 3)
+    assert_eq(sized({w: 30.5, count: 2}), 3)
+    assert_eq(sized({w: "30", count: 2.5}), 3)     // 两处都该警告，但不中断
+
+    print("test_anno_optkeys_type passed")
+}

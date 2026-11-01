@@ -550,7 +550,7 @@
                             //   之前试过 `case AST_MODULE_CALL` 开头 —— 那条路径实测收不到
                             //   控件构造调用（`var x = SDL3.createHBox({...})` 走的是这里）✗
                             if (func_sym->optkeys) {
-                                annos_check_module(ast, func_sym->optkeys, module_info->file_path);
+                                annos_check_module(ast, func_sym->optkeys, module_info->file_path, s);
                             }
                             // 检查参数数量（支持默认参数）
                             int actual_cnt = ast->u.module_call.args.count;

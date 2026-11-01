@@ -7,9 +7,10 @@ extern void annos_collect_func(Ast* ast);
 // 跨模块（`SDL3.createHBox({...})`）也在里面处理 —— 键表来自模块符号表
 //   ⚠ 必须在 AST_CALL 阶段查：改写成 AST_MODULE_CALL 之后实参已不是原始字面量 ✗
 extern void annos_check_call(Semantic* s, Ast* ast);
-extern void annos_check_module(Ast* ast, const char* keys_csv, const char* mod_path);
+extern void annos_check_module(Ast* ast, const char* keys_csv, const char* mod_path, Semantic* s);
 // 从被调函数的 AST 直接取注解 —— 同模块 / 跨模块通用（见 visit_expr.inc 的参数检查处 ✓）
-extern void annos_check_call_def(Ast* call_ast, Ast* func_def);
+//   Semantic* 用于值类型检查（infer_expr_type，2026-11-01）
+extern void annos_check_call_def(Ast* call_ast, Ast* func_def, Semantic* s);
 
 // ============================================================================
 // 泛型类型推断辅助

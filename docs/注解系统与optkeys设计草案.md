@@ -515,6 +515,119 @@ dochk.check("add()", opts, _add_keys())     // ← 注解不覆盖这条路径�
 
 ---
 
+## 14. 键值类型检查（2026-11-01）
+
+### 14.1 目标
+
+键名检查只能抓"选项不生效"，**值类型写错是逻辑静默走反**：
+
+```leno
+createXxx({visible: "false"})    // 多了一对引号
+```
+
+实测：编译通过；`bool v = opts["visible"] ?? false` 里 `v` 装的是**字符串**（`??` 只做空值兜底，
+不转换类型）；运行时非空字符串判定为**真** ⇒ 界面行为反了，却没有任何报错。
+
+目标：**只对声明了类型的键**，在编译期把这类错误报出来；没写类型的键行为完全不变。
+
+### 14.2 语法
+
+类型跟在键名后面，用冒号分隔，仍在**同一个** `@optkeys` 里（不新增 `@opttypes`——
+键名与类型本来就该在一起，改键名时类型跟着走；多一个注解只会多一套"漏写/对不上"）：
+
+```leno
+@optkeys(["visible:bool", "enabled:bool", "w:float", "h:float",
+          "tip:string", "headers:Array",
+          "align", "label"])          // 后两个不写类型 = 不查
+```
+
+### 14.3 类型词表
+
+**只用 Leno 自己的类型名**，不发明缩写（曾经想过 `fn` / `arr` / `dict` / `num`，全部废弃）：
+
+| 词 | 接受的实参 |
+|---|---|
+| `int` | 整数（`bigint` 也算整数，走 `type_is_integer_kind`） |
+| `float` | 浮点 **和整数**（int→float 是本语言允许的隐式转换） |
+| `num` | **数字**：int 或 float 都收（**注解专用记号**，语言里没有这个类型名） |
+| `bool` | `true` / `false` |
+| `string` | 字符串 |
+| `Array` | 数组 |
+| 不写 | 不查（默认，占绝大多数） |
+
+- 大小写不敏感（`Bool` / `BOOL` 都认），文档写规范形式
+- **`num` 与 `float` 的检查行为完全一样**（float 本来就收 int），差别只在语义表达：
+  控件的 `x / y / w / h / item_h` 这类尺寸键内部有时按 float 取、有时按 int 取，
+  标 `num` 比标 `float` 准确，也不会让人误以为"这里必须写 `0.5` 这种浮点字面量"。
+  报错文案显示用户写的**原词**（写 `num` 就报"期望 num"，不会擅自改成 float）
+- `Array[...]` 只认**外层**：`Array[int]`、`Array[Array[int]]` 都等价于 `Array`（见 14.6）
+- 认不出的词（拼错成 `bolean`）⇒ 退化成"不查"，**不报错**（宁漏勿误报）
+
+### 14.4 检查口径：复用现有类型系统，不另立规则
+
+不自己写"AST 形状 → 类型"的映射，全部复用语义分析现有的两个入口：
+
+```c
+TypeInfo* got = infer_expr_type(s, value);                       // semantic_type.c:1071
+if (got && got->kind != TYPE_ANY && !type_is_compatible(&want, got))
+    警告;                                                        // leno_types.h:513
+if (got) type_free(got);                                         // 返回值是新分配 ⇒ 必须 free
+```
+
+`want` 由类型词构造（`TYPE_INT` / `TYPE_FLOAT` / `TYPE_BOOL` / `TYPE_STRING` / `TYPE_ARRAY`）。
+
+这样做的好处：
+
+1. **兼容规则与语言一致**（int→float、bigint 当整数、null 可给 any…），不存在"两套规则各说各话"
+2. 覆盖范围从"只有字面量"扩展到**任何类型可推断的值**（变量也算）：
+   `createXxx({visible: flag})` 里 `flag` 是 string 也能抓到
+3. 改动量小
+
+### 14.5 落点与改动面
+
+| 文件 | 改动 |
+|---|---|
+| `src/semantic/semantic_annotations.c` | 类型词解析、声明解析、键名比较忽略冒号、值检查、警告文案 |
+| `src/semantic/visitinc/visit_expr.inc` | 调用点传 `s`（`annos_check_call_def` 加 `Semantic*` 参数） |
+| `src/semantic/semantic_visit_ast.c` | 同上，`extern` 声明同步 |
+| `build/leno_module/LenoSDL3/lib/SDL3.leno` | 48 个 `createXxx` 的 `@optkeys` 补类型（约 249 个键，由工具扫 `opts.get("k", 默认值)` 生成后人工复核） |
+
+**不动**：parser、VM、codegen、序列化（注解本来就是字符串，`.lenosymc` 不用升版本）。
+
+### 14.6 已知限制（明确不做）
+
+| 限制 | 原因 |
+|---|---|
+| 不查数组**元素**类型 | 需要递归解析 + 递归检查 + 空数组/混合数组规则；收益低（17 个数组键，元素多是 string） |
+| `Dict[...]` 带参数不支持 | 逗号与注解的 CSV 分隔符冲突（`Dict[string, int]` 会被裂成两段） |
+| 非字面量实参（`createXxx(o)`）放行 | 沿用 5.3 的口径，静态不可知 |
+| 自定义 struct / face 类型暂不支持 | opts 里没有这种值；要支持得先解决"跨模块名字比对" |
+
+### 14.7 验收清单
+
+- [ ] `@optkeys(["visible:bool"])` + `createXxx({visible: "yes"})` ⇒ 编译期警告（期望 bool，实际 string）
+- [ ] `{visible: flag}`（flag 是 string 变量）⇒ 同样报
+- [ ] `{w: 30}` 对着 `"w:float"` ⇒ **不报**（int→float 合法）
+- [ ] `{padding: 0}` 对着 `"padding:int"` ⇒ 不报；`{padding: 0.5}` 对着 `"padding:int"` ⇒ 报
+- [ ] 不写类型的键（`"align"`）⇒ 传什么都不报
+- [ ] `"headers:Array"` + `{headers: ["a"]}` ⇒ 不报；`{headers: "a,b"}` ⇒ 报
+- [ ] 拼错类型词（`"visible:bolean"`）⇒ 不报错、退化成不查
+- [ ] `--check` 全量套件零误报；Aria（5000+ 行、大量控件调用）零误报
+- [ ] 断言用例 `assert/test_anno_optkeys_type.leno`
+
+### 14.8 实现检查清单（防漏）
+
+1. 类型词解析：`anno_type_of_word()`（裸词 → 枚举）
+2. 声明解析：`anno_key_type_of("visible:bool")`、`anno_csv_type(csv, key)`（CSV 项不以 `\0` 结尾，不能直接复用前者）
+3. **键名比较要忽略冒号**：`anno_csv_has` / `anno_csv_nearest` / `anno_has_key` / `anno_nearest`
+   四处都要改——只改一处会出现"键名拼错时提示 `align:int`"这种怪现象 ✗
+4. 值检查接入**两条路径**：同模块（`AnnoOptKeys` 表）与跨模块（CSV 串）
+5. `annos_check_call_def` 加 `Semantic*`，两个调用点同步
+6. `type_free()` 不能漏（`infer_expr_type` 返回新分配）
+7. 断言用例 + 全量 `--check` + Aria 零误报
+
+---
+
 ## 附：与现有方案的关系
 
 | 方案 | 现状 | 本方案 |
