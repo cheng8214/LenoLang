@@ -14,6 +14,7 @@ import "sdl_core.leno" as core
 import "sdl_clickthrough.leno" as ct      // 整窗鼠标穿透（2026-10-21；只依赖 core，无循环引用 ✓）
 use core.SDL_KeyboardEvent     // ★ 2026-10-13：testKeyDown 注入按键要用（Leno 要求"出现它的每一处都在 use 列表里" ✓）
 use core.(sdl3, SDL_Point, Size, SDL_WindowEvent, SDL_MouseButtonEvent, SDL_MouseMotionEvent)   // 后两个供自测注入点击/移动 ✓
+use core.SDL_MouseWheelEvent    // ★ 2026-11-01：testWheelAt 注入滚轮要用 ✓
 
 sdl3 _lib = core.lib()
 
@@ -340,6 +341,25 @@ export func testMoveAt(int wid, float x, float y): bool {
     me.state = 0
     me.x = x
     me.y = y
+    bool r = _lib.SDL_PushEvent(e)
+    ffi.free(e)
+    return r
+}
+
+// ★ 2026-11-01 反哺：投递一条**鼠标滚轮**（自测用）
+//   为什么补：表格/列表的"滚到底自动加载"只有真滚轮才触发，无头探针以前没法验 ✗
+//   `dy` 与 SDL 同号：**负 = 向下滚**（内容往上走，scrollY 变大）
+//   x/y 是**客户区**坐标（与 testMoveAt 一致）：滚轮事件自带鼠标位置，控件用它做命中判断 ✓
+export func testWheelAt(int wid, float x, float y, float dy): bool {
+    Ptr[u8] e = ffi.malloc(128)
+    for 128 to i { ffi.write_byte(e, i, 0) }
+    SDL_MouseWheelEvent we = SDL_MouseWheelEvent.from_ptr(e)
+    we.type = core.EventType.MOUSE_WHEEL
+    we.windowID = wid
+    we.which = 0
+    we.y = dy
+    we.mouse_x = x
+    we.mouse_y = y
     bool r = _lib.SDL_PushEvent(e)
     ffi.free(e)
     return r

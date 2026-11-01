@@ -615,7 +615,43 @@ export struct Table impl Widget, Themeable {
         clamp_scroll()
     }
 
+    // ★ 2026-11-01 反哺：长列表"滚到底自动加载下一页"要的两个只读接口
+    //   （ScrollView 早就有同款，见发现页的 page_disc.near_bottom；Table 之前一个都没有 ⇒
+    //     应用只能塞一行"加载更多"按钮，或者干脆重建整页把滚动位置丢掉 ✗）
+    //   ⚠ 纯读：不改滚动位置、不请求重绘 ✓
+    func scroll_y(): float { return scrollY }
+    // 是否已滚到接近底部：`pad` = 距底部多少像素内算"到底"
+    //   内容没超出视口（没有可滚的）⇒ **false** —— 那种情况该由调用方在"首屏就装满"时判断，
+    //   这里返回 true 会让 tick 里无限触发加载 ✗
+    func near_bottom(float pad): bool {
+        float my = max_scroll_y()
+        if my <= 0.0 { return false }
+        return scrollY >= my - pad
+    }
+
+    // ★ 2026-11-01 反哺：**滚到底回调**（长列表"自动加载下一页"）
+    //   ⚠ 为什么必须在控件里做、而不是让应用 `tick` 里调 `near_bottom()`：
+    //     Widget 是 struct，应用手里那个字段是**副本**（布局容器另存一份，事件/滚动只更新
+    //     那一份）⇒ 副本读到的 `scrollY` 永远是 0 ✗。回调则是在 add() 之前设好的，
+    //     布局那份副本带着它，真滚到底时由**真正收事件的那个实例**调用 ✓
+    //   触发点：滚轮 / 拖动竖向滚动条（见 process 里那两处 fire_reach_bottom）
+    pri func():void onReachBottom = null
+    pri float reachPad = 160.0
+    func on_reach_bottom(func():void cb, float pad = 160.0) {
+        onReachBottom = cb
+        reachPad = pad
+    }
+    // 不做"只触发一次"的门闩：调用方自己有"正在加载"的判断，且追加数据后内容变高、
+    //   near_bottom 自然变 false ⇒ 不会连发 ✓
+    pri func fire_reach_bottom() {
+        if onReachBottom == null { return }
+        if near_bottom(reachPad) { onReachBottom() }
+    }
+
     // ==================== 数据操作 ====================
+    // ⚠ 这里存的是**调用方数组的引用**（`_rows = rs`）⇒ 之后 `add_row` 会往那个数组尾部追加。
+    //   调用方若把"自己的数据表"直接传进来、又用 `add_row` 追加行，两边会互相污染
+    //   （实测：歌手页续页时数据行翻倍、只有前一半有行控件 ✗）⇒ 那种用法请传一份副本 ✓
     func set_rows(Array[Array[string]] rs) {
         _rows = rs
         // 新一批数据 ⇒ 映射先恢复成 0..n-1（随后 `sort_by` 重放排序时会一起重排 ✓）
@@ -1636,6 +1672,7 @@ export struct Table impl Widget, Themeable {
             float thumbH = maths.max(18.0, maths.min(bodyH * bodyH / contentH, bodyH))
             scrollY = (my - (y + headerH + 2.0) - vDragOffset) * (maxY / (track - thumbH))
             clamp_scroll()
+            fire_reach_bottom()          // ★ 拖滚动条到底也算（见 on_reach_bottom ✓）
             core.markFrameRedraw()
             return
         }
@@ -1744,6 +1781,7 @@ export struct Table impl Widget, Themeable {
             if (mod & 1) != 0 { scrollX = scrollX - ev.wheelX() * 24.0 }
             else { scrollY = scrollY - ev.wheelY() * rowH }
             clamp_scroll()
+            fire_reach_bottom()          // ★ 滚到底回调（见 on_reach_bottom ✓）
             return
         }
 

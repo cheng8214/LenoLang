@@ -389,6 +389,8 @@ export func testClickAt(int wid, float x, float y): bool      { return wnd.testC
 export func testRightClickAt(int wid, float x, float y): bool { return wnd.testRightClickAt(wid, x, y) }
 export func testMouseAt(int wid, float x, float y, bool pressed): bool { return wnd.testMouseAt(wid, x, y, pressed) }
 export func testMoveAt(int wid, float x, float y): bool       { return wnd.testMoveAt(wid, x, y) }
+// ★ 2026-11-01：注入一次鼠标滚轮（`dy` 负 = 向下滚）—— 验"滚到底自动加载" ✓
+export func testWheelAt(int wid, float x, float y, float dy): bool { return wnd.testWheelAt(wid, x, y, dy) }
 export func testFocusLost(int wid): bool                      { return wnd.testFocusLost(wid) }
 // ★ 2026-10-13：注入一次按键（焦点链 Tab / Shift+Tab / Enter / Space 的自动回归要用 ✓）
 export func testKeyDown(int wid, int scancode, int mod = 0): bool { return wnd.testKeyDown(wid, scancode, mod) }
