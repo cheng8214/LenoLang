@@ -316,6 +316,288 @@ static Value math_sign(int argc, Value* args) {
     return val_float(0.0);
 }
 
+// ==================== 整数版工具 (2026-11-01) ====================
+// 为什么单独一组：上面的 round / min / max / clamp 一律返回 **float**，而 GUI 控件里的尺寸、
+//   行列号、像素坐标全是 int ⇒ 调用点还得 `_int(...)` 转回来，比手写 `if` 还长。
+//   实测 LenoSDL3/lib 的 58 个文件里只有 11 个 import maths，其余全是手写夹取；
+//   `_int(x + 0.5)` 这种手写四舍五入也有 24 处（sdl_renderer / sdl_imageview / sdl_card…）。
+//   ⇒ 补**同语义的 int 版**（名字加 i 后缀），不动原有 float 版的返回类型
+//     （改返回类型会动到类型推断，风险远大于加新函数 ✓）。
+//   int 版接受任意数字实参：小数按**四舍五入**取整（与 roundi 一致，符合"像素边界"的直觉）。
+
+static int64_t math_to_i64(Value v) {
+    // ★ 整数快路径：GUI 控件的尺寸/行列号**全是 int**，先判类型再决定要不要走 double
+    //   （实测：一律 get_number + llround 时 `clampi` 比手写 if 慢 2.5 倍；加这条快路径后
+    //     降到与手写同量级 —— 见 tools/bench_maths_native.leno 的对比）
+    if (val_is_int(v)) return val_as_int(v);
+    return (int64_t)llround(get_number(v));
+}
+
+static Value math_roundi(int argc, Value* args) {
+    (void)argc;
+    return val_int(math_to_i64(args[0]));
+}
+
+static Value math_mini(int argc, Value* args) {
+    int64_t m = math_to_i64(args[0]);
+    for (int i = 1; i < argc; i++) {
+        int64_t v = math_to_i64(args[i]);
+        if (v < m) m = v;
+    }
+    return val_int(m);
+}
+
+static Value math_maxi(int argc, Value* args) {
+    int64_t m = math_to_i64(args[0]);
+    for (int i = 1; i < argc; i++) {
+        int64_t v = math_to_i64(args[i]);
+        if (v > m) m = v;
+    }
+    return val_int(m);
+}
+
+static Value math_clampi(int argc, Value* args) {
+    (void)argc;
+    int64_t v = math_to_i64(args[0]);
+    int64_t lo = math_to_i64(args[1]);
+    int64_t hi = math_to_i64(args[2]);
+    // 边界写反时不抛异常：按"空区间"收成 lo（GUI 里 hi/lo 常来自布局计算，画错比崩了好）
+    if (hi < lo) hi = lo;
+    if (v < lo) v = lo;
+    if (v > hi) v = hi;
+    return val_int(v);
+}
+
+// 正取模：结余符号跟**除数**走（b > 0 时返回 0..b-1）
+//   为什么需要：`%` 是 C 语义（负数得负余数），日历取星期、环形索引都要自己补偏移
+//   （LenoSDL3 的 sdl_calendar.leno:226 就是 `(firstDow - weekStart + 7) % 7`）
+static Value math_mod(int argc, Value* args) {
+    (void)argc;
+    int64_t a = math_to_i64(args[0]);
+    int64_t b = math_to_i64(args[1]);
+    if (b == 0) {
+        native_throw_error("mod() 除数不能为 0");
+        return val_null();
+    }
+    int64_t r = a % b;
+    if (r != 0 && ((r < 0) != (b < 0))) r += b;
+    return val_int(r);
+}
+
+// 夹到 0..1（GUI 里出现频率最高的夹取：透明度、进度、归一化值）
+static Value math_saturate(int argc, Value* args) {
+    (void)argc;
+    double v = get_number(args[0]);
+    if (v < 0.0) return val_float(0.0);
+    if (v > 1.0) return val_float(1.0);
+    return val_float(v);
+}
+
+// (v - a) / (b - a)；a == b 时返回 0（不抛异常：GUI 里尺寸为 0 是常态）
+static Value math_inverse_lerp(int argc, Value* args) {
+    (void)argc;
+    double a = get_number(args[0]);
+    double b = get_number(args[1]);
+    double v = get_number(args[2]);
+    if (b == a) return val_float(0.0);
+    return val_float((v - a) / (b - a));
+}
+
+// 区间映射：v 在 [inLo, inHi] 中的比例（**先夹到 0..1**）线性映射到 [outLo, outHi]
+//   为什么夹输入：UI 侧几乎都是"内容长度 → 滑块长度"（LenoSDL3 里同一公式复制了 6 处），
+//   越界时必须夹住，否则滑块会长出轨道 ✗
+static Value math_remap(int argc, Value* args) {
+    (void)argc;
+    double v = get_number(args[0]);
+    double in_lo = get_number(args[1]);
+    double in_hi = get_number(args[2]);
+    double out_lo = get_number(args[3]);
+    double out_hi = get_number(args[4]);
+    double t = (in_hi == in_lo) ? 0.0 : (v - in_lo) / (in_hi - in_lo);
+    if (t < 0.0) t = 0.0;
+    if (t > 1.0) t = 1.0;
+    return val_float(out_lo + (out_hi - out_lo) * t);
+}
+
+// 环形夹取：把 v 绕回 [lo, hi)（轮播、色相环、环形索引）
+static Value math_wrap(int argc, Value* args) {
+    (void)argc;
+    double v = get_number(args[0]);
+    double lo = get_number(args[1]);
+    double hi = get_number(args[2]);
+    if (hi <= lo) return val_float(lo);
+    double span = hi - lo;
+    double r = fmod(v - lo, span);
+    if (r < 0.0) r += span;
+    return val_float(lo + r);
+}
+
+// ==================== 缓动曲线 (2026-11-01) ====================
+// 为什么一次给这么多条：`smoothstep` 只是"起手慢 + 收尾慢"，而 UI 动画里真正高频的是
+//   ① 进入/弹出 = **只收尾慢**（ease_out_*）② 展开/切换 = 两头都慢（ease_in_out_*）
+//   ③ 退场 = 只起手慢（ease_in_*）。LenoSDL3 的歌词滚动、Toast 淡入、面板展开已经在各写
+//   一份（Aria 最近两笔提交就是"缓动改用 maths.smoothstep / 自己补 ease"）。
+//   ⚠ 入口 t 一律先夹到 0..1（动画进度越界是常态，不该由调用方每次自己夹）。
+static double ease_clamp01(double t) {
+    if (t <= 0.0) return 0.0;
+    if (t >= 1.0) return 1.0;
+    return t;
+}
+
+static Value math_smootherstep(int argc, Value* args) {
+    (void)argc;
+    double t = ease_clamp01(get_number(args[0]));
+    return val_float(t * t * t * (t * (t * 6.0 - 15.0) + 10.0));   // 5t⁴-6t⁵ 的展开式
+}
+
+static Value math_ease_in_quad(int argc, Value* args) {
+    (void)argc;
+    double t = ease_clamp01(get_number(args[0]));
+    return val_float(t * t);
+}
+
+static Value math_ease_out_quad(int argc, Value* args) {
+    (void)argc;
+    double t = ease_clamp01(get_number(args[0]));
+    return val_float(1.0 - (1.0 - t) * (1.0 - t));
+}
+
+static Value math_ease_in_out_quad(int argc, Value* args) {
+    (void)argc;
+    double t = ease_clamp01(get_number(args[0]));
+    if (t < 0.5) return val_float(2.0 * t * t);
+    double u = 1.0 - t;
+    return val_float(1.0 - 2.0 * u * u);
+}
+
+static Value math_ease_in_cubic(int argc, Value* args) {
+    (void)argc;
+    double t = ease_clamp01(get_number(args[0]));
+    return val_float(t * t * t);
+}
+
+static Value math_ease_out_cubic(int argc, Value* args) {
+    (void)argc;
+    double t = ease_clamp01(get_number(args[0]));
+    double u = 1.0 - t;
+    return val_float(1.0 - u * u * u);
+}
+
+static Value math_ease_in_out_cubic(int argc, Value* args) {
+    (void)argc;
+    double t = ease_clamp01(get_number(args[0]));
+    if (t < 0.5) return val_float(4.0 * t * t * t);
+    double u = 1.0 - t;
+    return val_float(1.0 - 4.0 * u * u * u);
+}
+
+// ease_out_back：**会越过 1 再回弹**（k 是回弹幅度，UI 弹窗/卡片出现常用）
+static Value math_ease_out_back(int argc, Value* args) {
+    (void)argc;
+    double t = ease_clamp01(get_number(args[0]));
+    double k = (argc >= 2) ? get_number(args[1]) : 1.70158;
+    double u = t - 1.0;
+    return val_float(1.0 + (k + 1.0) * u * u * u + k * u * u);
+}
+
+// ==================== 角度工具 (2026-11-01) ====================
+// 为什么要单独三条：角度的"最短路径"不是普通减法。341° → 19° 应该走 +38°，直接相减是 -322°，
+//   按后者插值会转一大圈（spinner / ring / 指针类动画都会踩）。
+
+static double angle_norm(double d) {
+    double two_pi = 2.0 * M_PI;
+    d = fmod(d + M_PI, two_pi);
+    if (d < 0.0) d += two_pi;
+    return d - M_PI;                 // [-π, π)
+}
+
+// 从 from 转到 to 的最短角差（[-π, π)）
+static Value math_angle_delta(int argc, Value* args) {
+    (void)argc;
+    double from = get_number(args[0]);
+    double to = get_number(args[1]);
+    return val_float(angle_norm(to - from));
+}
+
+// 按最短路径插值（from/to 可以是任意弧度，不必先归一化）
+static Value math_lerp_angle(int argc, Value* args) {
+    (void)argc;
+    double from = get_number(args[0]);
+    double to = get_number(args[1]);
+    double t = get_number(args[2]);
+    return val_float(from + angle_norm(to - from) * t);
+}
+
+// 把任意弧度绕回 [-π, π)
+static Value math_wrap_angle(int argc, Value* args) {
+    (void)argc;
+    return val_float(angle_norm(get_number(args[0])));
+}
+
+// ==================== 数值小工具 (2026-11-01) ====================
+
+// 小数部分（着色、滚动偏移、进度取余都用它；负数结果也落在 [0,1)）
+static Value math_fract(int argc, Value* args) {
+    (void)argc;
+    double v = get_number(args[0]);
+    double f = v - floor(v);
+    return val_float(f);
+}
+
+// GLSL 式 step：x < edge ⇒ 0，否则 1
+static Value math_step(int argc, Value* args) {
+    (void)argc;
+    double edge = get_number(args[0]);
+    double x = get_number(args[1]);
+    return val_float(x < edge ? 0.0 : 1.0);
+}
+
+// 吸附到步长网格（对齐到整数像素/格子）；step <= 0 时原样返回
+static Value math_snap(int argc, Value* args) {
+    (void)argc;
+    double v = get_number(args[0]);
+    double s = get_number(args[1]);
+    if (s <= 0.0) return val_float(v);
+    return val_float(round(v / s) * s);
+}
+
+// 浮点近似相等（默认 eps = 1e-6）：布局/动画断言不该用 ==
+static Value math_approx_eq(int argc, Value* args) {
+    double a = get_number(args[0]);
+    double b = get_number(args[1]);
+    double eps = (argc >= 3) ? get_number(args[2]) : 1e-6;
+    if (eps < 0.0) eps = -eps;
+    double d = a - b;
+    if (d < 0.0) d = -d;
+    return val_bool(d <= eps);
+}
+
+// 两点距离（控件里两两算坐标差时，比手动 hypot(dx,dy) 少两行）
+static Value math_dist(int argc, Value* args) {
+    (void)argc;
+    double x1 = get_number(args[0]);
+    double y1 = get_number(args[1]);
+    double x2 = get_number(args[2]);
+    double y2 = get_number(args[3]);
+    return val_float(hypot(x2 - x1, y2 - y1));
+}
+
+// 2 的幂判断 / 向上取到 2 的幂（扩容、网格 layout 分块）
+static Value math_is_pow2(int argc, Value* args) {
+    (void)argc;
+    int64_t n = math_to_i64(args[0]);
+    return val_bool(n > 0 && (n & (n - 1)) == 0);
+}
+
+static Value math_next_pow2(int argc, Value* args) {
+    (void)argc;
+    int64_t n = math_to_i64(args[0]);
+    if (n <= 1) return val_int(1);
+    int64_t p = 1;
+    while (p < n && p < (int64_t)1 << 62) p <<= 1;
+    return val_int(p);
+}
+
 // ==================== 常量 ====================
 
 static Value math_pi(int argc, Value* args) {
@@ -414,6 +696,63 @@ void maths_init_module(void) {
 
     TypeKind clamp_params[] = {TYPE_FLOAT, TYPE_FLOAT, TYPE_FLOAT};
     native_register_module_method("maths", "clamp", math_clamp, &NATIVE_T_FLOAT, NATIVE_FIXED(clamp_params));
+
+    // ---- 整数版（2026-11-01，见文件上方"整数版工具"的说明）----
+    TypeKind roundi_params[] = {TYPE_FLOAT};
+    native_register_module_method("maths", "roundi", math_roundi, &NATIVE_T_INT, NATIVE_FIXED(roundi_params));
+
+    native_register_module_method("maths", "mini", math_mini, &NATIVE_T_INT, NATIVE_VARARG(1, NATIVE_ARITY_ANY, 0, NULL, TYPE_FLOAT));
+    native_register_module_method("maths", "maxi", math_maxi, &NATIVE_T_INT, NATIVE_VARARG(1, NATIVE_ARITY_ANY, 0, NULL, TYPE_FLOAT));
+
+    TypeKind clampi_params[] = {TYPE_FLOAT, TYPE_FLOAT, TYPE_FLOAT};
+    native_register_module_method("maths", "clampi", math_clampi, &NATIVE_T_INT, NATIVE_FIXED(clampi_params));
+
+    TypeKind mod_params[] = {TYPE_FLOAT, TYPE_FLOAT};
+    native_register_module_method("maths", "mod", math_mod, &NATIVE_T_INT, NATIVE_FIXED(mod_params));
+
+    // ---- 归一化 / 区间映射 ----
+    TypeKind saturate_params[] = {TYPE_FLOAT};
+    native_register_module_method("maths", "saturate", math_saturate, &NATIVE_T_FLOAT, NATIVE_FIXED(saturate_params));
+
+    TypeKind inverse_lerp_params[] = {TYPE_FLOAT, TYPE_FLOAT, TYPE_FLOAT};
+    native_register_module_method("maths", "inverse_lerp", math_inverse_lerp, &NATIVE_T_FLOAT, NATIVE_FIXED(inverse_lerp_params));
+
+    TypeKind remap_params[] = {TYPE_FLOAT, TYPE_FLOAT, TYPE_FLOAT, TYPE_FLOAT, TYPE_FLOAT};
+    native_register_module_method("maths", "remap", math_remap, &NATIVE_T_FLOAT, NATIVE_FIXED(remap_params));
+
+    TypeKind wrap_params[] = {TYPE_FLOAT, TYPE_FLOAT, TYPE_FLOAT};
+    native_register_module_method("maths", "wrap", math_wrap, &NATIVE_T_FLOAT, NATIVE_FIXED(wrap_params));
+
+    // ---- 缓动曲线（2026-11-01，见文件里"缓动曲线"的说明）----
+    TypeKind ease1_params[] = {TYPE_FLOAT};
+    native_register_module_method("maths", "smootherstep", math_smootherstep, &NATIVE_T_FLOAT, NATIVE_FIXED(ease1_params));
+    native_register_module_method("maths", "ease_in_quad", math_ease_in_quad, &NATIVE_T_FLOAT, NATIVE_FIXED(ease1_params));
+    native_register_module_method("maths", "ease_out_quad", math_ease_out_quad, &NATIVE_T_FLOAT, NATIVE_FIXED(ease1_params));
+    native_register_module_method("maths", "ease_in_out_quad", math_ease_in_out_quad, &NATIVE_T_FLOAT, NATIVE_FIXED(ease1_params));
+    native_register_module_method("maths", "ease_in_cubic", math_ease_in_cubic, &NATIVE_T_FLOAT, NATIVE_FIXED(ease1_params));
+    native_register_module_method("maths", "ease_out_cubic", math_ease_out_cubic, &NATIVE_T_FLOAT, NATIVE_FIXED(ease1_params));
+    native_register_module_method("maths", "ease_in_out_cubic", math_ease_in_out_cubic, &NATIVE_T_FLOAT, NATIVE_FIXED(ease1_params));
+    // 第 2 参可选（回弹幅度 k，默认 1.70158）
+    native_register_module_method("maths", "ease_out_back", math_ease_out_back, &NATIVE_T_FLOAT, NATIVE_VARARG(1, 2, 0, NULL, TYPE_FLOAT));
+
+    // ---- 角度工具 ----
+    TypeKind angle_delta_params[] = {TYPE_FLOAT, TYPE_FLOAT};
+    native_register_module_method("maths", "angle_delta", math_angle_delta, &NATIVE_T_FLOAT, NATIVE_FIXED(angle_delta_params));
+    TypeKind lerp_angle_params[] = {TYPE_FLOAT, TYPE_FLOAT, TYPE_FLOAT};
+    native_register_module_method("maths", "lerp_angle", math_lerp_angle, &NATIVE_T_FLOAT, NATIVE_FIXED(lerp_angle_params));
+    native_register_module_method("maths", "wrap_angle", math_wrap_angle, &NATIVE_T_FLOAT, NATIVE_FIXED(ease1_params));
+
+    // ---- 数值小工具 ----
+    native_register_module_method("maths", "fract", math_fract, &NATIVE_T_FLOAT, NATIVE_FIXED(ease1_params));
+    TypeKind step_params[] = {TYPE_FLOAT, TYPE_FLOAT};
+    native_register_module_method("maths", "step", math_step, &NATIVE_T_FLOAT, NATIVE_FIXED(step_params));
+    native_register_module_method("maths", "snap", math_snap, &NATIVE_T_FLOAT, NATIVE_FIXED(step_params));
+    // eps 可选（默认 1e-6）
+    native_register_module_method("maths", "approx_eq", math_approx_eq, &NATIVE_T_BOOL, NATIVE_VARARG(2, 3, 0, NULL, TYPE_FLOAT));
+    TypeKind dist_params[] = {TYPE_FLOAT, TYPE_FLOAT, TYPE_FLOAT, TYPE_FLOAT};
+    native_register_module_method("maths", "dist", math_dist, &NATIVE_T_FLOAT, NATIVE_FIXED(dist_params));
+    native_register_module_method("maths", "is_pow2", math_is_pow2, &NATIVE_T_BOOL, NATIVE_FIXED(ease1_params));
+    native_register_module_method("maths", "next_pow2", math_next_pow2, &NATIVE_T_INT, NATIVE_FIXED(ease1_params));
 
     TypeKind lerp_params[] = {TYPE_FLOAT, TYPE_FLOAT, TYPE_FLOAT};
     native_register_module_method("maths", "lerp", math_lerp, &NATIVE_T_FLOAT, NATIVE_FIXED(lerp_params));

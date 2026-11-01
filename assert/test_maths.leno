@@ -58,5 +58,79 @@ main()
     assert_eq(s1 + s2 > 0.9999 and s1 + s2 < 1.0001, true)   // 关于 0.5 对称
     assert_eq(0.5.smoothstep(), 0.5)            // 数值实例方法形式
 
+    // ---- 整数版工具（2026-11-01）：GUI 控件的尺寸/行列号是 int，float 版还得 _int 转回来 ----
+    assert_eq(maths.roundi(3.6), 4)
+    assert_eq(maths.roundi(3.4), 3)
+    assert_eq(maths.roundi(-3.6), -4)           // 四舍五入（远离 0），不是 _int(-3.6+0.5) 那种偏 0
+    assert_eq(maths.mini(5, 3, 9), 3)
+    assert_eq(maths.maxi(5, 3, 9), 9)
+    assert_eq(maths.mini(7), 7)                 // 单参数
+    assert_eq(maths.clampi(15, 0, 10), 10)
+    assert_eq(maths.clampi(-3, 0, 10), 0)
+    assert_eq(maths.clampi(5, 0, 10), 5)
+    assert_eq(maths.clampi(5, 10, 0), 10)       // 边界写反 ⇒ 收成 lo，不抛异常
+
+    // 正取模：负数也要落在 0..b-1（日历取星期就靠这个，见 sdl_calendar 的 +7 补偿）
+    assert_eq(maths.mod(7, 3), 1)
+    assert_eq(maths.mod(-1, 7), 6)
+    assert_eq(maths.mod(-8, 7), 6)
+    assert_eq(maths.mod(8, -7), -6)             // 结余符号跟除数走
+
+    // 归一化 / 区间映射
+    assert_eq(maths.saturate(1.5), 1.0)
+    assert_eq(maths.saturate(-0.2), 0.0)
+    assert_eq(maths.saturate(0.4), 0.4)
+    assert_eq(maths.inverse_lerp(0.0, 10.0, 2.5), 0.25)
+    assert_eq(maths.inverse_lerp(5.0, 5.0, 5.0), 0.0)              // 区间为 0 ⇒ 0，不抛
+    assert_eq(maths.remap(5.0, 0.0, 10.0, 100.0, 200.0), 150.0)
+    assert_eq(maths.remap(-5.0, 0.0, 10.0, 100.0, 200.0), 100.0)   // 输入先夹住
+    assert_eq(maths.remap(50.0, 0.0, 10.0, 100.0, 200.0), 200.0)
+
+    // 环形夹取：[0, 10) 里绕
+    assert_eq(maths.wrap(12.0, 0.0, 10.0), 2.0)
+    assert_eq(maths.wrap(-3.0, 0.0, 10.0), 7.0)
+    assert_eq(maths.wrap(10.0, 0.0, 10.0), 0.0)
+    assert_eq(maths.wrap(5.0, 10.0, 10.0), 10.0)                   // 空区间 ⇒ lo
+
+    // ---- 缓动曲线（2026-11-01）：入口 t 一律先夹到 0..1 ----
+    assert_eq(maths.ease_in_quad(0.0), 0.0)
+    assert_eq(maths.ease_in_quad(0.5), 0.25)
+    assert_eq(maths.ease_out_quad(0.5), 0.75)       // 只收尾慢
+    assert_eq(maths.ease_in_out_quad(0.5), 0.5)
+    assert_eq(maths.ease_in_cubic(0.5), 0.125)
+    assert_eq(maths.ease_out_cubic(0.5), 0.875)
+    assert_eq(maths.ease_in_out_cubic(0.5), 0.5)
+    assert_eq(maths.ease_out_cubic(1.0), 1.0)
+    assert_eq(maths.ease_out_cubic(2.0), 1.0)       // 越界夹取
+    assert_eq(maths.smootherstep(0.5), 0.5)
+    assert_eq(maths.smootherstep(-1.0), 0.0)
+    assert_eq(maths.ease_out_back(0.5) > 1.0, true) // 越过 1 再回弹
+    assert_eq(maths.approx_eq(maths.ease_out_back(1.0), 1.0), true)
+    assert_eq(maths.approx_eq(maths.ease_out_back(0.0), 0.0), true)
+
+    // ---- 角度工具：最短路径，不是普通减法 ----
+    var d2r = maths.pi() / 180.0
+    var da = maths.angle_delta(341.0 * d2r, 19.0 * d2r)
+    assert_eq(maths.approx_eq(da, 38.0 * d2r, 1e-9), true)   // 不是 -322°
+    assert_eq(maths.approx_eq(maths.wrap_angle(3.0 * maths.pi()), -maths.pi(), 1e-9), true)
+    var la = maths.lerp_angle(350.0 * d2r, 10.0 * d2r, 0.5)
+    assert_eq(maths.approx_eq(maths.wrap_angle(la), 0.0, 1e-9), true)   // 跨 0° 不绕大圈
+
+    // ---- 数值小工具 ----
+    assert_eq(maths.fract(2.25), 0.25)
+    assert_eq(maths.fract(-0.25), 0.75)             // 负数的小数部分也落在 [0,1)
+    assert_eq(maths.step(0.5, 0.3), 0.0)
+    assert_eq(maths.step(0.5, 0.5), 1.0)
+    assert_eq(maths.snap(2.7, 1.0), 3.0)
+    assert_eq(maths.snap(2.7, 0.0), 2.7)            // 步长非法 ⇒ 原样返回
+    assert_eq(maths.approx_eq(0.1 + 0.2, 0.3), true)   // 默认 eps
+    assert_eq(maths.approx_eq(1.0, 1.001), false)
+    assert_eq(maths.dist(0.0, 0.0, 3.0, 4.0), 5.0)
+    assert_eq(maths.is_pow2(64), true)
+    assert_eq(maths.is_pow2(63), false)
+    assert_eq(maths.is_pow2(0), false)
+    assert_eq(maths.next_pow2(65), 128)
+    assert_eq(maths.next_pow2(1), 1)
+
     print("test_maths passed")
 }
