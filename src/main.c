@@ -894,6 +894,10 @@ fail:
     }
     // 释放语义分析中的其他资源
     semantic_cleanup(&sem);
+    // ★ 编译期报错退出时 chunk 里可能已经有字节码/常量/filename（比如 codegen 阶段
+    //   才编译到的被 import 模块报错）⇒ 这条早退路径此前没释放，每次失败运行都漏
+    //   整个 Chunk（code + lines + constants + filename）
+    chunk_free(&chunk);
     return -1;
 }
 
@@ -1081,6 +1085,8 @@ compile_fail:
         sem.root_scope = NULL;
     }
     semantic_cleanup(&sem);
+    // ★ 与 lenolang_run 的 fail 路径同因：报错早退不释放 chunk 会漏整块字节码
+    chunk_free(&chunk);
     gc_free_all();
     return -1;
 }
