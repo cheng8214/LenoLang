@@ -12,6 +12,7 @@
 | `maths.fmod(a, b)` | `(float, float) -> float` | 浮点取模 a mod b（除数不能为0） |
 | `maths.clamp(v, lo, hi)` | `(float, float, float) -> float` | 限幅：将 v 限制在 [lo, hi] 范围内 |
 | `maths.lerp(a, b, t)` | `(float, float, float) -> float` | 线性插值：a + (b-a)*t |
+| `maths.smoothstep(t)` | `(float) -> float` | 平滑缓动 3t²-2t³（t 自动夹到 [0,1]）；动画"起手慢/收尾慢"用它 |
 | `maths.rsqrt(x)` | `(float) -> float` | 快速反平方根 1/√x（参数必须 >0） |
 | `maths.hypot(x, y)` | `(float, float) -> float` | 直角三角形斜边 √(x²+y²)，避免溢出 |
 | `maths.sign(x)` | `(float) -> float` | 符号函数：正数返回1，负数返回-1，零返回0 |
@@ -24,6 +25,7 @@
 float v = 3.14
 float r = v.clamp(0.0, 1.0)   // 等价于 maths.clamp(3.14, 0.0, 1.0)
 float h = 3.0.hypot(4.0)      // 等价于 maths.hypot(3.0, 4.0) = 5.0
+float e = 0.3.smoothstep()    // 等价于 maths.smoothstep(0.3) = 0.216
 ```
 
 ## 取整函数

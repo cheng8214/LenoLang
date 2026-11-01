@@ -45,5 +45,18 @@ main()
     assert_eq(cos0 > 0.999, true)
     assert_eq(cos0 < 1.001, true)
 
+    // 测试8: smoothstep（3t²-2t³ 缓动；两端夹取 + 对称性）
+    assert_eq(maths.smoothstep(0.0), 0.0)
+    assert_eq(maths.smoothstep(1.0), 1.0)
+    assert_eq(maths.smoothstep(0.5), 0.5)
+    assert_eq(maths.smoothstep(-2.0), 0.0)      // 下界夹取
+    assert_eq(maths.smoothstep(3.0), 1.0)       // 上界夹取
+    var s1 = maths.smoothstep(0.25)
+    var s2 = maths.smoothstep(0.75)
+    assert_eq(s1 < 0.25, true)                  // 起手比线性慢
+    assert_eq(s2 > 0.75, true)                  // 收尾比线性慢
+    assert_eq(s1 + s2 > 0.9999 and s1 + s2 < 1.0001, true)   // 关于 0.5 对称
+    assert_eq(0.5.smoothstep(), 0.5)            // 数值实例方法形式
+
     print("test_maths passed")
 }

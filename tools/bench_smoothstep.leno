@@ -1,0 +1,67 @@
+// bench_smoothstep.leno — maths.smoothstep(t)（原生调用）vs 手写多项式 的速度对比
+// ----------------------------------------------------------------------------
+// 为什么要测：把缓动曲线做成原生函数后，UI 动画里每次要调 60 次/秒左右。
+//   如果"一次原生调用"比"手写三个浮点乘"贵一个数量级，那就不值得推广；
+//   如果只是贵几纳秒，那统一成函数更好读（也不容易把 3t²-2t³ 记错）。
+// 三条基线（同一循环体，只有表达式不同）：
+//   ① 空转     —— for 循环 + u 的计算（不参与比较，只看开销量级）
+//   ② 手写     —— u * u * (3.0 - 2.0 * u)
+//   ③ 原生     —— maths.smoothstep(u)
+// 跑法：build\leno.exe tools\bench_smoothstep.leno
+import maths
+import times
+
+const int N = 2000000       // 200 万次；单次 ~50ns 时总耗时 ~0.1s，够稳定
+
+// 返回 [空转, 手写, 原生] 的三组毫秒数（同样的 u 计算，只有核心表达式不同）
+func run_once(): Array[float] {
+    Array[float] out = []
+
+    // ① 空转
+    float t0 = times.ms()
+    float acc0 = 0.0
+    for 0 : N - 1 to i {
+        float u = _float(i) / _float(N)
+        acc0 = acc0 + u
+    }
+    out.add(times.ms() - t0)
+
+    // ② 手写多项式
+    float t1 = times.ms()
+    float acc1 = 0.0
+    for 0 : N - 1 to i {
+        float u = _float(i) / _float(N)
+        acc1 = acc1 + (u * u * (3.0 - 2.0 * u))
+    }
+    out.add(times.ms() - t1)
+
+    // ③ 原生 maths.smoothstep
+    float t2 = times.ms()
+    float acc2 = 0.0
+    for 0 : N - 1 to i {
+        float u = _float(i) / _float(N)
+        acc2 = acc2 + maths.smoothstep(u)
+    }
+    out.add(times.ms() - t2)
+
+    // 校验：两边结果必须一样（不然"快"没意义）
+    float d = acc1 - acc2
+    if d < 0.0 { d = -d }
+    print("校验 |手写 - 原生| = " + _str(d))
+    // 防优化：把累加结果打出来（VM 没有 DCE，这里只是习惯 ✓）
+    if acc0 < 0.0 and acc1 < 0.0 and acc2 < 0.0 { print("unreachable") }
+    return out
+}
+
+main() {
+    print("N = " + _str(N) + "（每档跑 2 轮，取第 2 轮——第 1 轮含预热）")
+    run_once()                        // 预热
+    Array[float] r = run_once()
+    float base = r[0]
+    float hand = r[1]
+    float nat = r[2]
+    print("① 空转  : " + _str(_int(base)) + " ms")
+    print("② 手写  : " + _str(_int(hand)) + " ms（比空转多 " + _str(_int(hand - base)) + " ms）")
+    print("③ 原生  : " + _str(_int(nat)) + " ms（比空转多 " + _str(_int(nat - base)) + " ms）")
+    print("⇒ 每次调用差值约 " + _str((nat - hand) / _float(N) * 1000000.0) + " ns")
+}

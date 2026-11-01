@@ -191,6 +191,20 @@ static Value math_lerp(int argc, Value* args) {
     return val_float(a + (b - a) * t);
 }
 
+// smoothstep(t)：0..1 的平滑缓动 3t²-2t³（t 先夹到 [0,1]）
+//   用途：动画的"起手慢/收尾慢"曲线。线性插值起步和停止都很硬（"嗒"地一下），
+//   指数逼近则是"一上来最快、尾巴拖很长" ⇒ 两边都不好看，UI 动画基本都用这条 ✓
+//   边缘不在 0..1 时先自己归一化：maths.smoothstep(maths.clamp((x-e0)/(e1-e0), 0, 1))
+//   （不做成 GLSL 那种三参数版本：本语言同一名字只能有一种定长签名，
+//     而 UI 侧 99% 都是"进度 0~1"，单参数更省心 ✓）
+static Value math_smoothstep(int argc, Value* args) {
+    (void)argc;
+    double t = get_number(args[0]);
+    if (t <= 0.0) return val_float(0.0);      // 省掉死区里的乘法（也顺手夹取）
+    if (t >= 1.0) return val_float(1.0);
+    return val_float(t * t * (3.0 - 2.0 * t));
+}
+
 static Value math_rsqrt(int argc, Value* args) {
     (void)argc;
     double x = get_number(args[0]);
@@ -407,6 +421,10 @@ void maths_init_module(void) {
     TypeKind rsqrt_params[] = {TYPE_FLOAT};
     native_register_module_method("maths", "rsqrt", math_rsqrt, &NATIVE_T_FLOAT, NATIVE_FIXED(rsqrt_params));
 
+    // 动画缓动：3t²-2t³（0..1，t 自动夹取）—— 见 math_smoothstep 的注释 ✓
+    TypeKind smoothstep_params[] = {TYPE_FLOAT};
+    native_register_module_method("maths", "smoothstep", math_smoothstep, &NATIVE_T_FLOAT, NATIVE_FIXED(smoothstep_params));
+
     TypeKind hypot_params[] = {TYPE_FLOAT, TYPE_FLOAT};
     native_register_module_method("maths", "hypot", math_hypot, &NATIVE_T_FLOAT, NATIVE_FIXED(hypot_params));
 
@@ -467,6 +485,8 @@ void maths_init_instance_methods(void) {
     number_register_method("clamp", make_native(math_clamp, 3, "clamp"), TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED(two_params));
     number_register_method("lerp", make_native(math_lerp, 3, "lerp"), TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED(two_params));
     number_register_method("rsqrt", make_native(math_rsqrt, 1, "rsqrt"), TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
+    // 数字上的方法形式：`t.smoothstep()`（与 `maths.smoothstep(t)` 同一个实现 ✓）
+    number_register_method("smoothstep", make_native(math_smoothstep, 1, "smoothstep"), TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
     number_register_method("hypot", make_native(math_hypot, 2, "hypot"), TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED(one_params));
     number_register_method("log2", make_native(math_log2, 1, "log2"), TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
     number_register_method("sin_fast", make_native(math_sin_fast, 1, "sin_fast"), TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));

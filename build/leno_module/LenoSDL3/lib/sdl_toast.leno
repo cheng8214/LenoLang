@@ -35,6 +35,7 @@ import "sdl_core.leno" as core
 import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_theme.leno" as theme; use theme.Theme
+import maths                  // smoothstep：淡入淡出用缓动曲线（线性两端太硬 ✓）
 
 // ==================== 四档语义（与 Alert 的 kind 对齐）====================
 //   ⚠ 只对齐**语义**，不 import sdl_alert —— 那会把 Label/Font 整条依赖链拖进浮层，
@@ -210,13 +211,15 @@ func _elapsed(): int { return core.getTicks() - _startMs }
 
 func _alpha(int e): int {
     float a = 1.0
+    // ★ 2026-11-01：淡入/淡出走 `maths.smoothstep` —— 线性坡道两端是硬拐点
+    //   （刚开始/刚结束那几帧变化最大），观感像"啪"一下；缓动曲线首尾都平 ✓
     if _fadeInMs > 0 and e < _fadeInMs {
-        a = _float(e) / _float(_fadeInMs)
+        a = maths.smoothstep(_float(e) / _float(_fadeInMs))
     }
     if _fadeOutMs > 0 and e >= _durMs - _fadeOutMs {
         int rem = _durMs - e
         if rem < 0 { rem = 0 }
-        a = _float(rem) / _float(_fadeOutMs)
+        a = maths.smoothstep(_float(rem) / _float(_fadeOutMs))
     }
     if a < 0.0 { a = 0.0 }
     if a > 1.0 { a = 1.0 }
