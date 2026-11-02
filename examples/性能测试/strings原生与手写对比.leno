@@ -21,7 +21,9 @@ func hand_build(Array[int] data):string {
 func hand_to_bytes(string s):Array[int] {
     Array[int] out = []
     int i = 0
-    while i < s.len() { out.add(strings.byte(s, i)); i += 1 }
+    // ★ 2026-11-02：逐**字节**扫描必须用 byte_len()；s.len() 是**字符数**（码点），
+    //   对含非 UTF-8 字节的串（本页 data 就是 0-255 混合）会少扫/多扫 ⇒ 基准结果失真
+    while i < s.byte_len() { out.add(strings.byte(s, i)); i += 1 }
     return out
 }
 
@@ -31,7 +33,7 @@ func hand_to_hex(string s):string {
     var digits = "0123456789abcdef"
     var out = ""
     int i = 0
-    while i < s.len() {
+    while i < s.byte_len() {
         int b = strings.byte(s, i)
         int hi = (b >> 4) & 15
         int lo = b & 15
@@ -45,7 +47,7 @@ func hand_to_hex(string s):string {
 func hand_scan(string s):int {
     int sum = 0
     int i = 0
-    while i < s.len() {
+    while i < s.byte_len() {
         sum += strings.byte(s.slice(i, i), 0)
         i += 1
     }
@@ -109,8 +111,8 @@ main() {
     var t_nat = now_us()
     var a2 = strings.from_bytes(data)
     var t_nat_us = now_us() - t_nat
-    assert_eq(a1.len(), a2.len(), "1) 长度必须一致")
-    sink += a1.len() + a2.len()
+    assert_eq(a1.byte_len(), a2.byte_len(), "1) 长度必须一致（字节级，data 是 0-255 混合）")
+    sink += a1.byte_len() + a2.byte_len()
     print("[1] 逐字节拼串 : 手写 " + t_hand_us + "us  原生 from_bytes " + t_nat_us + "us  → " +
           ratio(t_hand_us, t_nat_us) + "x")
 
