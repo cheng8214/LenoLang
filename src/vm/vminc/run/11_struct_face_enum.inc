@@ -168,6 +168,94 @@
         struct_def_register(def);
         DISPATCH();
     }
+
+    // ★ 2026-11-02：跨模块 `extend` —— 给**已存在**的 struct 追加方法。
+    //   iABx：Bx = 类型名常量；后跟 u8 方法数，再每项 [u16 方法名常量, u16 函数常量]。
+    //   与 OP_STRUCT_DEF 的区别：那个是"新建"（struct_def_new + register），这个是"追加"，
+    //   目标必须已经在 struct_def_table 里（由定义模块初始化时建好，import 保证顺序 ✓）。
+    //   ⚠ 追加完必须 `struct_def_touch_generation()`：方法调用有"按调用点 + def + 代数"
+    //     的内联缓存（12_fields_object.inc），代数不变会一直命中扩展前的结果 ✗
+    //   ⚠ 方法调用本身不需要新指令：OP_GET_METHOD 走 `struct_method_lookup(def, name)`
+    //     按**名字**线性查表，追加进去的方法照常能调到 ✓
+    LABEL(OP_STRUCT_EXTEND): {
+        int line = GET_CURRENT_LINE();
+        int name_idx = READ_Bx();
+        if (unlikely(name_idx < 0 || name_idx >= frame->chunk->const_cnt)) {
+            if (!throw_runtime_error("extend 的类型名常量索引越界", line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        Value name_val = frame->chunk->constants[name_idx];
+        if (unlikely(!val_is_obj(name_val) || val_as_obj(name_val)->type != OBJ_STRING)) {
+            if (!throw_runtime_error("extend 的类型名必须是字符串", line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        ObjString* sname = (ObjString*)val_as_obj(name_val);
+
+        uint8_t* p = frame->ip;
+        uint8_t add_count = *p++;
+
+        ObjStructDef* def = struct_def_find(sname->chars);
+        if (unlikely(!def)) {
+            // 目标类型没先定义：要么模块没 import，要么名字写错
+            if (!throw_runtime_error("extend 的目标类型不存在（请确认已 import 定义它的模块）", line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+
+        int old_count = def->method_count;
+        StructMethodInfo* grown = (StructMethodInfo*)realloc(
+            def->methods, sizeof(StructMethodInfo) * (size_t)(old_count + add_count));
+        if (unlikely(!grown)) {
+            runtime_error("extend 追加方法时内存分配失败", line);
+            return -1;
+        }
+        memset(grown + old_count, 0, sizeof(StructMethodInfo) * (size_t)add_count);
+        def->methods = grown;
+
+        for (int i = 0; i < add_count; i++) {
+            int mn_idx = ((int)p[0] << 8) | (int)p[1];
+            p += 2;
+            Value mn_val = frame->chunk->constants[mn_idx];
+            if (unlikely(!val_is_obj(mn_val) || val_as_obj(mn_val)->type != OBJ_STRING)) {
+                if (!throw_runtime_error("extend 的方法名必须是字符串", line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            int fn_idx = ((int)p[0] << 8) | (int)p[1];
+            p += 2;
+            Value fn_val = frame->chunk->constants[fn_idx];
+            if (unlikely(!val_is_obj(fn_val) || val_as_obj(fn_val)->type != OBJ_FUNCTION)) {
+                if (!throw_runtime_error("extend 的方法必须是函数对象", line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+
+            StructMethodInfo* slot = &def->methods[old_count + i];
+            slot->name = strdup(((ObjString*)val_as_obj(mn_val))->chars);
+            slot->func = (ObjFunction*)val_as_obj(fn_val);
+            if (slot->func->upvalue_count == 0) {
+                ObjClosure* cl = (ObjClosure*)gc_alloc(sizeof(ObjClosure), OBJ_CLOSURE);
+                if (unlikely(!cl)) {
+                    runtime_error("extend 方法闭包内存分配失败", line);
+                    return -1;
+                }
+                cl->function = slot->func;
+                cl->upvalue_count = 0;
+                cl->type_param_count = 0;
+                cl->type_param_args = NULL;
+                slot->closure = cl;
+            } else {
+                slot->closure = NULL;   // 带 upvalue 的每次动态建（与 OP_STRUCT_DEF 同口径）
+            }
+        }
+        def->method_count = old_count + add_count;
+        struct_def_touch_generation();   // 让方法调用缓存失效
+        frame->ip = p;
+        DISPATCH();
+    }
+
     // OP_FACE_DEF A Bx: 定义接口（与栈式同一数据布局）
     LABEL(OP_FACE_DEF): {
         int line = GET_CURRENT_LINE();

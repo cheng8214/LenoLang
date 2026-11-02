@@ -95,6 +95,7 @@ static const char* opCodeNames[] = {
     "OP_LOCK_REF",         // const 深保护：R[A] 指向的对象标成只读
     "OP_FIN_GOTO",         // break/continue 穿过 try-finally 的续跳（2026-10-30）
     "OP_MATH_FAST",        // maths.* 纯数值函数的编译期内联（2026-11-01）
+    "OP_STRUCT_EXTEND",    // 跨模块 extend：给已存在的 struct 追加方法（2026-11-02）
     "OP_OPCODE_COUNT",
     };
 

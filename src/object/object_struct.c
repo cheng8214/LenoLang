@@ -250,6 +250,14 @@ uint32_t struct_def_generation(void) {
     return struct_def_gen;
 }
 
+// 方法表被**原地扩展**后必须调它（2026-11-02，跨模块 extend）。
+//   为什么：方法调用走 `struct_method_lookup` 的按名字线性查表，但外层还有一层
+//   "按调用点 + def + 代数"的内联缓存（12_fields_object.inc 的 ic_method_cache）
+//   ⇒ 代数不变的话，缓存会一直命中"扩展之前"的结果（新方法永远调不到 ✗）
+void struct_def_touch_generation(void) {
+    struct_def_gen++;
+}
+
 // 覆盖注册表中第 i 个条目。
 // ⚠ 这里**不能**把旧定义的 name/fields/methods/... 置 NULL：旧定义对象仍由 GC 管理，
 //   gc_free_all / sweep 会调用 free_object_resources 释放这些字段本身。置 NULL 只是

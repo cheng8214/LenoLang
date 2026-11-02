@@ -514,6 +514,15 @@ typedef enum {
     //   ⑧ 回归：`assert\run_tests.leno` 全绿（535+）+ 一个真实模块的 `--check`
     // ========================================================================
 
+    // ★ 2026-11-02：跨模块 `extend`（见 docs/struct_extend_设计草案.md 第 12 节）
+    //   OP_STRUCT_EXTEND：给**已存在**的 struct 追加方法（扩展模块初始化时执行一次）
+    //     iABx：Bx = 类型名常量索引；后跟 u8 方法数，再每项 [u16 方法名常量, u16 函数常量]
+    //   ⚠ 不需要"按名字取方法"的新指令：现有 `OP_GET_METHOD` 本来就是
+    //     `struct_method_lookup(def, name)` **按名字线性查**方法表（12_fields_object.inc:276）
+    //     ⇒ 追加进去的方法照常能调到，只要追加后 **bump struct_def_generation()**
+    //        （否则方法调用的内联缓存会命中旧结果 ✗）
+    OP_STRUCT_EXTEND,
+
     OP_OPCODE_COUNT,    // 用于跳转表大小
 } OpCode;
 

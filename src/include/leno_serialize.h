@@ -181,10 +181,13 @@
 //   ⇒ LENO_MODCACHE_VERSION 同步升 ✓
 //   ⚠ 4 字节的 `ADD/SUB/MUL/LT/GT/LE/GE_INT_IMM` 族**加宽不了** ✗（A/B/C 三字段全占满，
 //     且它们没有随附的填充字）⇒ 超 int8 只能退回「LOADI + 寄存器版」= 现状 ✓
-#define LENO_BIN_VERSION    0x0003021B  // v3.2.27（2026-11-01）—— OP_MATH_FAST 新增子操作码
+#define LENO_BIN_VERSION    0x0003021C  // v3.2.28（2026-11-02）—— 新增 opcode **OP_STRUCT_EXTEND**
+                                        //   （跨模块 extend：给已存在的 struct 追加方法；末尾追加 ⇒
+                                        //    既有编号不变，但旧构建不认识这个 opcode ⇒ 整体失效）
+                                        //   上一版 v3.2.27（0x0003021B）OP_MATH_FAST 新增子操作码
                                         //   **MATHF_ABSI**（int 版绝对值）；C 字段是子操作码 ⇒ 旧 VM 读到
                                         //   新值会落到 default 返回 null（静默错值 ✗）⇒ 必须整体失效
-                                        //   上一版 v3.2.26（0x0003021A）新增 opcode OP_MATH_FAST
+                                        //   再上一版 v3.2.26（0x0003021A）新增 opcode OP_MATH_FAST
                                         //   （maths.* 纯数值函数的编译期内联；末尾追加 ⇒ 既有编号不变，
                                         //    但旧构建不认识这个 opcode ⇒ 必须整体失效；模块缓存同步升 ✓）
                                         //   再上一版 v3.2.25（0x00030219，2026-10-30）新增 OP_FIN_GOTO
@@ -371,8 +374,11 @@
 // v13：ObjFunction 增加 is_async（运行期判定"调用即建协程"用）。旧缓存里的函数对象缺这个
 //      字段 ⇒ async 函数的**间接调用**（`var f = w; f()`、当参数传、绑定方法）会退回同步执行、
 //      静默错值，所以必须**作废旧缓存**。
-#define LENO_MODCACHE_VERSION  0x0000002B  // v43 - 同 LENO_BIN_VERSION v3.2.27（OP_MATH_FAST 的
-                                            //   子操作码新增 MATHF_ABSI ⇒ 旧 VM 读到会返回 null ✗）
+#define LENO_MODCACHE_VERSION  0x0000002C  // v44 - 同 LENO_BIN_VERSION v3.2.28（新增 opcode
+                                            //   OP_STRUCT_EXTEND ⇒ 模块字节码里含旧构建不认识的
+                                            //   opcode，加载后跳转会发散 ⇒ 整体失效重编译 ✓）
+                                            // v43 - v3.2.27（OP_MATH_FAST 的子操作码新增
+                                            //   MATHF_ABSI ⇒ 旧 VM 读到会返回 null ✗）
                                             // v40 - 同 LENO_BIN_VERSION v3.2.24（新增 opcode
                                             //   **OP_LOCK_REF** ⇒ 模块字节码里含旧构建不认识的
                                             //   opcode，加载后跳转会发散 ⇒ 整体失效重编译 ✓）

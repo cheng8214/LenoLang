@@ -495,6 +495,23 @@ static int verify_one(const Chunk* c, int pos, int cap,
             size = k.p - pos;
             break;
         }
+        // ★ 2026-11-02：跨模块 extend（给已存在的 struct 追加方法）
+        //   布局：iABx（Bx = 类型名常量）+ u8 方法数 + 每项 [u16 名字常量, u16 函数常量]
+        case OP_STRUCT_EXTEND: {
+            CONST_CHK(bx);
+            Cur k;
+            k.c = c; k.p = pos + 4; k.bad = 0;
+            int add_count = cur_u8(&k);
+            for (int i = 0; i < add_count && !k.bad; i++) {
+                int mn_idx = cur_u16(&k);
+                if (checks) ck_const(&k, mn_idx);
+                int fn_idx = cur_u16(&k);
+                if (checks) ck_const(&k, fn_idx);
+            }
+            if (k.bad) goto bad;
+            size = k.p - pos;
+            break;
+        }
         case OP_STRUCT_INIT: {
             REG_CHK(a);
             SPAN_CHK(a + 1, b);                           // 字段值 R[A+1..A+B]

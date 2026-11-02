@@ -1359,6 +1359,8 @@ void struct_def_register(ObjStructDef* def);
 
 // 当前结构体定义表代数（每次注册/覆盖递增），供 VM 内联缓存校验 def 是否被重定义
 uint32_t struct_def_generation(void);
+// 方法表原地扩展后调用（跨模块 extend）：让方法调用的内联缓存失效（2026-11-02）
+void struct_def_touch_generation(void);
 
 // 跨线程：返回当前线程结构体定义表数量（主线程抓取快照）
 int struct_def_get_count(void);
