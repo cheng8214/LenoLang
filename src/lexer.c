@@ -246,12 +246,24 @@ static void skip_whitespace(Lexer* lex) {
                 } else if (peek_next(lex) == '*') {
                     advance(lex);
                     advance(lex);
-                    while (!(peek(lex) == '*' && peek_next(lex) == '/') && peek(lex) != '\0') {
-                        advance(lex);
-                    }
-                    if (peek(lex) == '*') {
-                        advance(lex);
-                        advance(lex);
+                    // ★ 2026-11-02（B5）：**嵌套块注释**（深度计数）。
+                    //   此前在第一个 `*/` 就结束 ⇒ 注释掉"含块注释的代码段"时，后半段会被
+                    //   当成代码继续词法分析：轻则报「期望表达式」（指不到真因），
+                    //   重则编译通过但语义变了（"注释吞代码"）。Rust / Swift / D 都支持嵌套。
+                    //   未闭合时到 EOF 为止（与既有的"不报错"行为一致 —— 保持原状，别引入新错）。
+                    int depth = 1;
+                    while (depth > 0 && peek(lex) != '\0') {
+                        if (peek(lex) == '/' && peek_next(lex) == '*') {
+                            advance(lex);
+                            advance(lex);
+                            depth++;
+                        } else if (peek(lex) == '*' && peek_next(lex) == '/') {
+                            advance(lex);
+                            advance(lex);
+                            depth--;
+                        } else {
+                            advance(lex);
+                        }
                     }
                 } else {
                     return;
@@ -506,11 +518,12 @@ static Token read_number(Lexer* lex) {
         is_hex = 1;
         advance(lex); // 跳过 '0'
         advance(lex); // 跳过 'x' 或 'X'
-        // 读取十六进制数字
+        // 读取十六进制数字（B3：允许 `_` 作分隔符，但只在**两个十六进制数字之间**）
         int hex_digits = 0;
-        while (isxdigit(peek(lex))) {
-            advance(lex);
-            hex_digits++;
+        while (1) {
+            if (isxdigit(peek(lex))) { advance(lex); hex_digits++; }
+            else if (peek(lex) == '_' && hex_digits > 0 && isxdigit(peek_next(lex))) advance(lex);
+            else break;
         }
         // F4: 0x 后无数字此前静默按 0 解析（strtoull 停在前缀上）——与 0b 同样响亮报错
         if (hex_digits == 0) {
@@ -521,18 +534,22 @@ static Token read_number(Lexer* lex) {
         is_bin = 1;
         advance(lex); // 跳过 '0'
         advance(lex); // 跳过 'b' 或 'B'
-        while (peek(lex) == '0' || peek(lex) == '1') {
-            advance(lex);
-            bin_digits++;
+        while (1) {
+            if (peek(lex) == '0' || peek(lex) == '1') { advance(lex); bin_digits++; }
+            else if (peek(lex) == '_' && bin_digits > 0 &&
+                     (peek_next(lex) == '0' || peek_next(lex) == '1')) advance(lex);
+            else break;
         }
         if (bin_digits == 0) {
             error_add_at_fmt(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1,
                          "二进制字面量需要 0b 后跟至少一位 0/1");
         }
     } else {
-        // 普通十进制数字
-        while (isdigit(peek(lex))) {
-            advance(lex);
+        // 普通十进制数字（B3：`_` 必须在两个数字之间；`1_` / `_1` 不吞 ⇒ 后者仍是标识符）
+        while (1) {
+            if (isdigit(peek(lex))) advance(lex);
+            else if (peek(lex) == '_' && isdigit(peek_next(lex))) advance(lex);
+            else break;
         }
     }
 
@@ -540,8 +557,11 @@ static Token read_number(Lexer* lex) {
     if (!is_hex && !is_bin && peek(lex) == '.' && isdigit(peek_next(lex))) {
         is_float = 1;
         advance(lex);
-        while (isdigit(peek(lex))) {
-            advance(lex);
+        int frac_digits = 0;
+        while (1) {
+            if (isdigit(peek(lex))) { advance(lex); frac_digits++; }
+            else if (peek(lex) == '_' && frac_digits > 0 && isdigit(peek_next(lex))) advance(lex);
+            else break;
         }
     }
 
@@ -562,8 +582,11 @@ static Token read_number(Lexer* lex) {
             is_float = 1;
             advance(lex);                              // e / E
             if (peek(lex) == '+' || peek(lex) == '-') advance(lex);
-            while (isdigit(peek(lex))) {
-                advance(lex);
+            int exp_digits = 0;
+            while (1) {
+                if (isdigit(peek(lex))) { advance(lex); exp_digits++; }
+                else if (peek(lex) == '_' && exp_digits > 0 && isdigit(peek_next(lex))) advance(lex);
+                else break;
             }
         }
     }
@@ -571,8 +594,30 @@ static Token read_number(Lexer* lex) {
     tok.text = start;
     tok.len = (lex->src + lex->pos) - start;
 
+    // ★ 2026-11-02（B3）：数字分隔符 `_` 只是**给人看的**，真正做数值转换前必须去掉 ——
+    //   strtod / strtoull 会在 `_` 处停下，直接拿带下划线的文本会**静默截断**
+    //   （`1_000` 变成 1）。token 的 text/len 保持原文（诊断/高亮要看原样 ✓）。
+    char num_buf[256];
+    const char* numtext = start;
+    int nlen = tok.len;
+    {
+        int has_sep = 0;
+        for (int i = 0; i < tok.len; i++) {
+            if (start[i] == '_') { has_sep = 1; break; }
+        }
+        if (has_sep) {
+            int ci = 0;
+            for (int i = 0; i < tok.len && ci < (int)sizeof(num_buf) - 1; i++) {
+                if (start[i] != '_') num_buf[ci++] = start[i];
+            }
+            num_buf[ci] = '\0';
+            numtext = num_buf;
+            nlen = ci;
+        }
+    }
+
     if (is_float) {
-        tok.num_val = strtod(start, NULL);
+        tok.num_val = strtod(numtext, NULL);
         tok.is_bigint = 0;
         tok.bigint_str = NULL;
         tok.is_float = 1;
@@ -589,7 +634,7 @@ static Token read_number(Lexer* lex) {
             tok.is_float = 0;
         } else {
             unsigned long long bval = 0;
-            for (const char* p = start + 2; p < lex->src + lex->pos; p++) {
+            for (const char* p = numtext + 2; p < numtext + nlen; p++) {
                 if (*p == '0' || *p == '1') bval = bval * 2 + (unsigned long long)(*p - '0');
             }
             if (bval > 9007199254740992ULL) {
@@ -616,26 +661,26 @@ static Token read_number(Lexer* lex) {
     } else if (is_hex) {
         // 解析十六进制数字
         // 检查是否需要 BigInt（长度超过16位，或值超过 2^53 无法精确表示为 double）
-        if (tok.len > 18) {  // 0x + 16位 = 18字符，超过需要 BigInt
+        if (nlen > 18) {  // 0x + 16位 = 18字符，超过需要 BigInt
             tok.is_bigint = 1;
-            tok.bigint_str = (char*)malloc(tok.len + 1);
+            tok.bigint_str = (char*)malloc(nlen + 1);
             if (tok.bigint_str) {
-                memcpy(tok.bigint_str, start, tok.len);
-                tok.bigint_str[tok.len] = '\0';
+                memcpy(tok.bigint_str, numtext, nlen);
+                tok.bigint_str[nlen] = '\0';
                 bigint_pool_register(lex, tok.bigint_str);
             }
             tok.num_val = 0;
             tok.is_float = 0;
         } else {
             // 使用 strtoull 解析十六进制（无符号）
-            unsigned long long val = strtoull(start, NULL, 16);
+            unsigned long long val = strtoull(numtext, NULL, 16);
             // 如果值超过 2^53（9007199254740992），double 无法精确表示
             if (val > 9007199254740992ULL) {
                 tok.is_bigint = 1;
-                tok.bigint_str = (char*)malloc(tok.len + 1);
+                tok.bigint_str = (char*)malloc(nlen + 1);
                 if (tok.bigint_str) {
-                    memcpy(tok.bigint_str, start, tok.len);
-                    tok.bigint_str[tok.len] = '\0';
+                    memcpy(tok.bigint_str, numtext, nlen);
+                    tok.bigint_str[nlen] = '\0';
                     bigint_pool_register(lex, tok.bigint_str);
                 }
                 tok.num_val = 0;
@@ -648,17 +693,18 @@ static Token read_number(Lexer* lex) {
             }
         }
     } else {
-        double val = strtod(start, NULL);
+        double val = strtod(numtext, NULL);
         // int48 范围内的整数用 double 精确存储（double 可精确表示到 2^53）；
         // 仅当超出 int48（INT48_MAX=2^47-1=140737488355327）才升级为 bigint。
         // 此前用 int32(2^31) 阈值过于激进，导致 2147483648 等 int48 值被误判为 bigint，
         // num_val 被置 0，引发 codegen 误报"空循环"警告等问题。
-        if (tok.len > 15 || val > 140737488355327.0 || val < -140737488355328.0) {
+        // ⚠ 长度判据用 nlen（去掉下划线后的长度）：`1_000` 是 5 个字符但只有 4 位数字。
+        if (nlen > 15 || val > 140737488355327.0 || val < -140737488355328.0) {
             tok.is_bigint = 1;
-            tok.bigint_str = (char*)malloc(tok.len + 1);
+            tok.bigint_str = (char*)malloc(nlen + 1);
             if (tok.bigint_str) {
-                memcpy(tok.bigint_str, start, tok.len);
-                tok.bigint_str[tok.len] = '\0';
+                memcpy(tok.bigint_str, numtext, nlen);
+                tok.bigint_str[nlen] = '\0';
                 bigint_pool_register(lex, tok.bigint_str);
             }
             tok.num_val = 0;
