@@ -25,6 +25,11 @@ typedef struct {
     int* alias_type_param_counts; // 每个别名的泛型参数数量
     int alias_count;
     int alias_capacity;
+    // 箭头函数（C2）的"投机解析失败原因"，只用于把报错指向真因：
+    //   0 = 没有；1 = 写了块体 `x => { … }`；2 = 写了返回类型 `(int x): int => …`
+    // 为什么要这个字段：`(…)` 的参数表是**静默投机**解析的（失败就回退成普通括号表达式），
+    //   期间不能报错；只能先记下"为什么失败"，回到 parse_grouping 再给定向提示。
+    int arrow_hint;
 } Parser;
 
 void parser_init(Parser* p, const char* src);

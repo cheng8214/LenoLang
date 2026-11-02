@@ -1,0 +1,92 @@
+// 箭头函数 / 数字分隔符的"误写"诊断（2026-11-03，fuzz 测试发现）
+//
+// 误写时以前只会报「期望表达式」「期望 ')'」或「同一行出现标识符」，
+// 完全指不到真因；现在每种都有一条定向提示，并且**不再级联刷错**。
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+import strings
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_arrow_misuse")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ---- ① 单参块体：`x => { … }` ----
+    var f1 = dirs.join(work, "block_single.leno")
+    files.write(f1, @"main() {
+    var f = x => { x + 1 }
+    print(_int(f(1)))
+}
+")
+    ce.expect_error(f1, "单参块体", "箭头函数的体只能是**单个表达式**", 2)
+
+    // ---- ② 多参块体：`(a, b) => { … }` ----
+    var f2 = dirs.join(work, "block_multi.leno")
+    files.write(f2, @"main() {
+    var f = (int a, int b) => { a + b }
+    print(_int(f(1, 2)))
+}
+")
+    ce.expect_error(f2, "多参块体", "箭头函数的体只能是**单个表达式**", 2)
+
+    // ---- ③ 写返回类型：`(int x): int => …` ----
+    var f3 = dirs.join(work, "ret_type.leno")
+    files.write(f3, @"main() {
+    var f = (int x): int => x + 1
+    print(_int(f(1)))
+}
+")
+    ce.expect_error(f3, "箭头写返回类型", "箭头函数不支持写**返回类型**", 2)
+
+    // ---- ④ 数字分隔符错位：`1_` ----
+    var f4 = dirs.join(work, "sep_bad.leno")
+    files.write(f4, @"main() {
+    int a = 1_
+    print(_int(a))
+}
+")
+    ce.expect_error(f4, "尾随下划线", "数字分隔符 `_` 只能夹在两个数字之间", 2)
+
+    // ---- ④b 插值里的"百分比"误写：`{x:.1%}` ----
+    var f4b = dirs.join(work, "pct_spec.leno")
+    files.write(f4b, @"main() {
+    float r = 0.87
+    print($""{r:.1%}"")
+}
+")
+    ce.expect_error(f4b, "百分比 spec", "不是 Leno format 的转换符", 3)
+
+    // ---- ④c 对照：百分号写在 } 外面就正确 ----
+    var f4c = dirs.join(work, "pct_ok.leno")
+    files.write(f4c, @"main() {
+    float r = 0.87
+    print($""{r * 100:.1f}%"")
+}
+")
+    ce.expect_ok(f4c, "百分比正确写法", "87.0%")
+
+    // ---- ⑤ 对照：正确写法不报错 ----
+    var f5 = dirs.join(work, "ok.leno")
+    files.write(f5, @"main() {
+    var f = (int x) => x + 1
+    var g = (int a, int b) => a + b
+    int n = 1_000_000
+    print(_int(f(1)) + _int(g(2, 3)) + _int(n))
+}
+")
+    ce.expect_ok(f5, "正确写法", "1000007")
+
+    // ---- ⑥ 对照：单表达式箭头串在别的表达式里也不受影响 ----
+    var f6 = dirs.join(work, "inline_ok.leno")
+    files.write(f6, @"func apply(int v, func(int):int f): int { return f(v) }
+
+main() {
+    print(_int(apply(3, (int x) => x * x)))
+}
+")
+    ce.expect_ok(f6, "箭头作为实参", "9")
+
+    print("=== test_diag_arrow_misuse ALL passed ===")
+}

@@ -269,6 +269,18 @@ static Ast* parse_interp_format_spec(Parser* p, Ast* expr) {
         memcpy(spec, src + start, (size_t)spec_len);
         spec[spec_len] = '\0';
 
+        // ★ 2026-11-03（fuzz 发现）：`{x:.1%}` 这种"百分比"写法会把数字整个吃掉。
+        //   `%` 在 printf 里是"输出一个百分号"、**不消费参数** ⇒ 拼成 `"%.1%"` 后
+        //   实际只输出一个 `%`（实测 87.0% 变成 "%"），属于"看起来对、结果错"。
+        //   合法形态只有两种：单个 `%`（就想输出百分号）、或 `%%` 结尾（`%.1f%%`）。
+        //   其余"末尾是 % 但前面不是 %"的一律拦下，并给出两种正确写法。
+        if (spec_len >= 2 && spec[spec_len - 1] == '%' && spec[spec_len - 2] != '%') {
+            error_add_at_fmt(ERR_SYNTAX, line, col,
+                "`%%` 不是 Leno format 的转换符（它只输出一个百分号、不吃数字）—— "
+                "百分号请写在 `}` **外面**：`{x:.1f}%%` 里 spec 只写到 f，那个 %% 是普通字符；"
+                "想把 0.87 显示成 87.0%% 要先乘 100：`{x * 100:.1f}%%`");
+        }
+
         // 允许直接写 `%` 开头（老手习惯），否则自动补一个
         char fmtbuf[72];
         if (spec[0] == '%') snprintf(fmtbuf, sizeof(fmtbuf), "%s", spec);
@@ -538,6 +550,19 @@ static Ast* parse_arrow_infix(Parser* p, Ast* left) {
     ast_free(left);
 
     lexer_next(&p->lex);                        // 消费 '=>'
+
+    // ★ 2026-11-03：`x => { … }` —— 箭头体只支持**单个表达式**。
+    //   不特判的话这里会落到 parse_expression 撞 `{`，报一句「期望表达式」，
+    //   完全指不到"箭头函数没有块体"这个真因（fuzz 实测就是这个现象）。
+    if (p->lex.current.type == TOK_LBRACE) {
+        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+            "箭头函数的体只能是**单个表达式**（`x => x + 1`）—— 多语句请改回 "
+            "`func(参数) { … }`；块体（`x => { … }`）目前不支持");
+        Ast* blk = parse_block_internal(p); // 吞掉块，避免后面再刷一串级联错
+        if (blk) ast_free(blk);
+        return ast_new(AST_NULL, line);
+    }
+
     Ast* body = parse_expression(p);
     return make_arrow_func(line, arrow_column, params, types, 1, body);
 }
@@ -618,8 +643,37 @@ static Ast* try_parse_arrow_parens(Parser* p) {
 
     if (p->lex.current.type != TOK_RPAREN) goto fail;
     lexer_next(&p->lex);                        // ')'
+
+    // ★ 2026-11-03：`(int x): int => …` —— 箭头函数**不支持**写返回类型。
+    //   这里是静默投机段（不能报错），所以：记下原因 → **把剩余语法吞干净** →
+    //   返回占位节点。这样错误信息只有一条定向提示，不会连锁刷一串「期望 ')'」。
+    if (p->lex.current.type == TOK_COLON) {
+        p->arrow_hint = 2;
+        lexer_next(&p->lex);                    // ':'
+        TypeInfo* rt = parse_type(p);           // 吞掉声明的"返回类型"
+        if (rt) type_free(rt);
+        if (p->lex.current.type == TOK_FAT_ARROW) {
+            lexer_next(&p->lex);                // '=>'
+            Ast* body = (p->lex.current.type == TOK_LBRACE)
+                            ? parse_block_internal(p)
+                            : parse_expression(p);
+            if (body) ast_free(body);
+        }
+        free_arrow_params(params, types, pcnt);
+        return ast_new(AST_NULL, line);
+    }
+
     if (p->lex.current.type != TOK_FAT_ARROW) goto fail;
     lexer_next(&p->lex);                        // '=>'
+
+    // ★ `(a, b) => { … }`：同 parse_arrow_infix 的块体限制（吞块 + 占位）
+    if (p->lex.current.type == TOK_LBRACE) {
+        p->arrow_hint = 1;
+        Ast* blk = parse_block_internal(p);
+        if (blk) ast_free(blk);
+        free_arrow_params(params, types, pcnt);
+        return ast_new(AST_NULL, line);
+    }
 
     {
         Ast* body = parse_expression(p);
@@ -637,10 +691,30 @@ Ast* parse_grouping(Parser* p) {
     //   投机解析必须**词法回滚 + 静默错误** —— 否则 `(a + b)` 会先刷一串
     //   "期望参数类型"之类的假报错，再被当成括号表达式解析第二遍。
     Lexer saved = p->lex;
+    p->arrow_hint = 0;
     error_silence_begin();
     Ast* lam = try_parse_arrow_parens(p);
     int dropped = error_silence_end();
-    if (lam && dropped == 0) return lam;
+    int hint = p->arrow_hint;
+    p->arrow_hint = 0;
+    if (lam && dropped == 0 && hint == 0) return lam;
+
+    // ★ 2026-11-03：投机解析**知道失败原因**时（箭头误写），try 那边已经把剩余语法
+    //   吞干净并返回了占位节点 ⇒ 这里只报一条定向错、直接返回占位，
+    //   不再回退成括号表达式（否则会连锁刷一串「期望 ')'」「期望表达式」）。
+    if (hint != 0 && lam) {
+        if (hint == 1) {
+            error_add_at_fmt(ERR_SYNTAX, saved.current.line, saved.current.column,
+                "箭头函数的体只能是**单个表达式**（`(a, b) => a + b`）—— 多语句请改回 "
+                "`func(参数) { … }`；块体（`=> { … }`）目前不支持");
+        } else {
+            error_add_at_fmt(ERR_SYNTAX, saved.current.line, saved.current.column,
+                "箭头函数不支持写**返回类型**（`(int x): int => …`）—— 去掉 `: 类型`，"
+                "或改用 `func(int x): int { … }`");
+        }
+        return lam;
+    }
+
     if (lam) ast_free(lam);
     p->lex = saved;
     error_set_column(saved.current.column);

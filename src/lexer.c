@@ -529,6 +529,9 @@ static Token read_number(Lexer* lex) {
         if (hex_digits == 0) {
             error_add_at_fmt(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1,
                          "十六进制字面量需要 0x 后跟至少一位十六进制数字");
+            // 顺带把 `0x_1` 里剩下的 `_1` 吞掉：否则它会变成标识符，
+            // 再触发一条「同一行出现标识符」的级联错（fuzz 实测）
+            while (peek(lex) == '_' || is_ident_char(peek(lex))) advance(lex);
         }
     } else if (peek(lex) == '0' && (peek_next(lex) == 'b' || peek_next(lex) == 'B')) {
         is_bin = 1;
@@ -543,6 +546,7 @@ static Token read_number(Lexer* lex) {
         if (bin_digits == 0) {
             error_add_at_fmt(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1,
                          "二进制字面量需要 0b 后跟至少一位 0/1");
+            while (peek(lex) == '_' || is_ident_char(peek(lex))) advance(lex);   // 同上，吃掉 `0b_1` 的尾巴
         }
     } else {
         // 普通十进制数字（B3：`_` 必须在两个数字之间；`1_` / `_1` 不吞 ⇒ 后者仍是标识符）
@@ -593,6 +597,25 @@ static Token read_number(Lexer* lex) {
 
     tok.text = start;
     tok.len = (lex->src + lex->pos) - start;
+
+    // ★ 2026-11-03：下划线出现在**不合法的位置**（`1_` / `1__2` / `0xFF_`）时给定向报错。
+    //   不特判的话会落到 parser 的「声明语句后期望换行或 ';'，但同一行出现标识符」——
+    //   完全指不到"数字分隔符用法错了"这个真因（fuzz 实测）。
+    //   `0x_1` / `0b_1` 已由上面的「至少一位数字」分支报过，这里跳过避免重复。
+    if (peek(lex) == '_') {
+        int head_len = (int)((lex->src + lex->pos) - start);
+        int only_prefix = (head_len == 2 && start[0] == '0' &&
+                           (start[1] == 'x' || start[1] == 'X' ||
+                            start[1] == 'b' || start[1] == 'B'));
+        if (!only_prefix) {
+            error_add_at_fmt(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1,
+                "数字分隔符 `_` 只能夹在两个数字之间（如 1_000 / 0xFF_FF / 1_000.5）—— "
+                "`1_`、`1__0`、`0xFF_` 都不合法");
+            // 吞掉这个 `_` 和后面连续的标识符字符：让 token 流回到正轨，
+            // 不再连带刷一串「同一行出现标识符」的级联错
+            while (peek(lex) == '_' || is_ident_char(peek(lex))) advance(lex);
+        }
+    }
 
     // ★ 2026-11-02（B3）：数字分隔符 `_` 只是**给人看的**，真正做数值转换前必须去掉 ——
     //   strtod / strtoull 会在 `_` 处停下，直接拿带下划线的文本会**静默截断**
