@@ -941,6 +941,9 @@
                                   sk == TYPE_BIGINT || sk == TYPE_ENUM);
                     for (int j = 0; j < (int)ast->u.switch_.cases[i].values.count; j++) {
                         Ast* cv = ast->u.switch_.cases[i].values.items[j];
+                        // ★ 2026-11-02（C4）：区间 case（`case 1 to 3`）整体不是"单值"，
+                        //   它的端点类型由 codegen 的比较链负责，这里不参与「值 + 类型」匹配判定。
+                        if (cv->kind == AST_RANGE) continue;
                         TypeInfo* cv_type = cv->cached_type;
                         int owned = 0;
                         if (!cv_type) { cv_type = infer_expr_type(s, cv); owned = 1; }

@@ -963,6 +963,22 @@ Ast* parse_switch_stmt(Parser* p) {
                 // 普通值匹配：解析 case 值（支持多个值，用逗号分隔）
                 do {
                     Ast* value = parse_expression(p);
+                    // ★ 2026-11-02（C4）：**区间 case** `case 1 to 3 { }`。
+                    //   复用 `for` 的区间词 `to`（与 `for 1 to 3` 同词同义），闭区间。
+                    //   为什么不写 `case 1:3`：`:` 已经是切片/类型标注/字典的符号，
+                    //   再塞进 case 头长期成本更高；`case in 1:3` 又会和 `in` 的成员测试撞车。
+                    //   ⚠ 只对**字面量端点**不做限制，但仍要求两端是同一种数值类型（语义侧检查）。
+                    if (value && p->lex.current.type == TOK_TO) {
+                        int range_line = value->line;
+                        lexer_next(&p->lex);                 // 消费 'to'
+                        Ast* end = parse_expression(p);
+                        Ast* range = ast_new(AST_RANGE, range_line);
+                        range->column = value->column;
+                        range->u.range.start = value;
+                        range->u.range.end = end;
+                        range->u.range.inclusive = 1;        // 闭区间，与 for/切片同口径
+                        value = range;
+                    }
                     if (value) {
                         // ★ C2 护栏（2026-11-02）：`case x => …` 与条件位置同理，
                         //   以前是语法错误，现在会变成"case 值是函数"（永不命中）⇒ 拦掉

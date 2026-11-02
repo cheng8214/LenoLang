@@ -1,0 +1,59 @@
+// switch 的区间 case：`case 1 to 3 { }`（C4，2026-11-02）
+//
+// 口径：**闭区间**（与 `for 1 to 3`、切片一致），只对数值（int / float）有意义。
+// 实现：codegen 在比较链里生成"两条不满足就跳过"的跳转，不引入新的 opcode；
+// 与单值 case、逗号多值 case 可以混用。
+
+func grade(int score): string {
+    switch score {
+        case 0 to 59 { return "F" }
+        case 60 to 69 { return "D" }
+        case 70 to 79 { return "C" }
+        case 80 to 89 { return "B" }
+        case 90 to 100 { return "A" }
+        default { return "?" }
+    }
+}
+
+func mixed(int v): string {
+    switch v {
+        case 1 { return "one" }
+        case 2 to 4 { return "few" }
+        case 5, 6 { return "six-ish" }
+        default { return "many" }
+    }
+}
+
+func classify(float x): string {
+    switch x {
+        case 0.0 to 0.5 { return "low" }
+        case 0.51 to 1.0 { return "high" }
+        default { return "out" }
+    }
+}
+
+main() {
+    // ① 分档：边界值必须落在正确一侧（闭区间，两端都含）
+    assert_eq(grade(0), "F", "下界")
+    assert_eq(grade(59), "F", "F 上界")
+    assert_eq(grade(60), "D", "D 下界")
+    assert_eq(grade(89), "B", "B 上界")
+    assert_eq(grade(90), "A", "A 下界")
+    assert_eq(grade(100), "A", "整体上界")
+    assert_eq(grade(101), "?", "越界走 default")
+    assert_eq(grade(-1), "?", "负数走 default")
+
+    // ② 与单值 / 逗号多值混用
+    assert_eq(mixed(1), "one", "单值 case")
+    assert_eq(mixed(2), "few", "区间下界")
+    assert_eq(mixed(4), "few", "区间上界")
+    assert_eq(mixed(5), "six-ish", "逗号多值")
+    assert_eq(mixed(7), "many", "default")
+
+    // ③ float 区间
+    assert_eq(classify(0.0), "low", "float 下界")
+    assert_eq(classify(0.5), "low", "float 上界")
+    assert_eq(classify(0.75), "high", "float 区间内")
+
+    print("test_switch_range all passed")
+}

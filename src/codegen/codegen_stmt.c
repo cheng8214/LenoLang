@@ -1068,8 +1068,40 @@ static void gen_switch(CodeGen* gen, Ast* ast) {
         }
         AstList* vals = &ast->u.switch_.cases[i].values;
         for (int k = 0; k < vals->count; k++) {
+            Ast* cv = vals->items[k];
+            // ★ 2026-11-02（C4）：**区间 case** `case 1 to 3 { }`（闭区间）⇒
+            //   `tmp >= lo` 且 `tmp <= hi` 才算命中。实现成两条"不满足就跳过"的跳转，
+            //   跳过目标就是本 case 检查结束处（顺序生成，patch 到当前位置即可）。
+            //   ⚠ 不能直接 `gen_expr_to(..., vr)` 再 `emit_eq` —— AST_RANGE 的值是一个
+            //     Range 对象，跟 switch 值比相等永远不成立。
+            if (cv->kind == AST_RANGE) {
+                int lo = gen_expr(gen, cv->u.range.start);
+                int hi = gen_expr(gen, cv->u.range.end);
+                int cl = reg_alloc(gen);
+                emit_lt(gen, cl, tmp, lo, line);              // tmp < lo ?
+                int s1 = emit_jmp_if_true(gen, cl, line);     // 是 ⇒ 跳过本 case
+                reg_free(gen, cl);
+                int cg = reg_alloc(gen);
+                emit_gt(gen, cg, tmp, hi, line);              // tmp > hi ?
+                int s2 = emit_jmp_if_true(gen, cg, line);     // 是 ⇒ 跳过本 case
+                reg_free(gen, cg);
+                int jp = emit_jmp(gen, line);                 // 落在区间内 ⇒ 命中
+                patch_jmp(gen, s1);
+                patch_jmp(gen, s2);
+                if (cnt == cap) {
+                    cap *= 2;
+                    hit_pos = (int*)realloc(hit_pos, sizeof(int) * cap);
+                    hit_case = (int*)realloc(hit_case, sizeof(int) * cap);
+                }
+                hit_pos[cnt] = jp;
+                hit_case[cnt] = i;
+                cnt++;
+                reg_free(gen, lo);
+                reg_free(gen, hi);
+                continue;
+            }
             int vr = reg_alloc(gen);
-            gen_expr_to(gen, vals->items[k], vr);
+            gen_expr_to(gen, cv, vr);
             int cr = reg_alloc(gen);
             emit_eq(gen, cr, tmp, vr, line);
             int jp = emit_jmp_if_true(gen, cr, line);

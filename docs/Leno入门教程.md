@@ -2556,6 +2556,43 @@ main() {
 }
 ```
 
+### switch 区间 case `case 1 to 3`
+
+区间 case 用 `to` 表示**闭区间**（两端都含，与 `for 1 to 3`、切片同口径），
+可以和单值 case、逗号多值 case 混用（2026-11-02 起）：
+
+```leno
+func grade(int score): string {
+    switch score {
+        case 0 to 59 { return "F" }
+        case 60 to 69 { return "D" }
+        case 70 to 79 { return "C" }
+        case 80 to 89 { return "B" }
+        case 90 to 100 { return "A" }
+        default { return "?" }
+    }
+}
+
+// 混用：单值 / 区间 / 逗号多值
+switch v {
+    case 1 { print("one") }
+    case 2 to 4 { print("few") }
+    case 5, 6 { print("range") }
+    default { print("many") }
+}
+
+// float 区间同样支持
+switch ratio {
+    case 0.0 to 0.5 { print("low") }
+    case 0.51 to 1.0 { print("high") }
+    default { print("out") }
+}
+```
+
+> 为什么用 `to` 而不是 `case 1:3`：`:` 已经是切片 / 类型标注 / 字典的符号，
+> 再塞进 case 头长期成本更高；`case in 1:3` 又会和 `in` 的成员测试撞车。
+> 实现上就是比较链里两条比较（`>= 下界` 且 `<= 上界`），不引入新指令。
+
 ### switch `case is` 类型匹配
 
 `case is` 可以在 switch 中按类型匹配分支，类似 if 类型守卫但在 switch 中更简洁：
@@ -2719,37 +2756,25 @@ switch p {
 
 > **提示：** 解构可以和类型收窄结合使用——在 `case is Point(a, b)` 分支中，变量 `p` 同时被收窄为 `Point` 类型，可以直接访问 `p.x`、`p.y`。
 
-#### switch 性能优化
+#### switch 性能现状（2026-11-02 更正）
 
-当 switch 的所有 case 值类型统一为 `int`、`float` 或 `string`，且 case 数量 ≥ 4 时，编译器会自动生成**二分查找**字节码（`OP_SWITCH_LOOKUP`），将匹配复杂度从 O(n) 降为 O(log n)。
-
-**优化触发条件：**
-
-| 条件 | 说明 |
-|------|------|
-| case 值类型统一 | 所有 case 为同一类型（int/float/string） |
-| case 数量 ≥ 4 | 少于 4 个 case 不值得优化，线性扫描更快 |
-| 无 `case is` 混用 | 值匹配和类型匹配不能在同一次优化中混用 |
-
-**性能对比：**
+**当前 codegen 一律展开成"比较链 + 跳板"**（`gen_switch`）：每个 case 一次比较，命中就跳到对应 case 体。
+这里**没有**二分查找，也没有 `OP_SWITCH_LOOKUP` 指令参与（那条约等于空指令，且 codegen 早就不再发它了 ——
+之前本节写的"case ≥ 4 自动二分、O(log n)"与实测不符，已删除）。
 
 ```leno
-// 20 个 case 的 switch，匹配最后一个
-switch v {
-    case 0 { return 0 }
-    case 1 { return 1 }
-    // ... 中间 17 个 ...
-    case 19 { return 19 }
-    default { return -1 }
-}
+// 6 个 int case 的真实字节码（--debug 反汇编）：
+// 0008 OP_EQ  A=3 B=1 C=2
+// 0020 OP_EQ  ...
+// ... 共 6 条 OP_EQ，然后才是跳板区
 ```
 
-| 模式 | 线性扫描（旧） | 二分查找（新） | 提升 |
-|------|--------------|--------------|------|
-| 20 个 case | ~20 次比较 | ~5 次比较 | ~4x |
-| 100 个 case | ~100 次比较 | ~7 次比较 | ~14x |
+**实践建议**：case 特别多（几十上百）且命中集中在末尾时，比较链是 O(n)。
+需要 O(1)/O(log n) 时可以自己写：
+- 值域连续 ⇒ 直接 `if v < 10 then table[v] else …`（数组下标）；
+- 稀疏但有序 ⇒ 先粗分档（`if v < 100 … eif v < 200 …`）再细分。
 
-> **注意：** 优化是自动的，无需修改代码。少量 case（< 4）或类型混合时仍使用线性扫描。
+> `switch` 的**语义**与优化无关：按「值 + 类型」匹配、命中即跳出、无 fallthrough。
 
 ### while 循环
 
