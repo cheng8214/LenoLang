@@ -12,19 +12,27 @@ main() {
     Array[int] arr = [1, 2, 3, 4]
     Dict[string, int] d = {"a": 1, "b": 2, "c": 3}
     string s = "abc"
+    // ★ 2026-11-02：非 ASCII 字符串必须按**码点**迭代（char_len），不能按字节数（len）
+    //   否则循环会多跑 (字节数 - 字符数) 轮，OP_ITER_GET 直接抛「字符串迭代索引越界」✗
+    string u = "你好世界"   // 4 个字符 / 12 字节
 
     int sum = 0, cnt = 0, keylen = 0, chsum = 0
+    int ucnt = 0, uidx = 0
     for 3000 to r {
         for arr to x { sum = sum + x }                              // 10/轮
         for arr to y, i { cnt = cnt + i }                           // 6/轮
         for d to k, v { keylen = keylen + k.len(); sum = sum + v }  // 3 + 6/轮
         for s to ch { chsum = chsum + ch.len() }                    // 3/轮
+        for u to uch, ui { ucnt = ucnt + 1; uidx = uidx + ui }      // 4 轮，索引 0..3
     }
 
     assert_eq(sum, 48000)      // 3000 * 16
     assert_eq(cnt, 18000)      // 3000 * 6
     assert_eq(keylen, 9000)    // 3000 * 3
     assert_eq(chsum, 9000)     // 3000 * 3
+    assert_eq(u.len(), 4)      // 字符数（不是字节数 12）
+    assert_eq(ucnt, 12000)     // 3000 * 4
+    assert_eq(uidx, 18000)     // 3000 * (0+1+2+3)
 
     print("test_op_iter: OK")
 }

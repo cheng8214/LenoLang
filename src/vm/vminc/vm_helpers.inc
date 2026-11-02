@@ -38,7 +38,7 @@ static inline int64_t vm_container_len(Value v) {
     if (!val_is_obj(v)) return 0;
     ObjType t = val_as_obj(v)->type;
     if (t == OBJ_ARRAY)  return (int64_t)((ObjArray*)val_as_obj(v))->count;
-    if (t == OBJ_STRING) return (int64_t)((ObjString*)val_as_obj(v))->len;
+    if (t == OBJ_STRING) return (int64_t)((ObjString*)val_as_obj(v))->char_len;
     if (t == OBJ_DICT) {
         ObjDict* d = (ObjDict*)val_as_obj(v);
         return (int64_t)d->acount + (int64_t)d->count;
