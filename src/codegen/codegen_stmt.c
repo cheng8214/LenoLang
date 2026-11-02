@@ -1539,6 +1539,34 @@ void gen_index_assign(CodeGen* gen, Ast* ast, int dst) {
     Ast* idx_ast = ast->u.index_assign.index;
     Ast* val_ast = ast->u.index_assign.value;
 
+    // ★ 2026-11-02（B1）：`obj[i] ?? = v` / `obj.f ?? = v` —— 读一次 → 判空 →
+    //   只在 null 时求值 v 并写回。下标只求值一次（与下面的 c_arith 路径同一保证）。
+    //   ⚠ 这里的"写回"放在条件跳转**内部**：非 null 时连写都不做（`??` 的短路口径）。
+    if (ast->u.index_assign.op == TOK_COALESCE_ASSIGN) {
+        int c_obj = gen_expr(gen, obj_ast);
+        int c_idx = gen_expr(gen, idx_ast);
+        int c_old = reg_alloc(gen);
+        reg_encode_iABC(gen->chunk, OP_INDEX, c_old, c_obj, c_idx, ast->line);
+        int isnull = reg_alloc(gen);
+        emit_is_null(gen, isnull, c_old, ast->line);
+        int skip = emit_jmp_if_false(gen, isnull, ast->line);   // 非 null ⇒ 跳过
+        reg_free(gen, isnull);
+        int c_val = gen_expr(gen, val_ast);
+        if (c_val < 0) {
+            c_val = reg_alloc(gen);
+            emit_loadnil_to(gen, c_val, ast->line);
+        }
+        reg_encode_iABC(gen->chunk, OP_INDEX_SET, c_val, c_obj, c_idx, ast->line);
+        emit_mov(gen, c_old, c_val, ast->line);   // 表达式位置的结果 = 写入后的值
+        reg_free(gen, c_val);
+        patch_jmp(gen, skip);
+        if (dst >= 0 && dst != c_old) emit_mov(gen, dst, c_old, ast->line);
+        reg_free(gen, c_old);
+        reg_free(gen, c_idx);
+        reg_free(gen, c_obj);
+        return;
+    }
+
     // 复合索引赋值 `arr[i] += v`：读-改-写，下标只求值一次。
     // 判据逐个 token 命中（index_assign 在 union 里，脱糖节点可能残留旧字节）
     int c_arith = -1;
@@ -1935,10 +1963,97 @@ static void emit_compound_value(CodeGen* gen, Ast* ast, int dst, int imm_fast, i
     if (!r_is_direct) reg_free(gen, r);   // 直取变量寄存器时没分配临时，不能 free ✓
 }
 
+// ----------------------------------------------------------------------------
+// `lhs ?? = rhs`（空值合并赋值，B1，2026-11-02）
+//   语义 = `if lhs == null { lhs = rhs }`，**右侧惰性求值**（与 `??` 的短路一致：
+//   实测 `a ?? f()` 在 a 非空时 f 一次都不调用）。
+//   ⚠ 与算术复合赋值（读旧值 → 算 → 写回）形状不同：中间是**条件跳转**，
+//     所以不能复用 emit_compound_value / emit_compound_op。
+// ----------------------------------------------------------------------------
+static void gen_coalesce_assign_var(CodeGen* gen, Ast* ast) {
+    SymRef* ref = &ast->u.compound_assign.ref;
+    int line = ast->line;
+
+    // struct 方法体内的字段形态：语义阶段把目标改写成 ref.name = "__self_field__"
+    //   （self 固定占 R0），与 gen_compound_assign 的字段分支同一手法。
+    if (strcmp(ref->name, "__self_field__") == 0) {
+        int field_idx = ref->index;
+        int slot = reg_alloc(gen);
+        reg_encode_iABC(gen->chunk, OP_GET_FIELD, slot, 0, field_idx, line);
+        int isnull = reg_alloc(gen);
+        emit_is_null(gen, isnull, slot, line);
+        int skip = emit_jmp_if_false(gen, isnull, line);   // 非 null ⇒ 跳过赋值
+        reg_free(gen, isnull);
+        int r = gen_expr(gen, ast->u.compound_assign.value);
+        if (r >= 0) {
+            emit_mov(gen, slot, r, line);
+            reg_free(gen, r);
+        } else {
+            emit_loadnil_to(gen, slot, line);
+        }
+        reg_encode_iABC(gen->chunk, OP_SET_FIELD, slot, 0, field_idx, line);
+        patch_jmp(gen, skip);
+        reg_free(gen, slot);
+        return;
+    }
+
+    int is_local = (ref->kind == SYM_LOCAL || ref->kind == SYM_PARAM);
+    int slot;
+    if (is_local) {
+        slot = ref->index;
+    } else {
+        // 全局 / upvalue / 模块变量：先读到临时寄存器再判（与 gen_compound_assign 同源）
+        slot = reg_alloc(gen);
+        if (ref->kind == SYM_GLOBAL) {
+            emit_getglobal_to(gen, slot, ref->index, line);
+        } else if (ref->kind == SYM_UPVALUE) {
+            emit_getupval_to(gen, slot, ref->index, line);
+        } else if (ref->kind == SYM_MODULE) {
+            reg_encode_iABx(gen->chunk, OP_GET_MODULE_VAR, slot, ref->index, line);
+        } else {
+            emit_loadnil_to(gen, slot, line);
+        }
+    }
+
+    int isnull = reg_alloc(gen);
+    emit_is_null(gen, isnull, slot, line);
+    int skip = emit_jmp_if_false(gen, isnull, line);       // 非 null ⇒ 跳过赋值
+    reg_free(gen, isnull);
+
+    int r = gen_expr(gen, ast->u.compound_assign.value);
+    if (r >= 0) {
+        emit_mov(gen, slot, r, line);
+        reg_free(gen, r);
+    } else {
+        emit_loadnil_to(gen, slot, line);
+    }
+
+    patch_jmp(gen, skip);
+
+    if (!is_local) {
+        // 非 null 时写回的是"读到的原值"（值相同）⇒ 无条件写回，行为等价
+        if (ref->kind == SYM_GLOBAL) {
+            emit_setglobal(gen, slot, ref->index, line);
+        } else if (ref->kind == SYM_UPVALUE) {
+            emit_setupval(gen, slot, ref->index, line);
+        } else if (ref->kind == SYM_MODULE) {
+            reg_encode_iABx(gen->chunk, OP_SET_MODULE_VAR, slot, ref->index, line);
+        }
+        reg_free(gen, slot);
+    }
+}
+
 void gen_compound_assign(CodeGen* gen, Ast* ast) {
     // a += expr → R[dst] = R[dst] + expr
     SymRef* ref = &ast->u.compound_assign.ref;
     if (!ref->name) return;
+
+    // ★ 2026-11-02（B1）：空值合并赋值与算术复合赋值的形状不同（判空跳转，不是读-算-写），
+    //   单独走一条路径：见 gen_coalesce_assign_var。
+    if (ast->u.compound_assign.op == TOK_COALESCE_ASSIGN) {
+        gen_coalesce_assign_var(gen, ast);
+        return;
+    }
 
     // T33：`s += e` 的字符串自追加特化（判据同 gen_assign 的 `s = s + e`，见 codegen.c）。
     //   `__self_field__` 那种语义阶段改写的标记 kind 不是 SYM_LOCAL ⇒ 天然被排除 ✓

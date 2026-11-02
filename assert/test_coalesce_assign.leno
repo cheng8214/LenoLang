@@ -1,0 +1,72 @@
+// 空值合并赋值 `??=`（B1，2026-11-02）
+//
+// 语义 = `if lhs == null { lhs = rhs }`，两条硬约束：
+//   ① **右侧惰性求值** —— lhs 非 null 时 rhs 一次都不调用（与 `??` 的短路一致）；
+//   ② **左值只求值一次** —— 字段/下标的接收者与下标不会算两遍。
+// 覆盖：局部变量 / 字段 / 顶层全局 / 字典下标 / 闭包 upvalue / 表达式位置。
+
+struct CoalesceBox {
+    int? v = null
+    int? u = 9
+}
+
+var co_gcount = 0
+int? co_gval = null
+
+func co_rhs(): int {
+    co_gcount = co_gcount + 1
+    return 42
+}
+
+main() {
+    // ① null ⇒ 写入
+    int? a = null
+    a ??= 3
+    assert_eq(a as int, 3, "null 时应写入")
+
+    // ② 非 null ⇒ 保持，且右侧**不调用**
+    int? b = 7
+    b ??= co_rhs()
+    assert_eq(b as int, 7, "非 null 时不该覆盖")
+    assert_eq(co_gcount, 0, "非 null 时右侧必须惰性（一次都不调用）")
+
+    // ③ null 时右侧真的调用（恰好一次）
+    int? c = null
+    c ??= co_rhs()
+    assert_eq(c as int, 42, "null 时应求值右侧并写入")
+    assert_eq(co_gcount, 1, "null 时右侧应恰好调用一次")
+
+    // ④ 表达式位置：结果是"写入后的值"（与 `a = 1` 返回 1 同口径）
+    int? d = null
+    var e = (d ??= 11)
+    assert_eq(e as int, 11, "表达式位置应返回写入后的值")
+    assert_eq(d as int, 11, "目标变量也应写入")
+
+    // ⑤ 字段：null 的写入、非 null 的保持
+    CoalesceBox bx = new CoalesceBox()
+    bx.v ??= 5
+    bx.u ??= 6
+    assert_eq(bx.v as int, 5, "字段 null 时写入")
+    assert_eq(bx.u as int, 9, "字段非 null 时保持")
+
+    // ⑥ 顶层全局变量
+    co_gval ??= 8
+    assert_eq(co_gval as int, 8, "全局变量同样适用")
+
+    // ⑦ 字典下标（缺键读出来是 null）：第一次写入、第二次保持
+    Dict[string, int?] dd = {}
+    dd["k"] ??= 1
+    dd["k"] ??= 2
+    assert_eq(dd["k"] as int, 1, "字典下标：第一次写入、第二次保持")
+
+    // ⑧ 闭包 upvalue
+    int? up = null
+    func():int f = func(): int {
+        up ??= 4
+        return up as int
+    }
+    assert_eq(f(), 4, "upvalue 首次写入")
+    assert_eq(f(), 4, "upvalue 二次保持")
+
+    print("test_coalesce_assign all passed")
+}

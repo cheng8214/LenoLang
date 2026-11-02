@@ -1,0 +1,47 @@
+// 空值合并赋值 `??=` 的**诊断**（B1，2026-11-02）
+//   ① 目标不可空 ⇒ 编译错误（`??=` 恒不生效，100% 是笔误）
+//   ② const 目标 ⇒ 仍然被 const 检查拦住（新运算符不能开后门）
+//   ③ 右值与目标类型不兼容 ⇒ 复合赋值的类型检查照旧生效
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+import strings
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_coalesce_diag")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ---- ① 不可空目标 ----
+    var f1 = dirs.join(work, "nonnullable.leno")
+    files.write(f1, @"main() {
+    int a = 0
+    a ??= 1
+}
+")
+    var out1 = ce.expect_error(f1, "不可空目标", "不可空", 3)
+    assert_true(strings.has(out1, "恒不生效"), "报错要说清『恒不生效』；实际=" + out1)
+    assert_true(strings.has(out1, "a?"), "报错要给出改法（把声明改成可空）；实际=" + out1)
+
+    // ---- ② const 目标 ----
+    var f2 = dirs.join(work, "const_target.leno")
+    files.write(f2, @"const int? C = null
+
+main() {
+    C ??= 5
+}
+")
+    ce.expect_error(f2, "const 目标", "const 变量", 4)
+
+    // ---- ③ 右值类型不匹配 ----
+    var f3 = dirs.join(work, "type_mismatch.leno")
+    files.write(f3, @"main() {
+    int? a = null
+    a ??= ""文字""
+}
+")
+    ce.expect_error(f3, "右值类型不匹配", "复合赋值类型不匹配", 3)
+
+    print("=== test_diag_coalesce_assign ALL passed ===")
+}

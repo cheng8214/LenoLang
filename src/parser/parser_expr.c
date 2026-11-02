@@ -26,6 +26,7 @@ static int is_generic_type_start_token(LenoTokenType type) {
 static Ast* parse_anon_func(Parser* p);
 static Ast* parse_new(Parser* p);
 static Ast* parse_addr_of(Parser* p);
+static Ast* parse_arrow_infix(Parser* p, Ast* left);   // 箭头函数：`x => expr`（C2）
 
 // ============================================================================
 // Pratt 规则表 - 定义每个 token 的前缀/中缀解析器和优先级
@@ -57,6 +58,12 @@ static ParseRule rules[] = {
     [TOK_SHLEQ]     = {NULL,     parse_assignment, PREC_ASSIGNMENT},
     [TOK_SHREQ]     = {NULL,     parse_assignment, PREC_ASSIGNMENT},
     [TOK_USHREQ]    = {NULL,     parse_assignment, PREC_ASSIGNMENT},  // >>>=
+    [TOK_COALESCE_ASSIGN] = {NULL, parse_assignment, PREC_ASSIGNMENT},  // 空值合并赋值（B1）
+    // 箭头函数（C2）：`x => expr`。**必须**挂在 PREC_ASSIGNMENT 这一档 ——
+    //   `if x is T => v` / `case is A => v` 里的 `is` 是 PREC_IN（更高）⇒ 解析到
+    //   AST_TYPE_CHECK 就停在这一档；此时 parse_arrow_infix 发现 left 不是裸变量、
+    //   原样返回不消费 ⇒ `=>` 留着给 if/switch 的绑定语法 ✓
+    [TOK_FAT_ARROW] = {NULL, parse_arrow_infix, PREC_ASSIGNMENT},
     [TOK_SEMI]      = {NULL,     NULL,   PREC_NONE},
     [TOK_SLASH]     = {NULL,     parse_binary, PREC_FACTOR},
     [TOK_STAR]      = {NULL,     parse_binary, PREC_FACTOR},
@@ -388,8 +395,183 @@ Ast* parse_identifier_expr(Parser* p) {
     return ast;
 }
 
+// ============================================================================
+// 箭头函数（C2，2026-11-02）
+//   `x => expr` / `(a, b) => expr` / `(int x) => expr` / `() => expr`
+//
+// 纯语法糖：直接 desugar 成 `func(参数) { return expr }`（AST_FUNC_DEF），
+//   **不动语义分析与字节码** —— 语义/闭包/类型推断全部沿用既有匿名函数那条路。
+// 两种入口：
+//   ① `x => expr`：TOK_FAT_ARROW 的中缀规则（见 rules[] 与 parse_arrow_infix）
+//   ② `(…) => expr`：parse_grouping 先**投机**解析一遍参数表（静默期 + 词法回滚），
+//      失败就回退成普通括号表达式 —— `(a + b)` / `(x)` 必须照旧可用。
+// ============================================================================
+
+// 把"参数 + 一个表达式"拼成 AST_FUNC_DEF（体 = { return expr }）
+static Ast* make_arrow_func(int line, int column, char** params,
+                            TypeInfo** param_types, int pcnt, Ast* body_expr) {
+    Ast* fn = ast_new(AST_FUNC_DEF, line);
+    fn->column = column;
+    fn->u.func.name = copy_string("<arrow>", 7);
+    fn->u.func.params = params;
+    fn->u.func.param_types = param_types;
+    fn->u.func.param_defaults = (Ast**)calloc((size_t)(pcnt > 0 ? pcnt : 1), sizeof(Ast*));
+    fn->u.func.pcnt = pcnt;
+    fn->u.func.return_type = type_new(TYPE_INFER);
+    fn->u.func.type_params = NULL;
+    fn->u.func.type_param_constraints = NULL;
+    fn->u.func.type_param_defaults = NULL;
+    fn->u.func.type_param_count = 0;
+    fn->u.func.default_count = 0;
+    fn->u.func.is_async = 0;
+
+    Ast* blk = ast_new(AST_BLOCK, line);
+    ast_list_init(&blk->u.block);
+    Ast* ret = ast_new(AST_RETURN, line);
+    ret->column = column;
+    ret->u.ret = body_expr;
+    ast_list_add(&blk->u.block, ret);
+    fn->u.func.body = blk;
+    return fn;
+}
+
+static void free_arrow_params(char** params, TypeInfo** types, int pcnt) {
+    for (int i = 0; i < pcnt; i++) {
+        if (params) free(params[i]);
+        if (types && types[i]) type_free(types[i]);
+    }
+    free(params);
+    free(types);
+}
+
+// `x => expr`：中缀规则。left 不是裸标识符时**不消费** token 并原样返回
+//   ⇒ 调用方的 while 循环会立刻退出，`=>` 留给 if / switch 的绑定语法
+//   （`if x is T => v` / `case is A => v`）。这是两者共存的关键。
+static Ast* parse_arrow_infix(Parser* p, Ast* left) {
+    if (!left || left->kind != AST_VAR) return left;   // 不消费，交给上层
+
+    int line = p->lex.current.line;
+    int arrow_column = left->column;              // 报错落点用箭头**左端**（参数名）的列
+    char** params = (char**)malloc(sizeof(char*) * 1);
+    TypeInfo** types = (TypeInfo**)malloc(sizeof(TypeInfo*) * 1);
+    params[0] = copy_string(left->u.var.name, (int)strlen(left->u.var.name));
+    // 省略类型的参数 ⇒ **any**（与 `(a) => …` 同口径）。
+    //   ⚠ 不能用 TYPE_INFER：语义层明确拒绝"参数是 var 类型"（报「参数 'x' 不能使用
+    //     var 类型，请改用 any」）⇒ 用 INFER 连编译都过不了。
+    //   代价：签名比较是"按完整签名比"的 ⇒ 省略类型得到的是 `func(any):any`，
+    //   传给 `func(int):int` 形参会被判不匹配。要传到有明确签名的位置就写类型：
+    //   `(int x) => x * x` ✓
+    types[0] = type_new(TYPE_ANY);
+    ast_free(left);
+
+    lexer_next(&p->lex);                        // 消费 '=>'
+    Ast* body = parse_expression(p);
+    return make_arrow_func(line, arrow_column, params, types, 1, body);
+}
+
+// ★ C2 护栏（2026-11-02）：条件位置出现箭头函数 ⇒ 定向报错。
+//   为什么必须有这一条：`=>` 以前在 if/while 头**只**用于类型绑定（`if x is T => v`），
+//   裸变量紧跟 `=>`（如 `if x => 1 { }`）本来是语法错误。加了箭头函数后它会被
+//   解析成"条件是一个函数值 + 体" ⇒ **恒为真**且一声不吭 —— 把"编不过"变成
+//   "悄悄走另一条路"，正是本项目最忌讳的那种退化。
+//   `if check(x => x) { }` 不受影响（cond 是 AST_CALL）。
+void check_arrow_in_cond(Ast* cond) {
+    if (cond && cond->kind == AST_FUNC_DEF) {
+        error_add_at_fmt(ERR_SYNTAX, cond->line, cond->column,
+            "if / while 的条件、switch 的 case 值都不接受箭头函数："
+            "`x => 表达式` 求值出来是**函数值**（条件恒为真、case 永不命中）。"
+            "若要类型绑定请写 `if x is 类型 => 名字 { … }`；"
+            "确实想用函数值做条件，先赋给变量再判（`var f = x => …` 然后 `if f != null`）");
+    }
+}
+
+// `(…) => expr`：投机解析。**不报错**（由调用方开静默段），失败返回 NULL。
+static Ast* try_parse_arrow_parens(Parser* p) {
+    int line = p->lex.current.line;
+    int column = p->lex.current.column;
+
+    if (p->lex.current.type != TOK_LPAREN) return NULL;
+    lexer_next(&p->lex);                        // '('
+
+    char** params = NULL;
+    TypeInfo** types = NULL;
+    int pcnt = 0, cap = 8;
+    params = (char**)malloc(sizeof(char*) * cap);
+    types = (TypeInfo**)malloc(sizeof(TypeInfo*) * cap);
+
+    if (p->lex.current.type != TOK_RPAREN) {
+        while (1) {
+            // 判断"裸名字"（无类型）：`a` 后面紧跟 ',' 或 ')'
+            int bare = 0;
+            if (p->lex.current.type == TOK_IDENT) {
+                Lexer save = p->lex;
+                lexer_next(&p->lex);
+                if (p->lex.current.type == TOK_COMMA || p->lex.current.type == TOK_RPAREN) {
+                    bare = 1;
+                }
+                p->lex = save;
+            }
+
+            TypeInfo* ty = NULL;
+            char* nm = NULL;
+            if (bare) {
+                ty = type_new(TYPE_ANY);     // 省略类型的参数 ⇒ any（理由见 parse_arrow_infix）
+                nm = copy_string(p->lex.current.text, p->lex.current.len);
+                lexer_next(&p->lex);
+            } else {
+                ty = parse_type(p);
+                if (!ty) goto fail;
+                if (p->lex.current.type != TOK_IDENT) goto fail;   // 如 `(x + 1)`
+                nm = copy_string(p->lex.current.text, p->lex.current.len);
+                lexer_next(&p->lex);
+            }
+
+            if (pcnt >= cap) {
+                cap *= 2;
+                params = (char**)realloc(params, sizeof(char*) * cap);
+                types = (TypeInfo**)realloc(types, sizeof(TypeInfo*) * cap);
+            }
+            params[pcnt] = nm;
+            types[pcnt] = ty;
+            pcnt++;
+
+            if (p->lex.current.type == TOK_COMMA) {
+                lexer_next(&p->lex);
+                continue;
+            }
+            break;
+        }
+    }
+
+    if (p->lex.current.type != TOK_RPAREN) goto fail;
+    lexer_next(&p->lex);                        // ')'
+    if (p->lex.current.type != TOK_FAT_ARROW) goto fail;
+    lexer_next(&p->lex);                        // '=>'
+
+    {
+        Ast* body = parse_expression(p);
+        return make_arrow_func(line, column, params, types, pcnt, body);
+    }
+
+fail:
+    free_arrow_params(params, types, pcnt);
+    return NULL;
+}
+
 // 解析括号分组表达式 (expr)
 Ast* parse_grouping(Parser* p) {
+    // ★ 先试箭头函数：`(a, b) => …` / `(int x) => …` / `() => …`
+    //   投机解析必须**词法回滚 + 静默错误** —— 否则 `(a + b)` 会先刷一串
+    //   "期望参数类型"之类的假报错，再被当成括号表达式解析第二遍。
+    Lexer saved = p->lex;
+    error_silence_begin();
+    Ast* lam = try_parse_arrow_parens(p);
+    int dropped = error_silence_end();
+    if (lam && dropped == 0) return lam;
+    if (lam) ast_free(lam);
+    p->lex = saved;
+    error_set_column(saved.current.column);
+
     lexer_next(&p->lex);
     Ast* expr = parse_expression(p);
     consume(p, TOK_RPAREN, "期望 ')'");
@@ -1350,6 +1532,35 @@ Ast* parse_assignment(Parser* p, Ast* left) {
     // 处理属性赋值: obj.prop = value（AST_MODULE_ACCESS 在赋值上下文中）
     // 保留 AST_MODULE_ACCESS，让语义分析阶段决定是字段访问还是索引访问
     if (left->kind == AST_MODULE_ACCESS) {
+        // ★ 2026-11-02（B1）：`obj.prop ?? = v` ⇒ 交给 INDEX_ASSIGN 的"读-改-写"路径，
+        //   与 `obj[i] ?? = v` 同一套 codegen（判空 → 只在 null 时求右值 → 写回）。
+        //   ⚠ 不能像下面的 `+=` 那样脱糖成 `obj["prop"] = obj["prop"] ?? v`：
+        //     那条路在**非 null 时也会写回**（值相同，行为等价但多一次写），
+        //     而且右值求值时机与"只在 null 时求值"的口径不一致（`??` 是短的，写回不是）。
+        //     统一走 op 让 codegen 判更干净，也避免语义阶段把 binop 当右值做类型检查。
+        if (op == TOK_COALESCE_ASSIGN) {
+            Ast* obj_ast = ast_new(AST_VAR, line);
+            obj_ast->u.var.name = strdup(left->u.module_access.module_name);
+
+            Ast* idx_ast = ast_new(AST_STRING, line);
+            idx_ast->u.string.value = strdup(left->u.module_access.member_name);
+            idx_ast->u.string.len = (int)strlen(left->u.module_access.member_name);
+
+            Ast* assign_ast = ast_new(AST_INDEX_ASSIGN, line);
+            assign_ast->column = left_column;
+            assign_ast->u.index_assign.obj = obj_ast;
+            assign_ast->u.index_assign.index = idx_ast;
+            assign_ast->u.index_assign.value = value;
+            assign_ast->u.index_assign.field_index = -1;
+            assign_ast->u.index_assign.op = TOK_COALESCE_ASSIGN;
+
+            free(left->u.module_access.member_name);
+            free(left->u.module_access.module_name);
+            free(left);
+
+            return assign_ast;
+        }
+
         // 处理复合赋值运算符
         if (op == TOK_PLUSEQ || op == TOK_MINUSEQ || op == TOK_STAREQ || op == TOK_SLASHEQ ||
             op == TOK_MODEQ || op == TOK_BITANDEQ || op == TOK_BITOREQ || op == TOK_BITXOREQ ||
@@ -1426,10 +1637,11 @@ Ast* parse_assignment(Parser* p, Ast* left) {
         return NULL;
     }
 
-    // 处理复合赋值运算符: += -= *= /= %= &= |= ^= <<= >>=
+    // 处理复合赋值运算符: += -= *= /= %= &= |= ^= <<= >>= 以及空值合并赋值
     if (op == TOK_PLUSEQ || op == TOK_MINUSEQ || op == TOK_STAREQ || op == TOK_SLASHEQ ||
         op == TOK_MODEQ || op == TOK_BITANDEQ || op == TOK_BITOREQ || op == TOK_BITXOREQ ||
-        op == TOK_SHLEQ || op == TOK_SHREQ || op == TOK_USHREQ) {
+        op == TOK_SHLEQ || op == TOK_SHREQ || op == TOK_USHREQ ||
+        op == TOK_COALESCE_ASSIGN) {
         // 创建复合赋值节点
         Ast* ast = ast_new(AST_COMPOUND_ASSIGN, line);
         ast->column = left_column;

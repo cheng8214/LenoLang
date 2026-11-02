@@ -806,11 +806,30 @@
                 // ★ 清「确定为 null」标志（T11，写点见普通赋值那处的说明）。
                 //   这一处同时**报错**：`int? a = null; a += 1` 编译期就能确定是 null
                 //   （报错口径与 `a + 1` 一致，见 semantic_type.c 的 report_known_null_name）。
-                if (sym->is_null_value) {
+                //   ⚠ 空值合并赋值（B1）**必须豁免**：`int? a = null; a ?? = 3` 正是它的头号用法，
+                //     报"确定是 null"等于把新特性唯一的入口封死。
+                if (ast->u.compound_assign.op != TOK_COALESCE_ASSIGN && sym->is_null_value) {
                     report_known_null_name(s, ast->u.compound_assign.name, ast->line, ast->column);
                 }
                 sym->is_null_value = 0;
                 ast->u.compound_assign.ref.type_kind = sym->type ? sym->type->kind : TYPE_ANY;
+
+                // ★ 2026-11-02（B1）：不可空的目标用空值合并赋值 ⇒ 恒不生效，直接报错。
+                //   （写成错误而不是警告：`int a; a ?? = 1` 100% 是笔误 —— a 永远不可能是 null）
+                //   ⚠ 注释里一律写 "?? ="（中间加空格）而不是连写：连写会触发三字符组
+                //     （trigraph）替换 —— `??=` 在翻译阶段就被换成 `#`，字符串字面量里同样中招。
+                if (ast->u.compound_assign.op == TOK_COALESCE_ASSIGN &&
+                    sym->type && !type_is_nullable(sym->type) &&
+                    sym->type->kind != TYPE_ANY && sym->type->kind != TYPE_INFER &&
+                    sym->type->kind != TYPE_UNKNOWN) {
+                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                        // ⚠ 操作符拆成两段字面量写出：连写 `?` `?` `=` 会被三字符组替换成 '#'
+                        "'%s' 不可空（类型 '%s'），`?" "?=` 恒不生效 —— 直接写 '%s = 值' 即可；"
+                        "需要「可能为空」语义请把声明改成 '%s?'",
+                        ast->u.compound_assign.name,
+                        type_kind_to_string(sym->type->kind),
+                        ast->u.compound_assign.name, ast->u.compound_assign.name);
+                }
             }
             visit(s, ast->u.compound_assign.value);
 

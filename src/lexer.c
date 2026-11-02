@@ -994,9 +994,20 @@ advance(lex);
                 advance(lex);  // 消费 '?'
                 advance(lex);  // 消费 '.'
             } else if (peek_next(lex) == '?') {
-                lex->current = make_token(lex, TOK_NULL_COALESCE);
-                advance(lex);  // 消费第一个 '?'
-                advance(lex);  // 消费第二个 '?'
+                // ★ 2026-11-02（B1）：`??` 与"`??` + `=`"（空值合并赋值）—— 三字符前瞻。
+                //   必须在 `??` 分支里判，否则 `a ?? = 3` 会被切成 `??` + `=`（`=` 单独成 token）
+                //   ⚠ 注释里不要连写这三个字符：那是 trigraph，翻译阶段就被换成 '#'。
+                //   ⇒ parser 报「期望表达式」（这就是本特性修之前的现象）。
+                if (lex->src[lex->pos + 2] == '=') {
+                    lex->current = make_token(lex, TOK_COALESCE_ASSIGN);
+                    advance(lex);  // 消费第一个 '?'
+                    advance(lex);  // 消费第二个 '?'
+                    advance(lex);  // 消费 '='
+                } else {
+                    lex->current = make_token(lex, TOK_NULL_COALESCE);
+                    advance(lex);  // 消费第一个 '?'
+                    advance(lex);  // 消费第二个 '?'
+                }
             } else {
                 lex->current = make_token(lex, TOK_QUESTION);
                 advance(lex);

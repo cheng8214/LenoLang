@@ -1,0 +1,66 @@
+// 箭头函数的诊断护栏（C2，2026-11-02）
+//
+// `=>` 在 if/while 头原本**只**表示类型绑定（`if x is T => v`）。有了箭头函数后，
+// 裸变量紧跟 `=>`（`if x => 1 { }`）会被解析成"条件 = 函数值"⇒ 恒真、且一声不吭。
+// 这条护栏把它按"语法错误"拦下来（以前它也是编不过的，只是报错指不出真因）。
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_arrow_diag")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ---- ① if 条件 ----
+    var f1 = dirs.join(work, "if_arrow.leno")
+    files.write(f1, @"main() {
+    var x = 1
+    if x => 1 {
+        print(""never"")
+    }
+}
+")
+    ce.expect_error(f1, "if 条件里的箭头函数", "不接受箭头函数", 3)
+
+    // ---- ② while 条件 ----
+    var f2 = dirs.join(work, "while_arrow.leno")
+    files.write(f2, @"main() {
+    var x = 1
+    while x => 1 {
+        break
+    }
+}
+")
+    ce.expect_error(f2, "while 条件里的箭头函数", "不接受箭头函数", 3)
+
+    // ---- ③ switch case 值 ----
+    var f3 = dirs.join(work, "case_arrow.leno")
+    files.write(f3, @"main() {
+    var x = 1
+    switch x {
+        case x => 1 { print(""never"") }
+        default { print(""d"") }
+    }
+}
+")
+    ce.expect_error(f3, "case 值里的箭头函数", "不接受箭头函数", 4)
+
+    // ---- ④ 对照：类型绑定必须照旧可用（不能被护栏误伤）----
+    var f4 = dirs.join(work, "bind_ok.leno")
+    files.write(f4, @"struct Box { int v = 7 }
+
+func make(): any { return new Box() }
+
+main() {
+    var x = make()
+    if x is Box => b {
+        print(""v="" + _int(b.v))
+    }
+}
+")
+    ce.expect_ok(f4, "if + is + => 绑定不受护栏影响", "v=7")
+
+    print("=== test_diag_arrow_func ALL passed ===")
+}

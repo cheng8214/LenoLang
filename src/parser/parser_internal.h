@@ -148,6 +148,9 @@ Ast* parse_func_body_and_create(Parser* p, char* name, int line, int column);
 Ast* parse_expression_stmt(Parser* p);
 TypeInfo* parse_type(Parser* p);
 
+// C2（2026-11-02）：条件位置不许是箭头函数（恒真）—— if / while / switch case 头共用
+void check_arrow_in_cond(Ast* cond);
+
 // 类型位置（is / as / case is / 类型守卫）拒绝"模块限定类型名"（如 a.Point），
 // 并给出与声明处一致的"请先 use"提示。返回 0 = 已报错并释放 t ⇒ 调用方按解析失败处理。
 int parser_reject_module_qualified_type(Parser* p, TypeInfo* t);

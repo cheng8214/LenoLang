@@ -3241,10 +3241,14 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
             memset(&ref, 0, sizeof(ref));
             Symbol* sym = resolve_variable_with_upvalue(s, ast->u.compound_assign.name, &ref);
             // ★ T11：**确定是 null** 的变量做复合赋值（`int? a = null; a += 1`）⇒ 同一口径的编译错误
-            if (sym && sym->is_null_value) {
+            //   ⚠ 空值合并赋值豁免（B1）：`int? a = null; a ?? = 3` 的 a 本来就该是 null，
+            //     读的这一刻是 null 恰恰是特性生效的前提，不能按"确定是 null 还参与运算"报错。
+            if (sym && sym->is_null_value &&
+                ast->u.compound_assign.op != TOK_COALESCE_ASSIGN) {
                 report_known_null_name(s, ast->u.compound_assign.name, ast->line, ast->column);
             }
             if (sym && sym->type) {
+                // type_new 默认 nullable = 0 ⇒ 空值合并赋值的结果天然是"去掉可空"的那一侧
                 result = type_new(sym->type->kind);
             } else {
                 result = infer_expr_type(s, ast->u.compound_assign.value);

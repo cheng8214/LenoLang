@@ -1,0 +1,57 @@
+// 箭头函数（C2，2026-11-02）：`x => expr` / `(a, b) => expr` / `(int x) => expr` / `() => expr`
+//
+// 纯语法糖：desugar 成 `func(参数) { return expr }`（AST 仍是 AST_FUNC_DEF），
+// 语义 / 闭包 / 类型推断全走既有匿名函数那条路。
+// 关键回归点：`=>` 在 Leno 里还有两处既有用法（`if x is T => v` / `case is A => v`），
+// 它们必须照旧工作 —— 套件里那批用例没过就说明这里挂了。
+
+func apply_one(int x, func(int):int f): int { return f(x) }
+
+struct ArrowPair {
+    int a = 1
+    int b = 2
+    func sum(): int { return a + b }
+}
+
+main() {
+    // ① 单参免括号
+    var inc = x => x + 1
+    assert_eq(inc(41), 42, "单参箭头")
+
+    // ② 零参
+    var answer = () => 42
+    assert_eq(answer(), 42, "零参箭头")
+
+    // ③ 多参（省略类型 ⇒ any）
+    var add = (a, b) => a + b
+    assert_eq(add(2, 3), 5, "多参箭头")
+
+    // ④ 带类型
+    var mul = (int a, int b) => a * b
+    assert_eq(mul(3, 4), 12, "带类型的箭头")
+
+    // ⑤ 冗余括号的单参（`(a) => …` 与 `a => …` 等价）
+    var same = (a) => a
+    assert_eq(same(7), 7, "单参加括号")
+
+    // ⑥ 作为实参（形参签名明确 ⇒ 参数要写类型）
+    assert_eq(apply_one(10, (int x) => x * x), 100, "箭头当实参")
+
+    // ⑦ 普通括号表达式不受影响
+    var p = (2 + 3) * 4
+    assert_eq(p, 20, "括号表达式照旧")
+    ArrowPair pr = new ArrowPair()
+    assert_eq((pr.sum()) + 1, 4, "括号里调方法照旧")
+
+    // ⑧ 体是 if 表达式 + 捕获外层变量
+    var v = 5
+    var pick = (int x) => if x > v then x else v
+    assert_eq(pick(3), 5, "if 表达式体（取大）")
+    assert_eq(pick(9), 9, "if 表达式体（取实际）")
+
+    // ⑨ 嵌套箭头（柯里化）
+    var make = (int a) => (int b) => a + b
+    assert_eq(make(1)(2), 3, "嵌套箭头")
+
+    print("test_arrow_func all passed")
+}

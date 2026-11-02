@@ -1,7 +1,11 @@
-// OP_SWITCH_LOOKUP 回归 —— 覆盖面 R1（§8.61）+ int 快路径 R9（§8.62）
+// switch 语义回归 —— 覆盖面 R1（§8.61）+ int 快路径 R9（§8.62）
 //
-// 编译器只在「>= 4 个同类型常量 case」时才发 OP_SWITCH_LOOKUP
-// （codegen_stmt.c 的 gen_switch），所以这里都写 4 case + default。
+// ⚠ 2026-11-02 更正：本文件原注释说「编译器只在 >= 4 个同类型常量 case 时才发
+//   OP_SWITCH_LOOKUP（codegen_stmt.c 的 gen_switch）」，**与现状不符** ——
+//   现在的 gen_switch 一律展开成**线性比较链**，全仓 codegen 不发 OP_SWITCH_LOOKUP
+//   （该指令在 VM 侧是空动作，`switch_lookup_index()` 只剩定义、没有调用方）。
+//   本用例的价值不变：它钉的是 **switch 的匹配语义**（int / bigint / float / string /
+//   负数 / default），与走哪条实现路径无关。
 //
 // 覆盖的路径：
 //   A. int case + int 值 —— "switch 在循环体里"与"switch 在被调函数里"两种位置都覆盖。

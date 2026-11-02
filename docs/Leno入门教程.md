@@ -1679,6 +1679,33 @@ or        （最低）
 > if _onChange != null { _onChange(value) }   // ✅ 正确写法
 > ```
 
+#### 空值合并赋值 `??=`（2026-11-02）
+
+`lhs ??= rhs` 是"**只在 lhs 为 null 时才写入**"的复合赋值：
+
+```leno
+int? a = null
+a ??= 3
+print(a)        // 3   —— 是 null，写入
+
+int? b = 7
+b ??= rhs()     // 非 null ⇒ 保持不变，且 **rhs 一次都不调用**
+print(b)        // 7
+```
+
+- **等价于** `if lhs == null { lhs = rhs }`，**右侧惰性求值**（与 `??` 的短路一致）；
+- 支持变量 / 顶层 `var` / 闭包捕获的变量 / struct 字段 / 下标（`d["k"] ??= 1`），
+  且左值只求值一次（下标不会算两遍）；
+- 用在**表达式位置**时返回写入后的值：`var e = (d ??= 11)` ⇒ `e == 11`；
+- **目标必须可空**：`int a = 0; a ??= 1` 直接编译报错（恒不生效，100% 是笔误）。
+
+> 典型用法：给"可能没传的参数/可能缺的配置项"补默认值
+> ```leno
+> Dict opts = load_opts()
+> opts["w"] ??= 360
+> opts["h"] ??= 200
+> ```
+
 ### 运算符示例
 
 ```leno
@@ -3416,6 +3443,46 @@ var ops = {
 }
 print(ops["double"](5)) // 10
 ```
+
+#### 箭头函数（匿名函数的简写，2026-11-02）
+
+单表达式的小闭包可以写成箭头函数，**它就是匿名函数的语法糖**
+（`x => e` 等价于 `func(参数) { return e }`，AST / 闭包 / 类型推断完全一样）：
+
+```leno
+// 单参：免括号
+var inc = x => x + 1
+print(inc(41))              // 42
+
+// 零参
+var answer = () => 42
+print(answer())             // 42
+
+// 多参（省略类型 ⇒ any）
+var add = (a, b) => a + b
+print(add(2, 3))            // 5
+
+// 带类型（想传给形参签名明确的函数时必须写）
+var mul = (int a, int b) => a * b
+print(mul(3, 4))            // 12
+
+// 体可以是 if 表达式，也能捕获外层变量
+var v = 5
+var pick = (int x) => if x > v then x else v
+print(pick(3))              // 5
+
+// 柯里化：箭头可以套箭头
+var make = (int a) => (int b) => a + b
+print(make(1)(2))           // 3
+```
+
+> **两个口径**：
+> - **省略类型的参数是 `any`**（与 `func(any x)` 同）。函数类型是**按完整签名**比较的，
+>   所以 `func(any):any` 传不进 `func(int):int` 的形参 —— 这种位置要写 `(int x) => …`。
+> - `if` / `while` 的条件、`switch` 的 `case` 值**不接受**箭头函数
+>   （`x => e` 求值出来是函数值：条件恒真、case 永不命中）⇒ 编译期直接报错。
+>   `=>` 在 if 头另有一套既有含义（类型绑定，见下节 `if x is T => v`），两者在
+>   **不同位置**，互不干扰。
 
 #### 泛型匿名函数
 
@@ -11325,6 +11392,7 @@ lenolang program.leno
 | 逻辑运算  | `and`, `or`, `not`                      |
 | 安全访问  | `expr?.field`, `expr?.method(args)`      |
 | 空值合并  | `expr ?? default`                       |
+| 空值合并赋值 | `lhs ??= default`（仅 lhs 为 null 时写入；右侧惰性求值） |
 | 成员检查  | `x in arr`, `key in dict`, `sub in str` |
 | 非成员检查 | `x not in arr`, `key not in dict`       |
 | 可空类型  | `Type?` — `int?`, `string?`, `Point?` 等  |
@@ -11386,6 +11454,7 @@ lenolang program.leno
 | 匿名函数作为返回值 | `return func(x) { return x + n }`                    |
 | 立即执行匿名函数  | `var r = func() { return 100 }()`                    |
 | 泛型匿名函数    | `var id = func[T](T x): T { return x }`              |
+| 箭头函数      | `var inc = x => x + 1` / `(int a, int b) => a * b` / `() => 42` |
 | 闭包（嵌套函数）  | `func outer() { func inner() { ... } return inner }` |
 | 闭包（匿名函数）  | `func outer() { return func() { ... } }`             |
 | 闭包修改外部变量  | 内部函数可以修改外部函数的变量                                      |

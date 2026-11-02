@@ -504,6 +504,10 @@ Ast* parse_if_stmt(Parser* p) {
         // 仍保留 guard_var 用于兼容旧路径，同时设 guard_bind_var
     }
 
+    // ★ C2 护栏（2026-11-02）：`if x => 1 { }` 以前是语法错误，有了箭头函数后会被
+    //   解析成"条件 = 函数值"（恒真）⇒ 在这里拦掉，避免静默走另一条路。
+    check_arrow_in_cond(cond);
+
     // if 表达式形式：if cond then expr1 else expr2
     // 出现在语句位置时（如函数体最后一行、独立表达式语句），回退交给
     // parse_if_expr 解析。codegen 的 gen_if 已按 then/else 节点 kind 区分
@@ -580,6 +584,9 @@ Ast* parse_while_stmt(Parser* p) {
     // 让 parse_expression 自己处理括号
     // 这样可以正确解析 while (i + 1) % 100 == 0 这样的表达式
     Ast* cond = parse_expression(p);
+
+    // ★ C2 护栏（2026-11-02）：同 if，`while x => 1 { }` 不能被当成"条件恒真"
+    check_arrow_in_cond(cond);
 
     // while 循环体必须是代码块 {}
     if (p->lex.current.type != TOK_LBRACE) {
@@ -957,6 +964,9 @@ Ast* parse_switch_stmt(Parser* p) {
                 do {
                     Ast* value = parse_expression(p);
                     if (value) {
+                        // ★ C2 护栏（2026-11-02）：`case x => …` 与条件位置同理，
+                        //   以前是语法错误，现在会变成"case 值是函数"（永不命中）⇒ 拦掉
+                        check_arrow_in_cond(value);
                         ast_list_add(&cases[case_count].values, value);
                     }
                 } while (match(p, TOK_COMMA));
