@@ -1,0 +1,83 @@
+// 实参位置的赋值表达式（2026-11-02，C1 的前置闸门）
+//
+// `=` 是优先级最低的中缀运算符 ⇒ 以前 `f(a = 1, 2)` 会**先真的执行 a = 1**，
+// 再把赋完的值当第一个实参传进去（实测 f(a=1,2) ⇒ 12 且 a==1），全程无错无警告。
+// 同一个长相在 `new Point(x = 10)` 里却是字段名 ⇒ 一个写法两种语义，
+// 既是"命名实参"（C1）的拦路石，也是"把命名实参当 = 写"这类笔误静默改状态的原因。
+//
+// 现在的口径：**实参位置禁止裸赋值**（报错并说明三条出路）；
+// 用户显式加括号 `f((a = 1))` 视为有意为之，放行（既有 `assert_eq((c += 5), 6)` 靠它）。
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+import strings
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_arg_assign")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ---- ① 裸赋值实参：必须报错 ----
+    var f1 = dirs.join(work, "bare.leno")
+    files.write(f1, @"func f(int x, int y): int { return x * 10 + y }
+
+main() {
+    int a = 0
+    print(""r="" + _int(f(a = 1, 2)))
+    print(""a="" + _int(a))
+}
+")
+    var out1 = ce.expect_error(f1, "裸赋值实参", "实参位置不能写", 5)
+    assert_true(strings.has(out1, "命名实参"), "报错要点明『命名实参暂不支持』；实际=" + out1)
+
+    // ---- ② 方法调用的实参同样拦 ----
+    var f2 = dirs.join(work, "method.leno")
+    files.write(f2, @"struct S {
+    int v = 0
+    func apply(int x) { v = v + x }
+}
+
+main() {
+    S s = new S()
+    s.apply(v = 3)
+}
+")
+    ce.expect_error(f2, "方法实参里的裸赋值", "实参位置不能写", 8)
+
+    // ---- ③ 显式加括号：放行（并且真的执行赋值）----
+    var f3 = dirs.join(work, "paren_ok.leno")
+    files.write(f3, @"func f(int x, int y): int { return x * 10 + y }
+
+main() {
+    int a = 0
+    print(""r="" + _int(f((a = 1), 2)) + "" a="" + _int(a))
+}
+")
+    ce.expect_ok(f3, "显式括号的赋值实参", "r=12 a=1")
+
+    // ---- ④ new 的字段名不受影响 ----
+    var f4 = dirs.join(work, "new_ok.leno")
+    files.write(f4, @"struct P { int x = 0
+    int y = 0 }
+
+main() {
+    P p = new P(x = 10, y = 20)
+    print(_int(p.x) + "","" + _int(p.y))
+}
+")
+    ce.expect_ok(f4, "new 的字段名照旧", "10,20")
+
+    // ---- ⑤ 非实参位置的赋值表达式照旧 ----
+    var f5 = dirs.join(work, "expr_ok.leno")
+    files.write(f5, @"main() {
+    int a = 0
+    var b = (a = 5)
+    var c = 1 or (a = 7)
+    print(_int(b) + "","" + _int(a) + "","" + _int(c))
+}
+")
+    ce.expect_ok(f5, "括号里的赋值表达式照旧（含 or 短路）", "5,5,1")
+
+    print("=== test_diag_arg_assign ALL passed ===")
+}

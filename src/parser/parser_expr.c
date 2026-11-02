@@ -931,6 +931,46 @@ Ast* parse_binary(Parser* p, Ast* left) {
     return ast;
 }
 
+// ============================================================================
+// 实参解析（2026-11-02）：**实参位置禁止赋值表达式**
+//
+// 背景（实测）：`=` 是优先级最低的中缀运算符（rules[TOK_EQ] = parse_assignment）⇒
+//   `f(a = 1, 2)` 在以前会**先真的执行 `a = 1`**，再把赋完的值当第一个实参传进去，
+//   全程无错无警告（`f(a = 1, 2)` ⇒ 12 且事后 a == 1）。
+//   而且 `new Point(x = 10)` 里**同样长相**的 `名 = 值` 是字段名（另一条解析路径），
+//   于是同一个写法两种语义 —— 正是"命名实参"（C1）最大的拦路石，也是
+//   "把命名实参当 `=` 写"这类笔误静默改状态的原因。
+//
+// 取舍：**只拦实参位置**，其余表达式位置一律不动：
+//   · `func(...)` 实参、方法实参、`?.` 实参都走这里 ✓
+//   · `(a = 1)` / `var b = (a = 1)` / `1 or (flag = 1)` 保持可用
+//     （`assert/test_operator_precedence.leno` 正是用后者测短路 ✓）
+//   · `new Point(x = 10)` 不受影响（parse_new 的 AST_STRUCT_INIT 路径）
+// ============================================================================
+static Ast* parse_call_arg(Parser* p) {
+    // 记下实参的**起始位置**：用来区分「裸赋值」和「用户显式加括号的赋值」。
+    //   `f(a = 1)`   ⇒ 起始列就是 a 的列，arg->column 与之相同 ⇒ 裸赋值，拦
+    //   `f((a = 1))` ⇒ 起始列是 '('，arg->column 是 a 的列 ⇒ 差一列 ⇒ 用户明确
+    //                  表达了"我要在实参里做赋值"，放行（`(c += 5)` 这类既有用法靠它）
+    int start_line = p->lex.current.line;
+    int start_col = p->lex.current.column;
+
+    Ast* arg = parse_expression(p);
+    if (arg && (arg->kind == AST_ASSIGN || arg->kind == AST_COMPOUND_ASSIGN ||
+                arg->kind == AST_INDEX_ASSIGN)) {
+        int parenthesized = (arg->line != start_line) || (arg->column != start_col);
+        if (!parenthesized) {
+            error_add_at_fmt(ERR_SYNTAX, arg->line, arg->column > 0 ? arg->column : 1,
+                "实参位置不能写「名 = 值」：`=` 是**赋值**（不是命名实参、也不是比较），"
+                "它会在调用前真的改掉左边那个变量。想比较请写 `==`；"
+                "想先赋值就把赋值单独写一行（`x = 1` 然后 `f(x, …)`）；"
+                "若确实要在实参里赋值，请加括号明确写出 `f((x = 1))`；"
+                "命名实参 Leno 暂不支持，请按位置传参");
+        }
+    }
+    return arg;
+}
+
 // 解析函数调用表达式 func(arg1, arg2)
 Ast* parse_call(Parser* p, Ast* callee) {
     // 检查当前 token 是否是 '('
@@ -965,7 +1005,7 @@ Ast* parse_call(Parser* p, Ast* callee) {
     
     if (p->lex.current.type != TOK_RPAREN) {
         do {
-            Ast* arg = parse_expression(p);
+            Ast* arg = parse_call_arg(p);
             ast_list_add(&ast->u.call.args, arg);
         } while (match(p, TOK_COMMA) && p->lex.current.type != TOK_RPAREN);
         // ⚠ 上面条件里的 `&& p->lex.current.type != TOK_RPAREN` 就是**尾随逗号**支持（B3）：
@@ -1225,7 +1265,7 @@ Ast* parse_index(Parser* p, Ast* obj) {
                     lexer_next(&p->lex); // 消费 '('
                     if (p->lex.current.type != TOK_RPAREN) {
                         do {
-                            Ast* arg = parse_expression(p);
+                            Ast* arg = parse_call_arg(p);
                             ast_list_add(&ast->u.module_call.args, arg);
                         } while (match(p, TOK_COMMA));
                     }
@@ -1243,7 +1283,7 @@ Ast* parse_index(Parser* p, Ast* obj) {
                 lexer_next(&p->lex); // 消费 '('
                 if (p->lex.current.type != TOK_RPAREN) {
                     do {
-                        Ast* arg = parse_expression(p);
+                        Ast* arg = parse_call_arg(p);
                         ast_list_add(&ast->u.call.args, arg);
                     } while (match(p, TOK_COMMA));
                 }
@@ -1375,7 +1415,7 @@ Ast* parse_dot(Parser* p, Ast* left) {
             // 解析参数列表
             if (p->lex.current.type != TOK_RPAREN) {
                 do {
-                    Ast* arg = parse_expression(p);
+                    Ast* arg = parse_call_arg(p);
                     ast_list_add(&ast->u.module_call.args, arg);
                 } while (match(p, TOK_COMMA));
             }
@@ -1404,7 +1444,7 @@ Ast* parse_dot(Parser* p, Ast* left) {
             // 解析参数列表
             if (p->lex.current.type != TOK_RPAREN) {
                 do {
-                    Ast* arg = parse_expression(p);
+                    Ast* arg = parse_call_arg(p);
                     ast_list_add(&ast->u.call.args, arg);
                 } while (match(p, TOK_COMMA));
             }
@@ -1483,7 +1523,7 @@ Ast* parse_safe_dot(Parser* p, Ast* left) {
         lexer_next(&p->lex); // 消费 '('
         if (p->lex.current.type != TOK_RPAREN) {
             do {
-                Ast* arg = parse_expression(p);
+                Ast* arg = parse_call_arg(p);
                 ast_list_add(&ast->u.safe_access.args, arg);
             } while (match(p, TOK_COMMA));
         }
