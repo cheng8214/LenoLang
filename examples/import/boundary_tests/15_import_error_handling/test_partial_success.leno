@@ -1,9 +1,9 @@
 // 测试 4: 部分导入成功后的使用
+// ★ 2026-11-02：源码模块 import 必须在模块顶层（写在 main 里别名不会被绑定）
+import "partial_success_module.leno" as partial
 
 main() {
     print("=== 测试 4: 部分导入成功后的使用 ===")
-
-    import "partial_success_module.leno" as partial
 
     // 测试可以正常访问的变量
     print("partial.first = " + partial.first + " (期望: 1)")
