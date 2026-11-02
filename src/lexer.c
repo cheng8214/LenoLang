@@ -720,6 +720,54 @@ static Token read_number(Lexer* lex) {
     return tok;
 }
 
+// 前导小数点浮点（B2，2026-11-02）：`.5` / `.25` / `.5e3`（也允许 `_` 分隔，如 `.5_0`）
+//   token 文本保留原文（`.5`），转数值时补一个前导 '0' 并剥掉下划线 ⇒ strtod 不会在 `_` 处停。
+static Token read_leading_dot_number(Lexer* lex) {
+    Token tok = make_token(lex, TOK_NUM);
+    const char* start = lex->src + lex->pos;
+
+    advance(lex);                                   // '.'
+    int digits = 0;
+    while (1) {
+        if (isdigit(peek(lex))) { advance(lex); digits++; }
+        else if (peek(lex) == '_' && digits > 0 && isdigit(peek_next(lex))) advance(lex);
+        else break;
+    }
+
+    // 指数部分（三条护栏与 read_number 完全一致：只在十进制、e 后必须跟数字、只吃一次）
+    if (peek(lex) == 'e' || peek(lex) == 'E') {
+        const char* after = lex->src + lex->pos + 1;
+        if (*after == '+' || *after == '-') after++;
+        if (isdigit((unsigned char)*after)) {
+            advance(lex);
+            if (peek(lex) == '+' || peek(lex) == '-') advance(lex);
+            int ed = 0;
+            while (1) {
+                if (isdigit(peek(lex))) { advance(lex); ed++; }
+                else if (peek(lex) == '_' && ed > 0 && isdigit(peek_next(lex))) advance(lex);
+                else break;
+            }
+        }
+    }
+
+    tok.text = start;
+    tok.len = (lex->src + lex->pos) - start;
+
+    char buf[128];
+    int ci = 0;
+    buf[ci++] = '0';                                // `.5` ⇒ `0.5`
+    for (const char* p = start; p < lex->src + lex->pos && ci < (int)sizeof(buf) - 1; p++) {
+        if (*p != '_') buf[ci++] = *p;
+    }
+    buf[ci] = '\0';
+
+    tok.num_val = strtod(buf, NULL);
+    tok.is_float = 1;
+    tok.is_bigint = 0;
+    tok.bigint_str = NULL;
+    return tok;
+}
+
 static Token read_identifier(Lexer* lex) {
     const char* start = lex->src + lex->pos;
 
@@ -829,7 +877,24 @@ void lexer_next(Lexer* lex) {
         case ';': lex->current = make_token(lex, TOK_SEMI); advance(lex); break;
         case ',': lex->current = make_token(lex, TOK_COMMA); advance(lex); break;
         case ':': lex->current = make_token(lex, TOK_COLON); advance(lex); break;
-        case '.': lex->current = make_token(lex, TOK_DOT); advance(lex); break;
+        case '.':
+            // ★ 2026-11-02（B2）：前导小数点浮点 `.5` / `-.5`。
+            //   判据不能只看"`.` 后面是数字" —— 还要排除 `a.5` / `arr[0].5` / `(x).5`
+            //   这类"前面刚结束一个表达式"的位置，那里的 `.` 是成员访问。
+            //   前面是标识符 / `)` / `]` / 数字 / 插值片段 ⇒ 一律按 `.` 处理，保持原状。
+            if (isdigit(peek_next(lex)) &&
+                lex->prev.type != TOK_IDENT &&
+                lex->prev.type != TOK_RPAREN &&
+                lex->prev.type != TOK_RBRACKET &&
+                lex->prev.type != TOK_NUM &&
+                lex->prev.type != TOK_INTERP_PART &&
+                lex->prev.type != TOK_INTERP_RAW_PART) {
+                lex->current = read_leading_dot_number(lex);
+            } else {
+                lex->current = make_token(lex, TOK_DOT);
+                advance(lex);
+            }
+            break;
         case '+':
             if (peek_next(lex) == '+') {
                 lex->current = make_token(lex, TOK_INC);
