@@ -56,18 +56,58 @@
                     ext_fnames[fi] = ext_ssym->fields[fi].name;
                 }
             }
-            // 方法名表：符号表里存的是 `P::paint` ⇒ 剥掉前缀再交给转换器
+            // 方法名表：符号表里存的是 `P::paint` ⇒ 剥掉前缀再交给转换器。
+            // ★★ 表里必须**同时包含本 extend 块内的方法** —— 块内方法互相裸调用
+            //    （`queue_clear()` / `sync_play_ui()`）要能被识别成"方法调用"，
+            //    否则报「未定义函数: queue_clear」✗（实测：Aria 拆 166 个方法时，
+            //    首轮报了一串"未定义函数"，全是块内互调）。
+            // ★★ 方法名表 = 目标 struct 的方法 + **本块方法** + **所有导入模块 extends 的方法**
+            //   （2026-11-02 补第三条：把同一类型拆到多个 page_*.leno 后，A 文件的方法会调
+            //    B 文件的方法（`queue_clear()`），而 B 的方法只登记在 B 的符号表 extends 段里
+            //    ⇒ 表里看不到就报「未定义函数: queue_clear」✗ 这是拆分时才暴露的缺口）
+            int ext_sym_methods = ext_ssym->method_count > 0 ? ext_ssym->method_count : 0;
+            int ext_own_methods = ast->u.extend_def.method_count > 0 ? ast->u.extend_def.method_count : 0;
+            int ext_other_methods = 0;
+            for (int im = 0; im < s->imported_module_count; im++) {
+                ModuleSymbolTable* t = s->imported_modules[im].sym_table;
+                if (!t) continue;
+                for (int ei3 = 0; ei3 < t->extend_count; ei3++) {
+                    ext_other_methods += t->extends[ei3].method_count;
+                }
+            }
+            int ext_total_methods = ext_sym_methods + ext_own_methods + ext_other_methods;
             char** ext_mnames = NULL;
             int*   ext_mpcnts = NULL;
-            if (ext_ssym->method_count > 0 && ext_ssym->methods) {
-                ext_mnames = (char**)calloc((size_t)ext_ssym->method_count, sizeof(char*));
-                ext_mpcnts = (int*)calloc((size_t)ext_ssym->method_count, sizeof(int));
-                for (int mi2 = 0; ext_mnames && mi2 < ext_ssym->method_count; mi2++) {
+            if (ext_total_methods > 0) {
+                ext_mnames = (char**)calloc((size_t)ext_total_methods, sizeof(char*));
+                ext_mpcnts = (int*)calloc((size_t)ext_total_methods, sizeof(int));
+                for (int mi2 = 0; ext_mnames && mi2 < ext_sym_methods; mi2++) {
                     const char* full = ext_ssym->methods[mi2].name;
                     if (!full) continue;
                     const char* sep = strstr(full, "::");
                     ext_mnames[mi2] = (char*)(sep ? sep + 2 : full);
                     ext_mpcnts[mi2] = ext_ssym->methods[mi2].param_count;
+                }
+                for (int mi3 = 0; ext_mnames && mi3 < ext_own_methods; mi3++) {
+                    Ast* own = ast->u.extend_def.methods[mi3];
+                    if (!own || own->kind != AST_FUNC_DEF || !own->u.func.name) continue;
+                    ext_mnames[ext_sym_methods + mi3] = own->u.func.name;
+                    ext_mpcnts[ext_sym_methods + mi3] = own->u.func.pcnt;
+                }
+                int slot = ext_sym_methods + ext_own_methods;
+                for (int im = 0; ext_mnames && im < s->imported_module_count; im++) {
+                    ModuleSymbolTable* t = s->imported_modules[im].sym_table;
+                    if (!t) continue;
+                    for (int ei3 = 0; ei3 < t->extend_count; ei3++) {
+                        ModuleExtendSymbol* oex = &t->extends[ei3];
+                        for (int mi4 = 0; mi4 < oex->method_count && slot < ext_total_methods; mi4++) {
+                            const char* nm = oex->methods[mi4].name;
+                            if (!nm) continue;
+                            ext_mnames[slot] = (char*)nm;
+                            ext_mpcnts[slot] = oex->methods[mi4].param_count;
+                            slot++;
+                        }
+                    }
                 }
             }
 
@@ -78,7 +118,7 @@
                 // ① 字段名 → self.字段名、裸方法名 → Struct::method(self, ...)
                 transform_method_body(m->u.func.body,
                                       ext_fnames, ext_ssym->field_count,
-                                      ext_mnames, ext_ssym->method_count,
+                                      ext_mnames, ext_total_methods,
                                       ast->u.extend_def.type_name,
                                       m->u.func.params, m->u.func.pcnt,
                                       NULL, 0,                 // 关联常量：扩展方法用不到
