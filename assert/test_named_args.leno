@@ -1,0 +1,62 @@
+// 命名实参（C1，2026-11-02）：`f(b = 2, a = 1)`
+//
+// 口径：只支持**本模块的脚本函数**（能查到形参名）。重排在语义阶段完成，
+// 之后就是纯位置实参 ⇒ 字节码零变化、默认参数补齐逻辑照旧。
+// 规则：位置实参必须写在前面；同一个形参不能既位置又命名；中间形参可跳过
+// （前提是它有**字面量默认值**，否则报错）。
+
+func f(int a, int b): int { return a * 10 + b }
+
+func with_default(int a, int b = 2, int c = 3): int {
+    return a * 100 + b * 10 + c
+}
+
+func sum3(int x, int y, int z): int { return x + y + z }
+
+func ident[T](T v, int k): int { return k }
+
+struct Holder {
+    int base = 100
+    // 方法体内调用本模块的普通函数，同样可以用命名实参
+    func calc(int a): int { return f(b = a, a = 1) + base }
+}
+
+func recur(int n, int step = 1): int {
+    if n <= 0 { return 0 }
+    // 递归调用里也能用（并且能跳过带默认值的形参）
+    return n + recur(n - step)
+}
+
+main() {
+    // ① 顺序打乱 ⇒ 按形参名归位
+    assert_eq(f(b = 2, a = 1), 12, "打乱顺序")
+    assert_eq(f(a = 1, b = 2), 12, "按顺序命名")
+
+    // ② 位置 + 命名混用（位置在前）
+    assert_eq(f(1, b = 2), 12, "位置 + 命名")
+
+    // ③ 默认参数
+    assert_eq(with_default(1), 123, "全用默认")
+    assert_eq(with_default(1, c = 9), 129, "跳过中间带默认值的形参")
+    assert_eq(with_default(b = 5, c = 6, a = 1), 156, "全命名")
+    assert_eq(with_default(1, 5, c = 9), 159, "位置 + 命名尾部")
+
+    // ④ 全部命名、顺序完全颠倒
+    assert_eq(sum3(z = 3, y = 2, x = 1), 6, "三参全命名")
+
+    // ⑤ 值可以是复杂表达式
+    //   a = f(a=1, b=1) = 11、b = sum3(1,1,1) = 3 ⇒ 11 * 10 + 3 = 113
+    assert_eq(f(b = sum3(1, 1, 1), a = f(a = 1, b = 1)), 113, "命名实参的值是表达式")
+
+    // ⑥ 泛型函数的命名实参
+    assert_eq(ident[int](k = 7, v = 42), 7, "泛型函数")
+
+    // ⑦ 方法体内调用本模块函数
+    var h = new Holder()
+    assert_eq(h.calc(5), 115, "方法体内命名实参")
+
+    // ⑧ 递归 + 跳过默认形参
+    assert_eq(recur(3), 6, "递归里的命名实参")
+
+    print("test_named_args all passed")
+}

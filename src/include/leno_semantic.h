@@ -187,6 +187,12 @@ typedef struct {
     int owned_placeholder_capacity;
 } Semantic;
 
+// 命名实参（C1，2026-11-02）：把 `f(a = 1, b = 2)` 的实参按形参名重排成位置实参。
+//   func_def = 被调函数的 AST_FUNC_DEF（NULL ⇒ 拿不到签名，报"不支持命名实参"）。
+//   返回 1 = 实参里确实有命名实参（已重排或已报错）；0 = 没有，列表未动。
+int sem_normalize_named_args(Semantic* s, AstList* args, Ast* func_def,
+                             const char* callee_name, int line, int column);
+
 // 函数表 API
 void func_table_init(FuncTable* table);
 void func_table_free(FuncTable* table);

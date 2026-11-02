@@ -1,12 +1,14 @@
-// 实参位置的赋值表达式（2026-11-02，C1 的前置闸门）
+// 实参位置的 `名 = 值`（2026-11-02）
 //
-// `=` 是优先级最低的中缀运算符 ⇒ 以前 `f(a = 1, 2)` 会**先真的执行 a = 1**，
-// 再把赋完的值当第一个实参传进去（实测 f(a=1,2) ⇒ 12 且 a==1），全程无错无警告。
-// 同一个长相在 `new Point(x = 10)` 里却是字段名 ⇒ 一个写法两种语义，
-// 既是"命名实参"（C1）的拦路石，也是"把命名实参当 = 写"这类笔误静默改状态的原因。
+// 历史：`=` 是优先级最低的中缀运算符 ⇒ `f(a = 1, 2)` 会**先真的执行 a = 1**，
+// 再把赋完的值当第一个实参传（实测 f(a=1,2) ⇒ 12 且 a==1），全程无错无警告；
+// 而 `new Point(x = 10)` 里同样长相的 `x = 10` 是字段名 ⇒ 一个写法两种语义。
 //
-// 现在的口径：**实参位置禁止裸赋值**（报错并说明三条出路）；
-// 用户显式加括号 `f((a = 1))` 视为有意为之，放行（既有 `assert_eq((c += 5), 6)` 靠它）。
+// 现在（C1 落地后的口径）：
+//   · 裸标识符调用里，`名 = 值` 若 `名` 是该函数的形参 ⇒ **命名实参**（重排成位置实参）；
+//   · 名字对不上 ⇒ 报错并列出可用形参（同时提示"想赋值就加括号 / 想比较写 =="）；
+//   · 方法和跨模块/内置调用暂不支持 ⇒ 直接报"实参位置不能写「名 = 值」"；
+//   · 显式加括号 `f((x = 1))` 一律视为赋值表达式，放行。
 
 import "helpers/compiler.leno" as ce
 import dirs
@@ -18,20 +20,20 @@ main() {
     dirs.delete(work)
     dirs.mkdir_p(work)
 
-    // ---- ① 裸赋值实参：必须报错 ----
-    var f1 = dirs.join(work, "bare.leno")
+    // ---- ① 名字不是形参：报错并列出可用形参 ----
+    var f1 = dirs.join(work, "unknown_name.leno")
     files.write(f1, @"func f(int x, int y): int { return x * 10 + y }
 
 main() {
     int a = 0
     print(""r="" + _int(f(a = 1, 2)))
-    print(""a="" + _int(a))
 }
 ")
-    var out1 = ce.expect_error(f1, "裸赋值实参", "实参位置不能写", 5)
-    assert_true(strings.has(out1, "命名实参"), "报错要点明『命名实参暂不支持』；实际=" + out1)
+    var out1 = ce.expect_error(f1, "名字不是形参", "没有名为 'a' 的形参", 5)
+    assert_true(strings.has(out1, "可用形参：x, y"), "报错要列出可用形参；实际=" + out1)
+    assert_true(strings.has(out1, "f((a = 值))"), "报错要给「想赋值就加括号」的出路；实际=" + out1)
 
-    // ---- ② 方法调用的实参同样拦 ----
+    // ---- ② 方法调用：本期不支持命名实参 ----
     var f2 = dirs.join(work, "method.leno")
     files.write(f2, @"struct S {
     int v = 0
@@ -40,25 +42,56 @@ main() {
 
 main() {
     S s = new S()
-    s.apply(v = 3)
+    s.apply(x = 3)
 }
 ")
     ce.expect_error(f2, "方法实参里的裸赋值", "实参位置不能写", 8)
 
-    // ---- ③ 显式加括号：放行（并且真的执行赋值）----
-    var f3 = dirs.join(work, "paren_ok.leno")
-    files.write(f3, @"func f(int x, int y): int { return x * 10 + y }
+    // ---- ③ 同一个形参被指定两次 ----
+    var f3 = dirs.join(work, "duplicate.leno")
+    files.write(f3, @"func f(int a, int b): int { return a * 10 + b }
+
+main() {
+    print(_int(f(a = 1, a = 2)))
+}
+")
+    ce.expect_error(f3, "形参重复", "被指定了两次", 4)
+
+    // ---- ④ 命名实参之后又写位置实参 ----
+    var f4 = dirs.join(work, "pos_after_named.leno")
+    files.write(f4, @"func f(int a, int b): int { return a * 10 + b }
+
+main() {
+    print(_int(f(a = 1, 2)))
+}
+")
+    ce.expect_error(f4, "命名后写位置", "不能再写位置实参", 4)
+
+    // ---- ⑤ 正向：命名实参打乱顺序也对得上 ----
+    var f5 = dirs.join(work, "named_ok.leno")
+    files.write(f5, @"func f(int a, int b): int { return a * 10 + b }
+func g(int a, int b = 2, int c = 3): int { return a * 100 + b * 10 + c }
+
+main() {
+    print(""1="" + _int(f(b = 2, a = 1)) + "" 2="" + _int(g(1, c = 9)))
+}
+")
+    ce.expect_ok(f5, "命名实参重排 + 跳过带默认值的形参", "1=12 2=129")
+
+    // ---- ⑥ 显式加括号：放行（并且真的执行赋值）----
+    var f6 = dirs.join(work, "paren_ok.leno")
+    files.write(f6, @"func f(int x, int y): int { return x * 10 + y }
 
 main() {
     int a = 0
     print(""r="" + _int(f((a = 1), 2)) + "" a="" + _int(a))
 }
 ")
-    ce.expect_ok(f3, "显式括号的赋值实参", "r=12 a=1")
+    ce.expect_ok(f6, "显式括号的赋值实参", "r=12 a=1")
 
-    // ---- ④ new 的字段名不受影响 ----
-    var f4 = dirs.join(work, "new_ok.leno")
-    files.write(f4, @"struct P { int x = 0
+    // ---- ⑦ new 的字段名不受影响 ----
+    var f7 = dirs.join(work, "new_ok.leno")
+    files.write(f7, @"struct P { int x = 0
     int y = 0 }
 
 main() {
@@ -66,18 +99,18 @@ main() {
     print(_int(p.x) + "","" + _int(p.y))
 }
 ")
-    ce.expect_ok(f4, "new 的字段名照旧", "10,20")
+    ce.expect_ok(f7, "new 的字段名照旧", "10,20")
 
-    // ---- ⑤ 非实参位置的赋值表达式照旧 ----
-    var f5 = dirs.join(work, "expr_ok.leno")
-    files.write(f5, @"main() {
+    // ---- ⑧ 非实参位置的赋值表达式照旧（含 or 短路）----
+    var f8 = dirs.join(work, "expr_ok.leno")
+    files.write(f8, @"main() {
     int a = 0
     var b = (a = 5)
     var c = 1 or (a = 7)
     print(_int(b) + "","" + _int(a) + "","" + _int(c))
 }
 ")
-    ce.expect_ok(f5, "括号里的赋值表达式照旧（含 or 短路）", "5,5,1")
+    ce.expect_ok(f8, "括号里的赋值表达式照旧（含 or 短路）", "5,5,1")
 
     print("=== test_diag_arg_assign ALL passed ===")
 }

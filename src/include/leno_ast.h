@@ -154,6 +154,11 @@ struct Ast {
     // 注解链（2026-10-31）：放在 union 之外 ⇒ func / struct / var 都能挂，不必各加一份
     AstAnno* annos;
     int anno_count;
+    // 实参是**用户显式加括号**的表达式（2026-11-02，C1 命名实参配套）：
+    //   parser 的 parse_call_arg 在"实参起始列 ≠ 赋值左端列"时置 1。
+    //   `f(a = 1)` 与 `f((a = 1))` 在 AST 上都是 AST_ASSIGN（括号不留节点），
+    //   靠这个标记区分"可能是命名实参"与"用户明确表态这是赋值"。
+    int arg_paren;
     union {
         struct { double value; int is_bigint; char* bigint_str; int is_float; } num;
         struct { char* value; int len; } string;

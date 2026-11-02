@@ -947,25 +947,34 @@ Ast* parse_binary(Parser* p, Ast* left) {
 //     （`assert/test_operator_precedence.leno` 正是用后者测短路 ✓）
 //   · `new Point(x = 10)` 不受影响（parse_new 的 AST_STRUCT_INIT 路径）
 // ============================================================================
-static Ast* parse_call_arg(Parser* p) {
+static Ast* parse_call_arg(Parser* p, int allow_named) {
     // 记下实参的**起始位置**：用来区分「裸赋值」和「用户显式加括号的赋值」。
-    //   `f(a = 1)`   ⇒ 起始列就是 a 的列，arg->column 与之相同 ⇒ 裸赋值，拦
+    //   `f(a = 1)`   ⇒ 起始列就是 a 的列，arg->column 与之相同 ⇒ 裸赋值
     //   `f((a = 1))` ⇒ 起始列是 '('，arg->column 是 a 的列 ⇒ 差一列 ⇒ 用户明确
     //                  表达了"我要在实参里做赋值"，放行（`(c += 5)` 这类既有用法靠它）
     int start_line = p->lex.current.line;
     int start_col = p->lex.current.column;
 
     Ast* arg = parse_expression(p);
+    if (arg) arg->arg_paren = (arg->line != start_line) || (arg->column != start_col);
     if (arg && (arg->kind == AST_ASSIGN || arg->kind == AST_COMPOUND_ASSIGN ||
-                arg->kind == AST_INDEX_ASSIGN)) {
-        int parenthesized = (arg->line != start_line) || (arg->column != start_col);
-        if (!parenthesized) {
+                arg->kind == AST_INDEX_ASSIGN) && !arg->arg_paren) {
+        // 「命名实参候选」= 裸标识符调用的实参 + 形如 `名字 = 值`（target 是裸变量）。
+        //   这种**留着不报**，交给语义阶段按函数签名判定：
+        //     · 形参里确实有这个名字 ⇒ 命名实参（重排成位置实参，见 sem_normalize_named_args）
+        //     · 没有 / 拿不到签名   ⇒ 在那里报错（文案与下面这条一致）
+        //   为什么解析期判不了：函数可以后置定义，Parser 里也没有函数表。
+        int maybe_named = allow_named && arg->kind == AST_ASSIGN &&
+                          arg->u.assign.name_count == 1 && arg->u.assign.targets &&
+                          arg->u.assign.targets[0] &&
+                          arg->u.assign.targets[0]->kind == AST_VAR;
+        if (!maybe_named) {
             error_add_at_fmt(ERR_SYNTAX, arg->line, arg->column > 0 ? arg->column : 1,
                 "实参位置不能写「名 = 值」：`=` 是**赋值**（不是命名实参、也不是比较），"
                 "它会在调用前真的改掉左边那个变量。想比较请写 `==`；"
                 "想先赋值就把赋值单独写一行（`x = 1` 然后 `f(x, …)`）；"
                 "若确实要在实参里赋值，请加括号明确写出 `f((x = 1))`；"
-                "命名实参 Leno 暂不支持，请按位置传参");
+                "命名实参目前只支持**本模块的脚本函数**（方法 / 跨模块 / 内置函数暂不支持）");
         }
     }
     return arg;
@@ -1005,7 +1014,7 @@ Ast* parse_call(Parser* p, Ast* callee) {
     
     if (p->lex.current.type != TOK_RPAREN) {
         do {
-            Ast* arg = parse_call_arg(p);
+            Ast* arg = parse_call_arg(p, 1);   // 裸标识符调用：允许命名实参（语义阶段判定）
             ast_list_add(&ast->u.call.args, arg);
         } while (match(p, TOK_COMMA) && p->lex.current.type != TOK_RPAREN);
         // ⚠ 上面条件里的 `&& p->lex.current.type != TOK_RPAREN` 就是**尾随逗号**支持（B3）：
@@ -1265,7 +1274,7 @@ Ast* parse_index(Parser* p, Ast* obj) {
                     lexer_next(&p->lex); // 消费 '('
                     if (p->lex.current.type != TOK_RPAREN) {
                         do {
-                            Ast* arg = parse_call_arg(p);
+                            Ast* arg = parse_call_arg(p, 0);
                             ast_list_add(&ast->u.module_call.args, arg);
                         } while (match(p, TOK_COMMA));
                     }
@@ -1283,7 +1292,7 @@ Ast* parse_index(Parser* p, Ast* obj) {
                 lexer_next(&p->lex); // 消费 '('
                 if (p->lex.current.type != TOK_RPAREN) {
                     do {
-                        Ast* arg = parse_call_arg(p);
+                        Ast* arg = parse_call_arg(p, 1);
                         ast_list_add(&ast->u.call.args, arg);
                     } while (match(p, TOK_COMMA));
                 }
@@ -1415,7 +1424,7 @@ Ast* parse_dot(Parser* p, Ast* left) {
             // 解析参数列表
             if (p->lex.current.type != TOK_RPAREN) {
                 do {
-                    Ast* arg = parse_call_arg(p);
+                    Ast* arg = parse_call_arg(p, 0);
                     ast_list_add(&ast->u.module_call.args, arg);
                 } while (match(p, TOK_COMMA));
             }
@@ -1444,7 +1453,7 @@ Ast* parse_dot(Parser* p, Ast* left) {
             // 解析参数列表
             if (p->lex.current.type != TOK_RPAREN) {
                 do {
-                    Ast* arg = parse_call_arg(p);
+                    Ast* arg = parse_call_arg(p, 0);   // (expr).method(...)：本期不支持命名实参
                     ast_list_add(&ast->u.call.args, arg);
                 } while (match(p, TOK_COMMA));
             }
@@ -1523,7 +1532,7 @@ Ast* parse_safe_dot(Parser* p, Ast* left) {
         lexer_next(&p->lex); // 消费 '('
         if (p->lex.current.type != TOK_RPAREN) {
             do {
-                Ast* arg = parse_call_arg(p);
+                Ast* arg = parse_call_arg(p, 0);   // ?.m(...)：本期不支持命名实参
                 ast_list_add(&ast->u.safe_access.args, arg);
             } while (match(p, TOK_COMMA));
         }

@@ -1,6 +1,215 @@
 #include "semantic_internal.h"
 
 // ============================================================================
+// 命名实参（C1，2026-11-02）：`f(a = 1, b = 2)`
+//
+// 语法上 `a = 1` 落到实参列表里是一个普通的 `AST_ASSIGN`（parser 不再拦，见
+// parse_call_arg 的 allow_named 参数）。到底该按"命名实参"还是"非法赋值"处理，
+// 只有语义阶段能判 —— 那时 func_table 已经收全（函数可以后置定义）。
+//
+// 口径（第一版，刻意保守）：
+//   · 只对**本模块的脚本函数**生效（能查到 AST_FUNC_DEF，形参名完整）；
+//     内置 / native / 跨模块 / 方法 / `?.` / 函数值变量一律报"不支持命名实参"；
+//   · 命名实参之后不许再写位置实参；
+//   · 重名 / 不存在的名字 / 位置与命名撞同一形参 / 跳过中间形参 ⇒ 编译错误；
+//   · 重排成**纯位置实参**后原样交给后续所有检查与 codegen ⇒ **字节码零变化**。
+//     （尾部省略仍由既有的默认参数补齐逻辑负责 ✓）
+// ============================================================================
+
+// 实参是不是"命名实参候选"：裸的 `名字 = 值`（不是 `(a = 1)`，也不是下标/字段赋值）
+static int is_named_arg_candidate(Ast* a) {
+    if (!a || a->kind != AST_ASSIGN || a->arg_paren) return 0;
+    if (a->u.assign.name_count != 1 || !a->u.assign.names || !a->u.assign.names[0]) return 0;
+    if (!a->u.assign.targets || !a->u.assign.targets[0]) return 0;
+    return a->u.assign.targets[0]->kind == AST_VAR;
+}
+
+// 克隆"字面量默认值"（`= 2` / `= ""` / `= false` / `= null`）：
+//   `f(a = 1, c = 3)` 跳过中间的 `b`（b 有默认值）时，要在 b 的位置补一个值。
+//   ⚠ 只克隆**字面量**：默认值表达式若引用常量/其它标识符，就地克隆 AST 会让它在
+//     调用点多被访问一次（语义阶段可能重复报错/重复改写）⇒ 那种情况宁可不支持。
+static Ast* clone_literal_default(Ast* d, int line) {
+    if (!d) return NULL;
+    switch (d->kind) {
+        case AST_NUM: {
+            Ast* n = ast_new(AST_NUM, line);
+            n->u.num.value = d->u.num.value;
+            n->u.num.is_float = d->u.num.is_float;
+            n->u.num.is_bigint = d->u.num.is_bigint;
+            if (d->u.num.bigint_str) n->u.num.bigint_str = strdup(d->u.num.bigint_str);
+            return n;
+        }
+        case AST_STRING: {
+            Ast* n = ast_new(AST_STRING, line);
+            n->u.string.value = d->u.string.value ? strdup(d->u.string.value) : strdup("");
+            n->u.string.len = d->u.string.len;
+            return n;
+        }
+        case AST_BOOL: {
+            Ast* n = ast_new(AST_BOOL, line);
+            n->u.boolean = d->u.boolean;
+            return n;
+        }
+        case AST_NULL:
+            return ast_new(AST_NULL, line);
+        default:
+            return NULL;   // 非字面量默认值 ⇒ 不支持跨过它
+    }
+}
+
+// 兜底：把实参列表里的"命名壳"降级成它的值。
+//   只在**已经报错之后**用 —— 否则下游会把 `c = 9` 当赋值去解析，
+//   再刷一条「未定义的变量: c」的级联错（实测过）。
+static void degrade_named_shells(AstList* args) {
+    for (int i = 0; i < args->count; i++) {
+        Ast* a = args->items[i];
+        if (is_named_arg_candidate(a)) {
+            Ast* value = a->u.assign.value;
+            a->u.assign.value = NULL;
+            args->items[i] = value;
+            ast_free(a);
+        }
+    }
+}
+
+// 返回 1 = 实参里确实有命名实参（已处理或已报错）；0 = 没有，什么都没动
+int sem_normalize_named_args(Semantic* s, AstList* args, Ast* func_def,
+                             const char* callee_name, int line, int column) {
+    (void)s;
+    if (!args || args->count == 0) return 0;
+
+    int has_named = 0;
+    for (int i = 0; i < args->count; i++) {
+        if (is_named_arg_candidate(args->items[i])) { has_named = 1; break; }
+    }
+    if (!has_named) return 0;
+
+    const char* fname = callee_name ? callee_name : "?";
+
+    if (!func_def) {
+        error_add_at_fmt(ERR_UNDEFINED_VAR, line, column,
+            "「%s(...)」不支持命名实参：拿不到形参名。只有**本模块的脚本函数**支持"
+            "（内置 / native / 跨模块 / 方法调用 / 函数值变量都不支持）—— 请改成按位置传参",
+            fname);
+        return 1;
+    }
+
+    int pcnt = func_def->u.func.pcnt;
+    char** params = func_def->u.func.params;
+
+    // slots[k] 存的是"占住第 k 个形参"的那个实参节点（可能是位置实参节点本身，
+    //   也可能是命名实参的 AST_ASSIGN 外壳）。**不提前拆壳** —— 出错时什么都不用还原 ✓
+    Ast** slots = (Ast**)calloc((size_t)(pcnt > 0 ? pcnt : 1), sizeof(Ast*));
+    if (!slots) return 0;
+
+    int next_pos = 0, seen_named = 0, bad = 0;
+
+    for (int i = 0; i < args->count && !bad; i++) {
+        Ast* a = args->items[i];
+        if (is_named_arg_candidate(a)) {
+            seen_named = 1;
+            const char* nm = a->u.assign.names[0];
+            int idx = -1;
+            for (int k = 0; k < pcnt; k++) {
+                if (params && params[k] && strcmp(params[k], nm) == 0) { idx = k; break; }
+            }
+            if (idx < 0) {
+                char list[512];
+                list[0] = '\0';
+                for (int k = 0; k < pcnt; k++) {
+                    if (k > 0) strncat(list, ", ", sizeof(list) - strlen(list) - 1);
+                    strncat(list, (params && params[k]) ? params[k] : "?",
+                            sizeof(list) - strlen(list) - 1);
+                }
+                error_add_at_fmt(ERR_UNDEFINED_VAR, a->line, a->column,
+                    "「%s」没有名为 '%s' 的形参；可用形参：%s。"
+                    "（若你其实想在实参里**赋值**，请加括号写成 `f((%s = 值))`；"
+                    "想做相等比较请写 `==`）",
+                    fname, nm, pcnt > 0 ? list : "（无）", nm);
+                bad = 1;
+                break;
+            }
+            if (slots[idx]) {
+                error_add_at_fmt(ERR_SEMANTIC, a->line, a->column,
+                    "形参 '%s' 被指定了两次（已有的位置实参会占同一个形参）", nm);
+                bad = 1;
+                break;
+            }
+            slots[idx] = a;
+        } else {
+            if (seen_named) {
+                error_add_at_fmt(ERR_SYNTAX, a->line, a->column,
+                    "命名实参之后不能再写位置实参 —— 请把位置实参写在前面"
+                    "（`f(1, 2, c = 3)`），或全部改成命名实参");
+                bad = 1;
+                break;
+            }
+            while (next_pos < pcnt && slots[next_pos]) next_pos++;
+            if (next_pos >= pcnt) {
+                error_add_at_fmt(ERR_TYPE_MISMATCH, a->line, a->column,
+                    "「%s」只有 %d 个形参，实参过多", fname, pcnt);
+                bad = 1;
+                break;
+            }
+            slots[next_pos++] = a;
+        }
+    }
+
+    if (!bad) {
+        int max = -1;
+        for (int k = 0; k < pcnt; k++) {
+            if (slots[k]) max = k;
+        }
+        for (int k = 0; k <= max && !bad; k++) {
+            if (slots[k]) continue;
+            // 中间的形参没给 ⇒ 试着用它的**字面量默认值**补上（`g(1, c = 9)` 这种）
+            Ast* d = (func_def->u.func.param_defaults && k < pcnt)
+                         ? func_def->u.func.param_defaults[k] : NULL;
+            Ast* filled = clone_literal_default(d, line);
+            if (filled) {
+                slots[k] = filled;
+            } else {
+                error_add_at_fmt(ERR_TYPE_MISMATCH, line, column,
+                    "命名实参不能跳过中间的形参：'%s' 既没有给值、也没有可复制的字面量默认值 "
+                    "—— 请补上 '%s = …'，或改用位置实参",
+                    (params && params[k]) ? params[k] : "?",
+                    (params && params[k]) ? params[k] : "?");
+                bad = 1;
+            }
+        }
+
+        if (!bad) {
+            Ast** old_items = args->items;
+            ast_list_init(args);
+            for (int k = 0; k <= max; k++) {
+                Ast* item = slots[k];
+                if (item->kind == AST_ASSIGN && !item->arg_paren &&
+                    item->u.assign.name_count == 1 &&
+                    item->u.assign.targets && item->u.assign.targets[0] &&
+                    item->u.assign.targets[0]->kind == AST_VAR) {
+                    // 命名实参的壳：把值摘出来、壳整体释放（names/refs/targets 一并回收）
+                    Ast* value = item->u.assign.value;
+                    item->u.assign.value = NULL;
+                    ast_list_add(args, value);
+                    ast_free(item);
+                } else {
+                    ast_list_add(args, item);
+                }
+            }
+            free(old_items);
+            free(slots);
+            return 1;
+        }
+    }
+
+    // 出错：把命名壳降级成值（避免下游把 `c = 9` 当赋值再报一条"未定义的变量"），
+    //   实参列表整体保持原顺序 —— 反正已经报错、编译会中止，只要不崩不刷级联即可
+    degrade_named_shells(args);
+    free(slots);
+    return 1;
+}
+
+// ============================================================================
 // 辅助：递归检查 TypeInfo 中是否存在未定义的类型（在 resolve_alias_in_type 之后调用）
 // 此时所有 alias 已被解析，剩余的 TYPE_STRUCT 只能是合法 struct 或未定义类型
 // ============================================================================

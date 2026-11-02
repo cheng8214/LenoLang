@@ -616,6 +616,17 @@
         }
             
         case AST_CALL: {
+            // ★ 命名实参（C1，2026-11-02）：`f(a = 1, b = 2)` 在语法上就是实参里的
+            //   AST_ASSIGN（parser 的 allow_named 分支故意不报错）。这里按**函数签名**
+            //   重排成纯位置实参 ⇒ 后面的类型检查 / 默认参数补齐 / codegen 全都不用改。
+            //   ⚠ 必须在下面任何"逐个访问实参"的代码之前做（否则会先去 infer/visit 那个
+            //     AST_ASSIGN，把它当赋值表达式处理）。
+            if (ast->u.call.callee && ast->u.call.callee->kind == AST_VAR) {
+                const char* _named_callee = ast->u.call.callee->u.var.name;
+                Ast* _named_fdef = func_table_find(&s->func_table, _named_callee);
+                sem_normalize_named_args(s, &ast->u.call.args, _named_fdef,
+                                         _named_callee, ast->line, ast->column);
+            }
             // 注解（2026-10-31）：@optkeys 声明的选项键在这里校验
             //   （只查字面量 Dict、只警告不中断；跨模块走 module.member 分支 ✓）
             annos_check_call(s, ast);
