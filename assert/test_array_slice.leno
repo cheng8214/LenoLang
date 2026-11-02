@@ -31,6 +31,21 @@ main() {
     assert_eq(s4[7], 8)
     print("[PASS] 测试4: 完整切片 arr[0:7]")
 
+    // 测试4b: 双侧全省略 arr[:]（T28 补齐：与 arr[:3] / arr[5:] 对称）
+    Array[int] full = arr[:]
+    assert_eq(full.len(), 8)
+    assert_eq(full[0], 1)
+    assert_eq(full[7], 8)
+    full[0] = 99
+    assert_eq(arr[0], 1)  // 必须是副本，不是别名
+    print("[PASS] 测试4b: 双侧全省略 arr[:]")
+
+    // 测试4c: 字符串双侧全省略 s[:]
+    string sfull = "hello"[0:4]
+    assert_eq("hello"[:], "hello")
+    assert_eq(sfull, "hello")
+    print("[PASS] 测试4c: 字符串 s[:]")
+
     // 测试5: 字符串数组切片
     Array[string] names = ["alice", "bob", "carol", "dave"]
     Array[string] sub = names[1:2]

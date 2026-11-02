@@ -109,6 +109,12 @@ main()
     // split 空分隔符
     var chars = "abc".split("")
     assert_eq(chars.len(), 3)
+    // ★ 2026-11-02：空分隔符按**字符**切，不是按字节（修前 "你好".split("") 得 6 个乱码）
+    var uchars = "你好".split("")
+    assert_eq(uchars.len(), 2)
+    assert_eq(uchars[0], "你")
+    assert_eq(uchars[1], "好")
+    assert_eq(uchars[0].len(), 1)
 
     // split 无匹配
     var no_match = "hello".split(",")
@@ -149,6 +155,14 @@ main()
     assert_eq("5".pad_start(3, "0"), "005")
     assert_eq("hi".pad_start(5, " "), "   hi")
     assert_eq("hi".pad_end(5, " "), "hi   ")
+    // ★ 2026-11-02：target_len 按**字符**计（不是字节），填充字符可以是多字节
+    //   修前 `"你好".pad_start(5, "x")` 因 5 <= 6(字节) 原样返回 ✗
+    //   修前 `"ab".pad_start(4, "中")` 只取 0xE4 一字节 ⇒ 非法 UTF-8 ✗
+    assert_eq("你好".pad_start(5, "x"), "xxx你好")
+    assert_eq("你好".pad_end(5, "x"), "你好xxx")
+    assert_eq("ab".pad_start(4, "中"), "中中ab")
+    assert_eq("ab".pad_end(4, "中"), "ab中中")
+    assert_eq("你好".pad_start(2, "x"), "你好")   // 不截断
 
     // 测试22: 字符串方法 - slice
     assert_eq("hello".slice(1, 2), "el")

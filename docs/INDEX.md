@@ -687,7 +687,7 @@
 | [module_files.md](module_files.md) | files 模块（注意"字节保真 / 不翻译行尾"口径） |
 | [module_dirs.md](module_dirs.md) | 目录操作 |
 | [module_strings.md](module_strings.md) | 字符串方法 |
-| [module_arrays.md](module_arrays.md) | 数组（`arr[:]` 双侧省略**不支持**） |
+| [module_arrays.md](module_arrays.md) | 数组（`arr[:]` 双侧省略可用，等价整段浅拷贝） |
 | [module_dicts.md](module_dicts.md) | 字典 |
 | [module_types.md](module_types.md) | 类型判定与转换 |
 | [module_maths.md](module_maths.md) | 数学 |

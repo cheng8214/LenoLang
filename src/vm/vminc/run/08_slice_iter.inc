@@ -93,6 +93,70 @@
             DISPATCH();
         }
 
+        // cstruct 数组字段视图：切片 → 物化成普通 Array（文档承诺"语法与普通数组一致"）
+        //   ★ 2026-11-02：此前视图只支持逐元素索引，OP_SLICE 直接落到「切片: 对象必须
+        //   是数组或字符串」⇒ `cstruct.values[2:5]` 跑不通（docs/module_cstructs.md §数组
+        //   字段切片 的示例因此是坏的）。切出的元素与索引读取同口径：标量按 C 布局读，
+        //   嵌套 cstruct 给**非拥有视图**（指向父对象内存，不 free）。
+        if (val_is_obj(obj_val) && val_as_obj(obj_val)->type == OBJ_CSTRUCT_ARRAY_VIEW) {
+            ObjCStructArrayView* view = (ObjCStructArrayView*)val_as_obj(obj_val);
+            int arr_len = view->array_dim;
+            int start_idx = 0, end_idx = arr_len - 1;
+
+            if (!val_is_null(start_val)) {
+                if (unlikely(!val_is_num(start_val))) {
+                    if (!throw_runtime_error("切片起始索引必须是数字", line)) return -1;
+                    frame = &vm.frames[vm.frame_cnt - 1];
+                    DISPATCH();
+                }
+                start_idx = (int)value_to_double(start_val);
+                if (start_idx < 0) start_idx = arr_len + start_idx;
+                if (start_idx < 0) start_idx = 0;
+                if (start_idx > arr_len) start_idx = arr_len;
+            }
+            if (!val_is_null(end_val)) {
+                if (unlikely(!val_is_num(end_val))) {
+                    if (!throw_runtime_error("切片结束索引必须是数字", line)) return -1;
+                    frame = &vm.frames[vm.frame_cnt - 1];
+                    DISPATCH();
+                }
+                end_idx = (int)value_to_double(end_val);
+                if (end_idx < 0) end_idx = -1;
+                if (end_idx >= arr_len) end_idx = arr_len - 1;
+            }
+
+            int slice_len = end_idx - start_idx + 1;
+            if (slice_len < 0) slice_len = 0;
+            ObjArray* result = arr_new(slice_len > 0 ? slice_len : 1);
+            if (unlikely(!result)) {
+                runtime_error("切片数组内存分配失败", line);
+                return -1;
+            }
+            ObjCStruct* parent = view->cstruct;
+            CStructFieldInfo* vf = &parent->def->fields[view->field_index];
+            for (int i = 0; i < slice_len; i++) {
+                uint8_t* elem_addr = parent->data + vf->offset +
+                                     ((size_t)(start_idx + i) * view->element_size);
+                Value ev = val_null();
+                if (view->element_type == TYPE_CSTRUCT) {
+                    ObjCStructDef* edef = vf->struct_name ? cstruct_def_find(vf->struct_name) : NULL;
+                    if (edef) {
+                        ObjCStruct* elem = (ObjCStruct*)gc_alloc(sizeof(ObjCStruct), OBJ_CSTRUCT);
+                        if (unlikely(!elem)) { runtime_error("内存不足", line); return -1; }
+                        elem->def = edef;
+                        elem->data = elem_addr;
+                        elem->owns_memory = 0;
+                        ev = val_obj((Object*)elem);
+                    }
+                } else {
+                    ev = vm_c_layout_read_scalar(elem_addr, view->element_type);
+                }
+                arr_write(result, i, ev);
+            }
+            R(a) = val_obj((Object*)result);
+            DISPATCH();
+        }
+
         if (!throw_runtime_error("切片: 对象必须是数组或字符串", line)) return -1;
         frame = &vm.frames[vm.frame_cnt - 1];
         DISPATCH();

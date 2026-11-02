@@ -1104,11 +1104,23 @@ main() {
     //   ① 导入**不存在**的模块 ⇒ 编译期报错；
     //   ② 导入**有语法错误**的模块 ⇒ 编译期报错，且错误报在**那个模块自己那行**上。
     var im1 = dirs.join(work, "import_missing.leno")
-    files.write(im1, @"main() {
-    import ""nonexistent_module.leno"" as m
+    files.write(im1, @"import ""nonexistent_module.leno"" as m
+main() { }
+")
+    ce.expect_error(im1, "导入不存在的模块要报错", "找不到模块文件: nonexistent_module.leno", 1)
+
+    // ③ 源码模块 import 只能写在**模块顶层**（2026-11-02）
+    //    此前写在函数里会编译通过，但别名永远不被绑定 ⇒ 运行期是 null，
+    //    随后 `m.foo()` 报「下标访问: 对象不支持索引」（真正的原因完全看不出 ✗）
+    var im2mod = dirs.join(work, "import_nested_mod.leno")
+    files.write(im2mod, "export func hi(): int { return 1 }\n")
+    var im2 = dirs.join(work, "import_nested_in_func.leno")
+    files.write(im2, @"main() {
+    import ""import_nested_mod.leno"" as m
 }
 ")
-    ce.expect_error(im1, "导入不存在的模块要报错", "找不到模块文件: nonexistent_module.leno", 2)
+    ce.expect_error(im2, "源码模块 import 写在函数内要编译报错",
+        "源码模块 import 只能写在**模块顶层**", 2)
 
     // ② 用静态 fixture（assert/import_broken*.leno）：坏模块必须在 assert/ 下才能被相对 import 找到
     ce.expect_error("assert/import_broken.leno", "导入有语法错误的模块要报错（报在 fixture 自己那行）",

@@ -1151,10 +1151,16 @@ static Value str_split(int argc, Value* args) {
     const char* sep_chars = sep->chars;
     int sep_len = sep->len;
     
-    // 空分隔符，每个字符分割
+    // 空分隔符，每个**字符**（码点）分割
+    // ★ 2026-11-02：原先按字节 `for i < str_len` + `str_copy(str_chars + i, 1)` ——
+    //   `"你好".split("")` 得到 6 个非法单字节串（`p[0].len()` = 1、打印乱码）✗；
+    //   文档明确写"每个字符作为一个元素" ⇒ 必须走 UTF-8 码点边界。
     if (sep_len == 0) {
-        for (int i = 0; i < str_len; i++) {
-            ObjString* ch_str = str_copy(str_chars + i, 1);
+        int clen = str->char_len;
+        for (int i = 0; i < clen; i++) {
+            int off = utf8_char_offset(str_chars, str_len, i);
+            int cb = utf8_char_byte_len(str_chars, str_len, off);
+            ObjString* ch_str = str_copy(str_chars + off, cb);
             if (!ch_str) return val_null();
             arr_push_custom(result, val_obj((Object*)ch_str));
         }
@@ -1333,34 +1339,46 @@ static Value str_pad_start(int argc, Value* args) {
     int target_len = val_as_int(args[1]);
     
     // 获取填充字符，默认为空格
-    char pad_char = ' ';
+    // ★ 2026-11-02：按**字符**（码点）计长，且填充字符可以是多字节（如 "中"）。
+    //   原先拿 str->len（字节数）比较/计算，且只取 pad_str->chars[0] 一个字节：
+    //   `"你好".pad_start(5, "x")` 因 5 <= 6(字节) 直接原样返回 ✗；
+    //   `"ab".pad_start(4, "中")` 则会把 0xE4 单独拼进去 ⇒ 非法 UTF-8 ✗。
+    const char* pad_chars = " ";
+    int pad_bytes = 1;
     if (argc >= 3) {
         ObjString* pad_str = (ObjString*)val_as_obj(args[2]);
         if (pad_str->len > 0) {
-            pad_char = pad_str->chars[0];
+            pad_chars = pad_str->chars;
+            pad_bytes = utf8_char_byte_len(pad_str->chars, pad_str->len, 0);
+            if (pad_bytes <= 0) pad_bytes = 1;
         }
     }
-    
-    // 如果目标长度小于等于当前长度，返回原字符串
-    if (target_len <= str->len) {
+
+    // 如果目标长度小于等于当前长度（按字符数），返回原字符串
+    if (target_len <= str->char_len) {
         return val_obj((Object*)str);
     }
-    
-    int pad_len = target_len - str->len;
-    ObjString* result = str_alloc(target_len);
+
+    int pad_len = target_len - str->char_len;
+    long long total_bytes = (long long)str->len + (long long)pad_len * pad_bytes;
+    if (total_bytes > INT_MAX) {
+        native_throw_error("结果字符串太长");
+        return val_null();
+    }
+    ObjString* result = str_alloc((int)total_bytes);
     if (!result) return val_null();
-    
+
     // 填充字符
     for (int i = 0; i < pad_len; i++) {
-        result->chars[i] = pad_char;
+        memcpy(result->chars + (size_t)i * pad_bytes, pad_chars, (size_t)pad_bytes);
     }
-    
+
     // 复制原字符串
-    memcpy(result->chars + pad_len, str->chars, str->len);
-    result->chars[target_len] = '\0';
-    result->char_len = utf8_char_len(result->chars, target_len);
-    result->hash = hash_string(result->chars, target_len);
-    
+    memcpy(result->chars + (size_t)pad_len * pad_bytes, str->chars, (size_t)str->len);
+    result->chars[total_bytes] = '\0';
+    result->char_len = target_len;
+    result->hash = hash_string(result->chars, (int)total_bytes);
+
     return val_obj((Object*)result);
 }
 
@@ -1371,36 +1389,45 @@ static Value str_pad_end(int argc, Value* args) {
     ObjString* str = (ObjString*)val_as_obj(args[0]);
     int target_len = val_as_int(args[1]);
     
-    // 获取填充字符，默认为空格
-    char pad_char = ' ';
+    // 获取填充字符，默认为空格（口径与 str_pad_start 完全一致，见那里的说明）
+    const char* pad_chars = " ";
+    int pad_bytes = 1;
     if (argc >= 3) {
         ObjString* pad_str = (ObjString*)val_as_obj(args[2]);
         if (pad_str->len > 0) {
-            pad_char = pad_str->chars[0];
+            pad_chars = pad_str->chars;
+            pad_bytes = utf8_char_byte_len(pad_str->chars, pad_str->len, 0);
+            if (pad_bytes <= 0) pad_bytes = 1;
         }
     }
-    
-    // 如果目标长度小于等于当前长度，返回原字符串
-    if (target_len <= str->len) {
+
+    // 如果目标长度小于等于当前长度（按字符数），返回原字符串
+    if (target_len <= str->char_len) {
         return val_obj((Object*)str);
     }
-    
-    int pad_len = target_len - str->len;
-    ObjString* result = str_alloc(target_len);
+
+    int pad_len = target_len - str->char_len;
+    long long total_bytes = (long long)str->len + (long long)pad_len * pad_bytes;
+    if (total_bytes > INT_MAX) {
+        native_throw_error("结果字符串太长");
+        return val_null();
+    }
+    ObjString* result = str_alloc((int)total_bytes);
     if (!result) return val_null();
-    
+
     // 复制原字符串
-    memcpy(result->chars, str->chars, str->len);
-    
+    memcpy(result->chars, str->chars, (size_t)str->len);
+
     // 填充字符
     for (int i = 0; i < pad_len; i++) {
-        result->chars[str->len + i] = pad_char;
+        memcpy(result->chars + (size_t)str->len + (size_t)i * pad_bytes,
+               pad_chars, (size_t)pad_bytes);
     }
-    
-    result->chars[target_len] = '\0';
-    result->char_len = utf8_char_len(result->chars, target_len);
-    result->hash = hash_string(result->chars, target_len);
-    
+
+    result->chars[total_bytes] = '\0';
+    result->char_len = target_len;
+    result->hash = hash_string(result->chars, (int)total_bytes);
+
     return val_obj((Object*)result);
 }
 

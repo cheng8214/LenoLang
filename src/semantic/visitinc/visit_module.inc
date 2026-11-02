@@ -1,5 +1,21 @@
         case AST_IMPORT: {
             if (strstr(ast->u.import.module_name, ".leno") != NULL) {
+                // ★ 2026-11-02：源码模块 import 必须写在**模块顶层**。
+                //   写在函数/条件块里时，别名会被 scope_define 定义在**块作用域**：
+                //   ① codegen 的 gen_import 只在 root_scope 解析别名 ⇒ 永不绑定，
+                //      运行期变量是 null（`m.foo()` 随后报「下标访问: 对象不支持索引」）；
+                //   ② 嵌套作用域里的 SYM_GLOBAL 还会拿到**本作用域**的 global index，
+                //      与根作用域的全局槽位撞车（潜在错值）。
+                //   此前完全静默（编译通过、运行期才炸）⇒ 现在编译期直接报。
+                //   ⚠ 原生模块（import ffi / maths ...）**不绑定变量**，写在函数里是
+                //     合法惯用法（仓内回调里大量 `import ffi`）⇒ 不受此限。
+                if (s->current != s->root_scope) {
+                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                        "源码模块 import 只能写在**模块顶层** —— 当前在函数/条件块内，"
+                        "模块别名不会被绑定（运行期取到 null）；请把 import 提到顶层，"
+                        "再按条件选择要用的模块（原生模块 import 如 ffi/maths 不受此限）");
+                    break;
+                }
                 const char* alias = ast->u.import.alias;
                 char* module_name = NULL;
                 // 在模块上下文中使用 SYM_MODULE，否则使用 SYM_GLOBAL

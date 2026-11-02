@@ -593,25 +593,34 @@ main() {
 
 ## 7. 高级用法
 
-> **💡 编译期语义说明**：`import` 是**编译期指令**，不是运行时动态加载表达式。即使写在函数体或 `if` 块内部，编译器也会在编译阶段完成路径解析、模块编译和缓存。路径必须是编译期可确定的字符串字面量（如 `"db/mysql.leno"`），**不支持**用变量动态构造路径（如 `import path as plugin`）。
+> **💡 编译期语义说明**：`import` 是**编译期指令**，不是运行时动态加载表达式。编译器会在编译阶段完成路径解析、模块编译和缓存。路径必须是编译期可确定的字符串字面量（如 `"db/mysql.leno"`），**不支持**用变量动态构造路径（如 `import path as plugin`）。
+>
+> ⚠ **源码模块（`.leno`）的 `import` 必须写在模块顶层**（2026-11-02 起编译期强制）：
+> 写在函数体 / `if` 块内时，别名不会被绑定，运行期拿到的是 `null`
+> （随后 `m.foo()` 报「下标访问: 对象不支持索引」）。此前这里是**静默通过** ✗。
+> **原生模块**（`ffi` / `maths` / `times` 等）不绑定变量，写在函数体内仍是
+> **合法惯用法**（仓内回调里大量 `import ffi`），不受此限 ✓。
 
 ### 7.1 模块条件选择
 
-由于 `import` 在编译期处理，函数内的条件 `import` 实际上会在编译阶段把两个模块都编译和缓存。运行时根据条件返回不同的模块引用：
+源码模块的 `import` 要提到**顶层**（两个模块都会在编译期加载/缓存），运行期按条件
+选择要用的那个引用：
 
 ```leno
-// 根据条件选择不同实现
-// 注意：两个模块都会在编译期加载，运行时只返回选中的引用
+// 顶层导入两个实现
+import "db/mysql.leno" as mysql_db
+import "db/sqlite.leno" as sqlite_db
+
 func get_database_module(bool use_mysql) {
     if use_mysql {
-        import "db/mysql.leno" as mysql_db
         return mysql_db
-    } else {
-        import "db/sqlite.leno" as sqlite_db
-        return sqlite_db
     }
+    return sqlite_db
 }
 ```
+
+> 如果写成"函数内 `if` 里各 `import` 一个"，2026-11-02 之前会**编译通过但别名是 null**
+> （运行期才发现）；现在编译器会直接报「源码模块 import 只能写在模块顶层」。
 
 ### 7.2 插件系统实现
 

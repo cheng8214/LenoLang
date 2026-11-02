@@ -1085,11 +1085,16 @@ Ast* parse_index(Parser* p, Ast* obj) {
 
     // 检查是否是切片语法：arr[start:end]
     if (p->lex.current.type == TOK_COLON) {
-        // 语法: arr[:end] - 从开头到end
         lexer_next(&p->lex); // 消费 ':'
-        Ast* end = parse_expression(p);
+        // 语法: arr[:end] - 从开头到end；arr[:] - 双侧省略（整段复制）
+        // ★ 2026-11-02：此前 [: ] 直接 parse_expression ⇒ 报「期望表达式」，
+        //   而 arr[:3] / arr[5:] 都合法 ⇒ 解析器不对称（T28）。这里补上"紧随 ] 即省略"。
+        Ast* end = NULL;
+        if (p->lex.current.type != TOK_RBRACKET) {
+            end = parse_expression(p);
+        }
         consume(p, TOK_RBRACKET, "期望 ']'");
-        
+
         Ast* ast = ast_new(AST_SLICE, line);
         ast->u.slice.obj = obj;
         ast->u.slice.start = NULL; // 从开头开始
