@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include "leno_types.h"
 #include "platform_thread.h"
+// maths 纯数值函数的**唯一实现**（native 与 OP_MATH_FAST 共用，见该文件头说明）
+#include "leno_math_inline.h"
 
 // 线程局部存储定义（需要在 GC 声明之前）
 #ifndef THREAD_LOCAL

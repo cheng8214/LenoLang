@@ -42,8 +42,8 @@ static Value math_sqrt(int argc, Value* args) {
 
 static Value math_abs(int argc, Value* args) {
     (void)argc;
-    double num = get_number(args[0]);
-    return val_float(fabs(num));
+    // 纯计算见 src/include/leno_math_inline.h（与 OP_MATH_FAST 共用同一份实现）
+    return val_float(leno_math_abs(get_number(args[0])));
 }
 
 static Value math_pow(int argc, Value* args) {
@@ -175,20 +175,12 @@ static Value math_fmod(int argc, Value* args) {
 
 static Value math_clamp(int argc, Value* args) {
     (void)argc;
-    double v = get_number(args[0]);
-    double lo = get_number(args[1]);
-    double hi = get_number(args[2]);
-    if (v < lo) return val_float(lo);
-    if (v > hi) return val_float(hi);
-    return val_float(v);
+    return val_float(leno_math_clamp(get_number(args[0]), get_number(args[1]), get_number(args[2])));
 }
 
 static Value math_lerp(int argc, Value* args) {
     (void)argc;
-    double a = get_number(args[0]);
-    double b = get_number(args[1]);
-    double t = get_number(args[2]);
-    return val_float(a + (b - a) * t);
+    return val_float(leno_math_lerp(get_number(args[0]), get_number(args[1]), get_number(args[2])));
 }
 
 // smoothstep(t)：0..1 的平滑缓动 3t²-2t³（t 先夹到 [0,1]）
@@ -199,10 +191,7 @@ static Value math_lerp(int argc, Value* args) {
 //     而 UI 侧 99% 都是"进度 0~1"，单参数更省心 ✓）
 static Value math_smoothstep(int argc, Value* args) {
     (void)argc;
-    double t = get_number(args[0]);
-    if (t <= 0.0) return val_float(0.0);      // 省掉死区里的乘法（也顺手夹取）
-    if (t >= 1.0) return val_float(1.0);
-    return val_float(t * t * (3.0 - 2.0 * t));
+    return val_float(leno_math_smoothstep(get_number(args[0])));
 }
 
 static Value math_rsqrt(int argc, Value* args) {
@@ -278,22 +267,16 @@ static Value math_cos_fast(int argc, Value* args) {
 
 static Value math_max(int argc, Value* args) {
     (void)argc;
-    double max_val = get_number(args[0]);
-    for (int i = 1; i < argc; i++) {
-        double val = get_number(args[i]);
-        if (val > max_val) max_val = val;
-    }
-    return val_float(max_val);
+    double m = get_number(args[0]);
+    for (int i = 1; i < argc; i++) m = leno_math_max2(m, get_number(args[i]));
+    return val_float(m);
 }
 
 static Value math_min(int argc, Value* args) {
     (void)argc;
-    double min_val = get_number(args[0]);
-    for (int i = 1; i < argc; i++) {
-        double val = get_number(args[i]);
-        if (val < min_val) min_val = val;
-    }
-    return val_float(min_val);
+    double m = get_number(args[0]);
+    for (int i = 1; i < argc; i++) m = leno_math_min2(m, get_number(args[i]));
+    return val_float(m);
 }
 
 static Value math_deg(int argc, Value* args) {
@@ -335,7 +318,9 @@ static int64_t math_to_i64(Value v) {
 
 static Value math_roundi(int argc, Value* args) {
     (void)argc;
-    return val_int(math_to_i64(args[0]));
+    // int 实参直接取：精确、且省一次 double 往返（>2^53 的整数过 double 会丢精度）
+    if (val_is_int(args[0])) return val_int(val_as_int(args[0]));
+    return val_int(leno_math_roundi(get_number(args[0])));
 }
 
 // int 版绝对值（2026-11-01 补）：`maths.abs` 返回 float，而 QR 的 `abs(pct-50)/5`、
@@ -343,38 +328,26 @@ static Value math_roundi(int argc, Value* args) {
 //   赋回 int 还要再套 `_int(...)`，比手写 `if x < 0 then -x else x` 还长 ✗
 static Value math_absi(int argc, Value* args) {
     (void)argc;
-    int64_t v = math_to_i64(args[0]);
-    return val_int(v < 0 ? -v : v);
+    return val_int(leno_math_absi(math_to_i64(args[0])));
 }
 
 static Value math_mini(int argc, Value* args) {
+    (void)argc;
     int64_t m = math_to_i64(args[0]);
-    for (int i = 1; i < argc; i++) {
-        int64_t v = math_to_i64(args[i]);
-        if (v < m) m = v;
-    }
+    for (int i = 1; i < argc; i++) m = leno_math_mini(m, math_to_i64(args[i]));
     return val_int(m);
 }
 
 static Value math_maxi(int argc, Value* args) {
+    (void)argc;
     int64_t m = math_to_i64(args[0]);
-    for (int i = 1; i < argc; i++) {
-        int64_t v = math_to_i64(args[i]);
-        if (v > m) m = v;
-    }
+    for (int i = 1; i < argc; i++) m = leno_math_maxi(m, math_to_i64(args[i]));
     return val_int(m);
 }
 
 static Value math_clampi(int argc, Value* args) {
     (void)argc;
-    int64_t v = math_to_i64(args[0]);
-    int64_t lo = math_to_i64(args[1]);
-    int64_t hi = math_to_i64(args[2]);
-    // 边界写反时不抛异常：按"空区间"收成 lo（GUI 里 hi/lo 常来自布局计算，画错比崩了好）
-    if (hi < lo) hi = lo;
-    if (v < lo) v = lo;
-    if (v > hi) v = hi;
-    return val_int(v);
+    return val_int(leno_math_clampi(math_to_i64(args[0]), math_to_i64(args[1]), math_to_i64(args[2])));
 }
 
 // 正取模：结余符号跟**除数**走（b > 0 时返回 0..b-1）
@@ -382,24 +355,18 @@ static Value math_clampi(int argc, Value* args) {
 //   （LenoSDL3 的 sdl_calendar.leno:226 就是 `(firstDow - weekStart + 7) % 7`）
 static Value math_mod(int argc, Value* args) {
     (void)argc;
-    int64_t a = math_to_i64(args[0]);
     int64_t b = math_to_i64(args[1]);
     if (b == 0) {
         native_throw_error("mod() 除数不能为 0");
         return val_null();
     }
-    int64_t r = a % b;
-    if (r != 0 && ((r < 0) != (b < 0))) r += b;
-    return val_int(r);
+    return val_int(leno_math_mod(math_to_i64(args[0]), b));
 }
 
 // 夹到 0..1（GUI 里出现频率最高的夹取：透明度、进度、归一化值）
 static Value math_saturate(int argc, Value* args) {
     (void)argc;
-    double v = get_number(args[0]);
-    if (v < 0.0) return val_float(0.0);
-    if (v > 1.0) return val_float(1.0);
-    return val_float(v);
+    return val_float(leno_math_saturate(get_number(args[0])));
 }
 
 // (v - a) / (b - a)；a == b 时返回 0（不抛异常：GUI 里尺寸为 0 是常态）
@@ -548,9 +515,7 @@ static Value math_wrap_angle(int argc, Value* args) {
 // 小数部分（着色、滚动偏移、进度取余都用它；负数结果也落在 [0,1)）
 static Value math_fract(int argc, Value* args) {
     (void)argc;
-    double v = get_number(args[0]);
-    double f = v - floor(v);
-    return val_float(f);
+    return val_float(leno_math_fract(get_number(args[0])));
 }
 
 // GLSL 式 step：x < edge ⇒ 0，否则 1

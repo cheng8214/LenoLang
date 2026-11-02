@@ -602,54 +602,49 @@
                      || c == MATHF_MOD) ? 2 : 1;
         double y = (nargs >= 2) ? MATHF_D(b + 1) : 0.0;
         double z = (nargs >= 3) ? MATHF_D(b + 2) : 0.0;
+        // ★ 纯计算一律调 `leno_math_inline.h` 里的共享实现 —— 与 maths.c 的 native 版
+        //   是**同一份代码**（两处各写一遍迟早漂移，见该文件头说明）。这里只负责取值 + 装 Value。
         switch (c) {
             case MATHF_ABS:
-                R(a) = val_float(fabs(x));
+                R(a) = val_float(leno_math_abs(x));
                 break;
             case MATHF_CLAMP:
-                R(a) = val_float(x < y ? y : (x > z ? z : x));
+                R(a) = val_float(leno_math_clamp(x, y, z));
                 break;
             case MATHF_MIN:
-                R(a) = val_float(x < y ? x : y);
+                R(a) = val_float(leno_math_min2(x, y));
                 break;
             case MATHF_MAX:
-                R(a) = val_float(x > y ? x : y);
+                R(a) = val_float(leno_math_max2(x, y));
                 break;
             case MATHF_LERP:
-                R(a) = val_float(x + (y - x) * z);
+                R(a) = val_float(leno_math_lerp(x, y, z));
                 break;
-            case MATHF_SMOOTHSTEP: {
-                // 与 maths.smoothstep 同口径：先夹 0..1 再算 3t²-2t³（死区直接返回）
-                if (x <= 0.0) R(a) = val_float(0.0);
-                else if (x >= 1.0) R(a) = val_float(1.0);
-                else R(a) = val_float(x * x * (3.0 - 2.0 * x));
-            } break;
+            case MATHF_SMOOTHSTEP:
+                R(a) = val_float(leno_math_smoothstep(x));
+                break;
             case MATHF_SATURATE:
-                R(a) = val_float(x < 0.0 ? 0.0 : (x > 1.0 ? 1.0 : x));
+                R(a) = val_float(leno_math_saturate(x));
                 break;
             case MATHF_FRACT:
-                R(a) = val_float(x - floor(x));
+                R(a) = val_float(leno_math_fract(x));
                 break;
             case MATHF_ROUNDI:
-                R(a) = val_int((int64_t)llround(x));
+                // int 实参直接取（精确，且省一次 double 往返）
+                R(a) = val_int(val_is_int(R(b)) ? val_as_int(R(b)) : leno_math_roundi(x));
                 break;
-            case MATHF_CLAMPI: {
-                int64_t v = MATHF_I(b), lo = MATHF_I(b + 1), hi = MATHF_I(b + 2);
-                if (hi < lo) hi = lo;      // 边界写反 ⇒ 收成 lo（与 maths.clampi 同一口径）
-                R(a) = val_int(v < lo ? lo : (v > hi ? hi : v));
-            } break;
-            case MATHF_ABSI: {
-                int64_t v = MATHF_I(b);
-                R(a) = val_int(v < 0 ? -v : v);
-            } break;
-            case MATHF_MINI: {
-                int64_t u = MATHF_I(b), v = MATHF_I(b + 1);
-                R(a) = val_int(u < v ? u : v);
-            } break;
-            case MATHF_MAXI: {
-                int64_t u = MATHF_I(b), v = MATHF_I(b + 1);
-                R(a) = val_int(u > v ? u : v);
-            } break;
+            case MATHF_CLAMPI:
+                R(a) = val_int(leno_math_clampi(MATHF_I(b), MATHF_I(b + 1), MATHF_I(b + 2)));
+                break;
+            case MATHF_ABSI:
+                R(a) = val_int(leno_math_absi(MATHF_I(b)));
+                break;
+            case MATHF_MINI:
+                R(a) = val_int(leno_math_mini(MATHF_I(b), MATHF_I(b + 1)));
+                break;
+            case MATHF_MAXI:
+                R(a) = val_int(leno_math_maxi(MATHF_I(b), MATHF_I(b + 1)));
+                break;
             case MATHF_MOD: {
                 int64_t u = MATHF_I(b), v = MATHF_I(b + 1);
                 if (unlikely(v == 0)) {
@@ -657,9 +652,7 @@
                     frame = &vm.frames[vm.frame_cnt - 1];
                     DISPATCH();
                 }
-                int64_t r = u % v;
-                if (r != 0 && ((r < 0) != (v < 0))) r += v;    // 正取模：结余符号跟除数走
-                R(a) = val_int(r);
+                R(a) = val_int(leno_math_mod(u, v));
             } break;
             default:
                 R(a) = val_null();
