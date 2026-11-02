@@ -1,0 +1,42 @@
+// 插值字符串的边界：表达式形态 / spec 与其它新特性组合
+func add(int x, int y): int { return x + y }
+
+main() {
+    // ① 插值表达式是字符串字面量
+    assert_eq($"{"abc"}", "abc", "插值里是字符串字面量")
+
+    // ② 插值里是字典下标 + spec
+    var d = {"k": 3.14159}
+    assert_eq($"pi={d["k"]:.2f}", "pi=3.14", "下标 + spec")
+
+    // ③ 插值里是 if 表达式
+    int n = 5
+    assert_eq($"{(if n > 3 then "big" else "small")}", "big", "if 表达式")
+    assert_eq($"{if n > 5 then "big" else "small"}", "small", "if 表达式（另一支）")
+
+    // ④ 宽度 + 精度
+    assert_eq($"[{n:6.2f}]", "[  5.00]", "宽度 + 精度")
+
+    // ⑤ 空字符串字段
+    string empty = ""
+    assert_eq($"[{empty:s}]", "[]", "空字符串")
+
+    // ⑥ 多个插值紧挨着
+    int a = 1
+    int b = 2
+    assert_eq($"{a}{b}", "12", "相邻插值")
+
+    // ⑦ 插值里调用带命名实参的函数
+    assert_eq($"{add(y = 2, x = 3)}", "5", "插值里命名实参调用")
+
+    // ⑧ 插值里嵌 ??=
+    int? m = null
+    assert_eq($"{(m ??= 42):.2f}", "42.00", "插值里 ??=")
+    assert_eq(m, 42, "??= 在插值里真的生效")
+
+    // ⑨ 百分号写在 } 外面（spec 里写 % 会被编译期拦下）
+    float r = 0.87
+    assert_eq($"{r * 100:.1f}%", "87.0%", "百分号正确写法")
+
+    print("test_interp_edge all passed")
+}

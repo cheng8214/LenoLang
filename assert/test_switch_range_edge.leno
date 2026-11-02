@@ -1,0 +1,66 @@
+// 区间 case 的边界：单点 / 巨大区间 / 字符串 switch 配数字区间 / 大量 case 混合
+func single(int v): string {
+    switch v {
+        case 7:7 { return "seven" }
+        default { return "other" }
+    }
+}
+
+func huge(int v): string {
+    switch v {
+        case 0:1000000 { return "big-range" }
+        default { return "out" }
+    }
+}
+
+func onStr(string s): string {
+    switch s {
+        case 0:9 { return "digit-range" }   // 数字区间配字符串 switch ⇒ 永不命中，但不该崩
+        case "a" { return "a" }
+        default { return "other" }
+    }
+}
+
+func many(int v): string {
+    switch v {
+        case 0:1 { return "r0" }
+        case 2 { return "s2" }
+        case 3:4 { return "r3" }
+        case 5 { return "s5" }
+        case 6:7 { return "r6" }
+        case 8 { return "s8" }
+        case 9:10 { return "r9" }
+        case 11 { return "s11" }
+        case 12:13 { return "r12" }
+        case 14 { return "s14" }
+        case 15:16 { return "r15" }
+        case 17 { return "s17" }
+        case 18:19 { return "r18" }
+        default { return "other" }
+    }
+}
+
+main() {
+    // ① 单点区间等价于单值
+    assert_eq(single(7), "seven", "单点区间命中")
+    assert_eq(single(8), "other", "单点区间不命中")
+
+    // ② 巨大区间（两端都含）
+    assert_eq(huge(0), "big-range", "巨大区间下界")
+    assert_eq(huge(999999), "big-range", "巨大区间内部")
+    assert_eq(huge(1000000), "big-range", "巨大区间上界")
+    assert_eq(huge(1000001), "out", "巨大区间外")
+
+    // ③ 字符串 switch 配数字区间：不命中、不崩
+    assert_eq(onStr("5"), "other", "字符串不被数字区间吃掉")
+    assert_eq(onStr("a"), "a", "字符串单值 case 正常")
+    assert_eq(onStr("zz"), "other", "字符串走 default")
+
+    // ④ 20 个 case 交替（区间/单值），每个值都必须命中
+    for 0:19 to i {
+        assert_true(many(i) != "other", "case 混合：i=" + _int(i) + " 应命中")
+    }
+    assert_eq(many(99), "other", "越界走 default")
+
+    print("test_switch_range_edge all passed")
+}

@@ -1,0 +1,52 @@
+// `??=` 的求值顺序与副作用（钉住"右侧惰性 + 左值只求值一次"）
+int side = 0
+
+func bump(): int {
+    side = side + 1
+    return side
+}
+
+main() {
+    // ① 左侧为 null ⇒ 右侧整体求值（两次调用都发生）
+    int? x = null
+    x ??= bump() + bump()
+    assert_eq(x, 3, "右侧两次调用 ⇒ 1+2")
+    assert_eq(side, 2, "副作用发生 2 次")
+
+    // ② 左侧非 null ⇒ 右侧一次都不求值
+    int? y = 9
+    y ??= bump()
+    assert_eq(y, 9, "非 null 保持原值")
+    assert_eq(side, 2, "右侧完全没执行")
+
+    // ③ 下标左值只求值一次
+    int idx = 0
+    Array[int?] arr = [null, null]
+    arr[idx] ??= bump()
+    assert_eq(arr[0], 3, "下标目标写入")
+    assert_eq(idx, 0, "下标表达式没有被求值两次")
+    assert_eq(side, 3, "副作用累计 3 次")
+
+    // ④ 嵌套：a ??= (b ??= 5)
+    int? a = null
+    int? b = null
+    a ??= b ??= 5
+    assert_eq(a, 5, "嵌套 a")
+    assert_eq(b, 5, "嵌套 b")
+
+    // ⑤ 表达式位置的结果可参与别的类型
+    int? z = null
+    float fz = (z ??= 3)
+    assert_eq(fz, 3.0, "表达式位置返回写入后的值")
+
+    // ⑥ 链式：a ??= b ??= c ??= 7
+    int? p = null
+    int? q = null
+    int? r = null
+    p ??= q ??= r ??= 7
+    assert_eq(p, 7, "链式 p")
+    assert_eq(q, 7, "链式 q")
+    assert_eq(r, 7, "链式 r")
+
+    print("test_coalesce_order all passed")
+}
