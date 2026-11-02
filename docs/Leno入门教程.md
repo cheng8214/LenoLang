@@ -24,7 +24,9 @@
 6. [注解（@）](#注解)
    - [语法](#语法-1)
    - [目前唯一的注解：`@optkeys`](#目前唯一的注解optkeys)
+   - [键值类型检查：`@optkeys(["visible:bool"])`](#键值类型检查optkeysvisiblebool)
 7. [结构体（Struct）](#结构体struct)
+   - [`extend`：把方法写到别的文件](#extend把方法写到别的文件)
    - [可空类型 `Type?`](#可空类型-type推荐方案)
    - [泛型结构体](#泛型结构体)
    - [结构体引用语义与深拷贝](#结构体引用语义与深拷贝)
@@ -4174,6 +4176,44 @@ LenoSDL3 的 **48 个** `createXxx` 都带注解，跨模块调用同样生效�
 | **`@optkeys("*")` = 不查** | 某个构造函数确实接受任意键时这么写 |
 | **只警告，不中断编译** | 不会让编译失败，`--check` 仍算通过 |
 
+### 键值类型检查：`@optkeys(["visible:bool"])`
+
+键名写错只是“选项不生效”；**值类型写错是逻辑静默走反**。最典型的坑是多写一对引号：
+
+```leno
+createLabel({text: "你好", visible: "false"})
+```
+
+`"false"` 是非空字符串，在真假判定里是**真** ⇒ 界面行为反了，而编译不报、运行也不报
+（`?? false` 只做空值兜底，不会把字符串转成 bool）。
+
+键名后面加 `:类型` 就能在编译期拦住：
+
+```leno
+@optkeys(["visible:bool", "w:num", "tip:string", "headers:Array", "align"])
+func createBox(Dict opts): HBox { ... }
+```
+
+| 类型词 | 接受的实参 |
+|---|---|
+| `int` | 整数 |
+| `float` | 浮点**和整数**（int→float 是本语言允许的隐式转换） |
+| `num` | **数字**：int / float 都收（`x / y / w / h` 这类尺寸键用它最贴切） |
+| `bool` | `true` / `false` |
+| `string` | 字符串 |
+| `Array` | 数组（`Array[int]` / `Array[Array[int]]` 只认外层，元素类型暂不检查） |
+| 不写 | 不查（默认，占绝大多数） |
+
+口径与键名检查一致，都是为了不误伤：
+
+- 只查**字面量和已知类型的变量**；函数调用结果、`null` 一律放行
+- 只**警告**，不中断编译
+- 类型词拼错（写成 `bolean`）⇒ 退化成“不查”，不报错
+- 报错文案显示你写的**原词**（写 `num` 就报“期望 num”）
+
+> LenoSDL3 的 48 个 `createXxx` 已标注 637 处（`num 238 / bool 157 / float 104 / string 82 / int 38 / Array 18`），
+> 你在应用里写错类型，编译期就会看到警告。
+
 ### 给自己的函数加注解
 
 ```leno
@@ -4786,6 +4826,79 @@ print(c.get_count())    // 2
 > - 参数名和字段名冲突时：`func set_x(int x) { self.x = x }`
 > - 调用其他方法时：`self.print_coord()`
 > - 想要更清晰的代码时
+
+### `extend`：把方法写到别的文件
+
+一个类型的方法多了以后（几千行的 GUI 主类很常见），全挤在 `struct { }` 里就没法维护。
+`extend` 让方法可以写在**另一处**，语义与写在 `struct` 内部**完全等价** ——
+字段直接可用、不需要 `self.`、`pri` 方法照常互调。
+
+```leno
+// lib/player.leno —— 只放字段和少量核心方法
+export struct Player {
+    int hp = 100
+    func base(): int { return hp }
+}
+```
+
+```leno
+// lib/page_download.leno —— 页面相关的方法写在别的文件
+import "./player.leno" as pl
+
+extend pl.Player {
+    func damage(int n): int {
+        hp = hp - n                  // 字段直接改，不用 pl.hp / self.hp
+        return hp
+    }
+
+    pri func helper(): int { return hp * 2 }   // pri 照常
+}
+```
+
+调用方（主程序）**两个模块都要 import**：
+
+```leno
+import "./lib/player.leno" as pl
+import "./lib/page_download.leno" as pdl   // ← 少了这行，p.damage(10) 报"没有方法"
+
+main() {
+    var p = new pl.Player()
+    p.damage(30)
+    print(_str(p.base()))       // 70
+}
+```
+
+#### 三条规则
+
+| 规则 | 说明 |
+|---|---|
+| 只能加**方法** | 字段仍必须写回 `struct` 定义里；`extend` 里写字段会报错 |
+| 方法名不能重复 | 与 struct 内已有方法、或别的 `extend` 撞名都会报错（两个行号都给出） |
+| 顺序无关 | `extend` 写在 `struct` 定义**之前**也可以 |
+
+#### 跨模块的四个要点
+
+1. **调用方要 import 扩展模块**：方法的存在性来自扩展模块的符号表，只 import 定义模块是看不到的。
+2. **多个扩展文件要互相 import**：A 文件的方法调 B 文件的方法时（`queue_clear()`），靠互相 import
+   让编译器看到彼此的登记。**不 import 就报“未定义函数”。**
+3. **被扩展模块的顶层符号要 `export`**，扩展侧按 `pl.名字` 引用：
+   ```leno
+   // player.leno
+   export const int PAD = 18
+   export var g_theme = 0
+   // page_download.leno
+   float w = pl.PAD          // ✓；裸写 PAD 读不到
+   ```
+4. **`struct` 内部的关联常量在 `extend` 里用不了**：`const int X = 1` 写在 struct 里只有 struct 内部
+   的方法能直接用；扩展方法要用，就把它提到模块级并 `export`。
+
+#### 什么时候用它
+
+- 一个类型的代码超过 ~1000 行，想按页面 / 职责分文件
+- 想让“类型的定义（字段）”和“行为（方法）”分开演进
+
+> `extend` **不是**继承，不产生子类型、不改内存布局，只是把方法体搬到别处。
+> 完整设计与踩坑记录见 `docs/struct_extend_设计草案.md`。
 
 ### 结构体数组与类型守卫
 
@@ -11253,6 +11366,7 @@ lenolang program.leno
 | 创建泛型实例   | `new Box[int](value=42)`（类型参数不可省略） |
 | 访问字段     | `p.x`, `p.y`                      |
 | 定义方法     | `func method():type { }`          |
+| 方法写到别的文件 | `extend Player { func ... }`（跨模块：`extend pl.Player { }`） |
 | self 关键字 | `self.field`, `self.method()`     |
 | 方法链式调用   | `outer.get().get()`               |
 | 定义枚举     | `enum Color { red, green, blue }` |
