@@ -46,6 +46,7 @@
                     ImportedModuleInfo* info = &s->imported_modules[s->imported_module_count++];
                     info->alias = module_name;
                     info->file_path = strdup(ast->u.import.file_path);
+                    info->real_name = NULL;   // 用户模块：真实名就是 file_path，real_name 只给原生模块用
 
                     // 取（必要时扫描）模块符号表 —— **走进程内记忆化**，与依赖侧（扫描器解析
                     // use / 变量类型依赖时走的 module_symbol_table_get_shared）**共用同一张表**。
@@ -234,6 +235,9 @@
                     ImportedModuleInfo* info = &s->imported_modules[s->imported_module_count++];
                     info->alias = strdup(alias);
                     info->file_path = NULL;  // 原生模块没有文件路径
+                    // ★ 2026-11-01：记下真实模块名（`import maths as m` ⇒ "maths"）。
+                    //   codegen 的 maths 内联靠它判断"这确实是内置 maths"，不再写死别名 ✓
+                    info->real_name = ast->u.import.module_name ? strdup(ast->u.import.module_name) : NULL;
                 }
 
                 // 注册模块别名（如果有显式别名）

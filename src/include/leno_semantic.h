@@ -12,7 +12,13 @@
 
 typedef struct {
     char* alias;                    // 模块别名（如 test）
-    char* file_path;                // 模块文件路径（如 test.leno）
+    char* file_path;                // 模块文件路径（如 test.leno；**原生模块为 NULL**）
+    // ★ 2026-11-01：import 语句里写的**真实模块名**（`import maths as m` ⇒ "maths"）。
+    //   存在的理由：alias 是用户起的名字（可以是任意标识符），单看它认不出"这是不是内置模块"——
+    //   codegen 的 maths 内联（OP_MATH_FAST）曾经因此写死 `strcmp(别名, "maths")`，
+    //   于是 `import maths as m` 白白丢掉优化（实测走 OP_MODULE_CALL）。
+    //   只在**原生模块**那支 strdup 填充，用户模块置 NULL（它的状态归 file_path 管）。
+    char* real_name;
     ModuleSymbolTable* sym_table;   // 模块符号表（缓存所有导出符号）
     int load_failed;                // 模块加载是否失败（文件不存在或读取失败）
 } ImportedModuleInfo;

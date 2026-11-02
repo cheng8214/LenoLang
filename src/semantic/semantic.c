@@ -584,6 +584,8 @@ void semantic_cleanup(Semantic* s) {
     for (int i = 0; i < s->imported_module_count; i++) {
         free(s->imported_modules[i].alias);
         free(s->imported_modules[i].file_path);
+        free(s->imported_modules[i].real_name);   // 原生模块的真实名（用户模块为 NULL，free 安全 ✓）
+        s->imported_modules[i].real_name = NULL;
         // 释放模块符号表
         if (s->imported_modules[i].sym_table) {
             module_symbol_table_destroy(s->imported_modules[i].sym_table);

@@ -2561,9 +2561,14 @@ static int try_gen_maths_fast(CodeGen* gen, Ast* ast, int dst) {
     if (!gen || !ast || ast->kind != AST_MODULE_CALL) return 0;
     const char* mod = ast->u.module_call.module_name;
     const char* mth = ast->u.module_call.method_name;
-    if (!mod || !mth || strcmp(mod, "maths") != 0) return 0;
+    if (!mod || !mth) return 0;
     ImportedModuleInfo* mi = find_imported_module(gen->sem, mod);
-    if (!mi || mi->file_path != NULL) return 0;      // 只认原生模块
+    if (!mi || mi->file_path != NULL) return 0;      // 只认原生模块（file_path == NULL）
+    // ★ 2026-11-01：比**真实模块名**，不比别名。
+    //   原来写死 `strcmp(别名, "maths")` ⇒ `import maths as m` 后 `m.clamp(...)` 白白
+    //   丢掉内联（实测走 OP_MODULE_CALL，比内联慢 5ns/次），而别名是用户随便起的。
+    //   real_name 由语义侧填（visit_module.inc 的原生模块分支），与别名无关 ✓
+    if (!mi->real_name || strcmp(mi->real_name, "maths") != 0) return 0;
     int nargs = 0;
     int op = math_fast_op_of(mth, &nargs);
     if (op < 0) return 0;
