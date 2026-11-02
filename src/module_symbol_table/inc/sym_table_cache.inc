@@ -6,10 +6,13 @@
 // ⚠ 版本号登记表：docs/单一事实来源与重复实现收敛.md 第七节
 //   （只覆盖符号表缓存；2026-09-16 撞过车：与上游都用 v23 但格式不同）
 #define LENOSYMC_MAGIC   0x4D59534C  // "LSYM" little-endian
-#define LENOSYMC_VERSION 0x00000027  // v39: 函数符号新增 **`optkeys`**（注解 @optkeys 的键表，
-                                     //      逗号分隔）—— 函数段在 `is_async` 之后多一段字符串。
-                                     //      升版本是为了**内容失效**：旧缓存里没这份键表，
-                                     //      不重扫的话跨模块的选项键检查永远拿不到数据 ✓
+#define LENOSYMC_VERSION 0x00000028  // v40 (2026-11-02): 新增**跨模块 extend 登记段**
+                                     //      （structs 段之后：count + 每项 module_name/type_name +
+                                     //       方法签名）—— 旧缓存没有这一段，读取会从 enums 段开始
+                                     //       错位 ⇒ 必须升版本整体失效 ✓
+// v39: 函数符号新增 **`optkeys`**（注解 @optkeys 的键表，逗号分隔）——
+//      函数段在 `is_async` 之后多一段字符串；旧缓存里没这份键表，
+//      不重扫的话跨模块的选项键检查永远拿不到数据 ✓
 // v38: struct **方法符号新增 `param_text`**（参数列表文本：
                                      //      `Widget c, Dict opts` / `Array[Button] buttons`）——
                                      //      格式变了：方法段在**末尾**（`is_private` 之后）多一段
@@ -438,6 +441,38 @@ sym_cache_write_string(f, table->funcs[i].optkeys);
         // v15: 序列化 struct 定义行号
         uint32_t sdl = (uint32_t)ss->def_line;
         fwrite(&sdl, 4, 1, f);
+    }
+
+    // 跨模块 extend 登记（2026-11-02，LENOSYMC_VERSION v40）
+    //   ⚠ 不序列化就会"第一次编译有、第二次（缓存命中）没有"—— 扩展方法时有时无，
+    //     是最难查的一类 ✗
+    uint32_t exc = (uint32_t)table->extend_count;
+    fwrite(&exc, 4, 1, f);
+    for (uint32_t i = 0; i < exc; i++) {
+        ModuleExtendSymbol* ex = &table->extends[i];
+        sym_cache_write_string(f, ex->module_name);
+        sym_cache_write_string(f, ex->type_name);
+        uint32_t emc = (uint32_t)ex->method_count;
+        fwrite(&emc, 4, 1, f);
+        for (uint32_t j = 0; j < emc; j++) {
+            ModuleStructMethod* m = &ex->methods[j];
+            sym_cache_write_string(f, m->name);
+            sym_cache_write_string(f, m->return_struct_name);
+            uint8_t rt = (uint8_t)m->return_type;
+            uint8_t priv = (uint8_t)(m->is_private ? 1 : 0);
+            uint8_t asy = (uint8_t)(m->is_async ? 1 : 0);
+            uint8_t pc = (uint8_t)(m->param_count > 255 ? 255 : m->param_count);
+            fwrite(&rt, 1, 1, f);
+            fwrite(&priv, 1, 1, f);
+            fwrite(&asy, 1, 1, f);
+            fwrite(&pc, 1, 1, f);
+            for (uint8_t k = 0; k < pc; k++) {
+                uint8_t pt = (uint8_t)((m->param_types && m->param_types[k]) ? (uint8_t)m->param_types[k] : (uint8_t)TYPE_ANY);
+                fwrite(&pt, 1, 1, f);
+            }
+            int32_t ln = (int32_t)m->line;
+            fwrite(&ln, 4, 1, f);
+        }
     }
 
     // enums
@@ -904,6 +939,47 @@ static int sym_cache_deserialize(const char* cache_path, ModuleSymbolTable* tabl
         uint32_t sdl; if (fread(&sdl, 4, 1, f) != 1) goto fail;
         ss->def_line = (int)sdl;
         table->struct_count++;
+    }
+
+    // 跨模块 extend 登记（2026-11-02，与写入段一一对应）
+    uint32_t exc;
+    if (fread(&exc, 4, 1, f) != 1) { fclose(f); return -1; }
+    table->extend_count = 0;
+    table->extend_capacity = exc > 0 ? (int)exc : 0;
+    table->extends = exc > 0 ? (ModuleExtendSymbol*)calloc(exc, sizeof(ModuleExtendSymbol)) : NULL;
+    for (uint32_t i = 0; i < exc; i++) {
+        ModuleExtendSymbol* ex = &table->extends[i];
+        ex->module_name = sym_cache_read_string(f);
+        ex->type_name = sym_cache_read_string(f);
+        uint32_t emc; if (fread(&emc, 4, 1, f) != 1) goto fail;
+        ex->method_count = (int)emc;
+        ex->methods = emc > 0 ? (ModuleStructMethod*)calloc(emc, sizeof(ModuleStructMethod)) : NULL;
+        for (uint32_t j = 0; j < emc; j++) {
+            ModuleStructMethod* m = &ex->methods[j];
+            m->name = sym_cache_read_string(f);
+            m->return_struct_name = sym_cache_read_string(f);
+            uint8_t rt = 0, priv = 0, asy = 0, pc = 0;
+            if (fread(&rt, 1, 1, f) != 1) goto fail;
+            if (fread(&priv, 1, 1, f) != 1) goto fail;
+            if (fread(&asy, 1, 1, f) != 1) goto fail;
+            if (fread(&pc, 1, 1, f) != 1) goto fail;
+            m->return_type = (TypeKind)rt;
+            m->is_private = priv;
+            m->is_async = asy;
+            m->param_count = (int)pc;
+            if (pc > 0) {
+                m->param_types = (TypeKind*)calloc(pc, sizeof(TypeKind));
+                for (uint8_t k = 0; k < pc; k++) {
+                    uint8_t pt = 0;
+                    if (fread(&pt, 1, 1, f) != 1) goto fail;
+                    if (m->param_types) m->param_types[k] = (TypeKind)pt;
+                }
+            }
+            int32_t ln = 0;
+            if (fread(&ln, 4, 1, f) != 1) goto fail;
+            m->line = (int)ln;
+        }
+        table->extend_count++;
     }
 
     // enums
