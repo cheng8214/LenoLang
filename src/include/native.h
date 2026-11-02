@@ -312,6 +312,10 @@ void native_free_module_const_list(char** consts, int count);
 
 // 注册模块别名
 void native_register_module_alias(const char* alias, const char* module_name);
+// 清空模块别名表（2026-11-02）：别名是**编译单元级**声明，表却是进程级静态 ⇒
+//   每个编译单元开头必须清空，否则 A 模块的 `import "strings" as st` 会污染 B 模块
+//   （实测：Aria 里 page_lyric 的局部变量 `st` 因此声明失败，报「模块 'st' 未导入」）
+void native_clear_module_aliases(void);
 
 // 根据别名查找实际模块名
 const char* native_resolve_module_alias(const char* alias);

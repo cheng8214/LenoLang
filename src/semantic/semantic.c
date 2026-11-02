@@ -262,6 +262,9 @@ static void extend_merge_into_block(Semantic* s, Ast* block) {
 
 void semantic_analyze(Semantic* s, Ast* ast) {
     annos_reset_all();          // 注解（@optkeys）表每个分析单元清一次 ✓
+    // import 别名同理：表是进程级静态，而别名是编译单元级声明 ⇒ 不清空会把上一个
+    //   单元的 `import "strings" as st` 带进来（见 native.h 的 native_clear_module_aliases）
+    native_clear_module_aliases();
     // 创建全局作用域
     s->current = scope_new(NULL, 0);
     s->root_scope = s->current;
@@ -681,6 +684,10 @@ void semantic_cleanup(Semantic* s) {
 // 模块语义分析 - 将模块级别的符号标记为 SYM_MODULE
 void semantic_analyze_module(Semantic* s, Ast* ast) {
     annos_reset_all();          // 同 semantic_analyze：模块级分析也要清注解表 ✓
+    // ★ 2026-11-02：模块别名表同样要清 —— 它是进程级静态表，而别名是**本编译单元**
+    //   的声明。不清的话，前面编译过的模块里的 `import "strings" as st` 会留在这里，
+    //   让本模块的局部变量 `st` 声明失败、后续 `st.xxx` 报「模块 'st' 未导入」✗
+    native_clear_module_aliases();
     // 标记为模块模式
     s->is_module = 1;
 

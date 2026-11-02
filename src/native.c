@@ -1473,6 +1473,19 @@ void native_free_module_method_metas(ModuleMethodMeta* metas) {
 // 模块别名支持
 // ============================================================================
 
+// 清空模块别名表（2026-11-02）
+// ----------------------------------------------------------------------------
+// 为什么需要：`moduleAliases` 是**进程级静态表**，而 import 别名是**编译单元级**的
+//   声明。不清空的话，A 模块里 `import "strings" as st` 会被后面编译的 B 模块看到 ——
+//   实测 Aria：page_lyric 里 `Label st = SDL3.createLabel(...)` 声明后，
+//   `st.set_font_style(...)` 报「模块 'st' 未导入」，因为 `st` 被当成了
+//   session.leno 里那个 `import "strings" as st` 的别名 ✗
+//   每个编译单元开头清空即可：各自的 import 会在 visit 时重新注册 ✓
+//   （排查这条花了两轮：改掉别名就好，但完全看不出和 Label 有什么因果关系。）
+void native_clear_module_aliases(void) {
+    moduleAliasCount = 0;
+}
+
 // 注册模块别名
 void native_register_module_alias(const char* alias, const char* module_name) {
     if (moduleAliasCount >= MAX_MODULE_ALIASES) return;
