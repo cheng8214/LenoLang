@@ -13,12 +13,29 @@
 - 用例：`assert/test_extend.leno`（正向 4 组）+ 手工核对 4 组报错场景
 - 回归：`assert\run_tests.leno` **537 passed / 0 failed**
 
-**二期未做（也是拆 Aria 的真正前提）**：跨模块 `extend 模块.Player`。现在会**明确报错**
-（不静默忽略）。原因见 6.3：方法要挂到"别的模块已建立的 class"上，需要运行时注册机制，
-不是语义层一次 realloc 能解决的。
+**二期已完成（2026-11-02）**：跨模块 `extend 模块.类型`，链路是
 
-> 因此：**当前实现还不能用来拆 `aria.leno`**。它能做的是验证"方法合并"这条链路，
-> 为二期铺路。拆分前必须先决定跨模块方案（见 12 节）。
+```
+lib/page_download.leno   extend player.Player { func paint_dl }   ← 定义（方法体在这）
+        ↓ 扫描时登记进 page_download 的符号表（extends 段，.lenosymc v40）
+主程序 import page_download
+        ↓ semantic_register_extends_from_module：挂成 "Player::paint_dl" 占位符
+        ↓ visit：字段名→self.字段名、前置隐式 self、方法体语义分析
+        ↓ codegen：发 OP_STRUCT_EXTEND（类型名 + 方法名/函数常量表）
+运行期：模块初始化时把方法**追加进已存在的 class**（struct_def_find + realloc + bump 代数）
+        ↓ 调用走 struct_method_lookup(def, name) 按名字查表，不需要编译期索引 ✓
+```
+
+四块改动 + 两个踩坑：
+
+| 坑 | 症状 | 原因 |
+|---|---|---|
+| 校验时机 | 报"目标模块没导入"，可明明 import 了 | `extend_merge_into_block` 在 `semantic_analyze` **最开头**跑，那时 `imported_modules` 还是空的 ⇒ 校验必须挪到 visit 阶段 |
+| 重复前置 self | 带参方法第一个参数之后全是 null | 同一 extend 节点被 visit 多次 ⇒ 加幂等判据（首参已叫 `self` 就跳过） |
+| 缺方法体分析 | 形参恒为 nil，但 VM 侧 argc/arity/实参寄存器全对 | 只做了 transform + 前置 self，漏了 `visit_func_as_struct_method`（参数名没进作用域 ⇒ codegen 按名字找不到槽位） |
+| 缺作用域类型 | 报「未定义的类型: P（请补 use pl.P）」 | 方法体的 `self` 类型是 `P`，visit 时作用域里没有它 ⇒ 按需 `scope_define` + `semantic_attach_struct_fields` |
+
+用例：`assert/test_extend_cross_module.leno`（三文件：定义 / 扩展 / 调用）。
 
 ## 1. 背景：为什么需要它
 

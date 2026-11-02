@@ -1,0 +1,7 @@
+// 跨模块 extend 用例的**定义模块**（配套 extend_mod_page.leno / test_extend_cross_module.leno）
+export struct ExtPlayer {
+    int hp = 100
+    string name = "aria"
+
+    func base(): int { return hp }
+}

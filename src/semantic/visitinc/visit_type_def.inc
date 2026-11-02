@@ -35,6 +35,19 @@
                 break;
             }
 
+            // ★ 方法体的 self 参数类型就是 `P`（TYPE_STRUCT + struct_name）⇒ visit 方法体时
+            //   作用域里必须有 `P`，否则报「未定义的类型: P（请补 use pl.P）」✗
+            //   这里按需把目标类型登记进当前作用域（只在**本编译单元**可见，与
+            //   `use` 导入类型的口径一致；已存在则跳过 ✓）
+            if (!scope_resolve(s->current, ast->u.extend_def.type_name)) {
+                Symbol* ext_sym = scope_define(s->current, ast->u.extend_def.type_name, SYM_STRUCT);
+                if (ext_sym) {
+                    ext_sym->type = type_new(TYPE_STRUCT);
+                    if (ext_sym->type) ext_sym->type->struct_name = strdup(ast->u.extend_def.type_name);
+                    semantic_attach_struct_fields(ext_sym, ext_ssym);
+                }
+            }
+
             // 字段名表：直接引用符号表里的字符串（不拥有，循环结束不释放）
             char** ext_fnames = NULL;
             if (ext_ssym->field_count > 0 && ext_ssym->fields) {
@@ -106,6 +119,22 @@
                 if (!func_table_find(&s->func_table, ext_key)) {
                     func_table_add(&s->func_table, ext_key, m);
                 }
+            }
+
+            // ④ 方法体语义分析 —— 与 struct 方法的"阶段2"**同一入口**。
+            //   缺了这一步，方法体里的形参名不会进作用域 ⇒ codegen 按名字找不到槽位
+            //   ⇒ 形参恒为 nil（实测：无参方法完全正常，带参方法的第一个参数起全是 null ✓，
+            //   而 VM 侧打点显示 argc/arity/R[a+1]/R[a+2] 全都对 —— 问题在被调方不在调用方）
+            for (int ei2 = 0; ei2 < ast->u.extend_def.method_count; ei2++) {
+                Ast* m2 = ast->u.extend_def.methods[ei2];
+                if (!m2 || m2->kind != AST_FUNC_DEF) continue;
+                Ast* saved_gs = s->cur_generic_struct;
+                char* saved_gm = s->cur_struct_method_name;
+                s->cur_generic_struct = NULL;              // 跨模块扩展暂不支持泛型 struct
+                s->cur_struct_method_name = m2->u.func.name;
+                visit_func_as_struct_method(s, m2);
+                s->cur_generic_struct = saved_gs;
+                s->cur_struct_method_name = saved_gm;
             }
 
             free(ext_fnames);

@@ -1,0 +1,11 @@
+// 跨模块 extend 用例的**扩展模块**：方法体写在这里，运行期挂到 ExtPlayer 上
+import "extend_mod_base.leno" as pb
+
+extend pb.ExtPlayer {
+    func damage(int n): int {
+        hp = hp - n
+        return hp
+    }
+
+    func hello(): string { return name + "!" }
+}
