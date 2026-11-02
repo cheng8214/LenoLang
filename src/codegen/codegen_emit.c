@@ -281,6 +281,11 @@ void emit_is_null(CodeGen* gen, int dst, int b, int line) {
     reg_encode_iABC(gen->chunk, OP_IS_NULL, dst, b, 0, line);
 }
 
+// ★ 2026-11-03：区间 case 的类型守卫（见 codegen_stmt.c 的区间 case 说明）
+void emit_is_num(CodeGen* gen, int dst, int b, int line) {
+    reg_encode_iABC(gen->chunk, OP_IS_NUM, dst, b, 0, line);
+}
+
 // --- 字符串拼接 ---
 void emit_strcat(CodeGen* gen, int dst, int b, int c, int line) {
     reg_encode_iABC(gen->chunk, OP_STRCAT, dst, b, c, line);

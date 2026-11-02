@@ -523,6 +523,15 @@ typedef enum {
     //        （否则方法调用的内联缓存会命中旧结果 ✗）
     OP_STRUCT_EXTEND,
 
+    // ★ 2026-11-03：`R[A] = (R[B] 是数值)`（int / float / bigint）
+    //   为什么需要它：switch 的**区间 case**（`case 1 to 3`）生成的是 `tmp < lo` /
+    //   `tmp > hi` 两条比较，而 Leno 的 `<` 对"string 比 int"是**运行期错误**。
+    //   `switch any` 里混用区间 case 和 `case is string` 时，实测直接崩在比较指令上
+    //   （`操作数类型不可比较`）。区间前加一条 IS_NUM 守卫就能"不是数值 ⇒ 跳过本 case"，
+    //   语义上正好符合"区间只对数值有意义"。
+    //   ⚠ 追加在**枚举末尾**（名字表同步），不动既有 opcode 的数值。
+    OP_IS_NUM,          // iABC  R[A] = is_num(R[B])
+
     OP_OPCODE_COUNT,    // 用于跳转表大小
 } OpCode;
 

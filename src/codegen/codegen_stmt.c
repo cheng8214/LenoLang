@@ -1075,6 +1075,16 @@ static void gen_switch(CodeGen* gen, Ast* ast) {
             //   ⚠ 不能直接 `gen_expr_to(..., vr)` 再 `emit_eq` —— AST_RANGE 的值是一个
             //     Range 对象，跟 switch 值比相等永远不成立。
             if (cv->kind == AST_RANGE) {
+                // ★ 2026-11-03（fuzz 发现）：**类型守卫**。
+                //   区间比较用的是 `<` / `>`，而 Leno 的 `<` 对"string 比 int"是
+                //   **运行期错误**（不是返回 false）⇒ `switch any { case 1 to 3 … }`
+                //   遇到字符串值时直接崩在比较上（实测「操作数类型不可比较」）。
+                //   先判"是不是数值"，不是就跳过本 case —— 语义上正好是
+                //   "区间只对数值有意义"。
+                int isnum = reg_alloc(gen);
+                emit_is_num(gen, isnum, tmp, line);
+                int s0 = emit_jmp_if_false(gen, isnum, line);   // 非数值 ⇒ 跳过本 case
+                reg_free(gen, isnum);
                 int lo = gen_expr(gen, cv->u.range.start);
                 int hi = gen_expr(gen, cv->u.range.end);
                 int cl = reg_alloc(gen);
@@ -1088,6 +1098,7 @@ static void gen_switch(CodeGen* gen, Ast* ast) {
                 int jp = emit_jmp(gen, line);                 // 落在区间内 ⇒ 命中
                 patch_jmp(gen, s1);
                 patch_jmp(gen, s2);
+                patch_jmp(gen, s0);                           // 非数值的跳过 也落到这里
                 if (cnt == cap) {
                     cap *= 2;
                     hit_pos = (int*)realloc(hit_pos, sizeof(int) * cap);

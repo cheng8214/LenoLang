@@ -336,6 +336,7 @@ static int verify_one(const Chunk* c, int pos, int cap,
         case OP_BITAND: case OP_BITOR: case OP_BITXOR: case OP_BITNOT:
         case OP_SHL: case OP_SHR: case OP_USHR:
         case OP_CAST_FLOAT: case OP_CAST_INT: case OP_CAST_STRING: case OP_IS_NULL:
+        case OP_IS_NUM:
         case OP_STRCAT:
         case OP_INC: case OP_DEC:
         case OP_LEN:

@@ -166,6 +166,8 @@ void emit_cast_float(CodeGen* gen, int dst, int b, int line);
 void emit_cast_int(CodeGen* gen, int dst, int b, int line);
 void emit_cast_string(CodeGen* gen, int dst, int b, int line);
 void emit_is_null(CodeGen* gen, int dst, int b, int line);
+// 区间 case 的类型守卫（2026-11-03）：非数值 ⇒ false，调用方据此跳过该 case
+void emit_is_num(CodeGen* gen, int dst, int b, int line);
 
 // 字符串拼接
 void emit_strcat(CodeGen* gen, int dst, int b, int c, int line);

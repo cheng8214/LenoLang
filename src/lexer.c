@@ -970,6 +970,22 @@ void lexer_next(Lexer* lex) {
         case '"': lex->current = read_string(lex, '"'); break;
         case '\'': lex->current = read_string(lex, '\''); break;
         case '$':
+            // ★ 2026-11-03：**插值里再套插值**（`$"…{$"…"}…"`）不支持 ——
+            //   lexer 的 in_interp / in_expr 是**单值标志、不是栈**，内层一旦置位就会
+            //   覆盖外层状态 ⇒ 实测报「意外的字符 '\'」+「未终止的字符串」，指不到真因。
+            //   这里给定向提示，并把内层按**普通字符串**扫完（外层插值状态原样保留），
+            //   这样只报一条错、不会再连锁。
+            if ((peek_next(lex) == '"' ||
+                 (peek_next(lex) == '@' && lex->src[lex->pos + 2] == '"')) &&
+                lex->in_interp && lex->in_expr) {
+                error_add_at_fmt(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1,
+                    "插值字符串里不能再套一层插值字符串 —— 内层请用普通字符串，"
+                    "或先把值算出来存进变量（`var s = …`），再在插值里直接引用那个变量");
+                advance(lex);                       // 跳过 '$'
+                if (peek(lex) == '@') advance(lex); // `$@"…"` 的 '@'
+                lex->current = read_string(lex, '"');   // 当普通字符串扫完
+                break;
+            }
             if (peek_next(lex) == '"') {
                 advance(lex); // 跳过 $
                 advance(lex); // 跳过 "

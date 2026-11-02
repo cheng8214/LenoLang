@@ -1,0 +1,40 @@
+// 区间 case 与 case is / 非数值 switch 值混用（2026-11-03，fuzz 发现并修复的崩溃）
+//
+// 崩溃现场：`switch any { case 1 to 3 { … } case is string => s { … } }`，
+//   switch 值是 string 时，区间比较生成的是 `tmp < 1` ⇒ Leno 的 `<` 对
+//   "string 比 int" 是**运行期错误**（不是 false）⇒ 直接抛「操作数类型不可比较」。
+// 修法：区间比较前加 `OP_IS_NUM` 守卫，非数值直接跳过该 case
+//   （语义上正合"区间只对数值有意义"）。
+
+func kind(any v): string {
+    switch v {
+        case 1 to 3 { return "range" }
+        case 5 { return "five" }
+        case is string => s { return "str:" + s }
+        case is Array => a { return "arr:" + _int(a.len()) }
+        default { return "other" }
+    }
+}
+
+main() {
+    // ① 数值命中区间
+    assert_eq(kind(1), "range", "区间下界")
+    assert_eq(kind(3), "range", "区间上界")
+    assert_eq(kind(4), "other", "区间外")
+
+    // ② 单值 case 仍正常
+    assert_eq(kind(5), "five", "单值 case")
+
+    // ③ **非数值**值走到区间 case 时不能崩，要落到后面的分支
+    assert_eq(kind("hi"), "str:hi", "字符串不被区间吃掉")
+    assert_eq(kind([1, 2, 3]), "arr:3", "数组不被区间吃掉")
+
+    // ④ float 不在 int 区间里（3.5 > 3）
+    assert_eq(kind(3.5), "other", "float 越界")
+
+    // ⑤ null / bool 之类也不该崩
+    assert_eq(kind(null), "other", "null 走 default")
+    assert_eq(kind(true), "other", "bool 走 default")
+
+    print("test_switch_range_mixed all passed")
+}

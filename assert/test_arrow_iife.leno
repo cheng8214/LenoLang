@@ -1,0 +1,35 @@
+// 立即调用的箭头函数 `((int n) => n * 3)(4)` 的**返回类型推断**（2026-11-03，fuzz 发现）
+//
+// 修前：箭头脱糖成 AST_FUNC_DEF 后，`infer_expr_type(AST_CALL)` 只处理 callee 是变量/
+//   模块访问的情形 ⇒ 字面量函数调用的结果被算成 any ⇒ 赋给 int 变量、传给 int 形参
+//   全报"实际 any"（值其实是对的，只是类型信息丢了）。
+// 修后：callee 是 FUNC_DEF 时按它的 return 表达式推断。
+
+func takeInt(int v): int { return v }
+
+main() {
+    // ① 直接赋给 int
+    int a = ((int n) => n * 3)(4)
+    assert_eq(a, 12, "IIFE 结果赋给 int")
+
+    // ② 传给 int 形参
+    assert_eq(takeInt(((int n) => n * 7)(2)), 14, "IIFE 结果传给 int 形参")
+
+    // ③ 零参 IIFE
+    int b = (() => 5)()
+    assert_eq(b, 5, "零参 IIFE")
+
+    // ④ 返回 string 的 IIFE
+    string s = ((int n) => "v=" + _int(n))(9)
+    assert_eq(s, "v=9", "IIFE 返回 string")
+
+    // ⑤ 表达式里直接参与运算
+    assert_eq(((int n) => n + 1)(1) + 10, 12, "IIFE 参与运算")
+
+    // ⑥ 通过变量调用的类型推断（这条路径一直都正常，留作对照）
+    func(int):int f = (int n) => n * 2
+    int c = f(3)
+    assert_eq(c, 6, "函数类型变量调用")
+
+    print("test_arrow_iife all passed")
+}

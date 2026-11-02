@@ -1930,6 +1930,32 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                 if (arg_type) type_free(arg_type);
             }
 
+            // ★ 2026-11-03（fuzz 发现）：**立即调用的箭头函数** `((int n) => n * 3)(4)`。
+            //   箭头脱糖成 AST_FUNC_DEF 后，下面的分支只处理 callee 是变量 / 模块访问的情形，
+            //   于是一个字面量函数调用的结果被算成 any（实测 `int b = (...)（4)` 报"实际 any"、
+            //   传给 int 形参也报不匹配）。这里按它的 return 表达式补一条推断。
+            if (ast->u.call.callee && ast->u.call.callee->kind == AST_FUNC_DEF) {
+                Ast* cfd = ast->u.call.callee;
+                TypeInfo* crt = NULL;
+                if (cfd->u.func.return_type && cfd->u.func.return_type->kind != TYPE_INFER &&
+                    cfd->u.func.return_type->kind != TYPE_ANY) {
+                    crt = type_copy(cfd->u.func.return_type);
+                } else if (cfd->u.func.body && cfd->u.func.body->kind == AST_BLOCK) {
+                    AstList* cblk = &cfd->u.func.body->u.block;
+                    for (int ci = 0; ci < cblk->count; ci++) {
+                        Ast* cst = cblk->items[ci];
+                        if (cst && cst->kind == AST_RETURN && cst->u.ret) {
+                            crt = infer_expr_type(s, cst->u.ret);
+                            break;
+                        }
+                    }
+                }
+                if (crt) {
+                    ast->cached_type = type_copy(crt);
+                    return crt;
+                }
+            }
+
             if (ast->u.call.callee && ast->u.call.callee->kind == AST_VAR) {
                 const char* func_name = ast->u.call.callee->u.var.name;
 

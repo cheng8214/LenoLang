@@ -592,6 +592,15 @@
         DISPATCH();
     }
 
+    // ★ 2026-11-03：区间 case 的类型守卫 —— 非数值（string/array/struct/null…）直接 false，
+    //   调用方据此跳过该 case，避免 `tmp < lo` 触发"操作数类型不可比较"的运行期错误。
+    LABEL(OP_IS_NUM): {
+        int a = READ_A(), b = READ_B();
+        Value v = R(b);
+        R(a) = val_bool(val_is_int(v) || val_is_num(v) || val_is_bigint(v));
+        DISPATCH();
+    }
+
     // --- 字符串拼接 ---
     LABEL(OP_STRCAT): {
         int a = READ_A(), b = READ_B(), c = READ_C();
