@@ -1,0 +1,60 @@
+// cstruct 数组字段切片回归（2026-11-02）
+// 修前：ObjCStructArrayView 只支持逐元素索引，OP_SLICE 落到
+// 「切片: 对象必须是数组或字符串」⇒ docs/module_cstructs.md 的示例跑不通。
+// 现在切片物化成普通 Array（标量按 C 布局读），语法与普通数组一致。
+cstruct SliceT {
+    u32 values[6]
+}
+
+main() {
+    var o = SliceT.malloc()
+    for 0 : 5 to i {
+        o.values[i] = (i + 1) * 10          // 10,20,...,60
+    }
+
+    // 中间段
+    var s = o.values[2:4]
+    if s is Array {
+        assert_eq(s.len(), 3)
+        assert_eq(s[0], 30)
+        assert_eq(s[2], 50)
+    }
+
+    // 到结尾
+    var tail = o.values[4:]
+    if tail is Array {
+        assert_eq(tail.len(), 2)
+        assert_eq(tail[0], 50)
+        assert_eq(tail[1], 60)
+    }
+
+    // 从开头
+    var head = o.values[:1]
+    if head is Array {
+        assert_eq(head.len(), 2)
+        assert_eq(head[1], 20)
+    }
+
+    // 双侧省略（整段）
+    var full = o.values[:]
+    if full is Array {
+        assert_eq(full.len(), 6)
+    }
+
+    // 空区间
+    var empty = o.values[3:2]
+    if empty is Array {
+        assert_eq(empty.len(), 0)
+    }
+
+    // 负起点从末尾数（与普通数组切片同口径）
+    var neg = o.values[-2:]
+    if neg is Array {
+        assert_eq(neg.len(), 2)
+        assert_eq(neg[0], 50)
+        assert_eq(neg[1], 60)
+    }
+
+    o.free()
+    print("test_cstruct_array_slice passed")
+}
