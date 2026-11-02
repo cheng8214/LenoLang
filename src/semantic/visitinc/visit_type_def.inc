@@ -7,16 +7,21 @@
         case AST_EXTEND_DEF: {
             if (!ast->u.extend_def.module_name) break;
 
-            // ⚠ 幂等保护：同一个 extend 节点可能被 visit 多次（模块自身编译一次 +
-            //   被 import 时的符号表/依赖处理再一次）⇒ 重复前置 self 会让 pcnt 变成 3、
-            //   局部槽位整体错位，表现是"第一个参数读得到、后面的全是 null"（实测踩过 ✓）
-            //   判据：第一个方法的首参已经叫 "self" 就说明处理过了。
+            // ⚠ 幂等保护**只管"改写方法体 + 前置 self"**，不能连方法体分析一起跳过。
+            //   为什么：同一个 AST 会被**两个不同的 Semantic 实例**各分析一次
+            //   （主程序编译一次、该模块被单独编译成 .lenb 再一次）——
+            //   判据（首参已叫 self）长在 AST 上，是**跨实例共享**的 ✗
+            //   ⇒ 第二个实例若整体 break，方法体里所有局部变量都不会进作用域，
+            //     表现为 `Label st = ...` 后面的 `st.xxx` 报「模块 'st' 未导入」
+            //     （听起来完全是另一回事，实测在这上面绕了很久 ✓）。
+            //   正确做法：改写只做一次（AST 上的判据），**分析每次都做**（实例级）。
+            int ext_already_prepared = 0;
             if (ast->u.extend_def.method_count > 0) {
                 Ast* probe = ast->u.extend_def.methods[0];
                 if (probe && probe->kind == AST_FUNC_DEF && probe->u.func.pcnt > 0 &&
                     probe->u.func.params && probe->u.func.params[0] &&
                     strcmp(probe->u.func.params[0], "self") == 0) {
-                    break;
+                    ext_already_prepared = 1;
                 }
             }
 
@@ -111,6 +116,8 @@
                 }
             }
 
+            // 改写只做一次（AST 是跨实例共享的）；分析（下面 ④）每次都做 ✓
+            if (!ext_already_prepared) {
             for (int ei = 0; ei < ast->u.extend_def.method_count; ei++) {
                 Ast* m = ast->u.extend_def.methods[ei];
                 if (!m || m->kind != AST_FUNC_DEF) continue;
@@ -160,6 +167,7 @@
                     func_table_add(&s->func_table, ext_key, m);
                 }
             }
+            }   // end if (!ext_already_prepared)
 
             // ④ 方法体语义分析 —— 与 struct 方法的"阶段2"**同一入口**。
             //   缺了这一步，方法体里的形参名不会进作用域 ⇒ codegen 按名字找不到槽位

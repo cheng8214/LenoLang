@@ -21,7 +21,14 @@
 #define MAX_MODULE_NAME 128
 #define MAX_EXPORT_NAME 128
 #define MAX_EXPORTS 512
-#define MAX_LOADED_MODULES 128
+// ★ 2026-11-02：128 → 1024。
+//   128 不够用：Aria 拆成 7 个扩展文件 + lib 下 22 个模块 + SDL3 自己的模块树，
+//   一跑就撞上限。撞上时的现象很误导——只打印一行「已加载模块数量超过上限 128，
+//   'xxx' 被忽略」，随后被忽略的模块**初始化代码不执行** ⇒ OP_STRUCT_EXTEND 没跑
+//   ⇒ 方法表缺项 ⇒ 运行期递归查不到方法、最后以 0xC00000FD（栈溢出）崩掉，
+//   看起来完全是另一回事（实测踩过）。
+//   每个槽位是 MAX_PATH_LEN 字节 ⇒ 1024 个约 512KB 静态区，可接受 ✓
+#define MAX_LOADED_MODULES 1024
 
 typedef struct {
     char names[MAX_EXPORTS][MAX_EXPORT_NAME];
