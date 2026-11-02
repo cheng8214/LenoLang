@@ -1,0 +1,36 @@
+// 插值字符串的格式说明符（C3，2026-11-02）：`$"{x:.2f}"`
+//
+// 语义 = 脱糖成 `format("%.2f", x)`（不新增 AST 节点，字节码复用 format）。
+// spec 复用 format 的转换子集：.Nf / f / d / x / X / s / e / g，也允许自己写 % 开头。
+
+main() {
+    float pi = 3.14159
+    int n = 255
+    string name = "leno"
+
+    // ① 小数位数
+    assert_eq($"pi={pi:.2f}", "pi=3.14", ".2f")
+    assert_eq($"pi={pi:.0f}", "pi=3", ".0f")
+    assert_eq($"pi={pi:.4f}", "pi=3.1416", ".4f")
+
+    // ② 整数 / 十六进制 / 字符串
+    assert_eq($"n={n:d}", "n=255", ":d")
+    assert_eq($"h={n:x}", "h=ff", ":x")
+    assert_eq($"H={n:X}", "H=FF", ":X")
+    assert_eq($"s={name:s}", "s=leno", ":s")
+
+    // ③ 与不带说明符的插值共存（同一串里混用）
+    assert_eq($"a={n} b={pi:.1f} c={name}", "a=255 b=3.1 c=leno", "混用")
+
+    // ④ 表达式 + 说明符
+    assert_eq($"sum={(n + 1):d}", "sum=256", "表达式 + :d")
+    assert_eq($"half={(pi / 2):.3f}", "half=1.571", "表达式 + .3f")
+
+    // ⑤ 直接写 % 开头
+    assert_eq($"pct={pi:%.2f}", "pct=3.14", "显式 %")
+
+    // ⑥ 等值于手写 format
+    assert_eq($"pi={pi:.2f}", "pi=" + format("%.2f", pi), "与 format 等价")
+
+    print("test_interp_format all passed")
+}

@@ -236,6 +236,72 @@ Ast* parse_raw_string(Parser* p) {
     return ast;
 }
 
+// ============================================================================
+// 插值字符串的格式说明符（C3，2026-11-02）：`$"{x:.2f}"` / `$"{n:d}"` / `$"{n:x}"`
+//
+// 语法：`{expr:spec}`，spec 直接复用 `format` 的转换子集：
+//   `.Nf`（保留 N 位小数）/ `f` / `d` / `x` / `X` / `s` / `e` / `g`，也允许自己写 `%` 开头。
+// 脱糖：`format("%" + spec, expr)` —— 不新增 AST 节点，语义/字节码完全复用现成的 format。
+//
+// 为什么在**词法层**直接扫原文字符：`.2f` 这种 spec 用 token 流没法干净地表达
+// （`.` 是 TOK_DOT、`2f` 会被切成数字 + 标识符），而它是纯 ASCII、不含换行，
+// 直接按原文扫到 `}` 最省事。扫完把 lexer 的 pos 推到 `}`，再正常取一个 token 即可。
+// ============================================================================
+static Ast* parse_interp_format_spec(Parser* p, Ast* expr) {
+    int line = p->lex.current.line;
+    int col = p->lex.current.column;
+
+    // 当前 token 是 ':' ⇒ lex->pos 正好停在它后面
+    const char* src = p->lex.src;
+    int i = p->lex.pos;
+    int start = i;
+    while (src[i] && src[i] != '}' && src[i] != '"' && src[i] != '\n') i++;
+
+    int spec_len = i - start;
+    if (spec_len <= 0) {
+        error_add_at_fmt(ERR_SYNTAX, line, col,
+            "插值的格式说明符不能为空：写成 `{表达式:.2f}` / `{表达式:d}` 这样");
+    } else if (spec_len >= 40) {
+        error_add_at_fmt(ERR_SYNTAX, line, col,
+            "插值的格式说明符过长（%d 个字符）：只支持 format 的转换子集，如 .2f / d / x", spec_len);
+    } else {
+        char spec[64];
+        memcpy(spec, src + start, (size_t)spec_len);
+        spec[spec_len] = '\0';
+
+        // 允许直接写 `%` 开头（老手习惯），否则自动补一个
+        char fmtbuf[72];
+        if (spec[0] == '%') snprintf(fmtbuf, sizeof(fmtbuf), "%s", spec);
+        else                snprintf(fmtbuf, sizeof(fmtbuf), "%%%s", spec);
+
+        // 构建 format(fmt, expr)
+        Ast* callee = ast_new(AST_VAR, line);
+        callee->column = col;
+        callee->u.var.name = strdup("format");
+
+        Ast* fmt = ast_new(AST_STRING, line);
+        fmt->column = col;
+        fmt->u.string.value = strdup(fmtbuf);
+        fmt->u.string.len = (int)strlen(fmtbuf);
+
+        Ast* call = ast_new(AST_CALL, line);
+        call->column = col;
+        call->u.call.callee = callee;
+        ast_list_init(&call->u.call.args);
+        call->u.call.generic_type_args = NULL;
+        call->u.call.generic_type_count = 0;
+        call->u.call.generic_type_names = NULL;
+        ast_list_add(&call->u.call.args, fmt);
+        ast_list_add(&call->u.call.args, expr);
+        expr = call;
+    }
+
+    // 把词法位置推到 `}`（它此时还没被消费），让调用方照常走"期望 }"那段
+    p->lex.pos = i;
+    lexer_next(&p->lex);
+    return expr;
+}
+
 // 解析插值字符串: $"hello {name} world {a + b}"
 Ast* parse_interp_string(Parser* p) {
     int line = p->lex.current.line;
@@ -301,6 +367,13 @@ Ast* parse_interp_string(Parser* p) {
 
             // 解析表达式
             Ast* expr = parse_expression(p);
+
+            // ★ 2026-11-02（C3）：格式说明符 `{expr:spec}` ⇒ 脱糖成 `format("%spec", expr)`
+            //   例：`$"pi={x:.2f}"` ⇒ `format("%.2f", x)`。
+            //   解析完 spec 后 current 会停在 `}` 上，下面那段收尾照常走 ✓
+            if (p->lex.current.type == TOK_COLON) {
+                expr = parse_interp_format_spec(p, expr);
+            }
 
             // 期望 }
             if (p->lex.current.type == TOK_RBRACE) {
