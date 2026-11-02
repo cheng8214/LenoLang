@@ -11229,8 +11229,8 @@ lenolang program.leno
 | int 类型 | `int` — 任意精度整数，int48 内联存储，超出自动升级为 BigInt |
 | 泛型数组  | `Array[int]`, `Array[Array[int]]`             |
 | 泛型字典  | `Dict[string, int]`, `Dict[int, string]`                           |
-| 数组切片  | `arr[2:8]`, `arr[:5]`, `arr[3:]`              |
-| 字符串切片 | `s[2:8]`, `s[:5]`, `s[3:]`（包含end，UTF-8字符级） |
+| 数组切片  | `arr[2:8]`, `arr[:5]`, `arr[3:]`, `arr[:]`（双侧省略=整段浅拷贝） |
+| 字符串切片 | `s[2:8]`, `s[:5]`, `s[3:]`, `s[:]`（包含end，UTF-8字符级） |
 | 数组比较  | `[1,2] == [1,2]`                              |
 | 类型转换  | `_int(x)`, `_float(x)`, `_str(x)`, `_bool(x)`, `_int32(x)`, `_int64(x)`, `_uint32(x)`, `_uint64(x)`, `_uint8(x)`, `_byte(x)` |
 | 安全转换  | `x as Type`（原生类型：值转换/截断；结构类型：匹配返回原值，不匹配返回 null） |
