@@ -147,6 +147,30 @@ strings.len("abc")   // 返回 3
 "  hello  ".trim_end()    // "  hello"
 ```
 
+#### `trim_unicode()` / `trim_start_unicode()` / `trim_end_unicode()`（2026-11-03 新增）
+
+按 **Unicode White_Space** 属性修剪，与 Python 的 `str.strip()` / Rust 的
+`char::is_whitespace` 同口径。区别在于会认：
+
+- 全角空格 `U+3000`（中文内容里最常见）
+- 不间断空格 `U+00A0`、窄不间断空格 `U+202F`
+- `U+2000`–`U+200A`（各种宽度的空格）、`U+1680`、`U+205F`、`U+0085`、`U+2028/U+2029`
+
+```leno
+"　你好　".trim()            // "　你好　" —— **仍是 4 个字符**（trim 只认 ASCII 空白）
+"　你好　".trim_unicode()    // "你好"     —— 2 个字符 ✓
+" hi "                      // 两端是 NBSP（U+00A0）
+    // .trim() 原样返回；.trim_unicode() 得到 "hi"
+
+"　a　b　".trim_unicode()     // "a　b" —— 中间的不动，只裁两端
+"　　".trim_unicode()         // "" —— 全是空白 ⇒ 空串
+```
+
+> **为什么另开一个方法，而不是让 `trim` 直接认 Unicode**：
+> 改默认行为会**静默影响**"故意保留 NBSP / 全角空格"的数据清洗代码（比如从富文本、
+> 网页复制来的内容）。所以 `trim` 保持 ASCII 口径不变，需要 Unicode 的地方显式写
+> `trim_unicode()`。
+
 ---
 
 ### 包含检查

@@ -146,6 +146,101 @@ static Value str_trim_end(int argc, Value* args) {
     return val_obj((Object*)result);
 }
 
+// ---------------------------------------------------------------------------
+// 2b. **Unicode 空白**修剪（2026-11-03，D4）
+//
+// `trim` / `trim_start` / `trim_end` 只认 **ASCII** 空白（`isspace`）⇒ 全角空格 U+3000、
+// 不间断空格 U+00A0 都不算，中文内容里 `"　你好　".trim()` 会原样返回（实测 len 仍是 4）。
+// 这里按 Unicode White_Space 属性裁剪，与 Python 的 `str.strip()` / Rust 的
+// `char::is_whitespace` 同口径。
+//
+// ⚠ **刻意不改 trim 的默认语义**：改了会静默影响"故意保留 NBSP / 全角空格"的数据清洗代码。
+//   所以是**新增方法**，用户按需选用。
+// ---------------------------------------------------------------------------
+static int u8_decode(const unsigned char* s, int len, int* out_cp) {
+    unsigned char c = s[0];
+    if (c < 0x80) { *out_cp = c; return 1; }
+    if ((c & 0xE0) == 0xC0 && len >= 2)
+        { *out_cp = ((c & 0x1F) << 6) | (s[1] & 0x3F); return 2; }
+    if ((c & 0xF0) == 0xE0 && len >= 3)
+        { *out_cp = ((c & 0x0F) << 12) | ((s[1] & 0x3F) << 6) | (s[2] & 0x3F); return 3; }
+    if ((c & 0xF8) == 0xF0 && len >= 4)
+        { *out_cp = ((c & 0x07) << 18) | ((s[1] & 0x3F) << 12) |
+                    ((s[2] & 0x3F) << 6) | (s[3] & 0x3F); return 4; }
+    *out_cp = c;                // 非法起始字节：按单字节跳过（不报错、不越界）
+    return 1;
+}
+
+// Unicode White_Space 属性（与 Rust char::is_whitespace 同一集合）
+static int is_u8_space(int cp) {
+    switch (cp) {
+        case 0x09: case 0x0A: case 0x0B: case 0x0C: case 0x0D:   // \t \n \v \f \r
+        case 0x20:                                              // 空格
+        case 0x85:                                              // NEL
+        case 0xA0:                                              // NBSP（不间断空格）
+        case 0x1680:                                            // OGHAM SPACE MARK
+        case 0x2000: case 0x2001: case 0x2002: case 0x2003: case 0x2004:
+        case 0x2005: case 0x2006: case 0x2007: case 0x2008: case 0x2009:
+        case 0x200A:                                            // EN QUAD … HAIR SPACE
+        case 0x2028: case 0x2029:                               // LINE / PARAGRAPH SEPARATOR
+        case 0x202F:                                            // NARROW NBSP
+        case 0x205F:                                            // MEDIUM MATHEMATICAL SPACE
+        case 0x3000:                                            // **全角空格**（中文里最常见）
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+// do_left / do_right 组合出 trim_unicode / trim_start_unicode / trim_end_unicode
+static Value str_trim_unicode_impl(Value self, int do_left, int do_right) {
+    ObjString* str = (ObjString*)val_as_obj(self);
+    const char* chars = str->chars;
+    int len = str->len;
+    int start = 0, end = len;
+
+    if (do_left) {
+        while (start < end) {
+            int cp = 0;
+            int n = u8_decode((const unsigned char*)chars + start, end - start, &cp);
+            if (!is_u8_space(cp)) break;
+            start += n;
+        }
+    }
+    if (do_right) {
+        while (end > start) {
+            // 回退到"最后一个字符的起始字节"（跳过 UTF-8 续字节 10xxxxxx）
+            int s0 = end - 1;
+            while (s0 > start && (((unsigned char)chars[s0]) & 0xC0) == 0x80) s0--;
+            int cp = 0;
+            u8_decode((const unsigned char*)chars + s0, end - s0, &cp);
+            if (!is_u8_space(cp)) break;
+            end = s0;
+        }
+    }
+
+    int new_len = end - start;
+    if (new_len < 0) new_len = 0;
+    ObjString* result = str_copy(chars + start, new_len);
+    if (!result) return val_null();
+    return val_obj((Object*)result);
+}
+
+static Value str_trim_unicode(int argc, Value* args) {
+    (void)argc;
+    return str_trim_unicode_impl(args[0], 1, 1);
+}
+
+static Value str_trim_start_unicode(int argc, Value* args) {
+    (void)argc;
+    return str_trim_unicode_impl(args[0], 1, 0);
+}
+
+static Value str_trim_end_unicode(int argc, Value* args) {
+    (void)argc;
+    return str_trim_unicode_impl(args[0], 0, 1);
+}
+
 // 3. 包含检查
 
 static Value str_starts_with(int argc, Value* args) {
@@ -1973,6 +2068,10 @@ void strings_init_module(void) {
     native_register_module_method("strings", "trim", str_trim, &NATIVE_T_STRING, NATIVE_FIXED(trim_params));
     native_register_module_method("strings", "trim_start", str_trim_start, &NATIVE_T_STRING, NATIVE_FIXED(trim_params));
     native_register_module_method("strings", "trim_end", str_trim_end, &NATIVE_T_STRING, NATIVE_FIXED(trim_params));
+    // Unicode 空白版（2026-11-03，D4）：认全角空格 U+3000 / NBSP U+00A0 等
+    native_register_module_method("strings", "trim_unicode", str_trim_unicode, &NATIVE_T_STRING, NATIVE_FIXED(trim_params));
+    native_register_module_method("strings", "trim_start_unicode", str_trim_start_unicode, &NATIVE_T_STRING, NATIVE_FIXED(trim_params));
+    native_register_module_method("strings", "trim_end_unicode", str_trim_end_unicode, &NATIVE_T_STRING, NATIVE_FIXED(trim_params));
 
     // 3. 包含检查
     TypeKind starts_params[] = {TYPE_STRING, TYPE_STRING};
@@ -2118,6 +2217,10 @@ void strings_init_instance_methods(void) {
     string_register_method("trim", make_native(str_trim, 1, "trim"), TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
     string_register_method("trim_start", make_native(str_trim_start, 1, "trim_start"), TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
     string_register_method("trim_end", make_native(str_trim_end, 1, "trim_end"), TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
+    // Unicode 空白版（2026-11-03，D4）
+    string_register_method("trim_unicode", make_native(str_trim_unicode, 1, "trim_unicode"), TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
+    string_register_method("trim_start_unicode", make_native(str_trim_start_unicode, 1, "trim_start_unicode"), TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
+    string_register_method("trim_end_unicode", make_native(str_trim_end_unicode, 1, "trim_end_unicode"), TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
 
     // 3. 包含检查
     TypeKind str_params[] = {TYPE_STRING};

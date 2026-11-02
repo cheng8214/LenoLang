@@ -1,0 +1,51 @@
+// Unicode 空白修剪（D4，2026-11-03）：trim_unicode / trim_start_unicode / trim_end_unicode
+//
+// `trim` 只认 ASCII 空白（isspace）⇒ 全角空格 U+3000、NBSP U+00A0 都不算。
+// 新增的三个方法是**并列**的（不改 trim 的默认语义，避免静默影响"故意保留 NBSP"的清洗代码）。
+// Unicode White_Space 属性与 Python str.strip() / Rust char::is_whitespace 同口径。
+//
+// ⚠ 这里用 `\uXXXX` 转义构造空白，而不是直接敲全角空格/NBSP —— 后者在不同编码下
+//   容易被编辑器或工具"顺手"规范化成普通空格，测试就变成假绿了。
+
+import strings
+
+main() {
+    // ① 全角空格（U+3000）：trim 不动、trim_unicode 裁掉
+    string a = "\u3000你好\u3000"
+    assert_eq(a.len(), 4, "原文 4 个字符")
+    assert_eq(a.trim().len(), 4, "trim 只认 ASCII ⇒ 不动")
+    assert_eq(a.trim_unicode().len(), 2, "trim_unicode 裁掉两端全角空格")
+    assert_eq(a.trim_unicode(), "你好", "trim_unicode 结果")
+
+    // ② NBSP（U+00A0）：trim 不动、trim_unicode 裁掉
+    string b = "\u00A0hi\u00A0"
+    assert_eq(b.len(), 4, "NBSP 版原文 4 个字符")
+    assert_eq(b.trim(), b, "trim 不认 NBSP")
+    assert_eq(b.trim_unicode(), "hi", "trim_unicode 认 NBSP")
+
+    // ③ 单侧
+    assert_eq(a.trim_start_unicode(), "你好\u3000", "只裁左侧")
+    assert_eq(a.trim_end_unicode(), "\u3000你好", "只裁右侧")
+
+    // ④ ASCII 空白照旧
+    assert_eq("  abc  ".trim_unicode(), "abc", "ASCII 空格")
+    assert_eq("\t a \n".trim_unicode(), "a", "制表符/换行")
+
+    // ⑤ 中间的全角空格必须保留
+    assert_eq("\u3000a\u3000b\u3000".trim_unicode(), "a\u3000b", "中间不动")
+
+    // ⑥ 全是空白 ⇒ 空串
+    assert_eq("\u3000\u3000".trim_unicode(), "", "全空白")
+    assert_eq("".trim_unicode(), "", "空串")
+    assert_eq("\u3000".trim_start_unicode(), "", "单侧裁到空")
+
+    // ⑦ 模块门面形式等价
+    assert_eq(strings.trim_unicode(a), "你好", "strings.trim_unicode")
+    assert_eq(strings.trim_end_unicode(a), "\u3000你好", "strings.trim_end_unicode")
+
+    // ⑧ 没有 Unicode 空白时与 trim 完全一致
+    string c = "  plain  "
+    assert_eq(c.trim_unicode(), c.trim(), "纯 ASCII 时两者一致")
+
+    print("test_trim_unicode all passed")
+}
