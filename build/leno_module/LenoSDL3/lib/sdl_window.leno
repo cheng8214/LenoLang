@@ -655,7 +655,7 @@ export struct Window {
         // 0. ★ 2026-10-13：注册**主题递归出口** —— 深容器（ScrollView / Card / TabControl）在自己的
         //    `applyTheme` 里把内容控件交回来，由本函数继续下钻 ✓（类型表只在本文件一处 ✓，
         //    与 `lay.setExtraPassResize` 同款；`Card._content` 是 `pri` ✗ ⇒ 只能这么交 ✓）
-        lay.setExtraApplyThemeChild(func(Widget c, Theme ct) { applyThemeWidget(c, ct) })
+        lay.setExtraApplyThemeChild((Widget c, Theme ct) => applyThemeWidget(c, ct))
         // 1. 更新全局主题单例
         theme.setTheme(t)
         // 2. 遍历 _widgets（覆盖层：MenuBar/TitleBar 等）

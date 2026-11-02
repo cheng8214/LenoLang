@@ -70,10 +70,10 @@ export struct OffsetConfig {
             version = _str(parsed["version"])
             var mods = parsed["modules"]
             if mods != null { modules = mods as Dict }
-            if modules == null { modules = {} }
+            modules ??= {}          // 缺字段（或显式 null）⇒ 兜底空字典（2026-11-02）
             var sigs = parsed["signatures"]
             if sigs != null { signatures = sigs as Dict }
-            if signatures == null { signatures = {} }
+            signatures ??= {}
         }
 
         print("[OffsetConfig] 已加载配置 v" + version + " (" + path + ")")

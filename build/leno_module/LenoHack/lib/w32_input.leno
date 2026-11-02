@@ -20,7 +20,8 @@ clib user32 {
 
 user32 _usr = null
 func _lib(): user32 {
-    if _usr == null { _usr = ffi.load("user32.dll") }
+    // 懒加载：??= 只在为 null 时 load（2026-11-02）
+    _usr ??= ffi.load("user32.dll")
     return _usr
 }
 
@@ -137,9 +138,8 @@ const MAX_INPUT_BATCH = 20
 Ptr[u8] _inputBatchBuf = null
 
 func _ensureBatchBuf() {
-    if _inputBatchBuf == null {
-        _inputBatchBuf = ffi.malloc(INPUT_SIZE * MAX_INPUT_BATCH)
-    }
+    // ??=（2026-11-02）：只在为 null 时分配 ⇒ 3 行并 1 行
+    _inputBatchBuf ??= ffi.malloc(INPUT_SIZE * MAX_INPUT_BATCH)
 }
 
 // 获取扫描码的辅助

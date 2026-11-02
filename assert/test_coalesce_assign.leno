@@ -5,6 +5,8 @@
 //   ② **左值只求值一次** —— 字段/下标的接收者与下标不会算两遍。
 // 覆盖：局部变量 / 字段 / 顶层全局 / 字典下标 / 闭包 upvalue / 表达式位置。
 
+import ffi
+
 struct CoalesceBox {
     int? v = null
     int? u = 9
@@ -16,6 +18,11 @@ int? co_gval = null
 func co_rhs(): int {
     co_gcount = co_gcount + 1
     return 42
+}
+
+// 形参是 Ptr[u8] ⇒ 用来验证 `??=` 之后变量类型已被锁定成具体类型
+func co_take_ptr(Ptr[u8] p) {
+    assert_true(p != null, "??= 传入的指针不应为 null")
 }
 
 main() {
@@ -58,6 +65,23 @@ main() {
     dd["k"] ??= 1
     dd["k"] ??= 2
     assert_eq(dd["k"] as int, 1, "字典下标：第一次写入、第二次保持")
+
+    // ⑦b 引用类型：string / Dict 在 Leno 里本来就允许 null（不是 `string?`）
+    //    ⇒ `??=` 必须能用；只有**值类型**（int/float/bool…）才判"不可空"。
+    string str = null
+    str ??= "有空"
+    assert_eq(str, "有空", "string（引用类型）可用 ??=")
+    Dict dd2 = null
+    dd2 ??= {}
+    assert_eq(dd2.len(), 0, "Dict（引用类型）可用 ??=")
+
+    // ⑦c `var x = null`（any）用 ??= 赋值后要"锁类型"（与普通 `=` 同口径）：
+    //   否则变量永远是 any ⇒ 传给 `Ptr[u8]` 形参时报"实际 any"。
+    //   （真实踩点：LenoSDL3 的 sdl_tray / sdl_filedialog 缓存 C 回调句柄就是这么挂的）
+    var pbuf = null
+    pbuf ??= ffi.malloc(8)
+    co_take_ptr(pbuf)
+    ffi.free(pbuf)
 
     // ⑧ 闭包 upvalue
     int? up = null

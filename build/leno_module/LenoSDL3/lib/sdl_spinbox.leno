@@ -129,7 +129,7 @@ export struct SpinBox impl Widget, Themeable {
         edit = edt.createEdit({x: x, y: y, w: ew, h: h, border: false, draw_bg: false, radius: 0,
                                 font_size: opts.get("font_size", 15),
                                 placeholder: opts.get("placeholder", "")})
-        edit.on_change(func() { try_apply_text() })
+        edit.on_change(() => try_apply_text())   // 箭头函数：单表达式回调（2026-11-02）
 
         // 颜色：opts 未传则保持默认值
         if opts.get("bg_color") is Color => t { bgColor = t }

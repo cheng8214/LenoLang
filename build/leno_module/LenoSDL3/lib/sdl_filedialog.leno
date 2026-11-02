@@ -59,9 +59,8 @@ func _ensureLib(): sdl3dlg {
 
 // 确保 C 回调只创建一次（ffi.callback 最多 128 个，避免泄漏）
 func _ensureCb() {
-    if _cb == null {
-        _cb = ffi.callback(_dispatch, _DialogCb)
-    }
+    // ??=（2026-11-02）：只在为 null 时创建 ⇒ 3 行并 1 行，语义完全一致
+    _cb ??= ffi.callback(_dispatch, _DialogCb)
 }
 
 // C 侧回调入口：在工作线程被排队，主线程（run 循环每帧 clib 调用后）自动泵送执行

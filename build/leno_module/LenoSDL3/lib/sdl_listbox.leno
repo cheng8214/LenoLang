@@ -201,7 +201,7 @@ export struct ListBox impl Widget, Themeable {
             ctxMenu = menu.createMenuBar({})
             ctxMenu.setWindowSize(winW, winH)
             ctxMenuH = ctxMenu.addContextMenu("listbox_ctx")
-            ctxMenu.on_select(func(string m, string id) { ctx_select(id) })
+            ctxMenu.on_select((string m, string id) => ctx_select(id))   // 箭头函数（2026-11-02）
             menu.registerContextMenu(ctxMenu)
         }
         _loaded = true

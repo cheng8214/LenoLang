@@ -153,9 +153,8 @@ Array _entryCbs = []        // 每个条目的用户回调，按创建顺序
 Array _entryUds = []        // 每个条目的 userdata malloc 指针（用于释放）
 
 func _ensureCb() {
-    if _cb == null {
-        _cb = ffi.callback(_dispatch, _TrayCb)
-    }
+    // ??=（2026-11-02）：只在为 null 时创建 ⇒ 3 行并 1 行，语义完全一致
+    _cb ??= ffi.callback(_dispatch, _TrayCb)
 }
 
 func _dispatch(Ptr[u8] userdata, Ptr[u8] entry) {

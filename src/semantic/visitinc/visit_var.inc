@@ -814,24 +814,46 @@
                 sym->is_null_value = 0;
                 ast->u.compound_assign.ref.type_kind = sym->type ? sym->type->kind : TYPE_ANY;
 
-                // ★ 2026-11-02（B1）：不可空的目标用空值合并赋值 ⇒ 恒不生效，直接报错。
-                //   （写成错误而不是警告：`int a; a ?? = 1` 100% 是笔误 —— a 永远不可能是 null）
+                // ★ 2026-11-02（B1）：空值合并赋值的目标若**永远不可能是 null** ⇒ 恒不生效，直接报错。
+                //   ⚠ 只对**值类型**（int/float/bool/bigint/enum/C 布局标量）报：
+                //     引用类（string / Array / Dict / struct / clib / Ptr / 函数）在 Leno 里
+                //     本来就允许 `string s = null`（不是 `string? s`）⇒ 那些类型上 `??=` 完全合法，
+                //     实测 `string s = null; s ??= "x"` 与 `_krnl ??= ffi.load(...)` 都必须能过。
                 //   ⚠ 注释里一律写 "?? ="（中间加空格）而不是连写：连写会触发三字符组
-                //     （trigraph）替换 —— `??=` 在翻译阶段就被换成 `#`，字符串字面量里同样中招。
-                if (ast->u.compound_assign.op == TOK_COALESCE_ASSIGN &&
-                    sym->type && !type_is_nullable(sym->type) &&
-                    sym->type->kind != TYPE_ANY && sym->type->kind != TYPE_INFER &&
-                    sym->type->kind != TYPE_UNKNOWN) {
-                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
-                        // ⚠ 操作符拆成两段字面量写出：连写 `?` `?` `=` 会被三字符组替换成 '#'
-                        "'%s' 不可空（类型 '%s'），`?" "?=` 恒不生效 —— 直接写 '%s = 值' 即可；"
-                        "需要「可能为空」语义请把声明改成 '%s?'",
-                        ast->u.compound_assign.name,
-                        type_kind_to_string(sym->type->kind),
-                        ast->u.compound_assign.name, ast->u.compound_assign.name);
+                //     （trigraph）替换 —— 连写的三字符在翻译阶段就被换成 `#`，字符串里同样中招。
+                if (ast->u.compound_assign.op == TOK_COALESCE_ASSIGN && sym->type) {
+                    TypeKind vk = sym->type->kind;
+                    int value_kind = (vk == TYPE_INT || vk == TYPE_FLOAT || vk == TYPE_BOOL ||
+                                      vk == TYPE_BIGINT || vk == TYPE_ENUM || is_c_layout_type(vk));
+                    if (value_kind && !type_is_nullable(sym->type)) {
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                            // ⚠ 操作符拆成两段字面量写出：连写 `?` `?` `=` 会被三字符组替换成 '#'
+                            "'%s' 不可空（类型 '%s'），`?" "?=` 恒不生效 —— 直接写 '%s = 值' 即可；"
+                            "需要「可能为空」语义请把声明改成 '%s?'",
+                            ast->u.compound_assign.name,
+                            type_kind_to_string(sym->type->kind),
+                            ast->u.compound_assign.name, ast->u.compound_assign.name);
+                    }
                 }
             }
             visit(s, ast->u.compound_assign.value);
+
+            // ★ 2026-11-02（B1）：空值合并赋值也要"锁类型"。
+            //   普通赋值 `var cb = null; cb = ffi.callback(...)` 会把 any 变量锁成右侧的具体类型
+            //   （见本文件 AST_ASSIGN 的"第一次赋非 null 值时锁定类型"）。`cb ??= 同一个值`
+            //   若不锁，变量就一直是 any ⇒ 后续传给 `Ptr` 形参会报"实际 any"（实测 sdl_tray /
+            //   sdl_filedialog 的 C 回调句柄就是这么挂的）。这里对齐普通赋值的口径。
+            if (sym && sym->type && ast->u.compound_assign.op == TOK_COALESCE_ASSIGN &&
+                sym->type->kind == TYPE_ANY) {
+                TypeInfo* cvt = infer_expr_type(s, ast->u.compound_assign.value);
+                if (cvt && cvt->kind != TYPE_NULL && cvt->kind != TYPE_ANY &&
+                    cvt->kind != TYPE_UNKNOWN && cvt->kind != TYPE_INFER) {
+                    type_free(sym->type);
+                    sym->type = type_copy(cvt);
+                    ast->u.compound_assign.ref.type_kind = sym->type->kind;
+                }
+                if (cvt) type_free(cvt);
+            }
 
             // 复合赋值类型检查
             if (sym && sym->type) {

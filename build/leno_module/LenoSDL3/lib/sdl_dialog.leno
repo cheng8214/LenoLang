@@ -245,7 +245,7 @@ export func msgBox(string title, Array[string] lines, string okText, string canc
         if onOk != null { onOk() }
     }
     Button okBtn = btn.createButton({w: 150, h: 34, text: okText, type: (if danger then "danger" else "primary")})
-    okBtn.on_click(func() { hitOk() })
+    okBtn.on_click(() => hitOk())
     Array[Button] btns = [okBtn]
     if ask {
         Button cancelBtn = btn.createButton({w: 130, h: 34, text: cancelText, type: "dark"})
@@ -264,6 +264,6 @@ export func msgBox(string title, Array[string] lines, string okText, string canc
             return not done
         },
         // 外框底色/描边（公共件 ✓，理由见 dialogFramePaint 的注释：不能用与页面同色的 bg ✗）
-        func(Renderer r) { dialogFramePaint(r, w, DIALOG_TB_H + contentH) }
+        (Renderer r) => dialogFramePaint(r, w, DIALOG_TB_H + contentH)
     )
 }

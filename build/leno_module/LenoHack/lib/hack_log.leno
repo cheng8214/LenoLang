@@ -145,7 +145,8 @@ clib kernel32 {
 
 kernel32 _krnl = null
 func _lib(): kernel32 {
-    if _krnl == null { _krnl = ffi.load("kernel32.dll") }
+    // 懒加载：??= 只在为 null 时 load（2026-11-02）
+    _krnl ??= ffi.load("kernel32.dll")
     return _krnl
 }
 

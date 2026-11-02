@@ -102,13 +102,14 @@ const INJECT_TIMEOUT = 10000
 
 kernel32 _krnl = null
 func _lib(): kernel32 {
-    if _krnl == null { _krnl = ffi.load("kernel32.dll") }
+    // 懒加载：??= 只在为 null 时 load（2026-11-02，Leno 0.2.3 起的空值合并赋值）
+    _krnl ??= ffi.load("kernel32.dll")
     return _krnl
 }
 
 psapi _psapiLib = null
 func _psapi(): psapi {
-    if _psapiLib == null { _psapiLib = ffi.load("psapi.dll") }
+    _psapiLib ??= ffi.load("psapi.dll")
     return _psapiLib
 }
 
