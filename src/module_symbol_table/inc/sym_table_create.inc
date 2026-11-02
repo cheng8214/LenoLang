@@ -10,6 +10,12 @@ ModuleSymbolTable* module_symbol_table_create(const char* module_path) {
     table->structs = NULL;
     table->struct_count = 0;
     table->struct_capacity = 0;
+    // ★ 2026-11-02：跨模块 extend 登记（新增字段**必须在这里显式置空** —— 本函数是
+    //   malloc + 逐字段赋值，不是整体 memset ⇒ 漏了就是读栈/堆上的垃圾指针，
+    //   下一次 sym_table_clear_symbols 里 free 它直接炸（实测：537 个用例挂了 112 个 ✗）
+    table->extends = NULL;
+    table->extend_count = 0;
+    table->extend_capacity = 0;
     table->enums = NULL;
     table->enum_count = 0;
     table->enum_capacity = 0;
@@ -147,6 +153,27 @@ static void sym_table_clear_symbols(ModuleSymbolTable* table) {
         free(table->structs[i].const_value_strs);
     }
     free(table->structs);
+
+    // 释放跨模块 extend 登记（2026-11-02）：方法数组里的字段与 struct 方法同一套 ✓
+    for (int i = 0; i < table->extend_count; i++) {
+        free(table->extends[i].module_name);
+        free(table->extends[i].type_name);
+        for (int j = 0; j < table->extends[i].method_count; j++) {
+            free(table->extends[i].methods[j].name);
+            free(table->extends[i].methods[j].return_struct_name);
+            if (table->extends[i].methods[j].return_type_info) {
+                type_free(table->extends[i].methods[j].return_type_info);
+            }
+            free(table->extends[i].methods[j].return_type_param_name);
+            free(table->extends[i].methods[j].param_types);
+            free(table->extends[i].methods[j].param_text);
+        }
+        free(table->extends[i].methods);
+    }
+    free(table->extends);
+    table->extends = NULL;
+    table->extend_count = 0;
+    table->extend_capacity = 0;
 
     // 释放 enum 符号
     for (int i = 0; i < table->enum_count; i++) {

@@ -601,3 +601,62 @@ const char* module_symbol_table_hint(ModuleSymbolTable* table, const char* name)
 
 // ============================================================================
 
+
+// ============================================================================
+// 跨模块 extend 登记（2026-11-02，见 docs/struct_extend_设计草案.md 第 12 节）
+// ----------------------------------------------------------------------------
+// 调用方（`lib/page_download.leno`）：`extend player.Player { func paint_dl }`
+//   ⇒ 往**本模块**符号表登记一条"我扩展了 player.Player 的这些方法"。
+// 使用方（主程序）：import 了 page_download ⇒ 读这条记录，注册 `Player::paint_dl`
+//   占位符 ⇒ `p.paint_dl()` 的"方法存在"检查才通过（运行期由 OP_STRUCT_EXTEND
+//   真正挂到 class 上，按名字查表，不需要编译期索引 ✓）。
+// ⚠ 只深拷贝编译期检查需要的字段（名字 / 参数类型 / 返回类型 / pri / async）；
+//   泛型形参名、默认值文本这些扩展方法用不上，留空 —— 少拷贝只会让检查更宽松，
+//   不会误报（宁漏勿误报的口径 ✓）。
+// ============================================================================
+ModuleExtendSymbol* module_symbol_table_add_extend(ModuleSymbolTable* table,
+                                                   const char* module_name,
+                                                   const char* type_name,
+                                                   int method_count,
+                                                   const ModuleStructMethod* methods) {
+    if (!table || !type_name) return NULL;
+    if (table->extend_count >= table->extend_capacity) {
+        int cap = table->extend_capacity > 0 ? table->extend_capacity * 2 : 8;
+        ModuleExtendSymbol* grown = (ModuleExtendSymbol*)realloc(
+            table->extends, sizeof(ModuleExtendSymbol) * (size_t)cap);
+        if (!grown) return NULL;
+        table->extends = grown;
+        table->extend_capacity = cap;
+    }
+    ModuleExtendSymbol* ex = &table->extends[table->extend_count++];
+    memset(ex, 0, sizeof(*ex));
+    ex->module_name = module_name ? strdup(module_name) : NULL;
+    ex->type_name = strdup(type_name);
+
+    if (method_count > 0 && methods) {
+        ex->methods = (ModuleStructMethod*)calloc((size_t)method_count, sizeof(ModuleStructMethod));
+        if (!ex->methods) {
+            ex->method_count = 0;
+            return ex;
+        }
+        ex->method_count = method_count;
+        for (int i = 0; i < method_count; i++) {
+            const ModuleStructMethod* src = &methods[i];
+            ModuleStructMethod* dst = &ex->methods[i];
+            dst->name = src->name ? strdup(src->name) : NULL;
+            dst->return_type = src->return_type;
+            dst->return_struct_name = src->return_struct_name ? strdup(src->return_struct_name) : NULL;
+            dst->param_count = src->param_count;
+            if (src->param_count > 0 && src->param_types) {
+                dst->param_types = (TypeKind*)malloc(sizeof(TypeKind) * (size_t)src->param_count);
+                if (dst->param_types) {
+                    memcpy(dst->param_types, src->param_types, sizeof(TypeKind) * (size_t)src->param_count);
+                }
+            }
+            dst->is_async = src->is_async;
+            dst->is_private = src->is_private;
+            dst->line = src->line;
+        }
+    }
+    return ex;
+}

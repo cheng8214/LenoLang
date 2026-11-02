@@ -98,6 +98,21 @@ typedef struct {
     int is_private;
 } ModuleStructMethod;
 
+// 跨模块 `extend` 的登记项（2026-11-02，见 docs/struct_extend_设计草案.md 第 12 节）
+// ----------------------------------------------------------------------------
+// `lib/page_download.leno` 里 `extend player.Player { func paint_dl }` ⇒ 这个模块导出
+// **一条扩展记录**：目标类型 + 方法签名。
+//   为什么必须进符号表：调用方（主程序）import 的是 `player`（定义模块），看不到
+//   `page_download` 里的方法；只有把它登记进 page_download 的符号表，调用方 import
+//   它时才能注册 `Player::paint_dl` 占位符，"方法存在"检查才通得过 ✓
+//   运行期由 `OP_STRUCT_EXTEND` 真正把方法挂到 class 上（按名字查表，不需要索引）。
+typedef struct {
+    char* module_name;          // 目标类型所在模块的**别名**（`extend player.Player` ⇒ "player"）
+    char* type_name;            // 目标 struct 名（已去掉模块前缀）
+    int method_count;           // 扩展方法数量
+    ModuleStructMethod* methods; // 复用方法符号结构：名字 / 参数 / 返回类型 / is_private 都在
+} ModuleExtendSymbol;
+
 // 模块 struct 符号
 typedef struct {
     char* name;                 // struct 名称
@@ -205,6 +220,9 @@ typedef struct {
     ModuleStructSymbol* structs; // struct 符号数组
     int struct_count;           // struct 数量
     int struct_capacity;        // struct 数组容量
+    ModuleExtendSymbol* extends; // 跨模块 extend 登记（2026-11-02）
+    int extend_count;
+    int extend_capacity;
     ModuleEnumSymbol* enums;    // enum 符号数组
     int enum_count;             // enum 数量
     int enum_capacity;          // enum 数组容量
