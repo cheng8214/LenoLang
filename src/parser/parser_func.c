@@ -3595,3 +3595,103 @@ Ast* parse_enum_stmt(Parser* p) {
 
     return ast;
 }
+
+// ============================================================================
+// extend 声明（2026-11-02，设计见 docs/struct_extend_设计草案.md）
+// ----------------------------------------------------------------------------
+// 语法：extend [模块名.]StructName { func ... }
+//   作用：把 struct 的方法体**搬到别处**（不产生子类型、不改布局、不加字段）。
+//   语义层把这里的方法追加进目标 struct 的 methods 数组 ⇒ 调用 / 可见性 / codegen
+//   与"写在 struct 里"完全等价 ✓
+// ⚠ 顶层一般不允许 `pri`（parser.c 的 case TOK_PRI 直接报错），但 extend 块里的方法
+//   等价于 struct 成员 ⇒ 本函数自己吃掉 `pri`，记到 func->is_private（与结构体内部
+//   的 `pri func` 同一口径 ✓）
+// ⚠ 块内**只认 func**：出现字段/常量会点名报错并跳过那个 token，避免卡住解析 ✓
+// ============================================================================
+Ast* parse_extend_stmt(Parser* p) {
+    int line = p->lex.current.line;
+    lexer_next(&p->lex);            // 消费 'extend'
+
+    char* module_name = NULL;       // `extend p.Player` 的前缀
+    char* type_name = NULL;
+
+    if (p->lex.current.type != TOK_IDENT) {
+        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                         "extend 后面要跟结构体名（如 extend Player，或 extend 模块.Player）");
+        return NULL;
+    }
+    char* first = copy_string(p->lex.current.text, p->lex.current.len);
+    lexer_next(&p->lex);
+
+    if (p->lex.current.type == TOK_DOT) {
+        lexer_next(&p->lex);        // 消费 '.'
+        if (p->lex.current.type != TOK_IDENT) {
+            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                             "extend %s. 后面期望结构体名", first);
+            free(first);
+            return NULL;
+        }
+        module_name = first;
+        type_name = copy_string(p->lex.current.text, p->lex.current.len);
+        lexer_next(&p->lex);
+    } else {
+        type_name = first;
+    }
+
+    if (p->lex.current.type != TOK_LBRACE) {
+        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                         "extend %s 后面期望 '{'（块里只写方法）", type_name);
+        free(module_name);
+        free(type_name);
+        return NULL;
+    }
+    lexer_next(&p->lex);            // 消费 '{'
+
+    Ast** methods = (Ast**)malloc(sizeof(Ast*) * 8);
+    int method_count = 0;
+    int method_capacity = 8;
+
+    while (p->lex.current.type != TOK_RBRACE && p->lex.current.type != TOK_EOF) {
+        int is_private = 0;
+        if (p->lex.current.type == TOK_PRI) {
+            is_private = 1;
+            lexer_next(&p->lex);
+        }
+        if (p->lex.current.type != TOK_FUNC && p->lex.current.type != TOK_ASYNC) {
+            // 只报**一次**：整条语句跳过去（`int y = 2` 逐 token 跳会连报 4 次同样的话 ✗）
+            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                             "extend 块里只能写方法，不能加字段；字段请写回 struct %s 的定义里", type_name);
+            while (p->lex.current.type != TOK_SEMI &&
+                   p->lex.current.type != TOK_RBRACE &&
+                   p->lex.current.type != TOK_EOF) {
+                lexer_next(&p->lex);
+            }
+            if (p->lex.current.type == TOK_SEMI) lexer_next(&p->lex);   // 吃掉分号
+            continue;
+        }
+        Ast* fn = parse_func_stmt(p);
+        if (fn && fn->kind == AST_FUNC_DEF) {
+            fn->u.func.is_private = is_private;
+            if (method_count >= method_capacity) {
+                method_capacity *= 2;
+                methods = (Ast**)realloc(methods, sizeof(Ast*) * method_capacity);
+            }
+            methods[method_count++] = fn;
+        }
+    }
+    if (p->lex.current.type == TOK_RBRACE) lexer_next(&p->lex);   // 消费 '}'
+
+    Ast* node = ast_new(AST_EXTEND_DEF, line);
+    if (!node) {
+        free(module_name);
+        free(type_name);
+        free(methods);
+        return NULL;
+    }
+    node->u.extend_def.module_name = module_name;
+    node->u.extend_def.type_name = type_name;
+    node->u.extend_def.methods = methods;
+    node->u.extend_def.method_count = method_count;
+    node->u.extend_def.line = line;
+    return node;
+}

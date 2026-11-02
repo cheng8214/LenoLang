@@ -153,6 +153,7 @@ TypeInfo* parse_type(Parser* p);
 int parser_reject_module_qualified_type(Parser* p, TypeInfo* t);
 int is_entry_function_def(Parser* p);
 Ast* parse_struct_stmt(Parser* p);
+Ast* parse_extend_stmt(Parser* p);   // extend 声明（2026-11-02，见 docs/struct_extend_设计草案.md）
 Ast* parse_face_stmt(Parser* p);
 Ast* parse_cstruct_stmt(Parser* p);
 Ast* parse_clib_stmt(Parser* p);

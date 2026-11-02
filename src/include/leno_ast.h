@@ -51,6 +51,9 @@ AST_RETURN_MULTI,  // 多值返回: return a, b, c
     AST_AS_CAST,       // 安全类型转换: a as TypeName
     AST_ALIAS,         // 类型别名: alias Name = Type
     AST_STRUCT_DEF,    // struct 定义
+    AST_EXTEND_DEF,    // extend 声明（顶层：把 target struct 的方法写到别处，2026-11-02）
+                       //   语义：只加方法，不加字段；方法被合并进目标 struct 的 methods 数组 ⇒
+                       //   调用/可见性/codegen 与"写在 struct 里"完全等价（见 docs/struct_extend_设计草案.md）
     AST_FACE_DEF,      // face 定义
     AST_CSTRUCT_DEF,   // cstruct 定义（C 布局结构体）
     AST_CLIB_DEF,       // clib 定义（C 库函数签名声明）
@@ -326,6 +329,13 @@ struct Ast {
             Ast** const_values;       // 关联常量值表达式数组
             int const_count;          // 关联常量数量
         } struct_def;
+        struct {
+            char* module_name;       // 可空：`extend p.Player` 的 "p"；空 = 本文件/本模块
+            char* type_name;         // 被扩展的 struct 名（已去掉模块前缀）
+            Ast** methods;           // AST_FUNC_DEF 数组（方法体，原样搬运 ✓）
+            int method_count;
+            int line;                // extend 声明所在行（"未匹配"之类报错用）
+        } extend_def;
         struct {
             char* name;              // face 名称
             char** method_names;     // 方法名称数组

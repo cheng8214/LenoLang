@@ -386,6 +386,11 @@ Ast* parse_statement(Parser* p) {
             stmt = parse_struct_stmt(p);
             break;
 
+        // extend 声明：把某个 struct 的方法写到别处（不产生子类型，见设计文档）
+        case TOK_EXTEND:
+            stmt = parse_extend_stmt(p);
+            break;
+
         // face 定义
         case TOK_FACE:
             stmt = parse_face_stmt(p);

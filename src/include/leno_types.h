@@ -232,7 +232,10 @@ typedef enum {
     TOK_STRUCT,        // struct 关键字
     TOK_ENUM,          // enum 关键字
     TOK_FACE,          // face 关键字
-    TOK_IMPL,          // impl 关键字
+    TOK_IMPL,          // impl 关键字（struct 头部：声明实现了哪些 face）
+TOK_EXTEND,        // extend 关键字（顶层：把 target struct 的方法写到别处，2026-11-02）
+                   //   ⚠ 与 impl 是两件事：impl 声明"实现了接口"，方法体仍在 struct 内；
+                   //     extend 是把方法体**搬出去**，不产生子类型、不改布局 ✓
     TOK_NEW,           // new 关键字（struct 实例化）
     TOK_ALIAS,         // alias 关键字（类型别名）
     TOK_PRI,           // pri 关键字（struct 成员私有：默认全公有，只有标了 pri 的才拦 ✓）

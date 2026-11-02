@@ -185,6 +185,76 @@ void semantic_init(Semantic* s, Ast* root) {
     memset(s->imported_modules, 0, sizeof(s->imported_modules));
 }
 
+// ============================================================================
+// extend 合并（2026-11-02，设计见 docs/struct_extend_设计草案.md）
+// ----------------------------------------------------------------------------
+// 把顶层 block 里的 `extend X { func ... }` 的方法**追加进目标 struct 的 methods 数组**
+// ⇒ 调用解析 / 字段可见性 / codegen 全部自动复用"写在 struct 里"的那套逻辑 ✓
+//
+// ⚠ 必须在"预注册 struct"之前调用：下面那些流程按 `method_count` 一次性分配方法表，
+//   合并晚了多出来的方法会被截断，表现为"类型 'struct X' 没有方法 Y" ✗（实测踩过）
+// ⚠ 一期只支持**同文件**：跨模块 extend 要把方法挂到别的模块的 class 上，属于另一套
+//   运行时机制（设计文档 6.3），这里直接报错而不是静默忽略。
+// ============================================================================
+static void extend_merge_into_block(Ast* block) {
+    if (!block || block->kind != AST_BLOCK) return;
+    AstList* list = &block->u.block;
+    for (int i = 0; i < list->count; i++) {
+        Ast* ext = list->items[i];
+        if (!ext || ext->kind != AST_EXTEND_DEF) continue;
+
+        if (ext->u.extend_def.module_name) {
+            error_add_at_fmt(ERR_SEMANTIC, ext->u.extend_def.line, 0,
+                "extend 暂不支持跨模块写法（'%s.%s'）；请把 struct 定义与 extend 放在同一文件",
+                ext->u.extend_def.module_name, ext->u.extend_def.type_name);
+            continue;
+        }
+
+        Ast* target = NULL;
+        for (int j = 0; j < list->count; j++) {
+            Ast* sd = list->items[j];
+            if (!sd || sd->kind != AST_STRUCT_DEF || !sd->u.struct_def.name) continue;
+            if (strcmp(sd->u.struct_def.name, ext->u.extend_def.type_name) == 0) { target = sd; break; }
+        }
+        if (!target) {
+            error_add_at_fmt(ERR_SEMANTIC, ext->u.extend_def.line, 0,
+                "extend 的目标类型 '%s' 在本文件里没有定义", ext->u.extend_def.type_name);
+            continue;
+        }
+
+        for (int k = 0; k < ext->u.extend_def.method_count; k++) {
+            Ast* fn = ext->u.extend_def.methods[k];
+            if (!fn || fn->kind != AST_FUNC_DEF || !fn->u.func.name) continue;
+
+            // 重名：与 struct 内已有方法、或先前 extend 进来的方法撞名 ⇒ 报错。
+            //   不静默覆盖，否则"我改的方法怎么没生效"几乎查不出来 ✓
+            Ast* dup = NULL;
+            for (int m = 0; m < target->u.struct_def.method_count; m++) {
+                Ast* ex = target->u.struct_def.methods[m];
+                if (ex && ex->kind == AST_FUNC_DEF && ex->u.func.name &&
+                    strcmp(ex->u.func.name, fn->u.func.name) == 0) { dup = ex; break; }
+            }
+            if (dup) {
+                error_add_at_fmt(ERR_SEMANTIC, fn->line, 0,
+                    "extend 的方法 '%s' 重复定义（%s 里第 %d 行已有同名方法）",
+                    fn->u.func.name, target->u.struct_def.name, dup->line);
+                continue;
+            }
+
+            Ast** grown = (Ast**)realloc(target->u.struct_def.methods,
+                                         sizeof(Ast*) * (target->u.struct_def.method_count + 1));
+            if (!grown) continue;
+            target->u.struct_def.methods = grown;
+            target->u.struct_def.methods[target->u.struct_def.method_count++] = fn;
+            ext->u.extend_def.methods[k] = NULL;    // 所有权转移 ⇒ 不能再由 extend 节点释放
+        }
+        // 转移完毕：清空，避免 ast_free 二次释放（见 ast.c 的 AST_EXTEND_DEF 分支）
+        free(ext->u.extend_def.methods);
+        ext->u.extend_def.methods = NULL;
+        ext->u.extend_def.method_count = 0;
+    }
+}
+
 void semantic_analyze(Semantic* s, Ast* ast) {
     annos_reset_all();          // 注解（@optkeys）表每个分析单元清一次 ✓
     // 创建全局作用域
@@ -203,6 +273,9 @@ void semantic_analyze(Semantic* s, Ast* ast) {
     for (int i = 0; i < count; i++) {
         scope_define(s->current, builtins[i].name, SYM_NATIVE);
     }
+
+    // ★ 先把 extend 的方法并进目标 struct（必须在下面的预注册之前，见函数注释）
+    extend_merge_into_block(ast);
 
     // 预注册所有 struct/face 定义（支持前向引用）
     if (ast && ast->kind == AST_BLOCK) {
@@ -625,6 +698,9 @@ void semantic_analyze_module(Semantic* s, Ast* ast) {
     for (int i = 0; i < count; i++) {
         scope_define(s->current, builtins[i].name, SYM_NATIVE);
     }
+
+    // ★ 先把 extend 的方法并进目标 struct（必须在预注册之前，见函数注释）
+    extend_merge_into_block(ast);
 
     // 预注册所有模块类型定义（struct/cstruct/face）和函数定义（使用 SYM_MODULE 类型）
     // 同时提前注册 struct/face 到全局定义表，确保函数体中能通过 struct_def_find/face_def_find 找到

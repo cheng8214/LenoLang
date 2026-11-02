@@ -680,6 +680,9 @@ static void fold_expr(Ast* ast) {
         // AST_DEFER 是 parser 中间节点（块退出前就降级成 finally），
         // 优化器正常见不到它；列出来只为 -Wswitch 干净
         case AST_DEFER:
+        // AST_EXTEND_DEF 是顶层声明（方法已在语义阶段并进目标 struct），
+        // 折叠/DCE 都不该进它；列出来只为 -Wswitch 干净（2026-11-02）
+        case AST_EXTEND_DEF:
             break;
 
         case AST_BINOP:
@@ -973,6 +976,8 @@ static int dce_expr(Ast* ast) {
         case AST_CONTINUE:
         // AST_DEFER：parser 中间节点（降级成 finally 后消失），DCE 正常见不到
         case AST_DEFER:
+        // AST_EXTEND_DEF：顶层声明，方法已并进目标 struct（2026-11-02）
+        case AST_EXTEND_DEF:
             return 0;
 
         // return：递归处理返回值表达式，本身是终止语句

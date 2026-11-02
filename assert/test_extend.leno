@@ -1,0 +1,65 @@
+// `extend` —— 把 struct 的方法写到别处（2026-11-02）
+// 设计：docs/struct_extend_设计草案.md
+//
+// 覆盖：基本用法 / 定义顺序无关 / 多个 extend 块 / 跨块访问 pri 字段与方法 /
+//       改字段 / extend 方法互相调用
+// ⚠ 报错类场景（重名、加字段、目标不存在、跨模块写法）没法在这里断言 ——
+//    它们会让本文件编不过。那几条由设计文档第 9 节的验收清单手工核对 ✓
+
+struct Player {
+    int hp = 100
+    string name = "aria"
+    pri int secret = 7
+
+    func base(): int { return hp }
+
+    pri func inner(): int { return secret }
+}
+
+// ① 一个 extend 块：改字段 + 调 struct 内的 pri 方法
+extend Player {
+    func damage(int n): int {
+        hp = hp - n
+        return hp
+    }
+
+    func readSecret(): int { return inner() + secret }   // pri 方法 / pri 字段都能用
+
+    pri func helper(): string { return "h-" + name }
+}
+
+// ② 第二个 extend 块：可以调用前一个块里的 pri 方法（同一类型，语义一致）
+extend Player {
+    func combo(): string { return helper() + "!" }
+}
+
+// ③ extend 写在 struct **之前**（顺序无关）
+extend Later {
+    func hello(): string { return "hi-" + who }
+}
+
+struct Later {
+    string who = "later"
+}
+
+main()
+{
+    // ① 基本：struct 内方法与 extend 方法共存，且共享字段
+    var p = new Player()
+    assert_eq(p.base(), 100)
+    assert_eq(p.damage(30), 70)
+    assert_eq(p.hp, 70)                    // extend 里改的就是同一个字段
+    assert_eq(p.base(), 70)
+
+    // ② pri 字段 + pri 方法跨块可用
+    assert_eq(p.readSecret(), 14)          // inner()=7 + secret=7
+
+    // ③ 两个 extend 块之间互调
+    assert_eq(p.combo(), "h-aria!")
+
+    // ④ 顺序无关：extend 在前照样能调
+    var l = new Later()
+    assert_eq(l.hello(), "hi-later")
+
+    print("test_extend passed")
+}

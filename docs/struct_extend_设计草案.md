@@ -1,0 +1,259 @@
+# `extend` —— 把 struct 的方法写到别的文件（设计草案）
+
+> 2026-11-02 起草。目标读者：以后要拆大类、或要改 parser/semantic 的人。
+
+## 0. 实现状态（2026-11-02）
+
+**一期已完成并通过测试**：同文件 `extend`（含定义顺序无关、多块、跨块访问 `pri` 成员）。
+
+- 改动：`lexer.c`（关键字）、`leno_types.h`（TOK_EXTEND）、`leno_ast.h`（AST_EXTEND_DEF +
+  `u.extend_def`）、`parser_func.c`（`parse_extend_stmt`）、`parser.c`（分发）、
+  `semantic.c`（`extend_merge_into_block`：合并到 `struct_def.methods`）、
+  `ast.c`（释放）、`optimize.c`（两个 switch 补 case）
+- 用例：`assert/test_extend.leno`（正向 4 组）+ 手工核对 4 组报错场景
+- 回归：`assert\run_tests.leno` **537 passed / 0 failed**
+
+**二期未做（也是拆 Aria 的真正前提）**：跨模块 `extend 模块.Player`。现在会**明确报错**
+（不静默忽略）。原因见 6.3：方法要挂到"别的模块已建立的 class"上，需要运行时注册机制，
+不是语义层一次 realloc 能解决的。
+
+> 因此：**当前实现还不能用来拆 `aria.leno`**。它能做的是验证"方法合并"这条链路，
+> 为二期铺路。拆分前必须先决定跨模块方案（见 12 节）。
+
+## 1. 背景：为什么需要它
+
+`d:/CLeno/Aria/aria.leno` 实测 **6212 行**，结构是：
+
+| 区间 | 内容 | 行数 |
+|---|---|---|
+| L1-192 | 常量 / 调色板 / 主题 | ~190 |
+| L193-589 | `struct Player` 的**字段** | ~400 |
+| L590-6208 | `struct Player` 的 **167 个方法** | ~5600 |
+| L6209+ | `main()` | 4 |
+
+`lib/` 下已经有 22 个模块（最大的 `downloads.leno` 761 行），说明外围早就拆干净了，
+**唯一没拆的就是这一个 struct**。物理原因只有一条：
+
+> **方法只能写在 `struct X { ... }` 里面。**
+
+于是 5600 行方法无处可去。`face`/`impl` 解决不了它 —— `impl` 是
+`struct X impl Face`（声明实现了哪些接口），方法体仍然必须写在 struct 内，
+一个 face 都不写、写十个 face，行数都不变。
+
+## 2. 目标与非目标
+
+### 目标
+
+| # | 目标 |
+|---|---|
+| G1 | 方法可以写在**别的文件**，且搬运时**不用改方法体**（`self` 语义、字段名、`pri` 互调全部不变） |
+| G2 | 与既有 struct 完全等价：调用、重载、可见性、泛型、codegen 都不区分"写在 struct 里"还是"写在 extend 里" |
+| G3 | 跨模块可用：`lib/player_search.leno` 里的 `extend Player` 在其它模块调用时，方法照常可见 |
+| G4 | **不引入继承**语义：不产生子类型、不改变布局、不改变方法解析顺序 |
+
+### 非目标（一期不做）
+
+- `extend` 加**字段**（只加方法；加字段会破坏布局与既有构造语义）
+- 给 face / enum / cstruct 做 extend（先只支持 `struct`）
+- 跨模块**双向** extend（A 模块 extend B 的类型时，B 不能反向依赖 A，见 6.3）
+- 一个 extend 块里写 `static` 之类的新概念
+
+## 3. 语法
+
+```leno
+// lib/player_search.leno
+import "player.leno" as p
+
+extend p.Player {
+    pri func paint_search(r: Renderer) {
+        // 直接写 tbSearch / netRows，不需要 p. 前缀（self 仍然隐式存在）
+    }
+
+    func refresh_search() { ... }
+}
+```
+
+规则：
+
+1. `extend` 是**顶层声明**，与 `struct` / `face` / `func` 同级，不能出现在函数体内
+2. 目标类型写成 `Name` 或 `模块别名.Name`（后者用于跨文件/跨模块）
+3. 块内**只允许 `func`**（含 `pri` / `export` 修饰）；出现字段声明直接报错
+4. 同一类型可以有多个 extend 块，分散在多个文件
+
+### 与 `impl` 的区别（写进实现注释，也要写进文档）
+
+| | 位置 | 作用 |
+|---|---|---|
+| `struct X impl Face { }` | struct **头部** | 声明"X 实现了 Face"，供多态/类型检查 |
+| `extend X { }` | **顶层**独立声明 | 把 X 的方法体搬到别处，语义等价于写在 struct 内 |
+
+两者可以共存：extend 块里定义的方法照样能实现 face 约定的方法。
+
+## 4. AST
+
+```c
+// 新增顶层节点
+AST_EXTEND_DEF
+
+struct {
+    char* module_name;   // 可空（空 = 本模块/本文件）
+    char* type_name;     // 被扩展的 struct 名（已解析掉模块前缀）
+    Ast** methods;       // AST_FUNC_DEF 数组
+    int   method_count;
+    int   line;
+} extend_def;
+```
+
+## 5. 语义
+
+### 5.1 合并（核心）
+
+`extend` 不新建类型，它的方法**追加进目标 struct 的 `methods` 数组**
+（`AST_STRUCT_DEF.u.struct_def.methods`，见 `leno_ast.h:313` 附近的
+`Ast** methods; int method_count;`）。
+
+合并之后，下面这些**全部不用改**：
+
+- 方法调用解析（`visit_expr.inc` 的 `receiver_type->struct_name` 匹配）
+- 字段可见性检查（`field_private` 已存在：默认公有，显式 `pri` 才拦）
+- codegen 的方法编译（`codegen_struct_def` 遍历 `methods`）
+- `.lenosymc` 里的 `ModuleStructSymbol.methods`
+
+这就是选"追加到 methods 数组"而不是"新搞一套扩展方法表"的全部理由。
+
+### 5.2 顺序无关性
+
+`extend` 可能出现在 struct 定义**之前**（同一文件）。处理方式：
+
+1. 语义第一遍**只收集**：把 `AST_EXTEND_DEF` 挂到一张"待合并"表（`type_name → 方法列表`）
+2. 遇到 `AST_STRUCT_DEF` 时，先把待合并的方法追加进去，再走原来的注册流程
+3. 文件 visit 结束后，若还有未匹配的待合并项 ⇒ **报错**
+   `extend 的目标类型 'Player' 在本文件里没有定义（跨模块请写 extend 模块名.Player）`
+
+> 为什么不做"全文件两遍扫描"：那会动到 `visit_program` 的整体结构（所有
+> struct/face/enum 的注册顺序都会变），风险远大于收益。**要求 struct 定义与
+> 它的 extend 出现在同一文件**——这条限制对拆分没有任何影响（拆出去的方法本来就该
+> 和 struct 定义在同一模块的两个文件里）。
+
+### 5.3 重名
+
+- 与 struct 内已有的方法同名 ⇒ 报错（不静默覆盖，否则"我改的方法怎么没生效"极难查）
+- 两个 extend 块里同名 ⇒ 同样报错
+- 报错文案带上两个定义的行号
+
+### 5.4 可见性
+
+- `pri func` 在 extend 块里：**同一模块内的其它文件可调，模块外不可调**（与写在 struct 里一致）
+- extend 块**可以访问目标 struct 的 `pri` 字段**（否则拆出去没有意义）——前提是该 struct 与
+  extend 在同一模块
+
+## 6. 落点
+
+### 6.1 parser
+
+| 位置 | 改动 |
+|---|---|
+| `lexer.c` 关键字表 | 加 `{"extend", TOK_EXTEND}` |
+| `leno_types.h` | 加 `TOK_EXTEND`（放在 `TOK_IMPL` 附近，注释说明与 impl 的区别） |
+| `parser.c` 的 `declaration()` | 识别 `TOK_EXTEND` ⇒ 解析目标类型名 + `{ func* }` |
+| `leno_ast.h` | 新增 `AST_EXTEND_DEF` 与 `u.extend_def` |
+
+### 6.2 semantic
+
+| 位置 | 改动 |
+|---|---|
+| `visit_block.inc`（`AST_STRUCT_DEF` 分支附近） | 加 `AST_EXTEND_DEF` 分支：登记待合并 |
+| struct 注册处 | 合并前先 append 待合并方法 |
+| 文件 visit 收尾 | 校验"未匹配的 extend" |
+
+### 6.3 跨模块（工作量最大的一块）
+
+`module_symbol_table` 是**独立扫描器**（不跑完整 semantic），跨模块调
+`player.paint_search()` 时，方法必须出现在 `ModuleStructSymbol.methods` 里。
+
+所以扫描器也要认 `AST_EXTEND_DEF`：扫到 extend 就把它拼进对应 struct 的 methods。
+**约束**：extend 只能扩展**本模块**的类型（跨模块 extend 会在扫描器里产生"谁先扫谁"的
+循环依赖），跨模块调用走的是"模块 → 它自己的 struct"这条链，不需要额外处理。
+
+### 6.4 codegen
+
+**零改动**。方法已经并进 `methods` 数组，`codegen_struct_def` 原本就遍历它。
+唯一要确认的是：extend 文件的 `import` 要能让方法体内的符号解析正常（普通的
+import 规则即可，不需要额外机制）。
+
+## 7. 诊断文案
+
+```
+error: extend 只能加方法，不能加字段（'dlJobs'）
+        提示: 字段请写回 struct Player 的定义里
+
+error: extend 的目标类型 'Player' 在本文件没有定义
+        提示: 跨模块请写 `extend 模块别名.Player`
+
+error: 方法 'paint_search' 重复定义
+        提示: struct Player 里已有同名方法（第 812 行）
+
+error: extend 不能扩展 face / enum / cstruct（'Widget'）
+```
+
+## 8. 迁移路径（Aria 试拆）
+
+按"字段自包含程度"排序，先易后难：
+
+| 顺序 | 目标 | 方法 | 估计行数 | 为什么先做它 |
+|---|---|---|---|---|
+| 1 | `lib/page_download.leno` | `dl*` / `paint_dl*` / `apply_dl*` | ~900 | 只碰 `dlJobs` / `dlCur` / `dlCh` 少数几个字段 |
+| 2 | `lib/page_search.leno` | `paint_search*` / `apply_search*` / `sync_search*` | ~1200 | 字段集中，但与表格耦合 |
+| 3 | `lib/player_playback.leno` | `play_*` / `open_*` | ~900 | 依赖 LenoMusic，边界清楚 |
+| 4 | `lib/player_tick.leno` | `on_*` / `sync_*` | ~600 | 通道排空，逻辑独立 |
+
+搬运步骤（每次都一样）：
+
+1. 原文件里剪切方法 → 新文件 `extend Player { ... }`
+2. 新文件补 `import`（`player.leno` + 方法体用到的模块）
+3. `--check` 通过 ⇒ 方法体一个字都没改
+
+## 9. 验收清单
+
+- [ ] 单文件：`struct P { }` + `extend P { func get() }` ⇒ 能调 `p.get()`
+- [ ] 顺序：`extend P` 写在 `struct P` **之前** ⇒ 同样能编
+- [ ] `extend` 加字段 ⇒ 报错
+- [ ] 重名方法 ⇒ 报错，带两个行号
+- [ ] `extend` 目标不存在 ⇒ 报错
+- [ ] extend 块内访问 `pri` 字段 ⇒ 允许（同模块）
+- [ ] 跨文件（同模块两个 .leno）⇒ 能编能跑
+- [ ] 跨模块调用 extend 出来的方法 ⇒ 能编能跑（走 `.lenosymc`）
+- [ ] `--check` 全量套件零误报
+- [ ] Aria 拆出下载页后：`--check` 通过 + 下载功能正常
+
+## 10. 风险与取舍
+
+| 风险 | 影响 | 对策 |
+|---|---|---|
+| 方法表在 semantic 中途变了 | 已解析过的方法缓存失效 | extend 的合并在 **visit 该文件开头**完成（不边 visit 边加） |
+| 扫描器与语义两套逻辑漂移 | 跨模块调用 suddenly 找不到方法 | 抽一个公共的 `struct_append_methods()`，两处都调 |
+| 用户误以为能加字段 | 编译期报错即可，文案要清楚 | 见第 7 节 |
+| 被理解成继承 | 设计困扰 | 语法上不允许出现在 struct 头部；文档与报错文案强调"不产生子类型" |
+| extend 泛滥导致"方法在哪"更难找 | 可维护性 | 约定：**一个文件只 extend 一个类型**；类型名与方法名前缀一致（`paint_dl_*` 都在 `page_download.leno`） |
+
+## 12. 跨模块 extend：三条路，成本差很多
+
+拆 Aria 的真实形状是：`struct Player` 在 `lib/player.leno`，页面方法在
+`lib/page_download.leno` 里 `extend player.Player` —— **必然跨模块**。三条路：
+
+| 方案 | 做法 | 改动 | 代价 |
+|---|---|---|---|
+| A. 运行时注册 | 模块初始化时把 extend 的方法**追加进目标 class** | 需要"class 按名字查"的全局注册表 + 一条 `OP_EXTEND_METHOD`；方法在调用方模块编译，但 `self` 的字段索引必须与目标 struct 一致（字段布局来自符号表，可算） | 中高，动 codegen + VM |
+| B. 外部函数 | `func paint_dl(p: Player)`，不改类 | **零语言改动**（跨模块读写字段已验证可行） | 方法体里 `field` → `p.field`，约 100 个方法机械改动；`pri` 字段不可见（要么放开可见性，要么加 `pub`） |
+| C. 单文件内拆分 | 只做一期（同文件 extend） | 已完成 | 减不了行数（还在同一文件） |
+
+**判断**：先用 **B** 验证"拆了以后是否更好维护"，再决定要不要为 A 动 codegen/VM。
+理由是 A 的收益（搬运零改动）只在一次性迁移时兑现，而 B 的代价是一次性的机械替换，
+之后两者维护成本相同。为一次性便利改动 VM 不划算。
+
+## 11. 后续（不在本期）
+
+- **`self` 字段切片**：`func paint_dl(self: Player{dlJobs, dlCur})` —— 让"这个函数碰哪些字段"
+  成为签名的一部分，编译器就能算方法之间的字段连通性，**自动建议拆分边界**。这是让
+  拆分从"手工"变成"工具可推导"的关键，但需要改类型系统与字段访问检查。
+- **具名实参**：拆出去后函数签名会变长，具名调用能降低调用点维护成本。

@@ -425,6 +425,16 @@ break;
             ast_free(ast->u.slice.start);
             ast_free(ast->u.slice.end);
             break;
+        case AST_EXTEND_DEF:
+            // extend 声明（2026-11-02）：方法被**移动**进目标 struct 的 methods 数组
+            //   （语义层做完合并后会把这里的指针清空，避免二次释放 ✓），未合并的由这里释放
+            free(ast->u.extend_def.module_name);
+            free(ast->u.extend_def.type_name);
+            for (int i = 0; i < ast->u.extend_def.method_count; i++) {
+                ast_free(ast->u.extend_def.methods[i]);
+            }
+            free(ast->u.extend_def.methods);
+            break;
         case AST_STRUCT_DEF:
             free(ast->u.struct_def.name);
             for (int i = 0; i < ast->u.struct_def.field_count; i++) {
