@@ -1,3 +1,119 @@
+                // ★ 2026-11-02：跨模块 extend（`extend player.Player { func paint_dl }`）
+        //   目标 struct 不在本编译单元 ⇒ 字段名 / 方法名从**模块符号表**取，然后做与
+        //   "写在 struct 里"完全相同的两件事：① 方法体字段名 → self.字段名
+        //   ② 前置隐式 self 参数 ③ 注册 `P::方法` 到函数表。
+        //   同文件 extend 不走这里：那批方法已被 extend_merge_into_block 并进目标 struct 的
+        //   methods 数组，由下面的 AST_STRUCT_DEF 分支统一处理 ✓
+        case AST_EXTEND_DEF: {
+            if (!ast->u.extend_def.module_name) break;
+
+            // ⚠ 幂等保护：同一个 extend 节点可能被 visit 多次（模块自身编译一次 +
+            //   被 import 时的符号表/依赖处理再一次）⇒ 重复前置 self 会让 pcnt 变成 3、
+            //   局部槽位整体错位，表现是"第一个参数读得到、后面的全是 null"（实测踩过 ✓）
+            //   判据：第一个方法的首参已经叫 "self" 就说明处理过了。
+            if (ast->u.extend_def.method_count > 0) {
+                Ast* probe = ast->u.extend_def.methods[0];
+                if (probe && probe->kind == AST_FUNC_DEF && probe->u.func.pcnt > 0 &&
+                    probe->u.func.params && probe->u.func.params[0] &&
+                    strcmp(probe->u.func.params[0], "self") == 0) {
+                    break;
+                }
+            }
+
+            ImportedModuleInfo* ext_mi = find_imported_module(s, ast->u.extend_def.module_name);
+            if (!ext_mi || !ext_mi->sym_table) {
+                error_add_at_fmt(ERR_SEMANTIC, ast->u.extend_def.line, 0,
+                    "extend 的目标模块 '%s' 没有导入（请先 import）", ast->u.extend_def.module_name);
+                break;
+            }
+            ModuleStructSymbol* ext_ssym =
+                module_symbol_table_find_struct(ext_mi->sym_table, ast->u.extend_def.type_name);
+            if (!ext_ssym) {
+                error_add_at_fmt(ERR_SEMANTIC, ast->u.extend_def.line, 0,
+                    "模块 '%s' 里没有类型 '%s'",
+                    ast->u.extend_def.module_name, ast->u.extend_def.type_name);
+                break;
+            }
+
+            // 字段名表：直接引用符号表里的字符串（不拥有，循环结束不释放）
+            char** ext_fnames = NULL;
+            if (ext_ssym->field_count > 0 && ext_ssym->fields) {
+                ext_fnames = (char**)malloc(sizeof(char*) * (size_t)ext_ssym->field_count);
+                for (int fi = 0; ext_fnames && fi < ext_ssym->field_count; fi++) {
+                    ext_fnames[fi] = ext_ssym->fields[fi].name;
+                }
+            }
+            // 方法名表：符号表里存的是 `P::paint` ⇒ 剥掉前缀再交给转换器
+            char** ext_mnames = NULL;
+            int*   ext_mpcnts = NULL;
+            if (ext_ssym->method_count > 0 && ext_ssym->methods) {
+                ext_mnames = (char**)calloc((size_t)ext_ssym->method_count, sizeof(char*));
+                ext_mpcnts = (int*)calloc((size_t)ext_ssym->method_count, sizeof(int));
+                for (int mi2 = 0; ext_mnames && mi2 < ext_ssym->method_count; mi2++) {
+                    const char* full = ext_ssym->methods[mi2].name;
+                    if (!full) continue;
+                    const char* sep = strstr(full, "::");
+                    ext_mnames[mi2] = (char*)(sep ? sep + 2 : full);
+                    ext_mpcnts[mi2] = ext_ssym->methods[mi2].param_count;
+                }
+            }
+
+            for (int ei = 0; ei < ast->u.extend_def.method_count; ei++) {
+                Ast* m = ast->u.extend_def.methods[ei];
+                if (!m || m->kind != AST_FUNC_DEF) continue;
+
+                // ① 字段名 → self.字段名、裸方法名 → Struct::method(self, ...)
+                transform_method_body(m->u.func.body,
+                                      ext_fnames, ext_ssym->field_count,
+                                      ext_mnames, ext_ssym->method_count,
+                                      ast->u.extend_def.type_name,
+                                      m->u.func.params, m->u.func.pcnt,
+                                      NULL, 0,                 // 关联常量：扩展方法用不到
+                                      m->u.func.name,
+                                      NULL, NULL, 0,
+                                      ext_mpcnts, NULL);
+
+                // ② 前置隐式 self（与 struct 方法同一套：pfx[0]="self"，类型是目标 struct）
+                int new_pcnt = m->u.func.pcnt + 1;
+                char** new_params = (char**)malloc(sizeof(char*) * (size_t)new_pcnt);
+                TypeInfo** new_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * (size_t)new_pcnt);
+                Ast** new_defaults = (Ast**)calloc((size_t)new_pcnt, sizeof(Ast*));
+                if (!new_params || !new_types || !new_defaults) {
+                    free(new_params); free(new_types); free(new_defaults);
+                    continue;
+                }
+                new_params[0] = strdup("self");
+                new_types[0] = type_new(TYPE_STRUCT);
+                if (new_types[0]) new_types[0]->struct_name = strdup(ast->u.extend_def.type_name);
+                new_defaults[0] = NULL;
+                for (int pj = 0; pj < m->u.func.pcnt; pj++) {
+                    new_params[pj + 1] = m->u.func.params[pj];
+                    new_types[pj + 1] = m->u.func.param_types ? m->u.func.param_types[pj] : NULL;
+                    new_defaults[pj + 1] = m->u.func.param_defaults ? m->u.func.param_defaults[pj] : NULL;
+                }
+                free(m->u.func.params);
+                free(m->u.func.param_types);
+                free(m->u.func.param_defaults);
+                m->u.func.params = new_params;
+                m->u.func.param_types = new_types;
+                m->u.func.param_defaults = new_defaults;
+                m->u.func.pcnt = new_pcnt;
+
+                // ③ 注册成 `P::paint`（与导入模块方法的键同一套 ✓；已存在则跳过）
+                char ext_key[256];
+                snprintf(ext_key, sizeof(ext_key), "%s::%s",
+                         ast->u.extend_def.type_name, m->u.func.name);
+                if (!func_table_find(&s->func_table, ext_key)) {
+                    func_table_add(&s->func_table, ext_key, m);
+                }
+            }
+
+            free(ext_fnames);
+            free(ext_mnames);
+            free(ext_mpcnts);
+            break;
+        }
+
         case AST_STRUCT_DEF:
             // 注册 struct 类型
             {

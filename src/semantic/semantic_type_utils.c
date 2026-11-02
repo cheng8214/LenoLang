@@ -284,6 +284,71 @@ void semantic_register_struct_from_module(Semantic* s, const ModuleStructSymbol*
 }
 
 // ============================================================================
+// 跨模块 extend 的方法占位符（2026-11-02，设计见 docs/struct_extend_设计草案.md 第 12 节）
+// ----------------------------------------------------------------------------
+// 场景：`lib/page_download.leno` 里 `extend player.Player { func paint_dl }`，
+//   主程序 import 了 page_download，要能 `p.paint_dl()`。
+// 做法：把扩展方法登记成 `"Player::paint_dl"` 占位符 —— 与导入模块 struct 方法**同一套键**，
+//   所以 `semantic_struct_has_method` / 调用检查 / 参数检查全都自动认得 ✓
+//   运行期由 `OP_STRUCT_EXTEND` 真正把方法挂到 class 上（按名字查表，不需要索引）。
+// ⚠ 只登记**方法存在性 + 签名**；方法体在扩展模块里编译，本模块不碰。
+// ============================================================================
+void semantic_register_extends_from_module(Semantic* s, const ModuleSymbolTable* table) {
+    if (!s || !table || table->extend_count <= 0) return;
+    for (int ei = 0; ei < table->extend_count; ei++) {
+        const ModuleExtendSymbol* ex = &table->extends[ei];
+        if (!ex->type_name || !ex->methods || ex->method_count <= 0) continue;
+
+        for (int mi = 0; mi < ex->method_count; mi++) {
+            const ModuleStructMethod* m = &ex->methods[mi];
+            if (!m->name || !m->name[0]) continue;
+
+            char key[256];
+            snprintf(key, sizeof(key), "%s::%s", ex->type_name, m->name);
+            if (func_table_find(&s->func_table, key)) continue;   // 先到先得（本模块或别的扩展模块已登记）
+
+            Ast* ph = ast_new(AST_FUNC_DEF, 0);
+            if (!ph) continue;
+            ph->u.func.name = strdup(key);
+            ph->u.func.pcnt = 1 + m->param_count;                  // 与导入模块方法同口径：pcnt 含 self
+            ph->u.func.param_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * (size_t)(1 + m->param_count));
+            if (ph->u.func.param_types) {
+                ph->u.func.param_types[0] = type_new(TYPE_STRUCT);
+                if (ph->u.func.param_types[0]) {
+                    ph->u.func.param_types[0]->struct_name = strdup(ex->type_name);
+                }
+                for (int pi = 0; pi < m->param_count; pi++) {
+                    TypeKind pt = m->param_types ? m->param_types[pi] : TYPE_ANY;
+                    ph->u.func.param_types[1 + pi] = type_new(pt);
+                }
+            } else {
+                ph->u.func.param_types = NULL;
+            }
+            ph->u.func.return_type = type_new(m->return_type);
+            if (ph->u.func.return_type && m->return_struct_name) {
+                ph->u.func.return_type->struct_name = strdup(m->return_struct_name);
+            }
+            ph->u.func.is_async = m->is_async;
+
+            func_table_add(&s->func_table, key, ph);
+
+            // 所有权登记：占位 AST 不在任何 AST 树里，只有语义层能释放（与上面同一套 ✓）
+            if (s->owned_placeholder_count >= s->owned_placeholder_capacity) {
+                int new_cap = s->owned_placeholder_capacity == 0 ? 8 : s->owned_placeholder_capacity * 2;
+                Ast** grown = (Ast**)realloc(s->owned_placeholders, sizeof(Ast*) * (size_t)new_cap);
+                if (grown) {
+                    s->owned_placeholders = grown;
+                    s->owned_placeholder_capacity = new_cap;
+                }
+            }
+            if (s->owned_placeholder_count < s->owned_placeholder_capacity) {
+                s->owned_placeholders[s->owned_placeholder_count++] = ph;
+            }
+        }
+    }
+}
+
+// ============================================================================
 // 「未定义的类型」提示（**唯一实现**，2026-10-10 加 / A 组第 4 条）
 // ----------------------------------------------------------------------------
 // 症状（速查 §一③ / §二②）：`use M.(A, B)` **漏列一个类型**时，报的是

@@ -196,7 +196,7 @@ void semantic_init(Semantic* s, Ast* root) {
 // ⚠ 一期只支持**同文件**：跨模块 extend 要把方法挂到别的模块的 class 上，属于另一套
 //   运行时机制（设计文档 6.3），这里直接报错而不是静默忽略。
 // ============================================================================
-static void extend_merge_into_block(Ast* block) {
+static void extend_merge_into_block(Semantic* s, Ast* block) {
     if (!block || block->kind != AST_BLOCK) return;
     AstList* list = &block->u.block;
     for (int i = 0; i < list->count; i++) {
@@ -204,9 +204,14 @@ static void extend_merge_into_block(Ast* block) {
         if (!ext || ext->kind != AST_EXTEND_DEF) continue;
 
         if (ext->u.extend_def.module_name) {
-            error_add_at_fmt(ERR_SEMANTIC, ext->u.extend_def.line, 0,
-                "extend 暂不支持跨模块写法（'%s.%s'）；请把 struct 定义与 extend 放在同一文件",
-                ext->u.extend_def.module_name, ext->u.extend_def.type_name);
+            // ★ 2026-11-02：跨模块（`extend player.Player`）—— 这里**既不合并不校验**：
+            //   · 不合并：方法体留在 extend 节点上，由 codegen 生成 `OP_STRUCT_EXTEND`，
+            //     运行期挂到目标 class 上（按名字查表，不需要编译期索引 ✓）
+            //   · 不校验：本函数在 `semantic_analyze` **最开头**调用，那时
+            //     `s->imported_modules` 还是空的（import 在 visit 阶段才登记）
+            //     ⇒ 在这里查"模块是否导入"必然误报"没有导入"（实测踩过 ✗）
+            //   校验放在 visit 到该节点时做（那时 import 已处理完）。
+            (void)s;
             continue;
         }
 
@@ -275,7 +280,7 @@ void semantic_analyze(Semantic* s, Ast* ast) {
     }
 
     // ★ 先把 extend 的方法并进目标 struct（必须在下面的预注册之前，见函数注释）
-    extend_merge_into_block(ast);
+    extend_merge_into_block(s, ast);
 
     // 预注册所有 struct/face 定义（支持前向引用）
     if (ast && ast->kind == AST_BLOCK) {
@@ -700,7 +705,7 @@ void semantic_analyze_module(Semantic* s, Ast* ast) {
     }
 
     // ★ 先把 extend 的方法并进目标 struct（必须在预注册之前，见函数注释）
-    extend_merge_into_block(ast);
+    extend_merge_into_block(s, ast);
 
     // 预注册所有模块类型定义（struct/cstruct/face）和函数定义（使用 SYM_MODULE 类型）
     // 同时提前注册 struct/face 到全局定义表，确保函数体中能通过 struct_def_find/face_def_find 找到

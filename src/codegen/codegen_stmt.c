@@ -18,6 +18,8 @@ static void gen_switch(CodeGen* gen, Ast* ast);
 static void gen_try(CodeGen* gen, Ast* ast);
 static void gen_throw(CodeGen* gen, Ast* ast);
 static void gen_struct_def(CodeGen* gen, Ast* ast);
+// 跨模块 extend：把方法挂到已存在的 struct 上（发 OP_STRUCT_EXTEND，2026-11-02）
+static void gen_struct_extend(CodeGen* gen, Ast* ast);
 static void gen_enum_def(CodeGen* gen, Ast* ast);
 static void gen_face_def(CodeGen* gen, Ast* ast);
 static void gen_cstruct_def(CodeGen* gen, Ast* ast);
@@ -328,6 +330,7 @@ void gen_stmt(CodeGen* gen, Ast* ast) {
         case AST_TRY:         gen_try(gen, ast); break;
         case AST_THROW:       gen_throw(gen, ast); break;
         case AST_STRUCT_DEF:  gen_struct_def(gen, ast); break;
+        case AST_EXTEND_DEF:  gen_struct_extend(gen, ast); break;
         case AST_ENUM_DEF:    gen_enum_def(gen, ast); break;
         case AST_FACE_DEF:    gen_face_def(gen, ast); break;
         case AST_CSTRUCT_DEF: gen_cstruct_def(gen, ast); break;
@@ -2729,4 +2732,59 @@ void gen_array_add_by_symbol(CodeGen* gen, Symbol* var_sym, Ast* arg_ast, int ne
     // ARRAY_APPEND: append R[A] to R[B]
     reg_encode_iABC(gen->chunk, OP_ARRAY_APPEND, val_reg, var_sym->index, need_result, line);
     reg_free(gen, val_reg);
+}
+
+// ============================================================================
+// 跨模块 extend（2026-11-02，设计见 docs/struct_extend_设计草案.md 第 12 节）
+// ----------------------------------------------------------------------------
+// 发 `OP_STRUCT_EXTEND`（iABx：Bx = 类型名常量；后跟 u8 方法数 + 每项 [u16 名字, u16 函数]）。
+//   同文件的 extend **不走这里**：语义阶段已把方法并进目标 struct 的 methods 数组，
+//   按普通 struct 方法编译（零改动搬运 ✓）。
+//   跨模块时方法体在本模块编译，运行期由 VM 追加进目标 class —— 方法调用走
+//   `struct_method_lookup(def, name)` 按名字查表，所以不需要编译期索引 ✓
+// ============================================================================
+static void gen_struct_extend(CodeGen* gen, Ast* ast) {
+    if (!gen || !ast || ast->kind != AST_EXTEND_DEF) return;
+    if (!ast->u.extend_def.module_name) return;          // 同文件：已并进 struct
+    int n = ast->u.extend_def.method_count;
+    if (n <= 0) return;
+
+    int* name_consts = (int*)malloc(sizeof(int) * (size_t)n);
+    int* fn_consts = (int*)malloc(sizeof(int) * (size_t)n);
+    if (!name_consts || !fn_consts) {
+        free(name_consts);
+        free(fn_consts);
+        return;
+    }
+
+    // 方法体照 struct 方法那条路径编译（DCE 也要知道它们属于哪个类型 ✓）
+    dce_set_method_owner(ast->u.extend_def.type_name);
+    int real = 0;
+    for (int i = 0; i < n; i++) {
+        Ast* m = ast->u.extend_def.methods[i];
+        if (!m || m->kind != AST_FUNC_DEF || !m->u.func.name) continue;
+        ObjFunction* fn = gen_func_proto(gen, m);
+        if (fn) gen_func_closure(gen, m, fn);
+        name_consts[real] = make_constant(
+            gen, val_obj((Object*)str_copy(m->u.func.name, (int)strlen(m->u.func.name))));
+        fn_consts[real] = fn ? make_constant(gen, val_obj((Object*)fn))
+                             : make_constant(gen, val_null());
+        real++;
+    }
+    dce_set_method_owner(NULL);
+
+    if (real > 0) {
+        ObjString* tn = str_copy(ast->u.extend_def.type_name,
+                                 (int)strlen(ast->u.extend_def.type_name));
+        int type_const = make_constant(gen, val_obj((Object*)tn));
+        reg_encode_iABx(gen->chunk, OP_STRUCT_EXTEND, 0, type_const, ast->line);
+        cw_u8(gen, (int)real, ast->line);
+        for (int i = 0; i < real; i++) {
+            cw_u16(gen, name_consts[i], ast->line);
+            cw_u16(gen, fn_consts[i], ast->line);
+        }
+    }
+
+    free(name_consts);
+    free(fn_consts);
 }
