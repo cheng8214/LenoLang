@@ -1,16 +1,17 @@
-// switch 的区间 case：`case 1 to 3 { }`（C4，2026-11-02）
+// switch 的区间 case：`case 1:3 { }`（C4，2026-11-02）
 //
-// 口径：**闭区间**（与 `for 1 to 3`、切片一致），只对数值（int / float）有意义。
+// 口径：**闭区间**，符号与切片 `arr[2:8]` / 范围表达式 `x in 0:9` 完全一致
+//   （`case 0:59` 含 59）；只对数值（int / float）有意义。
 // 实现：codegen 在比较链里生成"两条不满足就跳过"的跳转，不引入新的 opcode；
 // 与单值 case、逗号多值 case 可以混用。
 
 func grade(int score): string {
     switch score {
-        case 0 to 59 { return "F" }
-        case 60 to 69 { return "D" }
-        case 70 to 79 { return "C" }
-        case 80 to 89 { return "B" }
-        case 90 to 100 { return "A" }
+        case 0:59 { return "F" }
+        case 60:69 { return "D" }
+        case 70:79 { return "C" }
+        case 80:89 { return "B" }
+        case 90:100 { return "A" }
         default { return "?" }
     }
 }
@@ -18,7 +19,7 @@ func grade(int score): string {
 func mixed(int v): string {
     switch v {
         case 1 { return "one" }
-        case 2 to 4 { return "few" }
+        case 2:4 { return "few" }
         case 5, 6 { return "six-ish" }
         default { return "many" }
     }
@@ -26,8 +27,8 @@ func mixed(int v): string {
 
 func classify(float x): string {
     switch x {
-        case 0.0 to 0.5 { return "low" }
-        case 0.51 to 1.0 { return "high" }
+        case 0.0:0.5 { return "low" }
+        case 0.51:1.0 { return "high" }
         default { return "out" }
     }
 }

@@ -963,20 +963,34 @@ Ast* parse_switch_stmt(Parser* p) {
                 // 普通值匹配：解析 case 值（支持多个值，用逗号分隔）
                 do {
                     Ast* value = parse_expression(p);
-                    // ★ 2026-11-02（C4）：**区间 case** `case 1 to 3 { }`。
-                    //   复用 `for` 的区间词 `to`（与 `for 1 to 3` 同词同义），闭区间。
-                    //   为什么不写 `case 1:3`：`:` 已经是切片/类型标注/字典的符号，
-                    //   再塞进 case 头长期成本更高；`case in 1:3` 又会和 `in` 的成员测试撞车。
-                    //   ⚠ 只对**字面量端点**不做限制，但仍要求两端是同一种数值类型（语义侧检查）。
-                    if (value && p->lex.current.type == TOK_TO) {
+                    // ★ 2026-11-03：**区间 case 用 `:`** —— 与切片 `arr[2:8]`、
+                    //   范围表达式 `x in 0:9` 同符号、同口径（**闭区间**，两端都含）。
+                    //   `:` 才是本语言既有的区间符号；给"区间"再造一个词（`to`）等于
+                    //   两套等价写法，与"单一事实来源"的纪律冲突。
+                    if (value && p->lex.current.type == TOK_COLON) {
                         int range_line = value->line;
-                        lexer_next(&p->lex);                 // 消费 'to'
+                        lexer_next(&p->lex);                 // ':'
                         Ast* end = parse_expression(p);
                         Ast* range = ast_new(AST_RANGE, range_line);
                         range->column = value->column;
                         range->u.range.start = value;
                         range->u.range.end = end;
-                        range->u.range.inclusive = 1;        // 闭区间，与 for/切片同口径
+                        range->u.range.inclusive = 1;        // 闭区间，与切片同口径
+                        value = range;
+                    } else if (value && p->lex.current.type == TOK_TO) {
+                        // 更早的临时写法 `case 1 to 3`：报错并**照旧构造区间**，
+                        // 这样只报一条、不会把后面的 `{` 也带崩。
+                        int range_line = value->line;
+                        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                            "case 的区间写法是 `case 1:3`（与切片 arr[1:3] 同口径，闭区间）—— "
+                            "`case 1 to 3` 已统一成 `:`，把中间那个 `to` 换成 `:` 即可");
+                        lexer_next(&p->lex);                 // 'to'
+                        Ast* end = parse_expression(p);
+                        Ast* range = ast_new(AST_RANGE, range_line);
+                        range->column = value->column;
+                        range->u.range.start = value;
+                        range->u.range.end = end;
+                        range->u.range.inclusive = 1;
                         value = range;
                     }
                     if (value) {

@@ -2559,19 +2559,19 @@ main() {
 }
 ```
 
-### switch 区间 case `case 1 to 3`
+### switch 区间 case `case 1:3`
 
-区间 case 用 `to` 表示**闭区间**（两端都含，与 `for 1 to 3`、切片同口径），
-可以和单值 case、逗号多值 case 混用（2026-11-02 起）：
+区间 case 用 **`:`** 表示**闭区间**（两端都含）—— 与切片 `arr[2:8]`、
+范围表达式 `x in 0:9` 是**同一个符号、同一个口径**。可以和单值 case、逗号多值 case 混用：
 
 ```leno
 func grade(int score): string {
     switch score {
-        case 0 to 59 { return "F" }
-        case 60 to 69 { return "D" }
-        case 70 to 79 { return "C" }
-        case 80 to 89 { return "B" }
-        case 90 to 100 { return "A" }
+        case 0:59 { return "F" }      // 含 0 和 59
+        case 60:69 { return "D" }
+        case 70:79 { return "C" }
+        case 80:89 { return "B" }
+        case 90:100 { return "A" }
         default { return "?" }
     }
 }
@@ -2579,22 +2579,26 @@ func grade(int score): string {
 // 混用：单值 / 区间 / 逗号多值
 switch v {
     case 1 { print("one") }
-    case 2 to 4 { print("few") }
+    case 2:4 { print("few") }
     case 5, 6 { print("range") }
     default { print("many") }
 }
 
 // float 区间同样支持
 switch ratio {
-    case 0.0 to 0.5 { print("low") }
-    case 0.51 to 1.0 { print("high") }
+    case 0.0:0.5 { print("low") }
+    case 0.51:1.0 { print("high") }
     default { print("out") }
 }
 ```
 
-> 为什么用 `to` 而不是 `case 1:3`：`:` 已经是切片 / 类型标注 / 字典的符号，
-> 再塞进 case 头长期成本更高；`case in 1:3` 又会和 `in` 的成员测试撞车。
-> 实现上就是比较链里两条比较（`>= 下界` 且 `<= 上界`），不引入新指令。
+> **为什么是 `:` 而不是别的词**：Leno 里"区间"本来就只有一个符号 —— 切片是
+> `arr[2:8]`、范围是 `x in 0:9`，两者都是闭区间。case 头用同一个符号，
+> 既省一个关键字，也不用记"这里该用 `to` 还是 `:`"。
+> （更早的临时写法 `case 1 to 3` 已废弃，写了会提示改成 `:`。）
+>
+> 实现上就是比较链里两条比较（`>= 下界` 且 `<= 上界`），另有一条 `OP_IS_NUM` 守卫：
+> switch 值是字符串/数组等非数值时**跳过**区间 case（否则 `"hi" < 1` 会抛运行期错误）。
 
 ### switch `case is` 类型匹配
 
