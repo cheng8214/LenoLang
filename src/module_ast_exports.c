@@ -1854,6 +1854,59 @@ static void ast_fill_one_struct_meta(ModuleSymbolTable* table, Ast* sd) {
     }
 }
 
+// ============================================================================
+// 跨模块 extend 登记（2026-11-02，见 docs/struct_extend_设计草案.md 第 12 节）
+// ----------------------------------------------------------------------------
+// 只处理**跨模块**写法（`extend player.Player`）：同文件的 extend 在语义阶段就并进
+// 目标 struct 的 methods 数组了，不需要进符号表。
+// ⚠ 这里不解析目标模块（那是 import 时的事）：只登记"本模块扩展了 类型 X 的哪些方法"，
+//   由导入方决定如何与目标模块的符号合并 ✓
+// ============================================================================
+static void ast_fill_one_extend(ModuleSymbolTable* table, Ast* ext) {
+    if (!table || !ext || ext->kind != AST_EXTEND_DEF) return;
+    if (!ext->u.extend_def.module_name) return;      // 同文件 extend：不进符号表
+    if (!ext->u.extend_def.type_name) return;
+    int n = ext->u.extend_def.method_count;
+    if (n <= 0) return;
+
+    ModuleStructMethod* ms = (ModuleStructMethod*)calloc((size_t)n, sizeof(ModuleStructMethod));
+    if (!ms) return;
+    int real = 0;
+    for (int i = 0; i < n; i++) {
+        Ast* fn = ext->u.extend_def.methods[i];
+        if (!fn || fn->kind != AST_FUNC_DEF || !fn->u.func.name) continue;
+        ModuleStructMethod* m = &ms[real++];
+        m->name = strdup(fn->u.func.name);
+        m->line = fn->line;
+        m->is_async = fn->u.func.is_async;
+        m->is_private = fn->u.func.is_private;
+        m->return_type = fn->u.func.return_type ? fn->u.func.return_type->kind : TYPE_ANY;
+        m->return_struct_name = (fn->u.func.return_type && fn->u.func.return_type->struct_name)
+                                    ? strdup(fn->u.func.return_type->struct_name) : NULL;
+        m->param_count = fn->u.func.pcnt;
+        if (fn->u.func.pcnt > 0) {
+            m->param_types = (TypeKind*)calloc((size_t)fn->u.func.pcnt, sizeof(TypeKind));
+            if (m->param_types) {
+                for (int k = 0; k < fn->u.func.pcnt; k++) {
+                    TypeInfo* pt = fn->u.func.param_types ? fn->u.func.param_types[k] : NULL;
+                    m->param_types[k] = pt ? pt->kind : TYPE_ANY;
+                }
+            }
+        }
+    }
+    if (real > 0) {
+        module_symbol_table_add_extend(table, ext->u.extend_def.module_name,
+                                       ext->u.extend_def.type_name, real, ms);
+    }
+    // add_extend 内部深拷贝 ⇒ 临时的释放掉（与 ast_fill_one_struct_meta 同口径 ✓）
+    for (int i = 0; i < real; i++) {
+        free(ms[i].name);
+        free(ms[i].return_struct_name);
+        free(ms[i].param_types);
+    }
+    free(ms);
+}
+
 static void ast_fill_one_face_meta(ModuleSymbolTable* table, Ast* fd) {
     if (!fd || !fd->u.face_def.name) return;
     ModuleFaceSymbol* sym = module_symbol_table_find_face(table, fd->u.face_def.name);
@@ -2168,6 +2221,7 @@ static void ast_symbol_fill_provider(ModuleSymbolTable* table, const char* src) 
             else if (d->kind == AST_CFUNC_DECL) ast_fill_one_cfunc(table, d);
             else if (d->kind == AST_ENUM_DEF) ast_fill_one_enum(table, d);
             else if (d->kind == AST_STRUCT_DEF) ast_fill_one_struct_meta(table, d);
+            else if (d->kind == AST_EXTEND_DEF) ast_fill_one_extend(table, d);   // 跨模块 extend（2026-11-02）
             else if (d->kind == AST_FACE_DEF) ast_fill_one_face_meta(table, d);
             else if (d->kind == AST_CLIB_DEF) ast_fill_one_clib(table, d);
             else if (d->kind == AST_CSTRUCT_DEF) ast_fill_one_cstruct(table, d);

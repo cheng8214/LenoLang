@@ -289,6 +289,12 @@ void module_symbol_table_set_func_optkeys(ModuleSymbolTable* table, const char* 
 
 // 添加 struct 符号
 void module_symbol_table_add_struct(ModuleSymbolTable* table, const char* name, int field_count, ModuleStructField* fields, int method_count, ModuleStructMethod* methods, int is_cstruct, int type_param_count, char** type_param_names);
+// 登记一条跨模块 extend（2026-11-02）：目标类型 + 方法签名（内部深拷贝，调用方可立即释放临时数组）
+ModuleExtendSymbol* module_symbol_table_add_extend(ModuleSymbolTable* table,
+                                                   const char* module_name,
+                                                   const char* type_name,
+                                                   int method_count,
+                                                   const ModuleStructMethod* methods);
 
 // 设置 struct 的 impl 列表（S10：AST 填充器的**建表路径**需要它）
 //   为什么单独一个接口：add_struct 的形参里**没有 impl** ⇒ 由 AST 建表时永远填不出
