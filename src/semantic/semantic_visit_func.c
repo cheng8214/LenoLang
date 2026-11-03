@@ -79,18 +79,24 @@ int sem_normalize_named_args(Semantic* s, Ast* call_ast, Ast* func_def,
     if (!call_ast) return 0;
     AstList* args = &call_ast->u.call.args;
     if (!args || args->count == 0) return 0;
-    // 幂等：同一节点被重复分析时，先丢掉上一轮的求值顺序表
-    free(call_ast->u.call.arg_eval);
-    free(call_ast->u.call.arg_eval_slots);
-    call_ast->u.call.arg_eval = NULL;
-    call_ast->u.call.arg_eval_slots = NULL;
-    call_ast->u.call.arg_eval_count = 0;
 
+    // ★ 2026-11-03：**先扫再清**。原来先 free 旧表、再扫"有没有命名壳"，
+    //   于是第二次分析同一个节点时：args 里的壳已经在第一遍被拆成值 ⇒ 扫不到 ⇒
+    //   走 `return 0` 早退，但旧表**已经被 free 掉了** ⇒ 求值顺序表丢失，
+    //   codegen 退回"按形参顺序求值"，副作用换序的问题悄悄复活。
+    //   改成先判断，没有命名壳就直接返回，一个字节都不动。
     int has_named = 0;
     for (int i = 0; i < args->count; i++) {
         if (is_named_arg_candidate(args->items[i])) { has_named = 1; break; }
     }
     if (!has_named) return 0;
+
+    // 幂等：这一遍确实要重排 ⇒ 丢掉上一轮建的求值顺序表再重建
+    free(call_ast->u.call.arg_eval);
+    free(call_ast->u.call.arg_eval_slots);
+    call_ast->u.call.arg_eval = NULL;
+    call_ast->u.call.arg_eval_slots = NULL;
+    call_ast->u.call.arg_eval_count = 0;
 
     const char* fname = callee_name ? callee_name : "?";
 

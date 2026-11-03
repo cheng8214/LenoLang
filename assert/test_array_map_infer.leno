@@ -51,6 +51,15 @@ main() {
     int r_mod_noinit = arrays.reduce(nums, func(int a, int b) { return a + b })
     assert_eq(r_mod_noinit, 15)
 
+    // ★ 2026-11-03（审查补充）：**空数组 + 有初值 ⇒ 返回初值**（标准 reduce 语义）
+    //   此前先判 count==0 就抛错，`[].reduce(f, 42)` 报「不能在空数组上调用」，
+    //   明明给了兜底值却被拒 —— 与"initial 可选"的语义不一致。
+    Array[int] empty = []
+    int empty_with_init = empty.reduce(func(int a, int b) { return a + b }, 42)
+    assert_eq(empty_with_init, 42, "空数组 + 初值 ⇒ 返回初值")
+    int empty_mod = arrays.reduce(empty, func(int a, int b) { return a + b }, 7)
+    assert_eq(empty_mod, 7, "模块形式：空数组 + 初值")
+
     Array[float] fs = [1.5, 2.5, 3.0]
     float fsum = fs.reduce(func(float a, float b) { return a + b }, 0.0)
     assert_eq(fsum, 7.0)

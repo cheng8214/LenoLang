@@ -548,18 +548,22 @@ static Value arr_reduce(int argc, Value* args) {
     ObjArray* arr = (ObjArray*)val_as_obj(args[0]);
     Value fn = args[1];
 
-    if (arr->count == 0) {
-        native_throw_error("reduce() 不能在空数组上调用");
-        return val_null();
-    }
-
-    Value acc = arr->elements[0];
-    int start_idx = 1;
-
-    // 如果有初始值
+    // ★ 2026-11-03：**有初值时空数组直接返回初值**（标准 reduce 语义）。
+    //   原来先判 `arr->count == 0` 就抛错，于是 `[].reduce(f, 42)` 报
+    //   「reduce() 不能在空数组上调用」—— 明明给了兜底值，用户会觉得莫名其妙
+    //   （Python 的 functools.reduce(f, [], 42) 就是 42）。
+    Value acc;
+    int start_idx;
     if (argc > 2) {
         acc = args[2];
         start_idx = 0;
+    } else {
+        if (arr->count == 0) {
+            native_throw_error("reduce() 不能在空数组上调用（既没有初值，也没有首元素可用）");
+            return val_null();
+        }
+        acc = arr->elements[0];
+        start_idx = 1;
     }
 
     for (int i = start_idx; i < arr->count; i++) {
