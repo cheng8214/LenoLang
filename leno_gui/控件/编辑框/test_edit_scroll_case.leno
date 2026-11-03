@@ -1,0 +1,78 @@
+// test_edit_scroll_case.leno — 多行 Edit「滚不到底」参数对照测试
+// ----------------------------------------------------------------------------
+// 目的：把 pad_x / 高度 / wordWrap 三个变量拆开对照，右侧实时显示
+//   scrollY / maxScrollY —— 滚轮滚到底后看数字：**scrollY 应该等于 max**
+//   哪个框到不了，就是哪个参数组合有问题 ✓
+//
+// 用法：
+//   build\leno.exe "leno_gui\控件\编辑框\test_edit_scroll_case.leno"
+//   分别在 4 个框里：滚轮到最下 → 看数值；再滚回最上 → 看 scrollY 是否 0
+//
+// 参数对照（其它全相同：内容一样、字号 13、无 wordWrap 差别的都写明）：
+//   A  64 高 / pad_x 8  / 不换行   ← 框架默认口径
+//   B  64 高 / pad_x 12 / 不换行   ← Aria 签名框最初的 pad_x
+//   C  96 高 / pad_x 12 / 不换行   ← Aria 签名框现状
+//   D  96 高 / pad_x 12 / 自动换行  ← test_edit_ml 的口径
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer, Edit, Scancode)
+
+main() {
+    var win = SDL3.createWindow({title: "多行 Edit 滚动参数对照", w: 900, h: 620})
+    if not win.ok { return }
+
+    SDL3.ttfInit()
+    var font = SDL3.createFontAuto(13.0)
+    var fontSm = SDL3.createFontAuto(11.0)
+
+    // 5 行中文：内容高度 ≈ 100px ⇒ 上面三个框都**必须滚动**才能看完
+    string t = "第一行：这是一段用来做对照测试的中文内容\n" +
+               "第二行：注意看滚轮滚到底时右侧的数字\n" +
+               "第三行：scrollY 必须等于 max 才算滚到底\n" +
+               "第四行：如果差一截，说明这个参数组合有问题\n" +
+               "第五行：滚回顶部时 scrollY 应该回到 0"
+
+    Edit a = win.addEdit({text: t, x: 20, y: 56, w: 520, h: 64, font_size: 13, pad_x: 8.0,
+                          multiline: true})
+    Edit b = win.addEdit({text: t, x: 20, y: 176, w: 520, h: 64, font_size: 13, pad_x: 12.0,
+                          multiline: true})
+    Edit c = win.addEdit({text: t, x: 20, y: 296, w: 520, h: 96, font_size: 13, pad_x: 12.0,
+                          multiline: true})
+    Edit d = win.addEdit({text: t, x: 20, y: 444, w: 520, h: 96, font_size: 13, pad_x: 12.0,
+                          multiline: true, wordWrap: true})
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.clearColor(#19192DFF)
+            if font.ok {
+                r.drawText(font, "多行 Edit 滚动对照：滚轮滚到底后，右侧 scrollY 必须 == max", 20, 14, #FFDC50FF)
+
+                r.drawText(fontSm, "A) 64 高 · pad_x 8 · 不换行", 20, 38, #9696B4FF)
+                r.drawText(fontSm, "scrollY=" + _str(_int(a.get_scroll_y()))
+                                  + "  max=" + _str(_int(a.get_max_scroll_y())), 560, 74, #9BE3A6FF)
+
+                r.drawText(fontSm, "B) 64 高 · pad_x 12 · 不换行", 20, 158, #9696B4FF)
+                r.drawText(fontSm, "scrollY=" + _str(_int(b.get_scroll_y()))
+                                  + "  max=" + _str(_int(b.get_max_scroll_y())), 560, 194, #9BE3A6FF)
+
+                r.drawText(fontSm, "C) 96 高 · pad_x 12 · 不换行（Aria 签名框现状）", 20, 278, #9696B4FF)
+                r.drawText(fontSm, "scrollY=" + _str(_int(c.get_scroll_y()))
+                                  + "  max=" + _str(_int(c.get_max_scroll_y())), 560, 330, #9BE3A6FF)
+
+                r.drawText(fontSm, "D) 96 高 · pad_x 12 · 自动换行（test_edit_ml 口径）", 20, 426, #9696B4FF)
+                r.drawText(fontSm, "scrollY=" + _str(_int(d.get_scroll_y()))
+                                  + "  max=" + _str(_int(d.get_max_scroll_y())), 560, 478, #9BE3A6FF)
+
+                r.drawText(fontSm, "滚到底：scrollY == max ？滚回顶：scrollY == 0 ？  ESC 退出", 20, 570, #78788CFF)
+            }
+        }
+    )
+
+    if font.ok { font.close() }
+    if fontSm.ok { fontSm.close() }
+    SDL3.ttfQuit()
+}

@@ -190,7 +190,13 @@ bool _drawBorder = true          // 是否绘制边框（嵌入 ComboBox 时设�
         rebuild_lines()
         if lines.len() == 0 { return lineHeight }
         if wordWrap {
-            if drDirty or drWrap != wordWrap { ensure_layout(w - 16.0) }
+            // ★ 2026-11-03 修「自动换行时滚不到最底」：
+            //   换行宽度必须是**扣掉竖滚动条**的宽度（visW），否则算出来的行数偏少
+            //   ⇒ 内容高偏小 ⇒ maxScroll 偏小 ⇒ 滚到底时最后一行还差一截 ✗
+            //   这里不直接调 sb_width()（它内部会再调 content_height ⇒ 无限递归），
+            //   而是沿用"上一次已经布局用的宽度" drVisW（0 = 还没排过 ⇒ 先用整宽兜底 ✓）
+            float ww = if drVisW > 0.0 then drVisW else (w - padX * 2.0)
+            if drDirty or drWrap != wordWrap { ensure_layout(ww) }
             if drCount == 0 { return lineHeight }
             return lineHeight * drCount
         }
@@ -229,7 +235,8 @@ bool _drawBorder = true          // 是否绘制边框（嵌入 ComboBox 时设�
         if visH <= 0 { return }
 
         // 构建显示行表并定位光标所在显示行
-        if not wordWrap { ensure_layout(visW) }
+        // ★ 自动换行也必须按 visW（扣竖条）重排：否则右侧被滚动条压住、行数偏少 ⇒ 滚不到底 ✗
+        ensure_layout(visW)
         var di = disp_row_of(cursorLine, cursorCol)
 
         // 垂直滚动
@@ -356,9 +363,28 @@ _drawBorder = opts.get("border", true)
         dirty = true; invalidate_sb(); adjust_scroll()
     }
     func set_pos(float px, float py)    { x = px; y = py }
-    func set_size(float sw, float sh)   { w = sw; h = sh; invalidate_sb(); adjust_scroll() }
+    // ★★ 2026-11-03 修「多行 Edit 滚轮/滚动条滚不动」（用户实测，抓日志定位）：
+    //   父容器（VBox/HBox）**每帧 relayout 都会调 set_size**，即使尺寸一个像素都没变。
+    //   原来这里无条件 `adjust_scroll()`，而 adjust_scroll_ml 的语义是"光标不在可视区就滚到光标处"
+    //   ⇒ 用户往上滚一点，下一帧就被光标（通常停在末尾）拽回底部，看起来就是"滚轮无效 / 拖不动" ✗
+    //   （我的自动化测试用的是 win.addEdit —— 没有父容器、不每帧 set_size，所以测不出来）
+    //   ⇒ 尺寸真的变了才重算滚动；重复的同值调用直接返回 ✓
+    func set_size(float sw, float sh) {
+        if sw == w and sh == h { return }
+        w = sw; h = sh
+        invalidate_sb()
+        adjust_scroll()
+    }
     func get_w(): float                 { return w }
     func get_h(): float                 { return h }
+    // ★ 2026-11-03 反哺：滚动位置原来读不到 —— 应用想"记住滚动位置 / 判断是否到底"只能自己猜 ✗
+    //   `get_max_scroll_y()` 用与滚轮/渲染**同一口径**（扣竖条、按 padX），可直接做边界断言 ✓
+    func get_scroll_y(): float          { return scrollY }
+    func get_max_scroll_y(): float {
+        float visH = h - padX * 2.0 - sb_height()
+        float m = content_height() - visH
+        return if m < 0.0 then 0.0 else m
+    }
     // ★ 2026-10-29 反哺：Edit 原来只有 get_w/get_h，没有 get_x/get_y
     //   ⇒ 想把「输入框」和别的东西对齐（标签、浮层、内联重命名）时拿不到坐标 ✗ 补齐 ✓
     func get_x(): float                 { return x }
@@ -757,8 +783,11 @@ _drawBorder = opts.get("border", true)
         sbDirty = false
         if not multiline { sbCache = [0.0, 0.0]; return sbCache }
         float contentH = content_height()
-        float visH0 = h - 16.0
-        float visW0 = w - 16.0
+        // ★ 2026-11-03：可视区一律按 padX 算（原来写死 16 = 假定 pad_x 就是 8）。
+        //   调用方设 pad_x: 12 时，"是否需要滚动条"会按 8 的边界判断 ⇒ 少判出滚动条，
+        //   最后一行被裁又滚不到（用户反馈"滚不到最底"的成因之一 ✓）
+        float visH0 = h - padX * 2.0
+        float visW0 = w - padX * 2.0
         float sbW = 0.0
         float sbH = 0.0
         if wordWrap {
@@ -881,10 +910,17 @@ _drawBorder = opts.get("border", true)
                 float sy = scrollY - ev.wheelY() * lineHeight * 3.0
                 if sy < 0 { sy = 0 }
                 // 可见高度需减去横向滚动条高度（sbH），否则横条存在时滚不到底
-                float maxSY = content_height() - (h - 16.0 - sb_height())
+                // ★ 2026-11-03 修（用户实测：滚轮滚不到最底，按键可以）：
+                //   这里原来写死 `h - 16.0`（= 假设 pad_x 就是 8），而 `adjust_scroll_ml`
+                //   （键盘/光标路径）用的是 `h - padX * 2.0 - sbH` ⇒ 一旦调用方设了别的
+                //   `pad_x`（Aria 的签名框是 12），两条路算出的 maxSY 就差 2*(padX-8)：
+                //   滚轮能到的"底"比真实内容底部少 8px，永远差一截 ✗
+                //   ⇒ 统一用 padX 口径（与 adjust_scroll / 渲染同一套边界）
+                float maxSY = content_height() - (h - padX * 2.0 - sb_height())
                 if maxSY < 0 { maxSY = 0 }
                 if sy > maxSY { sy = maxSY }
                 scrollY = sy
+                core.markFrameRedraw()      // 滚了就要重绘（原来靠别处的重绘，偶发"滚了不动"✗）
             } else {
                 float sx = scrollX - ev.wheelX() * 20.0
                 if sx < 0 { sx = 0 }
@@ -1446,8 +1482,9 @@ _drawBorder = opts.get("border", true)
     pri func move_up() {
         sync_line_col()
         rebuild_lines()
-        float visW = w - 16.0 - sb_width()
-        if wordWrap { visW = w - 16.0 }
+        // ★ 自动换行也扣竖条（原来 wordWrap 时故意用整宽 ⇒ 与滚动/渲染的布局宽度不一致，
+        //   上下方向键定位到的显示行会和画面错位 ✗）
+        float visW = w - padX * 2.0 - sb_width()
         ensure_layout(visW)
         var di = disp_row_of(cursorLine, cursorCol)
         if di > 0 {
@@ -1470,8 +1507,9 @@ _drawBorder = opts.get("border", true)
     pri func move_down() {
         sync_line_col()
         rebuild_lines()
-        float visW = w - 16.0 - sb_width()
-        if wordWrap { visW = w - 16.0 }
+        // ★ 自动换行也扣竖条（原来 wordWrap 时故意用整宽 ⇒ 与滚动/渲染的布局宽度不一致，
+        //   上下方向键定位到的显示行会和画面错位 ✗）
+        float visW = w - padX * 2.0 - sb_width()
         ensure_layout(visW)
         var di = disp_row_of(cursorLine, cursorCol)
         if di < drCount - 1 {
@@ -1658,7 +1696,8 @@ _drawBorder = opts.get("border", true)
         float sbW = sb_width(), sbH = sb_height(), visW = w - pad * 2.0 - sbW, visH = h - pad * 2.0 - sbH
         if visW <= 0 { visW = 1.0 }
         if visH <= 0 { visH = 1.0 }
-        if not wordWrap { ensure_layout(visW) }
+        // ★ 自动换行也按扣竖条的 visW 重排（与 adjust_scroll 同一口径，否则行数/滚动范围对不上 ✗）
+        ensure_layout(visW)
 
 
         // 裁剪区域
@@ -1832,7 +1871,11 @@ _drawBorder = opts.get("border", true)
         //   循环里用 `from_codepoint` 还原出单字符字符串喂 measureString ⇒ 全线 O(n) ✓
         //   等价：`from_codepoint(to_codepoints(s)[k]) == s.slice(k, k)`（对拍 0 分歧 ✓）
         Array[int] cps = strings.to_codepoints(ln)
-        for :n to i {
+        // ★ 2026-11-03 修崩溃（自动换行时整个应用挂掉，报"数组索引越界: 索引 1，长度 1"）：
+        //   `for a : b to i` 是**闭区间**（i 取 a..b，含 b）⇒ `for :n to i` 会走到 i == n，
+        //   而 cps 只有 n 个元素（下标 0..n-1）⇒ 最后一个 `cps[n]` 越界 ✗
+        //   （`n = ln.len()` 是**字符数**，与 cps 长度一致；byte_len() 才是字节数，两者别混 ✓）
+        for :n - 1 to i {
             var ch = strings.from_codepoint(cps[i])
             var[float, float](cw, _ch) = _font.measureString(ch)
             if curW + cw > maxW and i > segStart {
