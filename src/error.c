@@ -76,17 +76,41 @@ static int silence_depth = 0;
 static int silenced_errors = 0;
 static int silenced_warnings = 0;
 
+// ★ 2026-11-03：**嵌套静默段**必须各自记账。
+//   原来 end() 返回的是"累计值"，嵌套时内层被吞的错误会算到外层头上 ⇒
+//   外层（例如箭头的 `(参数) => 体` 投机解析）明明自己没出错，却被判"不干净"而整体回退，
+//   表现为「期望表达式」+「期望 ')'」这类指不到真因的错。
+//   实测现场：`var g = (int x) => (conf["k"] + x)` —— 体里那个 `(conf[...])` 的内层
+//   投机失败（`conf` 被当类型名）吞掉 1 条错误，外层就跟着失败。
+//   现在 begin() 记快照、end() 只报**本层新增**的条数。
+#define SILENCE_MAX_DEPTH 8
+static int silence_mark[SILENCE_MAX_DEPTH];
+
 int error_silence_begin(void) {
+    if (silence_depth < SILENCE_MAX_DEPTH) silence_mark[silence_depth] = silenced_errors;
     silence_depth++;
     return 0;
 }
 
 int error_silence_end(void) {
-    if (silence_depth > 0) silence_depth--;
-    int silenced = silenced_errors;
-    if (silence_depth == 0) {
-        silenced_errors = 0;
-        silenced_warnings = 0;
+    int silenced = 0;
+    if (silence_depth > 0) {
+        silence_depth--;
+        silenced = (silence_depth < SILENCE_MAX_DEPTH)
+                       ? (silenced_errors - silence_mark[silence_depth])
+                       : silenced_errors;
+        if (silenced < 0) silenced = 0;
+        // ★ 关键：把**本层已消费**的条数从累计里扣掉。
+        //   内层返回的条数代表"内层自己处理掉了"，不能再算到外层头上 ——
+        //   否则外层会因为"自己内部调用过一次内层投机解析"而误判成"我这层不干净"，
+        //   把明明解析成功的结果丢回退（实测：`(int n) => (y["k"])` 整条箭头被回退，
+        //   最后报「期望表达式」，指向 `int`）。
+        silenced_errors -= silenced;
+        if (silenced_errors < 0) silenced_errors = 0;
+        if (silence_depth == 0) {
+            silenced_errors = 0;
+            silenced_warnings = 0;
+        }
     }
     return silenced;
 }

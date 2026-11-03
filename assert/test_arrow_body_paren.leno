@@ -1,0 +1,54 @@
+// 箭头体里出现"括号包着 标识符+下标"（2026-11-03 修复的解析器 bug）
+//
+// 崩溃现场：
+//   var g = (int n) => (d["k"] + n)
+// 报「期望表达式」+「期望 ')'」，指向 `(int n)` 的 int —— 完全指不到真因。
+//
+// 根因：`(…)` 的箭头函数是**投机解析**（静默段 + 词法回滚）。箭头体里再出现
+//   一个 `(d["k"])` 时，内层也开一段静默期；内层试探失败被吞掉的错误**泄漏到了外层**，
+//   外层于是认为"我这层不干净"⇒ 把已经成功解析的箭头整个丢掉、回退成普通括号表达式
+//   ⇒ 报 "int 不是表达式"。
+// 修法：`error_silence_end()` 按层记账 —— 返回**本层新增**的条数，并从累计里扣掉，
+//   内层消费过的错误不再算给外层（src/error.c）。
+
+struct Holder2 {
+    Dict d = {"k": 2}
+    int n = 1
+}
+
+func idOf(Dict d, string key): int { return _int(d[key]) }
+
+main() {
+    Dict d = {"k": 2}
+
+    // ① 箭头体就是 括号+下标
+    var g1 = (int n) => (d["k"])
+    assert_eq(g1(1), 2, "体是 (dict[...])")
+
+    // ② 箭头体 括号+下标+运算
+    var g2 = (int n) => (d["k"] + n)
+    assert_eq(g2(1), 3, "体是 (dict[...] + n)")
+
+    // ③ 更深的嵌套：括号里的括号里的下标
+    var g3 = (int n) => ((d["k"]) + n)
+    assert_eq(g3(1), 3, "体是 ((dict[...]) + n)")
+
+    // ④ 箭头里再套箭头，内层体也是括号+下标
+    var g4 = (int a) => (int b) => (d["k"] + a + b)
+    assert_eq(g4(1)(2), 5, "嵌套箭头 + 括号下标")
+
+    // ⑤ 箭头体里调用函数，实参又是括号+下标
+    var g5 = (int n) => idOf((d), "k") + n
+    assert_eq(g5(1), 3, "实参里带括号")
+
+    // ⑥ 对照组：普通括号表达式（本来就没问题）
+    var plain = (d["k"] + 1)
+    assert_eq(plain, 3, "普通括号表达式")
+
+    // ⑦ 对照组：字段/下标混合
+    Holder2 h = new Holder2()
+    var g6 = (int n) => (h.d["k"] + h.n + n)
+    assert_eq(g6(1), 4, "字段+下标+字段")
+
+    print("test_arrow_body_paren all passed")
+}
