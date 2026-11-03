@@ -1390,8 +1390,24 @@ Ast* parse_new(Parser* p) {
             //   此前这里会报"期望字段名"、列号指向 ')'，同样指不到真病因（实录 B3 现象1）。
             if (p->lex.current.type == TOK_RPAREN) break;
             // 期望字段名
+            // ★ 2026-11-03：位置实参（`new P(10, 20)`）此前只报一句"期望字段名"就 break，
+            //   括号里的 token 全留在流里 ⇒ 后面再级联"声明语句后期望换行/';'""块没有闭合"
+            //   （一个写法错误刷 3 条，真正的原因被淹没 ✗）。现在点名"不接受位置实参"，
+            //   并把本层实参整体跳过去（配对括号），只留这一条错误。
             if (p->lex.current.type != TOK_IDENT) {
-                error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望字段名");
+                error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                                 "期望字段名：new 结构体初始化必须按字段名赋值（如 new P(x = 1, y = 2)），"
+                                 "不接受位置实参");
+                int depth = 0;
+                while (p->lex.current.type != TOK_EOF) {
+                    if (p->lex.current.type == TOK_LPAREN) {
+                        depth++;
+                    } else if (p->lex.current.type == TOK_RPAREN) {
+                        if (depth == 0) break;   // 留给下面 consume ')' 收尾
+                        depth--;
+                    }
+                    lexer_next(&p->lex);
+                }
                 break;
             }
 

@@ -3666,6 +3666,24 @@ Ast* parse_extend_stmt(Parser* p) {
         type_name = first;
     }
 
+    // `extend Box[T]`：类型参数**不写**（2026-11-03）
+    //   目标 struct 自己声明了类型参数，方法体里的 T 由它解析（实测 `extend Box { func peek(): T ... }`
+    //   对 `Box[T]` 完全可用）。此前这里直接报"后面期望 '{'"⇒ 后面的 `[T]` 被当成新语句，
+    //   再级联出一串"期望表达式 / 块没有闭合"（一个写法错误刷 6 种 9 条 ✗）。
+    //   ⇒ 吃掉整个 `[...]` 并只报这一条，让后续解析能继续对齐。
+    if (p->lex.current.type == TOK_LBRACKET) {
+        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                         "extend 后面不用写类型参数（%s 的参数由 struct 定义决定）—— "
+                         "改为 `extend %s { ... }`，方法里的类型参数会自动按 struct 的解析",
+                         type_name, type_name);
+        int depth = 0;
+        do {
+            if (p->lex.current.type == TOK_LBRACKET) depth++;
+            else if (p->lex.current.type == TOK_RBRACKET) depth--;
+            lexer_next(&p->lex);
+        } while (depth > 0 && p->lex.current.type != TOK_EOF);
+    }
+
     if (p->lex.current.type != TOK_LBRACE) {
         error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
                          "extend %s 后面期望 '{'（块里只写方法）", type_name);

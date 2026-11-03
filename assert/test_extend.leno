@@ -2,7 +2,7 @@
 // 设计：docs/struct_extend_设计草案.md
 //
 // 覆盖：基本用法 / 定义顺序无关 / 多个 extend 块 / 跨块访问 pri 字段与方法 /
-//       改字段 / extend 方法互相调用
+//       改字段 / extend 方法互相调用 / **泛型 struct**（方法里直接引用 T）
 // ⚠ 报错类场景（重名、加字段、目标不存在、跨模块写法）没法在这里断言 ——
 //    它们会让本文件编不过。那几条由设计文档第 9 节的验收清单手工核对 ✓
 
@@ -42,6 +42,16 @@ struct Later {
     string who = "later"
 }
 
+// ④ 泛型 struct：extend 里**不写** `[T]`（写法见 test_diag_static_errors 的负例），
+//    方法签名/方法体里的 T 直接按 struct 声明的类型参数解析（2026-11-03 验证）
+struct Box[T] {
+    T v
+}
+
+extend Box {
+    func peek(): T { return v }
+}
+
 main()
 {
     // ① 基本：struct 内方法与 extend 方法共存，且共享字段
@@ -60,6 +70,12 @@ main()
     // ④ 顺序无关：extend 在前照样能调
     var l = new Later()
     assert_eq(l.hello(), "hi-later")
+
+    // ⑤ 泛型 struct 的 extend 方法（T 由 struct 的参数解析）
+    var b = new Box[int](v = 5)
+    assert_eq(b.peek(), 5)
+    var bi = new Box[string](v = "hi")
+    assert_eq(bi.peek(), "hi")
 
     print("test_extend passed")
 }

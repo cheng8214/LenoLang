@@ -1132,6 +1132,23 @@ main() { }
     ce.expect_error("assert/extend_dup_local.leno", "本文件与导入模块的 extend 同名要报错",
         "在导入模块", 8)
 
+    // ⑥ 泛型 struct 的 extend 不写 `[T]`（2026-11-03）：T 由 struct 定义解析
+    //    此前 `extend Box[T]` 报"后面期望 '{'"，随后 `[T]` 被当新语句 ⇒ 再级联
+    //    一串"期望表达式 / 块没有闭合"（一个写法错误刷 6 种 9 条）
+    var eg1 = dirs.join(work, "extend_generic_params.leno")
+    files.write(eg1, @"struct Box[T] {
+    T v
+}
+
+extend Box[T] {
+    func peek(): T { return self.v }
+}
+
+main() { }
+")
+    ce.expect_error(eg1, "泛型 struct 的 extend 不要写 [T]（一条清楚报错）",
+        "extend 后面不用写类型参数", 5)
+
     // ② 用静态 fixture（assert/import_broken*.leno）：坏模块必须在 assert/ 下才能被相对 import 找到
     ce.expect_error("assert/import_broken.leno", "导入有语法错误的模块要报错（报在 fixture 自己那行）",
         "期望 '{'", 8)

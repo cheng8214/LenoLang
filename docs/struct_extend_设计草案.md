@@ -96,6 +96,9 @@ extend p.Player {
 2. 目标类型写成 `Name` 或 `模块别名.Name`（后者用于跨文件/跨模块）
 3. 块内**只允许 `func`**（含 `pri` / `export` 修饰）；出现字段声明直接报错
 4. 同一类型可以有多个 extend 块，分散在多个文件
+5. 泛型 struct **不写类型参数**：`struct Box[T]` 就写 `extend Box { func peek(): T { ... } }`
+   —— 方法签名/方法体里的 `T` 自动按 struct 声明的参数解析；写成 `extend Box[T]` 会报一条
+   清楚的语法错误（而不是级联出一串无关错误）
 
 ### 与 `impl` 的区别（写进实现注释，也要写进文档）
 
