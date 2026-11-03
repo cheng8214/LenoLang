@@ -73,10 +73,18 @@ static void degrade_named_shells(AstList* args) {
 }
 
 // 返回 1 = 实参里确实有命名实参（已处理或已报错）；0 = 没有，什么都没动
-int sem_normalize_named_args(Semantic* s, AstList* args, Ast* func_def,
+int sem_normalize_named_args(Semantic* s, Ast* call_ast, Ast* func_def,
                              const char* callee_name, int line, int column) {
     (void)s;
+    if (!call_ast) return 0;
+    AstList* args = &call_ast->u.call.args;
     if (!args || args->count == 0) return 0;
+    // 幂等：同一节点被重复分析时，先丢掉上一轮的求值顺序表
+    free(call_ast->u.call.arg_eval);
+    free(call_ast->u.call.arg_eval_slots);
+    call_ast->u.call.arg_eval = NULL;
+    call_ast->u.call.arg_eval_slots = NULL;
+    call_ast->u.call.arg_eval_count = 0;
 
     int has_named = 0;
     for (int i = 0; i < args->count; i++) {
@@ -101,6 +109,12 @@ int sem_normalize_named_args(Semantic* s, AstList* args, Ast* func_def,
     //   也可能是命名实参的 AST_ASSIGN 外壳）。**不提前拆壳** —— 出错时什么都不用还原 ✓
     Ast** slots = (Ast**)calloc((size_t)(pcnt > 0 ? pcnt : 1), sizeof(Ast*));
     if (!slots) return 0;
+    // ★ 2026-11-03：保留**书写顺序**的求值表（见 leno_ast.h 的 arg_eval 说明）。
+    //   args 仍按形参名重排（类型检查/codegen 不用改），但 codegen 按这里的顺序求值。
+    Ast** orig_nodes = (Ast**)calloc((size_t)args->count, sizeof(Ast*));
+    int* orig_slots = (int*)calloc((size_t)args->count, sizeof(int));
+    int orig_count = 0;
+    int* filled_default = (int*)calloc((size_t)(pcnt > 0 ? pcnt : 1), sizeof(int));
 
     int next_pos = 0, seen_named = 0, bad = 0;
 
@@ -136,6 +150,12 @@ int sem_normalize_named_args(Semantic* s, AstList* args, Ast* func_def,
                 break;
             }
             slots[idx] = a;
+            // 记录书写顺序：命名实参的求值表达式是壳里的 value（壳随后会被释放）
+            if (orig_nodes && orig_slots) {
+                orig_nodes[orig_count] = a->u.assign.value;
+                orig_slots[orig_count] = idx;
+                orig_count++;
+            }
         } else {
             if (seen_named) {
                 error_add_at_fmt(ERR_SYNTAX, a->line, a->column,
@@ -151,7 +171,13 @@ int sem_normalize_named_args(Semantic* s, AstList* args, Ast* func_def,
                 bad = 1;
                 break;
             }
+            int pidx = next_pos;
             slots[next_pos++] = a;
+            if (orig_nodes && orig_slots) {
+                orig_nodes[orig_count] = a;
+                orig_slots[orig_count] = pidx;
+                orig_count++;
+            }
         }
     }
 
@@ -168,6 +194,7 @@ int sem_normalize_named_args(Semantic* s, AstList* args, Ast* func_def,
             Ast* filled = clone_literal_default(d, line);
             if (filled) {
                 slots[k] = filled;
+                if (filled_default) filled_default[k] = 1;
             } else {
                 error_add_at_fmt(ERR_TYPE_MISMATCH, line, column,
                     "命名实参不能跳过中间的形参：'%s' 既没有给值、也没有可复制的字面量默认值 "
@@ -179,6 +206,36 @@ int sem_normalize_named_args(Semantic* s, AstList* args, Ast* func_def,
         }
 
         if (!bad) {
+            // ★ 先按**书写顺序**建求值表（用户实参原序 + 后补的默认值）——
+            //   下面的重排只改变参数槽位，不改变求值顺序。
+            int total = orig_count;
+            for (int k = 0; k <= max; k++) {
+                if (filled_default && filled_default[k]) total++;
+            }
+            Ast** enodes = (Ast**)malloc(sizeof(Ast*) * (size_t)(total > 0 ? total : 1));
+            int* eslots = (int*)malloc(sizeof(int) * (size_t)(total > 0 ? total : 1));
+            if (enodes && eslots && orig_nodes && orig_slots) {
+                int eo = 0;
+                for (int i = 0; i < orig_count; i++) {
+                    enodes[eo] = orig_nodes[i];
+                    eslots[eo] = orig_slots[i];
+                    eo++;
+                }
+                for (int k = 0; k <= max; k++) {
+                    if (filled_default && filled_default[k]) {
+                        enodes[eo] = slots[k];
+                        eslots[eo] = k;
+                        eo++;
+                    }
+                }
+                call_ast->u.call.arg_eval = enodes;
+                call_ast->u.call.arg_eval_slots = eslots;
+                call_ast->u.call.arg_eval_count = eo;
+            } else {
+                free(enodes);
+                free(eslots);
+            }
+
             Ast** old_items = args->items;
             ast_list_init(args);
             for (int k = 0; k <= max; k++) {
@@ -197,6 +254,9 @@ int sem_normalize_named_args(Semantic* s, AstList* args, Ast* func_def,
                 }
             }
             free(old_items);
+            free(orig_nodes);
+            free(orig_slots);
+            free(filled_default);
             free(slots);
             return 1;
         }
@@ -205,6 +265,9 @@ int sem_normalize_named_args(Semantic* s, AstList* args, Ast* func_def,
     // 出错：把命名壳降级成值（避免下游把 `c = 9` 当赋值再报一条"未定义的变量"），
     //   实参列表整体保持原顺序 —— 反正已经报错、编译会中止，只要不崩不刷级联即可
     degrade_named_shells(args);
+    free(orig_nodes);
+    free(orig_slots);
+    free(filled_default);
     free(slots);
     return 1;
 }

@@ -27,6 +27,11 @@ func recur(int n, int step = 1): int {
     return n + recur(n - step)
 }
 
+// ⑨ 求值顺序回归：实参表达式必须按**书写顺序**求值（不是形参顺序）
+Array[string] eval_log = []
+func mark(string tag): int { eval_log.add(tag); return 1 }
+func order2(int a, int b): int { return a + b }
+
 main() {
     // ① 顺序打乱 ⇒ 按形参名归位
     assert_eq(f(b = 2, a = 1), 12, "打乱顺序")
@@ -57,6 +62,18 @@ main() {
 
     // ⑧ 递归 + 跳过默认形参
     assert_eq(recur(3), 6, "递归里的命名实参")
+
+    // ⑨ 求值顺序 = **书写顺序**（2026-11-03 修：此前被按形参顺序重排后求值，
+    //   有副作用的实参会静默换序 ✗）
+    eval_log = []
+    order2(b = mark("b"), a = mark("a"))
+    assert_eq(eval_log[0], "b", "全命名：先写先求值")
+    assert_eq(eval_log[1], "a", "全命名：后写后求值")
+
+    eval_log = []
+    order2(mark("x"), b = mark("y"))
+    assert_eq(eval_log[0], "x", "位置+命名：位置实参先求值")
+    assert_eq(eval_log[1], "y", "位置+命名：命名实参后求值")
 
     print("test_named_args all passed")
 }

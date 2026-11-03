@@ -2073,6 +2073,27 @@ static int is_async_callee(Ast* ast, Ast* fdef) {
     return ast && ast->u.call.callee_is_async;
 }
 
+// ----------------------------------------------------------------------------
+// 求值调用实参到 R[base+1 + 形参槽]
+//   ★ 2026-11-03：命名实参在语义阶段被按形参名**重排**（args 列表 = 形参顺序），
+//    但用户书写的顺序可能不同 —— 有副作用时按重排后的顺序求值会静默换序 ✗。
+//    ast->u.call.arg_eval 记录了**书写顺序**的 (节点, 目标槽)，这里照它求值；
+//   没有命名实参时为 NULL ⇒ 退回原位顺序循环（零行为变化）。
+// ----------------------------------------------------------------------------
+static void gen_call_args_to(CodeGen* gen, Ast* ast, int base) {
+    if (ast->u.call.arg_eval && ast->u.call.arg_eval_slots &&
+        ast->u.call.arg_eval_count > 0) {
+        for (int e = 0; e < ast->u.call.arg_eval_count; e++) {
+            gen_expr_to(gen, ast->u.call.arg_eval[e],
+                        base + 1 + ast->u.call.arg_eval_slots[e]);
+        }
+        return;
+    }
+    for (int i = 0; i < ast->u.call.args.count; i++) {
+        gen_expr_to(gen, ast->u.call.args.items[i], base + 1 + i);
+    }
+}
+
 void gen_call(CodeGen* gen, Ast* ast, int dst) {
     Ast* callee = ast->u.call.callee;
     int nargs = ast->u.call.args.count;
@@ -2196,9 +2217,7 @@ void gen_call(CodeGen* gen, Ast* ast, int dst) {
                     if (pt->kind != TYPE_INT && pt->kind != TYPE_FLOAT) { typed_ok = 0; break; }
                 }
 
-                for (int i = 0; i < nargs; i++) {
-                    gen_expr_to(gen, ast->u.call.args.items[i], base + 1 + i);
-                }
+                gen_call_args_to(gen, ast, base);
                 expected = fill_default_args(gen, fdef, 0, nargs, base, ast->line);
                 if (typed_ok) {
                     dce_note_slot_ref(ref->index);   // DCE：typed 直呼同样是对槽位的引用
@@ -2215,9 +2234,7 @@ void gen_call(CodeGen* gen, Ast* ast, int dst) {
             }
             int base = reg_alloc_block(gen, expected + 1);
             emit_getglobalfunc_to(gen, base, ref->index, ast->line);
-            for (int i = 0; i < nargs; i++) {
-                gen_expr_to(gen, ast->u.call.args.items[i], base + 1 + i);
-            }
+            gen_call_args_to(gen, ast, base);
             expected = fill_default_args(gen, fdef, 0, nargs, base, ast->line);
             // ★ async 函数：调用不直接执行函数体，而是建协程并立刻返回 Future
             if (is_async_callee(ast, fdef)) {
@@ -2242,9 +2259,7 @@ void gen_call(CodeGen* gen, Ast* ast, int dst) {
 
     int base = reg_alloc_block(gen, expected + 1);
     gen_expr_to(gen, callee, base);
-    for (int i = 0; i < nargs; i++) {
-        gen_expr_to(gen, ast->u.call.args.items[i], base + 1 + i);
-    }
+    gen_call_args_to(gen, ast, base);
     expected = fill_default_args(gen, fdef, 0, nargs, base, ast->line);
     // async 函数（含局部 async 函数）：走协程创建路径，返回 Future
     if (is_async_callee(ast, fdef)) {
@@ -2316,9 +2331,7 @@ int gen_call_multi(CodeGen* gen, Ast* ast, int nresults, int line) {
         } else {
             reg_encode_iABC(gen->chunk, OP_GET_METHOD, base, base, nc, line);
         }
-        for (int i = 0; i < nargs; i++) {
-            gen_expr_to(gen, ast->u.call.args.items[i], base + 1 + i);
-        }
+        gen_call_args_to(gen, ast, base);
         expected = fill_default_args(gen, mdef, 0, nargs, base, line);
         emit_call(gen, base, expected, nresults, line);
         return base;
@@ -2335,9 +2348,7 @@ int gen_call_multi(CodeGen* gen, Ast* ast, int nresults, int line) {
     if (nresults > block) block = nresults;   // 同上：结果区必须落在块内
     int base = reg_alloc_block(gen, block);
     gen_expr_to(gen, callee, base);
-    for (int i = 0; i < nargs; i++) {
-        gen_expr_to(gen, ast->u.call.args.items[i], base + 1 + i);
-    }
+    gen_call_args_to(gen, ast, base);
     expected = fill_default_args(gen, fdef, 0, nargs, base, line);
     emit_call(gen, base, expected, nresults, line);
     return base;

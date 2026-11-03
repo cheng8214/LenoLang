@@ -134,6 +134,11 @@ void ast_free(Ast* ast) {
         case AST_CALL:
             ast_free(ast->u.call.callee);
             free_ast_list(&ast->u.call.args);
+            // 命名实参的求值顺序表（只借节点指针，节点归 args 所有 ⇒ 只释放数组本身）
+            free(ast->u.call.arg_eval);
+            free(ast->u.call.arg_eval_slots);
+            ast->u.call.arg_eval = NULL;
+            ast->u.call.arg_eval_slots = NULL;
             // 泛型调用的实参/名字（`foo[int](...)`）
             if (ast->u.call.generic_type_args) {
                 for (int i = 0; i < ast->u.call.generic_type_count; i++) {

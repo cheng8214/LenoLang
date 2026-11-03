@@ -171,7 +171,14 @@ struct Ast {
         struct { Ast* operand; LenoTokenType op; int is_postfix; } unary;
         struct { Ast* callee; AstList args; int is_tail_call;
                  char** generic_type_names; TypeInfo** generic_type_args; int generic_type_count;
-                 int callee_is_async; } call;
+                 int callee_is_async;
+                 // ★ 2026-11-03：命名实参保留**书写顺序**的求值表。
+                 //   args 被 sem_normalize_named_args 按形参名**重排**过（类型检查/codegen 照旧
+                 //   按位置读），但表达式求值必须按用户写的顺序（否则有副作用的实参静默换序 ✗）。
+                 //   arg_eval[i] 是某个实参表达式节点（节点本身归 args 所有，这里只借指针），
+                 //   arg_eval_slots[i] 表示它要落到第几个形参槽（R[base+1+slot]）。
+                 //   没有命名实参时三字段均为空/NULL ⇒ codegen 走原来的顺序循环。
+                 Ast** arg_eval; int* arg_eval_slots; int arg_eval_count; } call;
         struct { Ast* obj; Ast* index; } index;
         struct { Ast* obj; Ast* start; Ast* end; } slice;  // 切片：arr[start:end]
         struct { Ast* obj; Ast* index; Ast* value; int field_index;

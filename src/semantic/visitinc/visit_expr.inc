@@ -624,7 +624,7 @@
             if (ast->u.call.callee && ast->u.call.callee->kind == AST_VAR) {
                 const char* _named_callee = ast->u.call.callee->u.var.name;
                 Ast* _named_fdef = func_table_find(&s->func_table, _named_callee);
-                sem_normalize_named_args(s, &ast->u.call.args, _named_fdef,
+                sem_normalize_named_args(s, ast, _named_fdef,
                                          _named_callee, ast->line, ast->column);
             }
             // 注解（2026-10-31）：@optkeys 声明的选项键在这里校验
