@@ -47,7 +47,24 @@ Ast* parse_block_internal(Parser* p) {
         }
     }
     
-    consume(p, TOK_RBRACE, "期望 '}'");
+    // ★ 2026-11-03：**块未闭合**时给可定位的报错。
+    //   以前一律 `consume(p, TOK_RBRACE, "期望 '}'")` ⇒ 缺一个 `}` 时，这个块会一直吃到 EOF，
+    //   报错落在**文件末尾**（实测：一个函数漏 `}`，结果后面 4 个完全正确的函数全被吞掉，
+    //   末尾重复报 4 次"期望 '}'"，用户根本不知道是哪个块的问题）。
+    //   现在指出**块的起始行**，并且不硬塞 token（交给上层同步）。
+    if (p->lex.current.type != TOK_RBRACE) {
+        if (p->lex.current.type == TOK_EOF) {
+            error_add_at_fmt(ERR_SYNTAX, ast->line, 1,
+                "块没有闭合：第 %d 行开始的 '{' 缺少对应的 '}'（它后面的代码都被当成块内内容了）",
+                ast->line);
+        } else {
+            // 非 EOF：可能是 `}` 前多了东西，仍按"期望 '}'"报，但补上块的起始行便于定位
+            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                "期望 '}'（第 %d 行开始的块没有正确闭合）", ast->line);
+        }
+    } else {
+        lexer_next(&p->lex);       // 正常消费 '}'
+    }
 
     if (defer_count > 0) {
         // ★ 2026-10-23 修：按位置**逐层嵌套**（原来的"一刀切"有 bug）

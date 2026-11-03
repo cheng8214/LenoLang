@@ -1,0 +1,73 @@
+// 块未闭合的定向报错（2026-11-03）
+//
+// 修前：缺一个 `}` 时，那个块会一直吃到 EOF，报错落在**文件末尾**「期望 '}'」，
+//   而且后面每个函数各报一次（实测一个函数漏 `}` ⇒ 末尾重复 4 次），用户根本定位不到。
+// 修后：指出**块的起始行** ——「块没有闭合：第 N 行开始的 '{' 缺少对应的 '}'」。
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+import strings
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_diag_unclosed")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ---- ① 函数体漏右大括号 ----
+    var f1 = dirs.join(work, "func_open.leno")
+    files.write(f1, @"func f(): int {
+    return 1
+
+main() {
+    print(1)
+}
+")
+    ce.expect_error(f1, "函数体未闭合", "块没有闭合：第 1 行开始的", 0)
+
+    // ---- ② if 块漏右大括号（嵌在函数里）----
+    var f2 = dirs.join(work, "if_open.leno")
+    files.write(f2, @"func g(): int {
+    if true {
+        return 2
+    return 3
+}
+")
+    ce.expect_error(f2, "if 块未闭合", "块没有闭合", 0)
+
+    // ---- ③ 对照：完全闭合的文件不该出现这条 ----
+    var f3 = dirs.join(work, "ok.leno")
+    files.write(f3, @"func h(): int {
+    if true {
+        return 3
+    }
+    return 4
+}
+
+main() {
+    print(_int(h()))
+}
+")
+    var out3 = ce.expect_ok(f3, "正常闭合", "3")   // if true 里 return 3
+    ce.expect_no_warning(out3, "正常闭合不该报未闭合", "块没有闭合")
+
+    // ---- ④ 缺 `}` 时后续**正确**代码仍要被解析（错误恢复不能整个吞掉）----
+    var f4 = dirs.join(work, "recover.leno")
+    files.write(f4, @"func bad(): int {
+    return 1
+
+func after(): int {
+    return 42
+}
+
+main() {
+    print(_int(after()))
+}
+")
+    var out4 = ce.expect_error(f4, "缺 } 后的代码", "块没有闭合", 0)
+    // 后面那个函数本身是好的，报错里不该把它也算成"期望表达式"
+    assert_true(not strings.has(out4, "after"),
+        "缺 `}` 的报错不该把后面的函数体算进去；输出=" + out4)
+
+    print("=== test_diag_unclosed_block ALL passed ===")
+}
