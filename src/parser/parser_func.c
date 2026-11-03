@@ -1808,6 +1808,20 @@ static void free_assign_targets(Ast** targets, int count) {
     free(targets);
 }
 
+// ★ 2026-11-03：关于"每个表达式语句解析两遍" —— 想优化前先看这段
+//
+// `parse_expression_stmt` 为了支持并行赋值（`a, b = c, d`），会先**完整解析一遍**猜
+// "这是不是赋值语句"，判不出来就回滚重解析 ⇒ 每条以标识符开头的表达式语句都解析两遍。
+//
+// 我试过加"轻量词法前瞻"（扫到同层 `=` 才做探测）省掉这一遍，**实测收益不达预期**：
+//   · sdl_window.leno：parse 54ms / semantic 940ms / codegen 543ms ⇒ parse 只占 3.5%
+//   · examples 全量 812 个 --check：17.5s → 17.7s（噪声范围内）
+// 而且前瞻在**词法器副本**上推进时，lexer_next 会顺手更新全局错误列号 ⇒ 必须额外
+// 保存/还原列号，否则报错列会漂（实测 `xyz = 10` 从第 5 列漂到第 9 列）。
+//
+// ⇒ 结论：**不值得做**。真正的瓶颈在语义分析（60%+），要提速该去那里找。
+//   （"每个语法错报两次"是另一个问题，已由 error_truncate_to 单独修掉，与性能无关。）
+
 Ast* parse_expression_stmt(Parser* p) {
     int line = p->lex.current.line;
     int stmt_column = p->lex.current.column;
@@ -1825,6 +1839,8 @@ Ast* parse_expression_stmt(Parser* p) {
     int err_mark = error_count();
     
     // 尝试解析第一个赋值目标（变量或索引表达式）
+    //   注：曾试过加"轻量前瞻"跳过不可能带赋值的语句，实测收益 <2% 已回退，
+    //   原因见本函数上方那段说明。
     if (p->lex.current.type == TOK_IDENT) {
         // 调用 parse_call_expression 来解析完整的表达式（可能是索引如 arr[0]）
         // 使用 parse_call_expression 而不是 parse_expression，避免把 '=' 当作运算符
