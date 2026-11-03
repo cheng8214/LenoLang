@@ -1,0 +1,39 @@
+// 区间 case 与 bigint（超 int48 的值内部是 bigint）
+//
+// OP_IS_NUM 守卫必须认 bigint，否则大数走到区间 case 会被当成"非数值"而全部落 default。
+func band(int v): string {
+    switch v {
+        case 0:999_999 { return "small" }
+        case 1_000_000:999_999_999 { return "million" }
+        case 1_000_000_000:999_999_999_999 { return "billion" }
+        default { return "huge" }
+    }
+}
+
+main() {
+    // ① 普通区间
+    assert_eq(band(500), "small", "小数值")
+    assert_eq(band(999_999), "small", "小值上界")
+    assert_eq(band(1_000_000), "million", "百万下界")
+    assert_eq(band(999_999_999), "million", "百万上界")
+    assert_eq(band(1_000_000_000), "billion", "十亿下界")
+
+    // ② 超 int48 ⇒ 内部 bigint，仍要能比较
+    assert_eq(band(1_000_000_000_000_000), "huge", "1e15 超出所有区间")
+
+    // ③ 64 位十六进制（bigint 文本路径）
+    int h = 0xFFFF_FFFF_FFFF_FFFF
+    assert_eq(band(h), "huge", "64 位最大值")
+
+    // ④ 负的 bigint
+    int nb = -1_000_000_000_000_000
+    assert_eq(band(nb), "huge", "负 bigint")
+
+    // ⑤ 区间端点本身是 bigint 字面量
+    switch 5_000_000_000 {
+        case 1_000_000_000:9_999_999_999 { assert_true(true, "bigint 端点命中") }
+        default { assert_true(false, "bigint 端点不该落 default") }
+    }
+
+    print("test_switch_range_bigint all passed")
+}

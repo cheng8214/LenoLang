@@ -1,0 +1,62 @@
+// `??=` × 箭头 × 命名实参 × 区间 case 的组合边界（fuzz 测试筛出来的稳定形状）
+func add2(int v, int w): int { return v + w }
+
+func pick(int v): int {
+    switch v {
+        case 1:3 {
+            var t = (int n) => add2(v = n, w = 20)   // 区间 case 体里：箭头 + 命名实参
+            return t(v)
+        }
+        default { return 0 }
+    }
+}
+
+func onlyRange(int v): int {
+    // 只有区间 case、没有 default
+    switch v {
+        case 1:3 { return 1 }
+    }
+    return 0
+}
+
+main() {
+    // ① 右值是 `??` 表达式
+    int? a = null
+    int? b = null
+    a ??= b ?? 7
+    assert_eq(a, 7, "a ??= b ?? 7 ⇒ a")
+    assert_eq(b, null, "b 仍是 null")
+
+    // ② 右值是箭头函数（any 变量 + 函数值 + 类型锁定）
+    var cb = null
+    cb ??= (int x) => x * 2
+    assert_eq(cb(3), 6, "??= 箭头后被调用")
+
+    // ③ 箭头体是 `??=`
+    int? c = null
+    var f = () => (c ??= 42)
+    assert_eq(f(), 42, "第一次")
+    assert_eq(f(), 42, "第二次不覆盖")
+
+    // ④ 空 case 体也只能命中自己，不能落到 default
+    int hit = 0
+    switch 5 {
+        case 1:10 { }
+        default { hit = 1 }
+    }
+    assert_eq(hit, 0, "空 case 体命中后不该走 default")
+
+    // ⑤ 只有区间 case、没有 default
+    assert_eq(onlyRange(2), 1, "区间内")
+    assert_eq(onlyRange(9), 0, "区间外落到函数尾")
+
+    // ⑥ 区间 case 体里用箭头 + 命名实参
+    assert_eq(pick(2), 22, "pick(2)")
+
+    // ⑦ 右值是带命名实参的调用
+    int? m = null
+    m ??= add2(w = 5, v = 4)
+    assert_eq(m, 9, "??= 带命名实参的调用")
+
+    print("test_coalesce_arrow_combo all passed")
+}
