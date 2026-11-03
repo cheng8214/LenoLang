@@ -153,6 +153,9 @@ void semantic_init(Semantic* s, Ast* root) {
     s->is_module = 0;
     s->is_lsp_mode = 0;
     s->in_clib = 0;
+    // ★ 2026-11-04：同下面那几条 —— Semantic 是**栈变量**，不 memset ⇒ 漏清就是垃圾值。
+    //   漏了它会让**同文件 extend** 的 pri 访问被误判成"跨模块"而报错（实测 ✗）
+    s->in_cross_module_extend = 0;
     s->has_module_load_failure = 0;
     s->in_main_func = 0;
     s->for_in_lhs = NULL;   // ★ Q3：for 头 `x in y` 的定向提示用（漏清就是读栈上垃圾）

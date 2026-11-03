@@ -1149,6 +1149,15 @@ main() { }
     ce.expect_error(eg1, "泛型 struct 的 extend 不要写 [T]（一条清楚报错）",
         "extend 后面不用写类型参数", 5)
 
+    // ⑦ 跨模块 extend 访问 pri 私有字段（2026-11-04）：设计 §5.4 只对**同模块**开放。
+    //    此前 pri_inside_own_method 只看 self 的静态类型 == 目标类型 ⇒ 跨模块扩展被当成
+    //    "自己的方法"放行，静默读到私有值。报错文案里的声明位置必须指向**定义模块**，
+    //    不能套用当前编译单元的文件名（否则文件/行号对不上）
+    var priout = ce.expect_error("assert/extend_pri_main.leno", "跨模块 extend 访问 pri 字段要报错",
+        "是 pri 私有字段", 7)
+    assert_true(strings.has(priout, "extend_pri_base.leno"),
+        "pri 报错应指向声明所在模块 extend_pri_base.leno；输出=" + priout)
+
     // ② 用静态 fixture（assert/import_broken*.leno）：坏模块必须在 assert/ 下才能被相对 import 找到
     ce.expect_error("assert/import_broken.leno", "导入有语法错误的模块要报错（报在 fixture 自己那行）",
         "期望 '{'", 8)

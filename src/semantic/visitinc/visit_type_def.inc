@@ -197,9 +197,15 @@
                 if (!m2 || m2->kind != AST_FUNC_DEF) continue;
                 Ast* saved_gs = s->cur_generic_struct;
                 char* saved_gm = s->cur_struct_method_name;
-                s->cur_generic_struct = NULL;              // 跨模块扩展暂不支持泛型 struct
+                // 跨模块扩展的泛型解析放在方法签名的 self 上（generic_args ⇒ visit_func_impl ✓），
+                //   这里不需要 cur_generic_struct（它只服务"泛型需求推断"）。
+                s->cur_generic_struct = NULL;
                 s->cur_struct_method_name = m2->u.func.name;
+                // ★ 2026-11-04：标记"当前是跨模块 extend 的方法体"⇒ pri 检查不把 self 当"自己人"
+                int saved_xm = s->in_cross_module_extend;
+                s->in_cross_module_extend = 1;
                 visit_func_as_struct_method(s, m2);
+                s->in_cross_module_extend = saved_xm;
                 s->cur_generic_struct = saved_gs;
                 s->cur_struct_method_name = saved_gm;
             }

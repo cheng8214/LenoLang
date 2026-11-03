@@ -186,6 +186,9 @@ struct {
 - `pri func` 在 extend 块里：**同一模块内的其它文件可调，模块外不可调**（与写在 struct 里一致）
 - extend 块**可以访问目标 struct 的 `pri` 字段**（否则拆出去没有意义）——前提是该 struct 与
   extend 在同一模块
+- 跨模块 `extend m.X` **不能**访问 `pri` 成员（2026-11-04 起编译期强制）：`self` 的类型虽然
+  等于目标 struct，但代码不在定义模块里。此前 `pri_inside_own_method` 只看类型名 ⇒ 被当成
+  "自己的方法"静默放行（实测能直接读到私有值 2 ✗）
 
 ## 6. 落点
 

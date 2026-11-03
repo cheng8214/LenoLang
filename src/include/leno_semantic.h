@@ -138,6 +138,14 @@ typedef struct {
     int is_module;      // 是否为模块模式
     int is_lsp_mode;    // 是否为 LSP 模式（保留所有作用域供符号查询）
     int in_clib;        // 是否在 clib/cfunc 声明上下文中（C 布局类型允许）
+    // ★ 2026-11-04：是否正在分析**跨模块 extend**（`extend 模块.类型 { ... }`）的方法体。
+    //   这类方法虽然 `self` 的类型就是目标 struct，但代码**不在定义它的模块里** ⇒
+    //   `pri` 私有成员**不该**对它们开放（设计文档 §5.4）。此前 pri_inside_own_method
+    //   只看 self 的类型名 = 目标类型就放行，于是跨模块扩展能静默读写 pri 字段（实测
+    //   `extend b.SPri { func leak(): int { return secret } }` 直接读到私有值 2 ✗）。
+    //   置 1 后 pri_inside_own_method 返回 0，访问 pri 成员改走"跨模块符号表"检查并报错 ✓
+    //   （同文件/同模块的 extend 不受影响：那批方法已并进 struct，走的不是这条路径 ✓）
+    int in_cross_module_extend;
     int has_module_load_failure; // 是否有模块加载失败（用于抑制下游级联 any 错误）
     int in_main_func;   // 是否正在分析入口函数 main 的函数体（返回值必须为 int，作为进程退出码）
     // ★ 2026-10-24（Q3）：当前正在分析的「for 头里的 `x in y`」那个 `x` 的 AST 节点，

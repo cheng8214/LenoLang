@@ -1,0 +1,4 @@
+export struct SPri {
+    int pub = 1
+    pri int secret = 2
+}

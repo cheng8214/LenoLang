@@ -57,6 +57,9 @@ static Ast* pri_find_struct_def(Semantic* s, const char* struct_name) {
 // 当前是否在 `struct_name` 自己的方法内部（看 `self` 的静态类型 ✓ —— 只有方法里才有 self ✓）
 static int pri_inside_own_method(Semantic* s, const char* struct_name) {
     if (!s || !struct_name) return 0;
+    // 跨模块 extend 的方法体：self 的类型虽然等于目标 struct，但代码不在定义模块里 ⇒
+    //   不能算"自己的方法内部"（否则 pri 检查被整体绕过，实测能读到私有字段 ✗）
+    if (s->in_cross_module_extend) return 0;
     Symbol* self_sym = scope_resolve(s->current, "self");
     if (!self_sym || !self_sym->type || !self_sym->type->struct_name) return 0;
     return strcmp(self_sym->type->struct_name, struct_name) == 0;
@@ -103,7 +106,8 @@ static int pri_method_is_private(Semantic* s, const char* struct_name, const cha
 // 数据来源：文本扫描器剥掉 `pri` 时写进 ModuleStructField/Method.is_private ✓，
 //   再随 .lenosymc 缓存往返（缓存版本已升到 v32 ✓）
 static int pri_imported_field_private(Semantic* s, const char* struct_name,
-                                      const char* field_name, int* out_line) {
+                                      const char* field_name, int* out_line,
+                                      const char** out_file) {
     if (!s || !struct_name || !field_name) return 0;
     for (int mi = 0; mi < s->imported_module_count; mi++) {
         ModuleSymbolTable* t = s->imported_modules[mi].sym_table;
@@ -114,6 +118,9 @@ static int pri_imported_field_private(Semantic* s, const char* struct_name,
             if (ss->fields[j].name && strcmp(ss->fields[j].name, field_name) == 0) {
                 if (ss->fields[j].is_private) {
                     if (out_line) *out_line = ss->fields[j].line;
+                    // ★ 2026-11-04：声明**不在当前编译单元**里 ⇒ 报错文案必须用模块文件路径，
+                    //   此前一律套 error_get_filename()（= 调用方文件）⇒ 指向错文件且行号对不上 ✗
+                    if (out_file) *out_file = s->imported_modules[mi].file_path;
                     return 1;
                 }
                 return 0;   // 找到但没标 pri ⇒ 公有 ✓
@@ -124,7 +131,8 @@ static int pri_imported_field_private(Semantic* s, const char* struct_name,
 }
 
 static int pri_imported_method_private(Semantic* s, const char* struct_name,
-                                       const char* method_name, int* out_line) {
+                                       const char* method_name, int* out_line,
+                                       const char** out_file) {
     if (!s || !struct_name || !method_name) return 0;
     for (int mi = 0; mi < s->imported_module_count; mi++) {
         ModuleSymbolTable* t = s->imported_modules[mi].sym_table;
@@ -133,6 +141,7 @@ static int pri_imported_method_private(Semantic* s, const char* struct_name,
         if (m) {
             if (m->is_private) {
                 if (out_line) *out_line = m->line;
+                if (out_file) *out_file = s->imported_modules[mi].file_path;
                 return 1;
             }
             return 0;
@@ -142,13 +151,15 @@ static int pri_imported_method_private(Semantic* s, const char* struct_name,
 }
 
 // 统一的报错文案（字段/方法共用 ✓ —— 这套东西值钱的地方就在这句话 ✓）
+// decl_file = 声明所在文件（NULL ⇒ 当前编译单元，**本地**声明就是这样）
 static void pri_report(Semantic* s, Ast* ast, const char* kind, const char* struct_name,
-                       const char* member, int decl_line) {
+                       const char* member, int decl_line, const char* decl_file) {
     (void)s;
     error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
         "'%s.%s' 是 pri 私有%s（%s 第 %d 行）—— 只有 %s 自己的方法内部可以访问它；"
         "要对外开放就把 'pri' 去掉（默认全公有）",
-        struct_name, member, kind, error_get_filename(), decl_line, struct_name);
+        struct_name, member, kind, decl_file ? decl_file : error_get_filename(),
+        decl_line, struct_name);
 }
 
 // 字段访问检查（读 ✓ 写 ✓ 都走 AST_FIELD_ACCESS ✓ ⇒ 一处即可 ✓）
@@ -157,14 +168,15 @@ void pri_check_field_access(Semantic* s, Ast* ast, TypeInfo* obj_type, const cha
     if (!obj_type || obj_type->kind != TYPE_STRUCT || !obj_type->struct_name) return;
     if (pri_inside_own_method(s, obj_type->struct_name)) return;
     int line = 0;
+    const char* decl_file = NULL;
     if (pri_field_is_private(s, obj_type->struct_name, field_name, &line)) {
-        pri_report(s, ast, "字段", obj_type->struct_name, field_name, line);
+        pri_report(s, ast, "字段", obj_type->struct_name, field_name, line, NULL);
         return;
     }
     // 本文件里没有这个 struct 的定义（= 它是**导入**进来的 ✓）⇒ 查模块符号表 ✓
     if (pri_find_struct_def(s, obj_type->struct_name) == NULL &&
-        pri_imported_field_private(s, obj_type->struct_name, field_name, &line)) {
-        pri_report(s, ast, "字段", obj_type->struct_name, field_name, line);
+        pri_imported_field_private(s, obj_type->struct_name, field_name, &line, &decl_file)) {
+        pri_report(s, ast, "字段", obj_type->struct_name, field_name, line, decl_file);
     }
 }
 
@@ -174,14 +186,15 @@ void pri_check_method_access(Semantic* s, Ast* ast, TypeInfo* obj_type, const ch
     if (!obj_type || obj_type->kind != TYPE_STRUCT || !obj_type->struct_name) return;
     if (pri_inside_own_method(s, obj_type->struct_name)) return;
     int line = 0;
+    const char* decl_file = NULL;
     if (pri_method_is_private(s, obj_type->struct_name, method_name, &line)) {
-        pri_report(s, ast, "方法", obj_type->struct_name, method_name, line);
+        pri_report(s, ast, "方法", obj_type->struct_name, method_name, line, NULL);
         return;
     }
     // 跨模块兜底（同字段侧 ✓）
     if (pri_find_struct_def(s, obj_type->struct_name) == NULL &&
-        pri_imported_method_private(s, obj_type->struct_name, method_name, &line)) {
-        pri_report(s, ast, "方法", obj_type->struct_name, method_name, line);
+        pri_imported_method_private(s, obj_type->struct_name, method_name, &line, &decl_file)) {
+        pri_report(s, ast, "方法", obj_type->struct_name, method_name, line, decl_file);
     }
 }
 
