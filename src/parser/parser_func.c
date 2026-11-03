@@ -3638,6 +3638,7 @@ Ast* parse_enum_stmt(Parser* p) {
 // ============================================================================
 Ast* parse_extend_stmt(Parser* p) {
     int line = p->lex.current.line;
+    int start_col = p->lex.current.column;   // `extend` 关键字的列（语义期报错定位用）
     lexer_next(&p->lex);            // 消费 'extend'
 
     char* module_name = NULL;       // `extend p.Player` 的前缀
@@ -3744,5 +3745,8 @@ Ast* parse_extend_stmt(Parser* p) {
     node->u.extend_def.methods = methods;
     node->u.extend_def.method_count = method_count;
     node->u.extend_def.line = line;
+    // ast_new 的 column 取的是**解析完块之后**的当前列（指向 `}` 之后）⇒ 显式改回 `extend`
+    //   关键字的列，语义期（如"目标不是 struct"）报错落点才准
+    node->column = start_col;
     return node;
 }

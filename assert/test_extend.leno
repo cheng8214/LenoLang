@@ -3,7 +3,7 @@
 //
 // 覆盖：基本用法 / 定义顺序无关 / 多个 extend 块 / 跨块访问 pri 字段与方法 /
 //       改字段 / extend 方法互相调用 / **泛型 struct**（方法里直接引用 T）/
-//       `export func` 修饰（与写在 struct 里的写法一致）
+//       `export func` 修饰（与写在 struct 里的写法一致）/ `export struct` 上的 extend
 // ⚠ 报错类场景（重名、加字段、目标不存在、跨模块写法）没法在这里断言 ——
 //    它们会让本文件编不过。那几条由设计文档第 9 节的验收清单手工核对 ✓
 
@@ -48,6 +48,16 @@ struct Later {
     string who = "later"
 }
 
+// ③b `export struct` 上的同文件 extend（2026-11-04）：此前合并扫描只认裸 AST_STRUCT_DEF，
+//     `export struct` 包在 AST_EXPORT 里 ⇒ 报"目标类型在本文件里没有定义"，方法全不生效
+export struct EPlayer {
+    int v = 2
+}
+
+extend EPlayer {
+    func twice(): int { return v * 2 }
+}
+
 // ④ 泛型 struct：extend 里**不写** `[T]`（写法见 test_diag_static_errors 的负例），
 //    方法签名/方法体里的 T 直接按 struct 声明的类型参数解析（2026-11-03 验证）
 struct Box[T] {
@@ -77,6 +87,10 @@ main()
     // ④ 顺序无关：extend 在前照样能调
     var l = new Later()
     assert_eq(l.hello(), "hi-later")
+
+    // ④b `export struct` 上的 extend 也能合并进来
+    var ep = new EPlayer()
+    assert_eq(ep.twice(), 4)
 
     // ⑤ 泛型 struct 的 extend 方法（T 由 struct 的参数解析）
     var b = new Box[int](v = 5)

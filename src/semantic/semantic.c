@@ -219,14 +219,44 @@ static void extend_merge_into_block(Semantic* s, Ast* block) {
         }
 
         Ast* target = NULL;
+        // 目标名**存在但不是 struct** 时，给一句点名的报错（enum/face/cstruct 都没有方法体）
+        const char* not_struct_kind = NULL;
         for (int j = 0; j < list->count; j++) {
             Ast* sd = list->items[j];
-            if (!sd || sd->kind != AST_STRUCT_DEF || !sd->u.struct_def.name) continue;
-            if (strcmp(sd->u.struct_def.name, ext->u.extend_def.type_name) == 0) { target = sd; break; }
+            if (!sd) continue;
+            // ★ 2026-11-04：`export struct` 包在 AST_EXPORT 里 —— 此前只认裸 AST_STRUCT_DEF，
+            //   于是模块里最常见的写法 `export struct Player` + `extend Player` 直接报
+            //   「目标类型在本文件里没有定义」（明明就在上面），方法全部不生效 ✗（实测）。
+            Ast* decl = (sd->kind == AST_EXPORT && sd->u.export.decl) ? sd->u.export.decl : sd;
+            if (!decl) continue;
+            if (decl->kind == AST_STRUCT_DEF && decl->u.struct_def.name &&
+                strcmp(decl->u.struct_def.name, ext->u.extend_def.type_name) == 0) {
+                target = decl;
+                break;
+            }
+            if (!not_struct_kind) {
+                if (decl->kind == AST_ENUM_DEF && decl->u.enum_def.name &&
+                    strcmp(decl->u.enum_def.name, ext->u.extend_def.type_name) == 0) {
+                    not_struct_kind = "enum（枚举）";
+                } else if (decl->kind == AST_FACE_DEF && decl->u.face_def.name &&
+                           strcmp(decl->u.face_def.name, ext->u.extend_def.type_name) == 0) {
+                    not_struct_kind = "face（接口）";
+                } else if (decl->kind == AST_CSTRUCT_DEF && decl->u.cstruct_def.name &&
+                           strcmp(decl->u.cstruct_def.name, ext->u.extend_def.type_name) == 0) {
+                    not_struct_kind = "cstruct";
+                }
+            }
         }
         if (!target) {
-            error_add_at_fmt(ERR_SEMANTIC, ext->u.extend_def.line, 0,
-                "extend 的目标类型 '%s' 在本文件里没有定义", ext->u.extend_def.type_name);
+            if (not_struct_kind) {
+                error_add_at_fmt(ERR_SEMANTIC, ext->u.extend_def.line, ext->column,
+                    "extend 的目标 '%s' 是 %s —— extend 只能给 struct 加方法；"
+                    "enum/face/cstruct 没有方法体，请把方法写进一个 struct",
+                    ext->u.extend_def.type_name, not_struct_kind);
+            } else {
+                error_add_at_fmt(ERR_SEMANTIC, ext->u.extend_def.line, 0,
+                    "extend 的目标类型 '%s' 在本文件里没有定义", ext->u.extend_def.type_name);
+            }
             continue;
         }
 

@@ -150,6 +150,11 @@ struct {
 
 这就是选"追加到 methods 数组"而不是"新搞一套扩展方法表"的全部理由。
 
+> 2026-11-04 修：扫描目标 struct 时**必须同时认 `export struct`**（它包在 `AST_EXPORT` 里）。
+> 此前只认裸 `AST_STRUCT_DEF` ⇒ 模块里最常见的 `export struct Player` + `extend Player`
+> 直接报「目标类型在本文件里没有定义」，方法全部不生效（实测）。
+> 目标名存在但不是 struct（enum / face / cstruct）时点名报错，不再说"没有定义"。
+
 ### 5.2 顺序无关性
 
 `extend` 可能出现在 struct 定义**之前**（同一文件）。处理方式：
@@ -186,9 +191,11 @@ struct {
 - `pri func` 在 extend 块里：**同一模块内的其它文件可调，模块外不可调**（与写在 struct 里一致）
 - extend 块**可以访问目标 struct 的 `pri` 字段**（否则拆出去没有意义）——前提是该 struct 与
   extend 在同一模块
-- 跨模块 `extend m.X` **不能**访问 `pri` 成员（2026-11-04 起编译期强制）：`self` 的类型虽然
-  等于目标 struct，但代码不在定义模块里。此前 `pri_inside_own_method` 只看类型名 ⇒ 被当成
-  "自己的方法"静默放行（实测能直接读到私有值 2 ✗）
+- 跨模块 `extend m.X` **不能**访问 `pri` 成员（**字段与方法**，2026-11-04 起编译期强制）：
+  `self` 的类型虽然等于目标 struct，但代码不在定义模块里。此前 `pri_inside_own_method`
+  只看类型名 ⇒ 被当成"自己的方法"静默放行（实测能直接读到私有值 2、调用私有方法返回 3 ✗）。
+  方法那条更隐蔽：裸调用被 `transform_method_body` 改写成 `self["方法名"](self)`（按名分发），
+  点号调用的 pri 检查根本看不到它 ⇒ 现在在按名分发的解析点补查。
 
 ## 6. 落点
 

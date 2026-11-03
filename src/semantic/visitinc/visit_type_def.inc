@@ -34,8 +34,34 @@
             ModuleStructSymbol* ext_ssym =
                 module_symbol_table_find_struct(ext_mi->sym_table, ast->u.extend_def.type_name);
             if (!ext_ssym) {
+                // ★ 2026-11-04：目标名在模块里**确实存在**、但不是 struct 时，此前一律报
+                //   「模块 'b' 里没有类型 'Col'」—— 可枚举 Col 明明就在那儿，用户会怀疑
+                //   自己模块名/别名写错 ✗。这里先认 enum/face/别名，点名它是什么、为什么不能 extend。
+                const char* not_struct_kind = NULL;
+                if (module_symbol_table_find_enum(ext_mi->sym_table, ast->u.extend_def.type_name)) {
+                    not_struct_kind = "enum（枚举）";
+                } else if (module_symbol_table_find_face(ext_mi->sym_table, ast->u.extend_def.type_name)) {
+                    not_struct_kind = "face（接口）";
+                } else if (module_symbol_table_find_alias(ext_mi->sym_table, ast->u.extend_def.type_name)) {
+                    not_struct_kind = "类型别名（alias）";
+                }
+                if (not_struct_kind) {
+                    error_add_at_fmt(ERR_SEMANTIC, ast->u.extend_def.line, 0,
+                        "extend 的目标 '%s.%s' 是 %s —— extend 只能给 struct 加方法；"
+                        "enum/face/别名没有方法体，请把方法写进一个 struct",
+                        ast->u.extend_def.module_name, ast->u.extend_def.type_name, not_struct_kind);
+                } else {
+                    error_add_at_fmt(ERR_SEMANTIC, ast->u.extend_def.line, 0,
+                        "模块 '%s' 里没有类型 '%s'",
+                        ast->u.extend_def.module_name, ast->u.extend_def.type_name);
+                }
+                break;
+            }
+            // cstruct 也有 is_cstruct 标记（和 struct 一起存在同一张符号表里）
+            if (ext_ssym->is_cstruct) {
                 error_add_at_fmt(ERR_SEMANTIC, ast->u.extend_def.line, 0,
-                    "模块 '%s' 里没有类型 '%s'",
+                    "extend 的目标 '%s.%s' 是 cstruct —— cstruct 只有字段、没有方法，不能 extend；"
+                    "要加方法请改写成普通 struct",
                     ast->u.extend_def.module_name, ast->u.extend_def.type_name);
                 break;
             }

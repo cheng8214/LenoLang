@@ -2132,6 +2132,18 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     // 推断对象类型
                     TypeInfo* obj_type = infer_expr_type(s, index_ast->u.index.obj);
                     if (obj_type) {
+                        // ★ 2026-11-04：跨模块 extend 里**裸写 pri 方法名**的调用也要拦。
+                        //   transform_method_body 会把裸调用改写成 `self["方法名"](self, ...)`，
+                        //   走的是"按名分发"这条路径，而点号调用那条（visit_module / 下面的
+                        //   AST_FIELD_ACCESS）根本看不到它 ⇒ 跨模块扩展能静默调用 pri 方法
+                        //   （实测 `extend b.PM { func tryPri(): int { return pv() } }` 直接返回 3 ✗）。
+                        //   ⚠ 只在跨模块 extend 上下文里查：用户手写 `obj["方法名"]()` 的
+                        //     "运行期按名分发"是既有口径（v1 不拦）；同文件 extend / 自己的方法
+                        //     本来也应当放行 ✓
+                        if (s->in_cross_module_extend && obj_type->kind == TYPE_STRUCT &&
+                            obj_type->struct_name) {
+                            pri_check_method_access(s, ast, obj_type, method_name);
+                        }
                         // 处理 clib 方法调用
                         if (obj_type->kind == TYPE_CLIB && obj_type->struct_name) {
                             Symbol* clib_sym = scope_resolve(s->current, obj_type->struct_name);

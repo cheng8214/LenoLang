@@ -1,0 +1,8 @@
+// 跨模块 extend 调用 pri 私有方法的负例主文件
+import "extend_pri_method_base.leno" as b
+import "extend_pri_method_page.leno"
+
+main() {
+    var p = new b.PM()
+    print(p.tryPri())
+}

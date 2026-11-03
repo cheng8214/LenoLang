@@ -1158,6 +1158,27 @@ main() { }
     assert_true(strings.has(priout, "extend_pri_base.leno"),
         "pri 报错应指向声明所在模块 extend_pri_base.leno；输出=" + priout)
 
+    // ⑧ 跨模块 extend 调用 pri 私有方法（2026-11-04）：裸调用会被 transform 改写成
+    //    `self["pv"](self)`（按名分发），点号调用的 pri 检查看不到 ⇒ 此前静默返回 3
+    var primout = ce.expect_error("assert/extend_pri_method_main.leno",
+        "跨模块 extend 调用 pri 方法要报错", "是 pri 私有方法", 7)
+    assert_true(strings.has(primout, "extend_pri_method_base.leno"),
+        "pri 方法报错应指向声明所在模块 extend_pri_method_base.leno；输出=" + primout)
+
+    // ⑨ extend 的目标不是 struct（2026-11-04）：enum/face/cstruct 都没有方法体。
+    //    此前一律报"本文件里没有定义"（目标明明就在上一行）⇒ 现在点名它是 enum
+    var ex2 = dirs.join(work, "extend_enum_target.leno")
+    files.write(ex2, @"enum Col { Red Green }
+
+extend Col {
+    func f(): int { return 1 }
+}
+
+main() { }
+")
+    ce.expect_error(ex2, "extend 枚举要报错（说明它是什么，而不是'没有定义'）",
+        "是 enum（枚举）", 3)
+
     // ② 用静态 fixture（assert/import_broken*.leno）：坏模块必须在 assert/ 下才能被相对 import 找到
     ce.expect_error("assert/import_broken.leno", "导入有语法错误的模块要报错（报在 fixture 自己那行）",
         "期望 '{'", 8)
