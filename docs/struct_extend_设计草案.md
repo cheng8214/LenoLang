@@ -37,6 +37,10 @@ lib/page_download.leno   extend player.Player { func paint_dl }   ← 定义（�
 
 用例：`assert/test_extend_cross_module.leno`（三文件：定义 / 扩展 / 调用）。
 
+**三期（2026-11-03）**：跨模块扩展**泛型 struct** —— 给隐式 `self` 带上目标类型的
+`generic_args`，方法签名与方法体里的 `T` 就和写在 struct 里一样能解析（此前报
+「未定义的类型: T（请 use 导入）」）。同批补了两条重名诊断（见 §5.3）。
+
 ## 1. 背景：为什么需要它
 
 `d:/CLeno/Aria/aria.leno` 实测 **6212 行**，结构是：

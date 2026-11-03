@@ -5,3 +5,10 @@ export struct ExtPlayer {
 
     func base(): int { return hp }
 }
+
+// 跨模块泛型扩展用例（2026-11-03）
+export struct ExtBox[T] {
+    T v
+
+    func get(): T { return v }
+}

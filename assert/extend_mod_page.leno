@@ -9,3 +9,9 @@ extend pb.ExtPlayer {
 
     func hello(): string { return name + "!" }
 }
+
+// 跨模块扩展**泛型 struct**：不写 `[T]`，签名/方法体里的 T 由 ExtBox 的参数解析
+//（此前只给 self 填了类型名 ⇒ `T` 被报成"未定义的类型"，提示还叫你去 use 导入 T）
+extend pb.ExtBox {
+    func peek(): T { return v }
+}

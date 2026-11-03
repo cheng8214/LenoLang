@@ -144,7 +144,26 @@
                 }
                 new_params[0] = strdup("self");
                 new_types[0] = type_new(TYPE_STRUCT);
-                if (new_types[0]) new_types[0]->struct_name = strdup(ast->u.extend_def.type_name);
+                if (new_types[0]) {
+                    new_types[0]->struct_name = strdup(ast->u.extend_def.type_name);
+                    // ★ 2026-11-03：跨模块扩展**泛型 struct** 时，把目标类型的类型参数带上
+                    //   （与 struct 分支给 self 填 generic_args 同一口径）。
+                    //   此前这里只填名字 ⇒ 方法签名/方法体里的 `T` 停在 TYPE_STRUCT("T")，
+                    //   在 visit_func_impl / check_undefined_type 里报「未定义的类型: T（请 use 导入）」
+                    //   ——提示指向"去导入一个叫 T 的类型"，完全指不到真因（实测）。
+                    //   现在自带的 generic_args 会让 visit_func_impl 用 T 解析签名、
+                    //   visit_func_body 把 T 注册进作用域 ⇒ 与写在 struct 里等价。
+                    if (ext_ssym->type_param_count > 0 && ext_ssym->type_param_names) {
+                        new_types[0]->generic_count = ext_ssym->type_param_count;
+                        new_types[0]->generic_args = (TypeInfo**)malloc(
+                            sizeof(TypeInfo*) * (size_t)ext_ssym->type_param_count);
+                        for (int gi = 0; new_types[0]->generic_args && gi < ext_ssym->type_param_count; gi++) {
+                            TypeInfo* gp = type_new(TYPE_GENERIC_PARAM);
+                            if (gp) gp->type_param_name = strdup(ext_ssym->type_param_names[gi]);
+                            new_types[0]->generic_args[gi] = gp;
+                        }
+                    }
+                }
                 new_defaults[0] = NULL;
                 for (int pj = 0; pj < m->u.func.pcnt; pj++) {
                     new_params[pj + 1] = m->u.func.params[pj];
