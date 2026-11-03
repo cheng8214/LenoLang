@@ -150,13 +150,22 @@ var data = jsons.decode(json_text)
 var name = jsons.dig(data, "user.name")
 var age  = jsons.dig(data, "user.profile.age")
 
-// ② 字符串数组（键名本身含点、或键是数字时用它）
+// ② 数组路径（键名本身含点、或要按下标穿过 JSON 数组时用它）
 var v = jsons.dig(data, ["cfg", "app.name"])
 
-// ③ 缺失一律 null，不会崩
+// ③ 穿过 JSON 数组：数组路径写 int 下标；点分路径写"整串数字"的段
+var first = jsons.dig(data, ["user", "tags", 0])   // 等价于：
+var first2 = jsons.dig(data, "user.tags.0")
+assert_eq(first, first2)
+
+// ④ 缺失 / 越界一律 null，不会崩
 assert_eq(jsons.dig(data, "user.nope"), null)
+assert_eq(jsons.dig(data, ["user", "tags", 9]), null)   // 下标越界
 assert_eq(jsons.dig(data, ""), null)      // 空路径也返回 null
 ```
+
+> 每层按**当前值**的类型分派：字典查字符串键、数组查下标（`int`，或点分段里的整串数字）。
+> 在标量上继续下钻、非数字段用在数组上 ⇒ 一律 `null`（不抛异常）。
 
 > **为什么需要它**：`decode` 返回 `any`，而 Leno **不允许**在 `any` 上直接下标/取字段
 > （编译期就拦，这是有意的安全设计）⇒ 取 `data["user"]["name"]` 得先

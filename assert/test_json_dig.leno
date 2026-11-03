@@ -36,6 +36,14 @@ main() {
     var u = jsons.dig(data, "user") as Dict[string, any]
     assert_eq(u["name"], "alice", "单层与下标结果一致")
 
+    // ⑥b 穿过 JSON 数组：数组路径用 int 下标，点分路径用整串数字段（2026-11-03 补）
+    //   此前 json_pick 只认"字典 + 字符串键" ⇒ 这两条都返回 null（文档却写着"键是数字时用它"）
+    assert_eq(jsons.dig(data, ["user", "tags", 0]), "a", "数组下标（数组路径）")
+    assert_eq(jsons.dig(data, "user.tags.0"), "a", "数组下标（点分路径）")
+    assert_eq(jsons.dig(data, ["user", "tags", 5]), null, "下标越界 ⇒ null")
+    assert_eq(jsons.dig(data, "user.tags.x"), null, "非数字段不能当下标")
+    assert_eq(jsons.dig(data, ["user", "name", 0]), null, "在标量上按下标 ⇒ null")
+
     // ⑦ 非字符串/非数组 path ⇒ null，不崩
     assert_eq(jsons.dig(data, 123), null, "非法 path")
 

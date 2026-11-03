@@ -880,6 +880,43 @@ static Value json_pick(Value obj, Value key) {
     return dict_get(d, key);
 }
 
+// dig 的一步：字典按字符串键取；**数组**按下标取（2026-11-03 补）
+// ----------------------------------------------------------------------------
+// 为什么单独一个而不是直接改 json_pick：get_str/get_obj 那几个参数的语义是"字典取键"，
+//   在数组上返回 null 是它们既定的口径（不该因为 dig 需要遍历数组就改变 get_* 的行为）。
+// 下标来源两种：
+//   · 数组路径 `["a", 1]` —— 元素本身是 int；
+//   · 点分路径 `"a.1.b"` —— 段是**整串数字**才当下标（"1x" 之类仍视为普通键 ⇒ null）。
+// 越界 / 非数字 / 中途不是容器 ⇒ null（不抛异常，与 dig 其它分支同口径 ✓）
+static Value json_dig_step(Value cur, Value key) {
+    if (!val_is_obj(cur)) return val_null();
+    ObjType t = val_as_obj(cur)->type;
+
+    if (t == OBJ_DICT) return json_pick(cur, key);
+
+    if (t == OBJ_ARRAY) {
+        int idx = -1;
+        if (val_is_int(key)) {
+            idx = (int)val_as_int(key);
+        } else if (val_is_obj(key) && val_as_obj(key)->type == OBJ_STRING) {
+            const char* s = ((ObjString*)val_as_obj(key))->chars;
+            if (!s || !*s) return val_null();
+            int v = 0;
+            for (const char* q = s; *q; q++) {
+                if (*q < '0' || *q > '9') return val_null();
+                if (v > 200000000) return val_null();   // 防溢出（也远超任何真实数组长度）
+                v = v * 10 + (*q - '0');
+            }
+            idx = v;
+        }
+        ObjArray* arr = (ObjArray*)val_as_obj(cur);
+        if (idx < 0 || idx >= arr->count) return val_null();
+        return arr_read(arr, idx);
+    }
+
+    return val_null();
+}
+
 // 标量 → 文本（字符串/整数/浮点/布尔/BigInt）；容器与 null ⇒ NULL
 static ObjString* json_scalar_text(Value v) {
     if (val_is_obj(v)) {
@@ -1058,8 +1095,9 @@ static Value jsons_get_obj_func(int argc, Value* args) {
 //
 // path 两种形态：
 //   · "a.b.c"（点分字符串）—— 键名不含点时的简写；
-//   · ["a", "b", "c"]（字符串数组）—— 键名本身含点、或键是数字时用它。
-// 任一层不是字典 / 键不存在 / 中途为 null ⇒ 返回 null（与 get_* 同口径）。
+//   · ["a", "b", "c"]（数组）—— 键名本身含点、或需要按下标穿过 JSON 数组时用它。
+// 每层按当前值的类型分派：字典查字符串键、数组查下标（int，或点分段里的整串数字）。
+// 任一层不是容器 / 键或下标不存在 / 中途为 null ⇒ 返回 null（与 get_* 同口径）。
 static Value jsons_dig_func(int argc, Value* args) {
     if (argc < 2) return val_null();
     Value cur = args[0];
@@ -1071,7 +1109,7 @@ static Value jsons_dig_func(int argc, Value* args) {
         ObjArray* arr = (ObjArray*)val_as_obj(path);
         if (arr->count == 0) return val_null();     // 空路径 ⇒ null（同字符串形态）
         for (int i = 0; i < arr->count; i++) {
-            cur = json_pick(cur, arr_read(arr, i));
+            cur = json_dig_step(cur, arr_read(arr, i));
             if (val_is_null(cur)) return val_null();
         }
         return cur;
@@ -1091,7 +1129,7 @@ static Value jsons_dig_func(int argc, Value* args) {
         buf[n] = '\0';
         ObjString* ks = str_new(buf, n);
         if (!ks) return val_null();
-        cur = json_pick(cur, val_obj((Object*)ks));
+        cur = json_dig_step(cur, val_obj((Object*)ks));
         if (val_is_null(cur)) return val_null();
         segments++;
     }
