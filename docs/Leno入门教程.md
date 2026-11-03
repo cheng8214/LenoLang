@@ -625,6 +625,15 @@ main() {
     var inferred_arr = [1, 2, 3]      // 推断为 Array[int]
     var inferred_dict = {"x": 10}     // 推断为 Dict[string, int]
     var inferred_int_dict = {1: "一", 2: "二"}  // 推断为 Dict[int, string]
+
+    // 字面量里的 null 不会把类型锁死（2026-11-03 起）
+    Dict cfg = {"k": null}   // 值类型推成 any（不是 null）
+    cfg["k"] = 6             // ✓ 后填 int
+    cfg["k"] = "s"           // ✓ 换成 string
+
+    Array slots = [null, null]   // 全 null 数组：元素类型是 null
+    slots[0] = 1                 // ✓ 允许填任何值（"待填"的占位）
+    slots[1] = "y"
 }
 ```
 

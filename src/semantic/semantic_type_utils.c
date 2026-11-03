@@ -1693,6 +1693,14 @@ int type_utils_check_array_index_assignment(TypeInfo* obj_type, TypeInfo* value_
     if (!elem_type || elem_type->kind == TYPE_ANY) {
         return 1;  // 数组元素类型未指定或为 any，不检查
     }
+
+    // ★ 2026-11-03：元素类型是 **null** ⇒ 这个数组是"全 null 字面量"建的
+    //   （`Array a = [null]` / `[null, null]`），它本来就是"待填"的占位。
+    //   这类数组允许被赋任何值 —— 否则用户只能先改写成 `Array[any]`，纯噪音；
+    //   而 `Array[int?] arr = [null, null]` 不受影响（元素类型是 int?，kind 仍是 INT）。
+    if (elem_type->kind == TYPE_NULL) {
+        return 1;
+    }
     
     if (!value_type) {
         return 1;  // 无法推断类型，不检查

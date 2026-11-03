@@ -818,6 +818,8 @@
                 //   "可能为 null"（见 leno_vm.h 的 is_nonnull 说明）。
                 //   其它复合赋值（+= 之类）不保证非空 ⇒ 清掉。
                 sym->is_nonnull = (ast->u.compound_assign.op == TOK_COALESCE_ASSIGN) ? 1 : 0;
+                // 记录"这个变量被 ??= 初始化过"（跨分支保留），供可空警告给更具体的修法
+                if (ast->u.compound_assign.op == TOK_COALESCE_ASSIGN) sym->coalesce_inited = 1;
                 ast->u.compound_assign.ref.type_kind = sym->type ? sym->type->kind : TYPE_ANY;
 
                 // ★ 2026-11-02（B1）：空值合并赋值的目标若**永远不可能是 null** ⇒ 恒不生效，直接报错。

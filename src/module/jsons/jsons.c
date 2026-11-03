@@ -1047,6 +1047,60 @@ static Value jsons_get_obj_func(int argc, Value* args) {
 }
 
 // jsons.keys(obj)：字典键列表（插入序；非字符串键转文本 ✓）；非字典 ⇒ 空数组
+// jsons.dig(obj, path)：按路径**逐层**取值（2026-11-03）
+//
+// 为什么需要它：`jsons.decode` 返回 `any`，而 Leno 不允许在 any 上做下标/字段访问
+//   （编译期就拦，这是有意的安全设计）⇒ 取嵌套字段得写
+//     var u = data["user"] as Dict[string, any]
+//     var name = u["name"]
+//   每一层来一遍。dig 把这个套路收成一行，且**不放松任何类型检查**（它返回 any，
+//   调用点照旧 `_str()` / `_int()` 收窄）。
+//
+// path 两种形态：
+//   · "a.b.c"（点分字符串）—— 键名不含点时的简写；
+//   · ["a", "b", "c"]（字符串数组）—— 键名本身含点、或键是数字时用它。
+// 任一层不是字典 / 键不存在 / 中途为 null ⇒ 返回 null（与 get_* 同口径）。
+static Value jsons_dig_func(int argc, Value* args) {
+    if (argc < 2) return val_null();
+    Value cur = args[0];
+    Value path = args[1];
+    if (!val_is_obj(path)) return val_null();
+
+    // ① 数组形态：逐元素当键取
+    if (val_as_obj(path)->type == OBJ_ARRAY) {
+        ObjArray* arr = (ObjArray*)val_as_obj(path);
+        if (arr->count == 0) return val_null();     // 空路径 ⇒ null（同字符串形态）
+        for (int i = 0; i < arr->count; i++) {
+            cur = json_pick(cur, arr_read(arr, i));
+            if (val_is_null(cur)) return val_null();
+        }
+        return cur;
+    }
+
+    // ② 字符串形态：按 '.' 拆
+    if (val_as_obj(path)->type != OBJ_STRING) return val_null();
+    ObjString* sp = (ObjString*)val_as_obj(path);
+    const char* p = sp->chars;
+    char buf[256];
+    int segments = 0;
+    while (p && *p) {
+        int n = 0;
+        while (*p && *p != '.' && n < (int)sizeof(buf) - 1) buf[n++] = *p++;
+        if (*p == '.') p++;
+        if (n == 0) continue;              // 连续的 '.' 直接跳过
+        buf[n] = '\0';
+        ObjString* ks = str_new(buf, n);
+        if (!ks) return val_null();
+        cur = json_pick(cur, val_obj((Object*)ks));
+        if (val_is_null(cur)) return val_null();
+        segments++;
+    }
+    // 空路径（""、".." 之类）⇒ null，**不要**"原样返回整个对象" ——
+    //   否则"路径写错"会静默拿到整个 data，比报错更难查。
+    if (segments == 0) return val_null();
+    return cur;
+}
+
 static Value jsons_keys_func(int argc, Value* args) {
     (void)argc;
     ObjArray* arr = arr_new(8);
@@ -1121,4 +1175,8 @@ void jsons_init_module(void) {
 
     TypeKind write_text_params[] = {TYPE_STRING, TYPE_STRING};
     native_register_module_method("jsons", "write_text", jsons_write_text_func, &NATIVE_T_BOOL, NATIVE_FIXED(write_text_params));
+
+    // dig(obj, path)：按路径逐层取值（any 场景专用，见函数头的说明）
+    TypeKind dig_params[] = {TYPE_ANY, TYPE_ANY};
+    native_register_module_method("jsons", "dig", jsons_dig_func, &NATIVE_T_ANY, NATIVE_FIXED(dig_params));
 }

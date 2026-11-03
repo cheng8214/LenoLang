@@ -1026,14 +1026,41 @@ static int ast_var_is_nonnull(Semantic* s, Ast* node) {
     return nonnull;
 }
 
+// 该变量是否**在别处**用 `??=` 初始化过（但当前直线路径上没保证）
+static int ast_var_coalesce_inited(Semantic* s, Ast* node) {
+    if (!node || node->kind != AST_VAR || !node->u.var.name) return 0;
+    SymRef ref;
+    memset(&ref, 0, sizeof(ref));
+    Symbol* sym = resolve_variable_with_upvalue_raw(s, node->u.var.name, &ref);
+    int inited = (sym && sym->coalesce_inited);
+    symref_dispose(&ref);
+    return inited;
+}
+
+// 发一条"可空参与算术"的警告，**文案按场景选**：
+//   · 用户在某个分支里 `??=` 过 ⇒ 告诉他"提到分支外 / 在本行前再写一次"，
+//     比泛泛的"请先判空"有用得多（实测这类写法最容易被当成误报）；
+//   · 其它情况仍是原口径。
+static void warn_nullable_arith_site(Semantic* s, Ast* node, int line, int column) {
+    if (ast_var_coalesce_inited(s, node)) {
+        warning_add_at_fmt(WARN_NULLABLE_ARITH, line, column,
+            // ⚠ 操作符拆成两段字面量：连写的 `?` `?` `=` 会被三字符组替换成 '#'
+            "nullable 值类型参与算术运算，运行时可能为 null —— 这个变量**用 `?" "?=` 初始化过**，"
+            "但那条 `?" "?=` 不在本行之前的直线路径上（在别的分支里、或已被后续赋值覆盖）。"
+            "把 `?" "?=` 提到本行之前（最好提到所有分支之前），或在这里再写一次 "
+            "`x ?" "?= 默认值`，编译器就能确认非空");
+    } else {
+        warning_add_at_fmt(WARN_NULLABLE_ARITH, line, column,
+            "nullable 值类型参与算术运算，运行时可能为 null，请先检查变量是否为 null（如 if a != null）");
+    }
+}
+
 static void check_nullable_arith(Semantic* s, Ast* lhs, Ast* rhs,
                                  TypeInfo* left, TypeInfo* right, int line, int column) {
     if (is_nullable_value_kind(left) && !ast_var_is_nonnull(s, lhs)) {
-        warning_add_at_fmt(WARN_NULLABLE_ARITH, line, column,
-            "nullable 值类型参与算术运算，运行时可能为 null，请先检查变量是否为 null（如 if a != null）");
+        warn_nullable_arith_site(s, lhs, line, column);
     } else if (is_nullable_value_kind(right) && !ast_var_is_nonnull(s, rhs)) {
-        warning_add_at_fmt(WARN_NULLABLE_ARITH, line, column,
-            "nullable 值类型参与算术运算，运行时可能为 null，请先检查变量是否为 null（如 if a != null）");
+        warn_nullable_arith_site(s, rhs, line, column);
     }
 }
 
@@ -1398,6 +1425,10 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     }
                 }
                 if (!result) {
+                    // ⚠ 数组**不**把全 null 推成 any（与字典不同）：
+                    //   `Array[int?] arr = [null, null]` 是合法写法，推成 `Array[any]` 会因为
+                    //   "数组类型不变"而报不匹配（实测回归）。`[null]` 的"待填"需求改由
+                    //   下标赋值检查放行（元素类型是 null ⇒ 允许赋任何值，见 check_index_assign）。
                     if (!element_type) {
                         element_type = type_new(TYPE_ANY);
                     }
@@ -1450,6 +1481,16 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                 }
                 if (!key_type) key_type = type_new(TYPE_STRING);
                 if (!value_type) value_type = type_new(TYPE_ANY);
+                // ★ 2026-11-03：**值类型是 null 字面量 ⇒ 用 any**。
+                //   `{"k": null}` 的本意是"这个键现在是空的、以后可能填任何东西"，
+                //   而推断成 `Dict[string, null]` 会让 `d["k"] = 6` 报
+                //   「期望类型: null，实际类型: int」——用户会以为"字典不能存别的值"
+                //   （实测踩到过：必须先写 `Dict[string, any] d = {...}` 才行）。
+                //   null 字面量不携带元素类型信息，取 any 才符合直觉。
+                if (value_type->kind == TYPE_NULL) {
+                    type_free(value_type);
+                    value_type = type_new(TYPE_ANY);
+                }
                 result = type_dict(key_type, value_type);
             }
             ast->cached_type = type_copy(result);

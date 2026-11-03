@@ -68,5 +68,24 @@ main() {
 ")
     ce.expect_warning(f5, "右侧仍检查", "可空类型运算", 4)
 
+    // ---- ⑥ `??=` 过、但后续被赋值覆盖 ⇒ 警告文案要指出"提到本行之前" ----
+    //   旧文案只会说"请先检查变量是否为 null"，用户明明 ??= 过会觉得是误报。
+    var f6 = dirs.join(work, "coalesced_then_overwritten.leno")
+    files.write(f6, @"func compute(): int {
+    int? acc = null
+    acc ??= 1
+    acc = acc + 1
+    acc = acc + 1
+    return acc
+}
+
+main() {
+    print(_int(compute()))
+}
+")
+    var out6 = ce.expect_warning(f6, "??= 后被覆盖", "不在本行之前的直线路径上", 5)
+    assert_true(strings.has(out6, "提到本行之前"),
+        "文案应给出「把 ??= 提到本行之前」的修法；输出=" + out6)
+
     print("=== test_coalesce_narrow ALL passed ===")
 }

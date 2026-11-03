@@ -6,7 +6,7 @@
 
 - [使用方式](#使用方式)
 - [JSON 解码](#json-解码)
-- [取值助手（T21）](#取值助手t21)
+- [取值助手（T21）](#取值助手t21)（含 `dig` 路径取值）
 - [JSON 编码](#json-编码)
 - [文件操作](#文件操作)
 - [数据类型映射](#数据类型映射)
@@ -137,6 +137,32 @@ var ok      = jsons.get_bool(acc, "ok", false)
 var user = jsons.get_obj(acc, "user")        // 嵌套对象（any）
 var name = jsons.get_str(user, "name", "")   // 再取一层，仍是零收窄 ✓
 ```
+
+### `dig(obj, path)`（2026-11-03 新增）
+
+按路径**逐层**取值，任一层缺失 / 不是字典 / 中途是 null ⇒ 返回 `null`。
+返回的是 `any`，调用点照旧用 `_str()` / `_int()` 收窄 —— **不放松任何类型检查**。
+
+```leno
+var data = jsons.decode(json_text)
+
+// ① 点分字符串（键名不含点时最省事）
+var name = jsons.dig(data, "user.name")
+var age  = jsons.dig(data, "user.profile.age")
+
+// ② 字符串数组（键名本身含点、或键是数字时用它）
+var v = jsons.dig(data, ["cfg", "app.name"])
+
+// ③ 缺失一律 null，不会崩
+assert_eq(jsons.dig(data, "user.nope"), null)
+assert_eq(jsons.dig(data, ""), null)      // 空路径也返回 null
+```
+
+> **为什么需要它**：`decode` 返回 `any`，而 Leno **不允许**在 `any` 上直接下标/取字段
+> （编译期就拦，这是有意的安全设计）⇒ 取 `data["user"]["name"]` 得先
+> `var u = data["user"] as Dict[string, any]`，每层来一遍。
+> `dig` 把这个套路收成一行；如果要从根上"直接 `data["a"]["b"]`"，请把解码结果
+> 收窄成 `Dict[string, Dict[string, …]]`（结构固定时更推荐，能拿到精确类型）。
 
 ### `keys(obj)`
 

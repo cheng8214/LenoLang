@@ -1,0 +1,53 @@
+// 字面量里的 null 不再把容器类型锁死（2026-11-03）
+//
+// 旧行为：`Dict d = {"k": null}` 推成 `Dict[string, null]` ⇒ `d["k"] = 6` 报
+//   「期望类型: null，实际类型: int」，用户会以为"字典不能存别的值"。
+// 新行为：
+//   · 字典的值类型是 null 字面量 ⇒ 推成 any（可以后填任何类型）；
+//   · 数组的**元素类型是 null**（全 null 字面量）⇒ 下标赋值放行；
+//   · `Array[int?]` 这类**显式标注**不受影响（元素类型仍是 int?）。
+
+main() {
+    // ① 字典：先 null 后填各种类型
+    Dict d1 = {"k": null}
+    d1["k"] = 6
+    assert_eq(d1["k"], 6, "字典 null 值可后填 int")
+    d1["k"] = "s"
+    assert_eq(d1["k"], "s", "同一键可换成 string")
+
+    // ② 数组：全 null 字面量
+    Array a1 = [null]
+    a1[0] = 7
+    assert_eq(a1[0], 7, "单 null 元素数组可赋值")
+
+    Array a2 = [null, null]
+    a2[0] = 1
+    a2[1] = "y"
+    assert_eq(a2[0], 1, "全 null 数组 [0]")
+    assert_eq(a2[1], "y", "全 null 数组 [1]")
+
+    // ③ 混合（本来推 any）
+    Array a3 = [null, 2]
+    a3[0] = "x"
+    assert_eq(a3[0], "x", "null+int 混合数组")
+
+    // ④ 对照：显式标注仍然生效
+    Dict[string, int] e = {"k": 1}
+    assert_eq(e["k"], 1, "显式 Dict[string,int]")
+
+    Array[int?] arr = [null, null]
+    arr[0] = 5
+    assert_eq(arr[0], 5, "Array[int?] 可赋 int")
+    assert_eq(arr[1], null, "Array[int?] 仍是 null")
+
+    // ⑤ 空字面量不受影响
+    Dict f = {}
+    f["x"] = 1.5
+    assert_eq(f["x"], 1.5, "空字典")
+
+    Array g = []
+    g.add(1)
+    assert_eq(g[0], 1, "空数组")
+
+    print("test_literal_null_infer all passed")
+}

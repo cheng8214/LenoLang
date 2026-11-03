@@ -1,0 +1,46 @@
+// jsons.dig(obj, path)：any 场景下的嵌套取值（2026-11-03）
+//
+// 为什么需要：`jsons.decode` 返回 any，而 Leno 不允许在 any 上做下标/字段访问
+//   （编译期拦，这是有意的安全设计）⇒ 取 `data["user"]["name"]` 得先
+//   `var u = data["user"] as Dict[string, any]` 再 `u["name"]`，每层一遍。
+//   dig 把它收成一行，且不放松任何类型检查（仍返回 any，调用点照旧收窄）。
+// path 支持 "a.b.c"（点分）与 ["a","b"]（数组，键名含点时用）。
+
+import jsons
+
+main() {
+    var data = jsons.decode("{\"user\":{\"name\":\"alice\",\"age\":30,\"tags\":[\"a\"]},\"n\":null}")
+
+    // ① 点分路径
+    assert_eq(jsons.dig(data, "user.name"), "alice", "点分取字符串")
+    assert_eq(jsons.dig(data, "user.age"), 30, "点分取整数")
+
+    // ② 数组路径
+    assert_eq(jsons.dig(data, ["user", "name"]), "alice", "数组路径")
+
+    // ③ 缺失 / 中途是标量 ⇒ null（不崩）
+    assert_eq(jsons.dig(data, "user.nope"), null, "键不存在")
+    assert_eq(jsons.dig(data, "nope.deep.path"), null, "根不存在")
+    assert_eq(jsons.dig(data, "user.name.x"), null, "中途是标量")
+
+    // ④ 空路径 ⇒ null（"路径写错"不静默返回整个对象）
+    assert_eq(jsons.dig(data, ""), null, "空字符串路径")
+    assert_eq(jsons.dig(data, []), null, "空数组路径")
+
+    // ⑤ 取到容器后照常使用（返回值是 any，需收窄）
+    var tags = jsons.dig(data, "user.tags") as Array
+    assert_eq(tags.len(), 1, "取到数组")
+    assert_eq(tags[0], "a", "数组元素")
+
+    // ⑥ 单层取值与下标一致
+    var u = jsons.dig(data, "user") as Dict[string, any]
+    assert_eq(u["name"], "alice", "单层与下标结果一致")
+
+    // ⑦ 非字符串/非数组 path ⇒ null，不崩
+    assert_eq(jsons.dig(data, 123), null, "非法 path")
+
+    // ⑧ 显式 null 值
+    assert_eq(jsons.dig(data, "n"), null, "值是 null")
+
+    print("test_json_dig all passed")
+}
