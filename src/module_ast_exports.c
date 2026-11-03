@@ -1884,12 +1884,27 @@ static void ast_fill_one_extend(ModuleSymbolTable* table, Ast* ext) {
         m->return_struct_name = (fn->u.func.return_type && fn->u.func.return_type->struct_name)
                                     ? strdup(fn->u.func.return_type->struct_name) : NULL;
         m->param_count = fn->u.func.pcnt;
+        // ★ 2026-11-04：默认参数也要带进符号表 —— 否则**跨模块调用点**省略默认参数时
+        //   无从补齐：codegen 拿到 msm=NULL / 没有 param_default_texts ⇒ 发 nil，
+        //   运行期形参是 null（实测 `extend` 的 `func dmg(int n = 5)`，`p.dmg()` 在
+        //   方法体里报「减法: null 不能参与运算」，而 --check 是过的 ✗）。
+        //   口径与 struct 方法（ast_fill_one_struct_meta）完全一致：按参数下标对齐、
+        //   用 ast_default_text 折叠成字面量文本 ✓
+        m->default_count = fn->u.func.default_count;
         if (fn->u.func.pcnt > 0) {
             m->param_types = (TypeKind*)calloc((size_t)fn->u.func.pcnt, sizeof(TypeKind));
             if (m->param_types) {
                 for (int k = 0; k < fn->u.func.pcnt; k++) {
                     TypeInfo* pt = fn->u.func.param_types ? fn->u.func.param_types[k] : NULL;
                     m->param_types[k] = pt ? pt->kind : TYPE_ANY;
+                }
+            }
+            m->param_default_texts = (char**)calloc((size_t)fn->u.func.pcnt, sizeof(char*));
+            if (m->param_default_texts && fn->u.func.param_defaults) {
+                for (int k = 0; k < fn->u.func.pcnt; k++) {
+                    if (fn->u.func.param_defaults[k]) {
+                        m->param_default_texts[k] = ast_default_text(fn->u.func.param_defaults[k]);
+                    }
                 }
             }
         }
@@ -1903,6 +1918,10 @@ static void ast_fill_one_extend(ModuleSymbolTable* table, Ast* ext) {
         free(ms[i].name);
         free(ms[i].return_struct_name);
         free(ms[i].param_types);
+        if (ms[i].param_default_texts) {
+            for (int k = 0; k < ms[i].param_count; k++) free(ms[i].param_default_texts[k]);
+            free(ms[i].param_default_texts);
+        }
     }
     free(ms);
 }

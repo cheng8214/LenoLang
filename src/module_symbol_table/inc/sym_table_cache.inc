@@ -6,7 +6,10 @@
 // ⚠ 版本号登记表：docs/单一事实来源与重复实现收敛.md 第七节
 //   （只覆盖符号表缓存；2026-09-16 撞过车：与上游都用 v23 但格式不同）
 #define LENOSYMC_MAGIC   0x4D59534C  // "LSYM" little-endian
-#define LENOSYMC_VERSION 0x00000028  // v40 (2026-11-02): 新增**跨模块 extend 登记段**
+#define LENOSYMC_VERSION 0x00000029  // v41 (2026-11-04): extend 方法段新增**默认值**
+                                     //   （default_count + 逐参默认值文本）—— 跨模块调用点
+                                     //   省略默认参数时必须靠它补齐，否则运行期形参是 null
+                                     // v40 (2026-11-02): 新增跨模块 extend 登记段
                                      //      （structs 段之后：count + 每项 module_name/type_name +
                                      //       方法签名）—— 旧缓存没有这一段，读取会从 enums 段开始
                                      //       错位 ⇒ 必须升版本整体失效 ✓
@@ -469,6 +472,12 @@ sym_cache_write_string(f, table->funcs[i].optkeys);
             for (uint8_t k = 0; k < pc; k++) {
                 uint8_t pt = (uint8_t)((m->param_types && m->param_types[k]) ? (uint8_t)m->param_types[k] : (uint8_t)TYPE_ANY);
                 fwrite(&pt, 1, 1, f);
+            }
+            // v41：默认参数（同 struct 方法段的口径：个数 + 逐参文本，NULL 表示该参无默认值）
+            uint32_t mdc = (uint32_t)m->default_count;
+            fwrite(&mdc, 4, 1, f);
+            for (uint8_t k = 0; k < pc; k++) {
+                sym_cache_write_string(f, m->param_default_texts ? m->param_default_texts[k] : NULL);
             }
             int32_t ln = (int32_t)m->line;
             fwrite(&ln, 4, 1, f);
@@ -974,6 +983,14 @@ static int sym_cache_deserialize(const char* cache_path, ModuleSymbolTable* tabl
                     if (fread(&pt, 1, 1, f) != 1) goto fail;
                     if (m->param_types) m->param_types[k] = (TypeKind)pt;
                 }
+            }
+            // v41：默认参数（顺序必须与写入一致：param_types → default_count → 逐参文本）
+            uint32_t mdc = 0;
+            if (fread(&mdc, 4, 1, f) != 1) goto fail;
+            m->default_count = (int)mdc;
+            m->param_default_texts = pc > 0 ? (char**)calloc(pc, sizeof(char*)) : NULL;
+            for (uint8_t k = 0; k < pc; k++) {
+                m->param_default_texts[k] = sym_cache_read_string(f);
             }
             int32_t ln = 0;
             if (fread(&ln, 4, 1, f) != 1) goto fail;

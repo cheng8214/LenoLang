@@ -357,6 +357,11 @@ void semantic_register_extends_from_module(Semantic* s, const ModuleSymbolTable*
                 ph->u.func.return_type->struct_name = strdup(m->return_struct_name);
             }
             ph->u.func.is_async = m->is_async;
+            // ★ 2026-11-04：带上默认值个数 —— 跨模块调用省略默认参数时，"至少需要几个"
+            //   的判据（expected_arity - default_count）才不会把带默认值的形参算成必填。
+            //   真实的默认值表达式不在本编译单元（在扩展模块源码里）⇒ 占位符只记个数，
+            //   调用点的值由 codegen 从符号表的 param_default_texts 补 ✓
+            ph->u.func.default_count = m->default_count;
 
             func_table_add(&s->func_table, key, ph);
 

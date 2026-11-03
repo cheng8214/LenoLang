@@ -2,7 +2,7 @@
 // 设计：docs/struct_extend_设计草案.md 第 12 节
 //
 // 覆盖：无参方法 / 带参方法 / 读字段 / 改字段（改的必须是同一个对象）/
-//       **泛型 struct**（签名/方法体里的 T 由目标类型参数解析）
+//       **泛型 struct**（签名/方法体里的 T 由目标类型参数解析）/ 默认参数
 // ⚠ 调用方必须**同时** import 定义模块与扩展模块 —— 扩展方法的存在性来自
 //    扩展模块的符号表（extends 段），缺了它编译期报「类型 ExtPlayer 没有方法 damage」✓
 import "extend_mod_base.leno" as pb
@@ -14,6 +14,12 @@ main()
 
     // ① 定义模块自己的方法
     assert_eq(p.base(), 100)
+
+    // ①b 扩展方法的**默认参数**（跨模块调用点省略时由符号表补齐）
+    assert_eq(p.dmg(), 95)
+    assert_eq(p.dmg(10), 90)
+    assert_eq(p.span(), 100)       // 两个默认值都省略
+    assert_eq(p.span(5), 95)       // 只给第一个
 
     // ② 扩展模块加的**带参**方法（参数传递 + 改字段）
     assert_eq(p.damage(30), 70)

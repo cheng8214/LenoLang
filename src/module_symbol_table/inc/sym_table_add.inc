@@ -610,9 +610,10 @@ const char* module_symbol_table_hint(ModuleSymbolTable* table, const char* name)
 // 使用方（主程序）：import 了 page_download ⇒ 读这条记录，注册 `Player::paint_dl`
 //   占位符 ⇒ `p.paint_dl()` 的"方法存在"检查才通过（运行期由 OP_STRUCT_EXTEND
 //   真正挂到 class 上，按名字查表，不需要编译期索引 ✓）。
-// ⚠ 只深拷贝编译期检查需要的字段（名字 / 参数类型 / 返回类型 / pri / async）；
-//   泛型形参名、默认值文本这些扩展方法用不上，留空 —— 少拷贝只会让检查更宽松，
-//   不会误报（宁漏勿误报的口径 ✓）。
+// ⚠ 深拷贝编译期检查/调用点补默认值需要的字段（名字 / 参数类型 / 返回类型 / pri / async）；
+//   泛型形参名这些扩展方法用不上，留空 —— 少拷贝只会让检查更宽松，不会误报 ✓
+//   ★ 默认值文本**必须拷**（2026-11-04）：跨模块调用点省略默认参数时，codegen 只能从
+//     这里补（拿不到定义模块的 AST）⇒ 漏拷就是运行期形参变 null。
 // ============================================================================
 ModuleExtendSymbol* module_symbol_table_add_extend(ModuleSymbolTable* table,
                                                    const char* module_name,
@@ -651,6 +652,17 @@ ModuleExtendSymbol* module_symbol_table_add_extend(ModuleSymbolTable* table,
                 dst->param_types = (TypeKind*)malloc(sizeof(TypeKind) * (size_t)src->param_count);
                 if (dst->param_types) {
                     memcpy(dst->param_types, src->param_types, sizeof(TypeKind) * (size_t)src->param_count);
+                }
+            }
+            dst->default_count = src->default_count;
+            if (src->param_count > 0 && src->param_default_texts) {
+                dst->param_default_texts = (char**)calloc((size_t)src->param_count, sizeof(char*));
+                if (dst->param_default_texts) {
+                    for (int k = 0; k < src->param_count; k++) {
+                        if (src->param_default_texts[k]) {
+                            dst->param_default_texts[k] = strdup(src->param_default_texts[k]);
+                        }
+                    }
                 }
             }
             dst->is_async = src->is_async;

@@ -8,6 +8,14 @@ extend pb.ExtPlayer {
     }
 
     func hello(): string { return name + "!" }
+
+    // 默认参数（2026-11-04）：跨模块调用点省略时，值必须靠符号表的 param_default_texts
+    // 补齐 —— 此前派生段只抄了"参数类型/返回类型"，默认值没进符号表 ⇒ 运行期形参是 null
+    //（实测 `p.dmg()` 在方法体里报「减法: null 不能参与运算」，而 --check 是过的）
+    func dmg(int n = 5): int { return hp - n }
+
+    // 两个默认值：验证 default_count 与逐参文本都完整（省略部分/全部默认参数）
+    func span(int lo = 0, int hi = 100): int { return hi - lo }
 }
 
 // 跨模块扩展**泛型 struct**：不写 `[T]`，签名/方法体里的 T 由 ExtBox 的参数解析

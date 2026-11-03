@@ -2,7 +2,8 @@
 // 设计：docs/struct_extend_设计草案.md
 //
 // 覆盖：基本用法 / 定义顺序无关 / 多个 extend 块 / 跨块访问 pri 字段与方法 /
-//       改字段 / extend 方法互相调用 / **泛型 struct**（方法里直接引用 T）
+//       改字段 / extend 方法互相调用 / **泛型 struct**（方法里直接引用 T）/
+//       `export func` 修饰（与写在 struct 里的写法一致）
 // ⚠ 报错类场景（重名、加字段、目标不存在、跨模块写法）没法在这里断言 ——
 //    它们会让本文件编不过。那几条由设计文档第 9 节的验收清单手工核对 ✓
 
@@ -31,6 +32,11 @@ extend Player {
 // ② 第二个 extend 块：可以调用前一个块里的 pri 方法（同一类型，语义一致）
 extend Player {
     func combo(): string { return helper() + "!" }
+}
+
+// ②b `export func` 修饰（2026-11-04）：此前被当成"加字段"报错（文档却写着允许 export）
+extend Player {
+    export func exported(): int { return 2 }
 }
 
 // ③ extend 写在 struct **之前**（顺序无关）
@@ -66,6 +72,7 @@ main()
 
     // ③ 两个 extend 块之间互调
     assert_eq(p.combo(), "h-aria!")
+    assert_eq(p.exported(), 2)
 
     // ④ 顺序无关：extend 在前照样能调
     var l = new Later()

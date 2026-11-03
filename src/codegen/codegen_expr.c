@@ -1835,6 +1835,24 @@ static ModuleStructMethod* find_imported_struct_method(Semantic* sem, const char
             }
         }
     }
+    // ★ 2026-11-04：跨模块 **extend** 的方法不在目标 struct 的 methods 里，而在扩展模块
+    //   符号表的 extends 段 ⇒ 同口径再扫一遍。缺了这段，`extend` 方法的默认参数永远补不上：
+    //   实测 `extend` 的 `func dmg(int n = 5)`，`p.dmg()` 在方法体里报
+    //   「减法: null 不能参与运算」（--check 却是过的 ✗）。
+    for (int mi = 0; mi < sem->imported_module_count; mi++) {
+        ImportedModuleInfo* mod = &sem->imported_modules[mi];
+        if (!mod->sym_table) continue;
+        ModuleSymbolTable* t = mod->sym_table;
+        for (int ei = 0; ei < t->extend_count; ei++) {
+            ModuleExtendSymbol* ex = &t->extends[ei];
+            if (!ex->type_name || strcmp(ex->type_name, struct_name) != 0) continue;
+            for (int k = 0; k < ex->method_count; k++) {
+                if (ex->methods[k].name && strcmp(ex->methods[k].name, method_name) == 0) {
+                    return &ex->methods[k];
+                }
+            }
+        }
+    }
     return NULL;
 }
 

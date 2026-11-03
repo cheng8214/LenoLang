@@ -17,7 +17,7 @@
 
 ```
 lib/page_download.leno   extend player.Player { func paint_dl }   ← 定义（方法体在这）
-        ↓ 扫描时登记进 page_download 的符号表（extends 段，.lenosymc v40）
+        ↓ 扫描时登记进 page_download 的符号表（extends 段，.lenosymc v41 含默认值文本）
 主程序 import page_download
         ↓ semantic_register_extends_from_module：挂成 "Player::paint_dl" 占位符
         ↓ visit：字段名→self.字段名、前置隐式 self、方法体语义分析
@@ -40,6 +40,11 @@ lib/page_download.leno   extend player.Player { func paint_dl }   ← 定义（�
 **三期（2026-11-03）**：跨模块扩展**泛型 struct** —— 给隐式 `self` 带上目标类型的
 `generic_args`，方法签名与方法体里的 `T` 就和写在 struct 里一样能解析（此前报
 「未定义的类型: T（请 use 导入）」）。同批补了两条重名诊断（见 §5.3）。
+
+**三期补（2026-11-04）**：跨模块扩展方法的**默认参数** —— 默认值文本随符号表
+（extends 段，v41）带到调用方，codegen 省略实参时按它补齐。此前只抄参数类型，
+运行期形参是 null（`p.dmg()` 在方法体里报「减法: null 不能参与运算」，`--check` 却是过的）。
+另外 `export func` 修饰现在也被接受（此前被误报成"extend 块里不能加字段"）。
 
 ## 1. 背景：为什么需要它
 

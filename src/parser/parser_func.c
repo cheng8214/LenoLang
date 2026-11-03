@@ -3698,9 +3698,14 @@ Ast* parse_extend_stmt(Parser* p) {
     int method_capacity = 8;
 
     while (p->lex.current.type != TOK_RBRACE && p->lex.current.type != TOK_EOF) {
+        // 修饰符：`pri func` / `export func`（也接受 `pri export func` 这种叠写）。
+        // ★ 2026-11-04：此前只认 `pri`，`export func` 会掉进下面的"只能写方法，不能加字段"
+        //   ——报错完全指不到真因（明明写的就是方法），而设计文档第 3 节是允许 export 的。
+        //   `export` 在这里**没有额外语义**：扩展方法随目标类型一起被导入方看见（符号表
+        //   的 extends 段不分 export），接受它只是为了与"写在 struct 里"的写法一致 ✓
         int is_private = 0;
-        if (p->lex.current.type == TOK_PRI) {
-            is_private = 1;
+        while (p->lex.current.type == TOK_PRI || p->lex.current.type == TOK_EXPORT) {
+            if (p->lex.current.type == TOK_PRI) is_private = 1;
             lexer_next(&p->lex);
         }
         if (p->lex.current.type != TOK_FUNC && p->lex.current.type != TOK_ASYNC) {
