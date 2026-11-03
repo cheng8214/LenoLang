@@ -621,6 +621,8 @@
                         //     目前写点：本处、AST_COMPOUND_ASSIGN（本文件）、
                         //     `var` 声明（新符号，天然为 0）、for 迭代变量（作用域内新符号，天然为 0）。
                         sym->is_null_value = 0;
+                        // 普通赋值不保证非空 ⇒ 清掉"已确定非空"（`x ?? = v` 建立的那个）
+                        sym->is_nonnull = 0;
                         ast->u.assign.refs[i].type_kind = sym->type ? sym->type->kind : TYPE_ANY;
                     }
                 }
@@ -812,6 +814,10 @@
                     report_known_null_name(s, ast->u.compound_assign.name, ast->line, ast->column);
                 }
                 sym->is_null_value = 0;
+                // ★ 2026-11-03：`x ?? = v` 之后 x **一定非空** ⇒ 后续算术不用再报
+                //   "可能为 null"（见 leno_vm.h 的 is_nonnull 说明）。
+                //   其它复合赋值（+= 之类）不保证非空 ⇒ 清掉。
+                sym->is_nonnull = (ast->u.compound_assign.op == TOK_COALESCE_ASSIGN) ? 1 : 0;
                 ast->u.compound_assign.ref.type_kind = sym->type ? sym->type->kind : TYPE_ANY;
 
                 // ★ 2026-11-02（B1）：空值合并赋值的目标若**永远不可能是 null** ⇒ 恒不生效，直接报错。

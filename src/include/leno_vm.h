@@ -921,6 +921,14 @@ struct Symbol {
     //        由 VM 的运行期检查兜底（见 src/vm/vminc/run/03_arith.inc 的 OP_ADD_INT 等）。
     int is_null_value;
 
+    // ★ 2026-11-03：`x ??= v` 之后 **x 一定非空** ⇒ 后续算术不必再报
+    //   「nullable 值类型参与算术运算，运行时可能为 null」。
+    //   置位：COMPOUND_ASSIGN 且 op 是空值合并赋值；清零：任何**其它**写点
+    //   （普通赋值 / 其它复合赋值 / 重新声明）。
+    //   ⚠ 已知的保守性缺口：`if cond { a ??= 1 }` 出块之后仍保留该标志（分支内可能没执行），
+    //     后果是**少报一条警告**而不是误报错误 —— 与 is_null_value「宁漏勿误报」同一取舍。
+    int is_nonnull;
+
     // ★ 编译期专用：**未使用局部量**诊断（WARN_UNUSED_VAR，2026-10-10 首次实现）
     //   背景：这条警告在 leno_types.h 有枚举、error.c 有名字表，却**全仓零调用点** ✗
     //     ⇒ 实测 `var x = 1`（从头到尾没用过）编译零诊断 ✓ 静默放过 ✓。

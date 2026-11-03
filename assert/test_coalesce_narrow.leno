@@ -1,0 +1,72 @@
+// `??=` 之后的可空收窄（2026-11-03）
+//
+// `x ??= v` 保证执行后 x 非空 ⇒ 同一路径上再拿 x 做算术，不该再报
+// 「nullable 值类型参与算术运算，运行时可能为 null」。
+// 反例必须仍然报：① 从没 ??= 过；② ??= 之后又被普通赋值覆盖（可能重新变 null）。
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+import strings
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_coalesce_narrow")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ---- ① ??= 之后做算术：不该有警告 ----
+    var f1 = dirs.join(work, "narrow_ok.leno")
+    files.write(f1, @"main() {
+    int? a = null
+    a ??= 5
+    print(_int(a + 1))
+}
+")
+    var out1 = ce.expect_ok(f1, "??= 之后做算术", "6")
+    ce.expect_no_warning(out1, "??= 之后做算术", "可空类型运算")
+
+    // ---- ② 模块级变量同理 ----
+    var f2 = dirs.join(work, "narrow_global.leno")
+    files.write(f2, @"int? g = null
+
+main() {
+    g ??= 10
+    print(_int(g * 2))
+}
+")
+    var out2 = ce.expect_ok(f2, "模块级 ??= 之后", "20")
+    ce.expect_no_warning(out2, "模块级 ??= 之后", "可空类型运算")
+
+    // ---- ③ 对照：没有 ??= 的仍要警告 ----
+    var f3 = dirs.join(work, "no_narrow.leno")
+    files.write(f3, @"main() {
+    int? b = 1
+    print(_int(b + 1))
+}
+")
+    ce.expect_warning(f3, "没有 ??= 仍警告", "可空类型运算", 3)
+
+    // ---- ④ 对照：??= 之后又被普通赋值 ⇒ 警告回来 ----
+    var f4 = dirs.join(work, "reset.leno")
+    files.write(f4, @"main() {
+    int? c = null
+    c ??= 1
+    c = 0
+    print(_int(c + 1))
+}
+")
+    ce.expect_warning(f4, "重新赋值后警告回来", "可空类型运算", 5)
+
+    // ---- ⑤ 对照：??= 的值本身是算术（右侧）仍按原规则检查 ----
+    var f5 = dirs.join(work, "rhs_warn.leno")
+    files.write(f5, @"main() {
+    int? d = 3
+    int? e = null
+    e ??= d + 1
+    print(_int(e))
+}
+")
+    ce.expect_warning(f5, "右侧仍检查", "可空类型运算", 4)
+
+    print("=== test_coalesce_narrow ALL passed ===")
+}

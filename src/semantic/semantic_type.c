@@ -1011,11 +1011,27 @@ static const char* bitop_group_name(LenoTokenType op) {
     return op == TOK_MOD ? "取模" : "位运算";
 }
 
-static void check_nullable_arith(TypeInfo* left, TypeInfo* right, int line, int column) {
-    if (is_nullable_value_kind(left)) {
+// ★ 2026-11-03：这个操作数是否来自一个**已确定非空**的变量（`x ??= v` 之后）。
+//   只认"裸变量"形态 —— `a.b`、`f()` 之类不追。
+static int ast_var_is_nonnull(Semantic* s, Ast* node) {
+    if (!node || node->kind != AST_VAR || !node->u.var.name) return 0;
+    // ⚠ 这里必须用**栈上清零的** SymRef + raw 版本：
+    //   resolve_* 会 `free(ref->name)` 再赋值 ⇒ 不初始化就是 free 野指针（实测堆损坏崩溃）；
+    //   用 raw 是为了不改 is_read（否则"只写不读"的未使用变量警告会被这里洗掉）。
+    SymRef ref;
+    memset(&ref, 0, sizeof(ref));
+    Symbol* sym = resolve_variable_with_upvalue_raw(s, node->u.var.name, &ref);
+    int nonnull = (sym && sym->is_nonnull);
+    symref_dispose(&ref);
+    return nonnull;
+}
+
+static void check_nullable_arith(Semantic* s, Ast* lhs, Ast* rhs,
+                                 TypeInfo* left, TypeInfo* right, int line, int column) {
+    if (is_nullable_value_kind(left) && !ast_var_is_nonnull(s, lhs)) {
         warning_add_at_fmt(WARN_NULLABLE_ARITH, line, column,
             "nullable 值类型参与算术运算，运行时可能为 null，请先检查变量是否为 null（如 if a != null）");
-    } else if (is_nullable_value_kind(right)) {
+    } else if (is_nullable_value_kind(right) && !ast_var_is_nonnull(s, rhs)) {
         warning_add_at_fmt(WARN_NULLABLE_ARITH, line, column,
             "nullable 值类型参与算术运算，运行时可能为 null，请先检查变量是否为 null（如 if a != null）");
     }
@@ -1519,7 +1535,7 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     }
                     // nullable 值类型参与算术运算 -> 警告
                     else if (is_nullable_value_kind(left) || is_nullable_value_kind(right)) {
-                        check_nullable_arith(left, right, ast->line, ast->column);
+                        check_nullable_arith(s, ast->u.binop.l, ast->u.binop.r, left, right, ast->line, ast->column);
                         // 继续走数值类型推导
                         if (left->kind == TYPE_GENERIC_PARAM) {
                             result = type_copy(left);
@@ -1584,7 +1600,7 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     }
                     // nullable 值类型参与算术运算 -> 警告
                     else if (is_nullable_value_kind(left) || is_nullable_value_kind(right)) {
-                        check_nullable_arith(left, right, ast->line, ast->column);
+                        check_nullable_arith(s, ast->u.binop.l, ast->u.binop.r, left, right, ast->line, ast->column);
                         if (left->kind == TYPE_GENERIC_PARAM) {
                             result = type_copy(left);
                         } else if (right->kind == TYPE_GENERIC_PARAM) {
@@ -1649,7 +1665,7 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     }
                     // nullable 值类型参与算术运算 -> 警告
                     else if (is_nullable_value_kind(left) || is_nullable_value_kind(right)) {
-                        check_nullable_arith(left, right, ast->line, ast->column);
+                        check_nullable_arith(s, ast->u.binop.l, ast->u.binop.r, left, right, ast->line, ast->column);
                         if (left->kind == TYPE_INT && right->kind == TYPE_INT) {
                             result = type_new(TYPE_INT);
                         } else if (left->kind == TYPE_FLOAT || right->kind == TYPE_FLOAT) {
@@ -1728,7 +1744,7 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     }
                     // nullable 值类型参与位运算/取模 -> 警告
                     else if (is_nullable_value_kind(left) || is_nullable_value_kind(right)) {
-                        check_nullable_arith(left, right, ast->line, ast->column);
+                        check_nullable_arith(s, ast->u.binop.l, ast->u.binop.r, left, right, ast->line, ast->column);
                         if (left->kind == TYPE_BIGINT || right->kind == TYPE_BIGINT) {
                             result = type_new(TYPE_BIGINT);
                         } else {
