@@ -1,0 +1,80 @@
+// 插值格式说明符的**编译期校验**（2026-11-03）
+//
+// 修前：spec 打错会静默输出垃圾，数字整个丢掉却一声不吭 ——
+//   `{n:y}` ⇒ `%y`、`{pi:.2F}` ⇒ `%F`、`{n:dd}` ⇒ `42d`、`{n:zz}` ⇒ `%zz`。
+// 修后：编译期按 format 实际支持的转换符（s d i u f e E g G c x X o b t %）校验，
+//   结构不合法就报错并指出具体哪一位错了。
+//
+// 顺带钉住另一条：这些错误以前会报两次（"重复 2 次"），因为以标识符开头的表达式语句
+//   会被"是不是赋值语句"的探测式解析完整跑一遍再回滚重解析。已在回滚处截断错误列表。
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+import strings
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_diag_interp_spec")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ---- ① 未知转换符 ----
+    var f1 = dirs.join(work, "bad_conv.leno")
+    files.write(f1, @"main() {
+    int n = 42
+    print($""{n:y}"")
+}
+")
+    var out1 = ce.expect_error(f1, "未知转换符", "转换符 `y` 不认识", 3)
+    // ★ 只报一次（修前是两次，显示"重复 2 次"）
+    ce.expect_no_warning(out1, "未知转换符只报一次", "重复 2 次")
+
+    // ---- ② 大写 F 特判 ----
+    var f2 = dirs.join(work, "bad_capf.leno")
+    files.write(f2, @"main() {
+    float pi = 3.14159
+    print($""{pi:.2F}"")
+}
+")
+    ce.expect_error(f2, "大写 F", "转换符 `F` 不支持", 3)
+
+    // ---- ③ 转换符后有多余字符 ----
+    var f3 = dirs.join(work, "bad_extra.leno")
+    files.write(f3, @"main() {
+    int n = 42
+    print($""{n:dd}"")
+}
+")
+    ce.expect_error(f3, "多余字符", "之后还有多余字符", 3)
+
+    // ---- ④ 缺转换符 ----
+    var f4 = dirs.join(work, "no_conv.leno")
+    files.write(f4, @"main() {
+    int n = 42
+    print($""{n:.2}"")
+}
+")
+    ce.expect_error(f4, "缺转换符", "缺少转换符", 3)
+
+    // ---- ⑤ 对照：合法写法一律不报错 ----
+    var f5 = dirs.join(work, "ok.leno")
+    files.write(f5, @"main() {
+    int n = 42
+    float pi = 3.14159
+    string s = ""hi""
+    print($""{n:d}|{pi:.2f}|{n:x}|{n:X}|{n:08d}|{pi:e}|{s:s}|{n:b}|{n:o}|{n:%%}"")
+}
+")
+    ce.expect_ok(f5, "合法 spec", "42|3.14|2a|2A|00000042|3.141590e+00|hi|101010|52|%")
+
+    // ---- ⑥ 对照：`{x:%.2f}` 这种自己写 % 开头的老手写法 ----
+    var f6 = dirs.join(work, "pct_prefix.leno")
+    files.write(f6, @"main() {
+    float pi = 3.14159
+    print($""{pi:%.2f}"")
+}
+")
+    ce.expect_ok(f6, "带 % 前缀", "3.14")
+
+    print("=== test_diag_interp_spec ALL passed ===")
+}

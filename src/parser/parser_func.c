@@ -1819,6 +1819,10 @@ Ast* parse_expression_stmt(Parser* p) {
     
     // 保存当前位置，以便失败时恢复
     Lexer save_lex = p->lex;
+    // ★ 2026-11-03：记下错误数快照。下面的"是不是赋值语句"是**探测式解析**（完整解析一遍、
+    //   判不出来就回滚重解析）⇒ 探测期间报的语法错若不丢掉，正式解析会再报一遍，
+    //   用户看到的就是"(重复 2 次)"（实测：`take($"{n:y}")` 一条错报两次）。
+    int err_mark = error_count();
     
     // 尝试解析第一个赋值目标（变量或索引表达式）
     if (p->lex.current.type == TOK_IDENT) {
@@ -2026,6 +2030,12 @@ Ast* parse_expression_stmt(Parser* p) {
     }
     
 normal_parse:
+    // ★ 2026-11-03：走到这里说明"赋值探测"失败并回滚了（或压根没探测）。
+    //   把探测期间产生的诊断截断掉 —— 正式解析会把同样的错重新报一遍，
+    //   否则用户看到的是"(重复 2 次)"（一条错算两次）。
+    //   ⚠ 没探测过时 err_mark 就是当前条数 ⇒ 这里是 no-op，不会误删。
+    error_truncate_to(err_mark);
+
     // 普通表达式解析
     Ast* expr = parse_expression(p);
     

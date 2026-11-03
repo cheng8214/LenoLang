@@ -92,6 +92,13 @@ void error_add_at_fmt_dedup(ErrorType type, int line, int column, const char* fm
 int error_has_at(int line, int column, const char* msg);
 int error_has_any(void);
 int error_count(void);
+// ★ 2026-11-03：把错误列表**截断**回 error_count() 的快照。
+//   用途：`parse_expression_stmt` 为了支持并行赋值，会先用完整解析猜一次
+//   "这条语句是不是赋值"；猜错就回滚重解析 ⇒ 探测期间报的语法错会留在列表里，
+//   正式解析再报一遍，用户看到的就是"(重复 2 次)"（以为写了两处）。
+//   回滚时调用它把探测期的诊断丢掉。
+//   ⚠ 只做截断（Error 是定长结构、msg 不是堆指针）⇒ 不需要 free，回调 mark 之前的条目原样保留。
+void error_truncate_to(int mark);
 void error_clear(void);
 void error_print_all(void);
 

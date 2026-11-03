@@ -273,6 +273,13 @@ int error_has_any(void) {
     return errors.count > 0;
 }
 
+// ★ 2026-11-03：截断回快照（配合"探测式解析"回滚，见 leno_error.h 的说明）。
+//   Error 的 msg 是**定长数组**、list 是静态数组 ⇒ 只改 count 即可，无需释放任何东西。
+void error_truncate_to(int mark) {
+    if (mark < 0) return;
+    if (mark < errors.count) errors.count = mark;
+}
+
 int error_count(void) {
     return errors.count;
 }

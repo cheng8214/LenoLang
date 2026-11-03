@@ -247,6 +247,81 @@ Ast* parse_raw_string(Parser* p) {
 // （`.` 是 TOK_DOT、`2f` 会被切成数字 + 标识符），而它是纯 ASCII、不含换行，
 // 直接按原文扫到 `}` 最省事。扫完把 lexer 的 pos 推到 `}`，再正常取一个 token 即可。
 // ============================================================================
+// 插值 spec 的**编译期校验**（2026-11-03）：`{x:.2F}` / `{n:y}` / `{n:dd}` 这类手误
+//   以前会静默输出垃圾（实测 `{n:y}` ⇒ `%y`、`{pi:.2F}` ⇒ `%F`、`{n:dd}` ⇒ `42d`），
+//   数字整个丢掉却一声不吭 —— 正是本项目最忌讳的"看起来对、结果错"。
+//
+// 合法结构（与 printf 一致）：`[flags][width][.precision]conversion`
+//   flags      : `-` `+` 空格 `0` `#`（可重复、任意顺序）
+//   width      : 十进制数字
+//   precision  : `.` + 十进制数字
+//   conversion : 必须属于 **format 实际支持**的那一组（见 src/module/strings/strings.c
+//                的 switch：s d i u f e E g G c x X o b t %）
+//
+// 返回 1 = 合法；0 = 不合法（err 里写原因，调用方再拼成完整提示）。
+static int interp_spec_validate(const char* spec, char* err, int errsz) {
+    const char* p = spec;
+    if (!p || !*p) { snprintf(err, (size_t)errsz, "说明符为空"); return 0; }
+    if (*p == '%') p++;                       // 允许自己写 `%` 开头
+
+    // ① flags
+    while (*p == '-' || *p == '+' || *p == ' ' || *p == '0' || *p == '#') p++;
+
+    // ② width
+    while (*p >= '0' && *p <= '9') p++;
+
+    // ③ precision
+    if (*p == '.') {
+        p++;
+        if (!(*p >= '0' && *p <= '9')) {
+            snprintf(err, (size_t)errsz,
+                     "`.` 后面要跟数字（如 `.2f` 表示保留两位小数），现在是 `.%c`", *p ? *p : '\0');
+            return 0;
+        }
+        while (*p >= '0' && *p <= '9') p++;
+    }
+
+    // ④ conversion
+    if (!*p) {
+        snprintf(err, (size_t)errsz,
+                 "缺少转换符 —— 结尾要写 `f`（小数）/ `d`（整数）/ `s`（字符串）这类");
+        return 0;
+    }
+    int known = 0;
+    switch (*p) {
+        case 's': case 'd': case 'i': case 'u': case 'f':
+        case 'e': case 'E': case 'g': case 'G': case 'c':
+        case 'x': case 'X': case 'o': case 'b': case 't': case '%':
+            known = 1;
+            break;
+        default:
+            known = 0;
+            break;
+    }
+    if (!known) {
+        if (*p == 'F') {
+            snprintf(err, (size_t)errsz,
+                     "转换符 `F` 不支持（format 只认小写 `f`）—— 保留两位小数写 `.2f`");
+        } else {
+            snprintf(err, (size_t)errsz,
+                     "转换符 `%c` 不认识 —— 可用：f 小数 / d 整数 / s 字符串 / x 十六进制 / "
+                     "X 大写十六 / o 八进制 / b 二进制 / e E g G 科学计数与通用 / c 字符 / %% 百分号",
+                     *p);
+        }
+        return 0;
+    }
+    p++;
+
+    // ⑤ 转换符之后不能再有东西
+    if (*p) {
+        snprintf(err, (size_t)errsz,
+                 "转换符 `%c` 之后还有多余字符 `%s` —— 完整写法是 `[宽度][.精度]转换符`，"
+                 "例如 `.2f` / `08d` / `x`", *(p - 1), p);
+        return 0;
+    }
+    return 1;
+}
+
 static Ast* parse_interp_format_spec(Parser* p, Ast* expr) {
     int line = p->lex.current.line;
     int col = p->lex.current.column;
@@ -268,6 +343,17 @@ static Ast* parse_interp_format_spec(Parser* p, Ast* expr) {
         char spec[64];
         memcpy(spec, src + start, (size_t)spec_len);
         spec[spec_len] = '\0';
+
+        // ★ 2026-11-03：**编译期校验说明符**。以前拼错（`.2F` / `y` / `dd` / `2f`）
+        //   会静默输出 `%F` / `%y` / `42d` —— 数字整个丢掉却一声不吭。
+        //   校验规则与 format 实际支持的转换符一一对应（见 interp_spec_validate 的说明）。
+        {
+            char serr[256];
+            if (!interp_spec_validate(spec, serr, (int)sizeof(serr))) {
+                error_add_at_fmt(ERR_SYNTAX, line, col,
+                    "插值的格式说明符不合法：%s", serr);
+            }
+        }
 
         // ★ 2026-11-03（fuzz 发现）：`{x:.1%}` 这种"百分比"写法会把数字整个吃掉。
         //   `%` 在 printf 里是"输出一个百分号"、**不消费参数** ⇒ 拼成 `"%.1%"` 后
