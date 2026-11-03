@@ -3584,7 +3584,9 @@ var make = (int a) => (int b) => a + b
 print(make(1)(2))           // 3
 ```
 
-> **两个口径**：
+> **三个口径**：
+> - **体只能是单个表达式**，不能写 `{ … }`（`x => { x + 1 }` 会报错）。
+>   要写多条语句请改回 `func(参数) { … }`；也不能写返回类型（`(int x): int => …` 同样报错）。
 > - **省略类型的参数是 `any`**（与 `func(any x)` 同）。函数类型是**按完整签名**比较的，
 >   所以 `func(any):any` 传不进 `func(int):int` 的形参 —— 这种位置要写 `(int x) => …`。
 > - `if` / `while` 的条件、`switch` 的 `case` 值**不接受**箭头函数
@@ -8558,11 +8560,19 @@ main() {
     print(s.to_upper())     // HELLO WORLD
     print(s.to_lower())     // hello world
 
-    // 修剪空白
+    // 修剪空白（⚠ 只认 ASCII 空白：空格 / \t / \n …）
     var s2 = "  hello world  "
     print(s2.trim())        // 'hello world'
     print(s2.trim_start())  // 'hello world  '
     print(s2.trim_end())    // '  hello world'
+
+    // Unicode 空白修剪（2026-11-03 新增）：额外认全角空格 U+3000、NBSP U+00A0 等
+    var cn2 = "\u3000你好\u3000"        // 两端是全角空格
+    print(cn2.len())              // 4 —— 4 个字符，全角空格也算一个
+    print(cn2.trim().len())       // 4 ← trim 不认识全角空格，原样返回
+    print(cn2.trim_unicode())     // '你好'  ← 裁掉两端
+    print(cn2.trim_start_unicode())   // '你好　'
+    print(cn2.trim_end_unicode())     // '　你好'
 
     // 包含检查
     var s3 = "hello.txt"
@@ -11512,7 +11522,8 @@ lenolang program.leno
 | for 遍历字符串 | `for str to char`, `for str to char, index`（按 Unicode 字符遍历） |
 | while 循环  | `while i < 10 { }`                             |
 | switch    | `switch x { case v { } case is Type { } case is Point(a, b) { } default { } }` |
-| switch 优化 | 同类型 case ≥ 4 个时自动二分查找（int/float/string），无需手动干预 |
+| switch 区间 case | `case 0:59 { }` —— 闭区间，与切片 `arr[2:8]` 同符号同口径 |
+| switch 性能 | 一律展开成**线性比较链**（没有自动二分/跳转表）；case 很多且集中在末尾时请自己分档 |
 
 ### 运算符
 
