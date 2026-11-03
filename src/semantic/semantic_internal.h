@@ -78,7 +78,9 @@ int semantic_import_native_type(Semantic* s, const NativeStructSpec* spec);
 // 泛型方法经那条路会**静默跳过类型检查**（详见 semantic_type_utils.c 的说明）。
 void semantic_register_struct_from_module(Semantic* s, const ModuleStructSymbol* ssym);
 // 跨模块 extend：把扩展模块登记的方法挂成 "类型::方法" 占位符（2026-11-02）
-void semantic_register_extends_from_module(Semantic* s, const ModuleSymbolTable* table);
+//   line/column = 触发本次登记的 import 语句位置（跨模块重名报错落在这一行）
+void semantic_register_extends_from_module(Semantic* s, const ModuleSymbolTable* table,
+                                          int line, int column);
 
 // 跨模块 struct 方法的实参检查（**唯一实现**）：方法调用的实参检查在本仓有两份拷贝，
 // 两份都只在本编译单元的 root AST 里找 struct 声明 ⇒ 跨模块时整块跳过。

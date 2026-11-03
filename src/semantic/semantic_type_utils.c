@@ -293,7 +293,8 @@ void semantic_register_struct_from_module(Semantic* s, const ModuleStructSymbol*
 //   运行期由 `OP_STRUCT_EXTEND` 真正把方法挂到 class 上（按名字查表，不需要索引）。
 // ⚠ 只登记**方法存在性 + 签名**；方法体在扩展模块里编译，本模块不碰。
 // ============================================================================
-void semantic_register_extends_from_module(Semantic* s, const ModuleSymbolTable* table) {
+void semantic_register_extends_from_module(Semantic* s, const ModuleSymbolTable* table,
+                                          int line, int column) {
     if (!s || !table || table->extend_count <= 0) return;
     for (int ei = 0; ei < table->extend_count; ei++) {
         const ModuleExtendSymbol* ex = &table->extends[ei];
@@ -305,6 +306,33 @@ void semantic_register_extends_from_module(Semantic* s, const ModuleSymbolTable*
 
             char key[256];
             snprintf(key, sizeof(key), "%s::%s", ex->type_name, m->name);
+            // ★ 2026-11-03：**跨模块**的 extend 同名方法此前完全静默 —— 先导入的那个占住
+            //   func_table，后导入的 `continue` 掉（编译期按先到先得，运行期 OP_STRUCT_EXTEND
+            //   又按模块初始化顺序追加，两边不一定一致）⇒ "我改的方法怎么没生效" 极难查。
+            //   这里扫描已导入的其它模块符号表，发现同一 `类型::方法` 就报错。
+            //   （同文件内的重名由 semantic.c 的 extend_merge_into_block 负责）
+            int dup = 0;
+            for (int im = 0; im < s->imported_module_count && !dup; im++) {
+                ModuleSymbolTable* ot = s->imported_modules[im].sym_table;
+                if (!ot || ot == table) continue;   // 同一个表（重复 import 同模块）不算冲突
+                for (int oi = 0; oi < ot->extend_count && !dup; oi++) {
+                    const ModuleExtendSymbol* oex = &ot->extends[oi];
+                    if (!oex->type_name || strcmp(oex->type_name, ex->type_name) != 0) continue;
+                    for (int om = 0; om < oex->method_count; om++) {
+                        const ModuleStructMethod* om2 = &oex->methods[om];
+                        if (!om2->name || strcmp(om2->name, m->name) != 0) continue;
+                        error_add_at_fmt(ERR_SEMANTIC, line, column,
+                            "extend 方法 '%s::%s' 在多个模块里重复定义：%s 与 %s —— "
+                            "先导入的那个会生效、另一个被静默忽略；请只保留一处",
+                            ex->type_name, m->name,
+                            ot->module_path ? ot->module_path : "?",
+                            table->module_path ? table->module_path : "?");
+                        dup = 1;
+                        break;
+                    }
+                }
+            }
+            if (dup) continue;
             if (func_table_find(&s->func_table, key)) continue;   // 先到先得（本模块或别的扩展模块已登记）
 
             Ast* ph = ast_new(AST_FUNC_DEF, 0);

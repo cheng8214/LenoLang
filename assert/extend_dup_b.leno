@@ -1,0 +1,6 @@
+// 跨模块 extend 重名检测：模块 B 也给 DupS 加 same()（与 A 冲突）
+import "extend_dup_base.leno" as b
+
+extend b.DupS {
+    func same(): int { return 2 }
+}

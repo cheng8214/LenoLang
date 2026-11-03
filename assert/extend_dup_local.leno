@@ -1,0 +1,11 @@
+// 本文件 vs 导入模块的 extend 重名（2026-11-03）
+// extend_dup_a.leno 已经给 DupS 扩展了 same()；本文件再写一份 ⇒ 编译期应报重复定义。
+// 此前完全静默，且本文件这份**永远不生效**（运行期方法查找取先注册的那个）。
+import "extend_dup_base.leno" as b
+import "extend_dup_a.leno"
+
+extend b.DupS {
+    func same(): int { return 3 }
+}
+
+main() { }

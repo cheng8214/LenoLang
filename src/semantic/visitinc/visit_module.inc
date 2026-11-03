@@ -233,7 +233,8 @@
                         //   "类型::方法" 占位符。缺了它，主程序 import 了扩展模块也看不到
                         //   那些方法（报「类型 'struct Player' 没有方法 'paint_dl'」）。
                         //   运行期由 OP_STRUCT_EXTEND 真正挂到 class 上（按名字查表 ✓）
-                        semantic_register_extends_from_module(s, info->sym_table);
+                        semantic_register_extends_from_module(s, info->sym_table,
+                                                             ast->line, ast->column);
                         } // end else（sym_table 非 NULL ⇒ 必然已扫描完成）
                 } else {
                     free(module_name);

@@ -1122,6 +1122,16 @@ main() { }
     ce.expect_error(im2, "源码模块 import 写在函数内要编译报错",
         "源码模块 import 只能写在**模块顶层**", 2)
 
+    // ④ 跨模块 extend 同名方法（2026-11-03）：此前静默采用先导入的那个
+    //    （另一个模块的实现完全不生效、也不报警）⇒ 现在编译期报重复定义
+    ce.expect_error("assert/extend_dup_main.leno", "跨模块 extend 同名方法要报错",
+        "在多个模块里重复定义", 0)
+
+    // ⑤ 本文件 vs 导入模块的 extend 重名（2026-11-03）：本文件那份**永远不生效**
+    //    （编译期占位符先到先得 + 运行期方法查找取先注册的那个）⇒ 编译期报出来
+    ce.expect_error("assert/extend_dup_local.leno", "本文件与导入模块的 extend 同名要报错",
+        "在导入模块", 8)
+
     // ② 用静态 fixture（assert/import_broken*.leno）：坏模块必须在 assert/ 下才能被相对 import 找到
     ce.expect_error("assert/import_broken.leno", "导入有语法错误的模块要报错（报在 fixture 自己那行）",
         "期望 '{'", 8)

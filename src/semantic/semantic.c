@@ -260,6 +260,51 @@ static void extend_merge_into_block(Semantic* s, Ast* block) {
     }
 }
 
+// ============================================================================
+// 跨模块 extend 重名：本文件 vs 已导入模块（2026-11-03）
+// ----------------------------------------------------------------------------
+// 与 semantic_register_extends_from_module 那条互补（那条管 **import 与 import 之间**）。
+// 这里管"本文件自己写的 `extend m.X { func f }`"与"导入模块里的 `extend X { func f }`"
+// 撞名。此前完全静默，而且是**本文件那份永远不生效**：
+//   · 编译期：import 的占位符先进 func_table，本文件的方法被 `func_table_find` 跳过；
+//   · 运行期：OP_STRUCT_EXTEND 按模块初始化顺序**先到先占**，方法查找取**第一个**同名项
+//     ⇒ 无论源码顺序如何，导入模块的实现赢（实测导入后本地再写 `same(): 3`，调用输出 1）。
+// 做法：所有 import 都处理完（visit_list 之后）再扫顶层跨模块 extend，与导入模块符号表
+//   里的 extends 逐条比对 ⇒ 与源码顺序无关 ✓
+// ============================================================================
+static void extend_check_local_vs_imported(Semantic* s, Ast* root) {
+    if (!s || !root || root->kind != AST_BLOCK) return;
+    AstList* list = &root->u.block;
+    for (int i = 0; i < list->count; i++) {
+        Ast* ext = list->items[i];
+        if (!ext || ext->kind != AST_EXTEND_DEF) continue;
+        if (!ext->u.extend_def.module_name) continue;   // 同文件 extend 由 extend_merge_into_block 管
+        if (!ext->u.extend_def.type_name || ext->u.extend_def.method_count <= 0) continue;
+        for (int k = 0; k < ext->u.extend_def.method_count; k++) {
+            Ast* fn = ext->u.extend_def.methods[k];
+            if (!fn || fn->kind != AST_FUNC_DEF || !fn->u.func.name) continue;
+            for (int im = 0; im < s->imported_module_count; im++) {
+                ModuleSymbolTable* t = s->imported_modules[im].sym_table;
+                if (!t) continue;
+                for (int ei = 0; ei < t->extend_count; ei++) {
+                    ModuleExtendSymbol* ex = &t->extends[ei];
+                    if (!ex->type_name || strcmp(ex->type_name, ext->u.extend_def.type_name) != 0) continue;
+                    for (int mi = 0; mi < ex->method_count; mi++) {
+                        ModuleStructMethod* m = &ex->methods[mi];
+                        if (!m->name || strcmp(m->name, fn->u.func.name) != 0) continue;
+                        error_add_at_fmt(ERR_SEMANTIC, fn->line, fn->column,
+                            "extend 方法 '%s::%s' 在导入模块 %s 里也有定义 —— "
+                            "运行期先注册的那个生效、本文件这份会被静默忽略；请只保留一处",
+                            ex->type_name, fn->u.func.name,
+                            s->imported_modules[im].file_path ? s->imported_modules[im].file_path : "?");
+                        break;
+                    }
+                }
+            }
+        }
+    }
+}
+
 void semantic_analyze(Semantic* s, Ast* ast) {
     annos_reset_all();          // 注解（@optkeys）表每个分析单元清一次 ✓
     // import 别名同理：表是进程级静态，而别名是编译单元级声明 ⇒ 不清空会把上一个
@@ -643,6 +688,9 @@ void semantic_analyze(Semantic* s, Ast* ast) {
     //   更早被访问（main 在前 / struct 前向引用）⇒ 当场判会**漏过** ✗
     //   ⇒ 所有定义体都访问完，这里统一复查（与源码顺序无关 ✓）
     semantic_flush_pending_req_checks(s);
+
+    // ★ 本文件 vs 导入模块的 extend 重名（2026-11-03）—— 必须在 import 全部登记之后
+    extend_check_local_vs_imported(s, ast);
 }
 
 void semantic_cleanup(Semantic* s) {
@@ -1004,4 +1052,7 @@ void semantic_analyze_module(Semantic* s, Ast* ast) {
     //   更早被访问（main 在前 / struct 前向引用）⇒ 当场判会**漏过** ✗
     //   ⇒ 所有定义体都访问完，这里统一复查（与源码顺序无关 ✓）
     semantic_flush_pending_req_checks(s);
+
+    // ★ 本文件 vs 导入模块的 extend 重名（2026-11-03）—— 必须在 import 全部登记之后
+    extend_check_local_vs_imported(s, ast);
 }

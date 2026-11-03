@@ -1,0 +1,4 @@
+// 跨模块 extend 重名检测的基类（assert/extend_dup_* 三件套）
+export struct DupS {
+    int x = 1
+}
