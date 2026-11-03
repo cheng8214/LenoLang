@@ -560,6 +560,9 @@ static Ast* parse_arrow_infix(Parser* p, Ast* left) {
             "`func(参数) { … }`；块体（`x => { … }`）目前不支持");
         Ast* blk = parse_block_internal(p); // 吞掉块，避免后面再刷一串级联错
         if (blk) ast_free(blk);
+        // ★ 2026-11-03：params/types 已在这里分配，但本次不会交给 make_arrow_func
+        //   ⇒ 必须显式释放（ASAN 实测这条错误路径每次漏一个 TypeInfo ✗）
+        free_arrow_params(params, types, 1);
         return ast_new(AST_NULL, line);
     }
 
@@ -619,7 +622,13 @@ static Ast* try_parse_arrow_parens(Parser* p) {
             } else {
                 ty = parse_type(p);
                 if (!ty) goto fail;
-                if (p->lex.current.type != TOK_IDENT) goto fail;   // 如 `(x + 1)`
+                // ★ 2026-11-03：`(int x` 后面不是标识符（如 `(int + 1)`）时，
+                //   这个刚解析出来的 ty 还没入 types[] ⇒ 必须在这里释放，
+                //   否则投机解析每次失败都漏一个 TypeInfo（ASAN 实测 120B/次 ✗）。
+                if (p->lex.current.type != TOK_IDENT) {
+                    type_free(ty);
+                    goto fail;
+                }
                 nm = copy_string(p->lex.current.text, p->lex.current.len);
                 lexer_next(&p->lex);
             }
