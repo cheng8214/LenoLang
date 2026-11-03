@@ -44,6 +44,13 @@ main() {
     int maxv = nums.reduce(func(int a, int b) { return if a > b then a else b }, 0)
     assert_eq(maxv, 5)
 
+    // ★ 2026-11-03：initial **可选**（与文档一致）—— 不传初值时用首元素起算。
+    //   修前注册成 NATIVE_FIXED ⇒ 语义层报「期望 2, 实际 1」/「期望 3, 实际 2」✗
+    int sum_noinit = nums.reduce(func(int a, int b) { return a + b })
+    assert_eq(sum_noinit, 15)
+    int r_mod_noinit = arrays.reduce(nums, func(int a, int b) { return a + b })
+    assert_eq(r_mod_noinit, 15)
+
     Array[float] fs = [1.5, 2.5, 3.0]
     float fsum = fs.reduce(func(float a, float b) { return a + b }, 0.0)
     assert_eq(fsum, 7.0)

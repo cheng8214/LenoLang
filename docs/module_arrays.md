@@ -444,22 +444,26 @@ print(mixed.join(" | "))  // 1 | a | true
 **参数**:
 - `callback` (function): 回调函数，接收 `(item, index)` 两个参数，返回转换后的值
 
+> ⚠ 回调的**形参必须写具体类型**（如 `int`）——`var` 已不能作形参（会报
+> 「参数 'x' 不能使用 var 类型」）；不写类型时形参是 `any`，`x > 5` 这类比较会被拒绝。
+> 也可以直接用带类型的箭头函数：`nums.map((int x, int i) => x * 2)`。
+
 **返回**: `Array` - 新数组
 
 ```leno
 var nums = [1, 2, 3, 4, 5]
 
 // 基本用法
-var doubled = nums.map(func(var x, var i) { return x * 2 })
+var doubled = nums.map(func(int x, int i) { return x * 2 })
 print(doubled)  // [2, 4, 6, 8, 10]
 
 // 使用索引
-var indexed = nums.map(func(var x, var i) { return x + i })
+var indexed = nums.map(func(int x, int i) { return x + i })
 print(indexed)  // [1, 3, 5, 7, 9]
 
 // 模块方法
 import arrays
-var tripled = arrays.map(nums, func(var x, var i) { return x * 3 })
+var tripled = arrays.map(nums, func(int x, int i) { return x * 3 })
 ```
 
 ---
@@ -477,11 +481,11 @@ var tripled = arrays.map(nums, func(var x, var i) { return x * 3 })
 var nums = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
 // 过滤偶数
-var evens = nums.filter(func(var x, var i) { return x % 2 == 0 })
+var evens = nums.filter(func(int x, int i) { return x % 2 == 0 })
 print(evens)  // [2, 4, 6, 8, 10]
 
 // 过滤大于5的数
-var big = nums.filter(func(var x, var i) { return x > 5 })
+var big = nums.filter(func(int x, int i) { return x > 5 })
 print(big)  // [6, 7, 8, 9, 10]
 ```
 
@@ -501,15 +505,15 @@ print(big)  // [6, 7, 8, 9, 10]
 var nums = [1, 2, 3, 4, 5]
 
 // 求和（带初始值）
-var sum = nums.reduce(func(var acc, var x, var i) { return acc + x }, 0)
+var sum = nums.reduce(func(int acc, int x, int i) { return acc + x }, 0)
 print(sum)  // 15
 
 // 求积（带初始值）
-var product = nums.reduce(func(var acc, var x, var i) { return acc * x }, 1)
+var product = nums.reduce(func(int acc, int x, int i) { return acc * x }, 1)
 print(product)  // 120
 
 // 不带初始值（使用第一个元素）
-var sum2 = nums.reduce(func(var acc, var x, var i) { return acc + x })
+var sum2 = nums.reduce(func(int acc, int x, int i) { return acc + x })
 print(sum2)  // 15
 ```
 
@@ -523,14 +527,14 @@ print(sum2)  // 15
 var nums = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
 // 先过滤大于3的数，再乘以2
-var result = nums.filter(func(var x, var i) { return x > 3 })
-                 .map(func(var x, var i) { return x * 2 })
+var result = nums.filter(func(int x, int i) { return x > 3 })
+                 .map(func(int x, int i) { return x * 2 })
 print(result)  // [8, 10, 12, 14, 16, 18, 20]
 
 // 复杂管道：过滤偶数 -> 平方 -> 求和
-var sum_of_squares = nums.filter(func(var x, var i) { return x % 2 == 0 })
-                         .map(func(var x, var i) { return x * x })
-                         .reduce(func(var acc, var x, var i) { return acc + x }, 0)
+var sum_of_squares = nums.filter(func(int x, int i) { return x % 2 == 0 })
+                         .map(func(int x, int i) { return x * x })
+                         .reduce(func(int acc, int x, int i) { return acc + x }, 0)
 print(sum_of_squares)  // 220 (4+16+36+64+100)
 ```
 

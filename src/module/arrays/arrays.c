@@ -645,7 +645,11 @@ void arrays_init_module(void) {
     native_register_module_method("arrays", "flatten", arr_flatten, &NATIVE_T_ARR_ARG0_ELEM2, NATIVE_FIXED(flatten_params));
 
     TypeKind reduce_params[] = {TYPE_ARRAY, TYPE_FUNCTION, TYPE_ANY};
-    native_register_module_method("arrays", "reduce", arr_reduce, &NATIVE_T_ARG_REDUCE12, NATIVE_FIXED(reduce_params));
+    // ★ 2026-11-03：initial 是**可选**（arr_reduce 内部 `argc > 2` 才使用初始值；文档也写"可选"）
+    //   原先写 NATIVE_FIXED ⇒ 语义层按 3 个实参硬校验，`arrays.reduce(nums, fn)` 直接报
+    //   「期望 3, 实际 2」✗。改成 VARARG，min=2 / max=3，前 3 个仍按表查类型。
+    native_register_module_method("arrays", "reduce", arr_reduce, &NATIVE_T_ARG_REDUCE12,
+                                  NATIVE_VARARG(2, 3, 3, reduce_params, TYPE_ANY));
 }
 
 void arrays_init_instance_methods(void) {
@@ -705,7 +709,9 @@ void arrays_init_instance_methods(void) {
     native_register_instance_method_return_spec("Array", "flatten", &NATIVE_T_ARR_ARG0_ELEM2);
 
     TypeKind reduce_params[] = {TYPE_FUNCTION, TYPE_ANY};
-    array_register_method("reduce", make_native(arr_reduce,       3, "reduce"), TYPE_ANY, TYPE_UNKNOWN, NATIVE_FIXED(reduce_params));
+    // ★ 2026-11-03：与模块形态同因 —— initial 可选（实例形态实参不含接收者 ⇒ min=1/max=2）
+    array_register_method("reduce", make_native(arr_reduce, NATIVE_ARITY_VARARG, "reduce"),
+                          TYPE_ANY, TYPE_UNKNOWN, NATIVE_VARARG(1, 2, 2, reduce_params, TYPE_ANY));
     // map/reduce 实例规格（⓪ 族声明化）：接收者=0、回调=1、init=2 ⇒ 语义层通用推断点解析 ✓
     native_register_instance_method_return_spec("Array", "map", &NATIVE_T_ARR_CB_RET1);
     native_register_instance_method_return_spec("Array", "reduce", &NATIVE_T_ARG_REDUCE12);
