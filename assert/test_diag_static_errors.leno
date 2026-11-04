@@ -1198,6 +1198,44 @@ main() { }
     assert_true(strings.has(dsout, "extend_dup_struct_base.leno"),
         "同名报错应指向定义 struct 的模块 extend_dup_struct_base.leno；输出=" + dsout)
 
+    // ⑬ 单个跨模块 extend 块的方法数上限（2026-11-04）：`OP_STRUCT_EXTEND` 的方法数是
+    //    **u8** ⇒ 第 256 个会截断成 0（256 = 0x100 ⇒ 低 8 位 0）⇒ 后面的元数据被当成字节码，
+    //    运行期「内存反序列化失败」+「类型没有方法」。修复前 `--check` 全绿、只有运行时才炸 ✗
+    //    ⇒ 现在编译期报「超出上限（最多 255 个）」✓；配一条 255 的**正向对照**（边界值能跑 ✓）
+    var exlim = dirs.join(work, "extend_method_limit")
+    dirs.delete(exlim)
+    dirs.mkdir_p(exlim)
+    files.write(dirs.join(exlim, "lim_base.leno"),
+        "export struct LB {\n    int v = 1\n}\n")
+
+    var limsrc = "import \"lim_base.leno\" as lb\n\nextend lb.LB {\n"
+    var limi = 1
+    while limi <= 256 {
+        limsrc = limsrc + "    func lm" + limi + "(): int {\n        return " + limi + "\n    }\n"
+        limi = limi + 1
+    }
+    limsrc = limsrc + "}\n"
+    var limpage = dirs.join(exlim, "lim_page.leno")
+    files.write(limpage, limsrc)
+    var limout = ce.expect_error(limpage, "跨模块 extend 块方法数 >255 要编译期报错（u8 截断）",
+        "超出上限（最多 255 个）", 3)
+    assert_true(strings.has(limout, "256 个方法"),
+        "报错应点出实际方法数 256；输出=" + limout)
+
+    // 正向对照：恰好 255 个方法**能编译也能跑**（别把上限做成 254 ✗）
+    var lim255 = "import \"lim_base.leno\" as lb\n\nextend lb.LB {\n"
+    var limj = 1
+    while limj <= 255 {
+        lim255 = lim255 + "    func lm" + limj + "(): int {\n        return " + limj + "\n    }\n"
+        limj = limj + 1
+    }
+    lim255 = lim255 + "}\n"
+    files.write(dirs.join(exlim, "lim_page255.leno"), lim255)
+    var limmain = dirs.join(exlim, "lim_main255.leno")
+    files.write(limmain,
+        "import \"lim_page255.leno\"\nimport \"lim_base.leno\" as lb\n\nmain() {\n    var o = new lb.LB()\n    print(o.lm255())\n}\n")
+    ce.expect_ok(limmain, "跨模块 extend 块 255 个方法（上限边界）应能编译并跑通", "255")
+
     // ② 用静态 fixture（assert/import_broken*.leno）：坏模块必须在 assert/ 下才能被相对 import 找到
     ce.expect_error("assert/import_broken.leno", "导入有语法错误的模块要报错（报在 fixture 自己那行）",
         "期望 '{'", 8)

@@ -2931,6 +2931,15 @@ static void gen_struct_extend(CodeGen* gen, Ast* ast) {
     }
     dce_set_method_owner(NULL);
 
+    // ★ 2026-11-04：OP_STRUCT_EXTEND 的方法数是 u8 ⇒ >255 会被截断（并让后面的元数据被
+    //   当成字节码）。语义层已报错（visit_type_def 的 AST_EXTEND_DEF 分支）——
+    //   这里再兜一道，确保不会写出**损坏的字节码**（实测 260 个方法 ⇒ 运行期反序列化失败）
+    if (real > 255) {
+        free(name_consts);
+        free(fn_consts);
+        return;
+    }
+
     if (real > 0) {
         ObjString* tn = str_copy(ast->u.extend_def.type_name,
                                  (int)strlen(ast->u.extend_def.type_name));

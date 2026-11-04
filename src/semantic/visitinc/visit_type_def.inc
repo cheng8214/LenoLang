@@ -7,6 +7,21 @@
         case AST_EXTEND_DEF: {
             if (!ast->u.extend_def.module_name) break;
 
+            // ★ 2026-11-04：跨模块 extend 的方法数也是 **u8** 编码
+            //   （codegen 的 OP_STRUCT_EXTEND 用 `cw_u8(add_count)` 写方法数）⇒ >255 会被
+            //   截断成 (n & 0xFF)，随后那 256 项元数据被当成字节码 ⇒ 模块反序列化失败 /
+            //   运行期「类型 'BX' 没有方法 'm260'」（实测 260 个方法：--check 全绿，
+            //   运行期只注册前 4 个 ✗）。本地 extend 会被并进 struct，由 struct 的
+            //   method_count 上限检查覆盖 ✓
+            if (ast->u.extend_def.method_count > 255) {
+                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                    "extend 块里有 %d 个方法，超出上限（最多 255 个）："
+                    "OP_STRUCT_EXTEND 里的方法数是 1 字节，超出会截断（运行期只有前一部分注册，"
+                    "调用后续方法报「类型没有方法」）；请拆成多个 extend 块",
+                    ast->u.extend_def.method_count);
+                break;
+            }
+
             // ⚠ 幂等保护**只管"改写方法体 + 前置 self"**，不能连方法体分析一起跳过。
             //   为什么：同一个 AST 会被**两个不同的 Semantic 实例**各分析一次
             //   （主程序编译一次、该模块被单独编译成 .lenb 再一次）——

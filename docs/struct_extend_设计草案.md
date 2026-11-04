@@ -210,6 +210,19 @@ struct {
   都能进（实测 ✗）。实现：`pri_imported_method_private` 在查完目标 struct 的 methods 后，
   再扫各导入模块符号表的 **extends 段** ✓（本模块自己的扩展方法不在导入表里 ⇒ 自己调自己放行 ✓）
 
+### 5.5 方法数上限（2026-11-04）
+
+**单个跨模块 `extend` 块最多 255 个方法** —— `OP_STRUCT_EXTEND` 的 `add_count` 是 **u8**
+（codegen 里 `cw_u8(add_count)`）。超出会被截断成 `n & 0xFF`，紧随其后的方法元数据被当成
+字节码 ⇒ 模块反序列化失败 / 运行期「类型 'X' 没有方法 'lm256'」。
+
+- 修复前实测 260 个方法：`--check` **全绿**，只有运行期才炸（`[警告] 内存反序列化失败(6)`）
+  ⇒ 现在语义层（`visit_type_def.inc` 的 `AST_EXTEND_DEF` 分支）**编译期报错**并给出处方
+  「请拆成多个 extend 块」；codegen 在 `gen_struct_extend` 里再兜一道，保证不写出损坏的字节码。
+- 同一文件里的 `extend`（不含模块名）会被并进 struct 的 `methods`，由 struct 自身的
+  "方法数 ≤ 255" 检查覆盖（报错在 struct 定义行）。
+- 边界值 255 **合法且能跑**（`assert/test_diag_static_errors.leno` ⑬ 有正向对照）。
+
 ## 6. 落点
 
 ### 6.1 parser
