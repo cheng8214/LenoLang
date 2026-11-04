@@ -3,8 +3,7 @@
 
 #include "leno_value.h"
 #include "leno_vm.h"
-
-#define MAX_EXPORT_NAME_LEN 128
+#include "module_dispatch.h"   // MAX_EXPORT_NAME_LEN（单一来源，别在此重复定义）
 
 // 加载并编译模块文件
 // file_path: 模块文件路径

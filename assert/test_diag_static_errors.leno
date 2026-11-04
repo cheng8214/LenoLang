@@ -1381,6 +1381,26 @@ main() { }
         "import \"bigmod.leno\" as m\n\nmain() {\n    print(m.ef600())\n}\n")
     ce.expect_ok(emain, "模块导出 600 项（超过旧 512 上限）应能正常导入调用", "600")
 
+    // ⑰ 导出名长度上限（2026-11-04）：导出名缓冲原先 128 字节，**合法标识符**超过
+    //    127 字符会被静默截断 ⇒ 导入方报「模块中没有方法」且报错里还是完整名字
+    //    （看起来像拼错 ✗）。Leno 标识符本身没有硬长度限制 ⇒ 缓冲提到 1024
+    //    并改成按实际数量动态分配。这里用 300 字符的导出名钉住 ✓
+    var ldir = dirs.join(work, "long_export_name")
+    dirs.delete(ldir)
+    dirs.mkdir_p(ldir)
+    var lname = "f"
+    var lx = 1
+    while lx < 300 {
+        lname = lname + "x"
+        lx = lx + 1
+    }
+    files.write(dirs.join(ldir, "lmod.leno"),
+        "export func " + lname + "(): int { return 300 }\n")
+    var lmain = dirs.join(ldir, "lmain.leno")
+    files.write(lmain,
+        "import \"lmod.leno\" as m\n\nmain() {\n    print(m." + lname + "())\n}\n")
+    ce.expect_ok(lmain, "300 字符的导出函数名应能正常导入调用（不再被 128 截断）", "300")
+
     // ② 用静态 fixture（assert/import_broken*.leno）：坏模块必须在 assert/ 下才能被相对 import 找到
     ce.expect_error("assert/import_broken.leno", "导入有语法错误的模块要报错（报在 fixture 自己那行）",
         "期望 '{'", 8)

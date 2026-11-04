@@ -19,13 +19,20 @@
 #endif
 
 #define MAX_MODULE_NAME 128
-#define MAX_EXPORT_NAME 128
+// ★ 2026-11-04：128 → 1024（与 module_dispatch.h 的 MAX_EXPORT_NAME_LEN 同步）。
+//   128 会把合法标识符的导出名**静默截断**：实测 300 字符的 `export func fxxx...` 在
+//   导入方报「模块 'm' 中没有方法 'fxxx...'」——报错里还是完整名字，看起来像拼错，
+//   实际是清单里只剩前 127 个字符 ✗。
+#define MAX_EXPORT_NAME MAX_EXPORT_NAME_LEN
 // ★ 2026-11-04：512 → 4096。
 //   512 太小且**静默截断**：实测 600 个 `export func` 的模块，第 600 个在导入方报
 //   「模块 'm' 中没有方法 'ef600'」—— 导出名清单被 provider 截到前 512 个，与源码
 //   完全对不上，报错点离病因很远 ✗。项目长大了（Aria 一类）撞上只是时间问题。
-//   provider 侧现在在超出 max_names 时打一行**警告**（不再无声丢失 ✓）。
+//   provider 侧只返回 min(实际, max_names)；load_module_file 多取一行来探测溢出并打警告
+//   （不再无声丢失 ✓）。
 #define MAX_EXPORTS 4096
+// 比 MAX_EXPORTS 多留一行，专门用来**探测是否溢出**（见 load_module_file 的说明）✓
+#define EXPORT_LIST_CAP (MAX_EXPORTS + 1)
 // ★ 2026-11-02：128 → 1024。
 //   128 不够用：Aria 拆成 7 个扩展文件 + lib 下 22 个模块 + SDL3 自己的模块树，
 //   一跑就撞上限。撞上时的现象很误导——只打印一行「已加载模块数量超过上限 128，
@@ -36,7 +43,10 @@
 #define MAX_LOADED_MODULES 1024
 
 typedef struct {
-    char names[MAX_EXPORTS][MAX_EXPORT_NAME];
+    // ★ 2026-11-04：从固定 `names[EXPORT_LIST_CAP][MAX_EXPORT_NAME]` 改成**按实际数量
+    //   动态分配**。原因：MAX_EXPORT_NAME 提到 1024 后，固定 4097 行就是每个模块
+    //   白占 4MB（真实模块大多 <100 个导出 ✗）；动态分配后只付实际用到的部分 ✓
+    char (*names)[MAX_EXPORT_NAME];
     int count;
 } ExportList;
 
@@ -474,10 +484,27 @@ int extract_module_exports_from_file(const char* file_path, const char* current_
 //   现在优先走与 copy_module_export_names **同一份**名字清单（provider）⇒ 两者不会漂移 ✓
 int module_has_method(const char* file_path, const char* current_file, const char* method_name) {
     if (g_export_names_provider) {
+        // ★ 2026-11-04：按需扩缓冲，而不是每次 malloc 满额 MAX_EXPORTS。
+        //   原因：导出名缓冲随 MAX_EXPORTS/MAX_EXPORT_NAME 提升（4096 × 256 = 1MB），
+        //   而本函数在语义分析里会被**反复**调用（每个 `m.foo()` 一次）⇒ 固定满额分配
+        //   会变成每次 1MB 的 malloc/free 抖动 ✗。先 64 项，被截断（n == cap）再翻倍，
+        //   provider 侧有 AST 缓存 ⇒ 重试只是拷贝、不会重复 parse ✓。绝大多数模块
+        //   （<64 个导出）只分配 16KB ✓
+        int cap = 64;
         char (*names)[MAX_EXPORT_NAME] =
-            (char(*)[MAX_EXPORT_NAME])malloc(sizeof(char) * MAX_EXPORT_NAME * MAX_EXPORTS);
+            (char(*)[MAX_EXPORT_NAME])malloc(sizeof(char) * MAX_EXPORT_NAME * cap);
         if (names) {
-            int n = g_export_names_provider(file_path, current_file, names, MAX_EXPORTS);
+            int n = g_export_names_provider(file_path, current_file, names, cap);
+            while (n >= 0 && n == cap && cap < MAX_EXPORTS) {
+                int ncap = cap * 2;
+                if (ncap > MAX_EXPORTS) ncap = MAX_EXPORTS;
+                char (*tmp)[MAX_EXPORT_NAME] = (char(*)[MAX_EXPORT_NAME])realloc(
+                    names, sizeof(char) * MAX_EXPORT_NAME * ncap);
+                if (!tmp) break;
+                names = tmp;
+                cap = ncap;
+                n = g_export_names_provider(file_path, current_file, names, cap);
+            }
             if (n >= 0) {
                 int found = 0;
                 for (int i = 0; i < n && !found; i++) {
@@ -596,7 +623,39 @@ ObjModule* load_module_file(const char* file_path, const char* current_file, con
     //   传 full_path（已解析的绝对路径）作 module_path、current_file 传 NULL —— 扫描器内部同样会走
     //   "绝对化 + 进程内记忆化"，因此与语义分析侧**命中同一张表**（不会各扫一遍）
     {
-        int n = copy_module_export_names(full_path, NULL, exports->names, MAX_EXPORTS);
+        // ★ 2026-11-04：按需扩缓冲 + 多取一行探测溢出（provider 只返回 min(实际, max)，
+        //   光看 n == MAX_EXPORTS 分不出"刚好 4096"和"更多" ✗）。
+        //   先 64 项起步；绝大多数模块 <64 个导出 ⇒ 只分配 64KB（1024 字节/行）✓
+        int cap = 64;
+        exports->names = (char(*)[MAX_EXPORT_NAME])malloc(sizeof(char) * MAX_EXPORT_NAME * cap);
+        if (!exports->names) {
+            free(source);
+            free(exports);
+            return NULL;
+        }
+        int n = copy_module_export_names(full_path, NULL, exports->names, cap);
+        while (n >= 0 && n == cap && cap <= MAX_EXPORTS) {
+            int ncap = cap * 2;
+            if (ncap > EXPORT_LIST_CAP) ncap = EXPORT_LIST_CAP;
+            char (*tmp)[MAX_EXPORT_NAME] = (char(*)[MAX_EXPORT_NAME])realloc(
+                exports->names, sizeof(char) * MAX_EXPORT_NAME * ncap);
+            if (!tmp) {
+                free(exports->names);
+                free(source);
+                free(exports);
+                return NULL;
+            }
+            exports->names = tmp;
+            cap = ncap;
+            n = copy_module_export_names(full_path, NULL, exports->names, cap);
+        }
+        if (n > MAX_EXPORTS) {
+            fprintf(stderr,
+                    "[警告] 模块 '%s' 的导出项超过上限 %d，多出的不会被导出；"
+                    "请拆成多个模块（或减少 export）\n",
+                    full_path, MAX_EXPORTS);
+            n = MAX_EXPORTS;
+        }
         exports->count = (n > 0) ? n : 0;
     }
 
@@ -618,6 +677,7 @@ ObjModule* load_module_file(const char* file_path, const char* current_file, con
     if (!placeholder_module) {
         error_set_filename(original_filename[0] ? original_filename : NULL);
         free(source);
+        free(exports->names);
         free(exports);
         return NULL;
     }
@@ -638,6 +698,7 @@ ObjModule* load_module_file(const char* file_path, const char* current_file, con
     // 恢复原始文件名
     error_set_filename(original_filename[0] ? original_filename : NULL);
 
+    free(exports->names);
     free(exports);
     // 注意：source 延后释放，编译成功后用于写缓存的源文件哈希计算
 
