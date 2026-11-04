@@ -396,10 +396,33 @@ static void report_jump_overflow(CodeGen* gen, int pos, int offset, int limit) {
 //   ⇒ 升级成硬错误不会卡住现有代码 ✓
 //   背景：指令里的 A/B/C 各 8 位 ⇒ 寄存器号 ≥ 256 无法寻址（历史事故：SDL 的 Window.run
 //   寄存器高水位 655 ⇒ 循环变量被截断到别的槽位 ⇒ 现象却是「数组索引必须是数字」✗）
+//
+// ★ 2026-11-04 修**误报**：上面这条判据是按"A/B/C 都是寄存器号"写的，但有几条指令的
+//   **C 字段是结构体字段索引**（见 leno_vm.h：OP_GET_FIELD / OP_SET_FIELD /
+//   OP_GET_FIELD_ADDR / OP_GET_FIELD_FAST 全是 `field(C)`）。
+//   Aria 的 `Player` struct 涨到 260 个字段时，报出来的是
+//     「寄存器号超出 8 位上限（opcode 137：A=12 B=0 C=258）：单个函数的寄存器高水位不能超过 255」
+//   而实测该函数 `max_reg=46` —— 寄存器一点问题都没有，**方向完全指错**（人会去拆函数，
+//   拆到天亮也没用 ✗）。⇒ 字段类指令的 C 越界改报"结构体字段数超上限"，并指明真正的改法。
+static int op_c_is_field_index(OpCode op) {
+    return op == OP_GET_FIELD || op == OP_SET_FIELD ||
+           op == OP_GET_FIELD_ADDR || op == OP_GET_FIELD_FAST;
+}
+
 void codegen_reg_overflow_error(OpCode op, int a, int b, int c, int line) {
     //   ⚠ 长度：中文在 UTF-8 里一个字 3 字节，这条提示正文就 ~180 字节 ⇒ 早先自己开
     //     BUFFER_LARGE 才够（BUFFER_MEDIUM(256) 会被截断 ⇒ 用户看到半句提示 = 白报错）。
     //     现在走统一入口 ⇒ 内部就是 BUFFER_MSG(1024) ✓ 且超长会安全截断（退到完整字符 + …）✓
+    if (c > 255 && op_c_is_field_index(op)) {
+        error_add_fmt(ERR_SEMANTIC, line,
+                 "结构体字段数超出上限（opcode %d：A=%d B=%d C=%d，C 是**字段索引**不是寄存器号）："
+                 "单个 struct / face 最多 255 个字段（字段索引 8 位，且 struct 定义头里的字段数是 1 字节），"
+                 "超出的字段无法寻址；请把该 struct 拆成几个小 struct"
+                 "（或把一部分状态放到模块级变量 / 单独的结构体里）"
+                 "（详见 docs/待办与路线图.md 的「寄存器号 8 位上限」一节）",
+                 (int)op, a, b, c);
+        return;
+    }
     error_add_fmt(ERR_SEMANTIC, line,
              "寄存器号超出 8 位上限（opcode %d：A=%d B=%d C=%d）：单个函数的寄存器高水位不能超过 255；"
              "请把该函数拆小、或把长表达式拆成多条语句（详见 docs/待办与路线图.md 的「寄存器号 8 位上限」一节）",
