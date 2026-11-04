@@ -2,11 +2,14 @@
 // 设计：docs/struct_extend_设计草案.md 第 12 节
 //
 // 覆盖：无参方法 / 带参方法 / 读字段 / 改字段（改的必须是同一个对象）/
-//       **泛型 struct**（签名/方法体里的 T 由目标类型参数解析）/ 默认参数
+//       **泛型 struct**（签名/方法体里的 T 由目标类型参数解析）/ 默认参数 /
+//       扩展模块自己的 `pri` 方法（同模块内可调）
 // ⚠ 调用方必须**同时** import 定义模块与扩展模块 —— 扩展方法的存在性来自
 //    扩展模块的符号表（extends 段），缺了它编译期报「类型 ExtPlayer 没有方法 damage」✓
 import "extend_mod_base.leno" as pb
 import "extend_mod_page.leno" as pg
+import "extend_pri_ext_base.leno" as vx
+import "extend_pri_ext_a.leno"
 
 main()
 {
@@ -35,6 +38,10 @@ main()
     assert_eq(b.peek(), 7)
     var bs = new pb.ExtBox[string](v = "hi")
     assert_eq(bs.peek(), "hi")
+
+    // ⑥ 扩展模块 A 自己的 `pri` 方法：模块内可调（正例；跨模块调用由 diag 负例拦住）
+    var q = new vx.VX()
+    assert_eq(q.ownCall(), 41)
 
     print("test_extend_cross_module passed")
 }

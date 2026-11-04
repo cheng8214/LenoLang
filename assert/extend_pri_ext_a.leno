@@ -1,0 +1,8 @@
+// 扩展模块 A：`pri func` 在这里定义；本模块自己的方法**可以**调用它（正例）
+import "extend_pri_ext_base.leno" as b
+
+extend b.VX {
+    pri func secretH(): int { return 41 }
+
+    func ownCall(): int { return secretH() }
+}

@@ -1,0 +1,9 @@
+// 扩展模块 B：跨模块调用 A 的 pri 方法 ⇒ 编译期应报错（负例，2026-11-04）
+// 此前 pri 扩展方法完全公开（A 的 `secretH` 能被任何模块调）✗
+import "extend_pri_ext_base.leno" as b
+import "extend_pri_ext_a.leno" as a
+
+extend b.VX {
+    func otherCall(): int { return secretH() }
+    func dotCall(): int { return self.secretH() }
+}

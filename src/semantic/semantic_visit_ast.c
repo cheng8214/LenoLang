@@ -147,6 +147,29 @@ static int pri_imported_method_private(Semantic* s, const char* struct_name,
             return 0;
         }
     }
+    // ★ 2026-11-04：**扩展方法**不在目标 struct 的 methods 里，而在各模块符号表的
+    //   extends 段 ⇒ 同口径再扫一遍。缺了这段，`pri func` 写在跨模块 extend 里等于
+    //   完全公开：主程序能 `p.helper()`、另一个扩展模块里的裸调用也能进去（实测都能跑 ✗）。
+    //   语义按设计 §5.4 补齐："同一模块内的其它文件可调，模块外不可调" ——
+    //   本模块自己的 extend 方法不在**导入**表里（不会命中这里）⇒ 自己调自己仍然放行 ✓
+    for (int mi = 0; mi < s->imported_module_count; mi++) {
+        ModuleSymbolTable* t = s->imported_modules[mi].sym_table;
+        if (!t) continue;
+        for (int ei = 0; ei < t->extend_count; ei++) {
+            ModuleExtendSymbol* ex = &t->extends[ei];
+            if (!ex->type_name || strcmp(ex->type_name, struct_name) != 0) continue;
+            for (int k = 0; k < ex->method_count; k++) {
+                ModuleStructMethod* em = &ex->methods[k];
+                if (!em->name || strcmp(em->name, method_name) != 0) continue;
+                if (em->is_private) {
+                    if (out_line) *out_line = em->line;
+                    if (out_file) *out_file = s->imported_modules[mi].file_path;
+                    return 1;
+                }
+                return 0;
+            }
+        }
+    }
     return 0;
 }
 

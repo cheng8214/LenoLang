@@ -1179,6 +1179,13 @@ main() { }
     ce.expect_error(ex2, "extend 枚举要报错（说明它是什么，而不是'没有定义'）",
         "是 enum（枚举）", 3)
 
+    // ⑩ 扩展模块 A 的 `pri` 方法，另一个扩展模块 B 不能调（2026-11-04）
+    //    此前 extend 段的 pri 完全公开：裸调用与 self.方法名 都能进（实测）
+    var prx1 = ce.expect_error("assert/extend_pri_ext_b.leno",
+        "扩展模块之间调用 pri 方法要报错", "是 pri 私有方法", 7)
+    assert_true(strings.has(prx1, "extend_pri_ext_a.leno"),
+        "pri 扩展方法报错应指向定义它的模块 extend_pri_ext_a.leno；输出=" + prx1)
+
     // ② 用静态 fixture（assert/import_broken*.leno）：坏模块必须在 assert/ 下才能被相对 import 找到
     ce.expect_error("assert/import_broken.leno", "导入有语法错误的模块要报错（报在 fixture 自己那行）",
         "期望 '{'", 8)
