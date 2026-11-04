@@ -555,7 +555,14 @@ export struct Button impl Widget, Themeable {
         //  - 上下布局：图标须给文字预留 (h - 2pad - gap - textH) 高度
         // 图标只有 `image_path`（纹理）一种来源（矢量图标已从公共库移除）
         bool hasIcon = itex != null
-        bool iconOnly = (text == "")
+        // ★ 2026-11-04 修：`iconOnly` 必须是"**有图标**且没有文字"。
+        //   原来只判 `text == ""` ⇒ **纯热区按钮**（既没文字也没图标，比如应用里"整行可点"
+        //   叠的那层透明 Button）也被当成图标按钮 ⇒ 悬浮时下面那段
+        //   `iconOnly and hover` 会多画一块 `isize+6` 的亮方块。
+        //   现象（Aria 广场·热门下载行的实测）：鼠标划过整行时，行**中间凭空冒出一个矩形**，
+        //   和整行的 hover_color 底色叠在一起，非常显眼 ✗。
+        //   纯热区本来就不该有任何自带高亮 —— 它的悬停反馈由调用方给的 `hover_color` 整块负责 ✓
+        bool iconOnly = (text == "") and hasIcon
         float isize = imgSize
         if isize <= 0.0 and itex != null {
             var[float, float](_tsw, _tsh) = r.getTextureSize(itex)
