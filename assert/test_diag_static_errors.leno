@@ -1186,6 +1186,18 @@ main() { }
     assert_true(strings.has(prx1, "extend_pri_ext_a.leno"),
         "pri 扩展方法报错应指向定义它的模块 extend_pri_ext_a.leno；输出=" + prx1)
 
+    // ⑪ 同文件两个跨模块 extend 块写同名方法（2026-11-04）：此前输出先注册的 1，
+    //    后写的静默忽略 ⇒ 现在编译期报重复定义（报在**后写**那一行）
+    ce.expect_error("assert/extend_dup_blocks.leno",
+        "同文件多个 extend 块同名方法要报错", "在本文件里重复定义", 10)
+
+    // ⑫ 扩展方法与目标 struct 自带方法同名（2026-11-04）：此前输出 struct 自带的 9，
+    //    扩展方法永远不被调用 ⇒ 现在编译期点名"永远不会被调用"
+    var dsout = ce.expect_error("assert/extend_dup_struct_main.leno",
+        "扩展方法与 struct 自带方法同名要报错", "与导入模块", 6)
+    assert_true(strings.has(dsout, "extend_dup_struct_base.leno"),
+        "同名报错应指向定义 struct 的模块 extend_dup_struct_base.leno；输出=" + dsout)
+
     // ② 用静态 fixture（assert/import_broken*.leno）：坏模块必须在 assert/ 下才能被相对 import 找到
     ce.expect_error("assert/import_broken.leno", "导入有语法错误的模块要报错（报在 fixture 自己那行）",
         "期望 '{'", 8)

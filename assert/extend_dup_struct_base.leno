@@ -1,0 +1,6 @@
+// 扩展方法与目标 struct 自带方法同名的负例：定义模块（2026-11-04）
+export struct DS {
+    int v = 9
+
+    func own(): int { return 9 }
+}

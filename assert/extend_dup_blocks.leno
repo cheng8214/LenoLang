@@ -1,0 +1,16 @@
+// 同文件两个跨模块 extend 块写同名方法的负例（2026-11-04）
+// 此前编译通过、运行期只有先注册的那个生效（实测 `1`），后写的静默忽略
+import "extend_dup_base.leno" as b
+
+extend b.DupS {
+    func twice(): int { return 1 }
+}
+
+extend b.DupS {
+    func twice(): int { return 2 }
+}
+
+main() {
+    var p = new b.DupS()
+    print(p.twice())
+}

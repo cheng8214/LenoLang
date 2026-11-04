@@ -1,0 +1,12 @@
+// 扩展方法与目标 struct 自带方法同名的负例（2026-11-04）
+// 此前编译通过、运行期调用 struct 自带的那份（实测 `9`），扩展方法永远不被调用
+import "extend_dup_struct_base.leno" as b
+
+extend b.DS {
+    func own(): int { return 1 }
+}
+
+main() {
+    var p = new b.DS()
+    print(p.own())
+}

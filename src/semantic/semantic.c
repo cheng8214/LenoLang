@@ -294,42 +294,88 @@ static void extend_merge_into_block(Semantic* s, Ast* block) {
 }
 
 // ============================================================================
-// 跨模块 extend 重名：本文件 vs 已导入模块（2026-11-03）
+// 跨模块 extend 重名：本文件 vs 本文件 / 已导入模块（2026-11-03，2026-11-04 补两类）
 // ----------------------------------------------------------------------------
 // 与 semantic_register_extends_from_module 那条互补（那条管 **import 与 import 之间**）。
-// 这里管"本文件自己写的 `extend m.X { func f }`"与"导入模块里的 `extend X { func f }`"
-// 撞名。此前完全静默，而且是**本文件那份永远不生效**：
-//   · 编译期：import 的占位符先进 func_table，本文件的方法被 `func_table_find` 跳过；
-//   · 运行期：OP_STRUCT_EXTEND 按模块初始化顺序**先到先占**，方法查找取**第一个**同名项
-//     ⇒ 无论源码顺序如何，导入模块的实现赢（实测导入后本地再写 `same(): 3`，调用输出 1）。
-// 做法：所有 import 都处理完（visit_list 之后）再扫顶层跨模块 extend，与导入模块符号表
-//   里的 extends 逐条比对 ⇒ 与源码顺序无关 ✓
+// 这里管本文件自己写的 `extend m.X { func f }` 撞名，三种来源都查：
+//   ① 本文件的**另一个** extend 块（同一类型、同一方法）
+//   ② 导入模块里 **struct 自带的方法**（同名）—— 运行期方法查找优先命中 struct 自带的
+//   ③ 导入模块里的 **extend**（同名）—— 先注册的赢
+// 这三种此前全都完全静默，而且本文件/后写的那份**永远不生效**：
+//   · 编译期：import 的占位符/前一个块先进 func_table，后来的被 `func_table_find` 跳过；
+//   · 运行期：OP_STRUCT_EXTEND 按初始化顺序**先到先占**，方法查找取**第一个**同名项。
+// 实测：两个块写 `f(): 1 / f(): 2` ⇒ 输出 1；扩展写 `f(): 1`、struct 自带 `f(): 9` ⇒ 输出 9。
+// 做法：所有 import 都处理完（visit_list 之后）再扫顶层跨模块 extend ⇒ 与源码顺序无关 ✓
 // ============================================================================
-static void extend_check_local_vs_imported(Semantic* s, Ast* root) {
+static void extend_check_local_dups(Semantic* s, Ast* root) {
     if (!s || !root || root->kind != AST_BLOCK) return;
     AstList* list = &root->u.block;
     for (int i = 0; i < list->count; i++) {
         Ast* ext = list->items[i];
         if (!ext || ext->kind != AST_EXTEND_DEF) continue;
         if (!ext->u.extend_def.module_name) continue;   // 同文件 extend 由 extend_merge_into_block 管
-        if (!ext->u.extend_def.type_name || ext->u.extend_def.method_count <= 0) continue;
+        const char* type_name = ext->u.extend_def.type_name;
+        if (!type_name || ext->u.extend_def.method_count <= 0) continue;
         for (int k = 0; k < ext->u.extend_def.method_count; k++) {
             Ast* fn = ext->u.extend_def.methods[k];
             if (!fn || fn->kind != AST_FUNC_DEF || !fn->u.func.name) continue;
+            char key[256];
+            snprintf(key, sizeof(key), "%s::%s", type_name, fn->u.func.name);
+
+            // ① 本文件里**后面的** module-qualified extend 块（i+1 起，保证只报一次）
+            for (int j = i + 1; j < list->count; j++) {
+                Ast* other = list->items[j];
+                if (!other || other->kind != AST_EXTEND_DEF) continue;
+                if (!other->u.extend_def.module_name) continue;
+                if (!other->u.extend_def.type_name ||
+                    strcmp(other->u.extend_def.type_name, type_name) != 0) continue;
+                for (int k2 = 0; k2 < other->u.extend_def.method_count; k2++) {
+                    Ast* fn2 = other->u.extend_def.methods[k2];
+                    if (!fn2 || fn2->kind != AST_FUNC_DEF || !fn2->u.func.name) continue;
+                    if (strcmp(fn2->u.func.name, fn->u.func.name) != 0) continue;
+                    error_add_at_fmt(ERR_SEMANTIC, fn2->line, fn2->column,
+                        "extend 方法 '%s' 在本文件里重复定义（第 %d 行已经写过）—— "
+                        "运行期只有先注册的那个生效、后写的会被静默忽略；请只保留一处",
+                        key, fn->line);
+                }
+            }
+
             for (int im = 0; im < s->imported_module_count; im++) {
                 ModuleSymbolTable* t = s->imported_modules[im].sym_table;
                 if (!t) continue;
+                const char* mod_file = s->imported_modules[im].file_path
+                                           ? s->imported_modules[im].file_path : "?";
+
+                // ② 导入模块里 struct **自带**的方法（不是 extends 段）
+                ModuleStructSymbol* ss = module_symbol_table_find_struct(t, type_name);
+                if (ss && ss->methods) {
+                    int hit = 0;
+                    for (int mi = 0; mi < ss->method_count; mi++) {
+                        if (ss->methods[mi].name && strcmp(ss->methods[mi].name, key) == 0) {
+                            hit = 1;
+                            break;
+                        }
+                    }
+                    if (hit) {
+                        error_add_at_fmt(ERR_SEMANTIC, fn->line, fn->column,
+                            "extend 方法 '%s' 与导入模块 %s 里 struct 自带的方法同名 —— "
+                            "方法查找优先命中 struct 自带的，这个扩展方法永远不会被调用；"
+                            "请改名，或把实现写回 struct 定义里",
+                            key, mod_file);
+                    }
+                }
+
+                // ③ 导入模块里的 extends 段（原有用例）
                 for (int ei = 0; ei < t->extend_count; ei++) {
                     ModuleExtendSymbol* ex = &t->extends[ei];
-                    if (!ex->type_name || strcmp(ex->type_name, ext->u.extend_def.type_name) != 0) continue;
+                    if (!ex->type_name || strcmp(ex->type_name, type_name) != 0) continue;
                     for (int mi = 0; mi < ex->method_count; mi++) {
                         ModuleStructMethod* m = &ex->methods[mi];
                         if (!m->name || strcmp(m->name, fn->u.func.name) != 0) continue;
                         error_add_at_fmt(ERR_SEMANTIC, fn->line, fn->column,
                             "extend 方法 '%s::%s' 在导入模块 %s 里也有定义 —— "
                             "运行期先注册的那个生效、本文件这份会被静默忽略；请只保留一处",
-                            ex->type_name, fn->u.func.name,
-                            s->imported_modules[im].file_path ? s->imported_modules[im].file_path : "?");
+                            ex->type_name, fn->u.func.name, mod_file);
                         break;
                     }
                 }
@@ -722,8 +768,9 @@ void semantic_analyze(Semantic* s, Ast* ast) {
     //   ⇒ 所有定义体都访问完，这里统一复查（与源码顺序无关 ✓）
     semantic_flush_pending_req_checks(s);
 
-    // ★ 本文件 vs 导入模块的 extend 重名（2026-11-03）—— 必须在 import 全部登记之后
-    extend_check_local_vs_imported(s, ast);
+    // ★ 本文件/导入模块的 extend 重名（2026-11-03，2026-11-04 扩到本文件内 + struct 自带方法）
+    //   —— 必须在 import 全部登记之后
+    extend_check_local_dups(s, ast);
 }
 
 void semantic_cleanup(Semantic* s) {
@@ -1086,6 +1133,7 @@ void semantic_analyze_module(Semantic* s, Ast* ast) {
     //   ⇒ 所有定义体都访问完，这里统一复查（与源码顺序无关 ✓）
     semantic_flush_pending_req_checks(s);
 
-    // ★ 本文件 vs 导入模块的 extend 重名（2026-11-03）—— 必须在 import 全部登记之后
-    extend_check_local_vs_imported(s, ast);
+    // ★ 本文件/导入模块的 extend 重名（2026-11-03，2026-11-04 扩到本文件内 + struct 自带方法）
+    //   —— 必须在 import 全部登记之后
+    extend_check_local_dups(s, ast);
 }

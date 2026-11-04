@@ -179,7 +179,10 @@ struct {
 
 - 两个导入模块给同一个 `类型::方法` 都写了扩展 ⇒ 报错（`semantic_register_extends_from_module`）
 - 本文件的 `extend m.X { func f }` 与导入模块里的同名扩展 ⇒ 报错
-  （`extend_check_local_vs_imported`，在所有 import 处理完后统一扫描，与源码顺序无关）
+  （`extend_check_local_dups`，在所有 import 处理完后统一扫描，与源码顺序无关）
+- **本文件两个** `extend m.X` 块写同名方法 ⇒ 报错（报在**后写**那一行）★ 2026-11-04
+- 扩展方法与目标 struct **自带的方法**同名 ⇒ 报错：运行期方法查找优先命中 struct 自带的，
+  扩展方法**永远不会被调用**（实测写 `own(): 1`、struct 自带 `own(): 9` ⇒ 输出 9）★ 2026-11-04
 
 > 为什么必须报错而不是"后写覆盖"：编译期占位符是**先到先得**（`func_table_find` 命中就跳过），
 > 运行期 `OP_STRUCT_EXTEND` 又是按模块初始化顺序追加、方法查找取**第一个**同名项 ⇒
