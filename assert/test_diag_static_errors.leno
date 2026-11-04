@@ -1337,6 +1337,50 @@ main() { }
     ce.expect_error(ftpbad, "face 泛型参数 >255 要编译期报错（u8 截断）",
         "有 256 个泛型参数，超出上限（最多 255 个）", 1)
 
+    // ⑮ struct 方法数超限的**处方**要能真正解决问题（2026-11-04）：本文件 `extend`
+    //    （不写模块名）会并进 struct 的 methods ⇒ 同样占 255 上限。此前处方只说
+    //    "请把方法拆到其它文件用 extend 挂" —— 用户往往**已经**用了 extend（实测
+    //    200 个 struct 方法 + 100 个同文件 extend ⇒ 报「定义了 300 个方法」却让他再写 extend ✗）
+    //    ⇒ 现在文案明确"本文件的 extend 也占上限"，并指向**跨模块** extend（运行期追加不受限 ✓）
+    var mxsrc = "struct MX {\n    int v = 1\n"
+    var mi = 1
+    while mi <= 200 {
+        mxsrc = mxsrc + "    func mb" + mi + "(): int { return " + mi + " }\n"
+        mi = mi + 1
+    }
+    mxsrc = mxsrc + "}\n\nextend MX {\n"
+    var mj = 1
+    while mj <= 100 {
+        mxsrc = mxsrc + "    func me" + mj + "(): int { return " + mj + " }\n"
+        mj = mj + 1
+    }
+    mxsrc = mxsrc + "}\n\nmain() {\n    print(1)\n}\n"
+    var mxbad = dirs.join(ulim, "struct_extend_300.leno")
+    files.write(mxbad, mxsrc)
+    var mxout = ce.expect_error(mxbad,
+        "struct + 同文件 extend 共 300 个方法要报错，且处方指向跨模块 extend",
+        "也会并进这里、同样占这个上限", 1)
+    assert_true(strings.has(mxout, "跨模块"), "处方应指明跨模块 extend 才不受限；输出=" + mxout)
+
+    // ⑯ 模块导出项上限（2026-11-04）：导出名清单原先固定 512 且**静默截断** ⇒
+    //    600 个 `export func` 的模块里，第 600 个在导入方报「模块 'm' 中没有方法」
+    //    （看起来像名字拼错，实际是清单被截到前 512 个 ✗）⇒ 上限提到 4096 ✓
+    //    超限时 provider 会打一行警告（不再无声丢失），这里钉住 600 个能正常调用 ✓
+    var exdir = dirs.join(work, "export_limit")
+    dirs.delete(exdir)
+    dirs.mkdir_p(exdir)
+    var emod = ""
+    var xi = 1
+    while xi <= 600 {
+        emod = emod + "export func ef" + xi + "(): int { return " + xi + " }\n"
+        xi = xi + 1
+    }
+    files.write(dirs.join(exdir, "bigmod.leno"), emod)
+    var emain = dirs.join(exdir, "bigmain.leno")
+    files.write(emain,
+        "import \"bigmod.leno\" as m\n\nmain() {\n    print(m.ef600())\n}\n")
+    ce.expect_ok(emain, "模块导出 600 项（超过旧 512 上限）应能正常导入调用", "600")
+
     // ② 用静态 fixture（assert/import_broken*.leno）：坏模块必须在 assert/ 下才能被相对 import 找到
     ce.expect_error("assert/import_broken.leno", "导入有语法错误的模块要报错（报在 fixture 自己那行）",
         "期望 '{'", 8)

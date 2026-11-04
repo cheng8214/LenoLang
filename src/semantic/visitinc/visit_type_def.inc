@@ -495,10 +495,17 @@
                                          ast->u.struct_def.name, ast->u.struct_def.field_count);
                     }
                     // 方法数也是 u8 编码：>255 会同样静默截断（struct 体内的方法；extend 的不占这个数）
+                    // ⚠ 本文件的 `extend`（不写模块名）也会**并进 methods**、同样占这个上限；
+                    //   此前处方只说「请用 extend 挂」——而用户往往已经用了 extend（实测 200 个
+                    //   struct 方法 + 100 个同文件 extend ⇒ 报「定义了 300 个方法」却让再写 extend ✗）。
+                    //   真正能绕开该上限的是**跨模块** `extend 模块名.类型`（运行期 OP_STRUCT_EXTEND 追加，
+                    //   实测 200 + 100 跨模块扩展共 300 个方法可正常调用 ✓）。
                     if (ast->u.struct_def.method_count > 255) {
                         error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                                          "struct '%s' 定义了 %d 个方法，超出上限（最多 255 个）："
-                                         "方法数在 struct 定义头里是 1 字节；请把方法拆到其它文件用 extend 挂",
+                                         "方法数在 struct 定义头里是 1 字节；本文件的 `extend`（不写模块名）"
+                                         "也会并进这里、同样占这个上限。请把一部分方法改成**跨模块** "
+                                         "`extend 模块名.类型`（运行期追加，不受此限），或拆成几个 struct",
                                          ast->u.struct_def.name, ast->u.struct_def.method_count);
                     }
                     // ★ 2026-11-04：struct 的**关联常量数 / impl 数 / 泛型参数数**也都是 u8 编码

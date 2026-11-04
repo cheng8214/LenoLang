@@ -296,6 +296,15 @@ static int ast_export_names_provider(const char* file_path, const char* current_
     }
 
     ast_export_cache_store(file_path, list.names, list.count, src_hash);
+    // ★ 2026-11-04：导出名超过调用方缓冲上限时**不能静默丢弃** —— 此前 512 上限下，
+    //   第 513 个 `export func` 在导入方报「模块中没有方法」（看起来像拼错名字 ✗）。
+    //   这里只在**首次 parse** 时打一次警告（缓存命中不重复），并给出拆分处方 ✓
+    if (list.count > max_names) {
+        fprintf(stderr,
+                "[警告] 模块 '%s' 有 %d 个导出项，超过上限 %d，多出的不会被导出；"
+                "请拆成多个模块（或减少 export）\n",
+                file_path, list.count, max_names);
+    }
     int n = list.count < max_names ? list.count : max_names;
     for (int i = 0; i < n; i++) {
         strncpy(out[i], list.names[i], MAX_EXPORT_NAME_LEN - 1);
