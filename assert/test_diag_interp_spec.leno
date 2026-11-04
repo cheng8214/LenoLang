@@ -76,5 +76,33 @@ main() {
 ")
     ce.expect_ok(f6, "带 % 前缀", "3.14")
 
+    // ---- ⑧ 单写一个 `%`：它不消费表达式（2026-11-04）----
+    //   此前报"缺少转换符"（而转换符列表里又写着 `%% 百分号`，自相矛盾）；
+    //   现在点明"表达式会被丢弃"，并给出外面只写一个 % 的写法
+    var f7 = dirs.join(work, "pct_alone.leno")
+    files.write(f7, @"main() {
+    int n = 42
+    print($""{n:%}"")
+}
+")
+    var o7 = ce.expect_error(f7, "单独的 % 要报错并给出写法", "不会消费表达式", 3)
+    assert_true(strings.has(o7, "{x}%"),
+        "建议里应是 `}` 外面只写一个 %；输出=" + o7)
+
+    // ---- ⑨ 百分号写进 spec 末尾（`{f:.1f%%}`）----
+    //   正确写法是 `{f:.1f}%`（外面一个 %）；此前建议写 `%%` ⇒ 实际输出 `87.0%%`（多一个）
+    var f8 = dirs.join(work, "pct_in_spec.leno")
+    files.write(f8, @"main() {
+    float f = 0.87
+    print($""{f:.1f%%}"")
+}
+")
+    var o8 = ce.expect_error(f8, "spec 末尾写 % 要报错并给出正确写法",
+        "不能写在 spec 里", 3)
+    assert_true(strings.has(o8, "{表达式:.1f}%"),
+        "建议里应是外面只写一个 %；输出=" + o8)
+    assert_true(not strings.has(o8, "{表达式:.1f}%%"),
+        "建议里不能是外面两个百分号（那会多输出一个 %）；输出=" + o8)
+
     print("=== test_diag_interp_spec ALL passed ===")
 }
