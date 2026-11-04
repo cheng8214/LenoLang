@@ -55,6 +55,11 @@ bool _drawBorder = true          // 是否绘制边框（嵌入 ComboBox 时设�
     //   2026-10-30 加：原来写死 `darken(txtColor, 80)`，浅色主题下会变成接近纯黑
     pri Color phColor = 0
     pri bool focused = false
+    // ★ 2026-11-04 反哺：`Edit` 原来**没有 focusable 这套**（Button/CheckBox/Slider/ListBox…
+    //   全都有）⇒ 窗口的 Tab 焦点链根本收不到输入框 ⇒ 表单里"输完用户名按 Tab 不跳下一个框" ✗
+    //   （链里只有按钮：Tab 只会跳按钮，输入框纹丝不动，看着就是"Tab 没反应" ✓）
+    //   ⇒ 补齐与同类控件一致的 API：focusable / is_focusable / set_focusable / activate ✓
+    bool focusable = true
     // IME 候选框位置缓存：仅在坐标/光标变化时调用 SDL，避免每帧无谓刷新
     pri int imeX = -1, imeY = -1, imeW = -1, imeH = -1, imeCursor = -1
     pri bool mouseDown = false, draggingVScroll = false, draggingHScroll = false, hoverVScroll = false
@@ -655,6 +660,13 @@ _drawBorder = opts.get("border", true)
     // ==================== 回调 ====================
     func on_change(func():void cb) { onChange = cb }
     func on_enter(func():void cb)  { onEnter = cb }
+
+    // ==================== 焦点链（与 Button / CheckBox 同一套 API ✓）====================
+    //   作用：让窗口的 Tab / Shift+Tab 能停在输入框上（并把别的输入框 blur 掉）
+    func is_focusable(): bool { return focusable }
+    func set_focusable(bool b) { focusable = b; if not b { focused = false } }
+    // 窗口层 Enter / Space"激活"当前焦点控件时调到这里 ⇒ 等价于提交（onEnter 那条回调）
+    func activate() { if onEnter != null { onEnter() } }
 
     // ==================== 交互 ====================
     func contains(float mx, float my): bool {
@@ -2009,5 +2021,10 @@ func applyTheme(Theme t) {
 export func createEdit(Dict opts): Edit {
     Edit ed = new Edit(); ed.set(opts); return ed
 }
+
+// Tab 焦点链由**窗口**统一管（`Window._focusables()` 按控件树顺序收，
+//   `_collectFocus` / `_applyFocus` / `_activateFocused` 的 case 里已加上 Edit）——
+//   不用每个表单自己串：输入框按摆放顺序就自动串成 Tab 链 ✓
+//   （2026-11-04 之前 Edit 不在链里 ⇒ Tab 只会在按钮之间跳，输入框纹丝不动 ✗）
 
 

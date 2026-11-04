@@ -973,6 +973,13 @@ export struct Window {
         if _inList(out, w) { return }        // 已收过 ⇒ 跳过（防重复停靠 ✓）
         switch w {
             // ★ 2026-10-13 第二批：开关类也进链条（各自 `activate()` = 切一下 ✓）
+            // ★ 2026-11-04：**Edit 进链** —— 之前漏了它 ⇒ 表单里按 Tab 只在按钮间跳、
+            //   输入框纹丝不动（"输完用户名按 Tab 不跳密码框"就是这条 ✗）。
+            //   ⚠ **必须单独写一条 case**：多类型 case 的窄化只按第一个类型（本文件
+            //     991-1003 那条规矩）⇒ 写成 `case is Button, …, Edit` 时，对 Edit 实例
+            //     调 `w.is_focusable()` 会按 **Button 的字段下标**去读 ⇒ 读到的不是 Edit 的
+            //     focusable（实测：加了 Edit 到合并 case 后链里依旧是 0 个输入框 ✗）
+            case is Edit { if w.is_focusable() { out.add(w) } }
             case is Button, CheckBox, RadioButton, Toggle, Slider, ListBox, ComboBox, TabControl, Table, TreeView { if w.is_focusable() { out.add(w) } }
         }
         _collectChildren(w, out)
@@ -1052,6 +1059,7 @@ export struct Window {
         for fs.len() to i {
             var w = fs[i]
             switch w {
+                case is Edit { if i == focusIdx { w.focus() } else { w.blur() } }
                 case is Button, CheckBox, RadioButton, Toggle, Slider, ListBox, ComboBox, TabControl, Table, TreeView { if i == focusIdx { w.focus() } else { w.blur() } }
             }
         }
@@ -1080,6 +1088,10 @@ export struct Window {
         switch w {
             // ⚠ `Table` **刻意不在激活表里** ✓ —— 它自己那套键盘导航（已有）管 Enter ✓
             //   放进来就会"窗口 + 控件"各处理一次 ⇒ 与 ListBox/ComboBox 踩过的双触发同源 ✗
+            // ★ 2026-11-04：Edit 也在这里 —— 输入框上的 Enter 走 `activate()`（= onEnter 回调），
+            //   否则窗口层把 RETURN 消费掉后什么都不做 ⇒ "密码输完按回车不登录" ✗
+            //   （同样单独一条 case，理由同上一条注释 ✓）
+            case is Edit { w.activate() }
             case is Button, CheckBox, RadioButton, Toggle, Slider, ListBox, ComboBox, TabControl, TreeView { w.activate() }
         }
     }
@@ -1106,10 +1118,21 @@ export struct Window {
         if not ev.isKeyDown() { return false }
         int sc = ev.scancode()
         if sc == core.Scancode.TAB {
+            // ★ 2026-11-04：**焦点不是链给的就不消费**。应用里最常见的路径是"鼠标点进输入框
+            //   直接打字、再按 Tab 换下一个框"—— 此时 focusIdx 还是 -1（点选不同步聚焦序号），
+            //   原先窗口层照样把 TAB 吃掉 ⇒ 输入框换不动、应用也收不到（登录窗实测 ✗）。
+            //   放行后事件继续派发 ⇒ 应用可在自己的 onEvent 里按输入框顺序换焦点 ✓
+            if focusIdx < 0 { return false }
             if (ev.keyMod() & 3) != 0 { _moveFocus(-1) } else { _moveFocus(1) }   // 0x0003 = Shift ✓
             return true
         }
         if sc == core.Scancode.RETURN or sc == core.Scancode.SPACE {
+            // ★ 2026-11-04：**焦点没落在链里时不消费** —— 应用里很常见的路径是"鼠标点进输入框，
+            //   直接敲回车提交"，此时 focusIdx 还是 -1（点选没有同步聚焦序号）⇒ 原先
+            //   窗口层把 RETURN 吃掉、又没人可激活 ⇒ 回车**毫无反应**（登录窗实测 ✗）。
+            //   放行后事件继续派发到控件，Edit 自己的 onEnter 就生效了 ✓
+            Array[Widget] fs = _focusables()
+            if focusIdx < 0 or focusIdx >= fs.len() { return false }
             _activateFocused()
             return true
         }
