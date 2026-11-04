@@ -1,6 +1,18 @@
         case AST_ENUM_DEF:
             // 注册 enum 类型
             {
+                // ★ 2026-11-04：enum 的成员数在 `OP_ENUM_DEF` 里用 `cw_u8` 编码 ⇒ >255 会被
+                //   截断成 (n & 0xFF)，随后成员名/值元数据被当成字节码 ⇒ 模块反序列化失败
+                //   （实测 256 个成员：--check 全绿，运行报「内存反序列化失败(6)」✗）。
+                //   ⚠ 判据 >255（不是 >256）：255 能正常编码；256 写成 0。
+                if (ast->u.enum_def.member_count > 255) {
+                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                     "enum '%s' 有 %d 个成员，超出上限（最多 255 个）："
+                                     "成员数在 enum 定义头里是 1 字节，超出会截断（运行期反序列化失败）；"
+                                     "请拆成几个 enum（或改用 const 分组）",
+                                     ast->u.enum_def.name, ast->u.enum_def.member_count);
+                }
+
                 TypeInfo* enum_type = type_new(TYPE_ENUM);
                 enum_type->struct_name = strdup(ast->u.enum_def.name);
 

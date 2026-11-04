@@ -1,6 +1,18 @@
         case AST_CSTRUCT_DEF:
             // 注册 cstruct 类型并计算布局
             {
+                // ★ 2026-11-04：cstruct 的字段数在 `OP_CSTRUCT_DEF` 里用 `cw_u8` 编码 ⇒
+                //   >255 会被截断，随后字段元数据被当成字节码 ⇒ 模块反序列化失败
+                //   （实测 256 个字段：--check 全绿，运行报「内存反序列化失败(6)」✗）。
+                //   判据 >255：255 能正常编码；256 写成 0。
+                if (ast->u.cstruct_def.field_count > 255) {
+                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                     "cstruct '%s' 有 %d 个字段，超出上限（最多 255 个）："
+                                     "字段数在 cstruct 定义头里是 1 字节，超出会截断（运行期反序列化失败）；"
+                                     "请拆成几个 cstruct（或把一部分字段收进嵌套 cstruct）",
+                                     ast->u.cstruct_def.name, ast->u.cstruct_def.field_count);
+                }
+
                 // 1. 处理嵌套 cstruct 字段类型
                 // 如果字段类型是 TYPE_STRUCT 且类型名对应一个已定义的 cstruct，
                 // 则将其转换为 TYPE_CSTRUCT

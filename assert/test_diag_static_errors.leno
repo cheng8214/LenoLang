@@ -1236,6 +1236,107 @@ main() { }
         "import \"lim_page255.leno\"\nimport \"lim_base.leno\" as lb\n\nmain() {\n    var o = new lb.LB()\n    print(o.lm255())\n}\n")
     ce.expect_ok(limmain, "跨模块 extend 块 255 个方法（上限边界）应能编译并跑通", "255")
 
+    // ⑭ 其它 u8 计数字段的同类问题（2026-11-04）：`OP_ENUM_DEF` 的成员数、
+    //    `OP_STRUCT_DEF` 的关联常量数 / 泛型参数数、`OP_CSTRUCT_DEF` 的字段数
+    //    都是 `cw_u8` ⇒ 256 会写成 0，编译期全绿、运行期「内存反序列化失败(6)」✗
+    //    ⇒ 全部改成编译期点名报错；每条都配 255 的正向对照（边界值真的能跑 ✓）
+    var ulim = dirs.join(work, "u8_count_limits")
+    dirs.delete(ulim)
+    dirs.mkdir_p(ulim)
+
+    // enum：256 个成员
+    var esrc = "enum BE {\n"
+    var ei = 1
+    while ei <= 256 {
+        esrc = esrc + "    M" + ei + " = " + ei + "\n"
+        ei = ei + 1
+    }
+    esrc = esrc + "}\n\nmain() {\n    print(BE.M256)\n}\n"
+    var ebad = dirs.join(ulim, "enum256.leno")
+    files.write(ebad, esrc)
+    ce.expect_error(ebad, "enum 成员数 >255 要编译期报错（u8 截断）",
+        "有 256 个成员，超出上限（最多 255 个）", 1)
+
+    // enum 正向：255 个成员可编译并取值
+    var eok = "enum BE {\n"
+    var ej = 1
+    while ej <= 255 {
+        eok = eok + "    M" + ej + " = " + ej + "\n"
+        ej = ej + 1
+    }
+    eok = eok + "}\n\nmain() {\n    print(BE.M255)\n}\n"
+    var eokf = dirs.join(ulim, "enum255.leno")
+    files.write(eokf, eok)
+    ce.expect_ok(eokf, "enum 成员数 255（边界）应能跑通", "255")
+
+    // struct 关联常量：256 个
+    var csrc = "struct BS {\n"
+    var ci = 1
+    while ci <= 256 {
+        csrc = csrc + "    const C" + ci + " = " + ci + "\n"
+        ci = ci + 1
+    }
+    csrc = csrc + "}\n\nmain() {\n    print(BS.C256)\n}\n"
+    var cbad = dirs.join(ulim, "sconst256.leno")
+    files.write(cbad, csrc)
+    ce.expect_error(cbad, "struct 关联常量数 >255 要编译期报错（u8 截断）",
+        "有 256 个关联常量，超出上限（最多 255 个）", 1)
+
+    var cok = "struct BS {\n"
+    var cj = 1
+    while cj <= 255 {
+        cok = cok + "    const C" + cj + " = " + cj + "\n"
+        cj = cj + 1
+    }
+    cok = cok + "}\n\nmain() {\n    print(BS.C255)\n}\n"
+    var cokf = dirs.join(ulim, "sconst255.leno")
+    files.write(cokf, cok)
+    ce.expect_ok(cokf, "struct 关联常量数 255（边界）应能跑通", "255")
+
+    // cstruct 字段：256 个（类型用 i32，避免保留字 f64）
+    var fsrc = "cstruct BC {\n"
+    var fi = 1
+    while fi <= 256 {
+        fsrc = fsrc + "    i32 g" + fi + "\n"
+        fi = fi + 1
+    }
+    fsrc = fsrc + "}\n\nmain() {\n    print(1)\n}\n"
+    var fbad = dirs.join(ulim, "cstruct256.leno")
+    files.write(fbad, fsrc)
+    ce.expect_error(fbad, "cstruct 字段数 >255 要编译期报错（u8 截断）",
+        "有 256 个字段，超出上限（最多 255 个）", 1)
+
+    var fok = "cstruct BC {\n"
+    var fj = 1
+    while fj <= 255 {
+        fok = fok + "    i32 g" + fj + "\n"
+        fj = fj + 1
+    }
+    fok = fok + "}\n\nmain() {\n    print(1)\n}\n"
+    var fokf = dirs.join(ulim, "cstruct255.leno")
+    files.write(fokf, fok)
+    ce.expect_ok(fokf, "cstruct 字段数 255（边界）应能跑通", "1")
+
+    // struct / face 泛型参数：256 个
+    var tps = ""
+    var ti = 1
+    while ti <= 256 {
+        if ti > 1 { tps = tps + ", " }
+        tps = tps + "T" + ti
+        ti = ti + 1
+    }
+    var tpbad = dirs.join(ulim, "struct_tp256.leno")
+    files.write(tpbad,
+        "struct BT[" + tps + "] {\n    int v = 1\n}\n\nmain() {\n    print(1)\n}\n")
+    ce.expect_error(tpbad, "struct 泛型参数 >255 要编译期报错（u8 截断）",
+        "有 256 个泛型参数，超出上限（最多 255 个）", 1)
+
+    var ftpbad = dirs.join(ulim, "face_tp256.leno")
+    files.write(ftpbad,
+        "face BF[" + tps + "] {\n    func m()\n}\n\nmain() {\n    print(1)\n}\n")
+    ce.expect_error(ftpbad, "face 泛型参数 >255 要编译期报错（u8 截断）",
+        "有 256 个泛型参数，超出上限（最多 255 个）", 1)
+
     // ② 用静态 fixture（assert/import_broken*.leno）：坏模块必须在 assert/ 下才能被相对 import 找到
     ce.expect_error("assert/import_broken.leno", "导入有语法错误的模块要报错（报在 fixture 自己那行）",
         "期望 '{'", 8)

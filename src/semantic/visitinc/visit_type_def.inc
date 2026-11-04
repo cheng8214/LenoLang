@@ -501,6 +501,31 @@
                                          "方法数在 struct 定义头里是 1 字节；请把方法拆到其它文件用 extend 挂",
                                          ast->u.struct_def.name, ast->u.struct_def.method_count);
                     }
+                    // ★ 2026-11-04：struct 的**关联常量数 / impl 数 / 泛型参数数**也都是 u8 编码
+                    //   （codegen 的 OP_STRUCT_DEF 依次 `cw_u8(const_count)` / `impl_count` /
+                    //   `type_param_count`）⇒ >255 静默截断，后面的元数据被当成字节码
+                    //   （实测 256 个 const：--check 全绿，运行报「内存反序列化失败(6)」✗）。
+                    if (ast->u.struct_def.const_count > 255) {
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                         "struct '%s' 有 %d 个关联常量，超出上限（最多 255 个）："
+                                         "常量数在 struct 定义头里是 1 字节，超出会截断（运行期反序列化失败）；"
+                                         "请拆成多个 struct，或改用模块级 const",
+                                         ast->u.struct_def.name, ast->u.struct_def.const_count);
+                    }
+                    if (ast->u.struct_def.impl_count > 255) {
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                         "struct '%s' 有 %d 个 impl，超出上限（最多 255 个）："
+                                         "impl 数在 struct 定义头里是 1 字节，超出会截断（运行期反序列化失败）；"
+                                         "请把 impl 拆到多个 struct / 多个文件",
+                                         ast->u.struct_def.name, ast->u.struct_def.impl_count);
+                    }
+                    if (ast->u.struct_def.type_param_count > 255) {
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                         "struct '%s' 有 %d 个泛型参数，超出上限（最多 255 个）："
+                                         "泛型参数数在 struct 定义头里是 1 字节，超出会截断（运行期反序列化失败）；"
+                                         "请用更少类型参数（或把它们收进一个类型）",
+                                         ast->u.struct_def.name, ast->u.struct_def.type_param_count);
+                    }
 
                     // 预扫描阶段可能已给该符号填过一份字段元数据 ⇒ 覆盖前先释放旧副本
                     symbol_release_type_meta(sym);
@@ -1020,6 +1045,24 @@
                 TypeInfo* face_type = type_new(TYPE_FACE);
                 face_type->struct_name = strdup(ast->u.face_def.name);
 
+                // ★ 2026-11-04：face 的**方法数 / 泛型参数数**在 `OP_FACE_DEF` 里都是 u8 编码
+                //   （`cw_u8(method_count)` / `cw_u8(type_param_count)`）⇒ 超 255 直接报。
+                //   ⚠ 必须写在**预注册复用分支之外**：预注册已建好 TYPE_FACE 符号时走
+                //   `if (existing && TYPE_FACE)` 那条，原先把检查塞在 else 里根本执行不到
+                //   （实测 256 个泛型参数：--check 全绿，未触发检查 ✗）。
+                if (ast->u.face_def.method_count > 255) {
+                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                     "face '%s' 定义了 %d 个方法，超出上限（最多 255 个）："
+                                     "方法数在 face 定义头里是 1 字节，超出的方法会丢失",
+                                     ast->u.face_def.name, ast->u.face_def.method_count);
+                }
+                if (ast->u.face_def.type_param_count > 255) {
+                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                     "face '%s' 有 %d 个泛型参数，超出上限（最多 255 个）："
+                                     "泛型参数数在 face 定义头里是 1 字节，超出会截断（方法签名/约束可能错乱）",
+                                     ast->u.face_def.name, ast->u.face_def.type_param_count);
+                }
+
                 // 同名冲突标记（与 struct 分支同一策略：报错后不再写入全局 face 定义表）
                 int face_dup = 0;
 
@@ -1063,13 +1106,6 @@
                         type_free(sym->type);
                         sym->type = face_type;
                         sym->type_decl_ast = ast;
-                        // ★ 2026-11-04：face 的方法数在 `OP_FACE_DEF` 里也是 u8 编码（& 0xFF 截断）⇒ 超 255 直接报
-                        if (ast->u.face_def.method_count > 255) {
-                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
-                                             "face '%s' 定义了 %d 个方法，超出上限（最多 255 个）："
-                                             "方法数在 face 定义头里是 1 字节，超出的方法会丢失",
-                                             ast->u.face_def.name, ast->u.face_def.method_count);
-                        }
                         symbol_release_type_meta(sym);   // 预扫描可能已填过旧副本
                         sym->struct_field_count = ast->u.face_def.method_count;
                         sym->struct_field_names = (char**)malloc(sizeof(char*) * ast->u.face_def.method_count);

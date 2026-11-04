@@ -223,6 +223,13 @@ struct {
   "方法数 ≤ 255" 检查覆盖（报错在 struct 定义行）。
 - 边界值 255 **合法且能跑**（`assert/test_diag_static_errors.leno` ⑬ 有正向对照）。
 
+> **同类上限（2026-11-04 一并补齐）**：`OP_ENUM_DEF` 的成员数、`OP_STRUCT_DEF` 的
+> 关联常量数 / impl 数 / 泛型参数数、`OP_CSTRUCT_DEF` 的字段数、`OP_FACE_DEF` 的
+> 方法数 / 泛型参数数**都是 u8** ⇒ 256 会写成 0（`--check` 全绿、运行期反序列化失败）。
+> 现在全部在语义层编译期报「超出上限（最多 255 个）」。注意 face 的检查必须放在
+> **预注册复用分支之外**（否则预注册已建好符号时根本执行不到检查 ✗）。
+> 负例 + 255 正向对照都在 `assert/test_diag_static_errors.leno` ⑭ ✓。
+
 ## 6. 落点
 
 ### 6.1 parser
