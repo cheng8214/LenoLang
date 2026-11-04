@@ -235,8 +235,13 @@ void dicts_init_instance_methods(void) {
     
     dict_register_method("len", make_native(dict_method_len, 1, "len"), TYPE_INT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
 
-    TypeKind has_params[] = {TYPE_ANY};
-    dict_register_method("has", make_native(dict_method_has, 2, "has"), TYPE_BOOL, TYPE_UNKNOWN, NATIVE_FIXED(has_params));
+    // ★ 2026-11-04 修**误报**（实测：`Dict[string,int] d = {"a": 1}; d.has("a")` 编译不过，
+    //   报"参数 2 期望 int，但传入 string" ✗）：
+    //   键类型本来就随 `Dict[K,V]` 的 K 变化（`Dict[int,string].has(1)` 是合法的），
+    //   写死 `TYPE_ANY` 时语义层会拿**值类型 V** 去兜底检查实参 ⇒ 值类型不是 string 就误报。
+    //   传变量 `d.has(k)` 不走那条路径 ⇒ 同一个方法"字面量报错、变量能过"，更说明是检查口径问题。
+    //   ⇒ 只声明**参数个数**（arity 检查保留），类型不校验：K 是啥就传啥，运行期按内容比键 ✓
+    dict_register_method("has", make_native(dict_method_has, 2, "has"), TYPE_BOOL, TYPE_UNKNOWN, NATIVE_FIXED_NONE(1));
 
     TypeKind get_params[] = {TYPE_ANY, TYPE_ANY};
     dict_register_method("get", make_native(dict_method_get, 3, "get"), TYPE_ANY, TYPE_UNKNOWN, NATIVE_VARARG(1, 2, 2, get_params, TYPE_ANY));
