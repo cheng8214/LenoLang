@@ -167,6 +167,13 @@ static void sym_table_clear_symbols(ModuleSymbolTable* table) {
             free(table->extends[i].methods[j].return_type_param_name);
             free(table->extends[i].methods[j].param_types);
             free(table->extends[i].methods[j].param_text);
+            // 2026-11-04：聚合类型参数名（add_extend / 缓存反序列化都会填）
+            if (table->extends[i].methods[j].param_struct_names) {
+                for (int k = 0; k < table->extends[i].methods[j].param_count; k++) {
+                    free(table->extends[i].methods[j].param_struct_names[k]);
+                }
+                free(table->extends[i].methods[j].param_struct_names);
+            }
             // 2026-11-04：默认值文本（add_extend / 缓存反序列化都会填）
             if (table->extends[i].methods[j].param_default_texts) {
                 for (int k = 0; k < table->extends[i].methods[j].param_count; k++) {

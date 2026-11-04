@@ -22,4 +22,11 @@ extend pb.ExtPlayer {
 //（此前只给 self 填了类型名 ⇒ `T` 被报成"未定义的类型"，提示还叫你去 use 导入 T）
 extend pb.ExtBox {
     func peek(): T { return v }
+
+    // 泛型**形参**（2026-11-04）：符号表里的 `T` 只是 TYPE_STRUCT("T")，调用方拿到占位符后
+    // 需要对照目标类型的 type_params 认出它是泛型参数 —— 否则合法调用被误判成
+    // 「期望 struct, 实际 int」（实测 `wrap(7)` 编不过 ✗）
+    func echo(T x): T { return x }
+
+    func first(Array[T] xs): T { return xs[0] }
 }

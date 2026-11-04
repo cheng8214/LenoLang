@@ -300,6 +300,23 @@ void semantic_register_extends_from_module(Semantic* s, const ModuleSymbolTable*
         const ModuleExtendSymbol* ex = &table->extends[ei];
         if (!ex->type_name || !ex->methods || ex->method_count <= 0) continue;
 
+        // ★ 2026-11-04：目标 struct 的**类型参数名**（从定义模块的符号表取）。
+        //   扩展模块里的 `T` 在符号表里只是 TYPE_STRUCT("T")（扫描器不知道目标类型的参数表）
+        //   ⇒ 占位符若照抄就会把泛型形参当"真 struct"检查：`wrap(T x)` 在调用点
+        //   被误判成「期望 struct, 实际 int」（实测 ✗）。这里按名对照后转成 TYPE_GENERIC_PARAM ✓
+        char** target_tparams = NULL;
+        int target_tpc = 0;
+        for (int im2 = 0; im2 < s->imported_module_count; im2++) {
+            ModuleSymbolTable* t2 = s->imported_modules[im2].sym_table;
+            if (!t2) continue;
+            ModuleStructSymbol* ss2 = module_symbol_table_find_struct(t2, ex->type_name);
+            if (ss2 && ss2->type_param_count > 0 && ss2->type_param_names) {
+                target_tparams = ss2->type_param_names;
+                target_tpc = ss2->type_param_count;
+                break;
+            }
+        }
+
         for (int mi = 0; mi < ex->method_count; mi++) {
             const ModuleStructMethod* m = &ex->methods[mi];
             if (!m->name || !m->name[0]) continue;
@@ -347,7 +364,30 @@ void semantic_register_extends_from_module(Semantic* s, const ModuleSymbolTable*
                 }
                 for (int pi = 0; pi < m->param_count; pi++) {
                     TypeKind pt = m->param_types ? m->param_types[pi] : TYPE_ANY;
-                    ph->u.func.param_types[1 + pi] = type_new(pt);
+                    // 聚合名：是目标类型的类型参数（如 T）⇒ TYPE_GENERIC_PARAM；
+                    //   否则按普通 struct 名（调用点要能查字段/方法 ✓）
+                    const char* psn = (m->param_struct_names && m->param_struct_names[pi])
+                                          ? m->param_struct_names[pi] : NULL;
+                    int is_gp = 0;
+                    if (psn) {
+                        for (int tp = 0; tp < target_tpc; tp++) {
+                            if (target_tparams[tp] && strcmp(psn, target_tparams[tp]) == 0) {
+                                is_gp = 1;
+                                break;
+                            }
+                        }
+                    }
+                    if (is_gp) {
+                        ph->u.func.param_types[1 + pi] = type_new(TYPE_GENERIC_PARAM);
+                        if (ph->u.func.param_types[1 + pi]) {
+                            ph->u.func.param_types[1 + pi]->type_param_name = strdup(psn);
+                        }
+                    } else {
+                        ph->u.func.param_types[1 + pi] = type_new(pt);
+                        if (ph->u.func.param_types[1 + pi] && psn) {
+                            ph->u.func.param_types[1 + pi]->struct_name = strdup(psn);
+                        }
+                    }
                 }
             } else {
                 ph->u.func.param_types = NULL;

@@ -654,6 +654,17 @@ ModuleExtendSymbol* module_symbol_table_add_extend(ModuleSymbolTable* table,
                     memcpy(dst->param_types, src->param_types, sizeof(TypeKind) * (size_t)src->param_count);
                 }
             }
+            // 聚合类型参数名（2026-11-04）：调用方据此区分"目标 struct 的类型参数 T"与真 struct
+            if (src->param_count > 0 && src->param_struct_names) {
+                dst->param_struct_names = (char**)calloc((size_t)src->param_count, sizeof(char*));
+                if (dst->param_struct_names) {
+                    for (int k = 0; k < src->param_count; k++) {
+                        if (src->param_struct_names[k]) {
+                            dst->param_struct_names[k] = strdup(src->param_struct_names[k]);
+                        }
+                    }
+                }
+            }
             dst->default_count = src->default_count;
             if (src->param_count > 0 && src->param_default_texts) {
                 dst->param_default_texts = (char**)calloc((size_t)src->param_count, sizeof(char*));

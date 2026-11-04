@@ -6,7 +6,11 @@
 // ⚠ 版本号登记表：docs/单一事实来源与重复实现收敛.md 第七节
 //   （只覆盖符号表缓存；2026-09-16 撞过车：与上游都用 v23 但格式不同）
 #define LENOSYMC_MAGIC   0x4D59534C  // "LSYM" little-endian
-#define LENOSYMC_VERSION 0x00000029  // v41 (2026-11-04): extend 方法段新增**默认值**
+#define LENOSYMC_VERSION 0x0000002A  // v42 (2026-11-04): extend 方法段新增**聚合类型参数名**
+                                     //   （has_psn + 每参数名）—— 调用方需要区分"目标 struct
+                                     //   的类型参数 T"与真 struct，否则 `wrap(T x)` 的跨模块
+                                     //   调用被误判成「期望 struct, 实际 int」✗
+                                     // v41 (2026-11-04): extend 方法段新增默认值
                                      //   （default_count + 逐参默认值文本）—— 跨模块调用点
                                      //   省略默认参数时必须靠它补齐，否则运行期形参是 null
                                      // v40 (2026-11-02): 新增跨模块 extend 登记段
@@ -472,6 +476,14 @@ sym_cache_write_string(f, table->funcs[i].optkeys);
             for (uint8_t k = 0; k < pc; k++) {
                 uint8_t pt = (uint8_t)((m->param_types && m->param_types[k]) ? (uint8_t)m->param_types[k] : (uint8_t)TYPE_ANY);
                 fwrite(&pt, 1, 1, f);
+            }
+            // v42：聚合类型参数名（同 struct 方法段：has_psn + 每参数名）
+            uint8_t has_psn = m->param_struct_names ? 1 : 0;
+            fwrite(&has_psn, 1, 1, f);
+            if (has_psn) {
+                for (uint8_t k = 0; k < pc; k++) {
+                    sym_cache_write_string(f, m->param_struct_names ? m->param_struct_names[k] : NULL);
+                }
             }
             // v41：默认参数（同 struct 方法段的口径：个数 + 逐参文本，NULL 表示该参无默认值）
             uint32_t mdc = (uint32_t)m->default_count;
@@ -982,6 +994,15 @@ static int sym_cache_deserialize(const char* cache_path, ModuleSymbolTable* tabl
                     uint8_t pt = 0;
                     if (fread(&pt, 1, 1, f) != 1) goto fail;
                     if (m->param_types) m->param_types[k] = (TypeKind)pt;
+                }
+            }
+            // v42：聚合类型参数名（顺序必须与写入一致：param_types → has_psn+名 → 默认值）
+            uint8_t has_psn = 0;
+            if (fread(&has_psn, 1, 1, f) != 1) goto fail;
+            if (has_psn && pc > 0) {
+                m->param_struct_names = (char**)calloc(pc, sizeof(char*));
+                for (uint8_t k = 0; k < pc; k++) {
+                    m->param_struct_names[k] = sym_cache_read_string(f);
                 }
             }
             // v41：默认参数（顺序必须与写入一致：param_types → default_count → 逐参文本）

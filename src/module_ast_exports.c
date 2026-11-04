@@ -1899,6 +1899,20 @@ static void ast_fill_one_extend(ModuleSymbolTable* table, Ast* ext) {
                     m->param_types[k] = pt ? pt->kind : TYPE_ANY;
                 }
             }
+            // ★ 2026-11-04：聚合类型参数名也要带进符号表。`T` 在扩展模块里被解析成
+            //   TYPE_STRUCT("T") —— 调用方需要知道它是**目标 struct 的类型参数**还是真 struct，
+            //   否则 `wrap(T x)` 的跨模块调用会被判成「期望 struct, 实际 int」（实测 ✗）。
+            //   这里按原样记下 struct_name，由 semantic_register_extends_from_module 对照
+            //   目标类型的 type_params 决定是否转成 TYPE_GENERIC_PARAM ✓
+            m->param_struct_names = (char**)calloc((size_t)fn->u.func.pcnt, sizeof(char*));
+            if (m->param_struct_names && fn->u.func.param_types) {
+                for (int k = 0; k < fn->u.func.pcnt; k++) {
+                    TypeInfo* pt = fn->u.func.param_types[k];
+                    if (pt && pt->struct_name) {
+                        m->param_struct_names[k] = strdup(pt->struct_name);
+                    }
+                }
+            }
             m->param_default_texts = (char**)calloc((size_t)fn->u.func.pcnt, sizeof(char*));
             if (m->param_default_texts && fn->u.func.param_defaults) {
                 for (int k = 0; k < fn->u.func.pcnt; k++) {
@@ -1918,6 +1932,10 @@ static void ast_fill_one_extend(ModuleSymbolTable* table, Ast* ext) {
         free(ms[i].name);
         free(ms[i].return_struct_name);
         free(ms[i].param_types);
+        if (ms[i].param_struct_names) {
+            for (int k = 0; k < ms[i].param_count; k++) free(ms[i].param_struct_names[k]);
+            free(ms[i].param_struct_names);
+        }
         if (ms[i].param_default_texts) {
             for (int k = 0; k < ms[i].param_count; k++) free(ms[i].param_default_texts[k]);
             free(ms[i].param_default_texts);

@@ -17,7 +17,7 @@
 
 ```
 lib/page_download.leno   extend player.Player { func paint_dl }   ← 定义（方法体在这）
-        ↓ 扫描时登记进 page_download 的符号表（extends 段，.lenosymc v41 含默认值文本）
+        ↓ 扫描时登记进 page_download 的符号表（extends 段，.lenosymc v42：默认值文本 + 聚合类型参数名）
 主程序 import page_download
         ↓ semantic_register_extends_from_module：挂成 "Player::paint_dl" 占位符
         ↓ visit：字段名→self.字段名、前置隐式 self、方法体语义分析
@@ -45,6 +45,12 @@ lib/page_download.leno   extend player.Player { func paint_dl }   ← 定义（�
 （extends 段，v41）带到调用方，codegen 省略实参时按它补齐。此前只抄参数类型，
 运行期形参是 null（`p.dmg()` 在方法体里报「减法: null 不能参与运算」，`--check` 却是过的）。
 另外 `export func` 修饰现在也被接受（此前被误报成"extend 块里不能加字段"）。
+
+**三期补 2（2026-11-04）**：跨模块扩展方法的**泛型形参** —— 扩展模块里的 `T` 在符号表里
+只是 `TYPE_STRUCT("T")`，调用方必须对照目标类型的 `type_params` 认出它是泛型参数（v42 起
+随 extends 段带上聚合类型参数名）。此前占位符照抄 ⇒ `wrap(T x)` 的合法调用被误判成
+「期望 struct, 实际 int」（实测编不过 ✗）。注意：泛型参数本身仍是"与任何类型兼容"的口径，
+把 `TBox[int]` 的方法传 `string` 不会被拦（普通跨模块泛型方法同样如此，属既有口径）。
 
 ## 1. 背景：为什么需要它
 

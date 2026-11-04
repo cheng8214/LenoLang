@@ -39,6 +39,11 @@ main()
     var bs = new pb.ExtBox[string](v = "hi")
     assert_eq(bs.peek(), "hi")
 
+    // ④b 泛型形参：`echo(T x)` 与 `first(Array[T] xs)` 的合法调用不能再被误判
+    assert_eq(b.echo(8), 8)
+    assert_eq(b.first([5, 6]), 5)
+    assert_eq(bs.echo("y"), "y")
+
     // ⑥ 扩展模块 A 自己的 `pri` 方法：模块内可调（正例；跨模块调用由 diag 负例拦住）
     var q = new vx.VX()
     assert_eq(q.ownCall(), 41)
