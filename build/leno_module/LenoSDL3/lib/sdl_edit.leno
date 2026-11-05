@@ -625,8 +625,7 @@ _drawBorder = opts.get("border", true)
         } else {
             paste = paste.replace("\r", "").replace("\n", " ")
             cursorPos = del_sel()
-            text = text.slice(0, cursorPos - 1) + paste + text.slice(cursorPos, text.len())
-            cursorPos += paste.len()
+            cursorPos = _ins_at(cursorPos, paste)
             dirty = true; on_text_changed()
         }
     }
@@ -1168,6 +1167,33 @@ _drawBorder = opts.get("border", true)
         return t.slice(s, e - 1)
     }
 
+    // ==================== 单行编辑原语 ====================
+    // ★ 2026-11-05：把"改 text + 挪光标"收敛成两个原语。
+    //   原来粘贴 / 退格 / Delete / 输入 / 删选区 **五处各写一遍**：
+    //     `text.slice(0, cursorPos-1) + ... + text.slice(cursorPos, len)`
+    //   每处的 ±1 / ±2 都得单独推一遍（`slice` 是**闭区间**，很容易差一位），
+    //   改一处就得重新验一次 —— 这正是"手写 slice + 手动调光标"的重复成本。
+    //
+    //   语义（务必按这个理解，别按左闭右开推）：
+    //     · `cursorPos` 是 **1-based 光标位置**：光标左边有 `cursorPos` 个字符
+    //     · `slice(a, b)` 是**闭区间**（含 b）⇒ `slice(0, pos-1)` = 前 pos 个字符，
+    //       `slice(pos, len)` = 从第 pos+1 个字符起（正好接上，无重叠无跳过）
+    //
+    //   ⚠ 只改 `text` + 返回新光标；**不**碰 undo / dirty / on_text_changed
+    //     （这三样的时机各不一样：输入要合并撤销、粘贴要断开，留给调用方 ✓）
+
+    // 在 1-based 位置 pos 前插入 s，返回插入后的光标位置
+    pri func _ins_at(int pos, string s): int {
+        text = text.slice(0, pos - 1) + s + text.slice(pos, text.len())
+        return pos + s.len()
+    }
+
+    // 删除 1-based 区间 [from, te)（te 不含），返回删除后的光标位置（= from）
+    pri func _del_range(int from, int te): int {
+        text = text.slice(0, from - 1) + text.slice(te, text.len())
+        return from
+    }
+
     // 删除选区并返回删除的起始位置
     pri func del_sel(): int {
         if not selActive or selStart < 0 { return cursorPos }
@@ -1175,7 +1201,8 @@ _drawBorder = opts.get("border", true)
         if s > e { var t = s; s = e; e = t }
         if s < 0 { s = 0 }
         if e > text.len() { e = text.len() }
-        if s < e { text = text.slice(0, s - 1) + text.slice(e, text.len()) }
+        // 原来手写 slice，改走原语；光标由调用方按返回值 s 设置（保持原语义，这里不改 cursorPos）
+        if s < e { _del_range(s, e) }
         clear_sel()
         return s
     }
@@ -1213,8 +1240,7 @@ _drawBorder = opts.get("border", true)
                         paste = paste.replace("\r", "").replace("\n", " ")
                         save_undo(); mergeUndo = false
                         cursorPos = del_sel()
-                        text = text.slice(0, cursorPos - 1) + paste + text.slice(cursorPos, text.len())
-                        cursorPos += paste.len()
+                        cursorPos = _ins_at(cursorPos, paste)
                         changed = true
                     }
                 }
@@ -1228,8 +1254,7 @@ _drawBorder = opts.get("border", true)
                     cursorPos = del_sel(); changed = true
                 } else if cursorPos > 0 {
                     save_undo(); mergeUndo = false
-                    text = text.slice(0, cursorPos - 2) + text.slice(cursorPos, text.len())
-                    cursorPos -= 1; changed = true
+                    cursorPos = _del_range(cursorPos - 1, cursorPos); changed = true
                 }
             }
             if sc == Scancode.DELETE {
@@ -1238,7 +1263,7 @@ _drawBorder = opts.get("border", true)
                     cursorPos = del_sel(); changed = true
                 } else if cursorPos < text.len() {
                     save_undo(); mergeUndo = false
-                    text = text.slice(0, cursorPos - 1) + text.slice(cursorPos + 1, text.len())
+                    cursorPos = _del_range(cursorPos, cursorPos + 1)
                     changed = true
                 }
             }
@@ -1261,8 +1286,7 @@ _drawBorder = opts.get("border", true)
                 // 连续输入合并为一次撤销（与多行一致）；选区删除/光标移动则断开
                 bool canMerge = mergeUndo and not selActive and cursorPos == mergePos
                 if not canMerge { save_undo() }
-                text = text.slice(0, cursorPos - 1) + ch + text.slice(cursorPos, text.len())
-                cursorPos += ch.len()
+                cursorPos = _ins_at(cursorPos, ch)
                 on_text_changed()
                 dirty = true
                 mergeUndo = true; mergePos = cursorPos
