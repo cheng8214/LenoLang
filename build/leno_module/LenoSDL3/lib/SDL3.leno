@@ -376,7 +376,12 @@ export func createAnchorBox(Dict opts): AnchorBox { return lay.createAnchorBox(o
 import "sdl_dialog.leno" as dlg
 export func createDialogWindow(Dict style): Window { return dlg.createDialogWindow(style) }
 export func createModelessDialog(Dict style): Window { return dlg.createModelessDialog(style) }
+// ⚠ `runModal` **不保证阻塞到窗口关闭**：主循环已在跑时它只注册窗口就返回（见
+//   `isRunLoopActive` 的说明）⇒ 异步路径下结果必须由按钮/关闭回调交出 ✓
 export func runModal(Window win, any onEvent, any onRender) { dlg.runModal(win, onEvent, onRender) }
+
+// 主循环是否已在运行（`runModal` 是否只是个"注册"动作）
+export func isRunLoopActive(): bool { return wnd.isRunLoopActive() }
 
 // ==================== 对话框布局辅助工具（转发 sdl_dialog） ====================
 export func dialogLabel(string text, float fontSize, Color color = 0, int align = 0): Label { return dlg.dialogLabel(text, fontSize, color, align) }

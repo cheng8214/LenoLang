@@ -275,9 +275,12 @@ export struct Table impl Widget, Themeable {
         float bodyW0 = w - 8.0 - fw - gx()      // 行号槽也要从可用宽里扣掉 ✓
         float ch = _rows.len() * rowH
         float tw = total_w() - fw
+        // ★ 2026-11-05：**亚像素容差 0.5**。`avail * ratio` 的浮点求和（尤其 ratios 合计
+        //   写 1.00 时）可能比可视宽多出 1e-13 ⇒ 原来 `tw > bodyW0` 就成立 ⇒ 底部挂一条
+        //   **几乎满宽**的横向滚动条，拖到底也只能挪一丝（用户实测：Aria 歌单详情页 ✗）
         if ch > bodyH0 { vw = 8.0 }
-        if tw > bodyW0 { hh = 8.0 }
-        if vw > 0.0 and tw > bodyW0 - vw { hh = 8.0 }
+        if tw > bodyW0 + 0.5 { hh = 8.0 }
+        if vw > 0.0 and tw > bodyW0 - vw + 0.5 { hh = 8.0 }
         if hh > 0.0 and ch > bodyH0 - hh { vw = 8.0 }
         cachedSbVw = vw; cachedSbHh = hh; sbValid = true
         return [vw, hh]
@@ -297,7 +300,8 @@ export struct Table impl Widget, Themeable {
         float bodyW = w - sb[0] - frozen_w() - gx()
         if bodyW < 0 { bodyW = 0 }
         float m = total_w() - frozen_w() - bodyW
-        if m < 0 { m = 0 }
+        // 与 compute_sb 同口径：亚像素级的"超出"不算可滚动（否则横条能拖一丝、还没意义 ✗）
+        if m < 0.5 { m = 0 }
         return m
     }
     pri func clamp_scroll() {
@@ -575,6 +579,13 @@ export struct Table impl Widget, Themeable {
             //   列宽总和就比可视宽多 8px ⇒ 底部常驻一条横向滚动条，而且**窗口放大也消不掉**
             //   （差值固定 ✗，Aria 本地音乐页实测：只有它合计写成 1.00，其它表 0.98~0.99 没事）
             float avail = w - 8.0 - frozen_w() - iconW - gx()
+            // ★ 2026-11-05（Aria 歌单详情页实测：横竖两条滚动条常驻，横条还几乎满宽、拖不动）：
+            //   **行数超过一屏 ⇒ 竖滚动条会占 8px，列宽必须一起扣掉**。
+            //   原来只扣了右边距那 8px，没扣竖条：竖条出现后可视宽少了 8，而 total_w 不变
+            //   ⇒ `compute_sb` 判定"横向也得滚" ⇒ 横条常驻（差值固定 8px，窗口放大也消不掉 ✗）
+            //   顺序：先按"无竖条"算，再看行高是否超屏 ⇒ 超了就再扣 8（一次到位，不会来回抖 ✓）
+            float bodyH0 = h - headerH - 8.0
+            if _rows.len() * rowH > bodyH0 { avail = avail - 8.0 }
             if avail < 40.0 { avail = 40.0 }
             _colW = []
             for n to i {

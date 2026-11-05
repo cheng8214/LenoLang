@@ -373,6 +373,11 @@ export struct ScrollView impl Widget, Themeable {
     //   ⇒ "快到底时自动加载更多"这类需求没法做（除非自己重新记一份状态 ✗）补齐 ✓
     func get_scroll_y(): float { return scrollY }
     func get_content_h(): float { return _contentH }
+    // ★ 2026-11-05 反哺：`fit_w` 算出的**内容宽**（= 视图宽 − 滚动条宽）原来取不到，
+    //   上层只能自己写 `content_w: w` ⇒ 内容比视口宽出正好一条滚动条 ⇒ 底部多出一条横向
+    //   滚动条（实测：只超 12px，拇指几乎满宽、看着像"莫名其妙的横条"✗）。
+    //   上层要让内容跟视口同宽，直接 `get_content_w()` 即可 ✓
+    func get_content_w(): float { return _contentW }
     // 是否已接近底部（距底 < margin 就算）
     //   ⚠ 内容高未知（`content_h` 没给、自动测出来之前是 -1）时返回 false，别误触发加载 ✓
     func near_bottom(float margin): bool {

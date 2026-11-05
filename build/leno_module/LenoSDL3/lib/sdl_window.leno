@@ -222,6 +222,22 @@ Array[RenderCallback]  _runOverlays = []    // 各窗口叠加层回调（在所
 Array[Array[Shortcut]]  _runShortcuts = []    // 各窗口快捷键列表
 Array[func():bool]       _runShortcutGuards = [] // 各窗口快捷键守卫回调
 var _runLoopActive = false    // 主循环是否已在运行
+
+// 主循环是否**已经**在跑（即某个窗口的 run 正占着它）
+//
+// ★ 2026-11-05（Aria 头像裁剪实测反哺）：
+//   `run` 开头有 `if _runLoopActive { return }` —— 主循环已在跑时，**它只把窗口注册进去、
+//   立刻返回**。所以 `runModal(...)` 这个名字看着像"阻塞到窗口关闭"，实际不是：
+//   在已运行的应用里它一定立刻返回，窗口是**异步**显示的。
+//   ⇒ 调用方必须自己判断：真阻塞时才能在 runModal 之后读结果；否则结果得由
+//     按钮回调 / 关闭回调交出（Aria 那次就是在"窗口刚建好"时用空值回调了，
+//     界面直接显示"已取消头像选择" ✗）。
+//
+//   用法：
+//     bool blocked = not SDL3.isRunLoopActive()
+//     SDL3.runModal(dlg, onEvent, onRender)
+//     if blocked { /* 这里才拿得到用户的选择 */ } else { /* 异步：等回调 */ }
+export func isRunLoopActive(): bool { return _runLoopActive }
 Array[int] _modalStack = []   // 模态窗口栈（支持嵌套）
 var _exitRequested = false    // 程序化退出请求（requestExit ⇒ 主循环下一轮收尾返回）
 var _closeCanceled = false    // 本次关闭请求被拦截（Window.cancelClose ⇒ 不销毁窗口）
