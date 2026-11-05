@@ -298,7 +298,12 @@ func search(Dict req): Dict {
 
 - **路由顺序**：精确路径（注册顺序）→ 静态目录 → 404；**路径命中但方法不符 ⇒ 405**
 - **keep-alive**：HTTP/1.1 默认保持（`Connection: close` 关闭）、HTTP/1.0 需显式
-  `keep-alive`；单连接最多 100 个请求，空闲 5s 超时
+  `keep-alive`；单连接最多 100 个请求。
+  **空闲时不干等 5s**（★ 2026-11-05）：处理完一个请求后用 `select(idle_ms)` 探一下，
+  没数据就关连接（`handle_conn` 的第三参，默认 300ms；`worker_loop` 在队列有积压时传 0）。
+  否则一个空闲长连接会**独占处理线程**到 5s 超时 —— 线程池下 4 个空闲客户端就能把 worker
+  占满（实测吞吐 4110 → 7 req/s ✗，用例 `test/test_keepalive_idle.leno`）。
+  代价：客户端请求间隔 > `idle_ms` 会重连（标准 HTTP 客户端如 libcurl/浏览器自动处理）。
 - **上限**：请求头 64KB、请求体 8MB（超出报 413/400）
 - **静态文件**：拒绝任何含 `..` 的路径段（防目录穿越）；目录请求补 `index.html`；
   按扩展名给 Content-Type；文件整读进内存
@@ -311,6 +316,9 @@ func search(Dict req): Dict {
     个别路径取到的裸 `ObjFunction` 会被拒绝，具名函数最稳。
   - ⚠ **可变共享状态**：模块级 `var` 是所有线程同一份且无锁，计数/缓存/session 请用
     `Channel` 汇到单点线程处理，或每线程一份。
+  - ⚠ **空闲 keep-alive 会占住 worker**：`handle_conn(c, app, idle_ms = 300)` 的第三参控制
+    "多久没有下一个请求就关连接"；`worker_loop` 发现队列有积压时传 0（立刻让位去接新活）。
+    调大它 = 少重连、但空闲连接会多占 worker；调小 = 更快让位、但客户端更常重连。
   - 队列满（默认 `workers*4`）时直接回 503 关连接，不阻塞 accept。
 - **debug 日志**：`app.set("debug", true)` 会为每个请求打印一行
   （方法 / target / 状态 / keep / carry 字节数），排查"请求收不到"很快。
@@ -340,6 +348,10 @@ build\leno.exe build\leno_module\LenoHTTP\test\test_http.leno
 
 :: 线程池并发：3 个 slowloris 慢连接挂着时，正常请求必须 < 1500ms（1 worker 对照会失败）
 build\leno.exe build\leno_module\LenoHTTP\test\test_thread_server.leno
+
+:: 空闲 keep-alive 不阻塞：8 个空闲长连接挂着时，第 9 个请求必须 < 1000ms
+::   （恢复成"直接 recv 等 5s"会失败在 ~3000ms，即空闲客户端保持连接的时间）
+build\leno.exe build\leno_module\LenoHTTP\test\test_keepalive_idle.leno
 
 :: 视图文件：渲染 / layout 生效 / 默认转义 / 缺文件报错（不起网络）
 build\leno.exe build\leno_module\LenoHTTP\test\test_view.leno

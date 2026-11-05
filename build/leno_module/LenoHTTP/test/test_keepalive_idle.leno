@@ -1,0 +1,143 @@
+// test_keepalive_idle.leno —— 空闲 keep-alive 连接不应独占处理线程
+//
+// 验的是什么（不是"能连上"，而是**空闲连接会不会堵住别人**）：
+//   8 个客户端各发一个请求，**收到响应后保持连接不关**（HTTP/1.1 默认 keep-alive，
+//   浏览器和 libcurl 都这样）。然后第 9 个"探测"请求应当毫秒级返回。
+//
+//   修复前（2026-11-05 之前）：`handle_conn` 处理完请求后直接 recv 等下一个请求
+//   （5s 超时）⇒ 这段等待**一直占着处理线程**，探测请求要等空闲客户端自己断开
+//   （本例 3s）才会被处理。线程池下 4 个空闲客户端就能把 worker 占满
+//   （实测吞吐 4110 → 7 req/s ✗）。
+//   修复后：先 `sockets.select([c], idle_ms)` 探一下，没数据就关连接
+//   （标准 HTTP 客户端会自动重连）⇒ 探测 < 1s ✓
+//
+// 跑法（仓库根目录）：
+//   build\leno.exe build\leno_module\LenoHTTP\test\test_keepalive_idle.leno
+import sockets
+import threads
+import times
+import "HTTP" as http
+
+int PORT = 39732
+int WORKERS = 2
+int IDLE_N = 8
+int HOLD_MS = 3000
+int PROBE_LIMIT_MS = 1000
+
+// ==================== 服务端 ====================
+func h_fast(Dict req): Dict { return http.text("fast") }
+
+// 每个 worker 线程各调一次：路由/闭包只建在**本线程堆**上
+func buildApp(): Dict {
+    var app = http.newApp()
+    http.get(app, "/fast", h_fast)
+    return app
+}
+
+// worker 入口：必须是具名模块函数，arity 恰好 2
+func worker(int idx, Channel conns): int { return http.workerLoop(buildApp(), conns) }
+
+// ==================== 客户端工具 ====================
+func find_sub(string hay, string needle, int from): int {
+    Array[int] h = hay.to_bytes()
+    Array[int] n = needle.to_bytes()
+    if n.len() == 0 { return -1 }
+    var i = from
+    while i + n.len() <= h.len() {
+        var hit = true
+        for 0:n.len()-1 to k {
+            if h[i + k] != n[k] { hit = false; break }
+        }
+        if hit { return i }
+        i = i + 1
+    }
+    return -1
+}
+
+// 连到本机服务（服务端可能还没开始 listen ⇒ 重试）
+func dial(): Socket {
+    Socket last = sockets.connect("127.0.0.1", PORT)
+    for 300 to i {
+        if last != null { return last }
+        threads.sleep(20)
+        last = sockets.connect("127.0.0.1", PORT)
+    }
+    return last
+}
+
+// 空闲客户端：发一个 **keep-alive** 请求（不发 Connection: close），
+// 收到响应后**不关连接**，挂 HOLD_MS —— 模拟"客户端还在但是没新请求"
+func idleClient(Channel ready) {
+    Socket c = dial()
+    if c == null { ready.send(-1); return }
+    c.set_timeout(5000)
+    c.send("GET /fast HTTP/1.1\r\nHost: t\r\n\r\n")
+    var buf = ""
+    while find_sub(buf, "fast", 0) < 0 {
+        var d = c.recv(65536)
+        if d == null { break }
+        buf = buf + (d as string)
+    }
+    ready.send(1)              // 已拿到响应，且连接保持打开
+    threads.sleep(HOLD_MS)
+    c.close()
+}
+
+// 探测：等所有空闲连接都拿到响应后，发一个请求并报告耗时
+func probeClient(Channel ready, Channel out) {
+    for IDLE_N to i { ready.receive() }
+    var errs = ""
+    var t0 = times.ms()
+    Socket c = dial()
+    if c == null {
+        out.send({errs: "E connect", ms: 0.0})
+        return
+    }
+    c.set_timeout(20000)
+    c.send("GET /fast HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n")
+    var buf = ""
+    while find_sub(buf, "fast", 0) < 0 {
+        var d = c.recv(65536)
+        if d == null { break }
+        buf = buf + (d as string)
+    }
+    c.close()
+    if find_sub(buf, "200 OK", 0) < 0 { errs = errs + "E 状态码" }
+    out.send({errs: errs, ms: times.ms() - t0})
+}
+
+// ==================== 主流程 ====================
+main() {
+    var app = buildApp()           // 主线程这份只当 running 开关
+    var ready = threads.channel(IDLE_N)
+    var out = threads.channel(1)
+
+    var tc = threads.start(probeClient, ready, out)
+    for IDLE_N to i { threads.start(idleClient, ready) }
+
+    // IDLE_N 个空闲连接 + 1 个探测 = IDLE_N+1 个连接，处理满就收工
+    var r = http.serveWorkers(app, "127.0.0.1", PORT, WORKERS, worker, 64, IDLE_N + 1)
+    var res = out.receive() as Dict
+    var errs = res["errs"] as string
+    var ms = res["ms"] as float
+    tc.join()
+
+    if not (r["ok"] as bool) {
+        print("[FAIL] 服务未起来：" + (r["err"] as string))
+        _exit(1)
+    }
+    if errs != "" {
+        print("[FAIL] 探测请求出错：" + errs)
+        _exit(1)
+    }
+    // 关键断言：8 个空闲 keep-alive 连接（worker 只有 2 个）在场时，
+    // 探测请求仍应在 1s 内返回。修复前要等空闲客户端断开（3s）⇒ 必然超限 ✗
+    if ms >= PROBE_LIMIT_MS {
+        print("[FAIL] 空闲 keep-alive 连接堵住了新请求：" + _str(ms) + "ms（期望 < "
+            + _str(PROBE_LIMIT_MS) + "ms）")
+        _exit(1)
+    }
+    print("[PASS] keepalive_idle: " + _str(WORKERS) + " workers, " + _str(IDLE_N)
+        + " 个空闲连接各挂 " + _str(HOLD_MS) + "ms；探测请求 " + _str(ms) + "ms"
+        + "；服务端处理连接 " + _str(r["requests"] as int))
+}

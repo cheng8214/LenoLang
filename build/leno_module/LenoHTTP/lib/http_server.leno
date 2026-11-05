@@ -293,7 +293,12 @@ func _read_request(Socket c, string carry): Dict {
 }
 
 // 处理一个已接受的连接（含 keep-alive 的多次请求）
-export func handle_conn(Socket c, Dict app): Dict {
+//   ★ 2026-11-05 `idle_ms`：keep-alive **空闲等待**的上界（默认 300ms）。
+//     原来处理完一个请求就直接 recv（5s 超时）⇒ 一个空闲长连接会**独占处理线程 5 秒**；
+//     线程池下 4 个空闲客户端就能占满 worker，新连接排队（实测吞吐 4110 → 7 req/s ✗）。
+//     现在先 select 等 idle_ms：可读才继续读下一请求，否则关连接（标准 HTTP 客户端会自动重连 ✓）。
+//     worker_loop 在有积压时会传 0（立刻释放空闲连接去接新活）。
+export func handle_conn(Socket c, Dict app, int idle_ms = 300): Dict {
     // ⚠ 两个坑（实测踩出来的）：
     //   ① **accept 出来的 socket 会继承监听端的 nonblocking**（Windows 尤其明显）⇒
     //      若不显式关掉，recv 在"数据还没到"时立刻返回 null，keep-alive 的第二个请求
@@ -307,6 +312,11 @@ export func handle_conn(Socket c, Dict app): Dict {
     c.set_timeout(5000)          // 5s 收包超时：防慢速连接长期占着
     var carry = ""
     while count < MAX_REQ_PER_CONN {
+        // keep-alive 的空闲等待：不再无条件 recv（那会占满 5s），先短 select 探一下
+        if count > 0 {
+            var rdy = sockets.select([c], idle_ms)
+            if rdy.len() == 0 { break }
+        }
         var rr = _read_request(c, carry)
         if not (rr["ok"] as bool) {
             string e = rr["err"] as string
@@ -410,7 +420,10 @@ export func worker_loop(Dict app, Channel conns): int {
         Socket c = sockets.from_fd(fd)
         if c == null { continue }           // fd 已被对端关掉 / 重建失败
         var t0 = times.ms()
-        handle_conn(c, app)                 // 内部 try/catch + close（只断这一个连接）
+        // 队列里还有排队的连接 ⇒ 不回等 keep-alive（idle=0，没数据就放掉这个连接去接新活）
+        int idle = 300
+        if conns.len() > 0 { idle = 0 }
+        handle_conn(c, app, idle)           // 内部 try/catch + close（只断这一个连接）
         if app.has("debug") {
             print("[http] worker 处理完 fd " + _str(fd) + "（" + _str(times.ms() - t0) + "ms）")
         }
