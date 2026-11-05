@@ -997,6 +997,10 @@
                 }
             }
 
+            // ★ 2026-11-05：重复 case 值检查（`case 1` 写两遍 ⇒ 后者永远不会执行）
+            //   放在所有 case 的 values 都访问完（枚举成员此时已折叠成 AST_NUM ✓）
+            sw_check_dup_cases(ast);
+
             if (ast->u.switch_.default_body) {
                 Scope* default_scope = scope_new(s->current, 0);
                 s->current = default_scope;

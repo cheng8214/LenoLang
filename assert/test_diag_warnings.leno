@@ -287,7 +287,8 @@ main() {
         + "    var a = new App()\n"
         + "    print(\"ok\\n\")\n"
         + "}\n")
-    ce.expect_warning(pe2, "M4：别名被字段遮蔽", "[模块别名被遮蔽]", 4)
+    // 2026-11-05：落点改到**字段自己那一行**（struct App 在第 4 行、字段在第 5 行）
+    ce.expect_warning(pe2, "M4：别名被字段遮蔽", "[模块别名被遮蔽]", 5)
 
     // E3（M5a）：把**内建类型**写进 use 列表 ⇒ 报错要**点名说清**（不是干巴巴"期望类型名"✗）
     var pe3 = dirs.join(work, "m5a_builtin.leno")
@@ -396,7 +397,8 @@ main() {
         + "    E mode\n"
         + "}\n"
         + "main() { print(\"ok\\n\") }\n")
-    var of3 = ce.expect_warning(pf3, "F3：枚举字段未初始化", "[字段未初始化]", 2)
+    // 2026-11-05：落点改到**字段自己那一行**（struct S 在第 2 行、字段在第 3 行）
+    var of3 = ce.expect_warning(pf3, "F3：枚举字段未初始化", "[字段未初始化]", 3)
     assert_true(strings.has(of3, "E mode = E."),
         "F3：初值示例应是枚举写法（`E mode = E.…`），不能沿用标量的 `= 0` ✗；实际输出=" + of3)
 

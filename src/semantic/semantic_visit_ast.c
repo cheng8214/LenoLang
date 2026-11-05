@@ -1113,6 +1113,103 @@ void mv_check_top(Semantic* s, Ast* block) {
 }
 
 // ----------------------------------------------------------------------------
+// switch 重复 case 值检查（2026-11-05）
+//   此前 `case 1 { … } case 1 { … }` 静默通过，第二个 case 永远不可能命中，
+//   但编译器一声不吭（与"case 类型不可达"那条同族的静默坑）。
+//   这里只比**编译期可确定的常量**（整数 / 浮点 / 字符串 / bool / null，含负数字面量）；
+//   区间 case（AST_RANGE）与运行期表达式跳过 —— 不做猜测，宁漏勿误报。
+//   用**警告**而非错误：与 WARN_SWITCH_CASE_TYPE 同口径，不打断既有代码。
+// ----------------------------------------------------------------------------
+typedef struct {
+    int kind;       // 1=整数(含枚举/bigint) 2=浮点 3=字符串 4=bool 5=null
+    long long iv;
+    double fv;
+    const char* sv; // 字符串正文 / bigint 字符串
+    int line;
+    int col;
+} SwCaseKey;
+
+static int sw_case_key(Ast* v, SwCaseKey* k) {
+    if (!v || !k) return 0;
+    memset(k, 0, sizeof(*k));
+    k->line = v->line;
+    k->col = v->column;
+    if (v->kind == AST_UNARY) {
+        long long iv = 0;
+        if (ast_const_int(v, &iv)) { k->kind = 1; k->iv = iv; return 1; }
+        return 0;
+    }
+    if (v->kind == AST_NUM) {
+        if (v->u.num.is_bigint) {
+            if (!v->u.num.bigint_str) return 0;
+            k->kind = 1;
+            k->sv = v->u.num.bigint_str;
+            return 1;
+        }
+        if (v->u.num.is_float) { k->kind = 2; k->fv = v->u.num.value; return 1; }
+        k->kind = 1;
+        k->iv = (long long)v->u.num.value;
+        return 1;
+    }
+    if (v->kind == AST_STRING) {
+        if (!v->u.string.value) return 0;
+        k->kind = 3;
+        k->sv = v->u.string.value;
+        return 1;
+    }
+    if (v->kind == AST_BOOL) { k->kind = 4; k->iv = v->u.boolean; return 1; }
+    if (v->kind == AST_NULL) { k->kind = 5; return 1; }
+    return 0;
+}
+
+static int sw_key_same(const SwCaseKey* a, const SwCaseKey* b) {
+    if (a->kind != b->kind) return 0;
+    switch (a->kind) {
+        case 1:   // 整数 / bigint
+            if (a->sv || b->sv) return a->sv && b->sv && strcmp(a->sv, b->sv) == 0;
+            return a->iv == b->iv;
+        case 2: return a->fv == b->fv;
+        case 3: return a->sv && b->sv && strcmp(a->sv, b->sv) == 0;
+        case 4: return a->iv == b->iv;
+        case 5: return 1;   // null
+        default: return 0;
+    }
+}
+
+static void sw_check_dup_cases(Ast* sw) {
+    if (!sw || sw->kind != AST_SWITCH) return;
+    int cap = 64, n = 0;
+    SwCaseKey* seen = (SwCaseKey*)calloc((size_t)cap, sizeof(SwCaseKey));
+    if (!seen) return;
+    for (int i = 0; i < sw->u.switch_.case_count; i++) {
+        for (int j = 0; j < sw->u.switch_.cases[i].values.count; j++) {
+            Ast* v = sw->u.switch_.cases[i].values.items[j];
+            if (!v || v->kind == AST_RANGE) continue;   // 区间不参与单值重复判定
+            SwCaseKey k;
+            if (!sw_case_key(v, &k)) continue;
+            int hit = -1;
+            for (int p = 0; p < n; p++) {
+                if (sw_key_same(&seen[p], &k)) { hit = p; break; }
+            }
+            if (hit >= 0) {
+                warning_add_at_fmt(WARN_DUPLICATE_CASE, k.line, k.col,
+                    "重复的 case 值（与第 %d 行的 case 相同）—— switch 命中前面的分支后即跳出，"
+                    "这个 case **永远不会执行**；删掉重复项，或合并成 `case a, b { … }`",
+                    seen[hit].line);
+            }
+            if (n >= cap) {
+                cap *= 2;
+                SwCaseKey* grown = (SwCaseKey*)realloc(seen, sizeof(SwCaseKey) * (size_t)cap);
+                if (!grown) { free(seen); return; }
+                seen = grown;
+            }
+            seen[n++] = k;
+        }
+    }
+    free(seen);
+}
+
+// ----------------------------------------------------------------------------
 // 递归深度守护（2026-10-30）
 //   超长表达式（`a + b + …` 几千项）会让 AST 深度线性增长；visit 是纯递归，
 //   实测 ~4800 项时默认 8MB 栈被耗尽 ⇒ SIGSEGV（不是错误诊断）。

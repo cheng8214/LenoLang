@@ -2418,12 +2418,12 @@ static void gen_struct_def(CodeGen* gen, Ast* ast) {
                 // 字段类型名可得时（struct 字段）就写进提示里，能直接照抄 ✓
                 const char* tn = (ft && ft->struct_name) ? ft->struct_name : NULL;
                 if (tn) {
-                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                    error_add_at_fmt(ERR_SEMANTIC, def_expr->line, def_expr->column,
                              "struct 字段 '%s' 的默认值必须是常量（数字/字符串/bool/null/数组/字典字面量）；"
                              "需要 '%s' 这类对象实例时，请改成可空字段并判空创建：'%s? %s = null'",
                              ast->u.struct_def.field_names[i], tn, tn, ast->u.struct_def.field_names[i]);
                 } else {
-                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                    error_add_at_fmt(ERR_SEMANTIC, def_expr->line, def_expr->column,
                              "struct 字段 '%s' 的默认值必须是常量（数字/字符串/bool/null/数组/字典字面量）；"
                              "需要对象实例时请改成可空字段（类型后加 '?'、默认 null），在使用前判空创建，或在 init/构造器里赋值",
                              ast->u.struct_def.field_names[i]);

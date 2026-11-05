@@ -436,10 +436,14 @@ void semantic_analyze(Semantic* s, Ast* ast) {
                         for (int k = 0; k < j; k++) {
                             if (stmt->u.struct_def.field_names[j] && stmt->u.struct_def.field_names[k] &&
                                 strcmp(stmt->u.struct_def.field_names[j], stmt->u.struct_def.field_names[k]) == 0) {
-                                error_add_at_fmt(ERR_SEMANTIC, stmt->line, stmt->column,
-                                         "struct '%s' 存在重复字段 '%s'（字段 %d 与字段 %d 重名）",
+                                // ★ 2026-11-05：落点改到**重复字段自己那一行**（此前全报在
+                                //   `struct` 关键字行 ⇒ 几十个字段时根本不知道是哪条 ✗）
+                                int dup_line = ast_struct_field_line(stmt, j);
+                                int first_line = ast_struct_field_line(stmt, k);
+                                error_add_at_fmt(ERR_SEMANTIC, dup_line, 1,
+                                         "struct '%s' 存在重复字段 '%s'（第 %d 行与第 %d 行重名）",
                                          stmt->u.struct_def.name ? stmt->u.struct_def.name : "?",
-                                         stmt->u.struct_def.field_names[j], k + 1, j + 1);
+                                         stmt->u.struct_def.field_names[j], first_line, dup_line);
                             }
                         }
                         sym->struct_field_names[j] = strdup(stmt->u.struct_def.field_names[j]);
@@ -551,10 +555,12 @@ void semantic_analyze(Semantic* s, Ast* ast) {
                             for (int k = 0; k < j; k++) {
                                 if (decl->u.struct_def.field_names[j] && decl->u.struct_def.field_names[k] &&
                                     strcmp(decl->u.struct_def.field_names[j], decl->u.struct_def.field_names[k]) == 0) {
-                                    error_add_at_fmt(ERR_SEMANTIC, decl->line, decl->column,
-                                             "struct '%s' 存在重复字段 '%s'（字段 %d 与字段 %d 重名）",
+                                    int dup_line = ast_struct_field_line(decl, j);
+                                    int first_line = ast_struct_field_line(decl, k);
+                                    error_add_at_fmt(ERR_SEMANTIC, dup_line, 1,
+                                             "struct '%s' 存在重复字段 '%s'（第 %d 行与第 %d 行重名）",
                                              decl->u.struct_def.name ? decl->u.struct_def.name : "?",
-                                             decl->u.struct_def.field_names[j], k + 1, j + 1);
+                                             decl->u.struct_def.field_names[j], first_line, dup_line);
                                 }
                             }
                             sym->struct_field_names[j] = strdup(decl->u.struct_def.field_names[j]);
@@ -946,10 +952,12 @@ void semantic_analyze_module(Semantic* s, Ast* ast) {
                             for (int k = 0; k < j; k++) {
                                 if (decl->u.struct_def.field_names[j] && decl->u.struct_def.field_names[k] &&
                                     strcmp(decl->u.struct_def.field_names[j], decl->u.struct_def.field_names[k]) == 0) {
-                                    error_add_at_fmt(ERR_SEMANTIC, decl->line, decl->column,
-                                             "struct '%s' 存在重复字段 '%s'（字段 %d 与字段 %d 重名）",
+                                    int dup_line = ast_struct_field_line(decl, j);
+                                    int first_line = ast_struct_field_line(decl, k);
+                                    error_add_at_fmt(ERR_SEMANTIC, dup_line, 1,
+                                             "struct '%s' 存在重复字段 '%s'（第 %d 行与第 %d 行重名）",
                                              decl->u.struct_def.name ? decl->u.struct_def.name : "?",
-                                             decl->u.struct_def.field_names[j], k + 1, j + 1);
+                                             decl->u.struct_def.field_names[j], first_line, dup_line);
                                 }
                             }
                             sym->struct_field_names[j] = strdup(decl->u.struct_def.field_names[j]);

@@ -1,0 +1,113 @@
+// test_diag_case_and_field_line.leno —— switch 重复 case / struct 字段诊断落点（2026-11-05）
+//
+// ① switch 重复 case 值：`case 1 { }` 写两遍时，第二个分支**永远不会执行**，
+//    但此前编译器一声不吭。现在给警告（不打断编译，与「case 类型不可达」同口径）。
+//    只比编译期常量：`case 1` 与 `case 1.0` 是不同类型、区间 case 不参与 ⇒ 不该误报。
+// ② struct 字段的诊断此前全报在 `struct` 关键字那一行，几十个字段时定位不到。
+//    现在「重复字段 / 字段默认值非法 / 字段未初始化」都落在**字段自己那一行**。
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_diag_case_field_line")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ---- ① 重复的 int case：警告落在第二个 case 那一行 ----
+    var dupInt = dirs.join(work, "dup_case_int.leno")
+    files.write(dupInt, @"main() {
+    var x = 1
+    switch x {
+        case 1 { print(""one"") }
+        case 1 { print(""again"") }
+        default { print(""other"") }
+    }
+}
+")
+    ce.expect_warning(dupInt, "重复 int case => 警告（后一个永不执行）", "重复的 case 值", 5)
+
+    // ---- ② 重复的 string case ----
+    var dupStr = dirs.join(work, "dup_case_str.leno")
+    files.write(dupStr, @"main() {
+    var s = ""a""
+    switch s {
+        case ""a"" { print(""one"") }
+        case ""a"" { print(""again"") }
+        default { print(""other"") }
+    }
+}
+")
+    ce.expect_warning(dupStr, "重复 string case => 警告", "重复的 case 值", 5)
+
+    // ---- ③ 重复的 enum case（语义阶段枚举成员会折叠成整数，必须照样识别）----
+    var dupEnum = dirs.join(work, "dup_case_enum.leno")
+    files.write(dupEnum, @"enum Color { red; green }
+
+main() {
+    var c = Color.red
+    switch c {
+        case Color.red { print(""one"") }
+        case Color.red { print(""again"") }
+        default { print(""other"") }
+    }
+}
+")
+    ce.expect_warning(dupEnum, "重复 enum case => 警告", "重复的 case 值", 7)
+
+    // ---- ④ 防误报：int / float / 区间 case 混用不是重复 ----
+    var noDup = dirs.join(work, "case_no_dup.leno")
+    files.write(noDup, @"main() {
+    var x = 1
+    switch x {
+        case 1 { print(""int"") }
+        case 1.0 { print(""float"") }
+        case 2:3 { print(""range"") }
+        default { print(""other"") }
+    }
+}
+")
+    var outNoDup = ce.expect_ok(noDup, "不同类型的 case 值不是重复（防误报）", "int")
+    ce.expect_no_warning(outNoDup, "防误报", "重复的 case 值")
+
+    // ---- ⑤ 重复字段：错误必须落在**第二个字段**那一行（不是 struct 行）----
+    var dupField = dirs.join(work, "dup_field.leno")
+    files.write(dupField, @"struct P {
+    int x = 1
+    int x = 2
+}
+
+main() {}
+")
+    ce.expect_error(dupField, "重复字段 => 错误落在字段行",
+        "第 2 行与第 3 行重名", 3)
+
+    // ---- ⑥ 非法字段默认值：错误落在默认值表达式那一行 ----
+    var badDefault = dirs.join(work, "bad_field_default.leno")
+    files.write(badDefault, @"struct N {
+    int x = 1
+    N n = new N()
+}
+
+main() {}
+")
+    ce.expect_error(badDefault, "字段默认值非法 => 错误落在字段行",
+        "必须是常量", 3)
+
+    // ---- ⑦ 字段未初始化：警告逐字段落在各自行，且 string 的示例初值要能编译 ----
+    var noInit = dirs.join(work, "field_no_init.leno")
+    files.write(noInit, @"struct S {
+    int a
+    string b
+    int c = 3
+}
+
+main() {}
+")
+    ce.expect_warning(noInit, "字段未初始化 => 警告落在字段行", "字段 'a' 未显式初始化", 2)
+    var outNoInit = ce.expect_warning(noInit, "string 字段的建议初值必须是合法字面量", "string b = \"\"", 3)
+    ce.expect_no_warning(outNoInit, "已初始化的字段不该报", "字段 'c' 未显式初始化")
+
+    print("test_diag_case_and_field_line passed")
+}

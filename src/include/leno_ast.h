@@ -329,6 +329,10 @@ struct Ast {
             TypeInfo** field_types; // 字段类型数组
             Ast** field_defaults;   // 字段默认值表达式数组（可为 NULL）
             int field_count;    // 字段数量
+            // ★ 2026-11-05：每个字段**声明所在行**（与 field_names 同长）——
+            //   诊断落点用。此前"重复字段 / 字段默认值非法 / 字段未初始化"全报在
+            //   `struct` 关键字那一行，几十个字段时根本定位不到是哪一条 ✗
+            int* field_lines;
             // 每个字段是否 pri（1 = 私有 ✓；与 field_names 同长 ✓）
             //   默认 0 = 公有 ⇒ 只有显式写 pri 的才在编译期拦 ✓（改前全仓无一处 pri ⇒ 零影响 ✓）
             int* field_private;
@@ -462,5 +466,18 @@ struct {
 // AST API
 Ast* ast_new(AstKind kind, int line);
 void ast_free(Ast* ast);
+
+// 取 struct 第 i 个字段的声明行（诊断落点；缺 field_lines 时回退到 struct 行）。
+//   2026-11-05：重复字段 / 字段默认值非法 / 字段未初始化等诊断统一用它，
+//   避免几十个字段的 struct 里所有报错都指向 `struct` 关键字那一行。
+static inline int ast_struct_field_line(const Ast* ast, int i) {
+    if (!ast || ast->kind != AST_STRUCT_DEF) return ast ? ast->line : 0;
+    if (ast->u.struct_def.field_lines && i >= 0 &&
+        i < ast->u.struct_def.field_count &&
+        ast->u.struct_def.field_lines[i] > 0) {
+        return ast->u.struct_def.field_lines[i];
+    }
+    return ast->line;
+}
 
 #endif // LENO_AST_H

@@ -2220,6 +2220,7 @@ Ast* parse_struct_stmt(Parser* p) {
     char** field_names = NULL;
     TypeInfo** field_types = NULL;
     Ast** field_defaults = NULL;
+    int* field_lines = NULL;        // ★ 每个字段声明行（诊断落点，2026-11-05）
     int* field_private = NULL;      // ★ pri 标志（与 field_names 同长；0=公有 ✓）
     int field_count = 0;
     int field_capacity = 8;
@@ -2227,6 +2228,7 @@ Ast* parse_struct_stmt(Parser* p) {
     field_names = (char**)malloc(sizeof(char*) * field_capacity);
     field_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * field_capacity);
     field_defaults = (Ast**)calloc(field_capacity, sizeof(Ast*));
+    field_lines = (int*)calloc(field_capacity, sizeof(int));
     field_private = (int*)calloc(field_capacity, sizeof(int));   // calloc ⇒ 默认全 0 = 公有 ✓
 
     // 动态数组存储方法
@@ -2521,6 +2523,7 @@ Ast* parse_struct_stmt(Parser* p) {
         }
 
         do {
+            int field_line = p->lex.current.line;   // ★ 该字段名所在行（诊断落点）
             char* field_name = copy_string(p->lex.current.text, p->lex.current.len);
             lexer_next(&p->lex);
 
@@ -2531,11 +2534,14 @@ Ast* parse_struct_stmt(Parser* p) {
                 field_types = (TypeInfo**)realloc(field_types, sizeof(TypeInfo*) * field_capacity);
                 field_defaults = (Ast**)realloc(field_defaults, sizeof(Ast*) * field_capacity);
                 memset(&field_defaults[field_count], 0, sizeof(Ast*) * (field_capacity - field_count));
+                field_lines = (int*)realloc(field_lines, sizeof(int) * field_capacity);
+                memset(&field_lines[field_count], 0, sizeof(int) * (field_capacity - field_count));
                 field_private = (int*)realloc(field_private, sizeof(int) * field_capacity);
                 memset(&field_private[field_count], 0, sizeof(int) * (field_capacity - field_count));
             }
 
             field_names[field_count] = field_name;
+            field_lines[field_count] = field_line;
             field_types[field_count] = type_copy(field_type);
             // ★ pri 只作用于**本条声明语句** ✓：`pri int a, b` 里 a、b 都私有 ✓（逗号共享 ✓）；
             //   但 `pri int a; int b` 的 b 是**公有** ✗（`;` 起新语句 ✓ ⇒ member_private 会在
@@ -2571,6 +2577,7 @@ Ast* parse_struct_stmt(Parser* p) {
         free(field_names);
         free(field_types);
         free(field_defaults);
+        free(field_lines);
         free(field_private);
         for (int i = 0; i < method_count; i++) {
             ast_free(methods[i]);
@@ -2594,6 +2601,7 @@ Ast* parse_struct_stmt(Parser* p) {
     ast->u.struct_def.field_types = field_types;
     ast->u.struct_def.field_defaults = field_defaults;
     ast->u.struct_def.field_count = field_count;
+    ast->u.struct_def.field_lines = field_lines;   // ★ 字段声明行（诊断落点）
     ast->u.struct_def.field_private = field_private;   // ★ pri 标志数组 ✓
     ast->u.struct_def.methods = methods;
     ast->u.struct_def.method_count = method_count;

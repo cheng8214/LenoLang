@@ -564,6 +564,7 @@
                         //   ⇒ 给一条编译期警告 ✓（可空标量字段 `int? k` 是显式选择 null，跳过 ✓）
                         {
                             TypeInfo* ftt = ast->u.struct_def.field_types[i];
+                            int fld_line = ast_struct_field_line(ast, i);   // ★ 字段自己那一行
                             // ⚠ `TYPE_ENUM` 也算标量（2026-10-12 补）：口径「枚举 = int」⇒
                             //   `struct S { E mode }` 与 `struct S { int k }` 是同一个坑（运行期是 null ✗），
                             //   此前枚举这半边**漏报**（实测：int 字段有警告、枚举字段没有 ✗）
@@ -575,7 +576,7 @@
                                     // 枚举字段的初值示例**不能**沿用 `= 0`（枚举没有这种写法 ✗）⇒
                                     //   用枚举名 + 成员示例（枚举名就在 struct_name 里 ✓）；可空写法同理 ✓
                                     const char* en = ftt->struct_name ? ftt->struct_name : "枚举名";
-                                    warning_add_at_fmt(WARN_FIELD_NO_INIT, ast->line, ast->column,
+                                    warning_add_at_fmt(WARN_FIELD_NO_INIT, fld_line, 1,
                                              "struct '%s' 的字段 '%s' 未显式初始化 —— 标量字段默认是 null（不是 0），"
                                              "参与运算会直接报错；请写明初值（如 '%s %s = %s.某个成员'）"
                                              "或改用可空类型 '%s? %s'",
@@ -583,11 +584,17 @@
                                              en, ast->u.struct_def.field_names[i], en, en,
                                              ast->u.struct_def.field_names[i]);
                                 } else {
-                                    warning_add_at_fmt(WARN_FIELD_NO_INIT, ast->line, ast->column,
+                                    // ★ 2026-11-05：初值建议按字段类型给**能编译**的字面量 ——
+                                    //   原来一律写 "= 0"，于是 string 字段被建议成 `string b = 0` ✗
+                                    const char* init_lit = "0";
+                                    if (ftt->kind == TYPE_FLOAT) init_lit = "0.0";
+                                    else if (ftt->kind == TYPE_BOOL) init_lit = "false";
+                                    else if (ftt->kind == TYPE_STRING) init_lit = "\"\"";
+                                    warning_add_at_fmt(WARN_FIELD_NO_INIT, fld_line, 1,
                                              "struct '%s' 的字段 '%s' 未显式初始化 —— 标量字段默认是 null（不是 0），"
-                                             "参与运算会直接报错；请写明初值（如 '%s %s = 0'）或改用可空类型 '%s? %s'",
+                                             "参与运算会直接报错；请写明初值（如 '%s %s = %s'）或改用可空类型 '%s? %s'",
                                              ast->u.struct_def.name, ast->u.struct_def.field_names[i],
-                                             type_kind_to_string(ftt->kind), ast->u.struct_def.field_names[i],
+                                             type_kind_to_string(ftt->kind), ast->u.struct_def.field_names[i], init_lit,
                                              type_kind_to_string(ftt->kind), ast->u.struct_def.field_names[i]);
                                 }
                             }
@@ -596,7 +603,7 @@
                         // ★ M4（2026-10-11）：字段名撞上**模块别名** ⇒ 遮蔽告警 ✓
                         //   放在这里正好：字段名与 import 别名都已知 ✓（实测复现见 M4 文档 ✓）
                         semantic_check_alias_shadow(s, ast->u.struct_def.field_names[i], "字段",
-                                                    ast->line, ast->column);
+                                                    ast_struct_field_line(ast, i), 1);
                     }
 
                     // 存储泛型类型参数信息

@@ -79,8 +79,9 @@ main() {
     print(p.x)
 }
 ")
-    // 落点在 struct 声明行（预注册阶段无逐字段行号）
-    ce.expect_error(d2, "重复字段名要报错", "struct 'P' 存在重复字段 'x'", 1)
+    // 落点 = **第二个重复字段自己那一行**（2026-11-05：此前报在 struct 声明行，
+    //   几十个字段时根本定位不到是哪条 ✗）
+    ce.expect_error(d2, "重复字段名要报错", "struct 'P' 存在重复字段 'x'", 3)
 
     // ---- C1：方法名拼错给相似名建议 ----
     var m1 = dirs.join(work, "method_typo_builtin.leno")
