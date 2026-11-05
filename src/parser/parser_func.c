@@ -20,6 +20,12 @@ static TypeInfo* parse_type_internal(Parser* p);
 //   ⚠ 幂等：只匹配 `TYPE_STRUCT`，已转换过的（含方法自己声明的类型参数）不会被覆盖 ✓
 //   ⚠ 约束也要一起写：`resolve_generic_in_type` 对**已转换**的节点会直接跳过（它只认 TYPE_STRUCT）
 //     ⇒ 如果这里不写 `constraint_name`，`[T: string]` 的约束就会在这一步丢掉 ✗
+// ★ 2026-11-06：重复的泛型类型参数（`struct Box[T, T]`）此前**零诊断** ✗
+//   —— 实例化 `Box[int, string]` 时第一个 T 与第二个 T 都参与替换，字段类型
+//   实际取哪一个全凭遍历顺序，结果不可预期。这里在解析处直接拦下（四处声明通用 ✓）。
+//   idx = 新参数在数组中的下标；调用时 lexer 当前 token 仍是那个名字 ⇒ 行/列准确 ✓
+static void parser_check_dup_type_param(char** names, int idx, int line, int column);
+
 static void convert_to_generic_params(TypeInfo* type, char** param_names, char** param_constraints, int count) {
     if (!type || count <= 0) return;
     if (type->kind == TYPE_STRUCT && type->struct_name) {
@@ -59,6 +65,18 @@ static void convert_to_generic_params(TypeInfo* type, char** param_names, char**
     if (type->generic_args) {
         for (int i = 0; i < type->generic_count; i++) {
             convert_to_generic_params(type->generic_args[i], param_names, param_constraints, count);
+        }
+    }
+}
+
+static void parser_check_dup_type_param(char** names, int idx, int line, int column) {
+    if (!names || idx <= 0 || !names[idx]) return;
+    for (int j = 0; j < idx; j++) {
+        if (names[j] && strcmp(names[j], names[idx]) == 0) {
+            error_add_at_fmt(ERR_SEMANTIC, line, column,
+                "重复的类型参数 '%s'（第 %d 个与第 %d 个同名）—— 请换个名字",
+                names[idx], j + 1, idx + 1);
+            return;
         }
     }
 }
@@ -777,6 +795,7 @@ Ast* parse_alias_stmt(Parser* p) {
                 break;
             }
             type_params[type_param_count] = copy_string(p->lex.current.text, p->lex.current.len);
+            parser_check_dup_type_param(type_params, type_param_count, p->lex.current.line, p->lex.current.column);
             type_param_count++;
             lexer_next(&p->lex);
         } while (match(p, TOK_COMMA));
@@ -1454,6 +1473,7 @@ Ast* parse_func_body_and_create(Parser* p, char* name, int line, int column) {
                 break;
             }
             type_params[type_param_count] = copy_string(p->lex.current.text, p->lex.current.len);
+            parser_check_dup_type_param(type_params, type_param_count, p->lex.current.line, p->lex.current.column);
             lexer_next(&p->lex);
             
             // 解析可选的约束: T: FaceName 或 T: 具体类型名（string / int / float / bool，2026-10-03 放开）
@@ -1750,8 +1770,12 @@ int is_entry_function_def(Parser* p) {
     // 预读：跳过 ')'
     lexer_next(&p->lex);
 
-    // 检查是否是 '{'
-    int result = (p->lex.current.type == TOK_LBRACE);
+    // 检查是否是 '{'，或可选的返回类型注解 `main(): int { … }`
+    // ★ 2026-11-06：此前只认 `main() {` ⇒ `main(): int` 落到"表达式语句"解析，
+    //   报的是**误导性的「期望表达式」**✗（语义层其实明确支持 main 返回 int 当退出码 ✓）。
+    //   `main()` 后面出现 ':' 只可能是入口函数的返回类型（变量调用后跟 ':' 不合法）⇒ 直接认。
+    int result = (p->lex.current.type == TOK_LBRACE ||
+                  p->lex.current.type == TOK_COLON);
 
     // 恢复状态
     p->lex = saved_lex;
@@ -2112,6 +2136,7 @@ Ast* parse_struct_stmt(Parser* p) {
                 break;
             }
             type_params[type_param_count] = copy_string(p->lex.current.text, p->lex.current.len);
+            parser_check_dup_type_param(type_params, type_param_count, p->lex.current.line, p->lex.current.column);
             lexer_next(&p->lex);
             
             // 解析可选的约束: T: FaceName 或 T: 具体类型名（string / int / float / bool，2026-10-03 放开）
@@ -2446,6 +2471,26 @@ Ast* parse_struct_stmt(Parser* p) {
                     error_add_at_fmt(ERR_SYNTAX, func_line, p->lex.current.column,
                                      "%s不能有参数", is_ctor ? "构造函数" : "析构函数");
                 }
+                // ★ 2026-11-06：struct 内同名方法（同一个 `func m` 写两遍）此前**零诊断** ✗
+                //   运行期方法查找取第一个 ⇒ 第二个永远不会被调用，改代码时极难发现。
+                //   与顶层重名函数、extend 重名同一口径（Leno 没有同名重载 ✓）。
+                for (int mi = 0; mi < method_count; mi++) {
+                    Ast* prev = methods[mi];
+                    if (prev && prev->kind == AST_FUNC_DEF && prev->u.func.name &&
+                        strcmp(prev->u.func.name, func_ast->u.func.name) == 0) {
+                        // 构造函数与析构函数在 AST 里名字相同（`Resource` / `~Resource` 的
+                        // name 都存成 "Resource"）⇒ 这是**合法且必须**的一对，跳过 ✓
+                        if ((prev->u.func.is_ctor && func_ast->u.func.is_dtor) ||
+                            (prev->u.func.is_dtor && func_ast->u.func.is_ctor)) {
+                            continue;
+                        }
+                        error_add_at_fmt(ERR_SEMANTIC, func_ast->line, func_ast->column,
+                            "struct '%s' 的方法 '%s' 重复定义（第 %d 行已有同名方法）"
+                            "—— Leno 没有同名重载，运行期只有第一个生效；请改名或删掉一个",
+                            struct_name, func_ast->u.func.name, prev->line);
+                        break;
+                    }
+                }
                 // 扩容检查
                 if (method_count >= method_capacity) {
                     method_capacity *= 2;
@@ -2679,6 +2724,7 @@ Ast* parse_face_stmt(Parser* p) {
                 break;
             }
             type_params[type_param_count] = copy_string(p->lex.current.text, p->lex.current.len);
+            parser_check_dup_type_param(type_params, type_param_count, p->lex.current.line, p->lex.current.column);
             type_param_count++;
             lexer_next(&p->lex);
         } while (match(p, TOK_COMMA));
@@ -2734,6 +2780,8 @@ Ast* parse_face_stmt(Parser* p) {
             continue;
         }
 
+        int method_line = p->lex.current.line;
+        int method_col = p->lex.current.column;
         char* method_name = copy_string(p->lex.current.text, p->lex.current.len);
         lexer_next(&p->lex);
 
@@ -2773,6 +2821,17 @@ Ast* parse_face_stmt(Parser* p) {
             method_return_types = (TypeInfo**)realloc(method_return_types, sizeof(TypeInfo*) * method_capacity);
             method_param_types = (TypeInfo***)realloc(method_param_types, sizeof(TypeInfo**) * method_capacity);
             method_param_counts = (int*)realloc(method_param_counts, sizeof(int) * method_capacity);
+        }
+
+        // ★ 2026-11-06：face 内同名方法重复声明此前**零诊断** ✗（`func m()` 写两遍）
+        //   这类重复会让"实现了 face 没有"的判定失真 ⇒ 在声明处直接拦下。
+        for (int mi = 0; mi < method_count; mi++) {
+            if (method_names[mi] && strcmp(method_names[mi], method_name) == 0) {
+                error_add_at_fmt(ERR_SEMANTIC, method_line, method_col,
+                    "face '%s' 的方法 '%s' 重复声明 —— 同一个 face 里方法名必须唯一，请删掉一个",
+                    face_name, method_name);
+                break;
+            }
         }
 
         method_names[method_count] = method_name;

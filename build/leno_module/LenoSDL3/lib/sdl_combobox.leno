@@ -331,8 +331,6 @@ export struct ComboBox impl Widget, Themeable {
     func on_enter(func(string):void cb) { onEnter = cb }
     func set_editable(bool e) { editable = e }
     func is_editing(): bool { return editable and edit != null and edit.is_focused() }
-    func get_text(): string { if editable and edit != null { return edit.get_text() }; return get_selected_text() }
-    func set_text(string t) { if editable and edit != null { edit.set_text(t) } }
 
     func contains(float mx, float my): bool {
         return mx >= x and mx <= x + w and my >= y and my <= y + h

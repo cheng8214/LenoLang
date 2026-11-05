@@ -140,6 +140,46 @@
                                          ast->u.struct_init.struct_name, ast->u.struct_init.struct_name);
                     }
                 } else {
+                    // ★ 2026-11-06：泛型实参**个数**此前不校验 ✗
+                    //   `new Box[int, string](...)` 对 `struct Box[T]` 会静默只取第一个实参，
+                    //   后面的多余类型被丢弃 ⇒ 字段类型看似正常、实际语义错位。
+                    {
+                        int declared_tp = sym->struct_type_param_count;
+                        int given_tp = ast->u.struct_init.generic_type_count;
+                        if (given_tp > 0 && declared_tp == 0) {
+                            error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                                             "struct '%s' 不是泛型类型，不能写类型参数",
+                                             ast->u.struct_init.struct_name);
+                        } else if (given_tp > 0 && declared_tp > 0 && given_tp != declared_tp) {
+                            error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                                             "泛型 struct '%s' 需要 %d 个类型参数，实际写了 %d 个",
+                                             ast->u.struct_init.struct_name, declared_tp, given_tp);
+                        }
+                    }
+
+                    // ★ 2026-11-06：构造时重复初始化同一字段（`new P(x = 2, x = 3)`）
+                    //   此前**零诊断**，后写的值静默覆盖先写的 ⇒ 排查时看不到任何线索。
+                    for (int i = 0; i < ast->u.struct_init.field_count; i++) {
+                        for (int j = 0; j < i; j++) {
+                            if (ast->u.struct_init.field_names[i] &&
+                                ast->u.struct_init.field_names[j] &&
+                                strcmp(ast->u.struct_init.field_names[i],
+                                       ast->u.struct_init.field_names[j]) == 0) {
+                                Ast* v = ast->u.struct_init.field_values[i];
+                                error_add_at_fmt(ERR_SEMANTIC,
+                                                 v && v->line > 0 ? v->line : ast->line,
+                                                 v && v->column > 0 ? v->column : ast->column,
+                                                 "构造 struct '%s' 时重复初始化字段 '%s'（第 %d 行已给过一次）"
+                                                 "—— 后写的值会静默覆盖先写的，请删掉一个",
+                                                 ast->u.struct_init.struct_name,
+                                                 ast->u.struct_init.field_names[i],
+                                                 ast->u.struct_init.field_values[j]
+                                                     ? ast->u.struct_init.field_values[j]->line : ast->line);
+                                break;
+                            }
+                        }
+                    }
+
                     // 检查 struct 是否有析构函数，设置 has_dtor 标志供 codegen 使用
                     // 注意用"带模块前缀"的查找：这里的名字可能是 "a.Point"，裸名查找永远查不到
                     // （带前缀的名字不是表里的键）⇒ has_dtor 恒为假、`new a.Point()` 的析构登记

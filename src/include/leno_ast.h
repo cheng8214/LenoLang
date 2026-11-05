@@ -228,6 +228,8 @@ struct Ast {
             struct SwitchCase {
                 AstList values;  // case 值列表（支持多个值）
                 Ast* body;       // case 体
+                int line;        // `case` 关键字所在行（诊断定位用；0 = 未知）
+                int column;      // `case` 关键字所在列
                 int is_type_match;    // 1 = case is Type 模式
                 TypeInfo* match_type; // 匹配的首类型（= match_types[0]，用于类型窄化和解构）
                 TypeInfo** match_types;  // 匹配类型数组（逗号合并：case is A, B, C）

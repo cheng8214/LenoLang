@@ -1,0 +1,247 @@
+// test_diag_silent_dups.leno —— 重复/多余声明此前"静默生效"的一批诊断（2026-11-06）
+//
+// 每个用例都对应一次实测确认的静默坑：
+//   ① `new P(x = 2, x = 3)` 重复初始化字段 ⇒ 后写的值静默覆盖先写的（零诊断）
+//   ② `struct Box[T]` 写 `new Box[int, string](…)` ⇒ 多余类型参数被静默丢弃
+//   ③ `func id[T]` 写 `id[int, string](…)` ⇒ 同上
+//   ④ 非泛型函数写 `f[int](…)` ⇒ 类型参数整段被无声忽略
+//   ⑤ `case is P` 写两遍 ⇒ 第二个分支永不执行（此前只查了值 case）
+//   ⑥ struct 内同名方法写两遍 ⇒ 运行期只取第一个（第二个永远不生效）
+//   ⑦ `struct Box[T, T]` ⇒ 重复类型参数此前零诊断
+//   ⑧ `struct S impl F, F` ⇒ 重复 impl 此前零诊断
+//   ⑨ `main(): int` 此前根本解析不了，报的是误导性的「期望表达式」；
+//      `main(): string` 应该报"只能返回 int"
+//   ⑩ 非泛型 struct 写 `new P[int]()` ⇒ 类型参数被无声忽略
+//   ⑪ switch 里写两个 default ⇒ 第二个永远不执行（此前零诊断）
+//   ⑫ face 内同名方法写两遍 ⇒ 此前零诊断
+//   ⑬ 同一个 `case is P, P` 的类型列表内重复 ⇒ 说明是"列表内重复"，不是跨分支
+//
+// 同时钉住两条**防误报**：不同类型的 `case is`、不同的方法名都绝不能报。
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_diag_silent_dups")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ---- ① 构造时重复初始化字段：错误落在第二个值那一行（第 6 行）----
+    var dupInit = dirs.join(work, "dup_init_field.leno")
+    files.write(dupInit, @"struct P {
+    int x = 1
+}
+
+main() {
+    var p = new P(x = 2, x = 3)
+    print(_str(p.x) + ""\n"")
+}
+")
+    ce.expect_error(dupInit, "重复初始化字段 => 错误（后写覆盖先写）",
+        "重复初始化字段 'x'", 6)
+
+    // ---- ② 泛型 struct 实参个数不符 ----
+    var structArity = dirs.join(work, "generic_struct_arity.leno")
+    files.write(structArity, @"struct Box[T] {
+    T v
+}
+
+main() {
+    var b = new Box[int, string](v = 1)
+    print(_str(b.v) + ""\n"")
+}
+")
+    ce.expect_error(structArity, "泛型 struct 实参个数不符 => 错误",
+        "需要 1 个类型参数，实际写了 2 个", 6)
+
+    // ---- ③ 泛型函数实参个数不符 ----
+    var funcArity = dirs.join(work, "generic_func_arity.leno")
+    files.write(funcArity, @"func id[T](T x): T {
+    return x
+}
+
+main() {
+    print(_str(id[int, string](1)) + ""\n"")
+}
+")
+    ce.expect_error(funcArity, "泛型函数实参个数不符 => 错误",
+        "泛型函数 'id' 需要 1 个类型参数", 6)
+
+    // ---- ④ 非泛型函数写类型参数 ----
+    var nonGenFunc = dirs.join(work, "non_generic_func.leno")
+    files.write(nonGenFunc, @"func f(int a): int { return a }
+
+main() { print(_str(f[int](1)) + ""\n"") }
+")
+    ce.expect_error(nonGenFunc, "非泛型函数写类型参数 => 错误",
+        "不是泛型函数，不能写类型参数", 3)
+
+    // ---- ⑤ 重复的 case is 类型：警告落在第二个 case（第 8 行）----
+    var dupTypeCase = dirs.join(work, "dup_case_type.leno")
+    files.write(dupTypeCase, @"struct P { int x = 0 }
+
+func g(any v): int {
+    switch v {
+        case is P {
+            return 1
+        }
+        case is P {
+            return 2
+        }
+    }
+    return 0
+}
+
+main() { print(_str(g(new P())) + ""\n"") }
+")
+    var outDupType = ce.expect_warning(dupTypeCase, "重复 case is 类型 => 警告（后一个永不执行）",
+        "重复的 case 类型 'P'", 8)
+    // 文案里不能出现 `case is struct P`（type_to_string 的 "struct " 前缀不该漏进源码示例）
+    ce.expect_no_warning(outDupType, "重复 case 的文案不该带 struct 前缀", "case is struct P")
+
+    // ---- ⑤b 防误报：不同 struct 的 case is 不是重复 ----
+    var noDupTypeCase = dirs.join(work, "case_type_no_dup.leno")
+    files.write(noDupTypeCase, @"struct P { int x = 0 }
+struct Q { int y = 0 }
+
+func g(any v): int {
+    switch v {
+        case is P {
+            return 1
+        }
+        case is Q {
+            return 2
+        }
+    }
+    return 0
+}
+
+main() { print(_str(g(new Q())) + ""\n"") }
+")
+    var outNoDupType = ce.expect_ok(noDupTypeCase, "不同 case is 类型（防误报）", "2")
+    ce.expect_no_warning(outNoDupType, "不同 case is 类型", "重复的 case 类型")
+
+    // ---- ⑥ struct 内同名方法：错误落在第二个方法（第 3 行）----
+    var dupMethod = dirs.join(work, "dup_method.leno")
+    files.write(dupMethod, @"struct S {
+    func m(): int { return 1 }
+    func m(): int { return 2 }
+}
+
+main() { print(_str(new S().m()) + ""\n"") }
+")
+    ce.expect_error(dupMethod, "struct 内同名方法 => 错误",
+        "方法 'm' 重复定义", 3)
+
+    // ---- ⑥b 防误报：构造函数 + 析构函数同名是**合法**的一对 ----
+    var ctorDtor = dirs.join(work, "ctor_dtor_same_name.leno")
+    files.write(ctorDtor, @"struct R {
+    int v = 1
+    func R() { v = 2 }
+    func ~R() { v = 0 }
+}
+
+main() { var r = new R(); print(_str(r.v) + ""\n"") }
+")
+    ce.expect_ok(ctorDtor, "构造函数 + 析构函数同名（防误报）", "2")
+
+    // ---- ⑦ 重复的类型参数：错误落在重复那个名字（第 1 行第 15 列）----
+    var dupTypeParam = dirs.join(work, "dup_type_param.leno")
+    files.write(dupTypeParam, @"struct Box[T, T] {
+    T v
+}
+
+main() {}
+")
+    ce.expect_error(dupTypeParam, "重复的类型参数 => 错误",
+        "重复的类型参数 'T'", 1)
+
+    // ---- ⑧ 重复 impl ----
+    var dupImpl = dirs.join(work, "dup_impl.leno")
+    files.write(dupImpl, @"face F {
+    func m()
+}
+
+struct S impl F, F {
+    func m() {}
+}
+
+main() {}
+")
+    ce.expect_error(dupImpl, "重复 impl => 错误",
+        "重复声明 impl 'F'", 5)
+
+    // ---- ⑨ main(): int 是合法写法（返回码当退出码），不能再报「期望表达式」----
+    var mainInt = dirs.join(work, "main_int.leno")
+    files.write(mainInt, @"main(): int {
+    print(""main-int\n"")
+    return 0
+}
+")
+    ce.expect_ok(mainInt, "main(): int 应能编译运行", "main-int")
+
+    // ---- ⑨b main(): string 必须报明确的"只能返回 int"（不是语法错误）----
+    var mainStr = dirs.join(work, "main_string.leno")
+    files.write(mainStr, @"main(): string {
+    return ""x""
+}
+")
+    ce.expect_error(mainStr, "main(): string => 明确指出只能返回 int",
+        "只能返回 int", 1)
+
+    // ---- ⑩ 非泛型 struct 写类型参数 ----
+    var nonGenStruct = dirs.join(work, "non_generic_struct.leno")
+    files.write(nonGenStruct, @"struct P { int x = 1 }
+
+main() {
+    var p = new P[int]()
+    print(_str(p.x) + ""\n"")
+}
+")
+    ce.expect_error(nonGenStruct, "非泛型 struct 写类型参数 => 错误",
+        "不是泛型类型，不能写类型参数", 4)
+
+    // ---- ⑪ 多个 default：错误落在第二个 default（第 6 行）----
+    var dupDefault = dirs.join(work, "dup_default.leno")
+    files.write(dupDefault, @"main() {
+    var x = 1
+    switch x {
+        case 1 { print(""one\n"") }
+        default { print(""d1\n"") }
+        default { print(""d2\n"") }
+    }
+}
+")
+    ce.expect_error(dupDefault, "多个 default => 错误（后一个永远不执行）",
+        "多个 default", 6)
+
+    // ---- ⑫ face 内同名方法：错误落在第二个声明（第 3 行）----
+    var dupFaceMethod = dirs.join(work, "dup_face_method.leno")
+    files.write(dupFaceMethod, @"face F {
+    func m()
+    func m()
+}
+
+main() {}
+")
+    ce.expect_error(dupFaceMethod, "face 内同名方法 => 错误",
+        "重复声明", 3)
+
+    // ---- ⑬ 同一个 case 的类型列表里重复（不是跨分支）：落在该 case 行并说明是列表内重复 ----
+    var sameCaseDup = dirs.join(work, "same_case_dup_type.leno")
+    files.write(sameCaseDup, @"struct P { int x = 0 }
+
+main() {
+    var v = new P()
+    switch v {
+        case is P, P { print(""hit\n"") }
+        default { print(""no\n"") }
+    }
+}
+")
+    ce.expect_warning(sameCaseDup, "同一个 case is 列表内重复 => 警告",
+        "同一个 case 的类型列表里重复了 'P'", 6)
+
+    print("test_diag_silent_dups passed")
+}

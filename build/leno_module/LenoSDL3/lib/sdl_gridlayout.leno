@@ -116,7 +116,6 @@ export struct GridLayout impl Widget {
     func set_cols(int c) { if c >= 1 { cols = c } }
     // 当前实际列数（`min_col_width` 自适应后想知道结果就调它 ✓）
     func get_cols(): int { return cols }
-    func get_cols(): int { return cols }
     func set_enabled(bool e) { enabled = e }
     func set_visible(bool v) { visible = v }
     func is_visible(): bool { return visible }

@@ -1864,6 +1864,22 @@
                 Ast* func_def = func_table_find(&s->func_table, func_name);
                 
                 if (func_def && func_def->kind == AST_FUNC_DEF) {
+                    // ★ 2026-11-06：泛型实参**个数**此前不校验 ✗
+                    //   `id[int, string](…)` 对 `func id[T]` 会静默只取第一个实参；
+                    //   非泛型函数写 `f[int](…)` 则整段类型参数被无声忽略 ⇒ 都补上明确诊断。
+                    {
+                        int declared_tp = func_def->u.func.type_param_count;
+                        int given_tp = ast->u.call.generic_type_count;
+                        if (given_tp > 0 && declared_tp == 0) {
+                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                             "函数 '%s' 不是泛型函数，不能写类型参数",
+                                             func_name ? func_name : "?");
+                        } else if (given_tp > 0 && declared_tp > 0 && given_tp != declared_tp) {
+                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                             "泛型函数 '%s' 需要 %d 个类型参数，实际写了 %d 个",
+                                             func_name ? func_name : "?", declared_tp, given_tp);
+                        }
+                    }
                     // 泛型类型参数推断
                     int is_generic = (func_def->u.func.type_param_count > 0);
                     char** inferred_names = NULL;

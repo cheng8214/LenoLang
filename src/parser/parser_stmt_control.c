@@ -842,6 +842,8 @@ Ast* parse_switch_stmt(Parser* p) {
     // 解析 case 和 default
     while (p->lex.current.type != TOK_RBRACE && p->lex.current.type != TOK_EOF) {
         if (p->lex.current.type == TOK_CASE) {
+            int case_line = p->lex.current.line;
+            int case_column = p->lex.current.column;
             lexer_next(&p->lex); // case
             
             // 扩展 case 数组
@@ -852,6 +854,8 @@ Ast* parse_switch_stmt(Parser* p) {
             
             // 初始化 case 字段
             ast_list_init(&cases[case_count].values);
+            cases[case_count].line = case_line;
+            cases[case_count].column = case_column;
             cases[case_count].is_type_match = 0;
             cases[case_count].match_type = NULL;
             cases[case_count].match_types = NULL;
@@ -1061,6 +1065,8 @@ Ast* parse_switch_stmt(Parser* p) {
             cases[case_count].body = parse_block_internal(p);
             case_count++;
         } else if (p->lex.current.type == TOK_DEFAULT) {
+            int default_line = p->lex.current.line;
+            int default_col = p->lex.current.column;
             lexer_next(&p->lex); // default
             
             // default 体必须用大括号包裹
@@ -1069,6 +1075,14 @@ Ast* parse_switch_stmt(Parser* p) {
                 free(switch_var_name);
                 free(cases);
                 return NULL;
+            }
+            // ★ 2026-11-06：多个 default 此前**零诊断** ✗（只有第一个会生效，后面的永远死代码）
+            if (default_body) {
+                error_add_at_fmt(ERR_SEMANTIC, default_line, default_col,
+                    "switch 里出现了多个 default —— 只有第一个会生效，后面的分支永远不会执行；请删掉多余的");
+                Ast* dup = parse_block_internal(p);
+                if (dup) ast_free(dup);
+                continue;
             }
             default_body = parse_block_internal(p);
         } else {

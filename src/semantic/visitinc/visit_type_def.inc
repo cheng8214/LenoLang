@@ -821,6 +821,23 @@
                     }
                 }
 
+                // ★ 2026-11-06：`struct S impl F, F` 重复列同一个 face 此前**零诊断** ✗
+                //   虽然只是重复检查、不影响运行，但几乎都是笔误 ⇒ 明确指出并让用户删掉。
+                for (int i = 0; i < ast->u.struct_def.impl_count; i++) {
+                    for (int j = 0; j < i; j++) {
+                        if (ast->u.struct_def.impl_names[i] && ast->u.struct_def.impl_names[j] &&
+                            strcmp(ast->u.struct_def.impl_names[i],
+                                   ast->u.struct_def.impl_names[j]) == 0) {
+                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                             "struct '%s' 重复声明 impl '%s'（第 %d 个与第 %d 个相同）"
+                                             "—— 请删掉重复项",
+                                             ast->u.struct_def.name,
+                                             ast->u.struct_def.impl_names[i], j + 1, i + 1);
+                            break;
+                        }
+                    }
+                }
+
                 // 检查 impl 声明：struct 是否真正满足声明的 face
                 for (int i = 0; i < ast->u.struct_def.impl_count; i++) {
                     const char* face_name = ast->u.struct_def.impl_names[i];

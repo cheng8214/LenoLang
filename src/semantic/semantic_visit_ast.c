@@ -1192,10 +1192,16 @@ static void sw_check_dup_cases(Ast* sw) {
                 if (sw_key_same(&seen[p], &k)) { hit = p; break; }
             }
             if (hit >= 0) {
-                warning_add_at_fmt(WARN_DUPLICATE_CASE, k.line, k.col,
-                    "重复的 case 值（与第 %d 行的 case 相同）—— switch 命中前面的分支后即跳出，"
-                    "这个 case **永远不会执行**；删掉重复项，或合并成 `case a, b { … }`",
-                    seen[hit].line);
+                if (seen[hit].line == k.line) {
+                    warning_add_at_fmt(WARN_DUPLICATE_CASE, k.line, k.col,
+                        "同一个 case 的取值列表里重复了相同的值 —— 一个 case 只匹配一次，"
+                        "重复项没有意义；删掉重复项");
+                } else {
+                    warning_add_at_fmt(WARN_DUPLICATE_CASE, k.line, k.col,
+                        "重复的 case 值（与第 %d 行的 case 相同）—— switch 命中前面的分支后即跳出，"
+                        "这个 case **永远不会执行**；删掉重复项，或合并成 `case a, b { … }`",
+                        seen[hit].line);
+                }
             }
             if (n >= cap) {
                 cap *= 2;
@@ -1207,6 +1213,61 @@ static void sw_check_dup_cases(Ast* sw) {
         }
     }
     free(seen);
+
+    // ★ 2026-11-06：`case is Type` 的重复分支同样不可达（此前只查了值 case ✗）
+    //   `case is P { … } case is P { … }` 实测静默取第一个、第二个永远不执行。
+    //   与值 case 同口径：用警告（不打断既有代码），只比**编译期类型名**。
+    typedef struct { char name[128]; int line; } SwSeenType;
+    int tcap = 32, tn = 0;
+    SwSeenType* tseen = (SwSeenType*)calloc((size_t)tcap, sizeof(SwSeenType));
+    if (!tseen) return;
+    for (int i = 0; i < sw->u.switch_.case_count; i++) {
+        struct SwitchCase* c = &sw->u.switch_.cases[i];
+        if (!c->is_type_match) continue;
+        for (int t = 0; t < c->match_type_count; t++) {
+            TypeInfo* ti = (c->match_types && t < c->match_type_count)
+                               ? c->match_types[t]
+                               : (t == 0 ? c->match_type : NULL);
+            if (!ti || ti->kind == TYPE_ANY || ti->kind == TYPE_INFER) continue;
+            char nm[128];
+            // 诊断里用**源码里的写法**（struct 用 struct_name，如 `P`）；
+            //   type_to_string 对 struct 会加 "struct " 前缀，出现在 `case is …` 里反而不像源码。
+            if (ti->kind == TYPE_STRUCT && ti->struct_name) {
+                snprintf(nm, sizeof(nm), "%s", ti->struct_name);
+            } else {
+                snprintf(nm, sizeof(nm), "%s", type_to_string(ti));
+            }
+            int hit = -1;
+            for (int p = 0; p < tn; p++) {
+                if (strcmp(tseen[p].name, nm) == 0) { hit = p; break; }
+            }
+            if (hit >= 0) {
+                int line = c->line > 0 ? c->line : sw->line;
+                int col = c->column > 0 ? c->column : sw->column;
+                if (tseen[hit].line == line) {
+                    warning_add_at_fmt(WARN_DUPLICATE_CASE, line, col,
+                        "同一个 case 的类型列表里重复了 '%s' —— 同一分支只匹配一次，"
+                        "重复项没有意义；删掉重复项",
+                        nm);
+                } else {
+                    warning_add_at_fmt(WARN_DUPLICATE_CASE, line, col,
+                        "重复的 case 类型 '%s'（与第 %d 行的 case 相同）—— switch 命中前面的分支后即跳出，"
+                        "这个分支**永远不会执行**；删掉重复项，或合并成 `case is %s, …`",
+                        nm, tseen[hit].line, nm);
+                }
+            }
+            if (tn >= tcap) {
+                tcap *= 2;
+                SwSeenType* grown = (SwSeenType*)realloc(tseen, sizeof(SwSeenType) * (size_t)tcap);
+                if (!grown) { free(tseen); return; }
+                tseen = grown;
+            }
+            snprintf(tseen[tn].name, sizeof(tseen[tn].name), "%s", nm);
+            tseen[tn].line = c->line > 0 ? c->line : sw->line;
+            tn++;
+        }
+    }
+    free(tseen);
 }
 
 // ----------------------------------------------------------------------------
