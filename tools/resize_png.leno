@@ -32,138 +32,8 @@ import files
 import dirs
 import strings
 import "SDL3" as SDL3
-
-// ==================== 像素工具 ====================
-func clamp255(float v): int {
-    int n = _int(v + 0.5)
-    if n < 0 { return 0 }
-    if n > 255 { return 255 }
-    return n
-}
-
-// 两个区间的重叠长度（box 滤波的权重 ✓）
-func overlap(float a0, float a1, float b0, float b1): float {
-    float lo = if a0 > b0 then a0 else b0
-    float hi = if a1 < b1 then a1 else b1
-    float d = hi - lo
-    if d < 0.0 { return 0.0 }
-    return d
-}
-
-func put_px(Ptr[u8] dst, int off, float r, float g, float b, int a) {
-    ffi.write_byte(dst, off, clamp255(b))       // ARGB8888 在内存里是 B,G,R,A ✓
-    ffi.write_byte(dst, off + 1, clamp255(g))
-    ffi.write_byte(dst, off + 2, clamp255(r))
-    ffi.write_byte(dst, off + 3, a)
-}
-
-// 最近邻（px 精确、最快；图标要硬边时用 ✓）
-func resizeNearest(int sw, int sh, Ptr[u8] src, int spitch, int dw, int dh, Ptr[u8] dst) {
-    int dpitch = dw * 4
-    for 0 : dh - 1 to y {
-        int sy = _int(_float(y) * _float(sh) / _float(dh))
-        if sy > sh - 1 { sy = sh - 1 }
-        for 0 : dw - 1 to x {
-            int sx = _int(_float(x) * _float(sw) / _float(dw))
-            if sx > sw - 1 { sx = sw - 1 }
-            int so = sy * spitch + sx * 4
-            int do = y * dpitch + x * 4
-            ffi.write_byte(dst, do, ffi.read_byte(src, so))
-            ffi.write_byte(dst, do + 1, ffi.read_byte(src, so + 1))
-            ffi.write_byte(dst, do + 2, ffi.read_byte(src, so + 2))
-            ffi.write_byte(dst, do + 3, ffi.read_byte(src, so + 3))
-        }
-    }
-}
-
-// 缩小：box 滤波（目标像素覆盖的源像素按面积加权平均 —— 32→16 就是 2×2 平均 ✓）
-func resizeBox(int sw, int sh, Ptr[u8] src, int spitch, int dw, int dh, Ptr[u8] dst) {
-    int dpitch = dw * 4
-    float sx = _float(sw) / _float(dw)
-    float sy = _float(sh) / _float(dh)
-    for 0 : dh - 1 to y {
-        float y0 = _float(y) * sy
-        float y1 = y0 + sy
-        int iy0 = _int(y0)
-        int iy1 = _int(y1)
-        if iy1 > sh - 1 { iy1 = sh - 1 }
-        for 0 : dw - 1 to x {
-            float x0 = _float(x) * sx
-            float x1 = x0 + sx
-            int ix0 = _int(x0)
-            int ix1 = _int(x1)
-            if ix1 > sw - 1 { ix1 = sw - 1 }
-            float sr = 0.0; float sg = 0.0; float sb = 0.0
-            float sa = 0.0; float ws = 0.0
-            for iy0 : iy1 to ty {
-                float wy = overlap(y0, y1, _float(ty), _float(ty + 1))
-                if wy <= 0.0 { continue }
-                for ix0 : ix1 to tx {
-                    float wx = overlap(x0, x1, _float(tx), _float(tx + 1))
-                    if wx <= 0.0 { continue }
-                    float w = wx * wy
-                    int so = ty * spitch + tx * 4
-                    // alpha 预乘：颜色 × a 累加、a 单独累加 ⇒ 不会被"透明黑"拉暗 ✓
-                    float a = _float(ffi.read_byte(src, so + 3)) / 255.0
-                    sb = sb + _float(ffi.read_byte(src, so)) * a * w
-                    sg = sg + _float(ffi.read_byte(src, so + 1)) * a * w
-                    sr = sr + _float(ffi.read_byte(src, so + 2)) * a * w
-                    sa = sa + a * w
-                    ws = ws + w
-                }
-            }
-            int do = y * dpitch + x * 4
-            if ws <= 0.0 or sa <= 0.0 { put_px(dst, do, 0.0, 0.0, 0.0, 0); continue }
-            // 反预乘回去：颜色 = Σ(c·a·w) / Σ(a·w) ✓
-            put_px(dst, do, sr / sa, sg / sa, sb / sa, clamp255(sa / ws * 255.0))
-        }
-    }
-}
-
-// 放大：双线性（按像素中心对齐；同样预乘 alpha ✓）
-func resizeBilinear(int sw, int sh, Ptr[u8] src, int spitch, int dw, int dh, Ptr[u8] dst) {
-    int dpitch = dw * 4
-    float sx = _float(sw) / _float(dw)
-    float sy = _float(sh) / _float(dh)
-    for 0 : dh - 1 to y {
-        float fy = (_float(y) + 0.5) * sy - 0.5
-        int y0 = _int(fy)
-        float ty = fy - _float(y0)
-        if y0 < 0 { y0 = 0; ty = 0.0 }
-        int y1 = y0 + 1
-        if y1 > sh - 1 { y1 = sh - 1 }
-        for 0 : dw - 1 to x {
-            float fx = (_float(x) + 0.5) * sx - 0.5
-            int x0 = _int(fx)
-            float tx = fx - _float(x0)
-            if x0 < 0 { x0 = 0; tx = 0.0 }
-            int x1 = x0 + 1
-            if x1 > sw - 1 { x1 = sw - 1 }
-            float sr = 0.0; float sg = 0.0; float sb = 0.0
-            float sa = 0.0; float ws = 0.0
-            for 0 : 1 to k {
-                int yy = if k == 0 then y0 else y1
-                float wy = if k == 0 then (1.0 - ty) else ty
-                for 0 : 1 to m {
-                    int xx = if m == 0 then x0 else x1
-                    float wx = if m == 0 then (1.0 - tx) else tx
-                    float w = wx * wy
-                    if w <= 0.0 { continue }
-                    int so = yy * spitch + xx * 4
-                    float a = _float(ffi.read_byte(src, so + 3)) / 255.0
-                    sb = sb + _float(ffi.read_byte(src, so)) * a * w
-                    sg = sg + _float(ffi.read_byte(src, so + 1)) * a * w
-                    sr = sr + _float(ffi.read_byte(src, so + 2)) * a * w
-                    sa = sa + a * w
-                    ws = ws + w
-                }
-            }
-            int do = y * dpitch + x * 4
-            if ws <= 0.0 or sa <= 0.0 { put_px(dst, do, 0.0, 0.0, 0.0, 0); continue }
-            put_px(dst, do, sr / sa, sg / sa, sb / sa, clamp255(sa / ws * 255.0))
-        }
-    }
-}
+// ★ 2026-11-05：三种采样算法已抽到 tools/lib/image_ops.leno（纯 CPU、不依赖 SDL3）
+import "lib/image_ops.leno" as img
 
 // ==================== 单文件处理 ====================
 // 返回 true = 成功（含"已经是目标尺寸，跳过"）
@@ -225,9 +95,10 @@ func resize_one(string src, int wantW, int wantH, string outDir, bool inplace, b
         ffi.free(px)
         return false
     }
-    if nearest { resizeNearest(sw, sh, px, pitch, dw, dh, out) }
-    else if dw <= sw and dh <= sh { resizeBox(sw, sh, px, pitch, dw, dh, out) }
-    else { resizeBilinear(sw, sh, px, pitch, dw, dh, out) }
+    // 采样算法见 tools/lib/image_ops.leno（默认：缩小走 box、放大走 bilinear ✓）
+    if nearest { img.resizeNearest(sw, sh, px, pitch, dw, dh, out) }
+    else if dw <= sw and dh <= sh { img.resizeBox(sw, sh, px, pitch, dw, dh, out) }
+    else { img.resizeBilinear(sw, sh, px, pitch, dw, dh, out) }
 
     // 编码：临时 surface 只借用这块像素内存（CreateSurfaceFrom 不接管所有权 ✓）
     bool ok = false

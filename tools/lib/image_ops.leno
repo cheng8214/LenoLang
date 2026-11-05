@@ -1,0 +1,191 @@
+// image_ops.leno — 纯 CPU 像素运算（缩放采样）
+// ----------------------------------------------------------------------------
+// 为什么把这段从 tools/resize_png.leno 里抽出来：
+//   缩放采样是**通用算法**，和"命令行工具"（参数解析 / 目录遍历 / 输出命名）不是一回事。
+//   抽出来以后，任何工具（或将来运行期代码）都能 import 这份实现，
+//   而 CLI 层只留它该有的东西。
+//
+// 口径（保持不变，逐字节兼容原实现）：
+//   · 像素格式 **ARGB8888**，内存字节序是 B,G,R,A（SDL3 的 PIXELFORMAT_ARGB8888 在
+//     x86 上是这样存的）⇒ 写颜色时先写 B ✓
+//   · **一律按 pitch 走**：SDL 的 surface pitch 常大于 w*4（行对齐）⇒ 不能用 w*4 当步长 ✗
+//   · 缩放按 **alpha 预乘**做加权平均：直接平均非预乘 RGBA 会让透明边缘发黑 ✗
+//   · 缩小用 box 滤波（按覆盖面积加权）、放大用双线性（像素中心对齐）、
+//     像素画 / 硬边图标用最近邻
+//
+// ⚠ 本文件**不依赖 SDL3**：只吃 `Ptr[u8]` + 宽高 + pitch。
+//   解码/编码留给调用方（CLI 用 SDL3.pngFileToPixels / saveImagePNG，
+//   将来运行期可以直接吃纹理 readPixelsAt 的结果 ✓）。
+import ffi
+
+// ==================== 像素工具 ====================
+
+export func clamp255(float v): int {
+    int n = _int(v + 0.5)
+    if n < 0 { return 0 }
+    if n > 255 { return 255 }
+    return n
+}
+
+// 两个区间的重叠长度（box 滤波的权重 ✓）
+export func overlap(float a0, float a1, float b0, float b1): float {
+    float lo = if a0 > b0 then a0 else b0
+    float hi = if a1 < b1 then a1 else b1
+    float d = hi - lo
+    if d < 0.0 { return 0.0 }
+    return d
+}
+
+// 写一个像素（ARGB8888 在内存里是 B,G,R,A ✓）
+export func put_px(Ptr[u8] dst, int off, float r, float g, float b, int a) {
+    ffi.write_byte(dst, off, clamp255(b))
+    ffi.write_byte(dst, off + 1, clamp255(g))
+    ffi.write_byte(dst, off + 2, clamp255(r))
+    ffi.write_byte(dst, off + 3, a)
+}
+
+// ==================== 三种采样 ====================
+
+// 最近邻（px 精确、最快；图标要硬边时用 ✓）
+export func resizeNearest(int sw, int sh, Ptr[u8] src, int spitch, int dw, int dh, Ptr[u8] dst) {
+    int dpitch = dw * 4
+    for 0 : dh - 1 to y {
+        int sy = _int(_float(y) * _float(sh) / _float(dh))
+        if sy > sh - 1 { sy = sh - 1 }
+        for 0 : dw - 1 to x {
+            int sx = _int(_float(x) * _float(sw) / _float(dw))
+            if sx > sw - 1 { sx = sw - 1 }
+            int so = sy * spitch + sx * 4
+            int doff = y * dpitch + x * 4
+            ffi.write_byte(dst, doff, ffi.read_byte(src, so))
+            ffi.write_byte(dst, doff + 1, ffi.read_byte(src, so + 1))
+            ffi.write_byte(dst, doff + 2, ffi.read_byte(src, so + 2))
+            ffi.write_byte(dst, doff + 3, ffi.read_byte(src, so + 3))
+        }
+    }
+}
+
+// 缩小：box 滤波（目标像素覆盖的源像素按面积加权平均 —— 32→16 就是 2×2 平均 ✓）
+export func resizeBox(int sw, int sh, Ptr[u8] src, int spitch, int dw, int dh, Ptr[u8] dst) {
+    int dpitch = dw * 4
+    float sx = _float(sw) / _float(dw)
+    float sy = _float(sh) / _float(dh)
+    for 0 : dh - 1 to y {
+        float y0 = _float(y) * sy
+        float y1 = y0 + sy
+        int iy0 = _int(y0)
+        int iy1 = _int(y1)
+        if iy1 > sh - 1 { iy1 = sh - 1 }
+        for 0 : dw - 1 to x {
+            float x0 = _float(x) * sx
+            float x1 = x0 + sx
+            int ix0 = _int(x0)
+            int ix1 = _int(x1)
+            if ix1 > sw - 1 { ix1 = sw - 1 }
+            float sr = 0.0; float sg = 0.0; float sb = 0.0
+            float sa = 0.0; float ws = 0.0
+            for iy0 : iy1 to ty {
+                float wy = overlap(y0, y1, _float(ty), _float(ty + 1))
+                if wy <= 0.0 { continue }
+                for ix0 : ix1 to tx {
+                    float wx = overlap(x0, x1, _float(tx), _float(tx + 1))
+                    if wx <= 0.0 { continue }
+                    float w = wx * wy
+                    int so = ty * spitch + tx * 4
+                    // alpha 预乘：颜色 × a 累加、a 单独累加 ⇒ 不会被"透明黑"拉暗 ✓
+                    float a = _float(ffi.read_byte(src, so + 3)) / 255.0
+                    sb = sb + _float(ffi.read_byte(src, so)) * a * w
+                    sg = sg + _float(ffi.read_byte(src, so + 1)) * a * w
+                    sr = sr + _float(ffi.read_byte(src, so + 2)) * a * w
+                    sa = sa + a * w
+                    ws = ws + w
+                }
+            }
+            int doff = y * dpitch + x * 4
+            if ws <= 0.0 or sa <= 0.0 { put_px(dst, doff, 0.0, 0.0, 0.0, 0); continue }
+            // 反预乘回去：颜色 = Σ(c·a·w) / Σ(a·w) ✓
+            put_px(dst, doff, sr / sa, sg / sa, sb / sa, clamp255(sa / ws * 255.0))
+        }
+    }
+}
+
+// 放大：双线性（按像素中心对齐；同样预乘 alpha ✓）
+export func resizeBilinear(int sw, int sh, Ptr[u8] src, int spitch, int dw, int dh, Ptr[u8] dst) {
+    int dpitch = dw * 4
+    float sx = _float(sw) / _float(dw)
+    float sy = _float(sh) / _float(dh)
+    for 0 : dh - 1 to y {
+        float fy = (_float(y) + 0.5) * sy - 0.5
+        int y0 = _int(fy)
+        float ty = fy - _float(y0)
+        if y0 < 0 { y0 = 0; ty = 0.0 }
+        int y1 = y0 + 1
+        if y1 > sh - 1 { y1 = sh - 1 }
+        for 0 : dw - 1 to x {
+            float fx = (_float(x) + 0.5) * sx - 0.5
+            int x0 = _int(fx)
+            float tx = fx - _float(x0)
+            if x0 < 0 { x0 = 0; tx = 0.0 }
+            int x1 = x0 + 1
+            if x1 > sw - 1 { x1 = sw - 1 }
+            float sr = 0.0; float sg = 0.0; float sb = 0.0
+            float sa = 0.0; float ws = 0.0
+            for 0 : 1 to k {
+                int yy = if k == 0 then y0 else y1
+                float wy = if k == 0 then (1.0 - ty) else ty
+                for 0 : 1 to m {
+                    int xx = if m == 0 then x0 else x1
+                    float wx = if m == 0 then (1.0 - tx) else tx
+                    float w = wx * wy
+                    if w <= 0.0 { continue }
+                    int so = yy * spitch + xx * 4
+                    float a = _float(ffi.read_byte(src, so + 3)) / 255.0
+                    sb = sb + _float(ffi.read_byte(src, so)) * a * w
+                    sg = sg + _float(ffi.read_byte(src, so + 1)) * a * w
+                    sr = sr + _float(ffi.read_byte(src, so + 2)) * a * w
+                    sa = sa + a * w
+                    ws = ws + w
+                }
+            }
+            int doff = y * dpitch + x * 4
+            if ws <= 0.0 or sa <= 0.0 { put_px(dst, doff, 0.0, 0.0, 0.0, 0); continue }
+            put_px(dst, doff, sr / sa, sg / sa, sb / sa, clamp255(sa / ws * 255.0))
+        }
+    }
+}
+
+// ==================== 统一入口 ====================
+
+// 采样方式（与 CLI 的 `--nearest` 选项对应）
+export const int MODE_BOX = 0
+export const int MODE_BILINEAR = 1
+export const int MODE_NEAREST = 2
+
+// 按 mode 分派；返回 false = mode 不认识（不做任何写入）
+export func resize(int sw, int sh, Ptr[u8] src, int spitch, int dw, int dh, Ptr[u8] dst, int mode): bool {
+    if mode == MODE_NEAREST {
+        resizeNearest(sw, sh, src, spitch, dw, dh, dst)
+        return true
+    }
+    if mode == MODE_BOX {
+        resizeBox(sw, sh, src, spitch, dw, dh, dst)
+        return true
+    }
+    if mode == MODE_BILINEAR {
+        resizeBilinear(sw, sh, src, spitch, dw, dh, dst)
+        return true
+    }
+    return false
+}
+
+// 按"缩小/放大"自动选：缩小 → box、放大 → bilinear（与 CLI 的默认口径一致 ✓）
+//   pxArt = true 时一律最近邻（像素画 / 硬边图标）
+export func resizeAuto(int sw, int sh, Ptr[u8] src, int spitch, int dw, int dh, Ptr[u8] dst, bool pxArt): bool {
+    int mode = MODE_BILINEAR
+    if pxArt {
+        mode = MODE_NEAREST
+    } else if dw < sw or dh < sh {
+        mode = MODE_BOX
+    }
+    return resize(sw, sh, src, spitch, dw, dh, dst, mode)
+}
