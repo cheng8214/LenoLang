@@ -593,6 +593,10 @@ main() {
 Leno 的泛型类型不仅支持内置的 `Array`、`Dict`、`Ptr` 等，还支持自定义 struct 的泛型类型注解：
 
 ```leno
+struct Box[T] {
+    T value
+}
+
 main() {
     // 泛型数组（大写 Array）
     Array[int] arr1 = [1, 2, 3]
@@ -613,8 +617,7 @@ main() {
     Dict[string, int] dict3       // 空的 Dict[string, int]
     Dict[int, string] dict4 = {}  // 等同于上面，也是空的 Dict[int, string]
 
-    // 自定义泛型 struct 类型注解
-    // 假设已定义 struct Box[T] { T value }
+    // 自定义泛型 struct 类型注解（Box 定义见本段开头）
     Box[int] intBox = new Box[int](value=42)
     Box[string] strBox = new Box[string](value="hello")
 
@@ -909,7 +912,8 @@ for 32 {
 - **Leno 原生类型**（int、float）：值转换，始终成功（int↔float 互转）
 - **C 窄类型**（i8/u8/i16/u16/i32/u32/i64/u64/f32/f64）：**显式截断**，始终成功，丢弃超出位宽的高位
 - **结构类型**（bool、struct、face、cstruct）：类型检查，匹配返回原值，不匹配返回 `null`
-- **string 类型**：自动转换为字符串表示（与 `as int`/`as float` 一致，始终成功）
+- **目标为 string**：int / float / bool / null 自动转成字符串表示（`100 as string` → `"100"`）
+- **string → 数值**：`as` **不做解析**，`"12" as int` 现在是**编译期报错**，请用 `_int()` / `_int_or()` / `_float_or()`
 
 ```leno
 main() {
@@ -933,10 +937,12 @@ main() {
     var c6 = 281474976710657 as u64   // 281474976710657（超 int48 ⇒ 内部 BigInt，对外仍是 int ✓）
 
     // 不同类型：返回 null 或自动转换
-    var s = "hello"
-    var si = s as int          // null（string 不是 int，无法转换）
+    // ⚠ string → int/float 不是"转换"而是"解析"：as 会直接编译报错
+    // var si = "hello" as int   // ❌ [语义错误] as 不做字符串解析
+    var si = _int_or("12", 0)     // 12（宽容版：坏串返回默认值）
+    var sf = _float_or("3.5", 0.0) // 3.5
     var n = 100
-    var ns = n as string       // "100"（自动转换，与 as int/as float 一致）
+    var ns = n as string       // "100"（自动转换）
 
     // null 转换
     var na = null as int       // null
@@ -1654,10 +1660,11 @@ struct SpinBox {
 
 > **💡 一行替换两行**：传统写法需要 `if xxx == null { return "" }` 再 `return xxx.get_text()`，`?.` + `??` 一行搞定，且类型推断正确，无需 `as` 转换。
 
-> **⚠️ `?.` 仅适用于 struct/class 类型**：对 `clib`（`ffi.Library`）类型不能使用 `?.`。例如何判断 `lib()` 是否加载成功，仍需 `if` 守卫：
+> **⚠️ `?.` 只对 struct/face 类型可靠**：对 `clib`（`ffi.Library`）用 `?.` 虽然**能编译**，
+> 但运行期会报「类型 object 上不存在方法」。判断 `lib()` 是否加载成功仍需 `if` 守卫：
 > ```leno
 > sdl3 l = lib()
-> if l == null { return false }  // clib 类型不支持 ?.
+> if l == null { return false }  // clib 类型别用 ?.
 > return l.SDL_Init(flags)
 > ```
 
@@ -1957,11 +1964,14 @@ for students to s {
 **嵌套字段守卫**：对于嵌套字段（如 `data.inner.count`），需要通过中间变量逐层守卫：
 
 ```leno
-var data = {inner: {count: 5}}
+// 注意：字典字面量会推出精确的嵌套类型（这里是 Dict[string, Dict[string, int]]），
+// 所以 `data.inner.count` 本来就是 int，不需要守卫。
+// 下面用 Dict[string, any] 模拟"值类型未知"的 JSON 场景：
+Dict[string, any] data = {inner: {count: 5}}
 
-// ❌ 不支持直接嵌套字段守卫
+// ❌ 不支持直接嵌套字段守卫（data.inner 是 any，再往下取 count 就报错）
 if data.inner.count is int {
-    int n = data.inner.count   // ❌ 仍然是 any
+    int n = data.inner.count
 }
 
 // ✅ 使用中间变量逐层守卫
@@ -1980,7 +1990,7 @@ if data.inner is Dict {
 | `if x is int` | ✅ 收窄 `x` | 简单变量守卫 |
 | `if s.age is int` | ✅ 收窄 `s.age` | Dict 字段守卫 |
 | `if s.name is string and s.age is int` | ✅ 同时收窄 | 多字段守卫 |
-| `if data.inner.count is int` | ❌ 不收窄 | 嵌套字段暂不支持 |
+| `if data.inner.count is int` | ❌ 不收窄 | 嵌套字段暂不支持（`data.inner` 为 `any` 时） |
 | `if s.age is int or s.name is string` | ❌ 不收窄 | or 条件不收窄 |
 
 #### 类型守卫的无效场景
@@ -2027,9 +2037,9 @@ test(42)
 
 > **原因**：闭包捕获 `any` 参数时，如果没有类型守卫，`x` 保持 `any` 类型。
 
-**4. struct 字段不做类型收窄：**
+**4. struct 字段的类型守卫（已支持）：**
 
-`is` 检查 struct 字段时，编译器**不会**收窄类型——因为字段是共享可变状态，在 `is` 检查后、使用前可能被其他代码修改，收窄不安全：
+`if _content is HBox` 现在**会**把字段收窄为 `HBox`（2026-11-05 实测），可以直接调用 `HBox` 的方法：
 
 ```leno
 struct ScrollView impl Widget {
@@ -2037,26 +2047,27 @@ struct ScrollView impl Widget {
     // ...
 
     func _bind_window(Ptr[u8] hwnd) {
-        // ❌ _content 是 struct 字段，is 不收窄，仍视为 Widget
         if _content is HBox {
-            _content._bind_window(hwnd)   // ❌ 报错：Widget 没有 _bind_window
+            _content._bind_window(hwnd)   // ✅ 字段已收窄为 HBox
         }
     }
 }
 ```
 
-**解决方法**：先将字段赋给局部变量，再对局部变量做 `is` 守卫：
+> **⚠️ 收窄后别在同一个分支里改写这个字段**：编译器不会因为块内重新赋值就收回收窄
+> （`_content = new HBox()` 之后仍按 `HBox` 检查）。需要"先确认、再替换"的场景，
+> 仍建议先把字段取到局部变量，或用 `== null` 判空而不是类型守卫。
+
+**旧版本（早期编译器）不收起 struct 字段**，需要先赋给局部变量；下面的写法仍然通用，也更好读：
 
 ```leno
 func _bind_window(Ptr[u8] hwnd) {
     Widget c = _content         // 赋给局部变量
     if c is HBox {
-        c._bind_window(hwnd)    // ✅ 局部变量可安全收窄
+        c._bind_window(hwnd)    // ✅ 局部变量收窄
     }
 }
 ```
-
-> **原因**：局部变量和函数参数在 `if` 块内不会被外部修改，编译器可以安全收窄；而 struct 字段随时可能被其他代码（如定时器回调、事件处理）修改，收窄后类型可能不再成立。
 
 #### `is Array` 的特殊行为
 
@@ -3282,10 +3293,11 @@ main() {
 | 特性 | 具体类型 | any |
 |------|:---:|:---:|
 | 类型检查 | 编译期 | 运行期 |
-| 字段访问 | ✅ | ❌ |
+| 字段访问 | ✅ | ❌（需 `is` / `as` 收窄） |
 | 方法调用 | ✅ | ❌（需 `is` 收窄） |
-| 索引访问 | ✅ | ✅ |
-| 比较运算 | ✅ | ✅ |
+| 索引访问 | ✅ | ❌（需先收窄到 `Array` / `Dict`） |
+| `==` / `!=` 比较 | ✅ | ✅ |
+| `<` `>` 大小比较 | ✅ | ❌（需先收窄为具体数值类型） |
 
 > 需要访问 struct 字段或调用方法 → 具体类型或 `is` 收窄。只需打印/比较 → 可用 any，但仍建议写具体类型更安全。
 
@@ -4975,10 +4987,9 @@ main() {
     // ✅ 插值字符串，自动转换
     print($"({p.x}, {p.y})")   // 输出: (10, 20)
 
-    // 也可以使用 format 方法（⚠ `import` 必须在**模块顶层**，别写在 main 里 —— 这里为了紧挨示例，
-    // 实际代码请把 `import strings` 放到文件开头）
+    // 也可以使用 format（原生模块的 import 可以就近写；源码模块的 import 必须在文件顶层）
     import strings
-    print(strings.format("坐标: ({0}, {1})", p.x, p.y))
+    print(strings.format("坐标: (%d, %d)", p.x, p.y))   // 坐标: (10, 20)
 }
 ```
 
@@ -5080,6 +5091,8 @@ main() {
    ```
 4. **`struct` 内部的关联常量在 `extend` 里用不了**：`const int X = 1` 写在 struct 里只有 struct 内部
    的方法能直接用；扩展方法要用，就把它提到模块级并 `export`。
+5. **`pri` 方法只在扩展模块内可见**：在扩展模块里写 `pri func helper()`，它自己的其它扩展方法可以调，
+   但主程序 `p.helper()` 会报「私有方法」；要对外开放就去掉 `pri`（默认全公有）。
 
 #### 什么时候用它
 
@@ -6265,6 +6278,8 @@ main() {
 `func ~StructName()` — 以 `~` 开头且与 struct 同名的方法即为析构函数，在变量离开作用域时自动调用，**不能有参数和返回值**。
 
 ```leno
+import ffi
+
 int alive = 0
 
 struct Resource {
@@ -7148,17 +7163,18 @@ main() {
 
 > **⚠️ 注意：** 数组类型推断基于**显式 impl 声明**。如果 struct 没有 `impl` 声明，即使方法签名匹配，也不会被推断为该 face 类型。
 
-#### ⚠️ 实战踩坑记录（face 数组常见错误）
+#### ⚠️ 实战踩坑记录（face 数组 / 跨模块类型）
 
-以下是从实际 GUI 控件库（把 `Button`/`Label`/`Edit` 统一放进 `Array[Widget]` 由窗口调度）开发中踩出的真实错误，避免重复踩：
+以下是从实际 GUI 控件库（把 `Button`/`Label`/`Edit` 统一放进 `Array[Widget]` 由窗口调度）开发中踩出的真实问题。其中提到的历史限制**已在当前版本解除**，保留记录是为了让旧代码/旧教程对得上：
 
-1. **泛型实参不能写模块限定名**
-   `Array[a.Speaker]` 会报错，必须先在模块里 `use a.Speaker`，再写 `Array[Speaker]`：
+1. **泛型实参可以写模块限定名**
+   `Array[a.Speaker]`、`Box[a.Dog]` 现在都直接可用（旧版本会报"不支持模块限定名"）。`use` 后的短名同样可用：
    ```leno
    import "animal.leno" as a
+
+   Array[a.Speaker] arr = []    // ✅ 直接写模块限定名
    use a.Speaker
-   Array[Speaker] arr = []      // ✅ 用 use 后的短名
-   // Array[a.Speaker] arr      // ❌ 泛型实参不支持模块限定名
+   Array[Speaker] arr2 = []     // ✅ 也可以先用 use，再写短名
    ```
 
 2. **struct 存入 `Array[face]` 可直接 add**
@@ -7171,8 +7187,9 @@ main() {
    ```
    > 旧版本需要 `arr.add(d as Speaker)` 显式上转，当前版本已支持隐式兼容检查。
 
-3. **跨模块 `new` 需先 `use` 再用短名**
-   不能写 `b.Dog d = new b.Dog()`，必须 `use b.Dog` 后用 `Dog d = new Dog()`（详见下方“使用 use 导入类型”）。
+3. **跨模块 `new` 两种写法都可以**
+   `b.Dog d = new b.Dog()` 与 `use b.Dog` 后的 `Dog d = new Dog()` 都支持
+   （旧版本只支持后者；详见下方“使用 use 导入类型”）。
 
 4. **遍历 vs 下标访问（历史坑，2026-07-09 编译器已修复）**
    - `for arr to s { s.speak() }`：遍历变量 `s` 始终正确收窄为 `Speaker`，可直接调用方法（这是官方推荐写法）。
@@ -7357,7 +7374,7 @@ export enum Color {
 
 ```leno
 // main.leno
-import color_module
+import "color_module.leno" as color_module
 
 main() {
     print(color_module.Color.red)    // 0
@@ -7594,21 +7611,26 @@ main() {
     print(arr)          // []
 
     // map: 映射转换（返回新数组）
+    // ⚠ 回调参数写具体类型：写 any 时不能做 > / < 大小比较
     var nums = [1, 2, 3, 4, 5]
-    var doubled = nums.map(func(any x, any i) { return x * 2 })
+    var doubled = nums.map(func(int x, int i) { return x * 2 })
     print(doubled)      // [2, 4, 6, 8, 10]
 
     // filter: 过滤元素（返回新数组）
-    var evens = nums.filter(func(any x, any i) { return x % 2 == 0 })
+    var evens = nums.filter(func(int x, int i) { return x % 2 == 0 })
     print(evens)        // [2, 4]
 
-    // reduce: 累积计算
-    var sum = nums.reduce(func(any acc, any x, any i) { return acc + x }, 0)
+    // reduce: 累积计算（初始值可省略，省略时取第一个元素作初值）
+    var sum = nums.reduce(func(int acc, int x, int i) { return acc + x }, 0)
     print(sum)          // 15
 
+    // flatten: 压平一层（Array[Array[T]] → Array[T]，2026-10 新增）
+    var nested = [[1, 2], [3, 4], [5]]
+    print(nested.flatten())     // [1, 2, 3, 4, 5]
+
     // 链式调用
-    var result = nums.filter(func(any x, any i) { return x > 2 })
-                     .map(func(any x, any i) { return x * 10 })
+    var result = nums.filter(func(int x, int i) { return x > 2 })
+                     .map(func(int x, int i) { return x * 10 })
     print(result)       // [30, 40, 50]
 }
 ```
@@ -8055,14 +8077,24 @@ print(x)    // 1.0
 
 ```leno
 main() {
-    var config = {"host": "localhost", "port": 8080}
+    // 同值类型的字典：值类型明确为 int，槽位可以写 int
+    Dict[string, int] scores = {"math": 90, "english": 85}
+    var{"math": int, "english": int}(math, english) = scores
+    print(math)       // 90
+    print(english)    // 85
 
-    // 按键名解构
-    var{"host": string, "port": int}(host, port) = config
-    print(host)    // localhost
-    print(port)    // 8080
+    // 异构值的字典字面量会被推成 Dict[string, any]：
+    // 槽位必须写 any，不能直接写 string / int（源值类型是 any，无法转具体类型）
+    var config = {"host": "localhost", "port": 8080}
+    var{"host": any, "port": any}(host, port) = config
+    print(host)       // localhost
+    print(port)       // 8080
 }
 ```
+
+> **⚠️ 槽位类型必须与字典的值类型一致**：`Dict[string, any]` 只能配 `any` 槽位；
+> 想要具体类型，先把字典声明成 `Dict[string, int]` 这类同值类型的字典。
+> 多返回值函数的 `{"键": 类型}` 命名写法不受此限（它走的是多返回值类型，见下节）。
 
 ### 多返回值解构
 
@@ -8833,14 +8865,14 @@ use shape.(
 )
 ```
 
-> **⚠️ 跨模块 `new` 的坑：** `use` 导入类型后，**变量声明和 `new` 都要用短名**，不能保留模块限定名：
+> **💡 跨模块 `new`：短名和模块限定名都行**（旧版本曾要求 `use` 后只能用短名）：
 > ```leno
 > import "animal.leno" as a
+> Dog d1 = new a.Dog()     // ✅ 不用 use 也能写模块限定名
 > use a.Dog
-> Dog d = new Dog()        // ✅ 短名
-> // b.Dog d = new b.Dog() // ❌ 已 use 后不能写 b.Dog / new b.Dog()
+> Dog d2 = new Dog()       // ✅ use 后用短名
+> a.Dog d3 = new a.Dog()   // ✅ use 之后仍可写模块限定名
 > ```
-> 即：`use` 之后，`b.S` 这种“模块名.类型”写法在声明和 `new` 中都不再用，统一用 `S`。
 
 **use 导入的类型可作为 export func 返回类型：**
 
@@ -9261,6 +9293,20 @@ main() {
 }
 ```
 
+**更多常用函数**（完整列表与精度/开销说明见 [module_maths.md](module_maths.md)）：
+
+| 分类 | 常用函数 |
+|---|---|
+| 限幅/插值 | `clamp(v,lo,hi)`、`lerp(a,b,t)`、`saturate(v)`、`smoothstep(t)`、`smootherstep(t)` |
+| 整数版（GUI/像素首选） | `roundi`、`absi`、`mini`、`maxi`、`clampi`、`mod(a,b)`（正取模） |
+| 区间/环形 | `remap(v,inLo,inHi,outLo,outHi)`、`inverse_lerp`、`wrap(v,lo,hi)` |
+| 缓动 | `ease_in_quad`、`ease_out_quad`、`ease_in_out_quad`、`ease_out_cubic`、`ease_out_back` |
+| 角度 | `angle_delta`、`lerp_angle`、`wrap_angle` |
+| 浮点小工具 | `fract`、`step`、`snap`、`approx_eq`、`dist`、`hypot`、`rsqrt`、`sin_fast`/`cos_fast` |
+
+> `abs/clamp/min/max/lerp/smoothstep/saturate/fract/roundi/clampi/mini/maxi/mod`
+> 这几个会被编译期内联成一条 `OP_MATH_FAST` 指令，调用比手写还快（实测见模块文档）。
+
 ### files 文件操作模块
 
 ```leno
@@ -9324,31 +9370,60 @@ import jsons
 main() {
     // 解析 JSON 字符串
     var obj = jsons.decode('{"name": "Leno", "version": 1.0}')
-    print(obj.name)         // Leno
-    print(obj.version)      // 1.0
-    
-    // 解析数组
-    var arr = jsons.decode('[1, 2, 3]')
-    print(arr[0])           // 1
-    
+
+    // ⚠ decode 返回 any：不能直接 obj.name / obj["name"]
+    //   取值用 jsons.get_* 或 jsons.dig（见下），或先 as 成具体容器
+    var name = jsons.get_str(obj, "name", "")
+    print(name)                                  // Leno
+    var version = jsons.get_float(obj, "version", 0.0)
+    print(version)                               // 1.0
+    print(jsons.dig(obj, "name"))                // Leno（按路径取值）
+
+    // 解析数组：先收窄到 Array[any] 才能下标
+    var arr = jsons.decode('[1, 2, 3]') as Array[any]
+    print(arr[0])                                // 1
+
     // 编码为 JSON
     var data = {name: "测试", count: 42}
     var json_str = jsons.encode(data)
     print(json_str)         // {"name":"测试","count":42}
-    
+
     // 美化输出
     var pretty = jsons.encode_pretty(data)
     print(pretty)
     // {
-    //     "name": "测试",
-    //     "count": 42
+    //   "name": "测试",
+    //   "count": 42
     // }
-    
-    // 文件操作
+
+    // 文件操作：read_file 同样返回 any，取值方式与 decode 一致
     jsons.write_file("data.json", data)
     var loaded = jsons.read_file("data.json")
-    print(loaded.name)      // 测试
+    print(jsons.get_str(loaded, "name", ""))      // 测试
 }
+```
+
+**常用取值助手**（`get_str/int/float/bool` 返回**对应具体类型**，`get_obj` 返回 `any`；缺失/类型不符时返回默认值或 `null`）：
+
+| 函数 | 说明 |
+|---|---|
+| `jsons.get_str(obj, key, default)` | 取字符串 |
+| `jsons.get_int(obj, key, default)` | 取整数 |
+| `jsons.get_float(obj, key, default)` | 取浮点数 |
+| `jsons.get_bool(obj, key, default)` | 取布尔值 |
+| `jsons.get_obj(obj, key)` | 取嵌套对象（`any`，缺失返回 `null`） |
+| `jsons.dig(obj, path)` | 按路径逐层取值，任一层缺失即 `null`（2026-11-03 新增） |
+| `jsons.keys(obj)` | 取对象的所有键 |
+
+`dig` 的路径两种写法等价，数组下标用 `int` 或"整串数字"的段：
+
+```leno
+var data = jsons.decode('{"user":{"name":"A","tags":["x","y"]}}')
+
+print(jsons.dig(data, "user.name"))            // A
+print(jsons.dig(data, ["user", "tags", 0]))     // x
+print(jsons.dig(data, "user.tags.0"))           // x
+print(jsons.dig(data, "user.nope"))             // null（不会崩）
 ```
 
 ### sockets 网络模块
@@ -10064,7 +10139,7 @@ main() {
 | 取模零 | `除零错误` |
 | 数组越界 | `数组索引越界` |
 | 字符串越界 | `字符串索引越界` |
-| 字典键不存在 | `键 'xxx' 不存在` |
+| 字典键不存在 | **不抛异常**：返回 `null`（要区分"不存在/值为 null"用 `has()`） |
 | null 值操作 | `null 不能参与算术运算` |
 | 类型错误 | `类型错误` |
 
@@ -10913,6 +10988,8 @@ main() {
 ### 超时控制
 
 ```leno
+import asyncs
+
 async func slow_task():string {
     await asyncs.sleep(5000)
     return "完成"
@@ -10933,6 +11010,8 @@ async func test() {
 async 函数中抛出的异常通过 Future 传播，在 `await` 处重新抛出，可用 `try-catch` 捕获：
 
 ```leno
+import asyncs
+
 async func risky():string {
     await asyncs.sleep(100)
     throw "出错了"
@@ -11508,8 +11587,13 @@ main() {
 ## 运行程序
 
 ```bash
-# 编译并运行
-lenolang program.leno
+# 编译并运行（二进制名为 leno；从仓库根目录可用 build/leno）
+leno program.leno
+
+# 只做编译检查 / 编译为字节码 / 打包
+leno --check program.leno
+leno -c program.leno
+leno -p program.leno
 ```
 
 ***
@@ -11566,7 +11650,7 @@ lenolang program.leno
 | 非成员检查 | `x not in arr`, `key not in dict`       |
 | 可空类型  | `Type?` — `int?`, `string?`, `Point?` 等  |
 | null 赋值 | `string s = null` ✅ 引用类型 \| `int a = null` ❌ 值类型 \| `int? a = null` ✅ 可空类型  |
-| null 运算 | `null + 1` ❌ 编译错误 \| `int? a = null; a + 1` ⚠️ 编译警告 \| `if a != null { a + 1 }` ✅ |
+| null 运算 | `null + 1` ❌ 编译错误 \| `int? a = null; a + 1` ❌（值确定为 null）\| `int? a = 5; a + 1` ⚠️ 警告 \| `if a != null { a + 1 }` ✅ |
 | null 判断 | `x is null`, `x != null`, `x == null`    |
 | 复合赋值  | `+=`, `-=`, `*=`, `/=`, `%=`            |
 | 位复合赋值 | `&=`, `\|=`, `^=`, `<<=`, `>>=`, `>>>=` |
@@ -11690,7 +11774,7 @@ lenolang program.leno
 | 随机数     | `rands.ints(1,6)`, `rands.choice(arr)`               |
 | 数学函数    | `maths.sqrt(x)`, `maths.sin(x)`                      |
 | 文件操作    | `files.read(path)`, `files.write(path, content)`     |
-| JSON 解析 | `jsons.decode(str)`, `jsons.encode(obj)`             |
+| JSON 解析 | `jsons.decode(str)`, `jsons.encode(obj)`, `jsons.dig(obj, "a.b")` |
 | 网络连接    | `sockets.connect(host, port)`                        |
 | 目录操作    | `dirs.cwd()`, `dirs.listdir(path)`                   |
 | 时间戳     | `times.ms()`                                         |
@@ -11734,4 +11818,4 @@ lenolang program.leno
 
 ***
 
-**注意**：本文档中的示例均来自 `d:\CLeno\Leno\test` 目录下的实际测试文件。
+**注意**：本文档的示例大多能在仓库的 `examples/` 目录找到对应测试；带日期的结论均按当天的编译器实测（`build/leno --check` 通过）。
