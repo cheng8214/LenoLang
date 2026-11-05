@@ -1,0 +1,112 @@
+// test_diag_dup_func_and_scope.leno —— 重名函数 / 模块顶层 return / 裸块作用域（2026-11-05）
+//
+// 排查动机：这三类问题此前都**一个字都不报**，属于"静默错"：
+//   ① `func f(){}` + `func f(){}`：函数表与符号表由后者静默覆盖前者
+//      ⇒ 实测 `func dup` 返回 "second"，调用点永远只看到第二个定义 ✗
+//      （同名不同签名也不会被当成重载，反而报「参数类型不匹配」，指不到真因）
+//   ② 模块顶层 `return x`：**静默中止整个模块初始化** —— main 不会被调用，
+//      实测零输出、exit=1，没有任何诊断 ✗
+//   ③ 裸块 `{ var a = 1 }` 不建作用域 ⇒ a 泄漏到块外；而 codegen 会在块尾**逆序析构**
+//      块内变量 ⇒ 实测「析构已跑完，块外还能读到该局部量」（use-after-destruct ✗）
+//
+// 判据：前三类必须**编译失败且文案点明真因**；后三类是"不许误伤"的正向用例。
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_diag_dup_func")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ---- ① 顶层同名函数：必须报错，并指出第一次定义的行 ----
+    var dupTop = dirs.join(work, "dup_top.leno")
+    files.write(dupTop, @"func dup(): string { return ""first"" }
+func dup(): string { return ""second"" }
+
+main() { print(dup()) }
+")
+    ce.expect_error(dupTop, "顶层同名函数 => 报错（旧行为是后者静默覆盖）",
+        "重复的函数定义 'dup'", 2)
+
+    // ---- ② 同一块内的同名局部函数：必须报错 ----
+    var dupLocal = dirs.join(work, "dup_local.leno")
+    files.write(dupLocal, @"main() {
+    func inner(): int { return 1 }
+    func inner(): int { return 2 }
+    print(inner())
+}
+")
+    ce.expect_error(dupLocal, "同块同名局部函数 => 报错",
+        "重复的函数定义 'inner'", 3)
+
+    // ---- ③ 函数与 struct 同名：必须报错（否则 `S.x` 解析到函数，报"func 不支持属性访问"）----
+    var clash = dirs.join(work, "func_struct_clash.leno")
+    files.write(clash, @"struct S { int x = 1 }
+func S(): int { return 42 }
+
+main() { var s = new S(); print(s.x) }
+")
+    ce.expect_error(clash, "函数与 struct 同名 => 报错",
+        "与第 1 行的 struct 同名", 2)
+
+    // ---- ④ 模块顶层 return：必须报错（旧行为是静默中止模块、main 不执行）----
+    var topRet = dirs.join(work, "top_return.leno")
+    files.write(topRet, @"var x = 1
+return x
+
+main() { print(""NEVER"") }
+")
+    ce.expect_error(topRet, "模块顶层 return => 报错", "return 只能写在函数体内", 2)
+
+    // ---- ⑤ 裸块内的变量不许泄漏到块外 ----
+    var leak = dirs.join(work, "block_leak.leno")
+    files.write(leak, @"main() {
+    {
+        var a = 1
+    }
+    print(a)
+}
+")
+    ce.expect_error(leak, "裸块内的局部量不许泄漏到块外", "未定义的变量: a", 5)
+
+    // ---- ⑥ 反例：块内同名遮蔽照常可用（与 if/while/for 块体同口径）----
+    var shadow = dirs.join(work, "block_shadow.leno")
+    files.write(shadow, @"main() {
+    var a = 10
+    {
+        var a = 100
+        print(a)
+    }
+    print(a)
+}
+")
+    ce.expect_ok(shadow, "块内同名遮蔽可以编译并运行", "100")
+
+    // ---- ⑦ 反例：局部函数遮蔽外层同名函数是合法的（只比同一列表）----
+    var shadowFn = dirs.join(work, "shadow_func.leno")
+    files.write(shadowFn, @"func f(): int { return 1 }
+
+main() {
+    func f(): int { return 2 }
+    print(f())
+}
+")
+    ce.expect_ok(shadowFn, "局部函数遮蔽外层同名函数不误报", "2")
+
+    // ---- ⑧ eif 漏写条件：文案要点明"少了条件"，不再报「期望 ':'」----
+    var eifNoCond = dirs.join(work, "eif_no_cond.leno")
+    files.write(eifNoCond, @"main() {
+    if true {
+        print(1)
+    } eif {
+        print(2)
+    }
+}
+")
+    ce.expect_error(eifNoCond, "eif 漏写条件 => 定向报错",
+        "eif 后面必须跟条件表达式", 4)
+
+    print("test_diag_dup_func_and_scope passed")
+}

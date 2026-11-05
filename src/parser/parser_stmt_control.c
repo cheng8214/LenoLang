@@ -159,10 +159,26 @@ Ast* parse_if_stmt(Parser* p) {
     int line = p->lex.current.line;
     Lexer if_start_lex = p->lex;   // 保存 if 关键字位置，供 if 表达式形式回退
     // 支持 if 和 eif 关键字
+    int was_eif = (p->lex.current.type == TOK_EIF);
     if (p->lex.current.type == TOK_IF || p->lex.current.type == TOK_EIF) {
         lexer_next(&p->lex); // 消费 if/eif
     } else {
         error_add_at_fmt(ERR_SYNTAX, line, p->lex.current.column, "期望 if 或 eif 关键字");
+        return NULL;
+    }
+
+    // ★ 2026-11-05：`eif { … }`（漏写条件）此前会被当成**字典字面量**去解析 ⇒
+    //   首条报「期望 ':'」，完全指不到"少了条件" ✗（实测还会再刷两条级联）。
+    //   eif 不可能作为表达式开头（它是 else if 的简写）⇒ 见到块起止符号直接定向报错，
+    //   并把这一整块跳掉，避免后续连锁。
+    if (was_eif && (p->lex.current.type == TOK_LBRACE || p->lex.current.type == TOK_RBRACE)) {
+        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+            "eif 后面必须跟条件表达式（eif 是 else if 的简写，不能直接接 '{'）—— "
+            "例：`if a { … } eif b { … }`");
+        if (p->lex.current.type == TOK_LBRACE) {
+            Ast* skipped = parse_block_internal(p);
+            if (skipped) ast_free(skipped);
+        }
         return NULL;
     }
 

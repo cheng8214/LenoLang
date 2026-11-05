@@ -1,4 +1,15 @@
         case AST_RETURN: {
+            // ★ 2026-11-05：模块顶层的 return 此前**静默中止模块初始化** ——
+            //   后面的 main 不会被调用、进程直接以非 0 退出，而且一个字都不报 ✗
+            //   （实测 `var x = 1` + `return x` + `main(){print("after")}`：
+            //    零输出、exit=1）。这里编译期直接拦下。
+            if (!s->current_func) {
+                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                    "return 只能写在函数体内 —— 模块顶层的 return 会**中止整个模块的初始化**"
+                    "（后面的 main 不会被调用）；请把这段逻辑放进函数里");
+                visit(s, ast->u.ret);
+                break;
+            }
             visit(s, ast->u.ret);
 
             if (s->current_func) {
@@ -55,6 +66,15 @@
         case AST_RETURN_MULTI: {
             // 多值返回: return a, b, c
             int count = ast->u.ret_multi.count;
+
+            // ★ 2026-11-05：与 AST_RETURN 同口径 —— 模块顶层的 return 会静默中止模块初始化
+            if (!s->current_func) {
+                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                    "return 只能写在函数体内 —— 模块顶层的 return 会**中止整个模块的初始化**"
+                    "（后面的 main 不会被调用）；请把这段逻辑放进函数里");
+                for (int i = 0; i < count; i++) visit(s, ast->u.ret_multi.exprs[i]);
+                break;
+            }
 
             // main 的返回值作为进程退出码，不支持多值返回
             if (s->in_main_func) {

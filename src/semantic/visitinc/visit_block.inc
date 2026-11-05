@@ -1,4 +1,21 @@
         case AST_BLOCK: {
+            // ★ 2026-11-05：同一块内的重名函数（此前后者静默覆盖前者、调用点只看到后者）
+            //   只比**同一列表** ⇒ 合法的"局部函数遮蔽外层函数"不受影响 ✓
+            semantic_check_dup_funcs(ast);
+
+            // ★ 2026-11-05：只有**词法块**（用户写的 `{ … }` 语句）才建作用域 —— 与
+            //   if/while/for 的块体同口径。此前裸块不建作用域 ⇒ `{ var a = 1 }` 里的 a
+            //   泄漏到块外，而 codegen 的 gen_block 会在块尾**逆序析构**块内变量 ⇒
+            //   实测「析构已跑完，块外还能读到该局部量」（use-after-destruct ✗）。
+            //   ⚠ 语法糖容器块（use 批量 `use m.(A,B)` / `var a=1, b=2` / 函数体）**不建** ——
+            //     它们不是作用域边界，建了会把容器里的声明关进临时作用域、出块即消失 ✗
+            //     （实测：批量 use 的四个类型全部报「未定义的类型」）
+            Scope* block_scope = NULL;
+            if (ast->lexical_scope && s->current) {
+                block_scope = scope_new(s->current, 0);
+                s->current = block_scope;
+            }
+
             // 第零轮预扫描：提前注册所有 struct/face/cstruct 定义
             // 确保后续函数体中引用 struct 时能通过 scope_resolve 找到其字段
             for (int i = 0; i < ast->u.block.count; i++) {
@@ -281,5 +298,12 @@
             // 注：模块级变量初始化顺序检查**不在这里** —— 顶层根本不进本分支
             //     （semantic_analyze 是直接 visit_list(s, &ast->u.block)），
             //     它挂在 semantic.c 的两个入口上，见 mv_check_top。
+            if (block_scope) {
+                s->current = block_scope->parent;
+                if (!s->is_lsp_mode) {
+                    scope_detach_child(s->current, block_scope);
+                    scope_free(block_scope);
+                }
+            }
             break;
         }

@@ -3,6 +3,8 @@
 
 // 模块级变量初始化顺序检查（定义在 semantic_visit_ast.c，2026-10-23）
 void mv_check_top(Semantic* s, Ast* block);
+// 同一语句列表里的重名函数 / 函数与类型同名（2026-11-05，实现见 semantic_visit_ast.c）
+void semantic_check_dup_funcs(Ast* block);
 
 // 注解表清空（定义在 semantic_annotations.c，2026-10-31）
 //   ⚠ 表是**进程级**的静态数组 ⇒ 这次分析不清，上一个文件的 @optkeys 会串到下一个 ✗
@@ -408,6 +410,11 @@ void semantic_analyze(Semantic* s, Ast* ast) {
 
     // ★ 先把 extend 的方法并进目标 struct（必须在下面的预注册之前，见函数注释）
     extend_merge_into_block(s, ast);
+
+    // ★ 2026-11-05：顶层重名函数（此前后者静默覆盖前者）+ 函数与 struct/clib/cfunc 同名
+    //   ⚠ 必须早于下面的预注册：预注册用 func_table_add / scope_define，
+    //     后者遇到重名会静默返回 NULL，晚查就只能看到"已被覆盖"的状态
+    semantic_check_dup_funcs(ast);
 
     // 预注册所有 struct/face 定义（支持前向引用）
     if (ast && ast->kind == AST_BLOCK) {
@@ -841,6 +848,9 @@ void semantic_analyze_module(Semantic* s, Ast* ast) {
 
     // ★ 先把 extend 的方法并进目标 struct（必须在预注册之前，见函数注释）
     extend_merge_into_block(s, ast);
+
+    // ★ 2026-11-05：模块级重名函数 / 函数与类型同名（与 semantic_analyze 同口径）
+    semantic_check_dup_funcs(ast);
 
     // 预注册所有模块类型定义（struct/cstruct/face）和函数定义（使用 SYM_MODULE 类型）
     // 同时提前注册 struct/face 到全局定义表，确保函数体中能通过 struct_def_find/face_def_find 找到

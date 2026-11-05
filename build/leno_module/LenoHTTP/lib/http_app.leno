@@ -116,10 +116,6 @@ export func stop(Dict app) {
     app.set("running", false)
 }
 
-export func stop(Dict app) {
-    app.set("running", false)
-}
-
 // ==================== 响应助手 ====================
 export func text(string s): Dict {
     return {status: 200, body: s, contentType: "text/plain; charset=utf-8", headers: {}}

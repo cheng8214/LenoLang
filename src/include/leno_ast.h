@@ -159,6 +159,13 @@ struct Ast {
     //   `f(a = 1)` 与 `f((a = 1))` 在 AST 上都是 AST_ASSIGN（括号不留节点），
     //   靠这个标记区分"可能是命名实参"与"用户明确表态这是赋值"。
     int arg_paren;
+    // ★ 2026-11-05：AST_BLOCK 是否是**用户书写的词法块**（`{ … }` 语句）。
+    //   语义分析据此决定要不要建新作用域 —— 只有真块该建：
+    //     · `{ var a = 1 }` ⇒ 1（a 不泄漏到块外，与 if/while/for 块体同口径）
+    //     · 语法糖造出来的容器块（`use m.(A,B)` 的批量容器、`var a=1, b=2` 的多声明容器、
+    //       函数体）⇒ 0，否则这些"容器里的声明"会被关进临时作用域，块结束后凭空消失 ✗
+    //   由 parser.c 的 `case TOK_LBRACE:`（独立的块语句）置位，其余保持 calloc 的 0 ✓
+    int lexical_scope;
     union {
         struct { double value; int is_bigint; char* bigint_str; int is_float; } num;
         struct { char* value; int len; } string;

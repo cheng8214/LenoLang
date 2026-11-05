@@ -425,6 +425,10 @@ Ast* parse_statement(Parser* p) {
         // 代码块
         case TOK_LBRACE:
             stmt = parse_block_internal(p);
+            // ★ 2026-11-05：独立的块语句 `{ … }` 才是**词法块**（语义阶段据此建作用域）。
+            //   其他 AST_BLOCK 是语法糖容器（use 批量 / 多变量声明 / 函数体），不能标记，
+            //   否则容器里的声明会被关进临时作用域、出块即失效 ✗
+            if (stmt) stmt->lexical_scope = 1;
             break;
 
         // 默认情况：检查是否是入口函数定义、自定义类型变量声明或表达式语句

@@ -962,6 +962,78 @@ static Ast* mv_unwrap_export(Ast* stmt) {
     return stmt;
 }
 
+// ============================================================================
+// 同一语句列表内的**重名定义**检查（2026-11-05）
+// ----------------------------------------------------------------------------
+// 此前已经查过：模块级变量（mv_check_top）、struct 重名/重复字段、extend 重名。
+// 唯独**函数**没查：`func f(){}` + `func f(){}` 两个定义都"成功"，
+// 函数表（func_table_add）与符号表都由后者**静默覆盖**前者 ⇒
+//   ① 调用点永远只看到第二个（实测 `func dup` 返回 "second"，一个字都不报 ✗）；
+//   ② 同名但签名不同也不会被当成重载（Leno 没有重载），调用第一个的签名反而报
+//     「参数类型不匹配」—— 看着像调用点写错，实际是定义被顶掉。
+// 这里按**同一语句列表**扫（块内同名函数 / 函数与 struct、clib、cfunc 同名）：
+//   · 只比同一列表 ⇒ 合法的"局部函数遮蔽外层函数"不受影响 ✓
+//   · 顶层由 semantic.c 的两个入口调用（顶层不走 AST_BLOCK 分支）；
+//     嵌套块由 visit_block.inc 的 AST_BLOCK 分支调用 ✓
+// ============================================================================
+static Ast* dup_unwrap_export(Ast* stmt) {
+    if (stmt && stmt->kind == AST_EXPORT && stmt->u.export.decl) return stmt->u.export.decl;
+    return stmt;
+}
+
+// 取本列表里"会占用同名符号"的声明名（目前只认会与函数撞车的几种）
+static const char* dup_decl_name(Ast* d) {
+    if (!d) return NULL;
+    switch (d->kind) {
+        case AST_STRUCT_DEF: return d->u.struct_def.name;
+        case AST_CLIB_DEF:   return d->u.clib_def.name;
+        case AST_CFUNC_DECL: return d->u.cfunc_decl.name;
+        default:             return NULL;
+    }
+}
+
+static const char* dup_decl_kind_name(Ast* d) {
+    if (!d) return "声明";
+    switch (d->kind) {
+        case AST_STRUCT_DEF: return "struct";
+        case AST_CLIB_DEF:   return "clib";
+        case AST_CFUNC_DECL: return "cfunc";
+        default:             return "声明";
+    }
+}
+
+void semantic_check_dup_funcs(Ast* block) {
+    if (!block || block->kind != AST_BLOCK) return;
+    AstList* list = &block->u.block;
+    for (int i = 0; i < list->count; i++) {
+        Ast* cur = dup_unwrap_export(list->items[i]);
+        if (!cur || cur->kind != AST_FUNC_DEF || !cur->u.func.name) continue;
+
+        for (int j = 0; j < i; j++) {
+            Ast* prev = dup_unwrap_export(list->items[j]);
+            if (!prev) continue;
+
+            if (prev->kind == AST_FUNC_DEF && prev->u.func.name &&
+                strcmp(prev->u.func.name, cur->u.func.name) == 0) {
+                error_add_at_fmt(ERR_SEMANTIC, cur->line, cur->column,
+                    "重复的函数定义 '%s'（第一次定义在第 %d 行）—— 此前第二个定义会**静默覆盖**"
+                    "第一个，调用点永远只看到后者；Leno 没有同名重载，请改名或删掉其中一个",
+                    cur->u.func.name, prev->line);
+                break;
+            }
+
+            const char* dname = dup_decl_name(prev);
+            if (dname && strcmp(dname, cur->u.func.name) == 0) {
+                error_add_at_fmt(ERR_SEMANTIC, cur->line, cur->column,
+                    "函数 '%s' 与第 %d 行的 %s 同名 —— 两者共用同一个名字，"
+                    "实际只有一个能被解析到（另一个静默失效）；请给函数换个名字",
+                    cur->u.func.name, prev->line, dup_decl_kind_name(prev));
+                break;
+            }
+        }
+    }
+}
+
 // 供 semantic.c 的两个入口调用（它们直接 visit_list 顶层块，不走 AST_BLOCK 分支）
 void mv_check_top(Semantic* s, Ast* block) {
     int total = (int)block->u.block.count;
