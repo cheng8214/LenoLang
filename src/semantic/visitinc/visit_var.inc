@@ -368,6 +368,16 @@
             //   （若本分支同时被"赋值目标"复用，则赋值也会被算成读 ⇒ 只会**少报**、
             //    不会误报 ✓ 方向是安全的 —— 未使用变量的诊断宁漏勿误报 ✓）
             if (sym) sym->is_read = 1;
+            // ★ 2026-11-07：**裸写枚举成员**（`enum Color { red }` 后直接写 `red`）
+            //   此前语义能解析到成员符号，但 codegen 没有给这个全局槽赋值 ⇒ 运行期静默得到 null ✗
+            //   （实测 `print(_str(red))` 输出 null，既不报错也不等于 0）。
+            //   枚举成员必须带限定名访问（`Color.red`）⇒ 这里定向报错，不再放行到运行期。
+            if (sym && sym->name && sym->is_enum_member &&
+                sym->type && sym->type->struct_name) {
+                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                    "枚举成员 '%s' 不能直接当变量用（直接写会静默得到 null）—— 请写 `%s.%s`",
+                    ast->u.var.name, sym->type->struct_name, ast->u.var.name);
+            }
             if (!sym) {
                 // ★ 2026-10-24（Q3）：`for k in d` 里那个未定义的 k（用户想遍历字典/数组）
                 //   原来报「未定义的变量: k」+ 拼写建议「是否想输入 'd'？」——

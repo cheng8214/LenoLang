@@ -2301,10 +2301,12 @@ Ast* parse_struct_stmt(Parser* p) {
     // 动态数组存储关联常量
     char** const_names = NULL;
     Ast** const_values = NULL;
+    int* const_lines = NULL;        // ★ 每个常量的声明行（与字段重名的诊断用，2026-11-07）
     int const_count = 0;
     int const_capacity = 8;
     const_names = (char**)malloc(sizeof(char*) * const_capacity);
     const_values = (Ast**)malloc(sizeof(Ast*) * const_capacity);
+    const_lines = (int*)calloc(const_capacity, sizeof(int));
 
     // 解析字段列表和方法
     while (p->lex.current.type != TOK_RBRACE && p->lex.current.type != TOK_EOF) {
@@ -2382,7 +2384,19 @@ Ast* parse_struct_stmt(Parser* p) {
 
             // 支持逗号分隔多个常量：const A = 1, B = 2
             do {
+                int cname_line = p->lex.current.line;
+                int cname_col = p->lex.current.column;
                 char* cname = copy_string(p->lex.current.text, p->lex.current.len);
+                // ★ 2026-11-07：关联常量重名（`const int X = 1` 后再写 `const int X = 2`）
+                //   此前**零诊断**，后写的值静默覆盖先写的（实测 P.X 还是 1）。
+                for (int ci = 0; ci < const_count; ci++) {
+                    if (const_names[ci] && strcmp(const_names[ci], cname) == 0) {
+                        error_add_at_fmt(ERR_SEMANTIC, cname_line, cname_col,
+                            "struct '%s' 的关联常量 '%s' 重复定义 —— 后写的值会覆盖先写的；"
+                            "请改名或删掉一个", struct_name, cname);
+                        break;
+                    }
+                }
                 lexer_next(&p->lex);
 
                 // 期望 =
@@ -2409,10 +2423,12 @@ Ast* parse_struct_stmt(Parser* p) {
                     const_capacity *= 2;
                     const_names = (char**)realloc(const_names, sizeof(char*) * const_capacity);
                     const_values = (Ast**)realloc(const_values, sizeof(Ast*) * const_capacity);
+                    const_lines = (int*)realloc(const_lines, sizeof(int) * const_capacity);
                 }
 
                 const_names[const_count] = cname;
                 const_values[const_count] = cexpr;
+                const_lines[const_count] = cname_line;
                 const_count++;
             } while (match(p, TOK_COMMA));
 
@@ -2671,9 +2687,31 @@ Ast* parse_struct_stmt(Parser* p) {
         }
         free(const_names);
         free(const_values);
+        free(const_lines);
         free(struct_name);
         return NULL;
     }
+
+    // ★ 2026-11-07：关联常量与**字段**同名 —— 实测 `struct P { int x = 0; const int x = 1 }`
+    //   访问 `p.x` 会**静默返回常量的 1**（不是字段的 0）⇒ 数据读错且零提示 ✗
+    //   两个名字空间在这里会撞车，直接报错并让用户改名。
+    for (int ci = 0; ci < const_count; ci++) {
+        for (int fi = 0; fi < field_count; fi++) {
+            if (const_names[ci] && field_names[fi] &&
+                strcmp(const_names[ci], field_names[fi]) == 0) {
+                int cline = const_lines[ci] > 0 ? const_lines[ci] : line;
+                int fline = (field_lines && field_lines[fi] > 0) ? field_lines[fi] : line;
+                error_add_at_fmt(ERR_SEMANTIC, cline, 1,
+                    "struct '%s' 的关联常量 '%s'（第 %d 行）与字段 '%s'（第 %d 行）同名 —— "
+                    "访问 `实例.%s` 会**静默取到常量的值**（不是字段），请改名",
+                    struct_name, const_names[ci], cline, field_names[fi], fline,
+                    const_names[ci]);
+                break;
+            }
+        }
+    }
+    free(const_lines);
+    const_lines = NULL;
 
     // 创建 struct 定义 AST 节点
     Ast* ast = ast_new(AST_STRUCT_DEF, line);

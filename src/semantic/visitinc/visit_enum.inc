@@ -67,6 +67,9 @@
                         char* member_name = ast->u.enum_def.member_names[i];
                         Symbol* member_sym = scope_define(s->current, member_name, kind);
                         if (member_sym) {
+                            // 标记为 enum 成员：裸写 `red` 时 visit_var 会定向报"请写 Color.red"
+                            // （codegen 没给这个槽赋值 ⇒ 放行会静默得到 null）
+                            member_sym->is_enum_member = 1;
                             member_sym->type = type_new(TYPE_ENUM);
                             member_sym->type->struct_name = strdup(ast->u.enum_def.name);
                         }

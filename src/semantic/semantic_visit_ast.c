@@ -1181,10 +1181,43 @@ static void sw_check_dup_cases(Ast* sw) {
     int cap = 64, n = 0;
     SwCaseKey* seen = (SwCaseKey*)calloc((size_t)cap, sizeof(SwCaseKey));
     if (!seen) return;
+    // 区间 case 的去重：只比**两端都是整数字面量**的区间（变量端点无法静态确定 ⇒ 不猜 ✓）
+    typedef struct { long long lo, hi; int inclusive; int line; } SwRangeKey;
+    int rcap = 32, rn = 0;
+    SwRangeKey* rseen = (SwRangeKey*)calloc((size_t)rcap, sizeof(SwRangeKey));
     for (int i = 0; i < sw->u.switch_.case_count; i++) {
         for (int j = 0; j < sw->u.switch_.cases[i].values.count; j++) {
             Ast* v = sw->u.switch_.cases[i].values.items[j];
-            if (!v || v->kind == AST_RANGE) continue;   // 区间不参与单值重复判定
+            if (!v) continue;
+            if (v->kind == AST_RANGE && rseen) {
+                // ★ 2026-11-07：重复的**区间** case（`case 1:3` 写两遍）此前零诊断 ✗
+                long long lo = 0, hi = 0;
+                if (ast_const_int(v->u.range.start, &lo) &&
+                    ast_const_int(v->u.range.end, &hi)) {
+                    int hit = -1;
+                    for (int p = 0; p < rn; p++) {
+                        if (rseen[p].lo == lo && rseen[p].hi == hi &&
+                            rseen[p].inclusive == v->u.range.inclusive) { hit = p; break; }
+                    }
+                    if (hit >= 0) {
+                        warning_add_at_fmt(WARN_DUPLICATE_CASE, v->line, v->column,
+                            "重复的区间 case（与第 %d 行的 case 相同）—— switch 命中前面的分支后即跳出，"
+                            "这个分支**永远不会执行**；删掉重复项", rseen[hit].line);
+                    }
+                    if (rn >= rcap) {
+                        rcap *= 2;
+                        SwRangeKey* grown = (SwRangeKey*)realloc(rseen, sizeof(SwRangeKey) * (size_t)rcap);
+                        if (grown) rseen = grown;
+                    }
+                    if (rn < rcap) {
+                        rseen[rn].lo = lo; rseen[rn].hi = hi;
+                        rseen[rn].inclusive = v->u.range.inclusive;
+                        rseen[rn].line = v->line;
+                        rn++;
+                    }
+                }
+                continue;
+            }
             SwCaseKey k;
             if (!sw_case_key(v, &k)) continue;
             int hit = -1;
@@ -1213,6 +1246,7 @@ static void sw_check_dup_cases(Ast* sw) {
         }
     }
     free(seen);
+    free(rseen);
 
     // ★ 2026-11-06：`case is Type` 的重复分支同样不可达（此前只查了值 case ✗）
     //   `case is P { … } case is P { … }` 实测静默取第一个、第二个永远不执行。

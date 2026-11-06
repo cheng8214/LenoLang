@@ -13,6 +13,9 @@
 // ⑧ 非数值类型的 `+`（如 `[1] + [2]`）：VM 会静默退化成字符串拼接，而静态类型仍算成
 //    Array[int] ⇒ 类型系统与运行期实际值不一致；现在编译期直接报错
 // ⑨ 对 string 用 `in` 但左边不是 string（如 `3 in "hello"`）：此前**静默恒 false**
+// ⑩ struct 关联常量重名 / 关联常量与字段重名：此前后者会让 `p.x` 静默读到常量的值
+// ⑪ 裸写枚举成员（`enum Color { red }` 后直接写 `red`）：此前运行期静默得到 null
+// ⑫ 重复的区间 case（`case 1:3` 写两遍）：此前只查单值 case，区间完全漏检
 //
 // 配一条防误报：不同的字典键、不同的别名必须照常编译。
 
@@ -221,6 +224,96 @@ main() {
 }
 ")
     ce.expect_ok(inStringOk, "string in string（防误报）", "true")
+
+    // ---- ⑩ 关联常量重名：错误落在第二个常量（第 3 行）----
+    var dupAssocConst = dirs.join(work, "dup_assoc_const.leno")
+    files.write(dupAssocConst, @"struct P {
+    const int X = 1
+    const int X = 2
+}
+
+main() { print(_str(P.X)) }
+")
+    ce.expect_error(dupAssocConst, "关联常量重名 => 错误",
+        "关联常量 'X' 重复定义", 3)
+
+    // ---- ⑩b 关联常量与字段同名：访问 p.x 会静默拿到常量值，必须报错 ----
+    var fieldConstClash = dirs.join(work, "field_const_clash.leno")
+    files.write(fieldConstClash, @"struct P {
+    int x = 0
+    const int x = 1
+}
+
+main() {
+    var p = new P()
+    print(_str(p.x))
+}
+")
+    ce.expect_error(fieldConstClash, "关联常量与字段同名 => 错误",
+        "与字段 'x'", 3)
+
+    // ---- ⑩c 防误报：不同名的关联常量 + 字段照常工作 ----
+    var assocConstOk = dirs.join(work, "assoc_const_ok.leno")
+    files.write(assocConstOk, @"struct P {
+    int x = 0
+    const int Y = 2
+}
+
+main() {
+    var p = new P()
+    print(_str(p.x) + ""-"" + _str(P.Y))
+}
+")
+    ce.expect_ok(assocConstOk, "关联常量与字段不同名（防误报）", "0-2")
+
+    // ---- ⑪ 裸写枚举成员：必须提示带限定名，不能静默给 null ----
+    var bareEnum = dirs.join(work, "bare_enum_member.leno")
+    files.write(bareEnum, @"enum Color { red }
+
+main() {
+    print(_str(red))
+}
+")
+    ce.expect_error(bareEnum, "裸写枚举成员 => 错误（此前运行期是 null）",
+        "枚举成员 'red' 不能直接当变量用", 4)
+
+    // ---- ⑪b 防误报：`Color.red` 以及枚举型变量照常可用 ----
+    var enumOk = dirs.join(work, "enum_qualified_ok.leno")
+    files.write(enumOk, @"enum Color { red; green }
+
+main() {
+    var c = Color.green
+    print(_str(Color.red) + ""-"" + _str(c))
+}
+")
+    ce.expect_ok(enumOk, "限定名枚举成员（防误报）", "0-1")
+
+    // ---- ⑫ 重复的区间 case：警告落在第二个区间（第 5 行）----
+    var dupRange = dirs.join(work, "dup_range.leno")
+    files.write(dupRange, @"main() {
+    var x = 2
+    switch x {
+        case 1:3 { print(""A\n"") }
+        case 1:3 { print(""B\n"") }
+        default { print(""D\n"") }
+    }
+}
+")
+    ce.expect_warning(dupRange, "重复区间 case => 警告（后一个永不执行）",
+        "重复的区间 case", 5)
+
+    // ---- ⑫b 防误报：重叠但不相等的区间（1:3 与 2:4）不是重复 ----
+    var overlapRange = dirs.join(work, "overlap_range.leno")
+    files.write(overlapRange, @"main() {
+    var x = 2
+    switch x {
+        case 1:3 { print(""A\n"") }
+        case 2:4 { print(""B\n"") }
+    }
+}
+")
+    var outRange = ce.expect_ok(overlapRange, "不同区间（防误报）", "A")
+    ce.expect_no_warning(outRange, "不同区间不该报重复", "重复的区间 case")
 
     print("test_diag_dict_alias_assign_for passed")
 }
