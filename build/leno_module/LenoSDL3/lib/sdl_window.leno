@@ -167,7 +167,7 @@ func _ensureKeyNameMap() {
         "F7": 64, "F8": 65, "F9": 66, "F10": 67, "F11": 68, "F12": 69,
         "BACKSPACE": 42, "DELETE": 76, "DEL": 76, "INSERT": 73,
         "ESCAPE": 41, "ESC": 41, "RETURN": 40, "ENTER": 40, "SPACE": 44, "TAB": 43,
-        "HOME": 74, "END": 77, "PAGEUP": 75, "PAGEUP": 75, "PAGEDOWN": 78,
+        "HOME": 74, "END": 77, "PAGEUP": 75, "PAGEDOWN": 78,
         "LEFT": 80, "RIGHT": 79, "UP": 82, "DOWN": 81,
         "A": 4, "B": 5, "C": 6, "D": 7, "E": 8, "F": 9, "G": 10,
         "H": 11, "I": 12, "J": 13, "K": 14, "L": 15, "M": 16,

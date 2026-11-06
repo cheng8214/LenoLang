@@ -750,6 +750,7 @@ int parser_reject_module_qualified_type(Parser* p, TypeInfo* t) {
 
 Ast* parse_alias_stmt(Parser* p) {
     int line = p->lex.current.line;
+    int column = p->lex.current.column;
     lexer_next(&p->lex); // 跳过 alias
 
     if (p->lex.current.type != TOK_IDENT) {
@@ -876,6 +877,15 @@ Ast* parse_alias_stmt(Parser* p) {
     }
 
     // 泛型别名：NOTE: 类型体中的泛型参数名在语义分析阶段转换为 TYPE_GENERIC_PARAM
+    // ★ 2026-11-06：重复的类型别名此前**零诊断** ✗ —— parser 的 find_alias 从头遍历、
+    //   永远返回**第一次**的定义 ⇒ 第二次 `alias Num = string` 既不生效也无人提示。
+    //   （值别名 `alias X = Enum.member` 不走别名表，这里只管类型别名 ✓）
+    if (find_alias(p, name)) {
+        error_add_at_fmt(ERR_DUPLICATE_VAR, line, column,
+            "类型别名 '%s' 重复定义 —— 编译器只认第一次的定义，后写的**不会生效**；"
+            "请改名或删掉一个", name);
+    }
+
     Ast* ast = ast_new(AST_ALIAS, line);
     ast->u.alias.name = name;
     ast->u.alias.type = type;
@@ -1199,6 +1209,24 @@ Ast* parse_destruct_decl(Parser* p, TypeInfo* base_type, int is_const, int line,
     if (slot_count != name_count) {
         error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
                          "解构槽位数量(%d)与变量数量(%d)不匹配", slot_count, name_count);
+        // ★ 2026-11-07 修崩溃：此前报完错仍然建 AST（slot_count=2 / names 只有 1 项），
+        //   ast_free 按 slot_count 遍历 names ⇒ 越界读到垃圾指针 ⇒ SIGSEGV（实测 exit 0x0B）。
+        //   这类"结构不一致"的 AST 绝不能流到后面 ⇒ 释放全部临时数组后返回 NULL。
+        for (int i = 0; i < slot_count; i++) type_free(slot_types[i]);
+        free(slot_types);
+        if (slot_keys) {
+            for (int i = 0; i < slot_count; i++) free(slot_keys[i]);
+            free(slot_keys);
+        }
+        if (slot_defaults) {
+            for (int i = 0; i < slot_count; i++) {
+                if (slot_defaults[i]) ast_free(slot_defaults[i]);
+            }
+            free(slot_defaults);
+        }
+        for (int i = 0; i < name_count; i++) free(names[i]);
+        free(names);
+        return NULL;
     }
 
     // 解析 = expr
@@ -1944,7 +1972,7 @@ Ast* parse_expression_stmt(Parser* p) {
                 if (left_targets[0]->kind != AST_VAR) {
                     Ast* tgt = left_targets[0];
                     if (tgt->kind != AST_INDEX) {
-                        error_add_at_fmt(ERR_SYNTAX, line, p->lex.current.column,
+                        error_add_at_fmt(ERR_SYNTAX, tgt->line, tgt->column,
                             "复合赋值的目标只能是变量或索引（如 a += 1 / arr[i] += 1）");
                         free_assign_targets(left_targets, left_count);
                         return NULL;
@@ -2080,8 +2108,16 @@ normal_parse:
     Ast* expr = parse_expression(p);
     
     // 如果表达式解析失败，消费当前 token 避免无限循环
+    // ★ 2026-11-06：**只在"词法位置没有前进"时才吞** —— 否则会吞掉块结束的 '}'，
+    //   级联出一条完全错误的「块没有闭合」（实测：`f() = 2` 已经消费了整个赋值，
+    //   当前 token 是 '}'，旧代码无条件 lexer_next ⇒ '}' 被吃掉 ⇒ main 块吃到 EOF ✗）。
+    //   用 save_lex（语句起点）比较位置：没前进 + 当前不是 '}'/'EOF' ⇒ 才吞一个。
     if (expr == NULL) {
-        if (p->lex.current.type != TOK_EOF) {
+        int advanced = (p->lex.current.type != save_lex.current.type ||
+                        p->lex.current.line != save_lex.current.line ||
+                        p->lex.current.column != save_lex.current.column);
+        if (!advanced && p->lex.current.type != TOK_EOF &&
+            p->lex.current.type != TOK_RBRACE) {
             lexer_next(&p->lex);
         }
         return NULL;
