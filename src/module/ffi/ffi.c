@@ -266,14 +266,15 @@ void ffi_library_free_resources(Object* obj) {
     ObjFFILibrary* lib = (ObjFFILibrary*)obj;
     free(lib->path);
     lib->path = NULL;
-    if (lib->handle) {
-#ifdef _WIN32
-        FreeLibrary((HMODULE)lib->handle);
-#else
-        dlclose(lib->handle);
-#endif
-        lib->handle = NULL;
-    }
+    /* ★ 2026-11-07：**不再 FreeLibrary / dlclose**
+     *   同一份 DLL 句柄可能被多个线程的模块全局变量引用（模块表是进程级共享的），
+     *   任何一个线程的 GC/VM 销毁都不该把它卸掉 —— 否则别的线程下一次调用就崩
+     *   （`ffi_library_free_resources` 置 `freed=1` 后，`CHECK_LIB_FREED` 会直接抛
+     *   「库对象已释放，不能再使用」）。
+     *   交给进程退出由 OS 统一释放；`LoadLibrary` 对同路径只增引用计数，
+     *   而 `ffi.load` 每个线程只调一次（配合 `threads.local_*` 缓存）⇒ 计数很小 ✓
+     *   配合 gc.c 的 sweep：`OBJ_FFI_LIBRARY` 永不回收，避免 UAF。 */
+    lib->handle = NULL;
     lib->freed = 1;
 }
 

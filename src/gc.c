@@ -1913,6 +1913,20 @@ static void sweep_young(void) {
             continue;
         }
         if (!(*obj)->marked) {
+            /* ★ 2026-11-07：**ffi 库对象永不回收**
+             *   模块级 `xxx _lib = null` 缓存是**进程级共享**的（module_loader 的模块表
+             *   不是 THREAD_LOCAL），而 GC 是**线程级**的：A 线程 `ffi.load` 出来的
+             *   ObjFFILibrary 不在 B 线程的根集合里 ⇒ 被 B 的 sweep 回收
+             *   （`ffi_library_free_resources` 置 freed + FreeLibrary）⇒ A 线程再用就抛
+             *   「库对象已释放，不能再使用」。
+             *   实测现场：deployd（HTTP worker 池）`GET /status` 第一次正常、第二次起全 500，
+             *   栈顶 `w32_process.leno::_enumProcesses`；单线程 `http.serve` 永不复现。
+             *   库句柄本来就只有几个、且活到进程结束 ⇒ 直接跳过最省事（浪费几十字节）✓ */
+            if ((*obj)->type == OBJ_FFI_LIBRARY) {
+                (*obj)->marked = 0;
+                obj = &(*obj)->next;
+                continue;
+            }
             Object* unreached = *obj;
             *obj = unreached->next;
             if (gc.young_allocated >= unreached->size)
@@ -1977,6 +1991,20 @@ static void sweep_old(void) {
             continue;
         }
         if (!(*obj)->marked) {
+            /* ★ 2026-11-07：**ffi 库对象永不回收**
+             *   模块级 `xxx _lib = null` 缓存是**进程级共享**的（module_loader 的模块表
+             *   不是 THREAD_LOCAL），而 GC 是**线程级**的：A 线程 `ffi.load` 出来的
+             *   ObjFFILibrary 不在 B 线程的根集合里 ⇒ 被 B 的 sweep 回收
+             *   （`ffi_library_free_resources` 置 freed + FreeLibrary）⇒ A 线程再用就抛
+             *   「库对象已释放，不能再使用」。
+             *   实测现场：deployd（HTTP worker 池）`GET /status` 第一次正常、第二次起全 500，
+             *   栈顶 `w32_process.leno::_enumProcesses`；单线程 `http.serve` 永不复现。
+             *   库句柄本来就只有几个、且活到进程结束 ⇒ 直接跳过最省事（浪费几十字节）✓ */
+            if ((*obj)->type == OBJ_FFI_LIBRARY) {
+                (*obj)->marked = 0;
+                obj = &(*obj)->next;
+                continue;
+            }
             Object* unreached = *obj;
             *obj = unreached->next;
             if (gc.old_allocated >= unreached->size)
