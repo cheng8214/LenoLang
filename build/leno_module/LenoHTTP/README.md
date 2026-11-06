@@ -1,4 +1,4 @@
-# LenoHTTP v0.2.8
+# LenoHTTP v0.2.9
 
 Leno 的 **HTTP/1.1 服务端**（纯 Leno，零原生依赖，基于内置 `sockets`）。
 路由、查询串、表单、静态文件、keep-alive、**线程池并发**、**视图文件**、**声明式鉴权 + 全局管道**。
@@ -79,6 +79,8 @@ build\leno.exe build\leno_module\LenoHTTP\examples\music_api.leno 8090
 | `query(req, name, def="")` | 取查询参数（缺键/空串 ⇒ 默认值）**0.2.1 新增** |
 | `formValue(req, name, def="")` | 取表单字段（同上） |
 | `header(req, name, def="")` | 取请求头（名字不区分大小写） |
+| `stream(ctype, producer)` | **流式响应**：chunked 边算边发，`producer: func(): string`，返回 `""` 结束 **0.2.9** |
+| `sse(producer)` | SSE 便捷版：`text/event-stream` + `Cache-Control: no-cache` **0.2.9** |
 | `param(req, name, def="")` | 取**路径参数**（`/api/x/:id`）**0.2.8 新增** |
 | `intParam(req, name, def=0)` | 路径参数转整数：**非数字给默认值，绝不抛异常** **0.2.8 新增** |
 | `queryInt(req, name, def=0)` | 查询串转整数（同上口径）**0.2.8 新增** |
@@ -87,6 +89,16 @@ build\leno.exe build\leno_module\LenoHTTP\examples\music_api.leno 8090
 | `cookie(req, name, def)` | 读 cookie（`Cookie: a=1; b=2`） |
 | `setCookie(res, name, value, path, maxAge)` | 写 `Set-Cookie`（`maxAge=0` = 会话 cookie；可多次调用，逐行发出） |
 | `clearCookie(res, name)` | 删除 cookie |
+
+**流式响应（★ 0.2.9，2026-11-06）**：`http.sse(producer)` 走 `Transfer-Encoding: chunked`，
+producer 每调一次发一段（`data: {...}\n\n`），返回 `""` 收尾；头里带 `X-Accel-Buffering: no`
+（反代别攒字节）。**会一直占着一个 worker 线程**，producer 必须自己决定何时结束。
+
+**静态文件缓存（★ 0.2.9）**：除 `ETag` / `If-None-Match` 外，现在也发 `Last-Modified`，
+并按 `If-Modified-Since`（秒级）回 304。
+
+**按路由体积上限（★ 0.2.9）**：路由元数据加 `maxBody: 614400` ⇒ 超过回 **413** 且不进 handler
+（`http.routes([{method:"POST", path:"/api/avatar", handler: h, auth: true, maxBody: 614400}])`）。
 
 **协议细节（★ 0.2.8，2026-11-06）**：
 - **chunked 请求体**：`Transfer-Encoding: chunked` 现在会真正解码（含扩展/末块 trailer），

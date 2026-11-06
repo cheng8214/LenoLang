@@ -1,0 +1,93 @@
+// http_date.leno -- HTTP 日期（IMF-fixdate），2026-11-06
+// ----------------------------------------------------------------------------
+// 为什么单独一个模块：`Date` 响应头、静态文件的 `Last-Modified`、`If-Modified-Since`
+//   三处都要"epoch ⇄ GMT 字符串"，而 `times.format` 输出的是**本地时区**+系统语言缩写
+//   ⇒ 不能用于 HTTP（HTTP 只认 GMT + 英文字母，写错客户端会当成 1970 年）。
+//
+// 这里全部用纯算术（Hinnant 的 days_from_civil / civil_from_days），不碰时区库：
+//   输入 epoch 秒 → 先按 86400 拆成"天数 + 当天秒数"，再从天数推年月日。
+//
+// 只认 RFC 7231 的 IMF-fixdate：`Fri, 06 Nov 2026 00:42:44 GMT`
+//   （`parse` 对其它历史格式返回 -1，调用方当作"没有这个头"即可）
+var MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+var WDAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+
+func _pad2(int v): string {
+    if v < 10 { return "0" + _str(v) }
+    return _str(v)
+}
+
+// 十进制数字串 → 非负整数；非数字 / 过长 ⇒ -1（不用 _int：它会抛）
+func _num(string s, int maxLen): int {
+    string t = s.trim()
+    if t == "" or t.byte_len() > maxLen { return -1 }
+    int v = 0
+    for t.to_bytes() to b {
+        if b < 48 or b > 57 { return -1 }
+        v = v * 10 + (b - 48)
+    }
+    return v
+}
+
+func _month_of(string s): int {
+    for 0 : 11 to i {
+        if s == MON[i] { return i + 1 }
+    }
+    return -1
+}
+
+// epoch 秒 → `Fri, 06 Nov 2026 00:42:44 GMT`
+//   ⚠ 函数名别叫 `format` / `parse`：那是内置名，模块成员用同名字符串调用时会被解析成
+//     内置函数对象（运行时表现为"函数未定义"）
+export func stamp(int epoch): string {
+    int secs = epoch % 86400
+    int days = (epoch - secs) / 86400
+    int wd = (days + 4) % 7                       // 1970-01-01 是周四(idx 4)
+    if wd < 0 { wd = wd + 7 }
+    int zz = days + 719468                        // civil_from_days
+    int era = zz / 146097
+    int doe = zz - era * 146097
+    int yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+    int y = yoe + era * 400
+    int doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+    int mp = (5 * doy + 2) / 153
+    int d = doy - (153 * mp + 2) / 5 + 1
+    int m = mp + (if mp < 10 then 3 else -9)
+    if m <= 2 { y = y + 1 }
+    return WDAY[wd] + ", " + _pad2(d) + " " + MON[m - 1] + " " + _str(y) + " "
+        + _pad2(secs / 3600) + ":" + _pad2((secs % 3600) / 60) + ":" + _pad2(secs % 60) + " GMT"
+}
+
+// `Fri, 06 Nov 2026 00:42:44 GMT` → epoch 秒；解析不了 ⇒ -1
+export func epoch_of(string s): int {
+    string t = s.trim()
+    if t == "" { return -1 }
+    int comma = t.find(",")
+    if comma >= 0 {
+        if comma + 2 > t.byte_len() - 1 { return -1 }
+        t = t.byte_slice(comma + 2, t.byte_len() - 1).trim()   // 去掉星期前缀
+    }
+    Array[string] parts = t.split(" ")
+    // "06 Nov 2026 00:42:44 GMT"（GMT 可省）
+    if parts.len() < 4 { return -1 }
+    int d = _num(parts[0], 2)
+    int m = _month_of(parts[1])
+    int y = _num(parts[2], 4)
+    if d <= 0 or d > 31 or m <= 0 or y <= 0 { return -1 }
+    Array[string] hms = parts[3].split(":")
+    if hms.len() != 3 { return -1 }
+    int hh = _num(hms[0], 2)
+    int mm = _num(hms[1], 2)
+    int ss = _num(hms[2], 2)
+    if hh < 0 or mm < 0 or ss < 0 { return -1 }
+
+    // days_from_civil
+    int yy = y - (if m <= 2 then 1 else 0)
+    int era = yy / 400
+    int yoe = yy - era * 400
+    int mp = m + (if m > 2 then -3 else 9)
+    int doy = (153 * mp + 2) / 5 + d - 1
+    int doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+    int days = era * 146097 + doe - 719468
+    return days * 86400 + hh * 3600 + mm * 60 + ss
+}

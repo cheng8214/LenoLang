@@ -133,5 +133,13 @@ main() {
     assert_true(rh3.has("405"), "⑦POST-only 路由对 HEAD 仍 405")
     assert_true(rh3.has("Allow: POST"), "⑦405 的 Allow 是 POST")
 
-    print("test_route_params passed（单/多参数 / 404 / 精确优先 / 405+Allow / HEAD / 叠加鉴权）")
+    // ⑧ 路由元数据 maxBody：超了回 413，不进 handler（★ 2026-11-06）
+    var appCap = http.newApp()
+    http.post(appCap, "/small", hStatic, {maxBody: 4})
+    var rc1 = oneReq(appCap, "POST /small HTTP/1.1\r\nHost: t\r\nConnection: close\r\nContent-Length: 10\r\n\r\n0123456789")
+    assert_true(rc1.has("413"), "⑧超过 maxBody ⇒ 413")
+    var rc2 = oneReq(appCap, "POST /small HTTP/1.1\r\nHost: t\r\nConnection: close\r\nContent-Length: 3\r\n\r\nabc")
+    assert_true(rc2.has("200 OK"), "⑧没超 ⇒ 正常进 handler")
+
+    print("test_route_params passed（单/多参数 / 404 / 精确优先 / 405+Allow / HEAD / maxBody / 叠加鉴权）")
 }

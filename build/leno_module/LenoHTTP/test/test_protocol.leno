@@ -62,6 +62,19 @@ func h_echo(Dict req): Dict {
     return http.json({len: b.byte_len(), body: b})
 }
 
+// 流式响应的 producer：用 Dict 存游标（引用语义，闭包捕获得到）
+func make_sse(): any {
+    Dict st = {n: 0}
+    return func(): string {
+        int n = (st.get("n", 0) as int) + 1
+        st.set("n", n)
+        if n > 3 { return "" }
+        return "data: " + _str(n) + "\n\n"
+    }
+}
+
+func h_stream(Dict req): Dict { return http.sse(make_sse()) }
+
 // ==================== 客户端线程 ====================
 func client(int port, Channel[string] ch) {
     var errs = ""
@@ -150,6 +163,18 @@ func client(int port, Channel[string] ch) {
     if not r7.has("Access-Control-Allow-Origin: *") { errs = errs + "E ⑦ 预检缺 Allow-Origin " }
     if not r7.has("Access-Control-Allow-Headers: authorization") { errs = errs + "E ⑦ 没回显 Allow-Headers " }
 
+    // ⑧ 流式响应（SSE）：chunked 分块，逐条到达，末块 0\r\n\r\n
+    var c8 = sockets.connect("127.0.0.1", port)
+    if c8 == null { ch.send("E ⑧ connect 失败"); return }
+    c8.set_timeout(5000)
+    c8.send("GET /stream HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n")
+    var r8 = read_rest(c8)
+    c8.close()
+    if not r8.has("Transfer-Encoding: chunked") { errs = errs + "E ⑧ 流式响应没用 chunked " }
+    if not r8.has("data: 1") { errs = errs + "E ⑧ 缺第 1 条事件 " }
+    if not r8.has("data: 3") { errs = errs + "E ⑧ 缺第 3 条事件 " }
+    if not r8.has("0\r\n\r\n") { errs = errs + "E ⑧ 缺结束块 0\r\n\r\n " }
+
     if errs == "" { ch.send("OK") } else { ch.send(errs) }
 }
 
@@ -157,6 +182,7 @@ main() {
     var app = http.newApp()
     http.get(app, "/plain", h_plain)
     http.post(app, "/echo", h_echo)
+    http.get(app, "/stream", h_stream)            // ⑧ 流式（SSE）
     http.cors(app, "*")                          // ⑦ 预检 + after 钩子补 Allow-Origin
 
     var srv = http.listen("127.0.0.1", 0)
@@ -170,10 +196,11 @@ main() {
     Channel[string] ch = threads.channel(1)
     var t = threads.start(client, port, ch)
 
-    // 客户端会开 7 个连接：① Date / ② chunked / ③ 坏 chunk / ④ CL+TE / ⑤ Expect / ⑥ OPTIONS / ⑦ CORS 预检
+    // 客户端会开 8 个连接：① Date / ② chunked / ③ 坏 chunk / ④ CL+TE / ⑤ Expect /
+    //                      ⑥ OPTIONS / ⑦ CORS 预检 / ⑧ 流式
     var handled = 0
     var guard = 0
-    while handled < 7 and guard < 20000 {
+    while handled < 8 and guard < 20000 {
         var r = http.acceptOne(srv, app)
         if r["ok"] as bool { handled = handled + 1 }
         else { threads.sleep(2) }
@@ -189,5 +216,5 @@ main() {
         print("[FAIL] " + report)
         return
     }
-    print("test_protocol passed（Date / chunked / 100-continue / 走私防护 / OPTIONS / CORS）")
+    print("test_protocol passed（Date / chunked / 100-continue / 走私防护 / OPTIONS / CORS / 流式）")
 }

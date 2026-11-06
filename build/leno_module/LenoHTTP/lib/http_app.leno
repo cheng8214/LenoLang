@@ -15,6 +15,7 @@ import dirs
 import files
 import "http_static.leno" as st
 import "http_parse.leno" as p        // 复用 find（模板扫描用）
+import "http_date.leno" as hd        // 静态文件的 Last-Modified / If-Modified-Since
 
 // ==================== 应用 ====================
 export func new_app(): Dict {
@@ -203,6 +204,23 @@ export func form(Dict req, string name, string def): string {
     string v = f.get(name, "") as string
     if v == "" { return def }
     return v
+}
+
+// ==================== 流式响应 / SSE（2026-11-06）====================
+// producer: func(): string —— 每调一次返回一段正文，返回空串表示结束
+//   ⚠ 会一直占着 worker 线程（chunked + Connection: close），
+//     所以 producer 里必须有自己的结束条件（计数/时间/队列为空）
+export func stream(string ctype, any producer): Dict {
+    return {status: 200, body: "", contentType: ctype, headers: {}, stream: producer}
+}
+
+// SSE 便捷版：Content-Type 固定 text/event-stream，禁用缓存
+//   用法：producer 每次返回一条 `data: {...}\n\n`，结束时返回 ""
+export func sse(any producer): Dict {
+    Dict h = {}
+    h.set("Cache-Control", "no-cache")
+    return {status: 200, body: "", contentType: "text/event-stream; charset=utf-8",
+            headers: h, stream: producer}
 }
 
 // ==================== 路径参数 / 整数取参（2026-11-06）====================
@@ -412,7 +430,11 @@ func normalize(any res): Dict {
         if d.has("body") { body = d.get("body", "") as string }
         if d.has("contentType") { ct = d.get("contentType", "") as string }
         if d.has("headers") { hs = d.get("headers", {}) as Dict }
-        return {status: code, body: body, contentType: ct, headers: hs}
+        Dict out = {status: code, body: body, contentType: ct, headers: hs}
+        // 流式响应（SSE）：producer 必须原样带到 _write_response
+        //   `as any` 让元素类型保持 any（否则这行 set 会把 Dict 的元素类型钉成 whatever）
+        if d.has("stream") { out.set("stream", d.get("stream", null) as any) }
+        return out
     }
     // 直接返回字符串 ⇒ 按 **text/html**（写网页的默认口味，省掉 http.html(...)）
     //   要纯文本请显式 `return http.text(...)`
@@ -472,6 +494,15 @@ func _run_route(Dict app, Dict req, Dict r, Dict params): Dict {
         var meta = r.get("meta", null)
         if meta is Dict {
             Dict md = meta as Dict
+            // ★ 2026-11-06：按路由的请求体上限（如头像 600KB、评论 4KB）
+            //   放在鉴权之前：超大包不必等鉴权判完再拒
+            if md.has("maxBody") {
+                int cap = _int_or(_str(md.get("maxBody", "0")), 0)
+                if cap > 0 and _str(req.get("body", "")).byte_len() > cap {
+                    return json_status(413, {ok: false,
+                            error: "请求体超过该接口上限（≤" + _str(cap) + " 字节）"})
+                }
+            }
             var need = false
             if md.has("auth") { need = md.get("auth", false) as bool }
             if need {
@@ -618,13 +649,24 @@ func _dispatch(Dict app, Dict req): Dict {
                 int size = m["size"] as int
                 string ct = m["ctype"] as string
                 string fpath = m["path"] as string
-                Dict shs = {ETag: etag}
+                int mtime = m["mtime"] as int
+                Dict shs = {}
+                shs.set("ETag", etag)
+                shs.set("Last-Modified", hd.stamp(mtime))   // ★ 2026-11-06：现在有正确的 GMT 格式化
                 Dict reqh = req["headers"] as Dict
 
                 // ① 缓存：`If-None-Match` 命中 ⇒ 304（无正文）
                 if reqh.has("if-none-match") {
                     string inm = (reqh.get("if-none-match", "") as string).trim()
                     if inm == etag {
+                        return {status: 304, body: "", contentType: ct, headers: shs}
+                    }
+                }
+                // ①-b 时间戳弱校验：`If-Modified-Since` >= 文件 mtime ⇒ 304
+                //   （HTTP 日期只到秒，mtime 也按秒比 ⇒ 文件在同一秒内改两次不会误判为未变）
+                if reqh.has("if-modified-since") {
+                    int since = hd.epoch_of(reqh.get("if-modified-since", "") as string)
+                    if since >= 0 and since >= mtime {
                         return {status: 304, body: "", contentType: ct, headers: shs}
                     }
                 }

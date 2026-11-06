@@ -67,6 +67,13 @@ export func cors(Dict app, string origins): void { a.cors(app, origins) }
 // 带状态码的 JSON（http.json 固定 200）
 export func jsonStatus(int code, any obj): Dict { return a.json_status(code, obj) }
 
+// 流式响应（★ 2026-11-06）：chunked，边算边发，不预先知道长度
+//   producer = func(): string：每调一次返回一段正文，返回 `""` 表示结束
+//   `http.stream("text/plain", producer)` / `http.sse(producer)`（Content-Type 固定）
+//   ⚠ 会一直占着 worker 线程，producer 里必须有自己的结束条件
+export func stream(string ctype, any producer): Dict { return a.stream(ctype, producer) }
+export func sse(any producer): Dict { return a.sse(producer) }
+
 // ==================== 响应助手 ====================
 export func text(string s): Dict { return a.text(s) }
 export func html(string s): Dict { return a.html(s) }

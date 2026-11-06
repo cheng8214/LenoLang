@@ -23,6 +23,7 @@ import times     // 2026-10-20：慢速连接的整体截止时间（单线程�
 import threads   // 线程池（serve_workers / worker_loop）
 import "http_parse.leno" as p
 import "http_app.leno" as appmod
+import "http_date.leno" as hd
 // gzip 响应（2026-10-18）：压缩端在 LenoCompress（纯 Leno 的 DEFLATE）
 import "Compress" as z
 
@@ -97,8 +98,8 @@ func _write_response(Socket c, Dict res, bool keep, bool acceptGzip, bool headOn
     int st = res["status"] as int
     string ct = res["contentType"] as string
     Dict hs = res["headers"] as Dict
-    // RFC 9110：源服务器**必须**带 Date；自己算成 GMT 固定格式（不跟随时区/区域设置）
-    string dateLine = "Date: " + _http_date(_int(times.now())) + "\r\n"
+    // RFC 9110：源服务器**必须**带 Date；GMT 固定格式（不跟随时区/区域设置）
+    string dateLine = "Date: " + hd.stamp(_int(times.now())) + "\r\n"
     if hs.has("Date") { dateLine = "" }
 
     // ★ 2026-10-21：大文件 / Range 走**分块发送**（res 带 file / offset / length）
@@ -150,6 +151,40 @@ func _write_response(Socket c, Dict res, bool keep, bool acceptGzip, bool headOn
         return true
     }
 
+    // ★ 2026-11-06：**流式响应**（SSE / 边算边发）⇒ chunked 分块，不预先知道长度
+    //   res 形如 {status, contentType, headers, stream: func(): string}
+    //   producer 每调一次返回一段正文，返回空串 = 结束；期间可以阻塞（等队列/定时推送）
+    //   ⚠ 会一直占着这个 worker ⇒ 长连接流式接口要自己控制结束条件
+    if res.has("stream") {
+        var producer = res["stream"] as any
+        Array[int] hout2 = []
+        _put(hout2, "HTTP/1.1 " + _str(st) + " " + _status_text(st) + "\r\n")
+        _put(hout2, dateLine)
+        _put(hout2, "Content-Type: " + ct + "\r\n")
+        _put(hout2, "Transfer-Encoding: chunked\r\n")
+        _put(hout2, "Connection: close\r\n")
+        _put(hout2, "X-Accel-Buffering: no\r\n")        // 反代别攒：SSE 要逐条到达
+        for hs.keys() to k2 {
+            var hv2 = hs.get(k2, "")
+            if hv2 is Array {
+                for (hv2 as Array[string]) to line2 {
+                    _put(hout2, _str(k2) + ": " + line2 + "\r\n")
+                }
+            } else {
+                _put(hout2, _str(k2) + ": " + _str(hv2) + "\r\n")
+            }
+        }
+        _put(hout2, "\r\n")
+        if not c.send(strings.from_bytes(hout2)) { return false }
+        if headOnly { return true }
+        while true {
+            string piece = _str(producer())
+            if piece.byte_len() == 0 { break }
+            if not _chunk_send(c, piece) { return false }
+        }
+        return c.send("0\r\n\r\n")
+    }
+
     var body = res["body"] as string
     var gz = false
     if acceptGzip and not hs.has("Content-Encoding") and body.byte_len() >= 1024 and _compressible(ct) {
@@ -187,36 +222,6 @@ func _write_response(Socket c, Dict res, bool keep, bool acceptGzip, bool headOn
     return c.send(strings.from_bytes(out))
 }
 
-// ==================== 响应头：Date（2026-11-06）====================
-var MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-var WDAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
-
-func _pad2(int v): string {
-    if v < 10 { return "0" + _str(v) }
-    return _str(v)
-}
-
-// epoch 秒 → IMF-fixdate（`Fri, 06 Nov 2026 08:49:37 GMT`）
-//   为什么不直接用 times.format：Date 头必须是 **GMT + 英文缩写**，不能跟着本地时区/区域走
-func _http_date(int epoch): string {
-    int secs = epoch % 86400
-    int days = (epoch - secs) / 86400
-    int wd = (days + 4) % 7                       // 1970-01-01 是周四(idx 4)
-    if wd < 0 { wd = wd + 7 }
-    int zz = days + 719468                        // civil_from_days（Hinnant 算法）
-    int era = zz / 146097
-    int doe = zz - era * 146097
-    int yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
-    int y = yoe + era * 400
-    int doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
-    int mp = (5 * doy + 2) / 153
-    int d = doy - (153 * mp + 2) / 5 + 1
-    int m = mp + (if mp < 10 then 3 else -9)
-    if m <= 2 { y = y + 1 }
-    return WDAY[wd] + ", " + _pad2(d) + " " + MON[m - 1] + " " + _str(y) + " "
-        + _pad2(secs / 3600) + ":" + _pad2((secs % 3600) / 60) + ":" + _pad2(secs % 60) + " GMT"
-}
-
 // 十进制长度：非法（含非数字 / 过长）⇒ -1。**不能用 _int**（`_int("abc")` 会抛）
 func _len_of(string s): int {
     string t = s.trim()
@@ -225,6 +230,30 @@ func _len_of(string s): int {
         if b < 48 or b > 57 { return -1 }
     }
     return _int(t)
+}
+
+// 整数 → 小写十六进制（chunked 的分块长度行）
+func _hexstr(int v): string {
+    if v <= 0 { return "0" }
+    string digs = "0123456789abcdef"
+    Array[int] tmp = []
+    var n = v
+    while n > 0 {
+        tmp.add(digs.byte(n % 16))
+        n = n / 16
+    }
+    Array[int] rev = []
+    var i = tmp.len() - 1
+    while i >= 0 {
+        rev.add(tmp[i])
+        i = i - 1
+    }
+    return strings.from_bytes(rev)
+}
+
+// 发一个 chunk（含长度行与尾随 CRLF）
+func _chunk_send(Socket c, string s): bool {
+    return c.send(_hexstr(s.byte_len()) + "\r\n" + s + "\r\n")
 }
 
 // 再读一块（带整条请求的截止时间）；返回 {ok, data, err}
