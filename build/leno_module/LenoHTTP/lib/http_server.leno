@@ -92,7 +92,8 @@ func _compressible(string ct): bool {
 // acceptGzip：调用方按请求的 Accept-Encoding 传（不看请求头就不压 —— 有些老客户端不认）
 //   判据三条：客户端要 gzip、体积 ≥ 1KB、类型可压，且响应**没自带** Content-Encoding
 //   ⚠ Content-Length 必须写**压缩后**的长度（写错浏览器会一直等，表现为"页面转圈"✗）
-func _write_response(Socket c, Dict res, bool keep, bool acceptGzip): bool {
+// headOnly：HEAD 请求只发响应头，正文一个字节都不发（Content-Length 仍按 GET 的口径给 ✓）
+func _write_response(Socket c, Dict res, bool keep, bool acceptGzip, bool headOnly = false): bool {
     int st = res["status"] as int
     string ct = res["contentType"] as string
     Dict hs = res["headers"] as Dict
@@ -124,6 +125,7 @@ func _write_response(Socket c, Dict res, bool keep, bool acceptGzip): bool {
         }
         _put(hout, "\r\n")
         if not c.send(strings.from_bytes(hout)) { return false }
+        if headOnly { return true }          // HEAD：头已经发了，文件内容不读不写
 
         // ⚠ 必须 **"rb"**：文本模式在 Windows 上会把 `\r\n` 折成 `\n` ⇒ 图片/压缩包会被改坏
         var f = files.open(fpath, "rb")
@@ -174,7 +176,9 @@ func _write_response(Socket c, Dict res, bool keep, bool acceptGzip): bool {
         }
     }
     _put(out, "\r\n")
-    for body.to_bytes() to b { out.add(b) }
+    if not headOnly {
+        for body.to_bytes() to b { out.add(b) }
+    }
     return c.send(strings.from_bytes(out))
 }
 
@@ -313,7 +317,11 @@ export func handle_conn(Socket c, Dict app, int idle_ms = 300): Dict {
     var carry = ""
     while count < MAX_REQ_PER_CONN {
         // keep-alive 的空闲等待：不再无条件 recv（那会占满 5s），先短 select 探一下
-        if count > 0 {
+        //   ⚠ 2026-11-06 修：`carry != ""` 时**不能** select —— 上一次 recv 可能已经把
+        //     下一个请求整包读进 carry（客户端把两个请求连在一起发就会这样），此时 socket
+        //     上再没有新字节 ⇒ select 直接超时 ⇒ 第二个请求被丢掉（症状：test_middleware ⑥
+        //     "同一连接的下一个请求仍正常" 失败，客户端只看到连接被关 ✓）
+        if count > 0 and carry == "" {
             var rdy = sockets.select([c], idle_ms)
             if rdy.len() == 0 { break }
         }
@@ -340,7 +348,8 @@ export func handle_conn(Socket c, Dict app, int idle_ms = 300): Dict {
                 + " -> " + _str(res["status"] as int) + " keep=" + _str(keep)
                 + " carry=" + _str(carry.byte_len()))
         }
-        if not _write_response(c, res, keep, acceptGzip) {
+        bool headOnly = (req["method"] as string) == "HEAD"
+        if not _write_response(c, res, keep, acceptGzip, headOnly) {
             if app.has("debug") { print("[http] send 失败（连接被对端关闭？）") }
             break
         }

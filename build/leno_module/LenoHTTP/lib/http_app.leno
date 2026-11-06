@@ -484,6 +484,11 @@ export func dispatch(Dict app, Dict req): Dict {
     string method = req["method"] as string
     string path = req["path"] as string
 
+    // ★ 2026-11-06：**HEAD 按 GET 找路由**（RFC 9110：凡是支持 GET 的资源都必须支持 HEAD）。
+    //   正文由 `_write_response` 的 headOnly 兜掉，这里只负责"别把它判成 405"。
+    bool isHead = method == "HEAD"
+    string matchMethod = if isHead then "GET" else method
+
     // ① 全局中间件（注册顺序；返回非 null = 短路）。
     //    ⚠ 必须自己也兜 try/catch —— 一个坏中间件不能把整个服务带走
     if app.has("middlewares") {
@@ -500,6 +505,7 @@ export func dispatch(Dict app, Dict req): Dict {
     }
 
     var pathMatched = false
+    var allow = ""                                  // 路径命中但方法不符时要回给客户端的 Allow 集合
     Array[Dict] routes = app["routes"] as Array[Dict]
 
     // ② 精确匹配（快路径：只比字符串，绝大多数请求走这里）
@@ -507,9 +513,10 @@ export func dispatch(Dict app, Dict req): Dict {
         if (r["path"] as string) != path { continue }
         pathMatched = true
         string m = r["method"] as string
-        if m == method or m == "*" {
+        if m == matchMethod or m == method or m == "*" {
             return _run_route(app, req, r, {})
         }
+        allow = _allow_add(allow, m)
     }
 
     // ③ 参数路由（含 `:` 段）。**放在精确之后** ⇒ 静态路径永远赢，不会被 `:x` 抢走
@@ -520,9 +527,10 @@ export func dispatch(Dict app, Dict req): Dict {
         if pm == null { continue }
         pathMatched = true
         string m = r["method"] as string
-        if m == method or m == "*" {
+        if m == matchMethod or m == method or m == "*" {
             return _run_route(app, req, r, pm as Dict)
         }
+        allow = _allow_add(allow, m)
     }
 
     Array[Dict] statics = app["statics"] as Array[Dict]
@@ -588,8 +596,26 @@ export func dispatch(Dict app, Dict req): Dict {
         }
     }
 
-    if pathMatched { return status(405, "405 Method Not Allowed") }
+    if pathMatched {
+        // ★ 2026-11-06：405 **必须带 `Allow`**（RFC 9110：告诉客户端"这个方法不行，能用哪些"）。
+        //   以前只回一句纯文本，客户端除了猜没法知道该换哪个方法。
+        if allow == "" { allow = "*" }
+        Dict ah = {}
+        ah.set("Allow", allow)
+        return {status: 405, body: "405 Method Not Allowed",
+                contentType: "text/plain; charset=utf-8", headers: ah}
+    }
     return not_found()
+}
+
+// 把方法名并入 Allow 值（去重 + 逗号分隔；`*` = 任意方法 ⇒ 直接覆盖）
+func _allow_add(string cur, string m): string {
+    if m == "*" or cur == "*" { return "*" }
+    if cur == "" { return m }
+    for cur.split(", ") to one {
+        if one == m { return cur }
+    }
+    return cur + ", " + m
 }
 
 // 注册静态目录（prefix 形如 "/assets"）

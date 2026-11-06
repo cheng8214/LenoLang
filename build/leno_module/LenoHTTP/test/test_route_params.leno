@@ -94,6 +94,17 @@ main() {
     // ⑤ 方法不符 ⇒ 405
     var r6 = oneReq(app, "POST /api/song/1 HTTP/1.1\r\nHost: t\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")
     assert_true(r6.has("405"), "⑤模式命中但方法不符 ⇒ 405")
+    // ★ 2026-11-06：405 必须带 `Allow`（RFC 9110）—— 客户端要能知道"该用哪个方法"
+    assert_true(r6.has("Allow: GET"), "⑤405 带 Allow: GET（参数路由）")
+
+    // ⑤-B 精确路由同名多方法 ⇒ Allow 里全部列出、且不重复
+    var appBoth = http.newApp()
+    http.get(appBoth, "/both", hStatic)
+    http.post(appBoth, "/both", hStatic)
+    http.get(appBoth, "/both", hStatic)                 // 重复注册 GET：Allow 里不能出现两次
+    var rb = oneReq(appBoth, "PUT /both HTTP/1.1\r\nHost: t\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")
+    assert_true(rb.has("405"), "⑤-B 两个方法都不认 PUT ⇒ 405")
+    assert_true(rb.has("Allow: GET, POST"), "⑤-B Allow 去重并按注册顺序列出")
 
     // ⑥ 参数路由 + 鉴权叠加
     var appAuth = http.newApp()
@@ -107,5 +118,20 @@ main() {
     assert_true(r8.has("\"user\":\"alice\""), "⑥鉴权给的 user 在 handler 里可见")
     assert_true(r8.has("\"id\":\"5\""), "⑥params 也在")
 
-    print("test_route_params passed（单/多参数 / 404 / 精确优先 / 405 / 叠加鉴权）")
+    // ⑦ HEAD ⇒ 按 GET 找路由，但**只发头**（RFC 9110：GET 支持的资源必须支持 HEAD）
+    var rh1 = oneReq(app, "HEAD /a/b HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n")
+    assert_true(rh1.has("200 OK"), "⑦HEAD 命中 GET 路由")
+    assert_true(rh1.has("Content-Length: 16"), "⑦HEAD 的 Content-Length 与 GET 一致")
+    assert_true(not rh1.has("static"), "⑦HEAD 不回正文")
+    var rh2 = oneReq(app, "HEAD /api/song/7 HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n")
+    assert_true(rh2.has("200 OK"), "⑦HEAD 也走参数路由")
+    assert_true(not rh2.has("\"id\""), "⑦HEAD 参数路由同样不回正文")
+    // 方法真正不匹配时仍是 405（HEAD 不能把 POST-only 路由当命中）
+    var appPost = http.newApp()
+    http.post(appPost, "/only", hStatic)
+    var rh3 = oneReq(appPost, "HEAD /only HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n")
+    assert_true(rh3.has("405"), "⑦POST-only 路由对 HEAD 仍 405")
+    assert_true(rh3.has("Allow: POST"), "⑦405 的 Allow 是 POST")
+
+    print("test_route_params passed（单/多参数 / 404 / 精确优先 / 405+Allow / HEAD / 叠加鉴权）")
 }
