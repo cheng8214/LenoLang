@@ -112,6 +112,40 @@ export func json_status(int code, any obj): Dict {
     return res
 }
 
+// ==================== 响应后置钩子 / CORS（2026-11-06）====================
+// `before` 只能"短路"，没法给**最终响应**统一加头（CORS / 安全头 / 请求 id）。
+// `after(app, fn)`：fn(req, res) → res，在 dispatch 末尾按注册顺序跑，可改 header。
+export func after(Dict app, any fn) {
+    Array afs = []
+    if app.has("afters") { afs = app["afters"] as Array }
+    afs.add(fn)
+    app.set("afters", afs)
+}
+
+// 一键 CORS：origins 传 "*" 或具体源（如 "http://localhost:5173"）
+//   · 预检（OPTIONS + Access-Control-Request-Method）⇒ 204 + Allow-* 头，不走路由
+//   · 普通响应 ⇒ after 钩子补 Access-Control-Allow-Origin
+export func cors(Dict app, string origins) {
+    before(app, func(Dict req): Dict {
+        if (req["method"] as string) != "OPTIONS" { return null }
+        if header(req, "access-control-request-method", "") == "" { return null }   // 非预检
+        Dict h = {}
+        h.set("Access-Control-Allow-Origin", origins)
+        h.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+        h.set("Access-Control-Allow-Headers",
+              header(req, "access-control-request-headers", "Content-Type, Authorization"))
+        h.set("Access-Control-Max-Age", "600")
+        return {status: 204, body: "", contentType: "text/plain; charset=utf-8", headers: h}
+    })
+    after(app, func(Dict req, Dict res): Dict {
+        Dict hs = res["headers"] as Dict
+        if hs != null and not hs.has("Access-Control-Allow-Origin") {
+            hs.set("Access-Control-Allow-Origin", origins)
+        }
+        return res
+    })
+}
+
 export func stop(Dict app) {
     app.set("running", false)
 }
@@ -169,6 +203,27 @@ export func form(Dict req, string name, string def): string {
     string v = f.get(name, "") as string
     if v == "" { return def }
     return v
+}
+
+// ==================== 路径参数 / 整数取参（2026-11-06）====================
+// 以前 handler 里到处是 `util.to_int(_str(pr.get("id","0")), 0)`：
+//   少写一层 to_int 就变成 `_int("abc")` 抛异常 ⇒ 500（Aria 实测被扫 `/api/playlist/songs` 刷栈 ✗）
+// ⇒ 框架这边给"取参数 + 转整数"的固定口径，非数字一律给默认值，**绝不抛**
+export func param(Dict req, string name, string def): string {
+    if not req.has("params") { return def }
+    Dict pr = req["params"] as Dict
+    if pr == null or not pr.has(name) { return def }
+    string v = _str(pr.get(name, ""))
+    if v == "" { return def }
+    return v
+}
+
+export func int_param(Dict req, string name, int def): int {
+    return _int_or(param(req, name, "").trim(), def)
+}
+
+export func query_int(Dict req, string name, int def): int {
+    return _int_or(query(req, name, "").trim(), def)
 }
 
 // ==================== 上传的文件（multipart，2026-10-21）====================
@@ -481,6 +536,22 @@ func _parse_range(string r, int size): Array[int] {
 // 顺序：精确路由 → **参数路由** → 静态目录 → 404/405
 //   路径命中但方法不符 ⇒ 405（有路由表的情况下，这比 404 更容易排查）
 export func dispatch(Dict app, Dict req): Dict {
+    Dict res = _dispatch(app, req)
+    // 后置钩子：给**所有**响应统一加头（CORS / 安全头 / 请求 id）；钩子炸了不能影响响应
+    if app.has("afters") {
+        Array afs = app["afters"] as Array
+        for afs to fn {
+            try {
+                res = normalize((fn as any)(req, res))
+            } catch e {
+                print("[http] after 钩子异常：" + _str(e) + "\n")
+            }
+        }
+    }
+    return res
+}
+
+func _dispatch(Dict app, Dict req): Dict {
     string method = req["method"] as string
     string path = req["path"] as string
 
@@ -602,6 +673,11 @@ export func dispatch(Dict app, Dict req): Dict {
         if allow == "" { allow = "*" }
         Dict ah = {}
         ah.set("Allow", allow)
+        // OPTIONS = "这个路径能用什么方法" ⇒ 204 + Allow（RFC 9110 §9.3.7），
+        //   顺带让 CORS 预检有东西可看（跨域时还要自己加 Access-Control-* 头）
+        if method == "OPTIONS" {
+            return {status: 204, body: "", contentType: "text/plain; charset=utf-8", headers: ah}
+        }
         return {status: 405, body: "405 Method Not Allowed",
                 contentType: "text/plain; charset=utf-8", headers: ah}
     }

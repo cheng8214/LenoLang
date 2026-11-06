@@ -1,4 +1,4 @@
-# LenoHTTP v0.2.7
+# LenoHTTP v0.2.8
 
 Leno 的 **HTTP/1.1 服务端**（纯 Leno，零原生依赖，基于内置 `sockets`）。
 路由、查询串、表单、静态文件、keep-alive、**线程池并发**、**视图文件**、**声明式鉴权 + 全局管道**。
@@ -61,6 +61,8 @@ build\leno.exe build\leno_module\LenoHTTP\examples\music_api.leno 8090
 | `routes(app, table)` | **集中路由表**：一次注册一批，除 `method`/`path`/`handler` 外的键都是元数据；返回注册条数 **0.2.2** |
 | `auth(app, fn)` | 注册**唯一**的鉴权检查器：`fn(req) -> 用户名 / ""`（空串 = 未登录）**0.2.2** |
 | `before(app, fn)` | 全局前置管道：`fn(req)` 返回 `null` 放行、返回响应 Dict 短路 **0.2.2** |
+| `after(app, fn)` | 响应后置钩子：`fn(req, res) -> res`，统一改响应头（CORS/安全头/请求 id）**0.2.8** |
+| `cors(app, origins)` | 一键 CORS：预检 ⇒ 204 + `Allow-*`；普通响应由 `after` 补 `Allow-Origin` **0.2.8** |
 | `jsonStatus(code, obj)` | 带状态码的 JSON 响应（`json()` 固定 200）**0.2.2** |
 | `static(app, prefix, dir)` | 挂静态目录（`/assets` → `dir`） |
 | `listen(host, port)` | 监听 → `{ok, sock, host, port, err}`；`port=0` 由系统分配 |
@@ -77,11 +79,24 @@ build\leno.exe build\leno_module\LenoHTTP\examples\music_api.leno 8090
 | `query(req, name, def="")` | 取查询参数（缺键/空串 ⇒ 默认值）**0.2.1 新增** |
 | `formValue(req, name, def="")` | 取表单字段（同上） |
 | `header(req, name, def="")` | 取请求头（名字不区分大小写） |
+| `param(req, name, def="")` | 取**路径参数**（`/api/x/:id`）**0.2.8 新增** |
+| `intParam(req, name, def=0)` | 路径参数转整数：**非数字给默认值，绝不抛异常** **0.2.8 新增** |
+| `queryInt(req, name, def=0)` | 查询串转整数（同上口径）**0.2.8 新增** |
 | `views(app, dir)` | 指定视图目录 **0.2.1 新增** |
 | `view(app, name, vars)` | 渲染 `dir/name.html`，自动套 `dir/layout.html`（`{{{body}}}`） |
 | `cookie(req, name, def)` | 读 cookie（`Cookie: a=1; b=2`） |
 | `setCookie(res, name, value, path, maxAge)` | 写 `Set-Cookie`（`maxAge=0` = 会话 cookie；可多次调用，逐行发出） |
 | `clearCookie(res, name)` | 删除 cookie |
+
+**协议细节（★ 0.2.8，2026-11-06）**：
+- **chunked 请求体**：`Transfer-Encoding: chunked` 现在会真正解码（含扩展/末块 trailer），
+  超过 8MB 或长度行非法 ⇒ 400；以前是当"没有正文"静默放过 ✗
+- **请求走私防护**：同时出现 `Content-Length` 与 `Transfer-Encoding` ⇒ 直接 400（RFC 9112 §6.1）
+- **`Expect: 100-continue`**：会先回 `HTTP/1.1 100 Continue` 再读正文（否则 curl 要白等 1 秒）
+- **`Date` 头**：所有响应自动带 IMF-fixdate（`Fri, 06 Nov 2026 00:42:44 GMT`，自己算 GMT，
+  不跟本地时区/区域走）
+- **`HEAD`**：按 GET 找路由，只发头（`Content-Length` 与 GET 一致）
+- **`OPTIONS`**：路径存在但方法不匹配时回 **204 + `Allow`**（不再是 405）
 
 **慢连接保护（2026-10-20）**：单个请求的读入总时长上限 `MAX_REQUEST_SECONDS = 10`（秒），
 用 `select` 等"剩余时间"实现 ⇒ 滴水式客户端（每 4.9s 送一个字节）也不会把连接占死。

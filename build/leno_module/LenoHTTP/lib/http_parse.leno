@@ -4,7 +4,8 @@
 //   · 请求行 "METHOD target HTTP/1.1"
 //   · 头部每行 "Name: Value"，名字统一转小写（查询时不必关心大小写）
 //   · 查询串 & 表单用 application/x-www-form-urlencoded 解析（%XX 与 '+'）
-// 明确不做：分块传输（chunked 请求体）、multipart、HTTP/2、头部折行（obs-fold）。
+// 明确不做：HTTP/2、头部折行（obs-fold）。
+// 2026-11-06 起支持 chunked 请求体（`dechunk`），multipart 见 `parse_multipart`。
 import maths
 import strings
 
@@ -296,6 +297,72 @@ export func multipart_boundary(string ct): string {
             e = e + 1
         }
         return out
+    }
+    return v
+}
+
+// ==================== chunked 请求体（2026-11-06）====================
+// 客户端用 `Transfer-Encoding: chunked` 发正文（fetch 的流式 body、部分代理转发、
+//   curl -T 都会）；以前直接当"没有正文"⇒ handler 收到空 body 且毫无提示 ✗
+//
+// 返回 {ok, body, rest, more, err}：
+//   ok=true              ⇒ 解完；body 是解码后的正文，rest 是这条请求之后多读到的字节
+//   ok=false, more=true  ⇒ 数据还不够，调用方继续 recv
+//   ok=false, more=false ⇒ 报文非法（err 给原因，调用方回 400）
+export func dechunk(string raw): Dict {
+    Array[int] bs = raw.to_bytes()
+    int n = bs.len()
+    Array[int] out = []
+    var pos = 0
+    while true {
+        int eol = _find_crlf(bs, pos)
+        if eol < 0 { return {ok: false, body: "", rest: "", more: true, err: ""} }
+        // 长度行可能带扩展 `5;name=val` ⇒ 只取分号前那段
+        int hend = eol - 1
+        for pos : eol - 1 to i {
+            if bs[i] == 59 { hend = i - 1; break }          // ';'
+        }
+        int size = _hex_int(bs, pos, hend)
+        if size < 0 { return {ok: false, body: "", rest: "", more: false, err: "chunk 长度非法"} }
+        pos = eol + 2
+        if size == 0 {
+            // 末块之后是可选 trailer（通常为空）⇒ 一直读到空行为止
+            while true {
+                int e2 = _find_crlf(bs, pos)
+                if e2 < 0 { return {ok: false, body: "", rest: "", more: true, err: ""} }
+                if e2 == pos {
+                    var restS = ""
+                    int after = pos + 2
+                    if after <= n - 1 { restS = strings.byte_slice(raw, after, n - 1) }
+                    return {ok: true, body: strings.from_bytes(out), rest: restS, more: false, err: ""}
+                }
+                pos = e2 + 2
+            }
+        }
+        if pos + size + 1 > n - 1 { return {ok: false, body: "", rest: "", more: true, err: ""} }
+        for 0 : size - 1 to k { out.add(bs[pos + k]) }
+        pos = pos + size + 2                                // 块的正文 + 尾随 CRLF
+    }
+}
+
+func _find_crlf(Array[int] bs, int from): int {
+    var i = from
+    while i + 1 <= bs.len() - 1 {
+        if bs[i] == 13 and bs[i + 1] == 10 { return i }
+        i = i + 1
+    }
+    return -1
+}
+
+// 十六进制长度：只看 [from, lastIx]；非法 / 过长（> 8 位）⇒ -1
+//   ⚠ 参数不能叫 `to`（保留字），会被语法分析器当成 for 的 `to`
+func _hex_int(Array[int] bs, int from, int lastIx): int {
+    if from < 0 or lastIx < from or lastIx - from > 7 { return -1 }
+    int v = 0
+    for from : lastIx to i {
+        int d = _hexval(bs[i])
+        if d < 0 { return -1 }
+        v = v * 16 + d
     }
     return v
 }

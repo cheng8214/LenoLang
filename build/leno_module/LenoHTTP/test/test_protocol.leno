@@ -1,0 +1,193 @@
+// test_protocol.leno —— 协议层细节（2026-11-06）
+//
+// 判据：
+//   ① 每个响应都带 `Date: … GMT`（RFC 9110 要求源服务器必带）
+//   ② `Transfer-Encoding: chunked` 请求体被正确解码（多块拼接）
+//   ③ 分块长度非法 ⇒ 400（不是当成空正文放过去）
+//   ④ 同时带 Content-Length 与 Transfer-Encoding ⇒ 400（请求走私防护）
+//   ⑤ `Expect: 100-continue` ⇒ 先回 100 Continue，收到正文后才回 200
+//   ⑥ `OPTIONS /plain` ⇒ 204 + `Allow: GET`
+//
+// 跑法（仓库根目录）：
+//   build\leno.exe build\leno_module\LenoHTTP\test\test_protocol.leno
+import sockets
+import threads
+import "HTTP" as http
+
+// ==================== 客户端工具 ====================
+func find_sub(string hay, string needle, int from): int {
+    Array[int] h = hay.to_bytes()
+    Array[int] n = needle.to_bytes()
+    if n.len() == 0 { return -1 }
+    var i = from
+    while i + n.len() <= h.len() {
+        var hit = true
+        for 0:n.len()-1 to k {
+            if h[i + k] != n[k] { hit = false; break }
+        }
+        if hit { return i }
+        i = i + 1
+    }
+    return -1
+}
+
+// 读到出现 needle 为止（超时/对端关都返回已读到的部分）
+func read_until(Socket c, string needle): string {
+    var buf = ""
+    while true {
+        if find_sub(buf, needle, 0) >= 0 { return buf }
+        var d = c.recv(65536)
+        if d == null { return buf }
+        buf = buf + (d as string)
+        if buf.byte_len() > 65536 { return buf }
+    }
+}
+
+func read_rest(Socket c): string {
+    var buf = ""
+    while true {
+        var d = c.recv(65536)
+        if d == null { break }
+        buf = buf + (d as string)
+        if buf.byte_len() > 262144 { break }
+    }
+    return buf
+}
+
+// ==================== handler ====================
+func h_plain(Dict req): Dict { return http.text("plain-ok") }
+
+func h_echo(Dict req): Dict {
+    string b = req["body"] as string
+    return http.json({len: b.byte_len(), body: b})
+}
+
+// ==================== 客户端线程 ====================
+func client(int port, Channel[string] ch) {
+    var errs = ""
+
+    // ① Date 头
+    var c1 = sockets.connect("127.0.0.1", port)
+    if c1 == null { ch.send("E ① connect 失败"); return }
+    c1.set_timeout(5000)
+    c1.send("GET /plain HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n")
+    var r1 = read_rest(c1)
+    c1.close()
+    if not r1.has("200 OK") { errs = errs + "E ① 状态不是 200 " }
+    if not r1.has("Date: ") { errs = errs + "E ① 缺 Date 头 " }
+    if not r1.has(" GMT") { errs = errs + "E ① Date 不是 GMT 结尾 " }
+    if not r1.has("Access-Control-Allow-Origin: *") { errs = errs + "E ① after 钩子没加 CORS 头 " }
+
+    // ② chunked 请求体（hello + " world" 两块）
+    var c2 = sockets.connect("127.0.0.1", port)
+    if c2 == null { ch.send("E ② connect 失败"); return }
+    c2.set_timeout(5000)
+    c2.send("POST /echo HTTP/1.1\r\nHost: t\r\nConnection: close\r\n"
+        + "Transfer-Encoding: chunked\r\nContent-Type: text/plain\r\n\r\n"
+        + "5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n")
+    var r2 = read_rest(c2)
+    c2.close()
+    if not r2.has("200 OK") { errs = errs + "E ② chunked 不是 200 " }
+    if not r2.has("\"body\":\"hello world\"") { errs = errs + "E ② chunked 正文拼接错误 " }
+    if not r2.has("\"len\":11") { errs = errs + "E ② chunked 长度不是 11 " }
+
+    // ③ 分块长度非法 ⇒ 400
+    var c3 = sockets.connect("127.0.0.1", port)
+    if c3 == null { ch.send("E ③ connect 失败"); return }
+    c3.set_timeout(5000)
+    c3.send("POST /echo HTTP/1.1\r\nHost: t\r\nConnection: close\r\n"
+        + "Transfer-Encoding: chunked\r\n\r\n"
+        + "zz\r\nbad\r\n0\r\n\r\n")
+    var r3 = read_rest(c3)
+    c3.close()
+    if not r3.has("400") { errs = errs + "E ③ 非法 chunk 长度没回 400 " }
+
+    // ④ Content-Length + Transfer-Encoding 同时出现 ⇒ 400（走私防护）
+    var c4 = sockets.connect("127.0.0.1", port)
+    if c4 == null { ch.send("E ④ connect 失败"); return }
+    c4.set_timeout(5000)
+    c4.send("POST /echo HTTP/1.1\r\nHost: t\r\nConnection: close\r\n"
+        + "Content-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n"
+        + "0\r\n\r\n")
+    var r4 = read_rest(c4)
+    c4.close()
+    if not r4.has("400") { errs = errs + "E ④ CL+TE 没被拒 " }
+
+    // ⑤ Expect: 100-continue ⇒ 先 100，再发正文，再 200
+    var c5 = sockets.connect("127.0.0.1", port)
+    if c5 == null { ch.send("E ⑤ connect 失败"); return }
+    c5.set_timeout(5000)
+    c5.send("POST /echo HTTP/1.1\r\nHost: t\r\nConnection: close\r\n"
+        + "Expect: 100-continue\r\nContent-Length: 5\r\n\r\n")
+    var head = read_until(c5, "\r\n\r\n")
+    if not head.has("100 Continue") { errs = errs + "E ⑤ 没收到 100 Continue " }
+    c5.send("hello")
+    var r5 = read_rest(c5)
+    c5.close()
+    if not r5.has("200 OK") { errs = errs + "E ⑤ 收到正文后不是 200 " }
+    if not r5.has("\"body\":\"hello\"") { errs = errs + "E ⑤ 正文不对 " }
+
+    // ⑥ OPTIONS ⇒ 204 + Allow
+    var c6 = sockets.connect("127.0.0.1", port)
+    if c6 == null { ch.send("E ⑥ connect 失败"); return }
+    c6.set_timeout(5000)
+    c6.send("OPTIONS /plain HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n")
+    var r6 = read_rest(c6)
+    c6.close()
+    if not r6.has("204") { errs = errs + "E ⑥ OPTIONS 不是 204 " }
+    if not r6.has("Allow: GET") { errs = errs + "E ⑥ OPTIONS 没带 Allow: GET " }
+
+    // ⑦ CORS 预检（app 上开了 http.cors(app, "*")）
+    var c7 = sockets.connect("127.0.0.1", port)
+    if c7 == null { ch.send("E ⑦ connect 失败"); return }
+    c7.set_timeout(5000)
+    c7.send("OPTIONS /plain HTTP/1.1\r\nHost: t\r\nConnection: close\r\n"
+        + "Origin: http://x\r\nAccess-Control-Request-Method: POST\r\n"
+        + "Access-Control-Request-Headers: authorization\r\n\r\n")
+    var r7 = read_rest(c7)
+    c7.close()
+    if not r7.has("204") { errs = errs + "E ⑦ 预检不是 204 " }
+    if not r7.has("Access-Control-Allow-Origin: *") { errs = errs + "E ⑦ 预检缺 Allow-Origin " }
+    if not r7.has("Access-Control-Allow-Headers: authorization") { errs = errs + "E ⑦ 没回显 Allow-Headers " }
+
+    if errs == "" { ch.send("OK") } else { ch.send(errs) }
+}
+
+main() {
+    var app = http.newApp()
+    http.get(app, "/plain", h_plain)
+    http.post(app, "/echo", h_echo)
+    http.cors(app, "*")                          // ⑦ 预检 + after 钩子补 Allow-Origin
+
+    var srv = http.listen("127.0.0.1", 0)
+    if not (srv["ok"] as bool) {
+        print("E 启动失败：" + (srv["err"] as string))
+        return
+    }
+    int port = srv["port"] as int
+    print("服务启动于 127.0.0.1:" + _str(port))
+
+    Channel[string] ch = threads.channel(1)
+    var t = threads.start(client, port, ch)
+
+    // 客户端会开 7 个连接：① Date / ② chunked / ③ 坏 chunk / ④ CL+TE / ⑤ Expect / ⑥ OPTIONS / ⑦ CORS 预检
+    var handled = 0
+    var guard = 0
+    while handled < 7 and guard < 20000 {
+        var r = http.acceptOne(srv, app)
+        if r["ok"] as bool { handled = handled + 1 }
+        else { threads.sleep(2) }
+        guard = guard + 1
+    }
+
+    var report = ch.receive() as string
+    threads.join_all([t])
+    Socket listener = srv["sock"] as Socket
+    listener.close()
+
+    if report != "OK" {
+        print("[FAIL] " + report)
+        return
+    }
+    print("test_protocol passed（Date / chunked / 100-continue / 走私防护 / OPTIONS / CORS）")
+}

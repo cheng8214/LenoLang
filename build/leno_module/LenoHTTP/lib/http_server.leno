@@ -97,6 +97,9 @@ func _write_response(Socket c, Dict res, bool keep, bool acceptGzip, bool headOn
     int st = res["status"] as int
     string ct = res["contentType"] as string
     Dict hs = res["headers"] as Dict
+    // RFC 9110：源服务器**必须**带 Date；自己算成 GMT 固定格式（不跟随时区/区域设置）
+    string dateLine = "Date: " + _http_date(_int(times.now())) + "\r\n"
+    if hs.has("Date") { dateLine = "" }
 
     // ★ 2026-10-21：大文件 / Range 走**分块发送**（res 带 file / offset / length）
     //   为什么不在 dispatch 里读完整文件：1MB 以上会同时存在"文件字符串 + Array[int] 逐字节副本"
@@ -110,6 +113,7 @@ func _write_response(Socket c, Dict res, bool keep, bool acceptGzip, bool headOn
 
         Array[int] hout = []
         _put(hout, "HTTP/1.1 " + _str(st) + " " + _status_text(st) + "\r\n")
+        _put(hout, dateLine)
         _put(hout, "Content-Type: " + ct + "\r\n")
         _put(hout, "Content-Length: " + _str(length) + "\r\n")
         _put(hout, "Connection: " + (if keep then "keep-alive" else "close") + "\r\n")
@@ -157,6 +161,7 @@ func _write_response(Socket c, Dict res, bool keep, bool acceptGzip, bool headOn
     }
     Array[int] out = []
     _put(out, "HTTP/1.1 " + _str(st) + " " + _status_text(st) + "\r\n")
+    _put(out, dateLine)
     _put(out, "Content-Type: " + ct + "\r\n")
     _put(out, "Content-Length: " + _str(body.byte_len()) + "\r\n")
     _put(out, "Connection: " + (if keep then "keep-alive" else "close") + "\r\n")
@@ -180,6 +185,60 @@ func _write_response(Socket c, Dict res, bool keep, bool acceptGzip, bool headOn
         for body.to_bytes() to b { out.add(b) }
     }
     return c.send(strings.from_bytes(out))
+}
+
+// ==================== 响应头：Date（2026-11-06）====================
+var MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+var WDAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+
+func _pad2(int v): string {
+    if v < 10 { return "0" + _str(v) }
+    return _str(v)
+}
+
+// epoch 秒 → IMF-fixdate（`Fri, 06 Nov 2026 08:49:37 GMT`）
+//   为什么不直接用 times.format：Date 头必须是 **GMT + 英文缩写**，不能跟着本地时区/区域走
+func _http_date(int epoch): string {
+    int secs = epoch % 86400
+    int days = (epoch - secs) / 86400
+    int wd = (days + 4) % 7                       // 1970-01-01 是周四(idx 4)
+    if wd < 0 { wd = wd + 7 }
+    int zz = days + 719468                        // civil_from_days（Hinnant 算法）
+    int era = zz / 146097
+    int doe = zz - era * 146097
+    int yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+    int y = yoe + era * 400
+    int doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+    int mp = (5 * doy + 2) / 153
+    int d = doy - (153 * mp + 2) / 5 + 1
+    int m = mp + (if mp < 10 then 3 else -9)
+    if m <= 2 { y = y + 1 }
+    return WDAY[wd] + ", " + _pad2(d) + " " + MON[m - 1] + " " + _str(y) + " "
+        + _pad2(secs / 3600) + ":" + _pad2((secs % 3600) / 60) + ":" + _pad2(secs % 60) + " GMT"
+}
+
+// 十进制长度：非法（含非数字 / 过长）⇒ -1。**不能用 _int**（`_int("abc")` 会抛）
+func _len_of(string s): int {
+    string t = s.trim()
+    if t == "" or t.byte_len() > 10 { return -1 }
+    for t.to_bytes() to b {
+        if b < 48 or b > 57 { return -1 }
+    }
+    return _int(t)
+}
+
+// 再读一块（带整条请求的截止时间）；返回 {ok, data, err}
+//   对端关闭 ⇒ ok=false 且 err=""（正常收尾，不报错）
+func _read_more(Socket c, int t_start): Dict {
+    int remain = MAX_REQ_SECONDS - (_int(times.now()) - t_start)
+    if remain <= 0 { return {ok: false, data: "", err: "读请求体超时（慢速连接占用 " + _str(MAX_REQ_SECONDS) + "s）"} }
+    var ready = sockets.select([c], remain * 1000)
+    if ready.len() == 0 { return {ok: false, data: "", err: "读请求体超时（慢速连接占用 " + _str(MAX_REQ_SECONDS) + "s）"} }
+    var chunk = c.recv(65536)
+    if chunk == null { return {ok: false, data: "", err: ""} }
+    string s = chunk as string
+    if s.byte_len() == 0 { return {ok: false, data: "", err: ""} }
+    return {ok: true, data: s, err: ""}
 }
 
 // 读一个完整请求（含请求体）。carry = 上个请求多读到的字节。
@@ -231,31 +290,68 @@ func _read_request(Socket c, string carry): Dict {
     string path = p.url_decode(pt[0], false)
     Dict query = p.parse_kv(pt[1])
 
-    // 请求体：按 Content-Length 补齐（chunked 不支持）
+    // ==================== 请求体 ====================
+    // ① 只有 Content-Length ⇒ 读满 clen
+    // ② Transfer-Encoding: chunked ⇒ 分块解码（★ 2026-11-06）
+    // ③ 两个都带 ⇒ 直接拒（请求走私的经典形态；RFC 9112 §6.1 要求 400）
     var clen = 0
-    if h.has("content-length") { clen = _int(h.get("content-length", "0")) }
+    if h.has("content-length") {
+        clen = _len_of(h.get("content-length", "0") as string)
+        if clen < 0 {
+            return {ok: false, req: null, rest: "", err: "Content-Length 非法（必须是十进制数字）"}
+        }
+    }
+    var chunked = false
+    if h.has("transfer-encoding") {
+        if p.find((h.get("transfer-encoding", "") as string).to_lower(), "chunked", 0) >= 0 { chunked = true }
+    }
+    if chunked and h.has("content-length") {
+        return {ok: false, req: null, rest: "", err: "同时带 Content-Length 与 Transfer-Encoding（拒绝潜在请求走私）"}
+    }
     if clen > MAX_BODY {
         return {ok: false, req: null, rest: "", err: "请求体超过 " + _str(MAX_BODY) + " 字节"}
     }
-    var raw = rest
-    while raw.byte_len() < clen {
-        int remain = MAX_REQ_SECONDS - (_int(times.now()) - t_start);
-        if remain <= 0 {
-            return {ok: false, req: null, rest: "", err: "读请求体超时（慢速连接占用 " + _str(MAX_REQ_SECONDS) + "s）"}
+    // `Expect: 100-continue`：客户端会**先不发正文**等这一句；不回它 curl 要白等 1 秒超时
+    if h.has("expect") and (clen > 0 or chunked) {
+        if p.find((h.get("expect", "") as string).to_lower(), "100-continue", 0) >= 0 {
+            c.send("HTTP/1.1 100 Continue\r\n\r\n")
         }
-        var ready = sockets.select([c], remain * 1000)
-        if ready.len() == 0 {
-            return {ok: false, req: null, rest: "", err: "读请求体超时（慢速连接占用 " + _str(MAX_REQ_SECONDS) + "s）"}
-        }
-        var chunk = c.recv(65536)
-        if chunk == null { break }
-        raw = raw + (chunk as string)
     }
+
+    var raw = rest
     var body = ""
-    if clen > 0 and raw.byte_len() >= clen { body = raw.byte_slice(0, clen - 1) }
-    else if raw.byte_len() > 0 { body = raw }
     var leftover = ""
-    if raw.byte_len() > clen { leftover = raw.byte_slice(clen, raw.byte_len() - 1) }
+    if chunked {
+        while true {
+            var dec = p.dechunk(raw)
+            if dec["ok"] as bool {
+                body = dec["body"] as string
+                leftover = dec["rest"] as string
+                break
+            }
+            if not (dec["more"] as bool) {
+                return {ok: false, req: null, rest: "", err: dec["err"] as string}
+            }
+            if raw.byte_len() > MAX_BODY + 65536 {
+                return {ok: false, req: null, rest: "", err: "分块请求体超过 " + _str(MAX_BODY) + " 字节"}
+            }
+            var more = _read_more(c, t_start)
+            if not (more["ok"] as bool) { return {ok: false, req: null, rest: "", err: more["err"] as string} }
+            raw = raw + (more["data"] as string)
+        }
+        if body.byte_len() > MAX_BODY {
+            return {ok: false, req: null, rest: "", err: "请求体超过 " + _str(MAX_BODY) + " 字节"}
+        }
+    } else {
+        while raw.byte_len() < clen {
+            var more = _read_more(c, t_start)
+            if not (more["ok"] as bool) { return {ok: false, req: null, rest: "", err: more["err"] as string} }
+            raw = raw + (more["data"] as string)
+        }
+        if clen > 0 and raw.byte_len() >= clen { body = raw.byte_slice(0, clen - 1) }
+        else if raw.byte_len() > 0 { body = raw }
+        if raw.byte_len() > clen { leftover = raw.byte_slice(clen, raw.byte_len() - 1) }
+    }
 
     // 表单：urlencoded 走 parse_kv；**multipart 走 parse_multipart**（2026-10-21）
     //   multipart 的文本字段也进 `form` ⇒ `http.formValue` 对两种格式都成立

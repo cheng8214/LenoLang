@@ -14,12 +14,13 @@
 // 请求 Dict：{method, target, path, query, headers, body, form, version, keepAlive, remote}
 // 响应 Dict：{status, body, contentType, headers}（handler 也可以直接返回 string）
 //
-// 边界（v0.1）：
-//   · **单线程顺序处理**：Socket 不能跨线程（threads.start 只允许标量/string/Array/Dict/
-//     struct/Channel）⇒ 无法"每连接一个线程"；慢客户端会占住后续连接
-//   · 不做 chunked 请求体 / multipart / WebSocket / HTTP/2 / TLS
-//   · 请求体上限 8MB、请求头上限 64KB、单连接最多 100 个请求（keep-alive）
-//   · 静态文件整读进内存（大文件下载请用反向代理或自己流式发）
+// 边界：
+//   · Socket 不能跨线程 ⇒ 要么单线程 `serve`，要么 `serveWorkers` 线程池（每线程一个 app）
+//   · 不做 WebSocket / HTTP/2 / TLS（TLS 交给反代）
+//   · 请求体上限 8MB（含 chunked 解码后）、请求头上限 64KB、单连接最多 100 个请求
+//   · 支持 chunked 请求体、multipart 上传、Range/断点续传、gzip 响应、HEAD（只发头）、
+//     OPTIONS（204 + Allow）、`Expect: 100-continue`、Date 头（★ 2026-11-06）
+//   · 静态文件 256KB 以下整读，以上分块发（不整进内存）
 import "http_app.leno" as a
 import "http_server.leno" as srv
 
@@ -51,9 +52,17 @@ export func stop(Dict app): void { a.stop(app) }
 export func auth(Dict app, any fn): void { a.auth(app, fn) }
 
 // 管道式：全局中间件，fn(req) 返回 null = 放行，返回响应 Dict = 短路
-//   适合访问日志 / 耗时 / CORS / 维护模式；鉴权请用 {auth: true}
+//   适合访问日志 / 耗时 / 维护模式；鉴权请用 {auth: true}
 //   ⚠ 不叫 `use`（保留字），对外名字是 `before`
 export func before(Dict app, any fn): void { a.before(app, fn) }
+
+// 后置钩子（★ 2026-11-06）：fn(req, res) → res，可以统一改响应头
+//   `before` 只能短路，加不了"最终响应"的头 ⇒ CORS / 安全头 / 请求 id 用这个
+export func after(Dict app, any fn): void { a.after(app, fn) }
+
+// 一键 CORS（★ 2026-11-06）：`http.cors(app, "*")` 或具体源
+//   预检 OPTIONS ⇒ 204 + Access-Control-Allow-*；普通响应 ⇒ after 补 Allow-Origin
+export func cors(Dict app, string origins): void { a.cors(app, origins) }
 
 // 带状态码的 JSON（http.json 固定 200）
 export func jsonStatus(int code, any obj): Dict { return a.json_status(code, obj) }
@@ -80,6 +89,15 @@ export func htmlTemplate(string tpl, Dict vars): Dict { return a.html_template(t
 export func query(Dict req, string name, string def = ""): string { return a.query(req, name, def) }
 export func formValue(Dict req, string name, string def = ""): string { return a.form(req, name, def) }
 export func header(Dict req, string name, string def = ""): string { return a.header(req, name, def) }
+
+// 路径参数（`/api/playlist/:id`）与"转整数"口径（★ 2026-11-06）
+//   `http.param(req, "id", "0")`      —— 取 `:id`，缺键给默认值
+//   `http.intParam(req, "id", 0)`     —— 再转整数；**非数字给默认值，绝不抛异常**
+//   `http.queryInt(req, "limit", 20)` —— 查询串同理
+//   以前 handler 手写 `_int(...)`，扫到一个 `/api/x/abc` 就把栈刷爆（500）
+export func param(Dict req, string name, string def = ""): string { return a.param(req, name, def) }
+export func intParam(Dict req, string name, int def = 0): int { return a.int_param(req, name, def) }
+export func queryInt(Dict req, string name, int def = 0): int { return a.query_int(req, name, def) }
 
 // 上传的文件（multipart/form-data）：file(req,"avatar") => {name, filename, contentType, body}；
 //   没有这个字段 ⇒ 空 Dict（`f.len() == 0`）。所有文件用 files(req) 取。
