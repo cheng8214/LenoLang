@@ -144,6 +144,9 @@ export struct Label impl Widget, Themeable {
         //   与 `sdl_edit.leno` 的 `_lines = text...split("\n")` 同款写法 ✓）
         Array[string] raw = text.lines()
         float bw = wrapW
+        // ★ 2026-11-06 反哺：折行宽度优先用**布局实际给的宽**（`_w`），
+        //   其次才是 `max_w`。原来只认这两个参数 ⇒ 被容器拉宽/压窄后折行位置不变 ✗
+        if bw <= 0.0 { bw = _w }
         if bw <= 0.0 { bw = max_w }
         bool wantWrap = wrap and bw > 0.0
         if raw.len() <= 1 and not wantWrap { lines = []; lineH = 0.0; return }
@@ -325,7 +328,39 @@ export struct Label impl Widget, Themeable {
     // ★ 2026-10-29 反哺：内部已有 hover 字段，但没暴露 ⇒ 补成与 Button/Card 同名 ✓
     func is_hover(): bool    { return hover }
     func set_pos(float px, float py) { x = px; y = py }
-    func set_size(float sw, float sh) { _w = sw; _h = sh }
+    // ★ 2026-11-06 反哺：宽度变了要**重新折行**
+    //   原来 `set_size` 只存宽高 ⇒ 多行 Label 被容器拉宽/压窄后，折行还是按旧宽度算的，
+    //   文字会溢出或被截断（微博式评论区实测 ✗）。只在宽度**真的变了**时重排，避免每帧空转 ✓
+    func set_size(float sw, float sh) {
+        bool need = wrap and sw > 0.0 and sw != _w
+        _w = sw
+        _h = sh
+        if need { relayout_lines() }
+    }
+
+    // 按当前排版算**内容高**（多行 = 行数 × 行高；单行 = 字体行高）
+    //   ★ 2026-11-06 反哺：上层要"内容自动撑高"（评论区正文、长签名）时，
+    //     原来只能拿到文字宽度（`textWidth` 还是 pri 的），高度只能靠字符数猜 ✗
+    func measure_h(): float {
+        if _font == null or not _font.ok { return 0.0 }
+        if lines.len() > 1 { return lineH * _float(lines.len()) }
+        var[float, float](_tw, _th) = _font.measureString(if text == "" then " " else text)
+        return _th
+    }
+
+    // 内容宽（多行时取最长一行，单行取文字宽）—— 需要按内容撑宽时用 ✓
+    func measure_w(): float {
+        if _font == null or not _font.ok { return 0.0 }
+        if lines.len() > 1 {
+            float mx = 0.0
+            for lines to ln {
+                var[float, float](lw, lh) = _font.measureString(ln)
+                if lw > mx { mx = lw }
+            }
+            return mx
+        }
+        return textWidth()
+    }
 
     // 悬停提示 + 悬停变色 + 手型光标；挂了 `on_click` 才响应点击（默认不抢事件 ✓）
     func process(Event ev) {

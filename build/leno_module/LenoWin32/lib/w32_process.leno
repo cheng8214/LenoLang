@@ -2,6 +2,18 @@
 // 封装 kernel32.dll 和 psapi.dll 的进程相关 API
 // 提供 ProcessManager face 及 StandardProcessManager / SafeProcessManager 实现
 import ffi
+import threads
+
+// ==================== 线程局部库句柄（★ 2026-11-07 反哺）====================
+//   为什么不能放模块全局变量：
+//     · 模块对象在 `module_loader` 里是**进程级共享**的（非 THREAD_LOCAL），
+//       所以 `xxx _lib = null` + 懒加载 得到的句柄是**所有线程共用同一个 clib 对象**；
+//     · 而 **GC 是线程级的**（每线程一个堆/根集合）：A 线程 load 的对象不在 B 线程的
+//       根集合里 ⇒ B 的 GC 会把它当垃圾回收（`ffi_library_free_resources` 置 `freed`）
+//       ⇒ A 线程再用就抛「库对象已释放，不能再使用」✗
+//   实测现场：deployd（HTTP worker 池）里 `GET /status` 第一次正常、第二次起全 500，
+//   栈顶就是本文件 `_enumProcesses`。单线程（`http.serve`）永远不会遇到。
+//   ⇒ 句柄放 `threads.local_*`：每线程各 load 一份、各归各的 GC 管 ✓
 
 // ==================== KERNEL32 ====================
 clib kernel32 {
@@ -15,10 +27,12 @@ clib kernel32 {
     i32 GetModuleFileNameW(Ptr hModule, Ptr buf, i32 nSize)
 }
 
-kernel32 _krnl = null
 func _krnlLib(): kernel32 {
-    if _krnl == null { _krnl = ffi.load("kernel32.dll") }
-    return _krnl
+    var t = threads.local_get("w32.kernel32", null)
+    if t != null { return t as kernel32 }
+    kernel32 k = ffi.load("kernel32.dll")
+    threads.local_set("w32.kernel32", k)
+    return k
 }
 
 // 自己（当前进程）exe 的完整路径，UTF-8 出 ✓
@@ -44,10 +58,12 @@ clib psapi {
     i32 GetProcessMemoryInfo(Ptr hProcess, Ptr ppsmemCounters, i32 cb)
 }
 
-psapi _psapi = null
 func _psapiLib(): psapi {
-    if _psapi == null { _psapi = ffi.load("psapi.dll") }
-    return _psapi
+    var t = threads.local_get("w32.psapi", null)
+    if t != null { return t as psapi }
+    psapi p = ffi.load("psapi.dll")
+    threads.local_set("w32.psapi", p)
+    return p
 }
 
 // ==================== CSTRUCT ====================

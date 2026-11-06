@@ -3,6 +3,7 @@
 import ffi
 import dirs
 import files
+import threads
 
 // ==================== clib sqlite3 ====================
 // SQLite3 C API 函数声明
@@ -150,6 +151,14 @@ export const SQLITE_TRANSIENT = -1
 
 // ==================== DLL 加载 ====================
 
+// ✅ 2026-11-07 已根治（C 层）：多线程下的「库对象已释放」
+//   原因：模块对象是进程级共享的，而 GC 是**线程级**的 —— A 线程 load 的 clib 对象
+//   不在 B 线程的根集合里，会被 B 的 sweep 回收（`ffi_library_free_resources`
+//   置 `freed=1` 并 FreeLibrary）⇒ 之后任何线程再用都抛「库对象已释放」✗
+//   修法（两处 C 代码）：
+//     · `src/gc.c` 的 sweep_young / sweep_old：`OBJ_FFI_LIBRARY` **永不回收**；
+//     · `src/module/ffi/ffi.c` 的 ffi_library_free_resources：**不再 FreeLibrary/dlclose**。
+//   因此这里的模块级缓存（所有线程共用同一个句柄）现在是安全的 ✓
 sqlite3 g_lib = null
 
 // 加载 SQLite3 动态库（全局缓存，避免重复加载）
