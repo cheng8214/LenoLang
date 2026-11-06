@@ -19,6 +19,7 @@ import "helpers/compiler.leno" as ce
 
 var WORK = ""
 var ENTRY = ""
+var MODVER = ""          // LenoHTTP 当前版本（main 开头由 read_modver() 填）
 
 func write_req(string req):void {
     var toml = "[package]\n"
@@ -34,6 +35,26 @@ func cold():void {
     dirs.delete(dirs.join(WORK, ".lenocache"))
 }
 
+// ★ 2026-11-06：**动态读** LenoHTTP 的当前版本，不写死。
+//   原来满篇 `0.2.6`，模块一升级（0.2.6 → 0.2.9）整组用例就红，而代码本身没问题 ✗
+func read_modver():string {
+    string t = files.read("build/leno_module/LenoHTTP/leno.toml")
+    int i = t.find("version")
+    if i < 0 { return "" }
+    int q1 = t.find("\"", i + 1)
+    if q1 < 0 { return "" }
+    int q2 = t.find("\"", q1 + 1)
+    if q2 < 0 { return "" }
+    return t.slice(q1 + 1, q2 - 1)          // slice 是闭区间
+}
+
+// 下一个补丁版本（0.2.9 → 0.2.10），用于构造"精确不匹配 / 区间上界"
+func bump_patch(string v):string {
+    var p = v.split(".")
+    if p.len() < 3 { return v + ".1" }
+    return _str(p[0]) + "." + _str(p[1]) + "." + _str(_int(p[2]) + 1)
+}
+
 func expect_pass(string req, string tag):void {
     cold()
     write_req(req)
@@ -43,7 +64,7 @@ func expect_pass(string req, string tag):void {
 func expect_fail(string req, string tag):void {
     cold()
     write_req(req)
-    ce.expect_error(ENTRY, tag + "（" + req + "）", "版本 0.2.6 不满足项目要求", 1)
+    ce.expect_error(ENTRY, tag + "（" + req + "）", "版本 " + MODVER + " 不满足项目要求", 1)
 }
 
 main() {
@@ -52,23 +73,25 @@ main() {
     dirs.mkdir_p(WORK)
     files.write(dirs.join(WORK, "main.leno"), "import \"HTTP\"\n\nmain() {\n}\n")
     ENTRY = dirs.join(WORK, "main.leno")
+    MODVER = read_modver()
+    assert_true(MODVER != "", "应能从 LenoHTTP 的 leno.toml 读到版本号")
 
     // ---- 满足 ----
     expect_pass(">=0.2.0", "精确下限满足")
     expect_pass(">=0.2", "两段版本下限满足")
-    expect_pass("~0.2.0", "兼容区间 ~0.2.0 应含 0.2.6")
-    expect_pass("0.2.6", "精确版本满足")
-    expect_pass(">=0.2.6, <0.2.7", "区间（不含上界）满足")
-    expect_pass(">=0.2.6, <=0.2.6", "区间（含上界）应满足")
+    expect_pass("~0.2.0", "兼容区间 ~0.2.0 应含当前 0.2.x")
+    expect_pass(MODVER, "精确版本满足")
+    expect_pass(">=" + MODVER + ", <" + bump_patch(MODVER), "区间（不含上界）满足")
+    expect_pass(">=" + MODVER + ", <=" + MODVER, "区间（含上界）应满足")
     expect_pass("*", "任意版本")
 
     // ---- 不满足（必须报根因，而不是静默通过）----
     expect_fail(">=0.3", "两段版本下限不满足")
     expect_fail(">=0.3.0", "三段版本下限不满足")
-    expect_fail("~0.1.0", "兼容区间 ~0.1.0 不含 0.2.6")
-    expect_fail("0.2.5", "精确版本不匹配")
-    expect_fail(">=0.1.0, <0.2.0", "区间上界不含 0.2.6")
-    expect_fail(">=0.2.6, <0.2.5", "空区间（颠倒上下界）")
+    expect_fail("~0.1.0", "兼容区间 ~0.1.0 不含当前版本")
+    expect_fail(bump_patch(MODVER), "精确版本不匹配")
+    expect_fail(">=0.1.0, <0.2.0", "区间上界不含当前版本")
+    expect_fail(">=" + MODVER + ", <" + MODVER, "空区间（上下界相同）")
 
     // ---- 无法解析的约束：必须明确报错 ----
     cold()

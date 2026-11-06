@@ -122,8 +122,10 @@ export func postForm(string url, Dict data): Response { return net.postForm(url,
 export func urlEncode(string url): string { return net.urlEncode(url) }
 export func urlDecode(string url): string { return net.urlDecode(url) }
 
-// 版本 / 全局生命周期
-export func version(): string { return net.version() }
+// 全局生命周期
+//   ⚠ 这里**不再**定义 version()：第 70 行已经有一个（`return core.version()`），
+//   而 net.version() 也是转手 core.version() ⇒ 两个完全等价。以前重复定义会
+//   **静默覆盖**（前一个被丢掉），2026-11-05 的重名检查把它暴露出来 ⇒ 删掉重复的 ✓
 export func globalInit(int flags = 3): int { return net.globalInit(flags) }
 export func globalCleanup() { net.globalCleanup() }
 

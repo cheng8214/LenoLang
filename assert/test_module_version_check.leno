@@ -31,8 +31,12 @@ main() {
 
     // ① 要求高于当前内置版本 ⇒ 编译失败，且报错落在 import 行（第 1 行）
     write_project(work, ">=9.9.9")
+    // ★ 2026-11-06：**不再断言具体版本号** —— 原来写死 `0.2.6`，LenoHTTP 升到 0.2.9
+    //   这组用例就红，而版本检查本身完全正常。只验"是不是 LenoHTTP、要求是什么"。
     var out = ce.expect_error(entry, "版本过高应在 import 期失败",
-                              "模块包 'LenoHTTP' 版本 0.2.6 不满足项目要求 '>=9.9.9'", 1)
+                              "不满足项目要求 '>=9.9.9'", 1)
+    assert_true(strings.has(out, "LenoHTTP"),
+                "报错应指出是哪个模块包；输出=" + out)
     assert_true(strings.has(out, "发现 1 个错误"),
                 "版本不满足只报一条根因；输出=" + out)
 

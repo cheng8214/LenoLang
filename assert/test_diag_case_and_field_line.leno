@@ -8,6 +8,7 @@
 
 import "helpers/compiler.leno" as ce
 import dirs
+import strings
 import files
 
 main() {
@@ -105,8 +106,14 @@ main() {}
 
 main() {}
 ")
-    ce.expect_warning(noInit, "字段未初始化 => 警告落在字段行", "字段 'a' 未显式初始化", 2)
-    var outNoInit = ce.expect_warning(noInit, "string 字段的建议初值必须是合法字面量", "string b = \"\"", 3)
+    // ⚠ 只编译**一次**：`expect_warning` 每次都跑一遍子进程，第二次会命中 `.lenomc` 缓存
+    //   ⇒ 不再输出警告 ⇒ 第二条断言拿到的 out 是空的（实测：这条曾经一直红）。
+    //   改成一次拿 out、再对同一份输出做多条判断 ✓
+    var outNoInit = ce.expect_warning(noInit, "字段未初始化 => 警告落在字段行", "字段 'a' 未显式初始化", 2)
+    assert_true(strings.has(outNoInit, "string b = \"\""),
+        "string 字段的建议初值必须是合法字面量；输出=" + outNoInit)
+    assert_true(strings.has(outNoInit, "(3,"),
+        "b 的警告应落在字段自己那行（第 3 行）；输出=" + outNoInit)
     ce.expect_no_warning(outNoInit, "已初始化的字段不该报", "字段 'c' 未显式初始化")
 
     print("test_diag_case_and_field_line passed")
