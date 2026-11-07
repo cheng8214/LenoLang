@@ -1620,8 +1620,19 @@ Ast* parse_func_body_and_create(Parser* p, char* name, int line, int column) {
             
             // 解析可选的默认值: 类型 名 = 默认值
             if (match(p, TOK_EQ)) {
-                // 解析默认值表达式
-                param_defaults[pcnt] = parse_expression(p);
+                // ★ 2026-11-07：默认值缺失（`func f(int a = )`）此前报「期望表达式」+「期望 ')'」✗
+                //   这里定向报一次，按"没有默认值"处理，让后面的 ')' 正常收尾（只留这一条 ✓）
+                if (p->lex.current.type == TOK_COMMA || p->lex.current.type == TOK_RPAREN) {
+                    if (params && params[pcnt]) {
+                        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                            "参数 '%s' 的默认值不能为空 —— '=' 后面必须写表达式（如 int a = 0）",
+                            params[pcnt]);
+                    }
+                    param_defaults[pcnt] = NULL;
+                } else {
+                    // 解析默认值表达式
+                    param_defaults[pcnt] = parse_expression(p);
+                }
             } else {
                 param_defaults[pcnt] = NULL;
             }

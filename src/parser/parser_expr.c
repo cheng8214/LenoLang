@@ -861,6 +861,17 @@ Ast* parse_array(Parser* p) {
     
     // 解析数组元素
     while (1) {
+        // ★ 2026-11-07：空元素（`[,1]` / `[1,,2]`）此前 parse_expression 报「期望表达式」后
+        //   又刷「期望 ',' 或 ']'」「声明语句后期望换行」共 3~4 条 ✗。这里定向报一次，
+        //   吃掉多余的逗号后**继续解析后续元素**（只留这一条错误 ✓）。
+        if (p->lex.current.type == TOK_COMMA || p->lex.current.type == TOK_RBRACKET) {
+            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                "数组元素不能为空（多写了一个逗号）—— 逗号之间必须写表达式");
+            if (p->lex.current.type == TOK_RBRACKET) { lexer_next(&p->lex); break; }
+            lexer_next(&p->lex);   // 吃掉多余的 ','
+            if (p->lex.current.type == TOK_RBRACKET) { lexer_next(&p->lex); break; }
+            continue;
+        }
         Ast* element = parse_expression(p);
         if (element) {
             ast_list_add(&ast->u.array, element);
@@ -1015,11 +1026,49 @@ Ast* parse_dict(Parser* p) {
         }
 
         // 期望 ':'
-        if (!consume(p, TOK_COLON, "期望 ':'")) {
+        // ★ 2026-11-07：缺冒号（`{"a" 1}`）此前 consume 报一句后直接 break，把 `1` 留在流里
+        //   ⇒ 再刷「声明语句后期望换行」+「期望表达式」（还指到别的行）✗。
+        //   这里定向报一次，并把本条目剩余 token 跳到同层的 ',' / '}' 后**继续解析后续条目** ✓
+        if (p->lex.current.type != TOK_COLON) {
+            error_add_at_fmt(ERR_SYNTAX, key_line, key_col,
+                "字典键后面必须跟 ':'（如 {\"a\": 1}）");
             ast_free(key_ast);
-            break;
+            int depth = 0;
+            while (p->lex.current.type != TOK_EOF) {
+                if (p->lex.current.type == TOK_LBRACE ||
+                    p->lex.current.type == TOK_LPAREN ||
+                    p->lex.current.type == TOK_LBRACKET) {
+                    depth++;
+                } else if (p->lex.current.type == TOK_RPAREN ||
+                           p->lex.current.type == TOK_RBRACKET) {
+                    if (depth > 0) depth--;
+                } else if (p->lex.current.type == TOK_RBRACE) {
+                    if (depth == 0) break;
+                    depth--;
+                } else if (p->lex.current.type == TOK_COMMA && depth == 0) {
+                    break;
+                }
+                lexer_next(&p->lex);
+            }
+            if (p->lex.current.type == TOK_RBRACE) { lexer_next(&p->lex); break; }
+            lexer_next(&p->lex);   // 吃掉 ','
+            if (p->lex.current.type == TOK_RBRACE) { lexer_next(&p->lex); break; }
+            continue;
         }
-        
+        lexer_next(&p->lex);   // 吃掉 ':'
+
+        // ★ 2026-11-07：值缺失（`{"a": }` / `{"a": , "b": 2}`）—— 此前 parse_expression
+        //   报「期望表达式」后又刷「期望 ',' 或 '}'」✗。定向报一次并继续后续条目 ✓
+        if (p->lex.current.type == TOK_COMMA || p->lex.current.type == TOK_RBRACE) {
+            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                "字典的值不能为空 —— ':' 后面必须写表达式（如 {\"a\": 1}）");
+            ast_free(key_ast);
+            if (p->lex.current.type == TOK_RBRACE) { lexer_next(&p->lex); break; }
+            lexer_next(&p->lex);   // 吃掉 ','
+            if (p->lex.current.type == TOK_RBRACE) { lexer_next(&p->lex); break; }
+            continue;
+        }
+
         // 解析值
         Ast* value = parse_expression(p);
         
@@ -1332,13 +1381,27 @@ Ast* parse_call(Parser* p, Ast* callee) {
     lexer_next(&p->lex); // 消费 '('
     
     if (p->lex.current.type != TOK_RPAREN) {
-        do {
+        while (1) {
+            // ★ 2026-11-07：空实参（`f(, 2)` / `f(1, , 2)`）此前报「期望表达式」+「期望 ')'」✗
+            //   这里定向报一次，吃掉多余逗号后**继续解析后续实参**（只留这一条 ✓）
+            if (p->lex.current.type == TOK_COMMA) {
+                error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                    "实参不能为空（多写了一个逗号）—— 逗号之间必须写表达式");
+                lexer_next(&p->lex);   // 吃掉多余的 ','
+                if (p->lex.current.type == TOK_RPAREN) break;
+                continue;
+            }
             Ast* arg = parse_call_arg(p, 1);   // 裸标识符调用：允许命名实参（语义阶段判定）
             ast_list_add(&ast->u.call.args, arg);
-        } while (match(p, TOK_COMMA) && p->lex.current.type != TOK_RPAREN);
-        // ⚠ 上面条件里的 `&& p->lex.current.type != TOK_RPAREN` 就是**尾随逗号**支持（B3）：
-        //   `f(a, b,)` 最后一个逗号之后直接是 ')' ⇒ 收尾（此前会进 parse_expression 撞 ')'，
-        //   报"期望表达式"）。`match` 已经消费掉逗号 ✓
+            if (p->lex.current.type == TOK_RPAREN) break;
+            if (p->lex.current.type == TOK_COMMA) {
+                lexer_next(&p->lex);   // 吃掉分隔 ','
+                // 尾随逗号（B3）：`f(a, b,)` 最后一个逗号之后直接是 ')' ⇒ 收尾
+                if (p->lex.current.type == TOK_RPAREN) break;
+                continue;
+            }
+            break;   // 其他情况交给下面的 consume ')' 报错 + 同步
+        }
     }
     
     if (!consume(p, TOK_RPAREN, "期望 ')'")) {
@@ -1462,9 +1525,8 @@ Ast* parse_new(Parser* p) {
     ast->u.struct_init.field_values = (Ast**)malloc(sizeof(Ast*) * capacity);
 
     if (p->lex.current.type != TOK_RPAREN) {
-        do {
+        while (1) {
             // ★ 尾随逗号（B3）：`new P(x = 1,)` —— 逗号之后直接遇到 ')' 就是收尾。
-            //   此前这里会报"期望字段名"、列号指向 ')'，同样指不到真病因（实录 B3 现象1）。
             if (p->lex.current.type == TOK_RPAREN) break;
             // 期望字段名
             // ★ 2026-11-03：位置实参（`new P(10, 20)`）此前只报一句"期望字段名"就 break，
@@ -1497,6 +1559,20 @@ Ast* parse_new(Parser* p) {
                 break;
             }
 
+            // ★ 2026-11-07：字段值缺失（`new P(x = )` / `new P(x = , y = 3)`）此前报
+            //   「期望表达式」+「期望 ')'」(+「声明语句后期望换行」) 最多 4 条 ✗。
+            //   这里定向报一次，并**继续解析后续字段**（只留这一条 ✓）
+            if (p->lex.current.type == TOK_COMMA || p->lex.current.type == TOK_RPAREN) {
+                error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                    "字段 '%s' 的初始值不能为空 —— '=' 后面必须写表达式（如 new P(x = 1)）",
+                    field_name);
+                free(field_name);
+                if (p->lex.current.type == TOK_RPAREN) break;
+                lexer_next(&p->lex);   // 吃掉 ','
+                if (p->lex.current.type == TOK_RPAREN) break;
+                continue;
+            }
+
             // 解析字段值
             Ast* field_value = parse_expression(p);
 
@@ -1512,7 +1588,15 @@ Ast* parse_new(Parser* p) {
             ast->u.struct_init.field_names[ast->u.struct_init.field_count] = field_name;
             ast->u.struct_init.field_values[ast->u.struct_init.field_count] = field_value;
             ast->u.struct_init.field_count++;
-        } while (match(p, TOK_COMMA));
+
+            if (p->lex.current.type == TOK_RPAREN) break;
+            if (p->lex.current.type == TOK_COMMA) {
+                lexer_next(&p->lex);   // 吃掉分隔 ','
+                if (p->lex.current.type == TOK_RPAREN) break;   // 尾随逗号（合法）
+                continue;
+            }
+            break;   // 其他情况交给下面 consume ')' 报错 + 同步
+        }
     }
 
     consume(p, TOK_RPAREN, "期望 ')'");
