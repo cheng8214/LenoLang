@@ -67,6 +67,9 @@
                         char* member_name = ast->u.enum_def.member_names[i];
                         Symbol* member_sym = scope_define(s->current, member_name, kind);
                         if (member_sym) {
+                            // 标记为 enum 成员：裸写 `red` 时 visit_var 会定向报"请写 Color.red"
+                            // （codegen 没给这个槽赋值 ⇒ 放行会静默得到 null）
+                            member_sym->is_enum_member = 1;
                             member_sym->type = type_new(TYPE_ENUM);
                             member_sym->type->struct_name = strdup(ast->u.enum_def.name);
                         }
@@ -101,13 +104,21 @@
                 // 值别名：alias X = EnumName.member
                 // 对表达式做语义分析（会将 AST_MODULE_ACCESS 转换为 AST_NUM）
                 visit(s, ast->u.alias.expr);
-                // 注册为全局变量
-                Symbol* sym = scope_define(s->current, ast->u.alias.name, SYM_GLOBAL);
-                if (sym) {
-                    sym->type = type_new(TYPE_INT);
-                    ast->u.alias.ref.kind = sym->kind;
-                    ast->u.alias.ref.index = sym->index;
-                    ast->u.alias.ref.name = strdup(sym->name);
+                // ★ 2026-11-07：重复的值别名（`alias R = Color.red` 写两遍）此前**零诊断** ✗
+                //   scope_define 重名返回 NULL ⇒ 后写的整条被静默丢弃（实测仍打印第一条的值）。
+                if (ast->u.alias.name && scope_resolve_local(s->current, ast->u.alias.name)) {
+                    error_add_at_fmt(ERR_DUPLICATE_VAR, ast->line, ast->column,
+                        "值别名 '%s' 重复定义（已有同名符号）—— 后写的不会生效；请改名或删掉一个",
+                        ast->u.alias.name);
+                } else {
+                    // 注册为全局变量
+                    Symbol* sym = scope_define(s->current, ast->u.alias.name, SYM_GLOBAL);
+                    if (sym) {
+                        sym->type = type_new(TYPE_INT);
+                        ast->u.alias.ref.kind = sym->kind;
+                        ast->u.alias.ref.index = sym->index;
+                        ast->u.alias.ref.name = strdup(sym->name);
+                    }
                 }
             } else if (ast->u.alias.type) {
                 // 类型别名：alias EventHandler = func(Event):bool

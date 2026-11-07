@@ -750,6 +750,7 @@ int parser_reject_module_qualified_type(Parser* p, TypeInfo* t) {
 
 Ast* parse_alias_stmt(Parser* p) {
     int line = p->lex.current.line;
+    int column = p->lex.current.column;
     lexer_next(&p->lex); // 跳过 alias
 
     if (p->lex.current.type != TOK_IDENT) {
@@ -876,6 +877,15 @@ Ast* parse_alias_stmt(Parser* p) {
     }
 
     // 泛型别名：NOTE: 类型体中的泛型参数名在语义分析阶段转换为 TYPE_GENERIC_PARAM
+    // ★ 2026-11-06：重复的类型别名此前**零诊断** ✗ —— parser 的 find_alias 从头遍历、
+    //   永远返回**第一次**的定义 ⇒ 第二次 `alias Num = string` 既不生效也无人提示。
+    //   （值别名 `alias X = Enum.member` 不走别名表，这里只管类型别名 ✓）
+    if (find_alias(p, name)) {
+        error_add_at_fmt(ERR_DUPLICATE_VAR, line, column,
+            "类型别名 '%s' 重复定义 —— 编译器只认第一次的定义，后写的**不会生效**；"
+            "请改名或删掉一个", name);
+    }
+
     Ast* ast = ast_new(AST_ALIAS, line);
     ast->u.alias.name = name;
     ast->u.alias.type = type;
@@ -1199,6 +1209,24 @@ Ast* parse_destruct_decl(Parser* p, TypeInfo* base_type, int is_const, int line,
     if (slot_count != name_count) {
         error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
                          "解构槽位数量(%d)与变量数量(%d)不匹配", slot_count, name_count);
+        // ★ 2026-11-07 修崩溃：此前报完错仍然建 AST（slot_count=2 / names 只有 1 项），
+        //   ast_free 按 slot_count 遍历 names ⇒ 越界读到垃圾指针 ⇒ SIGSEGV（实测 exit 0x0B）。
+        //   这类"结构不一致"的 AST 绝不能流到后面 ⇒ 释放全部临时数组后返回 NULL。
+        for (int i = 0; i < slot_count; i++) type_free(slot_types[i]);
+        free(slot_types);
+        if (slot_keys) {
+            for (int i = 0; i < slot_count; i++) free(slot_keys[i]);
+            free(slot_keys);
+        }
+        if (slot_defaults) {
+            for (int i = 0; i < slot_count; i++) {
+                if (slot_defaults[i]) ast_free(slot_defaults[i]);
+            }
+            free(slot_defaults);
+        }
+        for (int i = 0; i < name_count; i++) free(names[i]);
+        free(names);
+        return NULL;
     }
 
     // 解析 = expr
@@ -1944,7 +1972,7 @@ Ast* parse_expression_stmt(Parser* p) {
                 if (left_targets[0]->kind != AST_VAR) {
                     Ast* tgt = left_targets[0];
                     if (tgt->kind != AST_INDEX) {
-                        error_add_at_fmt(ERR_SYNTAX, line, p->lex.current.column,
+                        error_add_at_fmt(ERR_SYNTAX, tgt->line, tgt->column,
                             "复合赋值的目标只能是变量或索引（如 a += 1 / arr[i] += 1）");
                         free_assign_targets(left_targets, left_count);
                         return NULL;
@@ -2080,8 +2108,16 @@ normal_parse:
     Ast* expr = parse_expression(p);
     
     // 如果表达式解析失败，消费当前 token 避免无限循环
+    // ★ 2026-11-06：**只在"词法位置没有前进"时才吞** —— 否则会吞掉块结束的 '}'，
+    //   级联出一条完全错误的「块没有闭合」（实测：`f() = 2` 已经消费了整个赋值，
+    //   当前 token 是 '}'，旧代码无条件 lexer_next ⇒ '}' 被吃掉 ⇒ main 块吃到 EOF ✗）。
+    //   用 save_lex（语句起点）比较位置：没前进 + 当前不是 '}'/'EOF' ⇒ 才吞一个。
     if (expr == NULL) {
-        if (p->lex.current.type != TOK_EOF) {
+        int advanced = (p->lex.current.type != save_lex.current.type ||
+                        p->lex.current.line != save_lex.current.line ||
+                        p->lex.current.column != save_lex.current.column);
+        if (!advanced && p->lex.current.type != TOK_EOF &&
+            p->lex.current.type != TOK_RBRACE) {
             lexer_next(&p->lex);
         }
         return NULL;
@@ -2265,10 +2301,12 @@ Ast* parse_struct_stmt(Parser* p) {
     // 动态数组存储关联常量
     char** const_names = NULL;
     Ast** const_values = NULL;
+    int* const_lines = NULL;        // ★ 每个常量的声明行（与字段重名的诊断用，2026-11-07）
     int const_count = 0;
     int const_capacity = 8;
     const_names = (char**)malloc(sizeof(char*) * const_capacity);
     const_values = (Ast**)malloc(sizeof(Ast*) * const_capacity);
+    const_lines = (int*)calloc(const_capacity, sizeof(int));
 
     // 解析字段列表和方法
     while (p->lex.current.type != TOK_RBRACE && p->lex.current.type != TOK_EOF) {
@@ -2346,7 +2384,19 @@ Ast* parse_struct_stmt(Parser* p) {
 
             // 支持逗号分隔多个常量：const A = 1, B = 2
             do {
+                int cname_line = p->lex.current.line;
+                int cname_col = p->lex.current.column;
                 char* cname = copy_string(p->lex.current.text, p->lex.current.len);
+                // ★ 2026-11-07：关联常量重名（`const int X = 1` 后再写 `const int X = 2`）
+                //   此前**零诊断**，后写的值静默覆盖先写的（实测 P.X 还是 1）。
+                for (int ci = 0; ci < const_count; ci++) {
+                    if (const_names[ci] && strcmp(const_names[ci], cname) == 0) {
+                        error_add_at_fmt(ERR_SEMANTIC, cname_line, cname_col,
+                            "struct '%s' 的关联常量 '%s' 重复定义 —— 后写的值会覆盖先写的；"
+                            "请改名或删掉一个", struct_name, cname);
+                        break;
+                    }
+                }
                 lexer_next(&p->lex);
 
                 // 期望 =
@@ -2373,10 +2423,12 @@ Ast* parse_struct_stmt(Parser* p) {
                     const_capacity *= 2;
                     const_names = (char**)realloc(const_names, sizeof(char*) * const_capacity);
                     const_values = (Ast**)realloc(const_values, sizeof(Ast*) * const_capacity);
+                    const_lines = (int*)realloc(const_lines, sizeof(int) * const_capacity);
                 }
 
                 const_names[const_count] = cname;
                 const_values[const_count] = cexpr;
+                const_lines[const_count] = cname_line;
                 const_count++;
             } while (match(p, TOK_COMMA));
 
@@ -2635,9 +2687,31 @@ Ast* parse_struct_stmt(Parser* p) {
         }
         free(const_names);
         free(const_values);
+        free(const_lines);
         free(struct_name);
         return NULL;
     }
+
+    // ★ 2026-11-07：关联常量与**字段**同名 —— 实测 `struct P { int x = 0; const int x = 1 }`
+    //   访问 `p.x` 会**静默返回常量的 1**（不是字段的 0）⇒ 数据读错且零提示 ✗
+    //   两个名字空间在这里会撞车，直接报错并让用户改名。
+    for (int ci = 0; ci < const_count; ci++) {
+        for (int fi = 0; fi < field_count; fi++) {
+            if (const_names[ci] && field_names[fi] &&
+                strcmp(const_names[ci], field_names[fi]) == 0) {
+                int cline = const_lines[ci] > 0 ? const_lines[ci] : line;
+                int fline = (field_lines && field_lines[fi] > 0) ? field_lines[fi] : line;
+                error_add_at_fmt(ERR_SEMANTIC, cline, 1,
+                    "struct '%s' 的关联常量 '%s'（第 %d 行）与字段 '%s'（第 %d 行）同名 —— "
+                    "访问 `实例.%s` 会**静默取到常量的值**（不是字段），请改名",
+                    struct_name, const_names[ci], cline, field_names[fi], fline,
+                    const_names[ci]);
+                break;
+            }
+        }
+    }
+    free(const_lines);
+    const_lines = NULL;
 
     // 创建 struct 定义 AST 节点
     Ast* ast = ast_new(AST_STRUCT_DEF, line);

@@ -171,11 +171,52 @@ Ast* parse_try_stmt(Parser* p) {
         // 如果有左括号，需要匹配右括号
         if (has_paren) {
             if (p->lex.current.type != TOK_RPAREN) {
-                error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "catch 变量后缺少右括号 )");
-                free(catch_var);
-                return NULL;
+                // ★ 2026-11-06：`catch (int e)` / `catch (Error e)` 原来只报
+                //   「catch 变量后缺少右括号」并 return NULL ⇒ 后面又级联「期望换行 / 期望表达式」，
+                //   完全指不到真因（Leno 的 catch 变量**不带类型**，统一是异常对象）。
+                //   现在点名"不支持类型标注"，并尽量把真正的变量名捞回来（catch 体里对它的引用照常有效）。
+                int type_anno = 0;
+                if (catch_var && p->lex.current.type == TOK_IDENT) {
+                    // `catch (Error err)`：先吃到的 "Error" 其实是类型名，后一个才是变量
+                    type_anno = 1;
+                    free(catch_var);
+                    catch_var = copy_string(p->lex.current.text, p->lex.current.len);
+                    lexer_next(&p->lex);
+                } else if (is_type_keyword(p->lex.current.type)) {
+                    // `catch (int err)`
+                    type_anno = 1;
+                    lexer_next(&p->lex);   // 跳过类型名
+                    if (p->lex.current.type == TOK_IDENT) {
+                        catch_var = copy_string(p->lex.current.text, p->lex.current.len);
+                        lexer_next(&p->lex);
+                    }
+                }
+
+                if (type_anno) {
+                    error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                        "catch 括号里只接受**一个变量名**（`catch e` / `catch (e)`）—— "
+                        "不支持类型标注（如 `catch (int e)` / `catch (Error err)`）；"
+                        "异常对象统一带 .msg / .file / .line / .stack 属性");
+                } else {
+                    error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                        "catch 变量后缺少右括号 )");
+                }
+                // 恢复：吃掉括号内剩余 token（含配对的 ')'），避免一条错变三条
+                {
+                    int depth = 0;
+                    while (p->lex.current.type != TOK_EOF) {
+                        if (p->lex.current.type == TOK_LPAREN) {
+                            depth++;
+                        } else if (p->lex.current.type == TOK_RPAREN) {
+                            if (depth == 0) { lexer_next(&p->lex); break; }
+                            depth--;
+                        }
+                        lexer_next(&p->lex);
+                    }
+                }
+            } else {
+                lexer_next(&p->lex); // )
             }
-            lexer_next(&p->lex); // )
         }
         
         // catch 体必须用大括号包裹

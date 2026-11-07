@@ -887,6 +887,41 @@ Ast* parse_array(Parser* p) {
     return ast;
 }
 
+// 字典字面量键比较（2026-11-06）：只处理字面量键 —— 字符串 / 整数 / 大整数
+//   （浮点键已在 parse_dict 里拒绝；变量/表达式键不存在）。返回 1 = 同一个键。
+static int ast_dict_key_same(const Ast* a, const Ast* b) {
+    if (!a || !b || a->kind != b->kind) return 0;
+    if (a->kind == AST_STRING) {
+        if (!a->u.string.value || !b->u.string.value) return 0;
+        return strcmp(a->u.string.value, b->u.string.value) == 0;
+    }
+    if (a->kind == AST_NUM) {
+        if (a->u.num.is_bigint || b->u.num.is_bigint) {
+            return a->u.num.bigint_str && b->u.num.bigint_str &&
+                   strcmp(a->u.num.bigint_str, b->u.num.bigint_str) == 0;
+        }
+        if (a->u.num.is_float || b->u.num.is_float) return 0;
+        return a->u.num.value == b->u.num.value;
+    }
+    return 0;
+}
+
+// 把键转成诊断里可读的文本（重复键报错用）
+static void ast_dict_key_display(const Ast* k, char* buf, int cap) {
+    if (!buf || cap <= 0) return;
+    buf[0] = '\0';
+    if (!k) return;
+    if (k->kind == AST_STRING && k->u.string.value) {
+        snprintf(buf, (size_t)cap, "%s", k->u.string.value);
+    } else if (k->kind == AST_NUM) {
+        if (k->u.num.is_bigint && k->u.num.bigint_str) {
+            snprintf(buf, (size_t)cap, "%s", k->u.num.bigint_str);
+        } else {
+            snprintf(buf, (size_t)cap, "%lld", (long long)k->u.num.value);
+        }
+    }
+}
+
 // 解析字典字面量 {"key": value, "key2": value2}
 Ast* parse_dict(Parser* p) {
     int line = p->lex.current.line;
@@ -907,6 +942,8 @@ Ast* parse_dict(Parser* p) {
     // 解析字典键值对
     while (1) {
         // 键: 字符串、标识符(转为字符串)、整数
+        int key_line = p->lex.current.line;
+        int key_col = p->lex.current.column;
         Ast* key_ast = NULL;
         if (p->lex.current.type == TOK_STRING) {
             int key_len;
@@ -929,8 +966,6 @@ Ast* parse_dict(Parser* p) {
             //   下面的报错文案（"…或整数"）与 docs/module_dicts.md（"字典的键必须是字符串"）三处
             //   口径一致，而实现此前把 TOK_NUM **整份**交给 parse_number ⇒ `{1.5: v}` **静默编译通过**
             //   （实测：examples/验证/error_column_tests/test16_dict_key.leno 的期望错误不再出现）。
-            int key_line = p->lex.current.line;
-            int key_col = p->lex.current.column;
             key_ast = parse_number(p);
             if (key_ast && key_ast->kind == AST_NUM && key_ast->u.num.is_float) {
                 error_add_at_fmt(ERR_SYNTAX, key_line, key_col,
@@ -962,6 +997,23 @@ Ast* parse_dict(Parser* p) {
             break;
         }
         
+        // ★ 2026-11-06：字典字面量里的重复键此前**零诊断** ✗
+        //   `{"a": 1, "a": 2}` 实测后写的值静默覆盖先写的（运行期只看到 2）。
+        //   只比**字面量键**（字符串 / 整数 / 大整数）—— 这正是字面量字典里仅有的键形态 ✓
+        if (key_ast) {
+            char keybuf[64];
+            ast_dict_key_display(key_ast, keybuf, sizeof(keybuf));
+            for (int ei = 0; ei < ast->u.dict.count; ei++) {
+                Ast* oldk = ast->u.dict.entries[ei].key;
+                if (ast_dict_key_same(oldk, key_ast)) {
+                    error_add_at_fmt(ERR_SEMANTIC, key_line, key_col,
+                        "字典字面量里重复的键 '%s' —— 后写的值会静默覆盖先写的；请删掉重复项",
+                        keybuf);
+                    break;
+                }
+            }
+        }
+
         // 期望 ':'
         if (!consume(p, TOK_COLON, "期望 ':'")) {
             ast_free(key_ast);
@@ -1965,7 +2017,10 @@ Ast* parse_assignment(Parser* p, Ast* left) {
     }
 
     if (left->kind != AST_VAR) {
-        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "赋值目标必须是变量");
+        // ★ 2026-11-06：落点改到**赋值目标本身**（此前用 p->lex.current，值已解析完 ⇒
+        //   报在 `}` 那一行，看不出是哪条语句）；同时把可写的形状说清。
+        error_add_at_fmt(ERR_SYNTAX, left->line, left->column,
+            "赋值目标必须是变量或索引（如 `a = 1` / `arr[0] = 1`），不能给表达式的结果赋值");
         return NULL;
     }
 

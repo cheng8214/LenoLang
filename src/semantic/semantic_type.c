@@ -1,6 +1,14 @@
 #include "semantic_internal.h"
 #include "include/module_symbol_table.h"
 
+// `+` 的合法数值操作数（int/float/bigint/enum/C 布局数值）—— 2026-11-07
+//   为什么需要：VM 的 OP_ADD 遇到非数值会**退化成"转字符串拼接"**，
+//   于是 `[1] + [2]` 的静态类型是 Array[int]、运行时却成了字符串 "[1][2]" ✗（类型系统被打破）。
+//   这个判据只用于 TOK_PLUS 的"非数值直接报错"分支，不改变其他运算符的既有口径 ✓
+static int plus_operand_is_numeric(TypeKind k) {
+    return type_is_integer_kind(k) || k == TYPE_FLOAT || k == TYPE_F32 || k == TYPE_F64;
+}
+
 // 语义错误占位（见 semantic_internal.h）：错误已报过，别让下游再报一串派生类型错误 ✓
 void semantic_poison_expr(Ast* ast) {
     if (!ast) return;
@@ -1603,6 +1611,33 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                         error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "bool 类型不能参与算术运算");
                         result = type_new(TYPE_ANY);
                     }
+                    // ★ 2026-11-07：**非数值类型之间（或数值与对象之间）的 `+`**
+                    //   此前静默通过：VM 的 OP_ADD 对非数值一律退化成"转字符串拼接"
+                    //   ⇒ `[1] + [2]` 静态类型被推导为 Array[int]，运行时却得到字符串
+                    //   "[1][2]"（len=6）—— 类型系统与实际值不一致，后患极大 ✗
+                    //   这里在编译期拦住；字符串拼接（任一侧 string）、any / 泛型 / 多返回值
+                    //   （多返回值按文档自动取第一个）仍照旧放行 ✓
+                    else if (left && right &&
+                             left->kind != TYPE_CLIB && right->kind != TYPE_CLIB &&
+                             ((left->kind != TYPE_GENERIC_PARAM &&
+                               left->kind != TYPE_MULTI_RET &&
+                               left->kind != TYPE_POISON &&
+                               !plus_operand_is_numeric(left->kind)) ||
+                              (right->kind != TYPE_GENERIC_PARAM &&
+                               right->kind != TYPE_MULTI_RET &&
+                               right->kind != TYPE_POISON &&
+                               !plus_operand_is_numeric(right->kind)))) {
+                        char lbuf[128], rbuf[128];
+                        snprintf(lbuf, sizeof(lbuf), "%s", type_to_string(left));
+                        snprintf(rbuf, sizeof(rbuf), "%s", type_to_string(right));
+                        error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                            "类型 '%s' 与 '%s' 不能相加 —— `+` 只支持数值与字符串拼接；"
+                            "数组追加元素请用 `a.add(x)`（批量可写循环），"
+                            "其它类型请用 `_str(...)` 显式转字符串",
+                            lbuf, rbuf);
+                        // 毒值：根因已报过 ⇒ 下游（声明/调用/方法查找）静默，避免级联
+                        result = type_new(TYPE_POISON);
+                    }
                     // 数值类型推导：int + int = int, int + float = float, float + float = float
                     // bigint + int/float/bigint = bigint
                     // 泛型参数：T + T = T（运行时确定具体类型）
@@ -1898,6 +1933,19 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                             error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
                                 "`in` 的右边必须是容器（Array / Dict / string），实际是 %s",
                                 type_kind_to_string(rk));
+                        }
+                        // ★ 2026-11-07：`3 in "hello"` 此前**静默恒 false** ✗
+                        //   对 string 来说 `in` 是**子串查找** ⇒ 左值必须是 string；
+                        //   左边是 int/float/对象等永远找不到（实测 3 in "hello" = false）。
+                        if (rk == TYPE_STRING && left &&
+                            left->kind != TYPE_STRING &&
+                            left->kind != TYPE_ANY && left->kind != TYPE_UNKNOWN &&
+                            left->kind != TYPE_INFER && left->kind != TYPE_POISON &&
+                            left->kind != TYPE_MULTI_RET) {
+                            error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                                "`in` 对 string 是**子串查找**，左边必须是 string（实际是 %s）"
+                                "—— 否则结果恒为 false；想找数字/字符请先转成字符串（如 `_str(x) in s`）",
+                                type_kind_to_string(left->kind));
                         }
                         // ⚠ 2026-10-24：**不查"左边与元素/键类型"**（曾试过，回退了）。
                         //   test_dict_int_keys:130 里有 `"5" in dict[int, ...]` —— 元素/键类型

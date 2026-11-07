@@ -1,0 +1,319 @@
+// test_diag_dict_alias_assign_for.leno —— 字典/别名/赋值/for 步进的一批静默坑（2026-11-06）
+//
+// ① 字典字面量重复键：`{"a": 1, "a": 2}` 后写的值静默覆盖先写的（零诊断）
+// ② 重复的类型别名：`alias Num = int` 后再写 `alias Num = string`，
+//    parser 的 find_alias 永远返回**第一次**的定义 ⇒ 第二次完全不生效且无提示
+// ③ 给表达式结果赋值（`f() = 2`）此前除了正确的主错误，还级联出一条**完全错误**的
+//    「块没有闭合」 —— 因为错误恢复无条件吞掉了一个 token，把块结束的 `}` 吃掉了
+// ④ `for 0:5:0`（步进 0）此前零诊断：VM 把它当空循环 ⇒ 一次都不执行
+// ⑤ `catch (int e)` / `catch (Error e)`：此前报误导性的「catch 变量后缺少右括号」，
+//    再级联「声明语句后期望换行 / 期望表达式」；现在点名"不支持类型标注"且只报一条
+// ⑥ 解构槽位数量与变量数量不匹配：此前报完错仍建 AST ⇒ ast_free 按下标越界 ⇒ **编译器崩溃**
+// ⑦ 重复的值别名（`alias R = Color.red` 写两遍）：后写的被静默丢弃
+// ⑧ 非数值类型的 `+`（如 `[1] + [2]`）：VM 会静默退化成字符串拼接，而静态类型仍算成
+//    Array[int] ⇒ 类型系统与运行期实际值不一致；现在编译期直接报错
+// ⑨ 对 string 用 `in` 但左边不是 string（如 `3 in "hello"`）：此前**静默恒 false**
+// ⑩ struct 关联常量重名 / 关联常量与字段重名：此前后者会让 `p.x` 静默读到常量的值
+// ⑪ 裸写枚举成员（`enum Color { red }` 后直接写 `red`）：此前运行期静默得到 null
+// ⑫ 重复的区间 case（`case 1:3` 写两遍）：此前只查单值 case，区间完全漏检
+//
+// 配一条防误报：不同的字典键、不同的别名必须照常编译。
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_diag_dict_alias_assign_for")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ---- ① 字典字面量重复键：错误落在第二个键（第 2 行）----
+    var dupDict = dirs.join(work, "dup_dict_key.leno")
+    files.write(dupDict, @"main() {
+    Dict[string, int] d = {""a"": 1, ""a"": 2}
+    print(_str(d[""a""]))
+}
+")
+    ce.expect_error(dupDict, "字典字面量重复键 => 错误",
+        "重复的键 'a'", 2)
+
+    // ---- ①b 防误报：不同键的字典照常编译运行 ----
+    var okDict = dirs.join(work, "dict_keys_ok.leno")
+    files.write(okDict, @"main() {
+    Dict[string, int] d = {""a"": 1, ""b"": 2}
+    print(_str(d[""a""]) + ""-"" + _str(d[""b""]))
+}
+")
+    ce.expect_ok(okDict, "不同字典键（防误报）", "1-2")
+
+    // ---- ② 重复类型别名：错误落在第二个 alias（第 2 行）----
+    var dupAlias = dirs.join(work, "dup_alias.leno")
+    files.write(dupAlias, @"alias Num = int
+alias Num = string
+
+main() {
+    Num x = ""s""
+    print(x)
+}
+")
+    ce.expect_error(dupAlias, "重复类型别名 => 错误（后写的不会生效）",
+        "类型别名 'Num' 重复定义", 2)
+
+    // ---- ②b 防误报：不同名字的别名照常可用 ----
+    var okAlias = dirs.join(work, "alias_ok.leno")
+    files.write(okAlias, @"alias Num = int
+alias Text = string
+
+main() {
+    Num n = 1
+    Text s = ""hi""
+    print(s + ""-"" + _str(n))
+}
+")
+    ce.expect_ok(okAlias, "不同别名（防误报）", "hi-1")
+
+    // ---- ③ 给表达式结果赋值：只报主错误，落点在赋值目标（第 4 行），
+    //        不能再级联出「块没有闭合」----
+    var badAssign = dirs.join(work, "assign_call_result.leno")
+    files.write(badAssign, @"func f(): int { return 1 }
+
+main() {
+    f() = 2
+}
+")
+    var outAssign = ce.expect_error(badAssign, "给表达式结果赋值 => 只报主错误",
+        "赋值目标必须是变量或索引", 4)
+    ce.expect_no_warning(outAssign, "赋值错误不该级联「块没有闭合」", "块没有闭合")
+
+    // ---- ④ for 步进 0：警告（编译成功、程序不执行循环）----
+    var stepZero = dirs.join(work, "for_step_zero.leno")
+    files.write(stepZero, @"main() {
+    for 0:5:0 to i {
+        print(""x"")
+        break
+    }
+}
+")
+    ce.expect_warning(stepZero, "for 步进 0 => 警告（一次都不执行）",
+        "步进值是 **0**", 2)
+
+    // ---- ④b 防误报：正向/反向的正常步进不报 ----
+    var stepOk = dirs.join(work, "for_step_ok.leno")
+    files.write(stepOk, @"main() {
+    int n = 0
+    for 0:5:2 to i { n = n + i }
+    for 5:0:-2 to j { n = n + j }
+    print(_str(n))
+}
+")
+    var outStep = ce.expect_ok(stepOk, "正常步进（防误报）", "")
+    ce.expect_no_warning(outStep, "正常步进不该报空循环", "步进值是 **0**")
+
+    // ---- ⑤ catch 类型标注：只报一条"不支持类型标注"，不能再说"缺少右括号"或级联 ----
+    var catchType = dirs.join(work, "catch_type.leno")
+    files.write(catchType, @"main() {
+    try {
+        throw ""boom""
+    } catch (int e) {
+        print(""caught\n"")
+    }
+}
+")
+    var outCatch = ce.expect_error(catchType, "catch 类型标注 => 点名不支持",
+        "不支持类型标注", 4)
+    ce.expect_no_warning(outCatch, "catch 类型标注不该报「缺少右括号」",
+        "缺少右括号")
+    ce.expect_no_warning(outCatch, "catch 类型标注不该级联「期望表达式」",
+        "期望表达式")
+
+    // ---- ⑤b 防误报：`catch (e)` 与 `catch e` 两种合法写法照常工作 ----
+    var catchOk = dirs.join(work, "catch_ok.leno")
+    files.write(catchOk, @"main() {
+    try {
+        throw ""b1""
+    } catch (e1) {
+        print(e1.msg + ""\n"")
+    }
+    try {
+        throw ""b2""
+    } catch e2 {
+        print(e2.msg + ""\n"")
+    }
+}
+")
+    ce.expect_ok(catchOk, "catch (e) / catch e（防误报）", "b1")
+
+    // ---- ⑥ 解构槽位/变量数量不匹配：必须给出错误，且**不能崩溃**（两个方向都测）----
+    var destructMoreSlots = dirs.join(work, "destruct_more_slots.leno")
+    files.write(destructMoreSlots, @"func f(): [int, string] {
+    return 1, ""x""
+}
+
+main() {
+    var[int, string](a) = f()
+    print(_str(a))
+}
+")
+    var outD1 = ce.expect_error(destructMoreSlots, "解构槽位多于变量 => 错误（不能崩溃）",
+        "解构槽位数量(2)与变量数量(1)不匹配", 6)
+    ce.expect_no_warning(outD1, "解构槽位多于变量", "[崩溃]")
+
+    var destructMoreNames = dirs.join(work, "destruct_more_names.leno")
+    files.write(destructMoreNames, @"func f(): [int] {
+    return 1
+}
+
+main() {
+    var[int](a, b) = f()
+    print(_str(a))
+}
+")
+    var outD2 = ce.expect_error(destructMoreNames, "变量多于解构槽位 => 错误（不能崩溃）",
+        "解构槽位数量(1)与变量数量(2)不匹配", 6)
+    ce.expect_no_warning(outD2, "变量多于解构槽位", "[崩溃]")
+
+    // ---- ⑦ 重复的值别名：错误落在第二个 alias（第 3 行）----
+    var dupValueAlias = dirs.join(work, "dup_value_alias.leno")
+    files.write(dupValueAlias, @"enum Color { red }
+alias R = Color.red
+alias R = Color.red
+
+main() {
+    print(_str(R))
+}
+")
+    ce.expect_error(dupValueAlias, "重复值别名 => 错误（后写的不会生效）",
+        "值别名 'R' 重复定义", 3)
+
+    // ---- ⑧ 数组相加：不再静默变成字符串，编译期直接报错 ----
+    var arrayPlus = dirs.join(work, "array_plus.leno")
+    files.write(arrayPlus, @"main() {
+    Array[int] a = [1] + [2]
+    print(_str(a.len()))
+}
+")
+    ce.expect_error(arrayPlus, "数组 + 数组 => 编译错误（不静默转字符串）",
+        "不能相加", 2)
+
+    // ---- ⑧b 防误报：多返回值 + 数值仍按文档自动取第一个值 ----
+    var multiPlus = dirs.join(work, "multi_ret_plus.leno")
+    files.write(multiPlus, @"func f(): [int, string] {
+    return 42, ""x""
+}
+
+main() {
+    print(_str(f() + 1))
+}
+")
+    ce.expect_ok(multiPlus, "多返回值 + 数值（防误报）", "43")
+
+    // ---- ⑨ int in string：必须是"子串查找"，左边类型不对就直接报（此前恒 false）----
+    var inString = dirs.join(work, "in_string_type.leno")
+    files.write(inString, @"main() {
+    print(_str(3 in ""hello""))
+}
+")
+    ce.expect_error(inString, "int in string => 编译错误（此前恒 false）",
+        "子串查找", 2)
+
+    // ---- ⑨b 防误报：正确写法的子串查找照常工作 ----
+    var inStringOk = dirs.join(work, "in_string_ok.leno")
+    files.write(inStringOk, @"main() {
+    print(_str(""el"" in ""hello""))
+}
+")
+    ce.expect_ok(inStringOk, "string in string（防误报）", "true")
+
+    // ---- ⑩ 关联常量重名：错误落在第二个常量（第 3 行）----
+    var dupAssocConst = dirs.join(work, "dup_assoc_const.leno")
+    files.write(dupAssocConst, @"struct P {
+    const int X = 1
+    const int X = 2
+}
+
+main() { print(_str(P.X)) }
+")
+    ce.expect_error(dupAssocConst, "关联常量重名 => 错误",
+        "关联常量 'X' 重复定义", 3)
+
+    // ---- ⑩b 关联常量与字段同名：访问 p.x 会静默拿到常量值，必须报错 ----
+    var fieldConstClash = dirs.join(work, "field_const_clash.leno")
+    files.write(fieldConstClash, @"struct P {
+    int x = 0
+    const int x = 1
+}
+
+main() {
+    var p = new P()
+    print(_str(p.x))
+}
+")
+    ce.expect_error(fieldConstClash, "关联常量与字段同名 => 错误",
+        "与字段 'x'", 3)
+
+    // ---- ⑩c 防误报：不同名的关联常量 + 字段照常工作 ----
+    var assocConstOk = dirs.join(work, "assoc_const_ok.leno")
+    files.write(assocConstOk, @"struct P {
+    int x = 0
+    const int Y = 2
+}
+
+main() {
+    var p = new P()
+    print(_str(p.x) + ""-"" + _str(P.Y))
+}
+")
+    ce.expect_ok(assocConstOk, "关联常量与字段不同名（防误报）", "0-2")
+
+    // ---- ⑪ 裸写枚举成员：必须提示带限定名，不能静默给 null ----
+    var bareEnum = dirs.join(work, "bare_enum_member.leno")
+    files.write(bareEnum, @"enum Color { red }
+
+main() {
+    print(_str(red))
+}
+")
+    ce.expect_error(bareEnum, "裸写枚举成员 => 错误（此前运行期是 null）",
+        "枚举成员 'red' 不能直接当变量用", 4)
+
+    // ---- ⑪b 防误报：`Color.red` 以及枚举型变量照常可用 ----
+    var enumOk = dirs.join(work, "enum_qualified_ok.leno")
+    files.write(enumOk, @"enum Color { red; green }
+
+main() {
+    var c = Color.green
+    print(_str(Color.red) + ""-"" + _str(c))
+}
+")
+    ce.expect_ok(enumOk, "限定名枚举成员（防误报）", "0-1")
+
+    // ---- ⑫ 重复的区间 case：警告落在第二个区间（第 5 行）----
+    var dupRange = dirs.join(work, "dup_range.leno")
+    files.write(dupRange, @"main() {
+    var x = 2
+    switch x {
+        case 1:3 { print(""A\n"") }
+        case 1:3 { print(""B\n"") }
+        default { print(""D\n"") }
+    }
+}
+")
+    ce.expect_warning(dupRange, "重复区间 case => 警告（后一个永不执行）",
+        "重复的区间 case", 5)
+
+    // ---- ⑫b 防误报：重叠但不相等的区间（1:3 与 2:4）不是重复 ----
+    var overlapRange = dirs.join(work, "overlap_range.leno")
+    files.write(overlapRange, @"main() {
+    var x = 2
+    switch x {
+        case 1:3 { print(""A\n"") }
+        case 2:4 { print(""B\n"") }
+    }
+}
+")
+    var outRange = ce.expect_ok(overlapRange, "不同区间（防误报）", "A")
+    ce.expect_no_warning(outRange, "不同区间不该报重复", "重复的区间 case")
+
+    print("test_diag_dict_alias_assign_for passed")
+}

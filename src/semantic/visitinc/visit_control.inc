@@ -641,7 +641,14 @@
                 int has_hi = ast_const_int(ast->u.for_.end, &hi);
                 int has_st = ast->u.for_.step ? ast_const_int(ast->u.for_.step, &st) : 1;
                 if (has_lo && has_hi && has_st) {
-                    if (st >= 0 && lo > hi) {
+                    if (st == 0) {
+                        // ★ 2026-11-06：步进 0 此前**零诊断** —— VM 把 step==0 当"空循环"，
+                        //   于是 `for 0:5:0` 静默一次都不执行（用户以为写了循环）。
+                        warning_add_at_fmt(WARN_FOR_EMPTY_RANGE, ast->line, ast->column,
+                            "for 的步进值是 **0** ⇒ 循环**一次都不执行**（VM 直接跳过）；"
+                            "请写正数（升序）或负数（降序，如 `for %lld:%lld:-1`）",
+                            lo, hi);
+                    } else if (st > 0 && lo > hi) {
                         warning_add_at_fmt(WARN_FOR_EMPTY_RANGE, ast->line, ast->column,
                             "for %lld:%lld 是**空区间**（一次都不执行）：本语言的 for 是升序闭区间，"
                             "倒序要显式写 `for %lld:%lld:-1`",

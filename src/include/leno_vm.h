@@ -948,6 +948,11 @@ struct Symbol {
     int decl_line;
     int track_unused;
 
+    // ★ 2026-11-07：这是 **enum 成员**符号（`enum Color { red }` 里的 red）。
+    //   成员必须带限定名访问（`Color.red`）；裸写 `red` 在 codegen 里拿不到值（静默 null）。
+    //   visit_var 据此给定向报错，而不是让用户拿到 null 还以为是值。
+    int is_enum_member;
+
     // ★ 编译期专用：「该变量的**字典值类型**是在哪一行被锁定的」（2026-10-14 加）
     //   背景（写 LenoWordBuddy 时的实录）：`d` 若是**裸 `Dict`**（键值类型未指定），
     //   第一次 `d.set(k, v)` / `d[k] = v` 会把 `value_type` **静默定死**，此后第二处
