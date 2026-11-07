@@ -28,9 +28,14 @@ export func createDialogWindow(Dict style): Window {
 // 以模态方式运行窗口（pushModal + run，嵌套安全）
 // 注意：不做 popModalIfTop 兜底——win.run() 在主循环已跑时不阻塞，
 // 模态状态由事件循环在对话框关闭时自动弹出
-export func runModal(Window win, any onEvent, any onRender) {
+// 返回 bool（★ 2026-11-08）：
+//   **true = 真的阻塞跑了模态循环**（窗口关闭后才返回）；
+//   **false = 主循环已在跑**，本次只把窗口注册进去、立即返回 —— 调用方必须靠自己的状态
+//           （比如"窗口是否已打开"标志）判断，不能假设"返回 = 已关闭" ✗
+//   详见 sdl_window 的 run()：`_runLoopActive` 是模块级的，同一进程只能有一个循环。
+export func runModal(Window win, any onEvent, any onRender): bool {
     wnd.pushModal(win.getID())
-    win.run(onEvent, onRender)
+    return win.run(onEvent, onRender)
 }
 
 // 模态对话框关闭后恢复焦点到下层窗口（由事件循环在窗口销毁时调用）

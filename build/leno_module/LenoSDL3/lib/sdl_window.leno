@@ -544,11 +544,18 @@ export struct Window {
     //        ② 应用自己的"关闭"按钮走同一套收尾，而不是各写一套
     //   返回：投递是否成功（事件被禁用的环境下 SDL_PushEvent 返回 false ⇒ 调用方要能知道 ✓）
     func requestClose(): bool {
+        // ★ 2026-11-08 框架缺陷修复：**标记这是程序自己发起的关闭**
+        //   原来 requestClose 投递的事件与用户点 X 完全一样（同一个 WINDOW_CLOSE_REQUESTED），
+        //   onEvent 里分不清是谁关的 —— 于是"登录成功后关闭对话框"被当成"用户关窗"，
+        //   在 force 模式下直接 requestExit() 把整个程序退了（实测 ✗）。
+        //   现在用 `Event.isUserClose()` 区分；标记在事件被消费时清掉。
+        int wid = getID()
+        event.markSelfClose(wid)        // 登记"这是程序自己发的关闭"，供 Event.isUserClose() 判断 ✓
         Ptr[u8] e = ffi.malloc(128)                     // SDL_Event 缓冲
         for 128 to i { ffi.write_byte(e, i, 0) }        // 先清零（未用字段别带垃圾 ✓）
         SDL_WindowEvent we = SDL_WindowEvent.from_ptr(e)
         we.type = core.EventType.WINDOW_CLOSE_REQUESTED // 偏移 0（cstruct 已标注布局 ✓）
-        we.windowID = getID()                           // 偏移 16
+        we.windowID = wid                               // 偏移 16
         bool r = _lib.SDL_PushEvent(e)
         ffi.free(e)
         return r
@@ -1598,9 +1605,15 @@ export struct Window {
     //
     // ★ 不需要 addTimer 空转来"保持窗口不退出"：主循环本来就一直跑，
     //   退出只由 onEvent 返回 false（或调用 _exit）决定 ✓
-    func run(EventHandler onEvent, RenderCallback onRender) {
+    // 返回 bool：**true = 真的进了阻塞循环**（本调用期间循环跑完才返回）；
+    //            **false = 主循环已在跑**，本窗口只是被注册进去、由现有循环驱动，
+    //                    调用方拿不到"窗口关闭了"这个返回时机 ✗
+    //   ★ 2026-11-08 框架缺陷修复：原来无返回值、静默 return —— 调用方（比如从 200ms 定时器里弹窗）
+    //     会以为"返回了就是关掉了"，于是每一拍又调一次 run/runModal ⇒ 窗口和线程疯狂堆积
+    //     （实测 30 秒 814 → 4085 线程、内存 287MB → 977MB）。有了返回值，调用方能自己判断。
+    func run(EventHandler onEvent, RenderCallback onRender): bool {
         registerOnly(onEvent, onRender)
-        if _runLoopActive { return }
+        if _runLoopActive { return false }
         _runLoopActive = true
 
         // ★ 首帧前检测：SDL_SyncWindow 已在 registerOnly 中阻塞等待 OS 完成最大化，
@@ -1733,7 +1746,7 @@ export struct Window {
                     ev.uninit()
                     if _windowCount <= 0 { core.quit() }
                     _runLoopActive = false
-                    return
+                    return true          // 本调用真的跑完了整个循环 ✓
                 }
                 int wid = ev.windowID()
                 // 模态：仅栈顶窗口接收事件，其余全部跳过（含主窗口 + 下层模态）
@@ -1962,7 +1975,7 @@ export struct Window {
                 ev.uninit()
                 if _windowCount <= 0 { core.quit() }
                 _runLoopActive = false
-                return
+                return true          // 窗口全关，循环结束 ✓
             }
             // 驱动所有定时器（在事件轮询外，确保 idle 期间也能触发定时器与自动重绘）
             timer.tickAllTimers()
@@ -1986,7 +1999,7 @@ export struct Window {
                 ev.uninit()
                 if _windowCount <= 0 { core.quit() }
                 _runLoopActive = false
-                return
+                return true          // 退出清理完成，循环结束 ✓
             }
             // 事件驱动重绘：非 motion 事件/动画请求/tooltip就绪时才渲染，空闲时跳过以降低 CPU 占用。
             // 注意：纯鼠标移动(motion)不再触发整窗重绘——其光标为 OS 级、hover 变化由控件
@@ -2071,7 +2084,7 @@ export struct Window {
                         ev.uninit()
                         if _windowCount <= 0 { core.quit() }
                         _runLoopActive = false
-                        return
+                        return true          // 全部窗口销毁，循环结束 ✓
                     }
                     // 弹层捕获区：每帧渲染前清空，由展开的下拉框在 renderPopup 里重新登记
                     //   ★ 按窗口隔离：设上下文 ⇒ 只清/只登记**本窗口**那一块（别的窗口不受影响 ✓ 见 sdl_core ✓）
@@ -2192,7 +2205,7 @@ export struct Window {
                     ev.uninit()
                     if _windowCount <= 0 { core.quit() }
                     _runLoopActive = false
-                    return
+                    return true          // 程序化退出（requestExit / 托盘菜单等），循环结束 ✓
                 }
             }
         }

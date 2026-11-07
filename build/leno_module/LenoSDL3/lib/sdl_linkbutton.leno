@@ -126,14 +126,26 @@ export struct LinkButton impl Widget, Themeable {
             core.markFrameRedraw()
         }
         if ev.isMouseButtonUp() {
-            if pressed and contains(mx, my) {
+        if pressed and contains(mx, my) {
+        visited = true
+        if onClick != null { onClick() }
+        core.markFrameRedraw()
+        }
+        pressed = false
+        }
+        // ★ 2026-11-07：键盘操作。鼠标停在链接上时按 **回车 / 空格** 也能打开。
+        //   为什么不做 Tab 聚焦切换：整套控件（Button/CheckBox…）目前都没有全局焦点管理器，
+        //   给 LinkButton 单独搞一套 tab order 反而是孤岛 ⇒ 先用「悬停 + 回车/空格」这个最小可用形态 ✓
+        if hover and ev.isKeyDown() {
+            // Scancode 定义在 sdl_core（ev.scancode() 返回 int，直接比常量 ✓）
+            int sc = ev.scancode()
+            if sc == _int(_str(core.Scancode.RETURN)) or sc == _int(_str(core.Scancode.SPACE)) {
                 visited = true
                 if onClick != null { onClick() }
                 core.markFrameRedraw()
             }
-            pressed = false
         }
-    }
+        }
 
     // ==================== 渲染 ====================
     func render(Renderer r) {

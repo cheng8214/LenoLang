@@ -378,7 +378,8 @@ export func createDialogWindow(Dict style): Window { return dlg.createDialogWind
 export func createModelessDialog(Dict style): Window { return dlg.createModelessDialog(style) }
 // ⚠ `runModal` **不保证阻塞到窗口关闭**：主循环已在跑时它只注册窗口就返回（见
 //   `isRunLoopActive` 的说明）⇒ 异步路径下结果必须由按钮/关闭回调交出 ✓
-export func runModal(Window win, any onEvent, any onRender) { dlg.runModal(win, onEvent, onRender) }
+// 返回 bool：true = 真的阻塞跑完模态循环；false = 主循环已在跑、只注册了窗口（★ 2026-11-08）
+export func runModal(Window win, any onEvent, any onRender): bool { return dlg.runModal(win, onEvent, onRender) }
 
 // 主循环是否已在运行（`runModal` 是否只是个"注册"动作）
 export func isRunLoopActive(): bool { return wnd.isRunLoopActive() }

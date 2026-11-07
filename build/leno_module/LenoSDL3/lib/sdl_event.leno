@@ -56,6 +56,21 @@ export struct Event {
     // ==================== 窗口事件 ====================
 
     func isWindowClose(): bool       { return sdl3_type() == core.EventType.WINDOW_CLOSE_REQUESTED }
+
+    // ★ 2026-11-08 框架缺陷修复：区分「用户点 X」与「程序 requestClose()」
+    //   两者投递的是**同一个** WINDOW_CLOSE_REQUESTED，原来无法区分 ⇒ 应用里"登录成功后
+    //   requestClose() 关掉对话框"被当成"用户关窗"，force 模式下直接 requestExit() 退了程序 ✗
+    //   现在 requestClose 会先在 _selfCloseWids 里登记，这里据此判断来源 ✓
+    func isUserClose(): bool {
+        if not isWindowClose() { return false }
+        int wid = windowID()
+        if isSelfClose(wid) {
+            // 一次性：查完就清掉，否则下次用户真的点 X 会被误判成"程序自己关" ✗
+            clearSelfClose(wid)
+            return false
+        }
+        return true
+    }
     func isWindowResized(): bool     { return sdl3_type() == core.EventType.WINDOW_RESIZED }
     func isWindowMoved(): bool       { return sdl3_type() == core.EventType.WINDOW_MOVED }
     func isWindowMinimized(): bool   { return sdl3_type() == core.EventType.WINDOW_MINIMIZED }
@@ -183,4 +198,34 @@ export struct Event {
 // 创建事件对象
 export func createEvent(): Event {
     Event ev = new Event(); ev.init(); return ev
+}
+
+// ==================== 程序主动关窗的窗口登记（★ 2026-11-08）====================
+//   `Window.requestClose()` 会在投递事件前调 `markSelfClose(wid)`，
+//   `Event.isUserClose()` 据此区分"用户点 X"和"程序自己关"。
+//   事件被消费后由调用方 `clearSelfClose(wid)` 清掉，避免下次误判。
+//
+//   为什么放在 sdl_event 而不是 sdl_window：sdl_window 已经 import sdl_event，
+//   反过来会形成循环依赖 ✗
+var _selfCloseWids = []
+
+export func markSelfClose(int wid) {
+    if isSelfClose(wid) { return }
+    _selfCloseWids.add(wid)
+}
+
+export func clearSelfClose(int wid) {
+    for 0 : _selfCloseWids.len() - 1 to i {
+        if _selfCloseWids[i] == wid {
+            _selfCloseWids.remove(i)
+            return
+        }
+    }
+}
+
+export func isSelfClose(int wid): bool {
+    for _selfCloseWids to w {
+        if w == wid { return true }
+    }
+    return false
 }
