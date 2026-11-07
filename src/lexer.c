@@ -1169,7 +1169,11 @@ advance(lex);
             if (isxdigit(peek_next(lex))) {
                 lex->current = read_color(lex);
             } else {
-                error_add_at_fmt(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1, "意外的字符 '#'，颜色字面量需要 # 后跟十六进制数字（如 #FF0000）");
+                // ★ 2026-11-07：Python/Shell 习惯的 `# 注释` 此前只提"颜色字面量"，
+                //   完全没提"注释该写什么" ⇒ 这里把两种可能一次说清。
+                error_add_at_fmt(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1,
+                                 "意外的字符 '#' —— Leno 的注释写 `//`（单行）或 `/* … */`（块）；"
+                                 "`#` 只用于颜色字面量，后面必须紧跟十六进制数字（如 #FF0000）");
                 advance(lex);
                 lex->current = make_token(lex, TOK_ERROR);
             }

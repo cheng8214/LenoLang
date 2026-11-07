@@ -833,6 +833,14 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
             "main 函数的返回值将作为进程退出码，只能返回 int，不能返回 %s",
             type_kind_to_string(ast->u.func.return_type->kind));
     }
+    // ★ 2026-11-07：`main(int x) { … }` 此前解析层直接放弃 ⇒ 「期望表达式」+「期望 ')'」，
+    //   完全看不出"main 不能有参数" ✗。现在解析层能认出来（参数交给这里报），
+    //   命令行参数走内置 `_args()`。
+    if (is_entry_main && ast->u.func.pcnt > 0) {
+        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+            "入口函数 main 不能有参数（这里写了 %d 个）—— 命令行参数请用内置函数 `_args()` 获取",
+            ast->u.func.pcnt);
+    }
 
     // 6. 检查参数类型和返回类型中是否将 var 用作了类型参数
     for (int i = 0; i < ast->u.func.pcnt; i++) {

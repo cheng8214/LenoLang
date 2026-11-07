@@ -171,10 +171,18 @@ Ast* parse_if_stmt(Parser* p) {
     //   首条报「期望 ':'」，完全指不到"少了条件" ✗（实测还会再刷两条级联）。
     //   eif 不可能作为表达式开头（它是 else if 的简写）⇒ 见到块起止符号直接定向报错，
     //   并把这一整块跳掉，避免后续连锁。
-    if (was_eif && (p->lex.current.type == TOK_LBRACE || p->lex.current.type == TOK_RBRACE)) {
-        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
-            "eif 后面必须跟条件表达式（eif 是 else if 的简写，不能直接接 '{'）—— "
-            "例：`if a { … } eif b { … }`");
+    // ★ 2026-11-07：`if { … }`（同样漏写条件）也并进来 —— 此前首条同样是「期望 ':'」，
+    //   后跟「if 语句体必须用大括号」+「期望表达式」共 3 条 ✗。if 也不可能是字典字面量开头 ✓
+    if (p->lex.current.type == TOK_LBRACE || p->lex.current.type == TOK_RBRACE) {
+        if (was_eif) {
+            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                "eif 后面必须跟条件表达式（eif 是 else if 的简写，不能直接接 '{'）—— "
+                "例：`if a { … } eif b { … }`");
+        } else {
+            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                "if 后面必须跟条件表达式（不能直接接 '{'）—— 例：`if a { … }`；"
+                "无条件分支请直接写 `{ … }` 代码块 ✓");
+        }
         if (p->lex.current.type == TOK_LBRACE) {
             Ast* skipped = parse_block_internal(p);
             if (skipped) ast_free(skipped);
@@ -613,6 +621,18 @@ Ast* parse_if_stmt(Parser* p) {
 Ast* parse_while_stmt(Parser* p) {
     int line = p->lex.current.line;
     lexer_next(&p->lex); // while
+
+    // ★ 2026-11-07：`while { … }`（漏写条件）此前会被当成字典字面量 ⇒
+    //   「期望 ':'」+「while 循环体必须用大括号」+「期望表达式」3 条级联 ✗
+    if (p->lex.current.type == TOK_LBRACE || p->lex.current.type == TOK_RBRACE) {
+        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+            "while 后面必须跟条件表达式（不能直接接 '{'）—— 无限循环写 `while true { … }` ✓");
+        if (p->lex.current.type == TOK_LBRACE) {
+            Ast* skipped = parse_block_internal(p);
+            if (skipped) ast_free(skipped);
+        }
+        return NULL;
+    }
     
     // 让 parse_expression 自己处理括号
     // 这样可以正确解析 while (i + 1) % 100 == 0 这样的表达式
@@ -641,6 +661,18 @@ Ast* parse_while_stmt(Parser* p) {
 Ast* parse_for_stmt(Parser* p) {
     int line = p->lex.current.line;
     lexer_next(&p->lex); // for
+
+    // ★ 2026-11-07：`for { … }`（漏写范围/容器）此前被当成字典字面量 ⇒ 3 条级联 ✗
+    if (p->lex.current.type == TOK_LBRACE || p->lex.current.type == TOK_RBRACE) {
+        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+            "for 后面必须跟范围或容器表达式（不能直接接 '{'）—— "
+            "例：`for 5 to i { … }`、`for arr to x { … }` ✓");
+        if (p->lex.current.type == TOK_LBRACE) {
+            Ast* skipped = parse_block_internal(p);
+            if (skipped) ast_free(skipped);
+        }
+        return NULL;
+    }
 
     // ★ 2026-10-14：C / Java / JS 风格 `for (int i = 0; i < n; i++)` ⇒ **定向报错**
     //   判据用「括号里出现 `;`」而**不是**「见到 `(` 就报」—— 因为 `for (-5):(-1)` 这种
@@ -813,6 +845,21 @@ Ast* parse_for_stmt(Parser* p) {
 Ast* parse_switch_stmt(Parser* p) {
     int line = p->lex.current.line;
     lexer_next(&p->lex); // switch
+
+    // ★ 2026-11-07：`switch { … }`（漏写表达式）此前被当成字典字面量 ⇒
+    //   「字典键必须是字符串…」+「switch 语句体必须用大括号」+「期望表达式」3 条级联 ✗
+    //   ⚠ 只拦 '{'（不拦 '}'）：`switch` 后换行再接 '}' 仍走 parse_expression，
+    //     保留"表达式解析失败返回 NULL 不解引用"的健壮性回归路径 ✓
+    if (p->lex.current.type == TOK_LBRACE) {
+        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+            "switch 后面必须跟要匹配的表达式（不能直接接 '{'）—— "
+            "例：`switch x { case 1 { … } default { … } }` ✓");
+        if (p->lex.current.type == TOK_LBRACE) {
+            Ast* skipped = parse_block_internal(p);
+            if (skipped) ast_free(skipped);
+        }
+        return NULL;
+    }
     
     // 解析 switch 表达式
     Ast* expr = parse_expression(p);

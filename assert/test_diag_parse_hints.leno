@@ -1,0 +1,219 @@
+// test_diag_parse_hints.leno —— 解析期"指不出真因"的一批诊断（2026-11-07）
+//
+// 每个用例都是实测"报错完全看不出病因"或"零诊断"的场景：
+//   ① `main(int x)` 带参数 ⇒ 此前报「期望表达式」+「期望 ')'」两条，看不出 main 不能有参数
+//   ② `main() -> int`（Rust 风格）⇒ 此前落到表达式解析，级联一串
+//   ③ `func f() -> int` ⇒ 此前连刷 5 条级联（期望 '{' / 期望表达式 / 字典解构…）
+//   ④ `case` 落在 switch 外 ⇒ 此前只报「期望表达式」
+//   ⑤ `default` 落在 switch 外 ⇒ 同上
+//   ⑥ 跨语言关键字 class / interface / fn / pub / match ⇒ 此前落到表达式解析
+//   ⑦ `nil` / `raise` ⇒ 此前只报「未定义的变量」，看不出该写 null / throw
+//   ⑧ `x := 1`（Go 风格）⇒ 此前报「期望表达式」，列号指向 '='
+//   ⑨ `# 注释`（Python 风格）⇒ 此前只提"颜色字面量"，不提注释写法
+//   ⑩ 区间 case 部分重叠 ⇒ 此前零诊断（后一个分支部分不可达）
+//
+// 另含三条防误报：`main(1)` 作为普通调用仍按"参数过多"报；互不重叠的区间不得报；
+// 单行 `//` 注释照常工作。
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_diag_parse_hints")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ---- ① main 带参数：语义层点名（解析层不再放弃）----
+    var mainParams = dirs.join(work, "main_params.leno")
+    files.write(mainParams, @"main(int x) {
+    print(""x\n"")
+}
+")
+    ce.expect_error(mainParams, "main 带参数 => 明确指出不能有参数",
+        "入口函数 main 不能有参数", 1)
+
+    // ---- ② main() -> int：定向报错并继续解析（不再级联）----
+    var mainArrow = dirs.join(work, "main_arrow.leno")
+    files.write(mainArrow, @"main() -> int {
+    return 0
+}
+")
+    ce.expect_error(mainArrow, "main() -> int => 指向 ':' 写法",
+        "返回类型写在 ':' 后面", 1)
+
+    // ---- ③ 普通函数 -> 返回类型：一条定向错误，不再刷 5 条级联 ----
+    var funcArrow = dirs.join(work, "func_arrow.leno")
+    files.write(funcArrow, @"func f() -> int { return 1 }
+main() { print(_str(f())) }
+")
+    var outArrow = ce.expect_error(funcArrow, "func f() -> int => 定向报错",
+        "返回类型写在 ':' 后面", 1)
+    ce.expect_no_warning(outArrow, "-> 用例", "字典解构期望键名")
+
+    // ---- ④ case 落在 switch 外：定向报错并整块跳过 ----
+    var caseOutside = dirs.join(work, "case_outside.leno")
+    files.write(caseOutside, @"main() {
+    case 1 { print(""x"") }
+}
+")
+    ce.expect_error(caseOutside, "case 在 switch 外 => 定向报错",
+        "`case` 只能写在 switch 语句内部", 2)
+
+    // ---- ⑤ default 落在 switch 外 ----
+    var defaultOutside = dirs.join(work, "default_outside.leno")
+    files.write(defaultOutside, @"main() {
+    default { print(""x"") }
+}
+")
+    ce.expect_error(defaultOutside, "default 在 switch 外 => 定向报错",
+        "`default` 只能写在 switch 语句内部", 2)
+
+    // ---- ⑥ 跨语言关键字：一句点名 + 直接给 Leno 写法 ----
+    var classFile = dirs.join(work, "kw_class.leno")
+    files.write(classFile, @"class P { }
+main() { }
+")
+    ce.expect_error(classFile, "class 关键字 => 指向 struct",
+        "没有 `class`", 1)
+
+    var interfaceFile = dirs.join(work, "kw_interface.leno")
+    files.write(interfaceFile, @"interface F { }
+main() { }
+")
+    ce.expect_error(interfaceFile, "interface 关键字 => 指向 face",
+        "没有 `interface`", 1)
+
+    var fnFile = dirs.join(work, "kw_fn.leno")
+    files.write(fnFile, @"fn f(): int { return 1 }
+main() { }
+")
+    ce.expect_error(fnFile, "fn 关键字 => 指向 func", "没有 `fn`", 1)
+
+    var pubFile = dirs.join(work, "kw_pub.leno")
+    files.write(pubFile, @"pub func f(): int { return 1 }
+main() { }
+")
+    ce.expect_error(pubFile, "pub 关键字 => 指向 export / pri", "没有 `pub`", 1)
+
+    var matchFile = dirs.join(work, "kw_match.leno")
+    files.write(matchFile, @"main() {
+    var x = 1
+    match x { }
+}
+")
+    ce.expect_error(matchFile, "match 关键字 => 指向 switch", "没有 `match`", 3)
+
+    // ---- ⑦ nil / raise：未定义变量旁边给正确写法 ----
+    var nilFile = dirs.join(work, "expr_nil.leno")
+    files.write(nilFile, @"main() {
+    var a = nil
+    print(_str(a))
+}
+")
+    ce.expect_error(nilFile, "nil => 提示改 null",
+        "空值字面量是 **`null`**", 2)
+
+    var raiseFile = dirs.join(work, "stmt_raise.leno")
+    files.write(raiseFile, @"main() {
+    raise ""boom""
+}
+")
+    ce.expect_error(raiseFile, "raise => 提示改 throw",
+        "抛异常用 **`throw 表达式`**", 2)
+
+    // ---- ⑧ :=（Go 风格）----
+    var walrusFile = dirs.join(work, "stmt_walrus.leno")
+    files.write(walrusFile, @"main() {
+    x := 1
+    print(_str(x))
+}
+")
+    ce.expect_error(walrusFile, "x := 1 => 定向报错",
+        "没有 `:=`", 2)
+
+    // ---- ⑨ # 注释（Python 风格）----
+    var hashFile = dirs.join(work, "comment_hash.leno")
+    files.write(hashFile, @"# 注释
+main() { print(""x"") }
+")
+    ce.expect_error(hashFile, "# 注释 => 提示用 //",
+        "注释写 `//`", 1)
+
+    // ---- ⑩ 区间 case 部分重叠：警告（后一个分支部分不可达）----
+    var overlapFile = dirs.join(work, "range_overlap.leno")
+    files.write(overlapFile, @"main() {
+    var x = 5
+    switch x {
+        case 1:4 { print(""a"") }
+        case 3:6 { print(""b"") }
+        default { print(""c"") }
+    }
+}
+")
+    ce.expect_warning(overlapFile, "区间 1:4 与 3:6 重叠 => 警告",
+        "与第 4 行的区间重叠", 5)
+
+    // ---- ⑩b 防误报：互不重叠的区间不得报 ----
+    var noOverlap = dirs.join(work, "range_no_overlap.leno")
+    files.write(noOverlap, @"main() {
+    var x = 6
+    switch x {
+        case 1:3 { print(""a"") }
+        case 5:7 { print(""b"") }
+        default { print(""c"") }
+    }
+}
+")
+    var outNoOverlap = ce.expect_ok(noOverlap, "互不重叠的区间（防误报）", "b")
+    ce.expect_no_warning(outNoOverlap, "互不重叠的区间", "区间重叠")
+
+    // ---- ⑪ 防误报：`main(1)` 作为普通调用 ⇒ 仍报参数数量，不误判成入口定义 ----
+    var mainCall = dirs.join(work, "main_call.leno")
+    files.write(mainCall, @"func g(): int {
+    main(1)
+    return 0
+}
+main() { print(_str(g())) }
+")
+    ce.expect_error(mainCall, "main(1) 普通调用 => 参数过多",
+        "main 参数数量过多", 2)
+
+    // ---- ⑫ if / while / for / switch 漏写条件或表达式：一条定向错误，不再级联 ----
+    var ifNoCond = dirs.join(work, "if_no_cond.leno")
+    files.write(ifNoCond, @"main() {
+    if { print(""x"") }
+}
+")
+    var outIf = ce.expect_error(ifNoCond, "if 漏写条件 => 定向报错",
+        "if 后面必须跟条件表达式", 2)
+    ce.expect_no_warning(outIf, "if 漏写条件", "期望 ':'")
+
+    var whileNoCond = dirs.join(work, "while_no_cond.leno")
+    files.write(whileNoCond, @"main() {
+    while { print(""x"") }
+}
+")
+    var outWhile = ce.expect_error(whileNoCond, "while 漏写条件 => 定向报错",
+        "while 后面必须跟条件表达式", 2)
+    ce.expect_no_warning(outWhile, "while 漏写条件", "期望 ':'")
+
+    var forNoRange = dirs.join(work, "for_no_range.leno")
+    files.write(forNoRange, @"main() {
+    for { print(""x"") }
+}
+")
+    ce.expect_error(forNoRange, "for 漏写范围 => 定向报错",
+        "for 后面必须跟范围或容器表达式", 2)
+
+    var switchNoExpr = dirs.join(work, "switch_no_expr.leno")
+    files.write(switchNoExpr, @"main() {
+    switch { case 1 { } }
+}
+")
+    var outSwitch = ce.expect_error(switchNoExpr, "switch 漏写表达式 => 定向报错",
+        "switch 后面必须跟要匹配的表达式", 2)
+    ce.expect_no_warning(outSwitch, "switch 漏写表达式", "字典键必须是字符串")
+
+    print("test_diag_parse_hints passed")
+}

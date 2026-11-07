@@ -1203,6 +1203,20 @@ static void sw_check_dup_cases(Ast* sw) {
                         warning_add_at_fmt(WARN_DUPLICATE_CASE, v->line, v->column,
                             "重复的区间 case（与第 %d 行的 case 相同）—— switch 命中前面的分支后即跳出，"
                             "这个分支**永远不会执行**；删掉重复项", rseen[hit].line);
+                    } else {
+                        // ★ 2026-11-07：区间**部分重叠**此前也零诊断 ✗
+                        //   `case 1:4 { } case 3:6 { }` ⇒ 3、4 会被前一个分支先命中，
+                        //   后一个分支在这段区间内不可达。switch 区间是闭区间（`tmp >= lo && tmp <= hi`）。
+                        for (int p = 0; p < rn; p++) {
+                            if (lo <= rseen[p].hi && rseen[p].lo <= hi) {
+                                warning_add_at_fmt(WARN_OVERLAP_CASE, v->line, v->column,
+                                    "case 区间 %lld:%lld 与第 %d 行的区间重叠 —— switch 按顺序匹配，"
+                                    "重叠部分会被前面的分支先命中，后一个分支在这段区间内**永远不会执行**；"
+                                    "请把两个区间改成互不重叠，或合并成一个",
+                                    lo, hi, rseen[p].line);
+                                break;
+                            }
+                        }
                     }
                     if (rn >= rcap) {
                         rcap *= 2;
