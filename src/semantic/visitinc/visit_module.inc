@@ -2168,6 +2168,16 @@
 
         case AST_EXPORT:
             if (ast->u.export.decl) {
+                // ★ 2026-11-07：`export var x = 1` 写在**函数体内**此前**静默生效** ✗ ——
+                //   export 只是模块导出表的事，局部声明永远不会被导出；用户以为"导出了"。
+                //   报一次错后照常访问内部声明（不让下游再刷级联 ✓）。
+                if (s->current_func) {
+                    const char* fname = s->current_func->u.func.name
+                                            ? s->current_func->u.func.name : "?";
+                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                        "export 只能写在模块顶层（当前在函数 '%s' 体内）—— 局部声明不会被导出 ✗；"
+                        "去掉 export，或把声明移到模块顶层", fname);
+                }
                 visit(s, ast->u.export.decl);
                 // ★ WARN_DEFAULT_VAR_SNAPSHOT（2026-10-17）：**导出函数**的默认值引用
                 //   **可变的模块变量**时，跨模块与同模块的求值时机不同 ——

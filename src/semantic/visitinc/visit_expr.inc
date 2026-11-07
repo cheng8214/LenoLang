@@ -8,6 +8,31 @@
             break;
 
         case AST_BINOP: {
+            // ★ 2026-11-07：除数是**字面量 0** ⇒ 运行到这条必报「除零错误」（int / float 都是，
+            //   实测 `1.0 / 0.0` 也报）⇒ 编译期先提醒一次。
+            //   警告而非错误：所在分支可能永远不执行；只认字面量 0，变量/表达式一律不猜 ✓
+            if ((ast->u.binop.op == TOK_SLASH || ast->u.binop.op == TOK_MOD) &&
+                ast->u.binop.r && ast->u.binop.r->kind == AST_NUM &&
+                !ast->u.binop.r->u.num.is_bigint && ast->u.binop.r->u.num.value == 0) {
+                warning_add_at_fmt(WARN_DIV_ZERO, ast->line, ast->column,
+                    "除数/模数是字面量 0 —— 运行到这里必然报「除零错误」；"
+                    "请改成非零值，或在运算前判 0");
+            }
+
+            // ★ 2026-11-07：移位量是**负的字面量** ⇒ 运行到这条必报「移位量不能为负」
+            //   （实测 `1 << -1` 运行期报错）⇒ 编译期先提醒；变量移位量不猜 ✓
+            if ((ast->u.binop.op == TOK_SHL || ast->u.binop.op == TOK_SHR ||
+                 ast->u.binop.op == TOK_USHR) &&
+                ast->u.binop.r && ast->u.binop.r->kind == AST_UNARY &&
+                ast->u.binop.r->u.unary.op == TOK_MINUS &&
+                ast->u.binop.r->u.unary.operand &&
+                ast->u.binop.r->u.unary.operand->kind == AST_NUM &&
+                !ast->u.binop.r->u.unary.operand->u.num.is_bigint &&
+                ast->u.binop.r->u.unary.operand->u.num.value > 0) {
+                warning_add_at_fmt(WARN_NEG_SHIFT, ast->line, ast->column,
+                    "移位量是负数 —— 运行到这里必然报「移位量不能为负」；请改成非负值");
+            }
+
             // ★ 2026-10-10（A 组 ①(a)）：**`not x in arr` 的优先级陷阱** ✓
             //   ⇒ `(not x) in arr` ✗（`not x` 是 bool ⇒ 几乎恒 false ✗）。
             //   ⚠ 只在 `in` / `not in` 上查 ✗ —— `not a == b` 那种偶尔是**有意**写法

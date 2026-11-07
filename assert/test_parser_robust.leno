@@ -35,14 +35,15 @@ main() {
 ")
     ce.expect_error(p2, "switch 缺表达式", "期望表达式", 3)
 
-    // ③ switch 后直接跟 '{'（表达式解析失败后再报大括号）
+    // ③ switch 后直接跟 '{'：★ 2026-11-07 起改为定向报「缺表达式」
+    //    （旧行为是把它当字典字面量，首条报「期望 ':'」+「switch 语句体必须用大括号」级联）
     var p3 = dirs.join(work, "switch_brace.leno")
     files.write(p3, @"main() {
     switch {
     }
 }
 ")
-    ce.expect_error(p3, "switch 缺表达式 + 大括号", "switch 语句体必须用大括号", 0)
+    ce.expect_error(p3, "switch 缺表达式 + 大括号", "switch 后面必须跟要匹配的表达式", 2)
 
     // ④ 未终止字符串（旧实现 memcpy(NULL, 0)）
     var p4 = dirs.join(work, "unterminated.leno")

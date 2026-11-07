@@ -160,8 +160,15 @@ static int parse_one_anno(Parser* p, AstAnno** annos, int* n, int* cap) {
             return 0;
         }
         if (p->lex.current.type != TOK_RPAREN) {
-            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
-                "注解参数后面期望 ')'");
+            // ★ 2026-11-07：`@optkeys("a", "b")`（多参数）此前只报"期望 ')'"，
+            //   看不出"注解只收一个参数、多个值要写成数组" ✗
+            if (p->lex.current.type == TOK_COMMA) {
+                error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                    "注解只接受**一个**参数 —— 多个值请写成字符串数组（如 `@optkeys([\"a\", \"b\"])`）");
+            } else {
+                error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                    "注解参数后面期望 ')'");
+            }
             anno_free_body(&a);
             return 0;
         }
@@ -175,6 +182,28 @@ static int parse_one_anno(Parser* p, AstAnno** annos, int* n, int* cap) {
     }
     (*annos)[(*n)++] = a;
     return 1;
+}
+
+// 预读一个 token，判断当前标识符是不是"关键字形态"（而不是同名变量被赋值/调用/索引）。
+// ★ 2026-11-07：跨语言关键字提示要防误报 —— 实测 `bool match = true; … match = false`
+//   是**合法变量赋值**，若只看词面就会把 `match` 当关键字报错 ✗。
+static int ident_looks_like_keyword(Parser* p) {
+    Lexer saved = p->lex;
+    lexer_next(&p->lex);
+    LenoTokenType t = p->lex.current.type;
+    p->lex = saved;
+    error_set_column(saved.current.column);
+    switch (t) {
+        case TOK_EQ: case TOK_PLUSEQ: case TOK_MINUSEQ: case TOK_STAREQ:
+        case TOK_SLASHEQ: case TOK_MODEQ: case TOK_BITANDEQ: case TOK_BITOREQ:
+        case TOK_BITXOREQ: case TOK_SHLEQ: case TOK_SHREQ: case TOK_USHREQ:
+        case TOK_COALESCE_ASSIGN: case TOK_INC: case TOK_DEC:
+        case TOK_LPAREN: case TOK_LBRACKET: case TOK_DOT: case TOK_COMMA:
+        case TOK_SEMI: case TOK_RPAREN: case TOK_RBRACKET: case TOK_RBRACE:
+            return 0;   // 赋值 / 调用 / 索引 / 成员访问 ⇒ 是变量，不是关键字
+        default:
+            return 1;
+    }
 }
 
 Ast* parse_statement(Parser* p) {
@@ -243,6 +272,31 @@ Ast* parse_statement(Parser* p) {
             sub = "Leno **没有 `static`** ✗ —— struct 方法本来就不占实例内存、"
                   "模块级函数天然是全局的，直接写 `func 名字(参数): 返回类型 { … }` 即可；"
                   "常量写在模块顶层用 `const X = 1` ✓";
+        } else if (cur_ident_is(p, "class")) {
+            // ★ 2026-11-07：跨语言高频笔误。此前落到表达式解析，最后报的是
+            //   「声明语句后期望换行或 ';'」，完全看不出"Leno 没有 class" ✗
+            //   ⚠ 仅当后面不是赋值/调用形态时才提示（同名变量 `class = 1` 必须放行 ✓）
+            if (ident_looks_like_keyword(p)) {
+                sub = "Leno **没有 `class`** ✗ —— 值类型写 `struct 名字 { 字段 / 方法 }`，"
+                      "接口写 `face 名字 { func 方法签名 }` ✓";
+            }
+        } else if (cur_ident_is(p, "interface")) {
+            if (ident_looks_like_keyword(p)) {
+                sub = "Leno **没有 `interface`** ✗ —— 接口用 `face 名字 { func 方法() }` 声明，"
+                      "struct 用 `impl` 实现（`struct S impl F { … }`）✓";
+            }
+        } else if (cur_ident_is(p, "fn")) {
+            if (ident_looks_like_keyword(p)) {
+                sub = "Leno **没有 `fn`** ✗ —— 函数定义写 `func 名字(参数): 返回类型 { … }` ✓";
+            }
+        } else if (cur_ident_is(p, "pub")) {
+            if (ident_looks_like_keyword(p)) {
+                sub = "Leno **没有 `pub`** ✗ —— 模块级公开用 `export`，struct 内仅本类型可见用 `pri` ✓";
+            }
+        } else if (cur_ident_is(p, "match")) {
+            if (ident_looks_like_keyword(p)) {
+                sub = "Leno **没有 `match`** ✗ —— 分支匹配用 `switch 表达式 { case 值 { … } default { … } }` ✓";
+            }
         }
         if (sub) {
             int bad_line = p->lex.current.line;
@@ -252,6 +306,37 @@ Ast* parse_statement(Parser* p) {
             //   ⚠ 必须保留那个 `{` 并整块跳掉 —— 否则 `function f() {` 的 `{` 被吃掉后，
             //     函数体会退化成**顶层语句**、末尾那个 `}` 再报一条「期望表达式」✗
             //     （实测：不保留时 `let` + `function` 一个文件报 5 条而非 3 条 ✓）。
+            while (p->lex.current.type != TOK_EOF &&
+                   p->lex.current.line == bad_line &&
+                   p->lex.current.type != TOK_LBRACE) {
+                lexer_next(&p->lex);
+            }
+            if (p->lex.current.type == TOK_LBRACE) {
+                Ast* skipped_body = parse_block_internal(p);
+                if (skipped_body) ast_free(skipped_body);
+            }
+            return NULL;
+        }
+    }
+
+    // ★ 2026-11-07：`x := 1`（Go / 部分脚本语言习惯）此前落到表达式解析 ⇒
+    //   只报「期望表达式」（列号指向 '='），看不出"Leno 没有 :=" ✗。
+    //   只在**语句开头**的 `标识符 :=` 命中（`{"k": v}` 等表达式上下文不受影响 ✓）。
+    if (p->lex.current.type == TOK_IDENT) {
+        Lexer saved = p->lex;
+        lexer_next(&p->lex);
+        int is_walrus = 0;
+        if (p->lex.current.type == TOK_COLON) {
+            lexer_next(&p->lex);
+            is_walrus = (p->lex.current.type == TOK_EQ);
+        }
+        p->lex = saved;
+        error_set_column(saved.current.column);
+        if (is_walrus) {
+            int bad_line = p->lex.current.line;
+            error_add_at_fmt(ERR_SYNTAX, bad_line, p->lex.current.column,
+                "Leno **没有 `:=`** ✗ —— 声明写 `类型 名 = 值` 或 `var 名 = 值`，"
+                "已有变量赋值直接写 `名 = 值` ✓");
             while (p->lex.current.type != TOK_EOF &&
                    p->lex.current.line == bad_line &&
                    p->lex.current.type != TOK_LBRACE) {
@@ -285,6 +370,29 @@ Ast* parse_statement(Parser* p) {
         case TOK_SWITCH:
             stmt = parse_switch_stmt(p);
             break;
+
+        // case / default 落在 switch 之外：★ 2026-11-07
+        //   此前掉进 default ⇒ parse_expression_stmt ⇒ 报「期望表达式」（列号还指向 case 后面），
+        //   完全看不出"这两个词只能写在 switch 里" ✗。这里定向报错并整块跳过，避免级联。
+        case TOK_CASE:
+        case TOK_DEFAULT: {
+            int is_case = (p->lex.current.type == TOK_CASE);
+            int bad_line = p->lex.current.line;
+            error_add_at_fmt(ERR_SYNTAX, bad_line, p->lex.current.column,
+                "`%s` 只能写在 switch 语句内部 —— 当前不在任何 switch 中 ✗",
+                is_case ? "case" : "default");
+            // 跳到本行末尾（见了 `{` 就停），再整块跳过 case 体，避免再刷一串级联错
+            while (p->lex.current.type != TOK_EOF &&
+                   p->lex.current.line == bad_line &&
+                   p->lex.current.type != TOK_LBRACE) {
+                lexer_next(&p->lex);
+            }
+            if (p->lex.current.type == TOK_LBRACE) {
+                Ast* skipped_body = parse_block_internal(p);
+                if (skipped_body) ast_free(skipped_body);
+            }
+            return NULL;
+        }
 
         // 函数定义 或 函数类型变量声明（func():void v = ...）
         case TOK_FUNC: {

@@ -1620,8 +1620,19 @@ Ast* parse_func_body_and_create(Parser* p, char* name, int line, int column) {
             
             // 解析可选的默认值: 类型 名 = 默认值
             if (match(p, TOK_EQ)) {
-                // 解析默认值表达式
-                param_defaults[pcnt] = parse_expression(p);
+                // ★ 2026-11-07：默认值缺失（`func f(int a = )`）此前报「期望表达式」+「期望 ')'」✗
+                //   这里定向报一次，按"没有默认值"处理，让后面的 ')' 正常收尾（只留这一条 ✓）
+                if (p->lex.current.type == TOK_COMMA || p->lex.current.type == TOK_RPAREN) {
+                    if (params && params[pcnt]) {
+                        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                            "参数 '%s' 的默认值不能为空 —— '=' 后面必须写表达式（如 int a = 0）",
+                            params[pcnt]);
+                    }
+                    param_defaults[pcnt] = NULL;
+                } else {
+                    // 解析默认值表达式
+                    param_defaults[pcnt] = parse_expression(p);
+                }
             } else {
                 param_defaults[pcnt] = NULL;
             }
@@ -1635,9 +1646,30 @@ Ast* parse_func_body_and_create(Parser* p, char* name, int line, int column) {
     // 支持可选的返回类型注解: func test(): Array[int] { }
     // 或多返回值类型: func test(): [int, string] { }
     TypeInfo* return_type = type_new(TYPE_INFER);  // 默认为推断类型
-    
-    if (p->lex.current.type == TOK_COLON) {
+
+    // ★ 2026-11-07：`func f() -> int { … }`（Rust/Swift 风格）此前 parse_block_internal
+    //   撞上 '-' ⇒ 连刷「期望 '{'」「期望表达式」「字典解构…」等 5 条级联 ✗。
+    //   这里定向报一次错，再**按返回类型注解照常解析**（只提示不改语义，后面函数体仍能走完）。
+    int arrow_return = 0;
+    if (p->lex.current.type == TOK_MINUS) {
+        Lexer saved = p->lex;
         lexer_next(&p->lex);
+        arrow_return = (p->lex.current.type == TOK_GT);
+        p->lex = saved;
+        error_set_column(saved.current.column);
+    }
+    if (arrow_return) {
+        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+            "Leno 的返回类型写在 ':' 后面，不是 '->' —— 改成 `func 名字(参数): 返回类型 { … }` ✓");
+    }
+
+    if (p->lex.current.type == TOK_COLON || arrow_return) {
+        if (arrow_return) {
+            lexer_next(&p->lex);   // 吃掉 '-'
+            lexer_next(&p->lex);   // 吃掉 '>'
+        } else {
+            lexer_next(&p->lex);   // 吃掉 ':'
+        }
         
         // 检测多返回值类型: [T1, T2, ...] 或 {"k": T1, ...}
         if (p->lex.current.type == TOK_LBRACKET || p->lex.current.type == TOK_LBRACE) {
@@ -1787,11 +1819,20 @@ int is_entry_function_def(Parser* p) {
     // 预读：跳过 '('
     lexer_next(&p->lex);
 
-    // 检查是否是 ')'
-    if (p->lex.current.type != TOK_RPAREN) {
-        // 恢复状态
+    // ★ 2026-11-07：`main(参数) { … }` 也是入口函数定义（带参数）——此前这里见到非 ')'
+    //   就直接返回 0 ⇒ 落到表达式语句 ⇒ 报「期望表达式」+「期望 ')'」两条，看不出真因 ✗。
+    //   现在扫到匹配的 ')'，只要后面是 '{' / ':' / '->' 就认作入口函数；
+    //   参数本身由语义层报"main 不能有参数"。
+    int depth = 1;
+    while (p->lex.current.type != TOK_EOF && depth > 0) {
+        if (p->lex.current.type == TOK_LPAREN) depth++;
+        else if (p->lex.current.type == TOK_RPAREN) depth--;
+        if (depth > 0) lexer_next(&p->lex);
+    }
+    if (depth != 0) {
+        // 括号没闭合 ⇒ 不是入口函数定义
         p->lex = saved_lex;
-            error_set_column(saved_lex.current.column);  // 恢复列号
+        error_set_column(saved_lex.current.column);
         return 0;
     }
 
@@ -1804,6 +1845,15 @@ int is_entry_function_def(Parser* p) {
     //   `main()` 后面出现 ':' 只可能是入口函数的返回类型（变量调用后跟 ':' 不合法）⇒ 直接认。
     int result = (p->lex.current.type == TOK_LBRACE ||
                   p->lex.current.type == TOK_COLON);
+
+    // ★ 2026-11-07：`main() -> int { … }` 也认作入口函数（`->` 由解析层定向报错并纠正）
+    if (!result && p->lex.current.type == TOK_MINUS) {
+        Lexer tmp = p->lex;
+        lexer_next(&p->lex);
+        result = (p->lex.current.type == TOK_GT);
+        p->lex = tmp;
+        error_set_column(tmp.current.column);
+    }
 
     // 恢复状态
     p->lex = saved_lex;

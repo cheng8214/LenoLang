@@ -165,6 +165,13 @@ typedef struct {
     //   0 = 主阶段（默认 ✓，只有上面那一小段循环会临时置 1）
     int in_type_prepass;
 
+    // ★ 2026-11-07：类型别名**展开栈**（防循环引用）。
+    //   现场：`alias A = Array[A]` 后写 `A a = []` ⇒ resolve_alias_in_type 拷贝
+    //   `Array[A]` 后又递归解析元素 A ⇒ 再拷贝 ⇒ 无限递归，直接**栈溢出核心转储** ✗
+    //   展开时把别名名压栈，递归里再次遇到同名 ⇒ 报「循环引用」并毒化成 any（不再递归）。
+    char* alias_expand_stack[64];
+    int alias_expand_depth;
+
     // ---- 泛型需求推断（见上面 GenericRequirement 的说明块）----
     Ast* cur_generic_func;      // 当前正在检查的**泛型函数定义**（非泛型函数体内为 NULL）
     Ast* cur_generic_struct;    // 当前正在检查其**方法体**的泛型 struct 定义（否则为 NULL）

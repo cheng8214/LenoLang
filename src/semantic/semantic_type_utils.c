@@ -1382,6 +1382,25 @@ const char* get_similar_name_hint(Scope* scope, const char* name) {
         return hint;
     }
 
+    // ★ 2026-11-07：其它语言的"空值"写法 ⇒ 指向 Leno 的 `null`
+    //   （此前只报「未定义的变量: nil」，看不出"该写 null" ✗）
+    if (strcmp(name, "nil") == 0 || strcmp(name, "Nil") == 0 || strcmp(name, "NIL") == 0 ||
+        strcmp(name, "None") == 0 || strcmp(name, "undefined") == 0 ||
+        strcmp(name, "nullptr") == 0 || strcmp(name, "NULL") == 0) {
+        snprintf(hint, sizeof(hint),
+                 "\n  提示: Leno 的空值字面量是 **`null`** ✓（没有 nil / None / undefined）"
+                 " —— 把 `%s` 改成 `null` ✓", name);
+        return hint;
+    }
+
+    // ★ 2026-11-07：`raise "xxx"`（Python 习惯）⇒ 指向 `throw`
+    if (strcmp(name, "raise") == 0) {
+        snprintf(hint, sizeof(hint),
+                 "\n  提示: Leno 抛异常用 **`throw 表达式`** ✓（没有 `raise`）—— "
+                 "如 `throw \"出错了\"`");
+        return hint;
+    }
+
     const char* best = NULL;
     int best_dist = 3;  // 最多允许 3 个编辑距离
 

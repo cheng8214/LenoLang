@@ -166,6 +166,8 @@ void semantic_init(Semantic* s, Ast* root) {
     //   实测（2026-10-12）：漏了这一行时，**模块模式**下这个字段是垃圾非零 ⇒
     //   类型归一化整段被跳过 ⇒ 模块里写 `m.Pt` 直接报"未定义的类型: Pt"✗（入口脚本模式恰好是 0）
     s->in_type_prepass = 0;
+    // ★ 2026-11-07：类型别名展开栈 —— 同上，Semantic 是栈变量 ⇒ 漏清就是垃圾深度
+    s->alias_expand_depth = 0;
     // ⚠ 泛型需求推断（B 方案）的三个字段**必须**在这里显式清零：本函数**不是**整体 memset
     //   （Semantic 是 main.c 的栈变量）⇒ 漏了就是读栈上垃圾 ⇒ 一调 native 检查点就段错误（实测 ✗）
     s->cur_generic_func = NULL;
