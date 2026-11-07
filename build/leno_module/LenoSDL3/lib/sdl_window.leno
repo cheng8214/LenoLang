@@ -544,11 +544,18 @@ export struct Window {
     //        ② 应用自己的"关闭"按钮走同一套收尾，而不是各写一套
     //   返回：投递是否成功（事件被禁用的环境下 SDL_PushEvent 返回 false ⇒ 调用方要能知道 ✓）
     func requestClose(): bool {
+        // ★ 2026-11-08 框架缺陷修复：**标记这是程序自己发起的关闭**
+        //   原来 requestClose 投递的事件与用户点 X 完全一样（同一个 WINDOW_CLOSE_REQUESTED），
+        //   onEvent 里分不清是谁关的 —— 于是"登录成功后关闭对话框"被当成"用户关窗"，
+        //   在 force 模式下直接 requestExit() 把整个程序退了（实测 ✗）。
+        //   现在用 `Event.isUserClose()` 区分；标记在事件被消费时清掉。
+        int wid = getID()
+        event.markSelfClose(wid)        // 登记"这是程序自己发的关闭"，供 Event.isUserClose() 判断 ✓
         Ptr[u8] e = ffi.malloc(128)                     // SDL_Event 缓冲
         for 128 to i { ffi.write_byte(e, i, 0) }        // 先清零（未用字段别带垃圾 ✓）
         SDL_WindowEvent we = SDL_WindowEvent.from_ptr(e)
         we.type = core.EventType.WINDOW_CLOSE_REQUESTED // 偏移 0（cstruct 已标注布局 ✓）
-        we.windowID = getID()                           // 偏移 16
+        we.windowID = wid                               // 偏移 16
         bool r = _lib.SDL_PushEvent(e)
         ffi.free(e)
         return r
