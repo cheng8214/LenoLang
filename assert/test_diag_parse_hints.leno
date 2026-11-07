@@ -269,5 +269,37 @@ main() {
         "小数点后面必须跟数字", 2)
     ce.expect_no_warning(outDot, "数字末尾小数点", "没有方法 'print'")
 
+    // ---- ⑯ 字面量除零：运行期必报，编译期先提醒（变量/表达式不猜）----
+    // 放在**不会执行的分支**里：只验编译期警告，不触发真的除零（否则子进程 exit≠0）
+    var divZero = dirs.join(work, "div_zero.leno")
+    files.write(divZero, @"func f(int z): int {
+    if z == 0 { return 1 / 0 }
+    return z
+}
+main() { print(_str(f(2))) }
+")
+    ce.expect_warning(divZero, "1 / 0 => 字面量除零警告", "字面量 0", 2)
+
+    var modZero = dirs.join(work, "mod_zero.leno")
+    files.write(modZero, @"func f(int z): int {
+    if z == 0 { return 7 % 0 }
+    return z
+}
+main() { print(_str(f(2))) }
+")
+    ce.expect_warning(modZero, "7 % 0 => 字面量除零警告", "字面量 0", 2)
+
+    // ⑯b 防误报：非零除数 / 变量除数都不得报
+    var divOk = dirs.join(work, "div_ok.leno")
+    files.write(divOk, @"main() {
+    var z = 2
+    var a = 10 / z
+    var b = 10 / 2
+    print(_str(a + b))
+}
+")
+    var outDivOk = ce.expect_ok(divOk, "非零/变量除数（防误报）", "10")
+    ce.expect_no_warning(outDivOk, "非零/变量除数", "字面量 0")
+
     print("test_diag_parse_hints passed")
 }
