@@ -904,6 +904,42 @@
                                                                  "struct '%s' 的方法 '%s' 参数数量与 face '%s' 不匹配: 期望 %d, 实际 %d",
                                                                  ast->u.struct_def.name, mname, face_name,
                                                                  expected_params, actual_params);
+                                                    } else if (mface->methods[j].param_types) {
+                                                        // ★ 2026-11-07：跨模块也校验参数**类型**（此前只判个数）✗
+                                                        for (int pi = 0; pi < expected_params; pi++) {
+                                                            TypeKind fk = mface->methods[j].param_types[pi];
+                                                            TypeInfo* itp = ast->u.struct_def.methods[k]->u.func.param_types
+                                                                                ? ast->u.struct_def.methods[k]->u.func.param_types[pi + 1]
+                                                                                : NULL;
+                                                            if (!itp) continue;
+                                                            TypeKind ik = itp->kind;
+                                                            if (fk == TYPE_GENERIC_PARAM || ik == TYPE_GENERIC_PARAM ||
+                                                                fk == TYPE_ANY || ik == TYPE_ANY ||
+                                                                fk == TYPE_INFER || ik == TYPE_INFER) continue;
+                                                            int pmatch = (fk == ik);
+                                                            if (!pmatch &&
+                                                                ((fk == TYPE_STRUCT && ik == TYPE_CLIB) ||
+                                                                 (fk == TYPE_CLIB && ik == TYPE_STRUCT))) {
+                                                                pmatch = 1;
+                                                            }
+                                                            // 同名聚合类型：face 名在自身签名里可能仍是 TYPE_STRUCT，
+                                                            // impl 侧已归一成 TYPE_FACE ⇒ 名字相同就算同一个类型 ✓
+                                                            if (!pmatch &&
+                                                                mface->methods[j].param_struct_names &&
+                                                                mface->methods[j].param_struct_names[pi] &&
+                                                                itp->struct_name &&
+                                                                strcmp(mface->methods[j].param_struct_names[pi],
+                                                                       itp->struct_name) == 0) {
+                                                                pmatch = 1;
+                                                            }
+                                                            if (!pmatch) {
+                                                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                                         "struct '%s' 的方法 '%s' 第 %d 个参数类型与 face '%s' 不匹配: 期望 %s, 实际 %s",
+                                                                         ast->u.struct_def.name, mname, pi + 1, face_name,
+                                                                         type_kind_to_string(fk),
+                                                                         type_kind_to_string(ik));
+                                                            }
+                                                        }
                                                     }
                                                 }
                                                 break;
@@ -995,6 +1031,42 @@
                                                  "struct '%s' 的方法 '%s' 参数数量与 face '%s' 不匹配: 期望 %d, 实际 %d",
                                                  ast->u.struct_def.name, mname, face_name,
                                                  expected_params, actual_params);
+                                    } else if (fdef->methods[j].param_types) {
+                                        // ★ 2026-11-07：参数**类型**也按 face 契约校验（此前只看个数）✗
+                                        //   方法形参从下标 1 开始（0 是 self）⇒ face 第 pi 个对 impl 的 pi+1
+                                        for (int pi = 0; pi < expected_params; pi++) {
+                                            TypeInfo* ft = fdef->methods[j].param_types[pi];
+                                            TypeInfo* it = ast->u.struct_def.methods[k]->u.func.param_types
+                                                               ? ast->u.struct_def.methods[k]->u.func.param_types[pi + 1]
+                                                               : NULL;
+                                            if (!ft || !it) continue;
+                                            // 泛型参数 / any / infer 不猜（与返回类型那条同口径 ✓）
+                                            if (ft->kind == TYPE_GENERIC_PARAM || it->kind == TYPE_GENERIC_PARAM ||
+                                                ft->kind == TYPE_ANY || it->kind == TYPE_ANY ||
+                                                ft->kind == TYPE_INFER || it->kind == TYPE_INFER) continue;
+                                            // 双向兼容：只允许**互可赋值**的类型（单向放宽会把收窄放过）✓
+                                            int pmatch = type_is_compatible(ft, it) &&
+                                                         type_is_compatible(it, ft);
+                                            // face 名在 face 自身的签名里可能还没归一化成 TYPE_FACE
+                                            // （仍是 TYPE_STRUCT + 名字）⇒ 同名聚合类型视为同一个类型 ✓
+                                            if (!pmatch && ft->struct_name && it->struct_name &&
+                                                strcmp(ft->struct_name, it->struct_name) == 0 &&
+                                                ((ft->kind == TYPE_STRUCT || ft->kind == TYPE_FACE ||
+                                                  ft->kind == TYPE_ENUM || ft->kind == TYPE_CSTRUCT ||
+                                                  ft->kind == TYPE_CLIB) &&
+                                                 (it->kind == TYPE_STRUCT || it->kind == TYPE_FACE ||
+                                                  it->kind == TYPE_ENUM || it->kind == TYPE_CSTRUCT ||
+                                                  it->kind == TYPE_CLIB))) {
+                                                pmatch = 1;
+                                            }
+                                            if (!pmatch) {
+                                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                         "struct '%s' 的方法 '%s' 第 %d 个参数类型与 face '%s' 不匹配: 期望 %s, 实际 %s",
+                                                         ast->u.struct_def.name, mname, pi + 1, face_name,
+                                                         type_kind_to_string(ft->kind),
+                                                         type_kind_to_string(it->kind));
+                                            }
+                                        }
                                     }
                                 }
                                 break;
@@ -1167,6 +1239,24 @@
                     for (int i = 0; i < ast->u.face_def.method_count; i++) {
                         fdef->methods[i].name = strdup(ast->u.face_def.method_names[i]);
                         fdef->methods[i].param_count = ast->u.face_def.method_param_counts[i];
+                        // ★ 2026-11-07：face 的参数类型此前**没有存进 ObjFaceDef**（param_types 恒 NULL）
+                        //   ⇒ impl 方法的参数类型与 face 不匹配时零诊断（实测 `face m(int)` 配
+                        //   `func m(string)` 静默通过，调用靠隐式转换蒙混）✗ 现在记录下来 ✓
+                        if (ast->u.face_def.method_param_types &&
+                            ast->u.face_def.method_param_types[i] &&
+                            fdef->methods[i].param_count > 0) {
+                            int pc = fdef->methods[i].param_count;
+                            fdef->methods[i].param_types =
+                                (TypeInfo**)calloc((size_t)pc, sizeof(TypeInfo*));
+                            for (int pi = 0; pi < pc && pi < ast->u.face_def.method_param_counts[i]; pi++) {
+                                TypeInfo* src_pt = ast->u.face_def.method_param_types[i][pi];
+                                if (!src_pt) continue;
+                                fdef->methods[i].param_types[pi] = type_copy(src_pt);
+                                resolve_generic_in_type(fdef->methods[i].param_types[pi],
+                                    ast->u.face_def.type_params, ast->u.face_def.type_param_constraints,
+                                    ast->u.face_def.type_param_count);
+                            }
+                        }
                         if (ast->u.face_def.method_return_types && ast->u.face_def.method_return_types[i]) {
                             fdef->methods[i].return_type = type_copy(ast->u.face_def.method_return_types[i]);
                             resolve_generic_in_type(fdef->methods[i].return_type,

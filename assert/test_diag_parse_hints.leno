@@ -410,5 +410,29 @@ main() { print(_str(new P(a = 2).a)) }
 ")
     ce.expect_ok(annoOk, "注解字符串数组（防误报）", "2")
 
+    // ---- ⑳ face 方法参数类型必须与 impl 一致（此前只比个数，类型不符静默通过）----
+    var faceParam = dirs.join(work, "face_param_mismatch.leno")
+    files.write(faceParam, @"face F { func m(int x): int }
+struct S impl F {
+    func m(string x): int { return 1 }
+}
+main() { }
+")
+    ce.expect_error(faceParam, "face 参数类型不匹配 => 编译期报错",
+        "第 1 个参数类型与 face 'F' 不匹配", 2)
+
+    // ⑳b 防误报：参数类型一致的 impl 照常可用
+    var faceParamOk = dirs.join(work, "face_param_ok.leno")
+    files.write(faceParamOk, @"face F { func m(int x): int }
+struct S impl F {
+    func m(int x): int { return x + 1 }
+}
+main() {
+    F f = new S()
+    print(_str(f.m(5)))
+}
+")
+    ce.expect_ok(faceParamOk, "face 参数类型一致（防误报）", "6")
+
     print("test_diag_parse_hints passed")
 }
