@@ -215,5 +215,59 @@ main() { print(_str(g())) }
         "switch 后面必须跟要匹配的表达式", 2)
     ce.expect_no_warning(outSwitch, "switch 漏写表达式", "字典键必须是字符串")
 
+    // ---- ⑬ 类型别名循环引用：此前 `alias A = Array[A]` 一旦被使用就**栈溢出核心转储** ----
+    var aliasSelf = dirs.join(work, "alias_self_cycle.leno")
+    files.write(aliasSelf, @"alias A = Array[A]
+main() {
+    A a = []
+    print(_str(a.len()))
+}
+")
+    ce.expect_error(aliasSelf, "别名直接自引用 => 报循环引用（不再崩溃）",
+        "存在循环引用", 3)
+
+    var aliasIndirect = dirs.join(work, "alias_indirect_cycle.leno")
+    files.write(aliasIndirect, @"alias A = B
+alias B = A
+main() {
+    A a = null
+    print(_str(a))
+}
+")
+    ce.expect_error(aliasIndirect, "别名间接循环 => 报循环引用",
+        "存在循环引用", 4)
+
+    // ⑬b 防误报：正常的多级别名链必须照常工作
+    var aliasChain = dirs.join(work, "alias_chain.leno")
+    files.write(aliasChain, @"alias B = int
+alias A = B
+main() {
+    A x = 7
+    print(_str(x))
+}
+")
+    ce.expect_ok(aliasChain, "多级别名链（防误报）", "7")
+
+    // ---- ⑭ export 写在函数体内：此前**静默生效**（用户以为导出了）----
+    var exportInFunc = dirs.join(work, "export_in_func.leno")
+    files.write(exportInFunc, @"main() {
+    export var x = 1
+    print(_str(x))
+}
+")
+    ce.expect_error(exportInFunc, "函数体内写 export => 报只能写在模块顶层",
+        "export 只能写在模块顶层", 2)
+
+    // ---- ⑮ 数字末尾的小数点（`1.`）：此前解析成"在 int 上调方法"，报一堆误导错误 ----
+    var trailingDot = dirs.join(work, "trailing_dot.leno")
+    files.write(trailingDot, @"main() {
+    var x = 1.
+    print(_str(x))
+}
+")
+    var outDot = ce.expect_error(trailingDot, "数字末尾小数点 => 定向报错",
+        "小数点后面必须跟数字", 2)
+    ce.expect_no_warning(outDot, "数字末尾小数点", "没有方法 'print'")
+
     print("test_diag_parse_hints passed")
 }

@@ -358,6 +358,9 @@ int resolve_alias_in_type(Semantic* s, TypeInfo** type_ptr, int line) {
     if (!type_ptr || !*type_ptr) return 0;
     TypeInfo* type = *type_ptr;
     int changed = 0;
+    // ★ 2026-11-07：本函数若展开了别名，就把名字压栈；函数末尾弹出。
+    //   递归（下面的泛型实参/元素类型）里再遇到同名 ⇒ 循环引用（见下面那段）。
+    char* pushed_alias = NULL;
 
     // ★ US1（2026-10-12，见 docs/类型可见性与use逃生阀修复追踪.md）：**模块限定类型名** `m.Pt`
     //   （解析器记在 `module_qualifier` 里，见 parser_func.c 的 parse_base_type）。
@@ -408,9 +411,43 @@ int resolve_alias_in_type(Semantic* s, TypeInfo** type_ptr, int line) {
             }
             if (struct_def && struct_def->kind == SYM_TYPE && struct_def->type) {
                 // 是 alias（如 FSize = Dict[string,float]），解析为实际类型
-                type_free(type);
-                *type_ptr = type_copy(struct_def->type);
-                changed = 1;
+                // ★ 2026-11-07：先查循环引用 —— `alias A = Array[A]` 展开后会再递归解析 A
+                //   ⇒ 无限递归直接**栈溢出核心转储**（现场实测 ✗）。展开栈上已有同名 ⇒
+                //   报错并毒化成 any（报过一次就不再递归，也不让下游刷级联）。
+                int cycle = 0;
+                for (int ei = 0; ei < s->alias_expand_depth; ei++) {
+                    if (s->alias_expand_stack[ei] &&
+                        strcmp(s->alias_expand_stack[ei], type->struct_name) == 0) {
+                        cycle = 1;
+                        break;
+                    }
+                }
+                if (cycle) {
+                    error_add_at_fmt(ERR_SEMANTIC, line > 0 ? line : type->line, type->column,
+                        "类型别名 '%s' 存在循环引用（直接或间接引用了自己）—— 类型展开会无限递归，"
+                        "无法确定实际类型；请拆掉其中一个别名或换成 struct",
+                        type->struct_name);
+                    free(type->struct_name);
+                    type->struct_name = NULL;
+                    type->kind = TYPE_ANY;   // 毒化：错误已报，别再让下游级联
+                    changed = 1;
+                } else {
+                    // 先复制再释放：万一 struct_def->type 与 type 是同一对象（自引用别名），
+                    // 先 free 会变成"拷贝已释放内存"（UAF）
+                    TypeInfo* repl = type_copy(struct_def->type);
+                    if (s->alias_expand_depth < (int)(sizeof(s->alias_expand_stack) / sizeof(char*))) {
+                        pushed_alias = strdup(type->struct_name);
+                        if (pushed_alias) {
+                            s->alias_expand_stack[s->alias_expand_depth++] = pushed_alias;
+                        }
+                    }
+                    type_free(type);
+                    *type_ptr = repl;
+                    // ★ 2026-11-07：顶层别名可能仍指向另一个别名（`alias A = B`、`B = int`）⇒
+                    //   立刻再展开一层。这同时让展开栈能捕获 `A = B; B = A` 这类**间接**
+                    //   循环（只在"展开中"才算，所以不会误报正常的多层别名 ✓）。
+                    changed |= resolve_alias_in_type(s, type_ptr, line);
+                }
             } else if (struct_def && struct_def->type && struct_def->type->kind == TYPE_CSTRUCT) {
                 type->kind = TYPE_CSTRUCT;
                 changed = 1;
@@ -444,6 +481,11 @@ int resolve_alias_in_type(Semantic* s, TypeInfo** type_ptr, int line) {
         for (int i = 0; i < t->param_count; i++) {
             changed |= resolve_alias_in_type(s, &t->param_types[i], line);
         }
+    }
+    // 展开结束 ⇒ 把本次压栈的别名弹掉（循环引用只在"展开中"才算，定义完再引用是合法的 ✓）
+    if (pushed_alias) {
+        s->alias_expand_depth--;
+        free(pushed_alias);
     }
     return changed;
 }

@@ -569,6 +569,20 @@ static Token read_number(Lexer* lex) {
         }
     }
 
+    // ★ 2026-11-07：`1.`（小数点后没数字）此前被切成数字 `1` + `.`，解析成"在 int 上调方法"⇒
+    //   报「变量 'x' 在初始化前使用」+「类型 'int' 没有方法 'print'」两条**完全指不到真因** ✗。
+    //   只在 `.` 后面**不是标识符**时拦（`1._str()` 这类"数字字面量上调方法"必须放行 ✓）；
+    //   吞掉 '.' 并标记为 float ⇒ strtod("1.") = 1.0，token 流回到正轨（只留这一条错误 ✓）。
+    if (!is_hex && !is_bin && peek(lex) == '.' && !isdigit(peek_next(lex))) {
+        char next_ch = peek_next(lex);
+        if (!is_ident_char(next_ch)) {
+            error_add_at_fmt(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1,
+                             "小数点后面必须跟数字（`1.` 不是合法数字）—— 写 `1.0`");
+            is_float = 1;
+            advance(lex);   // 吃掉 '.'，避免后面再刷"int 没有方法"的级联错
+        }
+    }
+
     // ★ 科学计数法（2026-10-12 支持）：1e10 / 1.0e10 / 1.5e-3 / 2E+8
     //   **为什么补**：enum 成员值那条路**本来就吃**（const 文本求值器交给 strtod ⇒
     //   `enum E { X = 1e10 }` 算得 10000000000 ✓），可普通表达式走词法却把 `1e10` 切成
