@@ -160,8 +160,15 @@ static int parse_one_anno(Parser* p, AstAnno** annos, int* n, int* cap) {
             return 0;
         }
         if (p->lex.current.type != TOK_RPAREN) {
-            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
-                "注解参数后面期望 ')'");
+            // ★ 2026-11-07：`@optkeys("a", "b")`（多参数）此前只报"期望 ')'"，
+            //   看不出"注解只收一个参数、多个值要写成数组" ✗
+            if (p->lex.current.type == TOK_COMMA) {
+                error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                    "注解只接受**一个**参数 —— 多个值请写成字符串数组（如 `@optkeys([\"a\", \"b\"])`）");
+            } else {
+                error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                    "注解参数后面期望 ')'");
+            }
             anno_free_body(&a);
             return 0;
         }

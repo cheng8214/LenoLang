@@ -370,5 +370,45 @@ main() {
 ")
     ce.expect_ok(trailingComma, "尾随逗号（防误报）", "123")
 
+    // ---- ⑱ 负数移位：运行期必报，编译期先提醒（变量移位量不猜）----
+    var negShift = dirs.join(work, "neg_shift.leno")
+    files.write(negShift, @"func f(int z): int {
+    if z == 0 { return 1 << -1 }
+    return z
+}
+main() { print(_str(f(2))) }
+")
+    ce.expect_warning(negShift, "1 << -1 => 负数移位警告", "移位量是负数", 2)
+
+    var shiftOk = dirs.join(work, "shift_ok.leno")
+    files.write(shiftOk, @"main() {
+    var k = 2
+    print(_str(1 << k))
+}
+")
+    var outShiftOk = ce.expect_ok(shiftOk, "变量移位量（防误报）", "4")
+    ce.expect_no_warning(outShiftOk, "变量移位量", "移位量是负数")
+
+    // ---- ⑲ 注解多参数：指向"要写成字符串数组"（旧文案只有「期望 ')'」）----
+    var annoMulti = dirs.join(work, "anno_multi.leno")
+    files.write(annoMulti, @"@optkeys(""a"", ""b"")
+struct P {
+    int a = 1
+}
+main() { print(_str(new P().a)) }
+")
+    ce.expect_error(annoMulti, "注解多参数 => 指向数组写法",
+        "注解只接受**一个**参数", 1)
+
+    // ⑲b 正确写法（字符串数组）照常可用
+    var annoOk = dirs.join(work, "anno_ok.leno")
+    files.write(annoOk, @"@optkeys([""a""])
+struct P {
+    int a = 1
+}
+main() { print(_str(new P(a = 2).a)) }
+")
+    ce.expect_ok(annoOk, "注解字符串数组（防误报）", "2")
+
     print("test_diag_parse_hints passed")
 }
