@@ -69,6 +69,17 @@
                                 for (int j = 0; j < stmt->u.struct_def.type_param_count; j++) {
                                     sym->struct_type_params[j] = strdup(stmt->u.struct_def.type_params[j]);
                                 }
+                                // ★ 2026-11-07：约束名一并预注册（new 时校验用）
+                                if (stmt->u.struct_def.type_param_constraints) {
+                                    sym->struct_type_param_constraints =
+                                        (char**)calloc((size_t)stmt->u.struct_def.type_param_count, sizeof(char*));
+                                    for (int j = 0; j < stmt->u.struct_def.type_param_count; j++) {
+                                        if (stmt->u.struct_def.type_param_constraints[j]) {
+                                            sym->struct_type_param_constraints[j] =
+                                                strdup(stmt->u.struct_def.type_param_constraints[j]);
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

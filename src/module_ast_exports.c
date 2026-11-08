@@ -1092,6 +1092,8 @@ static void ast_transmit_type_deps(ModuleSymbolTable* table, ModuleSymbolTable* 
         module_symbol_table_add_struct(table, nm, ss->field_count, ss->fields, ss->method_count,
                                        ss->methods, ss->is_cstruct, ss->type_param_count,
                                        ss->type_param_names);
+        module_symbol_table_set_struct_constraints(table, nm, ss->type_param_count,
+                                                   ss->type_param_constraints);
         module_symbol_table_set_struct_impls(table, nm, ss->impl_count, ss->impl_names);
         module_symbol_table_set_struct_consts(table, nm, ss->const_count, ss->const_names,
                                               ss->const_value_strs);
@@ -1797,6 +1799,10 @@ static void ast_fill_one_struct_meta(ModuleSymbolTable* table, Ast* sd) {
         // 建表（条目不存在）：add_struct 内部复制 ⇒ 随后释放本地构造 ✓
         module_symbol_table_add_struct(table, sd->u.struct_def.name, fc, fields, mc, methods, 0,
                                        sd->u.struct_def.type_param_count, sd->u.struct_def.type_params);
+        // ★ 2026-11-07：泛型约束名也要进符号表（跨模块 new 校验用）
+        module_symbol_table_set_struct_constraints(table, sd->u.struct_def.name,
+                                                   sd->u.struct_def.type_param_count,
+                                                   sd->u.struct_def.type_param_constraints);
         // ⚠ impl 必须单独设置（add_struct 的形参里没有它，见 module_symbol_table.h 的说明）：
         //   缺了它 ⇒ 语义判不出"该 struct 实现了哪个 face" ⇒ 经 face 的方法解析整条路径走不到 ✗
         module_symbol_table_set_struct_impls(table, sd->u.struct_def.name,

@@ -509,5 +509,55 @@ main() { }
         "期望 ']' 结束 Ptr 类型", 2)
     ce.expect_no_warning(outPtrArity, "Ptr 多写类型参数", "期望变量名")
 
+    // ---- ㉔ 泛型 struct 实例化的约束校验（此前 `new B[int]` 零诊断）----
+    var structConstraint = dirs.join(work, "struct_constraint_bad.leno")
+    files.write(structConstraint, @"face C { func m(): int }
+struct B[T: C] { T v }
+main() {
+    var b = new B[int](v = 1)
+    print(_str(b.v))
+}
+")
+    ce.expect_error(structConstraint, "new B[int] 违反 T: C 约束 => 编译期报错",
+        "不满足约束 'C'", 4)
+
+    // ㉔b 防误报：显式 impl 该 face 的 struct 可以实例化
+    var structConstraintOk = dirs.join(work, "struct_constraint_ok.leno")
+    files.write(structConstraintOk, @"face C { func m(): int }
+struct G impl C { func m(): int { return 1 } }
+struct B[T: C] { T v }
+main() {
+    var b = new B[G](v = new G())
+    print(_str(b.v.m()))
+}
+")
+    ce.expect_ok(structConstraintOk, "new B[G] 满足约束（防误报）", "1")
+
+    // ㉔c 跨模块：约束名随模块符号表传递，`new cm.B[int]` 同样要报
+    var cmod = dirs.join(work, "constraint_mod.leno")
+    files.write(cmod, @"export face C { func m(): int }
+export struct G impl C { func m(): int { return 1 } }
+export struct B[T: C] { T v }
+")
+    var crossBad = dirs.join(work, "struct_constraint_cross_bad.leno")
+    files.write(crossBad, @"import ""./constraint_mod.leno"" as cm
+main() {
+    var b = new cm.B[int](v = 1)
+    print(_str(b.v))
+}
+")
+    ce.expect_error(crossBad, "跨模块 new cm.B[int] 违反约束 => 报错",
+        "不满足约束 'C'", 3)
+
+    var crossOk = dirs.join(work, "struct_constraint_cross_ok.leno")
+    files.write(crossOk, @"import ""./constraint_mod.leno"" as cm
+use cm.G
+main() {
+    var b = new cm.B[G](v = new G())
+    print(""ok"")
+}
+")
+    ce.expect_ok(crossOk, "跨模块 new cm.B[G] 满足约束", "ok")
+
     print("test_diag_parse_hints passed")
 }

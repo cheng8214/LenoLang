@@ -990,6 +990,10 @@ struct Symbol {
     int* struct_field_null_default;  // 字段默认值是否为 null（用于空指针检查）
     // 泛型 struct 类型参数（仅当 struct 有泛型参数时使用）
     char** struct_type_params;       // 类型参数名数组（如 ["T", "U"]）
+    // ★ 2026-11-07：与 struct_type_params **按下标对齐**的约束名数组（如 ["Comparable", NULL]）。
+    //   用途：`new Box[int]` 时校验 `struct Box[T: Comparable]` 的约束 —— 此前 struct 侧
+    //   完全不校验（只有函数调用点校验）⇒ 违反约束静默通过、使用 face 方法才运行期报错 ✗
+    char** struct_type_param_constraints;
     int struct_type_param_count;     // 类型参数数量
     // cstruct 布局信息（仅当类型为 cstruct 时使用）
     int cstruct_size;           // cstruct 总大小

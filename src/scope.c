@@ -167,6 +167,12 @@ void scope_free(Scope* scope) {
                 }
                 free(sym->struct_type_params);
             }
+            if (sym->struct_type_param_constraints) {
+                for (int j = 0; j < sym->struct_type_param_count; j++) {
+                    free(sym->struct_type_param_constraints[j]);
+                }
+                free(sym->struct_type_param_constraints);
+            }
             if (sym->cstruct_field_offsets) free(sym->cstruct_field_offsets);
             // 释放 clib 函数签名（名称/返回类型/参数类型全部是独立副本）
             if (sym->clib_func_names) {
@@ -230,6 +236,11 @@ void symbol_release_type_meta(Symbol* sym) {
         for (int i = 0; i < sym->struct_type_param_count; i++) free(sym->struct_type_params[i]);
         free(sym->struct_type_params);
         sym->struct_type_params = NULL;
+    }
+    if (sym->struct_type_param_constraints) {
+        for (int i = 0; i < sym->struct_type_param_count; i++) free(sym->struct_type_param_constraints[i]);
+        free(sym->struct_type_param_constraints);
+        sym->struct_type_param_constraints = NULL;
     }
     sym->struct_type_param_count = 0;
     free(sym->cstruct_field_offsets);

@@ -125,6 +125,9 @@ typedef struct {
     char** impl_names;          // 实现的 face 名称数组
     int type_param_count;       // 泛型类型参数数量（如 Box[T] 的 type_param_count=1）
     char** type_param_names;    // 泛型类型参数名称数组（如 ["T"] 或 ["K","V"]）
+    // ★ 2026-11-07：与 type_param_names **按下标对齐**的约束名数组（如 ["Comparable", NULL]）。
+    //   用途：跨模块 `new m.Box[int]` 也要能校验 `struct Box[T: Comparable]` 的约束 ✓
+    char** type_param_constraints;
     // 关联常量
     char** const_names;         // 关联常量名数组
     char** const_value_strs;    // 关联常量值字符串（原始文本，导入时解析）
@@ -289,6 +292,9 @@ void module_symbol_table_set_func_optkeys(ModuleSymbolTable* table, const char* 
 
 // 添加 struct 符号
 void module_symbol_table_add_struct(ModuleSymbolTable* table, const char* name, int field_count, ModuleStructField* fields, int method_count, ModuleStructMethod* methods, int is_cstruct, int type_param_count, char** type_param_names);
+// ★ 2026-11-07：设置泛型 struct 的约束名数组（与 type_param_names 按下标对齐；NULL 项 = 无约束）
+void module_symbol_table_set_struct_constraints(ModuleSymbolTable* table, const char* name,
+                                                int count, char** constraints);
 // 登记一条跨模块 extend（2026-11-02）：目标类型 + 方法签名（内部深拷贝，调用方可立即释放临时数组）
 ModuleExtendSymbol* module_symbol_table_add_extend(ModuleSymbolTable* table,
                                                    const char* module_name,

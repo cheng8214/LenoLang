@@ -74,6 +74,16 @@ void semantic_attach_struct_fields(Symbol* sym, const ModuleStructSymbol* ssym) 
             sym->struct_type_params[i] = strdup(ssym->type_param_names[i]);
         }
     }
+    // ★ 2026-11-07：泛型约束名一并导入（`new Box[int]` 校验用；NULL 项 = 无约束）
+    if (ssym->type_param_count > 0 && ssym->type_param_constraints) {
+        sym->struct_type_param_constraints =
+            (char**)calloc((size_t)ssym->type_param_count, sizeof(char*));
+        for (int i = 0; i < ssym->type_param_count; i++) {
+            if (ssym->type_param_constraints[i]) {
+                sym->struct_type_param_constraints[i] = strdup(ssym->type_param_constraints[i]);
+            }
+        }
+    }
 }
 
 // ============================================================================
@@ -1910,6 +1920,51 @@ TypeKind semantic_constraint_builtin_kind(const char* name) {
     if (strcmp(name, "bool") == 0)   return TYPE_BOOL;
     if (strcmp(name, "bigint") == 0) return TYPE_BIGINT;
     return TYPE_UNKNOWN;
+}
+
+// ★ 2026-11-07：校验泛型 struct 的**类型实参**是否满足声明处的约束。
+//   现场：`struct Box[T: Comparable]` 写 `new Box[int](…)` 此前**零诊断** ✗
+//   （函数调用点已校验，但 struct 侧没有符号携带约束 ⇒ 这条路径一直是空的）。
+//   判据与函数调用点同口径：具体类型约束直接比 kind（int 也接受 bigint）；
+//   face 约束要求实参是**显式 impl** 该 face 的 struct；any/infer/泛型参数/face 值不猜。
+void semantic_check_struct_type_arg_constraint(const char* struct_name, const char* param_name,
+                                               const char* constraint, TypeInfo* arg,
+                                               int line, int column) {
+    if (!constraint || !arg) return;
+    if (arg->kind == TYPE_ANY || arg->kind == TYPE_INFER ||
+        arg->kind == TYPE_GENERIC_PARAM || arg->kind == TYPE_FACE ||
+        arg->kind == TYPE_POISON) {
+        return;   // 无法静态确定 / 运行期派发 ⇒ 不猜 ✓
+    }
+    TypeKind ck = semantic_constraint_builtin_kind(constraint);
+    if (ck != TYPE_UNKNOWN) {
+        int ok = (arg->kind == ck) || (ck == TYPE_INT && arg->kind == TYPE_BIGINT);
+        if (!ok) {
+            error_add_at_fmt(ERR_SEMANTIC, line, column,
+                "struct '%s' 的类型参数 '%s' 传入 '%s' 不满足约束 '%s'（该参数被约束为具体类型）",
+                struct_name ? struct_name : "?",
+                param_name ? param_name : "?",
+                type_kind_to_string(arg->kind), constraint);
+        }
+        return;
+    }
+    ObjFaceDef* fdef = face_def_find(constraint);
+    if (!fdef) return;   // 约束名不是已知 face（例如已删除/拼错由别处报）⇒ 不猜 ✓
+    if (arg->kind != TYPE_STRUCT || !arg->struct_name) {
+        error_add_at_fmt(ERR_SEMANTIC, line, column,
+            "struct '%s' 的类型参数 '%s' 传入 '%s' 不满足约束 '%s': 需要实现 face '%s'",
+            struct_name ? struct_name : "?",
+            param_name ? param_name : "?",
+            type_kind_to_string(arg->kind), constraint, constraint);
+        return;
+    }
+    ObjStructDef* sdef = struct_def_find(arg->struct_name);
+    if (sdef && !struct_implements_face(sdef, fdef)) {
+        error_add_at_fmt(ERR_SEMANTIC, line, column,
+            "struct '%s' 的类型参数 '%s' 传入 '%s' 不满足约束 '%s': 需要实现 face '%s'",
+            struct_name ? struct_name : "?", param_name ? param_name : "?",
+            arg->struct_name, constraint, constraint);
+    }
 }
 
 // ============================================================================

@@ -49,6 +49,17 @@
                                 for (int ti = 0; ti < mod_struct->type_param_count; ti++) {
                                     sym->struct_type_params[ti] = strdup(mod_struct->type_param_names[ti]);
                                 }
+                                // ★ 2026-11-07：跨模块泛型约束名一并带上（new 时校验用）
+                                if (mod_struct->type_param_constraints) {
+                                    sym->struct_type_param_constraints =
+                                        (char**)calloc((size_t)mod_struct->type_param_count, sizeof(char*));
+                                    for (int ti = 0; ti < mod_struct->type_param_count; ti++) {
+                                        if (mod_struct->type_param_constraints[ti]) {
+                                            sym->struct_type_param_constraints[ti] =
+                                                strdup(mod_struct->type_param_constraints[ti]);
+                                        }
+                                    }
+                                }
                             }
                             if (mod_struct->field_count > 0) {
                                 sym->struct_field_names = (char**)malloc(sizeof(char*) * mod_struct->field_count);
@@ -154,6 +165,23 @@
                             error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
                                              "泛型 struct '%s' 需要 %d 个类型参数，实际写了 %d 个",
                                              ast->u.struct_init.struct_name, declared_tp, given_tp);
+                        }
+                    }
+
+                    // ★ 2026-11-07：泛型实参必须满足 struct 声明处的约束
+                    //   `struct Box[T: Comparable]` + `new Box[int](…)` 此前零诊断 ✗
+                    if (sym->struct_type_param_constraints &&
+                        ast->u.struct_init.generic_type_args) {
+                        for (int gi = 0; gi < sym->struct_type_param_count &&
+                                            gi < ast->u.struct_init.generic_type_count; gi++) {
+                            if (!sym->struct_type_param_constraints[gi]) continue;
+                            TypeInfo* argt = ast->u.struct_init.generic_type_args[gi];
+                            if (!argt) continue;
+                            semantic_check_struct_type_arg_constraint(
+                                ast->u.struct_init.struct_name,
+                                sym->struct_type_params ? sym->struct_type_params[gi] : "?",
+                                sym->struct_type_param_constraints[gi], argt,
+                                ast->line, ast->column);
                         }
                     }
 

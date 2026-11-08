@@ -90,14 +90,14 @@ main() {
     var ris = rs as OrdStr
     assert_eq(ris.value, "banana")
 
-    // 3. 约束 struct 实例化
-    var box = new SortedBox[int](value=100)
-    assert_eq(box.value, 100)
+    // 3. 约束 struct 实例化（T 必须实现 Comparable ⇒ 用 OrdInt）
+    var box = new SortedBox[OrdInt](value=new OrdInt(value=100))
+    assert_eq(box.value.value, 100)
 
-    // 4. 混合约束 struct
-    var p = new Pair[string, float](key="key", val=3.14)
+    // 4. 混合约束 struct（K 无约束、V 必须是 Comparable）
+    var p = new Pair[string, OrdInt](key="key", val=new OrdInt(value=100))
     assert_eq(p.key, "key")
-    assert_eq(p.val, 3.14)
+    assert_eq(p.val.value, 100)
 
     // 5. 约束函数调用无约束函数（T 必须满足 face 约束 ⇒ 用实现了 Comparable 的 struct ✓）
     var w1 = wrap[OrdInt](new OrdInt(value=42))
@@ -105,9 +105,9 @@ main() {
     var w2 = wrap[OrdStr](new OrdStr(value="test"))
     assert_eq((w2 as OrdStr).value, "test")
 
-    // 6. 非约束泛型嵌套在约束里
-    var strBox = new SortedBox[string](value="abc")
-    assert_eq(strBox.value, "abc")
+    // 6. 非约束泛型嵌套在约束里（T 仍须实现 Comparable）
+    var strBox = new SortedBox[OrdStr](value=new OrdStr(value="abc"))
+    assert_eq(strBox.value.value, "abc")
 
     print("test_generic_constraint: ALL PASSED")
 }

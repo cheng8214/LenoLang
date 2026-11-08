@@ -142,6 +142,13 @@ static void sym_table_clear_symbols(ModuleSymbolTable* table) {
             free(table->structs[i].type_param_names[j]);
         }
         free(table->structs[i].type_param_names);
+        // ★ 2026-11-07：泛型约束名数组
+        if (table->structs[i].type_param_constraints) {
+            for (int j = 0; j < table->structs[i].type_param_count; j++) {
+                free(table->structs[i].type_param_constraints[j]);
+            }
+            free(table->structs[i].type_param_constraints);
+        }
         // 释放关联常量名数组
         for (int j = 0; j < table->structs[i].const_count; j++) {
             free(table->structs[i].const_names[j]);

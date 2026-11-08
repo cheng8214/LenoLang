@@ -6,7 +6,7 @@
 // ⚠ 版本号登记表：docs/单一事实来源与重复实现收敛.md 第七节
 //   （只覆盖符号表缓存；2026-09-16 撞过车：与上游都用 v23 但格式不同）
 #define LENOSYMC_MAGIC   0x4D59534C  // "LSYM" little-endian
-#define LENOSYMC_VERSION 0x0000002A  // v42 (2026-11-04): extend 方法段新增**聚合类型参数名**
+#define LENOSYMC_VERSION 0x0000002B  // v43 (2026-11-07): struct 符号新增**泛型约束名**（type_param_constraints）
                                      //   （has_psn + 每参数名）—— 调用方需要区分"目标 struct
                                      //   的类型参数 T"与真 struct，否则 `wrap(T x)` 的跨模块
                                      //   调用被误判成「期望 struct, 实际 int」✗
@@ -432,6 +432,15 @@ sym_cache_write_string(f, table->funcs[i].optkeys);
         fwrite(&tpc, 4, 1, f);
         for (uint32_t j = 0; j < tpc; j++) {
             sym_cache_write_string(f, ss->type_param_names[j]);
+        }
+        // ★ v43：泛型约束名（与 type_param_names 按下标对齐；空串 = 无约束）——
+        //   跨模块 `new m.Box[int]` 要按它校验 `struct Box[T: Face]` ✓
+        for (uint32_t j = 0; j < tpc; j++) {
+            if (ss->type_param_constraints && ss->type_param_constraints[j]) {
+                sym_cache_write_string(f, ss->type_param_constraints[j]);
+            } else {
+                sym_cache_write_string(f, "");
+            }
         }
         // 关联常量
         uint32_t cc = (uint32_t)ss->const_count;
@@ -939,6 +948,16 @@ static int sym_cache_deserialize(const char* cache_path, ModuleSymbolTable* tabl
         ss->type_param_names = tpc > 0 ? (char**)calloc(tpc, sizeof(char*)) : NULL;
         for (uint32_t j = 0; j < tpc; j++) {
             ss->type_param_names[j] = sym_cache_read_string(f);
+        }
+        // ★ v43：泛型约束名（空串 = 无约束）
+        ss->type_param_constraints = tpc > 0 ? (char**)calloc(tpc, sizeof(char*)) : NULL;
+        for (uint32_t j = 0; j < tpc; j++) {
+            char* cons = sym_cache_read_string(f);
+            if (cons && cons[0] != '\0') {
+                ss->type_param_constraints[j] = cons;
+            } else if (cons) {
+                free(cons);
+            }
         }
         // 关联常量
         uint32_t cc; if (fread(&cc, 4, 1, f) != 1) goto fail;

@@ -67,6 +67,7 @@ void module_symbol_table_add_struct(ModuleSymbolTable* table, const char* name, 
     st->impl_names = NULL;
     st->type_param_count = type_param_count;
     st->type_param_names = NULL;
+    st->type_param_constraints = NULL;
     st->const_names = NULL;
     st->const_value_strs = NULL;
     st->const_count = 0;
@@ -193,6 +194,20 @@ void module_symbol_table_set_struct_impls(ModuleSymbolTable* table, const char* 
     }
     st->impl_count = impl_count;
     st->impl_names = names;   // 旧数组不释放：同其它覆盖路径（量小、先避 use-after-free ✓）
+}
+
+// 设置泛型 struct 的约束名数组（与 type_param_names 按下标对齐，NULL 项 = 无约束）
+void module_symbol_table_set_struct_constraints(ModuleSymbolTable* table, const char* struct_name,
+                                                int count, char** constraints) {
+    if (!table || !struct_name || count < 0) return;
+    ModuleStructSymbol* st = module_symbol_table_find_struct(table, struct_name);
+    if (!st) return;
+    char** names = (char**)calloc((size_t)(count > 0 ? count : 1), sizeof(char*));
+    if (!names) return;
+    for (int i = 0; i < count; i++) {
+        names[i] = (constraints && constraints[i]) ? strdup(constraints[i]) : NULL;
+    }
+    st->type_param_constraints = names;   // 旧数组不释放（与 impl/const 的覆盖路径同口径）
 }
 
 // 设置 struct 的关联常量（S10：AST 填充器的建表路径用 —— add_struct 不带 const 形参）

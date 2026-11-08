@@ -66,7 +66,7 @@ main() {
     assert(eb == null)   // ← 故意触发 [ struct与null比较 ] 警告 ✓（本文件是教学/边界用例，不是漏改 ✓）
 
     print("=== 6: 约束 struct 实例化 ===")
-    var ch = new ConstrainedHolder[int](extra=100)
+    var ch = new ConstrainedHolder[EmptyBox](extra=100)
     assert(ch.extra == 100)
     assert(ch.getExtra() == 100)
 

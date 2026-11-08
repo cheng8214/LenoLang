@@ -613,6 +613,17 @@
                         for (int i = 0; i < ast->u.struct_def.type_param_count; i++) {
                             sym->struct_type_params[i] = strdup(ast->u.struct_def.type_params[i]);
                         }
+                        // ★ 2026-11-07：约束名一并登记（`new B[int]` 校验用）
+                        if (ast->u.struct_def.type_param_constraints) {
+                            sym->struct_type_param_constraints =
+                                (char**)calloc((size_t)ast->u.struct_def.type_param_count, sizeof(char*));
+                            for (int i = 0; i < ast->u.struct_def.type_param_count; i++) {
+                                if (ast->u.struct_def.type_param_constraints[i]) {
+                                    sym->struct_type_param_constraints[i] =
+                                        strdup(ast->u.struct_def.type_param_constraints[i]);
+                                }
+                            }
+                        }
                     }
                 } else {
                     // 检查是否已经被定义为其他类型（cstruct/enum/face）
