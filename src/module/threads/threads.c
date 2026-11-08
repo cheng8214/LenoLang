@@ -259,12 +259,29 @@ static int threads_check_entry(ObjClosure* closure, int got_args, const char* wh
     }
 
     int want = closure->function->arity;
+    // ★ 2026-11-08：允许**少传**（用 null 占位，函数体里的默认值逻辑会把 null 换成默认值）。
+    //   原来要求 got_args == want 严格相等，而普通调用 `f(a)` 对 `f(a, b = "x")` 是合法的
+    //   ⇒ 同一个函数 `threads.start(f, a)` 却报「默认参数不会被补齐」，两处行为不一致 ✗
+    //   实测踩坑：Aria 的 `ver.download_update(base, url, size, ch, targetOverride = "")`
+    //   在定时器里调用正常，改走线程就必须显式传第 5 个 ""（否则报错）。
+    //   多传仍然报错（与普通调用一致）✓
     if (got_args != want) {
-        char msg[256];
-        snprintf(msg, sizeof(msg),
-            "%s: 入口函数期望 %d 个参数，实际传了 %d 个"
-            "（线程入口由 VM 直接调用，默认参数不会被补齐）",
-            who, want, got_args);
+        // ★ 2026-11-08：错误信息升级 —— 说清「为什么」和「怎么改」，而不只是报个数。
+        //   不能说"补 null 就行"：Leno 的默认参数是**调用点**展开的，VM 直接调用绕过了那层，
+        //   传 null 只是让参数变 null（实测），所以必须显式传全。
+        char msg[512];
+        if (got_args < want) {
+            snprintf(msg, sizeof(msg),
+                "%s: 入口函数需要 %d 个参数，只传了 %d 个 —— "
+                "线程入口由 VM 直接调用，**默认参数不会自动补齐**"
+                "（默认值由编译器在普通调用点展开）。"
+                "请把缺的 %d 个显式写上（不想传给默认值，就把默认值抄过来）✓",
+                who, want, got_args, want - got_args);
+        } else {
+            snprintf(msg, sizeof(msg),
+                "%s: 入口函数只需要 %d 个参数，实际传了 %d 个（多了 %d 个）",
+                who, want, got_args, got_args - want);
+        }
         native_throw_error(msg);
         return -1;
     }
@@ -286,12 +303,21 @@ static Value threads_start(int argc, Value* args) {
         return val_null();
     }
 
+    // ★ 2026-11-08：不足 arity 时用 null 补齐（函数体里的默认值逻辑会把 null 换成默认值）。
+    //   原来按 argc-1 原样传，少传就直接被 threads_check_entry 拦掉了 ✗
+    // ⚠ 不能用 null 补默认参数：Leno 的默认参数是**调用点**展开的（编译器把缺省值填进实参），
+    //   VM 直接调用绕过了那一层 ⇒ 传 null 进去拿到的就是 null，比报错更危险（静默）✗
+    //   实测：`func w(int i, string tag = "DEF")`，普通调用 `w(1)` 得 tag="DEF"，
+    //         `threads.start(w, 1)` 若补 null 则得 tag=null。
+    //   ⇒ 保持严格 arity，只在错误信息里说清楚怎么改 ✓
     Value* call_args = NULL;
     int call_arg_count = argc - 1;
     if (call_arg_count > 0) {
-        call_args = (Value*)malloc(call_arg_count * sizeof(Value));
+        call_args = (Value*)malloc((size_t)call_arg_count * sizeof(Value));
         if (call_args) {
-            memcpy(call_args, &args[1], call_arg_count * sizeof(Value));
+            memcpy(call_args, &args[1], (size_t)call_arg_count * sizeof(Value));
+        } else {
+            call_arg_count = 0;      // 分配失败就别把野指针传下去
         }
     }
 
