@@ -50,12 +50,17 @@
                     //   "别名早被前一个 import 占了"（md10c 实测 ✗）
                     //   判据：别名已存在且指向**另一个文件** ⇒ 冲突；同一文件的重复 import 合法 ✓
                     ImportedModuleInfo* dup_info = find_imported_module(s, module_name);
-                    if (dup_info && dup_info->file_path &&
-                        !semantic_same_module_file(dup_info->file_path, ast->u.import.file_path)) {
+                    if (dup_info && ((dup_info->file_path &&
+                        !semantic_same_module_file(dup_info->file_path, ast->u.import.file_path)) ||
+                        (!dup_info->file_path && dup_info->real_name))) {
+                        // ★ 2026-11-08：补上"先 import 原生模块、再 import 用户模块"这一侧
+                        //   （原生模块的 file_path 为 NULL ⇒ 原来那条判据漏过它）。
                         error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                             "模块别名 '%s' 已被前面的 import 占用（%s）—— 一个别名不能指向两个模块；"
                             "请给其中一个换别名（如 `as %s2`），或删掉多余的 import",
-                            module_name, dup_info->file_path, module_name);
+                            module_name,
+                            dup_info->file_path ? dup_info->file_path : dup_info->real_name,
+                            module_name);
                         break;   // 不登记：避免"两个 import 抢一个别名"的静默覆盖
                     }
 
@@ -255,6 +260,22 @@
                 // 记录原生模块导入，用于编译时检查
                 const char* alias = ast->u.import.alias ? ast->u.import.alias : ast->u.import.module_name;
                 if (s->imported_module_count < 64) {
+                    // ★ 2026-11-08：与用户模块同口径（N7 的 native 版）——同一个别名
+                    //   import 了两个**不同的原生模块** ⇒ 编译期报错。
+                    //   此前完全静默：`native_resolve_module_alias` 线性查**第一命中** ⇒
+                    //   第二个 import 等于没写（实测 `import strings as s` +
+                    //   `import arrays as s` 之后 `s.len([1,2])` 仍走 strings，
+                    //   报的是"参数类型错误"，看不出别名早被占 ✗）。
+                    //   同一原生模块的重复 import（`import strings as s` 两次）保持合法 ✓。
+                    ImportedModuleInfo* dup_info = find_imported_module(s, alias);
+                    if (dup_info && (!dup_info->real_name ||
+                        strcmp(dup_info->real_name, ast->u.import.module_name) != 0)) {
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                            "模块别名 '%s' 已被前面的 import 占用（%s）—— 一个别名不能指向两个模块；"
+                            "请给其中一个换别名（如 `as %s2`），或删掉多余的 import",
+                            alias, dup_info->real_name ? dup_info->real_name : "另一个模块", alias);
+                        break;   // 不登记：避免"两个 import 抢一个别名"的静默覆盖
+                    }
                     ImportedModuleInfo* info = &s->imported_modules[s->imported_module_count++];
                     info->alias = strdup(alias);
                     info->file_path = NULL;  // 原生模块没有文件路径

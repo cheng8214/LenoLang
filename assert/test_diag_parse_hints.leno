@@ -1230,5 +1230,22 @@ main() {
     var outVoidOk = ce.expect_ok(voidOk, "null 字面量 + 有返回值 + Dict.get(键, null)（防误报）", "11")
     ce.expect_no_warning(outVoidOk, "null 字面量 + 有返回值 + Dict.get", "void 函数的结果")
 
+    // ---- ㊿ 同一别名 import 两个不同的原生模块（此前静默：第二个 import 等于没写）----
+    var dupNativeAlias = dirs.join(work, "dup_native_alias.leno")
+    files.write(dupNativeAlias, @"import ""strings"" as s
+import ""arrays"" as s
+main() { print(s.trim("" x "")) }
+")
+    ce.expect_error(dupNativeAlias, "原生模块别名重复（不同模块）=> 报错",
+        "模块别名 's' 已被前面的 import 占用", 2)
+
+    // ㊿b 防误报：同一原生模块 import 两次（别名相同）照常可用
+    var sameNativeTwice = dirs.join(work, "same_native_twice.leno")
+    files.write(sameNativeTwice, @"import ""strings"" as s
+import ""strings"" as s
+main() { print(s.trim("" x "")) }
+")
+    ce.expect_ok(sameNativeTwice, "同一原生模块重复 import（防误报）", "x")
+
     print("test_diag_parse_hints passed")
 }
