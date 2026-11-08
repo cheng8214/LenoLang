@@ -61,14 +61,28 @@ main() {
     assert_eq(ok[2], "o")
     print("④ 对照组（正常 add）ok")
 
-    // ⑤ 对照组：null 数组**可以 for 迭代**（当空表，历史口径 ✓ 不崩、不进循环）
-    var loops = 0
-    Array[string] nul = null
-    for nul to it {
-        loops = loops + 1
+    // ⑤ ★ 2026-11-08 **语义变更**：null 数组 for 迭代 -> 抛运行时错误
+    //   旧口径是「当空表、静默 0 次」。代价：`as` 收窄失败拿到 null 后，
+    //   for 一声不响跳过整个循环体，程序继续跑、只是行为不对 ——
+    //   「行为不对」和「本来就没数据」从外面完全看不出（实测踩了整夜 ✗）。
+    //   迁移：`if x != null { for x to i { ... } }`
+    bool caughtNullFor = false
+    string nullForErr = ""
+    int nullLoops = 0
+    try {
+        Array[string] nul = null
+        // ⚠ 循环体不能空：空体会被优化掉，连 OP_LEN 都不发（那样测不到检查 ✓）
+        for nul to it { nullLoops = nullLoops + 1 }
+    } catch e {
+        caughtNullFor = true
+        nullForErr = _str(e)
     }
-    assert_eq(loops, 0)
-    print("⑤ 对照组（for null）ok")
+    assert_eq(nullLoops, 0)
+    assert_eq(caughtNullFor, true)
+    if nullForErr.to_lower().find("null") < 0 {
+        print("⑤ 错误信息里没提到 null：" + nullForErr)
+    }
+    print("⑤ null 数组 for 迭代 -> 已抛错 ok")
 
     // 三支异常都必须被兜住（少一支就说明又崩/又静默成功了）
     assert_eq(caught, 3)

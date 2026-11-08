@@ -94,6 +94,27 @@
     }
     LABEL(OP_LEN): {
         int a = READ_A(), b = READ_B();
+        // ★ 2026-11-08 静默失败修复：遍历对象是 null 时**不再静默当成长度 0**。
+        //   实测现场（Aria / deployd）：
+        //     var roots = cfg.get("roots") as Array   // `as` 收窄失败 ⇒ null
+        //     for roots to one { ... }                // OP_LEN → 0 ⇒ 循环体一次不执行
+        //   ⇒ 白名单恒为空、所有带路径的请求都 403，而 /status 不经过这段所以看着"正常"，
+        //   查了两轮才怀疑到它。这类"什么都没发生"最难定位，必须出声 ✗
+        //   `OP_LEN` 只由 for 的容器长度计算生成（codegen_stmt.c 一处），不影响 arr.len() 这类方法调用 ✓
+        //   ★★ 2026-11-08 **语义变更**：null 遍历对象从「当空表、静默 0 次」改成**运行时错误**。
+        //   旧口径的代价：`as` 收窄失败拿到 null 后，`for` 一声不响地跳过整个循环体，
+        //   程序继续跑、只是行为不对 —— 而「行为不对」和「本来就没数据」从外面完全看不出。
+        //   实测现场：deployd 的白名单恒为空 → 所有带路径的请求 403，而 /status 正常，
+        //   查了两轮才怀疑到它。这类"什么都没发生"最难定位 ✗
+        //   迁移方式：`if x != null { for x to i { ... } }`（或修掉 `as` 收窄失败的上游原因）。
+        if (val_is_null(R(b))) {
+            if (!throw_runtime_error("for 的遍历对象是 null（很可能来自 `as` 收窄失败或未初始化）"
+                                     " —— 请先 `if x != null` 再遍历", GET_CURRENT_LINE())) return -1;
+            // ⚠ 捕获成功（有 try/catch 接住）时：frame 可能已切到 catch 块，
+            //   必须重新取 + DISPATCH 才会真正跳过去（照 vm_throw_not_array 的用法）✓
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
         // 长度规则见 vm_helpers.inc 的 vm_container_len（单一事实来源；本处原先是它的内联副本）
         R(a) = val_int(vm_container_len(R(b)));
         DISPATCH();
@@ -122,6 +143,13 @@
         if (c & 0x20) {                     /* 回边：先自增（位置与原先那条 OP_INC 一致） */
             idx++;
             R(a) = VM_INT_RESULT(idx);      /* 与 OP_INC 同口径（超 int48 提升 bigint） */
+        }
+        // 与 OP_LEN 同口径：循环中途容器被改成 null 也要抓到
+        if (val_is_null(R(b))) {
+            if (!throw_runtime_error("for 的遍历对象是 null（很可能来自 `as` 收窄失败或未初始化）"
+                                     " —— 请先 `if x != null` 再遍历", GET_CURRENT_LINE())) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
         }
         int truthy = (idx < vm_container_len(R(b)));
         if (truthy == ((c & 0x40) != 0)) {
