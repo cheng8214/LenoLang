@@ -776,5 +776,35 @@ main() {
         "new 后面期望 struct 名称", 2)
     ce.expect_no_warning(outNewScalar, "new 标量", "解构声明必须写形状")
 
+    // ---- ㉟ `int?? a` / cstruct 写方法 / clib 写 func：三条定向提示 ----
+    var optTwice = dirs.join(work, "optional_twice.leno")
+    files.write(optTwice, @"main() {
+    int?? a = null
+    print(_str(a))
+}
+")
+    ce.expect_error(optTwice, "可空标记写两次 => 定向报错",
+        "可空标记 '?' 只能写一次", 2)
+
+    var cstructFunc = dirs.join(work, "cstruct_func.leno")
+    files.write(cstructFunc, @"cstruct C {
+    func m(): int { return 1 }
+}
+main() { print(""x"") }
+")
+    var outCstructFunc = ce.expect_error(cstructFunc, "cstruct 写方法 => 单条报错",
+        "cstruct 不支持方法定义", 2)
+    ce.expect_no_warning(outCstructFunc, "cstruct 写方法", "期望表达式")
+
+    var clibFunc = dirs.join(work, "clib_func.leno")
+    files.write(clibFunc, @"clib Nope {
+    func f(): int
+}
+main() { print(""x"") }
+")
+    var outClibFunc = ce.expect_error(clibFunc, "clib 写 func => 指向 C 风格签名",
+        "C 风格签名", 2)
+    ce.expect_no_warning(outClibFunc, "clib 写 func", "期望变量名")
+
     print("test_diag_parse_hints passed")
 }

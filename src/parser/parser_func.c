@@ -1381,6 +1381,12 @@ Ast* parse_var_decl_internal(Parser* p) {
             error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
                      "不能使用关键字(%.*s)作为变量名",
                      p->lex.current.len, p->lex.current.text);
+        } else if (p->lex.current.type == TOK_QUESTION || p->lex.current.type == TOK_NULL_COALESCE) {
+            // ★ 2026-11-08：`int?? a`（可空标记重复）此前只报「期望变量名」✗
+            //   注意 `??` 在词法层是**空值合并运算符**（TOK_NULL_COALESCE），不是两个 '?' ✓
+            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                "可空标记 '?' 只能写一次 —— 类型后面加一个 '?' 即可（如 `int? a`；"
+                "`??` 是空值合并运算符，不能当类型标注用）");
         } else if (p->lex.current.type == TOK_LPAREN) {
             // `var (a, b) = ...` ⇒ 定向提示（文案与 const 路径共用，见 error_destruct_shape_hint）
             error_destruct_shape_hint(p);
@@ -3148,12 +3154,19 @@ Ast* parse_cstruct_stmt(Parser* p) {
 
         // cstruct 不支持方法
         if (p->lex.current.type == TOK_FUNC || p->lex.current.type == TOK_ASYNC) {
-            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "cstruct 不支持方法定义，请使用普通 struct");
-            // 跳过错误恢复
-            while (p->lex.current.type != TOK_SEMI &&
-                   p->lex.current.type != TOK_RBRACE &&
-                   p->lex.current.type != TOK_EOF) {
+            int bad_line = p->lex.current.line;
+            error_add_at_fmt(ERR_SYNTAX, bad_line, p->lex.current.column, "cstruct 不支持方法定义，请使用普通 struct");
+            // ★ 2026-11-08：错误恢复改成"跳到本行末尾 + 整块跳掉方法体"——
+            //   此前遇到第一个 '}' 就停，而那是**方法体的** '}'，留下 cstruct 的 '}' 变
+            //   孤立语句 ⇒ 还刷一条「期望表达式」✗
+            while (p->lex.current.type != TOK_EOF &&
+                   p->lex.current.line == bad_line &&
+                   p->lex.current.type != TOK_LBRACE) {
                 lexer_next(&p->lex);
+            }
+            if (p->lex.current.type == TOK_LBRACE) {
+                Ast* skipped_body = parse_block_internal(p);
+                if (skipped_body) ast_free(skipped_body);
             }
             if (p->lex.current.type == TOK_SEMI) {
                 lexer_next(&p->lex);
@@ -3345,10 +3358,26 @@ Ast* parse_clib_stmt(Parser* p) {
             continue;
         }
 
+        // ★ 2026-11-08：clib 里写 `func f(): int` —— clib 是 **C 风格签名**。
+        //   必须在 parse_type 之前判：parse_type 会把 `func` 当**函数类型**开头去吃
+        //   `func f` ⇒ 最后停在 ':' 上报「clib 函数缺少返回类型」，完全看不出真因 ✗
+        if (p->lex.current.type == TOK_FUNC || p->lex.current.type == TOK_ASYNC) {
+            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                "clib 里写 **C 风格签名**，不要 `func` —— 如 `int strlen(string s)`、`void free(Ptr p)`");
+            while (p->lex.current.type != TOK_RBRACE && p->lex.current.type != TOK_EOF) {
+                lexer_next(&p->lex);
+            }
+            break;
+        }
+
         // 解析返回类型
         TypeInfo* return_type = parse_type(p);
         if (!return_type) {
             error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "clib 函数缺少返回类型");
+            // 跳到 clib 的 '}' 之前：否则后面还会刷「期望 '}'」/「期望变量名」✗
+            while (p->lex.current.type != TOK_RBRACE && p->lex.current.type != TOK_EOF) {
+                lexer_next(&p->lex);
+            }
             break;
         }
 
