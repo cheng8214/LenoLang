@@ -822,6 +822,15 @@ Ast* parse_for_stmt(Parser* p) {
 
     // for 循环体必须是代码块 {}
     if (p->lex.current.type != TOK_LBRACE) {
+        // ★ 2026-11-08：`for d as k, v { … }` / `for arr, i { … }`（别的语言的遍历写法）
+        //   此前只报「循环体必须用大括号」，完全看不出是**遍历语法**写错 ✗
+        if (p->lex.current.type == TOK_COMMA || p->lex.current.type == TOK_AS) {
+            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                "for 的循环变量要用 `to` 引出（不是 `as` / 只用逗号）—— "
+                "例：`for 容器 to 值 { … }`、`for 字典 to 键, 值 { … }`、"
+                "`for 数组 to 值, 下标 { … }` ✓");
+            return NULL;
+        }
         error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "for 循环体必须用大括号 {} 包裹");
         return NULL;
     }

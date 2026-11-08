@@ -673,5 +673,24 @@ main() { print(""x"") }
 ")
     ce.expect_ok(sliceOk, "四种合法切片（防误报）", "3324")
 
+    // ---- ㉛ `for d as k, v {`（别的语言的遍历写法）：此前只报「循环体必须用大括号」----
+    var forAs = dirs.join(work, "for_as.leno")
+    files.write(forAs, @"main() {
+    Dict[string, int] d = {""a"": 1}
+    for d as k, v { print(k) }
+}
+")
+    ce.expect_error(forAs, "for ... as ... => 指向 to 写法",
+        "循环变量要用 `to` 引出", 3)
+
+    // ㉛b 防误报：正确的 `for 字典 to 键, 值` 照常可用
+    var forDictOk = dirs.join(work, "for_dict_ok.leno")
+    files.write(forDictOk, @"main() {
+    Dict[string, int] d = {""a"": 1, ""b"": 2}
+    for d to k, v { print(k + ""="" + _str(v)) }
+}
+")
+    ce.expect_ok(forDictOk, "字典 to 键, 值（防误报）", "a=1")
+
     print("test_diag_parse_hints passed")
 }
