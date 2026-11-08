@@ -1,0 +1,61 @@
+// test_error_limit.leno —— 错误/警告数量上限的**报告**行为（2026-11-09）
+//
+// 背景：`MAX_ERRORS` / `MAX_WARNINGS` 各 256 条，超了会被丢掉。原来：
+//   · 错误超限：**每丢一条就打一行** stderr（实测 600 个错误刷 44 行），
+//     而且报告只说"发现 256 个错误" —— 用户不知道实际有 300 条；
+//   · 警告超限：**完全静默**。
+// 这不是"显示不全"，是**误导**：用户以为改完 256 个就干净了，实际每次重编译
+// 都冒出新的几十条，很容易以为"改一个冒一个"。
+//
+// 这份用例锁住三件事：
+//   ① 超限时**不再刷屏**（输出里不该出现旧的"错误收集器已满"）
+//   ② 报告里**明确写出**"超出上限未记录详情"
+//   ③ 正常文件**不受影响**（无多余提示）
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+import strings
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_err_limit")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ---- ① 600 个未定义变量 ⇒ 错误数远超 256 ----
+    var big = dirs.join(work, "many.leno")
+    var body = "main() {\n"
+    int i = 1
+    while i <= 600 {
+        body = body + "    undefined_var_" + _str(i) + "\n"
+        i = i + 1
+    }
+    body = body + "}\n"
+    files.write(big, body)
+
+    var out = ce.expect_error(big, "600 个错误仍要编译失败", "发现", 0)
+
+    // ② 不再刷屏：旧的"每一行都没了"
+    assert_true(not strings.has(out, "错误收集器已满"),
+        "超限不该每条刷一行（旧文案「错误收集器已满」应已消失）；输出=" + out)
+
+    // ③ 报告里要写明"还有多少没显示"
+    assert_true(strings.has(out, "超出上限未记录详情"),
+        "报告必须说明有错误超出上限、未记录详情；输出=" + out)
+
+    // ④ 上限只提示一次（不该重复 N 遍）
+    var marker = "后续错误不再逐条记录"
+    int first = strings.find(out, marker)
+    assert_true(first >= 0, "应有上限提示；输出=" + out)
+    int second = strings.find(out, marker, first + 1)
+    assert_eq(second, -1, "上限提示只该出现一次（找到了第二次）")
+
+    // ---- ⑤ 正常文件不受影响：无任何上限提示 ----
+    var ok = dirs.join(work, "ok.leno")
+    files.write(ok, "main() {\n    print(\"hi\")\n}\n")
+    var outOk = ce.expect_ok(ok, "正常文件照常通过", "hi")
+    assert_true(not strings.has(outOk, "超出上限"),
+        "正常文件不该出现上限提示；输出=" + outOk)
+
+    dirs.delete(work)
+    print("test_error_limit passed")
+}
