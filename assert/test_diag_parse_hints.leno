@@ -1054,5 +1054,68 @@ main() {
 ")
     ce.expect_ok(closureOk, "具名函数默认值少传 + 闭包正常调用（防误报）", "36")
 
+    // ---- ㊹ for 头类型检查：步长非数字 / 上限是 bool/null ----
+    var forBadStep = dirs.join(work, "for_bad_step.leno")
+    files.write(forBadStep, @"main() {
+    for 0:10:""x"" to i { print(_str(i)) }
+}
+")
+    ce.expect_error(forBadStep, "for 步长是字符串 => 报错（此前静默 0 次）",
+        "for 的步长必须是数字", 2)
+
+    var forBool = dirs.join(work, "for_bool.leno")
+    files.write(forBool, @"main() {
+    for true to i { print(_str(i)) }
+}
+")
+    ce.expect_warning(forBool, "for 上限是 bool => 警告空循环",
+        "for 的上限是 'bool'", 2)
+
+    var forNull = dirs.join(work, "for_null.leno")
+    files.write(forNull, @"main() {
+    for null to i { print(_str(i)) }
+}
+")
+    ce.expect_warning(forNull, "for 上限是 null => 警告空循环",
+        "for 的上限是 'null'", 2)
+
+    // ㊹b 防误报：字符串遍历（按字符）、浮点范围、容器遍历都照常可用
+    var forOk = dirs.join(work, "for_ok.leno")
+    files.write(forOk, @"main() {
+    var chars = """"
+    for ""abc"" to ch { chars = chars + ch }
+    var sum = 0
+    for 0.5:2.5 to f { sum = sum + _int(f) }
+    Array[int] arr = [1, 2]
+    var cnt = 0
+    for arr to v { cnt = cnt + v }
+    print(chars + _str(sum) + _str(cnt))
+}
+")
+    var outForOk = ce.expect_ok(forOk, "字符串/浮点/容器遍历（防误报）", "abc33")
+    ce.expect_no_warning(outForOk, "字符串/浮点/容器遍历", "空循环")
+
+    // ---- ㊺ 函数类型声明里的未定义类型（此前 `func(int): Nope` 零诊断）----
+    var funcTypeBad = dirs.join(work, "func_type_bad.leno")
+    files.write(funcTypeBad, @"main() {
+    func(int): Nope f = null
+    print(""x"")
+}
+")
+    ce.expect_error(funcTypeBad, "函数类型返回未定义类型 => 报错",
+        "函数类型声明里的类型 'Nope' 未定义", 2)
+
+    // ㊺b 防误报：正常函数类型声明与闭包赋值照常可用
+    var funcTypeOk = dirs.join(work, "func_type_ok.leno")
+    files.write(funcTypeOk, @"func g(int a): int { return a }
+main() {
+    func(int): int f = g
+    var h = func(int a): int { return a + 1 }
+    print(_str(f(1)) + _str(h(2)))
+}
+")
+    var outFuncTypeOk = ce.expect_ok(funcTypeOk, "正常函数类型声明（防误报）", "13")
+    ce.expect_no_warning(outFuncTypeOk, "正常函数类型声明", "未定义")
+
     print("test_diag_parse_hints passed")
 }
