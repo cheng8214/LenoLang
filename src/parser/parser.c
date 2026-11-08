@@ -707,6 +707,57 @@ Ast* parse_statement(Parser* p) {
                 p->lex = saved; // 恢复 lexer 状态
                 error_set_column(saved.current.column);  // 恢复列号
 
+                // ★ 2026-11-08：`foo(a, b) { … }`（漏写 func 的 JS / Python 写法）
+                //   此前落到表达式语句 ⇒ 报「未定义的函数: foo」+「未定义的变量: a」+
+                //   「return 只能写在函数体内」等一串，完全看不出"定义函数要写 func" ✗。
+                //   判据：`标识符 ( … )` 后紧跟 `{` 或 `:`（返回类型）⇒ 函数体形态 ✓
+                //   （普通调用 `foo(a)` 后面不会紧跟 `{` ⇒ 不会误伤 ✓）
+                if (!is_type_decl) {
+                    Lexer look = p->lex;
+                    lexer_next(&p->lex);   // 跳过函数名
+                    int looks_like_def = 0;
+                    if (p->lex.current.type == TOK_LPAREN) {
+                        int depth = 1;
+                        lexer_next(&p->lex);
+                        while (p->lex.current.type != TOK_EOF && depth > 0) {
+                            if (p->lex.current.type == TOK_LPAREN) depth++;
+                            else if (p->lex.current.type == TOK_RPAREN) depth--;
+                            if (depth > 0) lexer_next(&p->lex);
+                        }
+                        if (depth == 0) {
+                            int close_line = p->lex.current.line;
+                            lexer_next(&p->lex);   // 跳过 ')'
+                            // ⚠ 必须**同一行**紧跟 `{` / `:` 才算函数体形态：
+                            //   否则 `assert_true(...)` 换行后接一个独立代码块 `{ … }` 会被误判 ✗
+                            if ((p->lex.current.type == TOK_LBRACE ||
+                                 p->lex.current.type == TOK_COLON) &&
+                                p->lex.current.line == close_line) {
+                                looks_like_def = 1;
+                            }
+                        }
+                    }
+                    p->lex = look;   // ⚠ 无论命中与否都要恢复（否则标识符已被吃掉）
+                    error_set_column(look.current.column);
+
+                    if (looks_like_def) {
+                        int bad_line = look.current.line;
+                        error_add_at_fmt(ERR_SYNTAX, bad_line, look.current.column,
+                            "定义函数要写 `func 名字(参数): 返回类型 { … }` —— "
+                            "只有 `main()` 可以省略 func ✗");
+                        // 跳到本行末尾再整块跳过函数体，避免「未定义的变量 / return 只能…」级联
+                        while (p->lex.current.type != TOK_EOF &&
+                               p->lex.current.line == bad_line &&
+                               p->lex.current.type != TOK_LBRACE) {
+                            lexer_next(&p->lex);
+                        }
+                        if (p->lex.current.type == TOK_LBRACE) {
+                            Ast* skipped_body = parse_block_internal(p);
+                            if (skipped_body) ast_free(skipped_body);
+                        }
+                        return NULL;
+                    }
+                }
+
                 if (is_type_decl) {
                     stmt = parse_var_decl_internal(p);
                 } else {

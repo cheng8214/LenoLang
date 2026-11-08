@@ -741,5 +741,29 @@ main() {
 ")
     ce.expect_ok(implOk, "struct 头部 impl（防误报）", "1")
 
+    // ---- ㉝ 定义函数漏写 func（`foo(x) { … }`）：此前报未定义函数 + 未定义变量 + return… ---- 
+    var noFunc = dirs.join(work, "missing_func_kw.leno")
+    files.write(noFunc, @"foo(x) {
+    return x
+}
+main() { print(_str(foo(1))) }
+")
+    var outNoFunc = ce.expect_error(noFunc, "漏写 func => 指向正确写法",
+        "定义函数要写 `func", 1)
+    ce.expect_no_warning(outNoFunc, "漏写 func", "未定义的变量")
+
+    // ㉝b 防误报：普通调用 + 后续独立代码块照常可用
+    var callThenBlock = dirs.join(work, "call_then_block.leno")
+    files.write(callThenBlock, @"func foo(): int { return 1 }
+main() {
+    var a = foo()
+    {
+        int b = a + 1
+        print(_str(b))
+    }
+}
+")
+    ce.expect_ok(callThenBlock, "调用后跟独立块（防误报）", "2")
+
     print("test_diag_parse_hints passed")
 }
