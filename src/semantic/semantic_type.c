@@ -2020,6 +2020,57 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                 if (arg_type) type_free(arg_type);
             }
 
+            // ★ 2026-11-08：format / 插值字符串的「转换符 vs 实参类型」编译期提醒。
+            //   `$"{字符串:d}"` 运行期**静默**输出字面量 `<type_error>`；
+            //   `$"{字符串:.2f}"` 更隐蔽 —— 输出 0.00 ✗。能静态看出来就先提醒（any 不猜）。
+            //   只处理"一个 format 串里恰好一个转换符 + 两个实参"的形态：
+            //   插值字符串（脱糖成 format(fmt, expr)）正好是这种 ✓，普通调用里也多能对号入座。
+            if (ast->u.call.callee && ast->u.call.callee->kind == AST_VAR &&
+                ast->u.call.callee->u.var.name &&
+                strcmp(ast->u.call.callee->u.var.name, "format") == 0 &&
+                ast->u.call.args.count == 2 &&
+                ast->u.call.args.items[0] &&
+                ast->u.call.args.items[0]->kind == AST_STRING) {
+                const char* fmt = ast->u.call.args.items[0]->u.string.value;
+                char conv = 0;
+                int conv_count = 0;
+                for (const char* q = fmt; q && *q; q++) {
+                    if (*q != '%') continue;
+                    if (*(q + 1) == '%') { q++; continue; }     // %% 只是输出百分号 ✓
+                    const char* r = q + 1;
+                    while (*r && !((*r >= 'a' && *r <= 'z') || (*r >= 'A' && *r <= 'Z')) && *r != '%') r++;
+                    if (*r == 0 || *r == '%') continue;
+                    conv = *r;
+                    conv_count++;
+                    q = r;
+                }
+                if (conv_count == 1 && conv != 0 && ast->u.call.args.items[1]) {
+                    TypeInfo* at = infer_expr_type(s, ast->u.call.args.items[1]);
+                    if (at) {
+                        int is_num = (at->kind == TYPE_INT || at->kind == TYPE_FLOAT ||
+                                      at->kind == TYPE_BIGINT || at->kind == TYPE_ENUM ||
+                                      at->kind == TYPE_ANY);
+                        int warns = 0;
+                        if (strchr("diuoxXb", conv) || strchr("eEfgG", conv)) {
+                            warns = !is_num;
+                        } else if (conv == 'c') {
+                            warns = !(at->kind == TYPE_INT || at->kind == TYPE_BIGINT ||
+                                      at->kind == TYPE_ANY);
+                        }
+                        if (warns) {
+                            warning_add_at_fmt(WARN_FORMAT_TYPE, ast->line, ast->column,
+                                "格式说明符 `%%%c` 需要%s，但实参类型是 '%s' —— "
+                                "运行期会静默输出 `<type_error>` / 0.00（不报错）；"
+                                "请改用匹配的转换符，或先转成数字（_int / _str）",
+                                conv,
+                                (conv == 'c' ? "字符码（int）" : "数字"),
+                                type_to_string(at));
+                        }
+                        type_free(at);
+                    }
+                }
+            }
+
             // ★ 2026-11-03（fuzz 发现）：**立即调用的箭头函数** `((int n) => n * 3)(4)`。
             //   箭头脱糖成 AST_FUNC_DEF 后，下面的分支只处理 callee 是变量 / 模块访问的情形，
             //   于是一个字面量函数调用的结果被算成 any（实测 `int b = (...)（4)` 报"实际 any"、
@@ -2055,6 +2106,43 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                 Symbol* sym = scope_resolve(s->current, func_name);
                 if (sym && sym->type && sym->type->kind == TYPE_FUNCTION && sym->type->return_type) {
                     TypeInfo* ret = type_copy(sym->type->return_type);
+
+                    // ★ 2026-11-08：**函数值变量**的调用按静态签名校验实参数量。
+                    //   此前 `func(int):int f = …; f(1, 2)` 静默忽略多余实参、
+                    //   `func():int g = …; g(1)` 也照收 —— 返回值却按声明类型算，
+                    //   调用方以为一切正常 ✗。只查"装函数的值"（局部量/形参/upvalue/全局）；
+                    //   命名函数（SYM_GLOBAL_FUNC / SYM_NATIVE）另有检查路径 ✓
+                    // ⚠ 只拦**多传**：少传可能是"形参有默认值"（函数值类型不带默认值信息，
+                    //   交给调用期补齐/运行期检查 ✓ —— 实测 assert/test_default_param_expression
+                    //   里的 `var f = 有默认值函数; f(1)` 是合法写法 ✗ 不能误伤）
+                    if ((sym->kind == SYM_LOCAL || sym->kind == SYM_PARAM ||
+                         sym->kind == SYM_UPVALUE || sym->kind == SYM_GLOBAL) &&
+                        ast->u.call.args.count > sym->type->param_count) {
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                            "函数值 '%s' 的签名最多 %d 个参数，实际传入 %d 个 —— "
+                            "多余的实参会被静默忽略；请删掉多余的实参",
+                            func_name, sym->type->param_count, ast->u.call.args.count);
+                    } else if ((sym->kind == SYM_LOCAL || sym->kind == SYM_PARAM ||
+                                sym->kind == SYM_UPVALUE || sym->kind == SYM_GLOBAL) &&
+                               sym->type->param_types && sym->type->param_count > 0) {
+                        // 位置实参的类型也要对得上（命名实参另有重排/拒绝路径，这里不掺和）
+                        for (int ai = 0; ai < ast->u.call.args.count; ai++) {
+                            Ast* aarg = ast->u.call.args.items[ai];
+                            if (!aarg || aarg->kind == AST_ASSIGN) break;
+                            TypeInfo* want = sym->type->param_types[ai];
+                            if (!want || want->kind == TYPE_ANY || want->kind == TYPE_INFER) continue;
+                            TypeInfo* got = infer_expr_type(s, aarg);
+                            if (got && got->kind != TYPE_ANY && !type_is_compatible(want, got)) {
+                                char wbuf[128], gbuf[128];
+                                snprintf(wbuf, sizeof(wbuf), "%s", type_to_string(want));
+                                snprintf(gbuf, sizeof(gbuf), "%s", type_to_string(got));
+                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                    "函数值 '%s' 第 %d 个参数类型不匹配：期望 '%s'，实际 '%s'",
+                                    func_name, ai + 1, wbuf, gbuf);
+                            }
+                            if (got) type_free(got);
+                        }
+                    }
                     
                     // async 函数返回 Future 而非声明的返回类型
                     //   ★ T3（2026-10-12）：现在**带上元素类型** —— Future[声明的返回类型] ✓。
@@ -2339,6 +2427,33 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                             }
 
                             //（map/reduce 的推断特判已删：⓪ 族声明化后走上面的实例规格路径 ✓）
+
+                            // ★ 2026-11-08：Dict 方法的**键类型**提醒。
+                            //   `has` 的元信息只有"1 个参数"、没有键类型 ⇒
+                            //   `Dict[string,int].has(1)` 编译通过、运行期静默 false ✗；
+                            //   get/set/remove/setdefault 同理（键都在第 1 个实参）。
+                            if (obj_type->key_type && obj_type->key_type->kind != TYPE_ANY &&
+                                ast->u.call.args.count >= 1 && ast->u.call.args.items[0] &&
+                                (strcmp(method_name, "has") == 0 ||
+                                 strcmp(method_name, "get") == 0 ||
+                                 strcmp(method_name, "set") == 0 ||
+                                 strcmp(method_name, "remove") == 0 ||
+                                 strcmp(method_name, "setdefault") == 0)) {
+                                TypeInfo* kt = infer_expr_type(s, ast->u.call.args.items[0]);
+                                if (kt && kt->kind != TYPE_ANY &&
+                                    !type_is_compatible(obj_type->key_type, kt)) {
+                                    // ⚠ type_to_string 是**共享静态缓冲** ⇒ 两个类型名先各拷一份
+                                    char kbuf[128], abuf[128];
+                                    snprintf(kbuf, sizeof(kbuf), "%s", type_to_string(obj_type->key_type));
+                                    snprintf(abuf, sizeof(abuf), "%s", type_to_string(kt));
+                                    warning_add_at_fmt(WARN_DICT_KEY_TYPE, ast->line, ast->column,
+                                        "方法 '%s' 的键类型不匹配：字典键类型是 '%s'，实参是 '%s' —— "
+                                        "运行期会把它们当成不同的键（查不到 / 静默 false）；"
+                                        "请用匹配的键类型",
+                                        method_name, kbuf, abuf);
+                                }
+                                if (kt) type_free(kt);
+                            }
 
                             // Dict.get 返回类型：2 参 ⇒ 默认值类型、1 参 ⇒ 值类型 V
                             //（与 obj_sym 路径共享 infer_dict_get_return ✓）

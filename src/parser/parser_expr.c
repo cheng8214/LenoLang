@@ -488,6 +488,15 @@ Ast* parse_interp_string(Parser* p) {
         if (p->lex.current.type == TOK_LBRACE) {
             lexer_next(&p->lex); // 消费 {
 
+            // ★ 2026-11-08：`$"x{}y"`（空插值）此前只报「期望表达式」+「期望 '}'」+
+            //   「期望 ')'」三条，看不出是插值里没写表达式 ✗
+            if (p->lex.current.type == TOK_RBRACE) {
+                error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                    "插值表达式不能为空 —— 大括号里必须写一个表达式（如 `{x}`）");
+                lexer_next(&p->lex); // 消费 }
+                continue;            // 该插值不产出表达式，继续读后面的片段 ✓
+            }
+
             // 解析表达式
             Ast* expr = parse_expression(p);
 

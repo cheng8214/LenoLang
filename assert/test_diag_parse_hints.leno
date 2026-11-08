@@ -976,5 +976,211 @@ main() { print(""x"") }
     ce.expect_error(dtorPy, "__del__ => 指向 func ~P()",
         "析构函数写 `func ~P()", 3)
 
+    // ---- ㊷ 插值/format 的转换符 vs 实参类型、空插值、Dict 方法键类型 ----
+    var fmtBad = dirs.join(work, "fmt_type_bad.leno")
+    files.write(fmtBad, @"main() {
+    var s = ""abc""
+    print($""v={s:d}"")
+}
+")
+    ce.expect_warning(fmtBad, "字符串用 :d => 提醒运行期会输出 <type_error>",
+        "格式说明符", 3)
+
+    var fmtOk = dirs.join(work, "fmt_type_ok.leno")
+    files.write(fmtOk, @"main() {
+    var n = 42
+    var f = 3.14
+    var s = ""hi""
+    print($""{n:d}|{n:x}|{f:.2f}|{s}|{s:s}"")
+}
+")
+    var outFmtOk = ce.expect_ok(fmtOk, "数值/字符串的匹配转换符（防误报）", "42")
+    ce.expect_no_warning(outFmtOk, "匹配转换符", "格式说明符")
+
+    var emptyInterp = dirs.join(work, "empty_interp.leno")
+    files.write(emptyInterp, @"main() {
+    print($""x{}y"")
+}
+")
+    var outEmptyInterp = ce.expect_error(emptyInterp, "空插值 => 单条定向报错",
+        "插值表达式不能为空", 2)
+    ce.expect_no_warning(outEmptyInterp, "空插值", "期望 '}'")
+
+    var dictKey = dirs.join(work, "dict_key_type.leno")
+    files.write(dictKey, @"main() {
+    Dict[string, int] d = {""a"": 1}
+    print(_str(d.has(1)))
+}
+")
+    ce.expect_warning(dictKey, "Dict[string,int].has(1) => 提醒键类型不匹配",
+        "键类型不匹配", 3)
+
+    var dictKeyOk = dirs.join(work, "dict_key_ok.leno")
+    files.write(dictKeyOk, @"main() {
+    Dict[string, int] d = {""a"": 1}
+    Dict[int, string] di = {1: ""x""}
+    print(_str(d.has(""a"")) + _str(di.has(1)))
+}
+")
+    var outDictKeyOk = ce.expect_ok(dictKeyOk, "匹配的键类型（防误报）", "truetrue")
+    ce.expect_no_warning(outDictKeyOk, "匹配的键类型", "键类型不匹配")
+
+    // ---- ㊸ 函数值调用的实参检查（此前多传/类型错都静默接受）----
+    var closureExtra = dirs.join(work, "closure_extra.leno")
+    files.write(closureExtra, @"main() {
+    var f = func(int a): int { return a }
+    print(_str(f(1, 2)))
+}
+")
+    ce.expect_error(closureExtra, "函数值多传实参 => 报错",
+        "多余的实参会被静默忽略", 3)
+
+    var closureType = dirs.join(work, "closure_type.leno")
+    files.write(closureType, @"main() {
+    var f = func(int a): int { return a }
+    print(_str(f(""x"")))
+}
+")
+    ce.expect_error(closureType, "函数值实参类型错 => 报错",
+        "第 1 个参数类型不匹配", 3)
+
+    // ㊸b 防误报：正常调用（含具名函数直调时的默认值少传）照常可用
+    var closureOk = dirs.join(work, "closure_ok.leno")
+    files.write(closureOk, @"func g(int a, int b = 2): int { return a + b }
+main() {
+    var h = func(int x): int { return x * 2 }
+    print(_str(g(1)) + _str(h(3)))
+}
+")
+    ce.expect_ok(closureOk, "具名函数默认值少传 + 闭包正常调用（防误报）", "36")
+
+    // ---- ㊹ for 头类型检查：步长非数字 / 上限是 bool/null ----
+    var forBadStep = dirs.join(work, "for_bad_step.leno")
+    files.write(forBadStep, @"main() {
+    for 0:10:""x"" to i { print(_str(i)) }
+}
+")
+    ce.expect_error(forBadStep, "for 步长是字符串 => 报错（此前静默 0 次）",
+        "for 的步长必须是数字", 2)
+
+    var forBool = dirs.join(work, "for_bool.leno")
+    files.write(forBool, @"main() {
+    for true to i { print(_str(i)) }
+}
+")
+    ce.expect_warning(forBool, "for 上限是 bool => 警告空循环",
+        "for 的上限是 'bool'", 2)
+
+    var forNull = dirs.join(work, "for_null.leno")
+    files.write(forNull, @"main() {
+    for null to i { print(_str(i)) }
+}
+")
+    ce.expect_warning(forNull, "for 上限是 null => 警告空循环",
+        "for 的上限是 'null'", 2)
+
+    // ㊹b 防误报：字符串遍历（按字符）、浮点范围、容器遍历都照常可用
+    var forOk = dirs.join(work, "for_ok.leno")
+    files.write(forOk, @"main() {
+    var chars = """"
+    for ""abc"" to ch { chars = chars + ch }
+    var sum = 0
+    for 0.5:2.5 to f { sum = sum + _int(f) }
+    Array[int] arr = [1, 2]
+    var cnt = 0
+    for arr to v { cnt = cnt + v }
+    print(chars + _str(sum) + _str(cnt))
+}
+")
+    var outForOk = ce.expect_ok(forOk, "字符串/浮点/容器遍历（防误报）", "abc33")
+    ce.expect_no_warning(outForOk, "字符串/浮点/容器遍历", "空循环")
+
+    // ---- ㊺ 函数类型声明里的未定义类型（此前 `func(int): Nope` 零诊断）----
+    var funcTypeBad = dirs.join(work, "func_type_bad.leno")
+    files.write(funcTypeBad, @"main() {
+    func(int): Nope f = null
+    print(""x"")
+}
+")
+    ce.expect_error(funcTypeBad, "函数类型返回未定义类型 => 报错",
+        "函数类型声明里的类型 'Nope' 未定义", 2)
+
+    // ㊺b 防误报：正常函数类型声明与闭包赋值照常可用
+    var funcTypeOk = dirs.join(work, "func_type_ok.leno")
+    files.write(funcTypeOk, @"func g(int a): int { return a }
+main() {
+    func(int): int f = g
+    var h = func(int a): int { return a + 1 }
+    print(_str(f(1)) + _str(h(2)))
+}
+")
+    var outFuncTypeOk = ce.expect_ok(funcTypeOk, "正常函数类型声明（防误报）", "13")
+    ce.expect_no_warning(outFuncTypeOk, "正常函数类型声明", "未定义")
+
+    // ---- ㊻ 解构右侧字面量的形状检查（此前缺键静默拿到 null / 元素不足运行期越界）----
+    var dictDestructMissing = dirs.join(work, "destruct_dict_missing.leno")
+    files.write(dictDestructMissing, @"main() {
+    var{""a"": int}(a) = {""b"": 1}
+    print(_str(a))
+}
+")
+    ce.expect_error(dictDestructMissing, "字典解构缺键 => 报错（此前静默 null）",
+        "字典解构的键 'a' 不在右侧字典字面量里", 2)
+
+    var arrDestructShort = dirs.join(work, "destruct_arr_short.leno")
+    files.write(arrDestructShort, @"main() {
+    var[int, int](a, b) = [1]
+    print(_str(a) + _str(b))
+}
+")
+    ce.expect_error(arrDestructShort, "数组解构元素不足 => 报错（此前运行期索引越界）",
+        "右侧数组字面量只有 1 个元素", 2)
+
+    // ㊻b 防误报：缺键但有默认值、元素正好够、右侧是变量（形状未知）都照常可用
+    var dictDestructDefault = dirs.join(work, "destruct_dict_default.leno")
+    files.write(dictDestructDefault, @"main() {
+    var{""a"": int = 5}(a) = {""b"": 1}
+    var[int, int](x, y) = [1, 2]
+    var src = {""b"": 1}
+    var{""a"": int}(c) = src
+    print(_str(a) + _str(x + y) + _str(c))
+}
+")
+    var outDictDefault = ce.expect_ok(dictDestructDefault, "缺键带默认值 + 元素正好 + 右侧变量（防误报）", "53")
+    ce.expect_no_warning(outDictDefault, "缺键带默认值 + 元素正好 + 右侧变量", "解构")
+
+    // ---- ㊼ 多返回值返回类型的错误写法：逗号分隔 / 圆括号元组（此前各刷 5~6 条级联）----
+    var retComma = dirs.join(work, "ret_comma.leno")
+    files.write(retComma, @"func pair(): int, int { return 1, 2 }
+main() {
+    var[int, int](a, b) = pair()
+    print(_str(a) + _str(b))
+}
+")
+    var outRetComma = ce.expect_error(retComma, "返回类型逗号分隔 => 单条定向报错",
+        "多返回值的返回类型要写成**方括号**", 1)
+    ce.expect_no_warning(outRetComma, "返回类型逗号分隔", "字典解构")
+
+    var retParen = dirs.join(work, "ret_paren.leno")
+    files.write(retParen, @"func pair(): (int, int) { return 1, 2 }
+main() {
+    var[int, int](a, b) = pair()
+    print(_str(a) + _str(b))
+}
+")
+    var outRetParen = ce.expect_error(retParen, "返回类型圆括号元组 => 单条定向报错",
+        "不是圆括号元组", 1)
+    ce.expect_no_warning(outRetParen, "返回类型圆括号元组", "块没有闭合")
+
+    // ㊼b 防误报：方括号多返回值写法照常可用
+    var retBracket = dirs.join(work, "ret_bracket.leno")
+    files.write(retBracket, @"func pair(): [int, int] { return 1, 2 }
+main() {
+    var[int, int](a, b) = pair()
+    print(_str(a) + _str(b))
+}
+")
+    ce.expect_ok(retBracket, "方括号多返回值（防误报）", "12")
+
     print("test_diag_parse_hints passed")
 }

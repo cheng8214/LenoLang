@@ -166,6 +166,32 @@
                             declared_type_undefined = 1;
                         }
                     }
+                } else if (ast->u.var_decl.type && ast->u.var_decl.type->kind == TYPE_FUNCTION) {
+                    // ★ 2026-11-08：**函数类型声明**里的参数/返回类型也要校验。
+                    //   此前 `func(int): Nope f = null` 里未定义的 `Nope` **零诊断** ✗
+                    //   （只查 TYPE_STRUCT/CLIB 顶层名字 ⇒ TYPE_FUNCTION 整个被跳过）
+                    TypeInfo* ft = ast->u.var_decl.type;
+                    for (int pass = 0; pass < 2; pass++) {
+                        int n = (pass == 0) ? ft->param_count : (ft->return_type ? 1 : 0);
+                        for (int pi = 0; pi < n; pi++) {
+                            TypeInfo* t = (pass == 0) ? (ft->param_types ? ft->param_types[pi] : NULL)
+                                                      : ft->return_type;
+                            if (!t || t->module_qualifier) continue;   // 限定名交给别名/use 路径 ✓
+                            if (t->kind != TYPE_STRUCT && t->kind != TYPE_CLIB && t->kind != TYPE_FACE) continue;
+                            if (!t->struct_name || !t->struct_name[0]) continue;
+                            if (face_def_find(t->struct_name)) continue;
+                            if (scope_resolve(s->current, t->struct_name)) continue;
+                            if (semantic_native_struct_known(t->struct_name)) continue;
+                            char hint[BUFFER_MEDIUM];
+                            semantic_undefined_type_hint(s, t->struct_name, hint, sizeof(hint));
+                            error_add_at_fmt(ERR_UNDEFINED_VAR, ast->line, ast->column,
+                                             "函数类型声明里的类型 '%s' 未定义%s",
+                                             t->struct_name, hint);
+                            declared_type_undefined = 1;
+                            break;
+                        }
+                        if (declared_type_undefined) break;
+                    }
                 } else if (ast->u.var_decl.type && ast->u.var_decl.type->kind == TYPE_STRUCT &&
                            ast->u.var_decl.type->struct_name) {
                     // 保持原有的 struct 检查路径（当 type->kind 明确是 TYPE_STRUCT 时）
@@ -967,6 +993,48 @@
             // 访问初始值表达式
             if (ast->u.destruct_decl.init) {
                 visit(s, ast->u.destruct_decl.init);
+
+                // ★ 2026-11-08：右侧是**字面量**时先查形状。
+                //   此前 `var{"a": int}(a) = {"b": 1}` 运行期静默 null ✗；
+                //   `var[int,int,int](a,b,c) = [1,2]` 运行期才报「数组索引越界」✗
+                {
+                    Ast* lit = ast->u.destruct_decl.init;
+                    if (lit && ast->u.destruct_decl.is_dict && lit->kind == AST_DICT) {
+                        for (int i = 0; i < ast->u.destruct_decl.slot_count; i++) {
+                            const char* key = (ast->u.destruct_decl.slot_keys
+                                               ? ast->u.destruct_decl.slot_keys[i] : NULL);
+                            if (!key) continue;
+                            if (ast->u.destruct_decl.slot_defaults &&
+                                ast->u.destruct_decl.slot_defaults[i]) continue;   // 有默认值 ⇒ 缺键合法
+                            int found = 0;
+                            for (int e = 0; e < lit->u.dict.count; e++) {
+                                Ast* k = lit->u.dict.entries[e].key;
+                                if (k && k->kind == AST_STRING && k->u.string.value &&
+                                    strcmp(k->u.string.value, key) == 0) { found = 1; break; }
+                            }
+                            if (!found) {
+                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                    "字典解构的键 '%s' 不在右侧字典字面量里 ⇒ 运行期会拿到 null；"
+                                    "请补上键，或给槽位写默认值（`var{\"%s\": 类型 = 默认值}(…)`）",
+                                    key, key);
+                            }
+                        }
+                    } else if (lit && !ast->u.destruct_decl.is_dict && lit->kind == AST_ARRAY &&
+                               lit->u.array.count < ast->u.destruct_decl.slot_count) {
+                        int has_default = 0;
+                        if (ast->u.destruct_decl.slot_defaults) {
+                            for (int i = 0; i < ast->u.destruct_decl.slot_count; i++) {
+                                if (ast->u.destruct_decl.slot_defaults[i]) { has_default = 1; break; }
+                            }
+                        }
+                        if (!has_default) {
+                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                "右侧数组字面量只有 %d 个元素，解构需要 %d 个 ⇒ 运行期会索引越界；"
+                                "请补齐元素或减少槽位",
+                                lit->u.array.count, ast->u.destruct_decl.slot_count);
+                        }
+                    }
+                }
 
                 // ============================================================
                 // 编译时类型检查：检查解构槽位类型与数据源元素类型是否兼容

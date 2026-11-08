@@ -1712,6 +1712,21 @@ Ast* parse_func_body_and_create(Parser* p, char* name, int line, int column) {
             } else {
                 error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望返回类型");
             }
+        } else if (p->lex.current.type == TOK_LPAREN) {
+            // ★ 2026-11-08：`func f(): (int, int)`（圆括号元组 / Python 习惯）——
+            //   此前直接落到 parse_block_internal，连刷「期望返回类型」「期望 '{'」「期望表达式」
+            //   「期望 ')'」… 6 条，且块还没闭合 ✗。这里定向报一次，再按元组里的类型列表**吃完**
+            //   让后面的函数体能正常解析（只留这一条真因 ✓）。
+            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                "多返回值的返回类型要写成**方括号** `[T1, T2, …]`，不是圆括号元组 `(T1, T2)` —— "
+                "改成 `func 名字(参数): [T1, T2] { … }` ✓");
+            lexer_next(&p->lex);                       // 吃掉 '('
+            while (p->lex.current.type != TOK_RPAREN && p->lex.current.type != TOK_EOF) {
+                TypeInfo* elem = parse_type(p);
+                if (elem) type_free(elem);
+                if (!match(p, TOK_COMMA)) break;
+            }
+            match(p, TOK_RPAREN);                      // 吃掉 ')'
         } else {
             // 解析普通返回类型
             TypeInfo* parsed_return = parse_type(p);
@@ -1723,6 +1738,20 @@ Ast* parse_func_body_and_create(Parser* p, char* name, int line, int column) {
                     strcmp(return_type->struct_name, "void") == 0) {
                     type_free(return_type);
                     return_type = type_new(TYPE_NULL);  // TYPE_NULL 表示 void 返回
+                }
+                // ★ 2026-11-08：`func f(): int, string`（逗号分隔多返回值，Go/Python 习惯）——
+                //   此前 parse_block_internal 撞上 ',' 同样连刷「期望 '{'」「期望表达式」…
+                //   ⇒ 定向报一次，再把后面的类型逐个吃掉，函数体照常解析 ✓。
+                if (p->lex.current.type == TOK_COMMA) {
+                    error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                        "多返回值的返回类型要写成**方括号** `[T1, T2, …]`，不能逗号分隔 —— "
+                        "改成 `func 名字(参数): [T1, T2] { … }` ✓");
+                    while (p->lex.current.type == TOK_COMMA) {
+                        lexer_next(&p->lex);           // 吃掉 ','
+                        TypeInfo* extra = parse_type(p);
+                        if (!extra) break;
+                        type_free(extra);
+                    }
                 }
             } else {
                 error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望返回类型");

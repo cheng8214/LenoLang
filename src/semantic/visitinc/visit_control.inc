@@ -666,6 +666,34 @@
             if (ast->u.for_.end) visit(s, ast->u.for_.end);
             if (ast->u.for_.step) visit(s, ast->u.for_.step);
 
+            // ★ 2026-11-08：for 头的类型检查。
+            //   此前 `for 0:10:"x"`（步长是字符串）**静默一次都不执行** ✗；
+            //   `for true to i` / `for null to i` 同样静默 0 次。
+            //   口径：步长必须是数字（错误）；上限是 bool/null 时给警告（不改语义）。
+            if (ast->u.for_.step) {
+                TypeInfo* stt = infer_expr_type(s, ast->u.for_.step);
+                if (stt && stt->kind != TYPE_ANY && stt->kind != TYPE_INT &&
+                    stt->kind != TYPE_FLOAT && stt->kind != TYPE_BIGINT &&
+                    stt->kind != TYPE_ENUM) {
+                    error_add_at_fmt(ERR_TYPE_MISMATCH,
+                        ast->u.for_.step->line, ast->u.for_.step->column,
+                        "for 的步长必须是数字（int / float），实际是 '%s' —— "
+                        "VM 会把它当成空循环（一次都不执行）",
+                        type_to_string(stt));
+                }
+                if (stt) type_free(stt);
+            }
+            if (ast->u.for_.end) {
+                TypeInfo* et = infer_expr_type(s, ast->u.for_.end);
+                if (et && (et->kind == TYPE_NULL || et->kind == TYPE_BOOL)) {
+                    warning_add_at_fmt(WARN_FOR_EMPTY_RANGE, ast->line, ast->column,
+                        "for 的上限是 '%s' ⇒ 循环一次都不执行；"
+                        "数字范围请给数字，遍历容器请给 Array / Dict / string",
+                        type_to_string(et));
+                }
+                if (et) type_free(et);
+            }
+
             // 注（2026-10-18）：这里曾试过加 WARN_FOR_REVERSED（"`for 变量 to 集合` 写反"），
             //   实测后**撤掉**了 —— 前提是错的：`for s to G` 不是"写反"，而是把 **s 当集合**
             //   （字符串按字符遍历：`for "abc" to ch` ⇒ a/b/c；空串 ⇒ 0 次）。本语言只有
