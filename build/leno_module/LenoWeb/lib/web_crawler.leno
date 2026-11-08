@@ -1020,10 +1020,17 @@ export func parseRobots(string text): Dict {
     var lines = strings.split(text, "\n")
     Array groups = []
     Dict[string, any] cur = {user_agents: [], allow: [], disallow: []}
+    // ★ 2026-11-09 修：追踪上一条字段，用于判断"连续的 User-agent 属于同一组"。
+    string lastField = ""
     for lines to ln {
         string line = strings.trim(ln)
-        if line == "" or line.starts_with("#") {
+        if line == "" {
+            // 空行 = 组分隔（robots.txt 规范）⇒ 清掉 lastField，下一次 User-agent 会开新组
+            lastField = ""
             continue
+        }
+        if line.starts_with("#") {
+            continue            // 注释不参与分组
         }
         int ci = strings.find(line, ":")
         if ci < 0 {
@@ -1032,12 +1039,20 @@ export func parseRobots(string text): Dict {
         string field = strings.to_lower(strings.trim(line.slice(0, ci - 1)))
         string value = strings.trim(line.slice(ci + 1, line.len()))
         if field == "user-agent" {
-            // 新一组
+            // ★ **连续**的 User-agent 行属于**同一组**（robots.txt 规范：多个 UA 共享后续规则）。
+            //   原来这里"每遇到一个 User-agent 就开新组" ⇒ 实测：
+            //     "User-agent: a\nUser-agent: b\nDisallow: /x"
+            //   被解析成两组：{a, 规则空} + {b, /x} —— a 的规则被 b "抢"走了 ✗
+            //   现在只有"上一条不是 User-agent"时才开新组，否则把 UA 追加进当前组。
             var prevUas = cur["user_agents"]
-            if prevUas is Array and prevUas.len() > 0 {
+            if lastField != "user-agent" and prevUas is Array and prevUas.len() > 0 {
                 groups.add(cur)
+                cur = {user_agents: [], allow: [], disallow: []}
             }
-            cur = {user_agents: [value], allow: [], disallow: []}
+            var uas = cur["user_agents"]
+            if uas is Array {
+                uas.add(value)
+            }
         } else if field == "allow" {
             if value != "" {
                 var allows = cur["allow"]
@@ -1053,6 +1068,7 @@ export func parseRobots(string text): Dict {
                 }
             }
         }
+        lastField = field        // 供下一条判断"是不是连续 User-agent"
     }
     var lastUas = cur["user_agents"]
     if lastUas is Array and lastUas.len() > 0 {

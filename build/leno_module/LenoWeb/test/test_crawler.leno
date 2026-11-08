@@ -89,6 +89,22 @@ main() {
     eqInt(rbD.len(), 1, "parseRobots 只返回 1 个键（groups）")
     eqInt(if rbD.has("groups") then 1 else 0, 1, "parseRobots 返回 groups 键")
 
+    // **连续的 User-agent 属于同一组**（robots.txt 规范）—— 这是 2026-11-09 修的
+    // 第二个真 bug 的回归哨兵：原来每遇到一个 User-agent 就开新组 ⇒
+    //   "User-agent: a\nUser-agent: b\nDisallow: /x"
+    // 被解析成 {a, 规则空} + {b, /x}，a 的规则被 b 抢走。
+    var gs = (web.parseRobots("User-agent: a\nUser-agent: b\nDisallow: /x\nDisallow: /y\n")["groups"]) as Array
+    eqInt(gs.len(), 1, "连续两个 User-agent ⇒ 1 组（曾错拆成 2 组）")
+    var g0 = gs[0] as Dict
+    eqInt((g0["user_agents"] as Array).len(), 2, "组内应有 2 个 UA")
+    eqInt((g0["disallow"] as Array).len(), 2, "组内应有 2 条 disallow（规则没被抢走）")
+
+    // 空行分隔 ⇒ 才是两组
+    var gs2 = (web.parseRobots("User-agent: a\nDisallow: /x\n\nUser-agent: b\nDisallow: /y\n")["groups"]) as Array
+    eqInt(gs2.len(), 2, "空行分隔 ⇒ 2 组")
+    eqInt(((gs2[0] as Dict)["disallow"] as Array).len(), 1, "第 1 组只吃自己的 disallow")
+    eqInt(((gs2[1] as Dict)["disallow"] as Array).len(), 1, "第 2 组只吃自己的 disallow")
+
     // crawl-delay：**秒 → 毫秒**
     eqInt(web.parseCrawlDelay(rb + "Crawl-delay: 5\n", "*"), 5000, "Crawl-delay: 5 ⇒ 5000 毫秒")
     eqInt(web.parseCrawlDelay("User-agent: x\n", "*"), 0, "没有 Crawl-delay ⇒ 0")
