@@ -304,14 +304,13 @@ export func listProcesses(): Array[ProcInfo] {
 
 // 按名字查（**不区分大小写**，子串匹配 ✓）；名字空 ⇒ 返回空
 export func findProcess(string name): Array[ProcInfo] {
-    Array[ProcInfo] out = []
-    if strings.trim(name) == "" { return out }
+    // ★ 2026-11-09：改用 `filter`（原来是"空数组 + 循环 + if + add"）。
+    //   谓词只看 `p.name` 和外部常量 `needle` ⇒ 无状态、逐字等价 ✓
+    if strings.trim(name) == "" { return [] }
     string needle = strings.to_lower(name)
-    var all = listProcesses()
-    for all to p {
-        if strings.find(strings.to_lower(p.name), needle) >= 0 { out.add(p) }
-    }
-    return out
+    return listProcesses().filter(func(ProcInfo p) {
+        return strings.find(strings.to_lower(p.name), needle) >= 0
+    })
 }
 
 export func processExists(int pid): bool {

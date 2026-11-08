@@ -160,9 +160,7 @@ export func glob(string pattern): Array[string] {
 
 // 过滤已有路径列表（不访问磁盘）
 export func filter(string pattern, Array[string] paths): Array[string] {
-    Array[string] out = []
-    for paths to p {
-        if match(pattern, p) { out.add(p) }
-    }
-    return out
+    // ★ 2026-11-09：这个函数**名字就叫 filter**，实现却是手写循环 —— 改用 `Array.filter`。
+    //   谓词 `match(pattern, p)` 无状态（只看元素和外部常量 `pattern`）⇒ 逐字等价 ✓
+    return paths.filter(func(string p) { return match(pattern, p) })
 }
