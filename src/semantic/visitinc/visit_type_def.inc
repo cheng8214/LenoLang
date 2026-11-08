@@ -700,7 +700,17 @@
                         if (ast->u.struct_def.field_types && ast->u.struct_def.field_types[i]) {
                             TypeInfo* ft = ast->u.struct_def.field_types[i];
                             TypeInfo* dt = infer_expr_type(s, ast->u.struct_def.field_defaults[i]);
-                            if (dt && !type_is_compatible(ft, dt)) {
+                            // 引用型字段（Channel / Thread / Future / Array / Dict / struct …）
+                            // 允许用 null 作默认值（实例化时再创建）—— 与 `int? x = null` 同口径 ✓
+                            int null_default_ok = (dt && dt->kind == TYPE_NULL) &&
+                                (ft->kind == TYPE_STRUCT || ft->kind == TYPE_CSTRUCT ||
+                                 ft->kind == TYPE_ARRAY || ft->kind == TYPE_DICT ||
+                                 ft->kind == TYPE_PTR || ft->kind == TYPE_PTR_GENERIC ||
+                                 ft->kind == TYPE_CHANNEL || ft->kind == TYPE_THREAD ||
+                                 ft->kind == TYPE_FUTURE || ft->kind == TYPE_SOCKET ||
+                                 ft->kind == TYPE_FILE || ft->kind == TYPE_FUNCTION ||
+                                 ft->kind == TYPE_CLIB || ft->kind == TYPE_ANY);
+                            if (dt && !type_is_compatible(ft, dt) && !null_default_ok) {
                                 // ⚠ type_to_string 返回**共享静态缓冲** ⇒ 不能在同一句里调两次
                                 //   （否则两个占位符都变成后一个的类型名，实测报 "int / int" ✗）
                                 char ft_buf[128], dt_buf[128];
