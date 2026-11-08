@@ -976,6 +976,27 @@ int type_is_nullable(TypeInfo* type) {
     return type && type->nullable;
 }
 
+// 哪些 kind 允许 null（引用语义：GC 托管对象 / 句柄 / 函数引用）
+//   ★ 2026-11-08：补 CHANNEL / THREAD / FUTURE / SOCKET / FILE。
+//     这五个此前只在"struct 字段默认值"那条局部判据里被放行（visit_type_def.inc），
+//     于是 `struct A { Channel c = null }` 合法、而 `Channel c = null`（局部变量）、
+//     `a.c = null`（赋值）、`f(null)`（实参）全报「类型不匹配」——
+//     同一个 null 换个位置就换答案。规则收到这里 ⇒ 一处定义、四处一致。
+//   ⚠ 值类型（int / float / bool / bigint）不在此列：它们要 null 必须写 `int?`。
+static int kind_accepts_null_ref(TypeKind k) {
+    switch (k) {
+        case TYPE_PTR: case TYPE_PTR_GENERIC: case TYPE_CSTRUCT:
+        case TYPE_STR8: case TYPE_STR16: case TYPE_CLIB: case TYPE_FACE:
+        case TYPE_STRUCT: case TYPE_STRING: case TYPE_ARRAY: case TYPE_DICT:
+        case TYPE_FUNCTION: case TYPE_ENUM:
+        case TYPE_CHANNEL: case TYPE_THREAD: case TYPE_FUTURE:
+        case TYPE_SOCKET: case TYPE_FILE:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
 // 检查类型是否兼容（用于赋值）
 int type_is_compatible(TypeInfo* target, TypeInfo* source) {
     if (!target || !source) return 1;  // 任意类型都可以
@@ -1005,19 +1026,9 @@ int type_is_compatible(TypeInfo* target, TypeInfo* source) {
         if (target->kind == TYPE_ANY || target->kind == TYPE_INFER) return 1;
         // 泛型类型参数可以接受 null
         if (target->kind == TYPE_GENERIC_PARAM) return 1;
-        // 引用类型可以为 null
-        if (target->kind == TYPE_PTR || target->kind == TYPE_PTR_GENERIC) return 1;  // 指针
-        if (target->kind == TYPE_CSTRUCT || target->kind == TYPE_STR8 || target->kind == TYPE_STR16) return 1;  // C 布局指针类型
-        if (target->kind == TYPE_CLIB) return 1;       // clib 句柄
-        if (target->kind == TYPE_FACE) return 1;       // face 接口引用
-        if (target->kind == TYPE_STRUCT) return 1;     // struct 引用
-        if (target->kind == TYPE_STRING) return 1;     // string 引用
-        if (target->kind == TYPE_ARRAY) return 1;      // array 引用
-        if (target->kind == TYPE_DICT) return 1;       // dict 引用
-        if (target->kind == TYPE_FUNCTION) return 1;    // func 引用
-        if (target->kind == TYPE_ENUM) return 1;       // enum 引用
-        // 值类型（int, float, bool, bigint）不接受 null 赋值
-        return 0;
+        // 引用类型可以为 null（指针 / C 布局 / 句柄 / GC 托管对象 / 函数引用）
+        //   值类型（int, float, bool, bigint）不接受 null 赋值 ⇒ 需要可空就写 `int?`
+        return kind_accepts_null_ref(target->kind);
     }
 
     // 多返回值类型在非解构上下文中自动退化为第一个返回值类型

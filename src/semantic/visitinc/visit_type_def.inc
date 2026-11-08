@@ -700,17 +700,11 @@
                         if (ast->u.struct_def.field_types && ast->u.struct_def.field_types[i]) {
                             TypeInfo* ft = ast->u.struct_def.field_types[i];
                             TypeInfo* dt = infer_expr_type(s, ast->u.struct_def.field_defaults[i]);
-                            // 引用型字段（Channel / Thread / Future / Array / Dict / struct …）
-                            // 允许用 null 作默认值（实例化时再创建）—— 与 `int? x = null` 同口径 ✓
-                            int null_default_ok = (dt && dt->kind == TYPE_NULL) &&
-                                (ft->kind == TYPE_STRUCT || ft->kind == TYPE_CSTRUCT ||
-                                 ft->kind == TYPE_ARRAY || ft->kind == TYPE_DICT ||
-                                 ft->kind == TYPE_PTR || ft->kind == TYPE_PTR_GENERIC ||
-                                 ft->kind == TYPE_CHANNEL || ft->kind == TYPE_THREAD ||
-                                 ft->kind == TYPE_FUTURE || ft->kind == TYPE_SOCKET ||
-                                 ft->kind == TYPE_FILE || ft->kind == TYPE_FUNCTION ||
-                                 ft->kind == TYPE_CLIB || ft->kind == TYPE_ANY);
-                            if (dt && !type_is_compatible(ft, dt) && !null_default_ok) {
+                            // ⚠ 这里**不要**再单独放行 null：哪些类型能取 null 统一由
+                            //   `type_is_compatible`（src/type.c 的 kind_accepts_null_ref）判定。
+                            //   2026-11-08 之前此处有一份局部名单，结果是"字段默认值能写 null、
+                            //   局部变量/赋值/实参却不能"，同一个 null 换位置就换答案 ✗
+                            if (dt && !type_is_compatible(ft, dt)) {
                                 // ⚠ type_to_string 返回**共享静态缓冲** ⇒ 不能在同一句里调两次
                                 //   （否则两个占位符都变成后一个的类型名，实测报 "int / int" ✗）
                                 char ft_buf[128], dt_buf[128];
