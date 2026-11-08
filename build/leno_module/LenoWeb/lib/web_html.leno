@@ -1845,36 +1845,23 @@ func _matchSimple(HtmlNode node, SelectorPart sel): bool {
                 return false
             }
         } else {
-            if sel.attrOp == "=" {
-                if actual != sel.attrValue {
-                    return false
+            // ★ 2026-11-09：`if-else if` 链改用 `switch` —— 一眼看出这是
+            //   "CSS 属性选择器运算符分派"（`= ^= $= *= ~= |=`），加新运算符只需加一个 case。
+            //   等价性：switch **自动 break**（实测），`default` 就是原来的 `else` ✓
+            switch sel.attrOp {
+                case "=" { if actual != sel.attrValue { return false } }
+                case "^=" { if not actual.starts_with(sel.attrValue) { return false } }
+                case "$=" { if not actual.ends_with(sel.attrValue) { return false } }
+                case "*=" { if not actual.has(sel.attrValue) { return false } }
+                case "~=" {
+                    // 空白分隔的词匹配：`[class~='x']` 命中 `class="a x b"`，且不会命中 `xy`
+                    if not _hasWord(actual, sel.attrValue) { return false }
                 }
-            } else if sel.attrOp == "^=" {
-                if not actual.starts_with(sel.attrValue) {
-                    return false
+                case "|=" {
+                    // 等于 v 或以 "v-" 开头（`[lang|='zh']` 命中 zh / zh-CN）
+                    if actual != sel.attrValue and not actual.starts_with(sel.attrValue + "-") { return false }
                 }
-            } else if sel.attrOp == "$=" {
-                if not actual.ends_with(sel.attrValue) {
-                    return false
-                }
-            } else if sel.attrOp == "*=" {
-                if not actual.has(sel.attrValue) {
-                    return false
-                }
-            } else if sel.attrOp == "~=" {
-                // 空白分隔的词匹配：`[class~='x']` 命中 `class="a x b"`，且不会命中 `xy`
-                if not _hasWord(actual, sel.attrValue) {
-                    return false
-                }
-            } else if sel.attrOp == "|=" {
-                // 等于 v 或以 "v-" 开头（`[lang|='zh']` 命中 zh / zh-CN）
-                if actual != sel.attrValue and not actual.starts_with(sel.attrValue + "-") {
-                    return false
-                }
-            } else {
-                if actual != sel.attrValue {
-                    return false
-                }
+                default { if actual != sel.attrValue { return false } }
             }
         }
     }
