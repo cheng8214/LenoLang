@@ -240,6 +240,18 @@
                 if (sym && sym->type) { type_free(sym->type); sym->type = NULL; }
                 TypeInfo* init_type = infer_expr_type(s, ast->u.var_decl.init);
                 if (init_type) {
+                    // ★ 2026-11-08：`var x = f()` 且 f 是 **void**（声明 `: void`，或无返回值注解
+                    //   且函数体里没有任何带值 return）⇒ x 恒为 null，此前**零诊断** ✗
+                    //   （实测 `func f(): void { }  var x = f()` 编译通过、x 静默是 null）。
+                    //   只判"初始化表达式是函数调用" —— `var x = null` 是字面量，合法 ✓。
+                    if (init_type->kind == TYPE_NULL &&
+                        ast->u.var_decl.init->kind == AST_CALL) {
+                        warning_add_at_fmt(WARN_VOID_CALL_VALUE, ast->line, ast->column,
+                            "把 void 函数的结果赋给变量 '%s' ⇒ 它恒为 null；"
+                            "若只是想执行副作用，直接写调用、不接返回值即可",
+                            ast->u.var_decl.name);
+                    }
+
                     if (ast->u.var_decl.type && ast->u.var_decl.type->kind != TYPE_INFER && !infer_as_param) {
                         // ★ 如果声明类型已报告未定义，跳过类型不匹配检查（避免级联错误），
                         //   并用初始化值的实际类型作为变量类型（让后续方法调用能正常解析）

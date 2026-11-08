@@ -222,6 +222,8 @@ typedef enum {
     WARN_DICT_KEY_TYPE,         // **Dict 方法（has/get/set/remove）的键类型与 Dict[K,V] 不匹配**
                                 //   （2026-11-08 加）：`Dict[string,int].has(1)` 编译期静默通过、
                                 //   运行期恒 false（1 与 "1" 不是同一个键）⇒ 先提醒 ✓
+    WARN_VOID_CALL_VALUE,       // **把 void 函数的结果赋给变量**（2026-11-08 加）：
+                                //   `var x = f()` 且 f 声明为 void ⇒ x 恒为 null，此前零诊断 ✗
 } WarnType;
 
 // ============================================================================

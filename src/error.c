@@ -564,6 +564,7 @@ void warning_print_all(void) {
             case WARN_OVERLAP_CASE:          type_str = "区间重叠"; break;
             case WARN_DIV_ZERO:              type_str = "字面量除零"; break;
             case WARN_NEG_SHIFT:             type_str = "负数移位"; break;
+            case WARN_VOID_CALL_VALUE:       type_str = "void调用结果"; break;
             // （原 WARN_EMPTY_CATCH / WARN_IMPOSSIBLE_CAST 已升为错误 ⇒ 类别名移入消息前缀 ✓）
             default: break;
         }
