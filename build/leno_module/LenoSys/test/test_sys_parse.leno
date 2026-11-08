@@ -1,0 +1,95 @@
+// LenoSys / sys_parse 自测（纯文本解析，不碰真实系统调用）
+//
+// 跑法（仓库根目录）：
+//   build\leno.exe build\leno_module\LenoSys\test\test_sys_parse.leno
+//
+// 为什么补：LenoSys 之前只有 2 个测试（`or_default` / `or_null` 两个泛型辅助），
+//   而 `sys_parse.leno` 有 **717 行纯解析**（/proc 系列、desktop entry、dpkg、
+//   os-release、cpuinfo）—— 这些是纯函数，最容易测也最容易错，之前一个都没覆盖。
+import "sys_parse.leno" as sp
+
+func fail(string msg) {
+    print("[FAIL] " + msg + "\n")
+    _exit(1)
+}
+
+func eqStr(string got, string want, string tag) {
+    if got != want { fail(tag + "：得到 [" + got + "] 期望 [" + want + "]") }
+}
+
+func eqInt(int got, int want, string tag) {
+    if got != want { fail(tag + "：得到 " + _str(got) + " 期望 " + _str(want)) }
+}
+
+main() {
+    // ==================== ① 基础工具 ====================
+    eqInt(sp.tokens("a  b\tc").len(), 3, "tokens 按空白切")
+    eqStr(sp.tokens("  x  ")[0], "x", "tokens 去掉首尾空白")
+    eqInt(sp.split_lines("a\nb\nc").len(), 3, "split_lines 3 行")
+    eqStr(sp.at(sp.tokens("p q r"), 1), "q", "at 按下标取")
+    eqStr(sp.at(sp.tokens("p"), 9), "", "at 越界 ⇒ 空串（不崩）")
+    eqInt(sp.last_index_of("a/b/c", "/"), 3, "last_index_of 取最后一个")
+
+    // ==================== ② 数字判定 ====================
+    eqInt(if sp.is_number("12") then 1 else 0, 1, "is_number(12) 为真")
+    eqInt(if sp.is_number("1a") then 1 else 0, 0, "is_number(1a) 为假")
+    eqInt(if sp.is_number("") then 1 else 0, 0, "is_number(空) 为假")
+    // ⚠ `is_number` 只认**纯十进制**（不含正负号/小数点）—— 这是有意的：
+    //    注释写明"靠这个把 df 的 Use% 列排除掉"（`"60%"` 必须为 false）
+    eqInt(if sp.is_number("-3.5") then 1 else 0, 0, "is_number(-3.5) 为假（纯十进制口径）")
+    eqInt(if sp.is_number("60%") then 1 else 0, 0, "is_number(60%) 为假（df 的 Use% 要排除）")
+    // ⚠ `is_digit_line` 判的是"**行首**是不是十进制数字"（注释原文："该行是否以
+    //   十进制数字开头，df 的表头行排除用"）—— 名字有点像"整行都是数字"，但不是。
+    eqInt(if sp.is_digit_line("12345") then 1 else 0, 1, "is_digit_line(12345) 为真")
+    eqInt(if sp.is_digit_line("12a") then 1 else 0, 1, "is_digit_line(12a) 也为真（只看首字符）")
+    eqInt(if sp.is_digit_line("abc") then 1 else 0, 0, "is_digit_line(abc) 为假")
+    eqInt(if sp.is_digit_line("") then 1 else 0, 0, "is_digit_line(空) 为假")
+
+    // ==================== ③ first_int_in ====================
+    eqInt(sp.first_int_in("abc 42 x", -1), 42, "取第一个整数")
+    eqInt(sp.first_int_in("no digits here", -1), -1, "没有整数 ⇒ 默认值")
+    // ⚠ `first_int_in` 只取**连续数字串**、不带正负号（用途是 /proc 的 `VmRSS: 1234 kB`，
+    //    那里都是正数）⇒ `"x -7 y"` 得到 7，不是 -7
+    eqInt(sp.first_int_in("x -7 y", 0), 7, "负号被忽略（只取连续数字）")
+
+    // ==================== ④ /proc/<pid>/status 内存 ====================
+    eqInt(sp.parse_proc_status_mem("Name:\tbash\nVmSize:\t 999999 kB\nVmRSS:\t  1234 kB\n"),
+          1234, "VmRSS 取到 1234")
+    eqInt(sp.parse_proc_status_mem("Name:\tbash\n"), -1, "没有 VmRSS ⇒ -1")
+    eqInt(sp.parse_proc_status_mem(""), -1, "空输入 ⇒ -1")
+
+    // ==================== ⑤ os-release ====================
+    var osr = sp.parse_os_release("NAME=\"Ubuntu\"\nVERSION_ID=\"22.04\"\nID=ubuntu\n")
+    eqInt(if osr["ok"] as bool then 1 else 0, 1, "os-release ok=true")
+    eqStr(osr["id"] as string, "ubuntu", "os-release id")
+    eqStr(osr["version"] as string, "22.04", "os-release version")
+    var osrBad = sp.parse_os_release("")
+    eqInt(if osrBad["ok"] as bool then 1 else 0, 0, "空输入 ⇒ ok=false")
+
+    // ==================== ⑥ df ====================
+    var df = sp.parse_df("Filesystem 1K-blocks Used Available Use% Mounted on\n"
+                       + "/dev/sda1 1000 400 600 40% /home\n")
+    eqInt(if df["ok"] as bool then 1 else 0, 1, "df ok=true")
+    eqInt(df["total"] as int, 1000, "df total")
+    eqInt(df["free"] as int, 600, "df free")
+
+    // ==================== ⑦ desktop entry ====================
+    var de = sp.parse_desktop_entry("[Desktop Entry]\nName=Firefox\nExec=firefox %u\nIcon=firefox\n")
+    eqInt(if de["ok"] as bool then 1 else 0, 1, "desktop ok=true")
+    eqStr(de["name"] as string, "Firefox", "desktop name")
+    eqStr(de["execLine"] as string, "firefox %u", "desktop execLine")
+    eqInt(if de["hidden"] as bool then 1 else 0, 0, "默认 hidden=false")
+    eqInt(if de["noDisplay"] as bool then 1 else 0, 0, "默认 noDisplay=false")
+
+    // 标记隐藏的应用
+    var de2 = sp.parse_desktop_entry("[Desktop Entry]\nName=X\nHidden=true\nNoDisplay=true\n")
+    eqInt(if de2["hidden"] as bool then 1 else 0, 1, "Hidden=true 被识别")
+    eqInt(if de2["noDisplay"] as bool then 1 else 0, 1, "NoDisplay=true 被识别")
+
+    // ==================== ⑧ 引号剥离 ====================
+    eqStr(sp.unquote("\"quoted\""), "quoted", "unquote 去双引号")
+    eqStr(sp.unquote("'single'"), "single", "unquote 去单引号")
+    eqStr(sp.unquote("plain"), "plain", "unquote 无引号原样")
+
+    print("[PASS] sys_parse\n")
+}
