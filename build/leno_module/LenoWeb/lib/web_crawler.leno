@@ -1212,26 +1212,39 @@ export func isRobotsAllowed(string robotsText, string userAgent, string url): bo
     }
 
     // 检查 Allow / Disallow 规则
-    bool allowed = true
     var allows = selected["allow"]
     var disallows = selected["disallow"]
 
-    // Disallow 命中即拒绝，除非 Allow 覆盖
+    // ★ 2026-11-09 修：**最长匹配优先**（robots.txt 规范），长度相同则 Allow 优先。
+    //   原来"先跑完所有 Disallow，再跑所有 Allow" ⇒ **Allow 无条件覆盖 Disallow** ⇒
+    //   实测：
+    //       Allow: /a
+    //       Disallow: /a/private
+    //   访问 `/a/private/x` 返回 **allowed=true** ✗（应该禁止 —— disallow 的规则更长）。
+    //   这是**安全方向**的错误：爬虫会去抓站长明确禁止的路径。
+    int bestLen = -1
+    bool bestAllowed = true
+
     if disallows is Array {
         for disallows to rule {
-            if _robotsRuleMatch(rule as string, path) {
-                allowed = false
+            string r = rule as string
+            if r != "" and _robotsRuleMatch(r, path) and r.len() > bestLen {
+                bestLen = r.len()
+                bestAllowed = false
             }
         }
     }
     if allows is Array {
         for allows to rule {
-            if _robotsRuleMatch(rule as string, path) {
-                allowed = true
+            string r = rule as string
+            // `>=` ⇒ 长度相同时 Allow 胜出（规范建议）
+            if r != "" and _robotsRuleMatch(r, path) and r.len() >= bestLen {
+                bestLen = r.len()
+                bestAllowed = true
             }
         }
     }
-    return allowed
+    return bestAllowed
 }
 
 // ==================== Sitemap.xml 解析 ====================

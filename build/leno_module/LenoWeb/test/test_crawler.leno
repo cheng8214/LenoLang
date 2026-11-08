@@ -129,5 +129,27 @@ main() {
     eqStr(si[0], "https://a.com/s1.xml", "index[0]")
     eqStr(si[1], "https://a.com/s2.xml", "index[1]")
 
+    // ==================== ⑦ robots 规则：**最长匹配优先** ====================
+    //  这是 2026-11-09 修的第三个 bug：原来"先跑 Disallow 再跑 Allow"⇒ Allow 无条件覆盖，
+    //  于是 `Allow: /a` + `Disallow: /a/private` 访问 `/a/private/x` 会放行（危险方向）。
+    string rbL = "User-agent: *\nAllow: /a\nDisallow: /a/private\n"
+    eqInt(if web.isRobotsAllowed(rbL, "bot", "http://x.com/a/private/x") then 1 else 0, 0,
+        "Disallow 规则更长 ⇒ 禁止（曾放行）")
+    eqInt(if web.isRobotsAllowed(rbL, "bot", "http://x.com/a/ok") then 1 else 0, 1,
+        "只命中 Allow ⇒ 允许")
+
+    string rbL2 = "User-agent: *\nDisallow: /\nAllow: /public\n"
+    eqInt(if web.isRobotsAllowed(rbL2, "bot", "http://x.com/public/x") then 1 else 0, 1,
+        "Allow 规则更长 ⇒ 允许（Disallow: / 被它覆盖）")
+    eqInt(if web.isRobotsAllowed(rbL2, "bot", "http://x.com/other") then 1 else 0, 0,
+        "只命中 Disallow ⇒ 禁止")
+
+    // UA 组选择：精确匹配优先于通配 *
+    string rbU = "User-agent: *\nDisallow: /\n\nUser-agent: mybot\nAllow: /\n"
+    eqInt(if web.isRobotsAllowed(rbU, "mybot", "http://x.com/x") then 1 else 0, 1,
+        "精确 UA 组优先于 *")
+    eqInt(if web.isRobotsAllowed(rbU, "otherbot", "http://x.com/x") then 1 else 0, 0,
+        "其它 bot 走 * 组（被禁）")
+
     print("[PASS] crawler\n")
 }
