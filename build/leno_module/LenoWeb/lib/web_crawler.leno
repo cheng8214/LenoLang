@@ -31,13 +31,13 @@ func _i(any v): int {
 // 强类型 URL，替代旧的 Dict 表示，提供完整的解析/重组/规范化能力
 
 export struct Url {
-    string scheme = 0      // 协议（http/https 等）
-    string host = 0        // 主机名
+    string scheme = ""     // 协议（http/https 等）
+    string host = ""       // 主机名
     int port = 0           // 端口（-1 表示未显式指定）
-    string path = 0        // 路径（默认 "/"）
-    string query = 0       // 查询字符串（不含 ?）
-    string fragment = 0    // 锚点（不含 #）
-    bool isAbsolute = 0    // 是否为绝对 URL
+    string path = ""       // 路径（默认 "/"）
+    string query = ""      // 查询字符串（不含 ?）
+    string fragment = ""   // 锚点（不含 #）
+    bool isAbsolute = false // 是否为绝对 URL
 
     // 重新拼接为完整 URL 字符串
     func str(): string {
@@ -359,7 +359,7 @@ export func parseUrl(string url): Url {
 
 // 队列项：待抓取的 URL 及其深度
 export struct CrawlItem {
-    string url = 0
+    string url = ""
     int depth = 0
     int priority = 0        // 越大越先出队（默认 0 ⇒ 先后顺序 = 入队顺序）
     int seq = 0             // 入队序号：同优先级按它做 FIFO 稳定排序（堆本身不稳定）
@@ -371,9 +371,9 @@ export struct CrawlItem {
 
 // 抓取的页面结果：URL + 状态码 + 原始 HTML + 解析后的 DOM
 export struct Page {
-    string url = 0
+    string url = ""
     int status = 0
-    string body = 0
+    string body = ""
     HtmlNode html
 
     // 页面中所有链接（绝对 URL）
@@ -404,13 +404,13 @@ export struct Crawler {
     int max_pages = 0
     int max_depth = 0
     int delay_ms = 0
-    string user_agent = 0
-    bool respect_robots = 0
-    string robots_rules = 0
+    string user_agent = ""
+    bool respect_robots = false
+    string robots_rules = ""
     Dict[string, bool] visited
     Array[CrawlItem] queue                  // 二叉大顶堆（优先队列），见 _push/_pop
     int page_count = 0
-    bool running = 0
+    bool running = false
 
     // ---- 内部状态（见各方法注释）----
     Dict[string, bool] _queued = {}        // 已入队集合：同一 URL 不重复入队
@@ -1217,10 +1217,10 @@ export func isRobotsAllowed(string robotsText, string userAgent, string url): bo
 
 // 一条 sitemap 记录（lastmod/changefreq/priority 是可选元数据，没有则为 ""）
 export struct SitemapEntry {
-    string url = 0
-    string lastmod = 0
-    string changefreq = 0
-    string priority = 0
+    string url = ""
+    string lastmod = ""
+    string changefreq = ""
+    string priority = ""
 }
 
 // 递归抓取 sitemap 的结果 + 诊断信息（不引入模块级状态 ⇒ 多线程安全）

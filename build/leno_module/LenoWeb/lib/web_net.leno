@@ -1024,7 +1024,7 @@ export func getVia(string url, string proxy): Response {
 
 // 单个代理的小账本
 export struct ProxyStats {
-    string proxy = 0
+    string proxy = ""
     int ok = 0
     int fail = 0
     int streak_fail = 0      // 连续失败数（成功即清零）
@@ -1168,14 +1168,14 @@ func _nowMs(): int {
 // 一条批抓结果。results 按**输入顺序**返回（不是完成顺序）⇒ 可直接和 urls 对齐。
 export struct BatchResult {
     int index = 0
-    string url = 0
+    string url = ""
     Response resp
 }
 
 // 一趟请求的运行时状态
 struct _MultiJob {
     int index = 0
-    string url = 0
+    string url = ""
     Ptr[u8] handle = null
     Ptr writeCb = null
     Ptr headerCb = null
@@ -1380,8 +1380,8 @@ export struct Session {
     HttpClient c        // 复用的客户端（保持 cookie/连接状态）
     Dict headers        // 持久化默认请求头（键值对）
     ProxyPool? pool = null   // 挂了代理池 ⇒ 每次请求自动轮换（见 sessionSetProxyPool）
-    string last_proxy = 0    // 最近一次请求实际用的代理（供 sessionReport* 上报）
-    bool pool_exhausted = 0  // 最近一次取代理时池子全在冷却 ⇒ 调用方据此退避/直连
+    string last_proxy = ""      // 最近一次请求实际用的代理（供 sessionReport* 上报）
+    bool pool_exhausted = false // 最近一次取代理时池子全在冷却 ⇒ 调用方据此退避/直连
 }
 
 // 创建会话

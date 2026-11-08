@@ -7,7 +7,7 @@ use player.Sound
 export struct Sfx {
     Array[Sound] pool
     int idx = 0
-    bool ok = 0
+    bool ok = false
     float vol = 0
 
     // 从同一音频文件预建 n 个实例，统一音量 v

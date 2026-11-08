@@ -10,7 +10,7 @@ var _engineFailed = false    // 引擎初始化是否曾失败：失败后不再
 
 // ==================== Sound (streaming playback) ====================
 export struct Sound {
-    Ptr h; bool ok = 0
+    Ptr h; bool ok = false
     bool _started = false        // 播过一次没有（`isAtEnd()` 要它：没播过时 isPlaying() 也是 false ✗）
 
     func load(string p): bool {
@@ -135,7 +135,7 @@ export struct Sound {
 
 // ==================== Engine ====================
 export struct Engine {
-    bool ok = 0
+    bool ok = false
 
     func init(): bool {
         if core.lib().ma_dll_engine_init() != 0 { return false }

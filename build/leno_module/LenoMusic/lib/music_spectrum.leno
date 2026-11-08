@@ -19,7 +19,7 @@ use core.miniaudio
 import ffi
 
 export struct Spectrum {
-    Ptr h; bool ok = 0
+    Ptr h; bool ok = false
     int bands = 32
     Ptr[u8] _out = null
     Array[float] _cur = []

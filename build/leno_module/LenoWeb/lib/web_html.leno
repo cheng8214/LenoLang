@@ -10,10 +10,10 @@ import strings
 // tag 取值：普通元素为标签名(小写)；文本节点为 "#text"；文档根为 "#document"
 
 export struct HtmlNode {
-    string tag = 0
+    string tag = ""
     Dict[string, string] attrs
     Array[HtmlNode] children
-    string text = 0
+    string text = ""
     HtmlNode? _parent   // 父节点（根节点为 null），建树时由 _makeNode 设置；用 parent() 访问
 
     // 获取属性值（不存在返回空串）
@@ -168,17 +168,17 @@ export struct HtmlNode {
 
 // CSS 选择器的单个组成部分（tag / id / class / 属性 / 伪类）
 export struct SelectorPart {
-    string tag = 0
-    string id = 0
+    string tag = ""
+    string id = ""
     Array[string] classes
-    string attrName = 0
-    string attrValue = 0
-    string attrOp = 0
-    bool hasAttr = 0
+    string attrName = ""
+    string attrValue = ""
+    string attrOp = ""
+    bool hasAttr = false
     // 与**前一段**的关系（第一段无意义）：
     //   " " 后代   ">" 子元素   "+" 紧随其后的兄弟元素   "~" 之后的所有兄弟元素
     string comb = " "
-    bool isChild = 0            // 兼容位：等价于 comb == ">"（_removeRec / closest 仍在读它）
+    bool isChild = false        // 兼容位：等价于 comb == ">"（_removeRec / closest 仍在读它）
     // 伪类：可叠加（`td:not(.x):first-child`）—— 按 CSS 语义**全部**满足才算匹配。
     // 原先只有单个 `pseudo`/`pseudoArg` 字段，写第二个伪类会把第一个**覆盖掉**（静默错）。
     Array[string] pseudos
@@ -214,7 +214,7 @@ Array[HtmlNode] _EMPTY_CHILDREN = []
 // 解析器上下文：每次 parse 调用创建独立实例，保证多线程并发解析安全。
 // 取代原先的模块级全局 _g_pos/_g_html（共享会导致多线程串台）。
 struct _ParseCtx {
-    string html = 0   // 当前解析的 HTML 文本
+    string html = ""  // 当前解析的 HTML 文本
     int pos = 0       // 当前解析光标
 
     func byte(int off): int {
