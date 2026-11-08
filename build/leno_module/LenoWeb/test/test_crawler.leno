@@ -83,5 +83,35 @@ main() {
     // 空 sitemap ⇒ 空数组（不崩）
     eqInt(web.parseSitemap("<urlset></urlset>").len(), 0, "空 sitemap ⇒ 空数组")
 
+    // ==================== ⑤ robots.txt ====================
+    string rb = "User-agent: *\nDisallow: /admin\nSitemap: https://a.com/s.xml\n"
+    var rbD = web.parseRobots(rb)
+    eqInt(rbD.len(), 1, "parseRobots 只返回 1 个键（groups）")
+    eqInt(if rbD.has("groups") then 1 else 0, 1, "parseRobots 返回 groups 键")
+
+    // crawl-delay：**秒 → 毫秒**
+    eqInt(web.parseCrawlDelay(rb + "Crawl-delay: 5\n", "*"), 5000, "Crawl-delay: 5 ⇒ 5000 毫秒")
+    eqInt(web.parseCrawlDelay("User-agent: x\n", "*"), 0, "没有 Crawl-delay ⇒ 0")
+
+    // ==================== ⑥ sitemap 扩展格式 ====================
+    string xmlE = "<?xml version=\"1.0\"?><urlset>"
+               + "<url><loc>https://a.com/1</loc><lastmod>2026-01-01</lastmod><priority>0.8</priority></url>"
+               + "</urlset>"
+    var se = web.parseSitemapEntries(xmlE)
+    eqInt(se.len(), 1, "parseSitemapEntries 解析出 1 条")
+    eqStr(se[0].url, "https://a.com/1", "entry.url")
+    eqStr(se[0].lastmod, "2026-01-01", "entry.lastmod")
+    eqStr(se[0].priority, "0.8", "entry.priority")
+
+    // sitemap index（指向其它 sitemap 文件）
+    string xmlI = "<?xml version=\"1.0\"?><sitemapindex>"
+               + "<sitemap><loc>https://a.com/s1.xml</loc></sitemap>"
+               + "<sitemap><loc>https://a.com/s2.xml</loc></sitemap>"
+               + "</sitemapindex>"
+    var si = web.parseSitemapIndex(xmlI)
+    eqInt(si.len(), 2, "parseSitemapIndex 解析出 2 条")
+    eqStr(si[0], "https://a.com/s1.xml", "index[0]")
+    eqStr(si[1], "https://a.com/s2.xml", "index[1]")
+
     print("[PASS] crawler\n")
 }

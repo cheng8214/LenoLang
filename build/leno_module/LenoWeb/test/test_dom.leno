@@ -1,0 +1,97 @@
+// LenoWeb HtmlNode 方法式 API 自测
+//
+// 跑法（仓库根目录）：
+//   build\leno.exe build\leno_module\LenoWeb\test\test_dom.leno
+//
+// test_html.leno 测的是**函数式**入口（web.select / web.selectText ...），
+// 这份测的是 **HtmlNode 自己的方法**（node.tagName() / node.closest() ...）——
+// 两套 API 各写各的，之前都没有测试。
+import "Web" as web
+use web.HtmlNode
+
+func fail(string msg) {
+    print("[FAIL] " + msg + "\n")
+    _exit(1)
+}
+
+func eqStr(string got, string want, string tag) {
+    if got != want { fail(tag + "：得到 [" + got + "] 期望 [" + want + "]") }
+}
+
+func eqInt(int got, int want, string tag) {
+    if got != want { fail(tag + "：得到 " + _str(got) + " 期望 " + _str(want)) }
+}
+
+// 可空节点 → 标签名（null 返回 "null"，方便断言）
+func tagOf(HtmlNode? n): string {
+    if n is HtmlNode => x { return x.tagName() }
+    return "null"
+}
+
+main() {
+    string html = "<div id='d' class='outer'>"
+                + "<ul class='list'><li class='x'>a</li><li>b</li></ul>"
+                + "<p>tail</p>"
+                + "</div>"
+    var r = web.parse(html)
+
+    // ==================== ① 节点自身属性 ====================
+    eqStr(web.tag(r), "#document", "根是 #document")
+    // 根是**文档节点**，不是 element —— 这条是写测试时按"根应该是个元素"的直觉
+    // 写成 1，跑出来是 0 才发现的（好在断言立刻抓到了）
+    eqInt(if r.isElement() then 1 else 0, 0, "根 #document 不是 element")
+    eqInt(if r.isTextNode() then 1 else 0, 0, "根不是文本节点")
+
+    var ul = r.selectOne(".list")
+    eqStr(tagOf(ul), "ul", "selectOne 拿到 ul")
+    if ul is HtmlNode => u {
+        eqStr(u.tagName(), "ul", "tagName")
+        eqStr(u.attr("class"), "list", "attr 读 class")
+        eqInt(if u.hasAttr("class") then 1 else 0, 1, "hasAttr(class) 为真")
+        eqInt(if u.hasAttr("id") then 1 else 0, 0, "hasAttr(id) 为假")
+        eqInt(u.classes().len(), 1, "classes() 有 1 个")
+        eqInt(if u.hasClass("list") then 1 else 0, 1, "hasClass(list)")
+        eqInt(if u.hasClass("nope") then 1 else 0, 0, "hasClass(nope) 为假")
+        eqInt(u.childCount(), 2, "childCount = 2（两个 li）")
+        eqInt(web.children(u).len(), 2, "children() 也是 2")
+        eqInt(if u.isElement() then 1 else 0, 1, "ul isElement")
+    }
+
+    // ==================== ② 文本 ====================
+    var li = r.selectOne(".x")
+    if li is HtmlNode => l {
+        eqStr(l.text(), "a", "text() 取直接文本")
+        eqStr(l.allText(), "a", "allText() 取含子孙文本")
+    }
+    eqStr(web.allText(r), "abtail", "根 allText 拼全部")
+
+    // ==================== ③ DOM 关系 ====================
+    if li is HtmlNode => l2 {
+        eqStr(tagOf(l2.parent()), "ul", "parent() 是 ul")
+        eqStr(tagOf(l2.closest("div")), "div", "closest(div) 跨两层")
+        eqStr(tagOf(l2.closest("section")), "null", "closest 无匹配 ⇒ null")
+        eqInt(l2.siblings().len(), 1, "同层还有 1 个兄弟（第二个 li）")
+    }
+
+    // 根节点没有父节点
+    eqStr(tagOf(r.parent()), "null", "根节点 parent() 为 null")
+
+    // ==================== ④ 方法式选择器与函数式一致 ====================
+    eqInt(r.select("li").len(), 2, "方法式 select 找到 2 个 li")
+    eqInt(web.select(r, "li").len(), 2, "函数式 select 也是 2")
+    eqStr(tagOf(r.selectOne("#d")), "div", "方法式 selectOne 按 id")
+    eqStr(tagOf(r.selectOne("#none")), "null", "方法式 selectOne 无匹配 ⇒ null")
+
+    // ==================== ⑤ remove：删子节点 ====================
+    var r2 = web.parse("<div><b>1</b><i>2</i><b>3</b></div>")
+    eqInt(r2.select("b").len(), 2, "删前有 2 个 b")
+    // remove 是 HtmlNode 的方法：在节点上删匹配的子节点
+    var dv = r2.selectOne("div")
+    if dv is HtmlNode => d {
+        eqInt(d.remove("b"), 2, "remove 返回删除个数 2")
+        eqInt(d.select("b").len(), 0, "删后 b 为 0")
+        eqInt(d.select("i").len(), 1, "不影响 i")
+    }
+
+    print("[PASS] dom\n")
+}
