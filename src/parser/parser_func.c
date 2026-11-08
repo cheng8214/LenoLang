@@ -2688,14 +2688,23 @@ Ast* parse_struct_stmt(Parser* p) {
             continue;
         }
 
-        // 期望字段名（支持逗号分隔多字段：int a, b, c）
-        if (p->lex.current.type != TOK_IDENT) {
-            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望字段名");
-            type_free(field_type);
-            break;
-        }
-
+        // 字段名（支持逗号分隔多字段：int a, b, c）
+        //   ★ 2026-11-08：`struct P { int x, int y }`（C / Go / Rust 风格）此前会把
+        //   `int` 当成**第二个字段名**、再把 `y` 当成类型 ⇒ 最后只在 '}' 处报一句
+        //   「期望字段名」，完全看不出"逗号后只能写名字" ✗。这里在每个名字位置都校验，
+        //   并直接给出正确写法；报完跳过本 struct 剩余内容，避免「期望 '}'」级联。
         do {
+            if (p->lex.current.type != TOK_IDENT) {
+                error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                    "期望字段名 —— 一个类型声明多个字段时，逗号后**只写名字**（如 `int x, y`）；"
+                    "不同类型请另起一行（如 `int x` 换行 `int y`）");
+                // ⚠ 不在这里 type_free(field_type)：do-while 之后就统一释放一次 ✓
+                //   （在这里再释放会 double free ⇒ 实测编译期 SIGSEGV ✗）
+                while (p->lex.current.type != TOK_RBRACE && p->lex.current.type != TOK_EOF) {
+                    lexer_next(&p->lex);
+                }
+                break;
+            }
             int field_line = p->lex.current.line;   // ★ 该字段名所在行（诊断落点）
             char* field_name = copy_string(p->lex.current.text, p->lex.current.len);
             lexer_next(&p->lex);
@@ -3141,6 +3150,22 @@ Ast* parse_cstruct_stmt(Parser* p) {
         if (p->lex.current.type == TOK_FUNC || p->lex.current.type == TOK_ASYNC) {
             error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "cstruct 不支持方法定义，请使用普通 struct");
             // 跳过错误恢复
+            while (p->lex.current.type != TOK_SEMI &&
+                   p->lex.current.type != TOK_RBRACE &&
+                   p->lex.current.type != TOK_EOF) {
+                lexer_next(&p->lex);
+            }
+            if (p->lex.current.type == TOK_SEMI) {
+                lexer_next(&p->lex);
+            }
+            continue;
+        }
+
+        // ★ 2026-11-08：`cstruct C { int x, int y }` —— C 风格的逗号分隔。
+        //   此前逗号直接走到 parse_type ⇒ 只报「期望字段类型」，看不出 cstruct 是**一行一个** ✗
+        if (p->lex.current.type == TOK_COMMA) {
+            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                "cstruct 字段不支持逗号分隔 —— 每行写一个字段（如 `int x` 换行 `int y`）");
             while (p->lex.current.type != TOK_SEMI &&
                    p->lex.current.type != TOK_RBRACE &&
                    p->lex.current.type != TOK_EOF) {

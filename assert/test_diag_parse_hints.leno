@@ -600,5 +600,37 @@ main() {
 ")
     ce.expect_ok(tryOk, "try/catch/finally + throw 表达式（防误报）", "boom")
 
+    // ---- ㉗ `struct P { int x, int y }` / cstruct 逗号分隔：此前只报「期望字段名」---
+    var structComma = dirs.join(work, "struct_comma_type.leno")
+    files.write(structComma, @"struct P { int x, int y }
+main() {
+    var p = new P(x = 1, y = 2)
+    print(_str(p.x + p.y))
+}
+")
+    var outStructComma = ce.expect_error(structComma, "struct 逗号后又写类型 => 定向报错",
+        "逗号后", 1)
+    ce.expect_no_warning(outStructComma, "struct 逗号后又写类型", "期望 '}' 结束 struct 定义")
+
+    var cstructComma = dirs.join(work, "cstruct_comma.leno")
+    files.write(cstructComma, @"cstruct C { int x, int y }
+main() {
+    C c = C.malloc()
+    print(_str(c.x))
+}
+")
+    ce.expect_error(cstructComma, "cstruct 逗号分隔 => 定向报错",
+        "cstruct 字段不支持逗号分隔", 1)
+
+    // ㉗b 防误报：合法的 `int x, y`（共用类型）必须照常可用
+    var commaNames = dirs.join(work, "struct_comma_names.leno")
+    files.write(commaNames, @"struct P { int x = 1, y = 2 }
+main() {
+    var p = new P()
+    print(_str(p.x + p.y))
+}
+")
+    ce.expect_ok(commaNames, "int x, y 共用类型（防误报）", "3")
+
     print("test_diag_parse_hints passed")
 }
