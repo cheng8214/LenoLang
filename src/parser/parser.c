@@ -358,7 +358,6 @@ Ast* parse_statement(Parser* p) {
 
         // 控制流语句
         case TOK_IF:
-        case TOK_EIF:
             stmt = parse_if_stmt(p);
             break;
         case TOK_WHILE:
@@ -370,6 +369,35 @@ Ast* parse_statement(Parser* p) {
         case TOK_SWITCH:
             stmt = parse_switch_stmt(p);
             break;
+
+        // else / eif 掉在 if 之外：★ 2026-11-08
+        //   ⚠ `if … { } eif … { }` 的 eif 由 parse_if_stmt **内部**消费，走不到这里
+        //   ⇒ 到了这里就是**孤立的** else / eif（此前 else 只报「期望表达式」，
+        //     eif 更糟：会被当成新的 if 静默执行 ✗）
+        case TOK_ELSE:
+        case TOK_EIF: {
+            int is_eif = (p->lex.current.type == TOK_EIF);
+            int bad_line = p->lex.current.line;
+            if (is_eif) {
+                error_add_at_fmt(ERR_SYNTAX, bad_line, p->lex.current.column,
+                    "`eif` 只能跟在 `if … { … }` 后面（当前没有可衔接的 if）—— "
+                    "写法：`if 条件 { … } eif 条件2 { … } else { … }`");
+            } else {
+                error_add_at_fmt(ERR_SYNTAX, bad_line, p->lex.current.column,
+                    "`else` 只能跟在 `if … { … }` 后面（当前没有可衔接的 if）—— "
+                    "写法：`if 条件 { … } else { … }`；中间条件用 `eif` 接");
+            }
+            while (p->lex.current.type != TOK_EOF &&
+                   p->lex.current.line == bad_line &&
+                   p->lex.current.type != TOK_LBRACE) {
+                lexer_next(&p->lex);
+            }
+            if (p->lex.current.type == TOK_LBRACE) {
+                Ast* skipped_body = parse_block_internal(p);
+                if (skipped_body) ast_free(skipped_body);
+            }
+            return NULL;
+        }
 
         // impl 只能写在 struct 头部（`struct S impl F`）：★ 2026-11-08
         //   Rust / Swift 风格的顶层 `impl F for S { … }` 此前落到表达式解析 ⇒

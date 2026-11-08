@@ -1061,15 +1061,31 @@ Ast* parse_switch_stmt(Parser* p) {
                     //   `:` 才是本语言既有的区间符号；给"区间"再造一个词（`to`）等于
                     //   两套等价写法，与"单一事实来源"的纪律冲突。
                     if (value && p->lex.current.type == TOK_COLON) {
-                        int range_line = value->line;
-                        lexer_next(&p->lex);                 // ':'
-                        Ast* end = parse_expression(p);
-                        Ast* range = ast_new(AST_RANGE, range_line);
-                        range->column = value->column;
-                        range->u.range.start = value;
-                        range->u.range.end = end;
-                        range->u.range.inclusive = 1;        // 闭区间，与切片同口径
-                        value = range;
+                        // ★ 2026-11-08：`case 1: { … }`（C / Java / JS 风格的"冒号 + 块"）
+                        //   此前把 ':' 当成**区间分隔符**，再去解析 `{ … }` 当区间终点 ⇒
+                        //   先报「字典键后面必须跟 ':'」，再报「case 语句体必须用大括号」✗
+                        //   判据：':' 后面紧跟 '{' ⇒ 那显然是想写块体，不是区间 ✓
+                        Lexer look = p->lex;
+                        lexer_next(&p->lex);
+                        int colon_starts_body = (p->lex.current.type == TOK_LBRACE);
+                        p->lex = look;
+                        error_set_column(look.current.column);
+                        if (colon_starts_body) {
+                            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                                "case 的语句体不要写冒号 —— 直接 `case 1 { … }`；"
+                                "`:` 在 case 里表示**区间**（如 `case 1:3`）");
+                            lexer_next(&p->lex);   // 吃掉多余的那个 ':'
+                        } else {
+                            int range_line = value->line;
+                            lexer_next(&p->lex);                 // ':'
+                            Ast* end = parse_expression(p);
+                            Ast* range = ast_new(AST_RANGE, range_line);
+                            range->column = value->column;
+                            range->u.range.start = value;
+                            range->u.range.end = end;
+                            range->u.range.inclusive = 1;        // 闭区间，与切片同口径
+                            value = range;
+                        }
                     } else if (value && p->lex.current.type == TOK_TO) {
                         // 更早的临时写法 `case 1 to 3`：报错并**照旧构造区间**，
                         // 这样只报一条、不会把后面的 `{` 也带崩。
@@ -1126,6 +1142,13 @@ Ast* parse_switch_stmt(Parser* p) {
             lexer_next(&p->lex); // default
             
             // default 体必须用大括号包裹
+            if (p->lex.current.type == TOK_COLON) {
+                // ★ 2026-11-08：`default: { … }`（C / Java / JS 风格）此前只报
+                //   「default 语句体必须用大括号」，看不出是多了个冒号 ✗
+                error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                    "default 的语句体不要写冒号 —— 直接 `default { … }`");
+                lexer_next(&p->lex);   // 吃掉多余的 ':'
+            }
             if (p->lex.current.type != TOK_LBRACE) {
                 error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "default 语句体必须用大括号 {} 包裹");
                 free(switch_var_name);
