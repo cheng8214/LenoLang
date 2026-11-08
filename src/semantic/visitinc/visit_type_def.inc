@@ -856,6 +856,15 @@
                                         for (int k = 0; k < ast->u.struct_def.method_count; k++) {
                                             if (strcmp(ast->u.struct_def.methods[k]->u.func.name, mname) == 0) {
                                                 found = 1;
+                                                // ★ 2026-11-07：impl 的 face 方法不能是 pri ——
+                                                //   此前通过 face 调用照样能进（pri 对 face 派发不生效）⇒
+                                                //   用户以为私有，实际全公开 ✗
+                                                if (ast->u.struct_def.methods[k]->u.func.is_private) {
+                                                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                        "struct '%s' 实现 face '%s' 的方法 '%s' 不能声明为 pri —— "
+                                                        "face 方法必须对外可调用；请去掉 pri",
+                                                        ast->u.struct_def.name, face_name, mname);
+                                                }
                                                 if (mface->methods[j].return_type != TYPE_ANY && ast->u.struct_def.methods[k]->u.func.return_type) {
                                                     TypeKind face_ret = mface->methods[j].return_type;
                                                     TypeKind impl_ret = ast->u.struct_def.methods[k]->u.func.return_type->kind;
@@ -966,6 +975,13 @@
                         for (int k = 0; k < ast->u.struct_def.method_count; k++) {
                             if (strcmp(ast->u.struct_def.methods[k]->u.func.name, mname) == 0) {
                                 found = 1;
+                                // ★ 2026-11-07：impl 的 face 方法不能是 pri（face 派发不检查 pri）✗
+                                if (ast->u.struct_def.methods[k]->u.func.is_private) {
+                                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                        "struct '%s' 实现 face '%s' 的方法 '%s' 不能声明为 pri —— "
+                                        "face 方法必须对外可调用；请去掉 pri",
+                                        ast->u.struct_def.name, face_name, mname);
+                                }
                                 if (fdef->methods[j].return_type && ast->u.struct_def.methods[k]->u.func.return_type) {
                                     // 泛型 face impl：如果返回类型是泛型参数，替换为 impl 提供的具体类型
                                     TypeKind expected_kind = fdef->methods[j].return_type->kind;

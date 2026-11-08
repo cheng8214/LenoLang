@@ -42,7 +42,8 @@ struct ConstrainedHolder[T: Comparable] {   // ← 故意触发 [ 字段未初�
 // ===== main =====
 main() {
     print("=== 1: 约束混合 [K:Face, V] ===")
-    var m = mixConstrained[string, int]("key", 42)
+    // K 受 Comparable 约束 ⇒ 必须传显式 impl 了该 face 的类型（string 不满足约束 ✗）
+    var m = mixConstrained[EmptyBox, int](new EmptyBox(), 42)
     assert(m == 42)
 
     print("=== 2: 返回泛型 struct ===")

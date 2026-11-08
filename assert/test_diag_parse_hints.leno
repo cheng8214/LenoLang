@@ -434,5 +434,39 @@ main() {
 ")
     ce.expect_ok(faceParamOk, "face 参数类型一致（防误报）", "6")
 
+    // ---- ㉑ 泛型约束必须在**调用点**校验：int/string 不实现 face 时此前静默通过 ----
+    var constraintBad = dirs.join(work, "constraint_bad.leno")
+    files.write(constraintBad, @"face Comparable { func cmp(): int }
+struct N impl Comparable { func cmp(): int { return 1 } }
+func useIt[T: Comparable](T x): int { return x.cmp() }
+main() {
+    print(_str(useIt(42)))
+}
+")
+    ce.expect_error(constraintBad, "约束 T: Face 传 int => 编译期报错",
+        "类型 'int' 不满足约束 'Comparable'", 5)
+
+    // ㉑b 防误报：显式 impl 了 face 的 struct 照常可用
+    var constraintOk = dirs.join(work, "constraint_ok.leno")
+    files.write(constraintOk, @"face Comparable { func cmp(): int }
+struct N impl Comparable { func cmp(): int { return 1 } }
+func useIt[T: Comparable](T x): int { return x.cmp() }
+main() {
+    print(_str(useIt(new N())))
+}
+")
+    ce.expect_ok(constraintOk, "约束 T: Face 合规（防误报）", "1")
+
+    // ---- ㉒ impl 的 face 方法不能声明为 pri（此前通过 face 调用照样能进）----
+    var priFaceMethod = dirs.join(work, "pri_face_method.leno")
+    files.write(priFaceMethod, @"face F { func m(): int }
+struct S impl F {
+    pri func m(): int { return 1 }
+}
+main() { }
+")
+    ce.expect_error(priFaceMethod, "impl 的 face 方法标 pri => 报错",
+        "不能声明为 pri", 2)
+
     print("test_diag_parse_hints passed")
 }

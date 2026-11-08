@@ -99,9 +99,11 @@ main() {
     assert_eq(p.key, "key")
     assert_eq(p.val, 3.14)
 
-    // 5. 约束函数调用无约束函数
-    assert_eq(wrap[int](42), 42)
-    assert_eq(wrap[string]("test"), "test")
+    // 5. 约束函数调用无约束函数（T 必须满足 face 约束 ⇒ 用实现了 Comparable 的 struct ✓）
+    var w1 = wrap[OrdInt](new OrdInt(value=42))
+    assert_eq((w1 as OrdInt).value, 42)
+    var w2 = wrap[OrdStr](new OrdStr(value="test"))
+    assert_eq((w2 as OrdStr).value, "test")
 
     // 6. 非约束泛型嵌套在约束里
     var strBox = new SortedBox[string](value="abc")

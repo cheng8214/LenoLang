@@ -1972,9 +1972,24 @@
                                 }
 
                                 // 只有 struct 类型需要检查 impl
+                                // ★ 2026-11-07：**非 struct 实参**（int / string / …）此前整段跳过 ⇒
+                                //   `useIt(42)`（T 约束为 face）静默通过，运行期才报「类型 object 上
+                                //   不存在方法 'cmp'」✗。约束是已知 face 时，非 struct 一律不满足 ✓
+                                if (inferred->kind == TYPE_FACE ||
+                                    inferred->kind == TYPE_GENERIC_PARAM) {
+                                    continue;   // face 值 / 未定类型：交给运行期派发
+                                }
+                                ObjFaceDef* fdef = face_def_find(constraint);
+                                if (fdef && (inferred->kind != TYPE_STRUCT ||
+                                             !inferred->struct_name)) {
+                                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                        "类型 '%s' 不满足约束 '%s': 需要实现 face '%s'",
+                                        type_kind_to_string(inferred->kind),
+                                        constraint, constraint);
+                                    continue;
+                                }
                                 if (inferred->kind == TYPE_STRUCT && inferred->struct_name) {
                                     ObjStructDef* sdef = struct_def_find(inferred->struct_name);
-                                    ObjFaceDef* fdef = face_def_find(constraint);
                                     if (sdef && fdef && !struct_implements_face(sdef, fdef)) {
                                         error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                                             "类型 '%s' 不满足约束 '%s': 需要实现 face '%s'",
