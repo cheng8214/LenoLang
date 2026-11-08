@@ -240,13 +240,14 @@ http.static(app, "/assets", "assets")
 
 | 请求 | 响应 |
 |---|---|
-| `GET /assets/a.css` | `200` + `ETag: "1234-1760000000"` + 正文 |
+| `GET /assets/a.css` | `200` + `ETag: "1234-1760000000"` + `Last-Modified: … GMT` + 正文 |
 | `GET` + `If-None-Match: "1234-1760000000"` | **`304`**，正文长度 0 |
-| 文件改过（size/mtime 变） | ETag 变 ⇒ 自然回 200 新内容 |
+| `GET` + `If-Modified-Since: <该文件的 Last-Modified>` | **`304`**（★ 0.2.9 新增） |
+| `GET` + `Range: bytes=0-1023` | **`206`** + `Content-Range`，只发那一段 |
+| 文件改过（size/mtime 变） | ETag / Last-Modified 都变 ⇒ 自然回 200 新内容 |
 
-> **不发 `Last-Modified`**：HTTP 要的是 GMT 格式，而 `times.format` 目前按本地时区输出
-> ⇒ 宁可少一个头，也不发一个时区错误的时间（会让缓存提前/延后失效）。
-> **`Range`（206 断点续传）还没做**，见能力缺口 2.6 的剩余项。
+> `Last-Modified` 由 `lib/http_date.leno` 用纯算术算成 IMF-fixdate（GMT），**不走 `times.format`**
+> —— 后者按本地时区输出，写进 HTTP 头会让缓存提前/延后失效。
 
 ## 路径参数（0.2.3）
 
