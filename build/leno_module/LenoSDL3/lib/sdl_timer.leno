@@ -168,6 +168,12 @@ export struct Timer {
         if once {
             running = false          // ⚠ 先置位再回调：回调里若重新 set/setOnce 才不会被这句冲掉 ✓
             cb()
+            // ★ 2026-11-08 框架缺陷修复：一次性定时器触发后**自动注销**。
+            //   原来只把 running 置 false，对象永久留在全局 `_timers` 里 ⇒
+            //   每次 addTimerOnce 都多一个死对象，而 tickAllTimers 每帧要对全表
+            //   做快照 + 逐个 alive 检查（O(n²)）⇒ 跑久了越来越卡 ✗
+            //   ⚠ 回调里如果又 set/setOnce 了（running 变回 true），说明要复用，不能删 ✓
+            if not running { unregisterTimer(self) }
             return true
         }
         // 周期对齐：落后不到一个周期 ⇒ 正常推进（保持不漂移 ✓）；
