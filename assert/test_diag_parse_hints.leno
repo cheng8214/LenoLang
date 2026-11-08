@@ -1025,5 +1025,34 @@ main() { print(""x"") }
     var outDictKeyOk = ce.expect_ok(dictKeyOk, "匹配的键类型（防误报）", "truetrue")
     ce.expect_no_warning(outDictKeyOk, "匹配的键类型", "键类型不匹配")
 
+    // ---- ㊸ 函数值调用的实参检查（此前多传/类型错都静默接受）----
+    var closureExtra = dirs.join(work, "closure_extra.leno")
+    files.write(closureExtra, @"main() {
+    var f = func(int a): int { return a }
+    print(_str(f(1, 2)))
+}
+")
+    ce.expect_error(closureExtra, "函数值多传实参 => 报错",
+        "多余的实参会被静默忽略", 3)
+
+    var closureType = dirs.join(work, "closure_type.leno")
+    files.write(closureType, @"main() {
+    var f = func(int a): int { return a }
+    print(_str(f(""x"")))
+}
+")
+    ce.expect_error(closureType, "函数值实参类型错 => 报错",
+        "第 1 个参数类型不匹配", 3)
+
+    // ㊸b 防误报：正常调用（含具名函数直调时的默认值少传）照常可用
+    var closureOk = dirs.join(work, "closure_ok.leno")
+    files.write(closureOk, @"func g(int a, int b = 2): int { return a + b }
+main() {
+    var h = func(int x): int { return x * 2 }
+    print(_str(g(1)) + _str(h(3)))
+}
+")
+    ce.expect_ok(closureOk, "具名函数默认值少传 + 闭包正常调用（防误报）", "36")
+
     print("test_diag_parse_hints passed")
 }

@@ -2106,6 +2106,43 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                 Symbol* sym = scope_resolve(s->current, func_name);
                 if (sym && sym->type && sym->type->kind == TYPE_FUNCTION && sym->type->return_type) {
                     TypeInfo* ret = type_copy(sym->type->return_type);
+
+                    // ★ 2026-11-08：**函数值变量**的调用按静态签名校验实参数量。
+                    //   此前 `func(int):int f = …; f(1, 2)` 静默忽略多余实参、
+                    //   `func():int g = …; g(1)` 也照收 —— 返回值却按声明类型算，
+                    //   调用方以为一切正常 ✗。只查"装函数的值"（局部量/形参/upvalue/全局）；
+                    //   命名函数（SYM_GLOBAL_FUNC / SYM_NATIVE）另有检查路径 ✓
+                    // ⚠ 只拦**多传**：少传可能是"形参有默认值"（函数值类型不带默认值信息，
+                    //   交给调用期补齐/运行期检查 ✓ —— 实测 assert/test_default_param_expression
+                    //   里的 `var f = 有默认值函数; f(1)` 是合法写法 ✗ 不能误伤）
+                    if ((sym->kind == SYM_LOCAL || sym->kind == SYM_PARAM ||
+                         sym->kind == SYM_UPVALUE || sym->kind == SYM_GLOBAL) &&
+                        ast->u.call.args.count > sym->type->param_count) {
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                            "函数值 '%s' 的签名最多 %d 个参数，实际传入 %d 个 —— "
+                            "多余的实参会被静默忽略；请删掉多余的实参",
+                            func_name, sym->type->param_count, ast->u.call.args.count);
+                    } else if ((sym->kind == SYM_LOCAL || sym->kind == SYM_PARAM ||
+                                sym->kind == SYM_UPVALUE || sym->kind == SYM_GLOBAL) &&
+                               sym->type->param_types && sym->type->param_count > 0) {
+                        // 位置实参的类型也要对得上（命名实参另有重排/拒绝路径，这里不掺和）
+                        for (int ai = 0; ai < ast->u.call.args.count; ai++) {
+                            Ast* aarg = ast->u.call.args.items[ai];
+                            if (!aarg || aarg->kind == AST_ASSIGN) break;
+                            TypeInfo* want = sym->type->param_types[ai];
+                            if (!want || want->kind == TYPE_ANY || want->kind == TYPE_INFER) continue;
+                            TypeInfo* got = infer_expr_type(s, aarg);
+                            if (got && got->kind != TYPE_ANY && !type_is_compatible(want, got)) {
+                                char wbuf[128], gbuf[128];
+                                snprintf(wbuf, sizeof(wbuf), "%s", type_to_string(want));
+                                snprintf(gbuf, sizeof(gbuf), "%s", type_to_string(got));
+                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                    "函数值 '%s' 第 %d 个参数类型不匹配：期望 '%s'，实际 '%s'",
+                                    func_name, ai + 1, wbuf, gbuf);
+                            }
+                            if (got) type_free(got);
+                        }
+                    }
                     
                     // async 函数返回 Future 而非声明的返回类型
                     //   ★ T3（2026-10-12）：现在**带上元素类型** —— Future[声明的返回类型] ✓。
