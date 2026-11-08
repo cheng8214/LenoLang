@@ -1,0 +1,87 @@
+// LenoWeb 爬虫解析自测（纯函数，不联网）
+//
+// 跑法（仓库根目录）：
+//   build\leno.exe build\leno_module\LenoWeb\test\test_crawler.leno
+//
+// 这份测试的由来：补 LenoWeb 测试时发现 `parseUrl` 有个真 bug ——
+// **相对 URL 的 path 全被丢掉、scheme 被污染成整串**：
+//     parseUrl("/rel/path")  ⇒ scheme="/rel/path"、path="/"   ✗
+//     parseUrl("rel/path")   ⇒ scheme="rel/path"、path="/"    ✗
+// 根因：扫 scheme 的循环找不到 `:` 时会一路扫到串尾，然后那个分支只设
+//   `isAbsolute`、不管 path，也不清 scheme。已修（web_crawler.leno 的对应分支）。
+// 下面第 ② 组就是它的回归哨兵 —— 站内链接几乎都是相对路径，这个错会让
+// 抓取全部跑到首页去。
+import "Web" as web
+
+func fail(string msg) {
+    print("[FAIL] " + msg + "\n")
+    _exit(1)
+}
+
+func eqStr(string got, string want, string tag) {
+    if got != want { fail(tag + "：得到 [" + got + "] 期望 [" + want + "]") }
+}
+
+func eqInt(int got, int want, string tag) {
+    if got != want { fail(tag + "：得到 " + _str(got) + " 期望 " + _str(want)) }
+}
+
+main() {
+    // ==================== ① 绝对 URL 全字段 ====================
+    var u = web.parseUrl("https://example.com:8080/a/b?x=1&y=2#top")
+    eqStr(u.scheme, "https", "scheme")
+    eqStr(u.host, "example.com", "host")
+    eqInt(u.port, 8080, "port")
+    eqStr(u.path, "/a/b", "path")
+    eqStr(u.query, "x=1&y=2", "query（不含 ?）")
+    eqStr(u.fragment, "top", "fragment（不含 #）")
+    eqInt(if u.isAbsolute then 1 else 0, 1, "isAbsolute")
+    eqStr(u.str(), "https://example.com:8080/a/b?x=1&y=2#top", "str() 往返一致")
+
+    // 无端口 ⇒ port = -1
+    var v = web.parseUrl("http://a.com")
+    eqInt(v.port, -1, "无端口 ⇒ -1")
+    eqStr(v.path, "/", "无路径 ⇒ /")
+    eqInt(if v.isAbsolute then 1 else 0, 1, "无路径也是绝对 URL")
+
+    // ==================== ② 相对路径（bug 回归哨兵）====================
+    var r1 = web.parseUrl("/rel/path")
+    eqStr(r1.scheme, "", "相对路径 scheme 必须为空（曾污染成整个串）")
+    eqStr(r1.path, "/rel/path", "相对路径 path 必须保留（曾丢成 /）")
+    eqInt(if r1.isAbsolute then 1 else 0, 0, "相对路径不是绝对 URL")
+
+    var r2 = web.parseUrl("rel/path")
+    eqStr(r2.scheme, "", "无前导斜杠的相对路径 scheme 为空")
+    eqStr(r2.path, "rel/path", "无前导斜杠的相对路径 path 保留")
+
+    // 相对路径带 query / fragment
+    var r3 = web.parseUrl("/p?k=v#frag")
+    eqStr(r3.path, "/p", "相对路径 + query：path 仍保留")
+    eqStr(r3.query, "k=v", "相对路径 + query")
+    eqStr(r3.fragment, "frag", "相对路径 + fragment")
+
+    // 空串 ⇒ path 退化成 /
+    var r4 = web.parseUrl("")
+    eqStr(r4.path, "/", "空 URL ⇒ path = /")
+
+    // ==================== ③ 非标准（有冒号但不是 ://）====================
+    var m = web.parseUrl("mailto:x@y.com")
+    eqStr(m.scheme, "", "非标准 URL 不认 scheme")
+    eqStr(m.path, "mailto:x@y.com", "非标准 URL 整串当 path")
+    eqInt(if m.isAbsolute then 1 else 0, 0, "非标准 URL 不是绝对")
+
+    // ==================== ④ sitemap 解析 ====================
+    string xml = "<?xml version=\"1.0\"?><urlset>"
+               + "<url><loc>https://a.com/1</loc></url>"
+               + "<url><loc>https://a.com/2</loc></url>"
+               + "</urlset>"
+    Array[string] sm = web.parseSitemap(xml)
+    eqInt(sm.len(), 2, "sitemap 解析出 2 个 URL")
+    eqStr(sm[0], "https://a.com/1", "sitemap 第 1 个")
+    eqStr(sm[1], "https://a.com/2", "sitemap 第 2 个")
+
+    // 空 sitemap ⇒ 空数组（不崩）
+    eqInt(web.parseSitemap("<urlset></urlset>").len(), 0, "空 sitemap ⇒ 空数组")
+
+    print("[PASS] crawler\n")
+}

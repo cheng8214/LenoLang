@@ -341,9 +341,18 @@ export func parseUrl(string url): Url {
         }
         if path == "" { path = "/" }
         u.path = path
-    } else if scheme != "" and pos >= noQuery.byte_len() {
-        // 只有 scheme，没有 //，视为相对/非标准
+    } else if pos >= noQuery.byte_len() {
+        // ★ 2026-11-09 修：**没有 `:`** ⇒ 这是相对路径，整串都是 path。
+        //   原来这里只设 `isAbsolute = false`，不管 path —— 而 scheme 的扫描循环在
+        //   "找不到冒号"时会一路扫到串尾，于是 `scheme` 变成**整个字符串**（313 行已经
+        //   赋给了 u.scheme）⇒ 实测：
+        //     parseUrl("/rel/path")  ⇒ scheme="/rel/path"、path="/"   ✗
+        //     parseUrl("rel/path")   ⇒ scheme="rel/path"、path="/"    ✗
+        //   相对路径是爬虫里最常见的情形（站内链接都是相对的）⇒ 这个 bug 会让
+        //   相对链接解析出来的 path 全变成 "/"，抓取直接跑到首页去。
         u.isAbsolute = false
+        u.scheme = ""                                  // 没有 scheme，别把整串当 scheme
+        u.path = if noQuery == "" then "/" else noQuery
     } else {
         // 相对路径（无 scheme://）
         u.isAbsolute = false

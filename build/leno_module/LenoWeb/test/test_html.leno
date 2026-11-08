@@ -1,0 +1,96 @@
+// LenoWeb HTML 解析 / CSS 选择器 自测
+//
+// 跑法（仓库根目录）：
+//   build\leno.exe build\leno_module\LenoWeb\test\test_html.leno
+//   或 build\leno.exe build\leno_module\run_all_tests.leno --only LenoWeb
+//
+// 为什么补这个：LenoWeb 是 20 个模块里功能最多的（HTML 解析 + HTTP 客户端 +
+//   爬虫框架），却**一个测试都没有**。改 `_attrMatches`（6 个属性运算符分派）时
+//   只能靠临时探针兜底 —— 探针漏一个组合，改动就会静默出错。
+//
+// 覆盖范围：**纯函数**（不碰网络）。HTTP / 爬虫的实际请求不在离线测试里。
+import "Web" as web
+
+func fail(string msg) {
+    print("[FAIL] " + msg + "\n")
+    _exit(1)
+}
+
+func eqStr(string got, string want, string tag) {
+    if got != want { fail(tag + "：得到 [" + got + "] 期望 [" + want + "]") }
+}
+
+func eqInt(int got, int want, string tag) {
+    if got != want { fail(tag + "：得到 " + _str(got) + " 期望 " + _str(want)) }
+}
+
+main() {
+    // ==================== ① 基础解析 ====================
+    string html = "<div id='root' class='box main'>"
+                + "<p class='a' data-k='v'>one</p>"
+                + "<p class='b'>two</p>"
+                + "<span>three</span>"
+                + "</div>"
+    var r = web.parse(html)
+
+    eqStr(web.tag(r), "#document", "parse 返回文档根（不是首个元素）")
+    eqInt(web.select(r, "p").len(), 2, "按标签选 p")
+    eqStr(web.selectText(r, "p")[0], "one", "selectText 取第一个 p 的文本")
+    eqStr(web.allText(r), "onetwothree", "allText 拼接全部文本")
+
+    // ==================== ② 属性读取 ====================
+    var ps = web.select(r, "p.a")
+    eqInt(ps.len(), 1, "组合选择器 p.a")
+    eqStr(web.attr(ps[0], "class"), "a", "attr 读 class")
+    eqStr(web.attr(ps[0], "data-k"), "v", "attr 读自定义属性")
+
+    // ==================== ③ CSS 选择器各形态 ====================
+    eqInt(web.select(r, ".a").len(), 1, "类选择器 .a")
+    eqInt(web.select(r, ".main").len(), 1, "类选择器（div 的第二个类）")
+    eqInt(web.select(r, "#root").len(), 1, "id 选择器")
+    eqInt(web.select(r, "[data-k]").len(), 1, "属性存在选择器")
+    eqInt(web.select(r, "div p").len(), 2, "后代选择器 div p")
+    eqInt(web.select(r, "div.box p").len(), 2, "标签+类 的后代组合")
+
+    // ==================== ④ 6 个属性运算符（= ^= $= *= ~= |=）====================
+    //  这一组是 2026-11-09 把 if-else 链改成 switch 后的回归哨兵：
+    //  漏掉任何一个分支，这里立刻红。
+    string h2 = "<a href='https://x.com/a.png' class='x y' lang='zh-CN'>t</a>"
+    var r2 = web.parse(h2)
+
+    eqInt(web.select(r2, "a[href='https://x.com/a.png']").len(), 1, "= 精确匹配")
+    eqInt(web.select(r2, "a[href^='https']").len(), 1, "^= 前缀")
+    eqInt(web.select(r2, "a[href$='.png']").len(), 1, "$= 后缀")
+    eqInt(web.select(r2, "a[href*='x.com']").len(), 1, "*= 包含")
+    eqInt(web.select(r2, "a[class~='y']").len(), 1, "~= 空白分隔词")
+    eqInt(web.select(r2, "a[lang|='zh']").len(), 1, "|= 等于或以 v- 开头")
+
+    // 反例（每一条都是"看起来该命中、其实不该"）
+    eqInt(web.select(r2, "a[href='nope']").len(), 0, "= 不命中")
+    eqInt(web.select(r2, "a[class~='z']").len(), 0, "~= 不该命中子串（class 里没有 z）")
+    eqInt(web.select(r2, "a[lang|='en']").len(), 0, "|= 不该命中 en（是 zh-CN）")
+    eqInt(web.select(r2, "a[href^='ftp']").len(), 0, "^= 不该命中 ftp")
+
+    // ==================== ⑤ selectAttr / findAll ====================
+    Array[string] hrefs = web.selectAttr(r2, "a", "href")
+    eqInt(hrefs.len(), 1, "selectAttr 拿到 1 个 href")
+    eqStr(hrefs[0], "https://x.com/a.png", "selectAttr 的值")
+
+    eqInt(web.findAll(r, "p", "", "").len(), 2, "findAll 按标签")
+    eqInt(web.findAll(r, "", "a", "").len(), 1, "findAll 按类")
+    eqInt(web.findAll(r, "", "", "root").len(), 1, "findAll 按 id")
+
+    // ==================== ⑥ 文本清洗 ====================
+    eqStr(web.stripTags("<b>hi</b> <i>there</i>"), "hi there", "stripTags")
+    eqStr(web.cleanText("  a \t b  "), "a b", "cleanText 压空白")
+
+    // ==================== ⑦ 边界 ====================
+    var empty = web.parse("")
+    eqStr(web.tag(empty), "#document", "空 HTML 仍返回文档根")
+    eqInt(web.select(empty, "p").len(), 0, "空 HTML 选不到任何元素")
+    eqInt(web.select(r, "nonexist").len(), 0, "无匹配返回空数组（不崩）")
+    eqInt(web.select(r, ".nope").len(), 0, "无匹配的类选择器")
+    eqInt(web.selectOne(r, "nonexist") is HtmlNode, 0, "selectOne 无匹配返回 null")
+
+    print("[PASS] html\n")
+}
