@@ -1,0 +1,73 @@
+// LenoWin32 / w32_reg 只读自测
+//
+// 跑法（仓库根目录）：
+//   build\leno.exe build\leno_module\LenoWin32\test\test_reg_readonly.leno
+//
+// 为什么只测"只读"：`w32_reg.leno` 有 852 行，含 createKey / deleteKey / setValue 等
+//   **会改系统**的写操作 —— 自动化测试不该碰。这里只测：
+//     · `errorToString`（纯函数，任何平台都能跑）
+//     · 打开/枚举/读值（只读，且只用 HKLM 下 Windows 一定存在的键）
+//
+// 另一个测试 `test_defer_reg.leno` 已覆盖 `readDword`；这份补 `errorToString`
+// 与 readString / enumSubKeys / enumValues / 错误码路径。
+import "w32_reg.leno" as reg
+
+func fail(string msg) {
+    print("[FAIL] " + msg + "\n")
+    _exit(1)
+}
+
+func eqStr(string got, string want, string tag) {
+    if got != want { fail(tag + "：得到 [" + got + "] 期望 [" + want + "]") }
+}
+
+func eqInt(int got, int want, string tag) {
+    if got != want { fail(tag + "：得到 " + _str(got) + " 期望 " + _str(want)) }
+}
+
+main() {
+    // ==================== ① errorToString：纯函数，跨平台 ====================
+    eqStr(reg.errorToString(0), "SUCCESS", "错误码 0 ⇒ SUCCESS")
+    eqStr(reg.errorToString(2), "FILE_NOT_FOUND", "错误码 2 ⇒ FILE_NOT_FOUND")
+    eqStr(reg.errorToString(5), "ACCESS_DENIED", "错误码 5 ⇒ ACCESS_DENIED")
+    eqStr(reg.errorToString(99999), "UNKNOWN_ERROR(99999)", "未知码 ⇒ 带原码的兜底文案")
+
+    if _os() != "windows" {
+        print("[SKIP] 注册表部分：非 Windows\n")
+        print("[PASS] reg_readonly (partial)\n")
+        return
+    }
+
+    // ==================== ② 打开已知键（只读）====================
+    //   CurrentVersion 在 Windows 10/11 上一定存在
+    var ok = reg.openKey(reg.HKEY_LOCAL_MACHINE,
+                         "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", 0x20019)  // KEY_READ
+    eqInt(ok.errorCode, 0, "打开 CurrentVersion 成功（errorCode=0）")
+
+    // ==================== ③ 读字符串 ====================
+    var pn = reg.readString(ok.handle, "ProductName")
+    eqInt(pn.errorCode, 0, "读 ProductName 成功")
+    if pn.value == "" { fail("③ ProductName 不该为空") }
+
+    // 读不存在的值 ⇒ errorCode=2(FILE_NOT_FOUND)、value 为空、**不崩**
+    var miss = reg.readString(ok.handle, "NoSuchValue_XYZ_2026")
+    eqInt(miss.errorCode, 2, "读不存在的值 ⇒ errorCode=2")
+    eqStr(miss.value, "", "读不存在的值 ⇒ 空串")
+
+    // ==================== ④ 枚举 ====================
+    var subs = reg.enumSubKeys(ok.handle)
+    eqInt(subs.errorCode, 0, "enumSubKeys 成功")
+    if subs.subKeys.len() == 0 { fail("④ CurrentVersion 下应有子键（实测 ≥1）") }
+
+    var vals = reg.enumValues(ok.handle)
+    eqInt(vals.errorCode, 0, "enumValues 成功")
+    if vals.values.len() == 0 { fail("④ CurrentVersion 下应有值（实测 ≥1）") }
+
+    reg.closeKey(ok.handle)
+
+    // ==================== ⑤ 打开不存在的键 ⇒ 错误码，不崩 ====================
+    var bad = reg.openKey(reg.HKEY_LOCAL_MACHINE, "SOFTWARE\\NoSuchKey_XYZ_2026", 0x20019)
+    eqInt(bad.errorCode, 2, "打开不存在的键 ⇒ errorCode=2")
+
+    print("[PASS] reg_readonly\n")
+}
