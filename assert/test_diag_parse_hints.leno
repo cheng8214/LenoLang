@@ -653,5 +653,25 @@ main() { print(""x"") }
         "as 后期望别名", 2)
     ce.expect_no_warning(outImportAs, "import as 漏写别名", "期望 ')'")
 
+    // ---- ㉚ `a[1:2:3]` 步长写法：此前只报「期望 ']'」+「期望 ')'」----
+    var sliceStep = dirs.join(work, "slice_step.leno")
+    files.write(sliceStep, @"main() {
+    Array[int] a = [1, 2, 3]
+    print(_str(a[1:2:3]))
+}
+")
+    var outSliceStep = ce.expect_error(sliceStep, "切片带第三个参数 => 定向报错",
+        "不支持第三个「步长」", 3)
+    ce.expect_no_warning(outSliceStep, "切片带第三个参数", "期望 ')'")
+
+    // ㉚b 防误报：start:end / [:end] / [start:] / [:] 四种合法写法照常可用
+    var sliceOk = dirs.join(work, "slice_ok.leno")
+    files.write(sliceOk, @"main() {
+    Array[int] a = [1, 2, 3, 4]
+    print(_str(a[1:3].len()) + _str(a[:2].len()) + _str(a[2:].len()) + _str(a[:].len()))
+}
+")
+    ce.expect_ok(sliceOk, "四种合法切片（防误报）", "3324")
+
     print("test_diag_parse_hints passed")
 }

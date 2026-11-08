@@ -1603,6 +1603,22 @@ Ast* parse_new(Parser* p) {
     return ast;
 }
 
+// ★ 2026-11-08：`a[1:2:3]`（Python / C# 的"步长"写法）—— 本语言切片只支持 start:end。
+//   此前第三个 ':' 留给外层 ⇒ 只报「期望 ']'」+「期望 ')'」，完全看不出是什么写错了 ✗。
+//   这里定向报错，并把多余部分跳到 ']' 前，避免级联。
+static void slice_reject_extra_step(Parser* p) {
+    if (p->lex.current.type != TOK_COLON) return;
+    error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+        "切片只支持 arr[start:end] —— 不支持第三个「步长」（如 a[1:2:3] 中的 `:3`）；删掉它即可");
+    while (p->lex.current.type != TOK_RBRACKET &&
+           p->lex.current.type != TOK_RPAREN &&
+           p->lex.current.type != TOK_SEMI &&
+           p->lex.current.type != TOK_RBRACE &&
+           p->lex.current.type != TOK_EOF) {
+        lexer_next(&p->lex);
+    }
+}
+
 // 解析索引表达式 arr[index] 或切片 arr[start:end]
 // 同时支持泛型函数调用：funcName[int](args) 或 funcName[Box](args)
 Ast* parse_index(Parser* p, Ast* obj) {
@@ -1743,6 +1759,7 @@ Ast* parse_index(Parser* p, Ast* obj) {
         if (p->lex.current.type != TOK_RBRACKET) {
             end = parse_expression(p);
         }
+        slice_reject_extra_step(p);
         consume(p, TOK_RBRACKET, "期望 ']'");
 
         Ast* ast = ast_new(AST_SLICE, line);
@@ -1762,6 +1779,7 @@ Ast* parse_index(Parser* p, Ast* obj) {
         if (p->lex.current.type != TOK_RBRACKET) {
             end = parse_expression(p);
         }
+        slice_reject_extra_step(p);
         consume(p, TOK_RBRACKET, "期望 ']'");
         
         Ast* ast = ast_new(AST_SLICE, line);
