@@ -38,23 +38,39 @@ Results: 12 passed, 0 failed, 1 skipped (total 13)
 - SKIP 的判据：`leno.toml` 里**当前平台**声明的 `.dll` / `.so` / `.dylib` 文件不存在
   （所以 Windows 上不会因为“没写 linux = …”而误判）
 
-## 模块一览（有 `test/` 的）
+## 模块一览（20 个）
 
-| 模块 | 一句话 | 用例 |
-|---|---|---|
-| LenoCSV | CSV 读写（RFC 4180 容错） | `test/test_csv.leno` |
-| LenoCompress | DEFLATE/gzip/zlib 压缩与解压 + CRC32/Adler-32 | `test/test_inflate_crc.leno`、`test/test_deflate.leno` |
-| LenoZip | ZIP 归档（stored + deflate） | `test/test_zip.leno` |
-| LenoXLSX | Excel 读写（zip + XML） | `test/test_xlsx.leno` |
-| LenoHTTP | HTTP/1.1 服务端子集 | `test/test_http.leno` |
-| LenoLog | 日志（等级/多目的地/raw） | `test/test_log.leno` |
-| LenoUUID | UUID v4 / v7 / 短 ID | `test/test_uuid.leno` |
-| LenoCLI | 命令行解析 | `test/test_cli.leno` |
-| LenoGlob | 通配符匹配与查找 | `test/test_glob.leno` |
-| LenoFS | rmtree / copytree / copy | `test/test_fs.leno` |
-| LenoStats | 统计 + 金额整数分 | `test/test_stats.leno` |
-| LenoQR | 二维码生成（纯 Leno）+ 识别（quirc） | `test/test_*.leno`（5 个） |
-| LenoCrypto | 加密原语 | `test/test_crypto_vectors.leno` |
+> ⚠ **包名 ≠ import 名**：`import "X"` 里的 X 是 `lib/` 下的**入口文件名**（不含 `.leno`），
+> 不是 `leno.toml` 里的 `[package] name`。照包名写会直接报「找不到模块」。
+> 最容易错的是这几个：`LenoFS` → `"FS"`、`LenoSqlite` → `"sqlite3"`、
+> `LenoHack` → `"GameHelper"`、`LenoMusic` → `"Music"`。
+
+| 包名 | **import 名** | 一句话 | 有 `test/` |
+|---|---|---|---|
+| LenoCLI | `"CLI"` | 命令行解析 | ✓ |
+| LenoCompress | `"Compress"` | DEFLATE/gzip/zlib 压缩与解压 + CRC32/Adler-32 | ✓ |
+| LenoCrypto | `"Crypto"` | 加密原语 | ✓ |
+| LenoCSV | `"CSV"` | CSV 读写（RFC 4180 容错） | ✓ |
+| LenoFS | `"FS"` | rmtree / copytree / copy | ✓ |
+| LenoGlob | `"Glob"` | 通配符匹配与查找 | ✓ |
+| LenoHack | `"GameHelper"` | 进程操作：内存读写、模拟输入、进程附加、内存扫描 | — |
+| LenoHTTP | `"HTTP"` | HTTP/1.1 服务端子集（含 SSE、按路由 maxBody） | ✓ |
+| LenoLog | `"Log"` | 日志（等级 / 多目的地 / raw） | ✓ |
+| LenoMusic | `"Music"` | 音频（miniaudio 流式播放、解码、频谱） | — |
+| LenoQR | `"QR"` | 二维码生成（纯 Leno）+ 识别（quirc） | ✓ |
+| LenoSDL3 | `"SDL3"` | 窗口、渲染器、事件、控件（58 个 lib 文件） | — |
+| LenoSqlite | `"sqlite3"` | SQLite3 绑定 | — |
+| LenoStats | `"Stats"` | 统计 + 金额整数分 | ✓ |
+| LenoSys | `"Sys"` | 跨平台系统：进程 / 磁盘 / 回收站 / 开机项 / 已装软件 | ✓ |
+| LenoUUID | `"UUID"` | UUID v4 / v7 / 短 ID | ✓ |
+| LenoWeb | `"Web"` | HTTP 客户端 + HTML 解析 + 爬虫框架 | — |
+| LenoWin32 | `"Win32"` | 桌面截屏、全局热键、剪贴板图片 | ✓ |
+| LenoXLSX | `"XLSX"` | Excel 读写（zip + XML） | ✓ |
+| LenoZip | `"Zip"` | ZIP 归档（stored + deflate） | ✓ |
+
+> **`LenoWeb` 的现状（值得注意）**：`Web.leno` 是门面，但 Aria/LenoMusic/LenoTrae/LenoWorkBuddy
+> 四个项目 **0 次** `import "Web"`、**37 次** `import "web_net"`（直接吃内部文件）。
+> 门面本身没错，问题是没有"该用门面"的共识。要用 HTTP 客户端请优先 `import "Web"`。
 
 > 各模块 README 里的“单跑命令”仍然有效（`build\leno.exe build\leno_module\<Mod>\test\<file>.leno`），
 > 适合开发时只跑一个；提交前请跑总入口。
