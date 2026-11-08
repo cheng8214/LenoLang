@@ -23,9 +23,13 @@ Ast* parse_import_stmt(Parser* p) {
         
         // 检查是否有 as 别名
         if (p->lex.current.type == TOK_AS) {
+            int as_line = p->lex.current.line;
             lexer_next(&p->lex); // as
             
-            if (p->lex.current.type != TOK_IDENT) {
+            // ★ 2026-11-08：`as` 后面换行再写下一句（`import "x" as` 换行 `main() {`）时，
+            //   下一行的标识符（如 main）会被当成别名 ⇒ 后续 `()` 变成孤立表达式，只报
+            //   「期望表达式」/「期望 ')'」，完全看不出"别名漏写了" ✗ ⇒ 按行号判定。
+            if (p->lex.current.type != TOK_IDENT || p->lex.current.line > as_line) {
                 error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "as 后期望别名");
                 free(module_name);
                 return NULL;
@@ -55,9 +59,10 @@ Ast* parse_import_stmt(Parser* p) {
         //
         // 检查是否有 as 别名
         if (p->lex.current.type == TOK_AS) {
+            int as_line = p->lex.current.line;
             lexer_next(&p->lex); // as
 
-            if (p->lex.current.type != TOK_IDENT) {
+            if (p->lex.current.type != TOK_IDENT || p->lex.current.line > as_line) {
                 error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "as 后期望别名");
                 free(module_name);
                 return NULL;

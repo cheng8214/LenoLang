@@ -641,5 +641,17 @@ main() { print(_str(f())) }
         "export 重复了", 1)
     ce.expect_no_warning(outExportTwice, "export 重复", "期望类型")
 
+    // ---- ㉙ `import "x" as` 漏写别名：此前把下一行的 main 当成别名，只报「期望表达式」----
+    var modFile = dirs.join(work, "alias_mod.leno")
+    files.write(modFile, @"export func hi(): int { return 1 }
+")
+    var importAs = dirs.join(work, "import_as_missing.leno")
+    files.write(importAs, @"import ""./alias_mod.leno"" as
+main() { print(""x"") }
+")
+    var outImportAs = ce.expect_error(importAs, "import as 漏写别名 => 定向报错",
+        "as 后期望别名", 2)
+    ce.expect_no_warning(outImportAs, "import as 漏写别名", "期望 ')'")
+
     print("test_diag_parse_hints passed")
 }
