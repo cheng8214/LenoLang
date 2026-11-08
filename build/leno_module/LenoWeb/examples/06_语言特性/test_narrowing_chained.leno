@@ -11,9 +11,9 @@ use htmls.HtmlNode
 
 func assert_eq(any a, any b, string label) {
     if a == b {
-        printf("  [PASS] %s\n", label)
+        print(format("  [PASS] %s", label))
     } else {
-        printf("  [FAIL] %s: expected %s, got %s\n", label, _str(b), _str(a))
+        print(format("  [FAIL] %s: expected %s, got %s", label, _str(b), _str(a)))
         assert(false, label)
     }
 }

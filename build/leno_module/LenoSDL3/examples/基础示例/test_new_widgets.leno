@@ -65,10 +65,10 @@ main() {
     // ================================================================
     // 3. Separator: 分隔线 — 测试水平/垂直 + 粗细 + 颜色 + margin
     // ================================================================
-    var sepH1 = win.addSeparator({x: 10, y: 220, w: 460, dir: 0, thickness: 1, margin: 10.0})
-    var sepH2 = win.addSeparator({x: 10, y: 228, w: 460, dir: 0, thickness: 3, color: #B45050FF, alpha: 255})
-    var sepV1 = win.addSeparator({x: 480, y: 10, dir: 1, h: 350, thickness: 2, margin: 5.0, color: #50B450FF, alpha: 200})
-    var sepV2 = win.addSeparator({x: 940, y: 10, dir: 1, h: 700, thickness: 1, color: #5050B4FF, alpha: 120})
+    var _sepH1 = win.addSeparator({x: 10, y: 220, w: 460, dir: 0, thickness: 1, margin: 10.0})
+    var _sepH2 = win.addSeparator({x: 10, y: 228, w: 460, dir: 0, thickness: 3, color: #B45050FF, alpha: 255})
+    var _sepV1 = win.addSeparator({x: 480, y: 10, dir: 1, h: 350, thickness: 2, margin: 5.0, color: #50B450FF, alpha: 200})
+    var _sepV2 = win.addSeparator({x: 940, y: 10, dir: 1, h: 700, thickness: 1, color: #5050B4FF, alpha: 120})
 
     // ================================================================
     // 4. GroupBox 2: LinkButton 专区

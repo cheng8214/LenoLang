@@ -77,7 +77,7 @@ main() {
     print("浏览器 = " + exe)
 
     print("--- ③ 起本机服务端 + 静态抓取对照 ---")
-    var srv = threads.start(serverEntry, PORT, MAXREQ)
+    var _srv = threads.start(serverEntry, PORT, MAXREQ)     // 只为启动服务线程，句柄不用
     if not tk.waitUp(PORT) {
         print("本机服务端未起来，终止")
         _exit(1)

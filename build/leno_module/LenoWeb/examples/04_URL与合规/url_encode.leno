@@ -4,8 +4,6 @@ import "web_net" as net
 main() {
     net.globalInit()
 
-    string url = "https://httpbin.org/get?msg=hello world&name=张三"
-
     // URL 编码
     string encoded = net.urlEncode("hello world&name=张三")
     print("原始: hello world&name=张三")

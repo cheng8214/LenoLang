@@ -119,7 +119,7 @@ main() {
         log_line("③ 托盘创建失败（无 shell / dummy 视频驱动下正常）⇒ 结束，本次无意义")
         return
     }
-    Tray tray = t
+    Tray _tray = t          // 只为持有引用（防止被 GC），不直接使用
     print("[探针] ③ 托盘 OK（图标 surface 全程保留 ✓；图标可能被 Windows 折叠在任务栏 ^ 里，点开就能看到 ✓）\n")
     log_line("③ 托盘 OK（图标 surface 全程保留，退出时才释放 ✓）")
     // ⚠ 图标 surface **不在这里释放**：这正是要验的那条线（睡眠唤醒/Explorer 重启后系统会重读图标 ✓）

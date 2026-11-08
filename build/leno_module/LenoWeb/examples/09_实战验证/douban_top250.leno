@@ -15,14 +15,14 @@ const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 // 一本书的完整记录
 struct Book {
     int rank = 0
-    string title = 0
-    string author = 0
-    string publisher = 0
-    string pubdate = 0
+    string title = ""
+    string author = ""
+    string publisher = ""
+    string pubdate = ""
     float rating = 0.0
     int voters = 0
-    string quote = 0
-    string url = 0
+    string quote = ""
+    string url = ""
 }
 
 // ==================== 字节级字符串工具 ====================

@@ -11,5 +11,5 @@ func _getFirstUrl(Dict config): string {
 main() {
     var config = {items: [{url: "/home", title: "首页"}]}
     string url = _getFirstUrl(config)
-    printf("url = %s\n", url)
+    print(format("url = %s", url))
 }

@@ -42,7 +42,7 @@ func countOf(string hay, string needle): int {
 }
 
 main() {
-    var srv = threads.start(serverEntry, PORT, MAXREQ)
+    var _srv = threads.start(serverEntry, PORT, MAXREQ)     // 只为启动服务线程，句柄不用
     if not tk.waitUp(PORT) {
         print("服务端未就绪")
         _exit(1)
@@ -149,7 +149,7 @@ main() {
     // 把两个都冷却掉 ⇒ 池子耗尽：保持在最后一个代理上，并把标志立起来（不偷偷直连）
     web.sessionCoolDownProxy(s, 10000)
     sp.coolDown(proxyLive, 10000)
-    Response g4 = web.sessionGet(s, "http://t4.invalid/d")
+    Response _g4 = web.sessionGet(s, "http://t4.invalid/d")  // 第 4 个请求只验"不抛"，响应不看
     tk.checkTrue("池子耗尽 ⇒ 挂标志（不静默直连暴露真实 IP）", s.pool_exhausted)
     web.sessionClose(s)
 

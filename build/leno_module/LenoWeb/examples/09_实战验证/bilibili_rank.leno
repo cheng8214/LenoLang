@@ -23,12 +23,12 @@ const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 
 struct Video {
     int rank = 0
-    string bvid = 0      // 形如 BV1c3HL6qEyq（在 DOM 里有）
-    string url = 0
-    string title = 0     // 实测为空（站点用伪元素渲染）
-    string up = 0
-    string play = 0
-    string danmaku = 0
+    string bvid = ""     // 形如 BV1c3HL6qEyq（在 DOM 里有）
+    string url = ""
+    string title = ""    // 实测为空（站点用伪元素渲染）
+    string up = ""
+    string play = ""
+    string danmaku = ""
 }
 
 // 取第一段连续数字，无则 0

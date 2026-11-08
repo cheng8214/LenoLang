@@ -54,7 +54,7 @@ func runOnce(Crawler c): int {
 
 main() {
     string base = "http://127.0.0.1:" + PORT
-    var srv = threads.start(serverEntry, PORT, MAXREQ)
+    var _srv = threads.start(serverEntry, PORT, MAXREQ)     // 只为启动服务线程，句柄不用
     if not tk.waitUp(PORT) {
         print("本机服务端未起来，终止")
         _exit(1)
@@ -91,7 +91,7 @@ main() {
 
     print("--- ⑤ 渲染不可用时**退回静态结果、不中断** ---")
     // 本节的 URL 走**独立服务端**（见 PORT2 说明），避免与前几节共用端口时的偶发串扰
-    var srv2 = threads.start(serverEntry2, PORT2, MAXREQ)
+    var _srv2 = threads.start(serverEntry2, PORT2, MAXREQ)  // 同上（第二个 mock 服务）
     if not tk.waitUp(PORT2) {
         print("第二个服务端未起来，终止")
         tk.shutdown(PORT)

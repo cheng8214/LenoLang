@@ -11,5 +11,5 @@ func _getSetting(Dict config, string key): int {
 main() {
     var config = {settings: {timeout: 30}}
     int t = _getSetting(config, "timeout")
-    printf("timeout = %d\n", t)
+    print(format("timeout = %d", t))
 }
