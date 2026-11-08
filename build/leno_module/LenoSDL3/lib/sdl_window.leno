@@ -795,6 +795,8 @@ export struct Window {
     // 销毁窗口（同时释放所有控件资源：字体等，避免窗口关闭后字体泄漏）
     func destroy() {
         if ok {
+            // ★ 2026-11-08：先注销本窗口的定时器（必须在 DestroyWindow 之前取 ID）
+            timer.unregisterByWindow(getID())
             // 根销毁：先释放所有控件资源，沿父子树递归清理
             for widgets to w { w.dispose() }
             root?.dispose()
@@ -809,12 +811,16 @@ export struct Window {
 
     // 添加定时器（毫秒），用法: Timer t = win.addTimer(200, func() { ... })
     func addTimer(int ms, func():void cb): Timer {
-        Timer t = new Timer(); t.set(ms, cb); timer.registerTimer(t); return t
+        Timer t = new Timer(); t.set(ms, cb)
+        t.ownerWid = getID()                 // ★ 归属本窗口，窗口销毁时自动注销 ✓
+        timer.registerTimer(t); return t
     }
 
     // 添加一次性定时器
     func addTimerOnce(int ms, func():void cb): Timer {
-        Timer t = new Timer(); t.setOnce(ms, cb); timer.registerTimer(t); return t
+        Timer t = new Timer(); t.setOnce(ms, cb)
+        t.ownerWid = getID()
+        timer.registerTimer(t); return t
     }
 
     // 添加按钮，opts: {text, x, y, w, h, r, g, b}
@@ -1819,6 +1825,9 @@ export struct Window {
                             _lib.SDL_DestroyWindow(_runHnds[i])
                             _windowCount -= 1
                             core.dropPopupCaptures(_runWids[i])   // 窗口没了 ⇒ 它那块弹层捕获区也清掉 ✓
+                            // ★ 2026-11-08：窗口自己的定时器一并注销（必须在 remove 之前取 wid）
+                            //   不注销会一直跑 ⇒ 每拍 requestRedraw ⇒ 空闲 CPU 白烧
+                            timer.unregisterByWindow(_runWids[i])
                             _runWids.remove(i);  _runHnds.remove(i)
                             _runRens.remove(i); _runEvts.remove(i)
                             _runRends.remove(i); _runWidgets.remove(i); _runWidgetZ.remove(i); _runMenus.remove(i); _runRoots.remove(i); _runRootX.remove(i); _runRootY.remove(i); _runW.remove(i); _runH.remove(i)

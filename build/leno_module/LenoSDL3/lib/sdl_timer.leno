@@ -21,6 +21,30 @@ export func unregisterTimer(Timer t) {
     }
 }
 
+// ★ 2026-11-08 框架缺陷修复：按窗口批量注销定时器。
+//   `Window.addTimer()` 原来只把 Timer 丢进这张全局表，**和窗口生命周期完全没有绑定** ——
+//   窗口关掉后定时器还在跑，每拍还在 `requestRedraw()` ⇒ 整窗重绘。
+//   实测（Aria）：加了"必须登录"之后，每次弹出登录窗都留下一个 150ms 定时器，
+//   空闲 CPU 从 3% 涨到 10%（用户反馈）。
+//   现在 Timer 记 ownerWid，窗口销毁时调这里一次清干净 ✓
+export func unregisterByWindow(int wid): int {
+    if wid == 0 { return 0 }
+    int n = 0
+    // 倒序遍历：remove 不会影响前面待检查的下标 ✓
+    int i = _timers.len() - 1
+    while i >= 0 {
+        if i < _timers.len() {
+            var t = _timers[i]
+            if t is Timer and t.ownerWid == wid {
+                _timers.remove(i)
+                n = n + 1
+            }
+        }
+        i = i - 1
+    }
+    return n
+}
+
 // 窗口主循环每帧调用：驱动所有注册的定时器，任意一个触发回调则自动 requestRedraw
 //   ⚠⚠ 2026-10-27 修（用户实测：Aria 运行中报
 //     "sdl_timer.leno:28 数组索引越界: 索引 2, 长度 2" ✗）：
@@ -63,6 +87,9 @@ export struct Timer {
     float   next = 0.0    // 下次触发时间（getTicks 毫秒）
     bool    running = false   // 是否运行中（显式初值，消 [字段未初始化] 警告）
     bool    once = false      // true=一次性
+    // ★ 2026-11-08：所属窗口 ID（0 = 全局/不属于任何窗口）。
+    //   `Window.addTimer()` 会自动填，窗口销毁时按它批量注销 ✓
+    int     ownerWid = 0
     Array   _cb           // 回调存 [0]
 
     // 设置并启动（循环），ms=毫秒，=0 只存回调不启动
