@@ -1345,6 +1345,37 @@ void visit(Semantic* s, Ast* ast) {
     s->ast_depth--;
 }
 
+// ============================================================================
+// 「这个 struct 操作数可能为 null 吗」—— 抑制 WARN_STRUCT_EQ_NULL 的误报（2026-11-08）
+// ----------------------------------------------------------------------------
+// 原来只要「struct 且非 nullable + 对面是 null 字面量」就警告，但下列来源**真的能为 null**：
+//   · `x as P`            —— 转型不匹配 ⇒ null
+//   · `a?.field`          —— 目标为空 ⇒ null
+//   · 函数调用            —— `func f(): P { return null }` 合法
+//   · 形参 / 无初值的变量 —— 调用方传 null 也合法
+// 判据取「宁漏勿误报」（与 Symbol.is_null_value 同一取舍）：拿不准就当"可能为 null"，
+// 少报一条警告，也绝不吓唬本来能跑的程序。
+static int sem_expr_maybe_null(Semantic* s, Ast* e, int depth) {
+    if (!s || !e) return 1;
+    if (depth > 4) return 1;
+    switch (e->kind) {
+        case AST_AS_CAST:
+        case AST_SAFE_ACCESS:
+        case AST_CALL:
+            return 1;
+        case AST_VAR: {
+            if (!e->u.var.name) return 1;
+            Symbol* sym = scope_resolve(s->current, e->u.var.name);
+            if (!sym) return 1;
+            if (sym->is_null_value) return 1;
+            if (!sym->decl_init) return 1;   // 形参 / 无初值 ⇒ 上游可以传 null
+            return sem_expr_maybe_null(s, sym->decl_init, depth + 1);
+        }
+        default:
+            return 0;   // new X() / struct 字面量 / 字段访问：按"不为 null"处理（保持原判据）
+    }
+}
+
 static void visit_node(Semantic* s, Ast* ast) {
     if (!ast) return;
 

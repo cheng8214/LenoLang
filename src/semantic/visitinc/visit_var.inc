@@ -99,6 +99,8 @@
                 if (sym) {
                     sym->is_null_value = (sym->kind == SYM_LOCAL &&
                                           ast->u.var_decl.init->kind == AST_NULL) ? 1 : 0;
+                    // 记住初值表达式：`var p = x as P` 这类"可能是 null"的来源要靠它认出来
+                    sym->decl_init = ast->u.var_decl.init;
                 }
                 // 恢复原始 type（后续类型推断会重新设置正确的类型）
                 if (sym && ast->u.var_decl.type && ast->u.var_decl.type->kind != TYPE_INFER) {

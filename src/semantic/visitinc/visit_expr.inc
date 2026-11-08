@@ -271,6 +271,13 @@
                     TypeInfo* rt = ra ? ra->cached_type : NULL;
                     int struct_vs_null = (lt && lt->kind == TYPE_STRUCT && !lt->nullable && ra && ra->kind == AST_NULL) ||
                                          (rt && rt->kind == TYPE_STRUCT && !rt->nullable && la && la->kind == AST_NULL);
+                    // ★ 2026-11-08：来源**真的可能是 null** 时不报 —— 否则是误报
+                    //   （`var p = x as P` / `f()` 返回值 / 形参 / `a?.b` 都能是 null）。
+                    //   详见语义层 sem_expr_maybe_null 的注释。
+                    if (struct_vs_null) {
+                        Ast* other = (lt && lt->kind == TYPE_STRUCT) ? la : ra;
+                        if (sem_expr_maybe_null(s, other, 0)) struct_vs_null = 0;
+                    }
                     if (struct_vs_null) {
                         warning_add_at_fmt(WARN_STRUCT_EQ_NULL, ast->line, ast->column,
                             "struct 值类型默认被立即分配（不为 null），%s null 仅在显式赋 null 后才成立；"
