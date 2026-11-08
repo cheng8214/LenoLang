@@ -45,6 +45,25 @@ export func unregisterByWindow(int wid): int {
     return n
 }
 
+// ★ 2026-11-08 诊断辅助：当前注册的定时器数量 / 明细。
+//   用来回答「空闲 CPU 是被定时器驱动的重绘吃掉的，还是别的原因」——
+//   `debugDump()` 会把每个定时器的间隔、是否运行、归属窗口列出来。
+export func timerCount(): int { return _timers.len() }
+
+export func debugDump(): string {
+    string s = "timers=" + _str(_timers.len()) + "\n"
+    for _timers.len() to i {
+        var t = _timers[i]
+        if t is Timer {
+            s = s + "  ms=" + _str(_int(_float(t.ms)))
+              + " run=" + (if t.running then "1" else "0")
+              + " once=" + (if t.once then "1" else "0")
+              + " wid=" + _str(t.ownerWid) + "\n"
+        }
+    }
+    return s
+}
+
 // 窗口主循环每帧调用：驱动所有注册的定时器，任意一个触发回调则自动 requestRedraw
 //   ⚠⚠ 2026-10-27 修（用户实测：Aria 运行中报
 //     "sdl_timer.leno:28 数组索引越界: 索引 2, 长度 2" ✗）：
@@ -63,7 +82,9 @@ export func tickAllTimers() {
         for _timers.len() to j {
             if _timers[j] == t { alive = true; break }
         }
-        if alive and t.tick() { anyFired = true }
+        // ★ 2026-11-08：只有 `autoRedraw` 的定时器触发才自动重绘。
+        //   关掉的那些（高频心跳 + 回调内部自己按需请求）不再拖着整窗以 30fps 空转 ✓
+        if alive and t.tick() and t.autoRedraw { anyFired = true }
     }
     if anyFired { core.requestRedraw() }
 }
@@ -83,13 +104,21 @@ export func nextTimerMs(): int {
 }
 
 export struct Timer {
-    pri float   ms = 0.0     // 定时间隔（毫秒）
+    // 定时间隔（毫秒）。★ 2026-11-08 去掉 pri：debugDump() 要读它做诊断，
+    //   而 pri 字段只有 Timer 自己的方法能访问。
+    float   ms = 0.0
     float   next = 0.0    // 下次触发时间（getTicks 毫秒）
     bool    running = false   // 是否运行中（显式初值，消 [字段未初始化] 警告）
     bool    once = false      // true=一次性
     // ★ 2026-11-08：所属窗口 ID（0 = 全局/不属于任何窗口）。
     //   `Window.addTimer()` 会自动填，窗口销毁时按它批量注销 ✓
     int     ownerWid = 0
+    // ★ 2026-11-08：到点是否**自动**请求重绘（默认 true，保持旧行为）。
+    //   为什么要有：`tickAllTimers` 原来把"回调被调用"一律当成"需要重绘"，
+    //   于是 33ms 的心跳定时器（如 Aria 的歌词 UI tick）会让窗口**空闲时也 33fps 全量重绘**，
+    //   实测吃满半个核（用户报 CPU 从 3% 涨到 10%）。
+    //   回调自己按需 `markFrameRedraw()` 的时候把这个关掉即可 ✓
+    bool    autoRedraw = true
     Array   _cb           // 回调存 [0]
 
     // 设置并启动（循环），ms=毫秒，=0 只存回调不启动

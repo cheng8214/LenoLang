@@ -449,6 +449,10 @@ export const SDL_Color_SIZE  = core.SDL_Color_SIZE
 export func init(int flags = 32): bool   { return core.init(flags) }
 export func initVideo(): bool        { return core.initVideo() }
 export func quit()                   { core.quit(); fnt.ttfQuit() }
+
+// ★ 2026-11-08 诊断：累计渲染帧数 + 当前定时器明细（排查空闲 CPU 占用用）
+export func frameTotal(): int        { return wnd.frameTotal() }
+export func timerDump(): string      { return tm.debugDump() }
 export func getError(): string       { return core.getError() }
 export func delay(int ms)            { core.delay(ms) }
 export func getTicks(): int          { return core.getTicks() }

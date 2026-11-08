@@ -223,6 +223,11 @@ Array[Array[Shortcut]]  _runShortcuts = []    // 各窗口快捷键列表
 Array[func():bool]       _runShortcutGuards = [] // 各窗口快捷键守卫回调
 var _runLoopActive = false    // 主循环是否已在运行
 
+// ★ 2026-11-08 诊断：累计渲染帧数。配合 timer.debugDump() 可以判断
+//   空闲时的高 CPU 是「定时器驱动的频繁重绘」还是别的原因。
+var _frameTotal = 0
+export func frameTotal(): int { return _frameTotal }
+
 // 主循环是否**已经**在跑（即某个窗口的 run 正占着它）
 //
 // ★ 2026-11-05（Aria 头像裁剪实测反哺）：
@@ -2173,6 +2178,7 @@ export struct Window {
                     var _ovl = _runOverlays[i]
                     if _ovl != null { _ovl(_runRens[i]) }
                     _runRens[i].present()
+                    _frameTotal = _frameTotal + 1      // ★ 诊断：累计渲染帧数（供 frameTotal() 查）
                     // 对话框窗口：首帧渲染完后显示（避免创建时闪现默认背景）
                     // show 后立即 raise，确保对话框在主窗口前面
                     if _runDialogHidden[i] {
