@@ -400,13 +400,13 @@ main() { print(_str(new P().a)) }
     ce.expect_error(annoMulti, "注解多参数 => 指向数组写法",
         "注解只接受**一个**参数", 1)
 
-    // ⑲b 正确写法（字符串数组）照常可用
+    // ⑲b 正确写法（字符串数组）照常可用 —— @optkeys 挂在**函数**上（它描述调用的可选键 ✓）
     var annoOk = dirs.join(work, "anno_ok.leno")
     files.write(annoOk, @"@optkeys([""a""])
-struct P {
-    int a = 1
+func f(int a = 1): int {
+    return a
 }
-main() { print(_str(new P(a = 2).a)) }
+main() { print(_str(f(a = 2))) }
 ")
     ce.expect_ok(annoOk, "注解字符串数组（防误报）", "2")
 
@@ -914,6 +914,32 @@ main() { print(""ok"") }
     var outGuardNoVar = ce.expect_error(guardNoVar, "=> 后漏写绑定变量 => 单条报错",
         "期望标识符作为绑定变量名", 4)
     ce.expect_no_warning(outGuardNoVar, "=> 后漏写绑定变量", "default` 只能写在 switch")
+
+    // ---- ㊵ @optkeys 参数/挂载位置校验 + cstruct 非法字段类型给出可用类型 ----
+    var annoBadArg = dirs.join(work, "anno_bad_arg.leno")
+    files.write(annoBadArg, @"@optkeys(1)
+func f(): int { return 1 }
+main() { print(_str(f())) }
+")
+    ce.expect_error(annoBadArg, "@optkeys 参数是数字 => 报错（此前静默）",
+        "参数必须是字符串数组", 1)
+
+    var annoOnVar = dirs.join(work, "anno_on_var.leno")
+    files.write(annoOnVar, @"@optkeys([""w""])
+var x = 1
+main() { print(_str(x)) }
+")
+    ce.expect_error(annoOnVar, "@optkeys 挂在 var 上 => 报错（此前静默）",
+        "只能挂在函数上", 0)
+
+    var cstructBad = dirs.join(work, "cstruct_bad_type.leno")
+    files.write(cstructBad, @"cstruct C {
+    int x
+}
+main() { print(""x"") }
+")
+    ce.expect_error(cstructBad, "cstruct 用 int => 提示可用 C 布局类型",
+        "请用 i8/i16/i32/i64", 1)
 
     print("test_diag_parse_hints passed")
 }

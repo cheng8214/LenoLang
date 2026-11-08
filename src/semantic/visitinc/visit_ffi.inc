@@ -34,10 +34,15 @@
                 for (int i = 0; i < ast->u.cstruct_def.field_count; i++) {
                     TypeInfo* field_type = ast->u.cstruct_def.field_types[i];
                     if (!field_type || !c_layout_is_valid_field_type(field_type->kind)) {
+                        // ★ 2026-11-08：把"哪些类型可用"写进文案 —— 此前只说"无效的 C 布局类型"，
+                        //   从别的语言过来的人不知道 Leno 的 cstruct 要用 i32/i64 那一套 ✗
                         error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
-                                 "cstruct '%s' 的字段 '%s' 使用了无效的 C 布局类型",
+                                 "cstruct '%s' 的字段 '%s' 的类型 '%s' 不是 C 布局类型 —— "
+                                 "请用 i8/i16/i32/i64、u8/u16/u32/u64、f32/f64、Ptr、"
+                                 "或另一个 cstruct（数组写 `i32 a[4]`）",
                                  ast->u.cstruct_def.name,
-                                 ast->u.cstruct_def.field_names[i]);
+                                 ast->u.cstruct_def.field_names[i],
+                                 field_type ? type_to_string(field_type) : "?");
                     }
                 }
 

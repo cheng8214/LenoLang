@@ -78,6 +78,7 @@ static int anno_is_known(const char* name) {
 // 解析一个 `@名字[(参数)]`，追加到 annos 数组末尾；失败返回 0
 static int parse_one_anno(Parser* p, AstAnno** annos, int* n, int* cap) {
     int line = p->lex.current.line;
+    int col = p->lex.current.column;
     lexer_next(&p->lex);                       // 吃掉 '@'
 
     if (p->lex.current.type != TOK_IDENT) {
@@ -175,6 +176,18 @@ static int parse_one_anno(Parser* p, AstAnno** annos, int* n, int* cap) {
         lexer_next(&p->lex);                   // 吃掉 ')'
     }
 
+    // ★ 2026-11-08：`@optkeys` 的参数必须是字符串数组（或字符串 "*"）。
+    //   此前 `@optkeys(1)` / `@optkeys(true)` / 裸 `@optkeys` 都**静默接受** ⇒ 等于没写 ✗
+    if (strcmp(a.name, "optkeys") == 0 &&
+        (a.arg_kind != 1 && a.arg_kind != 5)) {
+        error_add_at_fmt(ERR_SYNTAX, line, col,
+            "@optkeys 的参数必须是字符串数组（如 `@optkeys([\"w\", \"h\"])`）或通配 \"*\""
+            "%s", a.arg_kind == 0 ? " —— 当前没给参数（等于没写 ✗）" :
+                  " —— 当前给的是数字/bool（等于没写 ✗）");
+        anno_free_body(&a);
+        return 0;
+    }
+
     // 追加
     if (*n >= *cap) {
         *cap = *cap ? *cap * 2 : 4;
@@ -231,6 +244,21 @@ Ast* parse_statement(Parser* p) {
         }
         target->annos = annos;
         target->anno_count = anno_n;
+        // ★ 2026-11-08：@optkeys 描述"这个函数调用时还能接受哪些可选键" ⇒ 只能挂函数。
+        //   此前挂在 `var` / `struct` 上被**静默接受**（等于没写 ✗）
+        if (target->kind != AST_FUNC_DEF) {
+            for (int ai = 0; ai < anno_n; ai++) {
+                if (strcmp(annos[ai].name, "optkeys") == 0) {
+                    error_add_at_fmt(ERR_SYNTAX, annos[ai].line, 0,
+                        "@optkeys 只能挂在函数上 —— 它描述的是该函数调用时可接受的可选键；"
+                        "当前声明不是函数 ✗");
+                    target->annos = NULL;
+                    target->anno_count = 0;
+                    anno_free_list(annos, anno_n);
+                    return inner;
+                }
+            }
+        }
         return inner;
     }
 
