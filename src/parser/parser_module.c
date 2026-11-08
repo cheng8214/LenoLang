@@ -516,11 +516,36 @@ Ast* parse_use_stmt(Parser* p) {
 
     // 检查是否有 . 符号
     if (p->lex.current.type != TOK_DOT) {
-        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "use 语句语法: use module.Type 或 use module.(A, B, C)");
+        // ★ 2026-11-08：`use a, b`（一次列多个模块）—— 此前只报笼统的「use 语句语法」，
+        //   看不出"逗号分隔不支持" ✗
+        if (p->lex.current.type == TOK_COMMA) {
+            int bad_line = p->lex.current.line;
+            error_add_at_fmt(ERR_SYNTAX, bad_line, p->lex.current.column,
+                "use 不支持逗号分隔（`use a, b` ✗）—— 每个模块/每组类型分开写一行："
+                "`use a.X` 换行 `use b.Y`；同一模块多个类型写 `use a.(X, Y)` ✓");
+            // 跳到本行末尾：否则 `, files` 的残余会再刷「期望表达式」等级联 ✗
+            while (p->lex.current.type != TOK_EOF && p->lex.current.line == bad_line) {
+                lexer_next(&p->lex);
+            }
+        } else {
+            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "use 语句语法: use module.Type 或 use module.(A, B, C)");
+        }
         free(module_name);
         return NULL;
     }
+    int dot_line = p->lex.current.line;
     lexer_next(&p->lex); // .
+
+    // ★ 2026-11-08：`use strings.` 漏写类型名时，下一行的标识符会被当成类型名吃掉
+    //   ⇒ 后续 `()` 变成孤立表达式，只报「期望表达式」/「期望 ')'」✗ ⇒ 按行号判定。
+    if (((p->lex.current.type != TOK_IDENT && p->lex.current.type != TOK_LPAREN) ||
+         p->lex.current.line > dot_line)) {
+        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+            "use 的 '.' 后面必须跟类型名 —— 如 `use strings.String`，"
+            "同一模块多个类型写 `use strings.(String, StringBuilder)` ✓");
+        free(module_name);
+        return NULL;
+    }
 
     // 批量模式: use module.(A, B, C)
     if (p->lex.current.type == TOK_LPAREN) {

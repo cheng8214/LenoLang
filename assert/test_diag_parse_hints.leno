@@ -692,5 +692,54 @@ main() { print(""x"") }
 ")
     ce.expect_ok(forDictOk, "字典 to 键, 值（防误报）", "a=1")
 
+    // ---- ㉜ use 写法错误：逗号分隔 / 漏写类型名 / 顶层 impl ----
+    var useComma = dirs.join(work, "use_comma.leno")
+    files.write(useComma, @"use strings, files
+main() { print(""x"") }
+")
+    var outUseComma = ce.expect_error(useComma, "use a, b => 定向报错",
+        "use 不支持逗号分隔", 1)
+    ce.expect_no_warning(outUseComma, "use a, b", "期望表达式")
+
+    var useDot = dirs.join(work, "use_dot_only.leno")
+    files.write(useDot, @"use strings.
+main() { print(""x"") }
+")
+    var outUseDot = ce.expect_error(useDot, "use strings. 漏写类型 => 定向报错",
+        "'.' 后面必须跟类型名", 2)
+    ce.expect_no_warning(outUseDot, "use strings.", "期望表达式")
+
+    var implOutside = dirs.join(work, "impl_outside.leno")
+    files.write(implOutside, @"face F { func m(): int }
+impl F for S { func m(): int { return 1 } }
+main() { print(""x"") }
+")
+    ce.expect_error(implOutside, "顶层 impl F for S => 指向 struct 头部写法",
+        "impl 写在 **struct 头部**", 2)
+
+    // ㉜b 防误报：正常 use 与 struct 头部 impl 照常可用
+    var useMod = dirs.join(work, "use_mod.leno")
+    files.write(useMod, @"export struct T { int v = 1 }
+")
+    var useOk = dirs.join(work, "use_ok.leno")
+    files.write(useOk, @"import ""./use_mod.leno"" as um
+use um.T
+main() {
+    T t = new T()
+    print(_str(t.v))
+}
+")
+    ce.expect_ok(useOk, "正常 use 写法（防误报）", "1")
+
+    var implOk = dirs.join(work, "impl_ok.leno")
+    files.write(implOk, @"face F { func m(): int }
+struct S impl F { func m(): int { return 1 } }
+main() {
+    F f = new S()
+    print(_str(f.m()))
+}
+")
+    ce.expect_ok(implOk, "struct 头部 impl（防误报）", "1")
+
     print("test_diag_parse_hints passed")
 }

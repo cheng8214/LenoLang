@@ -371,6 +371,26 @@ Ast* parse_statement(Parser* p) {
             stmt = parse_switch_stmt(p);
             break;
 
+        // impl 只能写在 struct 头部（`struct S impl F`）：★ 2026-11-08
+        //   Rust / Swift 风格的顶层 `impl F for S { … }` 此前落到表达式解析 ⇒
+        //   只报「期望表达式」，看不出正确写法 ✗ ⇒ 定向报错并整块跳过。
+        case TOK_IMPL: {
+            int bad_line = p->lex.current.line;
+            error_add_at_fmt(ERR_SYNTAX, bad_line, p->lex.current.column,
+                "Leno 的 impl 写在 **struct 头部** —— 写成 `struct S impl F { … }`；"
+                "没有顶层 `impl F for S { … }` 这种写法 ✗");
+            while (p->lex.current.type != TOK_EOF &&
+                   p->lex.current.line == bad_line &&
+                   p->lex.current.type != TOK_LBRACE) {
+                lexer_next(&p->lex);
+            }
+            if (p->lex.current.type == TOK_LBRACE) {
+                Ast* skipped_body = parse_block_internal(p);
+                if (skipped_body) ast_free(skipped_body);
+            }
+            return NULL;
+        }
+
         // catch / finally 落在 try 之外：★ 2026-11-08
         //   此前掉进 default ⇒ 报「期望表达式」（catch 还会连报两次），看不出
         //   "这两个子句只能跟在 try 后面" ✗。定向报错并整块跳过，避免级联。
