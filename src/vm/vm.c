@@ -391,6 +391,9 @@ static int value_matches_kind(Value v, TypeKind kind) {
             return val_is_obj(v) && val_as_obj(v)->type == OBJ_CHANNEL;
         case TYPE_THREAD:
             return val_is_obj(v) && val_as_obj(v)->type == OBJ_THREAD;
+        case TYPE_CLIB:
+            // clib 句柄（ffi.load 的结果）；嵌套在 Array/Dict 规格里也要认得
+            return val_is_obj(v) && val_as_obj(v)->type == OBJ_FFI_LIBRARY;
         case TYPE_FUNCTION:
             return val_is_obj(v) &&
                    (val_as_obj(v)->type == OBJ_CLOSURE ||
@@ -751,6 +754,15 @@ Value vm_as_cast(Value value, TypeKind expected_type, TypeKind elem_type, Value 
             break;
         case TYPE_THREAD:
             matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_THREAD);
+            break;
+        // ★ 2026-11-08：clib 句柄的 `as` —— 运行期就是 `ffi.load` 得到的 OBJ_FFI_LIBRARY。
+        //   缺这一条时 `x as kernel32` **恒为 null**（落 default ⇒ matches=0）：
+        //   LenoWin32 新版 `_krnlLib()`（threads.local_get + `as kernel32` 懒加载）因此
+        //   每次都拿到 null ⇒ `_krnlLib().OpenProcess(...)` 报「clib 库对象为空（null）」，
+        //   test_lenosys / test_single_instance 挂在这里 ✗
+        //   ⚠ 只认 OBJ_FFI_LIBRARY：指针 / callback 不是"库句柄"，不能当 clib 用。
+        case TYPE_CLIB:
+            matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_FFI_LIBRARY);
             break;
         case TYPE_PTR:
             if (val_is_obj(value) &&
@@ -1133,6 +1145,10 @@ int type_check_value(Value value, TypeKind expected_type, TypeKind elem_type, Va
         case TYPE_PTR:
         case TYPE_PTR_GENERIC:
             matches = value_matches_kind(value, TYPE_PTR);
+            break;
+        // clib：`x is kernel32` 与 `as` 同口径（都是 ffi.load 的库对象）
+        case TYPE_CLIB:
+            matches = value_matches_kind(value, TYPE_CLIB);
             break;
         case TYPE_NULL:
             matches = val_is_null(value);
