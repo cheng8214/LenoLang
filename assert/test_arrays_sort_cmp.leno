@@ -1,0 +1,92 @@
+// test_arrays_sort_cmp.leno —— 自定义比较器排序（2026-11-08）
+//
+// 背景：此前 `sort()` 只吃 0 参，按"时长 / 大小 / 名字长度"排序只能手写。
+//   实测 LenoMusic 有三处手写排序（lrc_sort / insert_sorted / 去重+插入），
+//   Aria 也有 —— 这是评估文档 §2.3 记的真实缺口。
+//
+// 契约：`cmp(a, b)` 返回 int，负数 ⇒ a 在前、0 ⇒ 相等、正数 ⇒ b 在前。
+//   稳定性：相等元素保持原有顺序（业务排序几乎总需要）。
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+import strings
+
+struct Song {
+    string name = ""
+    int dur = 0
+}
+
+main() {
+    // ① 无比较器 ⇒ 行为与以前完全一致
+    Array[int] a = [3, 1, 2]
+    a.sort()
+    assert_eq(a[0], 1, "无比较器：升序")
+    assert_eq(a[2], 3, "无比较器：最大值在末尾")
+
+    // ② 降序
+    Array[int] b = [3, 1, 2]
+    b.sort(func(int x, int y) { return y - x })
+    assert_eq(b[0], 3, "降序：最大值在前")
+    assert_eq(b[2], 1, "降序：最小值在末尾")
+
+    // ③ 按字符串长度
+    Array[string] c = ["aaa", "a", "aa"]
+    c.sort(func(string x, string y) { return x.len() - y.len() })
+    assert_eq(c[0], "a")
+    assert_eq(c[1], "aa")
+    assert_eq(c[2], "aaa")
+
+    // ④ 按 struct 字段（真实场景）
+    Array[Song] songs = [new Song(), new Song(), new Song()]
+    songs[0].name = "c"; songs[0].dur = 300
+    songs[1].name = "a"; songs[1].dur = 100
+    songs[2].name = "b"; songs[2].dur = 200
+    songs.sort(func(Song x, Song y) { return x.dur - y.dur })
+    assert_eq(songs[0].name, "a", "按 dur 升序：第 1 个是 a")
+    assert_eq(songs[2].name, "c", "按 dur 升序：第 3 个是 c")
+
+    // ⑤ 稳定性：同长度元素的相对顺序不变
+    Array[string] d = ["xx1", "y2", "zz3", "w4"]
+    d.sort(func(string x, string y) { return x.len() - y.len() })
+    assert_eq(d[0], "y2", "稳定性：2 字符的 y2 在 w4 之前（原序）")
+    assert_eq(d[1], "w4")
+    assert_eq(d[2], "xx1", "稳定性：3 字符的 xx1 在 zz3 之前（原序）")
+    assert_eq(d[3], "zz3")
+
+    // ⑥ 空数组 / 单元素不崩
+    Array[int] e = []
+    e.sort(func(int x, int y) { return x - y })
+    assert_eq(e.len(), 0, "空数组排序后仍是空")
+    Array[int] one = [7]
+    one.sort(func(int x, int y) { return x - y })
+    assert_eq(one[0], 7, "单元素排序不变")
+
+    // ⑦ 比较器返回 float 也接受（负数/正数语义相同）
+    Array[int] fl = [2, 1, 3]
+    fl.sort(func(int x, int y) { return _float(x) - _float(y) })
+    assert_eq(fl[0], 1, "float 返回值的比较器也能用")
+
+    // ---- 错误路径：参数检查不能因为"可变参数"而放松 ----
+    var work = dirs.join(_tmpdir(), "leno_sortcmp_err")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    var f1 = dirs.join(work, "bad_type.leno")
+    files.write(f1, @"main() {
+    Array[int] a = [3, 1, 2]
+    a.sort(123)
+}
+")
+    ce.expect_error(f1, "sort 传非函数要报错", "期望 'func'", 3)
+
+    var f2 = dirs.join(work, "too_many.leno")
+    files.write(f2, @"main() {
+    Array[int] a = [3, 1, 2]
+    a.sort(func(int x, int y) { return x - y }, 1)
+}
+")
+    ce.expect_error(f2, "sort 参数过多要报错", "参数过多", 3)
+
+    dirs.delete(work)
+    print("test_arrays_sort_cmp passed")
+}

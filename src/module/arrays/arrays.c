@@ -326,6 +326,9 @@ static Value arr_reverse(int argc, Value* args) {
     return args[0];
 }
 
+// `call_closure` 定义在本文件靠后处，但比较器排序（下面）要用 ⇒ 前向声明
+static int call_closure(Value callee, int arg_count, Value* args, Value* out);
+
 // 排序比较函数
 static int value_compare_for_sort(const void* a, const void* b) {
     Value va = *(Value*)a;
@@ -357,12 +360,82 @@ static int value_compare_for_sort(const void* a, const void* b) {
     return 0;
 }
 
+// ★ 2026-11-08：**自定义比较器排序** `arr.sort(cmp)` / `arrays.sort(arr, cmp)`。
+//
+//   此前 `sort()` 只吃 0 参，想按"时长 / 大小 / 名字长度"这类业务字段排序只能手写 ——
+//   实测 LenoMusic 有三处（`player.leno` 的 `lrc_sort` / `insert_sorted`、
+//   `search_page.leno` 的去重+插入排序），Aria 也有。这是评估文档 §2.3 记的真实缺口。
+//
+//   契约：`cmp(a, b)` 返回 **int**，负数 ⇒ a 排前、0 ⇒ 相等、正数 ⇒ b 排前
+//   （与 C `qsort` / Java `Comparator` 同口径）。
+//
+// 三个实现要点：
+//   ① 用**归并排序**而不是 qsort：要稳定（相等元素保持原顺序，业务排序几乎总需要），
+//      而且 qsort 无法携带上下文（回调得走全局变量，递归实现本来就更清楚）。
+//   ② 排序前把元素**复制**到 malloc 缓冲：回调里可能 `arr.add()` / `arr.clear()`
+//      （实测这类"边排边改"最容易写出），直接操作 `arr->elements` 会在 realloc 后野指针。
+//   ③ GC 是**标记-清除、不移动对象**（src/gc.c）⇒ 回调期间持有的 Value 副本安全。
+static Value g_sort_cmp = {0};      // 排序期间的比较器（非递归调用时置 null）
+
+static int sort_cmp_via_callback(Value a, Value b) {
+    Value cargs[2];
+    cargs[0] = a;
+    cargs[1] = b;
+    Value r = val_int(0);
+    if (!call_closure(g_sort_cmp, 2, cargs, &r)) return 0;   // 回调抛异常 ⇒ 当作相等
+    // 接受 int / float；返回值语义：<0 前、0 等、>0 后
+    if (val_is_int(r)) {
+        int c = (int)val_as_int(r);
+        return c < 0 ? -1 : (c > 0 ? 1 : 0);
+    }
+    if (val_is_float(r)) {
+        double d = val_as_num(r);
+        return d < 0 ? -1 : (d > 0 ? 1 : 0);
+    }
+    return 0;   // 返回非数字 ⇒ 视为相等（不崩）
+}
+
+static void merge_sort_rec(Value* a, Value* tmp, int n) {
+    if (n < 2) return;
+    int mid = n / 2;
+    merge_sort_rec(a, tmp, mid);
+    merge_sort_rec(a + mid, tmp, n - mid);
+    int i = 0, j = mid, k = 0;
+    while (i < mid && j < n) {
+        // `<= 0` ⇒ 取左侧（**稳定**：相等时保持原序）
+        if (sort_cmp_via_callback(a[j], a[i]) < 0) tmp[k++] = a[j++];
+        else                                       tmp[k++] = a[i++];
+    }
+    while (i < mid) tmp[k++] = a[i++];
+    while (j < n)   tmp[k++] = a[j++];
+    memcpy(a, tmp, sizeof(Value) * (size_t)n);
+}
+
 static Value arr_sort(int argc, Value* args) {
-    (void)argc;
     ARR_REJECT_READONLY();
     ObjArray* arr = (ObjArray*)val_as_obj(args[0]);
     if (arr->count > 1) {
-        qsort(arr->elements, arr->count, sizeof(Value), value_compare_for_sort);
+        // 无比较器（或第二个实参不是对象）⇒ 走原来的内置比较，行为一字不变
+        if (argc < 2 || !val_is_obj(args[1])) {
+            qsort(arr->elements, arr->count, sizeof(Value), value_compare_for_sort);
+            return args[0];
+        }
+        int n = arr->count;
+        Value* buf = (Value*)malloc(sizeof(Value) * (size_t)n);
+        Value* tmp = (Value*)malloc(sizeof(Value) * (size_t)n);
+        if (!buf || !tmp) { free(buf); free(tmp); return val_null(); }
+        memcpy(buf, arr->elements, sizeof(Value) * (size_t)n);
+
+        Value saved = g_sort_cmp;
+        g_sort_cmp = args[1];
+        merge_sort_rec(buf, tmp, n);
+        g_sort_cmp = saved;
+
+        // 回调里可能删过元素 ⇒ 只写回 min(当前count, 原count) 个
+        int m = (arr->count < n) ? arr->count : n;
+        memcpy(arr->elements, buf, sizeof(Value) * (size_t)m);
+        free(buf);
+        free(tmp);
     }
     return args[0];
 }
@@ -692,7 +765,15 @@ void arrays_init_instance_methods(void) {
     array_register_method("reverse", make_native(arr_reverse,      1, "reverse"), TYPE_ARRAY, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
     native_register_instance_method_return_spec("Array", "reverse", &NATIVE_T_ARR_ARG0_ELEM);
 
-    array_register_method("sort", make_native(arr_sort,         1, "sort"), TYPE_ARRAY, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
+    // ★ 2026-11-08：比较器可选（实例形态实参不含接收者 ⇒ 0 或 1 个）
+    //   `arr.sort()` 走内置比较、`arr.sort(cmp)` 走回调；参数类型仍限定 FUNCTION
+    //   ⇒ `arr.sort(123)` 照样报「期望 'func'，但传入 'int'」✓
+    {
+        TypeKind sortcmp_params[] = {TYPE_FUNCTION};
+        array_register_method("sort", make_native(arr_sort, NATIVE_ARITY_VARARG, "sort"),
+                              TYPE_ARRAY, TYPE_UNKNOWN,
+                              NATIVE_VARARG(0, 1, 1, sortcmp_params, TYPE_ANY));
+    }
     native_register_instance_method_return_spec("Array", "sort", &NATIVE_T_ARR_ARG0_ELEM);
 
     // sum：实例形态（接收者就是第 0 个实参）⇒ 返回规格 FLOAT，与模块形态**同一口径** ✓

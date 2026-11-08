@@ -49,7 +49,10 @@ int removed = xs.remove(0)
 ```
 
 > ⚠ `map` / `reduce` **不在此列**：它们的类型取决于**回调的返回类型**（另一族规则）——
-> `map` 走泛型推断得到 `Array[U]`，`reduce` 的返回类型暂为 `any`。
+> `map` 走泛型推断得到 `Array[U]`；`reduce` 的返回类型与**元素类型**一致
+> （`Array[int]` ⇒ `int`、`Array[string]` ⇒ `string`，**不是 `any`** —— 实测 `type()` 也是
+> `int` / `string`，可以直接赋给具体类型变量）。带初值时初值必须与元素同类型；
+> 想把 `Array[int]` 累积成字符串，请先 `map` 再 `reduce`。
 > ⚠ 入参元素**未指定**时（如 `var empty = []`），结果仍是"未指定"，**不会**被硬塞成 `Array[any]`
 > —— 后者会拒绝 `Array[int]` 赋值（`assert/test_arrays_module.leno` 有这条回归）。
 
@@ -357,17 +360,26 @@ print(arr.last_index_of("grape"))    // -1
 
 ## 排序和反转
 
-### `sort()`
+### `sort(cmp?)`
 
-原地排序数组（使用 C 层 qsort）。
+原地排序数组。**不传比较器**时使用内置规则（C 层 qsort）；**传比较器**时按回调排序。
 
-**参数**: 无  
+**参数**:
+- `cmp` (function, 可选): `cmp(a, b)` 返回 **int** —— 负数 ⇒ `a` 排在前面，
+  `0` ⇒ 相等，正数 ⇒ `b` 排在前面（与 C `qsort` / Java `Comparator` 同口径）。
+  返回 `float` 也可以（按正负判断）。
+
 **返回**: `Array` - 原数组（支持链式调用）
 
-**排序规则**:
+**内置规则**（不传比较器）:
 - 数字：按数值大小
 - 字符串：按字典序
 - 不同类型：按类型排序
+
+> **两个性质**（2026-11-08 加比较器时一并保证）：
+> ① **稳定**：相等元素保持原有顺序（同长度字符串、同分数记录不会乱序）；
+> ② **回调里改数组不会崩**：排序前会把元素复制一份，回调中 `arr.add()` /
+> `arr.clear()` 只会影响写回的元素个数，不会野指针。
 
 ```leno
 // 数字排序
@@ -383,6 +395,30 @@ print(fruits)  // [apple, banana, cherry]
 // 链式调用
 var result = [3, 1, 2].sort().reverse()
 print(result)  // [3, 2, 1]
+
+// ---- 自定义比较器（2026-11-08）----
+
+// 降序
+var desc = [3, 1, 2]
+desc.sort(func(int x, int y) { return y - x })      // [3, 2, 1]
+
+// 按字符串长度
+var byLen = ["aaa", "a", "aa"]
+byLen.sort(func(string x, string y) { return x.len() - y.len() })
+print(byLen)  // [a, aa, aaa]
+
+// 按 struct 字段（最常用：按时长 / 分数 / 时间排序）
+struct Song { string name; int dur }
+var songs = [/* ... */]
+songs.sort(func(Song x, Song y) { return x.dur - y.dur })
+
+// 多关键字：先按时长、时长相同再按歌名（字符串可直接用 < / > 比）
+songs.sort(func(Song x, Song y) {
+    if x.dur != y.dur { return x.dur - y.dur }
+    if x.name < y.name { return -1 }
+    if x.name > y.name { return 1 }
+    return 0
+})
 ```
 
 ---
@@ -499,7 +535,8 @@ print(big)  // [6, 7, 8, 9, 10]
 - `callback` (function): 回调函数，接收 `(accumulator, item, index)` 三个参数，返回新的累积值
 - `initial` (any, 可选): 初始值。如果不提供，使用数组第一个元素作为初始值，从第二个元素开始遍历
 
-**返回**: `any` - 累积结果
+**返回**: 与**元素类型**相同（`Array[int]` ⇒ `int`、`Array[string]` ⇒ `string`）。
+不是 `any` —— 可以直接 `int s = nums.reduce(...)`。
 
 ```leno
 var nums = [1, 2, 3, 4, 5]
