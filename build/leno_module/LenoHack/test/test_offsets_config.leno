@@ -1,0 +1,80 @@
+// LenoHack / OffsetConfig 自测（纯 JSON 解析，不碰进程内存）
+//
+// 跑法（仓库根目录）：
+//   build\leno.exe build\leno_module\LenoHack\test\test_offsets_config.leno
+//
+// 为什么只测这个：LenoHack 的 `w32_memory` / `w32_input` **操作真实进程**
+//   （读写内存、模拟按键），不能放进自动化测试；`offsets_config` 是纯解析，安全。
+//
+// ⚠ 记一个容易踩的约定：`getOffset()` **一律按十六进制解析**（`0x` 前缀可有可无）
+//   ⇒ 配置里写 `"1000"` 得到的是 **4096**，不是 1000。这条已写进 `getOffset` 的注释。
+import "offsets_config.leno" as oc
+use oc.OffsetConfig
+import dirs
+import files
+import strings
+
+func fail(string msg) {
+    print("[FAIL] " + msg + "\n")
+    _exit(1)
+}
+
+func eqInt(int got, int want, string tag) {
+    if got != want { fail(tag + "：得到 " + _str(got) + " 期望 " + _str(want)) }
+}
+
+func eqStr(string got, string want, string tag) {
+    if got != want { fail(tag + "：得到 [" + got + "] 期望 [" + want + "]") }
+}
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_offsets_cfg")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+    var cfg = dirs.join(work, "cfg.json")
+    files.write(cfg, @"{
+  ""version"": ""1.2.3"",
+  ""modules"": {
+    ""client.dll"": { ""health"": ""0x1A2B"", ""ammo"": ""00FF"", ""plain"": ""1000"" },
+    ""engine.dll"": { ""base"": ""0x400000"" }
+  },
+  ""signatures"": { ""player"": ""48 8B 05 ?? ?? ?? ??"" }
+}
+")
+
+    var c = new OffsetConfig()
+    eqInt(if c.load(cfg) then 1 else 0, 1, "load 成功")
+    eqStr(c.version, "1.2.3", "version 读对")
+    eqInt(c.getModuleNames().len(), 2, "两个模块")
+
+    // 十六进制（带 0x / 不带前缀 / 大小写）
+    eqInt(c.getOffset("client.dll", "health"), 0x1A2B, "0x1A2B = 6699")
+    eqInt(c.getOffset("client.dll", "ammo"), 255, "00FF（无前缀）= 255")
+    eqInt(c.getOffset("engine.dll", "base"), 0x400000, "0x400000 = 4194304")
+
+    // ⚠ 无前缀也是十六进制 —— 这是最容易踩的约定
+    eqInt(c.getOffset("client.dll", "plain"), 4096, "\"1000\" 按十六进制 ⇒ 4096（不是 1000）")
+
+    // 缺失 ⇒ 0（不崩）
+    eqInt(c.getOffset("nope.dll", "x"), 0, "不存在的模块 ⇒ 0")
+    eqInt(c.getOffset("client.dll", "nope"), 0, "不存在的字段 ⇒ 0")
+
+    // 特征码
+    eqStr(c.getSignature("player"), "48 8B 05 ?? ?? ?? ??", "signature 读对")
+    eqStr(c.getSignature("nope"), "", "不存在的特征码 ⇒ 空串")
+
+    // 文件不存在 ⇒ load 返回 false，不崩
+    var bad = new OffsetConfig()
+    eqInt(if bad.load(dirs.join(work, "nope.json")) then 1 else 0, 0, "文件不存在 ⇒ load 返回 false")
+
+    // 缺 modules / signatures 字段 ⇒ 兜底空字典（不崩）
+    var mincfg = dirs.join(work, "min.json")
+    files.write(mincfg, "{\"version\": \"0.1\"}")
+    var m = new OffsetConfig()
+    eqInt(if m.load(mincfg) then 1 else 0, 1, "只有 version 也能加载")
+    eqInt(m.getModuleNames().len(), 0, "缺 modules ⇒ 空列表")
+    eqStr(m.getSignature("x"), "", "缺 signatures ⇒ 空串")
+
+    dirs.delete(work)
+    print("[PASS] offsets_config\n")
+}

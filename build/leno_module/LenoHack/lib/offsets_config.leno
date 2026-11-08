@@ -83,6 +83,12 @@ export struct OffsetConfig {
     // 获取模块偏移
     // moduleName: 模块名, fieldName: 字段名
     // 返回偏移值（int），失败返回 0
+    //
+    // ⚠ **一律按十六进制解析**（`0x` / `0X` 前缀可有可无）：
+    //     "0x1A2B" → 6699      "1A2B" → 6699
+    //     "1000"   → **4096**（不是 1000！）
+    //   配置里写偏移请统一用十六进制（游戏偏移本来就是按 hex 查的）。
+    //   非法字符（非 0-9A-Fa-f）按 0 计（容错：坏配置不崩，只得到 0）。
     func getOffset(string moduleName, string fieldName): int {
         var mod = modules[moduleName]
         if mod == null { return 0 }
