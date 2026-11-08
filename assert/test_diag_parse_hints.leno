@@ -632,5 +632,14 @@ main() {
 ")
     ce.expect_ok(commaNames, "int x, y 共用类型（防误报）", "3")
 
+    // ---- ㉘ `export export func`：此前先报一条不相干的「期望类型…」----
+    var exportTwice = dirs.join(work, "export_twice.leno")
+    files.write(exportTwice, @"export export func f(): int { return 1 }
+main() { print(_str(f())) }
+")
+    var outExportTwice = ce.expect_error(exportTwice, "export 重复 => 单条定向报错",
+        "export 重复了", 1)
+    ce.expect_no_warning(outExportTwice, "export 重复", "期望类型")
+
     print("test_diag_parse_hints passed")
 }

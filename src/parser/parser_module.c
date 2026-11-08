@@ -396,6 +396,15 @@ Ast* parse_export_stmt(Parser* p) {
     int line = p->lex.current.line;
     lexer_next(&p->lex); // export
 
+    // ★ 2026-11-08：`export export func f()`（重复写）此前落到 var 声明解析 ⇒
+    //   先报一条完全不相干的「期望类型 (int, float, string, …)」，再报本函数末尾那条
+    //   ⇒ 两句都看不出"export 写重了" ✗。这里单条点名，并返回 NULL 让上层照常往下解析。
+    if (p->lex.current.type == TOK_EXPORT) {
+        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+            "export 重复了 —— 一个声明只需写一次 `export`（如 `export func f() { … }`）");
+        return NULL;
+    }
+
     // export 后面可以是 var/const 声明、func 定义、struct 定义、cstruct 定义或 enum 定义
     if (p->lex.current.type == TOK_VAR || p->lex.current.type == TOK_CONST) {
         Ast* decl = parse_var_decl_internal(p);
