@@ -162,6 +162,28 @@ main() {
     } catch e { tampered = true }
     assert_true(tampered, "密钥长度非法必须抛错")
 
+    // ==================== AES-128 单块（FIPS-197 附录 C.1）====================
+    //   2026-11-09 补：GCM 那组只验了"端到端能加解密"，**没钉住单块原语** ——
+    //   而 SubBytes / ShiftRows / MixColumns / KeyExpansion 全是手写（691 行）。
+    //   这里用 NIST 官方向量：任何一位算错都会立刻红。
+    var nfK = crypto.hex_to_bytes("000102030405060708090a0b0c0d0e0f")
+    assert_eq(crypto.bytes_to_hex(crypto.aes_encrypt_block(
+                  crypto.hex_to_bytes("00112233445566778899aabbccddeeff"), nfK)),
+              "69c4e0d86a7b0430d8cdb78070b4c55a", "AES-128 加密（FIPS-197 C.1）")
+    assert_eq(crypto.bytes_to_hex(crypto.aes_decrypt_block(
+                  crypto.hex_to_bytes("69c4e0d86a7b0430d8cdb78070b4c55a"), nfK)),
+              "00112233445566778899aabbccddeeff", "AES-128 解密（FIPS-197 C.1）")
+
+    // CBC 与整串：只做**往返**（`aes128_cbc_encrypt_bytes` 会自动 PKCS#7 填充 ⇒
+    //   16 字节输入变 32 字节，与 NIST 的"单块密文"长度对不上，不适合直接比向量）
+    var nfCbcK = crypto.hex_to_bytes("2b7e151628aed2a6abf7158809cf4f3c")
+    var nfIv = crypto.hex_to_bytes("000102030405060708090a0b0c0d0e0f")
+    var nfPt = crypto.hex_to_bytes("6bc1bee22e409f96e93d7e117393172a6bc1bee22e409f96e93d7e117393172a")
+    var nfCt = crypto.aes128_cbc_encrypt_bytes(nfCbcK, nfIv, nfPt)
+    assert_eq(nfCt.len(), 48, "CBC：32 字节明文 + PKCS#7 ⇒ 48 字节密文")
+    assert_eq(crypto.bytes_to_hex(crypto.aes128_cbc_decrypt_bytes(nfCbcK, nfIv, nfCt)),
+              crypto.bytes_to_hex(nfPt), "AES-128-CBC 往返一致")
+
     print("test_crypto_vectors passed")
 }
 
