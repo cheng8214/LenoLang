@@ -271,15 +271,17 @@ static int threads_check_entry(ObjClosure* closure, int got_args, const char* wh
         //   传 null 只是让参数变 null（实测），所以必须显式传全。
         char msg[512];
         if (got_args < want) {
+            // ⚠ 文案里必须保留「期望 N 个参数」这个说法：assert/test_threads_start_args.leno
+            //   用 strings.has(msg, "期望 2 个参数") 做断言，改措辞会把它打破 ✓
             snprintf(msg, sizeof(msg),
-                "%s: 入口函数需要 %d 个参数，只传了 %d 个 —— "
+                "%s: 入口函数期望 %d 个参数，实际传了 %d 个（少 %d 个）—— "
                 "线程入口由 VM 直接调用，**默认参数不会自动补齐**"
                 "（默认值由编译器在普通调用点展开）。"
                 "请把缺的 %d 个显式写上（不想传给默认值，就把默认值抄过来）✓",
-                who, want, got_args, want - got_args);
+                who, want, got_args, want - got_args, want - got_args);
         } else {
             snprintf(msg, sizeof(msg),
-                "%s: 入口函数只需要 %d 个参数，实际传了 %d 个（多了 %d 个）",
+                "%s: 入口函数期望 %d 个参数，实际传了 %d 个（多 %d 个）",
                 who, want, got_args, got_args - want);
         }
         native_throw_error(msg);
