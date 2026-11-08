@@ -2714,6 +2714,144 @@ int module_source_snapshot_matches(const char* src_path, uint64_t size, uint64_t
     return cur_hash == hash;
 }
 
+// ============================================================================
+// 依赖闭包校验 —— 模块缓存失效判定里「传递」的那一半
+//
+// 缺陷（2026-11-08 实测）：.lenomc 的依赖清单只记**直接依赖**（序列化时出现的
+// CONST_TAG_MODULE_REF 路径）。当接口经由**中间层再导出**间接变化、源码却没变时
+// （最典型：base 定义 Pt ← mid 只 `use base.Pt` 再导出 ← app 只用 mid ← top 为入口），
+// 只改 base 的 struct **字段顺序/布局**（函数体一字不动）⇒ app 的缓存仍命中 ⇒
+// 旧字段索引被复用 ⇒ **静默读错字段**（实测输出 1，期望 8）。
+//
+// 为什么不引入「接口指纹」：那需要一套新的权威实现枚举导出函数签名 / struct 字段布局
+// （含再导出）/ enum 值 / face / 默认值 / export_mappings，漏一项就原样复发本 bug；
+// 且 struct 目前还没有可靠的模块所有者（另一处待修）。改为「源码快照的传递闭包」：
+// 每个模块的缓存里本来就有自己的直接依赖清单，沿它递归即可 —— 与入口缓存
+// （entry_*.lenb.deps 记录全部已加载模块）同一口径，且**不改缓存格式**（旧缓存仍可读）。
+// 方向仍是 fail-closed：闭包里任一模块的清单/快照取不到，父缓存即失效。
+// ============================================================================
+
+// 读 .lenomc 的依赖路径清单（header + dep 列表；不碰 body）
+// 返回 0 = 成功；-1 = 文件缺失 / 格式不符 / exe 指纹不符 —— 调用方一律判失效
+static int module_cache_read_dep_paths(const char* cache_dir, const char* src_path,
+                                       char*** out_paths, uint32_t* out_count) {
+    *out_paths = NULL;
+    *out_count = 0;
+    if (!cache_dir || !src_path) return -1;
+    char* cache_path = module_cache_path_for(src_path, cache_dir);
+    if (!cache_path) return -1;
+    FILE* f = leno_fopen(cache_path, "rb");
+    free(cache_path);
+    if (!f) return -1;
+    fseek(f, 0, SEEK_END);
+    long file_size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (file_size <= 0) { fclose(f); return -1; }
+    uint8_t* data = (uint8_t*)malloc((size_t)file_size);
+    if (!data) { fclose(f); return -1; }
+    size_t rd = fread(data, 1, (size_t)file_size, f);
+    fclose(f);
+    if (rd != (size_t)file_size) { free(data); return -1; }
+
+    DeserializeCtx ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.data = data;
+    ctx.size = (size_t)file_size;
+
+    uint32_t magic = 0, version = 0, dep_count = 0;
+    uint64_t src_hash = 0, src_size = 0, bin_fp = 0;
+    int ok = ctx_read_u32(&ctx, &magic) && ctx_read_u32(&ctx, &version) &&
+             ctx_read_u64(&ctx, &src_hash) && ctx_read_u64(&ctx, &src_size) &&
+             ctx_read_u64(&ctx, &bin_fp);
+    if (ok && (magic != LENO_MODCACHE_MAGIC || version != LENO_MODCACHE_VERSION)) ok = 0;
+    if (ok) {
+        uint64_t cur_fp = cache_runtime_binary_fingerprint();
+        if (cur_fp == 0 || cur_fp != bin_fp) ok = 0;
+    }
+    if (ok) ok = ctx_read_u32(&ctx, &dep_count);
+
+    char** paths = NULL;
+    if (ok && dep_count > 0) {
+        paths = (char**)calloc(dep_count, sizeof(char*));
+        if (!paths) ok = 0;
+        for (uint32_t i = 0; ok && i < dep_count; i++) {
+            uint32_t plen = 0;
+            paths[i] = ctx_read_string(&ctx, &plen);
+            if (!paths[i]) ok = 0;
+        }
+    }
+
+    ctx_intern_free(&ctx);
+    free(data);
+    if (!ok) {
+        for (uint32_t i = 0; i < dep_count; i++) { if (paths) free(paths[i]); }
+        free(paths);
+        return -1;
+    }
+    *out_paths = paths;
+    *out_count = dep_count;
+    return 0;
+}
+
+// 递归校验时记「已经判过的路径」：既防环（循环 import），也免得同一模块被反复校验
+typedef struct {
+    char** paths;
+    int count;
+    int cap;
+} DepSeenSet;
+
+static int dep_seen_has(const DepSeenSet* seen, const char* path) {
+    for (int i = 0; i < seen->count; i++) {
+        if (seen->paths[i] && strcmp(seen->paths[i], path) == 0) return 1;
+    }
+    return 0;
+}
+
+static void dep_seen_add(DepSeenSet* seen, const char* path) {
+    if (seen->count >= seen->cap) {
+        int cap = seen->cap ? seen->cap * 2 : 16;
+        char** grown = (char**)realloc(seen->paths, (size_t)cap * sizeof(char*));
+        if (!grown) return;   // 记不下只影响"重复校验"，不影响正确性 ⇒ 不判错
+        seen->paths = grown;
+        seen->cap = cap;
+    }
+    seen->paths[seen->count++] = strdup(path);
+}
+
+static void dep_seen_free(DepSeenSet* seen) {
+    for (int i = 0; i < seen->count; i++) free(seen->paths[i]);
+    free(seen->paths);
+    seen->paths = NULL;
+    seen->count = 0;
+    seen->cap = 0;
+}
+
+// 依赖闭包是否仍然成立：沿各模块缓存里的直接依赖清单递归向下
+static int module_cache_deps_closure_valid(const char* cache_dir, char** dep_paths,
+                                           uint32_t dep_count, DepSeenSet* seen) {
+    for (uint32_t i = 0; i < dep_count; i++) {
+        const char* p = dep_paths[i];
+        if (!p || !p[0]) continue;
+        if (dep_seen_has(seen, p)) continue;
+        dep_seen_add(seen, p);
+
+        // ① 依赖的「已编译版本」快照 vs 当前源码（与直接依赖同一判据）
+        uint64_t dep_size = 0, dep_hash = 0;
+        if (module_cache_read_source_snapshot(cache_dir, p, &dep_size, &dep_hash) != 0) return 0;
+        if (!module_source_snapshot_matches(p, dep_size, dep_hash, 1)) return 0;
+
+        // ② 再往下一层：它自己的直接依赖
+        char** sub_paths = NULL;
+        uint32_t sub_count = 0;
+        if (module_cache_read_dep_paths(cache_dir, p, &sub_paths, &sub_count) != 0) return 0;
+        int ok = module_cache_deps_closure_valid(cache_dir, sub_paths, sub_count, seen);
+        for (uint32_t j = 0; j < sub_count; j++) free(sub_paths[j]);
+        free(sub_paths);
+        if (!ok) return 0;
+    }
+    return 1;
+}
+
 // ④ 运行中可执行文件的指纹（见 leno_serialize.h 的说明 / §8.112）
 //    口径：size + mtime + 内容 FNV-1a(64)。返回 0 表示「取不到」——调用方按 fail-closed 处理。
 //
@@ -2867,23 +3005,20 @@ ObjModule* module_cache_deserialize(const char* cache_path, const char* full_pat
     // 依赖缓存一致性检查：对每个依赖模块，取其「已编译版本」快照（.lenomc header），
     // 再与依赖源文件当前内容比对。任何一个依赖的源文件变了、或快照取不到，父缓存都失效。
     //
+    // ⚠ 2026-11-08：这里必须校验**传递闭包**，不能只看直接依赖 —— 只改末端模块的
+    // struct 字段顺序（中间层只再导出、源码不动）时，直接依赖快照全都没变，
+    // 旧字段索引会被静默复用（实测输出 1，期望 8）。递归口径见 module_cache_deps_closure_valid。
+    //
     // 取快照与判定都在 module_source_snapshot_*（本文件上方）里 —— 那是全仓库唯一实现，
     // 这里不再自己解析 header、也不再自己决定 fail-open / fail-closed（S8 的收敛结果）。
     if (dep_count > 0 && dep_paths) {
         const char* cache_dir = module_loader_get_cache_dir();
         int deps_ok = 1;
-        for (uint32_t i = 0; i < dep_count && deps_ok; i++) {
-            if (!dep_paths[i] || !cache_dir) continue;
-            uint64_t dep_size = 0, dep_hash = 0;
-            if (module_cache_read_source_snapshot(cache_dir, dep_paths[i],
-                                                  &dep_size, &dep_hash) != 0) {
-                deps_ok = 0;   // 依赖没缓存 / 缓存损坏 / 版本不符 → 父缓存失效
-                break;
-            }
-            if (!module_source_snapshot_matches(dep_paths[i], dep_size, dep_hash, 1)) {
-                deps_ok = 0;   // 依赖源已变或读不到 → 父缓存失效
-                break;
-            }
+        if (cache_dir) {
+            DepSeenSet seen;
+            memset(&seen, 0, sizeof(seen));
+            deps_ok = module_cache_deps_closure_valid(cache_dir, dep_paths, dep_count, &seen);
+            dep_seen_free(&seen);
         }
         if (!deps_ok) {
             for (uint32_t j = 0; j < dep_count; j++) free(dep_paths[j]);

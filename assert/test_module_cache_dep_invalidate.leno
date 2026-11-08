@@ -46,6 +46,27 @@ func chain_b_src(int v):string {
     return "export func g(): int\n{\n    return " + v + "\n}\n"
 }
 
+// 场景 3 的源码：base(Pt) ← mid（只再导出 Pt）← app（读字段）← top（入口）
+// 关键：只改 base 的**字段顺序**，函数体一字不动 —— 改动落在「布局」维度，不是返回值维度。
+func layout_base(string field_order):string {
+    if field_order == "y_first" {
+        return "export struct Pt {\n    int y = 0\n    int x = 0\n}\n\nexport func make(): Pt {\n    return new Pt(x=8, y=1)\n}\n"
+    }
+    return "export struct Pt {\n    int x = 0\n    int y = 0\n}\n\nexport func make(): Pt {\n    return new Pt(x=8, y=1)\n}\n"
+}
+
+func layout_mid():string {
+    return "import \"base.leno\" as base\nuse base.Pt\n\nexport func make(): Pt {\n    return base.make()\n}\n"
+}
+
+func layout_app():string {
+    return "import \"mid.leno\" as mid\n\nexport func get(): int {\n    var p = mid.make()\n    return p.x\n}\n"
+}
+
+func entry_layout():string {
+    return "import \"lib/app.leno\" as app\n\nmain() {\n    print(\"TAG=\" + app.get())\n}\n"
+}
+
 // 断言输出里出现了 TAG=<want>。
 // 取值刻意避开前缀关系（11/22、101/202），免得 "TAG=1" 被 "TAG=11" 误命中。
 func expect_tag(string out, int want, string tag) {
@@ -93,9 +114,30 @@ main() {
     files.write(b2, chain_b_src(202))
     expect_tag(ce.expect_ok(e2, "场景2-改末端依赖", ""), 202, "场景2-改末端依赖")
 
+    // ================= 场景 3：传递依赖的**布局**变化（只改 struct 字段顺序）=================
+    // 2026-11-08 补：场景 1/2 只覆盖「返回值变了」，钉不住「接口布局变了、函数体没变」。
+    // 旧实现只校验直接依赖：app 的直接依赖是 mid，而 mid 的源码没变（只是再导出 base.Pt）
+    // ⇒ app 的缓存命中、复用旧字段索引 ⇒ 打印 TAG=1（期望 TAG=8）。
+    var w3 = dirs.join(_tmpdir(), "leno_cache_dep_layout")
+    dirs.delete(w3)
+    dirs.mkdir_p(dirs.join(w3, "lib"))
+
+    var e3 = dirs.join(w3, "main.leno")
+    var base3 = dirs.join(dirs.join(w3, "lib"), "base.leno")
+    files.write(e3, entry_layout())
+    files.write(dirs.join(dirs.join(w3, "lib"), "mid.leno"), layout_mid())
+    files.write(dirs.join(dirs.join(w3, "lib"), "app.leno"), layout_app())
+    files.write(base3, layout_base("x_first"))
+
+    expect_tag(ce.expect_ok(e3, "场景3-首跑", ""), 8, "场景3-首跑")
+    // 只改 base 的字段顺序：函数体、返回表达式、调用链一个字节都没动
+    files.write(base3, layout_base("y_first"))
+    expect_tag(ce.expect_ok(e3, "场景3-改字段顺序", ""), 8, "场景3-改字段顺序")
+
     // 清理（含两处 .lenocache）
     dirs.delete(w1)
     dirs.delete(w2)
+    dirs.delete(w3)
 
     print("test_module_cache_dep_invalidate passed")
 }
