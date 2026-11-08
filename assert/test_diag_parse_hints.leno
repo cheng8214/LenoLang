@@ -976,5 +976,54 @@ main() { print(""x"") }
     ce.expect_error(dtorPy, "__del__ => 指向 func ~P()",
         "析构函数写 `func ~P()", 3)
 
+    // ---- ㊷ 插值/format 的转换符 vs 实参类型、空插值、Dict 方法键类型 ----
+    var fmtBad = dirs.join(work, "fmt_type_bad.leno")
+    files.write(fmtBad, @"main() {
+    var s = ""abc""
+    print($""v={s:d}"")
+}
+")
+    ce.expect_warning(fmtBad, "字符串用 :d => 提醒运行期会输出 <type_error>",
+        "格式说明符", 3)
+
+    var fmtOk = dirs.join(work, "fmt_type_ok.leno")
+    files.write(fmtOk, @"main() {
+    var n = 42
+    var f = 3.14
+    var s = ""hi""
+    print($""{n:d}|{n:x}|{f:.2f}|{s}|{s:s}"")
+}
+")
+    var outFmtOk = ce.expect_ok(fmtOk, "数值/字符串的匹配转换符（防误报）", "42")
+    ce.expect_no_warning(outFmtOk, "匹配转换符", "格式说明符")
+
+    var emptyInterp = dirs.join(work, "empty_interp.leno")
+    files.write(emptyInterp, @"main() {
+    print($""x{}y"")
+}
+")
+    var outEmptyInterp = ce.expect_error(emptyInterp, "空插值 => 单条定向报错",
+        "插值表达式不能为空", 2)
+    ce.expect_no_warning(outEmptyInterp, "空插值", "期望 '}'")
+
+    var dictKey = dirs.join(work, "dict_key_type.leno")
+    files.write(dictKey, @"main() {
+    Dict[string, int] d = {""a"": 1}
+    print(_str(d.has(1)))
+}
+")
+    ce.expect_warning(dictKey, "Dict[string,int].has(1) => 提醒键类型不匹配",
+        "键类型不匹配", 3)
+
+    var dictKeyOk = dirs.join(work, "dict_key_ok.leno")
+    files.write(dictKeyOk, @"main() {
+    Dict[string, int] d = {""a"": 1}
+    Dict[int, string] di = {1: ""x""}
+    print(_str(d.has(""a"")) + _str(di.has(1)))
+}
+")
+    var outDictKeyOk = ce.expect_ok(dictKeyOk, "匹配的键类型（防误报）", "truetrue")
+    ce.expect_no_warning(outDictKeyOk, "匹配的键类型", "键类型不匹配")
+
     print("test_diag_parse_hints passed")
 }

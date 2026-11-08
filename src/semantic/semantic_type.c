@@ -2020,6 +2020,57 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                 if (arg_type) type_free(arg_type);
             }
 
+            // ★ 2026-11-08：format / 插值字符串的「转换符 vs 实参类型」编译期提醒。
+            //   `$"{字符串:d}"` 运行期**静默**输出字面量 `<type_error>`；
+            //   `$"{字符串:.2f}"` 更隐蔽 —— 输出 0.00 ✗。能静态看出来就先提醒（any 不猜）。
+            //   只处理"一个 format 串里恰好一个转换符 + 两个实参"的形态：
+            //   插值字符串（脱糖成 format(fmt, expr)）正好是这种 ✓，普通调用里也多能对号入座。
+            if (ast->u.call.callee && ast->u.call.callee->kind == AST_VAR &&
+                ast->u.call.callee->u.var.name &&
+                strcmp(ast->u.call.callee->u.var.name, "format") == 0 &&
+                ast->u.call.args.count == 2 &&
+                ast->u.call.args.items[0] &&
+                ast->u.call.args.items[0]->kind == AST_STRING) {
+                const char* fmt = ast->u.call.args.items[0]->u.string.value;
+                char conv = 0;
+                int conv_count = 0;
+                for (const char* q = fmt; q && *q; q++) {
+                    if (*q != '%') continue;
+                    if (*(q + 1) == '%') { q++; continue; }     // %% 只是输出百分号 ✓
+                    const char* r = q + 1;
+                    while (*r && !((*r >= 'a' && *r <= 'z') || (*r >= 'A' && *r <= 'Z')) && *r != '%') r++;
+                    if (*r == 0 || *r == '%') continue;
+                    conv = *r;
+                    conv_count++;
+                    q = r;
+                }
+                if (conv_count == 1 && conv != 0 && ast->u.call.args.items[1]) {
+                    TypeInfo* at = infer_expr_type(s, ast->u.call.args.items[1]);
+                    if (at) {
+                        int is_num = (at->kind == TYPE_INT || at->kind == TYPE_FLOAT ||
+                                      at->kind == TYPE_BIGINT || at->kind == TYPE_ENUM ||
+                                      at->kind == TYPE_ANY);
+                        int warns = 0;
+                        if (strchr("diuoxXb", conv) || strchr("eEfgG", conv)) {
+                            warns = !is_num;
+                        } else if (conv == 'c') {
+                            warns = !(at->kind == TYPE_INT || at->kind == TYPE_BIGINT ||
+                                      at->kind == TYPE_ANY);
+                        }
+                        if (warns) {
+                            warning_add_at_fmt(WARN_FORMAT_TYPE, ast->line, ast->column,
+                                "格式说明符 `%%%c` 需要%s，但实参类型是 '%s' —— "
+                                "运行期会静默输出 `<type_error>` / 0.00（不报错）；"
+                                "请改用匹配的转换符，或先转成数字（_int / _str）",
+                                conv,
+                                (conv == 'c' ? "字符码（int）" : "数字"),
+                                type_to_string(at));
+                        }
+                        type_free(at);
+                    }
+                }
+            }
+
             // ★ 2026-11-03（fuzz 发现）：**立即调用的箭头函数** `((int n) => n * 3)(4)`。
             //   箭头脱糖成 AST_FUNC_DEF 后，下面的分支只处理 callee 是变量 / 模块访问的情形，
             //   于是一个字面量函数调用的结果被算成 any（实测 `int b = (...)（4)` 报"实际 any"、
@@ -2339,6 +2390,33 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                             }
 
                             //（map/reduce 的推断特判已删：⓪ 族声明化后走上面的实例规格路径 ✓）
+
+                            // ★ 2026-11-08：Dict 方法的**键类型**提醒。
+                            //   `has` 的元信息只有"1 个参数"、没有键类型 ⇒
+                            //   `Dict[string,int].has(1)` 编译通过、运行期静默 false ✗；
+                            //   get/set/remove/setdefault 同理（键都在第 1 个实参）。
+                            if (obj_type->key_type && obj_type->key_type->kind != TYPE_ANY &&
+                                ast->u.call.args.count >= 1 && ast->u.call.args.items[0] &&
+                                (strcmp(method_name, "has") == 0 ||
+                                 strcmp(method_name, "get") == 0 ||
+                                 strcmp(method_name, "set") == 0 ||
+                                 strcmp(method_name, "remove") == 0 ||
+                                 strcmp(method_name, "setdefault") == 0)) {
+                                TypeInfo* kt = infer_expr_type(s, ast->u.call.args.items[0]);
+                                if (kt && kt->kind != TYPE_ANY &&
+                                    !type_is_compatible(obj_type->key_type, kt)) {
+                                    // ⚠ type_to_string 是**共享静态缓冲** ⇒ 两个类型名先各拷一份
+                                    char kbuf[128], abuf[128];
+                                    snprintf(kbuf, sizeof(kbuf), "%s", type_to_string(obj_type->key_type));
+                                    snprintf(abuf, sizeof(abuf), "%s", type_to_string(kt));
+                                    warning_add_at_fmt(WARN_DICT_KEY_TYPE, ast->line, ast->column,
+                                        "方法 '%s' 的键类型不匹配：字典键类型是 '%s'，实参是 '%s' —— "
+                                        "运行期会把它们当成不同的键（查不到 / 静默 false）；"
+                                        "请用匹配的键类型",
+                                        method_name, kbuf, abuf);
+                                }
+                                if (kt) type_free(kt);
+                            }
 
                             // Dict.get 返回类型：2 参 ⇒ 默认值类型、1 参 ⇒ 值类型 V
                             //（与 obj_sym 路径共享 infer_dict_get_return ✓）
