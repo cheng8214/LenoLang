@@ -100,6 +100,61 @@ static Value str_trim(int argc, Value* args) {
     return val_obj((Object*)result);
 }
 
+// ★ 2026-11-09：`pad_left(s, width, fill)` —— 把 s 左侧用 fill 补到 width 个**字符**。
+//
+// 为什么加它：四个项目里各抄了一份 `pad2`（LenoMusic 三处 + LenoTrae 一处），
+//   实现逐字相同（`if v < 10 { return "0" + _str(v) }`），其中一份注释还写着
+//   "与 netease_core.fmtsize 同口径；**两处各一份，改动要一起改** ⚠" —— 典型的
+//   "缺一个通用原语，于是每个项目自己造"。
+//   `pad2(v)` 只是它的一个用法：`pad_left(_str(v), 2, "0")`。
+//
+// 语义：
+//   · 已经够宽 ⇒ **原样返回**（不截断，与 printf 的 `%2s` 不同但更好用）；
+//   · `fill` 只取**首个字符**（传 "ab" 不会重复成 "abab"）；
+//   · 宽度按**字符**算（中文算 1 个，与 `len()` 同口径），不是字节。
+static int pad_left_char_count(const char* s, int len) {
+    int n = 0;
+    for (int i = 0; i < len; i++) {
+        if (((unsigned char)s[i] & 0xC0) != 0x80) n++;   // 非续字节 = 一个字符的首字节
+    }
+    return n;
+}
+
+static Value str_pad_left(int argc, Value* args) {
+    (void)argc;
+    ObjString* s = (ObjString*)val_as_obj(args[0]);
+    if (!s) return val_null();
+    int width = (int)val_as_int(args[1]);
+    if (!val_is_obj(args[2])) return args[0];
+    ObjString* fill = (ObjString*)val_as_obj(args[2]);
+    if (!fill || fill->len <= 0) return args[0];
+
+    int clen = pad_left_char_count(s->chars, s->len);
+    int need = width - clen;
+    if (need <= 0) return args[0];
+
+    // fill 首字符的字节数（UTF-8 1/2/3/4 字节的首字节高位模式）
+    unsigned char c0 = (unsigned char)fill->chars[0];
+    int fbytes = 1;
+    if ((c0 & 0xF8) == 0xF0) fbytes = 4;
+    else if ((c0 & 0xF0) == 0xE0) fbytes = 3;
+    else if ((c0 & 0xE0) == 0xC0) fbytes = 2;
+
+    int total = need * fbytes + s->len;
+    char* buf = (char*)malloc((size_t)total);
+    if (!buf) return val_null();
+    int p = 0;
+    for (int i = 0; i < need; i++) {
+        memcpy(buf + p, fill->chars, (size_t)fbytes);
+        p += fbytes;
+    }
+    memcpy(buf + p, s->chars, (size_t)s->len);
+    p += s->len;
+    ObjString* out = str_copy(buf, p);
+    free(buf);
+    return out ? val_obj((Object*)out) : val_null();
+}
+
 static Value str_trim_start(int argc, Value* args) {
     (void)argc;
     ObjString* str = (ObjString*)val_as_obj(args[0]);
@@ -2062,6 +2117,15 @@ void strings_init_module(void) {
 
     TypeKind lower_params[] = {TYPE_STRING};
     native_register_module_method("strings", "to_lower", str_to_lower, &NATIVE_T_STRING, NATIVE_FIXED(lower_params));
+
+    // 补宽：`pad_left(s, width, fill)` —— 四个项目各抄了一份 `pad2`，这是它的通用原语
+    //   （`pad2(v)` ⇔ `pad_left(_str(v), 2, "0")`）
+    {
+        // ⚠ 这个数组**含接收者**（`trim_params[] = {TYPE_STRING}` 对应 `trim(s)`）
+        TypeKind pad_left_params[] = {TYPE_STRING, TYPE_INT, TYPE_STRING};
+        native_register_module_method("strings", "pad_left", str_pad_left, &NATIVE_T_STRING,
+                                      NATIVE_FIXED(pad_left_params));
+    }
 
     // 2. 修剪空白
     TypeKind trim_params[] = {TYPE_STRING};
