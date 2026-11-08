@@ -1182,5 +1182,53 @@ main() {
 ")
     ce.expect_ok(retBracket, "方括号多返回值（防误报）", "12")
 
+    // ---- ㊽ for 的区间上限不是数字（`for 0:"a"`）此前零诊断、次数不可预期 ----
+    var forStrEnd = dirs.join(work, "for_str_end.leno")
+    files.write(forStrEnd, @"main() {
+    for 0:""a"" to i { print(_str(i)) }
+}
+")
+    var outForStrEnd = ce.expect_warning(forStrEnd, "for 0:\"a\" => 警告次数不可预期",
+        "for 的上限是 'string'", 2)
+    ce.expect_no_warning(outForStrEnd, "for 0:\"a\"", "循环体")
+
+    // ㊽b 防误报：容器遍历（`for 集合 to 变量`）与数字区间都不得报
+    var forIterOk = dirs.join(work, "for_iter_ok.leno")
+    files.write(forIterOk, @"main() {
+    Array[int] arr = [1, 2]
+    var sum = 0
+    for arr to v { sum = sum + v }
+    for 1:2 to i { sum = sum + i }
+    print(_str(sum))
+}
+")
+    var outForIterOk = ce.expect_ok(forIterOk, "容器遍历 + 数字区间（防误报）", "6")
+    ce.expect_no_warning(outForIterOk, "容器遍历 + 数字区间", "for 的上限")
+
+    // ---- ㊾ 把 void 函数的结果赋给变量（此前静默 null）----
+    var voidAssign = dirs.join(work, "void_assign.leno")
+    files.write(voidAssign, @"func f(): void { }
+main() {
+    var x = f()
+    print(_str(x))
+}
+")
+    ce.expect_warning(voidAssign, "void 函数结果赋给变量 => 警告恒为 null",
+        "把 void 函数的结果赋给变量", 3)
+
+    // ㊾b 防误报：null 字面量 / 有返回值的函数 / Dict.get(键, null) 都不得报
+    var voidOk = dirs.join(work, "void_ok.leno")
+    files.write(voidOk, @"func g(): int { return 1 }
+main() {
+    var a = null
+    var b = g()
+    Dict[string, any] d = {""k"": 1}
+    var v = d.get(""k"", null)
+    print(_str(b) + _str(v))
+}
+")
+    var outVoidOk = ce.expect_ok(voidOk, "null 字面量 + 有返回值 + Dict.get(键, null)（防误报）", "11")
+    ce.expect_no_warning(outVoidOk, "null 字面量 + 有返回值 + Dict.get", "void 函数的结果")
+
     print("test_diag_parse_hints passed")
 }

@@ -468,10 +468,18 @@ static TypeInfo* infer_dict_get_return(Semantic* s, TypeInfo* receiver_type, con
     if (!receiver_type || receiver_type->kind != TYPE_DICT) return NULL;
     if (arg_count >= 2) {
         TypeInfo* default_type = infer_expr_type(s, args[1]);
-        if (default_type && default_type->kind != TYPE_ANY) {
+        if (default_type && default_type->kind != TYPE_ANY && default_type->kind != TYPE_NULL) {
             return default_type;
         }
         if (default_type) type_free(default_type);
+        // ★ 2026-11-08：默认值是 `null`（`d.get(k, null)`）时不能把返回值推成 TYPE_NULL ✗
+        //   —— 那会让 `var v = d.get(k, null)` 的 v 类型变成 null，后续 `v is T`
+        //   / `v.as` 全被当成 null 处理；而实际运行期返回的是字典里的值。
+        //   ⇒ 与 1 参形态同口径，回落字典值类型 V（V 是 any 时交给调用方兜底 ANY ✓）。
+        //   实测触发：Aria 的 store/library + SDL3 里共 10 处 `get(key, null)`。
+        if (receiver_type->value_type && receiver_type->value_type->kind != TYPE_ANY) {
+            return type_copy(receiver_type->value_type);
+        }
         return NULL;
     }
     if (receiver_type->value_type && receiver_type->value_type->kind != TYPE_ANY) {

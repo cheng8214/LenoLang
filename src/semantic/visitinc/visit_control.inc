@@ -690,6 +690,20 @@
                         "for 的上限是 '%s' ⇒ 循环一次都不执行；"
                         "数字范围请给数字，遍历容器请给 Array / Dict / string",
                         type_to_string(et));
+                } else if (ast->u.for_.start && et && et->kind != TYPE_ANY &&
+                           et->kind != TYPE_INT && et->kind != TYPE_FLOAT &&
+                           et->kind != TYPE_BIGINT && et->kind != TYPE_ENUM) {
+                    // ★ 2026-11-08：`for 0:"a"`（上限是字符串等非数字）此前**零诊断**，
+                    //   实测起点 0 时跑一次、起点 ≥1 时一次都不跑（数字和字符串比较的
+                    //   隐式转换）⇒ 循环次数不可预期。
+                    //   ⚠ 必须带 `for_.start`：`for 集合 to 变量`（容器遍历）在 AST 里是
+                    //     start=NULL、end=集合（parser 把集合塞进 end）⇒ 不加这层会把
+                    //     全部容器遍历误报成"上限不是数字"（实测 Aria 刷出 86 条 ✗）。
+                    warning_add_at_fmt(WARN_FOR_EMPTY_RANGE, ast->line, ast->column,
+                        "for 的上限是 '%s'，不是数字 ⇒ 循环次数不可预期"
+                        "（实测起点 0 时执行一次、起点 ≥1 时一次都不执行）；"
+                        "数字范围请给数字，遍历容器请写 `for 集合 to 变量`（**不带 ':'**）",
+                        type_to_string(et));
                 }
                 if (et) type_free(et);
             }
