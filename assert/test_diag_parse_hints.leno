@@ -765,5 +765,16 @@ main() {
 ")
     ce.expect_ok(callThenBlock, "调用后跟独立块（防误报）", "2")
 
+    // ---- ㉞ `new int(1)`（拿 new 造标量）：此前后面还刷 2 条级联 ----
+    var newScalar = dirs.join(work, "new_scalar.leno")
+    files.write(newScalar, @"main() {
+    var x = new int(1)
+    print(_str(x))
+}
+")
+    var outNewScalar = ce.expect_error(newScalar, "new 标量 => 定向报错",
+        "new 后面期望 struct 名称", 2)
+    ce.expect_no_warning(outNewScalar, "new 标量", "解构声明必须写形状")
+
     print("test_diag_parse_hints passed")
 }

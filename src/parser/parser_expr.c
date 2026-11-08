@@ -1425,7 +1425,15 @@ Ast* parse_new(Parser* p) {
 
     // 期望 struct 名称（标识符）
     if (p->lex.current.type != TOK_IDENT) {
-        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "new 后面期望 struct 名称");
+        // ★ 2026-11-08：`new int(1)`（拿 new 造标量）此前只报这一句，但留下的 `(1)`
+        //   还会再刷「声明语句后期望换行」+「解构声明必须写形状」两条 ✗ ⇒ 定向说明并跳到行尾。
+        int bad_line = p->lex.current.line;
+        error_add_at_fmt(ERR_SYNTAX, bad_line, p->lex.current.column,
+            "new 后面期望 struct 名称 —— `new` 只用于 struct 实例化；"
+            "标量/容器直接赋值即可（如 `int x = 1`、`Array[int] a = []`）");
+        while (p->lex.current.type != TOK_EOF && p->lex.current.line == bad_line) {
+            lexer_next(&p->lex);
+        }
         return ast_new(AST_NULL, line);
     }
 
