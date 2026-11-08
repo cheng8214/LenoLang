@@ -75,6 +75,12 @@ const char* error_get_filename(void) {
 static int silence_depth = 0;
 static int silenced_errors = 0;
 static int silenced_warnings = 0;
+// ★ 2026-11-09：因超过 MAX_ERRORS / MAX_WARNINGS 而**没被记录**的条数。
+//   为什么需要：列表只有 256 条，超了会被丢掉 —— 但报告里"发现 256 个错误"
+//   看不出"其实还有多少没显示"，用户会以为改完这 256 个就干净了。
+//   这里计数，"发现 N 个错误"报的是 **N + dropped**（真实总数），并附一行说明。
+static int dropped_errors = 0;
+static int dropped_warnings = 0;
 
 // ★ 2026-11-03：**嵌套静默段**必须各自记账。
 //   原来 end() 返回的是"累计值"，嵌套时内层被吞的错误会算到外层头上 ⇒
@@ -136,7 +142,13 @@ static void error_add(ErrorType type, int line, const char* msg) {
     }
 
     if (errors.count >= MAX_ERRORS) {
-        fprintf(stderr, "错误收集器已满，无法添加更多错误\n");
+        // ★ 2026-11-09：原来**每丢一条就打一行** stderr —— 实测 600 个错误刷了 44 行，
+        //   把真正的错误明细淹掉。改成只提示一次；"到底还有多少没显示"由
+        //   error_print_all 在标题行里汇总（见那里的 dropped_errors）。
+        if (dropped_errors == 0) {
+            fprintf(stderr, "\n[注意] 错误数已超过上限 %d，后续错误不再逐条记录\n", MAX_ERRORS);
+        }
+        dropped_errors++;
         return;
     }
     
@@ -337,11 +349,17 @@ void error_print_all(void) {
         if (is_head) shown_kinds++;
     }
 
-    fprintf(stderr, "\n=== 发现 %d 个错误", total);
+    // ★ 2026-11-09：把"超限丢掉的"也算进总数 —— 否则用户看到"256 个"会以为
+    //   改完这些就干净了（实际还有几十条没记录）。
+    fprintf(stderr, "\n=== 发现 %d 个错误", total + dropped_errors);
     if (total > shown_kinds) {
         fprintf(stderr, "（%d 种，已合并重复）", shown_kinds);
     }
     fprintf(stderr, " ===\n");
+    if (dropped_errors > 0) {
+        fprintf(stderr, "（其中 %d 个超出上限未记录详情 —— 修掉上面这些后重新编译会继续报）\n",
+                dropped_errors);
+    }
 
     for (int i = 0; i < errors.count; i++) {
         Error* err = &errors.list[i];
@@ -445,6 +463,12 @@ static void warning_add(WarnType type, int line, const char* msg) {
     }
 
     if (warnings.count >= MAX_WARNINGS) {
+        // ★ 2026-11-09：原来**完全静默**（连一句提示都没有）⇒ 用户以为只有 256 条警告。
+        //   和错误那条一样：只提示一次，总数在报告处汇总。
+        if (dropped_warnings == 0) {
+            fprintf(stderr, "\n[注意] 警告数已超过上限 %d，后续警告不再逐条记录\n", MAX_WARNINGS);
+        }
+        dropped_warnings++;
         return;
     }
 
@@ -509,11 +533,16 @@ void warning_print_all(void) {
         if (is_head) shown_kinds++;
     }
 
-    fprintf(stderr, "\n=== 发现 %d 个警告", total);
+    // 与 error_print_all 同口径：把超限丢掉的也算进总数 ✓
+    fprintf(stderr, "\n=== 发现 %d 个警告", total + dropped_warnings);
     if (total > shown_kinds) {
         fprintf(stderr, "（%d 种，已合并重复）", shown_kinds);
     }
     fprintf(stderr, " ===\n");
+    if (dropped_warnings > 0) {
+        fprintf(stderr, "（其中 %d 个超出上限未记录详情 —— 修掉上面这些后重新编译会继续报）\n",
+                dropped_warnings);
+    }
 
     for (int i = 0; i < warnings.count; i++) {
         Warning* w = &warnings.list[i];
