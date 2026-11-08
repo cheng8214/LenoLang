@@ -76,5 +76,28 @@ main() {
     if er.ok and er.outBytes != 0 { fail("⑥ 空 DEFLATE 若成功也只能是 0 字节") }
     print("⑥ 空输入边界 ok")
 
+    // ---------- ⑦ 垃圾输入：必须**返回错误**，不能崩 ----------
+    //   2026-11-09 补：原来只测合法数据的往返。解压是"解析**外部**数据"，
+    //   坏输入是最常见也最危险的场景 —— 崩溃就等于整个服务端挂掉。
+    var b1 = z.gunzip("")
+    if b1.ok { fail("⑦ 空输入不该 ok=true") }
+    if b1.error == "" { fail("⑦ 空输入应给出原因") }
+
+    var b2 = z.gunzip("not a gzip at all")
+    if b2.ok { fail("⑦ 纯文本被当成 gzip 不该 ok=true") }
+    if b2.error == "" { fail("⑦ 纯文本应给出原因") }
+
+    var b4 = z.inflateRaw("random bytes here")
+    if b4.ok { fail("⑦ inflateRaw 垃圾不该 ok=true") }
+    if b4.error == "" { fail("⑦ inflateRaw 垃圾应给出原因") }
+
+    var b5 = z.inflateZlib("random bytes here")
+    if b5.ok { fail("⑦ inflateZlib 垃圾不该 ok=true") }
+    if b5.error == "" { fail("⑦ inflateZlib 垃圾应给出原因") }
+
+    // isGzip 判据
+    if not z.isGzip(z.gzip("x")) { fail("⑦ isGzip 对 gzip 输出应为真") }
+    if z.isGzip("hello") { fail("⑦ isGzip 对普通串应为假") }
+
     print("test_inflate_crc passed")
 }
