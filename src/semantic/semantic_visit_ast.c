@@ -369,7 +369,10 @@ static void import_type_deps(Semantic* s, ImportedModuleInfo* module_info, TypeI
 //   narrow_on_ne：then 分支传 1（条件 `a != null` 成立 ⇒ 非空）；
 //                 else 分支传 0（条件 `a == null` 不成立 ⇒ 非空）。
 // ⚠ 只认 `VAR != null` / `VAR == null`，且只沿 `and` 链（or 有短路语义，不收窄）；
-//   原变量未被 T11 置位的一律跳过 —— 收紧改动面，保持「宁漏勿误报」。
+//   ★ 2026-11-08：除"确定为 null"（is_null_value）外，**可空类型**也要收窄 ——
+//   此前 `int? a = 1; if a != null { a + 1 }` 仍报「可空类型运算」警告，而文案推荐的
+//   正是这种写法（实测 n19 误报 ✗）⇒ 分支内影子符号的 type 清掉 nullable ✓。
+//   类型非空的变量不建影子（收紧改动面 ✓）。
 static void apply_null_narrowing(Semantic* s, Ast* cond, int narrow_on_ne) {
     if (!cond) return;
     Ast* stack[32];
@@ -399,7 +402,12 @@ static void apply_null_narrowing(Semantic* s, Ast* cond, int narrow_on_ne) {
         SymRef ref;
         memset(&ref, 0, sizeof(ref));
         Symbol* original_sym = resolve_variable_with_upvalue(s, var_side->u.var.name, &ref);
-        if (!original_sym || !original_sym->is_null_value) { symref_dispose(&ref); continue; }
+        if (!original_sym ||
+            (!original_sym->is_null_value &&
+             !(original_sym->type && original_sym->type->nullable))) {
+            symref_dispose(&ref);
+            continue;
+        }
         if (!ref.name) { symref_dispose(&ref); continue; }
 
         SymKind kind = (ref.kind == SYM_UPVALUE) ? SYM_UPVALUE
@@ -408,7 +416,10 @@ static void apply_null_narrowing(Semantic* s, Ast* cond, int narrow_on_ne) {
         // 复用即可 —— 那种影子符号的 is_null_value 本就是 0。
         Symbol* shadow = scope_define(s->current, var_side->u.var.name, kind);
         if (shadow) {
-            if (original_sym->type) shadow->type = type_copy(original_sym->type);
+            if (original_sym->type) {
+                shadow->type = type_copy(original_sym->type);
+                shadow->type->nullable = 0;   // 分支内已确定非空 ⇒ 可空运算不再提醒 ✓
+            }
             shadow->index = ref.index;      // 复用原槽位，代码生成读写的是同一个变量
             shadow->is_null_value = 0;
             shadow->is_initialized = 1;

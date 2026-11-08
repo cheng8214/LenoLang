@@ -87,5 +87,32 @@ main() {
     assert_true(strings.has(out6, "提到本行之前"),
         "文案应给出「把 ??= 提到本行之前」的修法；输出=" + out6)
 
+    // ---- ⑦ ★ 2026-11-08：`if a != null { a + 1 }` 里不该再报「可空类型运算」----
+    //   此前只有"确定为 null"才建收窄影子符号 ⇒ 可空类型（`int? a = 1`）在守卫分支内
+    //   仍被警告，而警告文案推荐的正是这种写法 ✗（实测 n19）。
+    //   收窄只作用于**该分支作用域**：分支外照旧警告（③ 已钉住 ✓）。
+    var f7 = dirs.join(work, "if_guard_narrow.leno")
+    files.write(f7, @"main() {
+    int? a = 1
+    if a != null {
+        print(_int(a + 1))
+    }
+}
+")
+    var out7 = ce.expect_ok(f7, "if 守卫分支内做算术", "2")
+    ce.expect_no_warning(out7, "if 守卫分支内做算术", "可空类型运算")
+
+    var f8 = dirs.join(work, "if_guard_struct.leno")
+    files.write(f8, @"struct P { int x = 1 }
+main() {
+    P? p = new P()
+    if p != null {
+        print(_str(p.x) + _str(p?.x))
+    }
+}
+")
+    var out8 = ce.expect_ok(f8, "结构体守卫分支内访问字段/可空链", "11")
+    ce.expect_no_warning(out8, "结构体守卫分支内", "可能为 null")
+
     print("=== test_coalesce_narrow ALL passed ===")
 }
