@@ -1117,5 +1117,37 @@ main() {
     var outFuncTypeOk = ce.expect_ok(funcTypeOk, "正常函数类型声明（防误报）", "13")
     ce.expect_no_warning(outFuncTypeOk, "正常函数类型声明", "未定义")
 
+    // ---- ㊻ 解构右侧字面量的形状检查（此前缺键静默拿到 null / 元素不足运行期越界）----
+    var dictDestructMissing = dirs.join(work, "destruct_dict_missing.leno")
+    files.write(dictDestructMissing, @"main() {
+    var{""a"": int}(a) = {""b"": 1}
+    print(_str(a))
+}
+")
+    ce.expect_error(dictDestructMissing, "字典解构缺键 => 报错（此前静默 null）",
+        "字典解构的键 'a' 不在右侧字典字面量里", 2)
+
+    var arrDestructShort = dirs.join(work, "destruct_arr_short.leno")
+    files.write(arrDestructShort, @"main() {
+    var[int, int](a, b) = [1]
+    print(_str(a) + _str(b))
+}
+")
+    ce.expect_error(arrDestructShort, "数组解构元素不足 => 报错（此前运行期索引越界）",
+        "右侧数组字面量只有 1 个元素", 2)
+
+    // ㊻b 防误报：缺键但有默认值、元素正好够、右侧是变量（形状未知）都照常可用
+    var dictDestructDefault = dirs.join(work, "destruct_dict_default.leno")
+    files.write(dictDestructDefault, @"main() {
+    var{""a"": int = 5}(a) = {""b"": 1}
+    var[int, int](x, y) = [1, 2]
+    var src = {""b"": 1}
+    var{""a"": int}(c) = src
+    print(_str(a) + _str(x + y) + _str(c))
+}
+")
+    var outDictDefault = ce.expect_ok(dictDestructDefault, "缺键带默认值 + 元素正好 + 右侧变量（防误报）", "53")
+    ce.expect_no_warning(outDictDefault, "缺键带默认值 + 元素正好 + 右侧变量", "解构")
+
     print("test_diag_parse_hints passed")
 }

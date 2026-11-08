@@ -994,6 +994,48 @@
             if (ast->u.destruct_decl.init) {
                 visit(s, ast->u.destruct_decl.init);
 
+                // ★ 2026-11-08：右侧是**字面量**时先查形状。
+                //   此前 `var{"a": int}(a) = {"b": 1}` 运行期静默 null ✗；
+                //   `var[int,int,int](a,b,c) = [1,2]` 运行期才报「数组索引越界」✗
+                {
+                    Ast* lit = ast->u.destruct_decl.init;
+                    if (lit && ast->u.destruct_decl.is_dict && lit->kind == AST_DICT) {
+                        for (int i = 0; i < ast->u.destruct_decl.slot_count; i++) {
+                            const char* key = (ast->u.destruct_decl.slot_keys
+                                               ? ast->u.destruct_decl.slot_keys[i] : NULL);
+                            if (!key) continue;
+                            if (ast->u.destruct_decl.slot_defaults &&
+                                ast->u.destruct_decl.slot_defaults[i]) continue;   // 有默认值 ⇒ 缺键合法
+                            int found = 0;
+                            for (int e = 0; e < lit->u.dict.count; e++) {
+                                Ast* k = lit->u.dict.entries[e].key;
+                                if (k && k->kind == AST_STRING && k->u.string.value &&
+                                    strcmp(k->u.string.value, key) == 0) { found = 1; break; }
+                            }
+                            if (!found) {
+                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                    "字典解构的键 '%s' 不在右侧字典字面量里 ⇒ 运行期会拿到 null；"
+                                    "请补上键，或给槽位写默认值（`var{\"%s\": 类型 = 默认值}(…)`）",
+                                    key, key);
+                            }
+                        }
+                    } else if (lit && !ast->u.destruct_decl.is_dict && lit->kind == AST_ARRAY &&
+                               lit->u.array.count < ast->u.destruct_decl.slot_count) {
+                        int has_default = 0;
+                        if (ast->u.destruct_decl.slot_defaults) {
+                            for (int i = 0; i < ast->u.destruct_decl.slot_count; i++) {
+                                if (ast->u.destruct_decl.slot_defaults[i]) { has_default = 1; break; }
+                            }
+                        }
+                        if (!has_default) {
+                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                "右侧数组字面量只有 %d 个元素，解构需要 %d 个 ⇒ 运行期会索引越界；"
+                                "请补齐元素或减少槽位",
+                                lit->u.array.count, ast->u.destruct_decl.slot_count);
+                        }
+                    }
+                }
+
                 // ============================================================
                 // 编译时类型检查：检查解构槽位类型与数据源元素类型是否兼容
                 //
