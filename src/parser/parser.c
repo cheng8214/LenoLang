@@ -371,6 +371,28 @@ Ast* parse_statement(Parser* p) {
             stmt = parse_switch_stmt(p);
             break;
 
+        // catch / finally 落在 try 之外：★ 2026-11-08
+        //   此前掉进 default ⇒ 报「期望表达式」（catch 还会连报两次），看不出
+        //   "这两个子句只能跟在 try 后面" ✗。定向报错并整块跳过，避免级联。
+        case TOK_CATCH:
+        case TOK_FINALLY: {
+            int is_catch = (p->lex.current.type == TOK_CATCH);
+            int bad_line = p->lex.current.line;
+            error_add_at_fmt(ERR_SYNTAX, bad_line, p->lex.current.column,
+                "`%s` 只能跟在 try 语句后面 —— 当前不在任何 try 中 ✗（写法：try { … } catch e { … } finally { … }）",
+                is_catch ? "catch" : "finally");
+            while (p->lex.current.type != TOK_EOF &&
+                   p->lex.current.line == bad_line &&
+                   p->lex.current.type != TOK_LBRACE) {
+                lexer_next(&p->lex);
+            }
+            if (p->lex.current.type == TOK_LBRACE) {
+                Ast* skipped_body = parse_block_internal(p);
+                if (skipped_body) ast_free(skipped_body);
+            }
+            return NULL;
+        }
+
         // case / default 落在 switch 之外：★ 2026-11-07
         //   此前掉进 default ⇒ parse_expression_stmt ⇒ 报「期望表达式」（列号还指向 case 后面），
         //   完全看不出"这两个词只能写在 switch 里" ✗。这里定向报错并整块跳过，避免级联。

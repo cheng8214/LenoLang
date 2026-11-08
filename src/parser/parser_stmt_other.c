@@ -117,13 +117,24 @@ Ast* parse_continue_stmt(Parser* p) {
 
 Ast* parse_throw_stmt(Parser* p) {
     int line = p->lex.current.line;
+    int col = p->lex.current.column;
     lexer_next(&p->lex); // throw
     
     Ast* expr = NULL;
-    // 如果后面不是分号或右大括号，则解析抛出表达式
-    if (p->lex.current.type != TOK_SEMI && p->lex.current.type != TOK_RBRACE) {
-        expr = parse_expression(p);
+    // ★ 2026-11-08：`throw` 后面**必须**有表达式。
+    //   此前只有「分号 / 右大括号」才算缺省 ⇒ `throw` 单独一行会被**静默**解析成
+    //   `throw null`（运行期只打出 "[错误] 文件:行: null"，看不出是谁抛的 ✗）；
+    //   若下一行是普通语句，还会被**吞进抛出表达式**（`throw` 换行 `print("x")`
+    //   ⇒ `throw print("x")` ✗）。这里按行号判定"本行没有表达式"，定向报错。
+    if (p->lex.current.type == TOK_SEMI || p->lex.current.type == TOK_RBRACE ||
+        p->lex.current.type == TOK_EOF || p->lex.current.line > line) {
+        error_add_at_fmt(ERR_SYNTAX, line, col,
+            "throw 后面必须跟要抛出的表达式 —— 如 `throw \"错误信息\"` 或 `throw 异常对象`");
+        Ast* ast = ast_new(AST_THROW, line);
+        ast->u.throw_.expr = NULL;
+        return ast;
     }
+    expr = parse_expression(p);
     
     Ast* ast = ast_new(AST_THROW, line);
     ast->u.throw_.expr = expr;

@@ -559,5 +559,46 @@ main() {
 ")
     ce.expect_ok(crossOk, "跨模块 new cm.B[G] 满足约束", "ok")
 
+    // ---- ㉕ catch / finally 落在 try 之外：此前只报「期望表达式」（catch 还连报两次）----
+    var catchOutside = dirs.join(work, "catch_outside.leno")
+    files.write(catchOutside, @"main() {
+    catch (e) { print(""x"") }
+}
+")
+    ce.expect_error(catchOutside, "catch 在 try 外 => 定向报错",
+        "`catch` 只能跟在 try 语句后面", 2)
+
+    var finallyOutside = dirs.join(work, "finally_outside.leno")
+    files.write(finallyOutside, @"main() {
+    finally { print(""x"") }
+}
+")
+    ce.expect_error(finallyOutside, "finally 在 try 外 => 定向报错",
+        "`finally` 只能跟在 try 语句后面", 2)
+
+    // ---- ㉖ `throw` 缺表达式：此前**静默**当成 `throw null`（运行期只打 "[错误] …: null"）----
+    var throwNoExpr = dirs.join(work, "throw_no_expr.leno")
+    files.write(throwNoExpr, @"main() {
+    throw
+    print(""x"")
+}
+")
+    ce.expect_error(throwNoExpr, "throw 缺表达式 => 定向报错",
+        "throw 后面必须跟要抛出的表达式", 2)
+
+    // ㉖b 防误报：正常的 try / catch / finally 与带表达式的 throw 必须照常工作
+    var tryOk = dirs.join(work, "try_throw_ok.leno")
+    files.write(tryOk, @"main() {
+    try {
+        throw ""boom""
+    } catch e {
+        print(e.msg)
+    } finally {
+        print(""done"")
+    }
+}
+")
+    ce.expect_ok(tryOk, "try/catch/finally + throw 表达式（防误报）", "boom")
+
     print("test_diag_parse_hints passed")
 }
