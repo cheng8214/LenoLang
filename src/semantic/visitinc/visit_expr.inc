@@ -474,6 +474,11 @@
                         }
                     }
 
+                    // ★ pri：`pa["secret"] = v`（含复合赋值脱糖）的私有字段检查（2026-11-08）
+                    if (obj_type->struct_name) {
+                        pri_check_field_access(s, ast, obj_type, field_name);
+                    }
+
                     if (expected_type) {
                         // 推断值的类型
                         TypeInfo* value_type = infer_expr_type(s, ast->u.index_assign.value);

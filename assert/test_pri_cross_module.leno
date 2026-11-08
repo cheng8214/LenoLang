@@ -87,6 +87,28 @@ main() {
         make_case(work, "pri_comma_second", "", "    var p = m.makeProbe()\n    print(p.h)\n"),
         "逗号列表第二个名字同样私有", "是 pri 私有字段", 0)
 
+    // ==================== ①b 同一字段的其它写法也必须拦（2026-11-08） ====================
+    //   此前 `p["secret"]`、`p?.secret`、`p.secret += 1` 这三条路径的私有检查
+    //   要么漏检、要么报在**字段声明行 + 当前文件名**（指错文件 ✗）。
+    //   现在统一由 pri_check_field_access 报在**使用处**，且文案里点名声明文件/行号 ✓
+    var idx_read = ce.expect_error(
+        make_case(work, "pri_index_read", "", "    var p = m.makeProbe()\n    print(_str(p[\"secret\"]))\n"),
+        "下标形式的私有字段读取要拦", "是 pri 私有字段", 0);
+    assert_true(strings.has(idx_read, "mod.leno 第 2 行"),
+        "私有字段报错要点名声明文件与行号；实际输出=" + idx_read)
+
+    ce.expect_error(
+        make_case(work, "pri_index_write", "", "    var p = m.makeProbe()\n    p[\"secret\"] = 9\n    print(_str(p.open))\n"),
+        "下标形式的私有字段写入要拦", "是 pri 私有字段", 0)
+
+    ce.expect_error(
+        make_case(work, "pri_safe_access", "", "    var p = m.makeProbe()\n    print(_str(p?.secret))\n"),
+        "安全访问形式的私有字段要拦", "是 pri 私有字段", 0)
+
+    ce.expect_error(
+        make_case(work, "pri_compound", "", "    var p = m.makeProbe()\n    p.secret += 1\n    print(_str(p.open))\n"),
+        "复合赋值碰私有字段要拦", "是 pri 私有字段", 0)
+
     // ==================== ② 裸字段名形态（本次修的根因 ✓） ====================
     // 裸字段名 + **不存在的字段** ⇒ 必须编译期报"没有字段" ✓
     //   （此前这条路编译期静默 ✗，只有运行期才炸 ✗ —— file_manager:346 `btnBack._loaded` 的形态 ✓）

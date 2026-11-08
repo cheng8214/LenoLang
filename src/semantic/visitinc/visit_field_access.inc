@@ -162,6 +162,15 @@
                         }
                     }
 
+                    // ★ pri：私有字段检查（2026-11-08 统一到这一处 ✓）
+                    //   此前只在 `struct_sym`（本地定义）分支里查 ⇒ 跨模块私有字段**漏检** ✗；
+                    //   infer_field_type 里那份备用检查又没有 ast ⇒ 用字段声明行 + 当前文件名，
+                    //   报错**指错文件**且同一次访问被各调用点重复报 ✗
+                    //   这里拿得到 ast ⇒ 本地/跨模块都由 pri_check_field_access 报在使用处 ✓
+                    if (obj_type->kind == TYPE_STRUCT) {
+                        pri_check_field_access(s, ast, obj_type, field_name);
+                    }
+
                     if (struct_sym && struct_sym->struct_field_count > 0) {
                         int field_found = 0;
                         for (int i = 0; i < struct_sym->struct_field_count; i++) {
@@ -202,10 +211,6 @@
                                      "%s '%s' 没有字段 '%s'",
                                      skind, obj_type->struct_name ? obj_type->struct_name : "?", field_name);
                         }
-
-                        // ★ pri：私有字段的编译期检查（默认全公有 ⇒ 只有标了 pri 的才拦 ✓）
-                        //   放在字段存在性检查之后 ⇒ 名字本身就写错时只报那一条 ✗（不叠加噪音 ✓）
-                        pri_check_field_access(s, ast, obj_type, field_name);
 
                         // 注意：单层字段访问（如 o.inner）不需要检查 null 默认值
                         // 因为获取 null 本身不会运行时出错

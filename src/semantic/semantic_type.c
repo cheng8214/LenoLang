@@ -856,26 +856,11 @@ TypeInfo* infer_field_type(Semantic* s, TypeInfo* obj_type, const char* field_na
                             if (strcmp(ssym->fields[fi].name, field_name) == 0) {
                                 if (out_field_index) *out_field_index = fi;
                                 // 从模块符号表的字段类型构建 TypeInfo
-                                // ★ pri：跨模块私有字段 —— **在这里报**，因为只有这里才拿得到
-                    //   已加载（非 NULL）的模块符号表 ✓
-                    //   为什么不在 visit_field_access 里报：那边跑得更早，表的懒加载还没发生
-                    //   ⇒ 实测 imported_modules[].sym_table 仍是 NULL，检查静默失效 ✗
-                    //   放行条件：当前在该 struct 自己的方法内（看 self 的类型 ✓）
-                    if (ssym->fields[fi].is_private) {
-                        int inside_own = 0;
-                        Symbol* self_sym = scope_resolve(s->current, "self");
-                        if (self_sym && self_sym->type && self_sym->type->struct_name &&
-                            strcmp(self_sym->type->struct_name, obj_type->struct_name) == 0) {
-                            inside_own = 1;
-                        }
-                        if (!inside_own) {
-                            error_add_at_fmt(ERR_SEMANTIC, ssym->fields[fi].line, 1,
-                                "'%s.%s' 是 pri 私有字段（%s 第 %d 行）—— 只有 %s 自己的方法内部可以访问它；"
-                                "要对外开放就把 'pri' 去掉（默认全公有）",
-                                obj_type->struct_name, field_name, error_get_filename(),
-                                ssym->fields[fi].line, obj_type->struct_name);
-                        }
-                    }
+                                // ★ pri：跨模块私有字段的检查**不在这里** —— 本函数拿不到
+                    //   使用位置（AST），此前硬用字段声明行 + 当前文件名 ⇒ 指向**错文件**
+                    //   且行号对不上，同一次访问还会被多个调用点各报一遍 ✗
+                    //   ⇒ 统一由 pri_check_field_access（拿得到 ast）在字段访问/赋值/下标
+                    //   各条路径上报 ✓（2026-11-08）
                     TypeInfo* result = type_new(ssym->fields[fi].type);
                                 if (ssym->fields[fi].struct_name) {
                                     result->struct_name = strdup(ssym->fields[fi].struct_name);
@@ -3226,6 +3211,11 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     if (ast->u.index.index && ast->u.index.index->kind == AST_STRING) {
                         const char* field_name = ast->u.index.index->u.string.value;
                         TypeInfo* field_type = infer_field_type(s, obj_type, field_name, NULL);
+                        // ★ pri：`p["secret"]` 与 `p.secret` 是同一种访问 ⇒ 同样要拦
+                        //   （2026-11-08 起检查统一走 pri_check_field_access，能报在使用处 ✓）
+                        if (obj_type->kind == TYPE_STRUCT) {
+                            pri_check_field_access(s, ast, obj_type, field_name);
+                        }
                         if (field_type) {
                             ast->cached_type = field_type;   // 所有权转移（调用方负责 type_free）
                             fix_struct_to_face(ast->cached_type);
@@ -3685,6 +3675,10 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
             } else if (obj_type) {
                 // 字段访问：复用统一的字段类型推断
                 result = infer_field_type(s, obj_type, safe_name, NULL);
+                // ★ pri：`p?.secret` 与 `p.secret` 是同一种字段访问 ⇒ 同样要拦（2026-11-08）
+                if (obj_type->kind == TYPE_STRUCT && ast->u.safe_access.is_call == 0) {
+                    pri_check_field_access(s, ast, obj_type, safe_name);
+                }
             }
             if (!result) result = type_new(TYPE_ANY);
             // 安全访问的结果可空性**跟接收者一致**（★ T3，2026-10-12 收敛）——
@@ -3820,11 +3814,10 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                 const char* field_name = ast->u.field_access.field_name;
                 result = infer_field_type(s, obj_type, field_name, &ast->u.field_access.field_index);
 
-                // ★ pri：私有成员的统一检查点（字段访问的**表达式**侧）
-                //   为什么放这里：infer_field_type 刚跑完 ⇒ 导入模块的符号表**已懒加载** ✓
-                //   （放在 visit_field_access 里查得太早，实测表还是 NULL ⇒ 静默失效 ✗）
-                //   同文件 / 跨模块两支都由 pri_check_field_access 内部处理 ✓
-                pri_check_field_access(s, ast, obj_type, field_name);
+                // ★ pri：私有字段检查**不在这里**（2026-11-08 统一）
+                //   此前这里查一遍、visit_field_access 再查一遍 ⇒ 同一次访问报两次
+                //   （输出里带「(重复 2 次)」✗）。现在统一由 pri_check_field_access 在
+                //   visit_field_access / 赋值 / 下标各**唯一入口**上报，且能报在使用处 ✓
 
                 // struct 类型：infer_field_type 可能未找到，尝试从变量符号回退查找
                 if (!result && obj_type->kind == TYPE_STRUCT && ast->u.field_access.obj->kind == AST_VAR) {

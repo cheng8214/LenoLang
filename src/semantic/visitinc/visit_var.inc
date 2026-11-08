@@ -695,6 +695,10 @@
                         // 走**唯一实现** infer_field_type（三级：作用域 → 全局定义表 → 导入模块符号表）。
                         const char* field_name = target->u.index.index->u.string.value;
                         TypeInfo* field_type = infer_field_type(s, obj_type, field_name, NULL);
+                        // ★ pri：`pa["secret"] = v` 的私有字段检查（2026-11-08）
+                        if (obj_type->kind == TYPE_STRUCT) {
+                            pri_check_field_access(s, target, obj_type, field_name);
+                        }
                         if (field_type && value_type && !type_is_compatible(field_type, value_type)) {
                             error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "%s",
                                 format_detailed_type_error_ex_text(field_type, value_type,
@@ -734,6 +738,8 @@
                     // struct/cstruct 字段赋值的类型检查
                     TypeInfo* obj_type = infer_expr_type(s, target->u.field_access.obj);
                     if (obj_type && (obj_type->kind == TYPE_STRUCT || obj_type->kind == TYPE_CSTRUCT) && obj_type->struct_name) {
+                        // ★ pri：`pa.secret = v` 的检查交给 visit_field_access（那条赋值目标
+                        //   也会被当作字段访问访问一遍 ⇒ 在这里再查一次只会多一条「(重复 2 次)」✗）
                         Symbol* struct_sym = scope_resolve(s->current, obj_type->struct_name);
                         if (!struct_sym) {
                             struct_sym = scope_resolve_tree_bfs(s->root_scope, obj_type->struct_name);
