@@ -901,5 +901,19 @@ main() { print(""ok"") }
 ")
     ce.expect_ok(ifChainOk, "if 链 + 区间 case（防误报）", "br")
 
+    // ---- ㊴ `case is int => { … }`（=> 后漏写绑定变量）：此前还级联 default/期望表达式 ----
+    var guardNoVar = dirs.join(work, "guard_no_var.leno")
+    files.write(guardNoVar, @"main() {
+    var x = 1
+    switch x {
+        case is int => { print(""a"") }
+        default { print(""b"") }
+    }
+}
+")
+    var outGuardNoVar = ce.expect_error(guardNoVar, "=> 后漏写绑定变量 => 单条报错",
+        "期望标识符作为绑定变量名", 4)
+    ce.expect_no_warning(outGuardNoVar, "=> 后漏写绑定变量", "default` 只能写在 switch")
+
     print("test_diag_parse_hints passed")
 }

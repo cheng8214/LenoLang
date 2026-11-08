@@ -847,6 +847,22 @@ Ast* parse_for_stmt(Parser* p) {
     return ast;
 }
 
+// 错误恢复：跳到 switch 的 '}' 并消费掉。
+// 不这么做，剩下的 case/default 会掉到语句层被重新解析 ⇒ 级联报
+// 「default 只能写在 switch 语句内部」/「期望表达式」✗
+static void skip_to_switch_close(Parser* p) {
+    int depth = 0;
+    while (p->lex.current.type != TOK_EOF) {
+        if (p->lex.current.type == TOK_LBRACE) {
+            depth++;
+        } else if (p->lex.current.type == TOK_RBRACE) {
+            if (depth == 0) { lexer_next(&p->lex); break; }   // 消费 switch 的 '}'
+            depth--;
+        }
+        lexer_next(&p->lex);
+    }
+}
+
 // ============================================================================
 // switch 语句解析（支持多值 case）
 // ============================================================================
@@ -1031,6 +1047,7 @@ Ast* parse_switch_stmt(Parser* p) {
                         if (p->lex.current.type != TOK_IDENT) {
                             error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
                                 "=> 后面期望标识符作为绑定变量名");
+                            skip_to_switch_close(p);
                             free(switch_var_name);
                             free(cases);
                             return NULL;
@@ -1046,6 +1063,7 @@ Ast* parse_switch_stmt(Parser* p) {
                         if (p->lex.current.type == TOK_AND) {
                             error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
                                 "switch case 不支持 and 守卫（case is Type => var and ...），请改用 if-else if 链");
+                            skip_to_switch_close(p);
                             free(switch_var_name);
                             free(cases);
                             return NULL;
@@ -1118,18 +1136,7 @@ Ast* parse_switch_stmt(Parser* p) {
                 //   原来直接 return NULL ⇒ 剩下的 case 体（`print("one")`）和
                 //   `default:` 会被当成表达式继续解析 ⇒ 级联报「期望表达式」，
                 //   把真错淹没（实测 case 1: print(...) 会额外多报 2 条）。
-                {
-                    int depth = 0;
-                    while (p->lex.current.type != TOK_EOF) {
-                        if (p->lex.current.type == TOK_LBRACE) {
-                            depth++;
-                        } else if (p->lex.current.type == TOK_RBRACE) {
-                            if (depth == 0) { lexer_next(&p->lex); break; }   // 消费 switch 的 '}'
-                            depth--;
-                        }
-                        lexer_next(&p->lex);
-                    }
-                }
+                skip_to_switch_close(p);
                 free(switch_var_name);
                 free(cases);
                 return NULL;
