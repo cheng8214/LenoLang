@@ -694,6 +694,43 @@
                 for (int i = 0; i < ast->u.struct_def.field_count; i++) {
                     if (ast->u.struct_def.field_defaults[i]) {
                         visit(s, ast->u.struct_def.field_defaults[i]);
+                        // ★ 2026-11-08：字段默认值的**类型**必须与字段类型兼容。
+                        //   此前 `struct P { int x = "a" }` **零诊断**，实例里真的装着字符串
+                        //   （实测 `print(p.x)` 打出 `a` ✗）⇒ 后面按 int 用时才炸，且离现场很远 ✗
+                        if (ast->u.struct_def.field_types && ast->u.struct_def.field_types[i]) {
+                            TypeInfo* ft = ast->u.struct_def.field_types[i];
+                            TypeInfo* dt = infer_expr_type(s, ast->u.struct_def.field_defaults[i]);
+                            if (dt && !type_is_compatible(ft, dt)) {
+                                // ⚠ type_to_string 返回**共享静态缓冲** ⇒ 不能在同一句里调两次
+                                //   （否则两个占位符都变成后一个的类型名，实测报 "int / int" ✗）
+                                char ft_buf[128], dt_buf[128];
+                                snprintf(ft_buf, sizeof(ft_buf), "%s", type_to_string(ft));
+                                snprintf(dt_buf, sizeof(dt_buf), "%s", type_to_string(dt));
+                                if (dt->kind == TYPE_INT &&
+                                    (ft->kind == TYPE_STRING || ft->kind == TYPE_BOOL)) {
+                                    // ★ 历史写法 `string s = 0` / `bool b = 0` 全仓有几十处
+                                    //   （原意多半是"给个零值"）⇒ **降为警告**：不打断编译，
+                                    //   但说清数值会被原样当作字段初值、并给出正确字面量 ✓
+                                    warning_add_at_fmt(WARN_FIELD_DEFAULT_TYPE,
+                                        ast->u.struct_def.field_defaults[i]->line,
+                                        ast->u.struct_def.field_defaults[i]->column,
+                                        "struct '%s' 的字段 '%s' 默认值类型不匹配：字段类型 '%s'，"
+                                        "默认值却是 '%s' —— 这个数值会被原样当成初值；"
+                                        "请写 '%s' 字面量（%s）",
+                                        ast->u.struct_def.name, ast->u.struct_def.field_names[i],
+                                        ft_buf, dt_buf, ft_buf,
+                                        ft->kind == TYPE_STRING ? "如 \"\" / \"x\"" : "如 false / true");
+                                } else {
+                                    error_add_at_fmt(ERR_TYPE_MISMATCH,
+                                        ast->u.struct_def.field_defaults[i]->line,
+                                        ast->u.struct_def.field_defaults[i]->column,
+                                        "struct '%s' 的字段 '%s' 默认值类型不匹配：字段类型 '%s'，实际默认值 '%s'",
+                                        ast->u.struct_def.name, ast->u.struct_def.field_names[i],
+                                        ft_buf, dt_buf);
+                                }
+                            }
+                            if (dt) type_free(dt);
+                        }
                     }
                 }
 
