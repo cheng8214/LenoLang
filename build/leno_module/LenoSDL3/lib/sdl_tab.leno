@@ -68,7 +68,10 @@ export struct TabControl impl Widget, Themeable {
 
     // 配色
     pri Color bgColor = #262830FF       // 内容区背景
-    pri Color barColor = #232332FF      // 标签栏背景
+    // 标签栏背景。★ 2026-11-08：默认值改成**透明**（alpha=0 时整条不铺底，见下面的绘制判断）。
+    //   原来默认取主题的 bgInput（浅色主题是纯白），整条白条铺在对话框上非常突兀
+    //   （用户实测截图）。需要可见背景就显式传 `bar_color: #xxxxxxFF` ✓
+    pri Color barColor = #00000000      // 标签栏背景
     pri Color tabColor = #2C2E36FF      // 非激活标签
     // 标签底圆角：0 = 方角（老行为）；等于 tab_h/2 就是"胶囊" ✓
     pri float tabRadius = 8.0
@@ -97,7 +100,9 @@ export struct TabControl impl Widget, Themeable {
     func set(Dict opts) {
         Theme th = theme.getTheme()
         bgColor = th.bg
-        barColor = th.bgInput
+        // ★ 2026-11-08：不再跟随主题 bgInput（浅色主题=纯白，整条白杠很难看）
+        //   保持透明，让对话框自己的背景透出来；要底色就显式给 bar_color ✓
+        barColor = #00000000
         tabColor = th.bgAlt
         actColor = th.accent
         txtColor = th.txtDim
@@ -615,7 +620,7 @@ export struct TabControl impl Widget, Themeable {
     //     现在把每页的**布局容器**交给递归出口下钻 ✓（类型表仍然只在 sdl_window 一处 ✓）
     func applyTheme(Theme t) {
         bgColor = t.bg
-        barColor = t.bgInput
+        barColor = #00000000      // ★ 同上：不再跟随主题（浅色=纯白），默认透明 ✓
         tabColor = t.bgAlt
         actColor = t.accent
         txtColor = t.txtDim

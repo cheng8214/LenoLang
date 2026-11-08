@@ -448,7 +448,15 @@ export const SDL_Color_SIZE  = core.SDL_Color_SIZE
 
 export func init(int flags = 32): bool   { return core.init(flags) }
 export func initVideo(): bool        { return core.initVideo() }
+// ⚠⚠ 名字有误导性：`quit()` 只关 **SDL 子系统 + 字体**，**主循环还在跑**！
+//   实测踩坑：自更新流程里调 `SDL3.quit()` 想退出程序，结果进程一直不退出，
+//   外部 bat 替换 exe 时文件被占用、连续 15 次 move 全失败（30 秒后写 aria_update.err）。
+//   要退出程序请用 **`requestExit()`**（下面那个：置 _exitRequested，让 win.run 返回）。
 export func quit()                   { core.quit(); fnt.ttfQuit() }
+
+// ★ 2026-11-08：语义明确的退出入口 —— 名字直说"退出应用"，避免再有人误用 quit()。
+//   等价于 requestExit()（deployd 那种"启动-停止"也走这个）✓
+export func exitApp() { wnd.requestExit() }
 
 // ★ 2026-11-08 诊断：累计渲染帧数 + 当前定时器明细（排查空闲 CPU 占用用）
 export func frameTotal(): int        { return wnd.frameTotal() }

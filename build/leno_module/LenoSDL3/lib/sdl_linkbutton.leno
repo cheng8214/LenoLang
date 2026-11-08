@@ -8,12 +8,21 @@ import "sdl_core.leno" as core; use core.SystemCursor
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
+// ★ 2026-11-08：给 `url` 加默认行为需要打开浏览器。LenoSys 只依赖 sys_win/sys_linux/
+//   dirs/files/strings/jsons，**不反向依赖 SDL3** ⇒ GUI 层依赖系统层是单向的 ✓
+import "Sys"
 use theme.Color
 
 
 export struct LinkButton impl Widget, Themeable {
     string text = "Link"
     pri string url = ""             // 关联 URL（可空，纯文字链接）
+    // ★ 2026-11-08 框架缺陷修复：`url` 字段原来**只存不用** —— process 里只回调 onClick，
+    //   不绑回调时点了只有下划线变色，什么都不会发生（实测踩过：Aria 关于页三个仓库链接
+    //   点不动，查了半天才发现"控件没错、是没绑回调"）。
+    //   现在 autoOpen（默认 true）：给了 url 又没显式绑 onClick，就自动用系统浏览器打开 ✓
+    //   想自己接管就 `auto_open: false` 或直接 on_click 覆盖。
+    bool autoOpen = true
     float x = 0.0, y = 0.0
     float _fontSize = 15.0
     pri string fontPath = ""
@@ -61,6 +70,12 @@ export struct LinkButton impl Widget, Themeable {
         _tip = opts.get("tip", "")
         if opts.get("color") is Color => t { _color = t }
         if opts.get("hover_color") is Color => t { hovColor = t }
+        autoOpen  = opts.get("auto_open", true)
+        // 给了 url 又没显式绑 onClick ⇒ 默认行为 = 用系统浏览器打开 ✓
+        if autoOpen and url != "" and onClick == null {
+            string u = url
+            onClick = func():void { Sys.openWith(u) }
+        }
         ensure_font()
         if _font.ok {
             if text != "" { var[float, float](_mw, _mh) = _font.measureString(text); _w = _mw } else { _w = 0.0 }
@@ -76,7 +91,14 @@ export struct LinkButton impl Widget, Themeable {
             if text != "" { var[float, float](_mw, _mh) = _font.measureString(text); _w = _mw } else { _w = 0.0 }
         }
     }
-    func set_url(string u) { url = u }
+    func set_url(string u) {
+        url = u
+        // 运行期换 url 也要补默认行为（否则后设的地址点不动）
+        if autoOpen and u != "" and onClick == null {
+            string nu = u
+            onClick = func():void { Sys.openWith(nu) }
+        }
+    }
     func set_text_color(Color color) { _color = color }
     func set_hover_color(Color color) { hovColor = color }
     func set_visited(bool v) { visited = v }
