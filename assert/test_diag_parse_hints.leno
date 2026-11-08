@@ -1149,5 +1149,38 @@ main() {
     var outDictDefault = ce.expect_ok(dictDestructDefault, "缺键带默认值 + 元素正好 + 右侧变量（防误报）", "53")
     ce.expect_no_warning(outDictDefault, "缺键带默认值 + 元素正好 + 右侧变量", "解构")
 
+    // ---- ㊼ 多返回值返回类型的错误写法：逗号分隔 / 圆括号元组（此前各刷 5~6 条级联）----
+    var retComma = dirs.join(work, "ret_comma.leno")
+    files.write(retComma, @"func pair(): int, int { return 1, 2 }
+main() {
+    var[int, int](a, b) = pair()
+    print(_str(a) + _str(b))
+}
+")
+    var outRetComma = ce.expect_error(retComma, "返回类型逗号分隔 => 单条定向报错",
+        "多返回值的返回类型要写成**方括号**", 1)
+    ce.expect_no_warning(outRetComma, "返回类型逗号分隔", "字典解构")
+
+    var retParen = dirs.join(work, "ret_paren.leno")
+    files.write(retParen, @"func pair(): (int, int) { return 1, 2 }
+main() {
+    var[int, int](a, b) = pair()
+    print(_str(a) + _str(b))
+}
+")
+    var outRetParen = ce.expect_error(retParen, "返回类型圆括号元组 => 单条定向报错",
+        "不是圆括号元组", 1)
+    ce.expect_no_warning(outRetParen, "返回类型圆括号元组", "块没有闭合")
+
+    // ㊼b 防误报：方括号多返回值写法照常可用
+    var retBracket = dirs.join(work, "ret_bracket.leno")
+    files.write(retBracket, @"func pair(): [int, int] { return 1, 2 }
+main() {
+    var[int, int](a, b) = pair()
+    print(_str(a) + _str(b))
+}
+")
+    ce.expect_ok(retBracket, "方括号多返回值（防误报）", "12")
+
     print("test_diag_parse_hints passed")
 }
