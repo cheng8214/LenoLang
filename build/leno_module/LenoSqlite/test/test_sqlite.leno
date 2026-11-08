@@ -1,0 +1,118 @@
+// LenoSqlite 自测（内存库，不落盘）
+//
+// 跑法（仓库根目录）：
+//   build\leno.exe build\leno_module\LenoSqlite\test\test_sqlite.leno
+//   或 build\leno.exe build\leno_module\run_all_tests.leno --only LenoSqlite
+//
+// 为什么补：LenoSqlite 之前**一个测试都没有**，而它被 Aria 的服务端直接用着
+// （每 worker 一个连接）。这份覆盖：建表/插入/遍历/事务/错误/参数绑定，以及
+// 一个容易踩的点 —— **NULL 与 0/"" 必须能区分**（`columnType` 5 = NULL）。
+//
+// ⚠ 这里的 `forEach` 回调**都显式 `return true`**：跨模块调用时"无返回值"的回调
+//   不会报类型错（编译器已知缺陷），会被当作 false ⇒ 只跑第一行。
+//   见 docs/待办与路线图.md 五-1。
+import "sqlite3" as db
+use db.Statement
+use db.Database
+
+func fail(string msg) {
+    print("[FAIL] " + msg + "\n")
+    _exit(1)
+}
+
+func eqInt(int got, int want, string tag) {
+    if got != want { fail(tag + "：得到 " + _str(got) + " 期望 " + _str(want)) }
+}
+
+func eqStr(string got, string want, string tag) {
+    if got != want { fail(tag + "：得到 [" + got + "] 期望 [" + want + "]") }
+}
+
+main() {
+    // ==================== ① 内存库 ====================
+    var d = db.openMemory()
+    eqInt(if d.isOk() then 1 else 0, 1, "openMemory 成功")
+
+    // ==================== ② 建表 / 插入 / 计数 ====================
+    eqInt(d.exec("CREATE TABLE t(id INTEGER, name TEXT, score REAL)"), 0, "CREATE 返回 SQLITE_OK(0)")
+    d.exec("INSERT INTO t VALUES (1, 'a', 1.5)")
+    d.exec("INSERT INTO t VALUES (2, NULL, NULL)")
+    d.exec("INSERT INTO t VALUES (3, '', 0.0)")
+    eqInt(d.changes(), 1, "changes = 1（最后一次 INSERT）")
+    eqInt(d.lastInsertRowid(), 3, "lastInsertRowid = 3")
+
+    // ==================== ③ 遍历 ====================
+    var st = d.prepare("SELECT id, name, score FROM t ORDER BY id")
+    eqInt(if st.isOk() then 1 else 0, 1, "prepare 成功")
+    eqInt(st.columnCount(), 3, "3 列")
+    eqStr(st.columnName(0), "id", "列名 0")
+    eqStr(st.columnName(1), "name", "列名 1")
+
+    var seen = 0
+    st.forEach(func(Statement s) {
+        seen = seen + 1
+        return true                   // ← 必须
+    })
+    eqInt(seen, 3, "forEach 遍历全部 3 行")
+
+    // ==================== ④ NULL 与 0/"" 必须能区分 ====================
+    //   name 列：'a'(TEXT=3) / NULL(5) / ''(TEXT=3)
+    var st2 = d.prepare("SELECT name FROM t ORDER BY id")
+    var t1 = ""
+    st2.forEach(func(Statement s) {
+        t1 = t1 + _str(s.columnType(0)) + ","
+        return true
+    })
+    eqStr(t1, "3,5,3,", "name 列类型：TEXT / NULL / TEXT（NULL 与空串可分）")
+
+    //   score 列：1.5(FLOAT=2) / NULL(5) / 0.0(FLOAT=2)
+    var st3 = d.prepare("SELECT score FROM t ORDER BY id")
+    var t2 = ""
+    st3.forEach(func(Statement s) {
+        t2 = t2 + _str(s.columnType(0)) + ","
+        return true
+    })
+    eqStr(t2, "2,5,2,", "score 列类型：FLOAT / NULL / FLOAT（NULL 与 0.0 可分）")
+
+    // ==================== ⑤ 事务 ====================
+    d.exec("CREATE TABLE tx(a INTEGER)")
+    d.begin()
+    d.exec("INSERT INTO tx VALUES (1)")
+    d.exec("INSERT INTO tx VALUES (2)")
+    d.rollback()
+    var c1 = 0
+    var st4 = d.prepare("SELECT COUNT(*) AS n FROM tx")
+    st4.forEach(func(Statement s) { c1 = s.column_int(0); return true })
+    eqInt(c1, 0, "rollback 后表为空")
+
+    d.begin()
+    d.exec("INSERT INTO tx VALUES (1)")
+    d.commit()
+    var c2 = 0
+    var st5 = d.prepare("SELECT COUNT(*) AS n FROM tx")
+    st5.forEach(func(Statement s) { c2 = s.column_int(0); return true })
+    eqInt(c2, 1, "commit 后 1 行")
+
+    // ==================== ⑥ 错误路径 ====================
+    var e = d.execWithErr("SELECT * FROM nonexistent_table")
+    eqInt(if e["rc"] != 0 then 1 else 0, 1, "错误 SQL 的 rc 非 0")
+    eqStr(if _str(e["err"]) != "" then "has" else "empty", "has", "错误 SQL 带回错误消息")
+
+    // ==================== ⑦ 参数绑定 ====================
+    var st6 = d.prepare("SELECT name FROM t WHERE id = ?")
+    eqInt(st6.bindParameterCount(), 1, "1 个占位符")
+    st6.bind_int(1, 1)                 // SQLite 参数下标**从 1 开始**
+    var nm = ""
+    st6.forEach(func(Statement s) { nm = s.column_text(0); return true })
+    eqStr(nm, "a", "bind_int 生效")
+
+    // bind_null 后读回来应该是 NULL 类型
+    var st7 = d.prepare("SELECT ? AS v")
+    st7.bind_null(1)
+    var ty = -1
+    st7.forEach(func(Statement s) { ty = s.columnType(0); return true })
+    eqInt(ty, 5, "bind_null ⇒ 读回 NULL(5)")
+
+    d.close()
+    print("[PASS] sqlite\n")
+}

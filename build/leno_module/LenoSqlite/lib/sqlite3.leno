@@ -251,6 +251,11 @@ export struct Statement {
 
     // 遍历所有行并调用回调
     // 回调返回 false 停止遍历
+    // ⚠⚠ 回调**必须显式 `return true`** —— 写 `func(Statement s) { ... }`（无 return）
+    //   在**同模块**内会报「期望 func(Statement):bool，实际 func(Statement):void」，
+    //   但**跨模块调用时不报错**（编译器已知缺陷），回调会被当作返回 false
+    //   ⇒ **只处理第一行数据，静默丢剩下的**。
+    //   见 docs/待办与路线图.md「五、已确认但暂不修的缺陷」1。
     func forEach(RowCallback cb): int {
         if not ok { return ResultCode.MISUSE }
         int rc
