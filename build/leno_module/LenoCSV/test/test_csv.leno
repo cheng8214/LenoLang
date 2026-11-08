@@ -129,5 +129,33 @@ main() {
     if missing["ok"] as bool { fail("⑮ 不存在的文件不该 ok=true") }
     if (missing["err"] as string) == "" { fail("⑮ 应给出原因") }
 
-    print("test_csv passed（15 组断言）")
+    // ---------- ⑯ 往返：parse → encode → parse 必须**逐字段一致** ----------
+    //   这条同时抓两类错：encode 漏转义、parse 不认转义。
+    //   原来只分别测了 parse 和 encode，没有"转一圈还一样"的断言。
+    Array[Array[string]] rtOrig = [
+        ["a,b", "c"],
+        ["x\"y", "z"],
+        ["l1\nl2", "w"],
+        ["", ""],
+        ["\"lead", "tail "],
+        ["中文标题", "歌手"]
+    ]
+    string rtEnc = csv.encode(rtOrig, ",", false)
+    Array[Array[string]] rtBack = csv.parse(rtEnc, ",")
+    eqInt(rtBack.len(), rtOrig.len(), "⑯ 往返后行数一致")
+    for rtOrig.len() to ri {
+        eqInt(rtBack[ri].len(), rtOrig[ri].len(), "⑯ 第 " + _str(ri) + " 行列数一致")
+        for rtOrig[ri].len() to rk {
+            eq(rtBack[ri][rk], rtOrig[ri][rk], "⑯ 第 " + _str(ri) + " 行第 " + _str(rk) + " 列往返一致")
+        }
+    }
+
+    // ---------- ⑰ 空字段 / 前导引号 ----------
+    var rtE1 = csv.parse("a,,c\n")
+    eqInt(rtE1[0].len(), 3, "⑰ 空字段仍算一列")
+    eq(rtE1[0][1], "", "⑰ 空字段内容为空串")
+    eq(csv.encode([["\"quoted\"", "x"]], ",", false), "\"\"\"quoted\"\"\",x",
+       "⑰ 以引号开头的字段必须加引号并把内部引号翻倍")
+
+    print("test_csv passed（17 组断言）")
 }
