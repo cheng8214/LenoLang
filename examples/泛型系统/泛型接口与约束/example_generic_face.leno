@@ -13,7 +13,7 @@ face Describable {
 // --- 实现 Sortable 的 struct ---
 
 struct Student impl Sortable, Describable {
-    string name = 0
+    string name = ""
     float score = 0
 
     func sortKey(): float {
@@ -26,7 +26,7 @@ struct Student impl Sortable, Describable {
 }
 
 struct Product impl Sortable, Describable {
-    string name = 0
+    string name = ""
     float price = 0
 
     func sortKey(): float {

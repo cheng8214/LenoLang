@@ -58,9 +58,9 @@ export enum WinError {
 
 // 注册表值信息结构体
 export struct RegValueInfo {
-    string name = 0
+    string name = ""
     int type = 0
-    string typeName = 0
+    string typeName = ""
 }
 
 // 打开键结果结构体
@@ -73,18 +73,18 @@ export struct OpenKeyResult {
 export struct CreateKeyResult {
     Ptr handle
     int errorCode = 0
-    bool created = 0
+    bool created = false
 }
 
 // 读取字符串结果结构体
 export struct ReadStringResult {
-    string value = 0
+    string value = ""
     int errorCode = 0
 }
 
 // 读取展开字符串结果结构体
 export struct ReadExpandStringResult {
-    string value = 0
+    string value = ""
     int errorCode = 0
 }
 

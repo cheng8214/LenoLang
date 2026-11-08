@@ -2,7 +2,7 @@
 
 export struct TestStruct {
     int value = 0
-    bool isInit = 0
+    bool isInit = false
 
     func init(): bool {
         isInit = true

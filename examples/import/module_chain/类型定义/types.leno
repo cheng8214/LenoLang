@@ -34,7 +34,7 @@ export struct Rectangle {
 
 // 人员结构体
 export struct Person {
-    string name = 0
+    string name = ""
     int age = 0
 }
 

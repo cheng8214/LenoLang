@@ -24,7 +24,7 @@ enum 颜色 {
 
 // 测试3: 中文类（带方法的struct）
 struct 银行账户 {
-    string 户名 = 0
+    string 户名 = ""
     int 余额 = 0
 
     func 存款(int 金额) {

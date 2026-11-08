@@ -1,6 +1,6 @@
 // 模块 A: 定义 struct + enum
 export struct Info {
-    string name = 0
+    string name = ""
     int    age = 0
     func greet(): string { return "Hello " + name }
 }
