@@ -14,6 +14,11 @@
 >   （对象本身共享）⇒ 见下方 §二 ✓；
 > - **2026-10-20（TH8）**：浅拷贝已改成**深拷贝** —— 全局 `string`/`Array`/`Dict`/`struct`/闭包
 >   现在克隆进子线程堆（旧行为会跨堆写，偶发 `0xC0000374`）。模块级 `var` 不受影响，仍是共享 ✓。
+> - **2026-11-08（见 §八）**：deployd 实测到「模块级可变数组跑一阵变成空」⇒ 所有走白名单的接口 403，
+>   而 `/status` 正常。核查后**现有的 `mark_roots` 已经包含模块 globals**（理论上不该被回收），
+>   但那次**没开 `LENO_GC_TRACE` 就拿不到现场** ⇒ 无法断定是 GC 回收还是模块实例重建；
+>   **规避方式已上线并验证**：模块级可变状态一律改 `threads.local_*` ✓
+>   （§八 里写了完整现象、错误假设清单、代码事实和"要继续查该按什么顺序"）
 
 ---
 
@@ -384,3 +389,107 @@ vm_call_value:  vm_ptr=0xDCFCBB3630  &vm.stop_frame_cnt=0x7FF6983E66D8   ← 主
 | 仓库自带断言套件 | **419 passed / 0 failed**（含 9.1 / 9.2 / 9.3 的回归用例） |
 | LenoWeb 套件 | **17 个用例 / 488 项断言全绿** |
 | LenoWeb 离线示例 | 46 个 / 0 失败 |
+
+---
+
+## 八、2026-11-08 现场记录：deployd 的模块级白名单「跑一阵就空」
+
+这一节是**新的实测现场**（Aria 的部署守护进程 `deployd`）。和 §四 的「串台」不同：
+那里是**多个线程互相覆盖**，这里是**值自己没了**。附上查到的代码事实和**尚未确认的疑点**，
+免得下一个人重复走那几条弯路。
+
+### 现象
+
+```
+# deployd 用 http.serveWorkers(2 个 worker)
+GET /status    → 一直正常（running / pid / memory 都对）
+GET /upload    → 跑一阵之后全部返回 403 "path not allowed"
+GET /start     → 同样的 403
+GET /merge     → 同样的 403
+```
+
+用户看到的是「终止了但起不来」。重启进程立刻恢复，再跑一阵又复发。
+
+关键特征：**失败的都是要过 `_allowed()` 的接口，而 `_allowed()` 读模块级白名单**；
+`/status` 不过白名单，所以始终正常 —— 这个差异是定位的起点。
+
+### 走过的错误假设（都验证过，都不成立）
+
+| 假设 | 怎么排除的 |
+| --- | --- |
+| 盘符写错（`C:\aria-server` vs `D:\AriaServer`） | 换正确路径后仍 403；`/config` 能正确返回白名单 |
+| 工作目录不对 | `start` 已加 `/d` 指向 exe 目录，服务端启动日志显示 `库：D:\AriaServer\data\aria.db` 正常 |
+| 权限不足 | 换管理员权限启动，现象不变 |
+| `threads.local_get` 失效 | 在 `_allowed()` 里打印读到的值：首次调用正常、之后空 |
+
+### 代码核查结论（现有防护看起来是对的）
+
+```c
+// module_loader.c:423
+void loaded_modules_mark_all(void) {
+    for (int i = 0; i < loaded_modules.count; i++) {
+        if (loaded_modules.modules[i]) gc_mark_object((Object*)loaded_modules.modules[i]);
+    }
+}
+
+// gc.c:1289  —— mark_roots 里确实调了它
+loaded_modules_mark_all();
+
+// gc.c:798-817  OBJ_MODULE 分支
+for (int i = 0; i < module->global_count; i++) {
+    gc_mark_value(module->globals[i]);
+}
+```
+
+- `mark_roots` **已经包含**「遍历进程级模块表 → 标记每个模块 → 标记其 globals」这条链；
+- `gc_mark_object`（gc.c:1005）**不检查对象属于哪个堆**（1013 行只看分代），
+  所以线程 B 标记线程 A 的对象**能生效**（`marked` 位在对象自己身上）。
+
+**⇒ 从代码上看，模块 globals 是根，不该被回收。**
+
+### 尚未确认的部分（诚实标注，别当成结论）
+
+1. **没有 `LENO_GC_TRACE` 现场**。`gc.trace` / `gc.dbg_roots` 这套诊断就是为这种问题准备的，
+   但当时没第一时间打开，只靠「改代码 + 重启观察」试错 ⇒ 拿不到「哪个根漏了」的证据。
+2. **不能断定是 GC 回收**。同样能造成「值没了」的还有：模块实例被重建、globals 数组 realloc 后旧指针悬空、
+   `sweep` 在 `clear_all_marks` 之后又跑了一次 —— 这些都没被排除。
+3. `gc.c:1029-1035` 的注释承认「Channel / Thread 的 marked 可能被其他线程留下 stale 值」，
+   说明跨线程标记位的相互作用确实存在，只是那次处理的是「漏回收」，不是「错回收」。
+
+### 有效的规避（已上线并验证）
+
+把配置改成**线程局部**，每个 worker 首次用到时各读一份：
+
+```leno
+func _cfg(): Dict {
+    var t = threads.local_get("deployd.cfg", null)
+    var d = t as Dict
+    if d != null { return d }
+    Dict c = _parse_cfg()               // 纯函数：读文件 + 解析
+    threads.local_set("deployd.cfg", c)
+    return c
+}
+```
+
+改完后连续跑几小时、反复部署十几次，`/upload` 再没出现过 403。
+
+**代价**：每线程一份，配置改了要重启（`threads.local_*` 没有跨线程失效机制）。
+
+### 如果还要继续查，按这个顺序
+
+```
+① 真机开 LENO_GC_TRACE，复现时抓 mark_roots 的根来源统计（gc.dbg_roots）
+② 对比：模块对象被标了吗？它的 globals[i] 被标了吗？
+③ 确认是哪个 root 漏了，才动 mark_roots
+```
+
+**不要**在拿不到现场的情况下盲改 `mark_roots`：这是并发 GC，一旦漏标/错标，
+症状会从「偶尔值变空」变成「随机崩溃 / use-after-free」，比原问题难查一个数量级。
+
+### 对使用者的建议
+
+| 场景 | 建议 |
+| --- | --- |
+| 模块级**只读**常量（配置、字符串表） | 观察下来安全，可以用 |
+| 模块级**可变状态** + 多线程读写 | **一律 `threads.local_*`**（每线程一份），或改成实例字段由调用方传入 |
+| 需要**跨线程共享**的可变状态 | 用 `Channel` 传值，别靠模块级变量 |
