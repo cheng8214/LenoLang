@@ -1,0 +1,95 @@
+// LenoMusic / music_tag 自测（标签读写往返，不需要音频设备）
+//
+// 跑法（仓库根目录）：
+//   build\leno.exe build\leno_module\LenoMusic\test\test_music_tag.leno
+//
+// 为什么只测这个：LenoMusic 其余能力（`Sound` / `Engine`）要**真实音频设备**，
+//   不适合自动化；`music_tag` 是纯字节读写，安全可测。
+//
+// 思路：造一个**空 .mp3**（内容是空串）当容器 —— `write_tag` 会往里写 ID3v2，
+//   再 `read_tag` 读回来比对（实测空文件也能写，所以不需要真音频数据）。
+import "music_tag.leno" as mt
+use mt.TagInfo
+import dirs
+import files
+import strings
+
+func fail(string msg) {
+    print("[FAIL] " + msg + "\n")
+    _exit(1)
+}
+
+func eqStr(string got, string want, string tag) {
+    if got != want { fail(tag + "：得到 [" + got + "] 期望 [" + want + "]") }
+}
+
+func eqInt(int got, int want, string tag) {
+    if got != want { fail(tag + "：得到 " + _str(got) + " 期望 " + _str(want)) }
+}
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_music_tag")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ==================== ① 往返：写 → 读 ====================
+    var mp3 = dirs.join(work, "a.mp3")
+    files.write(mp3, "")                       // 空容器
+    var err = mt.write_tag(mp3, "标题一", "歌手甲", "", "")
+    eqStr(err, "", "write_tag 成功（返回空串）")
+
+    var t = mt.read_tag(mp3)
+    eqInt(if t.ok then 1 else 0, 1, "读回 ok=true")
+    eqStr(t.title, "标题一", "标题往返一致")
+    eqStr(t.artist, "歌手甲", "歌手往返一致")
+
+    // ==================== ② 覆盖写（改标题，不重复叠标签）====================
+    var err2 = mt.write_tag(mp3, "标题二", "歌手乙", "", "")
+    eqStr(err2, "", "第二次 write_tag 成功")
+    var t2 = mt.read_tag(mp3)
+    eqStr(t2.title, "标题二", "覆盖后标题是新值")
+    eqStr(t2.artist, "歌手乙", "覆盖后歌手是新值")
+
+    // ==================== ③ 写歌词 ====================
+    var err3 = mt.write_tag(mp3, "带词", "演唱", "", "[00:01.00]第一句\n[00:02.00]第二句")
+    eqStr(err3, "", "带歌词写入成功")
+    var t3 = mt.read_tag(mp3)
+    eqStr(t3.title, "带词", "带歌词时标题仍正确")
+    eqInt(if strings.has(t3.lyric, "第一句") then 1 else 0, 1, "歌词读回包含正文")
+
+    // ==================== ④ 空标题 / 空歌手（应能写、读回空串）====================
+    var err4 = mt.write_tag(mp3, "", "", "", "")
+    eqStr(err4, "", "全空也能写（不报错）")
+    var t4 = mt.read_tag(mp3)
+    eqStr(t4.title, "", "空标题读回空串")
+    eqStr(t4.artist, "", "空歌手读回空串")
+
+    // ==================== ⑤ 错误路径 ====================
+    eqStr(mt.write_tag(dirs.join(work, "nope.mp3"), "t", "a", "", ""), "文件不存在",
+        "文件不存在 ⇒ 明确提示")
+
+    var txt = dirs.join(work, "x.txt")
+    files.write(txt, "hi")
+    var msgTxt = mt.write_tag(txt, "t", "a", "", "")
+    eqInt(if strings.has(msgTxt, "暂不支持") then 1 else 0, 1,
+        "不支持的扩展名 ⇒ 提示「暂不支持」")
+
+    // ==================== ⑥ 读不支持的 / 不存在的 ====================
+    var u = mt.read_tag(txt)
+    eqInt(if u.ok then 1 else 0, 0, "读 .txt ⇒ ok=false")
+    var nf = mt.read_tag(dirs.join(work, "absent.mp3"))
+    eqInt(if nf.ok then 1 else 0, 0, "读不存在的 mp3 ⇒ ok=false")
+    eqStr(nf.title, "", "不存在的文件标题为空")
+
+    // ==================== ⑦ flac：非法文件要**明确拒绝** ====================
+    //   （空文件不是合法 FLAC —— 有 `fLaC` 魔数要求，和 mp3 不同）
+    var flac = dirs.join(work, "a.flac")
+    files.write(flac, "")
+    var ferr = mt.write_tag(flac, "T", "A", "", "")
+    eqStr(ferr, "不是 FLAC 文件", "空 flac ⇒ 明确提示「不是 FLAC 文件」")
+    var ft = mt.read_tag(flac)
+    eqInt(if ft.ok then 1 else 0, 0, "非法 flac ⇒ read_tag ok=false")
+
+    dirs.delete(work)
+    print("[PASS] music_tag\n")
+}
