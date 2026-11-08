@@ -1362,6 +1362,13 @@ static int sem_expr_maybe_null(Semantic* s, Ast* e, int depth) {
         case AST_AS_CAST:
         case AST_SAFE_ACCESS:
         case AST_CALL:
+        // ★ 2026-11-08：**字段访问**也要算"可能为 null" —— 结构体字段的默认值就是 null
+        //   （标量字段亦然，见 WARN_FIELD_NO_INIT 的文案）⇒ `if node.next == null`、
+        //   `while current.next != null` 这类链表写法完全合法。实测 examples/struct 下的
+        //   链表用例被这条警告误报 ✗
+        case AST_FIELD_ACCESS:
+        // 容器取出来的值同样可能是 null（`d["k"]` / `arr[i]`）
+        case AST_INDEX:
             return 1;
         case AST_VAR: {
             if (!e->u.var.name) return 1;
