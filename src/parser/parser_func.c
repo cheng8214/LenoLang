@@ -6,6 +6,8 @@
 
 // 前向声明
 static TypeInfo* parse_type_internal(Parser* p);
+// ★ 2026-11-07：泛型类型参数写错后的错误恢复（定义见 parse_array_type 之前）
+static void skip_type_arg_brackets(Parser* p);
 
 // 本地辅助：将 TypeInfo 树中匹配 param_names 的 TYPE_STRUCT 节点转换为 TYPE_GENERIC_PARAM
 //
@@ -202,11 +204,13 @@ static TypeInfo* parse_base_type(Parser* p) {
             TypeInfo* element_type = parse_type_internal(p);
             if (!element_type) {
                 error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "Ptr 元素类型解析失败");
+                skip_type_arg_brackets(p);
                 return type_ptr_generic(type_new(TYPE_ANY));
             }
             if (p->lex.current.type != TOK_RBRACKET) {
                 error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 ']' 结束 Ptr 类型");
                 type_free(element_type);
+                skip_type_arg_brackets(p);
                 return type_ptr_generic(type_new(TYPE_ANY));
             }
             lexer_next(&p->lex); // 消费 ']'
@@ -465,12 +469,14 @@ static TypeInfo* parse_dict_type(Parser* p) {
     TypeInfo* key_type = parse_type_internal(p);
     if (!key_type) {
         error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "Dict 键类型解析失败");
+        skip_type_arg_brackets(p);
         return type_dict(type_new(TYPE_ANY), type_new(TYPE_ANY));
     }
     
     if (p->lex.current.type != TOK_COMMA) {
         error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "Dict 类型需要两个参数: Dict[KeyType, ValueType]");
         type_free(key_type);
+        skip_type_arg_brackets(p);
         return type_dict(type_new(TYPE_ANY), type_new(TYPE_ANY));
     }
     lexer_next(&p->lex); // 消费 ','
@@ -480,6 +486,7 @@ static TypeInfo* parse_dict_type(Parser* p) {
     if (!value_type) {
         error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "Dict 值类型解析失败");
         type_free(key_type);
+        skip_type_arg_brackets(p);
         return type_dict(type_new(TYPE_ANY), type_new(TYPE_ANY));
     }
     
@@ -487,11 +494,28 @@ static TypeInfo* parse_dict_type(Parser* p) {
         error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 ']' 结束 Dict 类型");
         type_free(key_type);
         type_free(value_type);
+        skip_type_arg_brackets(p);
         return type_dict(type_new(TYPE_ANY), type_new(TYPE_ANY));
     }
     lexer_next(&p->lex); // 消费 ']'
     
     return type_dict(key_type, value_type);
+}
+
+// ★ 2026-11-07：泛型类型参数写错时的错误恢复 —— 把 `[...]` 整段跳掉（含配对的 ']'）。
+//   此前 `Array[int, int] x` / `Dict[string] d` / `Array[]` 报完类型错误后**不消费**剩余 token
+//   ⇒ 调用方接着报「期望变量名」等级联（一处笔误刷 2~3 条 ✗）。
+static void skip_type_arg_brackets(Parser* p) {
+    int depth = 0;
+    while (p->lex.current.type != TOK_EOF) {
+        if (p->lex.current.type == TOK_LBRACKET) {
+            depth++;
+        } else if (p->lex.current.type == TOK_RBRACKET) {
+            if (depth == 0) { lexer_next(&p->lex); return; }
+            depth--;
+        }
+        lexer_next(&p->lex);
+    }
 }
 
 // 解析 Array 类型
@@ -509,12 +533,14 @@ static TypeInfo* parse_array_type(Parser* p) {
     TypeInfo* element_type = parse_type_internal(p);
     if (!element_type) {
         error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "Array 元素类型解析失败");
+        skip_type_arg_brackets(p);
         return type_array(type_new(TYPE_ANY));
     }
     
     if (p->lex.current.type != TOK_RBRACKET) {
         error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 ']' 结束 Array 类型");
         type_free(element_type);
+        skip_type_arg_brackets(p);
         return type_array(type_new(TYPE_ANY));
     }
     lexer_next(&p->lex); // 消费 ']'

@@ -468,5 +468,46 @@ main() { }
     ce.expect_error(priFaceMethod, "impl 的 face 方法标 pri => 报错",
         "不能声明为 pri", 2)
 
+    // ---- ㉓ 泛型类型参数写错：一条定向错误（不再刷「期望变量名」等级联）----
+    var arrArity = dirs.join(work, "array_arity.leno")
+    files.write(arrArity, @"main() {
+    Array[int, int] a = [1]
+    print(_str(a.len()))
+}
+")
+    var outArrArity = ce.expect_error(arrArity, "Array 多写类型参数 => 一条错误",
+        "期望 ']' 结束 Array 类型", 2)
+    ce.expect_no_warning(outArrArity, "Array 多写类型参数", "期望变量名")
+
+    var dictArity = dirs.join(work, "dict_arity.leno")
+    files.write(dictArity, @"main() {
+    Dict[string] d = {""a"": 1}
+    print(_str(d.len()))
+}
+")
+    var outDictArity = ce.expect_error(dictArity, "Dict 少写类型参数 => 一条错误",
+        "Dict 类型需要两个参数", 2)
+    ce.expect_no_warning(outDictArity, "Dict 少写类型参数", "期望变量名")
+
+    var arrEmpty = dirs.join(work, "array_empty_arg.leno")
+    files.write(arrEmpty, @"main() {
+    Array[] a = []
+    print(_str(a.len()))
+}
+")
+    var outArrEmpty = ce.expect_error(arrEmpty, "Array 空类型参数 => 一条错误",
+        "Array 元素类型解析失败", 2)
+    ce.expect_no_warning(outArrEmpty, "Array 空类型参数", "期望变量名")
+
+    var ptrArity = dirs.join(work, "ptr_arity.leno")
+    files.write(ptrArity, @"main() {
+    Ptr[int, int] p = null
+    print(""x"")
+}
+")
+    var outPtrArity = ce.expect_error(ptrArity, "Ptr 多写类型参数 => 一条错误",
+        "期望 ']' 结束 Ptr 类型", 2)
+    ce.expect_no_warning(outPtrArity, "Ptr 多写类型参数", "期望变量名")
+
     print("test_diag_parse_hints passed")
 }
