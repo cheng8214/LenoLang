@@ -2568,6 +2568,26 @@ Ast* parse_struct_stmt(Parser* p) {
 
             // 期望方法名
             if (p->lex.current.type != TOK_IDENT) {
+                if (!is_dtor && p->lex.current.type == TOK_NEW) {
+                    // ★ 2026-11-08：`func new(int v) { … }`（Java/C#/Kotlin 习惯）
+                    //   此前只报「期望方法名」+「期望表达式」，看不出正确写法 ✗
+                    int bad_line = p->lex.current.line;
+                    error_add_at_fmt(ERR_SYNTAX, bad_line, p->lex.current.column,
+                        "Leno 的构造函数是**与 struct 同名、且不能有参数**的方法 —— "
+                        "写 `func %s() { … }`（在 new %s() 后自动执行），不是 `func new(...)` ✗",
+                        struct_name, struct_name);
+                    // 跳到本行末尾 + 整块跳掉方法体，避免级联
+                    while (p->lex.current.type != TOK_EOF &&
+                           p->lex.current.line == bad_line &&
+                           p->lex.current.type != TOK_LBRACE) {
+                        lexer_next(&p->lex);
+                    }
+                    if (p->lex.current.type == TOK_LBRACE) {
+                        Ast* skipped_body = parse_block_internal(p);
+                        if (skipped_body) ast_free(skipped_body);
+                    }
+                    continue;
+                }
                 error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "%s",
                                  is_dtor ? "析构函数名必须为 ~StructName" : "期望方法名");
                 // 跳过错误恢复
@@ -2581,6 +2601,20 @@ Ast* parse_struct_stmt(Parser* p) {
 
             char* method_name = copy_string(p->lex.current.text, p->lex.current.len);
             lexer_next(&p->lex);
+
+            // ★ 2026-11-08：跨语言的构造/析构方法名 —— 直接点名 Leno 的写法
+            if (!is_dtor && (strcmp(method_name, "__init__") == 0 ||
+                             strcmp(method_name, "constructor") == 0)) {
+                error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                    "Leno 的构造函数是**与 struct 同名、且不能有参数**的方法 —— "
+                    "写 `func %s() { … }`（在 new %s() 后自动执行），不是 `func %s(...)` ✗",
+                    struct_name, struct_name, method_name);
+            } else if (!is_dtor && (strcmp(method_name, "__del__") == 0 ||
+                                    strcmp(method_name, "destructor") == 0)) {
+                error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                    "Leno 的析构函数写 `func ~%s() { … }`（波浪号 + struct 名），"
+                    "不是 `func %s(...)` ✗", struct_name, method_name);
+            }
 
             // 判断构造函数（方法名与 struct 名相同且无 ~）
             if (!is_dtor && strcmp(method_name, struct_name) == 0) {

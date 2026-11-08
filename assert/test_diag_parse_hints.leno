@@ -941,5 +941,40 @@ main() { print(""x"") }
     ce.expect_error(cstructBad, "cstruct 用 int => 提示可用 C 布局类型",
         "请用 i8/i16/i32/i64", 1)
 
+    // ---- ㊶ 跨语言的构造/析构方法名：`func new(...)` / `__init__` / `__del__` ----
+    var ctorNew = dirs.join(work, "ctor_new.leno")
+    files.write(ctorNew, @"struct P {
+    int x = 1
+    func new(int v) { x = v }
+}
+main() {
+    var p = new P()
+    print(_str(p.x))
+}
+")
+    var outCtorNew = ce.expect_error(ctorNew, "func new(...) => 指向同名无参方法",
+        "与 struct 同名、且不能有参数", 3)
+    ce.expect_no_warning(outCtorNew, "func new(...)", "期望表达式")
+
+    var ctorPy = dirs.join(work, "ctor_py.leno")
+    files.write(ctorPy, @"struct P {
+    int x = 1
+    func __init__(int v) { x = v }
+}
+main() { print(""x"") }
+")
+    ce.expect_error(ctorPy, "__init__ => 指向同名无参方法",
+        "不是 `func __init__(...)`", 3)
+
+    var dtorPy = dirs.join(work, "dtor_py.leno")
+    files.write(dtorPy, @"struct P {
+    int x = 1
+    func __del__() { print(""bye"") }
+}
+main() { print(""x"") }
+")
+    ce.expect_error(dtorPy, "__del__ => 指向 func ~P()",
+        "析构函数写 `func ~P()", 3)
+
     print("test_diag_parse_hints passed")
 }
