@@ -63,14 +63,27 @@ Results: 12 passed, 0 failed, 1 skipped (total 13)
 | LenoStats | `"Stats"` | 统计 + 金额整数分 | ✓ |
 | LenoSys | `"Sys"` | 跨平台系统：进程 / 磁盘 / 回收站 / 开机项 / 已装软件 | ✓ |
 | LenoUUID | `"UUID"` | UUID v4 / v7 / 短 ID | ✓ |
-| LenoWeb | `"Web"` | HTTP 客户端 + HTML 解析 + 爬虫框架 | — |
+| LenoWeb | `"WebNet"` / `"WebHtml"` / `"WebCrawl"` / `"Web"` | HTTP / HTML / 爬虫 / **全部**（4 个入口，见下） | ✓ |
 | LenoWin32 | `"Win32"` | 桌面截屏、全局热键、剪贴板图片 | ✓ |
 | LenoXLSX | `"XLSX"` | Excel 读写（zip + XML） | ✓ |
 | LenoZip | `"Zip"` | ZIP 归档（stored + deflate） | ✓ |
 
-> **`LenoWeb` 的现状（值得注意）**：`Web.leno` 是门面，但 Aria/LenoMusic/LenoTrae/LenoWorkBuddy
-> 四个项目 **0 次** `import "Web"`、**37 次** `import "web_net"`（直接吃内部文件）。
-> 门面本身没错，问题是没有"该用门面"的共识。要用 HTTP 客户端请优先 `import "Web"`。
+> ### `LenoWeb` 有 4 个入口，按需选最轻的
+>
+> | 入口 | 拉进来的依赖 | 冷缓存编译 | 用在 |
+> |---|---|---|---|
+> | `import "WebNet"` | core(557) + net(1699) = **2256 行** | **31 ms** | 只要 HTTP 客户端（最常用）|
+> | `import "WebHtml"` | html(2008) + charset(614) + gzip(28) = 2650 行 | 32 ms | 只要解析 HTML / CSS 选择器 |
+> | `import "WebCrawl"` | crawler(1585) + net(1699) + core(557) = 3841 行 | 56 ms | URL 工具 / robots / sitemap / 爬虫骨架 |
+> | `import "Web"` | 上面全都有 + cdp(1266) + ws(533) = **8510 行** | 59 ms | 要 CDP 无头浏览器 / WebSocket，或多块能力 |
+>
+> **三个窄入口各自覆盖 `web_net` 的全部 54 个导出**（HTTP 那组）；`WebNet` 与 `Web` 的 API 是超集关系，
+> 所以 `WebNet` → `Web` 的迁移是纯增量、不用改调用点。
+>
+> ⚠ **`web_net.leno` / `web_html.leno` / `web_crawler.leno` 等是内部文件，不要直接 import。**
+> 2026-11-09 之前四个项目 `import "web_net"` **37 次**、`import "Web"` **0 次** ——
+> 原因不是"不知道有门面"，而是门面把 8510 行依赖一次绑定，编译是 `WebNet` 的 **1.9 倍**。
+> 拆出窄入口后，四个项目已全部改成 `import "WebNet"`（37 处，调用点零改动）。
 
 > 各模块 README 里的“单跑命令”仍然有效（`build\leno.exe build\leno_module\<Mod>\test\<file>.leno`），
 > 适合开发时只跑一个；提交前请跑总入口。

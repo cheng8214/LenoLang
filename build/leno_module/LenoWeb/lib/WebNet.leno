@@ -1,0 +1,119 @@
+// WebNet.leno -- HTTP 客户端入口（**只要 HTTP 就 import 这个**）
+//
+// ★ 2026-11-09：从 `Web.leno` 拆出来。原因（实测，冷 `.lenocache` × 3 取最小值）：
+//   `import "Web"` 会连带拉进 html(2008) + crawler(1585) + cdp(1266) + charset(614)
+//   + ws(533) = **8510 行**依赖 ⇒ 编译 **59ms**；
+//   只要 HTTP 的项目只需要 core(557) + net(1699) = **2256 行** ⇒ **31ms**（1.9 倍）。
+//
+//   另一个背景：四个项目 import 内部文件 `web_net.leno` 共 **37 次**，
+//   而门面 `Web` **0 次**。之前把它归因为"不知道有门面"，实际两边各有原因：
+//   门面确实重（1.9 倍 + 多拉 6000 行），而"重"又让作者更不愿意去查它。
+//
+// 这个入口只依赖 core + net，覆盖 `web_net` 的**全部 54 个导出**。
+//
+// 用法：import "WebNet" as web
+//
+// 另：`Web.leno` 仍是"全都有"的门面（HTML/爬虫/CDP/WebSocket 都在里面），
+//   需要多块能力时仍可 `import "Web"`。
+
+import "web_curl_core.leno" as core
+import "web_net.leno" as net
+
+use core.(curl, Code, Opt, Info, Global, HttpVersion, SslVersion)
+use net.(Response, HttpClient, Session, MimeField, ProxyPool, ProxyStats, BatchResult)
+
+// ==================== HTTP 客户端 ====================
+export func createClient(): HttpClient { return net.createClient() }
+
+// 下载到文件，成功返回字节数，失败返回 -1
+export func download(string url, string savePath): int { return net.download(url, savePath) }
+
+// 断点续传下载：本地已有部分则只取剩余字节（服务端不支持 Range 会自动整体重下）
+export func downloadResume(string url, string savePath): int { return net.downloadResume(url, savePath) }
+
+// 远端资源总大小（HEAD 取 Content-Length）；未知返回 -1
+export func remoteSize(string url): int { return net.remoteSize(url) }
+
+// 带重试的请求
+export func getWithRetry(string url, int retries, int delayMs): Response { return net.getWithRetry(url, retries, delayMs) }
+export func postWithRetry(string url, string body, int retries, int delayMs): Response { return net.postWithRetry(url, body, retries, delayMs) }
+
+
+// ==================== Session 会话（仿 requests.Session） ====================
+export func createSession(): Session { return net.createSession() }
+export func sessionGet(Session s, string url): Response { return net.sessionGet(s, url) }
+export func sessionPost(Session s, string url, string body): Response { return net.sessionPost(s, url, body) }
+export func sessionPostJson(Session s, string url, string json): Response { return net.sessionPostJson(s, url, json) }
+export func sessionPostJSON(Session s, string url, Dict data): Response { return net.sessionPostJSON(s, url, data) }
+export func sessionPut(Session s, string url, string body): Response { return net.sessionPut(s, url, body) }
+export func sessionDel(Session s, string url): Response { return net.sessionDel(s, url) }
+export func sessionPatch(Session s, string url, string body): Response { return net.sessionPatch(s, url, body) }
+export func sessionHead(Session s, string url): Response { return net.sessionHead(s, url) }
+export func sessionSetHeader(Session s, string name, string value) { net.sessionSetHeader(s, name, value) }
+export func sessionSetCookie(Session s, string cookie) { net.sessionSetCookie(s, cookie) }
+export func sessionSetCredentials(Session s, string user, string pass) { net.sessionSetCredentials(s, user, pass) }
+export func sessionSetTimeout(Session s, int ms) { net.sessionSetTimeout(s, ms) }
+export func sessionSetProxy(Session s, string proxy) { net.sessionSetProxy(s, proxy) }
+export func sessionClose(Session s) { net.sessionClose(s) }
+export func sessionLoadCookies(Session s, string cookieFile): int { return net.sessionLoadCookies(s, cookieFile) }
+export func sessionSaveCookies(Session s, string cookieFile): int { return net.sessionSaveCookies(s, cookieFile) }
+
+
+// ==================== 并发批抓 ====================
+// curl_multi 单线程多路复用：N 个请求同时飞，结果按**输入顺序**返回
+export func fetchAll(Array[string] urls, int concurrency = 8, string userAgent = "", string proxy = "", int timeoutMs = 30000): Array[BatchResult] { return net.fetchAll(urls, concurrency, userAgent, proxy, timeoutMs) }
+
+
+// ==================== 反爬基础 ====================
+// 只解决"看起来不像脚本"这一层：浏览器式请求头（含顺序）、代理轮换、TLS 套件选项。
+// 要真正对抗风控还需要 TLS 指纹（换 curl-impersonate 版 libcurl）与动态渲染，见 README。
+
+// libcurl 版本串（排查/验证"换过 DLL 没有"用）
+export func version(): string { return core.version() }
+
+export func chromeUA(): string { return net.chromeUA() }
+export func browserHeaders(string ua, string lang): Array[string] { return net.browserHeaders(ua, lang) }
+export func getWithBrowserHeaders(string url, string ua = ""): Response { return net.getWithBrowserHeaders(url, ua) }
+export func getVia(string url, string proxy): Response { return net.getVia(url, proxy) }
+
+// 代理池：轮询 + 失败冷却（连续失败达阈值临时踢出，到点自动放回）
+export func createProxyPool(Array[string] proxies, int fail_threshold = 3, int cool_ms = 60000): ProxyPool { return net.createProxyPool(proxies, fail_threshold, cool_ms) }
+export func proxyPoolFromFile(string path, int fail_threshold = 3, int cool_ms = 60000): ProxyPool { return net.proxyPoolFromFile(path, fail_threshold, cool_ms) }
+
+// 会话挂上池子后，每个 sessionXxx 请求都会自动换代理（用 sessionReportResult 回报成败）
+export func sessionSetProxyPool(Session s, ProxyPool pool) { net.sessionSetProxyPool(s, pool) }
+export func sessionReportResult(Session s, bool ok) { net.sessionReportResult(s, ok) }
+export func sessionCoolDownProxy(Session s, int ms) { net.sessionCoolDownProxy(s, ms) }
+
+
+// ==================== multipart/form-data（文件上传） ====================
+export func formField(string name, string value): MimeField { return net.formField(name, value) }
+export func formFile(string name, string filePath, string fileName = "", string mimeType = ""): MimeField { return net.formFile(name, filePath, fileName, mimeType) }
+export func postMultipart(string url, Array[MimeField] parts): Response { return net.postMultipart(url, parts) }
+export func putMultipart(string url, Array[MimeField] parts): Response { return net.putMultipart(url, parts) }
+export func sessionPostMultipart(Session s, string url, Array[MimeField] parts): Response { return net.sessionPostMultipart(s, url, parts) }
+
+
+// 便捷 GET/POST/PUT/DELETE/PATCH
+export func get(string url): Response { return net.get(url) }
+export func post(string url, string body): Response { return net.post(url, body) }
+export func postJson(string url, string json): Response { return net.postJson(url, json) }
+export func postJSON(string url, Dict data): Response { return net.postJSON(url, data) }
+export func put(string url, string body): Response { return net.put(url, body) }
+export func patch(string url, string body): Response { return net.patch(url, body) }
+export func del(string url): Response { return net.del(url) }
+
+// 表单 / 查询 / URL 编解码
+export func formEncode(Dict data): string { return net.formEncode(data) }
+export func buildQuery(Dict params): string { return net.buildQuery(params) }
+export func getWithParams(string url, Dict params): Response { return net.getWithParams(url, params) }
+export func postForm(string url, Dict data): Response { return net.postForm(url, data) }
+export func urlEncode(string url): string { return net.urlEncode(url) }
+export func urlDecode(string url): string { return net.urlDecode(url) }
+
+// 全局生命周期
+//   ⚠ 这里**不再**定义 version()：第 70 行已经有一个（`return core.version()`），
+//   而 net.version() 也是转手 core.version() ⇒ 两个完全等价。以前重复定义会
+//   **静默覆盖**（前一个被丢掉），2026-11-05 的重名检查把它暴露出来 ⇒ 删掉重复的 ✓
+export func globalInit(int flags = 3): int { return net.globalInit(flags) }
+export func globalCleanup() { net.globalCleanup() }

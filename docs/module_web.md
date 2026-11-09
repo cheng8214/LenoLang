@@ -1,6 +1,19 @@
 # module_web —— LenoWeb（HTTP / HTML / 字符集 / gzip / 爬虫 / 无头浏览器）
 
-> **位置**：`build/leno_module/LenoWeb/lib/`；**入口**：`import "Web" as web`
+> **位置**：`build/leno_module/LenoWeb/lib/`；**入口有 4 个，按需选最轻的**：
+>
+> | 入口 | 依赖规模 | 冷缓存编译 | 用在 |
+> |---|---|---|---|
+> | `import "WebNet"` | 2256 行 | **31 ms** | 只要 HTTP 客户端（最常用）|
+> | `import "WebHtml"` | 2650 行 | 32 ms | 只要 HTML 解析 / CSS 选择器 / 字符集 / gzip |
+> | `import "WebCrawl"` | 3841 行 | 56 ms | URL 工具 / robots / sitemap / 爬虫骨架 |
+> | `import "Web"` | 8510 行 | 59 ms | 要 CDP 无头浏览器 / WebSocket，或多块能力 |
+>
+> ⚠ 下面正文里的 `web.xxx` 示例对**四个入口都成立**（`WebNet` 覆盖 `web_net` 的全部 54 个导出）。
+> `web_net.leno` / `web_html.leno` / `web_crawler.leno` 等是**内部文件，不要直接 import**。
+>
+> ★ 2026-11-09：原先只有 `Web` 一个入口，它一次绑定 8510 行依赖（编译是 `WebNet` 的 1.9 倍），
+> 于是四个项目全部绕去 `import "web_net"`（37 次对门面 0 次）。拆出窄入口后已全部改回公共入口。
 > **本文补于 2026-10-14**：这是 LenoWeb 的**第一份参考文档**。此前它的能力只写在模块源码头注释与
 > 几份开发记录里（`移植音乐下载器实录与待办.md` / `LenoHtml_开发问题记录.md` / `LenoNet开发问题记录.md`），
 > 从 `docs/` 入口**根本发现不了** —— 实际后果之一是"Leno 有没有 gzip"被误判成"没有"
