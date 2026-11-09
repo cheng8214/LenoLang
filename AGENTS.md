@@ -103,6 +103,25 @@ ord.sort(func(int a, int b) {
 **两个不要**：
 - 不要改「往已排序数组插一个」（二分 + 一次移动，O(log n)）—— 全量 sort 会更慢
 - 不要改「取前 N 名」的选择排序（O(n×lim) 优于 O(n log n)）
+  **例外**：如果每轮还配着 `arr.remove(bi)`（那又是 O(n) 的搬移），就改全量 sort
+  ——`Aria/server/api_notice.leno` 原来就是这种，改成 `sort` + 切片后更快更短。
+
+### 4.1 回调 / 切片的两条硬性事实（实测，写错直接编译失败）
+
+```leno
+nums.map(func(int x) { return x * 2 })     // ✅ 参数**必须带类型**
+nums.map(func(x) { return x * 2 })         // ❌ 「期望参数名」
+```
+
+```leno
+var top = arr[0 : lim - 1]                 // ✅ Array 用 [a:b] 切片（闭区间）
+var top = arr.slice(0, lim - 1)            // ❌ 「类型 'Array[T]' 没有方法 'slice'」
+```
+
+> `Array` 的方法只有这些：`add / clear / copy / filter / flatten / has / index_of /
+> insert / join / last_index_of / len / map / pop / reduce / remove / reverse / sort / sum`。
+> **没有** `slice` / `contains` / `first` / `sort` 的变体之类——切片走 `[a:b]` 语法。
+> （`strings.slice` 是字符串的，存在；别和 `Array` 混。）
 
 ---
 
