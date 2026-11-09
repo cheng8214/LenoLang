@@ -363,6 +363,144 @@ static Value math_mod(int argc, Value* args) {
     return val_int(leno_math_mod(math_to_i64(args[0]), b));
 }
 
+// ==================== 模幂：pow_mod(base, exp, m) ====================
+// ★ 2026-11-09：`maths` 有 `pow`（浮点）和 `mod`（int），但没有二者的结合 —— 模幂。
+//   RSA / DH / LCG 随机数 / 哈希校验都要它，缺了每个项目都得手写一份
+//   （LenoMusic 就手写了 crypto_math.leno 的 powmod，用来算网易/QQ 的 encSecKey）。
+//
+// 语义：base^exp mod m
+//   · m <= 0    ⇒ 抛错（`mod()` 对 0 也是抛错；负模数没有意义）
+//   · exp < 0   ⇒ 抛错（没有模逆，不做隐式求逆）
+//   · base < 0  ⇒ 先归一化到 [0, m)（数学惯例；C 的 `%` 会给负余数）
+//
+// 两条路径：
+//   ① **int64 快路径**：三个参数都不是 bigint 时，用 `unsigned __int128` 做 mulmod
+//      ⇒ 全程**零分配**、纯 C 循环。
+//   ② **bignum 路径**：任一参数超出 int64（如 1024 位 RSA 模数）时，走
+//      bigint_mul + bigint_mod 的平方-乘法。
+//
+// ⚠ 不能只写 int64 版：Leno 的 `int` 是**任意精度**（OBJ_BIGINT），1024 位 RSA 全靠它；
+//   用 math_to_i64 截断会把 encSecKey 直接算错。
+// ⚠ bignum 路径里每个中间 Value 都必须 gc_push_root —— bigint_* 会 gc_alloc，
+//   而 GC **不扫 C 栈**，没护住的中间值会被回收（use-after-free）。
+// ⚠ bigint_* 的结果会自动 `bigint_compact_to_int` 压回 tagged int ⇒ 每轮都要重新
+//   归一化成 bignum（`math_bigint_value`），不能假设它一直是对象。
+
+// Value → 一定是 bignum 的 Value（tagged int 走 bigint_from_int64）
+static Value math_bigint_value(Value v) {
+    if (val_is_bigint(v)) return v;
+    return val_obj((Object*)bigint_from_int64((int64_t)math_to_i64(v)));
+}
+
+static Value math_pow_mod(int argc, Value* args) {
+    (void)argc;
+    int has_big = val_is_bigint(args[0]) || val_is_bigint(args[1]) || val_is_bigint(args[2]);
+
+    // ---------- ① int64 快路径（零分配）----------
+    if (!has_big) {
+        int64_t m = math_to_i64(args[2]);
+        int64_t e = math_to_i64(args[1]);
+        if (m <= 0) { native_throw_error("pow_mod() 模数必须为正"); return val_null(); }
+        if (e < 0)  { native_throw_error("pow_mod() 指数不能为负（没有模逆）"); return val_null(); }
+
+        int64_t b0 = math_to_i64(args[0]) % m;
+        if (b0 < 0) b0 += m;                       // 负底数归一化到 [0, m)
+
+        uint64_t um = (uint64_t)m;
+        uint64_t b  = (uint64_t)b0;
+        uint64_t r  = 1 % um;
+        uint64_t ee = (uint64_t)e;
+        while (ee != 0) {
+            if (ee & 1u) r = (uint64_t)(((unsigned __int128)r * b) % um);
+            b = (uint64_t)(((unsigned __int128)b * b) % um);
+            ee >>= 1;
+        }
+        return val_int((int64_t)r);
+    }
+
+    // ---------- ② bignum 路径 ----------
+    Value vm    = math_bigint_value(args[2]);
+    Value vexp  = math_bigint_value(args[1]);
+    Value vbase = math_bigint_value(args[0]);
+    Value vres  = math_bigint_value(val_bigint_from_int64(1));
+    gc_push_root(&vm);
+    gc_push_root(&vexp);
+    gc_push_root(&vbase);
+    gc_push_root(&vres);
+
+    ObjBigInt* m = val_as_bigint(vm);
+    if (bigint_is_zero(m) || m->is_negative) {
+        gc_pop_root(); gc_pop_root(); gc_pop_root(); gc_pop_root();
+        native_throw_error("pow_mod() 模数必须为正");
+        return val_null();
+    }
+    if (val_as_bigint(vexp)->is_negative) {
+        gc_pop_root(); gc_pop_root(); gc_pop_root(); gc_pop_root();
+        native_throw_error("pow_mod() 指数不能为负（没有模逆）");
+        return val_null();
+    }
+
+    // 指数快路径：exp 落在 int64 内时用 `uint64_t` 控制循环。
+    //   省掉每轮一次 `bigint_shr` + 一次"结果压缩回 int48 再重新装箱"的往返 ——
+    //   实测这是大数路径里唯一可省的开销（RSA 的 65537、DH 的常用指数都走这条）。
+    ObjBigInt* eobj = val_as_bigint(vexp);
+    int use_e64 = bigint_fits_in_int64(eobj);
+    uint64_t e64 = use_e64 ? (uint64_t)bigint_to_int64(eobj) : 0;
+
+    // base %= m，负余数归一化到 [0, m)
+    {
+        Value t  = bigint_mod(val_as_bigint(vbase), m);
+        Value tv = math_bigint_value(t);
+        gc_push_root(&tv);
+        if (val_as_bigint(tv)->is_negative) {
+            vbase = math_bigint_value(bigint_add(val_as_bigint(tv), m));
+        } else {
+            vbase = tv;
+        }
+        gc_pop_root();
+    }
+
+    for (;;) {
+        int is_odd;
+        if (use_e64) {
+            if (e64 == 0) break;
+            is_odd = (e64 & 1u) != 0;
+        } else {
+            ObjBigInt* eo = val_as_bigint(vexp);
+            if (bigint_is_zero(eo)) break;
+            // 奇偶只看最低 limb：limb 是 base-1e9（偶数进制）⇒ 整体奇偶 = limbs[0] 奇偶
+            is_odd = (eo->limb_count > 0) && ((eo->limbs[0] & 1u) != 0);
+        }
+
+        if (is_odd) {
+            Value t  = bigint_mul(val_as_bigint(vres), val_as_bigint(vbase));
+            Value tv = math_bigint_value(t);
+            gc_push_root(&tv);
+            vres = math_bigint_value(bigint_mod(val_as_bigint(tv), m));
+            gc_pop_root();
+        }
+
+        if (use_e64) {
+            e64 >>= 1;
+            if (e64 == 0) break;                    // 末轮不必再平方
+        } else {
+            vexp = math_bigint_value(bigint_shr(val_as_bigint(vexp), 1));
+        }
+
+        // base = (base * base) % m
+        {
+            Value t  = bigint_mul(val_as_bigint(vbase), val_as_bigint(vbase));
+            Value tv = math_bigint_value(t);
+            gc_push_root(&tv);
+            vbase = math_bigint_value(bigint_mod(val_as_bigint(tv), m));
+            gc_pop_root();
+        }
+    }
+
+    gc_pop_root(); gc_pop_root(); gc_pop_root(); gc_pop_root();
+    return bigint_compact_to_int(vres);          // 小结果压回 tagged int（与其它 maths 函数一致）
+}
+
 // 夹到 0..1（GUI 里出现频率最高的夹取：透明度、进度、归一化值）
 static Value math_saturate(int argc, Value* args) {
     (void)argc;
@@ -686,6 +824,12 @@ void maths_init_module(void) {
 
     TypeKind mod_params[] = {TYPE_FLOAT, TYPE_FLOAT};
     native_register_module_method("maths", "mod", math_mod, &NATIVE_T_INT, NATIVE_FIXED(mod_params));
+
+    // 模幂：三个参数都用 **TYPE_INT**（不是 TYPE_FLOAT）—— 声明成 float 会让
+    //   1024 位模数在传参时被转成 double，精度直接丢光。
+    TypeKind pow_mod_params[] = {TYPE_INT, TYPE_INT, TYPE_INT};
+    native_register_module_method("maths", "pow_mod", math_pow_mod, &NATIVE_T_INT,
+                                  NATIVE_FIXED(pow_mod_params));
 
     // ---- 归一化 / 区间映射 ----
     TypeKind saturate_params[] = {TYPE_FLOAT};

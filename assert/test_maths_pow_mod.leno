@@ -1,0 +1,102 @@
+// test_maths_pow_mod.leno —— maths.pow_mod(base, exp, m)（2026-11-09 新增）
+//
+// 为什么加这个原语：RSA / DH / LCG 随机数 / 哈希校验都要模幂，而 `maths` 里
+//   `pow`（浮点）与 `mod`（int）各有一个、却没有二者的结合 ⇒ 每个项目都得手写
+//   （LenoMusic 就写了一份 crypto_math.leno 的 powmod 来算网易/QQ 的 encSecKey）。
+//
+// 覆盖：① 固定金标（独立用 Python 的 pow(b,e,m) 算出）
+//       ② 费马小定理 / 指数分解（不必知道具体值也能验的性质）
+//       ③ 差分测试：与"朴素平方-乘法"逐值对比（含 bignum 模数）
+//       ④ 边界与错误路径
+import maths
+import "Crypto" as crypto
+
+// 网易客户端内置的 1024 位 RSA 模数（公开常量，与 netease_crypto 同一份）
+const MOD1024 = "e0b509f6259df8642dbc35662901477df22677ec152b5ff68ace615bb7b725152b3ab17a876aea8a5aa76d2e417629ec4ee341f56135fccf695280104e0312ecbda92557c93870114af6c9d05c4f7f0c3685b7a46bee255932575cce10b424d813cfe4875d3e82047b97ddef52741d546b8e289dc6935b3ece0462db0a22b8e7"
+
+func hex2int(string hex): int {
+    Array[int] bytes = crypto.hex_to_bytes(hex)
+    int acc = 0
+    for bytes to b { acc = acc * 256 + b }
+    return acc
+}
+
+// 朴素平方-乘法（参考实现，用来做差分对比）
+func ref_powmod(int base, int exp, int m): int {
+    int result = 1
+    base = base % m
+    while exp > 0 {
+        if exp % 2 == 1 { result = (result * base) % m }
+        exp = exp >> 1
+        base = (base * base) % m
+    }
+    return result
+}
+
+main() {
+    // ==================== ① 固定金标（Python pow(b,e,m) 独立算出）====================
+    assert_eq(maths.pow_mod(2, 10, 1000), 24, "2^10 mod 1000")
+    assert_eq(maths.pow_mod(3, 1000, 1000000007), 56888193, "3^1000 mod 1e9+7")
+    assert_eq(maths.pow_mod(2, 62, 1000000007), 145586002, "2^62 mod 1e9+7")
+    assert_eq(maths.pow_mod(0, 0, 7), 1, "0^0 mod 7 = 1（与 Python / C 一致）")
+    assert_eq(maths.pow_mod(5, 0, 13), 1, "任何数的 0 次幂 = 1")
+    assert_eq(maths.pow_mod(7, 1, 1), 0, "模 1 ⇒ 恒为 0")
+    assert_eq(maths.pow_mod(-7, 3, 5), 2, "负底数归一化：(-7)^3 mod 5 = 2")
+
+    // 返回值是 int ⇒ 能直接参与算术（不是 float、也不是 any）
+    int sum = maths.pow_mod(2, 10, 1000) + 1
+    assert_eq(sum, 25, "返回值类型是 int")
+
+    // ==================== ② 1024 位 bignum 金标 ====================
+    //   期望值由 Python 的 pow(msg, 65537, MOD) 算出并单独核对过 ✓
+    int msg = hex2int("deadbeefcafebabe0123456789abcdef")
+    int mod = hex2int(MOD1024)
+    assert_eq(_str(maths.pow_mod(msg, 65537, mod)),
+        "141882423606403964843982478743898874671575658253340078167517573052482125189257600304399186681836314995987435902756181983321232346055098127755659182681505883285822582361151101235169644324932452973468812511642334984854701780483128936080243860148187273165822366281481478903785154887275464316461313442627339906221",
+        "1024 位 RSA 模幂（Python 独立金标）")
+
+    // ==================== ③ 性质自检 ====================
+    //   费马小定理：a^(p-1) ≡ 1 (mod p)，p = 1e9+7（素数）
+    assert_eq(maths.pow_mod(2, 1000000006, 1000000007), 1, "费马小定理：2^(p-1) ≡ 1")
+    assert_eq(maths.pow_mod(123456789, 1000000006, 1000000007), 1, "费马小定理：123456789^(p-1) ≡ 1")
+    //   指数可分解：(a^e1)^e2 ≡ a^(e1*e2)
+    assert_eq(maths.pow_mod(maths.pow_mod(3, 100, 97), 7, 97),
+              maths.pow_mod(3, 700, 97), "指数分解：(3^100)^7 ≡ 3^700 (mod 97)")
+
+    // ==================== ④ 差分：与朴素实现逐值对比（含 bignum 模数）====================
+    assert_eq(maths.pow_mod(7, 65537, 1000000007), ref_powmod(7, 65537, 1000000007), "差分 int64/1e9+7")
+    assert_eq(maths.pow_mod(123456789, 4096, 2147483647), ref_powmod(123456789, 4096, 2147483647), "差分 int64/2^31-1")
+    assert_eq(maths.pow_mod(0, 5, 97), ref_powmod(0, 5, 97), "差分 base=0")
+    assert_eq(maths.pow_mod(1, 123456789, 97), ref_powmod(1, 123456789, 97), "差分 base=1")
+
+    // bignum 模数（> int64），指数仍在 int64 内 ⇒ 走 bignum 路径
+    int bigM = hex2int("bd9c66b3ad3c2d6d1a3d1fa7bc8960a923b8c1e9392456de3eb13b9046685257")
+    assert_eq(maths.pow_mod(msg, 65537, bigM), ref_powmod(msg, 65537, bigM),
+              "差分 bignum/256 位模数")
+    assert_eq(maths.pow_mod(3, 65537, bigM), ref_powmod(3, 65537, bigM),
+              "差分 bignum/256 位模数（小底数）")
+
+    // ==================== ⑤ 边界 / 错误路径 ====================
+    var caught = false
+    try { maths.pow_mod(2, 10, 0) } catch e { caught = true }
+    assert_true(caught, "m = 0 ⇒ 抛错（与 mod() 一致）")
+
+    caught = false
+    try { maths.pow_mod(2, -1, 7) } catch e { caught = true }
+    assert_true(caught, "exp < 0 ⇒ 抛错（没有模逆）")
+
+    caught = false
+    try { maths.pow_mod(2, 10, -7) } catch e { caught = true }
+    assert_true(caught, "m < 0 ⇒ 抛错")
+
+    // bignum 路径下 m = 0 / exp 为负，同样要抛错（不能只在小整数路径拦）
+    caught = false
+    try { maths.pow_mod(msg, 10, 0) } catch e { caught = true }
+    assert_true(caught, "bignum 路径 m = 0 ⇒ 抛错")
+
+    caught = false
+    try { maths.pow_mod(msg, -1, bigM) } catch e { caught = true }
+    assert_true(caught, "bignum 路径 exp 为负 ⇒ 抛错")
+
+    print("test_maths_pow_mod passed\n")
+}
