@@ -11,7 +11,7 @@
 //
 // 全程**离线**：只压 API 语义与内存安全，不发任何请求 ✓
 import "web_net" as net
-import "_testkit" as tk
+import "../../test/_testkit.leno" as tk
 import strings
 
 use net.(HttpClient)

@@ -7,7 +7,7 @@
 //   两端一对比，并发的存在就是量出来的，而不是"我设了并发参数就算并发"。
 //   （单个测试服务端做不到：它一次只处理一条连接，请求会排队 ⇒ 看起来永远像串行。）
 import "Web" as web
-import "_testkit" as tk
+import "../../test/_testkit.leno" as tk
 import threads
 import strings
 import times

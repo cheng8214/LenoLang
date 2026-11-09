@@ -6,7 +6,7 @@
 // ⚠ 需要本机有 Chrome/Edge（没有就跳过渲染部分，退出码仍为 0）；
 //   服务端是本机 testkit，所以除浏览器外不依赖外网。
 import "Web" as web
-import "_testkit" as tk
+import "../../test/_testkit.leno" as tk
 import threads
 import strings
 import files

@@ -4,7 +4,7 @@
 // 服务端 `/post` 会把**完整请求**回显出来，这里直接对回显文本做断言 —— 相当于
 // "看一眼真正发出的报文"，比只看状态码可靠得多。
 import "Web" as web
-import "_testkit" as tk
+import "../../test/_testkit.leno" as tk
 import threads
 import files
 

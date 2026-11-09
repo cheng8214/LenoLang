@@ -8,7 +8,7 @@
 //   · **服务端忽略 Range** ⇒ 自动回退整体重下（不能把文件拼成"前半段+全量"）
 //   · remoteSize() 取远端大小
 import "Web" as web
-import "_testkit" as tk
+import "../../test/_testkit.leno" as tk
 import threads
 import files
 import dirs

@@ -15,7 +15,7 @@
 import "Web" as web
 import "web_cdp" as cdp
 import "web_ws" as ws
-import "_testkit" as tk
+import "../../test/_testkit.leno" as tk
 import threads
 import strings
 import sockets

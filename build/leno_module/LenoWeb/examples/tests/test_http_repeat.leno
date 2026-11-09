@@ -6,7 +6,7 @@
 //     ⇒ 跑到第 128 次请求就"回调耗尽"失败。本用例跑 300 次，专门盯这一点。
 //  ② **累加器每次清空**：复用同一客户端连续请求，正文必须逐次独立（不能叠加上一次的内容）。
 import "Web" as web
-import "_testkit" as tk
+import "../../test/_testkit.leno" as tk
 import threads
 
 int PORT = 39612

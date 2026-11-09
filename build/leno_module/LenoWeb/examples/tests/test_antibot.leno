@@ -8,7 +8,7 @@
 // 「轮换确实换了代理」怎么证：池子第 2 个代理指向**没有监听**的端口 ⇒ 用它必然失败。
 //   所以"第 2 次请求失败、第 3 次又成功"本身就证明了轮换发生了（不是一直用第 1 个）。
 import "Web" as web
-import "_testkit" as tk
+import "../../test/_testkit.leno" as tk
 import threads
 import strings
 import files

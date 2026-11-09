@@ -3,7 +3,7 @@
 // 覆盖 P0 缺口：libcurl 只搬字节、不认识 `Content-Type; charset=`，
 // 改造前 GBK 页面进 body 就是乱码；现在 net 层统一转成 UTF-8，原始字节留在 rawBody()。
 import "Web" as web
-import "_testkit" as tk
+import "../../test/_testkit.leno" as tk
 import threads
 
 int PORT = 39611
