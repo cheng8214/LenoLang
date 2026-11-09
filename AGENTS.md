@@ -36,14 +36,53 @@ var n = _int(job[3])
 **只有跨界时才转成行**：`Table` 控件、跨线程传递。
 内存里一律用 struct，边界处转一次。
 
+### 1.0 造 struct：用**命名参数构造**，不要"先 new 再逐字段赋"
+
+```leno
+struct Song { string name = "" int dur = 0 float score = 0.0 }
+
+Song s = new Song(name = "晴天", dur = 269)   // 没列出的字段取声明时的默认值
+Song t = new Song()                            // 全默认
+```
+
+- 只给需要的字段即可，**不必给全**；顺序无所谓（按名字匹配）
+- 字段类型**编译期校验**：`new Song(dur = "269")` 直接报
+  `字段 'dur' 类型不匹配: 期望 'int'，实际 'string'` —— 不是运行期才炸
+- 尾逗号、嵌套 struct 字段（`one = inner`）、lambda 里 `return new X(...)`、
+  **跨模块**（`new srow.SongRow(id = ...)`）都支持
+
+**正例**（从一行/一个 Dict 造记录，是**一个表达式**）：
+
+```leno
+export func from_row(Array[string] row): SongRow {
+    return new SongRow(
+        id = rowid(row),
+        name = rowname(row),
+        bytes = rowbytes(row))
+}
+```
+
+**反例**（多一个可变中间变量，还得自己保证不漏字段）：
+
+```leno
+SongRow r = new SongRow()
+r.id = rowid(row)
+r.name = rowname(row)
+r.bytes = rowbytes(row)
+return r
+```
+
+> 为什么提这条：`AGENTS.md` 之前的示例全是 `new X()` + 逐字段赋值，
+> 于是生成出来的代码也是那个形状。实际语言支持命名参数构造，
+> 而"从外部数据造记录"本来就该是一个表达式。
+
 ### 1.1 struct ↔ JSON：**不要手写解析/拼接**（2026-11-09 起）
 
 ```leno
 struct Song { string name = "" int dur = 0 float score = 0.0 }
 
 // 写：struct → JSON（字段名 = 声明名，顺序 = 声明顺序，转义正确）
-Song s = new Song()
-s.name = "晴天"
+Song s = new Song(name = "晴天")
 jsons.encode(s)                  // {"name":"晴天","dur":0,"score":0.0}
 
 // 读：JSON → struct（按**字段声明类型**填，未知字段忽略，缺席保留默认值）
