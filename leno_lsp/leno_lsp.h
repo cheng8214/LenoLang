@@ -321,6 +321,11 @@ char* lsp_handle_rename(LspServer* server, int id, JsonValue* params);
 // 代码折叠
 char* lsp_handle_folding_range(LspServer* server, int id, JsonValue* params);
 
+// ==================== Code Action 服务（2026-11-10）====================
+
+// 快速修复：目前只做「补 default 分支」（与编译器的 switch 穷尽性警告配对）
+char* lsp_handle_code_action(LspServer* server, int id, JsonValue* params);
+
 // ==================== 文档管理 ====================
 
 // 文本文档管理

@@ -22,6 +22,7 @@ set LSP_SOURCES=!LSP_SOURCES! lsp_document_symbol.c
 set LSP_SOURCES=!LSP_SOURCES! lsp_signature.c
 set LSP_SOURCES=!LSP_SOURCES! lsp_references.c
 set LSP_SOURCES=!LSP_SOURCES! lsp_folding.c
+set LSP_SOURCES=!LSP_SOURCES! lsp_code_action.c
 set LSP_SOURCES=!LSP_SOURCES! json.c
 set LSP_SOURCES=!LSP_SOURCES! leno_compiler_lib.c
 

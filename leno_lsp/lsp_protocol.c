@@ -700,6 +700,15 @@ char* lsp_handle_initialize(LspServer* server, int id, JsonValue* params) {
     
     // Folding Range 提供者 (代码折叠)
     json_object_set(capabilities, "foldingRangeProvider", json_bool_new(true));
+
+    // Code Action 提供者（2026-11-10）：目前只有 quickfix「补 default 分支」
+    {
+        JsonValue* ca = json_object_new();
+        JsonValue* kinds = json_array_new();
+        json_array_add(kinds, json_string_new("quickfix"));
+        json_object_set(ca, "codeActionKinds", kinds);
+        json_object_set(capabilities, "codeActionProvider", ca);
+    }
     
     // 构建响应
     JsonValue* result = json_object_new();
@@ -912,6 +921,9 @@ char* lsp_handle_message(LspServer* server, const char* message) {
 	}
 	else if (strcmp(method_name, "textDocument/foldingRange") == 0) {
 		response = lsp_handle_folding_range(server, id, params);
+	}
+	else if (strcmp(method_name, "textDocument/codeAction") == 0) {
+		response = lsp_handle_code_action(server, id, params);
 	}
 	else {
         // 未知方法
