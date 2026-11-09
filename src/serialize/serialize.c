@@ -759,6 +759,14 @@ static int serialize_constant(WriteBuffer* wb, Value val) {
                     if (!serialize_constant(wb, f->default_value)) return 0;
                 }
                 wb_write_u8(wb, (uint8_t)f->element_type);
+                // ★ 2026-11-09：`Array[T]` 的元素 struct 名（与上面的读侧对称）
+                if (f->element_struct_name) {
+                    wb_write_u8(wb, 1);
+                    wb_write_string(wb, f->element_struct_name,
+                                    (uint32_t)strlen(f->element_struct_name));
+                } else {
+                    wb_write_u8(wb, 0);
+                }
                 wb_write_u8(wb, (uint8_t)f->nullable);
             }
             wb_write_u32(wb, (uint32_t)struct_def->method_count);
@@ -1487,14 +1495,27 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
             uint8_t element_type;
             if (!ctx_read_u8(ctx, &element_type)) { free(fname); free(struct_type_name); return 0; }
 
+            // ★ 2026-11-09：`Array[T]` 里 T 是 struct 时的类型名（新字段，见 leno_value.h）
+            uint8_t has_element_struct;
+            char* element_struct_name = NULL;
+            if (!ctx_read_u8(ctx, &has_element_struct)) { free(fname); free(struct_type_name); return 0; }
+            if (has_element_struct) {
+                uint32_t esn_len;
+                element_struct_name = ctx_read_string(ctx, &esn_len);
+                if (!element_struct_name) { free(fname); free(struct_type_name); return 0; }
+            }
+
             uint8_t is_nullable = 0;
-            if (!ctx_read_u8(ctx, &is_nullable)) { free(fname); free(struct_type_name); return 0; }
+            if (!ctx_read_u8(ctx, &is_nullable)) {
+                free(fname); free(struct_type_name); free(element_struct_name); return 0;
+            }
 
             struct_def_set_field(sdef, (int)i, fname, (TypeKind)type_kind,
                                  struct_type_name, default_val, has_default,
-                                 (TypeKind)element_type, is_nullable);
+                                 (TypeKind)element_type, element_struct_name, is_nullable);
             free(fname);
             free(struct_type_name);
+            free(element_struct_name);
         }
 
         uint32_t method_count;

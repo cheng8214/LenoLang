@@ -555,7 +555,19 @@ typedef struct {
     char* struct_type_name; // 嵌套 struct 类型名称（当 type == TYPE_STRUCT 时有效）
     Value default_value; // 字段默认值
     int has_default;    // 是否有默认值
-    TypeKind element_type;  // Ptr[T] 中 T 的类型（仅当 type == TYPE_PTR_GENERIC 时有效）
+    // Ptr[T] 中 T 的类型（type == TYPE_PTR_GENERIC 时有效）；
+    // Array[T] 中 T 是 struct 时也置为 TYPE_STRUCT（2026-11-09，供 jsons.fill 构造元素）
+    TypeKind element_type;
+    // ★ 2026-11-09：`Array[T]` 里 T 是 **struct** 时的类型名（其余情况 NULL）。
+    //   为什么需要：`jsons.fill(target, json)` 要按字段**声明类型**把 JSON 装进 struct，
+    //   而 `Array[Item]` 的元素类型此前在运行时**根本没有记录** —— 实测 `element_type`
+    //   读出来是 `TYPE_PTR`（未初始化的默认值），于是 `Array[Item]` 字段会被塞进
+    //   `Array[Dict]`，字段的声明类型被静默破坏，直到第一次 `arr[0].field` 才报
+    //   「字段访问需要结构体对象」（离病因很远）。
+    //   数据来源链：AST `TypeInfo.element_type` → `ModuleStructField.element_struct_name`
+    //   → **字节码**（codegen_stmt.c 的 OP_STRUCT_DEF 元数据）→ 本字段。
+    //   ⚠ 改了字节码布局 ⇒ LENO_BIN_VERSION / LENO_MODCACHE_VERSION 已同步 bump。
+    char* element_struct_name;
     int nullable;       // 可空字段标记：1=Type?，0=Type
 } StructFieldInfo;
 
@@ -1322,7 +1334,8 @@ ObjStructDef* struct_def_new(const char* name, int field_count, int method_count
 
 // 设置结构体字段
 void struct_def_set_field(ObjStructDef* def, int index, const char* name, TypeKind type,
-                          const char* struct_type_name, Value default_value, int has_default, TypeKind element_type, int nullable);
+                          const char* struct_type_name, Value default_value, int has_default,
+                          TypeKind element_type, const char* element_struct_name, int nullable);
 
 // 创建结构体实例
 ObjStruct* struct_instance_new(ObjStructDef* def);

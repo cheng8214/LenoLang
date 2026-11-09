@@ -11,6 +11,21 @@
 // 前向声明
 extern ObjString* dict_key_to_string(Value key);
 
+// ==================== 嵌套深度上限（2026-11-09，P1 压测发现）====================
+// 为什么必须有：`decode` / `encode` 都是**递归**的，而递归深度直接等于数据嵌套深度。
+// 实测（本机 1MB 栈）：12000 层正常，**20000 层栈溢出崩溃**（0xC00000FD，
+// 属于未处理系统异常，**try/catch 接不住**，整个进程直接死）。
+//
+// 两个都真实可触发：
+//   · `jsons.decode(body)` —— body 来自 HTTP 请求体 / DB 内容 / 文件，**不可信**。
+//     一个 `[[[[...` 就能把服务端打崩（Aria 就有这种入口）。
+//   · `jsons.encode(node)` —— struct 可以**自引用**（`Node? next = null`），
+//     一旦构造成环，编码就是无限递归。
+//
+// 512 层：真实 JSON 极少超过 20 层，留了 23 倍安全余量（12000 才崩）。
+// 超限一律**明确报错**，不静默截断 —— 静默截断正是本项目反复在修的那类问题。
+#define JSON_MAX_DEPTH 512
+
 // StringBuilder for dynamic string construction
 
 typedef struct {
@@ -294,12 +309,14 @@ typedef struct {
     JsonLexer lexer;
     JsonToken current;
     bool has_error;
+    int depth;                     // 当前嵌套深度（见文件头 JSON_MAX_DEPTH）
 } JsonParser;
 
 static void json_parser_init(JsonParser* parser, const char* input) {
     json_lexer_init(&parser->lexer, input);
     parser->current = json_lexer_next_token(&parser->lexer);
     parser->has_error = false;
+    parser->depth = 0;
 }
 
 static void json_parser_advance(JsonParser* parser) {
@@ -527,10 +544,21 @@ static Value json_parse_value(JsonParser* parser) {
         case JSON_TOKEN_NULL:
             json_parser_advance(parser);
             return val_null();
+        // ⚠ 嵌套深度保护：不加上限时，`[[[[...` 会在 ~20000 层时**栈溢出崩溃**
+        //   （0xC00000FD，try/catch 接不住）。这里是唯一的递归入口 ⇒ 在这一处计数即可。
         case JSON_TOKEN_LBRACE:
-            return json_parse_object(parser);
-        case JSON_TOKEN_LBRACKET:
-            return json_parse_array(parser);
+        case JSON_TOKEN_LBRACKET: {
+            if (parser->depth >= JSON_MAX_DEPTH) {
+                parser->has_error = true;
+                return val_null();
+            }
+            parser->depth++;
+            Value nested = (parser->current.type == JSON_TOKEN_LBRACE)
+                         ? json_parse_object(parser)
+                         : json_parse_array(parser);
+            parser->depth--;
+            return nested;
+        }
         default:
             parser->has_error = true;
             return val_null();
@@ -658,9 +686,66 @@ static Value json_coerce_to_field(Value raw, StructFieldInfo* f) {
             //   （数字→字符串没有"解析"这回事，方向反过来才有意义。）
             if (val_is_obj(raw) && val_as_obj(raw)->type == OBJ_STRING) return raw;
             return val_null();
-        case TYPE_ARRAY:
-            if (val_is_obj(raw) && val_as_obj(raw)->type == OBJ_ARRAY) return raw;
+        case TYPE_ARRAY: {
+            if (val_is_obj(raw) && val_as_obj(raw)->type == OBJ_ARRAY) {
+                // 元素不是 struct（`Array[int]` / `Array[string]` / `Array[Dict]` …）
+                //   ⇒ 原样赋。这类字段本来就该直接吃 JSON 数组。
+                if (!f->element_struct_name || f->element_type != TYPE_STRUCT) return raw;
+
+                // `Array[Item]`：逐元素造 struct 再递归填。
+                //   ★ 2026-11-09：`element_struct_name` 是**新加的**字段元数据（此前运行时
+                //   完全没有数组元素类型，实测读出来是 TYPE_PTR 默认值 ⇒ 只能塞 Array[Dict]，
+                //   字段声明类型被静默破坏）。数据来源：AST → 字节码（OP_STRUCT_DEF 元数据）
+                //   → StructFieldInfo。改了字节码布局 ⇒ 缓存版本已同步 bump。
+                ObjArray* srcArr = (ObjArray*)val_as_obj(raw);
+                ObjArray* outArr = arr_new(srcArr->count > 0 ? srcArr->count : 1);
+                if (!outArr) return val_null();
+
+                Value outVal = val_obj((Object*)outArr);
+                gc_push_root(&outVal);
+
+                int n = 0;
+                for (int i = 0; i < srcArr->count; i++) {
+                    Value el = srcArr->elements[i];
+                    int written = 0;
+
+                    if (val_is_obj(el) && val_as_obj(el)->type == OBJ_DICT) {
+                        // ⚠ 先扩容量再建元素：`arr_grow` 会分配，若元素还没挂进数组
+                        //   又没被 root 住，会被 GC 回收（use-after-free）。
+                        while (n >= outArr->capacity) {
+                            if (!arr_grow(outArr)) break;
+                        }
+                        if (n < outArr->capacity) {
+                            ObjStruct* it = native_struct_new(f->element_struct_name);
+                            if (it) {
+                                Value item = val_obj((Object*)it);
+                                gc_push_root(&item);
+                                json_fill_struct(it, (ObjDict*)val_as_obj(el));
+                                arr_write(outArr, n, item);
+                                gc_pop_root();
+                                n++;
+                                written = 1;
+                            }
+                        }
+                    }
+
+                    if (!written) {
+                        // 不是对象 / 造不出来 ⇒ 原样放进去（宁可留个 Dict，也不静默丢数据）
+                        while (n >= outArr->capacity) {
+                            if (!arr_grow(outArr)) break;
+                        }
+                        if (n < outArr->capacity) {
+                            arr_write(outArr, n, el);
+                            n++;
+                        }
+                    }
+                }
+                outArr->count = n;
+                gc_pop_root();
+                return outVal;
+            }
             return val_null();
+        }
         case TYPE_DICT:
             if (val_is_obj(raw) && val_as_obj(raw)->type == OBJ_DICT) return raw;
             return val_null();
@@ -743,7 +828,12 @@ static Value jsons_fill_func(int argc, Value* args) {
 
 // JSON Encoder
 
-static void json_encode_value(StringBuilder* sb, Value value, int indent, bool pretty);
+// `depth` = 当前嵌套层数（超 JSON_MAX_DEPTH 就置 *err 并停止递归）；
+// `err`   = 溢出标志，由顶层统一检查后抛错。
+//   ⚠ 不能在这里直接 `native_throw_error` —— 它**不跳转**（只登记异常，见 native.h:446），
+//     调用后递归会继续走下去 ⇒ 照样爆栈。
+static void json_encode_value(StringBuilder* sb, Value value, int indent, bool pretty,
+                              int depth, int* err);
 
 static void json_encode_string(StringBuilder* sb, const char* str, int len) {
     sb_append_char(sb, '"');
@@ -776,7 +866,8 @@ static void json_encode_indent(StringBuilder* sb, int indent) {
     }
 }
 
-static void json_encode_array(StringBuilder* sb, ObjArray* arr, int indent, bool pretty) {
+static void json_encode_array(StringBuilder* sb, ObjArray* arr, int indent, bool pretty,
+                              int depth, int* err) {
     sb_append_char(sb, '[');
     
     if (pretty && arr->count > 0) {
@@ -788,7 +879,7 @@ static void json_encode_array(StringBuilder* sb, ObjArray* arr, int indent, bool
             json_encode_indent(sb, indent + 2);
         }
         
-        json_encode_value(sb, arr->elements[i], indent + 2, pretty);
+        json_encode_value(sb, arr->elements[i], indent + 2, pretty, depth + 1, err);
         
         if (i < arr->count - 1) {
             sb_append_char(sb, ',');
@@ -806,7 +897,8 @@ static void json_encode_array(StringBuilder* sb, ObjArray* arr, int indent, bool
     sb_append_char(sb, ']');
 }
 
-static void json_encode_dict(StringBuilder* sb, ObjDict* dict, int indent, bool pretty) {
+static void json_encode_dict(StringBuilder* sb, ObjDict* dict, int indent, bool pretty,
+                             int depth, int* err) {
     sb_append_char(sb, '{');
     
     if (pretty && dict->count > 0) {
@@ -854,7 +946,7 @@ static void json_encode_dict(StringBuilder* sb, ObjDict* dict, int indent, bool 
             sb_append_char(sb, ' ');
         }
         
-        json_encode_value(sb, value, indent + 2, pretty);
+        json_encode_value(sb, value, indent + 2, pretty, depth + 1, err);
         
         count++;
         if (count < total) {
@@ -876,7 +968,8 @@ static void json_encode_dict(StringBuilder* sb, ObjDict* dict, int indent, bool 
 // ★ 2026-11-09（P1 记录类型）：struct 实例 → JSON 对象
 //   字段名取 `def->fields[i].name`，值取 `st->field_values[i]`（字段顺序 = 声明顺序）。
 //   嵌套 struct / struct 数组靠 `json_encode_value` 递归 ⇒ 自动支持。
-static void json_encode_struct(StringBuilder* sb, ObjStruct* st, int indent, bool pretty) {
+static void json_encode_struct(StringBuilder* sb, ObjStruct* st, int indent, bool pretty,
+                               int depth, int* err) {
     if (!st || !st->def) {
         sb_append_cstr(sb, "null");
         return;
@@ -895,7 +988,7 @@ static void json_encode_struct(StringBuilder* sb, ObjStruct* st, int indent, boo
         json_encode_string(sb, fname, (int)strlen(fname));
         sb_append_char(sb, ':');
         if (pretty) sb_append_char(sb, ' ');
-        json_encode_value(sb, st->field_values[i], indent + 2, pretty);
+        json_encode_value(sb, st->field_values[i], indent + 2, pretty, depth + 1, err);
 
         if (i + 1 < n) sb_append_char(sb, ',');
         if (pretty) sb_append_char(sb, '\n');
@@ -905,7 +998,15 @@ static void json_encode_struct(StringBuilder* sb, ObjStruct* st, int indent, boo
     sb_append_char(sb, '}');
 }
 
-static void json_encode_value(StringBuilder* sb, Value value, int indent, bool pretty) {
+static void json_encode_value(StringBuilder* sb, Value value, int indent, bool pretty,
+                              int depth, int* err) {
+    // 深度保护：struct 可以自引用（`Node? next = null`），成环时这里是无限递归。
+    //   实测未加保护时 `a.next = b; b.next = a; encode(a)` ⇒ 栈溢出崩溃（0xC00000FD）。
+    if (depth > JSON_MAX_DEPTH) {
+        *err = 1;
+        sb_append_cstr(sb, "null");          // 占位；顶层会据此抛错，不会把它交出去
+        return;
+    }
     switch (val_get_type(value)) {
         case VAL_NULL:
             sb_append_cstr(sb, "null");
@@ -938,10 +1039,10 @@ static void json_encode_value(StringBuilder* sb, Value value, int indent, bool p
                     json_encode_string(sb, ((ObjString*)val_as_obj(value))->chars, ((ObjString*)val_as_obj(value))->len);
                     break;
                 case OBJ_ARRAY:
-                    json_encode_array(sb, (ObjArray*)val_as_obj(value), indent, pretty);
+                    json_encode_array(sb, (ObjArray*)val_as_obj(value), indent, pretty, depth + 1, err);
                     break;
                 case OBJ_DICT:
-                    json_encode_dict(sb, (ObjDict*)val_as_obj(value), indent, pretty);
+                    json_encode_dict(sb, (ObjDict*)val_as_obj(value), indent, pretty, depth + 1, err);
                     break;
                 case OBJ_STRUCT:
                     // ★ 2026-11-09（P1）：**struct 按字段名写成 JSON 对象**。
@@ -950,7 +1051,7 @@ static void json_encode_value(StringBuilder* sb, Value value, int indent, bool p
                     //   同一类 bug —— "不认识的类型静默变 null"，而它比"报错"更糟：
                     //   数据无声丢失，跑测试也发现不了。
                     //   字段顺序 = 声明顺序（`def->fields[]`），与结构体源码一致。
-                    json_encode_struct(sb, (ObjStruct*)val_as_obj(value), indent, pretty);
+                    json_encode_struct(sb, (ObjStruct*)val_as_obj(value), indent, pretty, depth + 1, err);
                     break;
                 default:
                     sb_append_cstr(sb, "null");
@@ -963,6 +1064,12 @@ static void json_encode_value(StringBuilder* sb, Value value, int indent, bool p
     }
 }
 
+// 编码溢出时的统一收尾（见 JSON_MAX_DEPTH）
+static Value json_encode_overflow(void) {
+    native_throw_error("编码失败：嵌套超过 512 层（结构体可能存在循环引用）");
+    return val_null();
+}
+
 // jsons.encode
 static Value jsons_encode_func(int argc, Value* args) {
     (void)argc;
@@ -970,7 +1077,9 @@ static Value jsons_encode_func(int argc, Value* args) {
     StringBuilder sb;
     sb_init(&sb);
     
-    json_encode_value(&sb, args[0], 0, false);
+    int enc_err = 0;
+    json_encode_value(&sb, args[0], 0, false, 0, &enc_err);
+    if (enc_err) { sb_free(&sb); return json_encode_overflow(); }
     
     ObjString* result = str_new(sb.data, sb.len);
     sb_free(&sb);
@@ -985,7 +1094,9 @@ static Value jsons_encode_pretty_func(int argc, Value* args) {
     StringBuilder sb;
     sb_init(&sb);
     
-    json_encode_value(&sb, args[0], 0, true);
+    int enc_err = 0;
+    json_encode_value(&sb, args[0], 0, true, 0, &enc_err);
+    if (enc_err) { sb_free(&sb); return json_encode_overflow(); }
     
     ObjString* result = str_new(sb.data, sb.len);
     sb_free(&sb);
@@ -1062,8 +1173,10 @@ static Value jsons_write_file_func(int argc, Value* args) {
     
     StringBuilder sb;
     sb_init(&sb);
-    json_encode_value(&sb, args[1], 0, true);
-    
+    int enc_err = 0;
+    json_encode_value(&sb, args[1], 0, true, 0, &enc_err);
+    if (enc_err) { sb_free(&sb); return json_encode_overflow(); }
+
     // Use binary mode to write exact bytes
     FILE* file = fopen_utf8(path->chars, "wb");
     if (!file) {

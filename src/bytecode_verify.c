@@ -90,6 +90,17 @@ static int scan_struct_def(const Chunk* c, int base, int checks, Cur* k) {
             }
         }
         if (ftype == TYPE_PTR_GENERIC) cur_u8(k);     // 元素类型
+        // ★ 2026-11-09：`Array[T]` 的元素 struct 名（has 标志 + 可选 u16 常量索引）。
+        //   加了它之后字段元数据变长，**这里漏改会让整条字节码流从下一个字段起全部错位**
+        //   —— 实测表现是「内存反序列化失败(6)」（6 = SERIALIZE_ERR_FORMAT，
+        //   由 bytecode_verify_chunk 返回），而 `--check` 全绿，很难定位。
+        if (ftype == TYPE_ARRAY) {
+            int has_esn = cur_u8(k);
+            if (has_esn) {
+                int idx = cur_u16(k);
+                if (checks) ck_const(k, idx);
+            }
+        }
         int has_default = cur_u8(k);
         if (has_default) {
             int idx = cur_u16(k);

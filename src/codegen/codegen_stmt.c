@@ -2408,6 +2408,21 @@ static void gen_struct_def(CodeGen* gen, Ast* ast) {
             TypeKind elem = (ft && ft->element_type) ? ft->element_type->kind : TYPE_PTR;
             cw_u8(gen, elem, ast->line);
         }
+        // ★ 2026-11-09：`Array[T]` 里 T 是 struct ⇒ 把类型名一起编进字节码。
+        //   为什么：运行时 `StructFieldInfo` 此前**完全没有**数组元素类型（实测读出来是
+        //   TYPE_PTR 默认值），于是 `jsons.fill` 只能把 JSON 数组原样塞进 `Array[Item]`
+        //   字段（得到 Array[Dict]，字段声明类型被静默破坏）。
+        //   ⚠ 布局变了 ⇒ LENO_BIN_VERSION / LENO_MODCACHE_VERSION 已 bump。
+        if (field_type == TYPE_ARRAY) {
+            const char* esn = (ft && ft->element_type) ? ft->element_type->struct_name : NULL;
+            if (esn) {
+                ObjString* en = str_copy(esn, (int)strlen(esn));
+                cw_u8(gen, 1, ast->line);
+                cw_u16(gen, make_constant(gen, val_obj((Object*)en)), ast->line);
+            } else {
+                cw_u8(gen, 0, ast->line);
+            }
+        }
 
         Ast* def_expr = ast->u.struct_def.field_defaults ? ast->u.struct_def.field_defaults[i] : NULL;
         if (def_expr) {

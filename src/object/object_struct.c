@@ -126,7 +126,8 @@ ObjStructDef* struct_def_new(const char* name, int field_count, int method_count
 }
 
 void struct_def_set_field(ObjStructDef* def, int index, const char* name, TypeKind type,
-                          const char* struct_type_name, Value default_value, int has_default, TypeKind element_type, int nullable) {
+                          const char* struct_type_name, Value default_value, int has_default,
+                          TypeKind element_type, const char* element_struct_name, int nullable) {
     if (index < 0 || index >= def->field_count) return;
 
     def->fields[index].name = strdup(name);
@@ -135,6 +136,7 @@ void struct_def_set_field(ObjStructDef* def, int index, const char* name, TypeKi
     def->fields[index].default_value = default_value;
     def->fields[index].has_default = has_default;
     def->fields[index].element_type = element_type;
+    def->fields[index].element_struct_name = element_struct_name ? strdup(element_struct_name) : NULL;
     def->fields[index].nullable = nullable;
 }
 

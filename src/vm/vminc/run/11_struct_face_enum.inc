@@ -80,6 +80,22 @@
                 element_type = (TypeKind)(*p++);
             }
 
+            // ★ 2026-11-09：`Array[T]` 的元素类型名（与 codegen_stmt.c 的发射顺序对应）。
+            //   有了它，`jsons.fill` 才知道该把 JSON 数组的每个元素造成哪个结构体。
+            char* element_struct_name = NULL;
+            if (field_type == TYPE_ARRAY) {
+                uint8_t has_esn = *p++;
+                if (has_esn) {
+                    int esn_idx = ((int)p[0] << 8) | (int)p[1];
+                    p += 2;
+                    Value ev = frame->chunk->constants[esn_idx];
+                    if (val_is_obj(ev) && val_as_obj(ev)->type == OBJ_STRING) {
+                        element_struct_name = ((ObjString*)val_as_obj(ev))->chars;
+                        element_type = TYPE_STRUCT;
+                    }
+                }
+            }
+
             uint8_t has_default = *p++;
             Value field_name_val = frame->chunk->constants[field_name_idx];
             if (unlikely(!val_is_obj(field_name_val) || val_as_obj(field_name_val)->type != OBJ_STRING)) {
@@ -97,7 +113,8 @@
             }
 
             struct_def_set_field(def, i, field_name->chars, (TypeKind)field_type,
-                                 struct_type_name, default_value, has_default, element_type, is_nullable);
+                                 struct_type_name, default_value, has_default, element_type,
+                                 element_struct_name, is_nullable);
         }
 
         for (int i = 0; i < method_count; i++) {

@@ -1212,8 +1212,10 @@ ObjStructDef* native_struct_def_for(const char* name) {
         } else if (ft && ft->tag == NTYPE_DICT) {
             elem_kind = TYPE_ANY;   // Dict 的 K/V 在运行期字段元数据里没有两个槽（判定另走类型规格）
         }
+        // element_struct_name：原生结构体规格里没有 `Array[Struct]` 字段（有的话走
+        //   NTYPE_ARRAY + sub=NTYPE_STRUCT，届时再补）⇒ NULL。
         struct_def_set_field(def, i, spec->field_names[i], kind, field_struct_name,
-                             val_null(), 0, elem_kind, 0);
+                             val_null(), 0, elem_kind, NULL, 0);
     }
     struct_def_register(def);   // owner = NULL（来源未知）⇒ 与脚本同名类型冲突时按"来源未知"放行
     return def;

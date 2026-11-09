@@ -181,7 +181,18 @@
 //   ⇒ LENO_MODCACHE_VERSION 同步升 ✓
 //   ⚠ 4 字节的 `ADD/SUB/MUL/LT/GT/LE/GE_INT_IMM` 族**加宽不了** ✗（A/B/C 三字段全占满，
 //     且它们没有随附的填充字）⇒ 超 int8 只能退回「LOADI + 寄存器版」= 现状 ✓
-#define LENO_BIN_VERSION    0x0003021C  // v3.2.28（2026-11-02）—— 新增 opcode **OP_STRUCT_EXTEND**
+// v3.2.29（2026-11-09）：`OP_STRUCT_DEF` 的**字段元数据布局**变化 —— 字段类型为 `TYPE_ARRAY`
+//   时，在 `element_type` 位置后**多写 1 字节 has_element_struct（+ 有则 2 字节常量索引）**，
+//   记录 `Array[T]` 里 T 是 struct 时的类型名。
+//   为什么必须 bump：这是**变长尾随字节**，不是追加在 opcode 枚举末尾 —— 旧构建读新字节码会
+//   把这段多出来的字节当成下一个字段的 `has_default` / 默认值索引，静默错位并可能越界读
+//   （不会报格式错，只会读到乱其八糟的字段定义）。反之新构建读旧字节码会把下一个字段的
+//   字节当成 `has_element_struct`，同样错位。两侧都必须整体失效重编译。
+//   用途：`jsons.fill(target, json)` 要按字段声明类型把 JSON 装进 struct；
+//   `Array[Item]` 此前在运行时**没有**元素类型（读出是 TYPE_PTR 默认值），
+//   于是只能塞 `Array[Dict]`，字段声明类型被静默破坏。
+//   ⇒ LENO_MODCACHE_VERSION 同步升（模块字节码里同样是这份元数据）。
+#define LENO_BIN_VERSION    0x0003021D  // v3.2.29（2026-11-09）—— OP_STRUCT_DEF 字段元数据新增 Array[T] 元素结构体名
                                         //   （跨模块 extend：给已存在的 struct 追加方法；末尾追加 ⇒
                                         //    既有编号不变，但旧构建不认识这个 opcode ⇒ 整体失效）
                                         //   上一版 v3.2.27（0x0003021B）OP_MATH_FAST 新增子操作码
@@ -374,7 +385,10 @@
 // v13：ObjFunction 增加 is_async（运行期判定"调用即建协程"用）。旧缓存里的函数对象缺这个
 //      字段 ⇒ async 函数的**间接调用**（`var f = w; f()`、当参数传、绑定方法）会退回同步执行、
 //      静默错值，所以必须**作废旧缓存**。
-#define LENO_MODCACHE_VERSION  0x0000002C  // v44 - 同 LENO_BIN_VERSION v3.2.28（新增 opcode
+// v45（2026-11-09）：OP_STRUCT_DEF 的字段元数据多一个 `element_struct_name`
+//   （见 LENO_BIN_VERSION v3.2.29）。模块字节码里是同一份布局 ⇒ 必须同步升，
+//   否则旧 .lenomc 会被当成新格式读，字段定义整体错位。
+#define LENO_MODCACHE_VERSION  0x0000002D  // v44 - 同 LENO_BIN_VERSION v3.2.28（新增 opcode
                                             //   OP_STRUCT_EXTEND ⇒ 模块字节码里含旧构建不认识的
                                             //   opcode，加载后跳转会发散 ⇒ 整体失效重编译 ✓）
                                             // v43 - v3.2.27（OP_MATH_FAST 的子操作码新增
