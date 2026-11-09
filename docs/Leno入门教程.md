@@ -11633,7 +11633,7 @@ leno -p program.leno
 | while 循环  | `while i < 10 { }`                             |
 | switch    | `switch x { case v { } case is Type { } case is Point(a, b) { } default { } }` |
 | switch 区间 case | `case 0:59 { }` —— 闭区间，与切片 `arr[2:8]` 同符号同口径 |
-| switch 性能 | 一律展开成**线性比较链**（没有自动二分/跳转表）；case 很多且集中在末尾时请自己分档 |
+| switch 性能 | 展开成**线性比较链**（没有跳转表）。但**冷路径 / 分支 ≤ 十来个时照用** —— 可读性收益远大于这点开销；只有**热路径且 case 很多**时才值得手写分档 |
 
 ### 运算符
 
