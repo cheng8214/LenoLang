@@ -313,6 +313,84 @@ obj?.field                  // 安全访问
 
 ---
 
+## 7.1 并发：线程入口用模块级函数 + Channel
+
+**反例**（看着能跑，结果静默丢失）：
+
+```leno
+// ❌ 想让线程改外面的状态
+int progress = 0
+var t = threads.start(func() {
+    progress = 100          // 改的是**副本**
+})
+t.join()
+print(_str(progress))       // 0   ← 不报错，就是没生效
+```
+
+**正例**（入口是模块级函数，结果走 Channel）：
+
+```leno
+import threads
+
+func worker(any ch, int k) {
+    if ch is Channel {          // any 上不能直接 .send，先收窄
+        var c = ch
+        c.send(k * 2)
+    }
+}
+
+main() {
+    var ch = threads.channel(1)
+    var t = threads.start(worker, ch, 21)
+    var got = ch.receive()
+    t.join()
+    print(_str(_int(got)))      // 42
+}
+```
+
+**跨线程到底传什么（2026-11-09 在 `leno.exe` 上逐条实测）**
+
+| 传什么 | 结果 |
+|---|---|
+| `int` / `float` / `bool` / `null` | 直接复制 |
+| `string` / `Array` / `Dict` | 深拷贝（递归）|
+| **`struct` 实例**、`Array[struct]` | **深拷贝，可用**（2026-10-12 起）。`type()` 仍是 `P`，字段读得到 |
+| `Channel` 本身 | 引用共享（可以传给子线程，这是标准做法）|
+| 闭包 / 函数 | `type()` 是 `func`，**收到也调不了** |
+| `Ptr` / cstruct 实例（或字段里装它们的 struct）| 不能跨线程，**编译期**就报「不能跨线程传递此类型」|
+| `File` | 不能跨线程，但**运行期**才炸（见下面第 2 条）|
+| 闭包**捕获**的东西（局部变量 / 局部 struct / `self`）| **一律是副本** |
+
+> ⚠ `docs/threads使用指南.md` 的表里原来写着「struct 实例：需要序列化，暂不支持」——
+> 那是 **2026-10-12 之前**的状态，已过期（本次已改）。别再据此把 struct 拆成数组数组。
+> 权威清单在 `docs/module_threads_api.md` 的「可传递类型」表。
+
+**三条必须记住的**
+
+1. **闭包捕获 = 拷贝，改动不回传。** 子线程里 `self.cnt = 999`，`join` 之后父对象还是原值
+   （实测：子线程打印 999，主线程仍是 7）。要回传就用 Channel，别靠闭包改外部状态。
+2. **`self` 里含「打开的 File」时，捕获它会让 `threads.start` 抛「未知异常」** ——
+   报错信息里完全看不出原因（实测：`File` 字段为 `null` 时正常，真 `files.open` 之后就炸）。
+   这就是「线程入口必须是模块级函数」这条规矩的由来。
+   （`Ptr` / cstruct 的情况更好：编译器**直接拒绝**，不会等到运行期。）
+3. **`any` 两边都要收窄**：发的时候 `if ch is Channel { var c = ch; c.send(x) }`，
+   收的时候 `if got is P => p { p.n }`（`receive()` 返回 `any`）。
+
+**批量并行**（不用自己起线程）：
+
+```leno
+var ch = threads.channel(8)
+int n = threads.parallel_for(4, func(int i) { ch.send(i * 10) })   // 这里用闭包是安全的
+int sum = 0
+for 0 : n - 1 to k { sum = sum + _int(ch.receive()) }
+print(_str(sum))                                                   // 60
+```
+
+> `parallel_for` 的闭包**只**捕获 `ch`，而 Channel 是引用共享 ⇒ 安全。
+> 它捕获别的可变状态一样是副本 —— 规则没变。等一组线程用 `threads.join_all(Array[Thread])`。
+
+---
+
 ## 8. 写之前先跑一遍
 
 ```bat
