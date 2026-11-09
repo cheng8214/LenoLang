@@ -192,7 +192,7 @@ for jsons.keys(acc) to k {
 将 Leno 值编码为紧凑格式的 JSON 字符串。
 
 **参数**:
-- `value`: 要编码的值（字典、数组、字符串、数字、布尔值或 null）
+- `value`: 要编码的值（字典、数组、字符串、数字、布尔值、null，**或 struct 实例**）
 
 **返回**: `string` - JSON 字符串
 
@@ -214,7 +214,70 @@ var nested = {
 }
 var json = jsons.encode(nested)
 // json = "{\"user\":{\"id\":1,\"name\":\"李四\"},\"tags\":[\"a\",\"b\"]}"
+
+// ★ struct 实例（2026-11-09 起）：字段名 = 字段声明名，顺序 = 声明顺序
+struct Song { string name = "" int dur = 0 }
+Song s = new Song()
+s.name = "晴天"
+s.dur = 269
+jsons.encode(s)          // {"name":"晴天","dur":269}
+jsons.encode([s])        // [{"name":"晴天","dur":269}]
 ```
+
+> ⚠ **2026-11-09 之前 `encode(struct)` 会静默返回字符串 `"null"`**（编码器的 default
+> 分支），调用方以为成功、数据其实全丢了。嵌套 struct、`Array[struct]` 同样受影响。
+> 现在按字段名写成 JSON 对象；转义走的是同一条 `json_encode_string`，
+> 所以字段里含 `"` / 换行也是合法 JSON。
+
+---
+
+### `fill(target, json)`（2026-11-09 新增，P1 记录类型）
+
+把 JSON **对象**按字段的**声明类型**填进一个**已存在的 struct 实例**。返回 `bool`（是否成功填充）。
+
+```leno
+struct Song {
+    string name = ""
+    int    dur  = 0
+    float  score = 0.0
+    bool   ok   = false
+}
+struct Job {
+    string id = ""
+    int    status = 0
+    Song?  song = null          // 嵌套 struct 必须是可空字段
+}
+
+Song s = new Song()
+bool ok = jsons.fill(s, "{\"name\":\"七里香\",\"dur\":299,\"score\":8,\"ok\":true}")
+// ok = true；s.name="七里香"、s.dur=299、s.score=8.0、s.ok=true
+
+Job j = new Job()
+jsons.fill(j, "{\"id\":\"a1\",\"song\":{\"name\":\"夜曲\",\"dur\":227}}")
+// j.song 被**自动创建**并填好（不用自己 new）
+```
+
+**为什么不叫 `decode(Song, json)`**：调用点保持静态类型 —— `Song s = new Song(); jsons.fill(s, t)`
+不需要 `as Song` 强转，也不吃"按名字找类型"的全局表（同名 struct 跨模块不会有歧义）。
+
+**四条转换规则（都很关键）**：
+
+| 情况 | 行为 |
+|---|---|
+| JSON 里**没有**这个字段 | 保留字段**默认值**（不改成空/null）|
+| JSON 里有**未知**字段 | **忽略**（服务端加字段，老客户端不炸）|
+| JSON `null` | 保留默认值（不覆盖）|
+| **类型对不上**（如 `"269"` 填 `int`）| **保留默认值**，不静默强转 —— 见下 |
+
+> **为什么不做隐式 `_str` / 字符串转数字**：`{"id": 123}` 填 `string id` 时若静默变 `"123"`，
+> 类型错误就被藏起来了，上线才发现。宁可保留默认值 + 让作者显式转换。
+> 例外：**数值之间**可以互转（JSON 的整数 `8` 填 `float` 字段得 `8.0`，反之亦然），
+> 以及 `bool` ↔ `0/1` —— 这两类是 JSON 本身就没有区分的。
+>
+> **大整数不丢精度**：`{"id":153282510146394112}` 填 `int` 字段是**逐位保留**的
+> （不会先转 double 再转回来）。
+
+**返回值**：顶层不是 JSON 对象（数组/字符串/坏 JSON）⇒ 返回 `false`，且**不改动**目标实例。
 
 ---
 

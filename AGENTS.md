@@ -33,8 +33,43 @@ job[2] = "1"
 var n = _int(job[3])
 ```
 
-**只有跨界时才转成行**：`Table` 控件、`jsons.encode`、跨线程传递。
+**只有跨界时才转成行**：`Table` 控件、跨线程传递。
 内存里一律用 struct，边界处转一次。
+
+### 1.1 struct ↔ JSON：**不要手写解析/拼接**（2026-11-09 起）
+
+```leno
+struct Song { string name = "" int dur = 0 float score = 0.0 }
+
+// 写：struct → JSON（字段名 = 声明名，顺序 = 声明顺序，转义正确）
+Song s = new Song()
+s.name = "晴天"
+jsons.encode(s)                  // {"name":"晴天","dur":0,"score":0.0}
+
+// 读：JSON → struct（按**字段声明类型**填，未知字段忽略，缺席保留默认值）
+Song t = new Song()
+jsons.fill(t, "{\"name\":\"七里香\",\"dur\":299}")
+t.name                           // "七里香"
+```
+
+**不要**这样：
+
+```leno
+// ❌ 手拼：值里有 " 或换行就是坏 JSON，而且不报错
+print("{\"name\":\"" + s.name + "\"}")
+
+// ❌ 手取：每个字段都要 _str / _int，字段改名不报错
+var d = jsons.decode(text) as Dict[string, any]
+Song x = new Song()
+x.name = _str(d.get("name", ""))
+x.dur = _int(d.get("dur", "0"))
+```
+
+**四条规则**（`jsons.fill`）：JSON 没这个字段 ⇒ 保留默认值；未知字段 ⇒ 忽略；
+`null` ⇒ 保留默认值；**类型对不上 ⇒ 保留默认值、不静默强转**（`"269"` 填 `int` 不会变 269）。
+数值之间可以互转（`8` → `8.0`）、`bool` ↔ `0/1`；大整数逐位保留。
+
+> 嵌套 struct 字段必须声明成**可空**（`Song? song = null`），`fill` 会自动 `new` 出来。
 
 ---
 

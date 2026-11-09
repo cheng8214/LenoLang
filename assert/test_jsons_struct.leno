@@ -1,0 +1,133 @@
+// test_jsons_struct.leno —— struct ↔ JSON（P1 记录类型，2026-11-09）
+//
+// 修的两个问题：
+//   ① `jsons.encode(struct)` 以前**静默输出字符串 "null"**（走编码器的 default 分支），
+//      调用方以为成功、实际数据全丢了。和之前 bigint 那条是同一类 bug。
+//   ② 没有"JSON → struct"的通路，只能 `decode` 成 `Dict[string, any]` 再手写
+//      `_str(r.get("x", ""))` 逐字段取 —— 这正是 356 处行协议/parse_* 的来源。
+import jsons
+
+struct Song {
+    string name = ""
+    string artist = ""
+    int dur = 0
+    float score = 0.0
+    bool ok = false
+}
+
+struct Job {
+    string id = ""
+    int status = 0
+    Song? song = null
+}
+
+struct Big {
+    int id = 0
+}
+
+main() {
+    // ==================== ① 编码：struct → JSON 对象 ====================
+    Song s = new Song()
+    s.name = "晴天"
+    s.artist = "周杰伦"
+    s.dur = 269
+    s.score = 9.5
+    s.ok = true
+
+    assert_eq(jsons.encode(s),
+        "{\"name\":\"晴天\",\"artist\":\"周杰伦\",\"dur\":269,\"score\":9.5,\"ok\":true}",
+        "encode(struct)：字段按**声明顺序**输出")
+
+    assert_eq(jsons.encode([s]), "[" + jsons.encode(s) + "]",
+        "encode(Array[struct])：数组元素逐个走 struct 分支")
+
+    // 嵌套 struct
+    Job j = new Job()
+    j.id = "a1"
+    j.status = 1
+    j.song = s
+    assert_eq(jsons.encode(j),
+        "{\"id\":\"a1\",\"status\":1,\"song\":" + jsons.encode(s) + "}",
+        "encode(嵌套 struct)")
+
+    // 可空嵌套为 null
+    Job j2 = new Job()
+    j2.id = "a2"
+    assert_eq(jsons.encode(j2), "{\"id\":\"a2\",\"status\":0,\"song\":null}",
+        "encode(可空嵌套为 null) ⇒ 写 null，不是整个对象变 null")
+
+    // 转义（struct 路径也必须走 json_encode_string，而不是拼引号）
+    Song q = new Song()
+    q.name = "he said \"hi\"\nline2"
+    assert_true(jsons.encode(q).find("\\\"hi\\\"") >= 0, "encode(struct)：引号被转义")
+    assert_true(jsons.encode(q).find("\\n") >= 0, "encode(struct)：换行被转义成 \\n")
+    assert_false(jsons.encode(q).find("\n") >= 0, "encode(struct)：输出里没有裸换行")
+
+    // ==================== ② 填值：JSON → struct ====================
+    Song t = new Song()
+    assert_true(jsons.fill(t, "{\"name\":\"七里香\",\"dur\":299,\"score\":8,\"ok\":true}"), "fill 成功返回 true")
+    assert_eq(t.name, "七里香", "fill string 字段")
+    assert_eq(t.dur, 299, "fill int 字段")
+    assert_eq(t.score, 8.0, "fill float 字段（JSON 给的是整数 8）")
+    assert_eq(t.ok, true, "fill bool 字段")
+    assert_eq(t.artist, "", "JSON 里没有的字段 ⇒ 保留默认值")
+
+    // 未知字段忽略（向前兼容：服务端加字段，老客户端不炸）
+    Song u = new Song()
+    u.name = "原名"
+    assert_true(jsons.fill(u, "{\"name\":\"新名\",\"unknown_field\":123}"), "未知字段不影响 fill 成功")
+    assert_eq(u.name, "新名", "未知字段被忽略，已知字段照填")
+
+    // 类型不匹配 ⇒ 保留默认值（**不静默塞错类型**）
+    Song v = new Song()
+    v.dur = 7
+    assert_true(jsons.fill(v, "{\"dur\":\"269\"}"), "string 填 int 字段：fill 本身仍成功")
+    assert_eq(v.dur, 7, "string 填 int 字段 ⇒ 保留默认值 7，不塞 269")
+
+    // JSON null ⇒ 不动字段
+    Song w = new Song()
+    w.name = "保留"
+    jsons.fill(w, "{\"name\":null}")
+    assert_eq(w.name, "保留", "JSON null ⇒ 保留默认值")
+
+    // 嵌套
+    Job nj = new Job()
+    assert_true(jsons.fill(nj, "{\"id\":\"b1\",\"status\":2,\"song\":{\"name\":\"夜曲\",\"dur\":227}}"),
+        "fill 嵌套 JSON 成功")
+    assert_eq(nj.id, "b1", "嵌套外层字段")
+    assert_true(nj.song != null, "嵌套 struct 被自动创建")
+    if nj.song != null {
+        assert_eq(nj.song.name, "夜曲", "嵌套内层 name")
+        assert_eq(nj.song.dur, 227, "嵌套内层 dur")
+    }
+
+    // 失败路径
+    Song z = new Song()
+    assert_false(jsons.fill(z, "[1,2]"), "顶层不是 JSON 对象 ⇒ false")
+    assert_false(jsons.fill(z, "{bad"), "坏 JSON ⇒ false")
+    assert_false(jsons.fill(z, "\"just a string\""), "顶层是字符串 ⇒ false")
+
+    // ==================== ③ 往返 ====================
+    Song r1 = new Song()
+    r1.name = "a\"b"
+    r1.artist = "c\\d"
+    r1.dur = 100
+    r1.score = 1.25
+    r1.ok = true
+    Song r2 = new Song()
+    assert_true(jsons.fill(r2, jsons.encode(r1)), "往返：fill(encode(x)) 成功")
+    assert_eq(r2.name, r1.name, "往返 name（含引号）")
+    assert_eq(r2.artist, r1.artist, "往返 artist（含反斜杠）")
+    assert_eq(r2.dur, r1.dur, "往返 dur")
+    assert_eq(r2.score, r1.score, "往返 score")
+    assert_eq(r2.ok, r1.ok, "往返 ok")
+
+    // ==================== ④ 大整数不丢精度 ====================
+    //   JSON 里的大整数不能先转 double（2^53 以上会丢）—— 与 encode 那边 bigint 的处理对称
+    Big b = new Big()
+    assert_true(jsons.fill(b, "{\"id\":153282510146394112}"), "大整数 fill 成功")
+    assert_eq(_str(b.id), "153282510146394112", "大整数逐位保留")
+    assert_eq(jsons.encode(b), "{\"id\":153282510146394112}", "大整数 encode 原样写出")
+
+    print("test_jsons_struct passed\n")
+}

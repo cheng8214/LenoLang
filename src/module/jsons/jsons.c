@@ -550,8 +550,113 @@ static Value jsons_decode_func(int argc, Value* args) {
     if (parser.has_error) {
         return val_null();
     }
-    
+
     return result;
+}
+
+// ==================== 记录类型：JSON → struct（P1，2026-11-09）====================
+// 为什么做成 `fill(实例, json)` 而不是 `decode(Song, json)`：
+//   · 调用点保持静态类型 —— `Song s = new Song(); jsons.fill(s, t)`，不需要 `as Song` 强转；
+//   · 不吃"按名字找类型"的全局表，同名 struct 跨模块也不会有歧义。
+
+static void json_fill_struct(ObjStruct* target, ObjDict* src);
+
+// 按字段**声明类型**把 JSON 值转成该字段可接受的值。
+//   转不了 ⇒ val_null()（调用方保留字段默认值，而不是塞个错类型进去）。
+static Value json_coerce_to_field(Value raw, StructFieldInfo* f) {
+    if (val_is_null(raw) || !f) return val_null();
+
+    switch (f->type) {
+        case TYPE_INT:
+            // 大整数原样保留（转 double 会丢精度，见 encode 那边 bigint 的同类注释）
+            if (val_is_int(raw) || val_is_bigint(raw)) return raw;
+            if (val_is_bool(raw)) return val_int(val_as_bool(raw) ? 1 : 0);
+            if (val_is_float(raw)) return val_int((int64_t)val_as_num(raw));
+            return val_null();
+        case TYPE_FLOAT:
+            if (val_is_float(raw) || val_is_int(raw)) return val_float((double)val_as_num(raw));
+            if (val_is_bool(raw)) return val_float(val_as_bool(raw) ? 1.0 : 0.0);
+            return val_null();
+        case TYPE_BOOL:
+            return val_is_bool(raw) ? raw : val_null();
+        case TYPE_STRING:
+            // **不做隐式 _str**：`{"id": 123}` 填 `string id` 时静默变 "123" 会把类型错误藏起来
+            if (val_is_obj(raw) && val_as_obj(raw)->type == OBJ_STRING) return raw;
+            return val_null();
+        case TYPE_ARRAY:
+            if (val_is_obj(raw) && val_as_obj(raw)->type == OBJ_ARRAY) return raw;
+            return val_null();
+        case TYPE_DICT:
+            if (val_is_obj(raw) && val_as_obj(raw)->type == OBJ_DICT) return raw;
+            return val_null();
+        case TYPE_STRUCT: {
+            if (!f->struct_type_name) return val_null();
+            if (!val_is_obj(raw) || val_as_obj(raw)->type != OBJ_DICT) return val_null();
+            ObjStruct* nested = native_struct_new(f->struct_type_name);
+            if (!nested) return val_null();
+            Value nv = val_obj((Object*)nested);
+            gc_push_root(&nv);                  // 递归里还会 gc_alloc
+            json_fill_struct(nested, (ObjDict*)val_as_obj(raw));
+            gc_pop_root();
+            return nv;
+        }
+        default:
+            return raw;                          // TYPE_ANY / 未标注类型：原样赋
+    }
+}
+
+static void json_fill_struct(ObjStruct* target, ObjDict* src) {
+    if (!target || !target->def || !src) return;
+    ObjStructDef* def = target->def;
+
+    for (int i = 0; i < src->order_count; i++) {
+        Value k = src->order[i];
+        if (!val_is_obj(k) || val_as_obj(k)->type != OBJ_STRING) continue;
+        ObjString* ks = (ObjString*)val_as_obj(k);
+
+        // 按字段名定位（字段数通常十几，线性比建哈希划算）
+        int fi = -1;
+        for (int j = 0; j < def->field_count; j++) {
+            const char* fn = def->fields[j].name;
+            if (fn && (int)strlen(fn) == ks->len && memcmp(fn, ks->chars, (size_t)ks->len) == 0) {
+                fi = j;
+                break;
+            }
+        }
+        if (fi < 0) continue;                    // 未知字段：忽略（向前兼容）
+
+        Value conv = json_coerce_to_field(dict_get(src, k), &def->fields[fi]);
+        if (val_is_null(conv)) continue;         // 转不了：保留字段默认值
+        struct_set_field(target, fi, conv);      // 带 GC 写屏障
+    }
+}
+
+// jsons.fill(target, json)：把 JSON 对象填进**已有的** struct 实例；返回是否成功
+static Value jsons_fill_func(int argc, Value* args) {
+    (void)argc;
+    if (!val_is_obj(args[0]) || val_as_obj(args[0])->type != OBJ_STRUCT) {
+        native_throw_error("fill() 第一个参数必须是 struct 实例");
+        return val_null();
+    }
+    if (!val_is_obj(args[1]) || val_as_obj(args[1])->type != OBJ_STRING) {
+        native_throw_error("fill() 第二个参数必须是 JSON 字符串");
+        return val_null();
+    }
+
+    ObjStruct* target = (ObjStruct*)val_as_obj(args[0]);
+    ObjString* text = (ObjString*)val_as_obj(args[1]);
+
+    JsonParser parser;
+    json_parser_init(&parser, text->chars);
+    Value parsed = json_parse_value(&parser);
+
+    if (parser.has_error) return val_bool(false);
+    if (!val_is_obj(parsed) || val_as_obj(parsed)->type != OBJ_DICT) return val_bool(false);
+
+    gc_push_root(&parsed);
+    json_fill_struct(target, (ObjDict*)val_as_obj(parsed));
+    gc_pop_root();
+    return val_bool(true);
 }
 
 // JSON Encoder
@@ -682,7 +787,39 @@ static void json_encode_dict(StringBuilder* sb, ObjDict* dict, int indent, bool 
     if (pretty && total > 0) {
         json_encode_indent(sb, indent);
     }
-    
+
+    sb_append_char(sb, '}');
+}
+
+// ★ 2026-11-09（P1 记录类型）：struct 实例 → JSON 对象
+//   字段名取 `def->fields[i].name`，值取 `st->field_values[i]`（字段顺序 = 声明顺序）。
+//   嵌套 struct / struct 数组靠 `json_encode_value` 递归 ⇒ 自动支持。
+static void json_encode_struct(StringBuilder* sb, ObjStruct* st, int indent, bool pretty) {
+    if (!st || !st->def) {
+        sb_append_cstr(sb, "null");
+        return;
+    }
+    ObjStructDef* def = st->def;
+    int n = def->field_count;
+
+    sb_append_char(sb, '{');
+    if (pretty && n > 0) sb_append_char(sb, '\n');
+
+    for (int i = 0; i < n; i++) {
+        const char* fname = def->fields[i].name;
+        if (!fname) fname = "";
+
+        if (pretty) json_encode_indent(sb, indent + 2);
+        json_encode_string(sb, fname, (int)strlen(fname));
+        sb_append_char(sb, ':');
+        if (pretty) sb_append_char(sb, ' ');
+        json_encode_value(sb, st->field_values[i], indent + 2, pretty);
+
+        if (i + 1 < n) sb_append_char(sb, ',');
+        if (pretty) sb_append_char(sb, '\n');
+    }
+
+    if (pretty && n > 0) json_encode_indent(sb, indent);
     sb_append_char(sb, '}');
 }
 
@@ -723,6 +860,15 @@ static void json_encode_value(StringBuilder* sb, Value value, int indent, bool p
                     break;
                 case OBJ_DICT:
                     json_encode_dict(sb, (ObjDict*)val_as_obj(value), indent, pretty);
+                    break;
+                case OBJ_STRUCT:
+                    // ★ 2026-11-09（P1）：**struct 按字段名写成 JSON 对象**。
+                    //   此前这里落到 default ⇒ 静默输出 `"null"` ✗（实测：`encode(Song)`
+                    //   返回字符串 "null"，调用方以为成功）。这与第 706 行 bigint 那条是
+                    //   同一类 bug —— "不认识的类型静默变 null"，而它比"报错"更糟：
+                    //   数据无声丢失，跑测试也发现不了。
+                    //   字段顺序 = 声明顺序（`def->fields[]`），与结构体源码一致。
+                    json_encode_struct(sb, (ObjStruct*)val_as_obj(value), indent, pretty);
                     break;
                 default:
                     sb_append_cstr(sb, "null");
@@ -1181,6 +1327,12 @@ static Value jsons_write_text_func(int argc, Value* args) {
 void jsons_init_module(void) {
     TypeKind decode_params[] = {TYPE_STRING};
     native_register_module_method("jsons", "decode", jsons_decode_func, &NATIVE_T_ANY, NATIVE_FIXED(decode_params));
+
+    // ★ 2026-11-09（P1）：`fill(target, json)` —— 把 JSON 对象按**字段声明类型**填进 struct 实例。
+    //   第一个形参用 TYPE_ANY：形参类型只到 TYPE_STRUCT 这一档、写不出具体结构体名，
+    //   运行期再校验"必须是 struct 实例"并给出明确报错。
+    TypeKind fill_params[] = {TYPE_ANY, TYPE_STRING};
+    native_register_module_method("jsons", "fill", jsons_fill_func, &NATIVE_T_BOOL, NATIVE_FIXED(fill_params));
 
     TypeKind encode_params[] = {TYPE_ANY};
     native_register_module_method("jsons", "encode", jsons_encode_func, &NATIVE_T_STRING, NATIVE_FIXED(encode_params));
