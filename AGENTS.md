@@ -144,6 +144,68 @@ strings.lines(s)                      // 按行切（认 \r\n）
 
 ---
 
+## 6.1 数值：先查 `maths`，别手写
+
+**反例**（四个真实项目里有 **41 处** 这种写法）：
+
+```leno
+if x < 0.0 { x = 0.0 }          // 单边夹取 —— maths.max 一行就能做
+if alpha > 1.0 { alpha = 1.0 }
+if alpha < 0.0 { alpha = 0.0 }  // 两句连写 = saturate
+if a == b { ... }               // 浮点用 == 比较（几乎总是 bug）
+```
+
+**正例**：
+
+```leno
+x = maths.max(x, 0.0)                       // 单边夹取（int 用 maxi）
+a = maths.clamp(a, 0.0, 1.0)                // 双边夹取（int 用 clampi）
+a = maths.saturate(a)                       // 就是 clamp(v, 0, 1)
+ok = maths.approx_eq(0.1 + 0.2, 0.3)        // 浮点比较**用这个**，别用 ==
+t = maths.lerp(10.0, 20.0, 0.25)            // 12.5
+u = maths.inverse_lerp(10.0, 20.0, 15.0)    // 0.5   （a, b, v）
+v = maths.remap(5.0, 0.0, 10.0, 0.0, 100.0) // 50.0
+```
+
+**常用的**（全部实测过）：
+
+| 用途 | 函数 |
+|---|---|
+| 夹取 | `clamp` / `clampi` / `saturate`（= 0..1）|
+| 取极值 | `max` / `min` / `maxi` / `mini`（都**可变参**）|
+| 插值 | `lerp` / `inverse_lerp` / `remap` |
+| 环形 | `wrap(v, lo, hi)` — ⚠ **上界不含**（`wrap(360, 0, 360)` = 0）|
+| 角度 | `wrap_angle` / `angle_delta` / `lerp_angle` — ⚠ **全是弧度**，见下 |
+| 取整 / 量化 | `roundi` / `trunc` / `floor` / `ceil` / `fract` / `snap(v, step)` |
+| 其它 | `sign` / `step` / `hypot` / `dist(x1,y1,x2,y2)` |
+| 2 的幂 | `is_pow2` / `next_pow2` |
+| 缓动 | `ease_in_quad` / `ease_out_cubic` / `smoothstep` / `smootherstep` …（都只收 **1 个 `t`**，不是 GLSL 那种 `(edge0, edge1, x)`）|
+| 模幂 | `pow_mod(base, exp, m)`（RSA / DH / LCG 随机数）|
+
+> ⚠ **三个"快"字辈是近似，别用于精确计算**：
+> `rsqrt(4.0)` = **0.49915**（不是 0.5，Quake III 算法，误差 ~0.17%）；
+> `sin_fast` / `cos_fast` 同理。要精确就用 `1.0 / maths.sqrt(x)` / `maths.sin(x)`。
+
+**五个实测坑（写错不报错，只是结果无意义）**：
+
+```leno
+maths.wrap(360.0, 0.0, 360.0)   // 0.0  ← 上界是开区间，不是 360
+maths.wrap_angle(370.0)         // -0.708 弧度 ← 它要**弧度**！
+maths.wrap_angle(maths.rad(370.0))      // 0.1745 弧度 = 10° ✓
+maths.clamp(5.0, 10.0, 0.0)     // 10.0 ← lo > hi 时收成 lo，不抛错
+maths.fract(-2.75)              // 0.25 ← 非负（Python 风格），不是 -0.75
+maths.roundi(-2.5)              // -3   ← 远离零，不是银行家舍入
+```
+
+> **角度那三个函数一律用弧度**。要处理"度"就先转：
+> `maths.deg(maths.angle_delta(maths.rad(a), maths.rad(b)))`。
+> 直接把度数传进去**不会报错**，只会静默算出无意义的值 —— 这是这块最容易踩的坑。
+
+> **已知缺口**（不用找了，标准库确实没有）：`gcd` / `lcm` / `is_prime` /
+> `factorial` / `cbrt` / `comb`。四个项目里使用量为 **0**，需要时自己写。
+
+---
+
 ## 7. 可空：`T?` + `is` 收窄，不要 `any` + 双检
 
 ```leno
