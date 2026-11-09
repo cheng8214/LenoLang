@@ -3838,6 +3838,12 @@ Ast* parse_enum_stmt(Parser* p) {
 
     member_names = (char**)malloc(sizeof(char*) * member_capacity);
     member_values = (int64_t*)malloc(sizeof(int64_t) * member_capacity);
+    // ★ 2026-11-10（P4，步 1）：带载荷成员的语法槽位（老写法下恒为 NULL/0）
+    char*** member_param_names = (char***)calloc((size_t)member_capacity, sizeof(char**));
+    TypeInfo*** member_param_types = (TypeInfo***)calloc((size_t)member_capacity, sizeof(TypeInfo**));
+    int* member_param_counts = (int*)calloc((size_t)member_capacity, sizeof(int));
+    int saw_payload = 0;      // 是否出现过带载荷成员（用于"混用"检查，见下方收尾）
+    int saw_plain = 0;        // 是否出现过不带载荷成员
 
     int64_t next_auto_value = 0; // 下一个自动分配的值
 
@@ -3857,6 +3863,48 @@ Ast* parse_enum_stmt(Parser* p) {
 
         char* member_name = copy_string(p->lex.current.text, p->lex.current.len);
         lexer_next(&p->lex);
+
+        // ★ 2026-11-10（P4，步 1）：**带载荷成员**的语法 `name(type a, type b)`
+        //   · 只解析形状，语义阶段才决定怎么降级（见 docs/enum载荷_设计草案.md）
+        //   · 老写法 `name` / `name = 3` 完全不经过这里 ⇒ 行为零变化
+        char** pnames = NULL;
+        TypeInfo** ptypes = NULL;
+        int pcount = 0;
+        if (p->lex.current.type == TOK_LPAREN) {
+            lexer_next(&p->lex);        // '('
+            int pcap = 4;
+            pnames = (char**)malloc(sizeof(char*) * (size_t)pcap);
+            ptypes = (TypeInfo**)malloc(sizeof(TypeInfo*) * (size_t)pcap);
+            while (p->lex.current.type != TOK_RPAREN && p->lex.current.type != TOK_EOF) {
+                TypeInfo* ptype = parse_type(p);
+                if (!ptype) {
+                    error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                                     "期望 enum 成员参数的类型");
+                    break;
+                }
+                if (p->lex.current.type != TOK_IDENT) {
+                    error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                                     "期望 enum 成员参数名（写成 `类型 名字`）");
+                    type_free(ptype);
+                    break;
+                }
+                if (pcount >= pcap) {
+                    pcap *= 2;
+                    pnames = (char**)realloc(pnames, sizeof(char*) * (size_t)pcap);
+                    ptypes = (TypeInfo**)realloc(ptypes, sizeof(TypeInfo*) * (size_t)pcap);
+                }
+                pnames[pcount] = copy_string(p->lex.current.text, p->lex.current.len);
+                ptypes[pcount] = ptype;
+                pcount++;
+                lexer_next(&p->lex);    // 参数名
+                if (p->lex.current.type == TOK_COMMA) { lexer_next(&p->lex); continue; }
+                break;
+            }
+            if (!consume(p, TOK_RPAREN, "期望 ')' 结束 enum 成员参数表")) {
+                // 解析失败：已分配的参数名/类型照常挂在成员上，后续由语义阶段报错
+                // （不要在这里 free：成员数组还没落地，统一走 ast_free）
+            }
+        }
 
         int64_t member_value = next_auto_value;
 
@@ -3896,10 +3944,27 @@ Ast* parse_enum_stmt(Parser* p) {
             member_capacity *= 2;
             member_names = (char**)realloc(member_names, sizeof(char*) * member_capacity);
             member_values = (int64_t*)realloc(member_values, sizeof(int64_t) * member_capacity);
+            member_param_names = (char***)realloc(member_param_names,
+                                                   sizeof(char**) * (size_t)member_capacity);
+            member_param_types = (TypeInfo***)realloc(member_param_types,
+                                                      sizeof(TypeInfo**) * (size_t)member_capacity);
+            member_param_counts = (int*)realloc(member_param_counts,
+                                                sizeof(int) * (size_t)member_capacity);
+            // realloc 出来的尾巴未初始化 ⇒ 清零，否则 ast_free 会读到垃圾指针
+            memset(&member_param_names[member_count], 0,
+                   sizeof(char**) * (size_t)(member_capacity - member_count));
+            memset(&member_param_types[member_count], 0,
+                   sizeof(TypeInfo**) * (size_t)(member_capacity - member_count));
+            memset(&member_param_counts[member_count], 0,
+                   sizeof(int) * (size_t)(member_capacity - member_count));
         }
 
         member_names[member_count] = member_name;
         member_values[member_count] = member_value;
+        member_param_names[member_count] = pnames;
+        member_param_types[member_count] = ptypes;
+        member_param_counts[member_count] = pcount;
+        if (pcount > 0) saw_payload = 1; else saw_plain = 1;
         member_count++;
 
         // 下一个自动分配的值为当前值 + 1
@@ -3948,12 +4013,36 @@ Ast* parse_enum_stmt(Parser* p) {
         }
     }
 
+    // ★ 2026-11-10（P4）：**不许混用**"带载荷"与"不带载荷"成员。
+    //   理由（写在设计草案 §2）：混用会让"值是 int"与"值是对象"两种表示并存，
+    //   `switch` / `==` / 穷尽性检查的语义立刻分叉 —— 与其定义两套规则，不如直接拒绝。
+    if (saw_payload && saw_plain) {
+        error_add_at_fmt(ERR_SEMANTIC, line, 1,
+            "enum '%s' 混用了带载荷和不带载荷的成员：同一个 enum 里要么每个成员都写参数"
+            "（`name(int a)`），要么都不写 —— 混用会让\"值是 int\"和\"值是对象\"两种表示并存，"
+            "switch / == / 穷尽性检查都会分叉；请统一，或拆成两个 enum",
+            enum_name ? enum_name : "?");
+    }
+
     // 创建 enum 定义 AST 节点
     Ast* ast = ast_new(AST_ENUM_DEF, line);
     ast->u.enum_def.name = enum_name;
     ast->u.enum_def.member_names = member_names;
     ast->u.enum_def.member_values = member_values;
     ast->u.enum_def.member_count = member_count;
+    // 没有任何带载荷成员时**不挂**这三个数组（保持老 AST 形状，ast_free 也走老路径）
+    if (saw_payload) {
+        ast->u.enum_def.member_param_names = member_param_names;
+        ast->u.enum_def.member_param_types = member_param_types;
+        ast->u.enum_def.member_param_counts = member_param_counts;
+    } else {
+        free(member_param_names);
+        free(member_param_types);
+        free(member_param_counts);
+        ast->u.enum_def.member_param_names = NULL;
+        ast->u.enum_def.member_param_types = NULL;
+        ast->u.enum_def.member_param_counts = NULL;
+    }
 
     return ast;
 }

@@ -407,6 +407,17 @@ struct Ast {
             char** member_names; // 成员名称数组
             int64_t* member_values;  // 成员值数组（显式指定或自动分配）
             int member_count;    // 成员数量
+            // ★ 2026-11-10（P4，步 1）：**带载荷成员**的语法槽位
+            //   `enum Msg { progress(int done, int total) }` ⇒
+            //     member_param_counts[0] = 2
+            //     member_param_names[0]  = ["done", "total"]
+            //     member_param_types[0]  = [int, int]
+            //   不带载荷的老写法 ⇒ 三个数组为 NULL（或对应项 count = 0），
+            //   **旧行为一个字节都不变**（成员仍然是 int 常量，见 visit_module.inc 的改写）。
+            //   设计见 docs/enum载荷_设计草案.md：语义阶段会把它降级成"隐藏 struct + tag"。
+            char*** member_param_names;      // [member][param] 参数名
+            TypeInfo*** member_param_types;  // [member][param] 参数类型
+            int* member_param_counts;        // 每个成员的参数个数（0 = 无载荷）
             SymRef ref;        // 符号引用信息（用于模块变量索引）
         } enum_def;
         struct {

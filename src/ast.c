@@ -552,9 +552,23 @@ break;
             free(ast->u.enum_def.name);
             for (int i = 0; i < ast->u.enum_def.member_count; i++) {
                 free(ast->u.enum_def.member_names[i]);
+                // ★ 2026-11-10（P4，步 1）：带载荷成员的参数名/类型
+                if (ast->u.enum_def.member_param_names && ast->u.enum_def.member_param_names[i]) {
+                    for (int j = 0; j < ast->u.enum_def.member_param_counts[i]; j++) {
+                        free(ast->u.enum_def.member_param_names[i][j]);
+                        if (ast->u.enum_def.member_param_types[i][j]) {
+                            type_free(ast->u.enum_def.member_param_types[i][j]);
+                        }
+                    }
+                    free(ast->u.enum_def.member_param_names[i]);
+                    free(ast->u.enum_def.member_param_types[i]);
+                }
             }
             free(ast->u.enum_def.member_names);
             free(ast->u.enum_def.member_values);
+            free(ast->u.enum_def.member_param_names);
+            free(ast->u.enum_def.member_param_types);
+            free(ast->u.enum_def.member_param_counts);
             free(ast->u.enum_def.ref.name);
             free(ast->u.enum_def.ref.struct_name);
             break;
