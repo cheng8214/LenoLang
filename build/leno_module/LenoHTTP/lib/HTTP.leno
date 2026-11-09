@@ -23,6 +23,9 @@
 //   · 静态文件 256KB 以下整读，以上分块发（不整进内存）
 import "http_app.leno" as a
 import "http_server.leno" as srv
+// 结构化层（2026-11-10）：`func(Req): Res` handler + Route 表，见 http_typed.leno 顶部
+import "http_typed.leno" as typed
+use typed.(Req, Res, Route)
 
 // ==================== 应用与路由 ====================
 export func newApp(): Dict { return a.new_app() }
@@ -43,6 +46,29 @@ export func route(Dict app, string method, string path, any handler, any opts = 
 export func routes(Dict app, Array table): int { return a.routes(app, table) }
 export func static(Dict app, string prefix, string dir): void { a.static(app, prefix, dir) }
 export func stop(Dict app): void { a.stop(app) }
+
+// ==================== 结构化路由（2026-11-10，P2）====================
+// 与上面的 Dict 写法**并存**：两条路最后都进同一张路由表，可以按接口一个个迁。
+//   http.mount(app, [
+//       new Route(method: "GET", path: "/ping", handler: func(Req r): Res {
+//           return http.resText("pong")
+//       }),
+//   ])
+export func mount(Dict app, Array[Route] routes): int { return typed.mount(app, routes) }
+export func mountOne(Dict app, Route rt): bool { return typed.mountOne(app, rt) }
+
+// 边界转换（也供自测直接调用：不启服务器就能验 Req/Res 的映射）
+export func reqFromDict(Dict d): Req { return typed.reqFromDict(d) }
+export func resToDict(Res r): Dict { return typed.resToDict(r) }
+
+// 响应助手（内容类型沿用 http.text/html/json 的那套定义，不重复维护）
+export func resText(string s): Res { return typed.resText(s) }
+export func resHtml(string s): Res { return typed.resHtml(s) }
+export func resJson(any v): Res { return typed.resJson(v) }
+export func resStatus(int code, string s): Res { return typed.resStatus(code, s) }
+export func resJsonStatus(int code, any v): Res { return typed.resJsonStatus(code, v) }
+export func resEmpty(int code): Res { return typed.resEmpty(code) }
+export func resRedirect(string url): Res { return typed.resRedirect(url) }
 
 // ==================== 鉴权 / 中间件（2026-10-20）====================
 // 声明式：路由注册第 4 参 `{auth: true}` 表示需要鉴权（等价 C# 的 [Authorize]）

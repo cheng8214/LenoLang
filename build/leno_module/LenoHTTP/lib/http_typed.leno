@@ -1,0 +1,221 @@
+// http_typed.leno —— 结构化的「请求 / 响应 / 路由」（2026-11-10，P2）
+//
+// 为什么要有这一层：
+//   评估报告 §4.5.2 的原话是「HTTP 有 46 个函数、0 个结构体，只能 Dict 配 handler」。
+//   于是每个 handler 开头都是这几行：
+//       Dict q = req["query"] as Dict
+//       string id = _str(q.get("id", ""))
+//       Dict hs = req["headers"] as Dict
+//   键名拼错**不报错**（拿到 null，炸在几行之后），字段缺失也要自己兜。
+//
+// 现在：`Req` / `Res` / `Route` 三个结构体 + `mount()`。
+//   · handler 写成 `func(Req): Res`，字段是真类型（`r.q("id")` / `r.h("user-agent")`）
+//   · 转换只发生在**边界**（每请求一次 Dict→Req、响应一次 Res→Dict），
+//     内部仍然是那套跑了几万次请求的 Dict 协议 ⇒ 老代码
+//     `http.get(app, "/x", func(Dict): Dict {...})` **一行都不用改** ✓
+//   · 高级场景（`files` 上传、`stream` 分块、`file` 直发）走 `Req.raw`
+//     与原 Dict 响应助手 —— 不在这一层伪造。
+//
+// 用法：
+//   import "HTTP" as http
+//   use http.(Req, Res, Route)
+//
+//   http.mount(app, [
+//       new Route(method: "GET", path: "/api/ping", handler: func(Req r): Res {
+//           return http.resText("pong")
+//       }),
+//       new Route(method: "GET", path: "/api/search", auth: true,
+//                 handler: func(Req r): Res {
+//                     return http.resJson({"q": r.q("q"), "user": r.user})
+//                 }),
+//   ])
+import jsons
+import strings
+import "http_app.leno" as a
+
+// ==================== 请求 ====================
+export struct Req {
+    string method = ""
+    string target = ""
+    string path = ""
+    string body = ""
+    string remote = ""
+    string version = ""
+    string user = ""                      // 鉴权中间件塞进来的用户名（`{auth:true}` 路由）
+    bool keepAlive = false
+    Dict[string, string] query = {}
+    Dict[string, string] headers = {}
+    Dict[string, string] form = {}
+    Dict[string, string] params = {}      // `/user/:id` 里取到的 id
+    Dict raw = {}                         // 逃生舱：files / 以后新增的键
+
+    // 查询串取值（缺省给 def —— 默认值必须显式给，不吃"静默空串"）
+    func q(string name, string def = ""): string { return query.get(name, def) }
+
+    // 路由参数
+    func param(string name, string def = ""): string { return params.get(name, def) }
+
+    // 请求头：**名字大小写不敏感**（HTTP 头本来就不区分大小写，Dict 查是敏感的 ⇒ 这里统一扫一遍）
+    func h(string name, string def = ""): string {
+        string want = strings.to_lower(name)
+        for headers to k {
+            if strings.to_lower(k) == want { return headers.get(k, def) }
+        }
+        return def
+    }
+
+    // 请求体当 JSON 解（坏 JSON / 空体 ⇒ null，调用方自己判）
+    func json(): any {
+        if body == "" { return null }
+        return jsons.decode(body)
+    }
+
+    func isGet(): bool { return method == "GET" }
+    func isPost(): bool { return method == "POST" }
+}
+
+// ==================== 响应 ====================
+export struct Res {
+    int status = 200
+    string contentType = "text/plain; charset=utf-8"
+    string body = ""
+    Dict[string, string] headers = {}
+
+    // 链式加头：`return http.resJson(v).header("X-Req-Id", id)`
+    func header(string k, string v): Res {
+        headers.set(k, v)
+        return self
+    }
+}
+
+// ==================== 路由 ====================
+export struct Route {
+    string method = "GET"
+    string path = ""
+    func(Req): Res handler = null
+    bool auth = false                     // 等价于老写法的第 4 参 `{auth: true}`
+}
+
+// ==================== 边界转换（自测也用它们）====================
+func _s(any v): string {
+    if v is string { return v as string }
+    return ""
+}
+
+func _dictOf(any v): Dict {
+    if v is Dict { return v as Dict }
+    return {}
+}
+
+// Dict → Req（server 侧每请求一次）
+export func reqFromDict(Dict d): Req {
+    Req r = new Req()
+    r.method = _s(d.get("method", ""))
+    r.target = _s(d.get("target", ""))
+    r.path = _s(d.get("path", ""))
+    r.body = _s(d.get("body", ""))
+    r.remote = _s(d.get("remote", ""))
+    r.version = _s(d.get("version", ""))
+    r.user = _s(d.get("user", ""))
+    r.raw = d
+    var ka = d.get("keepAlive", false)
+    r.keepAlive = (ka is bool) and (ka as bool)
+
+    Dict q = _dictOf(d.get("query", null))
+    for q to k { r.query.set(_s(k), _s(q.get(k, ""))) }
+    Dict hs = _dictOf(d.get("headers", null))
+    for hs to k { r.headers.set(_s(k), _s(hs.get(k, ""))) }
+    Dict f = _dictOf(d.get("form", null))
+    for f to k { r.form.set(_s(k), _s(f.get(k, ""))) }
+    Dict ps = _dictOf(d.get("params", null))
+    for ps to k { r.params.set(_s(k), _s(ps.get(k, ""))) }
+    return r
+}
+
+// Res → Dict（server 侧每响应一次）
+export func resToDict(Res r): Dict {
+    Dict hs = {}
+    for r.headers to k { hs.set(k, r.headers.get(k, "")) }
+    return {status: r.status, body: r.body, contentType: r.contentType, headers: hs}
+}
+
+// Dict → Res（给 resText/resJson 这些助手共用，内容类型只在一处定义）
+export func resFromDict(Dict d): Res {
+    Res r = new Res()
+    var st = d.get("status", 200)
+    if st is int { r.status = st as int }
+    r.body = _s(d.get("body", ""))
+    string ct = _s(d.get("contentType", ""))
+    if ct != "" { r.contentType = ct }
+    Dict hs = _dictOf(d.get("headers", null))
+    for hs to k { r.headers.set(_s(k), _s(hs.get(k, ""))) }
+    return r
+}
+
+// ==================== 响应助手（内容类型沿用 http_app 的那套，别这里再抄一遍）====================
+export func resText(string s): Res { return resFromDict(a.text(s)) }
+export func resHtml(string s): Res { return resFromDict(a.html(s)) }
+export func resJson(any v): Res { return resFromDict(a.json(v)) }
+
+// 指定状态码 + 纯文本（错误响应最常用）
+export func resStatus(int code, string s): Res {
+    Res r = resText(s)
+    r.status = code
+    return r
+}
+
+// 指定状态码 + JSON 体
+export func resJsonStatus(int code, any v): Res {
+    Res r = resJson(v)
+    r.status = code
+    return r
+}
+
+// 空响应（204 / 304 这类）
+export func resEmpty(int code): Res {
+    Res r = new Res()
+    r.status = code
+    return r
+}
+
+// 302 跳转
+export func resRedirect(string url): Res {
+    Res r = new Res()
+    r.status = 302
+    r.headers.set("Location", url)
+    r.body = ""
+    return r
+}
+
+// ==================== 注册 ====================
+// 把 typed 路由表挂到 app 上；返回成功注册的条数（path 空 / handler 为 null 的条目跳过）
+//   · `auth: true` 与老写法同义（同样走 app 的鉴权中间件）
+//   · 中途想混用老写法（`http.get(app, path, func(Dict): Dict {...})`）完全没问题 ——
+//     两条路最后都进同一张路由表
+export func mount(Dict app, Array[Route] routes): int {
+    int n = 0
+    for routes to rt {
+        if rt.path == "" or rt.handler == null { continue }
+        var meta = null
+        if rt.auth { meta = {auth: true} }      // 与老写法第 4 参同义
+        a.route(app, rt.method, rt.path, _wrap(rt.handler), meta)
+        n = n + 1
+    }
+    return n
+}
+
+// 单个注册（按需）
+export func mountOne(Dict app, Route rt): bool {
+    if rt.path == "" or rt.handler == null { return false }
+    var meta = null
+    if rt.auth { meta = {auth: true} }
+    a.route(app, rt.method, rt.path, _wrap(rt.handler), meta)
+    return true
+}
+
+// 把 `func(Req): Res` 包成 server 认的 `func(Dict): Dict`
+func _wrap(func(Req): Res h): any {
+    return func(Dict d): Dict {
+        return resToDict(h(reqFromDict(d)))
+    }
+}

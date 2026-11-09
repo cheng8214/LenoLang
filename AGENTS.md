@@ -420,6 +420,9 @@ build\leno.exe --check <file>
 | `new 5` | `new` 只能造 struct | 直接用 `5` |
 | `{n:y}` | 插值说明符 `y` 不存在（会静默输出 `%y`） | `{n:d}` / `{n:.2f}` |
 | `d["a"]["b"]`（`d` 是 `any`） | 不能在 `any` 上直接下标 | 先 `as Dict`，或 `jsons.dig(d, "a.b")` |
+| `new Route(method: "GET", ...)` | `new` 的命名实参用 **`=`**，不是 `:`（`:` 是 Dict 字面量 / 插值） | `new Route(method="GET", path="/x")` |
+| `f(..., func(x) {` 换行 `...` `})` 内联多行 lambda 当实参 | 解析器在多行 lambda 处报「期望 ')' / 期望表达式」 | 把 handler 写成**单独的具名函数**再传：`f(..., hPing)` |
+| `import "Result" as res` 而本文件有局部/字段叫 `res` | 模块别名被**遮蔽**（`WARN_SHADOW_MODULE_ALIAS`），`res.ok(...)` 报「在该对象上找不到方法」 | 别名叫 `rstd`（本仓惯例），或给那个局部量改名 |
 
 ---
 
@@ -460,3 +463,19 @@ Option[string] o = res.none[string]()      // T 只在返回值里 ⇒ 调用点
 - 不要读失败结果的 `val`（0/""/null 没有意义），要默认值用 `orElse`
 - 不要把 SQL 的 NULL 压成 `""` / `0`：`stmt.column_value(i)` 给 `null`、`stmt.column_is_null(i)` 单独判
 - 不要在能恢复的路径上用 `unwrap()`（它会抛）
+
+**HTTP 服务端：优先结构化的 `Req` / `Res`**（2026-11-10 起，LenoHTTP）
+
+```leno
+use http.(Req, Res, Route)
+
+func hSearch(Req r): Res {                     // 字段是真类型，不用再 `req["query"] as Dict`
+    return http.resJson({"q": r.q("q"), "user": r.user}).header("X-Req-Id", "abc")
+}
+
+http.mount(app, [ new Route(method="GET", path="/api/search", auth=true, handler=hSearch) ])
+// 老写法 `http.get(app, path, func(Dict): Dict {...})` 仍然可用，两条路进同一张路由表
+```
+
+**统计/`Stats`**：空数组不再返回 `0.0`，一律 `Option[T]`（`st.mean([]).isNone()`）；
+`money("12.34")` 是 `Result[int]`（分）。

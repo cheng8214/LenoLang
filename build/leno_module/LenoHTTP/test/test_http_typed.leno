@@ -1,0 +1,178 @@
+// test_http_typed.leno —— 结构化层（Req / Res / Route / mount）
+//
+// 跑法（仓库根目录）：
+//   build\leno.exe build\leno_module\LenoHTTP\test\test_http_typed.leno
+//
+// 为什么不开 socket：这一层要验的是**转换**（Dict ⇄ Req/Res）与**注册**（mount 进路由表），
+//   网络那半条链路 test_http.leno 已经覆盖了。所以这里直接：
+//     ① 手搓 req Dict → reqFromDict → 验字段
+//     ② Res 助手 → resToDict → 验响应 Dict
+//     ③ mount 后把路由表里的 handler **取出来直接调**，验端到端（handler 收到 Req、返回 Dict）
+import "HTTP" as http
+import strings
+import jsons
+use http.(Req, Res, Route)
+
+func fail(string msg) {
+    print("[FAIL] " + msg + "\n")
+    _exit(1)
+}
+
+func eqStr(string got, string want, string tag) {
+    if got != want { fail(tag + "：得到「" + got + "」期望「" + want + "」") }
+}
+
+func eqInt(int got, int want, string tag) {
+    if got != want { fail(tag + "：得到 " + _str(got) + " 期望 " + _str(want)) }
+}
+
+func eqBool(bool got, bool want, string tag) {
+    if got != want { fail(tag + "：得到 " + _str(got) + " 期望 " + _str(want)) }
+}
+
+// ==================== 供 mount 用的 handler（写成分开的函数，别内联多行 lambda）====================
+func hPing(Req rq): Res {
+    return http.resText("pong")
+}
+
+func hSearch(Req rq): Res {
+    return http.resJson({"q": rq.q("q"), "user": rq.user})
+}
+
+func hNopath(Req rq): Res {
+    return http.resText("")
+}
+
+main() {
+    // ==================== ① Dict → Req ====================
+    Dict d = {
+        method: "POST",
+        target: "/api/search?q=周杰伦&n=2",
+        path: "/api/search",
+        query: {q: "周杰伦", n: "2"},
+        headers: {Host: "example.com", "User-Agent": "LenoTest/1.0"},
+        form: {name: "甲"},
+        params: {id: "42"},
+        body: "{\"k\":1}",
+        remote: "127.0.0.1:5000",
+        version: "HTTP/1.1",
+        keepAlive: true,
+        user: "alice"
+    }
+    Req r = http.reqFromDict(d)
+    eqStr(r.method, "POST", "① method")
+    eqStr(r.path, "/api/search", "① path")
+    eqStr(r.target, "/api/search?q=周杰伦&n=2", "① target")
+    eqStr(r.remote, "127.0.0.1:5000", "① remote")
+    eqStr(r.version, "HTTP/1.1", "① version")
+    eqStr(r.user, "alice", "① user")
+    eqBool(r.keepAlive, true, "① keepAlive")
+    eqBool(r.isPost(), true, "① isPost")
+    eqBool(r.isGet(), false, "① isGet")
+
+    // 查询串：有值 / 缺省
+    eqStr(r.q("q"), "周杰伦", "① q(有值)")
+    eqStr(r.q("missing"), "", "① q(缺键) ⇒ 空串")
+    eqStr(r.q("missing", "def"), "def", "① q(缺键) ⇒ 显式默认值")
+
+    // 路由参数
+    eqStr(r.param("id"), "42", "① param(id)")
+    eqStr(r.param("nope", "-"), "-", "① param(缺键)")
+
+    // 请求头：**大小写不敏感**（HTTP 头本来就不区分）
+    eqStr(r.h("host"), "example.com", "① h(host) 小写查大写键")
+    eqStr(r.h("USER-AGENT"), "LenoTest/1.0", "① h(全大写查混合键)")
+    eqStr(r.h("x-none", "d"), "d", "① h(缺键) 给默认值")
+
+    // 表单
+    eqStr(r.form.get("name", ""), "甲", "① form")
+
+    // 请求体 JSON
+    var body = r.json()
+    eqInt(jsons.dig(body, "k") as int, 1, "① json() 解出 k=1")
+
+    // 空体 / 坏 JSON ⇒ null（调用方自己判，不抛）
+    Req empty = http.reqFromDict({method: "GET", path: "/"})
+    eqBool(empty.json() == null, true, "① 空体 json() ⇒ null")
+    eqStr(empty.method, "GET", "① 缺字段给空串（不是 null）")
+    eqBool(empty.keepAlive, false, "① keepAlive 缺省 false")
+    Req badJson = http.reqFromDict({method: "POST", path: "/x", body: "{不是 JSON"})
+    eqBool(badJson.json() == null, true, "① 坏 JSON ⇒ null（不抛）")
+
+    // 逃生舱：原始 Dict 还在
+    eqStr(empty.raw.get("path", "") as string, "/", "① raw 保留原始 Dict")
+
+    // ==================== ② Res → Dict ====================
+    Res t1 = http.resText("hello")
+    eqInt(t1.status, 200, "② resText status")
+    eqStr(t1.body, "hello", "② resText body")
+    Dict d1 = http.resToDict(t1)
+    eqInt(d1.get("status", 0) as int, 200, "② resToDict status")
+    eqStr(d1.get("contentType", "") as string, "text/plain; charset=utf-8", "② resToDict contentType")
+    eqStr(d1.get("body", "") as string, "hello", "② resToDict body")
+
+    Res t2 = http.resJson({"ok": true})
+    eqStr(t2.contentType, "application/json; charset=utf-8", "② resJson 内容类型")
+    eqBool(t2.body.has("\"ok\""), true, "② resJson 正文是 JSON")
+
+    Res t3 = http.resStatus(404, "没有")
+    eqInt(t3.status, 404, "② resStatus 码")
+    eqStr(t3.body, "没有", "② resStatus 正文")
+
+    Res t4 = http.resEmpty(204)
+    eqInt(t4.status, 204, "② resEmpty 码")
+    eqStr(t4.body, "", "② resEmpty 空体")
+
+    Res t5 = http.resRedirect("/login")
+    eqInt(t5.status, 302, "② 跳转码")
+    eqStr(t5.headers.get("Location", ""), "/login", "② 跳转 Location")
+
+    // 链式加头（返回 self，所以能一路点下去）
+    Res t6 = http.resText("x").header("X-Req-Id", "abc").header("Cache-Control", "no-store")
+    eqStr(t6.headers.get("X-Req-Id", ""), "abc", "② header() 链式 1")
+    eqStr(t6.headers.get("Cache-Control", ""), "no-store", "② header() 链式 2")
+    Dict d6 = http.resToDict(t6)
+    Dict hs6 = d6.get("headers", null) as Dict
+    eqStr(hs6.get("X-Req-Id", "") as string, "abc", "② 自定义头进了响应 Dict")
+
+    // ==================== ③ mount：注册 + 端到端调用 ====================
+    Dict app = http.newApp()
+    Array[Route] rts = []
+    rts.add(new Route(method="GET", path="/ping", handler=hPing))
+    rts.add(new Route(method="GET", path="/search", auth=true, handler=hSearch))
+    rts.add(new Route(method="POST", path="", handler=hNopath))    // path 空 ⇒ 跳过
+    rts.add(new Route(method="GET", path="/nohandler"))            // handler 为 null ⇒ 跳过
+    int n = http.mount(app, rts)
+    eqInt(n, 2, "③ mount 只注册 2 条有效路由（path 空 / handler 空被跳过）")
+
+    Array[Dict] rs = app.get("routes", null) as Array[Dict]
+    eqInt(rs.len(), 2, "③ 路由表 2 条")
+
+    // ① /ping：handler 收到 Req、返回 Res ⇒ 包成 Dict
+    eqStr(rs[0].get("method", "") as string, "GET", "③ 路由 method")
+    eqStr(rs[0].get("path", "") as string, "/ping", "③ 路由 path")
+    var h0 = rs[0].get("handler", null)
+    Dict resp = h0({method: "GET", path: "/ping", query: {}, headers: {}}) as Dict
+    eqInt(resp.get("status", 0) as int, 200, "③ handler 返回 status")
+    eqStr(resp.get("body", "") as string, "pong", "③ handler 返回 body")
+
+    // ② /search：auth 标记进 meta；Req 里的 query/user 能取到
+    Dict meta1 = rs[1].get("meta", null) as Dict
+    eqBool(meta1.get("auth", false) as bool, true, "③ auth: true 写进路由 meta")
+    var h1 = rs[1].get("handler", null)
+    Dict resp2 = h1({method: "GET", path: "/search", query: {q: "晴天"}, headers: {}, user: "bob"}) as Dict
+    eqStr(resp2.get("contentType", "") as string, "application/json; charset=utf-8", "③ typed handler 的 JSON 内容类型")
+    var jd = jsons.decode(resp2.get("body", "") as string)
+    eqStr(jsons.dig(jd, "q") as string, "晴天", "③ typed handler 读到 query")
+    eqStr(jsons.dig(jd, "user") as string, "bob", "③ typed handler 读到 user")
+
+    // ==================== ④ 与老写法混用 ====================
+    //   同一个 app 上再挂一条 Dict 风格的路 —— 两条路进同一张表，不用二选一
+    http.get(app, "/legacy", func(Dict rq): Dict {
+        return http.text("old-style")
+    })
+    Array[Dict] rs2 = app.get("routes", null) as Array[Dict]
+    eqInt(rs2.len(), 3, "④ 混用：路由表 3 条")
+
+    print("test_http_typed passed（4 组 / 转换 + 助手 + mount + 混用）")
+}

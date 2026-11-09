@@ -5,17 +5,27 @@
 //   ② decimal 的实用替代：**金额一律用"分"（int）**，只在显示时格式化。
 //      float 存 0.1 会得到 0.100000000000000005 这类误差；财务场景必须走整数分。
 //
+// ★ 2026-11-09（P2 空值/错误契约）：
+//   · 空输入的统计量以前一律返回 `0.0` —— "没有数据"和"均值就是 0"从此分不清
+//     （评估报告 §4.5.1 的 4 类空值哨兵之一）。现在返回 `Option[float]`：没数据 ⇒ `isNone()`。
+//     `sumInt([])` 例外：空数组求和**就是 0**（数学上确定），保持 int。
+//   · `money(s)` 以前返回 `Dict{ok,cents,err}` ⇒ 现在 `Result[int]`（`val` 是分，失败是 PARSE）。
+//
 // 用法：
 //   import "Stats" as st
-//   st.mean([1.0, 2.0, 3.0])            // 2.0
-//   st.median([3.0, 1.0, 2.0])          // 2.0
-//   st.percentile(xs, 90.0)             // 线性插值（Excel PERCENTILE.INC 口径）
+//   import "Result" as res
+//   use res.(Result, Option)
+//   st.mean([1.0, 2.0, 3.0]).orElse(0.0)   // 2.0
+//   st.median([3.0, 1.0, 2.0]).orElse(0.0) // 2.0
+//   st.percentile(xs, 90.0)                // 线性插值（Excel PERCENTILE.INC 口径）
 //   st.stdevSample(xs) / st.stdevPop(xs)
-//   var m = st.money("12.34")           // {ok:true, cents:1234, err:""}
-//   st.formatCents(1234)                // "12.34"
-//   st.centsMul(1234, 7, 100)           // 打 7 折（四舍五入到分）
+//   Result[int] m = st.money("12.34")      // 1234 分
+//   st.formatCents(1234)                   // "12.34"
+//   st.centsMul(1234, 7, 100)              // 打 7 折（四舍五入到分）
 import maths
 import strings
+import "Result" as res
+use res.(Result, Option)
 
 func _sorted(Array[float] xs): Array[float] {
     Array[float] a = []
@@ -34,103 +44,111 @@ func _sorted(Array[float] xs): Array[float] {
 }
 
 // ==================== 统计 ====================
-export func mean(Array[float] xs): float {
-    if xs.len() == 0 { return 0.0 }
+// 内部：调用方都已判过 n > 0
+func _meanOf(Array[float] xs): float {
     var s = 0.0
     for xs to v { s = s + v }
     return s / _float(xs.len())
 }
 
-export func meanInt(Array[int] xs): float {
-    if xs.len() == 0 { return 0.0 }
-    var s = 0
-    for xs to v { s = s + v }
-    return _float(s) / _float(xs.len())
+export func mean(Array[float] xs): Option[float] {
+    if xs.len() == 0 { return res.none[float]() }
+    return res.some(_meanOf(xs))
 }
 
-export func median(Array[float] xs): float {
+export func meanInt(Array[int] xs): Option[float] {
     int n = xs.len()
-    if n == 0 { return 0.0 }
+    if n == 0 { return res.none[float]() }
+    var s = 0
+    for xs to v { s = s + v }
+    return res.some(_float(s) / _float(n))
+}
+
+export func median(Array[float] xs): Option[float] {
+    int n = xs.len()
+    if n == 0 { return res.none[float]() }
     Array[float] a = _sorted(xs)
-    if n % 2 == 1 { return a[n / 2] }
-    return (a[n / 2 - 1] + a[n / 2]) / 2.0
+    if n % 2 == 1 { return res.some(a[n / 2]) }
+    return res.some((a[n / 2 - 1] + a[n / 2]) / 2.0)
 }
 
 // p ∈ [0,100]；线性插值（与 Excel PERCENTILE.INC 一致）
-export func percentile(Array[float] xs, float p): float {
+export func percentile(Array[float] xs, float p): Option[float] {
     int n = xs.len()
-    if n == 0 { return 0.0 }
-    if p <= 0.0 { return _sorted(xs)[0] }
-    if p >= 100.0 { return _sorted(xs)[n - 1] }
+    if n == 0 { return res.none[float]() }
     Array[float] a = _sorted(xs)
+    if p <= 0.0 { return res.some(a[0]) }
+    if p >= 100.0 { return res.some(a[n - 1]) }
     float rank = p / 100.0 * _float(n - 1)
     int lo = maths.floor(rank) as int
     int hi = maths.mini(lo + 1, n - 1)          // 上界收敛（2026-11-01：手写 if 改 maths.mini）
     float frac = rank - _float(lo)
-    return maths.lerp(a[lo], a[hi], frac)       // 线性插值走 maths.lerp（同上）
+    return res.some(maths.lerp(a[lo], a[hi], frac))   // 线性插值走 maths.lerp（同上）
 }
 
-// 样本标准差（除以 n-1）
-export func stdevSample(Array[float] xs): float {
+// 样本标准差（除以 n-1）：n < 2 时**没有定义** ⇒ none（不是 0.0）
+export func stdevSample(Array[float] xs): Option[float] {
     int n = xs.len()
-    if n < 2 { return 0.0 }
-    float m = mean(xs)
+    if n < 2 { return res.none[float]() }
+    float m = _meanOf(xs)
     var s = 0.0
     for xs to v { s = s + (v - m) * (v - m) }
-    return maths.sqrt(s / _float(n - 1))
+    return res.some(maths.sqrt(s / _float(n - 1)))
 }
 
-// 总体标准差（除以 n）
-export func stdevPop(Array[float] xs): float {
+// 总体标准差（除以 n）：n < 1 ⇒ none
+export func stdevPop(Array[float] xs): Option[float] {
     int n = xs.len()
-    if n < 1 { return 0.0 }
-    float m = mean(xs)
+    if n < 1 { return res.none[float]() }
+    float m = _meanOf(xs)
     var s = 0.0
     for xs to v { s = s + (v - m) * (v - m) }
-    return maths.sqrt(s / _float(n))
+    return res.some(maths.sqrt(s / _float(n)))
 }
 
+// 空数组求和**就是 0**（数学上确定）⇒ 保持 int，不套 Option
 export func sumInt(Array[int] xs): int {
     var s = 0
     for xs to v { s = s + v }
     return s
 }
 
-export func minInt(Array[int] xs): int {
-    if xs.len() == 0 { return 0 }
+// 空数组的 min/max **没有定义** ⇒ Option（原来给 0，会和"最小值就是 0"混）
+export func minInt(Array[int] xs): Option[int] {
+    if xs.len() == 0 { return res.none[int]() }
     var m = xs[0]
     for xs to v {
         if v < m { m = v }
     }
-    return m
+    return res.some(m)
 }
 
-export func maxInt(Array[int] xs): int {
-    if xs.len() == 0 { return 0 }
+export func maxInt(Array[int] xs): Option[int] {
+    if xs.len() == 0 { return res.none[int]() }
     var m = xs[0]
     for xs to v {
         if v > m { m = v }
     }
-    return m
+    return res.some(m)
 }
 
 // ==================== 金额（整数分）====================
 // "12.34" → 1234；"-1.5" → -150；".5" → 50；"12." → 1200
 // 规则：最多两位小数（多了报错 —— 静默四舍五入会让账目对不上）
-export func money(string s): Dict {
+export func money(string s): Result[int] {
     var t = s
-    if t == "" { return {ok: false, cents: 0, err: "空字符串"} }
+    if t == "" { return res.err[int](res.ErrCode.PARSE, "空字符串不是金额") }
     var neg = false
     Array[int] bs = t.to_bytes()
     var i = 0
     if bs[0] == 45 { neg = true; i = 1 }
-    if i >= bs.len() { return {ok: false, cents: 0, err: "只有符号"} }
+    if i >= bs.len() { return res.err[int](res.ErrCode.PARSE, "只有符号，没有数字：" + s) }
 
     var intPart = 0
     var gotDigit = false
     while i < bs.len() and bs[i] != 46 {
         int c = bs[i]
-        if c < 48 or c > 57 { return {ok: false, cents: 0, err: "非法字符：" + s} }
+        if c < 48 or c > 57 { return res.err[int](res.ErrCode.PARSE, "非法字符：" + s) }
         intPart = intPart * 10 + (c - 48)
         gotDigit = true
         i = i + 1
@@ -141,21 +159,23 @@ export func money(string s): Dict {
         i = i + 1
         while i < bs.len() {
             int c = bs[i]
-            if c < 48 or c > 57 { return {ok: false, cents: 0, err: "非法字符：" + s} }
-            if fracDigits >= 2 { return {ok: false, cents: 0, err: "最多两位小数：" + s} }
+            if c < 48 or c > 57 { return res.err[int](res.ErrCode.PARSE, "非法字符：" + s) }
+            if fracDigits >= 2 {
+                return res.err[int](res.ErrCode.PARSE, "最多两位小数（多出的会被静默舍掉）：" + s)
+            }
             frac = frac * 10 + (c - 48)
             fracDigits = fracDigits + 1
             gotDigit = true
             i = i + 1
         }
     }
-    if not gotDigit { return {ok: false, cents: 0, err: "没有数字：" + s} }
+    if not gotDigit { return res.err[int](res.ErrCode.PARSE, "没有数字：" + s) }
     if fracDigits == 0 { frac = 0 }
     if fracDigits == 1 { frac = frac * 10 }
 
     int cents = intPart * 100 + frac
     if neg { cents = -cents }
-    return {ok: true, cents: cents, err: ""}
+    return res.ok(cents)
 }
 
 export func formatCents(int cents): string {
