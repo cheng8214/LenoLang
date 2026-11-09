@@ -499,6 +499,38 @@ static Value native_dirs_extname(int argCount, Value* args) {
     return val_obj((Object*)str_copy(last_dot, (int)strlen(last_dot)));
 }
 
+// dirs.stem(path) - 文件名去掉**最后一个**扩展名（★ 2026-11-10，P4）
+//   为什么补：`basename` + `extname` + 切片 这三件套在每个项目里各抄一遍 ——
+//   Aria 的 downloads.leno 是 `path.split(".")` 再拼回去（还要特判无点/多点），
+//   ffapi_core.leno 的注释直接写着"没有 rfind ⇒ 按点切开取最后一段"。
+//   口径与 extname **严格互补**：`stem(p) + extname(p) == basename(p)`；
+//     · 隐藏文件（`.bashrc`）没有扩展名 ⇒ stem 就是它自己
+//     · `a.b.c` ⇒ `a.b`（只去最后一段）
+//     · 无点 ⇒ 原样
+static Value native_dirs_stem(int argCount, Value* args) {
+    (void)argCount;
+    const char* path = get_string(args[0]);
+    if (!path) {
+        native_throw_error("stem 参数必须是字符串");
+        return val_null();
+    }
+    // 1) 取文件名段（与 extname / basename 同口径：'/' 和 '\\' 都算分隔）
+    const char* filename = path;
+    for (const char* p = path; *p; p++) {
+        if (*p == '/' || *p == '\\') filename = p + 1;
+    }
+    // 2) 找最后一个点（点在第 0 位 = 隐藏文件，不算扩展名 —— 与 extname 判据一致）
+    const char* last_dot = NULL;
+    for (const char* p = filename; *p; p++) {
+        if (*p == '.') last_dot = p;
+    }
+    int n = (int)strlen(filename);
+    if (last_dot != NULL && last_dot != filename) {
+        n = (int)(last_dot - filename);
+    }
+    return val_obj((Object*)str_copy(filename, n));
+}
+
 // dirs.join(part1, part2, ...) - 拼接路径
 static Value native_dirs_join(int argCount, Value* args) {
     // ⚠ 0 参由**注册元信息**挡住（`min_arity = 1`，见 dirs_init_module）—— 这里原来有一句
@@ -1461,6 +1493,8 @@ void dirs_init_module(void) {
     native_register_module_method("dirs", "basename", native_dirs_basename, &NATIVE_T_STRING, NATIVE_FIXED(string_params));
     native_register_module_method("dirs", "dirname", native_dirs_dirname, &NATIVE_T_STRING, NATIVE_FIXED(string_params));
     native_register_module_method("dirs", "extname", native_dirs_extname, &NATIVE_T_STRING, NATIVE_FIXED(string_params));
+    // stem（2026-11-10）：文件名去最后一个扩展名，与 extname 互补（stem + extname == basename）
+    native_register_module_method("dirs", "stem", native_dirs_stem, &NATIVE_T_STRING, NATIVE_FIXED(string_params));
     // relpath：两个参数**都必填**（不提供"相对 cwd"的单参形态）—— 隐式依赖 cwd 与 Leno 的显式取向相冲 ✓
     native_register_module_method("dirs", "relpath", native_dirs_relpath, &NATIVE_T_STRING, NATIVE_FIXED(string2_params));
     // join 的 `min_arity` 由 0 改成 **1**（2026-10-01）：`dirs.join()` 0 参没有意义，

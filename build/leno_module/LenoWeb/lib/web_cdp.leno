@@ -28,6 +28,7 @@ import maths
 import strings
 import files
 import dirs
+import "FS" as fsx          // _removeDir 用 FS.rmtree（2026-11-10：不再 shell 出去 rmdir）
 import jsons
 import times
 import sockets
@@ -846,17 +847,17 @@ export func close(Browser b): bool {
     return done
 }
 
-// 递归删目录（best-effort）。`dirs` 模块的 delete/rmdir 不保证递归，
-// 而浏览器 profile 是深层目录树 ⇒ 直接交给系统的递归删除命令
+// 递归删目录（best-effort）
+//   ★ 2026-11-10：改走 `FS.rmtree`（纯 Leno 递归，跨平台一套代码）。
+//   以前的写法是 Windows `cmd /c rmdir /s /q`、POSIX `rm -rf`，三个毛病：
+//     ① 依赖 shell —— 每次删个临时 profile 都要起一个 cmd；
+//     ② 拼引号：路径里出现 `"` 或结尾带 `\` 就会把命令拼坏（临时目录是
+//        `<tmp>\leno-cdp-<随机>`，随机段可控，但 tmp 由系统给，不能假设安全）；
+//     ③ `_exec` 在这条路径上还可能在无控制台宿主里闪一下窗口。
+//   `FS.rmtree` 幂等（不存在也算成功）、不跟随符号链接、返回 Result 而不抛 ⇒ 失败也只是"没删掉"。
 func _removeDir(string path): bool {
     if path == "" or not dirs.exists(path) { return false }
-    if _isWindows() {
-        // ⚠ `_r` 不是笔误 ✓：**调用必须照跑**（rmdir 的副作用 ✓），只有返回值没人用 ✓
-        //   （新警告 [未使用变量] 给的两条出路之一：有意保留 ⇒ 改 `_` 前缀 ✓ 见 M 系列姊妹项）
-        var _r = _exec("cmd /c rmdir /s /q \"" + path + "\"", 15000)
-        return not dirs.exists(path)
-    }
-    var _r2 = _exec("rm -rf \"" + path + "\"", 15000)   // 同上：调用要跑，返回值不用 ✓
+    var _r = fsx.rmtree(path)          // 失败不抛异常（Result 带原因；这里只关心"删掉了没"）
     return not dirs.exists(path)
 }
 

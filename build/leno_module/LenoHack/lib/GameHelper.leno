@@ -15,7 +15,8 @@
 import maths
 import "w32_memory.leno" as mem
 import "w32_input.leno" as inp
-import "hack_log.leno" as log
+import "Log" as log              // ★ 2026-11-10：日志改用 LenoLog（hack_log.leno 已拆解删除）
+import "hack_err.leno" as herr    // Win32 GetLastError / 错误码文案（原 hack_log 里的那部分）
 import "offsets_config.leno" as cfg
 import "w32_process.leno" as proc
 import "w32_hotkey.leno" as hotkey
@@ -23,6 +24,17 @@ import "w32_message.leno" as msg
 
 use mem.MemoryHandle
 use cfg.OffsetConfig
+
+// ==================== 日志器（LenoLog 是**实例式**）====================
+// 一个 logger 就是一个 Dict（见 LenoLog/lib/Log.leno）：`create(名字, 级别, 是否控制台)`。
+// 要写文件由调用方 `log.addFile(_logger(), "路径")`；要换级别 `log.setLevel(...)`。
+// 与旧的 `hack_log.init(path, level)` 相比只是"状态从模块全局挪到实例里"——同一份能力、不再重复实现。
+var _lg = null
+
+func _logger(): Dict {
+    if _lg == null { _lg = log.create("GameHelper", log.INFO, true) }
+    return _lg
+}
 
 // ==================== GameBot 游戏辅助主体 ====================
 
@@ -292,27 +304,27 @@ export struct GameBot {
 
     // 记录调试日志
     func logDebug(string message) {
-        log.debug("Bot", message)
+        log.debug(_logger(), "Bot " + message)
     }
 
     // 记录信息日志
     func logInfo(string message) {
-        log.info("Bot", message)
+        log.info(_logger(), "Bot " + message)
     }
 
     // 记录警告日志
     func logWarn(string message) {
-        log.warn("Bot", message)
+        log.warn(_logger(), "Bot " + message)
     }
 
     // 记录错误日志
     func logError(string message) {
-        log.error("Bot", message)
+        log.error(_logger(), "Bot " + message)
     }
 
-    // 记录错误并附带系统错误码
+    // 记录错误并附带系统错误码（GetLastError 那半在 hack_err.leno）
     func logErrorWithCode(string message) {
-        log.error("Bot", message + " — " + log.lastErrorString())
+        log.error(_logger(), "Bot " + message + " — " + herr.lastErrorString())
     }
 
     // ==================== 模拟输入（便捷封装）====================

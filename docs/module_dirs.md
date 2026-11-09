@@ -148,6 +148,22 @@ dirs.extname("Makefile")        // "" (无扩展名)
 dirs.extname(".bashrc")         // "" (隐藏文件)
 ```
 
+### `stem(path)` ★ 2026-11-10 新增
+
+文件名去掉**最后一个**扩展名。与 `extname` **严格互补**：`stem(p) + extname(p) == basename(p)`。
+
+```leno
+dirs.stem("a/b/c.txt")     // "c"
+dirs.stem("c.tar.gz")      // "c.tar"      （只去最后一段）
+dirs.stem(".bashrc")       // ".bashrc"    （隐藏文件没有扩展名）
+dirs.stem("noext")         // "noext"
+dirs.stem("dir/sub/x.len") // "x"
+```
+
+> 为什么补：`basename` + `extname` + 切片 三件套在每个项目里各抄一遍 ——
+> Aria 的 `downloads.leno` 用 `path.split(".")` 再拼回去（还得特判无点/多点），
+> `ffapi_core.leno` 的注释直接写"没有 rfind ⇒ 按点切开取最后一段"。
+
 ---
 
 ### `join(part1, part2, ...)`

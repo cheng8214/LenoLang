@@ -655,6 +655,49 @@ static Value str_find(int argc, Value* args) {
     return val_int(-1);  // 未找到返回 -1
 }
 
+// 10c. 最后一次出现的位置（★ 2026-11-10，P4）
+//   为什么补：`find` 只有正向版 ⇒ "取最后一个 '.' / '/' / '?'" 这类只能 split 后倒着拼
+//   （Aria 的 downloads.leno），或手写反向循环；ffapi_core.leno 里甚至有一行注释直接写着
+//   "没有 rfind ⇒ 按点切开取最后一段"。
+//   语义与 `find` 逐条对称：
+//     · 返回**字符索引**（不是字节偏移），找不到 ⇒ -1
+//     · 可选第 3 参 `before` 是**上界（不含）**：只在 [0, before) 里找最后一次出现
+//       （与 find 的 `start` 起点对称；也支持负数，从末尾数）
+//     · 空模式 ⇒ 返回上界处（对称于 find 的"空模式返回起点"）
+//     · 允许重叠匹配（"aaaa".rfind("aa") ⇒ 2，与 Python 一致）
+static Value str_rfind(int argc, Value* args) {
+    ObjString* str = (ObjString*)val_as_obj(args[0]);
+    ObjString* pattern = (ObjString*)val_as_obj(args[1]);
+    int char_len = str->char_len;
+
+    // 上界（字符索引，不含）；默认 = 整串
+    int before = char_len;
+    if (argc >= 3 && val_is_int(args[2])) {
+        before = val_as_int(args[2]);
+        if (before < 0) before = char_len + before;   // 与 find 的负起点同口径
+    }
+    if (before > char_len) before = char_len;
+    if (before < 0) before = 0;
+
+    if (pattern->len == 0) return val_int(before);    // 空模式：对称于 find 返回 start
+    if (before == 0) return val_int(-1);
+
+    int byte_limit = utf8_char_offset(str->chars, str->len, before);   // 搜索区间 [0, byte_limit)
+
+    int found_byte = -1;
+    const char* p = str->chars;
+    while (p && *p) {
+        const char* hit = strstr(p, pattern->chars);
+        if (!hit) break;
+        int off = (int)(hit - str->chars);
+        if (off + pattern->len > byte_limit) break;   // 后面的出现只会更靠后 ⇒ 可以停
+        found_byte = off;
+        p = hit + 1;                                  // +1 而不是 +len：允许重叠匹配
+    }
+    if (found_byte < 0) return val_int(-1);
+    return val_int(utf8_char_len(str->chars, found_byte));
+}
+
 // 10b. 新增：二进制安全的字节序列查找
 // 与 find() 的区别：使用 memcmp 而非 strstr，不会在 \x00 处截断
 // 返回字节偏移量（非字符索引），start 参数也是字节偏移
@@ -2128,6 +2171,10 @@ void strings_init_module(void) {
     TypeKind find_params[] = {TYPE_STRING, TYPE_STRING, TYPE_INT, TYPE_BOOL};
     native_register_module_method("strings", "find", str_find, &NATIVE_T_INT, NATIVE_VARARG(2, 4, 4, find_params, TYPE_ANY));
 
+    // 10c. 反向查找（2026-11-10）：`strings.rfind(s, pat[, before])` ⇒ 最后一次出现的字符索引
+    TypeKind rfind_params[] = {TYPE_STRING, TYPE_STRING, TYPE_INT};
+    native_register_module_method("strings", "rfind", str_rfind, &NATIVE_T_INT, NATIVE_VARARG(2, 3, 3, rfind_params, TYPE_ANY));
+
     // 10b. 新增：二进制安全的字节序列查找（支持2-3个可变参数）
     TypeKind byte_find_params[] = {TYPE_STRING, TYPE_STRING, TYPE_INT};
     native_register_module_method("strings", "byte_find", str_byte_find, &NATIVE_T_INT, NATIVE_VARARG(2, 3, 3, byte_find_params, TYPE_ANY));
@@ -2258,6 +2305,10 @@ void strings_init_instance_methods(void) {
     // 10. 新增：查找子串位置
     TypeKind str_int_bool_params[] = {TYPE_STRING, TYPE_INT, TYPE_BOOL};
     string_register_method("find", make_native(str_find, 4, "find"), TYPE_INT, TYPE_UNKNOWN, NATIVE_VARARG(1, 3, 3, str_int_bool_params, TYPE_ANY));
+
+    // 10c. 反向查找（2026-11-10）：`s.rfind(pat[, before])`（与模块式共用实现）
+    TypeKind str_int_rfind_params[] = {TYPE_STRING, TYPE_INT};
+    string_register_method("rfind", make_native(str_rfind, 3, "rfind"), TYPE_INT, TYPE_UNKNOWN, NATIVE_VARARG(1, 2, 2, str_int_rfind_params, TYPE_ANY));
 
     // 10b. 新增：二进制安全的字节序列查找（实例方法）
     TypeKind str_int_find_params[] = {TYPE_STRING, TYPE_INT};

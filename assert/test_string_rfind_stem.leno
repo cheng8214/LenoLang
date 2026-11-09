@@ -1,0 +1,43 @@
+// test_string_rfind_stem.leno —— P4：strings.rfind + dirs.stem（2026-11-10）
+//
+// 为什么要有：这两个都是"每个项目各抄一遍"的缺口 ——
+//   · 没有 rfind ⇒ Aria 的 downloads.leno 用 `path.split(".")` 再拼回去，
+//     ffapi_core.leno 的注释直接写"没有 rfind ⇒ 按点切开取最后一段"；
+//   · 没有 stem ⇒ basename + extname + 切片 三件套反复出现。
+// 口径：rfind 返回**字符索引**、找不到 -1、可选 before 是**上界（不含）**、允许重叠；
+//       stem 与 extname **严格互补**（stem + extname == basename）。
+import strings
+import dirs
+
+main() {
+    // ---------- ① rfind 基本语义（模块式 + 实例式同一实现）----------
+    assert_eq(strings.rfind("abcabc", "b"), 4, "rfind 最后一次出现")
+    assert_eq("abcabc".rfind("b"), 4, "实例式 rfind")
+    assert_eq(strings.rfind("abcabc", "z"), -1, "找不到 ⇒ -1")
+    assert_eq(strings.rfind("abc", ""), 3, "空模式 ⇒ 上界处（与 find 对称）")
+    assert_eq(strings.find("abcabc", "b"), 1, "对照：find 仍是第一次出现")
+
+    // ---------- ② before 上界（不含）----------
+    assert_eq(strings.rfind("a.b.c", "."), 3, "最后一个点")
+    assert_eq(strings.rfind("a.b.c", ".", 3), 1, "before=3 ⇒ 只在 [0,3) 里找 ⇒ 第 1 位")
+    assert_eq(strings.rfind("a.b.c", ".", 0), -1, "before=0 ⇒ 空区间 ⇒ -1")
+    assert_eq(strings.rfind("a.b.c", ".", 99), 3, "before 超长 ⇒ 夹到整串")
+
+    // ---------- ③ 重叠匹配 + 多字节 ----------
+    assert_eq(strings.rfind("aaaa", "aa"), 2, "重叠匹配（与 Python 一致）")
+    assert_eq(strings.rfind("中文中文", "中文"), 2, "多字节：返回**字符**索引（不是字节）")
+
+    // ---------- ④ stem：与 extname 互补 ----------
+    assert_eq(dirs.stem("a/b/c.txt"), "c", "普通扩展名")
+    assert_eq(dirs.stem("c.tar.gz"), "c.tar", "只去最后一段")
+    assert_eq(dirs.stem(".bashrc"), ".bashrc", "隐藏文件没有扩展名")
+    assert_eq(dirs.stem("noext"), "noext", "无点 ⇒ 原样")
+    assert_eq(dirs.stem("dir/sub/file.LENO"), "file", "大小写不敏感地只按点切")
+    // 互补性：拼接回去必须等于 basename（这是它俩唯一的契约）
+    Array[string] cases = ["a/b/c.txt", "c.tar.gz", ".bashrc", "noext", "x/y/z.json"]
+    for cases to p {
+        assert_eq(dirs.stem(p) + dirs.extname(p), dirs.basename(p), "stem + extname == basename：" + p)
+    }
+
+    print("test_string_rfind_stem passed（rfind 4 组 + stem 互补）")
+}

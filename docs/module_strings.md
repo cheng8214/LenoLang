@@ -281,6 +281,26 @@ strings.len("abc")   // 返回 3
 "Hello, World! Hello!".find("xyz")          // -1
 ```
 
+#### `rfind(pattern, before?)` ★ 2026-11-10 新增
+
+**反向**查找：返回子串**最后一次**出现的位置。与 `find` 逐条对称：
+
+- `before` (int, 可选): **上界（不含）** —— 只在 `[0, before)` 里找最后出现；负数从末尾数
+- 空模式 ⇒ 返回上界处（`find` 的空模式返回起点）
+- **允许重叠匹配**：`"aaaa".rfind("aa")` ⇒ 2（与 Python 一致）
+- 返回**字符索引**（不是字节偏移），找不到 ⇒ -1
+
+```leno
+"a.b.c".rfind(".")          // 3   ← 取扩展名的分界点
+"a.b.c".rfind(".", 3)       // 1   ← 只在 [0,3) 里找
+"abcabc".rfind("b")         // 4
+"中文中文".rfind("中文")     // 2   （字符索引，不是 6）
+"abc".rfind("z")            // -1
+```
+
+> 为什么补：`find` 只有正向版 ⇒ "取最后一个 `.` / `/` / `?`" 只能 `split` 后倒着拼
+> （Aria `downloads.leno`），或手写反向循环。**模块式 `strings.rfind(s, pat, before?)` 与实例式同一实现。**
+
 #### `byte_find(pattern, start?)`
 
 在字符串中**二进制安全**地搜索字节序列，返回首次匹配的字节偏移量。

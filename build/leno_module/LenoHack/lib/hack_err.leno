@@ -1,0 +1,62 @@
+// hack_err.leno — Win32 GetLastError + 常见错误码转可读文案
+//
+// ★ 2026-11-10（P4）：从 `hack_log.leno` 拆出来的。
+//   原来那个文件叫"日志系统"，里面却混着**两件不相干的事**：
+//     ① 一套自己的分级日志（文件/控制台/级别过滤）—— 与 `LenoLog` 完全重复；
+//     ② Win32 `GetLastError` + 错误码表 —— 这跟日志一点关系没有。
+//   现在 ①交给 `import "Log"`（实例式 logger，见 LenoLog），②留在本文件 ⇒ 两边各归各的。
+//
+// 用法：
+//   import "hack_err.leno" as herr
+//   if not ok { print("失败：" + herr.lastErrorString()) }
+import ffi
+
+// ==================== KERNEL32 (仅 GetLastError) ====================
+clib kernel32 {
+    u32 GetLastError()
+}
+
+kernel32 _krnl = null
+func _lib(): kernel32 {
+    // 懒加载：??= 只在为 null 时 load（2026-11-02）
+    _krnl ??= ffi.load("kernel32.dll")
+    return _krnl
+}
+
+// ==================== 错误码辅助 ====================
+
+// 获取最后的系统错误码 (GetLastError)
+export func lastError(): int {
+    return _int(_lib().GetLastError())
+}
+
+// 将常见 Windows 错误码转为可读字符串
+// 覆盖外挂开发中最常见的错误码
+export func errorString(int errorCode): string {
+    if errorCode == 0   { return "成功" }
+    if errorCode == 5   { return "拒绝访问 (ACCESS_DENIED) — 可能权限不足或被反作弊保护" }
+    if errorCode == 6   { return "句柄无效 (INVALID_HANDLE)" }
+    if errorCode == 299 { return "部分拷贝 (PARTIAL_COPY) — 地址部分不可读" }
+    if errorCode == 487 { return "地址无效 (INVALID_ADDRESS) — 目标地址不可访问" }
+    if errorCode == 998 { return "内存分配无效 (INVALID_ACCESS)" }
+    if errorCode == 1006 { return "标签不匹配" }
+    if errorCode == 1062 { return "服务未启动" }
+    if errorCode == 1084 { return "不能在安全模式运行" }
+    if errorCode == 1114 { return "动态链接库初始化失败" }
+    if errorCode == 127  { return "找不到过程 (PROC_NOT_FOUND)" }
+    if errorCode == 126  { return "找不到模块 (MOD_NOT_FOUND)" }
+    if errorCode == 183  { return "文件已存在" }
+    if errorCode == 2    { return "找不到文件 (FILE_NOT_FOUND)" }
+    if errorCode == 3    { return "找不到路径" }
+    if errorCode == 87   { return "参数错误 (INVALID_PARAMETER)" }
+    if errorCode == 122  { return "缓冲区不足 (INSUFFICIENT_BUFFER)" }
+    if errorCode == 8    { return "内存不足 (NOT_ENOUGH_MEMORY)" }
+    if errorCode == 1450 { return "资源不足 (NO_SYSTEM_RESOURCES)" }
+    return "错误码 " + errorCode
+}
+
+// 获取并格式化最后的系统错误
+export func lastErrorString(): string {
+    int code = lastError()
+    return errorString(code)
+}
