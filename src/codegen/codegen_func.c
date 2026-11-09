@@ -234,6 +234,24 @@ void gen_func_closure(CodeGen* gen, Ast* ast, ObjFunction* func) {
     // 寄存器高水位写回 local_count
     func->local_count = gen->max_reg;
 
+    // ★ 2026-11-10（P3 可行性结论 → 只做"跑道提醒"，不做加宽）：
+    //   寄存器号仍是 8 位（A/B/C 各 8 位，上限 255）。实测四个项目共 **16,245 个函数**，
+    //   最高 `_ensureKeyNameMap` = 134、次高 130，≥150 的一个都没有 ⇒ 把寄存器加宽
+    //   （等于给 ~60 条指令的操作数整体换编码）是**纯成本、零收益**，因此不做。
+    //   但"撞上限"是硬错误、撞上时用户没有任何预警 ⇒ 这里给一条跑道提醒：
+    //   高水位 ≥ 200 就报，并说清还剩多少、该拆什么。
+    //   ⚠ 为什么不干脆把上限抬到 65535：见上 —— 那条路的代价是**所有**指令都要能寻址
+    //     超过 255 的寄存器（不只是字段那 4 条），属全指令格式改造。
+    if (gen->max_reg >= 200) {
+        warning_add_at_fmt(WARN_REG_PRESSURE, ast->line, ast->column,
+                           "函数 '%s' 的寄存器高水位是 %d（上限 255，只剩 %d 个槽位）："
+                           "再涨就编不过了（会报「寄存器号超出 8 位上限」）。"
+                           "处方：把长函数拆成几个小函数，或把一组相关局部量收进一个 struct"
+                           "（struct 字段数上限已抬到 65535，装状态不受 255 限制）",
+                           func->name ? func->name : "(匿名函数)",
+                           gen->max_reg, 255 - gen->max_reg);
+    }
+
     // 恢复（含寄存器分配器状态与 free 栈内容）
     dce_exit_func();   // 与上面的 dce_enter_func 配对
     gen->chunk = saved_chunk;
