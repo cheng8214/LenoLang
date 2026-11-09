@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>      // ★ 2026-11-09：files.size() 的 stat() 分支（Windows 也提供）
 
 // ==================== 文件对象操作 ====================
 
@@ -450,6 +451,47 @@ static Value native_files_exists(int argCount, Value* args) {
     return val_bool(0);
 }
 
+// files.size(path) -> int
+//   ★ 2026-11-09 新增：只**取大小**，不读内容。
+//   为什么必须有：在这之前想知道一个文件多大，唯一办法是 `files.read(path).byte_len()`
+//   —— 那是**把整个文件读进内存**。实测（AriaDeployd）：分块上传每块写完都要校验落盘大小，
+//   于是 4.4MB 的 exe 分 3 块就要多读 4.4MB，纯浪费；而且分块越多浪费越线性增长。
+//   语义：文件不存在 / 无权限 ⇒ **抛错**（不返回 -1，避免和"空文件 0 字节"混淆）。
+static Value native_files_size(int argCount, Value* args) {
+    (void)argCount;
+
+    if (!is_string_value(args[0])) {
+        native_throw_error("size 参数必须是字符串");
+        return val_null();
+    }
+
+    ObjString* path = (ObjString*)val_as_obj(args[0]);
+#ifdef _WIN32
+    wchar_t* wpath = utf8_to_utf16(path->chars);
+    if (!wpath) {
+        native_throw_error("size: 路径编码转换失败");
+        return val_null();
+    }
+    WIN32_FILE_ATTRIBUTE_DATA fa;
+    BOOL ok = GetFileAttributesExW(wpath, GetFileExInfoStandard, &fa);
+    free(wpath);
+    if (!ok) {
+        native_throw_error("size: 文件不存在或无法访问");
+        return val_null();
+    }
+    // nFileSizeHigh/Low 拼成 64 位（>4GB 也正确）
+    int64_t sz = ((int64_t)fa.nFileSizeHigh << 32) | (int64_t)fa.nFileSizeLow;
+    return val_int(sz);
+#else
+    struct stat st;
+    if (stat(path->chars, &st) != 0) {
+        native_throw_error("size: 文件不存在或无法访问");
+        return val_null();
+    }
+    return val_int((int64_t)st.st_size);
+#endif
+}
+
 // files.delete(path)
 static Value native_files_delete(int argCount, Value* args) {
     (void)argCount;   // 个数由编译期把关（2026-10-01 实测：「参数数量不匹配」）⇒ 运行期不重复检查
@@ -611,6 +653,9 @@ void files_init_module(void) {
     native_register_module_method("files", "exists", native_files_exists, &NATIVE_T_BOOL, NATIVE_FIXED(string_params));
     native_register_module_method("files", "delete", native_files_delete, &NATIVE_T_BOOL, NATIVE_FIXED(string_params));
     native_register_module_method("files", "read", native_files_read, &NATIVE_T_STRING, NATIVE_FIXED(string_params));
+    // ★ 2026-11-09：只取大小，不读内容。原来量文件大小只能 files.read().byte_len()（整包读进内存），
+    //   分块上传逐块校验落盘大小时纯属浪费。不存在/无权限 ⇒ 抛错（区别于"空文件 0 字节"）。
+    native_register_module_method("files", "size", native_files_size, &NATIVE_T_INT, NATIVE_FIXED(string_params));
     // 返回 `null`（v3.2.6）：实现是 `return val_null()`（只写盘、不产生值）—— 原来标 any，
     //   连"失败时会 throw"这一条都看不出来；标 null 后 `var x = files.write(...)` 才是诚实推断。
     native_register_module_method("files", "write", native_files_write, &NATIVE_T_NULL, NATIVE_FIXED(string2_params));
