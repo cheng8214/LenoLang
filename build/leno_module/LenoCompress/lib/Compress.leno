@@ -5,31 +5,39 @@
 //         实现是 **fixed Huffman（BTYPE=01）+ LZ77**（窗口 32KB、匹配 3–258），
 //         单 BFINAL 块。实测 2000 个 'A' ⇒ gzip 34 字节。
 //   · 读：`inflateRaw` / `inflateZlib` / `gunzip`（解码端 **fixed / dynamic 都支持**，
-//         能读 python zlib / 7z / Excel 压出来的流）；坏输入返回 `ok=false` 不崩。
+//         能读 python zlib / 7z / Excel 压出来的流）；坏输入返回 `Result` 的 PARSE，不崩。
 //   · LenoZip 写条目**默认 method 8（deflate）**；`encode(entries, false)` 才用 stored。
 //
 // ⚠ 2026-11-09 更正：本文件头原先写着"下一步：DEFLATE 压缩""LenoZip 用 stored"，
 //   那是**压缩端做完之前**的状态，一直没跟着更新 —— 实测两者都已可用。
 //
+// ★ 2026-11-09（P2 契约收敛）：解压三件从 `GzipResult{ok,data,error,...}` 改成
+//   `Result[Inflated]` —— 失败统一 `ErrCode.PARSE` + 可读 msg，成功给 `Inflated{data,inBytes,outBytes}`。
+//
 // 用法：
 //   import "Compress" as z
-//   var r = z.gunzip(bytes)        // {ok, data, error, inBytes, outBytes}
-//   var r2 = z.inflateRaw(deflate) // 裸 DEFLATE（zip 条目里存的就是它）
+//   import "Result" as res
+//   use res.Result
+//   use z.Inflated
+//   Result[Inflated] r = z.gunzip(bytes)
+//   if r.isErr() { print(r.errText()) } else { print(_str(r.val.outBytes) + " 字节") }
 //   int c = z.crc32("123456789")   // 3421780262
 import "compress_inflate.leno" as inf
 import "compress_crc.leno" as crc
 import "compress_deflate.leno" as dfl
-use inf.GzipResult
+import "Result" as res
+use res.Result
+use inf.Inflated
 
 // ==================== 解压 ====================
 // gzip（RFC1952）：头 + DEFLATE + trailer（ISIZE 校验；不做 CRC32）
-export func gunzip(string raw): GzipResult { return inf.gunzip(raw) }
+export func gunzip(string raw): Result[Inflated] { return inf.gunzip(raw) }
 
 // zlib（RFC1950）：2 字节头 + DEFLATE + 4 字节 adler32（不校验 adler32）
-export func inflateZlib(string raw): GzipResult { return inf.inflateZlib(raw) }
+export func inflateZlib(string raw): Result[Inflated] { return inf.inflateZlib(raw) }
 
 // 裸 DEFLATE 流（RFC1951，无头无尾）—— zip 条目 / PNG IDAT 都是这个
-export func inflateRaw(string raw): GzipResult { return inf.inflateRaw(raw) }
+export func inflateRaw(string raw): Result[Inflated] { return inf.inflateRaw(raw) }
 
 // 魔数判断
 export func isGzip(string raw): bool { return inf.isGzip(raw) }

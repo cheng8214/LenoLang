@@ -224,12 +224,19 @@ for web.parseSitemapEntries(xml) to e { print(e.url, e.lastmod, e.changefreq, e.
 
 ```leno
 import "Web" as web
+import "Result" as res
+use res.Result
+use web.Inflated
 
-var r = web.gunzip(rawBytes)          // 解 gzip（含头/trailer）
-print(r.ok, r.outBytes, r.error)      // 失败时 error 是可读原因
-if web.isGzip(body) { ... }           // 只判魔数 1f 8b（不解压）
-var d = web.inflateRaw(deflateOnly)   // 裸 DEFLATE（无 gzip 头/trailer）
+Result[Inflated] r = web.gunzip(rawBytes)   // 解 gzip（含头/trailer）
+if r.isErr() { print(r.errText()) }         // 失败统一 ErrCode.PARSE + 可读 msg
+else { print(_str(r.val.outBytes) + " 字节") }
+if web.isGzip(body) { ... }                 // 只判魔数 1f 8b（不解压）
+var d = web.inflateRaw(deflateOnly)         // 裸 DEFLATE（无 gzip 头/trailer）
 ```
+
+> ★ 2026-11-09（P2）：`gunzip/inflateRaw/inflateZlib` 的返回值从 `GzipResult{ok,data,error,...}`
+> 改成 `Result[Inflated]`（`Inflated{data, inBytes, outBytes}`），与 LenoCompress 一致。
 
 **为什么自己写**：系统里没有独立的 zlib（PATH / System32 / Git 都查过），`libcurl` 也不导出
 `gzopen` / `inflate*`；随模块分发 DLL 又要维护 Windows/POSIX 两套二进制。这块逻辑不长，

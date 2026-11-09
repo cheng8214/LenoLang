@@ -173,9 +173,9 @@ func client(int port, Channel[string] ch) {
         errs = errs + "E ⑦ 响应体不是 gzip（魔数不符，长度 " + _str(packed.byte_len()) + "）"
     } else {
         var ung = z.gunzip(packed)
-        if not (ung.ok as bool) {
-            errs = errs + "E ⑦ gunzip 失败：" + (ung.error as string)
-        } else if (ung.data as string) != big_text() {
+        if ung.isErr() {
+            errs = errs + "E ⑦ gunzip 失败：" + ung.errText()
+        } else if ung.val.data != big_text() {
             errs = errs + "E ⑦ 解压内容与原文不符"
         } else if packed.byte_len() >= 2000 {
             errs = errs + "E ⑦ 压缩后没变小（" + _str(packed.byte_len()) + " 字节）"

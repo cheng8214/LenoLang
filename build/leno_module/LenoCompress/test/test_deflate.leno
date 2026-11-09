@@ -40,8 +40,8 @@ main() {
         string s = samples[i]
         string c = z.deflateRaw(s)
         var r = z.inflateRaw(c)
-        if not r.ok { fail("① 第 " + _str(i) + " 个样本解压失败：" + r.error) }
-        if r.data != s { fail("① 第 " + _str(i) + " 个样本内容不符") }
+        if r.isErr() { fail("① 第 " + _str(i) + " 个样本解压失败：" + r.errText()) }
+        if r.val.data != s { fail("① 第 " + _str(i) + " 个样本内容不符") }
     }
     print("① 压缩/解压回环 6 个样本 ok")
 
@@ -61,7 +61,7 @@ main() {
     int tail = gz.byte_len()
     eqInt(gz.byte(tail - 4), 5, "③ gzip ISIZE 低字节")
     var gr = z.gunzip(gz)
-    if not gr.ok or gr.data != "hello" { fail("③ gzip 回环失败") }
+    if gr.isErr() or gr.val.data != "hello" { fail("③ gzip 回环失败：" + gr.errText()) }
 
     // ---------- ④ zlib 头 + adler32 ----------
     string zl = z.zlib("abc")
@@ -70,15 +70,15 @@ main() {
     eqInt(z.adler32("abc"), 38600999, "④ adler32(abc)")
     eqInt(z.adler32(""), 1, "④ adler32(空)")
     var zr = z.inflateZlib(zl)
-    if not zr.ok or zr.data != "abc" { fail("④ zlib 回环失败") }
+    if zr.isErr() or zr.val.data != "abc" { fail("④ zlib 回环失败：" + zr.errText()) }
 
     // ---------- ⑤ level 1 / 2 都要能解回（level 1 可能更大）----------
     string l1 = z.deflateLevel(big, 1)
     string l2 = z.deflateLevel(big, 2)
     var r1 = z.inflateRaw(l1)
     var r2 = z.inflateRaw(l2)
-    if not r1.ok or r1.data != big { fail("⑤ level 1 回环失败") }
-    if not r2.ok or r2.data != big { fail("⑤ level 2 回环失败") }
+    if r1.isErr() or r1.val.data != big { fail("⑤ level 1 回环失败：" + r1.errText()) }
+    if r2.isErr() or r2.val.data != big { fail("⑤ level 2 回环失败：" + r2.errText()) }
     print("⑤ level 1 = " + _str(l1.byte_len()) + "B，level 2 = " + _str(l2.byte_len()) + "B")
 
     // ---------- ⑥ CRC 向量（zip/gzip 都用它，别被压缩改动带歪）----------

@@ -13,6 +13,9 @@ import maths
 import strings
 import files
 import "Compress" as z
+import "Result" as res
+use res.Result
+use z.Inflated
 
 func _u16(Array[int] bs, int o): int {
     return bs[o] | (bs[o + 1] << 8)
@@ -102,11 +105,11 @@ export func decode(string raw): Dict {
             } else if method == 8 {
                 var comp = ""
                 if csz > 0 { comp = strings.byte_slice(raw, dstart, dstart + csz - 1) }
-                var r = z.inflateRaw(comp)
-                if not r.ok {
-                    entryErr = "deflate 解压失败：" + r.error
+                Result[Inflated] r = z.inflateRaw(comp)
+                if r.isErr() {
+                    entryErr = "deflate 解压失败：" + r.errText()
                 } else {
-                    data = r.data
+                    data = r.val.data
                     crcOk = (z.crc32Bytes(data.to_bytes()) == crc)
                 }
             } else {

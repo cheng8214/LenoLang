@@ -9,8 +9,10 @@ import "web_html.leno" as htmls
 import "web_charset.leno" as charsets
 import "web_gzip.leno" as gzip
 
+import "Result" as res
+use res.Result
 use htmls.(HtmlNode)
-use gzip.(GzipResult)
+use gzip.(Inflated)
 
 // ==================== 字符集探测与转码 ====================
 // body 已由 net 层自动转码成 UTF-8；这几个函数供"手动处理原始字节"的场景使用
@@ -60,8 +62,8 @@ export func findAll(HtmlNode root, string tagName, string className, string idNa
 
 // ==================== gzip / DEFLATE 解压 ====================
 // 纯 Leno 实现（零依赖）：解 `.gz`、解"响应体是 gzip 字节"的内容
-export func gunzip(string raw): GzipResult { return gzip.gunzip(raw) }
-export func inflateRaw(string raw): GzipResult { return gzip.inflateRaw(raw) }
+export func gunzip(string raw): Result[Inflated] { return gzip.gunzip(raw) }
+export func inflateRaw(string raw): Result[Inflated] { return gzip.inflateRaw(raw) }
 export func isGzip(string raw): bool { return gzip.isGzip(raw) }
-export func inflateZlib(string raw): GzipResult { return gzip.inflateZlib(raw) }
+export func inflateZlib(string raw): Result[Inflated] { return gzip.inflateZlib(raw) }
 

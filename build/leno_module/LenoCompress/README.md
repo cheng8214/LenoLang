@@ -11,8 +11,12 @@ string raw  = z.deflateRaw(data)   // 裸 DEFLATE（zip 条目、PNG IDAT）
 string gz   = z.gzip(data)         // .gz
 string zl   = z.zlib(data)         // RFC1950
 
-// 解（返回 {ok, data, error, inBytes, outBytes}）
-var r = z.gunzip(gz)
+// 解（返回 Result[Inflated]：失败统一 ErrCode.PARSE + 可读 msg）
+import "Result" as res
+use res.Result
+use z.Inflated
+Result[Inflated] r = z.gunzip(gz)
+if r.isErr() { print(r.errText()) } else { print(_str(r.val.outBytes) + " 字节") }
 var r2 = z.inflateRaw(raw)
 var r3 = z.inflateZlib(zl)
 
@@ -28,7 +32,7 @@ int a = z.adler32("abc")           // 38600999
 | `deflateRaw(s)` / `deflateLevel(s, 1\|2)` | 裸 DEFLATE **压缩**（level 1 快、level 2 更小） |
 | `gzip(s)` | gzip：10 字节头（MTIME=0，可复现）+ DEFLATE + CRC32/ISIZE |
 | `zlib(s)` | zlib：`78 9C` + DEFLATE + adler32 |
-| `gunzip(raw)` / `inflateZlib(raw)` / `inflateRaw(raw)` | 解压（见下） |
+| `gunzip(raw)` / `inflateZlib(raw)` / `inflateRaw(raw)` | 解压 → `Result[Inflated]`（`Inflated{data, inBytes, outBytes}`；失败是 `ErrCode.PARSE`） |
 | `isGzip(raw)` | 魔数判断 |
 | `crc32(s)` / `crc32Bytes(Array[int])` / `adler32(s)` | 校验和 |
 | `rfcTableCheck()` | 内部 Huffman 码表自检（空串 = 正常） |

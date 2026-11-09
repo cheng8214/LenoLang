@@ -53,7 +53,7 @@
 | `web_net.leno` | HTTP 客户端与会话 | `HttpClient` / `Response` / `Session` / `ProxyPool` / `BatchResult` / `fetchAll` |
 | `web_html.leno` | HTML 解析 + CSS 选择器（纯 Leno） | `HtmlNode` / `parse` / `select` / `extractTable` / `htmlToText` |
 | `web_charset.leno` | 字符集探测与转码 | `detect` / `decode` / `encode` / `toUtf8` / `isValidUtf8` |
-| `web_gzip.leno` | **gzip / DEFLATE / zlib 解压（纯 Leno）** | `GzipResult` / `gunzip` / `inflateRaw` / `inflateZlib` / `isGzip` / `rfcTableCheck` |
+| `web_gzip.leno` | **gzip / DEFLATE / zlib 解压（纯 Leno）** | `Result[Inflated]` / `gunzip` / `inflateRaw` / `inflateZlib` / `isGzip` / `rfcTableCheck` |
 | `web_crawler.leno` | URL / robots / sitemap / 爬虫框架 / CSV | `Url` / `parseUrl` / `Crawler` / `createCrawler` / `writeCsv` |
 | `web_ws.leno` | WebSocket 客户端（自写，供 CDP 用） | `WsClient` / `connect` / `sendText` / `recvMessage` |
 | `web_cdp.leno` | 无头 Chrome/Edge 驱动（CDP） | `Browser` / `launch` / `render*` / `evaluate` / 截图 |
@@ -65,7 +65,7 @@
 
 | 想要 | 写法 |
 | --- | --- |
-| gzip 自检 `rfcTableCheck()` | `import "web_gzip" as gz`（入口只转发了 `GzipResult` + 4 个解压函数）|
+| gzip 自检 `rfcTableCheck()` | `import "web_gzip" as gz`（入口只转发了 `Result[Inflated]` + 4 个解压函数）|
 | **WebSocket 的任何函数** | `import "web_ws" as ws`（入口只转发了 3 个类型，函数一个都没转）|
 | CDP 低层（`evaluate` / `clickReal` / `captureScreenshot` / `createTargets` …）| `import "web_cdp" as cdp` |
 | HTML 的选择器部件 `SelectorPart` | `import "web_html" as htmls` |
@@ -150,11 +150,12 @@ if gz.ok { print("解出 " + _str(gz.outBytes) + " 字节") }
 ### web_gzip：gzip / DEFLATE / zlib 解压（纯 Leno）
 
 ```leno
-export struct GzipResult {
-    bool ok; string data;          // ok=true 时 data 是解压后的**字节**（当字符串用）
-    string error;                  // ok=false 时的可读原因
+// ★ 2026-11-09（P2）：返回值统一成 Result[Inflated]（原来是自己的一套 GzipResult）
+export struct Inflated {
+    string data;                   // 解压后的**字节**（当字符串用）
     int inBytes; int outBytes;     // 输入 / 输出字节数
 }
+// 失败：Result.code = ErrCode.PARSE，msg 是可读原因
 ```
 
 | 函数 | 认什么 |
@@ -190,12 +191,12 @@ import files
 import "web_gzip" as gz
 
 var b64 = strings.trim(files.read("some.info"))
-var r = gz.gunzip(b64.from_base64())
-if r.ok { print(r.data) } else { print("解压失败: " + r.error) }
+Result[Inflated] r = gz.gunzip(b64.from_base64())
+if r.isOk() { print(r.val.data) } else { print("解压失败: " + r.errText()) }
 ```
 
 > ⚠ **二进制串上 `len()` 是字符数、不是字节数**：错的字节序列经 `len()` 会得到一个偏小的数字
-> （实测：146 字节的 gzip 数据 `len()` 报 127，而 `byte_len()` 是 146、与 `gunzip(...).inBytes`
+> （实测：146 字节的 gzip 数据 `len()` 报 127，而 `byte_len()` 是 146、与 `gunzip(...).val.inBytes`
 > 对得上）⇒ 处理这些解出来的字节时，**一律用 `byte_len()` / `byte()` / `byte_slice()`**。
 > 这与 `web_charset.leno` 文件头第 13-18 行记的是同一条口径（那边同样全程走 `byte_*`）。
 

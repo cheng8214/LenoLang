@@ -10,7 +10,9 @@ import "web_cdp.leno" as browser   // 动态渲染（SPA 回退）：CDP 驱动�
 import "web_html.leno" as htmls
 import "web_net.leno" as web_net
 use web_net.(HttpClient, Response, createClient, ProxyPool)
-use gzip.(GzipResult)
+import "Result" as res
+use res.Result
+use gzip.(Inflated)
 use browser.(Browser, BrowserConfig, RenderOptions, RenderResult)
 use htmls.(HtmlNode)
 
@@ -1498,13 +1500,13 @@ export func fetchSitemapReport(string baseUrl, string userAgent, int maxDepth, i
             // 响应体是 gzip 字节（服务端把 .gz 当静态文件发，没做 Content-Encoding）⇒ 自己解
             string body = r.body
             if _isGzipBody(body) {
-                GzipResult un = gzip.gunzip(body)
-                if not un.ok {
+                Result[Inflated] un = gzip.gunzip(body)
+                if un.isErr() {
                     rep.gzip_skipped = rep.gzip_skipped + 1
-                    rep.errors.add(sm + "：gzip 解压失败（" + un.error + "）")
+                    rep.errors.add(sm + "：gzip 解压失败（" + un.msg + "）")
                     continue
                 }
-                body = un.data
+                body = un.val.data
             }
             if isSitemapIndex(body) {
                 Array[string] children = parseSitemapIndex(body)

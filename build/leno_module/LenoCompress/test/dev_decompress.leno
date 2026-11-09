@@ -1,8 +1,12 @@
 // dev_decompress.leno -- 解压文件（**开发期工具，不是用例**）
 //
 // 用法：dev_decompress.leno <raw|gzip|zlib> <in> <out>
+// ★ 2026-11-09：解压三件已改成 Result[Inflated]（见 lib/Compress.leno 顶部说明）
 import files
 import "Compress" as z
+import "Result" as res
+use res.Result
+use z.Inflated
 
 main() {
     Array[string] args = _args()
@@ -12,13 +16,13 @@ main() {
     }
     string mode = args[0]
     string data = files.read(args[1])
-    var r = z.gunzip(data)
+    Result[Inflated] r = z.gunzip(data)
     if mode == "raw" { r = z.inflateRaw(data) }
     else if mode == "zlib" { r = z.inflateZlib(data) }
-    if not r.ok {
-        print("ERR " + r.error)
+    if r.isErr() {
+        print("ERR " + r.errText())
         return
     }
-    files.write(args[2], r.data)
-    print("OK " + _str(r.outBytes))
+    files.write(args[2], r.val.data)
+    print("OK " + _str(r.val.outBytes))
 }
