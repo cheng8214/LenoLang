@@ -13,6 +13,8 @@
 //   见 docs/待办与路线图.md 五-1。
 import "sqlite3" as db
 import files
+import "Result" as res
+use res.Result
 use db.Statement
 use db.Database
 
@@ -27,6 +29,10 @@ func eqInt(int got, int want, string tag) {
 
 func eqStr(string got, string want, string tag) {
     if got != want { fail(tag + "：得到 [" + got + "] 期望 [" + want + "]") }
+}
+
+func eqBool(bool got, bool want, string tag) {
+    if got != want { fail(tag + "：得到 " + _str(got) + " 期望 " + _str(want)) }
 }
 
 main() {
@@ -94,10 +100,28 @@ main() {
     st5.forEach(func(Statement s) { c2 = s.column_int(0); return true })
     eqInt(c2, 1, "commit 后 1 行")
 
-    // ==================== ⑥ 错误路径 ====================
-    var e = d.execWithErr("SELECT * FROM nonexistent_table")
-    eqInt(if e["rc"] != 0 then 1 else 0, 1, "错误 SQL 的 rc 非 0")
-    eqStr(if _str(e["err"]) != "" then "has" else "empty", "has", "错误 SQL 带回错误消息")
+    // ==================== ⑥ 错误路径（2026-11-09：execWithErr ⇒ execResult）====================
+    //   原来 `Dict{rc, err}` 要 `_str(d["err"])` 判空；现在失败有码（DB）+ SQLite 原话
+    Result[int] e = d.execResult("SELECT * FROM nonexistent_table")
+    if e.isOk() { fail("⑥ 错误 SQL 不该成功") }
+    eqInt(e.code, res.ErrCode.DB, "⑥ 错误 SQL ⇒ ErrCode.DB")
+    eqBool(e.msg.has("no such table"), true, "⑥ 错误消息里带 SQLite 原话")
+    eqInt(if e.msg.has("SELECT * FROM nonexistent_table") then 1 else 0, 1, "⑥ 消息里带被执行的 SQL")
+
+    //   成功时给受影响行数（挑 id=2 的 score，别动 ⑦ 还要用的 name='a'）
+    Result[int] e2 = d.execResult("UPDATE t SET score = 2.5 WHERE id = 2")
+    if e2.isErr() { fail("⑥ UPDATE 应成功：" + e2.errText()) }
+    eqInt(e2.val, 1, "⑥ execResult 成功时给受影响行数")
+    d.exec("UPDATE t SET score = NULL WHERE id = 2")     // 还原：⑧ 还要断言第 2 行 score 是 NULL
+
+    //   prepareResult：失败带原因（prepare 只给 isOk()==false）
+    Result[Statement] pr = d.prepareResult("SELECT * FROM no_such_table_xyz")
+    if pr.isOk() { fail("⑥ prepareResult 应失败") }
+    eqInt(pr.code, res.ErrCode.DB, "⑥ prepareResult 失败 ⇒ ErrCode.DB")
+    eqBool(pr.msg.has("no such table"), true, "⑥ prepareResult 带上原因")
+    Result[Statement] pr2 = d.prepareResult("SELECT 1")
+    if pr2.isErr() { fail("⑥ prepareResult 正常 SQL 应成功") }
+    pr2.val.finalize()
 
     // ==================== ⑦ 参数绑定 ====================
     var st6 = d.prepare("SELECT name FROM t WHERE id = ?")

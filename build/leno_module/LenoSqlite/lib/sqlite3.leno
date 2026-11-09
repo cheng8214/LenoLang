@@ -5,6 +5,9 @@ import ffi
 import dirs
 import files
 import "sqlite3_core.leno" as core
+// 统一错误契约（P2）：`execResult` / `prepareResult` 用 Result 取代 Dict{rc,err} / 裸 rc
+import "Result" as res
+use res.Result
 // 重新导出核心类型（use 自动 re-export enum/struct 类型）
 use core.sqlite3
 use core.ResultCode
@@ -397,9 +400,12 @@ export struct Database {
         return core.lib().sqlite3_exec(handle, sql, null, null, null)
     }
 
-    // 执行 SQL 语句并返回错误消息
-    func execWithErr(string sql): Dict {
-        if not ok { return {rc: ResultCode.MISUSE, err: "Database not open"} }
+    // 执行 SQL 并带回原因（★ 2026-11-09，P2 契约收敛）
+    //   原来是 `Dict{rc, err}` —— 调用方要 `_str(d["err"])` 判空、`d["rc"] as int` 比 SQLite 常量。
+    //   现在：成功 ⇒ `ok(受影响行数)`（DDL 为 0），失败 ⇒ `err[DB]` 带 SQLite 原话。
+    //   `rc` 本身仍可从 `exec()` 拿（原生码，热路径/需要细分时用），但**新代码用这个**。
+    func execResult(string sql): Result[int] {
+        if not ok { return res.err[int](res.ErrCode.IO, "数据库连接未打开") }
         Ptr[u8] errmsgBuf = ffi.malloc(8)
         int rc = core.lib().sqlite3_exec(handle, sql, null, null, errmsgBuf)
         string err = ""
@@ -411,7 +417,10 @@ export struct Database {
             }
         }
         ffi.free(errmsgBuf)
-        return {rc: rc, err: err}
+        if rc != ResultCode.OK {
+            return res.err[int](res.ErrCode.DB, "SQL 执行失败（rc=" + _str(rc) + "）：" + err + "｜SQL: " + sql)
+        }
+        return res.ok(changes())
     }
 
     // ==================== 预编译语句 ====================
@@ -423,6 +432,18 @@ export struct Database {
         Statement stmt = new Statement()
         stmt.init(handle, sql)
         return stmt
+    }
+
+    // 同上，但失败时**带原因**（`prepare` 只给一个 isOk()==false 的 Statement，SQLite 的原话丢了）
+    //   ★ 2026-11-09：新代码建议用这个 —— "SQL 语法错" 和 "表不存在" 必须能分开
+    func prepareResult(string sql): Result[Statement] {
+        Statement stmt = new Statement()
+        stmt.init(handle, sql)
+        if not stmt.isOk() {
+            string why = if ok then errmsg() else "数据库连接未打开"
+            return res.err[Statement](res.ErrCode.DB, "准备 SQL 失败：" + why + "｜SQL: " + sql)
+        }
+        return res.ok(stmt)
     }
 
     // 便捷查询：执行 SQL 并对每行调用回调

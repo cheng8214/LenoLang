@@ -2,7 +2,11 @@
 //
 // 用法：dev_roundtrip.leno <输入.csv> <输出.csv>
 // 语义：读进来 → 按 LF 重新写出（不回写表头判断，纯行×列搬运）
+// ★ 2026-11-09：CSV 的 load/save 已改成 Result（见 lib/csv_io.leno 顶部说明）
 import "CSV" as csv
+import "Result" as res
+use res.Result
+use csv.CsvTable
 
 main() {
     Array[string] args = _args()
@@ -10,15 +14,15 @@ main() {
         print("用法: dev_roundtrip.leno <输入.csv> <输出.csv>")
         return
     }
-    var d = csv.load(args[0], ",", false)
-    if not (d["ok"] as bool) {
-        print("ERR " + (d["err"] as string))
+    Result[CsvTable] d = csv.load(args[0], ",", false)
+    if d.isErr() {
+        print("ERR " + d.errText())
         return
     }
-    Array[Array[string]] rows = d["rows"] as Array[Array[string]]
-    if not csv.save(args[1], rows, ",", false) {
-        print("ERR 写文件失败")
+    Result[int] w = csv.save(args[1], d.val.rows, ",", false)
+    if w.isErr() {
+        print("ERR " + w.errText())
         return
     }
-    print("OK " + _str(rows.len()))
+    print("OK " + _str(d.val.rows.len()))
 }

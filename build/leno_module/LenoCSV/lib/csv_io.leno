@@ -1,44 +1,65 @@
 // csv_io.leno -- 文件读写 + 表头/记录整理（纯 Leno）
 //
-// 返回口径统一为 Dict（与 LenoQR / LenoSDL3 的 capture 一致）：
-//   {ok: bool, header: Array[string], rows: Array[Array[string]], err: string}
-//   ok=false 时 err 是可直接展示的原因；ok=true 时 err 为空串。
+// ★ 2026-11-09（P2 契约收敛）：原来的口径是 `Dict{ok, header, rows, err}`，
+//   调用方要 `_str(d["err"])` 判空、还要 `as Array[...]` 强转。
+//   现在按"能不能失败"分开，**只给会失败的那两个套 Result**：
+//     · parse_table(text, ...)            ⇒ `CsvTable`       —— 解析是容错的，不会失败
+//     · load(path, ...)                   ⇒ `Result[CsvTable]` —— 文件可能不存在/读不了
+//     · save(path, ...)                   ⇒ `Result[int]`     —— 返回**写出的字节数**（原来是 bool）
+//   这样既统一了契约，也没有"凭空造一个永远 ok 的 Result"（那种 Result 反而让人以为要判错）。
 import files
+import strings
+import "Result" as res
+use res.Result
 import "csv_parse.leno" as p
 import "csv_encode.leno" as e
 
-// 文本 → {header, rows}；hasHeader=false 时 header 为空、rows 是全部行
-export func parse_table(string text, string delim, bool hasHeader): Dict {
-    Array[Array[string]] all = p.parse(text, delim)
+// 表头 + 记录（原来塞在 Dict 的 header / rows 两个键里）
+export struct CsvTable {
     Array[string] header = []
-    Array[Array[string]] rows = all
-    if hasHeader and all.len() > 0 {
-        header = all[0]
-        rows = []
-        for 1:all.len()-1 to i { rows.add(all[i]) }
-    }
-    return {ok: true, header: header, rows: rows, err: ""}
+    Array[Array[string]] rows = []
 }
 
-// 文件 → {header, rows}
+// 文本 → 表；hasHeader=false 时 header 为空、rows 是全部行
+export func parse_table(string text, string delim, bool hasHeader): CsvTable {
+    Array[Array[string]] all = p.parse(text, delim)
+    CsvTable t = new CsvTable()
+    if hasHeader and all.len() > 0 {
+        t.header = all[0]
+        for 1:all.len()-1 to i { t.rows.add(all[i]) }
+    } else {
+        t.rows = all
+    }
+    return t
+}
+
+// 文件 → 表
 //   ⚠ files.read 本身会剥 UTF-8 BOM；parse 里也有一层 BOM 处理 ⇒ 两条路都安全 ✓
-export func load(string path, string delim, bool hasHeader): Dict {
+export func load(string path, string delim, bool hasHeader): Result[CsvTable] {
     if not files.exists(path) {
-        return {ok: false, header: [], rows: [], err: "文件不存在：" + path}
+        return res.err[CsvTable](res.ErrCode.NOT_FOUND, "文件不存在：" + path)
     }
     string text = ""
     try {
         text = files.read(path)
     } catch ex {
-        return {ok: false, header: [], rows: [], err: "读文件失败：" + path}
+        return res.err[CsvTable](res.ErrCode.IO, "读文件失败：" + path + "（" + _str(ex) + "）")
     }
-    return parse_table(text, delim, hasHeader)
+    return res.ok(parse_table(text, delim, hasHeader))
 }
 
-// 行×列 → 文件。返回是否确实落盘（不依赖 files.write 的返回值口径）
-export func save(string path, Array[Array[string]] rows, string delim, bool crlf): bool {
-    files.write(path, e.encode(rows, delim, crlf))
-    return files.exists(path)
+// 行×列 → 文件。成功时给出**写出的字节数**（UTF-8），失败区分"写不动"和"写完不见了"
+export func save(string path, Array[Array[string]] rows, string delim, bool crlf): Result[int] {
+    string text = e.encode(rows, delim, crlf)
+    try {
+        files.write(path, text)
+    } catch ex {
+        return res.err[int](res.ErrCode.IO, "写文件失败：" + path + "（" + _str(ex) + "）")
+    }
+    if not files.exists(path) {
+        return res.err[int](res.ErrCode.IO, "写入后文件仍不存在：" + path)
+    }
+    return res.ok(strings.byte_len(text))
 }
 
 // 表头 + 行 → Array[Dict]（每行一个记录；缺的列补空串，多的列忽略）

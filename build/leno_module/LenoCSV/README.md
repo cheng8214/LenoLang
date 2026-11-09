@@ -10,25 +10,29 @@ var rows = csv.parse("a,b\n1,2\n")          // [["a","b"], ["1","2"]]
 var text = csv.encode(rows)                  // "a,b\r\n1,2"（默认 CRLF，Excel 友好）
 
 // ② 带表头 → 记录
-var t = csv.parseTable("name,age\nAlice,30\n")
+CsvTable t = csv.parseTable("name,age\nAlice,30\n")
 var recs = csv.toDicts(t.header, t.rows)     // [{name:"Alice", age:"30"}]
 
-// ③ 文件
-var d = csv.load("data.csv", ",", true)      // {ok, header, rows, err}
-csv.save("out.csv", d.rows, ",", true)
+// ③ 文件（会失败的两个返回 Result）
+Result[CsvTable] d = csv.load("data.csv", ",", true)
+if d.isErr() { print(d.errText()) }
+Result[int] w = csv.save("out.csv", d.val.rows, ",", true)    // 写出的字节数
 ```
 
 ## API
+
+★ 2026-11-09（P2）：`parseTable` 给 **`CsvTable` 结构体**（容错解析不会失败，不再假装返回
+`{ok,...}`）；`load` / `save` 给 **`Result`** —— 文件操作才可能失败，失败分 `NOT_FOUND` / `IO`。
 
 | 函数 | 说明 |
 |---|---|
 | `parse(text, delim=",")` | → `Array[Array[string]]`（行×列，含表头行） |
 | `encode(rows, delim=",", crlf=true)` | 行×列 → 文本（**最小引号**） |
 | `encodeRecords(header, rows, ...)` | 表头 + 记录 → 文本 |
-| `parseTable(text, delim=",", hasHeader=true)` | → `{ok, header, rows, err}` |
+| `parseTable(text, delim=",", hasHeader=true)` | → `CsvTable{header, rows}` |
 | `toDicts(header, rows)` | → `Array[Dict]`（缺列补 `""`，多列忽略） |
-| `load(path, delim=",", hasHeader=true)` | 读文件，同上 Dict；文件不存在 ⇒ `ok=false` + 原因 |
-| `save(path, rows, delim=",", crlf=true)` | 写文件，返回是否落盘 |
+| `load(path, delim=",", hasHeader=true)` | → `Result[CsvTable]`；文件不存在 ⇒ `NOT_FOUND` |
+| `save(path, rows, delim=",", crlf=true)` | → `Result[int]`（写出的**字节数**） |
 | `widths(rows)` | 每行列数（排查"第 3 行少一列"） |
 | `delimByte(delim)` | 分隔符首字节（自检用） |
 

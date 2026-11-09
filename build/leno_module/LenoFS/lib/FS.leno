@@ -8,18 +8,30 @@
 // 取向：
 //   · **不跟随符号链接**（与 dirs.walk 同口径）：链接本身会被删除/复制，但不会递归进去，
 //     避免 junction 指回祖先时无限展开
-//   · 返回 Dict `{ok, files, dirs, err}`，不抛异常（与 LenoQR/LenoCSV 一致）
+//   · 返回 `Result[FsCount]`（**2026-11-09，P2 契约收敛**：原来是 `Dict{ok,files,dirs,err}`，
+//     调用方要 `_str(d["err"])` 判空、还要 `as int` 取计数 —— 换成 Result 后失败有码、有消息，
+//     成功有强类型计数。全仓调用点只有本模块自己的测试，所以直接改，不留第二套）
 //   · 不保留 mtime/权限/属性（跨平台一致的成本太高；要保留请自己调系统工具）
 import files
 import dirs
 import strings
+import "Result" as res
+use res.Result
 
-func _ok(int f, int d): Dict {
-    return {ok: true, files: f, dirs: d, err: ""}
+// 计数结果（原来是 Dict 里的 files/dirs 两个数字）
+//   ⚠ 字段不能叫 `files` / `dirs`：本文件 `import files` / `import dirs` 用的正是这两个名字，
+//     字段会**遮蔽模块别名**（编译器给 WARN_SHADOW_MODULE_ALIAS），以后谁在 struct 方法里
+//     写 `files.exists(...)` 就会撞墙。叫 fileCount / dirCount，一眼不会错 ✓
+export struct FsCount {
+    int fileCount = 0
+    int dirCount = 0
 }
 
-func _bad(string msg): Dict {
-    return {ok: false, files: 0, dirs: 0, err: msg}
+func _okCount(int f, int d): Result[FsCount] {
+    FsCount c = new FsCount()
+    c.fileCount = f
+    c.dirCount = d
+    return res.ok(c)
 }
 
 // ==================== 删除 ====================
@@ -44,14 +56,15 @@ func _rm(string path, Dict st) {
     }
 }
 
-export func rmtree(string path): Dict {
-    if not files.exists(path) and not dirs.exists(path) { return _ok(0, 0) }
+// 递归删除。路径本来就不存在 ⇒ **算成功**（计数 0）—— 幂等，调用方不必先判断存在性
+export func rmtree(string path): Result[FsCount] {
+    if not files.exists(path) and not dirs.exists(path) { return _okCount(0, 0) }
     Dict st = {files: 0, dirs: 0}
     _rm(path, st)
     if files.exists(path) or dirs.exists(path) {
-        return _bad("删除后仍存在（权限 / 被占用？）：" + path)
+        return res.err[FsCount](res.ErrCode.IO, "删除后仍存在（权限 / 被占用？）：" + path)
     }
-    return _ok(st["files"] as int, st["dirs"] as int)
+    return _okCount(st["files"] as int, st["dirs"] as int)
 }
 
 // ==================== 复制 ====================
@@ -86,32 +99,41 @@ func _cp_dir(string src, string dst, Dict st) {
 }
 
 // 单文件复制（目标已存在则覆盖）
-export func copy(string src, string dst): Dict {
-    if not files.exists(src) { return _bad("源文件不存在：" + src) }
-    if dirs.is_dir(src) { return _bad("源是目录，请用 copytree：" + src) }
+export func copy(string src, string dst): Result[FsCount] {
+    // ⚠ 先判目录：`files.exists(目录)` 是 **false** ⇒ 顺序反了会把"你把目录交给 copy 了"
+    //   报成"源文件不存在"（实测 2026-11-09，测试 ③c 抓到的）
+    if dirs.is_dir(src) {
+        return res.err[FsCount](res.ErrCode.INVALID_ARG, "源是目录，请用 copytree：" + src)
+    }
+    if not files.exists(src) { return res.err[FsCount](res.ErrCode.NOT_FOUND, "源文件不存在：" + src) }
     Dict st = {files: 0, dirs: 0}
     _cp(src, dst, st)
-    return _ok(st["files"] as int, st["dirs"] as int)
+    return _okCount(st["files"] as int, st["dirs"] as int)
 }
 
 // 整树复制（src 是目录；dst 不存在会创建，已存在则合并）
-export func copytree(string src, string dst): Dict {
-    if not dirs.is_dir(src) { return _bad("源目录不存在：" + src) }
-    if files.exists(dst) and not dirs.is_dir(dst) { return _bad("目标已存在且不是目录：" + dst) }
+export func copytree(string src, string dst): Result[FsCount] {
+    if not dirs.is_dir(src) {
+        return res.err[FsCount](res.ErrCode.NOT_FOUND, "源目录不存在：" + src)
+    }
+    if files.exists(dst) and not dirs.is_dir(dst) {
+        return res.err[FsCount](res.ErrCode.CONFLICT, "目标已存在且不是目录：" + dst)
+    }
     Dict st = {files: 0, dirs: 0}
     _cp_dir(src, dst, st)
-    return _ok(st["files"] as int, st["dirs"] as int)
+    return _okCount(st["files"] as int, st["dirs"] as int)
 }
 
 // 目录项数量（供"删前确认/复制后核对"用）
-export func count(string path): Dict {
+//   不失败：路径不存在就是 0/0（只是统计，不是操作）
+export func count(string path): Result[FsCount] {
     Dict st = {files: 0, dirs: 0}
     if not dirs.is_dir(path) {
-        if files.exists(path) { return {files: 1, dirs: 0} }
-        return {files: 0, dirs: 0}
+        if files.exists(path) { return _okCount(1, 0) }
+        return _okCount(0, 0)
     }
     _count(path, st)
-    return {files: st["files"] as int, dirs: st["dirs"] as int}
+    return _okCount(st["files"] as int, st["dirs"] as int)
 }
 
 func _count(string path, Dict st) {

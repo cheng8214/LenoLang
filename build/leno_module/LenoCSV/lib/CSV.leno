@@ -8,12 +8,13 @@
 //   var text = csv.encode(rows)                  // "a,b\r\n1,2"
 //
 //   // ② 带表头
-//   var t = csv.parseTable(text)                 // {header, rows}
+//   var t = csv.parseTable(text)                 // CsvTable{header, rows}
 //   var recs = csv.toDicts(t.header, t.rows)     // [{a:"1", b:"2"}]
 //
-//   // ③ 文件
-//   var d = csv.load("data.csv", ",", true)      // {ok, header, rows, err}
-//   csv.save("out.csv", d.rows, ",", true)
+//   // ③ 文件（会失败的两个返回 Result[T]，见 docs/错误与空值契约.md）
+//   Result[CsvTable] d = csv.load("data.csv", ",", true)
+//   if d.isErr() { print(d.errText()) }
+//   Result[int] w = csv.save("out.csv", rows, ",", true)   // 写出的字节数
 //
 // 约定：
 //   · 解析是**容错**的（引号内逗号/换行、"" 转义、CRLF/LF/CR、BOM、空行、不齐的行都能读）
@@ -22,6 +23,9 @@
 import "csv_parse.leno" as p
 import "csv_encode.leno" as e
 import "csv_io.leno" as cio     // ⚠ 别名不能叫 io：`io` 是内部模块名（import 别名禁用）
+import "Result" as res
+use res.Result
+use cio.(CsvTable)
 
 // ==================== 文本 ⇄ 行×列 ====================
 export func parse(string text, string delim = ","): Array[Array[string]] {
@@ -39,8 +43,8 @@ export func encodeRecords(Array[string] header, Array[Array[string]] rows,
 }
 
 // ==================== 带表头 ====================
-// {ok, header: Array[string], rows: Array[Array[string]], err}
-export func parseTable(string text, string delim = ",", bool hasHeader = true): Dict {
+// 容错解析 ⇒ 不会失败，直接给 CsvTable（没有"永远 ok 的 Result"这种假契约）
+export func parseTable(string text, string delim = ",", bool hasHeader = true): CsvTable {
     return cio.parse_table(text, delim, hasHeader)
 }
 
@@ -50,12 +54,13 @@ export func toDicts(Array[string] header, Array[Array[string]] rows): Array[Dict
 }
 
 // ==================== 文件 ====================
-export func load(string path, string delim = ",", bool hasHeader = true): Dict {
+export func load(string path, string delim = ",", bool hasHeader = true): Result[CsvTable] {
     return cio.load(path, delim, hasHeader)
 }
 
+// 成功给写出的字节数（UTF-8）
 export func save(string path, Array[Array[string]] rows,
-                 string delim = ",", bool crlf = true): bool {
+                 string delim = ",", bool crlf = true): Result[int] {
     return cio.save(path, rows, delim, crlf)
 }
 

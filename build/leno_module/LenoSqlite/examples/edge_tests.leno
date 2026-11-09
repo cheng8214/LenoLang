@@ -2,6 +2,8 @@
 // 测试各种边界情况：NULL值、BLOB、错误处理、重复操作等
 import "sqlite3"
 import ffi
+import "Result" as res
+use res.Result
 use sqlite3.Statement
 use sqlite3.DataType
 
@@ -65,13 +67,13 @@ main() {
         print("  FAIL: 语法错误应返回非OK码")
     }
 
-    // execWithErr 测试
-    Dict errResult = db.execWithErr("SELECT * FROM nonexistent_table")
-    if errResult.get("rc", 0) != sqlite3.OK {
-        print("  execWithErr 错误码: " + errResult.get("rc", 0) + " (OK)")
-        print("  execWithErr 错误消息: " + errResult.get("err", ""))
+    // execResult 测试（2026-11-09：execWithErr 的 Dict 口径已改成 Result）
+    Result[int] errResult = db.execResult("SELECT * FROM nonexistent_table")
+    if errResult.isErr() {
+        print("  execResult 错误码: " + errResult.errName() + " (OK)")
+        print("  execResult 错误消息: " + errResult.msg)
     } else {
-        print("  FAIL: execWithErr 应返回错误")
+        print("  FAIL: execResult 应返回错误")
     }
 
     // ==================== 4. 列信息查询 ====================
