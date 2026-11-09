@@ -1,9 +1,11 @@
 // zip_write.leno -- 写 ZIP（PKZIP 2.0 格式，纯 Leno）
 //
-// 现状：条目一律用 **stored（method 0，不压缩）**。
-//   为什么不压缩：deflate **压缩端**还没实现（LenoCompress 目前只有解压）。
-//   stored 的好处是"任何解压器都能读"，代价是体积（xlsx/文本会明显变大）。
-//   等 LenoCompress 补上 deflate，这里只需把 method 换成 8 + 调一次压缩函数。
+// 现状：条目**按 compress 参数**选 method —— true ⇒ 8（deflate），false ⇒ 0（stored）。
+//   deflate 走 `LenoCompress.deflateRaw`（fixed Huffman + LZ77）。
+//   stored 的好处是"任何解压器都能读"，代价是体积。
+//
+// ⚠ 2026-11-09 更正：这里原先写"条目一律用 stored（不压缩），deflate 压缩端还没实现"，
+//   是压缩端完成前的状态 —— 下面 `if compress { method = 8 }` 早就实现了。
 //
 // 结构（3 段，全部小端）：
 //   [local header + data] × N  →  [central directory]  →  [EOCD]

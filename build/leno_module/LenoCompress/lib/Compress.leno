@@ -1,9 +1,15 @@
 // Compress.leno -- LenoCompress 门面（纯 Leno，零原生依赖）
 //
-// 现状：**解压**可用（gzip / zlib / 裸 DEFLATE）+ CRC32。
-// 下一步：DEFLATE **压缩**（fixed + dynamic Huffman + LZ77）—— 有了它，zip 才能把
-//   条目压小、gzip 才能"写"出来。当前 LenoZip 写出的条目用 stored（不压缩），
-//   读的时候两种都支持 ✓
+// 现状：**压缩与解压都可用**，外加 CRC32 / Adler-32。
+//   · 写：`deflateRaw` / `deflateLevel` / `gzip` / `zlib`
+//         实现是 **fixed Huffman（BTYPE=01）+ LZ77**（窗口 32KB、匹配 3–258），
+//         单 BFINAL 块。实测 2000 个 'A' ⇒ gzip 34 字节。
+//   · 读：`inflateRaw` / `inflateZlib` / `gunzip`（解码端 **fixed / dynamic 都支持**，
+//         能读 python zlib / 7z / Excel 压出来的流）；坏输入返回 `ok=false` 不崩。
+//   · LenoZip 写条目**默认 method 8（deflate）**；`encode(entries, false)` 才用 stored。
+//
+// ⚠ 2026-11-09 更正：本文件头原先写着"下一步：DEFLATE 压缩""LenoZip 用 stored"，
+//   那是**压缩端做完之前**的状态，一直没跟着更新 —— 实测两者都已可用。
 //
 // 用法：
 //   import "Compress" as z

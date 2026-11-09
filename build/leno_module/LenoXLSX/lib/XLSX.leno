@@ -16,7 +16,8 @@
 //   · 写：小数、日期、带前导零的编号都按**文本**写（避免"看着像数字其实错"）
 //   · 读：数值原样返回字符串；日期读到的是 Excel 序列号（没有样式就无法还原）
 //   · 读：只认 sheet 数据与共享字符串；图片/图表/数据透视表一律忽略
-//   · 容器：LenoZip 写的是 stored（不压缩），xlsx 会比 Excel 存的大一些
+//   · 容器：LenoZip **默认用 deflate 压缩**（method 8），xlsx 体积接近 Excel
+//     （⚠ 2026-11-09 更正：这里原先写"LenoZip 写的是 stored"，是压缩端完成前的状态）
 import files
 import "xlsx_write.leno" as w
 import "xlsx_read.leno" as r
