@@ -12,6 +12,7 @@
 //   不会报类型错（编译器已知缺陷），会被当作 false ⇒ 只跑第一行。
 //   见 docs/待办与路线图.md 五-1。
 import "sqlite3" as db
+import files
 use db.Statement
 use db.Database
 
@@ -113,6 +114,55 @@ main() {
     st7.forEach(func(Statement s) { ty = s.columnType(0); return true })
     eqInt(ty, 5, "bind_null ⇒ 读回 NULL(5)")
 
+    // ==================== ⑧ NULL 语义：column_is_null / column_value（2026-11-09，P2）====================
+    //   为什么单独测：`column_text(NULL)` 给 ""、`column_int(NULL)` 给 0 —— 那是**压平**，
+    //   "这格没值"和"这格的值就是空串/0"从此分不清（评估报告 §4.5.1 的 4 类空值哨兵之一）。
+    //   name 列：'a' / NULL / '' ；score 列：1.5 / NULL / 0.0
+    var st8 = d.prepare("SELECT id, name, score FROM t ORDER BY id")
+    Array[bool] isNullName = []
+    Array[bool] isNullScore = []
+    Array[string] names = []
+    Array[int] ids = []
+    Array[float] scores = []
+    st8.forEach(func(Statement s) {
+        isNullName.add(s.column_is_null(1))
+        isNullScore.add(s.column_is_null(2))
+        var nv = s.column_value(1)
+        if nv == null { names.add("<null>") } else { names.add(_str(nv)) }
+        ids.add(s.column_value(0) as int)
+        var sv = s.column_value(2)
+        if sv == null { scores.add(-999.0) } else { scores.add(_float(sv)) }
+        return true
+    })
+    eqInt(if isNullName[0] then 1 else 0, 0, "第 1 行 name 不是 NULL")
+    eqInt(if isNullName[1] then 1 else 0, 1, "第 2 行 name 是 NULL")
+    eqInt(if isNullName[2] then 1 else 0, 0, "第 3 行 name 不是 NULL（空串 ≠ NULL）")
+    eqStr(names[0], "a", "column_value(TEXT) ⇒ 文本")
+    eqStr(names[1], "<null>", "column_value(NULL) ⇒ null（不再伪装成空串）")
+    eqStr(names[2], "", "column_value('') ⇒ 空串，与 NULL 区分得开")
+    eqInt(ids[0], 1, "column_value(INTEGER) ⇒ int（不再是 \"1\"）")
+    eqInt(ids[2], 3, "column_value(INTEGER) 第 3 行")
+    var d0 = scores[0] - 1.5
+    if d0 < 0.0 { d0 = -d0 }
+    eqInt(if d0 < 0.000001 then 1 else 0, 1, "column_value(FLOAT) ⇒ float")
+    eqInt(if isNullScore[1] then 1 else 0, 1, "第 2 行 score 是 NULL")
+    eqInt(if scores[2] < -900.0 then 1 else 0, 0, "第 3 行 score 是 0.0（不是 NULL）")
+
     d.close()
+
+    // ---- queryAll：同样不再压平（NULL ⇒ null，INTEGER ⇒ int）----
+    string tmpdb = "build/leno_module/LenoSqlite/test/tmp_null.db"
+    files.delete(tmpdb)
+    var d2 = db.open(tmpdb)
+    d2.exec("CREATE TABLE n(a INTEGER, b TEXT)")
+    d2.exec("INSERT INTO n VALUES (1, NULL)")
+    d2.exec("INSERT INTO n VALUES (2, '')")
+    d2.close()
+    var qrows = db.queryAll(tmpdb, "SELECT a, b FROM n ORDER BY a")
+    eqInt(qrows.len(), 2, "queryAll 读回 2 行")
+    eqInt(_int(qrows[0]["a"]), 1, "queryAll INTEGER ⇒ int")
+    eqInt(if qrows[0]["b"] == null then 1 else 0, 1, "queryAll NULL ⇒ null（旧版是空串）")
+    eqStr(_str(qrows[1]["b"]), "", "queryAll 空串仍是空串")
+    files.delete(tmpdb)
     print("[PASS] sqlite\n")
 }

@@ -38,7 +38,7 @@ Results: 12 passed, 0 failed, 1 skipped (total 13)
 - SKIP 的判据：`leno.toml` 里**当前平台**声明的 `.dll` / `.so` / `.dylib` 文件不存在
   （所以 Windows 上不会因为“没写 linux = …”而误判）
 
-## 模块一览（20 个）
+## 模块一览（21 个）
 
 > ⚠ **包名 ≠ import 名**：`import "X"` 里的 X 是 `lib/` 下的**入口文件名**（不含 `.leno`），
 > 不是 `leno.toml` 里的 `[package] name`。照包名写会直接报「找不到模块」。
@@ -58,6 +58,7 @@ Results: 12 passed, 0 failed, 1 skipped (total 13)
 | LenoLog | `"Log"` | 日志（等级 / 多目的地 / raw） | ✓ |
 | LenoMusic | `"Music"` | 音频（miniaudio 流式播放、解码、频谱） | — |
 | LenoQR | `"QR"` | 二维码生成（纯 Leno）+ 识别（quirc） | ✓ |
+| LenoResult | `"Result"` | `Result[T]` / `Option[T]` + 严格数值解析（统一错误/空值契约，P2） | ✓ |
 | LenoSDL3 | `"SDL3"` | 窗口、渲染器、事件、控件（58 个 lib 文件） | — |
 | LenoSqlite | `"sqlite3"` | SQLite3 绑定 | — |
 | LenoStats | `"Stats"` | 统计 + 金额整数分 | ✓ |

@@ -1,0 +1,11 @@
+[package]
+name = "LenoResult"
+version = "0.1.0"
+description = "Result[T] / Option[T] + 严格数值解析（统一错误与空值契约的形态层）"
+authors = ""
+license = "Apache-2.0"
+
+[modules]
+root = "lib"
+
+# 纯 Leno，无原生库

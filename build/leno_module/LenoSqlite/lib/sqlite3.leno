@@ -240,6 +240,31 @@ export struct Statement {
         return core.lib().sqlite3_column_bytes(handle, col)
     }
 
+    // ==================== NULL 语义（2026-11-09，P2）====================
+    // 问题：SQL 的 NULL 与 `""` / `0` **不是一回事**，但上面那批 column_* 一律把 NULL 压平成零值
+    //   （column_text ⇒ ""、column_int ⇒ 0、column_double ⇒ 0.0）⇒ 调用方再也分不清
+    //   "这列没有值"和"这列的值就是空串/0"。这正是评估报告 §4.5.1 那 4 类空值哨兵之一，
+    //   也是 Aria 的 `db.all()` 只能把整行读成字符串的原因之一。
+    // 新口径（**新代码一律走这两个**；column_* 保留给"已确定非空"的热路径，省一次分支）：
+    //   · column_is_null(col) ⇒ 这一格就是 SQL NULL
+    //   · column_value(col)   ⇒ null / int / float / string / Ptr(BLOB)，**不再压平**
+    //       · INTEGER 给 int（int64 精度），不再是十进制字符串
+    //       · BLOB 给 Ptr —— 长度另取 column_bytes()，要 string 自己 strings.from_bytes
+    func column_is_null(int col): bool {
+        if not ok { return true }
+        return core.lib().sqlite3_column_type(handle, col) == DataType.NULL
+    }
+
+    func column_value(int col): any {
+        if not ok { return null }
+        int t = core.lib().sqlite3_column_type(handle, col)
+        if t == DataType.INTEGER { return core.lib().sqlite3_column_int64(handle, col) }
+        if t == DataType.FLOAT { return core.lib().sqlite3_column_double(handle, col) }
+        if t == DataType.TEXT { return core.lib().sqlite3_column_text(handle, col) }
+        if t == DataType.BLOB { return core.lib().sqlite3_column_blob(handle, col) }
+        return null                     // DataType.NULL
+    }
+
     // ==================== 执行 ====================
 
     // 执行一步预编译语句
@@ -528,6 +553,12 @@ export func quickExec(string path, string sql): int {
 }
 
 // 查询并收集所有行到数组
+// ★ 2026-11-09（P2）：**值不再压平成字符串**，NULL 保留为 null ——
+//   旧行为是 INTEGER → `"123"`、FLOAT → `"1.5"`、NULL → `""`，于是
+//   ① 数字要先 `_int()` 才能算；② `NULL` 与 `''` 完全无法区分（这张表里到底有没有值？）。
+//   新行为：int / float / string / Ptr(BLOB) / **null**。要字符串就自己 `_str()`，
+//   要"有值才用"就 `is null` 判 —— 判断依据只有一处，不再有第四种哨兵。
+//   （仓库内没有任何调用方，改语义不会打断谁；新代码更推荐 `column_value` + 你自己组结构）
 export func queryAll(string path, string sql): Array[Dict] {
     Database db = open(path)
     if not db.isOk() { return [] }
@@ -535,21 +566,23 @@ export func queryAll(string path, string sql): Array[Dict] {
     Statement stmt = db.prepare(sql)
     int ncol = stmt.columnCount()
     while stmt.step() == ResultCode.ROW {
-        Dict row = {}
+        // ⚠ 必须显式 `Dict[string, any]`：裸 `Dict` 的元素类型由**第一次写入**定死
+        //   （先写 int 之后写 string/null 就会报「字典值类型不匹配」）
+        Dict[string, any] row = {}
         for ncol to i {
             string colName = stmt.columnName(i)
             int colType = stmt.columnType(i)
             if colType == DataType.INTEGER {
-                row[colName] = _str(stmt.column_int64(i))
+                row[colName] = stmt.column_int64(i)
             } else if colType == DataType.FLOAT {
-                row[colName] = _str(stmt.column_double(i))
+                row[colName] = stmt.column_double(i)
             } else if colType == DataType.TEXT {
                 row[colName] = stmt.column_text(i)
             } else if colType == DataType.BLOB {
-                // BLOB 返回字节数
-                row[colName] = _str(stmt.column_bytes(i))
+                // BLOB 给字节数（保留旧口径里唯一有意义的那个数字；要内容用 column_blob）
+                row[colName] = stmt.column_bytes(i)
             } else {
-                row[colName] = ""
+                row[colName] = null          // SQL NULL ⇒ null（不再伪装成 ""）
             }
         }
         rows.add(row)

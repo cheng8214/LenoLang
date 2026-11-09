@@ -1,0 +1,246 @@
+// Result.leno —— 统一的「结果 / 可空」形态 + 严格数值解析
+//
+// 为什么要有这个模块（不是"再加一个 API"，而是**收敛**）：
+//   评估报告 §4.5.1 统计过：标准库与四个项目里至少并存 **8 种错误表达**（`Dict{ok,err}`、`bool`、
+//   `int -1`、typed `Result` struct、`error` 字段、`throw`、`Result[T]`、`Response.ok()`）与
+//   **4 类空值哨兵**（`null`、`""`、`0`/`0.0`、`[]`）。后果不是"难看"，是**调用方无法判断**：
+//   `column_int(NULL)` 得到 0、`column_text(NULL)` 得到 ""，于是"没有这个值"和"值就是 0"永远分不清。
+//
+// 本模块给出一套**唯一**的形态，规则只有三条：
+//   ① 可能失败的操作 → `Result[T]`（`ok` / `code` / `msg` / `val`）
+//   ② 可能"没有值"但不算失败 → `Option[T]`（`some` / `val`）
+//   ③ 同一个函数内部临时判空 → 继续用 `T?`（便宜；跨模块边界才换成 Option）
+//
+// 为什么是 struct 不是 enum：Leno 的 enum 只存 int 常量、**不能带载荷**（docs/idioms.md §10），
+//   所以 `Result[T]` 只能是"bool 标志 + 值"的 struct。字段顺序固定为 ok/code/msg/val，
+//   这样 `jsons.fill` / 日志打印 / 逐字段拷贝都能用同一口径。
+//
+// 为什么 `val` 不设默认值也不可空：`Result[int]` 失败时 `val` 是 0 —— 这个 0 **没有意义**，
+//   必须靠 `ok` 判断。`orElse(def)` 让你把"默认值"显式写在调用点，避免又回到"静默给 0"。
+//
+// 用法：
+//   import "Result" as res
+//   use res.(Result, Option)
+//
+//   Result[int] a = res.parseInt("42")
+//   if a.isOk() { print(_str(a.val)) } else { print(a.errName() + " " + a.msg) }
+//   int n = res.parseInt("x").orElse(0)          // 默认值必须显式给
+//   Result[string] s = res.mapResult(a, func(int v) { return _str(v) })
+//
+//   Option[string] o = res.none[string]()        // T 只在返回值里出现 ⇒ 调用点写 [T]
+//   string name = o.orElse("匿名")
+
+import strings
+
+// ==================== 错误码（机器可读的那一半）====================
+// 为什么不是字符串常量集合：字符串拼错不报错；enum 有成员引用检查，且能直接 switch。
+// 也不主张把**所有**细节塞进码里 —— 码只回答"哪一类"，具体原因放 `msg`。
+export enum ErrCode {
+    OK = 0
+    INVALID_ARG = 1     // 参数不合法（调用方写错了）
+    NOT_FOUND = 2       // 查不到（键/文件/行不存在）
+    PARSE = 3           // 文本/字节流解析失败
+    IO = 4              // 文件、目录、磁盘
+    NET = 5             // 网络、HTTP、DNS
+    DB = 6              // 数据库（约束冲突、SQL 错误）
+    AUTH = 7            // 未登录 / 无权限 / token 失效
+    CONFLICT = 8        // 状态冲突（已存在、版本不匹配）
+    UNSUPPORTED = 9     // 有这个能力但当前平台/版本不支持
+    INTERNAL = 10       // 兜底：不该发生的内部错误
+}
+
+// 错误码 → 名字（日志/HTTP 响应体里用；`"ERR_" + 数字` 那种没人看得懂）
+export func codeName(int code): string {
+    switch code {
+        case ErrCode.OK { return "OK" }
+        case ErrCode.INVALID_ARG { return "INVALID_ARG" }
+        case ErrCode.NOT_FOUND { return "NOT_FOUND" }
+        case ErrCode.PARSE { return "PARSE" }
+        case ErrCode.IO { return "IO" }
+        case ErrCode.NET { return "NET" }
+        case ErrCode.DB { return "DB" }
+        case ErrCode.AUTH { return "AUTH" }
+        case ErrCode.CONFLICT { return "CONFLICT" }
+        case ErrCode.UNSUPPORTED { return "UNSUPPORTED" }
+        case ErrCode.INTERNAL { return "INTERNAL" }
+        default { return "ERR_" + _str(code) }
+    }
+}
+
+// ==================== Result[T] ====================
+export struct Result[T] {
+    bool ok = false           // 成功与否（**唯一**判据；别用 code == 0 判，失败也可能是别的码）
+    int code = ErrCode.OK     // 失败时是 ErrCode；成功时恒为 OK
+    string msg = ""           // 失败时给人看的一句话；成功时为空
+    T val                     // 成功时的值（失败时无意义，不要读）
+
+    func isOk(): bool { return ok }
+    func isErr(): bool { return not ok }
+
+    // 直接取值 —— 只在**已经确认 ok** 之后用；失败时这里是"无意义的值"（0/""/null）
+    func get(): T { return val }
+
+    // 取值，失败就抛（消息带错误码名字，`catch e` 至少能看出是哪一类）
+    //   ⚠ 只在"这里失败就是程序 bug"的地方用；能恢复的路径请判 ok
+    func unwrap(): T {
+        if not ok { throw "Result.unwrap: " + codeName(code) + " " + msg }
+        return val
+    }
+
+    // 取值，失败给默认值（默认值必须**显式**给 —— 这就是不吃"静默 0"的关键）
+    func orElse(T def): T {
+        if ok { return val }
+        return def
+    }
+
+    // 日志用：`PARSE: 不是整数：12a`
+    func errName(): string { return codeName(code) }
+    func errText(): string {
+        if ok { return "OK" }
+        return codeName(code) + ": " + msg
+    }
+}
+
+// ==================== Option[T] ====================
+// 与 `T?` 的分工：`T?` 是"这个位置可能没有"，进程内随便用；
+//   `Option[T]` 是**跨模块边界**上"可能没有值"的正式回答（能放进 Result、数组、dict，不会和 null 混）。
+export struct Option[T] {
+    bool some = false
+    T val
+
+    func isSome(): bool { return some }
+    func isNone(): bool { return not some }
+    func get(): T { return val }
+    func unwrap(): T {
+        if not some { throw "Option.unwrap: 空值（isNone）" }
+        return val
+    }
+    func orElse(T def): T {
+        if some { return val }
+        return def
+    }
+}
+
+// ==================== 构造 ====================
+// T 能从实参推出来时直接写 `res.ok(42)`；推不出来（T 只在返回类型里）时写 `res.err[int](...)`
+export func ok[T](T v): Result[T] {
+    Result[T] r = new Result[T]()
+    r.ok = true
+    r.code = ErrCode.OK
+    r.val = v
+    return r
+}
+
+export func err[T](int code, string msg): Result[T] {
+    Result[T] r = new Result[T]()
+    r.ok = false
+    r.code = code
+    r.msg = msg
+    return r
+}
+
+// 最常见的一种失败：有话说、分类就是 INTERNAL 或者调用方懒得分类
+export func errText[T](string msg): Result[T] {
+    return err[T](ErrCode.INTERNAL, msg)
+}
+
+export func some[T](T v): Option[T] {
+    Option[T] o = new Option[T]()
+    o.some = true
+    o.val = v
+    return o
+}
+
+export func none[T](): Option[T] {
+    Option[T] o = new Option[T]()
+    return o
+}
+
+// ==================== 组合（失败短路，code/msg 一路带过去）====================
+export func mapResult[T, U](Result[T] r, func(T): U f): Result[U] {
+    if not r.ok { return err[U](r.code, r.msg) }
+    return ok(f(r.val))
+}
+
+// 链式调用：`f` 自己也返回 Result；第一个失败就停，后面的 f 不会被调用
+export func flatMap[T, U](Result[T] r, func(T): Result[U] f): Result[U] {
+    if not r.ok { return err[U](r.code, r.msg) }
+    return f(r.val)
+}
+
+export func mapOption[T, U](Option[T] o, func(T): U f): Option[U] {
+    if not o.some { return none[U]() }
+    return some(f(o.val))
+}
+
+// ==================== 严格数值解析 ====================
+// 为什么需要：`_int("abc")` 抛异常、`_int_or("abc", 0)` 返回 0、`as int` 只认 any —— 三种语义
+//   互不一致，而且没有一个能回答"这串文本到底是不是整数"。DB/CSV/环境变量全是文本，
+//   于是每个项目自己写一遍（LenoMusic `parsing.leno` 有 50 行注释专门写这个坑）。
+//
+// 口径（**严格**，不做"尽力而为"）：
+//   · parseInt  : `[+-]?数字+`（允许前导 0，如 "007" ⇒ 7）；空格/换行/小数点/中文一律 PARSE 失败
+//   · parseFloat: `[+-]?(数字[.数字]?|.数字)([eE][+-]?数字)?`，允许 "1e3"、".5"、"-0.0"
+//   · 空串 / 只有符号 / "nan" / "inf" ⇒ PARSE 失败（不做特殊值）
+//   · 需要宽松（先去空格）就在调用点 `strings.trim(s)` —— 别把宽松塞进解析器里
+
+func _isDigitByte(int b): bool { return b >= 48 and b <= 57 }
+
+export func parseInt(string s): Result[int] {
+    int n = strings.byte_len(s)
+    if n == 0 { return err[int](ErrCode.PARSE, "空字符串不是整数") }
+    int i = 0
+    int b0 = strings.byte(s, 0)
+    if b0 == 43 or b0 == 45 { i = 1 }          // '+' / '-'
+    if i >= n { return err[int](ErrCode.PARSE, "只有符号，没有数字：" + s) }
+    while i < n {
+        if not _isDigitByte(strings.byte(s, i)) {
+            return err[int](ErrCode.PARSE, "不是整数（含非数字字符）：" + s)
+        }
+        i = i + 1
+    }
+    return ok(_int(s))
+}
+
+export func parseFloat(string s): Result[float] {
+    int n = strings.byte_len(s)
+    if n == 0 { return err[float](ErrCode.PARSE, "空字符串不是数字") }
+    int i = 0
+    int b0 = strings.byte(s, 0)
+    if b0 == 43 or b0 == 45 { i = 1 }          // '+' / '-'
+    int digits = 0
+    int dots = 0
+    while i < n {
+        int b = strings.byte(s, i)
+        if _isDigitByte(b) {
+            digits = digits + 1
+        } else if b == 46 {                     // '.'
+            dots = dots + 1
+            if dots > 1 { return err[float](ErrCode.PARSE, "小数点重复：" + s) }
+        } else {
+            break
+        }
+        i = i + 1
+    }
+    if digits == 0 { return err[float](ErrCode.PARSE, "没有数字部分：" + s) }
+    // 指数部分：e/E [+-]? 数字+
+    if i < n {
+        int b = strings.byte(s, i)
+        if b != 101 and b != 69 { return err[float](ErrCode.PARSE, "不是数字（含非法字符）：" + s) }
+        i = i + 1
+        if i < n {
+            int sb = strings.byte(s, i)
+            if sb == 43 or sb == 45 { i = i + 1 }
+        }
+        int expDigits = 0
+        while i < n {
+            if not _isDigitByte(strings.byte(s, i)) {
+                return err[float](ErrCode.PARSE, "指数部分不是整数：" + s)
+            }
+            expDigits = expDigits + 1
+            i = i + 1
+        }
+        if expDigits == 0 { return err[float](ErrCode.PARSE, "指数后面没有数字：" + s) }
+    }
+    return ok(_float(s))
+}

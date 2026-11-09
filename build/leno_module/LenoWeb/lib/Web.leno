@@ -12,13 +12,16 @@ import "web_charset.leno" as charsets
 import "web_gzip.leno" as gzip
 import "web_ws.leno" as ws
 import "web_cdp.leno" as browser
+// 统一结果类型（2026-11-09：原来的 generic.Result 已删除，改用标准模块）
+import "Result" as rstd
+use rstd.(Result, Option)
 
 // ==================== 重新导出 core 类型 ====================
 use core.(curl, Code, Opt, Info, Global, HttpVersion, SslVersion)
 use net.(Response, HttpClient, Session, MimeField, ProxyPool, ProxyStats, BatchResult)
 use htmls.(HtmlNode)
 use crawler.(Url, Crawler, CrawlItem, Page, SitemapEntry, SitemapReport)
-use generic.(Result, Ok, Err, map, filter, reduce, forEach, Stack, LinkedList, ListNode)
+use generic.(map, filter, reduce, forEach, Stack, LinkedList, ListNode)
 use gzip.(GzipResult)
 use ws.(WsClient, WsUrl, WsMessage)
 use browser.(Browser, BrowserConfig, CdpClient, RenderResult, RenderOptions)
@@ -240,30 +243,29 @@ export func closeTarget(Browser b, string targetId): bool { return browser.close
 export func closeBrowser(Browser b): bool { return browser.close(b) }
 
 // ==================== 泛型工具 ====================
-// Result[T] 构造器转发
-export func Ok[T](T val): Result[T] { return generic.Ok(val) }
-export func Err[T](string msg): Result[T] { return generic.Err(msg) }
+// ★ 2026-11-09（P2）：`Ok` / `Err` 转发壳已删 —— Result 收到标准 `import "Result"` 模块
+//   （见 web_generic.leno 顶部说明）。这里只保留 `safeGet` 一个真实用法。
 
 // Result[T] 安全请求
 export func safeGet(string url): Result[Response] {
     Response r = net.get(url)
-    if r.ok() { return Ok[Response](r) }
-    return Err[Response]("HTTP " + r.statusCode + ": " + r.error)
+    if r.ok() { return rstd.ok(r) }
+    return rstd.err[Response](rstd.ErrCode.NET, "HTTP " + r.statusCode + ": " + r.error)
 }
 export func safePost(string url, string body): Result[Response] {
     Response r = net.post(url, body)
-    if r.ok() { return Ok[Response](r) }
-    return Err[Response]("HTTP " + r.statusCode + ": " + r.error)
+    if r.ok() { return rstd.ok(r) }
+    return rstd.err[Response](rstd.ErrCode.NET, "HTTP " + r.statusCode + ": " + r.error)
 }
 export func safePostJson(string url, string json): Result[Response] {
     Response r = net.postJson(url, json)
-    if r.ok() { return Ok[Response](r) }
-    return Err[Response]("HTTP " + r.statusCode + ": " + r.error)
+    if r.ok() { return rstd.ok(r) }
+    return rstd.err[Response](rstd.ErrCode.NET, "HTTP " + r.statusCode + ": " + r.error)
 }
 export func safeFetchPage(string url, string ua): Result[Page] {
     Page? p = crawler.fetchPage(url, ua)
-    if p == null { return Err[Page]("fetch failed: " + url) }
-    return Ok[Page](p)
+    if p == null { return rstd.err[Page](rstd.ErrCode.NET, "fetch failed: " + url) }
+    return rstd.ok(p)
 }
 
 // 泛型函数式工具直接 re-export

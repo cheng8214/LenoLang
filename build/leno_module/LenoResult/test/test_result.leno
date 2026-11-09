@@ -1,0 +1,171 @@
+// LenoResult 自测：Result / Option / 严格数值解析
+//
+// 跑法（仓库根目录）：
+//   build\leno.exe build\leno_module\LenoResult\test\test_result.leno
+//   或 build\leno.exe build\leno_module\run_all_tests.leno --only LenoResult
+//
+// 这份测试本身就是"跨模块使用"的证明：泛型 struct 从模块导出后用 `use` 取类型、
+// 泛型工厂用**类型推断**、T 只在返回值里出现的用**显式类型实参** `none[string]()`。
+import "Result" as res
+use res.(Result, Option)
+
+func fail(string msg) {
+    print("[FAIL] " + msg + "\n")
+    _exit(1)
+}
+
+func eqInt(int got, int want, string tag) {
+    if got != want { fail(tag + "：得到 " + _str(got) + " 期望 " + _str(want)) }
+}
+
+func eqStr(string got, string want, string tag) {
+    if got != want { fail(tag + "：得到 [" + got + "] 期望 [" + want + "]") }
+}
+
+func eqBool(bool got, bool want, string tag) {
+    if got != want { fail(tag + "：得到 " + _str(got) + " 期望 " + _str(want)) }
+}
+
+func near(float got, float want, string tag) {
+    var d = got - want
+    if d < 0.0 { d = -d }
+    if d > 0.000001 { fail(tag + "：得到 " + _str(got) + " 期望 " + _str(want)) }
+}
+
+struct Item {
+    string name = ""
+    int n = 0
+}
+
+main() {
+    // ==================== ① Result 基本形态 ====================
+    Result[int] a = res.ok(42)
+    eqBool(a.isOk(), true, "ok(42).isOk")
+    eqBool(a.isErr(), false, "ok(42).isErr")
+    eqInt(a.val, 42, "ok 直接读 val")
+    eqInt(a.get(), 42, "ok.get()")
+    eqInt(a.code, res.ErrCode.OK, "成功的 code 恒为 OK")
+    eqStr(a.msg, "", "成功时 msg 为空")
+    eqStr(a.errText(), "OK", "成功时 errText 是 OK")
+
+    Result[int] b = res.err[int](res.ErrCode.PARSE, "不是整数：12a")
+    eqBool(b.isOk(), false, "err.isOk 为假")
+    eqBool(b.isErr(), true, "err.isErr 为真")
+    eqInt(b.code, res.ErrCode.PARSE, "失败码保留")
+    eqStr(b.errName(), "PARSE", "errName 把码翻成名字")
+    eqStr(b.errText(), "PARSE: 不是整数：12a", "errText = 码名 + 冒号 + msg")
+    eqInt(b.orElse(7), 7, "失败时 orElse 给默认值")
+    eqInt(a.orElse(7), 42, "成功时 orElse 给真实值")
+    // 没有为 Result 设默认 val：失败时 val 是 0，但**不要读**它（这就是为什么留 orElse）
+
+    // 未分类失败
+    Result[int] c = res.errText[int]("懒得分码")
+    eqInt(c.code, res.ErrCode.INTERNAL, "errText 默认 INTERNAL")
+
+    // ==================== ② unwrap（失败抛，消息带码名）====================
+    Result[string] u = res.ok("值")
+    eqStr(u.unwrap(), "值", "成功时 unwrap 取值")
+    bool threw = false
+    string caught = ""
+    try {
+        u = res.err[string](res.ErrCode.AUTH, "token 失效")
+        u.unwrap()
+    } catch e {
+        threw = true
+        caught = _str(e)
+    }
+    eqBool(threw, true, "失败时 unwrap 抛异常")
+    eqBool(caught.has("AUTH"), true, "异常消息里带错误码名字")
+
+    // ==================== ③ 泛型换类型（mapResult / flatMap 短路）====================
+    Result[string] m1 = res.mapResult(a, func(int v) { return "n=" + _str(v) })
+    eqBool(m1.isOk(), true, "mapResult 成功")
+    eqStr(m1.val, "n=42", "mapResult 转换了值")
+
+    Result[string] m2 = res.mapResult(b, func(int v) { return "n=" + _str(v) })
+    eqBool(m2.isOk(), false, "mapResult 失败保持失败")
+    eqInt(m2.code, res.ErrCode.PARSE, "mapResult 保住 code")
+    eqStr(m2.msg, "不是整数：12a", "mapResult 保住 msg")
+
+    // 第一个失败就停：后面那段函数根本不该执行
+    int calls = 0
+    Result[int] f1 = res.flatMap(b, func(int v) {
+        calls = calls + 1
+        return res.ok[int](v + 1)
+    })
+    eqBool(f1.isOk(), false, "flatMap 失败短路")
+    eqInt(calls, 0, "flatMap 失败时后半段没执行")
+
+    Result[int] f2 = res.flatMap(res.ok(1), func(int v) {
+        if v > 0 { return res.err[int](res.ErrCode.CONFLICT, "已经有了") }
+        return res.ok[int](v)
+    })
+    eqInt(f2.code, res.ErrCode.CONFLICT, "flatMap 内层失败原样传出")
+
+    // ==================== ④ Result 装 struct（真实用法）====================
+    Item it = new Item()
+    it.name = "甲"
+    it.n = 3
+    Result[Item] ri = res.ok(it)
+    eqStr(ri.val.name, "甲", "Result[struct] 取值")
+    eqInt(ri.val.n, 3, "Result[struct] 字段")
+
+    // ==================== ⑤ Option ====================
+    Option[int] o1 = res.some(5)
+    eqBool(o1.isSome(), true, "some.isSome")
+    eqBool(o1.isNone(), false, "some.isNone")
+    eqInt(o1.orElse(0), 5, "some.orElse 给真实值")
+    eqInt(o1.get(), 5, "some.get")
+
+    Option[int] o2 = res.none[int]()
+    eqBool(o2.isSome(), false, "none.isSome")
+    eqBool(o2.isNone(), true, "none.isNone")
+    eqInt(o2.orElse(-1), -1, "none.orElse 给默认值")
+
+    Option[string] o3 = res.mapOption(res.some(7), func(int v) { return "v" + _str(v) })
+    eqStr(o3.orElse(""), "v7", "mapOption 变换")
+    Option[string] o4 = res.mapOption(res.none[int](), func(int v) { return "v" + _str(v) })
+    eqBool(o4.isNone(), true, "mapOption 空值保持空")
+
+    // ==================== ⑥ parseInt（严格）====================
+    eqInt(res.parseInt("42").val, 42, "parseInt 正常")
+    eqInt(res.parseInt("-7").val, -7, "parseInt 负数")
+    eqInt(res.parseInt("+7").val, 7, "parseInt 正号")
+    eqInt(res.parseInt("007").val, 7, "parseInt 前导零")
+    eqInt(res.parseInt("0").val, 0, "parseInt 零")
+    eqInt(res.parseInt("-0").val, 0, "parseInt 负零")
+
+    Result[int] e1 = res.parseInt("")
+    eqBool(e1.isErr(), true, "parseInt 空串失败")
+    eqInt(e1.code, res.ErrCode.PARSE, "parseInt 空串是 PARSE")
+    eqBool(res.parseInt("12a").isErr(), true, "parseInt 带字母失败")
+    eqBool(res.parseInt("1.5").isErr(), true, "parseInt 不接受小数（严格）")
+    eqBool(res.parseInt(" 12").isErr(), true, "parseInt 不替你去空格（严格）")
+    eqBool(res.parseInt("-").isErr(), true, "parseInt 只有符号失败")
+    eqBool(res.parseInt("１２").isErr(), true, "parseInt 全角数字失败（只认 ASCII）")
+    eqBool(res.parseInt("0x10").isErr(), true, "parseInt 不接受十六进制")
+    eqInt(res.parseInt("x").orElse(99), 99, "失败时 orElse 兜底")
+
+    // ==================== ⑦ parseFloat ====================
+    near(res.parseFloat("1.5").val, 1.5, "parseFloat 小数")
+    near(res.parseFloat("-0.25").val, -0.25, "parseFloat 负小数")
+    near(res.parseFloat(".5").val, 0.5, "parseFloat 省略整数部分")
+    near(res.parseFloat("1e3").val, 1000.0, "parseFloat 指数")
+    near(res.parseFloat("2E-2").val, 0.02, "parseFloat 大写指数 + 负号")
+    near(res.parseFloat("7").val, 7.0, "parseFloat 整数文本")
+
+    Result[float] ef1 = res.parseFloat("")
+    eqBool(ef1.isErr(), true, "parseFloat 空串失败")
+    eqBool(res.parseFloat("1.2.3").isErr(), true, "parseFloat 两个小数点失败")
+    eqBool(res.parseFloat("abc").isErr(), true, "parseFloat 全字母失败")
+    eqBool(res.parseFloat("1e").isErr(), true, "parseFloat 指数没数字失败")
+    eqBool(res.parseFloat("1x").isErr(), true, "parseFloat 尾部垃圾失败")
+    eqBool(res.parseFloat("nan").isErr(), true, "parseFloat 不认 nan（严格）")
+    eqBool(res.parseFloat(".").isErr(), true, "parseFloat 只有点失败")
+    eqBool(res.parseFloat(" 1").isErr(), true, "parseFloat 不替你去空格")
+
+    // ==================== ⑧ codeName 兜底 ====================
+    eqStr(res.codeName(999), "ERR_999", "未知码原样带出来（不吞）")
+
+    print("test_result passed（8 组 / 泛型 + 解析 + 短路）")
+}

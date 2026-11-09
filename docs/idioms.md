@@ -175,7 +175,7 @@ strings.lines("a\nb\r\nc")       // 按行切，认 \r\n
 |---|---|---|
 | **struct ↔ JSON 无自动转换** | `jsons.decode` 实测返回 `Dict[string, any]`（值保留运行期类型：`d["list"]` 收窄后就是 `Array[int]`），但**变不成你自己的 struct**，每层仍要 `as` 收窄 + `_str`/`_int` | 收窄成 `Dict[string, any]` 后手取；或 `jsons.dig(data, "user.name")` |
 | **enum 不能带载荷** | `Progress(done, total)` 写不出来 | struct + int tag |
-| **没有 `Result`** | 每个项目自己造一套错误返回 | 项目内约定一种，别每处一种 |
+| ~~**没有 `Result`**~~ | ✅ 2026-11-09 已补：`import "Result"` 提供 `Result[T]` / `Option[T]`（`ok`/`code`/`msg`/`val`，见 AGENTS.md §11） | 新代码一律用它，别再自造 `Dict{ok,err}` / `bool` / `int -1` |
 | **8 位索引上限** | struct 字段 > 255 / 函数局部量 > 255 编译报错 | 拆类型 / 拆函数（现在是**编译期报错**，不会静默） |
 | **`switch` 无穷尽性检查** | 漏 case 不报错 | 用 `default` 兜底 + 注释 |
 

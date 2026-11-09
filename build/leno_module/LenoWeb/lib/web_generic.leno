@@ -1,47 +1,14 @@
 // web_generic.leno — LenoWeb 泛型工具库
-// 提供 Result[T] 错误处理、map/filter/reduce 函数式工具、Stack[T]、LinkedList[T]
+// 提供 map/filter/reduce 函数式工具、Stack[T]、LinkedList[T]
 // 供 LenoWeb 内部和用户代码使用
-
-// ============================================================================
-// 1. Result[T] — 安全的错误处理模式
-// ============================================================================
-
-export struct Result[T] {
-    T data = null
-    string error = ""
-    bool ok = true
-
-    func isOk(): bool {
-        return self.ok
-    }
-
-    func isError(): bool {
-        return not self.ok
-    }
-
-    func unwrapOr(T defaultVal): T {
-        if self.ok { return self.data }
-        return defaultVal
-    }
-
-    func getError(): string {
-        return self.error
-    }
-
-    func getData(): T {
-        return self.data
-    }
-}
-
-// 构造成功结果
-export func Ok[T](T val): Result[T] {
-    return new Result[T](data=val, ok=true)
-}
-
-// 构造错误结果
-export func Err[T](string msg): Result[T] {
-    return new Result[T](ok=false, error=msg)
-}
+//
+// ★ 2026-11-09（P2）：本文件原来的 `Result[T]` + `Ok`/`Err` **已删除** ——
+//   它和标准的 `import "Result"` 是两份同义 API（而且字段口径还不一样：
+//   这里 `ok` 默认 **true**、值字段叫 `data`，标准那份默认 false、叫 `val`）。
+//   仓库内**零引用**（只有 Web.leno 的转发壳用到），所以直接收编，不再保留第二份。
+//   要 Result 请写：
+//       import "Result" as res
+//       use res.(Result, Option)
 
 // ============================================================================
 // 2. map / filter / reduce — 函数式工具

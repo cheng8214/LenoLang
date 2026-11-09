@@ -428,8 +428,35 @@ build\leno.exe --check <file>
 | 需求 | 现状 |
 |---|---|
 | `enum` 带载荷（`Progress(done, total)`） | 不支持，用 struct + tag |
-| 标准 `Result` / `Option` | 没有，项目内自己约定一种 |
 | struct ↔ JSON 自动转换 | 没有，手写 `as` 收窄 + 字段赋值 |
 | `switch` 穷尽性检查 | 没有，用 `default` 兜底 |
 | struct 字段 > 255 / 函数局部量 > 255 | **编译期报错**（不会静默），需拆类型/拆函数 |
 | 自定义可遍历对象（`for` 吃 `has_next/next`） | **未实现**，先 `toArray()` 或手动 `while` |
+
+---
+
+## 11. 错误与空值：`Result` / `Option`（2026-11-09 起）
+
+```leno
+import "Result" as res
+use res.(Result, Option)
+
+Result[int] n = res.parseInt(txt)          // 严格解析：不 trim、不认 nan/全角/十六进制
+if n.isErr() { print(n.errText()) }        // "PARSE: 不是整数（含非数字字符）：12a"
+int v = n.orElse(0)                        // 默认值必须**显式**给（不吃"静默 0"）
+Result[string] s = res.mapResult(n, func(int x) { return _str(x) })   // 失败短路，code/msg 带过去
+Option[string] o = res.none[string]()      // T 只在返回值里 ⇒ 调用点写 [T]
+```
+
+| 场景 | 用 |
+|---|---|
+| 可能失败（IO / 网络 / 解析 / DB / 鉴权） | `Result[T]` —— `ok` / `code` / `msg` / `val` |
+| 可能"没有值"但不算失败 | `Option[T]` —— `some` / `val` |
+| 函数内部临时判空 | 继续用 `T?`（跨**模块边界**才换 Option） |
+
+**五条不要**：
+- 不要再新增 `Dict{ok,err}` / `bool` / `int -1` / `error` 字段这套（同时存在等于每次都要重学）
+- 不要用 `code == 0` 判成功 —— 判据只有 `ok`
+- 不要读失败结果的 `val`（0/""/null 没有意义），要默认值用 `orElse`
+- 不要把 SQL 的 NULL 压成 `""` / `0`：`stmt.column_value(i)` 给 `null`、`stmt.column_is_null(i)` 单独判
+- 不要在能恢复的路径上用 `unwrap()`（它会抛）
