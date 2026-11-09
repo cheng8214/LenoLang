@@ -685,7 +685,18 @@
             }
             if (ast->u.for_.end) {
                 TypeInfo* et = infer_expr_type(s, ast->u.for_.end);
-                if (et && (et->kind == TYPE_NULL || et->kind == TYPE_BOOL)) {
+                // ★ 2026-11-09：容器遍历（`for 集合 to 元素`，AST 里 start==NULL）与数字区间
+                //   要分开说 —— VM 从 2026-11-08 起对 **null 容器**是**运行时错误**
+                //   （不再是"静默 0 次"），所以这里不能再说"一次都不执行"（那是旧口径 ✗）。
+                //   判据只看**静态**类型：`Array[T]?` / `Dict?`（nullable）或 null 字面量。
+                int is_container_loop = (ast->u.for_.start == NULL);
+                if (is_container_loop && et && (et->kind == TYPE_NULL || et->nullable)) {
+                    warning_add_at_fmt(WARN_FOR_EMPTY_RANGE, ast->line, ast->column,
+                        "for 的遍历对象是 '%s'（null 或可空类型）⇒ 运行时会报错"
+                        "「for 的遍历对象是 null」；请先 `if x != null` 再遍历，"
+                        "或把容器初始化成 `= []`",
+                        type_to_string(et));
+                } else if (et && (et->kind == TYPE_NULL || et->kind == TYPE_BOOL)) {
                     warning_add_at_fmt(WARN_FOR_EMPTY_RANGE, ast->line, ast->column,
                         "for 的上限是 '%s' ⇒ 循环一次都不执行；"
                         "数字范围请给数字，遍历容器请给 Array / Dict / string",

@@ -1076,8 +1076,11 @@ main() {
     for null to i { print(_str(i)) }
 }
 ")
-    ce.expect_warning(forNull, "for 上限是 null => 警告空循环",
-        "for 的上限是 'null'", 2)
+    // ★ 2026-11-09：文案跟着 VM 语义改了 —— `for null to i` 是**容器遍历**（start==NULL），
+    //   VM 从 2026-11-08 起对 null 容器直接抛运行时错误，不再是"静默 0 次"⇒
+    //   编译期这句提示必须说"运行时会报错"，不能再说"一次都不执行"（旧口径会误导 ✗）
+    ce.expect_warning(forNull, "for 遍历对象是 null => 提示运行时会报错",
+        "for 的遍历对象是 'null'", 2)
 
     // ㊹b 防误报：字符串遍历（按字符）、浮点范围、容器遍历都照常可用
     var forOk = dirs.join(work, "for_ok.leno")
