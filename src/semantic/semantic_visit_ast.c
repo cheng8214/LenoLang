@@ -360,6 +360,25 @@ static void import_type_deps(Semantic* s, ImportedModuleInfo* module_info, TypeI
     }
 }
 
+// ★ 守卫影子的 kind：**只收窄类型，绝不改寻址方式**（2026-11-09）
+// ----------------------------------------------------------------------------
+// 收窄/类型守卫都是"建一个同名影子符号、复用原 index"的手法。这里的 index 含义**随 kind 变**：
+//   局部/参数 ⇒ 寄存器号；SYM_GLOBAL ⇒ 全局槽位号；SYM_MODULE ⇒ 模块槽位号；SYM_UPVALUE ⇒ upvalue 号。
+// 所以影子符号的 kind 必须与原符号一致，否则 codegen 会拿"模块/全局槽位号"当寄存器号发指令。
+//   实测代价（Aria，2026-11-09）：`Font? _font` 是模块级变量，进入 `if _font != null and ...` 后
+//   被收窄成 SYM_LOCAL(index=22) ⇒ 运行期读 22 号寄存器，报「类型 string 上不存在方法 'setSSAA'」，
+//   跟"变量明明是 Font"完全对不上，查了很久 ✗。
+// ⇒ 六处建影子的地方（apply_null_narrowing / if-is 的 then+else / 旧单条件守卫 / switch-is /
+//   `and` 链里的 is 守卫）**统一走这个函数**，别再各自写三元/if-else —— 漏一支就等于埋一个坑。
+static SymKind guard_shadow_kind(SymKind k) {
+    switch (k) {
+        case SYM_UPVALUE: return SYM_UPVALUE;
+        case SYM_GLOBAL:  return SYM_GLOBAL;
+        case SYM_MODULE:  return SYM_MODULE;   // 模块级变量：index 是模块槽位号
+        default:          return SYM_LOCAL;    // 局部/参数：影子复用同一寄存器槽位
+    }
+}
+
 // ★ T27：`if a != null` 的空窄化 —— 进入对应分支后，让 `a` 不再被判为「确定为 null」。
 // ----------------------------------------------------------------------------
 // T11 的 `Symbol.is_null_value` 只认「声明即 null、此后未赋值」，没把 `if a != null` 的窄化
@@ -410,8 +429,19 @@ static void apply_null_narrowing(Semantic* s, Ast* cond, int narrow_on_ne) {
         }
         if (!ref.name) { symref_dispose(&ref); continue; }
 
-        SymKind kind = (ref.kind == SYM_UPVALUE) ? SYM_UPVALUE
-                     : (ref.kind == SYM_GLOBAL)  ? SYM_GLOBAL : SYM_LOCAL;
+        // ★ 2026-11-09：**模块级变量（SYM_MODULE）必须原样保留 kind** ——
+        //   影子符号只是"类型收窄视图"，取值的**寻址方式**不能变。
+        //   漏掉这一支会退化成 SYM_LOCAL：codegen 见 SYM_LOCAL 就发 `MOV dst, index`，
+        //   而 module 变量的 index 是**模块全局槽位号**、不是寄存器号 ⇒ 读到一个没赋过值的
+        //   寄存器。实测（Aria，2026-11-09）：sdl_tooltip 的
+        //     `Font? _font`（模块级）
+        //     `if _font != null and _font.ok { _font.setSSAA(r.getSSAA()) }`
+        //   进守卫分支后 `_font` 被收窄成 SYM_LOCAL(index=22) ⇒ 运行期 22 号寄存器里是别的东西，
+        //   报「类型 string 上不存在方法 'setSSAA'」（换了语句切分就变成「类型 object」），
+        //   跟 _font 明明是 Font、且上一行刚打印过 type=Font 完全对不上 ✗。
+        //   引入 commit：0af3cccb（11-08 让"可空类型"也收窄）—— 之前只有 is_null_value 的
+        //   变量才建影子，模块级可空变量不会走到这里，所以直到这次才炸出来。
+        SymKind kind = guard_shadow_kind(ref.kind);   // 见上面的说明：kind 决定 index 的口径
         // 已有同名守卫符号（如 `a != null and a is Point` 的 is 守卫）⇒ scope_define 返回 NULL，
         // 复用即可 —— 那种影子符号的 is_null_value 本就是 0。
         Symbol* shadow = scope_define(s->current, var_side->u.var.name, kind);

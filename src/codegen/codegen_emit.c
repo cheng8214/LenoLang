@@ -7,6 +7,31 @@
 #include "codegen.h"
 #include "include/leno_dce.h"
 
+// ============================================================================
+// ★ 2026-11-09：局部量槽位自检 —— 防"符号 kind 退化"这一整类 bug
+// ----------------------------------------------------------------------------
+// 背景（实测 Aria，2026-11-09）：守卫收窄（`if x != null { ... }` / `is` 守卫）会给变量
+//   建一个**影子符号**复用原 index，但 kind 只照抄了 UPVALUE/GLOBAL，SYM_MODULE 掉进 else
+//   ⇒ 模块变量变成 SYM_LOCAL。index 的含义**随 kind 变**（局部=寄存器号、模块=模块槽位号），
+//   于是 `_font.setSSAA(...)` 被编成 `MOV dst, 22`（22 是模块槽位号，不是寄存器），
+//   运行期读到没赋过值的寄存器 ⇒ 报「类型 string 上不存在方法 'setSSAA'」，
+//   与"变量明明是 Font"完全对不上，排查成本极高 ✗。
+// 判据：局部量的 index 必须是本函数**已经出现过**的槽位号。codegen 里 max_reg 单调上升，
+//   而任何合法槽位（参数 / 声明的局部 / for 槽位 / catch / guard_bind …）在**使用之前**
+//   都会把 next_reg/max_reg 顶上去 ⇒ `index > max_reg` 不可能是合法局部量。
+//   （用 `>` 而不是 `>=`：文件级 chunk 的槽位扫描只把 max_reg 抬到 max_slot，留一格容错。）
+// 价值：同类退化会在**编译期**点名病因，而不是让错误跑到运行期换个面目出现。
+void cg_check_local_slot(CodeGen* gen, const SymRef* ref, const Ast* ast) {
+    if (!gen || !ref || !ref->name) return;
+    if (ref->kind != SYM_LOCAL && ref->kind != SYM_PARAM) return;
+    if (ref->index <= gen->max_reg) return;
+    error_add_at_fmt(ERR_SEMANTIC, ast ? ast->line : 0, ast ? ast->column : -1,
+                     "编译器内部错误：变量 '%s' 按局部量处理（槽位 %d），但本函数最多只用到 %d 号寄存器 "
+                     "—— 符号 kind 与实际寻址方式不一致（典型原因：类型/空值守卫建影子符号时把模块变量或"
+                     "全局量降级成 SYM_LOCAL）。这是编译器的问题，不是代码写错，请附最小复现反馈",
+                     ref->name, ref->index, gen->max_reg);
+}
+
 // --- 基础：写 4 字节指令的封装 ---
 
 void emit_reg_iABC(CodeGen* gen, OpCode op, int a, int b, int c, int line) {

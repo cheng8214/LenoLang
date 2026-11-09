@@ -484,6 +484,9 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
                 case SYM_LOCAL:
                 case SYM_PARAM:
                     // 局部变量就是寄存器，直接 MOV
+                    // ⚠ 先自检槽位号：kind 若被降级（模块变量 → SYM_LOCAL），下面的 MOV 会把
+                    //   "模块槽位号"当寄存器号读 ⇒ 运行期报一个毫不相干的类型错误（见 cg_check_local_slot）
+                    cg_check_local_slot(gen, ref, ast);
                     if (ref->index != dst) {
                         emit_mov(gen, dst, ref->index, ast->line);
                     }

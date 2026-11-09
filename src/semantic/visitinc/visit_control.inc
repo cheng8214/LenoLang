@@ -271,14 +271,8 @@
                         if (ref.name) {
                             // 如果变量是upvalue，guard_sym也应该是upvalue
                             // 如果变量是global，guard_sym也应该是global
-                            SymKind guard_kind;
-                            if (ref.kind == SYM_UPVALUE) {
-                                guard_kind = SYM_UPVALUE;
-                            } else if (ref.kind == SYM_GLOBAL) {
-                                guard_kind = SYM_GLOBAL;
-                            } else {
-                                guard_kind = SYM_LOCAL;
-                            }
+                            // kind 必须与原符号一致（index 的口径随 kind 变，见 guard_shadow_kind）
+                            SymKind guard_kind = guard_shadow_kind(ref.kind);
                             Symbol* guard_sym = scope_define(s->current, cond->var_name, guard_kind);
                             if (guard_sym) {
                                 // 检查数组类型兼容性
@@ -358,14 +352,7 @@
                     if (ref.name) {
                         // 如果变量是upvalue，guard_sym也应该是upvalue
                         // 如果变量是global，guard_sym也应该是global
-                        SymKind guard_kind;
-                        if (ref.kind == SYM_UPVALUE) {
-                            guard_kind = SYM_UPVALUE;
-                        } else if (ref.kind == SYM_GLOBAL) {
-                            guard_kind = SYM_GLOBAL;
-                        } else {
-                            guard_kind = SYM_LOCAL;
-                        }
+                        SymKind guard_kind = guard_shadow_kind(ref.kind);
                         Symbol* guard_sym = scope_define(s->current, ast->u.if_.guard_var, guard_kind);
                         if (guard_sym) {
                             if (original_sym && original_sym->type && original_sym->type->kind == TYPE_ARRAY &&
@@ -484,14 +471,7 @@
                         if (ref.name && original_sym && original_sym->type) {
                             // 如果变量是upvalue，else_guard_sym也应该是upvalue
                             // 如果变量是global，else_guard_sym也应该是global
-                            SymKind guard_kind;
-                            if (ref.kind == SYM_UPVALUE) {
-                                guard_kind = SYM_UPVALUE;
-                            } else if (ref.kind == SYM_GLOBAL) {
-                                guard_kind = SYM_GLOBAL;
-                            } else {
-                                guard_kind = SYM_LOCAL;
-                            }
+                            SymKind guard_kind = guard_shadow_kind(ref.kind);
                             Symbol* else_guard_sym = scope_define(s->current, cond->var_name, guard_kind);
                             if (else_guard_sym) {
                                 if (cond->guard_type && original_sym->type->kind == cond->guard_type->kind) {
@@ -513,14 +493,7 @@
                     if (ref.name && original_sym && original_sym->type) {
                         // 如果变量是upvalue，else_guard_sym也应该是upvalue
                         // 如果变量是global，else_guard_sym也应该是global
-                        SymKind guard_kind;
-                        if (ref.kind == SYM_UPVALUE) {
-                            guard_kind = SYM_UPVALUE;
-                        } else if (ref.kind == SYM_GLOBAL) {
-                            guard_kind = SYM_GLOBAL;
-                        } else {
-                            guard_kind = SYM_LOCAL;
-                        }
+                        SymKind guard_kind = guard_shadow_kind(ref.kind);
                         Symbol* else_guard_sym = scope_define(s->current, ast->u.if_.guard_var, guard_kind);
                         if (else_guard_sym) {
                             if (ast->u.if_.guard_type && original_sym->type->kind == ast->u.if_.guard_type->kind) {
@@ -905,14 +878,7 @@
                     memset(&narrow_ref, 0, sizeof(narrow_ref));
                     Symbol* original_sym = resolve_variable_with_upvalue(s, ast->u.switch_.cases[i].guard_var, &narrow_ref);
                     if (narrow_ref.name) {
-                        SymKind guard_kind;
-                        if (narrow_ref.kind == SYM_UPVALUE) {
-                            guard_kind = SYM_UPVALUE;
-                        } else if (narrow_ref.kind == SYM_GLOBAL) {
-                            guard_kind = SYM_GLOBAL;
-                        } else {
-                            guard_kind = SYM_LOCAL;
-                        }
+                        SymKind guard_kind = guard_shadow_kind(narrow_ref.kind);
                         Symbol* guard_sym = scope_define(s->current, ast->u.switch_.cases[i].guard_var, guard_kind);
                         if (guard_sym) {
                             // 数组类型保持原类型（与 if-is 一致：Array[int] + is Array → 保持 Array[int]）

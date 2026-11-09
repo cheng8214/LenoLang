@@ -1750,6 +1750,8 @@ void gen_assign(CodeGen* gen, Ast* ast) {
                 switch (ref->kind) {
                     case SYM_LOCAL:
                     case SYM_PARAM:
+                        // 槽位自检：写入路径同样会"把模块槽位号当寄存器号"写坏内存（见 cg_check_local_slot）
+                        cg_check_local_slot(gen, ref, ast);
                         // T33：`s = s + e` 自追加特化 —— 原地追加，把 O(n²) 摊平成 O(n)。
                         //   条件：单目标、非并行赋值、目标是 **string 局部变量**，且编译期分析
                         //   已证明该槽位"全部使用都是自追加"（gen->str_append_ok，见 codegen.c）。

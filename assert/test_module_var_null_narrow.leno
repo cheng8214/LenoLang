@@ -1,0 +1,26 @@
+// test_module_var_null_narrow.leno —— 模块级变量在守卫分支里被收窄（2026-11-09）
+//
+// 现场（Aria）：sdl_tooltip 的
+//     Font? _font                                  // 模块级、可空
+//     if _font != null and _font.ok { _font.setSSAA(r.getSSAA()) }
+// 运行期报「类型 string 上不存在方法 'setSSAA'」，而上一行刚打印过 type(_font)=Font。
+//
+// 根因：0af3cccb（11-08「if 守卫分支内不再误报可空类型运算」）让 apply_null_narrowing
+//   也收窄**可空类型**（此前只收窄 is_null_value 的变量）。收窄时建影子符号，kind 只认
+//   UPVALUE / GLOBAL，SYM_MODULE 落进 else ⇒ SYM_LOCAL，而 index 仍是**模块槽位号**
+//   ⇒ codegen 见 SYM_LOCAL 就发 `MOV dst, 模块槽位号`（那是寄存器号！）⇒ 读到垃圾。
+//
+// 这个用例锁住三条路径：模块级可空 struct 调方法 / 模块级可空标量运算 / 模块级 any 的 is 守卫。
+import "helpers/narrow_mod.leno" as nm
+
+main() {
+    nm.reset()
+    assert_eq(nm.boxAdd(2), 2, "模块级可空 struct：守卫分支里调方法（第 1 次）")
+    assert_eq(nm.boxAdd(3), 5, "模块级可空 struct：守卫分支里调方法（第 2 次）")
+    assert_eq(nm.numPlus(41), 42, "模块级可空标量：守卫分支里参与运算")
+    assert_eq(nm.boxAddElse(4), 9, "模块级可空 struct：**else 分支**里调方法")
+    assert_eq(nm.strIsString("ok"), true, "模块级可空 string：is 守卫分支取到正确值")
+    assert_eq(nm.strIsString("again"), true, "模块级可空 string：is 守卫（换一个值）")
+    assert_eq(nm.localBoxAdd(6), 6, "对照：局部可空 struct 收窄后调方法仍正常")
+    print("test_module_var_null_narrow passed")
+}

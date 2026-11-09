@@ -94,6 +94,10 @@ void emit_loadtrue_to(CodeGen* gen, int dst, int line);
 void emit_loadfalse_to(CodeGen* gen, int dst, int line);
 void emit_mov(CodeGen* gen, int dst, int src, int line);
 
+// ★ 2026-11-09：局部量槽位自检（防"符号 kind 退化"整类 bug，实现与原因见 codegen_emit.c）
+//   读/写局部量之前都调一次：index 若是"模块/全局槽位号"被误当成寄存器号，这里当场报编译错误。
+void cg_check_local_slot(CodeGen* gen, const SymRef* ref, const Ast* ast);
+
 // 全局变量
 void emit_getglobal_to(CodeGen* gen, int dst, int slot, int line);
 void emit_setglobal(CodeGen* gen, int src, int slot, int line);

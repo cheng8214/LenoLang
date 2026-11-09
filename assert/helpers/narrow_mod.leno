@@ -1,0 +1,73 @@
+// narrow_mod.leno —— 供 test_module_var_null_narrow.leno 用（2026-11-09）
+//
+// 为什么要有这个模块：出 bug 的是**模块级**变量（SYM_MODULE）在守卫分支里被收窄成
+// 影子符号 —— 影子符号的 kind 若退化成 SYM_LOCAL，codegen 会拿"模块槽位号"当寄存器号
+// 发 MOV ⇒ 读到没赋过值的寄存器。这个现象只有在**模块**里才出现（主脚本的全局量走
+// SYM_GLOBAL，那条支路本来是对的），所以必须放在模块里验。
+
+export struct Box {
+    bool ok = true
+    int v = 0
+    func add(int n) { v = v + n }
+}
+
+Box? g_box
+int? g_num
+string? g_str
+
+export func reset() {
+    g_box = null
+    g_num = null
+    g_str = null
+}
+
+// ① 模块级可空 struct：`!= null` 守卫分支里**调方法**
+//    修前：`g_box.add(n)` 的接收者被当成 SYM_LOCAL ⇒ 运行期报
+//    「类型 string/object 上不存在方法 'add'」（Aria 的 sdl_tooltip 就是这么炸的）
+export func boxAdd(int n): int {
+    if g_box == null {
+        Box b = new Box()
+        g_box = b
+    }
+    if g_box != null and g_box.ok { g_box.add(n) }
+    if g_box != null { return g_box.v }
+    return -1
+}
+
+// ①b 同一件事，但收窄发生在 **else 分支**（`if x == null {} else {}`，另一处影子符号代码）
+export func boxAddElse(int n): int {
+    if g_box == null {
+        Box b = new Box()
+        g_box = b
+    }
+    if g_box == null {
+        return -1
+    } else {
+        g_box.add(n)
+        return g_box.v
+    }
+}
+
+// ② 模块级可空标量：守卫分支里参与运算
+export func numPlus(int n): int {
+    g_num = n
+    if g_num != null { return g_num + 1 }
+    return -1
+}
+
+// ③ 模块级可空 + `is` 类型守卫：同样的影子符号路径（visit_expr / visit_control 那几处）
+export func strIsString(string v): bool {
+    g_str = v
+    if g_str is string => s { return s == v }
+    return false
+}
+
+// ④ 对照：**局部**可空变量 —— 本来就该收窄成 SYM_LOCAL（影子复用同一寄存器槽位）。
+//    留在这里是为了保证"修模块那支"没有把局部这条正常路径也带歪 ✓
+export func localBoxAdd(int n): int {
+    Box? b = null
+    if b == null { b = new Box() }
+    if b != null and b.ok { b.add(n) }
+    if b != null { return b.v }
+    return -1
+}

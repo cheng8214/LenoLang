@@ -193,10 +193,8 @@
                         memset(&ref, 0, sizeof(ref));
                         resolve_variable_with_upvalue(s, cond->var_name, &ref);
                         if (ref.name) {
-                            SymKind guard_kind;
-                            if (ref.kind == SYM_UPVALUE) guard_kind = SYM_UPVALUE;
-                            else if (ref.kind == SYM_GLOBAL) guard_kind = SYM_GLOBAL;
-                            else guard_kind = SYM_LOCAL;
+                            // kind 必须与原符号一致（index 的口径随 kind 变，见 guard_shadow_kind）
+                            SymKind guard_kind = guard_shadow_kind(ref.kind);
 
                             Symbol* guard_sym = scope_define(s->current, cond->var_name, guard_kind);
                             if (guard_sym) {
