@@ -1,0 +1,75 @@
+// test_switch_enum_exhaustive.leno —— switch 穷尽性检查**不许变成错误**（2026-11-10，P4）
+//
+// 背景：`switch` 的主题是 enum、case 没盖全、又没有 default 时，新增了一条
+//   `WARN_SWITCH_NOT_EXHAUSTIVE`（见 leno_types.h / visit_control.inc 的说明）。
+//   警告没法在脚本里断言（要捕获 stderr），所以这里钉住**另一半**：
+//   ① 盖全的 enum switch 照常编译、照常跑对；
+//   ② 有 default 的 switch 照常跑对（哪怕只写了一个 case）；
+//   ③ 非 enum 主题（int / string）完全不受影响；
+//   ④ `case is` 形式的 enum switch 不参与检查，也不影响语义。
+//   ①③④ 任何一条被"检查"改坏（比如误判成编译错误），这个用例会立刻红。
+import strings
+
+enum Color { red, green, blue }
+enum Level { low = 1, mid = 2, high = 4 }
+
+// ① 盖全：应当是"零警告 + 结果正确"
+func nameOf(Color c): string {
+    switch c {
+        case Color.red { return "red" }
+        case Color.green { return "green" }
+        case Color.blue { return "blue" }
+    }
+    return "?"
+}
+
+// ② 有 default：只写一个 case 也合法
+func isRed(Color c): bool {
+    switch c {
+        case Color.red { return true }
+        default { return false }
+    }
+}
+
+// ③ 非 enum 主题：行为与之前逐位一致
+func sizeOf(int n): string {
+    switch n {
+        case 1 { return "one" }
+        case 2 { return "two" }
+    }
+    return "many"
+}
+
+// ③b 位标志 enum（成员值 1/2/4）：穷尽性按**值**比，不按名字
+func flags(Level l): int {
+    switch l {
+        case Level.low { return 1 }
+        case Level.mid { return 2 }
+        case Level.high { return 4 }
+    }
+    return 0
+}
+
+// ④ `case is` 形式：不参与穷尽性检查（但语义必须照旧）
+func kindName(any v): string {
+    switch v {
+        case is string { return "string" }
+        case is int { return "int" }
+    }
+    return "other"
+}
+
+main() {
+    assert_eq(nameOf(Color.red), "red", "① 盖全的 enum switch：red")
+    assert_eq(nameOf(Color.green), "green", "① green")
+    assert_eq(nameOf(Color.blue), "blue", "① blue")
+    assert_eq(isRed(Color.red), true, "② 有 default：命中 case")
+    assert_eq(isRed(Color.blue), false, "② 有 default：走 default")
+    assert_eq(sizeOf(1), "one", "③ int switch 不受影响")
+    assert_eq(sizeOf(9), "many", "③ int switch 落空照旧返回")
+    assert_eq(flags(Level.high), 4, "③b 位标志 enum 按值匹配")
+    assert_eq(kindName("x"), "string", "④ case is 分支照旧")
+    assert_eq(kindName(3), "int", "④ case is int")
+
+    print("test_switch_enum_exhaustive passed（穷尽性检查不影响语义）")
+}

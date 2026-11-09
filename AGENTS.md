@@ -480,3 +480,7 @@ http.mount(app, [ new Route(method="GET", path="/api/search", auth=true, handler
 
 **统计/`Stats`**：空数组不再返回 `0.0`，一律 `Option[T]`（`st.mean([]).isNone()`）；
 `money("12.34")` 是 `Result[int]`（分）。
+
+**enum 的 `switch` 要写全，或者写 `default`**：主题是 enum 且漏 case、又没有 `default` 时，
+编译器给 `WARN_SWITCH_NOT_EXHAUSTIVE` 并列出缺的成员（漏掉的值会**穿过去什么都不做**）。
+只是警告，不打断编译。

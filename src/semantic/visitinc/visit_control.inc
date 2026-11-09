@@ -1042,6 +1042,84 @@
                 }
             }
             sem_local_release(s, _mark_switch);   // ★ 槽位回收：见 case 开头的说明
+
+            // ★ 2026-11-10（P4）：**enum 的 switch 穷尽性**
+            //   主题是 enum、case 没盖全、又没有 default ⇒ 警告并列出漏掉的成员。
+            //   为什么只警告不用错误：运行期语义就是"没命中就穿过去"，那不算错；而且
+            //   `switch x { case A {…} }` 只关心一个分支的写法在既有代码里是合法的
+            //   （评估报告把"没有穷尽检查"列为劝退点 —— 要的是提示，不是拦截）。
+            //   ⚠ 判据"宁漏勿误报"（与 WARN_SWITCH_CASE_TYPE 同口径）：case 值里只要有
+            //     一个编译期认不出的形状（表达式 / 变量 / 函数调用 / case is），整条放弃。
+            //   ⚠ 枚举成员访问在语义阶段**已被改写成 AST_NUM**（见 visit_module.inc 的
+            //     "enum 值解析成常量"那段），所以这里主要读 AST_NUM；同模块的
+            //     `Color.red` 若还保持 AST_FIELD_ACCESS 也一并认。
+            if (sw_expr_type && sw_expr_type->kind == TYPE_ENUM && sw_expr_type->struct_name
+                && !ast->u.switch_.default_body) {
+                Symbol* esym = scope_resolve(s->current, sw_expr_type->struct_name);
+                if (esym && esym->enum_value_count > 0 && esym->enum_value_names && esym->enum_values) {
+                    int* covered = (int*)calloc((size_t)esym->enum_value_count, sizeof(int));
+                    int unknown = 0;
+                    int any_case = 0;
+                    for (int i = 0; covered && i < ast->u.switch_.case_count && !unknown; i++) {
+                        if (ast->u.switch_.cases[i].is_type_match) { unknown = 1; break; }
+                        AstList* vl = &ast->u.switch_.cases[i].values;
+                        for (int vi = 0; vi < vl->count && !unknown; vi++) {
+                            Ast* v = vl->items[vi];
+                            long long got = 0;
+                            int have = 0;
+                            if (v->kind == AST_NUM && !v->u.num.is_bigint && !v->u.num.is_float) {
+                                got = (long long)v->u.num.value;
+                                have = 1;
+                            } else if (v->kind == AST_FIELD_ACCESS && v->u.field_access.obj
+                                       && v->u.field_access.obj->kind == AST_VAR
+                                       && v->u.field_access.obj->u.var.name
+                                       && v->u.field_access.field_name
+                                       && strcmp(v->u.field_access.obj->u.var.name,
+                                                 sw_expr_type->struct_name) == 0) {
+                                for (int mi = 0; mi < esym->enum_value_count; mi++) {
+                                    if (strcmp(esym->enum_value_names[mi],
+                                               v->u.field_access.field_name) == 0) {
+                                        got = (long long)esym->enum_values[mi];
+                                        have = 1;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (!have) { unknown = 1; break; }
+                            any_case = 1;
+                            for (int mi = 0; mi < esym->enum_value_count; mi++) {
+                                if (esym->enum_values[mi] == got) covered[mi] = 1;
+                            }
+                        }
+                    }
+                    if (covered && !unknown && any_case) {
+                        char missing[192];
+                        missing[0] = '\0';
+                        int missing_n = 0;
+                        for (int mi = 0; mi < esym->enum_value_count; mi++) {
+                            if (covered[mi]) continue;
+                            missing_n++;
+                            if (missing_n <= 6) {
+                                if (missing[0]) {
+                                    strncat(missing, "、", sizeof(missing) - strlen(missing) - 1);
+                                }
+                                strncat(missing, esym->enum_value_names[mi],
+                                        sizeof(missing) - strlen(missing) - 1);
+                            }
+                        }
+                        if (missing_n > 0) {
+                            warning_add_at_fmt(WARN_SWITCH_NOT_EXHAUSTIVE, ast->line, ast->column,
+                                "switch 的主题是 enum '%s'，但少了 %d 个成员（%s%s）且没有 default："
+                                "这些值会直接穿过去、什么都不做；请补 case，或加 default"
+                                "（哪怕只写 throw / 赋一个兜底值）",
+                                sw_expr_type->struct_name, missing_n, missing,
+                                missing_n > 6 ? " 等" : "");
+                        }
+                    }
+                    if (covered) free(covered);
+                }
+            }
+
             if (sw_expr_type) type_free(sw_expr_type);   // N15 用的 switch 表达式类型
             break;
         }
