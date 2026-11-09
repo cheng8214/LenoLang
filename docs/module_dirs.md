@@ -434,6 +434,18 @@ dirs.rename("not_exist.txt", "new.txt")     // false
 
 **返回**: `array` - 文件和目录名称数组（不包含 `.` 和 `..`）
 
+> ⚠ **目录不存在 / 打不开时返回 `null`，不是空数组**（`dirs.c` 的
+> `FindFirstFileW == INVALID_HANDLE_VALUE` 分支）。而 2026-11-08 起
+> `for null to x` 是**运行时错误**（不再静默 0 次）⇒ 列一个"可能还没有"的目录时要先判：
+>
+> ```leno
+> if not dirs.exists(d) { return [] }
+> var files = dirs.listdir(d)
+> for files to f { ... }
+> ```
+>
+> 或者直接判返回值：`var files = dirs.listdir(d)` 之后 `if files != null { ... }`。
+
 ```leno
 var files = dirs.listdir("src")
 // files = ["error.c", "gc.c", "lexer.c", "main.c", ...]
