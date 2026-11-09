@@ -14,62 +14,157 @@
         "—— 跨线程的 struct 是**深拷贝**、能正常收到 ✓ 不可跨线程的只有 cstruct / Ptr / 闭包"
     #endif
 
-    LABEL(OP_GET_FIELD): {
-        int a = READ_A(), b = READ_B(), c = READ_C();
-        Value obj = R(b);
-        int line = GET_CURRENT_LINE();
-        if (unlikely(!val_is_obj(obj))) {
-            if (!throw_runtime_error(VM_MSG_FIELD_NEEDS_STRUCT, line)) return -1;
-            frame = &vm.frames[vm.frame_cnt - 1];
-            DISPATCH();
-        }
-        // cstruct（C 布局）字段读：数组/嵌套字段返回视图（见 vm_cstruct_field_read）
-        if (val_as_obj(obj)->type == OBJ_CSTRUCT) {
-            ObjCStruct* co = (ObjCStruct*)val_as_obj(obj);
-            if (unlikely(c < 0 || c >= co->def->field_count)) {
-                if (!throw_runtime_error("cstruct 字段索引越界", line)) return -1;
-                frame = &vm.frames[vm.frame_cnt - 1];
-                DISPATCH();
-            }
-            R(a) = vm_cstruct_field_read(co, c);
-            DISPATCH();
-        }
-        if (unlikely(val_as_obj(obj)->type != OBJ_STRUCT)) {
-            if (!throw_runtime_error(VM_MSG_FIELD_NEEDS_STRUCT, line)) return -1;
-            frame = &vm.frames[vm.frame_cnt - 1];
-            DISPATCH();
-        }
-        ObjStruct* so = (ObjStruct*)val_as_obj(obj);
-        if (unlikely(c < 0 || c >= so->def->field_count)) {
-            if (!throw_runtime_error("字段索引越界", line)) return -1;
-            frame = &vm.frames[vm.frame_cnt - 1];
-            DISPATCH();
-        }
-        R(a) = struct_get_field(so, c);
-        DISPATCH();
+    // ★ 2026-11-10（P3）：字段读写的**公共体**，供「8 位字段索引」与「24 位宽索引」两条指令共用。
+    //   为什么用宏而不是复制两遍：这几段里有 6 处 DISPATCH/return 的早退路径，
+    //   复制一份就等于埋一份"改一处漏三处"（本文件开头就已经为文案踩过这个坑）。
+    //   ⚠ 宏里含 DISPATCH / return，只能在 handler 里用；a/b 由宏自己从指令里读，
+    //     字段索引由调用方给（8 位版给 READ_C()，宽索引版给 READ_CONST_IDX(0)）。
+    #define VM_FIELD_READ_BODY(idx_expr)                                              \
+    {                                                                                 \
+        int a = READ_A(), b = READ_B();                                               \
+        int c = (idx_expr);                                                           \
+        Value obj = R(b);                                                             \
+        int line = GET_CURRENT_LINE();                                                \
+        if (unlikely(!val_is_obj(obj))) {                                             \
+            if (!throw_runtime_error(VM_MSG_FIELD_NEEDS_STRUCT, line)) return -1;     \
+            frame = &vm.frames[vm.frame_cnt - 1];                                     \
+            DISPATCH();                                                               \
+        }                                                                             \
+        /* cstruct（C 布局）字段读：数组/嵌套字段返回视图（见 vm_cstruct_field_read） */ \
+        if (val_as_obj(obj)->type == OBJ_CSTRUCT) {                                   \
+            ObjCStruct* co = (ObjCStruct*)val_as_obj(obj);                            \
+            if (unlikely(c < 0 || c >= co->def->field_count)) {                       \
+                if (!throw_runtime_error("cstruct 字段索引越界", line)) return -1;    \
+                frame = &vm.frames[vm.frame_cnt - 1];                                 \
+                DISPATCH();                                                           \
+            }                                                                         \
+            R(a) = vm_cstruct_field_read(co, c);                                      \
+            DISPATCH();                                                               \
+        }                                                                             \
+        if (unlikely(val_as_obj(obj)->type != OBJ_STRUCT)) {                           \
+            if (!throw_runtime_error(VM_MSG_FIELD_NEEDS_STRUCT, line)) return -1;     \
+            frame = &vm.frames[vm.frame_cnt - 1];                                     \
+            DISPATCH();                                                               \
+        }                                                                             \
+        ObjStruct* so = (ObjStruct*)val_as_obj(obj);                                  \
+        if (unlikely(c < 0 || c >= so->def->field_count)) {                           \
+            if (!throw_runtime_error("字段索引越界", line)) return -1;                \
+            frame = &vm.frames[vm.frame_cnt - 1];                                     \
+            DISPATCH();                                                               \
+        }                                                                             \
+        R(a) = struct_get_field(so, c);                                               \
+        DISPATCH();                                                                   \
     }
+
+    #define VM_FIELD_READ_FAST_BODY(idx_expr)                                         \
+    {                                                                                 \
+        int a = READ_A(), b = READ_B();                                               \
+        int c = (idx_expr);                                                           \
+        Value obj = R(b);                                                             \
+        int line = GET_CURRENT_LINE();                                                \
+        if (unlikely(!val_is_obj(obj) || val_as_obj(obj)->type != OBJ_STRUCT)) {      \
+            if (!throw_runtime_error(VM_MSG_FIELD_NEEDS_STRUCT, line)) return -1;     \
+            frame = &vm.frames[vm.frame_cnt - 1];                                     \
+            DISPATCH();                                                               \
+        }                                                                             \
+        ObjStruct* so = (ObjStruct*)val_as_obj(obj);                                  \
+        if (unlikely(c < 0 || c >= so->def->field_count)) {                           \
+            if (!throw_runtime_error("字段索引越界", line)) return -1;                \
+            frame = &vm.frames[vm.frame_cnt - 1];                                     \
+            DISPATCH();                                                               \
+        }                                                                             \
+        R(a) = so->field_values[c];                                                   \
+        DISPATCH();                                                                   \
+    }
+
+    #define VM_FIELD_WRITE_BODY(idx_expr)                                             \
+    {                                                                                 \
+        int a = READ_A(), b = READ_B();                                               \
+        int c = (idx_expr);                                                           \
+        Value obj = R(b);                                                             \
+        int line = GET_CURRENT_LINE();                                                \
+        if (unlikely(!val_is_obj(obj))) {                                             \
+            if (!throw_runtime_error("字段赋值需要结构体对象", line)) return -1;      \
+            frame = &vm.frames[vm.frame_cnt - 1];                                     \
+            DISPATCH();                                                               \
+        }                                                                             \
+        /* ★ 2026-10-24：const 深保护 —— `const s = new S()` 的实例字段也不许写。 */  \
+        if (unlikely(obj_is_readonly(obj))) {                                         \
+            if (!throw_runtime_error("const 对象的字段不可修改（const 是**整体不可变**：需要可变对象请声明为 var）", line)) return -1; \
+            frame = &vm.frames[vm.frame_cnt - 1];                                     \
+            DISPATCH();                                                               \
+        }                                                                             \
+        /* cstruct（C 布局）字段写：数值类型自动提升 */                               \
+        if (val_as_obj(obj)->type == OBJ_CSTRUCT) {                                   \
+            ObjCStruct* co = (ObjCStruct*)val_as_obj(obj);                            \
+            if (unlikely(c < 0 || c >= co->def->field_count)) {                       \
+                if (!throw_runtime_error("cstruct 字段索引越界", line)) return -1;    \
+                frame = &vm.frames[vm.frame_cnt - 1];                                 \
+                DISPATCH();                                                           \
+            }                                                                         \
+            Value nv = R(a);                                                          \
+            TypeKind ft = co->def->fields[c].type;                                     \
+            if (val_is_int(nv) && (ft == TYPE_F32 || ft == TYPE_F64)) {               \
+                nv = val_float((double)val_as_int(nv));                               \
+            } else if (val_is_bigint(nv) && (ft == TYPE_F32 || ft == TYPE_F64)) {     \
+                nv = val_float(bigint_to_double(val_as_bigint(nv)));                  \
+            } else if (val_is_float(nv) && (ft >= TYPE_I8 && ft <= TYPE_U64)) {       \
+                nv = val_num(val_as_num(nv));                                         \
+            }                                                                         \
+            cstruct_set_field_value(co, c, nv);                                       \
+            DISPATCH();                                                               \
+        }                                                                             \
+        if (unlikely(val_as_obj(obj)->type != OBJ_STRUCT)) {                          \
+            if (!throw_runtime_error("字段赋值需要结构体对象", line)) return -1;      \
+            frame = &vm.frames[vm.frame_cnt - 1];                                     \
+            DISPATCH();                                                               \
+        }                                                                             \
+        ObjStruct* so = (ObjStruct*)val_as_obj(obj);                                  \
+        if (unlikely(c < 0 || c >= so->def->field_count)) {                           \
+            if (!throw_runtime_error("字段索引越界", line)) return -1;                \
+            frame = &vm.frames[vm.frame_cnt - 1];                                     \
+            DISPATCH();                                                               \
+        }                                                                             \
+        struct_set_field(so, c, R(a));                                                \
+        DISPATCH();                                                                   \
+    }
+
+    #define VM_FIELD_ADDR_BODY(idx_expr)                                              \
+    {                                                                                 \
+        int a = READ_A(), b = READ_B();                                               \
+        int c = (idx_expr);                                                           \
+        int line = GET_CURRENT_LINE();                                                \
+        Value obj = R(b);                                                             \
+        if (unlikely(!val_is_obj(obj) || val_as_obj(obj)->type != OBJ_CSTRUCT)) {      \
+            if (!throw_runtime_error("& 取地址仅支持 cstruct 字段", line)) return -1; \
+            frame = &vm.frames[vm.frame_cnt - 1];                                     \
+            DISPATCH();                                                               \
+        }                                                                             \
+        ObjCStruct* co = (ObjCStruct*)val_as_obj(obj);                                \
+        if (unlikely(c < 0 || c >= co->def->field_count)) {                           \
+            if (!throw_runtime_error("cstruct 字段索引越界", line)) return -1;        \
+            frame = &vm.frames[vm.frame_cnt - 1];                                     \
+            DISPATCH();                                                               \
+        }                                                                             \
+        ObjFFIPointer* ptr = cstruct_field_addr_new(co, c);                           \
+        if (unlikely(!ptr)) {                                                         \
+            runtime_error("内存不足", line);                                          \
+            return -1;                                                                \
+        }                                                                             \
+        R(a) = val_obj((Object*)ptr);                                                 \
+        DISPATCH();                                                                   \
+    }
+
+    LABEL(OP_GET_FIELD): VM_FIELD_READ_BODY(READ_C())
+    // 宽索引版：C 恒为 0，真实字段索引在紧随的 OP_EXTRAARG（24 位）里
+    //   —— codegen 只在字段索引 > 255 时发这条（见 codegen_emit.c 的 emit_field_op）
+    LABEL(OP_GET_FIELD_W): VM_FIELD_READ_BODY(READ_CONST_IDX(0))
     // OP_GET_FIELD_FAST A B C: R[A] = R[B].field(C)
     //   —— 静态类型特化的字段读（对齐栈式 OP_GET_FIELD_FAST）：codegen 已核实 R[B] 的静态
     //   类型是 struct（非 cstruct）且 C 合法 ⇒ 省掉 cstruct 分流与 struct_get_field() 调用，
     //   直接读 field_values。仍保留 tag/类型/越界三项轻检查 ⇒ 报错口径与 OP_GET_FIELD 一致。
-    LABEL(OP_GET_FIELD_FAST): {
-        int a = READ_A(), b = READ_B(), c = READ_C();
-        Value obj = R(b);
-        int line = GET_CURRENT_LINE();
-        if (unlikely(!val_is_obj(obj) || val_as_obj(obj)->type != OBJ_STRUCT)) {
-            if (!throw_runtime_error(VM_MSG_FIELD_NEEDS_STRUCT, line)) return -1;
-            frame = &vm.frames[vm.frame_cnt - 1];
-            DISPATCH();
-        }
-        ObjStruct* so = (ObjStruct*)val_as_obj(obj);
-        if (unlikely(c < 0 || c >= so->def->field_count)) {
-            if (!throw_runtime_error("字段索引越界", line)) return -1;
-            frame = &vm.frames[vm.frame_cnt - 1];
-            DISPATCH();
-        }
-        R(a) = so->field_values[c];
-        DISPATCH();
-    }
+    LABEL(OP_GET_FIELD_FAST): VM_FIELD_READ_FAST_BODY(READ_C())
+    LABEL(OP_GET_FIELD_FAST_W): VM_FIELD_READ_FAST_BODY(READ_CONST_IDX(0))
     // OP_ACC_FIELDS A B C: R[A] = R[B].field(idx[0]) + ... + R[B].field(idx[C-1])
     //   —— 多字段累加融合（对齐栈式 OP_ACC_FIELDS）：紧随指令 C 个字节的字段索引。
     //   语义与「逐字段 OP_ADD_F 连加」逐位等价：double 左到右累加 + val_float。
@@ -100,56 +195,8 @@
         DISPATCH();
     }
     // OP_SET_FIELD A B C: R[B].field(C) = R[A]
-    LABEL(OP_SET_FIELD): {
-        int a = READ_A(), b = READ_B(), c = READ_C();
-        Value obj = R(b);
-        int line = GET_CURRENT_LINE();
-        if (unlikely(!val_is_obj(obj))) {
-            if (!throw_runtime_error("字段赋值需要结构体对象", line)) return -1;
-            frame = &vm.frames[vm.frame_cnt - 1];
-            DISPATCH();
-        }
-        // ★ 2026-10-24：const 深保护 —— `const s = new S()` 的实例字段也不许写。
-        //   编译期只看得到"变量符号"；实例传进函数后（形参不是 const）就靠这一位兜住。
-        if (unlikely(obj_is_readonly(obj))) {
-            if (!throw_runtime_error("const 对象的字段不可修改（const 是**整体不可变**：需要可变对象请声明为 var）", line)) return -1;
-            frame = &vm.frames[vm.frame_cnt - 1];
-            DISPATCH();
-        }
-        // cstruct（C 布局）字段写：数值类型自动提升
-        if (val_as_obj(obj)->type == OBJ_CSTRUCT) {
-            ObjCStruct* co = (ObjCStruct*)val_as_obj(obj);
-            if (unlikely(c < 0 || c >= co->def->field_count)) {
-                if (!throw_runtime_error("cstruct 字段索引越界", line)) return -1;
-                frame = &vm.frames[vm.frame_cnt - 1];
-                DISPATCH();
-            }
-            Value nv = R(a);
-            TypeKind ft = co->def->fields[c].type;
-            if (val_is_int(nv) && (ft == TYPE_F32 || ft == TYPE_F64)) {
-                nv = val_float((double)val_as_int(nv));
-            } else if (val_is_bigint(nv) && (ft == TYPE_F32 || ft == TYPE_F64)) {
-                nv = val_float(bigint_to_double(val_as_bigint(nv)));
-            } else if (val_is_float(nv) && (ft >= TYPE_I8 && ft <= TYPE_U64)) {
-                nv = val_num(val_as_num(nv));
-            }
-            cstruct_set_field_value(co, c, nv);
-            DISPATCH();
-        }
-        if (unlikely(val_as_obj(obj)->type != OBJ_STRUCT)) {
-            if (!throw_runtime_error("字段赋值需要结构体对象", line)) return -1;
-            frame = &vm.frames[vm.frame_cnt - 1];
-            DISPATCH();
-        }
-        ObjStruct* so = (ObjStruct*)val_as_obj(obj);
-        if (unlikely(c < 0 || c >= so->def->field_count)) {
-            if (!throw_runtime_error("字段索引越界", line)) return -1;
-            frame = &vm.frames[vm.frame_cnt - 1];
-            DISPATCH();
-        }
-        struct_set_field(so, c, R(a));
-        DISPATCH();
-    }
+    LABEL(OP_SET_FIELD): VM_FIELD_WRITE_BODY(READ_C())
+    LABEL(OP_SET_FIELD_W): VM_FIELD_WRITE_BODY(READ_CONST_IDX(0))
     // OP_GET_METHOD A B C: R[A] = R[B].方法名(K[C]) —— 内置类型 → 绑定原生方法；
     //   struct → 绑定脚本方法闭包；dict → 退化为按键取属性。
     LABEL(OP_GET_METHOD): {
@@ -536,29 +583,8 @@
         DISPATCH();
     }
     // OP_GET_FIELD_ADDR A B C: R[A] = &R[B].field(C)（仅 cstruct 字段）
-    LABEL(OP_GET_FIELD_ADDR): {
-        int a = READ_A(), b = READ_B(), c = READ_C();
-        int line = GET_CURRENT_LINE();
-        Value obj = R(b);
-        if (unlikely(!val_is_obj(obj) || val_as_obj(obj)->type != OBJ_CSTRUCT)) {
-            if (!throw_runtime_error("& 取地址仅支持 cstruct 字段", line)) return -1;
-            frame = &vm.frames[vm.frame_cnt - 1];
-            DISPATCH();
-        }
-        ObjCStruct* co = (ObjCStruct*)val_as_obj(obj);
-        if (unlikely(c < 0 || c >= co->def->field_count)) {
-            if (!throw_runtime_error("cstruct 字段索引越界", line)) return -1;
-            frame = &vm.frames[vm.frame_cnt - 1];
-            DISPATCH();
-        }
-        ObjFFIPointer* ptr = cstruct_field_addr_new(co, c);
-        if (unlikely(!ptr)) {
-            runtime_error("内存不足", line);
-            return -1;
-        }
-        R(a) = val_obj((Object*)ptr);
-        DISPATCH();
-    }
+    LABEL(OP_GET_FIELD_ADDR): VM_FIELD_ADDR_BODY(READ_C())
+    LABEL(OP_GET_FIELD_ADDR_W): VM_FIELD_ADDR_BODY(READ_CONST_IDX(0))
     // OP_SET_PTR_ELEM_TYPE A B: R[A] 若是 FFI 指针，设置其 element_type = (TypeKind)B
     //   由 `Ptr[u32] p = ffi.malloc(...)` 这类**声明**发射（gen_var_decl）。ffi.read_at /
     //   write_at 靠 element_type 算元素宽度，读不到就报「需要 Ptr[T] 类型指针」

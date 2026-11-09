@@ -192,7 +192,11 @@
 //   `Array[Item]` 此前在运行时**没有**元素类型（读出是 TYPE_PTR 默认值），
 //   于是只能塞 `Array[Dict]`，字段声明类型被静默破坏。
 //   ⇒ LENO_MODCACHE_VERSION 同步升（模块字节码里同样是这份元数据）。
-#define LENO_BIN_VERSION    0x0003021D  // v3.2.29（2026-11-09）—— OP_STRUCT_DEF 字段元数据新增 Array[T] 元素结构体名
+#define LENO_BIN_VERSION    0x0003021E  // v3.2.30（2026-11-10）—— 新增 4 条字段宽索引 opcode
+                                        //   （OP_GET_FIELD_W / OP_SET_FIELD_W / OP_GET_FIELD_FAST_W /
+                                        //    OP_GET_FIELD_ADDR_W：字段索引 > 255 时用 C=0 +
+                                        //    紧随 EXTRAARG 的 24 位索引）。末尾追加 ⇒ 既有编号不变，
+                                        //    但旧构建不认识这 4 个 opcode ⇒ 整体失效 ✓
                                         //   （跨模块 extend：给已存在的 struct 追加方法；末尾追加 ⇒
                                         //    既有编号不变，但旧构建不认识这个 opcode ⇒ 整体失效）
                                         //   上一版 v3.2.27（0x0003021B）OP_MATH_FAST 新增子操作码
@@ -388,7 +392,9 @@
 // v45（2026-11-09）：OP_STRUCT_DEF 的字段元数据多一个 `element_struct_name`
 //   （见 LENO_BIN_VERSION v3.2.29）。模块字节码里是同一份布局 ⇒ 必须同步升，
 //   否则旧 .lenomc 会被当成新格式读，字段定义整体错位。
-#define LENO_MODCACHE_VERSION  0x0000002D  // v44 - 同 LENO_BIN_VERSION v3.2.28（新增 opcode
+#define LENO_MODCACHE_VERSION  0x0000002E  // v45 - 同 LENO_BIN_VERSION v3.2.30（新增 4 条字段宽索引
+                                            //   opcode ⇒ 模块字节码里含旧构建不认识的指令 ⇒ 整体失效 ✓）
+                                            // v44 - 同 LENO_BIN_VERSION v3.2.28（新增 opcode
                                             //   OP_STRUCT_EXTEND ⇒ 模块字节码里含旧构建不认识的
                                             //   opcode，加载后跳转会发散 ⇒ 整体失效重编译 ✓）
                                             // v43 - v3.2.27（OP_MATH_FAST 的子操作码新增

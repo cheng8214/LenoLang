@@ -97,6 +97,11 @@ static const char* opCodeNames[] = {
     "OP_MATH_FAST",        // maths.* 纯数值函数的编译期内联（2026-11-01）
     "OP_STRUCT_EXTEND",    // 跨模块 extend：给已存在的 struct 追加方法（2026-11-02）
     "OP_IS_NUM",           // R[A] = is_num(R[B])：区间 case 的类型守卫（2026-11-03）
+    // ★ 2026-11-10（P3）：字段索引 > 255 的宽索引版（C=0 + 紧随 EXTRAARG 的 24 位索引）
+    "OP_GET_FIELD_W",       // R[A] = R[B].field(idx24)
+    "OP_SET_FIELD_W",       // R[B].field(idx24) = R[A]
+    "OP_GET_FIELD_FAST_W",  // 同上，静态类型已核实是 struct
+    "OP_GET_FIELD_ADDR_W",  // &R[B].field(idx24)（cstruct）
     "OP_OPCODE_COUNT",
     };
 
@@ -205,7 +210,8 @@ static int decode_trailing(Chunk* chunk, int offset, char* desc, size_t desc_siz
 
     switch (op) {
         case OP_STRUCT_DEF: {
-            int fields = dbg_take_u8(chunk, base, &p, &over);
+            // ★ 2026-11-10（P3）：字段数是 u16 大端（改自 u8，支持 >255 字段的 struct）
+            int fields = dbg_take_u16(chunk, base, &p, &over);
             int methods = dbg_take_u8(chunk, base, &p, &over);
             int impls = dbg_take_u8(chunk, base, &p, &over);
             for (int i = 0; i < impls; i++) dbg_take_u16(chunk, base, &p, &over);
@@ -507,6 +513,19 @@ static int decode_trailing(Chunk* chunk, int offset, char* desc, size_t desc_siz
                 dbg_const_str(chunk, ax, nm, (int)sizeof(nm));
                 snprintf(desc, desc_size, "EXTRAARG K[%d]=%s", ax, nm);
             }
+            break;
+        }
+        // ★ 2026-11-10（P3）：字段宽索引版 —— 紧随一条 EXTRAARG 携带 24 位字段索引
+        //   （codegen 只在字段索引 > 255 时发这几条，≤255 仍是上面的 4 字节老指令）
+        case OP_GET_FIELD_W:
+        case OP_SET_FIELD_W:
+        case OP_GET_FIELD_FAST_W:
+        case OP_GET_FIELD_ADDR_W: {
+            if (base + 4 > chunk->len || chunk->code[base] != OP_EXTRAARG) break;
+            int ax = ((int)chunk->code[base + 1] << 16) | ((int)chunk->code[base + 2] << 8) |
+                     (int)chunk->code[base + 3];
+            p += 4;
+            if (desc) snprintf(desc, desc_size, "字段索引=%d（宽索引）", ax);
             break;
         }
         // struct 方法调用融合：紧随 4 字节 = 方法名常量(16) + 静态类型名常量(16)。

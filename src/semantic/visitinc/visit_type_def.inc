@@ -472,25 +472,19 @@
                 if (sym) {
                     sym->type = struct_type;
 
-                    // ★ 2026-11-04：字段索引只有 8 位 ⇒ **超过 256 个字段的结构体根本不可用**。
-                    //   判据见 leno_vm.h：`OP_GET_FIELD / OP_SET_FIELD / OP_GET_FIELD_ADDR /
-                    //   OP_GET_FIELD_FAST` 的 C 字段是**字段索引**（`R[B].field(C)`），
-                    //   超过 255 的索引在编码时会被 &0xFF 截断成别的字段 ⇒ 静默错值。
-                    //   为什么在这里就报（而不是等 codegen 撞上）：
-                    //     codegen 那条错误指向的是"某条指令"，用户第一反应会去拆函数 / 查寄存器
-                    //     （实测：Aria 的 Player 260 个字段，报的却是「寄存器号超出 8 位上限」，
-                    //      而该函数 max_reg 只有 46 —— 方向全错 ✗）。
-                    //   ⚠ 判据是 > 255（**不是** 256）：虽然字段索引 8 位能编码 0..255，
-                    //     但 `OP_STRUCT_DEF` 紧随其后的元数据用 **u8** 写字段数
-                    //     （codegen_stmt.c 的 `cw_u8(field_count)`，& 0xFF **静默截断**）⇒
-                    //     256 个字段会被写成 **0**，运行时按"没有字段"建实例、后面写字段就越界
-                    //     （实测：256 字段的脚本编译通过、运行 exit=-1 直接挂 ✗）。
+                    // ★ 2026-11-10（P3）：字段数上限从 255 抬到 **65535**。
+                    //   历史：2026-11-04 这里报"最多 255 个字段"，两个原因各自独立：
+                    //     ① 字段索引挤在 OP_*_FIELD 的 C 字段（8 位）；
+                    //     ② `OP_STRUCT_DEF` 的元数据用 u8 写字段数（>255 会静默截断成别的数）。
+                    //   现在 ①由宽索引指令（OP_GET_FIELD_W / OP_SET_FIELD_W /
+                    //   OP_GET_FIELD_FAST_W / OP_GET_FIELD_ADDR_W，C=0 + 紧随 EXTRAARG 的 24 位索引）
+                    //   解决，②由 u16 字段数解决 ⇒ 真正的上限变成 u16 的 65535。
+                    //   codegen 侧只剩"寄存器号 > 255"那条老限制（那是另一件事，见 P3 后半）。
                     //   ⚠ field_count 不含方法（方法在 methods[] 里、走独立的方法表）✓
-                    if (ast->u.struct_def.field_count > 255) {
+                    if (ast->u.struct_def.field_count > 65535) {
                         error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
-                                         "struct '%s' 有 %d 个字段，超出上限（最多 255 个）："
-                                         "字段索引只有 8 位、且 struct 定义头里的字段数也是 1 字节，"
-                                         "超出的字段在运行期会直接错乱；请拆成几个小 struct"
+                                         "struct '%s' 有 %d 个字段，超出上限（最多 65535 个）："
+                                         "字段数在 struct 定义头里是 u16；请拆成几个小 struct"
                                          "（或把其中一部分状态放到模块级变量 / 另一个结构体里）",
                                          ast->u.struct_def.name, ast->u.struct_def.field_count);
                     }

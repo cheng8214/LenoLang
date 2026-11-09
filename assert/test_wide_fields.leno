@@ -1,0 +1,38 @@
+// test_wide_fields.leno —— P3 宽索引回归：struct 字段数 > 255（2026-11-10）
+//
+// 背景：字段索引一直挤在 iABC 的 C 字段（8 位）里 ⇒ 单个 struct 上限 256 个字段，
+//   Aria 的 `Player` 涨到 260 个字段时只能拆类型（评估报告 P3 / §3.4）。
+//   现在 codegen 在字段索引 > 255 时改发「OP_*_FIELD_W + EXTRAARG(24 位索引)」。
+//
+// 这份断言钉住三件事：
+//   ① 宽索引字段的读/写（299 号）
+//   ② struct **方法体内**对宽索引字段的读/写（self 固定在 R0 的那条路径）
+//   ③ 对照：0 号字段（≤255 的老路径）仍然正常 —— 别为了宽索引把老路径改坏
+import "./helpers/wide_struct.leno" as wide
+use wide.Wide
+
+main() {
+    // ① 外部读/写 299 号字段
+    Wide w = wide.make()
+    assert_eq(wide.getHighField(w), 0, "宽索引字段初值为 0")
+    assert_eq(wide.setHighField(w, 7), 7, "写 299 号字段并读回")
+    assert_eq(wide.getHighField(w), 7, "读回 299 号字段")
+
+    // ② 方法体内读/写（v299 / v256 都 > 255；self 固定在 R0）
+    w.setHigh(5)
+    assert_eq(w.v299, 5, "方法内写 v299")
+    assert_eq(w.v256, 6, "方法内写 v256")
+    assert_eq(w.highSum(), 5 + 6 + 0, "方法内读三个字段（含两个宽索引）")
+
+    // ③ 对照：0 号字段走老路径（C 字段直接放索引，不发 EXTRAARG）
+    assert_eq(wide.setLowField(w, 3), 3 + 5, "0 号字段（老路径）与 299 号字段共存")
+
+    // ④ 宽索引不影响同一函数里的普通循环
+    int n = 0
+    for 0:299 to i {
+        n = n + 1
+    }
+    assert_eq(n, 300, "普通循环不受影响")
+
+    print("test_wide_fields passed（300 字段：宽索引读/写 + 方法内读/写 + 老路径对照）")
+}

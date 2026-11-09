@@ -582,6 +582,33 @@ void emit_bitop_k(CodeGen* gen, OpCode op, int dst, int lhs, int const_idx, int 
     }
 }
 
+// ★ 2026-11-10（P3 前半）：字段访问 —— 索引 ≤255 用 4 字节老指令，>255 用宽索引指令。
+//   为什么现在才做：字段索引一直挤在 iABC 的 C 字段（8 位），单个 struct 上限 256 个字段；
+//   Aria 的 `Player` 涨到 260 个字段时只能拆类型（评估报告 P3 / §3.4）。
+//   编码（宽索引版）：`OP_*_FIELD_W A B 0` + `OP_EXTRAARG idx24`
+//     —— 与 OP_CALL_NATIVE 的宽常量索引同一惯例，VM 侧由 READ_CONST_IDX(0) 读走。
+//   ⚠ 顺序铁律：EXTRAARG 必须**紧跟**在指令之后（VM 执行到该指令时 ip 正指向它）。
+void emit_field_op(CodeGen* gen, OpCode op, int a, int b, int field_idx, int line) {
+    if (field_idx >= 0 && field_idx <= 255) {
+        reg_encode_iABC(gen->chunk, op, a, b, field_idx, line);
+        return;
+    }
+    OpCode wop = OP_GET_FIELD;
+    switch (op) {
+        case OP_GET_FIELD:      wop = OP_GET_FIELD_W; break;
+        case OP_SET_FIELD:      wop = OP_SET_FIELD_W; break;
+        case OP_GET_FIELD_FAST: wop = OP_GET_FIELD_FAST_W; break;
+        case OP_GET_FIELD_ADDR: wop = OP_GET_FIELD_ADDR_W; break;
+        default:
+            // 不是字段类指令就别走这个入口（内部错误，宁可编译期炸也别发错字节码）
+            error_add_at_fmt(ERR_SEMANTIC, line, -1,
+                             "编译器内部错误：emit_field_op 收到了非字段指令 %d", (int)op);
+            return;
+    }
+    reg_encode_iABC(gen->chunk, wop, a, b, 0, line);
+    reg_encode_iAx(gen->chunk, OP_EXTRAARG, field_idx, line);
+}
+
 // CALL_NATIVE: R[A] = result, B = name_const_idx（0 或 >255 时改由**紧随**的 EXTRAARG
 // 携带 24 位索引；EXTRAARG 必须在指令**之后** —— VM 执行到 call 时 ip 正指向它），C = nargs
 // 实参在 R[A+1..A+C]

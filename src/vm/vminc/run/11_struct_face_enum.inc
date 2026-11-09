@@ -15,7 +15,10 @@
         ObjString* sname = (ObjString*)val_as_obj(name_val);
 
         uint8_t* p = frame->ip;
-        uint8_t field_count = *p++;
+        // ★ 2026-11-10（P3）：字段数是 **u16 大端**（原来是 u8）—— 与 codegen_stmt.c 的
+        //   cw_u16(field_count) 对称；抬宽是为了支持 >255 字段的 struct（配合 OP_*_FIELD_W）。
+        int field_count = ((int)p[0] << 8) | (int)p[1];
+        p += 2;
         uint8_t method_count = *p++;
 
         ObjStructDef* def = struct_def_new(sname->chars, field_count, method_count);

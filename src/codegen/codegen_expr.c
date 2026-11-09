@@ -617,7 +617,7 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
                 if (ft) type_free(ft);
                 if (fi >= 0) {
                     dce_note_method_ref(NULL, iidx->u.string.value);
-                    reg_encode_iABC(gen->chunk, OP_GET_FIELD_FAST, dst, obj_reg, fi, ast->line);
+                    emit_field_op(gen, OP_GET_FIELD_FAST, dst, obj_reg, fi, ast->line);
                     if (obj_is_temp) reg_free(gen, obj_reg);
                     if (ot) type_free(ot);
                     if (it) type_free(it);
@@ -738,10 +738,10 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
                     //   与 struct_get_field() 的跨 TU 调用（其内部还重复一次越界检查）。
                     //   ⚠ 只在静态类型确定是 struct 时发；cstruct 必须走通用版（数组/嵌套字段
                     //   要返回视图），静态类型存疑（any/face/收窄后）也一律走通用版。
-                    reg_encode_iABC(gen->chunk, OP_GET_FIELD_FAST, dst, obj_reg, field_idx, ast->line);
+                    emit_field_op(gen, OP_GET_FIELD_FAST, dst, obj_reg, field_idx, ast->line);
                 } else {
                     // GET_FIELD: R[A] = R[B].field(C)
-                    reg_encode_iABC(gen->chunk, OP_GET_FIELD, dst, obj_reg, field_idx, ast->line);
+                    emit_field_op(gen, OP_GET_FIELD, dst, obj_reg, field_idx, ast->line);
                 }
             } else {
                 const char* fname = ast->u.field_access.field_name;
@@ -922,7 +922,7 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
             // &obj.field → GET_FIELD_ADDR
             Ast* field_ast = ast->u.address_of.operand;
             int obj_reg = gen_expr(gen, field_ast->u.field_access.obj);
-            reg_encode_iABC(gen->chunk, OP_GET_FIELD_ADDR, dst, obj_reg,
+            emit_field_op(gen, OP_GET_FIELD_ADDR, dst, obj_reg,
                           field_ast->u.field_access.field_index, ast->line);
             reg_free(gen, obj_reg);
             break;
@@ -3079,7 +3079,7 @@ void gen_safe_access(CodeGen* gen, Ast* ast, int dst) {
         int use_field_op = (ot && (ot->kind == TYPE_STRUCT || ot->kind == TYPE_CSTRUCT)
                             && field_idx >= 0);
         if (use_field_op) {
-            reg_encode_iABC(gen->chunk, OP_GET_FIELD, dst, obj_reg, field_idx, line);
+            emit_field_op(gen, OP_GET_FIELD, dst, obj_reg, field_idx, line);
         } else {
             const char* fname = ast->u.safe_access.name;
             int ireg = reg_alloc(gen);

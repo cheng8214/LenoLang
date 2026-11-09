@@ -1692,7 +1692,7 @@ void gen_index_assign(CodeGen* gen, Ast* ast, int dst) {
     }
     // INDEX_SET / SET_FIELD: R[B][R[C]] = R[A]（静态类型已知 ⇒ 发特化版，见 index_set_op_for）
     if (set_op == OP_SET_FIELD) {
-        reg_encode_iABC(gen->chunk, OP_SET_FIELD, val_reg, obj_reg, field_idx, ast->line);
+        emit_field_op(gen, OP_SET_FIELD, val_reg, obj_reg, field_idx, ast->line);
     } else if (set_op == OP_INDEX_SET_ARRAY_IMM) {
         // 立即数下标：C 字段直接放字面量（[0,255]，上面已判过 ⇒ 截断安全）
         reg_encode_iABC(gen->chunk, set_op, val_reg, obj_reg,
@@ -1847,7 +1847,7 @@ void gen_assign(CodeGen* gen, Ast* ast) {
                 else { val_reg = ASSIGN_VAL(); val_is_temp = 1; }
                 // INDEX_SET / SET_FIELD: R[B][R[C]] = R[A]（静态类型已知 ⇒ 发特化版，见 index_set_op_for）
                 if (mf_op == OP_SET_FIELD) {
-                    reg_encode_iABC(gen->chunk, OP_SET_FIELD, val_reg, obj_reg, mf_idx, ast->line);
+                    emit_field_op(gen, OP_SET_FIELD, val_reg, obj_reg, mf_idx, ast->line);
                 } else if (mf_op == OP_INDEX_SET_ARRAY_IMM) {
                     // 立即数下标：C 字段直接放字面量（[0,255]，index_set_op_for 已判 ✓）
                     reg_encode_iABC(gen->chunk, mf_op, val_reg, obj_reg,
@@ -1874,9 +1874,9 @@ void gen_assign(CodeGen* gen, Ast* ast) {
                 else { obj_reg = gen_expr(gen, fo); obj_is_temp = 1; }
                 if (val_slot >= 0) { val_reg = val_slot; }
                 else { val_reg = ASSIGN_VAL(); val_is_temp = 1; }
-                // SET_FIELD: R[B].field(C) = R[A]
-                reg_encode_iABC(gen->chunk, OP_SET_FIELD, val_reg, obj_reg,
-                                target->u.field_access.field_index, ast->line);
+                // SET_FIELD: R[B].field(C) = R[A]（字段索引 >255 时由 emit_field_op 改发宽索引版）
+                emit_field_op(gen, OP_SET_FIELD, val_reg, obj_reg,
+                              target->u.field_access.field_index, ast->line);
                 if (val_is_temp) ASSIGN_FREE_VAL(val_reg);
                 if (obj_is_temp) reg_free(gen, obj_reg);
                 break;
@@ -2024,7 +2024,7 @@ static void gen_coalesce_assign_var(CodeGen* gen, Ast* ast) {
     if (strcmp(ref->name, "__self_field__") == 0) {
         int field_idx = ref->index;
         int slot = reg_alloc(gen);
-        reg_encode_iABC(gen->chunk, OP_GET_FIELD, slot, 0, field_idx, line);
+        emit_field_op(gen, OP_GET_FIELD, slot, 0, field_idx, line);
         int isnull = reg_alloc(gen);
         emit_is_null(gen, isnull, slot, line);
         int skip = emit_jmp_if_false(gen, isnull, line);   // 非 null ⇒ 跳过赋值
@@ -2036,7 +2036,7 @@ static void gen_coalesce_assign_var(CodeGen* gen, Ast* ast) {
         } else {
             emit_loadnil_to(gen, slot, line);
         }
-        reg_encode_iABC(gen->chunk, OP_SET_FIELD, slot, 0, field_idx, line);
+        emit_field_op(gen, OP_SET_FIELD, slot, 0, field_idx, line);
         patch_jmp(gen, skip);
         reg_free(gen, slot);
         return;
@@ -2137,10 +2137,10 @@ void gen_compound_assign(CodeGen* gen, Ast* ast) {
         int field_idx = ref->index;
         int slot = reg_alloc(gen);
         // GET_FIELD: R[slot] = R[0].field(field_idx)
-        reg_encode_iABC(gen->chunk, OP_GET_FIELD, slot, 0, field_idx, ast->line);
+        emit_field_op(gen, OP_GET_FIELD, slot, 0, field_idx, ast->line);
         emit_compound_value(gen, ast, slot, imm_fast, imm_val);
         // SET_FIELD: R[0].field(field_idx) = R[slot]
-        reg_encode_iABC(gen->chunk, OP_SET_FIELD, slot, 0, field_idx, ast->line);
+        emit_field_op(gen, OP_SET_FIELD, slot, 0, field_idx, ast->line);
         reg_free(gen, slot);
         return;
     }
@@ -2366,7 +2366,13 @@ static void gen_struct_def(CodeGen* gen, Ast* ast) {
     int name_const = make_constant(gen, val_obj((Object*)struct_name));
 
     reg_encode_iABx(gen->chunk, OP_STRUCT_DEF, 0, name_const, ast->line);
-    cw_u8(gen, ast->u.struct_def.field_count, ast->line);
+    // ★ 2026-11-10（P3）：字段数 u8 → **u16**（大端，与 impl/常量表的 u16 同序）。
+    //   为什么必须改：字段数只写 1 字节 ⇒ 256 个字段被写成 0，运行期按"没有字段"建实例
+    //   （旧实现为此在语义阶段直接报「最多 255 个字段」）。现在字段索引有了宽索引指令
+    //   （OP_*_FIELD_W），定义头也必须能表达 >255 ⇒ 一并抬到 u16（上限 65535）。
+    //   ⚠ 读取侧必须同步：VM 的 11_struct_face_enum.inc（OP_STRUCT_DEF）与
+    //     debug.c 的 decode_trailing / bytecode_verify.c 的 scan_struct_def。
+    cw_u16(gen, ast->u.struct_def.field_count, ast->line);
     cw_u8(gen, method_count, ast->line);
 
     // impl 声明的 face 名

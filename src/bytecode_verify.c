@@ -65,7 +65,8 @@ static int ck_const_direct(const Chunk* c, int idx) {
 // OP_STRUCT_DEF：字段/方法/impl/泛型参数/关联常量表
 static int scan_struct_def(const Chunk* c, int base, int checks, Cur* k) {
     k->c = c; k->p = base; k->bad = 0;
-    int fields = cur_u8(k);
+    // ★ 2026-11-10（P3）：字段数是 u16 大端（改自 u8，为了支持 >255 字段的 struct）
+    int fields = cur_u16(k);
     int methods = cur_u8(k);
     int impls = cur_u8(k);
     for (int i = 0; i < impls && !k->bad; i++) {
@@ -412,6 +413,21 @@ static int verify_one(const Chunk* c, int pos, int cap,
             }
             CONST_CHK(cidx);
             SPAN_CHK(a + 1, cc);                          // 实参 R[A+1..A+C]
+            break;
+        }
+        // ★ 2026-11-10（P3）：字段宽索引版 —— A/B 是寄存器，C 恒为 0（**不是**寄存器号，
+        //   所以不能并进 REG_CHK(cc) 那一组），紧随一条 EXTRAARG 携带 24 位字段索引。
+        case OP_GET_FIELD_W:
+        case OP_SET_FIELD_W:
+        case OP_GET_FIELD_FAST_W:
+        case OP_GET_FIELD_ADDR_W: {
+            REG_CHK(a);
+            REG_CHK(b);
+            if (pos + 8 > len || c->code[pos + 4] != (uint8_t)OP_EXTRAARG) goto bad;
+            int fidx = ((int)c->code[pos + 5] << 16) | ((int)c->code[pos + 6] << 8) |
+                       (int)c->code[pos + 7];
+            if (fidx < 0) goto bad;
+            size = 8;
             break;
         }
         case OP_RETURN: {

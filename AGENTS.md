@@ -433,7 +433,8 @@ build\leno.exe --check <file>
 | `enum` 带载荷（`Progress(done, total)`） | 不支持，用 struct + tag |
 | struct ↔ JSON 自动转换 | 没有，手写 `as` 收窄 + 字段赋值 |
 | `switch` 穷尽性检查 | 没有，用 `default` 兜底 |
-| struct 字段 > 255 / 函数局部量 > 255 | **编译期报错**（不会静默），需拆类型/拆函数 |
+| 函数局部量 > 255 | **编译期报错**（不会静默），需拆函数（寄存器号 8 位，P3 后半待做） |
+| struct 字段 > 65535 | 编译期报错；**255 不再是上限**（2026-11-10 起字段索引走宽索引指令 `OP_*_FIELD_W`） |
 | 自定义可遍历对象（`for` 吃 `has_next/next`） | **未实现**，先 `toArray()` 或手动 `while` |
 
 ---

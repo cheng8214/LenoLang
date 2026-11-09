@@ -536,6 +536,19 @@ typedef enum {
     //   ⚠ 追加在**枚举末尾**（名字表同步），不动既有 opcode 的数值。
     OP_IS_NUM,          // iABC  R[A] = is_num(R[B])
 
+    // ★ 2026-11-10（P3 前半）：**字段索引 > 255** 的宽索引变体（**追加在枚举末尾** ⇒ 既有
+    //   opcode 的数值一个都不动，仍按惯例 bump 序列化版本，见 leno_serialize.h）。
+    //   为什么需要：字段索引一直挤在 iABC 的 C 字段（8 位）里 ⇒ 单个 struct 上限 256 个字段，
+    //   Aria 的 `Player` 涨到 260 个字段时只能拆类型（评估报告 P3 / §3.4「宽索引」）。
+    //   编码：A = 目标寄存器，B = 对象寄存器，C = 0，**紧随一条 OP_EXTRAARG** 携带 24 位字段索引
+    //         （与 OP_CALL_NATIVE 的宽常量索引同一惯例：VM 侧 `READ_CONST_IDX(0)` 读走它）。
+    //   ⚠ codegen **只在字段索引 > 255 时**才发这几条；≤255 仍发老的 4 字节指令
+    //     ⇒ 既有字节码逐位不变，只有真的超限的 struct 才会看到新指令。
+    OP_GET_FIELD_W,      // iABC + EXTRAARG   R[A] = R[B].field(idx24)
+    OP_SET_FIELD_W,      // iABC + EXTRAARG   R[B].field(idx24) = R[A]
+    OP_GET_FIELD_FAST_W, // iABC + EXTRAARG   R[A] = R[B].field(idx24)（codegen 已核实是 struct）
+    OP_GET_FIELD_ADDR_W, // iABC + EXTRAARG   R[A] = &R[B].field(idx24)（cstruct）
+
     OP_OPCODE_COUNT,    // 用于跳转表大小
 } OpCode;
 

@@ -94,6 +94,12 @@ void emit_loadtrue_to(CodeGen* gen, int dst, int line);
 void emit_loadfalse_to(CodeGen* gen, int dst, int line);
 void emit_mov(CodeGen* gen, int dst, int src, int line);
 
+// ★ 2026-11-10（P3）：字段访问统一入口 —— 字段索引 ≤255 发 4 字节老指令，
+//   >255 自动改发「宽索引 opcode + EXTRAARG(24 位)」。**所有**字段读写都必须走这里，
+//   别再直接 reg_encode_iABC(…, OP_GET_FIELD, …) —— 那会把索引截断成 8 位（编译期就报错，
+//   但报错信息会指到"寄存器号"，人会被带偏；2026-11-04 已经为此修过一次文案）。
+void emit_field_op(CodeGen* gen, OpCode op, int a, int b, int field_idx, int line);
+
 // ★ 2026-11-09：局部量槽位自检（防"符号 kind 退化"整类 bug，实现与原因见 codegen_emit.c）
 //   读/写局部量之前都调一次：index 若是"模块/全局槽位号"被误当成寄存器号，这里当场报编译错误。
 void cg_check_local_slot(CodeGen* gen, const SymRef* ref, const Ast* ast);
