@@ -561,26 +561,101 @@ static Value jsons_decode_func(int argc, Value* args) {
 
 static void json_fill_struct(ObjStruct* target, ObjDict* src);
 
+// 严格解析整串（允许前后空白）。成功返回 1。
+//   ⚠ 为什么需要它：**SQLite / CSV 的每一列都是字符串**（Aria 的 `db.all` 用
+//     `column_text` 取值），不让字符串转数字的话 `fill` 在 DB 场景完全失效 ——
+//     而 DB 行恰恰是"行数组"最大的来源。
+static int json_parse_int_text(const char* s, int len, Value* out) {
+    if (!s || len <= 0) return 0;
+    int b = 0, e = len;
+    while (b < e && (s[b] == ' ' || s[b] == '\t')) b++;
+    while (e > b && (s[e - 1] == ' ' || s[e - 1] == '\t')) e--;
+    if (b >= e) return 0;
+
+    // 全部是数字（可带一个前导 +/-）⇒ 可以按整数解析
+    int i = b;
+    if (s[i] == '+' || s[i] == '-') i++;
+    if (i >= e) return 0;
+    for (int k = i; k < e; k++) {
+        if (s[k] < '0' || s[k] > '9') return 0;
+    }
+
+    if (e - b < 20) {                       // 一定装得进 int64
+        char buf[32];
+        int n = e - b < (int)sizeof(buf) - 1 ? e - b : (int)sizeof(buf) - 1;
+        memcpy(buf, s + b, (size_t)n);
+        buf[n] = '\0';
+        *out = val_int((int64_t)strtoll(buf, NULL, 10));
+        return 1;
+    }
+    // 超长 ⇒ 走 bigint（大 id 逐位保留，别退化成 double）
+    char* tmp = (char*)malloc((size_t)(e - b) + 1);
+    if (!tmp) return 0;
+    memcpy(tmp, s + b, (size_t)(e - b));
+    tmp[e - b] = '\0';
+    *out = val_bigint_from_string(tmp);
+    free(tmp);
+    return 1;
+}
+
+static int json_parse_float_text(const char* s, int len, double* out) {
+    if (!s || len <= 0 || len >= 64) return 0;
+    char buf[64];
+    memcpy(buf, s, (size_t)len);
+    buf[len] = '\0';
+    char* end = NULL;
+    double d = strtod(buf, &end);
+    if (end == buf) return 0;
+    while (*end == ' ' || *end == '\t') end++;
+    if (*end != '\0') return 0;             // 后面还有杂字符 ⇒ 不算数字
+    *out = d;
+    return 1;
+}
+
 // 按字段**声明类型**把 JSON 值转成该字段可接受的值。
 //   转不了 ⇒ val_null()（调用方保留字段默认值，而不是塞个错类型进去）。
 static Value json_coerce_to_field(Value raw, StructFieldInfo* f) {
     if (val_is_null(raw) || !f) return val_null();
 
     switch (f->type) {
-        case TYPE_INT:
+        case TYPE_INT: {
             // 大整数原样保留（转 double 会丢精度，见 encode 那边 bigint 的同类注释）
             if (val_is_int(raw) || val_is_bigint(raw)) return raw;
             if (val_is_bool(raw)) return val_int(val_as_bool(raw) ? 1 : 0);
             if (val_is_float(raw)) return val_int((int64_t)val_as_num(raw));
+            // 字符串 ⇒ 严格解析（DB / CSV 的列都是字符串）
+            if (val_is_obj(raw) && val_as_obj(raw)->type == OBJ_STRING) {
+                ObjString* t = (ObjString*)val_as_obj(raw);
+                Value iv = val_null();
+                return json_parse_int_text(t->chars, t->len, &iv) ? iv : val_null();
+            }
             return val_null();
-        case TYPE_FLOAT:
+        }
+        case TYPE_FLOAT: {
             if (val_is_float(raw) || val_is_int(raw)) return val_float((double)val_as_num(raw));
             if (val_is_bool(raw)) return val_float(val_as_bool(raw) ? 1.0 : 0.0);
+            if (val_is_obj(raw) && val_as_obj(raw)->type == OBJ_STRING) {
+                ObjString* t = (ObjString*)val_as_obj(raw);
+                double dv = 0.0;
+                return json_parse_float_text(t->chars, t->len, &dv) ? val_float(dv) : val_null();
+            }
             return val_null();
-        case TYPE_BOOL:
-            return val_is_bool(raw) ? raw : val_null();
+        }
+        case TYPE_BOOL: {
+            if (val_is_bool(raw)) return raw;
+            if (val_is_int(raw)) return val_bool(val_as_int(raw) != 0);
+            if (val_is_obj(raw) && val_as_obj(raw)->type == OBJ_STRING) {
+                ObjString* t = (ObjString*)val_as_obj(raw);
+                if (t->len == 1 && (t->chars[0] == '1' || t->chars[0] == '0'))
+                    return val_bool(t->chars[0] == '1');
+                if (t->len == 4 && memcmp(t->chars, "true", 4) == 0) return val_bool(true);
+                if (t->len == 5 && memcmp(t->chars, "false", 5) == 0) return val_bool(false);
+            }
+            return val_null();
+        }
         case TYPE_STRING:
-            // **不做隐式 _str**：`{"id": 123}` 填 `string id` 时静默变 "123" 会把类型错误藏起来
+            // **不做隐式 _str**：`{"id": 123}` 填 `string id` 时静默变 "123" 会把类型错误藏起来。
+            //   （数字→字符串没有"解析"这回事，方向反过来才有意义。）
             if (val_is_obj(raw) && val_as_obj(raw)->type == OBJ_STRING) return raw;
             return val_null();
         case TYPE_ARRAY:
@@ -638,12 +713,19 @@ static Value jsons_fill_func(int argc, Value* args) {
         native_throw_error("fill() 第一个参数必须是 struct 实例");
         return val_null();
     }
+    ObjStruct* target = (ObjStruct*)val_as_obj(args[0]);
+
+    // 第二个参数：JSON 字符串 **或** 已解析好的 Dict
+    //   （DB 行 / CSV 行本来就已经是 Dict，再拼成字符串再解析一遍是浪费）
+    if (val_is_obj(args[1]) && val_as_obj(args[1])->type == OBJ_DICT) {
+        json_fill_struct(target, (ObjDict*)val_as_obj(args[1]));
+        return val_bool(true);
+    }
     if (!val_is_obj(args[1]) || val_as_obj(args[1])->type != OBJ_STRING) {
-        native_throw_error("fill() 第二个参数必须是 JSON 字符串");
+        native_throw_error("fill() 第二个参数必须是 JSON 字符串或 Dict");
         return val_null();
     }
 
-    ObjStruct* target = (ObjStruct*)val_as_obj(args[0]);
     ObjString* text = (ObjString*)val_as_obj(args[1]);
 
     JsonParser parser;
@@ -1328,10 +1410,14 @@ void jsons_init_module(void) {
     TypeKind decode_params[] = {TYPE_STRING};
     native_register_module_method("jsons", "decode", jsons_decode_func, &NATIVE_T_ANY, NATIVE_FIXED(decode_params));
 
-    // ★ 2026-11-09（P1）：`fill(target, json)` —— 把 JSON 对象按**字段声明类型**填进 struct 实例。
-    //   第一个形参用 TYPE_ANY：形参类型只到 TYPE_STRUCT 这一档、写不出具体结构体名，
-    //   运行期再校验"必须是 struct 实例"并给出明确报错。
-    TypeKind fill_params[] = {TYPE_ANY, TYPE_STRING};
+    // ★ 2026-11-09（P1）：`fill(target, src)` —— 把 JSON 对象 / Dict 按**字段声明类型**
+    //   填进 struct 实例。
+    //   两个形参都用 TYPE_ANY，原因各不相同：
+    //     · 第一个：形参类型只到 TYPE_STRUCT 这一档、写不出具体结构体名；
+    //     · 第二个：要同时接受 JSON 字符串**和**已解析好的 Dict（DB 行 / CSV 行就是 Dict），
+    //       而原生形参没有"联合类型"。代价是编译期不再拦 `fill(s, 123)`，
+    //       但运行期会抛明确错误（"必须是 JSON 字符串或 Dict"），不是静默失败。
+    TypeKind fill_params[] = {TYPE_ANY, TYPE_ANY};
     native_register_module_method("jsons", "fill", jsons_fill_func, &NATIVE_T_BOOL, NATIVE_FIXED(fill_params));
 
     TypeKind encode_params[] = {TYPE_ANY};
