@@ -128,13 +128,19 @@ var top = arr.slice(0, lim - 1)            // ❌ 「类型 'Array[T]' 没有方
 ## 6. 字符串：先查标准库，别自己写
 
 ```leno
-strings.pad_left(_str(v), 2, "0")     // "07"（按字符算，"你好" 是 2 个字符）
+strings.pad_start(_str(v), 2, "0")    // "07"（按字符算，"你好" 是 2 个字符）
+strings.pad_end(s, 5)                 // 右侧补空格到 5 个字符
 strings.trim_unicode(s)               // 认全角空格 / NBSP（trim 只认 ASCII）
 strings.to_lower(s)
+strings.split(s, ",")                 // 已有！别手写 split
+strings.fmt_size(1536)                // "1 KB"（字节数 → 人话，已有）
+strings.lines(s)                      // 按行切（认 \r\n）
 ```
 
 > **已知高频重复**：`pad2` 曾在四个项目里各抄一份。写补零/补空格前先想
-> `pad_left`。
+> `pad_start`（`pad2(v)` 就是 `pad_start(_str(v), 2, "0")`）。
+> 同理，`split` / `fmt_size` / `lines` / `format` 都**已经在标准库里**，
+> 写之前先 `strings.` 看一眼可用列表（编译器报"未找到方法"时会直接列出全部可用项）。
 
 ---
 

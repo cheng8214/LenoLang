@@ -126,9 +126,9 @@ ord.sort(func(int a, int b) {
 
 ---
 
-## 4. 字符串补宽：`strings.pad_left`
+## 4. 字符串：先查标准库，别自己写
 
-**反例**（四个项目各抄一份，注释写着“两处各一份，改动要一起改 ⚠”）：
+**反例 1**（`pad2` 在四个项目里各抄一份，注释写着“两处各一份，改动要一起改 ⚠”）：
 
 ```leno
 func pad2(int v): string {
@@ -137,12 +137,35 @@ func pad2(int v): string {
 }
 ```
 
-**正例**：
+**正例 1**：
 
 ```leno
-strings.pad_left(_str(v), 2, "0")        // "07"
-strings.pad_left("你好", 4, "*")          // "**你好"（按字符算，不是字节）
+strings.pad_start(_str(v), 2, "0")       // "07"
+strings.pad_start("你好", 4, "*")         // "**你好"（按字符算，不是字节）
+strings.pad_end("hi", 5)                 // "hi   "
 ```
+
+**反例 2**（手写 split / 字节格式化 / 按行切 —— 这些标准库**都已经有**）：
+
+```leno
+Array[string] out = []
+int i = 0
+while i < s.len() { /* 找分隔符、切片、add */ }
+```
+
+**正例 2**：
+
+```leno
+strings.split("a,b,,c", ",")     // [a][b][][c]（空段保留）
+strings.fmt_size(1536)           // "1 KB"
+strings.lines("a\nb\r\nc")       // 按行切，认 \r\n
+```
+
+> **2026-11-09 的自纠**：我为"消掉四份 `pad2`"曾加过一个 `strings.pad_left`，
+> 后来发现 `pad_start` **早就在**（`c07a9f6` 就有），语义相同且实现更好
+> ⇒ 删掉 `pad_left`，四份 `pad2` 改用 `pad_start`。
+> **教训：加 API 之前先看同一个模块里已有的完整方法表** ——
+> 编译器报「未找到方法」时会把全部可用项列出来，那就是最权威的清单。
 
 ---
 

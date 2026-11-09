@@ -164,6 +164,16 @@ main()
     assert_eq("ab".pad_end(4, "中"), "ab中中")
     assert_eq("你好".pad_start(2, "x"), "你好")   // 不截断
 
+    // ★ 2026-11-09 补：pad_start 的几个未覆盖边界
+    //   （起因：我一度加了个 `strings.pad_left`，后来发现 pad_start 早就存在且更好 ⇒
+    //     删掉重复 API，改为把缺的边界补在这里）
+    assert_eq("7".pad_start(3), "  7")            // 省略 fill ⇒ 补空格
+    assert_eq("a".pad_start(3, "xy"), "xxa")      // fill 多字符 ⇒ 只取首个
+    assert_eq("abc".pad_start(0, "0"), "abc")     // 宽度 0 ⇒ 原样
+    assert_eq("abc".pad_start(-5, "0"), "abc")    // 宽度为负 ⇒ 原样
+    assert_eq("".pad_start(3, "0"), "000")        // 空串补宽
+    assert_eq("a".pad_start(3, ""), "  a")        // 空 fill ⇒ 退回空格
+
     // 测试22: 字符串方法 - slice
     assert_eq("hello".slice(1, 2), "el")
     assert_eq("hello".slice(0, 4), "hello")
