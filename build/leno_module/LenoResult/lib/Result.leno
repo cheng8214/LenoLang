@@ -11,9 +11,21 @@
 //   ② 可能"没有值"但不算失败 → `Option[T]`（`some` / `val`）
 //   ③ 同一个函数内部临时判空 → 继续用 `T?`（便宜；跨模块边界才换成 Option）
 //
-// 为什么是 struct 不是 enum：Leno 的 enum 只存 int 常量、**不能带载荷**（docs/idioms.md §10），
-//   所以 `Result[T]` 只能是"bool 标志 + 值"的 struct。字段顺序固定为 ok/code/msg/val，
-//   这样 `jsons.fill` / 日志打印 / 逐字段拷贝都能用同一口径。
+// 为什么是 struct 不是 enum —— **2026-11-10 复核过，结论没变，但理由换了**：
+//   · enum 现在**能带载荷**了（`enum Msg { progress(int done, int total) }`，
+//     见 docs/idioms.md §3 与 docs/enum载荷_设计草案.md）⇒ 旧注释"enum 只存 int 常量"已过期；
+//   · 但**载荷 enum 不支持泛型参数**：`enum Result[T] { ok(T v) err(int c) }` 直接语法错误
+//     （带载荷 enum 会被降级成一个同名 struct `{tag, p0, p1…}`，泛型要求按实参逐个实例化，
+//     这套机制没做）。编译器现在对 `enum X[...]` 会给定向提示，不再只说"期望 '{'"。
+//   ⇒ 只要 `Result` 必须携带**任意 T**，它就只能是"bool 标志 + 值"的 struct。
+//   字段顺序固定为 ok/code/msg/val，这样 `jsons.fill` / 日志打印 / 逐字段拷贝都能用同一口径。
+//
+//   反过来：**不需要泛型的结果形态应当写成载荷 enum**（更好读，还能 `switch` 穷尽检查）：
+//
+//     enum Fetch { ok(string body), fail(int code, string msg) }
+//     switch r { case Fetch.ok(b) { … }  case Fetch.fail(c, m) { … } }
+//
+//   本模块只负责"要携带任意 T"的那一半（Result[T] / Option[T]）。
 //
 // 为什么 `val` 不设默认值也不可空：`Result[int]` 失败时 `val` 是 0 —— 这个 0 **没有意义**，
 //   必须靠 `ok` 判断。`orElse(def)` 让你把"默认值"显式写在调用点，避免又回到"静默给 0"。

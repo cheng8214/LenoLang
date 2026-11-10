@@ -57,6 +57,10 @@ $cases += @{ n = "e01 空 enum（2026-11-10 起告警）"; e = "warn"; src = @'
 enum E { }
 main() { print("x") }
 '@ }
+$cases += @{ n = "e01b enum 泛型参数（载荷 enum 不支持泛型）"; e = "error"; src = @'
+enum R[T] { ok(T v), err(int c) }
+main() { print("x") }
+'@ }
 $cases += @{ n = "e02 重复成员"; e = "error"; src = @'
 enum E { a, a }
 main() { print("x") }

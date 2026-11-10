@@ -3824,6 +3824,22 @@ Ast* parse_enum_stmt(Parser* p) {
     char* enum_name = copy_string(p->lex.current.text, p->lex.current.len);
     lexer_next(&p->lex);
 
+    // ★ 2026-11-10（写 LenoResult 时撞到）：**enum 不支持泛型参数**。
+    //   载荷 enum 落地后，`enum Result[T] { ok(T v) err(int c) }` 是最自然的写法，
+    //   但它降级成的是**同名 struct**（`__Result{tag, p0, p1}`）—— 泛型需要"按实参实例化"，
+    //   这套机制没做。原来这里只会说「期望 '{' 开始 enum 定义」，看到的是"我明明写了 {"。
+    //   ⇒ 遇到 `[` 就直接点名 + 给出路（用 struct，或改用非泛型 enum）。
+    if (p->lex.current.type == TOK_LBRACKET) {
+        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+            "enum '%s' 不支持**泛型参数**：带载荷的 enum 会被降级成一个同名 struct"
+            "（`{tag, p0, p1, …}`），而泛型要求按实参逐个实例化，这套机制尚未实现。"
+            "两条出路：① 要带类型参数请用 `struct %s[T] { … }`；"
+            "② 要 `ok/err` 那种形态且不需要泛型，就写非泛型的 `enum %s { ok(int v) err(int code, string msg) }`",
+            enum_name, enum_name, enum_name);
+        free(enum_name);
+        return NULL;
+    }
+
     // 期望 '{'
     if (!consume(p, TOK_LBRACE, "期望 '{' 开始 enum 定义")) {
         free(enum_name);
