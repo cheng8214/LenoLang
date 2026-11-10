@@ -1013,7 +1013,8 @@
                         int ck_num = (ck == TYPE_INT || ck == TYPE_FLOAT ||
                                       ck == TYPE_BIGINT || ck == TYPE_ENUM);
                         int comparable = (ck == TYPE_ANY || ck == TYPE_INFER || ck == TYPE_UNKNOWN ||
-                                          ck == TYPE_NULL || ck == sk || (ck_num && sk_num));
+                                          ck == TYPE_NULL || ck == TYPE_POISON ||
+                                          ck == sk || (ck_num && sk_num));
                         if (!comparable) {
                             warning_add_at_fmt(WARN_SWITCH_CASE_TYPE, cv->line, cv->column,
                                 "case 值的类型（%s）与 switch 表达式的类型（%s）不一致 —— "

@@ -305,6 +305,28 @@ Array[User] out = rows.map(func(Dict r) {
 
 **返回值**：顶层不是对象（数组/字符串/坏 JSON）⇒ 返回 `false`，且**不改动**目标实例。
 
+#### 带载荷 enum 的往返（2026-11-10 补）
+
+`encode(载荷 enum)` 输出 `{"成员":{"参数名":值,…}}`，`fill` **按同一份成员/参数签名解码**
+（`ObjStructDef.enum_sig`），所以 `encode → fill` 是对称的：
+
+```leno
+enum Msg { a(int x)  b(string s, float f)  c() }
+
+Msg m = Msg.b("hi", 2.5)
+string js = jsons.encode(m)          // {"b":{"s":"hi","f":2.5}}
+
+Msg got = Msg.a(0)                   // 先有一个实例（enum 不能用 new 造）
+jsons.fill(got, js)                  // tag=1、p1="hi"、p2=2.5  ← 按参数名落槽
+```
+
+- 目标实例**必须已经存在**（enum 没有 `new`）；`fill` 只改 `tag` 与该成员的载荷槽
+- 顶层键（成员名）对不上任何成员 ⇒ 退回原来的"按**隐藏字段名**填"
+  （兼容 `{"tag":1,"p0":3}` 这类老 JSON），不会静默写坏
+- 载荷里的嵌套 struct / `Array[struct]` 照常按声明类型递归转换（见上表）
+- ⚠ 载荷 enum 的 `==` / `Array.has` 是**按值**的，但**普通 struct 仍是引用语义**：
+  `Msg.point(new Pt(1,2)) == Msg.point(new Pt(1,2))` 为 `false`（两个不同 `Pt` 实例）
+
 ---
 
 ### `encode_pretty(value)`

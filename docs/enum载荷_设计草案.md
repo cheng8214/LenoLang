@@ -186,8 +186,13 @@ struct Msg {
 
 ### 仍未做（明确不做）
 
-- `jsons.fill(enum_value, json)` 反向填充：载荷"属于哪个成员"是运行期概念，反填要先定 tag；
-  目前请用 `switch` 分派。
+- ~~`jsons.fill(enum_value, json)` 反向填充~~ ⇒ **2026-11-10 已支持**：与 `encode` 共用
+  `ObjStructDef.enum_sig`（成员名 + 参数名）解码，`{"b":{"s":"hi","f":2.5}}` ⇒
+  `tag=1` + 对应载荷槽；顶层键对不上任何成员时退回"按隐藏字段名填"（兼容老 JSON）。
+  钉子：`assert/test_enum_payload_json_fill.leno`（单参 / 多参 / 零参 / 嵌套 struct /
+  `Array[struct]` / 跨模块）。
+  注意：目标实例必须已存在（enum 不能 `new`）；嵌套的**普通 struct** 载荷仍按引用语义
+  比较（`Msg.point(new Pt(1,2)) == Msg.point(new Pt(1,2))` 为 false）。
 - `==` 跨**不同 enum** 比较：类型不同 ⇒ 不等；`switch` 里混用两个 enum 的成员也在编译期就拦。
 
 ## 8. 压力测试记录（2026-11-10）—— 测出 3 个 bug，已修

@@ -1,0 +1,111 @@
+// test_enum_payload_json_fill.leno —— 带载荷 enum 的 **jsons.fill 往返**（2026-11-10）
+//
+// 此前 encode 支持（`{"a":{"x":7}}`），但 fill 走通用"按隐藏字段名填"的路径：
+//   JSON 顶层键（成员名）一个都匹配不上 `tag/p0/…` ⇒ 静默得到
+//   `Msg{tag=null,p0=null,…}`（实测）——既不报错也不是默认值，属于"静默错值"。
+// 现在 fill 按 `enum_sig`（成员名 + 参数名）解码，与 encode 同一份签名 ⇒ 往返对称。
+//
+// 钉住六件事：
+//   ① 单参成员往返（tag + 载荷）
+//   ② 多参成员（string / float）按**参数名**落槽
+//   ③ 零参成员（`c()`）只写 tag
+//   ④ 不同成员之间互不影响（未选中的槽保持默认）
+//   ⑤ 嵌套 struct 载荷 / Array[struct] 载荷
+//   ⑥ 跨模块导入的带载荷 enum 同款往返
+import jsons
+import "./helpers/enum_stress_mod.leno" as evmod
+use evmod.Ev
+
+struct Pt {
+    int x = 0
+    int y = 0
+}
+
+enum Msg {
+    a(int x)
+    b(string s, float f)
+    c()
+}
+
+enum Shape {
+    point(Pt p)
+    pts(Array[Pt] ps)
+}
+
+struct Wrap {
+    string name = ""
+    Msg? m = null
+}
+
+struct ShapeWrap {
+    Shape? s = null
+}
+
+func roundtripMsg(Msg m): Msg {
+    Wrap w = new Wrap(name = "x")
+    w.m = m
+    Wrap back = new Wrap()
+    jsons.fill(back, jsons.encode(w))
+    return back.m as Msg
+}
+
+main() {
+    // ① 单参成员
+    Msg a1 = Msg.a(7)
+    Msg a2 = roundtripMsg(a1)
+    assert_eq(a2.tag, 0, "① tag = a")
+    assert_eq(a2.p0, 7, "① 载荷落槽")
+    assert_eq(a1 == a2, true, "① 往返按值相等")
+
+    // ② 多参成员（顺序写在签名里，按参数名取值）
+    Msg b1 = Msg.b("hi", 2.5)
+    Msg b2 = roundtripMsg(b1)
+    assert_eq(b2.tag, 1, "② tag = b")
+    assert_eq(b2.p1, "hi", "② 第 1 个参数")
+    assert_eq(b2.p2, 2.5, "② 第 2 个参数")
+    assert_eq(b1 == b2, true, "② 往返按值相等")
+
+    // ③ 零参成员
+    Msg c1 = Msg.c()
+    Msg c2 = roundtripMsg(c1)
+    assert_eq(c2.tag, 2, "③ 零参成员只写 tag")
+
+    // ④ 不同成员互不影响：a 的实例不应写坏 b 的槽
+    assert_eq(a2.p1, null, "④ a 的实例 p1 保持默认 null")
+    assert_eq(b2.tag, 1, "④ b 的实例 tag 不被 a 影响")
+
+    // ⑤ 嵌套 struct / Array[struct] 载荷
+    ShapeWrap sw = new ShapeWrap()
+    sw.s = Shape.point(new Pt(x = 1, y = 2))
+    ShapeWrap sw2 = new ShapeWrap()
+    jsons.fill(sw2, jsons.encode(sw))
+    var sp = sw2.s as Shape
+    assert_eq(sp.tag, 0, "⑤ point.tag")
+    assert_eq((sp.p0 as Pt).x, 1, "⑤ point 载荷 x")
+    assert_eq((sp.p0 as Pt).y, 2, "⑤ point 载荷 y")
+
+    ShapeWrap sw3 = new ShapeWrap()
+    sw3.s = Shape.pts([new Pt(x = 3, y = 4)])
+    ShapeWrap sw4 = new ShapeWrap()
+    jsons.fill(sw4, jsons.encode(sw3))
+    var sps = sw4.s as Shape
+    assert_eq(sps.tag, 1, "⑤ pts.tag")
+    var arr = sps.p1 as Array[Pt]
+    assert_eq(arr.len(), 1, "⑤ 数组载荷长度")
+    assert_eq(arr[0].x, 3, "⑤ 数组载荷内容")
+
+    // ⑥ 跨模块 enum（Ev.click(x,y) / Ev.tick()）
+    assert_eq(jsons.encode(Ev.click(1, 2)), "{\"click\":{\"x\":1,\"y\":2}}", "⑥ 跨模块 encode")
+    var evBack = jsons.decode("{\"click\":{\"x\":9,\"y\":8}}")
+    if evBack is Dict {
+        Ev got = Ev.click(0, 0)     // 先有一个实例（enum 不能用 new 造）
+        jsons.fill(got, evBack as Dict)
+        assert_eq(got.tag, 0, "⑥ 跨模块 fill tag")
+        assert_eq(got.p0, 9, "⑥ 跨模块 fill 载荷 x")
+        assert_eq(got.p1, 8, "⑥ 跨模块 fill 载荷 y")
+    } else {
+        assert(false, "⑥ decode 应该是 Dict")
+    }
+
+    print("test_enum_payload_json_fill passed（单参 / 多参 / 零参 / 嵌套 / 数组 / 跨模块）")
+}

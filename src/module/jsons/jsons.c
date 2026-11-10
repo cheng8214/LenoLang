@@ -765,9 +765,102 @@ static Value json_coerce_to_field(Value raw, StructFieldInfo* f) {
     }
 }
 
+// ★ 2026-11-10（P4 enum 载荷 / fill 往返）：`{"成员":{"参数":值,…}}` 填回 `tag + 载荷槽`。
+//   与 `json_encode_enum_payload` 共用同一份 `enum_sig`（`a(x);b(s)`），保证编码/解码对称。
+//   ⚠ 此前 fill 走通用路径：顶层键（成员名）**一个都匹配不上隐藏字段** ⇒ 静默得到
+//     `Msg{tag=null,p0=null,…}`（实测），既不报错也不是默认值，属于"静默错值"。
+//   找不到匹配的成员键 ⇒ 返回 0，让调用方退回通用"按字段名填"（兼容 `{"tag":1,"p0":3}` 这类老 JSON）。
+static int json_fill_enum_payload(ObjStruct* target, ObjDict* src) {
+    if (!target || !target->def || !src) return 0;
+    ObjStructDef* def = target->def;
+    if (!def->enum_sig || def->field_count < 1) return 0;
+
+    // 取 src 里第一个"值是对象"的键（encode 只会写一个成员键）
+    const char* key = NULL;
+    int key_len = 0;
+    ObjDict* inner = NULL;
+    for (int i = 0; i < src->order_count; i++) {
+        Value k = src->order[i];
+        if (!val_is_obj(k) || val_as_obj(k)->type != OBJ_STRING) continue;
+        Value v = dict_get(src, k);
+        if (!val_is_obj(v) || val_as_obj(v)->type != OBJ_DICT) continue;
+        ObjString* ks = (ObjString*)val_as_obj(k);
+        key = ks->chars;
+        key_len = ks->len;
+        inner = (ObjDict*)val_as_obj(v);
+        break;
+    }
+    if (!key || !inner) return 0;
+
+    // 在签名里定位同名成员，同时累计载荷基址（与 encode 同一个公式）
+    const char* p = def->enum_sig;
+    int idx = 0;
+    int base = 0;
+    for (;;) {
+        if (!p || !*p) return 0;
+        const char* nend = strchr(p, '(');
+        const char* semi = strchr(p, ';');
+        if (!nend || (semi && semi < nend)) nend = semi;
+        if (!nend) nend = p + strlen(p);
+
+        int pc = 0;
+        const char* ps = NULL;
+        const char* pe = NULL;
+        if (*nend == '(') {
+            pe = strchr(nend, ')');
+            if (!pe) return 0;
+            ps = nend + 1;
+            pc = (pe > ps) ? 1 : 0;
+            for (const char* q = ps; q < pe; q++) {
+                if (*q == ',') pc++;
+            }
+        }
+
+        int name_len = (int)(nend - p);
+        if (name_len == key_len && memcmp(p, key, (size_t)key_len) == 0) {
+            // ① tag
+            struct_set_field(target, 0, val_int(idx));
+            // ② 该成员的载荷槽：按**参数名**去内层对象里找
+            int avail = def->field_count - 1 - base;
+            if (pc > avail) pc = avail > 0 ? avail : 0;
+            int k = 0;
+            const char* q = ps;
+            while (q && pe && q < pe && k < pc) {
+                const char* comma = memchr(q, ',', (size_t)(pe - q));
+                const char* name_end = comma ? comma : pe;
+                int nlen = (int)(name_end - q);
+                for (int i = 0; i < inner->order_count; i++) {
+                    Value ik = inner->order[i];
+                    if (!val_is_obj(ik) || val_as_obj(ik)->type != OBJ_STRING) continue;
+                    ObjString* iks = (ObjString*)val_as_obj(ik);
+                    if ((int)iks->len != nlen || memcmp(iks->chars, q, (size_t)nlen) != 0) continue;
+                    Value conv = json_coerce_to_field(dict_get(inner, ik),
+                                                      &def->fields[1 + base + k]);
+                    if (!val_is_null(conv)) struct_set_field(target, 1 + base + k, conv);
+                    break;
+                }
+                k++;
+                if (!comma) break;
+                q = comma + 1;
+            }
+            return 1;
+        }
+
+        if (!semi) return 0;
+        base += pc;
+        idx++;
+        p = strchr(nend, ';');
+        if (!p) return 0;
+        p++;
+    }
+}
+
 static void json_fill_struct(ObjStruct* target, ObjDict* src) {
     if (!target || !target->def || !src) return;
     ObjStructDef* def = target->def;
+
+    // ★ 带载荷 enum：先按「成员 + 参数名」解码（形状对上了就直接返回）
+    if (def->enum_sig && json_fill_enum_payload(target, src)) return;
 
     for (int i = 0; i < src->order_count; i++) {
         Value k = src->order[i];
