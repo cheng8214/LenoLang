@@ -426,7 +426,7 @@ build\leno.exe --check <file>
 | `for arr as x` | 遍历要用 `to` | `for arr to x` |
 | `arr[1:5:2]` | 切片**不支持步长** | 用循环或 `filter` |
 | `new 5` | `new` 只能造 struct | 直接用 `5` |
-| `{n:y}` | 插值说明符 `y` 不存在（会静默输出 `%y`） | `{n:d}` / `{n:.2f}` |
+| `{n:y}` | 插值说明符 `y` 不存在（**2026-11-02 起编译期报错**，并列出可用转换符） | `{n:d}` / `{n:.2f}` |
 | `d["a"]["b"]`（`d` 是 `any`） | 不能在 `any` 上直接下标 | 先 `as Dict`，或 `jsons.dig(d, "a.b")` |
 | `new Route(method: "GET", ...)` | `new` 的命名实参用 **`=`**，不是 `:`（`:` 是 Dict 字面量 / 插值） | `new Route(method="GET", path="/x")` |
 | `f(..., func(x) {` 换行 `...` `})` 内联多行 lambda 当实参 | 解析器在多行 lambda 处报「期望 ')' / 期望表达式」 | 把 handler 写成**单独的具名函数**再传：`f(..., hPing)` |

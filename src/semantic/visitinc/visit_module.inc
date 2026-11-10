@@ -355,29 +355,56 @@
                     int method_count = 0;
                     ModuleMethodMeta* all_methods = native_get_module_method_metas(actual_module, &method_count);
                     if (all_methods && method_count > 0) {
-                        // 构建可用方法列表
-                        char available[BUFFER_MEDIUM];
-                        int pos = 0;
-                        const char* sim_names[64];
-                        int sim_n = 0;
-                        for (int mi = 0; mi < method_count && pos < BUFFER_MEDIUM - 50; mi++) {
-                            if (mi > 0) pos += snprintf(available + pos, BUFFER_MEDIUM - pos, ", ");
-                            pos += snprintf(available + pos, BUFFER_MEDIUM - pos, "%s", all_methods[mi].method_name);
-                            if (sim_n < 64 && all_methods[mi].method_name) {
-                                sim_names[sim_n++] = all_methods[mi].method_name;
+                        // ★ 2026-11-11：列表**按字母排序**并按真实长度截断。
+                        //   此前直接用哈希桶遍历顺序填 BUFFER_MEDIUM(256) —— 两个问题：
+                        //   ① 顺序随机（`strings` 实测从 rfind 开始，用户没法"扫一眼找"）；
+                        //   ② 超过 256 字符就**静默截断**，被截掉的恰好是 `find` / `to_lower` /
+                        //      `lines` 这些常用名 ⇒ 用户以为"没有这个方法" ✗。
+                        //   现在：排序 + 放不下时明确写「… 等 N 个」，相似名提示放在列表**前面**。
+                        const char** names = (const char**)malloc(sizeof(const char*) * method_count);
+                        int names_n = 0;
+                        for (int mi = 0; mi < method_count; mi++) {
+                            if (all_methods[mi].method_name[0]) {
+                                names[names_n++] = all_methods[mi].method_name;
                             }
                         }
-                        // ★ 2026-11-11：列表之后**再给相似名**（方法多的模块翻列表很费眼）
-                        const char* sim_hint = get_similar_in_names(sim_names, sim_n,
+                        // 按字母排序（插入排序：错误路径才走到，方法数最多几百）
+                        for (int ni = 1; ni < names_n; ni++) {
+                            const char* key = names[ni];
+                            int nj = ni - 1;
+                            while (nj >= 0 && strcmp(names[nj], key) > 0) {
+                                names[nj + 1] = names[nj];
+                                nj--;
+                            }
+                            names[nj + 1] = key;
+                        }
+                        // 相似名提示：在**完整**方法表里找（不受 64 个上限影响）
+                        const char* sim_hint = get_similar_in_names(names, names_n,
                                                                     ast->u.module_call.method_name);
+                        char available[BUFFER_MEDIUM];
+                        int pos = 0;
+                        int shown = 0;
+                        for (int mi = 0; mi < names_n; mi++) {
+                            int need = (int)strlen(names[mi]) + (shown > 0 ? 2 : 0);
+                            if (pos + need > BUFFER_MEDIUM - 24) break;
+                            if (shown > 0) pos += snprintf(available + pos, BUFFER_MEDIUM - pos, ", ");
+                            pos += snprintf(available + pos, BUFFER_MEDIUM - pos, "%s", names[mi]);
+                            shown++;
+                        }
+                        if (shown < names_n) {
+                            snprintf(available + pos, BUFFER_MEDIUM - pos, " …");
+                        }
                         error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
-                                 "未找到模块方法: %s.%s（可用: %s）%s",
-                                 actual_module, ast->u.module_call.method_name, available, sim_hint);
+                                 "未找到模块方法: %s.%s%s（该模块共 %d 个方法：%s）",
+                                 actual_module, ast->u.module_call.method_name, sim_hint,
+                                 names_n, available);
+                        free(names);
                         free(all_methods);
                     } else {
                         error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                                  "未找到模块方法: %s.%s",
                                  actual_module, ast->u.module_call.method_name);
+                        free(all_methods);
                     }
                 } else {
                     // 方法存在，检查参数数量

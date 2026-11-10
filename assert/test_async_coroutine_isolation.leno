@@ -1,0 +1,77 @@
+// test_async_coroutine_isolation.leno —— 协程异常状态的**隔离**（2026-11-11）
+// ----------------------------------------------------------------------------
+// 两个实测过的错误行为（都在 vm.c 的协程入口/恢复路径）：
+//
+// ① 一个协程失败后 `vm.has_exception` 留在 VM 上，事件循环跑下一个协程时，
+//    它执行的第一条 native/模块调用（`if (vm.has_exception) throw`）会把**上一个
+//    协程的旧异常**当成自己的抛出去 ⇒ 第二个协程没跑完就被判失败，且错误值/文案
+//    从前一个协程复制。
+//    实测（修前）：两个协程分别 `throw "e" + _str(n)`（n=1/2）⇒
+//      `after 2` 不打印，汇总成「2 个协程失败: e1; e1」✗
+//    修后：两个协程都跑到 throw，汇总「2 个协程失败: e1; e2」✓
+//
+// ② 协程 `await` 一个**失败**的 Future 且自己没有 try/catch 时，恢复路径只登记错误、
+//    却继续执行 await 之后的语句 ⇒ `print("unreachable")` 会被打印，副作用已经发生 ✗
+//    修后：立即终止该协程（语义与"协程内未捕获异常"一致），await 之后的代码不执行 ✓
+//
+// 判据：① 汇总串里两条消息各自正确；② await 之后的赋值没有发生。
+import io
+import asyncs
+
+// 引擎错误统一带「[位置] + [调用栈]」⇒ 比语义时只看第一行
+func headLine(string s): string {
+    var i = s.find("\n")
+    if i < 0 { return s }
+    return s.slice(0, i - 1)
+}
+
+async func fail_msg(int n) {
+    await asyncs.sleep(1)
+    throw "e" + _str(n)
+}
+
+func case_two_failures(): string {
+    fail_msg(1)
+    fail_msg(2)
+    try {
+        asyncs.run()
+        return "run-returned-normally"
+    } catch e {
+        return headLine(_str(e))
+    }
+}
+
+// ② 的探针：await 之后的副作用（全局量，协程里写全局是同一份）
+int after_await_ran = 0
+
+async func boom_now(): int {
+    throw "Z"
+}
+
+async func consumer() {
+    var f = boom_now()
+    var _x = await f
+    after_await_ran = 1        // ← 修前会执行；修后不可达
+    io.print("unreachable")
+}
+
+func case_failed_await_stops(): string {
+    consumer()
+    try {
+        asyncs.run()
+        return "run-returned-normally"
+    } catch e {
+        return headLine(_str(e))
+    }
+}
+
+main() {
+    // ① 前一个协程的失败不能污染后一个协程
+    assert_eq(case_two_failures(), "2 个协程失败: e1; e2")
+
+    // ② 失败的 await 之后不得继续执行
+    assert_eq(case_failed_await_stops(), "Z")
+    assert_eq(after_await_ran, 0)
+
+    io.print("test_async_coroutine_isolation passed")
+}

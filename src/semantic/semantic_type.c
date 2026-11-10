@@ -3027,9 +3027,19 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                             if (!known) {
                                 // 同样先去重再报 ✓（与上面 AST_FIELD_ACCESS 那条同一理由 ✓）——
                                 //   走**谓词去重版**入口，不必自己开缓冲 ✓
+                                // ★ 2026-11-11：字段名拼错给相似名提示（与访问器那条**逐字一致**，
+                                //   否则两处文案不同 ⇒ 同一次错会显示两条 ✗）
+                                const char** fnames = (const char**)malloc(
+                                    sizeof(char*) * def_sym->struct_field_count);
+                                for (int fi = 0; fi < def_sym->struct_field_count; fi++) {
+                                    fnames[fi] = def_sym->struct_field_names[fi];
+                                }
+                                const char* fhint = get_similar_in_names(fnames,
+                                    def_sym->struct_field_count, key);
                                 error_add_at_fmt_dedup(ERR_SEMANTIC, ast->line, ast->column,
-                                                       "struct '%s' 没有字段 '%s'",
-                                                       recv->struct_name, key);
+                                                       "struct '%s' 没有字段 '%s'%s",
+                                                       recv->struct_name, key, fhint);
+                                free(fnames);
                             }
 
                             // ★ 顺带把 **pri 私有** 也在索引路上拦住（2026-09-30 ✓）
@@ -3881,9 +3891,19 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                         //   （visit_field_access.inc ✓）⇒ 这里再报就是同一处、同一句话的第二遍 ✗
                         //   （实测：不去重会显示 "(重复 2 次)" ✗ —— 那只是计数不是折叠 ✓）
                         //   ⇒ 走**谓词去重版**入口（不必自己开缓冲 ✓）
+                        // ★ 2026-11-11：相似名提示与访问器那条**逐字一致**（同一份字段表 + 同一个
+                        //   提示函数 ⇒ 文案相同 ⇒ 去重仍然命中 ✓）
+                        const char** fnames2 = (const char**)malloc(
+                            sizeof(char*) * def_sym->struct_field_count);
+                        for (int fi = 0; fi < def_sym->struct_field_count; fi++) {
+                            fnames2[fi] = def_sym->struct_field_names[fi];
+                        }
+                        const char* fhint2 = get_similar_in_names(fnames2,
+                            def_sym->struct_field_count, fname);
                         error_add_at_fmt_dedup(ERR_SEMANTIC, ast->line, ast->column,
-                                               "struct '%s' 没有字段 '%s'",
-                                               obj_type->struct_name, fname);
+                                               "struct '%s' 没有字段 '%s'%s",
+                                               obj_type->struct_name, fname, fhint2);
+                        free(fnames2);
                     }
                 }
             }

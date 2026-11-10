@@ -1657,7 +1657,20 @@ int vm_run_coroutine_with_vm(ObjCoroutine* co, VM* vm_ptr) {
 
     // 保存当前的 current_coroutine，防止嵌套调用时覆盖
     ObjCoroutine* saved_current = vm_ptr->current_coroutine;
-    
+
+    // ★ 2026-11-11：进入协程前**清掉上一个协程留在 VM 上的异常状态**。
+    //   协程失败时 vm.has_exception 会保持在 1（co->result 已记下错误）；
+    //   事件循环紧接着跑下一个协程，若不清，它执行的第一条 native/模块调用
+    //   （OP_CALL / OP_MODULE_CALL 里都有 `if (vm.has_exception) throw`）会把这个
+    //   **上一个协程的旧异常**当成自己的抛出去 ⇒ 第二个协程没跑完就被判失败，
+    //   且错误值/文案复制自前一个协程。
+    //   实测：两个协程分别 `throw "e" + _str(n)`（n=1/2）⇒ 第二个协程的
+    //   `print("after 2")` 不执行，汇总成「2 个协程失败: e1; e1」✗。
+    //   协程边界即异常屏障（F1 同口径）：旧状态属于别的协程，不能带进来。
+    vm_ptr->has_exception = 0;
+    vm_ptr->exception = val_null();
+    vm_ptr->exception_line = 0;
+
     // 检查协程状态
     if (co->state == COROUTINE_COMPLETED || co->state == COROUTINE_FAILED) {
         vm_ptr->current_coroutine = saved_current;
@@ -1847,7 +1860,11 @@ int vm_run_coroutine_with_vm(ObjCoroutine* co, VM* vm_ptr) {
         
         // 恢复栈指针到挂起时的位置，确保压入 Future 结果的位置正确
         vm_ptr->sp = co->saved_sp;
-        
+
+        // ★ 2026-11-11：本协程是否因"await 的 Future 失败且没有处理器"而**直接终止**。
+        //   置 1 后不再进入 vm_run_with_vm（见下面 no-handler 分支）。
+        int run_aborted = 0;
+
         // 如果协程正在等待一个已完成的 Future，推送结果到栈或抛出异常
         if (co->waiting_for && co->waiting_for->completed) {
             // 检查 Future 是否有错误
@@ -1911,6 +1928,13 @@ int vm_run_coroutine_with_vm(ObjCoroutine* co, VM* vm_ptr) {
                                  umsg ? umsg : "未捕获的异步异常");
                     free(umsg);
                 }
+                // ★ 2026-11-11：没有处理器 ⇒ **立刻终止本协程**，不再执行 await 之后的语句。
+                //   此前这里只登记错误、然后照常调 vm_run_with_vm ⇒ 协程带着 has_exception=1
+                //   继续跑后面的代码（实测 `await 失败的f` 之后 `print("unreachable")` 会被打印 ✗），
+                //   直到某条检查 has_exception 的指令才"补抛"，副作用已经发生。
+                //   现在只跳过这次 vm_run，收尾复用下面统一的 FAILED 分支（登记 co->result /
+                //   通知 task_future / 清理动态帧），语义与"协程里未捕获的异常"完全一致。
+                run_aborted = 1;
             } else {
                 // ★ 寄存器式：把 Future 结果写回挂起时记录的**目标寄存器**。
                 //   OP_AWAIT 已在顶层帧保存了 await_dst_reg，恢复后顶层帧就是
@@ -1929,7 +1953,8 @@ int vm_run_coroutine_with_vm(ObjCoroutine* co, VM* vm_ptr) {
         resume_done:;
         
         // 执行协程直到完成或再次挂起
-        int result = vm_run_with_vm(vm_ptr);
+        //   run_aborted ⇒ 失败的 await 没有处理器，本次不再执行任何字节码（见上）
+        int result = run_aborted ? -1 : vm_run_with_vm(vm_ptr);
         
         // 如果协程再次挂起，OP_AWAIT 已经保存了所有 frame
         // 如果协程完成，需要清理 saved_frames（如果有的话）

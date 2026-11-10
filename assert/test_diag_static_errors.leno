@@ -1811,5 +1811,54 @@ main() {
         "import \"emod.leno\" as m\n\nmain() {\n    print(\"S=\" + m.SHARED)\n    print(\"K=\" + m.K)\n}\n")
     ce.expect_ok(u1ok, "U1 正向：**导出**的 var / const 跨模块照常可读", "S=7")
 
+    // ---- 2026-11-11：诊断文案三补（方法/字段拼错 + 模块方法清单可读性）----
+    // ② 模块方法不存在：清单**按字母排序**、超长时明确截断（此前是哈希桶顺序 +
+    //    256 字符静默截断 —— `strings` 的 find / to_lower / lines 恰好被截掉 ✗）
+    var d21 = dirs.join(work, "module_method_list.leno")
+    files.write(d21, @"import strings
+
+main() {
+    print(_str(strings.index_of(""a,b"", "","")))
+}
+")
+    var o21 = ce.expect_error(d21, "模块方法清单：排序 + 相似名提示",
+        "该模块共", 4)
+    ce.expect_no_warning(o21, "模块方法清单", "未知的原生模块")
+    assert_true(strings.has(o21, "find"), "清单应包含此前被静默截掉的 find；实际=" + o21)
+    assert_true(strings.has(o21, "lines"), "清单应包含此前被静默截掉的 lines；实际=" + o21)
+
+    // ③ 数组方法拼错（apend）：应经"别名键相似"给到 add（此前零提示）
+    var d22 = dirs.join(work, "method_typo_alias.leno")
+    files.write(d22, @"main() {
+    Array[int] xs = [1, 2]
+    xs.apend(3)
+    print(_str(xs.len()))
+}
+")
+    ce.expect_error(d22, "apend（append 少一个 p）=> 是否想用 add",
+        "是否想用 'add'", 3)
+
+    // ④ 字符串 push：不能提示 add（string 没有 add），应指向 `+` 拼接
+    var d23 = dirs.join(work, "string_push.leno")
+    files.write(d23, @"main() {
+    var s = ""abc""
+    print(s.push(""d""))
+}
+")
+    ce.expect_error(d23, "字符串 push => 指向 `+` 拼接（不是 add）",
+        "字符串拼接用 `+`", 3)
+
+    // ⑤ struct 字段拼错：应给相似字段名（此前只有"没有字段"）
+    var d24 = dirs.join(work, "field_typo.leno")
+    files.write(d24, @"struct S { int width = 0 }
+
+main() {
+    S s = new S()
+    print(_str(s.widht))
+}
+")
+    ce.expect_error(d24, "字段 widht => 是否想用 width",
+        "是否想用 'width'", 5)
+
     print("=== test_diag_static_errors ALL passed ===")
 }

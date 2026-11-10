@@ -2157,6 +2157,19 @@ static int native_levenshtein(const char* a, const char* b) {
 // C1：在编译期实例方法表中找与 method_name 最相似的同类方法，
 // 返回提示串（静态缓冲区；无相似名时为空串）。语义分析阶段方法运行表还没建，
 // 但 native_register_all_instance_method_metas 已把元信息注册进 instanceMethodTable。
+// 该类型上是否真的有这个方法（别名提示只在目标存在时才给，见下）
+static int instance_method_exists(const char* type_name, const char* method_name) {
+    if (!instanceMethodTable.entries) return 0;
+    for (int i = 0; i < instanceMethodTable.capacity; i++) {
+        for (InstanceMethodEntry* e = instanceMethodTable.entries[i]; e; e = e->next) {
+            if (strcmp(e->type_name, type_name) == 0 && strcmp(e->method_name, method_name) == 0) {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
 const char* native_instance_method_hint(const char* type_name, const char* method_name) {
     static char hint[128];
     hint[0] = '\0';
@@ -2168,38 +2181,50 @@ const char* native_instance_method_hint(const char* type_name, const char* metho
     //   零建议 ✓）。这些是"**同义不同名**"，不是"拼错" ⇒ 靠白名单映射才准 ✓。
     //   ⚠ 只在"该方法确实不存在"时才会被调到（调用点保证 ✓）⇒ 给建议不会误伤 ✓。
     //   ⚠ 比较**不区分大小写**：覆盖 `indexOf` / `removeAt` 这类 camelCase ✓。
-    {
-        static const struct { const char* from; const char* to; } alias[] = {
-            {"push",     "add"},       // JS / Java / Python 的追加
-            {"append",   "add"},       // Python list.append
-            {"size",     "len"},       // JS Map/Set.size()、Java size()
-            {"length",   "len"},       // 当方法调用时（当属性读另有一条更准的提示 ✓）
-            {"count",    "len"},
-            {"contains", "has"},       // Java / C# contains
-            {"indexof",  "index_of"},  // JS indexOf / C# IndexOf
-            {"removeat", "remove"},    // C# / Java removeAt
-            {"delete",   "remove"},    // JS Map.delete 等
-            // ★ 2026-10-24（round8 N13 建议）：`ch.recv()` 与 `receive` 的编辑距离是 3
-            //   （recv → recev → receiv → receive）⇒ 相似名机制（最多 2）命不中 ✗，
-            //   而 Go 风格/Python socket 习惯都会写成 recv ✓
-            {"recv",     "receive"},
-        };
-        for (size_t i = 0; i < sizeof(alias) / sizeof(alias[0]); i++) {
-            size_t n = strlen(alias[i].from);
-            if (strlen(method_name) != n) continue;
-            int same = 1;
-            for (size_t k = 0; k < n; k++) {
-                char a = method_name[k], b = alias[i].from[k];
-                if (a >= 'A' && a <= 'Z') a = (char)(a - 'A' + 'a');
-                if (b >= 'A' && b <= 'Z') b = (char)(b - 'A' + 'a');
-                if (a != b) { same = 0; break; }
-            }
-            if (same) {
+    //   ★ 2026-11-11：目标方法**必须在该类型上真实存在**才给别名提示。
+    //     此前不分类型：`"abc".push("d")` 会提示「Leno 里它叫 'add'」，而 string 根本没有
+    //     add ⇒ 用户照着改还是错 ✗（实测）。字符串的追加是 `+` 拼接。
+    static const struct { const char* from; const char* to; } alias[] = {
+        {"push",     "add"},       // JS / Java / Python 的追加
+        {"append",   "add"},       // Python list.append
+        {"size",     "len"},       // JS Map/Set.size()、Java size()
+        {"length",   "len"},       // 当方法调用时（当属性读另有一条更准的提示 ✓）
+        {"count",    "len"},
+        {"contains", "has"},       // Java / C# contains
+        {"indexof",  "index_of"},  // JS indexOf / C# IndexOf
+        {"removeat", "remove"},    // C# / Java removeAt
+        {"delete",   "remove"},    // JS Map.delete 等
+        // ★ 2026-10-24（round8 N13 建议）：`ch.recv()` 与 `receive` 的编辑距离是 3
+        //   （recv → recev → receiv → receive）⇒ 相似名机制（最多 2）命不中 ✗，
+        //   而 Go 风格/Python socket 习惯都会写成 recv ✓
+        {"recv",     "receive"},
+    };
+    int alias_n = (int)(sizeof(alias) / sizeof(alias[0]));
+    for (int i = 0; i < alias_n; i++) {
+        size_t n = strlen(alias[i].from);
+        if (strlen(method_name) != n) continue;
+        int same = 1;
+        for (size_t k = 0; k < n; k++) {
+            char a = method_name[k], b = alias[i].from[k];
+            if (a >= 'A' && a <= 'Z') a = (char)(a - 'A' + 'a');
+            if (b >= 'A' && b <= 'Z') b = (char)(b - 'A' + 'a');
+            if (a != b) { same = 0; break; }
+        }
+        if (same) {
+            if (instance_method_exists(type_name, alias[i].to)) {
                 // 只报"它叫什么"，**不**写 `x.xxx(...)` —— 形参个数因方法而异，
                 //   写成带括号的样子会让人以为要传参（`len` 恰恰是无参的 ✓）
                 snprintf(hint, sizeof(hint), "\n  提示: Leno 里它叫 '%s' ✓", alias[i].to);
                 return hint;
             }
+            // 目标不存在：字符串没有 add（push/append 想表达的是拼接）
+            if (strcmp(type_name, "string") == 0 && strcmp(alias[i].to, "add") == 0) {
+                snprintf(hint, sizeof(hint),
+                         "\n  提示: string 没有 '%s' —— 字符串拼接用 `+` ✓（如 s + \"d\"）",
+                         method_name);
+                return hint;
+            }
+            break;   // 目标不存在 ⇒ 不误导，继续走相似名
         }
     }
 
@@ -2220,6 +2245,28 @@ const char* native_instance_method_hint(const char* type_name, const char* metho
     }
     if (best && strcmp(best, method_name) != 0) {
         snprintf(hint, sizeof(hint), "\n  提示: 是否想用 '%s'？", best);
+        return hint;
+    }
+
+    // ★ 2026-11-11：真实方法名都不像时，再比一遍**别名键**（拼错一个字母的情况：
+    //   `apend` → append → add）。此前 `apend` 完全零提示（append/add 编辑距离 4，
+    //   相似名机制命不中 ✗ 实测）。
+    {
+        const char* alias_best = NULL;   // 别名键
+        const char* alias_target = NULL; // 对应的 Leno 方法名
+        int alias_dist = 3;
+        for (int i = 0; i < alias_n; i++) {
+            int dist = native_levenshtein(method_name, alias[i].from);
+            if (dist < alias_dist && instance_method_exists(type_name, alias[i].to)) {
+                alias_dist = dist;
+                alias_best = alias[i].from;
+                alias_target = alias[i].to;
+            }
+        }
+        if (alias_best && alias_target && strcmp(alias_best, method_name) != 0) {
+            snprintf(hint, sizeof(hint), "\n  提示: 是否想用 '%s'？（Leno 里 '%s' 叫 '%s' ✓）",
+                     alias_target, alias_best, alias_target);
+        }
     }
     return hint;
 }
